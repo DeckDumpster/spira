@@ -51,7 +51,7 @@ state; see §4 R7).
 | `heimdall/src/main.rs` (formerly `spira/heimdall.sh:108,518`, retired sp-zpaq0) | reads `$SPIRA_RUN/strands.json` (or `SPIRA_HEIMDALL_STRANDS`) | a JSON object |
 | `cockpit/health.sh` | `SP_STRAND_GHOST`, `SP_STRANDS` from cockpit.sh | kind `ghost` spelled as before |
 | operator / concierge / runbooks | `strand.sh report [--json]` | the text and JSON shapes in §3.4 |
-| bash suites `test-strand-lock.sh`, `test-strand-reclaim-n.sh`, `test-sentinel-store-reads.sh` (case 7), `test-unit-name.sh`, `test-closed-strand.sh` | run `strand.sh` | see §7 |
+| bash suites `test-strand-reclaim-n.sh`, `test-sentinel-store-reads.sh` (case 7), `test-unit-name.sh`, `test-closed-strand.sh` | run `strand.sh` | see §7 |
 
 ### 2.3 Inputs
 
@@ -284,7 +284,7 @@ throttle-state parsing; `--from` parsing.
 | 2 | `spira/sentinel.sh:317` | `stranded="$("$SPIRA_HOME/strand.sh" check 2>&1)"` | `stranded="$("$SPIRA_STRAND_BIN" check 2>&1)"` — lines 318–321 (the `^RECLAIMED/RECOMPUTED/STRANDED` counts) unchanged |
 | 3 | `Makefile:46` and `Makefile:53` | `for _b in loom broker … reconciler-flow; do` / `… reconciler-flow panel; do` | add `strand` to both lists |
 | 4 | `spira/strand.sh`, `spira/strand-classify.py` | the component | delete |
-| 5 | `spira/test-strand-lock.sh:85,126,135,165,190,215`, `spira/test-strand-reclaim-n.sh:58` | `bash "$HERE/strand.sh" check --from …` | `"$SPIRA_STRAND_BIN" check --from …` (same env: `SPIRA_RUN`, `SPIRA_HOME`, `SPIRA_LABELS`, `SPIRA_STRAND_GRACE`) — or retire in favour of `state::tests` / `check::tests` |
+| 5 | `spira/test-strand-reclaim-n.sh:58` | `bash "$HERE/strand.sh" check --from …` | `"$SPIRA_STRAND_BIN" check --from …` (same env: `SPIRA_RUN`, `SPIRA_HOME`, `SPIRA_LABELS`, `SPIRA_STRAND_GRACE`) — or retire in favour of `state::tests` / `check::tests` |
 | 6 | `spira/test-strand-classify.sh` | runs strand-classify.py on fixtures | retire; its cases are `classify::tests` |
 | 7 | `spira/test-sentinel-store-reads.sh:255,266` (case 7) | `bash "$HERE/strand.sh" report` counting bd calls | point at the binary; 7b holds (0 bd calls with both snapshots); 7a's positive control still holds (1 `bd list` + 1 `bd ready` per partition) |
 | 8 | `spira/test-unit-name.sh:49,88–91` | awk-extracts `harness_state` from strand.sh | drop the strand.sh case; `probe::spira_unit`/`harness_state` carry it (a unit test there needs a stub systemctl) |

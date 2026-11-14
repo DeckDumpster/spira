@@ -148,14 +148,22 @@ pub fn progress(arc: &Path, sid: &str, turn: u64) -> Result<(), String> {
 /// sweep that silently treated one as 0 would be indistinguishable from one that read a
 /// real 0, which is exactly the ambiguity this log line exists to remove.
 fn numeric_logged(v: Option<&str>, context: &str) -> u64 {
-    let (n, ok) = state::numeric_or_zero(v);
-    if !ok {
-        log(&format!(
-            "archivist: {context} is '{}' — treating as 0 (not covered)",
-            v.filter(|s| !s.is_empty()).unwrap_or("(empty)")
-        ));
+    let (n, note) = numeric_noted(v, context);
+    if let Some(note) = note {
+        log(&note);
     }
     n
+}
+
+fn numeric_noted(v: Option<&str>, context: &str) -> (u64, Option<String>) {
+    let (n, ok) = state::numeric_or_zero(v);
+    let note = (!ok).then(|| {
+        format!(
+            "archivist: {context} is '{}' — treating as 0 (not covered)",
+            v.filter(|s| !s.is_empty()).unwrap_or("(empty)")
+        )
+    });
+    (n, note)
 }
 
 /// What came before this transcript, as a hint for the agent — never a dependency: a
@@ -746,6 +754,7 @@ mod tests {
         }
     }
 
+    // covers: UC-ops-detection-remediation-35
     #[test]
     fn sweep_skips_entirely_while_capacity_is_paused() {
         let dir = testkit::TempDir::new("archivist-run");
@@ -756,6 +765,11 @@ mod tests {
         assert!(dir.join("sweep.state").is_file());
         let text = std::fs::read_to_string(dir.join("sweep.state")).unwrap();
         assert!(text.contains("reason=capacity"));
+        assert!(text.contains("sweep_state=skipped"), "a paused sweep reports skipped, not idle: {text}");
+
+        *seam.paused.borrow_mut() = None;
+        sweep(&seam, &cfg(), &dir);
+        assert!(!dir.join("sweep.state").exists(), "the next normal pass clears the skipped state");
     }
 
     #[test]
@@ -952,6 +966,7 @@ mod tests {
         75
     }
 
+    // covers: UC-ops-detection-remediation-35
     #[test]
     fn archive_on_timeout_retries_until_the_budget_then_fails() {
         let dir = testkit::TempDir::new("archivist-run");
@@ -973,6 +988,7 @@ mod tests {
         assert_eq!(state::read_state_key(&dir, "sess-1", "state"), Some("failed".into()), "budget of 2 exhausted on the second timeout");
     }
 
+    // covers: UC-ops-detection-remediation-35
     #[test]
     fn archive_on_capacity_refusal_pauses_and_returns_the_capacity_code() {
         let dir = testkit::TempDir::new("archivist-run");
@@ -991,6 +1007,7 @@ mod tests {
         assert_eq!(state::read_state_key(&dir, "sess-1", "state"), Some("capacity".into()));
     }
 
+    // covers: UC-ops-detection-remediation-35
     #[test]
     fn sweep_defers_past_the_per_pass_budget() {
         let dir = testkit::TempDir::new("archivist-run");
@@ -1072,6 +1089,7 @@ mod tests {
         assert_eq!(state::read_state_key(&dir, "sess-a", "state"), Some("safe".into()));
     }
 
+    // covers: UC-ops-detection-remediation-35
     #[test]
     fn consecutive_failures_back_off_and_the_last_is_terminal() {
         let (dir, _p, _r, mut c, seam) = one_session_fixture("50");
@@ -1084,6 +1102,81 @@ mod tests {
         archive_past_lock_contention(&seam, &c, &dir);
         assert_eq!(state::read_state_key(&dir, "sess-1", "state"), Some("failed".into()));
         assert_eq!(state::read_state_key(&dir, "sess-1", "retry_at"), None, "the second consecutive failure is terminal");
+    }
+
+    fn sessions_fixture(turns: &[(&str, &str)]) -> (testkit::TempDir, testkit::TempDir, testkit::TempDir, Env, FakeSeam) {
+        let (dir, projects, runes, mut c, seam) = one_session_fixture("0");
+        seam.ctx_env.borrow_mut().clear();
+        std::fs::remove_file(projects.join("p").join("sess-a.jsonl")).unwrap();
+        c.every = 40;
+        for (sid, n) in turns {
+            let tp = projects.join("p").join(format!("{sid}.jsonl"));
+            std::fs::write(&tp, "x").unwrap();
+            let env: std::collections::HashMap<String, String> = [("SP_CTX_NOW", "10"), ("SP_CTX_TURNS", *n), ("SP_CTX_NEXT", "warn")]
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect();
+            seam.ctx_env.borrow_mut().insert(tp.to_string_lossy().into_owned(), env);
+        }
+        std::fs::write(runes.join("archivist.md"), "task for {{SESSION}}").unwrap();
+        (dir, projects, runes, c, seam)
+    }
+
+    // covers: UC-ops-detection-remediation-35
+    #[test]
+    fn a_sweep_archives_sessions_drifted_to_every_most_drifted_first_and_defers_the_rest() {
+        let (dir, _p, _r, mut c, seam) = sessions_fixture(&[("s-low", "39"), ("s-edge", "40"), ("s-mid", "45"), ("s-top", "50")]);
+        c.per_pass = 2;
+        let lines = sweep(&seam, &c, &dir);
+        let calls = seam.agent_calls.borrow();
+        assert_eq!(calls.len(), 2, "the per-pass budget bounds the archives");
+        assert!(calls[0].contains("s-top") && calls[1].contains("s-mid"), "most drifted first: {calls:?}");
+        assert!(lines.iter().any(|l| l.contains("s-edge deferred")), "drift exactly EVERY qualifies, and is deferred for budget");
+        assert!(!lines.iter().any(|l| l.contains("s-low")), "drift below EVERY is not a candidate");
+        assert_eq!(state::read_state_key(&dir, "s-low", "state"), None);
+    }
+
+    // covers: UC-ops-detection-remediation-35
+    #[test]
+    fn an_account_refusal_mid_sweep_records_capacity_raises_a_pause_and_stops_the_pass() {
+        let (dir, _p, _r, mut c, seam) = sessions_fixture(&[("s-one", "50"), ("s-two", "45")]);
+        c.per_pass = 5;
+        *seam.agent_rc.borrow_mut() = 1;
+        *seam.reset_at.borrow_mut() = Some(999_999);
+        let lines = sweep(&seam, &c, &dir);
+        assert_eq!(seam.agent_calls.borrow().len(), 1, "the second session is never attempted");
+        assert_eq!(seam.pause_calls.borrow().len(), 1);
+        assert_eq!(state::read_state_key(&dir, "s-one", "state"), Some("capacity".into()));
+        assert!(lines.iter().any(|l| l.contains("sweep stopped")));
+        assert_eq!(state::read_state_key(&dir, "s-two", "state"), None);
+    }
+
+    // covers: UC-ops-detection-remediation-35
+    #[test]
+    fn a_bad_cursor_is_coerced_to_zero_and_logged_and_the_session_is_still_swept() {
+        let (_n, note) = numeric_noted(Some("-"), "session s-bad cursor");
+        assert!(note.expect("a coercion is reported").contains("session s-bad cursor is '-' — treating as 0"));
+        assert!(numeric_noted(Some("7"), "x").1.is_none(), "a good value is not reported");
+
+        let (dir, _p, _r, mut c, seam) = sessions_fixture(&[("s-bad", "50"), ("s-ok", "45")]);
+        c.per_pass = 5;
+        std::fs::write(dir.join("s-bad.covered"), "turn=-\n").unwrap();
+        sweep(&seam, &c, &dir);
+        let calls = seam.agent_calls.borrow();
+        assert_eq!(calls.len(), 2, "the bad cursor neither aborts the sweep nor hides the session");
+        assert_eq!(covered_raw(&dir, "s-bad").as_deref(), Some("50"), "the cursor is rewritten as a number, never left as '-'");
+    }
+
+    // covers: UC-ops-detection-remediation-35
+    #[test]
+    fn a_crashed_session_is_failed_and_excluded_from_the_next_sweep() {
+        let (dir, _p, _r, mut c, seam) = sessions_fixture(&[("s-crash", "50")]);
+        c.fail_retries = 1;
+        *seam.agent_rc.borrow_mut() = 3;
+        sweep(&seam, &c, &dir);
+        assert_eq!(state::read_state_key(&dir, "s-crash", "state"), Some("failed".into()));
+        sweep(&seam, &c, &dir);
+        assert_eq!(seam.agent_calls.borrow().len(), 1, "a terminal failure is not re-fired by drift");
     }
 
     #[test]

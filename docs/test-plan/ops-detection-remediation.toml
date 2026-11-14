@@ -108,7 +108,7 @@ bead = "sp-94lbj.2"
 
 [[use_case]]
 id = "UC-ops-detection-remediation-21"
-tier = "T2"
+tier = "T1"
 statement = "`strand.sh check` mails exactly one escalation per episode even under concurrent runners (a flock guards it, and a runner that cannot take the lock declines and logs that), and never mails for info rows."
 
 [[use_case]]
@@ -199,7 +199,7 @@ statement = "`hold.sh` claims the bead, writes a pidfile and heartbeat, and refu
 
 [[use_case]]
 id = "UC-ops-detection-remediation-35"
-tier = "T2"
+tier = "T1"
 statement = "The archivist sweep archives sessions with drift at or above `EVERY`, most-drifted-first, at most `PER_PASS` per pass, deferring the rest; a capacity pause skips the sweep and reports `skipped`, not idle; an account refusal records `capacity`, stops the pass and raises a pause; exit 124 is `timeout` and retried until the budget is spent; a crash is `failed` and excluded; a bad cursor is coerced to 0 and logged."
 
 [[use_case]]

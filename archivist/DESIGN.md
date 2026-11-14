@@ -134,7 +134,6 @@ flock held past this process's own drop, which flipped the equivalent spira-conf
 round 209. `run`'s
 orchestration (`sweep`, `archive`, `digest_send`, `mark`, `state`) is tested against
 `FakeSeam`, covering the capacity-pause skip, the per-pass budget, the timeout retry
-budget and its exhaustion, the capacity-refusal pause, and the digest's same-day dedup —
-all `cargo test -p archivist`, no Dolt, no bd. The genuinely end-to-end behaviour (a real
-stub `claude`, real `ctx-meter.sh`, real flocks under a timer) stays in the repointed
-`test-archivist.sh`, run through `testenv`.
+budget and its exhaustion, the capacity-refusal pause that stops the pass, the bad-cursor
+coercion, the most-drifted-first order and the digest's same-day dedup — all
+`cargo test -p archivist`, no Dolt, no bd (`UC-ops-detection-remediation-35`).
