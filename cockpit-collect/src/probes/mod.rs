@@ -21,6 +21,7 @@ use crate::io;
 use crate::quoting::{sanitize, sanitize_title};
 use serde_json::Value;
 use spira_config::nonwork::{self, Kind, Which};
+use spira_config::scheduler_link::Limit;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -677,23 +678,27 @@ pub fn slots_keys(cfg: &Cfg) -> Kv {
     let live = io::lib_call(&home, "dwarves_live_total", &[]).unwrap_or_else(|| "?".to_string());
     push(&mut out, "SP_SLOTS_LIVE", live.clone());
 
-    let pool: i64 = io::max_dwarves().parse().ok().unwrap_or(0);
-    // SPIRA_MAX_LIVE_DWARVES now carries a real, always-declared value (the config file); the
-    // pool+lanes computation this ceiling used to fall back to when the key resolved empty
-    // is gone with that default.
-    let ceiling = cfg.max_live_dwarves;
-    push(&mut out, "SP_SLOTS_CEILING", ceiling.to_string());
-
-    // A failed live read must never resolve to a reassuring free count.
-    let free = match live.trim().parse::<i64>() {
-        Ok(l) => (ceiling - l).max(0).to_string(),
-        Err(_) => "?".to_string(),
-    };
-    push(&mut out, "SP_SLOTS_FREE", free);
-    push(&mut out, "SP_SLOTS_POOL", pool.to_string());
-    push(&mut out, "SP_SLOTS_LANES_CAP", cfg.lanes_max_live.clone());
+    let file_pool = io::max_dwarves();
+    let pool_limit = Limit::read("SPIRA_MAX_DWARVES", Some(file_pool.trim()).filter(|p| !p.is_empty()));
+    let ceiling_limit = Limit::read("SPIRA_MAX_LIVE_DWARVES", Some(&cfg.max_live_dwarves.to_string()));
+    let ceiling = ceiling_limit.shown().unwrap_or("?").to_string();
+    push(&mut out, "SP_SLOTS_CEILING", ceiling.clone());
+    push(&mut out, "SP_SLOTS_POOL", pool_limit.shown().unwrap_or("?").to_string());
+    push(&mut out, "SP_SLOTS_UNCONFIRMED", if ceiling_limit.held().is_some() && pool_limit.held().is_some() { "" } else { "1" }.to_string());
+    let pending: Vec<(&str, &spira_config::scheduler_link::Pending)> = [("ceiling", &ceiling_limit), ("pool", &pool_limit)].into_iter().filter_map(|(n, l)| l.pending().map(|p| (n, p))).collect();
+    push(&mut out, "SP_SLOTS_PENDING", pending.iter().map(|(n, p)| format!("{n} {}", p.config)).collect::<Vec<_>>().join(", "));
+    push(&mut out, "SP_SLOTS_WAITS", pending.first().map(|(_, p)| p.waits.clone()).unwrap_or_default());
+    push(&mut out, "SP_SLOTS_DIRECTED", strand::probe::dwarves_live_directed(&strand_cfg()).map(|n| n.to_string()).unwrap_or_else(|_| "?".to_string()));
 
     let lanes_live = io::lib_call(&home, "dwarves_live_lanes", &[]).unwrap_or_else(|| "?".to_string());
+    // A failed read must never resolve to a reassuring free count; free is the held ceiling less lane dwarves.
+    let free = match (live.trim().parse::<i64>(), lanes_live.trim().parse::<i64>(), ceiling.trim().parse::<i64>()) {
+        (Ok(_), Ok(l), Ok(c)) => (c - l).max(0).to_string(),
+        _ => "?".to_string(),
+    };
+    push(&mut out, "SP_SLOTS_FREE", free);
+    push(&mut out, "SP_SLOTS_LANES_CAP", cfg.lanes_max_live.clone());
+
     push(&mut out, "SP_SLOTS_LANES_LIVE", lanes_live);
 
     let snap = io::run_dir().join("cockpit.env");

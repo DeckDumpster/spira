@@ -261,6 +261,15 @@ pub fn holder_alive(run: &Path, id: &str) -> bool {
 /// Every live dwarf unit, by the globs and liveness rule `dwarves.sh` and the fleet ceiling count
 /// by. Err when systemd cannot answer: an unreadable list is not an empty fleet.
 pub fn live_units(cfg: &Config) -> Result<Vec<String>, String> {
+    Ok(all_live_units(cfg)?.into_iter().filter(|u| runtime::units::counts_toward_caps(u)).collect())
+}
+
+/// How many dwarves directed onto a named bead are live: outside every cap, so outside `live_units`.
+pub fn dwarves_live_directed(cfg: &Config) -> Result<u32, String> {
+    Ok(all_live_units(cfg)?.iter().filter(|u| runtime::units::is_directed(u)).count() as u32)
+}
+
+fn all_live_units(cfg: &Config) -> Result<Vec<String>, String> {
     let globs = runtime::units::dwarf_globs();
     let mut args = vec!["5", cfg.systemctl.as_str(), "--user", "list-units"];
     args.extend(globs.iter().map(String::as_str));
@@ -269,7 +278,7 @@ pub fn live_units(cfg: &Config) -> Result<Vec<String>, String> {
     if !o.ok {
         return Err(format!("`systemctl --user list-units` failed, so the live dwarves are unknown: {}", o.stderr.trim()));
     }
-    let live: std::collections::BTreeSet<&str> = o.stdout.lines().filter_map(runtime::units::live_dwarf_in_list_line).filter(|u| runtime::units::counts_toward_caps(u)).collect();
+    let live: std::collections::BTreeSet<&str> = o.stdout.lines().filter_map(runtime::units::live_dwarf_in_list_line).collect();
     Ok(live.into_iter().map(str::to_string).collect())
 }
 

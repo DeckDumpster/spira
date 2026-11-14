@@ -382,6 +382,13 @@ pub struct Snapshot {
     /// Bead ids whose own commit (`<id>:` subject, or a round's `merge <id> (`) is on the base.
     pub on_base: HashMap<String, String>,
     pub ceiling: usize,
+    /// What the config file says the ceiling will become, when the scheduler has not yet taken it;
+    /// empty when it holds the file's value or did not answer.
+    #[serde(default)]
+    pub ceiling_pending: String,
+    /// What the pending ceiling waits for.
+    #[serde(default)]
+    pub ceiling_waits: String,
     /// The dwarves actually live (their systemd units), with what each is doing; `None` when it
     /// could not be read, and NOW falls back to WORKING beads.
     #[serde(default)]
@@ -844,7 +851,10 @@ pub struct View {
     pub world: String,
     pub world_running: bool,
     pub working: usize,
+    pub directed: usize,
     pub ceiling: usize,
+    pub ceiling_pending: String,
+    pub ceiling_waits: String,
     pub errors: Vec<String>,
     /// Set while a failed source is covered by an earlier read still inside the staleness bound.
     pub read_age: Option<String>,
@@ -1366,8 +1376,14 @@ pub fn view(s: &Snapshot) -> View {
         release: cut(&s.release, 9),
         world: s.world.clone(),
         world_running: s.world.contains("RUNNING"),
-        working: count("WORKING"),
+        working: match &s.live {
+            Some(live) => live.iter().filter(|d| !runtime::units::is_directed(&d.unit)).count(),
+            None => count("WORKING"),
+        },
+        directed: s.live.iter().flatten().filter(|d| runtime::units::is_directed(&d.unit)).count(),
         ceiling: s.ceiling,
+        ceiling_pending: s.ceiling_pending.clone(),
+        ceiling_waits: s.ceiling_waits.clone(),
         errors: s.errors.clone(),
         read_age: (s.good_at > 0 && s.now - s.good_at <= STALE_WARN_S).then(|| age(s.now - s.good_at)),
         gather_ms: s.gather_ms,
@@ -1677,12 +1693,14 @@ pub fn render(v: &View, width: usize) -> Vec<String> {
     let w = width.max(60);
     let mut out = Vec::new();
     out.push(format!(
-        "{B}LIFECYCLE{R} {D}{}{R}  release {B}{}{R}  {}  dwarves {B}{}/{}{R}  {D}refresh {}ms · failures {}{R}",
+        "{B}LIFECYCLE{R} {D}{}{R}  release {B}{}{R}  {}  dwarves {B}{}/{}{R}{}{}  {D}refresh {}ms · failures {}{R}",
         v.clock,
         v.release,
         if v.world_running { format!("{GRN}world RUNNING{R}") } else { format!("{RED}world {}{R}", cut(&v.world, 30)) },
         v.working,
         v.ceiling,
+        if v.ceiling_pending.is_empty() { String::new() } else { format!(" {YEL}(config {} after {}){R}", v.ceiling_pending, cut(&v.ceiling_waits, 40)) },
+        if v.directed == 0 { String::new() } else { format!(" {D}+{} directed{R}", v.directed) },
         v.gather_ms,
         v.failures
     ));
@@ -2222,6 +2240,25 @@ mod tests {
         assert!(v.now_items[0].note.starts_with("closeout · build-fence"), "{:?}", v.now_items[0].note);
         assert_eq!(holder_pid("dwarf-dvalin@111.5"), Some(111));
         assert_eq!(holder_pid("concierge"), None);
+    }
+
+    #[test]
+    fn the_header_counts_directed_dwarves_apart_and_shows_a_pending_ceiling() {
+        let mut s = snap(vec![]);
+        s.ceiling = 7;
+        s.ceiling_pending = "9".into();
+        s.ceiling_waits = "the batcher".into();
+        s.live = Some(vec![
+            LiveDwarf { unit: "spira-dwarf-builder-1.service".into(), pid: 1, started: 99_000, phase: "session".into() },
+            LiveDwarf { unit: "spira-dwarf-builder-directed-1794009721.service".into(), pid: 2, started: 99_000, phase: "session".into() },
+            LiveDwarf { unit: "spira-dwarf-builder-directed-1794009722.service".into(), pid: 3, started: 99_000, phase: "session".into() },
+        ]);
+        let head = plain(&render(&view(&s), 120)).lines().next().unwrap().to_string();
+        assert!(head.contains("dwarves 1/7 (config 9 after the batcher) +2 directed"), "{head}");
+        s.ceiling_pending.clear();
+        s.live = Some(vec![]);
+        let head = plain(&render(&view(&s), 120)).lines().next().unwrap().to_string();
+        assert!(head.contains("dwarves 0/7") && !head.contains("directed") && !head.contains("config"), "{head}");
     }
 
     #[test]
