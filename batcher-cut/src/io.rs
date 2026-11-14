@@ -2314,6 +2314,7 @@ pub fn file_local_red_incident(
 /// A round landed green at `head`: the repo's open local-red incidents are over, and
 /// incident.sh closes them naming it. A failure is said, never blocks the landing.
 pub fn close_superseded_reds(repo: &Repo, head: &str) {
+    // FORK-EDGE: needs an incident library entry that closes a repo's local reds; only the incident binary reads the incident store for this
     let mut cmd = Command::new("incident.sh");
     cmd.args(["supersede-red", &repo.name, head]);
     match run(&mut cmd, "incident.sh supersede-red") {
