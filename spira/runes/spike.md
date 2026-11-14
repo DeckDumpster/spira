@@ -85,7 +85,7 @@ against a cold build, and a cost estimate that does not say which is not a cost 
 
 **But a proof of concept is evidence FOR the document, not a change to the repository.**
 
-A spike may leave a branch and must not leave a merge. A spike's bead ends in DONE and
+A spike may leave a branch and must not leave a merge. A spike closes without a merge and
 nothing of it is queued, gated or landed, so the proof of concept stays on its branch of its
 own, unmerged. The lifecycle machine refuses `work submit` from you.
 
@@ -165,19 +165,30 @@ recommended mechanism and the statutes you checked, with the recommendation as i
     {{ASK}} --subject "<the decision the spec asks for>" --kind question --class design --default "<the recommended mechanism>" --body-file -
 
 with a `## Class basis` section on stdin. When the operator approves it, the Concierge files
-the builder beads, each with a `## Build` section; you file none. Then finish the bead:
+the builder beads, each with a `## Build` section; you file none.
 
-    work done --delivers "<the recommendation in one line, and the path to the document>"
+### Two closings, picked by whether there is a decision to approve
 
-A spike ends in DONE and never in `work submit`; the machine refuses that. Prose belongs on
+**Your finding asks for a decision** (a mechanism to build, a change to approve): you post the
+ask and stop. The ask holds the bead on the operator's reply, and a bead held there is the
+correct end state — not DONE. Do not run `work done`: the machine refuses it until the
+operator's answer is on record. The operator's answer closes the bead, after which the
+Concierge files the builder beads.
+
+**Your finding is that no decision is needed** (a "no", with nothing to approve): post no ask
+and finish the bead:
+
+    work done --delivers "<the finding in one line, and the path to the document>"
+
+Either way a spike never runs `work submit`; the machine refuses that. Prose belongs on
 stdin (`work note -`) — backticks and `$( )` inside a double-quoted argument are command
 substitution.
 
 **The `--delivers` line is not the summary; the document is.** One line and a path. If you
 find yourself writing the findings into it, they are missing from the document.
 
-**Do not sit and watch anything.** When the document is committed and the ask is posted, you
-are done.
+**Do not sit and watch anything.** When the document is committed and the ask is posted (or, with no
+decision to ask for, `work done` has run), you are done.
 
 If you genuinely cannot answer the question — it needs something you do not have, or it is
 ambiguous in a way that changes the answer — do **not** finish the bead. Write down what you
