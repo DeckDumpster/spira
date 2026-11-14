@@ -38,6 +38,17 @@ exec 8>"$T/held.lock"; flock -n 8
 cmd_drill >/dev/null 2>&1; rc=$?
 [ "$rc" -eq 1 ] && ok "a drill whose lock stays held exits red" || bad "a drill whose lock stays held exits red" "rc=$rc"
 grep -q 'DEFERRED' "$v" 2>/dev/null && ok "a held lock records the deferral" || bad "a held lock records the deferral" "none"
+exec 8>&-
+SPIRA_LC_BACKUP_DB="alpha beta"
+_lcb_lock() { mkdir -p "$SPIRA_RUN/lc-backup/$1"; echo "$SPIRA_RUN/lc-backup/$1/.lock"; }
+_lcb_drill_db_locked() { echo "ok $1" > "$(_lcb_verdict "$1")"; }
+rm -f "$SPIRA_RUN"/lc-backup/*/drill.verdict
+exec 8>"$(_lcb_lock beta)"; flock -n 8
+cmd_drill >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 1 ] && ok "one database deferred makes the drill red" || bad "one database deferred makes the drill red" "rc=$rc"
+grep -q '^ok alpha' "$SPIRA_RUN/lc-backup/alpha/drill.verdict" 2>/dev/null && ok "a deferral leaves another database's verdict alone" || bad "a deferral leaves another database's verdict alone" "$(cat "$SPIRA_RUN/lc-backup/alpha/drill.verdict" 2>/dev/null)"
+grep -q 'DEFERRED' "$SPIRA_RUN/lc-backup/beta/drill.verdict" 2>/dev/null && ok "the deferred database records DEFERRED" || bad "the deferred database records DEFERRED" "none"
+exec 8>&-
 timeout_h="$(sed -n 's/^TimeoutStartSec=\([0-9]*\)h$/\1/p' "$HERE/../systemd/lc-backup-drill.service")"
 [ $(( ${timeout_h:-0} * 3600 )) -gt "$(sed -n "s/.*WAIT_SECS:=\([0-9]*\)}.*/\1/p" "$HERE/conf.d/SPIRA_LC_BACKUP_DRILL_WAIT_SECS")" ] && ok "the service outlives the wait cap" || bad "the service outlives the wait cap" "timeout ${timeout_h}h"
 

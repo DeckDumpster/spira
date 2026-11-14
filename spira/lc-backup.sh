@@ -198,9 +198,10 @@ cmd_age() {
 }
 
 _lcb_drill_db() {
-    local db="$1" lock
+    local db="$1" lock left
     lock="$(_lcb_lock "$db")" || return 1
-    ( flock -w "$SPIRA_LC_BACKUP_DRILL_WAIT_SECS" 9 || { echo "lc-backup: drill: DEFERRED past ${SPIRA_LC_BACKUP_DRILL_WAIT_SECS}s, never ran — $db: a run holds the lock" | _lcb_record_deferral >&2; exit 1; }
+    left=$(( _LCB_DRILL_DEADLINE - $(date +%s) )); [ "$left" -ge 0 ] || left=0
+    ( flock -w "$left" 9 || { echo "lc-backup: drill: DEFERRED past ${SPIRA_LC_BACKUP_DRILL_WAIT_SECS}s, never ran — $db: a run holds the lock" | _lcb_record_deferral "$db" >&2; exit 1; }
       _lcb_drill_db_locked "$db" ) 9>"$lock"
 }
 
@@ -271,7 +272,7 @@ _lcb_drill_busy() {
 
 _lcb_record_deferral() {
     local line db; line="$(cat)"; echo "$line"
-    for db in $(_lcb_dbs); do
+    for db in "$@"; do
         mkdir -p "$(dirname "$(_lcb_verdict "$db")")" || continue
         printf '%s\n' "$line" > "$(dirname "$(_lcb_verdict "$db")")/drill.deferred"
         printf '%s\n' "$line" > "$(_lcb_verdict "$db")"
@@ -279,11 +280,10 @@ _lcb_record_deferral() {
 }
 
 _lcb_drill_wait_quiet() {
-    local deadline why
-    deadline=$(( $(date +%s) + SPIRA_LC_BACKUP_DRILL_WAIT_SECS ))
+    local why
     while why="$(_lcb_drill_busy)"; [ -n "$why" ]; do
-        if [ "$(date +%s)" -ge "$deadline" ]; then
-            echo "lc-backup: drill: DEFERRED past ${SPIRA_LC_BACKUP_DRILL_WAIT_SECS}s, never ran — $why" | _lcb_record_deferral >&2
+        if [ "$(date +%s)" -ge "$_LCB_DRILL_DEADLINE" ]; then
+            echo "lc-backup: drill: DEFERRED past ${SPIRA_LC_BACKUP_DRILL_WAIT_SECS}s, never ran — $why" | _lcb_record_deferral "$@" >&2
             return 1
         fi
         echo "lc-backup: drill: deferring — $why"
@@ -322,7 +322,8 @@ cmd_drill() {
         _lcb_drill_control || rc=1
         [ "$only" = control ] && return "$rc"
     fi
-    _lcb_drill_wait_quiet || return 1
+    _LCB_DRILL_DEADLINE=$(( $(date +%s) + SPIRA_LC_BACKUP_DRILL_WAIT_SECS ))
+    _lcb_drill_wait_quiet ${only:-$(_lcb_dbs)} || return 1
     for db in ${only:-$(_lcb_dbs)}; do _lcb_drill_db "$db" || rc=1; done
     return "$rc"
 }
