@@ -204,6 +204,8 @@ pub struct FakeSystemctl {
     pub disabled: std::cell::RefCell<Vec<String>>,
     pub single_queries: std::cell::Cell<u32>,
     pub batched_queries: std::cell::Cell<u32>,
+    /// A running unit that reads inactive after this many more `is_active` polls.
+    pub finishes_after_polls: std::cell::RefCell<BTreeMap<String, u32>>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -227,6 +229,13 @@ impl Systemctl for FakeSystemctl {
     }
     fn is_active(&self, unit: &str) -> bool {
         self.single_queries.set(self.single_queries.get() + 1);
+        if let Some(n) = self.finishes_after_polls.borrow_mut().get_mut(unit) {
+            if *n == 0 {
+                self.units.borrow_mut().entry(unit.to_string()).or_default().active = false;
+            } else {
+                *n -= 1;
+            }
+        }
         self.units.borrow().get(unit).map(|u| u.active).unwrap_or(false)
     }
     fn is_enabled(&self, unit: &str) -> Option<String> {

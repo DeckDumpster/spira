@@ -17,21 +17,17 @@
 //! `--list-optional` prints, as bare template names, the UNION of every template any
 //! combination of this box's conditional inputs (dolt data, `SPIRA_SCCACHE_DAV_ADDR`,
 //! `--system-user`, `repo_is_git_checkout`) can ever push into `OPTIONAL` — not just this box's own current
-//! resolution. `test-tarball-bins.sh` (still bash) reads this instead of grepping
-//! `OPTIONAL+=` lines out of the retired `systemd/units.sh`.
+//! resolution.
 //!
 //! `--list-templates` prints this box's *current* resolution as `UNITS <template>` (bare
 //! template name) and `OPTIONAL <template>` lines, plus `ENABLE <installed-name>` (the same
-//! set `--list-enable` alone prints) — the three arrays `test-units-optional.sh` (still
-//! bash) used to read by sourcing `systemd/units.sh` directly.
+//! set `--list-enable` alone prints).
 //!
 //! `--list-union` prints `UNITS <template>`, `ENABLE <template>` (bare, unsuffixed — which
 //! templates get enabled, not their per-instance names) and `OPTIONAL <template>` as the
 //! UNION across every combination of this box's conditional inputs (dolt data,
 //! `SPIRA_SCCACHE_DAV_ADDR`, `--system-user`, `repo_is_git_checkout`) — the "is this template listed ANYWHERE,
-//! regardless of which branch a given box takes" completeness check
-//! `test-timer-templates.sh` (still bash) used static text parsing of `systemd/units.sh`
-//! for.
+//! regardless of which branch a given box takes" completeness check.
 //!
 //! `--list-manifest-union` prints `unit <installed-name>` for every template any
 //! combination of this box's FOUR conditional inputs (dolt data,
@@ -271,14 +267,12 @@ fn run_main() -> ExitCode {
 
     // Path collisions, landref currency and live dwarves — refuse before touching anything,
     // unless overridden.
-    if nonempty_env("SPIRA_INSTALL_FORCE").is_none() {
-        if let Err(lines) = install::checks::preflight(&instance, &host, &systemctl) {
-            for l in lines {
-                eprintln!("install: {l}");
-            }
-            eprintln!("install: override: SPIRA_INSTALL_FORCE=1");
-            return ExitCode::from(1);
+    if let Err(lines) = install::checks::preflight_unless_forced(nonempty_env("SPIRA_INSTALL_FORCE").is_some(), &instance, &host, &systemctl) {
+        for l in lines {
+            eprintln!("install: {l}");
         }
+        eprintln!("install: override: SPIRA_INSTALL_FORCE=1");
+        return ExitCode::from(1);
     }
 
     // Seed a split dev/prod checkout's own instance (install::seed_instance — sp-31dm0).

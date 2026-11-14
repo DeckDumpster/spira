@@ -136,6 +136,14 @@ pub fn live_dwarves(systemctl: &dyn Systemctl, instance: &str) -> Vec<String> {
     live
 }
 
+/// [`preflight`] unless the operator set `SPIRA_INSTALL_FORCE`.
+pub fn preflight_unless_forced(force: bool, instance: &str, host: &HostValues, systemctl: &dyn Systemctl) -> Result<(), Vec<String>> {
+    if force {
+        return Ok(());
+    }
+    preflight(instance, host, systemctl)
+}
+
 /// Run all three, in the same order `units-install` does, `Err` naming every refusal line.
 pub fn preflight(instance: &str, host: &HostValues, systemctl: &dyn Systemctl) -> Result<(), Vec<String>> {
     let mut lines = Vec::new();
@@ -284,5 +292,38 @@ mod tests {
         s.set(own, FakeUnit { active: true, ..Default::default() });
         s.set("spira-run-sentinel_2dpass-landing.service", FakeUnit { active: true, ..Default::default() });
         assert_eq!(live_dwarves(&s, "prod"), vec![own.to_string()], "the scheduler-named dwarf is live; the landing pass is not a dwarf");
+    }
+
+    fn landref_repo() -> (testkit::TempDir, Vec<String>) {
+        let (d, shas) = repo_with_commits(3);
+        testkit::git(d.path(), &["branch", "land"]);
+        (d, shas)
+    }
+
+    // covers: UC-instance-lifecycle-19
+    #[test]
+    fn a_checkout_on_the_wrong_branch_or_behind_the_landref_is_refused_and_a_release_or_tag_install_is_not_judged() {
+        let (d, shas) = landref_repo();
+        let repo = d.path().to_str().unwrap();
+        let err = landref_currency(repo, None, false, || Some("land".into())).unwrap_err();
+        assert!(err.contains("branch main") && err.contains("land") && err.contains("SPIRA_INSTALL_FORCE"), "{err}");
+
+        testkit::git(d.path(), &["checkout", "-q", "land"]);
+        testkit::git(d.path(), &["commit", "-q", "--allow-empty", "-m", "ahead"]);
+        testkit::git(d.path(), &["checkout", "-q", "-B", "main", &shas[0]]);
+        testkit::git(d.path(), &["branch", "-f", "land", "main"]);
+        testkit::git(d.path(), &["branch", "-f", "tipref", &shas[2]]);
+        let behind = landref_currency(repo, None, false, || Some("tipref".into()));
+        assert!(behind.is_err(), "a checkout on its landref name but behind the ref's tip is refused");
+
+        testkit::git(d.path(), &["branch", "-f", "tipref", "main"]);
+        assert_eq!(landref_currency(repo, None, false, || Some("main".into())), Ok(()), "on the landref and current: not refused");
+
+        testkit::git(d.path(), &["tag", "v1", "main"]);
+        testkit::git(d.path(), &["checkout", "-q", "--detach", "v1"]);
+        assert_eq!(landref_currency(repo, None, false, || Some("tipref-that-is-not-resolvable".into())), Ok(()), "an exact-tag detached HEAD is a release install");
+
+        let artifact = testkit::TempDir::new("artifact");
+        assert_eq!(landref_currency(artifact.path().to_str().unwrap(), None, false, || None), Ok(()), "an artifact deploy has no .git to judge");
     }
 }

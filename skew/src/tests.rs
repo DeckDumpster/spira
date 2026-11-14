@@ -850,6 +850,7 @@ fn refresh_checkout_mode_stages_and_swaps() {
 
 // ============================================================================ units()
 
+// covers: UC-instance-lifecycle-34
 #[test]
 fn units_installer_missing_cannot_check() {
     let f = Fake::default();
@@ -859,6 +860,7 @@ fn units_installer_missing_cannot_check() {
     assert!(f.stderr_joined().contains("units-install"));
 }
 
+// covers: UC-instance-lifecycle-34
 #[test]
 fn units_clean() {
     let f = Fake::default();
@@ -869,6 +871,7 @@ fn units_clean() {
     assert!(f.stdout_joined().contains("match what this box renders"));
 }
 
+// covers: UC-instance-lifecycle-34
 #[test]
 fn units_stale_is_a_finding() {
     let f = Fake::default();
