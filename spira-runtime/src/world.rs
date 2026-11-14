@@ -986,43 +986,65 @@ struct ThroughputParams {
     abandon_window_s: u64,
 }
 
-/// Seconds the store server unit has been active, asked of systemd; `None` when it is not active or cannot be asked.
+/// Seconds the oldest `spira-lc serve` process has been running, read from `/proc`; `None` when none runs or `/proc` cannot say.
 // loop-safe: runs inside an observe effect, never in a handler or on the loop
 pub fn store_up_s() -> Option<u64> {
     let uptime = fs::read_to_string("/proc/uptime").ok()?;
-    // The server runs under the user manager or, in system-user mode, the system one.
-    [Some("--user"), None].into_iter().find_map(|scope| {
-        let out = spira_config::bounded::bounded("systemctl")
-            .args(scope)
-            .args(["show", "lc-serve.service", "-p", "ActiveEnterTimestampMonotonic", "--value"])
-            .stdin(std::process::Stdio::null())
-            .output()
-            .ok()?;
-        server_age_s(&String::from_utf8_lossy(&out.stdout), &uptime)
-    })
+    // SAFETY: sysconf reads a constant and touches no memory.
+    let hz = u64::try_from(unsafe { libc::sysconf(libc::_SC_CLK_TCK) }).ok().filter(|h| *h > 0)?;
+    fs::read_dir("/proc")
+        .ok()?
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().bytes().all(|b| b.is_ascii_digit()))
+        .filter_map(|e| {
+            let argv = fs::read(e.path().join("cmdline")).ok()?;
+            let stat = fs::read_to_string(e.path().join("stat")).ok()?;
+            serves_the_store(&argv).then(|| process_age_s(&stat, &uptime, hz)).flatten()
+        })
+        .max()
 }
 
-/// The age of a unit from `ActiveEnterTimestampMonotonic` (microseconds since boot; 0 when it never became active) and `/proc/uptime`.
-fn server_age_s(entered_monotonic: &str, proc_uptime: &str) -> Option<u64> {
-    let entered_us: u64 = entered_monotonic.trim().parse().ok().filter(|us| *us > 0)?;
+/// Whether a `/proc/<pid>/cmdline` is `spira-lc serve ...`.
+fn serves_the_store(cmdline: &[u8]) -> bool {
+    let mut args = cmdline.split(|b| *b == 0);
+    let prog = args.next().unwrap_or_default();
+    prog.rsplit(|b| *b == b'/').next() == Some(b"spira-lc".as_slice()) && args.next() == Some(b"serve".as_slice())
+}
+
+/// A process's age from its `/proc/<pid>/stat` start time (clock ticks since boot, field 22) and `/proc/uptime`.
+fn process_age_s(stat: &str, proc_uptime: &str, hz: u64) -> Option<u64> {
+    // The command name is parenthesised and may hold spaces; fields count from after the last ')'.
+    let after = &stat[stat.rfind(')')? + 1..];
+    let started: u64 = after.split_whitespace().nth(19)?.parse().ok()?;
     let uptime_s: f64 = proc_uptime.split_whitespace().next()?.parse().ok()?;
-    Some((uptime_s as u64).saturating_sub(entered_us / 1_000_000))
+    Some((uptime_s as u64).saturating_sub(started / hz))
 }
 
 #[cfg(test)]
 mod server_age_tests {
-    use super::server_age_s;
+    use super::{process_age_s, serves_the_store};
 
-    #[test]
-    fn a_unit_entered_fifty_seconds_before_now_is_fifty_seconds_old() {
-        assert_eq!(server_age_s("950000000\n", "1000.25 4000.00\n"), Some(50));
+    fn stat(start_ticks: u64) -> String {
+        format!("77 (spira lc) S 1 77 77 0 -1 4194560 100 0 0 0 1 1 0 0 20 0 3 0 {start_ticks} 1000 100")
     }
 
     #[test]
-    fn a_unit_that_never_became_active_or_an_unparsed_answer_has_no_age() {
-        assert_eq!(server_age_s("0\n", "1000.25 4000.00"), None);
-        assert_eq!(server_age_s("", "1000.25 4000.00"), None);
-        assert_eq!(server_age_s("950000000", ""), None);
+    fn a_process_started_fifty_seconds_before_now_is_fifty_seconds_old() {
+        assert_eq!(process_age_s(&stat(95_000), "1000.25 4000.00\n", 100), Some(50));
+    }
+
+    #[test]
+    fn an_unparsed_stat_or_uptime_gives_no_age() {
+        assert_eq!(process_age_s("", "1000.25", 100), None);
+        assert_eq!(process_age_s(&stat(95_000), "", 100), None);
+    }
+
+    #[test]
+    fn only_a_spira_lc_serve_command_line_is_the_store_server() {
+        assert!(serves_the_store(b"/opt/current/bin/spira-lc\0serve\0/run/sock\0"));
+        assert!(!serves_the_store(b"/opt/current/bin/spira-lc\0list\0"));
+        assert!(!serves_the_store(b"vim\0serve\0"));
+        assert!(!serves_the_store(b""));
     }
 }
 
