@@ -1,6 +1,6 @@
-//! OPENED, FAIL RED, GREEN, MERGED, CLOSED, DEPLOYED, DEPLOY FAILED and `no PR` for every repository
-//! registered, whatever its land mode. Each tick asks the world for one snapshot of every forge;
-//! the decision over snapshot and carried state is `decide`, which does no IO.
+//! OPENED, FAIL RED, GREEN, MERGED, CLOSED, DEPLOYED, DEPLOY FAILED and `no PR` for the PRs the harness
+//! opened, read from its own batch and publish records and from the PRs already tracked. Each tick
+//! asks the world for one snapshot, by PR number; the decision over snapshot and carried state is `decide`, which does no IO.
 
 use std::collections::BTreeMap;
 

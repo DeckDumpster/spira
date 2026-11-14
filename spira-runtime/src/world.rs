@@ -63,6 +63,57 @@ pub struct World {
     pub batches_on_store: bool,
 }
 
+pub struct PrTarget {
+    pub name: String,
+    pub slug: String,
+    pub land: String,
+    pub base: String,
+}
+
+/// A repo absent from the map has no recorded PR; one mapped to `Err` could not be read.
+pub type RecordedPrs = BTreeMap<String, Result<Vec<u64>, String>>;
+
+/// The forge's word on each PR in `records` or already tracked in `carry`, asked by number.
+/// A repo's open set is `None` when its records or any answer is missing; strays are looked for
+/// only when a tracked PR left the open set.
+pub fn pr_snapshot_from(records: &RecordedPrs, targets: &[PrTarget], forge: &Forge, carry: &pr_notify::Carry) -> Result<String, String> {
+    let mut repos = vec![];
+    for t in targets {
+        let prev = carry.repos.get(&t.name).cloned().unwrap_or_default();
+        let mut obs = RepoObs::default();
+        if let Ok(recorded) = records.get(&t.name).cloned().unwrap_or(Ok(vec![])) {
+            let asked: BTreeSet<u64> = recorded.into_iter().chain(prev.prs.keys().copied()).collect();
+            let mut open = vec![];
+            let mut left = vec![];
+            let mut unanswered = false;
+            for n in asked {
+                match forge.open_pr(&t.slug, n) {
+                    Some(Some(pr)) => open.push(pr),
+                    Some(None) => left.push(n),
+                    None => unanswered = true,
+                }
+            }
+            if !unanswered {
+                for n in left.iter().filter(|n| prev.prs.contains_key(n)) {
+                    obs.finals.extend(forge.final_state(&t.slug, *n).map(|f| (*n, f)));
+                }
+                if t.land == "pr" && left.iter().any(|n| prev.prs.contains_key(n)) {
+                    let heads: Vec<String> = open.iter().map(|(_, h)| h.clone()).collect();
+                    let base = t.base.strip_prefix("origin/").unwrap_or(&t.base);
+                    obs.strays = forge.stray_branches(&t.slug, if base.is_empty() { "main" } else { base }, &heads);
+                }
+                obs.open = Some(open.into_iter().map(|(p, _)| p).collect());
+            }
+        }
+        for d in &prev.deploys {
+            obs.runs.extend(forge.deploy_run(&t.slug, &d.sha).map(|run| (d.sha.clone(), run)));
+        }
+        repos.push((t.name.clone(), obs));
+    }
+    forge.report_spend();
+    serde_json::to_string(&pr_notify::Snapshot { repos }).map_err(|e| e.to_string())
+}
+
 struct MapRow {
     name: String,
     path: String,
@@ -254,34 +305,36 @@ impl World {
         serde_json::to_string(&inbox_keeper::Snapshot { triage_alive: alive, inbox_mtime }).map_err(|e| e.to_string())
     }
 
-    /// Every repository registered with a checkout, asked of its forge. A tracked PR that left
-    /// the open list and a merge awaiting its deploy are asked about by name, from `input`.
+    /// The PRs the harness opened and recorded, asked of the forge by number, with the PRs already
+    /// tracked in `input`. No repository's PR list is read.
     pub fn pr_snapshot(&self, forge: &Forge, input: &str) -> Result<String, String> {
         let carry: pr_notify::Carry = serde_json::from_str(input).unwrap_or_default();
         let rows = fs::read_to_string(&self.repo_map).map(|t| map_rows(&t)).map_err(|e| format!("{}: {e}", self.repo_map.display()))?;
-        let mut repos = vec![];
-        for r in rows.iter().filter(|r| Path::new(&r.path).join(".git").is_dir()) {
-            let Some(slug) = slug(Path::new(&r.path)) else { continue };
-            let prev = carry.repos.get(&r.name).cloned().unwrap_or_default();
-            let mut obs = RepoObs::default();
-            if let Some(open) = forge.open_prs(&slug) {
-                for n in prev.prs.keys().filter(|n| !open.iter().any(|(p, _)| p.number == **n)) {
-                    obs.finals.extend(forge.final_state(&slug, *n).map(|f| (*n, f)));
-                }
-                if r.land == "pr" {
-                    let heads: Vec<String> = open.iter().map(|(_, h)| h.clone()).collect();
-                    let base = r.base.strip_prefix("origin/").unwrap_or(&r.base);
-                    obs.strays = forge.stray_branches(&slug, if base.is_empty() { "main" } else { base }, &heads);
-                }
-                obs.open = Some(open.into_iter().map(|(p, _)| p).collect());
-            }
-            for d in &prev.deploys {
-                obs.runs.extend(forge.deploy_run(&slug, &d.sha).map(|run| (d.sha.clone(), run)));
-            }
-            repos.push((r.name.clone(), obs));
+        let targets: Vec<PrTarget> = rows
+            .into_iter()
+            .filter(|r| Path::new(&r.path).join(".git").is_dir())
+            .filter_map(|r| Some(PrTarget { slug: slug(Path::new(&r.path))?, name: r.name, land: r.land, base: r.base }))
+            .collect();
+        let records = self.recorded_prs(&targets);
+        pr_snapshot_from(&records, &targets, forge, &carry)
+    }
+
+    /// Per repo, the PR numbers its batch record and its publish record name; an `Err` where
+    /// either could not be read, which is not "no PR".
+    fn recorded_prs(&self, targets: &[PrTarget]) -> RecordedPrs {
+        let lc = spira_store::lc_call::LcClient::socket(&self.lc_socket).within(std::time::Duration::from_secs(5));
+        let views = store_view::Projection::hot(lc).and_then(|v| v.batches_current().map(|()| v).map_err(|e| e.to_string()));
+        let number = |v: &str| v.trim().trim_start_matches('#').parse::<u64>().ok();
+        let mut out = RecordedPrs::new();
+        for t in targets {
+            let batch = match &views {
+                Ok(v) => v.batch_view(&t.name).map(|view| view.value.open.and_then(|r| r.get("pr").and_then(number))).map_err(|e| e.to_string()),
+                Err(e) => Err(e.clone()),
+            };
+            let publish = queue::records::read_kv(&self.queue_dir.join(&t.name).join("publish")).map(|kv| kv.and_then(|kv| kv.get("pr").and_then(number)));
+            out.insert(t.name.clone(), batch.and_then(|b| publish.map(|p| b.into_iter().chain(p).collect())));
         }
-        forge.report_spend();
-        serde_json::to_string(&pr_notify::Snapshot { repos }).map_err(|e| e.to_string())
+        out
     }
 
     /// Mail files naming `id` as their work bead, in mailbox order: every `new/` then every `cur/`.
@@ -1043,4 +1096,69 @@ fn sweep_bead(b: &Value) -> Option<Bead> {
         priority: b["priority"].as_i64().unwrap_or(2),
         title: b["title"].as_str().unwrap_or("").to_string(),
     })
+}
+
+#[cfg(test)]
+mod pr_snapshot_tests {
+    use super::*;
+    use crate::forge::tests::{answer, forge_at, stub};
+    use crate::watchers::pr_notify::{Carry, RepoCarry, Snapshot, Tracked};
+
+    fn target(name: &str, land: &str) -> PrTarget {
+        PrTarget { name: name.into(), slug: "o/r".into(), land: land.into(), base: String::new() }
+    }
+
+    fn snapshot(out: &str) -> Snapshot {
+        serde_json::from_str(out).unwrap()
+    }
+
+    fn tracking(n: u64) -> Carry {
+        let rc = RepoCarry { prs: BTreeMap::from([(n, Tracked { status: "green".into(), title: "t".into() })]), ..Default::default() };
+        Carry { repos: BTreeMap::from([("r".to_string(), rc)]) }
+    }
+
+    #[test]
+    fn nothing_recorded_nothing_tracked_and_no_deploy_makes_no_forge_call() {
+        let (api, seen) = stub(vec![]);
+        let out = pr_snapshot_from(&RecordedPrs::new(), &[target("a", "queue"), target("r", "pr")], &forge_at(api), &Carry::default()).unwrap();
+        assert!(seen.join().unwrap().is_empty());
+        assert!(snapshot(&out).repos.iter().all(|(_, o)| o.open == Some(vec![])));
+    }
+
+    #[test]
+    fn a_recorded_pr_is_asked_by_number_and_its_checks_read() {
+        let pr = r#"{"number":12,"state":"open","title":"batch","head":{"sha":"abc","ref":"spira/b"}}"#;
+        let checks = r#"{"check_runs":[{"name":"gate","status":"completed","conclusion":"success","check_suite":{"id":1}}]}"#;
+        let runs = r#"{"workflow_runs":[]}"#;
+        let (api, seen) = stub(vec![answer("200 OK", "", pr), answer("200 OK", "", checks), answer("200 OK", "", runs)]);
+        let records = RecordedPrs::from([("r".to_string(), Ok(vec![12]))]);
+        let out = pr_snapshot_from(&records, &[target("r", "queue")], &forge_at(api), &Carry::default()).unwrap();
+        let seen = seen.join().unwrap();
+        assert!(seen[0].starts_with("get /repos/o/r/pulls/12 "), "{}", seen[0]);
+        assert!(seen[1].contains("/commits/abc/check-runs") && seen[2].contains("head_sha=abc"));
+        assert!(seen.iter().all(|r| !r.contains("state=open")));
+        let open = snapshot(&out).repos[0].1.open.clone().unwrap();
+        assert_eq!((open[0].number, open[0].status.as_str()), (12, "green"));
+    }
+
+    #[test]
+    fn a_tracked_pr_no_longer_recorded_that_closed_gets_its_final_state_and_no_check_read() {
+        let closed = r#"{"number":12,"state":"closed","merged":false,"head":{"sha":"abc","ref":"b"}}"#;
+        let (api, seen) = stub(vec![answer("200 OK", "", closed), answer("200 OK", "", closed)]);
+        let out = pr_snapshot_from(&RecordedPrs::new(), &[target("r", "queue")], &forge_at(api), &tracking(12)).unwrap();
+        let seen = seen.join().unwrap();
+        assert!(seen.iter().all(|r| r.starts_with("get /repos/o/r/pulls/12 ")), "{seen:?}");
+        let obs = snapshot(&out).repos[0].1.clone();
+        assert_eq!(obs.finals[&12].state, "CLOSED");
+        assert_eq!(obs.open, Some(vec![]));
+    }
+
+    #[test]
+    fn a_repo_whose_records_cannot_be_read_is_unobserved_and_makes_no_call() {
+        let (api, seen) = stub(vec![]);
+        let records = RecordedPrs::from([("r".to_string(), Err("store down".to_string()))]);
+        let out = pr_snapshot_from(&records, &[target("r", "pr")], &forge_at(api), &tracking(12)).unwrap();
+        assert!(seen.join().unwrap().is_empty());
+        assert_eq!(snapshot(&out).repos[0].1.open, None);
+    }
 }
