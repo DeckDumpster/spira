@@ -589,6 +589,7 @@ mod tests {
         }
     }
 
+    // covers: UC-config-store-preflight-13
     #[test]
     fn repo_label_allows_home_repo_and_known_repos() {
         let e = env(&[("SPIRA_HOME_REPO", "spira")]);
@@ -596,6 +597,7 @@ mod tests {
         assert_eq!(check_repo_label(&s(&["create", "title", "--labels", "plan,repo:spira"]), &reg), None);
     }
 
+    // covers: UC-config-store-preflight-13
     #[test]
     fn repo_label_refuses_unknown_repo_and_names_valid_keys() {
         let map = "spira | /srv/spira | push | origin/main | |\nwidget | /srv/widget | pr | origin/main | |\n";
