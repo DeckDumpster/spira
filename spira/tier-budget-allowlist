@@ -113,11 +113,8 @@ test-landing-phase2-order.sh	T1	21.0
 test-landing-pr.sh	T1	36.0
 test-layout-guard.sh	T1	3.0
 test-literal-lint.sh	T1	51.5
-test-livelock.sh	T1	48.0
 test-mimir-blind-window.sh	T1	21.5
 test-mimir-sibling-blind.sh	T1	2.0
-test-mimir-trigger.sh	T1	12.0
-test-mimir.sh	T1	3.0
 test-now.sh	T1	8.5
 test-ops-closing.sh	T1	152.5
 test-poison-ask.sh	T1	37.5
@@ -161,8 +158,6 @@ test-world-start-honours-ctrl.sh	T1	5.0
 test-yield.sh	T1	44.5
 # exposure: test-mimir-blind-window.sh sp-vt8lbr
 # exposure: test-mimir-sibling-blind.sh sp-vt8lbr
-# exposure: test-mimir-trigger.sh sp-vt8lbr
-# exposure: test-mimir.sh sp-vt8lbr
 # exposure: test-cockpit-well.sh sp-o0kc8l
 # exposure: test-hel-certified-guard.sh sp-o0kc8l
 # exposure: test-hel-closed-reap.sh sp-o0kc8l

@@ -210,16 +210,32 @@ fn unclaimable_lines(cfg: &Config) -> String {
 /// `ci-stuck`, `unmapped-repo`. Never fails outright: a sub-query that cannot run reads as
 /// "nothing in that category", matching every bash `2>/dev/null` guard in the original.
 pub fn detect_livelocked(cfg: &Config) -> String {
+    let reg = registry(cfg);
+    let held: HashSet<String> = spira_store::lc_state::list_live()
+        .map(|rows| rows.into_iter().filter(|r| r.held("ask") || r.held("poison")).map(|r| r.bead_id).collect())
+        .unwrap_or_default();
+    livelock_rows(
+        cfg,
+        &reg,
+        &held,
+        &unclaimable_lines(cfg),
+        &list_beads(cfg, &["--label", cfg.vocab.ask.as_str()]),
+        &list_beads(cfg, &["--all", "--label", cfg.ci_label.as_str()]),
+        &list_beads(cfg, &[]),
+    )
+}
+
+fn livelock_rows(cfg: &Config, reg: &Registry, held: &HashSet<String>, unclaimable: &str, asks: &[Bead], ci_labelled: &[Bead], all: &[Bead]) -> String {
     let mut out = Vec::new();
 
-    for line in unclaimable_lines(cfg).lines() {
+    for line in unclaimable.lines() {
         let Some(rest) = line.strip_prefix("UNCLAIMABLE ") else { continue };
         let bid = rest.split(' ').next().unwrap_or("");
         let reason = rest.split_once(" — ").map(|(_, r)| r).unwrap_or("");
         out.push(format!("LIVELOCK {bid} unclaimable — {reason}"));
     }
 
-    for b in list_beads(cfg, &["--label", cfg.vocab.ask.as_str()]) {
+    for b in asks {
         if !b.has(&cfg.vocab.ask) || b.has("overseer") {
             continue;
         }
@@ -230,49 +246,42 @@ pub fn detect_livelocked(cfg: &Config) -> String {
         ));
     }
 
-    {
-        let reg = registry(cfg);
-        let home = reg.home_repo().to_string();
-        for b in list_beads(cfg, &["--all", "--label", cfg.ci_label.as_str()]) {
-            if b.is_closed() {
+    let home = reg.home_repo().to_string();
+    for b in ci_labelled {
+        if b.is_closed() {
+            continue;
+        }
+        let repo = label_value(&b.labels, "repo:").unwrap_or(home.as_str()).to_string();
+        let title = sanitize_title(b.title.as_deref().unwrap_or(""), 60);
+        if reg.land(&repo) != "pr" {
+            out.push(format!(
+                "LIVELOCK {} ci-stuck — repo {} land mode is not pr; {} will never clear; strip the label or change the repo land mode. title: {}",
+                b.id, repo, cfg.ci_label, title
+            ));
+        }
+    }
+
+    if reg.map_present() {
+        let valid: HashSet<String> = reg.names().into_iter().collect();
+        for b in all {
+            if held.contains(&b.id) || b.has(&cfg.groom_ask_label) {
                 continue;
             }
-            let repo = label_value(&b.labels, "repo:").unwrap_or(home.as_str()).to_string();
+            let repo_labels: Vec<&str> = b.labels.iter().filter_map(|l| l.strip_prefix("repo:")).collect();
+            if repo_labels.is_empty() {
+                continue;
+            }
+            let bad: Vec<&str> = repo_labels.into_iter().filter(|r| !valid.contains(*r)).collect();
+            if bad.is_empty() {
+                continue;
+            }
             let title = sanitize_title(b.title.as_deref().unwrap_or(""), 60);
-            if reg.land(&repo) != "pr" {
-                out.push(format!(
-                    "LIVELOCK {} ci-stuck — repo {} land mode is not pr; {} will never clear; strip the label or change the repo land mode. title: {}",
-                    b.id, repo, cfg.ci_label, title
-                ));
-            }
-        }
-
-        if reg.map_present() {
-            let valid: HashSet<String> = reg.names().into_iter().collect();
-            // Held is the lifecycle row's ask/poison hold, never a label (sp-psztcc).
-            let held: HashSet<String> = spira_store::lc_state::list_live()
-                .map(|rows| rows.into_iter().filter(|r| r.held("ask") || r.held("poison")).map(|r| r.bead_id).collect())
-                .unwrap_or_default();
-            for b in list_beads(cfg, &[]) {
-                if held.contains(&b.id) || b.has(&cfg.groom_ask_label) {
-                    continue;
-                }
-                let repo_labels: Vec<&str> = b.labels.iter().filter_map(|l| l.strip_prefix("repo:")).collect();
-                if repo_labels.is_empty() {
-                    continue;
-                }
-                let bad: Vec<&str> = repo_labels.into_iter().filter(|r| !valid.contains(*r)).collect();
-                if bad.is_empty() {
-                    continue;
-                }
-                let title = sanitize_title(b.title.as_deref().unwrap_or(""), 60);
-                out.push(format!(
-                    "LIVELOCK {} unmapped-repo — repo:{} not in the repo map; dwarf.sh refuses to claim it; fix the label or add the repo to the repo map. title: {}",
-                    b.id,
-                    bad.join(", "),
-                    title
-                ));
-            }
+            out.push(format!(
+                "LIVELOCK {} unmapped-repo — repo:{} not in the repo map; dwarf.sh refuses to claim it; fix the label or add the repo to the repo map. title: {}",
+                b.id,
+                bad.join(", "),
+                title
+            ));
         }
     }
 
@@ -457,5 +466,108 @@ mod tests {
         assert!(plain.starts_with("UNFILED-FOLLOW zz-cr-1"), "{plain}");
         let allowed = invalid_closed_rows(reason, Some("zz-cr-1 follow-up filed\n"));
         assert_eq!(allowed, "ALLOWED-IC zz-cr-1 — follow-up filed");
+    }
+
+    fn livelock_report(map: &str, held: &[&str], unclaimable: &str, asks: &str, ci: &str, all: &str) -> String {
+        let cfg = Config { ci_label: "ci-wait".into(), groom_ask_label: "groomed-ask".into(), ..Config::test_fixture() };
+        let reg = Registry::new(Some(map), &Default::default(), std::path::Path::new("/nonexistent"));
+        let held = held.iter().map(|h| h.to_string()).collect();
+        let beads = |j: &str| model::parse_beads(j).unwrap();
+        livelock_rows(&cfg, &reg, &held, unclaimable, &beads(asks), &beads(ci), &beads(all))
+    }
+
+    const MAP: &str = "pushrepo | /opt/pushrepo | push | origin/main | | \nprerepo | /opt/prerepo | pr | origin/main | | \n";
+
+    // covers: UC-ops-detection-remediation-29
+    #[test]
+    fn an_empty_store_reports_no_livelock() {
+        assert_eq!(livelock_report(MAP, &[], "", "[]", "[]", "[]"), "");
+    }
+
+    // covers: UC-ops-detection-remediation-29
+    #[test]
+    fn an_unclaimable_ready_bead_is_reported_by_id_and_category() {
+        let out = livelock_report(MAP, &[], "UNCLAIMABLE sp-u1 — no persona matches\n", "[]", "[]", "[]");
+        assert_eq!(out, "LIVELOCK sp-u1 unclaimable — no persona matches");
+    }
+
+    // covers: UC-ops-detection-remediation-29
+    #[test]
+    fn an_ask_without_overseer_is_reported_and_one_with_it_is_not() {
+        let asks = r#"[{"id":"sp-a1","title":"q","labels":["needs-operator"]},{"id":"sp-a2","title":"q","labels":["needs-operator","overseer"]}]"#;
+        let out = livelock_report(MAP, &[], "", asks, "[]", "[]");
+        assert!(out.contains("LIVELOCK sp-a1 ask-no-overseer"), "{out}");
+        assert!(!out.contains("sp-a2"), "{out}");
+    }
+
+    // covers: UC-ops-detection-remediation-29
+    #[test]
+    fn a_ci_wait_is_stuck_on_a_push_repo_and_waiting_on_a_pr_repo() {
+        let ci = r#"[{"id":"sp-c1","status":"open","labels":["ci-wait","repo:pushrepo"]},{"id":"sp-c2","status":"open","labels":["ci-wait","repo:prerepo"]},{"id":"sp-c3","status":"closed","labels":["ci-wait","repo:pushrepo"]}]"#;
+        let out = livelock_report(MAP, &[], "", "[]", ci, "[]");
+        assert!(out.contains("LIVELOCK sp-c1 ci-stuck"), "{out}");
+        assert!(!out.contains("sp-c2") && !out.contains("sp-c3"), "{out}");
+    }
+
+    // covers: UC-ops-detection-remediation-29
+    #[test]
+    fn a_repo_label_outside_the_map_is_unmapped_unless_the_bead_is_held_or_groom_asked() {
+        let all = r#"[
+            {"id":"sp-m1","labels":["repo:pushrepo"]},
+            {"id":"sp-m2","labels":["repo:bogus"]},
+            {"id":"sp-m3","labels":["repo:bogus"]},
+            {"id":"sp-m4","labels":["repo:bogus","groomed-ask"]},
+            {"id":"sp-m5","labels":["plan"]}]"#;
+        let out = livelock_report(MAP, &["sp-m3"], "", "[]", "[]", all);
+        assert_eq!(out.lines().count(), 1, "{out}");
+        assert!(out.contains("LIVELOCK sp-m2 unmapped-repo — repo:bogus"), "{out}");
+    }
+
+    // covers: UC-ops-detection-remediation-29
+    #[test]
+    fn with_no_repo_map_no_bead_is_unmapped() {
+        let cfg = Config::test_fixture();
+        let reg = Registry::new(None, &Default::default(), std::path::Path::new("/nonexistent"));
+        let all = model::parse_beads(r#"[{"id":"sp-n1","labels":["repo:bogus"]}]"#).unwrap();
+        assert_eq!(livelock_rows(&cfg, &reg, &HashSet::new(), "", &[], &[], &all), "");
+    }
+
+    fn classify(reason: &str) -> String {
+        let raw = serde_json::json!([{"id": "zz-c", "title": "t", "close_reason": reason}]).to_string();
+        let cfg = Config { id_prefix: "zz".into(), ..Config::test_fixture() };
+        classify_invalid_closed(&raw, &cfg)
+    }
+
+    // covers: UC-ops-detection-remediation-30
+    #[test]
+    fn a_permanent_fix_needed_or_temporary_workaround_close_is_invalid_closed() {
+        for r in ["PERMANENT FIX NEEDED: add real detection", "Applied a temporary workaround, real fix still needed.", "mitigated-only", "TODO wire it"] {
+            assert!(classify(r).starts_with("INVALID-CLOSED zz-c"), "{r}: {}", classify(r));
+        }
+    }
+
+    // covers: UC-ops-detection-remediation-30
+    #[test]
+    fn implied_follow_on_work_with_no_tracking_reference_is_unfiled_follow() {
+        for r in ["Builders should add external_ref to the list output.", "The real fix requires a migration.", "Needs a follow-up."] {
+            assert!(classify(r).starts_with("UNFILED-FOLLOW zz-c"), "{r}: {}", classify(r));
+        }
+    }
+
+    // covers: UC-ops-detection-remediation-30
+    #[test]
+    fn a_tracking_reference_acquits_a_follow_on_but_only_under_the_configured_id_prefix() {
+        assert_eq!(classify("Follow-up filed as zz-abc12."), "");
+        assert_eq!(classify("Follow-up tracked in acme/widgets#42."), "");
+        assert_eq!(classify("Follow-up at https://example.test/issues/9"), "");
+        assert!(classify("Follow-up filed as sp-abc12.").starts_with("UNFILED-FOLLOW"));
+    }
+
+    // covers: UC-ops-detection-remediation-30
+    #[test]
+    fn a_clean_close_and_the_word_temporary_describing_something_else_are_not_flagged() {
+        for r in ["fixed: zz-c commit abc123 landed on main", "Removed the temporary directory after the run.", "Pulled the change from upstream.", "temporary", ""] {
+            assert_eq!(classify(r), "", "{r}");
+        }
     }
 }

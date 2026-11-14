@@ -109,11 +109,10 @@ Side effects (unchanged from the bash):
 - `engine.rs`'s 21 unit tests include a fixture window of real commit subjects captured
   verbatim from this repository's own `git log --format=%s` history, so the landing-id
   extraction is checked against real data, not only hand-written examples.
-- Black-box parity: `test-mimir-trigger.sh` (T2, stub `bd`, real `git` against throwaway
-  repos) exercises the CLI contract — trigger conditions, dedup, labels, exit codes — against
-  whichever `mimir-trigger` is first on `PATH`. Run unchanged against the compiled binary
-  through its existing shim, it is this bead's parity evidence: same suite, same fixtures,
-  same assertions, old implementation vs new.
+- `main.rs`'s tests run the sweep against a fake `World` and carry
+  `UC-ops-detection-remediation-16`: gap and landing triggers, non-bead commits, per-bead
+  dedup, the home repo counted once, a non-`origin` remote, an open trigger suppressing a
+  second, a failed `bd create` as a failed sweep, and the allowlisted closed-record rows.
 
 ## Decisions
 

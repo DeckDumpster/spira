@@ -1061,10 +1061,19 @@ fn strand_cfg() -> strand::config::Config {
 }
 
 pub fn livelock_keys() -> Kv {
-    let mut out = Kv::new();
     let cfg = strand_cfg();
-    let ll_out = strand::detectors::detect_livelocked(&cfg);
-    if ll_out.is_empty() && io::contentjson(&["list", "--limit", "1"]).is_none() {
+    livelock_report(
+        &strand::detectors::detect_livelocked(&cfg),
+        &strand::detectors::detect_invalid_closed(&cfg),
+        || io::contentjson(&["list", "--limit", "1"]).is_some(),
+        || io::contentjson(&["list", "--all", "--limit", "1"]).is_some(),
+    )
+}
+
+/// An empty detector answer is "none" only when the store answers at all; otherwise `?`.
+fn livelock_report(ll_out: &str, ic_out: &str, store_answers: impl FnOnce() -> bool, closed_store_answers: impl FnOnce() -> bool) -> Kv {
+    let mut out = Kv::new();
+    if ll_out.is_empty() && !store_answers() {
         push(&mut out, "SP_LIVELOCKED", "?");
         push(&mut out, "SP_LIVELOCK_N", "?");
     } else {
@@ -1090,9 +1099,7 @@ pub fn livelock_keys() -> Kv {
     // $SPIRA_RUN/invalid-closed.allow, reported but not counted as either). None of the
     // three caps at 20 rows the way LIVELOCK above does — the bash's own cap check there is
     // `[ "$_n" -ge 20 ] && true`, which never breaks — so every matching row is emitted.
-    let ic_out = strand::detectors::detect_invalid_closed(&cfg);
-    // An empty detector answer is only "none" when the store answers at all.
-    if ic_out.is_empty() && io::contentjson(&["list", "--all", "--limit", "1"]).is_none() {
+    if ic_out.is_empty() && !closed_store_answers() {
         push(&mut out, "SP_INVALID_CLOSED", "?");
         push(&mut out, "SP_INVCLSD_N", "?");
         push(&mut out, "SP_UNFILED_FOLLOW", "?");
@@ -1805,5 +1812,45 @@ mod drift_tests {
         assert_eq!(strand_val(&kv, "SP_STRAND_GHOST"), "?", "a row whose class cannot be read makes the ghost count unknowable");
         assert_eq!(strand_val(&kv, "SP_STRAND_OTHER"), "unclassified=1");
         assert_eq!(strand_val(&strand(Some("{}")), "SP_STRAND_GHOST"), "0", "an empty ledger is a true zero");
+    }
+}
+
+#[cfg(test)]
+mod livelock_tests {
+    use super::livelock_report;
+
+    fn val(kv: &[(String, String)], k: &str) -> String {
+        kv.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone()).unwrap_or_default()
+    }
+
+    // covers: UC-ops-detection-remediation-29
+    #[test]
+    fn a_store_that_answers_with_nothing_flagged_reports_zero_never_a_question_mark() {
+        let kv = livelock_report("", "", || true, || true);
+        for k in ["SP_LIVELOCKED", "SP_INVALID_CLOSED", "SP_UNFILED_FOLLOW"] {
+            assert_eq!(val(&kv, k), "0", "{k}");
+        }
+    }
+
+    // covers: UC-ops-detection-remediation-29
+    #[test]
+    fn a_store_that_does_not_answer_is_a_question_mark_not_a_clean_bill() {
+        let kv = livelock_report("", "", || false, || false);
+        assert_eq!(val(&kv, "SP_LIVELOCKED"), "?");
+        assert_eq!(val(&kv, "SP_INVALID_CLOSED"), "?");
+    }
+
+    // covers: UC-ops-detection-remediation-29
+    // covers: UC-ops-detection-remediation-30
+    #[test]
+    fn each_detector_row_reaches_its_own_count_and_an_allowed_row_counts_in_neither() {
+        let ll = "LIVELOCK sp-a unclaimable — x\nLIVELOCK sp-b ci-stuck — y";
+        let ic = "INVALID-CLOSED sp-c — r\nUNFILED-FOLLOW sp-d — r\nALLOWED-IC sp-e — ok";
+        let kv = livelock_report(ll, ic, || false, || false);
+        assert_eq!(val(&kv, "SP_LIVELOCKED"), "2");
+        assert_eq!(val(&kv, "SP_INVALID_CLOSED"), "1");
+        assert_eq!(val(&kv, "SP_UNFILED_FOLLOW"), "1");
+        assert_eq!(val(&kv, "SP_ALLOWED_IC"), "1");
+        assert!(val(&kv, "SP_INVCLSD0").starts_with("INVALID-CLOSED sp-c"));
     }
 }

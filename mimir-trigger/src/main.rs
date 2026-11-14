@@ -336,24 +336,34 @@ mod tests {
         git_log: HashMap<(PathBuf, String), String>,
         repo_map_text: String,
         created: RefCell<Vec<(String, String, String)>>,
+        watermark: i64,
+        lastpass: i64,
+        now: i64,
+        open_count: u64,
+        lane_closed: bool,
+        invalid_closed: String,
+        create_err: Option<String>,
+        logs: RefCell<Vec<String>>,
     }
 
     impl World for FakeWorld {
-        fn log(&self, _msg: &str) {}
+        fn log(&self, msg: &str) {
+            self.logs.borrow_mut().push(msg.to_string());
+        }
         fn read_watermark(&self) -> i64 {
-            0
+            self.watermark
         }
         fn read_lastpass(&self) -> i64 {
-            0
+            self.lastpass
         }
         fn now(&self) -> i64 {
-            0
+            self.now
         }
         fn open_trigger_count(&self, _labels: &str) -> Result<u64, String> {
-            self.open_count_err.clone().map_or(Ok(0), Err)
+            self.open_count_err.clone().map_or(Ok(self.open_count), Err)
         }
         fn lane_admitted(&self, _lane: &str) -> bool {
-            true
+            !self.lane_closed
         }
         fn repo_lanes(&self, _name: &str) -> Result<String, String> {
             Ok(String::new())
@@ -374,9 +384,12 @@ mod tests {
             self.git_log.get(&(repo_path.to_path_buf(), base_ref.to_string())).cloned().unwrap_or_default()
         }
         fn detect_invalid_closed(&self) -> String {
-            String::new()
+            self.invalid_closed.clone()
         }
         fn create_bead(&self, title: &str, labels: &str, description: &str) -> Result<(), String> {
+            if let Some(e) = &self.create_err {
+                return Err(e.clone());
+            }
             self.created.borrow_mut().push((title.to_string(), labels.to_string(), description.to_string()));
             Ok(())
         }
@@ -465,5 +478,162 @@ mod tests {
         assert_eq!(home_contribution, 0);
         assert_eq!(satellite_contribution, 2);
         assert!(engine::landing_trigger(home_contribution + satellite_contribution, 2));
+    }
+
+    // Non-default labels and thresholds, so a literal written into `run` cannot pass.
+    fn cfg() -> Cfg {
+        let s = |v: &str| v.to_string();
+        Cfg {
+            spira_run: PathBuf::from("/run/x"),
+            repo_map: None,
+            labels: LaneLabels { plan: s("p"), incident: s("i"), groomer: s("g"), mimir: s("sweep-x"), spike: s("s"), czar: s("c") },
+            scope_label: s("scope-x"),
+            max_gap: 1000,
+            landing_interval: 3,
+            max_beads: 7,
+        }
+    }
+
+    fn home_dir() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    }
+
+    /// A world whose home repo is a real directory, whose lastpass is fresh and whose
+    /// history is empty: nothing fires until a test gives it a reason to.
+    fn quiet() -> FakeWorld {
+        let mut w = FakeWorld { home_repo: "home".into(), now: 5000, lastpass: 5000, watermark: 100, ..Default::default() };
+        w.repo_root.insert("home".into(), home_dir());
+        w.landref.insert("home".into(), "base/ref".into());
+        w
+    }
+
+    fn history(w: &mut FakeWorld, subjects: &str) {
+        w.git_log.insert((home_dir(), "base/ref".into()), subjects.into());
+    }
+
+    const THREE_LANDINGS: &str = "spira: land sp-a1\nspira: land sp-a2\nspira: land sp-a3\n";
+
+    // covers: UC-ops-detection-remediation-16
+    #[test]
+    fn a_pass_gap_over_the_maximum_files_one_trigger_with_the_scope_and_mimir_labels() {
+        let mut w = quiet();
+        w.lastpass = w.now - 1000;
+        assert!(run(&w, &cfg()));
+        let created = w.created.borrow();
+        assert_eq!(created.len(), 1);
+        assert!(created[0].0.contains("1000s elapsed"), "{}", created[0].0);
+        assert!(created[0].1.starts_with("scope-x,sweep-x"), "{}", created[0].1);
+        assert!(created[0].2.contains("at most 7 remedy beads"));
+    }
+
+    // covers: UC-ops-detection-remediation-16
+    #[test]
+    fn a_gap_under_the_maximum_with_no_landings_files_nothing() {
+        let mut w = quiet();
+        w.lastpass = w.now - 999;
+        assert!(run(&w, &cfg()));
+        assert!(w.created.borrow().is_empty());
+        assert!(w.logs.borrow().iter().any(|l| l.starts_with("no trigger")));
+    }
+
+    // covers: UC-ops-detection-remediation-16
+    #[test]
+    fn the_time_trigger_reads_the_last_pass_not_the_watermark() {
+        let mut w = quiet();
+        w.watermark = 1;
+        w.lastpass = w.now - 10;
+        assert!(run(&w, &cfg()));
+        assert!(w.created.borrow().is_empty(), "an old watermark with a recent pass must not fire");
+        w.lastpass = w.now - 5000;
+        assert!(run(&w, &cfg()));
+        assert_eq!(w.created.borrow().len(), 1, "positive control: the same watermark with an old pass fires");
+    }
+
+    // covers: UC-ops-detection-remediation-16
+    #[test]
+    fn landings_reaching_the_interval_file_one_trigger_and_fewer_do_not() {
+        let mut w = quiet();
+        history(&mut w, "spira: land sp-a1\nspira: land sp-a2\n");
+        assert!(run(&w, &cfg()));
+        assert!(w.created.borrow().is_empty());
+        history(&mut w, THREE_LANDINGS);
+        assert!(run(&w, &cfg()));
+        let created = w.created.borrow();
+        assert_eq!(created.len(), 1);
+        assert!(created[0].0.contains("3 landings"), "{}", created[0].0);
+    }
+
+    // covers: UC-ops-detection-remediation-16
+    #[test]
+    fn commits_that_name_no_bead_do_not_count_and_a_merge_and_landing_of_one_bead_count_once() {
+        let mut w = quiet();
+        history(&mut w, "update README\nfix typo\nspira: land sp-a1\nMerge branch 'spira/sp-a1' into main\nMerge pull request #4 from o/spira/sp-a1\nspira: land sp-a2\n");
+        assert!(run(&w, &cfg()));
+        assert!(w.created.borrow().is_empty(), "two beads landed, not six commits");
+    }
+
+    // covers: UC-ops-detection-remediation-16
+    #[test]
+    fn the_home_repo_in_the_repo_map_is_not_counted_twice() {
+        let mut w = quiet();
+        history(&mut w, "spira: land sp-a1\nspira: land sp-a2\n");
+        w.repo_map_text = format!("home | {} | push\n", home_dir().display());
+        assert!(run(&w, &cfg()));
+        assert!(w.created.borrow().is_empty(), "2 landings listed twice would read as 4");
+        let other = home_dir().parent().unwrap().to_path_buf();
+        w.repo_map_text = format!("home | {} | push\nsat | {} | push\n", home_dir().display(), other.display());
+        w.landref.insert(other.display().to_string(), "gitea/trunk".into());
+        w.git_log.insert((other, "gitea/trunk".into()), "sp-s1: one\n".into());
+        assert!(run(&w, &cfg()));
+        assert_eq!(w.created.borrow().len(), 1, "positive control: a satellite's landing on a non-origin remote adds to the home count");
+    }
+
+    // covers: UC-ops-detection-remediation-16
+    #[test]
+    fn an_open_trigger_suppresses_a_second_even_when_every_condition_fires() {
+        let mut w = quiet();
+        w.lastpass = 0;
+        history(&mut w, THREE_LANDINGS);
+        w.open_count = 1;
+        assert!(run(&w, &cfg()));
+        assert!(w.created.borrow().is_empty());
+        w.open_count = 0;
+        assert!(run(&w, &cfg()));
+        assert_eq!(w.created.borrow().len(), 1, "positive control: time and landings together make one bead, not two");
+    }
+
+    // covers: UC-ops-detection-remediation-16
+    #[test]
+    fn a_filing_failure_is_a_failed_sweep() {
+        let mut w = quiet();
+        w.lastpass = 0;
+        w.create_err = Some("bd create refused".into());
+        assert!(!run(&w, &cfg()));
+        assert!(w.logs.borrow().iter().any(|l| l.contains("failed to file")));
+    }
+
+    // covers: UC-ops-detection-remediation-16
+    #[test]
+    fn counted_invalid_closed_rows_fire_the_trigger_and_ride_in_the_description_but_allowed_ones_do_not() {
+        let mut w = quiet();
+        w.invalid_closed = "ALLOWED-IC sp-q — quotation".into();
+        assert!(run(&w, &cfg()));
+        assert!(w.created.borrow().is_empty());
+        w.invalid_closed = "ALLOWED-IC sp-q — quotation\nINVALID-CLOSED sp-w — contains 'x'".into();
+        assert!(run(&w, &cfg()));
+        let created = w.created.borrow();
+        assert_eq!(created.len(), 1);
+        assert!(created[0].2.contains("INVALID-CLOSED sp-w"));
+        assert!(!created[0].2.contains("sp-q"));
+    }
+
+    // covers: UC-ops-detection-remediation-16
+    #[test]
+    fn a_lane_no_repository_admits_files_nothing() {
+        let mut w = quiet();
+        w.lastpass = 0;
+        w.lane_closed = true;
+        assert!(run(&w, &cfg()));
+        assert!(w.created.borrow().is_empty());
     }
 }
