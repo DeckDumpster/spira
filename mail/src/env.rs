@@ -52,8 +52,14 @@ impl Env {
     pub fn load() -> Result<Env, String> {
         let fail = |e: String| format!("FATAL: {e}");
         let home = spira_config::resolve::locate_home_for_process().map_err(fail)?;
-        let cfg = |k: &str| spira_config::process::cfg(k).map_err(fail);
-        let cfg_u64 = |k: &str| spira_config::process::cfg_parse::<u64>(k).map_err(fail);
+        Self::from_config(home, &spira_config::process::cfg)
+    }
+
+    /// [`Env::load`] over any source of registered keys.
+    pub fn from_config(home: PathBuf, source: &dyn Fn(&str) -> Result<String, String>) -> Result<Env, String> {
+        let fail = |e: String| format!("FATAL: {e}");
+        let cfg = |k: &str| source(k).map_err(fail);
+        let cfg_u64 = |k: &str| source(k).and_then(|v| spira_config::process::parse_declared::<u64>(k, &v)).map_err(fail);
         let path = |k: &str| cfg(k).map(PathBuf::from);
         Ok(Env {
             mail_root: path("SPIRA_MAIL")?,
@@ -143,5 +149,29 @@ mod tests {
     fn locate_home_finds_nothing_with_no_lib_sh_around() {
         let t = testkit::TempDir::new("mail-home-none");
         assert_eq!(locate_home(None, &t.path().join("x/y")), None);
+    }
+
+    // covers: UC-operator-launchers-01
+    #[test]
+    fn sendmail_config_loads_from_the_operators_config_alone_and_refuses_without_it() {
+        use std::collections::BTreeMap;
+        let t = testkit::TempDir::new("mail-bare-login");
+        let toml = t.path().join("login.toml");
+        std::fs::write(&toml, spira_config::process::complete_fixture_text()).unwrap();
+        let home = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
+        let repo = home.parent().unwrap().to_path_buf();
+        let login = |with_toml: bool| -> BTreeMap<String, String> {
+            let mut e: BTreeMap<String, String> = [("HOME", "/nonexistent"), ("PATH", "/usr/bin"), ("SPIRA_RELEASE", repo.to_str().unwrap())].iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+            if with_toml {
+                e.insert("SPIRA_TOML".into(), toml.display().to_string());
+            }
+            e
+        };
+        let resolved = spira_config::resolve::resolve_for_process(&home, &repo, &login(true)).expect("a bare login environment with SPIRA_TOML resolves");
+        let loaded = Env::from_config(home.clone(), &|k| resolved.values.get(k).cloned().ok_or_else(|| format!("{k} unresolved")));
+        let env = loaded.expect("the outgoing command's config loads from the toml alone");
+        assert!(!env.mail_root.as_os_str().is_empty() && !env.run_dir.as_os_str().is_empty());
+        let refused = spira_config::resolve::resolve_for_process(&home, &repo, &login(false)).expect_err("positive control: the same environment without SPIRA_TOML refuses");
+        assert!(refused.contains("SPIRA_TOML"), "{refused}");
     }
 }

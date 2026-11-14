@@ -52,10 +52,8 @@ spira/test-census-pipeline.sh
 spira/test-concierge.sh
 spira/test-czar-pass.sh
 spira/test-deploy.sh
-spira/test-destroy-branch.sh
 spira/test-doctor-config-files.sh
 spira/test-doctor-gate-compile-check.sh
-spira/test-rune.sh
 spira/test-gate-discover-branch.sh
 spira/test-gh-run-gate.sh
 spira/test-guards.sh

@@ -7,7 +7,7 @@
 //!
 //! `detect_unclaimable_ready` classifies in-process through [`crate::unclaimable`], which
 //! `sentinel --classify-unclaimable` also exposes to the fixture-table suites and to
-//! `cockpit-collect`'s cross-check (test-cockpit-unclaimable.sh, UC-dispatch-17).
+//! `cockpit-collect`'s cross-check (UC-dispatch-17).
 
 use std::collections::HashMap;
 use std::path::PathBuf;

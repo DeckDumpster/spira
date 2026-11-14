@@ -737,7 +737,6 @@ named unit tests.
 - the retired lanes suite
 - `test-czar-pass.sh:287`
 - `test-wire-token.sh:35`
-- `test-rune.sh`
 - `test-event-taxonomy.sh:61`
 - `test-timeout-lint.sh:58`
 

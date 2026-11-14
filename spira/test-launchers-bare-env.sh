@@ -4,13 +4,13 @@
 # carries (SPIRA_TOML, SPIRA_RELEASE), nothing else. A unit's environment is rendered for it; these have none,
 # so a launcher that quietly depends on a variable only a unit sets passes every other suite.
 #
-# Each launcher (the ops pane aside, which renders "?" for what it cannot read) is run twice: with the profile export, where it must run, and with nothing, where
+# Each launcher is run twice: with the profile export, where it must run, and with nothing, where
 # it must refuse — the second proves the bare environment is bare and the first could have failed.
-# The client-registered commands (status line, session hook) are run by
-# release/tests/session_hook_minimal_env.rs, which names their use cases.
+# The mail client is covered by a unit test in mail/src/env.rs; the ops pane's startup lives in a
+# bin main with no library seam, and cockpit.sh and concierge.sh are bash.
 #
 # tier: T3
-# covers: aerc/* cockpit.sh concierge.sh cockpit/panel-run.sh cockpit/ops/src/* mail/src/* spira/conf.sh UC-operator-launchers-01 UC-operator-launchers-02 UC-operator-launchers-03 UC-operator-launchers-04
+# covers: cockpit.sh concierge.sh cockpit/ops/src/* spira/conf.sh UC-operator-launchers-02 UC-operator-launchers-03 UC-operator-launchers-04
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 ROOT="$(cd "$HERE/.." && pwd -P)"
@@ -34,17 +34,6 @@ refuses_bare() {  # refuses_bare <name> <cmd...>
     out="$(bare "$@" </dev/null 2>&1)"; rc=$?
     [ "$rc" != 0 ] && ok "$name refuses with no SPIRA_TOML" || bad "$name refuses with no SPIRA_TOML" "exit 0: $out"
 }
-
-# --- UC-operator-launchers-01: the mail client's outgoing command ---------------------------
-mkdir -p "$TMP/mail/concierge/"{new,cur,tmp} "$TMP/mail/operator/"{new,cur,tmp}
-id="$(date +%s).$$.$RANDOM"
-printf 'From: Operator <operator@spira>\nSubject: Please reply\nMessage-ID: <%s@spira>\n\nbody\n' "$id" > "$TMP/mail/concierge/cur/$id"
-reply="$(printf 'In-Reply-To: <%s@spira>\nFrom: Concierge <concierge@spira>\nSubject: Re: Please reply\n\nDone.\n' "$id")"
-out="$(printf '%s\n' "$reply" | profile mail sendmail 2>&1)"; rc=$?
-wantrc "mail sendmail runs from a bare login environment" 0 "$rc"
-[ "$rc" = 0 ] || echo "# sendmail said: $out"
-nowant "mail sendmail names no missing config" "SPIRA_TOML" "$out"
-refuses_bare "mail sendmail" mail sendmail
 
 # --- UC-operator-launchers-02: cockpit.sh --------------------------------------------------
 out="$(profile "$ROOT/cockpit.sh" status </dev/null 2>&1)"; rc=$?
