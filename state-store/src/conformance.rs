@@ -63,6 +63,7 @@ pub struct Interpose<B: Backend> {
     after_range: Mutex<Option<Box<dyn FnOnce() + Send>>>,
     ambiguous_commit: AtomicBool,
     gc_rows: AtomicUsize,
+    returned: Mutex<Vec<String>>,
 }
 
 impl<B: Backend> Interpose<B> {
@@ -72,7 +73,17 @@ impl<B: Backend> Interpose<B> {
             after_range: Mutex::new(None),
             ambiguous_commit: AtomicBool::new(false),
             gc_rows: AtomicUsize::new(0),
+            returned: Mutex::new(Vec::new()),
         }
+    }
+
+    /// Every key `range` and `range_outside` have returned so far.
+    pub fn returned_keys(&self) -> Vec<String> {
+        self.returned.lock().unwrap().clone()
+    }
+
+    fn record(&self, rows: &[(String, Version)]) {
+        self.returned.lock().unwrap().extend(rows.iter().map(|(k, _)| k.clone()));
     }
 
     pub fn after_next_range(&self, f: impl FnOnce() + Send + 'static) {
@@ -105,6 +116,9 @@ impl<B: Backend> Backend for Interpose<B> {
         at: u64,
     ) -> Result<Vec<(String, Version)>> {
         let out = self.inner.range(prefix, after, limit, at);
+        if let Ok(rows) = &out {
+            self.record(rows);
+        }
         let hook = self.after_range.lock().unwrap().take();
         if let Some(f) = hook {
             f();
@@ -144,6 +158,18 @@ impl<B: Backend> Backend for Interpose<B> {
     ) -> Result<Vec<(String, Version)>> {
         let rows = self.inner.gc_range(after, limit, at)?;
         self.gc_rows.fetch_add(rows.len(), Ordering::SeqCst);
+        self.record(&rows);
+        Ok(rows)
+    }
+    fn range_outside(
+        &self,
+        skip: &[&str],
+        after: Option<&str>,
+        limit: usize,
+        at: u64,
+    ) -> Result<Vec<(String, Version)>> {
+        let rows = self.inner.range_outside(skip, after, limit, at)?;
+        self.record(&rows);
         Ok(rows)
     }
 }

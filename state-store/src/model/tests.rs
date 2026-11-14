@@ -279,3 +279,24 @@ fn a_read_does_not_wait_for_a_commit_in_flight() {
     assert_eq!(t.join().unwrap(), rev + 1);
     assert_eq!(value(m.get("k", rev + 1).unwrap()).as_deref(), Some("2"));
 }
+
+#[test]
+fn the_load_reads_no_key_under_a_skipped_prefix() {
+    let inner = Interpose::new(MemBackend::new());
+    let mut batch = vec![put("a", "1"), put("b", "2")];
+    batch.extend((0..50).map(|i| put(&format!("requests/{i:03}"), "r")));
+    batch.push(put("events/e", "e"));
+    batch.push(put("history/h", "h"));
+    inner.commit(0, &batch).unwrap();
+    let m = Modeled::open(inner, &["events/", "requests/", "history/"], 16).unwrap();
+    let seen = m.inner().returned_keys();
+    assert!(!seen.is_empty(), "the load read through the recorder");
+    assert!(seen.iter().all(|k| k == "a" || k == "b"), "{seen:?}");
+    let (memory, _) = m.reads();
+    assert_eq!(m.size().0, 2);
+    let rev = m.revision();
+    assert_eq!(value(m.get("a", rev).unwrap()).as_deref(), Some("1"));
+    assert_eq!(value(m.get("b", rev).unwrap()).as_deref(), Some("2"));
+    assert_eq!(m.reads().0, memory + 2, "both served from memory");
+    assert_eq!(m.reads().1, 0);
+}

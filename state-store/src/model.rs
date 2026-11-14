@@ -254,8 +254,9 @@ impl<B: Backend> Modeled<B> {
         let mut keys = BTreeMap::new();
         let mut bytes = 0;
         let mut after: Option<String> = None;
+        let skip: Vec<&str> = self.skip.iter().map(String::as_str).collect();
         loop {
-            let page = self.inner.gc_range(after.as_deref(), LOAD_PAGE, head)?;
+            let page = self.inner.range_outside(&skip, after.as_deref(), LOAD_PAGE, head)?;
             let full = page.len() == LOAD_PAGE;
             after = page.last().map(|(k, _)| k.clone());
             for (k, v) in page {
@@ -454,6 +455,11 @@ impl<B: Backend> Backend for Modeled<B> {
     fn gc_range(&self, after: Option<&str>, limit: usize, at: u64) -> Result<Vec<(String, Version)>> {
         self.passed(at);
         self.inner.gc_range(after, limit, at)
+    }
+
+    fn range_outside(&self, skip: &[&str], after: Option<&str>, limit: usize, at: u64) -> Result<Vec<(String, Version)>> {
+        self.passed(at);
+        self.inner.range_outside(skip, after, limit, at)
     }
 }
 
