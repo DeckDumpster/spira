@@ -17,3 +17,5 @@ pub mod repeat;
 pub mod rfc822;
 pub mod sendmail;
 pub mod tidy;
+#[cfg(test)]
+mod verdict_tests;

@@ -121,7 +121,7 @@ impl<'a> Sentinel<'a> {
     /// put NINE identical "Spira is landing nothing" decisions in the operator's pane in a
     /// day — he closed eight and the ninth arrived anyway. The clock below is a floor
     /// under that database check, never the answer on its own.
-    fn land_escalate(&self, why: &str, evidence: &str) {
+    pub(crate) fn land_escalate(&self, why: &str, evidence: &str) {
         const SUBJECT: &str = "Spira is landing nothing";
         if self.ask_already_open(SUBJECT) {
             return;

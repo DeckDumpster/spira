@@ -342,10 +342,13 @@ mod tests {
             self.d.path().join("state")
         }
         fn question(&self, mailbox: &str, headers: &str) -> String {
+            self.ask_of_kind("question", mailbox, headers)
+        }
+        fn ask_of_kind(&self, kind: &str, mailbox: &str, headers: &str) -> String {
             let root = self.root();
             maildir::mail_ensure(&root.join(mailbox)).unwrap();
             let msgid = maildir::mint_msgid();
-            let orig = format!("From: Builder <builder@spira>\nSubject: May I?\nX-Spira-Kind: question\n{headers}Message-ID: <{msgid}@spira>\n\n## Question\nq\n");
+            let orig = format!("From: Builder <builder@spira>\nSubject: May I?\nX-Spira-Kind: {kind}\n{headers}Message-ID: <{msgid}@spira>\n\n## Question\nq\n");
             fs::write(root.join(mailbox).join("tmp").join(&msgid), &orig).unwrap();
             maildir::mail_deliver(&root.join(mailbox), &msgid, false).unwrap();
             msgid
@@ -363,6 +366,7 @@ mod tests {
         }
     }
 
+    // covers: UC-operator-channel-15
     #[test]
     fn a_reply_to_an_ask_closes_it_lifts_the_hold_and_records_the_answer() {
         let fx = Fx::new();
@@ -406,6 +410,7 @@ mod tests {
         assert_eq!(lc.calls().len(), 1, "{:?}", lc.calls());
     }
 
+    // covers: UC-operator-channel-19
     #[test]
     fn a_store_that_is_down_leaves_the_step_for_the_next_pass() {
         let fx = Fx::new();
@@ -455,6 +460,7 @@ mod tests {
         assert_eq!(lc.calls()[0][..2], ["reply".to_string(), "sp-work1".to_string()]);
     }
 
+    // covers: UC-operator-channel-15
     #[test]
     fn a_reply_to_a_notice_notes_its_bead_and_closes_nothing() {
         let fx = Fx::new();
@@ -483,5 +489,65 @@ mod tests {
         fx.pass(&bd, &FakeLc::new(0));
         let reason = bd.calls()[0].1.clone().unwrap();
         assert!(reason.contains(&q) && reason.contains("May I?"), "{reason}");
+    }
+
+    fn close_reason(bd: &FakeBd, id: &str) -> String {
+        bd.calls().into_iter().find(|c| c.0[0] == "close" && c.0[1] == id).and_then(|c| c.1).expect("a close with a reason")
+    }
+
+    // covers: UC-operator-channel-15
+    #[test]
+    fn a_reply_closes_the_decision_bead_and_writes_the_verdict_into_the_work_beads_notes_without_closing_it() {
+        let fx = Fx::new();
+        let q = fx.ask_of_kind("decision", "operator", "X-Spira-Bead: sp-dec1\nX-Spira-Work-Bead: sp-work1\n");
+        fx.reply(&q, "ans-1", "Yes, proceed with option A.");
+        let bd = FakeBd::new(vec![BdOut::ok(""), BdOut::ok(r#"[{"id":"sp-work1"}]"#), BdOut::ok("")]);
+        fx.pass(&bd, &FakeLc::new(0));
+        let calls = bd.calls();
+        assert_eq!(close_reason(&bd, "sp-dec1"), "Yes, proceed with option A.");
+        assert!(!calls.iter().any(|c| c.0[0] == "close" && c.0[1] == "sp-work1"), "{calls:?}");
+        let note = calls.iter().find(|c| c.0[0] == "note" && c.0[1] == "sp-work1").expect("the verdict is noted on the work bead");
+        assert!(note.0[2].contains("Operator verdict on decision bead sp-dec1") && note.0[2].contains("Yes, proceed with option A."), "{note:?}");
+    }
+
+    // covers: UC-operator-channel-16
+    #[test]
+    fn taking_the_messages_own_default_as_the_reply_closes_the_decision_with_that_default_as_the_verdict() {
+        let fx = Fx::new();
+        let q = fx.ask_of_kind("decision", "operator", "X-Spira-Default: take the accept-test default\nX-Spira-Bead: sp-dec1\nX-Spira-Work-Bead: sp-work1\n");
+        let orig = fs::read_to_string(find_message_by_id(&fx.root(), &format!("{q}@spira")).unwrap()).unwrap();
+        fx.reply(&q, "accept-1", &message::header_ci_before_blank(&orig, "x-spira-default"));
+        let bd = FakeBd::new(vec![BdOut::ok(""), BdOut::ok(r#"[{"id":"sp-work1"}]"#), BdOut::ok("")]);
+        fx.pass(&bd, &FakeLc::new(0));
+        assert_eq!(close_reason(&bd, "sp-dec1"), "take the accept-test default");
+        assert!(bd.calls().iter().any(|c| c.0[0] == "note" && c.0[1] == "sp-work1" && c.0[2].contains("take the accept-test default")));
+        assert!(!bd.calls().iter().any(|c| c.0[0] == "close" && c.0[1] == "sp-work1"));
+    }
+
+    // covers: UC-operator-channel-18
+    #[test]
+    fn each_suit_verdict_word_closes_the_suit_bead_with_its_own_reason() {
+        for (word, reason) in [("uphold", "upheld"), ("retire", "retired"), ("amend", "amended")] {
+            let fx = Fx::new();
+            let q = fx.ask_of_kind("suit", "operator", "X-Spira-Bead: sp-suit1\n");
+            fx.reply(&q, "ans-1", word);
+            let bd = FakeBd::new(vec![BdOut::ok("")]);
+            fx.pass(&bd, &FakeLc::new(0));
+            assert_eq!(close_reason(&bd, "sp-suit1"), reason, "{word}");
+        }
+    }
+
+    // covers: UC-operator-channel-19
+    #[test]
+    fn a_bead_the_store_cannot_close_still_delivers_the_reply_and_marks_the_original_answered() {
+        let fx = Fx::new();
+        let q = fx.question("operator", "X-Spira-Bead: sp-missing\n");
+        fx.reply(&q, "ans-1", "the answer");
+        let names: Vec<String> = maildir::sorted_entries(&fx.root().join("operator").join("cur")).iter().filter_map(|f| f.file_name().map(|n| n.to_string_lossy().into_owned())).collect();
+        assert!(names.iter().any(|n| n.starts_with(&q) && n.ends_with(":2,RS")), "{names:?}");
+        assert_eq!(maildir::sorted_entries(&fx.root().join("concierge").join("new")).len(), 1, "the reply reached the concierge");
+        let down = FakeBd::new(vec![BdOut::fail(1, "no such bead"), BdOut::fail(1, "no such bead")]);
+        let r = fx.pass(&down, &FakeLc::new(0));
+        assert_eq!((r.converged, r.pending), (0, 1), "the failed close is kept for the next pass, not dropped");
     }
 }

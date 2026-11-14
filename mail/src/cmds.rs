@@ -766,6 +766,69 @@ mod sweep_tests {
 }
 
 #[cfg(test)]
+mod sweep_decision_tests {
+    use super::*;
+    use crate::bead::fake::FakeBd;
+    use crate::bead::BdOut;
+    use crate::lc::fake::FakeLc;
+
+    const INDEX: &str = "ops\tm1@spira\tsp-ask1\tquestion\ttake the default\n";
+
+    fn fixture(tag: &str, mail_present: bool) -> (testkit::TempDir, PathBuf) {
+        let t = testkit::TempDir::new(tag);
+        let idx = t.path().join("nonstandard/index");
+        fs::create_dir_all(idx.parent().unwrap()).unwrap();
+        fs::write(&idx, INDEX).unwrap();
+        if mail_present {
+            let dir = t.path().join("elsewhere");
+            maildir::mail_ensure(&dir).unwrap();
+            fs::write(dir.join("new/m"), "Message-ID: <m1@spira>\n\nbody\n").unwrap();
+        }
+        (t, idx)
+    }
+
+    fn sweep(t: &testkit::TempDir, idx: &Path, bd: &FakeBd, actor: &str) -> SweepReport {
+        match sweep_dismissed(bd, &FakeLc::new(0), true, t.path(), idx, "ops", actor) {
+            Ok(SweepOutcome::Report(r)) => r,
+            _ => panic!("no report"),
+        }
+    }
+
+    fn open() -> BdOut {
+        BdOut::ok(r#"[{"status":"open"}]"#)
+    }
+
+    #[test]
+    fn a_deleted_ask_is_closed_with_its_default_in_the_reason() {
+        let (t, idx) = fixture("mail-sweep-deleted", false);
+        let bd = FakeBd::new(vec![open(), BdOut::ok("[]"), BdOut::ok("")]);
+        let r = sweep(&t, &idx, &bd, "ryan");
+        assert_eq!((r.dismissed, r.kept), (1, 0));
+        let close = bd.calls().into_iter().find(|c| c.0[0] == "close").expect("a close");
+        let reason = close.1.unwrap();
+        assert!(reason.contains("dismissed by operator (mail deleted)") && reason.contains("take the default"), "{reason}");
+    }
+
+    #[test]
+    fn an_ask_whose_mail_is_still_somewhere_is_kept_not_dismissed() {
+        let (t, idx) = fixture("mail-sweep-moved", true);
+        let bd = FakeBd::new(vec![open()]);
+        let r = sweep(&t, &idx, &bd, "ryan");
+        assert_eq!((r.dismissed, r.kept), (0, 1));
+        assert!(!bd.calls().iter().any(|c| c.0[0] == "close"), "{:?}", bd.calls());
+    }
+
+    #[test]
+    fn an_ask_the_operator_already_answered_is_kept_even_though_its_mail_is_gone() {
+        let (t, idx) = fixture("mail-sweep-replied", false);
+        let bd = FakeBd::new(vec![open(), BdOut::ok(r#"[{"actor":"ryan"}]"#)]);
+        let r = sweep(&t, &idx, &bd, "ryan");
+        assert_eq!((r.dismissed, r.kept), (0, 1));
+        assert!(!bd.calls().iter().any(|c| c.0[0] == "close"), "{:?}", bd.calls());
+    }
+}
+
+#[cfg(test)]
 mod probe_tests {
     use super::*;
     use crate::bead::fake::FakeBd;

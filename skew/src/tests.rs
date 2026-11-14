@@ -591,6 +591,57 @@ fn escalate_picks_the_local_behind_default_action() {
     assert!(default_action.contains("queue land-local"));
 }
 
+fn behind_latest_release() -> Fake {
+    let f = Fake::default();
+    f.set_env("SPIRA_RELEASES", "/releases");
+    f.symlinks.borrow_mut().insert(PathBuf::from("/releases/current"), "rel-2".into());
+    f.files.borrow_mut().insert(PathBuf::from("/releases/rel-2/MANIFEST"), format!("commit {}\n", "a".repeat(40)));
+    f.set_env("SPIRA_REPO", "/repo");
+    f.git_repos.borrow_mut().push(PathBuf::from("/repo"));
+    f.repo_lands.borrow_mut().insert("home".into(), "push".into());
+    *f.home_repo.borrow_mut() = "home".into();
+    f.tags.borrow_mut().insert("/repo".into(), vec!["spira-release-spira-20260101T000000Z".into(), "spira-0.1.104".into()]);
+    f.rev_parse.borrow_mut().insert("/repo|spira-release-spira-20260101T000000Z^{commit}".to_string(), "a".repeat(40));
+    f.rev_parse.borrow_mut().insert("/repo|spira-0.1.104^{commit}".to_string(), "c".repeat(40));
+    f.files.borrow_mut().insert(PathBuf::from("/releases/.tags/rel-2"), "spira-release-spira-20260101T000000Z".into());
+    f
+}
+
+// covers: UC-operator-channel-25
+#[test]
+fn an_escalation_asks_a_question_that_carries_its_default() {
+    let f = behind_latest_release();
+    *f.mail_ok.borrow_mut() = true;
+    assert_eq!(check(&f, true), EXIT_FINDING);
+    let calls = f.mail_calls.borrow();
+    assert_eq!(calls.len(), 1);
+    let (_, body, default_action) = &calls[0];
+    assert!(body.contains("## Question") && body.contains("## Default"), "{body}");
+    assert!(!default_action.is_empty() && body.contains(default_action.as_str()), "{body}");
+    assert!(f.stdout_joined().contains("escalated"), "{}", f.stdout_joined());
+}
+
+// covers: UC-operator-channel-25
+#[test]
+fn a_mailer_that_refuses_is_reported_with_its_output_and_the_finding_still_exits_one() {
+    let f = behind_latest_release();
+    assert_eq!(check(&f, true), EXIT_FINDING);
+    let out = f.stdout_joined();
+    assert!(out.contains("escalation failed") && out.contains("mail.sh failed"), "{out}");
+    assert!(!out.contains("skew: escalated"), "{out}");
+    assert!(f.stamps.borrow().is_empty(), "a failed send must not stamp the condition as reported");
+}
+
+// covers: UC-operator-channel-25
+#[test]
+fn a_check_without_escalate_prints_the_finding_and_mails_nobody() {
+    let f = behind_latest_release();
+    *f.mail_ok.borrow_mut() = true;
+    assert_eq!(check(&f, false), EXIT_FINDING);
+    assert!(f.stdout_joined().contains("NOT-LATEST"), "{}", f.stdout_joined());
+    assert!(f.mail_calls.borrow().is_empty());
+}
+
 // ============================================================================ refresh()
 
 #[test]

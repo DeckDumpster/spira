@@ -101,6 +101,12 @@ fn byte_offset_of_line(file: &mut File, n: u64) -> std::io::Result<u64> {
     Ok(offset)
 }
 
+fn second_reader_refusal(name: &str, holder: &str) -> String {
+    format!(
+        "watchd: '{name}' is already being tailed by pid {holder} — not attaching a second reader.\n  Its events are still being delivered to whoever holds it; a second tail would deliver\n  every line twice and corrupt the shared cursor. If this session should have the stream\n  instead, re-run with --takeover."
+    )
+}
+
 pub fn cmd_tail(rows: &[Row], run: &str, conf_file: &str, actionable: &str, now: i64, args: &TailArgs) -> i32 {
     let Some(row) = rows.iter().find(|r| r.name == args.name) else {
         eprintln!("watchd: no watcher named '{}' in the manifest", args.name);
@@ -132,10 +138,7 @@ pub fn cmd_tail(rows: &[Row], run: &str, conf_file: &str, actionable: &str, now:
         Ok(Err(())) => {
             let holder = lock::read_holder_pid(&lockf);
             if !args.takeover {
-                eprintln!("watchd: '{}' is already being tailed by pid {holder} — not attaching a second reader.", row.name);
-                eprintln!("  Its events are still being delivered to whoever holds it; a second tail would deliver");
-                eprintln!("  every line twice and corrupt the shared cursor. If this session should have the stream");
-                eprintln!("  instead, re-run with --takeover.");
+                eprintln!("{}", second_reader_refusal(&row.name, &holder));
                 return 3;
             }
             if let Ok(pid) = holder.parse::<i32>() {
@@ -209,6 +212,7 @@ mod tests {
     use super::*;
     use testkit::TempDir;
 
+    // covers: UC-operator-channel-27
     #[test]
     fn poll_once_shows_every_complete_line_and_leaves_a_partial_one_for_next_time() {
         let d = TempDir::new("watchd-tail");
@@ -228,6 +232,7 @@ mod tests {
         assert_eq!(line2, 3);
     }
 
+    // covers: UC-operator-channel-27
     #[test]
     fn the_cursor_advances_for_a_filtered_out_line_too() {
         let d = TempDir::new("watchd-tail");
@@ -290,5 +295,24 @@ mod tests {
         let rows: Vec<Row> = vec![];
         let rc = cmd_tail(&rows, "/tmp", "spira.conf", crate::filter::DEFAULT, 0, &TailArgs { name: "nope", all: false, takeover: false, from_start: false });
         assert_eq!(rc, 2);
+    }
+
+    // covers: UC-operator-channel-27
+    #[test]
+    fn a_second_reader_is_refused_at_once_naming_the_holder_and_the_takeover_flag() {
+        let d = TempDir::new("watchd-tail-second");
+        let run = d.path().to_str().unwrap().to_string();
+        let target = d.join("watched.log");
+        std::fs::write(&target, "line\n").unwrap();
+        let rows = vec![Row { name: "view".into(), kind: Kind::Log, target: target.to_str().unwrap().into(), health: String::new() }];
+        std::fs::create_dir_all(paths::watchd_dir(&run)).unwrap();
+        let lockf = paths::tail_lockfile(&run, "view");
+        let mut first = lock::try_lock(&lockf).unwrap().unwrap();
+        lock::record_holder(&mut first).unwrap();
+
+        let rc = cmd_tail(&rows, &run, "spira.conf", crate::filter::DEFAULT, 0, &TailArgs { name: "view", all: false, takeover: false, from_start: false });
+        assert_eq!(rc, 3);
+        let why = second_reader_refusal("view", &lock::read_holder_pid(&lockf));
+        assert!(why.contains(&format!("pid {}", std::process::id())) && why.contains("--takeover"), "{why}");
     }
 }
