@@ -103,6 +103,20 @@ impl Real {
         self
     }
 
+    /// `gh pr view` through `spawn`, counted as `hel:pr-view` when it exits.
+    pub(crate) fn pr_merged_tip_via(
+        &self,
+        sink: &spira_otel::metrics::MetricsSink,
+        repo: &Path,
+        br: &str,
+        spawn: &dyn Fn(&[&str], &Path) -> std::io::Result<std::process::Output>,
+    ) -> Option<String> {
+        let argv = ["pr", "view", br, "--json", "state,headRefOid", "-q", r#"select(.state=="MERGED") | .headRefOid"#];
+        let o = forge::spend::counted_output(sink, "hel:pr-view", &argv, || spawn(&argv, repo)).ok()?;
+        let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
+        (!s.is_empty()).then_some(s)
+    }
+
     /// The store, in-process over the lifecycle socket.
     fn lc(&self) -> Result<LcClient, String> {
         match &self.lc {
@@ -318,17 +332,17 @@ impl World for Real {
         }
     }
     fn pr_merged_tip(&self, repo: &Path, br: &str) -> Option<String> {
-        let o = Command::new("timeout")
-            .arg(self.setting("gh_timeout", "5"))
-            .arg(&self.gh)
-            .args(["pr", "view", br, "--json", "state,headRefOid", "-q", r#"select(.state=="MERGED") | .headRefOid"#])
-            .current_dir(repo)
-            .stdin(Stdio::null())
-            .stderr(Stdio::null())
-            .output()
-            .ok()?;
-        let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
-        (!s.is_empty()).then_some(s)
+        let sink = forge::telemetry::sink();
+        self.pr_merged_tip_via(&sink, repo, br, &|argv, dir| {
+            Command::new("timeout")
+                .arg(self.setting("gh_timeout", "5"))
+                .arg(&self.gh)
+                .args(argv)
+                .current_dir(dir)
+                .stdin(Stdio::null())
+                .stderr(Stdio::null())
+                .output()
+        })
     }
     fn emit(&self, line: &str) {
         println!("{line}");
@@ -382,6 +396,21 @@ pub fn run_dir() -> Result<PathBuf, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_pr_view_through_a_fake_gh_is_counted_once_under_hel_pr_view() {
+        use std::os::unix::process::ExitStatusExt;
+        let dir = testkit::TempDir::new("hel-real-pr-view");
+        let r = Real::minimal(dir.path().to_path_buf(), dir.join("run"), None);
+        let fake = |_: &[&str], _: &Path| {
+            Ok(std::process::Output { status: std::process::ExitStatus::from_raw(0), stdout: b"abc123\n".to_vec(), stderr: Vec::new() })
+        };
+        let (tip, got) = spira_otel::metrics::fixture::capture(|sink| r.pr_merged_tip_via(sink, dir.path(), "spira/sp-x", &fake));
+        assert_eq!(tip.as_deref(), Some("abc123"));
+        let series: Vec<_> = got.iter().filter(|s| s.name == forge::spend::CALLS).collect();
+        assert_eq!(series.len(), 1, "{got:?}");
+        assert_eq!((series[0].label("caller"), series[0].label("outcome"), series[0].value as u64), (Some("hel:pr-view"), Some("fresh"), 1));
+    }
 
     #[test]
     fn the_resume_cursor_round_trips_per_repository_and_clears() {

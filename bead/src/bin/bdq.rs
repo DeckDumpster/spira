@@ -156,11 +156,10 @@ fn cmd_ghq(args: &[String]) -> i32 {
             return 1;
         }
     };
-    Command::new("timeout")
-        .arg(&gh_timeout)
-        .arg(&gh_bin)
-        .args(args)
-        .status()
+    let argv: Vec<&str> = args.iter().map(String::as_str).collect();
+    let verb = argv.iter().take_while(|a| !a.starts_with('-')).take(2).copied().collect::<Vec<_>>().join("-");
+    let caller = format!("bdq:{}", if verb.is_empty() { "other" } else { &verb });
+    forge::spend::counted_status(&forge::telemetry::sink(), &caller, &argv, || Command::new("timeout").arg(&gh_timeout).arg(&gh_bin).args(&argv).status())
         .map(|s| s.code().unwrap_or(1))
         .unwrap_or(127)
 }

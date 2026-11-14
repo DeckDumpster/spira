@@ -76,15 +76,16 @@ struct PrFacts {
     allow_auto_merge: Option<bool>,
 }
 
+fn gh_counted(cfg: &Cfg, verb: &str, repo_path: &str, args: &[&str]) -> std::io::Result<std::process::Output> {
+    forge::spend::counted_output(&forge::telemetry::sink(), &format!("watchtower:{verb}"), args, || {
+        Command::new("timeout").arg(format!("{}", cfg.gh_timeout.as_secs())).arg(&cfg.gh_bin).args(args).current_dir(repo_path).output()
+    })
+}
+
 fn gh_pr_facts(cfg: &Cfg, repo_path: &str, bead_id: &str) -> PrFacts {
     let branch = format!("spira/{bead_id}");
-    let out = Command::new("timeout")
-        .arg(format!("{}", cfg.gh_timeout.as_secs()))
-        .arg(&cfg.gh_bin)
-        .args(["pr", "view", &branch, "--json", "mergeable,statusCheckRollup", "--jq",
-            "[(.mergeable // \"\"), ((.statusCheckRollup // []) | map(.conclusion // \"\") | join(\",\"))] | join(\"\\t\")"])
-        .current_dir(repo_path)
-        .output();
+    let out = gh_counted(cfg, "pr-stall", repo_path, &["pr", "view", &branch, "--json", "mergeable,statusCheckRollup", "--jq",
+        "[(.mergeable // \"\"), ((.statusCheckRollup // []) | map(.conclusion // \"\") | join(\",\"))] | join(\"\\t\")"]);
     let (mergeable, concls) = match out {
         Ok(o) if o.status.success() => {
             // Only the trailing newline, never `trim_end()`: an empty conclusions list
@@ -100,12 +101,7 @@ fn gh_pr_facts(cfg: &Cfg, repo_path: &str, bead_id: &str) -> PrFacts {
         }
         _ => (String::new(), String::new()),
     };
-    let aam_out = Command::new("timeout")
-        .arg(format!("{}", cfg.gh_timeout.as_secs()))
-        .arg(&cfg.gh_bin)
-        .args(["api", "repos/{owner}/{repo}", "--jq", ".allow_auto_merge"])
-        .current_dir(repo_path)
-        .output();
+    let aam_out = gh_counted(cfg, "pr-stall", repo_path, &["api", "repos/{owner}/{repo}", "--jq", ".allow_auto_merge"]);
     let allow_auto_merge = match aam_out {
         Ok(o) if o.status.success() => parse_bool(&String::from_utf8_lossy(&o.stdout)),
         _ => None,

@@ -93,13 +93,19 @@ fn artifact_download_args(run_id: &str, name: &str, dir: &str) -> Vec<String> {
     vec!["run".into(), "download".into(), run_id.into(), "-n".into(), name.into(), "-D".into(), dir.into()]
 }
 
+/// One `gh` process under the App token, counted as `broker:<verb>` when it exits.
+fn gh_counted<S: AsRef<str>>(verb: &str, args: &[S], repo_path: &str) -> Result<std::process::Output, String> {
+    let env = crate::token::gh_env()?;
+    let argv: Vec<&str> = args.iter().map(AsRef::as_ref).collect();
+    forge::spend::counted_output(&forge::telemetry::sink(), &format!("broker:{verb}"), &argv, || {
+        spira_config::bounded::bounded(gh_bin()).args(&argv).current_dir(repo_path).envs(env).output()
+    })
+    .map_err(|e| format!("gh failed: {e}"))
+}
+
 fn gh_run_view(repo_path: &str, run_id: &str) -> Result<String, String> {
-    let output = spira_config::bounded::bounded(gh_bin())
-        .args(run_view_args(run_id))
-        .current_dir(repo_path)
-        .envs(crate::token::gh_env()?)
-        .output()
-        .map_err(|e| format!("gh failed: {e}"))?;
+    let args = run_view_args(run_id);
+    let output = gh_counted("run-view", &args, repo_path)?;
     if output.status.success() {
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     } else {
@@ -114,12 +120,7 @@ const ERROR_LINES: usize = 5;
 const ERROR_LINE_CHARS: usize = 300;
 
 fn gh_api(repo_path: &str, endpoint: &str) -> Result<String, String> {
-    let output = spira_config::bounded::bounded(gh_bin())
-        .args(["api", endpoint])
-        .current_dir(repo_path)
-        .envs(crate::token::gh_env()?)
-        .output()
-        .map_err(|e| format!("gh failed: {e}"))?;
+    let output = gh_counted("api", &["api", endpoint], repo_path)?;
     if output.status.success() {
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     } else {
@@ -180,12 +181,8 @@ fn gh_run_jobs(repo_path: &str, run_id: &str) -> Result<String, String> {
 }
 
 fn gh_artifact_download(repo_path: &str, run_id: &str, name: &str, dir: &str) -> Result<(), String> {
-    let output = spira_config::bounded::bounded(gh_bin())
-        .args(artifact_download_args(run_id, name, dir))
-        .current_dir(repo_path)
-        .envs(crate::token::gh_env()?)
-        .output()
-        .map_err(|e| format!("gh failed: {e}"))?;
+    let args = artifact_download_args(run_id, name, dir);
+    let output = gh_counted("run-download", &args, repo_path)?;
     if output.status.success() {
         Ok(())
     } else {

@@ -141,6 +141,7 @@ dependencies = [
 name = "bead"
 version = "0.1.0"
 dependencies = [
+ "forge",
  "regex",
  "serde_json",
  "sha2",
@@ -170,6 +171,7 @@ dependencies = [
 name = "broker"
 version = "1.0.0"
 dependencies = [
+ "forge",
  "serde_json",
  "spira-config",
  "spira-otel",
@@ -540,6 +542,7 @@ dependencies = [
 name = "gate-check"
 version = "0.1.0"
 dependencies = [
+ "forge",
  "serde_json",
  "spira-config",
  "spira-otel",
@@ -696,6 +699,7 @@ dependencies = [
 name = "hel"
 version = "1.0.0"
 dependencies = [
+ "forge",
  "runtime",
  "serde_json",
  "spira-config",
@@ -2032,6 +2036,7 @@ dependencies = [
 name = "skew"
 version = "1.0.0"
 dependencies = [
+ "forge",
  "libc",
  "mail",
  "spira-config",
@@ -2902,6 +2907,7 @@ dependencies = [
 name = "watchtower"
 version = "1.0.0"
 dependencies = [
+ "forge",
  "libc",
  "reconciler-engine",
  "runtime",
