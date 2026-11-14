@@ -101,6 +101,7 @@ pub fn read(dir: &Path, prev_marker: &str) -> Lapsed {
 mod tests {
     use super::*;
 
+    // covers: UC-ops-detection-remediation-26
     #[test]
     fn missing_directory_is_zero_not_unknown() {
         let d = testkit::TempDir::new("wt-lapsed-missing");
@@ -108,6 +109,7 @@ mod tests {
         assert_eq!(l.count, Count::Known(0));
     }
 
+    // covers: UC-ops-detection-remediation-26
     #[test]
     fn a_file_where_the_directory_should_be_is_unknown() {
         let d = testkit::TempDir::new("wt-lapsed-notdir");
@@ -117,6 +119,7 @@ mod tests {
         assert_eq!(l.count, Count::Unknown);
     }
 
+    // covers: UC-ops-detection-remediation-26
     #[test]
     fn records_newer_than_the_marker_are_counted_older_ones_are_not() {
         let d = testkit::TempDir::new("wt-lapsed-records");
@@ -149,5 +152,31 @@ mod tests {
         std::fs::write(dir.join("not-a-lapse-record"), "x\n").unwrap();
         let l = read(&dir, "");
         assert_eq!(l.count, Count::Known(0));
+    }
+
+    // covers: UC-ops-detection-remediation-26
+    #[test]
+    fn two_lapses_of_one_bead_are_two_records_with_no_dedup() {
+        let d = testkit::TempDir::new("wt-lapsed-nodedup");
+        let dir = d.join("lapsed");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("sp-a-20260901T000000Z"), "bead: sp-a\n").unwrap();
+        std::fs::write(dir.join("sp-a-20260901T010000Z"), "bead: sp-a\n").unwrap();
+        let l = read(&dir, "");
+        assert_eq!(l.count, Count::Known(2));
+        assert!(l.section.contains("2 lapses since last sweep"), "{}", l.section);
+        assert!(l.section.contains("[sp-a-20260901T000000Z]") && l.section.contains("[sp-a-20260901T010000Z]"));
+    }
+
+    // covers: UC-ops-detection-remediation-37
+    #[test]
+    fn a_record_the_real_writer_wrote_parses_in_the_reader() {
+        let d = testkit::TempDir::new("wt-lapsed-writer");
+        spira_claim::write_lapse_record(d.path(), "sp-g8real", "600", "writing output file", "abc1234");
+        let l = read(&d.join("lapsed"), "");
+        assert_eq!(l.count, Count::Known(1), "{}", l.section);
+        for field in ["sp-g8real", "quiet: 600s", "last: writing output file", "branch: spira/sp-g8real", "tip: abc1234"] {
+            assert!(l.section.contains(field), "{field} missing from {}", l.section);
+        }
     }
 }

@@ -40,6 +40,7 @@ name = "watchtower"
 path = "src/main.rs"
 
 [dev-dependencies]
+spira-claim = { path = "../spira-claim" }
 testkit = { path = "../testkit" }
 
 [profile.release]
