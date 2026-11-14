@@ -85,9 +85,20 @@ pub trait Backend: Send + Sync {
     }
     /// `range("")` without the keys under `events/` and `history/`: what the GC controller and the
     /// TTL restart read, since neither carries metadata or a TTL and both grow without bound.
-    /// The default filters `range`; a backend whose index can skip the prefix overrides it.
     fn gc_range(
         &self,
+        after: Option<&str>,
+        limit: usize,
+        at: u64,
+    ) -> Result<Vec<(String, Version)>> {
+        self.range_outside(&[EVENTS_PREFIX, HISTORY_PREFIX], after, limit, at)
+    }
+    /// `range("")` without the keys starting with any of `skip`, strictly after `after`, in key
+    /// order, at most `limit`. The default pages `range` and filters; a backend whose index can
+    /// step over a prefix overrides it, so the skipped keys are never read.
+    fn range_outside(
+        &self,
+        skip: &[&str],
         after: Option<&str>,
         limit: usize,
         at: u64,
@@ -98,10 +109,7 @@ pub trait Backend: Send + Sync {
             let page = self.range("", cursor.as_deref(), limit, at)?;
             let full = page.len() == limit;
             cursor = page.last().map(|(k, _)| k.clone());
-            out.extend(
-                page.into_iter()
-                    .filter(|(k, _)| !skipped_by_gc(k)),
-            );
+            out.extend(page.into_iter().filter(|(k, _)| !skip.iter().any(|s| k.starts_with(s))));
             if !full {
                 break;
             }

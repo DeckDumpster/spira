@@ -31,7 +31,7 @@ use std::time::Duration;
 use runtime::ports::Clock;
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension, TransactionBehavior};
 use state_store::{
-    Backend, Error, LogEntry, Result, Rev, Version, Write, EVENTS_PREFIX, HISTORY_PREFIX,
+    Backend, Error, LogEntry, Result, Rev, Version, Write,
 };
 
 const SCHEMA: &[&str] = &[
@@ -885,18 +885,25 @@ impl Backend for SqliteBackend {
         }
     }
 
-    /// The key ranges outside `events/` and `history/`, read from the key index, so neither is
-    /// ever visited.
-    fn gc_range(
+    /// The key ranges outside `skip`, read from the key index, so no skipped key is visited.
+    fn range_outside(
         &self,
+        skip: &[&str],
         after: Option<&str>,
         limit: usize,
         at: u64,
     ) -> Result<Vec<(String, Version)>> {
         self.read(|conn, snap, deadline| {
             snap.readable(at)?;
-            let skipped = [EVENTS_PREFIX, HISTORY_PREFIX]
-                .map(|p| (p.as_bytes(), successor(p.as_bytes()).unwrap_or_default()));
+            let mut sorted: Vec<&str> = skip.to_vec();
+            sorted.sort_unstable();
+            let mut skipped: Vec<(&[u8], Vec<u8>)> = Vec::new();
+            for p in sorted {
+                if skipped.last().is_some_and(|(q, _)| p.as_bytes().starts_with(q)) {
+                    continue;
+                }
+                skipped.push((p.as_bytes(), successor(p.as_bytes()).unwrap_or_default()));
+            }
             let mut lo = lower_bound(b"", after);
             let steps = &self.0.read_steps;
             let mut out = Vec::new();
@@ -1227,6 +1234,34 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// A read that skips a prefix steps over it in the index: ten modeled keys beside twenty
+    /// thousand `requests/` rows cost steps in the ten, not the twenty thousand.
+    #[test]
+    fn range_outside_never_visits_the_skipped_prefixes() {
+        let dir = testkit::TempDir::new("sqlite-outside");
+        let b = SqliteBackend::open(&dir.path().join("o.db"), Options::default()).unwrap();
+        let put = |key: String| Write::Put {
+            key,
+            value: b"{}".to_vec(),
+            create_rev: Rev::new(0, 0),
+            prev: None,
+        };
+        let mut batch: Vec<Write> = (0..10).map(|i| put(format!("m/{i:02}"))).collect();
+        batch.extend((0..20_000).map(|i| put(format!("requests/{i:06}"))));
+        let head = b.commit(b.head().unwrap(), &batch).unwrap();
+        let skip = ["events/", "requests/", "history/"];
+        b.take_read_steps();
+        let rows = b.range_outside(&skip, None, 1000, head).unwrap();
+        let steps = b.take_read_steps();
+        assert_eq!(rows.len(), 10);
+        assert!(rows.iter().all(|(k, _)| k.starts_with("m/")));
+        assert!(steps <= 20 * 10, "{steps} VM steps for 10 rows");
+        let gc = b.gc_range(None, 100_000, head).unwrap();
+        let gc_steps = b.take_read_steps();
+        assert_eq!(gc.len(), 20_010, "gc_range still reads requests/");
+        assert!(gc_steps > steps * 100, "{gc_steps} gc steps against {steps}");
     }
 
     /// law: a state filter is an indexed range. A page of one state's keys reads that page,
