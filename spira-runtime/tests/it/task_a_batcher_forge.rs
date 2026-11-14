@@ -128,7 +128,7 @@ fn t3_the_attribution_line_opens_or_blocks() {
     let rc = RepoCarry { state: State::Attributing, leg: Some("spira.a2".into()), members: vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into())], run: 2, ..RepoCarry::default() };
     let carry = Carry { repos: [("spira".to_string(), rc)].into() };
     let ran = UnitRan { handle: UnitHandle::of(NAME, "spira.a2").unwrap(), exit: Exit::Code(0), duration_ms: 5 };
-    let land = Attribution::Land { members: vec![("sp-b".into(), "t2".into())], attribution_secs: None, mended: false };
+    let land = Attribution::Land { members: vec![("sp-b".into(), "t2".into())], attribution_secs: None, mended: false, head: String::new() };
     let (next, acts) = on_ran_with(&carry, &ran, &RanOutput::captured(land.line().as_bytes(), b""), 1).expect("its own leg");
     assert_eq!(next.repos["spira"].state, State::Opening);
     let open: spira_runtime::tasks::a::batcher_local::Leg = serde_json::from_str(&acts.iter().find(|a| a.effect == BATCH_OPEN).expect("the batch opens").input).unwrap();

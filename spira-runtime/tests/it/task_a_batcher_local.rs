@@ -200,8 +200,8 @@ fn t3_a_red_corpus_enters_attribution() {
 #[test]
 fn t3_the_attribution_line_decides_certify_mending_or_blocked() {
     use batcher_cut::attribute::Attribution;
-    let land = Attribution::Land { members: vec![("sp-b".into(), "t2".into())], attribution_secs: Some(9), mended: false };
-    for (line, mended) in [(land.line(), false), (Attribution::Land { members: vec![("sp-b".into(), "t2".into())], attribution_secs: None, mended: true }.line(), true)] {
+    let land = Attribution::Land { members: vec![("sp-b".into(), "t2".into())], attribution_secs: Some(9), mended: false, head: String::new() };
+    for (line, mended) in [(land.line(), false), (Attribution::Land { members: vec![("sp-b".into(), "t2".into())], attribution_secs: None, mended: true, head: String::new() }.line(), true)] {
         let mut r = carried(&driving(State::Attributing, "spira.a2"));
         let n = r.requested().len();
         r.tick(STREAM, ended("spira.a2", runtime::units::Exit::Code(0), &format!("batcher spira: attributing\n{line}\n"))).unwrap();
@@ -386,7 +386,7 @@ fn sp_7yu70y_2_an_unnamed_certify_red_attributes_once_then_faults_without_a_red(
     assert_eq!(after.iter().map(|(e, l)| (e.as_str(), l.why.as_str())).collect::<Vec<_>>(), [(CORPUS, "attribute")], "{after:?}");
     let attribution_unit = after[0].1.unit.clone();
 
-    let land = batcher_cut::attribute::Attribution::Land { members: vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into())], attribution_secs: None, mended: false }.line();
+    let land = batcher_cut::attribute::Attribution::Land { members: vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into())], attribution_secs: None, mended: false, head: String::new() }.line();
     let n = r.requested().len();
     r.tick(STREAM, ended(&attribution_unit, runtime::units::Exit::Code(0), &format!("{land}\n"))).unwrap();
     r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
@@ -495,7 +495,7 @@ fn sp_b0lhx6_a_named_suite_red_attributes_that_suite_and_the_survivors_land() {
     assert_eq!(after[0].1.reds, ["test-release-activate-config.sh"], "only the named suite is attributed");
     let unit = after[0].1.unit.clone();
 
-    let land = batcher_cut::attribute::Attribution::Land { members: vec![("sp-b".into(), "t2".into())], attribution_secs: None, mended: false }.line();
+    let land = batcher_cut::attribute::Attribution::Land { members: vec![("sp-b".into(), "t2".into())], attribution_secs: None, mended: false, head: String::new() }.line();
     let n = r.requested().len();
     r.tick(STREAM, ended(&unit, runtime::units::Exit::Code(0), &format!("{land}\n"))).unwrap();
     r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
@@ -650,7 +650,7 @@ fn ran_of(leg: &str) -> runtime::units::UnitRan {
 #[test]
 fn sp_56d3l3_a_round_emptied_by_its_own_ejects_is_abandoned_without_a_pause() {
     use batcher_cut::attribute::Attribution;
-    for outcome in [Attribution::Emptied("unit-tests red ejected every member".into()), Attribution::Land { members: vec![], attribution_secs: None, mended: false }] {
+    for outcome in [Attribution::Emptied("unit-tests red ejected every member".into()), Attribution::Land { members: vec![], attribution_secs: None, mended: false, head: String::new() }] {
         let out = runtime::units::RanOutput::captured(outcome.line().as_bytes(), b"");
         let (carry, acts) = on_ran_with(&driving(State::Attributing, "spira.a2"), &ran_of("spira.a2"), &out, NOW).expect("its own leg");
         let names: Vec<&str> = acts.iter().map(|a| a.effect.as_str()).collect();

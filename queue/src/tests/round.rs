@@ -8871,6 +8871,27 @@ fn a_worktree_carrying_a_commit_no_member_owns_is_not_adopted_by_certify() {
 }
 
 #[test]
+fn a_worktree_carrying_a_fold_commit_is_certified_when_rehead_names_its_head() {
+    let t = round_world();
+    let batch = open_two_and_eject_without_rebuild(&t);
+    declare_own_testenv(&t);
+    t.git.set("HEAD", "merged-ta");
+    t.git.ancestor("ta", "merged-ta");
+    *t.git.log.borrow_mut() = vec![RangeCommit {
+        sha: "fold".into(),
+        parents: vec!["b0".into()],
+        subject: "round: fold 1 config delta fragment(s) into spira/config-delta.toml".into(),
+    }];
+
+    assert_eq!(t.run(&["round", "certify", &batch, "--rehead", "merged-ta"]), 0, "{}", t.err());
+    assert_eq!(kv_of(&t, "round")["head"], "merged-ta");
+    assert_eq!(round_phase(&t), "GREEN");
+
+    assert_eq!(t.run(&["round", "land", &batch]), 0, "{}", t.err());
+    assert_eq!(t.landed_ref().as_deref(), Some("merged-ta"));
+}
+
+#[test]
 fn preempt_stops_a_pass_that_runs_as_a_leg_with_no_scope_or_handle() {
     let (t, batch) = preempt_world();
     t.scripts.pass_alive.set(false);

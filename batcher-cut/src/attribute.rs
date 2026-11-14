@@ -17,6 +17,8 @@ pub enum Attribution {
         members: Vec<(String, String)>,
         attribution_secs: Option<u64>,
         mended: bool,
+        /// The round worktree's HEAD when the attribution ended; empty when the line did not say.
+        head: String,
     },
     /// Nothing lands; why.
     Blocked(String),
@@ -36,8 +38,9 @@ impl Attribution {
                 members,
                 attribution_secs,
                 mended,
+                head,
             } => {
-                json!({ "end": "land", "members": members, "attribution_secs": attribution_secs, "mended": mended })
+                json!({ "end": "land", "members": members, "attribution_secs": attribution_secs, "mended": mended, "head": head })
             }
             Attribution::Blocked(why) => json!({ "end": "blocked", "why": why }),
             Attribution::Emptied(why) => json!({ "end": "emptied", "why": why }),
@@ -70,6 +73,7 @@ impl Attribution {
                     members,
                     attribution_secs: body.get("attribution_secs").and_then(Value::as_u64),
                     mended: body.get("mended").and_then(Value::as_bool).unwrap_or(false),
+                    head: body.get("head").and_then(Value::as_str).unwrap_or("").to_string(),
                 })
             }
             "blocked" => Some(Attribution::Blocked(body.get("why")?.as_str()?.to_string())),
@@ -125,6 +129,27 @@ mod tests {
     }
 
     #[test]
+    fn a_land_line_round_trips_its_head_and_a_line_without_one_reads_as_empty() {
+        let land = Attribution::Land {
+            members: vec![("sp-a".into(), "t1".into())],
+            attribution_secs: None,
+            mended: false,
+            head: "h2".into(),
+        };
+        assert_eq!(Attribution::parse(&land.line()), Some(land));
+        let old = format!("{PREFIX}{}", r#"{"end":"land","members":[["sp-a","t1"]],"attribution_secs":null,"mended":false}"#);
+        assert_eq!(
+            Attribution::parse(&old),
+            Some(Attribution::Land {
+                members: vec![("sp-a".into(), "t1".into())],
+                attribution_secs: None,
+                mended: false,
+                head: String::new(),
+            })
+        );
+    }
+
+    #[test]
     fn a_faulted_outcome_reads_back_as_faulted_not_blocked_or_fault() {
         let faulted = Attribution::Faulted("attribution faulted: its reruns of test-x.sh could not run".into());
         assert_eq!(Attribution::parse(&faulted.line()), Some(faulted));
@@ -136,6 +161,7 @@ mod tests {
             members: vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into())],
             attribution_secs: Some(42),
             mended: true,
+            head: "h2".into(),
         };
         let out = format!(
             "batcher spira: red test-x.sh → owner sp-c\n{}\nnoise after\n",
