@@ -1128,8 +1128,6 @@ fn every_early_exit_says_why() {
     h.git.add("spira/sp-sup", "t3");
     h.bead("sp-cut", "closed", &["cutover-round"]);
     h.git.add("spira/sp-cut", "t4");
-    h.closed("sp-held", "t5");
-    h.procs.live.borrow_mut().insert("sp-held".into());
     h.closed("sp-content", "t6");
     h.git.content.borrow_mut().insert("spira/sp-content".into());
     h.run();
@@ -1138,10 +1136,20 @@ fn every_early_exit_says_why() {
     assert!(h.logged("CHECK6 sp-other: spira/sp-other is in spira but the bead names repo:elsewhere — not landing it here"));
     assert!(h.logged("CHECK6 sp-sup: spira/sp-sup is superseded"));
     assert!(h.logged("CHECK6 sp-cut: spira/sp-cut is labelled cutover-round — leaving it for the cutover round"));
-    assert!(h.logged("CHECK6 sp-held: a live dwarf still holds spira/sp-held — deferring the land"));
     assert!(h.logged("origin/main already contains every change on spira/sp-content — nothing to land"));
     assert!(!h.s.run.join("landstate").exists(), "the pass recreated the retired landstate ledger (sp-2c1n0)");
     assert!(h.tools.gate_calls.borrow().is_empty());
+}
+
+#[test]
+fn a_live_holder_defers_the_land_of_a_submitted_bead_in_a_push_repository() {
+    let h = H::new(LandMode::Push);
+    h.closed("sp-held", "t5");
+    h.procs.live.borrow_mut().insert("sp-held".into());
+    h.run();
+    assert!(h.logged("CHECK6 sp-held: a live dwarf still holds spira/sp-held — deferring the land"));
+    assert!(h.tools.gate_calls.borrow().is_empty());
+    assert!(!h.lib.has("push"), "{:?}", h.lib.calls.borrow());
 }
 
 #[test]
@@ -2266,6 +2274,28 @@ fn a_pass_with_a_gate_worker_queues_every_branch_and_no_budget_can_cut_it() {
     let q = crate::gateq::GateQueue::new(&h.s.run);
     assert_eq!(q.queued().len(), 4);
     assert!(!h.lib.has("CERTIFIED"));
+}
+
+#[test]
+fn a_submitted_bead_is_gated_while_its_builder_is_still_alive() {
+    for mode in [LandMode::Queue, LandMode::QueueLocal] {
+        let h = h_worker(mode);
+        h.closed("sp-a", "t1");
+        h.procs.live.borrow_mut().insert("sp-a".into());
+        h.run();
+        assert_eq!(crate::gateq::GateQueue::new(&h.s.run).queued().len(), 1, "{:?}", h.out.lines());
+        assert!(h.logged("CHECK6 sp-a: spira/sp-a queued for gate-worker at t1"));
+        assert!(!h.logged("deferring the land"));
+    }
+    let mut h = H::new(LandMode::Queue);
+    h.s.gate_worker = false;
+    h.closed("sp-a", "t1");
+    h.procs.live.borrow_mut().insert("sp-a".into());
+    h.run();
+    let calls = h.tools.gate_calls.borrow();
+    assert_eq!(calls.len(), 1, "{:?}", h.out.lines());
+    assert_eq!(calls[0].0, "spira/sp-a");
+    assert!(!h.logged("deferring the land"));
 }
 
 #[test]
