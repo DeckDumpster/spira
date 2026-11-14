@@ -316,6 +316,60 @@ pub fn evict_idle_with(bases: &[PathBuf], budget_bytes: u64, size: &dyn Fn(&Path
     gone
 }
 
+/// One gauge the pool reports; `dir` labels the per-directory series.
+#[derive(Debug, PartialEq)]
+pub struct Sample {
+    pub name: &'static str,
+    pub value: f64,
+    pub dir: Option<String>,
+}
+
+fn sample(name: &'static str, value: u64, dir: Option<String>) -> Sample {
+    Sample { name, value: value as f64, dir }
+}
+
+/// What a lease or a release of `dir` reports: its own bytes, the pool the budget counts (every
+/// `dir.<n>`), the base total (everything under each base, including what no budget counts) and
+/// the budget itself. `size` answers the bytes one path holds.
+pub fn lease_samples(bases: &[PathBuf], dir: &Path, budget_bytes: u64, size: &dyn Fn(&Path) -> u64) -> Vec<Sample> {
+    let pool: u64 = bases.iter().flat_map(|b| slots(b).into_iter().map(move |n| dir_path(b, n))).map(|d| size(&d)).sum();
+    let base: u64 = bases.iter().map(|b| size(b)).sum();
+    vec![
+        sample("build_dir_bytes", size(dir), Some(dir.display().to_string())),
+        sample("build_dir_pool_bytes", pool, None),
+        sample("build_dir_base_bytes", base, None),
+        sample("build_dir_budget_bytes", budget_bytes, None),
+    ]
+}
+
+/// One event per directory [`evict_idle`] removed.
+pub fn eviction_samples(gone: &[PathBuf]) -> Vec<Sample> {
+    gone.iter().map(|d| sample("build_dir_evicted", 1, Some(d.display().to_string()))).collect()
+}
+
+/// Push `samples` as gauges; a failed push is counted by the sink, never returned.
+pub fn push(sink: &spira_otel::metrics::MetricsSink, samples: &[Sample]) {
+    let at = SystemTime::now();
+    let series: Vec<spira_otel::metrics::Series> = samples
+        .iter()
+        .map(|s| spira_otel::metrics::Series { name: s.name.into(), value: s.value, labels: s.dir.iter().map(|d| ("dir".to_string(), d.clone())).collect(), at })
+        .collect();
+    if !series.is_empty() {
+        let _ = sink.try_push_series(&series);
+    }
+}
+
+/// Measure the pool on disk and push it: called after a lease and after a release.
+pub fn meter(bases: &[PathBuf], dir: &Path, budget_bytes: u64) {
+    let sink = crate::process::metrics_sink("build-dir");
+    push(&sink, &lease_samples(bases, dir, budget_bytes, &crate::build::size_of));
+}
+
+/// Push one event per directory evicted.
+pub fn meter_evictions(gone: &[PathBuf]) {
+    push(&crate::process::metrics_sink("build-dir"), &eviction_samples(gone));
+}
+
 /// The owned build directory a caller's `CARGO_TARGET_DIR` names, when it is one: an absolute
 /// directory strictly under one of `bases`. Any other value is ignored, so an inherited override can
 /// never redirect a build elsewhere.
@@ -654,6 +708,58 @@ mod tests {
         }
         let held = |p: &Path| u64::from(holds_anything(p)) * 100;
         assert_eq!(evict_idle_with(&bases, 100, &held).len(), 1);
+    }
+
+    fn value(s: &[Sample], name: &str, dir: Option<&str>) -> Option<f64> {
+        s.iter().find(|x| x.name == name && x.dir.as_deref() == dir).map(|x| x.value)
+    }
+
+    #[test]
+    fn a_lease_reports_its_directory_the_pool_the_budget_counts_and_everything_under_the_base() {
+        let d = testkit::TempDir::new("bdir-meter");
+        let base = d.path().join("base");
+        let leases: Vec<Lease> = (0..2).map(|i| lease(std::slice::from_ref(&base), &format!("sp-{i}")).unwrap()).collect();
+        std::fs::create_dir_all(base.join("orphan")).unwrap();
+        let (a, b) = (leases[0].dir().to_path_buf(), leases[1].dir().to_path_buf());
+        let (orphan, whole) = (base.join("orphan"), base.clone());
+        let size = move |p: &Path| match p {
+            p if p == a => 100,
+            p if p == b => 20,
+            p if p == orphan => 3000,
+            p if p == whole => 3120,
+            _ => 0,
+        };
+        let s = lease_samples(std::slice::from_ref(&base), leases[0].dir(), 777, &size);
+        let n = leases[0].dir().display().to_string();
+        assert_eq!(value(&s, "build_dir_bytes", Some(&n)), Some(100.0));
+        assert_eq!(value(&s, "build_dir_pool_bytes", None), Some(120.0), "the pool is the directories the budget counts");
+        assert_eq!(value(&s, "build_dir_base_bytes", None), Some(3120.0), "the base total includes what the budget does not count");
+        assert_eq!(value(&s, "build_dir_budget_bytes", None), Some(777.0));
+    }
+
+    #[test]
+    fn an_eviction_yields_one_event_naming_the_directory() {
+        let d = testkit::TempDir::new("bdir-evict-event");
+        let base = d.path().join("base");
+        let l = lease(std::slice::from_ref(&base), "sp-a").unwrap();
+        fill(&l.dir().join("debug/x"), 1);
+        let dir = l.dir().to_path_buf();
+        l.release();
+        let gone = evict_idle_with(std::slice::from_ref(&base), 0, &|p: &Path| u64::from(holds_anything(p)) * 100);
+        let events = eviction_samples(&gone);
+        assert_eq!(events.len(), 1);
+        assert_eq!((events[0].name, events[0].value, events[0].dir.as_deref()), ("build_dir_evicted", 1.0, Some(dir.display().to_string().as_str())));
+    }
+
+    #[test]
+    fn pushed_samples_reach_the_endpoint_with_their_names_and_the_dir_label() {
+        let (addr, h) = spira_otel::metrics::run::fixture_sink();
+        let sink = spira_otel::metrics::MetricsSink::new(Some(&addr), "build-dir", std::time::Duration::from_secs(2));
+        push(&sink, &eviction_samples(&[PathBuf::from("/x/dir.7")]));
+        let body = h.join().unwrap();
+        for want in ["build_dir_evicted", "dir", "/x/dir.7", "build-dir"] {
+            assert!(body.contains(want), "{want} missing from the push");
+        }
     }
 
     #[test]

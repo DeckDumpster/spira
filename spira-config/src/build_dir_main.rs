@@ -110,6 +110,10 @@ fn hold(args: &[String]) -> Result<(), String> {
     let dir = lease.dir().to_path_buf();
     let trimmed = lease.release();
     eprintln!("released build directory {}: {trimmed}", dir.display());
+    if let Some(bases) = spira_config::process::cfg(bd::BASE_ENV).ok().map(|v| bd::parse_bases(&v)) {
+        let budget = spira_config::process::cfg_parse::<i64>(bd::BUDGET_ENV).unwrap_or(0).max(0) as u64;
+        bd::meter(&bases, &dir, budget.saturating_mul(1 << 30));
+    }
     Ok(())
 }
 
@@ -142,9 +146,13 @@ fn take(who: &str, root: &Path, out: &mut impl Write) -> Result<bd::Lease, Strin
         }
     }
     let budget = spira_config::process::cfg_parse::<i64>(bd::BUDGET_ENV)?.max(0) as u64;
-    for gone in bd::evict_idle(&bases, budget.saturating_mul(1 << 30)) {
+    let budget = budget.saturating_mul(1 << 30);
+    let evicted = bd::evict_idle(&bases, budget);
+    for gone in &evicted {
         let _ = writeln!(out, "# evicted idle build directory {}", gone.display());
     }
+    bd::meter_evictions(&evicted);
+    bd::meter(&bases, lease.dir(), budget);
     let state = if lease.reused { "warm" } else { "new" };
     let _ = writeln!(out, "{state}\t{}", lease.dir().display());
     let _ = out.flush();
