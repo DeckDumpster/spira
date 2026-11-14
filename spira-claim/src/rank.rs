@@ -389,10 +389,11 @@ pub enum Verdict {
     StackUnchanged,
 }
 
-/// An incident waits for its fix to land: a certified-only fix is not a reason to call Ops,
-/// so an incident-labelled candidate never stacks.
-pub fn stack_cap(cand: &ReadyRow, incident_label: &str, stack_max_depth: u32) -> u32 {
-    if !incident_label.is_empty() && cand.labels.iter().any(|l| l == incident_label) {
+/// An incident waits for its fix to land, and a pilgrimage walks the deployed feature: neither
+/// stacks on a certified-only blocker.
+pub fn stack_cap(cand: &ReadyRow, incident_label: &str, pilgrim_label: &str, stack_max_depth: u32) -> u32 {
+    let never_stacks = |label: &str| !label.is_empty() && cand.labels.iter().any(|l| l == label);
+    if never_stacks(incident_label) || never_stacks(pilgrim_label) {
         0
     } else {
         stack_max_depth
@@ -784,11 +785,27 @@ mod tests {
         let mut inc = blocked_on("B", "A");
         inc.labels.push("incident".into());
         let certified: HashMap<_, _> = [lcrow("B", BeadState::Ready, &[HoldKind::Wait], 0), lcrow("A", BeadState::Certified, &[], 0)].into();
-        let cap = stack_cap(&inc, "incident", 4);
+        let cap = stack_cap(&inc, "incident", "pilgrimage", 4);
         assert_eq!(claimable(&inc, &certified, &bd, cap), Verdict::Blocked("A".into()));
-        assert_eq!(claimable(&blocked_on("B", "A"), &certified, &bd, stack_cap(&blocked_on("B", "A"), "incident", 4)), Verdict::Claimable { depth: 1 }, "a non-incident still stacks");
+        assert_eq!(claimable(&blocked_on("B", "A"), &certified, &bd, stack_cap(&blocked_on("B", "A"), "incident", "pilgrimage", 4)), Verdict::Claimable { depth: 1 }, "a non-incident still stacks");
         let landed: HashMap<_, _> = [lcrow("B", BeadState::Ready, &[HoldKind::Wait], 0), lcrow("A", BeadState::Landed, &[], 0)].into();
         assert_eq!(claimable(&inc, &landed, &bd, cap), Verdict::Claimable { depth: 0 });
+    }
+
+    #[test]
+    fn a_pilgrimage_never_stacks_on_a_certified_feature_but_claims_once_it_lands() {
+        let bd: HashMap<_, _> = [bdrec("A", "open", "task", "spira")].into();
+        let mut pil = blocked_on("B", "A");
+        pil.labels.push("walker".into());
+        let certified: HashMap<_, _> = [lcrow("B", BeadState::Ready, &[HoldKind::Wait], 0), lcrow("A", BeadState::Certified, &[], 0)].into();
+        let cap = stack_cap(&pil, "incident", "walker", 4);
+        assert_eq!(cap, 0);
+        assert_eq!(stack_cap(&pil, "incident", "pilgrimage", 4), 4, "only the configured label never stacks");
+        assert_eq!(stack_cap(&pil, "incident", "", 4), 4, "an unset label matches nothing");
+        assert_eq!(claimable(&pil, &certified, &bd, cap), Verdict::Blocked("A".into()));
+        assert_eq!(stack_plan(&pil, &certified, &bd, cap), Err(Verdict::Blocked("A".into())));
+        let landed: HashMap<_, _> = [lcrow("B", BeadState::Ready, &[HoldKind::Wait], 0), lcrow("A", BeadState::Landed, &[], 0)].into();
+        assert_eq!(claimable(&pil, &landed, &bd, cap), Verdict::Claimable { depth: 0 });
     }
 
     #[test]
