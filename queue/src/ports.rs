@@ -691,6 +691,8 @@ pub trait Lc {
     ) -> Result<String, (i32, String)> {
         Ok(String::new())
     }
+    /// `fact <bead> --kind K --actor A --cause C`: a fact on the bead's lifecycle record.
+    fn fact(&self, bead: &str, kind: &str, actor: &str, cause: &str) -> Result<(), (i32, String)>;
     /// `certify <bead> <tip> pass <detail> <actor>`: record a gate pass at `tip`.
     fn certify(
         &self,

@@ -1272,6 +1272,10 @@ impl Lc for FLc {
             .borrow_mut()
             .push(format!("create-bead {id} --repo {repo}"));
     }
+    fn fact(&self, bead: &str, kind: &str, actor: &str, cause: &str) -> Result<(), (i32, String)> {
+        self.calls.borrow_mut().push(format!("fact {bead} {kind} {actor} [{cause}]"));
+        Ok(())
+    }
     fn set_carrier(&self, members: &[&str], by: Option<&str>, only_if_unset: bool) -> Result<String, (i32, String)> {
         let tail = by.map_or("--clear".to_string(), |b| format!("--by {b}"));
         let only = if only_if_unset { " --only-if-unset" } else { "" };

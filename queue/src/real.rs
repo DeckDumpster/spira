@@ -1915,6 +1915,14 @@ impl Lc for RealLc {
     fn create_bead_in(&self, id: &str, repo: &str) {
         let _ = self.run(&["create-bead", id, "--repo", repo, "--ready"]);
     }
+    fn fact(&self, bead: &str, kind: &str, actor: &str, cause: &str) -> Result<(), (i32, String)> {
+        let (rc, out) = self.run(&["fact", bead, "--kind", kind, "--actor", actor, "--cause", cause]);
+        if rc == 0 {
+            Ok(())
+        } else {
+            Err((rc, out.trim().to_string()))
+        }
+    }
     fn set_carrier(&self, members: &[&str], by: Option<&str>, only_if_unset: bool) -> Result<String, (i32, String)> {
         let mut argv = vec!["set-carrier"];
         argv.extend(members);

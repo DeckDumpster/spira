@@ -8881,3 +8881,41 @@ fn preempt_stops_a_pass_that_runs_as_a_leg_with_no_scope_or_handle() {
     assert!(!t.scripts.round_legs.borrow().iter().any(|(_, b, _)| b == &batch), "the leg running the pass is stopped");
     assert!(t.scripts.calls.borrow().iter().any(|c| c == &format!("restart {batch} spira")));
 }
+
+#[test]
+fn resubmit_drops_a_forced_suite_the_landing_ref_deleted_and_records_why() {
+    let t = rework_world(&["manual"]);
+    let dir = testkit::TempDir::new("deleted-suite");
+    let repo = dir.path().join("repo");
+    fs::create_dir_all(repo.join("spira")).unwrap();
+    testkit::git(&repo, &["init", "-q", "-b", "main"]);
+    fs::write(repo.join("spira/test-x.sh"), "").unwrap();
+    testkit::git(&repo, &["add", "."]);
+    testkit::git(&repo, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"]);
+    testkit::git(&repo, &["rm", "-q", "spira/test-x.sh"]);
+    testkit::git(&repo, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "delete x"]);
+    {
+        let mut r = t.lib.r.borrow_mut();
+        r.path = Some(repo.clone());
+        r.landref = Some("main".into());
+    }
+    let run = t.s().run.clone();
+    spira_config::proof::record_failing(&run, "sp-a", &["test-x.sh".to_string()]).unwrap();
+    let tip_arg = format!("--tip={T_FIX}");
+    assert_eq!(
+        t.run(&["resubmit", "sp-a", &tip_arg, "--by=concierge", "--reason=r", "--evidence=e", &ev_tip()]),
+        0,
+        "{}",
+        t.err()
+    );
+    let commit = testkit::git(&repo, &["rev-parse", "main"]);
+    assert!(
+        t.lc.has(&format!(
+            "fact sp-a suite-dropped concierge [suite test-x.sh deleted on main at {}; requirement dropped]",
+            commit.trim()
+        )),
+        "{:?}",
+        t.lc.calls.borrow()
+    );
+    assert!(spira_config::proof::failing(&run, "sp-a").is_empty());
+}
