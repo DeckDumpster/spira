@@ -368,6 +368,35 @@ impl EpicRow {
     }
 }
 
+/// One gate run as its row records it: `phases` is `name:secs,…`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct GateRun {
+    pub phases: String,
+    pub compiled: u64,
+    pub fresh: u64,
+    pub admit_wait_secs: u64,
+}
+
+/// The gate run's phase times for a bead's expanded detail.
+pub fn gate_why(g: &GateRun) -> String {
+    let phases: Vec<String> = g.phases.split(',').filter_map(|p| p.split_once(':')).map(|(n, t)| format!("{n} {t}s")).collect();
+    let mut parts = phases;
+    parts.push(format!("compiled {} · fresh {}", g.compiled, g.fresh));
+    parts.push(format!("admit wait {}s", g.admit_wait_secs));
+    format!("gate: {}", parts.join(" · "))
+}
+
+/// The latest run per bead among the gate's `gate-run` rows (oldest first).
+pub fn latest_gate_runs(rows: &[serde_json::Value]) -> BTreeMap<String, GateRun> {
+    let n = |r: &serde_json::Value, k: &str| r[k].as_u64().unwrap_or(0);
+    rows.iter()
+        .filter_map(|r| {
+            let bead = r["bead"].as_str().filter(|b| !b.is_empty())?;
+            Some((bead.to_string(), GateRun { phases: r["phases"].as_str().unwrap_or("").to_string(), compiled: n(r, "compiled"), fresh: n(r, "fresh"), admit_wait_secs: n(r, "admit_wait_secs") }))
+        })
+        .collect()
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Snapshot {
     pub now: i64,
@@ -404,6 +433,9 @@ pub struct Snapshot {
     pub asks: Vec<AskRow>,
     #[serde(default)]
     pub asks_error: Option<String>,
+    /// The gate's latest run per bead, from the run row the gate writes; absent when unread.
+    #[serde(default)]
+    pub gate_runs: BTreeMap<String, GateRun>,
     /// Why a round last ejected each bead, newest eject per bead (the batch's own reason).
     #[serde(default)]
     pub eject_why: BTreeMap<String, String>,
@@ -1434,6 +1466,8 @@ pub fn view(s: &Snapshot) -> View {
                 let mut it = item(r, if st.name == "LANDED" { r.updated_at } else { r.since }, note);
                 if st.name == "REWORK" {
                     it.why = rework_why(s, &r.id);
+                } else if NEEDS_REWORK_EXIT.contains(&st.name.as_str()) {
+                    it.why = s.gate_runs.get(&r.id).map(gate_why).unwrap_or_default();
                 }
                 it
             })

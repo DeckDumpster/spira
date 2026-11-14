@@ -61,6 +61,7 @@ mail = { path = "../../mail" }
 spira-world = { path = "../../spira-world" }
 runtime = { path = "../../runtime" }
 spira-otel = { path = "../../spira-otel" }
+tsd = { path = "../../tsd" }
 
 [dev-dependencies]
 testkit = { path = "../../testkit" }
