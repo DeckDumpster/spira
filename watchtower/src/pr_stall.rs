@@ -18,6 +18,13 @@ pub struct Cfg {
     pub gh_timeout: Duration,
 }
 
+impl Cfg {
+    /// The check's config from the configured stall threshold in minutes.
+    pub fn from_mins(stall_mins: i64, gh_bin: String, gh_timeout: Duration) -> Cfg {
+        Cfg { stall_secs: stall_mins * 60, gh_bin, gh_timeout }
+    }
+}
+
 impl Default for Cfg {
     fn default() -> Self {
         Cfg {
@@ -171,7 +178,8 @@ pub fn unopened(
         .collect()
 }
 
-fn escalate_unopened(reg: &spira_config::repos::Registry, lc: &LcClient, now: i64, db: &str, home_repo: &str, incident_sh: &str, cfg: &Cfg) {
+fn escalate_unopened(reg: &spira_config::repos::Registry, now: i64, act: &Acting, raise: &mut dyn FnMut(&Finding)) {
+    let Acting { lc, cfg, db, home_repo } = *act;
     let (Some(certified), Some(open)) = (lc::beads_in_on(lc, "CERTIFIED"), lc::pr_open_on(lc)) else { return };
     let open_ids: Vec<String> = open.into_iter().map(|r| r.id).collect();
     let repo_of = |id: &str| {
@@ -188,7 +196,7 @@ fn escalate_unopened(reg: &spira_config::repos::Registry, lc: &LcClient, now: i6
             .priority(1)
             .reference(format!("incident:pr-stall-unopened:{repo}:{id}"))
             .cause("pr-stall-unopened");
-        incident::alarm(incident_sh, &f);
+        raise(&f);
         log(&format!("watchtower: pr-stall-check: {id} in {repo} certified {age}s with no pull request — escalated"));
     }
 }
@@ -205,9 +213,16 @@ pub fn run(now: i64, spira_home: &str, db: &str, home_repo: &str, incident_sh: &
         log("watchtower: pr-stall-check skipped — spira-lc is unreachable");
         return;
     };
-    let reg = seams::registry(spira_home);
-    escalate_unopened(&reg, &lc, now, db, home_repo, incident_sh, cfg);
-    let Some(stalled) = gather_stalled(&reg, &lc, now, cfg) else {
+    pass(&seams::registry(spira_home), now, &Acting { lc: &lc, cfg, db, home_repo }, &mut |f| {
+        incident::alarm(incident_sh, f);
+    });
+}
+
+/// One check pass over `reg`: certified-but-unopened escalations, then each stalled PR handled
+/// by its repo's facts. Nothing is filed, requeued or armed when the store cannot answer.
+fn pass(reg: &spira_config::repos::Registry, now: i64, act: &Acting, raise: &mut dyn FnMut(&Finding)) {
+    escalate_unopened(reg, now, act, raise);
+    let Some(stalled) = gather_stalled(reg, act.lc, now, act.cfg) else {
         log("watchtower: pr-stall-check skipped — spira-lc is unreachable");
         return;
     };
@@ -216,16 +231,14 @@ pub fn run(now: i64, spira_home: &str, db: &str, home_repo: &str, incident_sh: &
             Some(p) if Path::new(&p).join(".git").exists() => p,
             _ => continue,
         };
-        let facts = gh_pr_facts(cfg, &repo_path, &s.id);
+        let facts = gh_pr_facts(act.cfg, &repo_path, &s.id);
         if facts.allow_auto_merge.is_none() {
             log(&format!(
                 "watchtower: pr-stall-check: allow_auto_merge unknown for {} — read failed or field absent",
                 s.repo
             ));
         }
-        handle(&s, &repo_path, &facts, &Acting { lc: &lc, cfg, db, home_repo }, &mut |f| {
-            incident::alarm(incident_sh, f);
-        });
+        handle(&s, &repo_path, &facts, act, raise);
     }
     log("watchtower: pr-stall-check complete");
 }
@@ -482,5 +495,66 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(t.seen.lock().unwrap()[0], ["list", "--delivery", "--state", "PR_OPEN"]);
         assert!(lc::pr_open_on(&scripted_by(&[("list", 2, "cannot tell")]).1).is_none(), "an unreachable store is not an empty one");
+    }
+
+    /// A pr-mode repo `testrepo` whose checkout carries the branches `spira/<id>` for `ids`, as a registry.
+    fn world(d: &std::path::Path, ids: &[&str]) -> spira_config::repos::Registry {
+        let repo = d.join("testrepo");
+        std::fs::create_dir_all(&repo).unwrap();
+        let git = |args: &[&str]| assert!(Command::new("git").args(args).current_dir(&repo).output().unwrap().status.success(), "{args:?}");
+        git(&["init", "-q"]);
+        git(&["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "base"]);
+        for id in ids {
+            git(&["branch", &format!("spira/{id}")]);
+        }
+        let map = format!("testrepo|{}|pr|origin/main||\n", repo.display());
+        spira_config::repos::Registry::new(Some(&map), &Default::default(), d)
+    }
+
+    fn passed(reg: &spira_config::repos::Registry, lc: &LcClient, cfg: &Cfg) -> Vec<Finding> {
+        let mut raised = Vec::new();
+        pass(reg, 10_000, &Acting { lc, cfg, db: "db", home_repo: "spira" }, &mut |f| raised.push(f.clone()));
+        raised
+    }
+
+    // covers: UC-ops-detection-remediation-28
+    #[test]
+    fn a_pass_over_a_stale_pr_in_an_auto_merge_off_repo_files_the_repo_scoped_stall() {
+        let d = testkit::TempDir::new("wt-prs-pass");
+        let reg = world(d.path(), &["sp-stale", "sp-fresh"]);
+        let cfg = stub_gh(&d, "false", "MERGEABLE\\tSUCCESS");
+        let rows = r#"[{"bead_id":"sp-stale","mode":"pr","entered_at":4000,"version":"3"},{"bead_id":"sp-fresh","mode":"pr","entered_at":9000,"version":"3"},{"bead_id":"sp-unknown","mode":"pr","entered_at":1,"version":"3"}]"#;
+        let (t, lc) = scripted_by(&[("list --delivery", 0, rows), ("list --state CERTIFIED", 0, "[]")]);
+        let raised = passed(&reg, &lc, &cfg);
+        assert_eq!(raised.len(), 1, "{raised:?}");
+        assert_eq!(raised[0].reference.as_deref(), Some("incident:pr-stall-auto-merge-off:testrepo"));
+        assert!(raised[0].body.contains("sp-stale") && !raised[0].body.contains("sp-fresh"));
+        assert!(t.seen.lock().unwrap().iter().all(|a| a[0] == "list"), "nothing but reads went to the store");
+    }
+
+    // covers: UC-ops-detection-remediation-28
+    #[test]
+    fn a_pass_with_an_unreachable_store_files_nothing_arms_nothing_and_requeues_nothing() {
+        let d = testkit::TempDir::new("wt-prs-pass-down");
+        let reg = world(d.path(), &["sp-stale"]);
+        let cfg = stub_gh(&d, "false", "CONFLICTING\\t");
+        let (t, lc) = scripted_by(&[("list", 2, "cannot tell")]);
+        assert!(passed(&reg, &lc, &cfg).is_empty());
+        assert!(gh_calls(&d).is_empty());
+        assert!(t.seen.lock().unwrap().iter().all(|a| a[0] == "list"), "no event was sent");
+    }
+
+    // covers: UC-ops-detection-remediation-28
+    #[test]
+    fn the_configured_stall_minutes_are_what_decides_a_stall() {
+        let d = testkit::TempDir::new("wt-prs-mins");
+        let reg = world(d.path(), &["sp-stale"]);
+        let rows = r#"[{"bead_id":"sp-stale","mode":"pr","entered_at":8200,"version":"3"}]"#;
+        let (_, lc) = scripted_by(&[("list --delivery", 0, rows), ("list --state CERTIFIED", 0, "[]")]);
+        let stub = stub_gh(&d, "false", "MERGEABLE\\tSUCCESS");
+        let with = |mins| Cfg::from_mins(mins, stub.gh_bin.clone(), stub.gh_timeout);
+        assert_eq!(with(30).stall_secs, 1800);
+        assert_eq!(passed(&reg, &lc, &with(30)).len(), 1, "30 minutes old against a 30 minute threshold");
+        assert!(passed(&reg, &lc, &with(31)).is_empty(), "and not against 31: the threshold is the configured one");
     }
 }
