@@ -1,7 +1,5 @@
 //! Unit tests over a `Fake` [`crate::ports::World`] — one scenario per decision point
-//! skew.sh's own dedicated suites exercised (test-skew-check-release.sh, test-skew-copies.sh,
-//! test-skew-foreign.sh, test-skew-local-release.sh, test-skew-refresh.sh — all retired by
-//! this bead, their coverage moved here).
+//! skew.sh's own dedicated suites exercised; those suites are retired and their coverage lives here.
 
 use crate::ports::{StatusRow, World};
 use crate::*;
@@ -1121,4 +1119,17 @@ fn refresh_stashes_dirty_files_and_advances_with_no_lease_consulted() {
     assert_eq!(refresh(&f, Some("/repo")), 0);
     assert!(f.stdout_joined().contains("stashed dirty tracked files"), "{}", f.stdout_joined());
     assert!(f.written.borrow().contains_key(&PathBuf::from("/repo/spira/conf.sh")));
+}
+
+// covers: UC-instance-lifecycle-35
+#[test]
+fn check_cannot_check_when_gh_cannot_list_the_forge_releases_and_says_why() {
+    let f = Fake::default();
+    f.set_env("SPIRA_REPO", "/repo");
+    f.set_env("SPIRA_RELEASE_REPO", "owner/repo");
+    f.git_repos.borrow_mut().push(PathBuf::from("/repo"));
+    *f.gh_tags_json.borrow_mut() = Some(Err("HTTP 401: bad credentials".into()));
+    assert_eq!(resolve_all_tags(&f, Path::new("/repo")), Err(EXIT_CANNOT_CHECK));
+    let said = f.stderr_joined();
+    assert!(said.contains("HTTP 401: bad credentials") && said.contains("gh credential"), "{said}");
 }

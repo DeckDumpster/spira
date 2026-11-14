@@ -146,7 +146,7 @@ on it (`mail_calls`, `overrides_applied`, `written`, `removed`) — the same tec
 - **`foreign`'s exact wording changes from "REFUSED by skew.sh" to "REFUSED by skew"** —
   the file it names no longer exists. No caller matched that exact string (audited: `gate`'s
   own tests use a fake and never inspect `skew`'s literal stderr); the dedicated bash suite
-  that did (`test-skew-foreign.sh`) is retired by this bead (§6).
+  that did (the former foreign suite) is retired by this bead (§6).
 
 ## 6. Parity and what moved
 
@@ -158,11 +158,11 @@ suites are retired, their coverage moved here:
 
 | retired suite | coverage now lives in |
 |---|---|
-| `test-skew-check-release.sh` | `check_not_latest_and_manifest_mismatch_both_fire`, `check_clean_when_tag_matches_and_is_latest`, `check_cannot_verify_alone_is_exit_3_not_1` |
+| the former check-release suite | `check_not_latest_and_manifest_mismatch_both_fire`, `check_clean_when_tag_matches_and_is_latest`, `check_cannot_verify_alone_is_exit_3_not_1` |
 | `test-skew-local-release.sh` | `check_local_tampered_and_behind_both_fire`, `check_local_hotfix_is_clean`, `check_local_unresolvable_divergence_is_cannot_verify` |
-| `test-skew-foreign.sh` | `foreign_*` (7 tests) |
+| the former foreign suite | `foreign_*` (7 tests) |
 | `test-skew-copies.sh` | `copies_found_reports_self_and_second`, `copies_none_found_is_a_finding` |
-| `test-skew-refresh.sh` | `refresh_*` (7 tests) |
+| the former refresh suite | `refresh_*` (7 tests) |
 | `test-doctor-gate-compile-check.sh` (skew's own `gap`/`units` paths only — the doctor half stays with the `doctor` crate) | n/a — not this table; see `doctor/DESIGN.md` |
 
 `UC-operator-channel-25` is carried by this crate's `escalate` unit tests (the question's
