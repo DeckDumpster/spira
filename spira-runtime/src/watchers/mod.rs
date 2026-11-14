@@ -92,8 +92,15 @@ pub fn iso8601(secs: u64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{iso8601, just_activated, last_activation};
+    use super::{iso8601, just_activated, last_activation, restart_excuses_read};
     use release::machine::{enter, ReleaseState};
+
+    #[test]
+    fn a_server_up_exactly_two_minutes_excuses_one_read_and_one_second_more_does_not() {
+        assert!(restart_excuses_read(None, Some(120), 10_000));
+        assert!(!restart_excuses_read(None, Some(121), 10_000));
+        assert!(!restart_excuses_read(None, None, 10_000), "an age systemd could not give excuses nothing");
+    }
 
     #[test]
     fn the_last_activation_is_the_activated_record_under_run_dir_and_nothing_else() {
