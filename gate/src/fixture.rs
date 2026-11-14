@@ -16,8 +16,8 @@ static SCRATCHES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsiz
 /// The number of registry keys the fixture resolved, or the refusal naming the key it cannot.
 pub fn check(tree: &Path, base: Option<&str>) -> Result<usize, String> {
     let fixture = tree.join(FIXTURE);
-    let doc = spira_config::load(&fixture).map_err(|e| format!("{FIXTURE}: {e}"))?;
     let home = tree.join("spira");
+    let doc = tree_doc(&fixture, &home)?;
     let env = BTreeMap::new();
     let resolve_against = |doc: &spira_config::SpiraToml, conf_d: &Path, what: &str| {
         resolve(ResolveInput { env: &env, home: &home, repo: tree, toml: Some(doc), conf_d })
@@ -82,6 +82,14 @@ fn merged_delta_parses(text: &str, base: &str) -> Result<(), String> {
     })
 }
 
+/// The fixture read against this tree's own registry, never the running binary's: a key the tree
+/// adds (with its conf.d file and delta) is not in the binary a round runs the fence with.
+fn tree_doc(fixture: &Path, home: &Path) -> Result<spira_config::SpiraToml, String> {
+    let text = std::fs::read_to_string(fixture).map_err(|e| format!("{FIXTURE}: {e}"))?;
+    let reg = spira_config::registry::Registry::load(home)?;
+    spira_config::validate_with(&text, &reg).map(|(doc, _)| doc).map_err(|e| format!("{FIXTURE}: {e}"))
+}
+
 /// The fixture read against the landing ref's registry, so a key the tip's registry retired is
 /// still declared for the code that has not yet.
 fn landing_doc(fixture: &Path, home: &Path) -> Result<spira_config::SpiraToml, String> {
@@ -122,10 +130,12 @@ mod tests {
         let dst = t.path().join("spira");
         std::fs::create_dir_all(dst.join("testlib")).unwrap();
         std::fs::copy(src.join("testlib/complete.toml"), dst.join("testlib/complete.toml")).unwrap();
-        std::fs::create_dir_all(dst.join("conf.d")).unwrap();
-        for e in std::fs::read_dir(src.join("conf.d")).unwrap() {
-            let e = e.unwrap();
-            std::fs::copy(e.path(), dst.join("conf.d").join(e.file_name())).unwrap();
+        for dir in ["conf.d", "conf.toml.d"] {
+            std::fs::create_dir_all(dst.join(dir)).unwrap();
+            for e in std::fs::read_dir(src.join(dir)).unwrap() {
+                let e = e.unwrap();
+                std::fs::copy(e.path(), dst.join(dir).join(e.file_name())).unwrap();
+            }
         }
         t
     }
@@ -243,5 +253,19 @@ mod tests {
         spira_config::retire::retire_key(t.path(), "spira.archivist_every").unwrap();
         assert!(!t.path().join("spira/conf.d/SPIRA_ARCHIVIST_EVERY").exists(), "the key is retired at the tip");
         check(t.path(), Some("main")).expect("the fixture line stays while the landing ref requires it");
+    }
+
+    #[test]
+    fn a_key_the_tree_adds_with_its_conf_d_file_resolves_though_the_running_binary_never_registered_it() {
+        let t = copy_tree();
+        testkit::git(t.path(), &["init", "-q", "-b", "main"]);
+        testkit::git(t.path(), &["add", "-A"]);
+        testkit::git(t.path(), &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "landing ref"]);
+        let f = t.path().join(FIXTURE);
+        let text = std::fs::read_to_string(&f).unwrap();
+        std::fs::write(&f, text.replacen("archivist_every = ", "key_only_in_delta = \"3\"\narchivist_every = ", 1)).unwrap();
+        std::fs::write(t.path().join(DELTA), "[spira]\nkey_only_in_delta = \"3\"\n").unwrap();
+        std::fs::write(t.path().join("spira/conf.d/SPIRA_KEY_ONLY_IN_DELTA"), "TYPE=string\nGROUP=archivist\nDOC=planted\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\n    : \"${SPIRA_KEY_ONLY_IN_DELTA:=3}\"\nSPIRA_CONF_DEFAULT_EOF\n").unwrap();
+        check(t.path(), Some("main")).expect("the tree declares the key in conf.d, the fixture and the delta; the landing ref lacks it");
     }
 }
