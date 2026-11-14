@@ -241,8 +241,12 @@ pub fn has_build_spec(text: &str) -> bool {
     false
 }
 
+// Written by dwarf/src/teardown.rs `NoteKey::Submitted`; bead cannot depend on dwarf.
+const HARNESS_SUBMIT_NOTE: &str = "Submitted: work committed on branch";
+
 /// `Ok` when `notes` holds `### Draft: <title>`, a blank line, then `body` trimmed and verbatim
-/// (ending the note or a line), on a request labelled `skuld_label`; else the refusal text.
+/// (ending the note, or followed by an `Open:` line, another draft, or the harness submit note),
+/// on a request labelled `skuld_label`; else the refusal text.
 pub fn skuld_drafted(title: &str, body: &str, skuld_label: &str, request: &str, labels: &[String], notes: &str) -> Result<(), String> {
     let how = "get a draft or review first: bead.sh file \"<title>\" --for skuld --repo <r> --body-file <the intent, or your draft for review>; then file the text of the note Skuld leaves with --drafted-by <that id>";
     let body = body.replace("\r\n", "\n");
@@ -257,7 +261,7 @@ pub fn skuld_drafted(title: &str, body: &str, skuld_label: &str, request: &str, 
     let notes = notes.replace("\r\n", "\n");
     let held = notes.match_indices(&wanted).any(|(at, m)| {
         let rest = notes[at + m.len()..].trim_start();
-        rest.is_empty() || rest.starts_with("Open:") || rest.starts_with("### Draft:")
+        rest.is_empty() || rest.starts_with("Open:") || rest.starts_with("### Draft:") || rest.starts_with(HARNESS_SUBMIT_NOTE)
     });
     if held {
         Ok(())
@@ -786,6 +790,13 @@ mod tests {
     }
 
     #[test]
+    fn skuld_drafted_passes_a_draft_followed_by_the_harness_submit_note() {
+        let l = vec!["draft".to_string()];
+        let notes = "### Draft: T\n\nbody line\nmore\n\nSubmitted: work committed on branch and marked submitted; the landing pass closes this bead when it lands, citing the merge commit. No attempt charged.\n";
+        assert!(skuld_drafted("T", "body line\nmore", "draft", "sp-r", &l, notes).is_ok());
+    }
+
+    #[test]
     fn skuld_drafted_refuses_an_edited_body_a_foreign_request_and_an_empty_body() {
         let l = vec!["draft".to_string()];
         let notes = "### Draft: T\n\nbody line\n";
@@ -794,6 +805,8 @@ mod tests {
         assert!(skuld_drafted("T", "body", "draft", "sp-r", &l, notes).is_err(), "a prefix of a line is not a match");
         let longer = "### Draft: T\n\na\nb\nc\n";
         assert!(skuld_drafted("T", "a\nb", "draft", "sp-r", &l, longer).is_err(), "a truncated body is not verbatim");
+        let submitted = "### Draft: T\n\na\nb\n\nSubmitted: work committed on branch and marked submitted.\n";
+        assert!(skuld_drafted("T", "a", "draft", "sp-r", &l, submitted).is_err(), "the submit note does not loosen verbatim matching");
         assert!(skuld_drafted("U", "body line", "draft", "sp-r", &l, notes).is_err());
         assert!(skuld_drafted("T", "body line", "draft", "sp-r", &[], notes).unwrap_err().contains("--for skuld"));
         assert!(skuld_drafted("T", "  \n", "draft", "sp-r", &l, notes).unwrap_err().contains("--for skuld"));
