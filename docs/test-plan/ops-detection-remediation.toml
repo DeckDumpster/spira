@@ -58,7 +58,7 @@ statement = "The census reports each failure class with its distinct-bead and de
 
 [[use_case]]
 id = "UC-ops-detection-remediation-12"
-tier = "T3"
+tier = "T1"
 statement = "The harness records requeues and reopens as epoch-stamped rows in the lifecycle log, the census reads them as bd-shaped events dated in UTC from that epoch with no server clock or timezone, and a since-watermark bound is strictly after the mark."
 
 [[use_case]]
