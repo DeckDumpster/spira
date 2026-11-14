@@ -317,6 +317,12 @@ impl Fake {
         {
             // The base re-run (sp-hh5h0) names itself; anything else is the re-entry phase.
             if cmd.starts_with(BASE_RERUN_MARK) {
+                let uncached = env.iter().any(|(k, v)| k == "SPIRA_BUILD_CACHE" && v == "off");
+                if uncached {
+                    if let Some(r) = self.reruns.borrow().get(&(format!("{br}:uncached"), list.to_string())) {
+                        return r.clone();
+                    }
+                }
                 if let Some(r) = self.reruns.borrow().get(&(br.clone(), list.to_string())) {
                     return r.clone();
                 }
@@ -3619,6 +3625,39 @@ fn a_trial_that_loses_sccache_retries_once_without_the_cache() {
     assert_eq!(f.env_of(n - 1, "SPIRA_BUILD_CACHE"), "off");
     assert_eq!(f.env_of(n - 1, "RUSTC_WRAPPER"), "");
     assert!(meter(&f).contains(" phases=gate:7,gate:7 test_clock=14s"), "{}", meter(&f));
+}
+
+/// A base re-run that loses its sccache server is run once more with the cache off; a
+/// re-run that then passes lets the branch's red stand as the branch's own.
+#[test]
+fn a_base_rerun_that_loses_sccache_retries_once_without_the_cache_then_passes() {
+    let wedged = "sccache: error: failed to execute compile\ncaused by: Connection reset by peer (os error 104)";
+    let f = Fake::new();
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, red(SUITE)));
+    f.reruns.borrow_mut().insert((BASE.into(), SUITE.into()), (1, wedged.into()));
+    f.reruns.borrow_mut().insert((format!("{BASE}:uncached"), SUITE.into()), (0, format!("  {SUITE:<32} ok      1s")));
+    assert_eq!(f.run(), FAIL, "{}", f.stderr());
+    assert!(f.verdict_line().contains("reason=branch-red"), "{}", f.verdict_line());
+    assert!(f.stderr().contains("retrying it once without the compiler cache"), "{}", f.stderr());
+    let cmds = f.cmds.borrow();
+    let reruns: Vec<usize> = (0..cmds.len()).filter(|&i| cmds[i].starts_with(BASE_RERUN_MARK)).collect();
+    assert_eq!(reruns.len(), 2, "{cmds:?}");
+    assert_eq!(f.env_of(reruns[0], "SPIRA_BUILD_CACHE"), "");
+    assert_eq!(f.env_of(reruns[1], "SPIRA_BUILD_CACHE"), "off");
+    assert!(meter_row(&f).contains(",base-rerun:14"), "{}", meter_row(&f));
+}
+
+/// A base re-run that fails the same way after the retry is the gate's NO_VERDICT, retried once.
+#[test]
+fn a_base_rerun_that_loses_sccache_twice_is_build_cache_fault() {
+    let wedged = "sccache: error: failed to execute compile\ncaused by: Connection reset by peer (os error 104)";
+    let f = Fake::new();
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, red(SUITE)));
+    f.reruns.borrow_mut().insert((BASE.into(), SUITE.into()), (1, wedged.into()));
+    f.reruns.borrow_mut().insert((format!("{BASE}:uncached"), SUITE.into()), (1, wedged.into()));
+    assert_eq!(f.run(), NOVERDICT, "{}", f.stderr());
+    assert!(f.verdict_line().contains("reason=build-cache-fault"), "{}", f.verdict_line());
+    assert_eq!(f.stderr().matches("retrying it once").count(), 1, "{}", f.stderr());
 }
 
 /// A trial whose cache is already off, or whose red is not a cache fault, is never retried; a

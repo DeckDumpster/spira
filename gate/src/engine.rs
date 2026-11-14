@@ -1201,7 +1201,8 @@ impl<'w, W: World> Trial<'w, W> {
             if !unrun.is_empty() {
                 let rerun = base_rerun_cmd(&unrun);
                 let t = w.now();
-                let (r, o) = w.run_gate(
+                let (r, o) = run_gate_uncached_once(
+                    w,
                     &tree,
                     &with_bins(
                         env(
@@ -1297,7 +1298,8 @@ impl<'w, W: World> Trial<'w, W> {
                 });
             if retryable {
                 let t = w.now();
-                let (rr, o) = w.run_gate(
+                let (rr, o) = run_gate_uncached_once(
+                    w,
                     &tree,
                     &with_bins(
                         env(
@@ -2176,6 +2178,16 @@ pub fn release_bins_command() -> String {
         "cargo build --release --workspace --locked {} || {{ _r=$?; find target/release -mindepth 1 -delete 2>/dev/null; exit $_r; }}",
         spira_config::build::one_shot_words("release")
     )
+}
+
+/// `run_gate`, run once more without the compiler cache when it lost its sccache server.
+fn run_gate_uncached_once<W: World>(w: &W, tree: &Path, env: &[(String, String)], timeout: &str, cmd: &str) -> (i32, String) {
+    let first = w.run_gate(tree, env, timeout, cmd);
+    if cache_in_force(env) && first.0 != 0 && parse::cache_transport_failure(&first.1) {
+        w.eprint("gate: the base trial's sccache server was lost mid-build — retrying it once without the compiler cache");
+        return w.run_gate(tree, &without_cache(env.to_vec()), timeout, cmd);
+    }
+    first
 }
 
 /// Whether the trial's builds compile through sccache: the admitted wrapper's inner compiler,
