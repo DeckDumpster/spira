@@ -160,6 +160,13 @@ pub fn run(now: i64, lc: &LcClient, db: &str, home_repo: &str, incident_sh: &str
         ));
         return;
     }
+    check(now, lc, db, home_repo, cfg, &mut |f| {
+        incident::alarm(incident_sh, f);
+    });
+}
+
+/// The check with its raise handed in: each finding the classifier returns, as the alarm it files.
+fn check(now: i64, lc: &LcClient, db: &str, home_repo: &str, cfg: &Cfg, raise: &mut dyn FnMut(&Finding)) {
     let beads = query_beads(lc, &cfg.label);
     for finding in classify(now, cfg.outcome_mins, cfg.unclaimed_mins, &beads) {
         match finding {
@@ -177,7 +184,7 @@ pub fn run(now: i64, lc: &LcClient, db: &str, home_repo: &str, incident_sh: &str
                 .priority(1)
                 .reference(format!("incident:czar-unclaimed-{id}"))
                 .cause("czar-unclaimed");
-                incident::alarm(incident_sh, &f);
+                raise(&f);
                 log(&format!(
                     "watchtower: czar-outcome-check filed unclaimed escalation for {id}"
                 ));
@@ -196,7 +203,7 @@ pub fn run(now: i64, lc: &LcClient, db: &str, home_repo: &str, incident_sh: &str
                 .priority(1)
                 .reference(format!("incident:czar-not-cleared-{id}"))
                 .cause("czar-not-cleared");
-                incident::alarm(incident_sh, &f);
+                raise(&f);
                 log(&format!(
                     "watchtower: czar-outcome-check filed not-cleared escalation for {id}"
                 ));
@@ -210,6 +217,7 @@ pub fn run(now: i64, lc: &LcClient, db: &str, home_repo: &str, incident_sh: &str
 mod tests {
     use super::*;
 
+    // covers: UC-ops-detection-remediation-25
     #[test]
     fn trigger_beads_are_read_through_the_content_door() {
         let (t, lc) = crate::lc::scripted::scripted(0, r#"[{"id":"sp-a","external_ref":"czar:deadlock"}]"#);
@@ -265,6 +273,7 @@ mod tests {
         crate::log::fmt_iso(NOW - m * 60)
     }
 
+    // covers: UC-ops-detection-remediation-25
     #[test]
     fn positive_control_unclaimed_open_bead_past_threshold_fires() {
         let beads = vec![bead(
@@ -284,6 +293,7 @@ mod tests {
         );
     }
 
+    // covers: UC-ops-detection-remediation-25
     #[test]
     fn positive_control_not_cleared_condition_returned_after_czar_closed_its_bead() {
         let beads = vec![
@@ -312,6 +322,7 @@ mod tests {
         );
     }
 
+    // covers: UC-ops-detection-remediation-25
     #[test]
     fn open_bead_younger_than_unclaimed_threshold_is_silent() {
         let beads = vec![bead(
@@ -324,6 +335,7 @@ mod tests {
         assert!(classify(NOW, 30, 10, &beads).is_empty());
     }
 
+    // covers: UC-ops-detection-remediation-25
     #[test]
     fn closed_with_no_recurrence_is_silent() {
         let beads = vec![bead(
@@ -336,6 +348,7 @@ mod tests {
         assert!(classify(NOW, 30, 10, &beads).is_empty());
     }
 
+    // covers: UC-ops-detection-remediation-25
     #[test]
     fn outcome_window_not_yet_elapsed_is_silent() {
         let beads = vec![
@@ -357,6 +370,7 @@ mod tests {
         assert!(classify(NOW, 30, 10, &beads).is_empty());
     }
 
+    // covers: UC-ops-detection-remediation-25
     #[test]
     fn a_non_queue_ref_is_ignored_but_queue_prefixed_still_fires() {
         let beads = vec![bead(
@@ -376,5 +390,66 @@ mod tests {
 
         let beads2 = vec![bead("sp-czoc9", "open", "some-other-ref", &minsago(15), "")];
         assert!(classify(NOW, 30, 10, &beads2).is_empty());
+    }
+
+    fn world(trigger_rows: &str, states: &str) -> (std::sync::Arc<crate::lc::scripted::Scripted>, LcClient) {
+        crate::lc::scripted::scripted_by(&[("content list", 0, trigger_rows), ("list --ids", 0, states)])
+    }
+
+    fn checked(lc: &LcClient, unclaimed_mins: i64) -> Vec<Finding> {
+        let cfg = Cfg { unclaimed_mins, ..Cfg::default() };
+        let mut raised = Vec::new();
+        check(NOW, lc, "db", "spira", &cfg, &mut |f| raised.push(f.clone()));
+        raised
+    }
+
+    // covers: UC-ops-detection-remediation-25
+    #[test]
+    fn an_unclaimed_trigger_is_raised_under_a_per_bead_ref_that_is_the_same_every_pass() {
+        let rows = format!(r#"[{{"id":"sp-czoc1","external_ref":"incident:queue-deadlock-batch-open","created_at":"{}"}}]"#, minsago(15));
+        let (t, lc) = world(&rows, r#"[{"bead_id":"sp-czoc1","state":"READY"}]"#);
+        let first = checked(&lc, 10);
+        let second = checked(&lc, 10);
+        assert_eq!(first.len(), 1);
+        assert_eq!(first[0].reference.as_deref(), Some("incident:czar-unclaimed-sp-czoc1"));
+        assert_eq!(first[0].reference, second[0].reference, "a recurrence must dedup, not file a second");
+        assert_eq!(first[0].cause.as_deref(), Some("czar-unclaimed"));
+        assert!(first[0].title.contains("sp-czoc1"));
+        assert_eq!(t.seen.lock().unwrap()[0][..4], ["content", "list", "--label", "czar-trigger"], "only czar-trigger beads are asked for");
+    }
+
+    // covers: UC-ops-detection-remediation-25
+    #[test]
+    fn a_trigger_younger_than_the_configured_threshold_is_not_raised() {
+        let rows = format!(r#"[{{"id":"sp-czoc1","external_ref":"incident:queue-deadlock-batch-open","created_at":"{}"}}]"#, minsago(15));
+        let (_, lc) = world(&rows, r#"[{"bead_id":"sp-czoc1","state":"READY"}]"#);
+        assert!(checked(&lc, 20).is_empty(), "15 minutes old is inside a 20 minute threshold");
+        assert_eq!(checked(&lc, 14).len(), 1, "and outside a 14 minute one: the threshold is the configured one");
+    }
+
+    // covers: UC-ops-detection-remediation-25
+    #[test]
+    fn a_recurrence_after_the_outcome_window_is_raised_as_not_cleared_under_its_own_ref() {
+        let rows = format!(
+            r#"[{{"id":"sp-czoc2a","external_ref":"incident:queue-sort-failed-x","created_at":"{}","closed_at":"{}"}},
+                {{"id":"sp-czoc2b","external_ref":"incident:queue-sort-failed-x","created_at":"{}","closed_at":"{}"}}]"#,
+            minsago(50),
+            minsago(45),
+            minsago(35),
+            minsago(15)
+        );
+        let (_, lc) = world(&rows, r#"[{"bead_id":"sp-czoc2a","state":"DONE"},{"bead_id":"sp-czoc2b","state":"DONE"}]"#);
+        let raised = checked(&lc, 10);
+        assert_eq!(raised.len(), 1);
+        assert_eq!(raised[0].reference.as_deref(), Some("incident:czar-not-cleared-sp-czoc2a"));
+        assert_eq!(raised[0].cause.as_deref(), Some("czar-not-cleared"));
+    }
+
+    // covers: UC-ops-detection-remediation-25
+    #[test]
+    fn an_unreadable_lifecycle_state_raises_nothing() {
+        let rows = format!(r#"[{{"id":"sp-czoc1","external_ref":"incident:queue-x","created_at":"{}"}}]"#, minsago(15));
+        let (_, lc) = crate::lc::scripted::scripted_by(&[("content list", 0, &rows), ("list --ids", 2, "cannot tell")]);
+        assert!(checked(&lc, 10).is_empty());
     }
 }
