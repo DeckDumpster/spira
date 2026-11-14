@@ -995,9 +995,31 @@ pub fn store_up_s() -> Option<u64> {
         .stdin(std::process::Stdio::null())
         .output()
         .ok()?;
-    let entered_us: u64 = String::from_utf8_lossy(&out.stdout).trim().parse().ok().filter(|us| *us > 0)?;
-    let uptime_s: f64 = fs::read_to_string("/proc/uptime").ok()?.split_whitespace().next()?.parse().ok()?;
+    server_age_s(&String::from_utf8_lossy(&out.stdout), &fs::read_to_string("/proc/uptime").ok()?)
+}
+
+/// The age of a unit from `ActiveEnterTimestampMonotonic` (microseconds since boot; 0 when it never became active) and `/proc/uptime`.
+fn server_age_s(entered_monotonic: &str, proc_uptime: &str) -> Option<u64> {
+    let entered_us: u64 = entered_monotonic.trim().parse().ok().filter(|us| *us > 0)?;
+    let uptime_s: f64 = proc_uptime.split_whitespace().next()?.parse().ok()?;
     Some((uptime_s as u64).saturating_sub(entered_us / 1_000_000))
+}
+
+#[cfg(test)]
+mod server_age_tests {
+    use super::server_age_s;
+
+    #[test]
+    fn a_unit_entered_fifty_seconds_before_now_is_fifty_seconds_old() {
+        assert_eq!(server_age_s("950000000\n", "1000.25 4000.00\n"), Some(50));
+    }
+
+    #[test]
+    fn a_unit_that_never_became_active_or_an_unparsed_answer_has_no_age() {
+        assert_eq!(server_age_s("0\n", "1000.25 4000.00"), None);
+        assert_eq!(server_age_s("", "1000.25 4000.00"), None);
+        assert_eq!(server_age_s("950000000", ""), None);
+    }
 }
 
 use crate::tasks::e::watch_throughput::{RepoLanding, RepoRounds, Records, Snapshot as ThroughputSnapshot, Unlanded};
