@@ -27,6 +27,6 @@ bin="$(command -v mimir-trigger)" || {
 # `main.rs` parses `--home` once, at the top, and every later `spira_config::resolve_for_
 # process` call (including the one behind its own lib.sh-sourcing seam, `real.rs`'s `seam`/
 # `seam_ok`, which still `.env("SPIRA_HOME", ...)`s that subprocess explicitly) now reads
-# it from there. Found originally via every seam call in test-mimir-trigger.sh failing
-# uniformly (source-lib.sh rc=96, SPIRA_HOME seen as ".") — this fix keeps that path closed.
+# it from there. A seam call without it failed uniformly (source-lib.sh rc=96,
+# SPIRA_HOME seen as ".") — this keeps that path closed.
 exec "$bin" --home "$HERE" "$@"

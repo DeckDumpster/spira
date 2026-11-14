@@ -22,7 +22,7 @@
 //! or an open trigger skips; an unadmitted lane skips; fire when `now - lastpass >=
 //! SPIRA_MIMIR_MAX_GAP_SECONDS`, or `landings >= SPIRA_MIMIR_LANDING_INTERVAL`, or there is any
 //! invalid-closed row. Fixtures: the 17 engine tests, the 5 `main.rs` tests,
-//! `real.rs`'s open-trigger test and `spira/test-mimir-trigger.sh`.
+//! and `real.rs`'s open-trigger test.
 //!
 //! # Act
 //!

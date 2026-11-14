@@ -32,6 +32,8 @@ pub mod verdict;
 pub mod worktree;
 
 #[cfg(test)]
+mod mimir_brief_tests;
+#[cfg(test)]
 mod persona_tools_tests;
 
 #[cfg(test)]

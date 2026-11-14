@@ -61,8 +61,6 @@ spira/test-landing-pass.sh
 spira/test-landing-pr.sh
 spira/testlib/gate-fixture.sh
 spira/testlib.sh
-spira/test-livelock.sh
-spira/test-mimir-trigger.sh
 spira/test-ops-closing.sh
 spira/test-pr-notify.sh
 spira/test-slay.sh

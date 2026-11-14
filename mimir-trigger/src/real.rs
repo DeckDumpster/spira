@@ -226,4 +226,48 @@ mod tests {
         assert_eq!(unfinished_count(&ids, &lc), 1, "a poisoned trigger is dead and must not suppress the next");
         assert!(json_ids("not json").is_none());
     }
+
+    // covers: UC-ops-detection-remediation-16
+    #[test]
+    fn landings_on_a_repo_whose_only_remote_is_not_origin_are_read_from_its_own_default_branch_since_the_mark() {
+        let ws = testkit::TempDir::new("mimir-trigger-gitea");
+        let remote = ws.path().join("remote.git");
+        let repo = ws.path().join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        testkit::git(ws.path(), &["init", "-q", "--bare", "-b", "trunk", remote.to_str().unwrap()]);
+        testkit::git(&repo, &["init", "-q", "-b", "trunk"]);
+        let at = |when: &str, msg: &str| {
+            let out = std::process::Command::new("git")
+                .arg("-C").arg(&repo)
+                .args(["-c", "user.name=t", "-c", "user.email=t@t.invalid", "commit", "-q", "--allow-empty", "-m", msg])
+                .env("GIT_AUTHOR_DATE", when).env("GIT_COMMITTER_DATE", when)
+                .output().unwrap();
+            assert!(out.status.success());
+        };
+        at("2020-01-01T00:00:00Z", "spira: land sp-old1");
+        at("2030-01-01T00:00:00Z", "spira: land sp-new1");
+        at("2030-01-02T00:00:00Z", "tidy readme");
+        testkit::git(&repo, &["remote", "add", "gitea", remote.to_str().unwrap()]);
+        testkit::git(&repo, &["push", "-q", "gitea", "trunk"]);
+
+        let l = || String::new();
+        let labels = LaneLabels { plan: l(), incident: l(), groomer: l(), mimir: l(), spike: l(), czar: l() };
+        let w = Real::new(ws.path().to_path_buf(), ws.path().join("run"), "bdq".into(), None, labels);
+        let base = w.landref(repo.to_str().unwrap()).expect("a lone remote that is not origin still resolves");
+        assert_eq!(base, "gitea/trunk");
+        let mark = 1_893_000_000; // 2029-12-26, after the old commit and before the new
+        let ids = crate::engine::parse_landing_ids(&w.git_log_subjects(&repo, mark, &base));
+        assert_eq!(ids, ["sp-new1"]);
+    }
+
+    // covers: UC-ops-detection-remediation-16
+    #[test]
+    fn a_trigger_still_working_suppresses_a_second_and_one_handed_on_does_not() {
+        let ids = json_ids(r#"[{"id":"w"},{"id":"s"}]"#).unwrap();
+        let row = |st: &str, id: &str| (id.to_string(), Row { bead_id: id.to_string(), state: st.to_string(), ..Default::default() });
+        let lc: std::collections::HashMap<_, _> = [row("WORKING", "w"), row("SUBMITTED", "s")].into_iter().collect();
+        assert_eq!(unfinished_count(&ids, &lc), 1);
+        assert_eq!(unfinished_count(&ids[..1], &lc), 1, "positive control: the working one alone counts");
+        assert_eq!(unfinished_count(&ids[1..], &lc), 0);
+    }
 }
