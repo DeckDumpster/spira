@@ -234,21 +234,21 @@ impl Forge {
         self.get(caller, path)?.as_array().filter(|a| a.len() < PAGE_SIZE).cloned()
     }
 
-    /// Every open PR with its checks classified; `None` when any call failed.
-    pub fn open_prs(&self, slug: &str) -> Option<Vec<(OpenPr, String)>> {
-        let prs = self.listed("open_prs", &format!("/repos/{slug}/pulls?state=open&{PAGE}"))?;
-        prs.iter()
-            .map(|p| {
-                let sha = p["head"]["sha"].as_str()?;
-                let checks = self.get("open_prs", &format!("/repos/{slug}/commits/{sha}/check-runs?{PAGE}"))?;
-                let runs = self.get("open_prs", &format!("/repos/{slug}/actions/runs?head_sha={sha}&{PAGE}"))?;
-                let runs = runs["workflow_runs"].as_array().filter(|a| a.len() < PAGE_SIZE)?;
-                let checks = current_checks(checks["check_runs"].as_array()?, runs, &text(&p["head"], "ref"));
-                let (status, fail) = classify(&checks);
-                let title = text(p, "title").replace(['\n', '\t'], " ");
-                Some((OpenPr { number: p["number"].as_u64()?, status: status.into(), title, fail }, text(&p["head"], "ref")))
-            })
-            .collect()
+    /// One PR by number with its checks classified: `Some(None)` once it is no longer open, `None`
+    /// when the forge could not say. Its checks are read only while it is open.
+    pub fn open_pr(&self, slug: &str, n: u64) -> Option<Option<(OpenPr, String)>> {
+        let p = self.get("open_prs", &format!("/repos/{slug}/pulls/{n}"))?;
+        if p["state"].as_str()? != "open" {
+            return Some(None);
+        }
+        let sha = p["head"]["sha"].as_str()?;
+        let checks = self.get("open_prs", &format!("/repos/{slug}/commits/{sha}/check-runs?{PAGE}"))?;
+        let runs = self.get("open_prs", &format!("/repos/{slug}/actions/runs?head_sha={sha}&{PAGE}"))?;
+        let runs = runs["workflow_runs"].as_array().filter(|a| a.len() < PAGE_SIZE)?;
+        let checks = current_checks(checks["check_runs"].as_array()?, runs, &text(&p["head"], "ref"));
+        let (status, fail) = classify(&checks);
+        let title = text(&p, "title").replace(['\n', '\t'], " ");
+        Some(Some((OpenPr { number: n, status: status.into(), title, fail }, text(&p["head"], "ref"))))
     }
 
     /// How a PR that left the open list ended; `None` when the forge could not say.
@@ -328,7 +328,7 @@ impl Forge {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     fn checkout(url: &str) -> testkit::TempDir {
@@ -437,7 +437,7 @@ mod tests {
     }
 
     /// Serves `answers` in order, one connection each; returns the api base and the requests seen.
-    fn stub(answers: Vec<String>) -> (String, std::thread::JoinHandle<Vec<String>>) {
+    pub(crate) fn stub(answers: Vec<String>) -> (String, std::thread::JoinHandle<Vec<String>>) {
         let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let api = format!("http://{}", l.local_addr().unwrap());
         let h = std::thread::spawn(move || {
@@ -454,23 +454,39 @@ mod tests {
         (api, h)
     }
 
-    fn answer(status: &str, headers: &str, body: &str) -> String {
+    pub(crate) fn answer(status: &str, headers: &str, body: &str) -> String {
         format!("HTTP/1.1 {status}\r\n{headers}Content-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len())
     }
 
-    fn forge_at(api: String) -> Forge {
+    pub(crate) fn forge_at(api: String) -> Forge {
         Forge { api, token: "t".into(), ..Forge::default() }
     }
 
     #[test]
-    fn open_prs_reports_a_cancelled_run_a_queued_run_replaced_as_pending() {
-        let pulls = r#"[{"number":5,"title":"publish","head":{"sha":"abc","ref":"spira/publish/a"}}]"#;
+    fn open_pr_reports_a_cancelled_run_a_queued_run_replaced_as_pending() {
+        let pulls = r#"{"number":5,"state":"open","title":"publish","head":{"sha":"abc","ref":"spira/publish/a"}}"#;
         let checks = r#"{"check_runs":[{"name":"gate","status":"completed","conclusion":"cancelled","check_suite":{"id":1}},{"name":"gate","status":"queued","conclusion":null,"check_suite":{"id":2}}]}"#;
         let runs = r#"{"workflow_runs":[{"id":1,"workflow_id":7,"name":"Publish","head_branch":"spira/publish/a","check_suite_id":1,"status":"completed","conclusion":"cancelled"},{"id":2,"workflow_id":7,"name":"Publish","head_branch":"spira/publish/a","check_suite_id":2,"status":"queued","conclusion":null}]}"#;
         let (api, seen) = stub(vec![answer("200 OK", "", pulls), answer("200 OK", "", checks), answer("200 OK", "", runs)]);
-        let open = forge_at(api).open_prs("o/r").unwrap();
+        let (pr, _) = forge_at(api).open_pr("o/r", 5).unwrap().unwrap();
         seen.join().unwrap();
-        assert_eq!((open[0].0.status.as_str(), open[0].0.fail.as_str()), ("pending", ""));
+        assert_eq!((pr.status.as_str(), pr.fail.as_str()), ("pending", ""));
+    }
+
+    #[test]
+    fn open_pr_asks_for_the_one_pr_and_reads_no_checks_once_it_is_closed() {
+        let (api, seen) = stub(vec![answer("200 OK", "", r#"{"number":12,"state":"closed","head":{"sha":"abc","ref":"b"}}"#)]);
+        assert_eq!(forge_at(api).open_pr("o/r", 12), Some(None));
+        let seen = seen.join().unwrap();
+        assert_eq!(seen.len(), 1);
+        assert!(seen[0].starts_with("get /repos/o/r/pulls/12 "), "{}", seen[0]);
+    }
+
+    #[test]
+    fn open_pr_is_unanswered_when_the_forge_does() {
+        let (api, seen) = stub(vec![answer("500 Internal Server Error", "", "{}")]);
+        assert_eq!(forge_at(api).open_pr("o/r", 12), None);
+        seen.join().unwrap();
     }
 
     #[test]
