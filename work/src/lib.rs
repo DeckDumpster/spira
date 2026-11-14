@@ -602,6 +602,24 @@ mod tests {
     }
 
     #[test]
+    fn the_repositorys_checks_include_a_row_that_is_the_gates_unit_build_line() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let rows = habits::config::load_checks(&root).unwrap();
+        let row = rows.iter().find(|r| r.run == UNIT_BUILD).expect("a unit-build row in .spira/checks.toml");
+        let crates = vec!["x".to_string()];
+        let argv = check_argv(&row.run, &Affected::Crates(crates.clone()), "b", rec_path()).unwrap();
+        assert_eq!(argv, gate::compose::unit_build_words(&crates));
+        assert!(row.build.is_none(), "cargo runs from the caller's PATH and CARGO_TARGET_DIR, not a built binary");
+    }
+
+    #[test]
+    fn a_workspace_wide_change_builds_the_whole_workspace_with_the_gates_flags() {
+        let argv = check_argv("{unit-build}", &Affected::Workspace, "b", rec_path()).unwrap();
+        assert_eq!(&argv[..argv.len() - 1], gate::compose::unit_build_words(&[]).as_slice());
+        assert_eq!(argv.last().map(String::as_str), Some("--workspace"));
+    }
+
+    #[test]
     fn a_checks_build_resolves_to_the_sessions_owned_build_directory() {
         let root = std::path::Path::new("/w/sp-x");
         let owned = std::path::Path::new("/srv/ssd-b/dwarf-build/dir.3");
