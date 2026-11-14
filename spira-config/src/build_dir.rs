@@ -881,6 +881,21 @@ mod tests {
     }
 
     #[test]
+    fn the_real_eviction_measures_bytes_on_disk_and_reclaims_a_stray_beside_a_live_slot() {
+        let d = testkit::TempDir::new("bdir-nonslot-real");
+        let base = d.path().join("base");
+        let live = lease(std::slice::from_ref(&base), "sp-live").unwrap();
+        fill(&live.dir().join("debug/x"), 64);
+        let stray = base.join("hand.1");
+        fill(&stray.join("debug/x"), 64);
+        touch(&stray.join("debug/x"), 3 * 86400, 3 * 86400);
+        let budget = crate::build::size_of(live.dir()) + 1024;
+        assert_eq!(evict_idle(std::slice::from_ref(&base), budget), vec![stray.clone()]);
+        assert!(!stray.exists());
+        assert!(live.dir().join("debug/x").exists());
+    }
+
+    #[test]
     fn a_base_value_lists_directories_separated_by_whitespace() {
         assert_eq!(parse_bases(" /x/b\n/y/c "), [PathBuf::from("/x/b"), PathBuf::from("/y/c")]);
         assert!(parse_bases("  ").is_empty());
