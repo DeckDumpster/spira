@@ -136,6 +136,8 @@ pub const INBOX_APPEND: &str = crate::watchers::INBOX_APPEND;
 
 pub const CADENCE_MS: u64 = 30_000;
 pub const OBSERVE_DEADLINE_MS: u64 = 10_000;
+/// A batch that closed without landing never produces the base run that settles it; the entry expires instead.
+pub const BASE_PENDING_MAX_AGE_MS: u64 = 6 * 3_600_000;
 
 pub const ACTS: &[(&str, u64)] = &[(FILE_INCIDENT, 30_000), (FILE_BASE_RED, 30_000), (RERUN_WORKFLOW, 60_000), (RESTART_LANDING, 10_000), (STATUS, 5_000), (INBOX_APPEND, 10_000)];
 pub const EMITS: &[EventKindTag] = &[CALL_REQUESTED];
@@ -341,7 +343,7 @@ pub struct Carry {
     pub keys: BTreeMap<String, KeyState>,
     pub cursor_ms: Option<u64>,
     /// Repos whose forge batch was open, with the epoch (ms) it was last seen: the base is read
-    /// until a run completed after that epoch has a conclusion.
+    /// until a run completed after that epoch has a conclusion, or the entry is older than `BASE_PENDING_MAX_AGE_MS`.
     pub base_pending: BTreeMap<String, u64>,
 }
 
@@ -561,7 +563,8 @@ pub fn decide(policy: &Policy, carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Ac
     for (repo, since) in &carry.base_pending {
         let in_flight = matches!(snap.open_batch.get(repo), Some(Read::Observed(Some(_)))) && snap.ci.contains_key(repo);
         let landed = matches!(snap.base_ci.get(repo), Some(Read::Observed(b)) if b.conclusion.is_some() && b.completed_at_ms.is_some_and(|at| at > *since));
-        if !in_flight && landed {
+        let expired = snap.now_ms.saturating_sub(*since) > BASE_PENDING_MAX_AGE_MS;
+        if !in_flight && (landed || expired) {
             p.next.base_pending.remove(repo);
         }
     }
@@ -990,6 +993,20 @@ mod tests {
 
         let calls = RefCell::new(vec![]);
         forge_reads(&rows, &batches, &next, &counted(&calls));
+        assert_eq!(calls.borrow().len(), 0);
+    }
+
+    #[test]
+    fn a_batch_closed_without_landing_stops_being_read_once_its_pending_entry_expires() {
+        let carry = Carry { base_pending: [("fa".to_string(), NOW)].into(), ..Carry::default() };
+        let at = |now_ms| Snapshot { now_ms, open_batch: [("fa".to_string(), Read::Observed(None))].into(), base_ci: [("fa".to_string(), Read::Observed(BaseCi::default()))].into(), ..Snapshot::default() };
+        let (young, _) = decide(&policy(), &carry, &at(NOW + BASE_PENDING_MAX_AGE_MS));
+        assert!(young.base_pending.contains_key("fa"));
+        let (old, _) = decide(&policy(), &carry, &at(NOW + BASE_PENDING_MAX_AGE_MS + 1));
+        assert!(old.base_pending.is_empty());
+        let rows = [row("fa", "queue")];
+        let calls = RefCell::new(vec![]);
+        forge_reads(&rows, &[("fa".to_string(), Read::Observed(None))].into(), &old, &counted(&calls));
         assert_eq!(calls.borrow().len(), 0);
     }
 
