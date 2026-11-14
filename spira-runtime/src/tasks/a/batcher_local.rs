@@ -572,6 +572,9 @@ pub struct RepoCarry {
     pub head: String,
     #[serde(default)]
     pub leg_head: String,
+    /// The head the attribution rebuilt the round tree at, which the certify that follows is for.
+    #[serde(default)]
+    pub certify_head: String,
     #[serde(default)]
     pub run: u32,
     /// Times the carried leg has been started again because it never ran or vanished.
@@ -648,6 +651,7 @@ impl RepoCarry {
             leg_at_ms: self.leg_at_ms,
             head: self.head.clone(),
             leg_head: self.leg_head.clone(),
+            certify_head: self.certify_head.clone(),
             run: self.run,
             leg_restarts: self.leg_restarts,
             leg_missing: self.leg_missing,
@@ -682,6 +686,7 @@ impl RepoCarry {
             leg_at_ms: round.leg_at_ms,
             head: round.head.clone(),
             leg_head: round.leg_head.clone(),
+            certify_head: round.certify_head.clone(),
             run: round.run,
             leg_restarts: round.leg_restarts,
             leg_missing: round.leg_missing,
@@ -921,6 +926,15 @@ pub fn unit_key(repo: &str, round: &str, what: &str, run: u32) -> String {
     format!("{}.{what}{run}", runtime::units::round_stem(repo, round))
 }
 
+/// `queue round certify`'s argv for `leg`: it names the head the leg is for when the attribution rebuilt the tree.
+pub fn certify_argv(queue_bin: &str, leg: &Leg) -> Vec<String> {
+    let mut argv = vec![queue_bin.to_string(), "round".into(), "certify".into(), leg.batch.clone(), leg.repo.clone()];
+    if !leg.head.is_empty() {
+        argv.extend(["--rehead".to_string(), leg.head.clone()]);
+    }
+    argv
+}
+
 /// Where a certify leg's output is kept, relative to the run's parent.
 pub fn certify_output_file(batch: &str, run: u32) -> String {
     format!("run/rounds/{batch}.certify-{run}.out")
@@ -1089,8 +1103,12 @@ impl Machine<'_> {
         let unit = unit_key(self.repo, &round, what, self.rc.run.max(1));
         self.rc.leg = Some(unit.clone());
         self.rc.leg_at_ms = self.now_ms;
-        self.rc.leg_head = self.rc.head.clone();
-        let leg = Leg { key: unit.clone(), unit, ..self.leg() };
+        if effect != CERTIFY {
+            self.rc.certify_head.clear();
+        }
+        let head = if self.rc.certify_head.is_empty() { self.rc.head.clone() } else { self.rc.certify_head.clone() };
+        self.rc.leg_head = head.clone();
+        let leg = Leg { key: unit.clone(), unit, head: if effect == CERTIFY { self.rc.certify_head.clone() } else { String::new() }, ..self.leg() };
         self.acts.push(leg.act(effect));
     }
 
@@ -1284,6 +1302,12 @@ impl Machine<'_> {
         true
     }
 
+    /// The live leg certifies the tree the attribution rebuilt and the store still names the head
+    /// the round had before it (`current`), or the rebuilt one.
+    fn certifying_rebuilt_head(&self, before: &str, current: &str) -> bool {
+        !self.rc.certify_head.is_empty() && self.rc.leg_head == self.rc.certify_head && current == before
+    }
+
     /// Follows the round's head. A leg started for an earlier head is orphaned: its result is
     /// never applied (`on_ran_with`), and the pass that replaced it decides the round. A green pass
     /// on the current head lands the round. True when the round was moved to land.
@@ -1292,13 +1316,14 @@ impl Machine<'_> {
         if open.head.is_empty() || !matches!(self.rc.state, State::Corpus | State::Attributing | State::Certifying) {
             return false;
         }
-        self.rc.head = open.head.clone();
+        let seen = std::mem::replace(&mut self.rc.head, open.head.clone());
         if self.rc.leg_head.is_empty() {
             self.rc.leg_head = open.head.clone();
         }
-        if self.rc.leg_head == open.head {
+        if self.rc.leg_head == open.head || self.certifying_rebuilt_head(&seen, &open.head) {
             return false;
         }
+        self.rc.certify_head.clear();
         eprintln!("{NAME} {}: round head moved {} -> {}: the step started for the old head is discarded", self.repo, self.rc.leg_head, open.head);
         self.rc.leg = None;
         if open.phase != "green" {
@@ -1595,6 +1620,9 @@ impl Machine<'_> {
             self.rc.leg_at_ms = self.now_ms;
             return;
         }
+        if self.rc.state == State::Certifying {
+            self.rc.certify_head.clear();
+        }
         let ok = green(exit);
         match (self.rc.state, ok) {
             (State::Corpus, true) => {
@@ -1610,7 +1638,10 @@ impl Machine<'_> {
                 self.attribute_after(Vec::new(), pass);
             }
             (State::Attributing, _) => match Attribution::parse(out) {
-                Some(Attribution::Land { members, mended, .. }) if !members.is_empty() => {
+                Some(Attribution::Land { members, mended, head, .. }) if !members.is_empty() => {
+                    if !head.is_empty() && head != self.rc.head {
+                        self.rc.certify_head = head;
+                    }
                     self.rc.members = members;
                     self.rc.round_key = Some(core::round_key(&self.rc.members));
                     if mended {
@@ -2095,7 +2126,8 @@ pub fn on_ran_seeing(carry: &Carry, ran: &UnitRan, out: &RanOutput, now_ms: u64,
     })?;
     let held = &rc.rounds()[at];
     let current = held.batch.as_deref().and_then(|b| head_of(repo, b)).filter(|h| !h.is_empty()).unwrap_or_else(|| held.head.clone());
-    if !current.is_empty() && !held.leg_head.is_empty() && current != held.leg_head {
+    let rebuilt = !held.certify_head.is_empty() && held.leg_head == held.certify_head && current == held.head;
+    if !current.is_empty() && !held.leg_head.is_empty() && current != held.leg_head && !rebuilt {
         eprintln!("{NAME} {repo}: step {key} was started for head {} and the round is at {current}: its result is discarded", held.leg_head);
         return None;
     }
@@ -2684,7 +2716,7 @@ pub mod edge {
     /// `queue round certify <batch> <repo>`, as a unit: the repo's own testenv or the gate.
     pub fn certify(e: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
         let (env, leg) = (env()?, leg(spec)?);
-        let argv = vec![env.queue_bin.display().to_string(), "round".into(), "certify".into(), leg.batch.clone(), leg.repo.clone()];
+        let argv = super::certify_argv(&env.queue_bin.display().to_string(), &leg);
         start_scope(e, super::NAME, &leg.unit, argv, home_vars(&env), None)
     }
 

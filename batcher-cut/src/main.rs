@@ -2232,6 +2232,7 @@ fn attribute_run(o: &Opts) -> Result<(), String> {
             members: members.into_iter().map(|m| (m.id, m.tip)).collect(),
             attribution_secs,
             mended,
+            head: io::head_of(&wt).unwrap_or_default(),
         },
         Ok(drive::RoundEnd::Blocked(why)) => Attribution::Blocked(why),
         Ok(drive::RoundEnd::Emptied(why)) => Attribution::Emptied(why),
