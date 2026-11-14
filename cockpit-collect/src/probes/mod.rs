@@ -684,6 +684,7 @@ pub fn slots_keys(cfg: &Cfg) -> Kv {
     let ceiling = ceiling_limit.shown().unwrap_or("?").to_string();
     push(&mut out, "SP_SLOTS_CEILING", ceiling.clone());
     push(&mut out, "SP_SLOTS_POOL", pool_limit.shown().unwrap_or("?").to_string());
+    push(&mut out, "SP_SLOTS_UNCONFIRMED", if ceiling_limit.held().is_some() && pool_limit.held().is_some() { "" } else { "1" }.to_string());
     let pending: Vec<(&str, &spira_config::scheduler_link::Pending)> = [("ceiling", &ceiling_limit), ("pool", &pool_limit)].into_iter().filter_map(|(n, l)| l.pending().map(|p| (n, p))).collect();
     push(&mut out, "SP_SLOTS_PENDING", pending.iter().map(|(n, p)| format!("{n} {}", p.config)).collect::<Vec<_>>().join(", "));
     push(&mut out, "SP_SLOTS_WAITS", pending.first().map(|(_, p)| p.waits.clone()).unwrap_or_default());

@@ -185,6 +185,8 @@ mod tests {
     fn slots_row_shows_a_pending_re_pin_and_the_directed_count() {
         let out = slots_frame("SP_SLOTS_LIVE='7'\nSP_SLOTS_CEILING='7'\nSP_SLOTS_FREE='0'\nSP_SLOTS_PENDING='ceiling 9'\nSP_SLOTS_WAITS='the batcher to finish the round it is driving'\nSP_SLOTS_DIRECTED='2'\n", 0);
         assert!(out.contains("7/7  0 free  config ceiling 9 pending, waiting for the batcher to finish the round it is driving  2 directed"), "{out}");
+        let silent = slots_frame("SP_SLOTS_LIVE='1'\nSP_SLOTS_CEILING='4'\nSP_SLOTS_FREE='3'\nSP_SLOTS_UNCONFIRMED='1'\n", 0);
+        assert!(silent.contains("scheduler not answering"), "{silent}");
         let quiet = slots_frame("SP_SLOTS_LIVE='1'\nSP_SLOTS_CEILING='4'\nSP_SLOTS_FREE='3'\nSP_SLOTS_PENDING=''\nSP_SLOTS_DIRECTED='0'\n", 0);
         assert!(!quiet.contains("pending") && !quiet.contains("directed"), "{quiet}");
     }

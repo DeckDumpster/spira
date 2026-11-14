@@ -252,12 +252,16 @@ pub fn slots_line(snap: &Snapshot) -> String {
         }
         None => String::new(),
     };
+    let unconfirmed = match snap.get("SP_SLOTS_UNCONFIRMED").map(|u| u.trim()) {
+        Some("1") => format!("  {WARN}config file values; scheduler not answering{RST}"),
+        _ => String::new(),
+    };
     let directed = match snap.get("SP_SLOTS_DIRECTED").map(|d| d.trim()) {
         Some("0") | Some("") | None => String::new(),
         Some(d) => format!("  {DIM}{d} directed{RST}"),
     };
     format!(
-        " {DIM}SLOTS{RST}   {B}{}/{}{RST}  {col}{free} free{RST}{split}{pending}{directed}",
+        " {DIM}SLOTS{RST}   {B}{}/{}{RST}  {col}{free} free{RST}{split}{pending}{unconfirmed}{directed}",
         snap.q("SP_SLOTS_LIVE"),
         snap.q("SP_SLOTS_CEILING"),
     )
