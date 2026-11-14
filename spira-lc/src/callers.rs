@@ -252,9 +252,10 @@ pub fn run(verb: &str, args: &[String], m: &mut dyn Machine) -> Answer {
         "deliver" => deliver(args, m),
         "certify" => {
             if !need(3) {
-                return usage("certify <bead-id> <tip> <pass|red|infra> [detail] [actor]");
+                return usage("certify <bead-id> <tip> <pass|red|infra> [detail] [actor] [step] [message]");
             }
-            certify(m, &a(0), &a(1), &a(2), &a(3), &actor_or(args.get(4), "lifecycle-cert"))
+            let red_at = RedAt { step: a(5), message: a(6) };
+            certify(m, &a(0), &a(1), &a(2), &a(3), &actor_or(args.get(4), "lifecycle-cert"), &red_at)
         }
         "resubmit" => {
             if !need(2) {
@@ -750,7 +751,21 @@ fn reach_submitted(m: &mut dyn Machine, id: &str, tip: &str, outcome: &str, deta
     Some((st, ver))
 }
 
-fn certify(m: &mut dyn Machine, id: &str, tip: &str, outcome: &str, detail: &str, actor: &str) -> Answer {
+/// Where a red gate failed: the fence or suite and its last output line, either possibly empty.
+#[derive(Default)]
+struct RedAt {
+    step: String,
+    message: String,
+}
+
+impl RedAt {
+    fn bounded(s: &str) -> Option<String> {
+        let s: String = s.chars().filter(|c| !c.is_control()).take(crate::facts::CAUSE_MAX).collect();
+        (!s.trim().is_empty()).then_some(s)
+    }
+}
+
+fn certify(m: &mut dyn Machine, id: &str, tip: &str, outcome: &str, detail: &str, actor: &str, red_at: &RedAt) -> Answer {
     let Some((state, version)) = reach_submitted(m, id, tip, outcome, detail, actor) else {
         return Answer::cert(CANNOT_TELL, "cannot-tell", "no lifecycle row yet".into());
     };
@@ -779,7 +794,7 @@ fn certify(m: &mut dyn Machine, id: &str, tip: &str, outcome: &str, detail: &str
     }
     let kind = match outcome {
         "pass" => BeadEventKind::GatePass { tip: tip.into(), gate_key: detail.into() },
-        "red" => BeadEventKind::GateRed { tip: tip.into(), reason: gate_red_reason(detail) },
+        "red" => BeadEventKind::GateRed { tip: tip.into(), reason: gate_red_reason(detail), step: RedAt::bounded(&red_at.step), message: RedAt::bounded(&red_at.message) },
         "infra" => BeadEventKind::GateInfra { tip: tip.into() },
         other => return Answer::cert(CANNOT_TELL, "cannot-tell", format!("unknown outcome {other}")),
     };
@@ -990,7 +1005,7 @@ fn reopen(m: &mut dyn Machine, id: &str, cause: &str, actor: &str) -> Answer {
         "READY" | "REWORK" => return Answer::code(APPLIED),
         "WORKING" => send(m, &state, &version, BeadEventKind::Release).0,
         "SUBMITTED" => {
-            let kind = BeadEventKind::GateRed { tip: bead_field(&v, "tip"), reason: gate_red_reason(cause) };
+            let kind = BeadEventKind::GateRed { tip: bead_field(&v, "tip"), reason: gate_red_reason(cause), step: None, message: None };
             send(m, &state, &version, kind).0
         }
         "IN_DELIVERY" => {

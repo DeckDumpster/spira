@@ -268,6 +268,6 @@ mod tests {
         let known = r#"{"GateRed":{"tip":"t1","reason":"suites-failed"}}"#;
         let parsed: crate::bead::BeadEventKind =
             serde_json::from_str(known).expect("a known reason must still parse");
-        assert_eq!(parsed, crate::bead::BeadEventKind::GateRed { tip: "t1".into(), reason: GateRedReason::SuitesFailed });
+        assert_eq!(parsed, crate::bead::BeadEventKind::GateRed { tip: "t1".into(), reason: GateRedReason::SuitesFailed, step: None, message: None });
     }
 }

@@ -612,6 +612,20 @@ fn certify_records_a_moved_tip_on_a_submitted_bead_before_a_pass_and_never_befor
 }
 
 #[test]
+fn a_red_certify_records_the_step_and_message_on_the_gate_red_and_omits_them_when_empty() {
+    let tip = "dddddddddddddddddddddddddddddddddddddddd";
+    let mut f = Fake::default();
+    f.bead("sp-r", BeadState::Working);
+    let a = go(&mut f, "certify", &["sp-r", tip, "red", "branch-red", "landing-pass", "fixture-config", "SPIRA_X is not declared"]);
+    assert_eq!(a.code, APPLIED);
+    assert_eq!(f.events[1].5, format!(r#"{{"GateRed":{{"tip":"{tip}","reason":"suites-failed","step":"fixture-config","message":"SPIRA_X is not declared"}}}}"#));
+    let mut f = Fake::default();
+    f.bead("sp-q", BeadState::Working);
+    go(&mut f, "certify", &["sp-q", tip, "red", "branch-red", "landing-pass", "", ""]);
+    assert_eq!(f.events[1].5, format!(r#"{{"GateRed":{{"tip":"{tip}","reason":"suites-failed"}}}}"#));
+}
+
+#[test]
 fn certify_skips_an_infra_verdict_on_a_tip_the_row_has_left() {
     let mut f = Fake::default();
     f.bead("sp-st", BeadState::Submitted).tip = Some("9191919191919191919191919191919191919191".into());

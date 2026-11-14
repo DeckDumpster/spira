@@ -343,7 +343,7 @@ fn batcher_corpus(w: &World, input: &str) -> Result<String, String> {
         if let Some(g) = guilty {
             let now = w.now();
             let tip = tip_of(g);
-            w.lc().due.push((now + ATTRIBUTE_MS - 1, Due::Event { bead: g.into(), actor: "batcher attribute".into(), kind: BeadEventKind::GateRed { tip, reason: GateRedReason::SuitesFailed } }));
+            w.lc().due.push((now + ATTRIBUTE_MS - 1, Due::Event { bead: g.into(), actor: "batcher attribute".into(), kind: BeadEventKind::GateRed { tip, reason: GateRedReason::SuitesFailed, step: None, message: None } }));
         }
         let line = format!("attribution\t{}\n", serde_json::json!({ "end": "land", "members": survivors, "attribution_secs": ATTRIBUTE_MS / 1000, "mended": false }));
         w.units.script(bl::NAME, ATTRIBUTE_MS, Exit::Code(0));

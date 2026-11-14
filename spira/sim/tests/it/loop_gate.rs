@@ -86,7 +86,7 @@ fn landing_pass(w: &World, s: &Shared) {
             let (_, verdict, _) = g.done.remove(at);
             let kind = match verdict.as_str() {
                 "PASS" => BeadEventKind::GatePass { tip, gate_key: format!("gate:{id}") },
-                "FAIL" => BeadEventKind::GateRed { tip, reason: GateRedReason::SuitesFailed },
+                "FAIL" => BeadEventKind::GateRed { tip, reason: GateRedReason::SuitesFailed, step: None, message: None },
                 _ => BeadEventKind::GateInfra { tip },
             };
             let _ = lc.apply(now, &id, "landing-pass", kind);

@@ -182,13 +182,9 @@ fn cmd_submit(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
         }
     }
     if row.ejected_red_tip.as_deref() == Some(tip.as_str()) {
-        return (
-            REFUSED,
-            format!(
-                "refused: {tip} is the tip a round ejected {bead_id} for as red{} — change the tree (fix the named reds) and commit again before resubmitting",
-                ejected_reasons(conn, bead_id, &tip).map(|r| format!(": {r}")).unwrap_or_default()
-            ),
-        );
+        let round = ejected_reasons(conn, bead_id, &tip);
+        let gate = if round.is_none() { gate_red_at(conn, bead_id, &tip) } else { None };
+        return (REFUSED, red_tip_refusal(bead_id, &tip, round.as_deref(), gate.as_ref()));
     }
     if let Some(refusal) = branch_refusal(conn, bead_id, &tip, &stack_tips) {
         return refusal;
@@ -539,6 +535,39 @@ fn record_target_verdict(bead_id: &str, verb: &str, args: &[String]) -> Result<(
         Ok(None) => Ok(()),
         Ok(Some(line)) => crate::bd::note(bead_id, &line).map(|_| ()).map_err(|e| (CANNOT_TELL, format!("cannot tell: {e}"))),
     }
+}
+
+/// What the gate recorded when it turned a tip red: the step and that step's message.
+struct GateRedAt {
+    step: Option<String>,
+    message: Option<String>,
+}
+
+/// The refusal for a tip already red: a round's eject names its reasons, anything else is the
+/// gate's red and names the step and message it recorded.
+fn red_tip_refusal(bead_id: &str, tip: &str, round: Option<&str>, gate: Option<&GateRedAt>) -> String {
+    let next = "change the tree (fix the named reds, rebase) and commit again before resubmitting";
+    if let (None, Some(g)) = (round, gate) {
+        let step = g.step.as_deref().map(|s| format!(" at step {s}")).unwrap_or_default();
+        let message = g.message.as_deref().map(|m| format!(": {m}")).unwrap_or_default();
+        return format!("refused: {tip} is the tip the gate turned red for {bead_id}{step}{message} — {next}");
+    }
+    let why = round.map(|r| format!(": {r}")).unwrap_or_default();
+    format!("refused: {tip} is the tip a round ejected {bead_id} for as red{why} — {next}")
+}
+
+fn gate_red_at(conn: &Conn, bead_id: &str, tip: &str) -> Option<GateRedAt> {
+    let sql = format!(
+        "SELECT JSON_UNQUOTE(JSON_EXTRACT(e.evidence, '$.GateRed.step')) AS step, JSON_UNQUOTE(JSON_EXTRACT(e.evidence, '$.GateRed.message')) AS message FROM event e \
+         WHERE e.machine = 'bead' AND e.event = 'GateRed' AND e.lc_key = '{b}' \
+           AND JSON_UNQUOTE(JSON_EXTRACT(e.evidence, '$.GateRed.tip')) = '{t}' ORDER BY e.seq DESC LIMIT 1",
+        b = rows::escape(bead_id),
+        t = rows::escape(tip)
+    );
+    let found = conn.query(&sql).ok()?;
+    let row = found.first()?;
+    let text = |k: &str| row.get(k).and_then(|v| v.as_str()).filter(|v| !v.is_empty() && *v != "null").map(str::to_string);
+    Some(GateRedAt { step: text("step"), message: text("message") })
 }
 
 fn ejected_reasons(conn: &Conn, bead_id: &str, tip: &str) -> Option<String> {
@@ -2327,6 +2356,16 @@ mod tests {
     }
 
     const TIP: &str = "3333333333333333333333333333333333333333";
+
+    #[test]
+    fn a_gate_red_tip_is_refused_saying_gate_with_the_step_and_message_and_a_round_eject_still_says_round() {
+        let gate = super::GateRedAt { step: Some("fixture-config".into()), message: Some("SPIRA_X is not declared".into()) };
+        let said = super::red_tip_refusal("sp-a", "abc", None, Some(&gate));
+        assert!(said.contains("the gate") && said.contains("fixture-config") && said.contains("SPIRA_X is not declared") && !said.contains("round"), "{said}");
+        let round = super::red_tip_refusal("sp-a", "abc", Some("unit-tests"), Some(&gate));
+        assert!(round.contains("a round ejected") && round.contains("unit-tests") && !round.contains("fixture-config"), "{round}");
+        assert!(super::red_tip_refusal("sp-a", "abc", None, None).contains("a round ejected"));
+    }
 
     #[test]
     fn a_resubmit_without_a_passing_run_of_the_ejected_suite_is_refused_naming_it() {

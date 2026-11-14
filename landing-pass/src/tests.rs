@@ -444,6 +444,7 @@ struct FakeLc {
     probes: Cell<u32>,
     down: RefCell<Option<String>>,
     certified: RefCell<Vec<String>>,
+    reds: RefCell<Vec<String>>,
     refuse_pass: Cell<bool>,
     held_tip: RefCell<Option<String>>,
     resubmits: RefCell<Vec<String>>,
@@ -460,6 +461,10 @@ impl crate::lifecycle::Lc for FakeLc {
             return Err("spira-lc certify exited 3: refused".into());
         }
         Ok("applied".into())
+    }
+    fn certify_red(&self, id: &str, tip: &str, reason: &str, step: &str, message: &str) -> Result<String, String> {
+        self.reds.borrow_mut().push(format!("{id} {tip} {reason} step={step} message={message}"));
+        self.certify(id, tip, "red", reason)
     }
     fn resubmit_submitted(&self, id: &str, tip: &str) -> Result<String, String> {
         self.resubmits.borrow_mut().push(format!("{id} {tip}"));
@@ -907,6 +912,19 @@ fn a_gate_that_dies_twice_on_one_bead_is_that_beads_red_with_the_gates_output() 
     let reopen = h.lib.find("reopen sp-a cert-gate-red");
     assert!(reopen.contains("test:77-215"), "the dead gate's own tail: {reopen}");
     assert!(reopen.contains("could not finish") && reopen.contains("2 times"), "{reopen}");
+}
+
+#[test]
+fn a_red_fence_is_recorded_on_the_lifecycle_and_quoted_on_the_bead_by_name_and_message() {
+    let h = H::new(LandMode::Queue);
+    h.closed("sp-a", "t1");
+    let msg = "gate fixture-config: spira/testlib/complete.toml does not resolve against the landing ref";
+    let out = format!("{msg}\ngate-step RED rc=1 :: fixture-config\ngate: VERDICT=FAIL reason=branch-red branch=spira/sp-a repo=spira suite=fixture-config\n");
+    h.tools.gates.borrow_mut().insert("spira/sp-a".into(), (1, out));
+    h.run();
+    assert_eq!(*h.lc.reds.borrow(), vec![format!("sp-a t1 branch-red step=fixture-config message={msg}")]);
+    let note = h.lib.calls.borrow().join("\n");
+    assert!(note.contains("Failed step: fixture-config") && note.contains(&format!("Message: {msg}")), "{note}");
 }
 
 #[test]

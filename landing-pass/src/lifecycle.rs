@@ -10,6 +10,10 @@ pub trait Lc {
     fn probe(&self) -> Result<(), String>;
     /// `spira-lc certify <id> <tip> <pass|red|infra> <detail>`: the gate outcome as an event.
     fn certify(&self, id: &str, tip: &str, outcome: &str, detail: &str) -> Result<String, String>;
+    /// A red `certify` that also names the step it failed at and that step's last output line.
+    fn certify_red(&self, id: &str, tip: &str, reason: &str, _step: &str, _message: &str) -> Result<String, String> {
+        self.certify(id, tip, "red", reason)
+    }
     /// `spira-lc resubmit-submitted <id> <tip>`: make a SUBMITTED row hold the branch tip the gate judged.
     fn resubmit_submitted(&self, id: &str, tip: &str) -> Result<String, String>;
     /// `spira-lc list --state SUBMITTED,CERTIFIED --repo <name>`: each waiting row's `(id, tip)`; a row with no tip is omitted.
@@ -43,6 +47,18 @@ pub struct RealLc {
     pub client: Option<LcClient>,
 }
 
+impl RealLc {
+    fn certify_at(&self, id: &str, tip: &str, outcome: &str, detail: &str, step: &str, message: &str) -> Result<String, String> {
+        let c = client(self.client.as_ref(), self.bin.as_deref())?;
+        let (rc, so, se) = run(&c, &["certify", id, tip, outcome, detail, "landing-pass", step, message]);
+        let out = so.trim().to_string();
+        if rc != 0 {
+            return Err(format!("spira-lc certify exited {rc}: {out} {}", se.lines().next().unwrap_or("")));
+        }
+        Ok(out)
+    }
+}
+
 impl Lc for RealLc {
     fn probe(&self) -> Result<(), String> {
         let c = client(self.client.as_ref(), self.bin.as_deref())?;
@@ -54,13 +70,11 @@ impl Lc for RealLc {
     }
 
     fn certify(&self, id: &str, tip: &str, outcome: &str, detail: &str) -> Result<String, String> {
-        let c = client(self.client.as_ref(), self.bin.as_deref())?;
-        let (rc, so, se) = run(&c, &["certify", id, tip, outcome, detail, "landing-pass"]);
-        let out = so.trim().to_string();
-        if rc != 0 {
-            return Err(format!("spira-lc certify exited {rc}: {out} {}", se.lines().next().unwrap_or("")));
-        }
-        Ok(out)
+        self.certify_at(id, tip, outcome, detail, "", "")
+    }
+
+    fn certify_red(&self, id: &str, tip: &str, reason: &str, step: &str, message: &str) -> Result<String, String> {
+        self.certify_at(id, tip, "red", reason, step, message)
     }
 
     fn waiting_tips(&self, repo: &str) -> Result<Vec<(String, String)>, String> {

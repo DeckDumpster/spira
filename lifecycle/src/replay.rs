@@ -81,7 +81,7 @@ mod tests {
         let log = vec![
             bead_ev(BeadState::Ready, 0, BeadEventKind::Claim { holder: "dwarf-1".into(), lease_until: 10, stack: bead::Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None, directed: None }),
             bead_ev(BeadState::Working, 1, BeadEventKind::Submit { tip: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into() }),
-            bead_ev(BeadState::Submitted, 2, BeadEventKind::GateRed { tip: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(), reason: GateRedReason::SuitesFailed }),
+            bead_ev(BeadState::Submitted, 2, BeadEventKind::GateRed { tip: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(), reason: GateRedReason::SuitesFailed, step: None, message: None }),
             bead_ev(BeadState::Rework, 3, BeadEventKind::Claim { holder: "dwarf-2".into(), lease_until: 20, stack: bead::Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None, directed: None }),
         ];
 

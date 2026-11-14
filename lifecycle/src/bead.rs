@@ -267,7 +267,9 @@ pub enum BeadEventKind {
     Submit { tip: String },
     Done { delivers: String },
     GatePass { tip: String, gate_key: String },
-    GateRed { tip: String, reason: GateRedReason },
+    /// `step` and `message` name where the gate went red (the fence or suite, and its last output
+    /// line); absent on a red whose producer saw neither.
+    GateRed { tip: String, reason: GateRedReason, #[serde(default, skip_serializing_if = "Option::is_none")] step: Option<String>, #[serde(default, skip_serializing_if = "Option::is_none")] message: Option<String> },
     GateInfra { tip: String },
     Deliver,
     Delivered { merge_sha: String, proof: String },
@@ -973,7 +975,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
                 new.version += 1;
                 Outcome::applied(new)
             }
-            GateRed { tip, reason } => {
+            GateRed { tip, reason, .. } => {
                 if row.tip.as_deref() != Some(tip.as_str()) {
                     return tip_mismatch(row, tip);
                 }
@@ -1064,7 +1066,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
                 new.version += 1;
                 Outcome::applied(new)
             }
-            GateRed { tip, reason } => {
+            GateRed { tip, reason, .. } => {
                 if row.tip.as_deref() != Some(tip.as_str()) {
                     return tip_mismatch(row, tip);
                 }
@@ -1155,7 +1157,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             }
             // A red verdict that lands while the bead is already in a round is recorded, not
             // dropped: the row stays IN_DELIVERY and its reason marks the member for eject.
-            GateRed { tip, reason } => {
+            GateRed { tip, reason, .. } => {
                 if row.tip.as_deref() != Some(tip.as_str()) {
                     return tip_mismatch(row, tip);
                 }
@@ -1395,7 +1397,7 @@ fn edge_probes() -> Vec<BeadEventKind> {
         BeadEventKind::Submit { tip: OTHER_TIP.into() },
         BeadEventKind::Done { delivers: "d".into() },
         BeadEventKind::GatePass { tip: TIP.into(), gate_key: "k".into() },
-        BeadEventKind::GateRed { tip: TIP.into(), reason: GateRedReason::SuitesFailed },
+        BeadEventKind::GateRed { tip: TIP.into(), reason: GateRedReason::SuitesFailed, step: None, message: None },
         BeadEventKind::GateInfra { tip: TIP.into() },
         BeadEventKind::Deliver,
         BeadEventKind::Delivered { merge_sha: "s".into(), proof: "p".into() },
@@ -1521,7 +1523,7 @@ mod tests {
             BeadEventKind::Submit { tip: "1111111111111111111111111111111111111111".into() },
             BeadEventKind::Done { delivers: "d".into() },
             BeadEventKind::GatePass { tip: "1111111111111111111111111111111111111111".into(), gate_key: "k".into() },
-            BeadEventKind::GateRed { tip: "1111111111111111111111111111111111111111".into(), reason: GateRedReason::SuitesFailed },
+            BeadEventKind::GateRed { tip: "1111111111111111111111111111111111111111".into(), reason: GateRedReason::SuitesFailed, step: None, message: None },
             BeadEventKind::GateInfra { tip: "1111111111111111111111111111111111111111".into() },
             BeadEventKind::Deliver,
             BeadEventKind::Delivered { merge_sha: "s".into(), proof: "p".into() },
@@ -2351,8 +2353,8 @@ mod tests {
         let cases = [
             (BeadState::InDelivery, BeadEventKind::Returned { reason: ReturnedReason::BatchEjected }),
             (BeadState::InDelivery, BeadEventKind::Returned { reason: ReturnedReason::BatchEjectedRed }),
-            (BeadState::Submitted, BeadEventKind::GateRed { tip: "1111111111111111111111111111111111111111".into(), reason: GateRedReason::NoRebase }),
-            (BeadState::Certified, BeadEventKind::GateRed { tip: "1111111111111111111111111111111111111111".into(), reason: GateRedReason::NoRebase }),
+            (BeadState::Submitted, BeadEventKind::GateRed { tip: "1111111111111111111111111111111111111111".into(), reason: GateRedReason::NoRebase, step: None, message: None }),
+            (BeadState::Certified, BeadEventKind::GateRed { tip: "1111111111111111111111111111111111111111".into(), reason: GateRedReason::NoRebase, step: None, message: None }),
         ];
         for (state, kind) in cases {
             let r = held(state);
@@ -2369,7 +2371,7 @@ mod tests {
             r.tip = Some("1111111111111111111111111111111111111111".into());
             apply(&r, &ev(state, r.version, kind)).row.ejected_red_tip
         };
-        let red = |reason| BeadEventKind::GateRed { tip: "1111111111111111111111111111111111111111".into(), reason };
+        let red = |reason| BeadEventKind::GateRed { tip: "1111111111111111111111111111111111111111".into(), reason, step: None, message: None };
         for state in [BeadState::Submitted, BeadState::Certified] {
             assert_eq!(go(state, red(GateRedReason::SuitesFailed)).as_deref(), Some("1111111111111111111111111111111111111111"), "{state:?}");
             assert_eq!(go(state, red(GateRedReason::NoRebase)), None, "{state:?}");
@@ -2425,7 +2427,7 @@ mod tests {
     fn a_pr_red_bead_resubmitted_at_the_same_tip_is_refused() {
         let mut r = row(BeadState::Submitted);
         r.tip = Some("1111111111111111111111111111111111111111".into());
-        let red = apply(&r, &ev(BeadState::Submitted, r.version, BeadEventKind::GateRed { tip: "1111111111111111111111111111111111111111".into(), reason: GateRedReason::SuitesFailed }));
+        let red = apply(&r, &ev(BeadState::Submitted, r.version, BeadEventKind::GateRed { tip: "1111111111111111111111111111111111111111".into(), reason: GateRedReason::SuitesFailed, step: None, message: None }));
         let claimed = apply(&red.row, &ev(BeadState::Rework, red.row.version, BeadEventKind::Claim { holder: "h".into(), lease_until: 9, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None, directed: None }));
         let again = apply(&claimed.row, &ev(BeadState::Working, claimed.row.version, BeadEventKind::Submit { tip: "1111111111111111111111111111111111111111".into() }));
         assert_eq!(again.refusal, Some(Refusal::EjectedRedTip { tip: "1111111111111111111111111111111111111111".into() }));
@@ -2454,7 +2456,7 @@ mod tests {
         for reason in ALL_GATE_RED_REASONS {
             let mut r = row(BeadState::Submitted);
             r.tip = Some("1111111111111111111111111111111111111111".into());
-            let out = apply(&r, &ev(BeadState::Submitted, 0, BeadEventKind::GateRed { tip: "1111111111111111111111111111111111111111".into(), reason }));
+            let out = apply(&r, &ev(BeadState::Submitted, 0, BeadEventKind::GateRed { tip: "1111111111111111111111111111111111111111".into(), reason, step: None, message: None }));
             assert!(out.applied, "{reason:?} should move SUBMITTED to REWORK");
             assert_eq!(out.row.state, BeadState::Rework);
             assert_eq!(out.row.reason.as_deref(), Some(reason.as_str()));
@@ -2466,11 +2468,11 @@ mod tests {
         let mut r = row(BeadState::Certified);
         r.tip = Some("1111111111111111111111111111111111111111".into());
         r.gate_key = Some("k".into());
-        let red = BeadEventKind::GateRed { tip: "1111111111111111111111111111111111111111".into(), reason: GateRedReason::NoRebase };
+        let red = BeadEventKind::GateRed { tip: "1111111111111111111111111111111111111111".into(), reason: GateRedReason::NoRebase, step: None, message: None };
         let out = apply(&r, &ev(BeadState::Certified, r.version, red));
         assert!(out.applied);
         assert_eq!((out.row.state, out.row.reason.as_deref(), out.row.gate_key.as_deref()), (BeadState::Rework, Some("no-rebase"), None));
-        let stale = BeadEventKind::GateRed { tip: "0000000000000000000000000000000000000000".into(), reason: GateRedReason::NoRebase };
+        let stale = BeadEventKind::GateRed { tip: "0000000000000000000000000000000000000000".into(), reason: GateRedReason::NoRebase, step: None, message: None };
         let out = apply(&r, &ev(BeadState::Certified, r.version, stale));
         assert!(matches!(out.refusal, Some(Refusal::TipMismatch { .. })));
     }
@@ -2585,7 +2587,7 @@ mod tests {
     fn stacked_red_row() -> BeadRow {
         let claimed = apply(&row(BeadState::Ready), &claim_ev(BeadState::Ready, 0, stack_of("8888888888888888888888888888888888888888"), 1, 4)).row;
         let submitted = apply(&claimed, &ev(BeadState::Working, claimed.version, BeadEventKind::Submit { tip: "1111111111111111111111111111111111111111".into() })).row;
-        let red = apply(&submitted, &ev(BeadState::Submitted, submitted.version, BeadEventKind::GateRed { tip: "1111111111111111111111111111111111111111".into(), reason: GateRedReason::SuitesFailed }));
+        let red = apply(&submitted, &ev(BeadState::Submitted, submitted.version, BeadEventKind::GateRed { tip: "1111111111111111111111111111111111111111".into(), reason: GateRedReason::SuitesFailed, step: None, message: None }));
         assert!(red.applied);
         red.row
     }
@@ -2787,7 +2789,7 @@ mod tests {
     fn a_red_verdict_at_the_tip_is_recorded_on_an_in_delivery_row_and_marks_it_for_eject() {
         let mut r = claimed_row(BeadState::InDelivery, "sp-a", "1111111111111111111111111111111111111111");
         r.tip = Some("1111111111111111111111111111111111111111".into());
-        let red = BeadEventKind::GateRed { tip: "1111111111111111111111111111111111111111".into(), reason: GateRedReason::SuitesFailed };
+        let red = BeadEventKind::GateRed { tip: "1111111111111111111111111111111111111111".into(), reason: GateRedReason::SuitesFailed, step: None, message: None };
         let out = apply(&r, &ev(BeadState::InDelivery, r.version, red));
         assert!(out.applied, "{:?}", out.refusal);
         assert_eq!(out.row.state, BeadState::InDelivery);
@@ -2799,7 +2801,7 @@ mod tests {
     fn a_red_verdict_at_a_superseded_tip_changes_nothing_on_an_in_delivery_row() {
         let mut r = claimed_row(BeadState::InDelivery, "sp-a", "2222222222222222222222222222222222222222");
         r.tip = Some("2222222222222222222222222222222222222222".into());
-        let red = BeadEventKind::GateRed { tip: "1111111111111111111111111111111111111111".into(), reason: GateRedReason::SuitesFailed };
+        let red = BeadEventKind::GateRed { tip: "1111111111111111111111111111111111111111".into(), reason: GateRedReason::SuitesFailed, step: None, message: None };
         let out = apply(&r, &ev(BeadState::InDelivery, r.version, red));
         assert!(!out.applied);
         assert!(matches!(out.refusal, Some(Refusal::TipMismatch { .. })), "{:?}", out.refusal);
