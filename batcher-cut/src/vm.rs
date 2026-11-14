@@ -1352,7 +1352,7 @@ mod tests {
     fn a_base_blamed_lint_finding_is_the_member_whose_diff_touches_the_path_it_names() {
         let ms = [member("sp-owner1"), member("sp-other2")];
         let one = changed_of(&[
-            ("sp-owner1", &["spira/lib-test-install.sh", "spira/aeon.sh"]),
+            ("sp-owner1", &["spira/lib-test-install.sh", "spira/other.sh"]),
             ("sp-other2", &["batcher/src/core.rs"]),
         ]);
         assert_eq!(
@@ -1365,7 +1365,7 @@ mod tests {
         ]);
         assert_eq!(named_path_owner(BASE_LINE, &ms, &both), None);
         let neither = changed_of(&[
-            ("sp-owner1", &["spira/aeon.sh"]),
+            ("sp-owner1", &["spira/other.sh"]),
             ("sp-other2", &["batcher/src/core.rs"]),
         ]);
         assert_eq!(named_path_owner(BASE_LINE, &ms, &neither), None);
@@ -1377,7 +1377,7 @@ mod tests {
         let d = testkit::TempDir::new("vm-filter-red-path");
         let ms = [member("sp-owner1"), member("sp-other2")];
         let changed = changed_of(&[
-            ("sp-owner1", &["spira/lib-test-install.sh", "spira/aeon.sh"]),
+            ("sp-owner1", &["spira/lib-test-install.sh", "spira/other.sh"]),
             ("sp-other2", &["batcher/src/core.rs"]),
         ]);
         fs::write(d.path().join("spira-lint.result"), "red 1 2 - - - 1\n").unwrap();
