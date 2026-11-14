@@ -844,7 +844,13 @@ fn cmd_file(bead_id: &str, args: &[String], verb: &str, conn: &Conn) -> (i32, St
                 Ok(()) => (0, new_id),
                 Err(e) => (CANNOT_TELL, format!("{new_id} was filed but could not be marked a split child, so it would be claimable before {bead_id} lands (do not file it again; add the label {}): {e}", spira_config::nonwork::SPLIT_LABEL)),
             },
-            (0, _) => (0, new_id),
+            (0, _) => match blocking_edge(verb, flag(args, "--actor").as_deref().unwrap_or(""), bead_id, &new_id) {
+                Some((blocked, blocker)) => match crate::bd::add_blocker(blocked, blocker) {
+                    Ok(()) => (0, new_id),
+                    Err(e) => (CANNOT_TELL, format!("{new_id} was filed but {bead_id} could not be made to wait on it (do not file it again; add the dependency): {e}")),
+                },
+                None => (0, new_id),
+            },
             (_, e) => (
                 CANNOT_TELL,
                 format!("LIFECYCLE: {new_id} was filed but has NO lifecycle row and cannot be claimed (do not file it again): {e}"),
@@ -852,6 +858,12 @@ fn cmd_file(bead_id: &str, args: &[String], verb: &str, conn: &Conn) -> (i32, St
         },
         Err(e) => (CANNOT_TELL, format!("cannot tell: {e}")),
     }
+}
+
+/// A pilgrimage is called again only when its defects land, so a pilgrim's filing blocks the bound
+/// bead on the new one: `(blocked, blocker)`.
+fn blocking_edge<'a>(verb: &str, actor: &str, bound: &'a str, new_id: &'a str) -> Option<(&'a str, &'a str)> {
+    (verb == "file-followup" && actor == "pilgrim").then_some((bound, new_id))
 }
 
 /// The persona a filing takes its partition from: a `file-followup` goes to the lane its filer's
@@ -2009,6 +2021,48 @@ mod tests {
         assert_eq!(at("builder"), "builder");
         assert_eq!(at("archivist"), "archivist");
         assert_eq!(super::filed_as("split", "pilgrim").unwrap(), "pilgrim");
+    }
+
+    #[test]
+    fn a_pilgrims_follow_up_blocks_the_bound_bead_on_the_new_one_and_a_builders_does_not() {
+        assert_eq!(super::blocking_edge("file-followup", "pilgrim", "sp-walk", "sp-new"), Some(("sp-walk", "sp-new")));
+        assert_eq!(super::blocking_edge("file-followup", "builder", "sp-b", "sp-new"), None);
+        assert_eq!(super::blocking_edge("split", "pilgrim", "sp-walk", "sp-new"), None);
+    }
+
+    #[test]
+    fn every_work_verb_a_persona_prompt_names_is_in_that_personas_allow_row() {
+        let runes = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/runes");
+        let mut bad = vec![];
+        for e in std::fs::read_dir(&runes).unwrap().flatten() {
+            let path = e.path();
+            if path.extension().and_then(|x| x.to_str()) != Some("md") {
+                continue;
+            }
+            let persona = path.file_stem().unwrap().to_string_lossy().into_owned();
+            for line in std::fs::read_to_string(&path).unwrap().lines() {
+                let mut words = line.split_whitespace().map(|w| w.trim_matches(|c: char| "`'\"(),.:;".contains(c)));
+                while let Some(w) = words.next() {
+                    if w != "work" {
+                        continue;
+                    }
+                    let Some(verb) = words.next() else { break };
+                    let is_verb = BOUND_VERBS.contains(&verb) || LANE_VERBS.contains(&verb);
+                    if !is_verb {
+                        continue;
+                    }
+                    let sub: Vec<String> = words.clone().next().map(|x| vec![x.to_string()]).unwrap_or_default();
+                    let op = super::op_key(verb, &sub);
+                    let op = if ALLOW.iter().any(|(k, _)| *k == op) { op } else { verb.to_string() };
+                    if super::permitted(&op, Some(&persona)).is_err() {
+                        bad.push(format!("{persona}.md: `work {op}`"));
+                    }
+                }
+            }
+        }
+        bad.sort();
+        bad.dedup();
+        assert!(bad.is_empty(), "prompt names verbs its persona may not run: {bad:?}");
     }
 
     #[test]

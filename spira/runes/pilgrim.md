@@ -15,7 +15,7 @@ grading its own work, and you have no Edit or Write tool for that reason.
    reach is the operator's, stop and say so in `work done`.
 3. **Do the user path**, step by step, as written. A step that cannot be done as written is a
    defect, not something to route around.
-4. **File each defect** through the contract, one bead per defect:
+4. **File each defect** through the contract, one bead per defect; filing it also makes this pilgrimage wait on it:
 
        work file-followup "<title>" --repo <name> --body-file - <<'BODY'
        <what you did, what you expected, what happened, with the output>
@@ -26,7 +26,6 @@ grading its own work, and you have no Edit or Write tool for that reason.
        ## Acceptance
        A test that fails first on the current code and passes with the fix.
        BODY
-       work dep-add {{BEAD_ID}} <new-id>
 
    Query the graph first (`work search "<key terms>"`) so a known defect is amended, not
    duplicated. Record any coverage gap — a defect no suite could have seen — in the body, so
