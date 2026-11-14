@@ -26,12 +26,17 @@ pub fn blocks(id: &str, read: &ClaimRead) -> Vec<String> {
         .collect()
 }
 
-pub fn run(ids: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) -> Answer {
-    if ids.is_empty() {
-        return Answer { code: CANNOT_TELL, stderr: format!("usage: spira-lc {VERB} <bead-id>...\n"), ..Default::default() };
+pub const ONLY_IF_UNSET: &str = "--only-if-unset";
+
+pub fn run(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) -> Answer {
+    let only_if_unset = args.iter().any(|a| a == ONLY_IF_UNSET);
+    let ids: Vec<&String> = args.iter().filter(|a| *a != ONLY_IF_UNSET).collect();
+    if ids.is_empty() || ids.iter().any(|a| a.starts_with('-')) {
+        return Answer { code: CANNOT_TELL, stderr: format!("usage: spira-lc {VERB} [{ONLY_IF_UNSET}] <bead-id>...\n"), ..Default::default() };
     }
-    let (mut worst, mut said) = (0, String::new());
+    let (mut worst, mut said, mut kept) = (0, String::new(), String::new());
     for id in ids {
+        let id: &String = id;
         let (code, why) = match bd.claim_read(id) {
             Err(e) => (CANNOT_TELL, format!("{id}: the content store cannot be read: {}", e.trim())),
             Ok(None) => (NO_ROW, format!("{id}: no such bead in the content store")),
@@ -40,7 +45,13 @@ pub fn run(ids: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) -> Answer {
                 argv.extend(blocks(id, &read).into_iter().flat_map(|b| ["--block".to_string(), b]));
                 argv.extend(read.parent.iter().flat_map(|p| ["--parent".to_string(), p.clone()]));
                 argv.extend(read.labels.iter().flat_map(|l| ["--label".to_string(), l.clone()]));
+                if only_if_unset {
+                    argv.push(ONLY_IF_UNSET.to_string());
+                }
                 let (code, out) = m.call(&argv);
+                if code == 0 && out.trim().starts_with("kept ") {
+                    kept.push_str(&format!("kept {id}: already written\n"));
+                }
                 (code, if code == 0 { String::new() } else { format!("{id}: {}", out.trim()) })
             }
         };
@@ -49,7 +60,7 @@ pub fn run(ids: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) -> Answer {
             said.push_str(&format!("{why}\n"));
         }
     }
-    Answer { code: worst, stderr: said, ..Default::default() }
+    Answer { code: worst, stdout: kept, stderr: said, ..Default::default() }
 }
 
 #[cfg(test)]

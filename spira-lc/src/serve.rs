@@ -1255,6 +1255,22 @@ mod tests {
     }
 
     #[test]
+    fn sync_claim_inputs_only_if_unset_keeps_a_written_claim_and_fills_a_null_one() {
+        let (world, client) = filed_world(&["incident"], Some("sp-e"));
+        {
+            let w = world.0.lock().unwrap();
+            w.file("sp-set", "task", None, &["other"]);
+            w.ok(&["create-bead", "sp-set", "--ready"]);
+            w.ok(&["set-claim-inputs", "sp-set", "--block", "sp-b"]);
+        }
+        let reply = client.call(&["sync-claim-inputs", "--only-if-unset", "sp-set", "sp-new"]).unwrap();
+        assert_eq!(reply.code, 0, "{}", reply.text());
+        assert!(reply.text().contains("kept sp-set: already written") && !reply.text().contains("kept sp-new"), "{}", reply.text());
+        assert_eq!(listed_row(&world, "sp-set")["claim"], serde_json::json!({"blocks": ["sp-b"], "parent": null, "labels": []}));
+        assert_eq!(listed_row(&world, "sp-new")["claim"], serde_json::json!({"blocks": [], "parent": "sp-e", "labels": ["incident"]}));
+    }
+
+    #[test]
     fn syncing_an_id_with_no_record_names_it_and_makes_none() {
         let world = std::sync::Arc::new(InProcess(std::sync::Mutex::new(World::new())));
         world.0.lock().unwrap().file("sp-ghost", "task", None, &[]);
