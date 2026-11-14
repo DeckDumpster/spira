@@ -110,24 +110,43 @@ fn vmid_of(name: &str) -> String {
 /// The check runs that judge a PR on `branch`, each `(name, STATUS, CONCLUSION)`. A commit's check
 /// runs are every run at that head, whichever branch it ran for: a head published once as a PR
 /// that went red and again as a new PR carries the old PR's failures too. `runs` are the commit's
-/// workflow runs; a check a workflow run owns counts only when that run is the latest of its
+/// workflow runs; a cancelled run a newer run of its workflow replaced is pending or dropped, by
+/// that run's state, and a check a workflow run owns counts only when that run is the latest of its
 /// workflow on `branch`, and a check no workflow run owns (an app's own check) always counts.
 pub fn current_checks(check_runs: &[Value], runs: &[Value], branch: &str) -> Vec<(String, String, String)> {
     let suite = |v: &Value, key: &str| v.pointer(key).and_then(Value::as_u64);
     let owned: BTreeSet<u64> = runs.iter().filter_map(|r| suite(r, "/check_suite_id")).collect();
+    let workflow_of = |r: &Value| r["workflow_id"].as_u64().map_or_else(|| text(r, "name"), |w| w.to_string());
     let mut latest: BTreeMap<String, (u64, u64)> = BTreeMap::new();
     for r in runs.iter().filter(|r| r["head_branch"].as_str() == Some(branch)) {
         let (Some(id), Some(s)) = (r["id"].as_u64(), suite(r, "/check_suite_id")) else { continue };
-        let workflow = r["workflow_id"].as_u64().map_or_else(|| text(r, "name"), |w| w.to_string());
+        let workflow = workflow_of(r);
         if latest.get(&workflow).is_none_or(|(newest, _)| id > *newest) {
             latest.insert(workflow, (id, s));
         }
     }
     let current: BTreeSet<u64> = latest.values().map(|(_, s)| *s).collect();
+    // Cancelled checks of a run a newer run of the same workflow replaced, by that run's state.
+    let mut replaced: BTreeMap<u64, bool> = BTreeMap::new();
+    for r in runs.iter().filter(|r| r["conclusion"].as_str() == Some("cancelled")) {
+        let (Some(id), Some(s)) = (r["id"].as_u64(), suite(r, "/check_suite_id")) else { continue };
+        let newer = runs.iter().filter(|n| n["id"].as_u64() > Some(id) && workflow_of(n) == workflow_of(r));
+        let pending = newer.clone().any(|n| n["status"].as_str() != Some("completed"));
+        if pending || newer.clone().any(|n| n["conclusion"].as_str() == Some("success")) {
+            replaced.insert(s, pending);
+        }
+    }
     check_runs
         .iter()
         .filter(|c| suite(c, "/check_suite/id").is_none_or(|s| !owned.contains(&s) || current.contains(&s)))
-        .map(|c| (text(c, "name"), text(c, "status").to_uppercase(), text(c, "conclusion").to_uppercase()))
+        .filter_map(|c| {
+            let (name, status, conclusion) = (text(c, "name"), text(c, "status").to_uppercase(), text(c, "conclusion").to_uppercase());
+            match (conclusion == "CANCELLED").then(|| suite(c, "/check_suite/id").and_then(|s| replaced.get(&s))).flatten() {
+                Some(true) => Some((name, "IN_PROGRESS".into(), String::new())),
+                Some(false) => None,
+                None => Some((name, status, conclusion)),
+            }
+        })
         .collect()
 }
 
@@ -385,6 +404,36 @@ mod tests {
         assert_eq!(names, ["provision", "gate", "tag", "lint-app"]);
         // On PR 988's own branch the same commit is red.
         assert_eq!(classify(&current_checks(&checks, &runs, "spira/publish/20261107T001222Z")).0, "red");
+    }
+
+    fn cancelled_then(later: Option<(&str, &str, &str)>) -> (&'static str, String) {
+        let check = |name: &str, status: &str, conclusion: &str, suite: u64| serde_json::json!({"name": name, "status": status, "conclusion": conclusion, "check_suite": {"id": suite}});
+        let run = |id: u64, branch: &str, suite: u64, status: &str, conclusion: &str| serde_json::json!({"id": id, "workflow_id": 7, "name": "Publish", "head_branch": branch, "check_suite_id": suite, "status": status, "conclusion": conclusion});
+        let mut checks = vec![check("select", "completed", "success", 1), check("gate", "completed", "cancelled", 1), check("suites", "completed", "cancelled", 1)];
+        let mut runs = vec![run(1, "spira/publish/a", 1, "completed", "cancelled")];
+        if let Some((branch, status, conclusion)) = later {
+            checks.push(check("select", "completed", "success", 2));
+            checks.push(check("gate", if status == "completed" { "completed" } else { "queued" }, if status == "completed" { conclusion } else { "" }, 2));
+            runs.push(run(2, branch, 2, status, conclusion));
+        }
+        classify(&current_checks(&checks, &runs, "spira/publish/a"))
+    }
+
+    /// sp-8z8d3t: a cancelled run is not a failure while a newer run of its workflow on the same
+    /// head is still going or has passed, whichever branch name the newer run carries.
+    #[test]
+    fn a_cancelled_run_is_pending_while_a_newer_run_of_its_workflow_is_pending() {
+        assert_eq!(cancelled_then(Some(("spira/publish/a", "queued", ""))).0, "pending");
+        assert_eq!(cancelled_then(Some(("spira/publish/b", "queued", ""))).0, "pending");
+        assert_eq!(cancelled_then(Some(("spira/publish/b", "in_progress", ""))).0, "pending");
+        assert_eq!(cancelled_then(Some(("spira/publish/b", "completed", "success"))).0, "green");
+    }
+
+    #[test]
+    fn a_cancelled_run_with_no_newer_run_is_red_and_a_real_failure_stays_red() {
+        assert_eq!(cancelled_then(None), ("red", "gate,suites".into()));
+        assert_eq!(cancelled_then(Some(("spira/publish/b", "completed", "cancelled"))).0, "red");
+        assert_eq!(cancelled_then(Some(("spira/publish/b", "completed", "failure"))).0, "red");
     }
 
     /// Serves `answers` in order, one connection each; returns the api base and the requests seen.
