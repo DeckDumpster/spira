@@ -709,7 +709,7 @@ mod tests {
         assert_eq!(trace_tail(&d.join("missing"), MARK, 10), "(no session log)");
     }
 
-    // ---- wiki_write_paths / wiki_commit_paths (test-dwarf-wiki-dirty.sh T1) ----
+    // ---- wiki_write_paths / wiki_commit_paths ----
 
     // covers: UC-dwarf-execution-17
     #[test]
@@ -813,7 +813,7 @@ mod tests {
         assert_eq!(bead_named_paths("spira/lib.sh", ""), Vec::<String>::new());
     }
 
-    // ---- dwarf_fuse_minutes (test-thrash.sh) ----
+    // ---- dwarf_fuse_minutes ----
 
     #[test]
     fn dwarf_fuse_minutes_no_worktree_is_question_mark() {

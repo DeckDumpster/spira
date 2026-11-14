@@ -48,8 +48,6 @@ spira/pr-notify.sh
 spira/publish-backlog.sh
 spira/release.sh
 spira/stage.sh
-spira/test-dwarf-wiki-dirty.sh
-spira/test-dwarf-worktree-collision.sh
 spira/test-census-pipeline.sh
 spira/test-runes-repo-labels.sh
 spira/test-cockpit-queue-section.sh

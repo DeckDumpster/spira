@@ -1,6 +1,5 @@
 //! One dwarf, one worktree, under the sanctioned root (law-one-dwarf-one-worktree,
-//! law-worktrees-in-the-sanctioned-root). The contract is what test-dwarf-worktree-collision.sh,
-//! test-dwarf-worktree-evict-foreign.sh and test-dwarf-resume-collision.sh assert:
+//! law-worktrees-in-the-sanctioned-root). The contract, pinned by the tests below:
 //!
 //! - a tree at the canonical path that belongs to ANOTHER repository (or resolves to
 //!   nothing) is moved aside to `<path>.<its repo dir>`, never deleted;

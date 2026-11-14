@@ -500,7 +500,6 @@ mod tests {
         }
     }
 
-    // test-dwarf-lease.sh / test-thrash.sh's hb_tick rows.
     #[test]
     fn hb_tick_table() {
         let t0 = 1_000_000;

@@ -35,8 +35,6 @@ test-dwarf-heartbeat.sh	T1	20.5
 test-dwarf-ledger.sh	T1	49.0
 test-dwarf-operator-wait.sh	T1	53.0
 test-dwarf-presession-death.sh	T1	44.0
-test-dwarf-wiki-dirty.sh	T1	49.0
-test-dwarf-worktree-collision.sh	T1	39.5
 test-dwarf-worktree-guard.sh	T1	9.5
 # literal-ok: a real suite filename, not a use of the configured label it happens to contain
 test-dwarf-yield-headless.sh	T1	42.5
@@ -196,7 +194,6 @@ test-tarball-bins.sh	T1	4.0
 test-testlib.sh	T1	2.0
 test-thrash-streak.sh	T1	28.5
 test-thrash-wall.sh	T1	2.0
-test-thrash.sh	T1	4.0
 test-timer-templates.sh	T1	2.0
 test-unit-drift.sh	T1	15.0
 test-unit-restart-limits.sh	T1	2.0

@@ -94,10 +94,8 @@ migration bead per family from this table.
 | --- | ---: | --- | --- | --- |
 | test-dwarf-resume-collision.sh | 40 | a lost resume race falls through to the next resumable candidate, not the general queue head | unit | Candidate selection after a failed claim; pure ordering. |
 | test-epic-claim-order.sh | 74 | claim rank: min(epic, bead) priority, started epic first, resumable before fresh, oldest | unit | A sort key; `epic_rank_rows` already isolates it. Cheapest win in the family. |
-| test-dwarf-worktree-collision.sh | 77 | never a second live session in a worktree another bead holds | sim | Two dwarves racing is a scenario, and flips in shell. |
 | test-dwarf-world-stop.sh | 40 | a world-stop-labelled bead is not run while live dwarves exist | unit | A predicate over labels and live count. |
 | test-dwarf-prod-dirty.sh | 55 | the prod-dirty guard is bound to the dwarf's own worktree, not the shared checkout | unit | Retired: `own_dirty` and `own_dirty_note` unit tests in `dwarf/src/verdict.rs` (UC-dwarf-execution-16). |
-| test-dwarf-wiki-dirty.sh | 39 | only this session's own still-dirty wiki writes are committed at exit, never `wiki/tasks.md` | unit | Path filter over a transcript. |
 | test-unclaimable.sh | 30 | ready beads no persona can claim are surfaced; the detector does not report its own reports | unit | Claimers arithmetic plus a cycle guard. |
 
 ### F — persona brief, prompt, model
