@@ -1129,6 +1129,94 @@ mod tests {
         assert_eq!(row["repo"], "spira", "{row}");
     }
 
+    fn listed_row(world: &InProcess, id: &str) -> serde_json::Value {
+        let live = world.0.lock().unwrap().ok(&["list", "--live"]);
+        let rows: Vec<serde_json::Value> = serde_json::from_str(&live).unwrap();
+        rows.into_iter().find(|r| r["bead_id"] == id).unwrap_or_else(|| panic!("no row for {id}: {live}"))
+    }
+
+    /// bdq's hooks after a write, as `bdq` runs them: the ids the write changed, then the sync.
+    fn bdq_hooks(client: &spira_store::lc_call::LcClient, args: &[&str], stdout: &str) -> Result<(), String> {
+        let ids = spira_store::planning::claim_inputs_changed(args, stdout);
+        spira_store::lifecycle_row::sync_claim_inputs_on(client, "bdq", &ids)
+    }
+
+    fn filed_world(labels: &[&str], parent: Option<&str>) -> (std::sync::Arc<InProcess>, spira_store::lc_call::LcClient) {
+        let world = std::sync::Arc::new(InProcess(std::sync::Mutex::new(World::new())));
+        world.0.lock().unwrap().file("sp-new", "task", parent, labels);
+        let client = spira_store::lc_call::LcClient::over(world.clone(), true);
+        spira_store::lifecycle_row::after_create_ids_on(&client, "bdq", "sp-new\n", None, 0).unwrap();
+        (world, client)
+    }
+
+    #[test]
+    fn a_filed_beads_parent_and_labels_are_on_its_record_once_bdqs_hooks_have_run() {
+        let (world, client) = filed_world(&["repo:spira", "no-loop"], Some("sp-e"));
+        assert_eq!(listed_row(&world, "sp-new")["claim"], serde_json::Value::Null, "nothing has synced it yet");
+        bdq_hooks(&client, &["create", "T", "--silent", "--parent", "sp-e", "--labels", "repo:spira,no-loop"], "sp-new\n").unwrap();
+        assert_eq!(listed_row(&world, "sp-new")["claim"], serde_json::json!({"blocks": [], "parent": "sp-e", "labels": ["repo:spira", "no-loop"]}));
+    }
+
+    #[test]
+    fn a_dep_add_then_a_dep_remove_move_the_records_blocks_and_a_related_edge_does_not() {
+        let (world, client) = filed_world(&[], None);
+        let blocks = || listed_row(&world, "sp-new")["claim"]["blocks"].clone();
+        let edge = |to: &str, kind: &str| world.0.lock().unwrap().plan.borrow_mut().get_mut("sp-new").unwrap().dependencies.push((to.into(), kind.into()));
+        edge("sp-r", "related");
+        bdq_hooks(&client, &["dep", "relate", "sp-new", "sp-r"], "").unwrap();
+        assert_eq!(blocks(), serde_json::json!([]));
+        edge("sp-b", "blocks");
+        bdq_hooks(&client, &["dep", "add", "sp-new", "sp-b"], "").unwrap();
+        assert_eq!(blocks(), serde_json::json!(["sp-b"]));
+        world.0.lock().unwrap().plan.borrow_mut().get_mut("sp-new").unwrap().dependencies.retain(|(to, _)| to != "sp-b");
+        bdq_hooks(&client, &["dep", "remove", "sp-new", "sp-b"], "").unwrap();
+        assert_eq!(blocks(), serde_json::json!([]));
+    }
+
+    #[test]
+    fn a_label_added_through_the_content_door_is_on_the_record_in_the_same_request() {
+        struct Labelling<'w>(&'w World);
+        impl crate::composed::Content for Labelling<'_> {
+            fn read(&self, _: &[String]) -> Result<String, crate::composed::ReadError> {
+                Ok(String::new())
+            }
+            fn write(&self, _: &[&str]) -> Result<String, String> {
+                Ok(String::new())
+            }
+            fn write_stdin(&self, args: &[String], _: Option<&str>) -> Result<String, String> {
+                if let ["label", "add", id, label] = args.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
+                    self.0.plan.borrow_mut().get_mut(*id).unwrap().labels.push(label.to_string());
+                }
+                Ok(String::new())
+            }
+            fn delete(&self, _: &[String]) -> Result<(), String> {
+                Ok(())
+            }
+            fn ask_label(&self) -> Result<String, String> {
+                Ok(String::new())
+            }
+            fn registry(&self) -> spira_config::repos::Registry {
+                spira_config::repos::Registry::new(Some("spira|/r/spira|main|gate.sh\n"), &Default::default(), std::path::Path::new("/r/spira"))
+            }
+        }
+        let w = World::new();
+        filed(&w, "sp-a");
+        let ans = served(&w, &Labelling(&w), &["label", "add", "sp-a", "incident"], &[]);
+        assert_eq!((ans.code, ans.stderr.as_str()), (0, ""), "{ans:?}");
+        let row: serde_json::Value = serde_json::from_str::<Vec<serde_json::Value>>(&w.ok(&["list", "--live"])).unwrap().into_iter().find(|r| r["bead_id"] == "sp-a").unwrap();
+        assert_eq!(row["claim"]["labels"], serde_json::json!(["incident"]), "{row}");
+    }
+
+    #[test]
+    fn syncing_an_id_with_no_record_names_it_and_makes_none() {
+        let world = std::sync::Arc::new(InProcess(std::sync::Mutex::new(World::new())));
+        world.0.lock().unwrap().file("sp-ghost", "task", None, &[]);
+        let client = spira_store::lc_call::LcClient::over(world.clone(), true);
+        let err = spira_store::lifecycle_row::sync_claim_inputs_on(&client, "bdq", &["sp-ghost".to_string()]).unwrap_err();
+        assert!(err.contains("sp-ghost"), "{err}");
+        assert_eq!(world.0.lock().unwrap().ok(&["list", "--live"]).trim(), "[]");
+    }
+
     #[test]
     fn a_lifecycle_row_the_server_cannot_write_is_reported_and_bds_create_stands() {
         let w = World::new();

@@ -550,6 +550,8 @@ pub trait Lc {
     fn batch_pass(&self, batch_id: &str) -> Option<(u32, String)>;
     fn create_bead(&self, id: &str);
     fn create_bead_in(&self, id: &str, repo: &str);
+    /// Records on each member's lifecycle record the integration carrying it (`by`), or that none does.
+    fn set_carrier(&self, members: &[&str], by: Option<&str>);
     /// `cut` → Ok(version) or Err((rc, output)). `round`: the queue's fields of the round,
     /// written in the cut's own txn (`--round`); only while the rounds are on the store.
     #[allow(clippy::too_many_arguments)]

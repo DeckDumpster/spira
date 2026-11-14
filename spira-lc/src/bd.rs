@@ -35,10 +35,11 @@ fn record_call(args: &[&str], started: std::time::Instant, ok: bool) {
 
 /// Every planning write this process makes moves the planning watermark once it has landed.
 fn stamped<S: AsRef<str>>(args: &[S], res: Result<String, String>) -> Result<String, String> {
-    if res.is_ok() && spira_store::planning::is_planning_write(args) {
+    if let (Ok(stdout), true) = (&res, spira_store::planning::is_planning_write(args)) {
         if let Some((bead, blocked_by)) = spira_store::planning::claim_input_change(args) {
             mark_rejudge(&bead, &blocked_by);
         }
+        sync_claim_inputs(&spira_store::planning::claim_inputs_changed(args, stdout));
         crate::plan::stamp_after_write();
     }
     res
@@ -62,6 +63,33 @@ fn mark_rejudge(bead: &str, blocked_by: &[String]) {
     };
     if code != 0 {
         eprintln!("spira-lc: the write to {bead} landed but its readiness was not marked for re-judgement: exit {code}: {out}");
+    }
+}
+
+/// The control store as a machine, for a write made inside the process that holds it.
+struct StoreMachine;
+
+impl crate::callers::Machine for StoreMachine {
+    fn call(&mut self, args: &[String]) -> (i32, String) {
+        crate::control::served::dispatch(args).unwrap_or((2, "not a control-store verb".into()))
+    }
+}
+
+/// Writes the claim inputs of `ids` onto their records once the write that changed them has
+/// landed. A failure is reported with its repair, never raised.
+fn sync_claim_inputs(ids: &[String]) {
+    if ids.is_empty() || !crate::control::served::store_configured() {
+        return;
+    }
+    let mut argv = vec![crate::claim_sync::VERB.to_string()];
+    argv.extend(ids.iter().cloned());
+    let direct = |argv: &[String]| {
+        let ans = crate::claim_sync::run(&argv[1..], &mut StoreMachine, &mut LiveBd);
+        (ans.code, ans.stderr)
+    };
+    let (code, out) = if crate::plan::serving() { direct(&argv) } else { crate::client::try_socket(&argv).unwrap_or_else(|| direct(&argv)) };
+    if code != 0 {
+        eprintln!("spira-lc: LIFECYCLE: {}; claim inputs not written; repair: spira-lc sync-claim-inputs {}", out.trim(), ids.join(" "));
     }
 }
 
@@ -225,6 +253,9 @@ impl crate::callers::Bd for LiveBd {
             return Ok(ids);
         }
         self.open_among(&ids)
+    }
+    fn claim_read(&mut self, id: &str) -> Result<Option<crate::claim_sync::ClaimRead>, String> {
+        Ok(bead(id)?.map(|b| crate::claim_sync::ClaimRead { parent: b.parent, labels: b.labels, edges: b.dependencies }))
     }
     fn external(&mut self, id: &str) -> Result<bool, String> {
         let b = bead(id)?.ok_or_else(|| format!("bd show {id}: {NO_SUCH}"))?;

@@ -1040,6 +1040,10 @@ pub trait Bd {
     fn blocking_dependents(&mut self, id: &str) -> Result<Vec<String>, String>;
     /// bd's own copy of the planning watermark (`skew::BD_KV_KEY`); `None` while unstamped.
     fn planning_watermark(&mut self) -> Result<Option<u64>, String>;
+    /// What the claim rule reads of `id` from the content store; `None` when it holds no such bead.
+    fn claim_read(&mut self, id: &str) -> Result<Option<crate::claim_sync::ClaimRead>, String> {
+        Err(format!("{id}: this bd reads no claim inputs"))
+    }
 }
 
 /// Why `kind` may not end the external bead `id`, as an answer; `None` when it may go ahead or

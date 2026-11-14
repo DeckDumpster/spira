@@ -7137,6 +7137,26 @@ fn open_files_one_integration_with_both_members_context_instead_of_skipping_one(
 }
 
 #[test]
+fn filing_an_integration_marks_each_member_record_carried_by_it() {
+    let t = round_world();
+    *t.lib.bug_id.borrow_mut() = Some("sp-int".into());
+    touches(&t, "ta", "child.rs");
+    touches(&t, "tb", "other.rs");
+    touches(&t, "tc", "child.rs");
+    t.git.merge_fail.borrow_mut().insert("tc".into());
+    t.git
+        .rebase_fail
+        .borrow_mut()
+        .insert("tc".into(), vec!["child.rs".into()]);
+    t.run(&["round", "open", "--members", "sp-a,sp-b,sp-c"]);
+    assert!(
+        t.lc.has("set-carrier sp-a sp-c --by sp-int"),
+        "{:?}",
+        t.lc.calls.borrow()
+    );
+}
+
+#[test]
 fn a_carried_member_is_not_admitted_and_a_second_integration_is_not_filed_while_one_is_open() {
     let t = round_world();
     *t.lib.bug_id.borrow_mut() = Some("sp-int".into());

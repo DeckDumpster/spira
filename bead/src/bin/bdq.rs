@@ -434,6 +434,9 @@ fn cmd_bdq(args: &[String]) -> i32 {
         if matches!(after, bead::guard::After::Terminal(_)) {
             let _ = spira_store::lifecycle_row::after_close("bdq", args);
         }
+        let rowless_create = bead::bdq::creates_beads(args) && !lc_row;
+        let claim_ids = if rowless_create { Vec::new() } else { spira_store::planning::claim_inputs_changed(args, &String::from_utf8_lossy(&created_out)) };
+        let _ = spira_store::lifecycle_row::sync_claim_inputs("bdq", &claim_ids);
         if spira_store::planning::is_planning_write(args) {
             spira_store::planning::stamp_after("bdq");
         }

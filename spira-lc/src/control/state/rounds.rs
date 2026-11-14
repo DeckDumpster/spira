@@ -12,7 +12,11 @@ use state_store::{Backend, Request};
 
 use super::{cannot_tell, number, Call};
 use crate::control::store::{Cut, Edge, Ran, RepoSet, Store, Turned, Verdict};
+use crate::control::records::ClaimInputs;
 use crate::{flag, CANNOT_TELL, REFUSED};
+
+/// The shell library's own "no row" exit.
+const NO_ROW: i32 = 1;
 
 /// The verbs this module answers.
 pub const VERBS: &[&str] = &[
@@ -23,6 +27,8 @@ pub const VERBS: &[&str] = &[
     "batch-progress",
     "claim-verdicts",
     "set-repo",
+    "set-claim-inputs",
+    "set-carrier",
     "dep-add",
     "dep-remove",
     "delete-bead-row",
@@ -38,6 +44,8 @@ pub fn run<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, 
         Some("batch-progress") => batch_progress(store, rest, call),
         Some("claim-verdicts") => claim_verdicts(store, rest, call),
         Some("set-repo") => set_repo(store, rest, call),
+        Some("set-claim-inputs") => set_claim_inputs(store, rest, call),
+        Some("set-carrier") => set_carrier(store, rest, call),
         Some("dep-add") => edge(store, "dep-add", rest, call),
         Some("dep-remove") => edge(store, "dep-remove", rest, call),
         Some("delete-bead-row") => delete_row(store, rest, call),
@@ -484,6 +492,50 @@ fn set_repo<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32,
         Ok(RepoSet::Working) => (1, working_refusal(id)),
         Ok(RepoSet::Set) => (0, format!("set-repo: {id} -> {}", repo.unwrap_or("(none)"))),
         Err(e) => cannot_tell(e),
+    }
+}
+
+fn values(args: &[String], name: &str) -> Vec<String> {
+    args.windows(2).filter(|w| w[0] == name).map(|w| w[1].clone()).collect()
+}
+
+/// `set-claim-inputs <bead-id> [--parent P] [--block ID]... [--label L]...`: the whole set the
+/// record's `claim` holds from now on. No record is answered 1 and none is made.
+fn set_claim_inputs<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, String) {
+    let Some(id) = args.first().filter(|id| crate::cutover::is_row_key(id)) else {
+        return (CANNOT_TELL, "set-claim-inputs: takes <bead-id> [--parent P] [--block ID]... [--label L]...".into());
+    };
+    let inputs = ClaimInputs { blocks: values(args, "--block"), parent: flag(args, "--parent"), labels: values(args, "--label") };
+    let req = Request::new(call.request, "set-claim-inputs", "lc.set-claim-inputs");
+    match store.set_claim_inputs(id, inputs, &req) {
+        Ok(true) => (0, String::new()),
+        Ok(false) => (NO_ROW, format!("set-claim-inputs: {id} has no lifecycle record")),
+        Err(e) => cannot_tell(e),
+    }
+}
+
+/// `set-carrier <member>... (--by <integration-id> | --clear)`: each member's record names the
+/// integration carrying it, or none. A member with no record is named and the rest are written.
+fn set_carrier<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, String) {
+    let members: Vec<&String> = args.iter().take_while(|a| !a.starts_with("--")).collect();
+    let by = flag(args, "--by");
+    let clear = args.iter().any(|a| a == "--clear");
+    if members.is_empty() || by.is_some() == clear || members.iter().any(|m| !crate::cutover::is_row_key(m)) {
+        return (CANNOT_TELL, "set-carrier: takes <member>... (--by <integration-id> | --clear)".into());
+    }
+    let req = Request::new(call.request, "set-carrier", "lc.set-carrier");
+    let mut missing = Vec::new();
+    for m in members {
+        match store.set_carrier(m, by.as_deref(), &req) {
+            Ok(true) => {}
+            Ok(false) => missing.push(m.as_str()),
+            Err(e) => return cannot_tell(e),
+        }
+    }
+    if missing.is_empty() {
+        (0, String::new())
+    } else {
+        (NO_ROW, format!("set-carrier: no lifecycle record for {}", missing.join(" ")))
     }
 }
 

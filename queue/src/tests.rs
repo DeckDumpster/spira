@@ -1266,6 +1266,10 @@ impl Lc for FLc {
             .borrow_mut()
             .push(format!("create-bead {id} --repo {repo}"));
     }
+    fn set_carrier(&self, members: &[&str], by: Option<&str>) {
+        let tail = by.map_or("--clear".to_string(), |b| format!("--by {b}"));
+        self.calls.borrow_mut().push(format!("set-carrier {} {tail}", members.join(" ")));
+    }
     fn cut(
         &self,
         id: &str,
@@ -5063,6 +5067,22 @@ fn landing_an_integration_lands_its_members_and_closes_the_record() {
         fs::read_to_string(t.qfile("integrations")).unwrap(),
         "sp-other sp-c\n"
     );
+}
+
+#[test]
+fn landing_an_integration_clears_the_carrier_of_each_member_record() {
+    let t = T::new(LandMode::QueueLocal);
+    local_repo(&t);
+    fs::create_dir_all(t.s().queue_dir.join("spira")).unwrap();
+    fs::write(t.qfile("integrations"), "sp-int sp-a sp-b\nsp-other sp-c\n").unwrap();
+    assert_eq!(
+        t.run(&["land-local", "--head", "h1", "--members", "sp-int:ta"]),
+        0,
+        "{}",
+        t.err()
+    );
+    let calls = t.lc.calls.borrow().clone();
+    assert!(calls.iter().any(|c| c == "set-carrier sp-a sp-b --clear"), "{calls:?}");
 }
 
 #[test]
