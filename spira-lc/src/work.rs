@@ -203,6 +203,12 @@ fn cmd_submit(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
             Err(refusal) => return refusal,
         };
         let checkout = repo_checkout(&repo);
+        if let Some((root, landref)) = &checkout {
+            let record = |cause: &str| conn.append_event(&crate::facts::insert_sql(bead_id, "suite-dropped", cause, &actor, crate::db::now_epoch())).map_err(|e| format!("{e:?}"));
+            if let Err(e) = spira_config::proof::drop_deleted_suites(run, bead_id, root, landref, &record) {
+                return (CANNOT_TELL, format!("cannot tell: {e}"));
+            }
+        }
         let runner = |check: &str, secs: u64| {
             let Some((program, args)) = check_invocation(check, &tip, &repo, checkout.as_ref().map(|(r, l)| (r.as_str(), l.as_str()))) else {
                 return (CANNOT_TELL, format!("{check} is a fence and {repo} names no checkout or landing ref to run it in"));

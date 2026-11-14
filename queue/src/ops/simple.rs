@@ -308,6 +308,25 @@ fn checks_proven(
     None
 }
 
+/// A suite the landing ref no longer contains cannot be run, so an ejection for it is not a
+/// failed verification: each is recorded as a fact on the bead and dropped from its requirement.
+fn drop_deleted_suites(w: &World, c: &Ctx, id: &str, by: &str) -> bool {
+    let (Some(root), Some(landref)) = (c.r.path.as_deref().and_then(|p| p.to_str()), c.r.landref.as_deref()) else {
+        return true;
+    };
+    let record = |cause: &str| {
+        w.out(format!("queue.sh resubmit: {cause}"));
+        w.lc.fact(id, "suite-dropped", by, cause).map_err(|(rc, e)| format!("rc={rc}: {e}"))
+    };
+    match spira_config::proof::drop_deleted_suites(&c.s.run, id, root, landref, &record) {
+        Ok(_) => true,
+        Err(e) => {
+            w.err(format!("queue.sh resubmit: {e} — refused"));
+            false
+        }
+    }
+}
+
 /// Record the gate pass on spira-lc; a refusal is reported and the submit does not certify.
 fn lc_certify(w: &World, id: &str, tip: &str) -> Result<(), ()> {
     w.lc.certify(id, tip, "queue-submit", &super::actor(w))
@@ -769,6 +788,9 @@ pub fn resubmit(
         }
     }
     if !lint_passed(w, "resubmit", &path, tip, false) {
+        return FAIL;
+    }
+    if !drop_deleted_suites(w, &c, id, by) {
         return FAIL;
     }
     let Some(round_only_notes) = checks_proven(w, "resubmit", &c.s.run, &c.r.name, id, tip) else {
