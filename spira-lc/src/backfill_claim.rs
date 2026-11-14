@@ -237,4 +237,47 @@ mod tests {
         assert_eq!(backfill_claim_inputs(&v(&["--apply", "--dry-run"]), &mut m).code, CANNOT_TELL);
         assert!(m.syncs.is_empty());
     }
+
+    #[test]
+    fn apply_calls_no_sync_when_the_skew_guard_refuses() {
+        struct Skewed(Lc);
+        impl Machine for Skewed {
+            fn call(&mut self, a: &[String]) -> (i32, String) {
+                if a[0] == crate::skew::CHECK_VERB { (REFUSED, "planes differ".into()) } else { self.0.call(a) }
+            }
+        }
+        let mut m = Skewed(fixture());
+        let a = backfill_claim_inputs(&v(&["--apply"]), &mut m);
+        assert_eq!(a.code, REFUSED, "{}", a.stderr);
+        assert!(m.0.syncs.is_empty());
+    }
+
+    #[test]
+    fn a_failure_in_the_first_chunk_does_not_stop_the_second() {
+        let mut m = Lc::default();
+        for i in 0..CHUNK + 5 {
+            m.rows.push(json!({"bead_id": format!("sp-{i}"), "state": "READY", "claim": null}));
+        }
+        m.fail = vec!["sp-3"];
+        let a = backfill_claim_inputs(&v(&["--apply"]), &mut m);
+        assert_eq!((a.code, m.syncs.len()), (REFUSED, 2));
+        assert!(a.stdout.contains(&format!("{} set, 0 kept, 1 failed", CHUNK + 4)), "{}", a.stdout);
+    }
+
+    #[test]
+    fn the_real_sync_verb_through_the_world_sets_keeps_and_names_a_bead_it_cannot_read() {
+        use crate::callers::world::World;
+        let w = World::new();
+        for id in ["sp-new", "sp-set", "sp-gone"] {
+            w.file(id, "task", None, &[]);
+            w.ok(&["create-bead", id, "--ready"]);
+        }
+        w.ok(&["set-claim-inputs", "sp-set", "--block", "sp-b"]);
+        w.plan.borrow_mut().remove("sp-gone");
+        let a = backfill_claim_inputs(&v(&["--apply", "sp-new", "sp-set", "sp-gone"]), &mut &w);
+        assert_eq!(a.code, REFUSED, "{}{}", a.stdout, a.stderr);
+        assert!(a.stdout.contains("set sp-new") && a.stdout.contains("failed sp-gone:") && a.stdout.contains("1 set, 0 kept, 1 failed"), "{}", a.stdout);
+        let a = backfill_claim_inputs(&v(&["--apply", "sp-new"]), &mut &w);
+        assert_eq!(a.stdout.trim(), "backfill-claim-inputs: 0 set, 0 kept, 0 failed", "a written record is not listed again");
+    }
 }
