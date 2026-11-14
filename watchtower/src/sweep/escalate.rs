@@ -519,8 +519,15 @@ mod tests {
     #[test]
     fn the_draining_escalation_is_filed_fenrir_exempt() {
         let d = testkit::TempDir::new("wt-esc-drain-exempt");
-        let cfg = cfg_with(&d, fake_incident(&d));
-        assert!(drain_finding(&cfg, "2026-09-08 20:02:00 UTC", 600).fenrir_exempt);
+        let mut cfg = cfg_with(&d, fake_incident(&d));
+        cfg.drain_warn_mins = 0;
+        let mut raised: Vec<Finding> = Vec::new();
+        drain_escalation(&drain(Some(600)), &cfg, &mut |f| {
+            raised.push(f.clone());
+            incident::AlarmOutcome::Noted
+        });
+        assert_eq!(raised.len(), 1);
+        assert!(raised[0].fenrir_exempt);
     }
 
     fn file_one(tag: &str, f: fn(&SweepData, &Cfg, Raise), pairs: &[(&str, &str)]) -> String {

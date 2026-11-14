@@ -63,7 +63,7 @@ refused the filing, or (for `drain`) at least one entry is still stuck.
   a native Rust unit test; the Python helper had no other caller (confirmed by grep) and is
   deleted.
 - **Four bash suites that reached inside `incident.sh`'s shell internals** —
-  `test-incident-decisions.sh`, `test-incident-recur-cause.sh`,
+  `test-incident-recur-cause.sh`,
   `test-counter-events-sentinel.sh` (all three `. "$HERE/incident.sh"` to call `file_one`/
   `_dedup_incident` directly) and `test-incident-migrations.sh` (drove the retired
   subcommands). A shim has nothing to source; their coverage moves to this crate's unit
