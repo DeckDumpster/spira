@@ -1005,7 +1005,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
     // gate's slot covers the test phase, and the build takes its compile lease WITHOUT WAITING
     // (DESIGN-admission.md D11): the gate never queues, agent builds queue behind it. Waiting
     // never fails; it is said on stderr.
-    let admit = |pool: admission::Pool, weight: u64| -> admission::Guard {
+    let admit = |pool: admission::Pool, weight: u64| -> Option<admission::Guard> {
         // The wait for a slot is queueing, not this run's work: the cap stands still (sp-u56az1).
         let _held = cap::hold();
         let inherit = (deps.env)(admission::INHERIT_ENV);
@@ -1016,7 +1016,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         if pool == admission::Pool::Compile && inherit.as_deref().is_some_and(admission::is_gate_token) {
             let gate_who = format!("gate:{who}");
             let q = admission::Request { run: &s.run, pool, holder_pid: std::process::id(), who: &gate_who, inherit: None, weight };
-            return admission::take_now_guard(&q, size_of(), &admission::RealProcs, &mut |l: &str| deps.log(l));
+            return Some(admission::take_now_guard(&q, size_of(), &admission::RealProcs, &mut |l: &str| deps.log(l)));
         }
         let q = admission::Request {
             run: &s.run,
@@ -1031,7 +1031,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
             procs: &admission::RealProcs,
             sleep: deps.sleep,
         };
-        admission::acquire(&q, &seams, &mut |l: &str| deps.log(l))
+        admission::acquire_unless(&q, &seams, &mut |l: &str| deps.log(l), &cancelled)
     };
     // A setup phase cut at its share: say so, and still leave the trial's `__batch__` row
     // (rc 2), so a reader sees the overrun and which phase it was (D11).
@@ -1208,7 +1208,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
     let has_suite_dir = git(&repo.path, &["cat-file", "-e", &format!("{br}:spira")]).is_ok();
     match decl_text {
         Some(text) => {
-            let lease = admit(admission::Pool::Test, 1);
+            let Some(lease) = admit(admission::Pool::Test, 1) else { return Finish::fault(2, "interrupted", 0) };
             crate::telemetry::note_queue_wait("test", lease.waited);
             if lease.waited > 0 {
                 deps.log(&format!("queue-wait={}s pool=test", lease.waited));
@@ -1665,7 +1665,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
     let _unit_lease = if crate::unit::selected(&active)
         && !(deps.env)(admission::INHERIT_ENV).as_deref().is_some_and(admission::is_gate_token)
     {
-        let l = admit(admission::Pool::Unit, 1);
+        let Some(l) = admit(admission::Pool::Unit, 1) else { return Finish::fault(2, "interrupted", 0) };
         shift(l.waited);
         crate::telemetry::note_queue_wait("unit", l.waited);
         if l.waited > 0 {
@@ -1720,7 +1720,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
     } else if unit_tests_only {
         deps.log("--tests: no workspace build and no install — the unit tier builds the crates that hold the named tests, and their test-bins, in the container");
     } else {
-        let lease = admit(admission::Pool::Compile, admission::profile_weight(&args.profile));
+        let Some(lease) = admit(admission::Pool::Compile, admission::profile_weight(&args.profile)) else { return Finish::fault(2, "interrupted", 0) };
         shift(lease.waited);
         crate::telemetry::note_queue_wait("compile", lease.waited);
         if lease.waited > 0 {
@@ -1747,7 +1747,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         return fin;
     }
     ph.mark("build");
-    let _test_lease = admit(admission::Pool::Test, 1);
+    let Some(_test_lease) = admit(admission::Pool::Test, 1) else { return Finish::fault(2, "interrupted", 0) };
     shift(_test_lease.waited);
     crate::telemetry::note_queue_wait("test", _test_lease.waited);
     if _test_lease.waited > 0 {
