@@ -69,7 +69,7 @@ fn no_brief_tells_an_agent_to_pass_mail_send_an_option_it_refuses() {
 #[test]
 fn no_caller_of_the_retired_ask_script_remains() {
     assert!(names_the_retired_ask_script("bash cockpit/ask.sh add \"q\""), "the matcher must fire on a planted caller");
-    assert!(!names_the_retired_ask_script("SPIRA_ASK_LABEL=needs-operator"));
+    assert!(!names_the_retired_ask_script("SPIRA_ASK_TIMEOUT=60"));
     assert!(!repo().join("cockpit/ask.sh").exists());
     let mut files = vec![];
     for d in ["spira", "cockpit"] {
