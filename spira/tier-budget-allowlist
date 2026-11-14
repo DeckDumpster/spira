@@ -54,7 +54,6 @@ test-batch-repeat-refused-delivers.sh	T1	18.5
 test-beads-sparklines.sh	T1	3.0
 test-bin-manifest.sh	T1	3.0
 test-branch-guard.sh	T1	3.0
-test-broker.sh	T1	15.0
 test-builder-qa-proposed.sh	T1	4.0
 test-cadence-tool.sh	T1	2.0
 test-cadence.sh	T1	1.5
