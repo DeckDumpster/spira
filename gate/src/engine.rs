@@ -1613,7 +1613,10 @@ impl<'w, W: World> Trial<'w, W> {
 
     /// The step a red failed at (the verdict's suite, `-` when none) and the last line of its message that is not the gate's own bookkeeping.
     fn red_at(&self, vd: &Verdict) -> (String, String) {
-        let step = if self.s.suite == "-" { String::new() } else { self.s.suite.clone() };
+        let step = match self.s.suite.as_str() {
+            "-" => vd.msg.lines().find_map(|l| l.trim().strip_prefix("gate-step RED ")?.split_once(" :: ").map(|(_, u)| u.trim().to_string())).unwrap_or_default(),
+            s => s.to_string(),
+        };
         let message = vd.msg.lines().map(str::trim).rev().find(|l| !l.is_empty() && !l.starts_with("gate: ") && !l.starts_with("gate-step ")).unwrap_or("").to_string();
         (step, message)
     }

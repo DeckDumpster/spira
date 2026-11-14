@@ -2120,6 +2120,18 @@ fn a_red_certification_carries_the_failed_step_and_its_last_message_line() {
 }
 
 #[test]
+fn a_red_fence_certifies_with_its_message_when_the_message_precedes_the_gate_step_line() {
+    let f = Fake::new();
+    f.put_var("SPIRA_GATE_BEAD", "sp-a");
+    let out = "gate fixture-config: complete.toml does not resolve\ngate-step RED rc=1 :: fixture-config";
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, out.into()));
+    f.runs.borrow_mut().insert(BASE.into(), (0, String::new()));
+    f.run();
+    let lc = f.lc.borrow()[0].clone();
+    assert_eq!((lc[4].as_str(), lc[5].as_str()), ("fixture-config", "gate fixture-config: complete.toml does not resolve"), "{lc:?}");
+}
+
+#[test]
 fn certification_events_follow_the_outcome() {
     for (rc, out, base, want) in [
         (0, "test-a.sh ok", 0, "pass"),
