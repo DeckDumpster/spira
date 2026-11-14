@@ -583,6 +583,24 @@ mod tests {
     }
 
     #[test]
+    fn gate_slow_files_the_deadline_it_was_configured_with() {
+        let d = testkit::TempDir::new("wt-esc-gslow");
+        let mut cfg = cfg_with(&d, fake_incident(&d));
+        cfg.gate_deadline_s = 777;
+        let mut data = SweepData::fixture_nominal(1_700_000_000);
+        let mut raised: Vec<Finding> = Vec::new();
+        let mut keep = |f: &Finding| {
+            raised.push(f.clone());
+            incident::AlarmOutcome::Noted
+        };
+        gate_slow(&data, &cfg, &mut keep);
+        data.gate_slow = Some(crate::gate_wait::Slow { p90: 780, rows: 25 });
+        gate_slow(&data, &cfg, &mut keep);
+        assert_eq!(raised.len(), 1, "silent until the measure says slow");
+        assert!(raised[0].body.contains("the deadline is 777s"), "{}", raised[0].body);
+    }
+
+    #[test]
     fn an_unread_oldest_unsent_is_silent_even_at_a_zero_threshold() {
         let d = testkit::TempDir::new("wt-esc-unsent0");
         let mut cfg = cfg_with(&d, fake_incident(&d));
