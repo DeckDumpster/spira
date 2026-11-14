@@ -44,6 +44,29 @@ pub fn supersede(s: &dyn Superseder, repo: &str, landing: &str, landed_at: i64) 
         .collect())
 }
 
+/// The store as [`Superseder`]: the unfinished incidents, closed through the lifecycle row.
+pub struct RealSuperseder<'a> {
+    pub bd: &'a crate::real::RealBd,
+    pub incident_label: String,
+}
+
+impl Superseder for RealSuperseder<'_> {
+    fn open_incidents(&self) -> Result<Vec<OpenRed>, String> {
+        let rows = self.bd.list_beads(crate::decide::Scope::Unfinished, Some(&self.incident_label), None)?;
+        Ok(rows
+            .into_iter()
+            .map(|(row, bead)| {
+                let stamp = |k: &str| bead.get(k).and_then(|v| v.as_str()).and_then(crate::run::parse_iso8601);
+                OpenRed { id: row.id, external_ref: row.external_ref, last_seen: stamp("updated_at").or_else(|| stamp("created_at")) }
+            })
+            .collect())
+    }
+
+    fn close(&self, id: &str, evidence: &str) -> Result<(), String> {
+        spira_store::lifecycle_row::close(id, evidence, "incident", None)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -96,28 +119,5 @@ mod tests {
             ]
         );
         assert!(f.closed.borrow().is_empty());
-    }
-}
-
-/// The store as [`Superseder`]: the unfinished incidents, closed through the lifecycle row.
-pub struct RealSuperseder<'a> {
-    pub bd: &'a crate::real::RealBd,
-    pub incident_label: String,
-}
-
-impl Superseder for RealSuperseder<'_> {
-    fn open_incidents(&self) -> Result<Vec<OpenRed>, String> {
-        let rows = self.bd.list_beads(crate::decide::Scope::Unfinished, Some(&self.incident_label), None)?;
-        Ok(rows
-            .into_iter()
-            .map(|(row, bead)| {
-                let stamp = |k: &str| bead.get(k).and_then(|v| v.as_str()).and_then(crate::run::parse_iso8601);
-                OpenRed { id: row.id, external_ref: row.external_ref, last_seen: stamp("updated_at").or_else(|| stamp("created_at")) }
-            })
-            .collect())
-    }
-
-    fn close(&self, id: &str, evidence: &str) -> Result<(), String> {
-        spira_store::lifecycle_row::close(id, evidence, "incident", None)
     }
 }
