@@ -65,6 +65,9 @@ fn rendering_names_every_unit_for_its_instance_and_leaves_no_placeholder() {
         assert!(!name.contains('@'), "{name}: a watcher is never named with the template's `@`");
         assert!(!text.contains("@SPIRA_") && !text.contains("@DOLT@"), "{name} keeps a placeholder");
     }
+    let enabled = m.enable("beta");
+    assert!(enabled.iter().any(|u| u == "spira-watchdog-beta.timer"), "{enabled:?}");
+    assert!(!enabled.iter().any(|u| u == "spira-watchdog.timer"), "{enabled:?}");
     let timer = out.iter().find(|(n, _, _)| n == "spira-vm-pool-section-beta.timer").expect("a periodic timer is rendered");
     assert!(timer.2.contains("Unit=spira-vm-pool-section-beta.service"), "a timer fires its suffixed service:\n{}", timer.2);
 }
