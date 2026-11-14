@@ -748,3 +748,4 @@ gate_target_root
 lc_backup_part_bytes
 hand_target_roots
 hand_target_idle_secs
+batched_stranded_grace_secs
