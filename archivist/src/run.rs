@@ -765,6 +765,11 @@ mod tests {
         assert!(dir.join("sweep.state").is_file());
         let text = std::fs::read_to_string(dir.join("sweep.state")).unwrap();
         assert!(text.contains("reason=capacity"));
+        assert!(text.contains("sweep_state=skipped"), "a paused sweep reports skipped, not idle: {text}");
+
+        *seam.paused.borrow_mut() = None;
+        sweep(&seam, &cfg(), &dir);
+        assert!(!dir.join("sweep.state").exists(), "the next normal pass clears the skipped state");
     }
 
     #[test]
@@ -1159,6 +1164,7 @@ mod tests {
         sweep(&seam, &c, &dir);
         let calls = seam.agent_calls.borrow();
         assert_eq!(calls.len(), 2, "the bad cursor neither aborts the sweep nor hides the session");
+        assert_eq!(covered_raw(&dir, "s-bad").as_deref(), Some("50"), "the cursor is rewritten as a number, never left as '-'");
     }
 
     // covers: UC-ops-detection-remediation-35
