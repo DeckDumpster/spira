@@ -990,12 +990,17 @@ struct ThroughputParams {
 /// Seconds the store server unit has been active, asked of systemd; `None` when it is not active or cannot be asked.
 // loop-safe: runs inside an observe effect, never in a handler or on the loop
 pub fn store_up_s() -> Option<u64> {
-    let out = spira_config::bounded::bounded("systemctl")
-        .args(["--user", "show", "lc-serve.service", "-p", "ActiveEnterTimestampMonotonic", "--value"])
-        .stdin(std::process::Stdio::null())
-        .output()
-        .ok()?;
-    server_age_s(&String::from_utf8_lossy(&out.stdout), &fs::read_to_string("/proc/uptime").ok()?)
+    let uptime = fs::read_to_string("/proc/uptime").ok()?;
+    // The server runs under the user manager or, in system-user mode, the system one.
+    [Some("--user"), None].into_iter().find_map(|scope| {
+        let out = spira_config::bounded::bounded("systemctl")
+            .args(scope)
+            .args(["show", "lc-serve.service", "-p", "ActiveEnterTimestampMonotonic", "--value"])
+            .stdin(std::process::Stdio::null())
+            .output()
+            .ok()?;
+        server_age_s(&String::from_utf8_lossy(&out.stdout), &uptime)
+    })
 }
 
 /// The age of a unit from `ActiveEnterTimestampMonotonic` (microseconds since boot; 0 when it never became active) and `/proc/uptime`.
