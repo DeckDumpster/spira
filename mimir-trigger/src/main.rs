@@ -577,6 +577,7 @@ mod tests {
     fn the_home_repo_in_the_repo_map_is_not_counted_twice() {
         let mut w = quiet();
         history(&mut w, "spira: land sp-a1\nspira: land sp-a2\n");
+        w.landref.insert(home_dir().display().to_string(), "base/ref".into());
         w.repo_map_text = format!("home | {} | push\n", home_dir().display());
         assert!(run(&w, &cfg()));
         assert!(w.created.borrow().is_empty(), "2 landings listed twice would read as 4");
