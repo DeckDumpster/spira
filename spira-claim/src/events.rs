@@ -511,6 +511,38 @@ mod tests {
         assert_eq!(got.returns, want.returns);
     }
 
+    // covers: UC-dwarf-execution-19
+    #[test]
+    fn attempts_come_from_the_events_trail_and_no_label_or_other_event_counts() {
+        let noise = [
+            ("label_added", "sp-attempt-3"),
+            ("label_added", "in_progress"),
+            ("reopened", ""),
+            ("reclaimed", ""),
+            ("commented", "claimed"),
+        ];
+        assert_eq!(fold(B, &rows(&noise)).attempts, 0, "labels, a reopen and a reclaim are no attempt");
+        assert_eq!(fold(B, &rows(&[("claimed", ""), ("claimed", ""), ("claimed", "")])).attempts, 3, "control: the same trail with claims counts");
+        let mixed: Vec<(&str, &str)> = noise.iter().copied().chain([("claimed", ""), ("claimed", "")]).collect();
+        assert_eq!(fold(B, &rows(&mixed)).attempts, 2, "only the claim rows count among the noise");
+    }
+
+    // covers: UC-dwarf-execution-19
+    #[test]
+    fn a_thrash_or_unjudged_death_is_no_attempt_but_a_real_failure_after_them_is() {
+        let r = rows(&[("claimed", ""), ("requeued", "thrash"), ("claimed", ""), ("requeued", "unjudged-killed"), ("claimed", "")]);
+        assert_eq!(fold(B, &r).attempts, 1);
+    }
+
+    // covers: UC-dwarf-execution-19
+    #[test]
+    fn nothing_since_a_poison_clear_is_zero_attempts_and_a_claim_after_it_is_one() {
+        let cleared = rows(&[("claimed", ""), ("claimed", ""), ("claimed", ""), ("poison.cleared", "op")]);
+        assert_eq!(fold(B, &cleared).attempts, 0);
+        let again = rows(&[("claimed", ""), ("claimed", ""), ("claimed", ""), ("poison.cleared", "op"), ("claimed", "")]);
+        assert_eq!(fold(B, &again).attempts, 1);
+    }
+
     #[test]
     fn null_safe_no_events() {
         let l = fold(B, &[]);

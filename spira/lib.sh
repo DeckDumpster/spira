@@ -1009,8 +1009,7 @@ capacity_withdrawn_mark() {
 # _attempts_sql_query (the thrash/unjudged exemption, the created_at poison.cleared floor,
 # the three sp-lzt/sp-rp4g4/sp-418h5 constraints its own comment used to carry) is now
 # `events::fold` (spira-claim/src/events.rs, DESIGN.md §3), unit-tested by
-# `cargo test -p spira-claim events::tests` and proven against the identical b1..b8 fixture
-# this file's own test-attempts-sql.sh still seeds. attempts_of is a one-line shim so every
+# `cargo test -p spira-claim events::tests`. attempts_of is a one-line shim so every
 # existing caller (capacity.sh, the Rust seams in dwarf/landing-pass/rebase-stale/etc. that
 # still call it by name) keeps working unchanged.
 #
@@ -1100,7 +1099,7 @@ thrash_streak_bump() {
 # DIAGNOSTIC ACCESSOR — the requeue counter is read from the events table via bd sql
 # (sp-2lk). PORTED TO spira-claim (wave 4.18, sp-sn1re): `count-events` is the same raw
 # COUNT(*), still generic over event_type — doctor's events-substrate probe and the
-# reclaims_of() test fixtures (test-attempts.sh, test-unpoison.sh) call this directly with
+# reclaims_of() test fixtures call this directly with
 # event types other than 'requeued'. _counter_events_sql had no caller left once this
 # shimmed directly and was retired outright.
 _counter_events_query() {   # _counter_events_query <id> <event_type> -> count, or '?' if bd sql fails

@@ -1,7 +1,7 @@
 //! Unit tests for `counters.rs` — the pure pieces (SQL shape, record format, streak
 //! arithmetic, metadata/label parsing). The one process boundary each public function
 //! crosses (`bd sql`/`bd show`/`bd update`, the filesystem, `date`) is exercised instead
-//! by the real suites this bead's report names (test-attempts-sql.sh, test-census*.sh,
+//! by the real suites this bead's report names (test-census*.sh,
 //! test-watchtower*.sh) against a real bd store.
 
 use super::*;

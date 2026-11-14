@@ -115,6 +115,7 @@ mod tests {
         assert_eq!(run(0, 0, 0, "", "", false), "none");
     }
 
+    // covers: UC-dwarf-execution-21
     #[test]
     fn decide_poison_at_threshold() {
         assert_eq!(run(3, 0, 0, "", "0:0:0:0", false), "poison ask");
@@ -128,12 +129,14 @@ mod tests {
         assert_eq!(run(3, 0, 0, "", "0:0:0:0", true), "ask");
     }
 
+    // covers: UC-dwarf-execution-21
     #[test]
     fn decide_clear_below_threshold_when_poisoned() {
         assert_eq!(run(1, 0, 0, "", "1:1:1", true), "clear");
         assert_eq!(run(0, 0, 0, "", "1:1:1", true), "clear");
     }
 
+    // covers: UC-dwarf-execution-21
     #[test]
     fn poison_at_zero_needs_a_charged_attempt() {
         let t = Thresholds { poison_at: 0, ..Thresholds::default() };

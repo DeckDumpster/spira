@@ -161,6 +161,7 @@ fn poisoned_a() -> Fake {
 
 // ---------------------------------------------------------------------------------------
 
+// covers: UC-dwarf-execution-21
 #[test]
 fn clear_then_verify_ok_with_zero_events() {
     // sp-r66qd: right after the floor there are NO events to count. The count must be 0,
@@ -215,6 +216,7 @@ fn on_bd_in_progress_is_not_a_holder() {
 }
 
 /// The refusal names the holder and the exit.
+// covers: UC-dwarf-execution-21
 #[test]
 fn refuse_when_held_names_the_exit() {
     let mut f = Fake::new()
@@ -242,6 +244,7 @@ fn refuse_when_lifecycle_holder() {
     assert_eq!(f.writes(), 0);
 }
 
+// covers: UC-dwarf-execution-21
 #[test]
 fn skip_when_not_poisoned_and_below_threshold() {
     let mut f = Fake::new().bead("pz4", "open", None, &["spira"]).claims("pz4", 2);

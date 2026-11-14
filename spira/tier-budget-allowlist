@@ -41,7 +41,6 @@ test-dwarf-yield-headless.sh	T1	42.5
 test-answers.sh	T1	23.5
 test-archivist.sh	T1	30.0
 test-artifact-install.sh	T1	2.5
-test-attempts.sh	T1	44.0
 test-batch-bisect-expiry.sh	T1	53.0
 test-batch-cited-commit.sh	T2	18.0
 test-batch-conflict.sh	T1	30.5
