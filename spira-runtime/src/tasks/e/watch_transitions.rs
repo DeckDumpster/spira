@@ -654,8 +654,7 @@ pub fn observe(
         .map(|(_, e)| e.at)
         .max();
     let activated = crate::watchers::last_activation(run_dir);
-    let up = crate::world::store_up_s();
-    let blind = |why: &str| Snapshot { activated_at: activated, store_up_s: up, ..blind(why) };
+    let blind = |why: &str| Snapshot { activated_at: activated, store_up_s: crate::world::store_up_s(), ..blind(why) };
     let in_effect = releases_in_effect(&releases, releases_dir);
     let window = window_s.to_string();
     let after = if current.is_some() {
@@ -684,7 +683,6 @@ pub fn observe(
         .into_iter()
         .collect();
     let mut snap = snapshot_of(&dwell, recorded, landed_after).unwrap_or_else(|e| blind(&e));
-    snap.store_up_s = up;
     let progress = std::fs::read_to_string(run_dir.join("round-progress.json"))
         .ok()
         .and_then(|t| round_owner(&t));

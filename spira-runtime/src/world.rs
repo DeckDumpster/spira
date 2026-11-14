@@ -855,13 +855,12 @@ impl World {
         let day = 24 * 3600;
         let halt = read_halt(&self.run_dir);
         let activated_at = crate::watchers::last_activation(&self.run_dir);
-        let store_up_s = store_up_s();
-        let blind = ThroughputSnapshot { readable: false, halt: halt.clone(), activated_at, store_up_s, ..Default::default() };
-        let Ok(prefix) = spira_config::process::cfg("SPIRA_ID_PREFIX") else { return to_json(&blind) };
-        let Ok(mut landings) = self.landed_on_refs(p.now, &prefix) else { return to_json(&blind) };
-        let Ok(waiting) = self.waiting_rows() else { return to_json(&blind) };
-        let Ok(batches) = self.lc_json(&["list", "--batches", "--window", &day.to_string()]) else { return to_json(&blind) };
-        let Some(rows) = batches.as_array() else { return to_json(&blind) };
+        let blind = || ThroughputSnapshot { readable: false, halt: halt.clone(), activated_at, store_up_s: store_up_s(), ..Default::default() };
+        let Ok(prefix) = spira_config::process::cfg("SPIRA_ID_PREFIX") else { return to_json(&blind()) };
+        let Ok(mut landings) = self.landed_on_refs(p.now, &prefix) else { return to_json(&blind()) };
+        let Ok(waiting) = self.waiting_rows() else { return to_json(&blind()) };
+        let Ok(batches) = self.lc_json(&["list", "--batches", "--window", &day.to_string()]) else { return to_json(&blind()) };
+        let Some(rows) = batches.as_array() else { return to_json(&blind()) };
         stamp_landings(&mut landings, rows);
         for l in &mut landings {
             l.waiting = waiting.as_array().map_or(0, |rows| rows.iter().filter(|r| r["repo"].as_str() == Some(l.repo.as_str())).count() as u64);
@@ -871,7 +870,7 @@ impl World {
         let unlanded = unlanded_rounds(batches, p.now);
         let parts = self.round_record_partition();
         let records = Records { clear: parts.clear.iter().map(|f| f.display().to_string()).collect(), held: parts.held };
-        to_json(&ThroughputSnapshot { readable: true, landings, repos, unlanded, records, halt, activated_at, store_up_s })
+        to_json(&ThroughputSnapshot { readable: true, landings, repos, unlanded, records, halt, activated_at, store_up_s: None })
     }
 
     /// The beads landed over the 24 h ending `now`, per registered repo, read from its landing ref
