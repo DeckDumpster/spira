@@ -1050,9 +1050,8 @@ bump_requeue() { _bump_write_event "${1:-}" requeued  "${2:-unrecorded}"; }
 bump_lapsed()  { _bump_write_event "${1:-}" lapsed    "${2:-unrecorded}"; }
 
 # write_lapse_record <bead> <quiet_s> <last_action> <tip> -> $SPIRA_RUN/lapsed/<bead>-<ts>
-# PORTED TO spira-claim (wave 4.18, sp-sn1re): same record format (test-watchtower.sh's
-# gap G8 lifts this function out of lib.sh and runs it standalone to prove the real
-# writer's output still matches the hand-written fixtures the rest of that suite plants).
+# PORTED TO spira-claim (wave 4.18, sp-sn1re): same record format, read back by
+# `watchtower::lapsed::tests`.
 write_lapse_record() {
     command spira-claim lapse-record "${1:-}" "${2:-}" "${3:-}" "${4:-}"
 }

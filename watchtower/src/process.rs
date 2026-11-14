@@ -65,7 +65,7 @@ pub fn getenv_i64(k: &str, default: i64) -> i64 {
 /// lib.sh's CODE (`git::spira_landref`, `seams::registry`, `seams::pipeline_probe`).
 /// Conflating this with `$SPIRA_HOME` was a real bug (sp-lnmbq): a suite that points
 /// `SPIRA_HOME` at a fixture directory holding only a `runes/` and no `lib.sh` at all
-/// (test-watchtower.sh's idle-while-ready section) made every one of those seams source
+/// made every one of those seams source
 /// nothing and fail closed, even though the fixture never intended to replace lib.sh
 /// itself — only what its ALREADY-real functions read. `SPIRA_HOME` still reaches those
 /// functions correctly: it is inherited in the subprocess's own environment, never passed

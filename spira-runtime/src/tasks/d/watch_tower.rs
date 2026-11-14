@@ -46,7 +46,6 @@
 //! Fixtures to port:
 //!
 //! - `sweep/render.rs` (20 tests), `sweep/collect.rs` (18), `sweep/escalate.rs` (9)
-//! - `spira/test-watchtower-lapse.sh`
 //!
 //! ## Act
 //!

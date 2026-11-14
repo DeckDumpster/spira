@@ -2915,6 +2915,7 @@ dependencies = [
  "runtime",
  "serde",
  "serde_json",
+ "spira-claim",
  "spira-config",
  "spira-ctrl",
  "spira-desired-state",

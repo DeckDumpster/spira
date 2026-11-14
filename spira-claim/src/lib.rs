@@ -24,6 +24,8 @@ mod store;
 mod unpoison;
 pub mod verdicts;
 
+pub use counters::write_lapse_record;
+
 /// `READY_ARGS`'s fixed prefix (lib.sh's own array literal) — "the one definition of a bead
 /// a dwarf can take" (lib.sh:434). `cockpit-collect`'s queue probe used to keep its own copy
 /// of exactly these five tokens (`probes/queue.rs`); importing this one is the fix.

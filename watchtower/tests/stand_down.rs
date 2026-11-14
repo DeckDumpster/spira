@@ -65,6 +65,7 @@ fn a_check_does_not_stand_down_while_one_repo_still_takes_the_detectors_lane() {
     }
 }
 
+// covers: UC-ops-detection-remediation-25
 #[test]
 fn every_periodic_check_stands_down_while_the_world_is_halted() {
     let (d, run) = world("watchtower-halted");

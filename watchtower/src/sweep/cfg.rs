@@ -95,3 +95,53 @@ impl Cfg {
         }
     }
 }
+
+#[cfg(test)]
+impl Cfg {
+    /// A sweep config over `d` with every threshold at a plain value, every path inside `d`, and
+    /// no live store, unit or binary behind it.
+    pub fn fixture(d: &std::path::Path, incident_sh: String) -> Cfg {
+        Cfg {
+            spira_run: d.to_path_buf(),
+            lib_sh_dir: String::new(),
+            db: "db".into(),
+            home_repo: "spira".into(),
+            ask_label: "needs-operator".into(), // literal-ok: test fixture
+            snap_stale_s: 60,
+            gate_window_s: 21600,
+            gate_silence_window_s: 3600,
+            gate_deadline_s: 300,
+            gate_log: None,
+            yield_window_s: 86400,
+            yield_sh: None,
+            disk_warn_pct: 90,
+            mem_warn_mb: 1500,
+            meminfo_path: PathBuf::from("/proc/meminfo"),
+            failed_units_warn_mins: 15,
+            cpu_throttle_units: Vec::new(),
+            cpu_throttle_warn_pct: 5,
+            cpu_throttle_min_periods: 100,
+            cgroup_root: "/sys/fs/cgroup".into(),
+            unsent_warn_h: 24,
+            closed_stranded_warn_h: 48,
+            drain_warn_mins: 15,
+            idle_while_ready_n: 5,
+            systemctl: "systemctl".into(),
+            units: std::sync::Arc::new(runtime::units::ScriptedUnits::new(std::sync::Arc::new(runtime::ports::VirtualClock::new(0)))),
+            prompt_file: None,
+            lapsed_dir: None,
+            lapsed_marker: None,
+            failed_units_state: Some(d.join("failed-units.state")),
+            throttle_stamp: None,
+            queue_throttle_override: String::new(),
+            incident_sh,
+            lc: spira_store::lc_call::LcClient::socket("/does/not/exist/lc.sock"),
+            suites_sh: None,
+            cockpit_db: None,
+            moot_timeout_s: 30,
+            resolve_bin: "resolve".into(),
+            branch_guard_sh: None,
+            lc_bin: "/does/not/exist/spira-lc".into(),
+        }
+    }
+}

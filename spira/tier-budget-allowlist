@@ -126,7 +126,6 @@ test-ops-closing.sh	T1	152.5
 test-poison-ask.sh	T1	37.5
 test-poison-edge.sh	T1	77.5
 test-pr-notify.sh	T1	3.0
-test-pr-stall.sh	T1	4.0
 # literal-ok: a real suite filename, not a use of the configured label it happens to contain
 test-reclaim-needs-ryan.sh	T1	2.0
 test-ref-guard.sh	T1	3.0
@@ -159,10 +158,7 @@ test-thrash-streak.sh	T1	28.5
 test-thrash-wall.sh	T1	2.0
 test-unit-restart-limits.sh	T1	2.0
 test-verdict-timer.sh	T1	1.5
-test-watchtower-czar-outcome.sh	T1	11.5
-test-watchtower-lapse.sh	T1	126.0
 test-watchtower-queue.sh	T1	26.0
-test-watchtower.sh	T1	143.0
 test-wiki-add-fence.sh	T1	1.5
 test-world-drain.sh	T1	3.0
 test-world-start-honours-ctrl.sh	T1	5.0

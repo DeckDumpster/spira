@@ -165,11 +165,11 @@ fn main() {
                 log::log(&why);
                 return;
             }
-            let cfg = pr_stall::Cfg {
-                stall_secs: reg_i64("SPIRA_PR_STALL_MINS") * 60,
-                gh_bin: reg("SPIRA_GH"),
-                gh_timeout: Duration::from_secs(getenv_i64("GH_TIMEOUT", 120) as u64),
-            };
+            let cfg = pr_stall::Cfg::from_mins(
+                reg_i64("SPIRA_PR_STALL_MINS"),
+                reg("SPIRA_GH"),
+                Duration::from_secs(getenv_i64("GH_TIMEOUT", 120) as u64),
+            );
             pr_stall::run(
                 n,
                 &lib_sh_dir(),

@@ -78,10 +78,8 @@ duplication is exactly what let a timer added after a hand list was written esca
 - **`watchtower-czar-outcome.py` is inlined, not repointed.** Its only caller was
   `--czar-outcome-check`; with that ported to Rust the classifier moves in-process
   (`czar_outcome::classify`) instead of a second process fork per sentinel pass. The script
-  and both suites that tested it (`test-watchtower-czar-outcome-classify.sh`,
-  `test-watchtower-czar-outcome.sh`) retire; `czar_outcome::tests` covers the classifier
-  one-for-one against the same fixtures, and `czar_outcome::gather` gets its own test against
-  a fake `bd`.
+  and both suites that tested it retire; `czar_outcome::tests` covers the classifier and
+  the per-bead refs through a scripted store.
 - **Nothing else in the sweep's field list was dropped.** Retiring a vital sign requires
   proving its producer (`collect.sh`/`cockpit.sh`, a different wave) is also gone; that
   evidence was not available in this bead's scope, so every `SP_*` key the bash read is read
@@ -162,8 +160,8 @@ runs `cockpit/moot-sweep.sh --apply`.
   used only by `seams::timer_priority_and_suspended` — the bash reached world.sh/ctrl.sh
   via a literal `"${SPIRA_HOME}/world.sh"`, genuinely `SPIRA_HOME`-driven, not `$0`-relative.
   Conflating the two was a real bug (sp-lnmbq): a caller that points `SPIRA_HOME` at a
-  fixture directory holding data files but no lib.sh (test-watchtower.sh's idle-while-ready
-  section, which overrides `SPIRA_HOME` so `bulk_ready_by_rune`'s runes lookup reads its
+  fixture directory holding data files but no lib.sh (an idle-while-ready
+  fixture, which overrides `SPIRA_HOME` so `bulk_ready_by_rune`'s runes lookup reads its
   fixture, while still expecting the real lib.sh code to run) made every lib.sh-sourcing
   seam fail closed with no error. `SPIRA_HOME` still reaches lib.sh's own functions
   correctly either way — it is inherited in the seam's subprocess environment, never
@@ -175,7 +173,7 @@ runs `cockpit/moot-sweep.sh --apply`.
   suspended-base list, NUL-separated. Fixed script, no interpolation — the base names come
   back on stdout, never assembled into the script text.
 - `czar_outcome::classify` is a pure function over `&[TriggerBead]` — no IO, table-tested
-  against the exact fixtures `test-watchtower-czar-outcome-classify.sh` used.
+  against fixtures.
 - `throttle::decide`, `pr_stall::decide` are pure decision functions over already-gathered
   inputs, same split the bash used when it hoisted `collect_*` above the main guard for
   direct testability.

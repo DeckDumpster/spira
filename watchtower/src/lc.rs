@@ -37,17 +37,9 @@ fn epoch(v: &Value, key: &str) -> Option<i64> {
     }
 }
 
-fn run(args: &[&str]) -> Option<String> {
-    run_on(&client()?, args)
-}
-
 /// The answer when it applied (exit 0); a refusal or no answer is `None`, never empty.
 fn run_on(client: &LcClient, args: &[&str]) -> Option<String> {
     client.answer(args).ok()
-}
-
-fn rows(args: &[&str]) -> Option<Vec<Value>> {
-    rows_on(&client()?, args)
 }
 
 /// `content list <args>`'s JSON payload — bd's own rows, through the store's content door —
@@ -72,22 +64,35 @@ fn rows_on(client: &LcClient, args: &[&str]) -> Option<Vec<Value>> {
 }
 
 pub fn beads_in(state: &str) -> Option<Vec<BeadRow>> {
+    beads_in_on(&client()?, state)
+}
+
+pub fn beads_in_on(client: &LcClient, state: &str) -> Option<Vec<BeadRow>> {
     Some(
-        rows(&["list", "--state", state])?
+        rows_on(client, &["list", "--state", state])?
             .iter()
             .map(|r| BeadRow { id: text(r, "bead_id"), tip: text(r, "tip"), since: epoch(r, "since") })
             .collect(),
     )
 }
 
-/// The newest `LANDED` bead and when it entered that state.
+/// The newest `LANDED` bead and when it entered that state. A row with no readable `since` is
+/// not a landing: it is never credited, so an unreadable record cannot make a stall look fresh.
 pub fn last_landed() -> Option<(String, i64)> {
-    beads_in("LANDED")?.into_iter().filter_map(|b| Some((b.id, b.since?))).max_by_key(|(_, at)| *at)
+    last_landed_on(&client()?)
+}
+
+pub fn last_landed_on(client: &LcClient) -> Option<(String, i64)> {
+    beads_in_on(client, "LANDED")?.into_iter().filter_map(|b| Some((b.id, b.since?))).max_by_key(|(_, at)| *at)
 }
 
 pub fn pr_open() -> Option<Vec<DeliveryRow>> {
+    pr_open_on(&client()?)
+}
+
+pub fn pr_open_on(client: &LcClient) -> Option<Vec<DeliveryRow>> {
     Some(
-        rows(&["list", "--delivery", "--state", "PR_OPEN"])?
+        rows_on(client, &["list", "--delivery", "--state", "PR_OPEN"])?
             .iter()
             .map(|r| DeliveryRow {
                 id: text(r, "bead_id"),
@@ -102,12 +107,16 @@ pub fn pr_open() -> Option<Vec<DeliveryRow>> {
 /// The PrOpen `Requeued` event, as the harness: the exit that sends the bead back through
 /// the landing pass for a rebase.
 pub fn requeue_pr_open(id: &str, version: &str) -> bool {
-    let Some(shown) = run(&["show", id]).and_then(|t| serde_json::from_str::<Value>(&t).ok()) else {
+    client().is_some_and(|c| requeue_pr_open_on(&c, id, version))
+}
+
+pub fn requeue_pr_open_on(client: &LcClient, id: &str, version: &str) -> bool {
+    let Some(shown) = run_on(client, &["show", id]).and_then(|t| serde_json::from_str::<Value>(&t).ok()) else {
         return false;
     };
     let tip = shown.get("bead").map(|b| text(b, "tip")).unwrap_or_default();
     let kind = serde_json::json!({"Requeued": {"tip": tip}}).to_string();
-    run(&["event", "delivery", id, "--expect", "PR_OPEN", "--version", version, "--actor", HARNESS_ACTOR, "--kind", &kind]).is_some()
+    run_on(client, &["event", "delivery", id, "--expect", "PR_OPEN", "--version", version, "--actor", HARNESS_ACTOR, "--kind", &kind]).is_some()
 }
 
 /// A scripted store for tests: records every argv, answers each with one fixed reply.

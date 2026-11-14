@@ -149,7 +149,7 @@ statement = "The watchtower sweep files each Hel, DEDUP, drain and PR-stall esca
 [[use_case]]
 id = "UC-ops-detection-remediation-28"
 tier = "T1"
-statement = "PR stall is handled per repo setting: a stale REBASED `pr-open` in a repo with auto-merge off files a stall incident with a repo-scoped ref; with auto-merge on, it arms auto-merge instead; a CONFLICTING PR's landstate is cleared; fresh, CERTIFIED and unknown-repo entries are ignored; doctor FAILs a pr-mode repo with auto-merge off and says \"could not check\" when gh errors."
+statement = "PR stall is handled per repo setting: a stale REBASED `pr-open` in a repo with auto-merge off files a stall incident with a repo-scoped ref; with auto-merge on, it arms auto-merge instead; a CONFLICTING PR's landstate is cleared; fresh, CERTIFIED and unknown-repo entries are ignored; an `allow_auto_merge` gh could not read is unknown, never taken for off."
 
 [[use_case]]
 id = "UC-ops-detection-remediation-29"
@@ -211,12 +211,6 @@ statement = "Detector and trigger conf keys are allowlisted with documented defa
 id = "UC-ops-detection-remediation-37"
 tier = "T1"
 statement = "dwarf.sh's lapse-record write and the watchtower lapse reader agree on format: a real writer-produced record parses correctly, the same seam `land_mark` already gives landstate."
-
-[use_case.uncovered]
-reason = "write_lapse_record() extraction and the writer-into-reader test are sp-fhzib.4's scope (gap G8), reopened separately and not yet landed"
-date = "2026-09-26"
-bead = "sp-fhzib.4"
-
 [[use_case]]
 id = "UC-ops-detection-remediation-38"
 tier = "T1"

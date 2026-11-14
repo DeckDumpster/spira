@@ -450,6 +450,6 @@ Tests (bash; none run here):
 | `test-guards.sh:256` | the rendered-brief allow case `"${FAKE_PROD}/suites.sh status"` becomes `"${FAKE_PROD_BIN}/testenv suites status"` (whatever path row 5 renders) |
 | `test-guards.sh:609-616` | repoint the dwarf refusal to `SPIRA_DWARF=x "$SPIRA_TESTENV_BIN" suites quarantine …` (message unchanged) |
 | `test-verdict.sh:254-259`, `test-verdict-replay.sh:100-104`, `test-eject-unattributed.sh:124-128` | the `$SH/suites.sh` stub becomes a `SPIRA_TESTENV_BIN` stub that logs `$*` (the log now starts `suites observe-flake …`) |
-| `test-watchtower*.sh`, `test-snap-stale-threshold.sh` | unchanged: they inject `SPIRA_SUITES_SH`, which row 2 keeps as the test seam |
+| `test-snap-stale-threshold.sh` | unchanged: they inject `SPIRA_SUITES_SH`, which row 2 keeps as the test seam |
 | `test-config-compat-master-base.sh:182`, `test-queue-step-eject-race.sh:66`, `test-install-hooks-artifact.sh:126` | drop `suites.sh` from the stubbed-script lists |
 | `test-suite-state.sh` | **retired (sp-9gd4e)** — tested `suite-state.sh`, deleted; covered by `cargo test -p testenv suite::` and `suites::lint_*` |

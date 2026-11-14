@@ -194,6 +194,7 @@ mod tests {
         assert_eq!(build_p90("", NOW, 86400), None, "no rows is unknown, not zero");
     }
 
+    // covers: UC-ops-detection-remediation-26
     #[test]
     fn picks_the_longest_wait_inside_the_window() {
         let t1 = fmt_iso(NOW - 100);
@@ -206,6 +207,7 @@ mod tests {
         assert_eq!(gw.oldest_branch, "sp-b");
     }
 
+    // covers: UC-ops-detection-remediation-26
     #[test]
     fn rows_outside_the_window_are_excluded() {
         let old = fmt_iso(NOW - 100_000);
@@ -214,6 +216,7 @@ mod tests {
         assert_eq!(gw.oldest_wait, None);
     }
 
+    // covers: UC-ops-detection-remediation-26
     #[test]
     fn no_rows_in_window_renders_unknown_not_zero() {
         let gw = compute("", NOW, 21600);

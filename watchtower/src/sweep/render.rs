@@ -377,6 +377,7 @@ mod tests {
         assert!(!is_nominal(&d, 60));
     }
 
+    // covers: UC-ops-detection-remediation-26
     #[test]
     fn render_includes_every_section_header_and_the_halt_banner_when_halted() {
         let mut d = SweepData::fixture_nominal(1_700_000_000);
@@ -400,6 +401,7 @@ mod tests {
         assert!(out.contains("## Your task"));
     }
 
+    // covers: UC-ops-detection-remediation-26
     #[test]
     fn render_never_folds_an_unknown_field_into_a_zero() {
         let mut d = SweepData::fixture_nominal(1_700_000_000);
@@ -441,6 +443,7 @@ mod tests {
             .unwrap_or_else(|| panic!("no row {label}"))
     }
 
+    // covers: UC-ops-detection-remediation-26
     #[test]
     fn each_hel_field_renders_the_value_its_key_holds() {
         let pairs: Vec<(&str, &str)> = HEL.iter().map(|(k, _)| (*k, "7")).collect();
@@ -454,6 +457,7 @@ mod tests {
         }
     }
 
+    // covers: UC-ops-detection-remediation-26
     #[test]
     fn each_hel_field_with_no_key_renders_a_question_mark() {
         let out = rendered(&[]);
@@ -463,6 +467,7 @@ mod tests {
         }
     }
 
+    // covers: UC-ops-detection-remediation-26
     #[test]
     fn a_zero_in_a_hel_field_renders_as_zero_never_a_question_mark() {
         let pairs: Vec<(&str, &str)> = HEL.iter().map(|(k, _)| (*k, "0")).collect();
@@ -493,6 +498,7 @@ mod tests {
         assert!(out.contains("duplicate incident refs             ?      (surplus beads: ?)"));
     }
 
+    // covers: UC-ops-detection-remediation-26
     #[test]
     fn an_old_snapshot_without_the_ghost_key_renders_it_unread_not_clear() {
         let out = rendered(&[("SP_STRANDS", "7")]);
