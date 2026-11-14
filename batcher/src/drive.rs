@@ -1171,7 +1171,7 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
             return eject_sole_member(ops, &members, &red, &filter);
         }
         suites = prior_reds;
-        kind = MainKind::Verify;
+        kind = MainKind::Corpus;
     }
     for iteration in 0..bound {
         if runner.abandoned() {
@@ -1649,6 +1649,9 @@ pub(crate) mod tests {
         pub prior: Option<FilterRed>,
         /// The suites the corpus pass this attribution follows ran red.
         pub prior_suites: Vec<String>,
+        /// Like the real runner: nothing answers a verify main or a job until a corpus main started.
+        pub needs_runner: bool,
+        pub runner_started: bool,
         /// A probe scoped to named tests finds nothing red: the red needs its whole package.
         pub narrow_clears: bool,
         /// A runner that cannot build a tree with members taken out: every such job fails to launch.
@@ -1700,6 +1703,8 @@ pub(crate) mod tests {
                 scoped: vec![],
                 prior: None,
                 prior_suites: vec![],
+                needs_runner: false,
+                runner_started: false,
                 narrow_clears: false,
                 refuses_removals: false,
                 added_by: BTreeMap::new(),
@@ -1740,6 +1745,11 @@ pub(crate) mod tests {
         }
         fn start_main(&mut self, kind: MainKind, suites: &[String]) -> Result<(), String> {
             self.main_kind.push((kind, suites.to_vec()));
+            if kind == MainKind::Corpus {
+                self.runner_started = true;
+            } else if self.needs_runner && !self.runner_started {
+                return Err("no round-vm is running to answer the verify request".into());
+            }
             self.main.clear();
             self.done_jobs.clear();
             self.jobs.clear();
@@ -1866,6 +1876,9 @@ pub(crate) mod tests {
             Ok(())
         }
         fn launch(&mut self, job: &Job) -> Result<(), String> {
+            if self.needs_runner && !self.runner_started {
+                return Err("no round-vm is running to answer the job request".into());
+            }
             if self.refuses_removals && !job.removal.is_empty() {
                 return Err("no tree without those members".into());
             }
@@ -2670,11 +2683,12 @@ pub(crate) mod tests {
     fn a_pass_red_only_on_suites_is_attributed_by_verifying_those_suites_alone() {
         let mut f = Fake::new(breaks("m2", "test-03.sh"));
         f.maxpar = 4;
+        f.needs_runner = true;
         f.prior_suites = vec!["test-03.sh".into(), "not-in-the-corpus.sh".into()];
         let mut ops = Ops::default();
         let end = attribute_round(&mut f, &mut ops, &corpus(4), three(), Budget { slots: 6, maxpar: 4 }).unwrap();
-        assert_eq!(f.main_kind[0], (MainKind::Verify, vec!["test-03.sh".into()]));
-        assert!(!f.main_kind.iter().any(|(k, _)| *k == MainKind::Corpus), "{:?}", f.main_kind);
+        assert_eq!(f.main_kind[0], (MainKind::Corpus, vec!["test-03.sh".into()]));
+        assert!(!f.jobs.iter().any(|(j, _, _)| j.suite == "not-in-the-corpus.sh"));
         assert_eq!(ops.ejected, vec![("m2".to_string(), vec!["test-03.sh".to_string()])]);
         assert!(matches!(end, RoundEnd::Land { .. }));
     }

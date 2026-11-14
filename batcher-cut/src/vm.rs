@@ -546,6 +546,13 @@ impl<'a> VmRunner<'a> {
     }
 
     /// Attributes from the results of the corpus pass that went red, found at `results`.
+    fn corpus_list_ok(&self, suites: &[String]) -> Result<(), String> {
+        if self.prior.is_some() {
+            return Ok(());
+        }
+        order::covers(&io::suites_in(&self.wt, "HEAD"), suites)
+    }
+
     pub fn after_pass(mut self, results: Option<PathBuf>) -> Self {
         self.prior = results;
         self
@@ -858,7 +865,7 @@ impl RoundRunner for VmRunner<'_> {
                     return Err("the corpus already ran for this round".into());
                 }
                 if self.corpus_runs == 0 {
-                    order::covers(&io::suites_in(&self.wt, "HEAD"), suites)?;
+                    self.corpus_list_ok(suites)?;
                 } else {
                     clear_results(&self.results, suites);
                 }
@@ -1793,6 +1800,27 @@ mod abandon_tests {
         assert!(r.prior_red_suites().is_empty(), "no prior pass: the corpus runs");
         let mut r = r.after_pass(Some(d.path().to_path_buf()));
         assert_eq!(r.prior_red_suites(), vec!["b.sh".to_string(), "c.sh".to_string()]);
+    }
+
+    #[test]
+    fn an_after_pass_runner_accepts_a_corpus_list_that_is_a_subset_of_the_tree_and_a_plain_one_refuses() {
+        let d = testkit::TempDir::new("vm-corpus-list");
+        fs::create_dir_all(d.path().join("spira")).unwrap();
+        testkit::git(d.path(), &["init", "-q", "-b", "main"]);
+        for s in ["test-a.sh", "test-b.sh"] {
+            fs::write(d.path().join("spira").join(s), "#!/bin/sh\n").unwrap();
+        }
+        testkit::git(d.path(), &["add", "-A"]);
+        testkit::git(d.path(), &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "c"]);
+        let env = lifecycle_tests_env(d.path());
+        let repo = repo(d.path());
+        let red = vec!["test-b.sh".to_string()];
+        let plain = VmRunner::new(&env, &repo, d.path(), "base", "r1", BTreeMap::new()).unwrap();
+        assert!(plain.corpus_list_ok(&red).unwrap_err().contains("suite list omits"));
+        let after = VmRunner::new(&env, &repo, d.path(), "base", "r1", BTreeMap::new())
+            .unwrap()
+            .after_pass(Some(d.path().to_path_buf()));
+        assert!(after.corpus_list_ok(&red).is_ok());
     }
 
     #[test]
