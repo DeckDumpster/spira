@@ -178,7 +178,7 @@ fn a_preempt_that_ejects_the_last_member_ends_the_round_quietly_and_the_next_tic
     let leg = preempts(&acts).remove(0);
     let (after, acts) = on_outcome(&next, PREEMPT, true, "{}", &leg, NOW);
     let rc = after.repos.get("spira").cloned().unwrap_or_default();
-    assert_eq!((rc.state, rc.batch.as_deref()), (State::Idle, None), "the round ended with its last member");
+    assert_eq!((rc.state, rc.batch.as_deref(), rc.pace.infra), (State::Idle, None, 0), "the round ended with its last member");
     assert!(!names(&acts).contains(&PAUSE) && !names(&acts).contains(&INBOX_APPEND) && !names(&acts).contains(&ABANDON), "{acts:?}");
 
     let member = Member { id: "sp-b".into(), state: "CERTIFIED".into(), version: 5, tip: "t2".into(), sifted_tip: Some("t2".into()), title: "work".into(), priority: 2, ..Member::default() };
@@ -207,4 +207,25 @@ fn a_two_member_round_that_loses_one_to_a_preempt_and_ends_red_is_still_attribut
     let ran = runtime::units::UnitRan { handle: runtime::units::UnitHandle::of(NAME, "spira.r9.corpus1").unwrap(), exit: runtime::units::Exit::Code(1), duration_ms: 1 };
     let (_, acts) = on_ran(&next, &ran, NOW).expect("the carried leg ended");
     assert!(names(&acts).contains(&CORPUS), "{acts:?}");
+}
+
+#[test]
+fn an_emptied_round_ends_quietly_from_every_state_a_pass_runs_in() {
+    for (state, leg) in [(State::Attributing, "spira.r9.attribute1"), (State::Certifying, "spira.r9.certify1")] {
+        let mut carry = one_member(state);
+        let rc = carry.repos.get_mut("spira").unwrap();
+        rc.leg = Some(leg.into());
+        let mut snap = snapshot(vec![("sp-a", "t1")], None);
+        snap.repos.get_mut("spira").unwrap().open_round.as_mut().unwrap().members = vec!["sp-a".into()];
+        snap.repos.get_mut("spira").unwrap().live_legs = Some(vec![leg.into()]);
+        let (asked, acts) = decide(&carry, &snap);
+        let (after, acts) = on_outcome(&asked, PREEMPT, true, "{}", &preempts(&acts).remove(0), NOW);
+        assert_eq!(after.repos.get("spira").cloned().unwrap_or_default().state, State::Idle, "{state:?}");
+        assert!(!names(&acts).contains(&PAUSE) && !names(&acts).contains(&ABANDON), "{state:?}: {acts:?}");
+        carry.repos.get_mut("spira").unwrap().members.clear();
+        let ran = runtime::units::UnitRan { handle: runtime::units::UnitHandle::of(NAME, leg).unwrap(), exit: runtime::units::Exit::Code(1), duration_ms: 1 };
+        let (next, acts) = on_ran(&carry, &ran, NOW).expect("the carried leg ended");
+        assert_eq!(next.repos.get("spira").cloned().unwrap_or_default().state, State::Idle, "{state:?}");
+        assert!(!names(&acts).contains(&PAUSE) && !names(&acts).contains(&INBOX_APPEND), "{state:?}: {acts:?}");
+    }
 }
