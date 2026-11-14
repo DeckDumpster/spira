@@ -145,7 +145,7 @@ and in `spira-ctrl`'s own DESIGN.md, mapped as `[use_case.uncovered]` exceptions
 pattern `sp-pppt0`/`sp-ekkak` already used for an earlier bash-to-Rust coverage move.
 Every other suite that names `world.sh`/`ctrl.sh`/`dwarves.sh`/`slay.sh` (`test-world.sh`,
 `test-ctrl.sh`, `test-slay.sh`, `test-work-services-exclusion.sh`, `test-world-timer-*.sh`,
-`test-install-dwarves.sh`, …) drives the tool as a subprocess and needed no change beyond a
+…) drives the tool as a subprocess and needed no change beyond a
 `# covers:` path fix (spira-lint's `covers-entries` rule) — it now validates the Rust
 binary by the same bare name, unchanged.
 

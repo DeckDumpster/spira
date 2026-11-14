@@ -114,7 +114,6 @@ Migrated (sp-uxdjnk). Wall before is the table's round-VM median; the alone figu
 
 | suite | wall | property | target | reason |
 | --- | ---: | --- | --- | --- |
-| test-install-dwarves.sh | 59 | install's live-dwarf guard, oneshot drain and end-state check | keep | Real install.sh against a mock systemctl; bare-host. |
 | test-deploy.sh | 33 | deploy: fetch, drain, activate, re-render, health check, rollback, dry-run, draft refusal | keep | Real deploy path; wall is 1,792 lines, shard by property. |
 | test-cadence-tool.sh | 84 | cadence.sh changes a timer's cadence and refuses to disarm one | keep | Real systemd; wall is two fixed sleeps (8 s unit, 2 s) repeated per row. |
 | test-canary.sh | 74 | `release stage` and `release canary` build an isolated environment and run the pipeline end to end | keep | The canary is the thing it tests. |

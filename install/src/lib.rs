@@ -7,6 +7,8 @@
 //! Replaces `install.sh`, `systemd/install.sh`, `systemd/unit-ensure.sh`, `systemd/units.sh`
 //! and `systemd/render.py`.
 
+#[cfg(test)]
+mod cells;
 pub mod bootstrap;
 pub mod checks;
 pub mod decide;

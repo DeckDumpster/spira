@@ -3,9 +3,9 @@
 # test-tarball-bins.sh — every binary named in a non-optional unit's ExecStart
 # is shipped in the tarball; build-tarball.sh refuses to build with no binary source.
 #
-# The structural claim — that non-optional units name at least one release binary —
-# and its own positive control now live in test-timer-templates.sh's T0 unit-lint, which
-# runs without paying for a build. What is left here needs the built tarball itself:
+# The static claim — every release binary a non-optional unit runs is built by some
+# workspace crate — is a cargo test in install (cells). What is left here needs the built
+# tarball itself, which no Rust test builds:
 #
 # CASES
 #   1. POSITIVE CONTROL: build with neither --bin-dir nor --workspace exits non-zero.
@@ -37,15 +37,14 @@ export GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 # retired; not a hand-copied list — the old list silently fell out of sync, missing
 # spira-landing-pass.service/.timer). `--list-optional` is the UNION of every template any
 # combination of this box's conditional inputs can ever push into OPTIONAL, regardless of
-# which this box happens to evaluate true, matching test-timer-templates.sh's
+# which this box happens to evaluate true, matching the manifest's
 # UNITS/_ENABLE_TMPL parse.
 OPTIONAL_BLOCK="$(units-install --list-optional)"
 is_optional() { case "$OPTIONAL_BLOCK" in *"$1"*) return 0 ;; *) return 1 ;; esac; }
 
 # ---------------------------------------------------------------------------
 # Scan: collect the bin/<name> each non-optional unit's ExecStart runs. The positive
-# control for this scan (at least one token found) lives in test-timer-templates.sh, which
-# runs the same scan without needing a build.
+# control for this scan is the at-least-one-token assertion below.
 declare -A FOUND_TOKENS=()
 while IFS= read -r svc; do
     fname="$(basename "$svc")"

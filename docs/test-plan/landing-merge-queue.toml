@@ -376,6 +376,11 @@ id = "UC-landing-merge-queue-50"
 tier = "T0"
 statement = "The verdict timer runs `spira-verdict.sh`, which calls `queue.sh step` for each repo. The service has `TimeoutStartSec` ≥ 3600 and no CPUQuota."
 
+[use_case.uncovered]
+reason = "the verdict timer and service no longer ship: `queue step --all` is the scheduler's queue.step task, so no unit file carries the claim; its checks left with the unit when test-timer-templates.sh was ported to cargo test -p install (cells::shipped_unit_files_are_listed_enabled_periodic_limited_and_watchdogged_correctly). The use case itself is stale and wants retiring"
+date = "2026-11-13"
+bead = "sp-vpwykr"
+
 [[use_case]]
 id = "UC-landing-merge-queue-52"
 tier = "T1"

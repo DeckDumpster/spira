@@ -108,16 +108,12 @@ test-gh-run-gate.sh	T1	9.0
 test-guards.sh	T1	10.0
 test-hold.sh	T1	12.0
 test-incident-recur-bounded.sh	T1	98.0
-test-install-dwarves.sh	T1	109.0
 test-install-bootstrap-release.sh	T1	7.5
 test-install-conf-seed.sh	T1	61.0
 test-install-conflicts.sh	T1	9.0
-test-install-landref.sh	T1	15.0
 test-install-loom-broker.sh	T1	2.5
 test-install-prod-checkout.sh	T1	9.5
 test-install-unit-directive.sh	T1	2.0
-test-install-unit-ensure.sh	T1	16.0
-test-install-unit-prune.sh	T1	45.0
 test-landed-stays-landed.sh	T1	44.5
 test-landing-pass.sh	T1	10.5
 test-landing-phase2-order.sh	T1	21.0
@@ -168,8 +164,6 @@ test-tarball-bins.sh	T1	4.0
 test-testlib.sh	T1	2.0
 test-thrash-streak.sh	T1	28.5
 test-thrash-wall.sh	T1	2.0
-test-timer-templates.sh	T1	2.0
-test-unit-drift.sh	T1	15.0
 test-unit-restart-limits.sh	T1	2.0
 test-verdict-timer.sh	T1	1.5
 test-watchtower-czar-outcome.sh	T1	11.5

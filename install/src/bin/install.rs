@@ -1125,13 +1125,11 @@ fn run_main() -> ExitCode {
     };
     let systemctl = RealSystemctl::from_env();
 
-    if nonempty_env("SPIRA_INSTALL_FORCE").is_none() {
-        if let Err(lines) = checks::preflight(&instance, &host, &systemctl) {
-            for l in lines {
-                eprintln!("install: {l}");
-            }
-            return ExitCode::from(2);
+    if let Err(lines) = checks::preflight_unless_forced(nonempty_env("SPIRA_INSTALL_FORCE").is_some(), &instance, &host, &systemctl) {
+        for l in lines {
+            eprintln!("install: {l}");
         }
+        return ExitCode::from(2);
     }
 
     if opts.dry {

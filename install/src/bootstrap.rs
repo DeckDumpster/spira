@@ -52,9 +52,8 @@ pub fn which(prog: &str) -> Option<String> {
 ///
 /// NEITHER SET (sp-al35q): `SPIRA_REPO/spira` with an empty `SPIRA_REPO` rendered the
 /// literal string "/spira" into every unit's substituted content — not a missing file (that
-/// would at least be loud), a wrong one. test-unit-drift.sh's "matching units" case, which
-/// deliberately sets neither (the same real-world shape as pre-activate, sp-w1r4f), rendered
-/// every single unit with this bogus home baked in and reported DIFFERS across the board.
+/// would at least be loud), a wrong one. A caller that sets neither (the real-world shape of
+/// pre-activate) rendered every unit with this bogus home baked in and reported DIFFERS.
 /// Falls back to the same release-relative resolution `templates_dir()` uses — `<release>/
 /// spira` beside the binary's own `bin/`, verified by requiring `conf.sh` there, exactly as
 /// `templates_dir`'s own fallback requires `spira-runtime.service` under its `systemd/`
@@ -274,8 +273,7 @@ fn systemd_above(exe: &Path) -> Option<PathBuf> {
 /// and `systemd/`/`spira/` to the real checkout — two unrelated directories once resolved,
 /// so `systemd_above`'s walk from a `current_exe()` path landed in cargo's own target/
 /// directory, which has no `systemd/` sibling at all, and `templates_dir()` fell through to
-/// a cwd-relative guess (caught live by testenv's test-unit-drift.sh: every unit showed
-/// DIFFERS because the "clean" comparison rendered from the wrong templates, sp-yyk47).
+/// a cwd-relative guess (every unit showed DIFFERS because the "clean" comparison rendered from the wrong templates).
 ///
 /// A bare name (no `/`) is NOT already the resolved path the way it is when a shell execs a
 /// PATH-found command: bash rewrites its own `$0` to the full path PATH search landed on

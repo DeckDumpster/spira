@@ -174,8 +174,7 @@ pub fn diff(ctx: &Ctx) -> Result<Vec<String>, String> {
 /// `diff -u <rendered> <installed>`, indented four spaces — systemd/install.sh's own
 /// `diff -u "$TMP/$inst" "$DEST/$inst" | sed 's/^/    /'`, dropped by this crate's rewrite
 /// (sp-31dm0): `--diff` reported which unit differed but never what changed, so an operator
-/// staring at "DIFFERS some.service" had to go find both files and diff them by hand.
-/// Caught live by testenv's test-unit-drift.sh (sp-al35q). Best-effort: a `diff` failure
+/// staring at "DIFFERS some.service" had to go find both files and diff them by hand. Best-effort: a `diff` failure
 /// (binary missing, write failure) is swallowed — the bare DIFFERS line above already said
 /// the one thing that must never be silent.
 fn unified_diff(rendered: &str, installed_path: &Path) -> Vec<String> {

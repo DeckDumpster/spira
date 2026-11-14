@@ -167,8 +167,8 @@ suites are retired, their coverage moved here:
 
 `UC-operator-channel-25` is carried by this crate's `escalate` unit tests (the question's
 sections, a refusing mailer reported, a read-only check mailing nobody); that the real mail
-library accepts skew's question is `test-mail-real-senders.sh`'s. `test-unit-drift.sh` (the only
-carrier of `UC-instance-lifecycle-34`) is kept, repointed.
+library accepts skew's question is `test-mail-real-senders.sh`'s. `UC-instance-lifecycle-34` is
+carried by a Rust test in `install::cells`.
 
 Both `gate` (`which("skew.sh")` → `which("skew")`, `skew_foreign`'s subprocess no longer
 wrapped in `bash`, `harness_hash` reads the resolved `skew` binary's bytes instead of a
@@ -204,6 +204,6 @@ Not covered here, and not fixable from this side without a live database, a real
 credential, or a real release tarball: `check`'s `gh release list` path against a live
 forge, `refresh`'s release-mode `release build/verify/activate` against a real release
 directory, and `check_local`'s `release verify` against a real MANIFEST. Those remain the
-round's integration coverage through `test-unit-drift.sh`, and the
+round's integration coverage through the
 suites that exercise `deploy.sh`/`release`/`queue` end to end (`test-deploy.sh`,
 `test-land-local-release.sh`, the retired landing-rebase suite).

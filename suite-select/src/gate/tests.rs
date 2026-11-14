@@ -294,14 +294,14 @@ fn width_and_defaults_read_like_the_bash() {
 }
 
 /// Part F of the retired test-gate-touched.sh: the real corpus's declaration — a
-/// unit-installer-only diff is never unselected.
+/// root-installer-only diff is never unselected.
 #[test]
-fn the_real_corpus_claims_the_unit_installer() {
+fn the_real_corpus_claims_the_root_installer() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
-    let c = Corpus::load_named(&dir, &["test-units-optional.sh".into()]).unwrap();
+    let c = Corpus::load_named(&dir, &["test-install-rehearsal-stray.sh".into()]).unwrap();
     let s = select::select(
         &c,
-        &[select::Change::modified("install/src/bin/units_install.rs")],
+        &[select::Change::modified("install/src/bin/install.rs")],
         &mut |_| vec![],
         &Buckets::default(),
         &Options {
@@ -310,7 +310,7 @@ fn the_real_corpus_claims_the_unit_installer() {
         },
     )
     .unwrap();
-    assert_eq!(s.suites, ["test-units-optional.sh"]);
+    assert_eq!(s.suites, ["test-install-rehearsal-stray.sh"]);
 }
 
 #[test]
