@@ -402,7 +402,7 @@ impl GateRun {
     /// (else the first red `gate-step`), and the last line the gate printed that is not its own
     /// bookkeeping. Either is empty when the output does not say.
     pub fn red_at(&self) -> (String, String) {
-        let bookkeeping = |l: &str| l.starts_with("gate-step ") || l.starts_with("gate: VERDICT=") || l.starts_with("gate: command:") || l.starts_with("gate: phase ");
+        let bookkeeping = |l: &str| l.starts_with("gate-step ") || l.starts_with("gate: ");
         let step = match self.suite.as_str() {
             "-" => self
                 .out
