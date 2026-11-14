@@ -320,11 +320,11 @@ fn ended_by(s: &State, events: &[Value]) -> u8 {
     })
 }
 
-/// The beads `list` answered, with the dispatcher's verdict on each.
+/// The beads `list` answered, with the claim view's verdict on each.
 fn beads_of(raw: &str) -> Result<Vec<(String, Bead)>, LcError> {
     let rows = lc_state::parse_rows(raw).map_err(fault)?;
     let verdicts: BTreeMap<String, String> = match json_of(raw, "list")? {
-        Value::Array(a) => a.iter().filter_map(|r| Some((text(r, "bead_id")?, text(r, "claim_verdict")?))).collect(),
+        Value::Array(a) => a.iter().filter_map(|r| Some((text(r, "bead_id")?, text(r.get("claim_view")?, "verdict")?))).collect(),
         _ => BTreeMap::new(),
     };
     let raws: BTreeMap<String, Value> = match json_of(raw, "list")? {

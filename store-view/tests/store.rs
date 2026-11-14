@@ -95,7 +95,7 @@ fn forge(id: &str, phase: &str, opened: u64, pr: &str, created: u64) -> Value {
 }
 
 fn bead(id: &str, state: &str, holds: &str, verdict: Option<&str>, express: bool) -> Value {
-    json!({ "bead_id": id, "state": state, "holds": holds, "express": if express { "1" } else { "0" }, "claim_verdict": verdict, "repo": "spira", "updated_at": 4_000_000_000_i64 })
+    json!({ "bead_id": id, "state": state, "holds": holds, "express": if express { "1" } else { "0" }, "claim_view": verdict.map(|v| json!({ "verdict": v, "blocker": null, "runes": [] })), "repo": "spira", "updated_at": 4_000_000_000_i64 })
 }
 
 struct World {

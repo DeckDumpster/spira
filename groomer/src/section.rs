@@ -109,10 +109,42 @@ fn lc_ok(lc: &dyn Lc, what: &str, args: &[String]) -> Result<Value, String> {
     }
 }
 
-/// The READY work a claimer can take: the rows `ready-set` judged claimable.
+/// The READY work a claimer can take: the claim view's rows that are claimable and that some rune takes.
 pub fn claimable_ready(lc: &dyn Lc) -> Result<u64, String> {
-    let v = lc_ok(lc, "ready-set", &argv(&["ready-set"]))?;
-    Ok(v["lifecycle"].as_array().map_or(0, Vec::len) as u64)
+    let v = lc_ok(lc, "claimable", &argv(&["claimable"]))?;
+    let beads = v["beads"].as_array().ok_or("claimable: no beads in the answer")?;
+    let taken = |b: &&Value| b["verdict"] == "claimable" && b["runes"].as_array().is_some_and(|r| !r.is_empty());
+    Ok(beads.iter().filter(taken).count() as u64)
+}
+
+#[cfg(test)]
+mod claimable_ready_tests {
+    use super::*;
+
+    struct View(Value);
+
+    impl Lc for View {
+        fn call(&self, args: &[String]) -> (i32, Value) {
+            assert_eq!(args, ["claimable"], "the count reads the claim view and nothing else");
+            (0, self.0.clone())
+        }
+    }
+
+    #[test]
+    fn the_count_is_the_claim_views_claimable_rows_that_a_rune_takes() {
+        let view = View(json!({"beads": [
+            {"bead_id": "sp-a", "verdict": "claimable", "runes": ["builder"]},
+            {"bead_id": "sp-b", "verdict": "claimable", "runes": []},
+            {"bead_id": "sp-c", "verdict": "blocked", "blocker": "sp-a", "runes": []},
+            {"bead_id": "sp-d", "verdict": "cannot-tell", "runes": []},
+        ]}));
+        assert_eq!(claimable_ready(&view), Ok(1));
+    }
+
+    #[test]
+    fn an_answer_with_no_beads_is_an_error_not_zero() {
+        assert!(claimable_ready(&View(json!({"cannot_tell": "x"}))).is_err());
+    }
 }
 
 /// The rows that entered READY or DROPPED, as transitions.
