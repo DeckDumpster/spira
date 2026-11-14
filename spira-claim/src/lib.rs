@@ -18,7 +18,6 @@ mod events;
 mod rank;
 mod readiness;
 mod ready;
-mod ready_cache;
 mod reopen;
 mod store;
 mod unpoison;
