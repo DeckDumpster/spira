@@ -752,6 +752,17 @@ mod tests {
     }
 
     #[test]
+    fn pushed_samples_reach_the_endpoint_with_their_names_and_the_dir_label() {
+        let (addr, h) = spira_otel::metrics::run::fixture_sink();
+        let sink = spira_otel::metrics::MetricsSink::new(Some(&addr), "build-dir", std::time::Duration::from_secs(2));
+        push(&sink, &eviction_samples(&[PathBuf::from("/x/dir.7")]));
+        let body = h.join().unwrap();
+        for want in ["build_dir_evicted", "dir", "/x/dir.7", "build-dir"] {
+            assert!(body.contains(want), "{want} missing from the push");
+        }
+    }
+
+    #[test]
     fn a_base_value_lists_directories_separated_by_whitespace() {
         assert_eq!(parse_bases(" /x/b\n/y/c "), [PathBuf::from("/x/b"), PathBuf::from("/y/c")]);
         assert!(parse_bases("  ").is_empty());
