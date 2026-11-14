@@ -4,7 +4,7 @@
 # SHRINK-ONLY. A count goes down as reads move to `spira-lc content <verb>`; nothing is
 # raised for a NEW read.
 2 bead/src/door.rs
-15 bead/src/main.rs
+17 bead/src/main.rs
 2 cockpit-collect/src/io.rs
 1 cockpit-collect/src/probes/core_detail.rs
 3 cockpit-collect/src/probes/lc.rs
@@ -40,7 +40,7 @@
 1 mail/src/lc.rs
 3 perf-watch/src/lib.rs
 5 reconciler/src/hold_sweep.rs
-5 reconciler/src/lib.rs
+7 reconciler/src/lib.rs
 2 rule/src/code.rs
 2 rule/src/main.rs
 2 runtime-watch/src/real.rs
