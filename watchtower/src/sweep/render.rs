@@ -95,6 +95,7 @@ reading `?` is one this pass COULD NOT READ — never treat it as a zero.
   branches finished but not landed    {sp_unlanded}
   branches done and waiting           {sp_branch_done}
   {gate_wait_label:<36}{gate_wait_disp}   {oldest_br}
+  gate build time, p90 last 24h       {gate_build_disp}
   worst no-verdict streak             {nv_worst}       {nv_worst_key}
 
 ### The Hel — are finished branches leaving?
@@ -214,6 +215,7 @@ Run the scans named in the menu above if you have wall time remaining.
         gate_wait_label = format!("longest gate wait, {}", d.gate_win_label),
         gate_wait_disp = gate_wait_disp(d),
         oldest_br = d.gate_wait.oldest_branch,
+        gate_build_disp = crate::gate_wait::disp(d.gate_build_p90),
         nv_worst = d.nv_worst,
         nv_worst_key = nv_worst_key,
         sp_unsent = d.env.g("SP_UNSENT"),
