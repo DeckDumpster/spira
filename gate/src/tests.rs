@@ -847,6 +847,7 @@ fn an_unset_spira_release_is_no_verdict_naming_it_and_nothing_runs() {
     assert!(f.ran.borrow().is_empty(), "no gate command ran");
 }
 
+// covers: UC-gate-verdict-05
 #[test]
 fn layer_one_reads_the_merged_content() {
     let f = Fake::new();
@@ -864,6 +865,7 @@ fn layer_one_reads_the_merged_content() {
         .contains("gate: spira/x.sh fails bash -n\nline 1: syntax error"));
 }
 
+// covers: UC-gate-verdict-05
 #[test]
 fn beads_data_in_the_merged_tree_is_refused() {
     let f = Fake::new();
@@ -1508,6 +1510,7 @@ fn a_silent_red_still_shows_its_status() {
         .contains("(the command printed nothing; it exited 1)"));
 }
 
+// covers: UC-gate-verdict-06
 #[test]
 fn an_empty_gate_string_passes_on_syntax() {
     let f = Fake::new();
@@ -1517,6 +1520,7 @@ fn an_empty_gate_string_passes_on_syntax() {
     assert!(f.ran.borrow().is_empty());
 }
 
+// covers: UC-gate-verdict-07
 #[test]
 fn a_gate_string_naming_a_file_the_base_lacks_is_configuration() {
     let f = Fake::new();
@@ -1525,6 +1529,7 @@ fn a_gate_string_naming_a_file_the_base_lacks_is_configuration() {
     assert!(f.verdict_line().contains("reason=cmd-missing-file"));
 }
 
+// covers: UC-gate-verdict-25
 #[test]
 fn the_early_refusals() {
     let f = Fake::new();
@@ -1568,6 +1573,7 @@ fn the_early_refusals() {
     assert!(f.verdict_line().contains("reason=lib-unavailable"));
 }
 
+// covers: UC-gate-verdict-05
 #[test]
 fn skew_init_fault_and_foreign_harness() {
     let f = Fake::new();
@@ -1578,6 +1584,90 @@ fn skew_init_fault_and_foreign_harness() {
     f.skew.set(1);
     assert_eq!(f.run(), FAIL);
     assert!(f.verdict_line().contains("reason=foreign-harness"));
+}
+
+// covers: UC-gate-verdict-03
+#[test]
+fn an_unreadable_repo_map_is_no_verdict_and_a_repo_absent_from_it_is_another() {
+    let f = Fake::new();
+    f.readable.borrow_mut().remove(Path::new("/cfg/repo-map"));
+    assert_eq!(f.run(), NOVERDICT);
+    assert!(f.verdict_line().contains("reason=no-repo-map-file"), "{}", f.verdict_line());
+    assert!(f.ran.borrow().is_empty(), "no trial runs against a map that cannot be read");
+
+    let f = Fake::new();
+    f.ctx.borrow_mut().as_mut().unwrap().repo_root = None;
+    assert_eq!(f.run(), NOVERDICT);
+    assert!(f.verdict_line().contains("reason=no-repo-map"), "{}", f.verdict_line());
+    assert!(!f.verdict_line().contains("no-repo-map-file"), "{}", f.verdict_line());
+}
+
+// covers: UC-gate-verdict-04
+#[test]
+fn an_unresolvable_branch_or_base_is_no_verdict_75_naming_the_range_the_repo_and_gits_line() {
+    let f = Fake::new();
+    *f.diff.borrow_mut() = Err("fatal: bad revision 'spira/sp-a'".into());
+    assert_eq!(f.run(), 75);
+    assert!(f.verdict_line().contains("reason=no-diff"), "{}", f.verdict_line());
+    let err = f.stderr();
+    assert!(err.contains(&format!("{BASE}...{BR}")), "{err}");
+    assert!(err.contains("spira"), "{err}");
+    assert!(err.contains("fatal: bad revision 'spira/sp-a'"), "{err}");
+
+    let f = Fake::new();
+    f.ctx.borrow_mut().as_mut().unwrap().landref = None;
+    assert_eq!(f.run(), 75);
+    assert!(f.verdict_line().contains("reason=no-base"), "{}", f.verdict_line());
+}
+
+// covers: UC-gate-verdict-05
+#[test]
+fn a_missing_exclude_or_skew_tool_is_no_verdict_not_a_pass() {
+    let f = Fake::new();
+    f.readable.borrow_mut().remove(Path::new("/h/exclude.sh"));
+    assert_eq!(f.run(), NOVERDICT);
+    assert!(f.verdict_line().contains("reason=missing-exclude"), "{}", f.verdict_line());
+    assert!(f.ran.borrow().is_empty());
+
+    let f = Fake::new();
+    f.readable.borrow_mut().remove(Path::new("/h/skew"));
+    assert_eq!(f.run(), NOVERDICT);
+    assert!(f.verdict_line().contains("reason=missing-skew"), "{}", f.verdict_line());
+    assert!(f.ran.borrow().is_empty());
+}
+
+// covers: UC-gate-verdict-05
+#[test]
+fn beads_data_anywhere_in_the_branch_tree_fails_though_the_diff_does_not_name_it() {
+    let f = Fake::new();
+    *f.diff.borrow_mut() = Ok("src/a.rs\n".into());
+    *f.beads.borrow_mut() = "deep/nested/.beads/issues.jsonl\n".into();
+    assert_eq!(f.run(), FAIL);
+    assert!(f.verdict_line().contains("reason=beads-data"), "{}", f.verdict_line());
+    assert!(f.stderr().contains("deep/nested/.beads/issues.jsonl"), "{}", f.stderr());
+}
+
+// covers: UC-gate-verdict-07
+#[test]
+fn a_gate_command_runs_once_the_file_it_names_is_on_the_base() {
+    let f = Fake::new();
+    f.ctx.borrow_mut().as_mut().unwrap().gate_cmd = "bash spira/present.sh".into();
+    assert_eq!(f.run(), PASS);
+    assert_eq!(f.ran.borrow().len(), 1, "the command ran");
+}
+
+// covers: UC-gate-verdict-25
+#[test]
+fn a_verdict_after_the_lock_is_metered_once_and_a_death_by_signal_too() {
+    let f = Fake::new();
+    assert_eq!(f.run(), PASS);
+    assert_eq!(f.appended.borrow().len(), 1, "{:?}", f.appended.borrow());
+
+    let f = Fake::new();
+    f.admission_free.set(false);
+    f.signal.set(true);
+    assert_eq!(f.run(), NOVERDICT);
+    assert_eq!(f.appended.borrow().len(), 1, "{:?}", f.appended.borrow());
 }
 
 #[test]

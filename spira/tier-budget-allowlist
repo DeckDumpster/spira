@@ -118,7 +118,6 @@ test-gate-discover-branch.sh	T1	2.0
 test-gate-fixture-diag.sh	T1	4.0
 test-gate-host-cores.sh	T1	7.0
 test-gate-missing-cmd.sh	T0	2.0
-test-gate-preflight.sh	T1	2.0
 test-gate-sweep.sh	T1	8.5
 test-gh-run-gate.sh	T1	9.0
 test-guards.sh	T1	10.0
