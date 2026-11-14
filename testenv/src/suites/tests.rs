@@ -515,6 +515,7 @@ fn intake_id_is_the_last_line_and_must_look_like_an_id() {
 
 // --------------------------------------------------------------------------- transitions
 
+// covers: UC-landing-merge-queue-27
 #[test]
 fn quarantine_commits_on_the_landing_ref_creates_the_branch_and_submits_it() {
     let t = T::new("quarantine");
@@ -659,6 +660,7 @@ fn transition_failures_are_exit_one_and_named() {
     assert!(t.out().is_empty());
 }
 
+// covers: UC-landing-merge-queue-27
 #[test]
 fn a_handed_change_bead_is_claimed_and_named_by_the_branch_and_none_is_filed() {
     let t = T::new("handed");
