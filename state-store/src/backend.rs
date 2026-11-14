@@ -83,6 +83,12 @@ pub trait Backend: Send + Sync {
     fn compacted(&self) -> Result<u64> {
         Ok(0)
     }
+    /// `gc_range` at the head of the read that serves it, with that head: the backend picks the
+    /// revision, so a store that commits between pages is never read at a past one.
+    fn gc_page(&self, after: Option<&str>, limit: usize) -> Result<(u64, Vec<(String, Version)>)> {
+        let head = self.head()?;
+        Ok((head, self.gc_range(after, limit, head)?))
+    }
     /// `range("")` without the keys under `events/` and `history/`: what the GC controller and the
     /// TTL restart read, since neither carries metadata or a TTL and both grow without bound.
     fn gc_range(

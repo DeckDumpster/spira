@@ -172,6 +172,11 @@ impl<B: Backend> Backend for Interpose<B> {
         self.record(&rows);
         Ok(rows)
     }
+    fn gc_page(&self, after: Option<&str>, limit: usize) -> Result<(u64, Vec<(String, Version)>)> {
+        let (head, rows) = self.inner.gc_page(after, limit)?;
+        self.gc_rows.fetch_add(rows.len(), Ordering::SeqCst);
+        Ok((head, rows))
+    }
 }
 
 /// Every key the txn at `main` wrote.

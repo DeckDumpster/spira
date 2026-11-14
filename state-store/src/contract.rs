@@ -309,18 +309,19 @@ struct Staged {
     op: &'static str,
 }
 
-const PAGE: usize = 1_000;
+pub(crate) const PAGE: usize = 1_000;
 const TRIM_TXNS: usize = 16;
 pub(crate) const COMPACT_STEP: u64 = 5_000;
 pub(crate) const COMPACT_STEPS: usize = 8;
 
-/// What a gc pass reads from the store: every key, and the items it may act on.
+/// A gc scan in progress: the cursor and what the pages read so far reduced to.
 #[derive(Default)]
-pub(crate) struct GcScan {
-    pub head: u64,
+pub(crate) struct ScanProgress {
+    pub after: Option<String>,
     pub keys: std::collections::BTreeSet<String>,
     pub finalized: Vec<Item>,
     pub owned: Vec<Item>,
+    pub pages: usize,
 }
 
 /// The wall time an audit record was written at, when it carries one.
@@ -1325,26 +1326,24 @@ impl<B: Backend> Contract<B> {
         Ok(done)
     }
 
-    /// Every key but the audit history, from one snapshot at the returned head, reduced to what
-    /// a gc pass acts on: the key set, and the items that are finalized or owned. A page the
-    /// store ends for outliving its read limit is retried at half the size, so a pass over
-    /// large values finishes in reads that each fit.
-    pub(crate) fn gc_scan(&self) -> Result<GcScan> {
-        let head = self.head()?;
-        let mut scan = GcScan::default();
-        let mut after: Option<String> = None;
-        let mut page_size = PAGE;
+    /// Reads pages of every key but the audit history into `scan`, from its cursor, each page at
+    /// the head the backend serves it at; true once the last page is in. On an error `scan`
+    /// keeps what was read, so the next call resumes. Pages at different heads are safe because
+    /// `collect` re-checks every candidate at its own commit head. A page the store ends for
+    /// outliving its read limit is retried at half the size.
+    pub(crate) fn gc_scan_pages(&self, scan: &mut ScanProgress, page: usize) -> Result<bool> {
+        let mut page_size = page.max(1);
         loop {
-            let page = match self.backend.gc_range(after.as_deref(), page_size, head) {
+            let rows = match self.backend.gc_page(scan.after.as_deref(), page_size) {
                 Err(Error::Backend(m)) if m.starts_with(crate::READ_ENDED) && page_size > 1 => {
                     page_size /= 2;
                     continue;
                 }
-                r => r?,
+                r => r?.1,
             };
-            let full = page.len() == page_size;
-            after = page.last().map(|(k, _)| k.clone());
-            for (k, v) in page {
+            let full = rows.len() == page_size;
+            let last = rows.last().map(|(k, _)| k.clone());
+            for (k, v) in rows {
                 let i = item(k, v)?;
                 scan.keys.insert(i.key.clone());
                 let m = &i.value.metadata;
@@ -1354,9 +1353,12 @@ impl<B: Backend> Contract<B> {
                     scan.owned.push(i);
                 }
             }
+            scan.pages += 1;
+            if last.is_some() {
+                scan.after = last;
+            }
             if !full {
-                scan.head = head;
-                return Ok(scan);
+                return Ok(true);
             }
         }
     }
