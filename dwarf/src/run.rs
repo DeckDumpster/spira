@@ -1491,9 +1491,12 @@ impl<'a> Run<'a> {
                 }
             }
             let budget = (self.conf.i(bd::BUDGET_ENV).max(0) as u64).saturating_mul(1 << 30);
-            for gone in bd::evict_idle(&bases, budget) {
+            let evicted = bd::evict_idle(&bases, budget);
+            for gone in &evicted {
                 self.log(&format!("{f}: evicted idle build directory {} (over the {} GiB budget)", gone.display(), budget >> 30));
             }
+            bd::meter_evictions(&evicted);
+            bd::meter(&bases, &dir, budget);
             self.s.build_dir = Some(lease);
         }
         if let Some(l) = &self.s.build_dir {
@@ -1515,6 +1518,9 @@ impl<'a> Run<'a> {
         let dir = lease.dir().to_path_buf();
         let trimmed = lease.release();
         self.log(&format!("{}: released build directory {}: {trimmed}", self.f(), dir.display()));
+        use spira_config::build_dir as pool;
+        let bases = pool::parse_bases(&self.conf.s(pool::BASE_ENV));
+        pool::meter(&bases, &dir, (self.conf.i(pool::BUDGET_ENV).max(0) as u64).saturating_mul(1 << 30));
     }
 
     /// The session-id arguments for this launch. A checkpoint left by a world stop is

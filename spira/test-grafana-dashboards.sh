@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tier: T1
-# covers: spira/metrics/grafana/** work/src/main.rs habits/src/lib.rs gate/src/telemetry.rs queue/src/ops/round.rs spira/testlib.sh
+# covers: spira/metrics/grafana/** spira-config/src/build_dir.rs work/src/main.rs habits/src/lib.rs gate/src/telemetry.rs queue/src/ops/round.rs spira/testlib.sh
 #
 # The gate-tooling dashboard's check panels (the yield meter and the unit-tests check seconds)
 # parse clean and query only series something pushes.
@@ -22,7 +22,7 @@ for p in d["panels"]:
     if p["id"] in want:
         for t in p["targets"]:
             expr = re.sub(r'"[^"]*"', '', t["expr"])
-            names |= set(re.findall(r'\b((?:check|unit_red|habit|spira_gate)_[a-z_]*)', expr))
+            names |= set(re.findall(r'\b((?:check|unit_red|habit|spira_gate|build_dir)_[a-z_]*)', expr))
 print("\n".join(sorted(names)))
 PY
 }
@@ -34,8 +34,14 @@ undeclared() {
   printf '%s' "${miss# }"
 }
 
-SRC=("$ROOT/work/src/main.rs" "$ROOT/queue/src/ops/round.rs" "$ROOT/gate/src/telemetry.rs")
+SRC=("$ROOT/spira-config/src/build_dir.rs" "$ROOT/work/src/main.rs" "$ROOT/queue/src/ops/round.rs" "$ROOT/gate/src/telemetry.rs")
 queried="$(series "$DASH" 9,10)"
+
+pool="$(series "$DASH" 11)"
+for m in build_dir_pool_bytes build_dir_budget_bytes build_dir_base_bytes build_dir_evicted; do
+  want "the build-directory panel graphs $m" "$m" "$pool"
+done
+is "the build-directory panel queries only series something pushes" "" "$(undeclared "$pool" "$ROOT/spira-config/src/build_dir.rs")"
 
 want "positive control: the check panels' series were found" "check_seconds" "$queried"
 want "the yield meter graphs unit reds caught at submit" "unit_red_at_submit" "$queried"

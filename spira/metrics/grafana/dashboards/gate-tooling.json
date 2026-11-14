@@ -409,6 +409,82 @@
           "refId": "B"
         }
       ]
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "build-directory pool: pool bytes against the budget, base bytes, evictions per day",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 40,
+        "w": 24,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "evictions per day"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "last_over_time(build_dir_pool_bytes[1d])",
+          "legendFormat": "pool (counted by the budget)",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "last_over_time(build_dir_budget_bytes[1d])",
+          "legendFormat": "budget",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "last_over_time(build_dir_base_bytes[1d])",
+          "legendFormat": "base (everything under it)",
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "sum(sum_over_time(build_dir_evicted[1d]))",
+          "legendFormat": "evictions per day",
+          "refId": "D"
+        }
+      ]
     }
   ]
 }
