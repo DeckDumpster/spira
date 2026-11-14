@@ -25,8 +25,8 @@
 //! | `last_landing_pass_at` | last `landing: pass complete` line (`cp:840-850`) | the `landing` task's last `landing.pass_completed`, from S13 `scheduler status` |
 //! | `open_batch[repo]` (pr, branch, members) | `queue batch show --repo` fork, under `SPIRA_LC_TIMEOUT` (`cp:469-489`, `193`) | the S7b round/batch projection |
 //! | `certified[repo]` | `spira-lc list --state CERTIFIED` fork (`cp:1240-1257`), then filtered by `git for-each-ref refs/heads/spira/*` (`cp:1217-1237`) | LcClient `list --state CERTIFIED`, with each row's repo from the store, not from the branch list (the store has the repo column; unverified) |
-//! | `ci[repo]` (queued-since, run-id, run-conclusion, run-completed-at) | `forge batch-ci-status <repo> <branch>` (`cp:974`) and `forge run-id` (`cp:707`) | still `forge` (the edge; class `forge`), read inside the probe |
-//! | `base_ci[repo]` (run-conclusion, head-sha, run-url, red-suite) | `forge batch-ci-status <repo> <base>` (`cp:1126`); base from `SPIRA_REPO_MAP` col 4 (`cp:444`) | same; base from the registry |
+//! | `ci[repo]` (queued-since, run-id, run-conclusion, run-completed-at) | `forge batch-ci-status <repo> <branch>` (`cp:974`) and `forge run-id` (`cp:707`) | still `forge` (the edge; class `forge`), read inside the probe, only for a `queue` (forge) repo whose batch record has a `pr` and a branch |
+//! | `base_ci[repo]` (run-conclusion, head-sha, run-url, red-suite) | `forge batch-ci-status <repo> <base>` (`cp:1126`); base from `SPIRA_REPO_MAP` col 4 (`cp:444`) | same; base from the registry; read only while that batch is in flight, then until a base run completed after the batch was last seen has a conclusion (`Carry.base_pending`) |
 //! | `landing_unit_failed` | `systemctl --user is-failed spira-landing.service` (`cp:886`) | moot: `landing` becomes a task, so its health comes from `scheduler status` |
 //! | `reconciler_last_pass` | `run/reconciler-pass.stamp` (`cp:1307`; `reconciler-engine/src/paths.rs:10`) and `systemctl show spira-runtime-<instance>.service` (`cp:1382-1396`) | the hosted `reconciler` handler's last pass, from `scheduler status` |
 //!
@@ -222,6 +222,8 @@ pub struct BaseCi {
     pub head_sha: String,
     pub run_url: Option<String>,
     pub red_suites: Vec<String>,
+    #[serde(default)]
+    pub completed_at_ms: Option<u64>,
 }
 
 /// GitHub's core budget, spent and not yet reset: why base CI cannot be read, said once.
@@ -338,6 +340,9 @@ pub struct KeyState {
 pub struct Carry {
     pub keys: BTreeMap<String, KeyState>,
     pub cursor_ms: Option<u64>,
+    /// Repos whose forge batch was open, with the epoch (ms) it was last seen: the base is read
+    /// until a run completed after that epoch has a conclusion.
+    pub base_pending: BTreeMap<String, u64>,
 }
 
 /// Move `key` from `from` to `to`, or refuse naming the key and the phase.
@@ -524,6 +529,9 @@ pub fn decide(policy: &Policy, carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Ac
         });
     }
     for (repo, batch) in &snap.open_batch {
+        if matches!(batch, Read::Observed(Some(_))) && snap.ci.contains_key(repo) {
+            p.next.base_pending.insert(repo.clone(), snap.now_ms);
+        }
         let safe = czar_pass::repo_safe(repo);
         let (cis_key, cir_key) = (format!("ci-stalled:{safe}"), format!("ci-red:{safe}"));
         let (cis, cir, run_id) = match (batch, snap.ci.get(repo)) {
@@ -550,6 +558,15 @@ pub fn decide(policy: &Policy, carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Ac
             Remedy::File(czar_pass::Filing::queue("ci-red", &format!("ci-red-{safe}"), &format!("QUEUE: CI run completed red, verdict not acting for {age}s ({repo})"), &format!("CI run completed red for the open batch in {repo}.\nRed for {age}s; verdict has not acted.\n"), ""))
         });
     }
+    for (repo, since) in &carry.base_pending {
+        let in_flight = matches!(snap.open_batch.get(repo), Some(Read::Observed(Some(_)))) && snap.ci.contains_key(repo);
+        let landed = matches!(snap.base_ci.get(repo), Some(Read::Observed(b)) if b.conclusion.is_some() && b.completed_at_ms.is_some_and(|at| at > *since));
+        if !in_flight && landed {
+            p.next.base_pending.remove(repo);
+        }
+    }
+    let watched: Vec<String> = snap.base_ci.keys().chain(p.next.base_pending.keys()).map(|r| czar_pass::repo_safe(r)).collect();
+    p.next.keys.retain(|k, _| k.strip_prefix("base-red:").is_none_or(|r| r.starts_with("gh-budget") || watched.iter().any(|w| w == r)));
     let unreadable = snap.base_ci.values().any(|b| !matches!(b, Read::Observed(_)));
     if let (Some(spent), true) = (&snap.gh_budget, unreadable) {
         let until = crate::api_budget::clock_of(spent.reset);
@@ -649,7 +666,7 @@ pub struct ObserveIn {
     pub pinned: BTreeMap<String, String>,
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Map { name: "keys", drop: &[] }, runtime::rows::Part::Field("cursor_ms")];
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Map { name: "keys", drop: &[] }, runtime::rows::Part::Field("cursor_ms"), runtime::rows::Part::Map { name: "base_pending", drop: &[] }];
 
 impl Handler for Czar {
     fn interests(&self) -> &[EventKindTag] {
@@ -723,6 +740,51 @@ fn forge_status(forge: &str, repo_path: &str, branch: &str) -> Result<String, St
     czar_pass::batch_ci_status(forge, repo_path, branch)
 }
 
+/// A registered repository as `observe` read it.
+pub struct RepoRow {
+    pub name: String,
+    pub land: String,
+    pub root: String,
+    pub landref: Option<String>,
+}
+
+/// The forge's reads for the snapshot: each repo's batch CI and its base CI. `forge` is called
+/// with (checkout path, branch).
+pub fn forge_reads(rows: &[RepoRow], batches: &BTreeMap<String, Read<Option<Batch>>>, carry: &Carry, forge: &dyn Fn(&str, &str) -> Result<String, String>) -> (BTreeMap<String, Read<Ci>>, BTreeMap<String, Read<BaseCi>>) {
+    let (mut ci, mut base_ci) = (BTreeMap::new(), BTreeMap::new());
+    for row in rows {
+        let batch = batches.get(&row.name);
+        let in_flight = row.land == "queue" && matches!(batch, Some(Read::Observed(Some(b))) if b.pr.is_some() && !b.branch.is_empty());
+        let trailing = carry.base_pending.contains_key(&row.name) && matches!(batch, Some(Read::Observed(_)));
+        if let (true, Some(Read::Observed(Some(b)))) = (in_flight, batch) {
+            let read = match forge(&row.root, &b.branch) {
+                Ok(out) => {
+                    let num = |k: &str| czar_pass::parse_field(&out, k).and_then(|v| v.trim().parse::<u64>().ok()).map(|s| s * 1000);
+                    Read::Observed(Ci { queued_since_ms: num("queued-since"), run_id: czar_pass::parse_field(&out, "run-id").filter(|r| !r.is_empty()), conclusion: czar_pass::parse_field(&out, "run-conclusion"), completed_at_ms: num("run-completed-at") })
+                }
+                Err(err) => Read::Unobservable(err),
+            };
+            ci.insert(row.name.clone(), read);
+        }
+        if let (true, Some(base)) = ((in_flight || trailing), row.landref.as_deref()) {
+            let branch = base.split_once('/').map_or(base, |(_, b)| b);
+            let read = match forge(&row.root, branch) {
+                Ok(out) if czar_pass::parse_field(&out, "run-id").is_some() => Read::Observed(BaseCi {
+                    conclusion: czar_pass::parse_field(&out, "run-conclusion"),
+                    head_sha: czar_pass::parse_field(&out, "head-sha").unwrap_or_else(|| "unknown".into()),
+                    run_url: czar_pass::parse_field(&out, "run-url"),
+                    red_suites: out.lines().filter_map(|l| l.strip_prefix("red-suite: ").map(str::to_string)).collect(),
+                    completed_at_ms: czar_pass::parse_field(&out, "run-completed-at").and_then(|v| v.trim().parse::<u64>().ok()).map(|s| s * 1000),
+                }),
+                Ok(_) => Read::Observed(BaseCi::default()),
+                Err(err) => Read::Unobservable(err),
+            };
+            base_ci.insert(row.name.clone(), read);
+        }
+    }
+    (ci, base_ci)
+}
+
 /// `czar.observe`: the landing log, the reconciler's stamp, each queue repository's open batch
 /// (the store projection), certified pool (`LcClient`) and CI (the forge).
 pub fn observe(e: &Effects, input: &str) -> Result<String, String> {
@@ -751,8 +813,10 @@ pub fn observe(e: &Effects, input: &str) -> Result<String, String> {
     let gh_pinned = req.pinned.get("SPIRA_GH").cloned().unwrap_or_default();
     let metrics = req.pinned.get("SPIRA_METRICS_ENDPOINT").cloned();
     let forge = req.pinned.get("SPIRA_FORGE").cloned().unwrap_or_else(|| "forge".into());
+    let mut rows = vec![];
     for name in reg.all() {
         let land = reg.land(&name);
+        let landref = spira_config::repos::landref(&reg, &name).filter(|b| !b.is_empty());
         let Some(path) = reg.root(&name).filter(|p| !p.is_empty()) else { continue };
         let batch = match (&views, &refreshed) {
             (Ok(v), Ok(())) => match v.batch_view(&name) {
@@ -765,38 +829,14 @@ pub fn observe(e: &Effects, input: &str) -> Result<String, String> {
             },
             (Err(err), _) | (_, Err(err)) => Read::Unobservable(format!("could not say: {err}")),
         };
-        if let Read::Observed(Some(b)) = &batch {
-            if !b.branch.is_empty() {
-                let ci = match forge_status(&forge, &path, &b.branch) {
-                    Ok(out) => {
-                        let num = |k: &str| czar_pass::parse_field(&out, k).and_then(|v| v.trim().parse::<u64>().ok()).map(|s| s * 1000);
-                        Read::Observed(Ci { queued_since_ms: num("queued-since"), run_id: czar_pass::parse_field(&out, "run-id").filter(|r| !r.is_empty()), conclusion: czar_pass::parse_field(&out, "run-conclusion"), completed_at_ms: num("run-completed-at") })
-                    }
-                    Err(err) => Read::Unobservable(err),
-                };
-                snap.ci.insert(name.clone(), ci);
-            }
-        }
-        if let Some(base) = spira_config::repos::landref(&reg, &name).filter(|b| !b.is_empty()) {
-            let branch = base.split_once('/').map_or(base.as_str(), |(_, b)| b).to_string();
-            let read = match forge_status(&forge, &path, &branch) {
-                Ok(out) if czar_pass::parse_field(&out, "run-id").is_some() => Read::Observed(BaseCi {
-                    conclusion: czar_pass::parse_field(&out, "run-conclusion"),
-                    head_sha: czar_pass::parse_field(&out, "head-sha").unwrap_or_else(|| "unknown".into()),
-                    run_url: czar_pass::parse_field(&out, "run-url"),
-                    red_suites: out.lines().filter_map(|l| l.strip_prefix("red-suite: ").map(str::to_string)).collect(),
-                }),
-                Ok(_) => Read::Observed(BaseCi::default()),
-                Err(err) => Read::Unobservable(err),
-            };
-            snap.base_ci.insert(name.clone(), read);
-        }
         if matches!(land.as_str(), "queue" | "queue.local") {
             let certified = certified_pool(&lc, &name);
             snap.certified.insert(name.clone(), certified);
         }
+        rows.push(RepoRow { name: name.clone(), land, root: path, landref });
         snap.open_batch.insert(name, batch);
     }
+    (snap.ci, snap.base_ci) = forge_reads(&rows, &snap.open_batch, &req.carry, &|path, branch| forge_status(&forge, path, branch));
     if snap.base_ci.values().any(|b| matches!(b, Read::Unobservable(_))) {
         snap.gh_budget = spent_budget(&gh_pinned, metrics.as_deref(), snap.now_ms / 1000);
     }
@@ -876,4 +916,136 @@ pub fn status(e: &Effects, input: &str) -> Result<String, String> {
 /// spira-lc may write. A held row is not pool: reading the string form as unheld miscounted it.
 pub fn unheld_ids(list_json: &str) -> Result<Vec<String>, String> {
     Ok(spira_store::lc_state::parse_rows(list_json)?.into_iter().filter(|r| r.holds.is_empty()).map(|r| r.bead_id).collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::RefCell;
+
+    use super::*;
+
+    const NOW: u64 = 1_793_000_000_000;
+
+    fn policy() -> Policy {
+        Policy { stages: CLASSES.iter().map(|c| (c.to_string(), Stage::Shadow)).collect(), loop_stall_secs: 900, ci_queued_max_secs: 1_800, ci_red_max_secs: 3_600, base_ci_unreadable_grace_secs: 600, reconciler_grace_secs: 600, queue_round_min_n: 2, queue_round_stall_secs: 1_800 }
+    }
+
+    fn row(name: &str, land: &str) -> RepoRow {
+        RepoRow { name: name.into(), land: land.into(), root: format!("/r/{name}"), landref: Some("origin/main".into()) }
+    }
+
+    fn open(pr: Option<u64>, branch: &str) -> Read<Option<Batch>> {
+        Read::Observed(Some(Batch { pr, branch: branch.into(), members: vec![] }))
+    }
+
+    fn counted(calls: &RefCell<Vec<(String, String)>>) -> impl Fn(&str, &str) -> Result<String, String> + '_ {
+        move |path, branch| {
+            calls.borrow_mut().push((path.into(), branch.into()));
+            Ok("run-id: 7\nrun-conclusion: success\n".into())
+        }
+    }
+
+    #[test]
+    fn an_idle_pass_asks_the_forge_nothing() {
+        let rows = [row("fa", "queue"), row("fb", "queue"), row("lo", "queue.local"), row("pr", "pr")];
+        let batches: BTreeMap<_, _> = [("fa".to_string(), Read::Observed(None)), ("fb".to_string(), open(None, "spira/batch/b")), ("lo".to_string(), open(Some(3), "spira/round/1")), ("pr".to_string(), Read::Observed(None))].into();
+        let calls = RefCell::new(vec![]);
+        let (ci, base_ci) = forge_reads(&rows, &batches, &Carry::default(), &counted(&calls));
+        assert_eq!(calls.borrow().len(), 0, "{:?}", calls.borrow());
+        assert!(ci.is_empty() && base_ci.is_empty());
+    }
+
+    fn base_run(completed_s: u64) -> Result<String, String> {
+        Ok(format!("run-id: 9\nrun-conclusion: success\nrun-completed-at: {completed_s}\n"))
+    }
+
+    #[test]
+    fn an_in_flight_forge_batch_reads_its_branch_and_the_base_only() {
+        let rows = [row("fa", "queue"), row("fb", "queue"), row("lo", "queue.local")];
+        let batches: BTreeMap<_, _> = [("fa".to_string(), open(Some(12), "spira/batch/x")), ("fb".to_string(), Read::Observed(None)), ("lo".to_string(), open(Some(3), "spira/round/1"))].into();
+        let calls = RefCell::new(vec![]);
+        let (ci, base_ci) = forge_reads(&rows, &batches, &Carry::default(), &counted(&calls));
+        assert_eq!(*calls.borrow(), vec![("/r/fa".to_string(), "spira/batch/x".to_string()), ("/r/fa".to_string(), "main".to_string())]);
+        assert_eq!(ci.keys().collect::<Vec<_>>(), ["fa"]);
+        assert_eq!(base_ci.keys().collect::<Vec<_>>(), ["fa"]);
+    }
+
+    #[test]
+    fn the_base_is_read_after_the_batch_closes_until_its_landing_run_completes() {
+        let rows = [row("fa", "queue")];
+        let batches: BTreeMap<_, _> = [("fa".to_string(), Read::Observed(None))].into();
+        let carry = Carry { base_pending: [("fa".to_string(), NOW)].into(), ..Carry::default() };
+        let calls = RefCell::new(vec![]);
+        let (_, base_ci) = forge_reads(&rows, &batches, &carry, &counted(&calls));
+        assert_eq!(*calls.borrow(), vec![("/r/fa".to_string(), "main".to_string())]);
+
+        let snap = Snapshot { now_ms: NOW + 60_000, open_batch: batches.clone(), base_ci, ..Snapshot::default() };
+        let older = Snapshot { base_ci: [("fa".to_string(), forge_reads(&rows, &batches, &carry, &|_, _| base_run(NOW / 1000 - 5)).1.remove("fa").unwrap())].into(), ..snap.clone() };
+        let (still, _) = decide(&policy(), &carry, &older);
+        assert!(still.base_pending.contains_key("fa"), "a run that finished before the batch was last seen does not settle it");
+
+        let snap = Snapshot { base_ci: [("fa".to_string(), forge_reads(&rows, &batches, &carry, &|_, _| base_run(NOW / 1000 + 30)).1.remove("fa").unwrap())].into(), ..snap };
+        let (next, _) = decide(&policy(), &carry, &snap);
+        assert!(next.base_pending.is_empty());
+
+        let calls = RefCell::new(vec![]);
+        forge_reads(&rows, &batches, &next, &counted(&calls));
+        assert_eq!(calls.borrow().len(), 0);
+    }
+
+    #[test]
+    fn decide_records_an_in_flight_batch_as_pending() {
+        let batch = Batch { pr: Some(12), branch: "spira/batch/x".into(), members: vec![] };
+        let snap = Snapshot { now_ms: NOW, open_batch: [("fa".to_string(), Read::Observed(Some(batch)))].into(), ci: [("fa".to_string(), Read::Observed(Ci::default()))].into(), ..Snapshot::default() };
+        let (next, _) = decide(&policy(), &Carry::default(), &snap);
+        assert_eq!(next.base_pending.get("fa"), Some(&NOW));
+    }
+
+    #[test]
+    fn an_unobservable_batch_view_makes_no_call_and_is_not_satisfied() {
+        let rows = [row("fa", "queue")];
+        let batches: BTreeMap<_, _> = [("fa".to_string(), Read::Unobservable("store down".to_string()))].into();
+        let carry = Carry { base_pending: [("fa".to_string(), NOW)].into(), ..Carry::default() };
+        let calls = RefCell::new(vec![]);
+        let (ci, base_ci) = forge_reads(&rows, &batches, &carry, &counted(&calls));
+        assert_eq!(calls.borrow().len(), 0);
+        let snap = Snapshot { now_ms: NOW, open_batch: batches, ci, base_ci, ..Snapshot::default() };
+        let (next, _) = decide(&policy(), &carry, &snap);
+        assert!(next.base_pending.contains_key("fa"));
+        for key in ["ci-stalled:fa", "ci-red:fa"] {
+            let reason = &next.keys[key].hysteresis;
+            assert!(*reason != HysteresisState::default() || next.keys[key].phase != Phase::Satisfied, "{key} is carried, not dropped as satisfied");
+        }
+        let (judged, _) = step(snap.now_ms / 1000, unobservable("x"), 0, HysteresisState::default());
+        assert!(matches!(judged.status, RawStatus::Unobservable { .. }));
+    }
+
+    #[test]
+    fn a_red_landing_run_still_files_base_red() {
+        let carry = Carry { base_pending: [("fa".to_string(), NOW)].into(), ..Carry::default() };
+        let red = BaseCi { conclusion: Some("failure".into()), head_sha: "abc".into(), red_suites: vec!["unit".into()], completed_at_ms: Some(NOW + 1_000), ..BaseCi::default() };
+        let snap = Snapshot { now_ms: NOW + 5_000, open_batch: [("fa".to_string(), Read::Observed(None))].into(), base_ci: [("fa".to_string(), Read::Observed(red))].into(), ..Snapshot::default() };
+        let mut pol = policy();
+        pol.stages.insert("base-red".into(), Stage::Act);
+        let (next, acts) = decide(&pol, &carry, &snap);
+        assert!(acts.iter().any(|a| a.effect == FILE_BASE_RED));
+        assert!(next.base_pending.is_empty());
+    }
+
+    #[test]
+    fn a_settled_landing_forgets_its_base_red_streak_so_the_next_red_files_again() {
+        let mut pol = policy();
+        pol.stages.insert("base-red".into(), Stage::Act);
+        let red = |at| BaseCi { conclusion: Some("failure".into()), head_sha: "abc".into(), red_suites: vec!["unit".into()], completed_at_ms: Some(at), ..BaseCi::default() };
+        let snap = |now, at| Snapshot { now_ms: now, open_batch: [("fa".to_string(), Read::Observed(None))].into(), base_ci: [("fa".to_string(), Read::Observed(red(at)))].into(), ..Snapshot::default() };
+        let carry = Carry { base_pending: [("fa".to_string(), NOW)].into(), ..Carry::default() };
+        let (c1, _) = decide(&pol, &carry, &snap(NOW + 5_000, NOW + 1_000));
+        assert!(c1.keys.contains_key("base-red:fa") && c1.base_pending.is_empty());
+        let idle = Snapshot { now_ms: NOW + 40_000, open_batch: [("fa".to_string(), Read::Observed(None))].into(), ..Snapshot::default() };
+        let (c2, _) = decide(&pol, &c1, &idle);
+        assert!(!c2.keys.contains_key("base-red:fa"), "an unwatched repo keeps no streak");
+        let again = Carry { base_pending: [("fa".to_string(), NOW + 100_000)].into(), ..c2 };
+        let (_, acts) = decide(&pol, &again, &snap(NOW + 200_000, NOW + 150_000));
+        assert!(acts.iter().any(|a| a.effect == FILE_BASE_RED));
+    }
 }

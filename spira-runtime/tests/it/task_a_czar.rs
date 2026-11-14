@@ -94,7 +94,7 @@ fn t5_an_act_deadlock_files_one_incident_by_its_ref() {
 /// `cp:369-395`: a red base files P0 against the red repo, keyed `incident:base-red:<repo>:<suites>`.
 #[test]
 fn t5_a_red_base_files_base_red_against_the_repo() {
-    let red = Snapshot { base_ci: [("spira".to_string(), Read::Observed(BaseCi { conclusion: Some("failure".into()), head_sha: "b2".into(), run_url: Some("u".into()), red_suites: vec!["lint".into()] }))].into(), ..idle() };
+    let red = Snapshot { base_ci: [("spira".to_string(), Read::Observed(BaseCi { conclusion: Some("failure".into()), head_sha: "b2".into(), run_url: Some("u".into()), red_suites: vec!["lint".into()], ..BaseCi::default() }))].into(), ..idle() };
     let (_, acts) = decide(&policy(Stage::Act), &Carry::default(), &red);
     assert!(acts.iter().any(|a| a.effect == FILE_BASE_RED && a.key == "incident:base-red:spira:lint"), "{acts:?}");
 }
