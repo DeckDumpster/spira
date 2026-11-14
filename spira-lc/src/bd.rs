@@ -165,7 +165,7 @@ fn settled(res: Result<(), String>, id: &str, still_open: impl FnOnce() -> Resul
 }
 
 /// Runs `ask` on the content store's read-only connection: lc-serve forks bd for writes only.
-fn store<T>(ask: impl FnOnce(&dyn Sql, &str) -> Result<T, Failure>) -> Result<T, String> {
+pub(crate) fn store<T>(ask: impl FnOnce(&dyn Sql, &str) -> Result<T, Failure>) -> Result<T, String> {
     crate::content_sql::served()?.with(ask).map_err(|f| f.text().to_string())
 }
 

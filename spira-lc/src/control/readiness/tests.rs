@@ -579,3 +579,193 @@ fn a_readiness_publish_after_a_verdict_pass_does_not_restamp_claim_at_and_a_new_
     let moved = stamps();
     assert!(moved.iter().all(|(_, at, _)| at == "2026-11-01T12:00:02Z"), "{moved:?}");
 }
+
+struct Fixed {
+    run: std::path::PathBuf,
+    rowless: Vec<(String, String, String)>,
+    fail: bool,
+}
+
+impl crate::control::claimable::Inputs for Fixed {
+    fn config(&self) -> Result<crate::control::claimable::Config, String> {
+        if self.fail {
+            return Err("SPIRA_STACK_MAX_DEPTH is unreadable".into());
+        }
+        Ok(crate::control::claimable::Config {
+            stack_max: 4,
+            incident_label: "incident".into(),
+            scope_label: String::new(),
+            no_loop_label: String::new(),
+        })
+    }
+
+    fn statuses(&self, ids: &[String]) -> Result<std::collections::BTreeMap<String, (String, String)>, String> {
+        Ok(self.rowless.iter().filter(|(id, ..)| ids.contains(id)).map(|(i, t, s)| (i.clone(), (t.clone(), s.clone()))).collect())
+    }
+
+    fn run_dir(&self) -> Result<std::path::PathBuf, String> {
+        Ok(self.run.clone())
+    }
+}
+
+impl Rig {
+    fn claimable(&self, run: &std::path::Path, extra: &[&str]) -> Value {
+        self.claimable_with(Fixed { run: run.into(), rowless: Vec::new(), fail: false }, extra)
+    }
+
+    fn claimable_with(&self, inputs: Fixed, extra: &[&str]) -> Value {
+        let call = Call { now: self.now(), request: "t/claimable" };
+        let mut args = vec!["claimable".to_string()];
+        args.extend(extra.iter().map(|s| s.to_string()));
+        let (code, out) = crate::control::claimable::run(&self.store, &args, &inputs, &call);
+        assert_eq!(code, 0, "{out}");
+        serde_json::from_str(&out).unwrap()
+    }
+
+    fn inputs(&self, id: &str, blocks: &[&str]) {
+        use state_store::Request;
+        let inputs = crate::control::records::ClaimInputs {
+            blocks: blocks.iter().map(|b| b.to_string()).collect(),
+            ..Default::default()
+        };
+        self.n.set(self.n.get() + 1);
+        let request = format!("t/inputs/{}", self.n.get());
+        self.store.set_claim_inputs(id, inputs, &Request::new(&request, "test", "inputs")).unwrap();
+    }
+}
+
+fn verdicts(answer: &Value) -> Vec<(String, String)> {
+    answer["beads"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|b| (b["bead_id"].as_str().unwrap().into(), b["verdict"].as_str().unwrap().into()))
+        .collect()
+}
+
+fn three_ready(r: &Rig) {
+    for id in ["sp-a", "sp-b", "sp-c", "sp-w"] {
+        r.ok(&["create-bead", id, "--ready", "--repo", "spira"]);
+    }
+    assert_eq!(r.claim("sp-w").0, 0);
+    r.inputs("sp-a", &[]);
+    r.inputs("sp-b", &["sp-w"]);
+}
+
+#[test]
+fn claimable_answers_every_ready_record_with_its_verdict_and_counts_the_ones_it_cannot_tell() {
+    let r = Rig::new();
+    let run = testkit::TempDir::new("claimable-verb");
+    three_ready(&r);
+    let answer = r.claimable(run.path(), &[]);
+    assert_eq!(
+        verdicts(&answer),
+        [("sp-a", "claimable"), ("sp-b", "blocked"), ("sp-c", "cannot-tell")].map(|(a, b)| (a.to_string(), b.to_string()))
+    );
+    assert_eq!(answer["cannot_tell"], 1);
+    assert_eq!(answer["rev"], r.store.contract().head().unwrap());
+    assert_eq!(answer["beads"][2]["missing"], json!(["claim"]));
+    assert_eq!(answer["beads"][1]["blocker"], "sp-w");
+}
+
+#[test]
+fn claimable_names_the_gate_of_each_blocker_it_read() {
+    let r = Rig::new();
+    let run = testkit::TempDir::new("claimable-gates");
+    three_ready(&r);
+    let answer = r.claimable(run.path(), &[]);
+    let expected = json!({ "sp-w": gate(BeadState::Working, None) });
+    assert_eq!(answer["beads"][1]["gates"], expected);
+}
+
+#[test]
+fn claimable_writes_nothing() {
+    let r = Rig::new();
+    let run = testkit::TempDir::new("claimable-readonly");
+    three_ready(&r);
+    let before = r.store.contract().head().unwrap();
+    r.claimable(run.path(), &[]);
+    assert_eq!(r.store.contract().head().unwrap(), before);
+}
+
+#[test]
+fn a_record_moved_to_working_between_two_calls_leaves_the_second_answer_with_no_pass_between() {
+    let r = Rig::new();
+    let run = testkit::TempDir::new("claimable-fresh");
+    three_ready(&r);
+    assert!(verdicts(&r.claimable(run.path(), &[])).iter().any(|(id, _)| id == "sp-a"));
+    assert_eq!(r.claim("sp-a").0, 0);
+    assert!(!verdicts(&r.claimable(run.path(), &[])).iter().any(|(id, _)| id == "sp-a"));
+}
+
+#[test]
+fn claimable_narrowed_to_a_repo_lists_only_that_repos_records() {
+    let r = Rig::new();
+    let run = testkit::TempDir::new("claimable-repo");
+    three_ready(&r);
+    r.ok(&["create-bead", "sp-o", "--ready", "--repo", "other"]);
+    let ids: Vec<String> = verdicts(&r.claimable(run.path(), &["--repo", "other"])).into_iter().map(|(i, _)| i).collect();
+    assert_eq!(ids, ["sp-o"]);
+}
+
+#[test]
+fn claimable_reads_the_run_dir_reserved_ids_and_repo_stops() {
+    let r = Rig::new();
+    let run = testkit::TempDir::new("claimable-run");
+    three_ready(&r);
+    r.ok(&["create-bead", "sp-s", "--ready", "--repo", "stopped"]);
+    r.inputs("sp-s", &[]);
+    let stop = spira_config::scoped_stop::RepoStop {
+        repo: "stopped".into(),
+        lanes: vec!["claims".into()],
+        owner: "test".into(),
+        reason: "fixture".into(),
+        until: "never".into(),
+        since: 1,
+    };
+    spira_config::scoped_stop::put_repo(run.path(), &stop).unwrap();
+    let answer = r.claimable(run.path(), &[]);
+    assert!(verdicts(&answer).contains(&("sp-s".to_string(), "stopped".to_string())), "{answer}");
+}
+
+#[test]
+fn claimable_judges_a_rowless_gate_by_the_content_stores_status() {
+    let r = Rig::new();
+    let run = testkit::TempDir::new("claimable-gate");
+    three_ready(&r);
+    r.inputs("sp-a", &["sp-gate"]);
+    let with = |status: &str| Fixed {
+        run: run.path().into(),
+        rowless: vec![("sp-gate".into(), "gate".into(), status.into())],
+        fail: false,
+    };
+    let verdict_of = |a: &Value| a["beads"][0]["verdict"].clone();
+    assert_eq!(verdict_of(&r.claimable_with(with("open"), &[])), "blocked");
+    assert_eq!(verdict_of(&r.claimable_with(with("closed"), &[])), "claimable");
+}
+
+#[test]
+fn claimable_reads_a_carrier_by_key_and_a_landed_one_releases_its_member() {
+    let r = Rig::new();
+    let run = testkit::TempDir::new("claimable-carried");
+    three_ready(&r);
+    r.certified("sp-int", TIP);
+    r.store
+        .set_carrier("sp-a", Some("sp-int"), false, &state_store::Request::new("t/carry", "test", "carry"))
+        .unwrap();
+    let answer = r.claimable(run.path(), &[]);
+    assert_eq!(answer["beads"][0]["verdict"], "carried");
+    assert_eq!(answer["beads"][0]["blocker"], "sp-int");
+}
+
+#[test]
+fn claimable_that_cannot_read_its_config_answers_cannot_tell_with_no_list() {
+    let r = Rig::new();
+    let run = testkit::TempDir::new("claimable-fail");
+    three_ready(&r);
+    let call = Call { now: r.now(), request: "t/claimable" };
+    let inputs = Fixed { run: run.path().into(), rowless: Vec::new(), fail: true };
+    let (code, out) = crate::control::claimable::run(&r.store, &["claimable".to_string()], &inputs, &call);
+    assert_eq!(code, crate::CANNOT_TELL);
+    assert!(out.starts_with("cannot tell: claimable: ") && !out.contains("beads"), "{out}");
+}

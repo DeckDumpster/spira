@@ -12,7 +12,7 @@ use state_store::{Config, Contract, Modeled, MonotonicClock, Ports};
 use state_store_sqlite::{Options, SqliteBackend};
 
 use super::store::Store;
-use super::{readiness, sections, state, verbs};
+use super::{claimable, readiness, sections, state, verbs};
 use crate::{CANNOT_TELL, REFUSED};
 
 /// A failed open is not kept, so the next call tries again.
@@ -246,7 +246,7 @@ pub fn dispatch(args: &[String]) -> Option<(i32, String)> {
     if sections::VERBS.contains(&verb.as_str()) || verb == sections::lifecycle::VERB || verb == spira_lc::rc::VERB {
         return Some(dispatch_sections(args));
     }
-    let lifecycle = state::is_verb(verb) || readiness::VERBS.contains(&verb.as_str());
+    let lifecycle = state::is_verb(verb) || readiness::VERBS.contains(&verb.as_str()) || claimable::VERBS.contains(&verb.as_str());
     if !lifecycle && !verbs::VERBS.contains(&verb.as_str()) {
         return None;
     }
@@ -267,7 +267,9 @@ pub fn dispatch(args: &[String]) -> Option<(i32, String)> {
                 now: crate::db::now_epoch(),
                 request: &request,
             };
-            if readiness::VERBS.contains(&verb.as_str()) {
+            if claimable::VERBS.contains(&verb.as_str()) {
+                claimable::run(&store, args, &claimable::Live, &call)
+            } else if readiness::VERBS.contains(&verb.as_str()) {
                 readiness::run(&store, args, &call)
             } else {
                 state::run(&store, args, &call)
