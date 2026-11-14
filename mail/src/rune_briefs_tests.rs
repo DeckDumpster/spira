@@ -47,7 +47,9 @@ fn names_the_retired_ask_script(text: &str) -> bool {
 #[test]
 fn the_option_check_flags_a_planted_unknown_option_and_passes_the_real_ones() {
     let accepted = accepted_send_options();
-    assert!(accepted.iter().any(|a| a == "--subject") && accepted.iter().any(|a| a == "--bead"), "{accepted:?}");
+    for must in ["--from", "--subject", "--kind", "--default", "--class", "--bead", "--dry-run"] {
+        assert!(accepted.iter().any(|a| a == must), "{must} not read from run_send: {accepted:?}");
+    }
     assert_eq!(refused_send_options("run `mail send operator --subject x --frobnicate`", &accepted), ["--frobnicate"]);
     assert!(refused_send_options("run `mail send operator --subject x --kind question`", &accepted).is_empty());
 }

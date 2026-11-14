@@ -75,3 +75,11 @@ fn the_decision_bead_is_linked_to_the_work_bead_as_relates_to_never_blocking() {
     assert_eq!(adds.len(), 1, "{adds:?}");
     assert_eq!(adds[0], ["dep", "add", "sp-work1", "sp-dec1", "--type", "relates-to"]);
 }
+
+// covers: UC-operator-channel-14
+#[test]
+fn only_the_explicit_override_makes_the_decision_block_the_work_bead() {
+    let (bd, _) = ask_about_work_bead("mail-uc14-override", true);
+    let adds = dep_adds(&bd);
+    assert_eq!(adds, [["dep", "add", "sp-work1", "sp-dec1", "--type", "blocks"]]);
+}
