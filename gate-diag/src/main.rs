@@ -277,3 +277,116 @@ mod record_tests_tests {
         assert!(text.contains("\"covered\":[\"src/b.rs:7\"]"), "{text}");
     }
 }
+
+#[cfg(test)]
+mod diagnostics_tests {
+    use super::*;
+    use crate::ports::ResultFile;
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+    use std::path::{Path, PathBuf};
+
+    #[derive(Default)]
+    struct Fake {
+        statuses: HashMap<String, (String, u64, i32)>,
+        outputs: HashMap<String, String>,
+        retries: HashMap<String, String>,
+        printed: RefCell<String>,
+        summary: RefCell<String>,
+    }
+
+    impl Fake {
+        fn suite(mut self, name: &str, status: &str, rc: i32, output: Option<&str>, retry: Option<&str>) -> Fake {
+            self.statuses.insert(name.into(), (status.into(), 3, rc));
+            if let Some(o) = output {
+                self.outputs.insert(name.into(), o.into());
+            }
+            if let Some(r) = retry {
+                self.retries.insert(name.into(), r.into());
+            }
+            self
+        }
+        fn names(&self) -> Vec<String> {
+            let mut n: Vec<String> = self.statuses.keys().cloned().collect();
+            n.sort();
+            n
+        }
+    }
+
+    impl World for Fake {
+        fn result_files(&self, _: &Path) -> Vec<ResultFile> {
+            self.names()
+                .into_iter()
+                .map(|s| ResultFile { result_path: PathBuf::from(format!("{s}.result")), out_path: PathBuf::from(format!("{s}.out")), suite: s })
+                .collect()
+        }
+        fn read_result(&self, p: &Path) -> (String, Option<u64>, Option<i32>) {
+            let name = p.to_string_lossy().trim_end_matches(".result").to_string();
+            let (s, secs, rc) = &self.statuses[&name];
+            (s.clone(), Some(*secs), Some(*rc))
+        }
+        fn read(&self, p: &Path) -> Option<String> {
+            self.outputs.get(p.to_string_lossy().trim_end_matches(".out")).cloned()
+        }
+        fn suite_source(&self, _: &Path, _: &str) -> Option<String> {
+            None
+        }
+        fn retry_status(&self, _: &Path, suite: &str) -> Option<String> {
+            self.retries.get(suite).cloned()
+        }
+        fn write(&self, _: &Path, _: &str) {}
+        fn append(&self, p: &Path, content: &str) {
+            if p.ends_with("step-summary.md") {
+                self.summary.borrow_mut().push_str(content);
+            }
+        }
+        fn github_actions(&self) -> bool {
+            true
+        }
+        fn step_summary_path(&self) -> Option<PathBuf> {
+            Some(PathBuf::from("/x/step-summary.md"))
+        }
+        fn batch_tail_lines(&self) -> usize {
+            2
+        }
+        fn suite_timeout_default(&self) -> u64 {
+            600
+        }
+        fn print(&self, s: &str) {
+            self.printed.borrow_mut().push_str(s);
+        }
+    }
+
+    fn diagnose(w: &Fake) -> i32 {
+        run(w, Path::new("/home"), Path::new("/root"), &mut Tally::default())
+    }
+
+    // covers: UC-test-infrastructure-36
+    #[test]
+    fn each_red_suite_is_diagnosed_and_summarised_and_an_all_green_batch_diagnoses_nothing() {
+        let w = Fake::default()
+            .suite("test-green.sh", "ok", 0, Some("fine\n"), None)
+            .suite("test-flaky.sh", "red", 1, Some("setup\n  FAIL  the thing broke\nt1\nt2\nt3\n"), Some("ok"))
+            .suite("test-silent.sh", "red", 137, None, Some("red"));
+        assert_eq!(diagnose(&w), 0);
+        let out = w.printed.borrow().clone();
+        assert!(out.contains("::group::test-flaky.sh  red-green (flake)  rc=1"), "{out}");
+        assert!(out.contains("--- FAIL lines ---\n  FAIL  the thing broke\n"), "{out}");
+        assert!(out.contains("--- last 2 lines ---\nt2\nt3\n"), "{out}");
+        assert!(out.contains("::error file=spira/test-flaky.sh::FAIL  the thing broke"), "{out}");
+        assert!(out.contains("::group::test-silent.sh  red-red  rc=137"), "{out}");
+        assert!(out.contains("(no output)"), "{out}");
+        assert!(out.contains("::error file=spira/test-silent.sh::"), "{out}");
+        assert!(!out.contains("test-green.sh"), "a passing suite is not diagnosed: {out}");
+        let summary = w.summary.borrow().clone();
+        assert!(summary.contains("| test-flaky.sh | 3s (rc=1) | red-green (flake) |"), "{summary}");
+        assert!(summary.contains("| test-silent.sh | 3s (rc=137) | red-red |"), "{summary}");
+        assert!(!summary.contains("test-green.sh"), "the summary lists reds only: {summary}");
+
+        let green = Fake::default().suite("test-a.sh", "ok", 0, None, None).suite("test-b.sh", "skip", 0, None, None);
+        assert_eq!(diagnose(&green), 0);
+        let out = green.printed.borrow().clone();
+        assert!(!out.contains("::group::") && !out.contains("::error"), "{out}");
+        assert!(green.summary.borrow().is_empty());
+    }
+}

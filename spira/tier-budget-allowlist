@@ -111,8 +111,6 @@ test-forge-orphan-runs.sh	T1	2.0
 test-forge-run-metadata.sh	T1	2.0
 test-forge-runs-active.sh	T1	3.0
 test-freshclone.sh	T1	11.5
-test-gate-check-red-twice.sh	T1	18.5
-test-gate-ci-diag.sh	T1	3.5
 test-gate-diag.sh	T1	1.5
 test-gate-discover-branch.sh	T1	2.0
 test-gate-fixture-diag.sh	T1	4.0

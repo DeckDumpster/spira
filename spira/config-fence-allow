@@ -59,7 +59,6 @@ spira/test-destroy-branch.sh
 spira/test-doctor-config-files.sh
 spira/test-doctor-gate-compile-check.sh
 spira/test-rune.sh
-spira/test-gate-check-red-twice.sh
 spira/test-gate-discover-branch.sh
 spira/test-gate-metering.sh
 spira/test-gate-preflight.sh

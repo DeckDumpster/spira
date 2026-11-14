@@ -39,3 +39,6 @@ impl std::fmt::Display for Refusal {
 pub fn refuse<T>(msg: impl Into<String>) -> Result<T, Refusal> {
     Err(Refusal(msg.into()))
 }
+
+#[cfg(test)]
+mod matrix_tests;

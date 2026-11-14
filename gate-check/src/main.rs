@@ -191,3 +191,6 @@ fn tsd_ingest_recent(world: &dyn World, home: &std::path::Path, repo: &str) {
 
 #[cfg(test)]
 mod run_tests;
+
+#[cfg(test)]
+mod filing_tests;
