@@ -1771,8 +1771,13 @@ impl Machine<'_> {
                 self.acts.push(follow.act(EJECT_GATE_RED));
             }
             (State::Corpus | State::Attributing | State::Certifying, EJECT_GATE_RED) if ok => {
+                let gone = leg.bead.split(',').count();
                 self.rc.members.retain(|(id, _)| !leg.bead.split(',').any(|b| b == id));
                 self.rc.round_key = Some(core::round_key(&self.rc.members));
+                let why = format!("{} left after a refused preempt ({}); the pass still running holds the round head that carried it, so the round is abandoned and its members cut again", leg.bead, leg.reds.join(" "));
+                self.go(Trigger::LegLost);
+                self.abandon_ejecting(&why, vec![], Some(gone));
+                self.finish(pace::Outcome::Quiet, "");
             }
             (State::Corpus | State::Attributing | State::Certifying, EJECT_GATE_RED) => {
                 let why = format!("a preempt recorded for {} and was refused its eject ({}); the plain eject was refused too ({})", leg.bead, leg.reds.join(" "), body.trim());

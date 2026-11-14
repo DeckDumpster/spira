@@ -132,7 +132,7 @@ fn gate_red_facts_for_one_member_apart_from_each_other_name_it_once() {
 }
 
 #[test]
-fn a_preempt_refused_after_it_acted_is_followed_by_the_plain_gate_red_eject_and_the_member_leaves_when_that_succeeds() {
+fn a_preempt_refused_after_it_acted_is_followed_by_the_plain_gate_red_eject_and_the_round_is_abandoned_with_the_member_out_when_that_succeeds() {
     let (next, acts) = decide(&carried(State::Corpus), &snapshot(vec![("sp-a", "t1")], None));
     let leg = preempts(&acts).remove(0);
     let refusal = "eject of sp-a failed (rc=1) — the next pass was not started";
@@ -142,8 +142,11 @@ fn a_preempt_refused_after_it_acted_is_followed_by_the_plain_gate_red_eject_and_
     assert_eq!(held.repos["spira"].members.len(), 2, "the member stays until the follow-up ejects it");
     let follow_leg: Leg = serde_json::from_str(&follow[0].input).unwrap();
     assert_eq!(follow_leg.bead, "sp-a");
-    let (after, _) = on_outcome(&held, EJECT_GATE_RED, true, "{}", &follow_leg, NOW);
-    assert_eq!(after.repos["spira"].members, [("sp-b".to_string(), "t2".to_string())]);
+    let (after, acts) = on_outcome(&held, EJECT_GATE_RED, true, "{}", &follow_leg, NOW);
+    assert!(after.repos.get("spira").is_none_or(|r| r.members.is_empty() && r.batch.is_none()), "the round is forgotten");
+    let abandon: Leg = serde_json::from_str(&acts.iter().find(|a| a.effect == ABANDON).expect("the pass on the old head is not left to decide the round").input).unwrap();
+    assert_eq!(abandon.ejected, Some(1));
+    assert!(abandon.why.contains("eject of sp-a failed (rc=1)"), "{}", abandon.why);
 }
 
 #[test]
