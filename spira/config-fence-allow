@@ -58,8 +58,6 @@ spira/test-doctor-gate-compile-check.sh
 spira/test-rune.sh
 spira/test-gate-check-red-twice.sh
 spira/test-gate-discover-branch.sh
-spira/test-gate-metering.sh
-spira/test-gate-preflight.sh
 spira/test-gh-run-gate.sh
 spira/test-guards.sh
 spira/test-hold.sh
