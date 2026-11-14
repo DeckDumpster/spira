@@ -565,9 +565,14 @@ fn gate_red_at(conn: &Conn, bead_id: &str, tip: &str) -> Option<GateRedAt> {
         t = rows::escape(tip)
     );
     let found = conn.query(&sql).ok()?;
-    let row = found.first()?;
+    gate_red_from_row(found.first()?)
+}
+
+/// A step or message is present only when non-empty: JSON_UNQUOTE of a missing key reads back as the text `null`.
+fn gate_red_from_row(row: &serde_json::Value) -> Option<GateRedAt> {
     let text = |k: &str| row.get(k).and_then(|v| v.as_str()).filter(|v| !v.is_empty() && *v != "null").map(str::to_string);
-    Some(GateRedAt { step: text("step"), message: text("message") })
+    let (step, message) = (text("step"), text("message"));
+    (step.is_some() || message.is_some()).then_some(GateRedAt { step, message })
 }
 
 fn ejected_reasons(conn: &Conn, bead_id: &str, tip: &str) -> Option<String> {
@@ -2365,6 +2370,14 @@ mod tests {
         let round = super::red_tip_refusal("sp-a", "abc", Some("unit-tests"), Some(&gate));
         assert!(round.contains("a round ejected") && round.contains("unit-tests") && !round.contains("fixture-config"), "{round}");
         assert!(super::red_tip_refusal("sp-a", "abc", None, None).contains("a round ejected"));
+    }
+
+    #[test]
+    fn a_stored_gate_red_row_reads_back_its_step_and_message_and_a_stepless_one_reads_as_none() {
+        let row = serde_json::json!({"step": "fixture-config", "message": "SPIRA_X is not declared"});
+        let got = super::gate_red_from_row(&row).unwrap();
+        assert_eq!((got.step.as_deref(), got.message.as_deref()), (Some("fixture-config"), Some("SPIRA_X is not declared")));
+        assert!(super::gate_red_from_row(&serde_json::json!({"step": "null", "message": null})).is_none());
     }
 
     #[test]
