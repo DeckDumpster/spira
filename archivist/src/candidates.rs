@@ -50,6 +50,7 @@ pub fn sort_by_drift_desc(candidates: &mut [Candidate]) {
 mod tests {
     use super::*;
 
+    // covers: UC-ops-detection-remediation-35
     #[test]
     fn would_archive_requires_drift_at_or_above_the_threshold() {
         assert!(!would_archive(4, 5, None, None, 0));
@@ -68,6 +69,7 @@ mod tests {
         assert!(!would_archive(4, 5, Some("failed"), Some(1000), 2000));
     }
 
+    // covers: UC-ops-detection-remediation-35
     #[test]
     fn a_terminal_failure_is_never_refired_by_drift_alone() {
         assert!(!would_archive(100, 5, Some("failed"), None, i64::MAX));

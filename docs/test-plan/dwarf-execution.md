@@ -164,7 +164,7 @@ Every seam below turns a full `dwarf.sh` or `sentinel.sh` run on a real Dolt sto
 | G1 | **Lease-lapse teardown**: `bump_lapsed`, the `$SPIRA_RUN/lapsed/<id>-<ts>` record, the note, claim release, ledger `lapsed` and the attempt being charged | dwarf.sh 754-770. No test greps `bump_lapsed` or `ledger_done … lapsed`. test-dwarf-lease.sh tests a copy of the tick, not cleanup. |
 | G2 | Thrash teardown **behaviour**: requeue event `thrash`, no attempt charged, note, ledger `requeue-thrash` | dwarf.sh 736-747; only line-order and awk greps in test-thrash.sh |
 | G3 | Timeout disposition: rc 124 with nothing committed → no charge, note, ledger `timeout`; and rc 124 **with** a commit falls through | dwarf.sh 826-836; the retired timeout suite checks only line order |
-| G4 | Capacity lost mid-session in a bead dwarf → `capacity_pause_set`, release, ledger `capacity`, no charge | dwarf.sh 715-726; `capacity_reset_at` is referenced only by test-archivist |
+| G4 | Capacity lost mid-session in a bead dwarf → `capacity_pause_set`, release, ledger `capacity`, no charge | dwarf.sh 715-726; `capacity_reset_at` is referenced only by the archivist's capacity-refusal unit test |
 | G5 | Dwarf-side handling of a slain bead (release, ledger `slain`, no charge) | dwarf.sh 727-734; test-slay.sh tests slay.sh, not the dwarf's cleanup |
 | G6 | Gate still running when the bead is **open** → released, ledger `gate-unfinished`, no charge | dwarf.sh 772-790; test-dwarf-gate-close-silent.sh covers only the closed-bead switch |
 | G7 | Read-after-claim poison race → release, ledger `poison-raced` | dwarf.sh 430-446; grep in the retired timeout suite only |

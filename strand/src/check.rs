@@ -387,6 +387,12 @@ pub fn decide(r: &AgedRow, dry: bool, strand_grace: i64) -> Step {
 }
 
 pub fn check(cfg: &Config, c: Classified, dry: bool) -> i32 {
+    check_raising(cfg, c, dry, &mut |part, kind, id, detail, action| escalate(cfg, part, kind, id, detail, action))
+}
+
+type Raise<'a> = dyn FnMut(&str, &str, &str, &str, &str) + 'a;
+
+fn check_raising(cfg: &Config, c: Classified, dry: bool, raise: &mut Raise) -> i32 {
     let Some(state_path) = cfg.state_path() else {
         warn("FATAL SPIRA_RUN is unknown — cannot keep episode state");
         return 2;
@@ -447,7 +453,7 @@ pub fn check(cfg: &Config, c: Classified, dry: bool) -> i32 {
                         warn(&format!("check: [{}] lane liveness unreadable at raise time — escalating on the classification", r.part));
                     }
                 }
-                escalate(cfg, &r.part, &r.row.kind, &r.row.id, &detail, &r.row.action);
+                raise(&r.part, &r.row.kind, &r.row.id, &detail, &r.row.action);
                 mark(&state_path, &mut keep, &r.part, &r.row, Mark::Escalated);
                 println!("STRANDED {} {} — {}", r.row.kind, r.row.id, detail);
                 handled += 1;
@@ -715,6 +721,43 @@ mod tests {
     fn the_inbox_line_names_the_row_and_its_action() {
         let l = inbox_line("Spira: sp-x is stranded (unrostered)", "no persona", "roster it");
         assert!(l.contains("sp-x") && l.contains("no persona") && l.contains("roster it"), "{l}");
+    }
+
+    fn escalating_fixture(run: &Path, disp: Disposition) -> (Config, Classified) {
+        let cfg = Config { run: Some(run.to_path_buf()), strand_grace: 0, ..Config::test_fixture() };
+        let rows = vec![PartRow { part: "spira,plan".into(), row: Row::new("stuck", "sp-x", disp, "d".into(), "a".into()) }];
+        (cfg, Classified { rows, watching: Vec::new(), live: Vec::new() })
+    }
+
+    // covers: UC-ops-detection-remediation-21
+    #[test]
+    fn a_runner_that_cannot_take_the_lock_declines_and_the_episode_is_escalated_once() {
+        let run = testkit::TempDir::new("strand-check-lock");
+        let (cfg, c) = escalating_fixture(&run, Disposition::Escalate);
+        let mut raised = 0;
+        let mut inner_rc = None;
+        let rc = check_raising(&cfg, c, false, &mut |_, _, _, _, _| {
+            raised += 1;
+            // The first runner is inside its critical section, holding the lock, right now.
+            let (cfg2, c2) = escalating_fixture(&run, Disposition::Escalate);
+            inner_rc = Some(check_raising(&cfg2, c2, false, &mut |_, _, _, _, _| panic!("a declined runner raised an escalation")));
+        });
+        assert_eq!(rc, 0);
+        assert_eq!(inner_rc, Some(0), "the second runner declines cleanly");
+        assert_eq!(raised, 1);
+
+        let (cfg3, c3) = escalating_fixture(&run, Disposition::Escalate);
+        let rc = check_raising(&cfg3, c3, false, &mut |_, _, _, _, _| panic!("the same episode escalated again"));
+        assert_eq!(rc, 0, "a later runner finds the episode already escalated");
+    }
+
+    // covers: UC-ops-detection-remediation-21
+    #[test]
+    fn an_info_row_never_raises_an_escalation() {
+        let run = testkit::TempDir::new("strand-check-info");
+        let (cfg, c) = escalating_fixture(&run, Disposition::Info);
+        let rc = check_raising(&cfg, c, false, &mut |_, _, _, _, _| panic!("an info row reached the escalation path"));
+        assert_eq!(rc, 0);
     }
 
     fn aged(kind: &str, disp: Disposition, age: i64, acted: i64, esc: i64) -> AgedRow {

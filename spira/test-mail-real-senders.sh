@@ -203,7 +203,7 @@ ARC_SH=archivist   # invoked by name on the suite's PATH (sp-gypjk)
 mkdir -p "$TMP/arc-runes" "$TMP/arc-run" "$TMP/arc-projects/-test-project"
 cp "$HERE/runes/archivist.md" "$TMP/arc-runes/"
 
-# mkarctranscript <path> <turns> <ctx> — same synthetic shape test-archivist uses, so
+# mkarctranscript <path> <turns> <ctx> — a synthetic transcript shape, so
 # ctx-meter.sh measures a real (if fabricated) transcript rather than a hand-typed SP_CTX_*.
 mkarctranscript() {
     local tp="$1" n="$2" ctx="$3" i per
