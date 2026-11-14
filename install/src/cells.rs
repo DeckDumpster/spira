@@ -212,6 +212,7 @@ fn a_changed_timer_waits_for_its_running_oneshot_and_a_dead_enabled_unit_fails_t
     assert!(r.errors.is_empty(), "{:?}", r.errors);
     assert_eq!(sc.restarts.borrow().as_slice(), ["spira-example-beta.timer"], "the changed timer is applied");
     assert!(!sc.units.borrow()["spira-example-beta.service"].active, "…only after the oneshot drained");
+    assert!(sc.order.borrow().iter().all(|o| !o.contains("still running")), "{:?}", sc.order.borrow());
     assert!(sc.finishes_after_polls.borrow()["spira-example-beta.service"] == 0, "the installer polled the oneshot until it finished");
 
     let dead = vec!["spira-example-beta.timer".to_string()];

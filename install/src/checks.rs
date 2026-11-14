@@ -312,9 +312,9 @@ mod tests {
         testkit::git(d.path(), &["commit", "-q", "--allow-empty", "-m", "ahead"]);
         testkit::git(d.path(), &["checkout", "-q", "-B", "main", &shas[0]]);
         testkit::git(d.path(), &["branch", "-f", "land", "main"]);
-        testkit::git(d.path(), &["branch", "-f", "tipref", &shas[2]]);
-        let behind = landref_currency(repo, None, false, || Some("tipref".into()));
-        assert!(behind.is_err(), "a checkout on its landref name but behind the ref's tip is refused");
+        testkit::git(d.path(), &["update-ref", "refs/remotes/up/main", &shas[2]]);
+        let behind = landref_currency(repo, None, false, || Some("up/main".into())).unwrap_err();
+        assert!(behind.contains("2 commit(s) behind") && behind.contains("SPIRA_INSTALL_FORCE"), "{behind}");
 
         testkit::git(d.path(), &["branch", "-f", "tipref", "main"]);
         assert_eq!(landref_currency(repo, None, false, || Some("main".into())), Ok(()), "on the landref and current: not refused");

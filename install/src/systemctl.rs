@@ -285,7 +285,9 @@ impl Systemctl for FakeSystemctl {
     }
     fn restart(&self, unit: &str) -> Result<(), String> {
         self.restarts.borrow_mut().push(unit.to_string());
-        self.order.borrow_mut().push(format!("restart {unit}"));
+        let svc = format!("{}.service", unit.trim_end_matches(".timer"));
+        let draining = self.finishes_after_polls.borrow().get(&svc).is_some_and(|n| *n > 0);
+        self.order.borrow_mut().push(format!("restart {unit}{}", if draining { " (oneshot still running)" } else { "" }));
         self.units.borrow_mut().entry(unit.to_string()).or_default().active = true;
         Ok(())
     }
