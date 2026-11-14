@@ -341,6 +341,17 @@ impl Host for RuntimeHost {
         lines.into_iter().map(|l| format!("{l}\n")).collect()
     }
 
+    fn forge_ci_in_flight(&self, repo_name: &str) -> Result<bool, String> {
+        let views = store_view::shared().ok_or("no store view is loaded")?;
+        let shown = views.batch_view(repo_name).map_err(|e| format!("batch view of {repo_name}: {e}"))?.value.shown();
+        let batch_pr = shown.lines().filter_map(|l| l.split_once('=')).any(|(k, v)| k == "pr" && !v.trim().is_empty());
+        if batch_pr {
+            return Ok(true);
+        }
+        let record = queue::records::read_kv(&self.world.queue_dir.join(repo_name).join("publish"))?;
+        Ok(record.is_some_and(|kv| kv.get_first("pr").is_some_and(|v| !v.trim().is_empty())))
+    }
+
     fn send_mail(&self, mail: &Mail) -> Result<(), String> {
         send_mail(self.mail.as_deref(), mail)
     }

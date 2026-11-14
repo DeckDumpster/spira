@@ -222,6 +222,10 @@ pub struct Config {
     pub skip_units: Vec<String>,
     /// Answers to git questions, keyed by the shas that decide them, so a ref that did not move is not asked about twice.
     pub memo: Arc<std::sync::Mutex<std::collections::BTreeMap<String, String>>>,
+    /// Seconds a job may sit queued before its runner is judged gone; also how long after CI was last in flight the one trailing sweep waits.
+    pub stranded_min_age: u64,
+    /// Per repo, the epoch CI was last seen in flight while a trailing sweep is still owed.
+    pub stranded_seen_path: PathBuf,
 }
 
 pub const MAIN_REF: &str = "local/main";
@@ -266,6 +270,10 @@ pub trait Host: Send + Sync {
     /// `rune task|lane|partitions|for-labels ...` and `repo landref <name>`.
     fn config(&self, argv: &[&str]) -> String;
     fn stranded_runners(&self, repo: &Path) -> String;
+    /// Whether the harness has forge CI in flight for `repo_name`: an open forge batch or an open publish record.
+    fn forge_ci_in_flight(&self, _repo_name: &str) -> Result<bool, String> {
+        Err("this host cannot tell".into())
+    }
     fn send_mail(&self, mail: &Mail) -> Result<(), String>;
     /// What a ref names in `repo`, read without running git.
     fn ref_sha(&self, _repo: &Path, _name: &str) -> Ref {
@@ -335,6 +343,7 @@ impl Config {
         "SPIRA_DESIRED_DIR",
         "SPIRA_NO_PROGRESS_BREAKER_CLAIMS",
         "SPIRA_NO_PROGRESS_BREAKER_WINDOW_MINUTES",
+        "SPIRA_STRANDED_RUNNER_MIN_AGE",
     ];
 
     pub fn from_process(seams: Seams) -> Result<Config, String> {
@@ -397,6 +406,8 @@ impl Config {
             lc_client: None,
             skip_units: Vec::new(),
             memo: Arc::default(),
+            stranded_min_age: parsed::<u64>(get, "SPIRA_STRANDED_RUNNER_MIN_AGE")?,
+            stranded_seen_path: paths::stranded_seen(&spira_run),
             seams,
             spira_run,
             spira_home,
@@ -553,6 +564,13 @@ impl Config {
         }
     }
 
+    fn forge_ci_in_flight(&self, repo_name: &str) -> Result<bool, String> {
+        match &self.host {
+            Some(h) => h.forge_ci_in_flight(repo_name),
+            None => Err("no host".into()),
+        }
+    }
+
     pub fn send_mail(&self, mail: &Mail) -> Result<(), String> {
         match &self.host {
             Some(h) => h.send_mail(mail),
@@ -691,6 +709,20 @@ fn repo_root(name: &str, repo_map: &Option<PathBuf>) -> Option<PathBuf> {
         }
     }
     None
+}
+
+fn repo_map_names(repo_map: &Option<PathBuf>) -> Vec<String> {
+    let Some(content) = repo_map.as_ref().and_then(|p| fs::read_to_string(p).ok()) else { return Vec::new() };
+    let mut names: Vec<String> = content
+        .lines()
+        .map(str::trim)
+        .filter(|t| !t.starts_with('#') && !t.is_empty())
+        .filter_map(|t| t.split('|').next().map(|n| n.trim().to_string()))
+        .filter(|n| !n.is_empty())
+        .collect();
+    names.sort();
+    names.dedup();
+    names
 }
 
 fn queue_repo_names(queue_dir: &Path) -> Vec<String> {
@@ -1521,10 +1553,36 @@ fn stranded_runs(out: &str) -> Vec<(String, String)> {
     runs
 }
 
+fn load_stranded_seen(path: &Path) -> std::collections::BTreeMap<String, u64> {
+    fs::read_to_string(path).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
+}
+
 fn observe_queue_stranded_runs(cfg: &Config) -> Vec<Check> {
     let mut checks = Vec::new();
-    for repo_name in queue_repo_names(&cfg.queue_dir) {
+    let mut seen = load_stranded_seen(&cfg.stranded_seen_path);
+    let before = seen.clone();
+    for repo_name in repo_map_names(&cfg.repo_map) {
         let Some(repo_path) = repo_root(&repo_name, &cfg.repo_map) else { continue };
+        match cfg.forge_ci_in_flight(&repo_name) {
+            Err(reason) => {
+                checks.push(Check {
+                    key: format!("queue-stranded-runs:{repo_name}"),
+                    raw: RawStatus::Unobservable { reason: format!("cannot tell whether {repo_name} has forge CI in flight: {reason}") },
+                    remedy: Remedy::Escalate,
+                });
+                continue;
+            }
+            Ok(true) => {
+                seen.insert(repo_name.clone(), cfg.now_secs);
+            }
+            Ok(false) => match seen.get(&repo_name) {
+                None => continue,
+                Some(&last) if cfg.now_secs.saturating_sub(last) < cfg.stranded_min_age => continue,
+                Some(_) => {
+                    seen.remove(&repo_name);
+                }
+            },
+        }
         let repo_str = repo_path.to_string_lossy().to_string();
         let out = cfg.stranded_runners(&repo_path);
         for (run, label) in stranded_runs(&out) {
@@ -1538,6 +1596,9 @@ fn observe_queue_stranded_runs(cfg: &Config) -> Vec<Check> {
                 remedy: Remedy::Command { program: cfg.seams.forge.clone(), args: vec!["workflow-rerun".into(), repo_str.clone(), run] },
             });
         }
+    }
+    if seen != before {
+        let _ = fs::write(&cfg.stranded_seen_path, serde_json::to_string(&seen).unwrap_or_else(|_| "{}".into()));
     }
     checks
 }
@@ -2769,6 +2830,130 @@ mod tests {
         assert_eq!(store.0.lock().unwrap().as_slice(), &[vec!["show".to_string(), "sp-1".into()]]);
     }
 
+    struct Ci {
+        in_flight: std::collections::BTreeMap<&'static str, Result<bool, String>>,
+        asked: std::sync::Mutex<Vec<String>>,
+    }
+
+    impl Host for Ci {
+        fn unit_state(&self, _: &str, _: &str) -> Result<String, String> {
+            Ok("active".into())
+        }
+        fn list_enable(&self) -> String {
+            String::new()
+        }
+        fn free_pct(&self, _: &str) -> Option<i64> {
+            Some(90)
+        }
+        fn lc(&self, _: &[&str]) -> Result<String, String> {
+            Err("unexpected".into())
+        }
+        fn certified_list(&self, _: &Path) -> String {
+            String::new()
+        }
+        fn config(&self, _: &[&str]) -> String {
+            String::new()
+        }
+        fn stranded_runners(&self, repo: &Path) -> String {
+            let name = repo.file_name().unwrap().to_string_lossy().to_string();
+            let line = format!("STRANDED run=77 job=1 label=ci-r-77-1 repo={name}\n");
+            self.asked.lock().unwrap().push(name);
+            line
+        }
+        fn forge_ci_in_flight(&self, repo: &str) -> Result<bool, String> {
+            self.in_flight.get(repo).cloned().unwrap_or(Ok(false))
+        }
+        fn send_mail(&self, _: &Mail) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    const REPOS: [&str; 3] = ["alpha", "beta", "gamma"];
+
+    fn stranded_world(tag: &str, in_flight: &[(&'static str, Result<bool, String>)]) -> (Config, Arc<Ci>, testkit::TempDir) {
+        let dir = scratch_dir(tag);
+        let queue = dir.join("queue");
+        let map: String = REPOS.iter().map(|r| format!("{r}|{}/{r}\n", dir.display())).collect();
+        for r in REPOS {
+            fs::create_dir_all(queue.join(r)).unwrap();
+        }
+        fs::write(dir.join("repos"), map).unwrap();
+        let host = Arc::new(Ci { in_flight: in_flight.iter().cloned().collect(), asked: Default::default() });
+        let mut cfg = test_config();
+        cfg.queue_dir = queue;
+        cfg.repo_map = Some(dir.join("repos"));
+        cfg.stranded_seen_path = dir.join("seen.json");
+        cfg.stranded_min_age = 600;
+        cfg.host = Some(host.clone());
+        (cfg, host, dir)
+    }
+
+    fn asked(host: &Ci) -> Vec<String> {
+        std::mem::take(&mut *host.asked.lock().unwrap())
+    }
+
+    #[test]
+    fn with_no_forge_ci_in_flight_a_pass_asks_the_forge_about_no_runners() {
+        let (cfg, host, _dir) = stranded_world("stranded-idle", &[]);
+        assert!(observe_queue_stranded_runs(&cfg).is_empty());
+        assert_eq!(asked(&host), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_repo_with_ci_in_flight_is_asked_alone_and_a_stranded_run_is_still_a_gap() {
+        let (cfg, host, _dir) = stranded_world("stranded-flight", &[("beta", Ok(true))]);
+        let checks = observe_queue_stranded_runs(&cfg);
+        assert_eq!(asked(&host), ["beta"]);
+        assert_eq!(checks.len(), 1);
+        assert_eq!(checks[0].key, "queue-stranded-run:beta:77");
+        assert!(matches!(checks[0].raw, RawStatus::Gap { .. }));
+    }
+
+    #[test]
+    fn one_sweep_follows_the_ci_once_the_min_age_has_passed_then_none() {
+        let (mut cfg, host, _dir) = stranded_world("stranded-trailing", &[("beta", Ok(true))]);
+        cfg.now_secs = 1_000;
+        observe_queue_stranded_runs(&cfg);
+        assert_eq!(asked(&host), ["beta"]);
+
+        let idle = Arc::new(Ci { in_flight: std::collections::BTreeMap::new(), asked: Default::default() });
+        cfg.host = Some(idle.clone());
+        for (at, want) in [(1_000 + 599, 0), (1_000 + 600, 1), (1_000 + 601, 0)] {
+            cfg.now_secs = at;
+            observe_queue_stranded_runs(&cfg);
+            assert_eq!(asked(&idle).len(), want, "at +{}", at - 1_000);
+        }
+    }
+
+    #[test]
+    fn a_trailing_sweep_owed_survives_a_restart() {
+        let (mut cfg, _, _dir) = stranded_world("stranded-restart", &[("beta", Ok(true))]);
+        cfg.now_secs = 50;
+        observe_queue_stranded_runs(&cfg);
+        let seen = fs::read_to_string(&cfg.stranded_seen_path).unwrap();
+        assert!(seen.contains("beta") && !seen.contains("alpha"), "{seen}");
+    }
+
+    #[test]
+    fn a_host_that_cannot_tell_makes_no_call_and_is_unobservable_not_satisfied() {
+        let (cfg, host, _dir) = stranded_world("stranded-unknown", &[("alpha", Err("no store view".into()))]);
+        let checks = observe_queue_stranded_runs(&cfg);
+        assert_eq!(asked(&host), Vec::<String>::new());
+        assert_eq!(checks.len(), 1);
+        assert_eq!(checks[0].key, "queue-stranded-runs:alpha");
+        assert!(matches!(&checks[0].raw, RawStatus::Unobservable { reason } if reason.contains("no store view")));
+    }
+
+    #[test]
+    fn stranded_repos_come_from_the_repo_map_not_the_queue_directory() {
+        let (mut cfg, host, _dir) = stranded_world("stranded-source", &[("sp-ghost", Ok(true))]);
+        fs::create_dir_all(cfg.queue_dir.join("sp-ghost")).unwrap();
+        assert!(observe_queue_stranded_runs(&cfg).is_empty());
+        assert_eq!(asked(&host), Vec::<String>::new());
+        cfg.repo_map = None;
+        assert!(observe_queue_stranded_runs(&cfg).is_empty());
+    }
+
     struct Legs(&'static str, Arc<std::sync::Mutex<Vec<String>>>);
 
     impl Host for Legs {
@@ -3080,6 +3265,8 @@ mod tests {
             lc_client: None,
             skip_units: Vec::new(),
             memo: Arc::default(),
+            stranded_min_age: 600,
+            stranded_seen_path: PathBuf::from("/dev/null"),
         }
     }
 
