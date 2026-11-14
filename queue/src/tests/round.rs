@@ -3597,6 +3597,27 @@ fn preempting_a_host_placed_pass_stops_its_scope_ejects_and_restarts() {
 }
 
 #[test]
+fn the_preempt_the_batcher_sends_ejects_its_member_and_names_no_forced_suite() {
+    let (t, batch, _) = host_pass_world();
+    *t.env.stdin.borrow_mut() = "red on its own gate".into();
+    let rc = t.run(&["round", "preempt", &batch, "--eject", "sp-b", "--reason-file", "-"]);
+    assert_eq!(rc, 0, "{}", t.err());
+    assert!(t.lc.has(&format!("eject-member {batch} sp-b ")), "{:?}", t.lc.calls.borrow());
+    assert_eq!(kv_of(&t, "round")["members"].as_str(), "sp-a:ta sp-c:tc");
+    assert!(t.scripts.calls.borrow().iter().any(|c| c == &format!("restart {batch} spira")), "{:?}", t.scripts.calls.borrow());
+}
+
+#[test]
+fn a_preempt_that_names_the_gate_as_a_forced_suite_is_refused_and_leaves_its_member() {
+    let (t, batch, _) = host_pass_world();
+    *t.env.stdin.borrow_mut() = "red on its own gate".into();
+    let refused = t.run(&["round", "preempt", &batch, "--eject", "sp-b", "--suites", "gate", "--reason-file", "-"]);
+    assert_eq!(refused, 1);
+    assert!(t.err().contains("which testenv does not know"), "{}", t.err());
+    assert_eq!(kv_of(&t, "round")["members"].as_str(), "sp-a:ta sp-b:tb sp-c:tc");
+}
+
+#[test]
 fn preempt_stops_the_step_that_started_the_pass_before_the_next_pass_starts() {
     let (t, batch, _) = host_pass_world();
     seed_suite(&t, "test-b.sh");
