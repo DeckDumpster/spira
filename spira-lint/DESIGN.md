@@ -20,7 +20,8 @@ spira-lint [--root <dir>] [--only <rule>] [--base <rev> | --diff <rev>] [--emit-
   3): comparing against nothing reads exactly like a clean comparison.
 - `--diff <rev>` is `--base <rev>` plus a filter: a finding is reported only on a line the
   working tree adds or changes against `git merge-base <rev> HEAD`, and a whole-file finding
-  only for a file the diff touches (untracked files count whole). The base-comparing rules
+  only for a file the diff touches (untracked files count whole). A finding is also kept when
+  its message names, as an exact path, a file the diff touches or deletes. The base-comparing rules
   above are left unfiltered. The fast tier uses it, so a finding already on the base never
   reds a bead; the round's full-tree lint is where such a finding is judged.
 - **One walk.** `git ls-files -z` (tracked) and `git ls-files -z --others --exclude-standard`
