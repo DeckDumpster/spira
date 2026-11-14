@@ -62,8 +62,6 @@ pub struct Config {
     pub units_install: String,
     /// The `queue` whose `batch show` is a forge repo's open batch.
     pub queue: String,
-    /// The registered config keys the factory page's queues show, as configured.
-    pub limits: std::collections::BTreeMap<String, String>,
     /// The bounds `watch.transitions` judges by, pinned once; the refusal when they cannot be.
     pub transitions: Result<spira_runtime::tasks::e::watch_transitions::Config, String>,
     /// The age past which the reconciler's pass is shown stale.
@@ -100,10 +98,38 @@ impl Config {
                 None => spira_config::release_env::tool("units-install")?,
             },
             queue: spira_config::release_env::tool("queue")?,
-            limits: factory::LIMIT_KEYS.iter().map(|k| cfg(k).map(|v| (k.to_string(), v)).map_err(|e| format!("loom: {e}"))).collect::<Result<_, _>>()?,
             transitions: spira_runtime::tasks::e::watch_transitions::Config::pinned(),
             deadman_secs: cockpit_ops::health::goodput::deadman_secs(),
         })
+    }
+}
+
+/// Reads the named config keys from the files again, not from what this process pinned.
+pub type Limits = Arc<dyn Fn(&[String]) -> Result<std::collections::BTreeMap<String, String>, String> + Send + Sync>;
+
+impl Config {
+    /// What `--print-config` prints: every value pinned at startup except the factory limits,
+    /// which are read fresh. Two Configs built from the same values render identically.
+    pub fn render_pinned(&self) -> String {
+        let lines = [
+            format!("SPIRA_LOOM_ADDR={}\n", self.addr),
+            format!("SPIRA_LOOM_BUDGET_MS={}\n", self.budget.as_millis()),
+            format!("SPIRA_LOOM_CACHE_S={}\n", self.cache.as_secs()),
+            format!("SPIRA_LC_BIN={}\n", self.lc),
+            format!("SPIRA_PATH={}\n", self.path),
+            format!("SPIRA_RUN={}\n", self.run),
+            format!("SPIRA_INSTANCE={}\n", self.instance),
+            format!("SPIRA_SYSTEMCTL={}\n", self.systemctl),
+            format!("SPIRA_METRICS_ENDPOINT={}\n", self.metrics_endpoint.clone().unwrap_or_default()),
+            format!("SPIRA_VICTORIALOGS_URL={}\n", self.victorialogs_url),
+            format!("SPIRA_BROKER={}\n", self.broker),
+            format!("SPIRA_DESIRED_DIR={}\n", self.desired_dir),
+            format!("SPIRA_UNITS_INSTALL={}\n", self.units_install),
+            format!("QUEUE_BIN={}\n", self.queue),
+            format!("WATCH_TRANSITIONS={:?}\n", self.transitions),
+            format!("DEADMAN_SECS={}\n", self.deadman_secs),
+        ];
+        lines.concat()
     }
 }
 
@@ -111,6 +137,7 @@ const UNITS_SYNC_WAIT: Duration = Duration::from_millis(300);
 
 pub struct Loom {
     cfg: Config,
+    limits: Limits,
     /// The ops snapshot cache. A 5-second TTL: two small file reads and one systemctl call.
     ops_cell: Mutex<Option<Arc<OpsSnapshot>>>,
     /// The units snapshot, held for `cfg.cache`; the lock is kept across the refresh so
@@ -128,8 +155,13 @@ pub struct Loom {
 
 impl Loom {
     pub fn new(cfg: Config) -> Loom {
+        Loom::with_limits(cfg, Arc::new(spira_config::process::fresh))
+    }
+
+    pub fn with_limits(cfg: Config, limits: Limits) -> Loom {
         Loom {
             cfg,
+            limits,
             ops_cell: Mutex::new(None),
             units_cell: Mutex::new(None),
             units_refreshing: AtomicBool::new(false),
@@ -226,7 +258,8 @@ impl Loom {
         let now = now_s();
         let sensing = factory::Sensing { victorialogs_url: self.cfg.victorialogs_url.clone(), transitions: self.cfg.transitions.clone(), tsd_endpoint: self.cfg.metrics_endpoint.clone(), now };
         let mut reads = factory::gather(client()?, self.cfg.budget, &self.cfg.run, &sensing).await;
-        reads.limits = self.cfg.limits.clone();
+        let keys: Vec<String> = factory::LIMIT_KEYS.iter().map(|k| k.to_string()).collect();
+        reads.limits = (self.limits)(&keys)?;
         let floor = factory::build(&reads, now)?;
         *held = Some((std::time::Instant::now(), floor.clone()));
         Ok(floor)
@@ -1006,7 +1039,6 @@ mod in_process_tests {
             desired_dir: String::new(),
             units_install: String::new(),
             queue: String::new(),
-            limits: std::collections::BTreeMap::from([("SPIRA_COMPILE_PAR".to_string(), "9".to_string())]),
             transitions: Err("not pinned in this test".into()),
             deadman_secs: 300,
         }
@@ -1035,7 +1067,7 @@ mod in_process_tests {
 
     #[tokio::test]
     async fn the_factory_is_held_for_the_cache_and_a_failed_build_is_not_held() {
-        let loom = Loom::new(test_config());
+        let loom = Loom::with_limits(test_config(), Arc::new(|_| Ok(std::collections::BTreeMap::from([("SPIRA_COMPILE_PAR".to_string(), "9".to_string())]))));
         let refused = Arc::new(Counted(Default::default(), vec![("ops-graph --machine ask", 3, "refused".into())]));
         let e = loom.factory_via(|| Ok(LcClient::over(refused.clone(), true))).await.unwrap_err();
         assert!(e.contains("ops-graph --machine ask"), "{e}");
@@ -1048,6 +1080,44 @@ mod in_process_tests {
         let second = loom.factory_via(|| Ok(LcClient::over(healthy.clone(), true))).await.unwrap();
         assert_eq!(healthy.0.load(Ordering::SeqCst), reads, "the second viewer is served from the held build");
         assert_eq!(first, second);
+    }
+
+    fn fleet_ceiling(floor: &Value) -> Value {
+        floor["components"].as_array().unwrap().iter().find(|c| c["id"] == "dwarf-session").unwrap()["queues"][0]["config"].clone()
+    }
+
+    #[tokio::test]
+    async fn a_limit_changed_in_the_file_reaches_the_same_loom_when_the_cache_ages_out_and_a_reader_error_fails_the_build() {
+        let reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let n = reads.clone();
+        let reader: Limits = Arc::new(move |keys| {
+            let asked: Vec<&str> = keys.iter().map(String::as_str).collect();
+            assert_eq!(asked, factory::LIMIT_KEYS, "the floor asks for exactly the limit keys");
+            let live = |v: &str| Ok(std::collections::BTreeMap::from([("SPIRA_MAX_LIVE_DWARVES".to_string(), v.to_string())]));
+            match n.fetch_add(1, Ordering::SeqCst) {
+                0 => live("8"),
+                1 => live("9"),
+                _ => Err("config no longer resolves".to_string()),
+            }
+        });
+        let loom = Loom::with_limits(Config { cache: Duration::ZERO, ..test_config() }, reader);
+        let healthy = Arc::new(Counted(Default::default(), vec![]));
+        assert_eq!(fleet_ceiling(&loom.factory_via(|| Ok(LcClient::over(healthy.clone(), true))).await.unwrap()), 8);
+        assert_eq!(fleet_ceiling(&loom.factory_via(|| Ok(LcClient::over(healthy.clone(), true))).await.unwrap()), 9);
+        let e = loom.factory_via(|| Ok(LcClient::over(healthy.clone(), true))).await.unwrap_err();
+        assert_eq!(e, "config no longer resolves");
+    }
+
+    #[test]
+    fn the_printed_config_is_byte_identical_for_equal_values_and_carries_no_limit_key() {
+        let (a, b) = (test_config().render_pinned(), test_config().render_pinned());
+        assert_eq!(a, b);
+        assert!(a.starts_with("SPIRA_LOOM_ADDR=\nSPIRA_LOOM_BUDGET_MS=2000\nSPIRA_LOOM_CACHE_S=60\nSPIRA_LC_BIN=spira-lc\n"), "{a}");
+        for k in factory::LIMIT_KEYS {
+            assert!(!a.contains(k), "{k} is read fresh, so it is not a pinned value");
+        }
+        let moved = Config { addr: "127.0.0.1:1".into(), ..test_config() }.render_pinned();
+        assert_ne!(a, moved);
     }
 
     #[tokio::test]

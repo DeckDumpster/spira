@@ -13,7 +13,7 @@
 # left the loop silent for its whole window.
 #
 # tier: T1
-# covers: spira/metrics-stack.sh spira/loom.sh spira/conf.sh UC-cockpit-observability-07
+# covers: spira/metrics-stack.sh spira/loom.sh loom/src/main.rs spira/conf.sh UC-cockpit-observability-07
 # host-reason: runs loom.sh as a real child process against a temp filesystem; no writes outside $TMP
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -25,7 +25,7 @@ BASE_PATH="$PATH"
 # A fake Loom binary that arms, then loops until killed; loom.sh starts it after its baseline.
 FAKE_DIR="$TMP/fake-bin"; mkdir -p "$FAKE_DIR"
 FAKE_BIN="$FAKE_DIR/loom"
-printf '#!/bin/sh\ntouch "$ARMED_MARKER" 2>/dev/null\nsleep 30\n' > "$FAKE_BIN"
+printf '#!/bin/sh\n[ "$1" = --print-config ] && exec cat "$PINNED_FILE"\ntouch "$ARMED_MARKER" 2>/dev/null\nexit_rc="${FAKE_EXIT:-}"\n[ -n "$exit_rc" ] && exit "$exit_rc"\nsleep 30\n' > "$FAKE_BIN"
 chmod +x "$FAKE_BIN"
 
 # The positive control always waits its whole window (timeout must expire to prove nothing
@@ -62,16 +62,17 @@ run_loom() {      # run_loom <window> <marker>
     timeout "$1" env -i SPIRA_RELEASE="$(tl_release)" PATH="$FAKE_DIR:$BASE_PATH" HOME="$RUN" LC_ALL=C.UTF-8 \
         SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         SPIRA_GOAL=sp-test \
-        ARMED_MARKER="${2:-}" \
+        ARMED_MARKER="${2:-}" PINNED_FILE="$PINNED_FILE" FAKE_EXIT="${FAKE_EXIT:-}" \
         SPIRA_LOOM_TICK="$TICK" \
         SPIRA_TOML="$SPIRA_TOML" \
-        bash "$HERE/loom.sh"
+        bash "$HERE/loom.sh" ${3:+"$3"}
 }
 
 for name in loom; do
     label="loom.sh"
 
     RUN="$TMP/$name-run"; mkdir -p "$RUN"
+    PINNED_FILE="$TMP/pinned"; printf 'SPIRA_LOOM_ADDR=127.0.0.1:1\nSPIRA_LOOM_CACHE_S=5\n' > "$PINNED_FILE"
 
     # ── NEGATIVE CASE: no config change — the loop stays running ──────────────────────
     ec_stay=0
@@ -99,11 +100,50 @@ for name in loom; do
     else
         bad "$label: config change — armed before the touch" "marker never appeared within 10s"
     fi
+    printf 'SPIRA_LOOM_ADDR=127.0.0.1:2\nSPIRA_LOOM_CACHE_S=5\n' > "$PINNED_FILE"
     printf '\n# changed\n' >> "$_TL_CONF_OVERRIDE"
     ec_chg=0
     wait "$run_pid" || ec_chg=$?
-    is "$label: config change — exits 0" "0" "$ec_chg"
-    want "$label: config change — message on stderr" "config changed" "$(cat "$err_log" 2>/dev/null)"
+    is "$label: pinned change — exits 0" "0" "$ec_chg"
+    want "$label: pinned change — message on stderr" "config changed" "$(cat "$err_log" 2>/dev/null)"
+    if grep -Eq '^loom\.sh: [0-9]{4}-[0-9]{2}-[0-9]{2}T[^ ]+ config changed \(.*SPIRA_LOOM_ADDR.*\)' "$err_log"; then
+        ok "$label: pinned change — timestamped line names the key"
+    else
+        bad "$label: pinned change — timestamped line names the key" "$(cat "$err_log" 2>/dev/null)"
+    fi
+
+    # ── UNPINNED CHANGE: the file changes, no pinned value does — stays running ───────
+    marker_un="$RUN/armed-unpinned"
+    "run_$name" "$WIN_STAY_TOUCH" "$marker_un" >/dev/null 2>"$TMP/$name-unpinned.log" &
+    un_pid=$!
+    wait_for_marker "$marker_un" || bad "$label: unpinned change — armed" "marker never appeared within 10s"
+    printf '\n# unpinned\n' >> "$_TL_CONF_OVERRIDE"
+    ec_un=0
+    wait "$un_pid" || ec_un=$?
+    is "$label: unpinned change — stays running" "124" "$ec_un"
+
+    # ── SIGNAL: SIGTERM names itself with a timestamp ─────────────────────────────────
+    marker_sig="$RUN/armed-sig"
+    "run_$name" "$WIN_CHANGE" "$marker_sig" "sigcase-$$" >/dev/null 2>"$TMP/$name-sig.log" &
+    sig_pid=$!
+    wait_for_marker "$marker_sig" || bad "$label: signal — armed" "marker never appeared within 10s"
+    pkill -TERM -f "^bash $HERE/loom.sh sigcase-$$\$" 2>/dev/null
+    wait "$sig_pid" 2>/dev/null
+    if grep -Eq '^loom\.sh: [0-9]{4}-[0-9]{2}-[0-9]{2}T[^ ]+ SIGTERM received' "$TMP/$name-sig.log"; then
+        ok "$label: SIGTERM — timestamped line"
+    else
+        bad "$label: SIGTERM — timestamped line" "$(cat "$TMP/$name-sig.log" 2>/dev/null)"
+    fi
+
+    # ── CRASH: loom exits 3 — loom.sh says so and exits 3 ─────────────────────────────
+    ec_crash=0
+    FAKE_EXIT=3 "run_$name" "$WIN_CHANGE" "$RUN/armed-crash" >/dev/null 2>"$TMP/$name-crash.log" || ec_crash=$?
+    is "$label: loom crash — exits with its rc" "3" "$ec_crash"
+    if grep -Eq '^loom\.sh: [0-9]{4}-[0-9]{2}-[0-9]{2}T[^ ]+ loom exited rc=3' "$TMP/$name-crash.log"; then
+        ok "$label: loom crash — timestamped line"
+    else
+        bad "$label: loom crash — timestamped line" "$(cat "$TMP/$name-crash.log" 2>/dev/null)"
+    fi
 done
 
 tl_summary

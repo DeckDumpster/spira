@@ -12,24 +12,55 @@ command -v loom >/dev/null 2>&1 || { printf 'loom: not found on PATH (%s)\n' "$P
 
 _conf_file="$(spira_toml_write_target)"   # the layer an operator edits, in the one source
 _conf_stamp_0="$(conf_stamp "$_conf_file")"
+_pinned_0="$(loom --print-config 2>&1)"
 _tick="${SPIRA_LOOM_TICK:-5}"
+
+_ts() { date -Is; }
 
 loom "$@" &
 _loom_pid=$!
 
-trap '
+_stop_on() {
+    printf 'loom.sh: %s SIG%s received — stopping loom\n' "$(_ts)" "$1" >&2
     kill "$_loom_pid" 2>/dev/null || true
     wait "$_loom_pid" 2>/dev/null || true
     exit 0
-' INT TERM HUP
+}
+trap '_stop_on INT' INT
+trap '_stop_on TERM' TERM
+trap '_stop_on HUP' HUP
+
+# Loom pins only what --print-config prints; a write to any other key leaves it running.
+_pinned_diff() {
+    local now rc=0
+    now="$(loom --print-config 2>&1)" || rc=$?
+    if [ "$rc" -ne 0 ]; then
+        printf 'config no longer resolves: %s' "$now"
+        return 0
+    fi
+    [ "$now" = "$_pinned_0" ] && return 1
+    local line old="" new=""
+    while IFS= read -r line; do case $'\n'"$now"$'\n' in *$'\n'"$line"$'\n'*) ;; *) old="$old${old:+ }$line" ;; esac; done <<<"$_pinned_0"
+    while IFS= read -r line; do case $'\n'"$_pinned_0"$'\n' in *$'\n'"$line"$'\n'*) ;; *) new="$new${new:+ }$line" ;; esac; done <<<"$now"
+    printf '%s → %s' "$old" "$new"
+}
 
 while kill -0 "$_loom_pid" 2>/dev/null; do
     sleep "$_tick"
     if conf_changed "$_conf_file" "$_conf_stamp_0"; then
-        printf 'loom.sh: config changed — exiting for restart\n' >&2
-        kill "$_loom_pid" 2>/dev/null || true
-        wait "$_loom_pid" 2>/dev/null || true
-        exit 0
+        if _why="$(_pinned_diff)"; then
+            case "$_why" in
+                "config no longer resolves:"*) printf 'loom.sh: %s %s — exiting for restart\n' "$(_ts)" "$_why" >&2 ;;
+                *) printf 'loom.sh: %s config changed (%s) — exiting for restart\n' "$(_ts)" "$_why" >&2 ;;
+            esac
+            kill "$_loom_pid" 2>/dev/null || true
+            wait "$_loom_pid" 2>/dev/null || true
+            exit 0
+        fi
+        _conf_stamp_0="$(conf_stamp "$_conf_file")"
     fi
 done
 wait "$_loom_pid"
+_rc=$?
+printf 'loom.sh: %s loom exited rc=%s\n' "$(_ts)" "$_rc" >&2
+exit "$_rc"
