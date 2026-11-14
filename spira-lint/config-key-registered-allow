@@ -889,7 +889,6 @@ SPIRA_TOML spira-runtime/src/tasks/f/persona_ops.rs
 SPIRA_TOML spira/acceptance-local.sh
 SPIRA_TOML spira/conf.sh
 SPIRA_TOML spira/hooks/session.sh
-SPIRA_TOML spira/lib-test-install.sh
 SPIRA_TOML spira/pre-activate.sh
 SPIRA_TOML spira/sim/src/drive.rs
 SPIRA_TOML spira/sim/src/world.rs
