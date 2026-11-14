@@ -39,7 +39,7 @@ statement = "At `SPIRA_FENRIR_AT` recurrences exactly one Fenrir ask is mailed a
 [[use_case]]
 id = "UC-ops-detection-remediation-08"
 tier = "T1"
-statement = "The `delivers:` label follows its rules: `delivers:note:<ledger>` is stamped only when the writer created the ledger directory inside this install's `SPIRA_RUN`; `SPIRA_INCIDENT_DELIVERS=action` replaces the note; an unknown value is rejected and logged; `retire-unsatisfiable-delivers` never mutates on a dry run."
+statement = "The `delivers:` label follows its rules: `delivers:note:<ledger>` is stamped only when the writer created the ledger directory inside this install's `SPIRA_RUN`; `SPIRA_INCIDENT_DELIVERS=action` replaces the note; an unknown value is rejected and logged."
 
 [[use_case]]
 id = "UC-ops-detection-remediation-09"

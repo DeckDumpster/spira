@@ -6,6 +6,8 @@ pub mod alarm;
 pub mod alarms_pass;
 pub mod attempts;
 pub mod decide;
+#[cfg(test)]
+mod fake;
 pub mod intake;
 pub mod page;
 pub mod ports;

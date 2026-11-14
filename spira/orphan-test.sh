@@ -14,8 +14,8 @@
 # THE TWO VIOLATIONS THIS FENCE WAS BUILT FOR (both live at the time of writing):
 #
 #   1. A commit deleted the sp-recur-N counter labels thirteen hours after a prior commit
-#      shipped them. It updated four suites and missed three — test-incident-dedup.sh,
-#      test-incident-recur-cause.sh, test-landing.sh — every one of which declared in its
+#      shipped them. It updated four suites and missed three — two incident suites and
+#      test-landing.sh — every one of which declared in its
 #      # covers: line a file the commit touched. The timed runner filed all three as bugs
 #      against spira/incident.sh, which is correct.
 #

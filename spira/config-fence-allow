@@ -75,7 +75,6 @@ spira/test-gate-preflight.sh
 spira/test-gh-run-gate.sh
 spira/test-guards.sh
 spira/test-hold.sh
-spira/test-incident.sh
 spira/test-install-conf-seed.sh
 spira/test-install-dolt-port-wait.sh
 spira/test-landing-base-fail.sh

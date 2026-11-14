@@ -87,18 +87,8 @@ fn own_alarm(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock, tit
 }
 
 fn cmd_drain(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock) -> ExitCode {
-    let mut n = 0;
-    let mut stuck = 0;
-    let entries = std::fs::read_dir(&env.spool_dir).into_iter().flatten().flatten();
-    let mut paths: Vec<_> = entries.map(|e| e.path()).filter(|p| p.is_file() && p.extension().map(|e| e != "bad").unwrap_or(true)).collect();
-    paths.sort();
-    for p in paths {
-        match drain_one(env, bd, mailer, clock, &p) {
-            Ok(_) => n += 1,
-            Err(()) => stuck += 1,
-        }
-    }
-    println!("drained {n}, still spooled {stuck}");
+    let (n, stuck) = drain_spool(env, bd, mailer, clock);
+    println!("{}", drain_report(n, stuck));
     if stuck == 0 {
         ExitCode::SUCCESS
     } else {
