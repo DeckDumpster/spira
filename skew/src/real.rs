@@ -22,6 +22,24 @@ pub fn config_resolves() -> bool {
     }
 }
 
+const GH_RELEASE: &str = "release";
+
+/// `gh release list` through `spawn`, counted as `skew:release-list` when it exits; Err is stderr's first line.
+fn release_list_via(
+    sink: &spira_otel::metrics::MetricsSink,
+    slug: &str,
+    spawn: &dyn Fn(&[&str]) -> std::io::Result<std::process::Output>,
+) -> Result<String, String> {
+    let argv = [GH_RELEASE, "list", "--repo", slug, "--json", "tagName,isDraft"];
+    let out = forge::spend::counted_output(sink, "skew:release-list", &argv, || spawn(&argv)).map_err(|e| e.to_string())?;
+    if out.status.success() {
+        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    } else {
+        let err = String::from_utf8_lossy(&out.stderr);
+        Err(err.lines().next().unwrap_or("").to_string())
+    }
+}
+
 /// `YYYYMMDDTHHMMSSZ`, UTC, for `epoch` — what `date -u +%Y%m%dT%H%M%SZ` printed.
 pub fn stamp_of(epoch: u64) -> String {
     tsd::iso_utc(epoch).replace(['-', ':'], "")
@@ -341,19 +359,8 @@ impl World for Real {
         // contract, read once through the `env()` seam (which routes it through
         // `spira_config::process::cfg`, never the raw environment).
         let gh = self.env("SPIRA_GH")?.filter(|v| !v.is_empty()).unwrap_or_else(|| "gh".to_string());
-        let out = Command::new("timeout")
-            .arg(&gh_timeout)
-            .arg(&gh)
-            .args(["release", "list", "--repo", slug, "--json", "tagName,isDraft"])
-            .stdin(Stdio::null())
-            .output()
-            .map_err(|e| e.to_string())?;
-        if out.status.success() {
-            Ok(String::from_utf8_lossy(&out.stdout).into_owned())
-        } else {
-            let err = String::from_utf8_lossy(&out.stderr);
-            Err(err.lines().next().unwrap_or("").to_string())
-        }
+        let sink = forge::telemetry::sink();
+        release_list_via(&sink, slug, &|argv| Command::new("timeout").arg(&gh_timeout).arg(&gh).args(argv).stdin(Stdio::null()).output())
     }
     fn mail_send_question(&self, subject: &str, body: &str, default_action: &str) -> Result<(), String> {
         send_question(subject, body, default_action)
@@ -511,4 +518,20 @@ fn pipe_through_exclude(home: &Path, text: &str) -> Vec<String> {
 fn is_exec(p: &Path) -> bool {
     use std::os::unix::fs::PermissionsExt;
     std::fs::metadata(p).map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0).unwrap_or(false)
+}
+
+#[cfg(test)]
+mod gh_tests {
+    use super::*;
+    use std::os::unix::process::ExitStatusExt;
+
+    #[test]
+    fn a_release_list_through_a_fake_gh_is_counted_once_under_skew_release_list() {
+        let fake = |_: &[&str]| Ok(std::process::Output { status: std::process::ExitStatus::from_raw(0), stdout: b"[]".to_vec(), stderr: Vec::new() });
+        let (got_list, got) = spira_otel::metrics::fixture::capture(|sink| release_list_via(sink, "o/r", &fake));
+        assert_eq!(got_list.as_deref(), Ok("[]"));
+        let series: Vec<_> = got.iter().filter(|s| s.name == forge::spend::CALLS).collect();
+        assert_eq!(series.len(), 1, "{got:?}");
+        assert_eq!((series[0].label("caller"), series[0].label("outcome"), series[0].value as u64), (Some("skew:release-list"), Some("fresh"), 1));
+    }
 }

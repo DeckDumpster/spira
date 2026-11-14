@@ -121,7 +121,7 @@ _deploy_file() { printf '%s/%s.deploy.tsv' "$STATE_DIR" "$1"; }
 # sha there is nothing to key a deploy on.
 _merged_report() {
     local repo_dir="$1" repo_name="$2" n="$3" title="$4" out sha beads
-    out="$(cd "$repo_dir" && timeout 5 gh pr view "$n" --json mergeCommit,body 2>/dev/null | python3 -c "$_MERGE_PY")"
+    out="$(cd "$repo_dir" && GH_TIMEOUT=5 ghq pr view "$n" --json mergeCommit,body 2>/dev/null | python3 -c "$_MERGE_PY")"
     sha="$(head -n1 <<< "$out")"
     beads="$(tail -n +2 <<< "$out" | sed 's/^- /- bead /')"
     _operator "MERGED #$n [$repo_name]${sha:+ ${sha:0:9}}" "PR #$n $title [$repo_name] merged${sha:+ at $sha}.
@@ -150,7 +150,7 @@ _deploy_tick() {
     now="$(date +%s)"
     while IFS=$'\t' read -r sha n at title beads; do
         [ -n "$sha" ] || continue
-        json="$(cd "$repo_dir" && timeout 5 gh run list --workflow deploy.yml --commit "$sha" \
+        json="$(cd "$repo_dir" && GH_TIMEOUT=5 ghq run list --workflow deploy.yml --commit "$sha" \
             --json status,conclusion,url,createdAt,updatedAt 2>/dev/null)"; rc=$?
         res=""
         [ "$rc" -eq 0 ] && res="$(python3 -c "$_RUN_PY" <<< "$json")"
@@ -210,7 +210,7 @@ for pr in prs:
 # asked (a transient network error, not "no open PRs" — those two must never look alike).
 _open_prs() {
     local repo_dir="$1" json rc
-    json="$(cd "$repo_dir" && timeout 5 gh pr list --state open \
+    json="$(cd "$repo_dir" && GH_TIMEOUT=5 ghq pr list --state open \
         --json number,title,headRefName,statusCheckRollup 2>/dev/null)"
     rc=$?
     [ "$rc" -eq 0 ] || return 1
@@ -259,7 +259,7 @@ _pr_transitions() {
     local m final
     for m in "${!prev_status[@]}"; do
         [ -n "${cur_status[$m]+x}" ] && continue
-        final="$(cd "$repo_dir" && timeout 5 gh pr view "$m" --json state -q .state 2>/dev/null)"
+        final="$(cd "$repo_dir" && GH_TIMEOUT=5 ghq pr view "$m" --json state -q .state 2>/dev/null)"
         case "$final" in
             MERGED)
                 _report "MERGED #$m ${prev_title[$m]} [$repo_name]"
@@ -297,7 +297,7 @@ _branchless_prs() {
         case "$short" in spira/*) ;; *) continue ;; esac
         ahead="$(git -C "$repo_dir" rev-list --count "origin/$base..origin/$short" 2>/dev/null)"
         case "$ahead" in ""|0) continue ;; esac
-        pr_n="$(cd "$repo_dir" && timeout 5 gh pr list --head "$short" --state open \
+        pr_n="$(cd "$repo_dir" && GH_TIMEOUT=5 ghq pr list --head "$short" --state open \
             --json number --jq 'length' 2>/dev/null)" || pr_n=""
         case "$pr_n" in ""|0) _report "⚠ BRANCH $short: no PR [$repo_name]" ;; esac
     done < <(git -C "$repo_dir" branch -r 2>/dev/null)

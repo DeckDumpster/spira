@@ -7,6 +7,7 @@ use std::cell::OnceCell;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use spira_otel::metrics::MetricsSink;
 
 pub struct Real {
     pub home: PathBuf,
@@ -66,6 +67,34 @@ impl Real {
             .output();
         out.ok().map(|o| String::from_utf8_lossy(&o.stdout).trim_end_matches('\n').to_string()).unwrap_or_default()
     }
+}
+
+/// One `gh` process, counted under `gate-check:<verb>` as it exits. `spawn` is the port the
+/// tests replace.
+pub(crate) struct Gh<'a> {
+    pub sink: &'a MetricsSink,
+    pub spawn: &'a dyn Fn(&[&str]) -> std::io::Result<std::process::Output>,
+}
+
+fn spawn_gh(args: &[&str]) -> std::io::Result<std::process::Output> {
+    spira_config::bounded::bounded("gh").args(args).stdin(Stdio::null()).stderr(Stdio::null()).output()
+}
+
+impl Gh<'_> {
+    fn out(&self, verb: &str, args: &[&str]) -> Option<std::process::Output> {
+        forge::spend::counted_output(self.sink, &format!("gate-check:{verb}"), args, || (self.spawn)(args)).ok()
+    }
+}
+
+pub(crate) fn recent_run_ids(gh: &Gh, repo: &str, limit: u32) -> Vec<String> {
+    let limit = limit.to_string();
+    let out = gh.out("run-list", &["run", "list", "--repo", repo, "--status", "completed", "--limit", &limit, "--json", "databaseId", "--jq", ".[].databaseId"]);
+    out.map(|o| String::from_utf8_lossy(&o.stdout).lines().map(String::from).collect()).unwrap_or_default()
+}
+
+fn with_real_gh<T>(f: impl FnOnce(&Gh) -> T) -> T {
+    let sink = forge::telemetry::sink();
+    f(&Gh { sink: &sink, spawn: &spawn_gh })
 }
 
 impl World for Real {
@@ -165,60 +194,34 @@ impl World for Real {
     }
 
     fn gh_recent_run_ids(&self, repo: &str, limit: u32) -> Vec<String> {
-        let out = spira_config::bounded::bounded("gh")
-            .args(["run", "list", "--repo", repo, "--status", "completed", "--limit", &limit.to_string(), "--json", "databaseId", "--jq", ".[].databaseId"])
-            .stdin(Stdio::null())
-            .stderr(Stdio::null())
-            .output();
-        out.ok().map(|o| String::from_utf8_lossy(&o.stdout).lines().map(String::from).collect()).unwrap_or_default()
+        with_real_gh(|gh| recent_run_ids(gh, repo, limit))
     }
 
     fn gh_jobs_json(&self, repo: &str, run_id: &str) -> String {
-        let out = spira_config::bounded::bounded("gh").args(["api", &format!("repos/{repo}/actions/runs/{run_id}/jobs")]).stdin(Stdio::null()).stderr(Stdio::null()).output();
-        out.ok().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default()
+        let out = with_real_gh(|gh| gh.out("jobs", &["api", &format!("repos/{repo}/actions/runs/{run_id}/jobs")]));
+        out.map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default()
     }
 
     fn gh_annotations_json(&self, repo: &str, job_id: &str) -> String {
-        let out = spira_config::bounded::bounded("gh").args(["api", &format!("repos/{repo}/check-runs/{job_id}/annotations")]).stdin(Stdio::null()).stderr(Stdio::null()).output();
-        out.ok().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default()
+        let out = with_real_gh(|gh| gh.out("annotations", &["api", &format!("repos/{repo}/check-runs/{job_id}/annotations")]));
+        out.map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default()
     }
 
     fn gh_last_green_main_sha(&self, repo: &str) -> Option<String> {
-        let out = spira_config::bounded::bounded("gh")
-            .args(["run", "list", "--repo", repo, "--branch", "main", "--status", "success", "--limit", "1", "--json", "headSha", "--jq", ".[0].headSha"])
-            .stdin(Stdio::null())
-            .stderr(Stdio::null())
-            .output()
-            .ok()?;
+        let out = with_real_gh(|gh| gh.out("run-list", &["run", "list", "--repo", repo, "--branch", "main", "--status", "success", "--limit", "1", "--json", "headSha", "--jq", ".[0].headSha"]))?;
         let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
         if s.is_empty() { None } else { Some(s) }
     }
 
     fn gh_failed_main_runs(&self, repo: &str, limit: u32) -> Vec<(String, String)> {
-        let out = spira_config::bounded::bounded("gh")
-            .args([
-                "run",
-                "list",
-                "--repo",
-                repo,
-                "--branch",
-                "main",
-                "--status",
-                "failure",
-                "--limit",
-                &limit.to_string(),
-                "--json",
-                "databaseId,headSha",
-            ])
-            .stdin(Stdio::null())
-            .stderr(Stdio::null())
-            .output();
-        out.ok().filter(|o| o.status.success()).and_then(|o| failed_runs_of(&String::from_utf8_lossy(&o.stdout))).unwrap_or_default()
+        let limit = limit.to_string();
+        let out = with_real_gh(|gh| gh.out("run-list", &["run", "list", "--repo", repo, "--branch", "main", "--status", "failure", "--limit", &limit, "--json", "databaseId,headSha"]));
+        out.filter(|o| o.status.success()).and_then(|o| failed_runs_of(&String::from_utf8_lossy(&o.stdout))).unwrap_or_default()
     }
 
     fn gh_fail_lines(&self, repo: &str, run_id: &str) -> String {
-        let out = spira_config::bounded::bounded("gh").args(["run", "view", run_id, "--repo", repo, "--log-failed"]).stdin(Stdio::null()).stderr(Stdio::null()).output();
-        let text = out.ok().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
+        let out = with_real_gh(|gh| gh.out("run-view", &["run", "view", run_id, "--repo", repo, "--log-failed"]));
+        let text = out.map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
         crate::engine::fail_lines(&text).join("\n")
     }
 
@@ -257,5 +260,24 @@ mod failed_runs_tests {
         assert_eq!(got, Some(vec![("42".into(), "abc".into()), ("7".into(), "def".into())]));
         assert_eq!(failed_runs_of("42\tabc\n"), None, "tab-separated text is not the answer");
         assert_eq!(failed_runs_of("[]"), Some(vec![]));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use spira_otel::metrics::fixture;
+    use std::os::unix::process::ExitStatusExt;
+
+    #[test]
+    fn a_run_list_through_a_fake_gh_is_counted_once_under_gate_check_run_list() {
+        let fake = |_: &[&str]| {
+            Ok(std::process::Output { status: std::process::ExitStatus::from_raw(0), stdout: b"11\n12\n".to_vec(), stderr: Vec::new() })
+        };
+        let (ids, got) = fixture::capture(|sink| recent_run_ids(&Gh { sink, spawn: &fake }, "o/r", 20));
+        assert_eq!(ids, ["11", "12"]);
+        let series: Vec<_> = got.iter().filter(|s| s.name == forge::spend::CALLS).collect();
+        assert_eq!(series.len(), 1, "{got:?}");
+        assert_eq!((series[0].label("caller"), series[0].label("outcome"), series[0].value as u64), (Some("gate-check:run-list"), Some("fresh"), 1));
     }
 }
