@@ -373,6 +373,16 @@ pub mod cockpit {
             assert!(!volatile("SP_DWARF_N") && !volatile("SP_DWARFX_MIN") && !volatile("SP_DWARF0_BEAD"));
         }
 
+        // covers: UC-cockpit-observability-01
+        #[test]
+        fn an_instance_that_is_not_the_supervised_writer_refuses_to_publish() {
+            let mut unsupervised = snap(10, "r1");
+            unsupervised.supervised = false;
+            let refusal = decide_tier(&Carry::default(), &unsupervised, "t.publish").unwrap_err();
+            assert!(refusal.contains(WRITE_KEY), "{refusal}");
+            assert!(decide_tier(&Carry::default(), &snap(10, "r1"), "t.publish").is_ok());
+        }
+
         #[test]
         fn a_newer_pass_with_the_same_values_refreshes_off_the_journal_and_moves_no_carry() {
             let (first, acts) = decide_tier(&Carry::default(), &snap(10, "r1"), "t.publish").unwrap();

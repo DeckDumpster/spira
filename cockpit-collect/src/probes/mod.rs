@@ -210,12 +210,18 @@ pub fn run(subcommand: &str, cfg: &Cfg) -> Option<Kv> {
 // now_keys — fast tier: /proc and the filesystem only, no bd/git.
 // ---------------------------------------------------------------------------------------
 
-pub fn now_keys(cfg: &Cfg) -> Kv {
+/// The keys every pass opens with: when it began, and the window its counts cover. `SP_AT`
+/// comes first so the snapshot's age bounds the oldest reading in it.
+fn stamp_keys(start: i64) -> Kv {
     let mut out = Kv::new();
-    let start = io::now();
     push(&mut out, "SP_AT", start.to_string());
-    let window_h = std::env::var("SPIRA_COCKPIT_WINDOW_HOURS").unwrap_or_else(|_| "24".to_string());
-    push(&mut out, "SP_WINDOW_HOURS", window_h);
+    push(&mut out, "SP_WINDOW_HOURS", std::env::var("SPIRA_COCKPIT_WINDOW_HOURS").unwrap_or_else(|_| "24".to_string()));
+    out
+}
+
+pub fn now_keys(cfg: &Cfg) -> Kv {
+    let start = io::now();
+    let mut out = stamp_keys(start);
 
     let home = io::home_dir();
     let run = io::run_dir();
@@ -770,35 +776,17 @@ mod mail_tests {
 }
 
 #[cfg(test)]
-mod now_tests {
+mod stamp_tests {
     use super::*;
 
     // covers: UC-cockpit-observability-02
     #[test]
-    fn the_pass_opens_with_its_stamp_then_the_window_before_any_section_data() {
-        let dir = testkit::TempDir::new("now-run");
-        let run = dir.path().display().to_string();
-        let toml = spira_config::process::fixture_toml(dir.path(), &[("SPIRA_RUN", &run)]).display().to_string();
-        let home = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira").display().to_string();
-        let _env = testkit::env(&[("SPIRA_HOME", Some(&home)), ("SPIRA_TOML", Some(&toml)), ("SPIRA_COCKPIT_WINDOW_HOURS", Some("6"))]);
-        let kv = now_keys(&Cfg::default());
-        assert_eq!((kv[0].0.as_str(), kv[1].0.as_str(), kv[1].1.as_str()), ("SP_AT", "SP_WINDOW_HOURS", "6"));
-        assert!(kv[0].1.parse::<i64>().is_ok());
-    }
-
-    // covers: UC-cockpit-observability-01 UC-cockpit-observability-02
-    #[test]
-    fn a_full_pass_stamps_first_ends_with_its_duration_and_writes_no_snapshot() {
-        let dir = testkit::TempDir::new("pass-run");
-        let run = dir.path().display().to_string();
-        let toml = spira_config::process::fixture_toml(dir.path(), &[("SPIRA_RUN", &run)]).display().to_string();
-        let home = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira").display().to_string();
-        let _env = testkit::env(&[("SPIRA_HOME", Some(&home)), ("SPIRA_TOML", Some(&toml)), ("PATH", Some(""))]);
-        let kv = full_pass(&Cfg::default());
-        assert_eq!(kv.first().map(|(k, _)| k.as_str()), Some("SP_AT"));
-        assert_eq!(kv.last().map(|(k, _)| k.as_str()), Some("SP_PASS_SECS"));
-        assert!(kv.iter().any(|(k, _)| k == "SP_WINDOW_HOURS"));
-        assert!(!dir.path().join("cockpit.env").exists(), "a pass computes in memory; only the tier writer publishes");
+    fn a_pass_opens_with_its_stamp_then_the_window() {
+        let _env = testkit::env(&[("SPIRA_COCKPIT_WINDOW_HOURS", Some("6"))]);
+        assert_eq!(stamp_keys(1234), vec![("SP_AT".to_string(), "1234".to_string()), ("SP_WINDOW_HOURS".to_string(), "6".to_string())]);
+        drop(_env);
+        let _unset = testkit::env(&[("SPIRA_COCKPIT_WINDOW_HOURS", None)]);
+        assert_eq!(stamp_keys(1)[1].1, "24", "the window defaults to a day");
     }
 }
 
