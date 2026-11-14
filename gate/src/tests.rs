@@ -1611,7 +1611,7 @@ fn an_unresolvable_branch_or_base_is_no_verdict_75_naming_the_range_the_repo_and
     assert!(f.verdict_line().contains("reason=no-diff"), "{}", f.verdict_line());
     let err = f.stderr();
     assert!(err.contains(&format!("{BASE}...{BR}")), "{err}");
-    assert!(err.contains("spira"), "{err}");
+    assert!(err.contains(" in spira "), "{err}");
     assert!(err.contains("fatal: bad revision 'spira/sp-a'"), "{err}");
 
     let f = Fake::new();
