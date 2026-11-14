@@ -349,7 +349,7 @@ mod tests {
 
     // covers: UC-landing-merge-queue-12
     #[test]
-    fn the_off_override_clears_an_engaged_throttle_and_the_stamp_stays_gone() {
+    fn the_off_override_clears_an_engaged_throttle() {
         let dir = testkit::TempDir::new("throttle-off");
         let stamp = dir.path().join("queue-throttled");
         std::fs::write(&stamp, "since=x\n").unwrap();

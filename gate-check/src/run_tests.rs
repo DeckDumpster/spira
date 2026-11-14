@@ -116,6 +116,7 @@ fn an_unbound_gate_branch_is_discovered_once_in_pr_repos_only_and_a_stuck_gate_i
     assert_eq!(found[0].1, "spira/sp-1");
     assert!(found[0].0.to_string_lossy().ends_with("prrepo"));
     assert!(w.printed.borrow().contains("1 stuck: no await_id"));
+    assert!(w.printed.borrow().contains("ESCALATE red"), "gate check ran and its output is shown");
     assert_eq!(*w.resolved.borrow(), vec!["zq-9k2".to_string()], "any id prefix is parsed");
 }
 
