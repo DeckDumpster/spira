@@ -159,3 +159,52 @@ fn a_gate_red_eject_refused_after_a_refused_preempt_abandons_the_round_with_both
     let abandon: Leg = serde_json::from_str(&acts.iter().find(|a| a.effect == ABANDON).expect("abandon").input).unwrap();
     assert!(abandon.why.contains("eject of sp-a failed (rc=1)") && abandon.why.contains("not in round"), "{}", abandon.why);
 }
+
+fn one_member(state: State) -> Carry {
+    let mut carry = carried(state);
+    carry.repos.get_mut("spira").unwrap().members = vec![("sp-a".into(), "t1".into())];
+    carry
+}
+
+fn names(acts: &[Act]) -> Vec<&str> {
+    acts.iter().map(|a| a.effect.as_str()).collect()
+}
+
+#[test]
+fn a_preempt_that_ejects_the_last_member_ends_the_round_quietly_and_the_next_tick_cuts_a_new_one() {
+    let mut snap = snapshot(vec![("sp-a", "t1")], None);
+    snap.repos.get_mut("spira").unwrap().open_round.as_mut().unwrap().members = vec!["sp-a".into()];
+    let (next, acts) = decide(&one_member(State::Corpus), &snap);
+    let leg = preempts(&acts).remove(0);
+    let (after, acts) = on_outcome(&next, PREEMPT, true, "{}", &leg, NOW);
+    let rc = after.repos.get("spira").cloned().unwrap_or_default();
+    assert_eq!((rc.state, rc.batch.as_deref()), (State::Idle, None), "the round ended with its last member");
+    assert!(!names(&acts).contains(&PAUSE) && !names(&acts).contains(&INBOX_APPEND) && !names(&acts).contains(&ABANDON), "{acts:?}");
+
+    let member = Member { id: "sp-b".into(), state: "CERTIFIED".into(), version: 5, tip: "t2".into(), sifted_tip: Some("t2".into()), title: "work".into(), priority: 2, ..Member::default() };
+    let repo = Repo { branch_tips: [("sp-b".to_string(), "t2".to_string())].into(), pool: vec![member], base_sha: "b1".into(), live_legs: Some(vec![]), ..Repo::default() };
+    let pool = Snapshot { repos: [("spira".to_string(), repo)].into(), now_ms: NOW + 30_000 };
+    let (_, acts) = decide(&after, &pool);
+    assert!(names(&acts).contains(&ASSEMBLE), "{acts:?}");
+}
+
+#[test]
+fn a_corpus_leg_ending_red_on_a_round_with_no_member_left_neither_attributes_nor_pauses() {
+    let mut carry = one_member(State::Corpus);
+    carry.repos.get_mut("spira").unwrap().members.clear();
+    let ran = runtime::units::UnitRan { handle: runtime::units::UnitHandle::of(NAME, "spira.r9.corpus1").unwrap(), exit: runtime::units::Exit::Code(1), duration_ms: 1 };
+    let (next, acts) = on_ran(&carry, &ran, NOW).expect("the carried leg ended");
+    assert!(!names(&acts).contains(&CORPUS) && !names(&acts).contains(&PAUSE) && !names(&acts).contains(&INBOX_APPEND), "{acts:?}");
+    let rc = next.repos.get("spira").cloned().unwrap_or_default();
+    assert_eq!((rc.state, rc.pace.infra), (State::Idle, 0));
+}
+
+#[test]
+fn a_two_member_round_that_loses_one_to_a_preempt_and_ends_red_is_still_attributed() {
+    let (next, acts) = decide(&carried(State::Corpus), &snapshot(vec![("sp-a", "t1")], None));
+    let leg = preempts(&acts).remove(0);
+    let (next, _) = on_outcome(&next, PREEMPT, true, "{}", &leg, NOW);
+    let ran = runtime::units::UnitRan { handle: runtime::units::UnitHandle::of(NAME, "spira.r9.corpus1").unwrap(), exit: runtime::units::Exit::Code(1), duration_ms: 1 };
+    let (_, acts) = on_ran(&next, &ran, NOW).expect("the carried leg ended");
+    assert!(names(&acts).contains(&CORPUS), "{acts:?}");
+}
