@@ -130,23 +130,7 @@ fn renderer_rev() -> String {
 /// snapshot is absent at `run`; mirrors `snap_absent_banner`'s own probe exactly.
 fn mismatch_alt(run: &str) -> Option<String> {
     let instance = spira_config::process::cfg("SPIRA_INSTANCE").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "prod".to_string());
-    let inst_sfx = if instance == "prod" { String::new() } else { format!("-{instance}") };
-    let mut alts = Vec::new();
-    if let Some(repo) = env_nonempty("SPIRA_REPO") {
-        alts.push(format!("{repo}/.runtime/spira{inst_sfx}"));
-    }
-    let xdg_data = env_nonempty("XDG_DATA_HOME")
-        .unwrap_or_else(|| format!("{}/.local/share", env_nonempty("HOME").unwrap_or_default()));
-    alts.push(format!("{xdg_data}/spira{inst_sfx}/run"));
-    for alt in alts {
-        if alt == run {
-            continue;
-        }
-        if Path::new(&alt).join("cockpit.env").is_file() {
-            return Some(alt);
-        }
-    }
-    None
+    cockpit_ops::health::sections::mismatch_alt_of(run, &instance, env_nonempty("SPIRA_REPO").as_deref(), env_nonempty("XDG_DATA_HOME").as_deref(), &env_nonempty("HOME").unwrap_or_default())
 }
 
 fn build_inputs(run: &str) -> (FrameInputs<'static>, String) {

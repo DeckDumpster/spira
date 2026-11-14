@@ -262,6 +262,7 @@ mod tests {
 
     #[test]
     fn republishing_an_unchanged_tier_writes_no_snapshot_data() {
+        let _env = testkit::env_read();
         let run = testkit::TempDir::new("tier-nowrite");
         publish(run.path(), "5s", "SP_A=1\n").unwrap();
         let before = io::data_writes();
@@ -330,14 +331,17 @@ mod tests {
         assert!(left.contains(&"cockpit.env".to_string()) && left.contains(&"cockpit-history.csv".to_string()), "{left:?}");
     }
 
+    // covers: UC-cockpit-observability-02
     #[test]
     fn publish_merges_every_tier_into_the_snapshot_and_appends_history() {
+        let _env = testkit::env_read();
         let dir = testkit::TempDir::new("cc-tiers");
         publish(dir.path(), "cockpit-tier-60s", "SP_SLOTS_LIVE=2\nSP_AT=9\n").unwrap();
         let snap = publish(dir.path(), "cockpit-tier-5s", "SP_AT=100\nSP_ROUND=it's\n").unwrap();
         let text = std::fs::read_to_string(&snap).unwrap();
         assert!(text.contains("SP_AT='100'\n") && !text.contains("SP_AT='9'"), "the first tier by name wins a shared key: {text}");
         assert!(text.contains("SP_SLOTS_LIVE='2'\n") && text.contains("SP_ROUND='it'\\''s'\n") && text.contains("SP_WRITER="), "{text}");
+        assert!(text.contains("SP_COLLECTOR_REV="), "the collector revision is always stamped: {text}");
         let hist = std::fs::read_to_string(dir.path().join("cockpit-history.csv")).unwrap();
         assert_eq!(hist.lines().count(), 3, "{hist}");
         assert!(publish(dir.path(), "../x", "").is_err());

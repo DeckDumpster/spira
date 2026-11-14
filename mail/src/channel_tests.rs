@@ -256,6 +256,7 @@ fn a_lint_refused_operator_send_writes_no_stamp_so_the_corrected_send_is_not_a_r
 }
 
 // covers: UC-operator-channel-07
+// covers: UC-cockpit-observability-26
 #[test]
 fn done_sets_the_replied_flag_once_and_a_second_done_changes_nothing() {
     let (_t, e) = fixture("mail-uc07-done");
@@ -269,6 +270,7 @@ fn done_sets_the_replied_flag_once_and_a_second_done_changes_nothing() {
 }
 
 // covers: UC-operator-channel-07
+// covers: UC-cockpit-observability-26
 #[test]
 fn done_on_an_unknown_id_fails_and_flags_nothing() {
     let (_t, e) = fixture("mail-uc07-unknown");

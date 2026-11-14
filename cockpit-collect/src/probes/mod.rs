@@ -446,6 +446,12 @@ fn overrides_summary() -> (usize, usize, String) {
 
 #[allow(clippy::type_complexity)]
 pub(super) fn gate_run_scan(run: &Path) -> (Vec<(String, String, String, String)>, usize, usize) {
+    gate_scan_with(run, io::now(), &|pid| io::proc_exists(pid).then(|| io::proc_cmdline(pid).unwrap_or_default()))
+}
+
+/// `cmdline_of` answers the process's command line, or `None` when no such process is alive.
+#[allow(clippy::type_complexity)]
+fn gate_scan_with(run: &Path, now: i64, cmdline_of: &dyn Fn(i64) -> Option<String>) -> (Vec<(String, String, String, String)>, usize, usize) {
     let dir = run.join("gate-run");
     let mut rows = Vec::new();
     let mut n = 0;
@@ -463,16 +469,13 @@ pub(super) fn gate_run_scan(run: &Path) -> (Vec<(String, String, String, String)
                 Some(p) => p,
                 None => continue,
             };
-            if !io::proc_exists(pid) {
-                continue;
-            }
-            let cmd = io::proc_cmdline(pid).unwrap_or_default();
+            let Some(cmd) = cmdline_of(pid) else { continue };
             if !cmd.contains("gate") {
                 continue;
             }
             live += 1;
             let started: Option<i64> = io::read_trim(&gd.join("started")).and_then(|s| s.parse().ok());
-            let age = started.map(|s| (io::now() - s).to_string()).unwrap_or_else(|| "?".to_string());
+            let age = started.map(|s| (now - s).to_string()).unwrap_or_else(|| "?".to_string());
             let out_file = gd.join("out");
             let out_has_content = std::fs::metadata(&out_file).map(|m| m.len() > 0).unwrap_or(false);
             let phase = if out_has_content { "running" } else { "waiting" };
@@ -667,6 +670,174 @@ pub fn core_counts_keys() -> Kv {
 /// Asks still open among `rows`; no readable rows is `?`, never 0.
 fn waiting_count(rows: Option<Vec<Value>>, open: &[&str]) -> String {
     rows.map_or("?".into(), |r| r.iter().filter(|b| b.get("status").and_then(Value::as_str).is_some_and(|s| open.contains(&s))).count().to_string())
+}
+
+#[cfg(test)]
+mod sop_tests {
+    use super::*;
+
+    const NOW: i64 = 1_800_000_000;
+    const SHELF_FLAT: &str = r#"{"sop-disk-full":"MATCH: a","sop-clock-skew":"MATCH: b"}"#;
+
+    fn entry(sop: &str, check: &str, held: &str, epoch: i64) -> String {
+        let (days, s) = (epoch.div_euclid(86400), epoch.rem_euclid(86400));
+        let z = days + 719468;
+        let era = z.div_euclid(146097);
+        let doe = z.rem_euclid(146097);
+        let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+        let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+        let mp = (5 * doy + 2) / 153;
+        let d = doy - (153 * mp + 2) / 5 + 1;
+        let m = if mp < 10 { mp + 3 } else { mp - 9 };
+        let y = yoe + era * 400 + i64::from(m <= 2);
+        format!(r#"{{"ts":"{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z","epoch":{epoch},"sop":"{sop}","check":"{check}","held":"{held}"}}"#, s / 3600, s % 3600 / 60, s % 60) + "\n"
+    }
+
+    fn probe(ledger: Option<&str>, shelf: &str) -> Vec<(String, String)> {
+        let dir = testkit::TempDir::new("sop-ledger");
+        let path = dir.path().join("applied.jsonl");
+        if let Some(text) = ledger {
+            std::fs::write(&path, text).unwrap();
+        }
+        sop_keys_from(Some(shelf.to_string()), path.to_str().unwrap(), 24.0, NOW)
+    }
+
+    fn get(kv: &[(String, String)], k: &str) -> String {
+        kv.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone()).unwrap_or_default()
+    }
+
+    // covers: UC-cockpit-observability-14
+    #[test]
+    fn never_fired_and_recurred_respect_the_window_held_and_check_fail() {
+        let none = probe(None, SHELF_FLAT);
+        assert_eq!((get(&none, "SP_SOP_NEVER_FIRED").as_str(), get(&none, "SP_SOP_RECURRED").as_str(), get(&none, "SP_SWEEP_AGE").as_str()), ("2", "0", "?"));
+        let held = probe(Some(&entry("sop-disk-full", "pass", "yes", NOW)), SHELF_FLAT);
+        assert_eq!((get(&held, "SP_SOP_NEVER_FIRED").as_str(), get(&held, "SP_SOP_RECURRED").as_str(), get(&held, "SP_SWEEP_AGE").as_str()), ("1", "0", "0"));
+        let recurred = probe(Some(&entry("sop-disk-full", "pass", "no", NOW)), SHELF_FLAT);
+        assert_eq!(get(&recurred, "SP_SOP_RECURRED"), "1");
+        let outside = probe(Some(&(entry("sop-clock-skew", "pass", "no", NOW - 3 * 86400) + &entry("sop-disk-full", "pass", "yes", NOW))), SHELF_FLAT);
+        assert_eq!((get(&outside, "SP_SOP_RECURRED").as_str(), get(&outside, "SP_SOP_NEVER_FIRED").as_str()), ("0", "0"), "an entry outside the window is no recurrence");
+        let unfixed = probe(Some(&entry("sop-disk-full", "fail", "no", NOW)), SHELF_FLAT);
+        assert_eq!(get(&unfixed, "SP_SOP_RECURRED"), "0", "check=fail means the fix was never run");
+    }
+
+    // covers: UC-cockpit-observability-14
+    #[test]
+    fn the_sweep_age_is_the_newest_ledger_entry_and_unreadable_sources_are_unknown() {
+        let stale = probe(Some(&entry("sop-disk-full", "pass", "yes", NOW - 7200)), SHELF_FLAT);
+        assert_eq!(get(&stale, "SP_SWEEP_AGE"), "7200");
+        let newest = probe(Some(&(entry("sop-disk-full", "pass", "yes", NOW - 7200) + &entry("sop-clock-skew", "pass", "yes", NOW))), SHELF_FLAT);
+        assert_eq!(get(&newest, "SP_SWEEP_AGE"), "0", "the newest entry wins");
+        let empty = probe(Some(""), SHELF_FLAT);
+        assert_eq!(get(&empty, "SP_SWEEP_AGE"), "?");
+        for broken in [None, Some(String::new()), Some("not json".to_string())] {
+            let kv = sop_keys_from(broken, "/nonexistent/applied.jsonl", 24.0, NOW);
+            assert_eq!(kv.iter().map(|(_, v)| v.as_str()).collect::<Vec<_>>(), ["?", "?", "?"]);
+        }
+        let dir = testkit::TempDir::new("sop-dir-ledger");
+        let kv = sop_keys_from(Some(SHELF_FLAT.into()), dir.path().to_str().unwrap(), 24.0, NOW);
+        assert_eq!(kv.iter().map(|(_, v)| v.as_str()).collect::<Vec<_>>(), ["?", "?", "?"], "a ledger that cannot be read is unknown, not zero");
+    }
+}
+
+#[cfg(test)]
+mod mail_tests {
+    use super::*;
+
+    // covers: UC-cockpit-observability-26
+    #[test]
+    fn mail_keys_count_unread_and_label_each_message_new_read_or_done() {
+        let dir = testkit::TempDir::new("mail-keys");
+        let concierge = dir.path().join("concierge");
+        for sub in ["new", "cur", "tmp"] {
+            std::fs::create_dir_all(concierge.join(sub)).unwrap();
+        }
+        let msg = |subject: &str| format!("From: Operator <op@h>\nSubject: {subject}\n\nbody\n");
+        std::fs::write(concierge.join("new/n1"), msg("New message")).unwrap();
+        std::fs::write(concierge.join("cur/r1"), msg("Read message")).unwrap();
+        std::fs::write(concierge.join("cur/d1:2,R"), msg("Done message")).unwrap();
+        let cfg = Cfg { mail: dir.path().display().to_string(), ..Cfg::default() };
+        let kv = mail_keys(&cfg);
+        let get = |k: &str| kv.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone()).unwrap_or_default();
+        assert_eq!((get("SP_MAIL_UNREAD").as_str(), get("SP_MAIL_N").as_str()), ("1", "3"));
+        let rows: String = (0..3).map(|i| get(&format!("SP_MAIL{i}"))).collect();
+        for state in ["|NEW|New message", "|READ|Read message", "|DONE|Done message"] {
+            assert!(rows.contains(state), "{state} missing from {rows}");
+        }
+        let none = mail_keys(&Cfg { mail: "/nonexistent/mail".into(), ..Cfg::default() });
+        assert_eq!(none.iter().find(|(n, _)| n == "SP_MAIL_UNREAD").map(|(_, v)| v.as_str()), Some("?"), "an unreadable mailbox is unknown, not zero");
+    }
+}
+
+#[cfg(test)]
+mod now_tests {
+    use super::*;
+
+    // covers: UC-cockpit-observability-02
+    #[test]
+    fn the_pass_opens_with_its_stamp_then_the_window_before_any_section_data() {
+        let dir = testkit::TempDir::new("now-run");
+        let run = dir.path().display().to_string();
+        let toml = spira_config::process::fixture_toml(dir.path(), &[("SPIRA_RUN", &run)]).display().to_string();
+        let home = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira").display().to_string();
+        let _env = testkit::env(&[("SPIRA_HOME", Some(&home)), ("SPIRA_TOML", Some(&toml)), ("SPIRA_COCKPIT_WINDOW_HOURS", Some("6"))]);
+        let kv = now_keys(&Cfg::default());
+        assert_eq!((kv[0].0.as_str(), kv[1].0.as_str(), kv[1].1.as_str()), ("SP_AT", "SP_WINDOW_HOURS", "6"));
+        assert!(kv[0].1.parse::<i64>().is_ok());
+    }
+
+    // covers: UC-cockpit-observability-01 UC-cockpit-observability-02
+    #[test]
+    fn a_full_pass_stamps_first_ends_with_its_duration_and_writes_no_snapshot() {
+        let dir = testkit::TempDir::new("pass-run");
+        let run = dir.path().display().to_string();
+        let toml = spira_config::process::fixture_toml(dir.path(), &[("SPIRA_RUN", &run)]).display().to_string();
+        let home = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira").display().to_string();
+        let _env = testkit::env(&[("SPIRA_HOME", Some(&home)), ("SPIRA_TOML", Some(&toml)), ("PATH", Some(""))]);
+        let kv = full_pass(&Cfg::default());
+        assert_eq!(kv.first().map(|(k, _)| k.as_str()), Some("SP_AT"));
+        assert_eq!(kv.last().map(|(k, _)| k.as_str()), Some("SP_PASS_SECS"));
+        assert!(kv.iter().any(|(k, _)| k == "SP_WINDOW_HOURS"));
+        assert!(!dir.path().join("cockpit.env").exists(), "a pass computes in memory; only the tier writer publishes");
+    }
+}
+
+#[cfg(test)]
+mod gate_scan_tests {
+    use super::*;
+
+    fn gate_dir(run: &Path, slug: &str, pid: i64) {
+        let d = run.join("gate-run").join(slug);
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("pid"), pid.to_string()).unwrap();
+        std::fs::write(d.join("started"), "900").unwrap();
+        std::fs::write(d.join("out"), "test").unwrap();
+    }
+
+    // covers: UC-cockpit-observability-15
+    #[test]
+    fn a_gate_is_live_only_when_its_pid_is_alive_and_its_cmdline_is_the_gate() {
+        let run = testkit::TempDir::new("gate-scan");
+        gate_dir(run.path(), "dead", 11);
+        gate_dir(run.path(), "recycled", 22);
+        gate_dir(run.path(), "live", 33);
+        let cmdline = |pid: i64| match pid {
+            22 => Some("sleep 3600".to_string()),
+            33 => Some("/bin/bash gate-run.sh spira/sp-x".to_string()),
+            _ => None,
+        };
+        let (rows, n, live) = gate_scan_with(run.path(), 1000, &cmdline);
+        assert_eq!((n, live), (1, 1));
+        assert_eq!((rows[0].0.as_str(), rows[0].1.as_str(), rows[0].2.as_str()), ("live", "100", "running"));
+    }
+
+    // covers: UC-cockpit-observability-15
+    #[test]
+    fn no_gate_run_directory_is_zero_gates() {
+        let run = testkit::TempDir::new("gate-scan-none");
+        let (rows, n, live) = gate_scan_with(run.path(), 1000, &|_| Some("gate".into()));
+        assert_eq!((rows.len(), n, live), (0, 0, 0));
+    }
 }
 
 #[cfg(test)]
@@ -1110,10 +1281,17 @@ pub fn czar_triggers_keys(cfg: &Cfg) -> Kv {
 const SOP_LEDGER_REL: &str = "sop/applied.jsonl";
 
 pub fn sop_keys() -> Kv {
-    let mut out = Kv::new();
     let ledger = std::env::var("SPIRA_SOP_LEDGER").unwrap_or_else(|_| io::run_dir().join(SOP_LEDGER_REL).to_string_lossy().into_owned());
-    let raw = io::contentjson(&["memories"]);
-    let Some(raw) = raw.filter(|s| !s.trim().is_empty()) else {
+    let window_h: f64 = std::env::var("SPIRA_SOP_WINDOW_HOURS").ok().and_then(|v| v.parse().ok()).unwrap_or(24.0);
+    let now = std::env::var("SPIRA_NOW").ok().and_then(|v| v.parse::<i64>().ok()).unwrap_or_else(io::now);
+    sop_keys_from(io::contentjson(&["memories"]), &ledger, window_h, now)
+}
+
+/// The SOP shelf (`bd memories` JSON) read against the applied ledger: an unreadable shelf or
+/// ledger is `?` for every key, a missing ledger is a valid empty one.
+fn sop_keys_from(shelf_raw: Option<String>, ledger: &str, window_h: f64, now: i64) -> Kv {
+    let mut out = Kv::new();
+    let Some(raw) = shelf_raw.filter(|s| !s.trim().is_empty()) else {
         push(&mut out, "SP_SOP_NEVER_FIRED", "?");
         push(&mut out, "SP_SOP_RECURRED", "?");
         push(&mut out, "SP_SWEEP_AGE", "?");
@@ -1125,8 +1303,6 @@ pub fn sop_keys() -> Kv {
         push(&mut out, "SP_SWEEP_AGE", "?");
         return out;
     };
-    let window_h: f64 = std::env::var("SPIRA_SOP_WINDOW_HOURS").ok().and_then(|v| v.parse().ok()).unwrap_or(24.0);
-    let now = std::env::var("SPIRA_NOW").ok().and_then(|v| v.parse::<i64>().ok()).unwrap_or_else(io::now);
     let since = now - (window_h * 3600.0) as i64;
 
     let sop_keys_set: std::collections::HashSet<&str> = shelf.iter().filter(|(k, v)| v.is_string() && k.starts_with("sop-")).map(|(k, _)| k.as_str()).collect();
@@ -1140,8 +1316,8 @@ pub fn sop_keys() -> Kv {
     // A MISSING LEDGER IS A VALID STATE (no SOP has ever been applied — every SOP is
     // never-fired). An UNREADABLE ledger (present but cannot be opened, e.g. a directory)
     // is the failure case and renders `?` for all three keys.
-    if Path::new(&ledger).exists() {
-        let Ok(content) = std::fs::read_to_string(&ledger) else {
+    if Path::new(ledger).exists() {
+        let Ok(content) = std::fs::read_to_string(ledger) else {
             push(&mut out, "SP_SOP_NEVER_FIRED", "?");
             push(&mut out, "SP_SOP_RECURRED", "?");
             push(&mut out, "SP_SWEEP_AGE", "?");
@@ -1479,6 +1655,7 @@ mod tests {
             .collect()
     }
 
+    // covers: UC-cockpit-observability-13
     /// Duplicate incident refs are counted from the lifecycle row: only non-terminal rows
     /// count; terminal, rowless and duplicate-of: never do.
     #[test]
@@ -1498,6 +1675,7 @@ mod tests {
         assert_eq!(got, vec!["a", "b"]);
     }
 
+    // covers: UC-cockpit-observability-13
     #[test]
     fn a_terminal_predecessor_and_a_recurrence_is_not_surplus_but_two_live_rows_are() {
         let rows: Vec<Value> = serde_json::from_str(
@@ -1532,6 +1710,7 @@ mod tests {
         assert_eq!(well_counts(&work, &lc), (2, 1, 0));
     }
 
+    // covers: UC-cockpit-observability-13
     #[test]
     fn poison_counts_live_poison_holds() {
         let lc = lcmap(&[("a", "REWORK", &["poison"]), ("b", "LANDED", &["poison"]), ("c", "READY", &["wait"])]);
@@ -1558,6 +1737,20 @@ mod tests {
         assert_eq!(czar_progress(&bead, Some(&lcmap(&[("z", "DONE", &[])]))), CzarProgress::Finished);
         assert_eq!(czar_progress(&bead, Some(&lcmap(&[]))), CzarProgress::Unknown);
         assert_eq!(czar_progress(&bead, None), CzarProgress::Unknown);
+    }
+
+    // covers: UC-cockpit-observability-13
+    #[test]
+    fn repo_label_meters_count_unmapped_and_absent_and_an_unreadable_map_is_unknown() {
+        let rows: Vec<Value> = serde_json::from_str(
+            r#"[{"id":"a","labels":["repo:known"]},{"id":"b","labels":["repo:stray"]},{"id":"c","labels":["plan"]},{"id":"d"},{"id":"e","labels":["repo:stray","repo:known"]}]"#,
+        )
+        .unwrap();
+        let valid: std::collections::HashSet<String> = ["known".to_string()].into();
+        assert_eq!(repo_label_counts(&rows, &valid), (1, 2));
+        let cfg = Cfg { repo_map: "/nonexistent/registry".into(), ..Cfg::default() };
+        let out = repo_label_keys(&cfg);
+        assert_eq!(out, vec![("SP_REPO_UNMAPPED".to_string(), "?".to_string()), ("SP_REPO_ABSENT".to_string(), "?".to_string())]);
     }
 
     #[test]

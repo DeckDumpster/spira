@@ -120,6 +120,18 @@ fn hotfix_banner(snap: &Snapshot) -> Vec<String> {
     out
 }
 
+/// The alternate run dir (repo-relative, then XDG) that holds a `cockpit.env` when none is at `run`.
+pub fn mismatch_alt_of(run: &str, instance: &str, repo: Option<&str>, xdg_data: Option<&str>, home: &str) -> Option<String> {
+    let inst_sfx = if instance == "prod" { String::new() } else { format!("-{instance}") };
+    let mut alts = Vec::new();
+    if let Some(repo) = repo {
+        alts.push(format!("{repo}/.runtime/spira{inst_sfx}"));
+    }
+    let xdg_data = xdg_data.map_or_else(|| format!("{home}/.local/share"), str::to_string);
+    alts.push(format!("{xdg_data}/spira{inst_sfx}/run"));
+    alts.into_iter().find(|alt| alt != run && std::path::Path::new(alt).join("cockpit.env").is_file())
+}
+
 /// `mismatch_alt`: the alternate `$SPIRA_RUN` derivation (repo-relative or XDG) that
 /// actually holds a `cockpit.env`, when it differs from `run_dir` — computed by the
 /// caller (it needs the filesystem and `$SPIRA_REPO`/`$XDG_DATA_HOME`/`$SPIRA_INSTANCE`),
@@ -1213,6 +1225,30 @@ fn now_placeholder() -> i64 {
 
 #[cfg(test)]
 mod tests {
+    // covers: UC-cockpit-observability-25
+    #[test]
+    fn no_snapshot_anywhere_says_so_and_a_snapshot_at_the_other_path_is_a_path_mismatch_naming_both() {
+        let none = snap_absent_banner(80, "/repo/.runtime/spira", None).join("\n");
+        assert!(none.contains("no snapshot") && !none.contains("PATH MISMATCH"), "{none}");
+        let mismatch = snap_absent_banner(80, "/repo/.runtime/spira", Some("/home/u/.local/share/spira/run")).join("\n");
+        assert!(mismatch.contains("PATH MISMATCH"), "{mismatch}");
+        assert!(mismatch.contains(".local/share/spira") && mismatch.contains(".runtime/spira"), "both paths are named: {mismatch}");
+    }
+
+    // covers: UC-cockpit-observability-25
+    #[test]
+    fn the_alternative_run_dir_is_reported_only_when_it_holds_a_snapshot_the_reader_lacks() {
+        let home = testkit::TempDir::new("alt-home");
+        let h = home.path().to_str().unwrap();
+        let xdg_run = home.path().join(".local/share/spira/run");
+        let reader = format!("{h}/repo/.runtime/spira");
+        assert_eq!(mismatch_alt_of(&reader, "prod", Some(&format!("{h}/repo")), None, h), None, "no snapshot anywhere");
+        std::fs::create_dir_all(&xdg_run).unwrap();
+        std::fs::write(xdg_run.join("cockpit.env"), "SP_NEXT_N=0\n").unwrap();
+        assert_eq!(mismatch_alt_of(&reader, "prod", Some(&format!("{h}/repo")), None, h), Some(xdg_run.display().to_string()));
+        assert_eq!(mismatch_alt_of(&xdg_run.display().to_string(), "prod", Some(&format!("{h}/repo")), None, h), None, "the reader's own path is not an alternative");
+    }
+
     #[test]
     fn production_instance_timer_is_resolved_not_reported_inactive() {
         let probe = |u: &str| {
