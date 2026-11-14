@@ -134,9 +134,8 @@ exists, and every case they carried that was still live is now a `cargo test -p 
 (named individually in `docs/test-plan/operator-channel.md`'s `UC-operator-channel-44/45`
 markers). `spira/test-sop.sh` is replaced by a thin T1 wiring smoke test of the real binary
 (env vars, the `lib.sh` subprocess seam, a real ledger file) — see its own header for what it
-covers that the cargo suite cannot. `spira/test-cockpit-sop.sh` is unaffected: it tests
-`cockpit.sh`'s own ledger-reading cockpit metrics, not `sop` itself, and still reads the same
-ledger file shape this crate writes.
+covers that the cargo suite cannot. The cockpit's ledger-reading SOP metrics are
+`cockpit-collect`'s own unit tests (`sop_tests`), over the same ledger file shape this crate writes.
 
 ## 6. Callers repointed
 

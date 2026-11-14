@@ -33,25 +33,9 @@ fn branch_backlog_section(out: &mut Kv, cfg: &Cfg) {
     let now = io::now();
 
     let mut fail = false;
-    let mut n = 0usize;
-    let mut oldest: Option<i64> = None;
-    let mut done = 0usize;
-    let mut unadopted = 0usize;
-    let mut unadopted_names: Vec<String> = Vec::new();
-    let mut orphan_work = 0usize;
-    let mut round_branches = 0usize;
-    let mut round_branches_names: Vec<String> = Vec::new();
-    let mut probe_fail = 0usize;
-    let mut probe_fail_names: Vec<String> = Vec::new();
+    let mut t = Tally::default();
     let mut protected = 0usize;
     let mut protected_names: Vec<String> = Vec::new();
-    let mut batched_stranded = 0usize;
-    let mut batched_stranded_names: Vec<String> = Vec::new();
-    let mut batched_too_long = 0usize;
-    let mut batched_too_long_names: Vec<String> = Vec::new();
-    let mut closed_stranded = 0usize;
-    let mut closed_stranded_oldest: Option<i64> = None;
-    let mut awaiting_round = 0usize;
 
     let reg = io::repo_registry();
     let forge_repos: Vec<String> = reg.all().into_iter().filter(|r| reg.land(r) == "queue").collect();
@@ -78,89 +62,9 @@ fn branch_backlog_section(out: &mut Kv, cfg: &Cfg) {
 
         match io::git(rp_path, &["for-each-ref", "--format=%(refname:short) %(committerdate:unix)", "refs/heads/spira/*"]) {
             Some(brs) => {
-                for line in brs.lines() {
-                    let Some((b, ts_s)) = line.rsplit_once(' ') else { continue };
-                    if b.is_empty() {
-                        continue;
-                    }
-                    if b.starts_with("spira/queue/") {
-                        continue;
-                    }
-                    let ts: Option<i64> = ts_s.parse().ok();
-                    let id = b.trim_start_matches("spira/");
-
-                    let status = bead_status(id, lc_index.as_ref());
-                    match status {
-                        BeadStatus::ProbeFailed => {
-                            probe_fail += 1;
-                            probe_fail_names.push(id.to_string());
-                            continue;
-                        }
-                        BeadStatus::NoBead => {
-                            if b.starts_with("spira/round-") {
-                                round_branches += 1;
-                                round_branches_names.push(id.to_string());
-                                continue;
-                            }
-                            let is_ancestor = base.as_deref().map(|base| io::git(rp_path, &["merge-base", "--is-ancestor", b, base]).is_some()).unwrap_or(false);
-                            if is_ancestor {
-                                unadopted += 1;
-                                unadopted_names.push(id.to_string());
-                            } else {
-                                orphan_work += 1;
-                            }
-                            continue;
-                        }
-                        BeadStatus::Closed { submitted } => {
-                            done += 1;
-                            match closed_branch_class(&land, submitted, b.starts_with("spira/queue/"), in_delivery.contains_key(id)) {
-                                ClosedClass::AwaitingRound => awaiting_round += 1,
-                                ClosedClass::Delivering | ClosedClass::BatchBranch => {}
-                                ClosedClass::Stranded => {
-                                    closed_stranded += 1;
-                                    if let Some(ts) = ts {
-                                        if closed_stranded_oldest.map(|o| ts < o).unwrap_or(true) {
-                                            closed_stranded_oldest = Some(ts);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        BeadStatus::Open => {}
-                    }
-                    n += 1;
-                    if !b.starts_with("spira/queue/") && !matches!(status, BeadStatus::Closed { .. }) {
-                        if let Some(ts) = ts {
-                            if oldest.map(|o| ts < o).unwrap_or(true) {
-                                oldest = Some(ts);
-                            }
-                        }
-                    }
-                    if batched_check_applies(&status, in_delivery.contains_key(id)) {
-                        if let Some(row) = in_delivery.get(id) {
-                            let settled = row.updated_at.is_some_and(|ep| now - ep >= STRANDED_GRACE_SECS);
-                            match forge_batch {
-                                Some(None) => {
-                                    probe_fail += 1;
-                                    probe_fail_names.push(id.to_string());
-                                }
-                                told => {
-                                    let in_batch = told.is_some_and(|b| b.as_ref().is_some_and(|b| b.members.contains(id))) || round_members.contains(id);
-                                    if !in_batch && settled {
-                                        batched_stranded += 1;
-                                        batched_stranded_names.push(id.to_string());
-                                    }
-                                }
-                            }
-                            if let Some(ep) = row.updated_at {
-                                if ep > 0 && (now - ep) > batch_wait {
-                                    batched_too_long += 1;
-                                    batched_too_long_names.push(id.to_string());
-                                }
-                            }
-                        }
-                    }
-                }
+                let on_base = |b: &str| base.as_deref().is_some_and(|base| io::git(rp_path, &["merge-base", "--is-ancestor", b, base]).is_some());
+                let ctx = Ctx { now, batch_wait, land: &land, in_delivery: &in_delivery, round_members: &round_members, forge_batch };
+                t.tally(&brs, &ctx, &|id| bead_status(id, lc_index.as_ref()), &on_base);
             }
             None => fail = true,
         }
@@ -187,24 +91,24 @@ fn branch_backlog_section(out: &mut Kv, cfg: &Cfg) {
         }
     }
 
-    push(out, "SP_BRANCH_DONE", done.to_string());
-    push(out, "SP_UNADOPTED", unadopted.to_string());
-    super::push(out, "SP_UNADOPTED_NAMES", unadopted_names.join(" "));
-    push(out, "SP_ORPHAN_WORK", orphan_work.to_string());
-    push(out, "SP_ROUND_BRANCHES", round_branches.to_string());
-    super::push(out, "SP_ROUND_BRANCHES_NAMES", round_branches_names.join(" "));
-    push(out, "SP_PROBE_FAIL", probe_fail.to_string());
-    super::push(out, "SP_PROBE_FAIL_NAMES", probe_fail_names.join(" "));
+    push(out, "SP_BRANCH_DONE", t.done.to_string());
+    push(out, "SP_UNADOPTED", t.unadopted.to_string());
+    super::push(out, "SP_UNADOPTED_NAMES", t.unadopted_names.join(" "));
+    push(out, "SP_ORPHAN_WORK", t.orphan_work.to_string());
+    push(out, "SP_ROUND_BRANCHES", t.round_branches.to_string());
+    super::push(out, "SP_ROUND_BRANCHES_NAMES", t.round_branches_names.join(" "));
+    push(out, "SP_PROBE_FAIL", t.probe_fail.to_string());
+    super::push(out, "SP_PROBE_FAIL_NAMES", t.probe_fail_names.join(" "));
     push(out, "SP_PROTECTED", protected.to_string());
     super::push(out, "SP_PROTECTED_NAMES", protected_names.join(" "));
-    push(out, "SP_BATCHED_STRANDED", batched_stranded.to_string());
-    super::push(out, "SP_BATCHED_STRANDED_NAMES", batched_stranded_names.join(" "));
-    push(out, "SP_BATCHED_TOO_LONG", batched_too_long.to_string());
-    super::push(out, "SP_BATCHED_TOO_LONG_NAMES", batched_too_long_names.join(" "));
-    push(out, "SP_AWAITING_ROUND", awaiting_round.to_string());
-    push(out, "SP_CLOSED_STRANDED", closed_stranded.to_string());
-    if closed_stranded > 0 {
-        if let Some(o) = closed_stranded_oldest {
+    push(out, "SP_BATCHED_STRANDED", t.batched_stranded.to_string());
+    super::push(out, "SP_BATCHED_STRANDED_NAMES", t.batched_stranded_names.join(" "));
+    push(out, "SP_BATCHED_TOO_LONG", t.batched_too_long.to_string());
+    super::push(out, "SP_BATCHED_TOO_LONG_NAMES", t.batched_too_long_names.join(" "));
+    push(out, "SP_AWAITING_ROUND", t.awaiting_round.to_string());
+    push(out, "SP_CLOSED_STRANDED", t.closed_stranded.to_string());
+    if t.closed_stranded > 0 {
+        if let Some(o) = t.closed_stranded_oldest {
             push(out, "SP_CLOSED_STRANDED_OLDEST_H", ((now - o) / 3600).to_string());
         } else {
             push(out, "SP_CLOSED_STRANDED_OLDEST_H", "0");
@@ -216,14 +120,138 @@ fn branch_backlog_section(out: &mut Kv, cfg: &Cfg) {
         push(out, "SP_UNSENT", "?");
         push(out, "SP_UNSENT_OLDEST_H", "?");
     } else {
-        push(out, "SP_UNSENT", n.to_string());
-        if n > 0 {
-            if let Some(o) = oldest {
+        push(out, "SP_UNSENT", t.n.to_string());
+        if t.n > 0 {
+            if let Some(o) = t.oldest {
                 push(out, "SP_UNSENT_OLDEST_H", ((now - o) / 3600).to_string());
                 return;
             }
         }
         push(out, "SP_UNSENT_OLDEST_H", "0");
+    }
+}
+
+
+struct Ctx<'a> {
+    now: i64,
+    batch_wait: i64,
+    land: &'a str,
+    in_delivery: &'a HashMap<String, super::lc::LcRow>,
+    round_members: &'a HashSet<String>,
+    forge_batch: Option<&'a Option<ForgeBatch>>,
+}
+
+/// The branch backlog's counters across every repository.
+#[derive(Default)]
+struct Tally {
+    n: usize,
+    oldest: Option<i64>,
+    done: usize,
+    unadopted: usize,
+    unadopted_names: Vec<String>,
+    orphan_work: usize,
+    round_branches: usize,
+    round_branches_names: Vec<String>,
+    probe_fail: usize,
+    probe_fail_names: Vec<String>,
+    batched_stranded: usize,
+    batched_stranded_names: Vec<String>,
+    batched_too_long: usize,
+    batched_too_long_names: Vec<String>,
+    closed_stranded: usize,
+    closed_stranded_oldest: Option<i64>,
+    awaiting_round: usize,
+}
+
+impl Tally {
+    /// Classifies one repo's `<branch> <committer-epoch>` lines. `status_of` is the bead's
+    /// state by id; `on_base` is whether a branch's tip is already on the land ref.
+    fn tally(&mut self, brs: &str, ctx: &Ctx, status_of: &dyn Fn(&str) -> BeadStatus, on_base: &dyn Fn(&str) -> bool) {
+        let Ctx { now, batch_wait, land, in_delivery, round_members, forge_batch } = ctx;
+        let (now, batch_wait) = (*now, *batch_wait);
+        for line in brs.lines() {
+            let Some((b, ts_s)) = line.rsplit_once(' ') else { continue };
+            if b.is_empty() {
+                continue;
+            }
+            if b.starts_with("spira/queue/") {
+                continue;
+            }
+            let ts: Option<i64> = ts_s.parse().ok();
+            let id = b.trim_start_matches("spira/");
+
+            let status = status_of(id);
+            match status {
+                BeadStatus::ProbeFailed => {
+                    self.probe_fail += 1;
+                    self.probe_fail_names.push(id.to_string());
+                    continue;
+                }
+                BeadStatus::NoBead => {
+                    if b.starts_with("spira/round-") {
+                        self.round_branches += 1;
+                        self.round_branches_names.push(id.to_string());
+                        continue;
+                    }
+                    let is_ancestor = on_base(b);
+                    if is_ancestor {
+                        self.unadopted += 1;
+                        self.unadopted_names.push(id.to_string());
+                    } else {
+                        self.orphan_work += 1;
+                    }
+                    continue;
+                }
+                BeadStatus::Closed { submitted } => {
+                    self.done += 1;
+                    match closed_branch_class(land, submitted, b.starts_with("spira/queue/"), in_delivery.contains_key(id)) {
+                        ClosedClass::AwaitingRound => self.awaiting_round += 1,
+                        ClosedClass::Delivering | ClosedClass::BatchBranch => {}
+                        ClosedClass::Stranded => {
+                            self.closed_stranded += 1;
+                            if let Some(ts) = ts {
+                                if self.closed_stranded_oldest.map(|o| ts < o).unwrap_or(true) {
+                                    self.closed_stranded_oldest = Some(ts);
+                                }
+                            }
+                        }
+                    }
+                }
+                BeadStatus::Open => {}
+            }
+            self.n += 1;
+            if !b.starts_with("spira/queue/") && !matches!(status, BeadStatus::Closed { .. }) {
+                if let Some(ts) = ts {
+                    if self.oldest.map(|o| ts < o).unwrap_or(true) {
+                        self.oldest = Some(ts);
+                    }
+                }
+            }
+            if batched_check_applies(&status, in_delivery.contains_key(id)) {
+                if let Some(row) = in_delivery.get(id) {
+                    let settled = row.updated_at.is_some_and(|ep| now - ep >= STRANDED_GRACE_SECS);
+                    match forge_batch {
+                        Some(None) => {
+                            self.probe_fail += 1;
+                            self.probe_fail_names.push(id.to_string());
+                        }
+                        told => {
+                            let in_batch = told.is_some_and(|b| b.as_ref().is_some_and(|b| b.members.contains(id))) || round_members.contains(id);
+                            if !in_batch && settled {
+                                self.batched_stranded += 1;
+                                self.batched_stranded_names.push(id.to_string());
+                            }
+                        }
+                    }
+                    if let Some(ep) = row.updated_at {
+                        if ep > 0 && (now - ep) > batch_wait {
+                            self.batched_too_long += 1;
+                            self.batched_too_long_names.push(id.to_string());
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -539,59 +567,82 @@ fn landing_funnel_section(out: &mut Kv, run: &Path, cfg: &Cfg) {
     let subject_lines: Vec<&str> = subjects.iter().flat_map(|s| s.lines()).collect();
     let branch_lines: Vec<&str> = branches.iter().flat_map(|s| s.lines()).collect();
 
-    let cert_win: i64 = cfg.cert_window_mins;
-
-    let mut landed_set: HashSet<&str> = HashSet::new();
-    for r in &closed_pairs {
-        let i = r.id.as_str();
-        let landed = subject_lines.iter().any(|s| {
-            let s = s.trim();
-            s == format!("spira: land {i}") || s.starts_with(&format!("spira: land {i} ")) || s.starts_with(&format!("{i}: "))
-        });
-        if landed {
-            landed_set.insert(i);
-        }
-    }
-    let mut anomaly = 0;
-    let mut stranded = 0;
-    let mut awaiting = 0;
-    let mut done_oldest: Option<i64> = None;
-    for r in &closed_pairs {
-        if landed_set.contains(r.id.as_str()) {
-            continue;
-        }
-        let Some(br) = branch_lines.iter().find(|b| b.trim_end().ends_with(&format!("/{}", r.id))) else {
-            continue;
-        };
-        if !awaits_certification(lc_index.get(r.id.as_str())) {
-            continue;
-        }
-        if let Some((rp, land_ref)) = cherry_refs.get(&r.repo) {
-            if branch_has_no_own_commit(rp, land_ref, br.trim()) {
-                continue;
-            }
-        }
-        let queued = gate_queued(run, &r.id);
-        anomaly += 1;
-        let ts = parse_iso8601(&r.closed_at);
-        if let Some(ts) = ts {
-            if done_oldest.map(|d| ts < d).unwrap_or(true) {
-                done_oldest = Some(ts);
-            }
-        }
-        let age_mins = ts.map(|t| (now - t) / 60).unwrap_or(9_999_999);
-        if !queued && age_mins > cert_win {
-            stranded += 1;
-        } else {
-            awaiting += 1;
-        }
-    }
+    let ids: Vec<(&str, &str, &str)> = closed_pairs.iter().map(|r| (r.id.as_str(), r.repo.as_str(), r.closed_at.as_str())).collect();
+    let f = classify_landing(
+        &ids,
+        &subject_lines,
+        &branch_lines,
+        &|id| lc_index.get(id),
+        now,
+        cfg.cert_window_mins,
+        &|repo, br| cherry_refs.get(repo).is_some_and(|(rp, land_ref)| branch_has_no_own_commit(rp, land_ref, br)),
+        &|id| gate_queued(run, id),
+    );
+    let (landed_set, anomaly, stranded, awaiting, done_oldest) = (f.landed, f.anomaly, f.stranded, f.awaiting, f.done_oldest);
     push(out, "SP_CLOSED", closed_pairs.len().to_string());
-    push(out, "SP_LANDED", landed_set.len().to_string());
+    push(out, "SP_LANDED", landed_set.to_string());
     push(out, "SP_UNLANDED_N", anomaly.to_string());
     push(out, "SP_STRANDED_N", stranded.to_string());
     push(out, "SP_CERT_N", awaiting.to_string());
     push(out, "SP_FUNNEL_DONE_AGE", done_oldest.map(|d| rel_age(now - d)).unwrap_or_default());
+}
+
+/// The funnel's counts over the closed beads `(id, repo, closed_at)` of the last 24 h.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct Landing {
+    landed: usize,
+    anomaly: usize,
+    stranded: usize,
+    awaiting: usize,
+    done_oldest: Option<i64>,
+}
+
+/// A commit subject names a bead only in the forms the landing pass writes; a body or a
+/// longer id that merely starts with it does not.
+fn subject_names(subject: &str, id: &str) -> bool {
+    let s = subject.trim();
+    s == format!("spira: land {id}") || s.starts_with(&format!("spira: land {id} ")) || s.starts_with(&format!("{id}: "))
+}
+
+/// LANDED: a subject on the base names the bead. Unlanded: not landed, a `spira/` branch
+/// for it exists, and the machine holds it SUBMITTED with a commit of its own; stranded when
+/// no gate job is queued for it and it is older than the certification window.
+#[allow(clippy::too_many_arguments)]
+fn classify_landing<'a>(
+    closed: &[(&str, &str, &str)],
+    subjects: &[&str],
+    branches: &[&str],
+    row_of: &dyn Fn(&str) -> Option<&'a super::lc::Row>,
+    now: i64,
+    cert_win_mins: i64,
+    no_own_commit: &dyn Fn(&str, &str) -> bool,
+    queued: &dyn Fn(&str) -> bool,
+) -> Landing {
+    let mut f = Landing::default();
+    for (id, repo, closed_at) in closed {
+        if subjects.iter().any(|s| subject_names(s, id)) {
+            f.landed += 1;
+            continue;
+        }
+        let Some(br) = branches.iter().find(|b| b.trim_end().ends_with(&format!("/{id}"))) else { continue };
+        if !awaits_certification(row_of(id)) || no_own_commit(repo, br.trim()) {
+            continue;
+        }
+        f.anomaly += 1;
+        let ts = parse_iso8601(closed_at);
+        if let Some(ts) = ts {
+            if f.done_oldest.map(|d| ts < d).unwrap_or(true) {
+                f.done_oldest = Some(ts);
+            }
+        }
+        let age_mins = ts.map(|t| (now - t) / 60).unwrap_or(9_999_999);
+        if !queued(id) && age_mins > cert_win_mins {
+            f.stranded += 1;
+        } else {
+            f.awaiting += 1;
+        }
+    }
+    f
 }
 
 /// `git cherry` prints `+` for each commit not on the land ref; none means the branch never
@@ -824,6 +875,103 @@ mod tests {
         assert!(!awaits_round("queue", true));
         assert!(!awaits_round("push", true));
         assert!(!awaits_round("queue.local", false));
+    }
+
+    fn tally_of(lines: &str, delivering: &[(&str, i64)], batch: Option<&Option<ForgeBatch>>, wait: i64) -> Tally {
+        let in_delivery: HashMap<String, super::super::lc::LcRow> = delivering
+            .iter()
+            .map(|(id, at)| (id.to_string(), super::super::lc::LcRow { id: id.to_string(), state: "IN_DELIVERY".into(), reason: String::new(), updated_at: Some(*at) }))
+            .collect();
+        let ctx = Ctx { now: 100_000, batch_wait: wait, land: "push", in_delivery: &in_delivery, round_members: &HashSet::new(), forge_batch: batch };
+        let status = |id: &str| match id {
+            "sp-open" | "sp-bat" => BeadStatus::Open,
+            "sp-done" => BeadStatus::Closed { submitted: false },
+            "sp-lookup" => BeadStatus::ProbeFailed,
+            _ => BeadStatus::NoBead,
+        };
+        let mut t = Tally::default();
+        t.tally(lines, &ctx, &status, &|b| b.ends_with("true-stray"));
+        t
+    }
+
+    // covers: UC-cockpit-observability-12
+    #[test]
+    fn only_bead_backed_branches_count_and_a_no_bead_branch_is_orphan_work_or_unadopted() {
+        let t = tally_of(
+            "spira/sp-open 90000\nspira/sp-done 90000\nspira/tmp-stray 90000\nspira/sp-true-stray 90000\nspira/round-81 90000\nspira/queue/20260101 90000\nspira/sp-lookup 90000\n",
+            &[],
+            None,
+            1,
+        );
+        assert_eq!((t.n, t.done), (2, 1), "bead-backed branches only; no-bead, round, queue and failed lookups are not unsent");
+        assert_eq!((t.orphan_work, t.unadopted), (1, 1));
+        assert_eq!(t.unadopted_names, ["sp-true-stray"]);
+        assert_eq!(t.round_branches_names, ["round-81"]);
+        assert_eq!((t.probe_fail, t.probe_fail_names.as_slice()), (1, ["sp-lookup".to_string()].as_slice()), "a failed lookup is a probe fault, never unadopted");
+    }
+
+    // covers: UC-cockpit-observability-12
+    #[test]
+    fn a_batched_bead_outside_every_batch_is_stranded_and_one_waiting_past_the_wait_is_too_long() {
+        let line = "spira/sp-bat 90000\n";
+        let no_batch: Option<ForgeBatch> = Some(ForgeBatch::default());
+        let stale = 100_000 - STRANDED_GRACE_SECS - 1;
+        let t = tally_of(line, &[("sp-bat", stale)], Some(&no_batch), 60);
+        assert_eq!((t.batched_stranded, t.batched_stranded_names.as_slice()), (1, ["sp-bat".to_string()].as_slice()));
+        assert_eq!(t.batched_too_long, 1);
+        let t = tally_of(line, &[("sp-bat", 100_000 - 5)], Some(&no_batch), 60);
+        assert_eq!((t.batched_stranded, t.batched_too_long), (0, 0), "inside the grace and the wait");
+        let member = Some(ForgeBatch { members: ["sp-bat".to_string()].into(), ..ForgeBatch::default() });
+        assert_eq!(tally_of(line, &[("sp-bat", stale)], Some(&member), 60).batched_stranded, 0, "a batch member is not stranded");
+        assert_eq!(tally_of(line, &[("sp-bat", stale)], Some(&None), 60).probe_fail, 1, "an unreadable batch is a fault, not a stranding");
+    }
+
+    // covers: UC-cockpit-observability-10
+    #[test]
+    fn a_closed_bead_is_landed_only_when_a_commit_subject_names_it() {
+        let submitted = row("SUBMITTED");
+        let now = 100_000;
+        let recent = "1970-01-02T03:00:00Z"; // inside the certification window of `now`
+        let closed = [("sp-a", "r", recent), ("sp-b", "r", recent), ("sp-c", "r", recent), ("sp-d", "r", recent)];
+        let subjects = ["spira: land sp-a", "tidy up, see also sp-b and sp-c", "spira: land sp-dd"];
+        let branches = ["origin/spira/sp-b", "origin/spira/sp-d"];
+        let f = classify_landing(&closed, &subjects, &branches, &|_| Some(&submitted), now, 90, &|_, _| false, &|_| false);
+        assert_eq!(f.landed, 1, "sp-a only: a body mention and a longer id are not landings");
+        assert_eq!(f.anomaly, 2, "sp-b and sp-d: closed, branch, no landing; sp-c has neither and is not an anomaly");
+    }
+
+    // covers: UC-cockpit-observability-10
+    #[test]
+    fn an_unlanded_branch_is_stranded_only_past_the_certification_window_and_with_no_gate_job() {
+        let submitted = row("SUBMITTED");
+        let now = parse_iso8601("2026-01-01T12:00:00Z").unwrap();
+        let closed = [("sp-old", "r", "2026-01-01T08:00:00Z"), ("sp-queued", "r", "2026-01-01T08:00:00Z"), ("sp-new", "r", "2026-01-01T11:50:00Z"), ("sp-empty", "r", "2026-01-01T08:00:00Z")];
+        let branches = ["origin/spira/sp-old", "origin/spira/sp-queued", "origin/spira/sp-new", "origin/spira/sp-empty"];
+        let f = classify_landing(&closed, &[], &branches, &|_| Some(&submitted), now, 90, &|_, br| br.ends_with("sp-empty"), &|id| id == "sp-queued");
+        assert_eq!((f.anomaly, f.stranded, f.awaiting), (3, 1, 2), "a branch with no commit of its own is no anomaly");
+        assert_eq!(f.done_oldest, parse_iso8601("2026-01-01T08:00:00Z"));
+        let certified = row("CERTIFIED");
+        let f = classify_landing(&closed, &[], &branches, &|_| Some(&certified), now, 90, &|_, _| false, &|_| false);
+        assert_eq!(f.anomaly, 0, "only a SUBMITTED bead awaits certification");
+    }
+
+    // covers: UC-cockpit-observability-15
+    #[test]
+    fn landing_status_and_progress_are_copied_verbatim_and_a_missing_status_is_unknown() {
+        let d = testkit::TempDir::new("cc-landing");
+        let get = |kv: &Kv, k: &str| kv.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
+        std::fs::write(d.path().join("landing.status"), "SP_LAND_AT=1788845658\nSP_LAND_RC=3\nSP_LAND_BRANCHES=4\nSP_LAND_MOVED=1\n").unwrap();
+        std::fs::write(d.path().join("landing.progress"), "landed spira/sp-35pl\nreopened sp-dvlq -- does not rebase\n").unwrap();
+        let mut kv = Kv::new();
+        gate_section(&mut kv, d.path());
+        assert_eq!((get(&kv, "SP_LAND_AT").as_deref(), get(&kv, "SP_LAND_RC").as_deref(), get(&kv, "SP_LAND_BRANCHES").as_deref()), (Some("1788845658"), Some("3"), Some("4")));
+        assert_eq!((get(&kv, "SP_LANDPROG_N").as_deref(), get(&kv, "SP_LANDPROG0").as_deref()), (Some("2"), Some("landed spira/sp-35pl")));
+        std::fs::remove_file(d.path().join("landing.status")).unwrap();
+        let mut kv = Kv::new();
+        gate_section(&mut kv, d.path());
+        for k in ["SP_LAND_AT", "SP_LAND_RC", "SP_LAND_BRANCHES"] {
+            assert_eq!(get(&kv, k).as_deref(), Some("?"), "{k}");
+        }
     }
 
     #[test]

@@ -533,6 +533,7 @@ mod tests {
         );
     }
 
+    // covers: UC-cockpit-observability-11
     #[test]
     fn priority_orders_rows_and_wins_over_a_transition_tiebreak() {
         let rows = [row("sp-p1", "t1", 2, true), row("sp-p0", "t2", 1, false)];
@@ -548,6 +549,15 @@ mod tests {
             vec!["sp-p0", "sp-p1"],
             "a P0 without a transition still sorts ahead of a P1 with one"
         );
+    }
+
+    // covers: UC-cockpit-observability-11
+    #[test]
+    fn within_one_priority_the_earlier_certification_goes_first() {
+        let rows = [row("sp-late", "t1", 9, false), row("sp-early", "t2", 3, false)];
+        let prio = r#"[{"id":"sp-late","priority":1},{"id":"sp-early","priority":1}]"#;
+        let (ranked, _) = sort_rows(&rows, prio, &HashSet::new());
+        assert_eq!(ranked.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), ["sp-early", "sp-late"]);
     }
 
     #[test]

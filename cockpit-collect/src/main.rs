@@ -83,25 +83,8 @@ fn cmd_history() -> i32 {
     0
 }
 
-fn sweep_stale_snapshot_tmps(run_dir: &std::path::Path) {
-    let mut n = 0;
-    if let Ok(entries) = std::fs::read_dir(run_dir) {
-        for e in entries.flatten() {
-            let name = e.file_name();
-            let name = name.to_string_lossy();
-            if name.starts_with(".cockpit.")
-                && std::fs::remove_file(e.path()).is_ok() {
-                    n += 1;
-                }
-        }
-    }
-    if n > 0 {
-        eprintln!("cockpit-collect: swept {n} stale temp(s) from {}", run_dir.display());
-    }
-}
-
 fn cmd_sweep_temps() -> i32 {
-    sweep_stale_snapshot_tmps(&io::run_dir());
+    tiers::sweep_stale_snapshot_tmps(&io::run_dir());
     0
 }
 

@@ -157,6 +157,24 @@ pub fn slots_sample(run_dir: &Path, fields_text: &str) -> Result<String, String>
     Ok(String::new())
 }
 
+/// Removes the `.cockpit.*` temps a crashed publish left behind.
+pub fn sweep_stale_snapshot_tmps(run_dir: &std::path::Path) {
+    let mut n = 0;
+    if let Ok(entries) = std::fs::read_dir(run_dir) {
+        for e in entries.flatten() {
+            let name = e.file_name();
+            let name = name.to_string_lossy();
+            if name.starts_with(".cockpit.")
+                && std::fs::remove_file(e.path()).is_ok() {
+                    n += 1;
+                }
+        }
+    }
+    if n > 0 {
+        eprintln!("cockpit-collect: swept {n} stale temp(s) from {}", run_dir.display());
+    }
+}
+
 /// `append_history`: read the snapshot back (never the probe's own in-memory output — the
 /// snapshot is what every other reader sees) and append one row, rotating the file on a
 /// column-set change rather than overwriting it.
@@ -244,6 +262,7 @@ mod tests {
 
     #[test]
     fn republishing_an_unchanged_tier_writes_no_snapshot_data() {
+        let _env = testkit::env_read();
         let run = testkit::TempDir::new("tier-nowrite");
         publish(run.path(), "5s", "SP_A=1\n").unwrap();
         let before = io::data_writes();
@@ -297,14 +316,32 @@ mod tests {
         lock().running.remove("slow");
     }
 
+    // covers: UC-cockpit-observability-06
+    #[test]
+    fn startup_sweep_removes_orphaned_snapshot_temps_and_leaves_the_published_snapshot() {
+        let dir = testkit::TempDir::new("cc-sweep");
+        let run = dir.path();
+        std::fs::write(run.join("cockpit.env"), "SP_AT='1'\n").unwrap();
+        std::fs::write(run.join(".cockpit.99999"), "").unwrap();
+        std::fs::write(run.join(".cockpit.orphan"), "").unwrap();
+        std::fs::write(run.join("cockpit-history.csv"), "h\n").unwrap();
+        sweep_stale_snapshot_tmps(run);
+        let left: Vec<String> = std::fs::read_dir(run).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+        assert!(!left.iter().any(|n| n.starts_with(".cockpit.")), "{left:?}");
+        assert!(left.contains(&"cockpit.env".to_string()) && left.contains(&"cockpit-history.csv".to_string()), "{left:?}");
+    }
+
+    // covers: UC-cockpit-observability-02
     #[test]
     fn publish_merges_every_tier_into_the_snapshot_and_appends_history() {
+        let _env = testkit::env_read();
         let dir = testkit::TempDir::new("cc-tiers");
         publish(dir.path(), "cockpit-tier-60s", "SP_SLOTS_LIVE=2\nSP_AT=9\n").unwrap();
         let snap = publish(dir.path(), "cockpit-tier-5s", "SP_AT=100\nSP_ROUND=it's\n").unwrap();
         let text = std::fs::read_to_string(&snap).unwrap();
         assert!(text.contains("SP_AT='100'\n") && !text.contains("SP_AT='9'"), "the first tier by name wins a shared key: {text}");
         assert!(text.contains("SP_SLOTS_LIVE='2'\n") && text.contains("SP_ROUND='it'\\''s'\n") && text.contains("SP_WRITER="), "{text}");
+        assert!(text.contains("SP_COLLECTOR_REV="), "the collector revision is always stamped: {text}");
         let hist = std::fs::read_to_string(dir.path().join("cockpit-history.csv")).unwrap();
         assert_eq!(hist.lines().count(), 3, "{hist}");
         assert!(publish(dir.path(), "../x", "").is_err());

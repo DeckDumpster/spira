@@ -815,6 +815,7 @@ mod tests {
 
     // ---- dwarf_fuse_minutes ----
 
+    // covers: UC-cockpit-observability-15
     #[test]
     fn dwarf_fuse_minutes_no_worktree_is_question_mark() {
         let d = tmp("fuse-nowt");
@@ -823,6 +824,7 @@ mod tests {
         assert_eq!(dwarf_fuse_minutes("sp-x", &d.join("worktree/sp-x"), &run, None, 1000), "?");
     }
 
+    // covers: UC-cockpit-observability-15
     #[test]
     fn dwarf_fuse_minutes_stale_worktree_is_a_positive_number() {
         let d = tmp("fuse-stale");
@@ -839,6 +841,7 @@ mod tests {
         assert!((85..=95).contains(&n), "got {n}");
     }
 
+    // covers: UC-cockpit-observability-15
     #[test]
     fn dwarf_fuse_minutes_live_gate_suppresses_it_dead_gate_does_not() {
         let d = tmp("fuse-gate");

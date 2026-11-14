@@ -378,6 +378,7 @@ mod tests {
         assert_eq!((m["SP_DWARF_THRASH"].as_str(), m["SP_DWARF_WORKED"].as_str()), ("2", "1"));
     }
 
+    // covers: UC-cockpit-observability-16
     #[test]
     fn repeating_act_run_is_found_and_old_burst_is_not() {
         let mk = |offs: &[i64]| -> Vec<String> {
@@ -398,6 +399,34 @@ mod tests {
         let old = mk(&[-21600, -21540, -21480]);
         let o: Vec<&str> = old.iter().map(String::as_str).collect();
         assert_eq!(self_metrics(&o, &[], NOW - 5400, NOW)["SP_SELF_REPEATING_N"], "0");
+    }
+
+    // covers: UC-cockpit-observability-16
+    #[test]
+    fn a_repeat_that_a_later_clean_pass_ended_is_not_repeating_now() {
+        let mut lines = Vec::new();
+        for o in [-600, -480, -360] {
+            lines.push(format!("{} spira: state: open=1 plan_ready=1 in_progress=0", ts(o)));
+            lines.push(format!("{} spira: ACT handled 1 stranded item(s)", ts(o)));
+        }
+        lines.push(format!("{} spira: state: open=0 plan_ready=0 in_progress=0", ts(-120)));
+        let l: Vec<&str> = lines.iter().map(String::as_str).collect();
+        assert_eq!(self_metrics(&l, &[], NOW - 5400, NOW)["SP_SELF_REPEATING_N"], "0");
+    }
+
+    // covers: UC-cockpit-observability-16
+    #[test]
+    fn stillborn_dwarves_count_only_inside_the_window_and_only_without_an_awake() {
+        let sl = |ledger: &[String]| {
+            let l: Vec<&str> = ledger.iter().map(String::as_str).collect();
+            self_metrics(&[], &l, NOW - 5400, NOW)
+        };
+        let born = |o: i64| format!("{} born dwarf-builder-sp-foo pid=1234", ts(o));
+        let k = sl(&[born(-600)]);
+        assert_eq!((k["SP_SELF_STILLBORN_W"].as_str(), k["SP_SELF_STILLBORN_LAST"].as_str()), ("1", "10m ago"));
+        let awake = format!("{} awake dwarf-builder-sp-foo work", ts(-600));
+        assert_eq!(sl(&[born(-600), awake])["SP_SELF_STILLBORN_W"], "0");
+        assert_eq!(sl(&[born(-21600)])["SP_SELF_STILLBORN_W"], "0");
     }
 
     #[test]

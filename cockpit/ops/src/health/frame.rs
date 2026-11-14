@@ -199,6 +199,23 @@ mod tests {
         assert!(bad.contains("? free"), "{bad}");
     }
 
+    // covers: UC-cockpit-observability-26
+    #[test]
+    fn the_pane_renders_mail_queue_land_and_lease_keys_and_none_of_the_retired_labels() {
+        let snap = "SP_AT='1000'\nSP_MAIL_UNREAD='1'\nSP_MAIL_OLDEST_AGE='60'\nSP_MAIL_N='3'\n\
+            SP_MAIL0='60|NEW|a new message'\nSP_MAIL1='120|READ|a read message'\nSP_MAIL2='180|DONE|a done message'\n\
+            SP_QUEUE_DEPTH='2'\nSP_QUEUE_BATCH_PR='42'\nSP_QUEUE_BATCH_N='1'\nSP_QUEUE_BATCH0='P1 sp-b1 a member'\n\
+            SP_LAND_AT='990'\nSP_LAND_RC='0'\nSP_LAND_BRANCHES='4'\nSP_LAND_MOVED='1'\n\
+            SP_DWARF_N='1'\nSP_DWARF0_NAME='ada'\nSP_DWARF0_BEAD='sp-w1'\nSP_DWARF0_PRI='1'\nSP_DWARF0_LEASE='7'\n";
+        let out = slots_frame(snap, 0);
+        for want in ["MAIL", "NEW", "READ", "DONE", "batch #42", "LAND", "rc 0", "branches 4", "7m"] {
+            assert!(out.contains(want), "{want} missing from {out}");
+        }
+        for retired in ["UNLND", " CTX ", " SELF ", " GOV "] {
+            assert!(!out.contains(retired), "{retired} is retired but rendered: {out}");
+        }
+    }
+
     #[test]
     fn slots_row_survives_a_mail_section_longer_than_the_pane() {
         let mut snap = String::from("SP_SLOTS_LIVE='3'\nSP_SLOTS_CEILING='8'\nSP_SLOTS_FREE='5'\nSP_MAIL_UNREAD='5'\nSP_MAIL_OLDEST_AGE='120'\nSP_MAIL_N='5'\n");

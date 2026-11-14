@@ -153,14 +153,7 @@ pub fn queue_keys(cfg: &Cfg) -> Kv {
                 continue;
             }
             let cert_lines: Vec<&str> = cert.lines().filter(|l| !l.trim().is_empty()).collect();
-            let filtered: Vec<&str> = cert_lines
-                .iter()
-                .filter(|l| {
-                    let cid = l.split_whitespace().next().unwrap_or("");
-                    !batch_set.contains(cid)
-                })
-                .copied()
-                .collect();
+            let filtered = unbatched(&cert_lines, &batch_set);
             if filtered.is_empty() {
                 continue;
             }
@@ -178,13 +171,8 @@ pub fn queue_keys(cfg: &Cfg) -> Kv {
             );
             let Some(sorted) = sorted else { continue };
             let rows = io::json_rows(Some(pj_raw)).unwrap_or_default();
-            for srow in sorted.lines() {
-                if next_n >= 20 {
-                    break;
-                }
-                let fields: Vec<&str> = srow.split_whitespace().collect();
-                let Some(nid) = fields.get(4) else { continue };
-                let row = rows.iter().find(|r| r.get("id").and_then(Value::as_str) == Some(*nid));
+            for nid in next_row_ids(&sorted, next_n) {
+                let row = rows.iter().find(|r| r.get("id").and_then(Value::as_str) == Some(nid));
                 let (pri, title) = row.map(row_pri_title).unwrap_or(("?".to_string(), "-".to_string()));
                 push(&mut out, &format!("SP_QUEUE_NEXT{next_n}"), format!("P{pri} {nid} {title}"));
                 next_n += 1;
@@ -203,13 +191,31 @@ pub fn queue_keys(cfg: &Cfg) -> Kv {
             let suite_state_file = spira_config::resolve::suite_state_file().unwrap_or_default();
             let sf = std::path::Path::new(&rp).join(&suite_state_file);
             if let Ok(content) = std::fs::read_to_string(&sf) {
-                quarantine_n += content.lines().filter(|l| l.contains(" | quarantined |")).count();
+                quarantine_n += quarantined_in(&content);
             }
         }
     }
     push(&mut out, "SP_QUEUE_QUARANTINE_N", quarantine_n.to_string());
 
     out
+}
+
+const NEXT_ROW_CAP: usize = 20;
+
+/// The bead ids of the sorted rows still to be drawn, at most [`NEXT_ROW_CAP`] rows in all;
+/// `SP_QUEUE_NEXT_N` counts every certified bead, not only these.
+fn next_row_ids(sorted: &str, drawn: usize) -> Vec<&str> {
+    sorted.lines().filter_map(|l| l.split_whitespace().nth(4)).take(NEXT_ROW_CAP.saturating_sub(drawn)).collect()
+}
+
+/// The certified lines whose bead (first column) is not already in the open batch.
+fn unbatched<'a>(certified: &[&'a str], batch: &HashSet<&str>) -> Vec<&'a str> {
+    certified.iter().copied().filter(|l| !batch.contains(l.split_whitespace().next().unwrap_or(""))).collect()
+}
+
+/// The quarantined suites a suite-state file lists.
+fn quarantined_in(content: &str) -> usize {
+    content.lines().filter(|l| l.contains(" | quarantined |")).count()
 }
 
 /// The open forge batch the pane shows: the first forge repo, in name order, whose record
@@ -283,6 +289,7 @@ mod tests {
         kv.iter().find(|(kk, _)| kk == k).map(|(_, v)| v.clone()).unwrap_or_else(|| panic!("no {k}"))
     }
 
+    // covers: UC-cockpit-observability-11
     #[test]
     fn funnel_counts_stages_red_breakdown_and_oldest_ages() {
         let now = 100_000;
@@ -318,6 +325,19 @@ mod tests {
         assert_eq!(kv.len(), 12);
         assert!(kv.iter().all(|(_, v)| v == "?"));
     }
+    // covers: UC-cockpit-observability-11
+    #[test]
+    fn next_rows_leave_out_the_open_batch_and_quarantined_suites_are_counted() {
+        let batch: HashSet<&str> = ["sp-b1", "sp-bopen"].into();
+        let cert = ["sp-b1 tip1 100", "sp-c1 tip2 200", "sp-c2 tip3 300"];
+        assert_eq!(unbatched(&cert, &batch), ["sp-c1 tip2 200", "sp-c2 tip3 300"]);
+        let sorted: String = (0..32).map(|i| format!("0 1 2 3 sp-c{i}\n")).collect();
+        assert_eq!(next_row_ids(&sorted, 0).len(), NEXT_ROW_CAP, "32 certified draw at most the row cap");
+        assert_eq!(next_row_ids(&sorted, 15).len(), NEXT_ROW_CAP - 15, "a later repo only fills what is left");
+        assert_eq!(quarantined_in("a | passing |\nb | quarantined | since x\nc | quarantined |\n"), 2);
+    }
+
+    // covers: UC-cockpit-observability-11
     #[test]
     fn the_active_batch_is_the_store_record_the_queue_shows() {
         let now = 10_000;

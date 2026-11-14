@@ -49,9 +49,6 @@ spira/publish-backlog.sh
 spira/release.sh
 spira/stage.sh
 spira/test-census-pipeline.sh
-spira/test-cockpit-queue-section.sh
-spira/test-cockpit-unlanded.sh
-spira/test-cockpit-unsent.sh
 spira/test-concierge.sh
 spira/test-czar-pass.sh
 spira/test-deploy.sh
