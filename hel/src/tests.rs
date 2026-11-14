@@ -412,3 +412,31 @@ mod resume {
         assert_eq!(f.now() - began, std::time::Duration::from_millis(240));
     }
 }
+
+mod wire_token {
+    use super::*;
+
+    // covers: UC-ops-detection-remediation-36
+    #[test]
+    fn a_sent_line_the_sweep_emits_is_counted_by_the_cockpit_metrics_parser() {
+        let t = testkit::TempDir::new("hel-wire");
+        let root = t.path().join("repo");
+        std::fs::create_dir_all(&root).unwrap();
+        git(&root, &["init", "-q", "-b", "main"]);
+        git(&root, &["commit", "-q", "--allow-empty", "-m", "x"]);
+        git(&root, &["branch", "spira/sp-wire"]);
+        let base = Base { landref: "main".into(), landrefs: vec!["main".into()], remote: None };
+        let beads = [("sp-wire".to_string(), serde_json::json!({"id": "sp-wire", "labels": []}))].into();
+        let f = Fake { base: Some(base), beads, wts: t.path().join("wt"), ..Default::default() };
+        let repo = crate::ports::Repo { name: "spira".into(), root: Some(root), forge_queued: false };
+        let opts = crate::sweep::Opts { dry: false, fetch: false, only: None, scope: Scope::All, budget: None, pace: Default::default() };
+        let mut s = crate::sweep::Sweep { w: &f, opts, submitted_label: "submitted".into(), tally: Default::default(), deadline: None, truncated: false };
+        s.repo(&repo);
+
+        let emitted = f.out();
+        let sent_line = emitted.lines().find(|l| l.contains("sp-wire")).unwrap_or_else(|| panic!("the sweep emitted nothing for the branch: {emitted}"));
+        let pass = "2026-11-14T00:00:00Z spira: state: open=0";
+        let keys = cockpit_collect::metrics::hel_metrics(&[pass, sent_line], 0, 4_000_000_000);
+        assert_eq!(keys.get("SP_SENT").map(String::as_str), Some("1"), "the sweep said {sent_line:?}");
+    }
+}
