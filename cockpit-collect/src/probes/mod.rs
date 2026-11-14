@@ -1133,15 +1133,14 @@ pub fn livelock_keys() -> Kv {
 // ---------------------------------------------------------------------------------------
 
 pub fn strand_keys() -> Kv {
+    strand_keys_of(std::fs::read_to_string(io::run_dir().join("strands.json")).ok().as_deref())
+}
+
+/// The strand keys for a ledger's text: `?` throughout when it is unreadable, otherwise the
+/// ghost count (the labelled failure of a claimed bead whose holder is gone) split from every other class.
+fn strand_keys_of(ledger: Option<&str>) -> Kv {
     let mut out = Kv::new();
-    let path = io::run_dir().join("strands.json");
-    let Ok(content) = std::fs::read_to_string(&path) else {
-        for k in ["SP_STRANDS", "SP_STRANDS_ESCALATED", "SP_STRAND_GHOST", "SP_STRAND_OTHER"] {
-            push(&mut out, k, "?");
-        }
-        return out;
-    };
-    let Ok(Value::Object(map)) = serde_json::from_str::<Value>(&content) else {
+    let Some(Ok(Value::Object(map))) = ledger.map(serde_json::from_str::<Value>) else {
         for k in ["SP_STRANDS", "SP_STRANDS_ESCALATED", "SP_STRAND_GHOST", "SP_STRAND_OTHER"] {
             push(&mut out, k, "?");
         }
@@ -1772,5 +1771,39 @@ mod drift_tests {
         assert_eq!(drift_value(Some(1), "DIRTY a\nDIRTY b\nnote\n", "DIRTY", "DIRTY "), "DIRTY:2");
         assert_eq!(drift_value(Some(3), "", "DIRTY", "DIRTY "), "?");
         assert_eq!(drift_value(None, "", "DIRTY", "DIRTY "), "?");
+    }
+
+    fn strand_val(kv: &[(String, String)], k: &str) -> String {
+        kv.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone()).unwrap_or_default()
+    }
+
+    fn strand(ledger: Option<&str>) -> Vec<(String, String)> {
+        super::strand_keys_of(ledger)
+    }
+
+    // covers: UC-ops-detection-remediation-26
+    #[test]
+    fn the_strand_ledger_counts_ghosts_apart_from_every_other_class() {
+        let kv = strand(Some(r#"{"spira,plan:ghost:sp-a":{},"spira,plan:ghost:sp-b":{},"spira,plan:empty:sp-c":{},"spira,plan:cycle:sp-d":{"escalated":5}}"#));
+        assert_eq!(strand_val(&kv, "SP_STRANDS"), "4");
+        assert_eq!(strand_val(&kv, "SP_STRAND_GHOST"), "2", "only ghost is a claimed bead with nobody home");
+        assert_eq!(strand_val(&kv, "SP_STRAND_OTHER"), "cycle=1,empty=1");
+        assert_eq!(strand_val(&kv, "SP_STRANDS_ESCALATED"), "1");
+        let only_ghosts = strand(Some(r#"{"spira,plan:ghost:sp-a":{}}"#));
+        assert_eq!(strand_val(&only_ghosts, "SP_STRAND_OTHER"), "none");
+    }
+
+    // covers: UC-ops-detection-remediation-26
+    #[test]
+    fn an_unreadable_or_unclassifiable_ledger_is_a_question_mark_before_the_split_never_a_zero() {
+        for ledger in [None, Some("not json"), Some("[]")] {
+            let kv = strand(ledger);
+            assert_eq!(strand_val(&kv, "SP_STRAND_GHOST"), "?", "{ledger:?}");
+            assert_eq!(strand_val(&kv, "SP_STRANDS"), "?", "{ledger:?}");
+        }
+        let kv = strand(Some(r#"{"spira,plan:ghost:sp-a":{},"no-class-here":{}}"#));
+        assert_eq!(strand_val(&kv, "SP_STRAND_GHOST"), "?", "a row whose class cannot be read makes the ghost count unknowable");
+        assert_eq!(strand_val(&kv, "SP_STRAND_OTHER"), "unclassified=1");
+        assert_eq!(strand_val(&strand(Some("{}")), "SP_STRAND_GHOST"), "0", "an empty ledger is a true zero");
     }
 }

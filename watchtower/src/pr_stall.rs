@@ -7,6 +7,7 @@ use crate::incident::{self, Finding};
 use crate::lc;
 use crate::log::log;
 use crate::seams;
+use spira_store::lc_call::LcClient;
 use std::path::Path;
 use std::process::Command;
 use std::time::Duration;
@@ -123,26 +124,27 @@ pub struct Stalled {
 /// Every pr-mode delivery in PR_OPEN for longer than `stall_secs`, with the registry repo
 /// whose checkout carries its branch. A row no repo carries is skipped, as an unregistered
 /// repo always was. `None` is spira-lc unreachable.
-pub fn gather_stalled(reg: &spira_config::repos::Registry, now: i64, cfg: &Cfg) -> Option<Vec<Stalled>> {
-    let mut out = Vec::new();
-    for row in lc::pr_open()? {
-        if row.mode != "pr" {
-            continue;
-        }
-        let Some(at) = row.entered_at else { continue };
-        let age = now - at;
-        if age < cfg.stall_secs {
-            continue;
-        }
-        let refname = format!("refs/heads/spira/{}", row.id);
-        let repo = reg.all().into_iter().find(|name| {
-            reg.root(name).map(|root| crate::git::ref_exists(Some(&root), &refname)).unwrap_or(false)
-        });
-        if let Some(repo) = repo {
-            out.push(Stalled { id: row.id, repo, age_secs: age, version: row.version });
-        }
-    }
-    Some(out)
+pub fn gather_stalled(reg: &spira_config::repos::Registry, lc: &LcClient, now: i64, cfg: &Cfg) -> Option<Vec<Stalled>> {
+    let repo_of = |id: &str| {
+        let refname = format!("refs/heads/spira/{id}");
+        reg.all().into_iter().find(|name| reg.root(name).map(|root| crate::git::ref_exists(Some(&root), &refname)).unwrap_or(false))
+    };
+    Some(stalled_in(lc::pr_open_on(lc)?, &repo_of, now, cfg.stall_secs))
+}
+
+/// The PR_OPEN rows that are pr-mode, older than `stall_secs`, and whose branch some repo carries.
+pub fn stalled_in(rows: Vec<lc::DeliveryRow>, repo_of: &dyn Fn(&str) -> Option<String>, now: i64, stall_secs: i64) -> Vec<Stalled> {
+    rows.into_iter()
+        .filter(|row| row.mode == "pr")
+        .filter_map(|row| {
+            let age_secs = now - row.entered_at?;
+            if age_secs < stall_secs {
+                return None;
+            }
+            let repo = repo_of(&row.id)?;
+            Some(Stalled { id: row.id, repo, age_secs, version: row.version })
+        })
+        .collect()
 }
 
 /// Beads CERTIFIED for longer than `stall_secs` in a pr-mode repo with no PR_OPEN delivery:
@@ -169,8 +171,8 @@ pub fn unopened(
         .collect()
 }
 
-fn escalate_unopened(reg: &spira_config::repos::Registry, now: i64, db: &str, home_repo: &str, incident_sh: &str, cfg: &Cfg) {
-    let (Some(certified), Some(open)) = (lc::beads_in("CERTIFIED"), lc::pr_open()) else { return };
+fn escalate_unopened(reg: &spira_config::repos::Registry, lc: &LcClient, now: i64, db: &str, home_repo: &str, incident_sh: &str, cfg: &Cfg) {
+    let (Some(certified), Some(open)) = (lc::beads_in_on(lc, "CERTIFIED"), lc::pr_open_on(lc)) else { return };
     let open_ids: Vec<String> = open.into_iter().map(|r| r.id).collect();
     let repo_of = |id: &str| {
         let refname = format!("refs/heads/spira/{id}");
@@ -199,106 +201,101 @@ pub fn run(now: i64, spira_home: &str, db: &str, home_repo: &str, incident_sh: &
         ));
         return;
     }
-    let reg = seams::registry(spira_home);
-    escalate_unopened(&reg, now, db, home_repo, incident_sh, cfg);
-    let Some(stalled) = gather_stalled(&reg, now, cfg) else {
+    let Some(lc) = lc::client() else {
         log("watchtower: pr-stall-check skipped — spira-lc is unreachable");
         return;
     };
-    if stalled.is_empty() {
+    let reg = seams::registry(spira_home);
+    escalate_unopened(&reg, &lc, now, db, home_repo, incident_sh, cfg);
+    let Some(stalled) = gather_stalled(&reg, &lc, now, cfg) else {
+        log("watchtower: pr-stall-check skipped — spira-lc is unreachable");
         return;
-    }
+    };
     for s in stalled {
         let repo_path = match reg.root(&s.repo) {
             Some(p) if Path::new(&p).join(".git").exists() => p,
             _ => continue,
         };
         let facts = gh_pr_facts(cfg, &repo_path, &s.id);
-        let red = is_red(&facts.concls);
-        let aam_false = facts.allow_auto_merge == Some(false);
         if facts.allow_auto_merge.is_none() {
             log(&format!(
                 "watchtower: pr-stall-check: allow_auto_merge unknown for {} — read failed or field absent",
                 s.repo
             ));
         }
-        let conflicting = facts.mergeable == "CONFLICTING";
-        let age_mins = s.age_secs / 60;
+        handle(&s, &repo_path, &facts, &lc, cfg, &mut |f| {
+            incident::alarm(incident_sh, f);
+        }, db, home_repo);
+    }
+    log("watchtower: pr-stall-check complete");
+}
 
-        match decide(red, aam_false, conflicting) {
-            Action::EscalateRed => {
-                let body = format!(
-                    "PR stall: bead {} in repo {} has been waiting {} minutes with a failing check.\n\nAuto-merge cannot fire while checks are red, so arming it is a no-op. Fix or override the failing check on this pull request.\n",
-                    s.id, s.repo, age_mins
-                );
-                let f = Finding::new(
-                    db,
-                    home_repo,
-                    &format!("PR STALL: {} in {} has a failing check — auto-merge cannot fire", s.id, s.repo),
-                    &body,
-                )
-                .priority(1)
-                .reference(format!("incident:pr-stall-checks-red:{}:{}", s.repo, s.id))
-                .cause("pr-stall-checks-red");
-                incident::alarm(incident_sh, &f);
-                log(&format!(
-                    "watchtower: pr-stall-check: {} in {} has a failing check (age {}s) — escalated",
-                    s.id, s.repo, s.age_secs
-                ));
-            }
-            Action::EscalateAutoMergeOff => {
-                let body = format!(
-                    "PR stall: bead {} in repo {} has been waiting {} minutes.\n\nThe repository has allow_auto_merge=false. Auto-merge can never fire until it is enabled.\n\nEnable it: GitHub → repository Settings → General → Allow auto-merge.\n\nBead {} will remain stalled until this is enabled.\n",
-                    s.id, s.repo, age_mins, s.id
-                );
-                let f = Finding::new(
-                    db,
-                    home_repo,
-                    &format!("PR STALL: {} allow_auto_merge=false — enable it to unblock", s.repo),
-                    &body,
-                )
-                .priority(1)
-                .reference(format!("incident:pr-stall-auto-merge-off:{}", s.repo))
-                .cause("pr-stall-auto-merge-off");
-                incident::alarm(incident_sh, &f);
-                log(&format!(
-                    "watchtower: pr-stall-check: {} allow_auto_merge=false (bead {}, age {}s) — escalated",
-                    s.repo, s.id, s.age_secs
-                ));
-            }
-            Action::RequeueConflicting => {
-                let requeued = lc::requeue_pr_open(&s.id, &s.version);
-                log(&format!(
-                    "watchtower: pr-stall-check: {} in {} is CONFLICTING — {}",
-                    s.id,
-                    s.repo,
-                    if requeued { "requeued to trigger rebase" } else { "requeue refused or spira-lc unreachable" }
-                ));
-            }
-            Action::ArmAutoMerge => {
-                let ok = Command::new("timeout")
-                    .arg(format!("{}", cfg.gh_timeout.as_secs()))
-                    .arg(&cfg.gh_bin)
-                    .args(["pr", "merge", "--auto", "--squash", &format!("spira/{}", s.id)])
-                    .current_dir(&repo_path)
-                    .output()
-                    .map(|o| o.status.success())
-                    .unwrap_or(false);
-                if ok {
-                    log(&format!(
-                        "watchtower: pr-stall-check: armed auto-merge for {} in {}",
-                        s.id, s.repo
-                    ));
-                } else {
-                    log(&format!(
-                        "watchtower: pr-stall-check: could not arm auto-merge for {} in {} (age {}s)",
-                        s.id, s.repo, s.age_secs
-                    ));
-                }
+/// The red-checks escalation for `s`; one per bead, its ref scoped by repo and bead.
+fn red_finding(s: &Stalled, db: &str, home_repo: &str) -> Finding {
+    let body = format!(
+        "PR stall: bead {} in repo {} has been waiting {} minutes with a failing check.\n\nAuto-merge cannot fire while checks are red, so arming it is a no-op. Fix or override the failing check on this pull request.\n",
+        s.id, s.repo, s.age_secs / 60
+    );
+    Finding::new(db, home_repo, &format!("PR STALL: {} in {} has a failing check — auto-merge cannot fire", s.id, s.repo), &body)
+        .priority(1)
+        .reference(format!("incident:pr-stall-checks-red:{}:{}", s.repo, s.id))
+        .cause("pr-stall-checks-red")
+}
+
+/// The auto-merge-off escalation for `s`; one per repo, whichever bead found it.
+fn auto_merge_off_finding(s: &Stalled, db: &str, home_repo: &str) -> Finding {
+    let body = format!(
+        "PR stall: bead {} in repo {} has been waiting {} minutes.\n\nThe repository has allow_auto_merge=false. Auto-merge can never fire until it is enabled.\n\nEnable it: GitHub → repository Settings → General → Allow auto-merge.\n\nBead {} will remain stalled until this is enabled.\n",
+        s.id, s.repo, s.age_secs / 60, s.id
+    );
+    Finding::new(db, home_repo, &format!("PR STALL: {} allow_auto_merge=false — enable it to unblock", s.repo), &body)
+        .priority(1)
+        .reference(format!("incident:pr-stall-auto-merge-off:{}", s.repo))
+        .cause("pr-stall-auto-merge-off")
+}
+
+/// What the check does for one stalled bead given the repo's facts: escalate through `raise`,
+/// requeue through `lc`, or arm auto-merge through the configured `gh`.
+fn handle(s: &Stalled, repo_path: &str, facts: &PrFacts, lc: &LcClient, cfg: &Cfg, raise: &mut dyn FnMut(&Finding), db: &str, home_repo: &str) {
+    let red = is_red(&facts.concls);
+    let conflicting = facts.mergeable == "CONFLICTING";
+    match decide(red, facts.allow_auto_merge == Some(false), conflicting) {
+        Action::EscalateRed => {
+            raise(&red_finding(s, db, home_repo));
+            log(&format!("watchtower: pr-stall-check: {} in {} has a failing check (age {}s) — escalated", s.id, s.repo, s.age_secs));
+        }
+        Action::EscalateAutoMergeOff => {
+            raise(&auto_merge_off_finding(s, db, home_repo));
+            log(&format!("watchtower: pr-stall-check: {} allow_auto_merge=false (bead {}, age {}s) — escalated", s.repo, s.id, s.age_secs));
+        }
+        Action::RequeueConflicting => {
+            let requeued = lc::requeue_pr_open_on(lc, &s.id, &s.version);
+            log(&format!(
+                "watchtower: pr-stall-check: {} in {} is CONFLICTING — {}",
+                s.id,
+                s.repo,
+                if requeued { "requeued to trigger rebase" } else { "requeue refused or spira-lc unreachable" }
+            ));
+        }
+        Action::ArmAutoMerge => {
+            if arm_auto_merge(cfg, repo_path, &s.id) {
+                log(&format!("watchtower: pr-stall-check: armed auto-merge for {} in {}", s.id, s.repo));
+            } else {
+                log(&format!("watchtower: pr-stall-check: could not arm auto-merge for {} in {} (age {}s)", s.id, s.repo, s.age_secs));
             }
         }
     }
-    log("watchtower: pr-stall-check complete");
+}
+
+fn arm_auto_merge(cfg: &Cfg, repo_path: &str, bead_id: &str) -> bool {
+    Command::new("timeout")
+        .arg(format!("{}", cfg.gh_timeout.as_secs()))
+        .arg(&cfg.gh_bin)
+        .args(["pr", "merge", "--auto", "--squash", &format!("spira/{bead_id}")])
+        .current_dir(repo_path)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 #[cfg(test)]
@@ -315,26 +312,31 @@ mod tests {
         assert_eq!(got, vec![("sp-old".to_string(), "prrepo".to_string(), 3600)]);
     }
 
+    // covers: UC-ops-detection-remediation-28
     #[test]
     fn red_outranks_everything_else() {
         assert_eq!(decide(true, true, true), Action::EscalateRed);
     }
 
+    // covers: UC-ops-detection-remediation-28
     #[test]
     fn auto_merge_off_outranks_conflicting() {
         assert_eq!(decide(false, true, true), Action::EscalateAutoMergeOff);
     }
 
+    // covers: UC-ops-detection-remediation-28
     #[test]
     fn conflicting_requeues_when_neither_red_nor_auto_merge_off() {
         assert_eq!(decide(false, false, true), Action::RequeueConflicting);
     }
 
+    // covers: UC-ops-detection-remediation-28
     #[test]
     fn otherwise_arms_auto_merge() {
         assert_eq!(decide(false, false, false), Action::ArmAutoMerge);
     }
 
+    // covers: UC-ops-detection-remediation-28
     #[test]
     fn is_red_matches_exact_tokens_not_substrings() {
         assert!(is_red("FAILURE"));
@@ -345,5 +347,131 @@ mod tests {
         // A conclusion string that merely CONTAINS "FAILURE" as a substring of a longer
         // token must not match — tokens are compared whole.
         assert!(!is_red("NOTAFAILURE"));
+    }
+
+    use crate::lc::scripted::scripted_by;
+
+    fn stalled(id: &str) -> Stalled {
+        Stalled { id: id.into(), repo: "testrepo".into(), age_secs: 5400, version: "3".into() }
+    }
+
+    fn facts(mergeable: &str, concls: &str, allow_auto_merge: Option<bool>) -> PrFacts {
+        PrFacts { mergeable: mergeable.into(), concls: concls.into(), allow_auto_merge }
+    }
+
+    /// A `gh` that logs its argv and answers the two reads `gh_pr_facts` makes.
+    fn stub_gh(d: &std::path::Path, aam: &str, view: &str) -> Cfg {
+        let gh = d.join("gh");
+        let log = d.join("gh.log");
+        testkit::write_exe(
+            &gh,
+            &format!(
+                "#!/bin/sh\necho \"$*\" >> {}\ncase \"$*\" in\n  *'api repos/'*) printf '%s\\n' '{aam}' ;;\n  *'pr view'*) printf '{view}\\n' ;;\nesac\n",
+                log.display()
+            ),
+        );
+        Cfg { stall_secs: 3600, gh_bin: gh.to_str().unwrap().into(), gh_timeout: Duration::from_secs(5) }
+    }
+
+    fn gh_calls(d: &std::path::Path) -> String {
+        std::fs::read_to_string(d.join("gh.log")).unwrap_or_default()
+    }
+
+    fn acted(s: &Stalled, f: &PrFacts, lc: &LcClient, cfg: &Cfg, repo_path: &str) -> Vec<Finding> {
+        let mut raised = Vec::new();
+        handle(s, repo_path, f, lc, cfg, &mut |x| raised.push(x.clone()), "db", "spira");
+        raised
+    }
+
+    fn no_store() -> LcClient {
+        scripted_by(&[]).1
+    }
+
+    // covers: UC-ops-detection-remediation-27 UC-ops-detection-remediation-28
+    #[test]
+    fn a_stalled_pr_in_a_repo_with_auto_merge_off_files_one_stall_scoped_to_the_repo() {
+        let d = testkit::TempDir::new("wt-prs-aam-off");
+        let cfg = stub_gh(&d, "false", "");
+        let off = facts("MERGEABLE", "", Some(false));
+        let first = acted(&stalled("sp-testA"), &off, &no_store(), &cfg, d.to_str().unwrap());
+        let second = acted(&stalled("sp-testB"), &off, &no_store(), &cfg, d.to_str().unwrap());
+        assert_eq!(first.len(), 1);
+        assert_eq!(first[0].reference.as_deref(), Some("incident:pr-stall-auto-merge-off:testrepo"));
+        assert_eq!(first[0].reference, second[0].reference, "two stalled beads of one repo are one incident");
+        assert_eq!(first[0].cause.as_deref(), Some("pr-stall-auto-merge-off"));
+        assert!(first[0].title.contains("PR STALL") && first[0].title.contains("testrepo"));
+        assert!(!gh_calls(&d).contains("pr merge"), "a repo that cannot auto-merge is not asked to");
+    }
+
+    // covers: UC-ops-detection-remediation-27 UC-ops-detection-remediation-28
+    #[test]
+    fn a_failing_check_is_filed_per_bead_and_arming_is_not_attempted() {
+        let d = testkit::TempDir::new("wt-prs-red");
+        let cfg = stub_gh(&d, "true", "");
+        let red = facts("CONFLICTING", "SUCCESS,FAILURE", Some(false));
+        let raised = acted(&stalled("sp-testR"), &red, &no_store(), &cfg, d.to_str().unwrap());
+        assert_eq!(raised.len(), 1);
+        assert_eq!(raised[0].reference.as_deref(), Some("incident:pr-stall-checks-red:testrepo:sp-testR"));
+        assert_eq!(raised[0].cause.as_deref(), Some("pr-stall-checks-red"));
+        assert!(gh_calls(&d).is_empty());
+    }
+
+    // covers: UC-ops-detection-remediation-28
+    #[test]
+    fn a_stalled_pr_in_a_repo_with_auto_merge_on_is_armed_and_nothing_is_filed() {
+        let d = testkit::TempDir::new("wt-prs-arm");
+        let cfg = stub_gh(&d, "true", "");
+        let raised = acted(&stalled("sp-test2"), &facts("MERGEABLE", "SUCCESS", Some(true)), &no_store(), &cfg, d.to_str().unwrap());
+        assert!(raised.is_empty());
+        assert_eq!(gh_calls(&d).trim(), "pr merge --auto --squash spira/sp-test2");
+    }
+
+    // covers: UC-ops-detection-remediation-28
+    #[test]
+    fn a_conflicting_pr_is_requeued_as_the_harness_with_its_version_and_not_armed_or_filed() {
+        let d = testkit::TempDir::new("wt-prs-conflict");
+        let cfg = stub_gh(&d, "true", "");
+        let (t, lc) = scripted_by(&[("show sp-testC", 0, r#"{"bead":{"tip":"abc1234"}}"#), ("event delivery", 0, "")]);
+        let raised = acted(&stalled("sp-testC"), &facts("CONFLICTING", "", Some(true)), &lc, &cfg, d.to_str().unwrap());
+        assert!(raised.is_empty());
+        assert!(gh_calls(&d).is_empty(), "arming a conflicting PR cannot help");
+        let seen = t.seen.lock().unwrap();
+        let event = seen.iter().find(|a| a[0] == "event").expect("the delivery event");
+        assert_eq!(event[..8], ["event", "delivery", "sp-testC", "--expect", "PR_OPEN", "--version", "3", "--actor"]);
+        assert_eq!(event[8], "harness");
+        assert!(event[10].contains("Requeued") && event[10].contains("abc1234"), "{}", event[10]);
+    }
+
+    // covers: UC-ops-detection-remediation-28
+    #[test]
+    fn a_read_gh_could_not_make_is_unknown_and_is_never_taken_for_auto_merge_off() {
+        let d = testkit::TempDir::new("wt-prs-unknown");
+        let mut cfg = stub_gh(&d, "not-a-bool", "MERGEABLE\\tSUCCESS");
+        let read = gh_pr_facts(&cfg, d.to_str().unwrap(), "sp-x");
+        assert_eq!((read.mergeable.as_str(), read.concls.as_str(), read.allow_auto_merge), ("MERGEABLE", "SUCCESS", None));
+        assert_eq!(decide(is_red(&read.concls), read.allow_auto_merge == Some(false), false), Action::ArmAutoMerge);
+        cfg.gh_bin = "/does/not/exist/gh".into();
+        let none = gh_pr_facts(&cfg, d.to_str().unwrap(), "sp-x");
+        assert_eq!((none.mergeable.as_str(), none.allow_auto_merge), ("", None));
+    }
+
+    // covers: UC-ops-detection-remediation-27 UC-ops-detection-remediation-28
+    #[test]
+    fn only_stale_pr_mode_deliveries_whose_branch_some_repo_carries_are_stalled() {
+        let row = |id: &str, mode: &str, at: i64| lc::DeliveryRow { id: id.into(), mode: mode.into(), entered_at: Some(at), version: "3".into() };
+        let rows = vec![row("sp-stale", "pr", 100), row("sp-fresh", "pr", 3500), row("sp-queue", "queue", 100), row("sp-nowhere", "pr", 100), lc::DeliveryRow { entered_at: None, ..row("sp-undated", "pr", 0) }];
+        let repo_of = |id: &str| (id != "sp-nowhere").then(|| "testrepo".to_string());
+        let got = stalled_in(rows, &repo_of, 3700, 3600);
+        assert_eq!(got.iter().map(|s| (s.id.as_str(), s.repo.as_str(), s.age_secs)).collect::<Vec<_>>(), vec![("sp-stale", "testrepo", 3600)]);
+    }
+
+    // covers: UC-ops-detection-remediation-28
+    #[test]
+    fn the_stall_scan_asks_the_store_for_pr_open_deliveries_only() {
+        let (t, lc) = scripted_by(&[("list", 0, r#"[{"bead_id":"sp-a","mode":"pr","entered_at":5,"version":"3"}]"#)]);
+        let rows = lc::pr_open_on(&lc).expect("rows");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(t.seen.lock().unwrap()[0], ["list", "--delivery", "--state", "PR_OPEN"]);
+        assert!(lc::pr_open_on(&scripted_by(&[("list", 2, "cannot tell")]).1).is_none(), "an unreachable store is not an empty one");
     }
 }

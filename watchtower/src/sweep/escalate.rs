@@ -413,7 +413,6 @@ mod tests {
     use super::*;
     use super::super::collect::SweepData;
     use crate::sweep::cfg::Cfg;
-    use std::path::PathBuf;
 
     /// The raise `run` gives the escalations: `incident alarm` on the cfg's incident.sh.
     fn alarm(cfg: &Cfg) -> impl FnMut(&Finding) -> incident::AlarmOutcome + '_ {
@@ -442,50 +441,10 @@ mod tests {
     }
 
     fn cfg_with(d: &std::path::Path, incident_sh: String) -> Cfg {
-        Cfg {
-            spira_run: d.to_path_buf(),
-            lib_sh_dir: String::new(),
-            db: "db".into(),
-            home_repo: "spira".into(),
-            ask_label: "needs-operator".into(), // literal-ok: test fixture
-            snap_stale_s: 60,
-            gate_window_s: 21600,
-            gate_silence_window_s: 3600,
-            gate_deadline_s: 300,
-            gate_log: None,
-            yield_window_s: 86400,
-            yield_sh: None,
-            disk_warn_pct: 90,
-            mem_warn_mb: 1500,
-            meminfo_path: PathBuf::from("/proc/meminfo"),
-            failed_units_warn_mins: 15,
-            cpu_throttle_units: Vec::new(),
-            cpu_throttle_warn_pct: 5,
-            cpu_throttle_min_periods: 100,
-            cgroup_root: "/sys/fs/cgroup".into(),
-            unsent_warn_h: 24,
-            closed_stranded_warn_h: 48,
-            drain_warn_mins: 15,
-            idle_while_ready_n: 5,
-            systemctl: "systemctl".into(),
-            units: std::sync::Arc::new(runtime::units::ScriptedUnits::new(std::sync::Arc::new(runtime::ports::VirtualClock::new(0)))),
-            prompt_file: None,
-            lapsed_dir: None,
-            lapsed_marker: None,
-            failed_units_state: Some(d.join("failed-units.state")),
-            throttle_stamp: None,
-            queue_throttle_override: String::new(),
-            incident_sh,
-            lc: spira_store::lc_call::LcClient::socket("/does/not/exist/lc.sock"),
-            suites_sh: None,
-            cockpit_db: None,
-            moot_timeout_s: 30,
-            resolve_bin: "resolve".into(),
-            branch_guard_sh: None,
-            lc_bin: "/does/not/exist/spira-lc".into(),
-        }
+        Cfg::fixture(d, incident_sh)
     }
 
+    // covers: UC-ops-detection-remediation-27
     #[test]
     fn a_question_mark_never_fires_the_unsent_escalation() {
         let d = testkit::TempDir::new("wt-escalate-unsent-unknown");
@@ -528,6 +487,7 @@ mod tests {
         d
     }
 
+    // covers: UC-ops-detection-remediation-27
     #[test]
     fn drain_escalation_is_silent_when_not_draining_or_the_age_is_unreadable() {
         let d = testkit::TempDir::new("wt-esc-drain-quiet");
@@ -538,7 +498,7 @@ mod tests {
         assert!(captured(&d).is_empty());
     }
 
-    // covers: UC-ops-detection-remediation-07
+    // covers: UC-ops-detection-remediation-07 UC-ops-detection-remediation-27
     #[test]
     fn the_draining_escalation_is_filed_fenrir_exempt() {
         let d = testkit::TempDir::new("wt-esc-drain-exempt");
@@ -576,6 +536,7 @@ mod tests {
         assert!(file_one("wt-esc-blq", batched_too_long, &[("SP_BATCHED_TOO_LONG", "?")]).is_empty());
     }
 
+    // covers: UC-ops-detection-remediation-27
     #[test]
     fn unadopted_refs_is_silent_at_zero_and_at_a_question_mark() {
         assert!(file_one("wt-esc-un0", unadopted_refs, &[("SP_UNADOPTED", "0")]).is_empty());
@@ -600,6 +561,7 @@ mod tests {
         assert!(raised[0].body.contains("the deadline is 777s"), "{}", raised[0].body);
     }
 
+    // covers: UC-ops-detection-remediation-27
     #[test]
     fn an_unread_oldest_unsent_is_silent_even_at_a_zero_threshold() {
         let d = testkit::TempDir::new("wt-esc-unsent0");
@@ -609,5 +571,63 @@ mod tests {
         data.env.set("SP_UNSENT_OLDEST_H", "?");
         hel_oldest_unsent(&data, &cfg, &mut alarm(&cfg));
         assert!(captured(&d).is_empty());
+    }
+
+    fn raised(tag: &str, f: fn(&SweepData, &Cfg, Raise), mutate: &dyn Fn(&mut SweepData, &mut Cfg)) -> Vec<Finding> {
+        let d = testkit::TempDir::new(tag);
+        let mut cfg = cfg_with(&d, fake_incident(&d));
+        let mut data = SweepData::fixture_nominal(1_700_000_000);
+        mutate(&mut data, &mut cfg);
+        let mut out = Vec::new();
+        f(&data, &cfg, &mut |x| {
+            out.push(x.clone());
+            incident::AlarmOutcome::Noted
+        });
+        out
+    }
+
+    // covers: UC-ops-detection-remediation-27
+    #[test]
+    fn the_hel_escalation_files_at_the_configured_threshold_under_one_stable_ref() {
+        let at = |h: &str, warn: i64| raised("wt-esc-hel", hel_oldest_unsent, &|d, c| {
+            d.env.set("SP_UNSENT_OLDEST_H", h);
+            c.unsent_warn_h = warn;
+        });
+        assert!(at("23", 24).is_empty(), "below the threshold");
+        let filed = at("24", 24);
+        assert_eq!(filed.len(), 1, "at the threshold");
+        assert_eq!(filed[0].reference.as_deref(), Some("incident:hel-oldest-unsent"));
+        assert_eq!(at("24", 24)[0].reference, filed[0].reference, "the same ref on every pass");
+        assert_eq!(at("5", 4).len(), 1, "the threshold is the configured one, not a literal");
+        assert!(at("0", 24).is_empty() && at("?", 0).is_empty());
+    }
+
+    // covers: UC-ops-detection-remediation-27
+    #[test]
+    fn the_dedup_escalation_files_on_any_duplicate_ref_and_never_on_zero_or_a_question_mark() {
+        let with = |refs: &str| raised("wt-esc-dedup", dedup_meter, &|d, _| {
+            d.env.set("SP_DUP_REFS", refs);
+            d.env.set("SP_DUP_BEADS", "5");
+            d.env.set("SP_DUP_ROW0", "incident:x x3");
+        });
+        assert!(with("0").is_empty() && with("?").is_empty());
+        let filed = with("3");
+        assert_eq!(filed.len(), 1);
+        assert_eq!(filed[0].reference.as_deref(), Some("incident:dedup-meter-nonzero"));
+        assert!(filed[0].title.contains("3 refs, 5 surplus") && filed[0].body.contains("incident:x x3"), "{}", filed[0].body);
+    }
+
+    // covers: UC-ops-detection-remediation-27
+    #[test]
+    fn the_drain_escalation_files_at_the_configured_threshold_and_not_below_it() {
+        let at = |mins: i64, warn: i64| raised("wt-esc-drain-at", drain_escalation, &|d, c| {
+            *d = drain(Some(mins));
+            c.drain_warn_mins = warn;
+        });
+        assert!(at(14, 15).is_empty());
+        let filed = at(15, 15);
+        assert_eq!(filed.len(), 1);
+        assert!(filed[0].title.starts_with("DRAINING"));
+        assert_eq!(at(3, 2).len(), 1, "the threshold is the configured one");
     }
 }

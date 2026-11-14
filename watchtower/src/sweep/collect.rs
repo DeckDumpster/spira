@@ -219,12 +219,7 @@ pub fn collect(now: i64, cfg: &Cfg) -> SweepData {
     };
 
     // LANDING FIELD ------------------------------------------------------------------
-    let last_landed = lc::last_landed();
-    let since_land_disp = last_landed
-        .as_ref()
-        .map(|(_, at)| ((now - at) / 60).to_string())
-        .unwrap_or_else(|| "?".into());
-    let last_land_id = last_landed.map(|(id, _)| id);
+    let (since_land_disp, last_land_id) = landing_field(&cfg.lc, now);
 
     // GATE WAIT ------------------------------------------------------------------------
     let gate_log_text = std::fs::read_to_string(cfg.gate_log()).unwrap_or_default();
@@ -399,6 +394,15 @@ pub fn collect(now: i64, cfg: &Cfg) -> SweepData {
         idle_while_ready,
         release_status,
         slow_probes: crate::deadline::slow_probes(),
+    }
+}
+
+/// Minutes since the newest `LANDED` record and the bead it names; `?` and no bead when the
+/// store cannot say or holds no readable landing — never `0`, which would read as "just landed".
+fn landing_field(lc: &spira_store::lc_call::LcClient, now: i64) -> (String, Option<String>) {
+    match lc::last_landed_on(lc) {
+        Some((id, at)) => (((now - at) / 60).to_string(), Some(id)),
+        None => ("?".to_string(), None),
     }
 }
 
@@ -695,5 +699,43 @@ mod tests {
         let l = ledger(&d, &[IDLE; 5]);
         assert!(idle_while_ready_hits(&l, &live_probe("builder", 1, 1), 5, &[]).is_empty());
         assert_eq!(idle_while_ready_hits(&l, &live_probe("builder", 1, 0), 5, &[]).len(), 1);
+    }
+
+    use crate::lc::scripted::scripted_by;
+
+    // covers: UC-ops-detection-remediation-26
+    #[test]
+    fn the_landing_field_is_the_newest_landed_record_never_a_bead_that_has_not_landed() {
+        let (t, lc) = scripted_by(&[(
+            "list --state LANDED",
+            0,
+            r#"[{"bead_id":"sp-old","since":1000},{"bead_id":"sp-land","since":9400},{"bead_id":"sp-undated"},{"bead_id":"sp-badtime","since":"soon"}]"#,
+        )]);
+        assert_eq!(landing_field(&lc, 10_000), ("10".to_string(), Some("sp-land".to_string())));
+        assert_eq!(t.seen.lock().unwrap()[0], ["list", "--state", "LANDED"], "only LANDED rows are asked for");
+    }
+
+    // covers: UC-ops-detection-remediation-26
+    #[test]
+    fn a_landing_that_cannot_be_read_is_a_question_mark_not_zero() {
+        let none = |lc| landing_field(&lc, 10_000);
+        assert_eq!(none(scripted_by(&[("list", 0, "[]")]).1), ("?".to_string(), None), "no landing recorded");
+        assert_eq!(none(scripted_by(&[("list", 0, r#"[{"bead_id":"sp-a"}]"#)]).1), ("?".to_string(), None), "a record with no time is not credited");
+        assert_eq!(none(scripted_by(&[("list", 0, "not json")]).1), ("?".to_string(), None), "a malformed answer");
+        assert_eq!(none(scripted_by(&[("list", 2, "cannot tell")]).1), ("?".to_string(), None), "an unreachable store");
+        assert_eq!(landing_field(&scripted_by(&[("list", 0, r#"[{"bead_id":"sp-now","since":10000}]"#)]).1, 10_000).0, "0", "0 only for a true zero");
+    }
+
+    // covers: UC-ops-detection-remediation-27
+    #[test]
+    fn the_sweep_names_the_suites_and_asks_only_for_their_status() {
+        let d = testkit::TempDir::new("wt-collect-suites");
+        let sh = d.join("suites.sh");
+        let args = d.join("args");
+        std::fs::write(&sh, format!("echo \"$*\" >> {}\necho '  suites in the tree   9'\n", args.display())).unwrap();
+        let mut cfg = Cfg::fixture(d.path(), "inc".into());
+        cfg.suites_sh = Some(sh.to_str().unwrap().into());
+        assert!(suites_block(&cfg).contains("suites in the tree"));
+        assert_eq!(std::fs::read_to_string(&args).unwrap().trim(), "status", "the sweep reads the figures; it runs no suite");
     }
 }
