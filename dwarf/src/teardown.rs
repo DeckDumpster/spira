@@ -461,17 +461,23 @@ impl Run<'_> {
                 if self.has_own_commit() {
                     if let Some(prev) = self.unchanged_tip_red() {
                         let tip = self.head_tip();
-                        let red = crate::fast_tier::Red { harness: false, text: format!("resubmitted tip {tip} unchanged since its fast-tier red; change the tip before submitting. That red:\n{prev}") };
+                        let red = crate::fast_tier::Red { harness: false, killed_by: None, text: format!("resubmitted tip {tip} unchanged since its fast-tier red; change the tip before submitting. That red:\n{prev}") };
                         self.refuse_handoff(&red);
                         return self.finish(rc, "open");
                     }
                     if let Some(red) = self.fast_tier_red() {
-                        if let Some((prereq, tip)) = self.conflicting_blocker(&red) {
-                            self.wait_for_blocker(&prereq, &tip, &red);
+                        if crate::fast_tier::certify_anyway(&red) {
+                            let first = red.text.lines().next().unwrap_or_default();
+                            self.log(&format!("{f}: {id} fast tier cut short — {first}; dwarf signalled: {:?} — handed to certification, no attempt charged", self.stop.signalled()));
+                            self.note(&format!("Fast tier killed before it judged the branch ({first}); certification judges it."));
+                        } else {
+                            if let Some((prereq, tip)) = self.conflicting_blocker(&red) {
+                                self.wait_for_blocker(&prereq, &tip, &red);
+                                return self.finish(rc, "open");
+                            }
+                            self.refuse_handoff(&red);
                             return self.finish(rc, "open");
                         }
-                        self.refuse_handoff(&red);
-                        return self.finish(rc, "open");
                     }
                 }
                 self.note("Submitted: work committed on branch and marked submitted; the landing pass closes this bead when it lands, citing the merge commit. No attempt charged.");

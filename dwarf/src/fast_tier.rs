@@ -35,7 +35,29 @@ pub const LINT_PROBE_FAILED: i32 = 4;
 #[derive(Debug, PartialEq)]
 pub struct Red {
     pub harness: bool,
+    /// The signal that killed the step before it judged the branch.
+    pub killed_by: Option<i32>,
     pub text: String,
+}
+
+/// The signal behind a `128+sig` exit, for the signals a stopped unit delivers.
+fn killing_signal(rc: i32) -> Option<i32> {
+    (129..=159).contains(&rc).then(|| rc - 128)
+}
+
+fn signal_name(sig: i32) -> String {
+    match sig {
+        1 => "SIGHUP".into(),
+        2 => "SIGINT".into(),
+        9 => "SIGKILL".into(),
+        15 => "SIGTERM".into(),
+        n => format!("signal {n}"),
+    }
+}
+
+/// A step killed by a signal never judged the branch: certification builds the tree in full.
+pub fn certify_anyway(red: &Red) -> bool {
+    red.killed_by.is_some()
 }
 
 /// Whether the branch changes what spira-lint compiles in (the key registry), so the installed
@@ -55,17 +77,20 @@ pub fn red(git: &dyn Git, exec: &dyn Exec, repo: &Path, work: &Path, branch: &st
     let tip = if head.success() && !head.stdout.trim().is_empty() { head.stdout.trim().to_string() } else { branch.to_string() };
     let mt = git.git(repo, &["-c", &format!("attr.tree={base_fq}"), "merge-tree", "--write-tree", base_fq, &tip]);
     if mt.code == 1 {
-        return Some(Red { harness: false, text: format!("{branch} does not rebase onto {base_fq} cleanly:\n{}", mt.text()) });
+        return Some(Red { harness: false, killed_by: None, text: format!("{branch} does not rebase onto {base_fq} cleanly:\n{}", mt.text()) });
     }
     if !work.join("spira/build-fence.sh").is_file() {
-        return strict.then(|| Red { harness: false, text: format!("{} carries no spira/build-fence.sh — there is no fast tier to run", work.display()) });
+        return strict.then(|| Red { harness: false, killed_by: None, text: format!("{} carries no spira/build-fence.sh — there is no fast tier to run", work.display()) });
     }
     for (prog, args) in steps(base_fq, changes_compiled_registry(git, work, base_fq)) {
         let o = exec.exec(prog, &args, None, Some(work));
         if o.code != 0 && (o.code != 127 || strict) {
             let name = if args.iter().any(|a| a == "spira/build-fence.sh") { "spira/build-fence.sh" } else { "spira-lint" };
+            if let Some(sig) = killing_signal(o.code) {
+                return Some(Red { harness: true, killed_by: Some(sig), text: format!("{name} killed by {} (rc={}) before it judged the branch:\n{}{}", signal_name(sig), o.code, o.stdout, o.stderr) });
+            }
             let harness = name == "spira-lint" && o.code == LINT_PROBE_FAILED;
-            return Some(Red { harness, text: format!("{name} failed (rc={}):\n{}{}", o.code, o.stdout, o.stderr) });
+            return Some(Red { harness, killed_by: None, text: format!("{name} failed (rc={}):\n{}{}", o.code, o.stdout, o.stderr) });
         }
     }
     None
@@ -187,6 +212,45 @@ mod tests {
             self.1.lock().unwrap().push(args.to_vec());
             Out { code: self.0, stdout: String::new(), stderr: "boom".into() }
         }
+    }
+
+    struct Steps(i32, i32, &'static str);
+    impl Exec for Steps {
+        fn exec(&self, _: &str, args: &[String], _: Option<Vec<u8>>, _: Option<&Path>) -> Out {
+            if args.iter().any(|a| a == "spira/build-fence.sh") {
+                Out { code: self.1, stdout: String::new(), stderr: self.2.into() }
+            } else {
+                Out { code: self.0, stdout: String::new(), stderr: String::new() }
+            }
+        }
+    }
+
+    fn fence_red(lint: i32, fence: i32, stderr: &'static str) -> Red {
+        let w = tree("steps", true);
+        red(&G(0), &Steps(lint, fence, stderr), &w.join("."), &w.join("."), "b", "base", false).unwrap()
+    }
+
+    #[test]
+    fn a_fence_killed_by_sigterm_with_no_output_is_a_harness_red_naming_the_signal() {
+        let r = fence_red(0, 143, "build-fence: cargo check -p dwarf\n");
+        assert!(r.harness && r.killed_by == Some(15) && certify_anyway(&r), "{r:?}");
+        assert!(r.text.starts_with("spira/build-fence.sh killed by SIGTERM (rc=143)"), "{r:?}");
+    }
+
+    #[test]
+    fn a_fence_compile_failure_is_a_branch_red() {
+        for rc in [1, 101] {
+            let r = fence_red(0, rc, "error[E0432]: unresolved import\n  --> src/a.rs:3:5\n");
+            assert!(!r.harness && r.killed_by.is_none() && !certify_anyway(&r), "{r:?}");
+            assert!(names_compile_error(&digest(&r.text)));
+        }
+    }
+
+    #[test]
+    fn a_lint_killed_by_a_signal_is_harness_too() {
+        let r = fence_red(137, 0, "");
+        assert_eq!(r.killed_by, Some(9));
+        assert!(r.harness && r.text.contains("SIGKILL"), "{r:?}");
     }
 
     fn tree(name: &str, with_fence: bool) -> testkit::TempDir {
