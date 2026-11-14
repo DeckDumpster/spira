@@ -1624,6 +1624,32 @@ considered <path>:<line>: <why>` to stderr.
 
 **Refuses** (exit 3): no `.rs`/`.sh` file in scope.
 
+## Rule `bdq-read`
+
+**Intent.** Bead content is read through the door (`spira-lc content <verb>`), which owns the
+deadline, credentials and retry of a read. A file that forks `bdq` for a read makes a second
+program answer the same question. The rule refuses a new such read and counts the old ones.
+
+**Contract.** A hit is a shell command (after `exec`, `command`, `timeout DUR`) whose head is
+`bdq` or `bdjson` and whose next word is a read verb (`show list search state memories comments
+children ready blocked history sql count query stats status graph find export`, or `dep list`,
+`label list`, `kv get`, `config get`); or, in a Rust crate whose comment-stripped source holds a
+`"bdq"` literal, an argv literal (`&[…]`, `vec![…]`) whose first element is such a verb, unless
+it is an argument of a lifecycle-client call (`.call(`, `.answer(`, `.call_stdin(`, `lc_run(`,
+`lc_full(`, `run_lc(`, `lc_list(`). Comments never count. Writes are not counted. Exempt by path,
+each with its reason in `bdq_read.rs`: `spira-lc/`, the bdq program and library, `spira/bdq.sh`,
+`spira-lint/`, `spira/test-*`, and any `tests/` path. `BDQ_READ_CONSIDERED="<why>"` on the line
+passes it and logs `bdq-read: considered <path>:<line>: <why>`.
+
+**Not covered.** An argv that leads with a flag, a bare `[..]` array without `&`/`vec!`, and `.args([..])` forms are not seen; the rule counts the three literal forms above.
+
+**Allow list.** `spira-lint/bdq-read-allow`, lines `<count> <path>`, shrink-only, parsed as
+`call-deadline`'s is. More hits than the count (or a file not listed) is refused with
+`(N allowed, M found)`; fewer is a stale entry to lower or remove. Regenerate with
+`spira-lint --only bdq-read --emit-allow`.
+
+**Refuses** (exit 3): no `.rs`/`.sh` file in scope.
+
 ## Rule `two-plane`
 
 **Intent.** bd is the planning plane: a bead's title, body, labels, priority, type, comments,
