@@ -107,7 +107,7 @@ ci_secs are from main-push run 35947142904. "Level now" is the mapper's classifi
 | 02 no-evidence downgrade | **none** | — | GAP (§6) |
 | 03 repo-map unreadable/unknown | **none** at gate level | — | GAP |
 | 04 no-diff / no-base | `test-gate-preflight.sh::unresolvable branch`, `::unresolvable base`, `::valid branch passes` | T2, 3 s | KEEP, as the host file for the merged preflight suite |
-| 05 universal layer | `test-gate-universal.sh` (6 cases, all through a real `gate.sh` run); `test-skew-foreign.sh::init failure exits 3` (skew side only, instance-lifecycle area) | T2 | DONE (sp-9ael3) |
+| 05 universal layer | `test-gate-universal.sh` (6 cases, all through a real `gate.sh` run); `skew` unit test `init_guard_reports_could_not_check_when_config_cannot_resolve` (skew side only, instance-lifecycle area) | T2 | DONE (sp-9ael3) |
 | 06 syntax-only PASS | `test-gate-preflight.sh::an empty gate column exits PASS` | T2, folded in | DONE (sp-ztxbr) |
 | 07 cmd-missing-file | `test-gate-preflight.sh::CASE 3/4` (was `test-gate-missing-cmd.sh::SEEN RED*`/`::SEEN GREEN*`) | T1, folded in | DONE (sp-ajxg3): merged into `test-gate-preflight.sh`, on the shared `gate-fixture.sh` builder; the SPIRA_HOME vs SPIRA_CONF env drift is resolved by always setting `SPIRA_CONF` to a nonexistent path |
 | 08 covers: selection | `test-gate-touched.sh::A1-A5`, `::B1-B2`, `::C1-C3`; `test-select.sh` (test-infra area, 19 s) | T1/T2, 1 s | DONE (sp-ffy9w): the 5 `sel()` calls in Part A collapsed into 1. |

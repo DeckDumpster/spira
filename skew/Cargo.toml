@@ -31,5 +31,8 @@ mail = { path = "../mail" }
 tsd = { path = "../tsd" }
 libc = "0.2"
 
+[dev-dependencies]
+testkit = { path = "../testkit" }
+
 [profile.release]
 opt-level = "z"

@@ -36,8 +36,8 @@ fn run_main() -> ExitCode {
     // failing on a locked database — must be "could not check" (exit 3), never read as a
     // real verdict from whichever subcommand happens to run next on empty data. Checked
     // once, before dispatch, exactly where skew.sh's own trap fired: before its `case`.
-    if !skew::real::config_resolves() {
-        return ExitCode::from(3);
+    if let Some(rc) = skew::init_verdict(skew::real::config_resolves()) {
+        return ExitCode::from(rc as u8);
     }
 
     let w = Real::new(home);
