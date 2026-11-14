@@ -414,6 +414,8 @@ pub enum Trigger {
     CertifyHeld,
     /// The rounds below have ended: the held round lands.
     LowerEnded,
+    /// A preempt ejected the round's last member: the round ended in the store and nothing is left to attribute (not in the contract's table).
+    PreemptEmptied,
 }
 
 pub static TABLE: &[(State, Trigger, State)] = &[
@@ -460,6 +462,9 @@ pub static TABLE: &[(State, Trigger, State)] = &[
     (State::Attributing, Trigger::LegRestarted, State::Attributing),
     (State::Certifying, Trigger::LegRestarted, State::Certifying),
     (State::Corpus, Trigger::LegLost, State::Done),
+    (State::Corpus, Trigger::PreemptEmptied, State::Done),
+    (State::Attributing, Trigger::PreemptEmptied, State::Done),
+    (State::Certifying, Trigger::PreemptEmptied, State::Done),
     (State::Attributing, Trigger::LegLost, State::Done),
     (State::Certifying, Trigger::LegLost, State::Done),
     (State::Certifying, Trigger::CertifyHeld, State::Certified),
@@ -1212,6 +1217,17 @@ impl Machine<'_> {
         self.forget_round();
     }
 
+    /// A round whose last member a preempt ejected is closed in the store: it ends Quiet, with nothing to abandon or attribute.
+    fn end_emptied_round(&mut self, why: &str) -> bool {
+        if !self.rc.members.is_empty() || !matches!(self.rc.state, State::Corpus | State::Attributing | State::Certifying) {
+            return false;
+        }
+        eprintln!("{NAME} {}: round {:?} ended: a preempt ejected its last member ({why})", self.repo, self.rc.batch);
+        self.go(Trigger::PreemptEmptied);
+        self.finish(pace::Outcome::Quiet, "");
+        true
+    }
+
     /// The round is over: what the repo shares stays, the round and the skip reason go.
     fn forget_round(&mut self) {
         let rc = std::mem::take(&mut self.rc);
@@ -1624,6 +1640,9 @@ impl Machine<'_> {
             self.rc.certify_head.clear();
         }
         let ok = green(exit);
+        if !ok && self.rc.members.is_empty() && self.end_emptied_round("its leg ended red with no member left") {
+            return;
+        }
         match (self.rc.state, ok) {
             (State::Corpus, true) => {
                 self.go(Trigger::LegGreen);
@@ -1815,6 +1834,7 @@ impl Machine<'_> {
             (State::Corpus | State::Attributing | State::Certifying, PREEMPT) if ok => {
                 self.rc.members.retain(|(id, _)| !leg.bead.split(',').any(|b| b == id));
                 self.rc.round_key = Some(core::round_key(&self.rc.members));
+                self.end_emptied_round(&leg.why);
             }
             (State::Corpus | State::Attributing | State::Certifying, PREEMPT) if !ok && !body.contains(queue::ops::round::PREEMPT_ACTED) => {
                 let ids: Vec<&str> = leg.bead.split(',').collect();
