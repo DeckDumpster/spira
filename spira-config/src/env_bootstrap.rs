@@ -370,10 +370,34 @@ mod tests {
         }
     }
 
+    // covers: UC-config-store-preflight-09
     #[test]
     fn schema_verdict_mismatch_names_cause_and_remedy() {
         let v = schema_verdict(1, "database is at v99\nbinary knows up to v53\n", "/x/bd", false, "/etc/spira.conf");
         assert!(v.messages.iter().any(|m| m.contains("/x/bd") && m.contains("v53")), "{v:?}");
         assert!(v.messages.iter().any(|m| m.contains("rebuild bd at v99") && m.contains("/etc/spira.conf")), "{v:?}");
+    }
+
+    // covers: UC-config-store-preflight-09
+    #[test]
+    fn an_unrunnable_bd_refuses_naming_the_binary_and_a_doctor_run_tolerates_it() {
+        let out = "spira: could not run /x/bd: no such file";
+        let v = schema_verdict(1, out, "/x/bd", false, "spira.conf");
+        assert!(v.refuse && !v.ok, "{v:?}");
+        assert!(v.messages.iter().any(|m| m.contains("bd is /x/bd")), "{v:?}");
+        let d = schema_verdict(1, out, "/x/bd", true, "spira.conf");
+        assert!(!d.refuse && !d.ok, "doctor reports and carries on: {d:?}");
+    }
+
+    // covers: UC-config-store-preflight-10
+    #[test]
+    fn a_locked_store_is_a_configuration_error_naming_the_remedy_never_a_pass() {
+        let locked = "Error: failed to open database: the database is locked by another dolt process\n";
+        let v = schema_verdict(1, locked, "/x/bd", false, "spira.conf");
+        assert!(v.refuse && !v.ok, "a lock must not be stamped as a pass: {v:?}");
+        let said = v.messages.join("\n");
+        assert!(said.contains("embedded") && said.contains("doctor"), "{said}");
+        let d = schema_verdict(1, locked, "/x/bd", true, "spira.conf");
+        assert!(!d.ok, "doctor still gets no pass, it only keeps going: {d:?}");
     }
 }

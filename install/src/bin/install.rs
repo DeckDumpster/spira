@@ -1591,24 +1591,35 @@ fn clean_partial_init(db: &str, dbname: &str, port: u16) {
     }
 }
 
-fn wait_tcp(port: u16, max_secs: u64) -> bool {
-    let start = std::time::Instant::now();
-    loop {
-        if tcp_up(port) {
-            return true;
+struct HostDeps;
+
+impl install::orchestrate::Deps for HostDeps {
+    fn tool(&self, name: &str, args: &[&str], env: &[(&str, &str)]) -> Result<String, String> {
+        let o = spira_config::bounded::bounded(name).args(args).envs(env.iter().copied()).stdin(Stdio::null()).output().map_err(|e| e.to_string())?;
+        let text = format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
+        if o.status.success() {
+            Ok(text)
+        } else {
+            Err(text)
         }
-        if start.elapsed().as_secs() >= max_secs {
-            return false;
-        }
-        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+    fn tcp_up(&self, port: u16) -> bool {
+        tcp_up(port)
+    }
+    fn now_secs(&self) -> u64 {
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+    }
+    fn sleep_secs(&self, n: u64) {
+        std::thread::sleep(std::time::Duration::from_secs(n));
     }
 }
 
+fn wait_tcp(port: u16, max_secs: u64) -> bool {
+    install::orchestrate::wait_for_tcp(&HostDeps, port, max_secs)
+}
+
 fn wait_tcp_down(port: u16, max_secs: u64) {
-    let start = std::time::Instant::now();
-    while tcp_up(port) && start.elapsed().as_secs() < max_secs {
-        std::thread::sleep(std::time::Duration::from_secs(1));
-    }
+    install::orchestrate::wait_for_tcp_closed(&HostDeps, port, max_secs);
 }
 
 fn wait_dolt_query(port: u16, max_secs: u64) -> bool {

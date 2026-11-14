@@ -449,4 +449,19 @@ mod tests {
         assert_eq!(default_out(&m(&[("HOME", "/h")])).unwrap(), PathBuf::from("/h/.config/spira/spira.toml"));
         assert_eq!(default_out(&m(&[("SPIRA_TOML", "/a:/b")])).unwrap(), PathBuf::from("/a:/b"));
     }
+
+    // covers: UC-config-store-preflight-07
+    #[test]
+    fn a_written_config_reads_back_what_was_answered_and_a_second_run_leaves_it_untouched() {
+        let d = testkit::TempDir::new("spira-config-init-roundtrip");
+        let out = d.path().join("cfg/spira.toml");
+        assert_eq!(ensure(&out, full(), None, &reg()).unwrap(), Outcome::Written(out.clone()));
+        let (doc, _) = crate::load_strict(&out).expect("what init writes the reader accepts");
+        assert_eq!(crate::get_path(&doc, "spira.db").as_deref(), Some("/b/db"));
+        assert_eq!(crate::get_path(&doc, "spira.instance").as_deref(), Some("acc"));
+
+        let first = std::fs::read(&out).unwrap();
+        assert_eq!(ensure(&out, full(), None, &reg()).unwrap(), Outcome::Existing(out.clone()));
+        assert_eq!(std::fs::read(&out).unwrap(), first, "configuring again must not rewrite the file");
+    }
 }

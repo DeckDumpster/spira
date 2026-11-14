@@ -589,6 +589,7 @@ mod tests {
         }
     }
 
+    // covers: UC-config-store-preflight-13
     #[test]
     fn repo_label_allows_home_repo_and_known_repos() {
         let e = env(&[("SPIRA_HOME_REPO", "spira")]);
@@ -596,6 +597,7 @@ mod tests {
         assert_eq!(check_repo_label(&s(&["create", "title", "--labels", "plan,repo:spira"]), &reg), None);
     }
 
+    // covers: UC-config-store-preflight-13
     #[test]
     fn repo_label_refuses_unknown_repo_and_names_valid_keys() {
         let map = "spira | /srv/spira | push | origin/main | |\nwidget | /srv/widget | pr | origin/main | |\n";
@@ -605,6 +607,41 @@ mod tests {
         assert!(msg.contains("repo:nope"), "{msg}");
         assert!(msg.contains("spira"), "{msg}");
         assert!(msg.contains("widget"), "{msg}");
+    }
+
+    /// `repo:WORD` where WORD starts with a letter: a literal repository name. `repo:<…>`
+    /// placeholders and `repo:${…}` references do not match.
+    fn bare_repo_literals(text: &str) -> Vec<String> {
+        text.match_indices("repo:")
+            .filter_map(|(i, _)| {
+                let rest = &text[i + 5..];
+                let word: String = rest.chars().take_while(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == '-').collect();
+                (word.chars().next().is_some_and(|c| c.is_ascii_lowercase())).then(|| format!("repo:{word}"))
+            })
+            .collect()
+    }
+
+    // covers: UC-config-store-preflight-14
+    #[test]
+    fn no_shipped_runes_persona_names_a_repository_by_literal() {
+        let planted = "bd create -l \"plan,repo:sentinel-test-literal\" and repo:<name> and repo:${SPIRA_HOME_REPO}";
+        assert_eq!(bare_repo_literals(planted), vec!["repo:sentinel-test-literal"], "positive control: the matcher fires on a literal only");
+
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/runes");
+        let mut checked = 0;
+        let mut found = Vec::new();
+        for e in std::fs::read_dir(&dir).unwrap().filter_map(Result::ok) {
+            let p = e.path();
+            if !p.extension().is_some_and(|x| x == "md" || x == "rune") {
+                continue;
+            }
+            checked += 1;
+            for lit in bare_repo_literals(&std::fs::read_to_string(&p).unwrap()) {
+                found.push(format!("{}: {lit}", p.file_name().unwrap().to_string_lossy()));
+            }
+        }
+        assert!(checked >= 10, "the sweep saw the shipped personas: {checked}");
+        assert!(found.is_empty(), "personas that hardcode a repository: {found:?}");
     }
 
     #[test]

@@ -33,8 +33,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # shellcheck source=/dev/null
 . "$HERE/conf.sh" 2>/dev/null || true
 # EVERY PATH COMES FROM THE CONFIG, never a default written here. A hardcoded path is one
-# operator's box baked into a repository meant to be cloned, and test-conf.sh fails the
-# landing gate on one. Unset is refused rather than guessed.
+# operator's box baked into a repository meant to be cloned, and the landing gate refuses one. Unset is refused rather than guessed.
 DB="${SPIRA_DB:?SPIRA_DB is unset — source conf.sh}"
 DRY=0; [ "${1:-}" = "--dry-run" ] && DRY=1
 

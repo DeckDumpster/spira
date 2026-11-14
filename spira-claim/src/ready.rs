@@ -371,4 +371,32 @@ mod tests {
         assert_eq!(bucket(&[held, past], &parts, ""), vec![("builder".to_string(), 1)]);
         assert_eq!(rfc3339_epoch("1970-01-02T00:00:00Z"), Some(86400));
     }
+
+    fn shipped_partition(rune: &str) -> RunePart {
+        let file = format!("{}/../spira/runes/{rune}.rune", env!("CARGO_MANIFEST_DIR"));
+        let text = std::fs::read_to_string(&file).unwrap();
+        let lookup = |n: &str| match n {
+            "SPIRA_SCOPE_LABEL" => Some("scope-x".to_string()),
+            "SPIRA_CZAR_LABEL" => Some("czar-x".to_string()),
+            "SPIRA_PLAN_LABEL" => Some("plan-x".to_string()),
+            "SPIRA_CI_LABEL" => Some("ci-x".to_string()),
+            _ => None,
+        };
+        let vars = spira_config::rune_file::parse(&file, &text, &lookup).unwrap();
+        part(rune, &split_csv(&vars["RUNE_LABELS"]).iter().map(String::as_str).collect::<Vec<_>>(), &split_csv(&vars["RUNE_EXCLUDE_LABELS"]).iter().map(String::as_str).collect::<Vec<_>>())
+    }
+
+    // covers: UC-dispatch-09 UC-config-store-preflight-15
+    #[test]
+    fn the_shipped_czar_and_builder_partitions_each_take_their_own_bead_and_never_the_others() {
+        let czar = shipped_partition("czar");
+        let builder = shipped_partition("builder");
+        let trigger = row("czq", &["scope-x", "czar-x"]);
+        let plan = row("pl", &["scope-x", "plan-x"]);
+        let rows = [trigger, plan];
+        let ids = |p: &RunePart| matching(&rows, &p.inc, &p.exc).iter().map(|r| r.id.clone()).collect::<Vec<_>>();
+        assert_eq!(ids(&czar), vec!["czq"], "the czar takes the queue-state escalation and not plan work");
+        assert_eq!(ids(&builder), vec!["pl"], "the builder takes plan work and not the czar's bead");
+        assert!(czar.inc.iter().all(|l| !builder.inc.contains(l) || l == "scope-x"), "only the scope label is shared: {:?} vs {:?}", czar.inc, builder.inc);
+    }
 }

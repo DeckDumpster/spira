@@ -93,6 +93,15 @@ fn fetch_remotes(path: &str) -> Vec<String> {
 /// (a future in-process `resolve()` caller) can choose how to fail rather than this function
 /// taking the process down under it.
 pub fn check(instance: &str, workspaces: &str, repo_map_text: Option<&str>) -> Result<(), Vec<String>> {
+    check_with(instance, workspaces, repo_map_text, &fetch_remotes)
+}
+
+fn check_with(
+    instance: &str,
+    workspaces: &str,
+    repo_map_text: Option<&str>,
+    remotes_of: &dyn Fn(&str) -> Vec<String>,
+) -> Result<(), Vec<String>> {
     if instance.is_empty() || instance == "prod" {
         return Ok(());
     }
@@ -110,7 +119,7 @@ pub fn check(instance: &str, workspaces: &str, repo_map_text: Option<&str>) -> R
                 ));
             }
         }
-        for url in fetch_remotes(&path) {
+        for url in remotes_of(&path) {
             if remote_is_real(&url) {
                 violations.push(format!(
                     "spira: containment: instance {instance} may not have a real remote — {name} ({path}) has {url}"
@@ -166,6 +175,64 @@ mod tests {
     fn prod_or_unset_instance_is_always_allowed() {
         assert_eq!(check("prod", "/ws", Some("x|/outside\n")), Ok(()));
         assert_eq!(check("", "/ws", Some("x|/outside\n")), Ok(()));
+    }
+
+    fn no_remotes(_: &str) -> Vec<String> {
+        Vec::new()
+    }
+
+    // covers: UC-config-store-preflight-16
+    #[test]
+    fn a_confined_instance_refuses_a_repo_outside_its_workspace_and_names_it() {
+        let map = "inside|/ws/inside\noutside|/elsewhere/outside\n";
+        let err = check_with("test", "/ws", Some(map), &no_remotes).unwrap_err();
+        assert_eq!(err.len(), 1, "{err:?}");
+        assert!(err[0].contains("outside") && err[0].contains("/elsewhere/outside"), "{err:?}");
+        assert_eq!(check_with("test", "/ws", Some("inside|/ws/inside\n"), &no_remotes), Ok(()), "positive control");
+    }
+
+    // covers: UC-config-store-preflight-16
+    #[test]
+    fn a_confined_instance_refuses_a_repo_with_a_network_remote_but_not_a_local_one() {
+        let remotes = |path: &str| match path {
+            "/ws/net" => vec!["https://example.invalid/x.git".to_string()],
+            _ => vec!["/ws/local-origin".to_string()],
+        };
+        let err = check_with("test", "/ws", Some("net|/ws/net\nlocal|/ws/local\n"), &remotes).unwrap_err();
+        assert_eq!(err.len(), 1, "{err:?}");
+        assert!(err[0].contains("net") && err[0].contains("example.invalid"), "{err:?}");
+    }
+
+    // covers: UC-config-store-preflight-16
+    #[test]
+    fn a_symlink_inside_the_workspace_is_judged_by_where_it_points() {
+        let d = testkit::TempDir::new("spira-config-containment-links");
+        let ws = d.path().join("ws");
+        let outside = d.path().join("outside");
+        std::fs::create_dir_all(ws.join("real")).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, ws.join("escapes")).unwrap();
+        std::os::unix::fs::symlink(ws.join("real"), ws.join("stays")).unwrap();
+        let root = ws.canonicalize().unwrap();
+        let root = root.to_str().unwrap();
+        let map = |name: &str| format!("{name}|{}/{name}\n", root);
+        assert!(check_with("test", root, Some(&map("escapes")), &no_remotes).is_err(), "a link pointing out is outside");
+        assert_eq!(check_with("test", root, Some(&map("stays")), &no_remotes), Ok(()), "a link pointing in is inside");
+    }
+
+    // covers: UC-config-store-preflight-16
+    #[test]
+    fn a_workspace_of_slash_confines_nothing_and_a_sibling_prefix_is_not_inside() {
+        assert!(is_under("/anywhere/at/all", "/"));
+        assert!(is_under("/ws/a", "/ws/"));
+        assert!(!is_under("/ws-other/a", "/ws"), "a shared name prefix is not containment");
+    }
+
+    // covers: UC-config-store-preflight-16
+    #[test]
+    fn prod_is_not_confined_even_with_an_outside_path_and_a_network_remote() {
+        let remotes = |_: &str| vec!["https://example.invalid/x.git".to_string()];
+        assert_eq!(check_with("prod", "/ws", Some("x|/elsewhere\n"), &remotes), Ok(()));
     }
 
     #[test]

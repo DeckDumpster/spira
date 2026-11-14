@@ -621,3 +621,47 @@ pub fn convert_legacy_dir(
     crate::write_atomic(&toml_path, &out).map_err(|e| format!("{}: {e}", toml_path.display()))?;
     Ok(LegacyOutcome::Converted(toml_path, warnings))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sections(map: &str) -> Result<BTreeMap<String, RepoSection>, Vec<String>> {
+        repo_sections(map, &mut ConvertWarnings::default())
+    }
+
+    // covers: UC-config-store-preflight-12
+    #[test]
+    fn repo_map_rows_parse_exactly_whatever_the_gate_or_the_lanes_column_hold() {
+        let map = "\
+alpha | /srv/alpha | push | origin/main | | true | consume
+beta  | /srv/beta  | queue | origin/dev | | bash a.sh || bash b.sh | develop
+gamma | /srv/gamma | pr | origin/main | | true | plan,spike
+delta | /srv/delta | push | origin/main | | true |
+eps   | /srv/eps   | queue | origin/main | | bash a.sh || bash b.sh
+";
+        let got = sections(map).unwrap();
+        assert_eq!(got["alpha"].lanes, vec![Lane::Plan]);
+        assert_eq!(got["beta"].lanes, vec![Lane::Plan, Lane::Incident, Lane::Groom, Lane::Spike]);
+        assert_eq!(got["beta"].base.as_deref(), Some("origin/dev"));
+        assert_eq!(got["gamma"].lanes, vec![Lane::Plan, Lane::Spike]);
+        assert_eq!(got["delta"].lanes.len(), 6, "an empty lanes column admits every lane");
+        assert_eq!(got["eps"].lanes.len(), 6, "a gate with pipes is not mistaken for a lanes column");
+        assert_eq!(got["eps"].path, "/srv/eps");
+    }
+
+    // covers: UC-config-store-preflight-12
+    #[test]
+    fn the_lanes_parser_rejects_an_unknown_mode_or_lane_naming_every_offending_row() {
+        assert!(sections("ok | /srv/ok | push | origin/main | | true | develop\n").is_ok(), "positive control");
+        let errs = sections(
+            "alpha | /srv/alpha | push | origin/main | | true | fullaccess\n\
+             beta | /srv/beta | push | origin/main | | true | plan,bogus-lane\n\
+             ok | /srv/ok | push | origin/main | | true | plan\n",
+        )
+        .unwrap_err();
+        assert_eq!(errs.len(), 2, "{errs:?}");
+        assert!(errs[0].contains("alpha") && errs[0].contains("fullaccess"), "{errs:?}");
+        assert!(errs[1].contains("beta") && errs[1].contains("bogus-lane"), "{errs:?}");
+    }
+}

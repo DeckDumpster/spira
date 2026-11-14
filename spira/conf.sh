@@ -63,13 +63,13 @@ SPIRA_CONF_LOADED=1
 # generator), but conf.sh no longer sources it.
 #
 # RESOLVES THE SYMLINK, unlike SPIRA_HOME's own derivation below. Dozens of suites
-# (test-conf.sh among them) `ln -s "$HERE/conf.sh" "$FIXTURE/spira/conf.sh"` to make conf.sh
+# `ln -s "$HERE/conf.sh" "$FIXTURE/spira/conf.sh"` to make conf.sh
 # believe it is running from a synthetic tree — that is SPIRA_HOME's whole point, and this
 # function must not disturb it. But conf.d/ and conf-gen.sh live beside conf.sh's REAL file,
 # not beside wherever a test symlinked it, so this one path is read with the link followed;
 # `dirname "${BASH_SOURCE[0]}"` alone resolved to the fixture's empty spira/ directory and
-# refused every such suite with "conf-gen.sh failed to regenerate" (caught by test-conf.sh,
-# the conf-toml and conf-writeback suites — 76 assertions, first attempt at this fix).
+# refused every such suite with "conf-gen.sh failed to regenerate" (caught by the
+# conf-toml and conf-writeback suites).
 _spira_conf_gen_ensure() {   # _spira_conf_gen_ensure <keys|defaults> -> sources the named
                              # generated fragment, regenerating first if it is stale
     local _dir _which="${1:?_spira_conf_gen_ensure needs keys or defaults}" _gen _src _stale="" _real

@@ -129,7 +129,7 @@ bdq() {
 }
 
 # This is also called directly, by name, from a test suite
-# (test-repo-map.sh) — not only from inside bdq() above — so it
+# — not only from inside bdq() above — so it
 # gets its own shim onto the binary's `__fence` subcommand rather than relying on bdq()'s own
 # dispatch to reach them.
 _bdq_check_repo_label() {   # _bdq_check_repo_label <create-args> -> 0 or refuse
@@ -676,7 +676,7 @@ park_unmapped() {
 # strand/src/probe.rs carries its own Rust copy of this same arithmetic for any FUTURE
 # in-process Rust caller, but THIS body stays bash: it calls rune_get/dwarf_count BY NAME,
 # and several suites (test-dwarf-elastic-concurrency.sh, test-rune.sh,
-# test-builder-qa-proposed.sh, test-czar-partition.sh, test-dependents.sh) redefine those
+# test-builder-qa-proposed.sh, test-dependents.sh) redefine those
 # bash functions after sourcing this file, to control rune_free's inputs without a real
 # process table. Reducing rune_free itself to a one-line exec shim would move that
 # arithmetic into a separate process where a bash-level override of dwarf_count can never
@@ -1781,7 +1781,7 @@ repo_land_queued() {
 #
 # PORTED (wave 4.35, sp-kelr2, row V) to mimir-trigger's `lanes` module, called in-process
 # by its own sweep; this is now the one-line shim onto its `repo-lanes` CLI door, which
-# groom-trigger.sh (the one surviving bash caller) and test-repo-map.sh both reach the
+# groom-trigger.sh (the one surviving bash caller) reaches the
 # same way. SPIRA_HOME is threaded explicitly — conf.sh deliberately never exports it (the
 # EXEC-BOUNDARY TRAP comment at the top of this file). `_spira_expand_lanes`, the internal
 # helper this function used to call, had no caller outside this one and is retired rather

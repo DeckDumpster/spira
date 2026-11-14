@@ -49,14 +49,10 @@ spira/publish-backlog.sh
 spira/release.sh
 spira/stage.sh
 spira/test-census-pipeline.sh
-spira/test-runes-repo-labels.sh
 spira/test-cockpit-queue-section.sh
 spira/test-cockpit-unlanded.sh
 spira/test-cockpit-unsent.sh
 spira/test-concierge.sh
-spira/test-configure.sh
-spira/test-conf.sh
-spira/test-containment.sh
 spira/test-czar-pass.sh
 spira/test-deploy.sh
 spira/test-destroy-branch.sh
@@ -71,7 +67,6 @@ spira/test-gh-run-gate.sh
 spira/test-guards.sh
 spira/test-hold.sh
 spira/test-install-conf-seed.sh
-spira/test-install-dolt-port-wait.sh
 spira/test-landing-pass.sh
 spira/test-landing-pr.sh
 spira/testlib/gate-fixture.sh
@@ -81,7 +76,6 @@ spira/test-mimir-trigger.sh
 spira/test-ops-closing.sh
 spira/test-pr-notify.sh
 spira/test-pr-stall.sh
-spira/test-repo-map.sh
 spira/test-skew-foreign.sh
 spira/test-skew-refresh.sh
 spira/test-slay.sh

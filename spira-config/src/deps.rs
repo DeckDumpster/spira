@@ -8,17 +8,17 @@
 //! because nothing here depends on `python3` at all now.
 //!
 //! `deps.toml` itself (`spira/deps.toml`) is untouched by this bead: same fields, same file,
-//! same authority (doctor's own checks, `testenv/doctor-check.sh`, `test-bin-manifest.sh`).
+//! same authority (doctor's own checks, `testenv/doctor-check.sh`).
 //! Only `version_min`/`version_probe` are left unread here — nothing in the five functions
-//! this module replaces ever read them either; `test-bin-manifest.sh` parses those two
-//! fields itself, directly, as its own expected-value oracle.
+//! this module replaces ever read them either; the shipped-manifest test below parses
+//! `version_probe` itself.
 
 use serde::Deserialize;
 use std::path::Path;
 
 /// The two fallbacks `conf.sh`'s own functions gave an undeclared name, or a declared one
-/// missing the field — preserved byte for byte because `test-bin-manifest.sh` asserts on
-/// both as its positive control.
+/// missing the field — preserved byte for byte; the shipped-manifest test uses
+/// them as its positive control.
 pub const DEFAULT_TIER: &str = "optional";
 pub const DEFAULT_PURPOSE: &str = "required by the harness";
 
@@ -277,5 +277,27 @@ version_probe = ""
         let path = dir.path().to_string_lossy().into_owned();
         let err = require(&deps, &["spira-no-such-program"], &path, "spira.conf").unwrap_err();
         assert!(err.contains(&format!("spira-no-such-program — {DEFAULT_PURPOSE}")), "{err}");
+    }
+
+    // covers: UC-config-store-preflight-08
+    #[test]
+    fn every_program_the_shipped_manifest_declares_has_a_tier_a_purpose_and_a_version_probe() {
+        let text = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../spira/deps.toml")).unwrap();
+        let manifest = parse(&text).unwrap();
+        assert!(manifest.deps.len() >= 8, "the manifest loaded: {} programs", manifest.deps.len());
+        let raw: toml::Value = text.parse().unwrap();
+        let probes: std::collections::BTreeMap<&str, &str> = raw["dep"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|d| (d["name"].as_str().unwrap(), d.get("version_probe").and_then(|v| v.as_str()).unwrap_or("")))
+            .collect();
+        let bad = |f: &dyn Fn(&Dep) -> bool| manifest.deps.iter().filter(|d| f(d)).map(|d| d.name.as_str()).collect::<Vec<_>>();
+        let tiers = ["runtime", "optional", "dev", "operator", "release"];
+        assert_eq!(bad(&|d| !tiers.contains(&d.tier.as_str())), Vec::<&str>::new(), "a program with no valid tier");
+        assert_eq!(bad(&|d| d.purpose == DEFAULT_PURPOSE), Vec::<&str>::new(), "a program stating no purpose");
+        assert_eq!(bad(&|d| probes[d.name.as_str()].is_empty()), Vec::<&str>::new(), "a program with no version probe");
+        assert!(absent_of(&manifest.deps, "bd-embedded").contains("shared Dolt server"), "a silent downgrade names what it falls back to");
+        assert_eq!(tier_of(&manifest.deps, "spira-no-such-program"), DEFAULT_TIER, "positive control: an undeclared program is untiered");
     }
 }

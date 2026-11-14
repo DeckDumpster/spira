@@ -285,4 +285,12 @@ mod tests {
             assert!(!should_close_on_land(&row(st, &["spira-submitted"])), "{st}");
         }
     }
+
+    // covers: UC-config-store-preflight-18
+    #[test]
+    fn other_bead_ids_follow_the_branchs_configured_prefix_not_the_default() {
+        let subjects = "tt-abc123: fix the thing\ntt-own: branch work\nsp-def456: someone elses\n";
+        assert_eq!(other_bead_ids(subjects, "tt-own"), "tt-abc123", "the configured prefix is found and the own id left out");
+        assert_eq!(other_bead_ids(subjects, "sp-own"), "sp-def456", "a branch under the default prefix matches only that prefix");
+    }
 }
