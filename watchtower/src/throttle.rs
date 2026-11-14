@@ -35,20 +35,19 @@ impl Default for Cfg {
 /// the land ref. Stale rows (branch gone, or tip already merged) do not count. `None` is
 /// spira-lc unreachable — the caller must not read it as an empty queue.
 pub fn compute_depth(repo: Option<&str>, land_ref: Option<&str>) -> Option<i64> {
-    let mut depth = 0i64;
-    for b in lc::beads_in("CERTIFIED")? {
-        let refname = format!("refs/heads/spira/{}", b.id);
-        if !git::ref_exists(repo, &refname) {
-            continue;
-        }
-        if let Some(lref) = land_ref {
-            if !b.tip.is_empty() && b.tip != "none" && git::is_ancestor(repo, &b.tip, lref) {
-                continue;
-            }
-        }
-        depth += 1;
-    }
-    Some(depth)
+    let rows = lc::beads_in("CERTIFIED")?;
+    Some(live_unlanded(
+        &rows,
+        |id| git::ref_exists(repo, &format!("refs/heads/spira/{id}")),
+        |tip| land_ref.is_some_and(|l| git::is_ancestor(repo, tip, l)),
+    ))
+}
+
+fn live_unlanded(rows: &[lc::BeadRow], branch_exists: impl Fn(&str) -> bool, on_land_ref: impl Fn(&str) -> bool) -> i64 {
+    rows.iter()
+        .filter(|b| branch_exists(&b.id))
+        .filter(|b| b.tip.is_empty() || b.tip == "none" || !on_land_ref(&b.tip))
+        .count() as i64
 }
 
 /// Minutes since the most recent LANDED bead, or `None` ("?" — drain unknown, treated as
@@ -71,7 +70,7 @@ pub enum Primary {
 }
 
 /// The pure decision over already-gathered numbers — no IO, table-tested against the exact
-/// scenarios `test-watchtower-throttle.sh` named (critical pair, hysteresis, stale-CERTIFIED
+/// scenarios of the admission throttle (critical pair, hysteresis, stale-CERTIFIED
 /// filtering happens before this in `compute_depth`).
 pub fn decide(
     depth: i64,
@@ -262,6 +261,7 @@ mod tests {
 
     // --- the critical pair -----------------------------------------------------------
 
+    // covers: UC-landing-merge-queue-12
     #[test]
     fn engage_when_depth_high_and_drain_active() {
         assert_eq!(
@@ -272,6 +272,7 @@ mod tests {
         );
     }
 
+    // covers: UC-landing-merge-queue-12
     #[test]
     fn stall_not_engage_when_depth_high_and_drain_zero() {
         assert_eq!(decide(16, None, false, &cfg()), Primary::HighDepthDrainZero);
@@ -291,11 +292,13 @@ mod tests {
 
     // --- hysteresis --------------------------------------------------------------------
 
+    // covers: UC-landing-merge-queue-12
     #[test]
     fn lift_when_depth_drops_below_release_threshold_while_throttled() {
         assert_eq!(decide(7, Some(2), true, &cfg()), Primary::Lift);
     }
 
+    // covers: UC-landing-merge-queue-12
     #[test]
     fn no_lift_in_the_hysteresis_band_between_release_and_depth_thresholds() {
         // depth 10 is below depth_at(16) but not below release_at(8): stays throttled,
@@ -325,4 +328,42 @@ mod tests {
     }
 
     // --- depth computation: stale CERTIFIED filtering ----------------------------------
+
+    fn row(id: &str, tip: &str) -> lc::BeadRow {
+        lc::BeadRow { id: id.into(), tip: tip.into(), since: None }
+    }
+
+    // covers: UC-landing-merge-queue-12
+    #[test]
+    fn depth_counts_only_certified_rows_with_a_live_branch_and_a_tip_not_yet_landed() {
+        let rows = [
+            row("sp-live", "aaa"),
+            row("sp-landed", "bbb"),
+            row("sp-gone", "ccc"),
+            row("sp-notip", ""),
+            row("sp-none", "none"),
+        ];
+        let depth = live_unlanded(&rows, |id| id != "sp-gone", |tip| tip == "bbb");
+        assert_eq!(depth, 3, "live, notip and none count; landed and gone do not");
+    }
+
+    // covers: UC-landing-merge-queue-12
+    #[test]
+    fn the_off_override_clears_an_engaged_throttle_and_the_stamp_stays_gone() {
+        let dir = testkit::TempDir::new("throttle-off");
+        let stamp = dir.path().join("queue-throttled");
+        std::fs::write(&stamp, "since=x\n").unwrap();
+        let ctx = Ctx {
+            db: "",
+            home_repo: "",
+            incident_sh: "",
+            stamp: &stamp,
+            override_off: true,
+            repo: None,
+            land_ref: None,
+            land_ref_default_for_log: "main",
+        };
+        run(0, &cfg(), &ctx);
+        assert!(!stamp.exists());
+    }
 }

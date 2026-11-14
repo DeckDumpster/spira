@@ -211,7 +211,6 @@ test-verify-asks.sh	T1	8.5
 test-watchtower-czar-outcome.sh	T1	11.5
 test-watchtower-lapse.sh	T1	126.0
 test-watchtower-queue.sh	T1	26.0
-test-watchtower-throttle.sh	T1	11.0
 test-watchtower.sh	T1	143.0
 test-wiki-add-fence.sh	T1	1.5
 test-work-services-exclusion.sh	T1	2.5
