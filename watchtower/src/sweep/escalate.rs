@@ -362,10 +362,10 @@ fn gate_slow(d: &SweepData, cfg: &Cfg, raise: Raise) {
         return;
     };
     let body = format!(
-        "The gate's p90 wall (gate.log ran= less waited=) over the last 24h is {}s across {} gates; the ceiling is {}s.\n\nSee the phases= field of the slowest gate.log rows for the phase that overruns; the whole-gate deadline (SPIRA_GATE_DEADLINE) and per-phase caps are in gate/DESIGN.md.\n",
-        s.p90, s.rows, cfg.gate_p90_limit_s
+        "The gate's p90 test_clock (gate.log, the seconds charged to SPIRA_GATE_DEADLINE) over the last 24h is {}s across {} gates; the deadline is {}s. Build time is not counted.\n\nSee the phases= field of the slowest gate.log rows for the test phase that overruns; per-phase caps are in gate/DESIGN.md.\n",
+        s.p90, s.rows, cfg.gate_deadline_s
     );
-    let f = Finding::new(&cfg.db, &cfg.home_repo, "GATE SLOW: p90 gate wall over the ceiling", &body)
+    let f = Finding::new(&cfg.db, &cfg.home_repo, "GATE SLOW: p90 gate test clock at the deadline", &body)
         .priority(1)
         .reference("incident:gate-slow")
         .cause("gate-slow");
@@ -451,7 +451,7 @@ mod tests {
             snap_stale_s: 60,
             gate_window_s: 21600,
             gate_silence_window_s: 3600,
-            gate_p90_limit_s: 300,
+            gate_deadline_s: 300,
             gate_log: None,
             yield_window_s: 86400,
             yield_sh: None,

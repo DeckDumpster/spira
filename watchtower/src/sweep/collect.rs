@@ -228,7 +228,7 @@ pub fn collect(now: i64, cfg: &Cfg) -> SweepData {
     let gate_log_text = std::fs::read_to_string(cfg.gate_log()).unwrap_or_default();
     let gw = gate_wait::compute(&gate_log_text, now, cfg.gate_window_s);
     let gate_win_label = gate_wait::window_label(cfg.gate_window_s);
-    let gate_slow = gate_wait::slow(&gate_log_text, now, 86400, cfg.gate_p90_limit_s, 20);
+    let gate_slow = gate_wait::slow(&gate_log_text, now, 86400, cfg.gate_deadline_s, 20);
     let gate_silence = gate_wait::silence(&gate_log_text, &lc::beads_in("SUBMITTED").unwrap_or_default(), now, cfg.gate_silence_window_s);
 
     // YIELD ------------------------------------------------------------------------------

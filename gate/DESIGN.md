@@ -1240,4 +1240,4 @@ the seconds charged, beside `ran=`.
 Compilation has no clock. An uncharged phase is watched instead: no compiler output line and no growth in the
 CPU time of its process group for `SPIRA_GATE_BUILD_STALL` seconds ends it as NO_VERDICT `reason=build-stall`.
 Only an operator `SPIRA_GATE_TIMEOUT` bounds a build that keeps progressing (reason `timeout`). The watchtower pages
-(`GATE SLOW`) when the p90 of `ran` less `waited` over 24 h exceeds `SPIRA_WATCH_GATE_P90_LIMIT` (300).
+(`GATE SLOW`) when the p90 of `test_clock` over 24 h reaches `SPIRA_GATE_DEADLINE`; build time raises nothing.
