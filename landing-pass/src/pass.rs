@@ -687,6 +687,7 @@ impl<'a> Pass<'a> {
     }
 
     /// §4.2 after the gate: the one decision this pass makes for this branch.
+    #[allow(clippy::too_many_arguments)]
     fn certify_judge(&self, w: &Walk, br: &str, id: &str, bead: &BeadRow, tip: &str, g: GateRun, regate: &Cell<bool>) -> Flow {
         let repo = w.repo;
         let name = &repo.name;
