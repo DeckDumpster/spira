@@ -517,7 +517,7 @@ Fakes for `Bd`, `Seam`, `Exec` and `Launcher`; git is real
 | module | contract it pins |
 |---|---|
 | `ledger` | every ledger format byte for byte, cockpit-metrics' regex over it, dry run writes nothing, trim 20,000→5,000, session fields (sum vs last, half-even rounding, `?` never 0), `attempt_trace` segments across a 64 KiB chunk, trace-mark numbering |
-| `decide` | the disposition table row by row and its precedence, hb_tick (test-dwarf-lease/test-thrash rows), world-stop, SOP verdict; `open_ask_blocker`, `session_outcome`, `session_yield_headless` and `rapid_recur_streak` phrasing/fixture tables (sp-8kqww, wave 4.33 — ported from the bash suites they retired) |
+| `decide` | the disposition table row by row and its precedence, hb_tick, world-stop, SOP verdict; `open_ask_blocker`, `session_outcome`, `session_yield_headless` and `rapid_recur_streak` phrasing/fixture tables (sp-8kqww, wave 4.33 — ported from the bash suites they retired) |
 | `verdict` | `verdict_committed` (branch then landrefs fallback), `delivers_verdict` (beads/note/report/applied.jsonl/check/action), `close_verdict` precedence (sp-8kqww, wave 4.33) |
 | `brief` | FINISH/FOLLOWUP/NO_BD are the `work` verbs; LANDING/PARK per mode; FIXTURE truthful; resume/slain/deadline/holds renderers; notes bounding (`bead_body_is_bounded`); overlays whole/section/append/absent/blocks; literal, ordered substitution; thrash banner lands in task.md; system/task split; memories tiering and budget |
 | `claim` | ready set on stdin and nothing in argv; lookup/rank failure is claim-error; resumable tier; lost race falls through; claim_retry |
@@ -674,8 +674,7 @@ Kept, although they look wrong (flagged for the operator):
     `test-dwarf-resume-collision.sh:47`,
     the retired dwarf-resume suite, `test-dwarf-prompt-layers.sh:112`,
     `test-dwarf-lifecycle-cutover.sh:206`, `test-dwarf-slain-attempts.sh:83`,
-    `test-dwarf-wiki-dirty.sh:120`,
-    `test-dwarf-worktree-collision.sh:57`, `test-dwarf-world-stop.sh:94`,
+    `test-dwarf-world-stop.sh:94`,
     `test-dwarf-teardown-e2e.sh:515`, the retired dwarf-sweep suite, the cross-repo suite (line 141),
     `test-epic-claim-order.sh:261`, `test-groom-escalation-check.sh:101`,
     the holds suite (line 210), `test-lifecycle-enforce-gate.sh:93`,
@@ -689,7 +688,7 @@ Kept, although they look wrong (flagged for the operator):
     `test-census-events.sh:410-432` (sp-ytw2h cause pairs: repoint its scan to `dwarf/src/*.rs`,
     where the causes are `const` strings in `verdict.rs`),
     the retired thrash-teardown suite (process-group kill → `heartbeat::tests::trip_signals_session_group`),
-    `test-attempts.sh:197`, `test-event-taxonomy.sh:55`, `test-world.sh:249`, and the
+    `test-event-taxonomy.sh:55`, `test-world.sh:249`, and the
     `grep`-for-shape guards in the suites of item 12 (same rows as their exec line, per
     the list in the commit that added this file).
 14. **Stay as they are** (they test lib.sh functions, which stay): `test-dwarf-disposition.sh`,
@@ -828,7 +827,7 @@ Fakes for `Bd`, `Seam`, `Exec` and `Launcher`; git is real
 | module | contract it pins |
 |---|---|
 | `ledger` | every ledger format byte for byte, cockpit-metrics' regex over it, dry run writes nothing, trim 20,000→5,000, session fields (sum vs last, half-even rounding, `?` never 0), `attempt_trace` segments across a 64 KiB chunk, trace-mark numbering |
-| `decide` | the disposition table row by row and its precedence, hb_tick (test-dwarf-lease/test-thrash rows), world-stop, SOP verdict; `open_ask_blocker`, `session_outcome`, `session_yield_headless` and `rapid_recur_streak` phrasing/fixture tables (sp-8kqww, wave 4.33 — ported from the bash suites they retired) |
+| `decide` | the disposition table row by row and its precedence, hb_tick, world-stop, SOP verdict; `open_ask_blocker`, `session_outcome`, `session_yield_headless` and `rapid_recur_streak` phrasing/fixture tables (sp-8kqww, wave 4.33 — ported from the bash suites they retired) |
 | `verdict` | `verdict_committed` (branch then landrefs fallback), `delivers_verdict` (beads/note/report/applied.jsonl/check/action), `close_verdict` precedence (sp-8kqww, wave 4.33) |
 | `brief` | FINISH/FOLLOWUP/NO_BD are the `work` verbs; LANDING/PARK per mode; FIXTURE truthful; resume/slain/deadline/holds renderers; notes bounding (`bead_body_is_bounded`); overlays whole/section/append/absent/blocks; literal, ordered substitution; thrash banner lands in task.md; system/task split; memories tiering and budget |
 | `claim` | ready set on stdin and nothing in argv; lookup/rank failure is claim-error; resumable tier; lost race falls through; claim_retry |
@@ -990,8 +989,7 @@ Kept, although they look wrong (flagged for the operator):
     `test-dwarf-resume-collision.sh:47`,
     the retired dwarf-resume suite, `test-dwarf-prompt-layers.sh:112`,
     `test-dwarf-lifecycle-cutover.sh:206`, `test-dwarf-slain-attempts.sh:83`,
-    `test-dwarf-wiki-dirty.sh:120`,
-    `test-dwarf-worktree-collision.sh:57`, `test-dwarf-world-stop.sh:94`,
+    `test-dwarf-world-stop.sh:94`,
     `test-dwarf-teardown-e2e.sh:515`, the retired dwarf-sweep suite, the cross-repo suite (line 141),
     `test-epic-claim-order.sh:261`, `test-groom-escalation-check.sh:101`,
     the holds suite (line 210), `test-lifecycle-enforce-gate.sh:93`,
@@ -1005,7 +1003,7 @@ Kept, although they look wrong (flagged for the operator):
     `test-census-events.sh:410-432` (sp-ytw2h cause pairs: repoint its scan to `dwarf/src/*.rs`,
     where the causes are `const` strings in `verdict.rs`),
     the retired thrash-teardown suite (process-group kill → `heartbeat::tests::trip_signals_session_group`),
-    `test-attempts.sh:197`, `test-event-taxonomy.sh:55`, `test-world.sh:249`, and the
+    `test-event-taxonomy.sh:55`, `test-world.sh:249`, and the
     `grep`-for-shape guards in the suites of item 12 (same rows as their exec line, per
     the list in the commit that added this file).
 14. **Stay as they are** (they test lib.sh functions, which stay): `test-dwarf-disposition.sh`,

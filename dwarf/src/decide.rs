@@ -598,7 +598,6 @@ mod tests {
         assert!(blocks_targets(&own("relates-to")).is_empty());
     }
 
-    // test-attempts.sh's session_outcome table.
     #[test]
     fn session_outcome_table() {
         assert_eq!(session_outcome(None), "unknown", "a missing/unreadable trace is not classified at all");

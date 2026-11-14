@@ -361,6 +361,7 @@ mod tests {
         (yoe + era * 400 + i64::from(m <= 2), m, d)
     }
 
+    // covers: UC-dwarf-execution-09
     #[test]
     fn requeue_thrash_ledger_lines_count_as_thrash_and_inflate_nothing_else() {
         let line = |ev: &str, rest: &str| format!("{} {ev} rune sp-x {rest}", ts(-10));
