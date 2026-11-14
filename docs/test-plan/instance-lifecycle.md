@@ -64,7 +64,7 @@ Where they run: **cert** = certification (every commit, local and gate), **batch
 | UC-instance-lifecycle-12 | `deploy.sh` resolves `latest`, refuses drafts, the already-current release, a DB-migration mismatch and a failed pre-deploy doctor, all before any disruptive step. | FC, COR | T2 / cert |
 | UC-instance-lifecycle-13 | `deploy.sh` drains first: a drain refusal blocks the deploy, and `--force` slays with `--keep-work --reopen`. It writes `SPIRA_PROD` into spira.conf before activate restarts services, then re-renders units with `SPIRA_PROD=releases/current/spira`. | COR, CONC | T2 / cert |
 | UC-instance-lifecycle-14 | A post-activation health failure (doctor or skew) rolls back to the prior release and restores spira.conf. On a first deploy it removes `current` and re-renders on the checkout. It never re-enables ctrl-suspended units. | REC, FC | T2 / cert |
-| UC-instance-lifecycle-15 | A release installed from its tarball runs from a read-only tree: sentinel dispatches and loom serves without cargo, and `conf.sh` resolves `SPIRA_LOOM_BIN` to `bin/loom`. | CFG, COR | T1 (conf resolution) + T3 (ro sentinel) main + T4 (loom live) accept |
+| UC-instance-lifecycle-15 | Installing a release from its tarball makes the just-unpacked release the live `current` over a stale prior one, and leaves the unpacked tree read-only. | CFG, COR | T1: `release` install-tarball unit test + T3 (ro sentinel) main + T4 (loom live) accept |
 
 ### Install (root `install.sh` and `systemd/install.sh`)
 | ID | Requirement | Dims | Tier / where |
@@ -102,11 +102,11 @@ Where they run: **cert** = certification (every commit, local and gate), **batch
 ### World control
 | ID | Requirement | Dims | Tier / where |
 |---|---|---|---|
-| UC-instance-lifecycle-41 | `world.sh stop` stops active work units (resolved instance-qualified name, with plain fallback). It never stops `spira-loom*` or landing, and spares CI watchers unless `--hard`. `--hard` stops watchers in both name forms. On any failed stop it exits non-zero without printing STOPPED. | COR, OBS, FC | T1: `spira-world::proc::is_excluded_work_service` unit tests (sp-6onps; world.sh is the `world` binary now) + T2 / cert |
+| UC-instance-lifecycle-41 | `world stop` halts the active work services of the halted planes and never Loom, a watcher or a kept unit. It attempts every stop even after one fails, and reports the failed ones so STOPPED is not printed. | COR, OBS, FC | T1: `spira-world::sysctl::stoppable_work_units` / `stop_all` unit tests |
 | UC-instance-lifecycle-42 | `world.sh start` starts timers except those ctrl-suspended (with the reason printed) or systemd-disabled. It revives non-oneshot watchers stopped by `--hard` and leaves active ones alone. | COR, IDEM | T1: `spira-world::sysctl::start_action` unit tests (sp-6onps) + T2 / cert. `test-world-decide.sh` retired — it sourced `world.sh`/`ctrl.sh` as bash libraries (`WORLD_LIB=1`/`CTRL_LIB=1`), which stopped being possible once both became Rust binaries; the same decision table now lives as native Rust tests next to the code it decides for. |
 | UC-instance-lifecycle-43 | `world.sh drain` touches no unit and writes a stamp with a resume hint. `--timeout` exits 1 with NOT DRAINED / REMAIN GATED. `--deadline` slays with `--keep-work --reopen`. `resume` clears the stamp. Every dwarf door carries both the drain and halt gates. | CONC, FC | T2 / cert; door coverage T0 |
-| UC-instance-lifecycle-44 | `world.sh status` reports landing, live gate and landing workers from `/proc`, DRAINING, active CI watchers, and `svc: <result>` for a failed last run. It says "unknown" (not "inactive") for an unresolvable unit. | OBS | T1: `spira-world::sysctl::status_timer_row` unit tests (sp-6onps) + T2 /proc / cert |
-| UC-instance-lifecycle-45 | `ctrl.sh`: a suspension needs a reason and an owner. check, list and resume work, and divergence reports suspended-but-running and masked-but-undeclared units. | FC, OBS | T1: `spira-ctrl` lib unit tests (sp-6onps; ctrl.sh is the `ctrl` binary now, `ctrl.sh` a compat symlink) + `test-ctrl.sh` (unchanged black-box CLI suite, now exercising the Rust binary) / cert |
+| UC-instance-lifecycle-44 | `world status` annotates a kept timer's row with its service's last result when that was not success, and shows nothing extra for a success or no recorded result. | OBS | T1: `spira-world::scheduler::keep_row` unit tests |
+| UC-instance-lifecycle-45 | `ctrl`: a suspension needs a reason and an owner, and divergence reports suspended-but-running and masked-but-undeclared units. | FC, OBS | T1: `spira-ctrl` lib unit tests (`divergences`, `missing_suspension_field`) |
 
 ### Acceptance runner (release gate)
 | ID | Requirement | Dims | Tier / where |

@@ -205,12 +205,8 @@ fn work_services(planes: &BTreeSet<Plane>) -> Vec<String> {
     let sfx = sfx_or_die();
     // A oneshot is `activating` for as long as its ExecStart runs; `--state=active` alone
     // skips exactly those. The keep list is never stopped, whatever plane it declares.
-    sysctl::run_lines(&["list-units", "spira-*.service", "--state=active,activating,reloading", "--no-legend"])
-        .into_iter()
-        .filter_map(|l| sysctl::first_field(&l).map(str::to_string))
-        .filter(|u| !spira_world::proc::is_excluded_work_service(u, &sfx) && !scheduler::is_kept(u, &sfx))
-        .filter(|u| planes.contains(&sysctl::plane_of(u)))
-        .collect()
+    let listing = sysctl::run_lines(&["list-units", "spira-*.service", "--state=active,activating,reloading", "--no-legend"]);
+    sysctl::stoppable_work_units(&listing, &sfx, planes, sysctl::plane_of)
 }
 
 /// Installed services that declare the work plane and are not oneshots: the ones no timer
@@ -427,15 +423,16 @@ fn cmd_stop(args: &[String]) -> i32 {
         }
     }
 
-    let mut svc_failed = false;
-    for svc in work_services(&planes) {
-        if sysctl::run_ok(&["stop", &svc]) {
+    let svc_failed = !sysctl::stop_all(&work_services(&planes), |svc| {
+        let ok = sysctl::run_ok(&["stop", svc]);
+        if ok {
             println!("  stopped {svc}");
         } else {
             eprintln!("  WARNING: could not stop {svc} — still running");
-            svc_failed = true;
         }
-    }
+        ok
+    })
+    .is_empty();
 
     if halts_work {
         let mut n = 0u32;

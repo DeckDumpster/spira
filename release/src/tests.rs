@@ -609,6 +609,26 @@ fn install_tarball_is_idempotent_when_the_release_already_exists() {
     assert_eq!(fs::read_link(cfg.releases.join("current")).unwrap().to_string_lossy(), "spira-20260101T000000Z");
 }
 
+// covers: UC-instance-lifecycle-15
+#[test]
+fn install_tarball_makes_the_just_unpacked_release_live_over_a_stale_one_and_leaves_it_read_only() {
+    let (sb, cfg) = install_world();
+    let sc = FakeSystemctl::new(cfg.unit_dir.clone());
+    let stale = cfg.releases.join("spira-20200101T000000Z");
+    file(&stale.join("bin/loom"), "stale-marker");
+    std::os::unix::fs::symlink("spira-20200101T000000Z", cfg.releases.join("current")).unwrap();
+    assert_eq!(fs::read_to_string(cfg.releases.join("current/bin/loom")).unwrap(), "stale-marker");
+
+    let tb = touch_tarball(&sb, "spira-20260925T000000Z");
+    let un = FakeUnpack { name: "spira-20260925T000000Z", files: vec![("bin/loom", "sp-x.fixed", true)], fails: false };
+    let r = install::install(&cfg, &sc, &un, &tb, &InstallOpts { dry_run: false, settle: Duration::ZERO, skip_restart: true }).unwrap();
+
+    assert!(r.fresh);
+    assert_eq!(fs::read_to_string(cfg.releases.join("current/bin/loom")).unwrap(), "sp-x.fixed");
+    let meta = fs::metadata(cfg.releases.join("spira-20260925T000000Z/bin/loom")).unwrap();
+    assert!(meta.permissions().readonly(), "an installed release is a read-only tree");
+}
+
 #[test]
 fn install_tarball_refuses_when_the_archive_does_not_produce_the_promised_directory() {
     let (sb, cfg) = install_world();

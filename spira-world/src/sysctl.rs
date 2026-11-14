@@ -157,6 +157,23 @@ pub fn is_oneshot(text: &str) -> bool {
     text.lines().any(|l| l.trim() == "Type=oneshot")
 }
 
+/// The active service units a stop acts on: in a halted plane, neither Loom, a watcher nor a
+/// kept unit.
+pub fn stoppable_work_units(listing: &[String], sfx: &str, planes: &std::collections::BTreeSet<Plane>, plane_of: impl Fn(&str) -> Plane) -> Vec<String> {
+    listing
+        .iter()
+        .filter_map(|l| first_field(l).map(str::to_string))
+        .filter(|u| !crate::proc::is_excluded_work_service(u, sfx) && !crate::scheduler::is_kept(u, sfx))
+        .filter(|u| planes.contains(&plane_of(u)))
+        .collect()
+}
+
+/// Stop every unit, reporting each stop that failed; the caller must not announce STOPPED while
+/// the returned list is non-empty.
+pub fn stop_all(units: &[String], mut stop: impl FnMut(&str) -> bool) -> Vec<String> {
+    units.iter().filter(|u| !stop(u)).cloned().collect()
+}
+
 pub fn plane_of(unit: &str) -> Plane {
     plane_from_unit_text(&run(&["cat", unit])).unwrap_or(Plane::Work)
 }
@@ -200,6 +217,35 @@ mod tests {
         assert!(is_oneshot("[Service]\nType=oneshot\nExecStart=x\n"));
         assert!(!is_oneshot("[Service]\nType=simple\n"));
         assert!(!is_oneshot("[Service]\n# Type=oneshot\n"));
+    }
+
+    // covers: UC-instance-lifecycle-41
+    #[test]
+    fn a_stop_takes_work_units_but_never_loom_watchers_or_kept_units_and_a_failed_stop_is_reported() {
+        let listing: Vec<String> = [
+            "spira-sentinel-prod.service loaded active running -",
+            "spira-landing.service loaded active running -",
+            "spira-loom-prod.service loaded active running -",
+            "spira-watch@pr-notify.service loaded active running -",
+            "spira-runtime-prod.service loaded active running -",
+            "spira-ops-prod.service loaded active running -",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let work: std::collections::BTreeSet<Plane> = [Plane::Work].into();
+        let plane = |u: &str| if u.contains("ops") { Plane::Maintenance } else { Plane::Work };
+        let units = stoppable_work_units(&listing, "-prod", &work, plane);
+        assert_eq!(units, vec!["spira-sentinel-prod.service", "spira-landing.service"]);
+
+        let mut tried = Vec::new();
+        let failed = stop_all(&units, |u| {
+            tried.push(u.to_string());
+            u != "spira-landing.service"
+        });
+        assert_eq!(tried, units, "one failed stop must not skip the rest");
+        assert_eq!(failed, vec!["spira-landing.service"]);
+        assert!(stop_all(&units, |_| true).is_empty());
     }
 
     #[test]
