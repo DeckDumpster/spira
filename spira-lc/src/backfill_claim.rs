@@ -149,7 +149,7 @@ mod tests {
             rows: vec![
                 json!({"bead_id": "sp-landed", "state": "LANDED", "claim": null}),
                 json!({"bead_id": "sp-ready", "state": "READY", "claim": null}),
-                json!({"bead_id": "sp-has", "state": "READY", "claim": {"blocks": [], "parent": null, "labels": []}}),
+                json!({"bead_id": "sp-has", "state": "READY", "claim": {"blocks": ["sp-b"]}}),
                 json!({"bead_id": "sp-rework", "state": "REWORK"}),
             ],
             ..Default::default()
