@@ -2688,7 +2688,7 @@ pub(crate) mod tests {
         let mut ops = Ops::default();
         let end = attribute_round(&mut f, &mut ops, &corpus(4), three(), Budget { slots: 6, maxpar: 4 }).unwrap();
         assert_eq!(f.main_kind[0], (MainKind::Corpus, vec!["test-03.sh".into()]));
-        assert!(!f.jobs.iter().any(|(j, _, _)| j.suite == "not-in-the-corpus.sh"));
+        assert!(f.main_kind.iter().all(|(_, s)| !s.contains(&"not-in-the-corpus.sh".to_string())), "{:?}", f.main_kind);
         assert_eq!(ops.ejected, vec![("m2".to_string(), vec!["test-03.sh".to_string()])]);
         assert!(matches!(end, RoundEnd::Land { .. }));
     }

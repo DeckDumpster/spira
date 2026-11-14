@@ -545,7 +545,6 @@ impl<'a> VmRunner<'a> {
         ))
     }
 
-    /// Attributes from the results of the corpus pass that went red, found at `results`.
     fn corpus_list_ok(&self, suites: &[String]) -> Result<(), String> {
         if self.prior.is_some() {
             return Ok(());
@@ -553,6 +552,7 @@ impl<'a> VmRunner<'a> {
         order::covers(&io::suites_in(&self.wt, "HEAD"), suites)
     }
 
+    /// Attributes from the results of the corpus pass that went red, found at `results`.
     pub fn after_pass(mut self, results: Option<PathBuf>) -> Self {
         self.prior = results;
         self
