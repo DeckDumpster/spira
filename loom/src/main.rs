@@ -17,10 +17,7 @@ async fn main() -> ExitCode {
     // `--print-config` resolves the configuration and stops: a preflight that wants to say
     // what this box will actually do, without starting the server.
     if std::env::args().any(|a| a == "--print-config") {
-        println!("SPIRA_LOOM_ADDR={}", cfg.addr);
-        println!("SPIRA_LOOM_BUDGET_MS={}", cfg.budget.as_millis());
-        println!("SPIRA_LOOM_CACHE_S={}", cfg.cache.as_secs());
-        println!("SPIRA_LC_BIN={}", cfg.lc);
+        print!("{}", cfg.render_pinned());
         return ExitCode::SUCCESS;
     }
 
