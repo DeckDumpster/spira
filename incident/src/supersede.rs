@@ -11,7 +11,7 @@ pub fn red_ref_prefix(repo: &str) -> String {
 pub struct OpenRed {
     pub id: String,
     pub external_ref: Option<String>,
-    /// When the incident was filed or last bumped, in epoch seconds; `None` if it cannot be read.
+    /// The latest of its filing, update and `recurrence:N@<time>` stamps, in epoch seconds; `None` if it cannot be read.
     pub last_seen: Option<i64>,
 }
 
@@ -57,7 +57,9 @@ impl Superseder for RealSuperseder<'_> {
             .into_iter()
             .map(|(row, bead)| {
                 let stamp = |k: &str| bead.get(k).and_then(|v| v.as_str()).and_then(crate::run::parse_iso8601);
-                OpenRed { id: row.id, external_ref: row.external_ref, last_seen: stamp("updated_at").or_else(|| stamp("created_at")) }
+                let bumped = row.labels.iter().filter_map(|l| l.strip_prefix("recurrence:")?.split_once('@')).filter_map(|(_, at)| crate::run::parse_iso8601(at));
+                let last_seen = bumped.chain(stamp("updated_at")).chain(stamp("created_at")).max();
+                OpenRed { id: row.id, external_ref: row.external_ref, last_seen }
             })
             .collect())
     }
