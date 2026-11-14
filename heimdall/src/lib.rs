@@ -16,3 +16,6 @@ pub mod util;
 
 #[cfg(test)]
 pub(crate) mod testing;
+
+#[cfg(test)]
+mod classify_cells;

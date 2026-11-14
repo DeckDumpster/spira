@@ -2,5 +2,4 @@
 # a line leaves when its file asserts counts instead; nothing is ever added.
 round-vm/src/pool.rs
 round-vm/src/run.rs
-spira/test-czar-pass.sh
 testenv/src/reap.rs

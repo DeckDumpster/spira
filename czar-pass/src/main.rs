@@ -1369,7 +1369,7 @@ mod tests {
     // A private scratch directory per test, so parallel `cargo test` threads never collide
     // on the same path (the real callers always get SPIRA_RUN handed to them by the caller,
     // never a shared ambient default).
-    fn scratch_dir(name: &str) -> testkit::TempDir {
+    pub(crate) fn scratch_dir(name: &str) -> testkit::TempDir {
         testkit::TempDir::new(&format!("czar-pass-test-{}-{}", name, SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()))
     }
 
@@ -1505,9 +1505,9 @@ mod tests {
     // wants from a detector whose whole job is to trigger a side effect.
     // ────────────────────────────────────────────────────────────────────────────────
 
-    const KNOWN_EPOCH: u64 = 1_609_459_200; // 2021-01-01T00:00:00Z, for parse_iso_to_epoch
+    pub(crate) const KNOWN_EPOCH: u64 = 1_609_459_200; // 2021-01-01T00:00:00Z, for parse_iso_to_epoch
 
-    fn test_config(dir: &Path, now: u64) -> Config {
+    pub(crate) fn test_config(dir: &Path, now: u64) -> Config {
         Config {
             spira_run: dir.to_path_buf(),
             czar_log: dir.join("czar.log"),
@@ -1724,6 +1724,9 @@ mod tests {
 }
 
 #[cfg(test)]
+mod cells;
+
+#[cfg(test)]
 mod fork_fence {
     #[test]
     fn czar_pass_starts_no_spira_child_that_is_not_a_named_fork_edge() {
@@ -1738,12 +1741,8 @@ mod lane_tests {
 
     #[test]
     fn a_pass_with_the_czar_lane_stopped_on_every_registered_repo_takes_no_lock() {
-        let d = testkit::TempDir::new("czar-pass-lane");
-        let run = d.path().join("run");
-        std::fs::create_dir_all(&run).unwrap();
-        let edits = spira_config::process::fixture_world_env(d.path(), &run, &["spira", "other"]);
-        let edits: Vec<(&str, Option<&str>)> = edits.iter().map(|(k, v)| (*k, v.as_deref())).collect();
-        let _env = testkit::env(&edits);
+        let world = crate::cells::pass_world();
+        let run = world.run.clone();
         let stop = |repo: &str| spira_config::scoped_stop::pause_repo(&run, repo, &["czar".to_string()], "cutover-mode", "cutover", "world stop", 1).unwrap();
         stop("spira");
         stop("other");

@@ -88,7 +88,7 @@ unchanged in shape. Each arrow-side is a module:
 
 The whole judgement is a pure function of one observation object (`judge::classify`): no
 clock, file, command or network. `heimdall classify` reads one observation on stdin and writes
-one sorted-key JSON alert per line, which is how `test-heimdall-classify.sh` replays it
+one sorted-key JSON alert per line, which is how `heimdall/src/classify_cells.rs` replays it
 against real sentinel log. `classify::run` calls it in-process.
 
 ### 2.5 The store port (`conditions.rs`)
@@ -147,7 +147,7 @@ re-raise), `condition clear <key>`, and `condition set heimdall-write-probe --ty
 
 The reconcile pass is `pass::run`, driven by the unit tests in `heimdall/src/pass.rs` over an
 in-memory `Conditions` store with `now` passed in; the classifier half is
-`spira/test-heimdall-classify.sh`.
+`heimdall/src/classify_cells.rs`.
 
 ## 5. Tests
 
