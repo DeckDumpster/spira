@@ -1,0 +1,301 @@
+//! `claimable`: the claim rule answered from lifecycle records when it is asked. Nothing is
+//! read from a stored verdict and nothing is written.
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
+
+use lifecycle::bead::{rework_claim_stack_unchanged, BeadState, HoldKind, Stack};
+use serde::Serialize;
+use serde_json::json;
+use spira_config::edges::{self, Gate};
+use spira_config::nonwork::{self, SPLIT_LABEL};
+use state_store::Backend;
+
+use super::records::LifecycleRecord;
+use super::state::{self, Call};
+use super::store::Store;
+use crate::{flag, CANNOT_TELL};
+
+pub const VERBS: &[&str] = &["claimable"];
+
+/// The hard ceiling the config schema enforces on `SPIRA_STACK_MAX_DEPTH`.
+const STACK_CEILING: u32 = 4;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Verdict {
+    Claimable,
+    Blocked,
+    Held,
+    Snoozed,
+    TooDeep,
+    StackUnchanged,
+    Carried,
+    Stopped,
+    OutOfScope,
+    CannotTell,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct Ctx {
+    pub now: i64,
+    pub stack_max: u32,
+    pub incident_label: String,
+    pub scope_label: String,
+    pub no_loop_label: String,
+    /// `(prerequisite, tip)` pairs a stack-conflict marker holds for.
+    pub conflicts: BTreeSet<(String, String)>,
+    pub reserved: BTreeSet<String>,
+    pub stopped_repos: BTreeSet<String>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Judgement {
+    pub verdict: Verdict,
+    pub blocker: Option<String>,
+    pub missing: Vec<&'static str>,
+    pub depth: u32,
+    pub stack: Stack,
+    pub gates: BTreeMap<String, Option<Gate>>,
+}
+
+fn csv(s: &str) -> Vec<&str> {
+    s.split(',').map(str::trim).filter(|t| !t.is_empty()).collect()
+}
+
+fn rowless_done(issue_type: &str, status: &str) -> bool {
+    let kind = match issue_type {
+        "gate" => nonwork::Kind::Hold,
+        "epic" | "decision" | "event" | "molecule" => nonwork::Kind::Epic,
+        _ => return true,
+    };
+    nonwork::is_closed(kind, status)
+}
+
+/// What `cand` waits on: its parent, then its declared blockers, which never repeat the parent.
+fn blockers(cand: &LifecycleRecord) -> Vec<String> {
+    let Some(claim) = &cand.claim else { return Vec::new() };
+    let id = &cand.row.bead_id;
+    claim
+        .parent
+        .iter()
+        .filter(|p| !p.is_empty() && *p != id)
+        .chain(claim.blocks.iter().filter(|b| claim.parent.as_ref() != Some(*b)))
+        .cloned()
+        .collect()
+}
+
+pub fn judge(
+    cand: &LifecycleRecord,
+    rows: &BTreeMap<String, LifecycleRecord>,
+    rowless: &BTreeMap<String, (String, String)>,
+    ctx: &Ctx,
+) -> Judgement {
+    let own = &cand.row;
+    let mut j = Judgement { verdict: Verdict::Claimable, blocker: None, missing: Vec::new(), depth: 0, stack: Stack::new(), gates: BTreeMap::new() };
+    if own.holds.iter().any(|h| *h != HoldKind::Wait) {
+        j.verdict = Verdict::Held;
+        return j;
+    }
+    let snoozed = own.holds.contains(&HoldKind::Wait)
+        && own.reason.as_deref().and_then(spira_store::lc_state::snooze_until).is_some_and(|t| t > ctx.now);
+    if snoozed {
+        j.verdict = Verdict::Snoozed;
+        return j;
+    }
+    if cand.claim.is_none() {
+        j.missing.push("claim");
+    }
+    if cand.repo.is_none() {
+        j.missing.push("repo");
+    }
+    let (Some(claim), Some(own_repo)) = (&cand.claim, &cand.repo) else {
+        j.verdict = Verdict::CannotTell;
+        return j;
+    };
+    let has = |set: &str, l: &String| csv(set).contains(&l.as_str());
+    let labelled = csv(&ctx.scope_label).iter().all(|l| claim.labels.iter().any(|x| x == l))
+        && !claim.labels.iter().any(|l| has(&ctx.no_loop_label, l));
+    if !labelled {
+        j.verdict = Verdict::OutOfScope;
+        return j;
+    }
+    let incident = !ctx.incident_label.is_empty() && claim.labels.contains(&ctx.incident_label);
+    let stack_max = if incident { 0 } else { ctx.stack_max };
+    let split = claim.labels.iter().any(|l| l == SPLIT_LABEL);
+    let mut stacked_max: Option<u32> = None;
+    let mut blocked = None;
+    for bid in blockers(cand) {
+        let rec = rows.get(&bid);
+        j.gates.insert(bid.clone(), rec.map(LifecycleRecord::gate));
+        if blocked.is_some() {
+            continue;
+        }
+        let is_parent = claim.parent.as_deref() == Some(bid.as_str());
+        if is_parent && !edges::blocks(edges::Edge::Parent { parent: rec.map(|r| (r.row.state, r.row.tip.is_some())), split }) {
+            continue;
+        }
+        let ok = match rec {
+            None => rowless.get(&bid).is_some_and(|(ty, status)| rowless_done(ty, status)),
+            Some(b) => {
+                let stackable = stack_max > 0 && !is_parent && b.repo.as_ref() == Some(own_repo);
+                let conflict = b.row.tip.as_ref().is_some_and(|t| ctx.conflicts.contains(&(bid.clone(), t.clone())));
+                match b.row.state {
+                    BeadState::Landed | BeadState::Done => true,
+                    BeadState::Certified | BeadState::InDelivery if stackable && conflict => false,
+                    BeadState::Certified | BeadState::InDelivery if stackable => {
+                        stacked_max = Some(stacked_max.unwrap_or(0).max(b.row.stack_depth));
+                        if let Some(tip) = &b.row.tip {
+                            j.stack.insert(bid.clone(), tip.clone());
+                        }
+                        true
+                    }
+                    s => s.is_terminal(),
+                }
+            }
+        };
+        if !ok {
+            blocked = Some(bid);
+        }
+    }
+    if let Some(b) = blocked {
+        j.verdict = Verdict::Blocked;
+        j.blocker = Some(b);
+        j.stack.clear();
+        return j;
+    }
+    j.depth = stacked_max.map_or(0, |d| d + 1);
+    if j.depth > stack_max {
+        j.verdict = Verdict::TooDeep;
+        return j;
+    }
+    if own.state == BeadState::Rework && rework_claim_stack_unchanged(&own.stack, own.reason.as_deref(), &j.stack) {
+        j.verdict = Verdict::StackUnchanged;
+        return j;
+    }
+    if ctx.reserved.contains(&own.bead_id) || ctx.stopped_repos.contains(own_repo) {
+        j.verdict = Verdict::Stopped;
+        return j;
+    }
+    if let Some(carrier) = &cand.carried_by {
+        if rows.get(carrier).is_none_or(|r| !r.row.state.is_terminal()) {
+            j.verdict = Verdict::Carried;
+            j.blocker = Some(carrier.clone());
+        }
+    }
+    j
+}
+
+/// What the verb reads besides the control store.
+pub trait Inputs {
+    fn config(&self) -> Result<Config, String>;
+    /// `(issue_type, status)` of each id the content store holds.
+    fn statuses(&self, ids: &[String]) -> Result<BTreeMap<String, (String, String)>, String>;
+    fn run_dir(&self) -> Result<PathBuf, String>;
+}
+
+pub struct Config {
+    pub stack_max: u32,
+    pub incident_label: String,
+    pub scope_label: String,
+    pub no_loop_label: String,
+}
+
+pub struct Live;
+
+impl Inputs for Live {
+    fn config(&self) -> Result<Config, String> {
+        use spira_config::process::{cfg, cfg_parse};
+        Ok(Config {
+            stack_max: cfg_parse::<u32>("SPIRA_STACK_MAX_DEPTH")?.min(STACK_CEILING),
+            incident_label: cfg("SPIRA_INCIDENT_LABEL")?,
+            scope_label: cfg("SPIRA_SCOPE_LABEL")?,
+            no_loop_label: cfg("SPIRA_NO_LOOP_LABEL")?,
+        })
+    }
+
+    fn statuses(&self, ids: &[String]) -> Result<BTreeMap<String, (String, String)>, String> {
+        let beads = crate::bd::store(|sql, db| crate::content_sql::statuses(sql, db, ids))?;
+        Ok(beads.into_iter().map(|b| (b.id, (b.issue_type, b.status))).collect())
+    }
+
+    fn run_dir(&self) -> Result<PathBuf, String> {
+        crate::lifecycle_run_dir()
+    }
+}
+
+pub fn run<B: Backend>(store: &Store<B>, args: &[String], inputs: &dyn Inputs, call: &Call) -> (i32, String) {
+    match answer(store, args, inputs, call) {
+        Ok(out) => (0, out),
+        Err(e) => (CANNOT_TELL, format!("cannot tell: claimable: {e}")),
+    }
+}
+
+fn answer<B: Backend>(store: &Store<B>, args: &[String], inputs: &dyn Inputs, call: &Call) -> Result<String, String> {
+    let repo = flag(args, "--repo");
+    if args.len() != 1 + 2 * usize::from(repo.is_some()) {
+        return Err("takes only --repo <repo>".into());
+    }
+    let config = inputs.config()?;
+    let rev = store.contract().head().map_err(|e| e.to_string())?;
+    let states = [BeadState::Ready, BeadState::Rework];
+    let cands = store
+        .records_page(rev, Some(&states), None, None, None, |r| repo.as_ref().is_none_or(|x| r.repo.as_ref() == Some(x)))
+        .map_err(|e| e.to_string())?;
+    let mut rows: BTreeMap<String, LifecycleRecord> = cands.into_iter().map(|r| (r.value.row.bead_id.clone(), r.value)).collect();
+    let cand_ids: Vec<String> = rows.keys().cloned().collect();
+    let wanted: BTreeSet<String> = cand_ids.iter().filter_map(|id| rows.get(id)).flat_map(blockers).collect();
+    let carriers: BTreeSet<String> = cand_ids.iter().filter_map(|id| rows[id].carried_by.clone()).collect();
+    let unread: Vec<String> = wanted.union(&carriers).filter(|i| !rows.contains_key(*i)).cloned().collect();
+    if !unread.is_empty() {
+        for r in store.records_page(rev, None, Some(&unread), None, None, |_| true).map_err(|e| e.to_string())? {
+            rows.insert(r.value.row.bead_id.clone(), r.value);
+        }
+    }
+    let rowless_ids: Vec<String> = wanted.iter().filter(|i| !rows.contains_key(*i)).cloned().collect();
+    let rowless = if rowless_ids.is_empty() { BTreeMap::new() } else { inputs.statuses(&rowless_ids)? };
+    let run = inputs.run_dir()?;
+    let ctx = context(&config, &run, &rows, &cand_ids, call.now);
+    let mut cannot_tell = 0;
+    let beads: Vec<_> = cand_ids
+        .iter()
+        .map(|id| {
+            let rec = &rows[id];
+            let j = judge(rec, &rows, &rowless, &ctx);
+            cannot_tell += usize::from(j.verdict == Verdict::CannotTell);
+            json!({
+                "bead_id": id, "verdict": j.verdict, "blocker": j.blocker, "missing": j.missing,
+                "depth": j.depth, "stack": j.stack, "gates": j.gates, "row": state::listed(rec, None),
+            })
+        })
+        .collect();
+    Ok(json!({ "rev": rev, "cannot_tell": cannot_tell, "beads": beads }).to_string())
+}
+
+fn context(config: &Config, run: &Path, rows: &BTreeMap<String, LifecycleRecord>, cands: &[String], now: i64) -> Ctx {
+    let conflicts = rows
+        .values()
+        .filter(|r| matches!(r.row.state, BeadState::Certified | BeadState::InDelivery))
+        .filter_map(|r| Some((r.row.bead_id.clone(), r.row.tip.clone()?)))
+        .filter(|(id, tip)| spira_config::stack_conflict::holds(run, id, tip))
+        .collect();
+    let repos: BTreeSet<&String> = cands.iter().filter_map(|id| rows[id].repo.as_ref()).collect();
+    let stopped_repos = repos
+        .into_iter()
+        .filter(|r| spira_config::scoped_stop::stop_for(run, r, "claims").is_some())
+        .cloned()
+        .collect();
+    Ctx {
+        now,
+        stack_max: config.stack_max,
+        incident_label: config.incident_label.clone(),
+        scope_label: config.scope_label.clone(),
+        no_loop_label: config.no_loop_label.clone(),
+        conflicts,
+        reserved: spira_config::scoped_stop::reserved_ids(run),
+        stopped_repos,
+    }
+}
+
+#[cfg(test)]
+mod tests;
