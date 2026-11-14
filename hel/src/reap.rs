@@ -772,6 +772,14 @@ mod tests {
         assert!(Git(&repo).branch_exists("spira/sp-q"));
         assert!(logged().contains("REFUSED") && logged().contains("lifecycle state is CERTIFIED"), "{}", logged());
 
+        let in_delivery = |_: &str| Some("IN_DELIVERY".to_string());
+        assert!(matches!(go("sp-q", "slain", &open(), &in_delivery), Err(DestroyBranchErr::CertifiedQueued)));
+
+        // A WORKING lifecycle row (an unreleased lease): refused.
+        let working = FakeBd { state: Some("WORKING".into()) };
+        assert!(matches!(go("sp-q", "hel", &working, &none), Err(DestroyBranchErr::Refused(ref m)) if m.contains("lease has not been released")));
+        assert!(Git(&repo).branch_exists("spira/sp-q"));
+
         // A live holder witness: refused.
         std::fs::write(run.join("hold-sp-q.pid"), std::process::id().to_string()).unwrap();
         assert!(matches!(go("sp-q", "hel", &open(), &none), Err(DestroyBranchErr::Refused(ref m)) if m.contains("live process")));
