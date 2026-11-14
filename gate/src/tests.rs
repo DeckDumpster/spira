@@ -355,10 +355,16 @@ impl Fake {
         if let Some(r) = lint.and_then(|l| self.lint_by_bin.borrow().get(&l).cloned()) {
             return r;
         }
+        let uncached = env.iter().any(|(k, v)| k == "SPIRA_BUILD_CACHE" && v == "off");
+        let key = if uncached && self.runs.borrow().contains_key(&format!("{br}:uncached")) {
+            format!("{br}:uncached")
+        } else {
+            br.clone()
+        };
         let (rc, out) = self
             .runs
             .borrow()
-            .get(&br)
+            .get(&key)
             .cloned()
             .unwrap_or((0, String::new()));
         if rc != 0 {
@@ -3507,6 +3513,67 @@ fn a_build_that_loses_sccache_is_no_verdict_but_a_compile_error_is_red() {
     f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, "test-a.sh RED\nerror[E0308]: mismatched types".into()));
     assert_eq!(f.run(), FAIL, "{}", f.stderr());
     assert!(f.verdict_line().contains("reason=branch-red"), "{}", f.verdict_line());
+}
+
+/// A trial that loses its sccache server is run once more with the cache off, and the gate
+/// says so; if the uncached run is clean the gate passes.
+#[test]
+fn a_trial_that_loses_sccache_retries_once_without_the_cache() {
+    let wedged = "test-a.sh RED\nsccache: error: failed to execute compile\ncaused by: Connection reset by peer (os error 104)";
+    let f = Fake::new();
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, wedged.into()));
+    f.runs.borrow_mut().insert(format!("{MERGE_SHA}:uncached"), (0, String::new()));
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    assert!(f.stderr().contains("retrying the trial once without the compiler cache"), "{}", f.stderr());
+    let n = f.ran.borrow().len();
+    assert_eq!(f.env_of(n - 1, "SPIRA_BUILD_CACHE"), "off");
+    assert_eq!(f.env_of(n - 1, "RUSTC_WRAPPER"), "");
+    assert!(meter(&f).contains(" phases=gate:7,gate:7 test_clock=14s"), "{}", meter(&f));
+}
+
+/// A trial whose cache is already off, or whose red is not a cache fault, is never retried; a
+/// retry that fails the same way is the verdict.
+#[test]
+fn only_a_cache_fault_on_a_cached_trial_is_retried_and_a_failed_retry_is_no_verdict() {
+    let wedged = "test-a.sh RED\nsccache: error: failed to execute compile\ncaused by: Connection reset by peer (os error 104)";
+    let f = Fake::new();
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, wedged.into()));
+    f.runs.borrow_mut().insert(format!("{MERGE_SHA}:uncached"), (1, wedged.into()));
+    assert_eq!(f.run(), NOVERDICT, "{}", f.stderr());
+    assert!(f.verdict_line().contains("reason=build-cache-fault"), "{}", f.verdict_line());
+    let retries = f.stderr().matches("retrying the trial once").count();
+    assert_eq!(retries, 1, "a retry that fails the same way is not retried again: {}", f.stderr());
+
+    let f = Fake::new();
+    f.put_var("SPIRA_BUILD_CACHE", "off");
+    *f.wrapper.borrow_mut() = Ok(spira_config::build::Wrapper::Off);
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, wedged.into()));
+    assert_eq!(f.run(), NOVERDICT, "{}", f.stderr());
+    assert!(!f.stderr().contains("retrying the trial"), "{}", f.stderr());
+
+    let f = Fake::new();
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, "test-a.sh RED\nerror[E0308]: mismatched types".into()));
+    assert_eq!(f.run(), FAIL, "{}", f.stderr());
+    assert!(!f.stderr().contains("retrying the trial"), "{}", f.stderr());
+}
+
+/// Under `spira-admit` the wrapper stays (the compile slot) and only its inner compiler drops
+/// sccache; an admitted build with no inner compiler is not a cached one.
+#[test]
+fn the_uncached_env_of_an_admitted_build_keeps_the_admit_wrapper_and_empties_its_inner_compiler() {
+    let env = |inner: &str| -> Vec<(String, String)> {
+        vec![
+            ("RUSTC_WRAPPER".into(), "/box/bin/spira-admit".into()),
+            ("SPIRA_ADMIT_INNER".into(), inner.into()),
+        ]
+    };
+    assert!(crate::engine::cache_in_force(&env("/box/.cargo/bin/sccache")));
+    assert!(!crate::engine::cache_in_force(&env("")));
+    let off = crate::engine::without_cache(env("/box/.cargo/bin/sccache"));
+    assert!(off.contains(&("RUSTC_WRAPPER".to_string(), "/box/bin/spira-admit".to_string())), "{off:?}");
+    assert!(off.contains(&("SPIRA_ADMIT_INNER".to_string(), String::new())), "{off:?}");
+    assert!(off.contains(&("SPIRA_BUILD_CACHE".to_string(), "off".to_string())), "{off:?}");
+    assert!(!crate::engine::cache_in_force(&off));
 }
 
 /// A test binary the gate built and something else removed is the host's fault: the red text
