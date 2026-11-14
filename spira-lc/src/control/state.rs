@@ -128,7 +128,7 @@ fn column(rec: &LifecycleRecord, r: Option<&Readiness>, name: &str) -> Value {
             let runes = r.map(|r| r.runes.join(",")).unwrap_or_default();
             text(Some(runes.as_str()).filter(|s| !s.is_empty()))
         }
-        "claim_at" => text(r.and_then(|r| r.judged_at.as_deref())),
+        "claim_at" => text(r.and_then(|r| r.verdict_at.as_deref())),
         "blocked_by" => Value::Array(
             r.map(|r| r.blocked_by.iter().cloned().map(Value::String).collect())
                 .unwrap_or_default(),
