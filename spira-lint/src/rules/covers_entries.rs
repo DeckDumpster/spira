@@ -164,6 +164,7 @@ mod tests {
         CoversEntries.check(&tree).map(|v| v.iter().map(|f| f.to_string()).collect())
     }
 
+    // covers: UC-test-infrastructure-02
     #[test]
     fn a_planted_unresolvable_token_is_caught_then_clears() {
         let t = TempDir::new("cov");
@@ -172,6 +173,12 @@ mod tests {
         assert_eq!(
             run(&t, &["spira/lib.sh", "spira/test-pc.sh"]).unwrap(),
             vec!["covers-entries: spira/test-pc.sh: # covers: token '(pc_bad)' matches no file in the tree"]
+        );
+        t.write("spira/test-pc.sh", "#!/bin/bash\n# covers: spira/lib.sh UC-area-01\n#   spira/ghost.sh\n");
+        assert_eq!(
+            run(&t, &["spira/lib.sh", "spira/test-pc.sh"]).unwrap(),
+            vec!["covers-entries: spira/test-pc.sh: # covers: token 'spira/ghost.sh' matches no file in the tree"],
+            "a continuation line is checked, and a use-case id is not a path"
         );
         t.write("spira/test-pc.sh", "#!/bin/bash\n# covers: spira/lib.sh spira/*.sh UC-area-01 G-07\n");
         assert!(run(&t, &["spira/lib.sh", "spira/test-pc.sh"]).unwrap().is_empty());

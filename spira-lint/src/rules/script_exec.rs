@@ -78,6 +78,7 @@ mod tests {
         ScriptExec.check(&tree).map(|v| v.iter().map(|f| f.path.clone()).collect())
     }
 
+    // covers: UC-test-infrastructure-41
     #[test]
     fn a_planted_non_executable_script_is_caught_then_clears_with_x() {
         let t = TempDir::new("sx");

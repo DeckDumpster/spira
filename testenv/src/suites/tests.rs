@@ -843,6 +843,52 @@ fn lint_counts_every_violation_on_one_line_and_still_reports_the_others() {
     assert_eq!(t.out(), vec!["test-a.sh\tquarantined\t2026-09-01T00:00:00Z\tsp-1\tok"]);
 }
 
+// covers: UC-test-infrastructure-32
+#[test]
+fn the_suite_state_file_never_duplicates_a_row_stores_no_active_row_and_never_reads_a_bad_line() {
+    let t = T::new("state-rules");
+    t.suite("test-d.sh", "");
+    t.git.trees.borrow_mut().get_mut("base0").unwrap().insert("spira/suite-state".into(), "# h\n".into());
+    let head = |t: &T, branch: &str| {
+        let c = t.git.refs.borrow().get(branch).cloned().unwrap();
+        t.git.show(Path::new("/r"), &c, "spira/suite-state").unwrap()
+    };
+    t.input.borrow_mut().insert("-".into(), "first reason\n".into());
+    assert_eq!(t.run(&["disable", "test-d.sh", "--reason-file", "-"]), 0);
+    let b1 = t.out()[0].clone();
+    t.clear();
+    t.input.borrow_mut().insert("-".into(), "second reason\n".into());
+    assert_eq!(t.run(&["disable", "test-d.sh", "--reason-file", "-", "--base", &b1]), 0);
+    let b2 = t.out()[0].clone();
+    let rows = head(&t, &b2);
+    assert_eq!(rows.matches("test-d.sh").count(), 1, "a replaced row is never duplicated: {rows}");
+    assert!(rows.contains("second reason") && !rows.contains("first reason"), "{rows}");
+    t.clear();
+    assert_eq!(t.run(&["activate", "test-d.sh", "--base", &b2]), 0);
+    let b3 = t.out()[0].clone();
+    assert_eq!(head(&t, &b3), "# h\n", "`active` stores no row");
+
+    // The fence's lint passes an empty file, and a bad line is reported but never becomes a row.
+    t.lifecycle("");
+    assert_eq!(t.run(&["lint"]), 0, "{}", t.err());
+    t.clear();
+    t.lifecycle("garbage line\ntest-d.sh | weird | 2026-01-01T00:00:00Z | | r\n");
+    assert_eq!(t.run(&["lint"]), 1);
+    assert!(t.out().is_empty(), "bad lines never reach the rows: {:?}", t.out());
+
+    // The fence refuses a quarantine with no bead, a row with no reason, and a missing suite.
+    for (row, said) in [
+        ("test-d.sh | quarantined | 2026-01-01T00:00:00Z | | flaky", "has no bead id"),
+        ("test-d.sh | disabled | 2026-01-01T00:00:00Z | |", "missing reason"),
+        ("test-gone.sh | disabled | 2026-01-01T00:00:00Z | | gone", "suite does not exist: test-gone.sh"),
+    ] {
+        t.clear();
+        t.lifecycle(&format!("{row}\n"));
+        assert_eq!(t.run(&["lint"]), 1, "{row}");
+        assert!(t.err().contains(said), "{row}: {}", t.err());
+    }
+}
+
 // --------------------------------------------------------------------------- spira-lc
 
 /// `testenv suites` never runs spira-lc or reads SPIRA_LC_BIN: a transition's change bead
