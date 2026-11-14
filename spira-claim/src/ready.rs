@@ -289,15 +289,11 @@ mod tests {
     // covers: UC-dwarf-execution-21
     #[test]
     fn an_epic_and_a_no_loop_bead_are_outside_the_scope_the_poison_pass_examines() {
-        let mut epic = row("e", &["spira", "plan"]);
-        epic.issue_type = Some("epic".into());
-        let mut task = row("t", &["spira", "plan"]);
-        task.issue_type = Some("task".into());
-        let mut no_loop = row("n", &["spira", "plan", "no-loop"]);
-        no_loop.issue_type = Some("task".into());
-        assert!(in_scope(&task, "plan", "no-loop"), "positive control");
-        assert!(!in_scope(&epic, "plan", "no-loop"));
-        assert!(!in_scope(&no_loop, "plan", "no-loop"));
+        let skip = "keep-out"; // literal-ok: test fixture
+        let typed = |id: &str, kind: &str, labels: &[&str]| ReadyRow { issue_type: Some(kind.into()), ..row(id, labels) };
+        assert!(in_scope(&typed("t", "task", &["plan"]), "plan", skip), "positive control");
+        assert!(!in_scope(&typed("e", "epic", &["plan"]), "plan", skip));
+        assert!(!in_scope(&typed("n", "task", &["plan", skip]), "plan", skip));
     }
 
     #[test]
