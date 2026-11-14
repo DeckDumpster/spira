@@ -298,7 +298,7 @@ fn width_and_defaults_read_like_the_bash() {
 #[test]
 fn the_real_corpus_claims_the_root_installer() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
-    let c = Corpus::load_named(&dir, &["test-install-dolt-port-wait.sh".into()]).unwrap();
+    let c = Corpus::load_named(&dir, &["test-install-rehearsal-stray.sh".into()]).unwrap();
     let s = select::select(
         &c,
         &[select::Change::modified("install/src/bin/install.rs")],
@@ -310,7 +310,7 @@ fn the_real_corpus_claims_the_root_installer() {
         },
     )
     .unwrap();
-    assert_eq!(s.suites, ["test-install-dolt-port-wait.sh"]);
+    assert_eq!(s.suites, ["test-install-rehearsal-stray.sh"]);
 }
 
 #[test]
