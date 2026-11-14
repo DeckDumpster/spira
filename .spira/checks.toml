@@ -4,6 +4,12 @@ run = "cargo clippy {affected} --features integration --all-targets -- -D warnin
 budget_ms = 900000
 
 [[check]]
+name = "unit-build"
+run = "gate unit-build {affected}"
+build = "gate"
+budget_ms = 900000
+
+[[check]]
 name = "spira-lint"
 run = "spira-lint --diff refs/heads/local/main"
 build = "spira-lint"
