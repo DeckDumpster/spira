@@ -751,3 +751,44 @@ fn a_user_named_like_the_bot_is_not_trusted() {
     let bd = run_bot_issue("github-actions[bot]", "User", r#"{"name":"spira:acceptance"}"#);
     assert!(work_beads(&bd).is_empty());
 }
+
+#[test]
+fn a_write_access_author_shown_as_contributor_still_becomes_work() {
+    let cfg = base_cfg();
+    let http = FakeHttp::default();
+    http.set(
+        &issues_url(&cfg, 1),
+        200,
+        r#"[{"number":348,"title":"a real request","body":"please","user":{"login":"rgantt","type":"User"},"labels":[],"author_association":"CONTRIBUTOR"}]"#,
+    );
+    http.set(&format!("{}/orgs/acme/members/rgantt", cfg.api), 404, "");
+    http.set(&format!("{}/repos/acme/widgets/collaborators/rgantt/permission", cfg.api), 200, r#"{"permission":"admin"}"#);
+    let bd = FakeBd::default();
+    bd.seed("seed", "sp-seed", &["spira"]);
+    let repo = FakeRepo { root: Some("/repos/widgets".to_string()), registered: vec![] };
+
+    let report = run(&http, &bd, &repo, &FakeMail::default(), &stamp(), &seen_of(&cfg), &cfg);
+
+    assert_eq!(report.code, 0, "stderr: {:?}", report.err);
+    let beads = bd.beads.borrow();
+    let made = beads.iter().find(|b| b["external_ref"] == "github:acme/widgets#348").expect("work bead filed");
+    assert_eq!(made["priority"], cfg.priority.as_str());
+    assert!(made["labels"].as_array().unwrap().iter().any(|l| l == "repo:widgets"), "{made}");
+    assert!(!beads.iter().any(|b| b["external_ref"] == "github-untrusted:acme/widgets#348"));
+}
+
+#[test]
+fn a_member_author_becomes_work_without_any_permission_call() {
+    let cfg = base_cfg();
+    let http = FakeHttp::default();
+    http.set(&issues_url(&cfg, 1), 200, &format!("[{}]", issue_json(7, "MEMBER")));
+    let bd = FakeBd::default();
+    bd.seed("seed", "sp-seed", &["spira"]);
+    let repo = FakeRepo { root: Some("/repos/widgets".to_string()), registered: vec![] };
+
+    let report = run(&http, &bd, &repo, &FakeMail::default(), &stamp(), &seen_of(&cfg), &cfg);
+
+    assert_eq!(report.code, 0, "stderr: {:?}", report.err);
+    assert!(bd.beads.borrow().iter().any(|b| b["external_ref"] == "github:acme/widgets#7"));
+    assert_eq!(*http.calls.borrow(), vec![issues_url(&cfg, 1)]);
+}

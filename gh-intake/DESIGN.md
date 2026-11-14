@@ -83,6 +83,8 @@ refusal, exit 2 — unchanged from the bash.
    - Already a known work bead (by ref) → note the re-ingest on the existing bead (or, under
      `--dry-run`, print what would be noted) and move on. No second bead, ever.
    - `author_association` in `OWNER`/`MEMBER`/`COLLABORATOR` → trusted outright.
+   - Otherwise an author whose current access is admin/maintain/write (`actor_has_access`) is
+     trusted too: a private org member reads as `CONTRIBUTOR` even to the App.
    - Otherwise, carrying the exact label `spira:accept` → resolve the actor who most
      recently applied it (the issue's events timeline) and check that actor's CURRENT access
      (org membership, then collaborator permission — `admin`/`maintain`/`write` only) before

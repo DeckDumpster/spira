@@ -455,7 +455,7 @@ pub fn run_observe(e: &Effects, _key: &str, s: &EffectSpec) -> Result<String, St
     let store: Vec<KnownRef> = gh_intake::store::ingested(&serde_json::Value::Array(listed)).into_iter().map(|k| KnownRef { id: k.id, ext_ref: k.ext_ref, labels: k.labels }).collect();
     let api = Some(get(cfg, "SPIRA_GH_INTAKE_API")).filter(|a| !a.is_empty()).unwrap_or(gh::GITHUB_API).to_string();
     let http = gh_intake::real::RealHttp::from_broker();
-    let (mut pages, mut accept, mut hidden) = (BTreeMap::new(), vec![], vec![]);
+    let (mut pages, mut accept, mut hidden) = (BTreeMap::new(), Vec::<Accept>::new(), Vec::new());
     for t in &targets {
         match gh::fetch_open_issues(&http, &api, &t.slug) {
             Err(gh::Fetch::RateLimited) => {
@@ -467,34 +467,41 @@ pub fn run_observe(e: &Effects, _key: &str, s: &EffectSpec) -> Result<String, St
                 pages.insert(t.slug.clone(), Pages::Error(err));
             }
             Ok(issues) => {
-                let seen = input.seen.get(&t.slug);
-                for i in issues.iter().filter(|i| seen.is_some_and(|s| !s.contains(&i.number))) {
-                    let trusted = gh_intake::model::association_trusted(&i.association) || gh_intake::model::own_bot_acceptance(i);
-                    if trusted {
-                        accept.push(Accept { slug: t.slug.clone(), number: i.number, actor: None, has_access: true, hidden: false });
-                        continue;
-                    }
-                    if gh_intake::model::has_accept_label(&i.labels) {
-                        let actor = gh::accept_actor_of(&http, &api, &t.slug, i.number);
-                        if !actor.is_empty() {
-                            let has_access = gh::actor_has_access(&http, &api, &t.slug, &actor);
-                            let hidden = !has_access && gh::membership_hidden(&http, &api, &t.slug, &actor);
-                            accept.push(Accept { slug: t.slug.clone(), number: i.number, actor: Some(actor), has_access, hidden });
-                            if has_access {
-                                continue;
-                            }
-                        }
-                    }
-                    if i.association == "CONTRIBUTOR" {
-                        hidden.push((t.slug.clone(), i.login.clone(), gh::membership_hidden(&http, &api, &t.slug, &i.login)));
-                    }
-                }
+                let (a, h) = trust_answers(&http, &api, &t.slug, &issues, input.seen.get(&t.slug));
+                accept.extend(a);
+                hidden.extend(h);
                 let list = issues.into_iter().map(|i| GhIssue { number: i.number, title: i.title, body: i.body, author: i.login, is_pr: false }).collect();
                 pages.insert(t.slug.clone(), Pages::Issues(list));
             }
         }
     }
     serde_json::to_string(&Snapshot { halted, targets, store, now, pages, accept, contributor_hidden: hidden }).map_err(|e| e.to_string())
+}
+
+/// Trust answers for the issues not seen before: who is admitted, and which CONTRIBUTOR authors are hidden members.
+pub fn trust_answers(http: &dyn gh_intake::ports::Http, api: &str, slug: &str, issues: &[gh_intake::model::GhIssue], seen: Option<&Vec<u64>>) -> (Vec<Accept>, Vec<(String, String, bool)>) {
+    let (mut accept, mut hidden) = (vec![], vec![]);
+    for i in issues.iter().filter(|i| seen.is_some_and(|s| !s.contains(&i.number))) {
+        if gh::author_has_access(http, api, slug, i) {
+            accept.push(Accept { slug: slug.to_string(), number: i.number, actor: None, has_access: true, hidden: false });
+            continue;
+        }
+        if gh_intake::model::has_accept_label(&i.labels) {
+            let actor = gh::accept_actor_of(http, api, slug, i.number);
+            if !actor.is_empty() {
+                let has_access = gh::actor_has_access(http, api, slug, &actor);
+                let hidden = !has_access && gh::membership_hidden(http, api, slug, &actor);
+                accept.push(Accept { slug: slug.to_string(), number: i.number, actor: Some(actor), has_access, hidden });
+                if has_access {
+                    continue;
+                }
+            }
+        }
+        if i.association == "CONTRIBUTOR" {
+            hidden.push((slug.to_string(), i.login.clone(), gh::membership_hidden(http, api, slug, &i.login)));
+        }
+    }
+    (accept, hidden)
 }
 
 fn file(e: &Effects, s: &EffectSpec, labels: impl Fn(&BTreeMap<String, String>, &Filing) -> (String, String)) -> Result<String, String> {
@@ -553,4 +560,45 @@ pub fn run_unverifiable(_: &Effects, _key: &str, s: &EffectSpec) -> Result<Strin
     let p: Pinned<Unverifiable> = parse(&s.input)?;
     let (subject, body) = gh::unverifiable_note(&p.act.login, &p.act.slug);
     mail(&p.cfg).send_operator_note(&subject, body.as_bytes()).then(|| subject.clone()).ok_or_else(|| format!("could not send: {subject}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gh_intake::ports::Http;
+    use std::collections::HashMap;
+
+    struct Fake(HashMap<String, (u16, Vec<u8>)>);
+    impl Http for Fake {
+        fn get(&self, url: &str, _t: u64) -> Result<(u16, Vec<u8>), String> {
+            self.0.get(url).cloned().ok_or_else(|| format!("no fixture for {url}"))
+        }
+    }
+
+    fn contributor(login: &str) -> gh_intake::model::GhIssue {
+        let page = format!(r#"[{{"number":348,"title":"t","body":"b","user":{{"login":"{login}","type":"User"}},"labels":[],"author_association":"CONTRIBUTOR"}}]"#);
+        gh_intake::model::parse_issues_page(page.as_bytes()).unwrap().remove(0)
+    }
+
+    #[test]
+    fn a_contributor_with_write_access_is_admitted_as_an_author() {
+        let api = "https://api.example";
+        let http = Fake(HashMap::from([
+            (format!("{api}/orgs/acme/members/rgantt"), (404, vec![])),
+            (format!("{api}/repos/acme/widgets/collaborators/rgantt/permission"), (200, br#"{"permission":"admin"}"#.to_vec())),
+        ]));
+        let (accept, hidden) = trust_answers(&http, api, "acme/widgets", &[contributor("rgantt")], Some(&vec![]));
+        assert_eq!(accept.len(), 1);
+        assert!(accept[0].actor.is_none() && accept[0].has_access && !accept[0].hidden);
+        assert!(hidden.is_empty());
+    }
+
+    #[test]
+    fn a_contributor_without_access_stays_a_hidden_member_question() {
+        let api = "https://api.example";
+        let http = Fake(HashMap::from([(format!("{api}/orgs/acme/members/rgantt"), (404, vec![]))]));
+        let (accept, hidden) = trust_answers(&http, api, "acme/widgets", &[contributor("rgantt")], Some(&vec![]));
+        assert!(accept.is_empty());
+        assert_eq!(hidden.len(), 1);
+    }
 }

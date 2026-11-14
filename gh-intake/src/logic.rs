@@ -189,7 +189,7 @@ fn ingest_repo(mut r: Report, http: &dyn Http, bd: &dyn Bd, mail: &dyn Mail, sta
         }
 
         let own_bot = own_bot_acceptance(issue);
-        let mut becomes_work = association_trusted(&issue.association) || own_bot;
+        let mut becomes_work = author_has_access(http, &cfg.api, &cfg.repo, issue);
         let mut accept_actor = String::new();
         if !becomes_work && has_accept_label(&issue.labels) {
             accept_actor = accept_actor_of(http, &cfg.api, &cfg.repo, issue.number);
@@ -362,6 +362,14 @@ pub fn actor_has_access(http: &dyn Http, api: &str, repo: &str, login: &str) -> 
         Ok((status, body)) if status < 400 => permission_grants_access(&body),
         _ => false,
     }
+}
+
+/// An author is trusted by association, as the repo's own bot, or by current write access
+/// (a private org member reads as CONTRIBUTOR even to the App). Fails closed.
+pub fn author_has_access(http: &dyn Http, api: &str, repo: &str, issue: &GhIssue) -> bool {
+    association_trusted(&issue.association)
+        || own_bot_acceptance(issue)
+        || (!issue.login.is_empty() && actor_has_access(http, api, repo, &issue.login))
 }
 
 pub fn sha256_hex(b: &[u8]) -> String {
