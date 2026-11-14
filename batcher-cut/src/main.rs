@@ -1340,6 +1340,7 @@ fn finish_local_round(
         ),
     }
     io::write_local_verdict(env_, &repo.name, "green", "");
+    io::close_superseded_reds(repo, &head);
     pace::Files::new(&env_.run, &repo.name).clear_refusals();
     println!(
         "batcher {}: landed locally at {head} — {} member(s)",

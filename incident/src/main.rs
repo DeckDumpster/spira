@@ -123,6 +123,26 @@ fn cmd_list(env: &Env, bd: &incident::real::RealBd) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// Close the repo's open local-red incidents a green landing has outlived.
+fn cmd_supersede_red(env: &Env, bd: &RealBd, repo: &str, landing: &str) -> ExitCode {
+    let s = incident::supersede::RealSuperseder { bd, incident_label: env_or("SPIRA_INCIDENT_LABEL", "incident") };
+    let landed_at = spira_config::vtime::now_epoch() as i64;
+    match incident::supersede::supersede(&s, repo, landing, landed_at) {
+        Ok(outcomes) => {
+            for o in &outcomes {
+                ilog(env, &format!("supersede-red: {o:?}"));
+            }
+            let closed = outcomes.iter().filter(|o| matches!(o, incident::supersede::Outcome::Closed(_))).count();
+            println!("closed {closed} of {}", outcomes.len());
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("incident supersede-red: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 /// Close the incidents whose fixes have landed and whose detector is quiet; leave the rest.
 /// Exit 1 only when the candidates could not be read — a skipped incident is not a failure.
 fn cmd_settle(env: &Env, bd: &RealBd) -> ExitCode {
@@ -369,6 +389,16 @@ fn main() -> ExitCode {
             cmd_drain(&env_cfg, &bd, &mailer, &clock)
         }
         Some("list") => cmd_list(&env_cfg, &bd),
+        Some("supersede-red") => {
+            let (Some(repo), Some(landing), None) = (args.get(1), args.get(2), args.get(3)) else {
+                eprintln!("usage: incident supersede-red <repo> <landing-sha>");
+                return ExitCode::from(2);
+            };
+            if env_cfg.db.is_none() {
+                return require_db(&env_cfg);
+            }
+            cmd_supersede_red(&env_cfg, &bd, repo, landing)
+        }
         Some("settle") => {
             if env_cfg.db.is_none() {
                 return require_db(&env_cfg);
