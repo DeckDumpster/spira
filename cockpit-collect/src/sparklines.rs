@@ -91,6 +91,45 @@ mod tests {
         assert_eq!(spark(&[0, 0, 2, 0, 0, 1, 0, 0]).chars().nth(2), Some('█'));
     }
 
+    // covers: UC-cockpit-observability-19
+    #[test]
+    fn opened_and_closed_sparklines_bucket_by_timestamp_and_render_empty_buckets() {
+        let now = 1_800_000_000;
+        let at = |off: i64| {
+            let t = now - 86400 + off;
+            let (d, s) = (t.div_euclid(86400), t.rem_euclid(86400));
+            let (y, m, day) = civil(d);
+            format!("{y:04}-{m:02}-{day:02}T{:02}:{:02}:{:02}Z", s / 3600, s % 3600 / 60, s % 60)
+        };
+        let row = |c: i64, closed: Option<i64>| match closed {
+            Some(x) => format!(r#"{{"issue_type":"task","created_at":"{}","closed_at":"{}"}}"#, at(c), at(x)),
+            None => format!(r#"{{"status":"open","created_at":"{}"}}"#, at(c)),
+        };
+        let json = format!("[{},{},{},{}]", row(3600, Some(14400)), row(25200, Some(48600)), row(56700, Some(68400)), row(57000, None));
+        let out = render(&json, now, &Ok(DayCounts { closed: 3, claims: 0, submits: 0, cuts: 0 })).unwrap();
+        let line = |k: &str| out.lines().find_map(|l| l.strip_prefix(k)).unwrap_or_default().chars().collect::<Vec<_>>();
+        let opened = line("SP_BEADS_SPARK_OPENED=");
+        assert_eq!(opened.len(), 8, "{out}");
+        assert_eq!(opened[5], '█', "the busiest bucket renders tallest: {out}");
+        assert_eq!(opened[1], '▁', "an empty bucket renders lowest, not dropped: {out}");
+        let closed = line("SP_BEADS_SPARK_CLOSED=");
+        assert_eq!((closed[1], closed[4], closed[6], closed[0]), ('█', '█', '█', '▁'), "{out}");
+        assert!(out.contains("SP_OPENED_24H=4\n"), "{out}");
+        assert!(out.contains("SP_CLOSED_KINDS=task 3\n"), "{out}");
+    }
+
+    fn civil(z: i64) -> (i64, i64, i64) {
+        let z = z + 719468;
+        let era = z.div_euclid(146097);
+        let doe = z.rem_euclid(146097);
+        let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+        let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+        let mp = (5 * doy + 2) / 153;
+        let d = doy - (153 * mp + 2) / 5 + 1;
+        let m = if mp < 10 { mp + 3 } else { mp - 9 };
+        (yoe + era * 400 + (m <= 2) as i64, m, d)
+    }
+
     #[test]
     fn counts_and_no_landed_series() {
         let now = 1788998400 + 86400;
@@ -112,6 +151,7 @@ mod tests {
         assert!(render("not json", now, &counts).is_none());
     }
 
+    // covers: UC-cockpit-observability-19
     #[test]
     fn unreadable_counts_are_unknown_with_the_error_not_zero() {
         let out = render("[]", 1_000_000, &Err("victorialogs-unreachable: refused".into())).unwrap();

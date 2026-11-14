@@ -660,12 +660,30 @@ pub fn core_counts_keys() -> Kv {
     // Asks are not work beads: bd status is their only state (spira_config::nonwork).
     let [_, open] = nonwork::status_args(Kind::Ask, Which::Open);
     let open: Vec<&str> = open.split(',').collect();
-    let rows = io::json_rows(io::live_beads(&ask_label)).map(|r| r.into_iter().filter(|b| b.get("status").and_then(Value::as_str).is_some_and(|s| open.contains(&s))).collect::<Vec<_>>());
-    match rows {
-        None => push(&mut out, "SP_WAITING", "?"),
-        Some(rows) => push(&mut out, "SP_WAITING", rows.len().to_string()),
-    }
+    push(&mut out, "SP_WAITING", waiting_count(io::json_rows(io::live_beads(&ask_label)), &open));
     out
+}
+
+/// Asks still open among `rows`; no readable rows is `?`, never 0.
+fn waiting_count(rows: Option<Vec<Value>>, open: &[&str]) -> String {
+    rows.map_or("?".into(), |r| r.iter().filter(|b| b.get("status").and_then(Value::as_str).is_some_and(|s| open.contains(&s))).count().to_string())
+}
+
+#[cfg(test)]
+mod waiting_tests {
+    use super::*;
+
+    // covers: UC-cockpit-observability-08
+    #[test]
+    fn waiting_is_unknown_when_bd_refused_and_zero_when_the_store_is_empty() {
+        let refusal = "schema version mismatch: database is at v61, binary knows up to v53";
+        assert_eq!(waiting_count(io::json_rows(Some(refusal.into())), &["open"]), "?");
+        assert_eq!(waiting_count(io::json_rows(Some(String::new())), &["open"]), "?");
+        assert_eq!(waiting_count(io::json_rows(None), &["open"]), "?");
+        assert_eq!(waiting_count(io::json_rows(Some("[]".into())), &["open"]), "0");
+        let rows = r#"[{"id":"a","status":"open"},{"id":"b","status":"closed"}]"#;
+        assert_eq!(waiting_count(io::json_rows(Some(rows.into())), &["open"]), "1");
+    }
 }
 
 // ---------------------------------------------------------------------------------------

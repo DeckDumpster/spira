@@ -45,10 +45,11 @@ fn tail_file(path: &Path, max: u64) -> Option<String> {
 }
 
 pub fn ratelim_keys() -> Kv {
-    let run = io::run_dir();
-    let now = io::now();
+    ratelim_in(&io::run_dir(), io::now())
+}
 
-    let mut logs: Vec<(std::path::PathBuf, i64)> = match std::fs::read_dir(&run) {
+fn ratelim_in(run: &Path, now: i64) -> Kv {
+    let mut logs: Vec<(std::path::PathBuf, i64)> = match std::fs::read_dir(run) {
         Ok(rd) => rd
             .flatten()
             .filter_map(|e| {
@@ -177,6 +178,35 @@ pub fn ratelim_keys() -> Kv {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn get<'a>(k: &'a Kv, key: &str) -> &'a str {
+        k.iter().find(|(n, _)| n == key).map_or("<absent>", |(_, v)| v.as_str())
+    }
+
+    // covers: UC-cockpit-observability-16
+    #[test]
+    fn ratelim_reads_the_newest_rate_limit_event_and_is_unknown_without_a_trace() {
+        let run = testkit::TempDir::new("ratelim-trace");
+        let run = run.path();
+        std::fs::write(
+            run.join("a.log"),
+            concat!(
+                r#"{"type":"rate_limit_event","rate_limit_info":{"unifiedWindows":{"five_hour":{"utilization":0.10,"resetsAt":9999999999},"seven_day":{"utilization":0.11,"resetsAt":9999999999}}}}"#, "\n",
+                r#"{"type":"rate_limit_event","rate_limit_info":{"unifiedWindows":{"five_hour":{"utilization":0.27,"resetsAt":9999999999},"seven_day":{"utilization":0.21,"resetsAt":9999999999}}}}"#, "\n",
+            ),
+        )
+        .unwrap();
+        let k = ratelim_in(run, 1_000);
+        assert_eq!((get(&k, "SP_RATELIM_5H_PCT"), get(&k, "SP_RATELIM_7D_PCT")), ("27", "21"));
+        assert_ne!(get(&k, "SP_RATELIM_5H_MIN"), "?");
+        assert_ne!(get(&k, "SP_RATELIM_AGE"), "?");
+
+        let empty = testkit::TempDir::new("ratelim-empty");
+        let k = ratelim_in(empty.path(), 1_000);
+        for key in ["SP_RATELIM_5H", "SP_RATELIM_7D", "SP_RATELIM_5H_PCT"] {
+            assert_eq!(get(&k, key), "?", "{key}");
+        }
+    }
 
     #[test]
     fn win_vals_rejects_bool_and_out_of_range() {

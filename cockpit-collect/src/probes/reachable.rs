@@ -214,6 +214,7 @@ mod tests {
         }
     }
 
+    // covers: UC-cockpit-observability-09
     #[test]
     fn ready_open_bead_with_no_blockers_is_reachable() {
         let beads = vec![bead("sp-1", "open", &["plan"], &[])];
@@ -221,6 +222,7 @@ mod tests {
         assert_eq!((reach, total), (1, 1));
     }
 
+    // covers: UC-cockpit-observability-09
     #[test]
     fn bead_behind_an_unresolved_blocker_is_stranded_until_it_resolves() {
         let beads = vec![
@@ -233,6 +235,7 @@ mod tests {
         assert_eq!((reach, total), (2, 2));
     }
 
+    // covers: UC-cockpit-observability-09
     #[test]
     fn ask_labelled_bead_is_excluded_from_the_universe_entirely() {
         let beads = vec![bead("sp-1", "open", &["plan", "needs-ryan"], &[])]; // literal-ok: fixture/fallback
@@ -240,6 +243,7 @@ mod tests {
         assert_eq!((reach, total), (0, 0));
     }
 
+    // covers: UC-cockpit-observability-09
     #[test]
     fn poisoned_bead_counts_as_stuck_work_not_reachable() {
         let mut b = bead("sp-1", "open", &["plan"], &[]);
@@ -259,6 +263,7 @@ mod tests {
         assert_eq!((reach, total), (0, 1));
     }
 
+    // covers: UC-cockpit-observability-09
     #[test]
     fn scope_label_is_required_to_enter_the_universe() {
         let beads = vec![bead("sp-1", "open", &["other-scope"], &[])];
@@ -276,6 +281,7 @@ mod tests {
         assert!(reach >= 1);
     }
 
+    // covers: UC-cockpit-observability-09
     /// sp-mve9i: the universe and the seeds are the lifecycle row's, not bd's status: a bd
     /// "closed" bead the machine sent back to REWORK is reachable work, a bd "open" bead the
     /// machine has LANDED is not work at all, and a poison hold stops a bead.
@@ -299,6 +305,36 @@ mod tests {
         let ids: Vec<&str> = beads.iter().map(|b| b.id.as_str()).collect();
         assert_eq!(ids, vec!["a", "c"]);
         assert_eq!(reachable_bfs(&beads, "needs-ryan", "plan", &[], &[]), (1, 2)); // literal-ok: fixture/fallback
+    }
+
+    // covers: UC-cockpit-observability-09
+    #[test]
+    fn work_behind_an_ask_or_a_poisoned_blocker_is_stranded() {
+        let ask_behind = vec![bead("sp-1", "open", &["plan", "needs-ryan"], &[]), bead("sp-2", "open", &["plan"], &["sp-1"])]; // literal-ok: fixture/fallback
+        assert_eq!(reachable_bfs(&ask_behind, "needs-ryan", "plan", &[], &[]), (0, 1)); // literal-ok: fixture/fallback
+        let mut poisoned = bead("sp-1", "open", &["plan"], &[]);
+        poisoned.holds = vec!["poison".into()];
+        let behind = vec![poisoned, bead("sp-2", "open", &["plan"], &["sp-1"])];
+        assert_eq!(reachable_bfs(&behind, "needs-ryan", "plan", &[], &[]), (0, 2)); // literal-ok: fixture/fallback
+    }
+
+    // covers: UC-cockpit-observability-09
+    #[test]
+    fn a_relates_to_edge_does_not_block() {
+        let rows: Vec<Value> = serde_json::from_str(
+            r#"[{"id":"a","labels":["plan"],"dependencies":[{"dependency_type":"relates-to","depends_on_id":"b"}]},
+                {"id":"b","labels":["plan"],"dependencies":[{"dependency_type":"blocks","depends_on_id":"c"}]},
+                {"id":"c","labels":["plan"]}]"#,
+        )
+        .unwrap();
+        let lc: HashMap<String, lc_state::Row> = ["a", "b", "c"]
+            .iter()
+            .map(|id| (id.to_string(), lc_state::Row { bead_id: id.to_string(), state: "READY".into(), ..Default::default() }))
+            .collect();
+        let beads = beads_of(&rows, &lc);
+        let blockers = |id: &str| beads.iter().find(|b| b.id == id).unwrap().blocked_by.len();
+        assert_eq!((blockers("a"), blockers("b")), (0, 1), "only a blocks edge blocks");
+        assert_eq!(reachable_bfs(&beads, "needs-ryan", "plan", &[], &[]), (3, 3)); // literal-ok: fixture/fallback
     }
 
     #[test]

@@ -491,6 +491,7 @@ mod tests {
         out.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str())
     }
 
+    // covers: UC-cockpit-observability-08
     #[test]
     fn next_section_reads_the_ready_set_once_for_all_its_partitions() {
         let cfg = Cfg::default();
@@ -525,6 +526,7 @@ mod tests {
         assert_eq!(kv(&out, "SP_NEXT0"), Some("P2 rest sp-1 one"));
     }
 
+    // covers: UC-cockpit-observability-08
     #[test]
     fn next_section_says_unknown_when_the_ready_set_is_refused() {
         let part_map: HashMap<String, String> = [("repo:a".to_string(), "alpha".to_string())].into();
@@ -533,6 +535,7 @@ mod tests {
         assert_eq!((kv(&out, "SP_READY"), kv(&out, "SP_NEXT_N")), (Some("?"), Some("?")));
     }
 
+    // covers: UC-cockpit-observability-08
     #[test]
     fn the_server_inflow_reply_parses_to_the_same_shape_as_the_row_aggregate() {
         let f = inflow_from_server(r#"{"n":3,"defect":1,"kinds":[["task",2],["bug",1]],"rows":[{"id":"sp-a"}]}"#).unwrap();
@@ -541,6 +544,18 @@ mod tests {
         let rows: Vec<Value> = serde_json::from_str(r#"[{"id":"a","issue_type":"bug","created_at":"2026-01-01T00:10:00Z"},{"id":"b","issue_type":"event","created_at":"2026-01-01T00:11:00Z"},{"id":"c","created_at":"2026-01-01T00:00:00Z"}]"#).unwrap();
         let f = inflow_from_rows(&rows, parse_iso8601("2026-01-01T00:05:00Z").unwrap());
         assert_eq!((f.n, f.defect, f.rows.len()), (1, 1, 2));
+    }
+
+    // covers: UC-cockpit-observability-08
+    #[test]
+    fn an_empty_readable_ready_set_is_zero_and_no_resolvable_partition_is_unknown() {
+        let part_map: HashMap<String, String> = [("repo:a".to_string(), "alpha".to_string())].into();
+        let mut out = Kv::new();
+        next_section(&mut out, &part_map, &Cfg::default(), &|_| Some(Vec::new()));
+        assert_eq!((kv(&out, "SP_READY"), kv(&out, "SP_NEXT_N")), (Some("0"), Some("0")));
+        let mut out = Kv::new();
+        next_section(&mut out, &HashMap::new(), &Cfg::default(), &|_| Some(Vec::new()));
+        assert_eq!((kv(&out, "SP_READY"), kv(&out, "SP_NEXT_N")), (Some("?"), Some("?")), "an unresolvable persona is a refusal, not an empty queue");
     }
 
     #[test]
