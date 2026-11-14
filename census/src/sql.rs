@@ -284,4 +284,38 @@ mod tests {
              sp-requeue-desc-changed-since-claim sp-reopen-desc-changed-since-claim\n"
         );
     }
+
+    // covers: UC-ops-detection-remediation-11
+    #[test]
+    fn a_merge_conflict_requeue_folds_into_the_rebase_conflict_reopen_class() {
+        let q = events_sql(None, &causes());
+        assert!(q.contains("NOT (event_type = 'requeued' AND new_value = 'merge-conflict')"), "kept out of its own class: {q}");
+        assert!(q.contains("SELECT 'reopen', 'rebase-conflict', COUNT(DISTINCT issue_id)"), "{q}");
+        assert!(q.contains("((event_type = 'reopen' AND new_value = 'rebase-conflict') OR (event_type = 'requeued' AND new_value = 'merge-conflict')"), "{q}");
+        let rows = event_rows_sql(None, &causes(), &[]);
+        assert!(rows.contains("SELECT 'reopen', 'rebase-conflict', issue_id"), "{rows}");
+    }
+
+    // covers: UC-ops-detection-remediation-11
+    #[test]
+    fn a_bare_reopened_counts_unrecorded_only_when_no_reopen_or_requeue_names_its_cause() {
+        for q in [events_sql(None, &causes()), event_rows_sql(None, &causes(), &[])] {
+            assert!(q.contains("'reopened', 'unrecorded'"), "{q}");
+            assert!(
+                q.contains("event_type = 'reopened' AND (actor = 'harness' OR actor LIKE 'dwarf-%') AND issue_id NOT IN (SELECT issue_id FROM events WHERE (event_type = 'reopen' OR (event_type = 'requeued' AND new_value = 'merge-conflict')))"),
+                "a requeue+reopen pair is not also counted unrecorded: {q}"
+            );
+        }
+    }
+
+    // covers: UC-ops-detection-remediation-13
+    #[test]
+    fn the_since_bound_is_a_utc_literal_and_no_watermark_adds_none() {
+        for since in [None, Some("")] {
+            assert!(!events_sql(since, &causes()).contains("created_at >"));
+            assert!(!event_rows_sql(since, &causes(), &[]).contains("created_at >"));
+        }
+        let q = event_rows_sql(Some("2025-06-16 09:06:40"), &causes(), &[]);
+        assert!(q.contains("created_at > '2025-06-16 09:06:40'") && !q.contains("FROM_UNIXTIME") && !q.contains("NOW()"), "{q}");
+    }
 }

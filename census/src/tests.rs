@@ -34,6 +34,8 @@ pub struct Fake {
     pub covers_closed_in: RefCell<String>,
     /// `spira-lc list`'s rows.
     pub lc: RefCell<Result<Vec<spira_store::lc_state::Row>, String>>,
+    /// Classification and remedy readers run the real [`crate::pipeline`] instead of the canned outputs.
+    pub real_pipeline: std::cell::Cell<bool>,
 }
 
 impl Default for Fake {
@@ -61,6 +63,7 @@ impl Default for Fake {
             covers_in: RefCell::new(String::new()),
             covers_closed_in: RefCell::new(String::new()),
             lc: RefCell::new(Ok(Vec::new())),
+            real_pipeline: std::cell::Cell::new(false),
         }
     }
 }
@@ -123,17 +126,29 @@ impl World for Fake {
         self.landed.borrow().get(id).copied().unwrap_or(2)
     }
     fn cluster(&self, tabular: &str) -> Result<String, String> {
+        if self.real_pipeline.get() {
+            return Ok(crate::pipeline::cluster(tabular, 300));
+        }
         Ok(self.count_out.borrow().get(tabular).cloned().unwrap_or_default())
     }
-    fn cluster_merge(&self, _all_time: &str, _since_wm: &str) -> String {
+    fn cluster_merge(&self, all_time: &str, since_wm: &str) -> String {
+        if self.real_pipeline.get() {
+            return crate::pipeline::cluster_merge(all_time, since_wm);
+        }
         self.merge_out.borrow().clone()
     }
-    fn covers(&self, bdq_json: &str, _fold_map: &str) -> String {
+    fn covers(&self, bdq_json: &str, fold_map: &str) -> String {
         *self.covers_in.borrow_mut() = bdq_json.to_string();
+        if self.real_pipeline.get() {
+            return crate::pipeline::covers(bdq_json, fold_map);
+        }
         self.covers_out.borrow().clone()
     }
-    fn covers_closed(&self, bdq_json: &str, _fold_map: &str) -> String {
+    fn covers_closed(&self, bdq_json: &str, fold_map: &str) -> String {
         *self.covers_closed_in.borrow_mut() = bdq_json.to_string();
+        if self.real_pipeline.get() {
+            return crate::pipeline::covers_closed(bdq_json, fold_map, 30, 1_800_000_000);
+        }
         self.covers_closed_out.borrow().clone()
     }
     fn handwritten(&self, _tabular: &str) -> String {
@@ -229,6 +244,7 @@ fn events_substrate_unreachable_refuses() {
 
 // ============================================================================ watermark / all-time formatting
 
+// covers: UC-ops-detection-remediation-13
 #[test]
 fn no_watermark_file_falls_back_to_all_time_format() {
     let f = Fake::default();
@@ -241,6 +257,7 @@ fn no_watermark_file_falls_back_to_all_time_format() {
     assert!(f.stderr.borrow().iter().any(|l| l.contains("no watermark file")));
 }
 
+// covers: UC-ops-detection-remediation-13
 #[test]
 fn unreadable_watermark_warns_and_falls_back() {
     let f = Fake::default();
@@ -253,6 +270,7 @@ fn unreadable_watermark_warns_and_falls_back() {
     assert!(f.stderr.borrow().iter().any(|l| l.contains("unreadable")));
 }
 
+// covers: UC-ops-detection-remediation-13
 #[test]
 fn valid_watermark_uses_cluster_merge() {
     let f = Fake::default();
@@ -271,6 +289,7 @@ fn valid_watermark_uses_cluster_merge() {
 
 // ============================================================================ suppression
 
+// covers: UC-ops-detection-remediation-14
 #[test]
 fn open_remedy_suppresses_by_default_and_shows_with_flag() {
     let f = Fake::default();
@@ -284,6 +303,7 @@ fn open_remedy_suppresses_by_default_and_shows_with_flag() {
     assert!(f.stdout_joined().is_empty(), "suppressed by default: {}", f.stdout_joined());
 }
 
+// covers: UC-ops-detection-remediation-14
 #[test]
 fn open_remedy_suppressed_shown_with_suppressed_flag() {
     let f = Fake::default();
@@ -296,6 +316,7 @@ fn open_remedy_suppressed_shown_with_suppressed_flag() {
     assert!(f.stdout_joined().contains("[suppressed]"), "{}", f.stdout_joined());
 }
 
+// covers: UC-ops-detection-remediation-14
 #[test]
 fn closed_remedy_with_live_branch_is_suppressed() {
     let f = Fake::default();
@@ -326,6 +347,7 @@ fn closed_remedy_with_no_branch_is_orphaned() {
     assert!(f.stdout_joined().contains("[orphaned remedy sp-4w1pp: closed, nothing in flight]"), "{}", f.stdout_joined());
 }
 
+// covers: UC-ops-detection-remediation-14
 #[test]
 fn closed_remedy_landed_is_neither_suppressed_nor_orphaned() {
     let f = Fake::default();
@@ -399,6 +421,7 @@ fn plain_class_with_no_remedy_is_unsuppressed() {
 /// §3.4). A remedy still WORKING whose bd row someone closed by hand still suppresses its
 /// class; one SUBMITTED whose bd row was reopened by hand is a closed remedy, checked for a
 /// landing; a remedy with no lifecycle row is neither, and says so.
+// covers: UC-ops-detection-remediation-14
 #[test]
 fn remedies_are_split_by_the_lifecycle_row_not_bd_status() {
     let f = Fake::default();
@@ -435,6 +458,73 @@ fn an_unreachable_lifecycle_machine_suppresses_nothing() {
     assert!(f.stderr.borrow().iter().any(|l| l.contains("lifecycle") && l.contains("not suppressing")), "{:?}", f.stderr.borrow());
 }
 
+/// The remedy's `covers:` label, read through the real pipeline, decides which class is hidden.
+fn remedy_census(state: &str, label: &str, with_suppressed: bool, landed: Option<i32>) -> Fake {
+    let f = Fake::default();
+    f.real_pipeline.set(true);
+    f.clean_clock();
+    f.set_events(None, "| recurred | suite-red | b1 | 1000 |\n| recurred | suite-red | b2 | 9000 |\n");
+    *f.remedies.borrow_mut() = format!(r#"[{{"id":"sp-rem","closed_at":"2027-01-10T00:00:00Z","labels":["{label}"]}}]"#);
+    f.set_lc(&[("sp-rem", state)]);
+    if let Some(l) = landed {
+        f.landed.borrow_mut().insert("sp-rem".into(), l);
+        f.branches.borrow_mut().push("sp-rem".into());
+    }
+    run(&f, with_suppressed);
+    f
+}
+
+// covers: UC-ops-detection-remediation-14
+#[test]
+fn a_remedy_a_builder_still_holds_hides_the_class_it_covers_in_every_working_state() {
+    for state in ["READY", "WORKING", "REWORK"] {
+        let f = remedy_census(state, "covers:sp-recur-suite-red", false, None);
+        assert!(f.stdout_joined().is_empty(), "{state}: {}", f.stdout_joined());
+    }
+}
+
+// covers: UC-ops-detection-remediation-14
+#[test]
+fn a_remedy_covering_an_unrelated_class_leaves_the_class_ranked() {
+    let f = remedy_census("WORKING", "covers:sp-recur-something-else", false, None);
+    assert_eq!(f.stdout_joined(), "2 sp-recur-suite-red (2 victims, 2 detections)");
+}
+
+// covers: UC-ops-detection-remediation-14
+#[test]
+fn with_suppressed_annotates_the_covered_class_instead_of_hiding_it() {
+    let f = remedy_census("WORKING", "covers:sp-recur-suite-red", true, None);
+    assert_eq!(f.stdout_joined(), "2 sp-recur-suite-red (2 victims, 2 detections) [suppressed]");
+}
+
+// covers: UC-ops-detection-remediation-14
+#[test]
+fn a_submitted_remedy_keeps_suppressing_until_the_lifecycle_record_says_landed() {
+    let f = remedy_census("SUBMITTED", "covers:sp-recur-suite-red", false, Some(1));
+    assert!(f.stdout_joined().is_empty(), "{}", f.stdout_joined());
+    let f = remedy_census("LANDED", "covers:sp-recur-suite-red", false, Some(0));
+    assert_eq!(f.stdout_joined(), "2 sp-recur-suite-red (2 victims, 2 detections)");
+}
+
+// covers: UC-ops-detection-remediation-13
+#[test]
+fn with_a_watermark_a_stale_class_ranks_last_with_zero_since_and_its_all_time_count() {
+    let f = Fake::default();
+    f.real_pipeline.set(true);
+    f.clean_clock();
+    f.set("SPIRA_RUN", "/run");
+    f.files.borrow_mut().insert(PathBuf::from("/run/mimir.watermark"), "5000".into());
+    let old = "| recurred | old | a | 1000 |\n| recurred | old | b | 2000 |\n| recurred | old | c | 3000 |\n";
+    f.set_events(None, &format!("{old}| recurred | live | d | 6000 |\n"));
+    f.set_events(Some(5000), "| recurred | live | d | 6000 |\n");
+    assert_eq!(run(&f, false), 0);
+    assert_eq!(
+        f.stdout_joined(),
+        "1 sp-recur-live (1 victims, 1 detections, 1 all-time)\n0 sp-recur-old (0 victims, 0 detections, 3 all-time)"
+    );
+    assert!(f.stderr.borrow().is_empty(), "{:?}", f.stderr.borrow());
+}
+
 // ============================================================================ pipeline
 
 mod pipeline_tests {
@@ -450,12 +540,14 @@ mod pipeline_tests {
         assert_eq!(cluster("", 300), "");
     }
 
+    // covers: UC-ops-detection-remediation-11
     #[test]
     fn cluster_ranks_and_names_classes() {
         let rows = "| reclaimed | | a | 1 |\n| reopened | r | a | 1 |\n| reopen | r | b | 9999 |\n| lapsed | | a | 1 |\n";
         assert_eq!(cluster(rows, 300), "2 2 2 sp-reopen-r\n1 1 1 sp-lapsed-unrecorded\n1 1 1 sp-reclaim\n");
     }
 
+    // covers: UC-ops-detection-remediation-13
     #[test]
     fn merge_ranks_by_since_counts_and_survives_malformed_input() {
         assert_eq!(
@@ -465,6 +557,7 @@ mod pipeline_tests {
         assert_eq!(cluster_merge("junk\n", ""), "");
     }
 
+    // covers: UC-ops-detection-remediation-14
     #[test]
     fn covers_resolves_aliases_and_ignores_garbage() {
         let j = r#"[{"labels":["spira","covers:old"]},{"labels":["covers:c"]},{"labels":null}]"#;
@@ -473,6 +566,7 @@ mod pipeline_tests {
         assert_eq!(covers(r#"{"labels":["covers:one"]}"#, ""), "one\n");
     }
 
+    // covers: UC-ops-detection-remediation-14
     #[test]
     fn covers_closed_applies_the_window() {
         let now = 1_800_000_000;
@@ -496,5 +590,47 @@ mod pipeline_tests {
             deliberate(del),
             "deliberate, not ranked: sp-reopen-j 3 beads (3 events)\ndeliberate, not ranked: sp-reopen-k 1 beads (4 events)\n"
         );
+    }
+
+    // covers: UC-ops-detection-remediation-11
+    #[test]
+    fn each_event_type_maps_to_its_cause_suffixed_class() {
+        let rows = "| requeued | prod-dirty | a | 1 |\n| recurred | suite-red | a | 1 |\n| reclaimed | timeout | a | 1 |\n| reclaimed |  | a | 1 |\n| lapsed | cause-x | a | 1 |\n| reopen | rebase-conflict | a | 1 |\n| mystery | x | a | 1 |\n| recurred | x | a |\n";
+        let out = cluster(rows, 300);
+        let mut got: Vec<&str> = out.lines().map(|l| l.splitn(4, ' ').nth(3).unwrap()).collect();
+        got.sort();
+        assert_eq!(
+            got,
+            ["sp-lapsed-cause-x", "sp-reclaim", "sp-reclaim-timeout", "sp-recur-suite-red", "sp-reopen-rebase-conflict", "sp-requeue-prod-dirty"],
+            "a bare reclaim has no suffix; an unknown event type and a short row are dropped"
+        );
+    }
+
+    // covers: UC-ops-detection-remediation-11
+    #[test]
+    fn a_null_cause_counts_under_unrecorded_and_shifts_no_column() {
+        let rows = format!("{HDR}| reopened |  | a | 100 |\n| reopened |  | b | 9000 |\n| requeued |  | c | 100 |\n");
+        assert_eq!(cluster(&rows, 300), "2 2 2 sp-reopen-unrecorded\n1 1 1 sp-requeue-unrecorded\n");
+    }
+
+    // covers: UC-ops-detection-remediation-11
+    #[test]
+    fn a_requeue_and_a_reopen_of_one_class_stay_two_classes_the_sql_does_the_folding() {
+        let rows = "| requeued | merge-conflict | a | 100 |\n| reopen | rebase-conflict | b | 100 |\n";
+        assert_eq!(cluster(rows, 300), "1 1 1 sp-reopen-rebase-conflict\n1 1 1 sp-requeue-merge-conflict\n");
+    }
+
+    // covers: UC-ops-detection-remediation-11
+    #[test]
+    fn classes_rank_by_causal_events_then_distinct_beads_then_detections() {
+        let rows = "| recurred | few-beads | a | 1000 |\n| recurred | few-beads | b | 2000 |\n| recurred | few-beads | c | 3000 |\n| recurred | one-sweep | d | 1000 |\n| recurred | one-sweep | e | 1010 |\n| recurred | one-sweep | f | 1020 |\n| recurred | one-sweep | g | 1030 |\n| recurred | one-sweep | h | 1040 |\n";
+        assert_eq!(cluster(rows, 300), "3 3 3 sp-recur-few-beads\n1 5 5 sp-recur-one-sweep\n");
+    }
+
+    // covers: UC-ops-detection-remediation-11
+    #[test]
+    fn an_empty_store_gives_empty_output() {
+        assert_eq!(cluster("", 300), "");
+        assert_eq!(cluster(HDR, 300), "");
     }
 }

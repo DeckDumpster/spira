@@ -438,4 +438,40 @@ mod tests {
     fn every_kind_fits_the_event_column() {
         assert!(KINDS.iter().all(|k| k.len() <= 32));
     }
+
+    // covers: UC-ops-detection-remediation-12
+    #[test]
+    fn a_fact_is_written_with_the_caller_epoch_and_no_server_clock() {
+        let q = insert_sql("sp-a", "reopen", "rebase-conflict", "harness", 1_750_000_000);
+        assert!(q.ends_with(", 1750000000)"), "{q}");
+        for clock in ["NOW(", "FROM_UNIXTIME", "CURRENT_TIMESTAMP", "UNIX_TIMESTAMP"] {
+            assert!(!q.to_uppercase().contains(clock), "{clock}: {q}");
+        }
+    }
+
+    // covers: UC-ops-detection-remediation-12
+    #[test]
+    fn the_census_view_dates_each_fact_from_its_epoch_in_no_server_timezone() {
+        let t = events_table();
+        assert!(t.contains("DATE_ADD(TIMESTAMP('1970-01-01 00:00:00'), INTERVAL `at` SECOND) AS created_at"), "{t}");
+        assert!(t.contains("event AS event_type") && t.contains("lc_key AS issue_id") && t.contains("AS new_value"), "{t}");
+        for clock in ["NOW(", "FROM_UNIXTIME", "CONVERT_TZ", "@@"] {
+            assert!(!t.to_uppercase().contains(clock), "{clock}: {t}");
+        }
+    }
+
+    // covers: UC-ops-detection-remediation-12
+    #[test]
+    fn a_census_since_bound_survives_retargeting_onto_the_fact_view() {
+        let q = retarget("SELECT event_type FROM events WHERE created_at > '2025-06-16 09:06:40'").unwrap();
+        assert!(q.contains("AS created_at") && q.ends_with("WHERE created_at > '2025-06-16 09:06:40'"), "{q}");
+    }
+
+    // covers: UC-ops-detection-remediation-12
+    #[test]
+    fn the_typed_since_bound_excludes_a_fact_at_the_watermark_itself() {
+        let sql = select_sql(&[], &["requeued".into()], Some(1_750_000_000));
+        assert!(sql.contains("AND `at` > 1750000000 ORDER BY"), "{sql}");
+        assert!(!sql.contains(">="), "{sql}");
+    }
 }

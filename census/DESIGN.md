@@ -120,11 +120,9 @@ watermark fallback, the three suppression outcomes, and the `--with-suppressed` 
 
 ## 6. Parity and what moved
 
-No dedicated bash suite tests census.sh's own orchestration logic in isolation — the
-closest, `test-census-pipeline.sh`, is explicitly about the decision logic
-(`cluster`/`cluster_merge`/`covers`/`covers_closed`'s class mapping and ranking, table-
-tested on canned rows) and is **kept**, repointed (`CENSUS="$HERE/census.sh"` →
-`CENSUS="$(command -v census)"`), because the pipeline stages are the decision logic.
+The pipeline stages (`cluster`/`cluster_merge`/`covers`/`covers_closed`) and the orchestration are
+unit-tested in `src/tests.rs` over the `Fake` World, and the SQL text in `src/sql.rs`; each test
+declares the matrix cell it covers (UC-ops-detection-remediation-11, -13, -14, -15).
 `test-census.sh` (the one real-`bd`-fixture suite, `UC-ops-detection-remediation-07/12/14`),
 `test-census-events.sh` and `test-census-actor-filter.sh` are likewise **kept**, repointed:
 real end-to-end coverage against a live Dolt fixture that a fake-backed unit test does not
@@ -156,7 +154,7 @@ the same principle: an unresolved state must not be read as "resolved, so suppre
 Not covered here, and not fixable from this side without a live Dolt server: the real SQL
 text `_census_events_sql` generates, the real `cluster`/`cluster_merge`/`covers` class-name
 mapping, and `bd sql`'s actual `DATE_FORMAT(UTC_TIMESTAMP(), ...)` row shape. Those remain
-`test-census.sh`, `test-census-pipeline.sh`, `test-census-events.sh` and
+`test-census.sh`, `test-census-events.sh` and
 `test-census-actor-filter.sh`'s job, all kept and repointed (§6).
 
 ## 9. Ranking by causal event (sp-jcd0e)

@@ -92,7 +92,7 @@ produced the 36 use cases. Columns marked **applied** reflect code that is actua
 | 08 | Rewrite `test-incident-delivers-satisfiable.sh` from source-grep to a real T1 behaviour test; merge `test-batch-repeat-refused-delivers.sh` in. | **Applied**. |
 | 09 | Move the REF/CAUSE pairing check to the gate's T0 fence stage. | **Applied**: `spira/incident-cause-lint.sh`, wired into `gate-spira.sh`. |
 | 10 | New suite against a genuinely unreachable bd (gap G1). | **Applied**: `test-incident-spool-drain.sh`. |
-| 11-15 | Extract census's heredoc python to `spira/census/*.py`; table-test on canned rows; keep one server-mode suite for the SQL-writes-events and since-filter contract. | **Applied** (`sp-fhzib.3`): `spira/census/{count,merge,covers,covers_closed}.py`; `test-census-pipeline.sh` (T1) + `test-census.sh` (T3, 3 rows + the Fenrir row landed by this bead). `test-census-reopen.sh`, `test-census-watermark.sh` deleted. |
+| 11-15 | Extract census's heredoc python to `spira/census/*.py`; table-test on canned rows; keep one server-mode suite for the SQL-writes-events and since-filter contract. | **Applied** (`sp-fhzib.3`): `spira/census/{count,merge,covers,covers_closed}.py`; then moved into Rust (`sp-wj9o75.2`): cells 11, 13, 14, 15 are unit tests in `census/src`, cell 12 in `spira-lc/src/facts.rs`; `test-census-pipeline.sh` and `test-census-tz-boundary.sh` deleted, `test-census.sh` (T3) remains for the real-store rows. |
 | 16-17 | Keep `test-mimir-trigger.sh`; delete `test-mimir-blind-window.sh` and `test-mimir-sibling-blind.sh`. | **Applied** (`sp-fhzib.3`). |
 | 18-22 | Split Heimdall's classifier half into its own T1 suite; merge the five `test-strand-*` classifier files into one table; keep `test-strand-lock.sh`/the retired strand-truncated suite for their own T2 properties. | **Partly applied.** The reconciler half moved to unit tests in `heimdall/src/pass.rs` (sp-eewrqr), and the five `test-strand-*.sh` files are unchanged. `sp-fhzib.4` did this work on the retired branch; it was reopened as its own bead and has not landed on `main`. |
 | 23 | Port the four log-pattern detectors plus CI-STALLED/CI-RED/STARVED to Rust `#[test]`s against the real reconciler-engine code; retire `test-watchtower-queue.sh` once ported. | **Applied, then superseded.** czar-pass was rewritten onto the reconciler engine (`sp-pu7v6`) after the original Rust port landed, which deleted the marker-file helpers (`fs_record`/`fs_get`/`fs_clear`/`fs_path`/`latency_secs`) those tests exercised; 5 of the 22 tests named functions that no longer exist, so `cargo test -p czar-pass` did not even compile on `main`. **This bead removes those 5 dead tests and adds 25 new ones,** bringing the file to 42 passing tests, exercising every `detect_*` function's fire/silent boundary against the current `Config`/`StateMap`/reconciler-engine shape — see §8. `test-watchtower-queue.sh` is gone (`sp-fhzib.5`); `test-czar-pass.sh` gained a `cargo test -p czar-pass` case (case 0) so the unit layer is verified as part of the suite, which is what would have caught the compile failure. |
@@ -186,7 +186,7 @@ What `sp-fhzib` itself still owed, on a fresh branch from `origin/main`:
   format and its own §8/§10 claimed some `sp-fhzib.4` work as landed that is not on `main`)
   plus `docs/test-plan/ops-detection-remediation.toml`, validated clean by
   `test-plan validate --catalogue-dir docs/test-plan`. `test-census.sh` and
-  `test-census-pipeline.sh`, the two suites whose `# covers:` lines already named
+  `test-census-pipeline.sh` (since moved to Rust), the two suites whose `# covers:` lines already named
   `UC-ops-detection-remediation-NN` ids with no catalogue to resolve them against (a hard
   `plan-lint.sh` failure once those files are the ones being checked), now resolve clean.
 - **UC-23, rewritten against current code — and a compile break found and fixed along the
@@ -243,13 +243,12 @@ After (measured this run):
                               `recurs_of` shell-out against data section 1 already wrote)
 ```
 
-Also run this slice: `test-census-pipeline.sh` (44 s, unchanged in shape — its `# covers:`
-line now resolves against a real catalogue instead of an absent one), `test-plan-lint.sh`
+Also run this slice: `test-plan-lint.sh`
 (33 s) and `test-plan-matrix.sh` (33 s), both exercising the new catalogue file itself.
 
-Verified: `bash spira/testenv-batch.sh --suites test-czar-pass.sh,test-census.sh,
-test-census-pipeline.sh spira/sp-n1twd` and `bash spira/testenv-batch.sh --suites
-test-plan-lint.sh,test-plan-matrix.sh spira/sp-n1twd` in testenv — all five green.
+Verified: `bash spira/testenv-batch.sh --suites test-czar-pass.sh,test-census.sh
+spira/sp-n1twd` and `bash spira/testenv-batch.sh --suites
+test-plan-lint.sh,test-plan-matrix.sh spira/sp-n1twd` in testenv — all four green.
 `spira/plan-matrix.sh` regenerated `coverage.json`/`COVERAGE.md`;
 `spira/plan-matrix.sh --check` and `test-plan validate --catalogue-dir docs/test-plan`
 both confirm the committed files match.

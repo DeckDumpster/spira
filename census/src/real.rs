@@ -10,6 +10,23 @@ use std::process::{Command, Stdio};
 /// One bd query carries the recorded ids as a literal list, and argv is bounded.
 const MAX_RECORDED_IDS: usize = 4000;
 
+/// Three attempts, the delay doubling between them; all three failing surfaces the last driver error.
+fn retry_sql(caller: &str, mut delay_s: u64, mut attempt: impl FnMut() -> (bool, String, String)) -> Result<String, String> {
+    let mut last_stderr = String::new();
+    for n in 1..=3 {
+        let (ok, out, err) = attempt();
+        if ok {
+            return Ok(out);
+        }
+        last_stderr = err;
+        if n < 3 {
+            std::thread::sleep(std::time::Duration::from_secs(delay_s));
+            delay_s *= 2;
+        }
+    }
+    Err(format!("{caller}: query failed after 3 attempts: {last_stderr}"))
+}
+
 pub struct Real {
     pub home: PathBuf,   // spira/ — where conf.sh and lib.sh live
     pub bdq: String,
@@ -165,20 +182,8 @@ impl World for Real {
         let fact_query = crate::sql::events_sql(since_formatted.as_deref(), &causes);
         let recorded = self.recorded_cause_ids(since.filter(|&s| s > 0))?;
         let bd_query = crate::sql::events_sql_with(since_formatted.as_deref(), &causes, &recorded);
-        let mut delay: u64 = self.env("CENSUS_RETRY_DELAY_S").and_then(|v| v.parse().ok()).unwrap_or(2);
-        let mut last_stderr = String::new();
-        for attempt in 1..=3 {
-            let (ok, out, err) = self.run_both_sql(&bd_query, &fact_query);
-            if ok {
-                return Ok(out);
-            }
-            last_stderr = err;
-            if attempt < 3 {
-                std::thread::sleep(std::time::Duration::from_secs(delay));
-                delay *= 2;
-            }
-        }
-        Err(format!("census_events_run_sql: query failed after 3 attempts: {last_stderr}"))
+        let delay = self.env("CENSUS_RETRY_DELAY_S").and_then(|v| v.parse().ok()).unwrap_or(2);
+        retry_sql("census_events_run_sql", delay, || self.run_both_sql(&bd_query, &fact_query))
     }
     fn census_event_rows_run_sql(&self, since: Option<i64>) -> Result<String, String> {
         let since_formatted = since.filter(|&s| s > 0).map(|s| self.format_epoch_utc(s));
@@ -186,20 +191,8 @@ impl World for Real {
         let fact_query = crate::sql::event_rows_sql(since_formatted.as_deref(), &causes, &[]);
         let recorded = self.recorded_cause_ids(since.filter(|&s| s > 0))?;
         let bd_query = crate::sql::event_rows_sql(since_formatted.as_deref(), &causes, &recorded);
-        let mut delay: u64 = self.env("CENSUS_RETRY_DELAY_S").and_then(|v| v.parse().ok()).unwrap_or(2);
-        let mut last_stderr = String::new();
-        for attempt in 1..=3 {
-            let (ok, out, err) = self.run_both_sql(&bd_query, &fact_query);
-            if ok {
-                return Ok(out);
-            }
-            last_stderr = err;
-            if attempt < 3 {
-                std::thread::sleep(std::time::Duration::from_secs(delay));
-                delay *= 2;
-            }
-        }
-        Err(format!("census_event_rows_run_sql: query failed after 3 attempts: {last_stderr}"))
+        let delay = self.env("CENSUS_RETRY_DELAY_S").and_then(|v| v.parse().ok()).unwrap_or(2);
+        retry_sql("census_event_rows_run_sql", delay, || self.run_both_sql(&bd_query, &fact_query))
     }
     fn census_handwritten_run_sql(&self) -> String {
         self.run_events_sql(&crate::sql::handwritten_sql()).1
@@ -354,5 +347,44 @@ impl World for Real {
     }
     fn err(&self, s: &str) {
         eprintln!("{s}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::retry_sql;
+
+    fn failing_then_ok(fail_first: usize, calls: &std::cell::Cell<usize>) -> (bool, String, String) {
+        calls.set(calls.get() + 1);
+        if calls.get() <= fail_first {
+            (false, String::new(), "read tcp: i/o timeout".into())
+        } else {
+            (true, "rows".into(), String::new())
+        }
+    }
+
+    // covers: UC-ops-detection-remediation-15
+    #[test]
+    fn the_census_sql_call_succeeds_after_two_transient_failures_in_three_attempts() {
+        let calls = std::cell::Cell::new(0);
+        assert_eq!(retry_sql("census_events_run_sql", 0, || failing_then_ok(2, &calls)), Ok("rows".into()));
+        assert_eq!(calls.get(), 3);
+    }
+
+    // covers: UC-ops-detection-remediation-15
+    #[test]
+    fn the_census_sql_call_surfaces_the_driver_error_when_all_three_attempts_fail() {
+        let calls = std::cell::Cell::new(0);
+        let err = retry_sql("census_event_rows_run_sql", 0, || failing_then_ok(usize::MAX, &calls)).unwrap_err();
+        assert_eq!(calls.get(), 3);
+        assert!(err.contains("i/o timeout") && err.contains("census_event_rows_run_sql"), "{err}");
+    }
+
+    // covers: UC-ops-detection-remediation-15
+    #[test]
+    fn a_first_success_is_not_retried() {
+        let calls = std::cell::Cell::new(0);
+        assert!(retry_sql("c", 0, || failing_then_ok(0, &calls)).is_ok());
+        assert_eq!(calls.get(), 1);
     }
 }
