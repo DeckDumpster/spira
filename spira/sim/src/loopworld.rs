@@ -583,6 +583,24 @@ fn batcher_preempt(w: &World, input: &str) -> Result<String, String> {
     Ok("{}".into())
 }
 
+/// `queue round eject` for a gate-red member: it leaves the open round and goes back to its dwarf.
+fn batcher_eject_gate_red(w: &World, input: &str) -> Result<String, String> {
+    let leg: bl::Leg = parse_json(bl::EJECT_GATE_RED, input)?;
+    let now = w.now();
+    let mut lc = w.lc();
+    let ids: Vec<&str> = leg.bead.split(',').filter(|s| !s.is_empty()).collect();
+    match &mut lc.round {
+        Some((batch, members)) if *batch == leg.batch => members.retain(|(id, _)| !ids.iter().any(|i| i == id)),
+        other => return Err(format!("eject {}: the open round is {other:?}", leg.batch)),
+    }
+    for id in ids {
+        lc.gate_red.remove(id);
+        lc.apply(now, id, bl::NAME, BeadEventKind::Deliver)?;
+        lc.apply(now, id, bl::NAME, BeadEventKind::Returned { reason: lifecycle::reason::ReturnedReason::BatchEjectedRed })?;
+    }
+    Ok("{}".into())
+}
+
 fn batcher_abandon(w: &World) -> Result<String, String> {
     w.lc().round = None;
     Ok("{}".into())
@@ -687,6 +705,7 @@ fn doubles(w: &Arc<World>) -> Doubles {
     let d = on(d, w, bl::ABANDON, |w, _| batcher_abandon(w));
     let d = on(d, w, bl::WITHDRAW, batcher_withdraw);
     let d = on(d, w, bl::PREEMPT, batcher_preempt);
+    let d = on(d, w, bl::EJECT_GATE_RED, batcher_eject_gate_red);
     let d = on(d, w, qs::OBSERVE, |w, _| queue_step_observe(w));
     let d = on(d, w, pb::OBSERVE, |w, _| publish_observe(w));
     let d = on(d, w, pb::PUSH_BRANCH, publish_push_branch);

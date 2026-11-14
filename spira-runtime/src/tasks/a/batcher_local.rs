@@ -69,7 +69,7 @@
 //! | `batcher.local.corpus` | unit (`unit.start`) | `SPIRA_BATCHER_WALL_SECS` | batch + run n | 2nd run while one live (`vm.rs:370`) |
 //! | `batcher.local.stage` / `.stage_test` | unit | wall secs | staged batch | hypervisor full (`io.rs:1881`, `:1906`) |
 //! | `batcher.local.eject` | store | 30 s | batch + bead | not in round (`io.rs:1600`, `:1628`) |
-//! | `batcher.local.eject_gate_red` | store | 30 s | batch + members | not in round |
+//! | `batcher.local.eject_red` | store | 30 s | batch + members | not in round |
 //! | `batcher.local.preempt` | store | 300 s | batch + members + head | no pass running |
 //! | `batcher.local.withdraw` | store | 10 s | bead + version | state ≠ CERTIFIED (`io.rs:851-887`) |
 //! | `batcher.local.rebase_stale` | unit | 600 s (unverified) | bead + base sha | not due (`io.rs:178`) |
@@ -121,7 +121,7 @@ pub const CORPUS: &str = "batcher.local.corpus";
 pub const STAGE: &str = "batcher.local.stage";
 pub const STAGE_TEST: &str = "batcher.local.stage_test";
 pub const EJECT: &str = "batcher.local.eject";
-pub const EJECT_GATE_RED: &str = "batcher.local.eject_gate_red";
+pub const EJECT_GATE_RED: &str = "batcher.local.eject_red";
 pub const PREEMPT: &str = "batcher.local.preempt";
 pub const WITHDRAW: &str = "batcher.local.withdraw";
 pub const REBASE_STALE: &str = "batcher.local.rebase_stale";
@@ -2632,7 +2632,7 @@ pub mod edge {
         let (env, leg) = (env()?, leg(spec)?);
         let repo = repo_of(&env, &leg)?;
         for id in leg.bead.split(',').filter(|s| !s.is_empty()) {
-            io::round_eject_gate_red(&env, &repo, &leg.batch, id, &leg.why)?;
+            io::round_eject_after_refused_preempt(&env, &repo, &leg.batch, id, &leg.reds.join(" "))?;
         }
         Ok("{}".into())
     }
