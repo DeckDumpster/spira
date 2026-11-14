@@ -11,7 +11,7 @@ use serde_json::{json, Value};
 use state_store::{Backend, Request};
 
 use super::{cannot_tell, number, Call};
-use crate::control::store::{Cut, Edge, Ran, RepoSet, Store, Turned, Verdict};
+use crate::control::store::{Carrier, Cut, Edge, Ran, RepoSet, Store, Turned, Verdict};
 use crate::control::records::ClaimInputs;
 use crate::callers::NO_ROW;
 use crate::{flag, CANNOT_TELL, REFUSED};
@@ -512,28 +512,32 @@ fn set_claim_inputs<B: Backend>(store: &Store<B>, args: &[String], call: &Call) 
     }
 }
 
-/// `set-carrier <member>... (--by <integration-id> | --clear)`: each member's record names the
-/// integration carrying it, or none. A member with no record is named and the rest are written.
+/// `set-carrier <member>... (--by <integration-id> | --clear) [--only-if-unset]`: each member's
+/// record names the integration carrying it, or none. A member with no record is named and the
+/// rest are written; with `--only-if-unset` a member already carried is answered `kept <id>`.
 fn set_carrier<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, String) {
     let members: Vec<&String> = args.iter().take_while(|a| !a.starts_with("--")).collect();
     let by = flag(args, "--by");
     let clear = args.iter().any(|a| a == "--clear");
+    let only_if_unset = args.iter().any(|a| a == "--only-if-unset");
     if members.is_empty() || by.is_some() == clear || members.iter().any(|m| !crate::cutover::is_row_key(m)) {
-        return (CANNOT_TELL, "set-carrier: takes <member>... (--by <integration-id> | --clear)".into());
+        return (CANNOT_TELL, "set-carrier: takes <member>... (--by <integration-id> | --clear) [--only-if-unset]".into());
     }
     let req = Request::new(call.request, "set-carrier", "lc.set-carrier");
-    let mut missing = Vec::new();
+    let (mut missing, mut kept) = (Vec::new(), Vec::new());
     for m in members {
-        match store.set_carrier(m, by.as_deref(), &req) {
-            Ok(true) => {}
-            Ok(false) => missing.push(m.as_str()),
+        match store.set_carrier(m, by.as_deref(), only_if_unset, &req) {
+            Ok(Carrier::Set) => {}
+            Ok(Carrier::Kept) => kept.push(format!("kept {m}")),
+            Ok(Carrier::NoRecord) => missing.push(m.as_str()),
             Err(e) => return cannot_tell(e),
         }
     }
+    let kept = kept.join("\n");
     if missing.is_empty() {
-        (0, String::new())
+        (0, kept)
     } else {
-        (NO_ROW, format!("set-carrier: no lifecycle record for {}", missing.join(" ")))
+        (NO_ROW, format!("set-carrier: no lifecycle record for {}\n{kept}", missing.join(" ")).trim_end().to_string())
     }
 }
 

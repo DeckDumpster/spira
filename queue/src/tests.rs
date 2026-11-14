@@ -1110,6 +1110,10 @@ struct FLc {
     leases: RefCell<BTreeMap<String, Result<Option<RoundLease>, String>>>,
     /// Every compare-on-a-field write finds the field already moved by another writer.
     cas_lost: Cell<bool>,
+    /// Integration ids whose `set-carrier --by` the fake refuses.
+    carrier_refused: RefCell<Vec<String>>,
+    /// Members whose record the fake already has a carrier on.
+    carried: RefCell<Vec<String>>,
     calls: RefCell<Vec<String>>,
 }
 
@@ -1148,6 +1152,8 @@ impl Default for FLc {
             abandon_refused: Cell::new(None),
             leases: RefCell::default(),
             cas_lost: Cell::new(false),
+            carrier_refused: RefCell::default(),
+            carried: RefCell::default(),
             calls: RefCell::default(),
         }
     }
@@ -1266,9 +1272,15 @@ impl Lc for FLc {
             .borrow_mut()
             .push(format!("create-bead {id} --repo {repo}"));
     }
-    fn set_carrier(&self, members: &[&str], by: Option<&str>) {
+    fn set_carrier(&self, members: &[&str], by: Option<&str>, only_if_unset: bool) -> Result<String, (i32, String)> {
         let tail = by.map_or("--clear".to_string(), |b| format!("--by {b}"));
-        self.calls.borrow_mut().push(format!("set-carrier {} {tail}", members.join(" ")));
+        let only = if only_if_unset { " --only-if-unset" } else { "" };
+        self.calls.borrow_mut().push(format!("set-carrier {} {tail}{only}", members.join(" ")));
+        if by.is_some_and(|b| self.carrier_refused.borrow().iter().any(|r| r == b)) {
+            return Err((1, format!("set-carrier: no lifecycle record for {}", members.last().unwrap_or(&""))));
+        }
+        let carried = self.carried.borrow();
+        Ok(members.iter().filter(|m| carried.iter().any(|c| c == *m)).map(|m| format!("kept {m}\n")).collect())
     }
     fn cut(
         &self,
@@ -5240,4 +5252,85 @@ fn a_text_only_tip_that_does_not_fast_forward_is_not_landed_by_lint() {
         .borrow()
         .iter()
         .any(|c| c.starts_with("gate ")));
+}
+
+fn integrations_of(t: &T, repo: &str, text: &str) {
+    t.repo(repo, LandMode::QueueLocal);
+    fs::create_dir_all(t.s().queue_dir.join(repo)).unwrap();
+    fs::write(t.s().queue_dir.join(repo).join("integrations"), text).unwrap();
+}
+
+fn set_carrier_calls(t: &T) -> Vec<String> {
+    t.lc.calls.borrow().iter().filter(|c| c.starts_with("set-carrier")).cloned().collect()
+}
+
+#[test]
+fn backfill_carriers_apply_sets_only_the_open_integrations_members_and_only_if_unset() {
+    let t = T::new(LandMode::QueueLocal);
+    integrations_of(&t, "spira", "sp-open sp-a sp-b\nsp-done sp-c\n");
+    *t.lib.repos.borrow_mut() = Ok(vec!["spira".into()]);
+    t.lc_row("sp-open", "WORKING", "t", 1);
+    t.lc_row("sp-done", "LANDED", "t", 1);
+    t.lc.carried.borrow_mut().push("sp-b".into());
+    assert_eq!(t.run(&["backfill-carriers", "--apply"]), 0, "{}", t.err());
+    assert_eq!(set_carrier_calls(&t), vec!["set-carrier sp-a sp-b --by sp-open --only-if-unset"]);
+    let out = t.out();
+    assert!(out.contains("set sp-a -> sp-open") && out.contains("kept sp-b"), "{out}");
+    assert!(!out.contains("sp-c"), "{out}");
+    assert!(out.contains("spira: set=1 kept=1 failed=0"), "{out}");
+}
+
+#[test]
+fn backfill_carriers_without_apply_names_each_member_and_integration_and_writes_nothing() {
+    let t = T::new(LandMode::QueueLocal);
+    integrations_of(&t, "spira", "sp-open sp-a sp-b\n");
+    *t.lib.repos.borrow_mut() = Ok(vec!["spira".into()]);
+    t.lc_row("sp-open", "WORKING", "t", 1);
+    assert_eq!(t.run(&["backfill-carriers"]), 0, "{}", t.err());
+    assert!(set_carrier_calls(&t).is_empty());
+    let out = t.out();
+    assert!(out.contains("would set sp-a -> sp-open") && out.contains("would set sp-b -> sp-open"), "{out}");
+    assert!(out.contains("spira: would set 2"), "{out}");
+}
+
+#[test]
+fn backfill_carriers_failure_exits_non_zero_and_the_next_repo_is_still_processed() {
+    let t = T::new(LandMode::QueueLocal);
+    integrations_of(&t, "spira", "sp-bad sp-a\n");
+    integrations_of(&t, "svc", "sp-good sp-b\n");
+    *t.lib.repos.borrow_mut() = Ok(vec!["spira".into(), "svc".into()]);
+    t.lc_row("sp-bad", "WORKING", "t", 1);
+    t.lc_row("sp-good", "WORKING", "t", 1);
+    t.lc.carrier_refused.borrow_mut().push("sp-bad".into());
+    assert_ne!(t.run(&["backfill-carriers", "--apply"]), 0);
+    assert_eq!(
+        set_carrier_calls(&t),
+        vec!["set-carrier sp-a --by sp-bad --only-if-unset", "set-carrier sp-b --by sp-good --only-if-unset"]
+    );
+    let out = t.out();
+    assert!(out.contains("failed sp-a") && out.contains("set sp-b -> sp-good"), "{out}");
+}
+
+#[test]
+fn backfill_carriers_refuses_an_unknown_option() {
+    let p = |a: &[&str]| cli::parse(&a.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+    assert_eq!(
+        p(&["backfill-carriers", "--bogus"]),
+        Err(cli::Usage("queue.sh backfill-carriers: unknown option: --bogus".into()))
+    );
+    assert_eq!(p(&["backfill-carriers", "--apply"]), Ok(Cmd::BackfillCarriers { apply: true }));
+    assert!(cli::USAGE.contains("queue.sh backfill-carriers"));
+}
+
+#[test]
+fn backfill_carriers_partial_failure_fails_only_the_member_the_verb_names() {
+    let t = T::new(LandMode::QueueLocal);
+    integrations_of(&t, "spira", "sp-bad sp-a sp-ghost\n");
+    *t.lib.repos.borrow_mut() = Ok(vec!["spira".into()]);
+    t.lc_row("sp-bad", "WORKING", "t", 1);
+    t.lc.carrier_refused.borrow_mut().push("sp-bad".into());
+    assert_ne!(t.run(&["backfill-carriers", "--apply"]), 0);
+    let out = t.out();
+    assert!(out.contains("failed sp-ghost") && out.contains("set sp-a -> sp-bad") && !out.contains("failed sp-a"), "{out}");
+    assert!(out.contains("spira: set=1 kept=0 failed=1"), "{out}");
 }

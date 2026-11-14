@@ -1228,6 +1228,23 @@ mod tests {
     }
 
     #[test]
+    fn set_carrier_only_if_unset_keeps_a_member_already_carried_and_sets_one_that_is_not() {
+        let world = std::sync::Arc::new(InProcess(std::sync::Mutex::new(World::new())));
+        {
+            let w = world.0.lock().unwrap();
+            filed(&w, "sp-a");
+            filed(&w, "sp-b");
+            w.ok(&["set-carrier", "sp-a", "--by", "sp-i1"]);
+        }
+        let client = spira_store::lc_call::LcClient::over(world.clone(), true);
+        let reply = client.call(&["set-carrier", "sp-a", "sp-b", "--only-if-unset", "--by", "sp-i2"]).unwrap();
+        assert_eq!(reply.code, 0, "{reply:?}");
+        assert!(reply.out.contains("kept sp-a") && !reply.out.contains("kept sp-b"), "{reply:?}");
+        assert_eq!(listed_row(&world, "sp-a")["carried_by"], "sp-i1");
+        assert_eq!(listed_row(&world, "sp-b")["carried_by"], "sp-i2");
+    }
+
+    #[test]
     fn a_claim_input_sync_that_fails_after_the_content_write_is_reported_with_its_repair_and_the_write_stands() {
         let w = World::new();
         filed(&w, "sp-a");

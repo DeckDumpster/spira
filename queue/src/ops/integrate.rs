@@ -25,6 +25,15 @@ fn entries(c: &Ctx) -> Vec<(String, Vec<String>)> {
         .collect()
 }
 
+fn carry(w: &World, members: &[&str], by: Option<&str>) {
+    if let Err((rc, out)) = w.lc.set_carrier(members, by, false) {
+        w.err(format!(
+            "queue: set-carrier exited {rc}: {}; the members' records do not name their integration",
+            out.trim()
+        ));
+    }
+}
+
 fn is_open(w: &World, id: &str) -> bool {
     w.lc.bead_row(id)
         .is_none_or(|r| !TERMINAL.contains(&r.state.as_str()))
@@ -62,7 +71,7 @@ pub(super) fn land_carried(w: &World, c: &Ctx, id: &str, head: &str) -> Vec<Stri
     }
     if stuck.is_empty() {
         let members: Vec<&str> = members.iter().map(String::as_str).collect();
-        w.lc.set_carrier(&members, None);
+        carry(w, &members, None);
         let rest: String = all
             .iter()
             .filter(|(i, _)| i != id)
@@ -73,6 +82,77 @@ pub(super) fn land_carried(w: &World, c: &Ctx, id: &str, head: &str) -> Vec<Stri
         }
     }
     stuck
+}
+
+/// Gives each member of an open integration, whose record names no carrier, that integration.
+/// One lc call per open integration; a member already carried is kept. Non-zero when any call fails.
+pub fn backfill_carriers(w: &World, apply: bool) -> i32 {
+    let names = match w.lib.repos() {
+        Ok(n) => n,
+        Err(e) => {
+            w.err(format!("queue.sh backfill-carriers: cannot list repositories: {e}"));
+            return super::FAIL;
+        }
+    };
+    if super::require_lc(w, "backfill-carriers").is_err() {
+        return super::FAIL;
+    }
+    let mut rc = 0;
+    for name in names {
+        let c = match w.lib.context(Some(&name)) {
+            Ok((s, r)) => Ctx { s, r },
+            Err(e) => {
+                w.err(format!("queue.sh backfill-carriers: {name}: cannot resolve the harness configuration: {e}"));
+                rc = super::FAIL;
+                continue;
+            }
+        };
+        let (mut set, mut kept, mut failed) = (0, 0, 0);
+        for (id, members) in entries(&c).into_iter().filter(|(id, _)| is_open(w, id)) {
+            if !apply {
+                for m in &members {
+                    w.out(format!("would set {m} -> {id}"));
+                }
+                set += members.len();
+                continue;
+            }
+            let refs: Vec<&str> = members.iter().map(String::as_str).collect();
+            let (code, out) = match w.lc.set_carrier(&refs, Some(&id), true) {
+                Ok(out) => (0, out),
+                Err(e) => e,
+            };
+            let held: BTreeSet<&str> = out.lines().filter_map(|l| l.strip_prefix("kept ")).collect();
+            let unwritten: Option<BTreeSet<&str>> = if code == 0 {
+                Some(BTreeSet::new())
+            } else {
+                out.lines()
+                    .find_map(|l| l.strip_prefix("set-carrier: no lifecycle record for "))
+                    .map(|l| l.split_whitespace().collect())
+            };
+            for m in &members {
+                let m = m.as_str();
+                if unwritten.as_ref().is_none_or(|u| u.contains(m)) {
+                    failed += 1;
+                    w.out(format!("failed {m} -> {id} (rc={code}: {})", out.trim()));
+                } else if held.contains(m) {
+                    kept += 1;
+                    w.out(format!("kept {m}"));
+                } else {
+                    set += 1;
+                    w.out(format!("set {m} -> {id}"));
+                }
+            }
+        }
+        if apply {
+            w.out(format!("{name}: set={set} kept={kept} failed={failed}"));
+        } else {
+            w.out(format!("{name}: would set {set}"));
+        }
+        if failed > 0 {
+            rc = super::FAIL;
+        }
+    }
+    rc
 }
 
 fn open_integration(w: &World, c: &Ctx) -> Option<String> {
@@ -219,7 +299,7 @@ pub(super) fn file(
         ));
         return None;
     }
-    w.lc.set_carrier(&ids, Some(&id));
+    carry(w, &ids, Some(&id));
     w.out(format!(
         "queue.sh {label}: integration {id} filed for {list} — one dwarf integrates them; no round admits them meanwhile"
     ));
