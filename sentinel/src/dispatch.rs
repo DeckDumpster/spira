@@ -148,7 +148,7 @@ impl<'a> Sentinel<'a> {
 
     /// `sentinel --land-escalate`: drive [`Sentinel::land_escalate`] alone, for callers
     /// that have a landing-leg failure to report without standing up a whole pass — and
-    /// for the real-sender suites (test-verdict-flow.sh UC-24) that used to source lib.sh
+    /// for the real-sender suites that used to source lib.sh
     /// directly and call its bash function. Stdin's first line is `why`; the rest is the
     /// evidence (the S3 seam's own contract, kept so no caller needed to change).
     pub fn land_escalate_cmd(&self) -> i32 {

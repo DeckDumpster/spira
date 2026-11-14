@@ -43,7 +43,7 @@
 //!    (`verify-asks.sh:59-68`); then for each work bead not terminal (`LANDED|SUPERSEDED|
 //!    DROPPED|DONE`, `:79`) a `Withdraw{work, actor: claude}` (`:75-87`). `rc != 0` → nothing.
 //!
-//! Carried state: `mislabelled_seen`. Fixtures: `spira/test-verify-asks.sh`.
+//! Carried state: `mislabelled_seen`.
 //!
 //! ## Act
 //!

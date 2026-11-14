@@ -1,7 +1,7 @@
 //! Unit tests over a `Fake` [`crate::ports::World`] — one scenario per decision point
 //! skew.sh's own dedicated suites exercised (test-skew-check-release.sh, test-skew-copies.sh,
-//! test-skew-escalate.sh, test-skew-foreign.sh, test-skew-local-release.sh,
-//! test-skew-refresh.sh — all retired by this bead, their coverage moved here).
+//! test-skew-foreign.sh, test-skew-local-release.sh, test-skew-refresh.sh — all retired by
+//! this bead, their coverage moved here).
 
 use crate::ports::{StatusRow, World};
 use crate::*;

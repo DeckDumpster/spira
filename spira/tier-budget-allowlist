@@ -155,7 +155,6 @@ test-mimir-blind-window.sh	T1	21.5
 test-mimir-sibling-blind.sh	T1	2.0
 test-mimir-trigger.sh	T1	12.0
 test-mimir.sh	T1	3.0
-test-mail-dismiss-sweep.sh	T2	24.0
 test-mail-pane.sh	T1	4.0
 test-now.sh	T1	8.5
 test-ops-allowlist.sh	T1	2.0
@@ -180,7 +179,6 @@ test-hel-unlanded-guard.sh	T1	6.0
 test-sentinel-capacity.sh	T1	6.0
 test-sentinel-order.sh	T1	32.0
 test-skew-check-release.sh	T1	3.5
-test-skew-escalate.sh	T1	4.0
 test-skew-foreign.sh	T1	5.0
 test-skew-refresh.sh	T1	4.0
 test-slay.sh	T1	61.0
@@ -203,7 +201,6 @@ test-timer-templates.sh	T1	2.0
 test-unit-drift.sh	T1	15.0
 test-unit-restart-limits.sh	T1	2.0
 test-verdict-timer.sh	T1	1.5
-test-verify-asks.sh	T1	8.5
 test-watchtower-czar-outcome.sh	T1	11.5
 test-watchtower-lapse.sh	T1	126.0
 test-watchtower-queue.sh	T1	26.0

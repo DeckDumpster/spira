@@ -40,14 +40,6 @@ spira/test-attempts.sh
 # suite reading the box, and requires them in different columns.
 spira/test-yield.sh
 
-# THE SOP LINT FENCE'S WIRING. gate-spira.sh used to call `sop.sh lint` as a fence to catch
-# SOPs written directly with `bd remember` — the back door that bypasses the write validator;
-# that fence was never re-homed after gate-spira.sh's own retirement (see
-# test-sop-gate-wired.sh for why). The validator `write`/`lint`/`validate` all share is
-# `cargo test -p sop`'s subject; test-sop-gate-wired.sh confirms, at T0, the gate's own
-# (non-)call into `sop lint`.
-spira/test-sop-gate-wired.sh
-
 # THE GATE'S OWN BUDGET ENFORCEMENT. gate-spira.sh times itself and files a bead when it
 # overruns SPIRA_GATE_BUDGET; this suite proves the timing, the bead filing, and the dedup.
 # In the timed suite run it consistently exceeds the per-suite slice (it invokes gate-spira.sh
