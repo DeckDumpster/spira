@@ -193,10 +193,35 @@ fn law_submission_runs_queue_submit_with_no_call_timeout_so_the_gate_survives() 
 }
 
 #[test]
-fn the_enact_bead_lookup_asks_spira_lc_for_a_verb_it_serves() {
-    let dir = testkit::TempDir::new("rule-fake-lc");
-    testkit::write_exe(dir.path().join("spira-lc"), "#!/bin/sh\n[ \"$1 $2\" = \"content list\" ] || { echo \"usage: spira-lc show <bead-id> | show-batch ...\" >&2; exit 2; }\necho '[]'\n");
-    let path = format!("{}:{}", dir.path().display(), std::env::var("PATH").unwrap_or_default());
-    let _env = testkit::env(&[("PATH", Some(&path))]);
-    assert_eq!(rule::code::open_bead_labelled("law-enact:x"), Ok(None));
+fn code_check_reports_a_store_slug_the_toc_lacks() {
+    let repo = testkit::TempDir::new("rule-behind");
+    std::fs::create_dir_all(repo.path().join("law")).unwrap();
+    std::fs::write(repo.path().join("law/toc.toml"), TOC).unwrap();
+    testkit::git(repo.path(), &["init", "-q"]);
+    let texts = testkit::TempDir::new("rule-behind-texts");
+    for (slug, text) in [("law-one", "Do one."), ("law-two", "Do two."), ("law-three", "Do three.")] {
+        std::fs::write(texts.path().join(format!("{slug}.txt")), text).unwrap();
+    }
+    let home = repo.path().to_str().unwrap();
+    let rule = |args: &[&str]| {
+        std::process::Command::new(env!("CARGO_BIN_EXE_rule")).args(["--home", home, "code"]).args(args).arg("--texts").arg(texts.path()).current_dir(repo.path()).env_clear().env("PATH", std::env::var("PATH").unwrap_or_default()).output().unwrap()
+    };
+    let written = rule(&[]);
+    assert_eq!(written.status.code(), Some(0), "{}", String::from_utf8_lossy(&written.stderr));
+    let clean = rule(&["--check"]);
+    assert_eq!(clean.status.code(), Some(0), "{}", String::from_utf8_lossy(&clean.stderr));
+
+    std::fs::write(texts.path().join("law-four.txt"), "Do four.").unwrap();
+    let out = rule(&["--check"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert_eq!(stderr.trim(), "law/: behind the store by 1: law-four");
+}
+
+#[test]
+fn behind_names_store_slugs_the_toc_and_pointers_do_not_account_for() {
+    let toc = parse_toc(TOC).unwrap();
+    let p = ptrs("[[retired]]\nslug = \"law-five\"\nreason = \"Gone.\"\non = \"d\"\n");
+    let store: BTreeMap<String, String> = ["law-one", "law-three", "law-four", "law-five", "law-six"].iter().map(|s| (s.to_string(), String::new())).collect();
+    assert_eq!(rule::code::behind(&toc, &p, &store), ["law-four", "law-six"]);
 }
