@@ -303,6 +303,33 @@ pub fn blamed_member(line: &str, members: &[Member]) -> Option<Id> {
     members.iter().find(|m| m.id == token).map(|m| m.id.clone())
 }
 
+/// The one member whose changed paths the finding of a `member=the base itself (…) <finding>`
+/// line names. The VM's parenthetical is left out: it names the paths already ruled out.
+pub fn named_path_owner(
+    line: &str,
+    members: &[Member],
+    changed: &BTreeMap<Id, Vec<String>>,
+) -> Option<(Id, String)> {
+    let who = line.strip_prefix("member=the base itself")?;
+    let finding = who.split_once(") ")?.1;
+    let red = Red {
+        suite: LINT.to_string(),
+        evidence: finding.to_string(),
+        own: vec![],
+    };
+    let paths: Vec<MemberPaths> = members
+        .iter()
+        .map(|m| MemberPaths {
+            id: m.id.clone(),
+            paths: changed.get(&m.id).cloned().unwrap_or_default(),
+        })
+        .collect();
+    match attribute(&[red], &paths) {
+        Verdict::Eject(owners) if owners.len() == 1 => Some((owners[0].0.clone(), line.to_string())),
+        _ => None,
+    }
+}
+
 /// The low-pass filter that ended the pass red in `results`, with each member its output blames.
 fn filter_red_in(
     results: &Path,
@@ -340,9 +367,14 @@ fn filter_red_in(
     for red in &reds {
         let text = fs::read_to_string(results.join(format!("{red}.out"))).unwrap_or_default();
         for line in text.lines() {
-            if let Some(id) = blamed_member(line, members) {
+            let owner = match blamed_member(line, members) {
+                Some(id) => Some((id, line.to_string())),
+                None if red == LINT => named_path_owner(line, members, changed),
+                None => None,
+            };
+            if let Some((id, line)) = owner {
                 if !named.iter().any(|(n, _)| *n == id) {
-                    named.push((id, line.to_string()));
+                    named.push((id, line));
                 }
             }
         }
@@ -1294,6 +1326,67 @@ mod tests {
             "fence-x",
             "a red fence is a filter red, naming nobody"
         );
+    }
+
+    const BASE_LINE: &str = "member=the base itself (no member's diff touches spira-lint/config-key-registered-allow or its rule config-key-registered) config-key-registered: spira-lint/config-key-registered-allow:892: lists SPIRA_TOML for spira/lib-test-install.sh, which no longer names it unregistered — remove the line (the list only shrinks)";
+
+    fn member(id: &str) -> Member {
+        Member {
+            id: id.to_string(),
+            tip: String::new(),
+            title: String::new(),
+            priority: None,
+            express: false,
+            base_fix: false,
+            certified_at: 0,
+            stack: BTreeMap::new(),
+            blocked_by: Vec::new(),
+        }
+    }
+
+    fn changed_of(rows: &[(&str, &[&str])]) -> BTreeMap<Id, Vec<String>> {
+        rows.iter()
+            .map(|(id, ps)| (id.to_string(), ps.iter().map(|p| p.to_string()).collect()))
+            .collect()
+    }
+
+    #[test]
+    fn a_base_blamed_lint_finding_is_the_member_whose_diff_touches_the_path_it_names() {
+        let ms = [member("sp-vpwykr"), member("sp-dnm9wy")];
+        let one = changed_of(&[
+            ("sp-vpwykr", &["spira/lib-test-install.sh", "spira/aeon.sh"]),
+            ("sp-dnm9wy", &["batcher/src/core.rs"]),
+        ]);
+        assert_eq!(
+            named_path_owner(BASE_LINE, &ms, &one),
+            Some(("sp-vpwykr".to_string(), BASE_LINE.to_string()))
+        );
+        let both = changed_of(&[
+            ("sp-vpwykr", &["spira/lib-test-install.sh"]),
+            ("sp-dnm9wy", &["spira/lib-test-install.sh"]),
+        ]);
+        assert_eq!(named_path_owner(BASE_LINE, &ms, &both), None);
+        let neither = changed_of(&[
+            ("sp-vpwykr", &["spira/aeon.sh"]),
+            ("sp-dnm9wy", &["batcher/src/core.rs"]),
+        ]);
+        assert_eq!(named_path_owner(BASE_LINE, &ms, &neither), None);
+        assert_eq!(named_path_owner("member=sp-vpwykr r: f.rs:1: x", &ms, &one), None);
+    }
+
+    #[test]
+    fn filter_red_ejects_the_member_a_base_blamed_lint_finding_names() {
+        let d = testkit::TempDir::new("vm-filter-red-path");
+        let ms = [member("sp-vpwykr"), member("sp-dnm9wy")];
+        let changed = changed_of(&[
+            ("sp-vpwykr", &["spira/lib-test-install.sh", "spira/aeon.sh"]),
+            ("sp-dnm9wy", &["batcher/src/core.rs"]),
+        ]);
+        fs::write(d.path().join("spira-lint.result"), "red 1 2 - - - 1\n").unwrap();
+        fs::write(d.path().join("spira-lint.out"), format!("{BASE_LINE}\n")).unwrap();
+        let red = filter_red_in(d.path(), &ms, &changed).unwrap();
+        assert_eq!(red.named, [("sp-vpwykr".to_string(), BASE_LINE.to_string())]);
+        assert!(filter_red_in(d.path(), &ms, &BTreeMap::new()).unwrap().named.is_empty());
     }
 
     #[test]
