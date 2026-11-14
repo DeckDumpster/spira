@@ -435,7 +435,11 @@ fn cmd_enact(db: &str, home: &str, rest: &[String]) -> i32 {
         }
     };
     let behind = code::behind(&toc, &pointers, &strings(&after));
-    println!("law/: book is {} behind the store ({}); add {key} under Part {part} in law/toc.toml, run rule.sh code, commit.", behind.len(), behind.join(", "));
+    if behind.is_empty() {
+        println!("law/: book is up to date with the store.");
+    } else {
+        println!("law/: book is {} behind the store ({}); add {key} under Part {part} in law/toc.toml, run rule.sh code, commit.", behind.len(), behind.join(", "));
+    }
     0
 }
 

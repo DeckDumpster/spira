@@ -199,14 +199,23 @@ fn code_check_reports_a_store_slug_the_toc_lacks() {
     std::fs::write(repo.path().join("law/toc.toml"), TOC).unwrap();
     testkit::git(repo.path(), &["init", "-q"]);
     let texts = testkit::TempDir::new("rule-behind-texts");
-    for (slug, text) in [("law-one", "Do one."), ("law-two", "Do two."), ("law-three", "Do three."), ("law-four", "Do four.")] {
+    for (slug, text) in [("law-one", "Do one."), ("law-two", "Do two."), ("law-three", "Do three.")] {
         std::fs::write(texts.path().join(format!("{slug}.txt")), text).unwrap();
     }
     let home = repo.path().to_str().unwrap();
-    let out = std::process::Command::new(env!("CARGO_BIN_EXE_rule")).args(["--home", home, "code", "--check", "--texts"]).arg(texts.path()).current_dir(repo.path()).env_clear().env("PATH", std::env::var("PATH").unwrap_or_default()).output().unwrap();
+    let rule = |args: &[&str]| {
+        std::process::Command::new(env!("CARGO_BIN_EXE_rule")).args(["--home", home, "code"]).args(args).arg("--texts").arg(texts.path()).current_dir(repo.path()).env_clear().env("PATH", std::env::var("PATH").unwrap_or_default()).output().unwrap()
+    };
+    let written = rule(&[]);
+    assert_eq!(written.status.code(), Some(0), "{}", String::from_utf8_lossy(&written.stderr));
+    let clean = rule(&["--check"]);
+    assert_eq!(clean.status.code(), Some(0), "{}", String::from_utf8_lossy(&clean.stderr));
+
+    std::fs::write(texts.path().join("law-four.txt"), "Do four.").unwrap();
+    let out = rule(&["--check"]);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert_eq!(out.status.code(), Some(1), "{stderr}");
-    assert!(stderr.contains("law/: behind the store by 1: law-four"), "{stderr}");
+    assert_eq!(stderr.trim(), "law/: behind the store by 1: law-four");
 }
 
 #[test]
