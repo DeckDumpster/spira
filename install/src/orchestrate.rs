@@ -112,6 +112,21 @@ pub fn wait_for_tcp(deps: &dyn Deps, port: u16, max_secs: u64) -> bool {
     }
 }
 
+/// The port-close wait before phase 4 starts the unit: `true` once nothing listens, `false` when
+/// the bound runs out with the temporary server still holding it.
+pub fn wait_for_tcp_closed(deps: &dyn Deps, port: u16, max_secs: u64) -> bool {
+    let start = deps.now_secs();
+    loop {
+        if !deps.tcp_up(port) {
+            return true;
+        }
+        if deps.now_secs().saturating_sub(start) >= max_secs {
+            return false;
+        }
+        deps.sleep_secs(1);
+    }
+}
+
 /// Phase 4's per-instance unit install, wired up from already-resolved host values and a
 /// pre-built manifest — the same [`install_units::run`] `deploy.sh`'s re-render step and
 /// `units-install` (the standalone binary) call, invoked here in-process rather than as a
@@ -209,5 +224,53 @@ mod tests {
     fn dolt_query_ready_gives_up_at_the_bound() {
         let d = FakeDeps { queries_ok_after: std::cell::Cell::new(9999), clock: std::cell::Cell::new(0) };
         assert!(!wait_for_dolt_query_ready(&d, 3307, 5));
+    }
+
+    struct Listener {
+        up_from: u64,
+        up_until: u64,
+        clock: std::cell::Cell<u64>,
+    }
+    impl Deps for Listener {
+        fn tool(&self, _: &str, _: &[&str], _: &[(&str, &str)]) -> Result<String, String> {
+            Ok(String::new())
+        }
+        fn tcp_up(&self, _port: u16) -> bool {
+            (self.up_from..self.up_until).contains(&self.clock.get())
+        }
+        fn now_secs(&self) -> u64 {
+            self.clock.get()
+        }
+        fn sleep_secs(&self, n: u64) {
+            self.clock.set(self.clock.get() + n);
+        }
+    }
+
+    fn listener(up_from: u64, up_until: u64) -> Listener {
+        Listener { up_from, up_until, clock: std::cell::Cell::new(0) }
+    }
+
+    // covers: UC-config-store-preflight-24
+    #[test]
+    fn phase_4_waits_for_the_store_port_to_open_and_gives_up_exactly_at_the_bound() {
+        let late = listener(3, u64::MAX);
+        assert!(wait_for_tcp(&late, 3307, 10), "a port that opens inside the window passes");
+        assert_eq!(late.clock.get(), 3, "and the wait stops the moment it opens");
+
+        let never = listener(u64::MAX, u64::MAX);
+        assert!(!wait_for_tcp(&never, 3307, 5), "positive control: a port that never opens is a timeout");
+        assert_eq!(never.clock.get(), 5, "the wait is bounded by the timeout, not open-ended");
+    }
+
+    // covers: UC-config-store-preflight-24
+    #[test]
+    fn phase_4_waits_for_the_temporary_server_to_release_the_port_before_starting_the_unit() {
+        let dying = listener(0, 2);
+        assert!(wait_for_tcp_closed(&dying, 3307, 10), "a server that goes away inside the window clears the wait");
+        assert_eq!(dying.clock.get(), 2);
+
+        let stuck = listener(0, u64::MAX);
+        assert!(!wait_for_tcp_closed(&stuck, 3307, 4), "a server that never releases the port is reported, bounded");
+        assert_eq!(stuck.clock.get(), 4);
     }
 }
