@@ -3182,11 +3182,18 @@ pub fn open_round_id(env: &Env, repo: &Repo) -> Result<Option<String>, String> {
 pub struct OpenRound {
     pub id: String,
     pub members: Vec<String>,
+    /// Each member's tip, in `members` order.
+    pub tips: Vec<String>,
     pub head: String,
     pub worktree: String,
     pub phase: String,
     pub red: bool,
     pub age_secs: u64,
+}
+
+/// `members` as `queue round status` writes them, `id:tip` apiece, split into ids and tips.
+fn split_members(members: &str) -> (Vec<String>, Vec<String>) {
+    members.split_whitespace().map(|m| m.split_once(':').map_or((m, ""), |(i, t)| (i, t))).map(|(i, t)| (i.to_string(), t.to_string())).unzip()
 }
 
 /// Every open round of the repo, as `queue round status` lists them: the first is unprefixed,
@@ -3209,9 +3216,11 @@ pub fn open_rounds(env: &Env, repo: &Repo) -> Result<Vec<OpenRound>, String> {
 /// A round of the store's view as `queue round status` lists it.
 fn open_round_of(r: &store_view::Round, now: u64) -> OpenRound {
     let get = |k: &str| r.record.get(k).unwrap_or_default();
+    let (members, tips) = split_members(get("members"));
     OpenRound {
         id: r.record.id.clone(),
-        members: get("members").split_whitespace().map(|m| m.split(':').next().unwrap_or("").to_string()).collect(),
+        members,
+        tips,
         head: get("head").to_string(),
         worktree: get("worktree").to_string(),
         phase: r.phase.clone(),
@@ -3226,12 +3235,11 @@ fn open_rounds_of(out: &str) -> Vec<OpenRound> {
         .map_while(|p| {
             let id = verb_value(out, &format!("{p}batch_id"))?;
             let get = |k: &str| verb_value(out, &format!("{p}{k}")).unwrap_or_default();
+            let (members, tips) = split_members(&get("members"));
             Some(OpenRound {
                 id,
-                members: get("members")
-                    .split_whitespace()
-                    .map(|m| m.split(':').next().unwrap_or("").to_string())
-                    .collect(),
+                members,
+                tips,
                 head: get("head"),
                 worktree: get("worktree"),
                 phase: if p.is_empty() {
@@ -4751,7 +4759,7 @@ mod land_exit_tests {
         let round = store_view::Round { phase: "certifying".into(), record };
         assert_eq!(
             open_round_of(&round, 1090),
-            OpenRound { id: "r2".into(), members: vec!["sp-c".into(), "sp-d".into()], head: "bbb".into(), worktree: "/w2".into(), phase: "certifying".into(), red: true, age_secs: 90 }
+            OpenRound { id: "r2".into(), members: vec!["sp-c".into(), "sp-d".into()], tips: vec!["tc".into(), "td".into()], head: "bbb".into(), worktree: "/w2".into(), phase: "certifying".into(), red: true, age_secs: 90 }
         );
     }
 
