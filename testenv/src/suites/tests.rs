@@ -875,6 +875,18 @@ fn the_suite_state_file_never_duplicates_a_row_stores_no_active_row_and_never_re
     t.lifecycle("garbage line\ntest-d.sh | weird | 2026-01-01T00:00:00Z | | r\n");
     assert_eq!(t.run(&["lint"]), 1);
     assert!(t.out().is_empty(), "bad lines never reach the rows: {:?}", t.out());
+
+    // The fence refuses a quarantine with no bead, a row with no reason, and a missing suite.
+    for (row, said) in [
+        ("test-d.sh | quarantined | 2026-01-01T00:00:00Z | | flaky", "has no bead id"),
+        ("test-d.sh | disabled | 2026-01-01T00:00:00Z | |", "missing reason"),
+        ("test-gone.sh | disabled | 2026-01-01T00:00:00Z | | gone", "suite does not exist: test-gone.sh"),
+    ] {
+        t.clear();
+        t.lifecycle(&format!("{row}\n"));
+        assert_eq!(t.run(&["lint"]), 1, "{row}");
+        assert!(t.err().contains(said), "{row}: {}", t.err());
+    }
 }
 
 // --------------------------------------------------------------------------- spira-lc
