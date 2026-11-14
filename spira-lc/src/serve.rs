@@ -1151,9 +1151,12 @@ mod tests {
 
     #[test]
     fn a_filed_beads_parent_and_labels_are_on_its_record_once_bdqs_hooks_have_run() {
+        // literal-ok: test fixture label
         let (world, client) = filed_world(&["repo:spira", "no-loop"], Some("sp-e"));
         assert_eq!(listed_row(&world, "sp-new")["claim"], serde_json::Value::Null, "nothing has synced it yet");
+        // literal-ok: test fixture label
         bdq_hooks(&client, &["create", "T", "--silent", "--parent", "sp-e", "--labels", "repo:spira,no-loop"], "sp-new\n").unwrap();
+        // literal-ok: test fixture label
         assert_eq!(listed_row(&world, "sp-new")["claim"], serde_json::json!({"blocks": [], "parent": "sp-e", "labels": ["repo:spira", "no-loop"]}));
     }
 
