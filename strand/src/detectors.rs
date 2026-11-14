@@ -571,4 +571,16 @@ mod tests {
             assert_eq!(classify(r), "", "{r}");
         }
     }
+
+    // covers: UC-ops-detection-remediation-29
+    #[test]
+    fn claimable_and_blocked_beads_beside_the_flagged_ones_are_never_reported() {
+        let all = r#"[
+            {"id":"sp-good","status":"open","labels":["plan","repo:pushrepo"]},
+            {"id":"sp-blocked","status":"open","labels":["plan","repo:pushrepo"],"dependency_count":1},
+            {"id":"sp-bad","status":"open","labels":["plan","repo:bogus"]}]"#;
+        let out = livelock_report(MAP, &[], "", "[]", "[]", all);
+        assert_eq!(out.lines().count(), 1, "{out}");
+        assert!(out.contains("sp-bad unmapped-repo"), "{out}");
+    }
 }

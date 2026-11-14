@@ -157,6 +157,7 @@ mod tests {
     }
     const PARTS: &str = "builder|myscope,plan|spira-poison\nops|myscope,incident|spira-poison\n";
 
+    // covers: UC-ops-detection-remediation-29
     #[test]
     fn a_claimable_bead_is_silent_and_an_unmatched_one_is_named() {
         let beads = r#"[{"id":"a","labels":["myscope","plan"]},{"id":"b","labels":["myscope","other"]}]"#;
@@ -189,6 +190,7 @@ mod tests {
     }
 
     // covers: UC-dispatch-17
+    // covers: UC-ops-detection-remediation-29
     #[test]
     fn check_7c_agrees_with_the_cockpit_next_attribution() {
         let beads = r#"[{"id":"sp-free","labels":["myscope","plan"]},{"id":"sp-ops-on-plan","labels":["rune:ops","myscope","plan"]},{"id":"sp-ops-on-incident","labels":["rune:ops","myscope","incident"]},{"id":"sp-ghost","labels":["rune:nobody","myscope","plan"]}]"#;
