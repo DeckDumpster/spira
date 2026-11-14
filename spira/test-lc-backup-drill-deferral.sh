@@ -5,12 +5,11 @@
 #
 #   ./test-lc-backup-drill-deferral.sh
 #
+# tier: T1
 # covers: spira/lc-backup.sh systemd/lc-backup-drill.* spira/conf.d/SPIRA_LC_BACKUP_DRILL_*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
-fail=0
-ok() { echo "ok - $1"; }
-bad() { echo "not ok - $1: $2"; fail=1; }
+. "$HERE/testlib.sh"
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 export SPIRA_RUN="$T/run" SPIRA_LC_BACKUP_DB="alpha" SPIRA_LC_BACKUP_DRILL_WAIT_SECS=0 \
@@ -31,4 +30,4 @@ grep -q 'DEFERRED' "$T/reported" 2>/dev/null && ok "explain-drill reports the de
 
 ! grep -q '16:50' "$HERE/../systemd/lc-backup-drill.timer" && ok "the timer has one slot" || bad "the timer has one slot" "16:50 present"
 [ "$(grep -c '^OnCalendar=' "$HERE/../systemd/lc-backup-drill.timer")" -eq 1 ] && ok "exactly one OnCalendar" || bad "exactly one OnCalendar" "count"
-exit "$fail"
+tl_summary
