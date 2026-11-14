@@ -1611,9 +1611,6 @@ impl<'w, W: World> Trial<'w, W> {
         par.min(par_mem)
     }
 
-    /// Every PASS certifies the merged tree it judged (cert.rs; queue/DESIGN.md §8 D12): the
-    /// record `queue land-local` requires before it lands a head with that tree. Keyed by
-    /// `(repo, tree)` only; a PASS that never reached the merge certifies nothing.
     /// The step a red failed at (the verdict's suite, `-` when none) and the last line of its message that is not the gate's own bookkeeping.
     fn red_at(&self, vd: &Verdict) -> (String, String) {
         let step = if self.s.suite == "-" { String::new() } else { self.s.suite.clone() };
@@ -1621,6 +1618,9 @@ impl<'w, W: World> Trial<'w, W> {
         (step, message)
     }
 
+    /// Every PASS certifies the merged tree it judged (cert.rs; queue/DESIGN.md §8 D12): the
+    /// record `queue land-local` requires before it lands a head with that tree. Keyed by
+    /// `(repo, tree)` only; a PASS that never reached the merge certifies nothing.
     fn record_red(&self, vd: &Verdict) {
         let w = self.w;
         let Some(p) = crate::redcache::path(&self.s.verdict_dir, &self.s.key) else { return };
