@@ -131,6 +131,69 @@
         assert_eq!(resolve_ask_label(&e, &home).unwrap(), "declared-ask");
     }
 
+    fn shipped_conf_d() -> std::path::PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/conf.d")
+    }
 
+    fn declared(pairs: &[(&str, &str)]) -> crate::SpiraToml {
+        [("spira.home_repo", "h"), ("spira.repo_map", "/nowhere/repo-map")]
+            .iter()
+            .chain(pairs)
+            .fold(crate::SpiraToml::default(), |d, (k, v)| crate::set_path(&d, k, v).unwrap())
+    }
 
+    fn with_defaults(repo: &Path, doc: &crate::SpiraToml, e: &BTreeMap<String, String>) -> Resolved {
+        let home = repo.join("spira");
+        resolve_with_defaults(ResolveInput { env: e, home: &home, repo, toml: Some(doc), conf_d: &shipped_conf_d() }).unwrap()
+    }
 
+    // covers: UC-config-store-preflight-01
+    #[test]
+    fn a_declared_key_beats_its_derived_default_and_the_environment_never_speaks() {
+        let ws = testkit::TempDir::new("spira-config-precedence");
+        let (home, repo) = fixture_home_repo(&ws);
+        let e = env(&[("HOME", "/h"), ("SPIRA_INSTANCE", "from-the-environment")]);
+
+        let derived = with_defaults(&repo, &declared(&[]), &e);
+        assert_eq!(derived.get("SPIRA_INSTANCE"), "prod", "nothing declared: the derived default");
+
+        let doc = declared(&[("spira.instance", "acc")]);
+        assert_eq!(with_defaults(&repo, &doc, &e).get("SPIRA_INSTANCE"), "acc", "the declaration beats the default and the environment");
+
+        let refused = resolve(ResolveInput { env: &e, home: &home, repo: &repo, toml: Some(&doc), conf_d: &shipped_conf_d() });
+        assert!(refused.is_err(), "reading a config that leaves a key undeclared is refused, not defaulted");
+    }
+
+    // covers: UC-config-store-preflight-03
+    #[test]
+    fn derived_defaults_follow_the_install_location_and_the_whole_shipped_key_set_resolves() {
+        let ws = testkit::TempDir::new("spira-config-derived-location");
+        let (_home, repo) = fixture_home_repo(&ws);
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        let e = env(&[("HOME", "/h")]);
+        let doc = declared(&[]);
+        let r = with_defaults(&repo, &doc, &e);
+        assert_eq!(r.get("SPIRA_WORKSPACES"), ws.path().to_str().unwrap(), "a git checkout's workspaces root is its parent directory");
+        assert!(r.values.len() > 100, "every key of the shipped registry resolves from its default: {}", r.values.len());
+        assert!(r.values.values().all(|v| !v.contains("$SPIRA_")), "no derived default is left an unexpanded reference");
+
+        let moved = testkit::TempDir::new("spira-config-derived-location-moved");
+        let repo2 = moved.path().join("spira-harness");
+        std::fs::create_dir_all(repo2.join(".git")).unwrap();
+        assert_eq!(with_defaults(&repo2, &doc, &e).get("SPIRA_WORKSPACES"), moved.path().to_str().unwrap());
+    }
+
+    // covers: UC-config-store-preflight-04
+    #[test]
+    fn prod_keeps_unqualified_paths_and_a_non_prod_instance_gets_its_own_database_and_runtime_directory() {
+        let ws = testkit::TempDir::new("spira-config-instance-paths");
+        let (_home, repo) = fixture_home_repo(&ws);
+        let e = env(&[("HOME", "/h")]);
+        let prod = with_defaults(&repo, &declared(&[]), &e);
+        assert_eq!(prod.get("SPIRA_DB"), "/h/.local/share/spira/db");
+        assert_eq!(prod.get("SPIRA_RUN"), "/h/.local/share/spira/run");
+
+        let acc = with_defaults(&repo, &declared(&[("spira.instance", "acc")]), &e);
+        assert_eq!(acc.get("SPIRA_DB"), "/h/.local/share/spira-acc/db");
+        assert_eq!(acc.get("SPIRA_RUN"), "/h/.local/share/spira-acc/run");
+    }

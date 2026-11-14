@@ -278,4 +278,24 @@ version_probe = ""
         let err = require(&deps, &["spira-no-such-program"], &path, "spira.conf").unwrap_err();
         assert!(err.contains(&format!("spira-no-such-program — {DEFAULT_PURPOSE}")), "{err}");
     }
+
+    // covers: UC-config-store-preflight-08
+    #[test]
+    fn every_program_the_shipped_manifest_declares_has_a_tier_a_purpose_and_a_version_probe() {
+        let text = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../spira/deps.toml")).unwrap();
+        let manifest = parse(&text).unwrap();
+        assert!(manifest.deps.len() >= 8, "the manifest loaded: {} programs", manifest.deps.len());
+        let raw: toml::Value = text.parse().unwrap();
+        let probes: std::collections::BTreeMap<&str, &str> = raw["dep"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|d| (d["name"].as_str().unwrap(), d.get("version_probe").and_then(|v| v.as_str()).unwrap_or("")))
+            .collect();
+        let bad = |f: &dyn Fn(&Dep) -> bool| manifest.deps.iter().filter(|d| f(d)).map(|d| d.name.as_str()).collect::<Vec<_>>();
+        let tiers = ["runtime", "optional", "dev", "operator", "release"];
+        assert_eq!(bad(&|d| !tiers.contains(&d.tier.as_str())), Vec::<&str>::new(), "a program with no valid tier");
+        assert_eq!(bad(&|d| d.purpose == DEFAULT_PURPOSE), Vec::<&str>::new(), "a program stating no purpose");
+        assert_eq!(bad(&|d| probes[d.name.as_str()].is_empty()), Vec::<&str>::new(), "a program with no version probe");
+    }
 }
