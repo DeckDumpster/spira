@@ -127,20 +127,40 @@ pub fn landed_suites(root: &str, landref: &str) -> Result<(String, Vec<String>),
 
 /// Removes from the bead's failing checks every suite not in `landed` and returns them: a suite
 /// the landing ref no longer has cannot be run, so it cannot be required.
-pub fn would_drop(check: &str) -> bool {
-    !is_step(check)
-}
-
-pub fn drop_deleted(run: &Path, bead: &str, landed: &[String]) -> io::Result<Vec<String>> {
-    let all = failing(run, bead);
-    let (gone, kept): (Vec<String>, Vec<String>) = all.into_iter().partition(|c| !is_step(c) && !landed.contains(c));
+/// Drops every failing suite `landref` no longer contains, from the bead's failing checks and
+/// from the gate's `ejected/<bead>` sidecar, recording one fact per suite through `record` first.
+/// A landing ref that cannot be read drops nothing. Returns the suites dropped.
+pub fn drop_deleted_suites(run: &Path, bead: &str, root: &str, landref: &str, record: &dyn Fn(&str) -> Result<(), String>) -> Result<Vec<String>, String> {
+    let sidecar = run.join("ejected").join(bead);
+    let sidecar_text = fs::read_to_string(&sidecar).unwrap_or_default();
+    let named: Vec<String> = sidecar_text.lines().next().unwrap_or("").split(|c: char| c == ',' || c.is_whitespace()).filter(|w| !w.is_empty()).map(String::from).collect();
+    if failing(run, bead).is_empty() && named.is_empty() {
+        return Ok(Vec::new());
+    }
+    let Ok((commit, landed)) = landed_suites(root, landref) else { return Ok(Vec::new()) };
+    let mut gone: Vec<String> = failing(run, bead).into_iter().chain(named.iter().cloned()).filter(|c| !is_step(c) && !landed.contains(c)).collect();
+    let mut seen = Vec::new();
+    gone.retain(|c| !seen.contains(c) && {
+        seen.push(c.clone());
+        true
+    });
+    for name in &gone {
+        record(&format!("suite {name} deleted on {landref} at {commit}; requirement dropped")).map_err(|e| format!("the dropped suite {name} could not be recorded: {e}"))?;
+    }
     if gone.is_empty() {
         return Ok(gone);
     }
+    let kept: Vec<String> = failing(run, bead).into_iter().filter(|c| !gone.contains(c)).collect();
     if kept.is_empty() {
         clear_failing(run, bead);
     } else {
-        write_atomic(&bead_dir(run, bead)?.join("failing"), &(kept.join("\n") + "\n"))?;
+        write_atomic(&bead_dir(run, bead).map_err(|e| e.to_string())?.join("failing"), &(kept.join("\n") + "\n")).map_err(|e| e.to_string())?;
+    }
+    let kept_sidecar: Vec<&String> = named.iter().filter(|c| !gone.contains(c)).collect();
+    if kept_sidecar.is_empty() {
+        let _ = fs::remove_file(&sidecar);
+    } else {
+        write_atomic(&sidecar, &kept_sidecar.iter().map(|c| c.as_str()).collect::<Vec<_>>().join(",")).map_err(|e| e.to_string())?;
     }
     Ok(gone)
 }
@@ -173,17 +193,63 @@ mod tests {
         assert!(unproven(&r, "sp-a", T1).is_empty());
     }
 
+    fn repo_without(dir: &Path) -> String {
+        let root = dir.join("repo");
+        fs::create_dir_all(root.join("spira")).unwrap();
+        let g = |a: &[&str]| assert!(std::process::Command::new("git").arg("-C").arg(&root).args(a).status().unwrap().success());
+        g(&["init", "-q", "-b", "main"]);
+        for n in ["test-gone.sh", "test-kept.sh"] {
+            fs::write(root.join("spira").join(n), "").unwrap();
+        }
+        g(&["add", "."]);
+        g(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"]);
+        g(&["rm", "-q", "spira/test-gone.sh"]);
+        g(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "y"]);
+        root.to_str().unwrap().to_string()
+    }
+
     #[test]
-    fn a_suite_the_landing_ref_lacks_is_dropped_from_the_requirement_and_steps_stay() {
+    fn a_forced_suite_the_landing_ref_lacks_is_dropped_with_its_reason_and_steps_stay() {
         let d = run();
-        let r = d.path().to_path_buf();
+        let root = repo_without(d.path());
+        let r = d.path().join("run");
         record_failing(&r, "sp-a", &["test-gone.sh".into(), "test-kept.sh".into(), "unit-tests".into(), "fence-x".into()]).unwrap();
-        let gone = drop_deleted(&r, "sp-a", &["test-kept.sh".into()]).unwrap();
+        fs::create_dir_all(r.join("ejected")).unwrap();
+        fs::write(r.join("ejected/sp-a"), "test-gone.sh,test-kept.sh").unwrap();
+        let facts = std::cell::RefCell::new(Vec::new());
+        let record = |c: &str| {
+            facts.borrow_mut().push(c.to_string());
+            Ok(())
+        };
+        let gone = drop_deleted_suites(&r, "sp-a", &root, "main", &record).unwrap();
         assert_eq!(gone, ["test-gone.sh"]);
         assert_eq!(failing(&r, "sp-a"), ["test-kept.sh", "unit-tests", "fence-x"]);
+        assert_eq!(fs::read_to_string(r.join("ejected/sp-a")).unwrap(), "test-kept.sh");
+        let commit = git_out(&root, &["rev-parse", "main"]).unwrap();
+        assert_eq!(*facts.borrow(), [format!("suite test-gone.sh deleted on main at {}; requirement dropped", commit.trim())]);
+        assert!(drop_deleted_suites(&r, "sp-a", &root, "main", &record).unwrap().is_empty(), "a second submit has nothing to drop");
+    }
+
+    #[test]
+    fn a_requirement_only_a_deleted_suite_held_is_cleared_with_its_sidecar() {
+        let d = run();
+        let root = repo_without(d.path());
+        let r = d.path().join("run");
         record_failing(&r, "sp-b", &["test-gone.sh".into()]).unwrap();
-        assert_eq!(drop_deleted(&r, "sp-b", &[]).unwrap(), ["test-gone.sh"]);
-        assert!(failing(&r, "sp-b").is_empty(), "nothing left to require");
+        fs::create_dir_all(r.join("ejected")).unwrap();
+        fs::write(r.join("ejected/sp-b"), "test-gone.sh").unwrap();
+        drop_deleted_suites(&r, "sp-b", &root, "main", &|_| Ok(())).unwrap();
+        assert!(failing(&r, "sp-b").is_empty() && !r.join("ejected/sp-b").exists());
+    }
+
+    #[test]
+    fn a_recorder_that_fails_leaves_the_requirement_in_place() {
+        let d = run();
+        let root = repo_without(d.path());
+        let r = d.path().join("run");
+        record_failing(&r, "sp-c", &["test-gone.sh".into()]).unwrap();
+        assert!(drop_deleted_suites(&r, "sp-c", &root, "main", &|_| Err("down".into())).is_err());
+        assert_eq!(failing(&r, "sp-c"), ["test-gone.sh"]);
     }
 
     #[test]

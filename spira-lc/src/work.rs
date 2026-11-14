@@ -204,10 +204,9 @@ fn cmd_submit(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
         };
         let checkout = repo_checkout(&repo);
         if let Some((root, landref)) = &checkout {
-            if let Err(refusal) = drop_deleted_suites(run, bead_id, root, landref, &|cause| {
-                conn.append_event(&crate::facts::insert_sql(bead_id, "suite-dropped", cause, &actor, crate::db::now_epoch())).map_err(|e| format!("{e:?}"))
-            }) {
-                return refusal;
+            let record = |cause: &str| conn.append_event(&crate::facts::insert_sql(bead_id, "suite-dropped", cause, &actor, crate::db::now_epoch())).map_err(|e| format!("{e:?}"));
+            if let Err(e) = spira_config::proof::drop_deleted_suites(run, bead_id, root, landref, &record) {
+                return (CANNOT_TELL, format!("cannot tell: {e}"));
             }
         }
         let runner = |check: &str, secs: u64| {
@@ -275,22 +274,6 @@ fn repo_checkout(repo: &str) -> Option<(String, String)> {
     let root = reg.root(repo)?;
     let landref = spira_config::repos::landref(&reg, &root)?;
     Some((root, landref))
-}
-
-/// A suite the landing ref no longer contains is not a failed verification: each is recorded as a
-/// fact on the bead and then removed from what the bead must prove. A landing ref that cannot be
-/// read drops nothing.
-fn drop_deleted_suites(run: &std::path::Path, bead_id: &str, root: &str, landref: &str, record: &dyn Fn(&str) -> Result<(), String>) -> Result<(), (i32, String)> {
-    let forced = spira_config::proof::failing(run, bead_id);
-    if forced.is_empty() {
-        return Ok(());
-    }
-    let Ok((commit, landed)) = spira_config::proof::landed_suites(root, landref) else { return Ok(()) };
-    for name in forced.iter().filter(|c| spira_config::proof::would_drop(c) && !landed.contains(c)) {
-        let cause = format!("suite {name} deleted on {landref} at {commit}; requirement dropped");
-        record(&cause).map_err(|e| (CANNOT_TELL, format!("cannot tell: the dropped suite {name} could not be recorded: {e}")))?;
-    }
-    spira_config::proof::drop_deleted(run, bead_id, &landed).map(drop).map_err(|e| (CANNOT_TELL, format!("cannot tell: the dropped suites could not be removed: {e}")))
 }
 
 /// What `work submit` may spend running the checks an ejection named; a retry resumes, because
@@ -2259,31 +2242,6 @@ mod tests {
     }
 
     const TIP: &str = "3333333333333333333333333333333333333333";
-
-    #[test]
-    fn a_suite_deleted_on_the_landing_ref_is_recorded_and_dropped_so_the_submit_is_admitted() {
-        let dir = proof_dir("deleted");
-        let repo = dir.path().join("repo");
-        std::fs::create_dir_all(repo.join("spira")).unwrap();
-        testkit::git(&repo, &["init", "-q", "-b", "main"]);
-        std::fs::write(repo.join("spira/test-x.sh"), "").unwrap();
-        testkit::git(&repo, &["add", "."]);
-        testkit::git(&repo, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"]);
-        testkit::git(&repo, &["rm", "-q", "spira/test-x.sh"]);
-        testkit::git(&repo, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "delete x"]);
-        let run = dir.path().join("run");
-        spira_config::proof::record_failing(&run, "sp-a", &["test-x.sh".into()]).unwrap();
-        let facts = std::cell::RefCell::new(Vec::new());
-        let record = |c: &str| {
-            facts.borrow_mut().push(c.to_string());
-            Ok(())
-        };
-        super::drop_deleted_suites(&run, "sp-a", repo.to_str().unwrap(), "main", &record).unwrap();
-        let commit = testkit::git(&repo, &["rev-parse", "main"]);
-        assert_eq!(*facts.borrow(), [format!("suite test-x.sh deleted on main at {}; requirement dropped", commit.trim())]);
-        let unrunnable = |_: &str, _: u64| -> (i32, String) { panic!("a deleted suite is not run") };
-        assert!(proof_refusal(&run, "sp-a", TIP, &[], 60, &unrunnable).is_none());
-    }
 
     #[test]
     fn a_resubmit_without_a_passing_run_of_the_ejected_suite_is_refused_naming_it() {

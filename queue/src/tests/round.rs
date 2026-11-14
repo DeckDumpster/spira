@@ -8901,6 +8901,8 @@ fn resubmit_drops_a_forced_suite_the_landing_ref_deleted_and_records_why() {
     }
     let run = t.s().run.clone();
     spira_config::proof::record_failing(&run, "sp-a", &["test-x.sh".to_string()]).unwrap();
+    fs::create_dir_all(run.join("ejected")).unwrap();
+    fs::write(run.join("ejected/sp-a"), "test-x.sh").unwrap();
     let tip_arg = format!("--tip={T_FIX}");
     assert_eq!(
         t.run(&["resubmit", "sp-a", &tip_arg, "--by=concierge", "--reason=r", "--evidence=e", &ev_tip()]),
@@ -8917,5 +8919,5 @@ fn resubmit_drops_a_forced_suite_the_landing_ref_deleted_and_records_why() {
         "{:?}",
         t.lc.calls.borrow()
     );
-    assert!(spira_config::proof::failing(&run, "sp-a").is_empty());
+    assert!(spira_config::proof::failing(&run, "sp-a").is_empty() && !run.join("ejected/sp-a").exists());
 }
