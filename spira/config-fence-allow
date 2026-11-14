@@ -50,14 +50,12 @@ spira/release.sh
 spira/stage.sh
 spira/test-dwarf-wiki-dirty.sh
 spira/test-dwarf-worktree-collision.sh
-spira/test-batcher-cut.sh
 spira/test-census-pipeline.sh
 spira/test-runes-repo-labels.sh
 spira/test-cockpit-queue-section.sh
 spira/test-cockpit-unlanded.sh
 spira/test-cockpit-unsent.sh
 spira/test-concierge.sh
-spira/test-config-compat-master-base.sh
 spira/test-configure.sh
 spira/test-conf.sh
 spira/test-containment.sh

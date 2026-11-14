@@ -859,6 +859,24 @@ fn a_refused_fast_forward_keeps_the_batch() {
     assert!(!t.lc.has("abandon-batch"));
 }
 
+// covers: UC-landing-merge-queue-45
+#[test]
+fn green_on_an_unmoved_master_based_repo_fast_forwards_master_and_never_main() {
+    let t = T::new(LandMode::Queue);
+    t.submitted(&["sp-a", "sp-b"]);
+    batch(&t);
+    t.lib.r.borrow_mut().landref = Some("origin/master".into());
+    t.git.set("origin/master", "b0");
+    t.forge
+        .status
+        .borrow_mut()
+        .push(Some("green\nhead-sha: h1\n".into()));
+    assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+    assert!(t.lib.has("push origin h1:master"), "{:?}", t.lib.calls.borrow());
+    assert!(!t.lib.has("push origin h1:main"));
+}
+
+// covers: UC-landing-merge-queue-45
 #[test]
 fn green_with_lifecycle_on_walks_the_batch_to_landed_on_spira_lc() {
     let t = T::new(LandMode::Queue);
@@ -1867,6 +1885,7 @@ fn publish_green_fast_forwards_the_forge_and_retires_the_record() {
         .contains("verdict spira: publish PR 77 green — origin/main fast-forwarded to m3"));
 }
 
+// covers: UC-landing-merge-queue-45
 #[test]
 fn green_on_an_unmoved_base_fast_forwards_lands_every_member_and_cleans_up() {
     let t = T::new(LandMode::Queue);

@@ -208,6 +208,7 @@ fn a_zero_slot_budget_waits_for_the_corpus_tail() {
     assert_eq!(a.next_jobs().len(), 1, "one corpus slot freed in the tail");
 }
 
+// covers: UC-landing-merge-queue-48
 #[test]
 fn a_plain_green_is_flaky_and_nothing_else_runs() {
     let (a, _) = replay(

@@ -2168,6 +2168,7 @@ pub(crate) mod tests {
         )])
     }
 
+    // covers: UC-landing-merge-queue-48
     #[test]
     fn a_red_suite_only_one_member_adds_ejects_that_member_and_is_never_run_without_it() {
         let mut f = Fake::new(breaks("m1", "test-01.sh"));
@@ -2957,6 +2958,7 @@ pub(crate) mod tests {
         assert!(matches!(end, RoundEnd::Land { .. }));
     }
 
+    // covers: UC-landing-merge-queue-48
     #[test]
     fn a_flaky_red_preempts_nothing_and_ejects_no_one() {
         let mut f = Fake::new(|_, _| false);
