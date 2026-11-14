@@ -7,6 +7,10 @@ pub fn state(run: &Path) -> PathBuf {
     run.join("reconciler-state.json")
 }
 
+pub fn stranded_seen(run: &Path) -> PathBuf {
+    run.join("reconciler-stranded-seen.json")
+}
+
 pub fn pass_stamp(run: &Path) -> PathBuf {
     run.join("reconciler-pass.stamp")
 }
