@@ -161,6 +161,7 @@ fn the_toml_path_is_the_spec_only_when_every_layer_exists() {
     assert_eq!(real::toml_path_of(None), None);
 }
 
+// covers: UC-safety-fences-31
 #[test]
 fn the_czar_fence_passes_only_an_act_stage_and_shadow_is_the_unset_stage() {
     let env = |k: &str| match k {
