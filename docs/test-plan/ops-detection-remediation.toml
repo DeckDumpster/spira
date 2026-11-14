@@ -54,12 +54,12 @@ statement = "When bd is unreachable a filing stays in the spool (exit 1); `incid
 [[use_case]]
 id = "UC-ops-detection-remediation-11"
 tier = "T1"
-statement = "The census reports each failure class with its distinct-bead and detection counts, ranked by distinct beads then events; requeue/recur/reclaim/reopen classes map to their cause suffix, a merge-conflict requeue folds into `sp-reopen-rebase-conflict`, a NULL cause counts under `-unrecorded` with no column-shifted phantom classes and no double-count of a requeue+reopen pair, and an empty store gives empty output."
+statement = "The census reports each failure class with its distinct-bead and detection counts, ranked by causal events, then distinct beads, then detections; requeue/recur/reclaim/reopen classes map to their cause suffix, a merge-conflict requeue folds into `sp-reopen-rebase-conflict`, a NULL cause counts under `-unrecorded` with no column-shifted phantom classes and no double-count of a requeue+reopen pair, and an empty store gives empty output."
 
 [[use_case]]
 id = "UC-ops-detection-remediation-12"
 tier = "T3"
-statement = "`bump_*` and `bead_reopen` write the event rows the census SQL reads, and the SQL respects the since-watermark bound — proven against a real bd store, not a canned model."
+statement = "The harness records requeues and reopens as epoch-stamped rows in the lifecycle log, the census reads them as bd-shaped events dated in UTC from that epoch with no server clock or timezone, and a since-watermark bound is strictly after the mark."
 
 [[use_case]]
 id = "UC-ops-detection-remediation-13"
@@ -69,7 +69,7 @@ statement = "With a watermark, classes rank by events since the mark and each li
 [[use_case]]
 id = "UC-ops-detection-remediation-14"
 tier = "T1"
-statement = "A remedy bead with `covers:<class>` suppresses that class: open, in_progress and blocked remedies suppress; a closed remedy keeps suppressing until its commit is on the base (including beyond `SPIRA_VERDICT_WINDOW`); `--with-suppressed` annotates instead of hiding; a `covers:` for an unrelated class does not suppress."
+statement = "A remedy bead with `covers:<class>` suppresses that class: a remedy a builder still holds (READY, WORKING, REWORK) suppresses; a handed-on remedy keeps suppressing until the lifecycle record says it landed; `--with-suppressed` annotates instead of hiding; a `covers:` for an unrelated class does not suppress."
 
 [[use_case]]
 id = "UC-ops-detection-remediation-15"

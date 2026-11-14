@@ -53,7 +53,6 @@ test-cadence-tool.sh	T1	2.0
 test-cadence.sh	T1	1.5
 test-capacity-probe.sh	T1	3.5
 test-census-reopen.sh	T1	78.5
-test-census-tz-boundary.sh	T1	65.0
 test-census-watermark.sh	T1	52.5
 test-check2-reclaim.sh	T1	23.0
 test-check4-batch.sh	T1	50.5
