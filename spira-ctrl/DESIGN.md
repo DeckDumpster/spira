@@ -69,11 +69,9 @@ without depending on `serde_json`'s `preserve_order` feature being off. `lib.rs`
   `load_suspended` function and its own tests, not by a new suite.
 
 - **`divergence`'s systemctl reads stay untested at the integration level in this crate.**
-  The pure parts — which unit-name forms a subject expands to, how a masked unit's filename
-  maps back to a subject — are unit-tested (`unit_forms`, `subject_of_masked_unit`). The
-  systemctl-calling shell around them is exercised by `test-ctrl.sh`'s existing divergence
-  cases (unchanged: a black-box CLI suite with `$SPIRA_SYSTEMCTL` stubbed, which needed no
-  edit to keep validating this binary instead of the bash it replaced).
+  The decision — which unit-name forms a subject expands to, how a masked unit's filename
+  maps back to a subject, what counts as a divergence — is `divergences`, unit-tested over an
+  injected probe (UC-instance-lifecycle-45). Only the systemctl calls around it are untested.
 
 - **`today()` shells to `date(1)` rather than carrying a timezone database.** `ctrl.sh
   suspend`'s own `when` field is computed the same way (`TZ=... date '+%Y-%m-%d'`); no crate
@@ -82,9 +80,4 @@ without depending on `serde_json`'s `preserve_order` feature being off. `lib.rs`
 
 ## Parity
 
-`ctrl.sh`'s own suite, `test-ctrl.sh`, is unchanged — it drives the CLI as a subprocess with
-`$SPIRA_CTRL` pinned to a temp file and `$SPIRA_SYSTEMCTL` stubbed, and never sourced the
-bash file as a library, so it now validates `ctrl` (via the `ctrl.sh` symlink) exactly as it
-validated the bash version. Manually verified end to end (suspend → list → check → reason →
-resume → list, and divergence with an empty control file) against the built binary; see the
-delivery report for the transcript.
+`ctrl.sh`'s black-box suite is retired; its cell (UC-instance-lifecycle-45) is the `spira_ctrl` unit tests.

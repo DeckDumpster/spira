@@ -19,9 +19,9 @@
 #      # covers: line a file the commit touched. The timed runner filed all three as bugs
 #      against spira/incident.sh, which is correct.
 #
-#   2. world.sh adopted list-units/list-unit-files, leaving the hand-written systemctl stub in
-#      test-work-services-exclusion.sh modelling the old shape. work_services() is correct;
-#      4 of 7 assertions fail. Marked KNOWN FAILING in gate-suites — a permanent red.
+#   2. world.sh adopted list-units/list-unit-files, leaving a suite's hand-written systemctl
+#      stub modelling the old shape. work_services() was correct; 4 of 7 assertions failed.
+#      Marked KNOWN FAILING in gate-suites — a permanent red.
 #
 # An orphaned test is a false red on a timer, and it arrives pointed at the wrong file. This
 # fence catches it at the branch, where the fix is obvious: update the suite in the same diff.

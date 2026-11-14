@@ -210,6 +210,45 @@ pub fn is_consultable(subject: &str, unit_files: &[String], inst: &str) -> bool 
         || unit_files.iter().any(|u| subject_of_masked_unit(u, inst) == subject)
 }
 
+/// The flag a suspension is refused for lacking: it needs a non-empty reason and a non-empty owner.
+pub fn missing_suspension_field(reason: Option<&str>, owner: Option<&str>) -> Option<&'static str> {
+    if reason.is_none_or(str::is_empty) {
+        Some("--reason")
+    } else if owner.is_none_or(str::is_empty) {
+        Some("--owner")
+    } else {
+        None
+    }
+}
+
+/// Where systemd and the control file disagree: a suspended subject with a unit active or
+/// enabled (`probe` answers `(is-active, is-enabled)`), and a masked unit file whose subject
+/// nothing declares. `unit_files` are `list-unit-files` rows (`name state ...`).
+pub fn divergences(data: &CtrlData, inst: &str, probe: impl Fn(&str) -> (String, String), unit_files: &[String]) -> Vec<String> {
+    let mut out = Vec::new();
+    let suspended = load_suspended(data);
+    for subject in suspended.keys() {
+        for unit in unit_forms(subject, inst) {
+            let (state, enabled) = probe(&unit);
+            if state == "active" || enabled == "enabled" {
+                out.push(format!(
+                    "ctrl: DIVERGENCE {subject} declared suspended but {unit} is {} (enabled: {})",
+                    if state.is_empty() { "inactive" } else { &state },
+                    if enabled.is_empty() { "?" } else { &enabled }
+                ));
+            }
+        }
+    }
+    for line in unit_files {
+        let mut cols = line.split_whitespace();
+        let (Some(unit_name), Some(state)) = (cols.next(), cols.next()) else { continue };
+        if state == "masked" && !suspended.contains_key(&subject_of_masked_unit(unit_name, inst)) {
+            out.push(format!("ctrl: DIVERGENCE {unit_name} is masked but has no control-plane entry (undeclared suspension)"));
+        }
+    }
+    out
+}
+
 /// True when the control plane declines `unit` (a `.service`/`.timer` file name): its
 /// subject is the unit name minus extension and instance suffix.
 pub fn unit_suspended(data: &CtrlData, unit: &str, inst: &str) -> bool {
@@ -227,6 +266,35 @@ pub fn subject_of_masked_unit(unit_name: &str, inst: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // covers: UC-instance-lifecycle-45
+    #[test]
+    fn a_suspension_needs_reason_and_owner_and_divergence_names_running_suspended_and_undeclared_masked_units() {
+        assert_eq!(missing_suspension_field(None, Some("sp-1")), Some("--reason"));
+        assert_eq!(missing_suspension_field(Some(""), Some("sp-1")), Some("--reason"));
+        assert_eq!(missing_suspension_field(Some("why"), None), Some("--owner"));
+        assert_eq!(missing_suspension_field(Some("why"), Some("sp-1")), None);
+
+        let quiet = |_: &str| ("inactive".to_string(), "disabled".to_string());
+        let mut d = CtrlData::new();
+        assert!(divergences(&d, "prod", quiet, &[]).is_empty(), "nothing declared, nothing masked: agreement");
+
+        suspend(&mut d, "spira-groom", "why", "sp-1", "2026-01-01", "op");
+        assert!(divergences(&d, "prod", quiet, &[]).is_empty(), "suspended and idle: agreement");
+        let running = |u: &str| if u == "spira-groom-prod.timer" { ("active".to_string(), "disabled".to_string()) } else { quiet(u) };
+        let found = divergences(&d, "prod", running, &[]);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(found[0].contains("spira-groom") && found[0].contains("spira-groom-prod.timer is active"), "{found:?}");
+        let enabled = |u: &str| if u == "spira-groom-prod.timer" { ("inactive".to_string(), "enabled".to_string()) } else { quiet(u) };
+        assert_eq!(divergences(&d, "prod", enabled, &[]).len(), 1);
+
+        let masked = vec!["spira-groom-prod.timer  masked  enabled".to_string()];
+        assert!(divergences(&d, "prod", quiet, &masked).is_empty(), "a masked unit the plane declares is not a divergence");
+        resume(&mut d, "spira-groom");
+        let found = divergences(&d, "prod", running, &masked);
+        assert_eq!(found.len(), 1, "an undeclared subject is not judged for running: {found:?}");
+        assert!(found[0].contains("masked but has no control-plane entry") && found[0].contains("spira-groom-prod.timer"), "{found:?}");
+    }
 
     #[test]
     fn suspend_then_resume_round_trips() {

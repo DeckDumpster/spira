@@ -124,7 +124,7 @@ statement = "a post-activation health failure rolls back to the prior release an
 [[use_case]]
 id = "UC-instance-lifecycle-15"
 tier = "T1"
-statement = "a release installed from its tarball runs from a read-only tree: sentinel dispatches and loom serves without cargo, and `conf.sh` resolves `SPIRA_LOOM_BIN` to `bin/loom`"
+statement = "installing a release from its tarball makes the just-unpacked release the live `current` over a stale prior one, and leaves the unpacked tree read-only"
 
 [[use_case]]
 id = "UC-instance-lifecycle-16"
@@ -299,12 +299,7 @@ statement = "a fresh-box install→ready→uninstall round trip on real systemd 
 [[use_case]]
 id = "UC-instance-lifecycle-41"
 tier = "T1"
-statement = "`world.sh stop` stops active work units (resolved instance-qualified name, plain fallback), never stops cockpit/loom/landing, spares CI watchers unless `--hard`, and exits non-zero without printing STOPPED on any failed stop"
-
-[use_case.uncovered]
-reason = "world.sh is the `world` binary now (sp-6onps); the work-service exclusion moved to `spira_world::proc::is_excluded_work_service`, covered by that function's cargo unit tests. test-world-decide.sh, the one T1 suite whose `# covers:` line named this use case, sourced world.sh/ctrl.sh as bash libraries (WORLD_LIB=1/CTRL_LIB=1) and was retired — sourcing a compiled binary is not possible. T2 coverage is test-work-services-exclusion.sh, which still exercises this behaviour end to end (test-world.sh was deleted by sp-jqp0m0, 2026-10-31 test review); plan-matrix's suite-header scan just cannot see the T1 half now that it is a cargo test rather than a spira/test-*.sh suite."
-date = "2026-09-30"
-bead = "sp-6onps"
+statement = "`world stop` halts the active work services of the halted planes and never Loom, a watcher or a kept unit, attempts every stop even after one fails, and reports the failed ones so STOPPED is not printed"
 
 [[use_case]]
 id = "UC-instance-lifecycle-42"
@@ -329,12 +324,7 @@ bead = "sp-pvelyu"
 [[use_case]]
 id = "UC-instance-lifecycle-44"
 tier = "T1"
-statement = "`world.sh status` reports landing, live gate and landing workers from `/proc`, DRAINING, active CI watchers and `svc: <result>` for a failed last run, saying 'unknown' (not 'inactive') for an unresolvable unit"
-
-[use_case.uncovered]
-reason = "the status-row decision (`_status_timer_row`) moved to `spira_world::sysctl::status_timer_row`'s cargo unit tests (sp-6onps); test-world-decide.sh, its one T1 home, sourced world.sh/ctrl.sh as bash libraries and cannot survive both becoming compiled binaries. T2 /proc coverage is test-world-timer-service-result.sh (test-world.sh was deleted by sp-jqp0m0, 2026-10-31 test review)."
-date = "2026-09-30"
-bead = "sp-6onps"
+statement = "`world status` annotates a kept timer's row with its service's last result when that was not success, and shows nothing extra for a success or no recorded result"
 
 [[use_case]]
 id = "UC-instance-lifecycle-45"

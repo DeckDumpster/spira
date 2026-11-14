@@ -141,10 +141,10 @@ No new persisted schema — this crate reads and writes the same stamp files (`w
 Suites that exercised `WORLD_LIB=1`/`CTRL_LIB=1`-sourced internals directly
 (`test-world-decide.sh`) are retired; their coverage is the cargo unit tests named above
 and in `spira-ctrl`'s own DESIGN.md, mapped as `[use_case.uncovered]` exceptions in
-`docs/test-plan/instance-lifecycle.toml` (UC-41/42/44) citing this bead, following the same
+`docs/test-plan/instance-lifecycle.toml` (UC-42) citing this bead, following the same
 pattern `sp-pppt0`/`sp-ekkak` already used for an earlier bash-to-Rust coverage move.
 Every other suite that names `world.sh`/`ctrl.sh`/`dwarves.sh`/`slay.sh` (`test-world.sh`,
-`test-ctrl.sh`, `test-slay.sh`, `test-work-services-exclusion.sh`, `test-world-timer-*.sh`,
+`test-slay.sh`, `test-world-timer-*.sh`,
 …) drives the tool as a subprocess and needed no change beyond a
 `# covers:` path fix (spira-lint's `covers-entries` rule) — it now validates the Rust
 binary by the same bare name, unchanged.

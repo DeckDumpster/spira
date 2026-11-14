@@ -218,6 +218,7 @@ mod tests {
     use super::*;
     use std::cell::RefCell;
 
+    // covers: UC-instance-lifecycle-44
     #[test]
     fn a_kept_timer_whose_service_failed_shows_the_result() {
         assert_eq!(keep_row("spira-watchdog-prod.timer", "active", "timeout"), format!("  {:<30} active (svc: timeout)", "spira-watchdog-prod.timer"));

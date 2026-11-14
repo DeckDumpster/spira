@@ -15,7 +15,6 @@
 //! registered config key, so it stays a plain env var, same name world.sh carries, so one
 //! stub covers both in a test.
 
-use std::collections::BTreeMap;
 use std::env;
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -143,14 +142,11 @@ fn cmd_suspend(args: &[String]) -> ExitCode {
             return ExitCode::from(1);
         }
     }
-    let Some(reason) = reason.filter(|r| !r.is_empty()) else {
-        eprintln!("ctrl: --reason is required");
+    if let Some(flag) = ctrl::missing_suspension_field(reason.as_deref(), owner.as_deref()) {
+        eprintln!("ctrl: {flag} is required");
         return ExitCode::from(1);
-    };
-    let Some(owner) = owner.filter(|o| !o.is_empty()) else {
-        eprintln!("ctrl: --owner is required");
-        return ExitCode::from(1);
-    };
+    }
+    let (reason, owner) = (reason.unwrap_or_default(), owner.unwrap_or_default());
     let by = env::var("USER").unwrap_or_else(|_| "operator".to_string());
     let tz = spira_config::process::cfg("SPIRA_TZ").unwrap_or_else(|e| die(&e));
     let mut data = load_or_die();
@@ -276,41 +272,13 @@ fn cmd_divergence() -> ExitCode {
         }
     };
     let inst = spira_instance();
-    let mut found = false;
-
-    // Direction 1: declared-but-running.
-    let suspended = ctrl::load_suspended(&data);
-    for subject in suspended.keys() {
-        for unit in ctrl::unit_forms(subject, &inst) {
-            let state = sc(&["--user", "is-active", &unit]);
-            let enabled = sc(&["--user", "is-enabled", &unit]);
-            if state == "active" || enabled == "enabled" {
-                println!(
-                    "ctrl: DIVERGENCE {subject} declared suspended but {unit} is {} (enabled: {})",
-                    if state.is_empty() { "inactive" } else { &state },
-                    if enabled.is_empty() { "?" } else { &enabled }
-                );
-                found = true;
-            }
-        }
+    let unit_files = sc_lines(&["--user", "list-unit-files", "spira*", "--no-legend", "--no-pager"]);
+    let found = ctrl::divergences(&data, &inst, |u| (sc(&["--user", "is-active", u]), sc(&["--user", "is-enabled", u])), &unit_files);
+    for line in &found {
+        println!("{line}");
     }
 
-    // Direction 2: undeclared-but-masked.
-    let entries: BTreeMap<&str, ()> = suspended.keys().map(|s| (s.as_str(), ())).collect();
-    for line in sc_lines(&["--user", "list-unit-files", "spira*", "--no-legend", "--no-pager"]) {
-        let mut cols = line.split_whitespace();
-        let (Some(unit_name), Some(state)) = (cols.next(), cols.next()) else { continue };
-        if state != "masked" {
-            continue;
-        }
-        let subject = ctrl::subject_of_masked_unit(unit_name, &inst);
-        if !entries.contains_key(subject.as_str()) {
-            println!("ctrl: DIVERGENCE {unit_name} is masked but has no control-plane entry (undeclared suspension)");
-            found = true;
-        }
-    }
-
-    if found {
+    if !found.is_empty() {
         ExitCode::from(1)
     } else {
         println!("ctrl: 0 divergences");
