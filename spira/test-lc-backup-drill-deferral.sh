@@ -12,8 +12,10 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
-export SPIRA_RUN="$T/run" SPIRA_LC_BACKUP_DB="alpha" SPIRA_LC_BACKUP_DRILL_WAIT_SECS=0 \
-    SPIRA_LC_BACKUP_DRILL_POLL_SECS=1 SPIRA_LC_STORE_PATH=""
+tl_config SPIRA_RUN="$T/run" SPIRA_LC_BACKUP_DB=alpha SPIRA_LC_BACKUP_DRILL_WAIT_SECS=0 \
+    SPIRA_LC_BACKUP_DRILL_POLL_SECS=1 SPIRA_LC_STORE_PATH="" SPIRA_LC_BACKUP_DRILL_DIR="$T/drill" \
+    SPIRA_LC_BACKUP_SYNC_DIR="$T/sync"
+SPIRA_RUN="$T/run"
 mkdir -p "$SPIRA_RUN"
 
 # shellcheck disable=SC1091
