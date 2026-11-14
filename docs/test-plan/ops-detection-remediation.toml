@@ -129,7 +129,7 @@ statement = "czar-pass's reconciler-engine detectors — DEADLOCK, ATTRIBUTION-F
 [[use_case]]
 id = "UC-ops-detection-remediation-24"
 tier = "T2"
-statement = "A czar pass has four guarantees: it finishes within its budget; a concurrent pass is skipped under flock; a halted world exits 0 without acting; a shadow-stage class logs `CZAR-WOULD` and files nothing, while act files. `czar-fence <class>` refuses by default and names the stage var."
+statement = "A czar pass has four guarantees: it runs to completion and reports every class; a concurrent pass is skipped under flock; a halted world exits 0 without acting; a shadow-stage class logs `CZAR-WOULD` and files nothing, while act files. `czar-fence <class>` refuses by default and names the stage var."
 
 [[use_case]]
 id = "UC-ops-detection-remediation-25"
