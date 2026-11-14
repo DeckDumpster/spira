@@ -3528,6 +3528,7 @@ fn a_trial_that_loses_sccache_retries_once_without_the_cache() {
     let n = f.ran.borrow().len();
     assert_eq!(f.env_of(n - 1, "SPIRA_BUILD_CACHE"), "off");
     assert_eq!(f.env_of(n - 1, "RUSTC_WRAPPER"), "");
+    assert!(meter(&f).contains(" phases=gate:7,gate:7 test_clock=14s"), "{}", meter(&f));
 }
 
 /// A trial whose cache is already off, or whose red is not a cache fault, is never retried; a
