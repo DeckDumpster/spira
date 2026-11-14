@@ -125,6 +125,7 @@ mod tests {
         IncidentCauseLint::default().check(&tree).map(|v| v.iter().map(|f| f.to_string()).collect())
     }
 
+    // covers: UC-ops-detection-remediation-09
     #[test]
     fn a_planted_offender_is_refused_by_file_and_line() {
         let t = TempDir::new("icl");
@@ -136,6 +137,7 @@ mod tests {
         assert_eq!(got, vec!["incident-cause-lint: spira/offender.sh:12: SPIRA_INCIDENT_REF= with no SPIRA_INCIDENT_CAUSE in its surrounding 14 lines"]);
     }
 
+    // covers: UC-ops-detection-remediation-09
     #[test]
     fn a_declared_site_is_clean() {
         let t = TempDir::new("icl-ok");
@@ -146,6 +148,7 @@ mod tests {
         assert!(run(&t, &["spira/declared.sh"]).unwrap().is_empty());
     }
 
+    // covers: UC-ops-detection-remediation-09
     #[test]
     fn a_site_near_the_top_of_a_short_file_still_finds_a_nearby_cause() {
         // This is the clamped-window fix: line 2 has no 10 lines before it, but the cause
@@ -155,6 +158,7 @@ mod tests {
         assert!(run(&t, &["spira/x.sh"]).unwrap().is_empty());
     }
 
+    // covers: UC-ops-detection-remediation-09
     #[test]
     fn a_comment_quoting_the_assignment_is_not_a_site() {
         let t = TempDir::new("icl-comment");
@@ -165,6 +169,7 @@ mod tests {
         assert!(run(&t, &["spira/commented.sh"]).unwrap().is_empty());
     }
 
+    // covers: UC-ops-detection-remediation-09
     #[test]
     fn a_quoted_reference_before_the_assignment_is_not_a_site() {
         let t = TempDir::new("icl-quoted");
@@ -180,6 +185,7 @@ mod tests {
         assert_eq!(run(&t, &["spira/test-x.sh", "spira/notes.md"]), Err(LintError::EmptyScope));
     }
 
+    // covers: UC-ops-detection-remediation-09
     #[test]
     fn a_clean_tree_reports_checked() {
         let t = TempDir::new("icl-clean");

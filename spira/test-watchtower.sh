@@ -325,7 +325,7 @@ wt_file_multi() {   # wt_file_multi [VAR=val ...] -> appends incident subjects t
 # wt_sinexempt_multi: like wt_file_multi but captures SPIRA_FENRIR_EXEMPT (UC-ops-detection-
 # remediation-07) alongside the subject, one "<subject>|<SPIRA_FENRIR_EXEMPT>" line per
 # incident.sh call — proving the DRAINING escalation cannot itself become a Fenrir, not just
-# that incident.sh's own exemption plumbing works (that half is test-fenrir-exempt.sh's job).
+# that incident.sh's own exemption plumbing works (that half is the incident crate's unit tests).
 wt_sinexempt_multi() {   # wt_sinexempt_multi [VAR=val ...] -> appends to $TMP/inc-sinexempt
     local mock="$TMP/mock-inc-sinexempt.sh"
     printf '#!/usr/bin/env bash\nprintf "%%s|%%s\n" "$2" "${SPIRA_FENRIR_EXEMPT:-}" >> "%s"\ncat > /dev/null\n' \

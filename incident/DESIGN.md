@@ -63,7 +63,7 @@ refused the filing, or (for `drain`) at least one entry is still stuck.
   a native Rust unit test; the Python helper had no other caller (confirmed by grep) and is
   deleted.
 - **Four bash suites that reached inside `incident.sh`'s shell internals** —
-  `test-incident-decisions.sh`, `test-incident-recur-cause.sh`,
+  `test-incident-recur-cause.sh`,
   `test-counter-events-sentinel.sh` (all three `. "$HERE/incident.sh"` to call `file_one`/
   `_dedup_incident` directly) and `test-incident-migrations.sh` (drove the retired
   subcommands). A shim has nothing to source; their coverage moves to this crate's unit
@@ -142,9 +142,8 @@ refused the filing, or (for `drain`) at least one entry is still stuck.
   against hand-built fixtures plus the real `bd` schema fields verified in this session
   (`created_at`, `closed_at`, `external_ref`, `labels`) against a live throwaway `bd init`
   store.
-- Black-box parity: the real-bd suites `test-incident.sh`, `test-incident-systemd.sh`,
-  `test-incident-spool-drain.sh`, `test-incident-delivers-satisfiable.sh`,
-  `test-incident-delivers-reopen-mismatch.sh`, `test-fenrir-exempt.sh` and
+- Black-box parity: the real-bd suites `test-incident-systemd.sh`,
+  `test-incident-delivers-reopen-mismatch.sh` and
   `test-mail-real-senders.sh`'s incident section all invoke `incident.sh` by name (or via
   `SPIRA_INCIDENT_SH`) unchanged — they now exercise the shim → the compiled binary, and are
   this bead's end-to-end parity evidence once run through `testenv` (never on the host).

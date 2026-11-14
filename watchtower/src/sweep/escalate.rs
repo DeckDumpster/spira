@@ -112,6 +112,13 @@ fn drain_check(d: &SweepData) {
     }
 }
 
+fn drain_finding(cfg: &Cfg, since: &str, mins: i64) -> Finding {
+    let body = format!(
+        "DRAINING for {mins}m — calls gated since {since}\n\nNew dwarves cannot be called while world.draining exists. Loop, landing and reaping continue.\n\nLift with: world.sh resume\n"
+    );
+    Finding::new(&cfg.db, &cfg.home_repo, "DRAINING: world.sh calls gated", &body).priority(1)
+}
+
 fn drain_escalation(d: &SweepData, cfg: &Cfg, raise: Raise) {
     let super::collect::Drain::Draining { since, mins } = &d.drain else {
         return;
@@ -124,11 +131,7 @@ fn drain_escalation(d: &SweepData, cfg: &Cfg, raise: Raise) {
         log(&format!("watchtower: {} is missing — drain escalation not filed", cfg.incident_sh));
         return;
     };
-    let body = format!(
-        "DRAINING for {mins}m — calls gated since {since}\n\nNew dwarves cannot be called while world.draining exists. Loop, landing and reaping continue.\n\nLift with: world.sh resume\n"
-    );
-    let f = Finding::new(&cfg.db, &cfg.home_repo, "DRAINING: world.sh calls gated", &body).priority(1);
-    raise(&f);
+    raise(&drain_finding(cfg, since, *mins));
     log(&format!("watchtower: drain escalation filed ({mins}m >= {}m threshold)", cfg.drain_warn_mins));
 }
 
@@ -510,6 +513,21 @@ mod tests {
         drain_escalation(&SweepData::fixture_nominal(1_700_000_000), &cfg, &mut alarm(&cfg));
         drain_escalation(&drain(None), &cfg, &mut alarm(&cfg));
         assert!(captured(&d).is_empty());
+    }
+
+    // covers: UC-ops-detection-remediation-07
+    #[test]
+    fn the_draining_escalation_is_filed_fenrir_exempt() {
+        let d = testkit::TempDir::new("wt-esc-drain-exempt");
+        let mut cfg = cfg_with(&d, fake_incident(&d));
+        cfg.drain_warn_mins = 0;
+        let mut raised: Vec<Finding> = Vec::new();
+        drain_escalation(&drain(Some(600)), &cfg, &mut |f| {
+            raised.push(f.clone());
+            incident::AlarmOutcome::Noted
+        });
+        assert_eq!(raised.len(), 1);
+        assert!(raised[0].fenrir_exempt);
     }
 
     fn file_one(tag: &str, f: fn(&SweepData, &Cfg, Raise), pairs: &[(&str, &str)]) -> String {

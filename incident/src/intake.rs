@@ -358,6 +358,25 @@ pub fn drain_one(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock,
     }
 }
 
+/// `incident drain`: every entry the spool holds, oldest first; (drained, still spooled).
+pub fn drain_spool(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock) -> (usize, usize) {
+    let entries = std::fs::read_dir(&env.spool_dir).into_iter().flatten().flatten();
+    let mut paths: Vec<_> = entries.map(|e| e.path()).filter(|p| p.is_file() && p.extension().map(|e| e != "bad").unwrap_or(true)).collect();
+    paths.sort();
+    let (mut drained, mut stuck) = (0, 0);
+    for p in paths {
+        match drain_one(env, bd, mailer, clock, &p) {
+            Ok(_) => drained += 1,
+            Err(()) => stuck += 1,
+        }
+    }
+    (drained, stuck)
+}
+
+pub fn drain_report(drained: usize, stuck: usize) -> String {
+    format!("drained {drained}, still spooled {stuck}")
+}
+
 pub fn require_db(env: &Env) -> ExitCode {
     eprintln!("incident: refusing to file — SPIRA_DB is not set — refusing to file rather than let bd resolve one on its own");
     let _ = env;
@@ -510,7 +529,54 @@ pub fn spool_stamp() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{filed_answer, Env};
+    use super::{drain_report, drain_spool, filed_answer, with_incident_lock, Env};
+    use crate::fake::{FakeBd, FakeMailer, FixedClock};
+    use crate::spool::{format_entry, SpoolEntry};
+    use std::cell::RefCell;
+    use std::sync::{mpsc, Arc, Mutex};
+
+    fn env_in(dir: &std::path::Path) -> Env {
+        Env {
+            db: Some("db".into()),
+            spool_dir: dir.join("spool"),
+            log_path: dir.join("incident.log"),
+            fenrir_at: 5,
+            fenrir_exempt: false,
+            dedup_lookback_days: 7,
+            watcher_interval_s: 1800,
+            cause: "unrecorded".into(),
+            labels: "spira,incident".into(),
+            repo: Some("spira".into()),
+            kind: "bug".into(),
+            priority: "3".into(),
+            actor: None,
+            delivers_pref: None,
+            sop_ledger: format!("{}/sop/applied.jsonl", dir.display()),
+            spira_run: dir.to_str().unwrap().into(),
+            home_repo: "spira".into(),
+            known_repos: vec!["spira".into()],
+            ask_label: "needs-operator".into(), // literal-ok: test fixture
+            express: false,
+            reference: None,
+            unit: "u.service".into(),
+            path: "?".into(),
+            lock_path: dir.join("incident.lock"),
+            lock_wait_s: 0,
+            retired_keys: vec![],
+        }
+    }
+
+    fn spool(env: &Env, name: &str, raw: &str) -> std::path::PathBuf {
+        std::fs::create_dir_all(&env.spool_dir).unwrap();
+        let p = env.spool_dir.join(name);
+        std::fs::write(&p, raw).unwrap();
+        p
+    }
+
+    fn entry(reference: &str) -> String {
+        let e = SpoolEntry { reference: reference.into(), title: "t".into(), unit: "u".into(), incident_path: "p".into(), cause: "c".into(), repo: None, body: b"payload".to_vec() };
+        String::from_utf8(format_entry(&e)).unwrap()
+    }
 
     #[test]
     fn the_filed_answer_is_one_json_object_naming_the_bead_or_null() {
@@ -523,5 +589,107 @@ mod tests {
         let mut env = Env::load();
         env.reference = Some("incident:throughput-stall:alpha:7".into());
         assert_eq!(env.repo_override_ref().as_deref(), Some("incident:throughput-stall:alpha:7"));
+    }
+
+    // covers: UC-ops-detection-remediation-02
+    #[test]
+    fn two_filers_of_one_ref_serialise_into_one_creation_and_one_recurrence() {
+        let dir = testkit::TempDir::new("incident-lock-serialise");
+        let lock = dir.join("incident.lock");
+        let beads: Arc<Mutex<Vec<&'static str>>> = Arc::default();
+        let (inside_tx, inside_rx) = mpsc::channel();
+        let (go_tx, go_rx) = mpsc::channel::<()>();
+        let (second_tx, second_rx) = mpsc::channel();
+        let first = {
+            let (lock, beads) = (lock.clone(), beads.clone());
+            std::thread::spawn(move || {
+                with_incident_lock(&lock, 30, || {
+                    let seen_none = beads.lock().unwrap().is_empty();
+                    inside_tx.send(()).unwrap();
+                    go_rx.recv().unwrap();
+                    beads.lock().unwrap().push(if seen_none { "create" } else { "recur" });
+                })
+            })
+        };
+        inside_rx.recv().unwrap();
+        let second = {
+            let (lock, beads) = (lock.clone(), beads.clone());
+            std::thread::spawn(move || {
+                second_tx.send(()).unwrap();
+                with_incident_lock(&lock, 30, || {
+                    let seen_none = beads.lock().unwrap().is_empty();
+                    beads.lock().unwrap().push(if seen_none { "create" } else { "recur" });
+                })
+            })
+        };
+        second_rx.recv().unwrap();
+        go_tx.send(()).unwrap();
+        assert!(first.join().unwrap().is_some());
+        assert!(second.join().unwrap().is_some());
+        assert_eq!(*beads.lock().unwrap(), vec!["create", "recur"]);
+    }
+
+    // covers: UC-ops-detection-remediation-02
+    #[test]
+    fn a_filer_that_cannot_get_the_lock_in_time_leaves_its_spool_entry_in_place() {
+        let dir = testkit::TempDir::new("incident-lock-held");
+        let env = env_in(&dir);
+        let p = spool(&env, "20260101T000000Z-a", &entry("incident:held"));
+        let bd = FakeBd::new();
+        let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+        let held = with_incident_lock(&env.lock_path, 0, || drain_spool(&env, &bd, &mailer, &FixedClock(1_000_000)));
+        assert_eq!(held, Some((0, 1)));
+        assert!(p.exists(), "the entry stays spooled for the next drain");
+        assert!(bd.created.borrow().is_empty());
+    }
+
+    // covers: UC-ops-detection-remediation-10
+    #[test]
+    fn an_unreachable_bd_keeps_the_entry_spooled_and_a_later_drain_files_it() {
+        let dir = testkit::TempDir::new("incident-drain-unreachable");
+        let env = env_in(&dir);
+        let p = spool(&env, "20260101T000000Z-a", &entry("incident:later"));
+        let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+        let down = FakeBd { reachable: false, next_id: RefCell::new(1), ..Default::default() };
+        let (n, stuck) = drain_spool(&env, &down, &mailer, &FixedClock(1_000_000));
+        assert_eq!((n, stuck), (0, 1));
+        assert_eq!(drain_report(n, stuck), "drained 0, still spooled 1");
+        assert!(p.exists() && down.created.borrow().is_empty());
+
+        let up = FakeBd::new();
+        let (n, stuck) = drain_spool(&env, &up, &mailer, &FixedClock(1_000_000));
+        assert_eq!(drain_report(n, stuck), "drained 1, still spooled 0");
+        assert!(!p.exists());
+        assert_eq!(up.created.borrow().len(), 1);
+    }
+
+    // covers: UC-ops-detection-remediation-10
+    #[test]
+    fn an_entry_with_no_ref_is_moved_aside_and_never_filed() {
+        let dir = testkit::TempDir::new("incident-drain-noref");
+        let env = env_in(&dir);
+        let p = spool(&env, "20260101T000000Z-a", "TITLE: orphan\n--\nbody");
+        let bd = FakeBd::new();
+        let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+        assert_eq!(drain_spool(&env, &bd, &mailer, &FixedClock(1_000_000)), (1, 0));
+        assert!(!p.exists() && p.with_extension("bad").exists());
+        assert!(bd.created.borrow().is_empty());
+        assert_eq!(drain_spool(&env, &bd, &mailer, &FixedClock(1_000_000)), (0, 0), "a .bad entry is not drained again");
+    }
+
+    // covers: UC-ops-detection-remediation-10
+    #[test]
+    fn an_entry_spooled_before_causes_existed_drains_as_unrecorded() {
+        let dir = testkit::TempDir::new("incident-drain-precause");
+        let env = env_in(&dir);
+        let old = "REF: incident:old\nTITLE: t\nUNIT: u\nINCIDENT_PATH: p\n--\npayload";
+        spool(&env, "20260101T000000Z-a", old);
+        spool(&env, "20260101T000001Z-b", old);
+        let bd = FakeBd::new();
+        let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+        assert_eq!(drain_spool(&env, &bd, &mailer, &FixedClock(1_000_000)), (2, 0));
+        let facts = bd.facts.borrow();
+        assert_eq!(facts.len(), 1, "the second entry recurs the first");
+        assert_eq!(facts[0].2, "unrecorded");
     }
 }

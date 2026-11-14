@@ -129,7 +129,6 @@ Migrated (sp-uxdjnk). Wall before is the table's round-VM median; the alone figu
 | suite | wall | property | target | reason |
 | --- | ---: | --- | --- | --- |
 | test-watch-refresh.sh | 109 | the staleness guard, and the cost of one pass | unit | The guard is a rule; the cost row stays with I as a measurement. |
-| test-incident.sh | 80 | the intake dedupe holds against two concurrent filers of the same ref | keep | A real race on a real store; two connections are the point. |
 | test-census.sh | 31 | census against a real bd fixture for three ops-detection use cases | keep | Declared the one server-mode census suite. |
 | test-census-events.sh | 78 | census reads requeue/reclaim/recur events written by `bump_*` | unit | Event classification; dominated by seeding a store. |
 | test-groom-escalation-check.sh | 71 | the groom ask label is a conf key defaulting to `groom-asked` | unit | One config key; the plan asks fixtures pin a non-default. |

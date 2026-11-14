@@ -17,11 +17,10 @@
 # NOT-LATEST fixture.
 #
 # incident.sh's FENRIR escalation is driven through incident-stub-bd (a genuinely stateful
-# fake bd, not a canned response — test-fenrir-exempt.sh already established that it reproduces
+# fake bd, not a canned response that reproduces
 # the create-then-recur sequence faithfully) rather than a real bd store: what this suite
 # checks is that the message incident.sh builds clears mail's own lint, which needs the
-# real mail, not a real database. Standing up a real recurrence count is test-fenrir-exempt.sh
-# and test-incident-recur-cause.sh's job, not this one's.
+# real mail, not a real database. Standing up a real recurrence count is the incident crate's unit tests' job, not this one's.
 #
 # archivist's sweep, driven for real over a fabricated transcript that ctx-meter.sh measures
 # for real, with SPIRA_AGENT stubbed to do exactly what the real archivist's own brief
@@ -189,7 +188,7 @@ file_fenrir_incident() {
 ref="incident:real-sender-fenrir-test"
 before="$(unread)"
 # FENRIR_AT counts RECURRENCES, not sightings: the filing that creates the bead is recurrence 0,
-# so reaching FENRIR_AT recurrences takes one create plus FENRIR_AT recurring filings (test-fenrir-exempt.sh).
+# so reaching FENRIR_AT recurrences takes one create plus FENRIR_AT recurring filings.
 for i in $(seq 1 "$(( FENRIR_AT + 1 ))"); do
     file_fenrir_incident "$ref" "real sender FENRIR test" "payload $i" >/dev/null
 done

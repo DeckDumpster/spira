@@ -458,7 +458,7 @@ _ref17="$(printf '%s\n' "$_inc_log" | grep -o 'ref=[^ ]*' | tail -1)"
 # ==========================================================================================
 printf '\n%s\n' "18. base-red: still red on a second pass → same dedupe ref (recurrence, not a new bead)"
 # ==========================================================================================
-# incident.sh itself owns dedupe-on-external_ref (tested in test-incident.sh); this
+# incident.sh itself owns dedupe-on-external_ref (tested in the incident crate); this
 # proves czar-pass computes the SAME ref on repeated passes for an unchanged suite set,
 # which is the half of the dedupe contract that lives in this seam.
 rm -f "$SPIRA_RUN/czar-pass.swept" "$INC_LOG"

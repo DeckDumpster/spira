@@ -388,6 +388,7 @@ mod tests {
         }
     }
 
+    // covers: UC-ops-detection-remediation-04
     #[test]
     fn dedup_scan_label_keyed_pass_finds_open_bead() {
         let rows = vec![row("sp-a", BeadStatus::Open, Some("incident:x"), &["ref:aa"], None)];
@@ -402,6 +403,7 @@ mod tests {
         assert_eq!(dedup_scan(&rows, true, true, "incident:x"), None);
     }
 
+    // covers: UC-ops-detection-remediation-04
     #[test]
     fn dedup_scan_fallback_finds_unlabeled_bead() {
         let rows = vec![row("sp-a", BeadStatus::Open, Some("incident:x"), &[], None)];
@@ -457,6 +459,7 @@ mod tests {
         assert_eq!(dedup_scan(&rows, false, false, "incident:x"), None);
     }
 
+    // covers: UC-ops-detection-remediation-06
     #[test]
     fn recur_note_body_empty_when_payload_unchanged_and_not_reopened() {
         let payload = b"same payload";
@@ -467,12 +470,14 @@ mod tests {
         assert_eq!(hash, hash2);
     }
 
+    // covers: UC-ops-detection-remediation-06
     #[test]
     fn recur_note_body_present_when_payload_changed() {
         let (note, _) = recur_note_body(Some("payload-hash:deadbeef"), b"new payload", false);
         assert!(note.unwrap().contains("new payload"));
     }
 
+    // covers: UC-ops-detection-remediation-06
     #[test]
     fn recur_note_body_present_on_reopen_even_if_unchanged() {
         let payload = b"same payload";
@@ -490,6 +495,7 @@ mod tests {
         assert_eq!(note.unwrap().len(), 2001);
     }
 
+    // covers: UC-ops-detection-remediation-07
     #[test]
     fn fenrir_thresholds() {
         assert!(crosses_sin(5, 5, false, false, false));

@@ -454,123 +454,8 @@ mod tests {
     use super::*;
     use crate::decide::BeadRow;
     use crate::decide::BeadStatus;
+    use crate::fake::{cfg, FakeBd, FakeMailer, FixedClock};
     use std::cell::RefCell;
-    use std::collections::HashMap;
-
-    #[derive(Default)]
-    struct FakeBd {
-        rows: RefCell<Vec<BeadRow>>,
-        reachable: bool,
-        /// The lifecycle machine does not answer: every dedup pass is blind.
-        lc_down: bool,
-        created: RefCell<Vec<(String, String)>>,
-        bodies: RefCell<HashMap<String, String>>,
-        reopened: RefCell<Vec<String>>,
-        related: RefCell<Vec<(String, String)>>,
-        successors: RefCell<HashMap<String, String>>,
-        duplicated: RefCell<Vec<(String, String)>>,
-        labels: RefCell<HashMap<String, Vec<String>>>,
-        notes: RefCell<HashMap<String, Vec<String>>>,
-        repos: RefCell<HashMap<String, String>>,
-        next_id: RefCell<u32>,
-    }
-
-    impl FakeBd {
-        fn new() -> FakeBd {
-            FakeBd { reachable: true, next_id: RefCell::new(1), ..Default::default() }
-        }
-    }
-
-    impl Bd for FakeBd {
-        // A row's `status` stands for its lifecycle row's state (decide::status_of_lc).
-        fn list(&self, _db: &str, scope: Scope, label: Option<&str>, _closed_after: Option<&str>) -> Result<Vec<BeadRow>, String> {
-            if self.lc_down {
-                return Err("spira-lc: down".into());
-            }
-            let rows = self.rows.borrow();
-            Ok(rows
-                .iter()
-                .filter(|r| scope.holds(r.status) && label.map(|l| r.labels.iter().any(|x| x == l)).unwrap_or(true))
-                .cloned()
-                .collect())
-        }
-        fn create(&self, _db: &str, title: &str, _kind: &str, _priority: &str, labels: &str, external_ref: &str, _body: &str, _actor: Option<&str>) -> Result<String, String> {
-            let mut n = self.next_id.borrow_mut();
-            let id = format!("sp-fake{n}");
-            *n += 1;
-            self.created.borrow_mut().push((title.to_string(), external_ref.to_string()));
-            self.bodies.borrow_mut().insert(id.clone(), _body.to_string());
-            self.rows.borrow_mut().push(BeadRow {
-                id: id.clone(),
-                status: BeadStatus::Open,
-                external_ref: Some(external_ref.to_string()),
-                labels: labels.split(',').map(str::to_string).collect(),
-                closed_at: None,
-            });
-            Ok(id)
-        }
-        fn label_add(&self, _db: &str, id: &str, label: &str) -> bool {
-            self.labels.borrow_mut().entry(id.to_string()).or_default().push(label.to_string());
-            if let Some(row) = self.rows.borrow_mut().iter_mut().find(|r| r.id == id) {
-                row.labels.push(label.to_string());
-            }
-            true
-        }
-        fn label_remove(&self, _db: &str, id: &str, label: &str) -> bool {
-            if let Some(row) = self.rows.borrow_mut().iter_mut().find(|r| r.id == id) {
-                row.labels.retain(|l| l != label);
-            }
-            true
-        }
-        fn label_list(&self, _db: &str, id: &str) -> Vec<String> {
-            self.rows.borrow().iter().find(|r| r.id == id).map(|r| r.labels.clone()).unwrap_or_default()
-        }
-        fn note(&self, _db: &str, id: &str, text: &str) -> bool {
-            self.notes.borrow_mut().entry(id.to_string()).or_default().push(text.to_string());
-            true
-        }
-        fn set_state(&self, _db: &str, _id: &str, _kv: &str) -> bool {
-            true
-        }
-        fn set_repo(&self, id: &str, repo: &str) -> bool {
-            self.repos.borrow_mut().insert(id.to_string(), repo.to_string());
-            true
-        }
-        fn reopen(&self, _db: &str, id: &str, _cause: &str) -> bool {
-            self.reopened.borrow_mut().push(id.to_string());
-            if let Some(row) = self.rows.borrow_mut().iter_mut().find(|r| r.id == id) {
-                row.status = BeadStatus::Open;
-                row.closed_at = None;
-            }
-            true
-        }
-        fn relate(&self, _db: &str, a: &str, b: &str) -> bool {
-            self.related.borrow_mut().push((a.to_string(), b.to_string()));
-            true
-        }
-        fn duplicate(&self, _db: &str, id: &str, survivor: &str) -> bool {
-            self.duplicated.borrow_mut().push((id.to_string(), survivor.to_string()));
-            true
-        }
-        fn live_successor(&self, _db: &str, id: &str) -> Option<String> {
-            self.successors.borrow().get(id).cloned()
-        }
-        fn show_closed_at(&self, _db: &str, id: &str) -> Option<String> {
-            self.rows.borrow().iter().find(|r| r.id == id).and_then(|r| r.closed_at.clone())
-        }
-        fn show_created_at(&self, _db: &str, _id: &str) -> Option<String> {
-            None
-        }
-        fn reachable(&self, _db: &str) -> bool {
-            self.reachable
-        }
-        fn fact(&self, _id: &str, _kind: &str, _cause: &str) -> bool {
-            true
-        }
-        fn fact_count(&self, _id: &str, _kind: &str) -> Option<usize> {
-            Some(0)
-        }
-    }
 
     #[test]
     fn collapse_marks_the_duplicate_and_labels_it_for_the_meter() {
@@ -588,47 +473,6 @@ mod tests {
         bd.rows.borrow_mut().push(BeadRow { id: "sp-a".into(), status: BeadStatus::Open, external_ref: None, labels: vec!["duplicate-of:sp-c".into()], closed_at: None });
         assert!(collapse(&bd, "db", "sp-a", "sp-b").unwrap_err().contains("already collapsed"));
         assert!(bd.duplicated.borrow().is_empty());
-    }
-
-    struct FakeMailer {
-        sent: RefCell<Vec<String>>,
-    }
-    impl Mailer for FakeMailer {
-        fn send_operator_question(&self, subject: &str, _default: &str, _body: &str) -> bool {
-            self.sent.borrow_mut().push(subject.to_string());
-            true
-        }
-    }
-
-    struct FixedClock(i64);
-    impl Clock for FixedClock {
-        fn now(&self) -> i64 {
-            self.0
-        }
-    }
-
-    fn cfg<'a>(known: &'a [String]) -> FileConfig<'a> {
-        FileConfig {
-            db: "db",
-            kind: "bug",
-            priority: "2",
-            actor: None,
-            cause: "systemd-fail",
-            fenrir_at: 5,
-            fenrir_exempt: false,
-            watcher_interval_s: 1800,
-            dedup_lookback_days: 7,
-            repo_declared: Some("spira"),
-            delivers_pref: None,
-            sop_ledger: "/run/sop/applied.jsonl",
-            spira_run: "/run",
-            home_repo: "spira",
-            known_repos: known,
-            ask_label: "needs-ryan", // literal-ok: test fixture value, not a config default read at runtime.
-            express: false,
-            provenance: "foo.service on host: ?",
-            retired_keys: &[],
-        }
     }
 
     #[test]
@@ -667,6 +511,7 @@ mod tests {
         assert!(log.iter().any(|l| l.contains("activation skew")), "{log:?}");
     }
 
+    // covers: UC-ops-detection-remediation-01
     #[test]
     fn second_filing_is_a_recurrence_not_a_new_bead() {
         let bd = FakeBd::new();
@@ -688,6 +533,7 @@ mod tests {
         assert_eq!(bd.created.borrow().len(), 1, "only one bead ever created");
     }
 
+    // covers: UC-ops-detection-remediation-01
     #[test]
     fn a_second_filing_from_a_different_repo_is_a_recurrence_not_a_new_bead() {
         let bd = FakeBd::new();
@@ -706,6 +552,7 @@ mod tests {
         assert_eq!(recurred, 1, "exactly one recurrence logged: {log:?}");
     }
 
+    // covers: UC-ops-detection-remediation-01 UC-ops-detection-remediation-06
     #[test]
     fn ten_unchanged_recurrences_leave_one_counter_line_and_no_per_tick_notes() {
         let bd = FakeBd::new();
@@ -727,6 +574,7 @@ mod tests {
         assert_eq!(counters.len(), 1, "{counters:?}");
     }
 
+    // covers: UC-ops-detection-remediation-06
     #[test]
     fn three_identical_filings_write_the_payload_note_exactly_once() {
         let bd = FakeBd::new();
@@ -750,6 +598,7 @@ mod tests {
         assert_eq!(occurrences, 1, "notes:\n{notes}");
     }
 
+    // covers: UC-ops-detection-remediation-10
     #[test]
     fn unreachable_database_stays_spooled() {
         let bd = FakeBd { reachable: false, next_id: RefCell::new(1), ..Default::default() };
@@ -764,6 +613,7 @@ mod tests {
 
     /// sp-jgjvh: a lifecycle machine that does not answer cannot say no incident holds the
     /// reference — the event stays spooled, never filed as a fresh bead.
+    // covers: UC-ops-detection-remediation-10
     #[test]
     fn an_unanswering_lifecycle_machine_stays_spooled() {
         let bd = FakeBd { reachable: true, lc_down: true, next_id: RefCell::new(1), ..Default::default() };
@@ -781,6 +631,7 @@ mod tests {
     /// and linked to it; the old bead is not reopened, noted or labelled, and its row stays
     /// terminal. SEEN RED before the fix: the old bead was reopened in bd and noted under a
     /// LANDED row, and no new bead was filed (`created` stayed 0).
+    // covers: UC-ops-detection-remediation-03
     #[test]
     fn a_recurrence_of_a_landed_incident_files_a_fresh_bead_citing_its_predecessor() {
         let bd = FakeBd::new();
@@ -891,6 +742,7 @@ mod tests {
 
     /// A handed-on but non-terminal incident (SUBMITTED) still absorbs the recurrence: its
     /// row can still move, so the existing bead stays the incident's identity.
+    // covers: UC-ops-detection-remediation-03
     #[test]
     fn a_recurrence_of_a_submitted_incident_still_reopens_it() {
         let bd = FakeBd::new();
@@ -912,6 +764,7 @@ mod tests {
         assert_eq!(*bd.reopened.borrow(), vec!["sp-submitted".to_string()]);
     }
 
+    // covers: UC-ops-detection-remediation-07
     #[test]
     fn fenrir_threshold_escalates_exactly_once() {
         let bd = FakeBd::new();
@@ -937,6 +790,7 @@ mod tests {
         assert_eq!(mailer.sent.borrow().len(), 1, "a bead already labelled fenrir is never paged twice");
     }
 
+    // covers: UC-ops-detection-remediation-05
     #[test]
     fn declared_repo_is_written_to_the_lifecycle_row() {
         let bd = FakeBd::new();
@@ -951,6 +805,7 @@ mod tests {
         assert_eq!(bd.repos.borrow().get(&id).map(String::as_str), Some("dumpstar"));
     }
 
+    // covers: UC-ops-detection-remediation-05
     #[test]
     fn undeclared_repo_gets_needs_repo_triage() {
         let bd = FakeBd::new();
@@ -968,6 +823,7 @@ mod tests {
         assert!(bd.label_list("db", &id).contains(&"needs-repo-triage".to_string()));
     }
 
+    // covers: UC-ops-detection-remediation-08
     #[test]
     fn delivers_default_is_action() {
         let bd = FakeBd::new();
@@ -985,6 +841,7 @@ mod tests {
         assert!(!labels.iter().any(|l| l.starts_with("delivers:note:")));
     }
 
+    // covers: UC-ops-detection-remediation-08
     #[test]
     fn delivers_note_inside_run_creates_the_ledger_directory_and_is_stamped() {
         let run_dir = testkit::TempDir::new("sp-0ekp7-run-rs-note-in");
@@ -1011,6 +868,7 @@ mod tests {
         assert!(ledger.parent().unwrap().is_dir(), "the ledger's directory must exist — the criterion must be reachable, not just look reachable");
     }
 
+    // covers: UC-ops-detection-remediation-08
     #[test]
     fn delivers_note_outside_run_falls_back_to_action_and_logs_outside() {
         let run_dir = testkit::TempDir::new("sp-0ekp7-run-rs-note-out");
@@ -1035,6 +893,7 @@ mod tests {
         assert!(log.iter().any(|l| l.contains("outside")), "{log:?}");
     }
 
+    // covers: UC-ops-detection-remediation-08
     #[test]
     fn delivers_action_mode_writes_that_label_verbatim() {
         let bd = FakeBd::new();
@@ -1053,6 +912,7 @@ mod tests {
         assert!(labels.contains(&"delivers:action".to_string()));
     }
 
+    // covers: UC-ops-detection-remediation-08
     #[test]
     fn delivers_unrecognised_value_writes_no_label_and_logs_it() {
         let bd = FakeBd::new();
@@ -1089,5 +949,104 @@ mod tests {
     #[test]
     fn provenance_format() {
         assert_eq!(provenance("foo.service", "host1", "/tmp/x"), "foo.service on host1: /tmp/x");
+    }
+
+    fn row(id: &str, status: BeadStatus, reference: &str, labels: Vec<String>, closed_at: Option<&str>) -> BeadRow {
+        BeadRow { id: id.into(), status, external_ref: Some(reference.into()), labels, closed_at: closed_at.map(str::to_string) }
+    }
+
+    // covers: UC-ops-detection-remediation-01
+    #[test]
+    fn n_filings_of_one_ref_leave_one_bead_and_log_n_minus_one_recurrences_whatever_the_labels_or_repo() {
+        let bd = FakeBd::new();
+        let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+        let clock = FixedClock(1_000_000);
+        let known = vec!["spira".to_string(), "dumpstar".to_string()];
+        let mut log = vec![];
+        let mut c = cfg(&known);
+        let callers = [("spira,incident", "spira"), ("spira,incident,extra", "dumpstar"), ("other", "spira"), ("spira,incident", "dumpstar")];
+        for (labels, repo) in callers {
+            c.repo_declared = Some(repo);
+            file_one(&bd, &mailer, &clock, &c, "incident:same", "t", b"p", labels, &mut log);
+        }
+        assert_eq!(bd.created.borrow().len(), 1);
+        assert_eq!(log.iter().filter(|l| l.contains("incident:same recurred")).count(), callers.len() - 1, "{log:?}");
+    }
+
+    // covers: UC-ops-detection-remediation-03
+    #[test]
+    fn a_recurrence_inside_the_lookback_reopens_the_closed_bead_and_one_outside_files_a_new_one() {
+        let known = vec!["spira".to_string()];
+        let c = cfg(&known); // lookback: 7 days
+        let clock = FixedClock(1_790_812_800); // 2026-10-01
+        for (closed_at, reopened) in [("2026-09-28T00:00:00Z", true), ("2026-09-01T00:00:00Z", false)] {
+            let bd = FakeBd::new();
+            let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+            bd.rows.borrow_mut().push(row("sp-closed", BeadStatus::Closed, "incident:lb", vec![], Some(closed_at)));
+            let mut log = vec![];
+            let out = file_one(&bd, &mailer, &clock, &c, "incident:lb", "t", b"p", "spira,incident", &mut log);
+            let FileOutcome::Filed(id) = out else { panic!("expected Filed") };
+            assert_eq!(*bd.reopened.borrow() == vec!["sp-closed".to_string()], reopened, "closed {closed_at}: {log:?}");
+            assert_eq!(id == "sp-closed", reopened, "closed {closed_at}");
+            assert_eq!(bd.created.borrow().len(), usize::from(!reopened), "closed {closed_at}");
+        }
+    }
+
+    // covers: UC-ops-detection-remediation-04
+    #[test]
+    fn the_dedup_lookup_is_label_keyed_makes_no_bd_show_and_still_finds_a_legacy_bead() {
+        let bd = FakeBd::new();
+        let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+        let clock = FixedClock(1_000_000);
+        let known = vec!["spira".to_string()];
+        let c = cfg(&known);
+        let mut log = vec![];
+        let FileOutcome::Filed(first) = file_one(&bd, &mailer, &clock, &c, "incident:keyed", "t", b"p", "spira,incident", &mut log) else { panic!() };
+        assert!(bd.label_list("db", &first).contains(&format!("ref:{}", decide::ref_hash("incident:keyed"))));
+        bd.rows.borrow_mut().push(row("sp-legacy", BeadStatus::Open, "incident:old", vec!["spira".into()], None));
+        let FileOutcome::Filed(again) = file_one(&bd, &mailer, &clock, &c, "incident:keyed", "t", b"p", "spira,incident", &mut log) else { panic!() };
+        let FileOutcome::Filed(legacy) = file_one(&bd, &mailer, &clock, &c, "incident:old", "t", b"p", "spira,incident", &mut log) else { panic!() };
+        assert_eq!((again, legacy), (first, "sp-legacy".to_string()));
+        assert_eq!(bd.created.borrow().len(), 1, "only the first filing created a bead");
+        assert_eq!(*bd.shows.borrow(), 0, "no bd show on the dedup path");
+    }
+
+    // covers: UC-ops-detection-remediation-05
+    #[test]
+    fn an_undeclared_repo_leaves_a_note_naming_the_missing_declaration() {
+        let bd = FakeBd::new();
+        let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+        let known = vec!["spira".to_string()];
+        let mut c = cfg(&known);
+        c.repo_declared = None;
+        let mut log = vec![];
+        let FileOutcome::Filed(id) = file_one(&bd, &mailer, &FixedClock(1_000_000), &c, "incident:nr", "t", b"p", "spira,incident", &mut log) else { panic!() };
+        let notes = bd.notes.borrow().get(&id).cloned().unwrap_or_default().join("\n");
+        assert!(notes.contains("SPIRA_INCIDENT_REPO"), "{notes}");
+        assert!(bd.repos.borrow().get(&id).is_none(), "no repo recorded when none was declared");
+    }
+
+    // covers: UC-ops-detection-remediation-07
+    #[test]
+    fn an_exempt_ref_still_counts_its_recurrences_but_is_never_labelled_or_paged() {
+        let known = vec!["spira".to_string()];
+        for exempt in [false, true] {
+            let bd = FakeBd::new();
+            let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+            let mut c = cfg(&known);
+            c.fenrir_at = 3;
+            c.fenrir_exempt = exempt;
+            let mut log = vec![];
+            let mut id = String::new();
+            for _ in 0..5 {
+                let FileOutcome::Filed(i) = file_one(&bd, &mailer, &FixedClock(1_000_000), &c, "incident:fx", "t", b"p", "spira,incident", &mut log) else { panic!() };
+                id = i;
+            }
+            let labels = bd.label_list("db", &id);
+            let counter = labels.iter().find(|l| l.starts_with("recurrence:")).cloned().unwrap_or_default();
+            assert!(counter.starts_with("recurrence:4@"), "exempt={exempt}: {counter}");
+            assert_eq!(labels.contains(&"fenrir".to_string()), !exempt, "exempt={exempt}");
+            assert_eq!(mailer.sent.borrow().len(), usize::from(!exempt), "exempt={exempt}");
+        }
     }
 }
