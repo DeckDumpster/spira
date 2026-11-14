@@ -75,8 +75,12 @@ fn world(pool: &str) -> World {
 }
 
 impl World {
-    fn change(&self, value: &str) {
-        self.file.lock().unwrap().insert(KEY.into(), value.into());
+    fn change(&self, key: &str, value: &str) {
+        self.file.lock().unwrap().insert(key.into(), value.into());
+    }
+
+    fn running(&self, key: &str) -> String {
+        self.ask(&["scheduler", "running", key]).unwrap()
     }
 
     fn ask(&self, argv: &[&str]) -> Result<String, runtime::RuntimeError> {
@@ -143,7 +147,7 @@ impl World {
 fn a_pool_size_set_from_0_to_4_with_no_landing_calls_four_builders_within_one_tick() {
     let mut w = world("0");
     assert_eq!(w.calls(6), 0, "control: a pool of 0 calls nobody");
-    w.change("4");
+    w.change(KEY, "4");
     let told: serde_json::Value = serde_json::from_str(&w.ask(&["scheduler", "repin", KEY]).unwrap()).unwrap();
     assert_eq!((told["state"].as_str(), told["held"].as_str(), told["wanted"].as_str()), (Some("pending"), Some("0"), Some("4")));
     assert_eq!(w.ask(&["scheduler", "running", KEY]).unwrap(), "0", "until a turn takes it, the old value is the one held");
@@ -155,7 +159,7 @@ fn a_pool_size_set_from_0_to_4_with_no_landing_calls_four_builders_within_one_ti
     assert_eq!(w.calls(6), 1, "the first tick after the re-pin calls a builder");
 
     let mut full = world("0");
-    full.change("4");
+    full.change(KEY, "4");
     full.ask(&["scheduler", "repin", KEY]).unwrap();
     full.turn();
     full.live = 4;
@@ -163,25 +167,45 @@ fn a_pool_size_set_from_0_to_4_with_no_landing_calls_four_builders_within_one_ti
 }
 
 #[test]
-fn the_same_change_while_a_round_is_driven_waits_for_the_round_and_status_shows_it_pending() {
+fn a_builder_limit_changed_while_a_round_is_driven_is_taken_one_turn_later() {
     let mut w = world("0");
     w.driving_a_round();
     w.turn();
-    w.change("4");
+    w.change(KEY, "4");
     w.ask(&["scheduler", "repin", KEY]).unwrap();
     w.turn();
-    assert_eq!(w.ask(&["scheduler", "running", KEY]).unwrap(), "0", "a round is being driven");
-    w.engine.run_until_idle().unwrap();
+    assert_eq!(w.running(KEY), "4", "the batcher does not pin it");
+    let facts: Vec<String> = w.journal.log().into_iter().filter(|e| e.kind.tag == spira_runtime::repin::REPINNED).map(|e| e.kind.body).collect();
+    assert_eq!(facts, vec![format!("re-pinned {KEY} 0 -> 4")]);
+}
+
+#[test]
+fn a_key_the_batcher_pins_changed_while_a_round_is_driven_waits_for_the_round_and_status_shows_it_pending() {
+    const BATCHER_KEY: &str = "SPIRA_BATCH_MAXPAR";
+    let mut w = world("0");
+    let old = w.running(BATCHER_KEY);
+    w.driving_a_round();
+    w.turn();
+    w.change(BATCHER_KEY, "13");
+    w.change("SPIRA_RUN", "/elsewhere");
+    w.ask(&["scheduler", "repin", BATCHER_KEY]).unwrap();
+    w.ask(&["scheduler", "repin", "SPIRA_RUN"]).unwrap();
+    w.turn();
+    assert_eq!(w.running(BATCHER_KEY), old, "a round is being driven");
+    assert_eq!(w.running("SPIRA_RUN"), w.repin.held("SPIRA_RUN").unwrap(), "SPIRA_RUN is pinned by both and waits");
+    assert_ne!(w.running("SPIRA_RUN"), "/elsewhere");
     let status: serde_json::Value = serde_json::from_str(&w.ask(&["scheduler", "status"]).unwrap()).unwrap();
-    assert_eq!(status["repin"]["pending"][KEY], serde_json::json!({ "held": "0", "wanted": "4" }));
-    assert!(status["repin"]["waits"].as_str().unwrap().contains("round"), "{status}");
+    assert_eq!(status["repin"]["pending"][BATCHER_KEY], serde_json::json!({ "held": old, "wanted": "13" }));
+    assert!(status["repin"]["pending"]["SPIRA_RUN"].is_object(), "{status}");
+    let waits = status["repin"]["waits"].as_str().unwrap();
+    assert!(waits.contains(BATCHER_KEY) && waits.contains("SPIRA_RUN") && waits.contains("round"), "{status}");
 
     use spira_runtime::tasks::a::batcher_local as b;
     let done = b::Carry { repos: [("spira".to_string(), b::RepoCarry { state: b::State::Done, ..b::RepoCarry::default() })].into() };
     w.engine.start(b::STREAM, EventKind::new("test.carry", &serde_json::to_string(&done).unwrap()));
     w.turn();
     w.turn();
-    assert_eq!(w.ask(&["scheduler", "running", KEY]).unwrap(), "4", "the round ended");
+    assert_eq!(w.running(BATCHER_KEY), "13", "the round ended");
     let status: serde_json::Value = serde_json::from_str(&w.ask(&["scheduler", "status"]).unwrap()).unwrap();
     assert!(status["repin"]["pending"].as_object().unwrap().is_empty());
 }
@@ -192,7 +216,7 @@ fn a_task_that_started_before_a_re_pin_reads_the_value_it_started_with() {
     w.tick();
     let started = w.pending(OBSERVE);
     assert_eq!(started.len(), 1);
-    w.change("4");
+    w.change(KEY, "4");
     w.ask(&["scheduler", "repin", KEY]).unwrap();
     w.turn();
     assert_eq!(w.ask(&["scheduler", "running", KEY]).unwrap(), "0", "its probe is in flight");
