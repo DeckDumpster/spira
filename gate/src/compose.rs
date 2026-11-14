@@ -603,6 +603,7 @@ pub fn unit_build_argv(affected: &[String]) -> Vec<String> {
 /// environment, so a submit check compiles the units into the builder's `CARGO_TARGET_DIR`.
 pub fn unit_build_main(args: &[String]) -> i32 {
     let words = unit_build_argv(args);
+    // batch-job: the gate's own build line, bounded by the check row's budget through timeout
     match std::process::Command::new(&words[0]).args(&words[1..]).status() {
         Ok(s) => s.code().unwrap_or(2),
         Err(e) => {
