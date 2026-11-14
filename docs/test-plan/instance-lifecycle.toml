@@ -234,7 +234,7 @@ statement = "`unit-ensure.sh` reinstalls missing or changed units (daemon-reload
 [[use_case]]
 id = "UC-instance-lifecycle-31"
 tier = "T0"
-statement = "unit-file invariants: every timer template is in UNITS (or OPTIONAL) and in ENABLE and fires periodically; restarting services have a reachable start limiter; WatchdogSec appears only on non-shell ExecStart; the verdict service has `TimeoutStartSec>=3600` and no CPUQuota"
+statement = "unit-file invariants: every timer template is in UNITS (or OPTIONAL) and in ENABLE and fires periodically; restarting services have a reachable start limiter; WatchdogSec appears only on non-shell ExecStart"
 
 [[use_case]]
 id = "UC-instance-lifecycle-32"

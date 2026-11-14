@@ -337,6 +337,12 @@ fn shipped_unit_files_are_listed_enabled_periodic_limited_and_watchdogged_correc
 
     assert!(execstart_target("[Service]\nExecStart=/usr/bin/bash /x.sh\nWatchdogSec=60\n").ends_with("bash"), "positive control: a shell target is extracted");
     assert_eq!(execstart_target("[Service]\nExecStart=/bin/spira-supervise /x/collect.sh loop\n"), "/bin/spira-supervise", "arguments are not the target");
+    let concierge = std::fs::read_to_string(templates().join("concierge.service")).unwrap();
+    let mut h = host("t");
+    h.repo = "/the/git/checkout".into();
+    let exec = render("concierge.service", &concierge, &h, None).unwrap();
+    let exec = exec.lines().find(|l| l.starts_with("ExecStart=")).unwrap().to_string();
+    assert!(exec.contains("/r/") && !exec.contains("/the/git/checkout"), "a shared unit runs from the release root, not the git checkout: {exec}");
     let shell: Vec<&(String, String)> = units.iter().filter(|(_, t)| {
         let target = execstart_target(t);
         target.contains("bash") || target.ends_with(".sh")
