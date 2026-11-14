@@ -27,7 +27,7 @@ use spira_config::process::cfg_parse;
 
 use crate::tasks::d::pattern;
 use crate::watchers::halt::Halt;
-use crate::watchers::{carried, iso8601, just_activated, INBOX_APPEND};
+use crate::watchers::{carried, iso8601, restart_excuses_read, INBOX_APPEND};
 
 pub const NAME: &str = "watch.throughput";
 pub const STREAM: &str = "watch.throughput";
@@ -113,6 +113,9 @@ pub struct Snapshot {
     /// The newest release activation, epoch seconds.
     #[serde(default)]
     pub activated_at: Option<u64>,
+    /// Seconds the store server had been up when this was read; `None` when systemd could not say.
+    #[serde(default)]
+    pub store_up_s: Option<u64>,
 }
 
 /// What `watch.throughput.file` is handed: one stall episode and the incident that names it.
@@ -188,7 +191,7 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> Verd
     }
     next.halted.clear();
     if !snap.readable {
-        if !carry.blind && !carry.retried && just_activated(snap.activated_at, now_ms / 1000) {
+        if !carry.blind && !carry.retried && restart_excuses_read(snap.activated_at, snap.store_up_s, now_ms / 1000) {
             next.retried = true;
             return Verdict { carry: next, acts };
         }

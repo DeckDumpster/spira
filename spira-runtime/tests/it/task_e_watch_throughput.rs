@@ -463,3 +463,34 @@ fn a_landings_read_that_stays_unreadable_for_two_ticks_after_an_activation_pages
     assert_eq!(pages.len(), 1, "{pages:?}");
     assert!(pages[0].contains("P0 BLIND") && pages[0].contains("after the activation"), "{pages:?}");
 }
+
+fn blind_with_server_up(host: Arc<Mutex<Host>>, up_s: u64) -> TaskRig {
+    let (_, stream, kind) = WatchThroughput::boot();
+    let observe = move |_: &str| {
+        let mut snap = host.lock().unwrap().snap.clone();
+        snap.store_up_s = Some(up_s);
+        Ok(serde_json::to_string(&snap).unwrap())
+    };
+    let mut r = TaskRig::new(1, WatchThroughput::new(config()).registration()).unwrap().double(OBSERVE, observe).double(FILE, |_| Ok("filed".into())).double(CLEAR, |_| Ok("cleared".into())).double(INBOX_APPEND, |_| Ok("appended".into()));
+    r.clock.advance_to(3 * DAY_MS);
+    r.tick(stream, kind).unwrap();
+    r
+}
+
+#[test]
+fn one_unreadable_landings_tick_after_the_store_server_restarted_pages_nothing_and_two_in_a_row_page() {
+    let host = Arc::new(Mutex::new(Host { snap: Snapshot::default(), ..landed(24) }));
+    let mut r = blind_with_server_up(host, 50);
+    assert_eq!(named(&r, INBOX_APPEND), Vec::<String>::new(), "the first read after a restart is retried");
+    r.advance(60_000).unwrap();
+    let pages = named(&r, INBOX_APPEND);
+    assert_eq!(pages.len(), 1, "{pages:?}");
+    assert!(pages[0].contains("P0 BLIND"), "{pages:?}");
+}
+
+#[test]
+fn an_unreadable_landings_tick_with_the_store_server_up_more_than_two_minutes_pages_at_once() {
+    let host = Arc::new(Mutex::new(Host { snap: Snapshot::default(), ..landed(24) }));
+    let r = blind_with_server_up(host, 121);
+    assert_eq!(named(&r, INBOX_APPEND).len(), 1, "{:?}", named(&r, INBOX_APPEND));
+}
