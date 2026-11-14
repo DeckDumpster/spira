@@ -67,7 +67,6 @@ spira/test-livelock.sh
 spira/test-mimir-trigger.sh
 spira/test-ops-closing.sh
 spira/test-pr-notify.sh
-spira/test-pr-stall.sh
 spira/test-slay.sh
 spira/test-spike.sh
 spira/tsd-ingest.sh

@@ -87,7 +87,7 @@ produced the 36 use cases. Columns marked **applied** reflect code that is actua
 | 04 | Demote to T1 (counting stub bd, no Dolt). | **Applied**: `incident-stub-bd` (incident/src/stub_bd.rs). |
 | 05 | Demote to T1 (stub bd plus a maildir). | **Applied**. |
 | 06 | Demote the note-size decision to T1; keep one real row; delete `test-incident-recur-bounded.sh`. | **Applied**. |
-| 07 | Demote `test-fenrir-exempt.sh` to T1 against a stub-`bd sql` count; merge the real-events row into the census integration suite; move the watchtower DRAINING-exempt assertion to `test-watchtower.sh`. | **Applied** except the real-events row, which was deferred by `sp-fhzib.3` until `sp-fhzib.2` landed. **Landed by this bead** (`sp-n1twd`): `test-census.sh` gained the Fenrir real-events row — see §8. |
+| 07 | Demote `test-fenrir-exempt.sh` to T1 against a stub-`bd sql` count; merge the real-events row into the census integration suite; move the watchtower DRAINING-exempt assertion to `escalate::tests`. | **Applied** except the real-events row, which was deferred by `sp-fhzib.3` until `sp-fhzib.2` landed. **Landed by this bead** (`sp-n1twd`): `test-census.sh` gained the Fenrir real-events row — see §8. |
 | 07b | Delete the backfill-recur-causes test; propose retiring the migration itself. | **Retired** (`sp-76ec4`): rows removed from `test-incident-recur-cause.sh` and `test-incident-migrations.sh`; the migration itself deleted from `incident.sh` — `sp-lzt` removed every `sp-recur-N` label write, so nothing bare is left to backfill. |
 | 08 | Rewrite `test-incident-delivers-satisfiable.sh` from source-grep to a real T1 behaviour test; merge `test-batch-repeat-refused-delivers.sh` in. | **Applied**. |
 | 09 | Move the REF/CAUSE pairing check to the gate's T0 fence stage. | **Applied**: `spira/incident-cause-lint.sh`, wired into `gate-spira.sh`. |
@@ -116,7 +116,7 @@ produced the 36 use cases. Columns marked **applied** reflect code that is actua
 | D9 | Halted-world skip + stable-ref pattern | watchtower.sh, watchtower-czar-outcome.sh, watchtower-queue.sh, czar-pass.sh | Partially resolved: watchtower-queue.sh is gone; the remaining three still each carry their own halt-guard assertion (`sp-fhzib.4`'s shared T1 table is `sp-fhzib.5`'s further scope, undone). |
 | D10 | Livelock categories + detector re-run | test-livelock.sh | **Open** (`sp-fhzib.4`) |
 | D11 | Close-reason phrase flags | test-livelock.sh, test-ops-closing.sh | **Open** (`sp-fhzib.4`) |
-| D12 | "Every snapshot section present" loop | test-watchtower.sh, test-watchtower-lapse.sh | **Open** (`sp-fhzib.4`) |
+| D12 | "Every snapshot section present" loop | test-watchtower.sh, test-watchtower-lapse.sh | Resolved (`sp-wj9o75.3`): both suites deleted; `render::tests` carries the one section check. |
 | D13 | Watermark prose greps of mimir.md | test-mimir.sh, test-mimir-sibling-blind.sh | Resolved (`sp-fhzib.3`) |
 | D14 | Trigger shape (dedup, threshold, lane guard) | the retired groom-trigger suite, test-mimir-trigger.sh | **Open** (`sp-fhzib.4`) |
 
@@ -137,7 +137,7 @@ Gaps opened by the original analysis, and their current state:
 6. **G6 (strand partition filtering untested)** — still open (`sp-fhzib.4`).
 7. **G7 (dwarf teardown ordering)** — out of this area's scope; belongs to
    dwarf-execution, cross-referenced only.
-8. **G8 (lapse writer/reader contract)** — still open (`sp-fhzib.4`).
+8. **G8 (lapse writer/reader contract)** — closed (`sp-wj9o75.3`): `lapsed::tests` reads a record `spira-claim` wrote.
 9. **G9 (incident migrations untested)** — closed (`sp-fhzib.2`,
    `test-incident-migrations.sh`).
 10. **G10 (trigger concurrency: neither trigger locks its dedup check)** — still open

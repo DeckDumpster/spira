@@ -435,9 +435,7 @@ fn czar_row(env: &Env, label: &str, tag: &str) -> String {
 /// Per-class display of the four queue-check trigger classes, read from the `SP_CZAR_*`
 /// keys `cockpit.sh`'s `czar_triggers_keys` writes. `pub(super)` so `collect::tests` can
 /// assert each class renders `?` throughout when unset and is untouched by another
-/// class's keys — the T1 seam `test-watchtower.sh` used to reach by sourcing the bash
-/// file directly (`. ./watchtower.sh; collect_czar_block`), not reachable that way once
-/// the sweep is a compiled binary.
+/// class's keys.
 pub(super) fn czar_block(env: &Env) -> String {
     let mut s = format!("  {:<22} {:<22} {:<12} {}\n", "class", "last fired", "handled by", "outcome");
     s += &czar_row(env, "deadlock", "DEADLOCK");
@@ -541,11 +539,8 @@ fn idle_while_ready_hits(
 mod tests {
     use super::*;
 
-    /// UC-26/sp-m0qeh's T1 seam, ported: a class with no `SP_CZAR_*` keys set renders `?`
-    /// throughout, a fired class carries who handled it, and an unrelated class is
-    /// untouched by another class's keys (`test-watchtower.sh`'s "collect_czar_block() is
-    /// a T1 seam" section, which sourced the bash file directly — not reachable that way
-    /// once the sweep is a compiled binary, so the property moves here).
+    /// A class with no `SP_CZAR_*` keys set renders `?` throughout, a fired class carries who
+    /// handled it, and an unrelated class is untouched by another class's keys.
     #[test]
     fn czar_block_renders_unset_classes_as_unknown_throughout() {
         let env = Env::new();

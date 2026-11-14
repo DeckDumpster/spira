@@ -66,7 +66,7 @@ pub fn lapse_record_content(bead: &str, quiet: &str, last: &str, tip: &str) -> S
 
 /// `date -u +%Y%m%dT%H%M%SZ`, shelled out rather than hand-rolled: this fires once per
 /// lapse, never on a hot path, and must match the format `watchtower`'s reader already
-/// expects from the real writer (test-watchtower.sh's gap G8, test-watchtower-lapse.sh).
+/// expects from the real writer (`watchtower::lapsed::tests` reads one back).
 fn utc_stamp() -> String {
     spira_config::bounded::bounded("date")
         .args(["-u", "+%Y%m%dT%H%M%SZ"])

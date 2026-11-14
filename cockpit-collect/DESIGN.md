@@ -162,7 +162,7 @@ unilaterally.
 - **Parity**: every rewritten `test-cockpit-*.sh` (and the handful of other suites that
   called a probe by name — `test-mimir-closed-record.sh`,
   `test-livelock.sh`, `test-law-synth.sh`, `test-statute-projection.sh`,
-  `test-watchtower.sh`, `test-closed-strand.sh`,
+  `test-closed-strand.sh`,
   `test-tsd-producers.sh`) is repointed to call the real compiled binary
   (`cockpit-collect probe <name>` / `once`) with the same
   fixtures, the same `SPIRA_BDJSON_FIXTURE`/fake-`systemctl`/mock-`COCK` seams the bash
