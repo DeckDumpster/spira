@@ -368,6 +368,39 @@ impl EpicRow {
     }
 }
 
+/// One gate run as its row records it: `phases` is `name:secs,…`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct GateRun {
+    pub phases: String,
+    pub compiled: u64,
+    pub fresh: u64,
+    pub admit_wait_secs: u64,
+}
+
+/// The gate run's phase times for a bead's expanded detail.
+pub fn gate_why(g: &GateRun) -> String {
+    let phases: Vec<String> = g.phases.split(',').filter_map(|p| p.split_once(':')).map(|(n, t)| format!("{n} {t}s")).collect();
+    let mut parts = phases;
+    parts.push(format!("compiled {} · fresh {}", g.compiled, g.fresh));
+    parts.push(format!("admit wait {}s", g.admit_wait_secs));
+    format!("gate: {}", parts.join(" · "))
+}
+
+/// The latest run per bead among the gate's `gate-run` rows, by their `ts`; a run with no
+/// phases (it ended before the build) says nothing and is skipped.
+pub fn latest_gate_runs(rows: &[serde_json::Value]) -> BTreeMap<String, GateRun> {
+    let n = |r: &serde_json::Value, k: &str| r[k].as_u64().unwrap_or(0);
+    let mut sorted: Vec<&serde_json::Value> = rows.iter().filter(|r| r["phases"].as_str().is_some_and(|p| !p.is_empty())).collect();
+    sorted.sort_by(|a, b| a["ts"].as_str().cmp(&b["ts"].as_str()));
+    sorted
+        .into_iter()
+        .filter_map(|r| {
+            let bead = r["bead"].as_str().filter(|b| !b.is_empty())?;
+            Some((bead.to_string(), GateRun { phases: r["phases"].as_str().unwrap_or("").to_string(), compiled: n(r, "compiled"), fresh: n(r, "fresh"), admit_wait_secs: n(r, "admit_wait_secs") }))
+        })
+        .collect()
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Snapshot {
     pub now: i64,
@@ -404,6 +437,9 @@ pub struct Snapshot {
     pub asks: Vec<AskRow>,
     #[serde(default)]
     pub asks_error: Option<String>,
+    /// The gate's latest run per bead, from the run row the gate writes; absent when unread.
+    #[serde(default)]
+    pub gate_runs: BTreeMap<String, GateRun>,
     /// Why a round last ejected each bead, newest eject per bead (the batch's own reason).
     #[serde(default)]
     pub eject_why: BTreeMap<String, String>,
@@ -1434,6 +1470,8 @@ pub fn view(s: &Snapshot) -> View {
                 let mut it = item(r, if st.name == "LANDED" { r.updated_at } else { r.since }, note);
                 if st.name == "REWORK" {
                     it.why = rework_why(s, &r.id);
+                } else if NEEDS_REWORK_EXIT.contains(&st.name.as_str()) {
+                    it.why = s.gate_runs.get(&r.id).map(gate_why).unwrap_or_default();
                 }
                 it
             })
@@ -2290,6 +2328,20 @@ mod tests {
         s.claimable = None;
         let v = view(&s);
         assert!(v.next_unknown && v.next.is_empty(), "without the claim tool's answer NEXT says it does not know, never guesses");
+    }
+
+    #[test]
+    fn the_latest_gate_run_per_bead_wins_whatever_the_file_order() {
+        let row = |ts: &str, bead: &str, phases: &str, compiled: u64| serde_json::json!({"ts": ts, "bead": bead, "phases": phases, "compiled": compiled, "fresh": 1, "admit_wait_secs": 2});
+        let rows = vec![
+            row("2026-11-14T10:00:00Z", "sp-a", "build:9", 7),
+            row("2026-11-14T09:00:00Z", "sp-a", "build:99", 3),
+            row("2026-11-14T11:00:00Z", "sp-a", "", 0),
+            row("2026-11-14T10:00:00Z", "", "build:1", 1),
+        ];
+        let m = latest_gate_runs(&rows);
+        assert_eq!(m.len(), 1, "a row with no bead is skipped");
+        assert_eq!((m["sp-a"].phases.as_str(), m["sp-a"].compiled), ("build:9", 7), "the newest run with phases, not the last line");
     }
 
     #[test]

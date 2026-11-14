@@ -270,6 +270,22 @@ fn gather_menders(s: &mut Snapshot) {
     }
 }
 
+fn gather_gate_runs(s: &mut Snapshot) {
+    let read = spira_config::process::cfg("SPIRA_RUN").and_then(|run| {
+        let src = tsd::query::Source { reader: None, root: std::path::Path::new(&run) };
+        let from = (s.now.max(0) as u64).saturating_sub(7 * 86_400);
+        match src.rows("gate-run", from) {
+            Ok(rows) => Ok(rows),
+            Err(f) if f.code == tsd::query::ERR_NO_FAMILY => Ok(Vec::new()),
+            Err(f) => Err(f.message),
+        }
+    });
+    match read {
+        Ok(rows) => s.gate_runs = cockpit_ops::lcview::latest_gate_runs(&rows),
+        Err(e) => s.errors.push(e),
+    }
+}
+
 fn gather_closed(s: &mut Snapshot) {
     let read = spira_config::process::cfg("SPIRA_VICTORIALOGS_URL")
         .and_then(|url| spira_otel::vlogs::Logs::new(&url).map_err(|e| e.to_string()))
@@ -423,6 +439,7 @@ fn gather() -> Snapshot {
     s.forge_base = spira_config::process::cfg("SPIRA_FORGE_REPO").ok().and_then(|r| r.trim().split_once('/').map(|(o, _)| format!("https://github.com/{o}"))).unwrap_or_default();
     s.loom_base = spira_config::process::cfg("SPIRA_LOOM_ADDR").ok().map(|a| a.trim().to_string()).filter(|a| !a.is_empty()).map(|a| format!("http://{}", a.replacen("0.0.0.0", "localhost", 1)));
     gather_menders(&mut s);
+    gather_gate_runs(&mut s);
     let file_ceiling = spira_config::process::cfg("SPIRA_MAX_LIVE_DWARVES").ok().map(|v| v.trim().to_string());
     let limit = spira_config::scheduler_link::Limit::read("SPIRA_MAX_LIVE_DWARVES", file_ceiling.as_deref());
     s.ceiling = limit.shown().and_then(|v| v.parse().ok()).unwrap_or(0);
