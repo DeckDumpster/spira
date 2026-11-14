@@ -874,6 +874,8 @@ mod tests {
         let no_batch: Option<ForgeBatch> = Some(ForgeBatch::default());
         let t = tally_of("spira/sp-bat 90000\n", &[("sp-bat", 100_000 - 360)], Some(&no_batch), 1800);
         assert_eq!(t.batched_stranded_ages, ["sp-bat=360"]);
+        let t = tally_of("spira/sp-bat 90000\n", &[("sp-bat", 100_000 - 40)], Some(&no_batch), 1800);
+        assert_eq!(t.batched_stranded, 0, "between two rounds for 40s");
     }
 
     #[test]
@@ -899,7 +901,7 @@ mod tests {
         assert!(!awaits_round("queue.local", false));
     }
 
-    const TEST_GRACE: i64 = 300;
+    const TEST_GRACE: i64 = 137;
 
     fn tally_of(lines: &str, delivering: &[(&str, i64)], batch: Option<&Option<ForgeBatch>>, wait: i64) -> Tally {
         let in_delivery: HashMap<String, super::super::lc::LcRow> = delivering
