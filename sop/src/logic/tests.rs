@@ -115,6 +115,7 @@ fn write_refuses_missing_fields() {
     assert!(bd.shelf.borrow().is_empty());
 }
 
+// covers: UC-operator-channel-44
 #[test]
 fn write_refuses_operator_infrastructure() {
     let bd = FakeBd::default();
@@ -457,6 +458,7 @@ fn synth_writes_the_page() {
     assert!(text.contains("sop-x"));
 }
 
+// covers: UC-operator-channel-44
 #[test]
 fn lint_reports_failures_and_refuses_an_unreadable_shelf() {
     let bd = FakeBd::default();

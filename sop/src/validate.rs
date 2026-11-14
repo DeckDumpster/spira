@@ -100,6 +100,7 @@ mod tests {
         assert_eq!(msgs(validate("   \n  ", 250)), vec!["empty SOP"]);
     }
 
+    // covers: UC-operator-channel-44
     #[test]
     fn missing_fields_are_named_individually() {
         let v = msgs(validate("SYMPTOM: it broke", 250));
@@ -114,6 +115,7 @@ mod tests {
         assert!(validate(text, 250).is_empty());
     }
 
+    // covers: UC-operator-channel-44
     #[test]
     fn a_bad_match_regex_is_caught() {
         let text = "MATCH: [unterminated\nSYMPTOM: x\nCHECK: y\nFIX: z\n";
@@ -127,6 +129,7 @@ mod tests {
         assert!(validate(text, 250).is_empty());
     }
 
+    // covers: UC-operator-channel-44
     #[test]
     fn metric_shape_rules() {
         let ok = "METRIC: SP_UNADOPTED unsent\nSYMPTOM: x\nCHECK: y\nFIX: z\n";
@@ -153,6 +156,7 @@ mod tests {
         assert!(msgs(validate(&no_deadline, 250)).iter().any(|m| m.contains("DEADLINE")));
     }
 
+    // covers: UC-operator-channel-44
     #[test]
     fn word_cap_is_enforced() {
         let long = format!("SYMPTOM: x\nCHECK: y\nFIX: {}\n", "word ".repeat(300));

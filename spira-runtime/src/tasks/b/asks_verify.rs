@@ -43,7 +43,7 @@
 //!    (`verify-asks.sh:59-68`); then for each work bead not terminal (`LANDED|SUPERSEDED|
 //!    DROPPED|DONE`, `:79`) a `Withdraw{work, actor: claude}` (`:75-87`). `rc != 0` → nothing.
 //!
-//! Carried state: `mislabelled_seen`. Fixtures: `spira/test-verify-asks.sh`.
+//! Carried state: `mislabelled_seen`.
 //!
 //! ## Act
 //!
@@ -401,6 +401,80 @@ mod tests {
 
     fn ask(id: &str, status: &str) -> serde_json::Value {
         serde_json::json!({"id": id, "status": status, "issue_type": "task", "labels": ["needs-x"], "description": "VERIFY: true"})
+    }
+
+    fn cfg() -> Cfg {
+        Cfg::new()
+    }
+
+    fn checking(id: &str, cmd: &str, works: &[&str]) -> Carry {
+        let ask = Ask { id: id.into(), works: works.iter().map(|w| w.to_string()).collect(), cmd: cmd.into() };
+        Carry { asks: BTreeMap::from([(id.to_string(), Phase::Checking)]), checks: BTreeMap::from([(id.to_string(), ask)]), ..Carry::default() }
+    }
+
+    fn checked(id: &str, rc: i32) -> Input<Snapshot> {
+        Input::Outcome { effect: CHECK.into(), ok: true, body: serde_json::to_string(&CheckOutcome { id: id.into(), rc, output: "evidence".into() }).unwrap() }
+    }
+
+    fn row(id: &str, kind: &str, labels: &[&str], description: &str) -> serde_json::Value {
+        serde_json::json!({"id": id, "status": "open", "issue_type": kind, "labels": labels, "description": description, "title": id})
+    }
+
+    // covers: UC-operator-channel-26
+    #[test]
+    fn a_passing_verify_closes_the_ask_with_a_reason_quoting_the_command() {
+        let (next, acts) = decide(&cfg(), &checking("sp-a", "test -f /done", &[]), &checked("sp-a", 0), 0).unwrap();
+        assert_eq!(next.asks["sp-a"], Phase::Satisfied);
+        let close: Vec<&Act> = acts.iter().filter(|a| a.name == CLOSE).collect();
+        assert_eq!(close.len(), 1, "{acts:?}");
+        let job: Job = serde_json::from_str(&close[0].input).unwrap();
+        assert_eq!(job.id, "sp-a");
+        assert!(job.reason.contains("test -f /done") && job.reason.contains("exit 0"), "{}", job.reason);
+    }
+
+    // covers: UC-operator-channel-26
+    #[test]
+    fn a_failing_verify_leaves_the_ask_open_and_closes_nothing() {
+        let (next, acts) = decide(&cfg(), &checking("sp-a", "false", &[]), &checked("sp-a", 1), 0).unwrap();
+        assert_eq!(next.asks["sp-a"], Phase::StillOpen);
+        assert!(acts.is_empty(), "{acts:?}");
+    }
+
+    // covers: UC-operator-channel-26
+    #[test]
+    fn a_closed_ask_withdraws_the_hold_on_each_work_bead_that_is_not_yet_terminal() {
+        let snap = Snapshot { asks: vec![Ask { id: "sp-a".into(), works: vec!["sp-live".into(), "sp-landed".into()], cmd: "true".into() }], work_states: BTreeMap::from([("sp-live".into(), "WORKING".into()), ("sp-landed".into(), "LANDED".into())]), ..Snapshot::default() };
+        let (carry, _) = decide(&cfg(), &Carry::default(), &Input::Observed(snap), 0).unwrap();
+        let (carry, _) = decide(&cfg(), &carry, &checked("sp-a", 0), 0).unwrap();
+        let (_, acts) = decide(&cfg(), &carry, &Input::Outcome { effect: CLOSE.into(), ok: true, body: "sp-a".into() }, 0).unwrap();
+        let withdrawn: Vec<String> = acts.iter().filter(|a| a.name == WITHDRAW).map(|a| serde_json::from_str::<Job>(&a.input).unwrap().work).collect();
+        assert_eq!(withdrawn, ["sp-live"]);
+    }
+
+    // covers: UC-operator-channel-26
+    #[test]
+    fn only_open_non_epic_asks_with_a_verify_line_are_checked_and_open_epics_are_reported() {
+        let mut closed = row("sp-closed", "decision", &["needs-x"], "VERIFY: exit 0");
+        closed["status"] = "closed".into();
+        let doc = serde_json::Value::Array(vec![
+            row("sp-ok", "decision", &["needs-x", "work-bead:sp-w"], "why\n\nVERIFY: exit 0"),
+            row("sp-bare", "decision", &["needs-x"], "no check line here"),
+            row("sp-epic", "epic", &["needs-x"], "VERIFY: exit 0"),
+            row("sp-unlabelled", "decision", &["other"], "VERIFY: exit 0"),
+            closed,
+        ]);
+        let (asks, bogus) = parse_rows(&doc, "needs-x");
+        assert_eq!(asks, [Ask { id: "sp-ok".into(), works: vec!["sp-w".into()], cmd: "exit 0".into() }]);
+        assert_eq!(bogus.iter().map(|b| b.0.as_str()).collect::<Vec<_>>(), ["sp-epic"]);
+    }
+
+    // covers: UC-operator-channel-26
+    #[test]
+    fn a_verify_that_never_returned_closes_nothing() {
+        let timed_out = Input::Outcome { effect: CHECK.into(), ok: false, body: String::new() };
+        let (next, acts) = decide(&cfg(), &checking("sp-a", "sleep 600", &[]), &timed_out, 0).unwrap();
+        assert!(acts.is_empty(), "{acts:?}");
+        assert_eq!(next.asks["sp-a"], Phase::Checking);
     }
 
     #[test]

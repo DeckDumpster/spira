@@ -627,6 +627,45 @@ fn ask_already_open_queries_open_asks_by_label_and_matches_the_subject_substring
     assert!(!s.ask_already_open("no bead carries this subject"));
 }
 
+/// `land_escalate` with the scripted store holding one ask titled as the escalation is, in
+/// the given status; the mail door is the runner's `mail send`, whose calls are what return.
+fn land_escalates_with_ask(tag: &str, ask_status: &'static str) -> usize {
+    let (w, r, sink, clock) = setup(tag);
+    r.on(move |s| {
+        if !is_bd(s, "list") {
+            return None;
+        }
+        let open = s.args.iter().any(|a| a == "open");
+        if ask_status == "open" && open {
+            ok(r#"[{"id":"sp-ask1","title":"Spira is landing nothing — its last run exited 1","status":"open"}]"#)
+        } else {
+            ok("[]")
+        }
+    });
+    let h: &Host = Box::leak(Box::new(test_host(&r, &clock, &sink)));
+    let s = Sentinel::new(h, w.ctx(&[("SPIRA_LAND_ESCALATE_EVERY", "0")], None), w.declared(&[]), &w.home, Mode::Report, "p".into());
+    s.land_escalate("the landing worker will not start", "evidence\n");
+    r.count(|c| c.prog == "mail" && c.args.first().map(String::as_str) == Some("send"))
+}
+
+// covers: UC-operator-channel-24
+#[test]
+fn land_escalate_asks_the_operator_when_no_ask_with_its_subject_is_open() {
+    assert_eq!(land_escalates_with_ask("land-esc-none", "none"), 1);
+}
+
+// covers: UC-operator-channel-24
+#[test]
+fn land_escalate_does_not_ask_again_while_an_ask_with_its_subject_is_open() {
+    assert_eq!(land_escalates_with_ask("land-esc-open", "open"), 0);
+}
+
+// covers: UC-operator-channel-24
+#[test]
+fn a_closed_ask_with_its_subject_does_not_suppress_a_new_escalation() {
+    assert_eq!(land_escalates_with_ask("land-esc-closed", "closed"), 1);
+}
+
 // ---------------------------------------------------------------------------------------
 // CHECK 3 and CHECK 8
 

@@ -2,10 +2,9 @@
 # test-mail-real-senders.sh — real harness emitters pass mail's own lint (gap G-05,
 # UC-operator-channel-05).
 #
-# test-migrate-ask.sh used to lint hand-copied sender bodies, so a regression in a real
-# emitter's actual message construction went unseen (it tested copies, not the senders).
-# This calls each emitter's real code — not a re-typed body — with mail pointed at a
-# scratch Maildir and with no lint override, so the running message actually clears
+# Linting hand-copied sender bodies let a regression in a real emitter's message
+# construction go unseen (it tested copies, not the senders). This calls each emitter's
+# real code — not a re-typed body — with mail pointed at a scratch Maildir and with no lint override, so the running message actually clears
 # mail's send path.
 #
 # COVERAGE: land_escalate is native in sentinel now (sp-31hjr; was lib.sh, sourced
@@ -120,8 +119,7 @@ echo "skew: escalate (question)"
 # `skew` is a compiled binary now (sp-yyk47): its `escalate()` is no longer bash source to
 # extract with sed (that technique needed skew.sh's own text; a binary has none to read).
 # Instead, drive the real `skew check --escalate` through a real NOT-LATEST scenario — the
-# same minimal fixture test-skew-escalate.sh builds for its own coverage of escalate()'s
-# error handling — so this suite still exercises the real send path against the real
+# minimal fixture — so this suite still exercises the real send path against the real
 # mail, with no lint override, the property this suite exists to prove.
 SKEW_REPO="$TMP/skew-repo"
 git init -q -b main "$SKEW_REPO"

@@ -176,7 +176,7 @@ surface gets an accounting, and none of it turned out to be dead).
   digest guard end-to-end) still runs against the real binary; its T1 lint table is removed
   (moved to `lint.rs`'s unit tests, since it can no longer source `mail.sh` as bash) and the
   suite's `covers:` line updated accordingly. `test-mail-tidy.sh`, `test-mail-bead-render.sh`,
-  `test-mail-dismiss-sweep.sh`, `test-mail-health.sh`, `test-mail-pane.sh`,
+  `test-mail-health.sh`, `test-mail-pane.sh`,
   `test-mail-mailbox-arg.sh`, `test-mail-real-senders.sh`,
   `test-mail-dwarf-hook.sh`, `test-brief-mail-options.sh`, `test-mail-tidy-units.sh` and
   `test-cockpit-layout-mail.sh` are repointed, not retired — every one of them exercises real

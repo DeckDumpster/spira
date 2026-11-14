@@ -165,11 +165,10 @@ suites are retired, their coverage moved here:
 | `test-skew-refresh.sh` | `refresh_*` (7 tests) |
 | `test-doctor-gate-compile-check.sh` (skew's own `gap`/`units` paths only — the doctor half stays with the `doctor` crate) | n/a — not this table; see `doctor/DESIGN.md` |
 
-`test-skew-escalate.sh` is **kept** (repointed to call `skew` by bare name): it carries
-`UC-operator-channel-25` as its only covering suite in `docs/test-plan/operator-channel.toml`,
-and it is a genuine integration check (mail.sh's real output format) that a fake-backed unit
-test does not replace. `test-unit-drift.sh` (the only carrier of
-`UC-instance-lifecycle-34`) is likewise kept, repointed.
+`UC-operator-channel-25` is carried by this crate's `escalate` unit tests (the question's
+sections, a refusing mailer reported, a read-only check mailing nobody); that the real mail
+library accepts skew's question is `test-mail-real-senders.sh`'s. `test-unit-drift.sh` (the only
+carrier of `UC-instance-lifecycle-34`) is kept, repointed.
 
 Both `gate` (`which("skew.sh")` → `which("skew")`, `skew_foreign`'s subprocess no longer
 wrapped in `bash`, `harness_hash` reads the resolved `skew` binary's bytes instead of a
@@ -205,6 +204,6 @@ Not covered here, and not fixable from this side without a live database, a real
 credential, or a real release tarball: `check`'s `gh release list` path against a live
 forge, `refresh`'s release-mode `release build/verify/activate` against a real release
 directory, and `check_local`'s `release verify` against a real MANIFEST. Those remain the
-round's integration coverage through `test-skew-escalate.sh`, `test-unit-drift.sh`, and the
+round's integration coverage through `test-unit-drift.sh`, and the
 suites that exercise `deploy.sh`/`release`/`queue` end to end (`test-deploy.sh`,
 `test-land-local-release.sh`, the retired landing-rebase suite).

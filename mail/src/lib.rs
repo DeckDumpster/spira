@@ -15,5 +15,9 @@ pub mod message;
 pub mod reconcile;
 pub mod repeat;
 pub mod rfc822;
+#[cfg(test)]
+mod rune_briefs_tests;
 pub mod sendmail;
 pub mod tidy;
+#[cfg(test)]
+mod verdict_tests;
