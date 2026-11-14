@@ -6,7 +6,8 @@
 //!
 //! `--diff <rev>` is `--base <rev>` plus a filter: a finding is reported only when it is on a
 //! line the working tree adds or changes relative to `git merge-base <rev> HEAD`, and a
-//! whole-file finding only for a file the diff touches. Rules that already judge against the
+//! whole-file finding only for a file the diff touches. A finding is also kept when its message
+//! names a touched file as an exact path. Rules that already judge against the
 //! base (`BASE_RELATIVE`) are left whole. Without it, every finding in the tree is reported.
 //!
 //! `--base` defaults to `SPIRA_GATE_BASE` (the gate sets it). On a clean run the positive

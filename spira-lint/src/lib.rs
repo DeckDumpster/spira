@@ -259,11 +259,23 @@ impl DiffScope {
     /// Whether a finding is on code this branch adds or changes. A finding with no line is
     /// whole-file: kept when the diff touches the file at all.
     pub fn keeps(&self, f: &Finding) -> bool {
-        match (self.files.get(&f.path), f.line) {
+        let at_location = match (self.files.get(&f.path), f.line) {
             (None, _) => false,
             (Some(None), _) | (Some(Some(_)), None) => true,
             (Some(Some(r)), Some(n)) => r.iter().any(|&(a, b)| a <= n && n <= b),
-        }
+        };
+        at_location || self.message_names_touched_file(&f.message)
+    }
+
+    fn message_names_touched_file(&self, message: &str) -> bool {
+        message
+            .split(|c: char| c.is_whitespace() || "\"'()[]<>,;=`{}|".contains(c))
+            .map(|t| t.trim_end_matches(['.', ':']))
+            .map(|t| match t.rsplit_once(':') {
+                Some((head, tail)) if !tail.is_empty() && tail.bytes().all(|b| b.is_ascii_digit()) => head,
+                _ => t,
+            })
+            .any(|t| self.files.contains_key(t))
     }
 }
 
@@ -568,6 +580,19 @@ mod tests {
         assert!(!d.keeps(&f("x.rs", Some(3))) && !d.keeps(&f("x.rs", Some(6))) && !d.keeps(&f("x.rs", Some(21))));
         assert!(d.keeps(&f("x.rs", None)) && d.keeps(&f("y.rs", Some(1))));
         assert!(!d.keeps(&f("z.rs", None)) && !d.keeps(&f("z.rs", Some(1))));
+    }
+
+    #[test]
+    fn diff_scope_keeps_a_finding_whose_message_names_a_touched_path() {
+        let mut d = DiffScope { files: Default::default() };
+        d.parse("diff --git a/spira/lib-test-install.sh b/spira/lib-test-install.sh\n--- a/spira/lib-test-install.sh\n+++ b/spira/lib-test-install.sh\n@@ -1 +1 @@\n-a\n+b\ndiff --git a/spira/gone.sh b/spira/gone.sh\n--- a/spira/gone.sh\n+++ /dev/null\n@@ -1 +0,0 @@\n-x\n");
+        let allow = "spira-lint/config-key-registered-allow";
+        let f = |msg: &str| Finding { rule: "config-key-registered", path: allow.into(), line: Some(892), message: msg.into() };
+        assert!(d.keeps(&f("lists SPIRA_TOML for spira/lib-test-install.sh, which no longer names it unregistered — remove the line (the list only shrinks)")));
+        assert!(d.keeps(&f("stale: (spira/lib-test-install.sh:12).")));
+        assert!(!d.keeps(&f("lists SPIRA_TOML for spira/other.sh, which no longer names it")));
+        assert!(!d.keeps(&f("lists SPIRA_TOML for lib-test-install.sh, which no longer names it")));
+        assert!(d.keeps(&f("lists SPIRA_TOML for spira/gone.sh, which no longer names it")));
     }
 
     #[test]
