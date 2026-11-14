@@ -341,14 +341,11 @@ fn cmd_enact(db: &str, home: &str, rest: &[String]) -> i32 {
         eprint!("{}", code::parts_list(&toc));
         return 1;
     };
-    let toc_after = match code::append(&toc, part, &key) {
-        Ok(t) => t,
-        Err(e) => {
-            eprintln!("rule: refusing — {e}. The Parts are:");
-            eprint!("{}", code::parts_list(&toc));
-            return 1;
-        }
-    };
+    if let Err(e) = code::append(&toc, part, &key) {
+        eprintln!("rule: refusing — {e}. The Parts are:");
+        eprint!("{}", code::parts_list(&toc));
+        return 1;
+    }
 
     let words = word_count(&text);
     if words > 130 {
@@ -429,25 +426,17 @@ fn cmd_enact(db: &str, home: &str, rest: &[String]) -> i32 {
     if rc != 0 {
         return rc;
     }
-    let pointers = match read_pointers_for_write(&repo) {
+    let pointers = match read_pointers_at(&repo) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("{e}");
-            eprintln!("rule: {key} IS in force but its law/ bead was not filed (enact cuts no law/ branch) — fix the cause and run `rule.sh code` from a worktree to land it.");
+            eprintln!("rule: {key} IS in force but the statute book's gap could not be measured — run `rule.sh code --check` from a worktree.");
             return 1;
         }
     };
-    match land_law(home, &repo, "enact", &key, &toc_after, &pointers, &strings(&after)) {
-        Ok((bead, _)) => {
-            println!("law/: {key} goes in Part {part}; bead {bead} numbers it and lands it from the store when a builder submits.");
-            0
-        }
-        Err(e) => {
-            eprintln!("{e}");
-            eprintln!("rule: {key} IS in force but its law/ bead was not filed (enact cuts no law/ branch) — fix the cause and run `rule.sh code` from a worktree to land it.");
-            1
-        }
-    }
+    let behind = code::behind(&toc, &pointers, &strings(&after));
+    println!("law/: book is {} behind the store ({}); add {key} under Part {part} in law/toc.toml, run rule.sh code, commit.", behind.len(), behind.join(", "));
+    0
 }
 
 fn land_law(home: &str, repo: &(String, Option<String>), verb: &str, key: &str, toc: &[code::Part], pointers: &code::Pointers, book: &BTreeMap<String, String>) -> Result<(String, String), String> {
@@ -612,6 +601,11 @@ fn cmd_code(db: &str, rest: &[String]) -> i32 {
         drift.extend(new_moves.iter().map(|m| format!("{}: §{} moved to {}, not yet recorded", code::POINTERS_FILE, m.section, code::section_of(&toc, &m.slug).unwrap_or_default())));
         for d in &drift {
             eprintln!("law/{d}");
+        }
+        let behind = code::behind(&toc, &pointers, &strings(&book));
+        if !behind.is_empty() {
+            eprintln!("law/: behind the store by {}: {}", behind.len(), behind.join(", "));
+            return 1;
         }
         return if drift.is_empty() { 0 } else { 1 };
     }
