@@ -2294,6 +2294,29 @@ fn an_over_cap_verdict_from_gate_worker_is_gated_again_after_the_backoff() {
 }
 
 #[test]
+fn a_no_verdict_from_gate_worker_is_queued_again_in_the_same_pass() {
+    let h = h_worker(LandMode::Queue);
+    h.closed("sp-a", "t1");
+    let q = crate::gateq::GateQueue::new(&h.s.run);
+    file_verdict(&h, "sp-a", "t1", 75, "gate: VERDICT=NO_VERDICT reason=deadline branch=b repo=spira suite=- (late)\n");
+    h.run();
+    assert_eq!(q.queued().len(), 1, "{:?}", h.lib.calls.borrow());
+    assert_eq!(q.queued()[0].tip, "t1");
+}
+
+#[test]
+fn a_no_verdict_that_defers_the_tip_to_a_round_is_not_queued_again() {
+    let mut h = h_worker(LandMode::Queue);
+    h.s.noverdict_max = 1;
+    h.closed("sp-a", "t1");
+    let q = crate::gateq::GateQueue::new(&h.s.run);
+    file_verdict(&h, "sp-a", "t1", 75, "gate: VERDICT=NO_VERDICT reason=deadline branch=b repo=spira suite=- (late)\n");
+    h.run();
+    assert!(h.logged("deferred to round"));
+    assert!(q.queued().is_empty());
+}
+
+#[test]
 fn a_tip_whose_gate_is_killed_over_cap_twice_goes_to_a_round_and_is_not_gated_a_third_time() {
     let h = h_worker(LandMode::Queue);
     h.closed("sp-a", "t1");
