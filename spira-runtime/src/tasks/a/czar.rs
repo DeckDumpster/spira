@@ -723,6 +723,49 @@ fn forge_status(forge: &str, repo_path: &str, branch: &str) -> Result<String, St
     czar_pass::batch_ci_status(forge, repo_path, branch)
 }
 
+/// A registered repository as `observe` read it.
+pub struct RepoRow {
+    pub name: String,
+    pub land: String,
+    pub root: String,
+    pub landref: Option<String>,
+}
+
+/// The forge's reads for the snapshot: each repo's batch CI and its base CI. `forge` is called
+/// with (checkout path, branch).
+pub fn forge_reads(rows: &[RepoRow], batches: &BTreeMap<String, Read<Option<Batch>>>, _carry: &Carry, forge: &dyn Fn(&str, &str) -> Result<String, String>) -> (BTreeMap<String, Read<Ci>>, BTreeMap<String, Read<BaseCi>>) {
+    let (mut ci, mut base_ci) = (BTreeMap::new(), BTreeMap::new());
+    for row in rows {
+        if let Some(Read::Observed(Some(b))) = batches.get(&row.name) {
+            if !b.branch.is_empty() {
+                let read = match forge(&row.root, &b.branch) {
+                    Ok(out) => {
+                        let num = |k: &str| czar_pass::parse_field(&out, k).and_then(|v| v.trim().parse::<u64>().ok()).map(|s| s * 1000);
+                        Read::Observed(Ci { queued_since_ms: num("queued-since"), run_id: czar_pass::parse_field(&out, "run-id").filter(|r| !r.is_empty()), conclusion: czar_pass::parse_field(&out, "run-conclusion"), completed_at_ms: num("run-completed-at") })
+                    }
+                    Err(err) => Read::Unobservable(err),
+                };
+                ci.insert(row.name.clone(), read);
+            }
+        }
+        if let Some(base) = row.landref.as_deref() {
+            let branch = base.split_once('/').map_or(base, |(_, b)| b);
+            let read = match forge(&row.root, branch) {
+                Ok(out) if czar_pass::parse_field(&out, "run-id").is_some() => Read::Observed(BaseCi {
+                    conclusion: czar_pass::parse_field(&out, "run-conclusion"),
+                    head_sha: czar_pass::parse_field(&out, "head-sha").unwrap_or_else(|| "unknown".into()),
+                    run_url: czar_pass::parse_field(&out, "run-url"),
+                    red_suites: out.lines().filter_map(|l| l.strip_prefix("red-suite: ").map(str::to_string)).collect(),
+                }),
+                Ok(_) => Read::Observed(BaseCi::default()),
+                Err(err) => Read::Unobservable(err),
+            };
+            base_ci.insert(row.name.clone(), read);
+        }
+    }
+    (ci, base_ci)
+}
+
 /// `czar.observe`: the landing log, the reconciler's stamp, each queue repository's open batch
 /// (the store projection), certified pool (`LcClient`) and CI (the forge).
 pub fn observe(e: &Effects, input: &str) -> Result<String, String> {
@@ -751,8 +794,10 @@ pub fn observe(e: &Effects, input: &str) -> Result<String, String> {
     let gh_pinned = req.pinned.get("SPIRA_GH").cloned().unwrap_or_default();
     let metrics = req.pinned.get("SPIRA_METRICS_ENDPOINT").cloned();
     let forge = req.pinned.get("SPIRA_FORGE").cloned().unwrap_or_else(|| "forge".into());
+    let mut rows = vec![];
     for name in reg.all() {
         let land = reg.land(&name);
+        let landref = spira_config::repos::landref(&reg, &name).filter(|b| !b.is_empty());
         let Some(path) = reg.root(&name).filter(|p| !p.is_empty()) else { continue };
         let batch = match (&views, &refreshed) {
             (Ok(v), Ok(())) => match v.batch_view(&name) {
@@ -765,38 +810,14 @@ pub fn observe(e: &Effects, input: &str) -> Result<String, String> {
             },
             (Err(err), _) | (_, Err(err)) => Read::Unobservable(format!("could not say: {err}")),
         };
-        if let Read::Observed(Some(b)) = &batch {
-            if !b.branch.is_empty() {
-                let ci = match forge_status(&forge, &path, &b.branch) {
-                    Ok(out) => {
-                        let num = |k: &str| czar_pass::parse_field(&out, k).and_then(|v| v.trim().parse::<u64>().ok()).map(|s| s * 1000);
-                        Read::Observed(Ci { queued_since_ms: num("queued-since"), run_id: czar_pass::parse_field(&out, "run-id").filter(|r| !r.is_empty()), conclusion: czar_pass::parse_field(&out, "run-conclusion"), completed_at_ms: num("run-completed-at") })
-                    }
-                    Err(err) => Read::Unobservable(err),
-                };
-                snap.ci.insert(name.clone(), ci);
-            }
-        }
-        if let Some(base) = spira_config::repos::landref(&reg, &name).filter(|b| !b.is_empty()) {
-            let branch = base.split_once('/').map_or(base.as_str(), |(_, b)| b).to_string();
-            let read = match forge_status(&forge, &path, &branch) {
-                Ok(out) if czar_pass::parse_field(&out, "run-id").is_some() => Read::Observed(BaseCi {
-                    conclusion: czar_pass::parse_field(&out, "run-conclusion"),
-                    head_sha: czar_pass::parse_field(&out, "head-sha").unwrap_or_else(|| "unknown".into()),
-                    run_url: czar_pass::parse_field(&out, "run-url"),
-                    red_suites: out.lines().filter_map(|l| l.strip_prefix("red-suite: ").map(str::to_string)).collect(),
-                }),
-                Ok(_) => Read::Observed(BaseCi::default()),
-                Err(err) => Read::Unobservable(err),
-            };
-            snap.base_ci.insert(name.clone(), read);
-        }
         if matches!(land.as_str(), "queue" | "queue.local") {
             let certified = certified_pool(&lc, &name);
             snap.certified.insert(name.clone(), certified);
         }
+        rows.push(RepoRow { name: name.clone(), land, root: path, landref });
         snap.open_batch.insert(name, batch);
     }
+    (snap.ci, snap.base_ci) = forge_reads(&rows, &snap.open_batch, &req.carry, &|path, branch| forge_status(&forge, path, branch));
     if snap.base_ci.values().any(|b| matches!(b, Read::Unobservable(_))) {
         snap.gh_budget = spent_budget(&gh_pinned, metrics.as_deref(), snap.now_ms / 1000);
     }
