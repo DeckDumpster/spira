@@ -386,8 +386,11 @@ fn sibling_in_flight(conn: &Conn, id: &str, repo: &str) -> bool {
             .is_some_and(|r| matches!(r.state, Submitted | Certified | InDelivery | Landed))
 }
 
+/// A commit's sha, subject and full message.
+type Commit = (String, String, String);
+
 /// The git reads behind `finishing_refusal`: the fork with the landing ref and the commits above it.
-fn branch_evidence(root: &std::path::Path, landref: &str, tip: &str, stack_tips: &[String]) -> (Option<String>, Option<Vec<(String, String, String)>>) {
+fn branch_evidence(root: &std::path::Path, landref: &str, tip: &str, stack_tips: &[String]) -> (Option<String>, Option<Vec<Commit>>) {
     let fork = crate::git_evidence::git_output(root, &["merge-base", landref, tip]).map(|f| f.trim().to_string()).filter(|f| !f.is_empty());
     let mut args = vec!["log".to_string(), "--no-merges".to_string(), "--format=%H%x1f%s%x1f%B%x1e".to_string(), tip.to_string(), format!("^{landref}")];
     args.extend(stack_tips.iter().map(|t| format!("^{t}")));
