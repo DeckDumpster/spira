@@ -193,6 +193,33 @@ fn one_round_that_faulted_then_was_abandoned_undriven_counts_once() {
     assert_eq!(carry.repos["spira"].pace.infra, 1);
 }
 
+/// Round `id` certifying after its attribution, its certify leg ending with no verdict.
+fn certify_faults(mut carry: Carry, id: &str, at: u64) -> (Carry, Vec<Act>) {
+    let leg = format!("spira.{id}.c");
+    let rc = RepoCarry { state: State::Certifying, round_key: Some("k".into()), batch: Some(id.into()), members: vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into())], wt: "/w".into(), base: "b1".into(), leg: Some(leg.clone()), run: 1, attributed: true, leg_at_ms: at, pace: carry.repos.get("spira").map(|r| r.pace.clone()).unwrap_or_default(), ..RepoCarry::default() };
+    carry.repos.insert("spira".into(), rc);
+    let ran = runtime::units::UnitRan { handle: runtime::units::UnitHandle::of(NAME, &leg).unwrap(), exit: runtime::units::Exit::Code(1), duration_ms: 1 };
+    on_ran_with(&carry, &ran, &runtime::units::RanOutput::captured(b"queue.sh round certify: refused, nothing ran\n", b""), at + TICK).unwrap()
+}
+
+#[test]
+fn two_different_rounds_that_each_fault_still_write_the_stop_and_page() {
+    let (carry, first) = certify_faults(Carry::default(), "r8", NOW);
+    assert!(!names(&first).contains(&PAUSE), "{first:?}");
+    let (_, second) = certify_faults(carry, "r9", NOW + 5 * TICK);
+    let n = names(&second);
+    assert!(second.iter().any(|a| a.effect == PAUSE && serde_json::from_str::<Leg>(&a.input).is_ok_and(|l| l.bead == "stop")), "{n:?}");
+    assert!(second.iter().any(|a| a.effect == INBOX_APPEND && a.input.contains("ROUNDS STOPPED spira:")), "{n:?}");
+}
+
+#[test]
+fn the_same_round_faulting_twice_counts_once_and_stops_nothing() {
+    let (carry, _) = certify_faults(Carry::default(), "r9", NOW);
+    let (carry, again) = certify_faults(carry, "r9", NOW + 5 * TICK);
+    assert!(!names(&again).contains(&PAUSE) && !names(&again).contains(&INBOX_APPEND), "{again:?}");
+    assert_eq!(carry.repos["spira"].pace.infra, 1);
+}
+
 #[test]
 fn running_legs_are_this_task_s_active_units_by_key() {
     use runtime::units::{UnitDetail, UnitHandle, UnitState};
