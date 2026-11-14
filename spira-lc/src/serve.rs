@@ -292,7 +292,7 @@ fn gc_lines(tick: &state_store::gc::Tick, wall_ms: u64) -> Vec<String> {
 /// the store does not have, and epics are reconciled by the `reconcile-content` verb.
 fn store_sweep<B: state_store::Backend>(store: &crate::control::store::Store<B>, now: i64) -> Result<usize, String> {
     let request = crate::control::served::request_id();
-    let call = crate::control::state::Call { now, request: &request };
+    let call = crate::control::state::Call { now, request: &request, inputs: &crate::control::claimable::Live };
     let argv: Vec<String> = ["mending", "sweep", "--actor", "spira-lc.sweep"].iter().map(|s| s.to_string()).collect();
     match crate::control::state::run(store, &argv, &call) {
         (0, out) => out.trim().parse().map_err(|_| format!("sweep answered {out:?}")),
@@ -633,7 +633,7 @@ mod tests {
     fn lc(store: &crate::control::store::Store<state_store::MemBackend>, argv: &[&str], now: i64) -> String {
         let args: Vec<String> = argv.iter().map(|s| s.to_string()).collect();
         let request = crate::control::served::request_id();
-        let (code, out) = crate::control::state::run(store, &args, &crate::control::state::Call { now, request: &request });
+        let (code, out) = crate::control::state::run(store, &args, &crate::control::state::Call { now, request: &request, inputs: &crate::control::claimable::FIXED });
         assert_eq!(code, 0, "{argv:?}: {out}");
         out
     }

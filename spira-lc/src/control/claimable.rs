@@ -9,6 +9,7 @@ use serde::Serialize;
 use serde_json::json;
 use spira_config::edges::{self, Gate};
 use spira_config::nonwork::{self, SPLIT_LABEL};
+use spira_config::runes::{self, Partition};
 use state_store::Backend;
 
 use super::records::LifecycleRecord;
@@ -192,9 +193,12 @@ pub trait Inputs {
     /// `(issue_type, status)` of each id the content store holds.
     fn statuses(&self, ids: &[String]) -> Result<BTreeMap<String, (String, String)>, String>;
     fn run_dir(&self) -> Result<PathBuf, String>;
+    /// The rune partitions that decide which runes would take a claimable bead.
+    fn partitions(&self, config: &Config) -> Result<Vec<Partition>, String>;
 }
 
 pub struct Config {
+    pub queue_wait: String,
     pub stack_max: u32,
     pub incident_label: String,
     pub scope_label: String,
@@ -207,6 +211,7 @@ impl Inputs for Live {
     fn config(&self) -> Result<Config, String> {
         use spira_config::process::{cfg, cfg_parse};
         Ok(Config {
+            queue_wait: cfg("SPIRA_QUEUE_WAIT_LABEL")?,
             stack_max: cfg_parse::<u32>("SPIRA_STACK_MAX_DEPTH")?.min(STACK_CEILING),
             incident_label: cfg("SPIRA_INCIDENT_LABEL")?,
             scope_label: cfg("SPIRA_SCOPE_LABEL")?,
@@ -222,6 +227,13 @@ impl Inputs for Live {
     fn run_dir(&self) -> Result<PathBuf, String> {
         crate::lifecycle_run_dir()
     }
+
+    fn partitions(&self, config: &Config) -> Result<Vec<Partition>, String> {
+        use spira_config::process::cfg;
+        let home = spira_config::resolve::locate_home_for_process()?;
+        let roster = cfg("SPIRA_RUNES")?;
+        runes::partitions(&home, Some(roster.as_str()), &config.queue_wait, &cfg("SPIRA_OPEN_CHILDREN_LABEL")?)
+    }
 }
 
 pub fn run<B: Backend>(store: &Store<B>, args: &[String], inputs: &dyn Inputs, call: &Call) -> (i32, String) {
@@ -236,13 +248,50 @@ fn answer<B: Backend>(store: &Store<B>, args: &[String], inputs: &dyn Inputs, ca
     if args.len() != 1 + 2 * usize::from(repo.is_some()) {
         return Err("takes only --repo <repo>".into());
     }
-    let config = inputs.config()?;
     let rev = store.contract().head().map_err(|e| e.to_string())?;
     let states = [BeadState::Ready, BeadState::Rework];
     let cands = store
         .records_page(rev, Some(&states), None, None, None, |r| repo.as_ref().is_none_or(|x| r.repo.as_ref() == Some(x)))
         .map_err(|e| e.to_string())?;
-    let mut rows: BTreeMap<String, LifecycleRecord> = cands.into_iter().map(|r| (r.value.row.bead_id.clone(), r.value)).collect();
+    let (rows, views) = view(store, rev, cands.into_iter().map(|r| r.value).collect(), inputs, call.now)?;
+    let cannot_tell = views.values().filter(|v| v.verdict == Verdict::CannotTell).count();
+    let beads: Vec<_> = views
+        .iter()
+        .map(|(id, v)| {
+            json!({
+                "bead_id": id, "verdict": v.verdict, "blocker": v.blocker, "runes": v.runes, "missing": v.missing,
+                "depth": v.depth, "stack": v.stack, "gates": v.gates, "row": state::listed(&rows[id], None),
+            })
+        })
+        .collect();
+    Ok(json!({ "rev": rev, "cannot_tell": cannot_tell, "beads": beads }).to_string())
+}
+
+/// One candidate's answer: the judgement and the runes that would take it.
+pub struct Viewed {
+    pub verdict: Verdict,
+    pub blocker: Option<String>,
+    pub runes: Vec<String>,
+    pub missing: Vec<&'static str>,
+    pub depth: u32,
+    pub stack: Stack,
+    pub gates: BTreeMap<String, Option<Gate>>,
+}
+
+/// The claim view of `cands` (READY and REWORK records), read from the records at `rev` and
+/// the inputs, with the records it consulted. Nothing is kept between calls.
+pub fn view<B: Backend>(
+    store: &Store<B>,
+    rev: u64,
+    cands: Vec<LifecycleRecord>,
+    inputs: &dyn Inputs,
+    now: i64,
+) -> Result<(BTreeMap<String, LifecycleRecord>, BTreeMap<String, Viewed>), String> {
+    if cands.is_empty() {
+        return Ok((BTreeMap::new(), BTreeMap::new()));
+    }
+    let config = inputs.config()?;
+    let mut rows: BTreeMap<String, LifecycleRecord> = cands.into_iter().map(|r| (r.row.bead_id.clone(), r)).collect();
     let cand_ids: Vec<String> = rows.keys().cloned().collect();
     let wanted: BTreeSet<String> = cand_ids.iter().filter_map(|id| rows.get(id)).flat_map(blockers).collect();
     let carriers: BTreeSet<String> = cand_ids.iter().filter_map(|id| rows[id].carried_by.clone()).collect();
@@ -255,21 +304,21 @@ fn answer<B: Backend>(store: &Store<B>, args: &[String], inputs: &dyn Inputs, ca
     let rowless_ids: Vec<String> = wanted.iter().filter(|i| !rows.contains_key(*i)).cloned().collect();
     let rowless = if rowless_ids.is_empty() { BTreeMap::new() } else { inputs.statuses(&rowless_ids)? };
     let run = inputs.run_dir()?;
-    let ctx = context(&config, &run, &rows, &cand_ids, call.now);
-    let mut cannot_tell = 0;
-    let beads: Vec<_> = cand_ids
-        .iter()
-        .map(|id| {
-            let rec = &rows[id];
-            let j = judge(rec, &rows, &rowless, &ctx);
-            cannot_tell += usize::from(j.verdict == Verdict::CannotTell);
-            json!({
-                "bead_id": id, "verdict": j.verdict, "blocker": j.blocker, "missing": j.missing,
-                "depth": j.depth, "stack": j.stack, "gates": j.gates, "row": state::listed(rec, None),
-            })
+    let ctx = context(&config, &run, &rows, &cand_ids, now);
+    let judged: Vec<(String, Judgement)> = cand_ids.iter().map(|id| (id.clone(), judge(&rows[id], &rows, &rowless, &ctx))).collect();
+    let parts = if judged.iter().any(|(_, j)| j.verdict == Verdict::Claimable) { inputs.partitions(&config)? } else { Vec::new() };
+    let views = judged
+        .into_iter()
+        .map(|(id, j)| {
+            let runes = match (j.verdict, &rows[&id].claim) {
+                (Verdict::Claimable, Some(c)) => runes::taking(&c.labels, &parts, &config.queue_wait),
+                _ => Vec::new(),
+            };
+            let v = Viewed { verdict: j.verdict, blocker: j.blocker, runes, missing: j.missing, depth: j.depth, stack: j.stack, gates: j.gates };
+            (id, v)
         })
         .collect();
-    Ok(json!({ "rev": rev, "cannot_tell": cannot_tell, "beads": beads }).to_string())
+    Ok((rows, views))
 }
 
 fn context(config: &Config, run: &Path, rows: &BTreeMap<String, LifecycleRecord>, cands: &[String], now: i64) -> Ctx {
@@ -294,6 +343,38 @@ fn context(config: &Config, run: &Path, rows: &BTreeMap<String, LifecycleRecord>
         conflicts,
         reserved: spira_config::scoped_stop::reserved_ids(run),
         stopped_repos,
+    }
+}
+
+/// Inputs for a unit test: a fixed config, no content store and no run directory.
+#[cfg(test)]
+pub(crate) struct Fixed;
+
+#[cfg(test)]
+pub(crate) static FIXED: Fixed = Fixed;
+
+#[cfg(test)]
+impl Inputs for Fixed {
+    fn config(&self) -> Result<Config, String> {
+        Ok(Config {
+            queue_wait: "queue-wait".into(),
+            stack_max: 4,
+            incident_label: "incident".into(),
+            scope_label: String::new(),
+            no_loop_label: String::new(),
+        })
+    }
+
+    fn statuses(&self, _: &[String]) -> Result<BTreeMap<String, (String, String)>, String> {
+        Ok(BTreeMap::new())
+    }
+
+    fn run_dir(&self) -> Result<PathBuf, String> {
+        Ok(PathBuf::from("/nonexistent/run"))
+    }
+
+    fn partitions(&self, _: &Config) -> Result<Vec<Partition>, String> {
+        Ok(Vec::new())
     }
 }
 

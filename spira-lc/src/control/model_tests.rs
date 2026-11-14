@@ -27,7 +27,7 @@ fn store<B: Backend>(b: B) -> Store<Modeled<B>> {
 fn run<B: Backend>(s: &Store<B>, argv: &[&str]) -> (i32, String) {
     let args: Vec<String> = argv.iter().map(|a| a.to_string()).collect();
     let request = super::served::request_id();
-    state::run(s, &args, &Call { now: AT, request: &request })
+    state::run(s, &args, &Call { now: AT, request: &request, inputs: &crate::control::claimable::FIXED })
 }
 
 fn ok<B: Backend>(s: &Store<B>, argv: &[&str]) -> String {
