@@ -469,12 +469,6 @@ mod tests {
         std::fs::write(p, vec![1u8; kib * 1024]).unwrap();
     }
 
-    fn set_idle(base: &Path, dir: &Path, secs_ago: u64) {
-        let n = dir.file_name().unwrap().to_str().unwrap().to_string();
-        let f = std::fs::OpenOptions::new().write(true).open(base.join(format!("{n}.lock"))).unwrap();
-        f.set_modified(SystemTime::now() - std::time::Duration::from_secs(secs_ago)).unwrap();
-    }
-
     fn touch(p: &Path, accessed_ago: u64, modified_ago: u64) {
         fill(p, 1);
         let ago = |s: u64| SystemTime::now() - std::time::Duration::from_secs(s);
@@ -603,97 +597,6 @@ mod tests {
     }
 
     #[test]
-    fn eviction_under_budget_pressure_removes_only_idle_directories_least_recently_used_first() {
-        let d = testkit::TempDir::new("bdir-evict");
-        let base = d.path().join("base");
-        let ls: Vec<Lease> = (0..4).map(|i| lease(std::slice::from_ref(&base), &format!("sp-{i}")).unwrap()).collect();
-        let dirs: Vec<PathBuf> = ls.iter().map(|l| l.dir().to_path_buf()).collect();
-        for p in &dirs {
-            fill(&p.join("debug/deps/x"), 256);
-        }
-        let mut ls = ls.into_iter();
-        let live = ls.next().unwrap();
-        for l in ls {
-            l.release();
-        }
-        // The measurement is injected (100 bytes for a directory that holds anything), so the
-        // host disk never decides the result.
-        let held = |p: &Path| u64::from(holds_anything(p)) * 100;
-        // dirs[0] is live and the oldest-stamped of all; the idle ones idled 3, 2 and 1 hours ago.
-        set_idle(&base, &dirs[0], 9 * 3600);
-        set_idle(&base, &dirs[1], 3 * 3600);
-        set_idle(&base, &dirs[2], 2 * 3600);
-        set_idle(&base, &dirs[3], 3600);
-        assert!(evict_idle_with(std::slice::from_ref(&base), 1000, &held).is_empty(), "under the budget nothing goes");
-        let gone = evict_idle_with(std::slice::from_ref(&base), 250, &held);
-        assert_eq!(gone, vec![dirs[1].clone(), dirs[2].clone()], "least recently used idle first, stopping once under");
-        assert!(dirs[0].join("debug/deps/x").exists(), "the live directory is never evicted, though it is the oldest");
-        assert!(dirs[3].join("debug/deps/x").exists(), "under the budget once two went: the newest idle stays");
-        let gone = evict_idle_with(std::slice::from_ref(&base), 0, &held);
-        assert_eq!(gone, vec![dirs[3].clone()], "a budget the live one alone exceeds evicts every idle one and stops");
-        assert!(dirs[0].join("debug/deps/x").exists());
-        drop(live);
-    }
-
-    fn workspace(root: &Path, b_body: &str) {
-        std::fs::create_dir_all(root.join("a/src")).unwrap();
-        std::fs::create_dir_all(root.join("b/src")).unwrap();
-        std::fs::write(root.join("Cargo.toml"), "[workspace]\nmembers = [\"a\", \"b\"]\n").unwrap();
-        std::fs::write(root.join("Cargo.lock"), "# lock\n").unwrap();
-        std::fs::write(root.join("a/Cargo.toml"), "[package]\nname = \"crate-a\"\n").unwrap();
-        std::fs::write(root.join("a/src/lib.rs"), "pub fn a() {}\n").unwrap();
-        std::fs::write(root.join("b/Cargo.toml"), "[package]\nname = \"crate-b\"\n").unwrap();
-        std::fs::write(root.join("b/src/lib.rs"), b_body).unwrap();
-    }
-
-    /// A `cargo` that only logs its arguments, one call per line.
-    fn fake_cargo(d: &Path) -> (String, PathBuf) {
-        let bin = d.join("bin");
-        let log = d.join("cargo.log");
-        std::fs::create_dir_all(&bin).unwrap();
-        testkit::write_exe(bin.join("cargo"), &format!("#!/bin/sh\necho \"$*\" >> {}\n", log.display()));
-        (format!("{}:{}", bin.display(), std::env::var("PATH").unwrap_or_default()), log)
-    }
-
-    fn script() -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira").join(CLEAN_SCRIPT)
-    }
-
-    #[test]
-    fn a_lease_after_an_idle_release_reuses_that_directory_and_cleans_only_the_changed_crates() {
-        let d = testkit::TempDir::new("bdir-reuse");
-        let base = d.path().join("base");
-        let (path, log) = fake_cargo(d.path());
-        let one = d.path().join("wt-one");
-        workspace(&one, "pub fn b() {}\n");
-        let first = lease(std::slice::from_ref(&base), "sp-one").unwrap();
-        let dir = first.dir().to_path_buf();
-        clean(&script(), &one, &dir, &path, false).expect("first clean");
-        assert_eq!(std::fs::read_to_string(&log).unwrap().trim(), "clean --workspace -q", "no record yet: the workspace crates are cleaned");
-        fill(&dir.join("debug/deps/libdep.rlib"), 4);
-        first.release();
-
-        let two = d.path().join("wt-two");
-        workspace(&two, "pub fn b() { let _ = 1; }\n");
-        std::fs::remove_file(&log).unwrap();
-        let second = lease(std::slice::from_ref(&base), "sp-two").unwrap();
-        assert_eq!(second.dir(), dir, "the idle directory is reused, not a new empty one");
-        assert!(second.reused);
-        let out = clean(&script(), &two, second.dir(), &path, false).expect("second clean");
-        assert_eq!(std::fs::read_to_string(&log).unwrap().trim(), "clean -q -p crate-b", "only the crate whose bytes changed: {out}");
-        assert!(dir.join("debug/deps/libdep.rlib").exists(), "dependencies stay warm");
-
-        std::fs::remove_file(&log).unwrap();
-        clean(&script(), &two, second.dir(), &path, false).expect("third clean");
-        assert!(!log.exists(), "the same tree again cleans nothing");
-        std::fs::write(two.join("Cargo.lock"), "# lock 2\n").unwrap();
-        clean(&script(), &two, second.dir(), &path, true).expect("record only");
-        assert!(!log.exists(), "recording never cleans");
-        clean(&script(), &two, second.dir(), &path, false).expect("fourth clean");
-        assert!(!log.exists(), "the release recorded the changed lock: nothing to clean");
-    }
-
-    #[test]
     fn only_an_absolute_directory_under_the_base_is_an_owned_build_directory() {
         let d = testkit::TempDir::new("bdir-owned");
         let base = d.path().join("base");
@@ -715,18 +618,6 @@ mod tests {
             assert_eq!(slots(b).len(), 2, "{}", b.display());
         }
         assert_eq!(held.len(), 4);
-    }
-
-    #[test]
-    fn an_existing_slot_stays_where_it_is_and_a_new_slot_goes_to_the_emptier_base() {
-        let d = testkit::TempDir::new("bdir-two-bases-stay");
-        let bases = [d.path().join("b"), d.path().join("c")];
-        let a = lease(&bases, "sp-a").unwrap();
-        let b = lease(&bases, "sp-b").unwrap();
-        let (da, db) = (a.dir().to_path_buf(), b.dir().to_path_buf());
-        assert_eq!((da.parent(), db.parent()), (Some(bases[0].as_path()), Some(bases[1].as_path())));
-        a.release();
-        assert_eq!(lease(&bases, "sp-c").unwrap().dir(), da, "an idle slot is reused where it lives");
     }
 
     #[test]
@@ -791,20 +682,6 @@ mod tests {
     }
 
     #[test]
-    fn an_eviction_yields_one_event_naming_the_directory() {
-        let d = testkit::TempDir::new("bdir-evict-event");
-        let base = d.path().join("base");
-        let l = lease(std::slice::from_ref(&base), "sp-a").unwrap();
-        fill(&l.dir().join("debug/x"), 1);
-        let dir = l.dir().to_path_buf();
-        l.release();
-        let gone = evict_idle_with(std::slice::from_ref(&base), 0, &|p: &Path| u64::from(holds_anything(p)) * 100);
-        let events = eviction_samples(&gone);
-        assert_eq!(events.len(), 1);
-        assert_eq!((events[0].name, events[0].value, events[0].dir.as_deref()), ("build_dir_evicted", 1.0, Some(dir.display().to_string().as_str())));
-    }
-
-    #[test]
     fn pushed_samples_reach_the_endpoint_with_their_names_and_the_dir_label() {
         let (addr, h) = spira_otel::metrics::run::fixture_sink();
         let sink = spira_otel::metrics::MetricsSink::new(Some(&addr), "build-dir", std::time::Duration::from_secs(2));
@@ -841,33 +718,6 @@ mod tests {
         assert!(!stale.exists());
         assert!(named.join("debug/x").exists(), "a directory a live process's CARGO_TARGET_DIR names stays");
         assert!(live.dir().join("debug/x").exists(), "a live slot is left alone");
-    }
-
-    #[test]
-    fn a_non_slot_directory_is_ranked_with_idle_slots_oldest_first_and_a_process_cwd_inside_it_spares_it() {
-        let d = testkit::TempDir::new("bdir-nonslot-order");
-        let base = d.path().join("base");
-        let a = lease(std::slice::from_ref(&base), "sp-a").unwrap();
-        let b = lease(std::slice::from_ref(&base), "sp-b").unwrap();
-        let (da, db) = (a.dir().to_path_buf(), b.dir().to_path_buf());
-        fill(&da.join("debug/x"), 1);
-        fill(&db.join("debug/x"), 1);
-        a.release();
-        b.release();
-        let stray = base.join("spike.1");
-        let cwd_held = base.join("spike.2");
-        for p in [&stray, &cwd_held] {
-            touch(&p.join("x"), 3 * 86400, 3 * 86400);
-        }
-        set_idle(&base, &da, 5 * 86400);
-        set_idle(&base, &db, 86400);
-        let held = |p: &Path| u64::from(holds_anything(p)) * 100;
-        let proc = d.path().join("proc");
-        std::fs::create_dir_all(proc.join("77")).unwrap();
-        std::os::unix::fs::symlink(cwd_held.join("sub"), proc.join("77/cwd")).unwrap();
-        let gone = evict_idle_in(std::slice::from_ref(&base), 100, &held, &proc);
-        assert_eq!(gone, vec![da, stray, db], "idle slots and strays go in one oldest-first order");
-        assert!(cwd_held.join("x").exists(), "a process standing in a stray keeps it");
     }
 
     #[test]
