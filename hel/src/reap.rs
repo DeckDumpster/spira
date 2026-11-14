@@ -892,6 +892,14 @@ mod tests {
         let run = tempdir().path().to_path_buf();
         assert!(holder_witnesses(&run, "sp-m1", &Held(vec!["manual".into()])).is_some());
         assert_eq!(holder_witnesses(&run, "sp-m2", &Held(vec![])), None);
+
+        struct Dropped;
+        impl ClaimProbe for Dropped {
+            fn probe(&self, id: &str) -> Result<Option<spira_store::lc_state::Row>, String> {
+                Ok(Some(spira_store::lc_state::Row { bead_id: id.into(), state: "DROPPED".into(), holds: vec![], ..Default::default() }))
+            }
+        }
+        assert_eq!(holder_witnesses(&run, "sp-m4", &Dropped), None);
     }
 
     #[test]

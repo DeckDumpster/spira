@@ -11,7 +11,8 @@ CREATE DATABASE IF NOT EXISTS spira_lifecycle;
 USE spira_lifecycle;
 
 -- The bead machine's row. `holds` is a JSON array of hold kinds (poison/ask/wait/manual);
--- holds suspend a state without losing it, so they are not folded into `state` itself.
+-- holds suspend a state without losing it, so they are not folded into `state` itself;
+-- empty on every terminal row.
 CREATE TABLE IF NOT EXISTS bead (
     bead_id     VARCHAR(64) NOT NULL PRIMARY KEY,
     state       VARCHAR(16) NOT NULL,

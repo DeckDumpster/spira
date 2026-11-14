@@ -505,6 +505,7 @@ pub fn apply(row: &BeadRow, ev: &BeadEvent) -> Outcome<BeadRow> {
         out.row.holder = None;
         out.row.persona = None;
         out.row.lease_until = None;
+        out.row.holds.clear();
     }
     out
 }
@@ -1679,6 +1680,44 @@ mod tests {
 
     fn bg(tip: &str) -> BreakGlass {
         BreakGlass { reason: "hand-mended".into(), evidence: "npm test 101/0".into(), evidence_tip: tip.into() }
+    }
+
+    #[test]
+    fn a_terminal_transition_clears_every_hold() {
+        let sets = [vec![HoldKind::Manual], vec![HoldKind::Wait, HoldKind::Manual], vec![HoldKind::Poison]];
+        let drop = || BeadEventKind::Drop { reason: DropReason::Unwanted };
+        let cob = || BeadEventKind::ContentOnBase { proof: "p".into() };
+        let cases: Vec<(BeadState, BeadEventKind)> = vec![
+            (BeadState::Ready, drop()),
+            (BeadState::Working, drop()),
+            (BeadState::Rework, drop()),
+            (BeadState::Ready, BeadEventKind::Supersede { by: "sp-99".into() }),
+            (BeadState::Ready, cob()),
+            (BeadState::Certified, cob()),
+            (BeadState::InDelivery, BeadEventKind::Delivered { merge_sha: "s".into(), proof: "p".into() }),
+        ];
+        for holds in &sets {
+            for (state, kind) in &cases {
+                let mut r = row(*state);
+                r.holds = holds.iter().copied().collect();
+                let out = apply(&r, &ev(*state, 0, kind.clone()));
+                assert!(out.applied && out.row.holds.is_empty(), "{state:?} {kind:?} {holds:?}: {:?} {:?}", out.refusal, out.row.holds);
+            }
+        }
+    }
+
+    #[test]
+    fn holds_survive_a_non_terminal_move_and_an_ask_still_refuses_drop() {
+        let mut r = row(BeadState::Ready);
+        r.holds.insert(HoldKind::Manual);
+        let out = apply(&r, &ev(BeadState::Ready, 0, BeadEventKind::Express));
+        assert!(out.applied, "{:?}", out.refusal);
+        assert!(out.row.holds.contains(&HoldKind::Manual));
+
+        let mut a = row(BeadState::Ready);
+        a.holds.insert(HoldKind::Ask);
+        let out = apply(&a, &ev(BeadState::Ready, 0, BeadEventKind::Drop { reason: DropReason::Unwanted }));
+        assert!(!out.applied && matches!(out.refusal, Some(Refusal::AwaitingReply { .. })), "{:?}", out.refusal);
     }
 
     #[test]
