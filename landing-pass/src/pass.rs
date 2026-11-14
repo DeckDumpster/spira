@@ -607,7 +607,7 @@ impl<'a> Pass<'a> {
             return self.certify_queued(w, br, id, bead, &tip);
         }
         let g = self.run_gate(&w.repo.name, br, id);
-        self.certify_judge(w, br, id, bead, &tip, g)
+        self.certify_judge(w, br, id, bead, &tip, g, &Cell::new(false))
     }
 
     /// A member cut into a round before its gate ran: queue the gate beside the round. The
@@ -629,7 +629,7 @@ impl<'a> Pass<'a> {
         if q.find(name, br, &tip).is_some() {
             return;
         }
-        if self.files.backing_off(br, &tip, self.clock.now(), self.s.gate_backoff) {
+        if self.files.backing_off(br, &tip, self.clock.now()) {
             return;
         }
         let fix = is_base_fix(bead.external_ref.as_deref(), name);
@@ -650,9 +650,13 @@ impl<'a> Pass<'a> {
         } else if let Some(d) = q.take_done(name, br, tip) {
             self.log(&format!("CHECK6 {id}: gate-worker's verdict for {br} at {tip} is in — applying it"));
             self.files.note_gated(br, tip);
-            return self.certify_judge(w, br, id, bead, tip, d.run);
+            let regate = Cell::new(false);
+            let flow = self.certify_judge(w, br, id, bead, tip, d.run, &regate);
+            if !regate.get() || self.files.deferred_to_round(br, tip) {
+                return flow;
+            }
         }
-        if self.files.backing_off(br, tip, self.clock.now(), self.s.gate_backoff) {
+        if self.files.backing_off(br, tip, self.clock.now()) {
             self.log(&format!("CHECK6 {id}: {br} at {tip} found no room for a gate lately — not queued again yet"));
             return Flow::Next;
         }
@@ -683,7 +687,7 @@ impl<'a> Pass<'a> {
     }
 
     /// §4.2 after the gate: the one decision this pass makes for this branch.
-    fn certify_judge(&self, w: &Walk, br: &str, id: &str, bead: &BeadRow, tip: &str, g: GateRun) -> Flow {
+    fn certify_judge(&self, w: &Walk, br: &str, id: &str, bead: &BeadRow, tip: &str, g: GateRun, regate: &Cell<bool>) -> Flow {
         let repo = w.repo;
         let name = &repo.name;
         let tip = tip.to_string();
@@ -722,7 +726,7 @@ impl<'a> Pass<'a> {
                 GateOutcome::NoVerdict if dead_run.is_none() => {
                     let host_cause = matches!(reason.as_str(), "scratch-short" | "died" | "over-cap");
                     if host_cause {
-                        self.files.back_off(br, &tip, self.clock.now());
+                        self.files.back_off(br, &tip, self.clock.now() + self.s.gate_backoff.max(0) as u64);
                     }
                     self.lib.noverdict(id, br, name, &reason, g.outcome.word(), &g.out);
                     if !moved && self.files.bump_infra(br, &tip) >= self.s.noverdict_max.max(1) && !host_cause {
@@ -743,6 +747,7 @@ impl<'a> Pass<'a> {
                             );
                         }
                     }
+                    regate.set(!moved);
                 }
                 _ => {
                     let (closed, st) = self.handed_on_now(id);
@@ -888,7 +893,7 @@ impl<'a> Pass<'a> {
             let job = inflight.remove(pos);
             self.set_run_inflight(&name, &inflight);
             let id = job.br.trim_start_matches("spira/");
-            let _ = self.certify_judge(w, &job.br, id, &job.bead, &job.tip, GateRun::parse(rc, out));
+            let _ = self.certify_judge(w, &job.br, id, &job.bead, &job.tip, GateRun::parse(rc, out), &Cell::new(false));
             if cut.is_none() {
                 self.refresh(w, &mut pending, &mut retry, &taken);
             }

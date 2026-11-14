@@ -126,9 +126,9 @@ impl Files {
     }
 
     /// Note that the gate could not judge `branch` at `tip` for want of the host's room.
-    pub fn back_off(&self, branch: &str, tip: &str, now: u64) {
+    pub fn back_off(&self, branch: &str, tip: &str, until: u64) {
         let _ = fs::create_dir_all(self.run.join("gate-backoff"));
-        let _ = atomic_write(&self.backoff_file(branch), &format!("{tip}\n{now}\n"));
+        let _ = atomic_write(&self.backoff_file(branch), &format!("{tip}\n{until}\n"));
     }
 
     fn pass_refused_file(&self, branch: &str) -> PathBuf {
@@ -264,12 +264,12 @@ impl Files {
         fs::read_to_string(self.round_deferred_file(branch)).map(|t| t.trim() == tip).unwrap_or(false)
     }
 
-    /// True while `window` seconds have not passed since [`Files::back_off`] for this very tip.
-    pub fn backing_off(&self, branch: &str, tip: &str, now: u64, window: i64) -> bool {
+    /// True while `now` is before the `until` that [`Files::back_off`] recorded for this very tip.
+    pub fn backing_off(&self, branch: &str, tip: &str, now: u64) -> bool {
         let Ok(t) = fs::read_to_string(self.backoff_file(branch)) else { return false };
         let mut l = t.lines();
-        let (Some(was), Some(at)) = (l.next(), l.next().and_then(|n| n.parse::<u64>().ok())) else { return false };
-        was == tip && (now.saturating_sub(at) as i64) < window
+        let (Some(was), Some(until)) = (l.next(), l.next().and_then(|n| n.parse::<u64>().ok())) else { return false };
+        was == tip && now < until
     }
 
     pub fn write_status(&self, st: &StatusFile) {
@@ -388,13 +388,13 @@ mod tests {
     fn a_backed_off_tip_waits_out_its_window_and_a_moved_tip_does_not() {
         let d = crate::testutil::tmpdir("backoff");
         let f = Files::new(&d);
-        assert!(!f.backing_off("spira/sp-a", "t1", 100, 300));
-        f.back_off("spira/sp-a", "t1", 100);
-        assert!(f.backing_off("spira/sp-a", "t1", 399, 300));
-        assert!(!f.backing_off("spira/sp-a", "t1", 400, 300));
-        assert!(!f.backing_off("spira/sp-a", "t2", 150, 300));
+        assert!(!f.backing_off("spira/sp-a", "t1", 100));
+        f.back_off("spira/sp-a", "t1", 400);
+        assert!(f.backing_off("spira/sp-a", "t1", 399));
+        assert!(!f.backing_off("spira/sp-a", "t1", 400));
+        assert!(!f.backing_off("spira/sp-a", "t2", 150));
         f.clear_noverdict("spira/sp-a");
-        assert!(!f.backing_off("spira/sp-a", "t1", 150, 300));
+        assert!(!f.backing_off("spira/sp-a", "t1", 150));
     }
 
     #[test]

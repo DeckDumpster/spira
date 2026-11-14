@@ -70,13 +70,20 @@ fn gate_queued(run_dir: &Path) -> Option<std::collections::HashSet<String>> {
     Some(beads)
 }
 
+/// The landing pass is deliberately holding this bead's gate back until a time it wrote down.
+fn backing_off(run_dir: &Path, bead_id: &str, now: i64) -> bool {
+    let Ok(t) = fs::read_to_string(run_dir.join("gate-backoff").join(format!("spira-{bead_id}"))) else { return false };
+    t.lines().nth(1).and_then(|n| n.parse::<i64>().ok()).is_some_and(|until| until > now)
+}
+
 /// SUBMITTED beads nothing will gate: no job queued, and no record that the host gate was
 /// exhausted on them and the round is their trial.
-fn ungated_submitted(run_dir: &Path, rows: &[spira_store::lc_state::Row]) -> std::collections::HashSet<String> {
+fn ungated_submitted(run_dir: &Path, rows: &[spira_store::lc_state::Row], now: i64) -> std::collections::HashSet<String> {
     let Some(queued) = gate_queued(run_dir) else { return Default::default() };
     rows.iter()
         .filter(|r| r.state == "SUBMITTED" && !queued.contains(&r.bead_id))
         .filter(|r| !run_dir.join("gate-deferred").join(format!("spira-{}", r.bead_id)).exists())
+        .filter(|r| !backing_off(run_dir, &r.bead_id, now))
         .map(|r| r.bead_id.clone())
         .collect()
 }
@@ -165,7 +172,7 @@ pub fn classify_live(cfg: &Config) -> Result<Classified, String> {
     let working = ids(&|r| r.working());
     let held_ask = ids(&|r| r.held("ask"));
     let held_poison = ids(&|r| r.held("poison"));
-    let ungated = ungated_submitted(&run_dir, &lc_rows);
+    let ungated = ungated_submitted(&run_dir, &lc_rows, now);
     let stacked_on: std::collections::HashMap<String, Vec<String>> = lc_rows
         .iter()
         .filter(|r| !r.terminal() && !r.stack.is_empty())
@@ -786,9 +793,24 @@ mod ungated_submitted_tests {
         fs::create_dir_all(run.join("gate-deferred")).unwrap();
         let row = |id: &str| spira_store::lc_state::Row { bead_id: id.into(), state: "SUBMITTED".into(), ..Default::default() };
         let rows = [row("sp-a"), row("sp-b")];
-        assert_eq!(ungated_submitted(&run, &rows).len(), 2, "the matcher must be able to find an ungated bead");
+        assert_eq!(ungated_submitted(&run, &rows, 1000).len(), 2, "the matcher must be able to find an ungated bead");
         fs::write(run.join("gate-deferred/spira-sp-b"), "tip\n").unwrap();
-        assert_eq!(ungated_submitted(&run, &rows), ["sp-a".to_string()].into_iter().collect());
+        assert_eq!(ungated_submitted(&run, &rows, 1000), ["sp-a".to_string()].into_iter().collect());
+    }
+
+    #[test]
+    fn a_submitted_bead_whose_gate_is_backing_off_is_not_ungated() {
+        let run = testkit::TempDir::new("strand-backoff");
+        fs::create_dir_all(run.join("gate-worker/inbox")).unwrap();
+        fs::create_dir_all(run.join("gate-backoff")).unwrap();
+        let row = |id: &str| spira_store::lc_state::Row { bead_id: id.into(), state: "SUBMITTED".into(), ..Default::default() };
+        let rows = [row("sp-a"), row("sp-b")];
+        let now = 1000;
+        assert_eq!(ungated_submitted(&run, &rows, now).len(), 2, "the matcher must be able to find an ungated bead");
+        fs::write(run.join("gate-backoff/spira-sp-b"), format!("t1\n{}\n", now + 60)).unwrap();
+        assert_eq!(ungated_submitted(&run, &rows, now), ["sp-a".to_string()].into_iter().collect());
+        fs::write(run.join("gate-backoff/spira-sp-b"), format!("t1\n{}\n", now - 1)).unwrap();
+        assert_eq!(ungated_submitted(&run, &rows, now).len(), 2, "an ended backoff is a stranding again");
     }
 
     #[test]

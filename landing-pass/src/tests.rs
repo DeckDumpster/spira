@@ -2294,6 +2294,16 @@ fn an_over_cap_verdict_from_gate_worker_is_gated_again_after_the_backoff() {
 }
 
 #[test]
+fn a_no_verdict_from_gate_worker_is_queued_again_in_the_same_pass() {
+    let h = h_worker(LandMode::Queue);
+    h.closed("sp-a", "t1");
+    let q = crate::gateq::GateQueue::new(&h.s.run);
+    file_verdict(&h, "sp-a", "t1", 75, "gate: VERDICT=NO_VERDICT reason=deadline branch=b repo=spira suite=- (late)\n");
+    h.run();
+    assert_eq!(q.queued().len(), 1, "{:?}", h.lib.calls.borrow());
+}
+
+#[test]
 fn a_tip_whose_gate_is_killed_over_cap_twice_goes_to_a_round_and_is_not_gated_a_third_time() {
     let h = h_worker(LandMode::Queue);
     h.closed("sp-a", "t1");
