@@ -22,6 +22,11 @@ pub const EXIT_OK: i32 = 0;
 pub const EXIT_FINDING: i32 = 1;
 pub const EXIT_CANNOT_CHECK: i32 = 3;
 
+/// A config that cannot resolve is "could not check", never a verdict from empty data.
+pub fn init_verdict(config_resolved: bool) -> Option<i32> {
+    (!config_resolved).then_some(EXIT_CANNOT_CHECK)
+}
+
 // =============================================================================================
 // harness_in / harness_in_ref — thin wrappers; the real filtering is exclude.sh's (unchanged,
 // still bash, out of this bead's scope). Kept as functions here only so `foreign`/`copies`
@@ -259,7 +264,7 @@ pub fn check(w: &dyn World, escalate_flag: bool) -> i32 {
     // to match tags to the MANIFEST commit when the sidecar is empty. A release-only install
     // with no sidecar and no checkout cannot be asked the question at all: exit 0, named
     // (sp-wecsq's case). Returning earlier, whenever SPIRA_REPO had no .git, silenced
-    // artifact-mode verdicts too (test-skew-check-release, the regression this fixes).
+    // artifact-mode verdicts too.
     if release_tag.is_empty() && !w.is_git_repo(&repo_path) {
         w.out(&format!(
             "skew: not applicable — no release tag recorded for {activated_name} and no harness checkout at SPIRA_REPO ({}) to match tags against",

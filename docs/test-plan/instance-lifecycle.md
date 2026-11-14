@@ -152,9 +152,9 @@ The cost column is ci_secs from the main-push run; NA means not run there.
 | 32 | test-cadence-tool.sh::all | T4-ish, real systemd (gate.yml, host-run) | Split. DEMOTE-TO-T1 the drop-in text, span→OnCalendar mapping and refusals. Keep the real-systemd "never disarms" case (sp-dah) host-run in gate.yml, not acceptance. |
 | 33 | test-owned.sh::all | T2, 19 | KEEP. Render once, reuse. |
 | 34 | test-unit-drift.sh::all | T2, 20 | KEEP. Share the render→DEST fixture with uninstall and owned. |
-| 35 | test-skew-check-release.sh::all | T2, 2 | KEEP (exemplar 0/1/3 contract) |
-| 36 | test-skew-foreign.sh::all | T2, 3 | KEEP |
-| 37 | test-skew-refresh.sh::all | T2, 2 | KEEP |
+| 35 | skew/src/tests.rs (Rust) | T2, 2 | MOVED to Rust; suite deleted |
+| 36 | skew/src/tests.rs (Rust) | T2, 3 | MOVED to Rust; suite deleted |
+| 37 | skew/src/tests.rs, skew/src/real.rs (Rust) | T2, 2 | MOVED to Rust; suite deleted |
 | 38 | the retired uninstall suite::all; the retired install-rehearsal suite::stray sweep | T2, 78; T4, gate.yml host-run | KEEP the retired uninstall suite, but share the render fixture and drop the git bare/clone used only for the landref bypass (use FORCE or artifact mode). Target ~20 s. |
 | 39 | *(none)* | — | GAP G1 |
 | 40 | the retired install-rehearsal suite::all; test-cadence.sh | T4, gate.yml host-run | test-install-rehearsal: KEEP (case "sentinel timer enabled" deleted: it flipped under load, `is-enabled` read `disabled` right after install; coverage left uncovered here is that the installer enables the sentinel timer, only the later start of the timer is still exercised; a follow-on may re-add it once it waits for systemd to settle); case "uninstall.sh --yes exits 0" also deleted: it flipped under host load (exit 124 at its 120 s guard, then red in a round with no uninstall change); coverage left uncovered here is uninstall.sh's exit status, only the post-uninstall clean-state assertions still exercise its effect; a follow-on that makes the exit deterministic under load may re-add it), runs directly on gate.yml's own runner (real podman + user systemd), never nested inside the corpus's testenv container (which carries no podman) and never in acceptance.yml. test-cadence.sh: DELETE. Its formula check is covered by test-watchd-unit-name.sh (hermetic), and its live half by the rehearsal. |

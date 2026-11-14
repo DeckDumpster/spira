@@ -1,7 +1,5 @@
 //! Unit tests over a `Fake` [`crate::ports::World`] — one scenario per decision point
-//! skew.sh's own dedicated suites exercised (test-skew-check-release.sh, test-skew-copies.sh,
-//! test-skew-foreign.sh, test-skew-local-release.sh, test-skew-refresh.sh — all retired by
-//! this bead, their coverage moved here).
+//! skew.sh's own dedicated suites exercised; those suites are retired and their coverage lives here.
 
 use crate::ports::{StatusRow, World};
 use crate::*;
@@ -273,6 +271,7 @@ fn check_no_releases_env_cannot_check() {
     assert!(f.stderr_joined().contains("SPIRA_RELEASES is not set"));
 }
 
+// covers: UC-instance-lifecycle-35
 #[test]
 fn check_not_latest_and_manifest_mismatch_both_fire() {
     let f = Fake::default();
@@ -296,6 +295,7 @@ fn check_not_latest_and_manifest_mismatch_both_fire() {
     assert!(out.contains("MANIFEST-MISMATCH"), "{out}");
 }
 
+// covers: UC-instance-lifecycle-35
 #[test]
 fn check_clean_when_tag_matches_and_is_latest() {
     let f = Fake::default();
@@ -434,6 +434,7 @@ fn check_local_unresolvable_divergence_is_cannot_verify() {
 
 // ============================================================================ foreign()
 
+// covers: UC-instance-lifecycle-36
 #[test]
 fn foreign_override_env_exempts() {
     let f = Fake::default();
@@ -447,6 +448,7 @@ fn foreign_missing_args_refuses() {
     assert_eq!(foreign(&f, "", "base", "ref"), 1);
 }
 
+// covers: UC-instance-lifecycle-36
 #[test]
 fn foreign_exempts_own_repo() {
     let f = Fake::default();
@@ -462,6 +464,7 @@ fn foreign_no_copy_in_ref_allows() {
     assert_eq!(foreign(&f, "/some/repo", "base", "ref"), 0);
 }
 
+// covers: UC-instance-lifecycle-36
 #[test]
 fn foreign_refuses_a_change_inside_the_vendored_copy() {
     let f = Fake::default();
@@ -548,6 +551,7 @@ fn gap_not_a_checkout_cannot_check() {
     assert!(f.stderr_joined().contains("not a git checkout"));
 }
 
+// covers: UC-instance-lifecycle-37
 #[test]
 fn gap_behind_is_a_finding() {
     let f = Fake::default();
@@ -822,6 +826,7 @@ fn refresh_checkout_mode_declines_off_base_branch() {
     assert!(f.stdout_joined().contains("declined"));
 }
 
+// covers: UC-instance-lifecycle-37
 #[test]
 fn refresh_checkout_mode_stages_and_swaps() {
     let f = Fake::default();
@@ -1064,4 +1069,67 @@ fn refresh_escalates_again_for_a_new_uncleared_lock_after_the_old_one_vanished()
 fn the_refresh_stamp_is_read_from_the_clock_in_process() {
     assert_eq!(crate::real::stamp_of(1_793_166_343), "20261028T054543Z");
     assert_eq!(crate::real::stamp_of(0), "19700101T000000Z");
+}
+
+// ============================================================================ plan cells 35-37
+
+// covers: UC-instance-lifecycle-35
+#[test]
+fn check_cannot_check_without_current_or_manifest_and_reads_artifact_tags_through_gh() {
+    let f = Fake::default();
+    f.set_env("SPIRA_RELEASES", "/releases");
+    f.symlinks.borrow_mut().insert(PathBuf::from("/releases/current"), "rel-1".into());
+    assert_eq!(check(&f, false), EXIT_CANNOT_CHECK, "no MANIFEST");
+    assert!(f.stderr_joined().contains("MANIFEST missing"), "{}", f.stderr_joined());
+
+    let g = Fake::default();
+    g.set_env("SPIRA_RELEASES", "/releases");
+    assert_eq!(check(&g, false), EXIT_CANNOT_CHECK, "no current");
+
+    let sha = "a".repeat(40);
+    let h = Fake::default();
+    h.set_env("SPIRA_RELEASES", "/releases");
+    h.set_env("SPIRA_REPO", "/repo");
+    h.set_env("SPIRA_RELEASE_REPO", "owner/repo");
+    h.git_repos.borrow_mut().push(PathBuf::from("/repo"));
+    h.symlinks.borrow_mut().insert(PathBuf::from("/releases/current"), "rel-1".into());
+    h.files.borrow_mut().insert(PathBuf::from("/releases/rel-1/MANIFEST"), format!("commit {sha}\n"));
+    h.files.borrow_mut().insert(PathBuf::from("/releases/.tags/rel-1"), "spira-release-spira-20260101T000000Z".into());
+    h.rev_parse.borrow_mut().insert("/repo|spira-release-spira-20260101T000000Z^{commit}".into(), sha);
+    *h.gh_tags_json.borrow_mut() = Some(Ok(
+        r#"[{"isDraft":true,"tagName":"spira-release-spira-20260301T000000Z"},{"isDraft":false,"tagName":"spira-release-spira-20260101T000000Z"}]"#.into(),
+    ));
+    assert_eq!(check(&h, false), EXIT_OK, "{}{}", h.stdout_joined(), h.stderr_joined());
+    assert!(h.stdout_joined().contains("in effect"));
+}
+
+// covers: UC-instance-lifecycle-36
+#[test]
+fn init_guard_reports_could_not_check_when_config_cannot_resolve() {
+    assert_eq!(init_verdict(false), Some(EXIT_CANNOT_CHECK));
+    assert_eq!(init_verdict(true), None);
+}
+
+// covers: UC-instance-lifecycle-37
+#[test]
+fn refresh_stashes_dirty_files_and_advances_with_no_lease_consulted() {
+    let f = dirty_checkout(" M conf.sh\n");
+    f.diff_statuses.borrow_mut().insert("/repo|HEAD..origin/main".into(), vec![('M', "spira/conf.sh".into())]);
+    f.show_files.borrow_mut().insert("/repo|origin/main|spira/conf.sh".into(), b"new".to_vec());
+    assert_eq!(refresh(&f, Some("/repo")), 0);
+    assert!(f.stdout_joined().contains("stashed dirty tracked files"), "{}", f.stdout_joined());
+    assert!(f.written.borrow().contains_key(&PathBuf::from("/repo/spira/conf.sh")));
+}
+
+// covers: UC-instance-lifecycle-35
+#[test]
+fn check_cannot_check_when_gh_cannot_list_the_forge_releases_and_says_why() {
+    let f = Fake::default();
+    f.set_env("SPIRA_REPO", "/repo");
+    f.set_env("SPIRA_RELEASE_REPO", "owner/repo");
+    f.git_repos.borrow_mut().push(PathBuf::from("/repo"));
+    *f.gh_tags_json.borrow_mut() = Some(Err("HTTP 401: bad credentials".into()));
+    assert_eq!(resolve_all_tags(&f, Path::new("/repo")), Err(EXIT_CANNOT_CHECK));
+    let said = f.stderr_joined();
+    assert!(said.contains("HTTP 401: bad credentials") && said.contains("gh credential"), "{said}");
 }

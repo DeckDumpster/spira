@@ -535,3 +535,27 @@ mod gh_tests {
         assert_eq!((series[0].label("caller"), series[0].label("outcome"), series[0].value as u64), (Some("skew:release-list"), Some("fresh"), 1));
     }
 }
+
+#[cfg(test)]
+mod swap_tests {
+    use super::*;
+    use std::os::unix::fs::MetadataExt;
+
+    // covers: UC-instance-lifecycle-37
+    #[test]
+    fn write_staged_swaps_in_a_new_inode_so_a_held_handle_keeps_the_old_content() {
+        let tmp = testkit::TempDir::new("skew-swap");
+        let dir = tmp.path().to_path_buf();
+        let p = dir.join("conf.sh");
+        std::fs::write(&p, "old").unwrap();
+        let before = std::fs::metadata(&p).unwrap().ino();
+        let held = std::fs::File::open(&p).unwrap();
+        let w = Real::new(dir.clone());
+        w.write_staged(&p, b"new", false).unwrap();
+        assert_ne!(std::fs::metadata(&p).unwrap().ino(), before);
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), "new");
+        let mut old = String::new();
+        std::io::Read::read_to_string(&mut &held, &mut old).unwrap();
+        assert_eq!(old, "old");
+    }
+}
