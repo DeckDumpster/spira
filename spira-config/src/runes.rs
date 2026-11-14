@@ -522,6 +522,82 @@ fn persona_model_from_doc(doc: Option<&SpiraToml>, rune: &str, default: &str) ->
         .unwrap_or_else(|| default.to_string())
 }
 
+/// One rune's claim partition: the labels a bead must carry and those it must not.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Partition {
+    pub name: String,
+    pub inc: Vec<String>,
+    pub exc: Vec<String>,
+}
+
+/// Comma-separated, empty tokens dropped.
+pub fn split_csv(s: &str) -> Vec<String> {
+    s.split(',').map(str::trim).filter(|t| !t.is_empty()).map(str::to_string).collect()
+}
+
+/// Whether a bead carrying `labels` falls in `part`: none of its labels is in `shared`, its
+/// `rune:` preferences (if any) include the partition's name, `inc` is a subset of its labels
+/// and `exc` is disjoint from them. A bead may name several runes and counts for each.
+pub fn bucket_match(labels: &[&str], inc: &[String], exc: &[String], shared: &[&str], name: &str) -> bool {
+    if labels.iter().any(|l| shared.contains(l)) {
+        return false;
+    }
+    let mut has_pref = false;
+    let mut pref_matches = false;
+    for l in labels {
+        if let Some(p) = l.strip_prefix("rune:") {
+            has_pref = true;
+            pref_matches |= p == name;
+        }
+    }
+    if has_pref && !pref_matches {
+        return false;
+    }
+    inc.iter().all(|want| labels.contains(&want.as_str())) && !exc.iter().any(|drop| labels.contains(&drop.as_str()))
+}
+
+/// The labels every partition excludes: the queue-wait label and the open-children label.
+pub fn shared_exclude(queue_wait: &str, open_children: &str) -> String {
+    [queue_wait, open_children].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(",")
+}
+
+/// `me`'s own exclusions, the shared set, then every other rune's `rune:<name>` claim.
+pub fn rune_exclude(me: &str, own: &str, roster: &[String], shared: &str) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if !own.is_empty() {
+        parts.push(own.to_string());
+    }
+    if !shared.is_empty() {
+        parts.push(shared.to_string());
+    }
+    parts.extend(roster.iter().filter(|f| *f != me).map(|f| format!("rune:{f}")));
+    parts.join(",")
+}
+
+/// Every claim partition of the roster, in roster order. A rune with no labels has none; a
+/// rune whose predicate would widen is an error, never skipped.
+pub fn partitions(home: &Path, env_override: Option<&str>, queue_wait: &str, open_children: &str) -> Result<Vec<Partition>, String> {
+    let roster: Vec<String> = spira_runes(home, env_override).split_whitespace().map(str::to_string).collect();
+    let shared = shared_exclude(queue_wait, open_children);
+    let mut out = Vec::new();
+    for f in &roster {
+        let p = rune_predicate(home, f).map_err(|e| e.to_string())?;
+        if p.labels.is_empty() {
+            continue;
+        }
+        let exc = rune_exclude(f, &p.exclude_labels, &roster, &shared);
+        out.push(Partition { name: f.clone(), inc: split_csv(&p.labels), exc: split_csv(&exc) });
+    }
+    Ok(out)
+}
+
+/// The names of the partitions that take a bead carrying `labels`.
+pub fn taking(labels: &[String], parts: &[Partition], queue_wait: &str) -> Vec<String> {
+    let shared: Vec<&str> = [queue_wait].into_iter().filter(|s| !s.is_empty()).collect();
+    let labels: Vec<&str> = labels.iter().map(String::as_str).collect();
+    parts.iter().filter(|p| bucket_match(&labels, &p.inc, &p.exc, &shared, &p.name)).map(|p| p.name.clone()).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
