@@ -241,6 +241,26 @@ mod tests {
 
     const CZAR: &[(&str, &str)] = &[("SPIRA_RUNE", "czar"), ("SPIRA_CZAR_CLASS", "loop-stalled"), ("SPIRA_CZAR_TRIGGER_BEAD", "sp-trig")];
 
+    // covers: UC-safety-fences-31
+    #[test]
+    fn every_czar_class_the_conf_declares_defaults_to_shadow_and_names_its_key() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../spira/conf.d");
+        let classes: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .filter_map(|e| e.unwrap().file_name().into_string().ok()?.strip_prefix("SPIRA_CZAR_STAGE_").map(|c| c.to_lowercase().replace('_', "-")))
+            .collect();
+        assert!(classes.len() >= 7, "{classes:?}");
+        let unset = |_: &str| None;
+        for c in &classes {
+            let key = format!("SPIRA_CZAR_STAGE_{}", c.replace('-', "_").to_uppercase());
+            let refusal = czar_stage(c, &unset).unwrap_err();
+            assert_eq!((refusal.code, refusal.text.contains(&key)), (1, true), "{c}: {refusal:?}");
+            let acting = |k: &str| (k == key).then(|| "act".to_string());
+            assert_eq!(czar_stage(c, &acting), Ok(()), "{c}");
+        }
+    }
+
+    // covers: UC-safety-fences-31
     #[test]
     fn the_stage_answers_with_the_scripts_codes_and_text() {
         let e = env(&[("SPIRA_CZAR_STAGE_LOOP_STALLED", "act"), ("SPIRA_CZAR_STAGE_DEADLOCK", "loud")]);
@@ -254,6 +274,7 @@ mod tests {
         assert_eq!(czar_stage("", &vars), Err(Refusal { code: 2, text: "czar-fence: class required\n".into() }));
     }
 
+    // covers: UC-safety-fences-31
     #[test]
     fn the_czar_fence_refuses_a_shadow_class_mutation_with_exit_1() {
         let e = env(CZAR);

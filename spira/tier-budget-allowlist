@@ -147,7 +147,6 @@ test-mimir-trigger.sh	T1	12.0
 test-mimir.sh	T1	3.0
 test-mail-pane.sh	T1	4.0
 test-now.sh	T1	8.5
-test-ops-allowlist.sh	T1	2.0
 test-ops-closing.sh	T1	152.5
 test-poison-ask.sh	T1	37.5
 test-poison-edge.sh	T1	77.5
