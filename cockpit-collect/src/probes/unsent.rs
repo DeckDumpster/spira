@@ -870,7 +870,7 @@ mod tests {
     }
 
     #[test]
-    fn a_stranded_bead_is_reported_with_its_age_and_a_round_member_never_is() {
+    fn a_stranded_bead_is_reported_with_its_age() {
         let no_batch: Option<ForgeBatch> = Some(ForgeBatch::default());
         let t = tally_of("spira/sp-bat 90000\n", &[("sp-bat", 100_000 - 360)], Some(&no_batch), 1800);
         assert_eq!(t.batched_stranded_ages, ["sp-bat=360"]);
