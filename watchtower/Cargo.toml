@@ -16,7 +16,7 @@ path = "tests/stand_down.rs"
 required-features = ["integration"]
 
 [features]
-integration = ["forge/integration", "reconciler-engine/integration", "spira-desired-state/integration", "runtime/integration", "spira-config/integration", "spira-store/integration", "spira-ctrl/integration", "strand/integration", "testkit/integration"]
+integration = ["spira-claim/integration", "forge/integration", "reconciler-engine/integration", "spira-desired-state/integration", "runtime/integration", "spira-config/integration", "spira-store/integration", "spira-ctrl/integration", "strand/integration", "testkit/integration"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
