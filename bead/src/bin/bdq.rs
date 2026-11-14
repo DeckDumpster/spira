@@ -141,6 +141,17 @@ fn cmd_json_count() -> i32 {
 // __ghq — `timeout "${GH_TIMEOUT:-120}" "${SPIRA_GH:-gh}" "$@"`.
 // =========================================================================================
 
+/// `bdq:<noun>-<verb>`; an `api` path is never part of the label, which stays a small closed set.
+fn ghq_caller(argv: &[&str]) -> String {
+    let words: Vec<&str> = argv.iter().take_while(|a| !a.starts_with('-')).copied().collect();
+    match words.as_slice() {
+        [] => "bdq:other".to_string(),
+        ["api", ..] => "bdq:api".to_string(),
+        [noun] => format!("bdq:{noun}"),
+        [noun, verb, ..] => format!("bdq:{noun}-{verb}"),
+    }
+}
+
 fn cmd_ghq(args: &[String]) -> i32 {
     // GH_TIMEOUT is not a registered config key (spira/conf.d has no entry) — left as a
     // plain env read with its existing default.
@@ -157,8 +168,7 @@ fn cmd_ghq(args: &[String]) -> i32 {
         }
     };
     let argv: Vec<&str> = args.iter().map(String::as_str).collect();
-    let verb = argv.iter().take_while(|a| !a.starts_with('-')).take(2).copied().collect::<Vec<_>>().join("-");
-    let caller = format!("bdq:{}", if verb.is_empty() { "other" } else { &verb });
+    let caller = ghq_caller(&argv);
     forge::spend::counted_status(&forge::telemetry::sink(), &caller, &argv, || Command::new("timeout").arg(&gh_timeout).arg(&gh_bin).args(&argv).status())
         .map(|s| s.code().unwrap_or(1))
         .unwrap_or(127)
@@ -511,4 +521,16 @@ fn acknowledge_forced_edit(timeout_s: &str, bd_bin: &str, db: &str, id: &str, cl
     let run = spira_config::process::cfg("SPIRA_RUN").unwrap_or_default();
     let mail = spira_config::process::cfg("SPIRA_MAIL").unwrap_or_default();
     claimdesc::notify_live_dwarf(id, &claimdesc::holder_message(&actor, reason), &run, &mail);
+}
+
+#[cfg(test)]
+mod ghq_tests {
+    use super::ghq_caller;
+
+    #[test]
+    fn a_ghq_call_is_labelled_by_noun_and_verb_and_an_api_path_never_widens_the_label() {
+        assert_eq!(ghq_caller(&["pr", "view", "spira/sp-x", "--json", "state"]), "bdq:pr-view");
+        assert_eq!(ghq_caller(&["api", "repos/o/r/actions/runs"]), "bdq:api");
+        assert_eq!(ghq_caller(&["--version"]), "bdq:other");
+    }
 }
