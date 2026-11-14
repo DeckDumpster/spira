@@ -286,6 +286,16 @@ mod tests {
         RunePart { name: name.into(), inc: inc.iter().map(|s| s.to_string()).collect(), exc: exc.iter().map(|s| s.to_string()).collect() }
     }
 
+    // covers: UC-dwarf-execution-21
+    #[test]
+    fn an_epic_and_a_no_loop_bead_are_outside_the_scope_the_poison_pass_examines() {
+        let skip = "keep-out"; // literal-ok: test fixture
+        let typed = |id: &str, kind: &str, labels: &[&str]| ReadyRow { issue_type: Some(kind.into()), ..row(id, labels) };
+        assert!(in_scope(&typed("t", "task", &["plan"]), "plan", skip), "positive control");
+        assert!(!in_scope(&typed("e", "epic", &["plan"]), "plan", skip));
+        assert!(!in_scope(&typed("n", "task", &["plan", skip]), "plan", skip));
+    }
+
     #[test]
     fn a_lane_only_bead_is_outside_the_task_pool_partitions() {
         let task = vec![part("builder", &["spira", "plan"], &["mender-failure"])];

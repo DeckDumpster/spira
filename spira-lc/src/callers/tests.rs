@@ -918,6 +918,18 @@ fn unclaim_never_robs_another_holder_and_a_claim_already_over_is_success() {
     assert_eq!(unclaim(&v(&["sp-none", "dwarf-1"]), &mut f).code, NO_ROW);
 }
 
+// covers: UC-dwarf-execution-20
+#[test]
+fn releasing_under_the_rune_name_leaves_the_claim_held_and_the_claiming_actor_frees_it() {
+    let mut f = Fake::default();
+    f.bead("sp-r", BeadState::Working).holder = Some("dwarf-regin".into());
+    let refused = unclaim(&v(&["sp-r", "dwarf-builder"]), &mut f);
+    assert_eq!(refused.code, NO_ROW, "{}", refused.stderr);
+    assert_eq!((f.state("sp-r"), f.events.len()), ("WORKING", 0), "the rune's name does not release it");
+    assert_eq!(unclaim(&v(&["sp-r", "dwarf-regin"]), &mut f).code, APPLIED);
+    assert_eq!(f.state("sp-r"), "READY");
+}
+
 #[test]
 fn unclaim_needs_an_actor() {
     let mut f = Fake::default();

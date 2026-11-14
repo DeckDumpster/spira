@@ -361,6 +361,23 @@ mod tests {
         (yoe + era * 400 + i64::from(m <= 2), m, d)
     }
 
+    // covers: UC-dwarf-execution-09
+    #[test]
+    fn requeue_thrash_ledger_lines_count_as_thrash_and_inflate_nothing_else() {
+        let line = |ev: &str, rest: &str| format!("{} {ev} rune sp-x {rest}", ts(-10));
+        let none = ledger_metrics(&[], NOW - 3600);
+        assert_eq!(none["SP_DWARF_THRASH"], "0");
+        let lines = [
+            line("awake", "worked"),
+            line("done", "rc=0 status=requeue-thrash"),
+            line("done", "rc=0 status=requeue-thrash"),
+            line("done", "rc=0 status=requeue-slain"),
+        ];
+        let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+        let m = ledger_metrics(&refs, NOW - 3600);
+        assert_eq!((m["SP_DWARF_THRASH"].as_str(), m["SP_DWARF_WORKED"].as_str()), ("2", "1"));
+    }
+
     #[test]
     fn repeating_act_run_is_found_and_old_burst_is_not() {
         let mk = |offs: &[i64]| -> Vec<String> {

@@ -309,8 +309,7 @@ sp-j1q6o commit).
    fi
    export SPIRA_CLAIM_BIN
    ```
-2. **spira/lib.sh:3225-3266 `_attempts_sql_query`** — delete (only attempts_of used it;
-   test-attempts-sql.sh's SQL-text assertions retire with it).
+2. **spira/lib.sh:3225-3266 `_attempts_sql_query`** — delete (only attempts_of used it).
 3. **spira/lib.sh:3275-3284 `attempts_of`** →
    `attempts_of() { "$SPIRA_CLAIM_BIN" attempts "$1"; }`
 4. **SUPERSEDED at sp-8itaf.** This item planned `reopens_of() { "$SPIRA_CLAIM_BIN" requeues
@@ -327,7 +326,7 @@ sp-j1q6o commit).
    `"$SPIRA_CLAIM_BIN" decide ...`. That CLI (`cmd_decide` in spira-claim/src/main.rs,
    `decide::decide` in decide.rs) already exists independently of this plan; the bash
    function itself had zero live callers left and was deleted outright rather than kept as
-   a shim nothing calls. `test-unpoison.sh` now calls `spira-claim decide` directly.
+   a shim nothing calls.
 8. **spira/lib.sh:1198-1246 `epic_parent_lookup`** →
    `epic_parent_lookup() { printf '%s' "$1" | "$SPIRA_CLAIM_BIN" epics; }`
 9. **spira/lib.sh:1264-1299 `epic_rank_rows`** →

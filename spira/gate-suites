@@ -28,10 +28,6 @@
 #
 # Blank lines and `#` comments are ignored. One repository-relative path per line.
 
-# THE ATTEMPT LEDGER'S OWN. An attempt count decides whether work is poisoned, so a count
-# that charges the harness for its own restarts removes work nobody ever tried.
-spira/test-attempts.sh
-
 # THIS GATE'S OWN YIELD METER, and it is the condition on the gate being here at all. A check
 # may sit between work and its landings only while it is catching real defects
 # (law-gate-earns-its-place); yield.sh is the count that makes that sentence actionable, and

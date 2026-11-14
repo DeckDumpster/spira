@@ -30,7 +30,7 @@ BD_TAG_PIN="v1.2.1"
 # That one fact caused both bd outages here. On 2026-09-09 dwarf.sh put that binary on live
 # dwarves' PATH; against the production store (v61) it printed "schema version mismatch … binary
 # knows up to v53" WHILE EXITING 0, and four dwarves escalated a destructive rollback of 3,296
-# healthy beads. On 2026-09-10 test-attempts.sh ran its fixture on it, `bd unclaim` printed
+# healthy beads. On 2026-09-10 a test fixture ran on it, `bd unclaim` printed
 # "unknown command", and gate-spira.sh went red against a clean origin/main — nothing landed
 # for hours. Neither was embedded mode's fault. Both were "install the latest release".
 #
