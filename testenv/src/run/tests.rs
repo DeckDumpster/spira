@@ -268,7 +268,7 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
     /// Runs `testenv --suites <suite> topic` with `pool` full of a live holder, a `sleep` that
     /// cancels this thread on its first call and panics on its fifth. Returns the last line
     /// and the files left in the pool directory.
-    fn run_cancelled_while_waiting(pool: &str, suite: &str) -> (String, Vec<String>) {
+    fn run_cancelled_while_waiting(pool: &str, suite: &str) -> (String, Vec<String>, usize) {
         let root = testkit::TempDir::new("testenv-admission-cancel");
         let (repo, harness, owner) = (root.join("repo"), root.join("harness"), root.join("owner"));
         for d in [&repo.join("spira"), &harness.join("spira"), &owner] {
@@ -347,20 +347,30 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
         crate::runtime::LOCAL_CANCEL.with(|l| *l.borrow_mut() = None);
         let last = lines.lock().unwrap().last().cloned().unwrap_or_default();
         let left = fs::read_dir(&dir).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).filter(|n| n.starts_with("slot.") || n.starts_with("wait.")).collect();
-        (last, left)
+        (last, left, sleeps.load(Ordering::SeqCst))
     }
 
     #[test]
     fn a_unit_pool_wait_ends_interrupted_on_a_caught_signal_and_leaves_no_waiter_file() {
-        let (last, left) = run_cancelled_while_waiting("unit", "unit-tests.sh");
+        let (last, left, slept) = run_cancelled_while_waiting("unit", "unit-tests.sh");
         assert!(last.starts_with("VERDICT FAULT") && last.contains("reason=interrupted"), "{last}");
         assert_eq!(left, ["slot.1"], "only the holder's file remains: {left:?}");
+        assert_eq!(slept, 1, "the wait loop, not an earlier check, ended the run");
     }
 
     #[test]
     fn a_compile_pool_wait_ends_interrupted_on_a_caught_signal_and_leaves_no_waiter_file() {
-        let (last, left) = run_cancelled_while_waiting("compile", "test-a.sh");
+        let (last, left, slept) = run_cancelled_while_waiting("compile", "test-a.sh");
         assert!(last.starts_with("VERDICT FAULT") && last.contains("reason=interrupted"), "{last}");
         assert_eq!(left, ["slot.1"], "only the holder's file remains: {left:?}");
+        assert_eq!(slept, 1, "the wait loop, not an earlier check, ended the run");
+    }
+
+    #[test]
+    fn a_test_pool_wait_ends_interrupted_on_a_caught_signal_and_leaves_no_waiter_file() {
+        let (last, left, slept) = run_cancelled_while_waiting("test", "test-a.sh");
+        assert!(last.starts_with("VERDICT FAULT") && last.contains("reason=interrupted"), "{last}");
+        assert_eq!(left, ["slot.1"], "only the holder's file remains: {left:?}");
+        assert_eq!(slept, 1, "the wait loop, not an earlier check, ended the run");
     }
 }
