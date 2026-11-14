@@ -303,6 +303,16 @@ pub fn blamed_member(line: &str, members: &[Member]) -> Option<Id> {
     members.iter().find(|m| m.id == token).map(|m| m.id.clone())
 }
 
+fn member_paths(members: &[Member], changed: &BTreeMap<Id, Vec<String>>) -> Vec<MemberPaths> {
+    members
+        .iter()
+        .map(|m| MemberPaths {
+            id: m.id.clone(),
+            paths: changed.get(&m.id).cloned().unwrap_or_default(),
+        })
+        .collect()
+}
+
 /// The one member whose changed paths the finding of a `member=the base itself (…) <finding>`
 /// line names. The VM's parenthetical is left out: it names the paths already ruled out.
 pub fn named_path_owner(
@@ -317,13 +327,7 @@ pub fn named_path_owner(
         evidence: finding.to_string(),
         own: vec![],
     };
-    let paths: Vec<MemberPaths> = members
-        .iter()
-        .map(|m| MemberPaths {
-            id: m.id.clone(),
-            paths: changed.get(&m.id).cloned().unwrap_or_default(),
-        })
-        .collect();
+    let paths = member_paths(members, changed);
     match attribute(&[red], &paths) {
         Verdict::Eject(owners) if owners.len() == 1 => Some((owners[0].0.clone(), line.to_string())),
         _ => None,
@@ -416,13 +420,7 @@ fn phase_owner(
         evidence,
         own: vec![],
     };
-    let paths: Vec<MemberPaths> = members
-        .iter()
-        .map(|m| MemberPaths {
-            id: m.id.clone(),
-            paths: changed.get(&m.id).cloned().unwrap_or_default(),
-        })
-        .collect();
+    let paths = member_paths(members, changed);
     match attribute(&[red], &paths) {
         Verdict::Eject(owners) => owners,
         Verdict::Ambiguous(_) => vec![],
@@ -1387,6 +1385,16 @@ mod tests {
         let red = filter_red_in(d.path(), &ms, &changed).unwrap();
         assert_eq!(red.named, [("sp-vpwykr".to_string(), BASE_LINE.to_string())]);
         assert!(filter_red_in(d.path(), &ms, &BTreeMap::new()).unwrap().named.is_empty());
+        let both = changed_of(&[
+            ("sp-vpwykr", &["spira/lib-test-install.sh"]),
+            ("sp-dnm9wy", &["spira/lib-test-install.sh"]),
+        ]);
+        assert!(filter_red_in(d.path(), &ms, &both).unwrap().named.is_empty());
+        fs::remove_file(d.path().join("spira-lint.result")).unwrap();
+        fs::remove_file(d.path().join("spira-lint.out")).unwrap();
+        fs::write(d.path().join("fence-x.result"), "red 1 1 - - - 1\n").unwrap();
+        fs::write(d.path().join("fence-x.out"), format!("{BASE_LINE}\n")).unwrap();
+        assert!(filter_red_in(d.path(), &ms, &changed).unwrap().named.is_empty());
     }
 
     #[test]
