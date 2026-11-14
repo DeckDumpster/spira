@@ -227,8 +227,9 @@ fn batched_stranded(d: &SweepData, cfg: &Cfg, raise: Raise) {
         return;
     };
     let names = d.env.raw("SP_BATCHED_STRANDED_NAMES").unwrap_or("(unavailable)");
+    let ages = stranded_ages(d.env.raw("SP_BATCHED_STRANDED_AGES").unwrap_or(""));
     let body = format!(
-        "Stranded IN_DELIVERY branches: {n}\n\nThe branch(es) below are IN_DELIVERY on the lifecycle record but their ID is absent from every open batch members= line. The Hel refuses to reap in-delivery branches, so these are permanently stuck until the record is corrected.\n\nBranch IDs (spira/ prefix omitted): {names}\n\nCheck: for each id, `spira-lc state <id>` (IN_DELIVERY) and confirm the id does not appear in $SPIRA_QUEUE_DIR/*/open members= lines.\nFix: settle or abandon the batch the row names on the lifecycle record (`spira-lc show <id>`). If the tip moved, escalate — the branch has diverged from what was batched.\n"
+        "Stranded IN_DELIVERY branches: {n}\n\nThe branch(es) below are IN_DELIVERY on the lifecycle record but their ID is absent from every open batch members= line. The Hel refuses to reap in-delivery branches, so these are permanently stuck until the record is corrected.\n\nBranch IDs (spira/ prefix omitted), with how long each has been outside every open batch:\n{ages}\n\nCheck: for each id, `spira-lc state <id>` (IN_DELIVERY) and confirm the id does not appear in $SPIRA_QUEUE_DIR/*/open members= lines.\nFix: settle or abandon the batch the row names on the lifecycle record (`spira-lc show <id>`). If the tip moved, escalate — the branch has diverged from what was batched.\n"
     );
     let f = Finding::new(&cfg.db, &cfg.home_repo, "HEL: BATCHED branch absent from open batch", &body)
         .priority(1)
@@ -240,6 +241,18 @@ fn batched_stranded(d: &SweepData, cfg: &Cfg, raise: Raise) {
         incident::AlarmOutcome::Failed => "NOT filed (incident alarm failed)",
     };
     log(&format!("watchtower: batched-stranded escalation {outcome} ({n} stranded: {names})"));
+}
+
+/// `id=secs` pairs as one line per bead: `id — 6m10s`.
+fn stranded_ages(raw: &str) -> String {
+    raw.split_whitespace()
+        .filter_map(|p| p.split_once('='))
+        .map(|(id, s)| match s.parse::<i64>() {
+            Ok(s) => format!("  {id} — {}m{:02}s", s / 60, s % 60),
+            Err(_) => format!("  {id} — (age unknown)"),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn batched_too_long(d: &SweepData, cfg: &Cfg, raise: Raise) {
@@ -402,6 +415,12 @@ mod tests {
     /// The raise `run` gives the escalations: `incident alarm` on the cfg's incident.sh.
     fn alarm(cfg: &Cfg) -> impl FnMut(&Finding) -> incident::AlarmOutcome + '_ {
         move |f| incident::alarm_outcome(&cfg.incident_sh, f)
+    }
+
+    #[test]
+    fn the_stranded_finding_lists_each_bead_with_how_long_it_has_been_stranded() {
+        assert_eq!(stranded_ages("sp-a=370 sp-b=61"), "  sp-a — 6m10s\n  sp-b — 1m01s");
+        assert_eq!(stranded_ages("sp-a=?"), "  sp-a — (age unknown)");
     }
 
     fn fake_incident(d: &std::path::Path) -> String {

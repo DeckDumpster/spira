@@ -46,6 +46,7 @@ fn branch_backlog_section(out: &mut Kv, cfg: &Cfg) {
     // every branch instead of a bd show per branch.
     let lc_index = super::lc::state_index_of(&branch_ids(&reg));
     let batch_wait: i64 = cfg.queue_batch_wait;
+    let grace: i64 = cfg.batched_stranded_grace;
 
     for rname in reg.all() {
         let Some(rp) = reg.root(&rname) else { continue };
@@ -63,7 +64,7 @@ fn branch_backlog_section(out: &mut Kv, cfg: &Cfg) {
         match io::git(rp_path, &["for-each-ref", "--format=%(refname:short) %(committerdate:unix)", "refs/heads/spira/*"]) {
             Some(brs) => {
                 let on_base = |b: &str| base.as_deref().is_some_and(|base| io::git(rp_path, &["merge-base", "--is-ancestor", b, base]).is_some());
-                let ctx = Ctx { now, batch_wait, land: &land, in_delivery: &in_delivery, round_members: &round_members, forge_batch };
+                let ctx = Ctx { now, batch_wait, grace, land: &land, in_delivery: &in_delivery, round_members: &round_members, forge_batch };
                 t.tally(&brs, &ctx, &|id| bead_status(id, lc_index.as_ref()), &on_base);
             }
             None => fail = true,
@@ -103,6 +104,7 @@ fn branch_backlog_section(out: &mut Kv, cfg: &Cfg) {
     super::push(out, "SP_PROTECTED_NAMES", protected_names.join(" "));
     push(out, "SP_BATCHED_STRANDED", t.batched_stranded.to_string());
     super::push(out, "SP_BATCHED_STRANDED_NAMES", t.batched_stranded_names.join(" "));
+    super::push(out, "SP_BATCHED_STRANDED_AGES", t.batched_stranded_ages.join(" "));
     push(out, "SP_BATCHED_TOO_LONG", t.batched_too_long.to_string());
     super::push(out, "SP_BATCHED_TOO_LONG_NAMES", t.batched_too_long_names.join(" "));
     push(out, "SP_AWAITING_ROUND", t.awaiting_round.to_string());
@@ -135,6 +137,7 @@ fn branch_backlog_section(out: &mut Kv, cfg: &Cfg) {
 struct Ctx<'a> {
     now: i64,
     batch_wait: i64,
+    grace: i64,
     land: &'a str,
     in_delivery: &'a HashMap<String, super::lc::LcRow>,
     round_members: &'a HashSet<String>,
@@ -156,6 +159,7 @@ struct Tally {
     probe_fail_names: Vec<String>,
     batched_stranded: usize,
     batched_stranded_names: Vec<String>,
+    batched_stranded_ages: Vec<String>,
     batched_too_long: usize,
     batched_too_long_names: Vec<String>,
     closed_stranded: usize,
@@ -167,8 +171,8 @@ impl Tally {
     /// Classifies one repo's `<branch> <committer-epoch>` lines. `status_of` is the bead's
     /// state by id; `on_base` is whether a branch's tip is already on the land ref.
     fn tally(&mut self, brs: &str, ctx: &Ctx, status_of: &dyn Fn(&str) -> BeadStatus, on_base: &dyn Fn(&str) -> bool) {
-        let Ctx { now, batch_wait, land, in_delivery, round_members, forge_batch } = ctx;
-        let (now, batch_wait) = (*now, *batch_wait);
+        let Ctx { now, batch_wait, grace, land, in_delivery, round_members, forge_batch } = ctx;
+        let (now, batch_wait, grace) = (*now, *batch_wait, *grace);
         for line in brs.lines() {
             let Some((b, ts_s)) = line.rsplit_once(' ') else { continue };
             if b.is_empty() {
@@ -229,7 +233,7 @@ impl Tally {
             }
             if batched_check_applies(&status, in_delivery.contains_key(id)) {
                 if let Some(row) = in_delivery.get(id) {
-                    let settled = row.updated_at.is_some_and(|ep| now - ep >= STRANDED_GRACE_SECS);
+                    let stranded_for = stranded_for(row.updated_at, now, grace);
                     match forge_batch {
                         Some(None) => {
                             self.probe_fail += 1;
@@ -237,9 +241,10 @@ impl Tally {
                         }
                         told => {
                             let in_batch = told.is_some_and(|b| b.as_ref().is_some_and(|b| b.members.contains(id))) || round_members.contains(id);
-                            if !in_batch && settled {
+                            if let (false, Some(secs)) = (in_batch, stranded_for) {
                                 self.batched_stranded += 1;
                                 self.batched_stranded_names.push(id.to_string());
+                                self.batched_stranded_ages.push(format!("{id}={secs}"));
                             }
                         }
                     }
@@ -255,9 +260,11 @@ impl Tally {
     }
 }
 
-/// One sweep's grace: a bead IN_DELIVERY for less than the slow-tier interval may simply not
-/// have its round or batch record written yet.
-const STRANDED_GRACE_SECS: i64 = 600;
+/// Seconds an IN_DELIVERY bead outside every open batch has been so, once past `grace`; a
+/// bead with no state time cannot be told stranded.
+fn stranded_for(state_at: Option<i64>, now: i64, grace: i64) -> Option<i64> {
+    state_at.map(|ep| now - ep).filter(|age| *age >= grace)
+}
 
 /// A forge repo's open batch, as `queue batch show` gives it: its members and its branch.
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -855,6 +862,21 @@ mod tests {
     }
 
     #[test]
+    fn a_bead_between_two_rounds_is_not_stranded_until_the_grace_has_passed() {
+        let now = 1_000_000;
+        assert_eq!(stranded_for(Some(now - 40), now, 300), None, "left a batch 40s ago");
+        assert_eq!(stranded_for(Some(now - 360), now, 300), Some(360), "six minutes outside every batch");
+        assert_eq!(stranded_for(None, now, 300), None, "no state time: cannot tell");
+    }
+
+    #[test]
+    fn a_stranded_bead_is_reported_with_its_age_and_a_round_member_never_is() {
+        let no_batch: Option<ForgeBatch> = Some(ForgeBatch::default());
+        let t = tally_of("spira/sp-bat 90000\n", &[("sp-bat", 100_000 - 360)], Some(&no_batch), 1800);
+        assert_eq!(t.batched_stranded_ages, ["sp-bat=360"]);
+    }
+
+    #[test]
     fn a_forge_batch_on_the_store_names_its_members_and_branch() {
         let show = |repo: &str| match repo {
             "r" => Some("batch_id=r-1\nforge.phase=armed\npr=1\nbranch=spira/queue/r-1\nmembers=sp-in:t\n".to_string()),
@@ -877,12 +899,14 @@ mod tests {
         assert!(!awaits_round("queue.local", false));
     }
 
+    const TEST_GRACE: i64 = 300;
+
     fn tally_of(lines: &str, delivering: &[(&str, i64)], batch: Option<&Option<ForgeBatch>>, wait: i64) -> Tally {
         let in_delivery: HashMap<String, super::super::lc::LcRow> = delivering
             .iter()
             .map(|(id, at)| (id.to_string(), super::super::lc::LcRow { id: id.to_string(), state: "IN_DELIVERY".into(), reason: String::new(), updated_at: Some(*at) }))
             .collect();
-        let ctx = Ctx { now: 100_000, batch_wait: wait, land: "push", in_delivery: &in_delivery, round_members: &HashSet::new(), forge_batch: batch };
+        let ctx = Ctx { now: 100_000, batch_wait: wait, grace: TEST_GRACE, land: "push", in_delivery: &in_delivery, round_members: &HashSet::new(), forge_batch: batch };
         let status = |id: &str| match id {
             "sp-open" | "sp-bat" => BeadStatus::Open,
             "sp-done" => BeadStatus::Closed { submitted: false },
@@ -915,7 +939,7 @@ mod tests {
     fn a_batched_bead_outside_every_batch_is_stranded_and_one_waiting_past_the_wait_is_too_long() {
         let line = "spira/sp-bat 90000\n";
         let no_batch: Option<ForgeBatch> = Some(ForgeBatch::default());
-        let stale = 100_000 - STRANDED_GRACE_SECS - 1;
+        let stale = 100_000 - TEST_GRACE - 1;
         let t = tally_of(line, &[("sp-bat", stale)], Some(&no_batch), 60);
         assert_eq!((t.batched_stranded, t.batched_stranded_names.as_slice()), (1, ["sp-bat".to_string()].as_slice()));
         assert_eq!(t.batched_too_long, 1);
