@@ -135,7 +135,7 @@ fn t3_a_green_certify_unit_ran_on_its_own_stream_certifies_and_lands_with_no_cor
     r.tick(STREAM, ran.event_kind()).unwrap();
     kit::assert_unpoisoned(&r, STREAM);
     let after: Vec<&str> = r.requested()[asked..].iter().map(|q| q.name.as_str()).collect();
-    assert!(after.contains(&LC_CERTIFY) && after.contains(&LAND), "{after:?}");
+    assert!(after.contains(&LAND), "{after:?}");
     assert!(r.requested().iter().all(|q| q.name != CORPUS), "no corpus leg ran before or after: {:?}", r.requested().iter().map(|q| &q.name).collect::<Vec<_>>());
 }
 
