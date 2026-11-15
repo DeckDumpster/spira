@@ -565,7 +565,7 @@ fn checks(args: &[String], via: &str) -> i32 {
     run_checks(args, false, via).0
 }
 
-/// [`checks`], with the failing test names of every red row that declares `deferred_to` when
+/// [`checks`], with the failing test names of every red row deferred to the `gate` when
 /// `base_red` waives it (a submit naming the bead that records the base red).
 fn run_checks(args: &[String], base_red: bool, via: &str) -> (i32, Vec<String>) {
     let list_only = match args {
