@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-pub type Clock = Arc<dyn Fn() -> Instant + Send + Sync>;
+use store_view::Clock;
 
 pub struct Notifier {
     dest: Option<SocketAddr>,
