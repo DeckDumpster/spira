@@ -4,7 +4,7 @@ Every verb below is run as `work <verb>`. Generated from the verb definitions; i
 
 ## 1. Reading the work item
 ### work show
-Prints your bead: description, labels, notes, children.
+Prints your bead: description, labels, notes, children, and the last round or gate red it was ejected for.
 Use when: First, and again after any amendment or reopen.
 Checks:
   - the bead is the bound one

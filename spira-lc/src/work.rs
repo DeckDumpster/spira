@@ -58,7 +58,15 @@ fn cmd_show(bead_id: &str, conn: &Conn) -> (i32, String) {
         Err(e) => return (CANNOT_TELL, format!("cannot tell: {e}")),
     };
     match crate::plane::read(conn, &[s("show"), bead_id.to_string()]) {
-        (0, row) => (0, with_logs(with_lifecycle(&text, &row), kept_entries(bead_id, conn).len())),
+        (0, row) => {
+            let tip = serde_json::from_str::<serde_json::Value>(&row).ok().and_then(|r| r["bead"]["tip"].as_str().map(str::to_string));
+            let shown = with_lifecycle(&text, &row);
+            let shown = match conn.query(&crate::facts::select_sql(&[bead_id.to_string()], &[spira_config::ejection::KIND.to_string()], None)) {
+                Ok(rows) => with_last_red(&shown, &crate::facts::shape(rows), tip.as_deref()),
+                Err(e) => format!("{shown}LAST RED: cannot tell: {e:?}\n"),
+            };
+            (0, with_logs(shown, kept_entries(bead_id, conn).len()))
+        }
         (1, _) => (0, format!("{text}\nLIFECYCLE: no row\n")),
         (_, e) => (CANNOT_TELL, e),
     }
@@ -155,6 +163,24 @@ fn with_lifecycle(bd_text: &str, show_json: &str) -> String {
         field("tip"),
         row["delivery"]["state"].as_str().map(|d| format!("  delivery: {d}\n")).unwrap_or_default(),
     )
+}
+
+/// `text` with the newest `eject-failure` row (rows come oldest first) under a `LAST RED` heading.
+fn with_last_red(text: &str, facts: &[serde_json::Value], tip: Option<&str>) -> String {
+    let Some(row) = facts.last() else {
+        return text.to_string();
+    };
+    let field = |k: &str| row.get(k).and_then(|v| v.as_str()).unwrap_or("");
+    let digest = field("new_value");
+    let mut out = format!("{text}LAST RED ({}, {} by {})\n", field("event_type"), field("created_at"), field("actor"));
+    let judged = spira_config::ejection::parse(digest).tip;
+    if let Some(now) = tip.filter(|now| !judged.is_empty() && *now != judged) {
+        out.push_str(&format!("  judged tip {judged}; the bead's tip is now {now}\n"));
+    }
+    for l in digest.lines() {
+        out.push_str(&format!("  {l}\n"));
+    }
+    out
 }
 
 fn cmd_note(bead_id: &str, args: &[String]) -> (i32, String) {
@@ -2723,6 +2749,32 @@ mod tests {
         assert!(!out.contains("holder"), "{out}");
     }
 
+
+    fn red_row(at: &str, digest: &str) -> serde_json::Value {
+        serde_json::json!({"issue_id": "sp-1", "event_type": "eject-failure", "new_value": digest, "actor": "batcher", "created_at": at})
+    }
+
+    #[test]
+    fn last_red_prints_only_the_newest_digest_verbatim_after_the_lifecycle_block() {
+        let shown = "t\n\nLIFECYCLE: SUBMITTED\n  tip: bbb\n";
+        let rows = [red_row("2026-01-01 00:00:00", "tip aaa\nFAIL old"), red_row("2026-01-02 00:00:00", "tip bbb\nFAIL new_test at x.rs:1\n  boom")];
+        let out = with_last_red(shown, &rows, Some("bbb"));
+        assert!(out.starts_with(shown), "{out}");
+        assert!(out.contains("LAST RED (eject-failure, 2026-01-02 00:00:00 by batcher)\n  tip bbb\n  FAIL new_test at x.rs:1\n    boom\n"), "{out}");
+        assert!(!out.contains("old"), "{out}");
+    }
+
+    #[test]
+    fn last_red_leaves_the_text_alone_when_no_red_was_recorded() {
+        assert_eq!(with_last_red("t\n", &[], Some("x")), "t\n");
+    }
+
+    #[test]
+    fn last_red_says_when_the_judged_tip_is_not_the_beads_tip() {
+        let rows = [red_row("2026-01-02 00:00:00", "tip aaa\nFAIL t")];
+        assert!(with_last_red("t\n", &rows, Some("bbb")).contains("judged tip aaa; the bead's tip is now bbb\n"));
+        assert!(!with_last_red("t\n", &rows, Some("aaa")).contains("judged tip"));
+    }
 
     fn logs_fixture() -> (testkit::TempDir, Vec<serde_json::Value>) {
         let run = testkit::TempDir::new("work-logs");
