@@ -439,6 +439,13 @@ mod tests {
     }
 
     #[test]
+    fn a_recursive_search_with_no_operand_searches_the_cwd_and_is_refused_in_the_run_dir() {
+        refused("cd /r/spira/run && rg foo");
+        refused("cd /r/spira/run && grep -r foo");
+        allowed("cd /r/spira/run/worktree/sp-a/dwarf && rg foo");
+    }
+
+    #[test]
     fn the_scar_command_is_refused_through_its_cd() {
         refused(r#"cd /r/spira/run; ls -dt */ 2>/dev/null | head -5; grep -rl "spira-20261114T055931Z" . 2>/dev/null | head"#);
     }
