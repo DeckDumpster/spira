@@ -962,7 +962,7 @@ impl World {
             Err(e) => Err(e),
         });
         for f in &bare {
-            if f.path.file_name().is_some_and(|n| n == "forge-state") {
+            if f.is_forge_state() {
                 if let Some(why) = self.forge_state_refusal(&f.path) {
                     parts.held.push(why);
                 }

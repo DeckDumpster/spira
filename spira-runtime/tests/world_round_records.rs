@@ -145,7 +145,7 @@ fn nothing_is_cleared_while_the_batch_machine_is_not_on_the_store() {
 fn forge_state_rig(repo: &str, open: &[&str]) -> (Rig, PathBuf) {
     let r = rig(true, &[]);
     std::fs::create_dir_all(r.dir.path().join("queue").join(repo)).unwrap();
-    let f = r.dir.path().join("queue").join(repo).join("forge-state");
+    let f = r.dir.path().join("queue").join(repo).join(install::round_records::FORGE_STATE);
     std::fs::write(&f, "pending\n").unwrap();
     r.open.lock().unwrap().insert(repo.into(), open.iter().map(|b| b.to_string()).collect());
     (r, f)
