@@ -25,6 +25,18 @@ pub fn fixture_config_door() {
     });
 }
 
+/// The unit-test binary opens the door before `main`: the process resolves its config once and
+/// keeps a refusal, so a test that reads config ahead of the fixture would poison every later one.
+#[cfg(all(test, target_os = "linux"))]
+#[used]
+#[link_section = ".init_array"]
+static OPEN_DOOR_BEFORE_MAIN: extern "C" fn() = {
+    extern "C" fn open() {
+        fixture_config_door();
+    }
+    open
+};
+
 pub fn lookup(secs: &'static str) -> impl Fn(&str) -> Result<String, String> {
     fixture_config_door();
     move |k| {
@@ -117,4 +129,12 @@ pub fn reconciler_fixture(k: &str) -> Option<&'static str> {
         "SPIRA_MAIN_HEALTH_ACTIVATION_GRACE_SECS" | "SPIRA_MAIN_HEALTH_FENCE_DEADLINE_SECS" | "SPIRA_PREFLIGHT_WALL_SECS" | "SPIRA_STRANDED_RUNNER_MIN_AGE" => "17",
         _ => return None,
     })
+}
+
+#[cfg(test)]
+mod door_tests {
+    #[test]
+    fn the_config_door_is_open_for_a_test_that_never_asks_the_fixture() {
+        spira_config::process::config().expect("the door resolved before this test ran");
+    }
 }
