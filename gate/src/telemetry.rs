@@ -136,7 +136,7 @@ pub fn build_dir_field(line: &str) -> String {
             return format!("warm from {}", rest.split(' ').next().unwrap_or(""));
         }
         if let Some((_, rest)) = l.split_once(COLD_OPEN) {
-            return format!("cold: {}", rest.trim_end_matches(')'));
+            return format!("cold: {}", rest.split_once(')').map_or(rest, |(why, _)| why));
         }
         if l.contains("builds in the tree") {
             return "cold: no tmpfs, built in the tree".into();
