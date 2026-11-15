@@ -62,4 +62,27 @@ mod tests {
         assert_eq!(sys, "# Memories in force\n\n\n\n---\n\n");
         assert_eq!(task, "just a task, no split");
     }
+
+    const BRIEF: &str = include_str!("../../spira/runes/archivist.md");
+
+    #[test]
+    fn the_brief_states_the_ask_rollup_and_close_rules() {
+        for rule in [
+            "work relate <rollup> <ask>",
+            "Never wire an untyped dependency between two beads",
+            "work close-ask <ask-id> --exit answered --source",
+            "only when his answer in",
+            "never take its default",
+            r#"claim {{SESSION}} "<key>" --ask "<the question>""#,
+            "{{LIVENESS}}",
+        ] {
+            assert!(BRIEF.contains(rule), "the brief no longer says: {rule}");
+        }
+    }
+
+    #[test]
+    fn a_brief_missing_a_rule_is_seen_to_miss_it() {
+        let stripped = BRIEF.replace("work relate <rollup> <ask>", "");
+        assert!(!stripped.contains("work relate <rollup> <ask>"));
+    }
 }

@@ -164,6 +164,26 @@
         assert!(refused.is_err(), "reading a config that leaves a key undeclared is refused, not defaulted");
     }
 
+    #[test]
+    fn spira_claude_is_a_deprecated_alias_that_only_an_undeclared_agent_falls_back_to() {
+        let ws = testkit::TempDir::new("spira-config-claude-alias");
+        let (_, repo) = fixture_home_repo(&ws);
+        let e = env(&[("HOME", "/h"), ("SPIRA_CLAUDE", "/opt/old-agent")]);
+
+        let aliased = with_defaults(&repo, &declared(&[]), &e);
+        assert_eq!(aliased.get("SPIRA_AGENT"), "/opt/old-agent");
+        assert_eq!(aliased.warnings, vec!["spira: SPIRA_CLAUDE is deprecated; rename it to SPIRA_AGENT in spira.conf".to_string()]);
+
+        let doc = declared(&[("spira.agent", "/opt/new-agent")]);
+        let declared_wins = with_defaults(&repo, &doc, &e);
+        assert_eq!(declared_wins.get("SPIRA_AGENT"), "/opt/new-agent");
+        assert!(declared_wins.warnings.is_empty(), "{:?}", declared_wins.warnings);
+
+        let neither = with_defaults(&repo, &declared(&[]), &env(&[("HOME", "/h")]));
+        assert_eq!(neither.get("SPIRA_AGENT"), "claude");
+        assert!(neither.warnings.is_empty());
+    }
+
     // covers: UC-config-store-preflight-03
     #[test]
     fn derived_defaults_follow_the_install_location_and_the_whole_shipped_key_set_resolves() {

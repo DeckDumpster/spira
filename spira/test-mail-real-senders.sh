@@ -265,4 +265,30 @@ rc=$?
 is "the isolated repro also fails" "1" "$rc"
 want "the isolated repro names the archivist-note guard" "archivist note refused" "$lint_err"
 
+echo
+echo "ctx-meter: the archivist's skipped and retry states reach the cockpit text"
+CM_RUN="$TMP/cm-run"; CM_PROJECTS="$TMP/cm-projects"
+mkdir -p "$CM_RUN/archivist" "$CM_PROJECTS/-test-project" "$TMP/cm-home"
+mkarctranscript "$CM_PROJECTS/-test-project/sess-viz.jsonl" 5 3000
+tl_config SPIRA_RUN="$CM_RUN" SPIRA_TOKEN_PROJECTS="$CM_PROJECTS"
+cm_env() { env -i SPIRA_RELEASE="$(tl_release)" SPIRA_TOML="$SPIRA_TOML" HOME="$TMP/cm-home" PATH="$PATH" SPIRA_CONF=/nonexistent TZ=UTC SPIRA_NOW=1750000000 "$@"; }
+cm_status() {
+    printf '{"session_id":"s-fail","cwd":"/tmp","context_window":{"total_input_tokens":1200,"current_usage":{"input_tokens":1200}}}' |
+        cm_env ctx-meter.sh 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g'
+}
+
+nowant "positive control: with no sweep.state the env mode does not say skipped" "SP_CTX_ARCHIVIST=skipped" \
+    "$(cm_env ctx-meter.sh env "$CM_PROJECTS/-test-project/sess-viz.jsonl" 2>/dev/null)"
+printf 'sweep_state=skipped\nreason=capacity\nat=1750000000\n' > "$CM_RUN/archivist/sweep.state"
+want "a sweep skipped for capacity shows as SP_CTX_ARCHIVIST=skipped" "SP_CTX_ARCHIVIST=skipped" \
+    "$(cm_env ctx-meter.sh env "$CM_PROJECTS/-test-project/sess-viz.jsonl" 2>/dev/null)"
+
+printf 'state=failed\nat_turn=1\nitems_filed=0\nretry_at=1750003600\n' > "$CM_RUN/archivist/s-fail.state"
+want "a retrying failure names the time it will retry" "will retry at 16:06" "$(cm_status)"
+printf 'state=retry\nat_turn=1\nitems_filed=0\nretry_at=1750003600\n' > "$CM_RUN/archivist/s-fail.state"
+want "a deferred commit names the time it will retry" "deferred, will retry at 16:06" "$(cm_status)"
+printf 'state=failed\nat_turn=1\nitems_filed=0\n' > "$CM_RUN/archivist/s-fail.state"
+want "a terminal failure names the command that forces a sweep" "archivist now s-fail" "$(cm_status)"
+nowant "a terminal failure promises no retry" "will retry" "$(cm_status)"
+
 tl_summary

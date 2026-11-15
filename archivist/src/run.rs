@@ -101,6 +101,17 @@ pub enum AskClaim {
     Held(String),
 }
 
+impl AskClaim {
+    /// The `claim --ask` exit status: 0 file it, 3 this key already claimed, 4 already held.
+    pub fn exit_code(&self) -> i32 {
+        match self {
+            AskClaim::File => 0,
+            AskClaim::AlreadyFiled => 3,
+            AskClaim::Held(_) => 4,
+        }
+    }
+}
+
 /// `archivist claim <session> <key> --ask <question>` — the claim, refused when the question
 /// is already held. The key is still recorded, so a rerun
 /// does not ask again. An unreadable transcript is not evidence of anything; only the open
@@ -770,6 +781,59 @@ mod tests {
         *seam.paused.borrow_mut() = None;
         sweep(&seam, &cfg(), &dir);
         assert!(!dir.join("sweep.state").exists(), "the next normal pass clears the skipped state");
+    }
+
+    fn claim_ask_for(dir: &Path, sid: &str, key: &str, question: &str, open: &str, transcript: Option<&Path>) -> AskClaim {
+        claim_ask(dir, sid, key, &AskQuery { question, beads: &[] }, open, transcript, 0).unwrap()
+    }
+
+    const FILED_TRANSCRIPT: &str = concat!(
+        r#"{"type":"assistant","timestamp":"2026-10-30T10:00:00Z","message":{"id":"m1","content":[{"type":"tool_use","id":"tu1","name":"Bash","input":{"command":"mail send operator --subject \"approve kit-catalog v2 rollout\" --kind question"}}]}}"#,
+        "\n",
+        r#"{"type":"user","timestamp":"2026-10-30T10:00:01Z","message":{"content":[{"type":"tool_result","tool_use_id":"tu1","content":"filed sp-e1k1gt"}]}}"#,
+    );
+    const OPEN_KIT: &str = r#"[{"id":"sp-e1k1gt","title":"Approve kit-catalog v2 rollout","description":"the v2 catalog"}]"#;
+
+    #[test]
+    fn claim_ask_leaves_an_unrelated_open_ask_from_blocking_a_new_question() {
+        let dir = testkit::TempDir::new("archivist-run");
+        let got = claim_ask_for(&dir, "s", "t0", "How many days should closed-ask mail be retained?", OPEN_KIT, None);
+        assert_eq!(got.exit_code(), 0);
+    }
+
+    #[test]
+    fn claim_ask_holds_a_question_already_open_in_the_store_exit_4() {
+        let dir = testkit::TempDir::new("archivist-run");
+        let got = claim_ask_for(&dir, "s", "t1", "Approve the kit-catalog v2 rollout?", OPEN_KIT, None);
+        assert!(matches!(&got, AskClaim::Held(w) if w.contains("sp-e1k1gt")), "held by the store, naming the ask");
+        assert_eq!(got.exit_code(), 4);
+    }
+
+    #[test]
+    fn claim_ask_holds_a_question_the_transcript_shows_filed_with_an_id_exit_4() {
+        let dir = testkit::TempDir::new("archivist-run");
+        let tp = dir.join("conc-1.jsonl");
+        std::fs::write(&tp, FILED_TRANSCRIPT).unwrap();
+        let got = claim_ask_for(&dir, "s", "t2", "Approve the kit-catalog v2 rollout?", "[]", Some(&tp));
+        assert_eq!(got.exit_code(), 4);
+    }
+
+    #[test]
+    fn claim_ask_files_an_unrecorded_question_then_refuses_the_same_key_exit_3() {
+        let dir = testkit::TempDir::new("archivist-run");
+        let tp = dir.join("conc-1.jsonl");
+        std::fs::write(&tp, FILED_TRANSCRIPT).unwrap();
+        let q = "How many days should closed-ask mail be retained?";
+        assert_eq!(claim_ask_for(&dir, "s", "t3", q, "[]", Some(&tp)).exit_code(), 0);
+        assert_eq!(claim_ask_for(&dir, "s", "t3", q, "[]", Some(&tp)).exit_code(), 3);
+    }
+
+    #[test]
+    fn claim_ask_records_the_key_even_when_the_question_is_held() {
+        let dir = testkit::TempDir::new("archivist-run");
+        let q = "Approve the kit-catalog v2 rollout?";
+        assert_eq!(claim_ask_for(&dir, "s", "t4", q, OPEN_KIT, None).exit_code(), 4);
+        assert_eq!(claim_ask_for(&dir, "s", "t4", q, OPEN_KIT, None).exit_code(), 3, "a rerun does not ask again");
     }
 
     #[test]
