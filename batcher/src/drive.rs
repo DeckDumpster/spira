@@ -2476,6 +2476,31 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_named_two_suite_list_out_of_a_43_suite_tree_ejects_the_member_red_on_both_and_lands_the_other() {
+        let two: Vec<String> = corpus(43).into_iter().take(2).collect();
+        let named = two.clone();
+        let mut f = Fake::new(move |s, tree| named.iter().any(|n| n == s) && tree.contains("m2"));
+        let mut ops = Ops::default();
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &two,
+            vec![member("m1"), member("m2")],
+            Budget {
+                slots: 6,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
+        assert_eq!(ops.ejected.len(), 1, "{:?}", ops.ejected);
+        assert_eq!(ops.ejected[0].0, "m2");
+        assert!(
+            matches!(end, RoundEnd::Land { ref members, .. } if members.iter().map(|m| m.id.as_str()).collect::<Vec<_>>() == ["m1"]),
+            "{end:?}"
+        );
+    }
+
+    #[test]
     fn a_red_whose_attribution_reruns_faulted_is_a_fault_when_two_members_touch_the_suite() {
         let mut f = Fake::new(breaks("m2", "test-01.sh"));
         f.refuses_removals = true;
