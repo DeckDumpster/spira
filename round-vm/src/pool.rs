@@ -84,6 +84,12 @@ pub struct Pool {
     pub acquire_deadline: Duration,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum Woke {
+    Changed,
+    Capped,
+}
+
 enum Next {
     Got(Vm),
     Wait,
@@ -292,7 +298,7 @@ impl Pool {
                 "round-vm: acquire: giving up after {attempts} attempt(s): {reason}"
             ));
         }
-        self.wait_for_freed_slot(signature)
+        self.wait_for_freed_slot(signature).map(|_| ())
     }
 
     fn slot_signature(&self) -> Result<Vec<String>, String> {
@@ -310,16 +316,16 @@ impl Pool {
     }
 
     /// Waits for the pool to change (a lease released, a VM made ready), capped at `retry_interval`.
-    fn wait_for_freed_slot(&self, before: Vec<String>) -> Result<(), String> {
+    fn wait_for_freed_slot(&self, before: Vec<String>) -> Result<Woke, String> {
         let started = std::time::Instant::now();
         loop {
             let left = self.retry_interval.saturating_sub(started.elapsed());
             if left.is_zero() {
-                return Ok(());
+                return Ok(Woke::Capped);
             }
             std::thread::sleep(self.wait_poll.min(left));
             if self.slot_signature()? != before {
-                return Ok(());
+                return Ok(Woke::Changed);
             }
         }
     }
@@ -1202,12 +1208,7 @@ mod tests {
             })
         })
         .unwrap();
-        let started = std::time::Instant::now();
-        pl.wait_for_freed_slot(before).unwrap();
-        assert!(
-            started.elapsed() < Duration::from_secs(5),
-            "a changed pool must end the wait"
-        );
+        assert_eq!(pl.wait_for_freed_slot(before).unwrap(), Woke::Changed);
     }
 
     #[test]
@@ -1217,7 +1218,7 @@ mod tests {
         pl.retry_interval = Duration::from_millis(60);
         let before = pl.slot_signature().unwrap();
         let started = std::time::Instant::now();
-        pl.wait_for_freed_slot(before).unwrap();
+        assert_eq!(pl.wait_for_freed_slot(before).unwrap(), Woke::Capped);
         assert!(started.elapsed() >= Duration::from_millis(60));
     }
 
@@ -1392,8 +1393,14 @@ mod tests {
         .unwrap();
         fp.plant("555", "round-555");
         let pl2 = Arc::clone(&pl);
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let seen = Arc::clone(&calls);
         let t = std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(60));
+            let t0 = std::time::Instant::now();
+            while seen.load(std::sync::atomic::Ordering::SeqCst) < 2 {
+                assert!(t0.elapsed() < Duration::from_secs(30), "acquire never looped");
+                std::thread::yield_now();
+            }
             pl2.with_state(|s| {
                 s.provisioning = None;
                 s.ready = Some(Vm {
@@ -1403,7 +1410,10 @@ mod tests {
             })
             .unwrap();
         });
-        let f = || Ok(attempt(&fp));
+        let f = || {
+            calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(attempt(&fp))
+        };
         let (vm, mode) = pl
             .acquire(
                 &Deps {

@@ -4385,6 +4385,8 @@ mod tests {
         never_starts: bool,
         attr_live: std::sync::atomic::AtomicUsize,
         attr_overlap: std::sync::atomic::AtomicBool,
+        /// each attribution run waits until a second is live beside it
+        pair_attrs: bool,
     }
     impl FakeRemote {
         fn green() -> FakeRemote {
@@ -4418,6 +4420,7 @@ mod tests {
                 never_starts: false,
                 attr_live: std::sync::atomic::AtomicUsize::new(0),
                 attr_overlap: std::sync::atomic::AtomicBool::new(false),
+                pair_attrs: false,
             }
         }
     }
@@ -4472,10 +4475,8 @@ mod tests {
             if self.attr_live.fetch_add(1, std::sync::atomic::Ordering::SeqCst) > 0 {
                 self.attr_overlap.store(true, std::sync::atomic::Ordering::SeqCst);
             }
-            let mut spins = 0;
-            while self.attr_live.load(std::sync::atomic::Ordering::SeqCst) < 2 && spins < 300_000 {
-                std::thread::yield_now();
-                spins += 1;
+            if self.pair_attrs {
+                wait_until(|| self.attr_overlap.load(std::sync::atomic::Ordering::SeqCst));
             }
             self.attr_live.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
             Ok(if job.job == "j2" { 1 } else { 0 })
@@ -5111,6 +5112,10 @@ mod tests {
     }
 
     fn serve_all(jobs: &[(&str, &str)]) -> FakeRemote {
+        serve_with(FakeRemote::green(), jobs)
+    }
+
+    fn serve_with(remote: FakeRemote, jobs: &[(&str, &str)]) -> FakeRemote {
         let d = TempDir::new();
         let spool = Spool { dir: d.path().join("spool") };
         fs::create_dir_all(spool.req_dir()).unwrap();
@@ -5118,7 +5123,6 @@ mod tests {
             fs::write(spool.req_dir().join(format!("{job}.req")), format!("branch={branch}\nsuites=test-a.sh\nbuild=artifacts\n")).unwrap();
         }
         fs::write(d.path().join("spool/close"), "").unwrap();
-        let remote = FakeRemote::green();
         let (host, in_flight, lock, queue, time) = (FakeHost, std::sync::atomic::AtomicUsize::new(0), Mutex::new(()), crate::spool::TreeQueue::default(), crate::spool::AttrTime::default());
         std::thread::scope(|sc| {
             let mut server = Server {
@@ -5151,7 +5155,9 @@ mod tests {
 
     #[test]
     fn attribution_jobs_for_different_trees_still_run_together() {
-        let remote = serve_all(&[("j1", "m1"), ("j2", "m2")]);
+        let mut paired = FakeRemote::green();
+        paired.pair_attrs = true;
+        let remote = serve_with(paired, &[("j1", "m1"), ("j2", "m2")]);
         assert!(remote.attr_overlap.load(std::sync::atomic::Ordering::SeqCst), "distinct trees were queued behind each other");
     }
 
