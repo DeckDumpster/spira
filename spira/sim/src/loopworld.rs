@@ -304,7 +304,7 @@ impl Lc {
                         }
                         Verdict::Pass if row.state == BeadState::Certified => true,
                         Verdict::Pass => self.event(at, &bead, "gate", BeadEventKind::GatePass { tip, gate_key: format!("gate:{bead}") }).is_ok(),
-                        Verdict::Red => self.event(at, &bead, "gate", BeadEventKind::GateRed { tip, reason: GateRedReason::SuitesFailed }).is_ok(),
+                        Verdict::Red => self.event(at, &bead, "gate", BeadEventKind::GateRed { tip, reason: GateRedReason::SuitesFailed, step: None, message: None }).is_ok(),
                     };
                     self.outside.push(Outside { state_before: row.state, applied });
                 }
@@ -451,7 +451,7 @@ fn sift_record_pass(w: &World, input: &str) -> Result<String, String> {
 fn sift_send_back(w: &World, input: &str) -> Result<String, String> {
     let wr: sift::Write = parse_json(sift::SEND_BACK, input)?;
     let now = w.now();
-    w.lc().apply(now, &wr.id, sift::NAME, BeadEventKind::GateRed { tip: wr.tip, reason: GateRedReason::SuitesFailed })?;
+    w.lc().apply(now, &wr.id, sift::NAME, BeadEventKind::GateRed { tip: wr.tip, reason: GateRedReason::SuitesFailed, step: None, message: None })?;
     Ok("{}".into())
 }
 

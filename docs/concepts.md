@@ -49,7 +49,7 @@ normally sends the event.
 | `SUBMITTED` | `HolderDead` | `SUBMITTED` (clears holder, persona, lease: a row written before `Submit` cleared them) | `sentinel` |
 | `WORKING` | `Renew`, `Phase`, `Disposition` | `WORKING` | the holder only for `Renew`/`Phase` (phases `claimed`, `building`, `session`, `teardown`, forward only); teardown and watchdogs for `Disposition` (`lapsed` < `thrash` < `slain`; a weaker word never overwrites a stronger) |
 | `SUBMITTED` | `GatePass {tip, gate_key}` | `CERTIFIED` | `landing-pass` / `gate-worker` (per-branch gate); `batcher` (round) |
-| `SUBMITTED`, `CERTIFIED` | `GateRed {tip, reason}` | `REWORK` | gate, `sift`, round ejection |
+| `SUBMITTED`, `CERTIFIED` | `GateRed {tip, reason, step?, message?}` | `REWORK` | gate, `sift`, round ejection |
 | `SUBMITTED` | `GateInfra {tip}` | `SUBMITTED` (the infrastructure faulted, not the tree) | gate |
 | `SUBMITTED`, `CERTIFIED` | `Deliver` | `IN_DELIVERY` | `landing-pass`, `batcher`, `queue` |
 | `IN_DELIVERY` | `Delivered {merge_sha, proof}` | `LANDED` | `queue land-local`, `landing-pass` (pr/push) |

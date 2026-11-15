@@ -109,7 +109,7 @@ pub trait World {
     fn push_metrics(&self, _run: &crate::telemetry::GateRun) {}
     /// `spira-lc certify <bead> <tip> <outcome> <detail> gate` (the machine reads its switch).
     /// Returns spira-lc's stderr when it refused (a tip the row does not hold), else empty.
-    fn lc_certify(&self, bead: &str, tip: &str, outcome: &str, detail: &str) -> String;
+    fn lc_certify(&self, bead: &str, tip: &str, outcome: &str, detail: &str, step: &str, message: &str) -> String;
     /// Records the red's failing tests and output tail as the bead's `eject-failure` fact, before its certify.
     fn lc_failure(&self, _bead: &str, _tip: &str, _files: &[String], _output: &str) {}
     /// `spira-lc fact <bead> --kind gate-start`: the gate holds its tree and begins running.

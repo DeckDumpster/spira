@@ -398,6 +398,22 @@ impl GateRun {
             (s, l) => format!("failing step: {s}; failing line: {l}"),
         }
     }
+    /// The step a red gate failed at and that step's last output line: the verdict's `suite`
+    /// (else the first red `gate-step`), and the last line the gate printed that is not its own
+    /// bookkeeping. Either is empty when the output does not say.
+    pub fn red_at(&self) -> (String, String) {
+        let bookkeeping = |l: &str| l.starts_with("gate-step ") || l.starts_with("gate: ");
+        let step = match self.suite.as_str() {
+            "-" => self
+                .out
+                .lines()
+                .find_map(|l| l.trim().strip_prefix("gate-step RED ")?.split_once(" :: ").map(|(_, u)| u.trim().to_string()))
+                .unwrap_or_default(),
+            s => s.to_string(),
+        };
+        let message = self.out.lines().rev().map(str::trim).find(|l| !l.is_empty() && !bookkeeping(l)).unwrap_or("").to_string();
+        (step, message)
+    }
     pub fn reason_or(&self, dflt: &str) -> String {
         self.reason.clone().filter(|r| !r.is_empty()).unwrap_or_else(|| dflt.to_string())
     }
@@ -509,6 +525,15 @@ mod gate_run_tests {
         assert_eq!(g.outcome, GateOutcome::NoVerdict);
         assert!(!g.outcome.blames_branch());
         assert_eq!(g.reason_or("x"), "over-cap");
+    }
+
+    #[test]
+    fn a_red_fence_is_named_with_the_line_it_printed() {
+        let msg = "gate fixture-config: spira/testlib/complete.toml does not resolve against the landing ref";
+        let out = format!("{msg}\ngate-step RED rc=1 :: fixture-config\ngate: VERDICT=FAIL reason=branch-red branch=b repo=r suite=fixture-config\n");
+        assert_eq!(GateRun::parse(1, out).red_at(), ("fixture-config".to_string(), msg.to_string()));
+        let unnamed = "boom\ngate-step RED rc=1 :: spira-lint\ngate: VERDICT=FAIL reason=branch-red branch=b repo=r suite=-\n";
+        assert_eq!(GateRun::parse(1, unnamed.into()).red_at(), ("spira-lint".to_string(), "boom".to_string()));
     }
 
     #[test]
