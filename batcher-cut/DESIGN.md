@@ -213,7 +213,7 @@ The cut fails with a `CutError` whose `CutKind` is set where the failure is prod
 reads the kind, never the message:
 
 - a red local verdict written in the pass (a round that ran and did not land)
-  writes `pause` and pages the Concierge inbox; `rm pause` lifts it. `Other` failures never
+  writes `pause` and pages the Concierge inbox; `batcher pause-lift` lifts it. `Other` failures never
   pause, whatever their wording. A round emptied because every member was ejected writes the
   `recut` verdict, not `red`: no culprit is left, so the next pass cuts the survivors;
 - `Infra` (a round with no verdict: certify exiting 4, a corpus run that ended in a harness

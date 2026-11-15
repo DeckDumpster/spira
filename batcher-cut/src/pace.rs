@@ -390,7 +390,7 @@ impl Files {
     }
 }
 
-fn one_line(s: &str) -> String {
+pub fn one_line(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 

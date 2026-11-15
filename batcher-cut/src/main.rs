@@ -2492,7 +2492,7 @@ fn person_flags(o: &Opts) -> Result<(String, String, String), String> {
 
 fn pause_set(o: &Opts, out: &mut dyn std::io::Write) -> Result<(), String> {
     let (run, by, reason) = person_flags(o)?;
-    let text = format!("hold:{}", reason.trim());
+    let text = format!("hold:{}", pace::one_line(&reason));
     pace::Files::new(Path::new(&run), &o.repo).set_pause(&text, &by, &reason, now())?;
     writeln!(out, "batcher: {}: paused by {by} — {text}", o.repo).map_err(|e| e.to_string())
 }
@@ -2649,6 +2649,24 @@ mod tests {
         assert_eq!(f.pause_since(), None);
         let log = std::fs::read_to_string(d.path().join("landing.log")).unwrap();
         assert!(log.contains("by=operator kind=hold"), "{log}");
+        let recs = spira_otel::logs::read_all(&spira_otel::dir_of(d.path()), "batcher");
+        let has = |k: &str, v: &str| recs.iter().any(|r| r.iter().any(|(n, x)| n == k && x["stringValue"] == v));
+        assert!(has("kind", "pause") && has("by", "operator"));
+    }
+
+    #[test]
+    fn a_person_lifts_their_own_hold_and_show_reads_it_first() {
+        let d = testkit::TempDir::new("batcher-pause-hold-lift");
+        let mut o = pause_opts(d.path(), Some("operator"));
+        o.reason = Some("two\nlines".into());
+        pause_set(&o, &mut Vec::new()).unwrap();
+        let f = pace::Files::new(d.path(), "a");
+        assert_eq!(std::fs::read_to_string(f.pause_file()).unwrap(), "hold:two lines");
+        let mut out = Vec::new();
+        pause_show(&o, &mut out).unwrap();
+        assert!(String::from_utf8(out).unwrap().contains("kind=hold"));
+        pause_lift(&o, &mut Vec::new()).unwrap();
+        assert!(!f.pause_file().exists());
     }
 
     #[test]
