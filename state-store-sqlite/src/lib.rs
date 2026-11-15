@@ -246,7 +246,15 @@ pub struct Options {
     pub outbox: bool,
     /// A segment of the outbox is closed once it holds this many bytes.
     pub outbox_segment_bytes: u64,
+    /// The wall clock whose UTC day a commit's receipts are filed under.
+    pub wall: Arc<dyn Clock>,
+    /// Runs after every side file has committed and before the main commit; an `Err` fails the
+    /// commit as a failed main commit would.
+    pub commit_probe: Option<CommitProbe>,
 }
+
+/// See [`Options::commit_probe`].
+pub type CommitProbe = Arc<dyn Fn() -> Result<()> + Send + Sync>;
 
 impl Default for Options {
     fn default() -> Self {
@@ -259,6 +267,8 @@ impl Default for Options {
             history_bytes: 64 * 1024 * 1024,
             outbox: true,
             outbox_segment_bytes: outbox::SEGMENT_BYTES,
+            wall: Arc::new(runtime::ports::WallClock),
+            commit_probe: None,
         }
     }
 }
