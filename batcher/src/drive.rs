@@ -141,6 +141,10 @@ pub trait RoundOps {
     /// `owner`: the member's own tip owns the red; a stacked dependent leaves as collateral.
     /// `Err` is the refusal, whole: the round ends on it rather than report the member gone.
     fn eject(&mut self, member: &Member, suites: &[String], owner: bool) -> Result<(), String>;
+    /// Ejects a member a mender's return named, carrying the mender's diagnosis as the reason.
+    fn eject_returned(&mut self, member: &Member, suites: &[String], _why: &str) -> Result<(), String> {
+        self.eject(member, suites, true)
+    }
     /// Ejects `member` on a filter's red, carrying the line that names it as the evidence.
     fn eject_on(&mut self, member: &Member, filter: &str, _line: &str, owner: bool) -> Result<(), String> {
         self.eject(member, &[filter.to_string()], owner)
@@ -1557,7 +1561,12 @@ fn attribute_members<R: RoundRunner, O: RoundOps>(
                                 .get(&l.id)
                                 .cloned()
                                 .unwrap_or_else(|| m.suites.clone());
-                            ops.eject(member, &own, d.owners.contains_key(&l.id)).map_err(refused)?;
+                            if l.is_stacked_dependent(&members) {
+                                ops.eject(member, &own, false)
+                            } else {
+                                ops.eject_returned(member, &own, &l.why)
+                            }
+                            .map_err(refused)?;
                         }
                     }
                     if next.is_empty() {
@@ -1975,6 +1984,7 @@ pub(crate) mod tests {
         pub touch: BTreeMap<String, Vec<String>>,
         pub ejected: Vec<(String, Vec<String>)>,
         pub eject_evidence: Vec<(String, String)>,
+        pub returned: Vec<(String, String)>,
         pub owner_flags: Vec<(String, bool)>,
         pub rebuilt: Vec<Vec<String>>,
         pub incidents: Vec<(String, Vec<String>)>,
@@ -2016,6 +2026,10 @@ pub(crate) mod tests {
             self.ejected.push((member.id.clone(), suites.to_vec()));
             self.owner_flags.push((member.id.clone(), owner));
             Ok(())
+        }
+        fn eject_returned(&mut self, member: &Member, suites: &[String], why: &str) -> Result<(), String> {
+            self.returned.push((member.id.clone(), why.to_string()));
+            self.eject(member, suites, true)
         }
         fn eject_on(&mut self, member: &Member, filter: &str, line: &str, owner: bool) -> Result<(), String> {
             self.eject_evidence
@@ -3181,6 +3195,30 @@ pub(crate) mod tests {
             (MainKind::Verify, vec!["test-03.sh".into()])
         );
         assert!(matches!(end, RoundEnd::Land { .. } | RoundEnd::Blocked(_)));
+    }
+
+    #[test]
+    fn a_member_a_mender_returned_is_ejected_with_the_diagnosis_though_attribution_did_not_own_it() {
+        use crate::mender::{Left, Next};
+        let mut f = Fake::new(|s, tree| match s {
+            "test-03.sh" => tree.contains("m1") && tree.contains("m3"),
+            _ => false,
+        });
+        let mut ops = Ops {
+            menders: vec![Next::Pass {
+                members: vec![member("m1")],
+                left: vec![Left {
+                    id: "m2".into(),
+                    why: "bad at x.rs:9".into(),
+                }],
+                retry: false,
+            }],
+            ..Ops::default()
+        };
+        attribute_round(&mut f, &mut ops, &corpus(10), three(), Budget { slots: 8, maxpar: 2 }).unwrap();
+        assert_eq!(ops.returned, vec![("m2".to_string(), "bad at x.rs:9".to_string())]);
+        assert_eq!(ops.owner_flags.iter().find(|(id, _)| id == "m2"), Some(&("m2".to_string(), true)));
+        assert_eq!(ops.rebuilt[0], vec!["m1".to_string()]);
     }
 
     #[test]

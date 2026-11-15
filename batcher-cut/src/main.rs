@@ -350,6 +350,7 @@ struct LiveOps<'a> {
     batch: Option<&'a str>,
     prior: batcher::mender::Prior,
     send_back: Option<String>,
+    mend_pass: u32,
 }
 
 const MEND_DEADLINE_SECS: i64 = 900;
@@ -368,6 +369,7 @@ impl LiveOps<'_> {
             .and_then(|v| v.get("pass").and_then(serde_json::Value::as_u64))
             .ok_or_else(|| format!("spira-lc show-batch {batch}: no pass in the reply"))?
             as u32;
+        self.mend_pass = pass;
         let deadline = std::env::var("SPIRA_BATCHER_MEND_DEADLINE_SECS")
             .ok()
             .and_then(|v| v.trim().parse().ok())
@@ -380,16 +382,8 @@ impl LiveOps<'_> {
         if endpass::Menders::rows(&mut lc)?.is_empty() {
             return Ok(None);
         }
-        let mut failures = endpass::wait(&mut lc, deadline)?;
+        let failures = endpass::with_owners(endpass::wait(&mut lc, deadline)?, &d.owners);
         let ids: Vec<String> = members.iter().map(|m| m.id.clone()).collect();
-        for f in &mut failures {
-            f.members = d
-                .owners
-                .iter()
-                .filter(|(_, s)| s.contains(&f.suite))
-                .map(|(id, _)| id.clone())
-                .collect();
-        }
         let mut mended = BTreeMap::new();
         let owners: Vec<String> = failures
             .iter()
@@ -426,6 +420,7 @@ impl LiveOps<'_> {
         suites: &[String],
         fails: &[(String, String)],
         owner: bool,
+        returned: Option<&str>,
     ) -> Result<(), String> {
         if owner {
             redtip::record(&self.env.run, &self.repo.name, &member.id, &member.tip);
@@ -435,9 +430,11 @@ impl LiveOps<'_> {
         }
         match self.batch {
             Some(batch) => {
-                if let Err(e) =
-                    io::round_eject(self.env, self.repo, batch, &member.id, suites, fails, owner)
-                {
+                let ejected = match returned {
+                    Some(lead) => io::round_eject_returned(self.env, self.repo, batch, &member.id, suites, fails, lead),
+                    None => io::round_eject(self.env, self.repo, batch, &member.id, suites, fails, owner),
+                };
+                if let Err(e) = ejected {
                     let refusal = format!("eject of {} from {batch} refused: {e}", member.id);
                     println!("batcher {}: {refusal}", self.repo.name);
                     return Err(refusal);
@@ -469,7 +466,7 @@ impl drive::RoundOps for LiveOps<'_> {
                 io::suite_first_fail(Path::new(&self.evidence), self.pass.as_deref(), s).map(|l| (s.clone(), l))
             })
             .collect();
-        self.eject_with(member, suites, &fails, owner)
+        self.eject_with(member, suites, &fails, owner, None)
     }
 
     fn eject_on(&mut self, member: &Member, filter: &str, line: &str, owner: bool) -> Result<(), String> {
@@ -478,7 +475,19 @@ impl drive::RoundOps for LiveOps<'_> {
             &[filter.to_string()],
             &[(filter.to_string(), line.to_string())],
             owner,
+            None,
         )
+    }
+
+    fn eject_returned(&mut self, member: &Member, suites: &[String], why: &str) -> Result<(), String> {
+        let fails: Vec<(String, String)> = suites
+            .iter()
+            .filter_map(|s| {
+                io::suite_first_fail(Path::new(&self.evidence), self.pass.as_deref(), s).map(|l| (s.clone(), l))
+            })
+            .collect();
+        let lead = io::returned_lead(suites, self.mend_pass, self.batch.unwrap_or_default(), why);
+        self.eject_with(member, suites, &fails, true, Some(&lead))
     }
 
     fn package_graph(&self) -> Option<batcher::unitattr::PackageGraph> {
@@ -532,6 +541,7 @@ impl drive::RoundOps for LiveOps<'_> {
                     &[drive::WORKSPACE_BUILD.to_string()],
                     &[(drive::WORKSPACE_BUILD.to_string(), line.to_string())],
                     false,
+                    None,
                 )?;
                 io::sequence_edges(self.env, &member.id, behind)
             }
@@ -973,6 +983,7 @@ fn stabilize_round(
         batch,
         prior: batcher::mender::Prior::default(),
         send_back: None,
+        mend_pass: 0,
     };
     let budget = batcher::attrib::Budget::with_default(env_.maxpar, env_.round_slots);
     let round_members = members.clone();
@@ -2219,6 +2230,7 @@ fn attribute_run(o: &Opts) -> Result<(), String> {
         batch: o.batch.as_deref(),
         prior: batcher::mender::Prior::default(),
         send_back: None,
+        mend_pass: 0,
     };
     let budget = batcher::attrib::Budget::with_default(env_.maxpar, env_.round_slots);
     let end = drive::attribute_round(&mut runner, &mut ops, &suites, members.clone(), budget);

@@ -134,6 +134,7 @@ CREATE TABLE IF NOT EXISTS mending (
     triage_ended_at BIGINT NULL,
     diagnosis       TEXT NULL,
     awaiting_ask    VARCHAR(40) NULL,
+    returned        TEXT NULL,
     version         BIGINT NOT NULL,
     PRIMARY KEY (batch_id, pass, suite)
 );

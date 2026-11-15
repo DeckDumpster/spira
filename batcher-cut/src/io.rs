@@ -2958,25 +2958,44 @@ pub fn round_eject(
     first_fails: &[(String, String)],
     owner: bool,
 ) -> Result<(), String> {
-    let reason = format!(
-        "Ejected by the merge queue's local attribution (pre-PR): spira/{id} {} red on: {}.{}",
-        if owner {
-            "turned"
-        } else {
-            "is stacked on a member that turned"
-        },
-        suites.join(", "),
-        first_fails
-            .iter()
-            .map(|(s, l)| format!(" First FAIL, {s}: {l}"))
-            .collect::<String>()
-    );
+    let reason = eject_reason(id, suites, first_fails, owner, None);
     let csv = if owner {
         suites.join(",")
     } else {
         String::new()
     };
     round_eject_with(env, repo, batch, id, &reason, &csv)
+}
+
+/// `round_eject` for the member a mender's return named: `lead` opens the reason and the member owns the red.
+pub fn round_eject_returned(
+    env: &Env,
+    repo: &Repo,
+    batch: &str,
+    id: &str,
+    suites: &[String],
+    first_fails: &[(String, String)],
+    lead: &str,
+) -> Result<(), String> {
+    let reason = eject_reason(id, suites, first_fails, true, Some(lead));
+    round_eject_with(env, repo, batch, id, &reason, &suites.join(","))
+}
+
+pub fn returned_lead(suites: &[String], pass: u32, batch: &str, why: &str) -> String {
+    format!("Returned by the mender of {} in pass {pass} of {batch}: {why}", suites.join(", "))
+}
+
+/// A mender's return leads with its diagnosis; any other ejection says which red it turned.
+pub fn eject_reason(id: &str, suites: &[String], first_fails: &[(String, String)], owner: bool, returned: Option<&str>) -> String {
+    let fails: String = first_fails.iter().map(|(s, l)| format!(" First FAIL, {s}: {l}")).collect();
+    match returned {
+        Some(lead) => format!("{lead}{fails}"),
+        None => format!(
+            "Ejected by the merge queue's local attribution (pre-PR): spira/{id} {} red on: {}.{fails}",
+            if owner { "turned" } else { "is stacked on a member that turned" },
+            suites.join(", ")
+        ),
+    }
 }
 
 /// `queue round eject --suites` for the only member of a round the repository's own CI judged red:
@@ -5587,5 +5606,16 @@ mod eject_args_tests {
         let a = eject_args("r9", "spira", "sp-a", "test-b.sh");
         let i = a.iter().position(|x| x == "--suites").expect("--suites");
         assert_eq!(a[i + 1], "test-b.sh");
+    }
+
+    #[test]
+    fn a_returned_members_reason_leads_with_the_mender_and_keeps_the_first_fail_line() {
+        let fails = [("test-x.sh".to_string(), "boom at x.rs:9".to_string())];
+        let lead = "Returned by the mender of test-x.sh in pass 2 of b-1: bad at x.rs:9";
+        assert_eq!(crate::io::returned_lead(&["test-x.sh".into()], 2, "b-1", "bad at x.rs:9"), lead);
+        let r = crate::io::eject_reason("sp-a", &["test-x.sh".into()], &fails, true, Some(lead));
+        assert_eq!(r, format!("{lead} First FAIL, test-x.sh: boom at x.rs:9"));
+        let plain = crate::io::eject_reason("sp-a", &["test-x.sh".into()], &fails, false, None);
+        assert!(plain.contains("is stacked on a member that turned"), "{plain}");
     }
 }
