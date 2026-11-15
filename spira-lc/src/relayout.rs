@@ -59,7 +59,7 @@ pub struct Wall(Option<u64>);
 
 impl Wall {
     pub fn from_env() -> Self {
-        Wall(std::env::var("SPIRA_NOW").ok().and_then(|v| v.parse::<u64>().ok()).map(|s| s * 1_000))
+        Wall(spira_config::vtime::override_epoch().map(|s| s.saturating_mul(1_000)))
     }
 }
 
