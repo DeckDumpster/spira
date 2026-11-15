@@ -1243,7 +1243,7 @@ impl Backend for SqliteBackend {
         };
         if let Some(past) = past {
             let past = u64::try_from(past).map_err(|_| Error::Backend("negative main".into()))?;
-            to = to.min(if past - 1 > compacted { past - 1 } else { past });
+            to = to.min((past - 1).max(compacted + 1));
         }
         let to_i = main_i64(to)?;
         for sql in [COMPACT_SUPERSEDED, COMPACT_TOMBSTONES] {

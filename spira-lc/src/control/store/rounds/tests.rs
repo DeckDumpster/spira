@@ -1046,6 +1046,9 @@ impl Backend for Counting {
     fn compact(&self, rev: u64) -> state_store::Result<()> {
         self.inner.compact(rev)
     }
+    fn compacted(&self) -> state_store::Result<u64> {
+        self.inner.compacted()
+    }
 }
 
 /// law: every list paginates in the store. `list --state X --limit N --after ID` over many

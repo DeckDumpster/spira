@@ -150,6 +150,9 @@ impl<B: Backend> Backend for Interpose<B> {
     fn compact(&self, rev: u64) -> Result<()> {
         self.inner.compact(rev)
     }
+    fn compacted(&self) -> Result<u64> {
+        self.inner.compacted()
+    }
     fn gc_range(
         &self,
         after: Option<&str>,

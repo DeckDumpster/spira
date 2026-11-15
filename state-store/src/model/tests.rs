@@ -40,6 +40,9 @@ impl Backend for Counted {
     fn compact(&self, rev: u64) -> Result<()> {
         self.inner.compact(rev)
     }
+    fn compacted(&self) -> Result<u64> {
+        self.inner.compacted()
+    }
 }
 
 const SKIP: &[&str] = &["events/", "history/"];
@@ -157,6 +160,48 @@ fn a_deleted_key_is_forgotten_once_no_read_can_see_it() {
     assert_eq!(m.get("k", rev).unwrap(), None);
 }
 
+/// A backend whose compaction stops at revision 2, as a bounded step stops short of the request.
+struct Short(MemBackend, AtomicU64);
+
+impl Backend for Short {
+    fn head(&self) -> Result<u64> {
+        self.0.head()
+    }
+    fn get(&self, key: &str, at: u64) -> Result<Option<Version>> {
+        self.1.fetch_add(1, Ordering::SeqCst);
+        self.0.get(key, at)
+    }
+    fn range(&self, prefix: &str, after: Option<&str>, limit: usize, at: u64) -> Result<Vec<(String, Version)>> {
+        self.0.range(prefix, after, limit, at)
+    }
+    fn commit(&self, expect: u64, batch: &[Write]) -> Result<u64> {
+        self.0.commit(expect, batch)
+    }
+    fn log(&self, from: u64, max_mains: usize) -> Result<Vec<LogEntry>> {
+        self.0.log(from, max_mains)
+    }
+    fn compact(&self, rev: u64) -> Result<()> {
+        self.0.compact(rev.min(2))
+    }
+    fn compacted(&self) -> Result<u64> {
+        self.0.compacted()
+    }
+}
+
+#[test]
+fn a_compaction_that_stops_short_raises_the_floor_only_to_where_it_stopped() {
+    let m = Modeled::open(Short(MemBackend::new(), AtomicU64::new(0)), SKIP, 16).unwrap();
+    let mut rev = 0;
+    for n in 1..=4 {
+        rev = m.commit(rev, &[put("lifecycle/k", &n.to_string())]).unwrap();
+    }
+    m.compact(rev).unwrap();
+    assert_eq!(m.get("lifecycle/k", 1), Err(Error::TooOld { compacted: 2 }));
+    let before = m.inner.1.load(Ordering::SeqCst);
+    assert_eq!(value(m.get("lifecycle/k", 3).unwrap()).as_deref(), Some("3"));
+    assert_eq!(m.inner.1.load(Ordering::SeqCst), before, "above where it stopped is still memory's");
+}
+
 #[test]
 fn a_read_below_the_compaction_point_is_too_old() {
     let m = Modeled::open(MemBackend::new(), SKIP, 16).unwrap();
@@ -255,6 +300,9 @@ fn a_read_does_not_wait_for_a_commit_in_flight() {
         }
         fn compact(&self, rev: u64) -> Result<()> {
             self.inner.compact(rev)
+        }
+        fn compacted(&self) -> Result<u64> {
+            self.inner.compacted()
         }
     }
     let (entered, on_entry) = mpsc::channel();
