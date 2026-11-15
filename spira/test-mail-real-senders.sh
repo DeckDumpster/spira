@@ -28,7 +28,7 @@
 # daily digest is the only path to the operator — so nothing here should ever reach the mailbox.
 #
 # tier: T2
-# covers: spira/lib.sh watchd/* skew/src/* spira/incident.sh archivist/src/* spira/ctx-meter.sh incident/src/stub_bd.rs mail/src/* incident/* sentinel/src/* UC-operator-channel-05
+# covers: spira/lib.sh watchd/* skew/src/* spira/incident.sh archivist/src/* spira/ctx-meter.sh spira/runes/archivist.md incident/src/stub_bd.rs mail/src/* incident/* sentinel/src/* UC-operator-channel-05
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -264,5 +264,44 @@ lint_err="$(printf 'body' | mail send operator \
 rc=$?
 is "the isolated repro also fails" "1" "$rc"
 want "the isolated repro names the archivist-note guard" "archivist note refused" "$lint_err"
+
+echo
+echo "ctx-meter: the archivist's skipped and retry states reach the cockpit text"
+CM_RUN="$TMP/cm-run"; CM_PROJECTS="$TMP/cm-projects"
+mkdir -p "$CM_RUN/archivist" "$CM_PROJECTS/-test-project" "$TMP/cm-home"
+mkarctranscript "$CM_PROJECTS/-test-project/sess-viz.jsonl" 5 3000
+tl_config SPIRA_RUN="$CM_RUN" SPIRA_TOKEN_PROJECTS="$CM_PROJECTS"
+cm_env() { env -i SPIRA_RELEASE="$(tl_release)" SPIRA_TOML="$SPIRA_TOML" HOME="$TMP/cm-home" PATH="$PATH" SPIRA_CONF=/nonexistent TZ=UTC SPIRA_NOW=1750000000 "$@"; }
+cm_status() {
+    printf '{"session_id":"s-fail","cwd":"/tmp","context_window":{"total_input_tokens":1200,"current_usage":{"input_tokens":1200}}}' |
+        cm_env ctx-meter.sh 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g'
+}
+
+nowant "positive control: with no sweep.state the env mode does not say skipped" "SP_CTX_ARCHIVIST=skipped" \
+    "$(cm_env ctx-meter.sh env "$CM_PROJECTS/-test-project/sess-viz.jsonl" 2>/dev/null)"
+printf 'sweep_state=skipped\nreason=capacity\nat=1750000000\n' > "$CM_RUN/archivist/sweep.state"
+want "a sweep skipped for capacity shows as SP_CTX_ARCHIVIST=skipped" "SP_CTX_ARCHIVIST=skipped" \
+    "$(cm_env ctx-meter.sh env "$CM_PROJECTS/-test-project/sess-viz.jsonl" 2>/dev/null)"
+
+printf 'state=failed\nat_turn=1\nitems_filed=0\nretry_at=1750003600\n' > "$CM_RUN/archivist/s-fail.state"
+want "a retrying failure names the time it will retry" "will retry at 16:06" "$(cm_status)"
+printf 'state=retry\nat_turn=1\nitems_filed=0\nretry_at=1750003600\n' > "$CM_RUN/archivist/s-fail.state"
+want "a deferred commit names the time it will retry" "deferred, will retry at 16:06" "$(cm_status)"
+printf 'state=failed\nat_turn=1\nitems_filed=0\n' > "$CM_RUN/archivist/s-fail.state"
+want "a terminal failure names the command that forces a sweep" "archivist now s-fail" "$(cm_status)"
+nowant "a terminal failure promises no retry" "will retry" "$(cm_status)"
+
+echo
+echo "brief text: the archivist brief states the ask rollup, close and claim rules"
+briefed="$(cat "$HERE/runes/archivist.md")"
+want "the brief uses a relates edge for a rollup" "work relate <rollup> <ask>" "$briefed"
+want "the brief forbids an untyped dependency between two ask beads" "Never wire an untyped dependency between two beads" "$briefed"
+want "the brief closes an answered ask with the operator's words" "work close-ask <ask-id> --exit answered --source" "$briefed"
+want "the brief closes only on an unambiguous answer" "only when his answer in" "$briefed"
+want "the brief forbids taking an ask's default" "never take its default" "$briefed"
+want "the brief claims an ask with its question" '--ask "<the question>"' "$briefed"
+want "the brief carries the session's liveness" "{{LIVENESS}}" "$briefed"
+stripped="${briefed//work relate <rollup> <ask>/}"
+nowant "positive control: a brief without the phrase is seen to lack it" "work relate <rollup> <ask>" "$stripped"
 
 tl_summary

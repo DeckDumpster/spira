@@ -141,14 +141,15 @@ fn dispatch(cmd: &str, rest: &[String]) {
             };
             let tp = archivist::transcripts::find_transcript(Path::new(&cfg.token_projects), sid);
             match run::claim_ask(&run_arc_dir(), sid, key, &run::AskQuery { question: &question, beads: &beads }, &open, tp.as_deref(), run::now_epoch()) {
-                Ok(run::AskClaim::File) => {}
-                Ok(run::AskClaim::AlreadyFiled) => {
-                    eprintln!("archivist: already filed: {key}");
-                    std::process::exit(3);
-                }
-                Ok(run::AskClaim::Held(why)) => {
-                    eprintln!("archivist: not filing, already covered: {why}");
-                    std::process::exit(4);
+                Ok(claim) => {
+                    match &claim {
+                        run::AskClaim::File => {}
+                        run::AskClaim::AlreadyFiled => eprintln!("archivist: already filed: {key}"),
+                        run::AskClaim::Held(why) => eprintln!("archivist: not filing, already covered: {why}"),
+                    }
+                    if claim.exit_code() != 0 {
+                        std::process::exit(claim.exit_code());
+                    }
                 }
                 Err(e) => die(&e),
             }
