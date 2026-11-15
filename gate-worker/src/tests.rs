@@ -1,8 +1,8 @@
 use super::*;
 use landing_pass::gateq::Where;
 use std::cell::RefCell;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Barrier, Mutex};
 
 struct Tip(Option<String>);
 impl Branches for Tip {
@@ -95,18 +95,37 @@ fn overlaps(spans: &[(u64, u64)]) -> bool {
     spans.iter().enumerate().any(|(i, a)| spans.iter().skip(i + 1).any(|b| a.0 < b.1 && b.0 < a.1))
 }
 
-struct Timed<'a>(&'a Mutex<Vec<(u64, u64)>>, &'a Wall);
-struct Wall;
-impl Clock for Wall {
-    fn now_ms(&self) -> u64 {
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_micros() as u64
-    }
+#[test]
+fn overlaps_reads_intersecting_spans_and_not_touching_ones() {
+    assert!(overlaps(&[(0, 20), (10, 30)]));
+    assert!(!overlaps(&[(0, 10), (10, 20)]));
+    assert!(overlaps(&[(0, 10), (20, 30), (5, 25)]));
 }
-impl Gate for Timed<'_> {
+
+struct Rendezvous<'a>(&'a Mutex<Vec<(u64, u64)>>, &'a Tick, Barrier);
+impl Gate for Rendezvous<'_> {
     fn gate(&self, _: &str, _: &str, _: &str, _: &str) -> (i32, String) {
         let s = self.1.now_ms();
-        std::thread::sleep(std::time::Duration::from_millis(20));
+        self.2.wait();
         self.0.lock().unwrap().push((s, self.1.now_ms()));
+        (0, String::new())
+    }
+}
+
+struct Exclusive<'a> {
+    in_gate: &'a AtomicUsize,
+    peak: &'a AtomicUsize,
+    spans: &'a Mutex<Vec<(u64, u64)>>,
+    clock: &'a Tick,
+}
+impl Gate for Exclusive<'_> {
+    fn gate(&self, _: &str, _: &str, _: &str, _: &str) -> (i32, String) {
+        let now = self.in_gate.fetch_add(1, Ordering::SeqCst) + 1;
+        self.peak.fetch_max(now, Ordering::SeqCst);
+        let s = self.clock.now_ms();
+        let e = self.clock.now_ms();
+        self.spans.lock().unwrap().push((s, e));
+        self.in_gate.fetch_sub(1, Ordering::SeqCst);
         (0, String::new())
     }
 }
@@ -114,8 +133,8 @@ impl Gate for Timed<'_> {
 #[test]
 fn the_overlap_check_sees_a_deliberate_overlap() {
     let spans = Mutex::new(Vec::new());
-    let wall = Wall;
-    let t = Timed(&spans, &wall);
+    let clock = Tick(AtomicU64::new(0));
+    let t = Rendezvous(&spans, &clock, Barrier::new(2));
     std::thread::scope(|s| {
         s.spawn(|| t.gate("b", "r", "1", "x"));
         s.spawn(|| t.gate("b", "r", "1", "y"));
@@ -131,17 +150,19 @@ fn two_branches_queued_for_one_tree_are_gated_one_at_a_time() {
         q.enqueue(&Job::new("r", b, b, t, false)).unwrap();
     }
     let spans = Mutex::new(Vec::new());
-    let wall = Wall;
+    let clock = Tick(AtomicU64::new(0));
+    let (in_gate, peak) = (AtomicUsize::new(0), AtomicUsize::new(0));
     struct AnyTip;
     impl Branches for AnyTip {
         fn tip(&self, _: &str, b: &str) -> Option<String> {
             Some(format!("t{}", b.trim_start_matches("spira/sp-")))
         }
     }
-    let w = Worker { queue: &q, gate: &Timed(&spans, &wall), branches: &AnyTip, clock: &wall, lock_wait: 1, log: &|_| {}, slot: 0 };
+    let w = Worker { queue: &q, gate: &Exclusive { in_gate: &in_gate, peak: &peak, spans: &spans, clock: &clock }, branches: &AnyTip, clock: &clock, lock_wait: 1, log: &|_| {}, slot: 0 };
     assert_eq!(w.drain(), 3);
     let spans = spans.lock().unwrap();
     assert_eq!(spans.len(), 3);
+    assert_eq!(peak.load(Ordering::SeqCst), 1, "more than one gate ran at once");
     assert!(!overlaps(&spans), "gates overlapped: {spans:?}");
     let done: Vec<Done> = ["t1", "t2", "t3"].iter().enumerate().map(|(i, t)| q.take_done("r", &format!("spira/sp-{}", i + 1), t).unwrap()).collect();
     let recorded: Vec<(u64, u64)> = done.iter().map(|d| (d.started_ms, d.finished_ms)).collect();
