@@ -434,3 +434,32 @@ fn a_read_below_the_compaction_point_is_stamped_too_old() {
     m.get("k", head).unwrap();
     assert!(!stamp().too_old);
 }
+
+#[test]
+fn a_range_below_the_compaction_point_is_stamped_too_old() {
+    let m = Modeled::open(MemBackend::new(), SKIP, 2).unwrap();
+    let head = ten_commits(&m);
+    m.compact(head).unwrap();
+    track(false);
+    assert!(matches!(m.range("", None, 10, 1), Err(Error::TooOld { .. })));
+    assert!(stamp().too_old);
+    track(false);
+    assert!(matches!(m.range_in_state("", "x", None, 10, 1), Err(Error::TooOld { .. })));
+    assert!(stamp().too_old);
+}
+
+#[test]
+fn a_reload_under_a_commit_is_stamped_too_old_without_lagging_the_request() {
+    let inner = MemBackend::new();
+    let m = Modeled::open(inner.clone(), SKIP, 16).unwrap();
+    let mut rev = m.commit(0, &[put("k", "0")]).unwrap();
+    for n in 1..5 {
+        rev = inner.commit(rev, &[put("k", &n.to_string())]).unwrap();
+    }
+    inner.compact(rev).unwrap();
+    track(false);
+    let wrote = m.commit(rev, &[put("k", "5")]).unwrap();
+    let st = stamp();
+    assert!(st.too_old, "the copy reloaded under this request");
+    assert_eq!((st.rev, st.lag_revs), (Some(wrote), None));
+}

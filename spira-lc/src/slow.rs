@@ -535,27 +535,25 @@ mod tests {
 
     #[test]
     fn past_reads_are_pushed_as_a_count_and_interval_maxima_and_a_quiet_key_pushes_none() {
-        let key = ("watch".to_string(), "spira-runtime".to_string(), "-".to_string());
-        let mut c = Counters::default();
-        let at = std::time::SystemTime::now();
-        let mut now = BTreeMap::new();
-        c.tasks.insert(key.clone(), (2, 10));
-        let mut p = Past::default();
-        for (revs, ms, too_old) in [(Some(9000), Some(5), true), (Some(7), None, false)] {
-            p.too_old += u64::from(too_old);
-            p.max_revs = p.max_revs.max(revs);
-            p.max_ms = p.max_ms.max(ms);
-        }
-        c.past.insert(key.clone(), p);
-        let got = series_since(&c, &now, at);
-        let by = |n: &str| got.iter().find(|s| s.name == n).map(|s| (s.value, s.labels.clone()));
-        let labels = vec![("verb".to_string(), "watch".to_string()), ("caller".to_string(), "spira-runtime".to_string()), ("task".to_string(), "-".to_string())];
-        assert_eq!(by("spira_lc_store_too_old"), Some((1.0, labels.clone())));
-        assert_eq!(by("spira_lc_store_lag_revs_max"), Some((9000.0, labels)));
-        assert_eq!(by("spira_lc_store_lag_ms_max").map(|v| v.0), Some(5.0));
-        now.insert(key.clone(), (2, 10));
-        c.past = settle(c.past.clone(), &c.past.clone());
-        assert!(series_since(&c, &now, at).is_empty(), "after a push a key with no new past read emits no store-lag series");
+        let probe = |name: &str| {
+            let labels = [("verb", "watch"), ("caller", "past-probe"), ("task", "-")];
+            let c = COUNTERS.lock().unwrap();
+            series_since(&c, &BTreeMap::new(), std::time::SystemTime::now())
+                .into_iter()
+                .filter(|s| s.name == name && labels.iter().all(|(k, v)| s.labels.contains(&(k.to_string(), v.to_string()))))
+                .map(|s| s.value)
+                .collect::<Vec<_>>()
+        };
+        request_done("watch", "watch", "past-probe", None, Duration::from_millis(1));
+        past_read_done("watch", "past-probe", None, Some(9000), Some(5), true);
+        past_read_done("watch", "past-probe", None, Some(7), None, false);
+        past_read_done("watch", "past-probe", None, None, None, false);
+        assert_eq!(probe("spira_lc_store_too_old"), [1.0]);
+        assert_eq!(probe("spira_lc_store_lag_revs_max"), [9000.0]);
+        assert_eq!(probe("spira_lc_store_lag_ms_max"), [5.0]);
+        let unreachable = spira_otel::metrics::MetricsSink::new(None, "spira-lc", Duration::from_millis(1));
+        push_counts(&unreachable, &mut BTreeMap::new());
+        assert_eq!(probe("spira_lc_store_too_old"), [1.0], "a failed push keeps the interval");
     }
 
     #[test]
