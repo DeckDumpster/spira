@@ -2816,6 +2816,20 @@ fn a_red_unit_test_on_a_green_base_is_the_branchs() {
     assert!(f.stderr().contains("phase 'test' failed (exit 101)"));
 }
 
+#[test]
+fn a_red_units_failure_record_lists_bare_paths_not_name_status_lines() {
+    let f = unit_fake(&["gate/src/x.rs"]);
+    f.put_var("SPIRA_GATE_BEAD", "sp-a");
+    f.unit_runs.borrow_mut().insert(
+        (MERGE_SHA.into(), "test"),
+        (101, "test tests::x ... FAILED".into()),
+    );
+    assert_eq!(f.run(), FAIL);
+    let got = f.failures.borrow();
+    assert_eq!(got.len(), 1);
+    assert_eq!(got[0].2, ["spira/x.sh", "src/a.rs"]);
+}
+
 const FLIP_OUT: &str = "---- t::flip stdout ----\n...\ntest t::flip ... FAILED";
 
 fn flip_fake(prior: Result<Vec<(String, String)>, String>) -> Fake {
@@ -2832,6 +2846,13 @@ fn other_red(bead: &str, tip: &str, file: &str) -> (String, String) {
 
 fn certified(f: &Fake, outcome: &str) -> usize {
     f.lc.borrow().iter().filter(|c| c[2] == outcome).count()
+}
+
+#[test]
+fn a_unit_red_whose_diff_shares_a_path_with_the_other_beads_is_the_branchs_whatever_the_status_letters() {
+    let f = flip_fake(Ok(vec![other_red("sp-x", "t1", "src/a.rs"), other_red("sp-y", "t2", "b.rs")]));
+    assert_eq!(f.run(), FAIL);
+    assert_eq!(f.failures.borrow().len(), 1);
 }
 
 #[test]
