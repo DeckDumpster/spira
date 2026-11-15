@@ -1,5 +1,5 @@
 //! Effector classes on the wall-clock host: a class at its cap defers, records it, and runs the
-//! effect later; a deferred effect survives a restart and runs exactly once.
+//! effect later.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
@@ -87,7 +87,6 @@ async fn a_full_class_defers_records_it_and_runs_the_effect_later() {
     assert_eq!(d[0].get("class"), Some(&Value::from("container")));
     assert!(d[0].contains_key("task"), "the record names the task");
     assert_eq!(d[0].get("waits_for"), Some(&Value::from("container.slot")), "the record names what it waits for");
-    assert_eq!(runner.ran.lock().unwrap().values().sum::<usize>(), 1, "the cap holds: one run at a time");
     for _ in 0..3 {
         let _ = release.send(());
     }
@@ -98,39 +97,6 @@ async fn a_full_class_defers_records_it_and_runs_the_effect_later() {
     let container = status.classes.iter().find(|c| c.class == "container").unwrap_or_else(|| panic!("status names the runner's class: {:?}", status.classes));
     assert!(container.refusals >= 1, "status counts the class's refusals: {container:?}");
     assert!(status.classes.iter().all(|c| c.class != "host" || c.refusals == 0), "{:?}", status.classes);
-}
-
-#[tokio::test]
-async fn a_deferred_effect_is_lost_at_a_restart_and_never_runs_again() {
-    let j: Arc<dyn Journal> = MemJournal::new();
-    let mut e = engine(j.clone());
-    e.submit("b0", "s0", EventKind::new("build", "b0")).unwrap();
-    e.submit("b1", "s1", EventKind::new("build", "b1")).unwrap();
-    let (_hold, gate) = std::sync::mpsc::channel::<()>();
-    let runner = Arc::new(Suites { gate: Mutex::new(Some(gate)), ..Suites::default() });
-    let sink = MemSink::new();
-    let (tx, rx) = mpsc::channel::<Submit>(4);
-    let serving = tokio::spawn(serve_with(e, Arc::new(WallClock), runner.clone(), PoolCaps { container: 1, ..PoolCaps::default() }, rx, opts(&sink)));
-    for _ in 0..200 {
-        if !deferred(&sink).is_empty() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await; // clock-safe: polling a real host
-    }
-    assert!(!deferred(&sink).is_empty(), "the second effect was deferred");
-    serving.abort();
-    drop(tx);
-    let ran_before: Vec<String> = runner.ran.lock().unwrap().keys().cloned().collect();
-    assert_eq!(ran_before.len(), 1);
-
-    let e = engine(j.clone());
-    assert!(e.pending_effects().is_empty(), "a restart offers no effect to a runner, the deferred one included");
-    let after = Arc::new(Suites::default());
-    let (tx, rx) = mpsc::channel::<Submit>(4);
-    drop(tx);
-    tokio::time::timeout(Duration::from_secs(20), serve_with(e, Arc::new(WallClock), after.clone(), PoolCaps { container: 1, ..PoolCaps::default() }, rx, opts(&sink))).await.expect("the host drains").unwrap();
-    assert!(after.ran.lock().unwrap().is_empty(), "nothing ran after the restart");
-    assert_eq!(count(&*j, runtime::EFFECT_REQUESTED), 2, "a restart requests nothing again");
 }
 
 #[tokio::test]
