@@ -2194,6 +2194,11 @@ fn attribute_run(o: &Opts) -> Result<(), String> {
         .in_batch(o.batch.as_deref())
         .attribution()
         .after_pass(o.after_pass.clone());
+    if let (Some(b), Some(pass)) = (o.batch.as_deref(), o.after_pass.as_deref()) {
+        if pass.is_dir() {
+            io::keep_round_results(&env_.run, b, pass);
+        }
+    }
     let mut ops = LiveOps {
         env: &env_,
         repo: &repo,
@@ -2228,7 +2233,11 @@ fn attribute_run(o: &Opts) -> Result<(), String> {
         o.batch.as_deref(),
         matches!(end, Ok(drive::RoundEnd::Land { .. })),
     ) {
-        io::keep_round_results(&env_.run, b, &runner.results);
+        if o.after_pass.is_some() {
+            io::overlay_round_results(&env_.run, b, &runner.results);
+        } else {
+            io::keep_round_results(&env_.run, b, &runner.results);
+        }
     }
     let mended = ops.prior != batcher::mender::Prior::default();
     let replaced = if end.is_err() { batcher_cut::attribute::replaced_by_preempt(&started_at, &head_now().unwrap_or_default()) } else { None };
