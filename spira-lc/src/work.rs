@@ -441,6 +441,14 @@ fn branch_refusal(conn: &Conn, bead_id: &str, tip: &str, stack_tips: &[String]) 
     if let Some(m) = finishing_refusal(&landref, tip, bead_id, fork.as_deref(), commits.as_deref(), &in_flight) {
         return Some((REFUSED, m));
     }
+    let prefix = match spira_config::process::cfg("SPIRA_ID_PREFIX") {
+        Ok(p) => p,
+        Err(e) => return Some((CANNOT_TELL, format!("cannot tell: {e}"))),
+    };
+    let pairs: Vec<(String, String)> = commits.iter().flatten().map(|(sha, _, msg)| (sha.clone(), msg.clone())).collect();
+    if let Some(r) = phantom_refusal(&pairs, &prefix, &mut |ids| crate::callers::Bd::known(&mut crate::bd::LiveBd, ids)) {
+        return Some(r);
+    }
     if !stack_tips.is_empty() {
         return None;
     }
@@ -465,6 +473,20 @@ fn merge_refusal(git: &dyn Fn(&[&str]) -> (i32, String), landref: &str, base_fq:
             Some((CANNOT_TELL, format!("cannot tell: git merge-tree of {tip} onto {base_fq} failed: {last}")))
         }
     }
+
+/// A commit citing a bead id the store does not hold refuses; a store that cannot answer is
+/// `CANNOT_TELL`, never a pass.
+pub(crate) fn phantom_refusal(
+    commits: &[(String, String)],
+    prefix: &str,
+    known: &mut spira_config::cite::Lookup,
+) -> Option<(i32, String)> {
+    match spira_config::cite::phantoms(commits, prefix, known) {
+        Ok(p) if p.is_empty() => None,
+        Ok(p) => Some((REFUSED, spira_config::cite::refusal(&p))),
+        Err(e) => Some((CANNOT_TELL, format!("cannot tell: the bead store did not answer the citation check: {e}"))),
+    }
+}
 }
 
 /// A sibling's commits may ride under this bead's (law-a-rebase-loop-is-sequenced-not-split): the
@@ -538,20 +560,15 @@ fn unnamed_commits(commits: &[(String, String, String)], bead_id: &str, in_fligh
     commits
         .iter()
         .filter(|(_, _, message)| {
-            !crate::git_evidence::message_names_bead(message, bead_id) && !named_beads(message).iter().any(|b| b != bead_id && in_flight(b))
+            !crate::git_evidence::message_names_bead(message, bead_id) && !named_beads(message, bead_id).iter().any(|b| b != bead_id && in_flight(b))
         })
         .map(|(sha, subject, _)| format!("  {} {subject}", &sha[..sha.len().min(12)]))
         .collect()
 }
 
 /// The whole bead ids a commit message names.
-fn named_beads(message: &str) -> Vec<String> {
-    message
-        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '.'))
-        .map(|t| t.trim_end_matches('.'))
-        .filter(|t| is_bead_id(t))
-        .map(str::to_string)
-        .collect()
+fn named_beads(message: &str, bead_id: &str) -> Vec<String> {
+    spira_config::cite::citations(message, bead_id.split('-').next().unwrap_or_default())
 }
 
 /// A tip is submitted only on a recorded pass of its repository's compile-and-lint check; the
@@ -2326,6 +2343,36 @@ mod tests {
         let refused = unnamed_commits(&commits, "sp-own", &in_flight);
         assert_eq!(refused.len(), 1, "{refused:?}");
         assert!(refused[0].contains("ccc3"), "{refused:?}");
+    }
+
+    fn pair(sha: &str, message: &str) -> (String, String) {
+        (sha.into(), message.into())
+    }
+
+    fn fake_store(held: &'static [&'static str]) -> impl FnMut(&[String]) -> Result<Vec<String>, String> {
+        move |ids| Ok(ids.iter().filter(|i| held.contains(&i.as_str())).cloned().collect())
+    }
+
+    #[test]
+    fn fixture_ids_in_a_commit_body_do_not_refuse_submit() {
+        let commits = [pair("aaa1bbb2ccc3", "sp-own: x\n\nanswers sp-a and sp-b\n")];
+        assert_eq!(phantom_refusal(&commits, "sp", &mut fake_store(&["sp-own"])), None);
+    }
+
+    #[test]
+    fn a_well_formed_id_the_store_lacks_refuses_submit_naming_the_commit() {
+        let commits = [pair("aaa1bbb2ccc3", "sp-own: x\n\nsee sp-zzzzzz\n")];
+        let (code, text) = phantom_refusal(&commits, "sp", &mut fake_store(&["sp-own"])).unwrap();
+        assert_eq!(code, REFUSED);
+        assert!(text.contains("aaa1bbb2c") && text.contains("sp-zzzzzz") && text.contains("Reword"), "{text}");
+    }
+
+    #[test]
+    fn a_store_that_cannot_answer_the_citation_check_is_cannot_tell() {
+        let commits = [pair("aaa1", "sp-own: see sp-zzzzzz\n")];
+        let (code, text) = phantom_refusal(&commits, "sp", &mut |_| Err("down".into())).unwrap();
+        assert_eq!(code, CANNOT_TELL);
+        assert!(text.contains("did not answer the citation check"), "{text}");
     }
 
     #[test]

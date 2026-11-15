@@ -206,7 +206,7 @@ impl Fake {
             "/cfg/repo-map",
             "/h/exclude.sh",
             "/h/skew",
-            "/h/commit-cite.sh",
+            "/h/spira-lc",
             "/h/yield.sh",
         ]
         .iter()
@@ -1693,13 +1693,32 @@ fn a_verdict_after_the_lock_is_metered_once_and_a_death_by_signal_too() {
 #[test]
 fn phantom_bead_id_fails_and_store_fault_is_no_verdict() {
     let f = Fake::new();
-    f.cite.set(1);
+    f.cite.set(3);
     assert_eq!(f.run(), FAIL);
     assert!(f.verdict_line().contains("reason=phantom-bead-id"));
     let f = Fake::new();
-    f.cite.set(3);
+    f.cite.set(2);
     assert_eq!(f.run(), NOVERDICT);
     assert!(f.verdict_line().contains("reason=commit-cite-fault"));
+}
+
+#[test]
+fn the_gate_and_submit_judge_the_same_messages_alike() {
+    // spira-lc's `cite-check` and `work submit` both run `spira_config::cite::phantoms` and map
+    // a phantom to 3, a store that cannot answer to 2; the gate is fed those codes here.
+    let held = ["sp-real1".to_string()];
+    for (message, refused) in [
+        ("sp-real1: x\n\nanswers sp-a and sp-b", false),
+        ("sp-real1: x\n\nsee sp-zzzzzz", true),
+        ("sp-real1: x\n\nsee sp-real1", false),
+    ] {
+        let commits = vec![("0123456789abcdef".to_string(), message.to_string())];
+        let found = spira_config::cite::phantoms(&commits, "sp", &mut |ids| Ok(ids.iter().filter(|i| held.contains(i)).cloned().collect())).unwrap();
+        let f = Fake::new();
+        f.cite.set(if found.is_empty() { 0 } else { 3 });
+        assert_eq!(f.run() == FAIL, refused, "{message}");
+        assert_eq!(!found.is_empty(), refused, "{message}");
+    }
 }
 
 // ---------------------------------------------------------------------------- cache & key

@@ -1,0 +1,52 @@
+//! `cite-check --repo <path> --base <ref> --branch <ref>`: the landing gate's bead-citation
+//! check. The rule is `spira_config::cite`, the same one `work submit` applies.
+
+use crate::{flag, CANNOT_TELL};
+
+/// `(sha, message)` for each record of `git log -z --format=%H%n%B`.
+fn parse_log(out: &str) -> Vec<(String, String)> {
+    out.split('\0')
+        .filter(|r| !r.trim().is_empty())
+        .map(|r| {
+            let r = r.trim_start_matches('\n');
+            let (sha, msg) = r.split_once('\n').unwrap_or((r, ""));
+            (sha.to_string(), msg.to_string())
+        })
+        .collect()
+}
+
+pub fn run(args: &[String]) -> (i32, String) {
+    let (Some(repo), Some(base), Some(branch)) = (flag(args, "--repo"), flag(args, "--base"), flag(args, "--branch")) else {
+        return (CANNOT_TELL, "cite-check: usage: cite-check --repo <path> --base <ref> --branch <ref>".into());
+    };
+    let prefix = match spira_config::process::cfg("SPIRA_ID_PREFIX") {
+        Ok(p) => p,
+        Err(e) => return (CANNOT_TELL, format!("cannot tell: {e}")),
+    };
+    let out = spira_config::bounded::bounded("git")
+        .arg("-C")
+        .arg(&repo)
+        .args(["log", "-z", "--format=%H%n%B", &format!("{base}..{branch}")])
+        .output();
+    let commits = match out {
+        Ok(o) if o.status.success() => parse_log(&String::from_utf8_lossy(&o.stdout)),
+        Ok(o) => return (CANNOT_TELL, format!("cannot tell: {base} or {branch} does not resolve in {repo}: {}", String::from_utf8_lossy(&o.stderr).trim_end())),
+        Err(e) => return (CANNOT_TELL, format!("cannot tell: git: {e}")),
+    };
+    crate::work::phantom_refusal(&commits, &prefix, &mut |ids| crate::callers::Bd::known(&mut crate::bd::LiveBd, ids))
+        .unwrap_or((0, String::new()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_log_splits_into_sha_and_whole_message() {
+        let got = parse_log("aaa\nsubject\n\nbody sp-abc\n\0bbb\nother\n\0");
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[0].0, "aaa");
+        assert!(got[0].1.contains("body sp-abc"));
+        assert_eq!(got[1], ("bbb".to_string(), "other\n".to_string()));
+    }
+}

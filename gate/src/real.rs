@@ -647,13 +647,15 @@ impl World for Real {
             .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
             .unwrap_or_default()
     }
-    fn commit_cite(&self, script: &Path, repo: &Path, base: &str, branch: &str) -> (i32, String) {
+    fn commit_cite(&self, spira_lc: &Path, repo: &Path, base: &str, branch: &str) -> (i32, String) {
         // batch-job: runs a gate, build or forge script that takes as long as its work
-        let o = Command::new("bash")
-            .arg(script)
-            .arg("land")
+        let o = Command::new(spira_lc)
+            .arg("cite-check")
+            .arg("--repo")
             .arg(repo)
+            .arg("--base")
             .arg(base)
+            .arg("--branch")
             .arg(branch)
             .env("SPIRA_HOME", &self.home)
             .stdin(Stdio::null())
@@ -667,7 +669,7 @@ impl World for Real {
                     String::from_utf8_lossy(&o.stderr)
                 )),
             ),
-            Err(e) => (3, e.to_string()),
+            Err(e) => (2, e.to_string()),
         }
     }
     fn skew_foreign(&self, skew: &Path, repo: &Path, base: &str, branch: &str) -> (i32, String) {
