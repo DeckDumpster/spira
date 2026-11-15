@@ -22,8 +22,7 @@ pub struct Store {
     pub bdq: String,
     /// The lifecycle service: every verb it serves goes here, no process launched.
     pub lc: LcClient,
-    /// The `spira-lc` CLI, for the verbs the socket does not serve (`close`, `reopen`) and
-    /// the one that takes stdin (`claim-verdicts`).
+    /// The `spira-lc` CLI, for the verbs the socket does not serve (`close`, `reopen`).
     pub lc_bin: String,
     pub timeout: Duration,
     /// The process's held lifecycle rows, when it keeps the store's watch.
@@ -286,15 +285,6 @@ impl Store {
         self.lc_verb(&["condition", "clear", READINESS_ALERT, "--reason", "Cleared", "--message", "readiness published again", "--owner", "heimdall"], &[0])
     }
 
-    /// Hands one pass's verdicts to the lifecycle store, which keeps them on the bead rows.
-    pub fn lc_claim_verdicts(&self, file: &spira_claim::verdicts::VerdictFile) -> Result<(), String> {
-        let r = self.lc.call_stdin(&["claim-verdicts"], &file.payload()).map_err(|e| format!("spira-lc claim-verdicts: {e}"))?;
-        match r.code {
-            0 => Ok(()),
-            c => Err(format!("spira-lc claim-verdicts: exit {c}: {}", r.why())),
-        }
-    }
-
     /// The machine's return-to-rework, through the one client of `spira-lc reopen`.
     pub fn lc_reopen(&self, id: &str, cause: &str, actor: &str) -> Result<(), String> {
         spira_store::lifecycle_row::reopen_with(&self.lc_bin, id, cause, actor)
@@ -482,16 +472,6 @@ mod tests {
         st.lifecycle_in_states(&["READY", "REWORK"]).unwrap();
         st.express_ids().unwrap();
         assert_eq!(*t.seen.lock().unwrap(), [vec!["list", "--state", "READY,REWORK"], vec!["list", "--express", "--live"]]);
-    }
-
-    #[test]
-    fn claim_verdicts_rides_the_service_with_its_payload_as_the_body() {
-        let (st, t) = store_over(|_| Reply { code: 0, out: String::new(), err: String::new() });
-        let file = spira_claim::verdicts::VerdictFile { computed_at: "2026-11-03T00:00:00Z".into(), entries: Vec::new() };
-        st.lc_claim_verdicts(&file).unwrap();
-        assert_eq!(t.seen.lock().unwrap()[0], ["claim-verdicts".to_string(), format!("stdin={}", file.payload())]);
-        let (st, _) = store_over(|_| Reply { code: 2, out: String::new(), err: "cannot tell: down\n".into() });
-        assert_eq!(st.lc_claim_verdicts(&file).unwrap_err(), "spira-lc claim-verdicts: exit 2: cannot tell: down");
     }
 
     #[test]

@@ -424,7 +424,7 @@ fn model_reached(rev: u64) -> bool {
     }
 }
 
-/// Longest request body read: a claim-verdicts batch or a section spec, never a file transfer.
+/// Longest request body read: a readiness publication or a section spec, never a file transfer.
 const MAX_BODY: u64 = 16 << 20;
 
 /// The request on `reader`: a JSON argv array on one line, or `{"argv": [...], "len": N}` on
@@ -1482,9 +1482,9 @@ mod tests {
         }
         let w = World::new();
         let (mut rec, mut bd) = (Rec(Vec::new()), &w);
-        let req = super::Request { argv: vec!["claim-verdicts".into()], stdin: Some("[{\"bead_id\":\"sp-a\"}]".into()), caller: Default::default(), min_rev: None, task: None };
+        let req = super::Request { argv: vec!["batch-progress".into()], stdin: Some("[{\"bead_id\":\"sp-a\"}]".into()), caller: Default::default(), min_rev: None, task: None };
         super::answer(req, &mut rec, &mut bd, &Content::default(), &|| Err(String::new()));
-        assert_eq!(rec.0, vec![vec!["claim-verdicts".to_string(), "--json".into(), "[{\"bead_id\":\"sp-a\"}]".into()]]);
+        assert_eq!(rec.0, vec![vec!["batch-progress".to_string(), "--json".into(), "[{\"bead_id\":\"sp-a\"}]".into()]]);
     }
 
     /// sp-6n7nuv: a verb the socket does not serve is refused by the server itself — the

@@ -94,18 +94,9 @@ pub struct Readiness {
     pub claimable: bool,
     #[serde(default)]
     pub blocked_by: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub verdict: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub blocker: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub runes: Vec<String>,
     /// The producer's own clock, as it stamped the pass.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub judged_at: Option<String>,
-    /// The `computed_at` of the verdict pass that wrote `verdict`; only `publish_verdicts` writes it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub verdict_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub judged_at_planning_watermark: Option<String>,
     #[serde(default)]

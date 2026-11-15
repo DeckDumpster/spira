@@ -242,26 +242,6 @@ mod tests {
     }
 
     #[test]
-    fn an_edge_write_keeps_the_verdict_a_pass_published() {
-        let s = store();
-        s.create("sp-a", None, None, 100, &req("c")).unwrap();
-        let v = super::super::Verdict {
-            id: "sp-a".into(),
-            verdict: "blocked".into(),
-            blocker: Some("sp-b".into()),
-            runes: vec![],
-        };
-        s.publish_verdicts(&[v], "2026-01-01T00:00:00Z", &req("p"))
-            .unwrap();
-        s.set_edge("sp-a", "sp-b", Edge::Blocks, &req("e")).unwrap();
-        let r = s.readiness("sp-a").unwrap().unwrap().value;
-        assert_eq!(
-            (r.verdict.as_deref(), r.blocked_by),
-            (Some("blocked"), vec!["sp-b".to_string()])
-        );
-    }
-
-    #[test]
     fn set_repo_changes_only_the_repo_and_leaves_a_working_record_alone() {
         let s = store();
         assert_eq!(

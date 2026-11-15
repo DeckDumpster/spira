@@ -73,16 +73,10 @@ struct Entry {
     blocked_by: Vec<String>,
     #[serde(default)]
     gates: BTreeMap<String, Option<Gate>>,
-    #[serde(default)]
-    verdict: Option<String>,
-    #[serde(default)]
-    blocker: Option<String>,
-    #[serde(default)]
-    runes: Vec<String>,
 }
 
 /// `publish-readiness --json <payload>`: `{computed_at, planning_watermark?, judged_at_rev?,
-/// entries: [{id, claimable, blocked_by, gates, verdict?, blocker?, runes?}]}`, one entry per
+/// entries: [{id, claimable, blocked_by, gates}]}`, one entry per
 /// live record the pass judged, whatever its state.
 fn publish<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> Answer {
     let body = flag(args, "--json").ok_or_else(|| {
@@ -101,9 +95,6 @@ fn publish<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> Answer
             claimable: e.claimable,
             blocked_by: e.blocked_by,
             gates: e.gates,
-            verdict: e.verdict,
-            blocker: e.blocker,
-            runes: e.runes,
         })
         .collect();
     let pass = Pass {

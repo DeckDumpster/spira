@@ -15,7 +15,7 @@ struct Step {
 }
 
 /// The verbs whose payload the CLI reads from stdin before it reaches either store.
-const PAYLOAD_VERBS: &[&str] = &["claim-verdicts", "batch-progress"];
+const PAYLOAD_VERBS: &[&str] = &["batch-progress"];
 
 /// The argv either store receives: a payload verb's stdin travels as `--json <body>`.
 fn delivered_argv(step: &Step) -> Vec<String> {

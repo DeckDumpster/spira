@@ -76,18 +76,6 @@ pub use spira_config::runes::{rune_exclude, shared_exclude};
 /// own `[ -n "$inc" ] || continue`), not merely counted as zero.
 pub use spira_config::runes::{split_csv, Partition as RunePart};
 
-/// The former ready-bucket script's predicate, exactly: a bead counts for `(inc, exc)` iff none of its
-/// labels is in `shared`, its `rune:` preferences (if it carries any) include `name`,
-/// `inc` is a subset of its labels, and `exc` is disjoint from them.
-///
-/// DELIBERATELY NOT `rune_exclude`'s own exclude-label semantics: a bead may carry more
-/// than one `rune:<name>` preference, and this (membership) lets it count for every one of
-/// them, while `rune_exclude`'s bd query (OR-matched `--exclude-label`) would exclude it
-/// from every partition but the first it names. Both are faithful ports of their own
-/// bash/python originals — this discrepancy predates this port and is not this bead's to
-/// resolve.
-use spira_config::runes::bucket_match;
-
 /// `bulk_ready_by_rune`'s bucketing (one ready-set fetch, counted per rune), in the input
 /// `parts` order. `queue_wait` is the shared exclusion; open-children is deliberately not.
 /// RFC3339 `YYYY-MM-DDTHH:MM:SS[.f][Z|±hh:mm]` to epoch seconds; None if unparseable.
@@ -137,25 +125,6 @@ pub fn bucket_taken(rows: &[ReadyRow], taken: &HashMap<String, Vec<String>>, par
         }
     }
     counts
-}
-
-/// One rune's own rows by [`bucket`]'s predicate: what `rune-ready` counts is exactly
-/// what `rune-ready --json` hands a dwarf to claim from.
-pub fn partition<'a>(rows: &'a [ReadyRow], part: &RunePart, queue_wait: &str) -> Vec<&'a ReadyRow> {
-    let shared: Vec<&str> = [queue_wait].into_iter().filter(|s| !s.is_empty()).collect();
-    let now = now_epoch();
-    rows.iter()
-        .filter(|row| !is_deferred(row, now))
-        .filter(|row| {
-            let labels: Vec<&str> = row.labels.iter().map(String::as_str).collect();
-            bucket_match(&labels, &part.inc, &part.exc, &shared, &part.name)
-        })
-        .collect()
-}
-
-/// Whether `row` is claimable under any of `parts`.
-pub fn in_any_partition(row: &ReadyRow, parts: &[RunePart], queue_wait: &str) -> bool {
-    parts.iter().any(|p| !partition(std::slice::from_ref(row), p, queue_wait).is_empty())
 }
 
 /// `ready-count`'s rows under the machine: bd's label predicate over the claimable set, with
@@ -245,17 +214,6 @@ mod tests {
     }
 
     #[test]
-    fn a_lane_only_bead_is_outside_the_task_pool_partitions() {
-        let task = vec![part("builder", &["spira", "plan"], &["mender-failure"])];
-        let lane_bead = row("m", &["spira", "mender-failure", "integrate"]);
-        let task_bead = row("b", &["spira", "plan"]);
-        assert!(!in_any_partition(&lane_bead, &task, "q"));
-        assert!(in_any_partition(&task_bead, &task, "q"), "positive control");
-        let with_lane = vec![part("mender", &["spira", "mender-failure"], &[])];
-        assert!(in_any_partition(&lane_bead, &with_lane, "q"), "the matcher can see a lane bead");
-    }
-
-    #[test]
     fn bucket_counts_by_label_superset_and_disjoint_exclude() {
         let rows = vec![
             row("a", &["spira", "plan"]),
@@ -273,7 +231,6 @@ mod tests {
         let rows = vec![row("a", &["spira", "plan", "spira-submitted"])];
         let parts = vec![part("builder", &["spira", "plan"], &[])];
         assert_eq!(bucket(&rows, &parts, "q"), vec![("builder".to_string(), 1)]);
-        assert_eq!(partition(&rows, &parts[0], "q").len(), 1);
         assert_eq!(shared_exclude("q", "oc"), "q,oc");
     }
 

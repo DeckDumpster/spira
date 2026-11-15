@@ -1,6 +1,6 @@
 //! The round's verbs on the control store, and the writes no machine event carries, each
 //! answering as its dolt path does: `cut`, `land`, `event batch|delivery`, `show-batch`,
-//! `batches-of`, `batch-progress`, `claim-verdicts`, `set-repo`, `dep-add`, `dep-remove` and
+//! `batches-of`, `batch-progress`, `set-repo`, `dep-add`, `dep-remove` and
 //! `delete-bead-row`.
 
 use std::collections::BTreeMap;
@@ -11,7 +11,7 @@ use serde_json::{json, Value};
 use state_store::{Backend, Request};
 
 use super::{cannot_tell, number, Call};
-use crate::control::store::{Carrier, Cut, Edge, Ran, RepoSet, Store, Turned, Verdict};
+use crate::control::store::{Carrier, Cut, Edge, Ran, RepoSet, Store, Turned};
 use crate::control::records::ClaimInputs;
 use crate::callers::NO_ROW;
 use crate::{flag, CANNOT_TELL, REFUSED};
@@ -23,7 +23,6 @@ pub const VERBS: &[&str] = &[
     "show-batch",
     "batches-of",
     "batch-progress",
-    "claim-verdicts",
     "set-repo",
     "set-claim-inputs",
     "set-carrier",
@@ -40,7 +39,6 @@ pub fn run<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, 
         Some("show-batch") => show_batch(store, rest),
         Some("batches-of") => batches_of(store, rest),
         Some("batch-progress") => batch_progress(store, rest, call),
-        Some("claim-verdicts") => claim_verdicts(store, rest, call),
         Some("set-repo") => set_repo(store, rest, call),
         Some("set-claim-inputs") => set_claim_inputs(store, rest, call),
         Some("set-carrier") => set_carrier(store, rest, call),
@@ -421,40 +419,6 @@ fn batch_progress<B: Backend>(store: &Store<B>, args: &[String], call: &Call) ->
     };
     match set() {
         Ok(()) => (0, String::new()),
-        Err(e) => cannot_tell(e),
-    }
-}
-
-/// `claim-verdicts --json <payload>`: one dispatcher pass onto each record's readiness.
-fn claim_verdicts<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, String) {
-    let Some(body) = flag(args, "--json") else {
-        return (CANNOT_TELL, "claim-verdicts: the payload is missing".into());
-    };
-    let payload = match crate::claim_verdicts::checked(&body) {
-        Ok(p) => p,
-        Err(why) => return (REFUSED, why),
-    };
-    if payload.entries.is_empty() {
-        return (0, String::new());
-    }
-    // An id named twice keeps its last entry, as the dolt path's last update wins; a txn may
-    // not write one key twice.
-    let last = |i: usize, id: &str| !payload.entries[i + 1..].iter().any(|e| e.id == id);
-    let verdicts: Vec<Verdict> = payload
-        .entries
-        .iter()
-        .enumerate()
-        .filter(|(i, e)| last(*i, &e.id))
-        .map(|(_, e)| Verdict {
-            id: e.id.clone(),
-            verdict: e.verdict.clone(),
-            blocker: e.blocker.clone(),
-            runes: e.runes.clone(),
-        })
-        .collect();
-    let req = Request::new(call.request, "spira-claim", "lc.claim-verdicts");
-    match store.publish_verdicts(&verdicts, &payload.computed_at, &req) {
-        Ok(_) => (0, String::new()),
         Err(e) => cannot_tell(e),
     }
 }

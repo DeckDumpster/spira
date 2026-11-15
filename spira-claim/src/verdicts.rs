@@ -1,6 +1,4 @@
-//! The per-bead verdicts the dispatcher reached on its last pass. The dispatcher hands them to
-//! `spira-lc claim-verdicts`, which stores them on the bead rows; a reader gets them back
-//! with the live rows, so it never execs the claim tool.
+//! The per-bead verdicts the dispatcher reached on its last pass; they feed `publish-readiness`.
 
 use serde::{Deserialize, Serialize};
 
@@ -26,28 +24,12 @@ pub struct Entry {
     pub verdict: Kind,
     #[serde(default)]
     pub blocker: Option<String>,
-    /// The rune partitions that would take this bead; only a claimable bead has any.
-    #[serde(default)]
-    pub runes: Vec<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct VerdictFile {
-    pub computed_at: String,
-    pub entries: Vec<Entry>,
 }
 
 impl Kind {
     /// The kind a stored word names; `None` for a word this build does not know.
     pub fn from_word(word: &str) -> Option<Kind> {
         serde_json::from_value(serde_json::Value::String(word.to_string())).ok()
-    }
-}
-
-impl VerdictFile {
-    /// The `spira-lc claim-verdicts` payload.
-    pub fn payload(&self) -> String {
-        serde_json::to_string(self).unwrap_or_default()
     }
 }
 
@@ -81,15 +63,5 @@ mod tests {
             assert_eq!(Kind::from_word(word.as_str().unwrap()), Some(k), "{word}");
         }
         assert_eq!(Kind::from_word("a-future-kind"), None);
-    }
-
-    #[test]
-    fn the_payload_carries_the_stamp_and_every_entry() {
-        let f = VerdictFile {
-            computed_at: stamp(1_793_398_800),
-            entries: vec![Entry { id: "sp-p.1".into(), verdict: Kind::Blocked, blocker: Some("sp-p".into()), runes: vec![] }],
-        };
-        let v: serde_json::Value = serde_json::from_str(&f.payload()).unwrap();
-        assert_eq!((v["computed_at"].as_str(), v["entries"][0]["verdict"].as_str(), v["entries"][0]["blocker"].as_str()), (Some("2026-10-30T22:20:00Z"), Some("blocked"), Some("sp-p")));
     }
 }

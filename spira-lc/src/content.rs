@@ -41,7 +41,7 @@ pub fn check(args: &[String]) -> Result<Kind, String> {
         ["close", id, "--reason", reason] if word(id) && !reason.trim().is_empty() => WRITE,
         ["update", id, flags @ ..] if !id.starts_with('-') && !flags.is_empty() => update_flags(flags),
         ["create", rest @ ..] if !rest.is_empty() => create_flags(rest),
-        ["ready", ..] => Err(unserved("ready", "`spira-lc list --state READY,REWORK` (the published claim_verdict) or `spira-claim rune-ready`")),
+        ["ready", ..] => Err(unserved("ready", "`spira-lc list --state READY,REWORK` `spira-lc claimable` (the claim view) or `spira-claim rune-ready`")),
         ["blocked", ..] => Err(unserved("blocked", "`spira-lc list` (the published blocked_by)")),
         ["history", ..] => Err(unserved("history", "`spira-lc facts --ids` or `content list --updated-after`")),
         ["children", ..] => Err(unserved("children", "`content list --all --limit 0 --parent <id>`")),
@@ -492,7 +492,7 @@ mod tests {
     #[test]
     fn a_read_the_door_does_not_serve_is_refused_naming_its_exit() {
         for (args, exit) in [
-            (&["ready"][..], "claim_verdict"),
+            (&["ready"][..], "spira-lc claimable"),
             (&["blocked"], "blocked_by"),
             (&["history", "sp-a"], "facts"),
             (&["children", "sp-a"], "--parent"),

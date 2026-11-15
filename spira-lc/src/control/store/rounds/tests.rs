@@ -8,7 +8,6 @@ use state_store::{Backend, Config, Contract, MemBackend, Ports, Request};
 use state_store_sqlite::SqliteBackend;
 
 use super::{Cut, Planned, Ran, Store};
-use crate::control::store::Verdict;
 use crate::control::keys;
 use crate::control::records::Audit;
 use crate::control::state::{self, Call};
@@ -201,16 +200,6 @@ fn a_delivery_written_after_the_plan_makes_the_cut_lose() {
         r.s.delivery("sp-a").unwrap().unwrap().value.state,
         DeliveryState::Pushing
     );
-}
-
-#[test]
-fn a_verdict_pass_naming_an_id_twice_keeps_its_last_entry() {
-    let r = Rig::new();
-    r.certified("sp-a", T1);
-    let body = r#"{"computed_at":"2026-01-01T00:00:00Z","entries":[{"id":"sp-a","verdict":"blocked"},{"id":"sp-a","verdict":"claimable"}]}"#;
-    r.ok(&["claim-verdicts", "--json", body]);
-    let v = r.s.readiness("sp-a").unwrap().unwrap().value;
-    assert_eq!(v.verdict.as_deref(), Some("claimable"));
 }
 
 #[test]
@@ -1099,16 +1088,6 @@ fn a_whole_table_list_reads_readiness_by_range_not_once_per_row() {
         r.ok(&["create-bead", &format!("sp-{i:04}"), "--repo", "spira", "--ready"]);
     }
     r.bead_event("sp-0002", "READY", "0", r#"{"Claim":{"holder":"dwarf-1","lease_until":1767229200}}"#);
-    let verdicts: Vec<Verdict> = (0..BEADS)
-        .step_by(7)
-        .map(|i| Verdict {
-            id: format!("sp-{i:04}"),
-            verdict: if i % 2 == 0 { "claimable" } else { "blocked" }.into(),
-            blocker: None,
-            runes: vec!["builder".into()],
-        })
-        .collect();
-    r.s.publish_verdicts(&verdicts, "2026-01-01T00:00:00Z", &r.req()).unwrap();
     let blocked = crate::control::records::Readiness {
         blocked_by: vec!["sp-0001".into(), "sp-0002".into(), "sp-gone".into()],
         ..Default::default()
@@ -1137,9 +1116,6 @@ fn a_whole_table_list_reads_readiness_by_range_not_once_per_row() {
     let ranged: Vec<&serde_json::Value> =
         rows.iter().filter(|x| probe.contains(&x["bead_id"].as_str().unwrap())).collect();
     assert_eq!(ranged, by_key.as_array().unwrap().iter().collect::<Vec<_>>());
-    assert_eq!(ranged[2]["claim_verdict"], "blocked");
-    assert_eq!(ranged[0]["claim_runes"], "builder");
-    assert_eq!(ranged[1]["claim_verdict"], serde_json::Value::Null);
     assert_eq!(ranged[4]["blocked_by"], serde_json::json!(["sp-0001", "sp-0002"]), "a blocker with no record no longer blocks");
 }
 

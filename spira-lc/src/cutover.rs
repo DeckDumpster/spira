@@ -61,7 +61,7 @@ pub(crate) fn inline_payload_from(mut args: Vec<String>, input: &mut dyn std::io
     let verb = (args.first().map(String::as_str), args.get(1).map(String::as_str));
     let reads_stdin = matches!(
         verb,
-        (Some("batch-progress" | "claim-verdicts" | "publish-readiness"), _)
+        (Some("batch-progress" | "publish-readiness"), _)
             | (Some("section"), Some("apply-spec" | "publish-status"))
             | (Some("intent"), Some("put"))
     );

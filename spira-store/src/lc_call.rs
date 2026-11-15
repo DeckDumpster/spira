@@ -583,7 +583,7 @@ mod tests {
             "show" => (1, String::new()),
             "event" | "create-bead" | "promote-filed" | "set-repo" => (0, String::new()),
             "plan" => (3, "refused: no planning plane".into()),
-            "close" | "claim-verdicts" => (0, format!("{}\x00", argv.join(" "))),
+            "close" | "batch-progress" => (0, format!("{}\x00", argv.join(" "))),
             "hold" => (3, "\x00lc: sp-a: refused\n".into()),
             _ => (2, "cannot tell: not served".into()),
         }
@@ -652,8 +652,8 @@ mod tests {
         let c = LcClient::socket(&path);
         let before = launched();
         assert_eq!(c.call(&["close", "sp-a", "--reason", "landed"]).unwrap().out, "close sp-a --reason landed");
-        let r = c.call_stdin(&["claim-verdicts"], "[{\"bead_id\":\"sp-a\"}]\nsecond line").unwrap();
-        assert_eq!((r.code, r.out.as_str()), (0, "claim-verdicts stdin=[{\"bead_id\":\"sp-a\"}]\nsecond line"));
+        let r = c.call_stdin(&["batch-progress"], "[{\"bead_id\":\"sp-a\"}]\nsecond line").unwrap();
+        assert_eq!((r.code, r.out.as_str()), (0, "batch-progress stdin=[{\"bead_id\":\"sp-a\"}]\nsecond line"));
         assert_eq!(launched(), before, "no program ran");
         assert_eq!(seen.lock().unwrap().len(), 2);
     }
