@@ -752,6 +752,46 @@ fn a_round_with_a_recorded_pass_and_no_live_leg_is_not_abandoned_as_never_began(
     assert_eq!(r.state("sp-a"), BeadState::InDelivery);
 }
 
+fn set_round_fields(r: &Rig, fields: serde_json::Value) {
+    let key = keys::batch("spira", "b-1");
+    let item = r.s.contract().get(&key).unwrap().unwrap();
+    let mut value = item.value.clone();
+    value.data["round"] = fields;
+    let t = state_store::Txn::new()
+        .when(state_store::Compare::ModRev(key.clone(), Some(item.mod_rev)))
+        .put(&key, value);
+    assert!(r.s.contract().txn(&t, &r.req()).unwrap().succeeded);
+}
+
+#[test]
+fn a_forge_round_with_a_recorded_pr_is_begun_and_not_abandoned_as_never_began() {
+    let r = Rig::new();
+    open_round(&r);
+    set_round_fields(&r, serde_json::json!({ "forge.phase": "armed", "pr": "351" }));
+    let applied =
+        r.s.requeue_orphans("test", true, 120, AT + 3600, &none(), &r.req())
+            .unwrap();
+    assert_eq!(applied.running, vec!["b-1".to_string()]);
+    assert!(
+        applied.phantom_batches.is_empty() && applied.abandoned.is_empty() && applied.requeued.is_empty(),
+        "{applied:?}"
+    );
+    assert_eq!(round_state(&r), BatchState::Open);
+    assert_eq!(r.state("sp-a"), BeadState::InDelivery);
+}
+
+#[test]
+fn a_forge_round_still_opening_with_no_pr_is_abandoned_as_never_began() {
+    let r = Rig::new();
+    open_round(&r);
+    set_round_fields(&r, serde_json::json!({ "forge.phase": "opening" }));
+    let applied =
+        r.s.requeue_orphans("test", true, 120, AT + 3600, &none(), &r.req())
+            .unwrap();
+    assert!(applied.running.is_empty(), "{applied:?}");
+    assert_eq!(round_state(&r), BatchState::Abandoned);
+}
+
 #[test]
 fn at_121_seconds_a_round_with_a_started_pass_is_left_and_one_with_none_is_abandoned() {
     let begun = Rig::new();
@@ -873,14 +913,7 @@ fn the_queues_fields_of_a_round_survive_every_machine_step_and_the_landing() {
     let members = two();
     let p = r.s.plan_cut(&r.cut_spec(&members)).unwrap();
     r.s.run_planned(p, &r.req(), "cut").unwrap();
-    let key = keys::batch("spira", "b-1");
-    let item = r.s.contract().get(&key).unwrap().unwrap();
-    let mut value = item.value.clone();
-    value.data["round"] = serde_json::json!({ "worktree": "/wt/b-1", "red": "test-a.sh" });
-    let t = state_store::Txn::new()
-        .when(state_store::Compare::ModRev(key.clone(), Some(item.mod_rev)))
-        .put(&key, value);
-    assert!(r.s.contract().txn(&t, &r.req()).unwrap().succeeded);
+    set_round_fields(&r, serde_json::json!({ "worktree": "/wt/b-1", "red": "test-a.sh" }));
     batch_event(
         &r,
         BatchState::Open,

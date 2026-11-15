@@ -439,7 +439,8 @@ impl<B: Backend> Store<B> {
 
     /// `requeue-orphans`: records IN_DELIVERY that no unfinished round names, and the members of
     /// a round that opened and never began (OPEN, no run, pass or phase, cut more than
-    /// `stale_secs` before `now`); a round with a recorded run, pass or phase is begun, listed `running`. With `apply`, each such round is abandoned and each other
+    /// `stale_secs` before `now`); a round with a recorded run, pass, phase or
+    /// PR (in its queue fields) is begun, listed `running`. With `apply`, each such round is abandoned and each other
     /// orphan released in its own txn. A delivery live outside a round is no orphan, and a round
     /// whose lease is live is its holder's: it is listed `leased` and left alone. `live` names
     /// the rounds the caller saw a leg unit or round-vm process running for, which the store
@@ -487,7 +488,10 @@ impl<B: Backend> Store<B> {
                 continue;
             }
             let row = &r.row;
-            let recorded = row.run.is_some() || row.pass != 0 || row.phase.is_some();
+            let recorded = row.run.is_some()
+                || row.pass != 0
+                || row.phase.is_some()
+                || r.round.get("pr").is_some_and(|pr| !pr.is_empty());
             if live.contains(&row.batch_id) || recorded {
                 out.running.push(r.row.batch_id.clone());
             } else if self.round_leased(key)? {
