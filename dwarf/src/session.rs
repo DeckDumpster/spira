@@ -26,7 +26,7 @@ pub struct Stop {
     pub pgid: AtomicI32,
     /// Epoch at which a wait on a harness-owned slot began (0: not waiting).
     pub harness_wait: AtomicI64,
-    sent_back: AtomicBool,
+    sent_back: std::sync::Mutex<Option<String>>,
 }
 
 impl Stop {
@@ -35,11 +35,12 @@ impl Stop {
         self.harness_wait.store(since.max(1), Ordering::SeqCst);
         HarnessWait(self)
     }
-    pub fn mark_sent_back(&self) {
-        self.sent_back.store(true, Ordering::SeqCst);
+    pub fn mark_sent_back(&self, why: &str) {
+        *self.sent_back.lock().unwrap_or_else(|e| e.into_inner()) = Some(why.to_string());
     }
-    pub fn was_sent_back(&self) -> bool {
-        self.sent_back.load(Ordering::SeqCst)
+    /// The state and reason the heartbeat saw when it stopped the session.
+    pub fn sent_back_why(&self) -> Option<String> {
+        self.sent_back.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
     pub fn trip(&self, sig: i32) {
         let _ = self.sig.compare_exchange(0, sig, Ordering::SeqCst, Ordering::SeqCst);
@@ -292,7 +293,7 @@ impl Heartbeat {
             }
             if let Some(why) = b.sent_back() {
                 b.log(&format!("{}: {} was sent back ({why}) while this session ran — stopping it", self.rune, self.bead));
-                stop.mark_sent_back();
+                stop.mark_sent_back(&why);
                 stop.trip(libc::SIGTERM);
                 return None;
             }
@@ -504,7 +505,7 @@ mod tests {
         let stop = Stop::default();
         assert_eq!(hb.run(&b, &stop, &AtomicBool::new(false)), None);
         assert_eq!(stop.signalled(), Some(libc::SIGTERM));
-        assert!(stop.was_sent_back());
+        assert_eq!(stop.sent_back_why().as_deref(), Some("REWORK suites-failed"));
         assert_eq!(*b.beats.lock().unwrap(), 3);
         assert!(b.logs.lock().unwrap().iter().any(|l| l == "builder: sp-a was sent back (REWORK suites-failed) while this session ran — stopping it"));
         assert!(b.dispositions.lock().unwrap().is_empty(), "the row is not touched");
@@ -519,6 +520,6 @@ mod tests {
         assert_eq!(hb.run(&b, &stop, &AtomicBool::new(false)), None);
         assert_eq!(b.renewals.lock().unwrap().len(), 6);
         assert_eq!(stop.signalled(), None);
-        assert!(!stop.was_sent_back());
+        assert_eq!(stop.sent_back_why(), None);
     }
 }
