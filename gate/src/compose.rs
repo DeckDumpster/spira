@@ -1171,6 +1171,8 @@ mod tests {
         let [b, t] = unit_commands(&["batcher-cut".into()], 4);
         assert!(b.1.ends_with(" -p batcher-cut -p gate"), "{}", b.1);
         assert!(!t.1.contains("-p gate"), "{}", t.1);
+        let [b, _] = unit_commands(&["batcher-cut".into(), "gate".into()], 4);
+        assert_eq!(b.1.matches("-p gate").count(), 1, "{}", b.1);
     }
 
     #[test]
