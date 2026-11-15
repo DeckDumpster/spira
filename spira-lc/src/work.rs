@@ -334,10 +334,10 @@ fn check_invocation(check: &str, tip: &str, repo: &str, checkout: Option<(&str, 
 
 /// The repository's checkout and landing ref.
 fn repo_checkout(repo: &str) -> Option<(String, String)> {
+    let root = crate::repo_config::registered_root(repo).ok()?.display().to_string();
     let home = spira_config::resolve::locate_home_for_process().ok()?;
     let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
     let reg = spira_config::repos::Registry::from_env(env, std::path::Path::new(&home));
-    let root = reg.root(repo)?;
     let landref = spira_config::repos::landref(&reg, &root)?;
     Some((root, landref))
 }
@@ -1740,9 +1740,7 @@ fn cmd_forge(bound: &str, rest: &[String]) -> (i32, String) {
 
 fn forge_repo(bound: &str) -> Result<std::path::PathBuf, String> {
     let name = crate::bd::repo_label(bound)?.ok_or_else(|| format!("{bound} carries no repo: label"))?;
-    let cfg = crate::repo_config::from_process()?;
-    let section = cfg.repos.get(&name).ok_or_else(|| format!("no repository {name:?} in the config in force"))?;
-    Ok(std::path::PathBuf::from(&section.path))
+    crate::repo_config::registered_root(&name)
 }
 
 /// A network round trip outlasts the five-second store-call bound; the request's own
