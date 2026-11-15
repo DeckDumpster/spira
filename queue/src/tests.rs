@@ -524,13 +524,10 @@ struct FScripts {
     round_vm_files: RefCell<Vec<(String, String)>>,
     /// Files only the next `round_vm` call writes, on top of `round_vm_files`.
     round_vm_files_once: RefCell<Vec<(String, String)>>,
-    /// A pass `round preempt` can address: its pid is alive until it is sent TERM.
+    /// Whether the pass a round's handle names is alive.
     pass_alive: Cell<bool>,
-    /// `round-vm` is preempted while it runs: the marker the verb leaves is there when it returns.
-    restart_fails: Cell<bool>,
     /// What `rebase-stale <id>` answers, by bead (absent = exit 0, nothing printed).
     rebase: RefCell<BTreeMap<String, RunOut>>,
-    survives_term: Cell<bool>,
     /// `round-vm` records the pass's verdict on the batch itself while it runs: the shared view
     /// it moves, and where to.
     round_vm_records: RefCell<Option<(SharedView, BatchView)>>,
@@ -629,18 +626,8 @@ impl Scripts for FScripts {
         self.calls.borrow_mut().push(format!("czar {class}"));
         self.fence_ok.get()
     }
-    fn pass_terminate(&self, pid: u32) {
-        self.calls.borrow_mut().push(format!("terminate {pid}"));
-        self.pass_alive.set(self.survives_term.get());
-    }
     fn pass_alive(&self, _: u32) -> bool {
         self.pass_alive.get()
-    }
-    fn pass_restart(&self, batch: &str, repo: &str) -> bool {
-        self.calls
-            .borrow_mut()
-            .push(format!("restart {batch} {repo}"));
-        !self.restart_fails.get()
     }
     fn rebase_stale(&self, ids: &[String], repo: &str) -> Vec<(String, RunOut)> {
         ids.iter()
