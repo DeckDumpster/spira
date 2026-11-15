@@ -1944,6 +1944,21 @@ mod abandon_tests {
     }
 
     #[test]
+    fn a_runner_answers_the_configured_stall_bound_and_counts_a_writing_results_dir_as_progress() {
+        let d = testkit::TempDir::new("vm-progress");
+        let mut env = lifecycle_tests_env(d.path());
+        env.stall_secs = 4242;
+        let repo = repo(d.path());
+        let mut r = VmRunner::new(&env, &repo, d.path(), "base", "r1", BTreeMap::new()).unwrap();
+        assert_eq!(r.stall_secs(), Some(4242));
+        fs::create_dir_all(&r.results).unwrap();
+        let before = r.progress();
+        assert_eq!(r.progress(), before, "nothing written, nothing moved");
+        fs::write(r.results.join("test-a.sh.out"), "building\n").unwrap();
+        assert_ne!(r.progress(), before, "a file written under the results dir is progress");
+    }
+
+    #[test]
     fn an_attribution_runner_accepts_a_corpus_list_that_is_a_subset_of_the_tree_and_a_plain_one_refuses() {
         let d = testkit::TempDir::new("vm-corpus-list");
         let env = lifecycle_tests_env(d.path());
