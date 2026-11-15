@@ -913,14 +913,7 @@ fn the_queues_fields_of_a_round_survive_every_machine_step_and_the_landing() {
     let members = two();
     let p = r.s.plan_cut(&r.cut_spec(&members)).unwrap();
     r.s.run_planned(p, &r.req(), "cut").unwrap();
-    let key = keys::batch("spira", "b-1");
-    let item = r.s.contract().get(&key).unwrap().unwrap();
-    let mut value = item.value.clone();
-    value.data["round"] = serde_json::json!({ "worktree": "/wt/b-1", "red": "test-a.sh" });
-    let t = state_store::Txn::new()
-        .when(state_store::Compare::ModRev(key.clone(), Some(item.mod_rev)))
-        .put(&key, value);
-    assert!(r.s.contract().txn(&t, &r.req()).unwrap().succeeded);
+    set_round_fields(&r, serde_json::json!({ "worktree": "/wt/b-1", "red": "test-a.sh" }));
     batch_event(
         &r,
         BatchState::Open,
