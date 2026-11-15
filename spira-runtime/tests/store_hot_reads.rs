@@ -1,11 +1,12 @@
 //! The scheduler's hot reads answered from the projection the store's watch keeps current: a
 //! state change shows within one watch round-trip, a cut watch makes every reader refuse, and
 //! none of it touches the store's socket. One test: the projection is installed once per process.
+//! The watch is driven by `poll()` on the test's own thread, so each step has applied when it returns.
 
 use std::os::unix::net::UnixListener;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
-use std::sync::{Arc, Condvar, Mutex};
+use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
@@ -19,38 +20,10 @@ struct Store {
     rows: Vec<Value>,
 }
 
-/// Counts of the watch calls the double answered and refused, with a signal on each.
-#[derive(Default)]
-struct Calls {
-    answered: Mutex<(usize, usize)>,
-    moved: Condvar,
-}
-
-impl Calls {
-    fn bump(&self, answered: bool) {
-        let mut n = self.answered.lock().unwrap();
-        if answered {
-            n.0 += 1;
-        } else {
-            n.1 += 1;
-        }
-        self.moved.notify_all();
-    }
-
-    /// Blocks until `ready` holds of (answered, refused) calls.
-    fn until(&self, what: &str, ready: impl Fn((usize, usize)) -> bool) {
-        let n = self.answered.lock().unwrap();
-        // clock-safe: a cap on the wait for the watch's next call, which is a named signal
-        let (_held, timeout) = self.moved.wait_timeout_while(n, Duration::from_secs(10), |n| !ready(*n)).unwrap();
-        assert!(!timeout.timed_out(), "never saw: {what}");
-    }
-}
-
 struct Double {
     store: Arc<Mutex<Store>>,
-    deliveries: Mutex<Receiver<String>>,
+    deliveries: Mutex<VecDeque<String>>,
     cut: Arc<AtomicBool>,
-    calls: Arc<Calls>,
 }
 
 fn bead(id: &str, state: &str, holds: &str) -> Value {
@@ -76,19 +49,8 @@ impl Transport for Double {
                 let kept: Vec<Value> = rows.into_iter().filter(|r| ids.as_ref().is_none_or(|ids| ids.contains(&r["bead_id"].as_str().unwrap()))).collect();
                 ok(Value::Array(kept).to_string())
             }
-            "watch" if self.cut.load(Ordering::SeqCst) => {
-                self.calls.bump(false);
-                Err("the watch is cut".into())
-            }
-            "watch" => {
-                let answer = match self.deliveries.lock().unwrap().recv_timeout(Duration::from_millis(20)) {
-                    Ok(answer) => answer,
-                    Err(RecvTimeoutError::Timeout) => json!({ "progress_rev": 5 }).to_string(),
-                    Err(RecvTimeoutError::Disconnected) => return Err("closed".into()),
-                };
-                self.calls.bump(true);
-                ok(answer)
-            }
+            "watch" if self.cut.load(Ordering::SeqCst) => Err("the watch is cut".into()),
+            "watch" => ok(self.deliveries.lock().unwrap().pop_front().unwrap_or_else(|| json!({ "progress_rev": 5 }).to_string())),
             other => Err(format!("unscripted {other}")),
         }
     }
@@ -112,33 +74,31 @@ fn hot_reads_follow_the_watch_refuse_when_it_is_cut_and_never_ask_the_store() {
     let snapshot = || world.round_snapshot("{}").map(|s| serde_json::from_str::<Snapshot>(&s).unwrap());
 
     let store = Arc::new(Mutex::new(Store { rows: vec![bead("a-1", "SUBMITTED", "[]"), bead("a-2", "SUBMITTED", "[]"), bead("a-3", "SUBMITTED", "[\"ask\"]"), bead("a-9", "CERTIFIED", "[]")] }));
-    let (deliver, deliveries): (Sender<String>, Receiver<String>) = channel();
     let cut = Arc::new(AtomicBool::new(false));
-    let calls = Arc::new(Calls::default());
-    let double = Double { store: store.clone(), deliveries: Mutex::new(deliveries), cut: cut.clone(), calls: calls.clone() };
+    let double = Arc::new(Double { store: store.clone(), deliveries: Mutex::default(), cut: cut.clone() });
     let now = Arc::new(Mutex::new(Instant::now()));
     let clock = now.clone();
-    let views = Projection::new(LcClient::over(Arc::new(double), true), Duration::from_millis(400), Arc::new(move || *clock.lock().unwrap()));
-    let _watch = spira_runtime::store::run(views).expect("the first install stands");
+    let views = Arc::new(Projection::new(LcClient::over(double.clone(), true), Duration::from_millis(400), Arc::new(move || *clock.lock().unwrap())));
+    assert!(Arc::ptr_eq(&store_view::install(views.clone()), &views), "the first install stands");
+    views.load().unwrap();
 
     let snap = snapshot().unwrap();
     assert_eq!((snap.submitted, snap.certified, snap.state, snap.open), (2, 1, RoundState::Open, 1));
     assert_eq!(snap.unadvanced, [("b-open".to_string(), 1_700_000_000)]);
 
     store.lock().unwrap().rows[0] = bead("a-1", "CERTIFIED", "[]");
-    deliver.send(json!({ "events": [{ "key": "lifecycle/a-1", "rev": { "main": 6, "sub": 0 }, "value": {}, "create_rev": null, "prev_mod_rev": null }], "through": 6 }).to_string()).unwrap();
-    let delivered = calls.answered.lock().unwrap().0;
-    calls.until("the delivery applied and the next watch begun", |n| n.0 >= delivered + 2);
+    double.deliveries.lock().unwrap().push_back(json!({ "events": [{ "key": "lifecycle/a-1", "rev": { "main": 6, "sub": 0 }, "value": {}, "create_rev": null, "prev_mod_rev": null }], "through": 6 }).to_string());
+    views.poll().unwrap();
     let moved = snapshot().unwrap();
     assert_eq!((moved.certified, moved.submitted), (2, 1));
     let lc = LcClient::socket(&sock);
     assert_eq!(certified_pool(&lc, "alpha"), Read::Observed(vec!["a-1".to_string(), "a-9".to_string()]));
 
-    let second = Projection::new(LcClient::over(Arc::new(Double { store, deliveries: Mutex::new(channel().1), cut: cut.clone(), calls: calls.clone() }), true), Duration::from_secs(1), Arc::new(Instant::now));
-    assert!(spira_runtime::store::run(second).is_err(), "a second projection never replaces the one readers hold");
+    let second = Arc::new(Projection::new(LcClient::over(Arc::new(Double { store, deliveries: Mutex::default(), cut: cut.clone() }), true), Duration::from_secs(1), Arc::new(Instant::now)));
+    assert!(!Arc::ptr_eq(&store_view::install(second.clone()), &second), "a second projection never replaces the one readers hold");
 
     cut.store(true, Ordering::SeqCst);
-    calls.until("the cut watch refused", |n| n.1 >= 1);
+    assert!(views.poll().is_err(), "the cut watch refused");
     *now.lock().unwrap() += Duration::from_secs(1);
     assert!(snapshot().is_err(), "a round snapshot read from a cut watch refuses");
     assert!(matches!(certified_pool(&lc, "alpha"), Read::Unobservable(why) if why.contains("the watch is lost")));

@@ -8,7 +8,6 @@
 
 mod boot_stagger;
 mod check_config;
-mod effect_classes;
 mod effects_runnable;
 mod no_fork_edges_ops;
 mod no_spawn;

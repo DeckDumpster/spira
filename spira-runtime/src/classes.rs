@@ -487,4 +487,17 @@ mod tests {
         assert_eq!(class_of(METRIC), Some(Host));
         assert_eq!(class_of(runtime::units::UNIT_START), Some(Unit));
     }
+
+    #[test]
+    fn with_the_host_class_full_a_unit_start_still_takes_a_permit() {
+        use crate::tasks::a::sentinel_call::{METRIC, UNIT_START};
+        use runtime::host::EffectRunner;
+        use runtime::pools::{ClassPools, PoolCaps};
+        let effects = crate::Effects::default();
+        let class = |name: &str| effects.class(&runtime::EffectSpec::keyed(name, name, String::new(), 5_000));
+        let pools = ClassPools::new(PoolCaps { host: 1, ..PoolCaps::default() });
+        let _held = pools.try_take(class(METRIC)).expect("the metric takes the only host permit");
+        assert!(pools.try_take(class(METRIC)).is_err(), "the host class is full");
+        assert!(pools.try_take(class(UNIT_START)).is_ok(), "a unit start runs under the unit class, not the full host one");
+    }
 }
