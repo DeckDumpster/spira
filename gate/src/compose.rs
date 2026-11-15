@@ -557,8 +557,8 @@ pub fn run_all(cmd: &str) -> String {
 }
 
 /// (crate, package) pairs: the crate's tests run the package's binary prebuilt in the target
-/// directory (spira-sim's ci_cut runs spira-config), so selecting the crate builds it too.
-const NEEDS_BUILT: [(&str, &str); 2] = [("spira-sim", "spira-config"), ("batcher-cut", "gate")];
+/// directory (batcher-cut's fence probe test runs the built gate), so selecting the crate builds it too.
+const NEEDS_BUILT: [(&str, &str); 1] = [("batcher-cut", "gate")];
 
 /// The words of the unit build line, shared by the gate's build phase and testenv's unit tier so
 /// both produce the same artefacts for the same crates: no profile, no config override, no `-j`.
@@ -1148,6 +1148,8 @@ mod tests {
         assert!(!b.1.contains("--workspace") && !b.1.contains("&&"), "{}", b.1);
         assert!(b.1.ends_with(" --features integration -p spira-runtime"), "{}", b.1);
         assert!(!t.1.contains("--workspace") && !t.1.contains("spira-config"), "{}", t.1);
+        let [b, _] = unit_commands(&["spira-sim".into()], 4);
+        assert!(b.1.ends_with(" --features integration -p spira-sim"), "{}", b.1);
     }
 
     #[test]
@@ -1158,19 +1160,10 @@ mod tests {
         let build = b.1.strip_prefix("CARGO_BUILD_JOBS=4 ").unwrap();
         assert_eq!(build, test_flags.replacen("cargo test -j 4 ", "cargo test --no-run --timings ", 1));
 
-        let [b, t] = unit_commands(&["spira-sim".into()], 4);
+        let [b, t] = unit_commands(&["batcher-cut".into()], 4);
         let (test_flags, _) = t.1.split_once(" -- ").unwrap();
-        let expected = test_flags.replacen("cargo test -j 4 ", "cargo test --no-run --timings ", 1) + " -p spira-config";
+        let expected = test_flags.replacen("cargo test -j 4 ", "cargo test --no-run --timings ", 1) + " -p gate";
         assert_eq!(b.1.strip_prefix("CARGO_BUILD_JOBS=4 ").unwrap(), expected, "only the extra built package differs");
-    }
-
-    #[test]
-    fn selecting_spira_sim_builds_the_spira_config_its_ci_cut_tests_run() {
-        let [b, t] = unit_commands(&["spira-sim".into()], 4);
-        assert!(b.1.ends_with(" -p spira-sim -p spira-config"), "{}", b.1);
-        assert!(!t.1.contains("spira-config"), "{}", t.1);
-        let [b, _] = unit_commands(&["spira-sim".into(), "spira-config".into()], 4);
-        assert_eq!(b.1.matches("-p spira-config").count(), 1, "{}", b.1);
     }
 
     #[test]
