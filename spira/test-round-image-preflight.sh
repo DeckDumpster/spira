@@ -28,10 +28,15 @@ cat > "$TMP/bin/podman" <<'SH'
 SH
 chmod +x "$TMP/bin/podman"
 
+mm="$(findmnt -n -o MAJ:MIN -T "$TMP" | head -n 1 | tr -d ' ')"
+mkdir -p "$TMP/sys/devices/vdz/queue" "$TMP/sys/dev/block"; echo 0 > "$TMP/sys/devices/vdz/queue/rotational"
+ln -sfn "$TMP/sys/devices/vdz" "$TMP/sys/dev/block/$mm"
+PF_TOML="$(tl_layer SPIRA_PREFLIGHT_CACHE_ROOT="$TMP/cache")"
+
 run() {   # run <branch> [flags] -> output in $OUT, podman calls in $LOG
     git checkout -q "$1"; export PODMAN_LOG="$TMP/podman.log"; : > "$PODMAN_LOG"
-    OUT="$(env -i PATH="$TMP/bin:$PATH" HOME="$TMP" PODMAN_LOG="$PODMAN_LOG" SPIRA_PREFLIGHT_CACHE="$TMP/cache" \
-        bash "$HERE/round-image-preflight.sh" --tree "$R" --base main --head "$1" "${@:2}" 2>&1)"
+    OUT="$(env -i PATH="$TMP/bin:$PATH" HOME="$TMP" PODMAN_LOG="$PODMAN_LOG" SPIRA_TOML="$PF_TOML" \
+        bash "$HERE/round-image-preflight.sh" --tree "$R" --base main --head "$1" --sysfs "$TMP/sys" "${@:2}" 2>&1)"
     LOG="$(cat "$PODMAN_LOG")"
 }
 branch() { git checkout -q -b "$1" main; }
@@ -72,7 +77,7 @@ want "--force runs the full setup" "/guest.sh" "$LOG"
 
 printf '#!/usr/bin/env bash\ncat >/dev/null; echo "E: Unable to locate package nope"; exit 100\n' > "$TMP/bin/podman"
 run apt-only
-RC=$(env -i PATH="$TMP/bin:$PATH" HOME="$TMP" SPIRA_PREFLIGHT_CACHE="$TMP/cache" bash "$HERE/round-image-preflight.sh" --tree "$R" --base main --head apt-only >/dev/null 2>&1; echo $?)
+RC=$(env -i PATH="$TMP/bin:$PATH" HOME="$TMP" SPIRA_TOML="$PF_TOML" bash "$HERE/round-image-preflight.sh" --tree "$R" --base main --head apt-only --sysfs "$TMP/sys" >/dev/null 2>&1; echo $?)
 is "a failing package install exits 1" 1 "$RC"
 want "a failing install prints the RED block" "round-image-preflight: RED rc=100" "$OUT"
 want "the RED block carries the install output" "Unable to locate package nope" "$OUT"

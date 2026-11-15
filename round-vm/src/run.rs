@@ -710,6 +710,7 @@ run = "$HOME/round-work/.runtime/spira"   # where REMOTE_RESULTS pulls batch-res
 releases = "$HOME/round-releases"
 path = "$HOME/spira-env/bin:$CARGO_HOME/bin:$HOME/.cargo/bin"
 testenv_scratch_root = "$HOME/round-scratch"
+preflight_cache_root = "$HOME/round-preflight"
 home_repo = "spira"
 batch_maxpar = $maxpar
 $testenv_limits
@@ -4102,6 +4103,16 @@ mod tests {
         assert!(
             REMOTE_SCRIPT[cfg..end].contains("\ntestenv_scratch_root = \"$HOME/round-scratch\"\n"),
             "testenv refuses a round whose config leaves its scratch root undeclared"
+        );
+    }
+
+    #[test]
+    fn the_round_config_declares_the_preflights_cache_root_beside_the_scratch_root() {
+        let cfg = REMOTE_SCRIPT.find("cat > \"$HOME/round-config.toml\"").unwrap();
+        let end = cfg + REMOTE_SCRIPT[cfg..].find("ROUNDCFG\nexport").unwrap();
+        assert!(
+            REMOTE_SCRIPT[cfg..end].contains("\npreflight_cache_root = \"$HOME/round-preflight\"\n"),
+            "the preflight refuses a round whose config leaves its cache root undeclared"
         );
     }
 

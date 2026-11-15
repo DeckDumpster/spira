@@ -1,0 +1,10 @@
+TYPE=string
+GROUP=round
+DOC=WHERE THE ROUND IMAGE PREFLIGHT KEEPS ITS CACHE AND THE CONTAINER'S OWN STORAGE, an absolute path on a non-rotational build disk. Empty, relative, or on a rotational disk refuses the preflight, naming this key.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # WHERE THE ROUND IMAGE PREFLIGHT KEEPS ITS CACHE AND PODMAN'S STORAGE: registry, target,
+    # apt, toolchains, the container's writable layer and its temp dir. An absolute path on a
+    # non-rotational build disk. Empty, relative, or on a rotational disk refuses the
+    # preflight, naming this key; no other place is guessed.
+    : "${SPIRA_PREFLIGHT_CACHE_ROOT:=}"
+SPIRA_CONF_DEFAULT_EOF

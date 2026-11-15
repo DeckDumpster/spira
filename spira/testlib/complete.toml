@@ -630,6 +630,7 @@ gate_target_root = ""
 lc_backup_part_bytes = 134217728
 testenv_sandbox_target_keep = 24
 testenv_scratch_root = "/tmp/spira-testenv-scratch"
+preflight_cache_root = "/tmp/spira-preflight-cache"
 testenv_foreign_target_max_gib = 40
 testenv_foreign_target_idle_hours = 48
 test_par = 4
