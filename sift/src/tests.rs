@@ -151,6 +151,17 @@ fn the_evidence_note_is_written_before_the_gate_red() {
 }
 
 #[test]
+fn the_send_back_fact_carries_the_note_and_follows_the_gate_red() {
+    let mut f = fake();
+    f.conflicts.insert("t-a".into(), vec!["x.rs".into()]);
+    let mut r = Rec::default();
+    screen(&f, &Mem::default(), &mut r, &[c("a")], &[]);
+    let red = r.log.iter().position(|l| l.starts_with("red a")).unwrap();
+    let fact = r.log.iter().position(|l| l.starts_with("send-back a t-a: Sift (pre-round screen)") && l.contains("x.rs")).unwrap();
+    assert!(red < fact, "{:?}", r.log);
+}
+
+#[test]
 fn no_note_means_no_send_back_and_the_candidate_stays_out_of_the_cut() {
     let mut f = fake();
     f.conflicts.insert("t-a".into(), vec!["x.rs".into()]);

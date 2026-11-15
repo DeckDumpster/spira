@@ -199,6 +199,12 @@ fn duration(secs: i64) -> String {
 mod tests {
     use super::*;
 
+    #[test]
+    fn facts_carry_their_actor_and_time() {
+        let f = parse_facts(r#"[{"issue_id":"sp-a","event_type":"send-back","new_value":"tip t\n\nwhy","actor":"concierge","created_at":"2001-09-09T01:46:40Z"}]"#);
+        assert_eq!((f[0].actor.as_str(), f[0].at_epoch, f[0].cause.as_str()), ("concierge", 1_000_000_000, "tip t\n\nwhy"));
+    }
+
     const ID: &str = "0b9d6f3a-1c2e-4f5a-8b7c-9d0e1f2a3b4c";
 
     fn session(rune: &str, persona: &str) -> Fact {

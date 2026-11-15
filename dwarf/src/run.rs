@@ -231,11 +231,10 @@ impl<'a> Run<'a> {
     }
 
     /// The brief's leading sections: why the bead was sent back, then its last closeout failure.
-    fn lead_briefs(&self, work: &Path, head: &str) -> String {
+    fn lead_briefs(&self, work: &Path, head: &str, amendments: &[spira_config::amendment::Record]) -> String {
         let heads = [self.s.claim_head.as_str(), head];
-        let amendments = spira_config::amendment::all(&self.conf.s("SPIRA_MAIL"), &self.s.bead);
         let red = self.last_fast_tier_red();
-        format!("{}{}", brief::send_back_brief(&self.send_backs(), &amendments, &heads), brief::fast_tier_red_brief(&crate::fast_tier::current_digest(self.d.git, &self.s.repo, work, &self.s.base_fq, &red)))
+        format!("{}{}", brief::send_back_brief(&self.send_backs(), amendments, &heads), brief::fast_tier_red_brief(&crate::fast_tier::current_digest(self.d.git, &self.s.repo, work, &self.s.base_fq, &red)))
     }
 
     pub fn record_fact(&self, kind: &str, cause: &str) {
@@ -1145,8 +1144,8 @@ impl<'a> Run<'a> {
         self.s.wall_deadline = deadline_at;
         let deadline = brief::deadline_brief(deadline_at, self.now(), deadline_at.and_then(util::local_hms_zone));
         let head = self.d.git.git(work, &["rev-parse", "HEAD"]).stdout.trim().to_string();
-        let leads = self.lead_briefs(work, &head);
         let amendments = spira_config::amendment::all(&self.conf.s("SPIRA_MAIL"), &bead);
+        let leads = self.lead_briefs(work, &head, &amendments);
         let history = brief::amendment_history_brief(&amendments);
         let task = brief::static_prompt(&leads, &brief::TaskFacts {
             id: &bead,
@@ -1217,7 +1216,8 @@ impl<'a> Run<'a> {
         }
 
         let head = self.d.git.git(work, &["rev-parse", "HEAD"]).stdout.trim().to_string();
-        body = format!("{}{body}", self.lead_briefs(work, &head));
+        let amendments = spira_config::amendment::all(&self.conf.s("SPIRA_MAIL"), &bead);
+        body = format!("{}{body}", self.lead_briefs(work, &head, &amendments));
 
         // A thrashed bead leads with its sticking point, while the tip has not moved.
         let mut banner = None;
