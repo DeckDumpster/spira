@@ -301,6 +301,12 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_send_back_kind_is_accepted_and_keeps_a_long_multi_line_reason() {
+        assert!(KINDS.contains(&spira_config::send_back::KIND));
+        assert!(LONG_KINDS.contains(&spira_config::send_back::KIND));
+    }
+
+    #[test]
     fn the_gate_start_kind_the_gate_sends_is_one_the_fact_verb_accepts() {
         assert!(KINDS.contains(&"gate-start"));
         assert!(insert_sql("sp-a", "gate-start", "", "gate", 5).contains("'fact', 'sp-a', 'gate-start'"));
