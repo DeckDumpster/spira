@@ -8,6 +8,7 @@ use std::process::Stdio;
 pub const KIND: &str = "eject-failure";
 const TIP_PREFIX: &str = "tip ";
 const FILES_PREFIX: &str = "files ";
+const FILES_CUT_PREFIX: &str = "files-cut ";
 const FAIL_PREFIX: &str = "FAIL ";
 const ALSO_PREFIX: &str = "ALSO ";
 const MAX_FAILURES: usize = 8;
@@ -81,7 +82,8 @@ fn clip_to(l: &str, max: usize) -> String {
 }
 
 /// The red steps of a `run_all`-composed output: (unit, the step's own text) for each
-/// `gate-step RED` marker. An output with no marker is one step, `gate`.
+/// `gate-step RED` marker. An output with no marker is one step, `gate`; markers with no RED
+/// leave the text after the last one as the step, named for the phase that failed.
 pub fn red_steps(output: &str) -> Vec<(String, String)> {
     let mut steps = Vec::new();
     let mut seen_marker = false;
@@ -100,6 +102,10 @@ pub fn red_steps(output: &str) -> Vec<(String, String)> {
     }
     if !seen_marker {
         return vec![("gate".to_string(), output.to_string())];
+    }
+    if steps.is_empty() {
+        let unit = output.lines().find_map(|l| l.trim().strip_prefix("gate: phase '")?.split('\'').next().map(|n| format!("phase:{n}")));
+        steps.push((unit.unwrap_or_else(|| "gate".to_string()), buf.join("\n")));
     }
     steps
 }
@@ -175,10 +181,6 @@ pub fn step_failure(text: &str) -> Vec<String> {
 /// red step its failure lines. Over the size limit the first lines are kept and the cut counted.
 pub fn digest_steps(tip: &str, files: &[String], why: &[String], steps: &[(String, String)]) -> String {
     let mut lines = vec![format!("{TIP_PREFIX}{tip}")];
-    if !files.is_empty() {
-        let shown: Vec<&str> = files.iter().take(FILES_MAX).map(String::as_str).collect();
-        lines.push(format!("{FILES_PREFIX}{}", shown.join(" ")));
-    }
     lines.extend(why.iter().map(|w| format!("{WHY_PREFIX}{}", clip_to(w, STEP_LINE_MAX))));
     for (unit, text) in steps {
         lines.push(format!("{STEP_PREFIX}{unit}"));
@@ -202,7 +204,23 @@ pub fn digest_steps(tip: &str, files: &[String], why: &[String], steps: &[(Strin
     if kept < total {
         d += &format!("... {}{CUT_SUFFIX}\n", total - kept);
     }
+    let room = DIGEST_MAX.saturating_sub(d.chars().count());
+    let at = d.find('\n').map_or(d.len(), |i| i + 1);
+    d.insert_str(at, &files_lines(files, room));
     d
+}
+
+/// The `files` line with as many leading paths as fit in `room` characters, then a `files-cut` line
+/// counting the rest.
+fn files_lines(files: &[String], room: usize) -> String {
+    let fits = |n: usize| {
+        let shown = format!("{FILES_PREFIX}{}\n", files[..n].join(" "));
+        let cut = if n < files.len() { format!("{FILES_CUT_PREFIX}{} more\n", files.len() - n) } else { String::new() };
+        let s = if n == 0 { cut } else { shown + &cut };
+        (s.chars().count() <= room).then_some(s)
+    };
+    let n = files.len().min(FILES_MAX);
+    (0..=n).rev().find_map(fits).unwrap_or_default()
 }
 
 pub fn digest(tip: &str, files: &[String], output: &str) -> String {
@@ -213,6 +231,7 @@ pub fn digest(tip: &str, files: &[String], output: &str) -> String {
 pub struct Parsed {
     pub tip: String,
     pub files: Vec<String>,
+    pub files_cut: bool,
     pub tests: Vec<String>,
 }
 
@@ -221,6 +240,8 @@ pub fn parse(digest: &str) -> Parsed {
     for l in digest.lines() {
         if let Some(t) = l.strip_prefix(TIP_PREFIX) {
             p.tip = t.trim().to_string();
+        } else if l.starts_with(FILES_CUT_PREFIX) {
+            p.files_cut = true;
         } else if let Some(f) = l.strip_prefix(FILES_PREFIX) {
             p.files = f.split_whitespace().map(String::from).collect();
         } else if let Some(t) = l.strip_prefix(FAIL_PREFIX) {
@@ -234,7 +255,7 @@ pub fn parse(digest: &str) -> Parsed {
 /// shares no file with this one, with the tests they share.
 pub fn shared_reds(bead: &str, this: &str, prior: &[(String, String)]) -> Vec<(String, Vec<String>)> {
     let me = parse(this);
-    if me.files.is_empty() {
+    if me.files.is_empty() || me.files_cut {
         return Vec::new();
     }
     let mut seen: Vec<(String, Vec<String>)> = Vec::new();
@@ -242,7 +263,7 @@ pub fn shared_reds(bead: &str, this: &str, prior: &[(String, String)]) -> Vec<(S
         let o = parse(text);
         let shared: Vec<String> = me.tests.iter().filter(|t| o.tests.contains(t)).cloned().collect();
         let disjoint = !o.files.is_empty() && !o.files.iter().any(|f| me.files.contains(f));
-        if other == bead || o.tip == me.tip || shared.is_empty() || !disjoint {
+        if other == bead || o.files_cut || o.tip == me.tip || shared.is_empty() || !disjoint {
             continue;
         }
         match seen.iter_mut().find(|(b, _)| b == other) {
@@ -477,6 +498,41 @@ mod tests {
         }
         o += "build-fence: cargo check ok\ngate: the same command passes against local/main, so this is the branch's own.\n";
         o
+    }
+
+    fn phase_red_out() -> String {
+        let mut o: String = ["spira-lint", "lifecycle-guard", "fixture-config", "round-image-preflight", "ci-spill-guard", "boundary"].iter().map(|u| format!("gate-step ok rc=0 :: {u}\n")).collect();
+        o += "running 66 tests\n---- t::x stdout ----\nthread 't::x' panicked at state-store-sqlite/tests/conformance_sqlite.rs:626:5:\nassertion failed\n\nfailures:\n    t::x\n\ntest result: FAILED. 65 passed; 1 failed\ngate: phase 'test' failed (exit 101): cargo test\n";
+        o
+    }
+
+    #[test]
+    fn a_phase_red_after_passing_markers_records_its_failing_lines() {
+        let files: Vec<String> = (0..40).map(|i| format!("crate/src/file{i}.rs")).collect();
+        let d = digest("abc", &files, &phase_red_out());
+        assert!(d.contains("STEP phase:test"), "{d}");
+        assert!(d.contains("FAIL t::x at state-store-sqlite/tests/conformance_sqlite.rs:626") && d.contains("assertion failed"), "{d}");
+    }
+
+    #[test]
+    fn an_oversized_file_list_is_shortened_and_the_failure_kept() {
+        let files: Vec<String> = (0..40).map(|i| format!("{i:03}{}", "p".repeat(147))).collect();
+        let steps = vec![("test".to_string(), "---- t::x stdout ----\nthread 't::x' panicked at a/b.rs:1:2:\nboom\n\nfailures:\n".to_string())];
+        let d = digest_steps("abc", &files, &[], &steps);
+        assert!(d.contains("FAIL t::x at a/b.rs:1") && d.contains("boom"), "{d}");
+        assert!(d.lines().any(|l| l.starts_with("files-cut ") && l.ends_with(" more")), "{d}");
+        assert!(d.chars().count() <= DIGEST_MAX, "{}", d.chars().count());
+        assert!(!d.contains(CUT_SUFFIX), "{d}");
+    }
+
+    #[test]
+    fn a_cut_file_list_is_never_a_shared_red() {
+        let cut = format!("tip t1\nfiles x.rs\n{FILES_CUT_PREFIX}3 more\nFAIL t::x\n");
+        let whole = "tip t2\nfiles y.rs\nFAIL t::x\n".to_string();
+        assert!(parse(&cut).files_cut);
+        assert!(shared_reds("sp-b", &whole, &[("sp-a".into(), cut.clone())]).is_empty());
+        assert!(shared_reds("sp-b", &cut, &[("sp-a".into(), whole.clone())]).is_empty());
+        assert_eq!(shared_reds("sp-b", &whole, &[("sp-a".into(), "tip t1\nfiles x.rs\nFAIL t::x\n".into())]).len(), 1);
     }
 
     #[test]
