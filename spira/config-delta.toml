@@ -382,6 +382,9 @@ batched_stranded_grace_secs = 300
 sendback_keep_days = 7
 results_keep_days = 7
 results_prune_max = 50
+batcher_stall_secs = 600
+publish_no_run_secs = 1800
+preflight_cache_root = ""
 
 [renamed]
 "persona.maechen" = "persona.mimir" # ffx-ok
