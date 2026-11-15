@@ -157,16 +157,20 @@ pub fn review(reason: &str) -> Option<(i64, String)> {
     let (token, tail) = rest.split_once(char::is_whitespace).unwrap_or((rest, ""));
     let b = token.as_bytes();
     let shaped = |at: usize| b.get(at).is_some_and(u8::is_ascii_digit);
+    let in_range = |t: &str| {
+        let f = |r: std::ops::Range<usize>| t[r].parse::<u8>().unwrap_or(u8::MAX);
+        (1..=12).contains(&f(5..7)) && (1..=31).contains(&f(8..10)) && f(11..13) < 24 && f(14..16) < 60 && f(17..19) < 60
+    };
     let date_shape = b.len() >= 10 && (0..10).all(|i| if i == 4 || i == 7 { b[i] == b'-' } else { shaped(i) });
     let due = match b.len() {
         10 if date_shape => {
             let (y, m, d) = (token[0..4].parse::<i64>().ok()?, token[5..7].parse::<i64>().ok()?, token[8..10].parse::<i64>().ok()?);
-            if y < 1 || !(1..=12).contains(&m) {
+            if y < 1 || !(1..=12).contains(&m) || !(1..=31).contains(&d) {
                 return None;
             }
             (days_from_civil(y, m, 1) + d) * 86_400
         }
-        20 if date_shape && b[10] == b'T' && b[13] == b':' && b[16] == b':' && b[19] == b'Z' && [11, 12, 14, 15, 17, 18].iter().all(|&i| shaped(i)) => bead::claimdesc::parse_iso(token)?,
+        20 if date_shape && b[10] == b'T' && b[13] == b':' && b[16] == b':' && b[19] == b'Z' && [11, 12, 14, 15, 17, 18].iter().all(|&i| shaped(i)) && in_range(token) => bead::claimdesc::parse_iso(token)?,
         _ => return None,
     };
     Some((due, tail.trim_start().chars().take(70).collect()))
@@ -603,6 +607,7 @@ mod tests {
         assert_eq!((due, text.as_str()), (1_793_318_400, "waits on tenancy"));
         assert_eq!(review("review-by:2026-11-15T22:00:00Z x").unwrap().0, 1_794_780_000);
         assert!(review("review-by:2026-11-15T22:00 x").is_none() && review("review-by:2026-11-15junk x").is_none());
+        assert!(["2026-11-00", "2026-11-99", "2026-13-01", "2026-11-15T99:00:00Z", "2026-11-15T22:60:00Z", "2026-11-99T22:00:00Z"].iter().all(|v| review(&format!("review-by:{v} x")).is_none()));
         assert!(review("reviewed-by:2026-10-29 x").is_none() && review("review-by:2026-13-01 x").is_none() && review("review-by:26-10-29 x").is_none());
     }
 

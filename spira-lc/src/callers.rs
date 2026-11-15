@@ -344,11 +344,15 @@ fn hold_flags(args: &[String]) -> Result<HoldArgs, Answer> {
 fn is_iso_date(v: &str) -> bool {
     let b = v.as_bytes();
     let digits = |at: &[usize]| at.iter().all(|&i| b[i].is_ascii_digit());
+    let num = |r: std::ops::Range<usize>| v[r].parse::<u8>().unwrap_or(u8::MAX);
     (b.len() == 10 || b.len() == 20)
         && digits(&[0, 1, 2, 3, 5, 6, 8, 9])
         && b[4] == b'-'
         && b[7] == b'-'
-        && (b.len() == 10 || (b[10] == b'T' && b[13] == b':' && b[16] == b':' && b[19] == b'Z' && digits(&[11, 12, 14, 15, 17, 18])))
+        && (1..=12).contains(&num(5..7))
+        && (1..=31).contains(&num(8..10))
+        && (b.len() == 10
+            || (b[10] == b'T' && b[13] == b':' && b[16] == b':' && b[19] == b'Z' && digits(&[11, 12, 14, 15, 17, 18]) && num(11..13) < 24 && num(14..16) < 60 && num(17..19) < 60))
 }
 
 /// Whether the bead's history has a Hold event at `seq`. Err: the history could not be read
