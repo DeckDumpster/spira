@@ -820,7 +820,7 @@ fn eject_sole_member_on_suites<O: RoundOps>(
     };
     let named = suites.join(",");
     let left = who_left(members, &leaving(members, &sole_member_culprit(red, members), &named));
-    ops.eject(only, suites, true);
+    ops.eject(only, suites, true).map_err(refused)?;
     Ok(RoundEnd::Emptied(format!("{named} red {left}")))
 }
 
