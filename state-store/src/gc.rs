@@ -43,6 +43,8 @@ impl std::fmt::Display for StepFailure {
 pub const EVENT_WINDOW_MS: u64 = 14 * 24 * 60 * 60 * 1_000;
 /// Revisions behind the head that compaction leaves, so a read as of a recent revision holds.
 pub const COMPACT_KEEP: u64 = 10_000;
+/// The most revisions a hot-key count looks back over: what compaction keeps plus one step.
+pub const HOT_KEYS_MAX_REVS: u64 = COMPACT_KEEP + crate::contract::COMPACT_STEP;
 
 pub struct Controller<'a, B: Backend> {
     contract: &'a Contract<B>,

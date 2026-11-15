@@ -55,6 +55,7 @@ on_each_backend!(
     history_outlives_compaction,
     event_seq_names_only_the_beads_with_an_applied_event_after_the_revision,
     a_watch_of_several_prefixes_delivers_each_and_nothing_else,
+    store_usage_answers_one_bounded_page_with_a_cursor_and_refuses_a_page_above_the_cap,
 );
 
 fn req(id: &str) -> Request {
@@ -280,6 +281,22 @@ fn history_outlives_compaction<B: Backend>(s: &Store<B>) {
         .map(|r| r["seq"].as_u64().unwrap())
         .collect();
     assert_eq!(seqs, [first, second]);
+}
+
+fn store_usage_answers_one_bounded_page_with_a_cursor_and_refuses_a_page_above_the_cap<B: Backend>(
+    s: &Store<B>,
+) {
+    for id in ["sp-a", "sp-b", "sp-c"] {
+        create(s, id);
+    }
+    let (code, out) = verbs::run(s, &["store-usage", "--limit", "2"].map(String::from));
+    assert_eq!(code, 0, "{out}");
+    let v: Value = serde_json::from_str(&out).unwrap();
+    assert!(v["next"].is_string(), "{out}");
+    assert_eq!(v["examined"], 2);
+    let (code, out) = verbs::run(s, &["store-usage", "--limit", "10001"].map(String::from));
+    assert_eq!(code, 2);
+    assert!(out.contains("10000"), "{out}");
 }
 
 fn event_seq_names_only_the_beads_with_an_applied_event_after_the_revision<B: Backend>(

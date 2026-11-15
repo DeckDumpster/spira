@@ -2,7 +2,9 @@
 //! a snapshot revision, commits a batch atomically and durably if the head is still the one the
 //! caller read, serves the watch log and compacts. The contract computes every revision it stores.
 
-use crate::{Result, Rev, EVENTS_PREFIX, HISTORY_PREFIX};
+use std::collections::BTreeMap;
+
+use crate::{Error, Result, Rev, EVENTS_PREFIX, HISTORY_PREFIX};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Version {
@@ -44,6 +46,46 @@ pub struct LogEntry {
     pub prev: Option<Rev>,
 }
 
+/// What one key prefix holds. `versions` and `version_bytes` are `None` on a backend that keeps
+/// no version history to count.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Usage {
+    pub keys: u64,
+    pub bytes: u64,
+    pub versions: Option<u64>,
+    pub version_bytes: Option<u64>,
+}
+
+impl Usage {
+    pub fn add(&mut self, other: &Usage) {
+        self.keys += other.keys;
+        self.bytes += other.bytes;
+        self.versions = sum_opt(self.versions, other.versions);
+        self.version_bytes = sum_opt(self.version_bytes, other.version_bytes);
+    }
+}
+
+fn sum_opt(a: Option<u64>, b: Option<u64>) -> Option<u64> {
+    match (a, b) {
+        (None, None) => None,
+        (a, b) => Some(a.unwrap_or(0) + b.unwrap_or(0)),
+    }
+}
+
+/// One bounded page of [`Backend::usage_page`]: `next` is the `after` of the following page,
+/// `None` on the last; `examined` is the live keys this page read.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct UsagePage {
+    pub prefixes: BTreeMap<String, Usage>,
+    pub next: Option<String>,
+    pub examined: usize,
+}
+
+/// A key up to and including its first `/`, or the whole key when it has none.
+pub fn usage_prefix(key: &str) -> &str {
+    key.find('/').map_or(key, |i| &key[..=i])
+}
+
 pub trait Backend: Send + Sync {
     /// The last committed main revision, kept in its own meta entry: never derived from keys.
     fn head(&self) -> Result<u64>;
@@ -82,6 +124,31 @@ pub trait Backend: Send + Sync {
     /// The revision compaction has reached.
     fn compacted(&self) -> Result<u64> {
         Ok(0)
+    }
+    /// The live keys strictly after `after`, at most `limit`, counted by [`usage_prefix`]. The
+    /// default reads `range` and knows no versions.
+    fn usage_page(&self, after: Option<&str>, limit: usize) -> Result<UsagePage> {
+        let head = self.head()?;
+        let rows = self.range("", after, limit, head)?;
+        let mut page = UsagePage {
+            examined: rows.len(),
+            next: if rows.len() == limit { rows.last().map(|(k, _)| k.clone()) } else { None },
+            ..UsagePage::default()
+        };
+        for (key, v) in &rows {
+            let u = page.prefixes.entry(usage_prefix(key).to_string()).or_default();
+            u.keys += 1;
+            u.bytes += v.value.len() as u64;
+        }
+        Ok(page)
+    }
+    /// The keys written most often in the last `revs` revisions, most first, at most `n`.
+    fn hot_keys(&self, _revs: u64, _n: usize) -> Result<Vec<(String, u64)>> {
+        Err(Error::Backend("not served by this backend".into()))
+    }
+    /// The file's total and free bytes.
+    fn file_bytes(&self) -> Result<(u64, u64)> {
+        Err(Error::Backend("not served by this backend".into()))
     }
     /// `gc_range` at the head of the read that serves it, with that head: the backend picks the
     /// revision, so a store that commits between pages is never read at a past one.

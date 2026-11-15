@@ -10,7 +10,7 @@ use super::store::Store;
 use crate::{flag, CANNOT_TELL};
 
 /// The verbs this module answers.
-pub const VERBS: &[&str] = &["watch", "history", "event-seq", "dwell"];
+pub const VERBS: &[&str] = &["watch", "history", "event-seq", "dwell", "store-usage"];
 
 pub fn run<B: Backend>(store: &Store<B>, args: &[String]) -> (i32, String) {
     let rest = &args[1..];
@@ -19,6 +19,7 @@ pub fn run<B: Backend>(store: &Store<B>, args: &[String]) -> (i32, String) {
         Some("history") => history(store, rest),
         Some("event-seq") => event_seq(store, rest),
         Some("dwell") => dwell(store, rest),
+        Some("store-usage") => store_usage(store, rest),
         other => Err(format!("{other:?} is not a control-store verb")),
     };
     match answer {
@@ -155,4 +156,41 @@ fn dwell<B: Backend>(store: &Store<B>, args: &[String]) -> Result<String, String
     };
     let d = store.dwell(now, window, landed_after).map_err(|e| format!("dwell: {e}"))?;
     serde_json::to_string(&d).map_err(|e| e.to_string())
+}
+
+const USAGE_DEFAULT_LIMIT: u64 = 2_000;
+const USAGE_MAX_LIMIT: u64 = 10_000;
+
+/// `store-usage [--after K] [--limit N]`, `--hot N [--revs R]` or `--file`: what the control
+/// store file holds, one bounded page of live keys by first key segment at a time.
+fn store_usage<B: Backend>(store: &Store<B>, args: &[String]) -> Result<String, String> {
+    let fail = |e: state_store::Error| format!("store-usage: {e}");
+    let backend = store.contract().backend();
+    if args.iter().any(|a| a == "--file") {
+        let (bytes, free_bytes) = backend.file_bytes().map_err(fail)?;
+        return Ok(json!({ "bytes": bytes, "free_bytes": free_bytes }).to_string());
+    }
+    if flag(args, "--hot").is_some() {
+        let n = number(args, "--hot", 0).map_err(|e| format!("store-usage: {e}"))?;
+        let revs = number(args, "--revs", state_store::gc::COMPACT_KEEP).map_err(|e| format!("store-usage: {e}"))?;
+        let keys = backend.hot_keys(revs, n as usize).map_err(fail)?;
+        let keys: Vec<Value> = keys.into_iter().map(|(key, writes)| json!({ "key": key, "writes": writes })).collect();
+        return Ok(json!({ "revs": revs, "keys": keys }).to_string());
+    }
+    let limit = number(args, "--limit", USAGE_DEFAULT_LIMIT).map_err(|e| format!("store-usage: {e}"))?;
+    if limit > USAGE_MAX_LIMIT {
+        return Err(format!("store-usage: --limit {limit} is above the cap of {USAGE_MAX_LIMIT}"));
+    }
+    let page = backend
+        .usage_page(flag(args, "--after").as_deref(), limit as usize)
+        .map_err(fail)?;
+    let prefixes: Map<String, Value> = page
+        .prefixes
+        .iter()
+        .map(|(p, u)| {
+            let v = json!({ "keys": u.keys, "bytes": u.bytes, "versions": u.versions, "version_bytes": u.version_bytes });
+            (p.clone(), v)
+        })
+        .collect();
+    Ok(json!({ "prefixes": prefixes, "next": page.next, "examined": page.examined }).to_string())
 }
