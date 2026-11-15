@@ -1304,6 +1304,9 @@ mod tests {
         let row = pools_row(&s);
         assert!(row.contains("1/3") && row.contains("4 waiting 90s"), "{row}");
         assert!(row.contains("gate") && row.contains("?/2"), "{row}");
+        assert!(!row.contains("compile"), "the compile pool no longer exists: {row}");
+        let at = |n: &str| row.find(n).unwrap_or_else(|| panic!("{n} missing: {row}"));
+        assert!(at("test") < at("gate") && at("gate") < at("cold"), "{row}");
     }
 
     #[test]

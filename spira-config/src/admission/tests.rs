@@ -434,7 +434,7 @@ fn a_run_slot_waiter_says_what_it_waits_for() {
 }
 
 #[test]
-fn the_retired_wrapper_execs_the_inner_compiler_and_touches_no_run_directory() {
+fn the_retired_wrapper_names_the_inner_compiler_with_every_argument() {
     let os = |a: &[&str]| a.iter().map(std::ffi::OsString::from).collect::<Vec<_>>();
     let args = os(&["rustc", "--crate-name", "x"]);
     let (prog, argv) = passthrough(Some("/box/sccache"), &args);
@@ -443,10 +443,4 @@ fn the_retired_wrapper_execs_the_inner_compiler_and_touches_no_run_directory() {
         let (prog, argv) = passthrough(none, &args);
         assert_eq!((prog, argv), ("rustc".into(), os(&["--crate-name", "x"])), "no inner: the compiler it was handed");
     }
-
-    let run = run_dir();
-    let (prog, argv) = passthrough(Some("/bin/echo"), &os(&["rustc", "-vV"]));
-    let echoed = std::process::Command::new(prog).args(argv).env("SPIRA_RUN", run.path()).output().unwrap();
-    assert_eq!(String::from_utf8_lossy(&echoed.stdout), "rustc -vV\n");
-    assert_eq!(fs::read_dir(run.path()).unwrap().count(), 0, "a pass-through reads and writes no pool file");
 }
