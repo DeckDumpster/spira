@@ -2540,8 +2540,8 @@ pub(crate) mod tests {
             vec![("m2".to_string(), vec!["test-01.sh".to_string()])]
         );
         assert!(
-            f.jobs.iter().all(|(j, _, _)| j.removal.is_empty()),
-            "a rerun on a member subset ran: {:?}",
+            f.jobs.iter().map(|(j, _, _)| (j.suite.as_str(), j.removal.len())).collect::<Vec<_>>() == [("test-01.sh", 0)],
+            "only the escape rerun on the full round tree runs: {:?}",
             f.jobs.iter().map(|(j, _, _)| j).collect::<Vec<_>>()
         );
         assert!(ops.incidents.is_empty() && ops.judged.is_empty());
