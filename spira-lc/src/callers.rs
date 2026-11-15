@@ -43,7 +43,7 @@ pub struct Answer {
     pub cert_log: Option<(String, String)>,
     /// `(bead, reason)` store closes still owed once the answer is sent; the caller settles each
     /// through `reconcile_content::settle_owed`, and reconcile-content redrives any that fail.
-    pub owed: Vec<(String, String)>,
+    pub owed: Box<[(String, String)]>,
 }
 
 impl Answer {
@@ -1601,7 +1601,7 @@ pub fn close(
     }
     let mut ans = withdraw_named_asks(&id, &asked_about, &actor, m);
     if !rowless && row_terminal && ans.code == APPLIED {
-        ans.owed.push((id, reason));
+        ans.owed = vec![(id, reason)].into();
     }
     ans
 }

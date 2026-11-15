@@ -1357,7 +1357,7 @@ fn close_records_the_end_on_the_row_before_the_store_closes() {
     assert_eq!(a.code, APPLIED, "{}", a.stderr);
     assert_eq!(f.state("sp-d"), "DROPPED", "a closed bead never stays READY on its row");
     assert!(bd.closed.is_empty(), "the store close runs after the answer");
-    assert_eq!(a.owed, vec![("sp-d".to_string(), "Decided by the Concierge: neither".to_string())]);
+    assert_eq!(a.owed.to_vec(), vec![("sp-d".to_string(), "Decided by the Concierge: neither".to_string())]);
     assert_eq!(f.events.last().unwrap().4, "close", "default actor");
 }
 
@@ -1442,7 +1442,7 @@ fn close_of_a_terminal_or_rowless_bead_closes_the_store_alone() {
     assert!(f.events.is_empty(), "nothing to record: already terminal, or no row");
     assert_eq!(bd.closed, vec![("sp-none".to_string(), "an alert".to_string())], "a rowless bead's store close is its only record");
     let a = close(&v(&["sp-l", "--reason", "landed at abc"]), &mut f, &mut bd, &mut no_file);
-    assert_eq!(a.owed, vec![("sp-l".to_string(), "landed at abc".to_string())]);
+    assert_eq!(a.owed.to_vec(), vec![("sp-l".to_string(), "landed at abc".to_string())]);
 }
 
 #[test]
@@ -1454,7 +1454,7 @@ fn close_answers_success_once_the_row_is_terminal_even_when_the_store_close_woul
     assert_eq!(a.code, APPLIED, "{}", a.stderr);
     assert_eq!(f.state("sp-d"), "DONE");
     assert!(bd.closed.is_empty());
-    assert_eq!(a.owed, vec![("sp-d".to_string(), "shipped".to_string())]);
+    assert_eq!(a.owed.to_vec(), vec![("sp-d".to_string(), "shipped".to_string())]);
     let mut left = Vec::new();
     crate::callers::settle_owed_with(&a.owed, &mut |id, r| {
         left.push(id.to_string());
@@ -1481,7 +1481,7 @@ fn close_reads_its_reason_from_a_file_and_refuses_without_one() {
     assert_eq!(close(&v(&["sp-r", "--reason-file", "-"]), &mut f, &mut bd, &mut file).code, APPLIED);
     assert!(bd.closed.is_empty());
     let a = close(&v(&["sp-r", "--reason-file", "-"]), &mut f, &mut bd, &mut file);
-    assert_eq!(a.owed, vec![("sp-r".to_string(), "from stdin".to_string())]);
+    assert_eq!(a.owed.to_vec(), vec![("sp-r".to_string(), "from stdin".to_string())]);
     for bad in [&["sp-r"][..], &["--reason", "x"], &["sp-r", "--reason", "  "], &["sp-r", "--reason", "x", "--bogus", "y"]] {
         assert_eq!(close(&v(bad), &mut f, &mut bd, &mut no_file).code, CANNOT_TELL, "{bad:?}: usage");
     }
@@ -1743,7 +1743,7 @@ fn close_delivered_ends_hand_delivered_work_done_with_its_reason_and_refuses_an_
     assert_eq!(a.code, APPLIED, "{}", a.stderr);
     assert_eq!(f.state("sp-h"), "DONE");
     assert_eq!(f.beads["sp-h"].reason.as_deref(), Some("live: dolt 2.4.2"));
-    assert_eq!(a.owed, vec![("sp-h".to_string(), "live: dolt 2.4.2".to_string())]);
+    assert_eq!(a.owed.to_vec(), vec![("sp-h".to_string(), "live: dolt 2.4.2".to_string())]);
     f.bead("sp-p", BeadState::Ready);
     assert_eq!(close(&v(&["sp-p", "--reason", "abandoned"]), &mut f, &mut bd, &mut no_file).code, APPLIED);
     assert_eq!(f.state("sp-p"), "DROPPED", "close without --delivered keeps its meaning");
@@ -1772,7 +1772,7 @@ fn drop_bead_ends_a_live_work_bead_as_dropped_with_the_reason_from_any_live_stat
         let a = drop_bead(&v(&["sp-x", "--reason", "failed five gates", "--actor", "concierge"]), &mut f, &mut bd);
         assert_eq!(a.code, APPLIED, "{st:?}: {}", a.stderr);
         assert_eq!(f.state("sp-x"), "DROPPED", "{st:?}");
-        assert_eq!(a.owed, vec![("sp-x".to_string(), "dropped: failed five gates".to_string())]);
+        assert_eq!(a.owed.to_vec(), vec![("sp-x".to_string(), "dropped: failed five gates".to_string())]);
         assert_eq!(f.events.last().unwrap().4, "concierge");
     }
 }
