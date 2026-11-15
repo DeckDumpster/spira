@@ -588,31 +588,6 @@ pub fn unit_build_words(crates: &[String]) -> Vec<String> {
     words
 }
 
-/// The unit build line for the crate words of a `{affected}` expansion (`-p a -p b`, or `--workspace`).
-pub fn unit_build_argv(affected: &[String]) -> Vec<String> {
-    if affected.iter().any(|a| a == "--workspace") {
-        let mut w = unit_build_words(&[]);
-        w.push("--workspace".into());
-        return w;
-    }
-    let crates: Vec<String> = affected.windows(2).filter(|w| w[0] == "-p").map(|w| w[1].clone()).collect();
-    unit_build_words(&crates)
-}
-
-/// `gate unit-build <-p crate…|--workspace>`: the gate's own build line, run with the caller's
-/// environment, so a submit check compiles the units into the builder's `CARGO_TARGET_DIR`.
-pub fn unit_build_main(args: &[String]) -> i32 {
-    let words = unit_build_argv(args);
-    // batch-job: the gate's own build line, bounded by the check row's budget through timeout
-    match std::process::Command::new(&words[0]).args(&words[1..]).status() {
-        Ok(s) => s.code().unwrap_or(2),
-        Err(e) => {
-            eprintln!("gate unit-build: cannot run cargo: {e}");
-            2
-        }
-    }
-}
-
 /// The unit phases' commands, in order: build ([`unit_build_words`], the default `dev` profile), then the tests.
 pub fn unit_commands(crates: &[String], jobs: u64) -> [(&'static str, String); 2] {
     let p = pkgs(crates);
@@ -781,15 +756,6 @@ pub fn reentry_command(suites: &[String]) -> String {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn unit_build_argv_is_the_gates_build_line_for_the_affected_words() {
-        let crates = vec!["a".to_string(), "b".to_string()];
-        let words: Vec<String> = ["-p", "a", "-p", "b"].map(String::from).to_vec();
-        assert_eq!(super::unit_build_argv(&words), super::unit_build_words(&crates));
-        let ws = super::unit_build_argv(&["--workspace".to_string()]);
-        assert_eq!(&ws[..ws.len() - 1], super::unit_build_words(&[]).as_slice());
-    }
-
     #[test]
     fn run_all_leaves_a_string_it_cannot_split_alone() {
         for c in ["true", "bash a/b.sh || bash a/c.sh", "bash a/b.sh; bash a/c.sh", "echo x && echo y"] {
