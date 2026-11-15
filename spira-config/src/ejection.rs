@@ -29,7 +29,7 @@ pub struct Failure {
 }
 
 fn clip(l: &str) -> String {
-    l.chars().filter(|c| !c.is_control()).take(LINE_MAX).collect()
+    clip_to(l, LINE_MAX)
 }
 
 fn location_of(line: &str) -> Option<String> {
@@ -82,7 +82,7 @@ pub fn red_steps(output: &str) -> Vec<(String, String)> {
     let mut seen_marker = false;
     let mut buf: Vec<&str> = Vec::new();
     for line in output.lines() {
-        if let Some(rest) = line.strip_prefix("gate-step ") {
+        if let Some(rest) = line.trim().strip_prefix("gate-step ") {
             seen_marker = true;
             if rest.starts_with("RED") {
                 let unit = rest.split_once(" :: ").map(|(_, u)| u.trim()).unwrap_or("gate");
@@ -142,13 +142,12 @@ pub fn step_failure(text: &str) -> Vec<String> {
         return out;
     }
     let lines: Vec<&str> = text.lines().collect();
-    let is_err = |l: &str| l.starts_with("error[") || (l.starts_with("error:") && !l.contains("could not compile") && !l.contains("aborting due to"));
+    let loc_after = |i: usize| lines[i + 1..].iter().take(3).find(|n| n.trim_start().starts_with("--> "));
     for (i, l) in lines.iter().enumerate() {
-        if is_err(l) {
+        let loc = loc_after(i);
+        if l.starts_with("error[") || (l.starts_with("error:") && loc.is_some()) {
             out.push(clip_to(l, STEP_LINE_MAX));
-            if let Some(loc) = lines[i + 1..].iter().take(3).find(|n| n.trim_start().starts_with("--> ")) {
-                out.push(clip_to(loc, STEP_LINE_MAX));
-            }
+            out.extend(loc.map(|n| clip_to(n, STEP_LINE_MAX)));
         }
     }
     if !out.is_empty() {
@@ -424,5 +423,27 @@ mod tests {
         let d = digest("t", &[], &o);
         assert!(d.contains("error[E0425]: cannot find value") && d.contains("--> gate/src/x.rs:3:5"), "{d}");
         assert!(!d.contains("warning:") && !d.contains("could not compile"), "{d}");
+    }
+
+    #[test]
+    fn a_lint_text_with_an_error_line_keeps_every_finding() {
+        let d = digest("t", &[], &format!("error: something the rule quotes\n{FINDING}\ngate-step RED rc=1 :: spira-lint\n"));
+        assert!(d.contains("error: something the rule quotes") && d.contains(FINDING), "{d}");
+    }
+
+    #[test]
+    fn an_indented_marker_still_splits_the_steps_and_attribution_lines_are_recorded_as_why() {
+        let steps = red_steps("one\n  gate-step ok rc=0 :: a\ntwo\ngate-step RED rc=1 :: b\n");
+        assert_eq!(steps, vec![("b".to_string(), "two".to_string())]);
+        let calls: RefCell<Vec<Vec<String>>> = RefCell::new(Vec::new());
+        let lc = |a: &[String]| {
+            calls.borrow_mut().push(a.to_vec());
+            Ok(String::new())
+        };
+        record(&lc, "sp-b", "t", &[], &["spira-lint: red".into()], &steps, "batcher").unwrap();
+        let calls = calls.borrow();
+        let fact = calls.iter().find(|c| c[0] == "fact").unwrap();
+        let cause = &fact[fact.iter().position(|a| a == "--cause").unwrap() + 1];
+        assert!(cause.contains("why spira-lint: red\nSTEP b\n  two"), "{cause}");
     }
 }
