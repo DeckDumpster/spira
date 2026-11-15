@@ -421,7 +421,7 @@ pub struct Policy {
 impl Default for Policy {
     /// The registered default (`spira/conf.d/SPIRA_PUBLISH_SETTLE_DEFER_MAX`).
     fn default() -> Self {
-        Policy { defer_max: 3, no_run_secs: Some(1800) }
+        Policy { defer_max: 3, no_run_secs: None }
     }
 }
 
@@ -766,6 +766,23 @@ pub mod edge {
         spira_config::repos::publish_forge(reg, repo, &BTreeMap::new()).ok_or_else(|| format!("{repo} publishes nowhere"))
     }
 
+    /// A record's fields as the probe reads them; `None` for one without a PR number.
+    pub fn publish_rec(kv: &BTreeMap<String, String>) -> Option<PublishRec> {
+        let n = |k: &str| kv.get(k).and_then(|v| v.parse().ok()).unwrap_or(0);
+        Some(PublishRec { pr: kv.get("pr")?.trim_start_matches('#').parse().ok()?, head: kv.get("head").cloned().unwrap_or_default(), branch: kv.get("branch").cloned().unwrap_or_default(), rerun: kv.get("rerun").is_some_and(|v| v == "1"), alarmed: kv.get("alarmed").is_some_and(|v| v == "1"), opened: n("opened"), ci_started: n("ci_started"), no_run_paged: kv.get("no_run_paged").is_some() })
+    }
+
+    /// The probe's word for a `check-status` answer.
+    pub fn ci_label(status: &str) -> &'static str {
+        match queue::ops::verdict::normalize_status(status.lines().next().unwrap_or("").trim()) {
+            "harness_fault" => "untested",
+            "green" => "green",
+            "red" => "red",
+            _ if status.lines().any(|l| l.starts_with("no-run: ")) => "no_run",
+            _ => "pending",
+        }
+    }
+
     /// The probe: per `queue.local` repo, its record, its PR on the forge, the two heads and
     /// whether a round holds the hypervisor.
     pub fn observe(e: &Effects, _: &str, _: &EffectSpec) -> Result<String, String> {
@@ -790,7 +807,7 @@ pub mod edge {
             });
             let diverged = forge_sha.as_ref().map(|f| git(&dir, &["merge-base", "--is-ancestor", f, &head_sha], Duration::from_secs(10)).is_err());
             let kv = queue_kv(e, &name, "publish");
-            let publish_rec = kv.as_ref().and_then(|kv| Some(PublishRec { pr: kv.get("pr")?.trim_start_matches('#').parse().ok()?, head: kv.get("head").cloned().unwrap_or_default(), branch: kv.get("branch").cloned().unwrap_or_default(), rerun: kv.get("rerun").is_some_and(|v| v == "1"), alarmed: kv.get("alarmed").is_some_and(|v| v == "1"), opened: kv.get("opened").and_then(|v| v.parse().ok()).unwrap_or(0), ci_started: kv.get("ci_started").and_then(|v| v.parse().ok()).unwrap_or(0), no_run_paged: kv.get("no_run_paged").is_some() }));
+            let publish_rec = kv.as_ref().and_then(publish_rec);
             let pr = match &publish_rec {
                 None => Pr::Unknown,
                 Some(rec) => {
@@ -798,14 +815,7 @@ pub mod edge {
                     match forge_call(&dir, "pr-state", &[&n], None)?.stdout().map(|s| s.trim().to_ascii_uppercase()) {
                         Some(s) if s == "OPEN" => {
                             let status = forge_call(&dir, "check-status", &[&n, &rec.branch], None)?.stdout().unwrap_or_default();
-                            let first = status.lines().next().unwrap_or("").trim();
-                            let ci = match queue::ops::verdict::normalize_status(first) {
-                                "harness_fault" => "untested",
-                                "green" => "green",
-                                "red" => "red",
-                                _ if status.lines().any(|l| l.starts_with("no-run: ")) => "no_run",
-                                _ => "pending",
-                            };
+                            let ci = ci_label(&status);
                             Pr::Open { ci: ci.into(), behind: rec.head != head_sha, tries: u32::from(rec.rerun) + u32::from(rec.alarmed) }
                         }
                         Some(_) => Pr::Gone,

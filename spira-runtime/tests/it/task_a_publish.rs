@@ -88,6 +88,10 @@ fn t5_the_settle_table() {
     assert_eq!(no_run(false, 0, 0), Settle::Wait, "no parseable opened is not past");
 }
 
+fn bound() -> Policy {
+    Policy { no_run_secs: Some(600), ..Policy::default() }
+}
+
 fn no_run_repo(behind: bool, ci_started: u64) -> Snapshot {
     let mut r = repo(Pr::Open { ci: "no_run".into(), behind, tries: 0 });
     r.publish_rec = Some(PublishRec { pr: 31, head: "h1".into(), branch: "publish/h1".into(), opened: 1_000, ci_started, ..PublishRec::default() });
@@ -98,17 +102,17 @@ fn no_run_repo(behind: bool, ci_started: u64) -> Snapshot {
 /// No run past the bound, local not ahead: CI started once, one page, then parked.
 #[test]
 fn t5_no_run_past_the_bound_starts_ci_once_then_parks() {
-    let (carry, first) = decide(&Carry::default(), &no_run_repo(false, 0));
+    let (carry, first) = decide_with(&bound(), &Carry::default(), &no_run_repo(false, 0));
     assert_eq!(effects(&first), [START_CI, NOTIFY, RECORD], "{first:?}");
     assert!(first[0].input.contains("publish/h1"), "{first:?}");
     assert_eq!(carry.repos["spira"].state, State::Open);
-    let (_, then) = decide(&Carry::default(), &no_run_repo(false, 5_000));
+    let (_, then) = decide_with(&bound(), &Carry::default(), &no_run_repo(false, 5_000));
     assert!(!effects(&then).contains(&START_CI), "{then:?}");
 }
 
 #[test]
 fn t5_no_run_past_the_bound_and_behind_supersedes() {
-    let (_, acts) = decide(&Carry::default(), &no_run_repo(true, 0));
+    let (_, acts) = decide_with(&bound(), &Carry::default(), &no_run_repo(true, 0));
     assert_eq!(effects(&acts), [CANCEL_RUNS, PR_CLOSE, NOTIFY, RECORD], "{acts:?}");
     assert!(acts[3].input.contains("no_run_paged"), "{acts:?}");
 }
@@ -262,4 +266,14 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
     kit::assert_boot_matches_an_unstopped_run(at_work, registration, STREAM, EventKind::new(TICK, ""));
+}
+
+#[test]
+fn t5_the_probe_reads_a_no_run_status_and_the_record_fields() {
+    assert_eq!(edge::ci_label("pending\nno-run: Gate\n"), "no_run");
+    assert_eq!(edge::ci_label("pending\n"), "pending");
+    assert_eq!(edge::ci_label("green\n"), "green");
+    let kv: std::collections::BTreeMap<String, String> = [("pr", "31"), ("opened", "900"), ("ci_started", "1200"), ("no_run_paged", "1")].into_iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+    let rec = edge::publish_rec(&kv).expect("a record with a pr");
+    assert_eq!((rec.opened, rec.ci_started, rec.no_run_paged), (900, 1200, true));
 }

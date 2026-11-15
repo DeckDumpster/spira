@@ -917,6 +917,7 @@ struct FForge {
     ami_results: RefCell<Vec<Option<AmiBuild>>>,
     /// pr-create makes this PR number upstream, then reports this error.
     create_then_err: RefCell<Option<(String, String)>>,
+    record_at_close: RefCell<Option<(PathBuf, String)>>,
     /// pr-preflight refuses with this message.
     preflight_err: RefCell<Option<String>>,
     /// `pr-list-open` cannot be read.
@@ -958,6 +959,10 @@ impl Forge for FForge {
     }
     fn pr_close(&self, _: &Path, _: &Path, pr: &str) {
         self.calls.borrow_mut().push(format!("pr-close {pr}"));
+        let mut watch = self.record_at_close.borrow_mut();
+        if let Some((path, seen)) = watch.as_mut() {
+            *seen = fs::read_to_string(&*path).unwrap_or_default();
+        }
     }
     fn queue_prs(&self, _: &Path, _: &Path) -> Option<Vec<(String, String)>> {
         (!self.queue_prs_unreadable.get()).then(|| self.queue_prs.borrow().clone())
@@ -4390,6 +4395,17 @@ fn settle_supersedes_a_publish_with_no_run_past_the_bound_when_local_is_ahead() 
     assert!(calls.iter().any(|c| c.starts_with("pr-create")), "{calls:?}");
     assert_eq!(count_calls(&t, "dispatch spira/publish/OLD"), 0);
     assert!(t.lib.has("notify spira publish PR 77 for spira has no CI run"));
+}
+
+#[test]
+fn settle_records_the_no_run_page_before_the_supersede_closes_the_pr() {
+    let t = T::new(LandMode::QueueLocal);
+    stale_publish(&t, NO_RUN);
+    *t.forge.record_at_close.borrow_mut() = Some((t.qfile("publish"), String::new()));
+    t.clock.now.set(900 + 600);
+    assert_eq!(t.run(&["publish-settle"]), 0, "{}", t.err());
+    let seen = t.forge.record_at_close.borrow().clone().unwrap().1;
+    assert!(seen.contains("no_run_paged="), "a failed close must not page again: {seen:?}");
 }
 
 #[test]
