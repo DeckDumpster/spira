@@ -233,4 +233,23 @@ mod tests {
         let none = |_: &str| None;
         assert!(Source { env: &none }.get("SPIRA_DWARF").is_none());
     }
+
+    fn shipped_priority(key: &str) -> u8 {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/conf.d").join(key);
+        let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        let marker = format!("${{{key}:=");
+        let line = text.lines().find(|l| !l.trim_start().starts_with('#') && l.contains(&marker)).unwrap_or_else(|| panic!("{key} has no shipped default"));
+        let rest = &line[line.find(&marker).unwrap() + marker.len()..];
+        rest[..rest.find('}').unwrap()].parse().unwrap_or_else(|_| panic!("{key} default is not a number: {line}"))
+    }
+
+    // covers: UC-ops-detection-remediation-36
+    #[test]
+    fn suite_reds_and_incidents_default_behind_a_reported_bug() {
+        let reported = shipped_priority("SPIRA_GH_INTAKE_PRIORITY");
+        for key in ["SPIRA_SUITES_PRIORITY", "SPIRA_INCIDENT_PRIORITY"] {
+            let own = shipped_priority(key);
+            assert!(own > reported, "{key} defaults to P{own}, reported bugs to P{reported}: the harness's own findings draw the dwarf first");
+        }
+    }
 }

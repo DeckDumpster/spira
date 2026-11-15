@@ -700,6 +700,7 @@ dependencies = [
 name = "hel"
 version = "1.0.0"
 dependencies = [
+ "cockpit-collect",
  "forge",
  "runtime",
  "serde_json",

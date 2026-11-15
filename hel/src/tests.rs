@@ -412,3 +412,49 @@ mod resume {
         assert_eq!(f.now() - began, std::time::Duration::from_millis(240));
     }
 }
+
+mod wire_token {
+    use super::*;
+
+    fn sweep_says(t: &testkit::TempDir, prepare: impl FnOnce(&Path, &Path), id: &str) -> (String, String) {
+        let root = t.path().join("repo");
+        std::fs::create_dir_all(&root).unwrap();
+        git(&root, &["init", "-q", "-b", "main"]);
+        git(&root, &["commit", "-q", "--allow-empty", "-m", "x"]);
+        let wts = t.path().join("wt");
+        std::fs::create_dir_all(&wts).unwrap();
+        prepare(&root, &wts);
+        let base = Base { landref: "main".into(), landrefs: vec!["main".into()], remote: None };
+        let beads = [(id.to_string(), serde_json::json!({"id": id, "labels": []}))].into();
+        let f = Fake { base: Some(base), beads, wts, ..Default::default() };
+        let repo = crate::ports::Repo { name: "spira".into(), root: Some(root), forge_queued: false };
+        let opts = crate::sweep::Opts { dry: false, fetch: false, only: None, scope: Scope::All, budget: None, pace: Default::default() };
+        let mut s = crate::sweep::Sweep { w: &f, opts, submitted_label: "submitted".into(), tally: Default::default(), deadline: None, truncated: false };
+        s.repo(&repo);
+        let emitted = f.out();
+        let line = emitted.lines().find(|l| l.contains(id)).unwrap_or_else(|| panic!("the sweep emitted nothing for {id}: {emitted}")).to_string();
+        let keys = cockpit_collect::metrics::hel_metrics(&["2026-11-14T00:00:00Z spira: state: open=0", &line], 0, 4_000_000_000);
+        (line.clone(), keys.get("SP_SENT").cloned().unwrap_or_default())
+    }
+
+    // covers: UC-ops-detection-remediation-36
+    #[test]
+    fn a_sent_line_for_a_landed_branch_is_counted_by_the_cockpit_metrics_parser() {
+        let t = testkit::TempDir::new("hel-wire");
+        let (line, counted) = sweep_says(&t, |root, _| drop(git(root, &["branch", "spira/sp-wire"])), "sp-wire");
+        assert_eq!(counted, "1", "the sweep said {line:?}");
+    }
+
+    // covers: UC-ops-detection-remediation-36
+    #[test]
+    fn a_sent_line_for_an_orphaned_worktree_is_counted_by_the_cockpit_metrics_parser() {
+        let t = testkit::TempDir::new("hel-wire-orphan");
+        let prepare = |root: &Path, wts: &Path| {
+            git(root, &["worktree", "add", "-q", "-b", "spira/sp-orph", wts.join("sp-orph").to_str().unwrap()]);
+            git(root, &["update-ref", "-d", "refs/heads/spira/sp-orph"]);
+        };
+        let (line, counted) = sweep_says(&t, prepare, "sp-orph");
+        assert!(line.starts_with("SENT"), "{line:?}");
+        assert_eq!(counted, "1", "the sweep said {line:?}");
+    }
+}

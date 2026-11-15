@@ -84,7 +84,7 @@ exits 2; the full sweep is `hel --all`.
 
 **Output** is the shell's, line for line (`SENT`, `REAPED`, `ARCHIVED`, `KEEP`, `HELD`,
 `SKIP`, `WOULD`, `FAILED`, lib.sh `log` lines), ending `… spira: hel: <n> sent,
-<m> failed` unless dry. The wire token is `SENT` (test-wire-token.sh).
+<m> failed` unless dry. The wire token is `SENT`.
 
 ## 3. Structure
 

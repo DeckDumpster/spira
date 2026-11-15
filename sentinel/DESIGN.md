@@ -735,7 +735,6 @@ named unit tests.
 `sentinel/src/*.rs`, or at lib.sh where the text now lives:
 
 - the retired lanes suite
-- `test-wire-token.sh:35`
 - `test-event-taxonomy.sh:61`
 - `test-timeout-lint.sh:58`
 

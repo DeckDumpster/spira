@@ -5,7 +5,7 @@ edition = "2021"
 description = "hel — the Hel: delete the branch and worktree of every bead whose work has landed, and nothing else. Replaces spira/hel.sh (sp-arpjt)."
 
 [features]
-integration = ["forge/integration", "runtime/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "testkit/integration"]
+integration = ["cockpit-collect/integration", "forge/integration", "runtime/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "testkit/integration"]
 
 [dependencies]
 serde_json = "1"
@@ -26,4 +26,5 @@ test = false
 
 [dev-dependencies]
 testkit = { path = "../testkit" }
+cockpit-collect = { path = "../cockpit-collect" }
 
