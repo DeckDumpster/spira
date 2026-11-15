@@ -503,8 +503,8 @@ impl<'w, W: World> Trial<'w, W> {
                 self.s.replayed = true;
                 self.s.replay_note = format!(" replayed=key:{}@{}", self.s.key, red.when);
                 return v(red.status, &red.reason, format!(
-                    "gate: this exact tree was already judged red by {name}'s gate at {} ({}) — repeated, not re-run.\ngate: key {} — same tree, same changed files, same command, same harness.\n{}",
-                    red.when, red.by, self.s.key, red.msg));
+                    "gate: this exact tree was already judged red by {name}'s gate at {} ({}) — repeated, not re-run.\ngate: key {} — same tree, same changed files, same command, same harness.\n{}{}",
+                    red.when, red.by, self.s.key, red.msg, replay_exits(&self.s.bead, &base, &self.s.branch_tip)));
             }
         }
 
@@ -2495,4 +2495,9 @@ pub fn definition<W: World>(w: &W, repo: Option<&str>) -> Result<String, String>
         Resolved::Column(c) => Ok(c),
         Resolved::Refused { why, .. } => Err(why),
     }
+}
+
+fn replay_exits(bead: &str, base: &str, tip: &str) -> String {
+    let bead = if bead.is_empty() { "<bead>" } else { bead };
+    format!("gate: judged again when {base} moves (the key carries the merged tree), or once the red is absolved: queue.sh absolve {bead} --by concierge --reason … --evidence … --evidence-tip {tip}\n")
 }

@@ -31,18 +31,23 @@ pub fn render(status: i32, reason: &str, suite: &str, when: &str, at: u64, by: &
     format!("status={status}\nreason={reason}\nsuite={suite}\nwhen={when}\nat={at}\nby={by}\ntip={tip}\n{SEP}{msg}")
 }
 
+fn records_for_tip(verdicts: &Path, tip: &str) -> impl Iterator<Item = PathBuf> {
+    let want = format!("tip={tip}");
+    std::fs::read_dir(verdicts.join("red")).into_iter().flatten().flatten().map(|e| e.path()).filter(move |p| {
+        let Ok(text) = std::fs::read_to_string(p) else { return false };
+        let head = text.split_once(SEP).map_or(text.as_str(), |(h, _)| h);
+        head.lines().any(|l| l == want)
+    })
+}
+
 /// Delete every stored red recorded for `tip`; returns how many. Absolving a tip must leave
 /// no verdict behind for the next gate to repeat.
 pub fn forget_tip(verdicts: &Path, tip: &str) -> usize {
-    let Ok(rd) = std::fs::read_dir(verdicts.join("red")) else { return 0 };
-    let want = format!("tip={tip}");
-    rd.flatten()
-        .filter(|e| {
-            let Ok(text) = std::fs::read_to_string(e.path()) else { return false };
-            let head = text.split_once(SEP).map_or(text.as_str(), |(h, _)| h);
-            head.lines().any(|l| l == want) && std::fs::remove_file(e.path()).is_ok()
-        })
-        .count()
+    records_for_tip(verdicts, tip).filter(|p| std::fs::remove_file(p).is_ok()).count()
+}
+
+pub fn holds_tip(verdicts: &Path, tip: &str) -> bool {
+    records_for_tip(verdicts, tip).next().is_some()
 }
 
 pub fn fresh(entry: &str, ttl: &str, now: u64) -> Option<Entry> {
