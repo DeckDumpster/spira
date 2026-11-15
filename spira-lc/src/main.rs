@@ -165,7 +165,7 @@ fn main() {
             Ok(client::Route::Service(socket)) => {
                 let (argv, body) = composed::client_request(&args, &mut stdin);
                 let (code, out, err) = client::forward_with(&socket, &argv, body.as_deref());
-                std::process::exit(emit(&[], callers::Answer { code, stdout: out, stderr: err, cert_log: None }));
+                std::process::exit(emit(&[], callers::Answer { code, stdout: out, stderr: err, ..Default::default() }));
             }
             Ok(client::Route::Direct) => {
                 let ports = composed::Ports {
@@ -260,6 +260,10 @@ fn emit(args: &[String], ans: callers::Answer) -> i32 {
     let id = args.first().map(String::as_str).unwrap_or("");
     if let Some(e) = composed::write_cert_log(id, &ans, lifecycle_run_dir(), db::now_epoch()) {
         eprintln!("{e}");
+    }
+    if !ans.owed.is_empty() {
+        let _ = std::io::Write::flush(&mut std::io::stdout());
+        callers::settle_owed_with(&ans.owed, &mut |id, reason| reconcile_content::settle_owed(&mut bd::LiveBd, id, reason));
     }
     ans.code
 }

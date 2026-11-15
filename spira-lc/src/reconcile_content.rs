@@ -300,15 +300,9 @@ fn complete_epics(m: &mut dyn Machine, recs: &BTreeMap<String, (String, String)>
         .collect())
 }
 
-/// Close `id` in bd now when its lifecycle record is terminal, with the caller's `reason`; a
-/// live record leaves bd as it is. `Ok(false)`: the bead has no record, so the control plane
-/// does not own its status.
-pub fn settle_close(m: &mut dyn Machine, bd: &mut dyn Bd, id: &str, reason: &str) -> Result<bool, String> {
-    match record_state(m, id)? {
-        None => Ok(false),
-        Some(state) if terminal(&state) => bd.close(id, reason).map(|()| true),
-        Some(_) => Ok(true),
-    }
+/// Settle a store close `close` answered as owed: the row is already terminal.
+pub fn settle_owed(bd: &mut dyn Bd, id: &str, reason: &str) -> Result<(), String> {
+    bd.close(id, reason)
 }
 
 /// Reopen `id` in bd now when its lifecycle record is live. `Ok(false)`: the bead has no record.
