@@ -1303,5 +1303,24 @@ mod relayout {
         };
         assert!(relayout_probed(&old, &new, &VirtualClock::new(WALL), &alter_event).is_err());
         assert!(files_beside(dir.path()).iter().all(|f| !f.starts_with("new")));
+
+        let alter_revision = |to: &Path| {
+            let file = to.with_file_name(format!("new.events-{}.db", date(WALL)));
+            let conn = Connection::open(file).unwrap();
+            conn.prepare("UPDATE rows SET sub = sub + 1 WHERE key = (SELECT max(key) FROM rows)").unwrap().execute([]).unwrap();
+        };
+        let e = relayout_probed(&old, &new, &VirtualClock::new(WALL), &alter_revision).unwrap_err().to_string();
+        assert!(e.contains("certification failed"), "{e}");
+        assert!(files_beside(dir.path()).iter().all(|f| !f.starts_with("new")));
+    }
+
+    #[test]
+    fn relayout_builds_into_a_target_directory_that_does_not_exist_yet() {
+        let dir = TempDir::new("relayout-parent");
+        let old = dir.path().join("old.db");
+        fixture(&old);
+        let new = dir.path().join("trial").join("new").join("control.db");
+        relayout(&old, &new, &VirtualClock::new(WALL)).unwrap();
+        assert!(new.is_file());
     }
 }

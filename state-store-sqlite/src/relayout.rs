@@ -97,6 +97,9 @@ pub fn relayout_probed(from: &Path, to: &Path, wall: &dyn Clock, before_certify:
         ));
     }
     let old = open_old(from)?;
+    if let Some(dir) = to.parent().filter(|p| !p.as_os_str().is_empty()) {
+        std::fs::create_dir_all(dir).map_err(|e| Error::Backend(format!("{}: {e}", dir.display())))?;
+    }
     let now = wall.now_ms();
     let built = build(&old, to, &stem, now, before_certify);
     if built.is_err() {
@@ -137,7 +140,12 @@ fn day_files_of(to: &Path) -> Result<Vec<PathBuf>> {
     let dir = to.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
     let stem = stem_of(to);
     let mut found = Vec::new();
-    for e in std::fs::read_dir(dir).map_err(|e| Error::Backend(format!("{}: {e}", dir.display())))? {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(found),
+        Err(e) => return Err(Error::Backend(format!("{}: {e}", dir.display()))),
+    };
+    for e in entries {
         let name = e.map_err(|e| Error::Backend(format!("{}: {e}", dir.display())))?.file_name();
         let name = name.to_string_lossy();
         let base = name.strip_suffix("-wal").or_else(|| name.strip_suffix("-shm")).unwrap_or(&name);
@@ -271,7 +279,8 @@ fn live_ranges() -> Vec<(Vec<u8>, Option<Vec<u8>>)> {
     vec![(Vec::new(), Some(events.0)), (events.1.unwrap_or_default(), Some(requests.0)), (requests.1.unwrap_or_default(), None)]
 }
 
-/// The count and the SHA-256 over `key || value`, in key order, of a class of rows.
+/// The count and the SHA-256 over each row's key, revisions and value, in key order, of a class
+/// of rows. A day file keeps no `version`, so it is not in the digest.
 #[derive(Default)]
 struct Tally {
     count: u64,
@@ -282,6 +291,9 @@ impl Tally {
     fn add(&mut self, r: &StoredRow) {
         self.count += 1;
         self.sha.update(&r.key);
+        for n in [Some(r.main), Some(r.sub), r.create_main, r.create_sub] {
+            self.sha.update(n.unwrap_or(-1).to_le_bytes());
+        }
         self.sha.update(&r.value);
     }
 
