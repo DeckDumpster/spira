@@ -111,7 +111,7 @@ fn t5_an_idle_repo_settles_once_then_wants_nothing() {
 fn t5_a_pending_check_records_no_forge_state_file() {
     let pending = with(Repo { check: Check::Pending, ..busy().repos["spira"].clone() });
     let (carry, first) = decide(&Carry::default(), &pending);
-    assert!(first.iter().all(|a| !(a.effect == RECORD && a.input.contains("forge-state"))), "{first:?}");
+    assert!(first.iter().all(|a| !(a.effect == RECORD && a.input.contains(queue::ops::forge_batch::FORGE_STATE))), "{first:?}");
     let (_, again) = decide(&carry, &pending);
     assert!(!effects(&again).contains(&RECORD), "{again:?}");
 }
