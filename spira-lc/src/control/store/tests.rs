@@ -1,7 +1,9 @@
 use lifecycle::bead::{BeadEvent, BeadEventKind, BeadState, Stack};
 use runtime::ports::{Clock, VirtualClock};
 use state_store::gc::Controller;
-use state_store::{Config, Contract, Deleted, Error, MemBackend, Ports, Request, Selector};
+use state_store::{
+    Backend, Config, Contract, Deleted, Error, MemBackend, Ports, Request, Selector,
+};
 
 use super::{Judged, Outcome, Pass, Store};
 use crate::control::keys;
@@ -65,7 +67,7 @@ fn created(s: &Store<MemBackend>, id: &str) {
         .unwrap());
 }
 
-fn audits_at(s: &Store<MemBackend>, rev: u64) -> (bool, Vec<Audit>) {
+fn audits_at<B: Backend>(s: &Store<B>, rev: u64) -> (bool, Vec<Audit>) {
     let e = s
         .contract()
         .get(&state_store::events_key(rev))
@@ -171,6 +173,7 @@ fn a_write_from_a_stale_read_loses_the_race_and_the_loss_is_audited() {
             &stale,
             &item,
             row,
+            None,
             None,
             &req("x-2"),
         )
@@ -1000,4 +1003,215 @@ fn a_refused_transition_and_a_retried_request_ship_nothing() {
     assert_eq!(claims, 1, "the retried request shipped once");
     assert!(logs.records().iter().all(|r| r["event"] != "HolderDead"), "a refused event is no transition");
     assert!(logs.records().iter().all(|r| r["event"] != "Renew"), "an event that leaves the state where it was is no move, as the gantt reads it");
+}
+
+#[derive(Clone, Default)]
+struct Tally {
+    commits: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    request_reads: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl Tally {
+    fn take(&self) -> (usize, usize) {
+        use std::sync::atomic::Ordering::SeqCst;
+        (
+            self.commits.swap(0, SeqCst),
+            self.request_reads.swap(0, SeqCst),
+        )
+    }
+}
+
+#[derive(Clone)]
+struct Counted {
+    inner: MemBackend,
+    tally: Tally,
+}
+
+impl Counted {
+    fn read(&self, key: &str) {
+        if key.starts_with(state_store::REQUESTS_PREFIX) {
+            self.tally
+                .request_reads
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+}
+
+impl Backend for Counted {
+    fn head(&self) -> state_store::Result<u64> {
+        self.inner.head()
+    }
+    fn due(&self, now: u64, limit: usize, at: u64) -> state_store::Result<Vec<String>> {
+        self.inner.due(now, limit, at)
+    }
+    fn owned_by(
+        &self,
+        owner: &str,
+        after: Option<&str>,
+        limit: usize,
+        at: u64,
+    ) -> state_store::Result<Vec<String>> {
+        self.inner.owned_by(owner, after, limit, at)
+    }
+    fn get(&self, key: &str, at: u64) -> state_store::Result<Option<state_store::Version>> {
+        self.read(key);
+        self.inner.get(key, at)
+    }
+    fn range(
+        &self,
+        prefix: &str,
+        after: Option<&str>,
+        limit: usize,
+        at: u64,
+    ) -> state_store::Result<Vec<(String, state_store::Version)>> {
+        self.read(prefix);
+        self.inner.range(prefix, after, limit, at)
+    }
+    fn range_in_state(
+        &self,
+        prefix: &str,
+        state: &str,
+        after: Option<&str>,
+        limit: usize,
+        at: u64,
+    ) -> state_store::Result<Vec<(String, state_store::Version)>> {
+        self.inner.range_in_state(prefix, state, after, limit, at)
+    }
+    fn commit(&self, expect: u64, batch: &[state_store::Write]) -> state_store::Result<u64> {
+        self.tally
+            .commits
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.inner.commit(expect, batch)
+    }
+    fn log(&self, from: u64, max_mains: usize) -> state_store::Result<Vec<state_store::LogEntry>> {
+        self.inner.log(from, max_mains)
+    }
+    fn compact(&self, rev: u64) -> state_store::Result<()> {
+        self.inner.compact(rev)
+    }
+    fn compacted(&self) -> state_store::Result<u64> {
+        self.inner.compacted()
+    }
+}
+
+fn counted_claim() -> (Store<Counted>, Tally, VirtualClock, state_store::Fence) {
+    let (inner, clock, tally) = (MemBackend::new(), VirtualClock::new(0), Tally::default());
+    let c = Contract::open(
+        Counted {
+            inner,
+            tally: tally.clone(),
+        },
+        Ports::virtual_clock(&clock),
+        Config {
+            min_lock_ttl_ms: FLOOR_MS,
+        },
+    )
+    .unwrap();
+    let s = Store::new(c, FLOOR_MS);
+    s.create("sp-a", Some("harness"), None, 100, &req("create-a"))
+        .unwrap();
+    let (_, f) = s
+        .claim(
+            "sp-a",
+            &ev(BeadState::Ready, 0, claim("dwarf-1", 102), "dwarf-1", 100),
+            &req("claim-1"),
+        )
+        .unwrap();
+    (s, tally, clock, f.unwrap())
+}
+
+fn renewal(lease_until: i64, at: i64) -> BeadEvent {
+    ev(
+        BeadState::Working,
+        1,
+        BeadEventKind::Renew { lease_until },
+        "dwarf-1",
+        at,
+    )
+}
+
+fn lock_expiry<B: Backend>(s: &Store<B>) -> Option<u64> {
+    s.contract()
+        .get(&keys::claim_lock("sp-a"))
+        .unwrap()
+        .and_then(|l| l.lock_expires_at_ms)
+}
+
+#[test]
+fn a_renewal_is_one_commit_that_restarts_the_lock_and_writes_the_record() {
+    let (s, tally, clock, f) = counted_claim();
+    clock.advance(500);
+    let before = lock_expiry(&s).unwrap();
+    tally.take();
+    let out = s
+        .renew_lease("sp-a", &f, &renewal(160, 101), &req("renew-1"))
+        .unwrap();
+    let Outcome::Applied { rev, record } = out else {
+        panic!("{out:?}")
+    };
+    let (commits, request_reads) = tally.take();
+    assert_eq!(commits, 1, "a renewal is one store commit");
+    assert_eq!(request_reads, 2, "reads of requests/ per renewal");
+    assert_eq!(
+        s.holder_fence("sp-a").unwrap(),
+        Some(f),
+        "the token is kept"
+    );
+    let expiry = lock_expiry(&s).unwrap();
+    assert!(expiry > before, "the lock moved to the new lease");
+    assert_eq!(record.row.lease_until, Some(expiry.div_ceil(1_000) as i64));
+    let (refused, audits) = audits_at(&s, rev);
+    assert!(!refused);
+    assert_eq!(audits[0].event, "Renew");
+    let history = s
+        .contract()
+        .list(&[state_store::HISTORY_PREFIX], &Selector::Everything)
+        .unwrap()
+        .0;
+    assert!(
+        history.iter().any(|h| h.key.ends_with("/renew-1/apply")),
+        "the record's history has a Renew entry: {history:?}"
+    );
+}
+
+#[test]
+fn a_renewal_after_the_lock_lapsed_is_lock_lost_and_leaves_the_record() {
+    let (s, _, clock, f) = counted_claim();
+    let before = s.record("sp-a").unwrap().unwrap().mod_rev;
+    clock.advance(10_000);
+    let out = s
+        .renew_lease("sp-a", &f, &renewal(160, 110), &req("renew-1"))
+        .unwrap();
+    assert!(matches!(out, Outcome::LockLost { .. }), "{out:?}");
+    assert_eq!(s.record("sp-a").unwrap().unwrap().mod_rev, before);
+}
+
+#[test]
+fn a_non_holders_renewal_is_refused_and_the_lock_expiry_is_unchanged() {
+    let (s, _, _, f) = counted_claim();
+    let before = lock_expiry(&s);
+    let stranger = state_store::Fence {
+        resource: f.resource.clone(),
+        token: state_store::Rev::new(f.token.main + 1, 0),
+    };
+    let out = s
+        .renew_lease("sp-a", &stranger, &renewal(160, 101), &req("renew-1"))
+        .unwrap();
+    assert!(matches!(out, Outcome::LockLost { .. }), "{out:?}");
+    let refused = s
+        .renew_lease(
+            "sp-a",
+            &f,
+            &ev(
+                BeadState::Ready,
+                1,
+                BeadEventKind::Renew { lease_until: 160 },
+                "dwarf-1",
+                101,
+            ),
+            &req("renew-2"),
+        )
+        .unwrap();
+    assert!(matches!(refused, Outcome::Refused { .. }), "{refused:?}");
+    assert_eq!(lock_expiry(&s), before);
 }

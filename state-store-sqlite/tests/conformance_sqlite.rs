@@ -90,6 +90,7 @@ scenarios!(
     lock_check_fails_the_txn_after_the_lock_expired_or_was_retaken,
     get_and_list_return_a_locks_expiry_and_renew_moves_it_forward,
     a_renew_under_a_new_ttl_keeps_the_token_and_moves_the_expiry,
+    a_lock_renew_op_keeps_the_token_restarts_the_ttl_and_runs_only_while_held,
     a_state_filtered_range_reads_the_keys_in_that_state_at_the_head_and_below_it,
     gc_range_skips_the_history_prefix,
 );
