@@ -42,7 +42,10 @@ pub fn keep(run: &Path, actor: &str, files: &[(String, Vec<u8>)], keep_days: u32
         match fs::create_dir(&entry) {
             Ok(()) => {
                 for (name, bytes) in files {
-                    fs::write(entry.join(name), bytes).map_err(|e| format!("{}: {e}", entry.join(name).display()))?;
+                    if let Err(e) = fs::write(entry.join(name), bytes) {
+                        let _ = fs::remove_dir_all(&entry);
+                        return Err(format!("{}: {e}", entry.join(name).display()));
+                    }
                 }
                 return Ok(id);
             }

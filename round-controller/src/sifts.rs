@@ -685,8 +685,6 @@ fn bead_event(lc: &LcClient, id: &str, state: &str, version: u64, kind: Value) -
     .map(|_| ())
 }
 
-/// Sends `id` back with `GateRed(reason)`, only while it is still the SUBMITTED or CERTIFIED
-/// bead at the tip the screen judged.
 /// Keeps `reason` as a send-back log entry of `id`; a failure is said and never stops the send-back.
 pub fn keep_sift_logs(lc: &LcClient, run: &std::path::Path, id: &str, reason: &str) {
     let ask = |a: &[String]| lcq_with(lc, &a.iter().map(String::as_str).collect::<Vec<_>>());
@@ -695,6 +693,8 @@ pub fn keep_sift_logs(lc: &LcClient, run: &std::path::Path, id: &str, reason: &s
     }
 }
 
+/// Sends `id` back with `GateRed(reason)`, only while it is still the SUBMITTED or CERTIFIED
+/// bead at the tip the screen judged.
 pub fn lc_gate_red(lc: &LcClient, id: &str, tip: &str, reason: &str) -> Result<(), String> {
     let b = show(lc, id)?;
     let version = b.version.ok_or("show: no version")?;
