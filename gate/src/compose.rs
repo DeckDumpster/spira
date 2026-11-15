@@ -593,8 +593,29 @@ pub fn unit_commands(crates: &[String], jobs: u64) -> [(&'static str, String); 2
     let p = pkgs(crates);
     [
         ("build", format!("CARGO_BUILD_JOBS={jobs} {}", unit_build_words(crates).join(" "))),
-        ("test", format!("cargo test -j {jobs} --features integration{p} -- --test-threads={jobs}")),
+        ("test", test_command(jobs, &p)),
     ]
+}
+
+fn test_command(jobs: u64, targets: &str) -> String {
+    format!("cargo test -j {jobs} --features integration{targets} -- --test-threads={jobs}")
+}
+
+fn sh_quote(v: &str) -> String {
+    format!("'{}'", v.replace('\'', "'\\''"))
+}
+
+/// The unit test phase's command as one line a person can paste at a workspace root: the
+/// phase's cleared environment, then the test command narrowed to `rerun` (cargo's own
+/// `-p <package> <target>` words).
+pub fn reproduce_line(env: &[(String, String)], jobs: u64, rerun: &str) -> String {
+    let vars: String = env.iter().map(|(k, v)| format!("{k}={} ", sh_quote(v))).collect();
+    format!("env -i {vars}{}", test_command(jobs, &format!(" {rerun}")))
+}
+
+/// The `-p` words of a unit composition's crates.
+pub fn unit_packages(crates: &[String]) -> String {
+    pkgs(crates).trim_start().to_string()
 }
 
 /// The environment of the unit test phase: the gate's own, minus the release's directories on
@@ -1148,6 +1169,19 @@ mod tests {
         assert_eq!(b.1, "CARGO_BUILD_JOBS=4 cargo test --no-run --timings --features integration -p gate -p queue");
         assert_eq!(t.0, "test");
         assert_eq!(t.1, "cargo test -j 4 --features integration -p gate -p queue -- --test-threads=4");
+    }
+
+    #[test]
+    fn reproduce_line_quotes_values_and_shares_the_test_commands_flags() {
+        let env = vec![("A".to_string(), "x y'z".to_string()), ("PATH".to_string(), "/bin".to_string())];
+        let line = reproduce_line(&env, 6, "-p gate --lib");
+        assert_eq!(
+            line,
+            "env -i A='x y'\\''z' PATH='/bin' cargo test -j 6 --features integration -p gate --lib -- --test-threads=6"
+        );
+        let [_, t] = unit_commands(&["gate".into()], 6);
+        let words = |s: &str| s.split(' ').filter(|w| w.starts_with("--") || *w == "-j").map(String::from).collect::<Vec<_>>();
+        assert!(words(&t.1).iter().all(|w| line.contains(w.as_str())), "{line} vs {}", t.1);
     }
 
     #[test]

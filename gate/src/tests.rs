@@ -2832,10 +2832,16 @@ fn a_red_unit_test_on_a_green_base_is_the_branchs() {
     let f = unit_fake(&["gate/src/x.rs"]);
     f.unit_runs.borrow_mut().insert(
         (MERGE_SHA.into(), "test"),
-        (101, "test tests::x ... FAILED".into()),
+        (101, "test tests::x ... FAILED\nerror: test failed, to rerun pass `-p gate --lib`".into()),
     );
     assert_eq!(f.run(), FAIL);
     assert!(f.verdict_line().contains("reason=branch-red"));
+    let err = f.stderr();
+    let line = err.lines().find(|l| l.starts_with("gate: reproduce (from the workspace root): env -i ")).expect(&err);
+    assert!(line.contains("PATH=") && line.contains("HOME="), "{line}");
+    let j = line.split("cargo test -j ").nth(1).unwrap().split(' ').next().unwrap();
+    assert!(line.ends_with(&format!(" --features integration -p gate --lib -- --test-threads={j}")), "{line}");
+    assert_eq!(line.matches(" -p ").count(), 1, "{line}");
     let cmds = f.cmds.borrow().clone();
     assert_eq!(
         cmds.len(),
@@ -2865,6 +2871,16 @@ fn a_red_units_failure_record_lists_bare_paths_not_name_status_lines() {
     let got = f.failures.borrow();
     assert_eq!(got.len(), 1);
     assert_eq!(got[0].2, ["spira/x.sh", "src/a.rs"]);
+}
+
+#[test]
+fn a_red_unit_test_without_a_rerun_line_reproduces_with_the_phases_crates() {
+    let f = unit_fake(&["gate/src/x.rs"]);
+    f.unit_runs.borrow_mut().insert((MERGE_SHA.into(), "test"), (101, "test tests::x ... FAILED".into()));
+    assert_eq!(f.run(), FAIL);
+    let err = f.stderr();
+    let line = err.lines().find(|l| l.starts_with("gate: reproduce (from the workspace root): env -i ")).expect(&err);
+    assert!(line.contains(" --features integration -p gate"), "{line}");
 }
 
 const FLIP_OUT: &str = "---- t::flip stdout ----\n...\ntest t::flip ... FAILED";

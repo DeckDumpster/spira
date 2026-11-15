@@ -2444,6 +2444,18 @@ pub fn run_composed<W: World>(
         }
         if r != 0 {
             out.push_str(&format!("\ngate: phase '{name}' failed (exit {r}): {c}"));
+            if let (Composition::Unit { crates, .. }, "test") = (comp, name) {
+                let mut reruns = parse::cargo_reruns(&o);
+                if reruns.is_empty() {
+                    reruns.push(compose::unit_packages(crates));
+                }
+                for rerun in reruns {
+                    out.push_str(&format!(
+                        "\ngate: reproduce (from the workspace root): {}",
+                        compose::reproduce_line(step_env, jobs, &rerun)
+                    ));
+                }
+            }
             return (r, out, phases);
         }
         if w.signalled() {
