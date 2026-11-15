@@ -274,6 +274,24 @@ pub fn record(lc: &dyn Fn(&[String]) -> Result<String, String>, bead: &str, tip:
     lc(&["fact".into(), bead.into(), "--kind".into(), KIND.into(), "--actor".into(), actor.into(), "--cause".into(), d]).map(|_| ())
 }
 
+pub const LOGS_KIND: &str = "send-back-logs";
+
+/// Keeps one entry of `files` and records it as a `send-back-logs` fact on each bead in `beads`.
+/// Answers the entry id; no bead is told of an entry that was not written.
+pub fn keep_and_reference(lc: &dyn Fn(&[String]) -> Result<String, String>, run: &std::path::Path, beads: &[&str], actor: &str, files: &[(String, Vec<u8>)], keep_days: u32) -> Result<String, String> {
+    let id = crate::sendback::keep(run, actor, files, keep_days, now())?;
+    reference(lc, beads, actor, &id)?;
+    Ok(id)
+}
+
+/// Writes the `send-back-logs` fact naming `id` on each bead.
+pub fn reference(lc: &dyn Fn(&[String]) -> Result<String, String>, beads: &[&str], actor: &str, id: &str) -> Result<(), String> {
+    for b in beads {
+        lc(&["fact".into(), (*b).into(), "--kind".into(), LOGS_KIND.into(), "--actor".into(), actor.into(), "--cause".into(), id.into()])?;
+    }
+    Ok(())
+}
+
 fn prior_digests(facts_json: &str) -> Vec<(String, String)> {
     let Ok(serde_json::Value::Array(rows)) = serde_json::from_str::<serde_json::Value>(facts_json.trim()) else { return Vec::new() };
     let s = |r: &serde_json::Value, k: &str| r.get(k).and_then(serde_json::Value::as_str).unwrap_or("").to_string();
@@ -445,5 +463,23 @@ mod tests {
         let fact = calls.iter().find(|c| c[0] == "fact").unwrap();
         let cause = &fact[fact.iter().position(|a| a == "--cause").unwrap() + 1];
         assert!(cause.contains("why spira-lint: red\nSTEP b\n  two"), "{cause}");
+    }
+
+    #[test]
+    fn one_kept_entry_is_referenced_by_a_fact_on_every_bead_it_judged() {
+        let run = testkit::TempDir::new("kar");
+        let calls: RefCell<Vec<Vec<String>>> = RefCell::new(Vec::new());
+        let lc = |a: &[String]| {
+            calls.borrow_mut().push(a.to_vec());
+            Ok(String::new())
+        };
+        let id = keep_and_reference(&lc, run.path(), &["sp-a", "sp-b"], "round", &[("pass/x.out".replace('/', "_"), b"o".to_vec())], 7).unwrap();
+        let calls = calls.borrow();
+        assert_eq!(calls.len(), 2);
+        for (c, b) in calls.iter().zip(["sp-a", "sp-b"]) {
+            assert_eq!(c[..6], ["fact", b, "--kind", LOGS_KIND, "--actor", "round"].map(String::from));
+            assert_eq!(c[7], id);
+        }
+        assert!(crate::sendback::read(run.path(), &id, "pass_x.out").is_ok());
     }
 }

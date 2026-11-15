@@ -1,0 +1,6 @@
+TYPE=u32
+GROUP=lifecycle
+DOC=Days a send-back log entry (<run>/sendback-logs/<entry>/, the full output of the steps that judged a bead) is kept; older entries are removed on write.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_SENDBACK_KEEP_DAYS:=7}"
+SPIRA_CONF_DEFAULT_EOF
