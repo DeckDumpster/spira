@@ -679,7 +679,7 @@ fn run_checks(args: &[String], base_red: bool, via: &str) -> (i32, Vec<String>) 
                             waived_tests.extend(tests);
                             deferred = true;
                         } else {
-                            let exit = if row.deferred_to.is_some() {
+                            let exit = if row.deferred_to.as_deref() == Some("gate") {
                                 " — if the same tests are red on the base, file a bead recording it and run `work submit --unit-red-on-base <bead-id>`"
                             } else {
                                 ""
