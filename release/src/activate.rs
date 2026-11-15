@@ -35,7 +35,7 @@ impl Reads for RealReads<'_> {
         let bin = rel.join("bin/spira-lc");
         // batch-job: one bounded read through the new release; a hung store is a refusal
         let mut cmd = Command::new("timeout");
-        cmd.arg("20").arg(&bin).args(args).env("SPIRA_HOME", rel.join("spira")).env_remove("SPIRA_REPO");
+        cmd.arg("20").arg(&bin).args(args).env_remove("SPIRA_REPO");
         for (k, v) in verify::pre_activate_env(self.0, rel)? {
             cmd.env(k, v);
         }
@@ -736,7 +736,7 @@ fn ensure_new_units(cfg: &Config, sha: &str) -> Result<(), String> {
     }
     // batch-job: installs and starts whatever units are new, bounded at 120 s by timeout(1)
     let mut cmd = Command::new("timeout");
-    cmd.arg("120").arg(&bin).arg("--retire").env("SPIRA_HOME", rel.join("spira")).env_remove("SPIRA_REPO");
+    cmd.arg("120").arg(&bin).arg("--retire").env_remove("SPIRA_REPO");
     for (k, v) in verify::pre_activate_env(cfg, &rel)? {
         cmd.env(k, v);
     }
