@@ -1282,3 +1282,22 @@ fn a_closeout_is_asked_failed_and_done_idempotently() {
     assert!(s.gh_closeouts().unwrap().is_empty());
     assert!(!s.gh_closeout_failed("sp-gh", &req("f3")).unwrap(), "no row is no failure to count");
 }
+
+#[test]
+fn the_pending_verb_names_every_column_the_drain_reads() {
+    let (s, _, _) = fresh();
+    let s = s.with_refs(refs_of(&[("sp-gh", "github:o/r#7")]));
+    created(&s, "sp-gh");
+    dropped(&s, "sp-gh", "drop-1");
+    let args = |v: &[&str]| v.iter().map(|a| a.to_string()).collect::<Vec<_>>();
+    let (code, out) = crate::control::gh_closeout::run(&s, &args(&["gh-closeout", "pending"]), "req-1");
+    assert_eq!(code, 0, "{out}");
+    let rows: serde_json::Value = serde_json::from_str(&out).unwrap();
+    let row = &rows[0];
+    for k in ["bead_id", "external_ref", "outcome_state", "sha", "ask_id", "enqueued_at", "attempts"] {
+        assert!(row.get(k).is_some(), "{k} missing from {row}");
+    }
+    let (code, _) = crate::control::gh_closeout::run(&s, &args(&["gh-closeout", "done", "sp-gh"]), "req-2");
+    assert_eq!(code, 0);
+    assert_eq!(crate::control::gh_closeout::run(&s, &args(&["gh-closeout", "pending"]), "req-3").1, "[]");
+}
