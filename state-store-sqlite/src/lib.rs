@@ -405,7 +405,7 @@ const RANGE_BOUNDED: &str =
 const RANGE_OPEN: &str = "SELECT key, max(main), sub, value, create_main, create_sub FROM versions
      WHERE key >= ?1 AND main <= ?2 GROUP BY key HAVING value IS NOT NULL
      ORDER BY key LIMIT ?3";
-/// The head's live keys in `[?1, ?2)`: one key-ordered range over `latest`, reading its page.
+/// The live keys after `?1`, each with its value's bytes: one key-ordered range over `latest`.
 const USAGE_KEYS: &str =
     "SELECT key, length(CAST(value AS BLOB)) FROM latest WHERE key > ?1 ORDER BY key LIMIT ?2";
 const USAGE_PREFIX: &str =
@@ -413,6 +413,7 @@ const USAGE_PREFIX: &str =
 const HOT_KEYS: &str =
     "SELECT key, count(*) FROM versions WHERE main > ?1 GROUP BY key ORDER BY 2 DESC, key LIMIT ?2";
 
+/// The head's live keys in `[?1, ?2)`: one key-ordered range over `latest`, reading its page.
 const LATEST_BOUNDED: &str = "SELECT key, main, sub, value, create_main, create_sub FROM latest
      WHERE key >= ?1 AND key < ?2 ORDER BY key LIMIT ?3";
 const LATEST_OPEN: &str = "SELECT key, main, sub, value, create_main, create_sub FROM latest
