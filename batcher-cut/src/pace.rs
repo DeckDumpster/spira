@@ -18,6 +18,7 @@ pub const NO_VM_STOP_AFTER: u32 = 3;
 pub const REFUSAL_WINDOW_SECS: u64 = 1800;
 pub const REFUSAL_STOP_AFTER: u32 = 2;
 pub const PAUSE_LIFTS_MAX: u32 = 1;
+pub const OPEN_FAILED_PAGE_AFTER: u32 = 3;
 
 #[derive(Default, Clone, PartialEq, Debug)]
 pub struct State {
@@ -28,6 +29,7 @@ pub struct State {
     pub orphan_since: u64,
     pub redriven: String,
     pub pause_lifts: u32,
+    pub open_failed: u32,
 }
 
 /// Why a cut failed, decided where the failure is produced; the pacing reads the kind and never
@@ -171,9 +173,13 @@ pub fn advance(st: &State, outcome: &Outcome, repo: &str, detail: &str) -> (Stat
             }
         }
         Outcome::OpenFailed => {
-            fx.pages.push(format!(
-                "OPEN FAILED {repo} — the cut could not open a round ({detail})"
-            ));
+            next.open_failed += 1;
+            if next.open_failed == OPEN_FAILED_PAGE_AFTER {
+                fx.pages.push(format!(
+                    "OPEN FAILED {repo} — the cut could not open a round: {} opens in a row failed; last: {detail}",
+                    next.open_failed
+                ));
+            }
         }
         Outcome::Infra => {
             next.infra += 1;
@@ -187,6 +193,14 @@ pub fn advance(st: &State, outcome: &Outcome, repo: &str, detail: &str) -> (Stat
         }
     }
     (next, fx)
+}
+
+/// A round opened: the run of failed opens is over.
+pub fn opened(st: &State) -> State {
+    State {
+        open_failed: 0,
+        ..st.clone()
+    }
 }
 
 /// What an open round with no driver is owed this pass.
@@ -295,13 +309,17 @@ impl Files {
                 .get("pause_lifts")
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0),
+            open_failed: kv
+                .get("open_failed")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0),
         }
     }
     pub fn save(&self, st: &State) -> Result<(), String> {
         fs::create_dir_all(&self.dir).map_err(|e| format!("{}: {e}", self.dir.display()))?;
         let body = format!(
-            "infra={}\nno_vm={}\npaged_open={}\norphan={}\norphan_since={}\nredriven={}\npause_lifts={}\n",
-            st.infra, st.no_vm, st.paged_open, st.orphan, st.orphan_since, st.redriven, st.pause_lifts
+            "infra={}\nno_vm={}\npaged_open={}\norphan={}\norphan_since={}\nredriven={}\npause_lifts={}\nopen_failed={}\n",
+            st.infra, st.no_vm, st.paged_open, st.orphan, st.orphan_since, st.redriven, st.pause_lifts, st.open_failed
         );
         fs::write(self.dir.join("state"), body).map_err(|e| format!("rounds-pace state: {e}"))
     }
@@ -944,18 +962,38 @@ mod tests {
     }
 
     #[test]
-    fn an_open_failed_outcome_pages_every_time_and_does_not_pause() {
-        let (st, mut pages) = (State::default(), 0);
-        for _ in [1000, 1100] {
-            let (next, fx) = advance(&st, &Outcome::OpenFailed, "a", "x");
-            assert!(!fx.pause && !fx.stop && next == st);
-            pages += fx
-                .pages
-                .iter()
-                .filter(|p| p.starts_with("OPEN FAILED a"))
-                .count();
+    fn open_failed_pages_once_on_the_third_consecutive_failure_with_the_last_detail() {
+        let mut st = State::default();
+        let mut pages = Vec::new();
+        for d in ["one", "two", "three", "four"] {
+            let (next, fx) = advance(&st, &Outcome::OpenFailed, "a", d);
+            assert!(!fx.pause && !fx.stop);
+            pages.push(fx.pages);
+            st = next;
         }
-        assert_eq!(pages, 2);
+        assert!(pages[0].is_empty() && pages[1].is_empty() && pages[3].is_empty());
+        assert_eq!(pages[2].len(), 1);
+        assert!(pages[2][0].starts_with("OPEN FAILED a") && pages[2][0].contains("last: three"));
+    }
+
+    #[test]
+    fn a_successful_open_resets_the_failed_open_count() {
+        let mut st = State::default();
+        for _ in 0..2 {
+            st = advance(&st, &Outcome::OpenFailed, "a", "x").0;
+        }
+        let st = opened(&st);
+        assert_eq!(st.open_failed, 0);
+        let (_, fx) = advance(&st, &Outcome::OpenFailed, "a", "x");
+        assert!(fx.pages.is_empty());
+    }
+
+    #[test]
+    fn open_failed_count_round_trips_through_the_files() {
+        let t = dir("open-failed");
+        let f = Files::new(t.path(), "a");
+        f.save(&State { open_failed: 2, ..State::default() }).unwrap();
+        assert_eq!(f.load().open_failed, 2);
     }
 
     const WAIT: u64 = 300;

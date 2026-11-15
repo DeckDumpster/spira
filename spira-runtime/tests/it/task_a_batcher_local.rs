@@ -855,6 +855,44 @@ fn sp_822b8l_an_open_refusing_every_member_abandons_nothing() {
     assert_eq!((rc.state, rc.refused.len()), (State::Idle, 3));
 }
 
+/// Fails the open `n` times, each from a fresh `Opened` state carrying the previous pace.
+fn fail_opens(bodies: &[&str]) -> (Carry, Vec<Vec<String>>) {
+    let mut carry = opening();
+    let mut all = Vec::new();
+    for body in bodies {
+        let (next, acts) = on_outcome(&carry, ROUND_OPEN, false, body, &open_leg(), NOW);
+        all.push(pages(&acts).into_iter().map(|a| a.input.clone()).collect());
+        let mut again = opening();
+        again.repos.get_mut("spira").unwrap().pace = next.repos["spira"].pace.clone();
+        carry = again;
+    }
+    (carry, all)
+}
+
+#[test]
+fn sp_64x7v2_one_failed_open_does_not_page_and_a_later_open_keeps_the_count_at_zero() {
+    let (carry, all) = fail_opens(&[""]);
+    assert!(all[0].is_empty(), "{all:?}");
+    let ok = serde_json::to_string(&Opened { batch: "r9".into(), ..Opened::default() }).unwrap();
+    let (carry, _) = on_outcome(&carry, ROUND_OPEN, true, &ok, &open_leg(), NOW);
+    assert_eq!(carry.repos["spira"].pace.open_failed, 0);
+}
+
+#[test]
+fn sp_64x7v2_three_failed_opens_in_a_row_page_once_with_the_last_body() {
+    let lock = "spira: another operation holds the lock";
+    let (_, all) = fail_opens(&["a", "b", lock]);
+    assert!(all[0].is_empty() && all[1].is_empty(), "{all:?}");
+    assert_eq!(all[2].len(), 1, "{all:?}");
+    assert!(all[2][0].contains(lock), "{all:?}");
+}
+
+#[test]
+fn sp_64x7v2_a_timed_out_open_page_says_it_timed_out_and_never_shows_empty_parens() {
+    let (_, all) = fail_opens(&["", "", ""]);
+    assert!(all[2][0].contains("did not answer within 30s") && !all[2][0].contains("()"), "{all:?}");
+}
+
 // --- sp-xmqd8k: a refused landing of a green round leaves the round open ---
 
 /// A landing refused for one member's change is not a red round: the round stays open with all
