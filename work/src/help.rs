@@ -294,7 +294,7 @@ pub static ENTRIES: &[Entry] = &[
         checks: &[
             "the tip is read from your branch, never taken from you",
             "a tip whose merge onto local/main has a content conflict is refused, naming the conflicting paths; a tip that is only behind is submitted",
-            "a branch whose diff touches the round image recipe has its Round AMI build dispatched and awaited; a failed build refuses, naming the step and its last log lines",
+            "in a repository carrying the round image workflow, a branch whose diff against its landing ref touches the recipe has its Round AMI build dispatched and awaited; a failed build refuses, naming the step and its last log lines",
             "a bead with a `Target:` line is submitted with a verdict; a submission without one is refused by the broker",
             "a --short verdict names a follow-on or escalation you filed",
         ],

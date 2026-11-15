@@ -500,8 +500,17 @@ impl ImagePorts {
 }
 
 impl work::image::Ports for ImagePorts {
-    fn changed_paths(&self) -> Option<Vec<String>> {
-        let out = self.git(&["diff", "--name-only", "--no-renames", &format!("{}...{}", work::CHECKS_BASE, self.tip)]).ok()?;
+    fn has_recipe(&self) -> bool {
+        self.git(&["cat-file", "-e", &format!("{}:{}", self.tip, work::image::RECIPE_WORKFLOW)]).is_ok()
+    }
+    fn landing_ref(&self) -> Option<String> {
+        let common = self.git(&["rev-parse", "--path-format=absolute", "--git-common-dir"]).ok()?;
+        let checkout = std::path::Path::new(common.trim()).parent()?.to_path_buf();
+        let reg = spira_config::repos::Registry::from_env_checkout(std::env::vars().collect(), &checkout);
+        spira_config::repos::landref(&reg, &checkout.to_string_lossy())
+    }
+    fn changed_paths(&self, base: &str) -> Option<Vec<String>> {
+        let out = self.git(&["diff", "--name-only", "--no-renames", &format!("{base}...{}", self.tip)]).ok()?;
         Some(out.lines().map(String::from).collect())
     }
     fn push(&self, branch: &str) -> Result<(), String> {
@@ -530,19 +539,11 @@ impl work::image::Ports for ImagePorts {
 }
 
 /// Refuses a submit whose branch changes the round image recipe and does not build the image.
-/// The diff is read before any image configuration, so a branch that leaves the recipe alone
-/// never depends on it; with no landing ref there is no diff to read and nothing to gate.
+/// The decision is `image::gate`'s: a repository without the image workflow, or a diff against its
+/// registered landing ref that leaves the recipe alone, never reaches the forge.
 fn image_gate(bead: &str) -> Result<(), String> {
     let root = git_line(&["rev-parse", "--show-toplevel"]).ok_or("not inside a git worktree")?;
     let tip = git_line(&["rev-parse", "HEAD"]).ok_or("cannot read HEAD")?;
-    if git_line(&["rev-parse", "--verify", "--quiet", work::CHECKS_BASE]).is_none() {
-        return Ok(());
-    }
-    let touched = git_line(&["diff", "--name-only", "--no-renames", &format!("{}...{tip}", work::CHECKS_BASE)])
-        .map(|o| o.lines().map(String::from).collect::<Vec<_>>());
-    if touched.as_deref().is_some_and(|c| !work::image::touches_recipe(c)) {
-        return Ok(());
-    }
     let ports = ImagePorts {
         root: root.into(),
         tip: tip.clone(),

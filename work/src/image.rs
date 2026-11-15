@@ -16,6 +16,8 @@ pub const RECIPE_PATHS: [&str; 11] = [
     "spira/testenv/Containerfile",
 ];
 
+pub const RECIPE_WORKFLOW: &str = ".github/workflows/round-ami-build.yml";
+
 pub const POLL_SECS: u64 = 60;
 pub const IDLE_POLLS: u32 = 3;
 const LOG_TAIL: usize = 20;
@@ -55,7 +57,11 @@ impl Build {
 }
 
 pub trait Ports {
-    fn changed_paths(&self) -> Option<Vec<String>>;
+    /// True when the tip tree carries [`RECIPE_WORKFLOW`]: only then is there an image to build.
+    fn has_recipe(&self) -> bool;
+    /// The repository's registered landing ref (`spira_landref`).
+    fn landing_ref(&self) -> Option<String>;
+    fn changed_paths(&self, base: &str) -> Option<Vec<String>>;
     fn push(&self, branch: &str) -> Result<(), String>;
     fn delete(&self, branch: &str);
     fn dispatch(&self, branch: &str) -> Result<(), String>;
@@ -72,10 +78,15 @@ pub enum Verdict {
     Built(String),
 }
 
-/// `Ok` when the diff leaves the recipe alone or its image build succeeded; `Err` is the
-/// refusal text. An unreadable diff or forge and a build that never finishes all refuse.
+/// `Ok` when the repository has no image recipe, the diff against its landing ref leaves the
+/// recipe alone, or the image build succeeded; `Err` is the refusal text. An unresolvable landing
+/// ref, an unreadable diff or forge and a build that never finishes all refuse.
 pub fn gate(p: &dyn Ports, bead: &str, tip: &str, nonce: u64, wait_secs: u64) -> Result<Verdict, String> {
-    let changed = p.changed_paths().ok_or("cannot read the branch's diff against the landing ref")?;
+    if !p.has_recipe() {
+        return Ok(Verdict::Skipped);
+    }
+    let base = p.landing_ref().ok_or("cannot resolve the repository's landing ref (spira_landref); give its registry row a base column")?;
+    let changed = p.changed_paths(&base).ok_or("cannot read the branch's diff against the landing ref")?;
     if !touches_recipe(&changed) {
         return Ok(Verdict::Skipped);
     }
@@ -128,6 +139,10 @@ mod tests {
 
     struct Fake {
         changed: Option<Vec<String>>,
+        recipe: bool,
+        landref: Option<String>,
+        by_base: Vec<(String, Vec<String>)>,
+        asked: RefCell<Vec<String>>,
         results: RefCell<Vec<Option<Build>>>,
         clock: Cell<u64>,
         calls: RefCell<Vec<String>>,
@@ -136,6 +151,10 @@ mod tests {
     fn fake(changed: &[&str], results: Vec<Option<Build>>) -> Fake {
         Fake {
             changed: Some(changed.iter().map(|s| s.to_string()).collect()),
+            recipe: true,
+            landref: Some("local/main".into()),
+            by_base: vec![],
+            asked: RefCell::new(vec![]),
             results: RefCell::new(results),
             clock: Cell::new(0),
             calls: RefCell::new(vec![]),
@@ -143,8 +162,15 @@ mod tests {
     }
 
     impl Ports for Fake {
-        fn changed_paths(&self) -> Option<Vec<String>> {
-            self.changed.clone()
+        fn has_recipe(&self) -> bool {
+            self.recipe
+        }
+        fn landing_ref(&self) -> Option<String> {
+            self.landref.clone()
+        }
+        fn changed_paths(&self, base: &str) -> Option<Vec<String>> {
+            self.asked.borrow_mut().push(base.to_string());
+            self.by_base.iter().find(|(b, _)| b == base).map(|(_, c)| c.clone()).or_else(|| self.changed.clone())
         }
         fn push(&self, b: &str) -> Result<(), String> {
             self.calls.borrow_mut().push(format!("push {b}"));
@@ -187,6 +213,57 @@ mod tests {
             calls,
             "push spira-round-candidate/sp-x-0123456789ab-7;dispatch spira-round-candidate/sp-x-0123456789ab-7;delete spira-round-candidate/sp-x-0123456789ab-7"
         );
+    }
+
+    fn base_of(row: &str, name: &str) -> Option<String> {
+        spira_config::repos::Registry::new(Some(row), &std::collections::BTreeMap::new(), std::path::Path::new("/x")).base(name)
+    }
+
+    fn paths(p: &[&str]) -> Vec<String> {
+        p.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn a_branch_is_judged_against_its_registered_landing_ref_not_a_stale_local_main() {
+        let mut f = fake(&[], vec![None]);
+        f.landref = base_of("dumpstar | /x/dumpstar | queue.forge | origin/main | | | plan\n", "dumpstar");
+        f.by_base = vec![
+            ("origin/main".into(), paths(&["crates/a/src/decks.rs", "crates/a/src/mcp.rs", "crates/a/src/lib.rs"])),
+            ("local/main".into(), paths(&["rust-toolchain.toml", "crates/a/src/decks.rs"])),
+        ];
+        assert_eq!(gate(&f, "sp-x", "abc", 1, 5400), Ok(Verdict::Skipped));
+        assert!(f.calls.borrow().is_empty());
+        assert_eq!(*f.asked.borrow(), vec!["origin/main".to_string()]);
+    }
+
+    #[test]
+    fn a_repository_without_the_image_workflow_is_never_diffed_or_dispatched() {
+        let mut f = fake(&["rust-toolchain.toml"], vec![Some(Build::NotStarted)]);
+        f.recipe = false;
+        assert_eq!(gate(&f, "sp-x", "abc", 1, 5400), Ok(Verdict::Skipped));
+        assert!(f.calls.borrow().is_empty());
+        assert!(f.asked.borrow().is_empty());
+    }
+
+    #[test]
+    fn spira_editing_a_recipe_input_against_local_main_still_dispatches() {
+        let mut f = fake(&[], vec![Some(Build::NotStarted), Some(Build::Running("7".into())), Some(Build::Failure("7".into(), vec!["build / Build, image and tag".into()]))]);
+        f.landref = base_of("spira | /x/harness | queue.local | local/main | | | plan\n", "spira");
+        f.by_base = vec![("local/main".into(), paths(&["round-vm/ami-setup.sh"]))];
+        assert!(gate(&f, "sp-x", "0123456789abcdef", 7, 5400).is_err());
+        assert_eq!(
+            f.calls.borrow().join(";"),
+            "push spira-round-candidate/sp-x-0123456789ab-7;dispatch spira-round-candidate/sp-x-0123456789ab-7;delete spira-round-candidate/sp-x-0123456789ab-7"
+        );
+    }
+
+    #[test]
+    fn an_unresolvable_landing_ref_refuses_naming_it_and_asks_the_forge_nothing() {
+        let mut f = fake(&["round-vm/ami-setup.sh"], vec![Some(Build::NotStarted)]);
+        f.landref = None;
+        let e = gate(&f, "sp-x", "abc", 1, 5400).unwrap_err();
+        assert!(e.contains("landing ref"), "{e}");
+        assert!(f.calls.borrow().is_empty());
     }
 
     #[test]
