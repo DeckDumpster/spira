@@ -11,6 +11,7 @@ pub mod gc;
 pub mod limits;
 pub mod mem;
 pub mod model;
+pub mod phases;
 pub mod wire;
 
 use serde::{Deserialize, Serialize};

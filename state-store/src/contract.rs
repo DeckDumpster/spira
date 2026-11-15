@@ -1311,8 +1311,8 @@ impl<B: Backend> Contract<B> {
         let _writing = Writing(&self.writers);
         // Held across the backend commit, so no plan reads a deadline the commit is replacing;
         // the commit waits behind at most one compaction step.
-        let mut d = self.deadlines.lock().unwrap_or_else(lock_err);
-        let res = self.backend.commit(head, &batch);
+        let mut d = crate::phases::time(crate::phases::Phase::DeadlinesWait, || self.deadlines.lock().unwrap_or_else(lock_err));
+        let res = crate::phases::commit(|| self.backend.commit(head, &batch));
         if matches!(res, Err(Error::Stale { .. })) {
             return res;
         }
@@ -1610,5 +1610,25 @@ impl<B: Backend> Contract<B> {
     /// Whether `key` exists at `head`.
     pub(crate) fn exists_at(&self, key: &str, head: u64) -> Result<bool> {
         Ok(self.read(key, head)?.is_some())
+    }
+}
+
+#[cfg(test)]
+mod phase_tests {
+    use super::*;
+    use crate::mem::MemBackend;
+    use crate::phases::{self, Recorder};
+
+    #[test]
+    fn a_tracked_contract_commit_records_the_deadlines_wait_and_one_commit() {
+        let clock = VirtualClock::new(1_000_000);
+        let c = Contract::open(MemBackend::new(), Ports::virtual_clock(&clock), Config { min_lock_ttl_ms: 1_000 }).unwrap();
+        let rec = Arc::new(Recorder::default());
+        phases::track(rec.clone());
+        c.txn(&Txn::new().put("k", Object::new(serde_json::json!(1))), &Request::new("1", "t", "w")).unwrap();
+        phases::untrack();
+        let s = rec.snapshot();
+        assert!(s.phases.iter().any(|p| p.0 == "deadlines_wait"), "{:?}", s.phases);
+        assert_eq!(s.commits_us.len(), 1);
     }
 }

@@ -19,7 +19,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
-use opentelemetry_proto::tonic::common::v1::{any_value::Value, AnyValue, InstrumentationScope, KeyValue};
+use opentelemetry_proto::tonic::common::v1::{any_value::Value, AnyValue, ArrayValue, InstrumentationScope, KeyValue};
 use opentelemetry_proto::tonic::resource::v1::Resource;
 use opentelemetry_proto::tonic::trace::v1::{span::SpanKind, status::StatusCode, ResourceSpans, ScopeSpans, Span, Status};
 
@@ -48,6 +48,14 @@ pub struct Call<'a> {
     pub start: SystemTime,
     pub end: SystemTime,
     pub queue_wait: Duration,
+    /// Microseconds per store phase the request recorded.
+    pub phases: &'a [(&'a str, u64)],
+    /// The duration of each store commit, in order.
+    pub commits_us: &'a [u64],
+    /// SQLite read transactions.
+    pub reads: u64,
+    /// The store phase a request cut at its deadline was still in.
+    pub open_phase: Option<&'a str>,
 }
 
 /// Spans lost to a write error since this process started.
@@ -110,6 +118,20 @@ impl Sink {
             kv_int("rpc.response.size", c.response_size),
             kv_int("spira.queue_wait_us", c.queue_wait.as_micros() as u64),
         ];
+        for (name, us) in c.phases {
+            attributes.push(kv_int(&format!("spira.phase.{name}_us"), *us));
+        }
+        if !c.commits_us.is_empty() {
+            attributes.push(kv_int("spira.store.commits", c.commits_us.len() as u64));
+            let values = c.commits_us.iter().map(|us| AnyValue { value: Some(Value::IntValue(*us as i64)) }).collect();
+            attributes.push(KeyValue { key: "spira.phase.commits_us".into(), value: Some(AnyValue { value: Some(Value::ArrayValue(ArrayValue { values })) }) });
+        }
+        if c.reads > 0 {
+            attributes.push(kv_int("spira.store.reads", c.reads));
+        }
+        if let Some(open) = c.open_phase {
+            attributes.push(kv_str("spira.phase.open", open));
+        }
         if failed {
             attributes.push(KeyValue { key: "spira.exit_code".into(), value: Some(AnyValue { value: Some(Value::IntValue(i64::from(c.exit_code))) }) });
         }
@@ -216,7 +238,7 @@ mod tests {
 
     fn call(code: i32) -> Call<'static> {
         let start = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
-        Call { method: "list", caller: "work/list", request_size: 40, response_size: 439_002, exit_code: code, start, end: start + Duration::from_millis(12), queue_wait: Duration::ZERO }
+        Call { method: "list", caller: "work/list", request_size: 40, response_size: 439_002, exit_code: code, start, end: start + Duration::from_millis(12), queue_wait: Duration::ZERO, phases: &[], commits_us: &[], reads: 0, open_phase: None }
     }
 
     fn tmp(name: &str) -> testkit::TempDir {
@@ -318,7 +340,7 @@ mod tests {
         let rows = [("show", "work/show", 61, 1_204, 0, 8), ("list", "work/list", 33, 439_002, 0, 212), ("show", "gate-run", 58, 96, 1, 3), ("event", "lifecycle/event", 412, 0, 0, 41)];
         for (i, (m, who, rq, rs, code, ms)) in rows.into_iter().enumerate() {
             let start = t0 + Duration::from_secs(i as u64);
-            let c = Call { method: m, caller: who, request_size: rq, response_size: rs, exit_code: code, start, end: start + Duration::from_millis(ms), queue_wait: Duration::ZERO };
+            let c = Call { method: m, caller: who, request_size: rq, response_size: rs, exit_code: code, start, end: start + Duration::from_millis(ms), queue_wait: Duration::ZERO, phases: &[], commits_us: &[], reads: 0, open_phase: None };
             sink.write(&c, start).unwrap();
         }
         fs::copy(dir.join("spira-lc.2023-11-14.jsonl"), concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/spira-lc.ndjson")).unwrap();

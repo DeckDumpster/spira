@@ -32,6 +32,7 @@ use runtime::ports::Clock;
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension, TransactionBehavior};
 use state_store::gc::HOT_KEYS_MAX_REVS;
 use state_store::limits::COMPACT_ROWS;
+use state_store::phases::{self, Phase};
 use state_store::{
     Backend, Error, LogEntry, Result, Rev, UsagePage, Version, Write,
 };
@@ -807,13 +808,16 @@ impl SqliteBackend {
         let inner = &self.0;
         let n = inner.readers.len();
         let start = inner.next_reader.fetch_add(1, Ordering::Relaxed);
-        let (reader, mut conn) = (0..n)
-            .map(|i| &inner.readers[(start + i) % n])
-            .find_map(|r| r.conn.try_lock().ok().map(|g| (r, g)))
-            .unwrap_or_else(|| {
-                let r = &inner.readers[start % n];
-                (r, lock(&r.conn))
-            });
+        let (reader, mut conn) = phases::time(Phase::ReaderWait, || {
+            (0..n)
+                .map(|i| &inner.readers[(start + i) % n])
+                .find_map(|r| r.conn.try_lock().ok().map(|g| (r, g)))
+                .unwrap_or_else(|| {
+                    let r = &inner.readers[start % n];
+                    (r, lock(&r.conn))
+                })
+        });
+        let _reading = phases::begin(Phase::Read);
         let max_read_ms = inner.max_read_ms.load(Ordering::SeqCst);
         let deadline = inner.clock.now_ms().saturating_add(max_read_ms);
         reader.deadline.store(deadline, Ordering::SeqCst);
@@ -1191,7 +1195,7 @@ impl Backend for SqliteBackend {
     }
 
     fn commit(&self, expect: u64, batch: &[Write]) -> Result<u64> {
-        let mut w = lock(&self.0.writer);
+        let mut w = phases::time(Phase::WriterWait, || lock(&self.0.writer));
         let head = self.0.head.load(Ordering::SeqCst);
         if head != expect {
             return Err(Error::Stale {
@@ -1201,6 +1205,7 @@ impl Backend for SqliteBackend {
         }
         let main = expect + 1;
         let m = main_i64(main)?;
+        let committing = phases::begin_unconfirmed(Phase::Commit);
         let tx = w
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -1286,6 +1291,7 @@ impl Backend for SqliteBackend {
         }
         set_meta(&tx, "head", main)?;
         tx.commit().map_err(db)?;
+        committing.confirm();
         self.0.head.store(main, Ordering::SeqCst);
         Ok(main)
     }
@@ -1403,6 +1409,40 @@ mod tests {
             forked.push(b.0._lock.0.try_clone().unwrap());
             drop(b);
         }
+    }
+
+    #[test]
+    fn a_tracked_commit_and_read_record_their_waits_and_the_read_is_counted() {
+        let dir = testkit::TempDir::new("sqlite-phases");
+        let b = SqliteBackend::open(&dir.path().join("s.db"), Options::default()).unwrap();
+        let rec = Arc::new(phases::Recorder::default());
+        phases::track(rec.clone());
+        let put = Write::Put { key: "k".into(), value: b"1".to_vec(), create_rev: Rev::new(1, 0), prev: None };
+        let rev = b.commit(0, &[put]).unwrap();
+        let s = rec.snapshot();
+        let names: Vec<_> = s.phases.iter().map(|p| p.0).collect();
+        assert_eq!(names, ["writer_wait", "commit"]);
+        assert_eq!((s.commits_us.len(), s.reads), (1, 0));
+        b.get("k", rev).unwrap();
+        phases::untrack();
+        let s = rec.snapshot();
+        let names: Vec<_> = s.phases.iter().map(|p| p.0).collect();
+        assert_eq!(names, ["writer_wait", "commit", "reader_wait", "read"]);
+        assert_eq!(s.reads, 1);
+    }
+
+    #[test]
+    fn a_commit_that_fails_inside_its_transaction_is_not_recorded_as_a_commit() {
+        let dir = testkit::TempDir::new("sqlite-phases-failed");
+        let b = SqliteBackend::open(&dir.path().join("s.db"), Options::default()).unwrap();
+        let rec = Arc::new(phases::Recorder::default());
+        phases::track(rec.clone());
+        let bad = Write::Put { key: "k".into(), value: b"1".to_vec(), create_rev: Rev::new(u64::MAX, 0), prev: None };
+        assert!(b.commit(0, &[bad]).is_err());
+        phases::untrack();
+        let s = rec.snapshot();
+        assert_eq!(s.commits_us.len(), 0);
+        assert_eq!(s.open, None);
     }
 
     #[test]

@@ -259,6 +259,37 @@ fn a_tracked_request_is_stamped_with_its_commit_or_the_oldest_revision_it_read()
 }
 
 #[test]
+fn a_tracked_commit_records_the_order_wait_and_one_commit() {
+    use crate::phases::{self, Recorder};
+    let m = Modeled::open(MemBackend::new(), SKIP, 16).unwrap();
+    let rec = Arc::new(Recorder::default());
+    phases::track(rec.clone());
+    m.commit(0, &[put("k", "1")]).unwrap();
+    phases::untrack();
+    let s = rec.snapshot();
+    let names: Vec<_> = s.phases.iter().map(|p| p.0).collect();
+    assert!(names.contains(&"order_wait"), "{names:?}");
+    assert!(!names.contains(&"catch_up"), "{names:?}");
+    assert_eq!(s.commits_us.len(), 1);
+}
+
+#[test]
+fn a_commit_made_while_the_copy_is_behind_records_the_catch_up() {
+    use crate::phases::{self, Recorder};
+    let inner = Counted::default();
+    let m = Modeled::open(inner.clone(), SKIP, 16).unwrap();
+    inner.inner.commit(0, &[put("k", "1")]).unwrap();
+    let rec = Arc::new(Recorder::default());
+    phases::track(rec.clone());
+    m.commit(1, &[put("j", "2")]).unwrap();
+    phases::untrack();
+    let s = rec.snapshot();
+    let names: Vec<_> = s.phases.iter().map(|p| p.0).collect();
+    assert!(names.contains(&"catch_up") && names.contains(&"order_wait"), "{names:?}");
+    assert_eq!(s.commits_us.len(), 1);
+}
+
+#[test]
 fn a_read_through_request_reads_the_inner_backend() {
     let inner = Counted::default();
     let m = Modeled::open(inner.clone(), SKIP, 16).unwrap();
