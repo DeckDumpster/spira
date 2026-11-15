@@ -55,10 +55,16 @@ struct Seen {
     wrote: Option<u64>,
     /// Every read goes to the inner backend.
     through: bool,
+    /// The lowest revision any read, including a log read, was made at.
+    oldest: Option<u64>,
+    /// The most revisions any read was behind the copy's head.
+    lag: Option<u64>,
+    /// A read was answered `TooOld`, or the copy reloaded.
+    too_old: bool,
 }
 
 thread_local! {
-    static SEEN: Cell<Seen> = const { Cell::new(Seen { on: false, read: None, wrote: None, through: false }) };
+    static SEEN: Cell<Seen> = const { Cell::new(Seen { on: false, read: None, wrote: None, through: false, oldest: None, lag: None, too_old: false }) };
 }
 
 fn seen(f: impl FnOnce(&mut Seen)) {
@@ -78,20 +84,55 @@ fn through() -> bool {
 /// Starts recording, on this thread, the revisions the request's reads and writes are made at;
 /// `read_through` sends every read of the request to the inner backend. [`stamp`] ends it.
 pub fn track(read_through: bool) {
-    SEEN.with(|s| s.set(Seen { on: true, read: None, wrote: None, through: read_through }));
+    SEEN.with(|s| s.set(Seen { on: true, read: None, wrote: None, through: read_through, oldest: None, lag: None, too_old: false }));
 }
 
-/// The revision the request [`track`] began reflects, and stops recording: its highest commit,
-/// or, above that, the lowest revision it read at, so every part of the answer is at least that
-/// fresh and a write it made is at or below it. `None` when it touched no store.
-pub fn stamp() -> Option<u64> {
+/// What a tracked request reflected and how far back it read.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Stamp {
+    /// The highest revision the request committed, or, above that, the lowest it read at, so
+    /// every part of the answer is at least that fresh and a write it made is at or below it.
+    /// `None` when it touched no store.
+    pub rev: Option<u64>,
+    /// The lowest revision read, when a read was behind the copy's head.
+    pub oldest: Option<u64>,
+    /// The most revisions a read was behind the copy's head; `None` for a read at the head.
+    pub lag_revs: Option<u64>,
+    /// A read was answered `TooOld`, or the copy reloaded under the request.
+    pub too_old: bool,
+}
+
+/// Stops the recording [`track`] began and reports it.
+pub fn stamp() -> Stamp {
     SEEN.with(|s| {
         let v = s.replace(Seen::default());
-        match (v.read, v.wrote) {
-            (None, None) => None,
-            (r, w) => Some(r.unwrap_or(0).max(w.unwrap_or(0))),
+        let lag_revs = v.lag.filter(|l| *l > 0);
+        Stamp {
+            rev: match (v.read, v.wrote) {
+                (None, None) => None,
+                (r, w) => Some(r.unwrap_or(0).max(w.unwrap_or(0))),
+            },
+            oldest: v.oldest.filter(|_| lag_revs.is_some()),
+            lag_revs,
+            too_old: v.too_old,
         }
     })
+}
+
+fn read_at(s: &mut Seen, at: u64, lag: u64) {
+    s.read = Some(s.read.map_or(at, |r| r.min(at)));
+    lag_at(s, at, lag);
+}
+
+fn lag_at(s: &mut Seen, at: u64, lag: u64) {
+    s.oldest = Some(s.oldest.map_or(at, |r| r.min(at)));
+    s.lag = Some(s.lag.map_or(lag, |l| l.max(lag)));
+}
+
+fn note_too_old<T>(r: &Result<T>) {
+    if matches!(r, Err(Error::TooOld { .. })) {
+        seen(|s| s.too_old = true);
+    }
 }
 
 /// Reads per page while the copy is loaded.
@@ -286,7 +327,10 @@ impl<B: Backend> Modeled<B> {
                 return Ok(());
             }
             let log = match self.inner.log(rev, CATCH_UP_MAINS) {
-                Err(Error::TooOld { .. }) => return self.reload(),
+                Err(Error::TooOld { .. }) => {
+                    seen(|s| s.too_old = true);
+                    return self.reload();
+                }
                 r => r?,
             };
             let Some(through) = log.last().map(|e| e.rev.main) else {
@@ -317,12 +361,14 @@ impl<B: Backend> Modeled<B> {
 
     fn served(&self, at: u64) {
         self.from_memory.fetch_add(1, Ordering::Relaxed);
-        seen(|s| s.read = Some(s.read.map_or(at, |r| r.min(at))));
+        let lag = self.revision().saturating_sub(at);
+        seen(|s| read_at(s, at, lag));
     }
 
     fn passed(&self, at: u64) {
         self.from_inner.fetch_add(1, Ordering::Relaxed);
-        seen(|s| s.read = Some(s.read.map_or(at, |r| r.min(at))));
+        let lag = self.revision().saturating_sub(at);
+        seen(|s| read_at(s, at, lag));
     }
 
     /// Up to `limit` visible keys under `prefix` after `after` at `at`, with `state` when given.
@@ -379,7 +425,9 @@ impl<B: Backend> Backend for Modeled<B> {
             }
         }
         self.passed(at);
-        self.inner.get(key, at)
+        let r = self.inner.get(key, at);
+        note_too_old(&r);
+        r
     }
 
     fn range(&self, prefix: &str, after: Option<&str>, limit: usize, at: u64) -> Result<Vec<(String, Version)>> {
@@ -387,7 +435,9 @@ impl<B: Backend> Backend for Modeled<B> {
             return Ok(out);
         }
         self.passed(at);
-        self.inner.range(prefix, after, limit, at)
+        let r = self.inner.range(prefix, after, limit, at);
+        note_too_old(&r);
+        r
     }
 
     fn range_in_state(
@@ -402,7 +452,9 @@ impl<B: Backend> Backend for Modeled<B> {
             return Ok(out);
         }
         self.passed(at);
-        self.inner.range_in_state(prefix, state, after, limit, at)
+        let r = self.inner.range_in_state(prefix, state, after, limit, at);
+        note_too_old(&r);
+        r
     }
 
     /// The inner backend's commit, applied to the copy before it returns. A commit whose
@@ -442,7 +494,11 @@ impl<B: Backend> Backend for Modeled<B> {
     }
 
     fn log(&self, from: u64, max_mains: usize) -> Result<Vec<LogEntry>> {
-        self.inner.log(from, max_mains)
+        let lag = self.revision().saturating_sub(from);
+        seen(|s| lag_at(s, from, lag));
+        let r = self.inner.log(from, max_mains);
+        note_too_old(&r);
+        r
     }
 
     /// The inner backend's compaction; the copy stops answering below it.

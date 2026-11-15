@@ -204,6 +204,7 @@ live_scenarios!(
     a_renew_under_a_new_ttl_keeps_the_token_and_moves_the_expiry,
     a_state_filtered_range_reads_the_keys_in_that_state_at_the_head_and_below_it,
     gc_range_skips_the_history_prefix,
+    committed_at_is_the_wall_time_of_the_first_audited_commit_at_or_after_a_main,
 );
 
 /// Each scenario's store is its own sub-prefix of the run's scope.

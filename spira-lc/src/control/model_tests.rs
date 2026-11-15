@@ -125,13 +125,13 @@ fn a_request_is_stamped_with_the_revision_it_reflects_and_one_naming_a_revision_
     ok(&s, &["create-bead", "sp-a", "--repo", "spira", "--ready"]);
     state_store::model::track(false);
     claim(&s, "sp-a");
-    let wrote = state_store::model::stamp().expect("a write is stamped");
+    let wrote = state_store::model::stamp().rev.expect("a write is stamped");
     let model = s.contract().backend();
     assert_eq!(model.revision(), wrote, "the model holds the write before the write returns");
     assert!(model.wait_for(wrote, Duration::ZERO), "a read naming the write's revision is fresh at once");
     state_store::model::track(false);
     ok(&s, &["show", "sp-a"]);
-    assert!(state_store::model::stamp().is_some_and(|r| r >= wrote), "the read reflects the write");
+    assert!(state_store::model::stamp().rev.is_some_and(|r| r >= wrote), "the read reflects the write");
     assert!(!model.wait_for(wrote + 1, Duration::from_millis(20)), "a revision not yet written is not reached");
     let before = database_reads(&s);
     state_store::model::track(true);
