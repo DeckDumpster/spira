@@ -601,10 +601,13 @@ mod tests {
         assert_eq!(crate::lc_state::row_on(&c, "sp-zz").unwrap(), None, "exit 1 is no row");
         crate::lifecycle_row::set_express_on(&c, "sp-a", true).unwrap();
         assert!(crate::lifecycle_row::set_express_on(&c, "sp-zz", true).is_err(), "no row is nothing to mark");
+        crate::lifecycle_row::content_on_base_on(&c, "sp-a", "p", "x").unwrap();
         assert_eq!(launched(), before, "no program ran");
         let seen = seen.lock().unwrap();
         let event = seen.iter().find(|a| a[0] == "event").expect("express sent its event");
         assert_eq!(event[1..], ["bead", "sp-a", "--expect", "READY", "--version", "4", "--actor", "bead", "--kind", "\"Express\""].map(String::from));
+        let cob = seen.iter().rev().find(|a| a[0] == "event").unwrap();
+        assert_eq!(cob[1..], ["bead", "sp-a", "--expect", "READY", "--version", "4", "--actor", "x", "--kind", "{\"ContentOnBase\":{\"proof\":\"p\"}}"].map(String::from));
     }
 
     #[test]

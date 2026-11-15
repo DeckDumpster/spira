@@ -262,22 +262,11 @@ impl<'a> RealLib<'a> {
         rc == 0
     }
     fn content_on_base_checked(&self, id: &str, proof: &str) -> bool {
-        let (rc, err) = match self.lc() {
-            Ok(c) => {
-                let (rc, _, err) = crate::lifecycle::run(&c, &["content-on-base", id, proof, "landing-pass"]);
-                (rc, err)
-            }
-            Err(e) => (spira_store::lc_call::CANNOT_TELL, e),
-        };
-        if rc != 0 {
-            let line = format!(
-                "landing-pass: {id}: LIFECYCLE: spira-lc content-on-base did not happen (exit {rc}): {}",
-                err.trim()
-            );
-            self.seam.out.log(&line);
-            eprintln!("{line}");
+        let done = self.lc().and_then(|c| spira_store::lifecycle_row::content_on_base_on(&c, id, proof, "landing-pass"));
+        if let Err(e) = &done {
+            self.seam.out.log(&format!("landing-pass: {id}: LIFECYCLE: spira-lc content-on-base did not happen: {}", e.trim()));
         }
-        rc == 0
+        done.is_ok()
     }
 
     /// lib.sh `ask_already_open <subject>` (sp-31hjr) — the strongest dedupe is "is it
@@ -1511,6 +1500,49 @@ mod store_tests {
         lib.note("sp-a", "a note");
         assert_eq!(*s.seen.lock().unwrap(), vec!["deliver push-delivered sp-a abc", "deliver pr-merged /r sp-b spira/sp-b def", "bd-note sp-a a note"]);
         assert!(out.lines().iter().any(|l| l.contains("sp-b: LIFECYCLE: spira-lc deliver pr-merged did not happen (exit 3)")), "{:?}", out.lines());
+    }
+
+    #[test]
+    fn a_bead_whose_tip_is_on_base_is_recorded_as_a_content_on_base_event() {
+        let proof = "settle-landed:abc ancestor-of:refs/heads/local/main@def";
+        let (s, c) = store(|a| match a[0].as_str() {
+            "content-on-base" => (2, "usage: spira-lc show <bead-id> | …".into()),
+            "show" => (0, r#"{"bead":{"bead_id":"sp-a","state":"SUBMITTED","version":7},"delivery":null}"#.into()),
+            "event" => (0, String::new()),
+            _ => (2, "cannot tell".into()),
+        });
+        let t = testkit::TempDir::new("landing-pass-cob");
+        let out = Reporter::capture(None);
+        let lib = RealLib { seam: SeamRunner { home: t.path().to_path_buf(), out: &out }, incident: PathBuf::new(), s: Settings::for_run(t.path().to_path_buf()), beads: beads(&c) };
+        assert!(lib.content_on_base("sp-a", proof));
+        let seen = s.seen.lock().unwrap();
+        let want = format!("event bead sp-a --expect SUBMITTED --version 7 --actor landing-pass --kind {{\"ContentOnBase\":{{\"proof\":\"{proof}\"}}}}");
+        assert!(seen.contains(&want), "{seen:?}");
+        assert!(!seen.iter().any(|l| l.starts_with("content-on-base")), "{seen:?}");
+    }
+
+    #[test]
+    fn a_content_on_base_with_no_row_is_reported_and_false() {
+        let (_s, c) = store(|_| (1, String::new()));
+        let t = testkit::TempDir::new("landing-pass-cob-norow");
+        let out = Reporter::capture(None);
+        let lib = RealLib { seam: SeamRunner { home: t.path().to_path_buf(), out: &out }, incident: PathBuf::new(), s: Settings::for_run(t.path().to_path_buf()), beads: beads(&c) };
+        assert!(!lib.content_on_base("sp-a", "p"));
+        let lines = out.lines();
+        assert_eq!(lines.iter().filter(|l| l.contains("content-on-base did not happen")).count(), 1, "{lines:?}");
+    }
+
+    #[test]
+    fn a_content_on_base_the_store_refuses_carries_the_stores_text_to_the_log() {
+        let (_s, c) = store(|a| match a[0].as_str() {
+            "show" => (0, r#"{"bead":{"bead_id":"sp-a","state":"SUBMITTED","version":7}}"#.into()),
+            _ => (3, "version conflict".into()),
+        });
+        let t = testkit::TempDir::new("landing-pass-cob-refused");
+        let out = Reporter::capture(None);
+        let lib = RealLib { seam: SeamRunner { home: t.path().to_path_buf(), out: &out }, incident: PathBuf::new(), s: Settings::for_run(t.path().to_path_buf()), beads: beads(&c) };
+        assert!(!lib.content_on_base("sp-a", "p"));
+        assert!(out.lines().iter().any(|l| l.contains("did not happen") && l.contains("version conflict")), "{:?}", out.lines());
     }
 
     #[test]
