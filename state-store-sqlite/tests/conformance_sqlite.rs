@@ -57,6 +57,7 @@ scenarios!(
     watch_resumes_from_a_revision,
     a_watch_on_a_quiet_prefix_returns_progress_rev,
     watch_returns_too_old_after_compaction,
+    a_value_overwritten_or_deleted_inside_the_ring_reads_as_of_a_revision_between_the_writes,
     a_lock_expires_on_the_virtual_clock,
     a_paused_holders_fenced_write_is_refused_after_expiry_and_reacquisition,
     reopen_extends_every_lock,
@@ -131,8 +132,8 @@ fn keys_at(b: &SqliteBackend, prefix: &str, at: u64) -> Vec<(String, Vec<u8>)> {
         .collect()
 }
 
-/// Puts at 1 and 2, then the delete at 3 that compaction drops: no row is left at the head, so
-/// a counter derived from the keys or a rowid would read back 1.
+/// Puts at 1 and 2, then the delete at 3: no row is left at the head, so a counter derived from
+/// the keys or a rowid would read back 1.
 #[test]
 fn after_deleting_the_highest_revision_keys_and_reopening_the_next_main_is_greater() {
     let dir = TempDir::new("sqlite-reopen");
@@ -162,6 +163,59 @@ fn after_deleting_the_highest_revision_keys_and_reopening_the_next_main_is_great
     let next = put(&c, "n/c", json!(3), "after-reopen");
     assert!(next > last, "a reopened store never reissues a revision: next {next}, last {last}");
     assert_eq!(next, head + 1, "the next txn follows the head the reopen read back");
+}
+
+/// The ring is empty after a restart and its floor is the head the file held at close: a read
+/// below it is `TooOld`, a watch from it sees only the jump, and a read model built over the
+/// reopened store serves at the head.
+#[test]
+fn straight_after_a_restart_history_below_the_close_head_is_too_old_and_the_head_is_served() {
+    let dir = TempDir::new("sqlite-restart-history");
+    let path = dir.path().join("s.db");
+    let clock = VirtualClock::new(1_000);
+    let (r1, close) = {
+        let c = contract(open(&path), &clock);
+        let r1 = put(&c, "t/a", json!(1), "1");
+        put(&c, "t/a", json!(2), "2");
+        (r1, c.head().unwrap())
+    };
+    let c = contract(open(&path), &clock);
+    let head = c.head().unwrap();
+    assert!(head > close, "the open jumped the head");
+    assert_eq!(c.get_at("t/a", r1), Err(Error::TooOld { compacted: close }));
+    assert_eq!(c.watch("t/", r1, 0), Err(Error::TooOld { compacted: close }));
+    assert_eq!(
+        c.watch("t/", close, 0).unwrap(),
+        state_store::Watched::Progress { progress_rev: head }
+    );
+    assert_eq!(c.get_at("t/a", head).unwrap().unwrap().value.data, json!(2));
+    drop(c);
+    let modeled = state_store::Modeled::open(open(&path), &[], 1_024).unwrap();
+    let head = modeled.head().unwrap();
+    assert_eq!(modeled.range("t/", None, 10, head).unwrap().len(), 1);
+}
+
+/// A ring that has turned past a revision answers `TooOld` for the read and the watch.
+#[test]
+fn a_revision_the_ring_has_turned_past_is_too_old_to_read_or_watch() {
+    let dir = TempDir::new("sqlite-ring-turns");
+    let clock = VirtualClock::new(1_000);
+    let b = SqliteBackend::open(
+        &dir.path().join("s.db"),
+        Options { history_bytes: 4_000, ..Options::default() },
+    )
+    .unwrap();
+    let c = contract(b, &clock);
+    let r1 = put(&c, "t/a", json!(0), "0");
+    assert!(c.get_at("t/a", r1).is_ok());
+    for i in 1..60 {
+        put(&c, "t/a", json!(i), &i.to_string());
+    }
+    let floor = c.backend().compacted().unwrap();
+    assert!(floor > r1);
+    assert_eq!(c.get_at("t/a", r1), Err(Error::TooOld { compacted: floor }));
+    assert_eq!(c.watch("t/", r1, 0), Err(Error::TooOld { compacted: floor }));
+    assert!(c.get_at("t/a", floor).is_ok());
 }
 
 #[test]
@@ -233,7 +287,7 @@ fn a_reader_held_past_max_read_ms_is_ended_and_the_next_checkpoint_truncates_the
         readers: 1,
         clock: Arc::new(clock.clone()),
         read_probe: Some(probe),
-        jump_on_open: true,
+        ..Options::default()
     };
     let b = SqliteBackend::open(&path, opts).unwrap();
     *slot.lock().unwrap() = Some(b.clone());
@@ -259,65 +313,6 @@ fn a_reader_held_past_max_read_ms_is_ended_and_the_next_checkpoint_truncates_the
         "the WAL was not truncated"
     );
     *slot.lock().unwrap() = None;
-}
-
-/// Reads its first `free` times unchanged, then jumps an hour: the reads after that are the
-/// progress handler's, inside a statement.
-struct JumpAfter {
-    calls: AtomicUsize,
-    free: AtomicUsize,
-}
-
-impl runtime::ports::Clock for JumpAfter {
-    fn now_ms(&self) -> u64 {
-        let n = self.calls.fetch_add(1, Ordering::SeqCst);
-        if n < self.free.load(Ordering::SeqCst) {
-            0
-        } else {
-            3_600_000
-        }
-    }
-}
-
-/// Every row a deleted key, so the statement scans thousands of rows and returns none: only the
-/// progress handler can see the deadline pass. The read is below the head, where `versions` is
-/// read: at the head, `latest` holds no deleted key to scan.
-#[test]
-fn a_single_long_statement_is_ended_past_max_read_ms_by_the_progress_handler() {
-    let dir = TempDir::new("sqlite-progress");
-    let clock = Arc::new(JumpAfter {
-        calls: AtomicUsize::new(0),
-        free: AtomicUsize::new(usize::MAX),
-    });
-    let opts = Options {
-        max_read_ms: 100,
-        readers: 1,
-        clock: clock.clone(),
-        read_probe: None,
-        jump_on_open: true,
-    };
-    let b = SqliteBackend::open(&dir.path().join("s.db"), opts).unwrap();
-    let keys: Vec<String> = (0..5_000).map(|i| format!("t/{i:05}")).collect();
-    let puts: Vec<Write> = keys.iter().map(|k| put_write(k, b"{}", 1, None)).collect();
-    b.commit(0, &puts).unwrap();
-    let dels: Vec<Write> = keys
-        .iter()
-        .enumerate()
-        .map(|(i, k)| Write::Delete {
-            key: k.clone(),
-            prev: Rev::new(1, i as u32),
-        })
-        .collect();
-    b.commit(1, &dels).unwrap();
-    b.commit(2, &[put_write("u/after", b"{}", 3, None)]).unwrap();
-    assert!(b.range("t/", None, 10, 2).unwrap().is_empty());
-
-    clock.calls.store(0, Ordering::SeqCst);
-    clock.free.store(2, Ordering::SeqCst);
-    match b.range("t/", None, 10, 2) {
-        Err(Error::Backend(m)) => assert!(m.contains("max_read_ms"), "{m}"),
-        other => panic!("the long statement was not ended: {other:?}"),
-    }
 }
 
 #[test]
@@ -412,62 +407,6 @@ fn a_snapshot_copy_taken_while_another_thread_commits_holds_one_revision() {
 }
 
 #[test]
-fn compact_below_the_floor_works_and_compact_above_it_stops_at_the_floor() {
-    let dir = TempDir::new("sqlite-compact");
-    let path = dir.path().join("s.db");
-    let clock = VirtualClock::new(1_000);
-    let c = contract(open(&path), &clock);
-    let revs: Vec<u64> = (1..=4)
-        .map(|i| put(&c, "k", json!(i), &format!("{i}")))
-        .collect();
-    let b = c.backend().clone();
-    b.set_compaction_floor(revs[2]).unwrap();
-
-    b.compact(revs[1]).unwrap();
-    assert_eq!(b.compacted().unwrap(), revs[1]);
-    assert_eq!(
-        b.get("k", revs[0]),
-        Err(Error::TooOld { compacted: revs[1] })
-    );
-    let at = |rev| {
-        Object::decode(&b.get("k", rev).unwrap().unwrap().value)
-            .unwrap()
-            .data
-    };
-    assert_eq!(at(revs[1]), json!(2));
-
-    b.compact(revs[3]).unwrap();
-    assert_eq!(
-        b.compacted().unwrap(),
-        revs[2],
-        "compaction ran past the floor"
-    );
-    assert_eq!(
-        at(revs[2]),
-        json!(3),
-        "the floor's revision is still readable"
-    );
-    assert!(b
-        .log(revs[2], 10)
-        .unwrap()
-        .iter()
-        .any(|e| e.rev.main == revs[3]));
-    assert_eq!(
-        b.log(revs[1], 10),
-        Err(Error::TooOld { compacted: revs[2] })
-    );
-    drop(c);
-    drop(b);
-    let b = open(&path);
-    b.compact(revs[3]).unwrap();
-    assert_eq!(
-        b.compacted().unwrap(),
-        revs[2],
-        "the floor did not survive a reopen"
-    );
-}
-
-#[test]
 fn gc_range_skips_events_and_history_and_pages_across_them() {
     let dir = TempDir::new("sqlite-gc-range");
     let b = open(&dir.path().join("s.db"));
@@ -505,8 +444,6 @@ fn a_snapshot_copy_does_not_carry_the_pages_deleted_rows_left_free_in_the_live_f
     for i in 0..200 {
         c.delete(&format!("k/{i}"), None, &req(&format!("d{i}"))).unwrap();
     }
-    c.backend().clear_compaction_floor().unwrap();
-    c.compact(c.head().unwrap()).unwrap();
     let dest = dir.path().join("snap.db");
     c.backend().snapshot_to(&dest).unwrap();
     let live = std::fs::metadata(&path).unwrap().len();

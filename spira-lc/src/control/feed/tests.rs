@@ -50,14 +50,51 @@ macro_rules! on_each_backend {
 
 on_each_backend!(
     a_watch_resumed_from_a_revision_sees_every_later_change_exactly_once,
-    after_compaction_a_watch_answers_too_old_with_the_prefix_relisted_to_resume_from,
+    after_history_is_forgotten_a_watch_answers_too_old_with_the_prefix_relisted_to_resume_from,
     history_lists_a_beads_changes_in_order_with_its_refusals_and_lost_races,
-    history_outlives_compaction,
+    history_outlives_forgetting_revisions,
     event_seq_names_only_the_beads_with_an_applied_event_after_the_revision,
     a_watch_of_several_prefixes_delivers_each_and_nothing_else,
     store_usage_of_a_backend_that_keeps_no_history_still_pages_by_prefix,
     store_usage_answers_one_bounded_page_with_a_cursor_and_refuses_a_page_above_the_cap,
 );
+
+/// A watch from a revision the history ring has turned past is `too_old`, and relists.
+fn once_the_ring_has_turned_a_watch_answers_too_old_with_the_prefix_relisted<B: Backend>(
+    s: &Store<B>,
+) {
+    create(s, "sp-a");
+    let old = toggle(s, "sp-a", 1);
+    for n in 2..80 {
+        toggle(s, "sp-a", n);
+    }
+    let w = watch(s, keys::LIFECYCLE, old);
+    assert!(w["too_old"]["compacted"].as_u64().unwrap() > old, "{w}");
+    assert_eq!(w["items"].as_array().unwrap().len(), 1, "{w}");
+    assert_eq!(w["list_rev"].as_u64().unwrap(), s.contract().head().unwrap());
+}
+
+#[test]
+fn a_mem_ring_that_has_turned_relists_a_feed() {
+    let clock = VirtualClock::new(0);
+    once_the_ring_has_turned_a_watch_answers_too_old_with_the_prefix_relisted(&store(
+        MemBackend::with_history_bytes(6_000),
+        &clock,
+    ));
+}
+
+#[test]
+fn a_sqlite_ring_that_has_turned_relists_a_feed() {
+    let dir = TempDir::new("spira-lc-feed-ring");
+    let clock = VirtualClock::new(0);
+    let opts = Options {
+        clock: Arc::new(clock.clone()),
+        history_bytes: 6_000,
+        ..Options::default()
+    };
+    let b = SqliteBackend::open(&dir.path().join("control.db"), opts).unwrap();
+    once_the_ring_has_turned_a_watch_answers_too_old_with_the_prefix_relisted(&store(b, &clock));
+}
 
 fn req(id: &str) -> Request {
     Request::new(id, "test", "t")
@@ -166,7 +203,7 @@ fn a_watch_resumed_from_a_revision_sees_every_later_change_exactly_once<B: Backe
     assert_eq!(code, crate::CANNOT_TELL, "{out}");
 }
 
-fn after_compaction_a_watch_answers_too_old_with_the_prefix_relisted_to_resume_from<B: Backend>(
+fn after_history_is_forgotten_a_watch_answers_too_old_with_the_prefix_relisted_to_resume_from<B: Backend>(
     s: &Store<B>,
 ) {
     create(s, "sp-a");
@@ -270,7 +307,7 @@ fn history_lists_a_beads_changes_in_order_with_its_refusals_and_lost_races<B: Ba
     assert_eq!(born, [("Submit", "SUBMITTED")], "a born-submitted record");
 }
 
-fn history_outlives_compaction<B: Backend>(s: &Store<B>) {
+fn history_outlives_forgetting_revisions<B: Backend>(s: &Store<B>) {
     create(s, "sp-a");
     let first = toggle(s, "sp-a", 1);
     let second = toggle(s, "sp-a", 2);
@@ -398,7 +435,7 @@ fn store_usage_hot_and_file_are_served_on_sqlite_and_refused_elsewhere() {
         let v: Value = serde_json::from_str(&out).unwrap();
         assert_eq!(v["keys"].as_array().map(Vec::len), Some(1), "{out}");
         let (code, out) = verbs::run(s, &["store-usage", "--hot", "1", "--revs", "999999"].map(String::from));
-        assert_eq!(code, 2, "{out}");
+        assert_eq!(code, 0, "a window wider than the ring counts what the ring holds: {out}");
         let (code, out) = verbs::run(s, &["store-usage", "--file"].map(String::from));
         assert_eq!(code, 0, "{out}");
         let v: Value = serde_json::from_str(&out).unwrap();

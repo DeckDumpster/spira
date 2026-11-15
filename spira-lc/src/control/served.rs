@@ -93,7 +93,8 @@ fn modeled(path: &str, opts: Options, build_ms: u64) -> Result<Served, String> {
 }
 
 fn open(path: &str) -> Result<Store<Served>, String> {
-    let backend = modeled(path, Options::default(), BUILD_READ_MS)?;
+    let history_bytes = spira_config::process::cfg_parse::<usize>("SPIRA_LC_HISTORY_RING_BYTES")?;
+    let backend = modeled(path, Options { history_bytes, ..Options::default() }, BUILD_READ_MS)?;
     let floor = lock_floor_ms()?;
     let ports = Ports {
         mono: Arc::new(MonotonicClock::new()),
@@ -373,7 +374,8 @@ mod tests {
     fn reads_after_the_build_are_held_to_the_steady_limit_again() {
         let (_dir, p) = seeded("lc-served-after");
         let built = modeled(&p, slow_reads(1_000), BUILD_READ_MS).unwrap();
-        let later = state_store::Backend::log(built.inner(), 0, 10).expect_err("a read after the build is held to the steady limit");
+        let head = state_store::Backend::head(built.inner()).unwrap();
+        let later = state_store::Backend::get(built.inner(), "k", head).expect_err("a read after the build is held to the steady limit");
         assert!(state_store_sqlite::is_read_ended(&later), "{later}");
     }
 

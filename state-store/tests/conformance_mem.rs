@@ -32,6 +32,7 @@ scenarios!(
     watch_resumes_from_a_revision,
     a_watch_on_a_quiet_prefix_returns_progress_rev,
     watch_returns_too_old_after_compaction,
+    a_value_overwritten_or_deleted_inside_the_ring_reads_as_of_a_revision_between_the_writes,
     a_lock_expires_on_the_virtual_clock,
     a_paused_holders_fenced_write_is_refused_after_expiry_and_reacquisition,
     reopen_extends_every_lock,

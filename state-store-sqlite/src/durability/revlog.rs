@@ -88,12 +88,22 @@ fn entry_line(e: &LogEntry) -> String {
     o.to_string()
 }
 
-pub fn encode(run: &Run) -> Vec<u8> {
+/// The entries as the lines a run's body holds.
+pub(crate) fn entries_body(entries: &[LogEntry]) -> String {
     let mut body = String::new();
-    for e in &run.entries {
+    for e in entries {
         body.push_str(&entry_line(e));
         body.push('\n');
     }
+    body
+}
+
+pub(crate) fn parse_entries(body: &str) -> Result<Vec<LogEntry>, String> {
+    body.lines().map(entry_of).collect()
+}
+
+pub fn encode(run: &Run) -> Vec<u8> {
+    let body = entries_body(&run.entries);
     let sum = hex(&Sha256::digest(body.as_bytes()));
     let mut header =
         json!({ "from": run.from, "to": run.to, "entries": run.entries.len(), "sha256": sum });

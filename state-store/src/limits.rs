@@ -8,8 +8,6 @@ use crate::{Error, Limit, Result};
 
 /// etcd's default `--max-txn-ops`, applied to each branch and to the compares.
 pub const MAX_TXN_OPS: usize = 128;
-/// The version rows one compaction step examines at most, bounding how long a commit waits on it.
-pub const COMPACT_ROWS: usize = 2_000;
 pub const MAX_TXN_COMPARES: usize = 128;
 /// etcd's default `--max-request-bytes` (1.5 MiB).
 pub const MAX_REQUEST_BYTES: usize = 1_572_864;
