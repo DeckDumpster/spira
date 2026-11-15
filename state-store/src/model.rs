@@ -545,6 +545,10 @@ impl<B: Backend> Backend for Modeled<B> {
     fn file_bytes(&self) -> Result<(u64, u64)> {
         self.inner.file_bytes()
     }
+
+    fn family_files(&self) -> Result<Vec<crate::FamilyFiles>> {
+        self.inner.family_files()
+    }
 }
 
 #[cfg(test)]
