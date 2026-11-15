@@ -5,12 +5,12 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use runtime::host::{serve_with, EffectRunner, ServeOpts, Submit};
+use runtime::host::{serve_with, EffectRunner, ServeOpts, Submit, VirtualDriver};
 use runtime::journal::Journal;
 use runtime::offload::Pool;
-use runtime::pools::{EffectClass, PoolCaps};
-use runtime::ports::WallClock;
-use runtime::{Command, Ctx, EffectSpec, Engine, Event, EventKind, EventKindTag, Executor, Handler, MemJournal, MemSink, Projection, Registration, Value, EFFECT_SUCCEEDED};
+use runtime::pools::{ClassPools, EffectClass, PoolCaps};
+use runtime::ports::{VirtualClock, WallClock};
+use runtime::{Command, Ctx, EffectSpec, Engine, Event, EventKind, EventKindTag, Executor, Handler, MemJournal, MemSink, Projection, Registration, Value, EFFECT_REQUESTED, EFFECT_SUCCEEDED, EFFECT_TIMED_OUT};
 use tokio::sync::mpsc;
 
 struct Builds;
@@ -48,6 +48,10 @@ impl EffectRunner for Suites {
 
 fn engine(j: Arc<dyn Journal>) -> Engine {
     Engine::open(j, Arc::new(WallClock), vec![Registration::new("builds", Builds)], 1).unwrap()
+}
+
+fn engine_on(j: Arc<dyn Journal>, clock: &VirtualClock) -> Engine {
+    Engine::open(j, Arc::new(clock.clone()), vec![Registration::new("builds", Builds)], 1).unwrap()
 }
 
 fn deferred(sink: &MemSink) -> Vec<BTreeMap<String, Value>> {
@@ -150,4 +154,37 @@ async fn the_live_host_names_the_registered_task_to_the_runner() {
     let serving = tokio::spawn(serve_with(e, Arc::new(WallClock), runner.clone(), PoolCaps::default(), rx, opts(&sink)));
     tokio::time::timeout(Duration::from_secs(20), serving).await.expect("the host drains").unwrap().unwrap();
     assert_eq!(*runner.0.lock().unwrap(), ["builds"]);
+}
+
+#[test]
+fn a_deferred_effect_is_lost_at_a_restart_and_never_runs_again() {
+    let j: Arc<dyn Journal> = MemJournal::new();
+    let clock = VirtualClock::new(0);
+    let mut e = engine_on(j.clone(), &clock);
+    e.submit("b0", "s0", EventKind::new("build", "b0")).unwrap();
+    e.submit("b1", "s1", EventKind::new("build", "b1")).unwrap();
+    e.run_until_idle().unwrap();
+    let pending = e.pending_effects();
+    assert_eq!(pending.len(), 2);
+    for p in &pending {
+        e.note_queued(&p.key);
+    }
+    let pools = ClassPools::new(PoolCaps { container: 1, ..PoolCaps::default() });
+    let held = pools.try_take(EffectClass::Container).expect("the first effect takes the only slot");
+    e.note_attempt(&pending[0].key);
+    let refused = pools.try_take(EffectClass::Container).expect_err("the class is at its cap");
+    e.note_deferred(&pending[1].key, refused.class.name());
+    drop(e);
+    drop(held);
+
+    let e = engine_on(j.clone(), &clock);
+    assert!(e.pending_effects().is_empty(), "a restart offers no effect to a runner, the deferred one included");
+    let runner = Arc::new(Suites::default());
+    let mut driver = VirtualDriver::new(e, clock.clone(), runner.clone());
+    driver.run_until(120_000).unwrap();
+    assert_eq!(driver.effects_run(), 0);
+    assert!(runner.ran.lock().unwrap().is_empty(), "nothing runs after the restart");
+    assert_eq!(count(&*j, EFFECT_REQUESTED), 2, "the restart does not request the effects again");
+    let lost = j.history().into_iter().filter(|ev| ev.kind.tag == EFFECT_TIMED_OUT && ev.kind.body == runtime::engine::LOST_AT_RESTART).count();
+    assert_eq!(lost, 2, "each unresolved effect is told it was lost, once");
 }
