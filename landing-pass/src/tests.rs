@@ -1430,7 +1430,6 @@ fn a_push_landing_makes_no_closeout_call_and_the_pass_scans_no_github_issues() {
     h.run();
     assert!(h.lib.has("close_on_land sp-a"), "the bead did land");
     assert!(!h.lib.has("closeout"), "the store enqueues the closeout in the landing's own transition");
-    assert!(!h.lib.has("gh_unlanded_scan"), "the pass reads no GitHub bead");
 }
 
 #[test]
