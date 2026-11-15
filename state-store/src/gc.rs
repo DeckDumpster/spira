@@ -149,7 +149,7 @@ mod tests {
     use super::*;
     use crate::backend::{Version, Write};
     use crate::contract::{Config, Ports, Request, Txn};
-    use crate::{events_key, Error, MemBackend, Object, ORPHANS_PREFIX};
+    use crate::{Error, MemBackend, Object, ORPHANS_PREFIX};
 
     const DAY_MS: u64 = 24 * 60 * 60 * 1_000;
 
