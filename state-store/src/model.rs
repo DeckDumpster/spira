@@ -478,6 +478,10 @@ impl<B: Backend> Backend for Modeled<B> {
         self.inner.usage_page(after, limit)
     }
 
+    fn version_usage_page(&self, after: Option<(&str, u64)>, limit: usize) -> Result<crate::VersionUsagePage> {
+        self.inner.version_usage_page(after, limit)
+    }
+
     fn hot_keys(&self, revs: u64, n: usize) -> Result<Vec<(String, u64)>> {
         self.inner.hot_keys(revs, n)
     }

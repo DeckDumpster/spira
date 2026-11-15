@@ -48,30 +48,41 @@ pub struct LogEntry {
     pub prev: Option<Rev>,
 }
 
-/// What one key prefix holds. `versions` and `version_bytes` are `None` on a backend that keeps
-/// no version history to count.
+/// What one key prefix holds among the live keys.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Usage {
     pub keys: u64,
     pub bytes: u64,
-    pub versions: Option<u64>,
-    pub version_bytes: Option<u64>,
 }
 
 impl Usage {
     pub fn add(&mut self, other: &Usage) {
         self.keys += other.keys;
         self.bytes += other.bytes;
-        self.versions = sum_opt(self.versions, other.versions);
-        self.version_bytes = sum_opt(self.version_bytes, other.version_bytes);
     }
 }
 
-fn sum_opt(a: Option<u64>, b: Option<u64>) -> Option<u64> {
-    match (a, b) {
-        (None, None) => None,
-        (a, b) => Some(a.unwrap_or(0) + b.unwrap_or(0)),
+/// What one key prefix holds among the version rows.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct VersionUsage {
+    pub versions: u64,
+    pub version_bytes: u64,
+}
+
+impl VersionUsage {
+    pub fn add(&mut self, other: &VersionUsage) {
+        self.versions += other.versions;
+        self.version_bytes += other.version_bytes;
     }
+}
+
+/// One bounded page of [`Backend::version_usage_page`]: `next` is the `(key, main)` the
+/// following page starts after, `None` on the last; `examined` is the version rows read.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct VersionUsagePage {
+    pub prefixes: BTreeMap<String, VersionUsage>,
+    pub next: Option<(String, u64)>,
+    pub examined: usize,
 }
 
 /// One bounded page of [`Backend::usage_page`]: `next` is the `after` of the following page,
@@ -151,6 +162,11 @@ pub trait Backend: Send + Sync {
             u.bytes += v.value.len() as u64;
         }
         Ok(page)
+    }
+    /// Up to `limit` version rows strictly after `after` in `(key, main)` order, counted by
+    /// [`usage_prefix`].
+    fn version_usage_page(&self, _after: Option<(&str, u64)>, _limit: usize) -> Result<VersionUsagePage> {
+        Err(Error::Backend("not served by this backend".into()))
     }
     /// The keys written most often in the last `revs` revisions, most first, at most `n`; a
     /// backend counts what its history still holds.

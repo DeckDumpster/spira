@@ -163,25 +163,45 @@ const HOT_KEYS_DEFAULT_REVS: u64 = 10_000;
 const USAGE_DEFAULT_LIMIT: u64 = 2_000;
 const USAGE_MAX_LIMIT: u64 = 10_000;
 
-/// `store-usage [--after K] [--limit N]`, `--hot N [--revs R]` or `--file`: what the control
-/// store file holds, one bounded page of live keys by first key segment at a time.
+/// `store-usage [--after K]`, `--versions [--after-key K --after-main M]`, `--hot N [--revs R]`
+/// or `--file`: what the control store file holds. Every page form reads at most `--limit`
+/// rows and names where the next call resumes.
 fn store_usage<B: Backend>(store: &Store<B>, args: &[String]) -> Result<String, String> {
     let fail = |e: state_store::Error| format!("store-usage: {e}");
+    let usage_err = |e: String| format!("store-usage: {e}");
     let backend = store.contract().backend();
     if args.iter().any(|a| a == "--file") {
         let (bytes, free_bytes) = backend.file_bytes().map_err(fail)?;
         return Ok(json!({ "bytes": bytes, "free_bytes": free_bytes }).to_string());
     }
+    let limit = number(args, "--limit", USAGE_DEFAULT_LIMIT).map_err(usage_err)?;
+    if limit > USAGE_MAX_LIMIT {
+        return Err(format!("store-usage: --limit {limit} is above the cap of {USAGE_MAX_LIMIT}"));
+    }
     if flag(args, "--hot").is_some() {
-        let n = number(args, "--hot", 0).map_err(|e| format!("store-usage: {e}"))?;
-        let revs = number(args, "--revs", HOT_KEYS_DEFAULT_REVS).map_err(|e| format!("store-usage: {e}"))?;
+        let n = number(args, "--hot", 0).map_err(usage_err)?;
+        let revs = number(args, "--revs", HOT_KEYS_DEFAULT_REVS).map_err(usage_err)?;
         let keys = backend.hot_keys(revs, n as usize).map_err(fail)?;
         let keys: Vec<Value> = keys.into_iter().map(|(key, writes)| json!({ "key": key, "writes": writes })).collect();
         return Ok(json!({ "revs": revs, "keys": keys }).to_string());
     }
-    let limit = number(args, "--limit", USAGE_DEFAULT_LIMIT).map_err(|e| format!("store-usage: {e}"))?;
-    if limit > USAGE_MAX_LIMIT {
-        return Err(format!("store-usage: --limit {limit} is above the cap of {USAGE_MAX_LIMIT}"));
+    if args.iter().any(|a| a == "--versions") {
+        let after = match (flag(args, "--after-key"), flag(args, "--after-main")) {
+            (None, None) => None,
+            (Some(_), None) => return Err("store-usage: --after-key needs --after-main".into()),
+            (None, Some(_)) => return Err("store-usage: --after-main needs --after-key".into()),
+            (Some(k), Some(_)) => Some((k, number(args, "--after-main", 0).map_err(usage_err)?)),
+        };
+        let page = backend
+            .version_usage_page(after.as_ref().map(|(k, m)| (k.as_str(), *m)), limit as usize)
+            .map_err(fail)?;
+        let prefixes: Map<String, Value> = page
+            .prefixes
+            .iter()
+            .map(|(p, u)| (p.clone(), json!({ "versions": u.versions, "version_bytes": u.version_bytes })))
+            .collect();
+        let next = page.next.map(|(key, main)| json!({ "key": key, "main": main }));
+        return Ok(json!({ "prefixes": prefixes, "next": next, "examined": page.examined }).to_string());
     }
     let page = backend
         .usage_page(flag(args, "--after").as_deref(), limit as usize)
@@ -190,7 +210,7 @@ fn store_usage<B: Backend>(store: &Store<B>, args: &[String]) -> Result<String, 
         .prefixes
         .iter()
         .map(|(p, u)| {
-            let v = json!({ "keys": u.keys, "bytes": u.bytes, "versions": u.versions, "version_bytes": u.version_bytes });
+            let v = json!({ "keys": u.keys, "bytes": u.bytes });
             (p.clone(), v)
         })
         .collect();
