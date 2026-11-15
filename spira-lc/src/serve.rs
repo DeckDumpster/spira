@@ -262,6 +262,17 @@ fn gc_tick<B: state_store::Backend>(gc: &state_store::gc::Controller<B>, contrac
 fn gc_lines(tick: &state_store::gc::Tick, wall_ms: u64) -> Vec<String> {
     let at = spira_lc::sections::rfc3339(wall_ms);
     let mut lines: Vec<String> = tick.failed.iter().map(|f| format!("spira-lc serve: {at} control-store gc {f}")).collect();
+    if let Some(c) = &tick.compaction {
+        let yielded = if c.yielded { ", yielded to a writer" } else { "" };
+        lines.push(format!(
+            "spira-lc serve: {at} control-store gc: compact {}→{} of {}, {} steps, {} revisions behind{yielded}",
+            c.from,
+            c.to,
+            c.target,
+            c.steps,
+            c.target - c.to
+        ));
+    }
     let collected = tick.finalized.len() + tick.orphans.len() + tick.expired.len() + tick.trimmed;
     let complete = tick.scan.as_ref().filter(|s| s.complete);
     if complete.is_some() || collected > 0 {
@@ -673,6 +684,17 @@ mod tests {
         assert!(lines[0].contains("0 finalized, 0 orphans"), "{}", lines[0]);
         let idle = state_store::gc::Tick::default();
         assert!(super::gc_lines(&idle, 0).is_empty(), "a pass that did nothing says nothing");
+    }
+
+    #[test]
+    fn a_compaction_pass_is_logged_with_its_progress_and_whether_it_yielded() {
+        let mut tick = state_store::gc::Tick::default();
+        tick.compaction = Some(state_store::Compaction { from: 100, to: 400, target: 1_000, steps: 3, yielded: true });
+        let lines = super::gc_lines(&tick, 0);
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(lines[0].ends_with("compact 100→400 of 1000, 3 steps, 600 revisions behind, yielded to a writer"), "{}", lines[0]);
+        tick.compaction.as_mut().unwrap().yielded = false;
+        assert!(super::gc_lines(&tick, 0)[0].ends_with("600 revisions behind"));
     }
 
     fn ask(sink: Option<&spira_otel::Sink>, request: &str) -> (String, i32) {
