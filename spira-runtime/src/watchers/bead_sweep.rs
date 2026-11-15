@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use spira_config::nonwork::{is_open, Kind};
 
-use super::{civil, iso8601, INBOX_APPEND};
+use super::{iso8601, INBOX_APPEND};
 
 pub const STREAM: &str = "watch.bead-sweep";
 pub const TICK: EventKindTag = "bead-sweep.tick";
