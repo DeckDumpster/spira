@@ -43,6 +43,8 @@ pub enum Class {
     Script,
     /// `systemd/` outside a crate: unit templates that crate tests read from `../systemd`.
     Units,
+    /// The config registry and delta: files crate tests read from `CARGO_MANIFEST_DIR/..`.
+    Registry,
     /// Anything else (data files, examples): nothing to build.
     Config,
 }
@@ -116,6 +118,9 @@ pub fn classify(c: &Changed, members: &[Member]) -> Class {
     if p.starts_with("spira/test-") || p.starts_with("spira/testlib/") {
         return Class::Suite;
     }
+    if under(p, "spira/conf.d") || under(p, "spira/conf.toml.d") || under(p, "spira/config-delta.d") || p == "spira/config-delta.toml" {
+        return Class::Registry;
+    }
     if p.ends_with(".sh") || p.ends_with(".bash") || p.ends_with(".py") || c.exec {
         return Class::Script;
     }
@@ -123,6 +128,13 @@ pub fn classify(c: &Changed, members: &[Member]) -> Class {
         return Class::Units;
     }
     Class::Config
+}
+
+/// Crates whose tests read the tree's config registry or delta.
+pub const REGISTRY_READERS: &[&str] = &["bead", "gate", "loom", "queue", "release", "spira-config", "spira-runtime", "testenv", "watchdog"];
+
+fn present_registry_readers(members: &[Member]) -> BTreeSet<String> {
+    REGISTRY_READERS.iter().filter(|r| members.iter().any(|m| m.name == **r)).map(|r| r.to_string()).collect()
 }
 
 /// Crates whose tests read `../systemd`.
@@ -179,6 +191,7 @@ pub fn select_crates(diff_raw: &[u8], metadata_json: &str, transitive: bool) -> 
     let members = parse_metadata(metadata_json)?;
     let mut touched = BTreeSet::new();
     let mut workspace = false;
+    let mut readers = BTreeSet::new();
     for c in parse_diff_raw(diff_raw) {
         touched.extend(bd_readers(&c.path, &members));
         match classify(&c, &members) {
@@ -187,13 +200,18 @@ pub fn select_crates(diff_raw: &[u8], metadata_json: &str, transitive: bool) -> 
             }
             Class::Workspace => workspace = true,
             Class::Units => touched.extend(UNIT_READERS.iter().filter(|r| members.iter().any(|m| m.name == **r)).map(|r| r.to_string())),
+            Class::Registry => readers.extend(present_registry_readers(&members)),
             Class::Doc | Class::Suite | Class::Script | Class::Config => {}
         }
     }
     if workspace {
         return Ok(members.iter().map(|m| m.name.clone()).collect());
     }
-    Ok(if transitive { with_transitive_dependents(&touched, &members) } else { with_dependents(&touched, &members) })
+    let mut out = if transitive { with_transitive_dependents(&touched, &members) } else { with_dependents(&touched, &members) };
+    out.extend(readers);
+    out.sort();
+    out.dedup();
+    Ok(out)
 }
 
 /// The inputs that force today's sequence whatever the mode says.
@@ -245,6 +263,7 @@ pub fn compose(
     };
     let mut touched = BTreeSet::new();
     let mut workspace = false;
+    let mut readers = BTreeSet::new();
     for c in changed {
         touched.extend(bd_readers(&c.path, members));
         match classify(c, members) {
@@ -259,6 +278,7 @@ pub fn compose(
                     .filter(|r| members.iter().any(|m| m.name == **r))
                     .map(|r| r.to_string()),
             ),
+            Class::Registry => readers.extend(present_registry_readers(members)),
             Class::Doc | Class::Suite | Class::Config => {}
         }
     }
@@ -277,10 +297,14 @@ pub fn compose(
             crates: all,
         };
     }
-    if touched.is_empty() {
+    if touched.is_empty() && readers.is_empty() {
         return Composition::Fences;
     }
-    let crates = with_transitive_dependents(&touched, members);
+    let mut crates = with_transitive_dependents(&touched, members);
+    crates.extend(readers.iter().cloned());
+    crates.sort();
+    crates.dedup();
+    touched.extend(readers);
     Composition::Unit {
         touched: touched.into_iter().collect(),
         crates,
@@ -911,11 +935,140 @@ mod tests {
                     crates: vec!["release".into()],
                 },
             ),
+            (
+                &["spira/conf.d/SPIRA_TASK_MODES"],
+                Unit {
+                    touched: vec!["gate".into(), "queue".into(), "release".into(), "spira-config".into()],
+                    crates: vec!["gate".into(), "queue".into(), "release".into(), "spira-config".into()],
+                },
+            ),
+            (
+                &["spira/config-delta.d/sp-x.toml", "spira/config-delta.toml"],
+                Unit {
+                    touched: vec!["gate".into(), "queue".into(), "release".into(), "spira-config".into()],
+                    crates: vec!["gate".into(), "queue".into(), "release".into(), "spira-config".into()],
+                },
+            ),
+            (
+                &["spira/conf.d/X", "gate/src/x.rs"],
+                Unit {
+                    touched: vec!["gate".into(), "queue".into(), "release".into(), "spira-config".into()],
+                    crates: vec!["gate".into(), "queue".into(), "release".into(), "spira-config".into()],
+                },
+            ),
             (&[], Fences),
         ];
         for (paths, want) in rows {
             assert_eq!(&unit(GateMode::Unit, paths), want, "{paths:?}");
         }
+    }
+
+    #[test]
+    fn a_registry_edit_adds_the_readers_after_the_dependents_expansion_in_both_modes() {
+        for mode in [GateMode::Unit, GateMode::Fences] {
+            assert_eq!(crates(&unit(mode, &["spira/conf.d/X"])), v(&["gate", "queue", "release", "spira-config"]), "{mode:?}");
+            assert_eq!(
+                crates(&unit(mode, &["spira/conf.d/X", "dwarf/src/x.rs"])),
+                v(&["dwarf", "gate", "queue", "release", "spira-config"]),
+                "{mode:?}"
+            );
+        }
+        assert_eq!(
+            crates(&unit(GateMode::Unit, &["spira/conf.d/X", "queue/src/x.rs"])),
+            v(&["gate", "landing-pass", "queue", "release", "spira-config"])
+        );
+    }
+
+    #[test]
+    fn a_registry_file_with_an_exec_bit_is_still_registry() {
+        let w = ws();
+        let c = Changed { path: "spira/conf.d/X".into(), exec: true };
+        assert_eq!(classify(&c, &w), Class::Registry);
+        assert_eq!(classify(&Changed { path: "spira/deps.toml".into(), exec: false }, &w), Class::Config);
+    }
+
+    #[test]
+    fn a_registry_edit_selects_the_readers_and_not_spira_configs_dependents() {
+        let json = r#"{"workspace_root":"/t","workspace_members":["a","b","c"],"packages":[
+            {"id":"a","name":"spira-config","manifest_path":"/t/spira-config/Cargo.toml","dependencies":[]},
+            {"id":"b","name":"queue","manifest_path":"/t/queue/Cargo.toml","dependencies":[{"name":"spira-config","path":"/t/spira-config"}]},
+            {"id":"c","name":"release","manifest_path":"/t/release/Cargo.toml","dependencies":[]}]}"#;
+        let raw = b":100644 100644 aaa bbb M\0spira/conf.d/SPIRA_TASK_MODES\0";
+        for transitive in [false, true] {
+            assert_eq!(select_crates(raw, json, transitive).unwrap(), v(&["queue", "release", "spira-config"]));
+        }
+    }
+
+    #[test]
+    fn registry_readers_are_every_crate_whose_tests_read_the_registry() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let found = registry_reading_crates(&root);
+        let want: BTreeSet<String> = REGISTRY_READERS.iter().map(|s| s.to_string()).collect();
+        let missing: Vec<_> = found.difference(&want).collect();
+        let stale: Vec<_> = want.difference(&found).collect();
+        assert!(missing.is_empty() && stale.is_empty(), "REGISTRY_READERS lacks {missing:?}; names crates that read nothing: {stale:?}");
+    }
+
+    #[test]
+    fn the_registry_reader_scan_finds_a_planted_crate() {
+        let t = testkit::TempDir::new("registry-scan");
+        std::fs::write(t.path().join("Cargo.toml"), "[workspace]\nmembers = [\n    \"planted\",\n]\n").unwrap();
+        std::fs::create_dir_all(t.path().join("planted/src")).unwrap();
+        std::fs::write(t.path().join("planted/Cargo.toml"), "[package]\nname = \"planted-crate\"\n").unwrap();
+        std::fs::write(
+            t.path().join("planted/src/lib.rs"),
+            "fn f() { let _ = concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/../spira/conf.d/X\"); }\n",
+        )
+        .unwrap();
+        assert_eq!(registry_reading_crates(t.path()), BTreeSet::from(["planted-crate".to_string()]));
+    }
+
+    fn registry_reading_crates(root: &std::path::Path) -> BTreeSet<String> {
+        fn rs_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+            let Ok(rd) = std::fs::read_dir(dir) else { return };
+            for e in rd.flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    if p.file_name().is_some_and(|n| n != "target") {
+                        rs_files(&p, out);
+                    }
+                } else if p.extension().is_some_and(|x| x == "rs") {
+                    out.push(p);
+                }
+            }
+        }
+        let members: Vec<String> = std::fs::read_to_string(root.join("Cargo.toml"))
+            .unwrap()
+            .lines()
+            .skip_while(|l| !l.starts_with("members"))
+            .skip(1)
+            .take_while(|l| !l.starts_with(']'))
+            .map(|l| l.trim().trim_end_matches(',').trim_matches('"').to_string())
+            .filter(|m| !m.is_empty())
+            .collect();
+        let mut found = BTreeSet::new();
+        for m in members {
+            let dir = root.join(&m);
+            let Ok(toml) = std::fs::read_to_string(dir.join("Cargo.toml")) else { continue };
+            let name = toml
+                .lines()
+                .skip_while(|l| l.trim() != "[package]")
+                .find_map(|l| l.trim().strip_prefix("name = ").map(|v| v.trim_matches('"').to_string()))
+                .unwrap();
+            let mut files = Vec::new();
+            rs_files(&dir, &mut files);
+            let reads = files.iter().any(|f| {
+                std::fs::read_to_string(f).is_ok_and(|t| {
+                    let code = |l: &&str| !l.trim_start().starts_with("//");
+                    t.lines().filter(code).any(|l| l.contains("CARGO_MANIFEST_DIR") && (l.contains("spira/conf.d") || l.contains("spira/config-delta")))
+                        || (t.contains("CARGO_MANIFEST_DIR") && t.lines().filter(code).any(|l| l.contains("config_delta::load(")))
+                })
+            });
+            if reads {
+                found.insert(name);
+            }
+        }
+        found
     }
 
     #[test]
