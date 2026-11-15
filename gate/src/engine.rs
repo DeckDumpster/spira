@@ -1362,8 +1362,12 @@ impl<'w, W: World> Trial<'w, W> {
                         beads.join(", "))).collect();
                     return v(PASS, "pass", format!("gate: {name}'s own gate failed: {cmd}\n{out}\n{notes}"));
                 }
-                v(FAIL, "branch-red", format!(
-                    "gate: {name}'s own gate failed: {cmd}\n{out}\ngate: the same command passes against {base}, so this is the branch's own."))
+                let closing = if matches!(comp, Composition::Unit { .. }) {
+                    format!("gate: {base}'s fences pass; its tests were not run (unit mode tries the base's fences only), so the red is charged to this branch: {}", spaced(&parse::failed_tests(&out)))
+                } else {
+                    format!("gate: the same command passes against {base}, so this is the branch's own.")
+                };
+                v(FAIL, "branch-red", format!("gate: {name}'s own gate failed: {cmd}\n{out}\n{closing}"))
             }
             Attribution::BaseTimeout(s) => {
                 self.s.suite = s;
