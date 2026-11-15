@@ -73,7 +73,7 @@ fn opts(id: &str, cause: &str) -> Opts {
 #[test]
 fn happy_path_every_step_in_order() {
     let mut w = Fake::default();
-    let rc = run(&opts("sp-a", "gate-red"), &mut w);
+    let rc = run(&opts("sp-a", "gate-red"), &mut w).0;
     assert_eq!(rc, 0);
     assert_eq!(
         *w.calls.borrow(),
@@ -105,7 +105,7 @@ fn no_suites_means_no_sidecar_write() {
 #[test]
 fn work_close_converted_is_exempt_leaves_the_row_alone() {
     let mut w = Fake::default();
-    assert_eq!(run(&opts("sp-a", "work-close-converted"), &mut w), 0);
+    assert_eq!(run(&opts("sp-a", "work-close-converted"), &mut w).0, 0);
     assert!(!w.calls.borrow().iter().any(|c| c.starts_with("lc_reopen")), "the conversion carries the CERTIFIED row forward");
     assert!(w.has("write_reopen_event sp-a work-close-converted"));
 }
@@ -133,18 +133,18 @@ fn note_only_called_when_non_empty() {
 #[test]
 fn lc_reopen_failure_sets_rc_1() {
     let mut w = Fake { reopen_fails: true, ..Default::default() };
-    assert_eq!(run(&opts("sp-a", "gate-red"), &mut w), 1);
+    assert_eq!(run(&opts("sp-a", "gate-red"), &mut w).0, 1);
 }
 
 #[test]
 fn note_failure_sets_rc_1_but_only_when_a_note_was_given() {
     let mut w = Fake { note_fails: true, ..Default::default() };
-    assert_eq!(run(&opts("sp-a", "gate-red"), &mut w), 0, "no note given: note's own (would-be) failure never runs");
+    assert_eq!(run(&opts("sp-a", "gate-red"), &mut w).0, 0, "no note given: note's own (would-be) failure never runs");
 
     let mut w2 = Fake { note_fails: true, ..Default::default() };
     let mut o = opts("sp-a", "gate-red");
     o.note = "x".into();
-    assert_eq!(run(&o, &mut w2), 1);
+    assert_eq!(run(&o, &mut w2).0, 1);
 }
 
 #[test]
@@ -155,7 +155,7 @@ fn write_reopen_event_failure_can_never_set_rc_nonzero() {
     // the trait method has to consciously decide to keep ignoring it, not drift into
     // checking it by accident.
     let mut w = Fake::default();
-    assert_eq!(run(&opts("sp-a", "gate-red"), &mut w), 0);
+    assert_eq!(run(&opts("sp-a", "gate-red"), &mut w).0, 0);
     assert!(w.has("write_reopen_event sp-a gate-red"));
 }
 
@@ -164,7 +164,7 @@ fn every_failure_together_is_still_just_rc_1() {
     let mut w = Fake { reopen_fails: true, note_fails: true, ..Default::default() };
     let mut o = opts("sp-a", "gate-red");
     o.note = "x".into();
-    assert_eq!(run(&o, &mut w), 1);
+    assert_eq!(run(&o, &mut w).0, 1);
 }
 
 // ---------------------------------------------------------------------------------------
@@ -240,21 +240,21 @@ fn a_refused_stop_leaves_the_bead_working() {
         fn note(&mut self, i: &str, t: &str) -> Result<(), String> { self.0.note(i, t) }
     }
     let mut w = Stuck(Fake::default());
-    assert_eq!(run(&opts("sp-a", "local-tier-red"), &mut w), 1);
+    assert_eq!(run(&opts("sp-a", "local-tier-red"), &mut w).0, 1);
     assert!(w.0.calls.borrow().is_empty(), "the row moved with the dwarf still running: {:?}", w.0.calls.borrow());
 }
 
 #[test]
 fn the_stop_comes_before_the_state_leaves_working() {
     let mut w = Fake::default();
-    assert_eq!(run(&opts("sp-a", "local-tier-red"), &mut w), 0);
+    assert_eq!(run(&opts("sp-a", "local-tier-red"), &mut w).0, 0);
     let calls = w.calls.borrow();
     let stop = calls.iter().position(|c| c.starts_with("stop_holder")).unwrap();
     let lc = calls.iter().position(|c| c.starts_with("lc_reopen")).unwrap();
     assert!(stop < lc);
     drop(calls);
     let mut w = Fake::default();
-    assert_eq!(run(&opts("sp-a", "work-close-converted"), &mut w), 0);
+    assert_eq!(run(&opts("sp-a", "work-close-converted"), &mut w).0, 0);
     assert!(!w.has("stop_holder sp-a work-close-converted"), "a conversion is the holder's own hand-off");
 }
 
@@ -262,11 +262,11 @@ fn the_stop_comes_before_the_state_leaves_working() {
 fn only_a_red_ejection_records_failing_checks() {
     let red = Opts { id: "sp-a".into(), cause: "eject-red".into(), note: String::new(), suites: "test-x.sh,test-y.sh".into() };
     let mut w = Fake::default();
-    assert_eq!(run(&red, &mut w), 0);
+    assert_eq!(run(&red, &mut w).0, 0);
     assert!(w.has("record_failing sp-a test-x.sh,test-y.sh"), "{:?}", w.calls.borrow());
     let plain = Opts { cause: "eject".into(), ..red };
     let mut w = Fake::default();
-    assert_eq!(run(&plain, &mut w), 0);
+    assert_eq!(run(&plain, &mut w).0, 0);
     assert!(!w.calls.borrow().iter().any(|c| c.starts_with("record_failing")), "a harness eject judges nothing");
 }
 
@@ -274,11 +274,43 @@ fn only_a_red_ejection_records_failing_checks() {
 fn a_judged_reopen_records_a_rejection_and_a_harness_one_does_not() {
     let mut w = Fake::default();
     let red = Opts { id: "sp-a".into(), cause: "eject-red".into(), note: "five tests failed".into(), suites: "test-x.sh".into() };
-    assert_eq!(run(&red, &mut w), 0);
+    assert_eq!(run(&red, &mut w).0, 0);
     assert!(w.has("record_rejection sp-a eject-red|test-x.sh|five tests failed"), "{:?}", w.calls.borrow());
     for cause in ["eject", "gate-no-verdict", "gate-base-red", "queue-eject"] {
         let mut w = Fake::default();
-        assert_eq!(run(&Opts { cause: cause.into(), ..red.clone() }, &mut w), 0);
+        assert_eq!(run(&Opts { cause: cause.into(), ..red.clone() }, &mut w).0, 0);
         assert!(!w.calls.borrow().iter().any(|c| c.starts_with("record_rejection")), "{cause} is not a rejection");
     }
+}
+
+#[test]
+fn a_refused_lc_reopen_is_reported_with_its_step_and_the_machines_own_error() {
+    let mut w = Fake { reopen_fails: true, ..Default::default() };
+    let (code, failures) = run(&opts("sp-a", "gate-red"), &mut w);
+    assert_eq!(code, 1);
+    assert_eq!(failures.len(), 1);
+    assert!(failures[0].starts_with("lc-reopen:"), "{failures:?}");
+    assert!(failures[0].contains("machine refused"), "{failures:?}");
+}
+
+#[test]
+fn a_failed_note_is_reported_with_its_step_and_bds_own_error() {
+    let mut w = Fake { note_fails: true, ..Default::default() };
+    let mut o = opts("sp-a", "gate-red");
+    o.note = "why".into();
+    let (code, failures) = run(&o, &mut w);
+    assert_eq!(code, 1);
+    assert_eq!(failures.len(), 1);
+    assert!(failures[0].starts_with("note:"), "{failures:?}");
+    assert!(failures[0].contains("note refused"), "{failures:?}");
+}
+
+#[test]
+fn both_failures_are_reported_in_step_order() {
+    let mut w = Fake { reopen_fails: true, note_fails: true, ..Default::default() };
+    let mut o = opts("sp-a", "gate-red");
+    o.note = "why".into();
+    let (_, failures) = run(&o, &mut w);
+    assert_eq!(failures.len(), 2);
+    assert!(failures[0].starts_with("lc-reopen:") && failures[1].starts_with("note:"), "{failures:?}");
 }
