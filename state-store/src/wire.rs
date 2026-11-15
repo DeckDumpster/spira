@@ -204,6 +204,11 @@ mod tests {
                     key: "locks/runner-slot/proxmox/0".into(),
                     ttl_ms: 9000,
                 },
+                Op::LockRenew {
+                    key: "locks/round/r/b1".into(),
+                    token: Rev::new(4, 1),
+                    ttl_ms: 9000,
+                },
             ],
             else_ops: vec![Op::Put("faults/r/b/d".into(), Object::default())],
         };
