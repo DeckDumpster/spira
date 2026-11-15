@@ -260,12 +260,11 @@ fn gc_tick<B: state_store::Backend>(gc: &state_store::gc::Controller<B>, contrac
 fn gc_lines(tick: &state_store::gc::Tick, wall_ms: u64) -> Vec<String> {
     let at = spira_lc::sections::rfc3339(wall_ms);
     let mut lines: Vec<String> = tick.failed.iter().map(|f| format!("spira-lc serve: {at} control-store gc {f}")).collect();
-    if tick.orphans.len() + tick.expired.len() + tick.trimmed > 0 {
+    if tick.orphans.len() + tick.expired.len() > 0 {
         lines.push(format!(
-            "spira-lc serve: {at} control-store gc: {} orphans, {} expired, {} trimmed",
+            "spira-lc serve: {at} control-store gc: {} orphans, {} expired",
             tick.orphans.len(),
-            tick.expired.len(),
-            tick.trimmed
+            tick.expired.len()
         ));
     }
     lines
@@ -704,10 +703,10 @@ mod tests {
     fn a_gc_pass_is_logged_only_for_what_it_collected_or_failed() {
         let idle = state_store::gc::Tick::default();
         assert!(super::gc_lines(&idle, 0).is_empty(), "a pass that did nothing says nothing");
-        let busy = state_store::gc::Tick { orphans: vec!["a".into(), "b".into()], trimmed: 3, ..Default::default() };
+        let busy = state_store::gc::Tick { orphans: vec!["a".into(), "b".into()], ..Default::default() };
         let lines = super::gc_lines(&busy, 0);
         assert_eq!(lines.len(), 1, "{lines:?}");
-        assert!(lines[0].ends_with("control-store gc: 2 orphans, 0 expired, 3 trimmed"), "{}", lines[0]);
+        assert!(lines[0].ends_with("control-store gc: 2 orphans, 0 expired"), "{}", lines[0]);
         assert!(!lines[0].contains("scan"), "{}", lines[0]);
         let failed = state_store::gc::Tick {
             failed: vec![state_store::gc::StepFailure { step: "orphan", error: state_store::Error::Backend("x".into()) }],
