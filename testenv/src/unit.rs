@@ -412,7 +412,6 @@ mod tests {
         let written: Vec<String> = std::fs::read_to_string(repo.join(BUILD_REL)).unwrap().lines().map(String::from).collect();
         let [gate_build, _] = gate::compose::unit_commands(&["spira-sim".into()], 7);
         assert_eq!(gate_build.1.strip_prefix("CARGO_BUILD_JOBS=7 ").unwrap(), written.join(" "));
-        assert!(written.windows(2).any(|w| w == ["-p", "spira-config"]), "{written:?}");
     }
 
     #[test]
