@@ -235,7 +235,7 @@ mod tests {
     #[test]
     fn a_member_reaches_the_package_whose_tests_read_a_file_it_touches_and_no_other() {
         let g = PackageGraph {
-            dirs: [("release", "release"), ("gate", "gate")].iter().map(|(p, d)| (p.to_string(), d.to_string())).collect(),
+            dirs: [("release", "release"), ("spira-world", "spira-world")].iter().map(|(p, d)| (p.to_string(), d.to_string())).collect(),
             deps: BTreeMap::new(),
         };
         let d = [diff("a", "spira/config-delta.d/x.toml"), diff("b", "docs/x.md")];
@@ -243,7 +243,7 @@ mod tests {
         assert_eq!(got.len(), 1, "{got:?}");
         assert_eq!(got[0].0.as_str(), "a");
         assert!(got[0].1.contains("spira/config-delta.d/x.toml (read by release's tests)"), "{got:?}");
-        assert!(reaching(&g, &["gate".to_string()], &d).is_empty());
+        assert!(reaching(&g, &["spira-world".to_string()], &d).is_empty());
     }
 
     #[test]
