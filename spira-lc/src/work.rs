@@ -473,6 +473,7 @@ fn merge_refusal(git: &dyn Fn(&[&str]) -> (i32, String), landref: &str, base_fq:
             Some((CANNOT_TELL, format!("cannot tell: git merge-tree of {tip} onto {base_fq} failed: {last}")))
         }
     }
+}
 
 /// A commit citing a bead id the store does not hold refuses; a store that cannot answer is
 /// `CANNOT_TELL`, never a pass.
@@ -486,7 +487,6 @@ pub(crate) fn phantom_refusal(
         Ok(p) => Some((REFUSED, spira_config::cite::refusal(&p))),
         Err(e) => Some((CANNOT_TELL, format!("cannot tell: the bead store did not answer the citation check: {e}"))),
     }
-}
 }
 
 /// A sibling's commits may ride under this bead's (law-a-rebase-loop-is-sequenced-not-split): the
