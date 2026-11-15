@@ -366,13 +366,14 @@ fn pre_activate_env_builds_the_release_own_path_and_release_var() {
     let rel = PathBuf::from("/e").join(A);
     let envs = verify::pre_activate_env(&cfg, &rel).unwrap();
     assert_eq!(envs[0], (spira_config::RELEASE_ENV.to_string(), rel.display().to_string()));
-    assert_eq!(envs[1], ("PATH".to_string(), format!("{}/bin:{}/spira:/usr/local/bin:/usr/bin:/bin:/h/.local/bin:/h/.cargo/bin", rel.display(), rel.display())));
+    assert_eq!(envs[1], ("SPIRA_HOME".to_string(), format!("{}/spira", rel.display())));
+    assert_eq!(envs[2], ("PATH".to_string(), format!("{}/bin:{}/spira:/usr/local/bin:/usr/bin:/bin:/h/.local/bin:/h/.cargo/bin", rel.display(), rel.display())));
 
     // No tail configured: PATH ends at the system directories, same as `release_path`.
     let reg = Registered { releases: "/e".into(), releases_keep: "10".into(), ..Default::default() };
     let cfg = Config::resolve_with(&Flags::default(), &env, None, &reg).unwrap();
     let envs = verify::pre_activate_env(&cfg, &rel).unwrap();
-    assert_eq!(envs[1].1, format!("{}/bin:{}/spira:/usr/local/bin:/usr/bin:/bin", rel.display(), rel.display()));
+    assert_eq!(envs[2].1, format!("{}/bin:{}/spira:/usr/local/bin:/usr/bin:/bin", rel.display(), rel.display()));
 }
 
 /// The same refusal `host_values` gives a tail inside a release or a checkout (sp-c7b85)

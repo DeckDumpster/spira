@@ -2585,6 +2585,14 @@ mod tests {
     }
 
     #[test]
+    fn every_config_key_is_registered_in_conf_d() {
+        let conf_d = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/conf.d");
+        let missing = |keys: &[&str]| keys.iter().filter(|k| !conf_d.join(k).is_file()).map(|k| k.to_string()).collect::<Vec<_>>();
+        assert_eq!(missing(&["SPIRA_PLANTED_UNREGISTERED"]).len(), 1, "positive control: an unregistered key is reported");
+        assert!(missing(super::CONFIG_KEYS).is_empty(), "CONFIG_KEYS names keys spira/conf.d does not register: {:?}", missing(super::CONFIG_KEYS));
+    }
+
+    #[test]
     fn check_config_names_every_key_context_reads() {
         let src = include_str!("real.rs");
         let body = &src[src.find("fn context(").unwrap()..src.find("let s = Settings {").unwrap()];
