@@ -336,6 +336,26 @@ pub fn judge(w: &Workflows) -> Vec<(&'static str, String)> {
     ] {
         j.want(GATE, d, n, &cut);
     }
+    let assert = step(&cut, "Assert gate check", true);
+    j.located(GATE, "the cut's Assert gate check step", &assert);
+    for (d, n) in [
+        ("cut accepts queue and publish PR heads (sp-3e2wt)", "spira/queue/*|spira/publish/*)"),
+        ("cut refuses any other head", "is not the head of a queue batch PR"),
+        ("cut counts only a successful gate check", "select(.name == \"gate\" and .conclusion == \"success\")"),
+        ("cut compares the result count against the corpus", "_want=\"$(ls spira/test-*.sh | wc -l)\""),
+        ("a run short of the corpus refuses", "-ge \"${_want:-1}\""),
+    ] {
+        j.want(GATE, d, n, &assert);
+    }
+    let build = step(&cut, "Build spira-config for release.sh", true);
+    j.located(GATE, "the cut's Build spira-config step", &build);
+    j.want(GATE, "cut builds spira-config", "cargo build --release --locked -p spira-config", &build);
+    j.want(GATE, "cut puts spira-config on PATH", ">> \"$GITHUB_PATH\"", &build);
+    let line_of = |t: &str| cut.lines().position(|l| l == t);
+    match (line_of("      - name: Build spira-config for release.sh"), line_of("      - name: Cut release tag")) {
+        (Some(b), Some(c)) if b < c => {}
+        _ => j.fail(GATE, "cut builds spira-config before release.sh runs (sp-y5wki): expected the build step before \"Cut release tag\"".into()),
+    }
     let cut_out = between(&cut, |l| l.starts_with("    outputs:"), |l| {
         l.strip_prefix("    ").is_some_and(|r| {
             r.split_once(':').is_some_and(|(k, _)| !k.is_empty() && k.bytes().all(|b| b.is_ascii_lowercase() || b == b'_' || b == b'-'))
@@ -603,6 +623,41 @@ mod tests {
     #[test]
     fn the_shipped_workflows_pass() {
         assert_eq!(judge(&shipped()), Vec::<(&str, String)>::new());
+    }
+
+    /// sp-3e2wt: the cut accepted only queue heads and refused every publish-PR head.
+    #[test]
+    fn a_cut_that_refuses_publish_heads_is_caught() {
+        let got = planted(gate, "spira/queue/*|spira/publish/*)", "spira/queue/*)");
+        assert!(got.iter().any(|m| m.contains("cut accepts queue and publish PR heads")), "{got:?}");
+    }
+
+    /// sp-y5wki: release.sh dies with no spira-config on PATH.
+    #[test]
+    fn a_cut_without_the_spira_config_build_is_caught() {
+        let build = "      - name: Build spira-config for release.sh";
+        let cut = "      - name: Cut release tag";
+        let got = planted(gate, build, "      - name: Something else");
+        assert!(got.iter().any(|m| m.contains("cut's Build spira-config step")), "{got:?}");
+        let got = planted(gate, "cargo build --release --locked -p spira-config", "true");
+        assert!(got.iter().any(|m| m.contains("cut builds spira-config: expected")), "{got:?}");
+        let got = planted(gate, ">> \"$GITHUB_PATH\"", ">> /dev/null");
+        assert!(got.iter().any(|m| m.contains("cut puts spira-config on PATH")), "{got:?}");
+        let mut w = shipped();
+        let g = w.gate.take().unwrap();
+        w.gate = Some(g.replacen(build, "@@", 1).replacen(cut, build, 1).replacen("@@", cut, 1));
+        let got: Vec<String> = judge(&w).into_iter().map(|(_, m)| m).collect();
+        assert!(got.iter().any(|m| m.contains("cut builds spira-config before release.sh runs")), "{got:?}");
+    }
+
+    #[test]
+    fn a_cut_the_forge_does_not_vouch_for_is_caught() {
+        let got = planted(gate, ".conclusion == \"success\")] | length", "true)] | length");
+        assert!(got.iter().any(|m| m.contains("cut counts only a successful gate check")), "{got:?}");
+        let got = planted(gate, "is not the head of a queue batch PR", "is odd");
+        assert!(got.iter().any(|m| m.contains("cut refuses any other head")), "{got:?}");
+        let got = planted(gate, "-ge \"${_want:-1}\"", "-ge 0");
+        assert!(got.iter().any(|m| m.contains("a run short of the corpus refuses")), "{got:?}");
     }
 
     #[test]
