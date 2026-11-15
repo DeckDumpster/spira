@@ -27,6 +27,11 @@ path = "tests/locate_parity.rs"
 required-features = ["integration"]
 
 [[test]]
+name = "process_refusal_not_kept"
+path = "tests/process_refusal_not_kept.rs"
+required-features = ["integration"]
+
+[[test]]
 name = "registry_codegen"
 path = "tests/registry_codegen.rs"
 required-features = ["integration"]
