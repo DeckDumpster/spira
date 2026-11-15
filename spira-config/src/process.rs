@@ -1,7 +1,7 @@
 //! THE ONE DOOR to config for every binary (per Ryan 2026-10-05: one source of config).
 //!
 //! A process reads its configuration here and nowhere else: the file `$SPIRA_TOML` names,
-//! resolved once per process. No `env::var("SPIRA_X")`, no default, no fallback — a key the
+//! resolved once per process: a success is kept for the life of the process, a refusal never is. No `env::var("SPIRA_X")`, no default, no fallback — a key the
 //! file does not declare is an error, and so is a resolution that fails. A caller that
 //! cannot do its job without a value refuses, naming the key; it never invents one.
 
@@ -11,11 +11,16 @@ use std::sync::OnceLock;
 
 use crate::resolve::Resolved;
 
-static CONFIG: OnceLock<Result<Resolved, String>> = OnceLock::new();
+static CONFIG: OnceLock<Resolved> = OnceLock::new();
 
-/// This process's resolved config: `$SPIRA_TOML`, read once.
+/// This process's resolved config: `$SPIRA_TOML`, read until one resolution succeeds and then
+/// pinned. A refusal is returned, never kept: the next call reads again.
 pub fn config() -> Result<&'static Resolved, String> {
-    CONFIG.get_or_init(resolve_now).as_ref().map_err(|e| e.clone())
+    if let Some(kept) = CONFIG.get() {
+        return Ok(kept);
+    }
+    let resolved = resolve_now()?;
+    Ok(CONFIG.get_or_init(|| resolved))
 }
 
 fn resolve_now() -> Result<Resolved, String> {
