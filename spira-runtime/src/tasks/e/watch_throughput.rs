@@ -332,11 +332,32 @@ impl Handler for WatchThroughput {
 pub fn file(input: &str) -> Result<String, String> {
     let f: Filing = serde_json::from_str(input).map_err(|e| format!("{FILE}: {e}"))?;
     let reference = f.reference();
-    incident::intake::file_payload_with(&f.title, f.body.as_bytes(), |env| {
-        env.priority = "0".into();
-        env.express = true;
-        env.fenrir_exempt = true;
-        env.reference = Some(reference);
-    })
-    .map(|()| format!("filed {}", f.title))
+    incident::intake::file_payload_with(&f.title, f.body.as_bytes(), |env| tune(env, reference)).map(|()| format!("filed {}", f.title))
+}
+
+fn tune(env: &mut incident::intake::Env, reference: String) {
+    env.priority = "0".into();
+    env.express = true;
+    env.fenrir_exempt = true;
+    env.repo = Some(env.home_repo.clone());
+    env.reference = Some(reference);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::tune;
+
+    #[test]
+    fn a_stall_incident_is_filed_express_p0_against_the_home_repo() {
+        let mut env = incident::intake::Env::load();
+        env.home_repo = "spira".into();
+        env.repo = None;
+        env.express = false;
+        env.reference = None;
+        tune(&mut env, "incident:throughput-stall:alpha:7".into());
+        assert_eq!(env.repo.as_deref(), Some("spira"));
+        assert_eq!(env.priority, "0");
+        assert!(env.express);
+        assert_eq!(env.reference.as_deref(), Some("incident:throughput-stall:alpha:7"));
+    }
 }
