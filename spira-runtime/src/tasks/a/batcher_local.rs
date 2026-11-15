@@ -917,6 +917,11 @@ pub fn running_legs(listed: &[runtime::units::UnitDetail]) -> Vec<String> {
         .collect()
 }
 
+/// Whether any of `listed`, the units found under one round-recert driver's name, is running.
+pub fn recert_live(listed: &[runtime::units::UnitDetail]) -> bool {
+    listed.iter().any(|d| matches!(d.state, runtime::units::UnitState::Active | runtime::units::UnitState::Activating))
+}
+
 /// How long past its wall a leg with no `unit.ran` is given before it is judged lost.
 pub const LEG_GRACE_MS: u64 = 120_000;
 /// How long past its start a leg with no `unit.ran` is judged lost: a wall and grace, and for
@@ -2536,9 +2541,10 @@ pub mod edge {
         let enabled = spira_config::process::cfg("SPIRA_BATCHER_ENABLE")?.trim() != "0";
         let reg = io::registry(&env);
         let mut snap = Snapshot { now_ms: spira_config::vtime::now_epoch() * 1000, ..Snapshot::default() };
+        let units = e.units.as_deref();
         for name in reg.names().into_iter().filter(|n| reg.land(n) == "queue.local" && (enabled || n != reg.home_repo())) {
             let repo = batcher_cut::find_repo(&env, &name)?;
-            let mut seen = observe_repo(&env, &repo)?;
+            let mut seen = observe_repo(&env, &repo, units)?;
             seen.live_legs = live_legs(e);
             seen.scoped_batches = scoped_batches(e, &name, &carried);
             seen.settled = carried.repos.get(&name).map(|rc| settled_batches(&env, rc, &seen)).unwrap_or_default();
@@ -2591,7 +2597,15 @@ pub mod edge {
         Some(live)
     }
 
-    fn observe_repo(env: &Env, repo: &batcher_cut::io::Repo) -> Result<Repo, String> {
+    /// Whether the manager runs round-recert's driver unit for `batch`, bare or under a lease token.
+    /// A manager that errs reads as driven: no land is started on a guess; with none, undriven.
+    fn recert_driven(units: Option<&dyn runtime::units::Units>, batch: &str) -> bool {
+        let Some(units) = units else { return false };
+        let bare = release::round_recert::unit_for(batch, None);
+        [bare.clone(), format!("{bare}-*")].iter().any(|glob| units.list(glob).map_or(true, |l| super::recert_live(&l)))
+    }
+
+    fn observe_repo(env: &Env, repo: &batcher_cut::io::Repo, units: Option<&dyn runtime::units::Units>) -> Result<Repo, String> {
         let sifted = io::sifted_tips(env)?;
         let pool: Vec<Member> = io::certified_pool(env, repo)?
             .into_iter()
@@ -2613,7 +2627,7 @@ pub mod edge {
         let blockers = pool.iter().flat_map(|m| m.deps.clone()).collect();
         let branch_tips = pool.iter().map(|m| (m.id.clone(), m.tip.clone())).collect();
         let mut open = io::open_rounds(env, repo)?.into_iter().map(|r| {
-            let driven = io::certify_driven(env, &repo.name, &r.id);
+            let driven = io::certify_driven(env, &repo.name, &r.id) || recert_driven(units, &r.id);
             let unfit = io::round_certifiable(env, repo, &r.id).err();
             let queue = landing_pass::gateq::GateQueue::new(&env.run);
             let gate_red = with_failing(io::gate_red_rows(env, &r.members), |id, tip| queue.failing_at(&repo.name, &format!("spira/{id}"), tip));
@@ -2871,6 +2885,52 @@ pub mod edge {
             std::fs::write(&p, &leg.why).map_err(|e| format!("{}: {e}", p.display()))?;
         }
         Ok("{}".into())
+    }
+
+    #[cfg(test)]
+    mod recert_tests {
+        use crate::tasks::a::batcher_local::recert_live;
+        use runtime::units::{UnitDetail, UnitState};
+
+        fn unit(state: UnitState) -> UnitDetail {
+            UnitDetail { name: "round-recert-b1.service".into(), state, ..UnitDetail::default() }
+        }
+
+        #[test]
+        fn a_round_whose_recert_driver_unit_is_running_reads_driven() {
+            assert!(recert_live(&[unit(UnitState::Active)]));
+            assert!(recert_live(&[unit(UnitState::Activating)]));
+        }
+
+        #[test]
+        fn a_round_whose_recert_driver_unit_is_absent_or_ended_reads_undriven() {
+            assert!(!recert_live(&[]));
+            for s in [UnitState::Inactive, UnitState::Failed, UnitState::Deactivating, UnitState::Absent] {
+                assert!(!recert_live(&[unit(s)]), "{s:?}");
+            }
+        }
+    }
+
+    #[cfg(test)]
+    mod green_round_tests {
+        use crate::tasks::a::batcher_local::{decide, Carry, Repo, Round, Snapshot, LAND};
+
+        fn lands(driven: bool) -> bool {
+            let open = Round { id: "b1".into(), members: vec!["m1".into()], tips: vec!["t1".into()], head: "h1".into(), phase: "green".into(), driven, ..Round::default() };
+            let repo = Repo { open_round: Some(open), base_sha: "base".into(), ..Repo::default() };
+            let snap = Snapshot { repos: [("r".to_string(), repo)].into(), now_ms: 1_000_000 };
+            decide(&Carry::default(), &snap).1.iter().any(|a| a.effect == LAND)
+        }
+
+        #[test]
+        fn a_green_round_round_recert_still_drives_is_not_landed_by_the_tick() {
+            assert!(!lands(true));
+        }
+
+        #[test]
+        fn a_green_round_with_no_driver_is_adopted_and_landed() {
+            assert!(lands(false));
+        }
     }
 
     #[cfg(test)]
