@@ -944,7 +944,7 @@ fn sp_tjrjca_a_green_round_refused_base_moved_is_certified_again_and_landed() {
     r.tick(STREAM, ended(&unit, runtime::units::Exit::Code(0), "verdict=green\n")).unwrap();
     kit::assert_unpoisoned(&r, STREAM);
     let after: Vec<String> = asked_after(&r, n).into_iter().map(|(e, _)| e).collect();
-    assert_eq!(after, [LC_CERTIFY, LAND], "green again: it lands");
+    assert_eq!(after, [LC_CERTIFY, LAND, SUPERSEDE_REDS], "green again: it lands");
 
     let (_, acts) = on_outcome(&Carry { repos: [("spira".to_string(), RepoCarry { state: State::Landing, ..carry.repos["spira"].clone() })].into() }, LAND, true, &serde_json::to_string(&Landed::default()).unwrap(), &land, NOW);
     assert!(!acts.iter().any(|a| a.effect == ABANDON), "{acts:?}");
@@ -958,6 +958,38 @@ fn a_land_re_driven_after_it_landed_is_landed_not_red() {
     let (carry, acts) = on_outcome(&landing(), LAND, true, &serde_json::to_string(&Landed::default()).unwrap(), &land, NOW);
     assert!(!acts.iter().any(|a| a.effect == ABANDON), "{acts:?}");
     assert!(!carry.repos.contains_key("spira"), "the round is finished, not held red: {:?}", carry.repos);
+}
+
+fn supersede_legs(acts: &[Act]) -> Vec<Leg> {
+    acts.iter().filter(|a| a.effect == SUPERSEDE_REDS).map(|a| serde_json::from_str(&a.input).unwrap()).collect()
+}
+
+#[test]
+fn a_landed_round_asks_for_the_repos_local_reds_to_be_closed() {
+    let land = Leg { batch: "r9".into(), ..Leg::on("spira") };
+    let (_, acts) = on_outcome(&landing(), LAND, true, &serde_json::to_string(&Landed::default()).unwrap(), &land, NOW);
+    let legs = supersede_legs(&acts);
+    assert_eq!(legs.len(), 1, "{acts:?}");
+    assert_eq!(legs[0].repo, "spira");
+}
+
+#[test]
+fn a_staged_landing_promotes_and_asks_for_the_local_reds_to_be_closed() {
+    let land = Leg { batch: "r9".into(), ..Leg::on("spira") };
+    let staged = serde_json::to_string(&Landed { staged: Some("r10".into()), ..Landed::default() }).unwrap();
+    let (_, acts) = on_outcome(&landing(), LAND, true, &staged, &land, NOW);
+    assert!(acts.iter().any(|a| a.effect == PROMOTE), "{acts:?}");
+    assert_eq!(supersede_legs(&acts).len(), 1, "{acts:?}");
+}
+
+#[test]
+fn a_base_moved_or_refused_land_closes_no_local_reds() {
+    let land = Leg { batch: "r9".into(), ..Leg::on("spira") };
+    let moved = serde_json::to_string(&Landed { base_moved: Some("b2".into()), ..Landed::default() }).unwrap();
+    let (_, acts) = on_outcome(&landing(), LAND, true, &moved, &land, NOW);
+    assert!(supersede_legs(&acts).is_empty(), "{acts:?}");
+    let (_, acts) = on_outcome(&landing(), LAND, false, "refused", &land, NOW);
+    assert!(supersede_legs(&acts).is_empty(), "{acts:?}");
 }
 
 /// At most once per base change: base-moved again on the same base is a red, abandoned.

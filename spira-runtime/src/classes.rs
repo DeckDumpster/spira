@@ -54,6 +54,7 @@ pub const CLASSES: &[(&str, EffectClass)] = &[
     ("batcher.local.redrive", Unit),
     ("batcher.local.round_open", Store),
     ("batcher.local.stage_test", Git),
+    ("batcher.local.supersede_reds", Store),
     ("batcher.local.stage", Unit),
     ("batcher.local.withdraw", Store),
     ("bead-sweep.observe", Store),
