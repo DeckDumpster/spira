@@ -284,6 +284,12 @@ pub fn keep_and_reference(lc: &dyn Fn(&[String]) -> Result<String, String>, run:
     Ok(id)
 }
 
+/// Keeps the reason sift sends `bead` back with as `sift.txt` and references it from the bead's facts.
+pub fn keep_sift(lc: &dyn Fn(&[String]) -> Result<String, String>, run: &std::path::Path, bead: &str, reason: &str) -> Result<String, String> {
+    let days = crate::process::cfg_parse::<u32>("SPIRA_SENDBACK_KEEP_DAYS")?;
+    keep_and_reference(lc, run, &[bead], "sift", &[("sift.txt".to_string(), reason.as_bytes().to_vec())], days)
+}
+
 /// Writes the `send-back-logs` fact naming `id` on each bead.
 pub fn reference(lc: &dyn Fn(&[String]) -> Result<String, String>, beads: &[&str], actor: &str, id: &str) -> Result<(), String> {
     for b in beads {

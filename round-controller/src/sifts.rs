@@ -179,7 +179,9 @@ impl Acts for Live<'_> {
         bead_note(self.env, id, text)
     }
     fn gate_red(&mut self, id: &str, tip: &str, reason: &str) -> Result<(), String> {
-        lc_gate_red(&client_of(self.env)?, id, tip, reason)
+        let lc = client_of(self.env)?;
+        keep_sift_logs(&lc, &self.env.run, id, reason);
+        lc_gate_red(&lc, id, tip, reason)
     }
     fn supersede(&mut self, id: &str, keeper: &str) -> Result<(), String> {
         let reason = format!("Sift: identical patch (patch-id) to {keeper}.");
@@ -685,6 +687,14 @@ fn bead_event(lc: &LcClient, id: &str, state: &str, version: u64, kind: Value) -
 
 /// Sends `id` back with `GateRed(reason)`, only while it is still the SUBMITTED or CERTIFIED
 /// bead at the tip the screen judged.
+/// Keeps `reason` as a send-back log entry of `id`; a failure is said and never stops the send-back.
+pub fn keep_sift_logs(lc: &LcClient, run: &std::path::Path, id: &str, reason: &str) {
+    let ask = |a: &[String]| lcq_with(lc, &a.iter().map(String::as_str).collect::<Vec<_>>());
+    if let Err(e) = spira_config::ejection::keep_sift(&ask, run, id, reason) {
+        eprintln!("sift: {id} send-back logs not kept: {e}");
+    }
+}
+
 pub fn lc_gate_red(lc: &LcClient, id: &str, tip: &str, reason: &str) -> Result<(), String> {
     let b = show(lc, id)?;
     let version = b.version.ok_or("show: no version")?;

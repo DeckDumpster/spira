@@ -23,6 +23,10 @@ impl Acts for Live<'_> {
         io::bead_note(self.env, id, text)
     }
     fn gate_red(&mut self, id: &str, tip: &str, reason: &str) -> Result<(), String> {
+        let lc = |a: &[String]| io::lcq(self.env, &a.iter().map(String::as_str).collect::<Vec<_>>());
+        if let Err(e) = spira_config::ejection::keep_sift(&lc, &self.env.run, id, reason) {
+            eprintln!("batcher: sift: {id} send-back logs not kept: {e}");
+        }
         io::lc_gate_red(self.env, id, tip, reason)
     }
     fn supersede(&mut self, id: &str, keeper: &str) -> Result<(), String> {

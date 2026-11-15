@@ -2175,6 +2175,67 @@ pub fn record_ejection(env: &Env, id: &str, tip: &str, files: &[String], (result
     }
 }
 
+/// Every regular file of a results directory, and of each directory one level down, named
+/// `<prefix>-<file>` or `<prefix>-<dir>-<file>`: send-back entries hold no subdirectory.
+fn flat_files(dir: &Path, prefix: &str, out: &mut Vec<(String, Vec<u8>)>) {
+    let mut entries: Vec<_> = fs::read_dir(dir).into_iter().flatten().flatten().collect();
+    entries.sort_by_key(|e| e.file_name());
+    for e in entries {
+        let name = e.file_name().to_string_lossy().into_owned();
+        let path = e.path();
+        if path.is_dir() {
+            for f in fs::read_dir(&path).into_iter().flatten().flatten().filter(|f| f.path().is_file()) {
+                if let Ok(bytes) = fs::read(f.path()) {
+                    out.push((format!("{prefix}-{name}-{}", f.file_name().to_string_lossy()), bytes));
+                }
+            }
+        } else if path.is_file() {
+            if let Ok(bytes) = fs::read(&path) {
+                out.push((format!("{prefix}-{name}"), bytes));
+            }
+        }
+    }
+}
+
+/// The files a round's send-back entry holds: the pass's results under `pass-…`, the
+/// attribution's own under `attribution-…`.
+pub fn send_back_files(evidence: &Path, pass: Option<&Path>) -> Vec<(String, Vec<u8>)> {
+    let mut out = Vec::new();
+    if let Some(p) = pass {
+        flat_files(p, "pass", &mut out);
+    }
+    flat_files(evidence, "attribution", &mut out);
+    out
+}
+
+/// The round's send-back entry id: `make` runs on the first call only and its answer is kept in
+/// `cache`, so every eject of one process names one entry.
+pub fn send_back_entry(cache: &mut Option<String>, make: impl FnOnce() -> Result<String, String>) -> Option<String> {
+    if cache.is_none() {
+        match make() {
+            Ok(id) => *cache = Some(id),
+            Err(e) => eprintln!("batcher: send-back logs not kept: {e}"),
+        }
+    }
+    cache.clone()
+}
+
+/// Keeps the round's output once and references it from `bead`'s facts.
+pub fn reference_round_logs(env: &Env, cache: &mut Option<String>, evidence: &Path, pass: Option<&Path>, bead: &str) {
+    let lc = |args: &[String]| lcq(env, &args.iter().map(String::as_str).collect::<Vec<_>>());
+    let id = send_back_entry(cache, || {
+        let days = spira_config::process::cfg_parse::<u32>("SPIRA_SENDBACK_KEEP_DAYS")?;
+        let files = send_back_files(evidence, pass);
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+        spira_config::sendback::keep(&env.run, "round", &files, days, now)
+    });
+    if let Some(id) = id {
+        if let Err(e) = spira_config::ejection::reference(&lc, &[bead], "round", &id) {
+            eprintln!("batcher: {bead} send-back logs not referenced: {e}");
+        }
+    }
+}
+
 /// The first line of a suite's output that reports a failure, trimmed and bounded.
 pub fn first_fail_line(out: &str) -> Option<String> {
     let l = out.lines().map(str::trim).find(|l| {
@@ -4355,6 +4416,24 @@ mod pool_parity_tests {
 #[cfg(test)]
 mod result_path_tests {
     use super::*;
+
+    #[test]
+    fn a_rounds_send_back_files_name_the_pass_and_the_attribution_and_two_ejects_share_one_entry() {
+        let (ev, pass) = (tmpdir("sb-ev"), tmpdir("sb-pass"));
+        fs::write(pass.path().join("spira-lint.out"), "lint red").unwrap();
+        fs::write(ev.path().join("test-a.sh.out"), "a red").unwrap();
+        fs::create_dir(ev.path().join("key1")).unwrap();
+        fs::write(ev.path().join("key1").join("test-b.sh.out"), "b").unwrap();
+        let files = send_back_files(ev.path(), Some(pass.path()));
+        let names: Vec<&str> = files.iter().map(|(n, _)| n.as_str()).collect();
+        assert!(names.contains(&"pass-spira-lint.out") && names.contains(&"attribution-test-a.sh.out") && names.contains(&"attribution-key1-test-b.sh.out"), "{names:?}");
+        assert!(names.iter().all(|n| !n.contains('/')));
+        let mut cache = None;
+        let mut made = 0;
+        let a = send_back_entry(&mut cache, || { made += 1; Ok("round-1-0".into()) });
+        let b = send_back_entry(&mut cache, || { made += 1; Ok("round-2-0".into()) });
+        assert_eq!((a, b, made), (Some("round-1-0".into()), Some("round-1-0".into()), 1));
+    }
 
     fn tmpdir(tag: &str) -> testkit::TempDir {
         testkit::TempDir::new(&format!("batcher-cut-results-{tag}"))

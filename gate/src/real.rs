@@ -739,6 +739,14 @@ impl World for Real {
     fn lc_failure(&self, bead: &str, tip: &str, files: &[String], output: &str) {
         let _ = spira_config::ejection::record(&spira_config::ejection::cli, bead, tip, files, &[], &spira_config::ejection::red_steps(output), "gate");
     }
+    fn keep_logs(&self, beads: &[&str], files: &[(String, Vec<u8>)]) {
+        let kept = spira_config::process::cfg("SPIRA_RUN")
+            .and_then(|run| spira_config::process::cfg_parse::<u32>("SPIRA_SENDBACK_KEEP_DAYS").map(|days| (run, days)))
+            .and_then(|(run, days)| spira_config::ejection::keep_and_reference(&spira_config::ejection::cli, Path::new(&run), beads, "gate", files, days));
+        if let Err(e) = kept {
+            eprintln!("gate: send-back logs not kept: {e}");
+        }
+    }
     fn lc_gate_start(&self, bead: &str) {
         let _ = spira_config::bounded::bounded("spira-lc")
             .args(["fact", bead, "--kind", "gate-start", "--actor", "gate"])
