@@ -14,7 +14,9 @@
 //! there are `SPIRA_THROUGHPUT_RATIO_MIN_RUNS` of them) is paged, and so is a round that passed and
 //! has not landed within `SPIRA_THROUGHPUT_PASSED_GRACE` seconds. Round record files naming a round
 //! the store has ended, or never held, are removed each tick (`CLEAR`); a file naming a round the
-//! store holds open, or cannot answer for, is refused clearing and paged by name once.
+//! store holds open, or cannot answer for, is refused clearing and paged by name once. A bare
+//! `forge-state` file (`pending`, naming no round) is live while the store holds an open batch for
+//! its repo, and refused and paged by name when it holds none or cannot say.
 //!
 //! A landing is a commit naming a bead on a repo's landing ref (resolved as `spira_landref` does,
 //! never the lane name): the ref is the authority on what landed. A count that cannot be read

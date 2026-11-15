@@ -961,8 +961,27 @@ impl World {
             Err(e) if e.trim() == "{}" => Ok(None),
             Err(e) => Err(e),
         });
-        parts.held.extend(bare.iter().map(|f| format!("{} names no round, so it cannot be told from a live record", f.path.display())));
+        for f in &bare {
+            if f.path.file_name().is_some_and(|n| n == "forge-state") {
+                if let Some(why) = self.forge_state_refusal(&f.path) {
+                    parts.held.push(why);
+                }
+            } else {
+                parts.held.push(format!("{} names no round, so it cannot be told from a live record", f.path.display()));
+            }
+        }
         parts
+    }
+
+    /// Why a bare `forge-state` file is refused: `None` while the store holds an open batch for its repo, the file's live record.
+    fn forge_state_refusal(&self, path: &Path) -> Option<String> {
+        let repo = path.parent().and_then(Path::file_name).map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let lc = queue::real::RealLc { bin: None, client: Some(spira_store::lc_call::LcClient::socket(&self.lc_socket)) };
+        match queue::batches::open_batches(&lc, &repo) {
+            Ok(open) if !open.is_empty() => None,
+            Ok(_) => Some(format!("{} names no round and the store holds no open batch for {repo}", path.display())),
+            Err(e) => Some(format!("{} names no round and the store cannot tell whether {repo} has an open batch: {e}", path.display())),
+        }
     }
 
     /// Removes the round record files in `input` (a JSON list of paths) that the store still says

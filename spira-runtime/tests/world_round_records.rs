@@ -10,10 +10,35 @@ use runtime::RuntimeError;
 use spira_runtime::world::World;
 
 type States = Arc<Mutex<BTreeMap<String, String>>>;
+type OpenByRepo = Arc<Mutex<BTreeMap<String, Vec<String>>>>;
+
+const REFUSING_REPO: &str = "refusing";
+
+fn listed(prefixes: &[String], open: &OpenByRepo) -> String {
+    let items: Vec<_> = open
+        .lock()
+        .unwrap()
+        .iter()
+        .flat_map(|(repo, ids)| ids.iter().map(move |id| (repo.clone(), id.clone())))
+        .filter(|(repo, id)| prefixes.iter().any(|p| format!("batches/{repo}/{id}").starts_with(p.as_str())))
+        .enumerate()
+        .map(|(n, (repo, id))| {
+            serde_json::json!({
+                "key": format!("batches/{repo}/{id}"),
+                "value": { "data": { "batch_id": id, "repo": repo, "state": "Open" } },
+                "mod_rev": { "main": n + 1, "sub": 0 },
+                "create_rev": { "main": n + 1, "sub": 0 },
+                "lock_expires_at_ms": null,
+            })
+        })
+        .collect();
+    serde_json::json!({ "ok": { "items": items, "list_rev": 1 } }).to_string()
+}
 
 struct Rig {
     dir: testkit::TempDir,
     states: States,
+    open: OpenByRepo,
     world: World,
 }
 
@@ -23,6 +48,8 @@ fn rig(on_store: bool, states: &[(&str, &str)]) -> Rig {
     let listener = UnixListener::bind(&sock).unwrap();
     let states: States = Arc::new(Mutex::new(states.iter().map(|(b, s)| (b.to_string(), s.to_string())).collect()));
     let served = states.clone();
+    let open: OpenByRepo = Arc::default();
+    let listing = open.clone();
     std::thread::spawn(move || {
         runtime::socket::answer(&listener, &|argv| match argv {
             [v, batch] if v == "show-batch" && batch == "unreadable" => Err(RuntimeError::new("cannot tell: store down")),
@@ -30,13 +57,25 @@ fn rig(on_store: bool, states: &[(&str, &str)]) -> Rig {
                 Some(s) => Ok(serde_json::json!({ "state": s }).to_string()),
                 None => Err(RuntimeError::new("{}")),
             },
+            [rc, list, json, body] if rc == "rc" && list == "list" && json == "--json" => {
+                let prefixes: Vec<String> = serde_json::from_str::<serde_json::Value>(body).unwrap()["prefixes"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|p| p.as_str().unwrap().to_string())
+                    .collect();
+                match prefixes.iter().any(|p| p.contains(&format!("/{REFUSING_REPO}/"))) {
+                    true => Err(RuntimeError::new("store down")),
+                    false => Ok(listed(&prefixes, &listing)),
+                }
+            }
             _ => Err(RuntimeError::new("the double has no such verb")),
         })
     });
     let queue = dir.path().join("queue");
     std::fs::create_dir_all(queue.join("alpha")).unwrap();
     let world = World { lc_socket: sock, queue_dir: queue, batches_on_store: on_store, ..World::default() };
-    Rig { dir, states, world }
+    Rig { dir, states, open, world }
 }
 
 fn plant(r: &Rig, name: &str, text: &str) -> PathBuf {
@@ -101,4 +140,41 @@ fn nothing_is_cleared_while_the_batch_machine_is_not_on_the_store() {
     let f = plant(&r, "round.b-gone", "batch_id=b-gone\n");
     r.world.clear_round_records(&paths(&[&f])).unwrap();
     assert!(f.exists(), "an absent batch is no evidence the record is stale before the cutover");
+}
+
+fn forge_state_rig(repo: &str, open: &[&str]) -> (Rig, PathBuf) {
+    let r = rig(true, &[]);
+    std::fs::create_dir_all(r.dir.path().join("queue").join(repo)).unwrap();
+    let f = r.dir.path().join("queue").join(repo).join("forge-state");
+    std::fs::write(&f, "pending\n").unwrap();
+    r.open.lock().unwrap().insert(repo.into(), open.iter().map(|b| b.to_string()).collect());
+    (r, f)
+}
+
+#[test]
+fn a_pending_forge_state_is_live_while_its_repo_has_an_open_batch() {
+    let (r, f) = forge_state_rig("alpha", &["alpha-20261115T130339Z"]);
+    let p = r.world.round_record_partition();
+    assert!(p.clear.is_empty() && p.held.is_empty(), "{:?} {:?}", p.clear, p.held);
+    r.world.clear_round_records(&paths(&[&f])).unwrap();
+    assert!(f.exists());
+}
+
+#[test]
+fn a_pending_forge_state_is_refused_by_name_when_its_repo_has_no_open_batch() {
+    let (r, f) = forge_state_rig("alpha", &[]);
+    r.open.lock().unwrap().insert("beta".into(), vec!["beta-1".into()]);
+    let p = r.world.round_record_partition();
+    assert!(p.clear.is_empty(), "{:?}", p.clear);
+    assert_eq!(p.held.len(), 1, "{:?}", p.held);
+    assert!(p.held[0].contains(&f.display().to_string()) && p.held[0].contains("no open batch for alpha"), "{}", p.held[0]);
+}
+
+#[test]
+fn a_pending_forge_state_is_refused_when_the_store_cannot_say_whether_its_repo_has_an_open_batch() {
+    let (r, f) = forge_state_rig(REFUSING_REPO, &[]);
+    let p = r.world.round_record_partition();
+    assert!(p.clear.is_empty(), "{:?}", p.clear);
+    assert_eq!(p.held.len(), 1, "{:?}", p.held);
+    assert!(p.held[0].contains(&f.display().to_string()) && p.held[0].contains("cannot tell whether refusing has an open batch"), "{}", p.held[0]);
 }
