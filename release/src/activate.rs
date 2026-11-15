@@ -759,6 +759,7 @@ const KILL_RESTARTED: &str = "dolt-beads.service";
 /// or its source changes. A rebuild that changed the binary's bytes but not the source it is
 /// compiled from (`backend_source`) leaves it running.
 const COMPILER_CACHE_BACKEND: &str = "sccache-dav.service";
+const BACKEND_CRATE_DIR: &str = "sccache-dav";
 
 /// The two release roots a unit's paths resolve under (sp-m9rruh): the one `current` named
 /// before this switch, which the running process started from, and the one it switches to.
@@ -837,7 +838,7 @@ fn backend_binary_changed(roots: &Roots) -> Option<String> {
 fn backend_source(root: &Path) -> Option<std::collections::BTreeMap<PathBuf, Vec<u8>>> {
     let mut files = std::collections::BTreeMap::new();
     let mut seen = BTreeSet::new();
-    let mut pending = vec![PathBuf::from("sccache-dav")];
+    let mut pending = vec![PathBuf::from(BACKEND_CRATE_DIR)];
     while let Some(dir) = pending.pop() {
         if !seen.insert(dir.clone()) {
             continue;
