@@ -35,7 +35,7 @@ pub const LIMIT_KEYS: [&str; 10] = [
 ];
 
 /// Where each `spira-lc stats` verb is drawn; a verb not named here sits on the control bus.
-const VERB_STATIONS: &[(&str, &[&str])] = &[("claim-verdicts", &["bead.claim"]), ("work", &["bead.build"])];
+const VERB_STATIONS: &[(&str, &[&str])] = &[("claimable", &["bead.claim"]), ("work", &["bead.build"])];
 /// The tsd families read, and where each is drawn; the second is the field that holds the wait.
 const TSD_SENSORS: &[(&str, &str, &[&str])] = &[("admission", "waited_secs", &["bead.build"]), ("cert-pass", "capacity_wait_s", &["batch.pass", "batch.CI_RUNNING"])];
 const BUS: &str = "*";
@@ -1501,7 +1501,7 @@ mod tests {
         assert_eq!((work["reading"].as_str(), work["at"].clone(), work["status"].as_str()), (Some("4 calls · mean 1000 ms"), json!(["bead.build"]), Some("OK")));
         assert_eq!(sensor(&f, "perf.renew")["at"], json!(["*"]));
         assert_eq!(sensor(&f, "perf.peek")["reading"], "peek: 10 calls · mean 0.4 ms", "a fast verb is not a zero mean");
-        assert_eq!(sensor(&f, "perf.claim-verdicts")["status"], "BLIND", "a verb never called is not a zero");
+        assert_eq!(sensor(&f, "perf.claimable")["status"], "BLIND", "a verb never called is not a zero");
         assert!(sensor(&f, "perf.writes")["reading"].as_str().unwrap().starts_with("9 writes · 3 commits · 2 groups"));
     }
 

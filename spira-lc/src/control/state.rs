@@ -127,13 +127,6 @@ fn column(rec: &LifecycleRecord, r: Option<&Readiness>, view: &Value, name: &str
         "sifted_tip" => text(row.sifted_tip.as_deref()),
         "updated_at" => number(Some(rec.updated_at)),
         "repo" => text(rec.repo.as_deref()),
-        "claim_verdict" => text(r.and_then(|r| r.verdict.as_deref())),
-        "claim_blocker" => text(r.and_then(|r| r.blocker.as_deref())),
-        "claim_runes" => {
-            let runes = r.map(|r| r.runes.join(",")).unwrap_or_default();
-            text(Some(runes.as_str()).filter(|s| !s.is_empty()))
-        }
-        "claim_at" => text(r.and_then(|r| r.verdict_at.as_deref())),
         "claim" => rec.claim.as_ref().map_or(Value::Null, |c| serde_json::to_value(c).unwrap_or(Value::Null)),
         "carried_by" => text(rec.carried_by.as_deref()),
         "claim_view" => view.clone(),
@@ -192,10 +185,6 @@ const LISTED: &[&str] = &[
     "ejected_red_tip",
     "sifted_tip",
     "repo",
-    "claim_verdict",
-    "claim_blocker",
-    "claim_runes",
-    "claim_at",
     "blocked_by",
     "claim_view",
     "claim",

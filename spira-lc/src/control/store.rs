@@ -57,15 +57,6 @@ pub type Snapshot = (
     u64,
 );
 
-/// One entry of a dispatcher pass.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Verdict {
-    pub id: String,
-    pub verdict: String,
-    pub blocker: Option<String>,
-    pub runes: Vec<String>,
-}
-
 /// One state's run through the state index in [`Store::records_page`]'s merge.
 struct StateRun {
     name: String,
@@ -1039,31 +1030,6 @@ impl<B: Backend> Store<B> {
             rev: r.rev,
             refusal,
         })
-    }
-
-    /// One dispatcher pass onto `readiness/<id>`, keeping what other publishers wrote there.
-    pub fn publish_verdicts(
-        &self,
-        verdicts: &[Verdict],
-        judged_at: &str,
-        req: &Request,
-    ) -> Result<u64> {
-        self.merge_readiness(
-            verdicts,
-            |v| &v.id,
-            "verdicts",
-            req,
-            |r, v, head| {
-                r.verdict = Some(v.verdict.clone());
-                r.blocker = v.blocker.clone();
-                r.runes = v.runes.clone();
-                r.judged_at = Some(judged_at.to_string());
-                r.verdict_at = Some(judged_at.to_string());
-                if !r.judged_for_claim {
-                    r.judged_at_rev = head;
-                }
-            },
-        )
     }
 
     /// The running pass's counts, under the batch's own progress key, which goes with the batch.

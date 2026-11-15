@@ -1,6 +1,6 @@
 //! The control store as lc-serve opens it — SQLite under the in-memory read model — answering
 //! the observers' verbs: a read after a commit reflects it, a read that names a revision is at
-//! least that fresh, and list, show and claim-verdicts neither read the database nor wait for a
+//! least that fresh, and list and show neither read the database nor wait for a
 //! commit in flight.
 
 use std::sync::{Arc, Condvar, Mutex};
@@ -117,14 +117,6 @@ fn a_read_after_a_commit_reflects_it_and_never_reads_the_database() {
     assert_eq!(shown["bead"]["state"], "WORKING");
     assert!(shown["bead"]["lease_until"].as_str().is_some_and(|l| !l.is_empty()), "the lease is projected from the claim's lock: {shown}");
     assert_eq!(sqlite().take(), Vec::<String>::new(), "list and show read nothing from SQLite");
-    let body = r#"{"computed_at":"2026-01-01T00:00:00Z","entries":[{"id":"sp-b","verdict":"claimable","runes":["builder"]}]}"#;
-    ok(&s, &["claim-verdicts", "--json", body]);
-    // A write's idempotency check reads its request key, which the model leaves to SQLite.
-    let read = sqlite().take();
-    assert!(!read.is_empty() && read.iter().all(|k| k.starts_with(state_store::REQUESTS_PREFIX)), "claim-verdicts read only its request key from SQLite: {read:?}");
-    let listed: Vec<serde_json::Value> = serde_json::from_str(&ok(&s, &["list", "--ids", "sp-b"])).unwrap();
-    assert_eq!(listed[0]["claim_verdict"], "claimable", "the verdict pass is read back at once");
-    assert_eq!(sqlite().take(), Vec::<String>::new());
 }
 
 #[test]
@@ -216,7 +208,7 @@ impl Backend for Stalled {
 }
 
 #[test]
-fn list_show_and_a_claim_verdict_read_do_not_wait_for_a_commit_in_flight() {
+fn list_and_show_do_not_wait_for_a_commit_in_flight() {
     let b = Stalled::default();
     let s = Arc::new(store(b.clone()));
     for id in ["sp-a", "sp-b"] {
@@ -251,7 +243,7 @@ fn list_show_and_a_claim_verdict_read_do_not_wait_for_a_commit_in_flight() {
 }
 
 /// A production-size store (13k records, 300k audit events) read by `list` and `show`, from
-/// SQLite alone and through the read model, quiet and while a verdict pass commits beside it.
+/// SQLite alone and through the read model, quiet.
 /// A measurement, not an assertion: `cargo test --release -p spira-lc -- --ignored --nocapture
 /// production_size`.
 #[test]
@@ -263,8 +255,6 @@ fn production_size_list_and_show_latency() {
     // One record as the verbs write it, then copied under 13k ids by a bulk load.
     let proto = store(MemBackend::new());
     ok(&proto, &["create-bead", "sp-proto", "--repo", "spira", "--ready"]);
-    let body = r#"{"computed_at":"2026-01-01T00:00:00Z","entries":[{"id":"sp-proto","verdict":"claimable","runes":["builder"]}]}"#;
-    ok(&proto, &["claim-verdicts", "--json", body]);
     let head = proto.contract().head().unwrap();
     let (items, _) = proto.contract().list(&[""], &state_store::Selector::Everything).unwrap();
     let event = items.iter().find(|i| i.key.starts_with(state_store::EVENTS_PREFIX)).unwrap().value.encode();
@@ -305,33 +295,8 @@ fn production_size_list_and_show_latency() {
         t.sort();
         (t[20], t[37])
     }
-    fn writer<B: Backend + 'static>(s: Arc<Store<B>>, stop: Arc<std::sync::atomic::AtomicBool>) -> std::thread::JoinHandle<(usize, Duration)> {
-        std::thread::spawn(move || {
-            let entries: Vec<String> = (0..BEADS).step_by(100).map(|n| format!(r#"{{"id":"sp-b{n:05}","verdict":"claimable","runes":["builder"]}}"#)).collect();
-            let body = format!(r#"{{"computed_at":"2026-01-01T00:00:00Z","entries":[{}]}}"#, entries.join(","));
-            let (mut n, mut took) = (0, Duration::ZERO);
-            while !stop.load(std::sync::atomic::Ordering::SeqCst) {
-                let at = Instant::now();
-                ok(&s, &["claim-verdicts", "--json", &body]);
-                took += at.elapsed();
-                n += 1;
-            }
-            (n, took)
-        })
-    }
     let verbs: [&[&str]; 5] = [&["list"], &["list", "--live"], &["list", "--state", "READY,REWORK"], &["list", "--ids", "sp-b00003,sp-b00103,sp-b05000"], &["show", "sp-b00003"]];
     for (name, quiet_plain, quiet_model) in verbs.iter().map(|v| (v.join(" "), p50(&plain, v), p50(&modeled, v))) {
         println!("quiet  {name:40} sqlite p50 {:>10.3?} p90 {:>10.3?} | model p50 {:>10.3?} p90 {:>10.3?}", quiet_plain.0, quiet_plain.1, quiet_model.0, quiet_model.1);
-    }
-    for (label, run) in [("sqlite", false), ("model", true)] {
-        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let w = if run { writer(Arc::clone(&modeled), Arc::clone(&stop)) } else { writer(Arc::clone(&plain), Arc::clone(&stop)) };
-        for v in verbs {
-            let (a, b) = if run { p50(&modeled, v) } else { p50(&plain, v) };
-            println!("writes {:40} {label} p50 {a:>10.3?} p90 {b:>10.3?}", v.join(" "));
-        }
-        stop.store(true, std::sync::atomic::Ordering::SeqCst);
-        let (n, took) = w.join().unwrap();
-        println!("writes claim-verdicts (130 entries) {label}: {n} passes, mean {:?}", took / n.max(1) as u32);
     }
 }

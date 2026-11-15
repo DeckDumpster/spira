@@ -1069,7 +1069,7 @@ fn publish_readiness(st: &Store, entries: &[verdicts::Entry], only: Option<&BTre
 }
 
 fn entry(id: &str, verdict: verdicts::Kind, blocker: Option<String>) -> verdicts::Entry {
-    verdicts::Entry { id: id.to_string(), verdict, blocker, runes: Vec::new() }
+    verdicts::Entry { id: id.to_string(), verdict, blocker }
 }
 
 /// Drops the members of an open integration: the integration is claimed and merges them, so
@@ -1245,21 +1245,8 @@ fn cmd_bulk_ready_by_rune(a: &Args, env: &mut Env) -> Outcome {
         Ok(v) => v,
         Err(e) => return Outcome::cannot_tell(format!("bulk-ready-by-rune: {}", first_line(&e))),
     };
-    // The write-back below only keeps a pane binary that still reads the stored columns fed.
-    let queue_wait = queue_wait_label(env);
-    match machine_judged(a, env, &st, true) {
-        Ok((rows, mut entries)) => {
-            for e in entries.iter_mut().filter(|e| e.verdict == verdicts::Kind::Claimable) {
-                if let Some(row) = rows.iter().find(|r| r.id == e.id) {
-                    e.runes = parts.iter().filter(|p| ready::in_any_partition(row, std::slice::from_ref(p), &queue_wait)).map(|p| p.name.clone()).collect();
-                }
-            }
-            let file = verdicts::VerdictFile { computed_at: verdicts::stamp(ready::now_epoch()), entries };
-            if let Err(e) = st.lc_claim_verdicts(&file) {
-                warnings.push(e);
-            }
-        }
-        Err(e) => warnings.push(format!("claim verdicts not written: {}", first_line(&e))),
+    if let Err(e) = machine_judged(a, env, &st, true) {
+        warnings.push(format!("readiness not published: {}", first_line(&e)));
     }
     let counts = ready::bucket_taken(&view.rows, &view.runes, &parts);
     Outcome {

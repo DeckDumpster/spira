@@ -417,38 +417,6 @@ fn a_record_with_no_gate_gets_one_on_its_next_transition() {
 }
 
 #[test]
-fn a_verdict_pass_after_a_readiness_pass_keeps_its_revision_and_a_readiness_pass_keeps_the_verdict()
-{
-    let r = Rig::new();
-    r.ok(&["create-bead", "sp-a", "--ready"]);
-    let verdicts = [crate::control::store::Verdict {
-        id: "sp-a".into(),
-        verdict: "claimable".into(),
-        blocker: None,
-        runes: vec!["builder".into()],
-    }];
-    let req = |id: &str| state_store::Request::new(id, "test", "t");
-    r.store
-        .publish_verdicts(&verdicts, STAMP, &req("v1"))
-        .unwrap();
-    let body = json!({ "computed_at": STAMP, "judged_at_rev": 3, "entries": [{ "id": "sp-a", "claimable": true }] });
-    r.ok(&["publish-readiness", "--json", &body.to_string()]);
-    r.store
-        .publish_verdicts(&verdicts, STAMP, &req("v2"))
-        .unwrap();
-    let got = r.store.readiness("sp-a").unwrap().unwrap().value;
-    assert_eq!(
-        (
-            got.judged_at_rev,
-            got.verdict.as_deref(),
-            got.runes.len(),
-            got.claimable
-        ),
-        (3, Some("claimable"), 1, true)
-    );
-}
-
-#[test]
 fn an_unrelated_planning_write_after_judgement_does_not_refuse_the_claim() {
     let r = Rig::new();
     r.ok(&["create-bead", "sp-a", "--ready"]);
@@ -533,51 +501,6 @@ fn the_judged_claimable_set_is_the_ready_records_a_pass_judged_claimable_and_not
     assert_eq!(r.store.judged_claimable().unwrap().1, 1, "sp-unjudged has no judgement; sp-taken is no longer READY");
     let (_, judged) = r.store.judged_claimable().unwrap().0.remove(0);
     assert_eq!(judged.judged_at_planning_watermark.as_deref(), Some("w-7"));
-}
-
-#[test]
-fn a_readiness_publish_after_a_verdict_pass_does_not_restamp_claim_at_and_a_new_verdict_pass_does() {
-    let r = Rig::new();
-    for id in ["sp-a", "sp-b", "sp-c"] {
-        r.ok(&["create-bead", id, "--ready"]);
-    }
-    let pass = |at: &str| {
-        let entries: Vec<Value> = [("sp-a", "claimable"), ("sp-b", "blocked"), ("sp-c", "claimable")]
-            .iter()
-            .map(|(id, v)| json!({ "id": id, "verdict": v, "runes": [] }))
-            .collect();
-        let body = json!({ "computed_at": at, "entries": entries });
-        r.ok(&["claim-verdicts", "--json", &body.to_string()]);
-    };
-    let listed = || -> Vec<Value> {
-        let out = r.ok(&["list", "--state", "READY,REWORK"]);
-        serde_json::from_str::<Vec<Value>>(&out).unwrap()
-    };
-    let stamps = || -> Vec<(String, String, String)> {
-        listed()
-            .iter()
-            .map(|b| {
-                (
-                    b["bead_id"].as_str().unwrap().into(),
-                    b["claim_at"].as_str().unwrap_or("").into(),
-                    b["claim_verdict"].as_str().unwrap_or("").into(),
-                )
-            })
-            .collect()
-    };
-    pass("2026-11-01T12:00:00Z");
-    let before = stamps();
-    let body = json!({ "computed_at": "2026-11-01T12:00:01Z", "entries": [{ "id": "sp-c", "claimable": true }] });
-    r.ok(&["publish-readiness", "--json", &body.to_string()]);
-    let after = stamps();
-    assert_eq!(after, before);
-    assert!(after.iter().all(|(_, at, _)| at == "2026-11-01T12:00:00Z"), "{after:?}");
-    let judged = r.store.readiness("sp-c").unwrap().unwrap().value.judged_at;
-    assert_eq!(judged.as_deref(), Some("2026-11-01T12:00:01Z"));
-
-    pass("2026-11-01T12:00:02Z");
-    let moved = stamps();
-    assert!(moved.iter().all(|(_, at, _)| at == "2026-11-01T12:00:02Z"), "{moved:?}");
 }
 
 struct Fixed {

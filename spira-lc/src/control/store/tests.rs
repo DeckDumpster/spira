@@ -3,7 +3,7 @@ use runtime::ports::{Clock, VirtualClock};
 use state_store::gc::Controller;
 use state_store::{Config, Contract, Deleted, Error, MemBackend, Ports, Request, Selector};
 
-use super::{Outcome, Store, Verdict};
+use super::{Judged, Outcome, Pass, Store};
 use crate::control::keys;
 use crate::control::records::{encode, Audit};
 
@@ -79,23 +79,22 @@ fn audits_at(s: &Store<MemBackend>, rev: u64) -> (bool, Vec<Audit>) {
     )
 }
 
+fn seed_judged(s: &Store<MemBackend>, id: &str, request: &str) {
+    let judged = [Judged { id: id.into(), claimable: true, ..Default::default() }];
+    let pass = Pass { judged_at: "2026-10-31T12:00:00Z".into(), ..Default::default() };
+    s.publish_readiness(&judged, &pass, &req(request)).unwrap();
+}
+
 #[test]
-fn a_verdict_pass_between_a_read_and_a_claim_does_not_conflict_the_claim() {
+fn a_readiness_pass_between_a_read_and_a_claim_does_not_conflict_the_claim() {
     let (s, _, _) = fresh();
     created(&s, "sp-a");
     let before = s.record("sp-a").unwrap().unwrap();
-    let pass = [Verdict {
-        id: "sp-a".into(),
-        verdict: "claimable".into(),
-        blocker: None,
-        runes: vec!["builder".into()],
-    }];
-    s.publish_verdicts(&pass, "2026-10-31T12:00:00Z", &req("pass-1"))
-        .unwrap();
+    seed_judged(&s, "sp-a", "pass-1");
     assert_eq!(
         s.record("sp-a").unwrap().unwrap().mod_rev,
         before.mod_rev,
-        "a verdict pass moved the lifecycle record"
+        "a readiness pass moved the lifecycle record"
     );
     let (out, fence) = s
         .claim(
@@ -113,55 +112,7 @@ fn a_verdict_pass_between_a_read_and_a_claim_does_not_conflict_the_claim() {
     assert!(matches!(out, Outcome::Applied { .. }), "{out:?}");
     assert!(fence.is_some());
     let r = s.readiness("sp-a").unwrap().unwrap().value;
-    assert_eq!(
-        (
-            r.verdict.as_deref(),
-            r.runes.as_slice(),
-            r.judged_at.as_deref()
-        ),
-        (
-            Some("claimable"),
-            &["builder".to_string()][..],
-            Some("2026-10-31T12:00:00Z")
-        )
-    );
-}
-
-#[test]
-fn a_pass_keeps_the_blockers_another_publisher_wrote_and_skips_ids_with_no_record() {
-    let (s, _, _) = fresh();
-    created(&s, "sp-a");
-    let seeded = super::Readiness {
-        blocked_by: vec!["sp-b".into()],
-        ..Default::default()
-    };
-    let t = state_store::Txn::new().put(
-        &keys::readiness("sp-a"),
-        state_store::Object::new(super::encode(&seeded).unwrap()),
-    );
-    s.contract().txn(&t, &req("seed")).unwrap();
-    let pass = [
-        Verdict {
-            id: "sp-a".into(),
-            verdict: "blocked".into(),
-            blocker: Some("sp-b".into()),
-            runes: vec![],
-        },
-        Verdict {
-            id: "sp-ghost".into(),
-            verdict: "claimable".into(),
-            blocker: None,
-            runes: vec![],
-        },
-    ];
-    s.publish_verdicts(&pass, "2026-10-31T12:00:00Z", &req("pass-1"))
-        .unwrap();
-    let r = s.readiness("sp-a").unwrap().unwrap().value;
-    assert_eq!(
-        (r.blocked_by, r.verdict.as_deref(), r.blocker.as_deref()),
-        (vec!["sp-b".to_string()], Some("blocked"), Some("sp-b"))
-    );
-    assert!(s.readiness("sp-ghost").unwrap().is_none());
+    assert_eq!(r.judged_at.as_deref(), Some("2026-10-31T12:00:00Z"));
 }
 
 #[test]
@@ -921,17 +872,7 @@ fn readiness_and_progress_are_owned_and_go_with_their_record_and_batch() {
         &req("p-1"),
     )
     .unwrap();
-    s.publish_verdicts(
-        &[Verdict {
-            id: "sp-a".into(),
-            verdict: "claimable".into(),
-            blocker: None,
-            runes: vec![],
-        }],
-        "2026-10-31T12:00:00Z",
-        &req("pass"),
-    )
-    .unwrap();
+    seed_judged(&s, "sp-a", "pass");
     s.delete("sp-a", false, &req("d-1")).unwrap();
     s.contract().delete(&batch, None, &req("bd")).unwrap();
     Controller::new(s.contract()).tick(clock.now_ms()).unwrap();
@@ -997,17 +938,7 @@ fn records_are_listed_from_one_snapshot_with_its_rev_and_without_other_kinds() {
     let (s, _, _) = fresh();
     created(&s, "sp-a");
     created(&s, "sp-b");
-    s.publish_verdicts(
-        &[Verdict {
-            id: "sp-a".into(),
-            verdict: "claimable".into(),
-            blocker: None,
-            runes: vec![],
-        }],
-        "2026-10-31T12:00:00Z",
-        &req("p"),
-    )
-    .unwrap();
+    seed_judged(&s, "sp-a", "p");
     let (records, rev) = s.records().unwrap();
     assert_eq!(
         records
