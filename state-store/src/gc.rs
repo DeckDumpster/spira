@@ -390,6 +390,7 @@ mod tests {
     struct Flaky {
         inner: MemBackend,
         refuse_events: AtomicBool,
+        refuse_markers: AtomicBool,
         key_space_reads: AtomicUsize,
     }
 
@@ -398,6 +399,7 @@ mod tests {
             Flaky {
                 inner: MemBackend::new(),
                 refuse_events: Default::default(),
+                refuse_markers: Default::default(),
                 key_space_reads: AtomicUsize::new(0),
             }
         }
@@ -418,6 +420,9 @@ mod tests {
             at: u64,
         ) -> crate::Result<Vec<(String, Version)>> {
             if prefix == crate::EVENTS_PREFIX && self.refuse_events.load(Ordering::SeqCst) {
+                return Err(Error::Backend("refused".into()));
+            }
+            if prefix == ORPHANS_PREFIX && self.refuse_markers.load(Ordering::SeqCst) {
                 return Err(Error::Backend("refused".into()));
             }
             if prefix != crate::EVENTS_PREFIX && prefix != ORPHANS_PREFIX {
@@ -483,6 +488,20 @@ mod tests {
         let pass = Controller::new(&c).pass(c.now_ms());
         assert!(pass.failed.is_empty() && pass.orphans.is_empty(), "{pass:?}");
         assert_eq!(c.backend().key_space_reads.load(Ordering::SeqCst), before);
+    }
+
+    #[test]
+    fn a_failed_orphan_drain_is_one_failure_and_expiry_and_trim_still_run() {
+        let clock = VirtualClock::new(10 * DAY_MS);
+        let c = open(Flaky::new(), &clock);
+        write(&c, "rec/old", "old");
+        clock.advance(EVENT_WINDOW_MS + DAY_MS);
+        write(&c, "new/0", "new0");
+        c.backend().refuse_markers.store(true, Ordering::SeqCst);
+        let pass = Controller::new(&c).pass(c.now_ms());
+        assert_eq!(pass.failed.len(), 1, "{pass:?}");
+        assert_eq!(pass.failed[0].step, "orphan");
+        assert_eq!(pass.trimmed, 1, "trim ran after the failed step");
     }
 
     #[test]

@@ -131,7 +131,7 @@ pub const MIGRATIONS: &[&[&str]] = &[
         "DROP TABLE m2_audits",
         "DROP TABLE m2_entered",
     ],
-    // 3 (sp-m20gue): `(owner, key)` for every live key whose `metadata.ownerReferences` names the
+    // 3: `(owner, key)` for every live key whose `metadata.ownerReferences` names the
     // owner, so the keys an owner leaves behind are a range. `events/`, `requests/` and
     // `history/` hold no owners and are left out.
     &[

@@ -39,6 +39,7 @@ scenarios!(
     a_finalizer_blocks_delete_until_the_write_clearing_it_removes_the_key,
     an_owner_reference_orphan_is_collected,
     an_owner_deleted_with_more_dependents_than_a_pass_is_drained_over_passes,
+    a_put_naming_an_owner_the_batch_writes_or_one_that_lives_queues_no_marker,
     an_owner_recreated_before_collection_keeps_its_dependents,
     owned_by_names_a_keys_dependents_until_they_drop_the_reference,
     a_request_retry_after_an_ambiguous_commit_reports_already_applied,
