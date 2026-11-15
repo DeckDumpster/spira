@@ -2259,7 +2259,14 @@ pub fn suite_first_fail(results_dir: &Path, pass: Option<&Path>, suite: &str) ->
 /// included) into `<run>/rounds/<batch>.results`, where a red round's Concierge and
 /// attribution step read them. Returns that directory.
 pub fn keep_round_results(run: &Path, batch: &str, from: &Path) -> PathBuf {
-    let to = run.join("rounds").join(format!("{batch}.results"));
+    let _ = fs::remove_dir_all(round_results_dir(run, batch));
+    overlay_round_results(run, batch, from)
+}
+
+/// Copies `from` into the round's kept results without removing what is already there; a file
+/// of the same name is overwritten, so a re-run suite's newer output replaces the pass's.
+pub fn overlay_round_results(run: &Path, batch: &str, from: &Path) -> PathBuf {
+    let to = round_results_dir(run, batch);
     fn copy(from: &Path, to: &Path) {
         if fs::create_dir_all(to).is_err() {
             return;
@@ -2273,7 +2280,6 @@ pub fn keep_round_results(run: &Path, batch: &str, from: &Path) -> PathBuf {
             }
         }
     }
-    let _ = fs::remove_dir_all(&to);
     copy(from, &to);
     if !to.is_dir() {
         eprintln!(
@@ -2283,6 +2289,20 @@ pub fn keep_round_results(run: &Path, batch: &str, from: &Path) -> PathBuf {
         );
     }
     to
+}
+
+/// The end of an attribution: with a pass behind it the pass's kept output stays and the
+/// attribution's is laid over it; without one the attribution's output replaces the kept dir.
+pub fn keep_attribution_results(run: &Path, batch: &str, from: &Path, after_pass: bool) -> PathBuf {
+    if after_pass {
+        overlay_round_results(run, batch, from)
+    } else {
+        keep_round_results(run, batch, from)
+    }
+}
+
+fn round_results_dir(run: &Path, batch: &str) -> PathBuf {
+    run.join("rounds").join(format!("{batch}.results"))
 }
 
 /// Each red suite with the first FAIL line of its output in the round's results, written to
@@ -4639,6 +4659,56 @@ mod fail_line_tests {
             "{why}"
         );
         assert!(why.contains(kept.to_str().unwrap()), "{why}");
+    }
+
+    fn pass_and_corpus(run: &Path, corpus_has_b: bool) -> (PathBuf, PathBuf) {
+        let pass = run.join("pass");
+        let corpus = run.join("corpus");
+        fs::create_dir_all(&pass).unwrap();
+        fs::create_dir_all(&corpus).unwrap();
+        fs::write(pass.join("test-a.sh.out"), "not ok 1 - broke\n").unwrap();
+        fs::write(pass.join("test-a.sh.result"), "red\n").unwrap();
+        fs::write(pass.join("test-b.sh.out"), "old").unwrap();
+        if corpus_has_b {
+            fs::write(corpus.join("test-b.sh.out"), "new").unwrap();
+        }
+        (pass, corpus)
+    }
+
+    #[test]
+    fn a_rerun_suites_output_is_laid_over_the_passs_after_the_round_tree_is_gone() {
+        let run = testkit::TempDir::new("batcher-cut-overlay");
+        let (pass, corpus) = pass_and_corpus(run.path(), true);
+        keep_round_results(run.path(), "b1", &pass);
+        fs::remove_dir_all(&pass).unwrap();
+        let kept = overlay_round_results(run.path(), "b1", &corpus);
+        assert_eq!(fs::read_to_string(kept.join("test-a.sh.out")).unwrap(), "not ok 1 - broke\n");
+        assert_eq!(fs::read_to_string(kept.join("test-b.sh.out")).unwrap(), "new");
+        assert_eq!(fs::read_to_string(kept.join("test-a.sh.result")).unwrap(), "red\n");
+    }
+
+    #[test]
+    fn an_attribution_without_a_pass_replaces_the_kept_results_and_one_with_a_pass_keeps_them() {
+        let run = testkit::TempDir::new("batcher-cut-attr-end");
+        let (pass, corpus) = pass_and_corpus(run.path(), true);
+        keep_round_results(run.path(), "b1", &pass);
+        let kept = keep_attribution_results(run.path(), "b1", &corpus, true);
+        assert!(kept.join("test-a.sh.out").is_file());
+        let kept = keep_attribution_results(run.path(), "b1", &corpus, false);
+        assert!(!kept.join("test-a.sh.out").exists());
+        assert_eq!(fs::read_to_string(kept.join("test-b.sh.out")).unwrap(), "new");
+    }
+
+    #[test]
+    fn an_attribution_that_ran_nothing_leaves_the_passs_output_kept_and_cited() {
+        let run = testkit::TempDir::new("batcher-cut-overlay-empty");
+        let (pass, corpus) = pass_and_corpus(run.path(), false);
+        keep_round_results(run.path(), "b1", &pass);
+        fs::remove_dir_all(&pass).unwrap();
+        let kept = overlay_round_results(run.path(), "b1", &corpus);
+        assert_eq!(fs::read_to_string(kept.join("test-a.sh.out")).unwrap(), "not ok 1 - broke\n");
+        let why = keep_red_evidence(run.path(), "b1", "red", &["test-a.sh".to_string()]);
+        assert!(why.contains("test-a.sh: not ok 1 - broke"), "{why}");
     }
 
     #[test]
