@@ -351,6 +351,7 @@ mod tests {
 
     #[test]
     fn a_stall_incident_is_filed_express_p0_against_the_home_repo() {
+        crate::fixture::fixture_config_door();
         let mut env = incident::intake::Env::load();
         env.home_repo = "home-x".into();
         env.repo = None;
