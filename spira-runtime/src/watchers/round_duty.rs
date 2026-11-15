@@ -19,7 +19,7 @@ pub const STATE: EventKindTag = "round-duty.state";
 pub const OBSERVE: &str = "round-duty.observe";
 pub const NAME: &str = "round-duty";
 
-const ROW_PARTS: &[Part] = &[Part::Field("last_due"), Part::Field("last_unknown"), Part::Field("last_c"), Part::Field("last_change"), Part::Field("last_stopped"), Part::Field("starved_since"), Part::Field("last_starved"), Part::Field("last_unadvanced"), Part::Field("held"), Part::Field("halt_paged"), Part::Map { name: "lines", drop: &[] }];
+const ROW_PARTS: &[Part] = &[Part::Field("last_due"), Part::Field("last_unknown"), Part::Field("last_c"), Part::Field("last_certified"), Part::Field("last_change"), Part::Field("last_stopped"), Part::Field("starved_since"), Part::Field("last_starved"), Part::Field("last_unadvanced"), Part::Field("held"), Part::Field("halt_paged"), Part::Map { name: "lines", drop: &[] }];
 
 const DEADLINE_MS: u64 = 10_000;
 
@@ -73,6 +73,9 @@ pub struct Carry {
     pub last_due: u64,
     pub last_unknown: u64,
     pub last_c: Option<u64>,
+    /// The lifecycle count of the last good snapshot, which a failed probe falls back on.
+    #[serde(default)]
+    pub last_certified: Option<u64>,
     pub last_change: u64,
     pub last_stopped: String,
     pub starved_since: Option<u64>,
@@ -109,6 +112,7 @@ pub fn decide(cfg: &RoundDuty, carry: &Carry, snap: &Snapshot, now: u64) -> (Car
     }
     let certified = snap.certified;
     let admissible = snap.admissible;
+    c.last_certified = Some(certified);
     if snap.stopped != c.last_stopped {
         let shown = if snap.stopped.is_empty() { "none" } else { snap.stopped.as_str() };
         say.push(format!("ROUNDS STOPPED ON PURPOSE: {shown} (world.sh status names owner and release condition) — not counted as due"));
@@ -116,7 +120,7 @@ pub fn decide(cfg: &RoundDuty, carry: &Carry, snap: &Snapshot, now: u64) -> (Car
     }
     if let Some(h) = &snap.halt {
         c.held = h.held_text(now);
-        c.last_c = Some(admissible);
+        c.last_c = Some(certified);
         c.last_change = now;
         c.starved_since = None;
         c.last_starved = 0;
@@ -210,7 +214,7 @@ impl Handler for RoundDuty {
         let carry = carried::<Carry>(view, &ev.stream, STATE);
         let snap = match (ev.kind.tag.as_str(), serde_json::from_str::<Snapshot>(&ev.kind.body)) {
             (EFFECT_SUCCEEDED, Ok(s)) => s,
-            _ => Snapshot { certified: carry.last_c.unwrap_or(0), lines: carry.lines.clone(), stopped: carry.last_stopped.clone(), ..Snapshot::default() },
+            _ => Snapshot { certified: carry.last_certified.unwrap_or(0), lines: carry.lines.clone(), stopped: carry.last_stopped.clone(), ..Snapshot::default() },
         };
         let now = ev.at / 1000;
         let snap = with_admissible(snap, &kit::carry::<batcher_local::Carry>(&batcher_local::SHAPE, view));
@@ -252,6 +256,13 @@ mod tests {
         assert!(say.iter().all(|m| !m.starts_with("ROUND DUE")), "{say:?}");
         let (_, say) = decide(&cfg, &Carry::default(), &snap(RoundState::None, 1), 1000);
         assert_eq!(say, ["ROUND DUE: 1 certified waiting [spira=1] (idle 0s), 0 of 1 rounds open — cut the next round"]);
+    }
+
+    #[test]
+    fn the_lifecycle_count_is_carried_apart_from_the_admissible_idle_clock() {
+        let s = Snapshot { admissible: 0, ..snap(RoundState::None, 3) };
+        let (c, _) = decide(&cfg(), &Carry::default(), &s, 1000);
+        assert_eq!((c.last_certified, c.last_c), (Some(3), Some(0)));
     }
 
     #[test]
