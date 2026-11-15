@@ -13,9 +13,9 @@ use super::land::land_local_deferring;
 use super::round_files;
 use super::stage;
 use super::{
-    actor, batch_abandoned, converge_orphans, czar_ok, idents, landing_log, lc_abandon, lc_cas,
-    lc_eject_member, lock_held_by_caller, read_text, repo_path, require_lc, resolve, statute_gate,
-    take_lock, Ctx, World, FAIL, OK, USAGE,
+    actor, batch_abandoned, converge_orphans, czar_ok, idents, lc_abandon, lc_cas,
+    lc_eject_member, lock_held_by_caller, read_text, repo_path, require_lc, resolve, round_event,
+    statute_gate, take_lock, Ctx, World, FAIL, OK, USAGE,
 };
 use crate::batches::BatchRecord;
 use crate::cli::{Round, Text};
@@ -167,24 +167,29 @@ impl LeaseCheck<'_> {
 /// The one red a repository that judges itself reports: its testenv run as a whole.
 pub(super) const REPO_TESTENV_RED: &str = "testenv";
 pub(crate) const LC_ACTOR: &str = "queue.sh";
+/// The actor of a round event the queue writes on its own, under no caller's verb.
+const HOUSEKEEPING: &str = "queue";
 const PASSING: [&str; 2] = ["ok", "skip"];
 pub const BLOCKING: [&str; 5] = ["red", "timeout", "unreached", "deferred", "fault"];
 
 pub fn run(w: &World, r: &Round) -> i32 {
     match r {
         Round::Open {
+            by,
             repo,
             members,
             name,
             worktree,
         } => open(
             w,
+            by,
             repo.as_deref(),
             members,
             name.as_deref(),
             worktree.as_deref(),
         ),
         Round::Certify {
+            by,
             batch,
             repo,
             attest,
@@ -193,6 +198,7 @@ pub fn run(w: &World, r: &Round) -> i32 {
             lease_token,
         } => certify(
             w,
+            by,
             batch,
             repo.as_deref(),
             attest.as_deref(),
@@ -201,6 +207,7 @@ pub fn run(w: &World, r: &Round) -> i32 {
             LeaseCheck::Check(lease_token.as_deref()),
         ),
         Round::Eject {
+            by,
             batch,
             id,
             repo,
@@ -213,6 +220,7 @@ pub fn run(w: &World, r: &Round) -> i32 {
             lease_token,
         } => eject(
             w,
+            by,
             batch,
             id,
             repo.as_deref(),
@@ -225,11 +233,13 @@ pub fn run(w: &World, r: &Round) -> i32 {
             LeaseCheck::Check(lease_token.as_deref()),
         ),
         Round::Land {
+            by,
             batch,
             repo,
             lease_token,
-        } => land(w, batch, repo.as_deref(), lease_token.as_deref()),
+        } => land(w, by, batch, repo.as_deref(), lease_token.as_deref()),
         Round::Abandon {
+            by,
             batch,
             repo,
             reason,
@@ -237,6 +247,7 @@ pub fn run(w: &World, r: &Round) -> i32 {
             cause,
         } => abandon(
             w,
+            by,
             batch,
             repo.as_deref(),
             reason,
@@ -245,12 +256,13 @@ pub fn run(w: &World, r: &Round) -> i32 {
         ),
         Round::SweepLocks { repo, all } => sweep_locks(w, repo.as_deref(), *all),
         Round::Preempt {
+            by,
             batch,
             repo,
             eject,
             reason,
             suites,
-        } => preempt(w, batch, repo.as_deref(), eject, reason, suites),
+        } => preempt(w, by, batch, repo.as_deref(), eject, reason, suites),
         Round::Stop {
             repo,
             by,
@@ -317,20 +329,22 @@ pub fn run(w: &World, r: &Round) -> i32 {
             reason,
         ),
         Round::Stage {
+            by,
             repo,
             members,
             name,
             worktree,
         } => stage::stage(
             w,
+            by,
             repo.as_deref(),
             members,
             name.as_deref(),
             worktree.as_deref(),
         ),
-        Round::StageTest { repo } => stage::stage_test(w, repo.as_deref()),
-        Round::Promote { repo } => stage::promote(w, repo.as_deref()),
-        Round::Discard { repo, reason } => stage::discard(w, repo.as_deref(), reason),
+        Round::StageTest { by, repo } => stage::stage_test(w, by, repo.as_deref()),
+        Round::Promote { by, repo } => stage::promote(w, by, repo.as_deref()),
+        Round::Discard { by, repo, reason } => stage::discard(w, by, repo.as_deref(), reason),
     }
 }
 
@@ -1164,6 +1178,7 @@ fn sweep(w: &World, c: &Ctx, spare: Option<&str>) {
         }
         close_abandoned(
             w,
+            HOUSEKEEPING,
             "sweep",
             c,
             repo,
@@ -1654,13 +1669,14 @@ impl<'a> Steps<'a> {
 
 fn open(
     w: &World,
+    by: &str,
     repo: Option<&str>,
     members_arg: &Text,
     name: Option<&str>,
     worktree: Option<&Path>,
 ) -> i32 {
     let steps = Steps::new(w);
-    let rc = open_timed(w, repo, members_arg, name, worktree, &steps);
+    let rc = open_timed(w, by, repo, members_arg, name, worktree, &steps);
     if rc != OK && !steps.done.borrow().is_empty() {
         w.err(format!("steps={}", steps.field()));
     }
@@ -1669,6 +1685,7 @@ fn open(
 
 fn open_timed(
     w: &World,
+    by: &str,
     repo: Option<&str>,
     members_arg: &Text,
     name: Option<&str>,
@@ -1842,6 +1859,7 @@ fn open_timed(
         {
             stage::discard_behind(
                 w,
+                by,
                 &c,
                 &path,
                 &parent,
@@ -2110,13 +2128,14 @@ fn open_timed(
     }
     mark_running(&c, &batch);
     steps.lap("record");
-    landing_log(
+    round_event(
         &c.s.run,
-        &format!(
-            "QUEUE ROUND-OPEN {now} repo={repo_name} batch={batch} head={head} members={} steps={}",
-            csv(&merged),
-            steps.field()
-        ),
+        "open",
+        &repo_name,
+        &batch,
+        by,
+        w.clock.now(),
+        &[("head", head.to_string()), ("members", csv(&merged)), ("steps", steps.field())],
     );
     w.out(format!("steps={}", steps.field()));
     w.out(format!("batch={batch}"));
@@ -2865,8 +2884,10 @@ pub(super) fn round_fault(results: &Path) -> Option<RoundFault> {
 /// A setting the round VM refused is the fault of the member whose diff adds its key: present
 /// at the member's tip and absent at the landing ref. Each such member is ejected with the
 /// fault; when none is, the harness is named and no member is counted against.
+#[allow(clippy::too_many_arguments)]
 fn settings_refused(
     w: &World,
+    by: &str,
     label: &str,
     c: &Ctx,
     path: &Path,
@@ -2917,6 +2938,7 @@ fn settings_refused(
         let reason = format!("{}'s diff adds {key}, which the round VM refused: {}\nThe VM script's log, last lines:\n{}", m.id, f.cause, f.tail);
         let rc = eject(
             w,
+            by,
             batch,
             &m.id,
             Some(&c.r.name),
@@ -3218,7 +3240,7 @@ fn infra_pass(w: &World, label: &str, c: &Ctx, batch: &str, why: &str) -> i32 {
 /// The pass of `batch` ended without a verdict: remember it, and eject each member that has now
 /// been aboard for [`FAULTED_PASSES_RED`] such passes. When every member of a multi-member pass
 /// qualifies, nothing separates them from the host, so none is ejected. Returns [`FAULT`] either way.
-fn faulted_pass(w: &World, label: &str, c: &Ctx, batch: &str, why: &str) -> i32 {
+fn faulted_pass(w: &World, by: &str, label: &str, c: &Ctx, batch: &str, why: &str) -> i32 {
     let ids = match pass_members(w, c, batch) {
         Ok(ids) => ids,
         Err(e) => {
@@ -3242,6 +3264,7 @@ fn faulted_pass(w: &World, label: &str, c: &Ctx, batch: &str, why: &str) -> i32 
         );
         let rc = eject(
             w,
+            by,
             batch,
             id,
             Some(&c.r.name),
@@ -3287,7 +3310,15 @@ fn base_moved_cause(w: &World, c: &Ctx, path: &Path, head: &str, err: &str) -> O
 
 /// The base moved under a round whose pass found its tree not the expected one: rebuild the
 /// round on the new base once, to be certified again. No member is charged with the pass.
-fn rebuild_on_moved_base(w: &World, label: &str, c: &Ctx, path: &Path, batch: &str, why: &str) -> i32 {
+fn rebuild_on_moved_base(
+    w: &World,
+    by: &str,
+    label: &str,
+    c: &Ctx,
+    path: &Path,
+    batch: &str,
+    why: &str,
+) -> i32 {
     w.err(format!("queue.sh {label}: {why}; the round is not judged"));
     let _g = match lock(w, label, c) {
         Ok(g) => g,
@@ -3296,7 +3327,7 @@ fn rebuild_on_moved_base(w: &World, label: &str, c: &Ctx, path: &Path, batch: &s
     let Ok(mut kv) = load(w, label, c, batch) else {
         return FAIL;
     };
-    match remerge_if_moved(w, label, c, path, batch, &mut kv) {
+    match remerge_if_moved(w, by, label, c, path, batch, &mut kv) {
         Some((_, rc)) if rc == FAIL => super::LAND_BASE_MOVED,
         Some((_, rc)) => rc,
         None => FAIL,
@@ -3308,8 +3339,10 @@ pub(super) fn tail(text: &str, n: usize) -> String {
     lines[lines.len().saturating_sub(n)..].join("\n")
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn certify(
     w: &World,
+    by: &str,
     batch: &str,
     repo: Option<&str>,
     attest: Option<&str>,
@@ -3346,6 +3379,7 @@ pub(super) fn certify(
     let mut over = None;
     let mut rc = certify_pass(
         w,
+        by,
         label,
         &c,
         &path,
@@ -3380,6 +3414,7 @@ pub(super) fn certify(
             drop(_g);
             rc = certify_pass(
                 w,
+                by,
                 label,
                 &c,
                 &path,
@@ -3445,6 +3480,7 @@ fn members_merged_on_base(w: &World, path: &Path, kv: &Kv, head: &str) -> bool {
 #[allow(clippy::too_many_arguments)]
 fn certify_pass(
     w: &World,
+    by: &str,
     label: &str,
     c: &Ctx,
     path: &Path,
@@ -3520,6 +3556,7 @@ fn certify_pass(
             let ran = kv.get("ran").and_then(|r| r.parse().ok()).unwrap_or(0);
             return finish_green(
                 w,
+                by,
                 label,
                 c,
                 path,
@@ -3587,7 +3624,7 @@ fn certify_pass(
                 pass_verdict_event(w, batch, &Verdict::Incomplete(&bounded_text(&why)), false),
             );
             w.err(format!("queue.sh {label}: {why}; the round is not judged"));
-            return faulted_pass(w, label, c, batch, &why);
+            return faulted_pass(w, by, label, c, batch, &why);
         };
         let began = w.clock.now();
         let out = w.scripts.repo_round_vm(
@@ -3641,7 +3678,7 @@ fn certify_pass(
             w.err(format!(
                 "queue.sh {label}: {why}; the round is not judged\n{shown}"
             ));
-            return faulted_pass(w, label, c, batch, &format!("{why}\n{shown}"));
+            return faulted_pass(w, by, label, c, batch, &format!("{why}\n{shown}"));
         }
     } else if attest.is_none() {
         let results = rounds_dir(c).join(format!("{batch}.results"));
@@ -3803,7 +3840,7 @@ fn certify_pass(
                 pass_verdict_event(w, batch, &Verdict::Incomplete(&bounded_text(&why)), false),
             );
             if moved.is_some() {
-                return rebuild_on_moved_base(w, label, c, path, batch, &why);
+                return rebuild_on_moved_base(w, by, label, c, path, batch, &why);
             }
             let shown = tail(&out.err, 20);
             w.err(format!(
@@ -3823,11 +3860,11 @@ fn certify_pass(
                     f.tail
                 ));
                 if let Some(key) = &f.settings_key {
-                    return settings_refused(w, label, c, path, batch, f, key);
+                    return settings_refused(w, by, label, c, path, batch, f, key);
                 }
-                return faulted_pass(w, label, c, batch, &format!("{why}\n{}", f.tail));
+                return faulted_pass(w, by, label, c, batch, &format!("{why}\n{}", f.tail));
             }
-            return faulted_pass(w, label, c, batch, &format!("{why}\n{shown}"));
+            return faulted_pass(w, by, label, c, batch, &format!("{why}\n{shown}"));
         }
         reds.extend(
             found
@@ -3906,6 +3943,7 @@ fn certify_pass(
         mark_running(c, batch);
         stage::discard_behind(
             w,
+            by,
             c,
             path,
             batch,
@@ -3926,7 +3964,7 @@ fn certify_pass(
         }
         if reds.iter().any(|r| r == PREFLIGHT_RED) {
             drop(_g);
-            eject_recipe_changers(w, label, c, path, batch, &judged);
+            eject_recipe_changers(w, by, label, c, path, batch, &judged);
         }
         return FAIL;
     }
@@ -3955,7 +3993,18 @@ fn certify_pass(
         return FAIL;
     }
     let wall = timings.suites_s + timings.build_s;
-    finish_green(w, label, c, path, batch, &head, &who, &run_id, (ran, wall))
+    finish_green(
+        w,
+        by,
+        label,
+        c,
+        path,
+        batch,
+        &head,
+        &who,
+        &run_id,
+        (ran, wall),
+    )
 }
 
 pub const EJECT_REFUSED: &str = "eject-refused=";
@@ -3965,7 +4014,15 @@ pub const EJECT_REFUSED: &str = "eject-refused=";
 /// With no such member the red is the harness's and nobody leaves. Prints `ejected=<csv>`, so the
 /// round's driver knows the red is attributed, and `eject-refused=<id>: …` for an eject the
 /// verb refused, after which no further member is tried.
-fn eject_recipe_changers(w: &World, label: &str, c: &Ctx, path: &Path, batch: &str, kv: &Kv) {
+fn eject_recipe_changers(
+    w: &World,
+    by: &str,
+    label: &str,
+    c: &Ctx,
+    path: &Path,
+    batch: &str,
+    kv: &Kv,
+) {
     let base = kv.get("base").unwrap_or("");
     let changers: Vec<(String, Vec<String>)> = kv
         .members()
@@ -4004,6 +4061,7 @@ fn eject_recipe_changers(w: &World, label: &str, c: &Ctx, path: &Path, batch: &s
         );
         let rc = eject(
             w,
+            by,
             batch,
             &id,
             Some(&c.r.name),
@@ -4074,6 +4132,7 @@ fn write_round_certificate(
 #[allow(clippy::too_many_arguments)]
 fn finish_green(
     w: &World,
+    by: &str,
     label: &str,
     c: &Ctx,
     path: &Path,
@@ -4115,13 +4174,20 @@ fn finish_green(
         }
     }
     mark_running(c, batch);
-    landing_log(
+    round_event(
         &c.s.run,
-        &format!(
-            "QUEUE ROUND-GREEN {} repo={} batch={batch} head={head} tree={tree} run={run_id} ran={ran} wall={wall}s",
-            w.clock.now(),
-            c.r.name
-        ),
+        "green",
+        &c.r.name,
+        batch,
+        by,
+        w.clock.now(),
+        &[
+            ("head", head.to_string()),
+            ("tree", tree.to_string()),
+            ("run", run_id.to_string()),
+            ("ran", ran.to_string()),
+            ("wall", format!("{wall}s")),
+        ],
     );
     w.out(format!(
         "queue.sh {label}: round {batch} is GREEN at {head} (tree {tree}) ran={ran} wall={wall}s"
@@ -4158,6 +4224,7 @@ fn known_forced_suites(w: &World, label: &str, wt: &Path, suites: &str) -> Resul
 #[allow(clippy::too_many_arguments)]
 fn eject(
     w: &World,
+    by: &str,
     batch: &str,
     id: &str,
     repo: Option<&str>,
@@ -4359,15 +4426,18 @@ fn eject(
             comment.push_str(&format!("\n\nRecertification will force these suites regardless of SPIRA_CERTIFY_SUITES: {suites}"));
         }
         w.lib.comment(bead, &comment);
-        landing_log(
+        round_event(
             &c.s.run,
-            &format!(
-                "QUEUE ROUND-EJECT {} repo={} batch={batch} id={bead} cause={} reason={}",
-                w.clock.now(),
-                c.r.name,
-                own_cause.as_str(),
-                one_line(&why_text)
-            ),
+            "eject",
+            &c.r.name,
+            batch,
+            by,
+            w.clock.now(),
+            &[
+                ("id", bead.to_string()),
+                ("cause", own_cause.as_str().to_string()),
+                ("reason", one_line(&why_text)),
+            ],
         );
         if bead != id {
             w.out(format!(
@@ -4409,11 +4479,18 @@ fn eject(
             End::Abandoned("emptied"),
             &format!("{id} ejected, no member remains"),
         );
-        stage::discard_behind(w, &c, &path, batch, &format!("round {batch} was emptied"));
+        stage::discard_behind(
+            w,
+            by,
+            &c,
+            &path,
+            batch,
+            &format!("round {batch} was emptied"),
+        );
         w.out(format!(
             "queue.sh {label}: ejected {id}; the round {batch} has no member left and is closed"
         ));
-        let voided = void_stacked(w, label, &c, &path, batch);
+        let voided = void_stacked(w, by, label, &c, &path, batch);
         if !unreturned.is_empty() {
             w.err(format!("queue.sh {label}: {} left round {batch} but did not return to REWORK: {} — see above", id, unreturned.join(" ")));
             return FAIL;
@@ -4524,6 +4601,7 @@ fn carry_mends(
 /// started. Refuses, naming the phase, when no pass is running.
 fn preempt(
     w: &World,
+    by: &str,
     batch: &str,
     repo: Option<&str>,
     eject_arg: &str,
@@ -4699,15 +4777,18 @@ fn preempt(
         let _ = fs::remove_file(preempt_marker(&c, batch));
         mark_running(&c, batch);
     }
-    landing_log(
+    round_event(
         &c.s.run,
-        &format!(
-            "QUEUE ROUND-PREEMPT {} repo={} batch={batch} done={done}/{total} red={} eject={}",
-            w.clock.now(),
-            c.r.name,
-            reds.join(","),
-            ids.join(",")
-        ),
+        "preempt",
+        &c.r.name,
+        batch,
+        by,
+        w.clock.now(),
+        &[
+            ("done", format!("{done}/{total}")),
+            ("red", reds.join(",")),
+            ("eject", ids.join(",")),
+        ],
     );
     w.out(format!(
         "queue.sh {label}: pass of round {batch} stopped at {done}/{total} suites, red so far: {}",
@@ -4735,6 +4816,7 @@ fn preempt(
         }
         let rc = eject(
             w,
+            by,
             batch,
             id,
             repo,
@@ -4916,12 +4998,12 @@ impl crate::ports::Emit for HeldErr<'_> {
     }
 }
 
-fn land(w: &World, batch: &str, repo: Option<&str>, token: Option<&str>) -> i32 {
+fn land(w: &World, by: &str, batch: &str, repo: Option<&str>, token: Option<&str>) -> i32 {
     let held = HeldErr {
         io: w.io,
         err: Default::default(),
     };
-    let r = land_round(&World { io: &held, ..*w }, batch, repo, token);
+    let r = land_round(&World { io: &held, ..*w }, by, batch, repo, token);
     let text = held.err.into_inner();
     match r {
         Ok(rc) => {
@@ -4967,6 +5049,7 @@ fn landed_head(w: &World, c: &Ctx, path: &Path, batch: &str) -> Option<String> {
 /// `Err` is a refusal that landed nothing; `Ok` is the exit of a land that ran.
 fn land_round(
     w: &World,
+    by: &str,
     batch: &str,
     repo: Option<&str>,
     token: Option<&str>,
@@ -4997,7 +5080,7 @@ fn land_round(
         ));
         return Err(refused(FAIL));
     }
-    if let Some(r) = remerge_if_moved(w, label, &c, &path, batch, &mut kv) {
+    if let Some(r) = remerge_if_moved(w, by, label, &c, &path, batch, &mut kv) {
         return Err(r);
     }
     let head = kv.get("head").unwrap_or("").to_string();
@@ -5050,14 +5133,14 @@ fn land_round(
     if recorded {
         crate::lock::remove_certify_lock(&c.s.queue_dir, &c.r.name, batch);
     }
-    landing_log(
+    round_event(
         &c.s.run,
-        &format!(
-            "QUEUE ROUND-LAND {} repo={} batch={batch} head={head} members={}",
-            w.clock.now(),
-            c.r.name,
-            csv(&members)
-        ),
+        "land",
+        &c.r.name,
+        batch,
+        by,
+        w.clock.now(),
+        &[("head", head.to_string()), ("members", csv(&members))],
     );
     w.out(format!(
         "queue.sh {label}: round {batch} landed at {head} — {} member(s)",
@@ -5097,8 +5180,10 @@ fn settled_parent(w: &World, c: &Ctx, parent: &str) {
 /// A round stacked on an open round lands only after that round has: it holds while the parent is
 /// open, is re-cut on the parent's head when that changed, and is rebuilt on the landing ref
 /// (to certify again) when the parent ended without landing. `None` means no stacking obstacle.
+#[allow(clippy::too_many_arguments)]
 fn settle_parent(
     w: &World,
+    by: &str,
     label: &str,
     c: &Ctx,
     path: &Path,
@@ -5156,13 +5241,14 @@ fn settle_parent(
         return Some((LandRefusal::Refused, FAIL));
     }
     mark_running(c, batch);
-    landing_log(
+    round_event(
         &c.s.run,
-        &format!(
-            "QUEUE ROUND-RESTACK {} repo={} batch={batch} head={new_head} base={onto}",
-            w.clock.now(),
-            c.r.name
-        ),
+        "restack",
+        &c.r.name,
+        batch,
+        by,
+        w.clock.now(),
+        &[("head", new_head.to_string()), ("base", onto.to_string())],
     );
     w.err(format!("queue.sh {label}: round {batch} was stacked on round {parent}, which changed or ended without landing — rebuilt at {new_head} on {onto}; run `queue round certify {batch}`, it is not landed"));
     Some((LandRefusal::BaseMoved, FAIL))
@@ -5174,6 +5260,7 @@ fn settle_parent(
 /// `None` means the round may land now (its kv holds the head to land).
 fn remerge_if_moved(
     w: &World,
+    by: &str,
     label: &str,
     c: &Ctx,
     path: &Path,
@@ -5182,7 +5269,7 @@ fn remerge_if_moved(
 ) -> Option<(LandRefusal, i32)> {
     let base = c.r.landref.clone().unwrap_or_default();
     let base_now = w.git.rev_parse(path, &base)?;
-    if let Some(r) = settle_parent(w, label, c, path, batch, kv, &base_now) {
+    if let Some(r) = settle_parent(w, by, label, c, path, batch, kv, &base_now) {
         return Some(r);
     }
     let head = kv.get("head").unwrap_or("").to_string();
@@ -5225,7 +5312,26 @@ fn remerge_if_moved(
         return Some((LandRefusal::Refused, FAIL));
     }
     mark_running(c, batch);
-    landing_log(&c.s.run, &format!("QUEUE ROUND-REMERGE {} repo={} batch={batch} head={new_head} base={base_now} shared={}", w.clock.now(), c.r.name, shared.iter().map(|f| f.as_str()).collect::<Vec<_>>().join(",")));
+    round_event(
+        &c.s.run,
+        "remerge",
+        &c.r.name,
+        batch,
+        by,
+        w.clock.now(),
+        &[
+            ("head", new_head.to_string()),
+            ("base", base_now.to_string()),
+            (
+                "shared",
+                shared
+                    .iter()
+                    .map(|f| f.as_str())
+                    .collect::<Vec<_>>()
+                    .join(","),
+            ),
+        ],
+    );
     w.err(format!(
         "queue.sh {label}: round {batch} was cut before {base} moved to {base_now} (files in common with what landed: {}) — re-merged to {new_head}; run `queue round certify {batch}`, it is not landed",
         if shared.is_empty() { "none".to_string() } else { shared.iter().take(5).map(|f| f.as_str()).collect::<Vec<_>>().join(" ") }
@@ -5259,29 +5365,42 @@ fn requeue_stranded(w: &World, label: &str, id: &str, tip: &str) -> Option<Strin
 
 fn abandon(
     w: &World,
+    by: &str,
     batch: &str,
     repo: Option<&str>,
     reason: &Text,
     token: Option<&str>,
     cause: &str,
 ) -> i32 {
-    abandon_with(w, batch, repo, reason, token, cause, true)
+    abandon_with(w, by, batch, repo, reason, token, cause, true)
 }
 
 /// A hand landing's void of the open round: the round's red is no reason to keep it, and a
 /// leased round is taken under its holder's own token.
 pub(super) fn abandon_for_landing(
     w: &World,
+    by: &str,
     batch: &str,
     repo: &str,
     reason: &str,
     token: Option<&str>,
 ) -> i32 {
-    abandon_with(w, batch, Some(repo), &Text::Arg(reason.to_string()), token, "hand-landing", false)
+    abandon_with(
+        w,
+        by,
+        batch,
+        Some(repo),
+        &Text::Arg(reason.to_string()),
+        token,
+        "hand-landing",
+        false,
+    )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn abandon_with(
     w: &World,
+    by: &str,
     batch: &str,
     repo: Option<&str>,
     reason: &Text,
@@ -5333,7 +5452,7 @@ fn abandon_with(
             }
         },
     };
-    close_abandoned(w, label, &c, &path, &kv, &reason, cause)
+    close_abandoned(w, by, label, &c, &path, &kv, &reason, cause)
 }
 
 const ABANDON_CONSIDERED_ENV: &str = "QUEUE_ABANDON_CONSIDERED";
@@ -5371,7 +5490,14 @@ fn considered_abandon(w: &World, label: &str, kv: &Kv, reason: String) -> Result
 /// members, so a verdict on it judges code that will not land. Each is named. A child's lease
 /// does not shield it: a pass its holder runs on that tree is void whoever holds it. The caller
 /// holds the queue lock; `Err` when any could not be voided.
-fn void_stacked(w: &World, label: &str, c: &Ctx, path: &Path, parent: &str) -> Result<(), i32> {
+fn void_stacked(
+    w: &World,
+    by: &str,
+    label: &str,
+    c: &Ctx,
+    path: &Path,
+    parent: &str,
+) -> Result<(), i32> {
     let children: Vec<Kv> = match live_records(w, c) {
         Ok(open) => open
             .into_iter()
@@ -5387,7 +5513,7 @@ fn void_stacked(w: &World, label: &str, c: &Ctx, path: &Path, parent: &str) -> R
         let child = kv.get("batch_id").unwrap_or("?").to_string();
         w.out(format!("queue.sh {label}: voiding round {child}: it is stacked on round {parent}, which closed without landing"));
         let reason = format!("voided: stacked on round {parent}, which closed without landing");
-        if close_abandoned(w, label, c, path, &kv, &reason, "voided") != OK {
+        if close_abandoned(w, by, label, c, path, &kv, &reason, "voided") != OK {
             w.err(format!("queue.sh {label}: round {child} is stacked on the closed round {parent} and could not be voided — abandon it by hand"));
             rc = Err(FAIL);
         }
@@ -5407,8 +5533,10 @@ fn name_surviving_driver(w: &World, label: &str, c: &Ctx, batch: &str) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn close_abandoned(
     w: &World,
+    by: &str,
     label: &str,
     c: &Ctx,
     path: &Path,
@@ -5469,25 +5597,26 @@ fn close_abandoned(
     finish(w, c, batch, End::Abandoned(cause), reason);
     stage::discard_behind(
         w,
+        by,
         c,
         path,
         batch,
         &format!("round {batch} was abandoned: {}", one_line(reason)),
     );
-    landing_log(
+    round_event(
         &c.s.run,
-        &format!(
-            "QUEUE ROUND-ABANDON {} repo={} batch={batch} reason={}",
-            w.clock.now(),
-            c.r.name,
-            one_line(reason)
-        ),
+        "abandon",
+        &c.r.name,
+        batch,
+        by,
+        w.clock.now(),
+        &[("reason", one_line(reason))],
     );
     w.out(format!(
         "queue.sh {label}: round {batch} abandoned for {}",
         c.r.name
     ));
-    match void_stacked(w, label, c, path, batch) {
+    match void_stacked(w, by, label, c, path, batch) {
         Ok(()) => OK,
         Err(rc) => rc,
     }

@@ -152,12 +152,12 @@ It runs with the rune prompt, hooks, fences, build-directory lease and `work sub
 dwarf, outside `max_live_dwarves` and the lanes, and the cockpit shows it as directed. A bead a
 dwarf holds is taken over: that dwarf is stopped with its branch and worktree kept, and the
 directed dwarf continues on the same branch. The claim event records you, the reason and the
-dwarf it replaced. When it reaches SUBMITTED, drive it with `queue round open --members`, certify
+dwarf it replaced. When it reaches SUBMITTED, drive it with `queue round open --members ... --by concierge`, certify
 and land as for any bead.
 
 **A hand-built fix to a bead in REWORK or an unclaimed READY** is put back with `queue resubmit <id>
 --tip <40-hex> --by concierge --reason <why the normal path was bypassed> --evidence <checks run on
-the tip, command and result> --evidence-tip <the same 40-hex>`, then `queue round open --members
+the tip, command and result> --evidence-tip <the same 40-hex>`, then `queue round open --by concierge --members
 <id>:<tip>`. A REWORK bead needs `spira-lc hold <id> manual --reason <why> concierge` first. It is a
 break-glass move and is refused without every field; the event records actor, reason, evidence and
 tip. It needs no host gate: the round's full suite certifies it. A bead a live dwarf holds is refused.

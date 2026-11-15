@@ -185,12 +185,14 @@ pub enum Cmd {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Round {
     Open {
+        by: String,
         repo: Option<String>,
         members: Text,
         name: Option<String>,
         worktree: Option<PathBuf>,
     },
     Certify {
+        by: String,
         batch: String,
         repo: Option<String>,
         attest: Option<String>,
@@ -199,6 +201,7 @@ pub enum Round {
         lease_token: Option<String>,
     },
     Eject {
+        by: String,
         batch: String,
         id: String,
         repo: Option<String>,
@@ -211,11 +214,13 @@ pub enum Round {
         lease_token: Option<String>,
     },
     Land {
+        by: String,
         batch: String,
         repo: Option<String>,
         lease_token: Option<String>,
     },
     Abandon {
+        by: String,
         batch: String,
         repo: Option<String>,
         reason: Text,
@@ -242,6 +247,7 @@ pub enum Round {
         reason: Text,
     },
     Preempt {
+        by: String,
         batch: String,
         repo: Option<String>,
         eject: String,
@@ -291,6 +297,7 @@ pub enum Round {
     },
     /// Assemble the next round behind the open one and run the fences on it.
     Stage {
+        by: String,
         repo: Option<String>,
         members: Text,
         name: Option<String>,
@@ -298,19 +305,22 @@ pub enum Round {
     },
     /// The staged round's own VM pass, once the round it waits behind is green.
     StageTest {
+        by: String,
         repo: Option<String>,
     },
     /// The round it waited behind landed: cut the staged round, reusing its pass when the tree matches.
     Promote {
+        by: String,
         repo: Option<String>,
     },
     Discard {
+        by: String,
         repo: Option<String>,
         reason: Text,
     },
 }
 
-pub const USAGE: &str = "usage: queue.sh submit <branch> [<repo>] | queue.sh protect [<repo>] | queue.sh stats | queue.sh churn [--since <dur|date>] [--until <dur|date>] [<repo>] | queue.sh backfill-carriers [--apply] | queue.sh flush [<repo>] | queue.sh step <repo> | queue.sh step --all | queue.sh verdict <repo> | queue.sh eject <id> [--reason <text>] [--harness-fault] [--dry-run] [<repo>] | queue.sh abandon [<repo>] --reason <text> [--dry-run] | queue.sh batch open [--repo <repo>] [--members <id[@tip]>,...] [--head <sha> --body-file <path|->] [--name <id> [--lease-token <t>]] [--owner <who>] [--skip-pregate] [--dry-run] [--replace --reason <why>] (alias: open-batch [<repo>]) | queue.sh batch sweep --repo <repo> | queue.sh batch show --repo <repo> [--ended <n>] | queue.sh claim [<repo>] --reason <text> [--force] | queue.sh release [<repo>] | queue.sh resubmit <id> [<repo>] --tip <40-hex> --by concierge --reason <why> | queue.sh rework <id> [<repo>] --by <concierge|operator> --reason <evidence> | queue.sh absolve <id> [<repo>] --by <concierge|operator> --reason <why> --evidence <checks> --evidence-tip <tip> | queue.sh settle-landed <id> [<repo>] --by <actor> --evidence-tip <sha> | queue.sh forced-suites <id> [<repo>] [--clear --by <concierge|operator> --reason <why>] | queue.sh land-local [<repo>] --head <sha> --members <id:tip[,id:tip...]> | queue.sh hand-land <id> [<repo>] --tip <40-hex> --by <actor> --reason <why> --evidence <checks> --evidence-tip <tip> --round <wait|subvert> [--worktree <dir>] [--dry-run] | queue.sh publish [<repo>] | queue.sh publish-settle [<repo>] | queue.sh to-forge [<repo>] | queue.sh to-local [<repo>] | queue.sh mode-switch <repo> <queue.forge|queue.local> | queue.sh rollback-local [<repo>] | queue.sh rebase-waiting [<repo>] | queue.sh round open [<repo>] --members <id[:tip],...> [--name <n>] [--worktree <dir>] | queue.sh round certify <batch> [<repo>] [--attest <head> --ran <n>] [--rehead <head>] [--lease-token <t>] | queue.sh round eject <batch> <id> [<repo>] --reason <text> [--suites <csv>] [--red] [--harness-fault] [--no-rebuild] [--with <id>[,<id>...]] [--lease-token <t>] | queue.sh round land <batch> [<repo>] [--lease-token <t>] | queue.sh round abandon <batch> [<repo>] --reason <text> [--cause <word>] [--lease-token <t>] | queue.sh round sweep-locks [--repo <repo> | --all] | queue.sh round preempt <batch> [<repo>] --eject <id>[,<id>...] --reason <text> [--suites <csv>] | queue.sh round pass-start <batch> [<repo>] [--resume] | queue.sh round suites-started <batch> [<repo>] | queue.sh round failed <batch> [<repo>] --suite <name> | queue.sh round mended <batch> <failure> [<repo>] --tips <id:tip,...> --checked <crate:x|suite:y,...> [--ask <id>] [--reason <text>] [--by <concierge|operator> --evidence <checks> --evidence-tip <tip>] | queue.sh round return <batch> <failure> [<repo>] --members <id,...> --reason <text> | queue.sh round environment|flaky|unsure <batch> <failure> [<repo>] --reason <text> | queue.sh round triage-ended <batch> <failure> [<repo>] | queue.sh round await-ask <batch> <failure> [<repo>] --ask <id> | queue.sh round pass-verdict <batch> [<repo>] --verdict <green|red|incomplete> [--red-suites <csv>] [--suites-s <n>] [--build-s <n>] [--reason <text>] | queue.sh round stop [<repo>] --by <owner> --reason <text> --until <condition> | queue.sh round start [<repo>] --by <owner> --reason <text> | queue.sh round status [<repo>] | queue.sh round stage [<repo>] --members <id[:tip],...> [--name <n>] [--worktree <dir>] | queue.sh round stage-test [<repo>] | queue.sh round promote [<repo>] | queue.sh round discard [<repo>] --reason <text>";
+pub const USAGE: &str = "usage: queue.sh submit <branch> [<repo>] | queue.sh protect [<repo>] | queue.sh stats | queue.sh churn [--since <dur|date>] [--until <dur|date>] [<repo>] | queue.sh backfill-carriers [--apply] | queue.sh flush [<repo>] | queue.sh step <repo> | queue.sh step --all | queue.sh verdict <repo> | queue.sh eject <id> [--reason <text>] [--harness-fault] [--dry-run] [<repo>] | queue.sh abandon [<repo>] --reason <text> [--dry-run] | queue.sh batch open [--repo <repo>] [--members <id[@tip]>,...] [--head <sha> --body-file <path|->] [--name <id> [--lease-token <t>]] [--owner <who>] [--skip-pregate] [--dry-run] [--replace --reason <why>] (alias: open-batch [<repo>]) | queue.sh batch sweep --repo <repo> | queue.sh batch show --repo <repo> [--ended <n>] | queue.sh claim [<repo>] --reason <text> [--force] | queue.sh release [<repo>] | queue.sh resubmit <id> [<repo>] --tip <40-hex> --by concierge --reason <why> | queue.sh rework <id> [<repo>] --by <concierge|operator> --reason <evidence> | queue.sh absolve <id> [<repo>] --by <concierge|operator> --reason <why> --evidence <checks> --evidence-tip <tip> | queue.sh settle-landed <id> [<repo>] --by <actor> --evidence-tip <sha> | queue.sh forced-suites <id> [<repo>] [--clear --by <concierge|operator> --reason <why>] | queue.sh land-local [<repo>] --head <sha> --members <id:tip[,id:tip...]> | queue.sh hand-land <id> [<repo>] --tip <40-hex> --by <actor> --reason <why> --evidence <checks> --evidence-tip <tip> --round <wait|subvert> [--worktree <dir>] [--dry-run] | queue.sh publish [<repo>] | queue.sh publish-settle [<repo>] | queue.sh to-forge [<repo>] | queue.sh to-local [<repo>] | queue.sh mode-switch <repo> <queue.forge|queue.local> | queue.sh rollback-local [<repo>] | queue.sh rebase-waiting [<repo>] | queue.sh round open [<repo>] --by <actor> --members <id[:tip],...> [--name <n>] [--worktree <dir>] | queue.sh round certify <batch> [<repo>] --by <actor> [--attest <head> --ran <n>] [--rehead <head>] [--lease-token <t>] | queue.sh round eject <batch> <id> [<repo>] --by <actor> --reason <text> [--suites <csv>] [--red] [--harness-fault] [--no-rebuild] [--with <id>[,<id>...]] [--lease-token <t>] | queue.sh round land <batch> [<repo>] --by <actor> [--lease-token <t>] | queue.sh round abandon <batch> [<repo>] --by <actor> --reason <text> [--cause <word>] [--lease-token <t>] | queue.sh round sweep-locks [--repo <repo> | --all] | queue.sh round preempt <batch> [<repo>] --by <actor> --eject <id>[,<id>...] --reason <text> [--suites <csv>] | queue.sh round pass-start <batch> [<repo>] [--resume] | queue.sh round suites-started <batch> [<repo>] | queue.sh round failed <batch> [<repo>] --suite <name> | queue.sh round mended <batch> <failure> [<repo>] --tips <id:tip,...> --checked <crate:x|suite:y,...> [--ask <id>] [--reason <text>] [--by <concierge|operator> --evidence <checks> --evidence-tip <tip>] | queue.sh round return <batch> <failure> [<repo>] --members <id,...> --reason <text> | queue.sh round environment|flaky|unsure <batch> <failure> [<repo>] --reason <text> | queue.sh round triage-ended <batch> <failure> [<repo>] | queue.sh round await-ask <batch> <failure> [<repo>] --ask <id> | queue.sh round pass-verdict <batch> [<repo>] --verdict <green|red|incomplete> [--red-suites <csv>] [--suites-s <n>] [--build-s <n>] [--reason <text>] | queue.sh round stop [<repo>] --by <owner> --reason <text> --until <condition> | queue.sh round start [<repo>] --by <owner> --reason <text> | queue.sh round status [<repo>] | queue.sh round stage [<repo>] --by <actor> --members <id[:tip],...> [--name <n>] [--worktree <dir>] | queue.sh round stage-test [<repo>] --by <actor> | queue.sh round promote [<repo>] --by <actor> | queue.sh round discard [<repo>] --by <actor> --reason <text>";
 
 /// A usage error: the message queue.sh printed (without trailing newline) and exit 2.
 #[derive(Debug, PartialEq, Eq)]
@@ -464,6 +474,20 @@ fn parse_batch_open(cmd: &str, args: &[String]) -> Result<Cmd, Usage> {
 /// The round verbs a lease guards: each takes `--lease-token`, and no other verb does.
 const LEASED_VERBS: [&str; 4] = ["certify", "eject", "land", "abandon"];
 
+/// The round verbs that write round events: each names who is acting on the round.
+const ACTED_VERBS: [&str; 10] = [
+    "open",
+    "certify",
+    "eject",
+    "land",
+    "abandon",
+    "preempt",
+    "stage",
+    "stage-test",
+    "promote",
+    "discard",
+];
+
 fn parse_round(args: &[String]) -> Result<Round, Usage> {
     let Some(verb) = args.first() else {
         return Err(Usage(USAGE.into()));
@@ -507,7 +531,10 @@ fn parse_round(args: &[String]) -> Result<Round, Usage> {
             Tok::Opt("tips", v) => tips = w.value(v),
             Tok::Opt("checked", v) => checked = w.value(v),
             Tok::Opt("ask", v) => ask = Some(w.value(v)),
-            Tok::Opt("by", v) if matches!(verb.as_str(), "mended" | "stop" | "start") => {
+            Tok::Opt("by", v)
+                if matches!(verb.as_str(), "mended" | "stop" | "start")
+                    || ACTED_VERBS.contains(&verb.as_str()) =>
+            {
                 by = w.value(v)
             }
             Tok::Opt("until", v) if verb == "stop" => until = w.value(v),
@@ -533,6 +560,12 @@ fn parse_round(args: &[String]) -> Result<Round, Usage> {
     let need = |what: &str, v: Option<String>| {
         v.ok_or_else(|| Usage(format!("queue.sh round {verb}: {what} required")))
     };
+    if ACTED_VERBS.contains(&verb.as_str()) && !spira_otel::rounds::ACTORS.contains(&by.as_str()) {
+        return Err(Usage(format!(
+            "queue.sh round {verb}: --by {} is required — who is acting on the round",
+            spira_otel::rounds::ACTORS.join("|")
+        )));
+    }
     let mut pos = pos.into_iter();
     match verb.as_str() {
         "open" => {
@@ -540,6 +573,7 @@ fn parse_round(args: &[String]) -> Result<Round, Usage> {
                 return Err(Usage("queue.sh round open: --members is required".into()));
             }
             Ok(Round::Open {
+                by,
                 repo: pos.next(),
                 members,
                 name,
@@ -547,6 +581,7 @@ fn parse_round(args: &[String]) -> Result<Round, Usage> {
             })
         }
         "certify" => Ok(Round::Certify {
+            by,
             batch: need("batch id", pos.next())?,
             repo: pos.next(),
             attest,
@@ -555,6 +590,7 @@ fn parse_round(args: &[String]) -> Result<Round, Usage> {
             lease_token,
         }),
         "eject" => Ok(Round::Eject {
+            by,
             batch: need("batch id", pos.next())?,
             id: need("bead id", pos.next())?,
             repo: pos.next(),
@@ -567,11 +603,13 @@ fn parse_round(args: &[String]) -> Result<Round, Usage> {
             lease_token,
         }),
         "land" => Ok(Round::Land {
+            by,
             batch: need("batch id", pos.next())?,
             repo: pos.next(),
             lease_token,
         }),
         "abandon" => Ok(Round::Abandon {
+            by,
             batch: need("batch id", pos.next())?,
             repo: pos.next(),
             reason,
@@ -596,6 +634,7 @@ fn parse_round(args: &[String]) -> Result<Round, Usage> {
                 ));
             }
             Ok(Round::Preempt {
+                by,
                 batch: need("batch id", pos.next())?,
                 repo: pos.next(),
                 eject,
@@ -696,15 +735,23 @@ fn parse_round(args: &[String]) -> Result<Round, Usage> {
                 return Err(Usage("queue.sh round stage: --members is required".into()));
             }
             Ok(Round::Stage {
+                by,
                 repo: pos.next(),
                 members,
                 name,
                 worktree,
             })
         }
-        "stage-test" => Ok(Round::StageTest { repo: pos.next() }),
-        "promote" => Ok(Round::Promote { repo: pos.next() }),
+        "stage-test" => Ok(Round::StageTest {
+            by,
+            repo: pos.next(),
+        }),
+        "promote" => Ok(Round::Promote {
+            by,
+            repo: pos.next(),
+        }),
         "discard" => Ok(Round::Discard {
+            by,
             repo: pos.next(),
             reason,
         }),
@@ -1166,8 +1213,20 @@ pub fn parse(argv: &[String]) -> Result<Cmd, Usage> {
 mod tests {
     use super::*;
 
-    fn p(s: &[&str]) -> Result<Cmd, Usage> {
+    fn bare(s: &[&str]) -> Result<Cmd, Usage> {
         parse(&s.iter().map(|x| x.to_string()).collect::<Vec<_>>())
+    }
+
+    /// `bare`, with `--by batcher` added to a round verb that needs an actor and names none.
+    fn p(s: &[&str]) -> Result<Cmd, Usage> {
+        let mut v: Vec<String> = s.iter().map(|x| x.to_string()).collect();
+        if v.first().is_some_and(|a| a == "round")
+            && v.get(1).is_some_and(|x| ACTED_VERBS.contains(&x.as_str()))
+            && !v.iter().any(|a| a == "--by")
+        {
+            v.extend(["--by".to_string(), "batcher".to_string()]);
+        }
+        parse(&v)
     }
 
     #[test]
@@ -1269,6 +1328,7 @@ mod tests {
         assert_eq!(
             c,
             Cmd::Round(Round::Open {
+                by: "batcher".into(),
                 repo: Some("spira".into()),
                 members: Text::Arg("a:1,b".into()),
                 name: Some("r1".into()),
@@ -1312,6 +1372,7 @@ mod tests {
         assert_eq!(
             p(&["round", "land", "b1"]),
             Ok(Cmd::Round(Round::Land {
+                by: "batcher".into(),
                 batch: "b1".into(),
                 repo: None,
                 lease_token: None
@@ -1320,6 +1381,7 @@ mod tests {
         assert_eq!(
             p(&["round", "land", "b1", "spira", "--lease-token", "9-0"]),
             Ok(Cmd::Round(Round::Land {
+                by: "batcher".into(),
                 batch: "b1".into(),
                 repo: Some("spira".into()),
                 lease_token: Some("9-0".into())
@@ -1433,6 +1495,7 @@ mod tests {
         assert_eq!(
             c,
             Cmd::Round(Round::Stage {
+                by: "batcher".into(),
                 repo: Some("spira".into()),
                 members: Text::Arg("a:1".into()),
                 name: Some("r2".into()),
@@ -1445,21 +1508,35 @@ mod tests {
         );
         assert_eq!(
             p(&["round", "stage-test"]),
-            Ok(Cmd::Round(Round::StageTest { repo: None }))
+            Ok(Cmd::Round(Round::StageTest {
+                by: "batcher".into(),
+                repo: None
+            }))
         );
         assert_eq!(
             p(&["round", "promote", "spira"]),
             Ok(Cmd::Round(Round::Promote {
+                by: "batcher".into(),
                 repo: Some("spira".into())
             }))
         );
         assert_eq!(
             p(&["round", "discard", "--reason", "x"]),
             Ok(Cmd::Round(Round::Discard {
+                by: "batcher".into(),
                 repo: None,
                 reason: Text::Arg("x".into())
             }))
         );
+    }
+
+    #[test]
+    fn a_round_verb_that_writes_events_needs_a_known_actor() {
+        let want = "queue.sh round eject: --by batcher|concierge|operator is required — who is acting on the round";
+        let eject = ["round", "eject", "b1", "sp-a"];
+        assert_eq!(bare(&eject), Err(Usage(want.into())));
+        assert_eq!(bare(&[&eject[..], &["--by", "dwarf"]].concat()), Err(Usage(want.into())));
+        assert!(bare(&[&eject[..], &["--by", "operator"]].concat()).is_ok());
     }
 
     #[test]

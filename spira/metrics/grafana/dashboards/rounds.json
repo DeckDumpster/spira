@@ -70,6 +70,12 @@
           "refId": "v"
         },
         "refresh": 2
+      },
+      {
+        "name": "DS_VL",
+        "type": "datasource",
+        "query": "victoriametrics-logs-datasource",
+        "label": "logs data source"
       }
     ]
   },
@@ -862,6 +868,71 @@
           },
           "expr": "sum by (place, cause) (increase(spira_cert_pass_causes{repo=~\"$repo\",place=~\"$place\"}[$__interval]))",
           "legendFormat": "{{place}} {{cause}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 24,
+      "type": "table",
+      "title": "hand-managed rounds",
+      "datasource": {
+        "type": "victoriametrics-logs-datasource",
+        "uid": "${DS_VL}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 104,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "${DS_VL}"
+          },
+          "expr": "_msg:\"round.event\" by:in(\"concierge\",\"operator\") | stats by (repo, batch) count() hand_events",
+          "queryType": "stats",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 25,
+      "type": "timeseries",
+      "title": "hand-managed round events per repo",
+      "datasource": {
+        "type": "victoriametrics-logs-datasource",
+        "uid": "${DS_VL}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 104,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "${DS_VL}"
+          },
+          "expr": "_msg:\"round.event\" by:in(\"concierge\",\"operator\") | stats by (repo) count() hand_events",
+          "queryType": "statsRange",
+          "legendFormat": "{{repo}}",
           "refId": "A"
         }
       ]
