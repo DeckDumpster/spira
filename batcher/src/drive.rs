@@ -807,6 +807,23 @@ fn eject_sole_member<O: RoundOps>(
     Ok(RoundEnd::Emptied(format!("{filter} red {left}")))
 }
 
+/// A one-member round red on several suites ejects that member on the suites themselves, so
+/// the record reads each suite's own failing lines.
+fn eject_sole_member_on_suites<O: RoundOps>(
+    ops: &mut O,
+    members: &[Member],
+    red: &str,
+    suites: &[String],
+) -> Result<RoundEnd, String> {
+    let [only] = members else {
+        return Err("a sole-member eject needs exactly one member".to_string());
+    };
+    let named = suites.join(",");
+    let left = who_left(members, &leaving(members, &sole_member_culprit(red, members), &named));
+    ops.eject(only, suites, true);
+    Ok(RoundEnd::Emptied(format!("{named} red {left}")))
+}
+
 enum FilterEject {
     Unnamed(String),
     /// Nothing is left to land; who left and who stayed.
@@ -1190,9 +1207,8 @@ fn attribute_members<R: RoundRunner, O: RoundOps>(
             prior_reds.len()
         );
         if let [_] = members[..] {
-            let filter = prior_reds.join(",");
-            let red = format!("{filter} red in the corpus pass");
-            return eject_sole_member(ops, &members, &red, &filter);
+            let red = format!("{} red in the corpus pass", prior_reds.join(","));
+            return eject_sole_member_on_suites(ops, &members, &red, &prior_reds);
         }
         suites = prior_reds;
         kind = MainKind::Corpus;
@@ -1411,13 +1427,14 @@ fn attribute_members<R: RoundRunner, O: RoundOps>(
             let red = format!("unattributed red {}", d.unattributed.join(","));
             let alone = sole_member_culprit(&red, &members);
             if !alone.is_empty() {
-                let suites = d.unattributed.join(",");
+                let named = d.unattributed.join(",");
                 println!(
-                    "batcher: {suites} red names no member; the round's only member is the culprit"
+                    "batcher: {named} red names no member; the round's only member is the culprit"
                 );
-                apply_build_actions(ops, &members, &alone, &suites)?;
+                let unattributed = d.unattributed.clone();
+                eject_sole_member_on_suites(ops, &members, &red, &unattributed)?;
                 return Ok(RoundEnd::Emptied(format!(
-                    "{suites} red ejected the only member"
+                    "{named} red ejected the only member"
                 )));
             }
             let mut found: Vec<Action> = vec![];
@@ -2978,7 +2995,16 @@ pub(crate) mod tests {
         assert!(matches!(end, RoundEnd::Emptied(_)), "{end:?}");
         assert_eq!(ops.ejected, vec![("m1".to_string(), vec!["test-03.sh".to_string()])]);
         assert!(f.main_kind.is_empty(), "{:?}", f.main_kind);
-        assert!(ops.eject_evidence.iter().any(|(id, line)| id == "m1" && line.contains("test-03.sh")), "{:?}", ops.eject_evidence);
+    }
+
+    #[test]
+    fn a_one_member_round_red_in_two_prior_suites_ejects_its_member_on_each_suite() {
+        let mut f = Fake::new(|_, _| false);
+        f.prior_suites = vec!["test-01.sh".into(), "test-03.sh".into()];
+        let mut ops = Ops::default();
+        let end = attribute_round(&mut f, &mut ops, &corpus(4), vec![member("m1")], Budget { slots: 6, maxpar: 2 }).unwrap();
+        assert!(matches!(end, RoundEnd::Emptied(_)), "{end:?}");
+        assert_eq!(ops.ejected, vec![("m1".to_string(), vec!["test-01.sh".to_string(), "test-03.sh".to_string()])]);
     }
 
     #[test]
@@ -4890,6 +4916,15 @@ pub(crate) mod tests {
         );
         assert!(ops.ejected.is_empty());
         assert_eq!(f.main_kind.len(), 1);
+    }
+
+    #[test]
+    fn a_sole_member_red_on_suites_no_one_owns_is_ejected_on_each_suite_and_the_round_ends_emptied() {
+        let mut ops = Ops::default();
+        let suites = vec!["test-01.sh".to_string(), "test-02.sh".to_string()];
+        let end = eject_sole_member_on_suites(&mut ops, &[member("m1")], "unattributed red test-01.sh,test-02.sh", &suites).unwrap();
+        assert!(matches!(&end, RoundEnd::Emptied(why) if why.contains("test-01.sh,test-02.sh") && why.contains("m1")), "{end:?}");
+        assert_eq!(ops.ejected, vec![("m1".to_string(), suites)]);
     }
 
     #[test]

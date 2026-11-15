@@ -4665,6 +4665,23 @@ mod fail_line_tests {
     }
 
     #[test]
+    fn a_sole_members_record_has_a_step_per_red_suite_only_when_the_suites_are_named_separately() {
+        let results = testkit::TempDir::new("batcher-cut-sole-results");
+        let pass = testkit::TempDir::new("batcher-cut-sole-pass");
+        fs::write(pass.path().join("test-a.sh.out"), "ok 1 - fine\nnot ok 2 - it broke\n").unwrap();
+        fs::write(pass.path().join("test-b.sh.out"), "not ok 1 - also broke\n").unwrap();
+        let digest = |suites: &[String]| {
+            spira_config::ejection::digest_steps("t", &[], &[], &red_suite_steps(results.path(), Some(pass.path()), suites))
+        };
+        let apart = digest(&["test-a.sh".to_string(), "test-b.sh".to_string()]);
+        for want in ["STEP test-a.sh", "not ok 2 - it broke", "STEP test-b.sh", "not ok 1 - also broke"] {
+            assert!(apart.contains(want), "{want}: {apart}");
+        }
+        let joined = digest(&["test-a.sh,test-b.sh".to_string()]);
+        assert!(!joined.contains("not ok"), "{joined}");
+    }
+
+    #[test]
     fn each_open_round_carries_its_own_phase() {
         let out = "round=open\nphase=opened\nbatch_id=b1\nround2=open\nround2_phase=certifying\nround2_batch_id=b2\n";
         let phases: Vec<_> = open_rounds_of(out)
