@@ -1462,7 +1462,7 @@ pub mod fake {
                 Some(hold) => {
                     let containers = std::sync::Arc::clone(&self.containers);
                     let t = std::thread::spawn(move || {
-                        let _ = hold.recv_timeout(Duration::from_secs(10));
+                        let _ = hold.recv();
                         containers.lock().unwrap().retain(|c| *c != name);
                     });
                     self.detached_threads.lock().unwrap().push(t);
