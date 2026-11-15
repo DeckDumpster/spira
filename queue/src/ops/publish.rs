@@ -651,6 +651,10 @@ fn settle_repo(w: &World, c: &Ctx) -> i32 {
         "{now} publish-settle {name}: pr={} -> {action:?}",
         if pr_no.is_empty() { "none" } else { &pr_no }
     ));
+    if let (Settle::Wait | Settle::Parked, Some(Pr::Open { ci: Ci::NoRun { .. }, .. })) = (action, &pr) {
+        let branch = kv.as_ref().and_then(|k| k.get("branch")).unwrap_or("");
+        w.out(format!("{now} publish-settle {name}: waiting for a gate run on {branch}"));
+    }
     match action {
         Settle::Wait | Settle::Parked => OK,
         Settle::Rerun | Settle::Alarm => rerun_or_alarm(w, c, &path, &pfile, kv.as_ref(), action),

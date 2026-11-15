@@ -4456,6 +4456,7 @@ fn settle_waits_on_a_publish_with_no_run_inside_the_bound() {
     stale_publish(&t, NO_RUN);
     t.clock.now.set(900 + 599);
     assert_eq!(t.run(&["publish-settle"]), 0, "{}", t.err());
+    assert!(t.out().contains("waiting for a gate run on spira/publish/OLD"), "{}", t.out());
     let calls = t.forge.calls.borrow().clone();
     assert!(
         !calls
