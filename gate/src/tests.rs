@@ -2838,6 +2838,7 @@ fn a_red_unit_test_on_a_green_base_is_the_branchs() {
     assert!(f.stderr().contains("phase 'test' failed (exit 101)"));
     assert!(!f.stderr().contains("the same command passes against"));
     assert!(f.stderr().contains("its tests were not run"));
+    assert!(f.stderr().contains("so the red is charged to this branch: tests::x"));
 }
 
 #[test]
