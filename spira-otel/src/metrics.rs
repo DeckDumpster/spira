@@ -420,7 +420,7 @@ pub mod fixture {
     /// received once it has returned.
     pub fn capture<R>(f: impl FnOnce(&MetricsSink) -> R) -> (R, Vec<Sample>) {
         let cap = Capture::start();
-        let r = f(&MetricsSink::new(Some(&cap.addr), "fixture", RUN_DEADLINE));
+        let r = f(&MetricsSink::new(Some(&cap.addr), "fixture", Duration::from_secs(30)));
         (r, cap.settled())
     }
 
