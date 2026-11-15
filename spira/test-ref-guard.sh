@@ -27,7 +27,7 @@
 # deletion in a real checkout would be the very thing the hook exists to prevent.
 #
 # tier: T2
-# covers: spira/hooks/reference-transaction spira/worktree-hooks.sh spira/hooks/pre-commit spira/pre-commit-guard.sh UC-safety-fences-20 UC-safety-fences-21
+# covers: spira/hooks/reference-transaction spira/worktree-hooks.sh spira/hooks/pre-commit spira/hooks/commit-msg spira/pre-commit-guard.sh UC-safety-fences-20 UC-safety-fences-21
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$HERE/testlib.sh"
