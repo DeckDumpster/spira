@@ -261,6 +261,13 @@ fn a_manual_hold_carries_its_reason_and_review_date_in_the_event() {
     let bad = go(&mut f, "hold", &["sp-r", "manual", "--reason", "x", "--review-by", "next week"]);
     assert_eq!(bad.code, REFUSED);
     assert_eq!(f.events.len(), 1, "a malformed date sends nothing");
+    for v in ["2026-11-15T22:00", "2026-11-15junk", "2026-13-01", "2026-11-99", "2026-11-15T99:00:00Z"] {
+        assert_eq!(go(&mut f, "hold", &["sp-r", "manual", "--reason", "x", "--review-by", v]).code, REFUSED, "{v}");
+    }
+    assert_eq!(f.events.len(), 1, "an unreadable review-by sends nothing");
+    let ok = go(&mut f, "hold", &["sp-r", "manual", "--reason", "x", "--review-by", "2026-11-15T22:00:00Z"]);
+    assert_eq!(ok.code, APPLIED, "{ok:?}");
+    assert!(f.events[1].5.contains(r#""detail":"review-by:2026-11-15T22:00:00Z x""#), "{}", f.events[1].5);
 }
 
 #[test]
