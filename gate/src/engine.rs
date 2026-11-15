@@ -1549,6 +1549,11 @@ impl<'w, W: World> Trial<'w, W> {
         self.w.checkout(repo, tree, rev, want)
     }
 
+    /// `self.s.changed` entries are `<status>\t<path>`; the ejection record keys on paths alone.
+    fn changed_paths(&self) -> Vec<String> {
+        self.s.changed.iter().map(|e| e.rsplit('\t').next().unwrap_or(e).to_string()).collect()
+    }
+
     /// The failing tests of `out` when the unit test phase is its only red and every failing test
     /// also failed on other beads with disjoint diffs; `None` on any doubt, leaving the red the branch's.
     fn shared_unit_red(&self, out: &str) -> Option<Vec<(String, Vec<String>)>> {
@@ -1556,7 +1561,7 @@ impl<'w, W: World> Trial<'w, W> {
         if self.s.bead.is_empty() || tip.is_empty() || tip == "-" || parse::red_units(out) != ["phase:test"] || parse::failed_tests(out).is_empty() || parse::fence_refusal(out).is_some() {
             return None;
         }
-        let digest = ejection::digest(tip, &self.s.changed, out);
+        let digest = ejection::digest(tip, &self.changed_paths(), out);
         let prior = self.w.lc_prior_failures(self.w.now() as i64 - ejection::LOOKBACK_SECS).ok()?;
         ejection::flipped(&self.s.bead, &digest, &prior)
     }
@@ -1888,7 +1893,7 @@ impl<'w, W: World> Trial<'w, W> {
             };
             w.keep_logs(&[self.s.bead.as_str()], &[("trial.out".to_string(), vd.msg.clone().into_bytes())]);
             if o == "red" {
-                w.lc_failure(&self.s.bead, &self.s.branch_tip, &self.s.changed, &vd.msg);
+                w.lc_failure(&self.s.bead, &self.s.branch_tip, &self.changed_paths(), &vd.msg);
             }
             let (step, message) = if o == "red" { self.red_at(&vd) } else { Default::default() };
             let refused = w.lc_certify(&self.s.bead, &self.s.branch_tip, o, &d, &step, &message);

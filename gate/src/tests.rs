@@ -2816,6 +2816,20 @@ fn a_red_unit_test_on_a_green_base_is_the_branchs() {
     assert!(f.stderr().contains("phase 'test' failed (exit 101)"));
 }
 
+#[test]
+fn a_red_units_failure_record_lists_bare_paths_not_name_status_lines() {
+    let f = unit_fake(&["gate/src/x.rs"]);
+    f.put_var("SPIRA_GATE_BEAD", "sp-a");
+    f.unit_runs.borrow_mut().insert(
+        (MERGE_SHA.into(), "test"),
+        (101, "test tests::x ... FAILED".into()),
+    );
+    assert_eq!(f.run(), FAIL);
+    let got = f.failures.borrow();
+    assert_eq!(got.len(), 1);
+    assert_eq!(got[0].2, ["spira/x.sh", "src/a.rs"]);
+}
+
 const FLIP_OUT: &str = "---- t::flip stdout ----\n...\ntest t::flip ... FAILED";
 
 fn flip_fake(prior: Result<Vec<(String, String)>, String>) -> Fake {
