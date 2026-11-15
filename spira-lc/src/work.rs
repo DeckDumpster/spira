@@ -438,7 +438,33 @@ fn branch_refusal(conn: &Conn, bead_id: &str, tip: &str, stack_tips: &[String]) 
     let landref = spira_config::repos::landref(&reg, &root)?;
     let in_flight = |id: &str| sibling_in_flight(conn, id, &repo);
     let (fork, commits) = branch_evidence(std::path::Path::new(&root), &landref, tip, stack_tips);
-    finishing_refusal(&landref, tip, bead_id, fork.as_deref(), commits.as_deref(), &in_flight).map(|m| (REFUSED, m))
+    if let Some(m) = finishing_refusal(&landref, tip, bead_id, fork.as_deref(), commits.as_deref(), &in_flight) {
+        return Some((REFUSED, m));
+    }
+    if !stack_tips.is_empty() {
+        return None;
+    }
+    let base_fq = Some(spira_config::repos::qualify_base_ref(&landref, &root)).filter(|b| !b.is_empty()).unwrap_or_else(|| landref.clone());
+    merge_refusal(&|a| crate::git_evidence::git_code_output(std::path::Path::new(&root), a), &landref, &base_fq, tip)
+}
+
+/// A tip with a content conflict against the landing ref stays WORKING, so the session that wrote
+/// it resolves the conflict; the exit check asks the same function.
+fn merge_refusal(git: &dyn Fn(&[&str]) -> (i32, String), landref: &str, base_fq: &str, tip: &str) -> Option<(i32, String)> {
+    match spira_config::rebase_check::merge_onto(git, base_fq, tip) {
+        spira_config::rebase_check::Merge::Clean => None,
+        spira_config::rebase_check::Merge::Conflict { paths, .. } => {
+            let named = if paths.is_empty() { "unknown".to_string() } else { paths.join(", ") };
+            Some((
+                REFUSED,
+                format!("refused: {tip} does not merge onto the landing ref {landref} — conflicts in: {named}. Rebase onto {landref}, resolve the conflict, commit, and run `work submit` again"),
+            ))
+        }
+        spira_config::rebase_check::Merge::Unknown(out) => {
+            let last = out.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("").trim();
+            Some((CANNOT_TELL, format!("cannot tell: git merge-tree of {tip} onto {base_fq} failed: {last}")))
+        }
+    }
 }
 
 /// A sibling's commits may ride under this bead's (law-a-rebase-loop-is-sequenced-not-split): the
@@ -2323,6 +2349,26 @@ mod tests {
         let commits = [commit("bbb2", "sp-own: my change\n")];
         let in_flight = |_: &str| false;
         assert_eq!(finishing_refusal("local/main", "tip1", "sp-own", Some("fork1"), Some(&commits), &in_flight), None);
+    }
+
+    #[test]
+    fn a_tip_that_conflicts_with_the_landing_ref_is_refused_naming_the_paths() {
+        let out = "t\nCONFLICT (content): Merge conflict in a/one.rs\nCONFLICT (content): Merge conflict in b/two.rs\n";
+        let (code, msg) = merge_refusal(&|_| (1, out.to_string()), "local/main", "local/main", "tip1").expect("refused");
+        assert_eq!(code, REFUSED);
+        assert!(msg.contains("a/one.rs, b/two.rs") && msg.contains("local/main") && msg.contains("work submit"), "{msg}");
+    }
+
+    #[test]
+    fn a_tip_behind_the_landing_ref_that_merges_cleanly_submits() {
+        assert_eq!(merge_refusal(&|_| (0, "tree\n".to_string()), "local/main", "local/main", "tip1"), None);
+    }
+
+    #[test]
+    fn a_merge_check_that_cannot_run_cannot_tell() {
+        let (code, msg) = merge_refusal(&|_| (128, "fatal: x\n\n".to_string()), "local/main", "base", "tip1").expect("refused");
+        assert_eq!(code, CANNOT_TELL);
+        assert!(msg.contains("onto base failed: fatal: x"), "{msg}");
     }
 
     #[test]

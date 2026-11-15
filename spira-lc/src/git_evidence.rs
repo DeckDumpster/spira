@@ -17,6 +17,14 @@ pub(crate) fn git_output(repo: &Path, args: &[&str]) -> Option<String> {
     Some(String::from_utf8_lossy(&out.stdout).to_string())
 }
 
+/// A git command's exit code and stdout, whatever the exit; `-1` and the error text when git did not run.
+pub(crate) fn git_code_output(repo: &Path, args: &[&str]) -> (i32, String) {
+    match spira_config::bounded::bounded("git").arg("-C").arg(repo).args(args).output() {
+        Ok(out) => (out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stdout).to_string()),
+        Err(e) => (-1, e.to_string()),
+    }
+}
+
 /// Whether `sha`'s commit message names `bead_id` as a whole id, not as the prefix of a longer one
 /// (`sp-x` inside `sp-x2` or the child `sp-x.1`).
 pub fn commit_names_bead(repo: &Path, sha: &str, bead_id: &str) -> bool {
