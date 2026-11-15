@@ -1894,12 +1894,11 @@ mod tests {
         let w = lock(&b.0.writer);
         let mirrored: i64 = w
             .conn
-            .query_row(
+            .prepare(
                 "SELECT count(*) FROM versions AS v JOIN latest AS l ON l.key = v.key AND l.main = v.main
                  WHERE v.value IS NOT l.value",
-                [],
-                |r| r.get(0),
             )
+            .and_then(|mut s| s.query_row([], |r| r.get(0)))
             .unwrap();
         assert_eq!(mirrored, 0, "versions mirror latest");
     }
