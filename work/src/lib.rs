@@ -564,9 +564,10 @@ mod tests {
         let mut l = line(Some(1), false, None);
         l.row = "clippy";
         l.via = "checks";
+        l.deferred_to = None;
         assert_eq!(
             checks_log_line(&l),
-            "2026-11-11T11:25:06Z spira spira/sp-x bead=sp-x row=clippy via=checks rc=1 outcome=red ran=121 phases=- crates=- selection=- target=- compiled=- fresh=- load1=31.50 load_wait=- budget=180 deferred_to=gate"
+            "2026-11-11T11:25:06Z spira spira/sp-x bead=sp-x row=clippy via=checks rc=1 outcome=red ran=121 phases=- crates=- selection=- target=- compiled=- fresh=- load1=31.50 load_wait=- budget=180 deferred_to=-"
         );
     }
 

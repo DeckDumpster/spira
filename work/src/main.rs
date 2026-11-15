@@ -647,11 +647,11 @@ fn run_checks(args: &[String], base_red: bool, via: &str) -> (i32, Vec<String>) 
                 found.unwrap_or_else(|| std::path::PathBuf::from(prog))
             }
         };
-        let mut bounded = vec!["timeout".to_string(), secs, exe.to_string_lossy().into_owned()];
-        bounded.extend(rest.iter().cloned());
         let ran_from = std::time::Instant::now();
         let path_env = work::trusted::join_path(&dirs);
         let out = if prog == "cargo" {
+            let mut bounded = vec!["timeout".to_string(), secs, exe.to_string_lossy().into_owned()];
+            bounded.extend(rest.iter().cloned());
             // batch-job: bounded by the row's budget through `timeout`
             Command::new(&bounded[0]).args(&bounded[1..]).env("PATH", &path_env).current_dir(root).output()
         } else {
