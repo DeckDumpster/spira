@@ -882,8 +882,8 @@ fn an_open_whose_trim_of_rows_above_the_head_cannot_complete_fails() {
     });
     let file = day_file(dir.path(), "2024-10-04");
     let conn = rusqlite::Connection::open(&file).unwrap();
-    conn.execute_batch("INSERT INTO rows VALUES (X'61', 9, 0, X'62', 9, 0); CREATE TRIGGER stuck BEFORE DELETE ON rows BEGIN SELECT RAISE(ABORT, 'stuck'); END")
-        .unwrap();
+    conn.prepare("INSERT INTO rows VALUES (X'61', 9, 0, X'62', 9, 0)").unwrap().execute([]).unwrap();
+    conn.prepare("CREATE TRIGGER stuck BEFORE DELETE ON rows BEGIN SELECT RAISE(ABORT, 'stuck'); END").unwrap().execute([]).unwrap();
     drop(conn);
     assert!(SqliteBackend::open(&path, day_opts(&wall)).is_err());
 }
