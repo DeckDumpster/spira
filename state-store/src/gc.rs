@@ -441,7 +441,7 @@ mod tests {
         ) -> crate::Result<Vec<String>> {
             let moved = self
                 .stale_owned_by
-                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+                .try_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
                 .is_ok();
             if moved {
                 return Err(Error::Stale { expected: at, head: at + 1 });
