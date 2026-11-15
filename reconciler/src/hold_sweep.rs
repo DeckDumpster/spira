@@ -14,6 +14,7 @@ use serde_json::Value;
 /// Mailboxes a question can be delivered to: an out-of-class ask is rerouted to the Concierge.
 const ASK_MAILBOXES: [&str; 2] = ["operator", "concierge"];
 const HISTORY_TAIL: usize = 8;
+const BREAKER_DEFAULT: &str = "drop or split the bead; it cannot progress with unchanged inputs";
 
 pub struct Live<'a> {
     pub lc: &'a dyn Fn(&[&str]) -> Result<String, String>,
@@ -221,12 +222,11 @@ impl Live<'_> {
     }
 
     fn send(&self, mailbox: &str, subject: &str, body: &str) -> Result<(), String> {
-        (self.send)(&Mail { mailbox: mailbox.into(), subject: subject.into(), kind: "note".into(), default: None, class: None, bead: None, body: body.into() })
+        (self.send)(&Mail { mailbox: mailbox.into(), subject: subject.into(), kind: "note".into(), default: None, class: None, bead: None, body: format!("## Note\n{body}") })
     }
 
     fn send_question(&self, bead: &str, subject: &str, body: &str) -> Result<(), String> {
-        let default = "drop or split the bead; it cannot progress with unchanged inputs";
-        (self.send)(&Mail { mailbox: "concierge".into(), subject: subject.into(), kind: "question".into(), default: Some(default.into()), class: None, bead: Some(bead.into()), body: body.into() })
+        (self.send)(&Mail { mailbox: "concierge".into(), subject: subject.into(), kind: "question".into(), default: Some(BREAKER_DEFAULT.into()), class: None, bead: Some(bead.into()), body: body.into() })
     }
 
     fn mailbox_exists(&self, mailbox: &str) -> bool {
@@ -279,37 +279,37 @@ impl Env for Live<'_> {
                 let last = exits.last().map(|x| x.note.as_str()).unwrap_or("");
                 let n = exits.len();
                 let question = format!("{n} claims ended without progress inside {}m; last: {last}", window_secs / 60);
-                self.lc(&["hold", bead, "ask", &question, &self.actor])?;
-                self.send_question(
-                    bead,
-                    &format!("NO-PROGRESS BREAKER: {bead} had {n} claims end without progress inside {}m", window_secs / 60),
-                    &format!(
-                        "bead     {bead}\n\nEach claim ended without a Submit and nothing it did moved the branch:\n{evidence}\nThe last dwarf's final word: {last}\n\nThe lifecycle has stopped re-calling it. Only your answer lifts the hold: change an input the dwarf was blocked on, split or drop the bead.\n"
-                    ),
-                )
+                let mins = window_secs / 60;
+                let body = format!(
+                    "bead: {bead}\n\n## Question\n{bead} had {n} claims end without progress inside {mins}m. Each claim ended without a Submit and nothing it did moved the branch:\n{evidence}The last dwarf's final word: {last}\n\nThe lifecycle has stopped re-calling it. Which input should change so it can progress, or should the bead be split or dropped?\n\n## Default\n{BREAKER_DEFAULT}\n\n## Class basis\nOnly the operator can change an input the dwarf was blocked on, or split or drop the bead; the lifecycle will not re-call it until then.\n"
+                );
+                self.send_question(bead, &format!("NO-PROGRESS BREAKER: {bead} had {n} claims end without progress inside {mins}m"), &body)?;
+                self.lc(&["hold", bead, "ask", &question, &self.actor])
+                    .map(drop)
+                    .map_err(|e| format!("the breaker question WAS delivered (do not ask again), but the ask hold on {bead} was not applied: {e}"))
             }
             Action::LiftWait { until } => lift_wait_result(self.lc(&["unhold", bead, "wait", &self.actor]), *until),
             Action::RaiseAsk => self.send(
                 "concierge",
                 &format!("HOLD SWEEP: {bead} is held on an ask that was never delivered"),
                 &format!(
-                    "bead     {bead}\nheld for {}\nquestion {reason}\n\nNo delivered question exists in the operator or concierge mailbox for this bead, so nobody has been asked. Deliver it (work ask) or withdraw it (spira-lc withdraw-ask). The sweep does not lift an ask.\n",
+                    "bead: {bead}\nheld for {}\nquestion: {reason}\n\nNo delivered question exists in the operator or concierge mailbox for this bead, so nobody has been asked. Deliver it (work ask) or withdraw it (spira-lc withdraw-ask). The sweep does not lift an ask.\n",
                     age_h(hold.since, now)
                 ),
             ),
             Action::ResurfaceAsk { delivered_at, mailbox } => self.send(
                 mailbox,
                 &format!("HOLD SWEEP: {bead} has waited {}h for an answer", now.saturating_sub(*delivered_at) / 3600),
-                &format!("bead     {bead}\nquestion {reason}\n\nThe question was delivered {}h ago and the bead is still held on it. This is the one reminder; the sweep does not lift an ask.\n", now.saturating_sub(*delivered_at) / 3600),
+                &format!("bead: {bead}\nquestion: {reason}\n\nThe question was delivered {}h ago and the bead is still held on it. This is the one reminder; the sweep does not lift an ask.\n", now.saturating_sub(*delivered_at) / 3600),
             ),
             Action::DiagnosePoison => {
                 let history = self.lc(&["history", bead, "--machine", "bead"]).map(|h| history_tail(&h)).unwrap_or_else(|e| format!("(history unreadable: {e})\n"));
-                let show = self.lc(&["show", bead]).unwrap_or_else(|e| format!("(show unreadable: {e})"));
+                let show = self.lc(&["show", bead]).unwrap_or_else(|e| format!("(show unreadable: {e})")).lines().map(|l| format!("row: {l}\n")).collect::<String>();
                 self.send(
                     "concierge",
                     &format!("HOLD SWEEP: {bead} poisoned for {} with no new tip — diagnose", age_h(hold.since, now)),
                     &format!(
-                        "bead     {bead}\npoisoned by {}\nreason   {reason}\n\nlast {HISTORY_TAIL} lifecycle events:\n{history}\ncurrent row:\n{show}\n\nUnpoison it (spira-lc unhold {bead} poison) or drop it. The sweep never lifts a poison.\n",
+                        "bead: {bead}\npoisoned by {}\nreason: {reason}\n\nlast {HISTORY_TAIL} lifecycle events:\n{history}\ncurrent row:\n{show}\nUnpoison it (spira-lc unhold {bead} poison) or drop it. The sweep never lifts a poison.\n",
                         hold.actor.as_deref().unwrap_or("unknown")
                     ),
                 )
@@ -320,7 +320,7 @@ impl Env for Live<'_> {
                     placer,
                     &format!("HOLD SWEEP: manual hold on {bead} is {} old", age_h(hold.since, now)),
                     &format!(
-                        "bead     {bead}\nplaced by {}\nreason   {reason}\n\nCheck whether that condition still holds; if it does not, lift it (unhold.sh {bead}).\n",
+                        "bead: {bead}\nplaced by {}\nreason: {reason}\n\nCheck whether that condition still holds; if it does not, lift it (unhold.sh {bead}).\n",
                         hold.actor.as_deref().unwrap_or("unknown")
                     ),
                 )
@@ -495,5 +495,70 @@ mod tests {
         events.push(ev(events.len() + 1, "Submit", "dwarf", 1_006_000, r#"{"tip":"t"}"#));
         no_progress_cycle(&mut events, 1_007_000);
         assert!(!trips(&events));
+    }
+
+    fn actions() -> Vec<Action> {
+        vec![
+            Action::TripBreaker { exits: vec![Exit { ended_at: 1, note: "gave up".into() }, Exit { ended_at: 2, note: "blocked on x".into() }], window_secs: 10_800 },
+            Action::RaiseAsk,
+            Action::ResurfaceAsk { delivered_at: 1_000, mailbox: "concierge".into() },
+            Action::DiagnosePoison,
+            Action::RemindManual,
+        ]
+    }
+
+    fn held(bead: &str) -> Hold {
+        Hold { bead: bead.into(), kind: Kind::Ask, since: Some(500), detail: Some("a question about sp-k1qi8v".into()), actor: Some("reconciler".into()) }
+    }
+
+    #[test]
+    fn every_hold_sweep_mail_passes_the_mail_lint() {
+        let kinds = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/mail/kinds");
+        let lc = |a: &[&str]| -> Result<String, String> {
+            match a[0] {
+                "history" => Ok(HISTORY.into()),
+                "show" => Ok("○ sp-k1qi8v · Fix the thing   [P2 · open]\nParent: sp-p4rent\nDepends on: sp-d3pend (blocks)\n".into()),
+                _ => Ok(String::new()),
+            }
+        };
+        for action in actions() {
+            let sent = std::cell::RefCell::new(Vec::new());
+            let send = |m: &Mail| -> Result<(), String> {
+                sent.borrow_mut().push(Mail { mailbox: m.mailbox.clone(), subject: m.subject.clone(), kind: m.kind.clone(), default: m.default.clone(), class: m.class.clone(), bead: m.bead.clone(), body: m.body.clone() });
+                Ok(())
+            };
+            let mut live = Live { lc: &lc, send: &send, mail_root: PathBuf::from("/nonexistent"), actor: "reconciler".into(), now: 100_000 };
+            live.act(&held("sp-k1qi8v"), &action).unwrap();
+            let sent = sent.borrow();
+            assert_eq!(sent.len(), 1, "{}", action.name());
+            let m = &sent[0];
+            let input = mail::lint::LintInput { from: "reconciler <reconciler@spira>", subject: &m.subject, kind: &m.kind, default: m.default.as_deref().unwrap_or(""), urgent: false, body: &m.body, digest: false };
+            if let Err(e) = mail::lint::lint_check(&input, &kinds, "sp") {
+                panic!("{} mail refused by lint: {e}\n{}", action.name(), m.body);
+            }
+        }
+    }
+
+    #[test]
+    fn a_refused_breaker_question_places_no_ask_hold() {
+        let calls = std::cell::RefCell::new(Vec::<String>::new());
+        let lc = |a: &[&str]| -> Result<String, String> {
+            calls.borrow_mut().push(a.join(" "));
+            Ok(String::new())
+        };
+        let send = |_: &Mail| -> Result<(), String> { Err("mail: lint: refused".into()) };
+        let mut live = Live { lc: &lc, send: &send, mail_root: PathBuf::from("/nonexistent"), actor: "reconciler".into(), now: 100_000 };
+        let err = live.act(&held("sp-k1qi8v"), &actions()[0]).unwrap_err();
+        assert!(err.contains("refused"), "{err}");
+        assert!(calls.borrow().iter().all(|c| !c.starts_with("hold ")), "{:?}", calls.borrow());
+    }
+
+    #[test]
+    fn a_breaker_hold_that_fails_after_the_question_was_delivered_says_so() {
+        let lc = |_: &[&str]| -> Result<String, String> { Err("store down".into()) };
+        let send = |_: &Mail| -> Result<(), String> { Ok(()) };
+        let mut live = Live { lc: &lc, send: &send, mail_root: PathBuf::from("/nonexistent"), actor: "reconciler".into(), now: 100_000 };
+        let err = live.act(&held("sp-k1qi8v"), &actions()[0]).unwrap_err();
+        assert!(err.contains("WAS delivered") && err.contains("store down"), "{err}");
     }
 }

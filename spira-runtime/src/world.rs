@@ -183,6 +183,16 @@ fn artifact_urls(text: &str) -> Vec<String> {
         .collect()
 }
 
+/// The newest Hold event of a `spira-lc history` answer: its seq and its whitespace-folded
+/// detail, capped.
+fn last_hold(history_json: &str) -> Option<(String, String)> {
+    let rows: Vec<Value> = serde_json::from_str(history_json).ok()?;
+    let r = rows.iter().rfind(|r| r["event"] == "Hold")?;
+    let seq = r["seq"].as_str().map(str::to_string).unwrap_or_else(|| r["seq"].to_string());
+    let detail = r["evidence"]["Hold"]["detail"].as_str().unwrap_or("").split_whitespace().collect::<Vec<_>>().join(" ");
+    Some((seq, detail.chars().take(400).collect()))
+}
+
 /// The `items` of the `{watermark, items}` object a `spira-lc plan items` door printed, skipping
 /// any notice lines the store printed before it.
 fn plan_items(out: &str) -> Option<Vec<Value>> {
@@ -367,17 +377,7 @@ impl World {
             let header = |k: &str| text.lines().take_while(|l| !l.is_empty()).find_map(|l| l.strip_prefix(k)).unwrap_or("").to_string();
             return format!("NEW ASK HOLD {id}: {} | default: {} | message-id: {}", header("Subject: "), header("X-Spira-Default: "), header("Message-ID: "));
         }
-        let last = self
-            .lc(&["history", id, "--machine", "bead"])
-            .and_then(|t| serde_json::from_str::<Vec<Value>>(&t).ok())
-            .and_then(|rows| {
-                rows.iter().rfind(|r| r["event"] == "Hold").map(|r| {
-                    let seq = r["seq"].as_str().map(str::to_string).unwrap_or_else(|| r["seq"].to_string());
-                    let hold: Value = r["evidence"].as_str().and_then(|e| serde_json::from_str(e).ok()).unwrap_or_default();
-                    let detail = hold["Hold"]["detail"].as_str().unwrap_or("").split_whitespace().collect::<Vec<_>>().join(" ");
-                    (seq, detail.chars().take(400).collect::<String>())
-                })
-            });
+        let last = self.lc(&["history", id, "--machine", "bead"]).and_then(|t| last_hold(&t));
         let (seq, q) = last.unwrap_or(("?".into(), String::new()));
         let q = if q.is_empty() { "<no text recorded>".to_string() } else { q };
         format!("NEW ASK HOLD {id}: {q} | NO MAIL for the question; answer with spira-lc reply {id} seq:{seq}")
@@ -1307,5 +1307,24 @@ mod sweep_row_tests {
         assert_eq!(r.claim.as_deref(), Some("claimable"));
         let bare = sweep_row(&serde_json::json!({"bead_id": "sp-r"})).unwrap();
         assert_eq!(bare.claim, None);
+    }
+}
+
+#[cfg(test)]
+mod last_hold_tests {
+    use super::*;
+
+    #[test]
+    fn the_newest_hold_gives_its_seq_and_the_detail_of_its_object_evidence() {
+        let h = r#"[
+          {"seq":915000,"event":"Hold","evidence":{"Hold":{"kind":"Wait","cause":"c","detail":"older"}}},
+          {"seq":916913,"event":"Hold","evidence":{"Hold":{"kind":"Ask","cause":"operator-question","detail":"4 claims ended without progress inside 180m; last: x"}}}
+        ]"#;
+        assert_eq!(last_hold(h), Some(("916913".into(), "4 claims ended without progress inside 180m; last: x".into())));
+    }
+
+    #[test]
+    fn a_history_with_no_hold_has_no_last_hold() {
+        assert_eq!(last_hold(r#"[{"seq":1,"event":"Claim","evidence":{}}]"#), None);
     }
 }
