@@ -112,12 +112,6 @@ impl Bd for FakeBd {
         self.record("show", id);
         self.beads.borrow().iter().find(|b| b["id"] == id).cloned()
     }
-
-    // The closeout-side methods (sp-j3fim) are exercised through `closeout.rs`'s own
-    // fakes, not through the ingest side's — these are never called from `logic::run`.
-    fn show_json(&self, _id: &str) -> Option<serde_json::Value> {
-        None
-    }
     fn dep_remove(&self, _id: &str, _other: &str) -> bool {
         false
     }

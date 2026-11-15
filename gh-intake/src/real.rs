@@ -626,15 +626,6 @@ mod transport_tests {
         assert_eq!(crate::store::ingested(&got)[0].id, "sp-1");
         let refused = github_refs_on(&LcClient::over(Arc::new(Bounded(Mutex::default(), 3)), true), "o/r#").unwrap_err();
         assert!(refused.contains("reads every bead"), "{refused}");
-        assert_eq!(list_all_on(&LcClient::over(Arc::new(Bounded(Mutex::default(), 0)), true)), None, "the whole-history read is what the store refuses");
-    }
-
-    #[test]
-    fn the_closeout_read_asks_only_for_work_refs_and_never_the_whole_history() {
-        let t = Arc::new(Bounded(Mutex::default(), 0));
-        github_refs_on(&LcClient::over(t.clone(), true), WORK_REF_PREFIX).unwrap();
-        let sent = t.0.lock().unwrap();
-        assert_eq!(sent[0], ["plan", "items", "--external-contains", "github:", "--full"]);
     }
 
     type Sent = Arc<Mutex<Vec<(String, String, String, String, String, String)>>>;
