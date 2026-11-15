@@ -150,16 +150,18 @@ pub const RECORD: &str = "publish.record";
 pub const NOTIFY: &str = "publish.notify";
 /// A green open publish PR merged: the forge branch fast-forwarded to its head (sp-hw3qio).
 pub const SETTLE: &str = "publish.settle";
+/// A publish PR with no gate run past the bound: its CI started once by dispatch on its branch.
+pub const START_CI: &str = "publish.start_ci";
 
 pub const CADENCE_MS: u64 = 1_800_000;
 pub const OBSERVE_DEADLINE_MS: u64 = 60_000;
 
-pub const ACTS: &[(&str, u64)] = &[(PUSH_BRANCH, 60_000), (PUSH_FORGE, 60_000), (PR_CREATE, 60_000), (PR_CLOSE, 30_000), (CANCEL_RUNS, 30_000), (RERUN, 30_000), (RECORD, 60_000), (NOTIFY, 5_000), (SETTLE, 60_000)];
+pub const ACTS: &[(&str, u64)] = &[(PUSH_BRANCH, 60_000), (PUSH_FORGE, 60_000), (PR_CREATE, 60_000), (PR_CLOSE, 30_000), (CANCEL_RUNS, 30_000), (RERUN, 30_000), (RECORD, 60_000), (NOTIFY, 5_000), (SETTLE, 60_000), (START_CI, 30_000)];
 pub const EMITS: &[EventKindTag] = &[];
 /// Hand-offs that wake it at once, besides its tick: queue.step wants a publish.
 pub const WAKES: &[EventKindTag] = &[PUBLISH_WANTED];
-pub const EFFECTS: &[&str] = &[OBSERVE, PUSH_BRANCH, PUSH_FORGE, PR_CREATE, PR_CLOSE, CANCEL_RUNS, RERUN, RECORD, NOTIFY, SETTLE];
-pub const KEYS: &[&str] = &["SPIRA_PUBLISH_SETTLE_DEFER_MAX", "SPIRA_FORGE", "SPIRA_QUEUE_DIR", "SPIRA_RUN", "SPIRA_MAIL_SESSION_MAILBOX", "SPIRA_QUEUE_LOCK_WAIT", "SPIRA_REPO_MAP"];
+pub const EFFECTS: &[&str] = &[OBSERVE, PUSH_BRANCH, PUSH_FORGE, PR_CREATE, PR_CLOSE, CANCEL_RUNS, RERUN, RECORD, NOTIFY, SETTLE, START_CI];
+pub const KEYS: &[&str] = &["SPIRA_PUBLISH_SETTLE_DEFER_MAX", "SPIRA_PUBLISH_NO_RUN_SECS", "SPIRA_FORGE", "SPIRA_QUEUE_DIR", "SPIRA_RUN", "SPIRA_MAIL_SESSION_MAILBOX", "SPIRA_QUEUE_LOCK_WAIT", "SPIRA_REPO_MAP"];
 pub const UNREGISTERED: &[&str] = &[];
 
 pub const SHAPE: Shape = Shape { name: NAME, stream: STREAM, tick: TICK, state: STATE, observe: OBSERVE, observe_deadline_ms: OBSERVE_DEADLINE_MS };
@@ -169,7 +171,7 @@ pub const SHAPE: Shape = Shape { name: NAME, stream: STREAM, tick: TICK, state: 
 #[serde(rename_all = "snake_case")]
 pub enum Pr {
     Open {
-        /// `ci_of`: `pending`, `green`, `red`, `untested`.
+        /// `ci_of`: `pending`, `green`, `red`, `untested`, `no_run`.
         ci: String,
         behind: bool,
         tries: u32,
@@ -181,9 +183,20 @@ pub enum Pr {
 
 impl Pr {
     /// The queue's own reading of this PR.
-    fn core(&self) -> core::Pr {
+    fn core(&self, rec: Option<&PublishRec>, observed_at: u64, no_run_secs: Option<u64>) -> core::Pr {
         match self {
-            Pr::Open { ci, behind, tries } => core::Pr::Open { ci: if ci == "untested" { core::Ci::Untested } else { core::ci_of(ci) }, behind: *behind, tries: u8::try_from(*tries).unwrap_or(u8::MAX) },
+            Pr::Open { ci, behind, tries } => {
+                let ci = match ci.as_str() {
+                    "untested" => core::Ci::Untested,
+                    "no_run" => {
+                        let rec = rec.cloned().unwrap_or_default();
+                        let since = if rec.ci_started > 0 { rec.ci_started } else { rec.opened };
+                        core::Ci::NoRun { past: since > 0 && no_run_secs.is_some_and(|bound| observed_at.saturating_sub(since) >= bound), started: rec.ci_started > 0 }
+                    }
+                    other => core::ci_of(other),
+                };
+                core::Pr::Open { ci, behind: *behind, tries: u8::try_from(*tries).unwrap_or(u8::MAX) }
+            }
             Pr::Gone => core::Pr::Gone,
             Pr::Unknown => core::Pr::Unknown,
         }
@@ -201,6 +214,7 @@ pub enum Settle {
     Alarm,
     Retire,
     Supersede,
+    StartCi,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -210,6 +224,12 @@ pub struct PublishRec {
     pub branch: String,
     pub rerun: bool,
     pub alarmed: bool,
+    #[serde(default)]
+    pub opened: u64,
+    #[serde(default)]
+    pub ci_started: u64,
+    #[serde(default)]
+    pub no_run_paged: bool,
 }
 
 /// One `queue.local` repository that publishes somewhere.
@@ -230,6 +250,9 @@ pub struct Repo {
     pub red_marker: Option<String>,
     pub fix_forward_live: bool,
     pub round_holds_hypervisor: bool,
+    /// The probe's clock, so `decide` stays pure.
+    #[serde(default)]
+    pub observed_at: u64,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -271,6 +294,7 @@ pub enum Trigger {
     SettleParked,
     SettleRerun,
     SettleAlarm,
+    SettleStartCi,
     SettleRetireOrSupersede,
     EffectSucceeded,
     PushSucceeded,
@@ -295,6 +319,7 @@ pub static TABLE: &[(State, Trigger, State)] = &[
     (State::Observing, Trigger::SettleParked, State::Alarmed),
     (State::Observing, Trigger::SettleRerun, State::Rerun),
     (State::Observing, Trigger::SettleAlarm, State::Alarmed),
+    (State::Observing, Trigger::SettleStartCi, State::Open),
     (State::Observing, Trigger::SettleRetireOrSupersede, State::Superseding),
     (State::Superseding, Trigger::EffectSucceeded, State::Opening),
     (State::Opening, Trigger::PushSucceeded, State::Opening),
@@ -386,18 +411,20 @@ pub struct Created {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Policy {
     pub defer_max: u32,
+    /// `SPIRA_PUBLISH_NO_RUN_SECS`; `None` when the key was not pinned (never defaulted).
+    pub no_run_secs: Option<u64>,
 }
 
 impl Default for Policy {
     /// The registered default (`spira/conf.d/SPIRA_PUBLISH_SETTLE_DEFER_MAX`).
     fn default() -> Self {
-        Policy { defer_max: 3 }
+        Policy { defer_max: 3, no_run_secs: Some(1800) }
     }
 }
 
 impl Policy {
     pub fn pinned(pinned: &BTreeMap<String, String>) -> Policy {
-        Policy { defer_max: pinned.get("SPIRA_PUBLISH_SETTLE_DEFER_MAX").and_then(|v| v.trim().parse().ok()).unwrap_or(Policy::default().defer_max) }
+        Policy { defer_max: pinned.get("SPIRA_PUBLISH_SETTLE_DEFER_MAX").and_then(|v| v.trim().parse().ok()).unwrap_or(Policy::default().defer_max), no_run_secs: pinned.get("SPIRA_PUBLISH_NO_RUN_SECS").and_then(|v| v.trim().parse().ok()) }
     }
 }
 
@@ -407,7 +434,12 @@ pub fn step(state: State, event: Trigger) -> Result<State, String> {
 
 /// The pure core `decide(Option<Pr>) -> Settle`.
 pub fn settle(pr: Option<&Pr>) -> Settle {
-    match core::decide(pr.map(Pr::core)) {
+    settle_with(&Policy::default(), None, 0, pr)
+}
+
+/// `settle` for a PR whose record and probe clock say how long it has gone without a run.
+pub fn settle_with(policy: &Policy, rec: Option<&PublishRec>, observed_at: u64, pr: Option<&Pr>) -> Settle {
+    match core::decide(pr.map(|pr| pr.core(rec, observed_at, policy.no_run_secs))) {
         core::Settle::Open => Settle::Open,
         core::Settle::Wait => Settle::Wait,
         core::Settle::Parked => Settle::Parked,
@@ -415,6 +447,7 @@ pub fn settle(pr: Option<&Pr>) -> Settle {
         core::Settle::Alarm => Settle::Alarm,
         core::Settle::Retire => Settle::Retire,
         core::Settle::Supersede => Settle::Supersede,
+        core::Settle::StartCi => Settle::StartCi,
     }
 }
 
@@ -431,6 +464,18 @@ impl Machine<'_> {
 
     fn notify(&mut self, pr: u64, subject: String, body: String) {
         self.acts.push(Pub { key: format!("{}/{pr}/{subject}", self.repo), pr, subject, body, ..Pub::on(self.repo) }.act(NOTIFY));
+    }
+
+    /// Pages Ops once per PR that it has no CI run; `record` also sets `no_run_paged` on the record.
+    fn page_no_run(&mut self, rec: &PublishRec, idle: u64, act: &str, record: bool) {
+        if rec.no_run_paged {
+            return;
+        }
+        let pr = rec.pr;
+        self.notify(pr, format!("publish PR {pr} for {} has no CI run", self.repo), format!("PR {pr} ({}) has had no gate run for {idle}s. Action: {act}.", rec.branch));
+        if record {
+            self.acts.push(Pub { pr, key: format!("{}/{pr}/no-run-paged", self.repo), record: [("no_run_paged".to_string(), "1".to_string())].into(), ..Pub::on(self.repo) }.act(RECORD));
+        }
     }
 
     fn observe(&mut self, policy: &Policy, r: &Repo) {
@@ -470,7 +515,7 @@ impl Machine<'_> {
             self.go(Trigger::RedFixForwardLive);
             return;
         }
-        let act = settle(rec.map(|_| &r.pr));
+        let act = settle_with(policy, rec, r.observed_at, rec.map(|_| &r.pr));
         // `:506-527`: an act that writes is deferred while a round holds the hypervisor.
         if !matches!(act, Settle::Wait | Settle::Parked | Settle::Alarm) && r.round_holds_hypervisor && self.rc.deferred_ticks < policy.defer_max {
             self.go(Trigger::RoundHoldsHypervisor);
@@ -488,6 +533,9 @@ impl Machine<'_> {
                 self.settle(rec.pr, &rec.head, &rec.branch);
             }
             Settle::Wait => {
+                if policy.no_run_secs.is_none() && matches!(&r.pr, Pr::Open { ci, .. } if ci == "no_run") {
+                    self.notify(pr, format!("publish PR {pr} for {} cannot be checked for a missing CI run", self.repo), "SPIRA_PUBLISH_NO_RUN_SECS does not resolve; the PR is left waiting.".to_string());
+                }
                 // Pending, or red: the verdict pass files a red's fix-forward.
                 self.go(Trigger::SettleWait);
                 self.go(Trigger::QueueStepSettled);
@@ -505,12 +553,24 @@ impl Machine<'_> {
                 self.notify(pr, format!("publish PR {pr} for {} untested twice", self.repo), format!("CI never tested {} after one re-run; the record is parked until a hand moves it.", r.head_sha));
                 self.acts.push(Pub { pr, key: format!("{}/{pr}", self.repo), record: [("alarmed".to_string(), "1".to_string())].into(), ..Pub::on(self.repo) }.act(RECORD));
             }
+            Settle::StartCi => {
+                self.go(Trigger::SettleStartCi);
+                let rec = rec.cloned().unwrap_or_default();
+                self.acts.push(Pub { pr, branch: rec.branch.clone(), key: format!("{}/{pr}", self.repo), record: [("ci_started".to_string(), r.observed_at.to_string())].into(), ..Pub::on(self.repo) }.act(START_CI));
+                let idle = r.observed_at.saturating_sub(rec.opened);
+                self.page_no_run(&rec, idle, "CI started by dispatch", true);
+            }
             Settle::Retire | Settle::Supersede => {
                 self.go(Trigger::SettleRetireOrSupersede);
                 let branch = rec.map(|r| r.branch.clone()).unwrap_or_default();
                 self.rc.retired = Some(pr);
                 self.acts.push(Pub { pr, branch: branch.clone(), key: format!("{}/{branch}", self.repo), ..Pub::on(self.repo) }.act(CANCEL_RUNS));
                 self.acts.push(Pub { pr, branch, head: r.head_sha.clone(), base: r.forge_sha.clone().unwrap_or_default(), key: format!("{}/{pr}", self.repo), ..Pub::on(self.repo) }.act(PR_CLOSE));
+                if let (Some(rec), Pr::Open { ci, .. }) = (rec, &r.pr) {
+                    if ci == "no_run" {
+                        self.page_no_run(rec, r.observed_at.saturating_sub(rec.opened), &format!("superseded for {}", r.head_sha), false);
+                    }
+                }
             }
         }
     }
@@ -728,7 +788,7 @@ pub mod edge {
             });
             let diverged = forge_sha.as_ref().map(|f| git(&dir, &["merge-base", "--is-ancestor", f, &head_sha], Duration::from_secs(10)).is_err());
             let kv = queue_kv(e, &name, "publish");
-            let publish_rec = kv.as_ref().and_then(|kv| Some(PublishRec { pr: kv.get("pr")?.trim_start_matches('#').parse().ok()?, head: kv.get("head").cloned().unwrap_or_default(), branch: kv.get("branch").cloned().unwrap_or_default(), rerun: kv.get("rerun").is_some_and(|v| v == "1"), alarmed: kv.get("alarmed").is_some_and(|v| v == "1") }));
+            let publish_rec = kv.as_ref().and_then(|kv| Some(PublishRec { pr: kv.get("pr")?.trim_start_matches('#').parse().ok()?, head: kv.get("head").cloned().unwrap_or_default(), branch: kv.get("branch").cloned().unwrap_or_default(), rerun: kv.get("rerun").is_some_and(|v| v == "1"), alarmed: kv.get("alarmed").is_some_and(|v| v == "1"), opened: kv.get("opened").and_then(|v| v.parse().ok()).unwrap_or(0), ci_started: kv.get("ci_started").and_then(|v| v.parse().ok()).unwrap_or(0), no_run_paged: kv.get("no_run_paged").is_some() }));
             let pr = match &publish_rec {
                 None => Pr::Unknown,
                 Some(rec) => {
@@ -741,6 +801,7 @@ pub mod edge {
                                 "harness_fault" => "untested",
                                 "green" => "green",
                                 "red" => "red",
+                                _ if status.lines().any(|l| l.starts_with("no-run: ")) => "no_run",
                                 _ => "pending",
                             };
                             Pr::Open { ci: ci.into(), behind: rec.head != head_sha, tries: u32::from(rec.rerun) + u32::from(rec.alarmed) }
@@ -756,7 +817,7 @@ pub mod edge {
                 super::super::queue_step::edge::lc(e).answer(&["show", &bead]).ok().is_some_and(|o| super::fix_forward_live(&o))
             });
             let stopped = spira_config::scoped_stop::stop_for(&e.world.run_dir, &name, "publish").is_some();
-            snap.repos.insert(name.clone(), Repo { mode: "queue.local".into(), publish_mode: publish_mode.into(), unpublished: target.is_none(), stopped, publish_rec, pr, open_publish_prs, forge_sha, head_sha, diverged, red_marker, fix_forward_live, round_holds_hypervisor: holds });
+            snap.repos.insert(name.clone(), Repo { mode: "queue.local".into(), publish_mode: publish_mode.into(), unpublished: target.is_none(), stopped, publish_rec, pr, open_publish_prs, forge_sha, head_sha, diverged, red_marker, fix_forward_live, round_holds_hypervisor: holds, observed_at: spira_config::vtime::now_epoch() });
         }
         json(&snap)
     }
@@ -822,6 +883,17 @@ pub mod edge {
         let r = forge_call(&dir, "workflow-rerun", &[&run], None)?;
         if !r.ok() {
             return Err(format!("workflow-rerun {run}: {}", r.err.trim()));
+        }
+        record(e, k, spec)
+    }
+
+    /// The publish branch's gate started by dispatch (every suite), once; the record then says `ci_started`.
+    pub fn start_ci(e: &Effects, k: &str, spec: &EffectSpec) -> Result<String, String> {
+        let p = input(spec)?;
+        let dir = root(&registry()?, &p.repo)?;
+        let r = forge_call(&dir, "dispatch", &[&p.branch, ""], None)?;
+        if !r.ok() {
+            return Err(format!("dispatch {}: {}", p.branch, r.err.trim()));
         }
         record(e, k, spec)
     }
