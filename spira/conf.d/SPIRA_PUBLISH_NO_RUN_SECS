@@ -1,0 +1,6 @@
+TYPE=u64
+GROUP=queue
+DOC=SPIRA_PUBLISH_NO_RUN_SECS — Seconds a publish PR's branch may go without a gate run before its CI is started once, or it is superseded when local is ahead.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_PUBLISH_NO_RUN_SECS:=1800}"
+SPIRA_CONF_DEFAULT_EOF

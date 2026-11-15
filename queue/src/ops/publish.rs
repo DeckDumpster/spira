@@ -431,6 +431,8 @@ pub enum Settle {
     Alarm,
     /// Already alarmed; the record waits for a hand.
     Parked,
+    /// No gate run on the branch past the bound and local has not moved: start its CI once.
+    StartCi,
 }
 
 /// The open publish PR as the pass saw it.
@@ -448,6 +450,9 @@ pub enum Ci {
     /// The branch was never tested (a provision fault): its CI says nothing about the head.
     Untested,
     Pending,
+    /// The forge listed the branch's gate runs and there were none. `past`: the bound since the
+    /// PR opened (or its CI was started) has run out; `started`: Spira already started its CI.
+    NoRun { past: bool, started: bool },
 }
 
 pub fn ci_of(status: &str) -> Ci {
@@ -455,6 +460,10 @@ pub fn ci_of(status: &str) -> Ci {
         "green" => Ci::Green,
         "red" => Ci::Red,
         "harness_fault" => Ci::Untested,
+        _ if status.lines().any(|l| l.starts_with("no-run: ")) => Ci::NoRun {
+            past: false,
+            started: false,
+        },
         _ => Ci::Pending,
     }
 }
@@ -473,6 +482,22 @@ pub fn decide(pr: Option<Pr>) -> Settle {
             behind: true,
             ..
         }) => Settle::Supersede,
+        Some(Pr::Open {
+            ci: Ci::NoRun { past: true, .. },
+            behind: true,
+            ..
+        }) => Settle::Supersede,
+        Some(Pr::Open {
+            ci: Ci::NoRun {
+                past: true,
+                started: false,
+            },
+            ..
+        }) => Settle::StartCi,
+        Some(Pr::Open {
+            ci: Ci::NoRun { past: true, .. },
+            ..
+        }) => Settle::Parked,
         Some(Pr::Open {
             ci: Ci::Untested,
             tries: 0,
@@ -578,7 +603,20 @@ fn settle_repo(w: &World, c: &Ctx) -> i32 {
             Err(()) => return FAIL,
         }
     }
-    let pr = kv.as_ref().map(|kv| observe(w, c, &path, kv));
+    let pr = kv
+        .as_ref()
+        .map(|kv| observe(w, c, &path, kv, c.s.publish_no_run_secs));
+    if matches!(
+        pr,
+        Some(Pr::Open {
+            ci: Ci::NoRun { .. },
+            ..
+        })
+    ) && c.s.publish_no_run_secs.is_none()
+    {
+        w.err(format!("queue.sh publish-settle {name}: SPIRA_PUBLISH_NO_RUN_SECS does not resolve from this release's config registry — refusing"));
+        return FAIL;
+    }
     let action = decide(pr);
     let deferred_file = c.queue_file("publish-deferred");
     if matches!(action, Settle::Wait | Settle::Parked | Settle::Alarm) {
@@ -613,12 +651,36 @@ fn settle_repo(w: &World, c: &Ctx) -> i32 {
         "{now} publish-settle {name}: pr={} -> {action:?}",
         if pr_no.is_empty() { "none" } else { &pr_no }
     ));
+    if let (Settle::Wait | Settle::Parked, Some(Pr::Open { ci: Ci::NoRun { .. }, .. })) = (action, &pr) {
+        let branch = kv.as_ref().and_then(|k| k.get("branch")).unwrap_or("");
+        w.out(format!("{now} publish-settle {name}: waiting for a gate run on {branch}"));
+    }
     match action {
         Settle::Wait | Settle::Parked => OK,
         Settle::Rerun | Settle::Alarm => rerun_or_alarm(w, c, &path, &pfile, kv.as_ref(), action),
+        Settle::StartCi => start_ci(w, c, &path, &pfile, kv.as_ref()),
         Settle::Open => publish_with(w, Some(&name), true),
         Settle::Retire | Settle::Supersede => {
             if action == Settle::Supersede {
+                if matches!(
+                    pr,
+                    Some(Pr::Open {
+                        ci: Ci::NoRun { .. },
+                        ..
+                    })
+                ) {
+                    let head = w
+                        .git
+                        .rev_parse(&path, c.r.landref.as_deref().unwrap_or(""))
+                        .unwrap_or_default();
+                    page_no_run(
+                        w,
+                        c,
+                        &pfile,
+                        kv.as_ref(),
+                        &format!("superseded for {head}"),
+                    );
+                }
                 w.lib.cancel_runs(
                     &c.s.forge,
                     &path,
@@ -715,6 +777,73 @@ fn adopt_forge_publish(
         "publish-settle {name}: adopted open publish PR {pr} ({branch}) from the forge"
     ));
     Ok(true)
+}
+
+/// Pages Ops once per PR (`no_run_paged` on the record) that it has no CI run, and says what was done.
+fn page_no_run(w: &World, c: &Ctx, pfile: &std::path::Path, kv: Option<&Kv>, act: &str) {
+    let Some(mut rec) = kv.cloned() else {
+        return;
+    };
+    if rec.get("no_run_paged").is_some() {
+        return;
+    }
+    let name = &c.r.name;
+    let now = w.clock.now();
+    let pr = rec.get("pr").unwrap_or("").to_string();
+    let branch = rec.get("branch").unwrap_or("").to_string();
+    let idle = now.saturating_sub(
+        rec.get("opened")
+            .and_then(|o| o.parse::<u64>().ok())
+            .unwrap_or(now),
+    );
+    rec.push("no_run_paged", &now.to_string());
+    if let Err(e) = write_atomic(pfile, &rec.render()) {
+        w.err(format!("queue.sh publish-settle: {e}"));
+        return;
+    }
+    w.lib.notify(
+        &c.s.mailbox,
+        name,
+        &format!("publish PR {pr} for {name} has no CI run"),
+        &format!("PR {pr} ({branch}) for {name} has had no gate run for {idle}s. Action: {act}."),
+    );
+}
+
+fn start_ci(
+    w: &World,
+    c: &Ctx,
+    path: &std::path::Path,
+    pfile: &std::path::Path,
+    kv: Option<&Kv>,
+) -> i32 {
+    let name = &c.r.name;
+    let Some(mut rec) = kv.cloned() else {
+        return OK;
+    };
+    let now = w.clock.now();
+    let pr = rec.get("pr").unwrap_or("").to_string();
+    let branch = rec.get("branch").unwrap_or("").to_string();
+    if !w.forge.workflow_dispatch(&c.s.forge, path, &branch, "") {
+        w.err(format!(
+            "queue.sh publish-settle: {name}: the forge refused to start CI on {branch} for PR {pr}"
+        ));
+        return FAIL;
+    }
+    rec.remove("ci_started");
+    rec.push("ci_started", &now.to_string());
+    if let Err(e) = write_atomic(pfile, &rec.render()) {
+        w.err(format!("queue.sh publish-settle: {e}"));
+        return FAIL;
+    }
+    landing_log(
+        &c.s.run,
+        &format!("QUEUE PUBLISH_NO_RUN_START {now} repo={name} pr={pr} branch={branch}"),
+    );
+    w.out(format!(
+        "publish-settle {name}: PR {pr} has no CI run — started one on {branch}"
+    ));
+    page_no_run(w, c, pfile, Some(&rec), "CI started by dispatch");
+    OK
 }
 
 fn rerun_or_alarm(
@@ -822,7 +951,13 @@ fn progress_live(run: &std::path::Path, now: u64) -> Option<Place> {
     })
 }
 
-fn observe(w: &World, c: &Ctx, path: &std::path::Path, kv: &Kv) -> Pr {
+fn observe(
+    w: &World,
+    c: &Ctx,
+    path: &std::path::Path,
+    kv: &Kv,
+    no_run_secs: Option<u64>,
+) -> Pr {
     let field = |k: &str| kv.get(k).unwrap_or("").to_string();
     let (pr, branch, head) = (field("pr"), field("branch"), field("head"));
     if pr.is_empty() || branch.is_empty() || head.is_empty() {
@@ -844,11 +979,21 @@ fn observe(w: &World, c: &Ctx, path: &std::path::Path, kv: &Kv) -> Pr {
     let Some(local) = w.git.rev_parse(path, base) else {
         return Pr::Unknown;
     };
-    let ci = ci_of(
+    let mut ci = ci_of(
         &w.forge
             .check_status(&c.s.forge, path, &pr, &branch)
             .unwrap_or_default(),
     );
+    if let Ci::NoRun { .. } = ci {
+        let stamp = |k: &str| kv.get(k).and_then(|v| v.parse::<u64>().ok());
+        let since = stamp("ci_started").or_else(|| stamp("opened"));
+        ci = Ci::NoRun {
+            past: since
+                .zip(no_run_secs)
+                .is_some_and(|(t, bound)| w.clock.now().saturating_sub(t) >= bound),
+            started: kv.get("ci_started").is_some(),
+        };
+    }
     let tries = if kv.get("alarmed").is_some() {
         2
     } else if kv.get("rerun").is_some() {

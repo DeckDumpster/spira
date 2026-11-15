@@ -2809,8 +2809,12 @@ fn queue_verb(
     );
     let mut child = cmd.spawn().map_err(|e| format!("{what}: {e}"))?;
     if let Some(mut si) = child.stdin.take() {
-        si.write_all(stdin.as_bytes())
-            .map_err(|e| format!("{what}: stdin: {e}"))?;
+        match si.write_all(stdin.as_bytes()) {
+            Err(e) if e.kind() != std::io::ErrorKind::BrokenPipe => {
+                return Err(format!("{what}: stdin: {e}"));
+            }
+            _ => {}
+        }
     }
     let o = child
         .wait_with_output()

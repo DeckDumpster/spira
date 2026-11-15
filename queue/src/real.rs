@@ -513,6 +513,16 @@ fn git_remotes(repo: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// A key the toml in force gains only at activation, after pre-activate: absent is `None`, so it
+/// stays out of `CONFIG_KEYS`, whose check would refuse the release that introduces it.
+fn unregistered_is_none<T>(r: Result<T, String>) -> Result<Option<T>, String> {
+    match r {
+        Ok(v) => Ok(Some(v)),
+        Err(e) if e.contains("not a registered config key") => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
 /// Every key `context` must resolve; `queue check-config` refuses a registry that lacks one.
 pub const CONFIG_KEYS: &[&str] = &[
     "SPIRA_CERTIFY_SUITES",
@@ -686,6 +696,9 @@ impl Lib for RealLib {
             publish_red_priority,
             publish_red_escalate_after,
             publish_defer_max,
+            publish_no_run_secs: unregistered_is_none(
+                spira_config::process::cfg_parse::<u64>("SPIRA_PUBLISH_NO_RUN_SECS"),
+            )?,
         };
         let path = reg.root(&name);
         let landref = spira_config::repos::landref(&reg, &name).filter(|s| !s.is_empty());
@@ -1690,6 +1703,16 @@ impl Forge for RealForge {
     fn run_cancel(&self, forge: &Path, repo: &Path, run: &str) {
         let _ = shown(forge_call(forge, "run-cancel", repo, &[run], None));
     }
+    fn workflow_dispatch(&self, forge: &Path, repo: &Path, ref_: &str, suites: &str) -> bool {
+        said(&shown(forge_call(
+            forge,
+            "dispatch",
+            repo,
+            &[ref_, suites],
+            None,
+        )))
+        .ok()
+    }
     fn workflow_rerun(&self, forge: &Path, repo: &Path, run: &str) -> Rerun {
         rerun_of(said(&forge_call(
             forge,
@@ -2553,6 +2576,14 @@ impl Emit for StdEmit {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn an_unregistered_key_reads_as_none_and_any_other_refusal_propagates() {
+        let unregistered = "K is not a registered config key (spira/conf.d) — refusing".to_string();
+        assert_eq!(unregistered_is_none::<u64>(Err(unregistered)), Ok(None));
+        assert_eq!(unregistered_is_none::<u64>(Ok(7)), Ok(Some(7)));
+        assert!(unregistered_is_none::<u64>(Err("K = \"x\" does not parse as a u64".into())).is_err());
+    }
+
     #[test]
     fn check_config_names_every_key_context_reads() {
         let src = include_str!("real.rs");

@@ -533,7 +533,13 @@ pub fn check_status(
             "1",
         ],
     );
-    let rl = parse(&run_list.stdout).unwrap_or(Value::Array(vec![]));
+    let listed = parse(&run_list.stdout);
+    let listed_empty = run_list.code == 0
+        && listed
+            .as_ref()
+            .and_then(Value::as_array)
+            .is_some_and(Vec::is_empty);
+    let rl = listed.unwrap_or(Value::Array(vec![]));
     let first = first_elem(&rl);
     let run_id = first
         .and_then(|r| r.get("databaseId"))
@@ -680,6 +686,9 @@ pub fn check_status(
     }
 
     let mut lines = vec![status.clone()];
+    if listed_empty && !missing_workflow {
+        lines.push(format!("no-run: {workflow}"));
+    }
     if missing_workflow {
         lines.push(format!("missing-workflow: {workflow}"));
     }

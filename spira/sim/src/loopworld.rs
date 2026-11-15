@@ -639,7 +639,7 @@ fn queue_step_observe(w: &World) -> Result<String, String> {
 fn publish_observe(w: &World) -> Result<String, String> {
     let lc = w.lc();
     let head = lc.main();
-    let rec = lc.published.last().map(|(pr, h)| pb::PublishRec { pr: *pr, head: h.clone(), branch: format!("publish/{}", &h[..12]), rerun: false, alarmed: false });
+    let rec = lc.published.last().map(|(pr, h)| pb::PublishRec { pr: *pr, head: h.clone(), branch: format!("publish/{}", &h[..12]), rerun: false, alarmed: false, ..Default::default() });
     let pr = match lc.prs.last() {
         Some(_) => pb::Pr::Open { ci: "pending".into(), behind: lc.prs.last().is_some_and(|(_, h)| *h != head), tries: 0 },
         None => pb::Pr::Gone,
