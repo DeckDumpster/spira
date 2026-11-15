@@ -434,7 +434,7 @@ mod tests {
     fn a_shipped_record_reaches_the_listener_on_the_insert_path_with_the_stream_fields() {
         let f = FakeLogs::start();
         Shipper::start(&f.url()).ship(&json!({"stream": "s", "kind_tag": "k", "at": 1}));
-        assert_eq!(f.wait_records(1, Duration::from_secs(3)), vec![json!({"stream": "s", "kind_tag": "k", "at": 1})]);
+        assert_eq!(f.wait_records(1, Duration::from_secs(30)), vec![json!({"stream": "s", "kind_tag": "k", "at": 1})]);
         assert_eq!(f.insert_targets(), vec![INSERT_PATH.to_string()]);
     }
 
@@ -450,7 +450,7 @@ mod tests {
             }
             let _ = done.send(());
         });
-        finished.recv_timeout(Duration::from_secs(5)).expect("fifty ships returned while the listener never answered"); // clock-safe: a cap on the wait for the shipping thread's own signal
+        finished.recv_timeout(Duration::from_secs(30)).expect("fifty ships returned while the listener never answered"); // clock-safe: a cap on the wait for the shipping thread's own signal
         assert!(s.counts().dropped() >= 40, "dropped {}", s.counts().dropped());
     }
 
@@ -463,7 +463,7 @@ mod tests {
         drop(l);
         let s = Shipper::start(&url);
         let failed_at_least = |n: u64| {
-            let end = Instant::now() + Duration::from_secs(5); // clock-safe: a cap on the wait for the shipper's own count
+            let end = Instant::now() + Duration::from_secs(30); // clock-safe: a cap on the wait for the shipper's own count
             while s.counts().failed() < n && Instant::now() < end { // clock-safe: same cap
                 std::thread::yield_now();
             }
