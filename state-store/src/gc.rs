@@ -391,6 +391,7 @@ mod tests {
         inner: MemBackend,
         refuse_events: AtomicBool,
         refuse_markers: AtomicBool,
+        stale_owned_by: AtomicUsize,
         key_space_reads: AtomicUsize,
     }
 
@@ -400,6 +401,7 @@ mod tests {
                 inner: MemBackend::new(),
                 refuse_events: Default::default(),
                 refuse_markers: Default::default(),
+                stale_owned_by: AtomicUsize::new(0),
                 key_space_reads: AtomicUsize::new(0),
             }
         }
@@ -437,6 +439,13 @@ mod tests {
             limit: usize,
             at: u64,
         ) -> crate::Result<Vec<String>> {
+            let moved = self
+                .stale_owned_by
+                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+                .is_ok();
+            if moved {
+                return Err(Error::Stale { expected: at, head: at + 1 });
+            }
             self.inner.owned_by(owner, after, limit, at)
         }
         fn commit(&self, expect: u64, batch: &[Write]) -> crate::Result<u64> {
@@ -488,6 +497,22 @@ mod tests {
         let pass = Controller::new(&c).pass(c.now_ms());
         assert!(pass.failed.is_empty() && pass.orphans.is_empty(), "{pass:?}");
         assert_eq!(c.backend().key_space_reads.load(Ordering::SeqCst), before);
+    }
+
+    #[test]
+    fn a_head_that_moves_under_an_owner_read_replans_the_write_and_the_drain() {
+        let clock = VirtualClock::new(0);
+        let c = open(Flaky::new(), &clock);
+        write(&c, "owners/o", "o");
+        let t = Txn::new().put("rec/a", Object::new(json!(1)).with_owners(&["owners/o"]));
+        c.txn(&t, &Request::new("a", "t", "test.write")).unwrap();
+        c.backend().stale_owned_by.store(2, Ordering::SeqCst);
+        c.delete("owners/o", None, &Request::new("d", "t", "test.delete")).unwrap();
+        assert_eq!(c.backend().stale_owned_by.load(Ordering::SeqCst), 0, "the write replanned past both");
+        c.backend().stale_owned_by.store(1, Ordering::SeqCst);
+        let pass = Controller::new(&c).pass(c.now_ms());
+        assert_eq!(c.backend().stale_owned_by.load(Ordering::SeqCst), 0, "the drain replanned past it");
+        assert_eq!((pass.orphans, pass.failed), (vec!["rec/a".to_string()], vec![]));
     }
 
     #[test]
