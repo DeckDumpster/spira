@@ -916,14 +916,9 @@ pub fn running_legs(listed: &[runtime::units::UnitDetail]) -> Vec<String> {
         .collect()
 }
 
-/// Whether `round-recert --drive` runs `batch` under a unit of `listed`: its name, bare or with a lease token.
-pub fn recert_driven(listed: &[runtime::units::UnitDetail], batch: &str) -> bool {
-    use runtime::units::UnitState;
-    let bare = release::round_recert::unit_for(batch, None);
-    listed.iter().filter(|d| matches!(d.state, UnitState::Active | UnitState::Activating)).any(|d| {
-        let name = d.name.strip_suffix(".service").unwrap_or(&d.name);
-        name == bare || name.strip_prefix(&bare).is_some_and(|rest| rest.starts_with('-'))
-    })
+/// Whether any of `listed`, the units found under one round-recert driver's name, is running.
+pub fn recert_live(listed: &[runtime::units::UnitDetail]) -> bool {
+    listed.iter().any(|d| matches!(d.state, runtime::units::UnitState::Active | runtime::units::UnitState::Activating))
 }
 
 /// How long past its wall a leg with no `unit.ran` is given before it is judged lost.
@@ -2545,10 +2540,10 @@ pub mod edge {
         let enabled = spira_config::process::cfg("SPIRA_BATCHER_ENABLE")?.trim() != "0";
         let reg = io::registry(&env);
         let mut snap = Snapshot { now_ms: spira_config::vtime::now_epoch() * 1000, ..Snapshot::default() };
-        let recerting = recert_units(e);
+        let units = e.units.as_deref();
         for name in reg.names().into_iter().filter(|n| reg.land(n) == "queue.local" && (enabled || n != reg.home_repo())) {
             let repo = batcher_cut::find_repo(&env, &name)?;
-            let mut seen = observe_repo(&env, &repo, &recerting)?;
+            let mut seen = observe_repo(&env, &repo, units)?;
             seen.live_legs = live_legs(e);
             seen.scoped_batches = scoped_batches(e, &name, &carried);
             seen.settled = carried.repos.get(&name).map(|rc| settled_batches(&env, rc, &seen)).unwrap_or_default();
@@ -2601,14 +2596,13 @@ pub mod edge {
         Some(live)
     }
 
-    /// The manager's round-recert driver units; empty when it cannot say.
-    fn recert_units(e: &Effects) -> Vec<runtime::units::UnitDetail> {
-        let Some(units) = e.units.as_deref() else { return vec![] };
-        let glob = format!("{}*", release::round_recert::UNIT_PREFIX);
-        runtime::units::effect(units, runtime::units::UNIT_LIST, &json(&glob).unwrap_or_default()).ok().and_then(|l| serde_json::from_str(&l).ok()).unwrap_or_default()
+    /// Whether the manager runs round-recert's driver unit for `batch`; false when it cannot say.
+    fn recert_driven(units: Option<&dyn runtime::units::Units>, batch: &str) -> bool {
+        let name = release::round_recert::unit_for(batch, None);
+        units.and_then(|u| u.list(&name).ok()).is_some_and(|l| super::recert_live(&l))
     }
 
-    fn observe_repo(env: &Env, repo: &batcher_cut::io::Repo, recerting: &[runtime::units::UnitDetail]) -> Result<Repo, String> {
+    fn observe_repo(env: &Env, repo: &batcher_cut::io::Repo, units: Option<&dyn runtime::units::Units>) -> Result<Repo, String> {
         let sifted = io::sifted_tips(env)?;
         let pool: Vec<Member> = io::certified_pool(env, repo)?
             .into_iter()
@@ -2630,7 +2624,7 @@ pub mod edge {
         let blockers = pool.iter().flat_map(|m| m.deps.clone()).collect();
         let branch_tips = pool.iter().map(|m| (m.id.clone(), m.tip.clone())).collect();
         let mut open = io::open_rounds(env, repo)?.into_iter().map(|r| {
-            let driven = io::certify_driven(env, &repo.name, &r.id) || super::recert_driven(recerting, &r.id);
+            let driven = io::certify_driven(env, &repo.name, &r.id) || recert_driven(units, &r.id);
             let unfit = io::round_certifiable(env, repo, &r.id).err();
             let queue = landing_pass::gateq::GateQueue::new(&env.run);
             let gate_red = with_failing(io::gate_red_rows(env, &r.members), |id, tip| queue.failing_at(&repo.name, &format!("spira/{id}"), tip));
@@ -2892,26 +2886,25 @@ pub mod edge {
 
     #[cfg(test)]
     mod recert_tests {
-        use crate::tasks::a::batcher_local::recert_driven;
+        use crate::tasks::a::batcher_local::recert_live;
         use runtime::units::{UnitDetail, UnitState};
 
-        fn unit(name: &str, state: UnitState) -> UnitDetail {
-            UnitDetail { name: name.into(), state, ..UnitDetail::default() }
+        fn unit(state: UnitState) -> UnitDetail {
+            UnitDetail { name: "round-recert-b1.service".into(), state, ..UnitDetail::default() }
         }
 
         #[test]
-        fn a_round_whose_recert_driver_unit_is_live_reads_driven_bare_or_leased() {
-            let listed = [unit("round-recert-b1.service", UnitState::Active), unit("round-recert-b2-41-2.service", UnitState::Activating)];
-            assert!(recert_driven(&listed, "b1"));
-            assert!(recert_driven(&listed, "b2"));
+        fn a_round_whose_recert_driver_unit_is_running_reads_driven() {
+            assert!(recert_live(&[unit(UnitState::Active)]));
+            assert!(recert_live(&[unit(UnitState::Activating)]));
         }
 
         #[test]
-        fn a_round_with_no_live_recert_driver_unit_reads_undriven() {
-            let listed = [unit("round-recert-b1.service", UnitState::Inactive), unit("round-recert-b10.service", UnitState::Active), unit("round-recert-b2.service", UnitState::Failed)];
-            assert!(!recert_driven(&listed, "b1"));
-            assert!(!recert_driven(&listed, "b2"));
-            assert!(!recert_driven(&[], "b1"));
+        fn a_round_whose_recert_driver_unit_is_absent_or_ended_reads_undriven() {
+            assert!(!recert_live(&[]));
+            for s in [UnitState::Inactive, UnitState::Failed, UnitState::Deactivating, UnitState::Absent] {
+                assert!(!recert_live(&[unit(s)]), "{s:?}");
+            }
         }
     }
 
