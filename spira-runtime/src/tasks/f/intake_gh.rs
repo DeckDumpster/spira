@@ -615,6 +615,23 @@ mod tests {
     }
 
     #[test]
+    fn decide_over_known_for_notes_a_tracked_ref_and_refiles_no_untrusted_record() {
+        let by_ref = |r: &str| Ok(match r {
+            "github:acme/widgets#7" => vec![row("b-7", r)],
+            "github-untrusted:acme/widgets#8" => vec![row("u-8", r)],
+            _ => vec![],
+        });
+        let list = vec![issue(7), issue(8)];
+        let store = known_for("acme/widgets", &list, Some(&vec![1]), &by_ref).unwrap();
+        let pages = BTreeMap::from([("acme/widgets".to_string(), Pages::Issues(list.into_iter().map(|i| GhIssue { number: i.number, title: i.title, body: i.body, author: i.login, is_pr: false }).collect()))]);
+        let targets = vec![Target { slug: "acme/widgets".into(), bead_repo: "r".into(), root_ok: true }];
+        let snap = Snapshot { halted: false, targets, store, now: 0, pages, accept: vec![], contributor_hidden: vec![] };
+        let carry = Carry { seen: BTreeMap::from([("acme/widgets".to_string(), vec![1])]), ..Carry::default() };
+        let (_, acts) = decide(&carry, &snap);
+        assert_eq!(acts.iter().map(|a| a.name.as_str()).collect::<Vec<_>>(), [NOTE_SEEN]);
+    }
+
+    #[test]
     fn known_for_asks_nothing_on_a_slugs_first_read() {
         let by_ref = |_: &str| -> Result<Vec<gh_intake::store::KnownRef>, String> { panic!("asked") };
         assert!(known_for("acme/widgets", &[issue(1)], None, &by_ref).unwrap().is_empty());
