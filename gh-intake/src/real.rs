@@ -1,4 +1,4 @@
-use crate::ports::{Bd, Gh, Git, Http, LcBead, Lifecycle, Mail, Repo, Seen, Stamp};
+use crate::ports::{Bd, Closeouts, Gh, Git, Http, LcBead, Lifecycle, Mail, Pending, Repo, Seen, Stamp};
 use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -148,34 +148,58 @@ impl Lifecycle for RealLifecycle {
         let r = self.lc.call(&["show", id]).map_err(String::from)?;
         parse_show(Some(r.code), r.out.as_bytes())
     }
+}
 
-    fn all(&self) -> Result<std::collections::BTreeMap<String, LcBead>, String> {
-        let read = |extra: &[&str]| -> Result<serde_json::Value, String> {
-            let argv: Vec<&str> = std::iter::once("list").chain(extra.iter().copied()).collect();
-            let r = self.lc.call(&argv).map_err(String::from)?;
-            if r.code != 0 {
-                return Err(format!("spira-lc list exited {:?}", Some(r.code)));
-            }
-            serde_json::from_str(&r.out).map_err(|e| format!("spira-lc list: unparsed reply: {e}"))
-        };
-        parse_list(&read(&[])?, &read(&["--delivery"])?)
+/// The pending closeouts, through `spira-lc gh-closeout`.
+pub struct RealCloseouts {
+    lc: spira_store::lc_call::LcClient,
+}
+
+impl RealCloseouts {
+    pub fn new() -> Result<Self, String> {
+        Ok(RealCloseouts { lc: spira_store::lc_call::LcClient::configured()? })
+    }
+
+    pub fn over(lc: spira_store::lc_call::LcClient) -> Self {
+        RealCloseouts { lc }
+    }
+
+    fn write(&self, argv: &[&str]) -> bool {
+        matches!(self.lc.call(argv), Ok(r) if r.code == 0)
     }
 }
 
-/// `spira-lc list` rows joined with `spira-lc list --delivery` rows: a landed bead's sha is its
-/// delivery's merge sha, else its tip, exactly as [`parse_show`] reads it.
-pub fn parse_list(beads: &serde_json::Value, deliveries: &serde_json::Value) -> Result<std::collections::BTreeMap<String, LcBead>, String> {
+/// `spira-lc gh-closeout pending`'s rows.
+pub fn parse_pending(out: &str) -> Result<Vec<Pending>, String> {
+    let rows: serde_json::Value = serde_json::from_str(out).map_err(|e| format!("gh-closeout pending: unparsed reply: {e}"))?;
+    let rows = rows.as_array().ok_or("gh-closeout pending: not an array")?;
     let text = |r: &serde_json::Value, k: &str| r.get(k).and_then(|t| t.as_str()).unwrap_or("").to_string();
-    let rows = |v: &serde_json::Value, what: &str| v.as_array().cloned().ok_or(format!("spira-lc list: {what} is not an array"));
-    let merges: std::collections::BTreeMap<String, String> =
-        rows(deliveries, "delivery reply")?.iter().map(|r| (text(r, "bead_id"), text(r, "merge_sha"))).filter(|(_, m)| !m.is_empty()).collect();
-    let mut out = std::collections::BTreeMap::new();
-    for r in rows(beads, "reply")? {
-        let id = text(&r, "bead_id");
-        let sha = merges.get(&id).cloned().unwrap_or_else(|| text(&r, "tip"));
-        out.insert(id, LcBead { state: text(&r, "state"), sha, reason: text(&r, "reason") });
+    Ok(rows
+        .iter()
+        .map(|r| Pending {
+            bead_id: text(r, "bead_id"),
+            external_ref: text(r, "external_ref"),
+            outcome_state: text(r, "outcome_state"),
+            sha: text(r, "sha"),
+            ask_id: Some(text(r, "ask_id")).filter(|a| !a.is_empty()),
+            attempts: r.get("attempts").and_then(|n| n.as_u64()).unwrap_or(0),
+        })
+        .collect())
+}
+
+impl Closeouts for RealCloseouts {
+    fn pending(&self) -> Result<Vec<Pending>, String> {
+        parse_pending(&self.lc.answer(&["gh-closeout", "pending"])?)
     }
-    Ok(out)
+    fn done(&self, bead: &str) -> bool {
+        self.write(&["gh-closeout", "done", bead])
+    }
+    fn asked(&self, bead: &str, ask: &str) -> bool {
+        self.write(&["gh-closeout", "asked", bead, ask])
+    }
+    fn failed(&self, bead: &str) -> bool {
+        self.write(&["gh-closeout", "failed", bead])
+    }
 }
 
 /// `spira-lc show`: exit 0 with the row, exit 1 with `{}` when the machine has no such bead,
@@ -206,20 +230,6 @@ pub fn by_ref_on(lc: &spira_store::lc_call::LcClient, external_ref: &str) -> Res
     crate::store::known_refs(&v).ok_or_else(|| format!("content ref: reply is no list: {}", out.chars().take(200).collect::<String>()))
 }
 
-/// The work beads' external-reference prefix: `github-untrusted:` records do not contain it.
-pub const WORK_REF_PREFIX: &str = "github:";
-
-/// The beads whose external reference contains `needle`, as the rows `store::ingested` reads.
-/// Err carries the store's own text: a refusal, a deadline or a reply that is no item list.
-pub fn github_refs_on(lc: &spira_store::lc_call::LcClient, needle: &str) -> Result<serde_json::Value, String> {
-    let out = lc.answer(&["plan", "items", "--external-contains", needle, "--full"])?;
-    let mut v: serde_json::Value = serde_json::from_str(&out).map_err(|e| format!("plan items: unparsed reply: {e}"))?;
-    match v.get_mut("items").map(serde_json::Value::take) {
-        Some(items @ serde_json::Value::Array(_)) => Ok(items),
-        _ => Err(format!("plan items: no items in {}", out.chars().take(200).collect::<String>())),
-    }
-}
-
 impl RealBd {
     fn cmd(&self) -> Command {
         // FORK-EDGE: dep remove / dep relate — the content door serves no dep verb
@@ -240,11 +250,6 @@ fn content<S: AsRef<str>>(argv: &[S], body: Option<&str>) -> Option<String> {
 }
 
 impl Bd for RealBd {
-    fn list_github_json(&self) -> Option<serde_json::Value> {
-        let lc = spira_store::lc_call::LcClient::configured().ok()?;
-        github_refs_on(&lc, WORK_REF_PREFIX).ok()
-    }
-
     fn by_ref(&self, external_ref: &str) -> Result<Vec<crate::store::KnownRef>, String> {
         by_ref_on(&spira_store::lc_call::LcClient::configured()?, external_ref)
     }
@@ -266,14 +271,6 @@ impl Bd for RealBd {
 
     fn show_json(&self, id: &str) -> Option<serde_json::Value> {
         serde_json::from_str(&content(&["content", "show", id, "--json"], None)?).ok()
-    }
-
-    fn list_asks(&self, which: spira_config::nonwork::Which, label: &str) -> Option<serde_json::Value> {
-        use spira_config::nonwork::{status_args, Kind};
-        let mut argv: Vec<String> = vec!["content".into(), "list".into()];
-        argv.extend(status_args(Kind::Ask, which));
-        argv.extend(["--label", label, "--limit", "0", "--json"].map(String::from));
-        serde_json::from_str(&content(&argv, None)?).ok()
     }
 
     fn dep_remove(&self, id: &str, other: &str) -> bool {
@@ -328,27 +325,11 @@ impl Repo for RealRepo {
         reg.all()
     }
 
-    /// `spira_landref <repo-path>` (family W, sp-j3fim) — in-process.
-    fn landref(&self, repo_path: &str) -> Option<String> {
-        let reg = spira_config::repos::Registry::from_env(std::env::vars().collect(), std::path::Path::new(&self.spira_home));
-        spira_config::repos::landref(&reg, repo_path)
-    }
-
-    /// `spira_landrefs <repo-path>` (family W, sp-j3fim) — in-process; flattens the
-    /// (base, local-counterpart) pair `spira_config::repos::landrefs` returns into the
-    /// list of refs to search.
-    fn landrefs(&self, repo_path: &str) -> Vec<String> {
-        let reg = spira_config::repos::Registry::from_env(std::env::vars().collect(), std::path::Path::new(&self.spira_home));
-        match spira_config::repos::landrefs(&reg, repo_path) {
-            Some((base, Some(local))) => vec![base, local],
-            Some((base, None)) => vec![base],
-            None => Vec::new(),
-        }
-    }
 }
 
 /// One operator mail, sent in-process through the `mail` library.
-pub type SendFn = Box<dyn Fn(&mail::cmds::SendArgs, String) -> Result<(), String>>;
+/// `Ok` carries the id of the ask bead the send created, empty when it made none.
+pub type SendFn = Box<dyn Fn(&mail::cmds::SendArgs, String) -> Result<String, String>>;
 
 pub struct RealMail {
     stand_in: Option<String>,
@@ -368,25 +349,27 @@ impl RealMail {
 }
 
 /// `mail send`'s own path: the config, the bead store's door, then the recorded send.
-fn send_in_process(args: &mail::cmds::SendArgs, body: String) -> Result<(), String> {
+fn send_in_process(args: &mail::cmds::SendArgs, body: String) -> Result<String, String> {
     let env = mail::env::Env::load().map_err(|e| format!("mail: {e}"))?;
     mail::maildir::mailbox_valid(args.mailbox).map_err(|e| format!("mail: send: {e}"))?;
     let bdq = spira_config::release_env::tool("bdq").map_err(|e| format!("mail: {e}"))?;
     let bd = mail::bead::BdCli { bdq, conn_retries: env.bd_conn_retries };
-    mail::cmds::send_recorded(&bd, &env, args, body).map(|_| ()).map_err(|e| format!("mail: send: {e}"))
+    let sent = mail::cmds::send_recorded(&bd, &env, args, body).map_err(|e| format!("mail: send: {e}"))?;
+    let named = sent.delivered_path.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
+    Ok(sent.x_bead.unwrap_or(named))
 }
 
 impl RealMail {
     /// `mail send operator <flags>` with `body` on stdin, through the fixture's stand-in
     /// program: stdout discarded, stderr the error text.
-    fn stand_in_send(bin: &str, flags: &[&str], body: &[u8]) -> Result<(), String> {
+    fn stand_in_send(bin: &str, flags: &[&str], body: &[u8]) -> Result<String, String> {
         // FORK-EDGE: a fixture's SPIRA_MAIL_BIN stand-in only; production sends in-process
         let mut child = spira_config::bounded::bounded(bin)
             .arg("send")
             .arg("operator")
             .args(flags)
             .stdin(Stdio::piped())
-            .stdout(Stdio::null())
+            .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
             .map_err(|e| e.to_string())?;
@@ -395,13 +378,13 @@ impl RealMail {
         }
         let out = child.wait_with_output().map_err(|e| e.to_string())?;
         if out.status.success() {
-            Ok(())
+            Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
         } else {
             Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
         }
     }
 
-    fn deliver(&self, args: &mail::cmds::SendArgs, flags: &[&str], body: &[u8]) -> Result<(), String> {
+    fn deliver(&self, args: &mail::cmds::SendArgs, flags: &[&str], body: &[u8]) -> Result<String, String> {
         match &self.stand_in {
             Some(bin) => Self::stand_in_send(bin, flags, body),
             None => (self.send)(args, String::from_utf8_lossy(body).into_owned()),
@@ -434,7 +417,7 @@ impl Mail for RealMail {
 
     /// lib.sh `gh_issue_ask_unlanded`'s mail call (sp-j3fim): the error text is what
     /// `mail send` says on stderr when it refuses.
-    fn send_question(&self, from: &str, subject: &str, default: &str, bead_id: &str, body: &[u8]) -> Result<(), String> {
+    fn send_question(&self, from: &str, subject: &str, default: &str, bead_id: &str, body: &[u8]) -> Result<String, String> {
         let flags = ["--from", from, "--subject", subject, "--kind", "question", "--default", default, "--bead", bead_id];
         self.deliver(&operator_args(from, subject, "question", default, bead_id), &flags, body)
     }
@@ -519,34 +502,6 @@ impl Git for RealGit {
         o.status.success().then(|| String::from_utf8_lossy(&o.stdout).trim().to_string())
     }
 
-    fn grep_ancestor(&self, repo: &Path, id: &str, land_ref: &str) -> Option<String> {
-        let grep = format!("--grep={id}");
-        let o = Self::cmd(repo)
-            .args(["log", "--format=%H", grep.as_str(), land_ref])
-            .stdin(Stdio::null())
-            .stderr(Stdio::null())
-            .output()
-            .ok()?;
-        if !o.status.success() {
-            return None;
-        }
-        String::from_utf8_lossy(&o.stdout).lines().next().map(str::to_string).filter(|s| !s.is_empty())
-    }
-
-    fn sha_is_ancestor(&self, repo: &Path, sha: &str, land_ref: &str) -> bool {
-        let exists = Self::cmd(repo).args(["cat-file", "-e", sha]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status().map(|s| s.success()).unwrap_or(false);
-        if !exists {
-            return false;
-        }
-        Self::cmd(repo)
-            .args(["merge-base", "--is-ancestor", sha, land_ref])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false)
-    }
 }
 
 #[cfg(test)]
@@ -563,13 +518,11 @@ mod lifecycle_tests {
     }
 
     #[test]
-    fn list_rows_read_as_show_reads_them() {
-        let beads = serde_json::json!([{"bead_id":"a","state":"LANDED","tip":"tt","reason":""},{"bead_id":"b","state":"SUPERSEDED","tip":"","reason":"a"}]);
-        let dels = serde_json::json!([{"bead_id":"a","merge_sha":"mm"}]);
-        let m = parse_list(&beads, &dels).unwrap();
-        assert_eq!((m["a"].state.as_str(), m["a"].sha.as_str()), ("LANDED", "mm"));
-        assert_eq!(m["b"].reason, "a");
-        assert!(parse_list(&serde_json::json!({}), &dels).is_err());
+    fn pending_rows_read_with_their_ask_and_attempts() {
+        let rows = parse_pending(r#"[{"bead_id":"sp-a","external_ref":"github:o/r#7","outcome_state":"DROPPED","sha":"","ask_id":null,"attempts":2},{"bead_id":"sp-b","external_ref":"github:o/r#8","outcome_state":"LANDED","sha":"ab","ask_id":"sp-ask","attempts":0}]"#).unwrap();
+        assert_eq!((rows[0].ask_id.clone(), rows[0].attempts), (None, 2));
+        assert_eq!(rows[1].ask_id.as_deref(), Some("sp-ask"));
+        assert!(parse_pending("{}").is_err());
     }
 
     #[test]
@@ -595,8 +548,6 @@ mod transport_tests {
             let out = match (argv[0].as_str(), argv.get(1).map(String::as_str)) {
                 ("show", Some("sp-1")) => r#"{"bead":{"state":"LANDED","tip":"tt"},"delivery":{"merge_sha":"mm"}}"#,
                 ("show", _) => return Ok(Reply { code: 1, out: "{}".into(), err: String::new() }),
-                ("list", Some("--delivery")) => r#"[{"bead_id":"a","merge_sha":"mm"}]"#,
-                ("list", _) => r#"[{"bead_id":"a","state":"LANDED","tip":"tt","reason":""}]"#,
                 _ => return Err("unscripted".into()),
             };
             Ok(Reply { code: 0, out: out.into(), err: String::new() })
@@ -609,8 +560,7 @@ mod transport_tests {
         let lc = RealLifecycle::over(LcClient::over(t.clone(), true));
         assert_eq!(lc.bead("sp-1").unwrap().unwrap().sha, "mm");
         assert_eq!(lc.bead("sp-2").unwrap(), None);
-        assert_eq!(lc.all().unwrap()["a"].sha, "mm");
-        assert_eq!(t.0.lock().unwrap().len(), 4);
+        assert_eq!(t.0.lock().unwrap().len(), 2);
     }
 
     struct Content(Mutex<Vec<Vec<String>>>, i32);
@@ -642,37 +592,6 @@ mod transport_tests {
         assert!(by_ref_on(&LcClient::over(Arc::new(Content(Mutex::default(), 1)), true), "github:o/r#1").is_err(), "a failed read is not none");
     }
 
-    struct Bounded(Mutex<Vec<Vec<String>>>, i32);
-
-    impl Transport for Bounded {
-        fn exchange(&self, argv: &[String], _stdin: Option<&str>, _d: std::time::Duration) -> Result<Reply, String> {
-            self.0.lock().unwrap().push(argv.to_vec());
-            if spira_store::lc_call::reads_whole_history(argv) || self.1 != 0 {
-                return Ok(Reply { code: if self.1 != 0 { self.1 } else { 3 }, out: "refused: reads every bead ever filed".into(), err: String::new() });
-            }
-            let out = r#"{"watermark":1,"items":[{"id":"sp-1","external_ref":"github:o/r#1","labels":["x"]}]}"#;
-            Ok(Reply { code: 0, out: out.into(), err: String::new() })
-        }
-    }
-
-    #[test]
-    fn the_github_refs_are_a_bounded_plan_read_the_store_serves_to_a_scheduler_task() {
-        let t = Arc::new(Bounded(Mutex::default(), 0));
-        let got = github_refs_on(&LcClient::over(t.clone(), true), "o/r#").unwrap();
-        assert!(t.0.lock().unwrap().iter().all(|a| !spira_store::lc_call::reads_whole_history(a)));
-        assert_eq!(got[0]["id"], "sp-1");
-        let refused = github_refs_on(&LcClient::over(Arc::new(Bounded(Mutex::default(), 3)), true), "o/r#").unwrap_err();
-        assert!(refused.contains("reads every bead"), "{refused}");
-    }
-
-    #[test]
-    fn the_closeout_read_asks_only_for_work_refs_and_never_the_whole_history() {
-        let t = Arc::new(Bounded(Mutex::default(), 0));
-        github_refs_on(&LcClient::over(t.clone(), true), WORK_REF_PREFIX).unwrap();
-        let sent = t.0.lock().unwrap();
-        assert_eq!(sent[0], ["plan", "items", "--external-contains", "github:", "--full"]);
-    }
-
     type Sent = Arc<Mutex<Vec<(String, String, String, String, String, String)>>>;
 
     fn recording(fail: bool) -> (RealMail, Sent) {
@@ -680,7 +599,7 @@ mod transport_tests {
         let s = sent.clone();
         let send: SendFn = Box::new(move |a: &mail::cmds::SendArgs, body: String| {
             s.lock().unwrap().push((a.mailbox.into(), a.from.unwrap_or("").into(), a.kind.into(), a.default.into(), a.bead.into(), body));
-            if fail { Err("mail: send: refused".into()) } else { Ok(()) }
+            if fail { Err("mail: send: refused".into()) } else { Ok("sp-ask9".into()) }
         });
         (RealMail::with(None, send), sent)
     }
@@ -689,7 +608,7 @@ mod transport_tests {
     fn operator_mail_is_sent_in_process_with_the_cli_flags() {
         let (m, sent) = recording(false);
         assert!(m.send_operator_note("digest", b"new untrusted"));
-        assert_eq!(m.send_question("gh <g@s>", "unlanded?", "wait", "sp-9", b"why"), Ok(()));
+        assert_eq!(m.send_question("gh <g@s>", "unlanded?", "wait", "sp-9", b"why"), Ok("sp-ask9".into()));
         let got = sent.lock().unwrap().clone();
         assert_eq!(got[0], ("operator".into(), "gh-intake <intake@spira>".into(), "note".into(), "".into(), "".into(), "new untrusted".into()));
         assert_eq!(got[1], ("operator".into(), "gh <g@s>".into(), "question".into(), "wait".into(), "sp-9".into(), "why".into()));

@@ -64,11 +64,6 @@ impl FakeBd {
 }
 
 impl Bd for FakeBd {
-    fn list_github_json(&self) -> Option<serde_json::Value> {
-        self.record("list_github_json", "");
-        None
-    }
-
     fn by_ref(&self, external_ref: &str) -> Result<Vec<KnownRef>, String> {
         self.record("by_ref", external_ref);
         if self.fail_by_ref.borrow().as_deref() == Some(external_ref) {
@@ -120,7 +115,7 @@ impl Bd for FakeBd {
 
     // The closeout-side methods (sp-j3fim) are exercised through `closeout.rs`'s own
     // fakes, not through the ingest side's — these are never called from `logic::run`.
-    fn list_asks(&self, _which: spira_config::nonwork::Which, _label: &str) -> Option<serde_json::Value> {
+    fn show_json(&self, _id: &str) -> Option<serde_json::Value> {
         None
     }
     fn dep_remove(&self, _id: &str, _other: &str) -> bool {
@@ -145,12 +140,6 @@ impl Repo for FakeRepo {
     }
     fn all_names(&self) -> Vec<String> {
         self.registered.iter().map(|(n, _)| n.to_string()).collect()
-    }
-    fn landref(&self, _repo_path: &str) -> Option<String> {
-        None
-    }
-    fn landrefs(&self, _repo_path: &str) -> Vec<String> {
-        Vec::new()
     }
 }
 
@@ -183,8 +172,8 @@ impl Mail for FakeMail {
         self.sent.borrow_mut().push((subject.to_string(), String::from_utf8_lossy(body).to_string()));
         true
     }
-    fn send_question(&self, _from: &str, _subject: &str, _default: &str, _bead_id: &str, _body: &[u8]) -> Result<(), String> {
-        Ok(())
+    fn send_question(&self, _from: &str, _subject: &str, _default: &str, _bead_id: &str, _body: &[u8]) -> Result<String, String> {
+        Ok(String::new())
     }
 }
 
