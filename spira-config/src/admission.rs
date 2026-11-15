@@ -1,10 +1,10 @@
 //! Host-wide admission per heavy phase — pipeline shaping (sp-f4ig1; design:
-//! `gate/DESIGN-admission.md`). Three pools — compile, test, gate — each sized from the
+//! `gate/DESIGN-admission.md`). The pools — test, gate, cold, unit, run — each sized from the
 //! measured cost of its phase, so N dwarves are spread across the phases instead of peaking in
 //! each one together. A slot is admission, never a limit: an admitted job runs at full
 //! width (law-reduce-the-count-never-throttle-the-job).
 //!
-//! Compile and test slots are **leases**: a `slot.<n>` file naming a pid and its starttime,
+//! Test slots are **leases**: a `slot.<n>` file naming a pid and its starttime,
 //! written under a short flock on the pool's `lock` file and dead when the pid is. The gate's
 //! pool stays the gate's flock slots (`gate/src/real.rs`); this module only sizes it and reads
 //! its holders for `status`.
@@ -19,12 +19,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 /// value): nothing under it takes a slot of its own. The gate sets it on every command it
 /// runs; testenv on its build.
 pub const INHERIT_ENV: &str = "SPIRA_ADMISSION";
-/// The label a lease carries (`who=`): the dwarf's bead.
-pub const WHO_ENV: &str = "SPIRA_ADMIT_WHO";
-/// The compiler the `spira-admit` RUSTC_WRAPPER execs after admission (sccache's absolute
-/// path; empty: rustc itself).
+/// The compiler a retired `spira-admit` RUSTC_WRAPPER execs (empty: the rustc it was handed).
 pub const INNER_ENV: &str = "SPIRA_ADMIT_INNER";
-/// The binary: RUSTC_WRAPPER mode, `status`, `run`.
+/// The binary: `status`, and the retired RUSTC_WRAPPER pass-through.
 pub const BIN: &str = "spira-admit";
 /// The call jitter's key (seconds; 0 disables).
 pub const JITTER_ENV: &str = "SPIRA_CALL_JITTER";
@@ -32,11 +29,7 @@ pub const JITTER_ENV: &str = "SPIRA_CALL_JITTER";
 pub const JITTER_DEFAULT: u64 = 20;
 /// The telemetry family: `<run>/tsd/admission.jsonl`.
 pub const FAMILY: &str = "admission";
-/// Minutes a compile lease may be held while no compiler in its process subtree advances
-/// (0 disables). Set well above the sccache wedge bound.
-pub const STALL_ENV: &str = "SPIRA_COMPILE_STALL_MINS";
-pub const STALL_DEFAULT_MINS: u64 = 30;
-/// Seconds a fresh compile or test admission waits after the pool's previous one began, while
+/// Seconds a fresh test admission waits after the pool's previous one began, while
 /// other leases are held (0 or unset: no stagger). Admission only; an admitted job is unlimited.
 pub const STAGGER_ENV: &str = "SPIRA_ADMIT_STAGGER_SECS";
 /// Cold builds admitted at once, host-wide: a toolchain change invalidates every compiled
@@ -55,7 +48,6 @@ pub const SAY_EVERY: u64 = 30;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Pool {
-    Compile,
     Test,
     Gate,
     Cold,
@@ -64,11 +56,10 @@ pub enum Pool {
 }
 
 impl Pool {
-    pub const ALL: [Pool; 6] = [Pool::Compile, Pool::Test, Pool::Gate, Pool::Cold, Pool::Unit, Pool::Run];
+    pub const ALL: [Pool; 5] = [Pool::Test, Pool::Gate, Pool::Cold, Pool::Unit, Pool::Run];
 
     pub fn name(self) -> &'static str {
         match self {
-            Pool::Compile => "compile",
             Pool::Test => "test",
             Pool::Gate => "gate",
             Pool::Cold => "cold",
@@ -86,10 +77,9 @@ impl Pool {
         run.join(format!("{}-admission", self.name()))
     }
 
-    /// The size key, env spelling (spira.toml `compile_par` / `test_par` / `certify_par`).
+    /// The size key, env spelling (spira.toml `test_par` / `certify_par`).
     pub fn size_env(self) -> &'static str {
         match self {
-            Pool::Compile => "SPIRA_COMPILE_PAR",
             Pool::Test => "SPIRA_TEST_PAR",
             Pool::Gate => "SPIRA_CERTIFY_PAR",
             Pool::Cold => "SPIRA_COLD_PAR",
@@ -132,9 +122,6 @@ pub fn derive(pool: Pool, h: Host) -> u64 {
         return (h.cores / RUN_CARGO_JOBS).max(1);
     }
     let (per_core, per_mib) = match pool {
-        // One dwarf-profile workspace build: ~9 cores average (14 peak), 2.7 GiB anon; a
-        // release (LTO) build heavier. 10 cores and 4 GiB a slot.
-        Pool::Compile => (10, 4096),
         // One testenv trial: eight private dolt sql-servers, fsync IO and a tmpfs slot; few
         // cores. 8 cores and 8 GiB a slot.
         Pool::Test => (8, 8192),
@@ -163,7 +150,6 @@ pub fn size_from_env(pool: Pool) -> u64 {
 pub fn doc_size(pool: Pool, doc: &crate::SpiraToml) -> Option<u64> {
     let s = doc.spira.as_ref()?;
     crate::said(match pool {
-        Pool::Compile => s.get_u32("SPIRA_COMPILE_PAR"),
         Pool::Test => s.get_u32("SPIRA_TEST_PAR"),
         Pool::Gate => s.get_u32("SPIRA_CERTIFY_PAR"),
         Pool::Cold | Pool::Unit | Pool::Run => Ok(None),
@@ -199,7 +185,7 @@ pub struct Holder {
     pub pid: u32,
     pub start: u64,
     pub who: String,
-    /// Units of the pool this job takes (§5: a release/LTO build is [`WEIGHT_RELEASE`]).
+    /// Units of the pool this job takes.
     pub weight: u64,
 }
 
@@ -215,41 +201,6 @@ pub struct Lease {
     pub waited: u64,
     pub last: u64,
     pub weight: u64,
-}
-
-/// A compile job's weight in units of the compile pool (DESIGN-admission.md §5). A unit is
-/// what one dwarf-profile workspace build costs (≈2.7 GiB anon, ≈9 cores); a release build
-/// (LTO, codegen-units=1) peaked at 15.3 GiB anon with 22 rustc alive, 145 s — ⌈15.3 ÷ 4⌉ = 4
-/// units. A job heavier than the whole pool runs alone. Measured on the fat-LTO profile that
-/// sp-zqo8s replaced (DESIGN-admission.md §5): a safe starting value, re-derived after rollout.
-pub const WEIGHT_RELEASE: u64 = 4;
-
-/// The weight of a rustc invocation's build: an optimised (`-C opt-level=` other than 0) or
-/// LTO compile is a release-like build.
-pub fn build_weight(rustc_args: &[String]) -> u64 {
-    let mut prev_c = false;
-    for a in rustc_args {
-        let flag = if prev_c { Some(a.as_str()) } else { a.strip_prefix("-C") };
-        prev_c = a == "-C";
-        if let Some(f) = flag {
-            let heavy = f.strip_prefix("opt-level=").is_some_and(|v| v != "0")
-                || f == "lto"
-                || f.strip_prefix("lto=").is_some_and(|v| v != "off" && v != "no" && v != "false");
-            if heavy {
-                return WEIGHT_RELEASE;
-            }
-        }
-    }
-    1
-}
-
-/// The weight of a cargo build of `profile` (testenv's in-place build).
-pub fn profile_weight(profile: &str) -> u64 {
-    if profile == "release" {
-        WEIGHT_RELEASE
-    } else {
-        1
-    }
 }
 
 fn clean_who(w: &str) -> String {
@@ -303,11 +254,6 @@ pub trait Procs {
     /// Field 22 of `/proc/<pid>/stat`; None when the process does not exist.
     fn start_of(&self, pid: u32) -> Option<u64>;
     fn ppid_of(&self, pid: u32) -> Option<u32>;
-    /// Cumulative CPU ticks (utime+stime) of the compiler processes (rustc, cc, linker) in
-    /// `pid`'s subtree; None when unknown, which never counts as a stall.
-    fn compiler_ticks(&self, _pid: u32) -> Option<u64> {
-        None
-    }
 }
 
 pub struct RealProcs;
@@ -327,36 +273,6 @@ impl Procs for RealProcs {
     fn ppid_of(&self, pid: u32) -> Option<u32> {
         stat_fields(pid)?.get(1)?.parse().ok()
     }
-    fn compiler_ticks(&self, pid: u32) -> Option<u64> {
-        stat_fields(pid)?;
-        let mut kids: std::collections::HashMap<u32, Vec<u32>> = std::collections::HashMap::new();
-        let mut info: std::collections::HashMap<u32, (String, u64)> = std::collections::HashMap::new();
-        for e in fs::read_dir("/proc").ok()?.flatten() {
-            let Some(p) = e.file_name().to_str().and_then(|n| n.parse::<u32>().ok()) else { continue };
-            let Ok(s) = fs::read_to_string(format!("/proc/{p}/stat")) else { continue };
-            let (Some(open), Some(close)) = (s.find('('), s.rfind(')')) else { continue };
-            let f: Vec<&str> = s[close + 1..].split_whitespace().collect();
-            let (Some(pp), Some(u), Some(k)) = (f.get(1).and_then(|v| v.parse::<u32>().ok()), f.get(11).and_then(|v| v.parse::<u64>().ok()), f.get(12).and_then(|v| v.parse::<u64>().ok())) else { continue };
-            kids.entry(pp).or_default().push(p);
-            info.insert(p, (s[open + 1..close].to_string(), u + k));
-        }
-        let (mut total, mut stack) = (0u64, vec![pid]);
-        while let Some(p) = stack.pop() {
-            for c in kids.get(&p).into_iter().flatten() {
-                stack.push(*c);
-                if let Some((comm, t)) = info.get(c) {
-                    if is_compiler_comm(comm) {
-                        total += t;
-                    }
-                }
-            }
-        }
-        Some(total)
-    }
-}
-
-fn is_compiler_comm(comm: &str) -> bool {
-    matches!(comm, "rustc" | "cc" | "c++" | "gcc" | "g++" | "clang" | "clang++" | "cc1" | "cc1plus" | "ld" | "lld" | "ld.lld" | "mold" | "collect2" | "as")
 }
 
 /// A holder for a live process: its pid and starttime.
@@ -452,32 +368,6 @@ pub struct Waiter {
     pub weight: u64,
 }
 
-/// Whether `l` has held its slot `stall` seconds with no change in its subtree's compiler CPU.
-/// The last change is kept in `progress.<slot>` (`pid start ticks moved`); a first sight, or a
-/// sidecar for another holder, starts the clock at `now`.
-fn stalled(dir: &Path, l: &Lease, procs: &dyn Procs, now: u64, stall: u64) -> bool {
-    let Some(ticks) = procs.compiler_ticks(l.pid) else { return false };
-    let path = dir.join(format!("progress.{}", l.slot));
-    let prev: Option<(u64, u64)> = fs::read_to_string(&path).ok().and_then(|t| {
-        let f: Vec<u64> = t.split_whitespace().filter_map(|v| v.parse().ok()).collect();
-        (f.len() == 4 && f[0] == u64::from(l.pid) && f[1] == l.start).then(|| (f[2], f[3]))
-    });
-    let moved = match prev {
-        Some((t, m)) if t == ticks => m,
-        _ => now,
-    };
-    if prev.map(|p| p.1) != Some(moved) || prev.map(|p| p.0) != Some(ticks) {
-        let _ = write_atomic(&path, &format!("{} {} {ticks} {moved}\n", l.pid, l.start));
-    }
-    now.saturating_sub(moved) >= stall
-}
-
-/// [`STALL_ENV`] from the environment, in seconds.
-fn stall_secs() -> u64 {
-    let mins = std::env::var(STALL_ENV).ok().and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(STALL_DEFAULT_MINS);
-    mins.saturating_mul(60)
-}
-
 fn stagger_secs() -> u64 {
     std::env::var(STAGGER_ENV).ok().and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(0)
 }
@@ -494,24 +384,16 @@ fn staggered(dir: &Path, held: bool, now: u64, stagger: u64) -> bool {
 
 /// Remove dead leases and dead waiters; return the live leases, the ended ones (for
 /// telemetry) and the live waiters, oldest first.
-fn reap(dir: &Path, pool: Pool, size: u64, procs: &dyn Procs, now: u64, stall: u64) -> (Vec<Lease>, Vec<Ended>, Vec<Waiter>) {
+fn reap(dir: &Path, pool: Pool, size: u64, procs: &dyn Procs) -> (Vec<Lease>, Vec<Ended>, Vec<Waiter>) {
     let mut live = Vec::new();
     let mut ended = Vec::new();
     for (n, l) in read_leases(dir) {
         match l {
             Some(l) if alive(l.pid, l.start, procs) => {
-                if pool == Pool::Compile && stall > 0 && stalled(dir, &l, procs, now, stall) {
-                    let _ = fs::remove_file(dir.join(format!("slot.{n}")));
-                    let _ = fs::remove_file(dir.join(format!("progress.{n}")));
-                    let held = now.saturating_sub(l.since);
-                    ended.push(Ended { pool, lease: l, size, held, end: "stalled" });
-                } else {
-                    live.push(l);
-                }
+                live.push(l);
             }
             other => {
                 let _ = fs::remove_file(dir.join(format!("slot.{n}")));
-                let _ = fs::remove_file(dir.join(format!("progress.{n}")));
                 if let Some(l) = other {
                     let held = l.last.max(l.since).saturating_sub(l.since);
                     ended.push(Ended { pool, lease: l, size, held, end: "reclaimed" });
@@ -554,7 +436,7 @@ fn ancestors(pid: u32, procs: &dyn Procs) -> Vec<u32> {
     out
 }
 
-/// ONE SCAN of a lease pool (compile or test) under its mutex: already ours, inherited from
+/// ONE SCAN of a lease pool (test) under its mutex: already ours, inherited from
 /// an ancestor's lease, admitted, or busy. Admission is by units and first come, first served:
 /// `me` is admitted when no older live waiter is queued ahead of it and its weight fits what
 /// the live leases leave of `size` — or the pool is empty (a job heavier than the pool runs
@@ -586,7 +468,7 @@ pub fn try_take_staggered(
 ) -> std::io::Result<(Take, Vec<Ended>)> {
     let dir = pool.dir(run);
     let _m = Mutex::lock(&dir)?;
-    let (live, ended, waiters) = reap(&dir, pool, size, procs, now, stall_secs());
+    let (live, ended, waiters) = reap(&dir, pool, size, procs);
     if let Some(l) = live.iter().find(|l| l.is(me)) {
         if l.last < now {
             let mut l2 = l.clone();
@@ -620,71 +502,6 @@ pub fn try_take_staggered(
         let _ = write_atomic(&wf, &format!("start={} who={} since={} weight={}\n", me.start, clean_who(&me.who), now, me.weight.max(1)));
     }
     Ok((Take::Busy { holders: live }, ended))
-}
-
-/// What [`take_now`] did.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Now {
-    /// A lease was written at `slot`; `held_before` units were already held by others
-    /// (> size: this lease oversubscribes the pool).
-    Took { slot: u64, held_before: u64, fresh: bool },
-    /// An ancestor of the holder already holds a lease in this pool.
-    Inherited { slot: u64 },
-}
-
-/// A GATE's build takes a compile lease WITHOUT WAITING (sp-f4ig1-fix, DESIGN-admission.md
-/// D11): written at once whatever the pool holds — oversubscribing it when full — so the
-/// gate never waits, while agent leases (which must fit, [`try_take`]) queue behind it until
-/// it is released. Already ours and inherited-from-an-ancestor behave as in [`try_take`].
-pub fn take_now(run: &Path, pool: Pool, size: u64, me: &Holder, now: u64, procs: &dyn Procs) -> std::io::Result<(Now, Vec<Ended>)> {
-    let dir = pool.dir(run);
-    let _m = Mutex::lock(&dir)?;
-    let (live, ended, _) = reap(&dir, pool, size, procs, now, stall_secs());
-    let held_before: u64 = live.iter().filter(|l| !l.is(me)).map(|l| l.weight.max(1)).sum();
-    if let Some(l) = live.iter().find(|l| l.is(me)) {
-        return Ok((Now::Took { slot: l.slot, held_before, fresh: false }, ended));
-    }
-    let anc = ancestors(me.pid, procs);
-    if let Some(l) = live.iter().find(|l| anc.contains(&l.pid)) {
-        return Ok((Now::Inherited { slot: l.slot }, ended));
-    }
-    let n = (1..).find(|n| !live.iter().any(|l| l.slot == *n)).unwrap_or(1);
-    let l = Lease { slot: n, pid: me.pid, start: me.start, who: me.who.clone(), since: now, waited: 0, last: now, weight: me.weight.max(1) };
-    write_atomic(&dir.join(format!("slot.{n}")), &l.render())?;
-    Ok((Now::Took { slot: n, held_before, fresh: true }, ended))
-}
-
-/// The log line of a fresh [`take_now`].
-pub fn take_now_line(pool: Pool, size: u64, slot: u64, weight: u64, held_before: u64) -> String {
-    let over = if held_before + weight > size { format!(" — oversubscribed: {} of {size} held", held_before + weight) } else { String::new() };
-    format!("gate build took {} slot {slot} (weight {weight}) without waiting{over}; new agent builds queue behind it", pool.name())
-}
-
-/// [`take_now`] for process `holder_pid`, as a [`Guard`] that releases on drop. Never fails
-/// the job: an unusable pool directory is said and the build runs unleased.
-/// `q.inherit` is not consulted: the caller already knows this is a gate's build.
-pub fn take_now_guard(q: &Request, size: u64, procs: &dyn Procs, say: &mut dyn FnMut(&str)) -> Guard {
-    let (run, pool) = (q.run, q.pool);
-    let Some(me) = holder_for(q.holder_pid, q.who, q.weight, procs) else {
-        return Guard::inherited(pool, "none");
-    };
-    match take_now(run, pool, size, &me, now_epoch(), procs) {
-        Ok((Now::Took { slot, held_before, fresh }, ended)) => {
-            record(run, &ended);
-            if fresh {
-                say(&take_now_line(pool, size, slot, me.weight, held_before));
-            }
-            Guard { run: run.to_path_buf(), pool, size, slot, me: Some(me), waited: 0, token: format!("{}:{slot}", pool.name()) }
-        }
-        Ok((Now::Inherited { slot }, ended)) => {
-            record(run, &ended);
-            Guard::inherited(pool, &format!("{}:{slot}", pool.name()))
-        }
-        Err(e) => {
-            say(&format!("admission: {} pool at {} unusable ({e}) — the gate build runs unleased", pool.name(), pool.dir(run).display()));
-            Guard::inherited(pool, "none")
-        }
-    }
 }
 
 /// Release `slot` if it still names `me`; the ended lease for telemetry.
@@ -825,12 +642,12 @@ impl Drop for Guard {
 pub struct Request<'a> {
     pub run: &'a Path,
     pub pool: Pool,
-    /// The process the slot is for (the cargo, for the RUSTC_WRAPPER; else ourselves).
+    /// The process the slot is for.
     pub holder_pid: u32,
     pub who: &'a str,
     /// The caller's [`INHERIT_ENV`] value.
     pub inherit: Option<&'a str>,
-    /// Units of the pool the job takes: 1, or [`WEIGHT_RELEASE`] for a release build.
+    /// Units of the pool the job takes.
     pub weight: u64,
 }
 
@@ -840,18 +657,6 @@ pub struct Seams<'a> {
     pub size_of: &'a dyn Fn() -> u64,
     pub procs: &'a dyn Procs,
     pub sleep: &'a dyn Fn(Duration),
-}
-
-fn real_sleep(d: Duration) {
-    std::thread::sleep(d)
-}
-
-/// [`acquire`] against the real process table, sized on every pass from the config document
-/// ([`size_configured`]), so a size raised while this job waits admits it.
-pub fn acquire_real(q: &Request, say: &mut dyn FnMut(&str)) -> Guard {
-    let pool = q.pool;
-    let size_of = move || size_configured(pool);
-    acquire(q, &Seams { size_of: &size_of, procs: &RealProcs, sleep: &real_sleep }, say)
 }
 
 /// BLOCK until `holder_pid` holds a slot of `pool` (or inherits one), saying so on `say`.
@@ -886,9 +691,6 @@ pub fn acquire_unless(q: &Request, s: &Seams, say: &mut dyn FnMut(&str), stopped
         match try_take(run, pool, size, &me, waited, now, procs) {
             Ok((take, ended)) => {
                 record(run, &ended);
-                for e in ended.iter().filter(|e| e.end == "stalled") {
-                    say(&format!("admission: reclaimed {} slot {} from {} — no compiler in its subtree advanced for {}s", pool.name(), e.lease.slot, e.lease.who, e.held));
-                }
                 match take {
                     Take::Admitted { slot, .. } => {
                         if said_at.is_some() {
@@ -1018,7 +820,7 @@ impl Occupancy {
 pub fn read_occupancy(run: &Path, pool: Pool, size: u64, procs: &dyn Procs) -> Option<Occupancy> {
     let dir = pool.dir(run);
     let _m = Mutex::lock(&dir).ok()?;
-    let (holders, ended, waiters) = reap(&dir, pool, size, procs, now_epoch(), stall_secs());
+    let (holders, ended, waiters) = reap(&dir, pool, size, procs);
     record(run, &ended);
     Some(Occupancy { pool, size, holders, waiting: waiters.len(), waiters })
 }
@@ -1091,40 +893,19 @@ pub fn jitter(max: u64, seed: u64) -> u64 {
     z % (max + 1)
 }
 
-/// What the RUSTC_WRAPPER does with one rustc invocation (DESIGN-admission.md §3.3, D11).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum WrapperAction {
-    /// Exec the compiler at once: a probe, or a job already admitted to a non-gate slot.
-    Exec,
-    /// Queue for a compile slot first (an agent's build).
-    Wait,
-    /// A gate's build: take a compile lease for the cargo without waiting, then exec.
-    TakeNow,
-}
-
-/// The wrapper's one decision. `inherit` is [`INHERIT_ENV`]: `gate` (or `gate:<n>`) marks a
-/// gate's build, any other non-empty value a job admitted elsewhere.
-pub fn wrapper_action(inherit: Option<&str>, rustc_args: &[String]) -> WrapperAction {
-    if !is_compile(rustc_args) {
-        return WrapperAction::Exec;
-    }
-    match inherit.map(str::trim).filter(|t| !t.is_empty()) {
-        None => WrapperAction::Wait,
-        Some(t) if is_gate_token(t) => WrapperAction::TakeNow,
-        Some(_) => WrapperAction::Exec,
-    }
-}
-
 /// Is this [`INHERIT_ENV`] value a gate's?
 pub fn is_gate_token(t: &str) -> bool {
     let t = t.trim();
     t == "gate" || t.starts_with("gate:")
 }
 
-/// Does this rustc argument list compile a crate? The probes (`-vV`, `--print …`) that
-/// `cargo metadata` makes too are not builds and never queue (DESIGN-admission.md D6).
-pub fn is_compile(args: &[String]) -> bool {
-    args.first().map(String::as_str) != Some("-") && args.iter().any(|a| a == "--crate-name")
+/// What the retired RUSTC_WRAPPER execs for `args` (`<rustc> <rustc args…>`): `inner` with every
+/// argument when set, else `args[0]` with the rest.
+pub fn passthrough(inner: Option<&str>, args: &[std::ffi::OsString]) -> (std::ffi::OsString, Vec<std::ffi::OsString>) {
+    match inner.map(str::trim).filter(|i| !i.is_empty()) {
+        Some(i) => (i.into(), args.to_vec()),
+        None => (args[0].clone(), args[1..].to_vec()),
+    }
 }
 
 #[cfg(test)]

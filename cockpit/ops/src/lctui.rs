@@ -1624,7 +1624,7 @@ mod tests {
         use crate::lcview::{view, GateRun, Row, Snapshot};
         let row = Row { id: "sp-g".into(), state: "CERTIFIED".into(), repo: "spira".into(), since: 99_000, updated_at: 99_000, ..Default::default() };
         let mut s = Snapshot { now: 100_000, rows: vec![row], ..Default::default() };
-        s.gate_runs.insert("sp-g".into(), GateRun { phases: "fences:9,build:654,test:72".into(), compiled: 138, fresh: 178, admit_wait_secs: 2985 });
+        s.gate_runs.insert("sp-g".into(), GateRun { phases: "fences:9,build:654,test:72".into(), compiled: 138, fresh: 178 });
         let mut ui = Ui::default();
         ui.set("state/CERTIFIED", Mode::Open);
         ui.set("state/CERTIFIED/sp-g", Mode::Open);
@@ -1632,7 +1632,6 @@ mod tests {
         let text = f.lines.iter().map(|l| strip(l)).collect::<Vec<_>>().join("\n");
         assert!(text.contains("build 654s"), "{text}");
         assert!(text.contains("compiled 138 · fresh 178"), "{text}");
-        assert!(text.contains("admit wait 2985s"), "{text}");
     }
 
     #[test]

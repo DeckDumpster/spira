@@ -89,7 +89,6 @@ pub struct GateRun {
     pub phases: String,
     pub compiled: u64,
     pub fresh: u64,
-    pub admit_wait_secs: u64,
     pub slowest: String,
 }
 
@@ -120,7 +119,6 @@ pub fn render(ts: &str, host: &str, r: &GateRun) -> Result<String, String> {
         ("phases".into(), s(&r.phases)),
         ("compiled".into(), Value::from(r.compiled)),
         ("fresh".into(), Value::from(r.fresh)),
-        ("admit_wait_secs".into(), Value::from(r.admit_wait_secs)),
         ("slowest".into(), s(&r.slowest)),
     ];
     tsd::build_row(ts, host, FAMILY, &fields)

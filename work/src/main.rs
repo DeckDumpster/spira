@@ -647,15 +647,9 @@ fn run_checks(args: &[String], base_red: bool, via: &str) -> (i32, Vec<String>) 
                 found.unwrap_or_else(|| std::path::PathBuf::from(prog))
             }
         };
-        // A cargo row waits for its compile slot BEFORE its budget starts: the budget bounds the
-        // check, never the queue (sp-8oc3xj).
         let mut bounded = vec!["timeout".to_string(), secs, exe.to_string_lossy().into_owned()];
         bounded.extend(rest.iter().cloned());
-        if prog == "cargo" {
-            let who = std::env::var("SPIRA_WORK_BEAD_ID").unwrap_or_else(|_| "work-checks".into());
-            bounded = work::admitted(bounded, std::env::var("RUSTC_WRAPPER").ok().as_deref(), &who);
-        }
-        // batch-job: bounded by the row's budget through `timeout`; the admission wait ahead of it is reported below
+        // batch-job: bounded by the row's budget through `timeout`
         let ran_from = std::time::Instant::now();
         let out = Command::new(&bounded[0]).args(&bounded[1..]).env("PATH", work::trusted::join_path(&dirs)).current_dir(root).output();
         match out {
@@ -663,11 +657,7 @@ fn run_checks(args: &[String], base_red: bool, via: &str) -> (i32, Vec<String>) 
                 print!("{}", String::from_utf8_lossy(&o.stdout));
                 let err = String::from_utf8_lossy(&o.stderr);
                 eprint!("{err}");
-                let waited = work::admission_wait_secs(&err);
-                if let Some(w) = waited {
-                    println!("{}: waited {w}s for a compile slot before its {} ms budget started", row.name, row.budget_ms);
-                }
-                log.row(row, o.status.code(), ran_from.elapsed().as_secs().saturating_sub(waited.unwrap_or(0)), &record_file);
+                log.row(row, o.status.code(), ran_from.elapsed().as_secs(), &record_file);
                 let stdout = String::from_utf8_lossy(&o.stdout);
                 match work::row_outcome(o.status.code().unwrap_or(-1), row.deferred_to.as_deref()) {
                     work::Outcome::Ok => println!("-- {}: ok", row.name),

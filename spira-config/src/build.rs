@@ -12,8 +12,7 @@
 //! THE SHARED STORE (sp-xtdqi, reversing sccache-dav/DESIGN.md §5's earlier call): a box
 //! that runs `sccache-dav` (sp-xjnzl) names it with `SPIRA_SCCACHE_DAV_ADDR` — resolved
 //! in-process, `[spira]`-table-aware, via [`Store::from_values`]/[`Store::from_env`], never a
-//! bare environment read (law-a-binary-resolves-the-config-it-reads) — and [`Wrapper::env`]/
-//! [`Wrapper::admitted_env`] carry it (`SCCACHE_WEBDAV_ENDPOINT`/`SCCACHE_WEBDAV_KEY_PREFIX`)
+//! bare environment read (law-a-binary-resolves-the-config-it-reads) — and [`Wrapper::env`] carries it (`SCCACHE_WEBDAV_ENDPOINT`/`SCCACHE_WEBDAV_KEY_PREFIX`)
 //! into every build this module wires up, not only the one whose own `~/.cargo/config.toml`
 //! happened to set it. The earlier design (DESIGN.md §5) kept this an "ambient environment
 //! change" on purpose; it did not survive a gate restarting the box's one sccache client
@@ -116,7 +115,7 @@ pub enum BackendCheck {
     Matches,
     /// A server answered on a DIFFERENT backend (almost always the local-disk default from a
     /// build that started it before `SCCACHE_WEBDAV_ENDPOINT` was ever set) and was stopped —
-    /// the next cargo invocation this process's own [`Wrapper::env`]/[`Wrapper::admitted_env`]
+    /// the next cargo invocation this process's own [`Wrapper::env`]
     /// already point at the store starts a fresh one on the right backend. Carries the stale
     /// `Cache location` line that was seen, for the caller's own log line.
     Restarted(String),
@@ -152,10 +151,10 @@ fn is_webdav_location(line: &str) -> bool {
 /// RESTARTS, NEVER REFUSES, on a mismatch. A refusal would turn a one-line, idempotent
 /// self-heal into a hard stop for every build on the box until an operator happens to notice
 /// and runs the same stop by hand — worse for throughput and no safer, since every caller of
-/// [`Wrapper::env`]/[`Wrapper::admitted_env`] already sets `SCCACHE_IGNORE_SERVER_IO_ERROR=1`
+/// [`Wrapper::env`] already sets `SCCACHE_IGNORE_SERVER_IO_ERROR=1`
 /// for exactly a server vanishing mid-build (see `env`'s own comment): a build concurrent with
 /// the stop falls back to an uncached `rustc` rather than failing. Call once per build setup
-/// (inside `env`/`admitted_env` themselves, not once per `cargo` invocation) — `--show-stats`
+/// (inside `env` itself, not once per `cargo` invocation) — `--show-stats`
 /// always talks to, or spawns, the daemon, so this is not free.
 fn ensure_store_backend(sccache_bin: &Path, store: &Store) -> BackendCheck {
     let extra = store.env_pairs();
@@ -191,7 +190,7 @@ fn start_server_unit(sccache_bin: &Path, store: &Store) {
 }
 
 /// [`ensure_store_backend`] plus the two `SCCACHE_WEBDAV_*` vars, in one call — the one place
-/// [`Wrapper::env`]/[`Wrapper::admitted_env`] reach for either, so neither can add the vars
+/// [`Wrapper::env`] reaches for either, so it cannot add the vars
 /// without also running the check (or vice versa).
 fn sync_and_append(sccache_bin: &Path, store: &Store, v: &mut Vec<(String, String)>) {
     if let BackendCheck::Restarted(line) = ensure_store_backend(sccache_bin, store) {
@@ -233,33 +232,6 @@ impl Wrapper {
             }
             Wrapper::Off => vec![("RUSTC_WRAPPER".into(), String::new())],
         }
-    }
-
-    /// The environment an AGENT's cargo gets (sp-f4ig1, gate/DESIGN-admission.md §3.3): the
-    /// same compiler, fronted by `spira-admit` (`admit`, an absolute path) so every build the
-    /// agent starts takes a compile slot for its cargo. The compiler this wrapper would have
-    /// been is `SPIRA_ADMIT_INNER` (empty when off: rustc itself); `run` is the pools' home
-    /// and `who` the lease's label. Still no `CARGO_*` variable (DESIGN §2.2). The gate and
-    /// testenv never use this: they take their slots in-process and keep [`Wrapper::env`].
-    /// `store`: see [`Wrapper::env`]'s own doc — same meaning, same synchronisation.
-    pub fn admitted_env(&self, admit: &Path, run: &str, who: &str, store: Option<&Store>) -> Vec<(String, String)> {
-        let inner = match self {
-            Wrapper::Sccache(p) => p.display().to_string(),
-            Wrapper::Off => String::new(),
-        };
-        let mut env = vec![
-            ("RUSTC_WRAPPER".into(), admit.display().to_string()),
-            (crate::admission::INNER_ENV.into(), inner),
-            (crate::admission::WHO_ENV.into(), who.to_string()),
-            ("SPIRA_RUN".into(), run.to_string()),
-        ];
-        if let Wrapper::Sccache(p) = self {
-            env.push(("SCCACHE_IGNORE_SERVER_IO_ERROR".into(), "1".into()));
-            if let Some(s) = store {
-                sync_and_append(p, s, &mut env);
-            }
-        }
-        env
     }
 
     /// One line for a log: which cache this build compiles through.

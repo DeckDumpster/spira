@@ -374,7 +374,6 @@ pub struct GateRun {
     pub phases: String,
     pub compiled: u64,
     pub fresh: u64,
-    pub admit_wait_secs: u64,
 }
 
 /// The gate run's phase times for a bead's expanded detail.
@@ -382,7 +381,6 @@ pub fn gate_why(g: &GateRun) -> String {
     let phases: Vec<String> = g.phases.split(',').filter_map(|p| p.split_once(':')).map(|(n, t)| format!("{n} {t}s")).collect();
     let mut parts = phases;
     parts.push(format!("compiled {} · fresh {}", g.compiled, g.fresh));
-    parts.push(format!("admit wait {}s", g.admit_wait_secs));
     format!("gate: {}", parts.join(" · "))
 }
 
@@ -396,7 +394,7 @@ pub fn latest_gate_runs(rows: &[serde_json::Value]) -> BTreeMap<String, GateRun>
         .into_iter()
         .filter_map(|r| {
             let bead = r["bead"].as_str().filter(|b| !b.is_empty())?;
-            Some((bead.to_string(), GateRun { phases: r["phases"].as_str().unwrap_or("").to_string(), compiled: n(r, "compiled"), fresh: n(r, "fresh"), admit_wait_secs: n(r, "admit_wait_secs") }))
+            Some((bead.to_string(), GateRun { phases: r["phases"].as_str().unwrap_or("").to_string(), compiled: n(r, "compiled"), fresh: n(r, "fresh") }))
         })
         .collect()
 }
@@ -2332,7 +2330,7 @@ mod tests {
 
     #[test]
     fn the_latest_gate_run_per_bead_wins_whatever_the_file_order() {
-        let row = |ts: &str, bead: &str, phases: &str, compiled: u64| serde_json::json!({"ts": ts, "bead": bead, "phases": phases, "compiled": compiled, "fresh": 1, "admit_wait_secs": 2});
+        let row = |ts: &str, bead: &str, phases: &str, compiled: u64| serde_json::json!({"ts": ts, "bead": bead, "phases": phases, "compiled": compiled, "fresh": 1});
         let rows = vec![
             row("2026-11-14T10:00:00Z", "sp-a", "build:9", 7),
             row("2026-11-14T09:00:00Z", "sp-a", "build:99", 3),

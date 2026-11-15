@@ -1,5 +1,4 @@
-//! Where a unit gate's build phase went: cargo's `--timings` report read back, and the
-//! seconds its rustc wrappers spent waiting in spira-admit.
+//! Where a unit gate's build phase went: cargo's `--timings` report read back.
 
 use serde_json::Value;
 
@@ -20,7 +19,6 @@ pub struct Unit {
 pub struct Build {
     pub compiled: u64,
     pub fresh: u64,
-    pub admit_wait_secs: u64,
     pub slowest: Vec<Unit>,
 }
 
@@ -38,21 +36,12 @@ impl Build {
     /// The gate.log fields after the phases.
     pub fn suffix(&self) -> String {
         format!(
-            " compiled={} fresh={} admit_wait={} slowest={}",
+            " compiled={} fresh={} slowest={}",
             self.compiled,
             self.fresh,
-            self.admit_wait_secs,
             self.slowest_field()
         )
     }
-}
-
-/// Seconds spent waiting in spira-admit, summed over every `admitted to compile slot N after Ns`.
-pub fn admit_wait_secs(output: &str) -> u64 {
-    output
-        .lines()
-        .filter_map(|l| l.split_once("admitted to compile slot ")?.1.split_once(" after ")?.1.trim().strip_suffix('s')?.parse::<u64>().ok())
-        .sum()
 }
 
 fn kind(target: &str) -> String {
@@ -71,14 +60,8 @@ fn summary(html: &str, label: &str) -> Option<u64> {
     html.split_once(&format!("<td>{label}:</td><td>"))?.1.split('<').next()?.trim().parse().ok()
 }
 
-/// A build that left no report (it died or hit the cap) still has its admit wait.
-pub fn wait_only(build_output: &str) -> Build {
-    Build { admit_wait_secs: admit_wait_secs(build_output), ..Build::default() }
-}
-
-/// The report's units and counts, with the admit wait of the build output alongside. None when
-/// the report is not a cargo timing report.
-pub fn parse(html: &str, build_output: &str) -> Option<Build> {
+/// The report's units and counts. None when the report is not a cargo timing report.
+pub fn parse(html: &str) -> Option<Build> {
     let data = html.split_once("const UNIT_DATA = ")?.1;
     let units = serde_json::Deserializer::from_str(data).into_iter::<Value>().next()?.ok()?;
     let mut all: Vec<Unit> = units
@@ -96,7 +79,6 @@ pub fn parse(html: &str, build_output: &str) -> Option<Build> {
     Some(Build {
         compiled: summary(html, "Dirty units").unwrap_or(0),
         fresh: summary(html, "Fresh units").unwrap_or(0),
-        admit_wait_secs: admit_wait_secs(build_output),
         slowest: all,
     })
 }
@@ -123,7 +105,7 @@ const x = 1;
 
     #[test]
     fn the_five_slowest_units_come_from_the_report_slowest_first() {
-        let b = parse(REPORT_HTML, "").unwrap();
+        let b = parse(REPORT_HTML).unwrap();
         assert_eq!(
             b.slowest_field(),
             "runtime/lib:88.4@4.2,gate/bin-test:31.0@90.0,b/custom-build:9.0@0.2,e/lib:3.0@0.5,d/lib:2.0@0.4"
@@ -132,31 +114,18 @@ const x = 1;
 
     #[test]
     fn compiled_and_fresh_counts_are_the_reports_dirty_and_fresh_units() {
-        let b = parse(REPORT_HTML, "").unwrap();
+        let b = parse(REPORT_HTML).unwrap();
         assert_eq!((b.compiled, b.fresh), (7, 3));
     }
 
     #[test]
-    fn admit_wait_is_the_sum_of_every_rustc_wait_in_the_build_output() {
-        let out = "spira-admit: admitted to compile slot 1 after 86s\nnoise\nspira-admit: admitted to compile slot 2 after 12s\n";
-        assert_eq!(admit_wait_secs(out), 98);
-        assert_eq!(admit_wait_secs("Compiling x"), 0);
-    }
-
-    #[test]
     fn a_file_that_is_not_a_timing_report_yields_nothing() {
-        assert_eq!(parse("<html>hi</html>", ""), None);
-    }
-
-    #[test]
-    fn a_build_with_no_report_still_reports_its_admit_wait() {
-        let out = "spira-admit: admitted to compile slot 1 after 40s\nspira-admit: admitted to compile slot 2 after 2s";
-        assert_eq!(wait_only(out).suffix(), " compiled=0 fresh=0 admit_wait=42 slowest=-");
+        assert_eq!(parse("<html>hi</html>"), None);
     }
 
     #[test]
     fn the_gate_log_suffix_has_every_field() {
-        let b = parse(REPORT_HTML, "admitted to compile slot 1 after 5s").unwrap();
-        assert!(b.suffix().starts_with(" compiled=7 fresh=3 admit_wait=5 slowest=runtime/lib:88.4@4.2,"));
+        let b = parse(REPORT_HTML).unwrap();
+        assert!(b.suffix().starts_with(" compiled=7 fresh=3 slowest=runtime/lib:88.4@4.2,"));
     }
 }

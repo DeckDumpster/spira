@@ -897,7 +897,7 @@ fn note(r: Result<(), String>) {
 
 /// The label an admission lease of this run carries: the dwarf's bead, else the branch.
 fn lease_label(args: &RunArgs, deps: &Deps) -> String {
-    [admission::WHO_ENV, "SPIRA_WORK_BEAD_ID", "BEAD_ID"]
+    ["SPIRA_WORK_BEAD_ID", "BEAD_ID"]
         .iter()
         .find_map(|k| (deps.env)(k).filter(|v| !v.trim().is_empty()))
         .unwrap_or_else(|| args.branch.clone())
@@ -1000,12 +1000,9 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
             deadline_at.set(deadline_at.get().map(|c| c + by));
         }
     };
-    // HOST-WIDE ADMISSION (sp-f4ig1): the build takes a compile slot, the container through
-    // teardown a test slot — one at a time, never both. Under a gate (SPIRA_ADMISSION=gate) the
-    // gate's slot covers the test phase, and the build takes its compile lease WITHOUT WAITING
-    // (DESIGN-admission.md D11): the gate never queues, agent builds queue behind it. Waiting
-    // never fails; it is said on stderr.
-    let admit = |pool: admission::Pool, weight: u64| -> Option<admission::Guard> {
+    // HOST-WIDE ADMISSION (sp-f4ig1): the container, through teardown, takes a test slot.
+    // Waiting never fails; it is said on stderr.
+    let admit = |pool: admission::Pool| -> Option<admission::Guard> {
         // The wait for a slot is queueing, not this run's work: the cap stands still (sp-u56az1).
         let _held = cap::hold();
         let inherit = (deps.env)(admission::INHERIT_ENV);
@@ -1015,18 +1012,13 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         let size_of = || {
             admission::size_in(pool, admission::doc_size_now(pool), (deps.env)(pool.size_env()).as_deref(), admission::Host::read())
         };
-        if pool == admission::Pool::Compile && inherit.as_deref().is_some_and(admission::is_gate_token) {
-            let gate_who = format!("gate:{who}");
-            let q = admission::Request { run: &s.run, pool, holder_pid: std::process::id(), who: &gate_who, inherit: None, weight };
-            return Some(admission::take_now_guard(&q, size_of(), &admission::RealProcs, &mut |l: &str| deps.log(l)));
-        }
         let q = admission::Request {
             run: &s.run,
             pool,
             holder_pid: std::process::id(),
             who: &who,
             inherit: inherit.as_deref(),
-            weight,
+            weight: 1,
         };
         let seams = admission::Seams {
             size_of: &size_of,
@@ -1210,7 +1202,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
     let has_suite_dir = git(&repo.path, &["cat-file", "-e", &format!("{br}:spira")]).is_ok();
     match decl_text {
         Some(text) => {
-            let Some(lease) = admit(admission::Pool::Test, 1) else { return Finish::fault(2, "interrupted", 0) };
+            let Some(lease) = admit(admission::Pool::Test) else { return Finish::fault(2, "interrupted", 0) };
             crate::telemetry::note_queue_wait("test", lease.waited);
             if lease.waited > 0 {
                 deps.log(&format!("queue-wait={}s pool=test", lease.waited));
@@ -1667,7 +1659,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
     let _unit_lease = if crate::unit::selected(&active)
         && !(deps.env)(admission::INHERIT_ENV).as_deref().is_some_and(admission::is_gate_token)
     {
-        let Some(l) = admit(admission::Pool::Unit, 1) else { return Finish::fault(2, "interrupted", 0) };
+        let Some(l) = admit(admission::Pool::Unit) else { return Finish::fault(2, "interrupted", 0) };
         shift(l.waited);
         crate::telemetry::note_queue_wait("unit", l.waited);
         if l.waited > 0 {
@@ -1722,17 +1714,9 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
     } else if unit_tests_only {
         deps.log("--tests: no workspace build and no install — the unit tier builds the crates that hold the named tests, and their test-bins, in the container");
     } else {
-        let Some(lease) = admit(admission::Pool::Compile, admission::profile_weight(&args.profile)) else { return Finish::fault(2, "interrupted", 0) };
-        shift(lease.waited);
-        crate::telemetry::note_queue_wait("compile", lease.waited);
-        if lease.waited > 0 {
-            deps.log(&format!("queue-wait={}s pool=compile", lease.waited));
-            ph.mark("admit-compile");
-        }
         let build_started = Instant::now();
         let built = build(args, deps, &wt.path, br, &artifacts, setup_cutoff.get());
         build_wall_secs = build_started.elapsed().as_secs();
-        drop(lease);
         if let Some(fin) = built {
             if fin.reason == Some(deadline_reason("build")) {
                 share_note("build", &ph);
@@ -1749,7 +1733,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         return fin;
     }
     ph.mark("build");
-    let Some(_test_lease) = admit(admission::Pool::Test, 1) else { return Finish::fault(2, "interrupted", 0) };
+    let Some(_test_lease) = admit(admission::Pool::Test) else { return Finish::fault(2, "interrupted", 0) };
     shift(_test_lease.waited);
     crate::telemetry::note_queue_wait("test", _test_lease.waited);
     if _test_lease.waited > 0 {

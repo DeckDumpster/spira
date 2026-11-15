@@ -41,26 +41,24 @@ fn run_dir() -> testkit::TempDir {
 }
 
 /// sp-p58bfi: a waiter sized from its environment kept the size its session started with, so
-/// `compile_par` raised 3 to 8 in the document admitted nobody already waiting.
+/// `test_par` raised 3 to 8 in the document admitted nobody already waiting.
 #[test]
 fn the_documents_size_wins_over_the_environment_a_waiter_inherited() {
     let b = Host { cores: 32, mem_avail_mib: 36_000 };
-    assert_eq!(size_in(Pool::Compile, Some(8), Some("3"), b), 8, "the document's size, not the session's");
-    assert_eq!(size_in(Pool::Compile, None, Some("5"), b), 5, "no document: the environment");
-    assert_eq!(size_in(Pool::Compile, None, None, b), 3, "neither: derived from the box");
-    assert_eq!(size_in(Pool::Compile, Some(0), Some("5"), b), 5, "a zero in the document is not a size");
+    assert_eq!(size_in(Pool::Test, Some(8), Some("3"), b), 8, "the document's size, not the session's");
+    assert_eq!(size_in(Pool::Test, None, Some("5"), b), 5, "no document: the environment");
+    assert_eq!(size_in(Pool::Test, None, None, b), 4, "neither: derived from the box");
+    assert_eq!(size_in(Pool::Test, Some(0), Some("5"), b), 5, "a zero in the document is not a size");
 }
 
 #[test]
 fn derived_sizes_follow_the_measured_costs() {
     // This box on 2026-09-30: 32 cores, ~36 GiB available.
     let b = Host { cores: 32, mem_avail_mib: 36_000 };
-    assert_eq!(derive(Pool::Compile, b), 3);
     assert_eq!(derive(Pool::Test, b), 4);
     assert_eq!(derive(Pool::Gate, b), 8);
     // Memory binds before cores on a starved box; never below 1.
     let starved = Host { cores: 32, mem_avail_mib: 9_000 };
-    assert_eq!(derive(Pool::Compile, starved), 2);
     assert_eq!(derive(Pool::Test, starved), 1);
     let tiny = Host { cores: 2, mem_avail_mib: 500 };
     for p in Pool::ALL {
@@ -71,10 +69,10 @@ fn derived_sizes_follow_the_measured_costs() {
 #[test]
 fn a_positive_key_wins_anything_else_derives() {
     let b = Host { cores: 32, mem_avail_mib: 36_000 };
-    assert_eq!(size(Pool::Compile, Some("5"), b), 5);
-    assert_eq!(size(Pool::Compile, Some(" 2 "), b), 2);
+    assert_eq!(size(Pool::Test, Some("5"), b), 5);
+    assert_eq!(size(Pool::Test, Some(" 2 "), b), 2);
     for v in [None, Some(""), Some("0"), Some("x"), Some("-1"), Some("2.5")] {
-        assert_eq!(size(Pool::Compile, v, b), 3, "{v:?}");
+        assert_eq!(size(Pool::Test, v, b), 4, "{v:?}");
     }
 }
 
@@ -82,7 +80,6 @@ fn a_positive_key_wins_anything_else_derives() {
 fn pools_have_their_own_directories_and_keys() {
     let r = Path::new("/run/spira");
     assert_eq!(Pool::Gate.dir(r), Path::new("/run/spira/gate-admission"), "the gate's pool stays where landing-pass probes it");
-    assert_eq!(Pool::Compile.dir(r), Path::new("/run/spira/compile-admission"));
     assert_eq!(Pool::Test.dir(r), Path::new("/run/spira/test-admission"));
     assert_eq!(Pool::Cold.dir(r), Path::new("/run/spira/cold-admission"));
     assert_eq!(Pool::Gate.size_env(), "SPIRA_CERTIFY_PAR");
@@ -126,24 +123,24 @@ fn the_same_holder_keeps_its_slot_and_refreshes_last() {
     // One cargo's many rustc invocations share one lease.
     let d = run_dir();
     let p = FakeProcs::with(&[(10, 1, 1)]);
-    try_take(&d, Pool::Compile, 1, &h(10, 1, "sp-a"), 0, 100, &p).unwrap();
-    let (t, _) = try_take(&d, Pool::Compile, 1, &h(10, 1, "sp-a"), 0, 160, &p).unwrap();
+    try_take(&d, Pool::Test, 1, &h(10, 1, "sp-a"), 0, 100, &p).unwrap();
+    let (t, _) = try_take(&d, Pool::Test, 1, &h(10, 1, "sp-a"), 0, 160, &p).unwrap();
     assert_eq!(t, Take::Admitted { slot: 1, fresh: false });
-    let l = Lease::parse(1, &fs::read_to_string(d.join("compile-admission/slot.1")).unwrap()).unwrap();
+    let l = Lease::parse(1, &fs::read_to_string(d.join("test-admission/slot.1")).unwrap()).unwrap();
     assert_eq!((l.since, l.last), (100, 160));
 }
 
 #[test]
 fn a_descendant_of_a_holder_inherits_its_slot() {
-    // testenv (pid 10) holds a compile lease; the cargo under it (pid 12, grandchild) runs on it.
+    // testenv (pid 10) holds a test lease; the cargo under it (pid 12, grandchild) runs on it.
     let d = run_dir();
     let p = FakeProcs::with(&[(10, 1, 1), (11, 2, 10), (12, 3, 11)]);
-    try_take(&d, Pool::Compile, 1, &h(10, 1, "sp-a"), 0, 100, &p).unwrap();
-    let (t, _) = try_take(&d, Pool::Compile, 1, &h(12, 3, "sp-a"), 0, 101, &p).unwrap();
+    try_take(&d, Pool::Test, 1, &h(10, 1, "sp-a"), 0, 100, &p).unwrap();
+    let (t, _) = try_take(&d, Pool::Test, 1, &h(12, 3, "sp-a"), 0, 101, &p).unwrap();
     assert_eq!(t, Take::Inherited { slot: 1, pid: 10 });
     // POSITIVE CONTROL: an unrelated process with the pool full waits.
     p.0.borrow_mut().insert(40, (4, 1));
-    let (t, _) = try_take(&d, Pool::Compile, 1, &h(40, 4, "sp-b"), 0, 101, &p).unwrap();
+    let (t, _) = try_take(&d, Pool::Test, 1, &h(40, 4, "sp-b"), 0, 101, &p).unwrap();
     assert!(matches!(t, Take::Busy { .. }), "{t:?}");
 }
 
@@ -226,10 +223,10 @@ fn an_unreadable_holder_runs_unadmitted_rather_than_failing() {
     let d = run_dir();
     let p = FakeProcs::default();
     let mut said = Vec::new();
-    let q = Request { run: &d, pool: Pool::Compile, holder_pid: 77, who: "x", inherit: None, weight: 1 };
+    let q = Request { run: &d, pool: Pool::Test, holder_pid: 77, who: "x", inherit: None, weight: 1 };
     let g = acquire(&q, &Seams { size_of: &|| 1, procs: &p, sleep: &|_| {} }, &mut |l: &str| said.push(l.to_string()));
     assert!(!g.held());
-    assert!(said[0].contains("running without a compile slot"), "{said:?}");
+    assert!(said[0].contains("running without a test slot"), "{said:?}");
 }
 
 #[test]
@@ -241,54 +238,43 @@ fn real_procs_reads_this_process() {
     assert_eq!(RealProcs.start_of(u32::MAX - 1), None);
 }
 
-#[test]
-fn only_a_crate_compile_is_a_build() {
-    let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-    assert!(is_compile(&v(&["--crate-name", "gate", "--edition=2021", "gate/src/main.rs"])));
-    assert!(!is_compile(&v(&["-vV"])));
-    let cargo_probe = ["-", "--crate-name", "___", "--print=file-names", "--crate-type", "bin", "--print=sysroot", "--print=cfg", "-Wwarnings"];
-    assert!(!is_compile(&v(&cargo_probe)), "cargo's first probe needs no config and no slot");
-    assert_eq!(wrapper_action(None, &v(&cargo_probe)), WrapperAction::Exec);
-    assert!(is_compile(&v(&["--crate-name", "x", "src/main.rs", "--print=native-static-libs"])), "a compile that prints is still a compile");
-}
-
-/// sp-c9mabt: a testenv run started under `compile_par` 3 waited for an empty pool with its
+/// sp-c9mabt: a testenv run started under `test_par` 3 waited for an empty pool with its
 /// weight-4 build while the document said 64 and four builds held slots.
 #[test]
 fn a_heavy_build_is_admitted_beside_holders_once_the_document_raises_the_pool() {
     let d = run_dir();
     let p = FakeProcs::with(&[(10, 1, 1), (20, 2, 1)]);
     let b = Host { cores: 32, mem_avail_mib: 36_000 };
-    try_take(&d, Pool::Compile, 3, &h(10, 1, "sp-held"), 0, now_epoch(), &p).unwrap();
-    let q = Request { run: &d, pool: Pool::Compile, holder_pid: 20, who: "sp-heavy", inherit: None, weight: 4 };
+    try_take(&d, Pool::Test, 3, &h(10, 1, "sp-held"), 0, now_epoch(), &p).unwrap();
+    let q = Request { run: &d, pool: Pool::Test, holder_pid: 20, who: "sp-heavy", inherit: None, weight: 4 };
     // Sized as the session's environment says (3), it does not fit beside the holder.
-    let stale = || size_in(Pool::Compile, None, Some("3"), b);
+    let stale = || size_in(Pool::Test, None, Some("3"), b);
     assert!(acquire_unless(&q, &Seams { size_of: &stale, procs: &p, sleep: &|_| {} }, &mut |_: &str| {}, &|| true).is_none(), "under 3 it waits");
     // Sized as testenv now sizes it, document first, it is admitted at once.
-    let live = || size_in(Pool::Compile, Some(64), Some("3"), b);
+    let live = || size_in(Pool::Test, Some(64), Some("3"), b);
     let g = acquire(&q, &Seams { size_of: &live, procs: &p, sleep: &|_| panic!("must not wait") }, &mut |_: &str| {});
     assert!(g.held());
 }
 
 #[test]
-fn a_release_build_weighs_the_whole_pool_and_runs_alone() {
+fn a_weighty_job_waits_for_an_empty_pool_and_runs_alone() {
     let d = run_dir();
     let p = FakeProcs::with(&[(10, 1, 1), (20, 2, 1), (30, 3, 1)]);
-    // Size 3 units: two debug builds leave one unit — not enough for a release build (4).
-    try_take(&d, Pool::Compile, 3, &h(10, 1, "dbg-a"), 0, 100, &p).unwrap();
-    let (t, _) = try_take(&d, Pool::Compile, 3, &hw(20, 2, "rel", WEIGHT_RELEASE), 0, 101, &p).unwrap();
+    // Size 3 units: one unit is held — not enough for a weight-4 job.
+    try_take(&d, Pool::Test, 3, &h(10, 1, "dbg-a"), 0, 100, &p).unwrap();
+    let (t, _) = try_take(&d, Pool::Test, 3, &hw(20, 2, "rel", 4), 0, 101, &p).unwrap();
     let Take::Busy { holders } = t else { panic!("{t:?}") };
-    assert_eq!(wait_line(Pool::Compile, 3, &holders, 110), "waiting for a compile slot: 1 of 3 held by dbg-a (pid 10, 10s)");
+    assert_eq!(wait_line(Pool::Test, 3, &holders, 110), "waiting for a test slot: 1 of 3 held by dbg-a (pid 10, 10s)");
     // FIFO: a later debug build that would fit does not jump the queued release build.
-    let (t, _) = try_take(&d, Pool::Compile, 3, &h(30, 3, "dbg-late"), 0, 102, &p).unwrap();
+    let (t, _) = try_take(&d, Pool::Test, 3, &h(30, 3, "dbg-late"), 0, 102, &p).unwrap();
     assert!(matches!(t, Take::Busy { .. }), "first come, first served: {t:?}");
-    // The debug build ends: the pool is empty, so the heavier-than-the-pool build runs alone.
+    // The debug build ends: the pool is empty, so the heavier-than-the-pool job runs alone.
     p.kill(10);
-    let (t, _) = try_take(&d, Pool::Compile, 3, &hw(20, 2, "rel", WEIGHT_RELEASE), 0, 120, &p).unwrap();
+    let (t, _) = try_take(&d, Pool::Test, 3, &hw(20, 2, "rel", 4), 0, 120, &p).unwrap();
     assert_eq!(t, Take::Admitted { slot: 1, fresh: true });
-    let (t, _) = try_take(&d, Pool::Compile, 3, &h(30, 3, "dbg-late"), 0, 121, &p).unwrap();
+    let (t, _) = try_take(&d, Pool::Test, 3, &h(30, 3, "dbg-late"), 0, 121, &p).unwrap();
     let Take::Busy { holders } = t else { panic!("{t:?}") };
-    assert_eq!(wait_line(Pool::Compile, 3, &holders, 130), "waiting for a compile slot: 4 of 3 held by rel ×4 (pid 20, 10s)");
+    assert_eq!(wait_line(Pool::Test, 3, &holders, 130), "waiting for a test slot: 4 of 3 held by rel ×4 (pid 20, 10s)");
 }
 
 #[test]
@@ -325,75 +311,15 @@ fn a_dead_waiter_loses_its_place() {
 }
 
 #[test]
-fn release_like_rustc_invocations_weigh_more() {
-    let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-    assert_eq!(build_weight(&v(&["--crate-name", "x", "-C", "opt-level=z", "-C", "codegen-units=1"])), WEIGHT_RELEASE);
-    assert_eq!(build_weight(&v(&["--crate-name", "x", "-Copt-level=3"])), WEIGHT_RELEASE);
-    assert_eq!(build_weight(&v(&["--crate-name", "x", "-C", "lto"])), WEIGHT_RELEASE);
-    assert_eq!(build_weight(&v(&["--crate-name", "x", "-C", "opt-level=0", "-C", "debuginfo=1"])), 1);
-    assert_eq!(build_weight(&v(&["--crate-name", "x", "-C", "lto=off"])), 1);
-    assert_eq!(build_weight(&v(&["--crate-name", "x"])), 1);
-    assert_eq!(profile_weight("release"), WEIGHT_RELEASE);
-    assert_eq!(profile_weight("dev"), 1);
-}
-
-#[test]
-fn the_wrapper_queues_agents_takes_now_for_gates_and_execs_probes() {
-    let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-    let compile = v(&["--crate-name", "gate", "-C", "opt-level=2"]);
-    assert_eq!(wrapper_action(None, &compile), WrapperAction::Wait, "an agent's build queues");
-    assert_eq!(wrapper_action(Some(" "), &compile), WrapperAction::Wait, "an empty token is not an admission");
-    assert_eq!(wrapper_action(Some("gate"), &compile), WrapperAction::TakeNow);
-    assert_eq!(wrapper_action(Some("gate:2"), &compile), WrapperAction::TakeNow);
-    assert_eq!(wrapper_action(Some("test:1"), &compile), WrapperAction::Exec, "admitted elsewhere");
-    assert_eq!(wrapper_action(None, &v(&["-vV"])), WrapperAction::Exec, "probes never queue");
-    assert_eq!(wrapper_action(Some("gate"), &v(&["-vV"])), WrapperAction::Exec);
-}
-
-/// D11: with the pool full of agent leases, a gate build starts at once (oversubscribing), and a
-/// new agent build waits until the gate build releases — even after an agent build finishes.
-#[test]
-fn a_gate_build_starts_at_once_on_a_full_pool_and_new_agent_builds_queue_behind_it() {
-    let d = run_dir();
-    let p = FakeProcs::with(&[(10, 1, 1), (11, 2, 1), (12, 3, 1), (50, 5, 1), (60, 6, 1)]);
-    for (pid, st, who) in [(10, 1, "agent-a"), (11, 2, "agent-b"), (12, 3, "agent-c")] {
-        let (t, _) = try_take(&d, Pool::Compile, 3, &h(pid, st, who), 0, 100, &p).unwrap();
-        assert!(matches!(t, Take::Admitted { .. }));
-    }
-    let gate = h(50, 5, "gate:concierge/sp-x");
-    let (n, _) = take_now(&d, Pool::Compile, 3, &gate, 101, &p).unwrap();
-    assert_eq!(n, Now::Took { slot: 4, held_before: 3, fresh: true }, "no wait, slot 4 of a pool of 3");
-    assert_eq!(take_now_line(Pool::Compile, 3, 4, 1, 3), "gate build took compile slot 4 (weight 1) without waiting — oversubscribed: 4 of 3 held; new agent builds queue behind it");
-    // An agent build finishes; the newcomer still waits: the gate's unit fills the freed room.
-    p.kill(10);
-    let (t, _) = try_take(&d, Pool::Compile, 3, &h(60, 6, "agent-new"), 0, 110, &p).unwrap();
-    let Take::Busy { holders } = t else { panic!("{t:?}") };
-    assert!(holders.iter().any(|l| l.who == "gate:concierge/sp-x"), "{holders:?}");
-    // The gate build releases: now the newcomer is admitted.
-    let e = release(&d, Pool::Compile, 3, 4, &gate, 130).unwrap();
-    assert_eq!((e.held, e.end), (29, "released"));
-    let (t, _) = try_take(&d, Pool::Compile, 3, &h(60, 6, "agent-new"), 0, 131, &p).unwrap();
-    assert!(matches!(t, Take::Admitted { fresh: true, .. }), "{t:?}");
-    // The same gate cargo asking again (its next rustc) keeps its lease; a gate build on an
-    // empty pool is an ordinary lease, not an oversubscription.
-    let d2 = run_dir();
-    let (n, _) = take_now(&d2, Pool::Compile, 3, &gate, 200, &p).unwrap();
-    assert_eq!(n, Now::Took { slot: 1, held_before: 0, fresh: true });
-    let (n, _) = take_now(&d2, Pool::Compile, 3, &gate, 201, &p).unwrap();
-    assert_eq!(n, Now::Took { slot: 1, held_before: 0, fresh: false });
-    assert_eq!(take_now_line(Pool::Compile, 3, 1, 1, 0), "gate build took compile slot 1 (weight 1) without waiting; new agent builds queue behind it");
-}
-
-#[test]
 fn status_lists_each_waiter_and_says_when_the_head_cannot_fit() {
     let d = run_dir();
     let p = FakeProcs::with(&[(10, 1, 1), (30, 3, 1), (40, 4, 1)]);
-    try_take(&d, Pool::Compile, 3, &h(10, 1, "sp-a"), 0, 100, &p).unwrap();
-    let (t, _) = try_take(&d, Pool::Compile, 3, &hw(30, 3, "sp-rel", 4), 0, 110, &p).unwrap();
+    try_take(&d, Pool::Test, 3, &h(10, 1, "sp-a"), 0, 100, &p).unwrap();
+    let (t, _) = try_take(&d, Pool::Test, 3, &hw(30, 3, "sp-rel", 4), 0, 110, &p).unwrap();
     assert!(matches!(t, Take::Busy { .. }));
-    let (t, _) = try_take(&d, Pool::Compile, 3, &h(40, 4, "sp-small"), 0, 120, &p).unwrap();
+    let (t, _) = try_take(&d, Pool::Test, 3, &h(40, 4, "sp-small"), 0, 120, &p).unwrap();
     assert!(matches!(t, Take::Busy { .. }), "FIFO holds the small job behind the head");
-    let o = occupancy(&d, Pool::Compile, 3, &p);
+    let o = occupancy(&d, Pool::Test, 3, &p);
     assert_eq!(o.waiting, 2);
     assert_eq!(
         o.waiters.iter().map(|w| (w.who.as_str(), w.pid, w.weight, w.since)).collect::<Vec<_>>(),
@@ -409,44 +335,6 @@ fn a_full_pool_or_a_fitting_head_is_not_reported_as_blocked() {
     try_take(&d, Pool::Test, 1, &h(10, 1, "sp-a"), 0, 100, &p).unwrap();
     try_take(&d, Pool::Test, 1, &h(20, 2, "sp-b"), 0, 110, &p).unwrap();
     assert_eq!(occupancy(&d, Pool::Test, 1, &p).head_blocked(), None);
-}
-
-/// A process table whose compiler subtree CPU is a set value.
-struct TickProcs {
-    base: FakeProcs,
-    ticks: RefCell<u64>,
-}
-
-impl Procs for TickProcs {
-    fn start_of(&self, pid: u32) -> Option<u64> {
-        self.base.start_of(pid)
-    }
-    fn ppid_of(&self, pid: u32) -> Option<u32> {
-        self.base.ppid_of(pid)
-    }
-    fn compiler_ticks(&self, _pid: u32) -> Option<u64> {
-        Some(*self.ticks.borrow())
-    }
-}
-
-#[test]
-fn stall_bound_zero_and_unknown_ticks_never_reclaim() {
-    let d = run_dir();
-    let p = TickProcs { base: FakeProcs::with(&[(10, 1, 1)]), ticks: RefCell::new(0) };
-    try_take(d.path(), Pool::Compile, 1, &h(10, 1, "sp-a"), 0, 100, &p).unwrap();
-    let dir = Pool::Compile.dir(d.path());
-    reap(&dir, Pool::Compile, 1, &p, 100, 0);
-    let (live, _, _) = reap(&dir, Pool::Compile, 1, &p, 99_999, 0);
-    assert_eq!(live.len(), 1);
-    let q = FakeProcs::with(&[(10, 1, 1)]);
-    let (live, _, _) = reap(&dir, Pool::Compile, 1, &q, 99_999, 600);
-    assert_eq!(live.len(), 1);
-    // The test pool is never stall-reclaimed.
-    let t = Pool::Test.dir(d.path());
-    try_take(d.path(), Pool::Test, 1, &h(10, 1, "sp-a"), 0, 100, &p).unwrap();
-    reap(&t, Pool::Test, 1, &p, 100, 600);
-    let (live, _, _) = reap(&t, Pool::Test, 1, &p, 99_999, 600);
-    assert_eq!(live.len(), 1);
 }
 
 #[test]
@@ -465,9 +353,9 @@ fn a_fresh_lease_waits_out_the_stagger_while_others_are_held() {
 fn the_stagger_never_holds_an_empty_pool_or_a_disabled_one() {
     let d = run_dir();
     let p = FakeProcs::with(&[(10, 1, 1), (20, 2, 1)]);
-    let (t, _) = try_take_staggered(&d, Pool::Compile, 2, &h(10, 1, "a"), 0, 100, &p, 30).unwrap();
+    let (t, _) = try_take_staggered(&d, Pool::Test, 2, &h(10, 1, "a"), 0, 100, &p, 30).unwrap();
     assert_eq!(t, Take::Admitted { slot: 1, fresh: true });
-    let (t, _) = try_take_staggered(&d, Pool::Compile, 2, &h(20, 2, "b"), 0, 101, &p, 0).unwrap();
+    let (t, _) = try_take_staggered(&d, Pool::Test, 2, &h(20, 2, "b"), 0, 101, &p, 0).unwrap();
     assert_eq!(t, Take::Admitted { slot: 2, fresh: true });
 }
 
@@ -543,4 +431,16 @@ fn the_run_ceiling_is_the_cores_over_one_runs_cargo_jobs_and_never_below_one() {
 fn a_run_slot_waiter_says_what_it_waits_for() {
     let holders = [Lease { slot: 1, pid: 7, start: 1, who: "sp-a".into(), since: 100, waited: 0, last: 100, weight: 1 }];
     assert_eq!(wait_line(Pool::Run, 1, &holders, 130), "testenv: waiting for a CPU slot (1 running)");
+}
+
+#[test]
+fn the_retired_wrapper_names_the_inner_compiler_with_every_argument() {
+    let os = |a: &[&str]| a.iter().map(std::ffi::OsString::from).collect::<Vec<_>>();
+    let args = os(&["rustc", "--crate-name", "x"]);
+    let (prog, argv) = passthrough(Some("/box/sccache"), &args);
+    assert_eq!((prog, argv), ("/box/sccache".into(), args.clone()), "the inner compiler gets every argument, rustc included");
+    for none in [None, Some(" ")] {
+        let (prog, argv) = passthrough(none, &args);
+        assert_eq!((prog, argv), ("rustc".into(), os(&["--crate-name", "x"])), "no inner: the compiler it was handed");
+    }
 }

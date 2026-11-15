@@ -544,7 +544,6 @@
    "components": [
     "worktree",
     "build-dir",
-    "compile",
     "model-session",
     "checks",
     "submit-proof"
@@ -2148,7 +2147,8 @@
     "warm pick",
     "cold judge",
     "cold-build slot",
-    "jitter"
+    "jitter",
+    "sccache"
    ],
    "queues": [
     {
@@ -2160,24 +2160,6 @@
      "label": "warm slots",
      "key": null,
      "config": null
-    }
-   ]
-  },
-  {
-   "id": "compile",
-   "label": "compile admission",
-   "tag": "cc",
-   "steps": [
-    "round yield",
-    "stagger",
-    "compile lease",
-    "sccache"
-   ],
-   "queues": [
-    {
-     "label": "compile_par",
-     "key": "SPIRA_COMPILE_PAR",
-     "config": 3
     }
    ]
   },

@@ -1067,7 +1067,7 @@ mod in_process_tests {
 
     #[tokio::test]
     async fn the_factory_is_held_for_the_cache_and_a_failed_build_is_not_held() {
-        let loom = Loom::with_limits(test_config(), Arc::new(|_| Ok(std::collections::BTreeMap::from([("SPIRA_COMPILE_PAR".to_string(), "9".to_string())]))));
+        let loom = Loom::with_limits(test_config(), Arc::new(|_| Ok(std::collections::BTreeMap::from([("SPIRA_COLD_PAR".to_string(), "9".to_string())]))));
         let refused = Arc::new(Counted(Default::default(), vec![("ops-graph --machine ask", 3, "refused".into())]));
         let e = loom.factory_via(|| Ok(LcClient::over(refused.clone(), true))).await.unwrap_err();
         assert!(e.contains("ops-graph --machine ask"), "{e}");
@@ -1076,7 +1076,7 @@ mod in_process_tests {
         let first = loom.factory_via(|| Ok(LcClient::over(healthy.clone(), true))).await.unwrap();
         let reads = healthy.0.load(Ordering::SeqCst);
         assert!(reads >= 10, "the refusal left nothing held, so the healthy build read afresh: {reads}");
-        assert_eq!(first["components"].as_array().unwrap().iter().find(|c| c["id"] == "compile").unwrap()["queues"][0]["config"], 9, "limits come from the config");
+        assert_eq!(first["components"].as_array().unwrap().iter().find(|c| c["id"] == "build-dir").unwrap()["queues"][0]["config"], 9, "limits come from the config");
         let second = loom.factory_via(|| Ok(LcClient::over(healthy.clone(), true))).await.unwrap();
         assert_eq!(healthy.0.load(Ordering::SeqCst), reads, "the second viewer is served from the held build");
         assert_eq!(first, second);

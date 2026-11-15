@@ -922,7 +922,7 @@ fn pools_row(snap: &Snapshot) -> String {
         let wait = if waiting == "0" { String::new() } else { format!(" {col}{waiting} waiting {oldest}s{RST}") };
         format!("{pool} {B}{held}/{size}{RST}{wait}")
     };
-    format!(" {DIM}POOLS{RST}  {}", ["compile", "test", "gate", "cold"].map(seg).join(" \u{b7} "))
+    format!(" {DIM}POOLS{RST}  {}", ["test", "gate", "cold"].map(seg).join(" \u{b7} "))
 }
 
 pub fn standing_lines(snap: &Snapshot, cols: i64) -> Vec<String> {
@@ -1298,12 +1298,15 @@ mod tests {
     #[test]
     fn pools_row_shows_held_of_size_waiting_and_question_marks() {
         let s = snap(&[
-            ("SP_ADM_COMPILE_HELD", "1"), ("SP_ADM_COMPILE_SIZE", "3"), ("SP_ADM_COMPILE_WAITING", "4"), ("SP_ADM_COMPILE_OLDEST", "90"),
-            ("SP_ADM_TEST_HELD", "?"), ("SP_ADM_TEST_SIZE", "2"), ("SP_ADM_TEST_WAITING", "?"),
+            ("SP_ADM_TEST_HELD", "1"), ("SP_ADM_TEST_SIZE", "3"), ("SP_ADM_TEST_WAITING", "4"), ("SP_ADM_TEST_OLDEST", "90"),
+            ("SP_ADM_GATE_HELD", "?"), ("SP_ADM_GATE_SIZE", "2"), ("SP_ADM_GATE_WAITING", "?"),
         ]);
         let row = pools_row(&s);
         assert!(row.contains("1/3") && row.contains("4 waiting 90s"), "{row}");
-        assert!(row.contains("test") && row.contains("?/2"), "{row}");
+        assert!(row.contains("gate") && row.contains("?/2"), "{row}");
+        assert!(!row.contains("compile"), "the compile pool no longer exists: {row}");
+        let at = |n: &str| row.find(n).unwrap_or_else(|| panic!("{n} missing: {row}"));
+        assert!(at("test") < at("gate") && at("gate") < at("cold"), "{row}");
     }
 
     #[test]

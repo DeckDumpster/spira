@@ -94,7 +94,7 @@ daemon a stale build started before anyone had exported `SCCACHE_WEBDAV_ENDPOINT
 later build on the LOCAL DISK cache until an operator noticed and re-exported the vars by
 hand — the exact failure sp-xtdqi exists to close.
 
-`Wrapper::env`/`Wrapper::admitted_env` now take an `Option<&spira_config::build::Store>` and,
+`Wrapper::env` now takes an `Option<&spira_config::build::Store>` and,
 when `Some`, set `SCCACHE_WEBDAV_ENDPOINT`/`SCCACHE_WEBDAV_KEY_PREFIX` themselves — resolved
 from `SPIRA_SCCACHE_DAV_ADDR` (`Store::from_values`/`Store::from_env`, in-process, never a
 bare env read) — AND synchronise the client daemon's own backend first (`ensure_store_backend`

@@ -54,17 +54,17 @@ mod tests {
         let run = testkit::TempDir::new("cc-adm-empty");
         let kv = admission_keys_in(run.path(), size);
         assert_eq!(get(&kv, "SP_ADM_GATE_SIZE"), "3");
-        assert_eq!(get(&kv, "SP_ADM_COMPILE_HELD"), "0");
+        assert_eq!(get(&kv, "SP_ADM_TEST_HELD"), "0");
         assert_eq!(get(&kv, "SP_ADM_TEST_OLDEST"), "0");
     }
 
     #[test]
     fn a_pool_whose_mutex_cannot_be_taken_reads_question_marks() {
         let run = testkit::TempDir::new("cc-adm-unreadable");
-        std::fs::write(Pool::Compile.dir(run.path()), "not a directory").unwrap();
+        std::fs::write(Pool::Test.dir(run.path()), "not a directory").unwrap();
         let kv = admission_keys_in(run.path(), size);
-        assert_eq!(get(&kv, "SP_ADM_COMPILE_HELD"), "?");
-        assert_eq!(get(&kv, "SP_ADM_COMPILE_WAITING"), "?");
-        assert_eq!(get(&kv, "SP_ADM_TEST_HELD"), "0");
+        assert_eq!(get(&kv, "SP_ADM_TEST_HELD"), "?");
+        assert_eq!(get(&kv, "SP_ADM_TEST_WAITING"), "?");
+        assert_eq!(get(&kv, "SP_ADM_COLD_HELD"), "0");
     }
 }

@@ -175,8 +175,8 @@ pub fn base_env(o: &Opts, ambient: &dyn Fn(&str) -> Option<String>) -> Result<Ve
     Ok(env)
 }
 
-/// The compile pool and shared cache for the build, exactly as a dwarf's cargo gets them. A
-/// missing piece is said in the build log and the build goes on uncached or unadmitted.
+/// The shared cache for the build, exactly as a dwarf's cargo gets it. A missing piece is said
+/// in the build log and the build goes on uncached.
 pub fn cache_env(path: &str, o: &Opts, notes: &mut Vec<String>) -> Vec<(String, String)> {
     let store = spira_config::build::Store::from_values(|k| (k == spira_config::build::STORE_ADDR_ENV && !o.dav_addr.is_empty()).then(|| o.dav_addr.clone()));
     let w = match spira_config::build::wrapper(path, None) {
@@ -187,13 +187,7 @@ pub fn cache_env(path: &str, o: &Opts, notes: &mut Vec<String>) -> Vec<(String, 
         }
     };
     notes.push(w.describe());
-    match spira_config::build::find_on(path, spira_config::admission::BIN) {
-        Some(a) => w.admitted_env(&a, &o.run.display().to_string(), &format!("vm-repro-{}", o.bead), store.as_ref()),
-        None => {
-            notes.push("spira-admit not on PATH — this build is not admitted".to_string());
-            w.env(store.as_ref())
-        }
-    }
+    w.env(store.as_ref())
 }
 
 #[derive(Debug, PartialEq, Eq)]
