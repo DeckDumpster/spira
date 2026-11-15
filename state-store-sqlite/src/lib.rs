@@ -939,7 +939,7 @@ impl Backend for SqliteBackend {
 
     fn gc_page(&self, after: Option<&str>, limit: usize) -> Result<(u64, Vec<(String, Version)>)> {
         self.read(|conn, snap, deadline| {
-            let rows = self.rows_outside(conn, Source::Head, &[EVENTS_PREFIX, HISTORY_PREFIX], after, limit, deadline)?;
+            let rows = self.rows_outside(conn, Source::Head, &[state_store::EVENTS_PREFIX, state_store::HISTORY_PREFIX], after, limit, deadline)?;
             Ok((snap.head, rows))
         })
     }
