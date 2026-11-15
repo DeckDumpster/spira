@@ -19,7 +19,7 @@ pub struct MainPoll {
     pub done: Option<MainEnd>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MainEnd {
     /// The suites ran (green or red).
     Ran,
@@ -30,6 +30,8 @@ pub enum MainEnd {
     /// The merged tree's own config delta does not parse or apply (the check `config-delta`):
     /// no suite ran, and the member whose merge breaks it is found without one.
     ConfigDelta,
+    /// No result, job result or runner progress for the stall bound; the main run was stopped.
+    Stalled { waiting: Vec<String>, idle_secs: u64 },
 }
 
 /// Which main run to start: the round's full corpus, or the survivors' verification of the
@@ -62,6 +64,14 @@ pub trait RoundRunner {
     /// Seconds.
     fn now(&self) -> u64;
     fn wait(&mut self);
+    /// Seconds without progress after which a polling wait gives up; `None` waits for ever.
+    fn stall_secs(&self) -> Option<u64> {
+        None
+    }
+    /// A mark that changes whenever the runner sees progress beyond the results it answers.
+    fn progress(&mut self) -> u64 {
+        0
+    }
     /// The round was abandoned: nothing drives it any more, and nothing more may be launched.
     fn abandoned(&mut self) -> bool {
         false
@@ -221,6 +231,9 @@ pub const WORKSPACE_BUILD: &str = "workspace-build";
 /// The check a merged tree's unappliable config delta is red under.
 pub const CONFIG_DELTA: &str = "config-delta";
 
+/// The incident kind of an attribution leg that made no progress for its stall bound.
+pub const ATTRIBUTION_STALLED: &str = "attribution-stalled";
+
 /// What a main run's error starts with when the pass built a tree the round was not cut for
 /// because the base moved under it: the round is rebuilt once on the new base, never sent to
 /// attribution as a harness fault.
@@ -230,6 +243,38 @@ pub const CONFIG_FAULT: &str = "config-fault";
 
 /// Ids of the settled-owner reruns start here, clear of the attributor's own.
 const RERUN_ID_BASE: u64 = 1 << 40;
+
+/// The time of the last progress of one polling wait, against the runner's stall bound.
+struct Idle {
+    limit: Option<u64>,
+    last: u64,
+    mark: u64,
+}
+
+impl Idle {
+    fn new<R: RoundRunner>(runner: &mut R) -> Idle {
+        Idle {
+            limit: runner.stall_secs(),
+            last: runner.now(),
+            mark: runner.progress(),
+        }
+    }
+
+    fn advanced<R: RoundRunner>(&mut self, runner: &R) {
+        self.last = runner.now();
+    }
+
+    /// The seconds idle once they reach the bound.
+    fn stalled<R: RoundRunner>(&mut self, runner: &mut R) -> Option<u64> {
+        let mark = runner.progress();
+        if mark != self.mark {
+            self.mark = mark;
+            self.last = runner.now();
+        }
+        let idle = runner.now().saturating_sub(self.last);
+        self.limit.filter(|l| idle >= *l).map(|_| idle)
+    }
+}
 
 /// `suite` once more on the round tree with every member present, to the end.
 fn rerun_with_members<R: RoundRunner>(runner: &mut R, suite: &str, n: u64) -> Option<JobResult> {
@@ -242,9 +287,17 @@ fn rerun_with_members<R: RoundRunner>(runner: &mut R, suite: &str, n: u64) -> Op
     if runner.launch(&job).is_err() {
         return None;
     }
+    let mut idle = Idle::new(runner);
     loop {
-        if let Some((_, r)) = runner.poll_jobs().into_iter().find(|(id, _)| *id == job.id) {
+        let results = runner.poll_jobs();
+        if !results.is_empty() {
+            idle.advanced(runner);
+        }
+        if let Some((_, r)) = results.into_iter().find(|(id, _)| *id == job.id) {
             return (r != JobResult::Fault).then_some(r);
+        }
+        if idle.stalled(runner).is_some() {
+            return None;
         }
         runner.wait();
     }
@@ -300,6 +353,8 @@ pub fn drive<R: RoundRunner, O: RoundOps + ?Sized>(
     let mut seen = std::collections::BTreeSet::new();
     let mut green_suites = std::collections::BTreeSet::new();
     let mut main_end_at = None;
+    let mut idle = Idle::new(runner);
+    let mut flying: BTreeMap<u64, String> = BTreeMap::new();
     loop {
         if runner.abandoned() {
             runner.stop_main()?;
@@ -336,6 +391,7 @@ pub fn drive<R: RoundRunner, O: RoundOps + ?Sized>(
         let now = runner.now();
         for (suite, green) in poll.results {
             if seen.insert(suite.clone()) {
+                idle.advanced(runner);
                 if green {
                     green_suites.insert(suite.clone());
                 }
@@ -347,6 +403,9 @@ pub fn drive<R: RoundRunner, O: RoundOps + ?Sized>(
             }
         }
         if let Some(end) = poll.done {
+            if main_end_at.is_none() {
+                idle.advanced(runner);
+            }
             if matches!(end, MainEnd::WorkspaceBuild | MainEnd::ConfigDelta) {
                 return Ok(Settled {
                     preempt: None,
@@ -383,6 +442,8 @@ pub fn drive<R: RoundRunner, O: RoundOps + ?Sized>(
             }
         }
         for (id, r) in runner.poll_jobs() {
+            idle.advanced(runner);
+            flying.remove(&id);
             a.on_job_result(id, r, now);
         }
         for job in a.next_jobs() {
@@ -395,6 +456,8 @@ pub fn drive<R: RoundRunner, O: RoundOps + ?Sized>(
                     job.id, job.suite, job.removal
                 );
                 a.on_job_result(job.id, JobResult::Fault, now);
+            } else {
+                flying.insert(job.id, format!("{} without {}", job.suite, job.removal.join(",")));
             }
         }
         if !a.main_done() {
@@ -429,6 +492,21 @@ pub fn drive<R: RoundRunner, O: RoundOps + ?Sized>(
                 preempt: None,
                 decision: a.decision(),
                 end: MainEnd::Ran,
+                main_end_at: main_end_at.unwrap_or(now),
+                settled_at: now,
+                filter: None,
+                returned: vec![],
+            });
+        }
+        if let Some(idle_secs) = idle.stalled(runner) {
+            runner.stop_main()?;
+            let mut waiting: Vec<String> =
+                suites.iter().filter(|s| !seen.contains(*s)).cloned().collect();
+            waiting.extend(flying.into_values());
+            return Ok(Settled {
+                preempt: None,
+                decision: a.decision(),
+                end: MainEnd::Stalled { waiting, idle_secs },
                 main_end_at: main_end_at.unwrap_or(now),
                 settled_at: now,
                 filter: None,
@@ -524,6 +602,8 @@ fn remove_flips<R: RoundRunner, O: RoundOps>(
     let mut faulted = false;
     let mut running = 0usize;
     let mut unproven: BTreeSet<String> = BTreeSet::new();
+    let mut idle = Idle::new(runner);
+    let mut flying: BTreeMap<u64, String> = BTreeMap::new();
     while !queue.is_empty() || running > 0 {
         while running < budget.slots as usize {
             let Some(job) = queue.pop_front() else { break };
@@ -531,7 +611,10 @@ fn remove_flips<R: RoundRunner, O: RoundOps>(
                 continue;
             }
             match runner.launch(&job) {
-                Ok(()) => running += 1,
+                Ok(()) => {
+                    running += 1;
+                    flying.insert(job.id, job.suite.clone());
+                }
                 Err(e) => {
                     eprintln!(
                         "batcher: flip proof job {} ({}) not launched: {e}",
@@ -543,6 +626,8 @@ fn remove_flips<R: RoundRunner, O: RoundOps>(
             }
         }
         for (id, r) in runner.poll_jobs() {
+            idle.advanced(runner);
+            flying.remove(&id);
             if let Some(suite) = suite_of.get(&id) {
                 running = running.saturating_sub(1);
                 let plain = plain_jobs.contains(&id);
@@ -564,6 +649,12 @@ fn remove_flips<R: RoundRunner, O: RoundOps>(
             }
         }
         if running > 0 {
+            if idle.stalled(runner).is_some() {
+                unproven.extend(flying.into_values());
+                unproven.extend(queue.drain(..).map(|j| j.suite));
+                faulted = true;
+                break;
+            }
             runner.wait();
         }
     }
@@ -621,6 +712,8 @@ pub enum RoundEnd {
     /// The attribution itself failed to run: nothing is judged, no member is charged, and the
     /// round stays open.
     Faulted(String),
+    /// The attribution made no progress for the stall bound: stopped, the round stays open.
+    Stalled(String),
     /// Nothing lands, but every culprit was ejected: the pool holds only survivors to cut again.
     Emptied(String),
     /// Someone else abandoned the round: it is over, and this driver writes no verdict.
@@ -1292,6 +1385,13 @@ fn attribute_members<R: RoundRunner, O: RoundOps>(
         if s.end == MainEnd::Abandoned {
             return Ok(RoundEnd::Abandoned);
         }
+        if let MainEnd::Stalled { waiting, idle_secs } = &s.end {
+            ops.incident(ATTRIBUTION_STALLED, waiting);
+            return Ok(RoundEnd::Stalled(format!(
+                "attribution stalled: no progress for {idle_secs}s, waiting on {}",
+                waiting.join(", ")
+            )));
+        }
         if s.end == MainEnd::ConfigDelta {
             let actions = bisect_members(
                 "the merged config delta does not apply",
@@ -1786,6 +1886,9 @@ pub(crate) mod tests {
         pub abandoned_at: Option<u64>,
         /// Mirrors the clock for an `Ops` that answers by time.
         pub clock: Option<std::rc::Rc<std::cell::Cell<u64>>>,
+        /// From this time on no main result, job result or end is ever answered.
+        pub stalls_at: Option<u64>,
+        pub stall: Option<u64>,
     }
 
     pub type BuildFn = Box<dyn Fn(&BTreeSet<String>) -> Option<String>>;
@@ -1836,6 +1939,8 @@ pub(crate) mod tests {
                 abandoned_after_starts: None,
                 abandoned_at: None,
                 clock: None,
+                stalls_at: None,
+                stall: None,
             }
         }
         fn verdict(&mut self, suite: &str, tree: &BTreeSet<String>) -> bool {
@@ -1910,6 +2015,9 @@ pub(crate) mod tests {
         }
         fn poll_main(&mut self) -> Result<MainPoll, String> {
             let mut p = MainPoll::default();
+            if self.stalls_at.is_some_and(|at| self.t >= at) {
+                return Ok(p);
+            }
             if let Some(text) = self.fails_once.take() {
                 return Err(text);
             }
@@ -2032,6 +2140,9 @@ pub(crate) mod tests {
         }
         fn poll_jobs(&mut self) -> Vec<(u64, JobResult)> {
             let mut out = vec![];
+            if self.stalls_at.is_some_and(|at| self.t >= at) {
+                return out;
+            }
             for (j, fin, r) in &self.jobs {
                 if *fin <= self.t && self.done_jobs.insert(j.id) {
                     out.push((j.id, *r));
@@ -2055,6 +2166,12 @@ pub(crate) mod tests {
                 c.set(self.t);
             }
             assert!(self.t < 100_000, "the loop never settled");
+            if let Some(at) = self.stalls_at {
+                assert!(self.t < at + 10_000, "the loop never ended");
+            }
+        }
+        fn stall_secs(&self) -> Option<u64> {
+            self.stall
         }
     }
 
@@ -2220,6 +2337,80 @@ pub(crate) mod tests {
         suite: &'static str,
     ) -> impl Fn(&str, &BTreeSet<String>) -> bool {
         move |s, tree| s == suite && tree.contains(culprit)
+    }
+
+    fn stalling_fake(stall: Option<u64>) -> Fake {
+        let mut f = Fake::new(|_, _| false);
+        f.dur.insert("test-02.sh".into(), 100);
+        f.dur.insert("test-03.sh".into(), 100);
+        f.stalls_at = Some(20);
+        f.stall = stall;
+        f
+    }
+
+    #[test]
+    fn an_attribution_leg_with_no_progress_for_the_stall_bound_stops_and_names_what_it_waited_on() {
+        let mut f = stalling_fake(Some(300));
+        let mut ops = Ops::default();
+        let budget = Budget { slots: 6, maxpar: 2 };
+        let end = attribute_round(&mut f, &mut ops, &corpus(4), three(), budget).unwrap();
+        let RoundEnd::Stalled(why) = end else { panic!("{end:?}") };
+        assert!(why.contains("test-02.sh") && why.contains("test-03.sh"), "{why}");
+        assert!(!why.contains("test-00.sh"), "{why}");
+        assert!(f.t <= 20 + 300 + 1, "ended at t={}", f.t);
+        assert_eq!(f.stopped, 1);
+        assert_eq!(
+            ops.incidents,
+            vec![("attribution-stalled".to_string(), vec!["test-02.sh".to_string(), "test-03.sh".to_string()])]
+        );
+    }
+
+    #[test]
+    fn a_run_whose_results_keep_coming_inside_the_stall_bound_is_not_stalled() {
+        let mut f = Fake::new(|_, _| false);
+        f.maxpar = 1;
+        for i in 0..5 {
+            f.dur.insert(format!("test-{i:02}.sh"), 100);
+        }
+        f.stall = Some(150);
+        let mut ops = Ops::default();
+        let budget = Budget { slots: 6, maxpar: 1 };
+        let end = attribute_round(&mut f, &mut ops, &corpus(5), three(), budget).unwrap();
+        assert!(matches!(end, RoundEnd::Land { .. }), "{end:?}");
+        assert!(f.t > 150, "the run outlasted the bound: t={}", f.t);
+        assert!(ops.incidents.is_empty());
+    }
+
+    #[test]
+    fn a_rerun_against_a_stalled_job_gives_up_within_the_stall_bound() {
+        let mut f = stalling_fake(Some(300));
+        f.stalls_at = Some(0);
+        assert_eq!(rerun_with_members(&mut f, "test-00.sh", 0), None);
+        assert!(f.t <= 301, "gave up at t={}", f.t);
+    }
+
+    #[test]
+    fn flip_proof_jobs_that_stall_are_unproven_within_the_stall_bound() {
+        let mut f = stalling_fake(Some(300));
+        f.stalls_at = Some(0);
+        let mut ops = Ops::default();
+        let members = three();
+        let budget = Budget { slots: 6, maxpar: 2 };
+        let flaky = vec!["test-00.sh".to_string()];
+        let Err(e) = remove_flips(&mut f, &mut ops, &flaky, &members, budget) else { panic!("proved") };
+        assert_eq!(e.reds, vec!["test-00.sh".to_string()]);
+        assert!(!e.member_owns);
+        assert!(f.t <= 301, "gave up at t={}", f.t);
+    }
+
+    #[test]
+    fn an_unbounded_runner_waits_as_before() {
+        let mut f = stalling_fake(None);
+        f.stalls_at = Some(20_000);
+        let mut ops = Ops::default();
+        let budget = Budget { slots: 6, maxpar: 2 };
+        let end = attribute_round(&mut f, &mut ops, &corpus(4), three(), budget).unwrap();
+        assert!(matches!(end, RoundEnd::Land { .. }), "{end:?}");
     }
 
     #[test]

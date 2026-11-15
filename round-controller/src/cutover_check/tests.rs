@@ -602,7 +602,7 @@ impl RoundRunner for Subs<'_> {
         match &self.ends {
             Ends::Ran(results, end) => Ok(MainPoll {
                 results: results.iter().map(|(s, g)| (s.to_string(), *g)).collect(),
-                done: Some(*end),
+                done: Some(end.clone()),
             }),
             Ends::Faults(why) => Err(why.to_string()),
             Ends::NoStart => unreachable!(),

@@ -108,6 +108,7 @@ pub fn env_from_cfg(home: PathBuf, run: PathBuf, round_vm: Option<PathBuf>) -> R
         // own hardware-derived or unpinned defaults — see io::run_suites.
         maxpar: cfg_parse::<u32>("SPIRA_BATCH_MAXPAR")?,
         wall_secs: cfg_parse::<u64>("SPIRA_BATCHER_WALL_SECS")?,
+        stall_secs: cfg_parse::<u64>("SPIRA_BATCHER_STALL_SECS")?,
         git_name: cfg("SPIRA_GIT_NAME")?,
         git_email: cfg("SPIRA_GIT_EMAIL")?,
         lc_bin: Some(PathBuf::from(spira_store::lifecycle_row::lc_bin()?)),

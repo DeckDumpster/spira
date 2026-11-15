@@ -94,6 +94,8 @@ pub struct Env {
     /// hold the round lock for the duration, so an unbounded run holds it unbounded too;
     /// enforced with `timeout` so a hang cannot outlive this call.
     pub wall_secs: u64,
+    /// Seconds an attribution leg's polling wait may see no progress before it gives up.
+    pub stall_secs: u64,
     pub git_name: String,
     pub git_email: String,
     pub lc_bin: Option<PathBuf>,
@@ -5080,6 +5082,7 @@ pub fn lifecycle_tests_env(dir: &Path) -> Env {
         poll: std::time::Duration::from_secs(1),
         maxpar: 1,
         wall_secs: 1,
+        stall_secs: 1,
         git_name: "t".into(),
         git_email: "t@t".into(),
         lc_rows: Default::default(),

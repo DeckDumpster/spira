@@ -249,6 +249,7 @@ fn e2e_three_members_one_breaks_a_fast_suite() {
         poll: std::time::Duration::from_secs(1),
         maxpar: 2,
         wall_secs: 600,
+        stall_secs: 600,
         git_name: "t".into(),
         git_email: "t@t".into(),
         lc_bin: None,
@@ -376,6 +377,7 @@ impl CloneMembers for RoundEnd {
             RoundEnd::Blocked(w) => format!("blocked: {w}"),
             RoundEnd::Emptied(w) => format!("emptied: {w}"),
             RoundEnd::Faulted(w) => format!("faulted: {w}"),
+            RoundEnd::Stalled(w) => format!("stalled: {w}"),
             RoundEnd::Abandoned => "abandoned".to_string(),
         }
     }
