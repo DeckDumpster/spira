@@ -335,8 +335,13 @@ fn deleting_a_record_whose_bead_is_open_marks_it_and_it_goes_only_once_planning_
         "GC removed a record its bead still has open"
     );
     assert!(s.planning_closed("sp-a", &req("p-1")).unwrap());
+    assert!(
+        s.record("sp-a").unwrap().is_none(),
+        "the write that closed planning removed the record"
+    );
+    assert!(s.contract().get(&keys::gate("sp-a")).unwrap().is_some());
     gc.tick(clock.now_ms()).unwrap();
-    assert!(s.record("sp-a").unwrap().is_none());
+    assert!(s.contract().get(&keys::gate("sp-a")).unwrap().is_none());
 
     created(&s, "sp-b");
     assert!(matches!(

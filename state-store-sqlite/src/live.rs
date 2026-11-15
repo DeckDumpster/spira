@@ -69,6 +69,23 @@ impl<B: Backend + Clone> Backend for Scoped<B> {
         Ok(self.strip(rows))
     }
 
+    fn owned_by(
+        &self,
+        owner: &str,
+        after: Option<&str>,
+        limit: usize,
+        at: u64,
+    ) -> Result<Vec<String>> {
+        let after = after.map(|a| self.outer(a));
+        let keys = self
+            .inner
+            .owned_by(&self.outer(owner), after.as_deref(), limit, at)?;
+        Ok(keys
+            .into_iter()
+            .filter_map(|k| k.strip_prefix(&self.scope).map(str::to_string))
+            .collect())
+    }
+
     fn commit(&self, expect: u64, batch: &[Write]) -> Result<u64> {
         let batch: Vec<Write> = batch
             .iter()
@@ -146,8 +163,11 @@ live_scenarios!(
     a_paused_holders_fenced_write_is_refused_after_expiry_and_reacquisition,
     reopen_extends_every_lock,
     a_lock_ttl_below_the_minimum_is_refused,
-    a_finalizer_blocks_delete_until_gc_removes_the_key_once_cleared,
+    a_finalizer_blocks_delete_until_the_write_clearing_it_removes_the_key,
     an_owner_reference_orphan_is_collected,
+    an_owner_deleted_with_more_dependents_than_a_pass_is_drained_over_passes,
+    an_owner_recreated_before_collection_keeps_its_dependents,
+    owned_by_names_a_keys_dependents_until_they_drop_the_reference,
     a_request_retry_after_an_ambiguous_commit_reports_already_applied,
     retries_of_lock_create_delete_and_a_refusal_report_the_original_outcome,
     request_keys_expire_at_24h_of_virtual_time,

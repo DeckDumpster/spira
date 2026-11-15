@@ -23,6 +23,9 @@ impl Backend for Counted {
     fn head(&self) -> Result<u64> {
         self.inner.head()
     }
+    fn owned_by(&self, owner: &str, after: Option<&str>, limit: usize, at: u64) -> Result<Vec<String>> {
+        self.inner.owned_by(owner, after, limit, at)
+    }
     fn get(&self, key: &str, at: u64) -> Result<Option<Version>> {
         self.reads.fetch_add(1, Ordering::SeqCst);
         self.inner.get(key, at)
@@ -186,6 +189,9 @@ impl Backend for Short {
     fn compacted(&self) -> Result<u64> {
         self.0.compacted()
     }
+    fn owned_by(&self, owner: &str, after: Option<&str>, limit: usize, at: u64) -> Result<Vec<String>> {
+        self.0.owned_by(owner, after, limit, at)
+    }
 }
 
 #[test]
@@ -274,6 +280,9 @@ fn a_read_does_not_wait_for_a_commit_in_flight() {
     impl Backend for Slow {
         fn head(&self) -> Result<u64> {
             self.inner.head()
+        }
+        fn owned_by(&self, owner: &str, after: Option<&str>, limit: usize, at: u64) -> Result<Vec<String>> {
+            self.inner.owned_by(owner, after, limit, at)
         }
         fn get(&self, key: &str, at: u64) -> Result<Option<Version>> {
             let _g = self.gate.lock().unwrap();

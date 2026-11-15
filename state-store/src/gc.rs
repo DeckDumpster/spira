@@ -1,32 +1,21 @@
-//! The GC controller: one `tick(now)` removes finalized keys, collects owner-reference orphans
-//! and expires keys whose TTL has run out.
+//! The GC controller: one `tick(now)` drains the markers of owners that went, and expires keys
+//! whose TTL has run out. A finished key is removed by the write that finished it, so no pass
+//! reads the key space.
 
 use crate::backend::Backend;
-use crate::contract::{Compaction, Contract, ScanProgress, COMPACT_STEP, COMPACT_STEPS, PAGE};
-use std::cell::{Cell, RefCell};
-
-use crate::{Error, Item, Result};
+use crate::contract::{Compaction, Contract, COMPACT_STEP, COMPACT_STEPS, PAGE};
+use crate::{Error, Item, Result, ORPHANS_PREFIX};
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Tick {
-    pub finalized: Vec<String>,
     pub orphans: Vec<String>,
     pub expired: Vec<String>,
     /// Audit records cut for being older than [`EVENT_WINDOW_MS`].
     pub trimmed: usize,
     /// Steps that failed this pass; every other step still ran.
     pub failed: Vec<StepFailure>,
-    /// The scan this pass read from, when it read one.
-    pub scan: Option<ScanReport>,
     /// What this pass's compaction did, when it took a step.
     pub compaction: Option<Compaction>,
-}
-
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct ScanReport {
-    pub pages: usize,
-    pub keys: usize,
-    pub complete: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -47,40 +36,29 @@ pub const EVENT_WINDOW_MS: u64 = 14 * 24 * 60 * 60 * 1_000;
 pub const COMPACT_KEEP: u64 = 10_000;
 /// The most revisions a hot-key count looks back over: what compaction keeps plus one step.
 pub const HOT_KEYS_MAX_REVS: u64 = COMPACT_KEEP + crate::contract::COMPACT_STEP;
+/// The dependents of gone owners one pass looks at, however many markers name them.
+pub const ORPHANS_PER_PASS: usize = 1_024;
 
 pub struct Controller<'a, B: Backend> {
     contract: &'a Contract<B>,
-    scan_every_ms: u64,
-    last_scan: Cell<Option<u64>>,
-    scan: RefCell<Option<ScanProgress>>,
-    page: usize,
 }
 
-fn finalized(i: &Item) -> bool {
-    i.value.metadata.deletion_timestamp.is_some() && i.value.metadata.finalizers.is_empty()
+fn orphan(i: &Item, alive: &dyn Fn(&str) -> Result<bool>) -> Result<bool> {
+    let m = &i.value.metadata;
+    if m.owner_references.is_empty() || m.deletion_timestamp.is_some() {
+        return Ok(false);
+    }
+    for o in &m.owner_references {
+        if alive(o)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 impl<'a, B: Backend> Controller<'a, B> {
-    /// Scans on every pass.
     pub fn new(contract: &'a Contract<B>) -> Self {
-        Self::with_scan_every(contract, 0)
-    }
-
-    /// The whole-key scan behind finalize and orphan collection runs at most once per `ms`.
-    pub fn with_scan_every(contract: &'a Contract<B>, ms: u64) -> Self {
-        Controller {
-            contract,
-            scan_every_ms: ms,
-            last_scan: Cell::new(None),
-            scan: RefCell::new(None),
-            page: PAGE,
-        }
-    }
-
-    /// Reads the scan `page` keys at a time instead of the default.
-    pub fn with_page(mut self, page: usize) -> Self {
-        self.page = page;
-        self
+        Controller { contract }
     }
 
     /// `now_ms` is on the contract's monotonic clock.
@@ -92,6 +70,38 @@ impl<'a, B: Backend> Controller<'a, B> {
         Err(Error::Backend(tick.failed.remove(0).to_string()))
     }
 
+    /// Collects the dependents of each owner a marker names, at most [`ORPHANS_PER_PASS`] in all.
+    fn drain_markers(&self, collected: &mut Vec<String>) -> Result<()> {
+        let c = self.contract;
+        let mut budget = ORPHANS_PER_PASS;
+        let head = c.head()?;
+        for (key, marker) in c.backend().range(ORPHANS_PREFIX, None, PAGE, head)? {
+            if budget == 0 {
+                break;
+            }
+            let Some(owner) = key.strip_prefix(ORPHANS_PREFIX) else {
+                continue;
+            };
+            if c.exists_at(owner, c.head()?)? {
+                c.settle_marker(&key, marker.mod_rev, None)?;
+                continue;
+            }
+            let after = crate::Object::decode(&marker.value)?
+                .data
+                .get("after")
+                .and_then(|a| a.as_str().map(str::to_string));
+            let want = budget;
+            let page = c.dependents(owner, after.as_deref(), want)?;
+            budget -= page.len();
+            collected.extend(c.collect(&page, "gc.orphan", |i, head| {
+                orphan(i, &|o| c.exists_at(o, head))
+            })?);
+            let resume = if page.len() < want { None } else { page.last().cloned() };
+            c.settle_marker(&key, marker.mod_rev, resume.as_deref())?;
+        }
+        Ok(())
+    }
+
     /// Runs every step; a failed step is recorded and the others go ahead.
     pub fn pass(&self, now_ms: u64) -> Tick {
         let c = self.contract;
@@ -100,71 +110,11 @@ impl<'a, B: Backend> Controller<'a, B> {
             tick.failed.push(StepFailure { step, error })
         };
 
-        let scan_due = self.scan.borrow().is_some()
-            || self
-                .last_scan
-                .get()
-                .is_none_or(|last| now_ms.saturating_sub(last) >= self.scan_every_ms);
-        if scan_due {
-            let mut progress = self.scan.borrow_mut().take().unwrap_or_else(|| {
-                self.last_scan.set(Some(now_ms));
-                ScanProgress::default()
-            });
-            let read = c.gc_scan_pages(&mut progress, self.page);
-            tick.scan = Some(ScanReport {
-                pages: progress.pages,
-                keys: progress.keys.len(),
-                complete: read.is_ok(),
-            });
-            match read {
-                Ok(()) => {
-                    let scan = progress;
-                    let ready: Vec<String> = scan.finalized.iter().map(|i| i.key.clone()).collect();
-                    match c.collect(&ready, "gc.finalize", |i, _| Ok(finalized(i))) {
-                        Ok(done) => tick.finalized = done,
-                        Err(e) => fail(&mut tick, "finalize", e),
-                    }
-                    let orphan = |i: &Item, alive: &dyn Fn(&str) -> Result<bool>| -> Result<bool> {
-                        let m = &i.value.metadata;
-                        if m.owner_references.is_empty() || m.deletion_timestamp.is_some() {
-                            return Ok(false);
-                        }
-                        for o in &m.owner_references {
-                            if alive(o)? {
-                                return Ok(false);
-                            }
-                        }
-                        Ok(true)
-                    };
-                    let found: Result<Vec<String>> = (|| {
-                        let mut candidates = Vec::new();
-                        for i in &scan.owned {
-                            if orphan(i, &|o| {
-                                Ok(scan.keys.contains(o) && !tick.finalized.iter().any(|f| f == o))
-                            })? {
-                                candidates.push(i.key.clone());
-                            }
-                        }
-                        c.collect(&candidates, "gc.orphan", |i, head| {
-                            orphan(i, &|o| c.exists_at(o, head))
-                        })
-                    })();
-                    match found {
-                        Ok(orphans) => tick.orphans = orphans,
-                        Err(e) => fail(&mut tick, "orphan", e),
-                    }
-                }
-                Err(e) => {
-                    let error = Error::Backend(format!(
-                        "{e} (after {} pages, {} keys, last key {:?})",
-                        progress.pages,
-                        progress.keys.len(),
-                        progress.after.as_deref().unwrap_or("")
-                    ));
-                    *self.scan.borrow_mut() = (progress.pages > 0).then_some(progress);
-                    fail(&mut tick, "scan", error);
-                }
-            }
+        let mut collected = Vec::new();
+        let drained = self.drain_markers(&mut collected);
+        tick.orphans = collected;
+        if let Err(e) = drained {
+            fail(&mut tick, "orphan", e);
         }
 
         let due = c.due(now_ms);
@@ -194,7 +144,7 @@ mod tests {
     use super::*;
     use crate::backend::{Version, Write};
     use crate::contract::{Config, Ports, Request, Txn};
-    use crate::{events_key, Error, MemBackend, Object};
+    use crate::{events_key, Error, MemBackend, Object, ORPHANS_PREFIX};
 
     const DAY_MS: u64 = 24 * 60 * 60 * 1_000;
 
@@ -284,84 +234,6 @@ mod tests {
         clock.advance(EVENT_WINDOW_MS + DAY_MS);
         assert_eq!(gc.tick(c.now_ms()).unwrap().trimmed, 4);
         assert_eq!(events(&c), 0);
-    }
-
-    /// Ends any `gc_range` read of more than `limit` rows, as the store ends a read held past
-    /// `max_read_ms`, and counts the ends.
-    struct Limited {
-        inner: MemBackend,
-        limit: usize,
-        ended: AtomicUsize,
-        widest: AtomicUsize,
-        armed: std::sync::atomic::AtomicBool,
-    }
-
-    impl Backend for Limited {
-        fn head(&self) -> crate::Result<u64> {
-            self.inner.head()
-        }
-        fn get(&self, key: &str, at: u64) -> crate::Result<Option<Version>> {
-            self.inner.get(key, at)
-        }
-        fn range(
-            &self,
-            prefix: &str,
-            after: Option<&str>,
-            limit: usize,
-            at: u64,
-        ) -> crate::Result<Vec<(String, Version)>> {
-            self.inner.range(prefix, after, limit, at)
-        }
-        fn commit(&self, expect: u64, batch: &[Write]) -> crate::Result<u64> {
-            self.inner.commit(expect, batch)
-        }
-        fn log(&self, from: u64, max_mains: usize) -> crate::Result<Vec<crate::LogEntry>> {
-            self.inner.log(from, max_mains)
-        }
-        fn compact(&self, rev: u64) -> crate::Result<()> {
-            self.inner.compact(rev)
-        }
-        fn gc_range(
-            &self,
-            after: Option<&str>,
-            limit: usize,
-            at: u64,
-        ) -> crate::Result<Vec<(String, Version)>> {
-            if self.armed.load(Ordering::SeqCst) && limit > self.limit {
-                self.ended.fetch_add(1, Ordering::SeqCst);
-                return Err(Error::Backend(format!("{} (1000 ms)", crate::READ_ENDED)));
-            }
-            if self.armed.load(Ordering::SeqCst) {
-                self.widest.fetch_max(limit, Ordering::SeqCst);
-            }
-            self.inner.gc_range(after, limit, at)
-        }
-    }
-
-    #[test]
-    fn a_pass_over_a_store_whose_page_outlives_the_read_limit_narrows_its_pages_until_each_fits() {
-        let clock = VirtualClock::new(0);
-        let b = Limited {
-            inner: MemBackend::new(),
-            limit: 100,
-            ended: AtomicUsize::new(0),
-            widest: AtomicUsize::new(0),
-            armed: Default::default(),
-        };
-        let c = open(b, &clock);
-        for i in 0..1_200 {
-            write(&c, &format!("rec/{i}"), &format!("r{i}"));
-        }
-        c.backend().armed.store(true, Ordering::SeqCst);
-        Controller::new(&c)
-            .tick(c.now_ms())
-            .expect("the pass finishes");
-        let b = c.backend();
-        assert!(
-            b.ended.load(Ordering::SeqCst) > 0,
-            "the limit was never reached, so nothing was shown"
-        );
-        assert!(b.widest.load(Ordering::SeqCst) <= 100);
     }
 
     #[test]
@@ -458,6 +330,15 @@ mod tests {
         ) -> crate::Result<Vec<(String, Version)>> {
             self.inner.gc_range(after, limit, at)
         }
+        fn owned_by(
+            &self,
+            owner: &str,
+            after: Option<&str>,
+            limit: usize,
+            at: u64,
+        ) -> crate::Result<Vec<String>> {
+            self.inner.owned_by(owner, after, limit, at)
+        }
     }
 
     #[test]
@@ -503,22 +384,21 @@ mod tests {
         assert_eq!(*c.backend().log.lock().unwrap(), ["compact", "commit", "compact"]);
     }
 
-    /// Refuses `gc_range`, or `range` over `events/`, with a plain error once armed, and counts
-    /// `gc_range` calls.
+    /// Refuses `range` over `events/` with a plain error once armed, and counts the reads that
+    /// visit the key space: `gc_range`, `range_outside`, and a `range` of any prefix but
+    /// `events/` or `orphans/`.
     struct Flaky {
         inner: MemBackend,
-        refuse_scan: AtomicBool,
         refuse_events: AtomicBool,
-        scans: AtomicUsize,
+        key_space_reads: AtomicUsize,
     }
 
     impl Flaky {
         fn new() -> Self {
             Flaky {
                 inner: MemBackend::new(),
-                refuse_scan: Default::default(),
                 refuse_events: Default::default(),
-                scans: AtomicUsize::new(0),
+                key_space_reads: AtomicUsize::new(0),
             }
         }
     }
@@ -540,7 +420,19 @@ mod tests {
             if prefix == crate::EVENTS_PREFIX && self.refuse_events.load(Ordering::SeqCst) {
                 return Err(Error::Backend("refused".into()));
             }
+            if prefix != crate::EVENTS_PREFIX && prefix != ORPHANS_PREFIX {
+                self.key_space_reads.fetch_add(1, Ordering::SeqCst);
+            }
             self.inner.range(prefix, after, limit, at)
+        }
+        fn owned_by(
+            &self,
+            owner: &str,
+            after: Option<&str>,
+            limit: usize,
+            at: u64,
+        ) -> crate::Result<Vec<String>> {
+            self.inner.owned_by(owner, after, limit, at)
         }
         fn commit(&self, expect: u64, batch: &[Write]) -> crate::Result<u64> {
             self.inner.commit(expect, batch)
@@ -560,33 +452,37 @@ mod tests {
             limit: usize,
             at: u64,
         ) -> crate::Result<Vec<(String, Version)>> {
-            self.scans.fetch_add(1, Ordering::SeqCst);
-            if self.refuse_scan.load(Ordering::SeqCst) {
-                return Err(Error::Backend("refused".into()));
-            }
+            self.key_space_reads.fetch_add(1, Ordering::SeqCst);
             self.inner.gc_range(after, limit, at)
+        }
+        fn range_outside(
+            &self,
+            skip: &[&str],
+            after: Option<&str>,
+            limit: usize,
+            at: u64,
+        ) -> crate::Result<Vec<(String, Version)>> {
+            self.key_space_reads.fetch_add(1, Ordering::SeqCst);
+            self.inner.range_outside(skip, after, limit, at)
         }
     }
 
     #[test]
-    fn a_failed_scan_still_trims_the_history_and_names_its_step() {
-        let clock = VirtualClock::new(10 * DAY_MS);
+    fn a_pass_with_nothing_queued_reads_no_key_page() {
+        let clock = VirtualClock::new(0);
         let c = open(Flaky::new(), &clock);
-        for i in 0..2_500 {
-            write(&c, &format!("rec/{i}"), &format!("old{i}"));
+        write(&c, "owners/o", "o");
+        for i in 0..2_000 {
+            let t = Txn::new().put(
+                &format!("rec/{i}"),
+                Object::new(json!(1)).with_owners(&["owners/o"]),
+            );
+            c.txn(&t, &Request::new(&format!("r{i}"), "t", "test.write")).unwrap();
         }
-        clock.advance(EVENT_WINDOW_MS + DAY_MS);
-        for i in 0..5 {
-            write(&c, &format!("new/{i}"), &format!("new{i}"));
-        }
-        c.backend().refuse_scan.store(true, Ordering::SeqCst);
-        let err = Controller::new(&c).tick(c.now_ms()).unwrap_err();
-        assert!(err.to_string().contains("scan: "), "{err}");
-        assert!(
-            matches!(&err, Error::Backend(m) if m.starts_with("scan: ")),
-            "{err:?}"
-        );
-        assert!(events(&c) < 2_505);
+        let before = c.backend().key_space_reads.load(Ordering::SeqCst);
+        let pass = Controller::new(&c).pass(c.now_ms());
+        assert!(pass.failed.is_empty() && pass.orphans.is_empty(), "{pass:?}");
+        assert_eq!(c.backend().key_space_reads.load(Ordering::SeqCst), before);
     }
 
     #[test]
@@ -603,55 +499,5 @@ mod tests {
             "{err:?}"
         );
         assert!(c.backend().compacted().unwrap() > 0);
-    }
-
-    #[test]
-    fn a_scan_runs_once_per_cadence_while_trim_runs_every_pass() {
-        let clock = VirtualClock::new(10 * DAY_MS);
-        let c = open(Flaky::new(), &clock);
-        for i in 0..2_500 {
-            write(&c, &format!("rec/{i}"), &format!("old{i}"));
-        }
-        clock.advance(EVENT_WINDOW_MS + DAY_MS);
-        write(&c, "new/0", "new0");
-        let gc = Controller::with_scan_every(&c, 300_000);
-        let now = c.now_ms();
-        let first = gc.pass(now);
-        let scans = c.backend().scans.load(Ordering::SeqCst);
-        assert!(scans > 0 && first.failed.is_empty());
-        let second = gc.pass(now);
-        assert_eq!(
-            c.backend().scans.load(Ordering::SeqCst),
-            scans,
-            "no scan inside the cadence"
-        );
-        assert!(second.trimmed > 0);
-        gc.pass(now + 300_000);
-        assert!(
-            c.backend().scans.load(Ordering::SeqCst) > scans,
-            "the cadence elapsed"
-        );
-    }
-
-    #[test]
-    fn a_failed_scan_is_one_failure_and_is_retried_at_the_cadence_not_every_pass() {
-        let clock = VirtualClock::new(10 * DAY_MS);
-        let c = open(Flaky::new(), &clock);
-        write(&c, "rec/a", "a");
-        c.backend().refuse_scan.store(true, Ordering::SeqCst);
-        let gc = Controller::with_scan_every(&c, 300_000);
-        let now = c.now_ms();
-        let first = gc.pass(now);
-        assert_eq!(first.failed.len(), 1);
-        assert_eq!(first.failed[0].step, "scan");
-        let scans = c.backend().scans.load(Ordering::SeqCst);
-        gc.pass(now);
-        assert_eq!(
-            c.backend().scans.load(Ordering::SeqCst),
-            scans,
-            "a failed scan waits out the cadence"
-        );
-        gc.pass(now + 300_000);
-        assert!(c.backend().scans.load(Ordering::SeqCst) > scans);
     }
 }
