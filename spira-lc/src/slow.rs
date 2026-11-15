@@ -557,6 +557,15 @@ mod tests {
     }
 
     #[test]
+    fn a_too_old_answer_with_no_audit_record_counts_without_a_lag_in_ms() {
+        past_read_done("watch", "no-record-probe", None, Some(3), None, true);
+        let c = COUNTERS.lock().unwrap();
+        let got = series_since(&c, &BTreeMap::new(), std::time::SystemTime::now());
+        let mine = |n: &str| got.iter().filter(|s| s.name == n && s.labels.contains(&("caller".into(), "no-record-probe".into()))).count();
+        assert_eq!((mine("spira_lc_store_too_old"), mine("spira_lc_store_lag_revs_max"), mine("spira_lc_store_lag_ms_max")), (1, 1, 0));
+    }
+
+    #[test]
     fn a_past_read_made_during_a_push_survives_it() {
         let key = ("v".to_string(), "c".to_string(), "-".to_string());
         let sent = BTreeMap::from([(key.clone(), Past { too_old: 1, max_revs: Some(9), max_ms: Some(4) })]);
