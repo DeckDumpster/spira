@@ -1904,10 +1904,12 @@ fn open_timed(
         }
         match w.lc.bead_row(&m.id) {
             None => skips.push(skip(&m.id, "no-row", format!("{}: no lifecycle row (spira-lc could not say) — not admitted", m.id))),
-            // SUBMITTED or CERTIFIED (law-a-round-is-feature-first-then-catch-all): the round's own
-            // full suite is the certification, so a submitted tip need not pass a per-bead gate first.
-            Some(r) if r.state != "CERTIFIED" && r.state != "SUBMITTED" => {
-                skips.push(skip(&m.id, "state", format!("{}: lifecycle state={} (not SUBMITTED or CERTIFIED) — not admitted", m.id, r.state)))
+            Some(r) if r.state == "SUBMITTED" => {
+                let tip = r.tip.clone().unwrap_or_default();
+                skips.push(skip(&m.id, "submitted", format!("{}: SUBMITTED — its gate has not passed at {tip}; not admitted", m.id)))
+            }
+            Some(r) if r.state != "CERTIFIED" => {
+                skips.push(skip(&m.id, "state", format!("{}: lifecycle state={} (not CERTIFIED) — not admitted", m.id, r.state)))
             }
             Some(r) => match r.tip.clone().filter(|t| !t.is_empty()) {
                 Some(tip) if r.ejected_red_tip.as_deref() == Some(tip.as_str()) => {

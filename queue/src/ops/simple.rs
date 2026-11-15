@@ -707,7 +707,7 @@ pub(super) fn is_full_sha(s: &str) -> bool {
 }
 
 /// The concierge's door for a hand-built fix: record the new tip and move a manually held REWORK
-/// row, or an unclaimed READY one, to SUBMITTED, so the round's full suite certifies it where the host gate cannot.
+/// row, or an unclaimed READY one, to SUBMITTED, where its own gate certifies it before it joins a round.
 #[allow(clippy::too_many_arguments)]
 pub fn resubmit(
     w: &World,
@@ -854,7 +854,7 @@ pub fn resubmit(
     for note in &round_only_notes {
         w.out(note);
     }
-    w.out(format!("queue.sh resubmit: {id} re-tipped to {tip}, {} -> SUBMITTED; admit it with `queue round open --members {id}:{tip}` — the round certifies it", row.state));
+    w.out(format!("queue.sh resubmit: {id} re-tipped to {tip}, {} -> SUBMITTED; its gate certifies it, and it joins the next round once CERTIFIED", row.state));
     OK
 }
 

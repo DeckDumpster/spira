@@ -208,7 +208,7 @@ mod tests {
     fn member(b: &Bench, id: &str) {
         b.seed(
             &format!("lifecycle/{id}"),
-            json!({ "repo": "r", "state": "SUBMITTED", "tip": format!("{id}-t") }),
+            json!({ "repo": "r", "state": "CERTIFIED", "tip": format!("{id}-t") }),
         );
     }
 

@@ -264,7 +264,7 @@ fn riding(stack: &Stack, rounds: &[Live]) -> BTreeMap<String, String> {
         .collect()
 }
 
-/// The pool: the repo's lifecycle records SUBMITTED or CERTIFIED at their live tip, unheld, not
+/// The pool: the repo's lifecycle records CERTIFIED at their live tip, unheld, not
 /// ejected red at that tip, and in no live round.
 fn pool(p: &Ports, repo: &str, rounds: &[Live]) -> Result<Vec<core::Member>, Refusal> {
     let in_rounds: BTreeSet<&str> = rounds
@@ -326,7 +326,7 @@ fn held(holds: Option<&serde_json::Value>) -> bool {
 
 fn pooled(id: &str, r: &serde_json::Value, repo: &str) -> Option<core::Member> {
     let s = |k: &str| r.get(k).and_then(|v| v.as_str());
-    if s("repo") != Some(repo) || !state_is(r, &["SUBMITTED", "CERTIFIED"]) {
+    if s("repo") != Some(repo) || !state_is(r, &["CERTIFIED"]) {
         return None;
     }
     let tip = s("tip").filter(|t| !t.is_empty())?;

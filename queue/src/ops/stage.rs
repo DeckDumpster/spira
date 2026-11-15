@@ -65,8 +65,13 @@ fn admit(
                 "{}: no lifecycle row (spira-lc could not say) — not admitted",
                 m.id
             )),
-            Some(r) if r.state != "CERTIFIED" && r.state != "SUBMITTED" => skips.push(format!(
-                "{}: lifecycle state={} (not SUBMITTED or CERTIFIED) — not admitted",
+            Some(r) if r.state == "SUBMITTED" => skips.push(format!(
+                "{}: SUBMITTED — its gate has not passed at {}; not admitted",
+                m.id,
+                r.tip.as_deref().unwrap_or_default()
+            )),
+            Some(r) if r.state != "CERTIFIED" => skips.push(format!(
+                "{}: lifecycle state={} (not CERTIFIED) — not admitted",
                 m.id, r.state
             )),
             Some(r) => match r.tip.filter(|t| !t.is_empty()) {

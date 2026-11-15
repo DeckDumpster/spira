@@ -1969,22 +1969,53 @@ fn the_orphan_sweep_is_told_which_rounds_have_a_live_leg() {
 }
 
 #[test]
-fn open_admits_a_submitted_member_its_full_suite_certifies() {
-    // law-a-round-is-feature-first-then-catch-all: a round takes SUBMITTED beads directly.
+fn open_refuses_a_round_naming_a_submitted_member_whose_gate_has_not_passed() {
     let t = round_world();
     t.lc_row("sp-s", "SUBMITTED", "ts", 100);
     assert_eq!(
         t.run(&["round", "open", "--members", "sp-a,sp-s"]),
+        1,
+        "{}",
+        t.err()
+    );
+    let e = t.err();
+    assert!(
+        e.contains("sp-s: SUBMITTED — its gate has not passed at ts; not admitted"),
+        "{e}"
+    );
+    assert!(!t.lc.has("cut") && !t.qfile("round").exists());
+}
+
+#[test]
+fn open_admits_a_certified_member() {
+    let t = round_world();
+    t.lc_row("sp-c", "CERTIFIED", "tc", 100);
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a,sp-c"]),
         0,
         "{}",
         t.err()
     );
-    let o = t.out();
-    assert!(
-        o.contains("sp-s:ts") && !o.contains("sp-s: lifecycle state"),
-        "{o}"
-    );
+    assert!(t.out().contains("sp-c:tc"), "{}", t.out());
     assert!(t.lc.has("cut"), "the round is recorded as a batch");
+}
+
+#[test]
+fn open_cuts_no_batch_for_a_lone_submitted_member() {
+    let t = round_world();
+    t.lc_row("sp-s", "SUBMITTED", "ts", 100);
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-s"]),
+        1,
+        "{}",
+        t.err()
+    );
+    let e = t.err();
+    assert!(
+        e.contains("sp-s: SUBMITTED — its gate has not passed at ts"),
+        "{e}"
+    );
+    assert!(!t.lc.has("cut") && !t.qfile("round").exists());
 }
 
 pub(super) fn file_gate_verdict(t: &T, id: &str, tip: &str, rc: i32) {
@@ -2026,10 +2057,10 @@ fn open_skips_a_member_at_a_tip_that_already_went_red_in_a_batch() {
 }
 
 #[test]
-fn open_skips_a_submitted_member_whose_gate_is_fail_at_its_current_tip_and_only_that() {
+fn open_skips_a_certified_member_whose_gate_is_fail_at_its_current_tip_and_only_that() {
     let t = round_world();
     for id in ["sp-f", "sp-old", "sp-base", "sp-nov"] {
-        t.lc_row(id, "SUBMITTED", &format!("t{id}"), 100);
+        t.lc_row(id, "CERTIFIED", &format!("t{id}"), 100);
     }
     file_gate_verdict(&t, "sp-f", "tsp-f", 1);
     file_gate_verdict(&t, "sp-old", "an-older-tip", 1);
@@ -4009,6 +4040,25 @@ fn stage_refuses_without_an_open_round_and_skips_the_open_rounds_own_members() {
 }
 
 #[test]
+fn stage_skips_a_submitted_member_whose_gate_has_not_passed() {
+    let t = round_world();
+    t.lc_row("sp-s", "SUBMITTED", "ts", 100);
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a:ta"]),
+        0,
+        "{}",
+        t.err()
+    );
+    assert_eq!(t.run(&["round", "stage", "--members", "sp-s:ts"]), 1);
+    let o = format!("{}{}", t.out(), t.err());
+    assert!(
+        o.contains("sp-s: SUBMITTED — its gate has not passed at ts; not admitted"),
+        "{o}"
+    );
+    assert!(!t.qfile("round-staged").exists());
+}
+
+#[test]
 fn fences_red_on_the_staged_head_stage_nothing() {
     let t = round_world();
     assert_eq!(
@@ -5233,6 +5283,22 @@ fn a_rework_bead_held_manual_is_retipped_and_admitted_to_a_round() {
         t.lc.calls.borrow()
     );
 
+    t.run(&["round", "open", "--members", &format!("sp-a:{T_FIX}")]);
+    assert!(
+        t.err().contains("SUBMITTED — its gate has not passed"),
+        "{}",
+        t.err()
+    );
+    for r in
+        t.lc.rows
+            .borrow_mut()
+            .as_mut()
+            .unwrap()
+            .iter_mut()
+            .filter(|r| r.bead_id == "sp-a")
+    {
+        r.state = "CERTIFIED".into();
+    }
     assert_eq!(
         t.run(&["round", "open", "--members", &format!("sp-a:{T_FIX}")]),
         0,

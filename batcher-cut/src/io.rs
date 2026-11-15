@@ -276,7 +276,7 @@ fn lc_answer(
 }
 
 /// The SUBMITTED and CERTIFIED lifecycle rows, from one `spira-lc list --state` per repo step: the
-/// pool and the sifted tips are filters of it. A row outside those states is read by id through
+/// sifted tips need both states; the pool takes only the CERTIFIED ones. A row outside those states is read by id through
 /// `lc_rows_of`, never by listing the store.
 pub fn lc_rows(env: &Env) -> Result<Vec<serde_json::Value>, String> {
     if let Some(views) = store_view::shared() {
@@ -310,6 +310,10 @@ pub fn lc_rows_of(env: &Env, ids: &[String]) -> Result<Vec<serde_json::Value>, S
 
 pub fn lc_forget(env: &Env) {
     *env.lc_rows.lock().unwrap_or_else(|e| e.into_inner()) = None;
+}
+
+fn in_pool_state(r: &serde_json::Value) -> bool {
+    r.get("state").and_then(|s| s.as_str()) == Some("CERTIFIED")
 }
 
 fn in_pool_states(r: &serde_json::Value) -> bool {
@@ -378,7 +382,7 @@ fn prereq_is_finished(env: &Env, id: &str) -> bool {
 }
 
 // ---------------------------------------------------------------------------------------
-// The round pool: the lifecycle machine's unheld SUBMITTED and CERTIFIED beads, narrowed to this repo, with
+// The round pool: the lifecycle machine's unheld CERTIFIED beads, narrowed to this repo, with
 // title/priority from the bead store and express from the lifecycle row.
 // ---------------------------------------------------------------------------------------
 
@@ -396,54 +400,54 @@ fn holds_empty(r: &serde_json::Value) -> bool {
 type PoolRow = (String, String, u64, bool, Vec<String>);
 
 fn read_pool(env: &Env) -> Result<Vec<PoolRow>, String> {
-    let mut pool: Vec<PoolRow> = Vec::new();
-    {
-        let rows = lc_rows(env)?;
-        pool.extend(
-            rows.iter()
-                .filter(|r| in_pool_states(r))
-                .filter(|r| holds_empty(r))
-                .filter_map(|r| {
-                    let id = r.get("bead_id")?.as_str()?.to_string();
-                    let tip = r
-                        .get("tip")
-                        .and_then(|t| t.as_str())
-                        .unwrap_or("none")
-                        .to_string();
-                    if r.get("ejected_red_tip").and_then(|t| t.as_str()) == Some(tip.as_str()) {
-                        return None;
-                    }
-                    let epoch = [r.get("since"), r.get("updated_at")]
-                        .into_iter()
-                        .flatten()
-                        .find_map(|v| match v {
-                            serde_json::Value::Number(n) => n.as_u64(),
-                            serde_json::Value::String(t) => t.parse().ok(),
-                            _ => None,
-                        })
-                        .unwrap_or(0);
-                    let express = match r.get("express") {
-                        Some(serde_json::Value::Bool(b)) => *b,
-                        Some(serde_json::Value::Number(n)) => n.as_u64() == Some(1),
-                        Some(serde_json::Value::String(t)) => matches!(t.as_str(), "1" | "true"),
-                        _ => false,
-                    };
-                    let blocked_by = r
-                        .get("blocked_by")
-                        .and_then(|b| b.as_array())
-                        .map(|a| {
-                            a.iter()
-                                .filter_map(|x| x.as_str().map(str::to_string))
-                                .collect()
-                        })
-                        .unwrap_or_default();
-                    Some((id, tip, epoch, express, blocked_by))
-                }),
-        );
-    }
+    Ok(pool_rows(&lc_rows(env)?))
+}
+
+fn pool_rows(rows: &[serde_json::Value]) -> Vec<PoolRow> {
+    let mut pool: Vec<PoolRow> = rows
+        .iter()
+        .filter(|r| in_pool_state(r))
+        .filter(|r| holds_empty(r))
+        .filter_map(|r| {
+            let id = r.get("bead_id")?.as_str()?.to_string();
+            let tip = r
+                .get("tip")
+                .and_then(|t| t.as_str())
+                .unwrap_or("none")
+                .to_string();
+            if r.get("ejected_red_tip").and_then(|t| t.as_str()) == Some(tip.as_str()) {
+                return None;
+            }
+            let epoch = [r.get("since"), r.get("updated_at")]
+                .into_iter()
+                .flatten()
+                .find_map(|v| match v {
+                    serde_json::Value::Number(n) => n.as_u64(),
+                    serde_json::Value::String(t) => t.parse().ok(),
+                    _ => None,
+                })
+                .unwrap_or(0);
+            let express = match r.get("express") {
+                Some(serde_json::Value::Bool(b)) => *b,
+                Some(serde_json::Value::Number(n)) => n.as_u64() == Some(1),
+                Some(serde_json::Value::String(t)) => matches!(t.as_str(), "1" | "true"),
+                _ => false,
+            };
+            let blocked_by = r
+                .get("blocked_by")
+                .and_then(|b| b.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default();
+            Some((id, tip, epoch, express, blocked_by))
+        })
+        .collect();
     pool.sort();
     pool.dedup_by(|a, b| a.0 == b.0);
-    Ok(pool)
+    pool
 }
 
 /// Beads that carry their commits into whatever stacks on them yet may not be batched
@@ -571,12 +575,12 @@ fn tip_current(tip: &str, id: &str, branches: &BTreeMap<String, String>) -> bool
     branches.get(id).map(String::as_str) == Some(tip)
 }
 
-/// The round pool for `repo`: every unheld SUBMITTED or CERTIFIED bead whose tip is still the
+/// The round pool for `repo`: every unheld CERTIFIED bead whose tip is still the
 /// live tip of `refs/heads/spira/<id>` in this repo's own checkout, with title/priority/
 /// with express read from the lifecycle row and the rest from one bulk `bd show`.
 ///
-/// Membership is the lifecycle machine's SUBMITTED/CERTIFIED state with no hold, and no gate
-/// verdict: the round's full suite is the trial. bd's status and the retired submitted label
+/// Membership is the lifecycle machine's CERTIFIED state with no hold: the bead's own gate has
+/// passed before it joins a round. bd's status and the retired submitted label
 /// decide nothing. The sp-1346p shape — a stale
 /// record of an incident, an ask, a test bead or work already landed — is a row the machine
 /// must not hold CERTIFIED (drop it there), not one this reader second-guesses from bd.
@@ -4465,6 +4469,24 @@ mod pool_parity_tests {
         assert!(!lock_busy(Some(1)));
         assert!(!lock_busy(Some(0)));
         assert!(!lock_busy(None));
+    }
+
+    #[test]
+    fn the_pool_leaves_out_a_submitted_unheld_bead_whose_gate_has_not_passed() {
+        let rows = vec![
+            serde_json::json!({"bead_id": "sp-s", "state": "SUBMITTED", "tip": "ts", "holds": []}),
+        ];
+        assert!(pool_rows(&rows).is_empty());
+    }
+
+    #[test]
+    fn the_pool_takes_a_certified_unheld_bead() {
+        let rows = vec![
+            serde_json::json!({"bead_id": "sp-c", "state": "CERTIFIED", "tip": "tc", "holds": []}),
+        ];
+        let pool = pool_rows(&rows);
+        assert_eq!(pool.len(), 1);
+        assert_eq!((pool[0].0.as_str(), pool[0].1.as_str()), ("sp-c", "tc"));
     }
 
     #[test]

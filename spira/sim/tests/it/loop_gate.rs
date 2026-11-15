@@ -242,7 +242,7 @@ fn dump(r: &Run, g: &Gate) -> String {
 /// (`red_then_pass_landed`).
 #[test]
 fn gate_verdict_red_a_failed_gate_returns_the_bead_and_its_reworked_tip_passes_and_lands() {
-    let script = Script { beads: vec![Bead::new("sp-gv01", 30_000)], max_concurrent: 1, stopped_until: 40 * MIN, until: 55 * MIN, ..Script::default() };
+    let script = Script { beads: vec![Bead::new("sp-gv01", 30_000)], max_concurrent: 1, stopped_until: 40 * MIN, own_gate: true, until: 55 * MIN, ..Script::default() };
     let (r, s) = run(41, script, &[("sp-gv01", &[(1, "gate: VERDICT=FAIL reason=suite-red suite=sim-planted.sh"), PASS])]);
     let g = gate(&s);
     println!("gate-verdict-red: wall {:?}", r.wall);
@@ -265,7 +265,7 @@ fn gate_verdict_red_a_failed_gate_returns_the_bead_and_its_reworked_tip_passes_a
 /// `infra_then_pass_landed`).
 #[test]
 fn gate_verdict_silent_a_gate_without_a_verdict_leaves_the_bead_submitted_and_the_next_pass_lands_it() {
-    let script = Script { beads: vec![Bead::new("sp-gv02", 30_000), Bead::new("sp-gv03", 30_000)], max_concurrent: 2, stopped_until: 25 * MIN, until: 40 * MIN, ..Script::default() };
+    let script = Script { beads: vec![Bead::new("sp-gv02", 30_000), Bead::new("sp-gv03", 30_000)], max_concurrent: 2, stopped_until: 25 * MIN, own_gate: true, until: 40 * MIN, ..Script::default() };
     let answers: &[(&str, &[(i32, &str)])] = &[("sp-gv02", &[(75, "gate: VERDICT=NO_VERDICT reason=timeout"), PASS]), ("sp-gv03", &[(75, "gate: VERDICT=NO_VERDICT reason=harness-fault"), PASS])];
     let (r, s) = run(42, script, answers);
     let g = gate(&s);
