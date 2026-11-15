@@ -6106,6 +6106,22 @@ fn rework_returns_an_unbatched_submitted_bead_and_refuses_a_round_member() {
     assert_eq!(t.lc.bead_state("sp-c").unwrap().0, "REWORK");
 }
 
+#[test]
+fn a_successful_rework_records_a_send_back_fact_and_a_refused_one_none() {
+    let t = round_world();
+    t.lc.rows.borrow_mut().as_mut().unwrap().retain(|r| r.bead_id != "sp-c");
+    t.lc_row("sp-c", "SUBMITTED", "tc", 100);
+    let reason = "not ok 2 - \"a spike\"\nwanted [1] got [0]";
+    assert_eq!(t.run(&["rework", "sp-c", "--by=dwarf-x", &format!("--reason={reason}")]), 1);
+    assert!(!t.lc.has("fact sp-c send-back"), "{:?}", t.lc.calls.borrow());
+    assert_eq!(t.run(&["rework", "sp-c", "--by=concierge", &format!("--reason={reason}")]), 0, "{}", t.err());
+    let calls = t.lc.calls.borrow();
+    let facts: Vec<&String> = calls.iter().filter(|c| c.starts_with("fact sp-c send-back concierge [")).collect();
+    assert_eq!(facts.len(), 1, "{calls:?}");
+    let cause = facts[0].strip_prefix("fact sp-c send-back concierge [").unwrap().strip_suffix(']').unwrap();
+    assert_eq!(spira_config::send_back::parse(cause), ("tc".to_string(), reason.to_string()));
+}
+
 fn proof_run(t: &T) -> std::path::PathBuf {
     t.s().run.clone()
 }

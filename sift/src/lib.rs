@@ -61,6 +61,8 @@ pub trait Store {
 pub trait Acts {
     fn note(&mut self, id: &str, text: &str) -> Result<(), String>;
     fn gate_red(&mut self, id: &str, tip: &str, reason: &str) -> Result<(), String>;
+    /// Records `text` as the bead's `send-back` fact, the text its next brief leads with.
+    fn send_back(&mut self, id: &str, tip: &str, text: &str) -> Result<(), String>;
     fn supersede(&mut self, id: &str, keeper: &str) -> Result<(), String>;
     /// Records that `tip` passed, on the lifecycle store.
     fn pass(&mut self, id: &str, tip: &str) -> Result<(), String>;
@@ -248,6 +250,9 @@ pub fn screen(probe: &dyn Probe, store: &dyn Store, acts: &mut dyn Acts, pool: &
         match acts.gate_red(&c.id, &c.tip, findings[0].reason) {
             Ok(()) => {
                 out.sent_back.push(c.id.clone());
+                if let Err(e) = acts.send_back(&c.id, &c.tip, &note) {
+                    out.errors.push(format!("sift: {} send-back fact not recorded ({e})", c.id));
+                }
                 if !conflict {
                     if let Err(e) = store.record_send_back(&c.id, &c.tip, findings[0].reason) {
                         out.errors.push(format!("sift: {} send-back count not recorded ({e})", c.id));

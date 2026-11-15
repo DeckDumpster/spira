@@ -100,6 +100,10 @@ impl Acts for Rec {
         self.log.push(format!("red {id} {tip} {reason}"));
         Ok(())
     }
+    fn send_back(&mut self, id: &str, tip: &str, text: &str) -> Result<(), String> {
+        self.log.push(format!("send-back {id} {tip}: {text}"));
+        Ok(())
+    }
     fn supersede(&mut self, id: &str, keeper: &str) -> Result<(), String> {
         self.log.push(format!("supersede {id} by {keeper}"));
         Ok(())
@@ -360,6 +364,9 @@ fn a_pass_the_store_refuses_is_not_a_sifted_candidate() {
         }
         fn gate_red(&mut self, id: &str, tip: &str, reason: &str) -> Result<(), String> {
             self.0.gate_red(id, tip, reason)
+        }
+        fn send_back(&mut self, id: &str, tip: &str, text: &str) -> Result<(), String> {
+            self.0.send_back(id, tip, text)
         }
         fn supersede(&mut self, id: &str, keeper: &str) -> Result<(), String> {
             self.0.supersede(id, keeper)

@@ -327,7 +327,7 @@ fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
 
 /// A minimal ISO-8601 timestamp parser — `YYYY-MM-DDTHH:MM:SS[.ffffff](Z|+HH:MM|-HH:MM)` —
 /// matching what `datetime.fromisoformat(ts.replace("Z", "+00:00"))` accepted in bash.
-fn parse_iso(s: &str) -> Option<i64> {
+pub(crate) fn parse_iso(s: &str) -> Option<i64> {
     let b = s.trim().as_bytes();
     if b.len() < 19 {
         return None;

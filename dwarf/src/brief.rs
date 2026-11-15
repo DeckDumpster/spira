@@ -425,6 +425,7 @@ pub struct TaskFacts<'a> {
     pub deadline: &'a str,
     pub description: &'a str,
     pub notes: &'a str,
+    pub history: &'a str,
     pub prior: &'a str,
 }
 
@@ -433,12 +434,21 @@ pub fn static_task(f: &TaskFacts) -> String {
         "# {}: {}\n\nRepository {}, worktree {}, branch {}, landing ref {}.\nDeadline {}\n\n{}\n",
         f.id, f.title, f.repo, f.worktree, f.branch, f.landing_ref, f.deadline, f.description.trim_end_matches('\n')
     );
-    for (heading, body) in [("Notes", f.notes), ("Prior attempt", f.prior)] {
-        if !body.trim().is_empty() {
-            s.push_str(&format!("\n## {heading}\n{}\n", body.trim_end_matches('\n')));
-        }
+    if !f.notes.trim().is_empty() {
+        s.push_str(&format!("\n## Notes\n{}\n", f.notes.trim_end_matches('\n')));
+    }
+    if !f.history.trim().is_empty() {
+        s.push_str(&format!("\n{}\n", f.history.trim_end_matches('\n')));
+    }
+    if !f.prior.trim().is_empty() {
+        s.push_str(&format!("\n## Prior attempt\n{}\n", f.prior.trim_end_matches('\n')));
     }
     s
+}
+
+/// The builder's task prompt: the send-back sections, then the task.
+pub fn static_prompt(lead: &str, f: &TaskFacts) -> String {
+    format!("{lead}{}", static_task(f))
 }
 
 /// The newest `max_chars` characters of the bead's notes.
@@ -465,19 +475,87 @@ pub fn fast_tier_red_brief(digest: &str) -> String {
     format!("## Your last closeout failed — fix this first\n\n{d}\n\n{repro}\n\n")
 }
 
-/// The failure that ejected the bead, as the first section of a rework brief; empty when none
-/// was recorded or it judged a tip that is none of `heads` (the branch at claim, before the
-/// rebase, and after it).
-pub fn eject_failure_brief(digest: &str, heads: &[&str]) -> String {
-    let d = digest.trim();
-    if d.is_empty() {
+/// One send-back of a bead: a gate or round `eject-failure`, or a `send-back` fact.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SendBack {
+    pub actor: String,
+    pub at_epoch: i64,
+    pub tip: String,
+    pub text: String,
+}
+
+impl SendBack {
+    pub fn from_fact(f: crate::checkpoint::Fact) -> Option<Self> {
+        let (tip, text) = match f.kind.as_str() {
+            spira_config::ejection::KIND => (spira_config::ejection::parse(&f.cause).tip, f.cause.trim().to_string()),
+            spira_config::send_back::KIND => {
+                let (tip, reason) = spira_config::send_back::parse(&f.cause);
+                (tip, reason.trim_end().to_string())
+            }
+            _ => return None,
+        };
+        Some(Self { actor: f.actor, at_epoch: f.at_epoch, tip, text })
+    }
+}
+
+const EARLIER_SENDS_MAX: usize = 5;
+
+fn first_line(t: &str) -> &str {
+    t.trim().lines().next().unwrap_or("")
+}
+
+/// Why the bead was sent back, as the first section of its brief: the newest send-back that
+/// judged one of `heads` (the branch at claim, before the rebase, and after it), verbatim,
+/// then the older ones. Empty when none judged a head.
+pub fn send_back_brief(sends: &[SendBack], amendments: &[spira_config::amendment::Record], heads: &[&str]) -> String {
+    let mut sends: Vec<&SendBack> = sends.iter().filter(|s| !s.text.trim().is_empty()).collect();
+    sends.sort_by_key(|s| std::cmp::Reverse(s.at_epoch));
+    let Some(at) = sends.iter().position(|s| heads.iter().any(|h| !h.is_empty() && *h == s.tip)) else { return String::new() };
+    let lead = sends[at];
+    let mut out = format!(
+        "## Sent back — the reason, verbatim\n\nBy {} at {} on tip {}:\n\n{}\n\nFull output of every step that judged you: `work logs`.\n\nThis is the evidence the sender held; start from it, not from a search of the box.\n\n",
+        lead.actor,
+        crate::util::iso_utc(lead.at_epoch),
+        lead.tip,
+        lead.text.trim_end()
+    );
+    let earlier: Vec<&&SendBack> = sends[at + 1..].iter().take(EARLIER_SENDS_MAX).collect();
+    if !earlier.is_empty() {
+        out.push_str("### Earlier send-backs\n\n");
+        for e in earlier {
+            out.push_str(&format!("- {} {} on tip {}: {}\n", e.actor, crate::util::iso_utc(e.at_epoch), e.tip, first_line(&e.text)));
+        }
+        out.push('\n');
+    }
+    if amendments.iter().map(|a| a.created).max().is_some_and(|newest| lead.at_epoch > newest) {
+        out.push_str("This send-back is newer than every amendment on this bead; it is the task, and the amendments below are history.\n\n");
+    }
+    out
+}
+
+/// The amendments already answered, as history: not instructions. Empty when none was answered.
+pub fn amendment_history_brief(amendments: &[spira_config::amendment::Record]) -> String {
+    use spira_config::amendment::State;
+    let rows: Vec<String> = amendments
+        .iter()
+        .filter(|a| a.state != State::Pending)
+        .map(|a| {
+            let state = match &a.state {
+                State::Accepted => "accepted".to_string(),
+                State::Declined(why) => format!("declined ({why})"),
+                State::Enforced => "enforced".to_string(),
+                State::Pending => unreachable!(),
+            };
+            format!("- {} by {}, {}, {state}: {}", a.id, a.amender, crate::util::iso_utc(a.created), first_line(&a.text))
+        })
+        .collect();
+    if rows.is_empty() {
         return String::new();
     }
-    let tip = spira_config::ejection::parse(d).tip;
-    if !heads.iter().any(|h| !h.is_empty() && *h == tip) {
-        return String::new();
-    }
-    format!("## You were ejected — the failure, verbatim\n\n{d}\n\nFull output of every step that judged you: `work logs`.\n\nThis is the evidence the gate or the round held; start from it, not from a search of the box.\n\n")
+    format!(
+        "## Amendments — history, already answered\n\nThese were answered in an earlier session. An answered amendment is merged into the description under `--- appended <date> ---`, and a \"Live amendment … awaiting acknowledgement\" note above is history once answered: neither is an open instruction.\n\n{}\n",
+        rows.join("\n")
+    )
 }
 
 pub fn thrash_banner(streak: &str, last: &str) -> String {
@@ -734,6 +812,7 @@ mod tests {
 
     fn facts<'a>(notes: &'a str, prior: &'a str) -> TaskFacts<'a> {
         TaskFacts {
+            history: "",
             id: "sp-a",
             title: "Do the thing",
             repo: "spira",
@@ -894,17 +973,72 @@ mod tests {
         assert_eq!(spent_wall(None, call_start), None);
     }
 
+    fn send(actor: &str, at: i64, tip: &str, text: &str) -> SendBack {
+        SendBack { actor: actor.into(), at_epoch: at, tip: tip.into(), text: text.into() }
+    }
+
+    fn amendment(id: &str, created: i64, state: spira_config::amendment::State) -> spira_config::amendment::Record {
+        spira_config::amendment::Record { id: id.into(), bead: "sp-a".into(), amender: "operator".into(), text: "reword the commit\nmore".into(), created, deadline: created + 600, state }
+    }
+
     #[test]
     fn an_eject_brief_leads_with_the_test_location_and_output_and_is_empty_without_one() {
         let d = spira_config::ejection::digest("aaa", &[], "---- t::boom stdout ----\nthread 't::boom' panicked at x/y.rs:7:1:\nit broke\n\nfailures:\n");
-        let b = eject_failure_brief(&d, &["aaa"]);
-        assert!(b.starts_with("## You were ejected") && b.contains("t::boom at x/y.rs:7") && b.contains("it broke"), "{b}");
+        let one = |tip: &str| vec![send("batcher", 100, &spira_config::ejection::parse(tip).tip, tip)];
+        let b = send_back_brief(&one(&d), &[], &["aaa"]);
+        assert!(b.starts_with("## Sent back") && b.contains("t::boom at x/y.rs:7") && b.contains("it broke"), "{b}");
         assert!(b.contains("`work logs`"), "the brief names the reader of the full output: {b}");
-        assert_eq!(eject_failure_brief(&d, &["bbb"]), "", "a red that judged another tip says nothing about this one");
-        assert!(eject_failure_brief(&d, &["aaa", "bbb"]).starts_with("## You were ejected"), "judged before the rebase");
-        assert_eq!(eject_failure_brief(&d, &["ccc", "bbb"]), "");
-        assert_eq!(eject_failure_brief(&d, &["", "bbb"]), "");
-        assert_eq!(eject_failure_brief("  \n", &["aaa", "bbb"]), "");
+        assert_eq!(send_back_brief(&one(&d), &[], &["bbb"]), "", "a red that judged another tip says nothing about this one");
+        assert!(send_back_brief(&one(&d), &[], &["aaa", "bbb"]).starts_with("## Sent back"), "judged before the rebase");
+        assert_eq!(send_back_brief(&one(&d), &[], &["ccc", "bbb"]), "");
+        assert_eq!(send_back_brief(&one(&d), &[], &["", "bbb"]), "");
+        assert_eq!(send_back_brief(&[send("batcher", 1, "aaa", "  \n")], &[], &["aaa", "bbb"]), "");
+    }
+
+    #[test]
+    fn a_rework_after_an_accepted_amendment_leads_with_its_reason_and_demotes_the_amendment() {
+        let reason = "run both suites:\n- test-spike.sh: 'not ok 2 - a spike bead is in the spike's partition / wanted [1] got [0]'\n- test-sim.sh: 'not ok 1 - x exits 0 in 33s'";
+        let am = [amendment("am-1", 1_000, spira_config::amendment::State::Accepted)];
+        let b = send_back_brief(&[send("concierge", 2_000, "aaa", reason)], &am, &["aaa"]);
+        assert!(b.starts_with("## Sent back — the reason, verbatim"), "{b}");
+        assert!(b.contains(reason) && b.contains("concierge") && b.contains(&crate::util::iso_utc(2_000)) && b.contains("aaa"), "{b}");
+        assert!(b.contains("newer than every amendment on this bead; it is the task, and the amendments below are history"), "{b}");
+        let h = amendment_history_brief(&am);
+        assert!(h.starts_with("## Amendments — history, already answered") && h.contains("am-1") && h.contains("accepted") && h.contains("reword the commit") && !h.contains("more"), "{h}");
+        let p = static_prompt(&b, &TaskFacts { history: &h, ..facts("n", "") });
+        assert!(p.starts_with("## Sent back — the reason, verbatim"), "{p}");
+        assert!(p.find("## Notes").unwrap() < p.find("## Amendments — history").unwrap(), "{p}");
+        let amendments_at = p.find("am-1").unwrap();
+        assert!(amendments_at > p.find(reason).unwrap(), "the amendment is read after the send-back");
+        assert!(!send_back_brief(&[send("concierge", 500, "aaa", reason)], &am, &["aaa"]).contains("newer than every amendment"));
+    }
+
+    #[test]
+    fn every_sender_renders_through_one_section_newest_first() {
+        let d = spira_config::ejection::digest("aaa", &[], "---- t::boom stdout ----\nboom\n\nfailures:\n");
+        let sends = [
+            send("batcher", 100, "aaa", &d),
+            send("operator", 300, "aaa", "operator says no\nsecond line"),
+            send("sift", 200, "aaa", "Sift sent this back\n- [no-rebase] x"),
+        ];
+        let b = send_back_brief(&sends, &[], &["aaa"]);
+        assert!(b.contains("By operator") && b.contains("operator says no\nsecond line"), "{b}");
+        let earlier = b.split("### Earlier send-backs").nth(1).unwrap();
+        assert!(earlier.find("sift").unwrap() < earlier.find("batcher").unwrap(), "{earlier}");
+        assert!(!earlier.contains("second line") && earlier.contains("Sift sent this back"), "{earlier}");
+        assert!(!b.contains("newer than every amendment"));
+        let other = [send("operator", 300, "zzz", "elsewhere"), send("sift", 200, "aaa", "mine")];
+        let b = send_back_brief(&other, &[], &["aaa"]);
+        assert!(b.contains("By sift") && !b.contains("elsewhere"), "a red on another tip is not the lead: {b}");
+    }
+
+    #[test]
+    fn pending_amendments_are_not_history() {
+        let am = [amendment("am-p", 1, spira_config::amendment::State::Pending)];
+        assert_eq!(amendment_history_brief(&am), "");
+        assert_eq!(amendment_history_brief(&[]), "");
+        let d = amendment_history_brief(&[amendment("am-d", 1, spira_config::amendment::State::Declined("no".into())), am[0].clone()]);
+        assert!(d.contains("am-d") && d.contains("declined (no)") && !d.contains("am-p"), "{d}");
     }
 
     #[test]

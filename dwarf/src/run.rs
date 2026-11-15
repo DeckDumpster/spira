@@ -217,13 +217,25 @@ impl<'a> Run<'a> {
         checkpoint::parse_facts(&o.stdout).into_iter().rev().find(|f| f.kind == crate::fast_tier::KIND).map(|f| f.cause).unwrap_or_default()
     }
 
-    /// The newest `eject-failure` fact of the bead: why the gate or a round sent it back.
-    pub fn last_eject_failure(&self) -> String {
-        let o = self.d.exec.exec("spira-lc", &s(&["facts", "--ids", &self.s.bead, "--kinds", spira_config::ejection::KIND]), None, None);
+    /// Every send-back of the bead, newest first: a gate or round `eject-failure`, or a `send-back`.
+    pub fn send_backs(&self) -> Vec<brief::SendBack> {
+        let kinds = format!("{},{}", spira_config::ejection::KIND, spira_config::send_back::KIND);
+        let o = self.d.exec.exec("spira-lc", &s(&["facts", "--ids", &self.s.bead, "--kinds", &kinds]), None, None);
         if !o.success() {
-            return String::new();
+            return Vec::new();
         }
-        checkpoint::parse_facts(&o.stdout).into_iter().rev().find(|f| f.kind == spira_config::ejection::KIND).map(|f| f.cause).unwrap_or_default()
+        let mut sends: Vec<brief::SendBack> = checkpoint::parse_facts(&o.stdout).into_iter().filter_map(brief::SendBack::from_fact).collect();
+        sends.sort_by_key(|f| f.at_epoch);
+        sends.reverse();
+        sends
+    }
+
+    /// The brief's leading sections: why the bead was sent back, then its last closeout failure.
+    fn lead_briefs(&self, work: &Path, head: &str) -> String {
+        let heads = [self.s.claim_head.as_str(), head];
+        let amendments = spira_config::amendment::all(&self.conf.s("SPIRA_MAIL"), &self.s.bead);
+        let red = self.last_fast_tier_red();
+        format!("{}{}", brief::send_back_brief(&self.send_backs(), &amendments, &heads), brief::fast_tier_red_brief(&crate::fast_tier::current_digest(self.d.git, &self.s.repo, work, &self.s.base_fq, &red)))
     }
 
     pub fn record_fact(&self, kind: &str, cause: &str) {
@@ -1132,7 +1144,11 @@ impl<'a> Run<'a> {
         let deadline_at = brief::call_deadline(self.rune.timeout_seconds, self.now());
         self.s.wall_deadline = deadline_at;
         let deadline = brief::deadline_brief(deadline_at, self.now(), deadline_at.and_then(util::local_hms_zone));
-        let task = brief::static_task(&brief::TaskFacts {
+        let head = self.d.git.git(work, &["rev-parse", "HEAD"]).stdout.trim().to_string();
+        let leads = self.lead_briefs(work, &head);
+        let amendments = spira_config::amendment::all(&self.conf.s("SPIRA_MAIL"), &bead);
+        let history = brief::amendment_history_brief(&amendments);
+        let task = brief::static_prompt(&leads, &brief::TaskFacts {
             id: &bead,
             title: &field("title"),
             repo: &self.s.repo_name,
@@ -1142,6 +1158,7 @@ impl<'a> Run<'a> {
             deadline: &deadline,
             description: &field("description"),
             notes: &notes,
+            history: &history,
             prior: &prior,
         });
         let _ = std::fs::write(self.run_dir().join(format!("{bead}.system.md")), sys);
@@ -1182,7 +1199,6 @@ impl<'a> Run<'a> {
         let keep = self.conf.i("SPIRA_BRIEF_KEEP_RECURRENCES").max(0) as usize;
         let max = self.conf.i("SPIRA_BRIEF_NOTES_MAX_CHARS").max(0) as usize;
         let mut body = brief::bound_bead_notes(&format!("{body}\n"), keep, max).trim_end_matches('\n').to_string();
-        let red = self.last_fast_tier_red();
         let tracked = if self.s.repo.join(".git").exists() {
             let o = self.d.git.git(&self.s.repo, &["ls-files"]);
             if o.success() { o.stdout } else { String::new() }
@@ -1201,7 +1217,7 @@ impl<'a> Run<'a> {
         }
 
         let head = self.d.git.git(work, &["rev-parse", "HEAD"]).stdout.trim().to_string();
-        body = format!("{}{}{body}", brief::eject_failure_brief(&self.last_eject_failure(), &[&self.s.claim_head, &head]), brief::fast_tier_red_brief(&crate::fast_tier::current_digest(self.d.git, &self.s.repo, work, &self.s.base_fq, &red)));
+        body = format!("{}{body}", self.lead_briefs(work, &head));
 
         // A thrashed bead leads with its sticking point, while the tip has not moved.
         let mut banner = None;
