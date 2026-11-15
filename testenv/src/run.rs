@@ -1010,8 +1010,10 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         let _held = cap::hold();
         let inherit = (deps.env)(admission::INHERIT_ENV);
         let who = lease_label(args, deps);
+        // The document's size first, on every pass: a session started before the operator
+        // raised a pool keeps the old size in its environment (sp-c9mabt).
         let size_of = || {
-            admission::size(pool, (deps.env)(pool.size_env()).as_deref(), admission::Host::read())
+            admission::size_in(pool, admission::doc_size_now(pool), (deps.env)(pool.size_env()).as_deref(), admission::Host::read())
         };
         if pool == admission::Pool::Compile && inherit.as_deref().is_some_and(admission::is_gate_token) {
             let gate_who = format!("gate:{who}");

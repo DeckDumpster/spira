@@ -252,6 +252,24 @@ fn only_a_crate_compile_is_a_build() {
     assert!(is_compile(&v(&["--crate-name", "x", "src/main.rs", "--print=native-static-libs"])), "a compile that prints is still a compile");
 }
 
+/// sp-c9mabt: a testenv run started under `compile_par` 3 waited for an empty pool with its
+/// weight-4 build while the document said 64 and four builds held slots.
+#[test]
+fn a_heavy_build_is_admitted_beside_holders_once_the_document_raises_the_pool() {
+    let d = run_dir();
+    let p = FakeProcs::with(&[(10, 1, 1), (20, 2, 1)]);
+    let b = Host { cores: 32, mem_avail_mib: 36_000 };
+    try_take(&d, Pool::Compile, 3, &h(10, 1, "sp-held"), 0, now_epoch(), &p).unwrap();
+    let q = Request { run: &d, pool: Pool::Compile, holder_pid: 20, who: "sp-heavy", inherit: None, weight: 4 };
+    // Sized as the session's environment says (3), it does not fit beside the holder.
+    let stale = || size_in(Pool::Compile, None, Some("3"), b);
+    assert!(acquire_unless(&q, &Seams { size_of: &stale, procs: &p, sleep: &|_| {} }, &mut |_: &str| {}, &|| true).is_none(), "under 3 it waits");
+    // Sized as testenv now sizes it, document first, it is admitted at once.
+    let live = || size_in(Pool::Compile, Some(64), Some("3"), b);
+    let g = acquire(&q, &Seams { size_of: &live, procs: &p, sleep: &|_| panic!("must not wait") }, &mut |_: &str| {});
+    assert!(g.held());
+}
+
 #[test]
 fn a_release_build_weighs_the_whole_pool_and_runs_alone() {
     let d = run_dir();
