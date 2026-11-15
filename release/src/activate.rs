@@ -754,10 +754,12 @@ fn ensure_new_units(cfg: &Config, sha: &str) -> Result<(), String> {
 /// `Restart=always` is the sanctioned way to cycle it.
 const KILL_RESTARTED: &str = "dolt-beads.service";
 
-/// The compiler cache's storage backend. Its launcher is a script, which the generic rule
-/// always counts as changed; every restart leaves the sccache server holding dead connections
-/// and wedges the next compile, so only its unit text and its own binary decide.
+/// The compiler cache's storage backend. Every restart leaves the sccache server holding dead
+/// connections and wedges the next compile, so it restarts only when its unit text, its launcher
+/// or its source changes. A rebuild that changed the binary's bytes but not the source it is
+/// compiled from (`backend_source`) leaves it running.
 const COMPILER_CACHE_BACKEND: &str = "sccache-dav.service";
+const BACKEND_CRATE_DIR: &str = "sccache-dav";
 
 /// The two release roots a unit's paths resolve under (sp-m9rruh): the one `current` named
 /// before this switch, which the running process started from, and the one it switches to.
@@ -813,11 +815,77 @@ fn restart_reason(unit: &str, old: &str, new: &str, roots: &Roots) -> Option<Str
 fn backend_binary_changed(roots: &Roots) -> Option<String> {
     let Some(old) = roots.old else { return Some("cannot tell which release its backend ran before; restarted".into()) };
     let files = |root: &Path| (std::fs::read(root.join("bin/sccache-dav")), std::fs::read(root.join("spira/sccache-dav.sh")));
-    match (files(old), files(roots.new)) {
-        ((Ok(ob), Ok(ol)), (Ok(nb), Ok(nl))) if ob == nb && ol == nl => None,
-        ((Ok(_), Ok(_)), (Ok(_), Ok(_))) => Some("its backend binary or launcher changed".into()),
-        _ => Some("cannot compare its backend binaries; restarted".into()),
+    let unreadable = || Some("cannot compare its backend binaries; restarted".to_string());
+    let ((Ok(ob), Ok(ol)), (Ok(nb), Ok(nl))) = (files(old), files(roots.new)) else { return unreadable() };
+    if ol != nl {
+        return Some("its backend launcher changed".into());
     }
+    if ob == nb {
+        return None;
+    }
+    match (backend_source(old), backend_source(roots.new)) {
+        (Some(o), Some(n)) => {
+            let first = o.keys().chain(n.keys()).filter(|p| o.get(*p) != n.get(*p)).min();
+            first.map(|p| format!("its backend's source changed ({})", p.display()))
+        }
+        _ => unreadable(),
+    }
+}
+
+/// Every file the backend is compiled from, by path under `root`: the crates reached from
+/// `sccache-dav/Cargo.toml` through `path =` entries of `[dependencies]` (not dev-dependencies),
+/// plus `Cargo.lock` and `rust-toolchain.toml` when present. `None` when any cannot be read.
+fn backend_source(root: &Path) -> Option<std::collections::BTreeMap<PathBuf, Vec<u8>>> {
+    let mut files = std::collections::BTreeMap::new();
+    let mut seen = BTreeSet::new();
+    let mut pending = vec![PathBuf::from(BACKEND_CRATE_DIR)];
+    while let Some(dir) = pending.pop() {
+        if !seen.insert(dir.clone()) {
+            continue;
+        }
+        let manifest: toml::Table = std::fs::read_to_string(root.join(&dir).join("Cargo.toml")).ok()?.parse().ok()?;
+        for dep in manifest.get("dependencies").and_then(|d| d.as_table()).into_iter().flat_map(|t| t.values()) {
+            if let Some(p) = dep.get("path").and_then(|p| p.as_str()) {
+                pending.push(lexical_join(&dir, p)?);
+            }
+        }
+        collect_files(root, &dir, &mut files)?;
+    }
+    files.insert(PathBuf::from("Cargo.lock"), std::fs::read(root.join("Cargo.lock")).ok()?);
+    if let Ok(b) = std::fs::read(root.join("rust-toolchain.toml")) {
+        files.insert(PathBuf::from("rust-toolchain.toml"), b);
+    }
+    Some(files)
+}
+
+fn lexical_join(base: &Path, rel: &str) -> Option<PathBuf> {
+    let mut out = base.to_path_buf();
+    for part in Path::new(rel).components() {
+        match part {
+            std::path::Component::Normal(p) => out.push(p),
+            std::path::Component::ParentDir => {
+                if !out.pop() {
+                    return None;
+                }
+            }
+            std::path::Component::CurDir => {}
+            _ => return None,
+        }
+    }
+    Some(out)
+}
+
+fn collect_files(root: &Path, dir: &Path, files: &mut std::collections::BTreeMap<PathBuf, Vec<u8>>) -> Option<()> {
+    for entry in std::fs::read_dir(root.join(dir)).ok()? {
+        let rel = dir.join(entry.ok()?.file_name());
+        let full = root.join(&rel);
+        if full.is_dir() {
+            collect_files(root, &rel, files)?;
+        } else {
+            files.insert(rel, std::fs::read(&full).ok()?);
+        }
+    }
+    Some(())
 }
 
 /// The first program an `Exec*=` line runs whose content differs between the two roots (or
