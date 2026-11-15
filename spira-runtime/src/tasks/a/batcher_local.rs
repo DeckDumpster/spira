@@ -2638,10 +2638,10 @@ pub mod edge {
 
     /// Whether the manager runs round-recert's driver unit for `batch`, bare or under a lease token.
     /// A manager that errs reads as driven: no land is started on a guess; with none, undriven.
-    fn recert_driven(units: Option<&dyn runtime::units::Units>, batch: &str) -> bool {
+    pub fn recert_driven(units: Option<&dyn runtime::units::Units>, batch: &str) -> bool {
         let Some(units) = units else { return false };
         let bare = release::round_recert::unit_for(batch, None);
-        [bare.clone(), format!("{bare}-*")].iter().any(|glob| units.list(glob).map_or(true, |l| super::recert_live(&l)))
+        [format!("{bare}.service"), format!("{bare}-*.service")].iter().any(|glob| units.list(glob).map_or(true, |l| super::recert_live(&l)))
     }
 
     fn observe_repo(env: &Env, repo: &batcher_cut::io::Repo, units: Option<&dyn runtime::units::Units>) -> Result<Repo, String> {
@@ -2990,8 +2990,27 @@ pub mod edge {
 
     #[cfg(test)]
     mod recert_tests {
-        use crate::tasks::a::batcher_local::recert_live;
-        use runtime::units::{UnitDetail, UnitState};
+        use crate::tasks::a::batcher_local::{edge::recert_driven, recert_live};
+        use runtime::units::{ScriptedUnits, UnitDetail, UnitFacts, UnitState};
+
+        fn manager_with(unit: &str, state: UnitState) -> ScriptedUnits {
+            let u = ScriptedUnits::new(std::sync::Arc::new(runtime::ports::VirtualClock::new(0)));
+            u.install(unit, UnitFacts { state, main_pid: Some(7), exit: None, since_ms: Some(1) });
+            u
+        }
+
+        #[test]
+        fn a_bare_round_recert_unit_named_with_its_service_suffix_reads_driven() {
+            let u = manager_with("round-recert-b1.service", UnitState::Active);
+            assert!(recert_driven(Some(&u), "b1"));
+        }
+
+        #[test]
+        fn a_token_named_round_recert_unit_reads_driven_and_another_batchs_does_not() {
+            let u = manager_with("round-recert-b1-abc.service", UnitState::Active);
+            assert!(recert_driven(Some(&u), "b1"));
+            assert!(!recert_driven(Some(&u), "b2"));
+        }
 
         fn unit(state: UnitState) -> UnitDetail {
             UnitDetail { name: "round-recert-b1.service".into(), state, ..UnitDetail::default() }

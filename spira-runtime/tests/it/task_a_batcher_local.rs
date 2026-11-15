@@ -1521,3 +1521,15 @@ fn sp_29matj_a_live_pass_or_a_pass_just_started_is_left_alone() {
     let (_, acts) = decide(&fresh, &driverless_snap(false, vec![]));
     assert!(!effects(&acts).contains(&ABANDON), "inside the grace: {acts:?}");
 }
+
+#[test]
+fn a_green_foreign_round_whose_bare_round_recert_unit_is_active_is_not_landed_by_the_tick() {
+    use runtime::units::{ScriptedUnits, UnitFacts, UnitState};
+    let units = ScriptedUnits::new(std::sync::Arc::new(runtime::ports::VirtualClock::new(0)));
+    units.install("round-recert-b1.service", UnitFacts { state: UnitState::Active, main_pid: Some(7), exit: None, since_ms: Some(1) });
+    let driven = edge::recert_driven(Some(&units), "b1");
+    let open = Round { id: "b1".into(), members: vec!["m1".into()], tips: vec!["t1".into()], head: "h1".into(), phase: "green".into(), driven, ..Round::default() };
+    let repo = Repo { open_round: Some(open), base_sha: "base".into(), ..Repo::default() };
+    let snap = Snapshot { repos: [("spira".to_string(), repo)].into(), now_ms: NOW };
+    assert!(!decide(&Carry::default(), &snap).1.iter().any(|a| a.effect == LAND));
+}

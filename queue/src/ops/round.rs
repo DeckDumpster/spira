@@ -5112,6 +5112,12 @@ fn land_round(
         .guard(w, label, &c, batch)
         .map_err(refused)?;
     let g = lock(w, label, &c).map_err(refused)?;
+    if let Some(head) = landed_head(w, &c, &path, batch) {
+        w.out(format!(
+            "queue.sh {label}: round {batch} already landed at {head}"
+        ));
+        return Ok(OK);
+    }
     let mut kv = load(w, label, &c, batch).map_err(refused)?;
     let phase = phase_of(w, batch);
     if phase != "green" {
