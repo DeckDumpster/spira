@@ -1362,8 +1362,15 @@ impl<'w, W: World> Trial<'w, W> {
                         beads.join(", "))).collect();
                     return v(PASS, "pass", format!("gate: {name}'s own gate failed: {cmd}\n{out}\n{notes}"));
                 }
-                v(FAIL, "branch-red", format!(
-                    "gate: {name}'s own gate failed: {cmd}\n{out}\ngate: the same command passes against {base}, so this is the branch's own."))
+                let failed = parse::failed_tests(&out);
+                let closing = if matches!(comp, Composition::Unit { .. }) && failed.is_empty() {
+                    format!("gate: {base}'s fences pass, so the red is charged to this branch.")
+                } else if matches!(comp, Composition::Unit { .. }) {
+                    format!("gate: {base}'s fences pass; its tests were not run (unit mode tries the base's fences only), so the red is charged to this branch: {}", spaced(&failed))
+                } else {
+                    format!("gate: the same command passes against {base}, so this is the branch's own.")
+                };
+                v(FAIL, "branch-red", format!("gate: {name}'s own gate failed: {cmd}\n{out}\n{closing}"))
             }
             Attribution::BaseTimeout(s) => {
                 self.s.suite = s;
