@@ -1473,7 +1473,7 @@ impl Machine<'_> {
                 State::Corpus => self.corpus(self.rc.run + 1),
                 State::Attributing => self.attribute(),
                 _ => {
-                    self.rc.run += 1;
+                    self.rc.run = self.rc.run.max(1) + 1;
                     self.certify();
                 }
             }
