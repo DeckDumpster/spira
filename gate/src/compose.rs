@@ -964,6 +964,22 @@ mod tests {
     }
 
     #[test]
+    fn a_registry_edit_adds_the_readers_after_the_dependents_expansion_in_both_modes() {
+        for mode in [GateMode::Unit, GateMode::Fences] {
+            assert_eq!(crates(&unit(mode, &["spira/conf.d/X"])), v(&["gate", "release", "spira-config"]), "{mode:?}");
+            assert_eq!(
+                crates(&unit(mode, &["spira/conf.d/X", "dwarf/src/x.rs"])),
+                v(&["dwarf", "gate", "release", "spira-config"]),
+                "{mode:?}"
+            );
+        }
+        assert_eq!(
+            crates(&unit(GateMode::Unit, &["spira/conf.d/X", "queue/src/x.rs"])),
+            v(&["gate", "landing-pass", "queue", "release", "spira-config"])
+        );
+    }
+
+    #[test]
     fn a_registry_file_with_an_exec_bit_is_still_registry() {
         let w = ws();
         let c = Changed { path: "spira/conf.d/X".into(), exec: true };
@@ -988,7 +1004,9 @@ mod tests {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
         let found = registry_reading_crates(&root);
         let want: BTreeSet<String> = REGISTRY_READERS.iter().map(|s| s.to_string()).collect();
-        assert_eq!(found, want, "REGISTRY_READERS drifted from the crates whose sources read the registry");
+        let missing: Vec<_> = found.difference(&want).collect();
+        let stale: Vec<_> = want.difference(&found).collect();
+        assert!(missing.is_empty() && stale.is_empty(), "REGISTRY_READERS lacks {missing:?}; names crates that read nothing: {stale:?}");
     }
 
     #[test]
