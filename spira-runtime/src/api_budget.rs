@@ -89,7 +89,12 @@ pub fn flush(endpoint: Option<&str>) {
 }
 
 fn flush_to(sink: &MetricsSink) {
-    let (calls, rates) = with(|l| (std::mem::take(&mut l.calls), l.rate.values().copied().collect::<Vec<_>>()));
+    let mut taken = with(|l| Ledger { calls: std::mem::take(&mut l.calls), rate: l.rate.clone(), ..Ledger::default() });
+    flush_ledger(&mut taken, sink);
+}
+
+fn flush_ledger(l: &mut Ledger, sink: &MetricsSink) {
+    let (calls, rates) = (std::mem::take(&mut l.calls), l.rate.values().copied().collect::<Vec<_>>());
     for ((caller, outcome), n) in calls {
         sink.push(&[Point::Count { name: CALLS, value: n }], &[("caller", &caller), ("outcome", outcome)]);
     }
@@ -131,19 +136,19 @@ mod tests {
 
     #[test]
     fn a_flush_pushes_each_callers_count_by_outcome_and_the_lowest_budget_seen() {
-        note_rate("flush-a", Rate { limit: 5000, remaining: 4000, reset: 1 });
-        note_rate("flush-b", Rate { limit: 5000, remaining: 12, reset: 1 });
-        count("flush-caller", FRESH);
-        count("flush-caller", FRESH);
-        count("flush-caller", CACHED);
-        let (_, got) = fixture::capture(flush_to);
-        let calls: Vec<(u64, String, String)> = got.iter().filter(|s| s.name == CALLS && s.label("caller") == Some("flush-caller")).map(|s| (s.value as u64, s.label("outcome").unwrap().to_string(), "".into())).collect();
+        let mut l = Ledger::default();
+        l.rate.insert("flush-a".into(), Rate { limit: 5000, remaining: 4000, reset: 1 });
+        l.rate.insert("flush-b".into(), Rate { limit: 5000, remaining: 12, reset: 1 });
+        l.calls.insert(("flush-caller".into(), FRESH), 2);
+        l.calls.insert(("flush-caller".into(), CACHED), 1);
+        let (_, got) = fixture::capture(|sink| flush_ledger(&mut l, sink));
+        let calls: Vec<(u64, String)> = got.iter().filter(|s| s.name == CALLS && s.label("caller") == Some("flush-caller")).map(|s| (s.value as u64, s.label("outcome").unwrap().to_string())).collect();
         assert!(calls.iter().any(|c| c.0 == 2 && c.1 == FRESH), "{calls:?}");
         assert!(calls.iter().any(|c| c.0 == 1 && c.1 == CACHED), "{calls:?}");
         let remaining = got.iter().find(|s| s.name == REMAINING).expect("remaining pushed");
-        assert!(remaining.value <= 12.0);
+        assert_eq!(remaining.value, 12.0);
         assert!(got.iter().any(|s| s.name == LIMIT));
-        assert_eq!(calls_after_flush(), 0, "a flush leaves nothing to count twice");
+        assert!(l.calls.is_empty(), "a flush leaves nothing to count twice");
     }
 
     #[test]
@@ -168,9 +173,5 @@ mod tests {
         let unlabelled = spira_otel::query::Exported { labels: Default::default(), samples: vec![(0, 99.0)] };
         assert_eq!(top_spender(&[unlabelled, series("a", &[2.0])]), Some(("a".to_string(), 2)));
         assert_eq!(top_spender(&[]), None);
-    }
-
-    fn calls_after_flush() -> u64 {
-        calls("flush-caller", FRESH)
     }
 }
