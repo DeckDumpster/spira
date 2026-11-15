@@ -158,13 +158,13 @@ fn a_leg_stopped_by_a_preempt_ends_as_preempted_and_neither_attributes_nor_aband
 }
 
 #[test]
-fn a_preempt_refused_because_no_pass_was_running_is_asked_again_at_the_next_tick() {
+fn a_preempt_refused_because_no_pass_was_running_is_not_asked_again() {
     let (next, acts) = decide(&carried(State::Corpus), &snapshot(vec![("sp-a", "t1")], None));
     let leg = preempts(&acts).remove(0);
     let refusal = "queue round preempt: round r9 is opened, with no pass running — nothing to preempt".to_string();
     let (after, _) = on_outcome(&next, PREEMPT, false, &refusal, &leg, NOW);
     let (_, again) = decide(&after, &snapshot(vec![("sp-a", "t1")], None));
-    assert_eq!(preempts(&again).len(), 1, "a refusal that stopped nothing leaves the member to be preempted");
+    assert!(preempts(&again).is_empty(), "the round with no pass running is left to the driverless-round abandon: {again:?}");
     let (failed, _) = on_outcome(&next, PREEMPT, false, "eject of sp-a failed — the next pass was not started", &leg, NOW);
     let (_, never) = decide(&failed, &snapshot(vec![("sp-a", "t1")], None));
     assert!(preempts(&never).is_empty(), "a preempt that acted is never asked twice: {never:?}");

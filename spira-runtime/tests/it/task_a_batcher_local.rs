@@ -1453,3 +1453,71 @@ fn sp_3uxw41_a_repo_with_its_rounds_at_max_open_records_nothing_admissible() {
     let (carry, _) = decide(&before, &s);
     assert_eq!(carry.repos["spira"].admissible, Vec::<String>::new(), "a stale answer is cleared");
 }
+
+// --- sp-29matj: a round whose pass ended with no verdict and no pass running is ended ---
+
+fn driverless_carry() -> Carry {
+    let mut carry = driving(State::Attributing, "");
+    let rc = carry.repos.get_mut("spira").unwrap();
+    rc.leg = None;
+    rc.leg_head = "old".into();
+    rc.head = "old".into();
+    rc.leg_at_ms = NOW - LEG_START_GRACE_MS - 1;
+    carry
+}
+
+fn driverless_snap(driven: bool, gate_red: Vec<(String, String, String)>) -> Snapshot {
+    let round = Round { id: "r9".into(), members: vec!["sp-a".into(), "sp-b".into()], head: "new".into(), worktree: "/w".into(), phase: "attributing".into(), driven, gate_red, ..Round::default() };
+    Snapshot { repos: [("spira".to_string(), Repo { open_round: Some(round), live_legs: Some(vec![]), ..busy().repos["spira"].clone() })].into(), now_ms: NOW }
+}
+
+#[test]
+fn sp_29matj_a_driverless_round_with_no_verdict_is_abandoned_as_a_harness_fault() {
+    let snap = driverless_snap(false, vec![]);
+    let (seen, acts) = decide(&driverless_carry(), &snap);
+    assert!(!effects(&acts).contains(&ABANDON), "the pass the queue has just started is given the grace: {acts:?}");
+    let later = Snapshot { now_ms: NOW + LEG_START_GRACE_MS + 1, ..snap };
+    let (next, acts) = decide(&seen, &later);
+    let abandon: Leg = serde_json::from_str(&acts.iter().find(|a| a.effect == ABANDON).unwrap_or_else(|| panic!("no abandon: {acts:?}")).input).unwrap();
+    assert!(abandon.why.contains("new") && abandon.why.contains("no pass is running"), "{}", abandon.why);
+    assert!(abandon.reds.is_empty());
+    let rc = next.repos.get("spira").cloned().unwrap_or_default();
+    assert_eq!((rc.state, rc.batch.as_deref(), rc.pace.infra), (State::Idle, None, 1), "no member is charged and the pace counts one infra");
+}
+
+#[test]
+fn sp_29matj_a_head_move_is_discarded_once_not_every_tick() {
+    let mut carry = driverless_carry();
+    carry.repos.get_mut("spira").unwrap().leg_at_ms = NOW;
+    let snap = driverless_snap(false, vec![]);
+    let (once, _) = decide(&carry, &snap);
+    assert_eq!(once.repos["spira"].discarded_head, "new", "the new head is the one handled");
+    let (twice, acts) = decide(&once, &snap);
+    assert_eq!(twice, once);
+    assert!(acts.is_empty(), "{acts:?}");
+}
+
+#[test]
+fn sp_29matj_no_preempt_goes_to_a_round_with_no_pass_running() {
+    let red = vec![("sp-a".to_string(), "t1".to_string(), "suites-failed".to_string())];
+    let mut carry = driverless_carry();
+    carry.repos.get_mut("spira").unwrap().leg_at_ms = NOW;
+    let (_, acts) = decide(&carry, &driverless_snap(false, red.clone()));
+    assert!(!effects(&acts).contains(&PREEMPT), "{acts:?}");
+    let (_, acts) = decide(&carry, &driverless_snap(true, red));
+    assert!(effects(&acts).contains(&PREEMPT), "{acts:?}");
+}
+
+#[test]
+fn sp_29matj_a_live_pass_or_a_pass_just_started_is_left_alone() {
+    let mut seen = driverless_carry();
+    seen.repos.get_mut("spira").unwrap().discarded_head = "new".into();
+    let (_, acts) = decide(&seen, &driverless_snap(true, vec![]));
+    assert!(!effects(&acts).contains(&ABANDON), "driven: {acts:?}");
+    let (_, acts) = decide(&seen, &driverless_snap(false, vec![]));
+    assert!(effects(&acts).contains(&ABANDON), "the same setup undriven is abandoned: {acts:?}");
+    let mut fresh = driverless_carry();
+    fresh.repos.get_mut("spira").unwrap().leg_at_ms = NOW - 1_000;
+    let (_, acts) = decide(&fresh, &driverless_snap(false, vec![]));
+    assert!(!effects(&acts).contains(&ABANDON), "inside the grace: {acts:?}");
+}

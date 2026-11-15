@@ -596,6 +596,9 @@ pub struct RepoCarry {
     pub head: String,
     #[serde(default)]
     pub leg_head: String,
+    /// The head whose move already discarded the leg: a move is handled once.
+    #[serde(default)]
+    pub discarded_head: String,
     /// The head the attribution rebuilt the round tree at, which the certify that follows is for.
     #[serde(default)]
     pub certify_head: String,
@@ -678,6 +681,7 @@ impl RepoCarry {
             leg_at_ms: self.leg_at_ms,
             head: self.head.clone(),
             leg_head: self.leg_head.clone(),
+            discarded_head: self.discarded_head.clone(),
             certify_head: self.certify_head.clone(),
             run: self.run,
             leg_restarts: self.leg_restarts,
@@ -713,6 +717,7 @@ impl RepoCarry {
             leg_at_ms: round.leg_at_ms,
             head: round.head.clone(),
             leg_head: round.leg_head.clone(),
+            discarded_head: round.discarded_head.clone(),
             certify_head: round.certify_head.clone(),
             run: round.run,
             leg_restarts: round.leg_restarts,
@@ -1322,6 +1327,9 @@ impl Machine<'_> {
         if passing && self.preempt_gate_red(repo) {
             return;
         }
+        if passing && self.pass_ended_without_verdict(repo) {
+            return;
+        }
         match self.rc.state {
             State::Certifying if self.rc.certify_held => self.release_certify(policy, repo),
             State::Corpus | State::Attributing | State::Certifying if self.now_ms.saturating_sub(self.rc.leg_at_ms) > leg_deadline_ms(policy, self.rc.state == State::Attributing, self.rc.members.len()) => self.leg_ended(Exit::Unknown),
@@ -1347,7 +1355,7 @@ impl Machine<'_> {
     /// A member whose own gate went red at the tip the round holds leaves at once: its pass is
     /// stopped, it is ejected with the gate's mark as evidence, and the round goes on without it.
     fn preempt_gate_red(&mut self, repo: &Repo) -> bool {
-        let Some(open) = self.rc.batch.as_deref().and_then(|b| repo.open_rounds().find(|r| r.id == b)) else { return false };
+        let Some(open) = self.rc.batch.as_deref().and_then(|b| repo.open_rounds().find(|r| r.id == b)).filter(|r| r.driven) else { return false };
         let mut seen = std::collections::BTreeSet::new();
         let red: Vec<&(String, String, String)> = open.gate_red.iter().filter(|(id, tip, _)| self.rc.members.iter().any(|(m, t)| m == id && t == tip) && !self.rc.preempted.iter().any(|(m, t)| m == id && t == tip) && seen.insert((id, tip))).collect();
         if red.is_empty() || repo.in_flight.as_ref().is_some_and(|f| f.iter().any(|e| e == PREEMPT)) {
@@ -1358,6 +1366,20 @@ impl Machine<'_> {
         let why = red.iter().map(|(id, tip, mark)| format!("{id}: its own gate went red at {tip} while round {} was running ({mark})", open.id)).collect::<Vec<_>>().join("; ");
         let key = format!("{}:{}:preempt:{}:{}", self.repo, open.id, ids.join(","), open.head);
         self.acts.push(Leg { bead: ids.join(","), why, key, ..self.leg() }.act(PREEMPT));
+        true
+    }
+
+    /// The pass the queue started after a preempt is no leg of this task and reports to nobody: with
+    /// no leg, no certify lock held and no verdict, the round is ended as a fault and its members re-cut.
+    fn pass_ended_without_verdict(&mut self, repo: &Repo) -> bool {
+        let Some(open) = self.rc.batch.as_deref().and_then(|b| repo.open_rounds().find(|r| r.id == b)) else { return false };
+        if self.rc.leg.is_some() || open.driven || open.phase == "green" || self.now_ms.saturating_sub(self.rc.leg_at_ms) < LEG_START_GRACE_MS {
+            return false;
+        }
+        let why = format!("round head {}: no pass is running and none will report (the pass the queue started ended without a verdict)", open.head);
+        self.go(Trigger::LegLost);
+        self.abandon_naming(&why, Vec::new());
+        self.finish(pace::Outcome::Infra, &why);
         true
     }
 
@@ -1382,9 +1404,13 @@ impl Machine<'_> {
         if self.rc.leg_head == open.head || self.certifying_rebuilt_head(&seen, &open.head) {
             return false;
         }
-        self.rc.certify_head.clear();
-        eprintln!("{NAME} {}: round head moved {} -> {}: the step started for the old head is discarded", self.repo, self.rc.leg_head, open.head);
-        self.rc.leg = None;
+        if self.rc.discarded_head != open.head {
+            self.rc.certify_head.clear();
+            eprintln!("{NAME} {}: round head moved {} -> {}: the step started for the old head is discarded", self.repo, self.rc.leg_head, open.head);
+            self.rc.leg = None;
+            self.rc.discarded_head = open.head.clone();
+            self.rc.leg_at_ms = self.now_ms;
+        }
         if open.phase != "green" {
             return false;
         }
@@ -1891,10 +1917,7 @@ impl Machine<'_> {
                 self.rc.round_key = Some(core::round_key(&self.rc.members));
                 self.end_emptied_round(&leg.why);
             }
-            (State::Corpus | State::Attributing | State::Certifying, PREEMPT) if !ok && !body.contains(queue::ops::round::PREEMPT_ACTED) => {
-                let ids: Vec<&str> = leg.bead.split(',').collect();
-                self.rc.preempted.retain(|(id, _)| !ids.contains(&id.as_str()));
-            }
+            (State::Corpus | State::Attributing | State::Certifying, PREEMPT) if !ok && !body.contains(queue::ops::round::PREEMPT_ACTED) => {}
             (State::Corpus | State::Attributing | State::Certifying, PREEMPT) if !ok => {
                 let key = format!("{}:{}:eject-gate-red:{}", self.repo, leg.batch, leg.bead);
                 let follow = Leg { why: leg.why.clone(), reds: vec![body.trim().to_string()], key, ..leg.clone() };
