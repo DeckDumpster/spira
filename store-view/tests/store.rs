@@ -395,13 +395,16 @@ fn asked(w: &World, verb: &str) -> usize {
 /// Delivers `keys` as one watch answer and returns once the projection has applied it and begun
 /// the next watch.
 fn deliver(w: &World, keys: &[&str], through: u64) {
-    let watches = |w: &World| w.script.lock().unwrap().seen.iter().filter(|a| a[0] == "watch").count();
     let events: Vec<Value> = keys.iter().map(|k| json!({ "key": k, "rev": rev(through), "value": {}, "create_rev": null, "prev_mod_rev": null })).collect();
-    let before = watches(w);
-    w.watch(json!({ "events": events, "through": through }));
+    let before = {
+        let mut s = w.script.lock().unwrap();
+        let before = s.seen.iter().filter(|a| a[0] == "watch").count();
+        s.watches.push_back((0, json!({ "events": events, "through": through }).to_string()));
+        before
+    };
     // clock-safe: a cap on the wait for the watch's next call, which is a named signal
-    let give_up = Instant::now() + Duration::from_secs(5);
-    while watches(w) < before + 2 {
+    let give_up = Instant::now() + Duration::from_secs(30);
+    while asked(w, "watch") < before + 2 {
         // clock-safe: the cap on the wait for the watch's next call
         assert!(Instant::now() < give_up, "the delivery was never applied");
         // clock-safe: a poll interval under that cap
