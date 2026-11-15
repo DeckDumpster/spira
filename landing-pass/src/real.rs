@@ -1533,6 +1533,19 @@ mod store_tests {
     }
 
     #[test]
+    fn a_content_on_base_the_store_refuses_carries_the_stores_text_to_the_log() {
+        let (_s, c) = store(|a| match a[0].as_str() {
+            "show" => (0, r#"{"bead":{"bead_id":"sp-a","state":"SUBMITTED","version":7}}"#.into()),
+            _ => (3, "version conflict".into()),
+        });
+        let t = testkit::TempDir::new("landing-pass-cob-refused");
+        let out = Reporter::capture(None);
+        let lib = RealLib { seam: SeamRunner { home: t.path().to_path_buf(), out: &out }, incident: PathBuf::new(), s: Settings::for_run(t.path().to_path_buf()), beads: beads(&c) };
+        assert!(!lib.content_on_base("sp-a", "p"));
+        assert!(out.lines().iter().any(|l| l.contains("did not happen") && l.contains("version conflict")), "{:?}", out.lines());
+    }
+
+    #[test]
     fn the_lifecycle_probe_and_certify_are_store_calls() {
         let (s, c) = store(|a| match a[0].as_str() {
             "list" => (0, "[]".into()),
