@@ -791,13 +791,15 @@ mod tests {
         use std::{sync::Arc, time::Duration};
         let rec = Arc::new(Recorder::default());
         let worker = Arc::clone(&rec);
+        let (release, release_rx) = std::sync::mpsc::channel::<()>();
         let out = super::within(Duration::from_millis(30), move || {
             let _tracking = track_scoped(worker);
             let _open = begin(Phase::WriterWait);
-            std::thread::sleep(Duration::from_millis(300));
+            let _ = release_rx.recv();
         });
         assert!(out.is_none());
-        assert_eq!(rec.snapshot().open.as_deref(), Some("writer_wait"));
+        assert_eq!(rec.snapshot().open, Some("writer_wait"));
+        drop(release);
     }
 
     #[test]
