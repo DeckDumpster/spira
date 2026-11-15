@@ -8,7 +8,7 @@
 use std::sync::{Arc, Mutex};
 
 use lifecycle::bead::BeadState;
-use runtime::units::{self, Exit, ScopeSpec, StartSpec, UnitHandle, UnitSpec, UNIT_RUN_SCOPE, UNIT_START};
+use runtime::units::{self, Exit, ScopeSpec, UnitHandle, UnitSpec, UNIT_RUN_SCOPE};
 use spira_runtime::tasks::a::batcher_local as bl;
 use spira_sim::loopworld::{self, Bead, Run, Script, World, MIN, REPO};
 
@@ -159,7 +159,7 @@ fn stale_round_pointer_a_stale_record_the_redrive_cannot_end_is_abandoned_after_
     assert_no_process(&r);
 }
 
-/// A round whose corpus unit never starts (the start reports success, no unit runs, no
+/// A round whose certify unit never starts (the start reports success, no unit runs, no
 /// `unit.ran` ever comes): the leg is started once more, then the round is abandoned and the
 /// pool is cut again at once, with no wait. Nothing leaves the round open; a repeat is
 /// braked by count (pace tests), never by wall time.
@@ -169,20 +169,20 @@ fn a_corpus_leg_that_never_runs_is_started_again_once_then_the_round_is_abandone
     let starts: Arc<Mutex<Vec<String>>> = Arc::default();
     let seen = starts.clone();
     let (r, _) = run_keeping(34, script, move |d, _| {
-        d.double(bl::CORPUS, move |input| {
+        d.double(bl::CERTIFY, move |input| {
             seen.lock().unwrap_or_else(|e| e.into_inner()).push(leg(input)?.unit);
             Ok(String::new())
         })
     });
     show("corpus-leg-never-runs", &r);
     let starts = starts.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    assert!(starts.len() >= 2 && starts[0] != starts[1], "the corpus leg was started again under a new unit: {starts:?}");
-    let (first, abandon) = (times(&r, bl::CORPUS)[0], times(&r, bl::ABANDON)[0]);
+    assert!(starts.len() >= 2 && starts[0] != starts[1], "the certify leg was started again under a new unit: {starts:?}");
+    let (first, abandon) = (times(&r, bl::CERTIFY)[0], times(&r, bl::ABANDON)[0]);
     assert!(abandon - first >= 60_000 && abandon - first < 5 * 60_000, "re-started within a minute, abandoned soon after: first {first}, abandon {abandon}");
     let abandons = times(&r, bl::ABANDON);
     assert!(abandons.len() >= 2, "abandoned, then re-cut with no backoff and abandoned again: {}", r.dump());
     assert!(abandons[1] - abandons[0] < 5 * 60_000, "the re-cut did not wait: {abandons:?}");
-    assert_eq!(batcher_states(&r)[..5], ["Assembling", "Opened", "Corpus", "Idle", "Assembling"], "{}", r.dump());
+    assert_eq!(batcher_states(&r)[..5], ["Assembling", "Opened", "Certifying", "Idle", "Assembling"], "{}", r.dump());
     assert_no_process(&r);
 }
 
@@ -205,8 +205,8 @@ fn a_round_whose_open_answer_is_lost_is_driven_by_the_next_tick_and_lands() {
         })
     });
     show("open-answer-lost", &r);
-    let (open, corpus) = (times(&r, bl::ROUND_OPEN)[0], times(&r, bl::CORPUS)[0]);
-    assert!(corpus - open < 5 * MIN, "the first pass started on the next ticks, not after the outcome wait: open {open}, corpus {corpus}");
+    let (open, certify) = (times(&r, bl::ROUND_OPEN)[0], times(&r, bl::CERTIFY)[0]);
+    assert!(certify - open < 5 * MIN, "the first pass started on the next ticks, not after the outcome wait: open {open}, certify {certify}");
     assert!(times(&r, bl::ABANDON).is_empty(), "the round was not abandoned: {}", r.dump());
     assert_eq!(r.lifecycle_of("sp-lo01").last().map(String::as_str), Some("LANDED"), "{}", r.dump());
     assert_no_process(&r);
@@ -233,27 +233,32 @@ fn attributing_redrive_a_red_early_round_is_redriven_on_its_own_batch_and_lands_
     let script = Script { beads: vec![Bead::new("sp-ar01", 30_000)], max_concurrent: 1, until: 40 * MIN, ..Script::default() };
     let legs: Arc<Mutex<Vec<bl::Leg>>> = Arc::default();
     let seen = legs.clone();
+    let first = Arc::new(Mutex::new(true));
     let (r, _) = run_keeping(33, script, move |d, w| {
-        let w = w.clone();
+        let (wa, wc) = (w.clone(), w.clone());
         d.double(bl::CORPUS, move |input| {
             let l = leg(input)?;
             seen.lock().unwrap_or_else(|e| e.into_inner()).push(l.clone());
             let spec = UnitSpec { task: bl::NAME.into(), key: l.unit.clone(), argv: vec!["round-vm".into(), "run".into(), l.wt.clone()], env: vec![], cwd: None };
-            if l.why == bl::ATTRIBUTE {
-                w.units.script(bl::NAME, MIN, Exit::Code(0));
-                w.units.script_output(bl::NAME, attribution_land(&l.members).as_bytes(), b"");
-                let scope = ScopeSpec { unit: spec, cpu_quota_pct: None, memory_max_bytes: None };
-                return units::effect(&*w.units, UNIT_RUN_SCOPE, &serde_json::to_string(&scope).map_err(|e| e.to_string())?);
-            }
+            wa.units.script(bl::NAME, MIN, Exit::Code(0));
+            wa.units.script_output(bl::NAME, attribution_land(&l.members).as_bytes(), b"");
+            let scope = ScopeSpec { unit: spec, cpu_quota_pct: None, memory_max_bytes: None };
+            units::effect(&*wa.units, UNIT_RUN_SCOPE, &serde_json::to_string(&scope).map_err(|e| e.to_string())?)
+        })
+        .double(bl::CERTIFY, move |input| {
+            let l = leg(input)?;
+            let spec = UnitSpec { task: bl::NAME.into(), key: l.unit.clone(), argv: vec!["queue".into(), "round".into(), "certify".into(), l.batch, REPO.into()], env: vec![], cwd: None };
             // red-early spira-lint: the pass ends before any suite ran.
-            w.units.script(bl::NAME, MIN, Exit::Code(1));
-            units::effect(&*w.units, UNIT_START, &serde_json::to_string(&StartSpec { unit: spec, props: Default::default() }).map_err(|e| e.to_string())?)
+            let red = std::mem::take(&mut *first.lock().unwrap_or_else(|e| e.into_inner()));
+            wc.units.script(bl::NAME, MIN, Exit::Code(i32::from(red)));
+            wc.units.script_output(bl::NAME, if red { b"red=spira-lint\n" } else { b"certified\n" }, b"");
+            units::effect(&*wc.units, UNIT_RUN_SCOPE, &serde_json::to_string(&ScopeSpec { unit: spec, cpu_quota_pct: None, memory_max_bytes: None }).map_err(|e| e.to_string())?)
         })
     });
     show("rc-attributing-redrive", &r);
-    assert_eq!(batcher_states(&r), ["Assembling", "Opened", "Corpus", "Attributing", "Certifying", "Landing", "Idle"], "{}", r.dump());
+    assert_eq!(batcher_states(&r), ["Assembling", "Opened", "Certifying", "Attributing", "Certifying", "Landing", "Idle"], "{}", r.dump());
     let legs = legs.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    assert_eq!(legs.iter().map(|l| l.why.as_str()).collect::<Vec<_>>(), ["", bl::ATTRIBUTE], "one corpus pass, then one attribution leg: {legs:?}");
+    assert_eq!(legs.iter().map(|l| l.why.as_str()).collect::<Vec<_>>(), [bl::ATTRIBUTE], "one attribution leg after the red certify: {legs:?}");
     assert!(legs.iter().all(|l| l.batch == "round-1"), "the attribution re-drives the open round's own batch: {legs:?}");
     assert_eq!(r.lifecycle_of("sp-ar01"), ["READY", "WORKING", "SUBMITTED", "CERTIFIED", "IN_DELIVERY", "LANDED"], "the member was never returned: {}", r.dump());
     assert!(!r.lifecycle_of("sp-ar01").iter().any(|s| s == "REWORK"));
@@ -279,31 +284,28 @@ fn an_attribution_leg_that_ends_while_its_pass_scope_is_finishing_still_lands_th
         d.double(bl::CORPUS, move |input| {
             let l = leg(input)?;
             let spec = UnitSpec { task: bl::NAME.into(), key: l.unit.clone(), argv: vec!["round-vm".into(), "run".into(), l.wt.clone()], env: vec![], cwd: None };
-            if l.why == bl::ATTRIBUTE {
-                wa.units.script(bl::NAME, MIN, Exit::Code(0));
-                wa.units.script_output(bl::NAME, attribution_land(&l.members).as_bytes(), b"");
-                let ends = wa.now() + MIN + 90_000;
-                wa.pass_scopes.lock().unwrap_or_else(|e| e.into_inner()).push((l.batch.clone(), ends));
-                let scope = ScopeSpec { unit: spec, cpu_quota_pct: None, memory_max_bytes: None };
-                return units::effect(&*wa.units, UNIT_RUN_SCOPE, &serde_json::to_string(&scope).map_err(|e| e.to_string())?);
-            }
-            wa.units.script(bl::NAME, MIN, Exit::Code(1));
-            units::effect(&*wa.units, UNIT_START, &serde_json::to_string(&StartSpec { unit: spec, props: Default::default() }).map_err(|e| e.to_string())?)
+            wa.units.script(bl::NAME, MIN, Exit::Code(0));
+            wa.units.script_output(bl::NAME, attribution_land(&l.members).as_bytes(), b"");
+            let ends = wa.now() + MIN + 90_000;
+            wa.pass_scopes.lock().unwrap_or_else(|e| e.into_inner()).push((l.batch.clone(), ends));
+            let scope = ScopeSpec { unit: spec, cpu_quota_pct: None, memory_max_bytes: None };
+            units::effect(&*wa.units, UNIT_RUN_SCOPE, &serde_json::to_string(&scope).map_err(|e| e.to_string())?)
         })
         .double(bl::CERTIFY, move |input| {
             let l = leg(input)?;
             seen.lock().unwrap_or_else(|e| e.into_inner()).push(wc.now());
             let spec = UnitSpec { task: bl::NAME.into(), key: l.unit.clone(), argv: vec!["queue".into(), "round".into(), "certify".into(), l.batch, REPO.into()], env: vec![], cwd: None };
             let refused = !wc.live_pass_scopes().is_empty();
-            wc.units.script(bl::NAME, if refused { 784 } else { MIN }, Exit::Code(i32::from(refused)));
-            let said: &[u8] = if refused { b"queue.sh round certify: round round-1 is already being certified (pid=7) \xe2\x80\x94 refused\n" } else { b"certified\n" };
+            let red = !refused && seen.lock().unwrap_or_else(|e| e.into_inner()).len() == 1;
+            wc.units.script(bl::NAME, if refused { 784 } else { MIN }, Exit::Code(i32::from(refused || red)));
+            let said: &[u8] = if refused { b"queue.sh round certify: round round-1 is already being certified (pid=7) \xe2\x80\x94 refused\n" } else if red { b"red=test-a.sh\n" } else { b"certified\n" };
             wc.units.script_output(bl::NAME, said, b"");
             units::effect(&*wc.units, UNIT_RUN_SCOPE, &serde_json::to_string(&ScopeSpec { unit: spec, cpu_quota_pct: None, memory_max_bytes: None }).map_err(|e| e.to_string())?)
         })
     });
     show("pass-scope-still-finishing", &r);
     let certifies = certifies.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    assert_eq!(certifies.len(), 1, "certify started once, after the pass scope ended: {certifies:?}");
+    assert!(certifies.len() >= 2, "the red certify, then certify again once the pass scope ended: {certifies:?}");
     assert_eq!(r.lifecycle_of("sp-pp01").last().map(String::as_str), Some("LANDED"), "{}", r.dump());
     assert!(!r.asked.iter().any(|n| n == bl::ABANDON), "{:?}", r.asked);
     assert_no_process(&r);
@@ -333,8 +335,8 @@ fn fences_in_vm_the_rounds_checks_are_its_unit_legs_and_no_host_fence_or_gate_ru
     let owners: Vec<(String, String)> = calls.iter().filter_map(|c| c.split_once(' ')).filter_map(|(_, n)| UnitHandle::named(n).owner()).collect();
     assert_eq!(owners.len(), calls.len(), "every unit started under the naming rule: {calls:?}");
     let rounds: Vec<&str> = owners.iter().filter(|(t, _)| t == bl::NAME).map(|(_, k)| k.as_str()).collect();
-    assert_eq!(rounds.len(), 2, "the round's two legs ran as units: {calls:?}");
-    assert!(rounds[0].contains(".corpus") && rounds[1].contains(".certify"), "corpus in the round VM, then certify: {rounds:?}");
+    assert_eq!(rounds.len(), 1, "the round's one leg ran as a unit: {calls:?}");
+    assert!(rounds.iter().all(|k| k.contains(".certify")), "a green round runs certify alone, no corpus: {rounds:?}");
     let others: Vec<&(String, String)> = owners.iter().filter(|(t, _)| t != bl::NAME && t != spira_runtime::tasks::a::sentinel_call::NAME).collect();
     assert!(others.is_empty(), "no other task started a unit: {others:?}");
     assert_eq!(w.units.scopes().iter().filter(|s| s.unit.task == bl::NAME).count(), 1, "certify is the round's one scope");

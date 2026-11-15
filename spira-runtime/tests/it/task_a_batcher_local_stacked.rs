@@ -62,17 +62,17 @@ fn cut_and_open(p: &Policy, carry: &Carry, snapshot: &Snapshot, batch: &str) -> 
     on_outcome(&carry, ROUND_OPEN, true, &serde_json::to_string(&opened).unwrap(), &open, snapshot.now_ms)
 }
 
-fn two_corpus_rounds() -> Carry {
+fn two_opened_rounds() -> Carry {
     let p = small(2);
     let (carry, acts) = cut_and_open(&p, &Carry::default(), &snap(vec![], NOW), "r1");
-    assert_eq!(names(&acts), [CORPUS], "{acts:?}");
+    assert_eq!(names(&acts), [CERTIFY], "{acts:?}");
     let (carry, acts) = cut_and_open(&p, &carry, &snap(vec![round("r1", &["sp-a", "sp-b"], "h1", 60)], NOW + 60_000), "r2");
-    assert_eq!(names(&acts), [CORPUS], "{acts:?}");
+    assert_eq!(names(&acts), [CERTIFY], "{acts:?}");
     carry
 }
 
 fn certifying_two() -> Carry {
-    let mut carry = two_corpus_rounds();
+    let mut carry = two_opened_rounds();
     let rc = carry.repos.get_mut("spira").unwrap();
     rc.state = State::Certifying;
     rc.leg = Some("spira.lower.certify1".into());
@@ -88,10 +88,10 @@ fn ran(carry: &Carry, leg: &str, code: i32, out: &str) -> (Carry, Vec<Act>) {
 
 #[test]
 fn two_rounds_are_in_flight_at_once_the_second_cut_on_the_head_of_the_first() {
-    let carry = two_corpus_rounds();
+    let carry = two_opened_rounds();
     let rc = &carry.repos["spira"];
-    assert_eq!((rc.state, rc.batch.as_deref(), ids(&rc.members)), (State::Corpus, Some("r1"), ["sp-a", "sp-b"].to_vec()));
-    assert_eq!((rc.above.len(), rc.above[0].state, rc.above[0].batch.as_deref(), ids(&rc.above[0].members)), (1, State::Corpus, Some("r2"), ["sp-c", "sp-d"].to_vec()));
+    assert_eq!((rc.state, rc.batch.as_deref(), ids(&rc.members)), (State::Certifying, Some("r1"), ["sp-a", "sp-b"].to_vec()));
+    assert_eq!((rc.above.len(), rc.above[0].state, rc.above[0].batch.as_deref(), ids(&rc.above[0].members)), (1, State::Certifying, Some("r2"), ["sp-c", "sp-d"].to_vec()));
     assert_ne!(rc.leg, rc.above[0].leg, "each round runs its own leg");
     assert_ne!(rc.wt, rc.above[0].wt, "each round keeps its own tree");
 }
@@ -123,7 +123,7 @@ fn with_one_round_open_allowed_a_running_round_cuts_nothing_more() {
 
 #[test]
 fn a_third_round_is_not_cut_past_the_limit() {
-    let carry = two_corpus_rounds();
+    let carry = two_opened_rounds();
     let open = vec![round("r1", &["sp-a", "sp-b"], "h1", 120), round("r2", &["sp-c", "sp-d"], "h2", 60)];
     let (_, acts) = decide_with(&small(2), &carry, &snap(open, NOW + 120_000));
     assert!(acts.is_empty(), "{acts:?}");
@@ -181,7 +181,7 @@ fn a_red_lower_round_leaves_the_upper_cut_again_on_the_new_base() {
 
 #[test]
 fn a_stacked_round_just_opened_is_not_voided_by_a_snapshot_that_predates_it() {
-    let carry = two_corpus_rounds();
+    let carry = two_opened_rounds();
     let open = vec![round("r1", &["sp-a", "sp-b"], "h1", 60)];
     let (next, acts) = decide_with(&small(2), &carry, &snap(open, NOW + 61_000));
     assert!(acts.is_empty(), "{acts:?}");
@@ -213,9 +213,9 @@ fn a_promotion_moves_the_round_that_landed_not_the_one_above_it() {
     let leg = Leg { batch: "r1-staged".into(), key: "r1-staged".into(), round_key: "lower-key".into(), ..Leg::on("spira") };
     let promoted = Promoted { batch: "r1-staged".into(), members: vec![("sp-e".into(), "te".into())], attested: false };
     let (carry, acts) = on_outcome(&carry, PROMOTE, true, &serde_json::to_string(&promoted).unwrap(), &leg, NOW);
-    assert_eq!(names(&acts), [CORPUS], "{acts:?}");
+    assert_eq!(names(&acts), [CERTIFY], "{acts:?}");
     let rc = &carry.repos["spira"];
-    assert_eq!((rc.state, rc.batch.as_deref()), (State::Corpus, Some("r1-staged")));
+    assert_eq!((rc.state, rc.batch.as_deref()), (State::Certifying, Some("r1-staged")));
     assert_eq!((rc.above[0].state, rc.above[0].batch.as_deref()), (State::Certifying, Some("r2")), "the upper is as it was");
 }
 

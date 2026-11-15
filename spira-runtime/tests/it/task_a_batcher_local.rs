@@ -113,11 +113,10 @@ fn t5_the_assemble_leg_lists_its_members_in_merge_order_priority_first() {
     assert_eq!(ids, ["sp-b", "sp-a"], "the priority-0 member merges first: {leg:?}");
 }
 
-/// A leg's `unit.ran`, delivered on this task's own stream, advances the machine at once: the
-/// green corpus starts the certify leg with no tick and no observe in between (the old workaround
-/// read the `units` stream at the next 30-s observe).
+/// A round opens straight into certify: its one green pass is the certificate, so the leg's
+/// `unit.ran` on this task's own stream lands the round at once and no corpus leg ever runs.
 #[test]
-fn t3_a_corpus_unit_ran_on_its_own_stream_starts_certify_at_once() {
+fn t3_a_green_certify_unit_ran_on_its_own_stream_certifies_and_lands_with_no_corpus() {
     use runtime::units::{Exit, UnitHandle, UnitRan};
     let snaps = std::sync::Mutex::new(vec![busy()]);
     let assembled = Assembled { merged: vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into())], wt: "/w".into(), base: "b1".into(), suites: true, ..Assembled::default() };
@@ -130,13 +129,14 @@ fn t3_a_corpus_unit_ran_on_its_own_stream_starts_certify_at_once() {
         r = r.double(e, |_| Ok("{}".into()));
     }
     r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
-    let corpus: Leg = serde_json::from_str(&r.requested().iter().find(|q| q.name == CORPUS).expect("the corpus leg started").input).unwrap();
+    let certify: Leg = serde_json::from_str(&r.requested().iter().find(|q| q.name == CERTIFY).expect("the first leg is certify").input).unwrap();
     let asked = r.requested().len();
-    let ran = UnitRan { handle: UnitHandle::of(NAME, &corpus.unit).unwrap(), exit: Exit::Code(0), duration_ms: 1_000 };
+    let ran = UnitRan { handle: UnitHandle::of(NAME, &certify.unit).unwrap(), exit: Exit::Code(0), duration_ms: 1_000 };
     r.tick(STREAM, ran.event_kind()).unwrap();
     kit::assert_unpoisoned(&r, STREAM);
     let after: Vec<&str> = r.requested()[asked..].iter().map(|q| q.name.as_str()).collect();
-    assert_eq!(after, [CERTIFY], "the green corpus's unit.ran starts certify at once, with no observe between");
+    assert!(after.contains(&LC_CERTIFY) && after.contains(&LAND), "{after:?}");
+    assert!(r.requested().iter().all(|q| q.name != CORPUS), "no corpus leg ran before or after: {:?}", r.requested().iter().map(|q| &q.name).collect::<Vec<_>>());
 }
 
 /// `work.submitted` (sift's hand-off when a pass is recorded) on this task's stream asks for an
@@ -484,15 +484,15 @@ fn sp_b2azes_a_daemon_left_in_the_pass_scope_does_not_hold_certify() {
 /// A certify red naming a suite in a round of several members is attributed on that suite,
 /// and the survivors are certified again and land (sp-b0lhx6).
 #[test]
-fn sp_b0lhx6_a_named_suite_red_attributes_that_suite_and_the_survivors_land() {
+fn sp_b0lhx6_a_named_suite_red_attributes_the_certify_pass_and_the_survivors_land() {
     let mut r = carried(&driving(State::Certifying, "spira.c3"));
     let n = r.requested().len();
-    let out = "queue.sh round certify: round r9 is RED at abc123: test-release-activate-config.sh\nred=test-release-activate-config.sh\nred-output=/run/rounds/r9.results/testenv.out\n";
+    let out = "queue.sh round certify: round r9 is RED at abc123: test-release-activate-config.sh\nred=test-release-activate-config.sh\n";
     r.tick(STREAM, ended("spira.c3", runtime::units::Exit::Code(1), out)).unwrap();
     kit::assert_unpoisoned(&r, STREAM);
     let after = asked_after(&r, n);
     assert_eq!(after.iter().map(|(e, l)| (e.as_str(), l.why.as_str())).collect::<Vec<_>>(), [(CORPUS, "attribute")], "no abandon yet: {after:?}");
-    assert_eq!(after[0].1.reds, ["test-release-activate-config.sh"], "only the named suite is attributed");
+    assert!(after[0].1.after_certify && after[0].1.reds.is_empty(), "the certify pass is the prior: {:?}", after[0].1);
     let unit = after[0].1.unit.clone();
 
     let land = batcher_cut::attribute::Attribution::Land { members: vec![("sp-b".into(), "t2".into())], attribution_secs: None, mended: false, head: String::new() }.line();
@@ -507,6 +507,43 @@ fn sp_b0lhx6_a_named_suite_red_attributes_that_suite_and_the_survivors_land() {
     r.tick(STREAM, ended(&certify_unit, runtime::units::Exit::Code(0), "verdict=green\n")).unwrap();
     let names: Vec<String> = asked_after(&r, n).into_iter().map(|(e, _)| e).collect();
     assert!(names.contains(&LAND.to_string()) && !names.contains(&ABANDON.to_string()), "{names:?}");
+}
+
+/// The first red certify of the round, named suites or not, attributes it from the certify
+/// pass's own results, for a sole member as for several: no eject, no abandon yet.
+#[test]
+fn a_first_red_certify_attributes_every_member_after_the_certify_pass() {
+    for carry in [driving(State::Certifying, "spira.c3"), sole_member(driving(State::Certifying, "spira.c3"))] {
+        let want = carry.repos["spira"].members.clone();
+        let mut r = carried(&carry);
+        let n = r.requested().len();
+        r.tick(STREAM, ended("spira.c3", runtime::units::Exit::Code(1), "queue.sh round certify: round r9 is RED at abc: test-a.sh\nred=test-a.sh\n")).unwrap();
+        kit::assert_unpoisoned(&r, STREAM);
+        let after = asked_after(&r, n);
+        assert_eq!(after.iter().map(|(e, l)| (e.as_str(), l.why.as_str())).collect::<Vec<_>>(), [(CORPUS, ATTRIBUTE)], "{after:?}");
+        let leg = &after[0].1;
+        assert!(leg.after_certify && leg.reds.is_empty() && leg.after_pass.is_empty(), "{leg:?}");
+        assert_eq!(leg.members, want, "every member is attributed");
+    }
+}
+
+/// No row but the carried leg's own restart reaches Corpus, and a promotion that is not yet
+/// attested certifies like an opened round.
+#[test]
+fn no_path_runs_corpus_then_certify() {
+    for (from, on, to) in TABLE {
+        if *from != State::Corpus {
+            assert!(*to != State::Corpus, "{from:?} × {on:?} reaches Corpus");
+        }
+    }
+    assert_eq!(step(State::Opened, Trigger::OpenedWithSuites), Ok(State::Certifying));
+    let mut c = driving(State::Promoting, "spira.c1");
+    c.repos.get_mut("spira").unwrap().leg = None;
+    let leg = Leg { repo: "spira".into(), ..Leg::default() };
+    let body = serde_json::json!({"batch": "r9", "members": [["sp-a", "t1"]], "attested": false}).to_string();
+    let (next, acts) = on_outcome(&c, PROMOTE, true, &body, &leg, NOW);
+    assert_eq!(acts.iter().map(|a| a.effect.as_str()).collect::<Vec<_>>(), [CERTIFY], "{acts:?}");
+    assert_eq!(next.repos["spira"].state, State::Certifying);
 }
 
 /// The named-suite attribution runs once; a second named red abandons and says what it had.
@@ -823,7 +860,7 @@ fn sp_822b8l_a_pool_with_one_inadmissible_member_still_opens_a_round_of_the_othe
     assert_eq!(rc.state, State::Opened);
     assert_eq!(rc.refused.get("sp-b"), Some(&("t2".to_string(), "b1".to_string(), "integration".to_string())));
     let (carry, acts) = on_outcome(&carry, ROUND_OPEN, true, &serde_json::to_string(&Opened { batch: "r9".into(), ..Opened::default() }).unwrap(), &leg, NOW);
-    assert_eq!(acts.iter().map(|a| a.effect.as_str()).collect::<Vec<_>>(), [CORPUS], "{acts:?}");
+    assert_eq!(acts.iter().map(|a| a.effect.as_str()).collect::<Vec<_>>(), [CERTIFY], "{acts:?}");
     assert_eq!(carry.repos["spira"].members.len(), 2);
 }
 
@@ -1114,9 +1151,7 @@ fn sp_lkm2fv_a_green_certify_of_a_wide_round_is_requested_not_refused_by_the_sto
     r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
     assert!(r.requested().iter().any(|q| q.name == ROUND_OPEN), "certified beads and no open round: the first tick opens a round");
     let leg_of = |r: &TaskRig, effect: &str| -> Leg { serde_json::from_str(&r.requested().iter().rev().find(|q| q.name == effect).unwrap_or_else(|| panic!("{effect} was never asked")).input).unwrap() };
-    let corpus = leg_of(&r, CORPUS);
     let ran = |leg: &Leg| UnitRan { handle: UnitHandle::of(NAME, &leg.unit).unwrap(), exit: Exit::Code(0), duration_ms: 1_000 };
-    r.tick(STREAM, ran(&corpus).event_kind()).unwrap();
     let certify = leg_of(&r, CERTIFY);
     r.tick(STREAM, ran(&certify).event_kind()).unwrap();
     kit::assert_unpoisoned(&r, STREAM);
@@ -1136,11 +1171,11 @@ fn queue_holds(id: &str, members: &[&str]) -> Snapshot {
 }
 
 #[test]
-fn sp_pi2ojm_the_tick_after_round_open_launches_the_corpus_leg_when_the_outcome_never_arrived() {
+fn sp_pi2ojm_the_tick_after_round_open_launches_the_certify_leg_when_the_outcome_never_arrived() {
     let (carry, acts) = decide(&opened_unadvanced(), &queue_holds("r9", &["sp-a", "sp-b"]));
-    assert_eq!(acts.iter().map(|a| a.effect.as_str()).collect::<Vec<_>>(), [CORPUS], "{acts:?}");
+    assert_eq!(acts.iter().map(|a| a.effect.as_str()).collect::<Vec<_>>(), [CERTIFY], "{acts:?}");
     let rc = &carry.repos["spira"];
-    assert_eq!((rc.state, rc.batch.as_deref()), (State::Corpus, Some("r9")));
+    assert_eq!((rc.state, rc.batch.as_deref()), (State::Certifying, Some("r9")));
     let leg: Leg = serde_json::from_str(&acts[0].input).unwrap();
     assert_eq!(leg.batch, "r9");
 }
@@ -1385,9 +1420,9 @@ fn effects(acts: &[Act]) -> Vec<&str> {
 #[test]
 fn sp_5u1oru_an_open_round_whose_open_answer_is_lost_is_adopted_at_the_next_tick() {
     let (carry, acts) = decide(&opened_unanswered(), &open_with("opened", &["sp-a", "sp-b"], "/w"));
-    assert!(effects(&acts).contains(&CORPUS), "the first pass starts on this tick: {acts:?}");
+    assert!(effects(&acts).contains(&CERTIFY), "the first pass starts on this tick: {acts:?}");
     let rc = &carry.repos["spira"];
-    assert_eq!((rc.state, rc.batch.as_deref()), (State::Corpus, Some("r9")));
+    assert_eq!((rc.state, rc.batch.as_deref()), (State::Certifying, Some("r9")));
 }
 
 #[test]

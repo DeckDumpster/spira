@@ -129,7 +129,7 @@ impl Lc {
 }
 
 /// What a scenario scripts: the beads it files (at what time), how many dwarves the rune may
-/// run at once, and which member's change turns the corpus red (none: green).
+/// run at once, and which member's change turns the certify red (none: green).
 #[derive(Clone)]
 struct Script {
     file: Vec<(u64, &'static str)>,
@@ -356,9 +356,10 @@ fn batcher_corpus(w: &World, input: &str) -> Result<String, String> {
 
 fn batcher_certify(w: &World, input: &str) -> Result<String, String> {
     let leg: bl::Leg = parse(bl::CERTIFY, input)?;
-    let spec = UnitSpec { task: bl::NAME.into(), key: leg.unit.clone(), argv: vec!["queue".into(), "round".into(), "certify".into(), leg.batch, REPO.into()], env: vec![], cwd: None };
-    w.units.script(bl::NAME, CERTIFY_MS, Exit::Code(0));
-    w.units.script_output(bl::NAME, b"certified\n", b"");
+    let spec = UnitSpec { task: bl::NAME.into(), key: leg.unit.clone(), argv: vec!["queue".into(), "round".into(), "certify".into(), leg.batch.clone(), REPO.into()], env: vec![], cwd: None };
+    let red = w.script.guilty.is_some_and(|g| leg.members.iter().any(|(id, _)| id == g));
+    w.units.script(bl::NAME, CERTIFY_MS, Exit::Code(if red { 1 } else { 0 }));
+    w.units.script_output(bl::NAME, if red { b"red=test-a.sh\n" } else { b"certified\n" }, b"");
     units::effect(&*w.units, UNIT_RUN_SCOPE, &json(&ScopeSpec { unit: spec, cpu_quota_pct: None, memory_max_bytes: None })?)
 }
 
@@ -687,13 +688,13 @@ fn one_bead_is_filed_claimed_submitted_cut_certified_and_landed_on_the_service_t
     assert_eq!(lifecycle, ["READY", "WORKING", "SUBMITTED", "CERTIFIED", "IN_DELIVERY", "LANDED"], "{}", dump(&a));
     assert_eq!(a.states["sp-w3a"], BeadState::Landed);
     assert!(a.refused.is_empty(), "the store refused nothing: {:?}", a.refused);
-    assert_eq!(batcher_states(&a.trace), ["Idle", "Assembling", "Opened", "Corpus", "Certifying", "Landing", "Idle"], "the first Idle records the named wait for sift (sp-8nlvra): {}", dump(&a));
+    assert_eq!(batcher_states(&a.trace), ["Idle", "Assembling", "Opened", "Certifying", "Landing", "Idle"], "the first Idle records the named wait for sift (sp-8nlvra): {}", dump(&a));
     let call = tags_on(&a, sc::STREAM);
     assert!(call.contains(&runtime::units::UNIT_RAN.to_string()), "the dwarf's end reached sentinel-call's own stream: {call:?}");
     let sifted = a.trace.iter().any(|e| e.1 == bl::STREAM && e.2 == spira_runtime::tasks::a::kit::WORK_SUBMITTED);
     assert!(sifted, "sift's pass woke the batcher on its own stream (EmitTo work.submitted)");
     let legs: Vec<&String> = a.trace.iter().filter(|e| e.1 == bl::STREAM && e.2 == runtime::units::UNIT_RAN).map(|e| &e.3).collect();
-    assert_eq!(legs.len(), 2, "the corpus leg and the certify leg each ended on the batcher's stream");
+    assert_eq!(legs.len(), 1, "the one certify leg ended on the batcher's stream");
     assert!(a.asked.iter().any(|n| n == qs::OBSERVE), "queue.step observed the repo");
     assert!(!a.asked.iter().any(|n| n.starts_with("queue.step.") && n != qs::OBSERVE), "queue.step asked for nothing past its observe: a queue.local repo with no batch is silent");
     assert_no_process(&a);
@@ -715,7 +716,7 @@ fn a_red_round_attributes_ejects_the_guilty_member_and_lands_the_rest() {
     assert_eq!(lifecycle_of(&a, "sp-w3a"), ["READY", "WORKING", "SUBMITTED", "CERTIFIED", "IN_DELIVERY", "LANDED"], "{}", dump(&a));
     assert_eq!(lifecycle_of(&a, "sp-w3b"), ["READY", "WORKING", "SUBMITTED", "REWORK"], "{}", dump(&a));
     assert!(a.refused.is_empty(), "the store refused nothing: {:?}", a.refused);
-    assert_eq!(batcher_states(&a.trace), ["Idle", "Assembling", "Opened", "Corpus", "Attributing", "Certifying", "Landing", "Idle"], "the first Idle records the named wait for sift (sp-8nlvra): {}", dump(&a));
+    assert_eq!(batcher_states(&a.trace), ["Idle", "Assembling", "Opened", "Certifying", "Attributing", "Certifying", "Landing", "Idle"], "the first Idle records the named wait for sift (sp-8nlvra): {}", dump(&a));
     let opens = a.asked.iter().filter(|n| *n == bl::ROUND_OPEN).count();
     assert_eq!(opens, 1, "one round was opened for the two members");
     assert_no_process(&a);
