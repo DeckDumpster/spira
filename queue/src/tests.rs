@@ -1468,7 +1468,7 @@ impl Lc for FLc {
                 "PassStarted" => ("CI_RUNNING", n, "build"),
                 "SuitesStarted" => ("CI_RUNNING", view.2, "suites"),
                 "PassGreen" => ("GREEN", view.2, ""),
-                "PassRed" | "PassIncomplete" | "PassPreempted" => ("ATTRIBUTING", view.2, ""),
+                "PassRed" | "PassIncomplete" => ("ATTRIBUTING", view.2, ""),
                 "PassRebuilt" => ("OPEN", view.2, ""),
                 "" if kind == "\"BaseMoved\"" => ("REBUILDING", view.2, ""),
                 _ => (view.0.as_str(), view.2, view.3.as_str()),

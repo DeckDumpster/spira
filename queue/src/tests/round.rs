@@ -3522,7 +3522,7 @@ fn a_pass_left_open_is_closed_incomplete_so_the_next_certify_starts_cleanly() {
     );
 }
 
-fn preempt_world() -> (T, String) {
+fn pass_world() -> (T, String) {
     let t = round_world();
     t.git
         .anc
@@ -3556,7 +3556,7 @@ fn preempt_world() -> (T, String) {
 }
 
 fn host_pass_world() -> (T, String, String) {
-    let (t, batch) = preempt_world();
+    let (t, batch) = pass_world();
     fs::remove_file(marker(&t, &batch, "pass")).unwrap();
     t.scripts.pass_alive.set(false);
     let scope = format!("{}.scope", runtime::units::round_scope_unit("spira", &batch, "9-1"));
@@ -3577,7 +3577,7 @@ fn an_eject_with_no_suite_and_no_red_reopens_with_cause_eject() {
 
 #[test]
 fn a_rebuild_that_cannot_cut_the_base_restores_the_head_and_says_nothing_changed() {
-    let (t, batch) = preempt_world();
+    let (t, batch) = pass_world();
     let rec = kv_of(&t, "round");
     let (base, head) = (rec["base"].to_string(), rec["head"].to_string());
     *t.git.add_refused.borrow_mut() = Some(base);
