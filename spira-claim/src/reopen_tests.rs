@@ -240,7 +240,9 @@ fn a_refused_stop_leaves_the_bead_working() {
         fn note(&mut self, i: &str, t: &str) -> Result<(), String> { self.0.note(i, t) }
     }
     let mut w = Stuck(Fake::default());
-    assert_eq!(run(&opts("sp-a", "local-tier-red"), &mut w).0, 1);
+    let (code, failures) = run(&opts("sp-a", "local-tier-red"), &mut w);
+    assert_eq!(code, 1);
+    assert_eq!(failures, vec!["stop-holder: still running".to_string()]);
     assert!(w.0.calls.borrow().is_empty(), "the row moved with the dwarf still running: {:?}", w.0.calls.borrow());
 }
 
