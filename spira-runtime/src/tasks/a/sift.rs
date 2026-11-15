@@ -588,8 +588,9 @@ pub fn send_back(e: &Effects, spec: &EffectSpec) -> Result<String, String> {
     let lc = client(e, spec.deadline_ms);
     sifts::keep_sift_logs(&lc, &e.world.run_dir, &w.id, &w.text);
     sifts::lc_gate_red(&lc, &w.id, &w.tip, &w.text)?;
-    if !w.brief.is_empty() {
-        sifts::lc_send_back_fact(&lc, &w.id, &w.tip, &w.brief).map_err(|e| format!("{} is sent back; its send-back fact was not recorded: {e}", w.id))?;
+    let fact = if w.brief.is_empty() { Ok(()) } else { sifts::lc_send_back_fact(&lc, &w.id, &w.tip, &w.brief) };
+    if let Err(e) = fact {
+        eprintln!("{SEND_BACK}: {} is sent back; its send-back fact was not recorded: {e}", w.id);
     }
     Ok(format!("sent {} back", w.id))
 }
