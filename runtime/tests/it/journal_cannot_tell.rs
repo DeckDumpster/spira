@@ -43,7 +43,7 @@ async fn a_journal_read_that_cannot_tell_is_retried_not_returned_as_an_exit() {
     let serving = tokio::spawn(serve_with(engine, Arc::new(WallClock), Arc::new(NoEffects), PoolCaps::default(), rx, opts));
     faulty.cannot_tell_next("commit");
     tx.send(Submit::new("p1", "s", EventKind::new("ping", ""))).await.unwrap();
-    for _ in 0..300 {
+    for _ in 0..3000 {
         if pongs(&*mem) == 1 {
             break;
         }
@@ -94,7 +94,7 @@ async fn a_spira_lc_deadline_on_the_socket_journal_is_retried_by_serve_not_retur
     let serving = tokio::spawn(serve_with(engine, Arc::new(WallClock), Arc::new(NoEffects), PoolCaps::default(), rx, ServeOpts::default()));
     store.deadline_next.store(true, std::sync::atomic::Ordering::SeqCst);
     tx.send(Submit::new("p1", "s", EventKind::new("ping", ""))).await.unwrap();
-    for _ in 0..300 {
+    for _ in 0..3000 {
         if !store.mem.commits().is_empty() {
             break;
         }

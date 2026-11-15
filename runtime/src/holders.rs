@@ -104,7 +104,7 @@ mod tests {
         let dir = scratch("holders-stop");
         let tree = dir.path().to_path_buf();
         let child = Command::new("sh")
-            .args(["-c", "trap '' TERM; while :; do sleep 1; done"])
+            .args(["-c", "trap '' TERM; exec sleep 30"])
             .current_dir(&tree)
             .spawn()
             .unwrap();
