@@ -479,7 +479,7 @@ fn merge_refusal(git: &dyn Fn(&[&str]) -> (i32, String), landref: &str, base_fq:
 pub(crate) fn phantom_refusal(
     commits: &[(String, String)],
     prefix: &str,
-    known: &mut spira_config::cite::Lookup,
+    known: &mut spira_config::cite::Lookup<'_>,
 ) -> Option<(i32, String)> {
     match spira_config::cite::phantoms(commits, prefix, known) {
         Ok(p) if p.is_empty() => None,

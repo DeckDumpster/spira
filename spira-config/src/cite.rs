@@ -9,7 +9,7 @@ pub struct Phantom {
 }
 
 /// Asks the store which of the ids it holds; `Err` is the store not answering.
-pub type Lookup = dyn FnMut(&[String]) -> Result<Vec<String>, String>;
+pub type Lookup<'a> = dyn FnMut(&[String]) -> Result<Vec<String>, String> + 'a;
 
 fn id_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_'
@@ -61,7 +61,7 @@ pub fn citations(message: &str, prefix: &str) -> Vec<String> {
 pub fn phantoms(
     commits: &[(String, String)],
     prefix: &str,
-    known: &mut Lookup,
+    known: &mut Lookup<'_>,
 ) -> Result<Vec<Phantom>, String> {
     let cited: Vec<(&str, Vec<String>)> = commits.iter().map(|(sha, msg)| (sha.as_str(), citations(msg, prefix))).collect();
     let mut all: Vec<String> = cited.iter().flat_map(|(_, ids)| ids.iter().cloned()).collect();
