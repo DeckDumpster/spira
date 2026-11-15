@@ -40,6 +40,17 @@ fn run_dir() -> testkit::TempDir {
     testkit::TempDir::new("spira-admission")
 }
 
+/// sp-p58bfi: a waiter sized from its environment kept the size its session started with, so
+/// `compile_par` raised 3 to 8 in the document admitted nobody already waiting.
+#[test]
+fn the_documents_size_wins_over_the_environment_a_waiter_inherited() {
+    let b = Host { cores: 32, mem_avail_mib: 36_000 };
+    assert_eq!(size_in(Pool::Compile, Some(8), Some("3"), b), 8, "the document's size, not the session's");
+    assert_eq!(size_in(Pool::Compile, None, Some("5"), b), 5, "no document: the environment");
+    assert_eq!(size_in(Pool::Compile, None, None, b), 3, "neither: derived from the box");
+    assert_eq!(size_in(Pool::Compile, Some(0), Some("5"), b), 5, "a zero in the document is not a size");
+}
+
 #[test]
 fn derived_sizes_follow_the_measured_costs() {
     // This box on 2026-09-30: 32 cores, ~36 GiB available.

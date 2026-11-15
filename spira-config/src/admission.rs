@@ -176,7 +176,15 @@ pub fn doc_size(pool: Pool, doc: &crate::SpiraToml) -> Option<u64> {
 /// then this process's environment, then derived from the box.
 pub fn size_configured(pool: Pool) -> u64 {
     let doc = crate::discover(None).and_then(|p| crate::load(&p).ok());
-    doc.as_ref().and_then(|d| doc_size(pool, d)).unwrap_or_else(|| size_from_env(pool))
+    size_in(pool, doc.as_ref().and_then(|d| doc_size(pool, d)), std::env::var(pool.size_env()).ok().as_deref(), Host::read())
+}
+
+/// The order every reader of a pool's size shares: the size the config document holds now,
+/// then the environment's, then the one derived from the box. A waiter sized from its
+/// environment alone kept the size its session started with, so a size the operator raised
+/// reached nothing already running (sp-p58bfi).
+pub fn size_in(pool: Pool, doc: Option<u64>, env: Option<&str>, h: Host) -> u64 {
+    doc.filter(|n| *n > 0).unwrap_or_else(|| size(pool, env, h))
 }
 
 /// Who holds (or waits for) a slot: a process, identified across pid reuse by its starttime.
@@ -832,10 +840,11 @@ fn real_sleep(d: Duration) {
     std::thread::sleep(d)
 }
 
-/// [`acquire`] against the real process table, sized from this process's environment.
+/// [`acquire`] against the real process table, sized on every pass from the config document
+/// ([`size_configured`]), so a size raised while this job waits admits it.
 pub fn acquire_real(q: &Request, say: &mut dyn FnMut(&str)) -> Guard {
     let pool = q.pool;
-    let size_of = move || size_from_env(pool);
+    let size_of = move || size_configured(pool);
     acquire(q, &Seams { size_of: &size_of, procs: &RealProcs, sleep: &real_sleep }, say)
 }
 
