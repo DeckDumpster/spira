@@ -572,7 +572,7 @@ fn gate_red_at(conn: &Conn, bead_id: &str, tip: &str) -> Option<GateRedAt> {
 fn gate_red_from_row(row: &serde_json::Value) -> Option<GateRedAt> {
     let text = |k: &str| row.get(k).and_then(|v| v.as_str()).filter(|v| !v.is_empty() && *v != "null").map(str::to_string);
     let (step, message) = (text("step"), text("message"));
-    (step.is_some() || message.is_some()).then_some(GateRedAt { step, message })
+    Some(GateRedAt { step, message })
 }
 
 fn ejected_reasons(conn: &Conn, bead_id: &str, tip: &str) -> Option<String> {
@@ -2373,11 +2373,11 @@ mod tests {
     }
 
     #[test]
-    fn a_stored_gate_red_row_reads_back_its_step_and_message_and_a_stepless_one_reads_as_none() {
+    fn a_stored_gate_red_row_reads_back_its_step_and_message_and_a_stepless_one_still_reads_as_a_gate_red() {
         let row = serde_json::json!({"step": "fixture-config", "message": "SPIRA_X is not declared"});
         let got = super::gate_red_from_row(&row).unwrap();
         assert_eq!((got.step.as_deref(), got.message.as_deref()), (Some("fixture-config"), Some("SPIRA_X is not declared")));
-        assert!(super::gate_red_from_row(&serde_json::json!({"step": "null", "message": null})).is_none());
+        assert!(super::gate_red_from_row(&serde_json::json!({"step": "null", "message": null})).is_some_and(|g| g.step.is_none() && g.message.is_none()));
     }
 
     #[test]
