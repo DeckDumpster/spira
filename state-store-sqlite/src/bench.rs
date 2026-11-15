@@ -1,8 +1,9 @@
 //! state-store-bench's core: argument parsing, the CAS load at a fixed rate, the synthetic IO
 //! load, and the quantiles it reports. A measurement tool, never a corpus assertion.
 
-use std::fs::OpenOptions;
+use std::fs::{File, OpenOptions};
 use std::io::{Seek, SeekFrom, Write as _};
+use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -31,6 +32,95 @@ const SECTION_BYTES: usize = 4 << 10;
 /// The TTLs the real writers put on a section and on a pass record.
 const SECTION_TTL_SECS: u64 = 7 * 24 * 3600;
 const PASS_TTL_SECS: u64 = 24 * 3600;
+
+/// A sample slower than this is a stall.
+pub const STALL_MS: f64 = 100.0;
+
+/// Bytes of the WAL index the bench reads: the two `WalIndexHdr` copies, then `nBackfill`.
+const SHM_PREFIX: usize = 100;
+const BACKFILL_OFFSET: usize = 96;
+
+/// One stall: when it ended, how long the commit itself took, how late it was against its
+/// schedule, and whether the WAL's backfill mark moved across the commit.
+struct Stall {
+    ended_unix_us: u128,
+    service_ms: f64,
+    total_ms: f64,
+    checkpointed: bool,
+}
+
+/// A sync of the load generator that took over [`STALL_MS`]: the device was slow then.
+#[derive(Clone, Copy)]
+struct SlowSync {
+    ended_unix_us: u128,
+    took_us: u64,
+}
+
+type SlowSyncs = Arc<std::sync::Mutex<Vec<SlowSync>>>;
+
+fn unix_us() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_micros())
+}
+
+/// `nBackfill` of a WAL index (`<db>-shm`), or `None` for a buffer too short to hold it.
+fn backfill(shm: &[u8]) -> Option<u32> {
+    let b = shm.get(BACKFILL_OFFSET..SHM_PREFIX)?;
+    Some(u32::from_ne_bytes(b.try_into().ok()?))
+}
+
+fn read_backfill(shm: &File, path: &str) -> std::result::Result<u32, String> {
+    let mut buf = [0u8; SHM_PREFIX];
+    shm.read_exact_at(&mut buf, 0)
+        .map_err(|e| format!("cannot read the WAL index {path}: {e}"))?;
+    backfill(&buf).ok_or_else(|| format!("the WAL index {path} is too short"))
+}
+
+impl Stall {
+    /// Why this commit was slow: it was only queued behind an earlier stall, it ran a
+    /// checkpoint or WAL restart, the load generator's own sync was slow in the same window
+    /// (the device), or nothing says.
+    fn cause(&self, slow: &[SlowSync]) -> &'static str {
+        if self.service_ms <= STALL_MS {
+            return "queued";
+        }
+        if self.checkpointed {
+            return "checkpoint";
+        }
+        let began = self
+            .ended_unix_us
+            .saturating_sub((self.service_ms * 1_000.0) as u128);
+        let overlaps = |ended: u128, took_us: u64| {
+            ended >= began && ended.saturating_sub(u128::from(took_us)) <= self.ended_unix_us
+        };
+        if slow.iter().any(|s| overlaps(s.ended_unix_us, s.took_us)) {
+            "device"
+        } else {
+            "unattributed"
+        }
+    }
+}
+
+fn report_stalls(stalls: &[Stall], slow: &[SlowSync]) {
+    let mut by_cause = std::collections::BTreeMap::<&str, u64>::new();
+    let mut roots = 0;
+    for s in stalls {
+        let cause = s.cause(slow);
+        *by_cause.entry(cause).or_default() += 1;
+        if s.service_ms > STALL_MS {
+            roots += 1;
+        }
+        eprintln!(
+            "state-store-bench: stall end_unix_us={} service_ms={:.1} total_ms={:.1} cause={cause}",
+            s.ended_unix_us, s.service_ms, s.total_ms
+        );
+    }
+    eprintln!(
+        "state-store-bench: {} samples over {STALL_MS}ms by cause: {by_cause:?}; {roots} commits took over {STALL_MS}ms themselves",
+        stalls.len()
+    );
+}
 
 /// What each commit of the run writes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -187,6 +277,11 @@ pub struct Quantiles {
     pub p99_ms: f64,
     pub p999_ms: f64,
     pub max_ms: f64,
+    /// p99 of each commit's own time, from when it began: the lateness quantiles above also
+    /// carry the queue a stall leaves behind it.
+    pub service_p99_ms: f64,
+    /// Commits whose own time passed [`STALL_MS`].
+    pub slow_commits: u64,
     /// Samples slower than `--limit-ms` (0 without one).
     pub exceed: u64,
     pub ended: Ended,
@@ -261,6 +356,8 @@ pub fn quantiles(ms: &mut [f64]) -> Quantiles {
         p99_ms: rank(0.99),
         p999_ms: rank(0.999),
         max_ms: ms.last().copied().unwrap_or(0.0),
+        service_p99_ms: 0.0,
+        slow_commits: 0,
         exceed: 0,
         ended: Ended::Full,
     }
@@ -280,11 +377,18 @@ pub fn report(q: &Quantiles, a: &CasArgs) -> serde_json::Value {
         "duration_secs": a.duration_secs,
         "load_mb_per_s": a.load_mb_per_s,
         "mix": a.mix.name(),
+        "service_p99_ms": q.service_p99_ms,
+        "slow_commits": q.slow_commits,
     })
 }
 
 /// Writes and fsyncs `mb_per_s` MiB a second into one file under `dir` until `stop`.
-fn io_load(dir: &Path, mb_per_s: u64, stop: Arc<AtomicBool>) -> std::io::Result<()> {
+fn io_load(
+    dir: &Path,
+    mb_per_s: u64,
+    stop: Arc<AtomicBool>,
+    slow: SlowSyncs,
+) -> std::io::Result<()> {
     let path = dir.join(format!("state-store-bench-load-{}", std::process::id()));
     let chunk = vec![0x5a_u8; LOAD_CHUNK];
     let every = Duration::from_secs_f64(1.0 / mb_per_s as f64);
@@ -302,7 +406,15 @@ fn io_load(dir: &Path, mb_per_s: u64, stop: Arc<AtomicBool>) -> std::io::Result<
             written = 0;
         }
         f.write_all(&chunk)?;
+        let began = Instant::now();
         f.sync_data()?;
+        let took = began.elapsed();
+        if took.as_secs_f64() * 1_000.0 > STALL_MS {
+            slow.lock().unwrap_or_else(|e| e.into_inner()).push(SlowSync {
+                ended_unix_us: unix_us(),
+                took_us: took.as_micros() as u64,
+            });
+        }
         written += LOAD_CHUNK as u64;
         next += every;
         if let Some(wait) = next.checked_duration_since(Instant::now()) {
@@ -330,11 +442,17 @@ pub fn run_cas(a: &CasArgs) -> std::result::Result<Quantiles, String> {
         },
     )
     .map_err(|e| e.to_string())?;
+    let shm_path = format!("{}-shm", a.path.display());
+    let shm = File::open(&shm_path)
+        .map_err(|e| format!("cannot open the WAL index {shm_path} to attribute stalls: {e}"))?;
+    let mut stalls = Vec::new();
+    let mut services = Vec::new();
 
     let stop = Arc::new(AtomicBool::new(false));
+    let slow = SlowSyncs::default();
     let load = a.load_dir.clone().map(|dir| {
-        let (stop, mb) = (stop.clone(), a.load_mb_per_s);
-        std::thread::spawn(move || io_load(&dir, mb, stop))
+        let (stop, mb, slow) = (stop.clone(), a.load_mb_per_s, slow.clone());
+        std::thread::spawn(move || io_load(&dir, mb, stop, slow))
     });
 
     let every = Duration::from_secs_f64(1.0 / a.rate);
@@ -356,9 +474,35 @@ pub fn run_cas(a: &CasArgs) -> std::result::Result<Quantiles, String> {
         if let Some(wait) = due.checked_duration_since(Instant::now()) {
             std::thread::sleep(wait);
         }
-        match commit(&c, a.mix, i, &run) {
+        let before = match read_backfill(&shm, &shm_path) {
+            Ok(b) => b,
+            Err(e) => {
+                failed = Some(e);
+                break;
+            }
+        };
+        let began = Instant::now();
+        let committed = commit(&c, a.mix, i, &run);
+        let service_ms = began.elapsed().as_secs_f64() * 1_000.0;
+        let after = match read_backfill(&shm, &shm_path) {
+            Ok(b) => b,
+            Err(e) => {
+                failed = Some(e);
+                break;
+            }
+        };
+        match committed {
             Ok(()) => {
                 let ms = due.elapsed().as_secs_f64() * 1_000.0;
+                services.push(service_ms);
+                if ms > STALL_MS {
+                    stalls.push(Stall {
+                        ended_unix_us: unix_us(),
+                        service_ms,
+                        total_ms: ms,
+                        checkpointed: before != after,
+                    });
+                }
                 if a.limit_ms.is_some_and(|l| ms > l) {
                     exceed += 1;
                 }
@@ -391,6 +535,7 @@ pub fn run_cas(a: &CasArgs) -> std::result::Result<Quantiles, String> {
         }
     }
     stop.store(true, Ordering::SeqCst);
+    report_stalls(&stalls, &slow.lock().unwrap_or_else(|e| e.into_inner()));
     if let Some(h) = load {
         match h.join() {
             Ok(Ok(())) => {}
@@ -404,6 +549,8 @@ pub fn run_cas(a: &CasArgs) -> std::result::Result<Quantiles, String> {
             let mut q = quantiles(&mut samples);
             q.exceed = exceed;
             q.ended = ended;
+            q.slow_commits = services.iter().filter(|ms| **ms > STALL_MS).count() as u64;
+            q.service_p99_ms = quantiles(&mut services).p99_ms;
             Ok(q)
         }
     }
@@ -464,6 +611,52 @@ mod tests {
 
     fn args(s: &[&str]) -> Vec<String> {
         s.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn a_stall_is_blamed_on_a_checkpoint_before_the_device() {
+        let stall = |service_ms, checkpointed| Stall {
+            ended_unix_us: 1_000_000,
+            service_ms,
+            total_ms: service_ms,
+            checkpointed,
+        };
+        let slow = [SlowSync { ended_unix_us: 1_000_000, took_us: 150_000 }];
+        assert_eq!(stall(300.0, true).cause(&slow), "checkpoint");
+        assert_eq!(stall(300.0, false).cause(&slow), "device");
+        assert_eq!(stall(300.0, false).cause(&[]), "unattributed");
+        let far = [SlowSync { ended_unix_us: 9_000_000, took_us: 150_000 }];
+        assert_eq!(stall(300.0, false).cause(&far), "unattributed");
+        let queued = Stall { ended_unix_us: 1_000_000, service_ms: 0.5, total_ms: 250.0, checkpointed: false };
+        assert_eq!(queued.cause(&[]), "queued");
+    }
+
+    #[test]
+    fn backfill_reads_the_ckpt_info_field_and_refuses_a_short_index() {
+        let mut shm = vec![0u8; 136];
+        shm[96..100].copy_from_slice(&7u32.to_ne_bytes());
+        assert_eq!(backfill(&shm), Some(7));
+        assert_eq!(backfill(&shm[..99]), None);
+    }
+
+    #[test]
+    fn the_report_carries_the_commits_own_p99_beside_the_lateness_quantiles() {
+        let a = CasArgs {
+            path: "p".into(),
+            rate: 50.0,
+            duration_secs: 1,
+            load_dir: None,
+            load_mb_per_s: 0,
+            mix: Mix::Reconciler,
+            json: true,
+            limit_ms: None,
+            min_secs: 300,
+        };
+        let mut q = quantiles(&mut [1.0, 2.0]);
+        q.service_p99_ms = 7.5;
+        q.slow_commits = 3;
+        let r = report(&q, &a);
+        assert_eq!((r["service_p99_ms"].as_f64(), r["slow_commits"].as_u64()), (Some(7.5), Some(3)));
     }
 
     #[test]

@@ -47,6 +47,14 @@ fn main() -> ExitCode {
                                 name: "spira_state_store_bench_cas_max_seconds",
                                 value: ms(q.max_ms),
                             },
+                            Point::Gauge {
+                                name: "spira_state_store_bench_cas_service_p99_seconds",
+                                value: ms(q.service_p99_ms),
+                            },
+                            Point::Count {
+                                name: "spira_state_store_bench_cas_slow_commits",
+                                value: q.slow_commits,
+                            },
                             Point::Count {
                                 name: "spira_state_store_bench_cas_samples",
                                 value: q.samples as u64,
