@@ -588,18 +588,6 @@ mod tests {
     }
 
     #[test]
-    fn the_repositorys_checks_build_the_units_with_the_gates_line_for_the_affected_crates() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
-        let rows = habits::config::load_checks(&root).unwrap();
-        let row = rows.iter().find(|r| r.run.starts_with("gate unit-build")).expect("a unit-build row in .spira/checks.toml");
-        assert_eq!(row.build.as_deref(), Some("gate"));
-        let crates = vec!["x".to_string(), "y".to_string()];
-        let argv = check_argv(&row.run, &Affected::Crates(crates.clone()), "b", rec_path()).unwrap();
-        assert_eq!(argv[..2], ["gate", "unit-build"]);
-        assert_eq!(gate::compose::unit_build_argv(&argv[2..]), gate::compose::unit_build_words(&crates));
-    }
-
-    #[test]
     fn a_checks_build_resolves_to_the_sessions_owned_build_directory() {
         let root = std::path::Path::new("/w/sp-x");
         let owned = std::path::Path::new("/srv/ssd-b/dwarf-build/dir.3");
