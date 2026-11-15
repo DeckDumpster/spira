@@ -7,6 +7,10 @@ pub mod help;
 pub mod image;
 pub mod review;
 pub mod trusted;
+use std::ffi::OsStr;
+use std::io;
+use std::path::Path;
+use std::process::Output;
 use help::{refusal, R};
 
 pub const CANNOT_TELL: i32 = 2;
@@ -168,6 +172,12 @@ pub fn check_outcome(rc: Option<i32>, staged: bool) -> &'static str {
     }
 }
 
+/// Runs a non-cargo row's program, cutting its whole process tree at `budget_ms`.
+pub fn run_row(exe: &Path, args: &[String], dir: &Path, path_env: &OsStr, budget_ms: u64) -> io::Result<Output> {
+    let ms = budget_ms.max(1);
+    spira_config::bounded::bounded_for(exe, &format!("{}.{:03}", ms / 1000, ms % 1000)).kill_tree().args(args).env("PATH", path_env).current_dir(dir).output()
+}
+
 /// One row's facts, as `<run>/checks.log` states them.
 pub struct CheckLine<'a> {
     pub ts: &'a str,
@@ -182,6 +192,7 @@ pub struct CheckLine<'a> {
     pub budget_s: u64,
     pub load1: Option<f64>,
     pub record: Option<&'a gate::unitrecord::UnitRecord>,
+    pub deferred_to: Option<&'a str>,
 }
 
 /// The `checks.log` line: fixed field order, `-` for what the row did not report.
@@ -195,7 +206,7 @@ pub fn checks_log_line(l: &CheckLine) -> String {
         None => "-".into(),
     };
     format!(
-        "{} {} {} bead={} row={} via={} rc={} outcome={} ran={} phases={} crates={} selection={} target={} compiled={} fresh={} load1={} load_wait={} budget={}",
+        "{} {} {} bead={} row={} via={} rc={} outcome={} ran={} phases={} crates={} selection={} target={} compiled={} fresh={} load1={} load_wait={} budget={} deferred_to={}",
         l.ts,
         l.repo,
         l.branch,
@@ -214,6 +225,7 @@ pub fn checks_log_line(l: &CheckLine) -> String {
         or_dash(r.and_then(|r| r.load1_start).or(l.load1).map(|v| format!("{v:.2}"))),
         or_dash(r.and_then(|r| r.load_wait_s)),
         l.budget_s,
+        or_dash(l.deferred_to),
     )
 }
 
@@ -487,7 +499,7 @@ mod tests {
     }
 
     fn line<'a>(rc: Option<i32>, staged: bool, record: Option<&'a gate::unitrecord::UnitRecord>) -> CheckLine<'a> {
-        CheckLine { ts: "2026-11-11T11:25:06Z", repo: "spira", branch: "spira/sp-x", bead: "sp-x", row: "unit-tests", via: "submit", rc, staged, ran_s: 121, budget_s: 180, load1: Some(31.5), record }
+        CheckLine { ts: "2026-11-11T11:25:06Z", repo: "spira", branch: "spira/sp-x", bead: "sp-x", row: "unit-tests", via: "submit", rc, staged, ran_s: 121, budget_s: 180, load1: Some(31.5), record, deferred_to: Some("gate") }
     }
 
     #[test]
@@ -543,7 +555,7 @@ mod tests {
         };
         assert_eq!(
             checks_log_line(&line(Some(0), true, Some(&r))),
-            "2026-11-11T11:25:06Z spira spira/sp-x bead=sp-x row=unit-tests via=submit rc=0 outcome=pass ran=121 phases=build:105.9,test:15.5 crates=3 selection=transitive target=owned compiled=137 fresh=0 load1=28.25 load_wait=12 budget=180"
+            "2026-11-11T11:25:06Z spira spira/sp-x bead=sp-x row=unit-tests via=submit rc=0 outcome=pass ran=121 phases=build:105.9,test:15.5 crates=3 selection=transitive target=owned compiled=137 fresh=0 load1=28.25 load_wait=12 budget=180 deferred_to=gate"
         );
     }
 
@@ -552,9 +564,10 @@ mod tests {
         let mut l = line(Some(1), false, None);
         l.row = "clippy";
         l.via = "checks";
+        l.deferred_to = None;
         assert_eq!(
             checks_log_line(&l),
-            "2026-11-11T11:25:06Z spira spira/sp-x bead=sp-x row=clippy via=checks rc=1 outcome=red ran=121 phases=- crates=- selection=- target=- compiled=- fresh=- load1=31.50 load_wait=- budget=180"
+            "2026-11-11T11:25:06Z spira spira/sp-x bead=sp-x row=clippy via=checks rc=1 outcome=red ran=121 phases=- crates=- selection=- target=- compiled=- fresh=- load1=31.50 load_wait=- budget=180 deferred_to=-"
         );
     }
 
@@ -844,6 +857,42 @@ mod tests {
     fn a_pass_key_is_none_when_the_fork_cannot_be_read() {
         let git = |args: &[&str]| (args == ["rev-parse", "HEAD"]).then(|| "T".to_string());
         assert_eq!(checks_pass_key_from(&git, ""), None);
+    }
+
+    // Exception to law-a-unit-test-calls-no-binary: spawning is the code under test; it spawns only `/bin/sh` and `sleep`.
+    #[test]
+    fn a_row_that_ignores_term_is_cut_with_its_grandchild_at_the_budget() {
+        let d = testkit::TempDir::new("run-row");
+        let dir = d.path().display();
+        let script = format!("trap \"\" TERM; setsid sh -c \"echo \\$\\$ > {dir}/gc; trap \\\"\\\" TERM; exec sleep 30\" & echo $$ > {dir}/c; sleep 30");
+        let (tx, rx) = std::sync::mpsc::channel();
+        let (cwd, env) = (d.path().to_path_buf(), std::ffi::OsString::from("/usr/bin:/bin"));
+        std::thread::spawn(move || tx.send(run_row(Path::new("/bin/sh"), &["-c".into(), script], &cwd, &env, 200)));
+        let out = rx.recv_timeout(std::time::Duration::from_secs(1)).expect("run_row did not return within a second of a 200 ms budget").unwrap(); // clock-safe: cap on waiting for run_row's return
+        assert_eq!(out.status.code(), Some(124));
+        for f in ["c", "gc"] {
+            let pid = std::fs::read_to_string(d.join(f)).unwrap().trim().to_string();
+            let gone = (0..30).any(|_| {
+                let alive = std::fs::read_to_string(format!("/proc/{pid}/stat")).map(|s| !s.rsplit(") ").next().unwrap_or("").starts_with('Z')).unwrap_or(false);
+                if alive {
+                    std::thread::sleep(std::time::Duration::from_millis(10)); // clock-safe: cap on waiting for the killed process to be reaped
+                }
+                !alive
+            });
+            assert!(gone, "{f} pid {pid} survived the cut");
+        }
+    }
+
+    // Exception to law-a-unit-test-calls-no-binary: spawning is the code under test; it spawns only `/bin/sh` and `sleep`.
+    #[test]
+    fn a_zero_budget_is_cut_at_once_never_unbounded() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let env = std::ffi::OsString::from("/usr/bin:/bin");
+        std::thread::spawn(move || {
+            let _ = tx.send(run_row(Path::new("/bin/sh"), &["-c".into(), "sleep 30".into()], Path::new("/"), &env, 0));
+        });
+        let out = rx.recv_timeout(std::time::Duration::from_secs(1)).expect("a zero budget ran unbounded").unwrap(); // clock-safe: cap on waiting for run_row's return
+        assert_eq!(out.status.code(), Some(124));
     }
 
     #[test]

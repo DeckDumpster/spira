@@ -80,3 +80,43 @@
         assert_eq!(bounded_for("true", "x").output().unwrap().status.code(), Some(125));
         assert_eq!(bounded_for("true", "x").spawn().err().unwrap().kind(), io::ErrorKind::InvalidInput);
     }
+
+    fn alive(pid: &str) -> bool {
+        std::fs::read_to_string(format!("/proc/{pid}/stat")).map(|s| !s.rsplit(") ").next().unwrap_or("").starts_with('Z')).unwrap_or(false)
+    }
+
+    fn setsid_grandchild(kill_tree: bool) -> (String, bool) {
+        let tmp = testkit::TempDir::new("bounded-tree");
+        let dir = tmp.path().to_path_buf();
+        let script = format!("setsid sh -c 'echo $$ > {d}/gc; exec sleep 30' & sleep 30", d = dir.display());
+        let mut b = bounded_for("sh", "0.3");
+        b.args(["-c", &script]).stdout(Stdio::null()).stderr(Stdio::null());
+        if kill_tree {
+            b.kill_tree();
+        }
+        assert_eq!(b.status().unwrap().code(), Some(124));
+        let pid = std::fs::read_to_string(dir.join("gc")).unwrap().trim().to_string();
+        let gone = (0..30).any(|_| {
+            let a = alive(&pid);
+            if a {
+                std::thread::sleep(Duration::from_millis(10)); // clock-safe: cap on waiting for the killed process to be reaped
+            }
+            !a
+        });
+        if !gone {
+            unsafe { libc::kill(pid.parse().unwrap(), libc::SIGKILL) };
+        }
+        (pid, gone)
+    }
+
+    #[test]
+    fn kill_tree_kills_a_grandchild_that_took_its_own_session() {
+        let (pid, gone) = setsid_grandchild(true);
+        assert!(gone, "grandchild {pid} survived kill_tree");
+    }
+
+    #[test]
+    fn without_kill_tree_a_grandchild_in_its_own_session_survives() {
+        let (pid, gone) = setsid_grandchild(false);
+        assert!(!gone, "grandchild {pid} died without kill_tree: the opt-in is not pinned");
+    }

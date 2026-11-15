@@ -647,11 +647,16 @@ fn run_checks(args: &[String], base_red: bool, via: &str) -> (i32, Vec<String>) 
                 found.unwrap_or_else(|| std::path::PathBuf::from(prog))
             }
         };
-        let mut bounded = vec!["timeout".to_string(), secs, exe.to_string_lossy().into_owned()];
-        bounded.extend(rest.iter().cloned());
-        // batch-job: bounded by the row's budget through `timeout`
         let ran_from = std::time::Instant::now();
-        let out = Command::new(&bounded[0]).args(&bounded[1..]).env("PATH", work::trusted::join_path(&dirs)).current_dir(root).output();
+        let path_env = work::trusted::join_path(&dirs);
+        let out = if prog == "cargo" {
+            let mut bounded = vec!["timeout".to_string(), secs, exe.to_string_lossy().into_owned()];
+            bounded.extend(rest.iter().cloned());
+            // batch-job: bounded by the row's budget through `timeout`
+            Command::new(&bounded[0]).args(&bounded[1..]).env("PATH", &path_env).current_dir(root).output()
+        } else {
+            work::run_row(&exe, rest, root, std::ffi::OsStr::new(&path_env), row.budget_ms)
+        };
         match out {
             Ok(o) => {
                 print!("{}", String::from_utf8_lossy(&o.stdout));
@@ -755,6 +760,7 @@ impl RowLog {
             budget_s: row.budget_ms.div_ceil(1000),
             load1,
             record: record.as_ref(),
+            deferred_to: row.deferred_to.as_deref(),
         });
         if let Some(run) = &self.run {
             use std::io::Write;
