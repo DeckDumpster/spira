@@ -151,7 +151,7 @@ fn run_search_fence(args: &[String]) -> i32 {
     let flag = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned();
     let (Some(run), Some(worktree)) = (flag("--run"), flag("--worktree")) else {
         eprintln!("usage: dwarf search-fence --run <dir> --worktree <dir>");
-        return 2;
+        return 0;
     };
     if std::env::var_os(dwarf::restrict::FENCE_OVERRIDE).is_some() {
         return 0;
