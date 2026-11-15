@@ -2705,6 +2705,16 @@ mod tests {
     }
 
     #[test]
+    fn logs_lists_the_newest_entry_first() {
+        let rows: Vec<serde_json::Value> = [("a-1-0", "1"), ("b-2-0", "2")]
+            .iter()
+            .map(|(id, at)| serde_json::json!({"issue_id": "sp-1", "event_type": LOGS_KIND, "new_value": id, "actor": "x", "at": at}))
+            .collect();
+        let ids: Vec<String> = entries_of(&rows).into_iter().map(|e| e.2).collect();
+        assert_eq!(ids, ["b-2-0", "a-1-0"]);
+    }
+
+    #[test]
     fn show_names_work_logs_when_the_bead_has_kept_entries() {
         assert!(with_logs(s("T\n"), 1).ends_with("LOGS: 1 kept — work logs\n"));
         assert_eq!(with_logs(s("T\n"), 0), "T\n");
