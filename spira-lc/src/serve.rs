@@ -375,14 +375,13 @@ fn serve_one(stream: UnixStream, conn: &Arc<Conn>, spans: Option<&spira_otel::Si
             let req = Request { argv, stdin: req.stdin, caller: req.caller, min_rev, task: None };
             let worker_rec = Arc::clone(&recorder);
             within(limit.saturating_sub(received.elapsed()), move || {
-                state_store::phases::track(worker_rec);
+                let _tracking = state_store::phases::track_scoped(worker_rec);
                 *began.lock().unwrap_or_else(|e| e.into_inner()) = Some(Instant::now());
                 crate::slow::set_caller(&who);
                 crate::db::set_request_deadline(Some(received + limit));
                 state_store::model::track(!min_rev.is_none_or(model_reached));
                 let mut local = Local(&worker);
                 let ans = answer(req, &mut local, &mut crate::bd::LiveBd, &crate::composed::LiveContent, &crate::lifecycle_run_dir);
-                state_store::phases::untrack();
                 (ans, state_store::model::stamp())
             })
             .unwrap_or_else(|| (Answer::out(2, format!("cannot tell: {}", crate::db::DEADLINE_MESSAGE)), None))
@@ -784,6 +783,21 @@ mod tests {
         assert!(attr("spira.phase.commit_us").is_some() && attr("spira.phase.read_us").is_some());
         assert!(matches!(attr("spira.phase.open"), Some(Value::StringValue(s)) if s == "writer_wait"));
         assert!(attr("spira.queue_wait_us").is_some());
+    }
+
+    #[test]
+    fn a_request_cut_at_its_deadline_leaves_the_phase_it_was_in_on_the_recorder() {
+        use state_store::phases::{begin, track_scoped, Phase, Recorder};
+        use std::{sync::Arc, time::Duration};
+        let rec = Arc::new(Recorder::default());
+        let worker = Arc::clone(&rec);
+        let out = super::within(Duration::from_millis(30), move || {
+            let _tracking = track_scoped(worker);
+            let _open = begin(Phase::WriterWait);
+            std::thread::sleep(Duration::from_millis(300));
+        });
+        assert!(out.is_none());
+        assert_eq!(rec.snapshot().open.as_deref(), Some("writer_wait"));
     }
 
     #[test]

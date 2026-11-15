@@ -110,6 +110,20 @@ pub fn track(recorder: Arc<Recorder>) {
     CURRENT.with(|c| *c.borrow_mut() = Some(recorder));
 }
 
+/// Removes the recorder when dropped, so a panicking request leaves none installed.
+pub struct Tracking;
+
+impl Drop for Tracking {
+    fn drop(&mut self) {
+        untrack();
+    }
+}
+
+pub fn track_scoped(recorder: Arc<Recorder>) -> Tracking {
+    track(recorder);
+    Tracking
+}
+
 pub fn untrack() {
     CURRENT.with(|c| *c.borrow_mut() = None);
 }
@@ -119,26 +133,48 @@ fn current() -> Option<Arc<Recorder>> {
 }
 
 /// A phase that ends, recording its duration, when dropped.
-pub struct Open(Option<(Arc<Recorder>, Phase, Instant)>);
+pub struct Open(Option<(Arc<Recorder>, Phase, Instant)>, bool);
 
 impl Drop for Open {
     fn drop(&mut self) {
+        let record = self.1;
         if let Some((rec, phase, at)) = self.0.take() {
             let mut g = rec.inner();
             if let Some(i) = g.open.iter().rposition(|p| *p == phase) {
                 g.open.remove(i);
             }
             drop(g);
-            rec.add(phase, at.elapsed());
+            if record {
+                rec.add(phase, at.elapsed());
+            }
         }
     }
 }
 
+impl Open {
+    /// Ends the phase and records it; an `Open` from [`begin_unconfirmed`] dropped otherwise records nothing.
+    pub fn confirm(mut self) {
+        self.1 = true;
+    }
+}
+
 pub fn begin(phase: Phase) -> Open {
-    Open(current().map(|rec| {
-        rec.inner().open.push(phase);
-        (rec, phase, Instant::now())
-    }))
+    open(phase, true)
+}
+
+/// Like [`begin`], but the phase is recorded only if [`Open::confirm`]ed: a commit that errors out is no commit.
+pub fn begin_unconfirmed(phase: Phase) -> Open {
+    open(phase, false)
+}
+
+fn open(phase: Phase, record: bool) -> Open {
+    Open(
+        current().map(|rec| {
+            rec.inner().open.push(phase);
+            (rec, phase, Instant::now())
+        }),
+        record,
+    )
 }
 
 pub fn time<T>(phase: Phase, f: impl FnOnce() -> T) -> T {
@@ -181,6 +217,17 @@ mod tests {
         drop(begin(Phase::Read));
         assert_eq!(rec.snapshot(), Snapshot::default());
         assert_eq!(time(Phase::Read, || 7), 7);
+    }
+
+    #[test]
+    fn an_unconfirmed_phase_dropped_records_nothing_and_closes() {
+        let rec = tracked();
+        drop(begin_unconfirmed(Phase::Commit));
+        begin_unconfirmed(Phase::Commit).confirm();
+        untrack();
+        let s = rec.snapshot();
+        assert_eq!(s.commits_us.len(), 1);
+        assert_eq!(s.open, None);
     }
 
     #[test]

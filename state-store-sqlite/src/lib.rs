@@ -1075,7 +1075,7 @@ impl Backend for SqliteBackend {
         }
         let main = expect + 1;
         let m = main_i64(main)?;
-        let _committing = phases::begin(Phase::Commit);
+        let committing = phases::begin_unconfirmed(Phase::Commit);
         let tx = w
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -1159,7 +1159,7 @@ impl Backend for SqliteBackend {
         }
         set_meta(&tx, "head", main)?;
         tx.commit().map_err(db)?;
-        drop(_committing);
+        committing.confirm();
         self.0.head.store(main, Ordering::SeqCst);
         Ok(main)
     }
@@ -1297,6 +1297,20 @@ mod tests {
         let names: Vec<_> = s.phases.iter().map(|p| p.0).collect();
         assert_eq!(names, ["writer_wait", "commit", "reader_wait", "read"]);
         assert_eq!(s.reads, 1);
+    }
+
+    #[test]
+    fn a_commit_that_fails_inside_its_transaction_is_not_recorded_as_a_commit() {
+        let dir = testkit::TempDir::new("sqlite-phases-failed");
+        let b = SqliteBackend::open(&dir.path().join("s.db"), Options::default()).unwrap();
+        let rec = Arc::new(phases::Recorder::default());
+        phases::track(rec.clone());
+        let bad = Write::Put { key: "k".into(), value: b"1".to_vec(), create_rev: Rev::new(u64::MAX, 0), prev: None };
+        assert!(b.commit(0, &[bad]).is_err());
+        phases::untrack();
+        let s = rec.snapshot();
+        assert_eq!(s.commits_us.len(), 0);
+        assert_eq!(s.open, None);
     }
 
     #[test]
