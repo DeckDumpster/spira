@@ -146,11 +146,11 @@ mod tests {
     #[test]
     fn an_old_entry_the_caller_keeps_survives() {
         let t = testkit::TempDir::new("retention-keep");
-        file(t.path(), "open", 8);
+        file(t.path(), "live", 8);
         file(t.path(), "shut", 8);
-        let p = prune(t.path(), 7, 50, NOW, &|n| n == "open");
+        let p = prune(t.path(), 7, 50, NOW, &|n| n == "live");
         assert_eq!(p, Pruned { removed: 1, left: 0 });
-        assert!(t.path().join("open").exists() && !t.path().join("shut").exists());
+        assert!(t.path().join("live").exists() && !t.path().join("shut").exists());
     }
 
     #[test]

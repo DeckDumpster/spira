@@ -1025,7 +1025,7 @@ fn stabilize_round(
     let harness_fault = runner.harness_fault();
     runner.close();
     if let (Some(b), false) = (batch, matches!(end, Ok(drive::RoundEnd::Land { .. }))) {
-        io::keep_round_results(&env_.run, b, &runner.results, io::rounds_prune(&env_, repo, b).as_ref());
+        io::keep_round_results(&env_.run, b, &runner.results, io::rounds_prune(env_, repo, b).as_ref());
     }
     let staged = stage_bg.and_then(|bg| io::round_stage_done(repo, bg));
     let end = end.map_err(|e| {
