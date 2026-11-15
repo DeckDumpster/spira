@@ -33,6 +33,9 @@ CREATE TABLE IF NOT EXISTS bead (
     stack_depth BIGINT NOT NULL DEFAULT 0,
     -- Epoch seconds the row last changed state; migrations/0002-since.sql for an existing database.
     since       BIGINT NULL,
+    -- Seconds of completed WORKING sessions, and entries into WORKING; migrations/0044-bead-worked.sql for an existing database.
+    worked_s    BIGINT NOT NULL DEFAULT 0,
+    sessions    INT NOT NULL DEFAULT 0,
     -- Mirrored from bd by bead.sh file/amend so the ops views never join to bd; migrations/0007.
     title       VARCHAR(512) NULL,
     priority    TINYINT NULL,

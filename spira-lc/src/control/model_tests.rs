@@ -208,6 +208,17 @@ impl Backend for Stalled {
 }
 
 #[test]
+fn a_list_row_and_a_show_carry_the_beads_builder_time_and_session_count() {
+    let s = store(MemBackend::default());
+    ok(&s, &["create-bead", "sp-a", "--repo", "spira", "--ready"]);
+    claim(&s, "sp-a");
+    let listed: Vec<serde_json::Value> = serde_json::from_str(&ok(&s, &["list", "--live"])).unwrap();
+    assert_eq!((listed[0]["worked_s"].as_str(), listed[0]["sessions"].as_str()), (Some("0"), Some("1")));
+    let shown: serde_json::Value = serde_json::from_str(&ok(&s, &["show", "sp-a"])).unwrap();
+    assert_eq!(shown["bead"]["sessions"].as_str(), Some("1"), "{shown}");
+}
+
+#[test]
 fn list_and_show_do_not_wait_for_a_commit_in_flight() {
     let b = Stalled::default();
     let s = Arc::new(store(b.clone()));

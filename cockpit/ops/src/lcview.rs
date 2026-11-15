@@ -61,6 +61,11 @@ pub struct Row {
     pub sifted_tip: Option<String>,
     #[serde(default)]
     pub ejected_red_tip: Option<String>,
+    /// Seconds of completed WORKING sessions, and entries into WORKING (the lifecycle row's own figures).
+    #[serde(default)]
+    pub worked_s: i64,
+    #[serde(default)]
+    pub sessions: u32,
 }
 
 pub use spira_claim::verdicts::Kind;
@@ -150,6 +155,8 @@ pub fn live_row(r: &serde_json::Value) -> Result<(Row, Meta), String> {
         tip: r["tip"].as_str().map(String::from),
         sifted_tip: r["sifted_tip"].as_str().map(String::from),
         ejected_red_tip: r["ejected_red_tip"].as_str().map(String::from),
+        worked_s: num(&r["worked_s"]).unwrap_or(0),
+        sessions: num(&r["sessions"]).unwrap_or(0).max(0) as u32,
     };
     Ok((row, meta))
 }
@@ -1344,6 +1351,21 @@ pub fn age(secs: i64) -> String {
     }
 }
 
+/// A duration as `42m` under an hour, otherwise `3h27`.
+pub fn hm(secs: i64) -> String {
+    let s = secs.max(0);
+    if s < 3600 { format!("{}m", s / 60) } else { format!("{}h{:02}", s / 3600, s % 3600 / 60) }
+}
+
+/// A NOW row's time: this session's, and on a later session the total builders have held the bead.
+pub fn session_line(session_s: i64, row: &Row, now: i64) -> String {
+    if row.sessions <= 1 {
+        return hm(session_s);
+    }
+    let total = row.worked_s + if row.state == "WORKING" { (now - row.since).max(0) } else { 0 };
+    format!("{} · total {} ×{}", hm(session_s), hm(total), row.sessions)
+}
+
 pub const TEAL: &str = "\x1b[38;5;30m";
 
 /// The bead's repo as the coloured tag between priority and title; an unknown repo is `?`, never nothing.
@@ -1579,7 +1601,7 @@ pub fn view(s: &Snapshot) -> View {
                     match s.rows.iter().find(|r| r.holder.as_deref().and_then(holder_pid) == Some(a.pid)) {
                         Some(r) => {
                             let mut it = with_tail(item(r, a.started, phase), r);
-                            it.age = age(s.now - a.started);
+                            it.age = session_line(s.now - a.started, r, s.now);
                             it
                         }
                         None => {
@@ -1597,7 +1619,9 @@ pub fn view(s: &Snapshot) -> View {
                 .iter()
                 .map(|r| {
                     let lease = r.lease_until.map(|l| if l > s.now { format!("lease {}", age(l - s.now)) } else { "lease EXPIRED".into() }).unwrap_or_default();
-                    with_tail(item(r, r.since, lease), r)
+                    let mut it = with_tail(item(r, r.since, lease), r);
+                    it.age = session_line(s.now - r.since, r, s.now);
+                    it
                 })
                 .collect();
         }
@@ -2271,6 +2295,47 @@ mod tests {
         assert!(v.now_items[0].note.starts_with("directed · session"), "{:?}", v.now_items[0].note);
         s.live = Some(vec![LiveDwarf { unit: "spira-dwarf-builder-1.service".into(), pid: 111, started: 99_000, phase: "session".into() }]);
         assert!(view(&s).now_items[0].note.starts_with("session"), "an ordinary dwarf is not marked");
+    }
+
+    fn live_session(secs: i64, row: Row) -> Snapshot {
+        let mut s = snap(vec![row]);
+        s.live = Some(vec![LiveDwarf { unit: "spira-dwarf-builder-1.service".into(), pid: 111, started: s.now - secs, phase: "session".into() }]);
+        s
+    }
+
+    fn builder_row(sessions: u32, worked_s: i64, since: i64) -> Row {
+        let mut w = row("sp-w", "WORKING", since);
+        w.holder = Some("dwarf-dvalin@111.5".into());
+        w.sessions = sessions;
+        w.worked_s = worked_s;
+        w
+    }
+
+    #[test]
+    fn a_first_session_shows_only_its_own_time() {
+        let v = view(&live_session(12420, builder_row(1, 0, 100_000 - 12420)));
+        assert_eq!(v.now_items[0].age, "3h27");
+    }
+
+    #[test]
+    fn a_later_session_shows_the_total_builders_have_held_the_bead_and_the_session_count() {
+        let v = view(&live_session(12420, builder_row(2, 17580, 100_000 - 12420)));
+        assert_eq!(v.now_items[0].age, "3h27 · total 8h20 ×2");
+        let mut s = snap(vec![builder_row(2, 17580, 100_000 - 12420)]);
+        s.live = None;
+        assert_eq!(view(&s).now_items[0].age, "3h27 · total 8h20 ×2", "without live units the row's own since is the session");
+    }
+
+    #[test]
+    fn a_dwarf_in_closeout_has_its_last_session_already_in_the_total() {
+        let mut r = builder_row(2, 30000, 100_000 - 100);
+        r.state = "SUBMITTED".into();
+        assert_eq!(view(&live_session(12420, r)).now_items[0].age, "3h27 · total 8h20 ×2");
+    }
+
+    #[test]
+    fn hm_is_minutes_under_an_hour_and_hours_with_padded_minutes_after() {
+        assert_eq!([hm(0), hm(2820), hm(3600), hm(12420), hm(30000)], ["0m", "47m", "1h00", "3h27", "8h20"]);
     }
 
     #[test]

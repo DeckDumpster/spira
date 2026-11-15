@@ -1270,6 +1270,20 @@ mod tests {
     }
 
     #[test]
+    fn a_later_session_total_reaches_the_pane_head_line_and_the_page() {
+        let mut v = busy_view();
+        v.now_items[0].age = "3h27 · total 8h20 ×2".into();
+        fn lines(n: &Node, out: &mut Vec<String>) {
+            out.push(strip(&n.line));
+            n.kids.iter().for_each(|k| lines(k, out));
+        }
+        let mut heads = Vec::new();
+        tree(&v).iter().for_each(|n| lines(n, &mut heads));
+        assert!(heads.iter().any(|l| l.contains("3h27 · total 8h20 ×2")), "{heads:#?}");
+        assert!(render_page(&v, None, 5).contains("3h27 · total 8h20 ×2"));
+    }
+
+    #[test]
     fn the_lc_view_text_render_tags_next_blocked_and_recent_rows() {
         let out = crate::lcview::render(&repo_view(), 120).join("\n");
         for (id, repo) in [("sp-c1", "cubby"), ("sp-d1", "deckdumpster"), ("sp-u1", "?")] {

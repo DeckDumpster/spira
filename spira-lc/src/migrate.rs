@@ -1121,7 +1121,7 @@ mod tests {
                 _ => None,
             })
             .collect();
-        for want in [("bead", "stack"), ("bead", "stack_depth"), ("bead", "since"), ("bead", "persona"), ("bead", "title"), ("bead", "priority"), ("bead", "express"), ("batch", "pass"), ("batch", "phase"), ("bead", "dwarf_phase"), ("bead", "disposition"), ("bead", "disposition_note"), ("bead", "ejected_red_tip"), ("bead", "repo"), ("batch", "progress"), ("bead", "claim_verdict"), ("bead", "claim_at")] {
+        for want in [("bead", "stack"), ("bead", "stack_depth"), ("bead", "since"), ("bead", "persona"), ("bead", "title"), ("bead", "priority"), ("bead", "express"), ("batch", "pass"), ("batch", "phase"), ("bead", "dwarf_phase"), ("bead", "disposition"), ("bead", "disposition_note"), ("bead", "ejected_red_tip"), ("bead", "repo"), ("batch", "progress"), ("bead", "claim_verdict"), ("bead", "claim_at"), ("bead", "worked_s"), ("bead", "sessions")] {
             assert!(adds.contains(&(want.0.to_string(), want.1.to_string())), "{want:?} is added");
         }
         let views: Vec<Probe> = steps.iter().map(|(_, s)| probe_for(s)).filter(|p| matches!(p, Probe::View(_))).collect();
@@ -1300,7 +1300,7 @@ mod tests {
     /// A store with every shipped migration's effect already present (production today).
     fn migrated() -> Rc<RefCell<State>> {
         let mut st = State::default();
-        for c in ["id", "state", "holder", "stack", "stack_depth", "since", "persona", "title", "priority", "express", "aeon_phase", "dwarf_phase", "disposition", "disposition_note", "ejected_red_tip", "sifted_tip", "repo", "claimed_from", "claim_verdict", "claim_blocker", "claim_runes", "claim_at"] { // ffx-ok
+        for c in ["id", "state", "holder", "stack", "stack_depth", "since", "persona", "title", "priority", "express", "aeon_phase", "dwarf_phase", "disposition", "disposition_note", "ejected_red_tip", "sifted_tip", "repo", "claimed_from", "claim_verdict", "claim_blocker", "claim_runes", "claim_at", "worked_s", "sessions"] { // ffx-ok
             st.columns.insert(("bead".into(), c.into()));
         }
         for c in ["batch_id", "state", "pass", "phase", "progress"] {
@@ -1617,6 +1617,7 @@ mod tests {
         let real = real_steps();
         assert_eq!(applier_for(GRANTS_SQL, &real, "0003-terminal-holder.sql"), Applier::Service);
         assert_eq!(applier_for(GRANTS_SQL, &real, "0043-mending-returned.sql"), Applier::Admin);
+        assert_eq!(applier_for(GRANTS_SQL, &real, "0044-bead-worked.sql"), Applier::Admin);
         assert_eq!(applier_for(GRANTS_SQL, &real, "0001-stack.sql"), Applier::Admin);
         assert_eq!(applier_for(GRANTS_SQL, &real, "0002-since.sql"), Applier::Admin);
         assert_eq!(applier_for(GRANTS_SQL, &real, "0020-since-every-state.sql"), Applier::Service);
