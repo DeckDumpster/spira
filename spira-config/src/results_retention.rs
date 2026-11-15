@@ -55,7 +55,7 @@ pub fn rounds_keep<'a>(repo: &'a str, open: &'a [String]) -> impl Fn(&str) -> bo
         };
         let batch = batch.replace("%2F", "/");
         let own = batch.starts_with(&format!("{repo}-")) || batch.starts_with(&format!("{repo}/"));
-        !own || open.iter().any(|o| *o == batch)
+        !own || open.contains(&batch)
     }
 }
 
