@@ -675,7 +675,7 @@ fn one_bead_is_filed_claimed_submitted_cut_certified_and_landed_on_the_service_t
     assert_eq!(lifecycle, ["READY", "WORKING", "SUBMITTED", "CERTIFIED", "IN_DELIVERY", "LANDED"], "{}", dump(&a));
     assert_eq!(a.states["sp-w3a"], BeadState::Landed);
     assert!(a.refused.is_empty(), "the store refused nothing: {:?}", a.refused);
-    assert_eq!(batcher_states(&a.trace), ["Idle", "Assembling", "Opened", "Certifying", "Landing", "Idle"], "the first Idle records the named wait for sift (sp-8nlvra): {}", dump(&a));
+    assert_eq!(batcher_states(&a.trace), ["Assembling", "Opened", "Certifying", "Landing", "Idle"], "an empty pool names no wait, so the trace opens on the cut: {}", dump(&a));
     let call = tags_on(&a, sc::STREAM);
     assert!(call.contains(&runtime::units::UNIT_RAN.to_string()), "the dwarf's end reached sentinel-call's own stream: {call:?}");
     let sifted = a.trace.iter().any(|e| e.1 == bl::STREAM && e.2 == spira_runtime::tasks::a::kit::WORK_SUBMITTED);
@@ -703,7 +703,7 @@ fn a_red_round_attributes_ejects_the_guilty_member_and_lands_the_rest() {
     assert_eq!(lifecycle_of(&a, "sp-w3a"), ["READY", "WORKING", "SUBMITTED", "CERTIFIED", "IN_DELIVERY", "LANDED"], "{}", dump(&a));
     assert_eq!(lifecycle_of(&a, "sp-w3b"), ["READY", "WORKING", "SUBMITTED", "CERTIFIED", "REWORK"], "{}", dump(&a));
     assert!(a.refused.is_empty(), "the store refused nothing: {:?}", a.refused);
-    assert_eq!(batcher_states(&a.trace), ["Idle", "Assembling", "Opened", "Certifying", "Attributing", "Certifying", "Landing", "Idle"], "the first Idle records the named wait for sift (sp-8nlvra): {}", dump(&a));
+    assert_eq!(batcher_states(&a.trace), ["Assembling", "Opened", "Certifying", "Attributing", "Certifying", "Landing", "Idle"], "an empty pool names no wait, so the trace opens on the cut: {}", dump(&a));
     let opens = a.asked.iter().filter(|n| *n == bl::ROUND_OPEN).count();
     assert_eq!(opens, 1, "one round was opened for the two members");
     assert_no_process(&a);
