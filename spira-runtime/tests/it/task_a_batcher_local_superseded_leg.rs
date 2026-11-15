@@ -87,7 +87,7 @@ fn a_green_round_whose_head_never_moved_is_left_to_its_own_step() {
     assert_eq!(next.repos["spira"].state, State::Attributing);
 }
 
-/// The incident's order: the step runs for head A, a preempt moves the round to head B, the next
+/// The incident's order: the step runs for head A, the round moves to head B, the next
 /// pass goes green, and only then the step returns its fault.
 #[test]
 fn a_round_that_went_green_on_the_new_head_lands_at_it_when_the_old_step_faults() {
@@ -114,10 +114,10 @@ fn a_step_result_whose_head_equals_the_head_read_at_apply_time_is_applied() {
     assert!(effects(&acts).contains(&ABANDON), "{acts:?}");
 }
 
-/// The incident's actual order: the preempt moves the round to head B, the stopped step's fault
+/// The incident's actual order: the round moves to head B, the stopped step's fault
 /// arrives before the batcher has observed the round again, and the next pass then decides it.
 #[test]
-fn a_preempted_steps_fault_delivered_before_the_next_observation_does_not_abandon_the_round() {
+fn a_superseded_steps_fault_delivered_before_the_next_observation_does_not_abandon_the_round() {
     let (carry, _) = decide(&carried("", ""), &snapshot("A", "certifying"));
     let head_now_b = |_: &str, _: &str| Some("B".to_string());
     assert!(on_ran_seeing(&carry, &ran(), &fault(), NOW, &head_now_b).is_none(), "the fault arrives first and is not applied");
