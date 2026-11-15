@@ -89,7 +89,7 @@ pub fn claude_args(home: &Path, run: &Path, prod: &str, rune: &Rune, sys_file: &
     if rune.project_instructions == "none" {
         a.extend(["--setting-sources", "user"].iter().map(|s| s.to_string()));
     }
-    a.extend(["--settings".to_string(), crate::run::dwarf_settings(home, run, Some(prod).filter(|p| !p.is_empty()).map(Path::new), rune.habits)]);
+    a.extend(["--settings".to_string(), crate::run::dwarf_settings(home, run, Some(prod).filter(|p| !p.is_empty()).map(Path::new), rune.habits, None)]);
     Ok(a)
 }
 
