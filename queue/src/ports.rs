@@ -369,8 +369,8 @@ pub trait Scripts {
     /// `round-vm run <tree> --results-dir <results> --base <base> --round-batch <batch> --round-repo <repo>` under `timeout <wall_secs>`: the full
     /// corpus of `tree` on the round VM. Exit 0/1 ran (the results say which suites are red);
     /// 124/137 hit the wall; anything else is the harness's fault.
-    /// `handle` is where the run's pid is written while it runs: the one thing `round preempt`
-    /// addresses. The pid is the `timeout` wrapper, so a TERM reaches round-vm through it.
+    /// `handle` is where the run's pid is written while it runs: the pid
+    /// other verbs address. The pid is the `timeout` wrapper, so a TERM reaches round-vm through it.
     /// `ami` is the image id the pass launches instead of the newest matching the release (`SPIRA_ROUND_VM_EC2_AMI`).
     #[allow(clippy::too_many_arguments)]
     fn round_vm(

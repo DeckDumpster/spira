@@ -17,10 +17,8 @@ use crate::ports::{
     SubPassKind, Verb,
 };
 
-/// certify's exits (`queue round certify`): the corpus could not be judged; `round preempt`
-/// stopped the pass; the round VM died under it; the round VM answered ssh and never started the round.
+/// certify's exits (`queue round certify`): the corpus could not be judged; the round VM died under it; the round VM answered ssh and never started the round.
 pub const FAULT: i32 = 4;
-pub const PREEMPTED: i32 = 5;
 pub const VM_LOST: i32 = 75;
 pub const VM_NO_OUTPUT: i32 = 77;
 
@@ -125,8 +123,6 @@ impl Round {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Typed {
-    /// The verb that stopped the pass records it.
-    Preempted,
     Green,
     Red {
         steps: Vec<String>,
@@ -138,7 +134,6 @@ pub enum Typed {
 /// red, and a non-zero exit naming no red step is no verdict either.
 pub fn type_pass(pass: &PassResult) -> Typed {
     match pass.exit {
-        PREEMPTED => Typed::Preempted,
         VM_LOST | VM_NO_OUTPUT => Typed::Fault(Cause::Vm),
         FAULT => Typed::Fault(match pass.reason.as_deref() {
             Some(OVER_CAP) => Cause::OverCap,
@@ -195,8 +190,6 @@ pub enum Blocker {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Judged {
-    /// No attempt: the pass was preempted.
-    Preempted,
     /// Attempt `n` holds `class`; `ejected` are the members whose eject returned `Ok`.
     Recorded {
         n: u32,
@@ -219,7 +212,6 @@ pub enum Judged {
 impl Judged {
     pub fn word(&self) -> &'static str {
         match self {
-            Judged::Preempted => "preempted",
             Judged::Recorded { .. } => "recorded",
             Judged::Held { .. } => "held",
             Judged::Unfinished { .. } => "unfinished",
@@ -285,7 +277,6 @@ fn result_of(w: &str) -> JobResult {
 pub fn judge(p: &Ports, runner: &mut impl RoundRunner, round: &Round, pass: &PassResult) -> Judged {
     let typed = type_pass(pass);
     let done = match typed {
-        Typed::Preempted => return Judged::Preempted,
         Typed::Green => record(p, round, Class::Green, vec![], String::new()),
         Typed::Fault(cause) => record(p, round, Class::Fault { cause }, vec![], String::new()),
         Typed::Red { steps } => judge_red(p, runner, round, pass, &steps),
