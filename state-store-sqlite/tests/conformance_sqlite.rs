@@ -838,3 +838,52 @@ fn a_day_file_behind_the_mark_is_retired_when_the_store_opens() {
     assert!(receipt_files(dir.path()).is_empty());
     assert!(b.get("requests/old", b.head().unwrap()).unwrap().is_none());
 }
+
+#[test]
+fn a_store_opened_without_day_receipts_starts_no_drain_clock() {
+    let dir = TempDir::new("sqlite-receipt-clock");
+    let wall = VirtualClock::new(D0);
+    let path = dir.path().join("s.db");
+    drop(SqliteBackend::open(&path, Options { day_receipts: false, ..day_opts(&wall) }).unwrap());
+    assert_eq!(count(&path, "SELECT count(*) FROM meta WHERE name = 'receipts_from_at'"), 0);
+    drop(SqliteBackend::open(&path, day_opts(&wall)).unwrap());
+    assert_eq!(count(&path, "SELECT count(*) FROM meta WHERE name = 'receipts_from_at'"), 1);
+}
+
+#[test]
+fn a_failed_main_commit_leaves_a_receipt_the_batch_deleted() {
+    let dir = TempDir::new("sqlite-receipt-undeleted");
+    let wall = VirtualClock::new(D0);
+    let path = dir.path().join("s.db");
+    let fail = Arc::new(AtomicBool::new(false));
+    let probe = {
+        let fail = Arc::clone(&fail);
+        Arc::new(move || if fail.load(Ordering::SeqCst) { Err(Error::Backend("injected".into())) } else { Ok(()) })
+            as Arc<dyn Fn() -> state_store::Result<()> + Send + Sync>
+    };
+    let b = SqliteBackend::open(&path, Options { commit_probe: Some(probe), ..day_opts(&wall) }).unwrap();
+    b.commit(0, &[receipt("a", b"1", 1)]).unwrap();
+    fail.store(true, Ordering::SeqCst);
+    let del = Write::Delete { key: state_store::request_key("a"), prev: Rev::new(1, 0) };
+    assert!(b.commit(1, &[del]).is_err());
+    assert_eq!(b.get(&state_store::request_key("a"), 1).unwrap().unwrap().value, b"1");
+    assert_eq!(count(&day_file(dir.path(), "2024-10-04"), "SELECT count(*) FROM rows"), 1);
+}
+
+#[test]
+fn an_open_whose_trim_of_rows_above_the_head_cannot_complete_fails() {
+    let dir = TempDir::new("sqlite-receipt-open-trim");
+    let wall = VirtualClock::new(D0);
+    let path = dir.path().join("s.db");
+    drop({
+        let b = SqliteBackend::open(&path, day_opts(&wall)).unwrap();
+        b.commit(0, &[receipt("a", b"1", 1)]).unwrap();
+        b
+    });
+    let file = day_file(dir.path(), "2024-10-04");
+    let conn = rusqlite::Connection::open(&file).unwrap();
+    conn.execute_batch("INSERT INTO rows VALUES (X'61', 9, 0, X'62', 9, 0); CREATE TRIGGER stuck BEFORE DELETE ON rows BEGIN SELECT RAISE(ABORT, 'stuck'); END")
+        .unwrap();
+    drop(conn);
+    assert!(SqliteBackend::open(&path, day_opts(&wall)).is_err());
+}

@@ -772,7 +772,9 @@ impl SqliteBackend {
                 .map_err(|e| Error::Backend(format!("{}: rows above the head {head} could not be removed: {e}", f.path().display())))?;
         }
         receipts.retire_behind(dated::day_of(now));
-        exec(&conn, "INSERT OR IGNORE INTO meta (name, value) VALUES ('receipts_from_at', ?1)", [main_i64(now)?])?;
+        if opts.day_receipts {
+            exec(&conn, "INSERT OR IGNORE INTO meta (name, value) VALUES ('receipts_from_at', ?1)", [main_i64(now)?])?;
+        }
         let receipts_from_at = meta(&conn, "receipts_from_at")?.unwrap_or(now);
         let outbox = opts
             .outbox
@@ -1516,11 +1518,6 @@ impl Backend for SqliteBackend {
                 today.put(main, &filed)?;
                 wrote.push(today);
             }
-            for f in &files {
-                if !unfiled.is_empty() {
-                    f.delete_keys(&unfiled)?;
-                }
-            }
             Ok(())
         })();
         if let Err(e) = sides {
@@ -1549,6 +1546,11 @@ impl Backend for SqliteBackend {
         }
         committing.confirm();
         self.0.head.store(main, Ordering::SeqCst);
+        if !unfiled.is_empty() {
+            for f in &files {
+                let _ = f.delete_keys(&unfiled);
+            }
+        }
         self.drain_receipts(&mut w, now);
         Ok(main)
     }
