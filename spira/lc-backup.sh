@@ -256,6 +256,7 @@ _lcb_drill_db_locked() {
     rm -rf "$scratch"
     if [ "$rc" = 0 ]; then
         echo "lc-backup: drill ok — $db: $(printf '%s\n' "$tables" | wc -l) table(s) identical at $head" | tee "$verdict"
+        date +%s > "$(dirname "$verdict")/drill.ok"
     fi
     return "$rc"
 }

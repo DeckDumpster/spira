@@ -19,6 +19,8 @@
 //! - `NoDestination` when `SPIRA_LC_BACKUP_URL` is empty (`:174`); `NoDatabase` when `SPIRA_LC_BACKUP_DB` names none (`:175`).
 //! - Per db, the stamp `$SPIRA_RUN/lc-backup.<db>.ok` (`:52`), whose first field is the epoch of the last good upload. It is written only by the backup run after a successful `spira-lc admin-dolt-ship` (`:117-120`), so it is the backup component's own record of success, not a re-derivation. Absent → `Never` (`:162`); non-numeric → `Unreadable` (`:164`); age > `SPIRA_LC_BACKUP_MAX_AGE` → `Stale` (`:167`).
 //!
+//! Each store also gets a `drill:<db>` entry from `$SPIRA_RUN/lc-backup/<db>/drill.ok`, the epoch the daily drill last passed (a failed drill truncates `drill.verdict`, so the stamp is kept apart). Past `DRILL_STALE_S` (49h) it is `Stale`; ages under that are `Ok`; no stamp is `Never`, so a store whose drill has never passed is red. The control store's drill is not watched.
+//!
 //! ## Decide
 //!
 //! - Aggregate: `ok` only when every db is `Ok` (`_lcb_all_ok`, `:184`); `NoDestination`, `NoDatabase`, `Never`, `Stale`, `Unreadable` are all red (`:340-341`).
@@ -120,7 +122,9 @@ pub enum Carry {
 pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> (Carry, Vec<EffectSpec>) {
     let state = if all_ok(snap) { Carry::Ok } else { Carry::Red };
     let out = measured(snap);
+    let drill_late = matches!(snap, Snapshot::Dbs(dbs) if dbs.iter().any(|(n, d)| n.starts_with("drill:") && !matches!(d, Db::Ok { .. })));
     let line = match (state, carry) {
+        (Carry::Red, Carry::Ok) if drill_late => format!("RED: a store's restore drill has not passed within {DRILL_STALE_S}s ({out}) — its backups are unproven to restore"),
         (Carry::Red, Carry::Ok) => format!("RED: a store has no good backup within {}s ({out}) — losing its disk now loses its data and history", cfg.max_age_s),
         (Carry::Ok, Carry::Red) => format!("CLEAR: every store has a fresh backup again ({out})"),
         _ => return (state, vec![]),
@@ -163,6 +167,15 @@ pub fn measure_db(stamp: Option<&str>, now_s: u64, max_age_s: u64) -> Db {
     }
 }
 
+/// The daily drill is stale past 49h: two missed days. Fresh is under 25h.
+pub const DRILL_STALE_S: u64 = 49 * 3600;
+
+/// `lc-backup/<db>/drill.ok`, the epoch a drill last passed (kept across a failed drill, which
+/// truncates `drill.verdict`), against `now_s`.
+pub fn measure_drill(stamp: Option<&str>, now_s: u64) -> Db {
+    measure_db(stamp, now_s, DRILL_STALE_S)
+}
+
 /// The observe runner: each configured store's `lc-backup.<db>.ok` stamp under the run dir.
 pub fn observe() -> Result<String, String> {
     let cfg = Config::pinned()?;
@@ -173,7 +186,10 @@ pub fn observe() -> Result<String, String> {
     } else if dbs.is_empty() {
         Snapshot::NoDatabase
     } else {
-        Snapshot::Dbs(dbs.iter().map(|db| (db.to_string(), measure_db(std::fs::read_to_string(std::path::Path::new(&cfg.run).join(format!("lc-backup.{db}.ok"))).ok().as_deref(), now_s, cfg.max_age_s))).collect())
+        let read = |rel: String| std::fs::read_to_string(std::path::Path::new(&cfg.run).join(rel)).ok();
+        let backups = dbs.iter().map(|db| (db.to_string(), measure_db(read(format!("lc-backup.{db}.ok")).as_deref(), now_s, cfg.max_age_s)));
+        let drills = dbs.iter().map(|db| (format!("drill:{db}"), measure_drill(read(format!("lc-backup/{db}/drill.ok")).as_deref(), now_s)));
+        Snapshot::Dbs(backups.chain(drills).collect())
     };
     serde_json::to_string(&snap).map_err(|e| e.to_string())
 }
@@ -213,5 +229,31 @@ impl Handler for WatchBackupAge {
             return pattern::tick(ev, OBSERVE, String::new(), OBSERVE_DEADLINE_MS, ev.at + CADENCE_MS);
         }
         pattern::on_answer(ctx, view, ev, OBSERVE, STATE, &self.config, decide)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const H: u64 = 3600;
+
+    #[test]
+    fn a_drill_is_fresh_to_49h_stale_past_it_and_never_without_a_stamp() {
+        let now = 1_000_000;
+        let at = |age: u64| format!("{}\n", now - age);
+        assert_eq!(measure_drill(Some(&at(25 * H - 1)), now), Db::Ok { age: 25 * H - 1 });
+        assert_eq!(measure_drill(Some(&at(49 * H)), now), Db::Ok { age: 49 * H });
+        assert_eq!(measure_drill(Some(&at(49 * H + 1)), now), Db::Stale { age: 49 * H + 1 });
+        assert_eq!(measure_drill(None, now), Db::Never);
+        assert_eq!(measure_drill(Some("junk"), now), Db::Unreadable);
+    }
+
+    #[test]
+    fn a_stale_drill_turns_the_aggregate_red() {
+        let snap = Snapshot::Dbs(vec![("a".into(), Db::Ok { age: 1 }), ("drill:a".into(), Db::Stale { age: 50 * H })]);
+        let cfg = Config { url: "u".into(), db: "a".into(), max_age_s: 1, run: "/r".into() };
+        let (carry, fx) = decide(&Carry::Ok, &snap, 0, &cfg);
+        assert_eq!((carry, fx.len()), (Carry::Red, 1));
     }
 }
