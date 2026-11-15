@@ -2277,7 +2277,9 @@ pub fn keep_round_results(run: &Path, batch: &str, from: &Path, prune: Option<&R
 /// Keeps the pass an attribution follows as the batch's results. A pass already kept there
 /// stays as it is: `keep_round_results` empties the destination before it copies.
 pub fn keep_attributed_pass(run: &Path, batch: &str, pass: &Path, prune: Option<&RoundsPrune>) {
-    if pass != round_results_dir(run, batch) {
+    let kept = round_results_dir(run, batch);
+    let same = pass == kept || matches!((pass.canonicalize(), kept.canonicalize()), (Ok(a), Ok(b)) if a == b);
+    if !same {
         keep_round_results(run, batch, pass, prune);
     }
 }
@@ -4851,6 +4853,16 @@ mod fail_line_tests {
         let kept = keep_round_results(run.path(), "b1", &pass, None);
         keep_attributed_pass(run.path(), "b1", &kept, None);
         assert_eq!(fs::read_to_string(kept.join("test-a.sh.out")).unwrap(), "not ok 1 - broke\n");
+        assert_eq!(fs::read_to_string(kept.join("test-a.sh.result")).unwrap(), "red\n");
+    }
+
+    #[test]
+    fn an_attribution_after_the_kept_pass_under_another_spelling_leaves_its_results_in_place() {
+        let run = testkit::TempDir::new("batcher-cut-attr-kept-spelling");
+        let (pass, _) = pass_and_corpus(run.path(), true);
+        let kept = keep_round_results(run.path(), "b1", &pass, None);
+        let other = kept.join("..").join(kept.file_name().unwrap());
+        keep_attributed_pass(run.path(), "b1", &other, None);
         assert_eq!(fs::read_to_string(kept.join("test-a.sh.result")).unwrap(), "red\n");
     }
 

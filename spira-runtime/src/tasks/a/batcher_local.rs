@@ -2539,7 +2539,7 @@ pub mod edge {
         if !leg.reds.is_empty() {
             argv.extend(["--suites".into(), leg.reds.join(",")]);
         }
-        if leg.after_certify {
+        if leg.after_certify && !leg.batch.is_empty() {
             argv.extend(["--after-pass".into(), batcher_cut::io::round_results_dir(run, &leg.batch).display().to_string()]);
         } else if !leg.after_pass.is_empty() {
             argv.extend(["--after-pass".into(), leg.after_pass.clone()]);
