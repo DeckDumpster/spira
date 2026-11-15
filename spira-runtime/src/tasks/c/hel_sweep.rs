@@ -720,7 +720,7 @@ pub fn send(real: &hel::real::Real, lc: &spira_store::lc_call::LcClient, units: 
     if s.proof {
         let base = real.base(&root).ok_or_else(|| format!("{}: the land ref does not resolve", s.repo))?;
         let sha = hel::git::Git(&root).rev_parse(&base.landref).unwrap_or_default();
-        lc.answer(&["content-on-base", s.id.as_str(), &format!("merge-tree:{sha}"), "hel"]).map_err(String::from)?;
+        record_content_on_base(lc, &s.id, &sha)?;
     }
     let mut env = vec![];
     if let Ok(spec) = spira_config::process::spec() {
@@ -740,7 +740,11 @@ pub fn content_on_base(real: &hel::real::Real, lc: &spira_store::lc_call::LcClie
     let root = root_of(real, &t.repo)?;
     let base = real.base(&root).ok_or_else(|| format!("{}: the land ref does not resolve", t.repo))?;
     let sha = hel::git::Git(&root).rev_parse(&base.landref).unwrap_or_default();
-    lc.answer(&["content-on-base", t.id.as_str(), &format!("merge-tree:{sha}"), "hel"]).map_err(String::from)
+    record_content_on_base(lc, &t.id, &sha).map(|()| String::new())
+}
+
+fn record_content_on_base(lc: &spira_store::lc_call::LcClient, id: &str, land_sha: &str) -> Result<(), String> {
+    spira_store::lifecycle_row::content_on_base_on(lc, id, &format!("merge-tree:{land_sha}"), "hel")
 }
 
 /// The runner of [`CLOSE_ON_LAND`]: close a submitted bead at the land ref's sha.
@@ -793,3 +797,36 @@ pub fn prune(real: &hel::real::Real, input: &str) -> Result<String, String> {
 const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("phase"), runtime::rows::Part::Field("last_fired"), runtime::rows::Part::Field("pass"), runtime::rows::Part::Field("tally"), runtime::rows::Part::Map { name: "jobs", drop: &[] }];
 
 crate::tasks::b::hosted!(HelSweep, catch_up = catch_up);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct Store(std::sync::Mutex<Vec<String>>);
+
+    impl spira_store::lc_call::Transport for Store {
+        fn exchange(&self, argv: &[String], _stdin: Option<&str>, _d: std::time::Duration) -> Result<spira_store::lc_call::Reply, String> {
+            self.0.lock().unwrap().push(argv.join(" "));
+            let (code, out) = match argv[0].as_str() {
+                "content-on-base" => (2, "usage: spira-lc show ...".to_string()),
+                "show" => (0, r#"{"bead":{"state":"SUBMITTED","version":3}}"#.to_string()),
+                _ => (0, String::new()),
+            };
+            Ok(spira_store::lc_call::Reply { code, out, err: String::new() })
+        }
+    }
+
+    #[test]
+    fn content_on_base_is_sent_as_a_bead_event_the_socket_serves() {
+        let store = std::sync::Arc::new(Store(Default::default()));
+        let lc = spira_store::lc_call::LcClient::over(store.clone(), true);
+        record_content_on_base(&lc, "sp-a", "abc").unwrap();
+        assert_eq!(
+            *store.0.lock().unwrap(),
+            vec![
+                "show sp-a".to_string(),
+                r#"event bead sp-a --expect SUBMITTED --version 3 --actor hel --kind {"ContentOnBase":{"proof":"merge-tree:abc"}}"#.to_string()
+            ]
+        );
+    }
+}
