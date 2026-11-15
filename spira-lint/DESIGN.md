@@ -1245,7 +1245,8 @@ carrying one is a second, divergent counter.
 **Scope.** Tracked `spira/**/*.sh`, except `spira/test-*` and `spira/lib.sh`.
 
 **Violation.** A non-comment line matching `label add` followed by `sp-attempt-`,
-`sp-reclaim`, `sp-requeue`, `sp-timeout-` or `sp-recur-`; or a body of `bump_requeue` or
+`sp-reclaim`, `sp-requeue`, `sp-timeout-` or `sp-recur-` (the bare `sp-reclaim` and `sp-requeue`
+are banned too: the retired labels were written both ways); or a body of `bump_requeue` or
 `bump_poison_cleared` in `spira/lib.sh` containing `label add` or `bump_counter`. A missing
 `spira/lib.sh` is a refusal; a missing `bump_*` function is a finding, since an absent body
 would otherwise read as clean.

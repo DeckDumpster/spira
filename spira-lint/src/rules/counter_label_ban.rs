@@ -38,17 +38,20 @@ pub fn label_writes(content: &[u8]) -> Vec<usize> {
         .collect()
 }
 
-/// The body of shell function `name` (from its `name()` line to the closing `}`), with the
+/// The body of shell function `name` (from its `name()` line to a closing `}` line, or the same line), with the
 /// line it starts on; `None` when the function is not defined.
 pub fn function_body(content: &[u8], name: &str) -> Option<(usize, String)> {
     let head = format!("{name}()");
     let lines = crate::lines(content);
     let start = lines.iter().position(|l| l.starts_with(head.as_bytes()))?;
     let mut body = String::new();
-    for l in &lines[start..] {
-        body.push_str(&String::from_utf8_lossy(l));
-        body.push('\n');
-        if l.ends_with(b"}") {
+    for (i, l) in lines[start..].iter().enumerate() {
+        let one_line = i == 0 && l.ends_with(b"}");
+        if !is_comment(l) {
+            body.push_str(&String::from_utf8_lossy(l));
+            body.push('\n');
+        }
+        if one_line || *l == b"}" {
             break;
         }
     }
@@ -127,5 +130,43 @@ mod tests {
         let (_, body) = function_body(ok, "bump_requeue").unwrap();
         assert!(!writes_label_re().is_match(body.as_bytes()));
         assert!(function_body(ok, "bump_poison_cleared").is_none());
+    }
+
+    fn run(files: &[(&str, &str)]) -> Result<Vec<Finding>, LintError> {
+        let t = crate::testutil::TempDir::new("clb");
+        for (p, c) in files {
+            t.write(p, c);
+        }
+        let tree = Tree::from_paths(t.path(), files.iter().map(|(p, _)| *p), std::iter::empty::<&str>());
+        CounterLabelBan.check(&tree)
+    }
+
+    const CLEAN_LIB: &str = "bump_requeue() { _bump_write_event \"$1\" requeued; }\nbump_poison_cleared() { :; }\n";
+
+    #[test]
+    fn check_finds_a_script_writer_and_ignores_suites_and_the_shim() {
+        let bad = "bdq label add \"$b\" sp-attempt-2\n";
+        let f = run(&[("spira/lib.sh", CLEAN_LIB), ("spira/a.sh", bad), ("spira/test-a.sh", bad)]).unwrap();
+        assert_eq!(f.len(), 1);
+        assert_eq!(f[0].path, "spira/a.sh");
+        assert_eq!(f[0].line, Some(1));
+    }
+
+    #[test]
+    fn check_finds_a_bump_that_writes_a_label_past_an_inner_brace() {
+        let lib = "bump_requeue() {\n  x=\"${y}\"\n  # label add in prose\n  bdq label add \"$1\" l\n}\nbump_poison_cleared() { :; }\n";
+        let f = run(&[("spira/lib.sh", lib)]).unwrap();
+        assert_eq!(f.len(), 1);
+        assert!(f[0].message.contains("bump_requeue"));
+        let prose = "bump_requeue() {\n  # never label add\n  :\n}\nbump_poison_cleared() { :; }\n";
+        assert!(run(&[("spira/lib.sh", prose)]).unwrap().is_empty());
+    }
+
+    #[test]
+    fn check_reports_a_missing_bump_and_refuses_without_lib() {
+        let f = run(&[("spira/lib.sh", "bump_requeue() { :; }\n")]).unwrap();
+        assert_eq!(f.len(), 1);
+        assert!(f[0].message.contains("bump_poison_cleared"));
+        assert!(run(&[("spira/a.sh", "true\n")]).is_err());
     }
 }
