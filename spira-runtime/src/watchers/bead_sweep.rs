@@ -47,6 +47,16 @@ pub struct Row {
     pub holder: Option<String>,
     /// The review-by reason read from the hold's history when the row's own reason lost it.
     pub hold_review: Option<String>,
+    /// The claim rule's verdict on this row and when it judged (ISO-8601).
+    pub claim_verdict: Option<String>,
+    pub claim_at: Option<String>,
+}
+
+/// The call scheduler's judgement of task room: since when a slot has been open, and when it last judged.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Room {
+    pub since_ms: Option<u64>,
+    pub at_ms: u64,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -213,7 +223,7 @@ fn is_ours(ask_label: &str, b: &Bead, rows: &BTreeSet<&str>, term: &BTreeSet<&st
 }
 
 /// The SUSPECT lines of one pass, in the order the sweep prints them.
-pub fn suspects(p: &BeadSweep, snap: &Snapshot, now: f64) -> Vec<String> {
+pub fn suspects(p: &BeadSweep, snap: &Snapshot, room: Option<&Room>, now: f64) -> Vec<String> {
     let home = format!("repo:{}", p.home_repo);
     let rows: BTreeMap<&str, &Row> = snap.rows.iter().map(|r| (r.id.as_str(), r)).collect();
     let row_ids: BTreeSet<&str> = rows.keys().copied().collect();
@@ -269,7 +279,7 @@ pub fn suspects(p: &BeadSweep, snap: &Snapshot, now: f64) -> Vec<String> {
         } else if explained {
             None
         } else if st == "REWORK" && age > p.rework_min as i64 {
-            Some(format!("UNCLAIMED REWORK over {}m ({why})", p.rework_min))
+            unclaimed_rework(p, r, room, &why, now)
         } else if st == "CERTIFIED" && !labels.contains(&home) && age > p.cert_min as i64 {
             Some(format!("CERTIFIED outside {home}, no batch opened"))
         } else if matches!(st, "SUBMITTED" | "CERTIFIED") && carrier.is_some() {
@@ -300,14 +310,47 @@ pub fn suspects(p: &BeadSweep, snap: &Snapshot, now: f64) -> Vec<String> {
     out.into_iter().map(|l| format!("SUSPECT {l}")).collect()
 }
 
-pub fn decide(p: &BeadSweep, carry: &Carry, snap: &Snapshot, repaired: &[String], now: f64) -> (Carry, Vec<String>) {
+fn judged_secs(iso: &str) -> Option<f64> {
+    let (date, time) = iso.split_once('T')?;
+    let mut d = date.split('-').map(|x| x.parse::<i64>().ok());
+    let (y, m, day) = (d.next()??, d.next()??, d.next()??);
+    let mut t = time.trim_end_matches('Z').split(':').map(|x| x.parse::<f64>().ok());
+    let (h, mi, sec) = (t.next()??, t.next()??, t.next()??);
+    Some(((days_from_civil(y, m, 1) + day - 1) * 86_400) as f64 + h * 3600.0 + mi * 60.0 + sec)
+}
+
+/// The row for a REWORK bead past the threshold, or none while the claim rule or a full scheduler explains the wait.
+fn unclaimed_rework(p: &BeadSweep, r: &Row, room: Option<&Room>, why: &str, now: f64) -> Option<String> {
+    let stale = |at: f64| (now - at) / 60.0 > p.rework_min as f64;
+    let head = format!("UNCLAIMED REWORK over {}m", p.rework_min);
+    let claim_at = r.claim_at.as_deref();
+    match r.claim_verdict.as_deref() {
+        Some("claimable") if claim_at.and_then(judged_secs).is_some_and(|t| !stale(t)) => {}
+        Some(v) if v != "claimable" => return None,
+        Some(_) | None => {
+            let from = match (r.claim_verdict.as_ref(), claim_at) {
+                (Some(_), Some(at)) => format!("verdict from {at}"),
+                _ => "no verdict".to_string(),
+            };
+            return Some(format!("{head} ({why}; claimability unknown: {from})"));
+        }
+    }
+    let Some(room) = room.filter(|x| !stale(x.at_ms as f64 / 1000.0)) else {
+        let judged = room.map_or("the scheduler has not judged".to_string(), |x| format!("judged at {}", iso8601(x.at_ms / 1000)));
+        return Some(format!("{head} ({why}; slot unknown: {judged})"));
+    };
+    let since = room.since_ms? as f64 / 1000.0;
+    stale(r.since.unwrap_or(now).max(since)).then(|| format!("{head} ({why})"))
+}
+
+pub fn decide(p: &BeadSweep, carry: &Carry, snap: &Snapshot, room: Option<&Room>, repaired: &[String], now: f64) -> (Carry, Vec<String>) {
     let mut say = vec![];
     for id in repaired {
         if let Some(b) = snap.content.iter().find(|b| &b.id == id) {
             say.push(format!("REPAIRED {id} open bead had no lifecycle row; created it (priority {}, repo {})", b.priority, b.labels.iter().find_map(|l| l.strip_prefix("repo:")).unwrap_or("none")));
         }
     }
-    let now_set: Vec<String> = suspects(p, snap, now).into_iter().filter(|l| !repaired.iter().any(|id| l.starts_with(&format!("SUSPECT {id} ROWLESS")))).collect();
+    let now_set: Vec<String> = suspects(p, snap, room, now).into_iter().filter(|l| !repaired.iter().any(|id| l.starts_with(&format!("SUSPECT {id} ROWLESS")))).collect();
     let mut next = Carry::default();
     for l in now_set {
         if !carry.seen.contains(&l) {
@@ -333,7 +376,9 @@ impl BeadSweep {
 
     fn finish(&self, ctx: &Ctx, view: &Projection, ev: &Event, snap: &Snapshot, repaired: &[String]) -> Vec<Command> {
         let now = ev.at as f64 / 1000.0;
-        let (next, say) = decide(self, &Self::carry(view, &ev.stream), snap, repaired, now);
+        let called: crate::tasks::a::sentinel_call::Carry = crate::tasks::a::kit::carry(&crate::tasks::a::sentinel_call::SHAPE, view);
+        let room = called.room_at_ms.map(|at_ms| Room { since_ms: called.room_since_ms, at_ms });
+        let (next, say) = decide(self, &Self::carry(view, &ev.stream), snap, room.as_ref(), repaired, now);
         ctx.event().set("bead-sweep.said", say.len() as u64);
         let mut cmds = vec![Command::Emit(EventKind::new(STATE, &serde_json::to_string(&next).unwrap_or_default()))];
         for m in say {
@@ -398,6 +443,58 @@ mod tests {
         Row { id: id.into(), state: "READY".into(), holds: vec!["poison".into()], ..Row::default() }
     }
 
+    const NOW: f64 = 3600.0;
+
+    fn rework(verdict: Option<&str>) -> Snapshot {
+        let row = Row { id: "sp-r".into(), state: "REWORK".into(), since: Some(0.0), reason: "suites-failed".into(), claim_verdict: verdict.map(str::to_string), claim_at: verdict.map(|_| "1970-01-01T00:59:00Z".to_string()), ..Row::default() };
+        Snapshot { rows: vec![row], ..Snapshot::default() }
+    }
+
+    fn said(snap: &Snapshot, room: Option<Room>) -> Vec<String> {
+        decide(&sweep(), &Carry::default(), snap, room.as_ref(), &[], NOW).1
+    }
+
+    const ROW: &str = "SUSPECT sp-r REWORK UNCLAIMED REWORK over 5m (suites-failed)";
+
+    #[test]
+    fn a_rework_bead_behind_a_full_task_pool_raises_no_row() {
+        assert!(said(&rework(Some("claimable")), Some(Room { since_ms: None, at_ms: 3_600_000 })).is_empty());
+    }
+
+    #[test]
+    fn a_claimable_rework_bead_with_a_slot_free_for_the_threshold_raises_the_row() {
+        assert_eq!(said(&rework(Some("claimable")), Some(Room { since_ms: Some(0), at_ms: 3_600_000 })), [ROW]);
+    }
+
+    #[test]
+    fn a_slot_freed_two_minutes_ago_raises_no_row() {
+        assert!(said(&rework(Some("claimable")), Some(Room { since_ms: Some(3_480_000), at_ms: 3_600_000 })).is_empty());
+    }
+
+    #[test]
+    fn a_verdict_other_than_claimable_raises_no_row() {
+        assert!(said(&rework(Some("snoozed")), Some(Room { since_ms: Some(0), at_ms: 3_600_000 })).is_empty());
+    }
+
+    #[test]
+    fn an_unjudged_slot_raises_a_row_that_says_so() {
+        let say = said(&rework(Some("claimable")), None);
+        assert!(say.len() == 1 && say[0].contains("slot unknown: the scheduler has not judged"), "{say:?}");
+        let old = said(&rework(Some("claimable")), Some(Room { since_ms: Some(0), at_ms: 60_000 }));
+        assert!(old.len() == 1 && old[0].contains("slot unknown: judged at 1970-01-01T00:01:00Z"), "{old:?}");
+    }
+
+    #[test]
+    fn a_missing_or_old_verdict_raises_a_row_that_says_so() {
+        let room = Some(Room { since_ms: None, at_ms: 3_600_000 });
+        let say = said(&rework(None), room);
+        assert!(say.len() == 1 && say[0].contains("claimability unknown: no verdict"), "{say:?}");
+        let mut snap = rework(Some("claimable"));
+        snap.rows[0].claim_at = Some("1970-01-01T00:10:00Z".into());
+        let say = said(&snap, room);
+        assert!(say.len() == 1 && say[0].contains("claimability unknown: verdict from 1970-01-01T00:10:00Z"), "{say:?}");
+    }
+
     #[test]
     fn a_review_by_reason_gives_its_date_and_its_text() {
         let (due, text) = review("review-by:2026-10-29 waits on tenancy").unwrap();
@@ -409,12 +506,12 @@ mod tests {
     fn a_suspect_is_said_when_it_appears_not_while_it_stays_and_again_after_it_clears() {
         let p = sweep();
         let snap = Snapshot { rows: vec![poisoned("sp-a")], ..Snapshot::default() };
-        let (c, say) = decide(&p, &Carry::default(), &snap, &[], 0.0);
+        let (c, say) = decide(&p, &Carry::default(), &snap, None, &[], 0.0);
         assert_eq!(say, ["SUSPECT sp-a READY POISONED ()"]);
-        let (c, say) = decide(&p, &c, &snap, &[], 0.0);
+        let (c, say) = decide(&p, &c, &snap, None, &[], 0.0);
         assert!(say.is_empty());
-        let (c, _) = decide(&p, &c, &Snapshot::default(), &[], 0.0);
-        assert_eq!(decide(&p, &c, &snap, &[], 0.0).1.len(), 1);
+        let (c, _) = decide(&p, &c, &Snapshot::default(), None, &[], 0.0);
+        assert_eq!(decide(&p, &c, &snap, None, &[], 0.0).1.len(), 1);
     }
 
     #[test]
@@ -422,8 +519,8 @@ mod tests {
         let p = sweep();
         let bead = Bead { id: "sp-o".into(), status: "open".into(), priority: 2, ..Bead::default() };
         let snap = Snapshot { content: vec![bead], ..Snapshot::default() };
-        assert_eq!(decide(&p, &Carry::default(), &snap, &[], 0.0).1, ["SUSPECT sp-o ROWLESS open bead with no lifecycle row"]);
-        assert_eq!(decide(&p, &Carry::default(), &snap, &["sp-o".into()], 0.0).1, ["REPAIRED sp-o open bead had no lifecycle row; created it (priority 2, repo none)"]);
+        assert_eq!(decide(&p, &Carry::default(), &snap, None, &[], 0.0).1, ["SUSPECT sp-o ROWLESS open bead with no lifecycle row"]);
+        assert_eq!(decide(&p, &Carry::default(), &snap, None, &["sp-o".into()], 0.0).1, ["REPAIRED sp-o open bead had no lifecycle row; created it (priority 2, repo none)"]);
     }
 
     fn at(view: &mut Projection, id: &str, at: u64, kind: EventKind, cause: Option<&str>) -> Event {

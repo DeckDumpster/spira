@@ -305,6 +305,10 @@ pub struct Carry {
     pub lane_last: Option<String>,
     pub in_flight: BTreeMap<String, String>,
     pub refusal: Option<String>,
+    /// Since when a task slot has been open on every pass; `None` while none is.
+    pub room_since_ms: Option<u64>,
+    /// When the scheduler last judged the room.
+    pub room_at_ms: Option<u64>,
 }
 
 fn moved<S: Copy + PartialEq + std::fmt::Debug, E: Copy + PartialEq + std::fmt::Debug>(table: &[(S, E, S)], state: S, event: E) -> Result<S, String> {
@@ -393,6 +397,8 @@ pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Act>) {
         next.lane_last = Some(l.clone());
     }
     next.refusal = p.refusal.clone();
+    next.room_since_ms = if p.task_room == Some(0) { None } else { carry.room_since_ms.or(Some(snap.now_ms)) };
+    next.room_at_ms = Some(snap.now_ms);
     let mut acts = vec![];
     if let Some(x) = &p.preempt {
         let key = format!("{}:{}", x.bead, x.express);
@@ -449,7 +455,7 @@ impl SentinelCall {
     }
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("state"), runtime::rows::Part::Field("lane_last"), runtime::rows::Part::Field("refusal"), runtime::rows::Part::Map { name: "in_flight", drop: &[] }];
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("state"), runtime::rows::Part::Field("lane_last"), runtime::rows::Part::Field("refusal"), runtime::rows::Part::Field("room_since_ms"), runtime::rows::Part::Field("room_at_ms"), runtime::rows::Part::Map { name: "in_flight", drop: &[] }];
 
 impl Handler for SentinelCall {
     fn interests(&self) -> &[EventKindTag] {
