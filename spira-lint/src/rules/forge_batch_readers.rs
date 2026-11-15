@@ -30,9 +30,8 @@ const ALLOW_FILE: &str = "spira-lint/forge-batch-readers-allow";
 
 /// The queue reads and writes the files until the store holds the batch; install removes them,
 /// and the migration classifier imports the open one from whichever queue directory install
-/// names, which no queue verb can be pointed at. `queue.step` is the queue's own verdict step
-/// run by the scheduler; it records the forge state as the queue did.
-const OWNERS: [&str; 4] = ["queue/", "install/src/round_records.rs", "spira-lc/src/legacy_files.rs", "spira-runtime/src/tasks/a/queue_step.rs"];
+/// names, which no queue verb can be pointed at.
+const OWNERS: [&str; 3] = ["queue/", "install/src/round_records.rs", "spira-lc/src/legacy_files.rs"];
 
 fn owns(path: &str) -> bool {
     OWNERS.iter().any(|o| path.starts_with(o))

@@ -105,12 +105,13 @@ fn t5_an_idle_repo_settles_once_then_wants_nothing() {
     assert_eq!(decide(&carry, &idle()).1, Vec::<Act>::new());
 }
 
-/// `Waiting` with an unchanged check records nothing.
+/// The forge's view of an open batch is the batch record's: a pending check writes no
+/// `forge-state` file, on the first pass or the next.
 #[test]
-fn t5_an_unchanged_pending_check_records_once() {
+fn t5_a_pending_check_records_no_forge_state_file() {
     let pending = with(Repo { check: Check::Pending, ..busy().repos["spira"].clone() });
     let (carry, first) = decide(&Carry::default(), &pending);
-    assert!(effects(&first).contains(&RECORD), "{first:?}");
+    assert!(first.iter().all(|a| !(a.effect == RECORD && a.input.contains(queue::ops::forge_batch::FORGE_STATE))), "{first:?}");
     let (_, again) = decide(&carry, &pending);
     assert!(!effects(&again).contains(&RECORD), "{again:?}");
 }

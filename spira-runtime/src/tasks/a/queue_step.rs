@@ -51,7 +51,7 @@
 //! |---|---|---|---|
 //! | Idle | `queue.step.tick` | Observing | `queue.step.observe` |
 //! | Observing | snapshot, no batch, no publish rec | Cutting | `queue.step.cut_wanted` |
-//! | Observing | check `pending` | Waiting | `queue.step.record` (forge state) |
+//! | Observing | check `pending` | Waiting | — |
 //! | Observing | check `green`, head = sealed, base unmoved | Pushing | `queue.step.push` (ff) |
 //! | Observing | check `green`, base moved | Settling | `queue.step.push` (rebased head, `:1692`) |
 //! | Observing | check `red`, batcher-owned | Judging | `queue.step.judgement` (unit.start) |
@@ -550,9 +550,6 @@ impl Machine<'_> {
         match repo.check {
             Check::Pending => {
                 self.go(Trigger::CheckPending);
-                if self.rc.last_check != Check::Pending {
-                    self.acts.push(Step { key: format!("{}/forge-state", self.repo), subject: "forge-state".into(), body: "pending".into(), ..at }.act(RECORD));
-                }
             }
             Check::Green if repo.sealed_base.as_deref().is_none_or(|s| s == repo.base_sha) => {
                 self.go(Trigger::CheckGreenSealedBaseUnmoved);
@@ -941,7 +938,11 @@ pub mod edge {
     /// A closed or merged batch PR: the queue's verdict pass reconciles it (`ops/reconcile.rs`).
     pub fn reconcile(e: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
         let s = step(spec)?;
-        queue_leg(e, &format!("reconcile.{}", s.batch), &["verdict", &s.repo])
+        let started = queue_leg(e, &format!("reconcile.{}", s.batch), &["verdict", &s.repo])?;
+        if let Err(why) = queue::ops::forge_batch::clear_pending(&e.world.queue_dir, &s.repo) {
+            eprintln!("queue.step.reconcile: {} left in place: {why}", s.repo);
+        }
+        Ok(started)
     }
 
     pub fn sweep(e: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {

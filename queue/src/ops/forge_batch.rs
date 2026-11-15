@@ -246,10 +246,58 @@ impl Open {
     }
 }
 
+/// Removes `<queue_dir>/<repo>/forge-state` when its whole content is `pending`; a file carrying
+/// `batch_id=` is the verdict's record of a file batch and stays.
+pub fn clear_pending(queue_dir: &std::path::Path, repo: &str) -> Result<bool, String> {
+    let path = records::repo_file(queue_dir, repo, FORGE_STATE);
+    match std::fs::read_to_string(&path) {
+        Ok(text) if text.trim() == "pending" => {
+            std::fs::remove_file(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+            Ok(true)
+        }
+        Ok(_) => Ok(false),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(format!("{}: {e}", path.display())),
+    }
+}
+
 /// `kv` naming batch `id`, as a store write needs it to.
 fn with_id(kv: &Kv, id: &str) -> Kv {
     let mut out = kv.clone();
     out.remove("batch_id");
     out.lines.insert(0, ("batch_id".into(), id.into()));
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn planted(content: &str) -> (testkit::TempDir, std::path::PathBuf) {
+        let dir = testkit::TempDir::new("clear-pending");
+        std::fs::create_dir_all(dir.join("r")).unwrap();
+        let file = dir.join("r").join(FORGE_STATE);
+        std::fs::write(&file, content).unwrap();
+        (dir, file)
+    }
+
+    #[test]
+    fn a_bare_pending_forge_state_is_removed() {
+        let (dir, file) = planted("pending\n");
+        assert_eq!(clear_pending(&dir, "r"), Ok(true));
+        assert!(!file.exists());
+    }
+
+    #[test]
+    fn a_verdict_forge_state_naming_a_batch_is_left() {
+        let (dir, file) = planted("batch_id=x\nci=red\n");
+        assert_eq!(clear_pending(&dir, "r"), Ok(false));
+        assert!(file.exists());
+    }
+
+    #[test]
+    fn no_forge_state_is_no_error() {
+        let dir = testkit::TempDir::new("clear-pending-absent");
+        assert_eq!(clear_pending(&dir, "r"), Ok(false));
+    }
 }
