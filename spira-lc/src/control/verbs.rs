@@ -164,7 +164,7 @@ const USAGE_DEFAULT_LIMIT: u64 = 2_000;
 const USAGE_MAX_LIMIT: u64 = 10_000;
 
 /// `store-usage [--after K]`, `--versions [--after-key K --after-main M]`, `--hot N [--revs R]`
-/// or `--file`: what the control store file holds. Every page form reads at most `--limit`
+/// `--file` or `--families` (every family's files, sizes and mark): what the control store file holds. Every page form reads at most `--limit`
 /// rows and names where the next call resumes.
 fn store_usage<B: Backend>(store: &Store<B>, args: &[String]) -> Result<String, String> {
     let fail = |e: state_store::Error| format!("store-usage: {e}");
@@ -173,6 +173,22 @@ fn store_usage<B: Backend>(store: &Store<B>, args: &[String]) -> Result<String, 
     if args.iter().any(|a| a == "--file") {
         let (bytes, free_bytes) = backend.file_bytes().map_err(fail)?;
         return Ok(json!({ "bytes": bytes, "free_bytes": free_bytes }).to_string());
+    }
+    if args.iter().any(|a| a == "--families") {
+        let families: Vec<Value> = backend
+            .family_files()
+            .map_err(fail)?
+            .into_iter()
+            .map(|f| {
+                let files: Vec<Value> = f
+                    .files
+                    .iter()
+                    .map(|x| json!({ "file": x.file, "bytes": x.bytes, "behind_mark": x.behind_mark }))
+                    .collect();
+                json!({ "family": f.family, "keep_days": f.keep_days, "mark": f.mark, "files": files })
+            })
+            .collect();
+        return Ok(json!({ "families": families }).to_string());
     }
     let limit = number(args, "--limit", USAGE_DEFAULT_LIMIT).map_err(usage_err)?;
     if limit > USAGE_MAX_LIMIT {

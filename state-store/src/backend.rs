@@ -94,6 +94,24 @@ pub struct UsagePage {
     pub examined: usize,
 }
 
+/// One file of a store family on disk.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FamilyFile {
+    pub file: String,
+    pub bytes: u64,
+    /// The file's day is before the family's mark.
+    pub behind_mark: bool,
+}
+
+/// One family of files: the main file, or a dated family with the days it keeps and today's mark.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FamilyFiles {
+    pub family: String,
+    pub keep_days: Option<i64>,
+    pub mark: Option<String>,
+    pub files: Vec<FamilyFile>,
+}
+
 /// A key up to and including its first `/`, or the whole key when it has none.
 pub fn usage_prefix(key: &str) -> &str {
     key.find('/').map_or(key, |i| &key[..=i])
@@ -175,6 +193,10 @@ pub trait Backend: Send + Sync {
     }
     /// The file's total and free bytes.
     fn file_bytes(&self) -> Result<(u64, u64)> {
+        Err(Error::Backend("not served by this backend".into()))
+    }
+    /// Every family's files on disk with their sizes and marks.
+    fn family_files(&self) -> Result<Vec<FamilyFiles>> {
         Err(Error::Backend("not served by this backend".into()))
     }
     /// `range("")` without the keys under `events/`, `history/` and `requests/`: none carries

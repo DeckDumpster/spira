@@ -1517,6 +1517,10 @@ impl Backend for SqliteBackend {
         })
     }
 
+    fn family_files(&self) -> Result<Vec<state_store::FamilyFiles>> {
+        dated::family_files(&self.0.path, self.0.wall.now_ms())
+    }
+
     fn owned_by(
         &self,
         owner: &str,

@@ -119,6 +119,46 @@ impl Family {
     }
 }
 
+/// The main file and each family's files beside `path`, `-wal` and `-shm` included, with the
+/// family's mark on the UTC day of `now_ms`.
+pub fn family_files(path: &Path, now_ms: u64) -> Result<Vec<state_store::FamilyFiles>> {
+    use state_store::{FamilyFile, FamilyFiles};
+    let dir = path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    let stem = stem_of(path);
+    let main_name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let today = day_of(now_ms);
+    let mut main = Vec::new();
+    let mut dated: Vec<Vec<FamilyFile>> = FAMILIES.iter().map(|_| Vec::new()).collect();
+    let entries = std::fs::read_dir(dir).map_err(|e| Error::Backend(format!("{}: {e}", dir.display())))?;
+    for entry in entries {
+        let entry = entry.map_err(|e| Error::Backend(format!("{}: {e}", dir.display())))?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let base = name.strip_suffix("-wal").or_else(|| name.strip_suffix("-shm")).unwrap_or(&name);
+        let bytes = entry.metadata().map_or(0, |m| m.len());
+        if base == main_name {
+            main.push(FamilyFile { file: name, bytes, behind_mark: false });
+            continue;
+        }
+        for (family, files) in FAMILIES.iter().zip(dated.iter_mut()) {
+            if let Some(day) = family.day_of_file(&stem, base) {
+                files.push(FamilyFile { file: name.clone(), bytes, behind_mark: day < family.mark(today) });
+            }
+        }
+    }
+    main.sort_by(|a, b| a.file.cmp(&b.file));
+    let mut out = vec![FamilyFiles { family: "main".into(), keep_days: None, mark: None, files: main }];
+    for (family, mut files) in FAMILIES.iter().zip(dated) {
+        files.sort_by(|a, b| a.file.cmp(&b.file));
+        out.push(FamilyFiles {
+            family: family.name.into(),
+            keep_days: Some(family.keep_days),
+            mark: Some(date_of(family.mark(today))),
+            files,
+        });
+    }
+    Ok(out)
+}
+
 /// One day's file.
 pub struct DatedFile {
     pub day: i64,

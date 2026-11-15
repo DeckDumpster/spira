@@ -482,3 +482,45 @@ fn store_usage_hot_and_file_are_served_on_sqlite_and_refused_elsewhere() {
         assert!(v["bytes"].as_u64().unwrap() > 0, "{out}");
     });
 }
+
+#[test]
+fn store_usage_families_names_each_family_file_size_and_mark_and_flags_the_file_behind_it() {
+    use state_store_sqlite::dated::date_of;
+    const DAY_MS: u64 = 86_400_000;
+    let today = 100;
+    let dir = TempDir::new("spira-lc-feed-families");
+    let clock = VirtualClock::new(0);
+    let opts = Options {
+        clock: Arc::new(clock.clone()),
+        wall: Arc::new(VirtualClock::new(today as u64 * DAY_MS)),
+        ..Options::default()
+    };
+    let b = SqliteBackend::open(&dir.path().join("control.db"), opts).unwrap();
+    let plant = |name: String, bytes: usize| std::fs::write(dir.path().join(name), vec![0u8; bytes]).unwrap();
+    plant(format!("control.receipts-{}.db", date_of(today - 2)), 10);
+    plant(format!("control.receipts-{}.db-wal", date_of(today - 2)), 20);
+    plant(format!("control.receipts-{}.db", date_of(today - 1)), 30);
+    plant(format!("control.events-{}.db", date_of(today - 14)), 40);
+    plant(format!("control.events-{}.db", date_of(today - 15)), 50);
+    plant(format!("control.events-{}.db-shm", date_of(today - 15)), 60);
+    let (code, out) = verbs::run(&store(b, &clock), &["store-usage", "--families"].map(String::from));
+    assert_eq!(code, 0, "{out}");
+    let v: Value = serde_json::from_str(&out).unwrap();
+    let family = |name: &str| v["families"].as_array().unwrap().iter().find(|f| f["family"] == name).unwrap_or_else(|| panic!("{name} missing: {out}")).clone();
+    let file = |f: &Value, name: &str| f["files"].as_array().unwrap().iter().find(|x| x["file"] == name).unwrap_or_else(|| panic!("{name} missing: {out}")).clone();
+    let main = family("main");
+    assert!(file(&main, "control.db")["bytes"].as_u64().unwrap() > 0, "{out}");
+    let receipts = family("receipts");
+    assert_eq!((receipts["keep_days"].as_i64(), receipts["mark"].as_str()), (Some(2), Some(date_of(today - 1).as_str())), "{out}");
+    let old = file(&receipts, &format!("control.receipts-{}.db", date_of(today - 2)));
+    assert_eq!((old["bytes"].as_u64(), old["behind_mark"].as_bool()), (Some(10), Some(true)), "{out}");
+    let wal = file(&receipts, &format!("control.receipts-{}.db-wal", date_of(today - 2)));
+    assert_eq!((wal["bytes"].as_u64(), wal["behind_mark"].as_bool()), (Some(20), Some(true)), "{out}");
+    let kept = file(&receipts, &format!("control.receipts-{}.db", date_of(today - 1)));
+    assert_eq!((kept["bytes"].as_u64(), kept["behind_mark"].as_bool()), (Some(30), Some(false)), "{out}");
+    let events = family("events");
+    assert_eq!(events["mark"].as_str(), Some(date_of(today - 14).as_str()), "{out}");
+    assert_eq!(file(&events, &format!("control.events-{}.db", date_of(today - 14)))["behind_mark"], false, "{out}");
+    let shm = file(&events, &format!("control.events-{}.db-shm", date_of(today - 15)));
+    assert_eq!((shm["bytes"].as_u64(), shm["behind_mark"].as_bool()), (Some(60), Some(true)), "{out}");
+}
