@@ -1019,7 +1019,7 @@ impl Backend for SqliteBackend {
     fn file_bytes(&self) -> Result<(u64, u64)> {
         self.read(|conn, _snap, _deadline| {
             let pragma = |name: &str| -> Result<u64> {
-                let n: i64 = conn.query_row(&format!("PRAGMA {name}"), [], |r| r.get(0)).map_err(db)?;
+                let n: i64 = conn.pragma_query_value(None, name, |r| r.get(0)).map_err(db)?;
                 Ok(u64::try_from(n).unwrap_or(0))
             };
             let size = pragma("page_size")?;
