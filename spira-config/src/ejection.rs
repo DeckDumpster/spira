@@ -24,6 +24,7 @@ pub const LOOKBACK_SECS: i64 = 7 * 24 * 3600;
 pub const FLIP_MIN_BEADS: usize = 2;
 const MORE_PREFIX: &str = "... and ";
 const MORE_SUFFIX: &str = " more failing tests";
+const CUT_SUFFIX: &str = " more lines cut";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Failure {
@@ -190,7 +191,7 @@ pub fn digest_steps(tip: &str, files: &[String], why: &[String], steps: &[(Strin
     let mut kept = 0;
     for l in &lines {
         let more = total - kept - 1;
-        let marker = format!("... {} more lines cut\n", more);
+        let marker = format!("... {more}{CUT_SUFFIX}\n");
         if d.chars().count() + l.chars().count() + 1 + if more > 0 { marker.len() } else { 0 } > DIGEST_MAX {
             break;
         }
@@ -199,7 +200,7 @@ pub fn digest_steps(tip: &str, files: &[String], why: &[String], steps: &[(Strin
         kept += 1;
     }
     if kept < total {
-        d += &format!("... {} more lines cut\n", total - kept);
+        d += &format!("... {}{CUT_SUFFIX}\n", total - kept);
     }
     d
 }
@@ -260,7 +261,7 @@ pub fn shared_reds(bead: &str, this: &str, prior: &[(String, String)]) -> Vec<(S
 /// truncated list, and for any test the evidence does not cover.
 pub fn flipped(bead: &str, this: &str, prior: &[(String, String)]) -> Option<Vec<(String, Vec<String>)>> {
     let tests = parse(this).tests;
-    if tests.is_empty() || this.lines().map(str::trim_start).any(|l| l.starts_with(MORE_PREFIX) && l.ends_with(MORE_SUFFIX) || l.starts_with("... ") && l.ends_with(" more lines cut")) {
+    if tests.is_empty() || this.lines().map(str::trim_start).any(|l| l.starts_with(MORE_PREFIX) && l.ends_with(MORE_SUFFIX) || l.starts_with("... ") && l.ends_with(CUT_SUFFIX)) {
         return None;
     }
     let shared = shared_reds(bead, this, prior);
@@ -424,6 +425,16 @@ mod tests {
         let many: String = (0..9).map(|i| format!("test t::n{i} ... FAILED\n")).collect();
         let mine = digest("t3", &["m.rs".into()], &many);
         let prior: Vec<(String, String)> = ["sp-x", "sp-y"].iter().map(|b| (b.to_string(), digest(&format!("t{b}"), &[format!("{b}.rs")], &many))).collect();
+        assert!(flipped("sp-z", &mine, &prior).is_none());
+    }
+
+    #[test]
+    fn a_digest_cut_for_size_is_not_a_flip() {
+        let lint: String = (0..300).map(|i| format!("some-rule: src/f{i}.rs:{i}: finding number {i} with padding to take room\n")).collect();
+        let make = |tip: &str, file: &str| digest_steps(tip, &[file.to_string()], &[], &[("phase:test".to_string(), "test t::a ... FAILED\n".to_string()), ("spira-lint".to_string(), lint.clone())]);
+        let mine = make("t3", "m.rs");
+        assert!(mine.lines().any(|l| l.ends_with(CUT_SUFFIX)), "{mine}");
+        let prior: Vec<(String, String)> = ["sp-x", "sp-y"].iter().map(|b| (b.to_string(), make(&format!("t{b}"), &format!("{b}.rs")))).collect();
         assert!(flipped("sp-z", &mine, &prior).is_none());
     }
 

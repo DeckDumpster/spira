@@ -56,6 +56,7 @@ struct Fake {
     failures: RefCell<Vec<Recorded>>,
     kept_logs: RefCell<Vec<KeptLogs>>,
     prior_failures: RefCell<Result<Vec<(String, String)>, String>>,
+    prior_since: RefCell<Vec<i64>>,
     gate_starts: RefCell<Vec<String>>,
     lc_refusal: RefCell<String>,
     removed_trees: Cell<u32>,
@@ -250,6 +251,7 @@ impl Fake {
             failures: RefCell::new(Vec::new()),
             kept_logs: RefCell::new(Vec::new()),
             prior_failures: RefCell::new(Ok(Vec::new())),
+            prior_since: RefCell::new(Vec::new()),
             gate_starts: RefCell::new(Vec::new()),
             lc_refusal: RefCell::new(String::new()),
             removed_trees: Cell::new(0),
@@ -577,7 +579,8 @@ impl World for Fake {
         v.extend(args.iter().map(|s| s.to_string()));
         self.yields.borrow_mut().push(v);
     }
-    fn lc_prior_failures(&self, _since: i64) -> Result<Vec<(String, String)>, String> {
+    fn lc_prior_failures(&self, since: i64) -> Result<Vec<(String, String)>, String> {
+        self.prior_since.borrow_mut().push(since);
         self.prior_failures.borrow().clone()
     }
     fn lc_failure(&self, bead: &str, tip: &str, files: &[String], output: &str) {
@@ -2845,6 +2848,14 @@ fn a_unit_red_that_two_other_beads_showed_on_disjoint_diffs_certifies_not_judged
 }
 
 #[test]
+fn the_prior_failures_are_read_from_seven_days_back() {
+    let f = flip_fake(Ok(vec![]));
+    f.run();
+    let since = f.prior_since.borrow().clone();
+    assert_eq!(since, vec![f.now() as i64 - spira_config::ejection::LOOKBACK_SECS]);
+}
+
+#[test]
 fn a_unit_red_no_other_bead_showed_stays_the_branchs() {
     let f = flip_fake(Ok(vec![]));
     assert_eq!(f.run(), FAIL);
@@ -2864,6 +2875,7 @@ fn a_shared_unit_red_beside_a_red_fence_stays_the_branchs() {
     f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, "literal-lint: RED".into()));
     assert_eq!(f.run(), FAIL);
     assert_eq!(certified(&f, "pass"), 0);
+    assert!(f.prior_since.borrow().is_empty(), "the shared-red read was reached past a red fence");
 }
 
 #[test]
