@@ -115,8 +115,8 @@ impl Seen for FileSeen {
     }
     fn save_last_filed(&self, slug: &str, external_ref: &str, id: &str) {
         let path = self.last_path(slug);
-        let tmp = path.with_extension("last.tmp");
-        if std::fs::create_dir_all(&self.0).is_ok() && std::fs::write(&tmp, format!("{external_ref} {id}\n")).is_ok() {
+        let tmp = path.with_extension("tmp");
+        if std::fs::create_dir_all(self.0.join("last")).is_ok() && std::fs::write(&tmp, format!("{external_ref} {id}\n")).is_ok() {
             let _ = std::fs::rename(&tmp, &path);
         }
     }
@@ -124,7 +124,7 @@ impl Seen for FileSeen {
 
 impl FileSeen {
     fn last_path(&self, slug: &str) -> std::path::PathBuf {
-        self.path(slug).with_extension("last")
+        self.0.join("last").join(slug.replace('/', "__"))
     }
 }
 
@@ -620,6 +620,17 @@ mod transport_tests {
             self.0.lock().unwrap().push(argv.to_vec());
             Ok(Reply { code: self.1, out: r#"[{"id":"sp-1"}]"#.into(), err: String::new() })
         }
+    }
+
+    #[test]
+    fn last_filed_lines_round_trip_per_repository_including_dotted_slugs() {
+        let dir = testkit::TempDir::new("gh-intake-last");
+        let seen = FileSeen(dir.path().to_path_buf());
+        assert_eq!(seen.last_filed("acme/widgets"), None);
+        seen.save_last_filed("acme/widgets", "github:acme/widgets#4", "sp-a");
+        seen.save_last_filed("acme/widgets.js", "github:acme/widgets.js#9", "sp-b");
+        assert_eq!(seen.last_filed("acme/widgets"), Some(("github:acme/widgets#4".into(), "sp-a".into())));
+        assert_eq!(seen.last_filed("acme/widgets.js"), Some(("github:acme/widgets.js#9".into(), "sp-b".into())));
     }
 
     #[test]

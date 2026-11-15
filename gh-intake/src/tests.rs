@@ -899,3 +899,14 @@ fn an_unread_repo_with_no_tracked_issue_is_a_first_read_and_files_none() {
     assert_eq!(seen.load(&cfg.repo), Some(vec![1, 2, 3]));
     assert!(!bd.calls.borrow().iter().any(|c| c.starts_with("create")));
 }
+
+#[test]
+fn an_unread_repo_asks_both_refs_of_every_open_issue_before_deciding() {
+    let (cfg, http, _, repo) = three_issue_world();
+    let bd = FakeBd::default();
+
+    run(&http, &bd, &repo, &FakeMail::default(), &stamp(), &FakeSeen::default(), &cfg);
+
+    let want: Vec<String> = (1..=3).flat_map(|n| [format!("by_ref github:acme/widgets#{n}"), format!("by_ref github-untrusted:acme/widgets#{n}")]).collect();
+    assert_eq!(*bd.calls.borrow(), want);
+}
