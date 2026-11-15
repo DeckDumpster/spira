@@ -238,6 +238,28 @@ impl DatedFile {
         })
     }
 
+    /// Files `rows` as they were stored, each at its own revision, in one commit.
+    pub fn import(&self, rows: &[super::StoredRow]) -> Result<()> {
+        self.with_writer(|conn| {
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(db)?;
+            {
+                let mut ins = tx
+                    .prepare_cached(
+                        "INSERT INTO rows (key, main, sub, value, create_main, create_sub)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    )
+                    .map_err(db)?;
+                for r in rows {
+                    let (Some(cm), Some(cs)) = (r.create_main, r.create_sub) else {
+                        return Err(Error::Backend(format!("{} has no create revision", String::from_utf8_lossy(&r.key))));
+                    };
+                    ins.execute(params![r.key, r.main, r.sub, r.value, cm, cs]).map_err(db)?;
+                }
+            }
+            tx.commit().map_err(db)
+        })
+    }
+
     pub fn delete_keys(&self, keys: &[&str]) -> Result<()> {
         self.with_writer(|conn| {
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(db)?;

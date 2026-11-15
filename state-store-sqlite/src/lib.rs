@@ -24,6 +24,7 @@ pub mod dated;
 pub mod durability;
 pub mod live;
 pub mod outbox;
+pub mod relayout;
 
 use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
@@ -280,6 +281,18 @@ impl Default for Options {
             day_receipts: true,
         }
     }
+}
+
+/// One `latest` row as stored, every non-generated column.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StoredRow {
+    pub key: Vec<u8>,
+    pub main: i64,
+    pub sub: i64,
+    pub value: Vec<u8>,
+    pub create_main: Option<i64>,
+    pub create_sub: Option<i64>,
+    pub version: i64,
 }
 
 /// One `PRAGMA wal_checkpoint(TRUNCATE)`: `busy` when a reader or writer kept it from finishing.
@@ -1205,6 +1218,54 @@ impl SqliteBackend {
         tx.commit().map_err(db)?;
         *lock(&self.0.history) = History::new(rev, self.0.history_bytes);
         self.0.head.store(rev, Ordering::SeqCst);
+        Ok(())
+    }
+
+    /// The names of the `latest` columns a row is stored in: every one that is not generated.
+    pub fn latest_columns(&self) -> Result<Vec<String>> {
+        let w = lock(&self.0.writer);
+        let mut s = w.conn.prepare("SELECT name FROM pragma_table_xinfo('latest') WHERE hidden = 0 ORDER BY cid").map_err(db)?;
+        let names = s.query_map([], |r| r.get(0)).map_err(db)?;
+        names.collect::<std::result::Result<_, _>>().map_err(db)
+    }
+
+    /// Loads an empty store with another store's live rows exactly as they were stored: each
+    /// row's revisions and version kept, the head and the history floor at `head`, and
+    /// `jumps` recorded. Nothing is committed unless every row is.
+    pub fn import_as_stored(
+        &self,
+        head: u64,
+        jumps: &[(u64, u64)],
+        rows: impl IntoIterator<Item = Result<StoredRow>>,
+    ) -> Result<()> {
+        let mut w = lock(&self.0.writer);
+        let tx = w.conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(db)?;
+        let any: Option<i64> = tx
+            .prepare_cached("SELECT 1 FROM latest LIMIT 1")
+            .and_then(|mut s| s.query_row([], |r| r.get(0)).optional())
+            .map_err(db)?;
+        let at = meta(&tx, "head")?.unwrap_or(0);
+        if at != 0 || any.is_some() {
+            return Err(Error::Backend(format!("import_as_stored needs an empty store; this one is at revision {at}")));
+        }
+        {
+            let mut put_latest = tx.prepare_cached(PUT_LATEST).map_err(db)?;
+            for row in rows {
+                let r = row?;
+                set_owner_refs(&tx, &key_of(r.key.clone())?, Some(&r.value))?;
+                put_latest
+                    .execute(params![r.key, r.main, r.sub, r.value, r.create_main, r.create_sub, r.version])
+                    .map_err(db)?;
+            }
+        }
+        for (from, to) in jumps {
+            exec(&tx, "INSERT INTO jumps (from_main, to_main) VALUES (?1, ?2)", [main_i64(*from)?, main_i64(*to)?])?;
+        }
+        set_meta(&tx, "head", head)?;
+        set_meta(&tx, "compacted", head)?;
+        tx.commit().map_err(db)?;
+        *lock(&self.0.history) = History::new(head, self.0.history_bytes);
+        self.0.head.store(head, Ordering::SeqCst);
         Ok(())
     }
 
