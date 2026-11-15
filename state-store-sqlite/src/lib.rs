@@ -317,7 +317,6 @@ struct Inner {
     receipts_from_at: u64,
     /// The main file holds no receipt left to drain.
     drained: AtomicBool,
-    /// The main file holds no event left to drain.
     events_drained: AtomicBool,
     /// Wall ms before which the main file's oldest event is within the retention window.
     events_due: AtomicU64,
