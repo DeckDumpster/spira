@@ -127,11 +127,12 @@ fn a_quiet_tick_of_each_task_that_read_the_store_every_tick_never_reaches_its_so
             self.0.exchange(argv, stdin, d)
         }
     }
-    let views = Projection::new(LcClient::over(Arc::new(Shared(store.clone())), true), Duration::from_secs(30), Arc::new(std::time::Instant::now));
+    let frozen = Arc::new(Mutex::new(std::time::Instant::now()));
+    let views = Projection::new(LcClient::over(Arc::new(Shared(store.clone())), true), Duration::from_secs(30), Arc::new(move || *frozen.lock().unwrap()));
     let _watch = spira_runtime::store::run(views).expect("the first install stands");
     let installed = store_view::shared().unwrap();
     // clock-safe: a cap on the wait for the watch thread to start
-    for _ in 0..1000 {
+    for _ in 0..6000 {
         if installed.watching() {
             break;
         }

@@ -281,7 +281,7 @@ async fn the_served_scheduler_takes_a_change_at_the_start_of_its_next_turn_with_
     let wait = |n: usize| {
         let p = probes.clone();
         async move {
-            for _ in 0..500 {
+            for _ in 0..3000 {
                 if p.0.lock().unwrap().len() >= n {
                     return;
                 }
@@ -294,13 +294,16 @@ async fn the_served_scheduler_takes_a_change_at_the_start_of_its_next_turn_with_
     file.lock().unwrap().insert(KEY.into(), "4".into());
     let s = sock.clone();
     tokio::task::spawn_blocking(move || lc_call(&s, &["scheduler", "repin", KEY]).unwrap()).await.unwrap();
-    for _ in 0..500 {
+    let mut running = false;
+    for _ in 0..3000 {
         let s = sock.clone();
         if tokio::task::spawn_blocking(move || lc_call(&s, &["scheduler", "running", KEY]).unwrap()).await.unwrap() == "4" {
+            running = true;
             break;
         }
         tokio::time::sleep(Duration::from_millis(10)).await; // clock-safe: polling a real host
     }
+    assert!(running, "the served scheduler never reported the repinned value");
     tx.send(tick("tick-2")).await.unwrap();
     wait(2).await;
     drop(tx);

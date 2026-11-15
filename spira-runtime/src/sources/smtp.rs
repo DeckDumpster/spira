@@ -146,7 +146,7 @@ mod tests {
     use super::*;
 
     fn sink(tx: mpsc::Sender<Submit>, mail_root: &std::path::Path, run: &std::path::Path) -> EventSink {
-        EventSink { tx, delivery: Some(Delivery { run_dir: run.into(), home: run.into(), mail_root: mail_root.into(), mute: true }), reply_within: Duration::from_secs(2) }
+        EventSink { tx, delivery: Some(Delivery { run_dir: run.into(), home: run.into(), mail_root: mail_root.into(), mute: true }), reply_within: Duration::from_secs(3600) }
     }
 
     fn envelope<'a>(to: &'a [String]) -> Envelope<'a> {

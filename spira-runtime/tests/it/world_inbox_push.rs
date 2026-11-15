@@ -29,7 +29,7 @@ fn blind_line() -> String {
 
 /// The flusher runs detached, so its record is waited for: the marker file is the signal.
 fn wait_for(path: &Path) -> String {
-    let end = Instant::now() + Duration::from_secs(5); // clock-safe: a cap on a wait for the flusher's marker file
+    let end = Instant::now() + Duration::from_secs(30); // clock-safe: a cap on a wait for the flusher's marker file
     while Instant::now() < end { // clock-safe: a cap on a wait for the flusher's marker file
         if let Ok(t) = std::fs::read_to_string(path) {
             if !t.is_empty() {

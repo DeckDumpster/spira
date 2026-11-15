@@ -4,12 +4,16 @@
 use std::os::linux::net::SocketAddrExt;
 use std::os::unix::net::{SocketAddr, UnixDatagram};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+use store_view::Clock;
 
 pub struct Notifier {
     dest: Option<SocketAddr>,
     sock: UnixDatagram,
     every: Option<Duration>,
+    clock: Clock,
     base: Instant,
     last: AtomicU64,
     dropped: AtomicU64,
@@ -18,6 +22,10 @@ pub struct Notifier {
 impl Notifier {
     /// `socket` is `$NOTIFY_SOCKET`, `watchdog_usec` is `$WATCHDOG_USEC`; both are set by systemd.
     pub fn new(socket: Option<&str>, watchdog_usec: Option<u64>) -> std::io::Result<Notifier> {
+        Notifier::with_clock(socket, watchdog_usec, Arc::new(Instant::now))
+    }
+
+    pub fn with_clock(socket: Option<&str>, watchdog_usec: Option<u64>, clock: Clock) -> std::io::Result<Notifier> {
         let dest = match socket.filter(|s| !s.is_empty()) {
             Some(s) => Some(match s.strip_prefix('@') {
                 Some(name) => SocketAddr::from_abstract_name(name.as_bytes())?,
@@ -28,7 +36,7 @@ impl Notifier {
         let every = watchdog_usec.filter(|u| *u > 0).map(|u| Duration::from_micros(u / 3));
         let sock = UnixDatagram::unbound()?;
         sock.set_nonblocking(true)?;
-        Ok(Notifier { dest, sock, every, base: Instant::now(), last: AtomicU64::new(0), dropped: AtomicU64::new(0) })
+        Ok(Notifier { dest, sock, every, base: clock(), clock, last: AtomicU64::new(0), dropped: AtomicU64::new(0) })
     }
 
     pub fn from_env() -> std::io::Result<Notifier> {
@@ -60,7 +68,7 @@ impl Notifier {
     /// `WATCHDOG=1`, at most once per `max_sleep`; cheap enough to call after every event.
     pub fn kick(&self) {
         let Some(every) = self.every else { return };
-        let now = self.base.elapsed().as_nanos() as u64 + 1;
+        let now = (self.clock)().saturating_duration_since(self.base).as_nanos() as u64 + 1;
         let last = self.last.load(Ordering::Relaxed);
         if last == 0 || now - last >= (every / 2).as_nanos() as u64 {
             self.last.store(now, Ordering::Relaxed);
@@ -79,9 +87,12 @@ mod tests {
         let path = d.path().join("n.sock");
         let rx = UnixDatagram::bind(&path).unwrap();
         rx.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
-        let n = Notifier::new(path.to_str(), Some(3_000_000)).unwrap();
+        let now = Arc::new(std::sync::Mutex::new(Instant::now()));
+        let clock = now.clone();
+        let n = Notifier::with_clock(path.to_str(), Some(3_000_000), Arc::new(move || *clock.lock().unwrap())).unwrap();
         n.ready();
         n.kick();
+        *now.lock().unwrap() += Duration::from_millis(499);
         n.kick();
         let mut buf = [0u8; 32];
         let got = |rx: &UnixDatagram, buf: &mut [u8]| {
@@ -90,8 +101,11 @@ mod tests {
         };
         assert_eq!(got(&rx, &mut buf), "READY=1");
         assert_eq!(got(&rx, &mut buf), "WATCHDOG=1");
-        rx.set_read_timeout(Some(Duration::from_millis(50))).unwrap();
+        rx.set_nonblocking(true).unwrap();
         assert!(rx.recv(&mut buf).is_err(), "the second kick inside the window is dropped");
+        *now.lock().unwrap() += Duration::from_millis(1);
+        n.kick();
+        assert_eq!(got(&rx, &mut buf), "WATCHDOG=1", "a kick at the window's edge is sent");
         assert_eq!(n.max_sleep(), Some(Duration::from_secs(1)));
     }
 
