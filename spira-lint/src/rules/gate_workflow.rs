@@ -639,6 +639,10 @@ mod tests {
         let cut = "      - name: Cut release tag";
         let got = planted(gate, build, "      - name: Something else");
         assert!(got.iter().any(|m| m.contains("cut's Build spira-config step")), "{got:?}");
+        let got = planted(gate, "cargo build --release --locked -p spira-config", "true");
+        assert!(got.iter().any(|m| m.contains("cut builds spira-config: expected")), "{got:?}");
+        let got = planted(gate, ">> \"$GITHUB_PATH\"", ">> /dev/null");
+        assert!(got.iter().any(|m| m.contains("cut puts spira-config on PATH")), "{got:?}");
         let mut w = shipped();
         let g = w.gate.take().unwrap();
         w.gate = Some(g.replacen(build, "@@", 1).replacen(cut, build, 1).replacen("@@", cut, 1));
@@ -650,6 +654,8 @@ mod tests {
     fn a_cut_the_forge_does_not_vouch_for_is_caught() {
         let got = planted(gate, ".conclusion == \"success\")] | length", "true)] | length");
         assert!(got.iter().any(|m| m.contains("cut counts only a successful gate check")), "{got:?}");
+        let got = planted(gate, "is not the head of a queue batch PR", "is odd");
+        assert!(got.iter().any(|m| m.contains("cut refuses any other head")), "{got:?}");
         let got = planted(gate, "-ge \"${_want:-1}\"", "-ge 0");
         assert!(got.iter().any(|m| m.contains("a run short of the corpus refuses")), "{got:?}");
     }
