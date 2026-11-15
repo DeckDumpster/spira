@@ -614,6 +614,9 @@ pub struct RepoCarry {
     /// (law-a-failure-carries-its-own-explanation); logged once each time it changes.
     #[serde(default)]
     pub skip_why: Option<String>,
+    /// The members this repo's latest pass would cut; empty when it cut nothing. Round-duty reads it.
+    #[serde(default)]
+    pub admissible: Vec<String>,
     /// The assemble error of the last cut and the ticks it has now failed the same way running.
     #[serde(default)]
     pub assemble_failed: Option<(String, u32)>,
@@ -1494,6 +1497,7 @@ impl Machine<'_> {
     /// The cut: whether this repo may open a further round now, and if so which. `live` are the
     /// rounds of the repo this task already drives, lowest first.
     fn cut(&mut self, policy: &Policy, repo: &Repo, live: &[RepoCarry]) {
+        self.rc.admissible.clear();
         if live.len() >= policy.max_open {
             return;
         }
@@ -1542,6 +1546,7 @@ impl Machine<'_> {
                 self.go(Trigger::NoTrigger);
             }
             Ok((pool, key)) => {
+                self.rc.admissible = pool.iter().map(|m| m.id.clone()).collect();
                 self.go(Trigger::Cut);
                 self.rc.round_key = Some(key.clone());
                 self.rc.stacked = !live.is_empty();
@@ -2068,6 +2073,7 @@ impl Machine<'_> {
         if a.merged.is_empty() || self.rc.held_keys.contains(&key) {
             hold_key(&mut self.rc, &leg.round_key);
             self.rc.skip_why = Some(held_key_why(&leg.round_key));
+            self.rc.admissible.clear();
             self.go(Trigger::AssembledEmpty);
             self.rc.round_key = None;
             return;
@@ -2130,7 +2136,9 @@ fn decide_repo(policy: &Policy, name: &str, rc: &RepoCarry, repo: &Repo, now_ms:
         shared = m.rc;
     }
     let mut m = Machine { repo: name, rc: shared.holding(&RepoCarry { state: idle, ..RepoCarry::default() }), acts, now_ms, below: !live.is_empty() };
-    if !ended {
+    if ended {
+        m.rc.admissible.clear();
+    } else {
         m.cut(policy, repo, &live);
     }
     if m.rc.live() {

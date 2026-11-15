@@ -9,6 +9,8 @@ use runtime::rows::Part;
 use serde::{Deserialize, Serialize};
 
 use super::halt::Halt;
+use crate::tasks::a::{batcher_local, kit};
+
 use super::{answers_observe, carried, iso8601, INBOX_APPEND};
 
 pub const STREAM: &str = "watch.round-duty";
@@ -17,7 +19,7 @@ pub const STATE: EventKindTag = "round-duty.state";
 pub const OBSERVE: &str = "round-duty.observe";
 pub const NAME: &str = "round-duty";
 
-const ROW_PARTS: &[Part] = &[Part::Field("last_due"), Part::Field("last_unknown"), Part::Field("last_c"), Part::Field("last_change"), Part::Field("last_stopped"), Part::Field("starved_since"), Part::Field("last_starved"), Part::Field("last_unadvanced"), Part::Field("held"), Part::Field("halt_paged"), Part::Map { name: "lines", drop: &[] }];
+const ROW_PARTS: &[Part] = &[Part::Field("last_due"), Part::Field("last_unknown"), Part::Field("last_c"), Part::Field("last_certified"), Part::Field("last_change"), Part::Field("last_stopped"), Part::Field("starved_since"), Part::Field("last_starved"), Part::Field("last_unadvanced"), Part::Field("held"), Part::Field("halt_paged"), Part::Map { name: "lines", drop: &[] }];
 
 const DEADLINE_MS: u64 = 10_000;
 
@@ -49,6 +51,11 @@ pub struct Snapshot {
     pub submitted: u64,
     pub submitted_by_repo: String,
     pub by_repo: String,
+    /// Members the batcher's latest pass would cut, filled from its carry, not by the world probe.
+    #[serde(default)]
+    pub admissible: u64,
+    #[serde(default)]
+    pub admissible_by_repo: String,
     pub stopped: String,
     pub state: RoundState,
     pub open: u64,
@@ -66,6 +73,9 @@ pub struct Carry {
     pub last_due: u64,
     pub last_unknown: u64,
     pub last_c: Option<u64>,
+    /// The lifecycle count of the last good snapshot, which a failed probe falls back on.
+    #[serde(default)]
+    pub last_certified: Option<u64>,
     pub last_change: u64,
     pub last_stopped: String,
     pub starved_since: Option<u64>,
@@ -81,6 +91,14 @@ fn verdictless(line: &str) -> bool {
     ["no verdict", "no-verdict", "verdict-less", "verdictless"].iter().any(|k| l.contains(k))
 }
 
+/// `snap` with the members the batcher's latest pass would cut, summed over its repos.
+pub fn with_admissible(mut snap: Snapshot, batcher: &batcher_local::Carry) -> Snapshot {
+    let per: Vec<(&String, usize)> = batcher.repos.iter().map(|(n, rc)| (n, rc.admissible.len())).filter(|(_, n)| *n > 0).collect();
+    snap.admissible = per.iter().map(|(_, n)| *n as u64).sum();
+    snap.admissible_by_repo = per.iter().map(|(n, k)| format!("{n}={k}")).collect::<Vec<_>>().join(" ");
+    snap
+}
+
 /// The messages a snapshot calls for, and the state to carry into the next tick.
 pub fn decide(cfg: &RoundDuty, carry: &Carry, snap: &Snapshot, now: u64) -> (Carry, Vec<String>) {
     let mut c = carry.clone();
@@ -93,6 +111,8 @@ pub fn decide(cfg: &RoundDuty, carry: &Carry, snap: &Snapshot, now: u64) -> (Car
         }
     }
     let certified = snap.certified;
+    let admissible = snap.admissible;
+    c.last_certified = Some(certified);
     if snap.stopped != c.last_stopped {
         let shown = if snap.stopped.is_empty() { "none" } else { snap.stopped.as_str() };
         say.push(format!("ROUNDS STOPPED ON PURPOSE: {shown} (world.sh status names owner and release condition) — not counted as due"));
@@ -113,8 +133,8 @@ pub fn decide(cfg: &RoundDuty, carry: &Carry, snap: &Snapshot, now: u64) -> (Car
     }
     c.held.clear();
     c.halt_paged = None;
-    if c.last_c != Some(certified) {
-        c.last_c = Some(certified);
+    if c.last_c != Some(admissible) {
+        c.last_c = Some(admissible);
         c.last_change = now;
     }
     let idle = now.saturating_sub(c.last_change);
@@ -146,9 +166,9 @@ pub fn decide(cfg: &RoundDuty, carry: &Carry, snap: &Snapshot, now: u64) -> (Car
         c.last_starved = 0;
     }
     let may_cut = snap.state == RoundState::None || (snap.state == RoundState::Open && snap.open < cfg.max_open);
-    if may_cut && (certified >= cfg.min || (certified >= 1 && idle >= cfg.idle_cut_secs)) {
+    if may_cut && (admissible >= cfg.min || (admissible >= 1 && idle >= cfg.idle_cut_secs)) {
         if now.saturating_sub(c.last_due) >= cfg.remind_secs {
-            say.push(format!("ROUND DUE: {certified} certified waiting [{}] (idle {idle}s), {} of {} rounds open — cut the next round", snap.by_repo, snap.open, cfg.max_open));
+            say.push(format!("ROUND DUE: {admissible} certified waiting [{}] (idle {idle}s), {} of {} rounds open — cut the next round", snap.admissible_by_repo, snap.open, cfg.max_open));
             c.last_due = now;
         }
     } else {
@@ -194,9 +214,10 @@ impl Handler for RoundDuty {
         let carry = carried::<Carry>(view, &ev.stream, STATE);
         let snap = match (ev.kind.tag.as_str(), serde_json::from_str::<Snapshot>(&ev.kind.body)) {
             (EFFECT_SUCCEEDED, Ok(s)) => s,
-            _ => Snapshot { certified: carry.last_c.unwrap_or(0), lines: carry.lines.clone(), stopped: carry.last_stopped.clone(), ..Snapshot::default() },
+            _ => Snapshot { certified: carry.last_certified.unwrap_or(0), lines: carry.lines.clone(), stopped: carry.last_stopped.clone(), ..Snapshot::default() },
         };
         let now = ev.at / 1000;
+        let snap = with_admissible(snap, &kit::carry::<batcher_local::Carry>(&batcher_local::SHAPE, view));
         let (next, say) = decide(self, &carry, &snap, now);
         ctx.event().set("round_duty.said", say.len() as u64);
         let mut cmds: Vec<Command> = vec![];
@@ -220,7 +241,37 @@ mod tests {
     }
 
     fn snap(state: RoundState, certified: u64) -> Snapshot {
-        Snapshot { certified, by_repo: "spira=1".into(), state, ..Snapshot::default() }
+        Snapshot { certified, by_repo: "spira=1".into(), admissible: certified, admissible_by_repo: "spira=1".into(), state, ..Snapshot::default() }
+    }
+
+    #[test]
+    fn a_certified_bead_the_batcher_would_not_cut_pages_no_round_due() {
+        let cfg = cfg();
+        let unwanted = Snapshot { admissible: 0, admissible_by_repo: String::new(), ..snap(RoundState::None, 1) };
+        let (c, say) = decide(&cfg, &Carry::default(), &unwanted, 1000);
+        assert!(say.iter().all(|m| !m.starts_with("ROUND DUE")), "{say:?}");
+        let (c, say) = decide(&cfg, &c, &unwanted, 1000 + cfg.idle_cut_secs);
+        assert!(say.iter().all(|m| !m.starts_with("ROUND DUE")), "{say:?}");
+        let (_, say) = decide(&cfg, &c, &unwanted, 1000 + cfg.idle_cut_secs + cfg.remind_secs);
+        assert!(say.iter().all(|m| !m.starts_with("ROUND DUE")), "{say:?}");
+        let (_, say) = decide(&cfg, &Carry::default(), &snap(RoundState::None, 1), 1000);
+        assert_eq!(say, ["ROUND DUE: 1 certified waiting [spira=1] (idle 0s), 0 of 1 rounds open — cut the next round"]);
+    }
+
+    #[test]
+    fn the_lifecycle_count_is_carried_apart_from_the_admissible_idle_clock() {
+        let s = Snapshot { admissible: 0, ..snap(RoundState::None, 3) };
+        let (c, _) = decide(&cfg(), &Carry::default(), &s, 1000);
+        assert_eq!((c.last_certified, c.last_c), (Some(3), Some(0)));
+    }
+
+    #[test]
+    fn the_admissible_count_is_what_the_batcher_carries_per_repo() {
+        let mut b = batcher_local::Carry::default();
+        b.repos.insert("spira".into(), batcher_local::RepoCarry { admissible: vec!["a".into(), "b".into()], ..Default::default() });
+        b.repos.insert("other".into(), batcher_local::RepoCarry::default());
+        let s = with_admissible(snap(RoundState::None, 5), &b);
+        assert_eq!((s.admissible, s.admissible_by_repo.as_str()), (2, "spira=2"));
     }
 
     fn outcome(tag: EventKindTag) -> Vec<String> {

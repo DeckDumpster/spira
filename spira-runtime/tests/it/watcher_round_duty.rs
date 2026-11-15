@@ -1,6 +1,6 @@
 use runtime::event::EventKind;
 use runtime::taskrig::TaskRig;
-use spira_runtime::tasks::a::kit;
+use spira_runtime::tasks::a::{batcher_local, kit};
 use spira_runtime::watchers::round_duty::*;
 use spira_runtime::watchers::INBOX_APPEND;
 
@@ -15,6 +15,8 @@ fn certified_work_and_no_round() -> Snapshot {
 fn round_due_said() -> TaskRig {
     let world = serde_json::to_string(&certified_work_and_no_round()).unwrap();
     let mut r = TaskRig::new(1, registration()).unwrap().double(OBSERVE, move |_| Ok(world.clone())).double(INBOX_APPEND, |l| Ok(l.into()));
+    let carry = batcher_local::Carry { repos: [("spira".to_string(), batcher_local::RepoCarry { admissible: vec!["sp-a".into()], ..Default::default() })].into() };
+    r.tick(batcher_local::STREAM, EventKind::new(batcher_local::STATE, &serde_json::to_string(&carry).unwrap())).unwrap();
     r.advance(1_000_000).unwrap();
     r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
     assert!(r.requested().iter().any(|q| q.name == INBOX_APPEND && q.input.contains("ROUND DUE")), "the scenario must have said ROUND DUE");

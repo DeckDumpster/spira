@@ -67,8 +67,9 @@ fn a_certifying_round_with_a_certified_bead_set_aside_pages_nothing_and_no_round
 
     let (_dir, w) = world(true);
     let w = World { home_repo: "gamma".into(), ..w };
-    let snap: Snapshot = serde_json::from_str(&w.round_snapshot("{}").unwrap()).unwrap();
+    let mut snap: Snapshot = serde_json::from_str(&w.round_snapshot("{}").unwrap()).unwrap();
     assert_eq!(snap.state, RoundState::None);
+    (snap.admissible, snap.admissible_by_repo) = (snap.certified, snap.by_repo.clone());
     let (c, first) = decide(&cfg(), &Carry::default(), &snap, 1000);
     assert_eq!(first.len(), 1, "{first:?}");
     let (_, later) = decide(&cfg(), &c, &snap, 1100);
