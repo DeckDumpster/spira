@@ -426,7 +426,7 @@ impl LiveOps<'_> {
         suites: &[String],
         fails: &[(String, String)],
         owner: bool,
-    ) {
+    ) -> Result<(), String> {
         if owner {
             redtip::record(&self.env.run, &self.repo.name, &member.id, &member.tip);
             let files = self.changed.get(&member.id).cloned().unwrap_or_default();
@@ -438,10 +438,9 @@ impl LiveOps<'_> {
                 if let Err(e) =
                     io::round_eject(self.env, self.repo, batch, &member.id, suites, fails, owner)
                 {
-                    println!(
-                        "batcher {}: could not eject {} from round {batch}: {e}",
-                        self.repo.name, member.id
-                    );
+                    let refusal = format!("eject of {} from {batch} refused: {e}", member.id);
+                    println!("batcher {}: {refusal}", self.repo.name);
+                    return Err(refusal);
                 }
             }
             None => io::eject_member(self.env, &self.repo.name, &member.id, suites, fails, owner),
@@ -454,6 +453,7 @@ impl LiveOps<'_> {
             })
             .text
         );
+        Ok(())
     }
 }
 
@@ -462,23 +462,23 @@ impl drive::RoundOps for LiveOps<'_> {
         suspects_in(self.wt, &self.changed, suite, members)
     }
 
-    fn eject(&mut self, member: &Member, suites: &[String], owner: bool) {
+    fn eject(&mut self, member: &Member, suites: &[String], owner: bool) -> Result<(), String> {
         let fails: Vec<(String, String)> = suites
             .iter()
             .filter_map(|s| {
                 io::suite_first_fail(Path::new(&self.evidence), self.pass.as_deref(), s).map(|l| (s.clone(), l))
             })
             .collect();
-        self.eject_with(member, suites, &fails, owner);
+        self.eject_with(member, suites, &fails, owner)
     }
 
-    fn eject_on(&mut self, member: &Member, filter: &str, line: &str, owner: bool) {
+    fn eject_on(&mut self, member: &Member, filter: &str, line: &str, owner: bool) -> Result<(), String> {
         self.eject_with(
             member,
             &[filter.to_string()],
             &[(filter.to_string(), line.to_string())],
             owner,
-        );
+        )
     }
 
     fn package_graph(&self) -> Option<batcher::unitattr::PackageGraph> {
@@ -523,7 +523,7 @@ impl drive::RoundOps for LiveOps<'_> {
             .collect()
     }
 
-    fn sequence(&mut self, member: &Member, behind: &[String], line: &str) {
+    fn sequence(&mut self, member: &Member, behind: &[String], line: &str) -> Result<(), String> {
         let outcome = match self.batch {
             Some(batch) => io::round_sequence(self.env, self.repo, batch, &member.id, behind, line),
             None => {
@@ -532,7 +532,7 @@ impl drive::RoundOps for LiveOps<'_> {
                     &[drive::WORKSPACE_BUILD.to_string()],
                     &[(drive::WORKSPACE_BUILD.to_string(), line.to_string())],
                     false,
-                );
+                )?;
                 io::sequence_edges(self.env, &member.id, behind)
             }
         };
@@ -557,6 +557,7 @@ impl drive::RoundOps for LiveOps<'_> {
                 );
             }
         }
+        Ok(())
     }
 
     fn rebuild(&mut self, survivors: &[Member]) -> Result<Vec<Member>, String> {
@@ -1081,7 +1082,7 @@ fn install_fault_outcome(
         InstallFault::Owner(id) => {
             println!("batcher {}: install fault → owner {id}", repo.name);
             if let Some(m) = members.iter().find(|m| &m.id == id) {
-                ops.eject(m, &install, true);
+                let _printed_refusal = ops.eject(m, &install, true);
             }
         }
         InstallFault::Base => {

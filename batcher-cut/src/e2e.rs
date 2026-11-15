@@ -134,8 +134,9 @@ impl RoundOps for ProofOps {
     fn suspects(&self, suite: &str, members: &[String]) -> Vec<String> {
         crate::suspects_in(&self.wt, &self.changed, suite, members)
     }
-    fn eject(&mut self, member: &Member, suites: &[String], _owner: bool) {
+    fn eject(&mut self, member: &Member, suites: &[String], _owner: bool) -> Result<(), String> {
         self.ejected.push((member.id.clone(), suites.to_vec()));
+        Ok(())
     }
     fn rebuild(&mut self, survivors: &[Member]) -> Result<Vec<Member>, String> {
         crate::merge_round(
