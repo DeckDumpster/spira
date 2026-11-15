@@ -354,6 +354,8 @@ fn sweep_run_dir() -> Result<std::path::PathBuf, String> {
     crate::lifecycle_run_dir()
 }
 
+const BY: &str = "spira-lc";
+
 /// One `ROUND-ABANDON` line in `landing.log` for each round the sweep abandoned, in the shape
 /// the queue writes for its own abandons; the failure to write is returned for the caller to say.
 fn log_abandons(
@@ -367,14 +369,38 @@ fn log_abandons(
     if abandoned.is_empty() {
         return None;
     }
-    let file = run.and_then(|dir| {
-        std::fs::OpenOptions::new().create(true).append(true).open(dir.join("landing.log")).map_err(|e| e.to_string())
+    let file = run.clone().and_then(|dir| {
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(dir.join("landing.log"))
+            .map_err(|e| e.to_string())
     });
+    let run_dir = run;
     match file {
         Ok(mut f) => {
             for id in abandoned {
                 let repo = repos.get(id).map_or("unknown", String::as_str);
-                let _ = writeln!(f, "QUEUE ROUND-ABANDON {now} repo={repo} batch={id} reason=requeue-orphans: opened and never began, no driver in {stale_secs}s");
+                let reason =
+                    format!("requeue-orphans: opened and never began, no driver in {stale_secs}s");
+                let _ = writeln!(
+                    f,
+                    "QUEUE ROUND-ABANDON {now} repo={repo} batch={id} by={BY} reason={reason}"
+                );
+                if let Ok(dir) = &run_dir {
+                    let at = std::time::UNIX_EPOCH
+                        + std::time::Duration::from_secs(u64::try_from(now).unwrap_or(0));
+                    spira_otel::rounds::emit(
+                        dir,
+                        "spira-lc",
+                        "abandon",
+                        repo,
+                        id,
+                        BY,
+                        &[("reason", reason)],
+                        at,
+                    );
+                }
             }
             None
         }
@@ -397,7 +423,11 @@ mod tests {
         assert_eq!(log_abandons(Ok(dir.path().to_path_buf()), &ids, &repos, 120, 1_794_368_406), None);
         let log = std::fs::read_to_string(dir.path().join("landing.log")).unwrap();
         assert_eq!(log.lines().count(), 1, "{log}");
-        assert!(log.starts_with("QUEUE ROUND-ABANDON 1794368406 repo=spira batch=b-1 reason=requeue-orphans: "), "{log}");
+        assert!(log.starts_with("QUEUE ROUND-ABANDON 1794368406 repo=spira batch=b-1 by=spira-lc reason=requeue-orphans: "), "{log}");
+        let recs = spira_otel::logs::read_all(&spira_otel::dir_of(dir.path()), "spira-lc");
+        assert_eq!(recs.len(), 1, "one OTLP record beside the line");
+        let attr = |k: &str| recs[0].iter().find(|(n, _)| n == k).and_then(|(_, v)| v["stringValue"].as_str().map(str::to_string));
+        assert_eq!((attr("by"), attr("kind"), attr("batch")), (Some("spira-lc".into()), Some("abandon".into()), Some("b-1".into())));
         assert!(log.contains("120s"), "{log}");
     }
 

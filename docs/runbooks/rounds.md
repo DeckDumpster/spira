@@ -57,7 +57,7 @@ cause is fixed.
 
 <!-- check: hand-land -->
 ```sh
-queue round open "$REPO" --members "$BEAD" --name "$BATCH"   # exits 0
+queue round open "$REPO" --members "$BEAD" --name "$BATCH" --by concierge   # exits 0
 round-recert --drive --batch "$BATCH" --repo "$REPO"   # exits 0, retried
 ```
 
@@ -135,7 +135,7 @@ the hand-land entry and abandon the rest with their evidence noted.
 ```sh
 release activate "$R3"   # not checked: a sim world has no release to activate
 queue round status "$REPO"   # exits 0
-queue round abandon "$BATCH" "$REPO" --reason "$WHY"   # exits 0
+queue round abandon "$BATCH" "$REPO" --reason "$WHY" --by concierge   # exits 0
 queue round status "$REPO" | grep -qx 'round=none'   # exits 0
 ```
 

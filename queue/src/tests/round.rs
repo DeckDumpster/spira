@@ -192,7 +192,7 @@ fn open_certify_land_is_one_round_the_whole_way() {
     assert!(
         log.lines().any(|l| l.starts_with("QUEUE ROUND-LAND ")
             && l.ends_with(&format!(
-                " repo=spira batch={batch} head=merged-tb members=sp-a:ta,sp-b:tb"
+                " repo=spira batch={batch} by=batcher head=merged-tb members=sp-a:ta,sp-b:tb"
             ))),
         "the landing log names the round's members (run-state-trail): {log}"
     );
@@ -3966,6 +3966,8 @@ fn a_staged_round_is_merged_onto_the_open_rounds_head_and_moves_no_bead() {
         !t.lc.has("event bead sp-b"),
         "a staged member is not delivered"
     );
+    assert!(recorded(&t, "stage", "batcher", &s), "{:?}", round_records(&t));
+    assert!(t.landing_log().contains("QUEUE ROUND-STAGE ") && t.landing_log().contains(&format!("batch={s} by=batcher behind=")));
     let rec = kv_of(&t, "round-staged");
     assert_eq!(
         (
@@ -8756,7 +8758,7 @@ fn ejecting_every_member_on_an_integration_test_red_returns_each_red_and_logs_ea
     let log = t.landing_log();
     for id in ["sp-a", "sp-b"] {
         assert!(
-            log.contains(&format!("batch={batch} id={id} cause=eject-red")),
+            log.contains(&format!("batch={batch} by=batcher id={id} cause=eject-red")),
             "{id}: {log}"
         );
         assert!(
@@ -9111,4 +9113,272 @@ fn resubmit_drops_a_forced_suite_the_landing_ref_deleted_and_records_why() {
         t.lc.calls.borrow()
     );
     assert!(spira_config::proof::failing(&run, "sp-a").is_empty() && !run.join("ejected/sp-a").exists());
+}
+
+fn round_records(t: &T) -> Vec<(String, String, String)> {
+    let get = |r: &[(String, serde_json::Value)], k: &str| {
+        r.iter()
+            .find(|(n, _)| n == k)
+            .and_then(|(_, v)| v["stringValue"].as_str().map(str::to_string))
+            .unwrap_or_default()
+    };
+    spira_otel::logs::read_all(&spira_otel::dir_of(&t.s().run), "queue")
+        .iter()
+        .map(|r| (get(r, "kind"), get(r, "by"), get(r, "batch")))
+        .collect()
+}
+
+fn recorded(t: &T, kind: &str, by: &str, batch: &str) -> bool {
+    round_records(t).contains(&(kind.into(), by.into(), batch.into()))
+}
+
+#[test]
+fn a_hand_eject_names_the_concierge_in_the_landing_log_and_the_log_record() {
+    let t = round_world();
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]),
+        0,
+        "{}",
+        t.err()
+    );
+    let batch = batch_of(&t);
+    assert_eq!(
+        t.run(&[
+            "round",
+            "eject",
+            &batch,
+            "sp-b",
+            "--reason",
+            "r",
+            "--red",
+            "--no-rebuild",
+            "--suites",
+            "integration-tests",
+            "--by",
+            "concierge"
+        ]),
+        0,
+        "{}",
+        t.err()
+    );
+    let log = t.landing_log();
+    assert!(
+        log.lines().any(|l| l.starts_with("QUEUE ROUND-EJECT ")
+            && l.contains(&format!("batch={batch} by=concierge id=sp-b"))),
+        "{log}"
+    );
+    assert!(
+        recorded(&t, "eject", "concierge", &batch),
+        "{:?}",
+        round_records(&t)
+    );
+}
+
+#[test]
+fn a_batcher_eject_names_the_batcher_in_both_places() {
+    let t = round_world();
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]),
+        0,
+        "{}",
+        t.err()
+    );
+    let batch = batch_of(&t);
+    assert_eq!(
+        t.run(&[
+            "round",
+            "eject",
+            &batch,
+            "sp-b",
+            "--reason",
+            "r",
+            "--red",
+            "--no-rebuild",
+            "--suites",
+            "integration-tests",
+            "--by",
+            "batcher"
+        ]),
+        0,
+        "{}",
+        t.err()
+    );
+    assert!(t
+        .landing_log()
+        .contains(&format!("batch={batch} by=batcher id=sp-b")));
+    assert!(recorded(&t, "eject", "batcher", &batch));
+    assert!(!recorded(&t, "eject", "concierge", &batch));
+}
+
+#[test]
+fn open_land_and_abandon_record_their_actor_in_both_places() {
+    let t = round_world();
+    *t.scripts.round_vm.borrow_mut() = RunOut::default();
+    *t.scripts.round_vm_results.borrow_mut() = vec![
+        ("test-a.sh".into(), "ok 3 1 fp p e 0".into()),
+        ("test-b.sh".into(), "skip".into()),
+    ];
+    assert_eq!(
+        t.run(&[
+            "round",
+            "open",
+            "--members",
+            "sp-a:ta,sp-b:tb",
+            "--by",
+            "batcher"
+        ]),
+        0,
+        "{}",
+        t.err()
+    );
+    let batch = batch_of(&t);
+    assert_eq!(
+        t.run(&["round", "certify", &batch, "--by", "batcher"]),
+        0,
+        "{}",
+        t.err()
+    );
+    assert_eq!(
+        t.run(&["round", "land", &batch, "--by", "batcher"]),
+        0,
+        "{}",
+        t.err()
+    );
+    let log = t.landing_log();
+    for kind in ["OPEN", "LAND"] {
+        assert!(
+            log.lines()
+                .any(|l| l.starts_with(&format!("QUEUE ROUND-{kind} "))
+                    && l.contains(&format!("batch={batch} by=batcher "))),
+            "{kind}: {log}"
+        );
+    }
+    assert!(recorded(&t, "open", "batcher", &batch) && recorded(&t, "land", "batcher", &batch));
+
+    let t = round_world();
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a:ta"]),
+        0,
+        "{}",
+        t.err()
+    );
+    let batch = batch_of(&t);
+    assert_eq!(
+        t.run(&["round", "abandon", &batch, "--reason", "why", "--by", "operator"]),
+        0,
+        "{}",
+        t.err()
+    );
+    assert!(
+        t.landing_log().contains("QUEUE ROUND-ABANDON ")
+            && t.landing_log()
+                .contains(&format!("batch={batch} by=operator reason=why"))
+    );
+    assert!(recorded(&t, "abandon", "operator", &batch));
+}
+
+#[test]
+fn a_preempt_and_the_eject_inside_it_record_the_preempting_actor() {
+    let (t, batch) = preempt_world();
+    seed_suite(&t, "test-b.sh");
+    let rc = t.run(&[
+        "round",
+        "preempt",
+        &batch,
+        "--eject",
+        "sp-b",
+        "--reason",
+        "red",
+        "--suites",
+        "test-b.sh",
+        "--by",
+        "batcher",
+    ]);
+    assert_eq!(rc, 0, "{}", t.err());
+    assert!(
+        recorded(&t, "preempt", "batcher", &batch),
+        "{:?}",
+        round_records(&t)
+    );
+    assert!(
+        recorded(&t, "eject", "batcher", &batch),
+        "{:?}",
+        round_records(&t)
+    );
+    assert!(t
+        .landing_log()
+        .lines()
+        .any(|l| l.starts_with("QUEUE ROUND-PREEMPT ")
+            && l.contains(&format!("batch={batch} by=batcher "))));
+}
+
+#[test]
+fn a_settings_refusal_inside_certify_records_the_certifying_actor_on_its_eject() {
+    let t = round_world();
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a,sp-b"]),
+        0,
+        "{}",
+        t.err()
+    );
+    let batch = batch_of(&t);
+    holds_key(&t, "tb", "SPIRA_NEW_KEY = 1\n");
+    holds_key(&t, "local/main", "SPIRA_NEW_KEY_ROOT = 1\n");
+    vm_names_the_fault(&t, SETTINGS_FAULT);
+    assert_eq!(t.run(&["round", "certify", &batch, "--by", "batcher"]), 4);
+    assert!(
+        recorded(&t, "eject", "batcher", &batch),
+        "{:?}",
+        round_records(&t)
+    );
+}
+
+#[test]
+fn a_round_verb_without_a_known_actor_is_usage_and_writes_nothing() {
+    let t = round_world();
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]),
+        0,
+        "{}",
+        t.err()
+    );
+    let batch = batch_of(&t);
+    let before = t.landing_log();
+    for args in [
+        vec![
+            "round",
+            "eject",
+            &batch,
+            "sp-b",
+            "--reason",
+            "r",
+            "--red",
+            "--no-rebuild",
+            "--suites",
+            "integration-tests",
+        ],
+        vec![
+            "round",
+            "eject",
+            &batch,
+            "sp-b",
+            "--reason",
+            "r",
+            "--red",
+            "--no-rebuild",
+            "--suites",
+            "integration-tests",
+            "--by",
+            "dwarf",
+        ],
+    ] {
+        assert_eq!(t.run_bare(&args), 2);
+        assert!(
+            t.err()
+                .contains("--by batcher|concierge|operator is required"),
+            "{}",
+            t.err()
+        );
+        assert_eq!(t.landing_log(), before, "nothing is written");
+    }
 }

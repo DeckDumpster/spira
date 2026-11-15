@@ -38,6 +38,12 @@ impl Call {
     fn new(verb: Verb, args: &[&str]) -> Call {
         let mut all = vec!["round".to_string(), verb.word().to_string()];
         all.extend(args.iter().map(|a| a.to_string()));
+        if matches!(
+            verb,
+            Verb::Open | Verb::Certify | Verb::Eject | Verb::Land | Verb::Abandon
+        ) {
+            all.extend(["--by".to_string(), "batcher".to_string()]);
+        }
         Call {
             verb,
             args: all,
@@ -296,6 +302,8 @@ mod tests {
                 "r",
                 "--suites",
                 "test-a.sh,testenv",
+                "--by",
+                "batcher",
                 "--red",
                 "--reason-file",
                 "-"
@@ -399,6 +407,8 @@ mod tests {
                 "round",
                 "open",
                 "r",
+                "--by",
+                "batcher",
                 "--name",
                 "n1",
                 "--on-base",
@@ -419,6 +429,8 @@ mod tests {
                 "round",
                 "open",
                 "r",
+                "--by",
+                "batcher",
                 "--stack-on",
                 "k1",
                 "--members-file",
@@ -438,21 +450,42 @@ mod tests {
         v.land("r", "b1", Some("9-0")).unwrap();
         let seen = p.seen.lock().unwrap();
         assert_eq!(seen[0].args, ["round", "status", "r"]);
-        assert_eq!(seen[1].args, ["round", "land", "b1", "r"]);
+        assert_eq!(
+            seen[1].args,
+            ["round", "land", "b1", "r", "--by", "batcher"]
+        );
         assert_eq!(
             (seen[2].args.clone(), seen[2].stdin.clone()),
             (
-                vec!["round", "abandon", "b1", "r", "--reason-file", "-"]
-                    .into_iter()
-                    .map(String::from)
-                    .collect(),
+                vec![
+                    "round",
+                    "abandon",
+                    "b1",
+                    "r",
+                    "--by",
+                    "batcher",
+                    "--reason-file",
+                    "-"
+                ]
+                .into_iter()
+                .map(String::from)
+                .collect(),
                 b"why".to_vec()
             )
         );
         assert_eq!(seen[3].args, ["round", "pass-start", "b1", "r"]);
         assert_eq!(
             seen[4].args,
-            ["round", "land", "b1", "r", "--lease-token", "9-0"]
+            [
+                "round",
+                "land",
+                "b1",
+                "r",
+                "--by",
+                "batcher",
+                "--lease-token",
+                "9-0"
+            ]
         );
     }
 
@@ -508,7 +541,16 @@ mod tests {
         assert_eq!(seen[0].prog, "queue");
         assert_eq!(
             seen[0].args,
-            ["round", "certify", "b1", "r", "--lease-token", "7-0"]
+            [
+                "round",
+                "certify",
+                "b1",
+                "r",
+                "--by",
+                "batcher",
+                "--lease-token",
+                "7-0"
+            ]
         );
         assert_eq!(seen[0].progress, Some(PathBuf::from("/run/x")));
         assert_eq!(
@@ -516,7 +558,10 @@ mod tests {
             Some("round-controller-certify-b1-7-0"),
             "its own scope, so a signal reaches round-vm whatever group it is in"
         );
-        assert_eq!(seen[1].args, ["round", "certify", "b2", "r"]);
+        assert_eq!(
+            seen[1].args,
+            ["round", "certify", "b2", "r", "--by", "batcher"]
+        );
         let refused = RealVerbs::new(
             fake(Some(0), "", ""),
             Arc::new(Recorded(Mutex::default(), Some("no such program".into()))),

@@ -407,8 +407,13 @@ fn subvert(w: &World, c: &Ctx, a: &Args, reason: &str, rounds: &[OpenRound]) -> 
                 return Err(FAIL);
             }
         };
-        let why = format!("cause=hand-landing by={} bead={} — {}", a.by, a.bead, one_line(reason));
-        let rc = abandon_for_landing(w, &r.batch, &c.r.name, &why, token.as_deref());
+        let why = format!(
+            "cause=hand-landing by={} bead={} — {}",
+            a.by,
+            a.bead,
+            one_line(reason)
+        );
+        let rc = abandon_for_landing(w, a.by, &r.batch, &c.r.name, &why, token.as_deref());
         if rc != OK {
             w.err(format!("queue.sh hand-land: round {} could not be voided (rc={rc}) — refused, nothing landed", r.batch));
             return Err(FAIL);

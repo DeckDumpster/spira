@@ -13,7 +13,7 @@ use super::round::{
     BLOCKING, BUILD_RED, LC_ACTOR, UNIT_RED,
 };
 use super::{
-    actor, idents, landing_log, lc_cas, read_text, require_lc, Ctx, World, FAIL, OK, USAGE,
+    actor, idents, lc_cas, read_text, require_lc, round_event, Ctx, World, FAIL, OK, USAGE,
 };
 use crate::cli::Text;
 use crate::ident::bounded_text;
@@ -89,6 +89,7 @@ fn admit(
 
 pub fn stage(
     w: &World,
+    by: &str,
     repo: Option<&str>,
     members_arg: &Text,
     name: Option<&str>,
@@ -321,7 +322,19 @@ pub fn stage(
         ));
         return FAIL;
     }
-    landing_log(&c.s.run, &format!("QUEUE ROUND-STAGE {now} repo={repo_name} batch={batch} behind={parent} head={head} members={}", csv(&merged)));
+    round_event(
+        &c.s.run,
+        "stage",
+        &repo_name,
+        &batch,
+        by,
+        w.clock.now(),
+        &[
+            ("behind", parent.to_string()),
+            ("head", head.to_string()),
+            ("members", csv(&merged)),
+        ],
+    );
     w.out(format!("batch={batch}"));
     w.out(format!("behind={parent}"));
     w.out(format!("head={head}"));
@@ -333,7 +346,7 @@ fn results_dir(c: &Ctx, batch: &str) -> PathBuf {
     rounds_dir(c).join(format!("{batch}.results"))
 }
 
-pub fn stage_test(w: &World, repo: Option<&str>) -> i32 {
+pub fn stage_test(w: &World, by: &str, repo: Option<&str>) -> i32 {
     let label = "round stage-test";
     let Ok((c, path)) = local_ctx(w, label, repo) else {
         return FAIL;
@@ -492,13 +505,14 @@ pub fn stage_test(w: &World, repo: Option<&str>) -> i32 {
         ));
         return FAIL;
     }
-    landing_log(
+    round_event(
         &c.s.run,
-        &format!(
-            "QUEUE ROUND-STAGE-GREEN {} repo={} batch={batch} head={head} tree={tree}",
-            w.clock.now(),
-            c.r.name
-        ),
+        "stage-green",
+        &c.r.name,
+        &batch,
+        by,
+        w.clock.now(),
+        &[("head", head.to_string()), ("tree", tree.to_string())],
     );
     w.out(format!(
         "queue.sh {label}: staged round {batch} is GREEN at {head} (tree {tree})"
@@ -511,6 +525,7 @@ pub fn stage_test(w: &World, repo: Option<&str>) -> i32 {
 /// already; one that has been promoted is not ours to discard.
 pub(super) fn discard_staged(
     w: &World,
+    by: &str,
     c: &Ctx,
     path: &Path,
     kv: &Kv,
@@ -550,25 +565,32 @@ pub(super) fn discard_staged(
         super::round::End::Abandoned("discarded"),
         reason,
     );
-    landing_log(
+    round_event(
         &c.s.run,
-        &format!(
-            "QUEUE ROUND-DISCARD {} repo={} batch={batch} reason={}",
-            w.clock.now(),
-            c.r.name,
-            one_line(reason)
-        ),
+        "discard",
+        &c.r.name,
+        &batch,
+        by,
+        w.clock.now(),
+        &[("reason", one_line(reason))],
     );
     Ok(())
 }
 
 /// The round `parent` can no longer be followed: discard the round staged behind it, if any.
-pub(super) fn discard_behind(w: &World, c: &Ctx, path: &Path, parent: &str, reason: &str) {
+pub(super) fn discard_behind(
+    w: &World,
+    by: &str,
+    c: &Ctx,
+    path: &Path,
+    parent: &str,
+    reason: &str,
+) {
     let Some(kv) = staged_record(c) else { return };
     if kv.get("parent") != Some(parent) {
         return;
     }
-    match discard_staged(w, c, path, &kv, reason) {
+    match discard_staged(w, by, c, path, &kv, reason) {
         Ok(()) => w.out(format!(
             "queue.sh: staged round {} discarded — {reason}",
             kv.get("batch_id").unwrap_or("?")
@@ -580,7 +602,7 @@ pub(super) fn discard_behind(w: &World, c: &Ctx, path: &Path, parent: &str, reas
     }
 }
 
-pub fn discard(w: &World, repo: Option<&str>, reason: &Text) -> i32 {
+pub fn discard(w: &World, by: &str, repo: Option<&str>, reason: &Text) -> i32 {
     let label = "round discard";
     let reason = read_text(w, reason).unwrap_or_default();
     if reason.trim().is_empty() {
@@ -605,7 +627,7 @@ pub fn discard(w: &World, repo: Option<&str>, reason: &Text) -> i32 {
         ));
         return FAIL;
     };
-    match discard_staged(w, &c, &path, &kv, &reason) {
+    match discard_staged(w, by, &c, &path, &kv, &reason) {
         Ok(()) => {
             w.out(format!(
                 "queue.sh {label}: staged round {} discarded",
@@ -620,7 +642,7 @@ pub fn discard(w: &World, repo: Option<&str>, reason: &Text) -> i32 {
     }
 }
 
-pub fn promote(w: &World, repo: Option<&str>) -> i32 {
+pub fn promote(w: &World, by: &str, repo: Option<&str>) -> i32 {
     let label = "round promote";
     let Ok((c, path)) = local_ctx(w, label, repo) else {
         return FAIL;
@@ -671,7 +693,7 @@ pub fn promote(w: &World, repo: Option<&str>) -> i32 {
                     parent_state.as_str()
                 }
             );
-            return discarded(w, &c, &path, &kv, &why);
+            return discarded(w, by, &c, &path, &kv, &why);
         }
         let Some(base) = c.r.landref.clone() else {
             w.err(format!(
@@ -694,6 +716,7 @@ pub fn promote(w: &World, repo: Option<&str>) -> i32 {
         if !tips_kept {
             return discarded(
                 w,
+                by,
                 &c,
                 &path,
                 &kv,
@@ -710,6 +733,7 @@ pub fn promote(w: &World, repo: Option<&str>) -> i32 {
             }) {
                 return discarded(
                     w,
+                    by,
                     &c,
                     &path,
                     &kv,
@@ -730,6 +754,7 @@ pub fn promote(w: &World, repo: Option<&str>) -> i32 {
                 Err(why) => {
                     return discarded(
                         w,
+                        by,
                         &c,
                         &path,
                         &kv,
@@ -779,7 +804,19 @@ pub fn promote(w: &World, repo: Option<&str>) -> i32 {
         let _ = fs::remove_file(c.queue_file(STAGED));
         w.git.branch_delete_sanctioned(&path, &branch_of(&batch));
         mark_running(&c, &batch);
-        landing_log(&c.s.run, &format!("QUEUE ROUND-PROMOTE {now} repo={repo_name} batch={batch} head={head} base={base_sha} members={}", csv(&admitted)));
+        round_event(
+            &c.s.run,
+            "promote",
+            &repo_name,
+            &batch,
+            by,
+            w.clock.now(),
+            &[
+                ("head", head.to_string()),
+                ("base", base_sha.to_string()),
+                ("members", csv(&admitted)),
+            ],
+        );
         let members: Vec<_> = admitted
             .iter()
             .map(|m| serde_json::json!({"id": m.id, "tip": m.tip}))
@@ -795,6 +832,7 @@ pub fn promote(w: &World, repo: Option<&str>) -> i32 {
             w.out(format!("queue.sh {label}: {batch}'s tree {tree} is the tree its staged pass at {tested_head} judged — attesting that pass"));
             let rc = certify(
                 w,
+                by,
                 &batch,
                 Some(&repo_name),
                 Some(&head),
@@ -802,7 +840,20 @@ pub fn promote(w: &World, repo: Option<&str>) -> i32 {
                 None,
                 super::round::LeaseCheck::Inside,
             );
-            landing_log(&c.s.run, &format!("QUEUE ROUND-ATTEST {} repo={repo_name} batch={batch} head={head} tree={tree} tested={tested_head} rc={rc}", w.clock.now()));
+            round_event(
+                &c.s.run,
+                "attest",
+                &repo_name,
+                &batch,
+                by,
+                w.clock.now(),
+                &[
+                    ("head", head.to_string()),
+                    ("tree", tree.to_string()),
+                    ("tested", tested_head.to_string()),
+                    ("rc", rc.to_string()),
+                ],
+            );
             if rc == OK {
                 answer(true);
             }
@@ -815,9 +866,9 @@ pub fn promote(w: &World, repo: Option<&str>) -> i32 {
     }
 }
 
-fn discarded(w: &World, c: &Ctx, path: &Path, kv: &Kv, why: &str) -> i32 {
+fn discarded(w: &World, by: &str, c: &Ctx, path: &Path, kv: &Kv, why: &str) -> i32 {
     let batch = kv.get("batch_id").unwrap_or("?");
-    match discard_staged(w, c, path, kv, why) {
+    match discard_staged(w, by, c, path, kv, why) {
         Ok(()) => w.err(format!("queue.sh round promote: staged round {batch} discarded — {why}; cut its members with round open")),
         Err(e) => w.err(format!("queue.sh round promote: {batch} cannot be promoted ({why}) and was not discarded: {e}")),
     }

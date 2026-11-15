@@ -389,15 +389,17 @@ pub fn drive(sys: &dyn Sys, batch: &str, repo: &str, held: Option<(&Ports, Hold)
     rc
 }
 
+const RECERT_ACTOR: &str = "operator";
+
 /// One verb of the pass: under a hold, with its token and the hold renewed while it runs.
 fn verb(sys: &dyn Sys, keeper: &mut Option<&mut Keeper>, verb: &str, batch: &str, repo: &str, deadline: u64) -> Out {
     let Some(k) = keeper.as_deref_mut() else {
-        return queue(sys, &[verb, batch, repo], deadline);
+        return queue(sys, &[verb, batch, repo, "--by", RECERT_ACTOR], deadline);
     };
     let token = token_word(k.hold.lease.token());
     let every = (k.p.leases.renew_every_ms() / 1000).max(1);
     let mut tick = || k.tick(sys.now_ms(), sys.progress());
-    queue_ticking(sys, &[verb, batch, repo, "--lease-token", &token], deadline, every, &mut tick)
+    queue_ticking(sys, &[verb, batch, repo, "--by", RECERT_ACTOR, "--lease-token", &token], deadline, every, &mut tick)
 }
 
 fn drive_pass(sys: &dyn Sys, batch: &str, repo: &str, mut keeper: Option<&mut Keeper>) -> u8 {
@@ -847,6 +849,14 @@ mod tests {
         fn unit_state(&self, _: &str) -> Result<UnitState, String> {
             Ok(UnitState::Inactive)
         }
+    }
+
+    #[test]
+    fn every_verb_the_pass_drives_names_the_operator_as_its_actor() {
+        let rec = Recorder(RefCell::new(vec![]));
+        verb(&rec, &mut None, "land", "b1", "r", 1);
+        let calls = rec.0.borrow();
+        assert_eq!(calls[0].1, ["round", "land", "b1", "r", "--by", "operator"]);
     }
 
     #[test]
