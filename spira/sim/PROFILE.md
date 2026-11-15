@@ -87,7 +87,7 @@ Happy-path CPU, one world, ranked (cpu of the program plus children too short to
 | `gate` | 1.8 s | two trials, ~350 ms of its own CPU each, the rest in its `git` and `spira-lc cite-check` |
 
 The rest of the gap to 10 s is in the harness code the world exists to run, not in the driver:
-`bd show` of the same bead from `commit-cite.sh`, `land-subject` and `landing-pass` in turn (each
+`bd show` of the same bead from `cite-check`, `land-subject` and `landing-pass` in turn (each
 a process, 80 ms of Go start-up); `bash -c '. lib.sh; …'` seams that exist only to reach a
 function already ported; per-tick scans that run on an idle pool. Keeping them real is the point
 of the world, so removing them means changing those programs (a per-process cache of bead reads;

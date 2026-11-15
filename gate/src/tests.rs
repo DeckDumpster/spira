@@ -1719,6 +1719,9 @@ fn the_gate_and_submit_judge_the_same_messages_alike() {
         assert_eq!(f.run() == FAIL, refused, "{message}");
         assert_eq!(!found.is_empty(), refused, "{message}");
     }
+    let f = Fake::new();
+    f.cite.set(2);
+    assert_eq!(f.run(), NOVERDICT, "a store that cannot answer is no verdict, as it is CANNOT_TELL at submit");
 }
 
 // ---------------------------------------------------------------------------- cache & key
