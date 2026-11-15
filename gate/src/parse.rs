@@ -28,6 +28,19 @@ pub fn red_suites(out: &str) -> Vec<String> {
     suites_where(out, &["RED", "TIMEOUT", "FAILED"], true)
 }
 
+/// The backticked argument of each `error: test failed, to rerun pass `…`` line, once each.
+pub fn cargo_reruns(out: &str) -> Vec<String> {
+    let mut v: Vec<String> = Vec::new();
+    for l in out.lines() {
+        let Some(rest) = l.trim().strip_prefix("error: test failed, to rerun pass `") else { continue };
+        let Some(arg) = rest.strip_suffix('`') else { continue };
+        if !v.iter().any(|x| x == arg) {
+            v.push(arg.to_string());
+        }
+    }
+    v
+}
+
 /// `failed_tests`: the `<name>` of each cargo `test <name> ... FAILED` line, in order, unique.
 pub fn failed_tests(out: &str) -> Vec<String> {
     let mut seen = Vec::new();
@@ -343,6 +356,12 @@ pub fn tail_bytes(s: &str, n: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn cargo_reruns_returns_each_distinct_argument_once() {
+        let o = "error: test failed, to rerun pass `-p a --lib`\nnoise\nerror: test failed, to rerun pass `-p b --test t`\nerror: test failed, to rerun pass `-p a --lib`\n";
+        assert_eq!(super::cargo_reruns(o), ["-p a --lib", "-p b --test t"]);
+    }
+
     const NONE: &[String] = &[];
     const STEPS_BASE: &str = "gate-step RED rc=1 :: spira-lint\ngate-step ok rc=0 :: build-fence\n  test-s1.sh RED rc=1";
 
