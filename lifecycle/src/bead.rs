@@ -1583,6 +1583,23 @@ mod tests {
     }
 
     #[test]
+    fn a_session_with_no_recorded_start_or_a_backwards_clock_adds_no_builder_time() {
+        let submit = |r: &BeadRow, at: Option<i64>| {
+            let mut e = ev(BeadState::Working, r.version, BeadEventKind::Submit { tip: "1111111111111111111111111111111111111111".into() });
+            e.actor = "h".into();
+            e.at = at;
+            apply(r, &e).row
+        };
+        let mut r = row(BeadState::Working);
+        r.holder = Some("h".into());
+        r.worked_s = 50;
+        assert_eq!(submit(&r, Some(10)).worked_s, 50, "no since");
+        r.since = Some(100);
+        assert_eq!(submit(&r, None).worked_s, 50, "no event time");
+        assert_eq!(submit(&r, Some(40)).worked_s, 50, "a backwards clock clamps to zero");
+    }
+
+    #[test]
     fn since_is_stamped_on_every_state_change_and_not_on_a_move_within_a_state() {
         let mut r = row(BeadState::InDelivery);
         r.tip = Some("t".into());

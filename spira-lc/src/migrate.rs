@@ -1618,6 +1618,7 @@ mod tests {
         assert_eq!(applier_for(GRANTS_SQL, &real, "0003-terminal-holder.sql"), Applier::Service);
         assert_eq!(applier_for(GRANTS_SQL, &real, "0043-mending-returned.sql"), Applier::Admin);
         assert_eq!(applier_for(GRANTS_SQL, &real, "0044-bead-worked.sql"), Applier::Admin);
+        assert_eq!(applier_for(GRANTS_SQL, &real, "0045-bead-worked-backfill.sql"), Applier::Service);
         assert_eq!(applier_for(GRANTS_SQL, &real, "0001-stack.sql"), Applier::Admin);
         assert_eq!(applier_for(GRANTS_SQL, &real, "0002-since.sql"), Applier::Admin);
         assert_eq!(applier_for(GRANTS_SQL, &real, "0020-since-every-state.sql"), Applier::Service);

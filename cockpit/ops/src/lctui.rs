@@ -1271,8 +1271,15 @@ mod tests {
 
     #[test]
     fn a_later_session_total_reaches_the_pane_head_line_and_the_page() {
-        let mut v = busy_view();
-        v.now_items[0].age = "3h27 · total 8h20 ×2".into();
+        let mut r = crate::lcview::Row { id: "sp-w".into(), state: "WORKING".into(), since: 100_000 - 12420, holder: Some("dwarf-dvalin@111.5".into()), sessions: 2, worked_s: 17580, ..Default::default() };
+        r.updated_at = r.since;
+        let snap = crate::lcview::Snapshot {
+            now: 100_000,
+            rows: vec![r],
+            live: Some(vec![crate::lcview::LiveDwarf { unit: "spira-dwarf-builder-1.service".into(), pid: 111, started: 100_000 - 12420, phase: "session".into() }]),
+            ..Default::default()
+        };
+        let v = crate::lcview::view(&snap);
         fn lines(n: &Node, out: &mut Vec<String>) {
             out.push(strip(&n.line));
             n.kids.iter().for_each(|k| lines(k, out));
