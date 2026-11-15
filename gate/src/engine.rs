@@ -110,6 +110,7 @@ struct State {
     queue_secs: u64,
     /// `release` or `tree`: where the branch trial's tools came from; empty when it needs none.
     tools_from: String,
+    build_dir: String,
     /// The tree certificate (cert.rs) a PASS writes: the merged tree judged, the revision
     /// that carries it, where verdicts live, the harness hash and the suites covered.
     merged_tree: String,
@@ -643,8 +644,9 @@ impl<'w, W: World> Trial<'w, W> {
 
         // A cached PASS keeps its verdict, but --release-bins still needs the judged tree's binaries.
         if let Some(hit) = cached {
-            if let Some(e) = self.prepare_build_tree(&ctx, &tree) {
-                return e;
+            match self.prepare_build_tree(&ctx, &tree) {
+                Ok(field) => self.s.build_dir = field,
+                Err(e) => return e,
             }
             return hit;
         }
@@ -804,8 +806,9 @@ impl<'w, W: World> Trial<'w, W> {
             || matches!(comp, Composition::Unit { .. })
             || self.a.release_bins;
         if builds {
-            if let Some(e) = self.prepare_build_tree(&ctx, &tree) {
-                return e;
+            match self.prepare_build_tree(&ctx, &tree) {
+                Ok(field) => self.s.build_dir = field,
+                Err(e) => return e,
             }
         }
         // THE TOOLS ARE THE TREE'S, PROVABLY (sp-g9f3t): keyed by the tree id the gate tree
@@ -1685,17 +1688,17 @@ impl<'w, W: World> Trial<'w, W> {
     }
 
     /// The refusals a tree build meets before it starts: no build cache, a target that cannot be prepared.
-    fn prepare_build_tree(&self, ctx: &Ctx, tree: &Path) -> Option<Verdict> {
+    fn prepare_build_tree(&self, ctx: &Ctx, tree: &Path) -> Result<String, Verdict> {
         let w = self.w;
         if let Some(e) = &self.s.cache_refusal {
-            return Some(v(NOVERDICT, "no-build-cache", format!("gate: {e} — refusing to judge")));
+            return Err(v(NOVERDICT, "no-build-cache", format!("gate: {e} — refusing to judge")));
         }
         let lim = Self::target_limits(ctx);
-        let short = |e: String| Some(v(NOVERDICT, "scratch-short", format!("{e}\ngate: the scratch target could not be prepared on the host, not a fault in the branch.")));
+        let short = |e: String| Err(v(NOVERDICT, "scratch-short", format!("{e}\ngate: the scratch target could not be prepared on the host, not a fault in the branch.")));
         match w.target_on_tmpfs(tree, ctx.var("SPIRA_GATE_TARGET_ROOT"), &self.s.run, &lim) {
             Ok(line) => {
                 w.eprint(&line);
-                None
+                Ok(crate::telemetry::build_dir_field(&line))
             }
             Err(e) => short(e),
         }
@@ -1833,6 +1836,7 @@ impl<'w, W: World> Trial<'w, W> {
                 compiled: self.s.build_timing.as_ref().map_or(0, |(b, _)| b.compiled),
                 fresh: self.s.build_timing.as_ref().map_or(0, |(b, _)| b.fresh),
                 slowest: self.s.build_timing.as_ref().map_or(String::new(), |(b, _)| b.slowest_field()),
+                build_dir: self.s.build_dir.clone(),
             };
             let ts = w.utc();
             if let Some((_, html)) = self.s.build_timing.as_ref().filter(|(_, h)| !h.is_empty()) {

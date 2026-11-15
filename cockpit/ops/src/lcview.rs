@@ -372,6 +372,7 @@ pub struct GateRun {
     pub phases: String,
     pub compiled: u64,
     pub fresh: u64,
+    pub build_dir: String,
 }
 
 /// The gate run's phase times for a bead's expanded detail.
@@ -379,6 +380,9 @@ pub fn gate_why(g: &GateRun) -> String {
     let phases: Vec<String> = g.phases.split(',').filter_map(|p| p.split_once(':')).map(|(n, t)| format!("{n} {t}s")).collect();
     let mut parts = phases;
     parts.push(format!("compiled {} · fresh {}", g.compiled, g.fresh));
+    if !g.build_dir.is_empty() {
+        parts.push(format!("build dir {}", g.build_dir));
+    }
     format!("gate: {}", parts.join(" · "))
 }
 
@@ -392,7 +396,7 @@ pub fn latest_gate_runs(rows: &[serde_json::Value]) -> BTreeMap<String, GateRun>
         .into_iter()
         .filter_map(|r| {
             let bead = r["bead"].as_str().filter(|b| !b.is_empty())?;
-            Some((bead.to_string(), GateRun { phases: r["phases"].as_str().unwrap_or("").to_string(), compiled: n(r, "compiled"), fresh: n(r, "fresh") }))
+            Some((bead.to_string(), GateRun { phases: r["phases"].as_str().unwrap_or("").to_string(), compiled: n(r, "compiled"), fresh: n(r, "fresh"), build_dir: r["build_dir"].as_str().unwrap_or("").to_string() }))
         })
         .collect()
 }
@@ -1909,6 +1913,13 @@ pub fn render_html(v: &View, stale: Option<i64>, poll_s: u64) -> String {
 mod tests {
     use super::*;
     use spira_claim::verdicts::Kind;
+
+    #[test]
+    fn a_gate_run_row_reaches_the_beads_detail_with_its_build_directory() {
+        let rows = vec![serde_json::json!({"bead": "sp-b", "ts": "t", "phases": "build:5", "build_dir": "cold: mtimes: denied"})];
+        let g = &latest_gate_runs(&rows)["sp-b"];
+        assert!(gate_why(g).ends_with("build dir cold: mtimes: denied"), "{}", gate_why(g));
+    }
 
     #[test]
     fn the_world_line_reads_the_halt_stamp_as_world_status_printed_it() {

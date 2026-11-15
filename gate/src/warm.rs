@@ -131,16 +131,19 @@ pub fn normalize_mtimes(tree: &Path, built_from: &str) -> Result<usize, String> 
     Ok(aged)
 }
 
+pub const WARM_FROM: &str = "gate: build directory warm from ";
+pub const COLD_OPEN: &str = "building cold (";
+
 /// The gate's side of adoption: fill `dest`, then age `tree`'s files. A failure empties `dest`.
 /// The line for the trial's log.
 pub fn warm_start(root: &Path, dest: &Path, tree: &Path) -> Option<String> {
     let commit = adopt(root, dest)?;
     match normalize_mtimes(tree, &commit) {
-        Ok(n) => Some(format!("gate: build directory warm from {commit} ({n} unchanged files aged)")),
+        Ok(n) => Some(format!("{WARM_FROM}{commit} ({n} unchanged files aged)")),
         Err(e) => {
             let _ = fs::remove_dir_all(dest);
             let _ = fs::create_dir_all(dest);
-            Some(format!("gate: warm build directory from {commit} discarded, building cold ({e})"))
+            Some(format!("gate: warm build directory from {commit} discarded, {COLD_OPEN}{e})"))
         }
     }
 }
