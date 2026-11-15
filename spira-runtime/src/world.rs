@@ -883,7 +883,7 @@ impl World {
         let unlanded = unlanded_rounds(batches, p.now);
         let parts = self.round_record_partition();
         let records = Records { clear: parts.clear.iter().map(|f| f.display().to_string()).collect(), held: parts.held };
-        to_json(&ThroughputSnapshot { readable: true, landings, repos, unlanded, records, halt, activated_at, store_up_s: None, ..Default::default() })
+        to_json(&ThroughputSnapshot { readable: true, landings, repos, unlanded, records, halt, activated_at, store_up_s: None, store_restart, ..Default::default() })
     }
 
     /// The beads landed over the 24 h ending `now`, per registered repo, read from its landing ref
