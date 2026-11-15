@@ -1,7 +1,8 @@
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use lifecycle::bead::{BeadEvent, BeadEventKind, BeadState};
-use runtime::ports::VirtualClock;
+use runtime::ports::{Clock, VirtualClock};
 use serde_json::Value;
 use state_store::{Backend, Config, Contract, MemBackend, Ports, Request};
 use state_store_sqlite::{Options, SqliteBackend};
@@ -40,11 +41,40 @@ fn on_sqlite(body: fn(&Store<SqliteBackend>)) {
     body(&store(b, &clock));
 }
 
+/// A wall clock that reads 6 hours later every time it is read.
+struct SixHoursPerRead(AtomicU64);
+
+impl Clock for SixHoursPerRead {
+    fn now_ms(&self) -> u64 {
+        self.0.fetch_add(6 * 3_600_000, Ordering::SeqCst)
+    }
+}
+
+/// SQLite with the wall clock stepping, so successive commits fall in successive day files.
+fn on_sqlite_across_days(body: fn(&Store<SqliteBackend>)) {
+    let dir = TempDir::new("spira-lc-feed-days");
+    let clock = VirtualClock::new(0);
+    let opts = Options {
+        clock: Arc::new(clock.clone()),
+        wall: Arc::new(SixHoursPerRead(AtomicU64::new(0))),
+        ..Options::default()
+    };
+    let b = SqliteBackend::open(&dir.path().join("control.db"), opts).unwrap();
+    body(&store(b.clone(), &clock));
+    let commits = b.head().unwrap();
+    let day_files = std::fs::read_dir(dir.path())
+        .unwrap()
+        .filter(|e| e.as_ref().unwrap().file_name().to_string_lossy().starts_with("control.events-"))
+        .count();
+    assert!(commits < 5 || day_files > 1, "{commits} commits left the events in {day_files} events file(s), not several");
+}
+
 /// Each scenario once on the reference backend and once on SQLite, both on the virtual clock.
 macro_rules! on_each_backend {
     ($($name:ident),* $(,)?) => {
         mod mem { $( #[test] fn $name() { super::on_mem(super::$name); } )* }
         mod sqlite { $( #[test] fn $name() { super::on_sqlite(super::$name); } )* }
+        mod sqlite_across_days { $( #[test] fn $name() { super::on_sqlite_across_days(super::$name); } )* }
     };
 }
 

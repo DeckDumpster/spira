@@ -332,7 +332,6 @@ struct Staged {
 pub(crate) const PAGE: usize = 1_000;
 /// The keys with a stored expiry one gc pass deletes: eight txns of [`limits::MAX_TXN_OPS`].
 pub const EXPIRE_PER_PASS: usize = 1_024;
-const TRIM_TXNS: usize = 16;
 
 /// The wall time an audit record was written at, when it carries one.
 fn recorded_at(v: &Version) -> Result<Option<u64>> {
@@ -1507,52 +1506,6 @@ impl<B: Backend> Contract<B> {
         .map(drop)
     }
 
-    /// Deletes the audit records older than `window_ms` on the wall clock, oldest first, at most
-    /// [`TRIM_TXNS`] pages of [`limits::MAX_TXN_OPS`]; returns how many. A record written before
-    /// records were stamped is as old as the first stamped one, so nothing is cut until stamping
-    /// itself is older than the window. Retention writes no `events/` key.
-    pub(crate) fn trim_events(&self, window_ms: u64) -> Result<usize> {
-        let Some(unstamped_age) = self.first_stamped_at()? else {
-            return Ok(0);
-        };
-        let cutoff = self.ports.wall.now_ms().saturating_sub(window_ms);
-        let rec = Record {
-            audited: false,
-            idempotent: false,
-            compare_bytes: 0,
-        };
-        let mut gone = 0;
-        for _ in 0..TRIM_TXNS {
-            let head = self.head()?;
-            let page = self
-                .backend
-                .range(EVENTS_PREFIX, None, limits::MAX_TXN_OPS, head)?;
-            let full = page.len() == limits::MAX_TXN_OPS;
-            let mut old = Vec::new();
-            for (k, v) in page {
-                if recorded_at(&v)?.unwrap_or(unstamped_age) >= cutoff {
-                    break;
-                }
-                old.push(k);
-            }
-            if old.is_empty() {
-                break;
-            }
-            let all = full && old.len() == limits::MAX_TXN_OPS;
-            self.engine(&Request::new("", "gc", "gc.trim"), rec, |_| {
-                Ok(Step::<Infallible>::Apply {
-                    ok: true,
-                    ops: old.iter().cloned().map(Op::Delete).collect(),
-                })
-            })?;
-            gone += old.len();
-            if !all {
-                break;
-            }
-        }
-        Ok(gone)
-    }
-
     /// The `at` field of the first `events/` record at or after main `m`, read at `head`:
     /// the outer `None` when there is no such record, the inner when it is unstamped.
     fn stamped_at_or_after(&self, m: u64, head: u64) -> Result<Option<Option<u64>>> {
@@ -1565,24 +1518,6 @@ impl<B: Backend> Contract<B> {
     /// wrote only telemetry leaves no record, so this is exact only when `main` was audited.
     pub fn committed_at(&self, main: u64) -> Result<Option<u64>> {
         Ok(self.stamped_at_or_after(main, self.head()?)?.flatten())
-    }
-
-    /// The `at` of the oldest stamped audit record. Stamped records are a suffix of the
-    /// history, so it is found by bisecting the revisions.
-    fn first_stamped_at(&self) -> Result<Option<u64>> {
-        let head = self.head()?;
-        let probe = |m: u64| -> Result<Option<(bool, Option<u64>)>> {
-            Ok(self.stamped_at_or_after(m, head)?.map(|at| (at.is_some(), at)))
-        };
-        let (mut lo, mut hi) = (0, head + 1);
-        while lo < hi {
-            let mid = lo + (hi - lo) / 2;
-            match probe(mid)? {
-                Some((false, _)) => lo = mid + 1,
-                _ => hi = mid,
-            }
-        }
-        Ok(probe(lo)?.and_then(|(_, at)| at))
     }
 
     /// Whether `key` exists at `head`.

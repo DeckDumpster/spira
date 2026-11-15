@@ -37,7 +37,7 @@ use state_store::history::{overlay, AsOf, Written};
 use state_store::phases::{self, Phase};
 use state_store::{Backend, Error, History, LogEntry, Result, Rev, UsagePage, Version, VersionUsagePage, Write};
 
-use dated::{DatedFile, Files, SideRow, RECEIPTS};
+use dated::{DatedFile, Family, Files, SideRow, EVENTS, FAMILIES};
 use outbox::Outbox;
 
 const SCHEMA: &[&str] = &[
@@ -256,8 +256,8 @@ pub struct Options {
     /// Runs after every side file has committed and before the main commit; an `Err` fails the
     /// commit as a failed main commit would.
     pub commit_probe: Option<CommitProbe>,
-    /// File receipts in day files. Off for a store being restored or verified, whose receipts
-    /// stay in its one file, where reads find them and the drain removes them once a day old.
+    /// File receipts and events in day files. Off for a store being restored or verified, whose
+    /// receipts and events stay in its one file, where reads find them and no drain removes them.
     pub day_receipts: bool,
 }
 
@@ -306,7 +306,7 @@ struct Inner {
     max_read_ms: AtomicU64,
     clock: Arc<dyn Clock>,
     probe: Option<Arc<dyn Fn() + Send + Sync>>,
-    receipts: Files,
+    dated: Vec<Files>,
     wall: Arc<dyn Clock>,
     commit_probe: Option<CommitProbe>,
     day_receipts: bool,
@@ -317,6 +317,9 @@ struct Inner {
     receipts_from_at: u64,
     /// The main file holds no receipt left to drain.
     drained: AtomicBool,
+    events_drained: AtomicBool,
+    /// Wall ms before which the main file's oldest event is within the retention window.
+    events_due: AtomicU64,
     /// The VM steps every range statement has taken since [`SqliteBackend::take_read_steps`].
     read_steps: AtomicU64,
     /// Held for the life of the handle: the exclusive opener. Last, so it outlives the
@@ -460,8 +463,8 @@ struct Snapshot<'a> {
     head: u64,
     /// The VM steps a range statement has taken; see [`SqliteBackend::take_read_steps`].
     steps: &'a AtomicU64,
-    /// The receipt files this read may see, newest day first.
-    receipts: Vec<Arc<DatedFile>>,
+    /// The day files this read may see, per family, newest day first.
+    dated: Vec<(Family, Vec<Arc<DatedFile>>)>,
 }
 
 impl Snapshot<'_> {
@@ -476,11 +479,11 @@ impl Snapshot<'_> {
     }
 }
 
-fn snapshot<'a>(conn: &Connection, files: &Files, steps: &'a AtomicU64) -> Result<Snapshot<'a>> {
+fn snapshot<'a>(conn: &Connection, files: &[Files], steps: &'a AtomicU64) -> Result<Snapshot<'a>> {
     Ok(Snapshot {
         head: meta(conn, "head")?.unwrap_or(0),
         steps,
-        receipts: files.handles(),
+        dated: files.iter().map(|f| (f.family, f.handles())).collect(),
     })
 }
 
@@ -547,6 +550,48 @@ fn set_owner_refs(tx: &rusqlite::Transaction<'_>, key: &str, value: Option<&[u8]
     Ok(())
 }
 
+enum Drain {
+    Empty,
+    More,
+    /// The oldest event left is inside the window until this wall ms.
+    Waiting(u64),
+}
+
+/// The wall time an audit record was written at, when it carries one.
+fn recorded_at(value: &[u8]) -> Option<u64> {
+    serde_json::from_slice::<serde_json::Value>(value).ok()?.get("data")?.get("at")?.as_u64()
+}
+
+/// The first `limit` rows of `[lo, hi)` in key order.
+fn event_page(tx: &rusqlite::Transaction<'_>, lo: &[u8], hi: Option<&[u8]>, limit: usize) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
+    let mut stmt = tx
+        .prepare_cached("SELECT key, value FROM latest WHERE key >= ?1 AND (?2 IS NULL OR key < ?2) ORDER BY key LIMIT ?3")
+        .map_err(db)?;
+    let rows = stmt
+        .query_map(params![lo, hi, i64::try_from(limit).unwrap_or(i64::MAX)], |r| Ok((r.get(0)?, r.get(1)?)))
+        .map_err(db)?;
+    rows.collect::<std::result::Result<Vec<_>, _>>().map_err(db)
+}
+
+/// The `at` of the first stamped event after `key`, paging through unstamped ones.
+fn first_stamped_after(tx: &rusqlite::Transaction<'_>, key: &[u8], hi: Option<&[u8]>) -> Result<Option<u64>> {
+    let mut cursor = key.to_vec();
+    cursor.push(0);
+    loop {
+        let page = event_page(tx, &cursor, hi, 2_000)?;
+        if let Some(at) = page.iter().find_map(|(_, v)| recorded_at(v)) {
+            return Ok(Some(at));
+        }
+        match page.last() {
+            Some((k, _)) if page.len() == 2_000 => {
+                cursor = k.clone();
+                cursor.push(0);
+            }
+            _ => return Ok(None),
+        }
+    }
+}
+
 /// A key's newest version into `latest`: the only copy of it on disk.
 const PUT_LATEST: &str = "INSERT OR REPLACE INTO latest
      (key, main, sub, value, create_main, create_sub, version) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)";
@@ -609,12 +654,12 @@ fn range_rows(
         Source::State(s) => Some(s),
         _ => None,
     };
-    merge_receipts(out, snap, lo, hi, want, state)
+    merge_dated(out, snap, lo, hi, want, state)
 }
 
-/// `main`'s rows with the receipts of the snapshot's day files in the same range laid in key
-/// order, at most `limit`: a receipt is read as if it sat in the one keyspace.
-fn merge_receipts(
+/// `main`'s rows with the rows of the snapshot's day files in the same range laid in key
+/// order, at most `limit`: a filed row is read as if it sat in the one keyspace.
+fn merge_dated(
     main: Vec<(String, Version)>,
     snap: &Snapshot,
     lo: &[u8],
@@ -622,14 +667,17 @@ fn merge_receipts(
     limit: usize,
     state: Option<&str>,
 ) -> Result<Vec<(String, Version)>> {
-    if snap.receipts.is_empty() || !RECEIPTS.overlaps(lo, hi) {
+    let reached: Vec<_> = snap.dated.iter().filter(|(fam, files)| !files.is_empty() && fam.overlaps(lo, hi)).collect();
+    if reached.is_empty() {
         return Ok(main);
     }
     let mut merged: std::collections::BTreeMap<String, Version> = main.into_iter().collect();
     let mut filed = std::collections::BTreeMap::new();
-    for f in &snap.receipts {
-        for (k, v) in f.range(lo, hi, limit, snap.head, state)? {
-            filed.entry(k).or_insert(v);
+    for (_, files) in reached {
+        for f in files {
+            for (k, v) in f.range(lo, hi, limit, snap.head, state)? {
+                filed.entry(k).or_insert(v);
+            }
         }
     }
     merged.extend(filed);
@@ -766,13 +814,16 @@ impl SqliteBackend {
         let mut head = meta(&conn, "head")?.unwrap_or(0);
         let floor = head;
         let now = opts.wall.now_ms();
-        let receipts = Files::new(RECEIPTS, path);
-        receipts.open_existing()?;
-        for f in receipts.handles() {
-            f.trim_above(head)
-                .map_err(|e| Error::Backend(format!("{}: rows above the head {head} could not be removed: {e}", f.path().display())))?;
+        let dated: Vec<Files> = FAMILIES.iter().map(|f| Files::new(*f, path)).collect();
+        for files in &dated {
+            files.open_existing()?;
+            for f in files.handles() {
+                f.trim_above(head).map_err(|e| {
+                    Error::Backend(format!("{}: rows above the head {head} could not be removed: {e}", f.path().display()))
+                })?;
+            }
+            files.retire_behind(dated::day_of(now));
         }
-        receipts.retire_behind(dated::day_of(now));
         if opts.day_receipts {
             exec(&conn, "INSERT OR IGNORE INTO meta (name, value) VALUES ('receipts_from_at', ?1)", [main_i64(now)?])?;
         }
@@ -815,20 +866,26 @@ impl SqliteBackend {
             max_read_ms: AtomicU64::new(opts.max_read_ms),
             clock: opts.clock,
             probe: opts.read_probe,
-            receipts,
+            dated,
             wall: opts.wall,
             commit_probe: opts.commit_probe,
             day_receipts: opts.day_receipts,
             unclear: Mutex::new(None),
             receipts_from_at,
             drained: AtomicBool::new(false),
+            events_drained: AtomicBool::new(false),
+            events_due: AtomicU64::new(0),
             read_steps: AtomicU64::new(0),
             _lock: OpenerLock(lock_file),
         })))
     }
 
-    fn filed(&self, key: &str) -> bool {
-        self.0.day_receipts && RECEIPTS.holds(key)
+    /// The index in `dated` of the family that files `key`.
+    fn filed(&self, key: &str) -> Option<usize> {
+        if !self.0.day_receipts {
+            return None;
+        }
+        FAMILIES.iter().position(|f| f.holds(key))
     }
 
     /// Takes the rows `main` filed in `wrote` back out after its main commit failed, so the
@@ -874,6 +931,57 @@ impl SqliteBackend {
         })();
         if drained == Ok(true) {
             self.0.drained.store(true, Ordering::SeqCst);
+        }
+    }
+
+    /// Deletes up to [`DRAIN_PER_COMMIT`] events from the main file, oldest first, while they are
+    /// older than the retention window: no log entry, the head unmoved. A failure is retried by
+    /// the next commit.
+    fn drain_events(&self, w: &mut Writer, now: u64) {
+        if !self.0.day_receipts || self.0.events_drained.load(Ordering::SeqCst) || now < self.0.events_due.load(Ordering::SeqCst) {
+            return;
+        }
+        let cutoff = now.saturating_sub(state_store::gc::EVENT_WINDOW_MS);
+        let lo = EVENTS.prefix.as_bytes();
+        let hi = successor(lo);
+        let outcome = (|| {
+            let tx = w.conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(db)?;
+            let page = event_page(&tx, lo, hi.as_deref(), DRAIN_PER_COMMIT)?;
+            if page.is_empty() {
+                return Ok::<Drain, Error>(Drain::Empty);
+            }
+            let unstamped_age = match page.iter().find_map(|(_, v)| recorded_at(v)) {
+                Some(at) => Some(at),
+                None if page.len() < DRAIN_PER_COMMIT => None,
+                None => first_stamped_after(&tx, &page[page.len() - 1].0, hi.as_deref())?,
+            };
+            let mut last = None;
+            let mut blocked_at = None;
+            for (k, v) in &page {
+                let Some(at) = recorded_at(v).or(unstamped_age) else {
+                    blocked_at = Some(now.saturating_add(dated::DAY_MS));
+                    break;
+                };
+                if at >= cutoff {
+                    blocked_at = Some(at.saturating_add(state_store::gc::EVENT_WINDOW_MS));
+                    break;
+                }
+                last = Some(k);
+            }
+            if let Some(last) = last {
+                exec(&tx, "DELETE FROM latest WHERE key >= ?1 AND key <= ?2", params![lo, last])?;
+                exec(&tx, "DELETE FROM versions WHERE key >= ?1 AND key <= ?2", params![lo, last])?;
+            }
+            tx.commit().map_err(db)?;
+            Ok(match blocked_at {
+                Some(due) => Drain::Waiting(due),
+                None => Drain::More,
+            })
+        })();
+        match outcome {
+            Ok(Drain::Empty) => self.0.events_drained.store(true, Ordering::SeqCst),
+            Ok(Drain::Waiting(due)) => self.0.events_due.store(due.max(now.saturating_add(1)), Ordering::SeqCst),
+            Ok(Drain::More) | Err(_) => {}
         }
     }
 
@@ -1038,7 +1146,7 @@ impl SqliteBackend {
             let tx = conn
                 .transaction_with_behavior(TransactionBehavior::Deferred)
                 .map_err(db)?;
-            let snap = snapshot(&tx, &inner.receipts, &inner.read_steps)?;
+            let snap = snapshot(&tx, &inner.dated, &inner.read_steps)?;
             if let Some(p) = &inner.probe {
                 p();
             }
@@ -1110,7 +1218,7 @@ impl SqliteBackend {
                 dest.display()
             )));
         }
-        let files = self.0.receipts.handles();
+        let files: Vec<Arc<DatedFile>> = self.0.dated.iter().flat_map(Files::handles).collect();
         let result = self.copy_snapshot(dest, &files);
         if result.is_err() {
             let _ = std::fs::remove_file(dest);
@@ -1195,10 +1303,12 @@ impl Backend for SqliteBackend {
             if let AsOf::Was(v) = was {
                 return Ok(v);
             }
-            if RECEIPTS.holds(key) {
-                for f in &snap.receipts {
-                    if let Some(v) = f.get(key, at)? {
-                        return Ok(Some(v));
+            for (family, files) in &snap.dated {
+                if family.holds(key) {
+                    for f in files {
+                        if let Some(v) = f.get(key, at)? {
+                            return Ok(Some(v));
+                        }
                     }
                 }
             }
@@ -1414,8 +1524,8 @@ impl Backend for SqliteBackend {
             )));
         }
         for wr in batch {
-            if matches!(wr, Write::Put { prev: Some(_), .. }) && self.filed(wr.key()) {
-                return Err(Error::Backend(format!("{}: a receipt is written once", wr.key())));
+            if matches!(wr, Write::Put { prev: Some(_), .. }) && self.filed(wr.key()).is_some() {
+                return Err(Error::Backend(format!("{}: a filed row is written once", wr.key())));
             }
         }
         let now = self.0.wall.now_ms();
@@ -1427,13 +1537,15 @@ impl Backend for SqliteBackend {
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(db)?;
         let mut written = Vec::with_capacity(batch.len());
-        let mut filed: Vec<SideRow<'_>> = Vec::new();
-        let mut unfiled: Vec<&str> = Vec::new();
-        let files = if batch.iter().any(|w| self.filed(w.key())) {
-            self.0.receipts.handles()
-        } else {
-            Vec::new()
-        };
+        let mut filed: Vec<Vec<SideRow<'_>>> = FAMILIES.iter().map(|_| Vec::new()).collect();
+        let mut unfiled: Vec<Vec<&str>> = FAMILIES.iter().map(|_| Vec::new()).collect();
+        let files: Vec<Vec<Arc<DatedFile>>> = self
+            .0
+            .dated
+            .iter()
+            .enumerate()
+            .map(|(i, f)| if batch.iter().any(|w| self.filed(w.key()) == Some(i)) { f.handles() } else { Vec::new() })
+            .collect();
         {
             let mut current = tx
                 .prepare_cached(
@@ -1466,9 +1578,9 @@ impl Backend for SqliteBackend {
                             None => 1,
                             Some(_) => old_version + 1,
                         };
-                        if filed_key {
+                        if let Some(fam) = filed_key {
                             previous = None;
-                            filed.push(SideRow { key, sub: sub as u32, value, create_rev: *create_rev });
+                            filed[fam].push(SideRow { key, sub: sub as u32, value, create_rev: *create_rev });
                         } else {
                             set_owner_refs(&tx, key, Some(value))?;
                             put_latest
@@ -1494,10 +1606,10 @@ impl Backend for SqliteBackend {
                     Write::Delete { key, prev } => {
                         set_owner_refs(&tx, key, None)?;
                         drop_latest.execute([key.as_bytes()]).map_err(db)?;
-                        if filed_key {
-                            unfiled.push(key);
+                        if let Some(fam) = filed_key {
+                            unfiled[fam].push(key);
                             if previous.is_none() {
-                                for f in &files {
+                                for f in &files[fam] {
                                     previous = f.get(key, head)?;
                                     if previous.is_some() {
                                         break;
@@ -1519,13 +1631,16 @@ impl Backend for SqliteBackend {
         }
         let mut wrote: Vec<Arc<DatedFile>> = Vec::new();
         let sides = (|| {
-            if !filed.is_empty() {
-                let day = dated::day_of(now);
-                let (today, created) = self.0.receipts.today(day)?;
-                if created {
-                    self.0.receipts.retire_behind(day);
+            let day = dated::day_of(now);
+            for (fam, rows) in filed.iter().enumerate() {
+                if rows.is_empty() {
+                    continue;
                 }
-                today.put(main, &filed)?;
+                let (today, created) = self.0.dated[fam].today(day)?;
+                if created {
+                    self.0.dated[fam].retire_behind(day);
+                }
+                today.put(main, rows)?;
                 wrote.push(today);
             }
             Ok(())
@@ -1556,12 +1671,15 @@ impl Backend for SqliteBackend {
         }
         committing.confirm();
         self.0.head.store(main, Ordering::SeqCst);
-        if !unfiled.is_empty() {
-            for f in &files {
-                let _ = f.delete_keys(&unfiled);
+        for (fam, keys) in unfiled.iter().enumerate() {
+            if !keys.is_empty() {
+                for f in &files[fam] {
+                    let _ = f.delete_keys(keys);
+                }
             }
         }
         self.drain_receipts(&mut w, now);
+        self.drain_events(&mut w, now);
         Ok(main)
     }
 
@@ -1877,7 +1995,7 @@ mod tests {
 
     /// Keys under `a/` (one rewritten five times), `b/` and `events/`, one commit each.
     fn usage_store(dir: &testkit::TempDir) -> SqliteBackend {
-        let b = SqliteBackend::open(&dir.path().join("u.db"), Options::default()).unwrap();
+        let b = SqliteBackend::open(&dir.path().join("u.db"), Options { day_receipts: false, ..Options::default() }).unwrap();
         let put = |key: &str, value: &[u8], prev: Option<Rev>| {
             let head = b.head().unwrap();
             b.commit(

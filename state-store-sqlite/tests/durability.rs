@@ -28,7 +28,7 @@ fn open(path: &Path) -> SqliteBackend {
 /// A copy being checked (a snapshot, a restore, a backup): opened without the jump, so its
 /// revisions read exactly as written (sp-r3yb7x).
 fn verify(path: &Path) -> SqliteBackend {
-    SqliteBackend::open(path, Options { jump_on_open: false, ..Options::default() }).unwrap()
+    SqliteBackend::open(path, Options { jump_on_open: false, day_receipts: false, ..Options::default() }).unwrap()
 }
 
 fn req(id: &str) -> Request {

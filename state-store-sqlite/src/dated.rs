@@ -12,11 +12,11 @@ use std::sync::{Arc, Mutex};
 
 use rusqlite::{params, Connection, OpenFlags, TransactionBehavior};
 use state_store::backend::state_of;
-use state_store::{Error, Result, Rev, Version, REQUESTS_PREFIX};
+use state_store::{Error, Result, Rev, Version, EVENTS_PREFIX, REQUESTS_PREFIX};
 
 use super::{db, exec, key_of, lock, main_i64, rev, successor};
 
-const DAY_MS: u64 = 86_400_000;
+pub(crate) const DAY_MS: u64 = 86_400_000;
 
 /// Rows a state-filtered read takes from a file at a time.
 const STATE_PAGE: usize = 500;
@@ -31,6 +31,12 @@ pub struct Family {
 
 /// A request receipt: today's file and yesterday's answer a retry.
 pub const RECEIPTS: Family = Family { name: "receipts", prefix: REQUESTS_PREFIX, keep_days: 2 };
+
+/// An audit event: today's file and the fourteen days before it.
+pub const EVENTS: Family = Family { name: "events", prefix: EVENTS_PREFIX, keep_days: 15 };
+
+/// Every family, in the order the store keeps its `Files`.
+pub const FAMILIES: [Family; 2] = [RECEIPTS, EVENTS];
 
 pub fn day_of(ms: u64) -> i64 {
     (ms / DAY_MS) as i64

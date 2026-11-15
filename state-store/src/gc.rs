@@ -11,8 +11,6 @@ use crate::{Error, Item, Result, ORPHANS_PREFIX};
 pub struct Tick {
     pub orphans: Vec<String>,
     pub expired: Vec<String>,
-    /// Audit records cut for being older than [`EVENT_WINDOW_MS`].
-    pub trimmed: usize,
     /// Steps that failed this pass; every other step still ran.
     pub failed: Vec<StepFailure>,
 }
@@ -137,10 +135,6 @@ impl<'a, B: Backend> Controller<'a, B> {
             Ok(mut expired) => tick.expired.append(&mut expired),
             Err(e) => fail(&mut tick, "due", e),
         }
-        match c.trim_events(EVENT_WINDOW_MS) {
-            Ok(trimmed) => tick.trimmed = trimmed,
-            Err(e) => fail(&mut tick, "trim", e),
-        }
         tick
     }
 }
@@ -155,7 +149,7 @@ mod tests {
     use super::*;
     use crate::backend::{Version, Write};
     use crate::contract::{Config, Ports, Request, Txn};
-    use crate::{events_key, Error, MemBackend, Object, ORPHANS_PREFIX};
+    use crate::{Error, MemBackend, Object, ORPHANS_PREFIX};
 
     const DAY_MS: u64 = 24 * 60 * 60 * 1_000;
 
@@ -187,64 +181,17 @@ mod tests {
     }
 
     #[test]
-    fn audit_history_older_than_the_window_is_cut_in_bounded_passes_and_the_rest_stays() {
+    fn a_gc_pass_leaves_every_audit_event_in_place_however_old() {
         let clock = VirtualClock::new(10 * DAY_MS);
         let c = open(MemBackend::new(), &clock);
-        for i in 0..2_500 {
+        for i in 0..5 {
             write(&c, &format!("rec/{i}"), &format!("old{i}"));
         }
-        clock.advance(EVENT_WINDOW_MS + DAY_MS);
-        for i in 0..5 {
-            write(&c, &format!("new/{i}"), &format!("new{i}"));
-        }
-        assert_eq!(events(&c), 2_505);
+        clock.advance(15 * DAY_MS);
+        write(&c, "rec/new", "new");
         let gc = Controller::new(&c);
-        let first = gc.tick(c.now_ms()).unwrap().trimmed;
-        assert!(first > 0 && first < 2_500, "one pass is bounded: {first}");
-        assert_eq!(events(&c), 2_505 - first);
-        let mut passes = 1;
-        while gc.tick(c.now_ms()).unwrap().trimmed > 0 {
-            passes += 1;
-        }
-        assert!(passes >= 2, "{passes}");
-        assert_eq!(events(&c), 5, "only the events inside the window remain");
-    }
-
-    #[test]
-    fn nothing_is_cut_from_a_history_that_is_all_inside_the_window() {
-        let clock = VirtualClock::new(10 * DAY_MS);
-        let c = open(MemBackend::new(), &clock);
-        write(&c, "rec/a", "1");
-        clock.advance(EVENT_WINDOW_MS - 1);
-        assert_eq!(Controller::new(&c).tick(c.now_ms()).unwrap().trimmed, 0);
-        assert_eq!(events(&c), 1);
-    }
-
-    #[test]
-    fn unstamped_history_is_as_old_as_the_first_stamped_record() {
-        let clock = VirtualClock::new(10 * DAY_MS);
-        let b = MemBackend::new();
-        let legacy = Object::new(json!({"actor": "x", "subs": []})).encode();
-        for n in 1..=3u64 {
-            let w = Write::Put {
-                key: events_key(n),
-                value: legacy.clone(),
-                create_rev: crate::Rev::new(n, 0),
-                prev: None,
-            };
-            b.commit(n - 1, &[w]).unwrap();
-        }
-        let c = open(b, &clock);
-        let gc = Controller::new(&c);
-        assert_eq!(
-            gc.tick(c.now_ms()).unwrap().trimmed,
-            0,
-            "no stamped record to date them by"
-        );
-        write(&c, "rec/a", "1");
-        clock.advance(EVENT_WINDOW_MS + DAY_MS);
-        assert_eq!(gc.tick(c.now_ms()).unwrap().trimmed, 4);
-        assert_eq!(events(&c), 0);
+        gc.tick(c.now_ms()).unwrap();
+        assert_eq!(events(&c), 6);
     }
 
     /// Refuses `range` over `events/` with a plain error once armed, and counts the reads that
@@ -252,7 +199,6 @@ mod tests {
     /// `events/` or `orphans/`.
     struct Flaky {
         inner: MemBackend,
-        refuse_events: AtomicBool,
         refuse_markers: AtomicBool,
         stale_owned_by: AtomicUsize,
         key_space_reads: AtomicUsize,
@@ -265,7 +211,6 @@ mod tests {
         fn new() -> Self {
             Flaky {
                 inner: MemBackend::new(),
-                refuse_events: Default::default(),
                 refuse_markers: Default::default(),
                 stale_owned_by: AtomicUsize::new(0),
                 key_space_reads: AtomicUsize::new(0),
@@ -290,9 +235,6 @@ mod tests {
             limit: usize,
             at: u64,
         ) -> crate::Result<Vec<(String, Version)>> {
-            if prefix == crate::EVENTS_PREFIX && self.refuse_events.load(Ordering::SeqCst) {
-                return Err(Error::Backend("refused".into()));
-            }
             if prefix == ORPHANS_PREFIX && self.refuse_markers.load(Ordering::SeqCst) {
                 return Err(Error::Backend("refused".into()));
             }
@@ -395,17 +337,16 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_orphan_drain_is_one_failure_and_expiry_and_trim_still_run() {
+    fn a_failed_orphan_drain_is_one_failure_and_expiry_still_runs() {
         let clock = VirtualClock::new(10 * DAY_MS);
         let c = open(Flaky::new(), &clock);
-        write(&c, "rec/old", "old");
-        clock.advance(EVENT_WINDOW_MS + DAY_MS);
-        write(&c, "new/0", "new0");
+        write_ttl(&c, "telemetry/a", 1);
+        clock.advance(2_000);
         c.backend().refuse_markers.store(true, Ordering::SeqCst);
         let pass = Controller::new(&c).pass(c.now_ms());
         assert_eq!(pass.failed.len(), 1, "{pass:?}");
         assert_eq!(pass.failed[0].step, "orphan");
-        assert_eq!(pass.trimmed, 1, "trim ran after the failed step");
+        assert_eq!(pass.expired, ["telemetry/a"], "expiry ran after the failed step");
     }
 
     fn write_ttl(c: &Contract<impl Backend>, key: &str, ttl_secs: u64) {
@@ -451,13 +392,10 @@ mod tests {
         let clock = VirtualClock::new(10 * DAY_MS);
         let c = open(Flaky::new(), &clock);
         write(&c, "rec/old", "old");
-        clock.advance(EVENT_WINDOW_MS + DAY_MS);
-        write(&c, "new/0", "new0");
         c.backend().refuse_due.store(true, Ordering::SeqCst);
         let pass = Controller::new(&c).pass(c.now_ms());
         assert_eq!(pass.failed.len(), 1, "{pass:?}");
         assert_eq!(pass.failed[0].step, "due");
-        assert_eq!(pass.trimmed, 1, "trim ran after the failed step");
     }
 
     #[test]
@@ -487,16 +425,4 @@ mod tests {
         assert!(Controller::new(&c).tick(c.now_ms()).unwrap().expired.is_empty());
     }
 
-    #[test]
-    fn a_failed_trim_names_its_step() {
-        let clock = VirtualClock::new(0);
-        let c = open(Flaky::new(), &clock);
-        write(&c, "rec/a", "r");
-        c.backend().refuse_events.store(true, Ordering::SeqCst);
-        let err = Controller::new(&c).tick(c.now_ms()).unwrap_err();
-        assert!(
-            matches!(&err, Error::Backend(m) if m.starts_with("trim: ")),
-            "{err:?}"
-        );
-    }
 }
