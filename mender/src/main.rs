@@ -6,7 +6,7 @@ use std::process::Command;
 
 use mender::verbs::{self, World};
 
-const USAGE: &str = "mender start <spec> | pack <spec> | diff <spec> <bead> | bead <id> | members <spec> | failures <spec> | passes <spec> | verdicts <spec> | landing <spec> | triaged <spec> | diagnose <spec> (text on stdin) | outcome <spec> <mended|environment|flaky|return|unsure> [--checks <text>] [--ask <id>] (diagnosis on stdin)";
+const USAGE: &str = "mender start <spec> | pack <spec> | diff <spec> <bead> | bead <id> | members <spec> | failures <spec> | passes <spec> | verdicts <spec> | landing <spec> | triaged <spec> | diagnose <spec> (text on stdin) | outcome <spec> <mended|environment|flaky|return|unsure> [--checks <text>] [--ask <id>] [--member <bead>]... (diagnosis on stdin)";
 
 struct Real;
 
@@ -48,22 +48,27 @@ fn stdin() -> String {
     s
 }
 
-fn outcome_flags<'a>(flags: &[&'a str]) -> Result<(Option<&'a str>, Option<&'a str>), String> {
-    let (mut checks, mut ask) = (None, None);
+type Flags<'a> = (Option<&'a str>, Option<&'a str>, Vec<&'a str>);
+
+fn outcome_flags<'a>(flags: &[&'a str]) -> Result<Flags<'a>, String> {
+    let (mut checks, mut ask, mut members) = (None, None, Vec::new());
     let mut it = flags.iter();
     while let Some(flag) = it.next() {
-        let slot = match *flag {
-            "--checks" => &mut checks,
-            "--ask" => &mut ask,
-            other => return Err(format!("outcome: unknown flag {other:?}; usage: {USAGE}")),
+        let value = |it: &mut std::slice::Iter<'_, &'a str>| -> Result<&'a str, String> {
+            let v = *it.next().ok_or_else(|| format!("outcome: {flag} needs a value"))?;
+            if v.trim().is_empty() {
+                return Err(format!("outcome: {flag} is empty"));
+            }
+            Ok(v)
         };
-        let value = *it.next().ok_or_else(|| format!("outcome: {flag} needs a value"))?;
-        if value.trim().is_empty() {
-            return Err(format!("outcome: {flag} is empty"));
+        match *flag {
+            "--checks" => checks = Some(value(&mut it)?),
+            "--ask" => ask = Some(value(&mut it)?),
+            "--member" => members.push(value(&mut it)?),
+            other => return Err(format!("outcome: unknown flag {other:?}; usage: {USAGE}")),
         }
-        *slot = Some(value);
     }
-    Ok((checks, ask))
+    Ok((checks, ask, members))
 }
 
 fn run(args: &[String]) -> Result<String, String> {
@@ -82,8 +87,8 @@ fn run(args: &[String]) -> Result<String, String> {
         ["triaged", spec] => verbs::triaged(&w, spec),
         ["diagnose", spec] => verbs::diagnose(&w, spec, &stdin()),
         ["outcome", spec, kind, flags @ ..] => {
-            let (checks, ask) = outcome_flags(flags)?;
-            verbs::finish(&w, spec, kind, &stdin(), checks, ask)
+            let (checks, ask, members) = outcome_flags(flags)?;
+            verbs::finish(&w, spec, kind, &stdin(), checks, ask, &members)
         }
         _ => Err(format!("usage: {USAGE}")),
     }
@@ -112,9 +117,14 @@ mod tests {
 
     #[test]
     fn outcome_flags_take_checks_and_ask_in_either_order() {
-        assert_eq!(outcome_flags(&["--checks", "crate:x", "--ask", "a1"]).unwrap(), (Some("crate:x"), Some("a1")));
-        assert_eq!(outcome_flags(&["--ask", "a1", "--checks", "crate:x"]).unwrap(), (Some("crate:x"), Some("a1")));
-        assert_eq!(outcome_flags(&[]).unwrap(), (None, None));
+        assert_eq!(outcome_flags(&["--checks", "crate:x", "--ask", "a1"]).unwrap(), (Some("crate:x"), Some("a1"), vec![]));
+        assert_eq!(outcome_flags(&["--ask", "a1", "--checks", "crate:x"]).unwrap(), (Some("crate:x"), Some("a1"), vec![]));
+        assert_eq!(outcome_flags(&[]).unwrap(), (None, None, vec![]));
+    }
+
+    #[test]
+    fn outcome_flags_collect_each_member() {
+        assert_eq!(outcome_flags(&["--member", "sp-a", "--member", "sp-b"]).unwrap().2, vec!["sp-a", "sp-b"]);
     }
 
     #[test]

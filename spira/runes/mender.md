@@ -45,7 +45,7 @@ menders of this round), `work mender passes <spec>` (earlier passes), `work mend
 | `mended` | a member's code is at fault and you committed the fix | `--checks "crate:<dir> suite:<path> ..."` — each check you ran green, as the machine names it |
 | `environment` | the box failed, not the code | the signature and the output line that shows it |
 | `flaky` | the test is unreliable | the evidence it passed or failed independent of the diffs |
-| `return` | a member's code is at fault and the fix is out of your reach | the defect as `<file>:<line>`, and why |
+| `return` | a member's code is at fault and the fix is out of your reach | the defect as `<file>:<line>`, and why; the member sent back, named with `--member <bead>` (repeat for each) |
 | `unsure` | you cannot tell | what you ruled out |
 
 A guess never ejects anyone. Only `return` sends a member back, and only with a diagnosis a
