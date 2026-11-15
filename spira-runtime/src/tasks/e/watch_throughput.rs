@@ -116,6 +116,12 @@ pub struct Snapshot {
     /// Seconds the store server had been up when this was read; `None` when systemd could not say.
     #[serde(default)]
     pub store_up_s: Option<u64>,
+    /// The refusal the failing read returned; empty when the snapshot is readable.
+    #[serde(default)]
+    pub why: String,
+    /// The newest activation whose record says it restarted the store server: epoch seconds, sha.
+    #[serde(default)]
+    pub store_restart: Option<(u64, String)>,
 }
 
 /// What `watch.throughput.file` is handed: one stall episode and the incident that names it.
@@ -152,6 +158,8 @@ pub struct Carry {
     pub resumed_at: u64,
     /// The read just after an activation that was let go unreported; the next unreadable one pages.
     pub retried: bool,
+    /// When the landings were last readable after a recorded store restart, epoch seconds; 0 before.
+    pub readable_at: u64,
 }
 
 pub struct Verdict {
@@ -197,7 +205,12 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> Verd
         }
         if !carry.blind {
             let after = if carry.retried { snap.activated_at.map_or(String::new(), |at| format!(" (still unreadable on the retry after the activation at {})", iso8601(at))) } else { String::new() };
-            acts.push(say(now_ms, &format!("P0 BLIND: the landings cannot be read{after}, so landing stalls are not being checked")));
+            let refusal = if snap.why.is_empty() { String::new() } else { format!(" ({})", snap.why) };
+            let restarted = match &snap.store_restart {
+                Some((at, sha)) if *at >= carry.readable_at => format!(": the store server was restarted by the activation of {} at {}, and the store has not answered since", &sha[..sha.len().min(12)], iso8601(*at)),
+                _ => String::new(),
+            };
+            acts.push(say(now_ms, &format!("P0 BLIND: the landings cannot be read{refusal}{after}{restarted}, so landing stalls are not being checked")));
         }
         next.blind = true;
         next.retried = false;
@@ -205,6 +218,9 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> Verd
     }
     next.blind = false;
     next.retried = false;
+    if snap.store_restart.as_ref().is_some_and(|(at, _)| *at >= carry.readable_at) {
+        next.readable_at = now_ms / 1000;
+    }
 
     next.stalled.retain(|repo, _| snap.landings.iter().any(|l| l.repo == *repo && is_stalled(l, now_ms, cfg)));
     for l in snap.landings.iter().filter(|l| is_stalled(l, now_ms, cfg)) {
@@ -273,7 +289,7 @@ impl WatchThroughput {
     }
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("blind"), runtime::rows::Part::Map { name: "stalled", drop: &[] }, runtime::rows::Part::Field("starved"), runtime::rows::Part::Field("diluted"), runtime::rows::Part::Field("unlanded"), runtime::rows::Part::Field("held"), runtime::rows::Part::Field("halted"), runtime::rows::Part::Field("resumed_at"), runtime::rows::Part::Field("retried")];
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("blind"), runtime::rows::Part::Map { name: "stalled", drop: &[] }, runtime::rows::Part::Field("starved"), runtime::rows::Part::Field("diluted"), runtime::rows::Part::Field("unlanded"), runtime::rows::Part::Field("held"), runtime::rows::Part::Field("halted"), runtime::rows::Part::Field("resumed_at"), runtime::rows::Part::Field("retried"), runtime::rows::Part::Field("readable_at")];
 
 impl Handler for WatchThroughput {
     fn interests(&self) -> &[EventKindTag] {

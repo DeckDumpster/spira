@@ -855,12 +855,25 @@ impl World {
         let day = 24 * 3600;
         let halt = read_halt(&self.run_dir);
         let activated_at = crate::watchers::last_activation(&self.run_dir);
-        let blind = || ThroughputSnapshot { readable: false, halt: halt.clone(), activated_at, store_up_s: store_up_s(), ..Default::default() };
-        let Ok(prefix) = spira_config::process::cfg("SPIRA_ID_PREFIX") else { return to_json(&blind()) };
-        let Ok(mut landings) = self.landed_on_refs(p.now, &prefix) else { return to_json(&blind()) };
-        let Ok(waiting) = self.waiting_rows() else { return to_json(&blind()) };
-        let Ok(batches) = self.lc_json(&["list", "--batches", "--window", &day.to_string()]) else { return to_json(&blind()) };
-        let Some(rows) = batches.as_array() else { return to_json(&blind()) };
+        let store_restart = crate::watchers::last_store_restart(&self.run_dir);
+        let blind = |why: String| ThroughputSnapshot { readable: false, halt: halt.clone(), activated_at, store_up_s: store_up_s(), why, store_restart: store_restart.clone(), ..Default::default() };
+        let prefix = match spira_config::process::cfg("SPIRA_ID_PREFIX") {
+            Ok(p) => p,
+            Err(e) => return to_json(&blind(format!("SPIRA_ID_PREFIX: {e}"))),
+        };
+        let mut landings = match self.landed_on_refs(p.now, &prefix) {
+            Ok(l) => l,
+            Err(e) => return to_json(&blind(format!("landings: {e}"))),
+        };
+        let waiting = match self.waiting_rows() {
+            Ok(w) => w,
+            Err(e) => return to_json(&blind(format!("waiting rows: {e}"))),
+        };
+        let batches = match self.lc_json(&["list", "--batches", "--window", &day.to_string()]) {
+            Ok(b) => b,
+            Err(e) => return to_json(&blind(format!("batches: {e}"))),
+        };
+        let Some(rows) = batches.as_array() else { return to_json(&blind("batches: not a list".into())) };
         stamp_landings(&mut landings, rows);
         for l in &mut landings {
             l.waiting = waiting.as_array().map_or(0, |rows| rows.iter().filter(|r| r["repo"].as_str() == Some(l.repo.as_str())).count() as u64);
@@ -870,7 +883,7 @@ impl World {
         let unlanded = unlanded_rounds(batches, p.now);
         let parts = self.round_record_partition();
         let records = Records { clear: parts.clear.iter().map(|f| f.display().to_string()).collect(), held: parts.held };
-        to_json(&ThroughputSnapshot { readable: true, landings, repos, unlanded, records, halt, activated_at, store_up_s: None })
+        to_json(&ThroughputSnapshot { readable: true, landings, repos, unlanded, records, halt, activated_at, store_up_s: None, store_restart, ..Default::default() })
     }
 
     /// The beads landed over the 24 h ending `now`, per registered repo, read from its landing ref

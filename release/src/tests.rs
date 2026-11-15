@@ -1458,3 +1458,50 @@ fn an_activation_leaves_a_watcher_to_restart_itself_when_its_installed_unit_alre
     assert!(restarts.is_empty(), "{restarts:?}");
     assert!(out.restarted.is_empty() && out.stale.iter().chain(&out.when_idle).any(|s| s.starts_with("lc-serve.service")), "{out:?}");
 }
+
+/// `current` on the previous release `P`, whose installed `lc-serve` unit names it; release `A`
+/// ships `spira-lc` with `new_bytes`, `P` with the bytes `spira-lc v1`.
+fn world_switching_lc_serve_from_the_previous_release(new_bytes: &str) -> World {
+    let w = World::with_git(FakeGit::default());
+    let prev = "p".repeat(40);
+    for (name, bin) in [(prev.as_str(), "spira-lc v1"), (A, new_bytes)] {
+        file(&w.cfg.releases.join(name).join("systemd/lc-serve.service"), LC_UNIT);
+        exe(&w.cfg.releases.join(name).join("bin/spira-lc"), bin);
+    }
+    let rel = w.cfg.releases.join(A);
+    let m = Manifest { commit: A.into(), built: None, repo: None, entries: Manifest::scan(&rel).unwrap() };
+    fs::write(rel.join("MANIFEST"), m.render()).unwrap();
+    std::os::unix::fs::symlink(&prev, w.cfg.releases.join("current")).unwrap();
+    file(&w.cfg.unit_dir.join("lc-serve.service"), &LC_UNIT.replace("@SPIRA_PROD_ROOT@", &w.cfg.releases.join(&prev).display().to_string()));
+    w
+}
+
+fn running_lc_serve(w: &World) -> FakeSystemctl {
+    let sc = FakeSystemctl::new(w.cfg.unit_dir.clone());
+    sc.states.borrow_mut().insert("lc-serve.service".into(), UnitState { active: "active".into(), result: "success".into(), kind: "simple".into() });
+    sc
+}
+
+fn recorded_restarts(w: &World) -> Vec<String> {
+    let r = crate::machine::load(&w.cfg.state_dir().unwrap(), A).unwrap().unwrap();
+    let e = r.events.iter().rev().find(|e| e.to == crate::machine::ReleaseState::Activated).unwrap();
+    e.restarted.clone()
+}
+
+#[test]
+fn an_activation_that_changes_spira_lc_records_that_it_restarted_lc_serve() {
+    let w = world_switching_lc_serve_from_the_previous_release("spira-lc v2 with holds");
+    let sc = running_lc_serve(&w);
+    activate_with(&w, &sc).unwrap();
+    assert_eq!(*sc.restarts.borrow(), vec!["lc-serve.service".to_string()]);
+    assert_eq!(recorded_restarts(&w), vec!["lc-serve.service".to_string()]);
+}
+
+#[test]
+fn an_activation_that_leaves_spira_lc_identical_records_no_lc_serve_restart() {
+    let w = world_switching_lc_serve_from_the_previous_release("spira-lc v1");
+    let sc = running_lc_serve(&w);
+    activate_with(&w, &sc).unwrap();
+    assert!(sc.restarts.borrow().is_empty());
+    assert!(!recorded_restarts(&w).contains(&"lc-serve.service".to_string()));
+}

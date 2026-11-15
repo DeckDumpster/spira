@@ -53,6 +53,17 @@ pub fn last_activation(run_dir: &std::path::Path) -> Option<u64> {
     releases.iter().flat_map(|r| r.events.iter()).filter(|e| e.to == release::machine::ReleaseState::Activated).map(|e| e.at).max()
 }
 
+/// The `at` and sha of the newest `Activated` event that restarted the store server, from the record.
+pub fn last_store_restart(run_dir: &std::path::Path) -> Option<(u64, String)> {
+    let releases = release::machine::all(&run_dir.join("release")).ok()?;
+    releases
+        .iter()
+        .flat_map(|r| r.events.iter().map(move |e| (e, &r.sha)))
+        .filter(|(e, _)| e.to == release::machine::ReleaseState::Activated && e.restarted.iter().any(|u| u == "lc-serve.service"))
+        .map(|(e, sha)| (e.at, sha.clone()))
+        .max()
+}
+
 /// The name of the effect that `ev` is the outcome of, when its stream requested one.
 pub fn answered_effect(view: &Projection, ev: &Event) -> Option<String> {
     let cause = ev.cause.as_ref()?;
@@ -92,8 +103,8 @@ pub fn iso8601(secs: u64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{iso8601, just_activated, last_activation, restart_excuses_read};
-    use release::machine::{enter, ReleaseState};
+    use super::{iso8601, just_activated, last_activation, last_store_restart, restart_excuses_read};
+    use release::machine::{enter, save, Release, ReleaseState};
 
     #[test]
     fn a_server_up_exactly_two_minutes_excuses_one_read_and_one_second_more_does_not() {
@@ -112,6 +123,24 @@ mod tests {
         enter(&state, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", ReleaseState::Activated, "current switched").unwrap();
         let at = last_activation(t.path()).expect("the activated record is read");
         assert!(just_activated(Some(at), at + 60) && !just_activated(Some(at), at + 61) && !just_activated(Some(at), at.saturating_sub(1)));
+    }
+
+    #[test]
+    fn the_last_store_restart_is_the_newest_activation_whose_record_lists_lc_serve() {
+        let t = testkit::TempDir::new("last-store-restart");
+        let state = t.path().join("release");
+        let (a, b) = ("a".repeat(40), "b".repeat(40));
+        assert_eq!(last_store_restart(t.path()), None);
+        for (sha, at, restarted) in [(&a, 100, "lc-serve.service"), (&b, 200, "other.service")] {
+            let mut r = Release::new(sha);
+            r.record(ReleaseState::Cut, "cut", at - 3).unwrap();
+            r.record(ReleaseState::Accepted, "accepted", at - 2).unwrap();
+            r.record(ReleaseState::Published, "published", at - 1).unwrap();
+            r.record_with(ReleaseState::Activated, "current switched", at, &[restarted.to_string()]).unwrap();
+            save(&state, &r).unwrap();
+        }
+        assert_eq!(last_activation(t.path()), Some(200));
+        assert_eq!(last_store_restart(t.path()), Some((100, a)));
     }
 
     #[test]

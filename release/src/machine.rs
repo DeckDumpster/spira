@@ -47,12 +47,21 @@ pub struct ReleaseEvent {
     pub to: ReleaseState,
     pub reason: String,
     pub at: u64,
+    pub restarted: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Release {
     pub sha: String,
     pub events: Vec<ReleaseEvent>,
+}
+
+fn event_json(e: &ReleaseEvent) -> Value {
+    let mut v = json!({"to": e.to.as_str(), "reason": e.reason, "at": e.at});
+    if !e.restarted.is_empty() {
+        v["restarted"] = json!(e.restarted);
+    }
+    v
 }
 
 impl Release {
@@ -66,6 +75,10 @@ impl Release {
 
     /// Applies a move, or refuses naming the state the release is in. Nothing is written on a refusal.
     pub fn record(&mut self, to: ReleaseState, reason: &str, at: u64) -> Result<(), String> {
+        self.record_with(to, reason, at, &[])
+    }
+
+    pub fn record_with(&mut self, to: ReleaseState, reason: &str, at: u64, restarted: &[String]) -> Result<(), String> {
         let ok = match self.state() {
             None => to == ReleaseState::Cut,
             Some(from) => from.can_go(to),
@@ -74,12 +87,12 @@ impl Release {
             let from = self.state().map_or("unrecorded", ReleaseState::as_str);
             return Err(format!("release {} is {from}; it cannot become {} ({reason})", self.sha, to.as_str()));
         }
-        self.events.push(ReleaseEvent { to, reason: reason.into(), at });
+        self.events.push(ReleaseEvent { to, reason: reason.into(), at, restarted: restarted.to_vec() });
         Ok(())
     }
 
     fn events_json(&self) -> Value {
-        Value::Array(self.events.iter().map(|e| json!({"to": e.to.as_str(), "reason": e.reason, "at": e.at})).collect())
+        Value::Array(self.events.iter().map(event_json).collect())
     }
 
     pub fn to_json(&self) -> Value {
@@ -96,6 +109,7 @@ impl Release {
                 to,
                 reason: e.get("reason").and_then(Value::as_str).unwrap_or_default().to_string(),
                 at: e.get("at").and_then(Value::as_u64).unwrap_or(0),
+                restarted: e.get("restarted").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).map(String::from).collect()).unwrap_or_default(),
             });
         }
         Ok(Release { sha, events })
@@ -187,6 +201,11 @@ fn already_passed(from: ReleaseState, to: ReleaseState) -> bool {
 /// passed, each event saying it was backfilled; a move that is illegal from the recorded state
 /// is refused and nothing is written.
 pub fn enter(state: &Path, sha: &str, to: ReleaseState, reason: &str) -> Result<(), String> {
+    enter_with(state, sha, to, reason, &[])
+}
+
+/// `enter`, the event also recording which services the move restarted.
+pub fn enter_with(state: &Path, sha: &str, to: ReleaseState, reason: &str, restarted: &[String]) -> Result<(), String> {
     let mut r = load(state, sha)?.unwrap_or_else(|| Release::new(sha));
     if r.state() == Some(to) || r.state().is_some_and(|from| already_passed(from, to)) {
         return Ok(());
@@ -197,7 +216,7 @@ pub fn enter(state: &Path, sha: &str, to: ReleaseState, reason: &str) -> Result<
             r.record(s, "backfilled: the release predates its record", now)?;
         }
     }
-    r.record(to, reason, now)?;
+    r.record_with(to, reason, now, restarted)?;
     save(state, &r)
 }
 
@@ -220,8 +239,26 @@ mod tests {
 
     fn at(state: ReleaseState) -> Release {
         let mut r = Release::new(SHA);
-        r.events.push(ReleaseEvent { to: state, reason: "fixture".into(), at: 0 });
+        r.events.push(ReleaseEvent { to: state, reason: "fixture".into(), at: 0, restarted: Vec::new() });
         r
+    }
+
+    #[test]
+    fn a_recorded_restart_list_reads_back() {
+        let t = testkit::TempDir::new("machine-restarted");
+        enter(t.path(), SHA, Published, "p").unwrap();
+        enter_with(t.path(), SHA, Activated, "up", &["lc-serve.service".to_string()]).unwrap();
+        let r = load(t.path(), SHA).unwrap().unwrap();
+        assert_eq!(r.events[0].restarted, Vec::<String>::new());
+        assert_eq!(r.events.last().unwrap().restarted, vec!["lc-serve.service".to_string()]);
+        assert!(!r.to_json()["events"][0].as_object().unwrap().contains_key("restarted"), "an empty list is not written");
+    }
+
+    #[test]
+    fn a_record_in_the_format_before_restart_lists_loads_with_an_empty_list() {
+        let old = format!(r#"{{"sha":"{SHA}","events":[{{"to":"cut","reason":"x","at":5}}]}}"#);
+        let r = Release::from_json(&old).unwrap();
+        assert_eq!(r.events[0].restarted, Vec::<String>::new());
     }
 
     #[test]
