@@ -1188,6 +1188,45 @@ fn a_changed_binary_and_a_changed_dev_dependency_source_leaves_the_cache_backend
     assert_eq!(*sc.cache_server_stops.borrow(), 0);
 }
 
+#[test]
+fn a_changed_launcher_restarts_the_cache_backend_though_its_binary_is_identical() {
+    let w = world_activating_over_a_running_cache(false);
+    change_new_release_file(&w, "spira/sccache-dav.sh", "#!/bin/sh\nexec sccache-dav --x\n");
+    let (_, sc) = activate_over_running_cache(&w);
+    assert_eq!(*sc.restarts.borrow(), vec!["sccache-dav.service".to_string()]);
+}
+
+#[test]
+fn a_changed_binary_with_no_source_tree_to_compare_restarts_the_cache_backend() {
+    let w = world_activating_over_a_running_cache(true);
+    fs::remove_file(w.cfg.releases.join(A).join("Cargo.lock")).unwrap();
+    change_new_release_file(&w, "dep/src/lib.rs", "pub fn f() {}\n");
+    let (_, sc) = activate_over_running_cache(&w);
+    assert_eq!(*sc.restarts.borrow(), vec!["sccache-dav.service".to_string()]);
+}
+
+#[test]
+fn a_changed_binary_and_a_changed_transitive_dependency_restarts_the_cache_backend() {
+    let w = world_activating_over_a_running_cache(true);
+    let prev = w.cfg.releases.join("p".repeat(40));
+    for rel in [prev, w.cfg.releases.join(A)] {
+        file(&rel.join("dep/Cargo.toml"), "[dependencies]\ndeep = { path = \"../deep\" }\n");
+        file(&rel.join("deep/src/lib.rs"), "pub fn d() {}\n");
+        file(&rel.join("deep/Cargo.toml"), "[package]\nname = \"deep\"\n");
+    }
+    change_new_release_file(&w, "deep/src/lib.rs", "pub fn d() { 1; }\n");
+    let (_, sc) = activate_over_running_cache(&w);
+    assert_eq!(*sc.restarts.borrow(), vec!["sccache-dav.service".to_string()]);
+}
+
+#[test]
+fn a_changed_binary_and_a_changed_toolchain_pin_restarts_the_cache_backend() {
+    let w = world_activating_over_a_running_cache(true);
+    change_new_release_file(&w, "rust-toolchain.toml", "[toolchain]\nchannel = \"1.99\"\n");
+    let (_, sc) = activate_over_running_cache(&w);
+    assert_eq!(*sc.restarts.borrow(), vec!["sccache-dav.service".to_string()]);
+}
+
 const LC_UNIT: &str = "[Service]\nType=simple\nExecStart=@SPIRA_PROD_ROOT@/bin/spira-lc serve\n";
 
 /// Release `A` whose `spira-lc` differs from the previous release `P`'s, with `current`
