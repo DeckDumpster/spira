@@ -64,7 +64,7 @@ impl<B: Backend> Rig<B> {
             &args,
             &Call {
                 now: AT,
-                request: &req.id,
+                request: &req.id, inputs: &crate::control::claimable::FIXED,
             },
         )
     }
@@ -820,7 +820,7 @@ fn the_requeue_orphans_command_leaves_the_round_it_is_told_is_live() {
     let later = |argv: &[&str]| {
         let args: Vec<String> = argv.iter().map(|s| s.to_string()).collect();
         let req = r.req();
-        state::run(&r.s, &args, &Call { now: AT + 3600, request: &req.id })
+        state::run(&r.s, &args, &Call { now: AT + 3600, request: &req.id, inputs: &crate::control::claimable::FIXED })
     };
     let (rc, dry) = later(&["requeue-orphans", "--actor", "test"]);
     assert_eq!(rc, 0, "{dry}");
@@ -838,7 +838,7 @@ fn the_requeue_orphans_command_abandons_a_round_with_no_driver_after_two_minutes
     let at = |now: i64| {
         let args: Vec<String> = ["requeue-orphans", "--actor", "test"].iter().map(|s| s.to_string()).collect();
         let req = r.req();
-        state::run(&r.s, &args, &Call { now, request: &req.id })
+        state::run(&r.s, &args, &Call { now, request: &req.id, inputs: &crate::control::claimable::FIXED })
     };
     let (rc, early) = at(AT + 60);
     assert_eq!(rc, 0, "{early}");
@@ -849,7 +849,7 @@ fn the_requeue_orphans_command_abandons_a_round_with_no_driver_after_two_minutes
     assert_eq!(round_state(&r), BatchState::Open, "a dry run writes nothing");
     let args: Vec<String> = ["requeue-orphans", "--actor", "test", "--apply"].iter().map(|s| s.to_string()).collect();
     let req = r.req();
-    let (rc, out) = state::run(&r.s, &args, &Call { now: AT + 180, request: &req.id });
+    let (rc, out) = state::run(&r.s, &args, &Call { now: AT + 180, request: &req.id, inputs: &crate::control::claimable::FIXED });
     assert_eq!(rc, 0, "{out}");
     assert_eq!(round_state(&r), BatchState::Abandoned);
 }
@@ -1367,4 +1367,46 @@ fn a_cut_ships_each_step_it_committed_under_its_machine() {
         .collect();
     assert!(cut.iter().any(|(s, b)| s == "lifecycle.bead" && b == "sp-a"), "{cut:?}");
     assert!(cut.iter().any(|(s, b)| s == "lifecycle.delivery" && b == "sp-b"), "the cut's delivery steps ship under their own machine: {cut:?}");
+}
+
+fn claim_view_of(r: &Rig, id: &str) -> serde_json::Value {
+    let (rc, out) = r.lc(&["list", "--ids", id]);
+    assert_eq!(rc, 0, "{out}");
+    let rows: serde_json::Value = serde_json::from_str(&out).unwrap();
+    rows[0]["claim_view"].clone()
+}
+
+#[test]
+fn list_answers_a_beads_claimability_from_its_prerequisite_when_it_is_read() {
+    let r = Rig::new();
+    for id in ["sp-a", "sp-b"] {
+        r.ok(&["create-bead", id, "--repo", "spira", "--ready"]);
+    }
+    r.ok(&["set-claim-inputs", "sp-a"]);
+    r.ok(&["set-claim-inputs", "sp-b", "--block", "sp-a"]);
+
+    let b = claim_view_of(&r, "sp-b");
+    assert_eq!((b["verdict"].as_str(), b["blocker"].as_str()), (Some("blocked"), Some("sp-a")));
+    assert_eq!(claim_view_of(&r, "sp-a")["verdict"], "claimable");
+
+    r.bead_event("sp-a", "READY", "0", r#"{"ContentOnBase":{"proof":"p"}}"#);
+    assert_eq!(r.state("sp-a"), BeadState::Landed);
+    assert_eq!(claim_view_of(&r, "sp-b")["verdict"], "claimable", "no write-back stands between the landing and the next list");
+    assert!(claim_view_of(&r, "sp-a").is_null(), "a LANDED record has no claim view");
+}
+
+#[test]
+fn list_with_unreadable_view_inputs_still_lists_and_each_ready_row_says_it_cannot_tell() {
+    let r = Rig::new();
+    r.ok(&["create-bead", "sp-a", "--repo", "spira", "--ready"]);
+    r.ok(&["create-bead", "sp-w", "--repo", "spira"]);
+    let args: Vec<String> = ["list"].iter().map(|s| s.to_string()).collect();
+    let req = r.req();
+    let (rc, out) = state::run(&r.s, &args, &Call { now: AT, request: &req.id, inputs: &crate::control::claimable::UNREADABLE });
+    assert_eq!(rc, 0, "{out}");
+    let rows: serde_json::Value = serde_json::from_str(&out).unwrap();
+    let by = |id: &str| rows.as_array().unwrap().iter().find(|r| r["bead_id"] == id).unwrap().clone();
+    assert_eq!(by("sp-a")["claim_view"]["verdict"], "cannot-tell");
+    assert!(by("sp-a")["claim_view"]["error"].as_str().unwrap().contains("SPIRA_STACK_MAX_DEPTH"));
+    assert!(by("sp-w")["claim_view"].is_null(), "a record the view does not cover is untouched");
 }

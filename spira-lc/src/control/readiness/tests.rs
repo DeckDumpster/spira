@@ -56,7 +56,7 @@ impl Rig {
         let request = format!("t/{}", self.n.get());
         let call = Call {
             now: self.now(),
-            request: &request,
+            request: &request, inputs: &crate::control::claimable::FIXED,
         };
         let args: Vec<String> = argv.iter().map(|s| s.to_string()).collect();
         if super::VERBS.contains(&argv[0]) {
@@ -592,6 +592,7 @@ impl crate::control::claimable::Inputs for Fixed {
             return Err("SPIRA_STACK_MAX_DEPTH is unreadable".into());
         }
         Ok(crate::control::claimable::Config {
+            queue_wait: String::new(),
             stack_max: 4,
             incident_label: "incident".into(),
             scope_label: String::new(),
@@ -606,6 +607,10 @@ impl crate::control::claimable::Inputs for Fixed {
     fn run_dir(&self) -> Result<std::path::PathBuf, String> {
         Ok(self.run.clone())
     }
+
+    fn partitions(&self, _: &crate::control::claimable::Config) -> Result<Vec<spira_config::runes::Partition>, String> {
+        Ok(Vec::new())
+    }
 }
 
 impl Rig {
@@ -614,7 +619,7 @@ impl Rig {
     }
 
     fn claimable_with(&self, inputs: Fixed, extra: &[&str]) -> Value {
-        let call = Call { now: self.now(), request: "t/claimable" };
+        let call = Call { now: self.now(), request: "t/claimable", inputs: &crate::control::claimable::FIXED };
         let mut args = vec!["claimable".to_string()];
         args.extend(extra.iter().map(|s| s.to_string()));
         let (code, out) = crate::control::claimable::run(&self.store, &args, &inputs, &call);
@@ -763,7 +768,7 @@ fn claimable_that_cannot_read_its_config_answers_cannot_tell_with_no_list() {
     let r = Rig::new();
     let run = testkit::TempDir::new("claimable-fail");
     three_ready(&r);
-    let call = Call { now: r.now(), request: "t/claimable" };
+    let call = Call { now: r.now(), request: "t/claimable", inputs: &crate::control::claimable::FIXED };
     let inputs = Fixed { run: run.path().into(), rowless: Vec::new(), fail: true };
     let (code, out) = crate::control::claimable::run(&r.store, &["claimable".to_string()], &inputs, &call);
     assert_eq!(code, crate::CANNOT_TELL);

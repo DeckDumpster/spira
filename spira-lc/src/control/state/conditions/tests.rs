@@ -30,7 +30,7 @@ impl Rig {
         self.n.set(self.n.get() + 1);
         let args: Vec<String> = argv.iter().map(|s| s.to_string()).collect();
         let req = format!("r{}", self.n.get());
-        state::run(&self.s, &args, &Call { now: self.now.get(), request: &req })
+        state::run(&self.s, &args, &Call { now: self.now.get(), request: &req, inputs: &crate::control::claimable::FIXED })
     }
 
     fn ok(&self, argv: &[&str]) {

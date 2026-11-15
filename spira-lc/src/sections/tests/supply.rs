@@ -192,7 +192,12 @@ fn the_groom_pass_reads_the_listed_rows_and_the_ready_sets_claimable_count() {
                     { "bead_id": "c", "state": "READY", "updated_at": null },
                     { "state": "READY", "updated_at": 1 },
                 ])),
-                "ready-set" => (0, json!({ "lifecycle": [{}, {}], "items": [] })),
+                "claimable" => (0, json!({ "beads": [
+                    { "verdict": "claimable", "runes": ["builder"] },
+                    { "verdict": "claimable", "runes": ["ops"] },
+                    { "verdict": "claimable", "runes": [] },
+                    { "verdict": "blocked", "runes": [] },
+                ] })),
                 "section" if args[1] == "get" => (1, json!({})),
                 "section" => (0, json!({})),
                 other => panic!("unexpected verb {other}"),
@@ -205,16 +210,16 @@ fn the_groom_pass_reads_the_listed_rows_and_the_ready_sets_claimable_count() {
 }
 
 #[test]
-fn a_list_or_ready_set_that_fails_stops_the_pass_before_any_write() {
+fn a_list_or_claim_view_that_fails_stops_the_pass_before_any_write() {
     struct Down;
     impl Lc for Down {
         fn call(&self, args: &[String]) -> (i32, Value) {
-            assert!(args[0] == "list" || args[0] == "ready-set", "nothing is written: {args:?}");
+            assert!(args[0] == "list" || args[0] == "claimable", "nothing is written: {args:?}");
             (2, json!({ "cannot_tell": "down" }))
         }
     }
     assert!(section::publish(&Down, MIDNIGHT, INTERVAL).unwrap_err().starts_with("list: exit 2"));
-    assert!(section::claimable_ready(&Down).unwrap_err().starts_with("ready-set: exit 2"));
+    assert!(section::claimable_ready(&Down).unwrap_err().starts_with("claimable: exit 2"));
 }
 
 #[test]

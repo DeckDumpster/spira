@@ -74,8 +74,6 @@ pub struct Config {
     pub pilgrim_label: String,
     /// `SPIRA_QUEUE_DIR` — where each repo's `integrations` record lives; a member it names is not claimable.
     pub queue_dir: String,
-    /// `SPIRA_READY_TTL_S` — how old a published ready answer a reader accepts, and how long `ready-count` shares one it judged itself; 0 = always judge.
-    pub ready_ttl_s: u32,
     /// `SPIRA_LC_STORE_PATH` is set: the control store is where readiness is published.
     pub control_store: bool,
 }
@@ -100,7 +98,6 @@ pub fn load_config() -> Result<Config, String> {
         incident_label: spira_config::process::cfg("SPIRA_INCIDENT_LABEL")?,
         pilgrim_label: spira_config::process::cfg("SPIRA_PILGRIM_LABEL")?,
         queue_dir: spira_config::process::cfg("SPIRA_QUEUE_DIR")?,
-        ready_ttl_s: spira_config::process::cfg_parse("SPIRA_READY_TTL_S")?,
         control_store: !spira_config::process::cfg("SPIRA_LC_STORE_PATH")?.is_empty(),
     })
 }
@@ -208,21 +205,25 @@ impl Store {
         Ok(out)
     }
 
-    /// The dispatcher's last judgement of the READY and REWORK beads, in one read.
-    pub fn ready_set(&self) -> Result<ReadySet, String> {
-        let text = self.lc_run(&["ready-set"]).map_err(|e| format!("spira-lc ready-set: {e}"))?;
-        let v: serde_json::Value = serde_json::from_str(text.trim()).map_err(|e| format!("spira-lc ready-set: not JSON: {e}"))?;
-        let part = |k: &str| v.get(k).filter(|x| x.is_array()).map(|x| x.to_string()).ok_or_else(|| format!("spira-lc ready-set: no {k} array"));
-        let lifecycle = part("lifecycle")?;
-        let stamp = |k: &str| v.get(k).and_then(serde_json::Value::as_str).map(str::to_string);
-        Ok(ReadySet {
-            rows: rank::parse_ready(&part("items")?)?,
-            express: rank::express_ids(&lifecycle)?,
-            lifecycle: rank::parse_lifecycle(&lifecycle)?,
-            planning_watermark: stamp("planning_watermark"),
-            judged_at: stamp("judged_at"),
-            unjudged: v.get("unjudged").and_then(serde_json::Value::as_u64).ok_or("spira-lc ready-set: no unjudged count")?,
-        })
+    /// The claim view of every READY and REWORK bead, answered by the control store from the
+    /// lifecycle rows when it is asked.
+    pub fn claim_view(&self) -> Result<Vec<ViewRow>, String> {
+        let text = self.lc_run(&["claimable"]).map_err(|e| format!("spira-lc claimable: {e}"))?;
+        let v: serde_json::Value = serde_json::from_str(text.trim()).map_err(|e| format!("spira-lc claimable: not JSON: {e}"))?;
+        let beads = v.get("beads").and_then(serde_json::Value::as_array).ok_or("spira-lc claimable: no beads array")?;
+        let rows = serde_json::Value::Array(beads.iter().map(|b| b["row"].clone()).collect()).to_string();
+        let mut lifecycle = rank::parse_lifecycle(&rows)?;
+        beads
+            .iter()
+            .map(|b| {
+                let id = b["bead_id"].as_str().ok_or("spira-lc claimable: a bead with no bead_id")?.to_string();
+                let word = b["verdict"].as_str().unwrap_or_default();
+                let verdict = crate::verdicts::Kind::from_word(word).ok_or_else(|| format!("spira-lc claimable: {id} has the verdict {word:?}, which this build does not know"))?;
+                let runes = b["runes"].as_array().map(|r| r.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default();
+                let lifecycle = lifecycle.remove(&id).ok_or_else(|| format!("spira-lc claimable: {id} has no row"))?;
+                Ok(ViewRow { id, verdict, runes, lifecycle })
+            })
+            .collect()
     }
 
     pub fn express_ids(&self) -> Result<std::collections::BTreeSet<String>, String> {
@@ -324,17 +325,14 @@ fn first_reason(r: &Ran) -> &str {
     r.stderr.lines().chain(r.stdout.lines()).find(|l| !l.trim().is_empty()).unwrap_or("no output")
 }
 
-/// What [`Store::ready_set`] read: the beads the dispatcher judged claimable, the planning
-/// watermark and time of the oldest judgement among them, and how many READY or REWORK beads
-/// no pass has judged yet.
+/// One bead of the claim view: its verdict, the runes that would take it, and
+/// the lifecycle row the view judged it from.
 #[derive(Debug)]
-pub struct ReadySet {
-    pub rows: Vec<ReadyRow>,
-    pub lifecycle: HashMap<String, LifecycleRow>,
-    pub express: std::collections::BTreeSet<String>,
-    pub planning_watermark: Option<String>,
-    pub judged_at: Option<String>,
-    pub unjudged: u64,
+pub struct ViewRow {
+    pub id: String,
+    pub verdict: crate::verdicts::Kind,
+    pub runes: Vec<String>,
+    pub lifecycle: LifecycleRow,
 }
 
 /// The condition key a refused readiness publish raises.

@@ -107,7 +107,7 @@ mod tests {
     fn lc(s: &Store<MemBackend>, argv: &[&str]) -> (i32, String) {
         let args: Vec<String> = argv.iter().map(|a| a.to_string()).collect();
         let request = format!("t/{argv:?}");
-        super::super::run(s, &args, &Call { now: 100, request: &request })
+        super::super::run(s, &args, &Call { now: 100, request: &request, inputs: &crate::control::claimable::FIXED })
     }
 
     fn state_of(s: &Store<MemBackend>, id: &str) -> String {
@@ -129,7 +129,7 @@ mod tests {
 
     fn settle_with(s: &Store<MemBackend>, id: &str, sha: &str, on_ref: bool, names_bead: bool) -> (i32, String) {
         let landing = Landing { sha, base: "refs/heads/local/main", on_ref, names_bead };
-        settle(s, id, &landing, "concierge", &Call { now: 100, request: &format!("t/settle/{id}") })
+        settle(s, id, &landing, "concierge", &Call { now: 100, request: &format!("t/settle/{id}"), inputs: &crate::control::claimable::FIXED })
     }
 
     #[test]

@@ -89,8 +89,6 @@ fn express_is_a_bool_flag_and_never_swallows_what_follows() {
     assert_eq!(a.pos, vec!["labels".to_string(), String::new()]);
 }
 
-// ---- ready-count shares one computation per ready_ttl_s (sp-su318h) ----------------------
-
 // ---- readiness is published for every live state ----------------------------------------
 
 mod published {
@@ -290,391 +288,147 @@ mod published {
     }
 }
 
-// ---- a reader answers from the readiness the dispatcher published -------------------------
+// ---- a reader answers from the claim view, asked when it reads --------------------------
 
-mod published_read {
+mod claim_view_read {
     use super::*;
     use serde_json::{json, Value};
     use spira_store::lc_call::{LcClient, Reply, Transport};
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
-    fn snooze() -> String {
-        spira_store::lc_state::snooze_reason(ready::now_epoch() + 3_600)
+    fn row(id: &str, state: &str) -> Value {
+        json!({ "bead_id": id, "state": state, "holds": [], "tip": null })
     }
 
-    fn lifecycle() -> Vec<Value> {
-        let row = |id: &str,
-                   state: &str,
-                   holds: Value,
-                   reason: Option<String>,
-                   tip: Option<&str>| {
-            json!({ "bead_id": id, "state": state, "holds": holds, "reason": reason, "tip": tip })
-        };
-        vec![
-            row("sp-free", "READY", json!([]), None, None),
-            row("sp-held", "READY", json!(["manual"]), None, None),
-            row("sp-snoozed", "READY", json!(["wait"]), Some(snooze()), None),
-            row("sp-blocked", "READY", json!([]), None, None),
-            row("sp-stacked", "READY", json!([]), None, None),
-            row("sp-epic", "READY", json!([]), None, None),
-            row("sp-rework", "REWORK", json!([]), None, None),
-            row("sp-working", "WORKING", json!([]), None, None),
-            row(
-                "sp-certified",
-                "CERTIFIED",
-                json!([]),
-                None,
-                Some("0123456789abcdef0123456789abcdef01234567"),
-            ),
-        ]
+    fn item(id: &str) -> Value {
+        json!({ "id": id, "title": id, "priority": 2, "issue_type": "task", "labels": ["repo:spira"], "dependencies": [] })
     }
 
-    fn item(id: &str, kind: &str, blocked_on: Option<&str>) -> Value {
-        let deps: Vec<Value> = blocked_on
-            .map(|b| json!({ "issue_id": id, "depends_on_id": b, "type": "blocks" }))
-            .into_iter()
-            .collect();
-        json!({ "id": id, "title": id, "priority": 2, "issue_type": kind, "labels": ["repo:spira"], "dependencies": deps })
-    }
-
-    fn items() -> Vec<Value> {
-        vec![
-            item("sp-free", "task", None),
-            item("sp-held", "task", None),
-            item("sp-snoozed", "task", None),
-            item("sp-blocked", "task", Some("sp-working")),
-            item("sp-stacked", "task", Some("sp-certified")),
-            item("sp-epic", "epic", None),
-            item("sp-rework", "task", None),
-            item("sp-working", "task", None),
-            item("sp-certified", "task", None),
-        ]
-    }
-
-    fn pick(rows: &[Value], key: &str, ids: &[&str]) -> Vec<Value> {
-        let mut out: Vec<Value> = rows
-            .iter()
-            .filter(|r| ids.contains(&r[key].as_str().unwrap()))
-            .cloned()
-            .collect();
-        out.sort_by(|a, b| a[key].as_str().cmp(&b[key].as_str()));
-        out
-    }
-
-    /// The store as the dispatcher left it, answering the reads a judging pass makes and, once
-    /// `published` holds a pass, the one `ready-set` read.
-    struct Store0 {
+    /// A store whose claim view says `sp-a` is claimable for `builder` and `sp-b` is blocked, and
+    /// whose stored readiness says both are claimable. `view_code` is the exit of the view read.
+    struct Double {
         seen: Mutex<Vec<Vec<String>>>,
-        published: Mutex<Option<Value>>,
+        view_code: i32,
     }
 
-    impl Transport for Store0 {
-        fn exchange(
-            &self,
-            argv: &[String],
-            stdin: Option<&str>,
-            _d: Duration,
-        ) -> Result<Reply, String> {
+    impl Transport for Double {
+        fn exchange(&self, argv: &[String], _: Option<&str>, _: Duration) -> Result<Reply, String> {
             self.seen.lock().unwrap().push(argv.to_vec());
             let words: Vec<&str> = argv.iter().map(String::as_str).collect();
-            let all = lifecycle();
-            let out = match words.as_slice() {
-                ["publish-readiness"] => {
-                    *self.published.lock().unwrap() = serde_json::from_str(stdin.unwrap()).ok();
-                    String::new()
-                }
-                ["ready-set"] => {
-                    let p = self
-                        .published
-                        .lock()
-                        .unwrap()
-                        .clone()
-                        .expect("a dispatcher pass before the read");
-                    let claimable: Vec<&str> = p["entries"]
-                        .as_array()
-                        .unwrap()
-                        .iter()
-                        .filter(|e| e["claimable"] == true)
-                        .map(|e| e["id"].as_str().unwrap())
-                        .collect();
-                    let ready: Vec<Value> = all
-                        .iter()
-                        .filter(|r| matches!(r["state"].as_str(), Some("READY" | "REWORK")))
-                        .filter(|r| claimable.contains(&r["bead_id"].as_str().unwrap()))
-                        .cloned()
-                        .collect();
-                    let ids: Vec<&str> = ready
-                        .iter()
-                        .map(|r| r["bead_id"].as_str().unwrap())
-                        .collect();
-                    json!({ "planning_watermark": p["planning_watermark"], "judged_at": p["computed_at"], "unjudged": 0, "lifecycle": ready, "items": pick(&items(), "id", &ids) }).to_string()
-                }
-                ["list", "--state", states, ..] => {
-                    let wanted: Vec<&str> = states.split(',').collect();
-                    Value::Array(
-                        all.into_iter()
-                            .filter(|r| wanted.contains(&r["state"].as_str().unwrap()))
-                            .collect(),
-                    )
-                    .to_string()
-                }
-                ["list", "--express", ..] => "[]".to_string(),
-                ["list", "--ids", ids] => {
-                    let wanted: Vec<&str> = ids.split(',').collect();
-                    Value::Array(pick(&all, "bead_id", &wanted)).to_string()
-                }
-                ["plan", "watermark"] => r#"{"watermark":7}"#.to_string(),
+            let (code, out, err) = match words.as_slice() {
+                ["claimable"] if self.view_code != 0 => (self.view_code, String::new(), "the control store is unreadable".to_string()),
+                ["claimable"] => (
+                    0,
+                    json!({ "rev": 1, "cannot_tell": 0, "beads": [
+                        { "bead_id": "sp-a", "verdict": "claimable", "blocker": null, "runes": ["builder"], "row": row("sp-a", "READY") },
+                        { "bead_id": "sp-b", "verdict": "blocked", "blocker": "sp-a", "runes": [], "row": row("sp-b", "READY") },
+                    ] })
+                    .to_string(),
+                    String::new(),
+                ),
+                ["ready-set"] => (
+                    0,
+                    json!({ "planning_watermark": "7", "judged_at": verdicts::stamp(ready::now_epoch()), "unjudged": 0, "lifecycle": [row("sp-a", "READY"), row("sp-b", "READY")], "items": [item("sp-a"), item("sp-b")] }).to_string(),
+                    String::new(),
+                ),
+                ["list", "--express", ..] => (0, "[]".into(), String::new()),
+                ["list", "--state", ..] => (0, json!([row("sp-a", "READY"), row("sp-b", "READY")]).to_string(), String::new()),
                 ["plan", "items", "--ids", ids] => {
                     let wanted: Vec<&str> = ids.split(',').collect();
-                    json!({ "watermark": 7, "items": pick(&items(), "id", &wanted) }).to_string()
+                    let items: Vec<Value> = [item("sp-a"), item("sp-b")].into_iter().filter(|i| wanted.contains(&i["id"].as_str().unwrap())).collect();
+                    (0, json!({ "watermark": 7, "items": items }).to_string(), String::new())
                 }
-                _ => String::new(),
+                ["plan", "watermark"] => (0, r#"{"watermark":7}"#.into(), String::new()),
+                _ => (0, String::new(), String::new()),
             };
-            Ok(Reply {
-                code: 0,
-                out,
-                err: String::new(),
-            })
+            Ok(Reply { code, out, err })
         }
     }
 
-    fn setup() -> (Arc<Store0>, Store) {
-        let svc = Arc::new(Store0 {
-            seen: Mutex::new(Vec::new()),
-            published: Mutex::new(None),
-        });
-        let st = Store {
-            bdq: "/nonexistent/bdq".into(),
-            lc: LcClient::over(svc.clone(), true),
-            lc_bin: "/nonexistent/spira-lc".into(),
-            timeout: Duration::from_secs(1),
-            views: None,
-        };
+    fn setup(view_code: i32) -> (Arc<Double>, Store) {
+        let svc = Arc::new(Double { seen: Mutex::new(Vec::new()), view_code });
+        let st = Store { bdq: "/nonexistent/bdq".into(), lc: LcClient::over(svc.clone(), true), lc_bin: "/nonexistent/spira-lc".into(), timeout: Duration::from_secs(1), views: None };
         (svc, st)
     }
 
     fn env_over<R>(f: impl FnOnce(&mut Env) -> R) -> R {
-        env_with(true, f)
-    }
-
-    fn env_with<R>(control_store: bool, f: impl FnOnce(&mut Env) -> R) -> R {
         let mut stdin = std::io::empty();
         let none = |_: &str| None;
-        let config = Config {
-            control_store,
-            ready_ttl_s: 60,
-            stack_max_depth: 4,
-            run: "/nonexistent/run".into(),
-            queue_dir: "/nonexistent/queue".into(),
-            ..Config::default()
-        };
-        f(&mut Env {
-            stdin: &mut stdin,
-            config,
-            lookup: &none,
-        })
+        let config = Config { control_store: true, stack_max_depth: 4, run: "/nonexistent/run".into(), queue_dir: "/nonexistent/queue".into(), ..Config::default() };
+        f(&mut Env { stdin: &mut stdin, config, lookup: &none })
     }
 
     fn ids(rows: &[rank::ReadyRow]) -> Vec<&str> {
         rows.iter().map(|r| r.id.as_str()).collect()
     }
 
-    #[test]
-    fn a_reader_asks_the_store_once_for_the_ready_set() {
-        let (svc, st) = setup();
-        env_over(|env| {
-            let a = Args::parse(&[]).unwrap();
-            judge_rows(&a, env, &st, None, true).unwrap();
-            svc.seen.lock().unwrap().clear();
-            claimable_over(&a, env, &st).unwrap();
-        });
-        let seen = svc.seen.lock().unwrap().clone();
-        assert_eq!(seen, [vec!["ready-set".to_string()]], "{seen:?}");
+    fn seen(svc: &Double) -> Vec<String> {
+        svc.seen.lock().unwrap().iter().map(|a| a.join(" ")).collect()
     }
 
     #[test]
-    fn the_published_read_returns_the_rows_judge_rows_returns_for_the_same_store() {
-        let (svc, st) = setup();
-        env_over(|env| {
-            let a = Args::parse(&[]).unwrap();
-            let (judged, entries) = judge_rows(&a, env, &st, None, true).unwrap();
-            let kinds: Vec<verdicts::Kind> = entries.iter().map(|e| e.verdict).collect();
-            for k in [
-                verdicts::Kind::Claimable,
-                verdicts::Kind::Held,
-                verdicts::Kind::Snoozed,
-                verdicts::Kind::OutOfScope,
-            ] {
-                assert!(
-                    kinds.contains(&k),
-                    "the fixture must reach {k:?}: {entries:?}"
-                );
-            }
-            assert!(entries
-                .iter()
-                .any(|e| e.id == "sp-blocked" && e.verdict == verdicts::Kind::Blocked));
-            let (read, fresh) = claimable_over(&a, env, &st).unwrap();
-            assert_eq!(fresh.expect("a published answer says what it is from").planning_watermark.as_deref(), Some("7"));
-            assert_eq!(ids(&read), ids(&judged));
-            assert_eq!(read, judged);
-            assert!(
-                ids(&read).contains(&"sp-stacked") && ids(&read).contains(&"sp-rework"),
-                "{:?} {:?}",
-                ids(&read),
-                entries
-            );
-            drop(svc);
-        });
+    fn rune_ready_lists_the_beads_the_view_says_the_rune_would_take() {
+        let (svc, st) = setup(0);
+        let view = env_over(|env| claimable_over(&Args::parse(&[]).unwrap(), env, &st).unwrap());
+        assert_eq!(ids(&taken_by(&view, "builder").into_iter().cloned().collect::<Vec<_>>()), ["sp-a"]);
+        assert!(taken_by(&view, "ops").is_empty(), "a rune the view does not name takes nothing");
+        assert!(!seen(&svc).iter().any(|c| c == "ready-set"), "{:?}", seen(&svc));
     }
 
     #[test]
-    fn a_reader_does_not_trust_a_judgement_for_a_bead_whose_hold_has_changed_since() {
-        let (svc, st) = setup();
-        env_over(|env| {
-            let a = Args::parse(&[]).unwrap();
-            judge_rows(&a, env, &st, None, true).unwrap();
-            let mut p = svc.published.lock().unwrap().take().unwrap();
-            for e in p["entries"].as_array_mut().unwrap() {
-                if e["id"] == "sp-held" || e["id"] == "sp-snoozed" {
-                    e["claimable"] = json!(true);
-                }
-            }
-            *svc.published.lock().unwrap() = Some(p);
-            assert!(!ids(&claimable_over(&a, env, &st).unwrap().0)
-                .iter()
-                .any(|i| *i == "sp-held" || *i == "sp-snoozed"));
-        });
-    }
-
-    #[test]
-    fn a_reader_judges_for_itself_while_any_ready_bead_awaits_its_first_judgement() {
-        struct Fresh(Store0);
-        impl Transport for Fresh {
-            fn exchange(
-                &self,
-                argv: &[String],
-                stdin: Option<&str>,
-                d: Duration,
-            ) -> Result<Reply, String> {
-                if argv[0] == "ready-set" {
-                    self.0.seen.lock().unwrap().push(argv.to_vec());
-                    return Ok(Reply { code: 0, out: r#"{"planning_watermark":"7","judged_at":"2026-11-11T10:00:05Z","unjudged":1,"lifecycle":[{"bead_id":"sp-free","state":"READY","holds":[]}],"items":[{"id":"sp-free","labels":["repo:spira"]}]}"#.into(), err: String::new() });
-                }
-                self.0.exchange(argv, stdin, d)
-            }
-        }
-        let svc = Arc::new(Fresh(Store0 {
-            seen: Mutex::new(Vec::new()),
-            published: Mutex::new(None),
-        }));
-        let st = Store {
-            bdq: "/nonexistent/bdq".into(),
-            lc: LcClient::over(svc, true),
-            lc_bin: "/nonexistent/spira-lc".into(),
-            timeout: Duration::from_secs(1),
-            views: None,
-        };
-        env_over(|env| {
-            let (rows, fresh) = claimable_over(&Args::parse(&[]).unwrap(), env, &st).unwrap();
-            assert_eq!(fresh, None, "rows judged here name no pass");
-            assert_eq!(ids(&rows), ["sp-free", "sp-rework", "sp-stacked"]);
-        });
-    }
-    fn seen_of(svc: &Store0) -> Vec<Vec<String>> {
-        svc.seen.lock().unwrap().clone()
-    }
-
-    fn only_ready_set() -> Vec<Vec<String>> {
-        vec![vec!["ready-set".to_string()]]
-    }
-
-    #[test]
-    fn urgent_over_a_published_pass_reads_the_ready_set_once() {
-        let (svc, st) = setup();
-        let out = env_over(|env| {
-            let a = Args::parse(&[]).unwrap();
-            judge_rows(&a, env, &st, None, true).unwrap();
-            svc.seen.lock().unwrap().clear();
-            urgent_over(&a, env, &st).unwrap()
-        });
-        assert_eq!(seen_of(&svc), only_ready_set());
-        assert_eq!(out, "sp-rework\t2\t1\t0\n");
-    }
-
-    #[test]
-    fn ready_count_express_over_a_published_pass_reads_the_ready_set_once() {
-        let (svc, st) = setup();
-        env_over(|env| {
-            judge_rows(&Args::parse(&[]).unwrap(), env, &st, None, true).unwrap();
-            svc.seen.lock().unwrap().clear();
-            let a = Args::parse(&["".into(), "--express".into()]).unwrap();
-            let o = ready_count_over(&a, env, &st);
-            assert_eq!((o.code, o.out.as_str()), (0, "0"), "{o:?}");
-        });
-        assert_eq!(seen_of(&svc), only_ready_set());
-    }
-
-    #[test]
-    fn select_machine_over_the_published_rows_reads_the_ready_set_once_and_ranks_as_judging_does() {
-        let (svc, st) = setup();
+    fn select_machine_keeps_only_the_beads_the_view_lists_as_claimable() {
+        let (svc, st) = setup(0);
         let a = Args::parse(&["--rune".into(), "builder".into(), "--blockers".into(), "machine".into()]).unwrap();
-        let (mut fast, fast_rework) = env_over(|env| {
-            judge_rows(&a, env, &st, None, true).unwrap();
-            let mut rows = claimable_over(&a, env, &st).unwrap().0;
-            svc.seen.lock().unwrap().clear();
-            let lc = machine_filter(&a, env, &st, &mut rows).unwrap_or_else(|o| panic!("{o:?}"));
-            (rows, lc.into_iter().filter(|(_, r)| r.state == lifecycle::bead::BeadState::Rework).map(|(k, _)| k).collect::<BTreeSet<_>>())
-        });
-        assert_eq!(seen_of(&svc), only_ready_set());
-        let (mut slow, slow_rework) = env_with(false, |env| {
-            let mut rows = claimable_over(&a, env, &st).unwrap().0;
-            let lc = machine_filter(&a, env, &st, &mut rows).unwrap_or_else(|o| panic!("{o:?}"));
-            (rows, lc.into_iter().filter(|(_, r)| r.state == lifecycle::bead::BeadState::Rework).map(|(k, _)| k).collect::<BTreeSet<_>>())
-        });
-        fast.sort_by(|x, y| x.id.cmp(&y.id));
-        slow.sort_by(|x, y| x.id.cmp(&y.id));
-        assert_eq!(fast, slow);
-        assert_eq!(fast_rework, slow_rework);
-    }
-
-    fn fixed_ready_set(judged_at: &str) -> (Arc<Store0>, Store) {
-        struct Fixed(Arc<Store0>, String);
-        impl Transport for Fixed {
-            fn exchange(&self, argv: &[String], stdin: Option<&str>, d: Duration) -> Result<Reply, String> {
-                if argv[0] == "ready-set" {
-                    self.0.seen.lock().unwrap().push(argv.to_vec());
-                    let at = &self.1;
-                    return Ok(Reply { code: 0, out: format!(r#"{{"planning_watermark":"7","judged_at":"{at}","unjudged":0,"lifecycle":[{{"bead_id":"sp-free","state":"READY","holds":[]}}],"items":[{{"id":"sp-free","labels":["repo:spira"]}}]}}"#), err: String::new() });
-                }
-                self.0.exchange(argv, stdin, d)
-            }
-        }
-        let inner = Arc::new(Store0 { seen: Mutex::new(Vec::new()), published: Mutex::new(None) });
-        let st = Store { bdq: "/nonexistent/bdq".into(), lc: LcClient::over(Arc::new(Fixed(inner.clone(), judged_at.into())), true), lc_bin: "/nonexistent/spira-lc".into(), timeout: Duration::from_secs(1), views: None };
-        (inner, st)
+        let mut rows = st.items_by_ids(&["sp-a".to_string(), "sp-b".to_string()]).unwrap();
+        svc.seen.lock().unwrap().clear();
+        let lc = env_over(|env| machine_filter(&a, env, &st, &mut rows).unwrap_or_else(|o| panic!("{o:?}")));
+        assert_eq!(ids(&rows), ["sp-a"]);
+        assert!(lc.contains_key("sp-a"));
+        assert!(!seen(&svc).iter().any(|c| c == "ready-set"), "{:?}", seen(&svc));
     }
 
     #[test]
-    fn a_published_answer_older_than_the_accepted_age_is_judged_here() {
-        let (_, old) = fixed_ready_set("2020-01-01T00:00:00Z");
-        let (_, new) = fixed_ready_set(&verdicts::stamp(ready::now_epoch()));
-        env_over(|env| {
-            let a = Args::parse(&[]).unwrap();
-            assert_eq!(claimable_over(&a, env, &old).unwrap().1, None, "a stale verdict is not accepted");
-            assert!(claimable_over(&a, env, &new).unwrap().1.is_some(), "a fresh verdict is");
-        });
+    fn bulk_counts_come_from_the_runes_the_view_names() {
+        let (_, st) = setup(0);
+        let view = env_over(|env| viewed(&Args::parse(&[]).unwrap(), env, &st).unwrap());
+        let parts = vec![ready::RunePart { name: "builder".into(), inc: vec![], exc: vec![] }, ready::RunePart { name: "ops".into(), inc: vec![], exc: vec![] }];
+        assert_eq!(ready::bucket_taken(&view.rows, &view.runes, &parts), [("builder".to_string(), 1), ("ops".to_string(), 0)]);
     }
 
     #[test]
-    fn accepts_a_stamp_up_to_the_age_and_refuses_beyond_it_or_without_one() {
-        let now = 1_800_000_000;
-        let at = |age: i64| Some(verdicts::stamp(now - age));
-        assert!(accepts(at(60).as_deref(), now, 60));
-        assert!(!accepts(at(61).as_deref(), now, 60));
-        assert!(!accepts(None, now, 60));
-        assert!(!accepts(Some("not a stamp"), now, 60));
-        assert!(!accepts(at(0).as_deref(), now, 0), "0 means always judge");
+    fn ready_count_counts_the_view_claimable_rows() {
+        let (_, st) = setup(0);
+        let n = env_over(|env| machine_claimable_shared(&Args::parse(&[]).unwrap(), env, &st).unwrap().len());
+        assert_eq!(n, 1);
+    }
+
+    #[test]
+    fn urgent_lists_the_views_rework_beads_and_reads_the_view_once() {
+        let (svc, st) = setup(0);
+        let out = env_over(|env| urgent_over(&Args::parse(&[]).unwrap(), env, &st).unwrap());
+        assert_eq!(out, "", "sp-a is READY at priority 2, so nothing outranks the lanes");
+        let calls = seen(&svc);
+        assert_eq!(calls.iter().filter(|c| *c == "claimable").count(), 1, "{calls:?}");
+        assert!(!calls.iter().any(|c| c == "ready-set"), "{calls:?}");
+    }
+
+    #[test]
+    fn ready_count_express_counts_the_views_claimable_rows_that_are_express() {
+        let (_, st) = setup(0);
+        let n = env_over(|env| ready_count_over(&Args::parse(&["".into(), "--express".into()]).unwrap(), env, &st));
+        assert_eq!((n.code, n.out.as_str()), (0, "0"), "{n:?}");
+        let n = env_over(|env| ready_count_over(&Args::parse(&["".into()]).unwrap(), env, &st));
+        assert_eq!((n.code, n.out.as_str()), (0, "1"), "{n:?}");
+    }
+
+    #[test]
+    fn an_unreadable_view_is_the_reads_error_and_nothing_judges_in_its_place() {
+        let (svc, st) = setup(2);
+        let err = env_over(|env| claimable_over(&Args::parse(&[]).unwrap(), env, &st).err().expect("the view is unreadable"));
+        assert!(err.contains("claimable") && err.contains("unreadable"), "{err}");
+        let calls = seen(&svc);
+        assert_eq!(calls, ["claimable"], "no content read, no lifecycle read, no judging: {calls:?}");
     }
 }
 

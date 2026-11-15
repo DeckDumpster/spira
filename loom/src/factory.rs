@@ -6,6 +6,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
+use cockpit_ops::lcview::{self, ClaimView, Kind};
 use serde_json::{json, Value};
 use spira_store::lc_call::LcClient;
 
@@ -379,6 +380,7 @@ impl EventRef<'_> {
     }
 }
 
+#[derive(Clone)]
 struct Item {
     id: String,
     at: String,
@@ -391,7 +393,7 @@ struct Item {
     phase: Option<String>,
     repo: Option<String>,
     title: Option<String>,
-    verdict: Option<String>,
+    verdict: Option<ClaimView>,
 }
 
 impl Item {
@@ -422,27 +424,29 @@ fn holds_of(v: &Value) -> Vec<String> {
     list.iter().filter_map(text).collect()
 }
 
-fn bead_items(v: &Value) -> Vec<Item> {
-    rows(v)
-        .into_iter()
-        .filter_map(|r| {
-            let state = text(&r["state"])?;
-            Some(Item {
-                id: text(&r["bead_id"])?,
+fn bead_items(v: &Value) -> Result<Vec<Item>, String> {
+    let mut out = Vec::new();
+    for r in rows(v) {
+        let (Some(state), Some(id)) = (text(&r["state"]), text(&r["bead_id"])) else { continue };
+        let verdict = lcview::claim_view(r)?;
+        out.push({
+            Item {
+                id,
                 at: format!("bead.{state}"),
                 kind: "bead",
                 p: num(&r["priority"]),
                 express: num(&r["express"]).is_some_and(|e| e != 0) || r["express"].as_bool() == Some(true),
                 since: num(&r["since"]),
                 holds: holds_of(&r["holds"]),
-                blocked: r["blocked_by"].as_array().and_then(|b| b.iter().find_map(text)),
+                blocked: verdict.as_ref().and_then(|c| c.blocker.clone()),
                 phase: text(&r["dwarf_phase"]),
                 repo: text(&r["repo"]),
                 title: text(&r["title"]),
-                verdict: text(&r["claim_verdict"]),
-            })
-        })
-        .collect()
+                verdict,
+            }
+        });
+    }
+    Ok(out)
 }
 
 fn side_item(id: String, machine: &str, state: &str, kind: &'static str, since: Option<i64>, repo: Option<String>, title: Option<String>) -> Item {
@@ -567,6 +571,10 @@ pub fn build(reads: &Reads, now: i64) -> Result<Value, String> {
         }
     }
     note(&mut errors, "list --live", &reads.live);
+    let live_items = reads.live.as_ref().map_err(String::clone).and_then(bead_items);
+    if let (Err(e), Ok(_)) = (&live_items, &reads.live) {
+        errors.push(format!("list --live: {e}"));
+    }
     note(&mut errors, "list --batches", &reads.batches);
     note(&mut errors, "list-asks", &reads.asks);
     note(&mut errors, "mending list --live", &reads.mending);
@@ -689,8 +697,8 @@ pub fn build(reads: &Reads, now: i64) -> Result<Value, String> {
 
     // Items, in claim order.
     let mut items: Vec<Item> = Vec::new();
-    if let Ok(v) = &reads.live {
-        items.extend(bead_items(v));
+    if let Ok(live) = &live_items {
+        items.extend(live.iter().cloned());
     }
     if let Ok(v) = &reads.batches {
         items.extend(batch_items(v));
@@ -704,7 +712,7 @@ pub fn build(reads: &Reads, now: i64) -> Result<Value, String> {
     items.retain(|i| kind_of(&i.at) != Some("sink"));
     claim_order(&mut items);
     let machine_read_ok = |m: &str| match m {
-        "bead" => reads.live.is_ok(),
+        "bead" => live_items.is_ok(),
         "batch" => reads.batches.is_ok(),
         "ask" => reads.asks.is_ok(),
         _ => reads.mending.is_ok(),
@@ -728,11 +736,11 @@ pub fn build(reads: &Reads, now: i64) -> Result<Value, String> {
         let counted = *kind != "sink" && machine_read_ok(machine);
         let in24h = (*kind == "sink" && counted_24h).then(|| tallies.iter().filter(|t| t.machine == machine && &t.to == state).map(|t| t.n).sum::<i64>());
         let parts = (id == "bead.READY" && counted).then(|| {
-            let claimable_known = here.iter().any(|i| i.verdict.is_some());
             let held = here.iter().filter(|i| !i.holds.is_empty()).count();
-            let blocked = here.iter().filter(|i| i.holds.is_empty() && (i.blocked.is_some() || i.verdict.as_deref() == Some("blocked"))).count();
-            let claimable = here.iter().filter(|i| i.holds.is_empty() && i.blocked.is_none() && i.verdict.as_deref() == Some("claimable")).count();
-            json!({"claimable": claimable_known.then_some(claimable), "held": held, "blocked": blocked})
+            let blocked = here.iter().filter(|i| i.holds.is_empty() && (i.blocked.is_some() || i.verdict.as_ref().is_some_and(|v| v.verdict == Kind::Blocked))).count();
+            let claimable = here.iter().filter(|i| i.verdict.as_ref().is_some_and(lcview::claimable)).count();
+            let cannot_tell = here.iter().filter(|i| i.verdict.as_ref().is_some_and(|v| v.verdict == Kind::CannotTell)).count();
+            json!({"claimable": claimable, "held": held, "blocked": blocked, "cannot_tell": cannot_tell})
         });
         belts_json.push(json!({
             "id": id, "lane": lane, "kind": kind, "label": label, "machine": machine, "state": state,
@@ -1064,7 +1072,7 @@ mod tests {
     }
 
     fn bead(id: &str, state: &str, p: Option<i64>, since: i64) -> Value {
-        json!({"bead_id": id, "state": state, "priority": p.map(|p| p.to_string()), "since": since.to_string(), "express": "0", "holds": "[]", "blocked_by": [], "repo": "spira", "title": id, "claim_verdict": null})
+        json!({"bead_id": id, "state": state, "priority": p.map(|p| p.to_string()), "since": since.to_string(), "express": "0", "holds": "[]", "repo": "spira", "title": id, "claim_view": {"verdict": "held", "blocker": null, "runes": []}})
     }
 
     fn bounds() -> wt::Config {
@@ -1277,16 +1285,40 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ready_parts_come_from_the_claim_verdict_the_holds_and_the_blockers() {
+    async fn ready_parts_come_from_the_claim_view_the_holds_and_the_blockers() {
         let mut held = bead("held", "READY", Some(1), 1);
         held["holds"] = json!("[\"manual\"]");
         let mut blocked = bead("blocked", "READY", Some(1), 2);
-        blocked["blocked_by"] = json!(["sp-x"]);
+        blocked["claim_view"] = json!({"verdict": "blocked", "blocker": "sp-x", "runes": []});
         let mut free = bead("free", "READY", Some(1), 3);
-        free["claim_verdict"] = json!("claimable");
+        free["claim_view"] = json!({"verdict": "claimable", "blocker": null, "runes": ["builder"]});
         let f = floor(script(batch_graph(), &quiet(), json!([held, blocked, free]))).await.unwrap();
-        assert_eq!(by_id(&f, "belts", "bead.READY")["parts"], json!({"claimable": 1, "held": 1, "blocked": 1}));
+        assert_eq!(by_id(&f, "belts", "bead.READY")["parts"], json!({"claimable": 1, "held": 1, "blocked": 1, "cannot_tell": 0}));
         assert_eq!(by_id(&f, "belts", "bead.READY")["now"], 3);
+    }
+
+    #[tokio::test]
+    async fn loom_and_the_pane_count_the_same_claim_view_rows_the_same() {
+        let rows: Value = serde_json::from_str(include_str!("../../cockpit/ops/tests/fixtures/live-claim-view.json")).unwrap();
+        let f = floor(script(batch_graph(), &quiet(), rows.clone())).await.unwrap();
+        let parts = &by_id(&f, "belts", "bead.READY")["parts"];
+        assert_eq!((parts["claimable"].as_u64(), parts["blocked"].as_u64(), parts["cannot_tell"].as_u64()), (Some(2), Some(1), Some(1)));
+        let mut pane = cockpit_ops::lcview::Snapshot::default();
+        for r in rows.as_array().unwrap() {
+            pane.rows.push(cockpit_ops::lcview::live_row(r).unwrap().0);
+        }
+        cockpit_ops::lcview::apply_claim_views(&mut pane);
+        assert_eq!(cockpit_ops::lcview::view(&pane).next_count as u64, parts["claimable"].as_u64().unwrap());
+    }
+
+    #[tokio::test]
+    async fn a_ready_row_with_no_claim_view_fails_the_live_read_and_is_not_counted() {
+        let mut bare = bead("bare", "READY", Some(1), 1);
+        bare.as_object_mut().unwrap().remove("claim_view");
+        let f = floor(script(batch_graph(), &quiet(), json!([bare]))).await.unwrap();
+        assert!(by_id(&f, "belts", "bead.READY")["parts"].is_null());
+        let errors = f["meta"]["errors"].as_array().unwrap();
+        assert!(errors.iter().any(|e| e.as_str().unwrap().contains("bare") && e.as_str().unwrap().contains("claim_view")), "{errors:?}");
     }
 
     #[test]

@@ -1074,6 +1074,7 @@ case "${1:-}" in
         for c in $(type -ap spira-lc); do [ "$c" -ef "$0" ] || exec "$c" "$@"; done; exit 2 ;;
     work) if [ "${3:-}" = show ]; then exec env BD_IGNORE_SCHEMA_SKEW=1 "${SPIRA_BD:-bd}" -C "${SPIRA_DB:-.}" show "${2:-}"; fi
         for c in $(type -ap spira-lc); do [ "$c" -ef "$0" ] || exec "$c" "$@"; done; exit 2 ;;
+    claimable) ;;
     phase) exit 0 ;;
     disposition) mkdir -p "${SPIRA_RUN:?}/lc-disposition"; printf '%s\t%s\n' "${3:-}" "${4:-}" > "$SPIRA_RUN/lc-disposition/${2:?}"; exit 0 ;;
     express) mkdir -p "${SPIRA_RUN:?}/lc-express"; : > "$SPIRA_RUN/lc-express/${2:?}"; exit 0 ;;
@@ -1142,6 +1143,24 @@ if verb == "list":
     ids = opt["--ids"].split(",") if "--ids" in opt else None
     print(json.dumps([r for r in rows.values()
                       if (states is None or r["state"] in states) and (ids is None or r["bead_id"] in ids)]))
+elif verb == "claimable":
+    import subprocess
+    out = []
+    for b in beads:
+        r = rows.get(b.get("id"))
+        if r is None or r["state"] not in ("READY", "REWORK"):
+            continue
+        runes = []
+        if not r["holds"]:
+            t = subprocess.run(["spira-config", "rune", "taking", ",".join(b.get("labels") or [])],
+                               capture_output=True, text=True)
+            if t.returncode != 0:
+                sys.stderr.write(t.stderr)
+                sys.exit(2)
+            runes = t.stdout.split()
+        out.append({"bead_id": r["bead_id"], "verdict": "held" if r["holds"] else "claimable",
+                    "blocker": None, "runes": runes, "row": r})
+    print(json.dumps({"rev": 0, "cannot_tell": 0, "beads": out}))
 elif verb == "show":
     r = rows.get(args[1] if len(args) > 1 else "")
     if r is None:

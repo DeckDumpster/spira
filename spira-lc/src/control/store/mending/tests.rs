@@ -44,7 +44,7 @@ impl Rig {
             &args,
             &Call {
                 now: AT,
-                request: &req.id,
+                request: &req.id, inputs: &crate::control::claimable::FIXED,
             },
         )
     }

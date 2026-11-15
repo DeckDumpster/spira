@@ -53,7 +53,7 @@ impl<B: Backend> Plane<'_, B> {
         match self {
             Plane::Store(s) => {
                 let request = crate::control::served::request_id();
-                state::run(s, args, &state::Call { now: crate::db::now_epoch(), request: &request })
+                state::run(s, args, &state::Call { now: crate::db::now_epoch(), request: &request, inputs: &crate::control::claimable::Live })
             }
             Plane::Dolt(conn) => crate::dispatch(args, conn),
         }
@@ -74,7 +74,7 @@ impl<B: Backend> Plane<'_, B> {
                     .map(|s| s.to_string())
                     .collect();
                 let request = crate::control::served::request_id();
-                state::run(s, &argv, &state::Call { now: crate::db::now_epoch(), request: &request })
+                state::run(s, &argv, &state::Call { now: crate::db::now_epoch(), request: &request, inputs: &crate::control::claimable::Live })
             }
             Plane::Dolt(conn) => crate::dolt_apply_bead_event(conn, id, actor, kind.clone()),
         }

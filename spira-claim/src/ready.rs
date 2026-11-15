@@ -69,44 +69,12 @@ pub fn ready_args(scope_label: &str, no_loop_label: &str) -> Vec<String> {
     v
 }
 
-/// `ready_shared_exclude`'s labels (lib.sh:652) — never the submitted label: lifecycle state decides SUBMITTED, a stale bd label must not, folded into [`rune_exclude`] — its
-/// only caller — rather than kept as a separately shimmed function (zero other callers).
-pub fn shared_exclude(queue_wait: &str, open_children: &str) -> String {
-    [queue_wait, open_children].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(",")
-}
-
-/// `rune_exclude <rune> [own]` (lib.sh:666): the persona's own exclusions, the shared
-/// exclusion set, then every OTHER persona's `rune:<name>` claim — in that order, matching
-/// the bash's own append sequence (own, then shared, then the roster loop).
-pub fn rune_exclude(me: &str, own: &str, roster: &[String], shared: &str) -> String {
-    let mut parts: Vec<String> = Vec::new();
-    if !own.is_empty() {
-        parts.push(own.to_string());
-    }
-    if !shared.is_empty() {
-        parts.push(shared.to_string());
-    }
-    for f in roster {
-        if f != me {
-            parts.push(format!("rune:{f}"));
-        }
-    }
-    parts.join(",")
-}
+pub use spira_config::runes::{rune_exclude, shared_exclude};
 
 /// One rune's `(name, RUNE_LABELS, RUNE_EXCLUDE_LABELS)` row for [`bucket`] — a rune
 /// whose `RUNE_LABELS` is empty is never added to this list at all (bulk_ready_by_rune's
 /// own `[ -n "$inc" ] || continue`), not merely counted as zero.
-pub struct RunePart {
-    pub name: String,
-    pub inc: Vec<String>,
-    pub exc: Vec<String>,
-}
-
-/// The former ready-bucket script's own split: comma-separated, empty tokens dropped.
-pub fn split_csv(s: &str) -> Vec<String> {
-    s.split(',').map(str::trim).filter(|t| !t.is_empty()).map(str::to_string).collect()
-}
+pub use spira_config::runes::{split_csv, Partition as RunePart};
 
 /// The former ready-bucket script's predicate, exactly: a bead counts for `(inc, exc)` iff none of its
 /// labels is in `shared`, its `rune:` preferences (if it carries any) include `name`,
@@ -118,31 +86,7 @@ pub fn split_csv(s: &str) -> Vec<String> {
 /// from every partition but the first it names. Both are faithful ports of their own
 /// bash/python originals — this discrepancy predates this port and is not this bead's to
 /// resolve.
-fn bucket_match(labels: &[&str], inc: &[String], exc: &[String], shared: &[&str], name: &str) -> bool {
-    if labels.iter().any(|l| shared.contains(l)) {
-        return false;
-    }
-    let mut has_pref = false;
-    let mut pref_matches = false;
-    for l in labels {
-        if let Some(p) = l.strip_prefix("rune:") {
-            has_pref = true;
-            if p == name {
-                pref_matches = true;
-            }
-        }
-    }
-    if has_pref && !pref_matches {
-        return false;
-    }
-    if !inc.iter().all(|want| labels.contains(&want.as_str())) {
-        return false;
-    }
-    if exc.iter().any(|drop| labels.contains(&drop.as_str())) {
-        return false;
-    }
-    true
-}
+use spira_config::runes::bucket_match;
 
 /// `bulk_ready_by_rune`'s bucketing (one ready-set fetch, counted per rune), in the input
 /// `parts` order. `queue_wait` is the shared exclusion; open-children is deliberately not.
@@ -170,25 +114,24 @@ fn rfc3339_epoch(s: &str) -> Option<i64> {
 }
 
 /// A bead whose `defer_until` is still in the future is held, not ready, in every bucket.
-fn is_deferred(row: &ReadyRow, now: i64) -> bool {
+pub fn is_deferred(row: &ReadyRow, now: i64) -> bool {
     row.defer_until.as_deref().and_then(rfc3339_epoch).is_some_and(|t| t > now)
 }
 
-pub fn bucket(rows: &[ReadyRow], parts: &[RunePart], queue_wait: &str) -> Vec<(String, u64)> {
-    let shared: Vec<&str> = [queue_wait].into_iter().filter(|s| !s.is_empty()).collect();
+
+/// `bulk-ready-by-rune`'s counts, over rows whose taking runes the claim view named: a bead that
+/// carries no `rune:` preference counts for the first rune that takes it only.
+pub fn bucket_taken(rows: &[ReadyRow], taken: &HashMap<String, Vec<String>>, parts: &[RunePart]) -> Vec<(String, u64)> {
     let mut counts: Vec<(String, u64)> = parts.iter().map(|p| (p.name.clone(), 0)).collect();
     let now = now_epoch();
-    for row in rows {
-        if is_deferred(row, now) {
-            continue;
-        }
-        let labels: Vec<&str> = row.labels.iter().map(String::as_str).collect();
-        let has_pref = labels.iter().any(|l| l.starts_with("rune:"));
+    for row in rows.iter().filter(|r| !is_deferred(r, now)) {
+        let Some(runes) = taken.get(&row.id) else { continue };
+        let has_pref = row.labels.iter().any(|l| l.starts_with("rune:"));
         for (i, p) in parts.iter().enumerate() {
-            if bucket_match(&labels, &p.inc, &p.exc, &shared, &p.name) {
+            if runes.contains(&p.name) {
                 counts[i].1 += 1;
                 if !has_pref {
-                    break; // unlabeled bead counts in exactly one (first) bucket
+                    break;
                 }
             }
         }
@@ -234,6 +177,11 @@ pub(crate) fn now_epoch() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn bucket(rows: &[ReadyRow], parts: &[RunePart], queue_wait: &str) -> Vec<(String, u64)> {
+        let taken = rows.iter().map(|r| (r.id.clone(), spira_config::runes::taking(&r.labels, parts, queue_wait))).collect();
+        bucket_taken(rows, &taken, parts)
+    }
 
     fn lc_row(id: &str, state: BeadState) -> (String, LifecycleRow) {
         (id.to_string(), LifecycleRow { bead_id: id.to_string(), state, holds: Default::default(), stack_depth: 0, tip: None, snoozed_until: None, stack_conflict: false, stack: Default::default(), reason: None })

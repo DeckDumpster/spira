@@ -265,7 +265,7 @@ pub fn dispatch(args: &[String]) -> Option<(i32, String)> {
             let request = request_id();
             let call = state::Call {
                 now: crate::db::now_epoch(),
-                request: &request,
+                request: &request, inputs: &crate::control::claimable::Live,
             };
             if claimable::VERBS.contains(&verb.as_str()) {
                 claimable::run(&store, args, &claimable::Live, &call)

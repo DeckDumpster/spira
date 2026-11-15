@@ -3,7 +3,7 @@
 //! commits (drift, cached by sha), `world status`, and the dwarf ceiling from config. Never runs `bd`.
 
 use cockpit_ops::lctui::{layout, parent_key, Frame, Mode, Ui};
-use cockpit_ops::lcview::{num, text, apply_verdicts, carry_forward, live_row, repo_column, verdicts_of, AskRow, VmRun, holder_pid, own_ids, render, tail_lines, view, LiveDwarf, MenderRow, PassProgress, View, BatchRow, DwellRow, EdgeRow, GraphEdge, Meta, Row, Snapshot, Tail, TAIL_BYTES};
+use cockpit_ops::lcview::{num, text, apply_claim_views, carry_forward, live_row, repo_column, AskRow, VmRun, holder_pid, own_ids, render, tail_lines, view, LiveDwarf, MenderRow, PassProgress, View, BatchRow, DwellRow, EdgeRow, GraphEdge, Meta, Row, Snapshot, Tail, TAIL_BYTES};
 use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom};
 use std::process::Command;
@@ -324,11 +324,13 @@ fn gather() -> Snapshot {
     let mut phases: HashMap<i64, String> = HashMap::new();
     match lc_json(&["list", "--live"]) {
         Ok(rows) => {
+            let mut read = true;
             for r in rows {
                 let (row, meta) = match live_row(&r) {
                     Ok(x) => x,
                     Err(e) => {
                         s.errors.push(format!("spira-lc list --live: {e}"));
+                        read = false;
                         break;
                     }
                 };
@@ -338,9 +340,8 @@ fn gather() -> Snapshot {
                 s.meta.insert(row.id.clone(), meta);
                 s.rows.push(row);
             }
-            match verdicts_of(&s.rows) {
-                Ok(f) => apply_verdicts(&mut s, &f),
-                Err(e) => s.errors.push(e),
+            if read {
+                apply_claim_views(&mut s);
             }
         }
         Err(e) => s.errors.push(e),

@@ -4,9 +4,12 @@
 //! renew, state, holds, list-state and the rest) reach the control store through these.
 
 use lifecycle::bead::{self, BeadEvent, BeadEventKind, BeadState};
+use std::collections::BTreeMap;
+
 use serde_json::{Map, Value};
 use state_store::{Backend, Error, Request};
 
+use super::claimable;
 use super::records::{LifecycleRecord, Readiness};
 use super::store::{Outcome, Store};
 use crate::{flag, CANNOT_TELL, REFUSED};
@@ -31,6 +34,8 @@ pub fn is_verb(verb: &str) -> bool {
 pub struct Call<'a> {
     pub now: i64,
     pub request: &'a str,
+    /// What the claim view reads besides the control store.
+    pub inputs: &'a dyn claimable::Inputs,
 }
 
 const LIVE_WINDOW_SECS: i64 = 24 * 3600;
@@ -39,7 +44,7 @@ const LISTED_TERMINAL: [&str; 4] = ["LANDED", "SUPERSEDED", "DROPPED", "DONE"];
 pub fn run<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, String) {
     let rest = &args[1..];
     match args.first().map(String::as_str) {
-        Some("show") => show(store, rest),
+        Some("show") => show(store, rest, call),
         Some("list") => list(store, rest, call),
         Some("event") => event(store, rest, call),
         Some("create-bead") => create(store, rest, call),
@@ -88,7 +93,7 @@ fn number(v: Option<i64>) -> Value {
 }
 
 /// Every column a `show` or `list` row may carry, by its dolt name.
-fn column(rec: &LifecycleRecord, r: Option<&Readiness>, name: &str) -> Value {
+fn column(rec: &LifecycleRecord, r: Option<&Readiness>, view: &Value, name: &str) -> Value {
     let row = &rec.row;
     match name {
         "bead_id" => text(Some(&row.bead_id)),
@@ -131,6 +136,7 @@ fn column(rec: &LifecycleRecord, r: Option<&Readiness>, name: &str) -> Value {
         "claim_at" => text(r.and_then(|r| r.verdict_at.as_deref())),
         "claim" => rec.claim.as_ref().map_or(Value::Null, |c| serde_json::to_value(c).unwrap_or(Value::Null)),
         "carried_by" => text(rec.carried_by.as_deref()),
+        "claim_view" => view.clone(),
         "blocked_by" => Value::Array(
             r.map(|r| r.blocked_by.iter().cloned().map(Value::String).collect())
                 .unwrap_or_default(),
@@ -160,6 +166,7 @@ const SHOWN: &[&str] = &[
     "sifted_tip",
     "updated_at",
     "blocked_by",
+    "claim_view",
     "claim",
     "carried_by",
 ];
@@ -190,21 +197,44 @@ const LISTED: &[&str] = &[
     "claim_runes",
     "claim_at",
     "blocked_by",
+    "claim_view",
     "claim",
     "carried_by",
 ];
 
 /// A record as `list` prints it.
 pub(crate) fn listed(rec: &LifecycleRecord, r: Option<&Readiness>) -> Value {
-    row(rec, r, LISTED)
+    row(rec, r, &Value::Null, LISTED)
 }
 
-fn row(rec: &LifecycleRecord, r: Option<&Readiness>, cols: &[&str]) -> Value {
+fn row(rec: &LifecycleRecord, r: Option<&Readiness>, view: &Value, cols: &[&str]) -> Value {
     Value::Object(
         cols.iter()
-            .map(|c| (c.to_string(), column(rec, r, c)))
+            .map(|c| (c.to_string(), column(rec, r, view, c)))
             .collect::<Map<_, _>>(),
     )
+}
+
+/// The claim view of each READY or REWORK record in `recs`, asked once for all of them; every
+/// other record has none. When the view's inputs cannot be read, each of those records says it
+/// cannot tell and why, so a reader of `list` still gets its rows.
+fn claim_views<B: Backend>(store: &Store<B>, rev: u64, recs: &[&LifecycleRecord], call: &Call) -> BTreeMap<String, Value> {
+    let cands: Vec<LifecycleRecord> = recs
+        .iter()
+        .filter(|r| matches!(r.row.state, BeadState::Ready | BeadState::Rework))
+        .map(|r| (*r).clone())
+        .collect();
+    let ids: Vec<String> = cands.iter().map(|r| r.row.bead_id.clone()).collect();
+    match claimable::view(store, rev, cands, call.inputs, call.now) {
+        Ok((_, views)) => views
+            .into_iter()
+            .map(|(id, v)| (id, serde_json::json!({ "verdict": v.verdict, "blocker": v.blocker, "runes": v.runes })))
+            .collect(),
+        Err(why) => ids
+            .into_iter()
+            .map(|id| (id, serde_json::json!({ "verdict": claimable::Verdict::CannotTell, "blocker": null, "runes": [], "error": why })))
+            .collect(),
+    }
 }
 
 /// `r` with only the prerequisites that still block, by `state_of` each one's record.
@@ -224,20 +254,24 @@ fn blocking(
 }
 
 /// `show <id>`: the record and its delivery, or exit 1 with `{}`.
-fn show<B: Backend>(store: &Store<B>, args: &[String]) -> (i32, String) {
+fn show<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, String) {
     let Some(id) = args.first() else {
         return (CANNOT_TELL, "show: missing <bead-id>".into());
     };
-    let read = || -> state_store::Result<Option<Value>> {
-        let Some(rec) = store.record(id)? else {
+    let read = || -> Result<Option<Value>, String> {
+        let e = |e: state_store::Error| e.to_string();
+        let Some(rec) = store.record(id).map_err(e)? else {
             return Ok(None);
         };
-        let readiness = blocking(store.readiness(id)?.map(|r| r.value), |b| {
+        let rev = store.contract().head().map_err(e)?;
+        let view = claim_views(store, rev, &[&rec.value], call).remove(id).unwrap_or(Value::Null);
+        let readiness = blocking(store.readiness(id).map_err(e)?.map(|r| r.value), |b| {
             Ok(store.record(b)?.map(|r| r.value.row.state))
-        })?;
-        let delivery = store.delivery(id)?.map(|d| rounds::delivery_view(&d.value));
+        })
+        .map_err(e)?;
+        let delivery = store.delivery(id).map_err(e)?.map(|d| rounds::delivery_view(&d.value));
         Ok(Some(serde_json::json!({
-            "bead": row(&rec.value, readiness.as_ref(), SHOWN),
+            "bead": row(&rec.value, readiness.as_ref(), &view, SHOWN),
             "delivery": delivery,
         })))
     };
@@ -306,23 +340,21 @@ fn list<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, Str
                 .collect(),
         ),
     };
-    let read = || -> state_store::Result<Vec<Value>> {
-        let rev = store.contract().head()?;
-        let records = store.records_page(
-            rev,
-            indexed.as_deref(),
-            ids.as_deref(),
-            after.as_deref(),
-            limit,
-            kept,
-        )?;
-        let ids: Vec<&str> = records.iter().map(|r| r.value.row.bead_id.as_str()).collect();
-        let mut readiness = store.readiness_of(&ids, rev)?;
+    let read = || -> Result<Vec<Value>, String> {
+        let e = |e: state_store::Error| e.to_string();
+        let rev = store.contract().head().map_err(e)?;
+        let records = store
+            .records_page(rev, indexed.as_deref(), ids.as_deref(), after.as_deref(), limit, kept)
+            .map_err(e)?;
+        let recs: Vec<&LifecycleRecord> = records.iter().map(|r| &r.value).collect();
+        let mut views = claim_views(store, rev, &recs, call);
+        let ids: Vec<&str> = recs.iter().map(|r| r.row.bead_id.as_str()).collect();
+        let mut readiness = store.readiness_of(&ids, rev).map_err(e)?;
         let mut rows = Vec::with_capacity(records.len());
-        for r in &records {
-            let id = r.value.row.bead_id.as_str();
-            let ready = blocking(readiness.remove(id), |b| store.state_at(b, rev))?;
-            rows.push(row(&r.value, ready.as_ref(), LISTED));
+        for r in &recs {
+            let id = r.row.bead_id.as_str();
+            let ready = blocking(readiness.remove(id), |b| store.state_at(b, rev)).map_err(e)?;
+            rows.push(row(r, ready.as_ref(), &views.remove(id).unwrap_or(Value::Null), LISTED));
         }
         Ok(rows)
     };

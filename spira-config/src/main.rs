@@ -1544,6 +1544,29 @@ fn cmd_rune(args: &[String]) -> ExitCode {
             }
             ExitCode::SUCCESS
         }
+        Some("taking") => {
+            let labels = runes::split_csv(args.get(1).map(String::as_str).unwrap_or(""));
+            let cfg = spira_config::process::cfg;
+            let (wait, open) = match (cfg("SPIRA_QUEUE_WAIT_LABEL"), cfg("SPIRA_OPEN_CHILDREN_LABEL")) {
+                (Ok(w), Ok(o)) => (w, o),
+                (Err(e), _) | (_, Err(e)) => {
+                    eprintln!("spira-config rune taking: {e}");
+                    return ExitCode::FAILURE;
+                }
+            };
+            match runes::partitions(&home, roster_override, &wait, &open) {
+                Ok(parts) => {
+                    for n in runes::taking(&labels, &parts, &wait) {
+                        println!("{n}");
+                    }
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("spira-config rune taking: {e}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
         Some("for-labels") => match args.get(1) {
             Some(labels) => {
                 for f in runes::runes_for_labels(&home, labels) {
@@ -1569,7 +1592,7 @@ fn cmd_rune(args: &[String]) -> ExitCode {
         },
         _ => {
             eprintln!(
-                "usage: spira-config rune <names|get|roster|task|lane|partitions|for-labels|model> ...\n\
+                "usage: spira-config rune <names|get|roster|task|lane|partitions|taking|for-labels|model> ...\n\
                  \n\
                  \x20 names                           every persona in the runes, one per line\n\
                  \x20 get <rune> <var> [default]      one field of a rune\n\
@@ -1847,7 +1870,7 @@ fn dispatch(args: &[String]) -> ExitCode {
                  \x20 registry-index <home>\n\
                  \x20 schema\n\
                  \x20 path-tail\n\
-                 \x20 rune <names|get|roster|task|lane|partitions|for-labels|model> ...\n\
+                 \x20 rune <names|get|roster|task|lane|partitions|taking|for-labels|model> ...\n\
                  \x20 unit <base> [service|timer]\n\
                  \x20 unit --watch <name>\n\
                  \x20 deps <list [tier]|tier <bin>|purpose <bin>|absent <bin>|require <bin>...>\n\

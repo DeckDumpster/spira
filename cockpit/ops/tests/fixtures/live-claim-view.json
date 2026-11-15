@@ -1,0 +1,9 @@
+[
+  {"bead_id":"sp-c1","state":"READY","holds":"[]","repo":"spira","title":"first claimable","priority":"1","since":"90000","claim_view":{"verdict":"claimable","blocker":null,"runes":["builder"]}},
+  {"bead_id":"sp-c2","state":"READY","holds":"[]","repo":"spira","title":"second claimable","priority":"2","since":"90100","claim_view":{"verdict":"claimable","blocker":null,"runes":["builder","ops"]}},
+  {"bead_id":"sp-norune","state":"READY","holds":"[]","repo":"spira","title":"claimable but no rune takes it","priority":"2","since":"90200","claim_view":{"verdict":"claimable","blocker":null,"runes":[]}},
+  {"bead_id":"sp-blocked","state":"READY","holds":"[]","repo":"spira","title":"waits on sp-x","priority":"2","since":"90300","claim_view":{"verdict":"blocked","blocker":"sp-x","runes":[]}},
+  {"bead_id":"sp-cannot","state":"READY","holds":"[]","repo":"spira","title":"a record missing an input","priority":"2","since":"90400","claim_view":{"verdict":"cannot-tell","blocker":null,"runes":[]}},
+  {"bead_id":"sp-held","state":"READY","holds":"[\"manual\"]","repo":"spira","title":"held by an operator","priority":"2","since":"90500","claim_view":{"verdict":"held","blocker":null,"runes":[]}},
+  {"bead_id":"sp-landed","state":"WORKING","holds":"[]","repo":"spira","title":"not covered by the view","claim_view":null}
+]
