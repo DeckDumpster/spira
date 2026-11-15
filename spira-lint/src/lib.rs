@@ -43,7 +43,11 @@ pub struct Tree {
     /// rules that compare the tree with what it replaces (`plan-matrix`). `None`: not given,
     /// and such a rule refuses rather than compare against nothing.
     pub base: Option<String>,
+    reader: Option<GitReader>,
 }
+
+/// A stand-in for spawning git, for unit tests.
+pub type GitReader = Box<dyn Fn(&[&str]) -> Result<Vec<u8>, String> + Send + Sync>;
 
 impl Tree {
     /// Walk `root` with git: `ls-files` (tracked) and `ls-files --others --exclude-standard`
@@ -104,7 +108,7 @@ impl Tree {
         entries.extend(untracked.into_iter().map(|p| Entry::new(p, false)));
         entries.sort_by(|a, b| a.path.cmp(&b.path));
         entries.dedup_by(|a, b| a.path == b.path);
-        Tree { root: root.to_path_buf(), entries, base: None }
+        Tree { root: root.to_path_buf(), entries, base: None, reader: None }
     }
 
     /// The same tree, judged against `base`.
@@ -113,8 +117,17 @@ impl Tree {
         self
     }
 
+    /// The same tree, answering git reads from `reader` instead of spawning git.
+    pub fn with_git(mut self, reader: GitReader) -> Tree {
+        self.reader = Some(reader);
+        self
+    }
+
     /// `git -C <root> <args>`'s stdout, or its error.
     pub fn git(&self, args: &[&str]) -> Result<Vec<u8>, String> {
+        if let Some(r) = &self.reader {
+            return r(args);
+        }
         // batch-job: a local repo read that stalls for tens of seconds on a loaded host; 120 s hang guard
         let out = std::process::Command::new("timeout")
             .arg(GIT_HANG_GUARD_SECS)
@@ -133,19 +146,27 @@ impl Tree {
         }
     }
 
-    /// [`Tree::base`] as a commit id. A rule that compares with the base refuses without one:
-    /// comparing against nothing reads as clean.
+    /// The commit the branch forked from [`Tree::base`]: `git merge-base <base> HEAD`, not the
+    /// base's tip, so what landed on the base after the fork is never the branch's own change.
+    /// A rule that compares with the base refuses without one: comparing against nothing reads
+    /// as clean.
     pub fn base_commit(&self) -> Result<String, LintError> {
         let Some(base) = self.base.as_deref() else {
             return Err(LintError::Refused(
                 "no base to compare against — pass --base <rev> or set SPIRA_GATE_BASE".into(),
             ));
         };
-        self.git(&["rev-parse", "--verify", "--quiet", &format!("{base}^{{commit}}")])
+        let tip = self
+            .git(&["rev-parse", "--verify", "--quiet", &format!("{base}^{{commit}}")])
             .map(|o| String::from_utf8_lossy(&o).trim().to_string())
             .map_err(|_| {
                 LintError::Refused(format!("the base {base} does not resolve to a commit in {}", self.root.display()))
-            })
+            })?;
+        self.git(&["merge-base", &tip, "HEAD"])
+            .map(|o| String::from_utf8_lossy(&o).trim().to_string())
+            .ok()
+            .filter(|f| !f.is_empty())
+            .ok_or_else(|| LintError::Refused(format!("{base} shares no history with HEAD")))
     }
 
     /// `rel` as it stood at `rev`, or `None` when `rev` has no such file.
@@ -207,12 +228,8 @@ pub struct DiffScope {
 impl DiffScope {
     pub fn from_tree(tree: &Tree) -> Result<DiffScope, LintError> {
         let base = tree.base_commit()?;
-        let mb = tree
-            .git(&["merge-base", &base, "HEAD"])
-            .map(|o| String::from_utf8_lossy(&o).trim().to_string())
-            .map_err(|e| LintError::Refused(format!("--diff: {e}")))?;
         let out = tree
-            .git(&["diff", "-U0", "--no-color", "--no-ext-diff", "--no-renames", &mb])
+            .git(&["diff", "-U0", "--no-color", "--no-ext-diff", "--no-renames", &base])
             .map_err(|e| LintError::Refused(format!("--diff: {e}")))?;
         let mut scope = DiffScope { files: Default::default() };
         scope.parse(&String::from_utf8_lossy(&out));
@@ -571,6 +588,20 @@ pub(crate) mod testutil {
 mod tests {
 
     use super::*;
+
+    #[test]
+    fn base_commit_with_no_merge_base_is_refused() {
+        let t = Tree::from_paths(Path::new("/nowhere"), Vec::<String>::new(), Vec::<String>::new())
+            .with_base(Some("main".into()))
+            .with_git(Box::new(|a| match a[0] {
+                "rev-parse" => Ok(b"B\n".to_vec()),
+                _ => Err("no merge base".into()),
+            }));
+        match t.base_commit() {
+            Err(LintError::Refused(m)) => assert!(m.contains("main shares no history with HEAD"), "{m}"),
+            other => panic!("{other:?}"),
+        }
+    }
     #[test]
     fn diff_scope_keeps_only_changed_lines_and_touched_files() {
         let mut d = DiffScope { files: Default::default() };
