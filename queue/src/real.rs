@@ -1322,10 +1322,6 @@ impl Scripts for RealScripts {
             None,
         )
     }
-    fn pass_terminate(&self, pid: u32) {
-        // SAFETY: a plain SIGTERM to the pid the run wrote to its handle.
-        unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
-    }
     fn pass_alive(&self, pid: u32) -> bool {
         // SAFETY: signal 0 only checks existence.
         unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
@@ -1419,21 +1415,6 @@ impl Scripts for RealScripts {
         // FORK-EDGE: machine leg self re-exec (rebase-waiting)
         Command::new(exe)
             .args(["rebase-waiting", repo])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .process_group(0)
-            .spawn()
-            .is_ok()
-    }
-    fn pass_restart(&self, batch: &str, repo: &str) -> bool {
-        let Ok(exe) = std::env::current_exe() else {
-            return false;
-        };
-        // batch-job: the next pass runs as long as its round-vm wall allows, detached from this verb
-        // FORK-EDGE: machine leg self re-exec (round certify)
-        Command::new(exe)
-            .args(["round", "certify", batch, repo])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())

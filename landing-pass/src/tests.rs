@@ -2517,30 +2517,14 @@ fn a_gate_worker_row_with_pass_certifies_and_one_with_fail_and_a_reason_reworks(
 }
 
 #[test]
-fn a_provisional_member_cut_into_a_round_before_its_gate_has_its_gate_queued_beside_the_round() {
+fn an_in_round_member_with_no_gate_on_file_gets_none_queued() {
     let h = h_worker(LandMode::Queue);
     h.closed("sp-a", "t1");
     h.bead("sp-a", "IN_DELIVERY", &[]);
     h.beads.batched.borrow_mut().insert("sp-a".into());
     h.run();
-    h.run();
-    let q = crate::gateq::GateQueue::new(&h.s.run);
-    assert_eq!(q.queued().len(), 1, "gated once, beside the round: {:?}", h.out.lines());
-    assert!(h.logged("sp-a: spira/sp-a is a provisional member of a round — gate queued at t1"));
-    assert!(!h.lib.has("CERTIFIED") && !h.lib.has("reopen"));
-}
-
-#[test]
-fn a_provisional_member_whose_gate_went_green_keeps_its_verdict_for_the_round() {
-    let h = h_worker(LandMode::Queue);
-    h.closed("sp-a", "t1");
-    h.bead("sp-a", "IN_DELIVERY", &[]);
-    h.beads.batched.borrow_mut().insert("sp-a".into());
-    file_verdict(&h, "sp-a", "t1", 0, "gate: VERDICT=PASS\n");
-    h.run();
-    let q = crate::gateq::GateQueue::new(&h.s.run);
-    assert!(q.queued().is_empty());
-    assert!(q.peek_done("spira", "spira/sp-a", "t1").is_some(), "the verdict stays on file");
+    assert!(crate::gateq::GateQueue::new(&h.s.run).queued().is_empty(), "{:?}", h.out.lines());
+    assert!(h.logged("sp-a: spira/sp-a is in a round — the round judges it, no per-bead gate"));
 }
 
 #[test]

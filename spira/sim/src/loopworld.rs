@@ -208,12 +208,7 @@ pub struct Lc {
     pub round: Option<(String, Vec<(String, String)>)>,
     /// The tree `round open` was handed, which the queue records as the round's worktree.
     pub round_wt: String,
-    /// The members of the open round whose own gate went red there, as `id -> (tip, the gate's
-    /// mark)`: the row stays IN_DELIVERY and carries the mark, it does not leave the round.
-    pub gate_red: BTreeMap<String, (String, String)>,
     pub rounds: u32,
-    /// Every preempt the batcher asked: the batch, the members ejected, the evidence.
-    pub preempts: Vec<(String, String, String)>,
     pub dwarves: BTreeMap<String, u64>,
     pub items: BTreeMap<String, String>,
     /// Per bead: the claims it has had (its sessions), so each session's tips are distinct.
@@ -304,12 +299,7 @@ impl Lc {
                     // `spira-lc certify <bead> <tip> pass`: a row already CERTIFIED at that tip
                     // answers APPLIED with no event (spira-lc's own `certify_voids_a_stale_
                     // certification_first_and_leaves_a_current_one_alone`).
-                    let in_round = self.round.as_ref().is_some_and(|(_, m)| m.iter().any(|(id, t)| *id == bead && *t == tip));
                     let applied = match verdict {
-                        Verdict::Red if in_round => {
-                            self.gate_red.insert(bead.clone(), (tip, GateRedReason::SuitesFailed.as_str().to_string()));
-                            true
-                        }
                         Verdict::Pass if row.state == BeadState::Certified => true,
                         Verdict::Pass => self.event(at, &bead, "gate", BeadEventKind::GatePass { tip, gate_key: format!("gate:{bead}") }).is_ok(),
                         Verdict::Red => self.event(at, &bead, "gate", BeadEventKind::GateRed { tip, reason: GateRedReason::SuitesFailed, step: None, message: None }).is_ok(),
@@ -476,8 +466,7 @@ fn batcher_observe(w: &World, input: &str) -> Result<String, String> {
         .map(|r| bl::Member { id: r.bead_id.clone(), state: r.state.as_str().into(), version: r.version, tip: r.tip.clone().unwrap_or_default(), sifted_tip: r.sifted_tip.clone(), title: r.bead_id.clone(), priority: w.bead(&r.bead_id).map_or(2, |b| b.priority), ..bl::Member::default() })
         .collect();
     let open_round = lc.round.as_ref().map(|(id, m)| {
-        let gate_red = m.iter().filter_map(|(i, _)| lc.gate_red.get(i).map(|(tip, mark)| (i.clone(), tip.clone(), mark.clone()))).collect();
-        bl::Round { id: id.clone(), members: m.iter().map(|(i, _)| i.clone()).collect(), head: BASE.into(), worktree: lc.round_wt.clone(), driven: held.as_ref() == Some(id), gate_red, ..bl::Round::default() }
+        bl::Round { id: id.clone(), members: m.iter().map(|(i, _)| i.clone()).collect(), head: BASE.into(), worktree: lc.round_wt.clone(), driven: held.as_ref() == Some(id), ..bl::Round::default() }
     });
     let live_legs = units::Units::list(&*w.units, &units::task_glob(bl::NAME)).ok().map(|all| bl::running_legs(&all));
     let repo = bl::Repo { pool, open_round, base_sha: BASE.into(), stopped: w.now() < w.script.stopped_until, live_legs, scoped_batches: Some(w.live_pass_scopes()), ..bl::Repo::default() };
@@ -537,20 +526,6 @@ fn batcher_certify(w: &World, input: &str) -> Result<String, String> {
     units::effect(&*w.units, UNIT_RUN_SCOPE, &json(&ScopeSpec { unit: spec, cpu_quota_pct: None, memory_max_bytes: None })?)
 }
 
-/// `round certify`'s store half (`lc_certify_round`): every SUBMITTED member to CERTIFIED at its
-/// tip; a member in any other state (already CERTIFIED by a gate) is left alone.
-fn batcher_lc_certify(w: &World, input: &str) -> Result<String, String> {
-    let leg: bl::Leg = parse_json(bl::LC_CERTIFY, input)?;
-    let now = w.now();
-    let mut lc = w.lc();
-    for (id, tip) in &leg.members {
-        if lc.rows.get(id).is_some_and(|r| r.state == BeadState::Submitted) {
-            lc.apply(now, id, bl::NAME, BeadEventKind::GatePass { tip: tip.clone(), gate_key: format!("round:{}", leg.round_key) })?;
-        }
-    }
-    Ok("{}".into())
-}
-
 fn batcher_land(w: &World, input: &str) -> Result<String, String> {
     let leg: bl::Leg = parse_json(bl::LAND, input)?;
     let now = w.now();
@@ -569,44 +544,6 @@ fn batcher_land(w: &World, input: &str) -> Result<String, String> {
     lc.lands.push(leg.members.clone());
     lc.round = None;
     json(&bl::Landed { staged: None, base_moved: None })
-}
-
-/// `queue round preempt --eject`: the named members leave the open round and go back to their
-/// dwarf, charged red; the pass restarts on the members that remain.
-fn batcher_preempt(w: &World, input: &str) -> Result<String, String> {
-    let leg: bl::Leg = parse_json(bl::PREEMPT, input)?;
-    let now = w.now();
-    let mut lc = w.lc();
-    let ids: Vec<&str> = leg.bead.split(',').filter(|s| !s.is_empty()).collect();
-    match &mut lc.round {
-        Some((batch, members)) if *batch == leg.batch => members.retain(|(id, _)| !ids.iter().any(|i| i == id)),
-        other => return Err(format!("preempt {}: the open round is {other:?}", leg.batch)),
-    }
-    lc.preempts.push((leg.batch.clone(), leg.bead.clone(), leg.why.clone()));
-    for id in ids {
-        lc.gate_red.remove(id);
-        lc.apply(now, id, bl::NAME, BeadEventKind::Deliver)?;
-        lc.apply(now, id, bl::NAME, BeadEventKind::Returned { reason: lifecycle::reason::ReturnedReason::BatchEjectedRed })?;
-    }
-    Ok("{}".into())
-}
-
-/// `queue round eject` for a gate-red member: it leaves the open round and goes back to its dwarf.
-fn batcher_eject_gate_red(w: &World, input: &str) -> Result<String, String> {
-    let leg: bl::Leg = parse_json(bl::EJECT_GATE_RED, input)?;
-    let now = w.now();
-    let mut lc = w.lc();
-    let ids: Vec<&str> = leg.bead.split(',').filter(|s| !s.is_empty()).collect();
-    match &mut lc.round {
-        Some((batch, members)) if *batch == leg.batch => members.retain(|(id, _)| !ids.iter().any(|i| i == id)),
-        other => return Err(format!("eject {}: the open round is {other:?}", leg.batch)),
-    }
-    for id in ids {
-        lc.gate_red.remove(id);
-        lc.apply(now, id, bl::NAME, BeadEventKind::Deliver)?;
-        lc.apply(now, id, bl::NAME, BeadEventKind::Returned { reason: lifecycle::reason::ReturnedReason::BatchEjectedRed })?;
-    }
-    Ok("{}".into())
 }
 
 fn batcher_abandon(w: &World) -> Result<String, String> {
@@ -708,12 +645,9 @@ fn doubles(w: &Arc<World>) -> Doubles {
     let d = on(d, w, bl::ROUND_OPEN, batcher_round_open);
     let d = on(d, w, bl::CORPUS, batcher_corpus);
     let d = on(d, w, bl::CERTIFY, batcher_certify);
-    let d = on(d, w, bl::LC_CERTIFY, batcher_lc_certify);
     let d = on(d, w, bl::LAND, batcher_land);
     let d = on(d, w, bl::ABANDON, |w, _| batcher_abandon(w));
     let d = on(d, w, bl::WITHDRAW, batcher_withdraw);
-    let d = on(d, w, bl::PREEMPT, batcher_preempt);
-    let d = on(d, w, bl::EJECT_GATE_RED, batcher_eject_gate_red);
     let d = on(d, w, qs::OBSERVE, |w, _| queue_step_observe(w));
     let d = on(d, w, pb::OBSERVE, |w, _| publish_observe(w));
     let d = on(d, w, pb::PUSH_BRANCH, publish_push_branch);

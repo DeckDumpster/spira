@@ -45,6 +45,7 @@ const BASE: &str = "ba5eba5eba5eba5eba5eba5eba5eba5eba5eba5e";
 const MIN: u64 = 60_000;
 /// Every dwarf session runs this long, then exits 0 having submitted.
 const DWARF_MS: u64 = 10 * MIN;
+const GATE_MS: u64 = 30_000;
 const CORPUS_MS: u64 = 5 * MIN;
 const ATTRIBUTE_MS: u64 = 3 * MIN;
 const CERTIFY_MS: u64 = 2 * MIN;
@@ -251,6 +252,7 @@ fn sentinel_unit_start(w: &World, input: &str) -> Result<String, String> {
     let bead = lc.in_state(BeadState::Ready).first().map(|r| r.bead_id.clone()).ok_or("the dwarf found nothing ready")?;
     w.write("sentinel_unit_start", &mut lc, &bead, &unit, BeadEventKind::Claim { holder: unit.clone(), lease_until: ((now + DWARF_MS) / 1000) as i64 + 600, stack: Default::default(), stack_depth: 0, stack_max_depth: 0, persona: None, directed: None })?;
     lc.due.push((now + DWARF_MS - 1, Due::Event { bead: bead.clone(), actor: unit.clone(), kind: BeadEventKind::Submit { tip: tip_of(&bead) } }));
+    lc.due.push((now + DWARF_MS + GATE_MS, Due::Event { bead: bead.clone(), actor: "gate".into(), kind: BeadEventKind::GatePass { tip: tip_of(&bead), gate_key: format!("gate:{bead}") } }));
     lc.dwarves.insert(unit, now + DWARF_MS);
     drop(lc);
     w.units.script(sc::NAME, DWARF_MS, Exit::Code(0));
@@ -301,7 +303,7 @@ fn batcher_observe(w: &World, input: &str) -> Result<String, String> {
     let pool = lc
         .rows
         .values()
-        .filter(|r| matches!(r.state, BeadState::Submitted | BeadState::Certified))
+        .filter(|r| r.state == BeadState::Certified)
         .map(|r| bl::Member { id: r.bead_id.clone(), state: r.state.as_str().into(), version: r.version, tip: r.tip.clone().unwrap_or_default(), sifted_tip: r.sifted_tip.clone(), title: r.bead_id.clone(), priority: 2, ..bl::Member::default() })
         .collect();
     let open_round = lc.round.as_ref().map(|r| bl::Round { id: r.batch.clone(), members: r.members.iter().map(|(i, _)| i.clone()).collect(), head: BASE.into(), worktree: r.wt.clone(), driven: held.as_ref() == Some(&r.batch), ..bl::Round::default() });
@@ -363,20 +365,6 @@ fn batcher_certify(w: &World, input: &str) -> Result<String, String> {
     units::effect(&*w.units, UNIT_RUN_SCOPE, &json(&ScopeSpec { unit: spec, cpu_quota_pct: None, memory_max_bytes: None })?)
 }
 
-/// `round certify`'s store half: every member SUBMITTED → CERTIFIED at its tip.
-fn batcher_lc_certify(w: &World, input: &str) -> Result<String, String> {
-    let leg: bl::Leg = parse(bl::LC_CERTIFY, input)?;
-    let mut lc = w.lc();
-    for (id, tip) in &leg.members {
-        if lc.rows.get(id).is_none_or(|r| r.state != BeadState::Submitted) {
-            continue;
-        }
-        w.write("batcher_lc_certify", &mut lc, id, bl::NAME, BeadEventKind::GatePass { tip: tip.clone(), gate_key: format!("round:{}", leg.round_key) })?;
-    }
-    w.gate("batcher_lc_certify")?;
-    Ok("{}".into())
-}
-
 /// `queue round land`: the round's members delivered and landed, and the round closed.
 fn batcher_land(w: &World, input: &str) -> Result<String, String> {
     let leg: bl::Leg = parse(bl::LAND, input)?;
@@ -419,7 +407,7 @@ fn queue_step_observe(_: &World) -> Result<String, String> {
 }
 
 /// The effects that read or write the lifecycle store.
-const STORE_CLASS: &[&str] = &[sc::OBSERVE, sc::UNIT_START, sift::OBSERVE, sift::RECORD_PASS, bl::OBSERVE, bl::ROUND_OPEN, bl::LC_CERTIFY, bl::LAND, bl::ABANDON];
+const STORE_CLASS: &[&str] = &[sc::OBSERVE, sc::UNIT_START, sift::OBSERVE, sift::RECORD_PASS, bl::OBSERVE, bl::ROUND_OPEN, bl::LAND, bl::ABANDON];
 
 /// The quiet world with this world's doubles over it, and the unit effects on its manager.
 fn doubles(w: &Arc<World>) -> Doubles {
@@ -458,7 +446,6 @@ fn doubles(w: &Arc<World>) -> Doubles {
     let d = on(d, bl::ROUND_OPEN, batcher_round_open);
     let d = on(d, bl::CORPUS, batcher_corpus);
     let d = on(d, bl::CERTIFY, batcher_certify);
-    let d = on(d, bl::LC_CERTIFY, batcher_lc_certify);
     let d = on(d, bl::LAND, batcher_land);
     let d = on(d, bl::ABANDON, |w, _| batcher_abandon(w));
     on(d, qs::OBSERVE, |w, _| queue_step_observe(w))
@@ -688,7 +675,7 @@ fn one_bead_is_filed_claimed_submitted_cut_certified_and_landed_on_the_service_t
     assert_eq!(lifecycle, ["READY", "WORKING", "SUBMITTED", "CERTIFIED", "IN_DELIVERY", "LANDED"], "{}", dump(&a));
     assert_eq!(a.states["sp-w3a"], BeadState::Landed);
     assert!(a.refused.is_empty(), "the store refused nothing: {:?}", a.refused);
-    assert_eq!(batcher_states(&a.trace), ["Idle", "Assembling", "Opened", "Certifying", "Landing", "Idle"], "the first Idle records the named wait for sift (sp-8nlvra): {}", dump(&a));
+    assert_eq!(batcher_states(&a.trace), ["Assembling", "Opened", "Certifying", "Landing", "Idle"], "an empty pool names no wait, so the trace opens on the cut: {}", dump(&a));
     let call = tags_on(&a, sc::STREAM);
     assert!(call.contains(&runtime::units::UNIT_RAN.to_string()), "the dwarf's end reached sentinel-call's own stream: {call:?}");
     let sifted = a.trace.iter().any(|e| e.1 == bl::STREAM && e.2 == spira_runtime::tasks::a::kit::WORK_SUBMITTED);
@@ -714,9 +701,9 @@ fn a_red_round_attributes_ejects_the_guilty_member_and_lands_the_rest() {
     println!("red scenario: wall {:?} and {:?} for {} virtual minutes", a.wall, b.wall, UNTIL_MS / MIN);
     show("red", &a);
     assert_eq!(lifecycle_of(&a, "sp-w3a"), ["READY", "WORKING", "SUBMITTED", "CERTIFIED", "IN_DELIVERY", "LANDED"], "{}", dump(&a));
-    assert_eq!(lifecycle_of(&a, "sp-w3b"), ["READY", "WORKING", "SUBMITTED", "REWORK"], "{}", dump(&a));
+    assert_eq!(lifecycle_of(&a, "sp-w3b"), ["READY", "WORKING", "SUBMITTED", "CERTIFIED", "REWORK"], "{}", dump(&a));
     assert!(a.refused.is_empty(), "the store refused nothing: {:?}", a.refused);
-    assert_eq!(batcher_states(&a.trace), ["Idle", "Assembling", "Opened", "Certifying", "Attributing", "Certifying", "Landing", "Idle"], "the first Idle records the named wait for sift (sp-8nlvra): {}", dump(&a));
+    assert_eq!(batcher_states(&a.trace), ["Assembling", "Opened", "Certifying", "Attributing", "Certifying", "Landing", "Idle"], "an empty pool names no wait, so the trace opens on the cut: {}", dump(&a));
     let opens = a.asked.iter().filter(|n| *n == bl::ROUND_OPEN).count();
     assert_eq!(opens, 1, "one round was opened for the two members");
     assert_no_process(&a);
@@ -792,21 +779,12 @@ fn converged(crashed: &Run, clean: &Run) -> Result<(), String> {
 }
 
 fn crash_at(name: &str, script: fn() -> Script, seed: u64, double: &'static str, after: u32) {
-    crash_at_cutting(name, script, seed, double, after, None);
-}
-
-/// [`crash_at`], for a crash after which the cut is made from what the store shows sifted so
-/// far: `rounds` is how many rounds that takes, where the uninterrupted run took the clean count.
-fn crash_at_cutting(name: &str, script: fn() -> Script, seed: u64, double: &'static str, after: u32, rounds: Option<u32>) {
     let interrupt = Interrupt { crash: Some(Crash { double, after }), ..Interrupt::default() };
     let clean = run(seed, script());
     let a = run_interrupted(seed, script(), interrupt);
     let b = run_interrupted(seed, script(), interrupt);
     show(name, &a);
     assert_eq!(a.crashed.as_deref(), Some("injected fault in append"), "the crash was seen at {double} after {after} writes");
-    let mut want = clean;
-    want.rounds = rounds.unwrap_or(want.rounds);
-    let clean = want;
     if let Err(why) = converged(&a, &clean) {
         panic!("{name}: {why}\n{}", dump(&a));
     }
@@ -824,21 +802,16 @@ fn a_crash_after_sift_recorded_both_passes_converges_on_the_store() {
     crash_at("sifted_both", GREEN2, 12, "sift_record_pass", 2);
 }
 
-/// Sift's first pass reached the store and the second did not: the batcher's first look at the
-/// restarted store finds one member sifted and cuts it alone, and the other lands in the next round.
+/// Sift's first pass reached the store and the second did not: the restart sifts the other, and
+/// both are cut once certified.
 #[test]
-fn a_crash_after_sift_recorded_one_pass_cuts_what_the_store_shows_sifted() {
-    crash_at_cutting("sifted_one", GREEN2, 12, "sift_record_pass", 1, Some(2));
+fn a_crash_after_sift_recorded_one_pass_converges_on_the_store() {
+    crash_at("sifted_one", GREEN2, 12, "sift_record_pass", 1);
 }
 
 #[test]
 fn a_crash_after_the_round_was_recorded_converges_on_the_store() {
     crash_at("round_open", GREEN2, 12, "batcher_round_open", 1);
-}
-
-#[test]
-fn a_crash_after_the_first_member_was_certified_converges_on_the_store() {
-    crash_at("lc_certify", GREEN2, 12, "batcher_lc_certify", 1);
 }
 
 #[test]
@@ -859,11 +832,6 @@ fn a_crash_after_the_last_member_landed_converges_on_the_store() {
 #[test]
 fn a_crash_after_the_round_was_closed_converges_on_the_store() {
     crash_at("land_closed", GREEN2, 12, "batcher_land", 5);
-}
-
-#[test]
-fn a_crash_after_the_last_member_was_certified_converges_on_the_store() {
-    crash_at("lc_certify_both", GREEN2, 12, "batcher_lc_certify", 2);
 }
 
 #[test]

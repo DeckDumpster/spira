@@ -32,7 +32,7 @@ fn snap(open: Vec<Round>, now_ms: u64) -> Snapshot {
 }
 
 fn round(id: &str, members: &[&str], head: &str, age_secs: u64) -> Round {
-    Round { id: id.into(), members: members.iter().map(|m| m.to_string()).collect(), tips: vec![], head: head.into(), worktree: format!("/w/{id}"), driven: true, red: false, age_secs, unfit: None, phase: String::new(), gate_red: vec![] }
+    Round { id: id.into(), members: members.iter().map(|m| m.to_string()).collect(), tips: vec![], head: head.into(), worktree: format!("/w/{id}"), driven: true, red: false, age_secs, unfit: None, phase: String::new() }
 }
 
 fn names(acts: &[Act]) -> Vec<&str> {
@@ -137,7 +137,7 @@ fn the_upper_round_lands_only_after_the_lower() {
     assert_eq!(carry.repos["spira"].above[0].state, State::Certified);
 
     let (carry, acts) = ran(&carry, "spira.lower.certify1", 0, "");
-    assert_eq!(names(&acts), [LC_CERTIFY, LAND], "{acts:?}");
+    assert_eq!(names(&acts), [LAND], "{acts:?}");
     assert_eq!(leg_of(&acts, LAND).batch, "r1");
 
     let landed = leg_of(&acts, LAND);
@@ -148,7 +148,7 @@ fn the_upper_round_lands_only_after_the_lower() {
 
     let open = vec![round("r2", &["sp-c", "sp-d"], "h2", 70)];
     let (carry, acts) = decide_with(&small(2), &carry, &snap(open, NOW + 140_000));
-    assert_eq!(names(&acts), [LC_CERTIFY, LAND], "{acts:?}");
+    assert_eq!(names(&acts), [LAND], "{acts:?}");
     assert_eq!(leg_of(&acts, LAND).batch, "r2");
     assert_eq!(carry.repos["spira"].state, State::Landing);
 }
@@ -156,7 +156,7 @@ fn the_upper_round_lands_only_after_the_lower() {
 #[test]
 fn a_green_lower_with_the_upper_still_certifying_lands_at_once() {
     let (_, acts) = ran(&certifying_two(), "spira.lower.certify1", 0, "");
-    assert_eq!(names(&acts), [LC_CERTIFY, LAND], "{acts:?}");
+    assert_eq!(names(&acts), [LAND], "{acts:?}");
 }
 
 #[test]

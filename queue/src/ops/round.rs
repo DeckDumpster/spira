@@ -24,20 +24,13 @@ use crate::lock::Guard;
 use crate::model::{parse_members, render_members, EjectCause, LandMode, Member};
 use crate::ports::{ref_branch, AmiBuild, AmiLookup, RunOut};
 use crate::records::{self, one_line, write_atomic, Kv};
-use landing_pass::gateq::GateQueue;
 use spira_config::scoped_stop;
 
 const ROUNDS_LANE: &str = "rounds";
-use landing_pass::model::GateOutcome;
 
 /// certify's exit when the corpus could not be judged (the VM, the wall, the install), as
 /// opposed to FAIL, which is a red round.
 pub const FAULT: i32 = 4;
-
-/// certify's exit when `round preempt` stopped its pass: the verb, not certify, records that.
-pub const PREEMPTED: i32 = 5;
-/// Every refusal of `round preempt` after it stopped the pass names this; one before it names nothing of the kind.
-pub const PREEMPT_ACTED: &str = "next pass";
 
 /// round-vm's exit, and certify's, when the round VM died under the pass: no verdict, no member
 /// at fault, the pass is run again.
@@ -46,8 +39,6 @@ pub const VM_LOST: i32 = 75;
 /// round-vm's exit, and certify's, when the VM answered ssh and never started the round: no
 /// verdict, no member at fault, and the driver runs the pass once more on a fresh VM.
 pub const VM_NO_OUTPUT: i32 = 77;
-
-const PREEMPT_POLLS: u32 = 120;
 
 pub(super) const BUILD_RED: &str = "workspace-build";
 pub(super) const LINT_RED: &str = "spira-lint";
@@ -255,14 +246,6 @@ pub fn run(w: &World, r: &Round) -> i32 {
             cause,
         ),
         Round::SweepLocks { repo, all } => sweep_locks(w, repo.as_deref(), *all),
-        Round::Preempt {
-            by,
-            batch,
-            repo,
-            eject,
-            reason,
-            suites,
-        } => preempt(w, by, batch, repo.as_deref(), eject, reason, suites),
         Round::Stop {
             repo,
             by,
@@ -1317,10 +1300,6 @@ pub(super) fn handle_of(c: &Ctx, batch: &str) -> PathBuf {
     rounds_dir(c).join(format!("{batch}.pass"))
 }
 
-fn preempt_marker(c: &Ctx, batch: &str) -> PathBuf {
-    rounds_dir(c).join(format!("{batch}.preempt"))
-}
-
 fn running_marker(c: &Ctx, batch: &str) -> PathBuf {
     rounds_dir(c).join(format!("{batch}.running"))
 }
@@ -1571,13 +1550,6 @@ pub(super) fn return_to_rework(w: &World, m: &Member) -> Result<(), String> {
         )),
         None => Err("return to rework accepted but the bead's row cannot be read back".into()),
     }
-}
-
-/// The gate-worker's recorded FAIL for `spira/<id>` at exactly `tip`, as the gate's own reason.
-/// BASE_FAIL and NO_VERDICT are not the branch's fault and a missing verdict says nothing.
-pub(super) fn gate_red_at(c: &Ctx, id: &str, tip: &str) -> Option<String> {
-    let done = GateQueue::new(&c.s.run).peek_done(&c.r.name, &format!("spira/{id}"), tip)?;
-    (done.run.outcome == GateOutcome::Fail).then(|| done.run.reason_or("unspecified").to_string())
 }
 
 const RED_TIPS: &str = "red-tips";
@@ -1918,18 +1890,15 @@ fn open_timed(
                 Some(tip) if tip.starts_with(&m.tip) && batch_red_at(&c, &m.id, &tip) => {
                     skips.push(skip(&m.id, "batch-red", format!("{}: {tip} already went red in a batch — not admitted until the tip changes", m.id)))
                 }
-                Some(tip) if tip.starts_with(&m.tip) => match gate_red_at(&c, &m.id, &tip) {
-                    Some(why) => skips.push(skip(&m.id, "gate-red", format!("{}: its gate is FAIL at {tip} ({why}) — not admitted", m.id))),
-                    None => match r.blocked_by.first() {
-                        Some(dep) => {
-                            let state = w.lc.bead_row(dep).map(|d| d.state).unwrap_or_else(|| "unknown".into());
-                            skips.push(skip(&m.id, "blocked", format!("{}: depends on {dep} ({state}) — not admitted until it lands", m.id)))
-                        }
-                        None if super::simple::lands_by_lint(w, &c.s, &path, &base, &tip) => {
-                            skips.push(skip(&m.id, "text-only", crate::text_only::skip_line(&m.id)))
-                        }
-                        None => admitted.push(Member { id: m.id, tip }),
-                    },
+                Some(tip) if tip.starts_with(&m.tip) => match r.blocked_by.first() {
+                    Some(dep) => {
+                        let state = w.lc.bead_row(dep).map(|d| d.state).unwrap_or_else(|| "unknown".into());
+                        skips.push(skip(&m.id, "blocked", format!("{}: depends on {dep} ({state}) — not admitted until it lands", m.id)))
+                    }
+                    None if super::simple::lands_by_lint(w, &c.s, &path, &base, &tip) => {
+                        skips.push(skip(&m.id, "text-only", crate::text_only::skip_line(&m.id)))
+                    }
+                    None => admitted.push(Member { id: m.id, tip }),
                 },
                 Some(tip) => skips.push(skip(&m.id, "tip-moved", format!("{}: {} is not its row's tip {tip} — not admitted", m.id, m.tip))),
                 None => skips.push(skip(&m.id, "no-tip", format!("{}: no submitted tip — not admitted", m.id))),
@@ -3623,7 +3592,6 @@ fn certify_pass(
             ));
             return FAIL;
         }
-        let _ = fs::remove_file(preempt_marker(c, batch));
         if ride.save_rest(w, label, c, &kv).is_err() {
             return FAIL;
         }
@@ -3665,10 +3633,6 @@ fn certify_pass(
             &handle_of(c, batch),
         );
         let _ = fs::remove_file(handle_of(c, batch));
-        if preempt_marker(c, batch).exists() {
-            w.out(format!("queue.sh {label}: round {batch} was preempted; its pass is recorded by `round preempt`"));
-            return PREEMPTED;
-        }
         let wall = w.clock.now().saturating_sub(began);
         ran = 1;
         timings = Timings {
@@ -3751,7 +3715,6 @@ fn certify_pass(
         let mut ami = AmiWait::default();
         while image_id.is_none()
             && stale_ami_cause(&out).is_some()
-            && !preempt_marker(c, batch).exists()
             && ami.step(w, label, c)
         {
             out = run_vm();
@@ -3760,10 +3723,6 @@ fn certify_pass(
             .map(|h| h.trim().to_string())
             .unwrap_or_default();
         let _ = fs::remove_file(handle_of(c, batch));
-        if preempt_marker(c, batch).exists() {
-            w.out(format!("queue.sh {label}: round {batch} was preempted; its pass is recorded by `round preempt`"));
-            return PREEMPTED;
-        }
         let build_env = if out.rc == 4 && !matches!(image, Image::Failed(_)) {
             build_environment_cause(&out.err)
         } else {
@@ -4321,7 +4280,7 @@ fn eject(
         match w.scripts.live_pass_scopes(&c.r.name, batch) {
             Ok(live) if live.is_empty() => {}
             Ok(live) => {
-                w.err(format!("queue.sh {label}: a pass of round {batch} is running ({}); rebuilding the round would pull its worktree from under it — stop it with `queue round preempt {batch} --eject {id} --reason ...` — nothing changed", live.join(" ")));
+                w.err(format!("queue.sh {label}: a pass of round {batch} is running ({}); rebuilding the round would pull its worktree from under it — nothing changed", live.join(" ")));
                 return FAIL;
             }
             Err(e) => {
@@ -4623,300 +4582,6 @@ fn carry_mends(
         "queue.sh {label}: round {batch} rebuilt at {new_head} with its mended tips"
     ));
     Ok(Some(new_head))
-}
-
-/// Stops the round's running pass without letting it finish: TERM to the run's handle so
-/// round-vm salvages the finished suites and releases the VM, `PassPreempted` on the batch,
-/// the named members ejected with the evidence, the head rebuilt and checked, the next pass
-/// started. Refuses, naming the phase, when no pass is running.
-fn preempt(
-    w: &World,
-    by: &str,
-    batch: &str,
-    repo: Option<&str>,
-    eject_arg: &str,
-    reason: &Text,
-    suites: &str,
-) -> i32 {
-    let label = "round preempt";
-    let reason = match read_text(w, reason) {
-        Ok(r) if !r.trim().is_empty() => r,
-        Ok(_) => {
-            w.err(format!("queue.sh {label}: --reason is required — it is the evidence each ejected bead carries back"));
-            return USAGE;
-        }
-        Err(e) => {
-            w.err(format!("queue.sh {label}: cannot read the reason: {e}"));
-            return USAGE;
-        }
-    };
-    let ids: Vec<String> = eject_arg
-        .split(',')
-        .filter(|s| !s.is_empty())
-        .map(String::from)
-        .collect();
-    if ids.is_empty() {
-        w.err(format!("queue.sh {label}: --eject names no bead"));
-        return USAGE;
-    }
-    let Ok((c, path)) = local_ctx(w, label, repo) else {
-        return FAIL;
-    };
-    if idents(w, label, &[("batch id", batch)]).is_err() || require_lc(w, label).is_err() {
-        return FAIL;
-    }
-    if ids
-        .iter()
-        .try_for_each(|i| idents(w, label, &[("bead id", i)]))
-        .is_err()
-        || suites
-            .split(',')
-            .filter(|s| !s.is_empty())
-            .try_for_each(|s| idents(w, label, &[("suite", s)]))
-            .is_err()
-    {
-        return FAIL;
-    }
-    // It ejects, so a leased round is refused here as eject refuses it; no holder preempts.
-    if let Err(rc) = LeaseCheck::Check(None).guard(w, label, &c, batch) {
-        return rc;
-    }
-
-    let (wt, head, tips) = {
-        let _g = match lock(w, label, &c) {
-            Ok(g) => g,
-            // A busy lock keeps its own exit (LOCK_BUSY), so a caller retries on the code.
-            Err(rc) => return rc,
-        };
-        let Ok(kv) = load(w, label, &c, batch) else {
-            return FAIL;
-        };
-        let phase = phase_of(w, batch);
-        let members = kv.members();
-        if let Some(missing) = ids.iter().find(|i| !members.iter().any(|m| &m.id == *i)) {
-            let named: Vec<&str> = members.iter().map(|m| m.id.as_str()).collect();
-            w.err(format!(
-                "queue.sh {label}: {missing} is not a member of round {batch} (members: {})",
-                named.join(" ")
-            ));
-            return FAIL;
-        }
-        let pid = fs::read_to_string(handle_of(&c, batch))
-            .ok()
-            .and_then(|t| t.trim().parse::<u32>().ok())
-            .filter(|p| w.scripts.pass_alive(*p));
-        let scopes = if pid.is_none() && phase == "certifying" {
-            match w.scripts.live_pass_scopes(&c.r.name, batch) {
-                Ok(s) => s,
-                Err(e) => {
-                    w.err(format!("queue.sh {label}: cannot tell whether a pass of round {batch} is running ({e}) — nothing preempted"));
-                    return FAIL;
-                }
-            }
-        } else {
-            Vec::new()
-        };
-        let leg_runs = pid.is_none() && scopes.is_empty() && phase == "certifying" && w.scripts.round_legs_live(&c.r.name, batch);
-        if phase != "certifying" || (pid.is_none() && scopes.is_empty() && !leg_runs) {
-            w.err(format!("queue.sh {label}: round {batch} is {phase}, with no pass running — nothing to preempt"));
-            return FAIL;
-        }
-        let _ = fs::create_dir_all(rounds_dir(&c));
-        if let Err(e) = fs::write(preempt_marker(&c, batch), one_line(&reason)) {
-            w.err(format!(
-                "queue.sh {label}: cannot mark the pass as preempted: {e}"
-            ));
-            return FAIL;
-        }
-        if let Some(pid) = pid {
-            w.scripts.pass_terminate(pid);
-            let mut polls = 0;
-            while w.scripts.pass_alive(pid) && polls < PREEMPT_POLLS {
-                w.clock.sleep(1);
-                polls += 1;
-            }
-            if w.scripts.pass_alive(pid) {
-                let _ = fs::remove_file(preempt_marker(&c, batch));
-                w.err(format!("queue.sh {label}: the pass of round {batch} (pid {pid}) did not stop after {PREEMPT_POLLS} polls — left running, not killed: a kill would lose its salvaged results"));
-                return FAIL;
-            }
-        } else if let Err(e) = if leg_runs { Ok(Vec::new()) } else { w.scripts.stop_pass_scopes(&c.r.name, batch) } {
-            let _ = fs::remove_file(preempt_marker(&c, batch));
-            w.err(format!("queue.sh {label}: the pass scope of round {batch} did not stop ({e}) — left running"));
-            return FAIL;
-        }
-        (
-            worktree_of(&kv),
-            kv.get("head").unwrap_or("").to_string(),
-            members,
-        )
-    };
-
-    let mut found = Vec::new();
-    suite_statuses(
-        &rounds_dir(&c).join(format!("{batch}.results")),
-        &mut found,
-        0,
-    );
-    let corpus = fs::read_dir(wt.join("spira"))
-        .map(|rd| {
-            rd.flatten()
-                .filter_map(|e| e.file_name().into_string().ok())
-                .filter(|n| n.starts_with("test-") && n.ends_with(".sh"))
-                .count()
-        })
-        .unwrap_or(0);
-    let (done, total) = (found.len() as u32, (corpus.max(found.len())) as u32);
-    let mut reds: Vec<String> = found
-        .iter()
-        .filter(|(_, s)| BLOCKING.contains(&s.as_str()))
-        .map(|(n, _)| n.clone())
-        .collect();
-    reds.sort();
-    reds.dedup();
-
-    {
-        let _g = match lock(w, label, &c) {
-            Ok(g) => g,
-            // A busy lock keeps its own exit (LOCK_BUSY), so a caller retries on the code.
-            Err(rc) => return rc,
-        };
-        let Ok(mut kv) = load(w, label, &c, batch) else {
-            return FAIL;
-        };
-        if phase_of(w, batch) != "certifying" || kv.get("head") != Some(head.as_str()) {
-            w.err(format!("queue.sh {label}: the round {batch} changed while its pass was stopping — nothing ejected"));
-            return FAIL;
-        }
-        set(&mut kv, "red", &reds.join(","));
-        let ride = Ride::with(w, &kv);
-        let recorded = lc_cas(w, batch, |s, v| {
-            let (n, _) =
-                w.lc.batch_pass(batch)
-                    .ok_or((1, format!("spira-lc cannot say which pass {batch} is on")))?;
-            let kind = serde_json::json!({"PassPreempted": {"n": n, "done": done, "total": total, "red_suites": reds}});
-            ride.sent(w.lc.batch_event(batch, s, v, LC_ACTOR, &kind.to_string(), ride.fields()))
-        });
-        if let Err((rc, out)) = recorded {
-            w.err(format!("queue.sh {label}: spira-lc refused PassPreempted for {batch} (rc={rc}): {out} — nothing ejected"));
-            return FAIL;
-        }
-        if ride.save_rest(w, label, &c, &kv).is_err() {
-            return FAIL;
-        }
-        let _ = fs::remove_file(preempt_marker(&c, batch));
-        mark_running(&c, batch);
-    }
-    round_event(
-        &c.s.run,
-        "preempt",
-        &c.r.name,
-        batch,
-        by,
-        w.clock.now(),
-        &[
-            ("done", format!("{done}/{total}")),
-            ("red", reds.join(",")),
-            ("eject", ids.join(",")),
-        ],
-    );
-    w.out(format!(
-        "queue.sh {label}: pass of round {batch} stopped at {done}/{total} suites, red so far: {}",
-        if reds.is_empty() {
-            "none".to_string()
-        } else {
-            reds.join(",")
-        }
-    ));
-
-    for id in &ids {
-        match record_of(w, &c, batch) {
-            Err(e) => {
-                w.err(format!("queue.sh {label}: cannot tell whether round {batch} is still open: {e} — the next pass was not started"));
-                return FAIL;
-            }
-            Ok(Some(kv)) if kv.members().iter().any(|m| &m.id == id) => {}
-            Ok(Some(_)) => {
-                w.out(format!(
-                    "queue.sh {label}: {id} already left round {batch} with an earlier eject"
-                ));
-                continue;
-            }
-            Ok(None) => break,
-        }
-        let rc = eject(
-            w,
-            by,
-            batch,
-            id,
-            repo,
-            &Text::Arg(reason.clone()),
-            suites,
-            !suites.is_empty(),
-            false,
-            true,
-            "",
-            LeaseCheck::Inside,
-        );
-        if rc != OK {
-            match record_of(w, &c, batch) {
-                Ok(Some(kv)) if !kv.members().iter().any(|m| &m.id == id) => {}
-                Ok(None) => {}
-                _ => {
-                    w.err(format!(
-                        "queue.sh {label}: eject of {id} failed (rc={rc}) — the next pass was not started"
-                    ));
-                    return rc;
-                }
-            }
-            w.err(format!("queue.sh {label}: {id} left round {batch}; its eject reported rc={rc} after it was recorded — the next pass goes on"));
-        }
-    }
-
-    let kv = match record_of(w, &c, batch) {
-        Err(e) => {
-            w.err(format!("queue.sh {label}: cannot tell whether round {batch} is still open: {e} — the next pass was not started"));
-            return FAIL;
-        }
-        Ok(None) => {
-            w.out(format!(
-                "queue.sh {label}: round {batch} has no member left; no pass to start"
-            ));
-            return OK;
-        }
-        Ok(Some(kv)) => kv,
-    };
-    let new_head = kv.get("head").unwrap_or("").to_string();
-    let base = kv.get("base").unwrap_or("").to_string();
-    let still_in: Vec<&str> = tips
-        .iter()
-        .filter(|m| !kv.members().iter().any(|k| k.id == m.id))
-        .filter(|m| {
-            w.git.is_ancestor(&path, &m.tip, &new_head) && !w.git.is_ancestor(&path, &m.tip, &base)
-        })
-        .map(|m| m.id.as_str())
-        .collect();
-    if !still_in.is_empty()
-        || w.git.rev_parse(&worktree_of(&kv), "HEAD").as_deref() != Some(new_head.as_str())
-    {
-        w.err(format!("queue.sh {label}: the rebuilt head {new_head} of round {batch} still holds the tip of {} or the worktree is not at it — the next pass was not started", still_in.join(" ")));
-        return FAIL;
-    }
-    w.out(format!(
-        "queue.sh {label}: verified no ejected tip remains in head {new_head}"
-    ));
-    if let Err(e) = w.scripts.stop_round_legs(&c.r.name, batch) {
-        w.err(format!("queue.sh {label}: the step of round {batch} that started the stopped pass did not stop ({e}) — the next pass was not started"));
-        return FAIL;
-    }
-    if !w.scripts.pass_restart(batch, &c.r.name) {
-        w.err(format!("queue.sh {label}: cannot start the next pass of round {batch} — run `queue round certify {batch}`"));
-        return FAIL;
-    }
-    w.out(format!(
-        "queue.sh {label}: next pass of round {batch} started at {new_head}"
-    ));
-    OK
 }
 
 /// Activation restarts the store's server; a refusal (rc 3) is final, anything else is retried

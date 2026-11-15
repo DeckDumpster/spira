@@ -74,7 +74,7 @@ fn a_round_the_attribution_rebuilt_is_certified_for_the_rebuilt_head_and_its_gre
     for (carry, seen) in [(&before_write, OPENED), (&after_write, REBUILT)] {
         let head_of = move |_: &str, _: &str| Some(seen.to_string());
         let (landing, acts) = on_ran_seeing(carry, &ran(&leg.unit, Exit::Code(0)), &RanOutput::captured(b"", b""), NOW, &head_of).unwrap_or_else(|| panic!("a green certify seen at {seen} was discarded"));
-        assert_eq!(effects(&acts), [LC_CERTIFY, LAND], "{acts:?}");
+        assert_eq!(effects(&acts), [LAND], "{acts:?}");
         assert_eq!(landing.repos["spira"].state, State::Landing);
     }
 }
@@ -119,14 +119,4 @@ fn certify_argv_carries_rehead_only_for_a_leg_that_names_a_head() {
         certify_argv("q", &bare),
         ["q", "round", "certify", "r9", "spira", "--by", "batcher"]
     );
-}
-
-#[test]
-fn a_preempted_certify_leaves_the_rebuilt_head_for_the_certify_that_replaces_it() {
-    let (held, _) = on_ran_with(&attributing(), &ran(ATTRIBUTE, Exit::Code(0)), &land_line(REBUILT), NOW).unwrap();
-    let (certifying, acts) = decide(&held, &snapshot(OPENED));
-    let leg = certify_leg(&acts);
-    let preempted = Exit::Code(queue::ops::round::PREEMPTED);
-    let (after, _) = on_ran_with(&certifying, &ran(&leg.unit, preempted), &RanOutput::captured(b"", b""), NOW).expect("its own leg");
-    assert_eq!(after.repos["spira"].certify_head, REBUILT);
 }

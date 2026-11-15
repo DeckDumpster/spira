@@ -1285,50 +1285,6 @@ pub fn withdraw_for_conflict(env: &Env, repo: &Repo, id: &str, rounds: u32, file
     conflict_streak_clear(env, id);
 }
 
-/// A SUBMITTED member the round carried to a green corpus has earned CERTIFIED, so `land-local`
-/// can walk it Deliver -> Delivered: the round's full suite is its trial, recorded as the gate
-/// key. A refusal (tip moved, already certified) is said on stderr and never blocks the round.
-pub fn lc_certify_round(env: &Env, members: &[(String, String)], round_key: &str) {
-    for (id, tip) in members {
-        let Ok(Ok(row)) =
-            lcq(env, &["show", id]).map(|o| serde_json::from_str::<serde_json::Value>(&o))
-        else {
-            continue;
-        };
-        let bead = row.get("bead").cloned().unwrap_or_default();
-        if bead.get("state").and_then(|s| s.as_str()) != Some("SUBMITTED") {
-            continue;
-        }
-        let Some(version) = bead.get("version").and_then(|v| {
-            v.as_u64()
-                .or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
-        }) else {
-            continue;
-        };
-        let kind =
-            serde_json::json!({"GatePass": {"tip": tip, "gate_key": format!("round:{round_key}")}})
-                .to_string();
-        if let Err(e) = lcq(
-            env,
-            &[
-                "event",
-                "bead",
-                id,
-                "--expect",
-                "SUBMITTED",
-                "--version",
-                &version.to_string(),
-                "--actor",
-                "batcher",
-                "--kind",
-                &kind,
-            ],
-        ) {
-            eprintln!("batcher: LIFECYCLE: {id} not certified by its round on spira-lc: {e}");
-        }
-    }
-}
-
 /// A CERTIFIED member whose tip is already an ancestor of the landing ref is recorded LANDED
 /// there, so no later cut sets it aside again. Anything else is left as it stands.
 pub fn lc_land_on_base(env: &Env, repo: &Repo, id: &str, tip: &str, base_sha: &str) {
@@ -1391,30 +1347,6 @@ pub fn lc_withdraw(env: &Env, id: &str) {
     }) else {
         return fail("show: no version".into());
     };
-    if state == "SUBMITTED" {
-        let tip = bead.get("tip").and_then(|t| t.as_str()).unwrap_or("");
-        let kind =
-            serde_json::json!({"GateRed": {"tip": tip, "reason": "suites-failed"}}).to_string();
-        if let Err(e) = lcq(
-            env,
-            &[
-                "event",
-                "bead",
-                id,
-                "--expect",
-                "SUBMITTED",
-                "--version",
-                &version.to_string(),
-                "--actor",
-                "batcher",
-                "--kind",
-                &kind,
-            ],
-        ) {
-            fail(format!("GateRed: {e}"));
-        }
-        return;
-    }
     if state == "CERTIFIED" {
         let v = version.to_string();
         if let Err(e) = lcq(
@@ -2858,9 +2790,7 @@ fn round_verb(env: &Env, args: &[&str], stdin: &str) -> Result<VerbRun, String> 
 }
 
 /// The round verbs that name who acts on the round (`queue round <verb> --by <actor>`).
-const ACTED_VERBS: [&str; 7] = [
-    "open", "certify", "eject", "land", "abandon", "preempt", "promote",
-];
+const ACTED_VERBS: [&str; 6] = ["open", "certify", "eject", "land", "abandon", "promote"];
 
 /// The whole argv after `queue` for a round verb: the batcher acts, so it says so.
 pub fn round_argv(args: &[&str]) -> Vec<String> {
@@ -3161,84 +3091,7 @@ pub fn added_lines(repo: &Repo, base_sha: &str, tip: &str) -> String {
     .collect()
 }
 
-/// Members of `ids` whose lifecycle row carries a red gate verdict, as `(id, tip, the row's mark)`.
-pub fn gate_red_rows(env: &Env, ids: &[String]) -> Vec<(String, String, String)> {
-    ids.iter()
-        .filter_map(|id| {
-            let row =
-                serde_json::from_str::<serde_json::Value>(&lcq(env, &["show", id]).ok()?).ok()?;
-            let bead = row.get("bead")?;
-            let field = |k: &str| bead.get(k).and_then(|v| v.as_str()).unwrap_or("");
-            let mark = field("reason").strip_prefix(lifecycle::bead::GATE_RED_MARK)?;
-            (field("state") == "IN_DELIVERY")
-                .then(|| (id.clone(), field("tip").to_string(), mark.to_string()))
-        })
-        .collect()
-}
-
-/// Members of an open round whose lifecycle row carries a red gate verdict at the very tip the
-/// round holds, as `(id, the row's mark)`: the gate already judged this tree red, so the round's
-/// corpus need not rediscover it.
-pub fn gate_red_marks(env: &Env, members: &[(String, String)]) -> Vec<(String, String)> {
-    let ids: Vec<String> = members.iter().map(|(id, _)| id.clone()).collect();
-    gate_red_rows(env, &ids)
-        .into_iter()
-        .filter(|(id, tip, _)| members.iter().any(|(m, t)| m == id && t == tip))
-        .map(|(id, _, mark)| (id, mark))
-        .collect()
-}
-
-/// `queue round preempt`: stops the pass of `batch` that is running, ejects `ids` (each carries
-/// `reason` back as its evidence) and starts the next pass on the rebuilt head.
-pub fn round_preempt(env: &Env, repo: &Repo, batch: &str, ids: &[String], reason: &str) -> Result<(), String> {
-    let args = preempt_args(batch, &repo.name, ids);
-    let run = round_verb(env, &args.iter().map(String::as_str).collect::<Vec<_>>(), reason)?;
-    if run.code == Some(0) {
-        Ok(())
-    } else {
-        Err(verb_failed("queue round preempt", &run))
-    }
-}
-
-/// The arguments after `queue round` for [`round_preempt`]; the reason comes on stdin.
-pub fn preempt_args(batch: &str, repo: &str, ids: &[String]) -> Vec<String> {
-    [
-        "preempt",
-        batch,
-        repo,
-        "--eject",
-        &ids.join(","),
-        "--reason-file",
-        "-",
-        "--by",
-        "batcher",
-    ]
-    .map(String::from)
-    .to_vec()
-}
-
-/// `queue round eject` for a member the gate had already marked red while it sat in the round.
-pub fn round_eject_gate_red(
-    env: &Env,
-    repo: &Repo,
-    batch: &str,
-    id: &str,
-    mark: &str,
-) -> Result<(), String> {
-    let reason = format!(
-        "Ejected from the round before its corpus ran: spira/{id}'s own gate went red at the tip the round holds ({mark}). The gate's whole output is kept under the gate-worker's output directory."
-    );
-    round_eject_with(env, repo, batch, id, &reason, "")
-}
-
-/// `queue round eject` for a member whose preempt recorded the preemption and then could not eject it.
-pub fn round_eject_after_refused_preempt(env: &Env, repo: &Repo, batch: &str, id: &str, refusal: &str) -> Result<(), String> {
-    let reason = format!("Ejected from the round: spira/{id}'s gate went red, and the preempt that should have ejected it was refused ({refusal}).");
-    round_eject_with(env, repo, batch, id, &reason, "")
-}
-
-/// The arguments after `queue round` for an eject; the reason comes on stdin. No csv names no
-/// suite, as the preempt's argv does.
+/// The arguments after `queue round` for an eject; the reason comes on stdin. No csv names no suite.
 pub fn eject_args(batch: &str, repo: &str, id: &str, csv: &str) -> Vec<String> {
     let mut args: Vec<String> = [
         "eject",
@@ -5791,17 +5644,13 @@ mod config_key_tests {
 
 #[cfg(test)]
 mod eject_args_tests {
-    use super::{eject_args, preempt_args, round_argv};
+    use super::{eject_args, round_argv};
 
     #[test]
-    fn the_batchers_eject_and_preempt_name_the_batcher() {
-        for a in [
-            eject_args("r9", "spira", "sp-a", ""),
-            preempt_args("r9", "spira", &["sp-a".to_string()]),
-        ] {
-            let i = a.iter().position(|x| x == "--by").expect("--by");
-            assert_eq!(a[i + 1], "batcher", "{a:?}");
-        }
+    fn the_batchers_eject_names_the_batcher() {
+        let a = eject_args("r9", "spira", "sp-a", "");
+        let i = a.iter().position(|x| x == "--by").expect("--by");
+        assert_eq!(a[i + 1], "batcher", "{a:?}");
     }
 
     #[test]

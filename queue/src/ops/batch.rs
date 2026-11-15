@@ -845,7 +845,6 @@ pub fn open_batch(w: &World, a: &OpenArgs) -> i32 {
     // the work verbs never move it). A row the machine cannot read is not admitted
     // (DESIGN.md §8 D8).
     let mut admitted = Vec::new();
-    let provisional: Vec<String> = Vec::new();
     for (id, tip) in cands {
         match w.lc.bead_row(&id) {
             None => skips.push(format!(
@@ -894,7 +893,6 @@ pub fn open_batch(w: &World, a: &OpenArgs) -> i32 {
             .into_iter()
             .map(|(id, tip)| Member { id, tip })
             .collect();
-        let provisional = provisional.join(" ");
         return publish(
             w,
             &c,
@@ -905,7 +903,6 @@ pub fn open_batch(w: &World, a: &OpenArgs) -> i32 {
             None,
             &base_sha,
             &actor,
-            &provisional,
         );
     }
     let wt =
@@ -957,12 +954,6 @@ pub fn open_batch(w: &World, a: &OpenArgs) -> i32 {
     }
     w.lib.format_batch(&wt, &base_sha, &name);
     let head = w.git.rev_parse(&wt, "HEAD").unwrap_or_default();
-    let provisional = provisional
-        .iter()
-        .filter(|p| members.iter().any(|m| &m.id == *p))
-        .cloned()
-        .collect::<Vec<_>>()
-        .join(" ");
     publish(
         w,
         &c,
@@ -973,7 +964,6 @@ pub fn open_batch(w: &World, a: &OpenArgs) -> i32 {
         Some(&wt),
         &base_sha,
         &actor,
-        &provisional,
     )
 }
 
@@ -990,7 +980,6 @@ fn publish(
     wt: Option<&std::path::Path>,
     base_sha: &str,
     actor: &str,
-    provisional: &str,
 ) -> i32 {
     let name = c.r.name.as_str();
     let drop_wt = || {
@@ -1103,12 +1092,6 @@ fn publish(
         ("owner", actor),
     ] {
         rec.push(k, v);
-    }
-    if !provisional.is_empty() {
-        rec.push("provisional", provisional);
-        w.out(format!(
-            "queue.sh open-batch: provisional (SUBMITTED, gate still running): {provisional}"
-        ));
     }
     let title = format!("queue: {} beads for {name}", members.len());
     let pr_req = PrRequest {

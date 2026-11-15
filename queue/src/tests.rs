@@ -524,14 +524,10 @@ struct FScripts {
     round_vm_files: RefCell<Vec<(String, String)>>,
     /// Files only the next `round_vm` call writes, on top of `round_vm_files`.
     round_vm_files_once: RefCell<Vec<(String, String)>>,
-    /// A pass `round preempt` can address: its pid is alive until it is sent TERM.
+    /// Whether the pass a round's handle names is alive.
     pass_alive: Cell<bool>,
-    /// `round-vm` is preempted while it runs: the marker the verb leaves is there when it returns.
-    preempted_during_vm: Cell<bool>,
-    restart_fails: Cell<bool>,
     /// What `rebase-stale <id>` answers, by bead (absent = exit 0, nothing printed).
     rebase: RefCell<BTreeMap<String, RunOut>>,
-    survives_term: Cell<bool>,
     /// `round-vm` records the pass's verdict on the batch itself while it runs: the shared view
     /// it moves, and where to.
     round_vm_records: RefCell<Option<(SharedView, BatchView)>>,
@@ -630,18 +626,8 @@ impl Scripts for FScripts {
         self.calls.borrow_mut().push(format!("czar {class}"));
         self.fence_ok.get()
     }
-    fn pass_terminate(&self, pid: u32) {
-        self.calls.borrow_mut().push(format!("terminate {pid}"));
-        self.pass_alive.set(self.survives_term.get());
-    }
     fn pass_alive(&self, _: u32) -> bool {
         self.pass_alive.get()
-    }
-    fn pass_restart(&self, batch: &str, repo: &str) -> bool {
-        self.calls
-            .borrow_mut()
-            .push(format!("restart {batch} {repo}"));
-        !self.restart_fails.get()
     }
     fn rebase_stale(&self, ids: &[String], repo: &str) -> Vec<(String, RunOut)> {
         ids.iter()
@@ -703,9 +689,6 @@ impl Scripts for FScripts {
         fs::write(handle, "777").unwrap();
         if let Some(f) = self.during_vm.borrow().as_ref() {
             f();
-        }
-        if self.preempted_during_vm.get() {
-            fs::write(handle.with_extension("preempt"), "why").unwrap();
         }
         fs::create_dir_all(results).unwrap();
         for (suite, status) in self.round_vm_results.borrow().iter() {
@@ -1968,7 +1951,6 @@ impl T {
             "eject",
             "land",
             "abandon",
-            "preempt",
             "stage",
             "stage-test",
             "promote",
@@ -3129,24 +3111,6 @@ fn open_batch_admits_a_named_certified_bead() {
         .borrow()
         .iter()
         .any(|c| c.starts_with("pr-create")));
-}
-
-#[test]
-fn verdict_ejects_a_provisional_member_whose_gate_went_red_naming_the_gate_lines() {
-    let t = T::new(LandMode::Queue);
-    t.open_record("pr=12\nhead=h1\nbase=b0\nmembers=sp-a:ta sp-s:ts\nopened=5\nbranch=spira/queue/x\nowner=batcher\nprovisional=sp-s\nbatch_id=spira-x\nversion=1\n");
-    round::file_gate_verdict(&t, "sp-s", "ts", 1);
-    t.run(&["verdict", "spira"]);
-    assert!(
-        t.out().contains("provisional member sp-s") && t.out().contains("branch-red"),
-        "{}",
-        t.out()
-    );
-    assert!(
-        t.lib.has("cause_event sp-s eject-red"),
-        "{:?}",
-        t.lib.calls.borrow()
-    );
 }
 
 // covers: UC-landing-merge-queue-41

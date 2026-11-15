@@ -361,60 +361,11 @@ fn run_state_trail_the_landing_names_its_member_after_its_certificate_and_the_pu
     assert_eq!(r.missed(&script), None, "{}", r.dump());
     let tip = r.submitted["sp-rs01"][0].clone();
     assert_eq!(r.lands, [vec![("sp-rs01".to_string(), tip)]], "the landing names its member at its tip: {}", r.dump());
-    let (certify, lc_certify, land) = (times(&r, bl::CERTIFY), times(&r, bl::LC_CERTIFY), times(&r, bl::LAND));
-    assert_eq!((certify.len(), lc_certify.len(), land.len()), (1, 1, 1), "{:?}", r.exec_log);
+    let (certify, land) = (times(&r, bl::CERTIFY), times(&r, bl::LAND));
+    assert_eq!((certify.len(), land.len()), (1, 1), "{:?}", r.exec_log);
     assert!(land[0] >= certify[0] + loopworld::CERTIFY_MS, "certify ran to its end before land: certify {certify:?}, land {land:?}");
-    assert!(lc_certify[0] <= land[0] && entered(&r, "sp-rs01", "CERTIFIED").is_some_and(|c| c <= land[0]), "the member was certified before land: {}", r.dump());
+    assert!(entered(&r, "sp-rs01", "CERTIFIED").is_some_and(|c| c <= land[0]), "the member was certified before land: {}", r.dump());
     assert_eq!(r.published, [(100, loopworld::main_after(1))], "the publish record is at the head the member landed at: {}", r.dump());
     assert!(r.refused.is_empty(), "{:?}", r.refused);
-    assert_no_process(&r);
-}
-
-/// A provisional member (cut while SUBMITTED, its gate still running) whose own gate goes red
-/// minutes into the pass leaves the round at once: the pass is preempted, the member is ejected
-/// with the gate's mark as its evidence and goes back to its dwarf, and the other member lands.
-/// Covers a path no cut reaches now that the pool takes only CERTIFIED beads.
-#[test]
-#[ignore = "covers a path no cut reaches: the pool takes only CERTIFIED beads; the provisional-member work deletes it"]
-fn a_gate_red_recorded_for_a_provisional_member_mid_pass_preempts_the_pass_and_ejects_it() {
-    let script = Script {
-        beads: vec![early("sp-gr01"), early("sp-gr02")],
-        max_concurrent: 2,
-        verdicts: vec![loopworld::VerdictAt { at: 4 * MIN, bead: "sp-gr01".into(), verdict: loopworld::Verdict::Red }],
-        until: 40 * MIN,
-        ..Script::default()
-    };
-    let (r, w) = run_keeping(36, script, |d, _| d);
-    show("provisional-gate-red", &r);
-    assert_eq!(times(&r, bl::PREEMPT).len(), 1, "one preempt asked: {:?}", r.exec_log);
-    let preempts = w.lc().preempts.clone();
-    assert_eq!(preempts.len(), 1, "one preempt: {}", r.dump());
-    assert_eq!(preempts[0].1, "sp-gr01", "the member whose gate went red was ejected");
-    assert!(preempts[0].2.contains("its own gate went red") && preempts[0].2.contains("suites-failed"), "the gate's mark is the evidence: {}", preempts[0].2);
-    let preempted_at = times(&r, bl::PREEMPT)[0];
-    assert!((4 * MIN..6 * MIN).contains(&preempted_at), "preempted as soon as the red was seen: {preempted_at}");
-    assert_eq!(entered(&r, "sp-gr01", "REWORK"), Some(preempted_at), "the ejected member went back to its dwarf: {}", r.dump());
-    let tip = r.submitted["sp-gr02"][0].clone();
-    assert_eq!(r.lands[0], [("sp-gr02".to_string(), tip)], "the other member landed alone from the same round: {}", r.dump());
-    assert_eq!(r.opened[0].len(), 2, "both members were cut into the first round: {:?}", r.opened);
-    assert!(!r.asked.iter().any(|n| n == bl::ABANDON), "the round was not abandoned: {:?}", r.asked);
-    assert!(r.refused.is_empty(), "{:?}", r.refused);
-    assert_no_process(&r);
-}
-
-/// Two gate-red facts for one tip (the gate reported twice) preempt the member once. Covers a path
-/// no cut reaches now that the pool takes only CERTIFIED beads.
-#[test]
-#[ignore = "covers a path no cut reaches: the pool takes only CERTIFIED beads; the provisional-member work deletes it"]
-fn two_gate_red_facts_for_one_tip_preempt_the_member_once_and_the_other_lands() {
-    let red = |at| loopworld::VerdictAt { at, bead: "sp-gr03".into(), verdict: loopworld::Verdict::Red };
-    let script = Script { beads: vec![early("sp-gr03"), early("sp-gr04")], max_concurrent: 2, verdicts: vec![red(4 * MIN), red(4 * MIN + 10_000)], until: 40 * MIN, ..Script::default() };
-    let (r, w) = run_keeping(37, script, |d, _| d);
-    show("gate-red-twice", &r);
-    assert_eq!(w.lc().preempts.len(), 1, "{}", r.dump());
-    assert_eq!(times(&r, bl::PREEMPT).len(), 1, "{:?}", r.exec_log);
-    let tip = r.submitted["sp-gr04"][0].clone();
-    assert_eq!(r.lands[0], [("sp-gr04".to_string(), tip)], "{}", r.dump());
-    assert!(!r.asked.iter().any(|n| n == bl::ABANDON), "{:?}", r.asked);
     assert_no_process(&r);
 }

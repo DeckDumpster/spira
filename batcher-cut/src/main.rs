@@ -924,24 +924,7 @@ fn stabilize_round(
     batch: Option<&str>,
     stage: &[Member],
 ) -> Result<Stabilized, pace::CutError> {
-    let mut members = merge_round(env_, repo, wt, start_sha, starting)?;
-    if let Some(batch) = batch {
-        let held: Vec<(String, String)> = members
-            .iter()
-            .map(|m| (m.id.clone(), m.tip.clone()))
-            .collect();
-        let marked = io::gate_red_marks(env_, &held);
-        if !marked.is_empty() {
-            for (id, mark) in &marked {
-                match io::round_eject_gate_red(env_, repo, batch, id, mark) {
-                    Ok(()) => println!("batcher {}: ejected {id} from round {batch} — its own gate was red at this tip ({mark})", repo.name),
-                    Err(e) => println!("batcher {}: could not eject gate-red {id} from round {batch}: {e}", repo.name),
-                }
-            }
-            members.retain(|m| !marked.iter().any(|(id, _)| *id == m.id));
-            members = merge_round(env_, repo, wt, start_sha, members)?;
-        }
-    }
+    let members = merge_round(env_, repo, wt, start_sha, starting)?;
     if members.is_empty() {
         println!(
             "{}",
@@ -1332,13 +1315,6 @@ fn finish_local_round(
                     None
                 }
             });
-
-    let certified: Vec<(String, String)> = stable
-        .members
-        .iter()
-        .map(|m| (m.id.clone(), m.tip.clone()))
-        .collect();
-    io::lc_certify_round(env_, &certified, batch);
 
     let run = io::round_land(env_, repo, batch);
     let run = match run {

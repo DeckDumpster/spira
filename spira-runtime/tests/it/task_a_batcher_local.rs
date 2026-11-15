@@ -135,7 +135,7 @@ fn t3_a_green_certify_unit_ran_on_its_own_stream_certifies_and_lands_with_no_cor
     r.tick(STREAM, ran.event_kind()).unwrap();
     kit::assert_unpoisoned(&r, STREAM);
     let after: Vec<&str> = r.requested()[asked..].iter().map(|q| q.name.as_str()).collect();
-    assert!(after.contains(&LC_CERTIFY) && after.contains(&LAND), "{after:?}");
+    assert!(after.contains(&LAND), "{after:?}");
     assert!(r.requested().iter().all(|q| q.name != CORPUS), "no corpus leg ran before or after: {:?}", r.requested().iter().map(|q| &q.name).collect::<Vec<_>>());
 }
 
@@ -981,7 +981,7 @@ fn sp_tjrjca_a_green_round_refused_base_moved_is_certified_again_and_landed() {
     r.tick(STREAM, ended(&unit, runtime::units::Exit::Code(0), "verdict=green\n")).unwrap();
     kit::assert_unpoisoned(&r, STREAM);
     let after: Vec<String> = asked_after(&r, n).into_iter().map(|(e, _)| e).collect();
-    assert_eq!(after, [LC_CERTIFY, LAND, SUPERSEDE_REDS], "green again: it lands");
+    assert_eq!(after, [LAND, SUPERSEDE_REDS], "green again: it lands");
 
     let (_, acts) = on_outcome(&Carry { repos: [("spira".to_string(), RepoCarry { state: State::Landing, ..carry.repos["spira"].clone() })].into() }, LAND, true, &serde_json::to_string(&Landed::default()).unwrap(), &land, NOW);
     assert!(!acts.iter().any(|a| a.effect == ABANDON), "{acts:?}");
@@ -1101,7 +1101,7 @@ fn sp_2gcs4h_a_certifying_round_is_never_forgotten_for_waiting() {
 
 #[test]
 fn sp_2gcs4h_the_outcome_wait_outlasts_every_effect_a_waiting_state_issues() {
-    let longest = ACTS.iter().filter(|(e, _)| [ASSEMBLE, ROUND_OPEN, LAND, LC_CERTIFY, PROMOTE, FETCH].contains(e)).map(|(_, d)| *d).max().unwrap();
+    let longest = ACTS.iter().filter(|(e, _)| [ASSEMBLE, ROUND_OPEN, LAND, PROMOTE, FETCH].contains(e)).map(|(_, d)| *d).max().unwrap();
     assert!(OUTCOME_WAIT_MS > longest, "{OUTCOME_WAIT_MS} vs {longest}");
 }
 
@@ -1132,7 +1132,7 @@ fn a_boot_repeats_no_side_effect_and_misses_none() {
 }
 
 /// The round key lists every member as `id:tip`, so it outgrows the store's 255-char key column
-/// with the round's size; a green certify of such a round must still reach `lc_certify`.
+/// with the round's size; a green certify of such a round must still reach `land`.
 #[test]
 fn sp_lkm2fv_a_green_certify_of_a_wide_round_is_requested_not_refused_by_the_store() {
     use runtime::units::{Exit, UnitHandle, UnitRan};
@@ -1155,7 +1155,7 @@ fn sp_lkm2fv_a_green_certify_of_a_wide_round_is_requested_not_refused_by_the_sto
     let certify = leg_of(&r, CERTIFY);
     r.tick(STREAM, ran(&certify).event_kind()).unwrap();
     kit::assert_unpoisoned(&r, STREAM);
-    assert!(r.requested().iter().any(|q| q.name == LC_CERTIFY), "the green certify reaches lc_certify");
+    assert!(r.requested().iter().any(|q| q.name == LAND), "the green certify reaches land");
 }
 
 // --- sp-pi2ojm: an opened round is driven on the next tick, not after its outcome's 20-minute wait ---
@@ -1464,7 +1464,7 @@ fn green_orphan() -> (Carry, Snapshot) {
 fn sp_k7ltss_a_green_round_with_no_driver_is_landed_not_abandoned() {
     let (carry, snap) = green_orphan();
     let (carry, acts) = decide(&carry, &snap);
-    assert_eq!(effects(&acts), [LC_CERTIFY, LAND], "{acts:?}");
+    assert_eq!(effects(&acts), [LAND], "{acts:?}");
     let rc = &carry.repos["spira"];
     assert_eq!((rc.state, rc.batch.as_deref(), rc.members.clone()), (State::Landing, Some("r9"), vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into())]));
     assert_eq!((rc.wt.as_str(), rc.head.as_str()), ("/w", "h"));
@@ -1533,14 +1533,14 @@ fn driverless_carry() -> Carry {
     carry
 }
 
-fn driverless_snap(driven: bool, gate_red: Vec<(String, String, String)>) -> Snapshot {
-    let round = Round { id: "r9".into(), members: vec!["sp-a".into(), "sp-b".into()], head: "new".into(), worktree: "/w".into(), phase: "attributing".into(), driven, gate_red, ..Round::default() };
+fn driverless_snap(driven: bool) -> Snapshot {
+    let round = Round { id: "r9".into(), members: vec!["sp-a".into(), "sp-b".into()], head: "new".into(), worktree: "/w".into(), phase: "attributing".into(), driven, ..Round::default() };
     Snapshot { repos: [("spira".to_string(), Repo { open_round: Some(round), live_legs: Some(vec![]), ..busy().repos["spira"].clone() })].into(), now_ms: NOW }
 }
 
 #[test]
 fn sp_29matj_a_driverless_round_with_no_verdict_is_abandoned_as_a_harness_fault() {
-    let snap = driverless_snap(false, vec![]);
+    let snap = driverless_snap(false);
     let (seen, acts) = decide(&driverless_carry(), &snap);
     assert!(!effects(&acts).contains(&ABANDON), "the pass the queue has just started is given the grace: {acts:?}");
     let later = Snapshot { now_ms: NOW + LEG_START_GRACE_MS + 1, ..snap };
@@ -1556,7 +1556,7 @@ fn sp_29matj_a_driverless_round_with_no_verdict_is_abandoned_as_a_harness_fault(
 fn sp_29matj_a_head_move_is_discarded_once_not_every_tick() {
     let mut carry = driverless_carry();
     carry.repos.get_mut("spira").unwrap().leg_at_ms = NOW;
-    let snap = driverless_snap(false, vec![]);
+    let snap = driverless_snap(false);
     let (once, _) = decide(&carry, &snap);
     assert_eq!(once.repos["spira"].discarded_head, "new", "the new head is the one handled");
     let (twice, acts) = decide(&once, &snap);
@@ -1565,27 +1565,16 @@ fn sp_29matj_a_head_move_is_discarded_once_not_every_tick() {
 }
 
 #[test]
-fn sp_29matj_no_preempt_goes_to_a_round_with_no_pass_running() {
-    let red = vec![("sp-a".to_string(), "t1".to_string(), "suites-failed".to_string())];
-    let mut carry = driverless_carry();
-    carry.repos.get_mut("spira").unwrap().leg_at_ms = NOW;
-    let (_, acts) = decide(&carry, &driverless_snap(false, red.clone()));
-    assert!(!effects(&acts).contains(&PREEMPT), "{acts:?}");
-    let (_, acts) = decide(&carry, &driverless_snap(true, red));
-    assert!(effects(&acts).contains(&PREEMPT), "{acts:?}");
-}
-
-#[test]
 fn sp_29matj_a_live_pass_or_a_pass_just_started_is_left_alone() {
     let mut seen = driverless_carry();
     seen.repos.get_mut("spira").unwrap().discarded_head = "new".into();
-    let (_, acts) = decide(&seen, &driverless_snap(true, vec![]));
+    let (_, acts) = decide(&seen, &driverless_snap(true));
     assert!(!effects(&acts).contains(&ABANDON), "driven: {acts:?}");
-    let (_, acts) = decide(&seen, &driverless_snap(false, vec![]));
+    let (_, acts) = decide(&seen, &driverless_snap(false));
     assert!(effects(&acts).contains(&ABANDON), "the same setup undriven is abandoned: {acts:?}");
     let mut fresh = driverless_carry();
     fresh.repos.get_mut("spira").unwrap().leg_at_ms = NOW - 1_000;
-    let (_, acts) = decide(&fresh, &driverless_snap(false, vec![]));
+    let (_, acts) = decide(&fresh, &driverless_snap(false));
     assert!(!effects(&acts).contains(&ABANDON), "inside the grace: {acts:?}");
 }
 

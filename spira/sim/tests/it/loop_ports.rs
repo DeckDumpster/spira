@@ -72,30 +72,6 @@ fn certify_twice_a_repeat_verdict_keeps_the_row_certified_and_the_round_lands_it
     assert_no_process(&r);
 }
 
-/// Replaces `long-gate-interleaving` (sp-2adk7): a slow gate whose verdict arrives after the
-/// round landed the bead must not move it. LANDED is final (`landed_is_final`), and nothing
-/// readmits the landed bead to a cut (`no_stale_admission`): one round, opened once.
-#[test]
-#[ignore = "covers a path no cut reaches: the pool takes only CERTIFIED beads; the provisional-member work deletes it"]
-fn long_gate_interleaving_a_verdict_after_the_landing_leaves_the_bead_landed() {
-    let verdicts = vec![verdict(30 * MIN, "sp-lg01", Verdict::Pass), verdict(31 * MIN, "sp-lg01", Verdict::Red)];
-    let script = Script { beads: vec![Bead::new("sp-lg01", 30_000)], max_concurrent: 1, stopped_until: 0, verdicts, until: 36 * MIN, ..Script::default() };
-    let r = run(23, script);
-    show("long-gate-interleaving", &r);
-    let landed = r.landed_at("sp-lg01").unwrap_or_else(|| panic!("the bead landed: {}", r.dump()));
-    assert!(landed < 30 * MIN, "the round landed before the slow gate finished: {}", r.dump());
-    assert_eq!(r.outside.len(), 2, "{}", r.dump());
-    for o in &r.outside {
-        assert_eq!(o.state_before, BeadState::Landed, "{o:?}");
-        assert!(!o.applied, "a gate verdict on a LANDED row is refused: {o:?}");
-    }
-    let after: Vec<&(u64, String, String, String)> = r.history.iter().filter(|(at, id, ..)| id == "sp-lg01" && *at > landed).collect();
-    assert!(after.is_empty(), "LANDED is final: {after:?}");
-    assert_eq!(r.rows["sp-lg01"].state, BeadState::Landed);
-    assert_eq!(r.opened.len(), 1, "no landed bead is admitted to another cut: {:?}", r.opened);
-    assert_no_process(&r);
-}
-
 /// Replaces `conflicting-siblings` (sp-2adk7): two siblings change the same file, the
 /// higher-priority one (priority 0) filed alongside a priority-3 one. Both are sifted before the
 /// cut (the `rounds` lane is stopped until then), so one cut sees both: the round takes the
