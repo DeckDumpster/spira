@@ -1159,6 +1159,7 @@ impl Backend for SqliteBackend {
         }
         set_meta(&tx, "head", main)?;
         tx.commit().map_err(db)?;
+        drop(_committing);
         self.0.head.store(main, Ordering::SeqCst);
         Ok(main)
     }
