@@ -151,13 +151,13 @@ fn commits() -> usize {
     current().map_or(0, |r| r.inner().commits.len())
 }
 
-/// Runs a backend commit, recording it as one `commit` unless the backend recorded its own.
-pub fn commit<T>(f: impl FnOnce() -> T) -> T {
+/// Runs a backend commit, recording it as one `commit` unless the backend recorded its own; a refused commit is none.
+pub fn commit<T, E>(f: impl FnOnce() -> Result<T, E>) -> Result<T, E> {
     let Some(rec) = current() else { return f() };
     let before = commits();
     let at = Instant::now();
     let out = f();
-    if commits() == before {
+    if out.is_ok() && commits() == before {
         rec.add(Phase::Commit, at.elapsed());
     }
     out
@@ -206,8 +206,8 @@ mod tests {
     #[test]
     fn a_commit_the_backend_recorded_is_not_recorded_twice() {
         let rec = tracked();
-        commit(|| time(Phase::Commit, || ()));
-        commit(|| ());
+        let _ = commit(|| time(Phase::Commit, || Ok::<(), ()>(())));
+        let _ = commit(|| Ok::<(), ()>(()));
         untrack();
         assert_eq!(rec.snapshot().commits_us.len(), 2);
     }
@@ -218,5 +218,14 @@ mod tests {
         time(Phase::Read, || ());
         untrack();
         assert_eq!(rec.snapshot().reads, 1);
+    }
+
+    #[test]
+    fn a_refused_commit_is_not_recorded_as_a_commit() {
+        let rec = tracked();
+        let out: Result<(), ()> = commit(|| Err(()));
+        untrack();
+        assert!(out.is_err());
+        assert_eq!(rec.snapshot().commits_us.len(), 0);
     }
 }

@@ -1494,3 +1494,23 @@ impl<B: Backend> Contract<B> {
         Ok(self.read(key, head)?.is_some())
     }
 }
+
+#[cfg(test)]
+mod phase_tests {
+    use super::*;
+    use crate::mem::MemBackend;
+    use crate::phases::{self, Recorder};
+
+    #[test]
+    fn a_tracked_contract_commit_records_the_deadlines_wait_and_one_commit() {
+        let clock = VirtualClock::new(1_000_000);
+        let c = Contract::open(MemBackend::new(), Ports::virtual_clock(&clock), Config { min_lock_ttl_ms: 1_000 }).unwrap();
+        let rec = Arc::new(Recorder::default());
+        phases::track(rec.clone());
+        c.txn(&Txn::new().put("k", Object::new(serde_json::json!(1))), &Request::new("1", "t", "w")).unwrap();
+        phases::untrack();
+        let s = rec.snapshot();
+        assert!(s.phases.iter().any(|p| p.0 == "deadlines_wait"), "{:?}", s.phases);
+        assert_eq!(s.commits_us.len(), 1);
+    }
+}
