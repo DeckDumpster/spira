@@ -627,7 +627,8 @@ fn a_retired_day_file_waits_for_the_read_in_flight_and_then_leaves_nothing_behin
         let gone = PathBuf::from(format!("{}{suffix}", file.display()));
         assert!(!gone.exists(), "{} remains", gone.display());
     }
-    assert_eq!(open_fds_naming("s.receipts-2024-10-04"), Vec::<String>::new());
+    let own = format!("{}/s.receipts-2024-10-04", dir.path().display());
+    assert_eq!(open_fds_naming(&own), Vec::<String>::new());
 }
 
 #[test]
