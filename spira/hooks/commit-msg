@@ -22,10 +22,11 @@ command -v "$_tool" >/dev/null 2>&1 || {
 }
 _msg="${1:-}"
 [ -r "$_msg" ] || { echo "commit-msg: no message file given; refusing to commit unchecked" >&2; exit 1; }
+_body="$(grep -v '^#' "$_msg" || true)"
 if [ "$_tool" = work ]; then
-    grep -v '^#' "$_msg" | work cite-check -
+    printf '%s\n' "$_body" | work cite-check -
 else
-    grep -v '^#' "$_msg" | spira-lc cite-check --message -
+    printf '%s\n' "$_body" | spira-lc cite-check --message -
 fi
 case $? in
     0) exit 0 ;;

@@ -2132,6 +2132,11 @@ mod tests {
     }
 
     #[test]
+    fn every_persona_may_run_cite_check() {
+        assert!(permitted("cite-check", Some("builder")).is_ok());
+    }
+
+    #[test]
     fn cite_check_cannot_tell_when_the_store_errs() {
         assert_eq!(cite_check_of("sp-me1: x", &[], true).0, CANNOT_TELL);
     }

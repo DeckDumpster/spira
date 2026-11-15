@@ -727,6 +727,14 @@ mod tests {
     }
 
     #[test]
+    fn cite_check_carries_the_message_as_a_stdin_body() {
+        assert_eq!(
+            build_request_with_body("sp-3m1p9", "cite-check", &v(&["-"]), None, "a", Some("sp-x: m")).unwrap(),
+            v(&["work", "sp-3m1p9", "cite-check", "-", "--stdin", "sp-x: m"])
+        );
+    }
+
+    #[test]
     fn note_carries_a_stdin_body() {
         assert_eq!(
             build_request_with_body("sp-3m1p9", "note", &v(&["-"]), None, "a", Some("prose")).unwrap(),
