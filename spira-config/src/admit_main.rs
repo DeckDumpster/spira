@@ -80,7 +80,7 @@ fn wrapper(args: Vec<OsString>) -> ExitCode {
         let q = admission::Request { run: &run, pool: Pool::Compile, holder_pid: std::os::unix::process::parent_id(), who: &who, inherit: None, weight: admission::build_weight(&rest) };
         let g = if matches!(action, admission::WrapperAction::TakeNow) {
             // A gate's build (D11): a lease for the cargo at once, oversubscribing a full pool.
-            admission::take_now_guard(&q, admission::size_from_env(Pool::Compile), &RealProcs, &mut |l: &str| say(l))
+            admission::take_now_guard(&q, admission::size_configured(Pool::Compile), &RealProcs, &mut |l: &str| say(l))
         } else {
             admission::acquire_real(&q, &mut |l: &str| say(l))
         };
