@@ -47,15 +47,12 @@ on:
 # one function that names the image, but its binary is cached keyed by the sources it is
 # built from (testenv's path-dependency closure, the lockfile and the toolchain pin), so a
 # push or PR that touches none of them restores it instead of cold-building testenv. The
-# closure list is checked against `cargo metadata` on every run: a crate testenv starts
-# depending on fails this job, naming the list, rather than serving a stale binary.
+# closure is computed from `cargo metadata` on every run, never kept as a list, so a crate
+# testenv starts depending on joins the key instead of leaving it stale.
 
 permissions:
   contents: read
   packages: write
-
-env:
-  TESTENV_CLOSURE: "gate lifecycle spira-config spira-otel suite-select testenv tsd"
 
 jobs:
   tag:
@@ -68,21 +65,24 @@ jobs:
         uses: actions/checkout@v4
 
       - name: The cached closure is testenv's path-dependency closure
+        id: closure
         run: |
           set -euo pipefail
           got="$(cargo metadata --no-deps --format-version 1 --locked | jq -r --arg ws "$GITHUB_WORKSPACE" '
             (.packages | map({key: .name, value: .}) | from_entries) as $p
             | def walk_deps($n): [$n] + ([$p[$n].dependencies[] | select(.path != null and .kind != "dev") | .name] | map(walk_deps(.)) | add // []);
             [walk_deps("testenv")[] | $p[.].manifest_path | sub("/Cargo.toml$"; "") | sub("^" + $ws + "/"; "")] | unique | join(" ")')"
-          [ "$got" = "$TESTENV_CLOSURE" ] || {
-            printf 'tag: testenv now builds from [%s], but TESTENV_CLOSURE lists [%s] — update it in this workflow\n' "$got" "$TESTENV_CLOSURE" >&2
-            exit 1; }
+          case " $got " in *" testenv "*) ;; *) echo "tag: the computed closure [$got] does not contain testenv" >&2; exit 1;; esac
+          echo "closure: $got"
+          printf 'closure=%s\n' "$got" >> "$GITHUB_OUTPUT"
 
       - name: Key the driver by its sources
         id: key
+        env:
+          CLOSURE: ${{ steps.closure.outputs.closure }}
         run: |
           set -euo pipefail
-          sum="$( { for d in $TESTENV_CLOSURE; do git ls-files -s -- "$d"; done; git ls-files -s -- Cargo.lock rust-toolchain.toml; } | sha256sum | cut -c1-32)"
+          sum="$( { for d in $CLOSURE; do git ls-files -s -- "$d"; done; git ls-files -s -- Cargo.lock rust-toolchain.toml; } | sha256sum | cut -c1-32)"
           printf 'key=testenv-driver-%s-%s\n' "${{ runner.os }}" "$sum" >> "$GITHUB_OUTPUT"
 
       - name: Restore the driver

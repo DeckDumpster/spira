@@ -266,6 +266,8 @@ pub fn judge(w: &Workflows) -> Vec<(&'static str, String)> {
             j.want(IMAGE, "an already-published tag is skipped", "manifest inspect", i);
             j.want(IMAGE, "the registry path is lowercased", "tr '[:upper:]' '[:lower:]'", i);
             j.want(IMAGE, "the publish is grouped by its tag (over-broad-scopes #15)", "group: testenv-image-${{ needs.tag.outputs.tag }}", i);
+            j.nowant(IMAGE, "the testenv closure is derived, not hand-kept", "TESTENV_CLOSURE", i);
+            j.want(IMAGE, "the driver key hashes the computed closure", "steps.closure.outputs.closure", i);
             j.want(IMAGE, "the driver is built only on a cache miss", "if: steps.driver.outputs.cache-hit != 'true'", i);
         }
         None => j.fail(IMAGE, "missing".into()),
@@ -618,6 +620,14 @@ mod tests {
         assert!(got.iter().any(|m| m.contains("grouped by its tag")), "{got:?}");
         let got = planted(image, "if: steps.driver.outputs.cache-hit != 'true'", "if: true");
         assert!(got.iter().any(|m| m.contains("only on a cache miss")), "{got:?}");
+    }
+
+    #[test]
+    fn the_testenv_closure_is_derived_not_listed() {
+        assert_eq!(judge(&shipped()).into_iter().filter(|(p, _)| *p == IMAGE).count(), 0);
+        let got = planted(image, "steps.closure.outputs.closure", "env.TESTENV_CLOSURE");
+        assert!(got.iter().any(|m| m.contains("the testenv closure is derived, not hand-kept")), "{got:?}");
+        assert!(got.iter().any(|m| m.contains("the driver key hashes the computed closure")), "{got:?}");
     }
 
     #[test]
