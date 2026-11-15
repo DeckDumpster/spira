@@ -3091,6 +3091,17 @@ fn open_batch_names_the_paths_a_member_conflicts_with_base_on() {
     t.git.conflict_with_base.borrow_mut().insert("tx".into(), vec!["a.rs".into(), "b.rs".into()]);
     assert_eq!(t.run(&["open-batch", "--skip-pregate"]), 0, "{}\n{}", t.out(), t.err());
     assert!(t.out().contains("sp-x: conflicts with base — paths: a.rs b.rs"), "{}", t.out());
+
+    let t = T::new(LandMode::Queue);
+    t.git.set("origin/main", "b0");
+    t.submitted(&["sp-x"]);
+    t.git.set("refs/heads/spira/sp-x", "tx");
+    t.lc_row("sp-x", "CERTIFIED", "tx", 1);
+    *t.git.branches.borrow_mut() = vec![("spira/sp-x".into(), "tx".into())];
+    t.git.merge_fail.borrow_mut().insert("tx".into());
+    t.git.conflict_with_base.borrow_mut().insert("tx".into(), vec![]);
+    t.run(&["open-batch", "--skip-pregate"]);
+    assert!(t.out().contains("sp-x: conflicts with base — paths: unknown"), "{}", t.out());
 }
 
 #[test]

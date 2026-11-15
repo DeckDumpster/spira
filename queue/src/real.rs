@@ -139,10 +139,11 @@ impl Git for RealGit {
             .stderr(Stdio::null())
             .output()
             .ok()?;
-        if o.status.code() != Some(1) {
+        let so = String::from_utf8_lossy(&o.stdout);
+        let tree = so.lines().next().unwrap_or("");
+        if o.status.code() != Some(1) || tree.len() < 40 || !tree.bytes().all(|b| b.is_ascii_hexdigit()) {
             return None;
         }
-        let so = String::from_utf8_lossy(&o.stdout);
         let mut paths: Vec<String> = Vec::new();
         for l in so.lines().skip(1).filter(|l| !l.is_empty()) {
             if !paths.iter().any(|p| p == l) {
