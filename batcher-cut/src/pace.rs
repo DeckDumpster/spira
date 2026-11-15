@@ -80,6 +80,8 @@ impl From<&str> for CutError {
 pub enum Outcome {
     Quiet,
     Red,
+    /// The base alone reproduces the red: no member is at fault.
+    BaseRed { base: String },
     Infra,
     /// The round's attribution reruns faulted: the round stays open and a person is told.
     AttributionFaulted,
@@ -99,6 +101,8 @@ pub enum Hold {
 #[derive(Default, PartialEq, Debug)]
 pub struct Effects {
     pub pause: bool,
+    /// The sha a `base:` pause is set for, in place of a clock-stamped `red:` one.
+    pub base_pause: Option<String>,
     pub stop: bool,
     pub pages: Vec<String>,
 }
@@ -106,6 +110,17 @@ pub struct Effects {
 /// The cut's result and the repo's local verdict (`verdict`, `at`) as written during the pass.
 /// A cut that admitted nothing is `Quiet` whatever its wording: only a round that ran and did
 /// not land is red.
+pub const BASE_RED_WORD: &str = "base-red";
+
+/// The local verdict a base-red round writes: `base-red:<sha>:<why>`.
+pub fn base_red_verdict(base: &str, why: &str) -> String {
+    format!("{BASE_RED_WORD}:{base}:{}", one_line(why))
+}
+
+fn base_red_parts(word: &str) -> Option<(&str, &str)> {
+    word.strip_prefix(BASE_RED_WORD)?.strip_prefix(':')?.split_once(':')
+}
+
 pub fn classify(
     result: &Result<(), CutError>,
     verdict: Option<(&str, u64)>,
@@ -116,7 +131,13 @@ pub fn classify(
         Some(CutKind::Infra) => Outcome::Infra,
         Some(CutKind::Other) => Outcome::Quiet,
         None if matches!(verdict, Some(("red", at)) if at >= pass_start) => Outcome::Red,
-        None => Outcome::Quiet,
+        None => match verdict {
+            Some((w, at)) if at >= pass_start => match base_red_parts(w) {
+                Some((base, _)) => Outcome::BaseRed { base: base.to_string() },
+                None => Outcome::Quiet,
+            },
+            _ => Outcome::Quiet,
+        },
     }
 }
 
@@ -156,6 +177,14 @@ pub fn advance(st: &State, outcome: &Outcome, repo: &str, detail: &str) -> (Stat
             };
             fx.pages.push(format!(
                 "ROUND RED {repo}{again} — attribute and eject, then batcher pause-lift --repo {repo} --by concierge --reason \"<why>\" ({detail})"
+            ));
+        }
+        Outcome::BaseRed { base } => {
+            next.infra = 0;
+            next.no_vm = 0;
+            fx.base_pause = Some(base.clone());
+            fx.pages.push(format!(
+                "BASE RED {repo} at {base} — {detail}; no member is at fault: revert or fix the change named on main (law-a-landing-stop-is-reverted-first); rounds resume by themselves when the landing ref moves"
             ));
         }
         Outcome::StaleImage => {}
@@ -516,6 +545,8 @@ pub struct Seams<'a> {
     pub stamp: &'a dyn Fn(u64) -> String,
     pub redrive_after: u64,
     pub pause_lift_after: u64,
+    /// The landing ref's sha now; a `base:` pause set at another sha is lifted.
+    pub landing_head: Option<String>,
 }
 
 fn page(sm: &Seams, text: &str) -> Result<(), String> {
@@ -569,7 +600,15 @@ pub fn paced(
     cut: impl FnOnce() -> Result<(), CutError>,
 ) -> Result<(), CutError> {
     let mut st = files.load();
-    if let Some(since) = files.pause_since() {
+    let pause_text = fs::read_to_string(files.pause_file()).unwrap_or_default();
+    let base_pause = pause_text.trim().strip_prefix("base:");
+    if let (Some(at), Some(head)) = (base_pause, sm.landing_head.as_deref()) {
+        if at != head {
+            files.lift_pause(PACE_OWNER, &format!("landing ref moved {at} → {head}"), sm.now)?;
+            println!("batcher rounds: {}: landing ref moved {at} → {head} — base-red pause lifted, cutting", sm.repo);
+        }
+    }
+    if let (Some(since), None) = (files.pause_since(), base_pause) {
         if pause_expired(&st, sm.now.saturating_sub(since), sm.pause_lift_after) {
             files.lift_pause(
                 PACE_OWNER,
@@ -653,15 +692,17 @@ pub fn paced(
     let res = cut();
     let v = verdict();
     let outcome = classify(&res, v.as_ref().map(|(s, at)| (s.as_str(), *at)), sm.now);
-    let detail = res
-        .as_ref()
-        .err()
-        .map(|e| e.msg.clone())
-        .unwrap_or_default();
+    let detail = match v.as_ref().and_then(|(w, _)| base_red_parts(w)) {
+        Some((_, why)) if matches!(outcome, Outcome::BaseRed { .. }) => why.to_string(),
+        _ => res.as_ref().err().map(|e| e.msg.clone()).unwrap_or_default(),
+    };
     let (next, fx) = advance(&st, &outcome, sm.repo, &detail);
     st = next;
     if fx.pause {
         files.stamp_pause(sm.now)?;
+    }
+    if let Some(base) = &fx.base_pause {
+        files.set_pause(&format!("base:{base}\n"), PACE_OWNER, &format!("base red at {base}"), sm.now)?;
     }
     if fx.stop {
         files.stop_rounds(
@@ -698,6 +739,17 @@ mod tests {
         verdict: Option<(&str, u64)>,
         res: Result<(), CutError>,
     ) -> bool {
+        run_at(d, repo, now, open, verdict, res, None)
+    }
+    fn run_at(
+        d: &Path,
+        repo: &str,
+        now: u64,
+        open: Option<&str>,
+        verdict: Option<(&str, u64)>,
+        res: Result<(), CutError>,
+        landing_head: Option<&str>,
+    ) -> bool {
         let inbox = d.join("inbox.log");
         let sm = Seams {
             repo,
@@ -706,6 +758,7 @@ mod tests {
             stamp: &stamp,
             redrive_after: WAIT,
             pause_lift_after: LIFT,
+            landing_head: landing_head.map(String::from),
         };
         let cut_ran = Cell::new(false);
         let none = Orphans {
@@ -742,6 +795,7 @@ mod tests {
             stamp: &stamp,
             redrive_after: WAIT,
             pause_lift_after: LIFT,
+            landing_head: None,
         };
         page_stale_pause(&Files::new(d, repo), &sm, 3600, || work).unwrap();
         inbox(d)
@@ -869,6 +923,54 @@ mod tests {
         );
         assert!(!Files::new(d, "a").pause_file().exists());
         assert!(inbox(d).contains("PAUSE LIFTED a"));
+    }
+
+    fn base_red_cut(d: &Path, now: u64, head: Option<&str>) -> bool {
+        let word = base_red_verdict("abc", "unit-tests red; last change touching it: c0de fix");
+        run_at(d, "a", now, None, Some((&word, now)), Ok(()), head)
+    }
+
+    #[test]
+    fn a_base_red_pauses_at_the_sha_pages_once_and_leaves_the_lift_count() {
+        let st = State { pause_lifts: 1, ..State::default() };
+        let (next, fx) = advance(&st, &Outcome::BaseRed { base: "abc".into() }, "a", "why");
+        assert_eq!(next.pause_lifts, 1);
+        assert_eq!(fx.base_pause.as_deref(), Some("abc"));
+        assert!(!fx.pause);
+        assert_eq!(fx.pages.len(), 1);
+        assert!(fx.pages[0].starts_with("BASE RED a at abc — why;"), "{:?}", fx.pages);
+    }
+
+    #[test]
+    fn a_base_red_verdict_is_classified_by_its_word_with_the_sha() {
+        let w = base_red_verdict("abc", "x\ny");
+        assert_eq!(classify(&Ok(()), Some((&w, 5)), 5), Outcome::BaseRed { base: "abc".into() });
+        assert_eq!(classify(&Ok(()), Some((&w, 4)), 5), Outcome::Quiet);
+    }
+
+    #[test]
+    fn a_base_pause_holds_while_the_landing_ref_stays_and_lifts_when_it_moves() {
+        let t = dir("base-pause");
+        let d = t.path();
+        assert!(base_red_cut(d, 1000, Some("abc")));
+        let f = Files::new(d, "a");
+        assert_eq!(fs::read_to_string(f.pause_file()).unwrap(), "base:abc\n");
+        assert!(inbox(d).contains("BASE RED a at abc — unit-tests red"), "{}", inbox(d));
+        assert!(!run_at(d, "a", 1100, None, None, Ok(()), Some("abc")), "same head: held");
+        assert!(run_at(d, "a", 1200, None, None, Ok(()), Some("def")), "moved head: lifts and cuts");
+        assert!(!f.pause_file().exists());
+        let log = landing_log(d);
+        assert!(log.contains("by=batcher") && log.contains("reason=landing ref moved abc → def"), "{log}");
+        assert_eq!(event(d, "kind").last(), Some(&Some("pause-lift".to_string())));
+    }
+
+    #[test]
+    fn a_base_pause_is_never_lifted_by_the_clock() {
+        let t = dir("base-pause-clock");
+        let d = t.path();
+        assert!(base_red_cut(d, 1000, Some("abc")));
+        assert!(!run_at(d, "a", 1000 + LIFT * 3, None, None, Ok(()), Some("abc")));
+        assert!(Files::new(d, "a").pause_file().exists());
     }
 
     fn event(d: &Path, key: &str) -> Vec<Option<String>> {
@@ -1168,6 +1270,7 @@ mod tests {
             stamp: &stamp,
             redrive_after: WAIT,
             pause_lift_after: LIFT,
+            landing_head: None,
         };
         let (fit_f, redrive_f, incident_f) = (
             |_: &str| fit.clone(),

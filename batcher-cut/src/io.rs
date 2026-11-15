@@ -1682,6 +1682,23 @@ pub fn config_delta_at(repo: &Repo, rev: &str) -> Result<Option<String>, String>
 
 /// The paths `tip` changed since it forked from `base_sha` (`git diff base...tip`) — what
 /// attribution orders suspects by and decides a rerun's build by.
+/// The last commit reachable from `at` that touched any of `paths`, as `<sha> <subject>`.
+pub fn last_touching(repo: &Repo, at: &str, paths: &[String]) -> Option<String> {
+    if paths.is_empty() {
+        return None;
+    }
+    let out = run(
+        Command::new("git")
+            .arg("-C")
+            .arg(&repo.path)
+            .args(["log", "-1", "--format=%h %s", at, "--"])
+            .args(paths),
+        "git log last touching",
+    )
+    .ok()?;
+    Some(out.trim().to_string()).filter(|l| !l.is_empty())
+}
+
 pub fn changed_paths(repo: &Repo, base_sha: &str, tip: &str) -> Vec<String> {
     run(
         Command::new("git").arg("-C").arg(&repo.path).args([

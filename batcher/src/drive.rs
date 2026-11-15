@@ -194,6 +194,14 @@ pub trait RoundOps {
             false,
         )
     }
+    /// The base commit the round was cut on.
+    fn base_sha(&self) -> String {
+        String::new()
+    }
+    /// The last commit on the base (`<sha> <subject>`) that touched any of `paths`.
+    fn last_touching(&self, _paths: &[String]) -> Option<String> {
+        None
+    }
     /// `kind`: `base`, `unattributed`, `integration` or `workspace-build`.
     fn incident(&mut self, kind: &str, suites: &[String]);
     /// The members whose diff adds the file `suite`, which the base lacks.
@@ -718,6 +726,8 @@ pub enum RoundEnd {
     Emptied(String),
     /// Someone else abandoned the round: it is over, and this driver writes no verdict.
     Abandoned,
+    /// The base alone reproduces the red: no member is at fault and none is ejected.
+    BaseRed { base: String, why: String },
 }
 
 /// A member stacked on one that leaves leaves with it.
@@ -820,7 +830,8 @@ fn eject_filter_owners<R: RoundRunner, O: RoundOps>(
         let tests = noted_tests(&f.failed);
         let scope = unitattr::rerun_scope(&f.failed, graph.as_ref());
         let mapped = graph
-            .map(|g| unitattr::reaching(&g, &packages, &ops.diffs(&ids)))
+            .as_ref()
+            .map(|g| unitattr::reaching(g, &packages, &ops.diffs(&ids)))
             .unwrap_or_default();
         let mut actions: Vec<Action> = mapped
             .into_iter()
@@ -848,6 +859,18 @@ fn eject_filter_owners<R: RoundRunner, O: RoundOps>(
                 page.push(format!("run alone: {cleared}"));
             }
             ops.incident(kind, &page);
+            if kind == "base" {
+                let mut paths: Vec<String> = packages
+                    .iter()
+                    .filter_map(|p| graph.as_ref().and_then(|g| g.dirs.get(p)).cloned())
+                    .collect();
+                paths.sort();
+                paths.dedup();
+                return Ok(FilterEject::Base(base_why(ops, &paths, &format!(
+                    "{} red{tests} (run alone: {cleared})",
+                    f.name
+                ))));
+            }
             return Ok(FilterEject::Unnamed(format!(
                 "{tests}{}",
                 if cleared.is_empty() {
@@ -951,7 +974,16 @@ fn eject_sole_member_on_suites<O: RoundOps>(
     Ok(RoundEnd::Emptied(format!("{named} red {left}")))
 }
 
+/// The base-red reason: what failed, then the last commit on the base that touched it.
+fn base_why<O: RoundOps>(ops: &O, paths: &[String], red: &str) -> String {
+    match ops.last_touching(paths) {
+        Some(line) => format!("{red}; last change touching it: {line}"),
+        None => red.to_string(),
+    }
+}
+
 enum FilterEject {
+    Base(String),
     Unnamed(String),
     /// Nothing is left to land; who left and who stayed.
     Emptied(String),
@@ -1317,6 +1349,7 @@ fn attribute_members<R: RoundRunner, O: RoundOps>(
                 attribution_secs: None,
             },
             FilterEject::Emptied(left) => RoundEnd::Emptied(format!("{} red {left}", f.name)),
+            FilterEject::Base(why) => RoundEnd::BaseRed { base: ops.base_sha(), why },
             FilterEject::Unnamed(tests) => RoundEnd::Blocked(format!(
                 "{} red{tests} names no member that can be ejected",
                 f.name
@@ -1467,6 +1500,9 @@ fn attribute_members<R: RoundRunner, O: RoundOps>(
                 FilterEject::Survivors(next) => next,
                 FilterEject::Emptied(left) => {
                     return Ok(RoundEnd::Emptied(format!("{} red {left}", f.name)))
+                }
+                FilterEject::Base(why) => {
+                    return Ok(RoundEnd::BaseRed { base: ops.base_sha(), why })
                 }
                 FilterEject::Unnamed(tests) => {
                     return Ok(RoundEnd::Blocked(format!(
@@ -1659,11 +1695,15 @@ fn attribute_members<R: RoundRunner, O: RoundOps>(
             }
             if !base_red.is_empty() {
                 ops.incident("base", &base_red);
-                return Ok(RoundEnd::Blocked(format!(
-                    "base red: {} ({})",
-                    base_red.join(","),
-                    said.join("; ")
-                )));
+                let paths: Vec<String> = base_red.clone();
+                return Ok(RoundEnd::BaseRed {
+                    base: ops.base_sha(),
+                    why: base_why(
+                        ops,
+                        &paths,
+                        &format!("{} (run alone: {})", base_red.join(","), said.join("; ")),
+                    ),
+                });
             }
             let ids: Vec<Id> = members.iter().map(|m| m.id.clone()).collect();
             ops.judge(&d.unattributed, &ids);
@@ -2278,6 +2318,12 @@ pub(crate) mod tests {
         }
         fn judge(&mut self, suites: &[String], members: &[Id]) {
             self.judged.push((suites.to_vec(), members.to_vec()));
+        }
+        fn base_sha(&self) -> String {
+            "b4se".into()
+        }
+        fn last_touching(&self, paths: &[String]) -> Option<String> {
+            Some(format!("c0de fixes {}", paths.join(",")))
         }
         fn incident(&mut self, kind: &str, suites: &[String]) {
             self.incidents.push((kind.into(), suites.to_vec()));
@@ -3017,7 +3063,7 @@ pub(crate) mod tests {
             ops.incidents
         );
         assert!(ops.ejected.is_empty());
-        assert!(matches!(end, RoundEnd::Blocked(_)), "{end:?}");
+        assert!(matches!(end, RoundEnd::BaseRed { .. }), "{end:?}");
     }
 
     #[test]
@@ -3321,6 +3367,29 @@ pub(crate) mod tests {
         )
         .unwrap();
         assert!(matches!(end, RoundEnd::Blocked(_)), "{end:?}");
+        assert!(ops.ejected.is_empty());
+    }
+
+    #[test]
+    fn an_unattributed_suite_red_the_base_reproduces_ends_base_red() {
+        let bases = std::cell::Cell::new(0u32);
+        let mut f = Fake::new(move |s, tree| {
+            if s != "test-00.sh" {
+                return false;
+            }
+            if tree.is_empty() {
+                bases.set(bases.get() + 1);
+                return bases.get() > 1;
+            }
+            tree.len() >= 2
+        });
+        f.maxpar = 4;
+        f.runs_alone = true;
+        let mut ops = Ops::default();
+        let end = attribute_round(&mut f, &mut ops, &corpus(4), three(), Budget { slots: 6, maxpar: 4 }).unwrap();
+        let RoundEnd::BaseRed { base, why } = end else { panic!("{end:?}") };
+        assert_eq!(base, "b4se");
+        assert!(why.contains("test-00.sh"), "{why}");
         assert!(ops.ejected.is_empty());
     }
 
@@ -3956,6 +4025,41 @@ pub(crate) mod tests {
         )
         .unwrap();
         assert!(ops.ejected.is_empty(), "{:?}", ops.ejected);
+        let RoundEnd::BaseRed { base, why } = end else { panic!("{end:?}") };
+        assert_eq!(base, "b4se");
+        assert!(why.contains(FAILING[0]), "{why}");
+        assert!(why.contains("last change touching it: c0de fixes"), "{why}");
+    }
+
+    #[test]
+    fn an_integration_red_the_base_reproduces_ends_base_red() {
+        let mut f = Fake::new(|_, _| false);
+        f.bisects = true;
+        f.filter = Some(Box::new(|_| {
+            Some(FilterRed {
+                name: "integration-tests".into(),
+                named: vec![],
+                failed: vec![FAILING[0].to_string()],
+            })
+        }));
+        let mut ops = Ops { graph: Some(loom_graph()), ..Ops::default() };
+        let end = attribute_round(&mut f, &mut ops, &corpus(3), four(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        assert!(matches!(end, RoundEnd::BaseRed { .. }), "{end:?}");
+        assert!(ops.ejected.is_empty());
+    }
+
+    #[test]
+    fn a_filter_red_whose_probes_cannot_answer_still_blocks() {
+        let mut f = Fake::new(|_, _| false);
+        f.filter = Some(Box::new(|_| {
+            Some(FilterRed {
+                name: "unit-tests".into(),
+                named: vec![],
+                failed: vec![FAILING[0].to_string()],
+            })
+        }));
+        let mut ops = Ops { graph: Some(loom_graph()), ..Ops::default() };
+        let end = attribute_round(&mut f, &mut ops, &corpus(3), four(), Budget { slots: 6, maxpar: 2 }).unwrap();
         assert!(matches!(end, RoundEnd::Blocked(_)), "{end:?}");
     }
 

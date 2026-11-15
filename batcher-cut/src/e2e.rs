@@ -380,6 +380,7 @@ impl CloneMembers for RoundEnd {
             RoundEnd::Faulted(w) => format!("faulted: {w}"),
             RoundEnd::Stalled(w) => format!("stalled: {w}"),
             RoundEnd::Abandoned => "abandoned".to_string(),
+            RoundEnd::BaseRed { base, why } => format!("base red at {base}: {why}"),
         }
     }
 }
