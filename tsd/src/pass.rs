@@ -107,7 +107,7 @@ pub struct PassRecord {
 }
 
 /// The largest byte count the pass's DISK lines (`round-vm: DISK <phase> <label> <bytes> <path>`) put on a
-/// `total` or `peak` label; an `unread` figure or the lower-bound suffix `+unread` never counts as a zero.
+/// `total` or `peak` label (`sample` lines are the VM sampler's readings); an `unread` figure or the lower-bound suffix `+unread` never counts as a zero.
 pub fn disk_peak_bytes(text: &str) -> Option<u64> {
     text.lines()
         .filter_map(|l| {
@@ -341,5 +341,13 @@ mod tests {
         let text = "round-vm: DISK start total 100 -\nround-vm: DISK build cargo-target 9999 /t\nround-vm: DISK build total 700+unread -\nround-vm: DISK suites peak 500 -\nround-vm: DISK suites total unread -\n";
         assert_eq!(disk_peak_bytes(text), Some(700));
         assert_eq!(disk_peak_bytes("round-vm: DISK suites peak unread -\n"), None);
+    }
+
+    #[test]
+    fn the_peak_is_the_largest_sample_and_stays_after_usage_falls_back() {
+        let lines = "round-vm: DISK start total 1000 -\nround-vm: DISK sample total 1500 -\nround-vm: DISK sample total 9000 -\nround-vm: DISK sample total 2000 -\nround-vm: DISK sample total unread -\nround-vm: DISK suites total 2000 -\n";
+        assert_eq!(disk_peak_bytes(lines), Some(9000));
+        let unread = "round-vm: DISK sample total unread -\nround-vm: DISK sample total unread -\nround-vm: DISK suites total unread -\n";
+        assert_eq!(disk_peak_bytes(unread), None);
     }
 }
