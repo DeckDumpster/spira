@@ -550,5 +550,5 @@ fn a_conflict_goes_straight_to_rework_and_files_no_bead() {
     let o = screen(&f, &Mem::default(), &mut r, &[c("a"), c("b")], &[]);
     assert_eq!((o.pass.as_slice(), o.sent_back.as_slice()), (&["b".to_string()][..], &["a".to_string()][..]));
     assert_eq!(reds(&r), ["red a t-a no-rebase"]);
-    assert!(r.log.iter().all(|l| l.starts_with("note ") || l.starts_with("red ") || l.starts_with("pass ") || l.starts_with("tell ")), "{:?}", r.log);
+    assert!(r.log.iter().all(|l| l.starts_with("note ") || l.starts_with("red ") || l.starts_with("send-back ") || l.starts_with("pass ") || l.starts_with("tell ")), "{:?}", r.log);
 }

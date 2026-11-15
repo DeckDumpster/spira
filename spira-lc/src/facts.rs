@@ -301,7 +301,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_send_back_kind_is_accepted_and_keeps_a_long_multi_line_reason() {
+    fn the_send_back_kind_is_accepted_and_is_a_long_kind() {
         assert!(KINDS.contains(&spira_config::send_back::KIND));
         assert!(LONG_KINDS.contains(&spira_config::send_back::KIND));
     }
