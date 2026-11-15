@@ -420,6 +420,7 @@ mod tests {
         key_space_reads: AtomicUsize,
         whole_space_calls: AtomicUsize,
         range_prefixes: std::sync::Mutex<Vec<String>>,
+        refuse_due: AtomicBool,
     }
 
     impl Flaky {
@@ -432,6 +433,7 @@ mod tests {
                 key_space_reads: AtomicUsize::new(0),
                 whole_space_calls: AtomicUsize::new(0),
                 range_prefixes: Default::default(),
+                refuse_due: Default::default(),
             }
         }
     }
@@ -463,6 +465,9 @@ mod tests {
             self.inner.range(prefix, after, limit, at)
         }
         fn due(&self, now: u64, limit: usize, at: u64) -> crate::Result<Vec<String>> {
+            if self.refuse_due.load(Ordering::SeqCst) {
+                return Err(Error::Backend("refused".into()));
+            }
             self.inner.due(now, limit, at)
         }
 
@@ -601,6 +606,47 @@ mod tests {
         let seen = c.backend().range_prefixes.lock().unwrap().clone();
         assert_eq!(c.backend().whole_space_calls.load(Ordering::SeqCst), 0);
         assert!(!seen.is_empty() && seen.iter().all(|p| p == "locks/" || p == "requests/"), "{seen:?}");
+    }
+
+    #[test]
+    fn a_failed_due_read_is_one_failure_and_the_other_steps_still_run() {
+        let clock = VirtualClock::new(10 * DAY_MS);
+        let c = open(Flaky::new(), &clock);
+        write(&c, "rec/old", "old");
+        clock.advance(EVENT_WINDOW_MS + DAY_MS);
+        write(&c, "new/0", "new0");
+        c.backend().refuse_due.store(true, Ordering::SeqCst);
+        let pass = Controller::new(&c).pass(c.now_ms());
+        assert_eq!(pass.failed.len(), 1, "{pass:?}");
+        assert_eq!(pass.failed[0].step, "due");
+        assert_eq!(pass.trimmed, 1, "trim ran after the failed step");
+    }
+
+    #[test]
+    fn a_key_rewritten_after_it_was_listed_due_is_not_expired() {
+        let clock = VirtualClock::new(0);
+        let c = open(MemBackend::new(), &clock);
+        write_ttl(&c, "telemetry/a", 1);
+        clock.advance(2_000);
+        let listed = c.backend().due(c.wall_ms(), 10, c.head().unwrap()).unwrap();
+        assert_eq!(listed, ["telemetry/a"]);
+        let t = Txn::new().put("telemetry/a", Object::new(json!(2)).with_ttl(3_600));
+        c.txn(&t, &Request::new("again", "t", "test.write")).unwrap();
+        assert!(c.expire_stored(&listed, c.wall_ms()).unwrap().is_empty());
+        assert!(c.get("telemetry/a").unwrap().is_some());
+    }
+
+    #[test]
+    fn a_key_marked_for_deletion_carries_no_expiry() {
+        let clock = VirtualClock::new(0);
+        let c = open(MemBackend::new(), &clock);
+        let held = Object::new(json!(1)).with_ttl(1).with_finalizers(&["f"]);
+        c.txn(&Txn::new().put("telemetry/a", held), &Request::new("w", "t", "test.write")).unwrap();
+        c.delete("telemetry/a", None, &Request::new("d", "t", "test.delete")).unwrap();
+        clock.advance(2_000);
+        let head = c.head().unwrap();
+        assert!(c.backend().due(c.wall_ms(), 10, head).unwrap().is_empty());
+        assert!(Controller::new(&c).tick(c.now_ms()).unwrap().expired.is_empty());
     }
 
     #[test]
