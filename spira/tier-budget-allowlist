@@ -135,7 +135,6 @@ test-hel-squash-merged.sh	T1	8.0
 test-hel-unlanded-guard.sh	T1	6.0
 test-sentinel-capacity.sh	T1	6.0
 test-sentinel-order.sh	T1	32.0
-test-slay.sh	T1	61.0
 test-spike.sh	T1	32.0
 test-strand-capacity.sh	T1	4.0
 test-strand-deferred.sh	T1	2.0

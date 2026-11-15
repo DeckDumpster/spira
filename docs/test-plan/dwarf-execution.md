@@ -69,7 +69,7 @@ Where it runs: **cert** = certification/every commit, **batch** = batch CI, **ma
 | UC-dwarf-execution-23 | Requeue cap stays silent below `REQUEUE_AT` and sends one mail at the cap ("completed and requeued N times"), deduplicated per bead across higher counts. `delivers:action` is exempt. It never adds poison. The reclaim cap (`RECLAIM_AT`, sentinel.sh:382) does the same with "dwarves died holding" wording, and the checks are not hard-coded to one partition. | C, I, O | T1 | cert |
 | UC-dwarf-execution-24 | `attempts.sh deadlocked` lists poisoned-but-cleanly-mergeable beads (WOULD) and keeps branchless ones (KEEP with a reason). A dry run changes nothing. `--apply` lifts poison, keeps the attempt record and notes why. | C, R | T2 | batch |
 | UC-dwarf-execution-25 | A repeated lane-cap timeout files an ask saying "timed out" (lane too small), not "change the approach". | O | T1 (stub mail) | cert |
-| UC-dwarf-execution-26 | `slay.sh` writes the `.slain` marker first. The default reopens, unassigns and removes the worktree and keeps a branch carrying unlanded commits with its `branch:` label. `--close` adds `spira-dropped`. `--keep-work` keeps. Uncommitted work is saved as a patch plus a wip commit, and `--close` parks unique work at `refs/slain/<id>`. Bad ids, positional args and a duplicate `--bead` exit 2 and change nothing. | C, R, FC | T2 + T1 args | batch / cert |
+| UC-dwarf-execution-26 | `slay.sh` writes the `slain` disposition first. The default reopens, unassigns and removes the worktree and keeps a branch carrying unlanded commits with its `branch:` label. `--close` drops the lifecycle row. `--keep-work` keeps. Uncommitted work is saved as a patch plus a wip commit, and `--close` parks unique work at `refs/slain/<id>`. Bad ids, positional args and a duplicate `--bead` exit 2 and change nothing. | C, R, FC | T1 (`spira_world::slay` tests, ports for git, bead store, lifecycle, dwarf) | batch / cert |
 | UC-dwarf-execution-27 | The installed agent CLI accepts `--system-prompt-snapshot on` (the external contract `dwarf.sh`/`archivist` rely on). | K | doctor preflight (not CI) | doctor |
 
 
@@ -111,7 +111,7 @@ Cost is the CI seconds of the whole file (main push). "e2e" means the proposed s
 | 23 | test-requeue-cap.sh (6 asserts, 213 s); test-requeue-cap-accept.sh (7 asserts, 235 s) | T3 / 448 | MERGE both INTO check4-unit (the cap/dedup/exemption rows) + 1 row in the T3 poison pass. The reclaim cap has no test (G11). |
 | 24 | test-requeue.sh::{deadlock sweep dry run, --apply} | T3 / (in 294) | Move to T2 the retired deadlock-sweep suite (stub the landability check or use a 1-commit temp repo; no dwarf runs) |
 | 25 | the retired timeout suite::{at-limit call produces an ask, ask says timed out} | T2 / (in 156) | DEMOTE-TO-T1 (stub mail; no bd needed). DELETE the `ops_age_of`/`age_of` cases: they test copies of cockpit.sh inlined in the test. Re-home them to the cockpit area against the real function. Also DELETE the `timeouts_of`/`bump_timeout` dead-stub asserts. |
-| 26 | test-slay.sh (16 groups, ~60 asserts) | T2 / 60 | KEEP (T2). Arg refusals and `-h` → T1 (~-10 s). SOURCE-GREP: the marker-first grep on a section comment becomes a behaviour check (a stub `kill` records whether `.slain` exists). |
+| 26 | test-slay.sh (16 groups, ~60 asserts) | T2 / 60 | RETIRED: `spira_world::slay` unit tests over git, bead-store, lifecycle and dwarf ports (modes, refusals, disposition first as call order). |
 | 27 | the dwarf-launch-grammar suite (NA: needs the real claude binary) | T4-ish / NA | DELETE from the suite list; move the 2 checks into `doctor.sh` |
 
 ## 4. Duplicate clusters
@@ -204,7 +204,6 @@ That is 26% of the 9,587 suite-seconds on main push. 77% of it (1,941 s) sits in
 | T0 | counter-label ban, `set +e`, rune-schema, conf-key lint (folded into the existing lint) | 2 | greps |
 | T1 | disposition table; `hb_tick`; close/delivers/eviction verdict; session-outcome + spend parser + yield; brief + argv render; check4-decide + ask format; slay args; timeout ask | 8 | ~1 s each, 8 files (lib.sh source ≈ 0.5 s, per test-dwarf-lease.sh) |
 | T2 | test-attempts-sql (one embedded store: b1..b8, bulk≡per-bead, unclaim CAS) | 30 | test-attempts.sh today is 30 s including the classifier half |
-| T2 | test-slay.sh minus arg/`-h` cases | 45 | 60 − ~15 |
 | T2 | fuse probe (test-thrash.sh remnant), resume count + landref walk on temp git, wiki-concurrent, deadlock sweep | 3 + 5 + 1 + 15 = 24 | no dwarf runs, no Dolt server |
 | T3 | test-dwarf-teardown-e2e: 1 fixture + ~16 dwarf runs (closed+commit, no-commit reopen, Unlanded, decision-blocked, operator-wait, pre-session, rebase-conflict, cross-repo/fresh-base, world-stop, sweep, prod-dirty ×2, eviction reopen, wiki commit, second-attempt segment, one close guard) | 90 | 16 × ~5 s (verdict 77/13 = 5.9 s; ledger 36/8 = 4.5 s; exit 16/5 = 3.2 s) + ~10 s setup |
 | T3 | test-poison.sh rewritten as the sole CHECK 4 pass (one SQL-seeded store, one bead per row, 2 passes) | 60 | poison-edge already seeds by SQL; today's cost comes from ~16 `bd update` cycles per seed × many seeds |

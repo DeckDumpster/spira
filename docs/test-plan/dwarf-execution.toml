@@ -214,5 +214,5 @@ bead = "sp-ugnv1x"
 
 [[use_case]]
 id = "UC-dwarf-execution-26"
-tier = "T2"
-statement = "`slay.sh` writes `.slain` first; its default/`--close`/`--keep-work` modes and argument refusals are exact"
+tier = "T1"
+statement = "`slay.sh` writes the `slain` disposition first; its default/`--close`/`--keep-work` modes and argument refusals are exact"

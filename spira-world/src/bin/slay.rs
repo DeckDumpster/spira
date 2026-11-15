@@ -1,368 +1,336 @@
 //! slay.sh — stop one dwarf cleanly and make its bead say what is true. Replaces
 //! spira/slay.sh (bash).
 //!
-//!   slay.sh --bead <id> [--why "<text>"] [--keep-work] [--close "<reason>" | --reopen]
-//!
-//! NAMED ARGUMENTS ONLY, same as the bash version and for the same scar: a bare word here
-//! used to become the bead id, so a reason written beside the id silently replaced it.
-//!
-//! WHAT MOVED WHERE (DESIGN.md Decisions has the full account): the disposition record, the
-//! hold-vs-dwarf distinction, the systemd-unit-or-pid stop and the wait/escalate-to-KILL
-//! loop are native Rust (`spira_world::proc`, `spira_world::sysctl`) — this is the part of
-//! the original file that was genuinely process-control logic, and the part whose own
-//! history (the positional-argument bug, the pidfile-vs-environment BEAD_ID bug, the
-//! split-checkout "both homes" bug) shows it benefits most from a type system. Steps 0
-//! (bead existence), 4a (claim release), 5 (salvage/park/destroy the work) and 4b/6 (the
-//! note and the final status) still go through lib.sh's own chokepoints — `bdq`'s fencing,
-//! and the ONE permitted door onto `git worktree remove`/`git branch -D` — via the
-//! `spira_world::seam::SLAY_FINISH` seam, because lib.sh is explicitly out of this wave's
-//! scope. That seam's stdout is slay.sh's own narration, forwarded verbatim.
+//! The decisions, the arguments and every refusal are `spira_world::slay`, behind ports; this
+//! file is the real adapters: the lifecycle service, `bdq`, git and `hel`'s destruction
+//! chokepoint (the one permitted door onto `git worktree remove` / `git branch -D`), and the
+//! dwarf's own pidfiles and unit.
 
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::Stdio;
 
-use spira_world::{seam, sysctl};
+use hel::ports::World;
+use spira_store::lc_call::LcClient;
+use spira_world::slay::{self, BeadView, Beads, Ctx, Dwarf, Git, Lifecycle, Parsed, Ports, Stopped};
+use spira_world::{proc, sysctl};
 
-fn usage_text() -> &'static str {
-    r#"slay.sh — stop one dwarf cleanly and make its bead say what is true.
+const BEAD_DEADLINE_SECS: &str = "30";
 
-  slay.sh --bead <id> [--why "<text>"] [--keep-work] [--close "<reason>" | --reopen]
-
-REQUIRED
-  --bead <id>        The bead whose dwarf is to be stopped. Must exist in SPIRA_DB;
-                     an id no bead carries is refused rather than acted on.
-
-OPTIONAL
-  --why "<text>"     What the note on the bead records as the operator's reason.
-                     Default: "slain by the operator". This is where a sentence goes.
-  --keep-work        Leave the branch and worktree exactly as they are.
-  --close "<reason>" Close the bead with this reason instead of releasing it.
-  --reopen           Release the bead as open and unassigned. This is the default.
-  -h, --help         This text.
-
-WHAT HAPPENS TO THE WORK WITHOUT --keep-work
-  It is RETIRED, not lost. Uncommitted changes are salvaged to SPIRA_RUN/reaped as a
-  patch and committed to the branch. With --reopen (the default) a branch carrying commits
-  the base lacks stays at refs/heads/spira/<id> with its branch: label, so the next builder
-  continues from it; the worktree is removed. With --close such a branch is parked at
-  refs/slain/<id>, a real ref that survives gc; if parking fails the deletion is REFUSED.
-  A branch holding nothing the base lacks is simply removed. Use --keep-work to leave the
-  worktree in place too.
-
-EXIT
-  0  the dwarf was stopped and the bead says what is true
-  1  something could not be done — the message names it
-  2  usage: no --bead, an unknown flag, a positional argument, two --bead values,
-     or a bead id the store does not carry
-"#
-}
-
-fn usage_err(msg: &str) -> ! {
-    eprintln!("slay.sh: {msg}");
-    eprint!("{}", usage_text());
-    spira_otel::oneshot::exit(2);
-}
-
-struct Args {
-    id: String,
-    mode_close: Option<String>,
-    keep: bool,
-    why: String,
-}
-
-fn parse_args(argv: &[String]) -> Args {
-    let mut id: Option<String> = None;
-    let mut mode_close: Option<String> = None;
-    let mut keep = false;
-    let mut why = "slain by the operator".to_string();
-    let mut i = 0;
-    while i < argv.len() {
-        match argv[i].as_str() {
-            "--bead" => {
-                if let Some(prev) = &id {
-                    usage_err(&format!("--bead given twice ({prev}, {})", argv.get(i + 1).cloned().unwrap_or_default()));
-                }
-                let Some(v) = argv.get(i + 1) else { usage_err("--bead needs a bead id") };
-                id = Some(v.clone());
-                i += 2;
-            }
-            "--close" => {
-                let Some(v) = argv.get(i + 1) else { usage_err("--close needs a reason") };
-                mode_close = Some(v.clone());
-                i += 2;
-            }
-            "--reopen" => {
-                mode_close = None;
-                i += 1;
-            }
-            "--keep-work" => {
-                keep = true;
-                i += 1;
-            }
-            "--why" => {
-                let Some(v) = argv.get(i + 1) else { usage_err("--why needs text") };
-                why = v.clone();
-                i += 2;
-            }
-            "-h" | "--help" => {
-                print!("{}", usage_text());
-                spira_otel::oneshot::exit(0);
-            }
-            other if other.starts_with('-') => {
-                usage_err(&format!("unknown flag {other}"));
-            }
-            other => {
-                eprintln!("slay.sh: unexpected argument \"{other}\" — this tool takes named arguments only.");
-                eprintln!("slay.sh: the bead goes in --bead, a reason goes in --why.");
-                spira_otel::oneshot::exit(2);
-            }
-        }
-    }
-    let Some(id) = id else { usage_err("--bead is required") };
-    Args { id, mode_close, keep, why }
-}
-
-const FINISH_DEADLINE_SECS: &str = "120";
-
-fn say(s: &str) {
-    println!("{s}");
-}
-
-/// sp-ivfu3: `spira_world::spira_run` resolves `spira.run` in-process through
-/// `spira_config` and REFUSES with a named error rather than guess `/tmp/spira` — slay.sh
-/// has no sensible "keep going anyway" here (it would act on the wrong dwarf's pidfiles),
-/// so the refusal exits.
-fn spira_run() -> PathBuf {
-    spira_world::spira_run().unwrap_or_else(|e| {
-        eprintln!("spira: FATAL slay: {e}");
-        spira_otel::oneshot::exit(1);
-    })
+fn fatal(msg: &str) -> ! {
+    eprintln!("{msg}");
+    spira_otel::oneshot::exit(1);
 }
 
 fn epoch() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
 
-/// `$SPIRA_RUN/dwarf-*-<id>.pid`, first match (bash's `ls ... | head -1`; glob order, which
-/// on a healthy box is at most one match — two pidfiles for the same bead is itself a
-/// defect this refuses to silently pick between by taking whichever sorts first).
-fn find_dwarf_pidfile(run: &std::path::Path, id: &str) -> Option<PathBuf> {
-    let rd = std::fs::read_dir(run).ok()?;
-    let suffix = format!("-{id}.pid");
-    let mut matches: Vec<PathBuf> = rd
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| {
-            p.file_name()
-                .and_then(|n| n.to_str())
-                .map(|n| n.starts_with("dwarf-") && n.ends_with(&suffix))
-                .unwrap_or(false)
-        })
-        .collect();
-    matches.sort();
-    matches.into_iter().next()
+fn proc_dir(pid: &str) -> bool {
+    Path::new(&format!("/proc/{pid}")).is_dir()
 }
 
-fn main() {
-    let argv: Vec<String> = env::args().skip(1).collect();
-    let args = parse_args(&argv);
-    let id = &args.id;
-    spira_otel::oneshot::begin(spira_config::process::metrics_endpoint().as_deref(), "spira-slay", "slay");
-    let run = spira_run();
-    // `SLAY_FINISH` reads this itself (bdq label add) — resolved here, at the top, and
-    // handed in explicitly rather than left for the seam's bash to inherit from whatever
-    // happens to be in the ambient environment (per Ryan 2026-10-05: one source of config).
-    let submitted_label = spira_config::process::cfg("SPIRA_SUBMITTED_LABEL").unwrap_or_else(|e| {
-        eprintln!("slay.sh: FATAL: {e}");
-        spira_otel::oneshot::exit(1);
-    });
-    let lib_sh = spira_world::locate_home().map(|h| h.join("lib.sh"));
+fn read_trim(p: &Path) -> String {
+    std::fs::read_to_string(p).unwrap_or_default().trim().to_string()
+}
 
-    // ---- 0. the bead must exist -------------------------------------------------------
-    let found = lib_sh
-        .as_deref()
-        .map(|lib| seam::run(lib, "slay-exists", seam::SLAY_EXISTS, &[("SLAY_ID", id)], ""))
-        .filter(|(_, ok)| *ok)
-        .map(|(out, _)| out.trim().to_string())
-        .unwrap_or_default();
-    if found != *id {
-        let db = spira_config::process::cfg("SPIRA_DB").unwrap_or_else(|e| format!("(unresolved: {e})"));
-        eprintln!("slay.sh: no bead {id} in {db} — refusing to act");
-        if !found.is_empty() {
-            eprintln!("slay.sh: the store answered with {found} instead (prefix match)");
+/// `$SPIRA_RUN/dwarf-*-<id>.pid`, first match: two pidfiles for one bead is itself a defect,
+/// and sorting picks one deterministically rather than silently.
+fn find_dwarf_pidfile(run: &Path, id: &str) -> Option<PathBuf> {
+    let suffix = format!("-{id}.pid");
+    let mut found: Vec<PathBuf> = std::fs::read_dir(run)
+        .ok()?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with("dwarf-") && n.ends_with(&suffix)))
+        .collect();
+    found.sort();
+    found.into_iter().next()
+}
+
+struct RealLc(Result<LcClient, String>);
+
+impl RealLc {
+    fn call(&self, argv: &[&str]) {
+        if let Ok(c) = &self.0 {
+            let _ = c.call(argv);
         }
-        spira_otel::oneshot::exit(2);
     }
+}
 
-    let mut fail = false;
-    let lc = spira_store::lc_call::LcClient::configured();
-
-    // ---- 1. the disposition: the row says why the session ends -------------------------
-    if let Ok(c) = &lc {
-        let _ = c.call(&["disposition", id, "slain", &args.why, "slay"]);
+impl Lifecycle for RealLc {
+    fn disposition(&self, id: &str, why: &str) {
+        self.call(&["disposition", id, "slain", why, "slay"]);
     }
+    fn holder_dead(&self, id: &str) {
+        self.call(&["holder-dead", id, "slay"]);
+    }
+    fn drop_bead(&self, id: &str, text: &str) {
+        self.call(&["drop", id, text, "slay"]);
+    }
+}
 
-    // ---- 2/3. the holder (dwarf OR manual hold) ------------------------------------------
-    let mut name = String::new();
-    let mut pid = String::new();
-    let mut unit = String::new();
+struct RealBeads {
+    bdq: String,
+    lc: Result<LcClient, String>,
+    registry: spira_config::repos::Registry,
+}
 
-    let hold_pid_file = run.join(format!("hold-{id}.pid"));
-    if hold_pid_file.is_file() {
-        let hpid = std::fs::read_to_string(&hold_pid_file).unwrap_or_default().trim().to_string();
-        let hb_file = run.join(format!("hold-{id}.hb"));
-        let hbpid = if hb_file.is_file() {
-            std::fs::read_to_string(&hb_file).unwrap_or_default().trim().to_string()
-        } else {
-            String::new()
+impl RealBeads {
+    fn bdq(&self, args: &[&str]) -> Option<String> {
+        // FORK-EDGE: content store — bdq is the store's one chokepoint, with its own fencing.
+        let mut cmd = spira_config::bounded::bounded_for(&self.bdq, BEAD_DEADLINE_SECS);
+        cmd.args(args).stdin(Stdio::null()).stderr(Stdio::null());
+        match spira_config::release_env::child_path_env_for_process() {
+            Ok(e) => cmd.envs(e),
+            Err(_) => return None,
         };
-        if !hbpid.is_empty() {
-            let _ = spira_world::proc::signal(&hbpid, libc::SIGTERM);
+        let o = cmd.output().ok()?;
+        o.status.success().then(|| String::from_utf8_lossy(&o.stdout).into_owned())
+    }
+}
+
+impl Beads for RealBeads {
+    fn view(&self, id: &str) -> Option<BeadView> {
+        let v = hel::real::json_only(&self.bdq(&["show", id, "--json"])?)?;
+        let b = if v.is_array() { v.get(0)? } else { &v };
+        let text = |k: &str| b.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
+        let labels = b.get("labels").and_then(|l| l.as_array()).map(|l| l.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default();
+        Some(BeadView { id: text("id"), status: text("status"), assignee: text("assignee"), labels })
+    }
+    fn clear_assignee(&self, id: &str) {
+        if self.bdq(&["update", id, "--assignee", "", "--force"]).is_none() {
+            let _ = self.bdq(&["update", id, "--assignee", ""]);
         }
-        let _ = std::fs::remove_file(&hold_pid_file);
-        let _ = std::fs::remove_file(&hb_file);
-        if let Ok(c) = &lc {
-            let _ = c.call(&["unhold", id, "manual", "slay"]);
+    }
+    fn label_add(&self, id: &str, label: &str) {
+        let _ = self.bdq(&["label", "add", id, label]);
+    }
+    fn label_remove(&self, id: &str, label: &str) {
+        let _ = self.bdq(&["label", "remove", id, label]);
+    }
+    fn note(&self, id: &str, text: &str) {
+        let _ = self.bdq(&["note", id, text]);
+    }
+    fn repo_root_of(&self, id: &str) -> Option<PathBuf> {
+        let stated = self.lc.as_ref().ok().and_then(|c| c.call(&["content", "state", id, "repo"]).ok()).map(|r| r.out.trim().to_string()).unwrap_or_default();
+        let named = if stated.is_empty() || stated.starts_with('(') { self.registry.home_repo().to_string() } else { stated };
+        if named.is_empty() {
+            return None;
         }
-        say(&format!(
-            "hold: manual hold released for {id} (holder pid {}, heartbeat {})",
-            if hpid.is_empty() { "?" } else { &hpid },
-            if hbpid.is_empty() { "none" } else { &hbpid }
-        ));
-    } else {
-        let pf = find_dwarf_pidfile(&run, id);
+        self.registry.root(&named).map(PathBuf::from)
+    }
+}
+
+struct RealGit {
+    world: hel::real::Real,
+}
+
+impl RealGit {
+    fn git(&self, repo: &Path, args: &[&str]) -> Option<String> {
+        hel::git::Git(repo).out(args)
+    }
+}
+
+impl Git for RealGit {
+    fn is_dir(&self, p: &Path) -> bool {
+        p.is_dir()
+    }
+    fn branch_exists(&self, repo: &Path, br: &str) -> bool {
+        hel::git::Git(repo).branch_exists(br)
+    }
+    fn short_tip(&self, repo: &Path, br: &str) -> Option<String> {
+        self.git(repo, &["rev-parse", "--short", br]).map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+    }
+    fn landref(&self, repo: &Path) -> Option<String> {
+        self.world.base(repo).map(|b| b.landref)
+    }
+    fn names_bead_between(&self, repo: &Path, base: &str, br: &str, id: &str) -> bool {
+        self.git(repo, &["log", "--format=%s%n%b", &format!("{base}..{br}")]).is_some_and(|l| l.contains(id))
+    }
+    fn ahead(&self, repo: &Path, base: &str, br: &str) -> u64 {
+        hel::git::Git(repo).ahead(base, br).unwrap_or(0)
+    }
+    fn content_landed(&self, repo: &Path, br: &str, base: &str) -> bool {
+        hel::git::Git(repo).content_on_base(br, base)
+    }
+    fn abort_inflight(&self, wt: &Path) {
+        let g = hel::git::Git(wt);
+        let _ = g.ok(&["rebase", "--abort"]);
+        let _ = g.ok(&["merge", "--abort"]);
+    }
+    fn commit_all(&self, wt: &Path, msg: &str) -> bool {
+        let g = hel::git::Git(wt);
+        g.ok(&["add", "-A"])
+            && spira_config::bounded::bounded("git")
+                .arg("-C")
+                .arg(wt)
+                .args(["-c", "user.name=slay", "-c", "user.email=slay@spira.local", "-c", "commit.gpgsign=false", "commit", "-m", msg])
+                .env("SPIRA_ALLOW_DIRTY_STAGE", "1")
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .is_ok_and(|s| s.success())
+    }
+    fn park(&self, repo: &Path, refname: &str, br: &str) -> bool {
+        hel::git::Git(repo).update_ref(refname, br)
+    }
+    fn salvage(&self, id: &str, wt: &Path) -> Result<Option<PathBuf>, ()> {
+        self.world.salvage(id, wt)
+    }
+    fn destroy_worktree(&self, id: &str, wt: &Path, repo: &Path, why: &str) -> bool {
+        self.world.destroy_worktree(id, wt, repo, why)
+    }
+    fn destroy_branch(&self, id: &str, br: &str, repo: &Path, why: &str) -> Result<(), String> {
+        let base = self.world.base(repo).map(|b| b.landref);
+        self.world.destroy_branch(id, br, repo, why, "slain", base.as_deref()).map_err(|e| match e {
+            hel::reap::DestroyBranchErr::CertifiedQueued => "certified-queued".to_string(),
+            hel::reap::DestroyBranchErr::Refused(m) | hel::reap::DestroyBranchErr::Failed(m) => m,
+        })
+    }
+}
+
+struct RealDwarf {
+    run: PathBuf,
+    lc: RealLc,
+}
+
+impl Dwarf for RealDwarf {
+    fn alive(&self, pid: &str) -> bool {
+        proc_dir(pid)
+    }
+
+    fn pidfile_remains(&self, id: &str) -> bool {
+        find_dwarf_pidfile(&self.run, id).is_some()
+    }
+
+    fn stop(&self, id: &str, say: &mut Vec<String>) -> Stopped {
+        let run = &self.run;
+        let mut s = Stopped::default();
+        let hold_pid_file = run.join(format!("hold-{id}.pid"));
+        if hold_pid_file.is_file() {
+            let hpid = read_trim(&hold_pid_file);
+            let hb_file = run.join(format!("hold-{id}.hb"));
+            let hbpid = if hb_file.is_file() { read_trim(&hb_file) } else { String::new() };
+            if !hbpid.is_empty() {
+                let _ = proc::signal(&hbpid, libc::SIGTERM);
+            }
+            let _ = std::fs::remove_file(&hold_pid_file);
+            let _ = std::fs::remove_file(&hb_file);
+            self.lc.call(&["unhold", id, "manual", "slay"]);
+            say.push(format!(
+                "hold: manual hold released for {id} (holder pid {}, heartbeat {})",
+                if hpid.is_empty() { "?" } else { &hpid },
+                if hbpid.is_empty() { "none" } else { &hbpid }
+            ));
+            return s;
+        }
+
+        let pf = find_dwarf_pidfile(run, id);
         if let Some(pf) = &pf {
-            pid = std::fs::read_to_string(pf).unwrap_or_default().trim().to_string();
-            let name_file = pf.with_extension("name");
-            name = std::fs::read_to_string(&name_file).unwrap_or_default().trim().to_string();
+            s.pid = read_trim(pf);
+            s.name = read_trim(&pf.with_extension("name"));
         }
-        if !pid.is_empty() {
+        if !s.pid.is_empty() {
             let globs = sysctl::dwarf_globs();
             let mut args = vec!["list-units"];
             args.extend(globs.iter().map(String::as_str));
             args.push("--no-legend");
             for u in sysctl::run_lines(&args) {
                 if let Some(unit_name) = sysctl::first_field(&u) {
-                    if sysctl::run(&["show", "-p", "MainPID", "--value", unit_name]) == pid {
-                        unit = unit_name.to_string();
+                    if sysctl::run(&["show", "-p", "MainPID", "--value", unit_name]) == s.pid {
+                        s.unit = unit_name.to_string();
                         break;
                     }
                 }
             }
         }
-        let alive = !pid.is_empty() && std::path::Path::new(&format!("/proc/{pid}")).is_dir();
-        if !alive {
-            say(&format!("dwarf: none running for {id} (no live pid file) — setting the bead and the work only"));
-            if let Some(pf) = &pf {
+        let forget = |pf: &Option<PathBuf>| {
+            if let Some(pf) = pf {
                 let _ = std::fs::remove_file(pf);
                 let _ = std::fs::remove_file(pf.with_extension("name"));
             }
+        };
+        if s.pid.is_empty() || !proc_dir(&s.pid) {
+            say.push(format!("dwarf: none running for {id} (no live pid file) — setting the bead and the work only"));
+            forget(&pf);
+            return s;
+        }
+        let who = if s.name.is_empty() { "?" } else { &s.name };
+        if s.unit.is_empty() {
+            say.push(format!("dwarf: {who} pid {} has no unit — sending TERM", s.pid));
+            let _ = proc::signal(&s.pid, libc::SIGTERM);
         } else {
-            if !unit.is_empty() {
-                say(&format!("dwarf: {} pid {pid} is {unit} — stopping the unit", if name.is_empty() { "?" } else { &name }));
-                if !sysctl::run_ok(&["stop", &unit]) {
-                    say(&format!("dwarf: systemctl stop failed — sending TERM to {pid}"));
-                    let _ = spira_world::proc::signal(&pid, libc::SIGTERM);
-                }
-            } else {
-                say(&format!("dwarf: {} pid {pid} has no unit — sending TERM", if name.is_empty() { "?" } else { &name }));
-                let _ = spira_world::proc::signal(&pid, libc::SIGTERM);
-            }
-            let t0 = epoch();
-            loop {
-                let pf_exists = pf.as_ref().map(|p| p.is_file()).unwrap_or(false);
-                let proc_exists = std::path::Path::new(&format!("/proc/{pid}")).is_dir();
-                if !pf_exists && !proc_exists {
-                    break;
-                }
-                std::thread::sleep(std::time::Duration::from_secs(1));
-                if epoch() - t0 >= 60 {
-                    say("dwarf: still alive after 60s — KILL");
-                    let _ = spira_world::proc::signal(&pid, libc::SIGKILL);
-                    std::thread::sleep(std::time::Duration::from_secs(1));
-                    if let Some(pf) = &pf {
-                        let _ = std::fs::remove_file(pf);
-                        let _ = std::fs::remove_file(pf.with_extension("name"));
-                    }
-                    break;
-                }
-            }
-            if std::path::Path::new(&format!("/proc/{pid}")).is_dir() {
-                say(&format!("dwarf: pid {pid} SURVIVED a KILL — investigate by hand"));
-                fail = true;
-            } else {
-                say(&format!("dwarf: stopped ({}s)", epoch() - t0));
+            say.push(format!("dwarf: {who} pid {} is {} — stopping the unit", s.pid, s.unit));
+            if !sysctl::run_ok(&["stop", &s.unit]) {
+                say.push(format!("dwarf: systemctl stop failed — sending TERM to {}", s.pid));
+                let _ = proc::signal(&s.pid, libc::SIGTERM);
             }
         }
+        let t0 = epoch();
+        loop {
+            let pf_exists = pf.as_ref().is_some_and(|p| p.is_file());
+            if !pf_exists && !proc_dir(&s.pid) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_secs(1)); // waits-on: the dwarf's exit; KILL after 60s
+            if epoch() - t0 >= 60 {
+                say.push("dwarf: still alive after 60s — KILL".into());
+                let _ = proc::signal(&s.pid, libc::SIGKILL);
+                std::thread::sleep(std::time::Duration::from_secs(1)); // waits-on: the KILL to land
+                forget(&pf);
+                break;
+            }
+        }
+        if proc_dir(&s.pid) {
+            say.push(format!("dwarf: pid {} SURVIVED a KILL — investigate by hand", s.pid));
+            s.fail = true;
+        } else {
+            say.push(format!("dwarf: stopped ({}s)", epoch() - t0));
+        }
+        s
     }
+}
 
-    // ---- 4a/5/4b/6 — everything downstream that still needs lib.sh's chokepoints -------
-    let (mode, reason) = match &args.mode_close {
-        Some(r) => ("close", r.as_str()),
-        None => ("reopen", ""),
-    };
-    let run_str = run.to_string_lossy().into_owned();
-    let seam_fail = match lib_sh.as_deref() {
-        Some(lib) => {
-            let (out, rc) = seam::run_for(
-                lib,
-                "slay-finish",
-                seam::SLAY_FINISH,
-                &[
-                    ("SLAY_ID", id.as_str()),
-                    ("SLAY_WHY", &args.why),
-                    ("SLAY_MODE", mode),
-                    ("SLAY_REASON", reason),
-                    ("SLAY_KEEP", if args.keep { "1" } else { "0" }),
-                    ("SLAY_NAME", &name),
-                    ("SLAY_PID", &pid),
-                    ("SLAY_UNIT", &unit),
-                    ("SPIRA_RUN", &run_str),
-                    ("SPIRA_SUBMITTED_LABEL", &submitted_label),
-                ],
-                "",
-                FINISH_DEADLINE_SECS,
-            );
-            let mut result_fail = rc != Some(0);
-            let mut saw_result = false;
-            for line in out.lines() {
-                if let Some(v) = line.strip_prefix("___SLAY_RESULT___\t") {
-                    saw_result = true;
-                    result_fail = result_fail || v.trim() != "0";
-                } else {
-                    println!("{line}");
-                }
-            }
-            if rc == Some(124) {
-                say(&format!("slay: the finish step (claim, work, note) hit its {FINISH_DEADLINE_SECS}s deadline and was killed (rc=124)"));
-            } else if rc != Some(0) {
-                say(&format!("slay: the finish step (claim, work, note) failed: rc={}", rc.map_or("none".to_string(), |c| c.to_string())));
-            } else if !saw_result {
-                say("slay: the finish step exited 0 but never reported its result");
-                result_fail = true;
-            }
-            result_fail
+fn main() {
+    let argv: Vec<String> = env::args().skip(1).collect();
+    let args = match slay::parse_args(&argv) {
+        Ok(Parsed::Run(a)) => a,
+        Ok(Parsed::Help) => {
+            print!("{}", slay::usage_text());
+            spira_otel::oneshot::exit(0);
         }
-        None => {
-            eprintln!("slay.sh: cannot locate lib.sh — the bead's claim, note and work were NOT touched");
-            true
+        Err(e) => {
+            eprint!("{}", e.message());
+            spira_otel::oneshot::exit(2);
         }
     };
-    fail = fail || seam_fail;
+    spira_otel::oneshot::begin(spira_config::process::metrics_endpoint().as_deref(), "spira-slay", "slay");
+    let run = spira_world::spira_run().unwrap_or_else(|e| fatal(&format!("spira: FATAL slay: {e}")));
+    let submitted_label = spira_config::process::cfg("SPIRA_SUBMITTED_LABEL").unwrap_or_else(|e| fatal(&format!("slay.sh: FATAL: {e}")));
+    let home = spira_world::locate_home().unwrap_or_else(|| fatal("slay.sh: cannot locate lib.sh — the bead's claim, note and work were NOT touched"));
+    let store = spira_config::process::cfg("SPIRA_DB").unwrap_or_else(|e| format!("(unresolved: {e})"));
+    let bdq = spira_config::release_env::tool("bdq").unwrap_or_else(|e| fatal(&format!("slay.sh: FATAL: {e}")));
+    let world = hel::verbs::real_world(None).unwrap_or_else(|e| fatal(&format!("slay.sh: FATAL: {e}")));
+    let registry = spira_config::repos::Registry::from_env(env::vars().collect(), &home);
 
-    // ---- 6. verify (the process-side half; the seam already verified the branch) -------
-    if !pid.is_empty() && std::path::Path::new(&format!("/proc/{pid}")).is_dir() {
-        fail = true;
-    }
-    if find_dwarf_pidfile(&run, id).is_some() {
-        say(&format!("verify: a pid file for {id} remains"));
-        fail = true;
-    }
+    let git = RealGit { world };
+    let beads = RealBeads { bdq, lc: LcClient::configured(), registry };
+    let lc = RealLc(LcClient::configured());
+    let dwarf = RealDwarf { run: run.clone(), lc: RealLc(LcClient::configured()) };
+    let ports = Ports { git: &git, beads: &beads, lc: &lc, dwarf: &dwarf };
+    let ctx = Ctx { run: &run, submitted_label: &submitted_label, store: &store };
 
-    if fail {
-        say(&format!("slay: INCOMPLETE for {id} — see above"));
-        spira_otel::oneshot::exit(1);
+    let report = slay::slay(&ctx, &ports, &args);
+    for l in &report.out {
+        println!("{l}");
     }
-    say(&format!("slain: {id}"));
-    spira_otel::oneshot::end(0);
+    for l in &report.err {
+        eprintln!("{l}");
+    }
+    if report.code == 0 {
+        spira_otel::oneshot::end(0);
+    }
+    spira_otel::oneshot::exit(report.code);
 }

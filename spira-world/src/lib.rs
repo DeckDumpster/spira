@@ -20,6 +20,7 @@ pub mod round;
 pub mod stoprec;
 pub mod scheduler;
 pub mod seam;
+pub mod slay;
 pub mod sysctl;
 pub mod usage;
 

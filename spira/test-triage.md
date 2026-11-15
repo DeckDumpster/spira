@@ -86,7 +86,6 @@ migration bead per family from this table.
 | test-dwarf-lifecycle-cutover.sh | 65 | dwarf.sh on the semantic layer against a throwaway Dolt and real bd | sim (not migrated: the sim has no dwarf actor, and the property is dwarf against real bd) | The semantic layer has a sim; the Dolt-grant half belongs to family I. |
 | test-ops-closing.sh | 92 | close-time fences on a dwarf's finished session, through the real dwarf with a shim | **migrated**: dwarf runs are whole-run tests; the shell keeps only the pure phrase table | Fence = predicate over close evidence (unit) + wiring (scenario step); neither needs 92 s of dwarf. |
 | test-dwarf-gate-unfinished-attempts.sh | 31 | releasing a bead while its gate is still running leaves `attempts_of` unchanged | **migrated**: `dwarf/src/tests.rs` plus `spira-claim` events fold; suite deleted | An SQL net-zero rule over events; test the attempts query. |
-| test-slay.sh | 52 | slay stops one dwarf cleanly, removes its work, makes the bead say what is true | sim (not migrated: the sim has no dwarf actor or process group to slay) | Operator action in a world with a live dwarf. |
 
 ### E — dwarf claim, resume and hygiene
 

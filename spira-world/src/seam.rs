@@ -6,7 +6,7 @@
 //!
 //! lib.sh itself is explicitly out of this wave's scope (`remaining-bash-inventory.md`
 //! group 4: "Ryan's standing instruction during the cutover was 'leave lib.sh alone.'");
-//! its two chokepoints below are called, never re-implemented:
+//! its chokepoint below is called, never re-implemented:
 //!
 //!   - `spira_lane_runes` + `rune_get`: a `.rune` file is SOURCED as bash to read one
 //!     field (dwarves.sh's own `lane_caps`), and a rune file may compute that field from
@@ -14,12 +14,6 @@
 //!     different field) — a hand-written Rust parser would silently disagree on the one
 //!     rune that does, which is the exact failure `dwarves.sh` exists to prevent
 //!     (law-bake-rules-into-tools: a program that refuses to be misread).
-//!   - `bdq`/`bdjson`, `salvage`, `spira_destroy_worktree`/`_branch`, `spira_landref`,
-//!     `bead_repo`, `repo_root` (slay.sh steps 0, 4a, 5, 4b, 6): the one
-//!     permitted door onto `git worktree remove`/`git branch -D` in the harness, and `bdq`
-//!     carries its own fencing (repo-label validation, the
-//!     schema-delete refusals, a dead-Dolt-connection retry) that a direct `bd` call would
-//!     silently drop.
 
 use std::path::Path;
 use std::process::Stdio;
@@ -38,8 +32,7 @@ pub fn run(lib_sh: &Path, name: &str, script: &str, envs: &[(&str, &str)], stdin
 /// code: `Some(124)` is the deadline, `None` is a seam that never started or has no code.
 pub fn run_for(lib_sh: &Path, name: &str, script: &str, envs: &[(&str, &str)], stdin: &str, secs: &str) -> (String, Option<i32>) {
     let full = format!("set -uo pipefail\n. \"$SPIRA_HOME_LIB\" >&2 || exit 97\n{script}\n");
-    // FORK-EDGE: lib.sh chokepoints, not a config bootstrap: rune files are sourced as bash, and
-    // SLAY_FINISH (~105 lines) drives salvage/spira_destroy_worktree/_branch; over the port bound.
+    // FORK-EDGE: not a config bootstrap: a rune file is sourced as bash, and may compute a field from shell variables.
     let mut cmd = spira_config::bounded::bounded_for("bash", secs);
     cmd.args(["-c", &full, name]);
     cmd.env("SPIRA_HOME_LIB", lib_sh);
@@ -90,146 +83,6 @@ pub fn parse_lane_caps(out: &str) -> Vec<(String, u32)> {
         })
         .collect()
 }
-
-/// slay.sh step 0: refuse unless the store answers with EXACTLY `$SLAY_ID` — never a
-/// prefix-matched orphan child (`bd show sp-ofeb` resolving `sp-ofeb.1`), and never just a
-/// nonzero exit check.
-pub const SLAY_EXISTS: &str = r#"
-bdq show "$SLAY_ID" --json 2>/dev/null | python3 -c '
-import json, sys
-try:
-    d = json.load(sys.stdin)
-    d = d[0] if isinstance(d, list) else d
-    print(d.get("id",""))
-except Exception:
-    print("")'
-"#;
-
-/// slay.sh steps 4a (release the claim before anything is destroyed), 5 (salvage, park or
-/// delete the work), 4b (the note) and the final `bdjson show` — everything downstream of
-/// "the dwarf/hold is stopped" that still has to go through lib.sh's own chokepoints.
-/// Reads `$SLAY_ID $SLAY_WHY $SLAY_MODE $SLAY_REASON $SLAY_KEEP $SLAY_NAME $SLAY_PID
-/// $SLAY_UNIT $SPIRA_RUN $SPIRA_SUBMITTED_LABEL` from the environment (never interpolated
-/// into this script's text) and prints slay.sh's own narration lines verbatim, ending with
-/// one machine-readable line this crate strips before relaying the rest:
-/// `___SLAY_RESULT___\t<0|1>`. `SPIRA_RUN`/`SPIRA_SUBMITTED_LABEL` are the caller's own
-/// `spira_config` reads, passed in explicitly — never inherited ambient values (per Ryan
-/// 2026-10-05: one source of config).
-pub const SLAY_FINISH: &str = r#"
-ID="$SLAY_ID"; WHY="$SLAY_WHY"; MODE="$SLAY_MODE"; REASON="$SLAY_REASON"
-KEEP="$SLAY_KEEP"; name="$SLAY_NAME"; pid="$SLAY_PID"; unit="$SLAY_UNIT"
-fail=0
-say() { printf '%s\n' "$*"; }
-
-status_of() { bdjson show "$ID" | python3 -c 'import sys,json
-d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(d[0].get("status","") if d else "")' 2>/dev/null; }
-st="$(status_of)"
-carries_own=0
-if [ "$st" = in_progress ] && [ "$MODE" = reopen ] && [ "$KEEP" = 1 ]; then
-    _rn="$(bead_repo "$ID" 2>/dev/null)"; _rp=""
-    [ -n "$_rn" ] && _rp="$(repo_root "$_rn" 2>/dev/null)"
-    if [ -n "$_rp" ] && _base="$(spira_landref "$_rp" 2>/dev/null)" \
-        && git -C "$_rp" log --format='%s%n%b' "$_base..spira/$ID" 2>/dev/null | grep -qF -- "$ID"; then
-        carries_own=1
-    fi
-fi
-if [ "$st" = in_progress ]; then
-    spira-lc holder-dead "$ID" slay >/dev/null 2>&1 || true
-fi
-bdq update "$ID" --assignee "" --force >/dev/null 2>&1 || bdq update "$ID" --assignee "" >/dev/null 2>&1
-if [ "$carries_own" = 1 ]; then
-    bdq label add "$ID" "$SPIRA_SUBMITTED_LABEL" >/dev/null 2>&1 || true
-    say "bead: spira/$ID already carries a commit of $ID — reopened as submitted, not for redo"
-fi
-
-repo_name="$(bead_repo "$ID" 2>/dev/null)"; repo=""
-[ -n "$repo_name" ] && repo="$(repo_root "$repo_name" 2>/dev/null)"
-br="spira/$ID"; wt="$SPIRA_RUN/worktree/$ID"; tip=""; nuked=""; saved=""; WIP_COMMITTED=0; BRANCH_KEPT=0
-if [ -n "$repo" ] && git -C "$repo" show-ref --verify -q "refs/heads/$br"; then
-    tip="$(git -C "$repo" rev-parse --short "$br")"
-fi
-if [ "$KEEP" = 1 ]; then
-    say "work: kept — branch $br${tip:+ at $tip}, worktree $wt"
-elif [ -n "$repo" ]; then
-    if [ -d "$wt" ]; then
-        git -C "$wt" rebase --abort >/dev/null 2>&1 || true
-        git -C "$wt" merge --abort  >/dev/null 2>&1 || true
-        if salvage "$ID" "$wt"; then
-            saved="${SALVAGED:-}"
-            if [ -n "$saved" ]; then
-                say "work: uncommitted changes salvaged to $saved"
-                if git -C "$wt" add -A >/dev/null 2>&1 \
-                    && SPIRA_ALLOW_DIRTY_STAGE=1 \
-                       git -C "$wt" -c user.name=slay -c user.email=slay@spira.local -c commit.gpgsign=false \
-                           commit -m "$ID: wip — salvaged at slay ($WHY)" >/dev/null 2>&1; then
-                    WIP_COMMITTED=1
-                    tip="$(git -C "$repo" rev-parse --short "$br" 2>/dev/null || echo "${tip:-?}")"
-                    say "work: wip committed to $br at $tip — branch stays in refs/heads"
-                else
-                    say "work: could not make wip commit — patch is the only copy"
-                fi
-            fi
-        else
-            say "work: could not salvage $wt — leaving it in place"; fail=1
-        fi
-        if [ "$fail" = 0 ]; then
-            if spira_destroy_worktree "$ID" "$wt" "$repo" "slain: $WHY"; then
-                say "work: worktree $wt removed"
-            else
-                say "work: could not remove $wt — see $SPIRA_RUN/reap.log"; fail=1
-            fi
-        fi
-    fi
-    parked=""
-    if [ -n "$tip" ] && [ "$fail" = 0 ] && [ "$WIP_COMMITTED" = 0 ]; then
-        if base="$(spira_landref "$repo" 2>/dev/null)"; then
-            ahead="$(git -C "$repo" rev-list --count "$base..$br" 2>/dev/null || echo 0)"
-            if [ "${ahead:-0}" -gt 0 ] && ! spira-lc content-landed "$repo" "$br" "$base" 2>/dev/null; then
-                if [ "$MODE" = reopen ]; then
-                    BRANCH_KEPT=1
-                    say "work: $br carries work $base does not — kept in refs/heads for the next builder"
-                elif git -C "$repo" update-ref "refs/slain/$ID" "$br" 2>/dev/null; then
-                    parked="refs/slain/$ID"
-                    say "work: $br carries work $base does not — parked at $parked"
-                else
-                    say "work: could not park $br at refs/slain/$ID — REFUSING to delete it"
-                    fail=1
-                fi
-            fi
-        elif [ "$MODE" = reopen ]; then
-            BRANCH_KEPT=1
-            say "work: no base to compare $br against — kept in refs/heads"
-        fi
-    fi
-    if [ -n "$tip" ] && [ "$fail" = 0 ] && [ "$WIP_COMMITTED" = 0 ] && [ "$BRANCH_KEPT" = 0 ]; then
-        if spira_destroy_branch "$ID" "$br" "$repo" "slain: $WHY" slain; then
-            nuked="branch $br deleted at $tip${parked:+, kept at $parked}"; say "work: $nuked"
-        else
-            say "work: could not delete $br${SPIRA_DESTROY_ERR:+ — $SPIRA_DESTROY_ERR}"; fail=1
-        fi
-    fi
-else
-    say "work: bead names no resolvable repository — nothing to remove"
-fi
-
-if [ -n "$nuked" ]; then bdq label remove "$ID" "branch:$br" >/dev/null 2>&1 || true; fi
-_work_msg="${nuked:-work kept}${saved:+; uncommitted changes salvaged to $saved}"
-[ "$BRANCH_KEPT" = 1 ] && _work_msg="branch $br kept in refs/heads with its commits"
-[ "$WIP_COMMITTED" = 1 ] && _work_msg="wip committed to $br; branch kept in refs/heads; patch at $saved"
-note="Slain by the operator: $WHY. Dwarf ${name:-?}${pid:+ (pid $pid)} stopped${unit:+ via $unit}. ${_work_msg}. No attempt charged."
-case "$MODE" in
-    close)  spira-lc drop "$ID" "$REASON — $note" slay >/dev/null 2>&1 || true
-            bdq note "$ID" "$REASON — $note" >/dev/null 2>&1 || true ;;
-    reopen) bdq note "$ID" "$note" >/dev/null 2>&1 || true ;;
-esac
-bdjson show "$ID" | python3 -c '
-import sys,json
-d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; b=d[0] if d else {}
-print("bead: %s status=%s assignee=%s labels=%s" % (b.get("id"), b.get("status"), b.get("assignee") or "-", ",".join(b.get("labels") or [])))' 2>/dev/null
-
-[ "$KEEP" = 1 ] || [ "$WIP_COMMITTED" = 1 ] || [ "$BRANCH_KEPT" = 1 ] || [ -z "$repo" ] || ! git -C "$repo" show-ref --verify -q "refs/heads/$br" || { say "verify: $br still exists"; fail=1; }
-printf '___SLAY_RESULT___\t%s\n' "$fail"
-"#;
 
 #[cfg(test)]
 mod tests {
