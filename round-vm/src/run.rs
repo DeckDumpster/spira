@@ -265,12 +265,13 @@ script_err_tee=${!:-}
 round_phase=start fault_phase="" fault_rc="" err_rc="" err_line="" err_cmd=""
 round_marker() {
     local rc="$1" at="" out="$HOME/round-work/.runtime/spira/batch-results"
-    [ -z "$err_line" ] || [ "$err_rc" != "$rc" ] || at=" line=$err_line cmd=$err_cmd"
+    [ -z "$err_line" ] || [ "$err_rc" != "$rc" ] || [ -n "$fault_phase" ] || at=" line=$err_line cmd=$err_cmd"
     { mkdir -p "$out" && printf 'phase=%s rc=%s%s\n' "${fault_phase:-$round_phase}" "${fault_rc:-$rc}" "$at" > "$out/round-phase"; } 2>/dev/null || true
 }
 round_err() {
     err_rc=$1 err_line=$2 err_cmd=${3//$'\n'/ }
     err_cmd=${err_cmd:0:200}
+    [ "$BASHPID" = "$$" ] || return 0
     round_marker "$err_rc"
 }
 trap 'round_err $? $LINENO "$BASH_COMMAND"' ERR
@@ -4794,7 +4795,6 @@ mod tests {
         let exit_fn = &s[s.find("round_exit() {").unwrap()..trap];
         assert!(exit_fn.contains("cp -f ~/round-script.log \"$dir/round-script.log\""), "{exit_fn}");
         assert!(exit_fn.contains("round_marker \"$rc\""), "{exit_fn}");
-        assert!(s.contains("printf 'phase=%s rc=%s%s\\n' \"${fault_phase:-$round_phase}\" \"${fault_rc:-$rc}\" \"$at\""));
         assert!(exit_fn.contains("dir=\"$HOME/round-work/.runtime/spira/batch-results\""), "into the dir REMOTE_RESULTS pulls");
         assert_eq!(REMOTE_RESULTS, "round-work/.runtime/spira/batch-results/");
         let wait = s.find("wait \"$testenv_pid\"").unwrap();
@@ -4813,6 +4813,18 @@ mod tests {
         assert_eq!(st.code(), Some(1));
         let marker = fs::read_to_string(home.path().join("round-work/.runtime/spira/batch-results/round-phase")).unwrap();
         assert!(marker.starts_with("phase=start rc=1 line=") && marker.trim_end().ends_with("cmd=false"), "{marker}");
+    }
+
+    #[test]
+    fn a_named_failed_phase_leaves_a_marker_without_a_command() {
+        let home = TempDir::new();
+        fs::write(home.path().join("round-script.log"), "").unwrap();
+        let head = &REMOTE_SCRIPT[REMOTE_SCRIPT.find("round_phase=start").unwrap()..REMOTE_SCRIPT.find("trap round_exit EXIT").unwrap()];
+        let script = format!("set -Eeuo pipefail\nscript_out_tee= script_err_tee=\n{head}trap round_exit EXIT\nphase suites\n(exit 3) || true\nfalse || phase_failed suites 2\nexit 2\n");
+        let st = std::process::Command::new("bash").args(["-c", &script]).env_clear().env("HOME", home.path()).env("PATH", "/usr/bin:/bin").status().unwrap();
+        assert_eq!(st.code(), Some(2));
+        let marker = fs::read_to_string(home.path().join("round-work/.runtime/spira/batch-results/round-phase")).unwrap();
+        assert_eq!(marker, "phase=suites rc=2\n");
     }
 
     #[test]
