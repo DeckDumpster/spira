@@ -100,6 +100,10 @@ impl Acts for Rec {
         self.log.push(format!("red {id} {tip} {reason}"));
         Ok(())
     }
+    fn send_back(&mut self, id: &str, tip: &str, text: &str) -> Result<(), String> {
+        self.log.push(format!("send-back {id} {tip}: {text}"));
+        Ok(())
+    }
     fn supersede(&mut self, id: &str, keeper: &str) -> Result<(), String> {
         self.log.push(format!("supersede {id} by {keeper}"));
         Ok(())
@@ -144,6 +148,17 @@ fn the_evidence_note_is_written_before_the_gate_red() {
     let note = r.log.iter().position(|l| l.starts_with("note a: ") && l.contains("x.rs")).unwrap();
     let red = r.log.iter().position(|l| l.starts_with("red a")).unwrap();
     assert!(note < red);
+}
+
+#[test]
+fn the_send_back_fact_carries_the_note_and_follows_the_gate_red() {
+    let mut f = fake();
+    f.conflicts.insert("t-a".into(), vec!["x.rs".into()]);
+    let mut r = Rec::default();
+    screen(&f, &Mem::default(), &mut r, &[c("a")], &[]);
+    let red = r.log.iter().position(|l| l.starts_with("red a")).unwrap();
+    let fact = r.log.iter().position(|l| l.starts_with("send-back a t-a: Sift (pre-round screen)") && l.contains("x.rs")).unwrap();
+    assert!(red < fact, "{:?}", r.log);
 }
 
 #[test]
@@ -361,6 +376,9 @@ fn a_pass_the_store_refuses_is_not_a_sifted_candidate() {
         fn gate_red(&mut self, id: &str, tip: &str, reason: &str) -> Result<(), String> {
             self.0.gate_red(id, tip, reason)
         }
+        fn send_back(&mut self, id: &str, tip: &str, text: &str) -> Result<(), String> {
+            self.0.send_back(id, tip, text)
+        }
         fn supersede(&mut self, id: &str, keeper: &str) -> Result<(), String> {
             self.0.supersede(id, keeper)
         }
@@ -532,5 +550,5 @@ fn a_conflict_goes_straight_to_rework_and_files_no_bead() {
     let o = screen(&f, &Mem::default(), &mut r, &[c("a"), c("b")], &[]);
     assert_eq!((o.pass.as_slice(), o.sent_back.as_slice()), (&["b".to_string()][..], &["a".to_string()][..]));
     assert_eq!(reds(&r), ["red a t-a no-rebase"]);
-    assert!(r.log.iter().all(|l| l.starts_with("note ") || l.starts_with("red ") || l.starts_with("pass ") || l.starts_with("tell ")), "{:?}", r.log);
+    assert!(r.log.iter().all(|l| l.starts_with("note ") || l.starts_with("red ") || l.starts_with("send-back ") || l.starts_with("pass ") || l.starts_with("tell ")), "{:?}", r.log);
 }

@@ -360,6 +360,8 @@ pub struct Write {
     pub tip: String,
     pub text: String,
     pub keeper: String,
+    /// The note the send-back stands on, recorded as its `send-back` fact once it is sent.
+    pub brief: String,
 }
 
 impl Recorded<'_> {
@@ -377,6 +379,15 @@ impl sift::Acts for Recorded<'_> {
 
     fn gate_red(&mut self, id: &str, tip: &str, reason: &str) -> Result<(), String> {
         self.push(SEND_BACK, format!("{id}:{tip}:GateRed"), Write { id: id.into(), tip: tip.into(), text: reason.into(), ..Write::default() });
+        Ok(())
+    }
+
+    fn send_back(&mut self, id: &str, tip: &str, text: &str) -> Result<(), String> {
+        let key = format!("{id}:{tip}:GateRed");
+        let Some(act) = self.acts.iter_mut().rev().find(|a| a.effect == SEND_BACK && a.key == key) else { return Ok(()) };
+        let mut w: Write = serde_json::from_str(&act.input).map_err(|e| e.to_string())?;
+        w.brief = text.into();
+        act.input = serde_json::to_string(&w).map_err(|e| e.to_string())?;
         Ok(())
     }
 
@@ -576,7 +587,12 @@ pub fn send_back(e: &Effects, spec: &EffectSpec) -> Result<String, String> {
     let w = write_of(&spec.input, SEND_BACK)?;
     let lc = client(e, spec.deadline_ms);
     sifts::keep_sift_logs(&lc, &e.world.run_dir, &w.id, &w.text);
-    sifts::lc_gate_red(&lc, &w.id, &w.tip, &w.text).map(|()| format!("sent {} back", w.id))
+    sifts::lc_gate_red(&lc, &w.id, &w.tip, &w.text)?;
+    let fact = if w.brief.is_empty() { Ok(()) } else { sifts::lc_send_back_fact(&lc, &w.id, &w.tip, &w.brief) };
+    if let Err(e) = fact {
+        eprintln!("{SEND_BACK}: {} is sent back; its send-back fact was not recorded: {e}", w.id);
+    }
+    Ok(format!("sent {} back", w.id))
 }
 
 pub fn record_pass(e: &Effects, spec: &EffectSpec) -> Result<String, String> {

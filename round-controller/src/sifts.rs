@@ -183,6 +183,9 @@ impl Acts for Live<'_> {
         keep_sift_logs(&lc, &self.env.run, id, reason);
         lc_gate_red(&lc, id, tip, reason)
     }
+    fn send_back(&mut self, id: &str, tip: &str, text: &str) -> Result<(), String> {
+        lc_send_back_fact(&client_of(self.env)?, id, tip, text)
+    }
     fn supersede(&mut self, id: &str, keeper: &str) -> Result<(), String> {
         let reason = format!("Sift: identical patch (patch-id) to {keeper}.");
         // FORK-EDGE: unserved verb close (the spira-lc CLI answers it; the socket does not)
@@ -708,6 +711,12 @@ pub fn lc_gate_red(lc: &LcClient, id: &str, tip: &str, reason: &str) -> Result<(
         version,
         serde_json::json!({"GateRed": {"tip": tip, "reason": reason}}),
     )
+}
+
+/// The `send-back` fact of a sift send-back: the note it stands on, at the tip it judged.
+pub fn lc_send_back_fact(lc: &LcClient, id: &str, tip: &str, text: &str) -> Result<(), String> {
+    let cause = spira_config::send_back::encode(tip, text);
+    lcq_with(lc, &["fact", id, "--kind", spira_config::send_back::KIND, "--actor", "sift", "--cause", &cause]).map(|_| ())
 }
 
 /// Records the pass for `tip`. A bead no longer SUBMITTED or CERTIFIED records none, said on

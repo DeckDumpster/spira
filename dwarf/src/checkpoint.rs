@@ -19,10 +19,12 @@ pub const HOLD_SECS: i64 = 7 * 24 * 3600;
 /// How long a stop waits for a turn boundary; below `slay`'s 60s before KILL.
 pub const BOUNDARY_WAIT_SECS: u64 = 30;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Fact {
     pub kind: String,
     pub cause: String,
+    pub actor: String,
+    pub at_epoch: i64,
 }
 
 /// `spira-lc facts` output (an array of `{event_type, new_value}`, oldest first).
@@ -31,7 +33,12 @@ pub fn parse_facts(json: &str) -> Vec<Fact> {
     rows.iter()
         .filter_map(|r| {
             let s = |k: &str| r.get(k).and_then(Value::as_str).map(str::to_string);
-            Some(Fact { kind: s("event_type")?, cause: s("new_value").unwrap_or_default() })
+            Some(Fact {
+                kind: s("event_type")?,
+                cause: s("new_value").unwrap_or_default(),
+                actor: s("actor").unwrap_or_default(),
+                at_epoch: s("created_at").and_then(|t| crate::trace::parse_iso(&t)).unwrap_or(0),
+            })
         })
         .collect()
 }
@@ -192,14 +199,20 @@ fn duration(secs: i64) -> String {
 mod tests {
     use super::*;
 
+    #[test]
+    fn facts_carry_their_actor_and_time() {
+        let f = parse_facts(r#"[{"issue_id":"sp-a","event_type":"send-back","new_value":"tip t\n\nwhy","actor":"concierge","created_at":"2001-09-09T01:46:40Z"}]"#);
+        assert_eq!((f[0].actor.as_str(), f[0].at_epoch, f[0].cause.as_str()), ("concierge", 1_000_000_000, "tip t\n\nwhy"));
+    }
+
     const ID: &str = "0b9d6f3a-1c2e-4f5a-8b7c-9d0e1f2a3b4c";
 
     fn session(rune: &str, persona: &str) -> Fact {
-        Fact { kind: SESSION.into(), cause: SessionFact { id: ID.into(), rune: rune.into(), persona: persona.into(), worktree: "/w/sp-a".into() }.cause() }
+        Fact { kind: SESSION.into(), cause: SessionFact { id: ID.into(), rune: rune.into(), persona: persona.into(), worktree: "/w/sp-a".into() }.cause(), ..Fact::default() }
     }
 
     fn ck(at: i64) -> Fact {
-        Fact { kind: CHECKPOINTED.into(), cause: at.to_string() }
+        Fact { kind: CHECKPOINTED.into(), cause: at.to_string(), ..Fact::default() }
     }
 
     #[test]

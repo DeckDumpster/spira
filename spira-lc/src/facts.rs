@@ -11,13 +11,13 @@ const CANNOT_TELL: i32 = 2;
 const REFUSED: i32 = 3;
 
 /// Closed: a kind outside this list is refused, so a typo cannot start a new history.
-pub const KINDS: &[&str] = &["claimed", "requeued", "reopen", "reclaimed", "poison.cleared", "recurred", "lapsed", "session", "checkpointed", "fast-tier-red", "eject-failure", "send-back-logs", "blind-rework", "rejection", "escalated", "no-progress", "gate-start", "build-dir", "suite-dropped", "__doctor_probe__"];
+pub const KINDS: &[&str] = &["claimed", "requeued", "reopen", "reclaimed", "poison.cleared", "recurred", "lapsed", "session", "checkpointed", "fast-tier-red", "eject-failure", "send-back", "send-back-logs", "blind-rework", "rejection", "escalated", "no-progress", "gate-start", "build-dir", "suite-dropped", "__doctor_probe__"];
 
 pub const MACHINE: &str = "fact";
 pub const CAUSE_MAX: usize = 200;
 pub const READ_MAX: usize = 120;
 /// Kinds whose cause is a multi-line digest rather than a one-line token.
-pub const LONG_KINDS: &[&str] = &["fast-tier-red", "eject-failure", "rejection"];
+pub const LONG_KINDS: &[&str] = &["fast-tier-red", "eject-failure", "send-back", "rejection"];
 pub const LONG_MAX: usize = 6000;
 
 fn flag(args: &[String], name: &str) -> Option<String> {
@@ -299,6 +299,12 @@ pub fn cmd_facts_query(args: &[String], conn: &Conn) -> (i32, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_send_back_kind_is_accepted_and_is_a_long_kind() {
+        assert!(KINDS.contains(&spira_config::send_back::KIND));
+        assert!(LONG_KINDS.contains(&spira_config::send_back::KIND));
+    }
 
     #[test]
     fn the_gate_start_kind_the_gate_sends_is_one_the_fact_verb_accepts() {

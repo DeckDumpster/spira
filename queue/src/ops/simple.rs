@@ -955,6 +955,9 @@ pub fn rework(w: &World, id: &str, repo: Option<&str>, by: &str, reason: &Text) 
         ));
         return FAIL;
     }
+    if let Err((rc, e)) = w.lc.fact(id, spira_config::send_back::KIND, by, &spira_config::send_back::encode(&tip, &reason)) {
+        w.err(format!("queue.sh rework: {id} is sent back, but its send-back fact was not recorded (rc={rc}): {e}"));
+    }
     w.lib.comment(
         id,
         &format!("Returned to rework by {by} on tip {tip}.\n\n{reason}"),
