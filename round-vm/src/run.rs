@@ -364,7 +364,6 @@ disk_report() {
     total="$(fs_used)"
     case "$total" in ''|*[!0-9]*) total=unread ;; esac
     echo "round-vm: DISK $phase total $total -" | tee -a "$disk_out" >&2
-    [ "$phase" != start ] || disk_start_total="$total"
     own_dirs "$phase" & disk_walks+=($!)
 }
 # The phase reports see only their instants; per-suite scratch rises and is cleaned between them.
