@@ -84,7 +84,7 @@ Happy-path CPU, one world, ranked (cpu of the program plus children too short to
 |---|---|---|
 | `bd` | 2.9 s | 28 calls at ~100 ms (before the idle-pool and Go-runtime changes): 15 `show` of the one bead, 8 `list` for base-red beads, 4 scans |
 | batcher / queue / landing-pass / gate-worker | 2.4 / 1.8 / 1.0 / 1.3 s | each actor tick starts dozens of `git`, `spira-lc` and `bash` seams (211 `git`, 86 `spira-lc`, ~90 `bash` per world) |
-| `gate` | 1.8 s | two trials, ~350 ms of its own CPU each, the rest in its `git` and `commit-cite.sh` |
+| `gate` | 1.8 s | two trials, ~350 ms of its own CPU each, the rest in its `git` and `spira-lc cite-check` |
 
 The rest of the gap to 10 s is in the harness code the world exists to run, not in the driver:
 `bd show` of the same bead from `commit-cite.sh`, `land-subject` and `landing-pass` in turn (each

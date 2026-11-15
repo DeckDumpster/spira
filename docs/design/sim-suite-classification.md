@@ -220,7 +220,6 @@ Every `spira/test-*.sh` on `local/main`, by name. Scenario `new:` names refer to
 | cockpit-unsent | no | - | 48 | cockpit/pane rendering and its probes: no loop actor changes state |
 | cockpit-watcher-owner | no | - | 4 | cockpit/pane rendering and its probes: no loop actor changes state |
 | cockpit | no | - | 13 | cockpit/pane rendering and its probes: no loop actor changes state |
-| commit-cite | no | - | ? | gate engine, selector or test-infrastructure logic: tests the tooling, not the loop it guards |
 | concierge-acceptance | no | - | 4 | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
 | concierge-inbox | no | - | ? | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
 | concierge-roster | no | - | 6 | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |

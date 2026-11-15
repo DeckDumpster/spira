@@ -42,6 +42,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_verb_exits_0_for_clean_and_fixture_ids_3_for_a_phantom_and_2_for_a_silent_store() {
+        let held = ["sp-real1".to_string()];
+        let mut store = |ids: &[String]| Ok(ids.iter().filter(|i| held.contains(i)).cloned().collect());
+        let run = |msg: &str, known: &mut spira_config::cite::Lookup<'_>| {
+            crate::work::phantom_refusal(&[("0123456789abcdef".into(), msg.into())], "sp", known).map_or(0, |(c, _)| c)
+        };
+        assert_eq!(run("sp-real1: x\n\nanswers sp-a and sp-b", &mut store), 0);
+        assert_eq!(run("sp-real1: x\n\nsee sp-zzzzzz", &mut store), crate::REFUSED);
+        assert_eq!(run("sp-real1: x", &mut |_| Err("down".into())), crate::CANNOT_TELL);
+    }
+
+    #[test]
     fn the_log_splits_into_sha_and_whole_message() {
         let got = parse_log("aaa\nsubject\n\nbody sp-abc\n\0bbb\nother\n\0");
         assert_eq!(got.len(), 2);
