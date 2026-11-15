@@ -1045,7 +1045,11 @@ fn activate_with(w: &World, sc: &FakeSystemctl) -> Result<activate::Switched, St
 }
 
 fn activate_reading(w: &World, sc: &FakeSystemctl, reads: &FakeReads) -> Result<activate::Switched, String> {
-    let ctx = activate::Ctx { cfg: &w.cfg, reads, sc, git: &w._git, repo: None, landed_ref: "main".into(), settle: Duration::from_millis(10), drain: Duration::from_millis(10), steady: Duration::from_millis(500), warm_wait: Duration::from_millis(200), warm_pause: Duration::from_millis(1) };
+    activate_reading_within(w, sc, reads, Duration::from_secs(60), Duration::from_secs(60))
+}
+
+fn activate_reading_within(w: &World, sc: &FakeSystemctl, reads: &FakeReads, steady: Duration, warm_wait: Duration) -> Result<activate::Switched, String> {
+    let ctx = activate::Ctx { cfg: &w.cfg, reads, sc, git: &w._git, repo: None, landed_ref: "main".into(), settle: Duration::from_millis(10), drain: Duration::from_millis(10), steady, warm_wait, warm_pause: Duration::from_millis(1) };
     activate::activate(&ctx, A, None)
 }
 
@@ -1337,7 +1341,7 @@ fn an_activation_whose_store_server_stays_cold_is_done_and_not_rolled_back() {
     let sc = FakeSystemctl::new(w.cfg.unit_dir.clone());
     let reads = FakeReads::serving();
     reads.cold_dwells.set(u32::MAX);
-    activate_reading(&w, &sc, &reads).unwrap();
+    activate_reading_within(&w, &sc, &reads, Duration::from_millis(500), Duration::from_millis(200)).unwrap();
 }
 
 #[test]
