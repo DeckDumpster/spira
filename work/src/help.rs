@@ -148,7 +148,7 @@ pub static ENTRIES: &[Entry] = &[
     Entry {
         verb: "show",
         group: Group::Read,
-        does: "Prints your bead: description, labels, notes, children.",
+        does: "Prints your bead: description, labels, notes, children, and the last round or gate red it was ejected for.",
         when: "First, and again after any amendment or reopen.",
         args: &[],
         checks: &["the bead is the bound one"],
