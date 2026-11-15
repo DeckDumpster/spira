@@ -426,6 +426,8 @@ mod tests {
         assert!(log.starts_with("QUEUE ROUND-ABANDON 1794368406 repo=spira batch=b-1 by=spira-lc reason=requeue-orphans: "), "{log}");
         let recs = spira_otel::logs::read_all(&spira_otel::dir_of(dir.path()), "spira-lc");
         assert_eq!(recs.len(), 1, "one OTLP record beside the line");
+        let attr = |k: &str| recs[0].iter().find(|(n, _)| n == k).and_then(|(_, v)| v["stringValue"].as_str().map(str::to_string));
+        assert_eq!((attr("by"), attr("kind"), attr("batch")), (Some("spira-lc".into()), Some("abandon".into()), Some("b-1".into())));
         assert!(log.contains("120s"), "{log}");
     }
 

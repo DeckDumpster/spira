@@ -3966,6 +3966,8 @@ fn a_staged_round_is_merged_onto_the_open_rounds_head_and_moves_no_bead() {
         !t.lc.has("event bead sp-b"),
         "a staged member is not delivered"
     );
+    assert!(recorded(&t, "stage", "batcher", &s), "{:?}", round_records(&t));
+    assert!(t.landing_log().contains("QUEUE ROUND-STAGE ") && t.landing_log().contains(&format!("batch={s} by=batcher behind=")));
     let rec = kv_of(&t, "round-staged");
     assert_eq!(
         (

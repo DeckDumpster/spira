@@ -102,5 +102,8 @@ mod tests {
             .expect("the panel");
         assert_eq!(panel["targets"][0]["expr"], hand_managed_query());
         assert_eq!(panel["datasource"]["uid"], "${DS_VL}");
+        let band = dash["panels"].as_array().unwrap().iter().find(|p| p["title"] == "hand-managed round events per repo").expect("the band panel");
+        let want = hand_managed_query().replace("stats by (repo, batch)", "stats by (repo)");
+        assert_eq!(band["targets"][0]["expr"], want);
     }
 }
