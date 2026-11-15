@@ -359,6 +359,9 @@ pub struct RepoCarry {
     /// The head a refusal was last told about: one note per head.
     #[serde(default)]
     pub refused_head: Option<String>,
+    /// The PR whose unresolved no-run bound was already paged: one note per PR.
+    #[serde(default)]
+    pub no_run_key_noted: Option<u64>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -466,16 +469,14 @@ impl Machine<'_> {
         self.acts.push(Pub { key: format!("{}/{pr}/{subject}", self.repo), pr, subject, body, ..Pub::on(self.repo) }.act(NOTIFY));
     }
 
-    /// Pages Ops once per PR that it has no CI run; `record` also sets `no_run_paged` on the record.
-    fn page_no_run(&mut self, rec: &PublishRec, idle: u64, act: &str, record: bool) {
+    /// Pages Ops once per PR that it has no CI run, and sets `no_run_paged` on the record.
+    fn page_no_run(&mut self, rec: &PublishRec, idle: u64, act: &str) {
         if rec.no_run_paged {
             return;
         }
         let pr = rec.pr;
         self.notify(pr, format!("publish PR {pr} for {} has no CI run", self.repo), format!("PR {pr} ({}) has had no gate run for {idle}s. Action: {act}.", rec.branch));
-        if record {
-            self.acts.push(Pub { pr, key: format!("{}/{pr}/no-run-paged", self.repo), record: [("no_run_paged".to_string(), "1".to_string())].into(), ..Pub::on(self.repo) }.act(RECORD));
-        }
+        self.acts.push(Pub { pr, key: format!("{}/{pr}/no-run-paged", self.repo), record: [("no_run_paged".to_string(), "1".to_string())].into(), ..Pub::on(self.repo) }.act(RECORD));
     }
 
     fn observe(&mut self, policy: &Policy, r: &Repo) {
@@ -533,7 +534,8 @@ impl Machine<'_> {
                 self.settle(rec.pr, &rec.head, &rec.branch);
             }
             Settle::Wait => {
-                if policy.no_run_secs.is_none() && matches!(&r.pr, Pr::Open { ci, .. } if ci == "no_run") {
+                if policy.no_run_secs.is_none() && matches!(&r.pr, Pr::Open { ci, .. } if ci == "no_run") && self.rc.no_run_key_noted != Some(pr) {
+                    self.rc.no_run_key_noted = Some(pr);
                     self.notify(pr, format!("publish PR {pr} for {} cannot be checked for a missing CI run", self.repo), "SPIRA_PUBLISH_NO_RUN_SECS does not resolve; the PR is left waiting.".to_string());
                 }
                 // Pending, or red: the verdict pass files a red's fix-forward.
@@ -558,7 +560,7 @@ impl Machine<'_> {
                 let rec = rec.cloned().unwrap_or_default();
                 self.acts.push(Pub { pr, branch: rec.branch.clone(), key: format!("{}/{pr}", self.repo), record: [("ci_started".to_string(), r.observed_at.to_string())].into(), ..Pub::on(self.repo) }.act(START_CI));
                 let idle = r.observed_at.saturating_sub(rec.opened);
-                self.page_no_run(&rec, idle, "CI started by dispatch", true);
+                self.page_no_run(&rec, idle, "CI started by dispatch");
             }
             Settle::Retire | Settle::Supersede => {
                 self.go(Trigger::SettleRetireOrSupersede);
@@ -568,7 +570,7 @@ impl Machine<'_> {
                 self.acts.push(Pub { pr, branch, head: r.head_sha.clone(), base: r.forge_sha.clone().unwrap_or_default(), key: format!("{}/{pr}", self.repo), ..Pub::on(self.repo) }.act(PR_CLOSE));
                 if let (Some(rec), Pr::Open { ci, .. }) = (rec, &r.pr) {
                     if ci == "no_run" {
-                        self.page_no_run(rec, r.observed_at.saturating_sub(rec.opened), &format!("superseded for {}", r.head_sha), false);
+                        self.page_no_run(rec, r.observed_at.saturating_sub(rec.opened), &format!("superseded for {}", r.head_sha));
                     }
                 }
             }

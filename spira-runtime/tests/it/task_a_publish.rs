@@ -109,15 +109,19 @@ fn t5_no_run_past_the_bound_starts_ci_once_then_parks() {
 #[test]
 fn t5_no_run_past_the_bound_and_behind_supersedes() {
     let (_, acts) = decide(&Carry::default(), &no_run_repo(true, 0));
-    assert_eq!(effects(&acts), [CANCEL_RUNS, PR_CLOSE, NOTIFY], "{acts:?}");
+    assert_eq!(effects(&acts), [CANCEL_RUNS, PR_CLOSE, NOTIFY, RECORD], "{acts:?}");
+    assert!(acts[3].input.contains("no_run_paged"), "{acts:?}");
 }
 
 #[test]
 fn t5_no_run_with_an_unresolved_bound_waits_and_names_the_key() {
     let policy = Policy { no_run_secs: None, ..Policy::default() };
-    let (_, acts) = decide_with(&policy, &Carry::default(), &no_run_repo(false, 0));
+    let (carry, acts) = decide_with(&policy, &Carry::default(), &no_run_repo(false, 0));
     assert_eq!(effects(&acts), [NOTIFY], "{acts:?}");
     assert!(acts[0].input.contains("SPIRA_PUBLISH_NO_RUN_SECS"), "{acts:?}");
+    let (carry, again) = decide_with(&policy, &carry, &no_run_repo(false, 0));
+    assert!(again.is_empty(), "paged once per PR: {again:?}");
+    assert_eq!(carry.repos["spira"].no_run_key_noted, Some(31));
 }
 
 /// `tests.rs:3808-3888`: a gone PR is retired, then the next one opens.

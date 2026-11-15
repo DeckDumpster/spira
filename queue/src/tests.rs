@@ -4405,7 +4405,12 @@ fn settle_starts_ci_once_for_a_publish_with_no_run_past_the_bound() {
     assert_eq!(count_calls(&t, "dispatch spira/publish/OLD"), 1);
     assert!(fs::read_to_string(t.qfile("publish"))
         .unwrap()
-        .contains("ci_started="));
+        .contains("ci_started=1500"));
+    t.clock.now.set(1500 + 600);
+    t.forge.status.borrow_mut().push(Some(NO_RUN.into()));
+    assert_eq!(t.run(&["publish-settle"]), 0, "{}", t.err());
+    assert_eq!(count_calls(&t, "dispatch spira/publish/OLD"), 1, "parked");
+    assert!(t.out().contains("-> Parked"), "{}", t.out());
     let pages = t
         .lib
         .calls
@@ -4414,6 +4419,19 @@ fn settle_starts_ci_once_for_a_publish_with_no_run_past_the_bound() {
         .filter(|l| l.starts_with("notify spira publish PR 77 for spira has no CI run"))
         .count();
     assert_eq!(pages, 1);
+}
+
+#[test]
+fn settle_refused_dispatch_fails_and_writes_nothing() {
+    let t = T::new(LandMode::QueueLocal);
+    stale_publish(&t, NO_RUN);
+    t.git.set("refs/heads/local/main", "m3");
+    t.clock.now.set(900 + 600);
+    *t.forge.dispatch_refused.borrow_mut() = true;
+    assert_ne!(t.run(&["publish-settle"]), 0, "{}", t.out());
+    let rec = fs::read_to_string(t.qfile("publish")).unwrap();
+    assert!(!rec.contains("ci_started=") && !rec.contains("no_run_paged"), "{rec}");
+    assert!(!t.lib.has("notify spira publish PR 77 for spira has no CI run"));
 }
 
 #[test]
