@@ -3555,79 +3555,6 @@ fn preempt_world() -> (T, String) {
     (t, batch)
 }
 
-#[test]
-fn preempting_a_running_pass_salvages_ejects_rebuilds_and_restarts() {
-    let (t, batch) = preempt_world();
-    seed_suite(&t, "test-b.sh");
-    let rc = t.run(&[
-        "round",
-        "preempt",
-        &batch,
-        "--eject",
-        "sp-b",
-        "--reason",
-        "red on test-b.sh at 2/3",
-        "--suites",
-        "test-b.sh",
-    ]);
-    assert_eq!(rc, 0, "{}", t.err());
-    assert!(
-        t.scripts
-            .calls
-            .borrow()
-            .iter()
-            .any(|c| c == "terminate 777"),
-        "TERM to the run's handle, never a kill: {:?}",
-        t.scripts.calls.borrow()
-    );
-    assert!(
-        !t.scripts
-            .calls
-            .borrow()
-            .iter()
-            .any(|c| c.starts_with("round-vm")),
-        "a pass is stopped, not re-run, by the verb"
-    );
-    let results = marker(&t, &batch, "results");
-    assert!(
-        results.join("test-a.sh.result").exists() && results.join("test-b.sh.result").exists(),
-        "the finished suites' results stay"
-    );
-    assert!(t.lc.has(&format!("event batch {batch} CI_RUNNING 4 {{\"PassPreempted\":{{\"n\":1,\"done\":2,\"total\":3,\"red_suites\":[\"test-b.sh\"]}}}}")), "{:?}", t.lc.calls.borrow());
-    assert!(
-        t.lc.has(&format!("eject-member {batch} sp-b "))
-            && t.lib.has("bead_reopen sp-b eject-red test-b.sh")
-    );
-    let rec = kv_of(&t, "round");
-    assert_eq!(
-        (
-            rec["members"].as_str(),
-            rec["head"].as_str(),
-            round_phase(&t).as_str()
-        ),
-        ("sp-a:ta sp-c:tc", "merged-tc", "OPEN")
-    );
-    assert!(
-        t.out().contains("stopped at 2/3 suites")
-            && t.out().contains("verified no ejected tip remains"),
-        "{}",
-        t.out()
-    );
-    assert!(
-        t.scripts
-            .calls
-            .borrow()
-            .iter()
-            .any(|c| c == &format!("restart {batch} spira")),
-        "{:?}",
-        t.scripts.calls.borrow()
-    );
-    assert!(
-        !marker(&t, &batch, "preempt").exists(),
-        "the marker is spent once the pass is recorded"
-    );
-}
-
 fn host_pass_world() -> (T, String, String) {
     let (t, batch) = preempt_world();
     fs::remove_file(marker(&t, &batch, "pass")).unwrap();
@@ -3635,76 +3562,6 @@ fn host_pass_world() -> (T, String, String) {
     let scope = format!("{}.scope", runtime::units::round_scope_unit("spira", &batch, "9-1"));
     t.scripts.round_legs.borrow_mut().push(("spira".into(), batch.clone(), scope.clone()));
     (t, batch, scope)
-}
-
-#[test]
-fn preempting_a_host_placed_pass_stops_its_scope_ejects_and_restarts() {
-    let (t, batch, scope) = host_pass_world();
-    seed_suite(&t, "test-b.sh");
-    let rc = t.run(&[
-        "round", "preempt", &batch, "--eject", "sp-b", "--reason", "red on test-b.sh at 2/3", "--suites", "test-b.sh",
-    ]);
-    assert_eq!(rc, 0, "{}", t.err());
-    assert!(
-        !t.scripts.round_legs.borrow().iter().any(|(_, _, u)| u == &scope),
-        "the pass scope is stopped by its unit name"
-    );
-    assert!(t.lc.has(&format!("event batch {batch} CI_RUNNING 4 {{\"PassPreempted\":{{\"n\":1,\"done\":2,\"total\":3,\"red_suites\":[\"test-b.sh\"]}}}}")), "{:?}", t.lc.calls.borrow());
-    assert!(t.lc.has(&format!("eject-member {batch} sp-b ")) && t.lib.has("bead_reopen sp-b eject-red test-b.sh"));
-    let rec = kv_of(&t, "round");
-    assert_eq!(rec["members"].as_str(), "sp-a:ta sp-c:tc");
-    assert!(
-        t.scripts.calls.borrow().iter().any(|c| c == &format!("restart {batch} spira")),
-        "the next pass starts without the member: {:?}",
-        t.scripts.calls.borrow()
-    );
-}
-
-#[test]
-fn the_preempt_the_batcher_sends_ejects_its_member_and_names_no_forced_suite() {
-    let (t, batch, _) = host_pass_world();
-    *t.env.stdin.borrow_mut() = "red on its own gate".into();
-    let rc = t.run(&["round", "preempt", &batch, "--eject", "sp-b", "--reason-file", "-"]);
-    assert_eq!(rc, 0, "{}", t.err());
-    assert!(t.lc.has(&format!("eject-member {batch} sp-b ")), "{:?}", t.lc.calls.borrow());
-    assert_eq!(kv_of(&t, "round")["members"].as_str(), "sp-a:ta sp-c:tc");
-    assert!(t.scripts.calls.borrow().iter().any(|c| c == &format!("restart {batch} spira")), "{:?}", t.scripts.calls.borrow());
-}
-
-#[test]
-fn a_preempt_whose_eject_is_recorded_but_whose_reopen_fails_starts_the_next_pass() {
-    let (t, batch, _) = host_pass_world();
-    t.lib.reopen_fails.borrow_mut().insert("sp-b".into());
-    *t.env.stdin.borrow_mut() = "red on its own gate".into();
-    let rc = t.run(&["round", "preempt", &batch, "--eject", "sp-b", "--reason-file", "-"]);
-    assert_eq!(rc, 0, "{}", t.err());
-    assert!(t.err().contains("cannot reopen sp-b"), "{}", t.err());
-    assert_eq!(kv_of(&t, "round")["members"].as_str(), "sp-a:ta sp-c:tc");
-    assert!(t.scripts.calls.borrow().iter().any(|c| c == &format!("restart {batch} spira")), "{:?}", t.scripts.calls.borrow());
-}
-
-#[test]
-fn a_preempt_whose_member_left_the_record_goes_on_when_the_eject_exits_non_zero() {
-    let (t, batch, _) = host_pass_world();
-    t.lc.bead_rows.borrow_mut().insert("sp-b".into(), ("IN_DELIVERY".into(), "unreadable".into()));
-    *t.env.stdin.borrow_mut() = "red on its own gate".into();
-    let rc = t.run(&["round", "preempt", &batch, "--eject", "sp-b", "--reason-file", "-"]);
-    assert_eq!(rc, 0, "{}", t.err());
-    assert!(t.err().contains("sp-b left round") && t.err().contains("rc=1"), "{}", t.err());
-    assert_eq!(kv_of(&t, "round")["members"].as_str(), "sp-a:ta sp-c:tc");
-    assert!(t.scripts.calls.borrow().iter().any(|c| c == &format!("restart {batch} spira")), "{:?}", t.scripts.calls.borrow());
-}
-
-#[test]
-fn a_preempt_whose_member_is_still_in_the_record_after_a_failed_eject_fails_without_restart() {
-    let (t, batch, _) = host_pass_world();
-    t.lc.eject_refused.set(true);
-    *t.env.stdin.borrow_mut() = "red on its own gate".into();
-    let rc = t.run(&["round", "preempt", &batch, "--eject", "sp-b", "--reason-file", "-"]);
-    assert_ne!(rc, 0);
-    assert!(t.err().contains("the next pass was not started"), "{}", t.err());
-    assert_eq!(kv_of(&t, "round")["members"].as_str(), "sp-a:ta sp-b:tb sp-c:tc");
-    assert!(!t.scripts.calls.borrow().iter().any(|c| c == &format!("restart {batch} spira")));
 }
 
 #[test]
@@ -3716,41 +3573,6 @@ fn an_eject_with_no_suite_and_no_red_reopens_with_cause_eject() {
     let rc = t.run(&["round", "eject", &batch, "sp-b", "spira", "--reason-file", "-", "--no-rebuild"]);
     assert_eq!(rc, 0, "{}", t.err());
     assert!(t.lib.has("bead_reopen sp-b eject"), "{:?}", t.lib.calls.borrow());
-}
-
-#[test]
-fn a_preempt_that_names_the_gate_as_a_forced_suite_is_refused_and_leaves_its_member() {
-    let (t, batch, _) = host_pass_world();
-    *t.env.stdin.borrow_mut() = "red on its own gate".into();
-    let refused = t.run(&["round", "preempt", &batch, "--eject", "sp-b", "--suites", "gate", "--reason-file", "-"]);
-    assert_eq!(refused, 1);
-    assert!(t.err().contains("which testenv does not know"), "{}", t.err());
-    assert_eq!(kv_of(&t, "round")["members"].as_str(), "sp-a:ta sp-b:tb sp-c:tc");
-}
-
-#[test]
-fn preempt_stops_the_step_that_started_the_pass_before_the_next_pass_starts() {
-    let (t, batch, _) = host_pass_world();
-    seed_suite(&t, "test-b.sh");
-    let step = "spira-batcher-local-spira-attribute2.service".to_string();
-    t.scripts.round_legs.borrow_mut().push(("spira".into(), batch.clone(), step.clone()));
-    let rc = t.run(&["round", "preempt", &batch, "--eject", "sp-b", "--reason", "red on test-b.sh", "--suites", "test-b.sh"]);
-    assert_eq!(rc, 0, "{}", t.err());
-    assert!(!t.scripts.round_legs.borrow().iter().any(|(_, b, _)| b == &batch), "no unit of the replaced head is left running");
-    let calls = t.scripts.calls.borrow();
-    assert!(calls.iter().any(|c| c == &format!("restart {batch} spira")), "{calls:?}");
-}
-
-#[test]
-fn a_step_that_will_not_stop_leaves_the_next_pass_unstarted() {
-    let (t, batch, _) = host_pass_world();
-    seed_suite(&t, "test-b.sh");
-    t.scripts.round_legs.borrow_mut().push(("spira".into(), batch.clone(), "step.service".into()));
-    t.scripts.step_stubborn.set(true);
-    let rc = t.run(&["round", "preempt", &batch, "--eject", "sp-b", "--reason", "red", "--suites", "test-b.sh"]);
-    assert_eq!(rc, 1);
-    assert!(t.err().contains("step") && t.err().contains("next pass was not started"), "{}", t.err());
-    assert!(!t.scripts.calls.borrow().iter().any(|c| c.starts_with("restart")));
 }
 
 #[test]
@@ -3774,117 +3596,9 @@ fn eject_refuses_while_a_pass_scope_runs_and_touches_nothing() {
         t.run(&["round", "eject", &batch, "sp-b", "--reason", "red", "--red", "--suites", "test-b.sh"]),
         1
     );
-    assert!(t.err().contains("preempt") && t.err().contains(&scope), "{}", t.err());
+    assert!(t.err().contains(&scope), "{}", t.err());
     assert_eq!(t.git.calls.borrow().len(), before, "no worktree is pruned or removed");
     assert!(!t.lc.has("eject-member"));
-}
-
-#[test]
-fn preempt_refuses_without_a_running_pass_and_names_the_phase() {
-    let (t, batch) = preempt_world();
-    *t.lc.batch_view.borrow_mut() = Some(("RED".into(), 4, 1, "suites".into()));
-    assert_eq!(
-        t.run(&["round", "preempt", &batch, "--eject", "sp-b", "--reason", "x"]),
-        1
-    );
-    assert!(
-        t.err()
-            .contains(&format!("round {batch} is red, with no pass running")),
-        "{}",
-        t.err()
-    );
-
-    *t.lc.batch_view.borrow_mut() = Some(("CI_RUNNING".into(), 4, 1, "suites".into()));
-    t.scripts.pass_alive.set(false);
-    assert_eq!(
-        t.run(&["round", "preempt", &batch, "--eject", "sp-b", "--reason", "x"]),
-        1
-    );
-    assert!(
-        t.err().contains("is certifying, with no pass running"),
-        "a recorded phase without a live handle is not a running pass: {}",
-        t.err()
-    );
-    assert!(!t
-        .scripts
-        .calls
-        .borrow()
-        .iter()
-        .any(|c| c.starts_with("terminate") || c.starts_with("restart")));
-    assert!(!t.lc.has("PassPreempted") && !t.lib.has("bead_reopen"));
-}
-
-#[test]
-fn preempt_does_not_restart_while_an_ejected_tip_is_still_in_the_head() {
-    let (t, batch) = preempt_world();
-    t.git.ancestor("tb", "merged-tc");
-    assert_eq!(
-        t.run(&["round", "preempt", &batch, "--eject", "sp-b", "--reason", "red"]),
-        1
-    );
-    assert!(
-        t.err().contains("still holds the tip of sp-b")
-            && t.err().contains("next pass was not started"),
-        "{}",
-        t.err()
-    );
-    assert!(!t
-        .scripts
-        .calls
-        .borrow()
-        .iter()
-        .any(|c| c.starts_with("restart")));
-}
-
-#[test]
-fn preempt_names_the_stuck_pass_when_it_will_not_stop() {
-    let (t, batch) = preempt_world();
-    t.scripts.pass_alive.set(true);
-    t.scripts.calls.borrow_mut().clear();
-    t.scripts.survives_term.set(true);
-    assert_eq!(
-        t.run(&["round", "preempt", &batch, "--eject", "sp-b", "--reason", "red"]),
-        1
-    );
-    assert!(
-        t.err().contains("did not stop") && t.err().contains("not killed"),
-        "{}",
-        t.err()
-    );
-    assert!(
-        !marker(&t, &batch, "preempt").exists()
-            && !t.lc.has("PassPreempted")
-            && !t.lib.has("bead_reopen")
-    );
-}
-
-#[test]
-fn a_preempted_certify_leaves_the_record_to_the_verb() {
-    let t = round_world();
-    assert_eq!(
-        t.run(&["round", "open", "--members", "sp-a"]),
-        0,
-        "{}",
-        t.err()
-    );
-    let batch = batch_of(&t);
-    t.scripts.preempted_during_vm.set(true);
-    assert_eq!(
-        t.run(&["round", "certify", &batch]),
-        crate::ops::round::PREEMPTED,
-        "{}",
-        t.err()
-    );
-    assert!(
-        !marker(&t, &batch, "pass").exists(),
-        "the handle goes with the run"
-    );
-    assert!(!kv_of(&t, "round").contains_key("phase"));
-    assert!(
-        !t.lc.has("PassIncomplete") && !t.lc.has("PassRed"),
-        "{:?}",
-        t.lc.calls.borrow()
-    );
 }
 
 const T_STAGED: &str = "4444444444444444444444444444444444444444";
@@ -8411,7 +8125,7 @@ fn a_round_leased_by_another_holder_refuses_every_verb_that_touches_it_naming_ho
     leased_by(&t, &batch, "round-recert", "7-0");
     let before = kv_of(&t, "round");
     let runs = vm_runs(&t);
-    let verbs: [&[&str]; 5] = [
+    let verbs: [&[&str]; 4] = [
         &["round", "abandon", &batch, "--reason", "batcher: stale"],
         &[
             "round",
@@ -8426,15 +8140,6 @@ fn a_round_leased_by_another_holder_refuses_every_verb_that_touches_it_naming_ho
         ],
         &["round", "land", &batch],
         &["round", "certify", &batch],
-        &[
-            "round",
-            "preempt",
-            &batch,
-            "--eject",
-            "sp-b",
-            "--reason",
-            "batcher: fresh",
-        ],
     ];
     for argv in verbs {
         let (rc, e) = err_of(&t, || t.run(argv));
@@ -9164,18 +8869,6 @@ fn a_worktree_carrying_a_fold_commit_is_certified_when_rehead_names_its_head() {
 }
 
 #[test]
-fn preempt_stops_a_pass_that_runs_as_a_leg_with_no_scope_or_handle() {
-    let (t, batch) = preempt_world();
-    t.scripts.pass_alive.set(false);
-    seed_suite(&t, "test-b.sh");
-    t.scripts.round_legs.borrow_mut().push(("spira".into(), batch.clone(), "spira-batcher-local-spira-corpus1.service".into()));
-    let rc = t.run(&["round", "preempt", &batch, "--eject", "sp-b", "--reason", "red", "--suites", "test-b.sh"]);
-    assert_eq!(rc, 0, "{}", t.err());
-    assert!(!t.scripts.round_legs.borrow().iter().any(|(_, b, _)| b == &batch), "the leg running the pass is stopped");
-    assert!(t.scripts.calls.borrow().iter().any(|c| c == &format!("restart {batch} spira")));
-}
-
-#[test]
 fn resubmit_drops_a_forced_suite_the_landing_ref_deleted_and_records_why() {
     let t = rework_world(&["manual"]);
     let dir = testkit::TempDir::new("deleted-suite");
@@ -9375,41 +9068,6 @@ fn open_land_and_abandon_record_their_actor_in_both_places() {
                 .contains(&format!("batch={batch} by=operator reason=why"))
     );
     assert!(recorded(&t, "abandon", "operator", &batch));
-}
-
-#[test]
-fn a_preempt_and_the_eject_inside_it_record_the_preempting_actor() {
-    let (t, batch) = preempt_world();
-    seed_suite(&t, "test-b.sh");
-    let rc = t.run(&[
-        "round",
-        "preempt",
-        &batch,
-        "--eject",
-        "sp-b",
-        "--reason",
-        "red",
-        "--suites",
-        "test-b.sh",
-        "--by",
-        "batcher",
-    ]);
-    assert_eq!(rc, 0, "{}", t.err());
-    assert!(
-        recorded(&t, "preempt", "batcher", &batch),
-        "{:?}",
-        round_records(&t)
-    );
-    assert!(
-        recorded(&t, "eject", "batcher", &batch),
-        "{:?}",
-        round_records(&t)
-    );
-    assert!(t
-        .landing_log()
-        .lines()
-        .any(|l| l.starts_with("QUEUE ROUND-PREEMPT ")
-            && l.contains(&format!("batch={batch} by=batcher "))));
 }
 
 #[test]

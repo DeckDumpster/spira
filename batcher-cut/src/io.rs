@@ -2790,9 +2790,7 @@ fn round_verb(env: &Env, args: &[&str], stdin: &str) -> Result<VerbRun, String> 
 }
 
 /// The round verbs that name who acts on the round (`queue round <verb> --by <actor>`).
-const ACTED_VERBS: [&str; 7] = [
-    "open", "certify", "eject", "land", "abandon", "preempt", "promote",
-];
+const ACTED_VERBS: [&str; 6] = ["open", "certify", "eject", "land", "abandon", "promote"];
 
 /// The whole argv after `queue` for a round verb: the batcher acts, so it says so.
 pub fn round_argv(args: &[&str]) -> Vec<String> {

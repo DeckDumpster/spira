@@ -527,7 +527,6 @@ struct FScripts {
     /// A pass `round preempt` can address: its pid is alive until it is sent TERM.
     pass_alive: Cell<bool>,
     /// `round-vm` is preempted while it runs: the marker the verb leaves is there when it returns.
-    preempted_during_vm: Cell<bool>,
     restart_fails: Cell<bool>,
     /// What `rebase-stale <id>` answers, by bead (absent = exit 0, nothing printed).
     rebase: RefCell<BTreeMap<String, RunOut>>,
@@ -703,9 +702,6 @@ impl Scripts for FScripts {
         fs::write(handle, "777").unwrap();
         if let Some(f) = self.during_vm.borrow().as_ref() {
             f();
-        }
-        if self.preempted_during_vm.get() {
-            fs::write(handle.with_extension("preempt"), "why").unwrap();
         }
         fs::create_dir_all(results).unwrap();
         for (suite, status) in self.round_vm_results.borrow().iter() {
@@ -1968,7 +1964,6 @@ impl T {
             "eject",
             "land",
             "abandon",
-            "preempt",
             "stage",
             "stage-test",
             "promote",

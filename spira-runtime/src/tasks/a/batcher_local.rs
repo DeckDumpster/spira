@@ -1658,11 +1658,6 @@ impl Machine<'_> {
     fn leg_ended_with(&mut self, exit: Exit, out: &str) {
         self.rc.leg_restarts = 0;
         self.rc.leg_missing = 0;
-        if exit == Exit::Code(queue::ops::round::PREEMPTED) && matches!(self.rc.state, State::Corpus | State::Attributing | State::Certifying) {
-            self.rc.leg = None;
-            self.rc.leg_at_ms = self.now_ms;
-            return;
-        }
         if self.rc.state == State::Certifying {
             self.rc.certify_head.clear();
         }
