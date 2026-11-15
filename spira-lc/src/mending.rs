@@ -10,7 +10,7 @@ use crate::db::{Conn, DbError};
 use crate::rows::escape;
 use crate::CANNOT_TELL;
 
-const COLUMNS: &str = "batch_id, pass, suite, state, picked_at, deadline, triage_ended_at, diagnosis, awaiting_ask, version";
+const COLUMNS: &str = "batch_id, pass, suite, state, picked_at, deadline, triage_ended_at, diagnosis, awaiting_ask, returned, version";
 
 fn cell(row: &Value, col: &str) -> Option<String> {
     match row.get(col) {
@@ -36,6 +36,7 @@ pub(crate) fn from_json(row: &Value) -> Result<MendingRow, DbError> {
         triage_ended_at: num(row, "triage_ended_at"),
         diagnosis: cell(row, "diagnosis"),
         awaiting_ask: cell(row, "awaiting_ask"),
+        returned: cell(row, "returned").and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default(),
         version: num(row, "version").unwrap_or(0) as u64,
     })
 }

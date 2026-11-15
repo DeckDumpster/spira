@@ -61,6 +61,9 @@ pub struct MendingRow {
     /// The open ask a mend waits on; while set no deadline can return the failure.
     #[serde(default)]
     pub awaiting_ask: Option<String>,
+    /// The round members the mender's return sends back; empty for a deadline expiry.
+    #[serde(default)]
+    pub returned: Vec<String>,
     pub version: Version,
 }
 
@@ -77,6 +80,7 @@ impl MendingRow {
             triage_ended_at: None,
             diagnosis: None,
             awaiting_ask: None,
+            returned: Vec::new(),
             version: 0,
         }
     }
@@ -107,8 +111,13 @@ pub enum MendingEventKind {
     Environment { at: i64 },
     Flaky { at: i64 },
     Unsure { at: i64 },
-    /// The mender's own return, carrying its diagnosis.
-    Return { at: i64, diagnosis: String },
+    /// The mender's own return, carrying its diagnosis and the members it sends back.
+    Return {
+        at: i64,
+        diagnosis: String,
+        #[serde(default)]
+        members: Vec<String>,
+    },
     /// While MENDING: the mend waits on `ask`; the deadline stops binding until `Resume`.
     Await { ask: String },
     /// The machine's own, once the awaited ask is closed: a fresh deadline of `at + deadline_s`
@@ -173,8 +182,9 @@ pub fn apply(row: &MendingRow, ev: &MendingEvent) -> Outcome<MendingRow> {
         (MendingState::Waiting, MendingEventKind::Environment { at }) if triager => settle(new, MendingState::Environment, *at),
         (MendingState::Waiting, MendingEventKind::Flaky { at }) if triager => settle(new, MendingState::Flaky, *at),
         (MendingState::Waiting, MendingEventKind::Unsure { at }) if triager => settle(new, MendingState::Unsure, *at),
-        (MendingState::Waiting, MendingEventKind::Return { at, diagnosis }) if triager => {
+        (MendingState::Waiting, MendingEventKind::Return { at, diagnosis, members }) if triager => {
             new.diagnosis = Some(diagnosis.clone());
+            new.returned = members.clone();
             settle(new, MendingState::Returned, *at)
         }
         (MendingState::Waiting, MendingEventKind::Pickup { at, deadline_s }) => {
@@ -207,8 +217,9 @@ pub fn apply(row: &MendingRow, ev: &MendingEvent) -> Outcome<MendingRow> {
         (MendingState::Mending, MendingEventKind::Environment { at }) => settle(new, MendingState::Environment, *at),
         (MendingState::Mending, MendingEventKind::Flaky { at }) => settle(new, MendingState::Flaky, *at),
         (MendingState::Mending, MendingEventKind::Unsure { at }) => settle(new, MendingState::Unsure, *at),
-        (MendingState::Mending, MendingEventKind::Return { at, diagnosis }) => {
+        (MendingState::Mending, MendingEventKind::Return { at, diagnosis, members }) => {
             new.diagnosis = Some(diagnosis.clone());
+            new.returned = members.clone();
             settle(new, MendingState::Returned, *at)
         }
         (MendingState::Mending, MendingEventKind::Expire { at }) if row.overdue(*at) => {
@@ -266,7 +277,7 @@ fn event_probes() -> Vec<MendingEventKind> {
         MendingEventKind::Environment { at: 50 },
         MendingEventKind::Flaky { at: 50 },
         MendingEventKind::Unsure { at: 50 },
-        MendingEventKind::Return { at: 50, diagnosis: "d".into() },
+        MendingEventKind::Return { at: 50, diagnosis: "d".into(), members: vec![] },
         MendingEventKind::Await { ask: "sp-ask".into() },
         MendingEventKind::Resume { at: 50, deadline_s: PROBE_DEADLINE as u64 },
         MendingEventKind::Expire { at: PROBE_DEADLINE * 2 },
@@ -495,12 +506,12 @@ mod tests {
             (MendingEventKind::Environment { at: 1299 }, MendingState::Environment),
             (MendingEventKind::Flaky { at: 1299 }, MendingState::Flaky),
             (MendingEventKind::Unsure { at: 1299 }, MendingState::Unsure),
-            (MendingEventKind::Return { at: 1299, diagnosis: "d".into() }, MendingState::Returned),
+            (MendingEventKind::Return { at: 1299, diagnosis: "d".into(), members: vec![] }, MendingState::Returned),
         ];
         for (kind, state) in outcomes {
             assert_eq!(step(&picked(1000), kind).state, state);
         }
-        let r = step(&picked(1000), MendingEventKind::Return { at: 1299, diagnosis: "d".into() });
+        let r = step(&picked(1000), MendingEventKind::Return { at: 1299, diagnosis: "d".into(), members: vec![] });
         assert_eq!(r.diagnosis.as_deref(), Some("d"));
     }
 
@@ -511,7 +522,7 @@ mod tests {
             MendingEventKind::Environment { at: 1300 },
             MendingEventKind::Flaky { at: 1300 },
             MendingEventKind::Unsure { at: 1300 },
-            MendingEventKind::Return { at: 1300, diagnosis: "late".into() },
+            MendingEventKind::Return { at: 1300, diagnosis: "late".into(), members: vec![] },
             MendingEventKind::TriageEnded { at: 1300 },
         ] {
             assert_eq!(refusal(&picked(1000), kind), Refusal::DeadlinePassed { deadline: 1300, at: 1300 });
@@ -546,7 +557,7 @@ mod tests {
                 (MendingEventKind::Flaky { at: 5 }, MendingState::Flaky),
                 (MendingEventKind::Unsure { at: 5 }, MendingState::Unsure),
                 (MendingEventKind::Mended { at: 5 }, MendingState::Mended),
-                (MendingEventKind::Return { at: 5, diagnosis: "d".into() }, MendingState::Returned),
+                (MendingEventKind::Return { at: 5, diagnosis: "d".into(), members: vec![] }, MendingState::Returned),
             ] {
                 let out = apply(&r, &MendingEvent { expect: r.state, version: r.version, kind, actor: actor.into() });
                 assert!(out.applied && out.row.state == state, "{actor} {state:?}: {:?}", out.refusal);
@@ -630,5 +641,27 @@ mod tests {
             |p| if p == "spira/lib.sh" { vec!["spira/test-a.sh".into()] } else { vec![] },
         );
         assert_eq!(got, vec!["crate:queue", "suite:spira/test-a.sh", "suite:spira/test-b.sh"]);
+    }
+
+    #[test]
+    fn a_return_stores_the_members_it_sends_back_on_the_row() {
+        let ret = |r: &MendingRow| step(r, MendingEventKind::Return { at: 1100, diagnosis: "d".into(), members: vec!["sp-b".into()] });
+        assert_eq!(ret(&picked(1000)).returned, vec!["sp-b".to_string()]);
+        let mut w = MendingRow::failed("b1", 1, "test-x.sh");
+        let out = apply(&w, &MendingEvent { expect: w.state, version: w.version, kind: MendingEventKind::Return { at: 5, diagnosis: "d".into(), members: vec!["sp-b".into()] }, actor: "concierge".into() });
+        w = out.row;
+        assert_eq!(w.returned, vec!["sp-b".to_string()]);
+    }
+
+    #[test]
+    fn an_expiry_returns_no_members() {
+        let r = step(&picked(1000), MendingEventKind::Expire { at: 1300 });
+        assert!(r.returned.is_empty());
+    }
+
+    #[test]
+    fn a_return_event_without_members_still_parses() {
+        let k: MendingEventKind = serde_json::from_str(r#"{"Return":{"at":3,"diagnosis":"d"}}"#).unwrap();
+        assert_eq!(k, MendingEventKind::Return { at: 3, diagnosis: "d".into(), members: vec![] });
     }
 }

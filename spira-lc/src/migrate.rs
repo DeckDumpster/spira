@@ -1320,6 +1320,7 @@ mod tests {
         st.tables.insert("mending".into());
         st.tables.insert("mend".into());
         st.columns.insert(("mending".into(), "awaiting_ask".into()));
+        st.columns.insert(("mending".into(), "returned".into()));
         for t in ["runtime_event", "runtime_applied", "runtime_cursor", "runtime_schedule", "runtime_poison", "runtime_effect", "runtime_effect_0038", "runtime_task_state", "planning_watermark"] {
             st.tables.insert(t.into());
         }
@@ -1615,7 +1616,7 @@ mod tests {
         // The shipped migrations: 0003 is the service user's, the column adds the admin's.
         let real = real_steps();
         assert_eq!(applier_for(GRANTS_SQL, &real, "0003-terminal-holder.sql"), Applier::Service);
-        assert_eq!(applier_for(GRANTS_SQL, &real, "0042-terminal-holds.sql"), Applier::Service);
+        assert_eq!(applier_for(GRANTS_SQL, &real, "0043-mending-returned.sql"), Applier::Service);
         assert_eq!(applier_for(GRANTS_SQL, &real, "0001-stack.sql"), Applier::Admin);
         assert_eq!(applier_for(GRANTS_SQL, &real, "0002-since.sql"), Applier::Admin);
         assert_eq!(applier_for(GRANTS_SQL, &real, "0020-since-every-state.sql"), Applier::Service);
