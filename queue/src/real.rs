@@ -123,6 +123,35 @@ impl Git for RealGit {
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
     }
+    fn base_conflict_paths(&self, repo: &Path, base: &str, tip: &str) -> Option<Vec<String>> {
+        let o = git(repo)
+            .args([
+                "-c",
+                &format!("attr.tree={base}"),
+                "merge-tree",
+                "--write-tree",
+                "--name-only",
+                "--no-messages",
+                base,
+                tip,
+            ])
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .output()
+            .ok()?;
+        let so = String::from_utf8_lossy(&o.stdout);
+        let tree = so.lines().next().unwrap_or("");
+        if o.status.code() != Some(1) || tree.len() < 40 || !tree.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return None;
+        }
+        let mut paths: Vec<String> = Vec::new();
+        for l in so.lines().skip(1).filter(|l| !l.is_empty()) {
+            if !paths.iter().any(|p| p == l) {
+                paths.push(l.to_string());
+            }
+        }
+        Some(paths)
+    }
     fn update_ref(&self, repo: &Path, refname: &str, new: &str, old: Option<&str>) -> bool {
         let mut c = git(repo);
         c.args(["update-ref", refname, new]);
@@ -864,14 +893,6 @@ impl Lib for RealLib {
             &[&wt.display().to_string(), base, name],
             false,
         );
-    }
-    fn base_conflict(&self, path: &Path, base: &str, tip: &str) -> bool {
-        self.call(
-            Op::BaseConflict,
-            &[&path.display().to_string(), base, tip],
-            false,
-        )
-        .0 == 0
     }
     fn pf_gate(&self, branch: &str, name: &str, stamp: &str, wall_secs: u64) -> (i32, String) {
         self.answer(Op::PfGate, &[branch, name, stamp, &wall_secs.to_string()])

@@ -41,6 +41,8 @@ struct FGit {
     settle_fails: Cell<bool>,
     /// Tips whose rebase onto the round's head conflicts, with the paths it names.
     rebase_fail: RefCell<BTreeMap<String, Vec<String>>>,
+    /// Tips that conflict with the base, with the paths the merge names.
+    conflict_with_base: RefCell<BTreeMap<String, Vec<String>>>,
     branches: RefCell<Vec<(String, String)>>,
     /// `numstat` answers by (a, b); a pair not listed has no changes.
     #[allow(clippy::type_complexity)]
@@ -97,6 +99,9 @@ impl Git for FGit {
     }
     fn is_ancestor(&self, _: &Path, a: &str, b: &str) -> bool {
         a == b || self.anc.borrow().contains(&(a.to_string(), b.to_string()))
+    }
+    fn base_conflict_paths(&self, _: &Path, _: &str, tip: &str) -> Option<Vec<String>> {
+        self.conflict_with_base.borrow().get(tip).cloned()
     }
     fn merge_base(&self, _: &Path, a: &str, b: &str) -> Option<String> {
         let m = self.bases.borrow();
@@ -295,7 +300,6 @@ struct FLib {
     amend_ok: Cell<bool>,
     dead_beads: RefCell<Vec<String>>,
     pf_rc: Cell<i32>,
-    conflict_with_base: RefCell<BTreeSet<String>>,
     /// R22's answer (step --all).
     repos: RefCell<Result<Vec<String>, String>>,
     /// Per-name contexts; a name not here resolves to `r`.
@@ -434,9 +438,6 @@ impl Lib for FLib {
     }
     fn format_batch(&self, _: &Path, _: &str, _: &str) {
         self.log("format_batch".into());
-    }
-    fn base_conflict(&self, _: &Path, _: &str, tip: &str) -> bool {
-        self.conflict_with_base.borrow().contains(tip)
     }
     fn pf_gate(&self, br: &str, _: &str, _: &str, wall: u64) -> (i32, String) {
         self.log(format!("pf_gate {br} {wall}"));
@@ -1887,7 +1888,6 @@ impl T {
             amend_ok: Cell::new(true),
             dead_beads: RefCell::new(Vec::new()),
             pf_rc: Cell::new(0),
-            conflict_with_base: RefCell::default(),
             repos: RefCell::new(Ok(vec!["spira".into()])),
             by_name: RefCell::default(),
             close_fail: Cell::new(false),
@@ -3091,6 +3091,33 @@ fn open_batch_pr_body_lists_id_and_title_per_member() {
     assert_eq!(t.run(&["open-batch", "--skip-pregate"]), 0, "{}\n{}", t.out(), t.err());
     let pr = t.forge.calls.borrow().iter().find(|c| c.starts_with("pr-create")).cloned().unwrap_or_default();
     assert!(pr.contains("- sp-a — first fix\n") && pr.contains("- sp-b — second fix"), "{pr}");
+}
+
+#[test]
+fn open_batch_names_the_paths_a_member_conflicts_with_base_on() {
+    let t = T::new(LandMode::Queue);
+    t.git.set("origin/main", "b0");
+    t.submitted(&["sp-a", "sp-x"]);
+    for (id, tip) in [("sp-a", "ta"), ("sp-x", "tx")] {
+        t.git.set(&format!("refs/heads/spira/{id}"), tip);
+        t.lc_row(id, "CERTIFIED", tip, 1);
+    }
+    *t.git.branches.borrow_mut() = vec![("spira/sp-a".into(), "ta".into()), ("spira/sp-x".into(), "tx".into())];
+    t.git.merge_fail.borrow_mut().insert("tx".into());
+    t.git.conflict_with_base.borrow_mut().insert("tx".into(), vec!["a.rs".into(), "b.rs".into()]);
+    assert_eq!(t.run(&["open-batch", "--skip-pregate"]), 0, "{}\n{}", t.out(), t.err());
+    assert!(t.out().contains("sp-x: conflicts with base — paths: a.rs b.rs"), "{}", t.out());
+
+    let t = T::new(LandMode::Queue);
+    t.git.set("origin/main", "b0");
+    t.submitted(&["sp-x"]);
+    t.git.set("refs/heads/spira/sp-x", "tx");
+    t.lc_row("sp-x", "CERTIFIED", "tx", 1);
+    *t.git.branches.borrow_mut() = vec![("spira/sp-x".into(), "tx".into())];
+    t.git.merge_fail.borrow_mut().insert("tx".into());
+    t.git.conflict_with_base.borrow_mut().insert("tx".into(), vec![]);
+    t.run(&["open-batch", "--skip-pregate"]);
+    assert!(t.out().contains("sp-x: conflicts with base — paths: unknown"), "{}", t.out());
 }
 
 #[test]

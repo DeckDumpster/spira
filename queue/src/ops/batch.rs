@@ -952,10 +952,10 @@ pub fn open_batch(w: &World, a: &OpenArgs) -> i32 {
             members.push(Member { id, tip });
         } else {
             w.git.merge_abort(&wt);
-            let why = if w.lib.base_conflict(&path, &base_sha, &tip) {
-                "conflicts with base"
-            } else {
-                "conflicts with batch"
+            let why = match w.git.base_conflict_paths(&path, &base_sha, &tip) {
+                Some(paths) if paths.is_empty() => "conflicts with base — paths: unknown".to_string(),
+                Some(paths) => format!("conflicts with base — paths: {}", paths.join(" ")),
+                None => "conflicts with batch".to_string(),
             };
             skips.push(format!("{id}: {why}"));
         }

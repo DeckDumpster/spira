@@ -20,7 +20,6 @@ pub enum Op {
     Rebase,
     LandSubject,
     FormatBatch,
-    BaseConflict,
     PfGate,
     CreateBug,
     AmendBug,
@@ -54,8 +53,8 @@ fn body(op: Op) -> &'static str {
         Op::Event => "spira_event \"$1\" - \"$2\" \"$3\" || true\nexit 0\n",
         Op::Rebase => "rebase_branch \"$1\" \"$2\" \"$3\" \"$4\" 2>/dev/null; __rc=$?\nprintf '\\036%s' \"${REBASE_FAILURE:-}\"\nexit $__rc\n",
         Op::LandSubject => "printf '\\036%s' \"$(land_subject \"$1\")\"\nexit 0\n",
-        // FormatBatch/BaseConflict/PfGate used to source batch.sh for these bodies (`format_batch`,
-        // `_base_conflict`, `_pf_gate`/`_pf_run`) — inlined here, batch.sh deleted, sp-uwhx0. Bodies
+        // FormatBatch/PfGate used to source batch.sh for these bodies (`format_batch`,
+        // `_pf_gate`/`_pf_run`) — inlined here, batch.sh deleted, sp-uwhx0. Bodies
         // are otherwise unchanged from batch.sh's own (same reviewed shape), except PfGate: batch.sh
         // shared one `_PF_DEADLINE` wall across a sequence of steps (gate, attribution, re-gate) that
         // no longer exists here — open-batch calls pf_gate exactly once, so the wall is just `$4`
@@ -87,15 +86,6 @@ fn body(op: Op) -> &'static str {
             "EOF\n",
             "log \"format: formatted $__name batch\"\n",
             "exit 0\n",
-        ),
-        Op::BaseConflict => concat!(
-            "__repo=\"$1\" __base=\"$2\" __tip=\"$3\" __rc=1\n",
-            "__wt=\"$SPIRA_RUN/worktree/.batch-ck-$$\"\n",
-            "git -C \"$__repo\" worktree add -q --detach \"$__wt\" \"$__base\" 2>/dev/null || exit 2\n",
-            "git -C \"$__wt\" merge --no-commit --no-ff \"$__tip\" >/dev/null 2>&1 || __rc=0\n",
-            "git -C \"$__wt\" merge --abort 2>/dev/null || true\n",
-            "git -C \"$__repo\" worktree remove -f \"$__wt\" 2>/dev/null || true\n",
-            "exit $__rc\n",
         ),
         Op::PfGate => concat!(
             "__br=\"$1\" __name=\"$2\" __stamp=\"$3\" __secs=\"$4\"\n",
@@ -184,7 +174,6 @@ mod tests {
             Op::Rebase,
             Op::LandSubject,
             Op::FormatBatch,
-            Op::BaseConflict,
             Op::PfGate,
             Op::CreateBug,
             Op::AmendBug,
