@@ -3040,6 +3040,16 @@ pub fn round_eject_after_refused_preempt(env: &Env, repo: &Repo, batch: &str, id
     round_eject_with(env, repo, batch, id, &reason, "")
 }
 
+/// The arguments after `queue round` for an eject; the reason comes on stdin. No csv names no
+/// suite, as the preempt's argv does.
+pub fn eject_args(batch: &str, repo: &str, id: &str, csv: &str) -> Vec<String> {
+    let mut args: Vec<String> = ["eject", batch, id, repo, "--reason-file", "-", "--no-rebuild"].map(String::from).to_vec();
+    if !csv.is_empty() {
+        args.extend(["--suites".to_string(), csv.to_string()]);
+    }
+    args
+}
+
 fn round_eject_with(
     env: &Env,
     repo: &Repo,
@@ -3048,20 +3058,8 @@ fn round_eject_with(
     reason: &str,
     csv: &str,
 ) -> Result<(), String> {
-    let mut args = vec![
-        "eject",
-        batch,
-        id,
-        &repo.name,
-        "--reason-file",
-        "-",
-        "--no-rebuild",
-    ];
-    if !csv.is_empty() {
-        args.extend(["--suites", csv]);
-    } else {
-        args.push("--red");
-    }
+    let args = eject_args(batch, &repo.name, id, csv);
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
     let attempts = env.land_lock_attempts.max(1);
     let mut last = round_verb(env, &args, reason)?;
     for n in 1..attempts {
@@ -5386,5 +5384,23 @@ mod config_key_tests {
         let text = config_delta_at(&repo, "HEAD").unwrap().unwrap();
         assert!(spira_config::delta_added(&text).is_ok() && text.contains("spira.x") && text.contains("spira.y"), "{text}");
         assert!(config_delta_at(&repo, &a).unwrap().unwrap().contains("spira.x"));
+    }
+}
+
+#[cfg(test)]
+mod eject_args_tests {
+    use super::eject_args;
+
+    #[test]
+    fn an_eject_naming_no_suite_sends_neither_red_nor_suites() {
+        let a = eject_args("r9", "spira", "sp-a", "");
+        assert!(!a.iter().any(|x| x == "--red" || x == "--suites"), "{a:?}");
+    }
+
+    #[test]
+    fn an_eject_naming_a_suite_sends_it_as_suites() {
+        let a = eject_args("r9", "spira", "sp-a", "test-b.sh");
+        let i = a.iter().position(|x| x == "--suites").expect("--suites");
+        assert_eq!(a[i + 1], "test-b.sh");
     }
 }

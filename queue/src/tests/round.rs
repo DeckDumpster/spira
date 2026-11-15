@@ -3608,6 +3608,53 @@ fn the_preempt_the_batcher_sends_ejects_its_member_and_names_no_forced_suite() {
 }
 
 #[test]
+fn a_preempt_whose_eject_is_recorded_but_whose_reopen_fails_starts_the_next_pass() {
+    let (t, batch, _) = host_pass_world();
+    t.lib.reopen_fails.borrow_mut().insert("sp-b".into());
+    *t.env.stdin.borrow_mut() = "red on its own gate".into();
+    let rc = t.run(&["round", "preempt", &batch, "--eject", "sp-b", "--reason-file", "-"]);
+    assert_eq!(rc, 0, "{}", t.err());
+    assert!(t.err().contains("cannot reopen sp-b"), "{}", t.err());
+    assert_eq!(kv_of(&t, "round")["members"].as_str(), "sp-a:ta sp-c:tc");
+    assert!(t.scripts.calls.borrow().iter().any(|c| c == &format!("restart {batch} spira")), "{:?}", t.scripts.calls.borrow());
+}
+
+#[test]
+fn a_preempt_whose_member_left_the_record_goes_on_when_the_eject_exits_non_zero() {
+    let (t, batch, _) = host_pass_world();
+    t.lc.bead_rows.borrow_mut().insert("sp-b".into(), ("IN_DELIVERY".into(), "unreadable".into()));
+    *t.env.stdin.borrow_mut() = "red on its own gate".into();
+    let rc = t.run(&["round", "preempt", &batch, "--eject", "sp-b", "--reason-file", "-"]);
+    assert_eq!(rc, 0, "{}", t.err());
+    assert!(t.err().contains("sp-b left round") && t.err().contains("rc=1"), "{}", t.err());
+    assert_eq!(kv_of(&t, "round")["members"].as_str(), "sp-a:ta sp-c:tc");
+    assert!(t.scripts.calls.borrow().iter().any(|c| c == &format!("restart {batch} spira")), "{:?}", t.scripts.calls.borrow());
+}
+
+#[test]
+fn a_preempt_whose_member_is_still_in_the_record_after_a_failed_eject_fails_without_restart() {
+    let (t, batch, _) = host_pass_world();
+    t.lc.eject_refused.set(true);
+    *t.env.stdin.borrow_mut() = "red on its own gate".into();
+    let rc = t.run(&["round", "preempt", &batch, "--eject", "sp-b", "--reason-file", "-"]);
+    assert_ne!(rc, 0);
+    assert!(t.err().contains("the next pass was not started"), "{}", t.err());
+    assert_eq!(kv_of(&t, "round")["members"].as_str(), "sp-a:ta sp-b:tb sp-c:tc");
+    assert!(!t.scripts.calls.borrow().iter().any(|c| c == &format!("restart {batch} spira")));
+}
+
+#[test]
+fn an_eject_with_no_suite_and_no_red_reopens_with_cause_eject() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb,sp-c:tc"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    *t.env.stdin.borrow_mut() = "gate red".into();
+    let rc = t.run(&["round", "eject", &batch, "sp-b", "spira", "--reason-file", "-", "--no-rebuild"]);
+    assert_eq!(rc, 0, "{}", t.err());
+    assert!(t.lib.has("bead_reopen sp-b eject"), "{:?}", t.lib.calls.borrow());
+}
+
+#[test]
 fn a_preempt_that_names_the_gate_as_a_forced_suite_is_refused_and_leaves_its_member() {
     let (t, batch, _) = host_pass_world();
     *t.env.stdin.borrow_mut() = "red on its own gate".into();
