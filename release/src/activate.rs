@@ -299,7 +299,7 @@ fn is_up(active: &str) -> bool {
 /// Switch the running system onto release `sha`: render and install units, swap
 /// `current`, daemon-reload, restart what changed, check it came up, and undo all of it
 /// when something did not.
-pub fn switch(ctx: &Ctx, sha: &str, install_new: bool, live: &dyn Fn() -> Result<(), String>) -> Result<Switched, String> {
+pub fn switch(ctx: &Ctx, sha: &str, install_new: bool, live: &dyn Fn(&[String]) -> Result<(), String>) -> Result<Switched, String> {
     let cfg = ctx.cfg;
     let rel = verify::release_dir(cfg, sha)?;
     let problems = verify::check_files(&rel, sha);
@@ -431,7 +431,7 @@ pub fn switch(ctx: &Ctx, sha: &str, install_new: bool, live: &dyn Fn() -> Result
             out.deferred.push(unit.clone());
         }
     }
-    if let Err(e) = live() {
+    if let Err(e) = live(&out.restarted) {
         let undo = undo(ctx, &changes, prev.as_deref(), &[]);
         return Err(format!("cannot record the activation of {sha}: {e}; nothing was restarted; rolled back{undo}"));
     }
@@ -709,7 +709,7 @@ fn undo(ctx: &Ctx, changes: &[Change], prev: Option<&str>, restarted: &[String])
 /// `spira-config` before anything changes, added keys written before the flip, dropped keys
 /// removed after it, and the config put back when the switch fails. `Ok` carries the undo
 /// record and any problem dropping keys hit after the flip (the switch itself stood).
-fn switch_with_config(ctx: &Ctx, sha: &str, txn: Option<&Txn>, install_new: bool, live: &dyn Fn() -> Result<(), String>) -> Result<(Switched, Option<String>), String> {
+fn switch_with_config(ctx: &Ctx, sha: &str, txn: Option<&Txn>, install_new: bool, live: &dyn Fn(&[String]) -> Result<(), String>) -> Result<(Switched, Option<String>), String> {
     if let Some(t) = txn {
         t.apply_pre()?;
     }
@@ -794,8 +794,8 @@ impl Roots<'_> {
 /// scheduler and drained every running oneshot. A program that cannot be read, or one that is
 /// a script (it reads siblings such as `lib.sh` that its bytes do not show), is a change.
 ///
-/// The store server keeps its own reason: its binary comes from the toolchain environment, so
-/// only its unit text decides, and a restart is an outage for every caller.
+/// The store server restarts like any other service: when its unit text or `bin/spira-lc`'s
+/// bytes change, and a restart is an outage for every caller.
 fn restart_reason(unit: &str, old: &str, new: &str, roots: &Roots) -> Option<String> {
     let text_changed = unrooted(&units::without_documentation(old), roots.new) != unrooted(&units::without_documentation(new), roots.new);
     if text_changed {
@@ -969,9 +969,9 @@ pub fn activate(ctx: &Ctx, sha: &str, hotfix_reason: Option<&str>) -> Result<Swi
         activated.push(entry);
     }
     let recorded = std::cell::Cell::new(false);
-    let live = || {
+    let live = |restarted: &[String]| {
         write_history(&state, &activated)?;
-        machine::enter(&state, sha, ReleaseState::Activated, "current switched")?;
+        machine::enter_with(&state, sha, ReleaseState::Activated, "current switched", restarted)?;
         recorded.set(true);
         Ok(())
     };
@@ -1036,7 +1036,7 @@ pub fn rollback(ctx: &Ctx) -> Result<String, String> {
         }
         None => None,
     };
-    let (_, late) = switch_with_config(ctx, &prev.sha, txn.as_ref(), false, &|| Ok(()))?;
+    let (_, late) = switch_with_config(ctx, &prev.sha, txn.as_ref(), false, &|_| Ok(()))?;
     config_delta::clear_undo(&state, &top.sha);
     config_delta::save_retired(&state, &[])?;
     history.pop();

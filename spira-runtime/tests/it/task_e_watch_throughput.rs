@@ -367,7 +367,7 @@ fn filed_and_said() -> TaskRig {
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&filed_and_said(), NAME);
-    assert_eq!(rows, ["blind", "diluted", "halted", "held", "resumed_at", "retried", "stalled/alpha", "starved", "unlanded"]);
+    assert_eq!(rows, ["blind", "diluted", "halted", "held", "readable_at", "resumed_at", "retried", "stalled/alpha", "starved", "unlanded"]);
 }
 
 #[test]
@@ -493,4 +493,50 @@ fn an_unreadable_landings_tick_with_the_store_server_up_more_than_two_minutes_pa
     let host = Arc::new(Mutex::new(Host { snap: Snapshot::default(), ..landed(24) }));
     let r = blind_with_server_up(host, 121);
     assert_eq!(named(&r, INBOX_APPEND).len(), 1, "{:?}", named(&r, INBOX_APPEND));
+}
+
+const REFUSAL: &str = "cannot tell: list --state SUBMITTED,IN_DELIVERY: timed out";
+const RESTART_AT: u64 = 1_794_686_201;
+const NOW_MS: u64 = (RESTART_AT + 600) * 1000;
+
+fn blind_page(readable_at: u64, store_restart: Option<(u64, String)>) -> String {
+    let snap = Snapshot { why: REFUSAL.into(), store_restart, activated_at: Some(RESTART_AT), ..Default::default() };
+    let v = decide(&Carry { readable_at, ..Default::default() }, &snap, NOW_MS, &config());
+    let lines: Vec<String> = v.acts.iter().filter(|a| a.name == INBOX_APPEND).map(|a| a.input.clone()).collect();
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    lines[0].clone()
+}
+
+fn restart() -> Option<(u64, String)> {
+    Some((RESTART_AT, "f66b50ff0a5c1234567890abcdef1234567890ab".into()))
+}
+
+#[test]
+fn a_blind_page_quotes_the_refusal_and_names_the_activation_that_restarted_the_store_server() {
+    let line = blind_page(RESTART_AT - 100, restart());
+    assert!(line.contains(&format!("({REFUSAL})")), "{line}");
+    assert!(line.contains(&format!("restarted by the activation of f66b50ff0a5c at {}", spira_runtime::watchers::iso8601(RESTART_AT))), "{line}");
+    assert!(line.contains("the store has not answered since, so landing stalls are not being checked"), "{line}");
+}
+
+#[test]
+fn a_blind_page_after_the_store_answered_since_the_restart_carries_the_refusal_and_no_restart_clause() {
+    let line = blind_page(RESTART_AT + 1, restart());
+    assert!(line.contains(REFUSAL) && !line.contains("restarted"), "{line}");
+}
+
+#[test]
+fn a_blind_page_with_no_recorded_store_restart_carries_the_refusal_and_no_restart_clause() {
+    let line = blind_page(0, None);
+    assert!(line.contains(REFUSAL) && !line.contains("restarted"), "{line}");
+}
+
+#[test]
+fn a_readable_tick_after_a_recorded_store_restart_stops_the_next_blind_page_naming_it() {
+    let readable = Snapshot { readable: true, store_restart: restart(), ..Default::default() };
+    let carry = decide(&Carry::default(), &readable, NOW_MS, &config()).carry;
+    assert_eq!(carry.readable_at, NOW_MS / 1000);
+    let blind = Snapshot { why: REFUSAL.into(), store_restart: restart(), ..Default::default() };
+    let v = decide(&carry, &blind, NOW_MS + 60_000, &config());
+    assert!(v.acts.iter().all(|a| !a.input.contains("restarted")), "{:?}", v.acts);
 }
