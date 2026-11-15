@@ -402,7 +402,7 @@ pub enum Trigger {
     /// The rounds below have ended: the held round lands.
     LowerEnded,
     /// An eject left the round with no member: the round ended in the store and nothing is left to attribute (not in the contract's table).
-    PreemptEmptied,
+    RoundEmptied,
 }
 
 pub static TABLE: &[(State, Trigger, State)] = &[
@@ -447,9 +447,9 @@ pub static TABLE: &[(State, Trigger, State)] = &[
     (State::Attributing, Trigger::LegRestarted, State::Attributing),
     (State::Certifying, Trigger::LegRestarted, State::Certifying),
     (State::Corpus, Trigger::LegLost, State::Done),
-    (State::Corpus, Trigger::PreemptEmptied, State::Done),
-    (State::Attributing, Trigger::PreemptEmptied, State::Done),
-    (State::Certifying, Trigger::PreemptEmptied, State::Done),
+    (State::Corpus, Trigger::RoundEmptied, State::Done),
+    (State::Attributing, Trigger::RoundEmptied, State::Done),
+    (State::Certifying, Trigger::RoundEmptied, State::Done),
     (State::Attributing, Trigger::LegLost, State::Done),
     (State::Certifying, Trigger::LegLost, State::Done),
     (State::Certifying, Trigger::CertifyHeld, State::Certified),
@@ -1249,7 +1249,7 @@ impl Machine<'_> {
             return false;
         }
         eprintln!("{NAME} {}: round {:?} ended: its last member was ejected ({why})", self.repo, self.rc.batch);
-        self.go(Trigger::PreemptEmptied);
+        self.go(Trigger::RoundEmptied);
         self.finish(pace::Outcome::Quiet, "");
         true
     }
