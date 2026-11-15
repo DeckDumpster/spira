@@ -33,9 +33,8 @@ pub fn run<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, 
     };
     let repo = match (flag(args, "--repo-path"), flag(args, "--repo")) {
         (Some(p), _) => std::path::PathBuf::from(p),
-        (None, Some(name)) => match crate::repo_config::from_process().map(|c| c.repos.get(&name).map(|s| s.path.clone())) {
-            Ok(Some(p)) => std::path::PathBuf::from(p),
-            Ok(None) => return (CANNOT_TELL, format!("reconcile-landed: no repository {name:?} in the config in force")),
+        (None, Some(name)) => match crate::repo_config::registered_root(&name) {
+            Ok(p) => p,
             Err(e) => return (CANNOT_TELL, format!("reconcile-landed: {e}")),
         },
         (None, None) => return (CANNOT_TELL, "reconcile-landed: --repo-path or --repo is required".into()),
@@ -211,5 +210,28 @@ mod tests {
         let (code, out) = verb("sp-on", &on);
         assert_eq!(code, 0, "{out}");
         assert_eq!(state_of(&s, "sp-on"), "LANDED");
+    }
+
+    #[test]
+    fn a_product_repository_known_only_to_the_repo_map_is_reconciled_by_name() {
+        let dir = testkit::TempDir::new("lc-reconcile-landed-registry");
+        let repo = dir.path().join("dumpstar");
+        std::fs::create_dir_all(&repo).unwrap();
+        git(&repo, &["init", "-q", "-b", "main"]);
+        git(&repo, &["commit", "-q", "--allow-empty", "-m", "sp-on: landed work"]);
+        let on = git(&repo, &["rev-parse", "HEAD"]);
+        let run = dir.path().join("run");
+        let env = spira_config::process::fixture_world_env(dir.path(), &run, &["spira", "dumpstar"]);
+        let edits: Vec<(&str, Option<&str>)> = env.iter().map(|(k, v)| (*k, v.as_deref())).collect();
+        let _env = testkit::env(&edits);
+        let s = store();
+        submitted(&s, "sp-on", &on);
+        let verb = |name: &str| lc(&s, &["reconcile-landed", "sp-on", "--sha", &on, "--ref", "main", "--repo", name, "--actor", "concierge"]);
+        let (code, out) = verb("dumpstar");
+        assert_eq!(code, 0, "{out}");
+        assert_eq!(state_of(&s, "sp-on"), "LANDED");
+        let (code, out) = verb("nowhere");
+        assert_eq!(code, CANNOT_TELL, "{out}");
+        assert!(out.contains("no repository \"nowhere\""), "{out}");
     }
 }

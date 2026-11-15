@@ -97,9 +97,8 @@ pub(crate) fn inline_payload_from(mut args: Vec<String>, input: &mut dyn std::io
 pub(crate) fn branch_containment(batch_row: &batch::BatchRow, members: &[(String, String)]) -> std::collections::BTreeSet<(String, String)> {
     let empty = std::collections::BTreeSet::new();
     let Some(base) = batch_row.base.as_deref() else { return empty };
-    let Ok(cfg) = crate::repo_config::from_process() else { return empty };
-    let Some(section) = cfg.repos.get(&batch_row.repo) else { return empty };
-    containment_in_repo(std::path::Path::new(&section.path), base, members)
+    let Ok(root) = crate::repo_config::registered_root(&batch_row.repo) else { return empty };
+    containment_in_repo(&root, base, members)
 }
 
 fn containment_in_repo(repo: &std::path::Path, base: &str, members: &[(String, String)]) -> std::collections::BTreeSet<(String, String)> {
@@ -193,5 +192,56 @@ mod inline_tests {
         let argv = vec!["publish-readiness".to_string()];
         let out = inline_payload_from(argv, &mut r#"{"entries":[]}"#.as_bytes());
         assert_eq!(out, ["publish-readiness", "--json", r#"{"entries":[]}"#]);
+    }
+}
+
+#[cfg(test)]
+mod containment_tests {
+    use super::branch_containment;
+
+    fn git(dir: &std::path::Path, args: &[&str]) -> String {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    fn world(dir: &testkit::TempDir) -> (testkit::EnvGuard, Vec<(String, String)>, String) {
+        let repo = dir.path().join("dumpstar");
+        std::fs::create_dir_all(&repo).unwrap();
+        git(&repo, &["init", "-q", "-b", "main"]);
+        git(&repo, &["commit", "-q", "--allow-empty", "-m", "base"]);
+        let base = git(&repo, &["rev-parse", "HEAD"]);
+        git(&repo, &["commit", "-q", "--allow-empty", "-m", "prereq"]);
+        let prereq = git(&repo, &["rev-parse", "HEAD"]);
+        git(&repo, &["commit", "-q", "--allow-empty", "-m", "dependent"]);
+        let dependent = git(&repo, &["rev-parse", "HEAD"]);
+        let run = dir.path().join("run");
+        let env: Vec<(&str, Option<String>)> = spira_config::process::fixture_world_env(dir.path(), &run, &["spira", "dumpstar"]);
+        let edits: Vec<(&str, Option<&str>)> = env.iter().map(|(k, v)| (*k, v.as_deref())).collect();
+        let guard = testkit::env(&edits);
+        (guard, vec![("sp-dep".into(), dependent), ("sp-pre".into(), prereq)], base)
+    }
+
+    #[test]
+    fn a_product_repository_known_only_to_the_repo_map_gets_its_containment_edges() {
+        let dir = testkit::TempDir::new("lc-containment-registry");
+        let (_env, members, base) = world(&dir);
+        let row = lifecycle::batch::BatchRow::cut("b1", "dumpstar", "h", base);
+        let edges = branch_containment(&row, &members);
+        assert_eq!(edges, std::collections::BTreeSet::from([("sp-dep".to_string(), "sp-pre".to_string())]));
+    }
+
+    #[test]
+    fn an_unregistered_repository_yields_no_edges() {
+        let dir = testkit::TempDir::new("lc-containment-unregistered");
+        let (_env, members, base) = world(&dir);
+        let row = lifecycle::batch::BatchRow::cut("b1", "nowhere", "h", base);
+        assert!(branch_containment(&row, &members).is_empty());
     }
 }
