@@ -185,7 +185,7 @@ Refusals:
 ## 7. Submitting
 ### work submit
 Moves your bead to SUBMITTED; the landing pass certifies and lands it.
-Use when: The work is committed on your branch, its commit subject names your bead, and you rebased onto local/main. Do not run the full gate first.
+Use when: The work is committed on your branch, its commit subject names your bead. No rebase is needed: the round merges it onto local/main. Do not run the full gate first.
 Arguments:
   --met "<measured value and where>" | --contradicted "<evidence>" | --short "<value>" with --follow-on <id> or --escalation <id>   (only when the description carries a `Target:` line)
   [--unit-red-on-base <bead-id>]   (a filed bead recording that the failing unit-tests row is red on the base too)

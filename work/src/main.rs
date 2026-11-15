@@ -827,12 +827,10 @@ fn git_line(args: &[&str]) -> Option<String> {
 /// is recorded in, and whether the tree is the tip (no tracked change).
 fn checks_pass_state() -> Option<(String, std::path::PathBuf, bool)> {
     let root = git_line(&["rev-parse", "--show-toplevel"])?;
-    let head = git_line(&["rev-parse", "HEAD"])?;
-    let base = git_line(&["rev-parse", "--verify", "--quiet", work::CHECKS_BASE]).unwrap_or_default();
     let toml = std::fs::read_to_string(std::path::Path::new(&root).join(".spira/checks.toml")).unwrap_or_default();
     let file = std::path::Path::new(&root).join(git_line(&["rev-parse", "--git-path", work::CHECKS_PASS_FILE])?);
     let clean = git_line(&["status", "--porcelain", "--untracked-files=no"]).is_some_and(|s| s.is_empty());
-    Some((work::checks_pass_key(&head, &base, &toml), file, clean))
+    Some((work::checks_pass_key_from(&|a| git_line(a), &toml)?, file, clean))
 }
 
 fn record_checks_pass() {

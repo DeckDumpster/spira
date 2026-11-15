@@ -185,7 +185,7 @@ fn cmd_submit(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
         return (
             REFUSED,
             format!(
-                "refused: {tip} is the tip a round ejected {bead_id} for as red{} — change the tree (fix the named reds, rebase) and commit again before resubmitting",
+                "refused: {tip} is the tip a round ejected {bead_id} for as red{} — change the tree (fix the named reds) and commit again before resubmitting",
                 ejected_reasons(conn, bead_id, &tip).map(|r| format!(": {r}")).unwrap_or_default()
             ),
         );
@@ -371,7 +371,8 @@ fn branch_refusal(conn: &Conn, bead_id: &str, tip: &str, stack_tips: &[String]) 
     let root = reg.root(&repo)?;
     let landref = spira_config::repos::landref(&reg, &root)?;
     let in_flight = |id: &str| sibling_in_flight(conn, id, &repo);
-    finishing_refusal(std::path::Path::new(&root), &landref, tip, bead_id, stack_tips, &in_flight).map(|m| (REFUSED, m))
+    let (fork, commits) = branch_evidence(std::path::Path::new(&root), &landref, tip, stack_tips);
+    finishing_refusal(&landref, tip, bead_id, fork.as_deref(), commits.as_deref(), &in_flight).map(|m| (REFUSED, m))
 }
 
 /// A sibling's commits may ride under this bead's (law-a-rebase-loop-is-sequenced-not-split): the
@@ -385,35 +386,51 @@ fn sibling_in_flight(conn: &Conn, id: &str, repo: &str) -> bool {
             .is_some_and(|r| matches!(r.state, Submitted | Certified | InDelivery | Landed))
 }
 
-/// Every commit above the landing ref names the bead or an in-flight sibling, and the branch holds
-/// the landing ref's tip.
+/// A commit's sha, subject and full message.
+type Commit = (String, String, String);
+
+/// The git reads behind `finishing_refusal`: the fork with the landing ref and the commits above it.
+fn branch_evidence(root: &std::path::Path, landref: &str, tip: &str, stack_tips: &[String]) -> (Option<String>, Option<Vec<Commit>>) {
+    let fork = crate::git_evidence::git_output(root, &["merge-base", landref, tip]).map(|f| f.trim().to_string()).filter(|f| !f.is_empty());
+    let mut args = vec!["log".to_string(), "--no-merges".to_string(), "--format=%H%x1f%s%x1f%B%x1e".to_string(), tip.to_string(), format!("^{landref}")];
+    args.extend(stack_tips.iter().map(|t| format!("^{t}")));
+    let commits = spira_config::bounded::bounded("git")
+        .arg("-C")
+        .arg(root)
+        .args(&args)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|out| {
+            String::from_utf8_lossy(&out.stdout)
+                .split('\x1e')
+                .map(|rec| rec.trim_start_matches('\n'))
+                .filter(|rec| !rec.is_empty())
+                .map(|rec| {
+                    // A record cut short keeps empty fields, so it names nothing and refuses.
+                    let mut f = rec.splitn(3, '\x1f').map(str::to_string);
+                    (f.next().unwrap_or_default(), f.next().unwrap_or_default(), f.next().unwrap_or_default())
+                })
+                .collect()
+        });
+    (fork, commits)
+}
+
+/// The tip shares history with the landing ref, and every commit above the fork names the bead or
+/// an in-flight sibling. A tip behind the landing ref is fine: the round merges it.
 fn finishing_refusal(
-    root: &std::path::Path,
     landref: &str,
     tip: &str,
     bead_id: &str,
-    stack_tips: &[String],
+    fork: Option<&str>,
+    commits: Option<&[(String, String, String)]>,
     in_flight: &dyn Fn(&str) -> bool,
 ) -> Option<String> {
-    if !crate::git_evidence::is_ancestor(root, landref, tip) {
-        return Some(format!(
-            "refused: {tip} does not contain the landing ref {landref} — run `git rebase {landref}`, resolve any conflict, and run `work submit` again"
-        ));
+    if fork.is_none() {
+        return Some(format!("refused: {tip} shares no history with the landing ref {landref} — branch from {landref} and run `work submit` again"));
     }
-    let mut args = vec!["log".to_string(), "--no-merges".to_string(), "--format=%H%x1f%s%x1f%B%x1e".to_string(), tip.to_string(), format!("^{landref}")];
-    args.extend(stack_tips.iter().map(|t| format!("^{t}")));
-    let out = spira_config::bounded::bounded("git").arg("-C").arg(root).args(&args).output().ok().filter(|o| o.status.success())?;
-    let commits: Vec<(String, String, String)> = String::from_utf8_lossy(&out.stdout)
-        .split('\x1e')
-        .map(|rec| rec.trim_start_matches('\n'))
-        .filter(|rec| !rec.is_empty())
-        .map(|rec| {
-            // A record cut short keeps empty fields, so it names nothing and refuses.
-            let mut f = rec.splitn(3, '\x1f').map(str::to_string);
-            (f.next().unwrap_or_default(), f.next().unwrap_or_default(), f.next().unwrap_or_default())
-        })
-        .collect();
-    let unnamed = unnamed_commits(&commits, bead_id, in_flight);
+    let commits = commits?;
+    let unnamed = unnamed_commits(commits, bead_id, in_flight);
     if unnamed.is_empty() {
         return None;
     }
@@ -2194,6 +2211,20 @@ mod tests {
         let commits = [commit("aaa1", "sp-sib2: a longer id\n")];
         let in_flight = |id: &str| id == "sp-sib";
         assert_eq!(unnamed_commits(&commits, "sp-own", &in_flight).len(), 1);
+    }
+
+    #[test]
+    fn a_tip_behind_the_landing_ref_submits() {
+        let commits = [commit("bbb2", "sp-own: my change\n")];
+        let in_flight = |_: &str| false;
+        assert_eq!(finishing_refusal("local/main", "tip1", "sp-own", Some("fork1"), Some(&commits), &in_flight), None);
+    }
+
+    #[test]
+    fn a_tip_sharing_no_history_with_the_landing_ref_refuses() {
+        let in_flight = |_: &str| false;
+        let refused = finishing_refusal("local/main", "tip1", "sp-own", None, Some(&[]), &in_flight).expect("refused");
+        assert!(refused.contains("shares no history"), "{refused}");
     }
 
     #[test]

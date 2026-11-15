@@ -231,6 +231,14 @@ pub fn checks_pass_key(head: &str, base: &str, checks_toml: &str) -> String {
     format!("{head} {base} {:016x}", h.finish())
 }
 
+/// The pass key read through `git`: the tip, the fork with `CHECKS_BASE` (the landing ref moving
+/// does not change what `{affected}` selected), and the checks file's text.
+pub fn checks_pass_key_from(git: &dyn Fn(&[&str]) -> Option<String>, checks_toml: &str) -> Option<String> {
+    let head = git(&["rev-parse", "HEAD"])?;
+    let fork = git(&["merge-base", CHECKS_BASE, "HEAD"])?;
+    Some(checks_pass_key(&head, &fork, checks_toml))
+}
+
 /// Whether `work submit` may skip the checks: they passed at this exact key and the tree holds
 /// no tracked change, so what passed is the tip submitted.
 pub fn checks_already_passed(recorded: Option<&str>, key: &str, clean: bool) -> bool {
@@ -843,6 +851,27 @@ mod tests {
         for other in [checks_pass_key("t2", "b1", "[[check]]"), checks_pass_key("t1", "b2", "[[check]]"), checks_pass_key("t1", "b1", "[[check]]\nx")] {
             assert!(!checks_already_passed(Some(&key), &other, true), "another tip, base or checks file runs them again");
         }
+    }
+
+    #[test]
+    fn a_pass_key_survives_the_landing_ref_moving() {
+        let moved = std::cell::Cell::new(0);
+        let git = |args: &[&str]| match args {
+            ["rev-parse", "HEAD"] => Some("T".to_string()),
+            ["merge-base", "local/main", "HEAD"] => Some("F".to_string()),
+            ["rev-parse", "--verify", "--quiet", "local/main"] => {
+                moved.set(moved.get() + 1);
+                Some(format!("L{}", moved.get()))
+            }
+            _ => None,
+        };
+        assert_eq!(checks_pass_key_from(&git, "[[check]]"), checks_pass_key_from(&git, "[[check]]"));
+    }
+
+    #[test]
+    fn a_pass_key_is_none_when_the_fork_cannot_be_read() {
+        let git = |args: &[&str]| (args == ["rev-parse", "HEAD"]).then(|| "T".to_string());
+        assert_eq!(checks_pass_key_from(&git, ""), None);
     }
 
     #[test]

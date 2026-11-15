@@ -409,28 +409,6 @@ The machine-readable path:
     )
 }
 
-pub fn close_brief(base: &str, work: &str, base_remote: &str) -> String {
-    let fetch = if base_remote.is_empty() {
-        format!("# {base} is a local ref already in this checkout; no fetch needed")
-    } else {
-        format!("git -C {work} fetch {base_remote}")
-    };
-    format!(
-        "## Before you close: rebase onto `{base}`
-
-Other dwarves land while you work, so `{base}` has probably moved. The last thing you do
-before closing the bead — after your commits, before the close — is:
-
-    {fetch}
-    git -C {work} rebase {base}
-
-Resolve any conflict yourself: you wrote these commits and you know what they mean, and the
-landing pass does not — it would reopen the bead and hand the conflict to a stranger. Then
-run the gate once more on the rebased tree, and close. A bead closed behind `{base}` that
-does not rebase cleanly is reopened by the harness, which costs a whole second session."
-    )
-}
-
 /// The builder's whole system prompt: its rune with the three session substitutions and nothing else.
 pub fn static_system(template: &str, id: &str, worktree: &str, repo_dir: &str) -> String {
     template.replace("{{ID}}", id).replace("{{WORKTREE}}", worktree).replace("{{REPO_DIR}}", repo_dir)
@@ -1078,8 +1056,8 @@ mod tests {
     // covers: UC-dwarf-execution-07
     #[test]
     fn close_and_already_done_blocks() {
-        assert!(close_brief("local/main", "/w", "").contains("    # local/main is a local ref already in this checkout; no fetch needed\n    git -C /w rebase local/main"));
-        assert!(close_brief("origin/main", "/w", "origin").contains("    git -C /w fetch origin\n"));
+        let composed = format!("{}{}", already_done_brief("origin/main", "sp-a", "/w"), rebase_brief("b", "o/m", "/w", ""));
+        assert!(!composed.contains("Before you close: rebase"), "{composed}");
         let on = already_done_brief("origin/main", "sp-a", "/w");
         assert!(on.contains("-n ${SPIRA_VERDICT_WINDOW:-400} origin/main | grep"));
         assert!(on.contains("work superseded-by <successor-id>") && !on.contains("bd "), "{on}");

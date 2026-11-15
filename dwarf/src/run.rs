@@ -1264,7 +1264,6 @@ impl<'a> Run<'a> {
         task.push_str(resume);
         task.push_str(slain);
         task.push_str(&brief::already_done_brief(&self.s.base, &bead, &wdisp));
-        task.push_str(&brief::close_brief(&self.s.base, &wdisp, &self.s.base_remote));
         task.push_str(rebase);
         let _ = std::fs::write(self.run_dir().join(format!("{bead}.system.md")), sys);
         let _ = std::fs::write(self.run_dir().join(format!("{bead}.task.md")), task);

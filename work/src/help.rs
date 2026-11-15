@@ -280,7 +280,7 @@ pub static ENTRIES: &[Entry] = &[
         verb: "submit",
         group: Group::Submit,
         does: "Moves your bead to SUBMITTED; the landing pass certifies and lands it.",
-        when: "The work is committed on your branch, its commit subject names your bead, and you rebased onto local/main. Do not run the full gate first.",
+        when: "The work is committed on your branch, its commit subject names your bead. No rebase is needed: the round merges it onto local/main. Do not run the full gate first.",
         args: &["--met \"<measured value and where>\" | --contradicted \"<evidence>\" | --short \"<value>\" with --follow-on <id> or --escalation <id>   (only when the description carries a `Target:` line)", "[--unit-red-on-base <bead-id>]   (a filed bead recording that the failing unit-tests row is red on the base too)"],
         checks: &[
             "the tip is read from your branch, never taken from you",

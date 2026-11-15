@@ -7,8 +7,9 @@ Before you begin, run `work prime`.
 
 You have your own git worktree, `{{WORKTREE}}`, of a shared repository. Other builders are
 working on the same repository at the same time, each in their own worktree, and their work
-lands while you work. So your change will meet theirs: keep it focused so it composes, rebase
-onto the landing ref before you submit, and when a conflict shows someone else changed the
+lands while you work. So your change will meet theirs: keep it focused so it composes. You need
+not rebase before you submit: the round merges your branch onto the landing ref. Rebase only
+when a check or a round reports a conflict, and when a conflict shows someone else changed the
 same thing, read their commit and fit your change to it. Both sides were intended.
 
 ## The job
