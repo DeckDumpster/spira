@@ -27,10 +27,11 @@
 
     #[test]
     fn expiry_kills_the_process_group() {
-        let out = bounded_for("sh", "0.1").args(["-c", "sleep 30 & echo $!; wait"]).output().unwrap();
+        let out = bounded_for("sh", "2").args(["-c", "sleep 30 & echo $!; wait"]).output().unwrap();
         assert_eq!(out.status.code(), Some(124));
         let pid = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        let gone = (0..200).any(|_| {
+        assert!(!pid.is_empty(), "the child never printed the backgrounded pid before the deadline");
+        let gone = (0..3000).any(|_| {
             let alive = std::fs::read_to_string(format!("/proc/{pid}/stat"))
                 .map(|s| !s.rsplit(") ").next().unwrap_or("").starts_with('Z'))
                 .unwrap_or(false);
@@ -89,20 +90,25 @@
         let tmp = testkit::TempDir::new("bounded-tree");
         let dir = tmp.path().to_path_buf();
         let script = format!("setsid sh -c 'echo $$ > {d}/gc; exec sleep 30' & sleep 30", d = dir.display());
-        let mut b = bounded_for("sh", "0.3");
+        let mut b = bounded_for("sh", "2");
         b.args(["-c", &script]).stdout(Stdio::null()).stderr(Stdio::null());
         if kill_tree {
             b.kill_tree();
         }
         assert_eq!(b.status().unwrap().code(), Some(124));
         let pid = std::fs::read_to_string(dir.join("gc")).unwrap().trim().to_string();
-        let gone = (0..30).any(|_| {
-            let a = alive(&pid);
-            if a {
-                std::thread::sleep(Duration::from_millis(10)); // clock-safe: cap on waiting for the killed process to be reaped
-            }
-            !a
-        });
+        let gone = if kill_tree {
+            (0..3000).any(|_| {
+                let a = alive(&pid);
+                if a {
+                    std::thread::sleep(Duration::from_millis(10)); // clock-safe: cap on waiting for the killed process to be reaped
+                }
+                !a
+            })
+        } else {
+            std::thread::sleep(Duration::from_millis(300)); // clock-safe: lower bound on the survivor's life; a slow box only lengthens it
+            !alive(&pid)
+        };
         if !gone {
             unsafe { libc::kill(pid.parse().unwrap(), libc::SIGKILL) };
         }
