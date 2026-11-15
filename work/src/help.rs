@@ -293,6 +293,7 @@ pub static ENTRIES: &[Entry] = &[
         args: &["--met \"<measured value and where>\" | --contradicted \"<evidence>\" | --short \"<value>\" with --follow-on <id> or --escalation <id>   (only when the description carries a `Target:` line)", "[--unit-red-on-base <bead-id>]   (a filed bead recording that the failing unit-tests row is red on the base too)"],
         checks: &[
             "the tip is read from your branch, never taken from you",
+            "a tip whose merge onto local/main has a content conflict is refused, naming the conflicting paths; a tip that is only behind is submitted",
             "a branch whose diff touches the round image recipe has its Round AMI build dispatched and awaited; a failed build refuses, naming the step and its last log lines",
             "a bead with a `Target:` line is submitted with a verdict; a submission without one is refused by the broker",
             "a --short verdict names a follow-on or escalation you filed",

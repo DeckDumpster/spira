@@ -4,7 +4,14 @@
 
 use std::path::Path;
 
+use spira_config::rebase_check::{merge_onto, Merge};
+
 use crate::ports::{Exec, Git};
+
+fn run_git(git: &dyn Git, repo: &Path, args: &[&str]) -> (i32, String) {
+    let o = git.git(repo, args);
+    (o.code, o.text())
+}
 
 /// The fast tier's commands, in order. spira-lint judges only the branch's own diff, so a
 /// finding already on the base never reds a bead; the round lints the whole tree. The build
@@ -75,9 +82,8 @@ fn changes_compiled_registry(git: &dyn Git, work: &Path, base_fq: &str) -> bool 
 pub fn red(git: &dyn Git, exec: &dyn Exec, repo: &Path, work: &Path, branch: &str, base_fq: &str, strict: bool) -> Option<Red> {
     let head = git.git(work, &["rev-parse", "HEAD"]);
     let tip = if head.success() && !head.stdout.trim().is_empty() { head.stdout.trim().to_string() } else { branch.to_string() };
-    let mt = git.git(repo, &["-c", &format!("attr.tree={base_fq}"), "merge-tree", "--write-tree", base_fq, &tip]);
-    if mt.code == 1 {
-        return Some(Red { harness: false, killed_by: None, text: format!("{branch} does not rebase onto {base_fq} cleanly:\n{}", mt.text()) });
+    if let Merge::Conflict { text, .. } = merge_onto(&|a| run_git(git, repo, a), base_fq, &tip) {
+        return Some(Red { harness: false, killed_by: None, text: format!("{branch} does not rebase onto {base_fq} cleanly:\n{text}") });
     }
     if !work.join("spira/build-fence.sh").is_file() {
         return strict.then(|| Red { harness: false, killed_by: None, text: format!("{} carries no spira/build-fence.sh — there is no fast tier to run", work.display()) });
@@ -106,7 +112,7 @@ pub fn current_digest(git: &dyn Git, repo: &Path, work: &Path, base_fq: &str, re
     if !head.success() || tip.is_empty() || judged != Some(tip) {
         return String::new();
     }
-    if digest.contains(" does not rebase onto ") && git.git(repo, &["-c", &format!("attr.tree={base_fq}"), "merge-tree", "--write-tree", base_fq, tip]).code != 1 {
+    if digest.contains(" does not rebase onto ") && !matches!(merge_onto(&|a| run_git(git, repo, a), base_fq, tip), Merge::Conflict { .. }) {
         return String::new();
     }
     digest.to_string()
@@ -117,17 +123,7 @@ pub fn conflict_paths(red: &str) -> Vec<String> {
     if !red.contains(" does not rebase onto ") {
         return Vec::new();
     }
-    red.lines()
-        .filter(|l| l.starts_with("CONFLICT"))
-        .filter_map(|l| {
-            if let Some((_, p)) = l.split_once("Merge conflict in ") {
-                return Some(p.trim());
-            }
-            let rest = l.split_once("): ")?.1;
-            rest.split_once(" deleted in ").or_else(|| rest.split_once(" renamed ")).map(|(p, _)| p.trim())
-        })
-        .map(String::from)
-        .collect()
+    spira_config::rebase_check::conflict_paths(red)
 }
 
 pub const KIND: &str = "fast-tier-red";
