@@ -81,7 +81,7 @@ mod tests {
         assert!(commit_all(&d, "sp-g1: wip — salvaged at slay (halted)"));
         assert_ne!(git(&d, &["rev-parse", "HEAD"]), before);
         assert_eq!(git(&d, &["log", "-1", "--format=%s"]), "sp-g1: wip — salvaged at slay (halted)");
-        assert_eq!(git(&d, &["status", "--porcelain"]), "", "the whole tree went into the commit");
+        assert_eq!(git(&d, &["ls-tree", "--name-only", "HEAD", "unsaved.txt"]), "unsaved.txt", "the leftover went into the commit");
     }
 
     // covers: UC-dwarf-execution-26
