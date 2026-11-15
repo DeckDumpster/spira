@@ -206,6 +206,9 @@ pub struct BeadRow {
     /// Express, from the lifecycle row — never a bd label.
     #[serde(default)]
     pub express: bool,
+    /// The lifecycle row's holds; a held bead is not gated.
+    #[serde(default)]
+    pub holds: Vec<String>,
 }
 
 fn no_state() -> String {
@@ -279,7 +282,7 @@ impl BeadRow {
             .map(String::from);
         let title = v.get("title").and_then(|x| x.as_str()).unwrap_or("").to_string();
         let notes = normalize_notes(v.get("notes"));
-        Some(BeadRow { id, state: no_state(), repo, labels, superseded, closed_at, priority, external_ref, title, notes, express: false })
+        Some(BeadRow { id, state: no_state(), repo, labels, superseded, closed_at, priority, external_ref, title, notes, express: false, holds: Vec::new() })
     }
 
     /// The builder has handed this bead on (its lifecycle row is SUBMITTED onward).

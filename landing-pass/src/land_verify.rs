@@ -269,6 +269,7 @@ mod tests {
             title: String::new(),
             notes: Vec::new(),
             express: false,
+            holds: Vec::new(),
         }
     }
 

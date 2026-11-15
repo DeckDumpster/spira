@@ -412,6 +412,7 @@ mod tests {
                     title: "a bead".into(),
                     notes: Vec::new(),
                     express: false,
+                    holds: Vec::new(),
                 })
                 .collect())
         }

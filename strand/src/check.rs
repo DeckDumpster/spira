@@ -76,13 +76,12 @@ fn backing_off(run_dir: &Path, bead_id: &str, now: i64) -> bool {
     t.lines().nth(1).and_then(|n| n.parse::<i64>().ok()).is_some_and(|until| until > now)
 }
 
-/// SUBMITTED beads nothing will gate: no job queued, and no record that the host gate was
-/// exhausted on them and the round is their trial.
+/// SUBMITTED beads nothing will gate: no job queued, no backoff, and no hold.
 fn ungated_submitted(run_dir: &Path, rows: &[spira_store::lc_state::Row], now: i64) -> std::collections::HashSet<String> {
     let Some(queued) = gate_queued(run_dir) else { return Default::default() };
     rows.iter()
         .filter(|r| r.state == "SUBMITTED" && !queued.contains(&r.bead_id))
-        .filter(|r| !run_dir.join("gate-deferred").join(format!("spira-{}", r.bead_id)).exists())
+        .filter(|r| r.holds.is_empty())
         .filter(|r| !backing_off(run_dir, &r.bead_id, now))
         .map(|r| r.bead_id.clone())
         .collect()
@@ -830,14 +829,14 @@ mod ungated_submitted_tests {
     use super::*;
 
     #[test]
-    fn a_submitted_bead_whose_gate_was_exhausted_waits_for_a_round_and_is_not_ungated() {
+    fn a_held_submitted_bead_is_not_ungated() {
         let run = testkit::TempDir::new("strand-ungated");
         fs::create_dir_all(run.join("gate-worker/inbox")).unwrap();
-        fs::create_dir_all(run.join("gate-deferred")).unwrap();
         let row = |id: &str| spira_store::lc_state::Row { bead_id: id.into(), state: "SUBMITTED".into(), ..Default::default() };
-        let rows = [row("sp-a"), row("sp-b")];
-        assert_eq!(ungated_submitted(&run, &rows, 1000).len(), 2, "the matcher must be able to find an ungated bead");
-        fs::write(run.join("gate-deferred/spira-sp-b"), "tip\n").unwrap();
+        let held = spira_store::lc_state::Row { holds: vec!["wait".into()], ..row("sp-b") };
+        let rows = [row("sp-a"), held];
+        let unheld = [row("sp-a"), row("sp-b")];
+        assert_eq!(ungated_submitted(&run, &unheld, 1000).len(), 2, "the matcher must be able to find an ungated bead");
         assert_eq!(ungated_submitted(&run, &rows, 1000), ["sp-a".to_string()].into_iter().collect());
     }
 

@@ -96,11 +96,6 @@ impl Files {
         self.run.join("gate-exhaust").join(branch_key(branch))
     }
 
-    /// Forget a deferral: the branch is being gated again, so no marker may keep it from strand.
-    pub fn clear_round_deferral(&self, branch: &str) {
-        let _ = fs::remove_file(self.round_deferred_file(branch));
-    }
-
     fn backoff_file(&self, branch: &str) -> PathBuf {
         self.run.join("gate-backoff").join(branch_key(branch))
     }
@@ -186,18 +181,12 @@ impl Files {
         fs::read_to_string(self.gated_file(branch)).map(|t| t.trim() == tip).unwrap_or(false)
     }
 
-    fn round_deferred_file(&self, branch: &str) -> PathBuf {
-        self.run.join("gate-deferred").join(branch_key(branch))
+    /// Forget the unjudged-run record: the tip gets a fresh count.
+    pub fn clear_exhaust(&self, branch: &str) {
+        let _ = fs::remove_file(self.exhaust_file(branch));
     }
 
-    /// Record that the host gate could not judge `branch` at `tip` within its cap: the round
-    /// is its trial, and the same tip is not gated again.
-    pub fn defer_to_round(&self, branch: &str, tip: &str) {
-        let _ = fs::create_dir_all(self.run.join("gate-deferred"));
-        let _ = atomic_write(&self.round_deferred_file(branch), &format!("{tip}\n"));
-    }
-
-    /// Record a host-cause verdict on this exact tip; the reasons so far, a different tip starting again.
+    /// Record an unjudged verdict on this exact tip; the reasons so far, a different tip starting again.
     pub fn note_exhaust(&self, branch: &str, tip: &str, reason: &str) -> Vec<String> {
         let file = self.exhaust_file(branch);
         let text = fs::read_to_string(&file).unwrap_or_default();
@@ -210,23 +199,6 @@ impl Files {
         let _ = fs::create_dir_all(self.run.join("gate-exhaust"));
         let _ = atomic_write(&file, &format!("{tip}\n{}\n", seen.join("\n")));
         seen
-    }
-
-    /// Count a NO_VERDICT on this exact tip; a different tip starts again at 1.
-    pub fn bump_infra(&self, branch: &str, tip: &str) -> u32 {
-        let file = self.run.join("gate-infra").join(branch_key(branch));
-        let prior = fs::read_to_string(&file).ok().and_then(|t| {
-            let mut l = t.lines();
-            let was = l.next()?.to_string();
-            Some((was, l.next()?.parse::<u32>().ok()?))
-        });
-        let n = match prior {
-            Some((was, n)) if was == tip => n + 1,
-            _ => 1,
-        };
-        let _ = fs::create_dir_all(self.run.join("gate-infra"));
-        let _ = atomic_write(&file, &format!("{tip}\n{n}\n"));
-        n
     }
 
     fn dead_file(&self, branch: &str) -> PathBuf {
@@ -258,10 +230,6 @@ impl Files {
     /// A gate reached a verdict for `branch`: its run of dead gates is over.
     pub fn note_gate_judged(&self, branch: &str) {
         let _ = fs::remove_file(self.dead_file(branch));
-    }
-
-    pub fn deferred_to_round(&self, branch: &str, tip: &str) -> bool {
-        fs::read_to_string(self.round_deferred_file(branch)).map(|t| t.trim() == tip).unwrap_or(false)
     }
 
     /// True while `now` is before the `until` that [`Files::back_off`] recorded for this very tip.
