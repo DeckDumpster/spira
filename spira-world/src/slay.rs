@@ -120,12 +120,10 @@ pub fn parse_args(argv: &[String]) -> Result<Parsed, ArgError> {
     Ok(Parsed::Run(Args { id, mode, keep, why }))
 }
 
-/// What the bead store says about one bead.
+/// What the bead store says about one bead. Who holds it, and whether, is the lifecycle's.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct BeadView {
     pub id: String,
-    pub status: String,
-    pub assignee: String,
     pub labels: Vec<String>,
 }
 
@@ -141,12 +139,17 @@ pub trait Beads {
 }
 
 pub trait Lifecycle {
+    /// The lifecycle row's state (`WORKING`, `READY`, ...), `None` when it has no answer.
+    fn state(&self, id: &str) -> Option<String>;
     fn disposition(&self, id: &str, why: &str);
     fn holder_dead(&self, id: &str);
     fn drop_bead(&self, id: &str, text: &str);
 }
 
 /// git, and the destruction chokepoint that owns `worktree remove` and `branch -D`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SalvageFailed;
+
 pub trait Git {
     fn is_dir(&self, p: &Path) -> bool;
     fn branch_exists(&self, repo: &Path, br: &str) -> bool;
@@ -159,7 +162,7 @@ pub trait Git {
     fn commit_all(&self, wt: &Path, msg: &str) -> bool;
     fn park(&self, repo: &Path, refname: &str, br: &str) -> bool;
     /// `Ok(None)` nothing to save; `Err` salvage failed and the removal must not proceed.
-    fn salvage(&self, id: &str, wt: &Path) -> Result<Option<PathBuf>, ()>;
+    fn salvage(&self, id: &str, wt: &Path) -> Result<Option<PathBuf>, SalvageFailed>;
     fn destroy_worktree(&self, id: &str, wt: &Path, repo: &Path, why: &str) -> bool;
     fn destroy_branch(&self, id: &str, br: &str, repo: &Path, why: &str) -> Result<(), String>;
 }
@@ -247,12 +250,12 @@ fn finish(ctx: &Ctx, p: &Ports, a: &Args, s: &Stopped, out: &mut Vec<String>) ->
     let br = format!("spira/{id}");
     let wt = ctx.run.join("worktree").join(id);
 
-    let in_progress = p.beads.view(id).is_some_and(|v| v.status == "in_progress");
-    let carries_own = in_progress
+    let working = p.lc.state(id).is_some_and(|s| s == "WORKING");
+    let carries_own = working
         && reopen
         && a.keep
         && repo.as_deref().is_some_and(|rp| p.git.landref(rp).is_some_and(|base| p.git.names_bead_between(rp, &base, &br, id)));
-    if in_progress {
+    if working {
         p.lc.holder_dead(id);
     }
     p.beads.clear_assignee(id);
@@ -285,7 +288,7 @@ fn finish(ctx: &Ctx, p: &Ports, a: &Args, s: &Stopped, out: &mut Vec<String>) ->
                         }
                     }
                 }
-                Err(()) => {
+                Err(SalvageFailed) => {
                     say(format!("work: could not salvage {} — leaving it in place", wt.display()));
                     fail = true;
                 }
@@ -364,8 +367,8 @@ fn finish(ctx: &Ctx, p: &Ports, a: &Args, s: &Stopped, out: &mut Vec<String>) ->
     }
 
     if let Some(v) = p.beads.view(id) {
-        let assignee = if v.assignee.is_empty() { "-" } else { &v.assignee };
-        say(format!("bead: {} status={} assignee={assignee} labels={}", v.id, v.status, v.labels.join(",")));
+        let state = p.lc.state(id).unwrap_or_else(|| "?".into());
+        say(format!("bead: {} state={state} labels={}", v.id, v.labels.join(",")));
     }
 
     let survives = repo.as_deref().is_some_and(|rp| p.git.branch_exists(rp, &br));

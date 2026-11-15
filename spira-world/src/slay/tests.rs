@@ -92,8 +92,7 @@ fn a_later_reopen_overrides_an_earlier_close() {
 
 struct Fake {
     answers_id: String,
-    status: &'static str,
-    assignee: String,
+    state: RefCell<String>,
     labels: RefCell<Vec<String>>,
     repo: Option<PathBuf>,
     branch: RefCell<bool>,
@@ -102,7 +101,7 @@ struct Fake {
     landed: bool,
     own_commit: bool,
     worktree: bool,
-    salvage: Result<Option<PathBuf>, ()>,
+    salvage: Result<Option<PathBuf>, SalvageFailed>,
     commit_ok: bool,
     park_ok: bool,
     destroy_wt_ok: bool,
@@ -119,8 +118,7 @@ impl Fake {
     fn new() -> Fake {
         Fake {
             answers_id: "sp-s1".into(),
-            status: "in_progress",
-            assignee: "dwarf-test".into(),
+            state: RefCell::new("WORKING".into()),
             labels: RefCell::new(vec!["spira".into()]),
             repo: Some(PathBuf::from("/repo")),
             branch: RefCell::new(true),
@@ -162,7 +160,7 @@ impl Beads for Fake {
         if self.answers_id.is_empty() {
             return None;
         }
-        Some(BeadView { id: self.answers_id.clone(), status: self.status.into(), assignee: self.assignee.clone(), labels: self.labels.borrow().clone() })
+        Some(BeadView { id: self.answers_id.clone(), labels: self.labels.borrow().clone() })
     }
     fn clear_assignee(&self, id: &str) {
         self.log(format!("clear_assignee {id}"));
@@ -184,14 +182,19 @@ impl Beads for Fake {
 }
 
 impl Lifecycle for Fake {
+    fn state(&self, _id: &str) -> Option<String> {
+        Some(self.state.borrow().clone())
+    }
     fn disposition(&self, id: &str, why: &str) {
         self.log(format!("disposition {id} slain {why}"));
     }
     fn holder_dead(&self, id: &str) {
         self.log(format!("holder_dead {id}"));
+        *self.state.borrow_mut() = "READY".into();
     }
     fn drop_bead(&self, id: &str, text: &str) {
         self.log(format!("drop {id} {text}"));
+        *self.state.borrow_mut() = "DROPPED".into();
     }
 }
 
@@ -228,7 +231,7 @@ impl Git for Fake {
         self.log(format!("park {refname} {br}"));
         self.park_ok
     }
-    fn salvage(&self, id: &str, _wt: &Path) -> Result<Option<PathBuf>, ()> {
+    fn salvage(&self, id: &str, _wt: &Path) -> Result<Option<PathBuf>, SalvageFailed> {
         self.log(format!("salvage {id}"));
         self.salvage.clone()
     }
@@ -298,13 +301,14 @@ fn default_slay_releases_the_claim_unassigns_and_removes_the_worktree() {
     let f = Fake::new();
     let r = run(&f, &[]);
     assert_eq!(r.code, 0, "{r:?}");
+    assert!(said(&r, "bead: sp-s1 state=READY labels=spira"));
     assert!(said(&r, "slain: sp-s1"));
     assert!(f.called("holder_dead sp-s1"));
     assert!(f.called("clear_assignee sp-s1"));
     assert!(f.call("destroy_worktree").contains("/run/worktree/sp-s1"));
     assert!(f.call("destroy_worktree").ends_with("slain: slain by the operator"));
     assert!(f.called("abort_inflight"));
-    assert!(f.called("drop") == false, "reopen must not drop the bead");
+    assert!(!f.called("drop"), "reopen must not drop the bead");
 }
 
 // covers: UC-dwarf-execution-26 UC-landed-audit-reaping-23
@@ -482,7 +486,7 @@ fn a_failed_wip_commit_says_the_patch_is_the_only_copy_and_carries_on() {
 #[test]
 fn a_failed_salvage_leaves_the_worktree_and_branch_alone_and_fails() {
     let mut f = Fake::new();
-    f.salvage = Err(());
+    f.salvage = Err(SalvageFailed);
     let r = run(&f, &["--close", "drop"]);
     assert_eq!(r.code, 1);
     assert!(said(&r, "could not salvage /run/worktree/sp-s1 — leaving it in place"));
@@ -539,14 +543,13 @@ fn a_bead_that_names_no_repository_has_no_work_to_remove_but_is_still_released()
 // covers: UC-dwarf-execution-26
 #[test]
 fn closing_an_already_closed_bead_adds_a_note_and_releases_no_holder() {
-    let mut f = Fake::new();
-    f.status = "closed";
-    f.assignee = String::new();
+    let f = Fake::new();
+    *f.state.borrow_mut() = "DROPPED".into();
     let r = run(&f, &["--close", "second close"]);
     assert_eq!(r.code, 0, "{r:?}");
     assert!(!f.called("holder_dead"));
     assert!(f.call("note").contains("second close — Slain by the operator"));
-    assert!(said(&r, "bead: sp-s1 status=closed assignee=- labels=spira"));
+    assert!(said(&r, "bead: sp-s1 state=DROPPED labels=spira"));
 }
 
 // covers: UC-dwarf-execution-26

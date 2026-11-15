@@ -12,7 +12,7 @@ use std::process::Stdio;
 
 use hel::ports::World;
 use spira_store::lc_call::LcClient;
-use spira_world::slay::{self, BeadView, Beads, Ctx, Dwarf, Git, Lifecycle, Parsed, Ports, Stopped};
+use spira_world::slay::{self, BeadView, Beads, Ctx, Dwarf, Git, Lifecycle, Parsed, Ports, SalvageFailed, Stopped};
 use spira_world::{proc, sysctl};
 
 const BEAD_DEADLINE_SECS: &str = "30";
@@ -59,6 +59,9 @@ impl RealLc {
 }
 
 impl Lifecycle for RealLc {
+    fn state(&self, id: &str) -> Option<String> {
+        hel::reap::lc_state_on(self.0.as_ref().ok()?, id)
+    }
     fn disposition(&self, id: &str, why: &str) {
         self.call(&["disposition", id, "slain", why, "slay"]);
     }
@@ -92,11 +95,12 @@ impl RealBeads {
 
 impl Beads for RealBeads {
     fn view(&self, id: &str) -> Option<BeadView> {
-        let v = hel::real::json_only(&self.bdq(&["show", id, "--json"])?)?;
+        let shown = self.lc.as_ref().ok()?.call(&["content", "show", id, "--json"]).ok()?;
+        let v = hel::real::json_only(&shown.out)?;
         let b = if v.is_array() { v.get(0)? } else { &v };
-        let text = |k: &str| b.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
+        let id = b.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
         let labels = b.get("labels").and_then(|l| l.as_array()).map(|l| l.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default();
-        Some(BeadView { id: text("id"), status: text("status"), assignee: text("assignee"), labels })
+        Some(BeadView { id, labels })
     }
     fn clear_assignee(&self, id: &str) {
         if self.bdq(&["update", id, "--assignee", "", "--force"]).is_none() {
@@ -165,8 +169,7 @@ impl Git for RealGit {
             && spira_config::bounded::bounded("git")
                 .arg("-C")
                 .arg(wt)
-                .args(["-c", "user.name=slay", "-c", "user.email=slay@spira.local", "-c", "commit.gpgsign=false", "commit", "-m", msg])
-                .env("SPIRA_ALLOW_DIRTY_STAGE", "1")
+                .args(["-c", "user.name=slay", "-c", "user.email=slay@spira.local", "-c", "commit.gpgsign=false", "commit", "--no-verify", "-m", msg])
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
@@ -176,8 +179,8 @@ impl Git for RealGit {
     fn park(&self, repo: &Path, refname: &str, br: &str) -> bool {
         hel::git::Git(repo).update_ref(refname, br)
     }
-    fn salvage(&self, id: &str, wt: &Path) -> Result<Option<PathBuf>, ()> {
-        self.world.salvage(id, wt)
+    fn salvage(&self, id: &str, wt: &Path) -> Result<Option<PathBuf>, SalvageFailed> {
+        self.world.salvage(id, wt).map_err(|()| SalvageFailed)
     }
     fn destroy_worktree(&self, id: &str, wt: &Path, repo: &Path, why: &str) -> bool {
         self.world.destroy_worktree(id, wt, repo, why)
