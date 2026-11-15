@@ -2,10 +2,8 @@
 //! decision-making over data a test can hand it directly, and only `real.rs` touches the
 //! network, the beads store, or another program. See DESIGN.md §"Ports".
 //!
-//! `Bd`'s closeout-side methods, `Gh` and `Git` were added for the closeout half
-//! (sp-j3fim, "wave 4.31", wave4-decomposition.md row AB): gh-intake was a one-way
-//! ingest gate until now; it is bidirectional from this bead on. `Mail::send_question`
-//! is the operator-ask half of the same addition.
+//! `Gh`, `Git`, `Closeouts` and `Mail::send_question` are the closeout half: the write-back
+//! to the public tracker, driven by the pending-closeout rows.
 
 use crate::store::KnownRef;
 use std::path::Path;
@@ -46,10 +44,6 @@ pub trait Bd {
     /// the store could not answer — never read as none (law-absence-needs-a-positive-control).
     fn by_ref(&self, external_ref: &str) -> Result<Vec<KnownRef>, String>;
 
-    /// Only the beads whose external reference is `github:…`, with the columns the closeout
-    /// reads. A store that holds no such bead answers an empty list, not `None`.
-    fn list_github_json(&self) -> Option<serde_json::Value>;
-
     /// `bd -C <db> create <title> --external-ref <ref> --labels <labels> -t bug -p <priority>
     /// --body-file -`, body on stdin. Returns the new bead's id, `None` when it was not filed.
     fn create(&self, title: &str, external_ref: &str, labels: &str, priority: &str, body: &[u8]) -> Option<String>;
@@ -64,12 +58,6 @@ pub trait Bd {
     /// read a bead's `external_ref`/`dependencies` through this (sp-j3fim). `bd show`
     /// returns a bare object OR a one-element array of one; callers normalise either shape.
     fn show_json(&self, id: &str) -> Option<serde_json::Value>;
-
-    /// `bd -C <db> list --status <which> --label <ask-label> --limit 0 --json` (sp-j3fim):
-    /// `ask_already_open`/`ask_closed_subject`/`_gh_close_ask_unblock`/
-    /// `_gh_resolve_stale_asks` all read the operator-ask queue through this one shape. An
-    /// ask is not a work bead, so its bd status is its state (`spira_config::nonwork`, sp-mve9i).
-    fn list_asks(&self, which: spira_config::nonwork::Which, label: &str) -> Option<serde_json::Value>;
 
     /// `bd -C <db> dep remove <id> <other>`, best effort (sp-j3fim, `_gh_close_ask_unblock`).
     fn dep_remove(&self, id: &str, other: &str) -> bool;
@@ -94,31 +82,6 @@ pub trait Lifecycle {
     /// never confused with no row (law-absence-needs-a-positive-control).
     fn bead(&self, id: &str) -> Result<Option<LcBead>, String>;
 
-    /// Every row the machine has, in one read. `Err` when it could not answer.
-    fn all(&self) -> Result<std::collections::BTreeMap<String, LcBead>, String>;
-}
-
-/// The machine read once, on first use, then served from memory: a pass asks about every bead
-/// and must cost the store one read, not one per bead.
-pub struct Snapshot<'a> {
-    inner: &'a dyn Lifecycle,
-    rows: std::cell::OnceCell<Result<std::collections::BTreeMap<String, LcBead>, String>>,
-}
-
-impl<'a> Snapshot<'a> {
-    pub fn of(inner: &'a dyn Lifecycle) -> Snapshot<'a> {
-        Snapshot { inner, rows: std::cell::OnceCell::new() }
-    }
-}
-
-impl Lifecycle for Snapshot<'_> {
-    fn bead(&self, id: &str) -> Result<Option<LcBead>, String> {
-        self.all().map(|m| m.get(id).cloned())
-    }
-
-    fn all(&self) -> Result<std::collections::BTreeMap<String, LcBead>, String> {
-        self.rows.get_or_init(|| self.inner.all()).clone()
-    }
 }
 
 /// `repo_root <name>` (family U) and the base-ref families (U/W), resolved in-process
@@ -135,18 +98,9 @@ pub trait Repo {
         None
     }
 
-    /// `spira_repos` (sp-j3fim): every repo name the map carries, in map order —
-    /// `gh-intake backfill`'s scan loop (ported from `gh-issue-backfill.sh`).
+    /// Every repo name the map carries, in map order.
     fn all_names(&self) -> Vec<String>;
 
-    /// `spira_landref <repo-path>` (family W): the single base ref, or `None` when it does
-    /// not resolve. Used by `backfill`'s own looser ancestry search (sp-j3fim) — kept
-    /// separate from `landrefs` below on purpose; see `Git::grep_ancestor`.
-    fn landref(&self, repo_path: &str) -> Option<String>;
-
-    /// `spira_landrefs <repo-path>` (family W): the land ref plus its local counterpart
-    /// when one exists, as refs to search. Empty when unresolvable.
-    fn landrefs(&self, repo_path: &str) -> Vec<String>;
 }
 
 /// The operator channel gh-intake touches. `mail` (rewritten and retired from bash by
@@ -162,7 +116,7 @@ pub trait Mail {
     /// behind its own ask). `Ok(())` on success; `Err(stderr)` otherwise — stderr may
     /// itself be empty, exactly as lib.sh's `_err="$(... 2>&1 >/dev/null)"` could capture
     /// nothing from a probe fault.
-    fn send_question(&self, from: &str, subject: &str, default: &str, bead_id: &str, body: &[u8]) -> Result<(), String>;
+    fn send_question(&self, from: &str, subject: &str, default: &str, bead_id: &str, body: &[u8]) -> Result<String, String>;
 }
 
 /// lib.sh's `ghq` (`ghq() { command bdq __ghq "$@"; }` — never its own binary): `bdq
@@ -187,12 +141,27 @@ pub trait Git {
     fn rev_parse_short(&self, repo: &Path, sha: &str) -> Option<String>;
     /// `git -C <repo> log --format=%s -1 <sha>`.
     fn subject_of(&self, repo: &Path, sha: &str) -> Option<String>;
-    /// `gh-issue-backfill.sh`'s OWN looser ancestry search (test-land-commit-contract.sh, "gap
-    /// G4"); the unlanded scan reads landed-ness from the lifecycle row instead (sp-uzxf1o): the
-    /// first commit on `land_ref` whose message contains `id` anywhere (`git log --grep`,
-    /// no `-F`, no subject-shape check).
-    fn grep_ancestor(&self, repo: &Path, id: &str, land_ref: &str) -> Option<String>;
-    /// `git -C <repo> cat-file -e <sha>` AND `git -C <repo> merge-base --is-ancestor <sha>
-    /// <land_ref>` — the backfill script's fallback to the machine's recorded sha.
-    fn sha_is_ancestor(&self, repo: &Path, sha: &str, land_ref: &str) -> bool;
+}
+
+/// One pending closeout: a `github:` bead that reached LANDED, SUPERSEDED or DROPPED, as the
+/// lifecycle store recorded it in the transition.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Pending {
+    pub bead_id: String,
+    pub external_ref: String,
+    pub outcome_state: String,
+    pub sha: String,
+    /// The operator ask opened for this bead, once there is one.
+    pub ask_id: Option<String>,
+    pub attempts: u64,
+}
+
+/// The pending closeouts (`spira-lc gh-closeout`): the only list a drain reads.
+pub trait Closeouts {
+    fn pending(&self) -> Result<Vec<Pending>, String>;
+    /// The issue is settled: remove the row.
+    fn done(&self, bead: &str) -> bool;
+    fn asked(&self, bead: &str, ask: &str) -> bool;
+    /// An attempt failed: count it, keep the row.
+    fn failed(&self, bead: &str) -> bool;
 }

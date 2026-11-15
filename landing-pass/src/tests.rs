@@ -274,9 +274,6 @@ impl Lib for FakeLib {
     fn deliver_returned(&self, id: &str, _: &str) {
         self.rec(format!("deliver_returned {id}"));
     }
-    fn closeout(&self, id: &str, sha: &str, _: &Path) {
-        self.rec(format!("closeout {id} {sha}"));
-    }
     fn close_on_land(&self, id: &str, sha: &str) {
         self.rec(format!("close_on_land {id} {sha}"));
     }
@@ -286,9 +283,6 @@ impl Lib for FakeLib {
     }
     fn prune_worktrees(&self, _: &Path) {
         self.rec("prune_worktrees".into());
-    }
-    fn gh_unlanded_scan(&self) {
-        self.rec("gh_unlanded_scan".into());
     }
     fn ask_refresh_loop(&self, _: &Path, name: &str, br: &str, id: &str, _: &str, n: u32) {
         self.rec(format!("ask_refresh_loop {id} {br} {name} {n}"));
@@ -1426,6 +1420,16 @@ fn push_lands_records_first_and_closes_and_rebases_survivors_once_per_pass() {
     assert_eq!(h.lib.count("rebase spira/sp-c "), 2);
     assert!(h.logged("landing: pass complete — 4 branch(es) seen, 2 movement(s), 2 survivor(s) rebased after a landing, 0 conflicted"));
     assert_eq!(h.tools.skews.borrow().len(), 1);
+}
+
+#[test]
+fn a_push_landing_makes_no_closeout_call_and_the_pass_scans_no_github_issues() {
+    let h = H::new(LandMode::Push);
+    h.git.tree.set(true);
+    h.closed("sp-a", "t1");
+    h.run();
+    assert!(h.lib.has("close_on_land sp-a"), "the bead did land");
+    assert!(!h.lib.has("closeout"), "the store enqueues the closeout in the landing's own transition");
 }
 
 #[test]

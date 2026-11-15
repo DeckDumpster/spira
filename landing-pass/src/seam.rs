@@ -17,9 +17,8 @@
 /// (sp-81t4d, "wave 4.17": family R, landed verification) — `conflict_reopen_note`,
 /// `other_beads_on_conflicts`, `pr_merged`, `land_subject` and the close-on-land are all
 /// native now (`land_verify.rs`), reached through `RealLib` directly, never this seam.
-/// `Closeout` and `GhUnlandedScan` are retired too (sp-j3fim, "wave 4.31": family AB,
-/// GitHub closeout) — `gh_issue_closeout`/`_gh_unlanded_scan` moved into gh-intake;
-/// `RealLib` shells to the compiled `gh-intake closeout`/`unlanded-scan` binary instead.
+/// `Closeout` and `GhUnlandedScan` are retired too: the lifecycle store records a GitHub
+/// bead's closeout in the transition itself, and the `intake.gh_closeout` task drains it.
 /// `Note`, the five `Deliver*` and `PruneWorktrees` are retired too (sp-ipwlic): the store's
 /// `bd-note` and `deliver` verbs over `LcClient`, and `hel::reap::prune_worktrees`, in-process.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

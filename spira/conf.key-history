@@ -756,3 +756,4 @@ batcher_stall_secs
 results_keep_days
 results_prune_max
 publish_no_run_secs
+runtime_gh_closeout_secs

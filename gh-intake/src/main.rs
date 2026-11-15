@@ -1,15 +1,12 @@
 //! `gh-intake [--dry-run]` — see DESIGN.md. Ported from `spira/gh-intake.sh` (deleted,
 //! sp-8fsql); same env vars, same argv shape, called by bare name on the release PATH.
 //!
-//! `gh-intake closeout <bead-id> <sha> <repo-path>`, `gh-intake unlanded-scan` and
-//! `gh-intake backfill [--dry-run]` are the closeout half (sp-j3fim, "wave 4.31"):
-//! `gh_issue_closeout`, `_gh_unlanded_scan` and `gh-issue-backfill.sh`, each a one-line
-//! shim for its own bash form (`closeout`/`unlanded-scan` are landing-pass's and queue's
-//! new seam targets; `backfill` is the operator's own manual tool).
+//! `gh-intake closeout <bead-id> <sha> <repo-path>` settles one issue by hand; `gh-intake
+//! closeout-pending` drains the closeouts the lifecycle store has recorded.
 
 use gh_intake::closeout::{self, Ctx, Deps};
 use gh_intake::logic::{self, Config};
-use gh_intake::real::{RealBd, RealGh, RealGit, RealHttp, RealLifecycle, RealMail, RealRepo, FileSeen, FileStamp};
+use gh_intake::real::{RealBd, RealGh, RealCloseouts, RealGit, RealHttp, RealLifecycle, RealMail, RealRepo, FileSeen, FileStamp};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -18,9 +15,7 @@ fn usage() -> ExitCode {
     println!();
     println!("  gh-intake [--dry-run]");
     println!("  gh-intake closeout <bead-id> <sha> <repo-path>");
-    println!("  gh-intake unlanded-scan");
-    println!("  gh-intake backfill [--dry-run]");
-    println!("  gh-intake provenance [--check]");
+    println!("  gh-intake closeout-pending");
     ExitCode::from(0)
 }
 
@@ -35,11 +30,7 @@ fn closeout_env() -> Result<(String, PathBuf), String> {
 }
 
 fn closeout_ctx(run: PathBuf) -> Result<Ctx, String> {
-    Ok(Ctx {
-        run,
-        ask_label: spira_config::process::cfg("SPIRA_ASK_LABEL")?,
-        grace_secs: spira_config::process::cfg_parse("SPIRA_GH_ASK_GRACE_SECS")?,
-    })
+    Ok(Ctx { run })
 }
 
 fn closeout_cmd(args: &[String]) -> ExitCode {
@@ -68,14 +59,14 @@ fn closeout_cmd(args: &[String]) -> ExitCode {
             return ExitCode::from(1);
         }
     };
-    let lc = match RealLifecycle::new() {
-        Ok(l) => l,
-        Err(e) => {
+    let (lc, co) = match (RealLifecycle::new(), RealCloseouts::new()) {
+        (Ok(l), Ok(c)) => (l, c),
+        (Err(e), _) | (_, Err(e)) => {
             eprintln!("gh-intake: {e}");
             return ExitCode::from(1);
         }
     };
-    let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail, lc: &lc };
+    let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail, lc: &lc, co: &co };
     let log = closeout::gh_issue_closeout(&d, &ctx, &args[0], &args[1], Path::new(&args[2]));
     for l in log {
         println!("{l}");
@@ -83,9 +74,9 @@ fn closeout_cmd(args: &[String]) -> ExitCode {
     ExitCode::from(0)
 }
 
-fn unlanded_scan_cmd(args: &[String]) -> ExitCode {
+fn closeout_pending_cmd(args: &[String]) -> ExitCode {
     if !args.is_empty() {
-        eprintln!("usage: gh-intake unlanded-scan");
+        eprintln!("usage: gh-intake closeout-pending");
         return ExitCode::from(2);
     }
     let (home, run) = match closeout_env() {
@@ -109,118 +100,18 @@ fn unlanded_scan_cmd(args: &[String]) -> ExitCode {
             return ExitCode::from(1);
         }
     };
-    let lc = match RealLifecycle::new() {
-        Ok(l) => l,
-        Err(e) => {
+    let (lc, co) = match (RealLifecycle::new(), RealCloseouts::new()) {
+        (Ok(l), Ok(c)) => (l, c),
+        (Err(e), _) | (_, Err(e)) => {
             eprintln!("gh-intake: {e}");
             return ExitCode::from(1);
         }
     };
-    let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail, lc: &lc };
-    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
-    let log = closeout::gh_unlanded_scan(&d, &ctx, now);
-    for l in log {
+    let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail, lc: &lc, co: &co };
+    for l in closeout::drain(&d, &ctx) {
         println!("{l}");
     }
     ExitCode::from(0)
-}
-
-fn backfill_cmd(args: &[String]) -> ExitCode {
-    let mut dry_run = false;
-    for a in args {
-        match a.as_str() {
-            "--dry-run" => dry_run = true,
-            "-h" | "--help" => {
-                println!("gh-intake backfill [--dry-run]");
-                return ExitCode::from(0);
-            }
-            other => {
-                eprintln!("gh-intake backfill: unknown argument: {other}");
-                return ExitCode::from(2);
-            }
-        }
-    }
-    let (home, run) = match closeout_env() {
-        Ok(v) => v,
-        Err(e) => {
-            eprintln!("gh-intake: {e}");
-            return ExitCode::from(1);
-        }
-    };
-    let ctx = match closeout_ctx(run) {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("gh-intake: {e}");
-            return ExitCode::from(1);
-        }
-    };
-    let (bd, gh, git, repo, mail) = match ports(home) {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("gh-intake: {e}");
-            return ExitCode::from(1);
-        }
-    };
-    let lc = match RealLifecycle::new() {
-        Ok(l) => l,
-        Err(e) => {
-            eprintln!("gh-intake: {e}");
-            return ExitCode::from(1);
-        }
-    };
-    let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail, lc: &lc };
-    let (log, _found, _closed, _skipped, _dry) = closeout::backfill(&d, &ctx, dry_run);
-    for l in log {
-        println!("{l}");
-    }
-    ExitCode::from(0)
-}
-
-
-/// `gh-intake provenance` — every external issue, its bead, the outcome that settles it.
-/// `--check` exits 1 when any trail is broken, 2 when the trail could not be read.
-fn provenance_cmd(args: &[String]) -> ExitCode {
-    let check = match closeout::provenance_mode(args) {
-        Ok(check) => check,
-        Err(e) => {
-            eprintln!("gh-intake provenance: {e}");
-            return ExitCode::from(2);
-        }
-    };
-    let (home, _) = match closeout_env() {
-        Ok(v) => v,
-        Err(e) => {
-            eprintln!("gh-intake: {e}");
-            return ExitCode::from(1);
-        }
-    };
-    let (bd, gh, git, repo, mail) = match ports(home) {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("gh-intake: {e}");
-            return ExitCode::from(1);
-        }
-    };
-    let lc = match RealLifecycle::new() {
-        Ok(l) => l,
-        Err(e) => {
-            eprintln!("gh-intake: {e}");
-            return ExitCode::from(1);
-        }
-    };
-    let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail, lc: &lc };
-    match closeout::provenance_read(&d) {
-        Ok(rows) => {
-            for r in &rows {
-                println!("{}", r.line());
-            }
-            ExitCode::from(if check && rows.iter().any(|r| r.is_broken()) { 1 } else { 0 })
-        }
-        Err(e) => {
-            eprintln!("gh-intake provenance: {e}");
-            ExitCode::from(2)
-        }
-    }
 }
 
 /// The fixture's stand-in mail program (`SPIRA_MAIL_BIN`, registered config); none (empty)
@@ -244,9 +135,7 @@ fn main() -> ExitCode {
     }
     let op = match std::env::args().nth(1).as_deref() {
         Some("closeout") => "closeout",
-        Some("unlanded-scan") => "unlanded-scan",
-        Some("backfill") => "backfill",
-        Some("provenance") => "provenance",
+        Some("closeout-pending") => "closeout-pending",
         _ => "intake",
     };
     let run = spira_otel::metrics::Run::begin(spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref(), "gh-intake", op);
@@ -259,9 +148,7 @@ fn dispatch() -> ExitCode {
     let all_args: Vec<String> = std::env::args().skip(1).collect();
     match all_args.first().map(String::as_str) {
         Some("closeout") => return closeout_cmd(&all_args[1..]),
-        Some("unlanded-scan") => return unlanded_scan_cmd(&all_args[1..]),
-        Some("backfill") => return backfill_cmd(&all_args[1..]),
-        Some("provenance") => return provenance_cmd(&all_args[1..]),
+        Some("closeout-pending") => return closeout_pending_cmd(&all_args[1..]),
         _ => {}
     }
 

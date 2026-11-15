@@ -82,6 +82,7 @@ mod task_e_watch_throughput;
 mod task_e_watch_warm_full;
 mod task_f_asks_ideas;
 mod task_f_intake_filings;
+mod task_f_intake_gh_closeout;
 mod task_f_intake_gh;
 mod task_f_intake_kit_bump;
 mod task_f_persona_archivist;

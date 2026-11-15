@@ -233,7 +233,6 @@ impl<'a> Pass<'a> {
             }
         }
 
-        self.lib.gh_unlanded_scan();
         let sweep = if self.swept.get() + self.swept_conflict.get() > 0 {
             format!(
                 ", {} survivor(s) rebased after a landing, {} conflicted",

@@ -34,8 +34,7 @@ leaves a record of every transition so the next pass never re-derives what this 
 
 Around the walk the pass also: settles each queued repository's open round before and after
 certifying (the scheduler's `queue.step` task, not this pass), prunes the landstate records nothing will read again, advances
-the checkout humans read (`skew refresh`) for push/queue, asks about closed beads whose
-GitHub issue has no landing (`_gh_unlanded_scan`), installs unit templates that landed
+the checkout humans read (`skew refresh`) for push/queue, installs unit templates that landed
 (`unit-ensure`, sp-31dm0 — a bare-name binary now, replacing `systemd/unit-ensure.sh`), and reaps the build output of worktrees whose bead is closed (`target-reap`, sp-z61hj; it replaced `land-build-ensure.sh`, whose post-landing release rebuild was redundant — a landing publishes a release from tested binaries).
 
 ### Four outcomes, one of them the branch's fault
@@ -281,7 +280,7 @@ enum BranchVerdict { Gone, NotClosed, WrongRepo, Superseded, CutoverRound, Eject
 8. Log `landing: walk complete — N branch(es), S settled from memory`.
 9. `skew refresh <path>` for push and queue(forge) repositories (queue.local's base is
    local; its refresh belongs to land-local, as before).
-10. `gh-intake unlanded-scan` (sp-j3fim, "wave 4.31" — `_gh_unlanded_scan` moved natively into gh-intake, no seam call left). `unit-ensure` (sp-31dm0), `target-reap` (lines logged; sp-z61hj replaced `land-build-ensure.sh`).
+10. `unit-ensure` (sp-31dm0), `target-reap` (lines logged; sp-z61hj replaced `land-build-ensure.sh`).
 11. The pass-complete line; status file; remove `landing.run`/`landing.containers`.
 
 ### 4.1 Per repository: enumerate, scan, order
@@ -435,7 +434,7 @@ are values like any other.
 | S15 `deliver_*` | `spira-lc deliver push-delivered / push-requeued / push-returned` (lc-delivery.sh's `lc_deliver_push_*` until sp-arpjt) | delivery CAS |
 | S16 | ~~`closeout` / `close_on_land`~~ | **both retired:** `gh_issue_closeout` moved natively into gh-intake (sp-j3fim, "wave 4.31") — this crate shells to `gh-intake closeout <id> <sha> <repo>` by bare name now, stdout relayed through `Reporter::raw`. `bead_close_on_land` is native too (sp-81t4d, "wave 4.17": family R) — `Lib::close_on_land` calls `land_verify::close_on_land` (bd close + `land_mark` + a direct `hel reap-landed-branch` call, never this seam). `landing-pass close-on-land <id> [sha]` is the shim target for the latter. |
 | S17 `prune_worktrees` | `spira_prune_worktrees <repo>` | the one destruction site |
-| S18 | ~~`gh_unlanded_scan`~~ | **retired (sp-j3fim, wave 4.31):** `_gh_unlanded_scan` moved natively into gh-intake; this crate shells to `gh-intake unlanded-scan` by bare name now. |
+| S18 | ~~`gh_unlanded_scan`~~ | **retired:** the lifecycle store records a GitHub bead's closeout in its landing transition and the `intake.gh_closeout` task drains it; this pass reads no GitHub bead. |
 | S19 | ~~`ask_refresh_loop`~~ (sp-t4y60) | **retired (sp-31hjr):** `spira_ask_refresh_loop` is native — `Lib::ask_refresh_loop` in `real.rs`, text in `ask.rs`; `needs_refresh`'s own escalation, distinct from the rebase-loop ask. |
 | S20 `deliver_pr_merged` / `deliver_pr_closed` (sp-t4y60) | `spira-lc deliver pr-merged` / `pr-closed` (lc-delivery.sh's `lc_deliver_pr_*` until sp-arpjt) | delivery CAS, pr mode's own exits (distinct from S15's push-mode wrappers) |
 | S21 `force_push` (sp-t4y60) | `spira_git_push <repo> -q --force-with-lease -u <remote> <br>` (stderr returned) | GitHub App credentials, same as S13; `land_pr`'s push always force-with-lease |

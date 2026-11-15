@@ -112,7 +112,9 @@ fn open(path: &str) -> Result<Store<Served>, String> {
     if logs.trim().is_empty() {
         return Err("SPIRA_VICTORIALOGS_URL is empty: every transition is shipped there and there is no fallback".into());
     }
-    Ok(Store::new(contract, floor).with_shipper(spira_otel::vlogs::Shipper::start(&logs)))
+    Ok(Store::new(contract, floor)
+        .with_shipper(spira_otel::vlogs::Shipper::start(&logs))
+        .with_refs(Arc::new(crate::bd::external_ref_of)))
 }
 
 fn opened(path: &str) -> Result<Arc<Store<Served>>, String> {
@@ -247,8 +249,9 @@ pub fn dispatch(args: &[String]) -> Option<(i32, String)> {
     if sections::VERBS.contains(&verb.as_str()) || verb == sections::lifecycle::VERB || verb == spira_lc::rc::VERB {
         return Some(dispatch_sections(args));
     }
+    let closeout = verb == super::gh_closeout::VERB;
     let lifecycle = state::is_verb(verb) || readiness::VERBS.contains(&verb.as_str()) || claimable::VERBS.contains(&verb.as_str());
-    if !lifecycle && !verbs::VERBS.contains(&verb.as_str()) {
+    if !lifecycle && !closeout && !verbs::VERBS.contains(&verb.as_str()) {
         return None;
     }
     let path = match store_path() {
@@ -276,6 +279,7 @@ pub fn dispatch(args: &[String]) -> Option<(i32, String)> {
                 state::run(&store, args, &call)
             }
         }
+        Ok(store) if closeout => super::gh_closeout::run(&store, args, &request_id()),
         Ok(store) => verbs::run(&store, args),
         Err(e) => (CANNOT_TELL, format!("cannot tell: the control store: {e}")),
     })

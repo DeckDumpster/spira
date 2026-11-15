@@ -174,8 +174,8 @@ bdjson() { bdq "$@" --json 2>/dev/null | json_only; }
 # ask_already_open/ask_closed_subject retired (sp-j3fim, wave 4.31, family AB): both
 # ported natively into gh-intake/src/closeout.rs — the GitHub-closeout family (AB) was
 # the last bash caller left after sp-31hjr (wave 4.30) ported family C's own callers, so
-# no bash form remains anywhere in the tree. `gh-intake closeout`/`unlanded-scan`/
-# `backfill` carry the dedupe logic now; sentinel and landing-pass each keep their own
+# no bash form remains anywhere in the tree. `gh-intake closeout` carries the logic
+# now; sentinel and landing-pass each keep their own
 # separate native copy (sp-31hjr), not shared with this one — same reasoning as there.
 
 # spira_ask_machinery, spira_ask_machinery_class, spira_land_noverdict,
@@ -2364,11 +2364,7 @@ bead_is_decision_type() {
     esac
 }
 
-# _gh_close_ask_unblock/gh_issue_ask_unlanded/_gh_resolve_stale_asks/_gh_unlanded_scan
-# retired (sp-j3fim, wave 4.31, family AB): ported natively into gh-intake/src/closeout.rs
-# as gh_close_ask_unblock/gh_issue_ask_unlanded/gh_resolve_stale_asks/gh_unlanded_scan.
-# "gh-intake unlanded-scan" drives the whole family now (landing-pass's and queue's own
-# seams call the binary directly); "gh-intake backfill" replaces gh-issue-backfill.sh.
+# The GitHub closeout family lives in gh-intake/src/closeout.rs; no bash form remains.
 
 # spira_git_push <repo> [push-args...] — push with GitHub App identity when configured.
 # When SPIRA_GH_APP_ID and SPIRA_GH_APP_INSTALLATION_ID are set, routes the push over

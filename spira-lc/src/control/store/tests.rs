@@ -1215,3 +1215,90 @@ fn a_non_holders_renewal_is_refused_and_the_lock_expiry_is_unchanged() {
     assert!(matches!(refused, Outcome::Refused { .. }), "{refused:?}");
     assert_eq!(lock_expiry(&s), before);
 }
+
+fn refs_of(pairs: &[(&str, &str)]) -> super::ExternalRefs {
+    let held: std::collections::BTreeMap<String, String> = pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+    std::sync::Arc::new(move |id: &str| Ok(held.get(id).cloned()))
+}
+
+fn dropped(s: &Store<MemBackend>, id: &str, request: &str) -> Outcome {
+    let cur = s.record(id).unwrap().unwrap();
+    let kind = BeadEventKind::Drop { reason: lifecycle::reason::DropReason::Unwanted };
+    s.apply(id, &ev(cur.value.row.state, cur.value.row.version, kind, "operator", 120), &req(request)).unwrap()
+}
+
+#[test]
+fn a_github_bead_entering_a_terminal_state_enqueues_exactly_one_closeout() {
+    let (s, _, _) = fresh();
+    let s = s.with_refs(refs_of(&[("sp-gh", "github:o/r#7")]));
+    created(&s, "sp-gh");
+    assert!(s.gh_closeouts().unwrap().is_empty(), "nothing is owed before the bead is terminal");
+    assert!(matches!(dropped(&s, "sp-gh", "drop-1"), Outcome::Applied { .. }));
+    let rows = s.gh_closeouts().unwrap();
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0].0, "sp-gh");
+    assert_eq!(rows[0].1["external_ref"], "github:o/r#7");
+    assert_eq!(rows[0].1["outcome_state"], "DROPPED");
+    assert_eq!(rows[0].1["attempts"], 0);
+    assert!(matches!(dropped(&s, "sp-gh", "drop-2"), Outcome::Refused { .. }), "a repeated terminal event is refused");
+    assert_eq!(s.gh_closeouts().unwrap().len(), 1, "a repeated event enqueues none");
+}
+
+#[test]
+fn a_bead_with_no_or_a_non_github_reference_enqueues_nothing() {
+    let (s, _, _) = fresh();
+    let s = s.with_refs(refs_of(&[("sp-jira", "jira:X-1"), ("sp-untrusted", "github-untrusted:o/r#3")]));
+    for id in ["sp-none", "sp-jira", "sp-untrusted"] {
+        created(&s, id);
+        assert!(matches!(dropped(&s, id, &format!("drop-{id}")), Outcome::Applied { .. }));
+    }
+    assert!(s.gh_closeouts().unwrap().is_empty());
+}
+
+#[test]
+fn a_reference_the_content_store_cannot_read_fails_the_transition_closed() {
+    let (s, _, _) = fresh();
+    let s = s.with_refs(std::sync::Arc::new(|_: &str| Err("content store down".to_string())));
+    created(&s, "sp-gh");
+    let cur = s.record("sp-gh").unwrap().unwrap();
+    let kind = BeadEventKind::Drop { reason: lifecycle::reason::DropReason::Unwanted };
+    let err = s.apply("sp-gh", &ev(cur.value.row.state, cur.value.row.version, kind, "operator", 120), &req("drop-1")).unwrap_err();
+    assert!(err.to_string().contains("content store down"), "{err}");
+    assert_eq!(s.record("sp-gh").unwrap().unwrap().value.row.state, BeadState::Ready, "the bead did not move");
+}
+
+#[test]
+fn a_closeout_is_asked_failed_and_done_idempotently() {
+    let (s, _, _) = fresh();
+    let s = s.with_refs(refs_of(&[("sp-gh", "github:o/r#7")]));
+    created(&s, "sp-gh");
+    dropped(&s, "sp-gh", "drop-1");
+    assert!(s.gh_closeout_failed("sp-gh", &req("f1")).unwrap());
+    assert!(s.gh_closeout_failed("sp-gh", &req("f2")).unwrap());
+    assert!(s.gh_closeout_asked("sp-gh", "sp-ask1", &req("a1")).unwrap());
+    let row = s.gh_closeout("sp-gh").unwrap().unwrap();
+    assert_eq!((row["attempts"].as_u64(), row["ask_id"].as_str()), (Some(2), Some("sp-ask1")));
+    s.gh_closeout_done("sp-gh", &req("d1")).unwrap();
+    s.gh_closeout_done("sp-gh", &req("d2")).unwrap();
+    assert!(s.gh_closeouts().unwrap().is_empty());
+    assert!(!s.gh_closeout_failed("sp-gh", &req("f3")).unwrap(), "no row is no failure to count");
+}
+
+#[test]
+fn the_pending_verb_names_every_column_the_drain_reads() {
+    let (s, _, _) = fresh();
+    let s = s.with_refs(refs_of(&[("sp-gh", "github:o/r#7")]));
+    created(&s, "sp-gh");
+    dropped(&s, "sp-gh", "drop-1");
+    let args = |v: &[&str]| v.iter().map(|a| a.to_string()).collect::<Vec<_>>();
+    let (code, out) = crate::control::gh_closeout::run(&s, &args(&["gh-closeout", "pending"]), "req-1");
+    assert_eq!(code, 0, "{out}");
+    let rows: serde_json::Value = serde_json::from_str(&out).unwrap();
+    let row = &rows[0];
+    for k in ["bead_id", "external_ref", "outcome_state", "sha", "ask_id", "enqueued_at", "attempts"] {
+        assert!(row.get(k).is_some(), "{k} missing from {row}");
+    }
+    let (code, _) = crate::control::gh_closeout::run(&s, &args(&["gh-closeout", "done", "sp-gh"]), "req-2");
+    assert_eq!(code, 0);
+    assert_eq!(crate::control::gh_closeout::run(&s, &args(&["gh-closeout", "pending"]), "req-3").1, "[]");
+}

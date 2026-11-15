@@ -7,6 +7,9 @@ pub const ASKS: &str = "asks/";
 pub const MENDINGS: &str = "mendings/";
 /// Each member branch a mend moved, by bead: what a second mender must build on.
 pub const MENDS: &str = "mends/";
+/// Each GitHub bead's pending issue closeout, `gh-closeout/<bead>`: written in the txn that
+/// moves the bead to LANDED, SUPERSEDED or DROPPED, deleted once the issue is settled.
+pub const GH_CLOSEOUTS: &str = "gh-closeout/";
 pub const BATCHES: &str = "batches/";
 /// Each round's id, naming the repo it was cut in: a round id is unique across repos.
 pub const BATCH_IDS: &str = "batch-ids/";
@@ -58,6 +61,10 @@ pub fn conditions(owner: &str) -> String {
 
 pub fn condition(owner: &str, key: &str) -> String {
     format!("{}{key}", conditions(owner))
+}
+
+pub fn gh_closeout(id: &str) -> String {
+    format!("{GH_CLOSEOUTS}{id}")
 }
 
 pub fn mending(id: &str) -> String {
