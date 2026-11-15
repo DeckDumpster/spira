@@ -747,6 +747,10 @@ impl World for Real {
             eprintln!("gate: send-back logs not kept: {e}");
         }
     }
+
+    fn lc_prior_failures(&self, since: i64) -> Result<Vec<(String, String)>, String> {
+        spira_config::ejection::prior(&spira_config::ejection::cli, since)
+    }
     fn lc_gate_start(&self, bead: &str) {
         let _ = spira_config::bounded::bounded("spira-lc")
             .args(["fact", bead, "--kind", "gate-start", "--actor", "gate"])
