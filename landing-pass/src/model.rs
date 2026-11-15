@@ -383,24 +383,6 @@ impl GateRun {
     pub fn unjudged(&self) -> bool {
         self.outcome == GateOutcome::Fail && self.reason.as_deref().unwrap_or("").is_empty() && self.out.trim().is_empty()
     }
-    /// Where a red gate failed: its failing suite and the last output line that says so; empty
-    /// when the gate named neither.
-    pub fn failing(&self) -> String {
-        let line = self
-            .out
-            .lines()
-            .rev()
-            .filter(|l| !l.starts_with("gate: VERDICT="))
-            .map(str::trim)
-            .find(|l| ["FAIL", "error", "panicked"].iter().any(|k| l.contains(k)))
-            .unwrap_or("");
-        match (self.suite.as_str(), line) {
-            ("-", "") => String::new(),
-            ("-", l) => format!("failing line: {l}"),
-            (s, "") => format!("failing step: {s}"),
-            (s, l) => format!("failing step: {s}; failing line: {l}"),
-        }
-    }
     /// The step a red gate failed at and that step's last output line: the verdict's `suite`
     /// (else the first red `gate-step`), and the last line the gate printed that is not its own
     /// bookkeeping. Either is empty when the output does not say.
@@ -537,14 +519,6 @@ mod gate_run_tests {
         assert_eq!(GateRun::parse(1, out).red_at(), ("fixture-config".to_string(), msg.to_string()));
         let unnamed = "boom\ngate-step RED rc=1 :: spira-lint\ngate: VERDICT=FAIL reason=branch-red branch=b repo=r suite=-\n";
         assert_eq!(GateRun::parse(1, unnamed.into()).red_at(), ("spira-lint".to_string(), "boom".to_string()));
-    }
-
-    #[test]
-    fn a_red_gate_names_its_failing_suite_and_the_last_line_that_says_so() {
-        let out = "running\nFAIL test-a.sh\nerror: callers.rs:726 retires x_secs\ngate: VERDICT=FAIL reason=suites-failed branch=b repo=r suite=test-a.sh\n";
-        let g = GateRun::parse(1, out.into());
-        assert_eq!(g.failing(), "failing step: test-a.sh; failing line: error: callers.rs:726 retires x_secs");
-        assert_eq!(GateRun::parse(1, "gate: VERDICT=FAIL reason=x suite=-\n".into()).failing(), "");
     }
 
     #[test]

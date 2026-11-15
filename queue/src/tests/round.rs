@@ -2087,57 +2087,6 @@ fn open_skips_a_member_at_a_tip_that_already_went_red_in_a_batch() {
 }
 
 #[test]
-fn open_skips_a_certified_member_whose_gate_is_fail_at_its_current_tip_and_only_that() {
-    let t = round_world();
-    for id in ["sp-f", "sp-old", "sp-base", "sp-nov"] {
-        t.lc_row(id, "CERTIFIED", &format!("t{id}"), 100);
-    }
-    file_gate_verdict(&t, "sp-f", "tsp-f", 1);
-    file_gate_verdict(&t, "sp-old", "an-older-tip", 1);
-    file_gate_verdict(
-        &t,
-        "sp-base",
-        "tsp-base",
-        landing_pass::model::GATE_BASEFAIL,
-    );
-    file_gate_verdict(&t, "sp-nov", "tsp-nov", landing_pass::model::GATE_NOVERDICT);
-    assert_eq!(
-        t.run(&[
-            "round",
-            "open",
-            "--members",
-            "sp-a,sp-f,sp-old,sp-base,sp-nov"
-        ]),
-        1,
-        "{}",
-        t.err()
-    );
-    let o = t.err();
-    assert!(
-        o.contains("sp-f: its gate is FAIL at tsp-f (branch-red)")
-            && o.contains("1 of 5 named members"),
-        "{o}"
-    );
-    assert!(!t.qfile("round").exists());
-    assert_eq!(
-        t.run(&["round", "open", "--members", "sp-a,sp-old,sp-base,sp-nov"]),
-        0,
-        "{}",
-        t.err()
-    );
-    let o = t.out();
-    let members = o.lines().find_map(|l| l.strip_prefix("members=")).unwrap();
-    assert!(
-        members.contains("sp-a:")
-            && members.contains("sp-old:")
-            && members.contains("sp-base:")
-            && members.contains("sp-nov:")
-            && !members.contains("sp-f:"),
-        "{o}"
-    );
-}
-
-#[test]
 fn a_second_round_is_refused_until_the_first_is_closed() {
     let t = round_world();
     assert_eq!(

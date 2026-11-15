@@ -981,7 +981,7 @@ fn sp_tjrjca_a_green_round_refused_base_moved_is_certified_again_and_landed() {
     r.tick(STREAM, ended(&unit, runtime::units::Exit::Code(0), "verdict=green\n")).unwrap();
     kit::assert_unpoisoned(&r, STREAM);
     let after: Vec<String> = asked_after(&r, n).into_iter().map(|(e, _)| e).collect();
-    assert_eq!(after, [LC_CERTIFY, LAND, SUPERSEDE_REDS], "green again: it lands");
+    assert_eq!(after, [LAND, SUPERSEDE_REDS], "green again: it lands");
 
     let (_, acts) = on_outcome(&Carry { repos: [("spira".to_string(), RepoCarry { state: State::Landing, ..carry.repos["spira"].clone() })].into() }, LAND, true, &serde_json::to_string(&Landed::default()).unwrap(), &land, NOW);
     assert!(!acts.iter().any(|a| a.effect == ABANDON), "{acts:?}");
@@ -1101,7 +1101,7 @@ fn sp_2gcs4h_a_certifying_round_is_never_forgotten_for_waiting() {
 
 #[test]
 fn sp_2gcs4h_the_outcome_wait_outlasts_every_effect_a_waiting_state_issues() {
-    let longest = ACTS.iter().filter(|(e, _)| [ASSEMBLE, ROUND_OPEN, LAND, LC_CERTIFY, PROMOTE, FETCH].contains(e)).map(|(_, d)| *d).max().unwrap();
+    let longest = ACTS.iter().filter(|(e, _)| [ASSEMBLE, ROUND_OPEN, LAND, PROMOTE, FETCH].contains(e)).map(|(_, d)| *d).max().unwrap();
     assert!(OUTCOME_WAIT_MS > longest, "{OUTCOME_WAIT_MS} vs {longest}");
 }
 
@@ -1132,7 +1132,7 @@ fn a_boot_repeats_no_side_effect_and_misses_none() {
 }
 
 /// The round key lists every member as `id:tip`, so it outgrows the store's 255-char key column
-/// with the round's size; a green certify of such a round must still reach `lc_certify`.
+/// with the round's size; a green certify of such a round must still reach `land`.
 #[test]
 fn sp_lkm2fv_a_green_certify_of_a_wide_round_is_requested_not_refused_by_the_store() {
     use runtime::units::{Exit, UnitHandle, UnitRan};
@@ -1155,7 +1155,7 @@ fn sp_lkm2fv_a_green_certify_of_a_wide_round_is_requested_not_refused_by_the_sto
     let certify = leg_of(&r, CERTIFY);
     r.tick(STREAM, ran(&certify).event_kind()).unwrap();
     kit::assert_unpoisoned(&r, STREAM);
-    assert!(r.requested().iter().any(|q| q.name == LC_CERTIFY), "the green certify reaches lc_certify");
+    assert!(r.requested().iter().any(|q| q.name == LAND), "the green certify reaches land");
 }
 
 // --- sp-pi2ojm: an opened round is driven on the next tick, not after its outcome's 20-minute wait ---
@@ -1464,7 +1464,7 @@ fn green_orphan() -> (Carry, Snapshot) {
 fn sp_k7ltss_a_green_round_with_no_driver_is_landed_not_abandoned() {
     let (carry, snap) = green_orphan();
     let (carry, acts) = decide(&carry, &snap);
-    assert_eq!(effects(&acts), [LC_CERTIFY, LAND], "{acts:?}");
+    assert_eq!(effects(&acts), [LAND], "{acts:?}");
     let rc = &carry.repos["spira"];
     assert_eq!((rc.state, rc.batch.as_deref(), rc.members.clone()), (State::Landing, Some("r9"), vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into())]));
     assert_eq!((rc.wt.as_str(), rc.head.as_str()), ("/w", "h"));

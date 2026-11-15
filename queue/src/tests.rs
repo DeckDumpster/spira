@@ -3131,24 +3131,6 @@ fn open_batch_admits_a_named_certified_bead() {
         .any(|c| c.starts_with("pr-create")));
 }
 
-#[test]
-fn verdict_ejects_a_provisional_member_whose_gate_went_red_naming_the_gate_lines() {
-    let t = T::new(LandMode::Queue);
-    t.open_record("pr=12\nhead=h1\nbase=b0\nmembers=sp-a:ta sp-s:ts\nopened=5\nbranch=spira/queue/x\nowner=batcher\nprovisional=sp-s\nbatch_id=spira-x\nversion=1\n");
-    round::file_gate_verdict(&t, "sp-s", "ts", 1);
-    t.run(&["verdict", "spira"]);
-    assert!(
-        t.out().contains("provisional member sp-s") && t.out().contains("branch-red"),
-        "{}",
-        t.out()
-    );
-    assert!(
-        t.lib.has("cause_event sp-s eject-red"),
-        "{:?}",
-        t.lib.calls.borrow()
-    );
-}
-
 // covers: UC-landing-merge-queue-41
 #[test]
 fn open_batch_pr_body_lists_id_and_title_per_member() {

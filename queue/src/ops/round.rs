@@ -24,11 +24,9 @@ use crate::lock::Guard;
 use crate::model::{parse_members, render_members, EjectCause, LandMode, Member};
 use crate::ports::{ref_branch, AmiBuild, AmiLookup, RunOut};
 use crate::records::{self, one_line, write_atomic, Kv};
-use landing_pass::gateq::GateQueue;
 use spira_config::scoped_stop;
 
 const ROUNDS_LANE: &str = "rounds";
-use landing_pass::model::GateOutcome;
 
 /// certify's exit when the corpus could not be judged (the VM, the wall, the install), as
 /// opposed to FAIL, which is a red round.
@@ -1573,13 +1571,6 @@ pub(super) fn return_to_rework(w: &World, m: &Member) -> Result<(), String> {
     }
 }
 
-/// The gate-worker's recorded FAIL for `spira/<id>` at exactly `tip`, as the gate's own reason.
-/// BASE_FAIL and NO_VERDICT are not the branch's fault and a missing verdict says nothing.
-pub(super) fn gate_red_at(c: &Ctx, id: &str, tip: &str) -> Option<String> {
-    let done = GateQueue::new(&c.s.run).peek_done(&c.r.name, &format!("spira/{id}"), tip)?;
-    (done.run.outcome == GateOutcome::Fail).then(|| done.run.reason_or("unspecified").to_string())
-}
-
 const RED_TIPS: &str = "red-tips";
 
 /// Whether `id` at exactly `tip` was already ejected red from a batch: only a new tip may rejoin.
@@ -1918,18 +1909,15 @@ fn open_timed(
                 Some(tip) if tip.starts_with(&m.tip) && batch_red_at(&c, &m.id, &tip) => {
                     skips.push(skip(&m.id, "batch-red", format!("{}: {tip} already went red in a batch — not admitted until the tip changes", m.id)))
                 }
-                Some(tip) if tip.starts_with(&m.tip) => match gate_red_at(&c, &m.id, &tip) {
-                    Some(why) => skips.push(skip(&m.id, "gate-red", format!("{}: its gate is FAIL at {tip} ({why}) — not admitted", m.id))),
-                    None => match r.blocked_by.first() {
-                        Some(dep) => {
-                            let state = w.lc.bead_row(dep).map(|d| d.state).unwrap_or_else(|| "unknown".into());
-                            skips.push(skip(&m.id, "blocked", format!("{}: depends on {dep} ({state}) — not admitted until it lands", m.id)))
-                        }
-                        None if super::simple::lands_by_lint(w, &c.s, &path, &base, &tip) => {
-                            skips.push(skip(&m.id, "text-only", crate::text_only::skip_line(&m.id)))
-                        }
-                        None => admitted.push(Member { id: m.id, tip }),
-                    },
+                Some(tip) if tip.starts_with(&m.tip) => match r.blocked_by.first() {
+                    Some(dep) => {
+                        let state = w.lc.bead_row(dep).map(|d| d.state).unwrap_or_else(|| "unknown".into());
+                        skips.push(skip(&m.id, "blocked", format!("{}: depends on {dep} ({state}) — not admitted until it lands", m.id)))
+                    }
+                    None if super::simple::lands_by_lint(w, &c.s, &path, &base, &tip) => {
+                        skips.push(skip(&m.id, "text-only", crate::text_only::skip_line(&m.id)))
+                    }
+                    None => admitted.push(Member { id: m.id, tip }),
                 },
                 Some(tip) => skips.push(skip(&m.id, "tip-moved", format!("{}: {} is not its row's tip {tip} — not admitted", m.id, m.tip))),
                 None => skips.push(skip(&m.id, "no-tip", format!("{}: no submitted tip — not admitted", m.id))),
