@@ -486,12 +486,7 @@ impl drive::RoundOps for LiveOps<'_> {
                 io::suite_first_fail(Path::new(&self.evidence), self.pass.as_deref(), s).map(|l| (s.clone(), l))
             })
             .collect();
-        let lead = format!(
-            "Returned by the mender of {} in pass {} of {}: {why}",
-            suites.join(", "),
-            self.mend_pass,
-            self.batch.unwrap_or_default()
-        );
+        let lead = io::returned_lead(suites, self.mend_pass, self.batch.unwrap_or_default(), why);
         self.eject_with(member, suites, &fails, true, Some(&lead))
     }
 

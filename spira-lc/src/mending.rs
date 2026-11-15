@@ -66,3 +66,20 @@ pub fn check_widths(batch: &str, pass: u32, suite: &str) -> Result<(), (i32, Str
     Ok(())
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::from_json;
+    use serde_json::json;
+
+    fn row(returned: serde_json::Value) -> serde_json::Value {
+        json!({"batch_id": "b", "pass": "1", "suite": "s", "state": "RETURNED", "version": "3", "returned": returned})
+    }
+
+    #[test]
+    fn the_returned_column_reads_back_as_a_list_and_a_null_or_garbled_one_as_none() {
+        assert_eq!(from_json(&row(json!(r#"["sp-a","sp-b"]"#))).unwrap().returned, ["sp-a", "sp-b"]);
+        assert!(from_json(&row(json!(null))).unwrap().returned.is_empty());
+        assert!(from_json(&row(json!("not json"))).unwrap().returned.is_empty());
+    }
+}
