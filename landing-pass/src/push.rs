@@ -256,7 +256,6 @@ fn land(p: &Pass, w: &Walk, br: &str, id: &str, mut tip: String) {
             // this commit is on the base (law-closed-is-not-landed, one layer in).
             let head = p.git.tree_head(&w.land).unwrap_or_default();
             p.lib.deliver_delivered(id, &head);
-            p.lib.closeout(id, &head, path);
             p.lib.close_on_land(id, &head);
             let short: String = head.chars().take(7).collect();
             p.lib.event("bead.landed", id, &format!("landed {br} on {name}'s {}", w.base), &format!("merged as {short} from {tip}"));

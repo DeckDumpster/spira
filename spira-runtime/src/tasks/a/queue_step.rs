@@ -59,7 +59,7 @@
 //! | Observing | PR `closed`/`merged` | Settling | `queue.step.reconcile` (`ops/reconcile.rs:22`) |
 //! | Pushing | `effect.succeeded` | Landing | `queue.step.land` |
 //! | Pushing | `effect.failed` | Idle | `queue.step.notify` (ff refused, `:301-311`) |
-//! | Landing | `effect.succeeded` | Cutting | `queue.step.close_bead`, `queue.step.gh_closeout`, `queue.step.cut_wanted` |
+//! | Landing | `effect.succeeded` | Cutting | `queue.step.close_bead`, `queue.step.cut_wanted` |
 //! | Judging | `unit.ran{ok, id=}` | Cutting | `queue.step.record` (judgement id, `:2167`) |
 //! | Judging | `unit.ran{fail}` / deadline | Idle | `queue.step.notify` |
 //! | Settling | outcome | Cutting | — |
@@ -77,7 +77,6 @@
 //! | `queue.step.push` | git | 60 s | `repo/remote/branch/head` | non-fast-forward (`:1528`, `:300`) |
 //! | `queue.step.land` | store | 5 s | `batch_id/version` (`ops/verdict.rs:1643`, `real.rs:1857`) | state ≠ GREEN (`--expect GREEN`) |
 //! | `queue.step.close_bead` | store | 5 s | `bead/sha` (`ops/helpers.rs:480`) | bead lacks submitted label (`ops/helpers.rs:476`) |
-//! | `queue.step.gh_closeout` | forge | 30 s | `bead/sha` (`real.rs:690`, `gh-intake closeout`) | — (best effort) |
 //! | `queue.step.pr_close` | forge | 30 s | `repo/pr` (`ops/verdict.rs:313`, `:947`, `:1332`) | — |
 //! | `queue.step.cancel_runs` | forge | 30 s | `repo/branch` (`real.rs:782`) | — |
 //! | `queue.step.rerun` | forge | 30 s | `repo/run` (`ops/verdict.rs:373`, `:1956`) | run already rerun once (`classify_fault_rerun`) |
@@ -141,7 +140,6 @@ pub const OBSERVE: &str = "queue.step.observe";
 pub const PUSH: &str = "queue.step.push";
 pub const LAND: &str = "queue.step.land";
 pub const CLOSE_BEAD: &str = "queue.step.close_bead";
-pub const GH_CLOSEOUT: &str = "queue.step.gh_closeout";
 pub const PR_CLOSE: &str = "queue.step.pr_close";
 pub const CANCEL_RUNS: &str = "queue.step.cancel_runs";
 pub const RERUN: &str = "queue.step.rerun";
@@ -163,7 +161,6 @@ pub const ACTS: &[(&str, u64)] = &[
     (PUSH, 60_000),
     (LAND, 5_000),
     (CLOSE_BEAD, 5_000),
-    (GH_CLOSEOUT, 30_000),
     (PR_CLOSE, 30_000),
     (CANCEL_RUNS, 30_000),
     (RERUN, 30_000),
@@ -179,7 +176,7 @@ pub const ACTS: &[(&str, u64)] = &[
 pub const EMITS: &[EventKindTag] = &[CUT_WANTED, PUBLISH_WANTED];
 /// Hand-offs that wake it at once, besides its tick: batcher.forge left a batch to settle.
 pub const WAKES: &[EventKindTag] = &[super::batcher_forge::SETTLE_WANTED];
-pub const EFFECTS: &[&str] = &[runtime::units::UNIT_FACTS, OBSERVE, PUSH, LAND, CLOSE_BEAD, GH_CLOSEOUT, PR_CLOSE, CANCEL_RUNS, RERUN, JUDGEMENT, OBSERVE_FLAKE, EJECT, RECONCILE, SWEEP, FILE_BUG, NOTIFY, RECORD];
+pub const EFFECTS: &[&str] = &[runtime::units::UNIT_FACTS, OBSERVE, PUSH, LAND, CLOSE_BEAD, PR_CLOSE, CANCEL_RUNS, RERUN, JUDGEMENT, OBSERVE_FLAKE, EJECT, RECONCILE, SWEEP, FILE_BUG, NOTIFY, RECORD];
 pub const KEYS: &[&str] = &[
     "SPIRA_QUEUE_CI_MAXSEC",
     "SPIRA_QUEUE_CI_IDLE_SEC",
@@ -603,7 +600,6 @@ impl Machine<'_> {
                 self.go(Trigger::EffectSucceeded);
                 for m in &s.members {
                     self.acts.push(Step { bead: m.clone(), key: format!("{m}/{}", s.head), ..s.clone() }.act(CLOSE_BEAD));
-                    self.acts.push(Step { bead: m.clone(), key: format!("{m}/{}", s.head), ..s.clone() }.act(GH_CLOSEOUT));
                 }
                 self.cut(&s.head);
             }
@@ -870,13 +866,6 @@ pub mod edge {
             return Err(format!("close {}: {}", s.bead, r.why()));
         }
         Ok("{}".into())
-    }
-
-    /// `gh-intake closeout` for the landed member, as a unit: only its binary has it.
-    pub fn gh_closeout(e: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
-        let s = step(spec)?;
-        let bin = spira_config::release_env::tool("gh-intake")?;
-        start_unit(e, super::NAME, &format!("closeout.{}", s.bead), vec![bin, "closeout".into(), s.bead.clone(), s.head.clone()], vec![], None)
     }
 
     pub fn pr_close(_: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {

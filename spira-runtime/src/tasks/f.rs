@@ -19,6 +19,7 @@ use crate::watchers::{answers_observe, INBOX_APPEND};
 pub mod asks_ideas;
 pub mod intake_filings;
 pub mod intake_gh;
+pub mod intake_gh_closeout;
 pub mod intake_kit_bump;
 pub mod persona_archivist;
 pub mod persona_ops;
@@ -45,6 +46,17 @@ pub static TASKS: &[Task] = &[
         ],
         keys: &[intake_gh::KEYS],
         build: |s| refuse(intake_gh::NAME, intake_gh::IntakeGh::from_settings(s)).registration(),
+    },
+    Task {
+        name: intake_gh_closeout::NAME,
+        plane: runtime::Plane::Work,
+        signal: &[],
+        boot: intake_gh_closeout::IntakeGhCloseout::boot,
+        cadence_ms: |s| cadence(s, intake_gh_closeout::CADENCE_KEY),
+        effects: intake_gh_closeout::EFFECTS,
+        runners: &[(intake_gh_closeout::OBSERVE, intake_gh_closeout::run_observe), (intake_gh_closeout::DRAIN, intake_gh_closeout::run_drain)],
+        keys: &[intake_gh_closeout::KEYS],
+        build: |s| refuse(intake_gh_closeout::NAME, intake_gh_closeout::IntakeGhCloseout::from_settings(s)).registration(),
     },
     Task {
         name: persona_ops::NAME,

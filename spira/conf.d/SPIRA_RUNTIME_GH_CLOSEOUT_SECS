@@ -1,0 +1,8 @@
+TYPE=u64
+GROUP=runtime
+DOC=Seconds between the intake.gh_closeout task's checks for pending GitHub closeouts; a tick with none pending reads one record list and does nothing else.
+SCHEMA=REQUIRED: Seconds between the intake.gh_closeout task's ticks in spira-runtime. Declared by a spira-runtime task row; its default is the task's pin, which spira-config init writes on a fresh install and activation's config delta declares on an upgrade.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # A GitHub bead's issue is closed within this long of its landing, plus the drain's own time.
+    : "${SPIRA_RUNTIME_GH_CLOSEOUT_SECS:=120}"
+SPIRA_CONF_DEFAULT_EOF
