@@ -94,7 +94,7 @@ fn modeled(path: &str, opts: Options, build_ms: u64) -> Result<Served, String> {
 
 fn open(path: &str) -> Result<Store<Served>, String> {
     let history_bytes = spira_config::process::cfg_parse::<usize>("SPIRA_LC_HISTORY_RING_BYTES")?;
-    let backend = modeled(path, Options { history_bytes, ..Options::default() }, BUILD_READ_MS)?;
+    let backend = modeled(path, Options { history_bytes, wall: Arc::new(Wall), ..Options::default() }, BUILD_READ_MS)?;
     let floor = lock_floor_ms()?;
     let ports = Ports {
         mono: Arc::new(MonotonicClock::new()),

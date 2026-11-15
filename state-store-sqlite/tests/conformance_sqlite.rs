@@ -642,8 +642,9 @@ fn thirty_days_of_commits_never_leave_more_than_two_day_files_and_today_is_one()
         let files = receipt_files(dir.path());
         assert!(files.len() <= 2, "{files:?} after commit {i}");
         let today = D0 + i * 6 * 3_600_000;
-        let day = today / DAY_MS - 20_000 + 4;
-        let name = format!("s.receipts-2024-10-{day:02}.db");
+        let day = today / DAY_MS - 20_000;
+        let (month, dom) = if day < 28 { (10, 4 + day) } else { (11, day - 27) };
+        let name = format!("s.receipts-2024-{month:02}-{dom:02}.db");
         assert!(files.contains(&name), "{name} missing from {files:?}");
     }
 }
@@ -707,4 +708,53 @@ fn log_over_a_mixed_batch_sequence_is_the_same_on_the_memory_and_the_sqlite_back
         m.commit(i as u64, batch).unwrap();
     }
     assert_eq!(s.log(0, 10).unwrap(), m.log(0, 10).unwrap());
+}
+
+#[test]
+fn a_range_lays_receipts_among_the_main_files_keys_at_the_head_and_below_it() {
+    let dir = TempDir::new("sqlite-receipt-range");
+    let wall = VirtualClock::new(D0);
+    let b = SqliteBackend::open(&dir.path().join("s.db"), day_opts(&wall)).unwrap();
+    b.commit(0, &[put_write("a", b"1", 1, None), receipt("r1", b"x", 1), put_write("z", b"1", 1, None)]).unwrap();
+    wall.advance_to(D0 + DAY_MS);
+    b.commit(1, &[receipt("r2", b"y", 2), put_write("a", b"2", 2, Some(Rev::new(1, 0)))]).unwrap();
+    let keys = |at: u64| -> Vec<String> { b.range("", None, 100, at).unwrap().into_iter().map(|(k, _)| k).collect() };
+    assert_eq!(keys(2), ["a", "requests/r1", "requests/r2", "z"]);
+    assert_eq!(keys(1), ["a", "requests/r1", "z"]);
+    let page = b.range("requests/", Some("requests/r1"), 1, 2).unwrap();
+    assert_eq!(page.len(), 1);
+    assert_eq!(page[0].0, "requests/r2");
+    let outside: Vec<String> =
+        b.range_outside(&["a"], None, 100, 2).unwrap().into_iter().map(|(k, _)| k).collect();
+    assert_eq!(outside, ["requests/r1", "requests/r2", "z"]);
+    assert!(b.gc_range(None, 100, 2).unwrap().iter().all(|(k, _)| !k.starts_with("requests/")));
+}
+
+#[test]
+fn a_snapshot_copy_carries_the_receipts_up_to_its_revision_in_one_file() {
+    let dir = TempDir::new("sqlite-receipt-snapshot");
+    let wall = VirtualClock::new(D0);
+    let b = SqliteBackend::open(&dir.path().join("s.db"), day_opts(&wall)).unwrap();
+    b.commit(0, &[receipt("r1", b"x", 1)]).unwrap();
+    let dest = dir.path().join("snap.db");
+    let rev = b.snapshot_to(&dest).unwrap();
+    b.commit(1, &[receipt("r2", b"y", 2)]).unwrap();
+    let copy = SqliteBackend::open(&dest, Options { jump_on_open: false, ..Options::default() }).unwrap();
+    assert_eq!(copy.get("requests/r1", rev).unwrap().unwrap().value, b"x");
+    assert!(copy.get("requests/r2", rev).unwrap().is_none());
+    assert!(receipt_files(dir.path()).len() == 1, "the copy made no day file of its own");
+}
+
+#[test]
+fn a_day_file_behind_the_mark_is_retired_when_the_store_opens() {
+    let dir = TempDir::new("sqlite-receipt-open-retire");
+    let wall = VirtualClock::new(D0);
+    let path = dir.path().join("s.db");
+    let b = SqliteBackend::open(&path, day_opts(&wall)).unwrap();
+    b.commit(0, &[receipt("old", b"x", 1)]).unwrap();
+    drop(b);
+    wall.advance_to(D0 + 2 * DAY_MS);
+    let b = SqliteBackend::open(&path, day_opts(&wall)).unwrap();
+    assert!(receipt_files(dir.path()).is_empty());
+    assert!(b.get("requests/old", b.head().unwrap()).unwrap().is_none());
 }
