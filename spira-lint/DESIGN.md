@@ -1235,6 +1235,22 @@ form (`add -A`, `add .` followed by whitespace/`;`/`|`/`&` or end of line, or `c
 finding per line, path and line number, message the raw line text (unmodified, matching the
 bash original, which did not trim it).
 
+## Rule `counter-label-ban`
+
+Replaces the counter-label section of the deleted `test-attempts-sql.sh` (test plan D6).
+
+**Intent.** Attempt, reclaim, requeue, timeout and recur counts are bd events; a label
+carrying one is a second, divergent counter.
+
+**Scope.** Tracked `spira/**/*.sh`, except `spira/test-*` and `spira/lib.sh`.
+
+**Violation.** A non-comment line matching `label add` followed by `sp-attempt-`,
+`sp-reclaim`, `sp-requeue`, `sp-timeout-` or `sp-recur-` (the bare `sp-reclaim` and `sp-requeue`
+are banned too: the retired labels were written both ways); or a body of `bump_requeue` or
+`bump_poison_cleared` in `spira/lib.sh` containing `label add` or `bump_counter`. A missing
+`spira/lib.sh` is a refusal; a missing `bump_*` function is a finding, since an absent body
+would otherwise read as clean.
+
 ## Rule `tmux-scope-fence`
 
 Ported from `spira/tmux-scope-fence.sh` (deleted).
