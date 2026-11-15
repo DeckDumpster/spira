@@ -332,6 +332,21 @@ struct Staged {
 pub(crate) const PAGE: usize = 1_000;
 /// The keys with a stored expiry one gc pass deletes: eight txns of [`limits::MAX_TXN_OPS`].
 pub const EXPIRE_PER_PASS: usize = 1_024;
+
+/// The wall time an audit record was written at, when it carries one.
+fn recorded_at(v: &Version) -> Result<Option<u64>> {
+    #[derive(Deserialize)]
+    struct Data {
+        at: Option<u64>,
+    }
+    #[derive(Deserialize)]
+    struct Rec {
+        data: Option<Data>,
+    }
+    let r: Rec = serde_json::from_slice(&v.value)
+        .map_err(|e| Error::Backend(format!("undecodable value: {e}")))?;
+    Ok(r.data.and_then(|d| d.at))
+}
 const WATCH_MAINS: usize = 1_000;
 /// The real-time slice a waiting watch re-reads the injected clock at: the virtual clock has
 /// no wake-up of its own.
