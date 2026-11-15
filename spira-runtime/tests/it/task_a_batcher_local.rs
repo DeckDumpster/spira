@@ -1121,6 +1121,14 @@ fn sp_pi2ojm_an_opened_round_the_queue_does_not_hold_yet_is_left_waiting() {
 }
 
 #[test]
+fn sp_64x7v2_adopting_a_late_opened_round_resets_the_failed_open_count() {
+    let mut carry = opened_unadvanced();
+    carry.repos.get_mut("spira").unwrap().pace.open_failed = 2;
+    let (carry, _) = decide(&carry, &queue_holds("r9", &["sp-a", "sp-b"]));
+    assert_eq!(carry.repos["spira"].pace.open_failed, 0);
+}
+
+#[test]
 fn sp_pi2ojm_the_late_round_open_outcome_after_the_adoption_launches_no_second_leg() {
     let (carry, _) = decide(&opened_unadvanced(), &queue_holds("r9", &["sp-a", "sp-b"]));
     let (_, acts) = on_outcome(&carry, ROUND_OPEN, true, &serde_json::to_string(&Opened { batch: "r9".into(), ..Opened::default() }).unwrap(), &Leg { why: "suites".into(), ..Leg::on("spira") }, NOW);
