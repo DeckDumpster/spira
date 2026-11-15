@@ -522,6 +522,15 @@ fn land_whose_record_another_landing_wrote_exits_zero() {
 }
 
 #[test]
+fn land_whose_landed_row_has_its_head_off_the_landing_ref_still_alarms() {
+    let (t, batch) = certified_round();
+    t.lc.landed_first.set(true);
+    assert_eq!(t.run(&["round", "land", &batch]), 1, "{}", t.err());
+    assert!(t.err().contains("ALARM"), "{}", t.err());
+    assert!(marker(&t, &batch, "unrecorded").exists());
+}
+
+#[test]
 fn land_retries_a_record_that_got_no_reply() {
     let (t, batch) = certified_round();
     t.lc.land_no_reply_once.set(true);
