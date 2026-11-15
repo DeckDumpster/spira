@@ -9,6 +9,15 @@ Use when: First, and again after any amendment or reopen.
 Checks:
   - the bead is the bound one
 
+### work logs
+Lists the kept full output of every step that judged your bead after a submit, or prints one file of it.
+Use when: Your bead was sent back and the brief's digest is not enough: the gate, a round or sift kept the whole output.
+Arguments:
+  [<entry> <file>]   (no argument lists the entries and their files)
+Checks:
+  - the entry is one your own bead's `send-back-logs` facts name
+  - an entry is kept SPIRA_SENDBACK_KEEP_DAYS days
+
 ### work prime
 Prints this whole manual, generated from the code.
 Use when: Before you begin.

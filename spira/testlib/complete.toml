@@ -358,6 +358,7 @@ lanes = "ops groomer mimir czar warden mender pilgrimage skuld"
 lanes_max_live = 2
 ffx_vocabulary_mode = "enforce"
 otel_keep_days = 14
+sendback_keep_days = 7
 victorialogs_url = "http://127.0.0.1:19428"
 beads_sql_host = "127.0.0.1"
 beads_sql_port = "3307"
