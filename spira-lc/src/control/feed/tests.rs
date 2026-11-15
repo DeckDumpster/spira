@@ -425,6 +425,8 @@ fn store_usage_hot_and_file_are_served_on_sqlite_and_refused_elsewhere() {
     let mem = store(MemBackend::new(), &VirtualClock::new(0));
     let (code, out) = hot(&mem);
     assert_eq!((code, out.starts_with("cannot tell: ")), (2, true), "{out}");
+    let (code, out) = verbs::run(&mem, &["store-usage", "--versions"].map(String::from));
+    assert_eq!((code, out.starts_with("cannot tell: ")), (2, true), "{out}");
     let (code, _) = verbs::run(&mem, &["store-usage", "--file"].map(String::from));
     assert_eq!(code, 2);
     on_sqlite(|s| {
@@ -436,6 +438,14 @@ fn store_usage_hot_and_file_are_served_on_sqlite_and_refused_elsewhere() {
         assert_eq!(v["keys"].as_array().map(Vec::len), Some(1), "{out}");
         let (code, out) = verbs::run(s, &["store-usage", "--hot", "1", "--revs", "999999"].map(String::from));
         assert_eq!(code, 0, "a window wider than the ring counts what the ring holds: {out}");
+        let (code, out) = verbs::run(s, &["store-usage", "--versions", "--limit", "1"].map(String::from));
+        assert_eq!(code, 0, "{out}");
+        let (code, out) = verbs::run(s, &["store-usage", "--versions", "--after-key", "zzz"].map(String::from));
+        assert_eq!(code, 2, "{out}");
+        assert!(out.contains("--after-main"), "{out}");
+        let (code, out) = verbs::run(s, &["store-usage", "--versions", "--after-main", "1"].map(String::from));
+        assert_eq!(code, 2, "{out}");
+        assert!(out.contains("--after-key"), "{out}");
         let (code, out) = verbs::run(s, &["store-usage", "--file"].map(String::from));
         assert_eq!(code, 0, "{out}");
         let v: Value = serde_json::from_str(&out).unwrap();

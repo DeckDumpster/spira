@@ -35,7 +35,7 @@ use runtime::ports::Clock;
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension, TransactionBehavior};
 use state_store::history::{overlay, AsOf, Written};
 use state_store::phases::{self, Phase};
-use state_store::{Backend, Error, History, LogEntry, Result, Rev, UsagePage, Version, Write};
+use state_store::{Backend, Error, History, LogEntry, Result, Rev, UsagePage, Version, VersionUsagePage, Write};
 
 use dated::{DatedFile, Files, SideRow, RECEIPTS};
 use outbox::Outbox;
@@ -499,8 +499,9 @@ fn version_row(r: &rusqlite::Row<'_>, from: usize) -> rusqlite::Result<Option<Ve
 /// The live keys after `?1`, each with its value's bytes: one key-ordered range over `latest`.
 const USAGE_KEYS: &str =
     "SELECT key, length(CAST(value AS BLOB)) FROM latest WHERE key > ?1 ORDER BY key LIMIT ?2";
-const USAGE_PREFIX: &str =
-    "CAST(CASE WHEN instr(key, X'2F') > 0 THEN substr(key, 1, instr(key, X'2F')) ELSE key END AS TEXT)";
+/// The version rows strictly after `(?1, ?2)`: one range of the `versions` primary key.
+const VERSION_USAGE: &str = "SELECT key, main, length(CAST(coalesce(value, X'') AS BLOB)) FROM versions
+     WHERE (key, main) > (?1, ?2) ORDER BY key, main LIMIT ?3";
 
 /// The head's live keys in `[?1, ?2)`: one key-ordered range over `latest`, reading its page.
 const LATEST_BOUNDED: &str = "SELECT key, main, sub, value, create_main, create_sub FROM latest
@@ -1290,32 +1291,41 @@ impl Backend for SqliteBackend {
                 }
             }
             steps.fetch_add(u64::try_from(stmt.reset_status(rusqlite::StatementStatus::VmStep)).unwrap_or(0), Ordering::Relaxed);
-            let full = page.examined == limit;
-            let hi = if full { last.clone() } else { None };
-            page.next = hi.clone();
-            for u in page.prefixes.values_mut() {
-                u.versions = Some(0);
-                u.version_bytes = Some(0);
+            if page.examined == limit {
+                page.next = last;
             }
-            let sql = format!(
-                "SELECT {USAGE_PREFIX}, count(*), sum(length(CAST(coalesce(value, X'') AS BLOB)))
-                 FROM versions WHERE key > ?1 AND (?2 IS NULL OR key <= ?2) GROUP BY 1"
-            );
-            let mut stmt = conn.prepare_cached(&sql).map_err(db)?;
+            Ok(page)
+        })
+    }
+
+    fn version_usage_page(&self, after: Option<(&str, u64)>, limit: usize) -> Result<VersionUsagePage> {
+        self.read(|conn, _snap, deadline| {
+            let (key, main) = after.map_or((Vec::new(), -1), |(k, m)| (k.as_bytes().to_vec(), i64::try_from(m).unwrap_or(i64::MAX)));
+            let sql_limit = i64::try_from(limit).unwrap_or(i64::MAX);
+            let mut page = VersionUsagePage::default();
+            let mut last = None;
+            let mut stmt = conn.prepare_cached(VERSION_USAGE).map_err(db)?;
             stmt.reset_status(rusqlite::StatementStatus::VmStep);
             {
-                let hi = hi.map(String::into_bytes);
-                let mut rows = stmt.query(params![lo, hi]).map_err(db)?;
+                let mut rows = stmt.query(params![key, main, sql_limit]).map_err(db)?;
                 while let Some(r) = rows.next().map_err(db)? {
                     deadline()?;
-                    let prefix: String = r.get(0).map_err(db)?;
-                    let (n, bytes): (i64, Option<i64>) = (r.get(1).map_err(db)?, r.get(2).map_err(db)?);
-                    let u = page.prefixes.entry(prefix).or_default();
-                    u.versions = Some(u.versions.unwrap_or(0) + u64::try_from(n).unwrap_or(0));
-                    u.version_bytes = Some(u.version_bytes.unwrap_or(0) + u64::try_from(bytes.unwrap_or(0)).unwrap_or(0));
+                    let key = key_of(r.get::<_, Vec<u8>>(0).map_err(db)?)?;
+                    let main: i64 = r.get(1).map_err(db)?;
+                    let bytes: i64 = r.get(2).map_err(db)?;
+                    let u = page.prefixes.entry(state_store::backend::usage_prefix(&key).to_string()).or_default();
+                    u.versions += 1;
+                    u.version_bytes += u64::try_from(bytes).unwrap_or(0);
+                    page.examined += 1;
+                    last = Some((key, u64::try_from(main).unwrap_or(0)));
                 }
             }
-            steps.fetch_add(u64::try_from(stmt.reset_status(rusqlite::StatementStatus::VmStep)).unwrap_or(0), Ordering::Relaxed);
+            self.0
+                .read_steps
+                .fetch_add(u64::try_from(stmt.reset_status(rusqlite::StatementStatus::VmStep)).unwrap_or(0), Ordering::Relaxed);
+            if page.examined == limit {
+                page.next = last;
+            }
             Ok(page)
         })
     }
@@ -1889,20 +1899,25 @@ mod tests {
         b
     }
 
-    fn usage(keys: u64, bytes: u64, versions: u64, version_bytes: u64) -> state_store::Usage {
-        state_store::Usage { keys, bytes, versions: Some(versions), version_bytes: Some(version_bytes) }
+    fn usage(keys: u64, bytes: u64) -> state_store::Usage {
+        state_store::Usage { keys, bytes }
+    }
+
+    fn vusage(versions: u64, version_bytes: u64) -> state_store::VersionUsage {
+        state_store::VersionUsage { versions, version_bytes }
     }
 
     #[test]
-    fn usage_page_counts_each_prefixs_keys_and_bytes_and_the_version_rows_a_store_inherited() {
+    fn usage_page_counts_each_prefixs_keys_and_bytes_and_version_usage_page_its_inherited_rows() {
         let dir = testkit::TempDir::new("sqlite-usage");
         let b = usage_store(&dir);
         let page = b.usage_page(None, 1000).unwrap();
         assert_eq!(page.next, None);
         assert_eq!(page.examined, 6);
-        assert_eq!(page.prefixes["a/"], usage(2, 5, 0, 0), "a commit writes no version row");
-        assert_eq!(page.prefixes["b/"], usage(2, 5, 0, 0));
-        assert_eq!(page.prefixes["events/"], usage(2, 7, 0, 0));
+        assert_eq!(page.prefixes["a/"], usage(2, 5));
+        assert_eq!(page.prefixes["b/"], usage(2, 5));
+        assert_eq!(page.prefixes["events/"], usage(2, 7));
+        assert!(b.version_usage_page(None, 1000).unwrap().prefixes.is_empty(), "a commit writes no version row");
         for (i, key) in ["a/old", "a/older", "b/old"].iter().enumerate() {
             exec(
                 &lock(&b.0.writer).conn,
@@ -1911,9 +1926,86 @@ mod tests {
             )
             .unwrap();
         }
-        let page = b.usage_page(None, 1000).unwrap();
-        assert_eq!(page.prefixes["a/"], usage(2, 5, 2, 8));
-        assert_eq!(page.prefixes["b/"], usage(2, 5, 1, 4));
+        let page = b.version_usage_page(None, 1000).unwrap();
+        assert_eq!(page.next, None);
+        assert_eq!(page.prefixes["a/"], vusage(2, 8));
+        assert_eq!(page.prefixes["b/"], vusage(1, 4));
+    }
+
+    /// One key of 200,000 versions beside two keys of one.
+    fn history_store(dir: &testkit::TempDir) -> SqliteBackend {
+        let path = dir.path().join("history.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            for sql in SCHEMA {
+                exec(&conn, sql, []).unwrap();
+            }
+            let hot = "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 200000)
+                 INSERT INTO versions (key, main, sub, value, create_main, create_sub, version)
+                 SELECT CAST('a/hot' AS BLOB), i, 0, CAST('v' AS BLOB), 1, 0, i FROM n";
+            exec(&conn, hot, []).unwrap();
+            for k in ["b/1", "b/2"] {
+                exec(
+                    &conn,
+                    "INSERT INTO versions (key, main, sub, value, create_main, create_sub, version)
+                     VALUES (CAST(?1 AS BLOB), 1, 0, CAST('vv' AS BLOB), 1, 0, 1)",
+                    params![k],
+                )
+                .unwrap();
+            }
+            exec(&conn, "UPDATE meta SET value = 200000 WHERE name = 'head'", []).unwrap();
+        }
+        SqliteBackend::open(&path, Options { jump_on_open: false, ..Options::default() }).unwrap()
+    }
+
+    #[test]
+    fn a_key_page_beside_a_key_of_200000_versions_reads_its_page() {
+        let dir = testkit::TempDir::new("sqlite-usage-hot");
+        let b = history_store(&dir);
+        b.take_read_steps();
+        let page = b.usage_page(None, 1).unwrap();
+        let steps = b.take_read_steps();
+        assert!(steps <= 20, "{steps} VM steps for a page of 1");
+        assert_eq!(page.examined, 1);
+        assert_eq!(page.next.as_deref(), Some("a/hot"));
+    }
+
+    #[test]
+    fn a_versions_page_over_a_key_of_200000_versions_stops_at_its_cap_with_a_cursor() {
+        let dir = testkit::TempDir::new("sqlite-versions-cap");
+        let b = history_store(&dir);
+        b.take_read_steps();
+        let page = b.version_usage_page(None, 1000).unwrap();
+        let steps = b.take_read_steps();
+        assert_eq!(page.examined, 1000);
+        assert_eq!(page.next, Some(("a/hot".to_string(), 1000)));
+        assert_eq!(page.prefixes["a/"].versions, 1000);
+        assert!(steps <= 20 * 1000, "{steps} VM steps");
+        let literal = VERSION_USAGE.replace("?1", "X''").replace("?2", "-1").replace("?3", "10");
+        let steps = plan(&b, &literal);
+        assert!(steps.iter().any(|s| s.starts_with("SEARCH versions USING INDEX sqlite_autoindex_versions_1")), "{steps:?}");
+        assert!(steps.iter().all(|s| !s.starts_with("SCAN") && !s.contains("TEMP B-TREE")), "{steps:?}");
+    }
+
+    #[test]
+    fn walking_versions_pages_sums_to_the_table() {
+        let dir = testkit::TempDir::new("sqlite-versions-walk");
+        let b = history_store(&dir);
+        let mut sum: std::collections::BTreeMap<String, state_store::VersionUsage> = Default::default();
+        let mut after: Option<(String, u64)> = None;
+        loop {
+            let page = b.version_usage_page(after.as_ref().map(|(k, m)| (k.as_str(), *m)), 10_000).unwrap();
+            assert!(page.examined <= 10_000);
+            for (p, u) in &page.prefixes {
+                sum.entry(p.clone()).or_default().add(u);
+            }
+            match page.next {
+                Some(n) => after = Some(n),
+                None => break,
+            }
+        }
+        assert_eq!(sum["a/"].versions, 200_000);
+        assert_eq!(sum["b/"], vusage(2, 4));
     }
 
     #[test]
