@@ -19,3 +19,9 @@ fn the_guest_runs_ami_setup_as_the_real_builds_do() {
     let call = GUEST.lines().find(|l| l.contains("round-vm/ami-setup.sh")).expect("the guest runs ami-setup.sh");
     assert_eq!(call.trim(), r#"bash -x round-vm/ami-setup.sh /root/tree "$toolchain" /root/.cargo"#, "three arguments, as setup_command and ssm-commands.jq pass");
 }
+
+#[test]
+fn the_guest_copies_only_the_listed_source_not_the_whole_mounted_tree() {
+    assert!(!GUEST.contains("cp -a /src/."), "the guest copies the tree's target/ with the source");
+    assert!(GUEST.contains("tar --null -C /src -T /tree.list"), "the guest copies the host's list of source files");
+}

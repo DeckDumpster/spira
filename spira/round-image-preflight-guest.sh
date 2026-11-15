@@ -12,7 +12,7 @@
 set -euo pipefail
 toolchain="$1"
 export DEBIAN_FRONTEND=noninteractive
-rm -rf /root/tree && mkdir -p /root/tree && cp -a /src/. /root/tree/
+rm -rf /root/tree && mkdir -p /root/tree && tar --null -C /src -T /tree.list -cf - | tar -C /root/tree -xf -
 
 mkdir -p /etc/systemd/system /cache/toolchains /root/.cargo/rustup
 ln -sfn /cache/registry /root/.cargo/registry
