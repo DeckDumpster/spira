@@ -1875,6 +1875,7 @@ impl<'w, W: World> Trial<'w, W> {
                 NOVERDICT | BASEFAIL => ("infra", vd.reason.clone()),
                 _ => ("red", vd.reason.clone()),
             };
+            w.keep_logs(&[self.s.bead.as_str()], &[("trial.out".to_string(), vd.msg.clone().into_bytes())]);
             if o == "red" {
                 w.lc_failure(&self.s.bead, &self.s.branch_tip, &self.s.changed, &vd.msg);
             }

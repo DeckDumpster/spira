@@ -37,12 +37,13 @@ pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
         "split" => cmd_file(bead_id, rest, "split", conn),
         "superseded-by" => cmd_superseded_by(bead_id, rest, conn),
         "ack" => cmd_ack(bead_id, rest),
+        "logs" => cmd_logs(bead_id, rest, conn),
         "fence" => cmd_fence(rest),
         "forge" => cmd_forge(bead_id, rest),
         other if LANE_VERBS.contains(&other) => cmd_lane(bead_id, other, rest, conn),
         other => (
             CANNOT_TELL,
-            format!("work: unknown verb {other:?} (want show, note, submit, done, blocked, file-followup, split, superseded-by, ack, {})", LANE_VERBS.join(", ")),
+            format!("work: unknown verb {other:?} (want show, note, submit, done, blocked, file-followup, split, superseded-by, ack, logs, {})", LANE_VERBS.join(", ")),
         ),
     }
 }
@@ -57,9 +58,78 @@ fn cmd_show(bead_id: &str, conn: &Conn) -> (i32, String) {
         Err(e) => return (CANNOT_TELL, format!("cannot tell: {e}")),
     };
     match crate::plane::read(conn, &[s("show"), bead_id.to_string()]) {
-        (0, row) => (0, with_lifecycle(&text, &row)),
+        (0, row) => (0, with_logs(with_lifecycle(&text, &row), kept_entries(bead_id, conn).len())),
         (1, _) => (0, format!("{text}\nLIFECYCLE: no row\n")),
         (_, e) => (CANNOT_TELL, e),
+    }
+}
+
+const LOGS_KIND: &str = spira_config::ejection::LOGS_KIND;
+
+fn with_logs(text: String, kept: usize) -> String {
+    if kept == 0 {
+        text
+    } else {
+        format!("{text}LOGS: {kept} kept — work logs\n")
+    }
+}
+
+/// The bead's `send-back-logs` facts, newest first: (epoch, actor, entry id).
+fn kept_entries(bead_id: &str, conn: &Conn) -> Vec<(i64, String, String)> {
+    let rows = conn.query(&crate::facts::select_sql(&[bead_id.to_string()], &[LOGS_KIND.to_string()], None)).unwrap_or_default();
+    entries_of(&rows)
+}
+
+fn entries_of(rows: &[serde_json::Value]) -> Vec<(i64, String, String)> {
+    let text = |r: &serde_json::Value, k: &str| r.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let mut out: Vec<(i64, String, String)> = rows
+        .iter()
+        .filter(|r| text(r, "event_type") == LOGS_KIND)
+        .map(|r| (text(r, "at").parse().unwrap_or(0), text(r, "actor"), text(r, "new_value")))
+        .collect();
+    out.reverse();
+    out
+}
+
+/// `work logs [<entry> <file>]`: the entries this bead's own facts name, or one file of one.
+fn cmd_logs(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
+    let run = match spira_config::process::cfg("SPIRA_RUN") {
+        Ok(r) => r,
+        Err(e) => return (CANNOT_TELL, format!("cannot tell: {e}")),
+    };
+    let rows = match conn.query(&crate::facts::select_sql(&[bead_id.to_string()], &[LOGS_KIND.to_string()], None)) {
+        Ok(r) => r,
+        Err(e) => return (CANNOT_TELL, format!("cannot tell: {e:?}")),
+    };
+    logs_out(&rows, std::path::Path::new(&run), &split_reserved(args).args)
+}
+
+fn logs_out(rows: &[serde_json::Value], run: &std::path::Path, args: &[String]) -> (i32, String) {
+    use spira_config::sendback;
+    let kept = entries_of(rows);
+    match args {
+        [] if kept.is_empty() => (0, "no send-back logs kept for this bead\n".into()),
+        [] => {
+            let mut out = String::new();
+            for (at, actor, id) in &kept {
+                out += &format!("{} {actor} {id}\n", crate::callers::fmt_utc(*at));
+                match sendback::list(run, id) {
+                    Ok(files) => files.iter().for_each(|(f, n)| out += &format!("    {f} {n} bytes\n")),
+                    Err(e) => out += &format!("    ({e})\n"),
+                }
+            }
+            (0, out)
+        }
+        [id, file] => {
+            if !kept.iter().any(|(_, _, k)| k == id) {
+                return (REFUSED, format!("work logs: {id:?} is not an entry this bead's facts name; `work logs` lists them"));
+            }
+            match sendback::read(run, id, file) {
+                Ok(bytes) => (0, String::from_utf8_lossy(&bytes).into_owned()),
+                Err(e) => (REFUSED, format!("work logs: {e}")),
+            }
+        }
+        _ => (CANNOT_TELL, "work logs: usage: work logs [<entry> <file>]".into()),
     }
 }
 
@@ -1025,7 +1095,7 @@ pub const LANE_VERBS: &[&str] = &[
     "sop", "census", "queue", "landing-pass", "strand", "fence", "hel", "mender", "forge",
 ];
 
-const BOUND_VERBS: &[&str] = &["show", "note", "submit", "done", "blocked", "file-followup", "split", "superseded-by", "ack"];
+const BOUND_VERBS: &[&str] = &["show", "note", "submit", "done", "blocked", "file-followup", "split", "superseded-by", "ack", "logs"];
 
 /// The tool verbs: `work <verb> <sub> ...` runs `<program> <sub> ...` — a harness tool that
 /// itself reaches bd, with `<sub>` one of the operations [`ALLOW`] names for it. `census`
@@ -1073,6 +1143,7 @@ pub const ALLOW: &[(&str, &[&str])] = &[
     ("split", ANY),
     ("superseded-by", ANY),
     ("ack", ANY),
+    ("logs", ANY),
     // Reads and the operator mailbox.
     ("ask", ANY),
     ("read", ANY),
@@ -2608,6 +2679,46 @@ mod tests {
         assert!(!out.contains("holder"), "{out}");
     }
 
+
+    fn logs_fixture() -> (testkit::TempDir, Vec<serde_json::Value>) {
+        let run = testkit::TempDir::new("work-logs");
+        let id = spira_config::sendback::keep(run.path(), "gate", &[("trial.out".to_string(), b"FAIL test-b".to_vec())], 7, 1000).unwrap();
+        let rows = vec![serde_json::json!({"issue_id": "sp-1", "event_type": LOGS_KIND, "new_value": id, "actor": "gate", "at": "1000"})];
+        (run, rows)
+    }
+
+    #[test]
+    fn logs_lists_the_entry_and_its_files_and_prints_one_of_them() {
+        let (run, rows) = logs_fixture();
+        let (code, out) = logs_out(&rows, run.path(), &[]);
+        assert_eq!(code, 0);
+        assert!(out.contains("gate gate-1000-0") && out.contains("trial.out 11 bytes"), "{out}");
+        assert_eq!(logs_out(&rows, run.path(), &[s("gate-1000-0"), s("trial.out")]), (0, s("FAIL test-b")));
+    }
+
+    #[test]
+    fn logs_refuses_an_entry_the_bead_has_no_fact_for() {
+        let (run, rows) = logs_fixture();
+        let other = spira_config::sendback::keep(run.path(), "gate", &[("trial.out".to_string(), b"x".to_vec())], 7, 2000).unwrap();
+        let (code, out) = logs_out(&rows, run.path(), &[other, s("trial.out")]);
+        assert_eq!(code, REFUSED, "{out}");
+    }
+
+    #[test]
+    fn logs_lists_the_newest_entry_first() {
+        let rows: Vec<serde_json::Value> = [("a-1-0", "1"), ("b-2-0", "2")]
+            .iter()
+            .map(|(id, at)| serde_json::json!({"issue_id": "sp-1", "event_type": LOGS_KIND, "new_value": id, "actor": "x", "at": at}))
+            .collect();
+        let ids: Vec<String> = entries_of(&rows).into_iter().map(|e| e.2).collect();
+        assert_eq!(ids, ["b-2-0", "a-1-0"]);
+    }
+
+    #[test]
+    fn show_names_work_logs_when_the_bead_has_kept_entries() {
+        assert!(with_logs(s("T\n"), 1).ends_with("LOGS: 1 kept — work logs\n"));
+        assert_eq!(with_logs(s("T\n"), 0), "T\n");
+    }
 
     fn scripted<'a>(answer: &str, seen: &'a std::cell::RefCell<Vec<Vec<String>>>) -> impl Fn(&[String]) -> Result<String, content_sql::Failure> + 'a {
         let answer = answer.to_string();

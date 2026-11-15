@@ -574,7 +574,9 @@ pub fn note(e: &Effects, spec: &EffectSpec) -> Result<String, String> {
 
 pub fn send_back(e: &Effects, spec: &EffectSpec) -> Result<String, String> {
     let w = write_of(&spec.input, SEND_BACK)?;
-    sifts::lc_gate_red(&client(e, spec.deadline_ms), &w.id, &w.tip, &w.text).map(|()| format!("sent {} back", w.id))
+    let lc = client(e, spec.deadline_ms);
+    sifts::keep_sift_logs(&lc, &e.world.run_dir, &w.id, &w.text);
+    sifts::lc_gate_red(&lc, &w.id, &w.tip, &w.text).map(|()| format!("sent {} back", w.id))
 }
 
 pub fn record_pass(e: &Effects, spec: &EffectSpec) -> Result<String, String> {

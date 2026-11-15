@@ -349,6 +349,7 @@ struct LiveOps<'a> {
     key: String,
     batch: Option<&'a str>,
     prior: batcher::mender::Prior,
+    send_back: Option<String>,
 }
 
 const MEND_DEADLINE_SECS: i64 = 900;
@@ -430,6 +431,7 @@ impl LiveOps<'_> {
             redtip::record(&self.env.run, &self.repo.name, &member.id, &member.tip);
             let files = self.changed.get(&member.id).cloned().unwrap_or_default();
             io::record_ejection(self.env, &member.id, &member.tip, &files, (Path::new(&self.evidence), self.pass.as_deref()), suites, fails);
+            io::reference_round_logs(self.env, &mut self.send_back, Path::new(&self.evidence), self.pass.as_deref(), &member.id);
         }
         match self.batch {
             Some(batch) => {
@@ -969,6 +971,7 @@ fn stabilize_round(
         ),
         batch,
         prior: batcher::mender::Prior::default(),
+        send_back: None,
     };
     let budget = batcher::attrib::Budget::with_default(env_.maxpar, env_.round_slots);
     let round_members = members.clone();
@@ -2209,6 +2212,7 @@ fn attribute_run(o: &Opts) -> Result<(), String> {
         key: batcher::core::round_key(&given),
         batch: o.batch.as_deref(),
         prior: batcher::mender::Prior::default(),
+        send_back: None,
     };
     let budget = batcher::attrib::Budget::with_default(env_.maxpar, env_.round_slots);
     let end = drive::attribute_round(&mut runner, &mut ops, &suites, members.clone(), budget);

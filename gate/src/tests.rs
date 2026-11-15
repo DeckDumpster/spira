@@ -18,6 +18,7 @@ const MERGE_SHA: &str = "m3rg3";
 
 type UnitRuns = HashMap<(String, &'static str), (i32, String)>;
 /// (bead, tip, changed files, output) of each `lc_failure`.
+type KeptLogs = (Vec<String>, Vec<(String, Vec<u8>)>);
 type Recorded = (String, String, Vec<String>, String);
 
 struct Fake {
@@ -53,6 +54,7 @@ struct Fake {
     yields: RefCell<Vec<Vec<String>>>,
     lc: RefCell<Vec<Vec<String>>>,
     failures: RefCell<Vec<Recorded>>,
+    kept_logs: RefCell<Vec<KeptLogs>>,
     gate_starts: RefCell<Vec<String>>,
     lc_refusal: RefCell<String>,
     removed_trees: Cell<u32>,
@@ -245,6 +247,7 @@ impl Fake {
             yields: RefCell::new(Vec::new()),
             lc: RefCell::new(Vec::new()),
             failures: RefCell::new(Vec::new()),
+            kept_logs: RefCell::new(Vec::new()),
             gate_starts: RefCell::new(Vec::new()),
             lc_refusal: RefCell::new(String::new()),
             removed_trees: Cell::new(0),
@@ -574,6 +577,9 @@ impl World for Fake {
     }
     fn lc_failure(&self, bead: &str, tip: &str, files: &[String], output: &str) {
         self.failures.borrow_mut().push((bead.into(), tip.into(), files.to_vec(), output.into()));
+    }
+    fn keep_logs(&self, beads: &[&str], files: &[(String, Vec<u8>)]) {
+        self.kept_logs.borrow_mut().push((beads.iter().map(|b| b.to_string()).collect(), files.to_vec()));
     }
     fn lc_certify(&self, bead: &str, tip: &str, outcome: &str, detail: &str, step: &str, message: &str) -> String {
         self.lc.borrow_mut().push(
@@ -2177,6 +2183,26 @@ fn a_red_gate_hands_its_failing_output_to_the_bead_before_certifying() {
     assert_eq!(got.len(), 1, "{got:?}");
     assert_eq!((got[0].0.as_str(), got[0].1.as_str()), ("sp-a", BR));
     assert!(got[0].3.contains("test-b.sh"), "{:?}", got[0].3);
+}
+
+#[test]
+fn a_red_and_a_passing_verdict_on_a_bead_tip_each_keep_one_send_back_entry_holding_the_message() {
+    for (rc, out) in [(1, "test-a.sh ok\ntest-b.sh RED"), (0, "test-a.sh ok")] {
+        let f = Fake::new();
+        f.put_var("SPIRA_GATE_BEAD", "sp-a");
+        f.runs.borrow_mut().insert(MERGE_SHA.into(), (rc, out.into()));
+        f.run();
+        let kept = f.kept_logs.borrow();
+        assert_eq!(kept.len(), 1, "rc {rc}: {kept:?}");
+        assert_eq!(kept[0].0, vec!["sp-a".to_string()]);
+        assert_eq!(kept[0].1.len(), 1);
+        assert_eq!(kept[0].1[0].0, "trial.out");
+        let text = String::from_utf8(kept[0].1[0].1.clone()).unwrap();
+        assert!(text.contains("test-a.sh"), "{text}");
+        if rc == 1 {
+            assert_eq!(text, f.failures.borrow()[0].3, "the verdict's message");
+        }
+    }
 }
 
 #[test]
