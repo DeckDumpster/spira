@@ -497,6 +497,22 @@ pub struct Pace {
     /// The batch that last advanced `infra`: one round counts once.
     #[serde(default)]
     pub infra_batch: String,
+    #[serde(default)]
+    pub open_failed: u32,
+}
+
+/// The reason a failed `round_open` carries into the pace page; a timeout arrives as an empty body.
+fn open_failed_detail(ok: bool, body: &str) -> String {
+    if ok {
+        return "queue round open named no batch".into();
+    }
+    match body.trim() {
+        "" => {
+            let secs = ACTS.iter().find(|(e, _)| *e == ROUND_OPEN).map_or(0, |(_, ms)| ms / 1000);
+            format!("queue round open did not answer within {secs}s (the batcher.local.round_open deadline); a round it opened late is adopted by the next pass")
+        }
+        b => b.to_string(),
+    }
 }
 
 impl Pace {
@@ -509,6 +525,7 @@ impl Pace {
             orphan_since: self.orphan_since_ms / 1000,
             redriven: self.redriven.clone(),
             pause_lifts: self.pause_lifts,
+            open_failed: self.open_failed,
         }
     }
 
@@ -524,6 +541,7 @@ impl Pace {
             redriven: st.redriven.clone(),
             pause_lifts: st.pause_lifts,
             infra_batch: prev.infra_batch.clone(),
+            open_failed: st.open_failed,
         }
     }
 }
@@ -1841,10 +1859,11 @@ impl Machine<'_> {
                 }
                 if o.batch.is_empty() {
                     self.go(Trigger::OpenFailed);
-                    self.finish(pace::Outcome::OpenFailed, if ok { "queue round open named no batch" } else { body });
+                    self.finish(pace::Outcome::OpenFailed, &open_failed_detail(ok, body));
                     return;
                 }
                 self.rc.batch = Some(o.batch);
+                self.rc.pace = Pace::of(&pace::opened(&self.rc.pace.core()), &self.rc.pace);
                 self.opened(leg.why == "suites");
             }
             (State::Corpus | State::Attributing, CORPUS) | (State::Certifying, CERTIFY) if !ok && self.rc.leg.as_deref() == Some(leg.unit.as_str()) => self.leg_unstarted(&format!("it could not be started ({})", body.trim())),
@@ -1942,6 +1961,7 @@ impl Machine<'_> {
         let Some(held) = held else { return };
         eprintln!("{NAME} {}: round open's outcome did not arrive; adopting the queue's open round {} and starting its first pass", self.repo, held.id);
         self.rc.batch = Some(held.id.clone());
+        self.rc.pace = Pace::of(&pace::opened(&self.rc.pace.core()), &self.rc.pace);
         self.opened(self.rc.suites.unwrap_or(true));
     }
 
