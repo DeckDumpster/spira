@@ -659,10 +659,6 @@ pub struct Seams<'a> {
     pub sleep: &'a dyn Fn(Duration),
 }
 
-fn real_sleep(d: Duration) {
-    std::thread::sleep(d)
-}
-
 /// BLOCK until `holder_pid` holds a slot of `pool` (or inherits one), saying so on `say`.
 /// Never fails for waiting: an IO error on the pool directory is said and the job proceeds
 /// unadmitted (a scheduling tool never stops the world). `inherit` is the caller's
