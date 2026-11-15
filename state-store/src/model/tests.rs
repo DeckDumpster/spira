@@ -412,7 +412,7 @@ fn a_log_read_behind_the_head_is_stamped_with_how_far_back_it_read() {
     track(false);
     m.log(head - 7, 100).unwrap();
     let st = stamp();
-    assert_eq!((st.lag_revs, st.oldest, st.too_old), (Some(7), Some(head - 7), false));
+    assert_eq!((st.lag_revs, st.oldest, st.too_old, st.rev), (Some(7), Some(head - 7), false, None), "a log read leaves the reply rev as it was");
     track(false);
     m.get("k", head).unwrap();
     let st = stamp();

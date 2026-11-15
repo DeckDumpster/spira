@@ -55,6 +55,8 @@ struct Seen {
     wrote: Option<u64>,
     /// Every read goes to the inner backend.
     through: bool,
+    /// The lowest revision any read, including a log read, was made at.
+    oldest: Option<u64>,
     /// The most revisions any read was behind the copy's head.
     lag: Option<u64>,
     /// A read was answered `TooOld`, or the copy reloaded.
@@ -62,7 +64,7 @@ struct Seen {
 }
 
 thread_local! {
-    static SEEN: Cell<Seen> = const { Cell::new(Seen { on: false, read: None, wrote: None, through: false, lag: None, too_old: false }) };
+    static SEEN: Cell<Seen> = const { Cell::new(Seen { on: false, read: None, wrote: None, through: false, oldest: None, lag: None, too_old: false }) };
 }
 
 fn seen(f: impl FnOnce(&mut Seen)) {
@@ -82,7 +84,7 @@ fn through() -> bool {
 /// Starts recording, on this thread, the revisions the request's reads and writes are made at;
 /// `read_through` sends every read of the request to the inner backend. [`stamp`] ends it.
 pub fn track(read_through: bool) {
-    SEEN.with(|s| s.set(Seen { on: true, read: None, wrote: None, through: read_through, lag: None, too_old: false }));
+    SEEN.with(|s| s.set(Seen { on: true, read: None, wrote: None, through: read_through, oldest: None, lag: None, too_old: false }));
 }
 
 /// What a tracked request reflected and how far back it read.
@@ -110,7 +112,7 @@ pub fn stamp() -> Stamp {
                 (None, None) => None,
                 (r, w) => Some(r.unwrap_or(0).max(w.unwrap_or(0))),
             },
-            oldest: v.read.filter(|_| lag_revs.is_some()),
+            oldest: v.oldest.filter(|_| lag_revs.is_some()),
             lag_revs,
             too_old: v.too_old,
         }
@@ -119,6 +121,11 @@ pub fn stamp() -> Stamp {
 
 fn read_at(s: &mut Seen, at: u64, lag: u64) {
     s.read = Some(s.read.map_or(at, |r| r.min(at)));
+    lag_at(s, at, lag);
+}
+
+fn lag_at(s: &mut Seen, at: u64, lag: u64) {
+    s.oldest = Some(s.oldest.map_or(at, |r| r.min(at)));
     s.lag = Some(s.lag.map_or(lag, |l| l.max(lag)));
 }
 
@@ -488,7 +495,7 @@ impl<B: Backend> Backend for Modeled<B> {
 
     fn log(&self, from: u64, max_mains: usize) -> Result<Vec<LogEntry>> {
         let lag = self.revision().saturating_sub(from);
-        seen(|s| read_at(s, from, lag));
+        seen(|s| lag_at(s, from, lag));
         let r = self.inner.log(from, max_mains);
         note_too_old(&r);
         r
