@@ -131,6 +131,25 @@ pub const MIGRATIONS: &[&[&str]] = &[
         "DROP TABLE m2_audits",
         "DROP TABLE m2_entered",
     ],
+    // 3: `(owner, key)` for every live key whose `metadata.ownerReferences` names the
+    // owner, so the keys an owner leaves behind are a range. `events/`, `requests/` and
+    // `history/` hold no owners and are left out.
+    &[
+        "CREATE TABLE owner_refs (
+            owner BLOB NOT NULL,
+            key BLOB NOT NULL,
+            PRIMARY KEY (owner, key)
+        ) WITHOUT ROWID",
+        "INSERT OR IGNORE INTO owner_refs (owner, key)
+         SELECT CAST(j.value AS BLOB), l.key
+         FROM (SELECT key, CAST(value AS TEXT) AS v FROM latest
+               WHERE NOT (key >= CAST('events/' AS BLOB) AND key < CAST('events0' AS BLOB))
+                 AND NOT (key >= CAST('requests/' AS BLOB) AND key < CAST('requests0' AS BLOB))
+                 AND NOT (key >= CAST('history/' AS BLOB) AND key < CAST('history0' AS BLOB))
+                 AND json_valid(CAST(value AS TEXT))) AS l,
+              json_each(l.v, '$.metadata.ownerReferences') AS j
+         WHERE j.type = 'text'",
+    ],
 ];
 
 /// How many schema migrations this binary knows: what a store's `user_version` is checked
@@ -441,6 +460,35 @@ const STATE_BOUNDED: &str = "SELECT key, main, sub, value, create_main, create_s
      WHERE state = ?1 AND key >= ?2 AND key < ?3 ORDER BY key LIMIT ?4";
 const STATE_OPEN: &str = "SELECT key, main, sub, value, create_main, create_sub FROM latest
      WHERE state = ?1 AND key >= ?2 ORDER BY key LIMIT ?3";
+
+/// The head's live keys naming owner `?1`, after `?2`: one range of `owner_refs`.
+const OWNED_BY: &str = "SELECT key FROM owner_refs WHERE owner = ?1 AND key > ?2 ORDER BY key LIMIT ?3";
+
+/// Whether a key's value may name owners: the contract writes none under these prefixes.
+fn may_be_owned(key: &str) -> bool {
+    ![state_store::EVENTS_PREFIX, state_store::REQUESTS_PREFIX, state_store::HISTORY_PREFIX]
+        .iter()
+        .any(|p| key.starts_with(p))
+}
+
+/// Replaces `key`'s `owner_refs` rows with the owners `value` names (none for a delete), in the
+/// txn that writes `latest`.
+fn set_owner_refs(tx: &rusqlite::Transaction<'_>, key: &str, value: Option<&[u8]>) -> Result<()> {
+    if !may_be_owned(key) {
+        return Ok(());
+    }
+    let old: Option<Vec<u8>> = tx
+        .prepare_cached("SELECT value FROM latest WHERE key = ?1")
+        .and_then(|mut s| s.query_row([key.as_bytes()], |r| r.get(0)).optional())
+        .map_err(db)?;
+    for owner in old.map(|v| state_store::backend::owners_of(&v)).unwrap_or_default() {
+        exec(tx, "DELETE FROM owner_refs WHERE owner = ?1 AND key = ?2", params![owner.as_bytes(), key.as_bytes()])?;
+    }
+    for owner in value.map(state_store::backend::owners_of).unwrap_or_default() {
+        exec(tx, "INSERT OR IGNORE INTO owner_refs (owner, key) VALUES (?1, ?2)", params![owner.as_bytes(), key.as_bytes()])?;
+    }
+    Ok(())
+}
 
 /// A key's newest version into `latest`, in the txn that writes it to `versions`.
 const PUT_LATEST: &str = "INSERT OR REPLACE INTO latest
@@ -803,6 +851,7 @@ impl SqliteBackend {
                     .map_err(|_| Error::Backend("bulk_load of more than u32::MAX keys".into()))?;
                 ins.execute(params![key.as_bytes(), main, sub, value])
                     .map_err(db)?;
+                set_owner_refs(&tx, &key, Some(&value))?;
                 put_latest
                     .execute(params![key.as_bytes(), main, sub, value, main, sub, 1])
                     .map_err(db)?;
@@ -1053,10 +1102,33 @@ impl Backend for SqliteBackend {
         })
     }
 
-    fn gc_page(&self, after: Option<&str>, limit: usize) -> Result<(u64, Vec<(String, Version)>)> {
+    fn owned_by(
+        &self,
+        owner: &str,
+        after: Option<&str>,
+        limit: usize,
+        at: u64,
+    ) -> Result<Vec<String>> {
         self.read(|conn, snap, deadline| {
-            let rows = self.rows_outside(conn, Source::Head, &[state_store::EVENTS_PREFIX, state_store::HISTORY_PREFIX], after, limit, deadline)?;
-            Ok((snap.head, rows))
+            if at != snap.head {
+                return Err(Error::Stale {
+                    expected: at,
+                    head: snap.head,
+                });
+            }
+            deadline()?;
+            let mut stmt = conn.prepare_cached(OWNED_BY).map_err(db)?;
+            let rows = stmt
+                .query_map(
+                    params![
+                        owner.as_bytes(),
+                        after.map_or(&[][..], str::as_bytes),
+                        i64::try_from(limit).unwrap_or(i64::MAX)
+                    ],
+                    |r| r.get::<_, Vec<u8>>(0),
+                )
+                .map_err(db)?;
+            rows.map(|k| key_of(k.map_err(db)?)).collect()
         })
     }
 
@@ -1122,6 +1194,7 @@ impl Backend for SqliteBackend {
                             prev.map(|p| p.sub),
                         ])
                         .map_err(db)?;
+                        set_owner_refs(&tx, key, Some(value))?;
                         put_latest
                             .execute(params![
                                 key.as_bytes(),
@@ -1147,6 +1220,7 @@ impl Backend for SqliteBackend {
                             prev.sub,
                         ])
                         .map_err(db)?;
+                        set_owner_refs(&tx, key, None)?;
                         drop_latest.execute([key.as_bytes()]).map_err(db)?;
                     }
                 }
@@ -1631,6 +1705,63 @@ mod tests {
             .and_then(|mut s| s.query_row([], |r| r.get(0)))
             .unwrap();
         assert_eq!(mirrored, 0, "every version row mirrors its latest");
+    }
+
+    /// A store written before `owner_refs` existed answers `owned_by` once opened: the
+    /// migration fills the index from `latest`, skipping what is not JSON and what is not owned.
+    #[test]
+    fn owned_by_answers_from_rows_a_migration_filled_for_a_store_that_predates_the_index() {
+        let dir = testkit::TempDir::new("sqlite-owner-migration");
+        let path = dir.path().join("s.db");
+        let owned = |owners: &[&str]| {
+            serde_json::to_vec(&serde_json::json!({
+                "metadata": { "ownerReferences": owners }, "data": 1
+            }))
+            .unwrap()
+        };
+        let rows: Vec<(&str, i64, Vec<u8>)> = vec![
+            ("deps/a", 1, owned(&["owners/o"])),
+            ("deps/b", 2, owned(&["owners/o", "owners/p"])),
+            ("deps/c", 3, owned(&["owners/p"])),
+            ("deps/free", 4, br#"{"data":1}"#.to_vec()),
+            ("deps/raw", 5, b"\xff not json".to_vec()),
+            ("events/00000000000000000006", 6, owned(&["owners/o"])),
+        ];
+        {
+            let conn = Connection::open(&path).unwrap();
+            for sql in SCHEMA.iter().chain(MIGRATIONS[0]) {
+                exec(&conn, sql, []).unwrap();
+            }
+            conn.pragma_update(None, "user_version", 1).unwrap();
+            for table in ["versions", "latest"] {
+                let sql = format!(
+                    "INSERT INTO {table} (key, main, sub, value, create_main, create_sub, version)
+                     VALUES (?1, ?2, 0, ?3, ?2, 0, 1)"
+                );
+                for (k, main, v) in &rows {
+                    exec(&conn, &sql, params![k.as_bytes(), main, v]).unwrap();
+                }
+            }
+            exec(&conn, "UPDATE meta SET value = 6 WHERE name = 'head'", []).unwrap();
+        }
+        let opts = Options {
+            jump_on_open: false,
+            ..Options::default()
+        };
+        let b = SqliteBackend::open(&path, opts).unwrap();
+        assert_eq!(b.schema_migrations().unwrap(), SCHEMA_MIGRATIONS);
+        assert_eq!(b.owned_by("owners/o", None, 10, 6).unwrap(), ["deps/a", "deps/b"]);
+        assert_eq!(b.owned_by("owners/p", Some("deps/b"), 10, 6).unwrap(), ["deps/c"]);
+        assert_eq!(b.owned_by("owners/o", None, 10, 5), Err(Error::Stale { expected: 5, head: 6 }));
+    }
+
+    #[test]
+    fn the_owned_by_query_neither_scans_nor_sorts() {
+        let dir = testkit::TempDir::new("sqlite-owned-plan");
+        let b = SqliteBackend::open(&dir.path().join("o.db"), Options::default()).unwrap();
+        for step in plan(&b, OWNED_BY) {
+            assert!(!step.starts_with("SCAN") && !step.contains("TEMP B-TREE"), "{step}");
+        }
     }
 
     /// The migration counts in `user_version`, and a store from a binary that knows more

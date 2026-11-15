@@ -1,10 +1,10 @@
 //! The reference backend: every version kept in memory until compaction. A clone shares the
 //! same store, which is how a conformance rig reopens it to stage a restart.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use crate::backend::{Backend, LogEntry, Version, Write};
+use crate::backend::{owners_of, Backend, LogEntry, Version, Write};
 use crate::{Error, Result, Rev};
 
 #[derive(Clone, Default)]
@@ -17,6 +17,8 @@ struct State {
     /// Each key's versions in main order; `None` is a delete.
     keys: BTreeMap<String, Vec<(u64, Option<Version>)>>,
     log: Vec<LogEntry>,
+    /// `(owner, key)` for every live key at the head, kept in `commit`.
+    owned: BTreeSet<(String, String)>,
 }
 
 impl MemBackend {
@@ -86,6 +88,29 @@ impl Backend for MemBackend {
             .collect())
     }
 
+    fn owned_by(
+        &self,
+        owner: &str,
+        after: Option<&str>,
+        limit: usize,
+        at: u64,
+    ) -> Result<Vec<String>> {
+        let s = self.state();
+        if at != s.head {
+            return Err(Error::Stale {
+                expected: at,
+                head: s.head,
+            });
+        }
+        let from = (owner.to_string(), after.map_or(String::new(), |a| format!("{a}\0")));
+        Ok(s.owned
+            .range(from..)
+            .take_while(|(o, _)| o == owner)
+            .map(|(_, k)| k.clone())
+            .take(limit)
+            .collect())
+    }
+
     fn commit(&self, expect: u64, batch: &[Write]) -> Result<u64> {
         let mut s = self.state();
         if s.head != expect {
@@ -128,8 +153,24 @@ impl Backend for MemBackend {
                     },
                 ),
             };
+            let key = w.key().to_string();
+            let held: Vec<String> = s
+                .keys
+                .get(&key)
+                .and_then(|v| v.last())
+                .and_then(|(_, v)| v.as_ref())
+                .map(|v| owners_of(&v.value))
+                .unwrap_or_default();
+            for o in held {
+                s.owned.remove(&(o, key.clone()));
+            }
+            if let Write::Put { value, .. } = w {
+                for o in owners_of(value) {
+                    s.owned.insert((o, key.clone()));
+                }
+            }
             s.keys
-                .entry(w.key().to_string())
+                .entry(key)
                 .or_default()
                 .push((main, version));
             s.log.push(entry);

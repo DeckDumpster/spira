@@ -113,6 +113,10 @@ pub trait Backend: Send + Sync {
     ) -> Result<Vec<(String, Version)>> {
         range_in_state_by_scan(self, prefix, state, after, limit, at)
     }
+    /// The head's live keys whose value's `metadata.ownerReferences` names `owner`, strictly
+    /// after `after`, in key order, at most `limit`; `Stale` unless `at` is the head.
+    fn owned_by(&self, owner: &str, after: Option<&str>, limit: usize, at: u64)
+        -> Result<Vec<String>>;
     /// Applies `batch` as main `expect + 1`, or `Stale` if the head is no longer `expect`. The
     /// contract never puts a key in a batch twice.
     fn commit(&self, expect: u64, batch: &[Write]) -> Result<u64>;
@@ -150,12 +154,6 @@ pub trait Backend: Send + Sync {
     /// The file's total and free bytes.
     fn file_bytes(&self) -> Result<(u64, u64)> {
         Err(Error::Backend("not served by this backend".into()))
-    }
-    /// `gc_range` at the head of the read that serves it, with that head: the backend picks the
-    /// revision, so a store that commits between pages is never read at a past one.
-    fn gc_page(&self, after: Option<&str>, limit: usize) -> Result<(u64, Vec<(String, Version)>)> {
-        let head = self.head()?;
-        Ok((head, self.gc_range(after, limit, head)?))
     }
     /// `range("")` without the keys under `events/` and `history/`: what the GC controller and the
     /// TTL restart read, since neither carries metadata or a TTL and both grow without bound.
@@ -208,6 +206,13 @@ pub fn state_of(value: &[u8]) -> Option<String> {
         serde_json::Value::String(s) => Some(s),
         _ => None,
     }
+}
+
+/// The owners a value names in `metadata.ownerReferences`; none when it is not an object value.
+pub fn owners_of(value: &[u8]) -> Vec<String> {
+    serde_json::from_slice::<crate::Object>(value)
+        .map(|o| o.metadata.owner_references)
+        .unwrap_or_default()
 }
 
 /// [`Backend::range_in_state`] by paging through `range` and filtering on [`state_of`].

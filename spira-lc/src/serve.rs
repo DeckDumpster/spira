@@ -24,7 +24,6 @@ use crate::callers::Answer;
 use crate::db::Conn;
 
 const SWEEP_EVERY: Duration = Duration::from_secs(5);
-const GC_SCAN_EVERY: Duration = Duration::from_secs(300);
 
 static SPANS: std::sync::OnceLock<spira_otel::Sink> = std::sync::OnceLock::new();
 
@@ -167,7 +166,7 @@ pub fn run(args: &[String]) -> i32 {
         });
         if let Some(store) = control {
             std::thread::spawn(move || {
-                let gc = state_store::gc::Controller::with_scan_every(store.contract(), GC_SCAN_EVERY.as_millis() as u64);
+                let gc = state_store::gc::Controller::new(store.contract());
                 loop {
                     std::thread::sleep(SWEEP_EVERY);
                     gc_tick(&gc, store.contract());
@@ -273,13 +272,9 @@ fn gc_lines(tick: &state_store::gc::Tick, wall_ms: u64) -> Vec<String> {
             c.target - c.to
         ));
     }
-    let collected = tick.finalized.len() + tick.orphans.len() + tick.expired.len() + tick.trimmed;
-    let complete = tick.scan.as_ref().filter(|s| s.complete);
-    if complete.is_some() || collected > 0 {
-        let scan = complete.map_or(String::new(), |s| format!("scan complete: {} keys in {} pages, ", s.keys, s.pages));
+    if tick.orphans.len() + tick.expired.len() + tick.trimmed > 0 {
         lines.push(format!(
-            "spira-lc serve: {at} control-store gc: {scan}{} finalized, {} orphans, {} expired, {} trimmed",
-            tick.finalized.len(),
+            "spira-lc serve: {at} control-store gc: {} orphans, {} expired, {} trimmed",
             tick.orphans.len(),
             tick.expired.len(),
             tick.trimmed
@@ -668,22 +663,21 @@ mod tests {
     }
 
     #[test]
-    fn a_completed_gc_scan_is_logged_with_its_keys_pages_and_what_it_collected() {
-        use state_store::{Config, Contract, MemBackend, Ports};
-        let clock = runtime::ports::VirtualClock::new(0);
-        let contract = Contract::open(MemBackend::new(), Ports::virtual_clock(&clock), Config { min_lock_ttl_ms: 1_000 }).unwrap();
-        let store = crate::control::store::Store::new(contract, 1_000);
-        lc(&store, &["create-bead", "sp-a", "--repo", "spira", "--ready"], 1_000);
-        let gc = state_store::gc::Controller::new(store.contract()).with_page(1);
-        let tick = gc.pass(store.contract().now_ms());
-        let keys = tick.scan.as_ref().unwrap().keys;
-        assert!(keys > 1, "the fixture holds several keys");
-        let lines = super::gc_lines(&tick, 0);
-        assert_eq!(lines.len(), 1, "{lines:?}");
-        assert!(lines[0].contains(&format!("scan complete: {keys} keys in {} pages", keys + 1)), "{}", lines[0]);
-        assert!(lines[0].contains("0 finalized, 0 orphans"), "{}", lines[0]);
+    fn a_gc_pass_is_logged_only_for_what_it_collected_or_failed() {
         let idle = state_store::gc::Tick::default();
         assert!(super::gc_lines(&idle, 0).is_empty(), "a pass that did nothing says nothing");
+        let busy = state_store::gc::Tick { orphans: vec!["a".into(), "b".into()], trimmed: 3, ..Default::default() };
+        let lines = super::gc_lines(&busy, 0);
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(lines[0].ends_with("control-store gc: 2 orphans, 0 expired, 3 trimmed"), "{}", lines[0]);
+        assert!(!lines[0].contains("scan"), "{}", lines[0]);
+        let failed = state_store::gc::Tick {
+            failed: vec![state_store::gc::StepFailure { step: "orphan", error: state_store::Error::Backend("x".into()) }],
+            ..Default::default()
+        };
+        let lines = super::gc_lines(&failed, 0);
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(lines[0].contains("control-store gc orphan: "), "{}", lines[0]);
     }
 
     #[test]

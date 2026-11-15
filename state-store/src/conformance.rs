@@ -12,9 +12,9 @@ use crate::backend::{Backend, LogEntry, Version, Write};
 use crate::contract::{
     Compare, Config, Contract, Created, Deleted, Fence, Ports, Request, Selector, Txn, Watched,
 };
-use crate::gc::Controller;
+use crate::gc::{Controller, ORPHANS_PER_PASS};
 use crate::limits::{self, MAX_REQUEST_BYTES, MAX_TXN_COMPARES, MAX_TXN_OPS};
-use crate::{events_key, request_key, Error, Limit, Object, Result, Rev, HISTORY_PREFIX};
+use crate::{events_key, request_key, Error, Limit, Object, Result, Rev, HISTORY_PREFIX, ORPHANS_PREFIX};
 
 pub trait Rig {
     type B: Backend + 'static;
@@ -175,11 +175,8 @@ impl<B: Backend> Backend for Interpose<B> {
         self.record(&rows);
         Ok(rows)
     }
-    fn gc_page(&self, after: Option<&str>, limit: usize) -> Result<(u64, Vec<(String, Version)>)> {
-        let (head, rows) = self.inner.gc_page(after, limit)?;
-        self.gc_rows.fetch_add(rows.len(), Ordering::SeqCst);
-        self.record(&rows);
-        Ok((head, rows))
+    fn owned_by(&self, owner: &str, after: Option<&str>, limit: usize, at: u64) -> Result<Vec<String>> {
+        self.inner.owned_by(owner, after, limit, at)
     }
 }
 
@@ -626,13 +623,13 @@ pub fn a_lock_ttl_below_the_minimum_is_refused<R: Rig>(rig: &R) {
     c.lock("x", MIN_LOCK_TTL_MS, &req("2")).unwrap();
 }
 
-pub fn a_finalizer_blocks_delete_until_gc_removes_the_key_once_cleared<R: Rig>(rig: &R) {
+pub fn a_finalizer_blocks_delete_until_the_write_clearing_it_removes_the_key<R: Rig>(rig: &R) {
     let clock = VirtualClock::new(T0);
     let c = open(rig.fresh(), &clock);
     let gc = Controller::new(&c);
     c.create(
         "rec/1",
-        obj(json!({"s": "DONE"})).with_finalizers(&["planning-closed"]),
+        obj(json!({"s": "DONE"})).with_finalizers(&["planning-closed", "other"]),
         &req("1"),
     )
     .unwrap();
@@ -642,9 +639,14 @@ pub fn a_finalizer_blocks_delete_until_gc_removes_the_key_once_cleared<R: Rig>(r
     ));
     let held = c.get("rec/1").unwrap().expect("still present");
     assert_eq!(held.value.metadata.deletion_timestamp, Some(T0));
-    assert!(gc.tick(c.now_ms()).unwrap().finalized.is_empty());
+    gc.tick(c.now_ms()).unwrap();
     assert!(c.get("rec/1").unwrap().is_some());
-    put(&c, "rec/1", obj(json!({"s": "DONE"})), "3");
+    put(
+        &c,
+        "rec/1",
+        obj(json!({"s": "DONE"})).with_finalizers(&["other"]),
+        "3",
+    );
     assert_eq!(
         c.get("rec/1")
             .unwrap()
@@ -653,10 +655,18 @@ pub fn a_finalizer_blocks_delete_until_gc_removes_the_key_once_cleared<R: Rig>(r
             .metadata
             .deletion_timestamp,
         Some(T0),
-        "a write keeps the mark"
+        "a write keeping a finalizer keeps the mark"
     );
-    assert_eq!(gc.tick(c.now_ms()).unwrap().finalized, ["rec/1"]);
-    assert!(c.get("rec/1").unwrap().is_none());
+    let rev = put(&c, "rec/1", obj(json!({"s": "DONE"})), "4");
+    assert!(c.get("rec/1").unwrap().is_none(), "no tick was needed");
+    let event = data(&c, &events_key(rev)).expect("the clearing commit's record");
+    let ops: Vec<(String, String)> = event["subs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| (s["key"].as_str().unwrap().to_string(), s["op"].as_str().unwrap().to_string()))
+        .collect();
+    assert!(ops.contains(&("rec/1".to_string(), "delete".to_string())), "{ops:?}");
 }
 
 pub fn an_owner_reference_orphan_is_collected<R: Rig>(rig: &R) {
@@ -681,6 +691,91 @@ pub fn an_owner_reference_orphan_is_collected<R: Rig>(rig: &R) {
     c.delete("batches/r/1", None, &req("4")).unwrap();
     assert_eq!(gc.tick(c.now_ms()).unwrap().orphans, ["members/r/1/a"]);
     assert!(c.get("members/r/1/a").unwrap().is_none());
+}
+
+pub fn an_owner_deleted_with_more_dependents_than_a_pass_is_drained_over_passes<R: Rig>(rig: &R) {
+    const DEPENDENTS: usize = 2_500;
+    let clock = VirtualClock::new(T0);
+    let c = open(rig.fresh(), &clock);
+    let gc = Controller::new(&c);
+    put(&c, "owners/o", obj(json!(1)), "o");
+    for (n, chunk) in (0..DEPENDENTS).collect::<Vec<_>>().chunks(100).enumerate() {
+        let mut t = Txn::new();
+        for i in chunk {
+            t = t.put(&format!("deps/{i:05}"), obj(json!(1)).with_owners(&["owners/o"]));
+        }
+        assert!(c.txn(&t, &req(&format!("d{n}"))).unwrap().succeeded);
+    }
+    c.delete("owners/o", None, &req("del")).unwrap();
+    let mut passes = Vec::new();
+    for _ in 0..3 {
+        passes.push(gc.tick(c.now_ms()).unwrap().orphans.len());
+    }
+    assert_eq!(passes, [ORPHANS_PER_PASS, ORPHANS_PER_PASS, DEPENDENTS - 2 * ORPHANS_PER_PASS]);
+    let head = c.head().unwrap();
+    assert!(c.backend().range("deps/", None, 1, head).unwrap().is_empty());
+    assert!(c.backend().range(ORPHANS_PREFIX, None, 1, head).unwrap().is_empty());
+}
+
+pub fn a_put_naming_an_owner_the_batch_writes_or_one_that_lives_queues_no_marker<R: Rig>(rig: &R) {
+    let clock = VirtualClock::new(T0);
+    let c = open(rig.fresh(), &clock);
+    let t = Txn::new()
+        .put("owners/o", obj(json!(1)))
+        .put("deps/a", obj(json!(1)).with_owners(&["owners/o"]));
+    assert!(c.txn(&t, &req("1")).unwrap().succeeded);
+    put(&c, "deps/b", obj(json!(1)).with_owners(&["owners/o", "owners/gone"]), "2");
+    let head = c.head().unwrap();
+    assert!(c.backend().range(ORPHANS_PREFIX, None, 1, head).unwrap().is_empty());
+    put(&c, "deps/c", obj(json!(1)).with_owners(&["owners/gone"]), "3");
+    let head = c.head().unwrap();
+    let markers = c.backend().range(ORPHANS_PREFIX, None, 10, head).unwrap();
+    assert_eq!(markers.len(), 1);
+    assert_eq!(markers[0].0, format!("{ORPHANS_PREFIX}owners/gone"));
+}
+
+pub fn an_owner_recreated_before_collection_keeps_its_dependents<R: Rig>(rig: &R) {
+    let clock = VirtualClock::new(T0);
+    let c = open(rig.fresh(), &clock);
+    let gc = Controller::new(&c);
+    put(&c, "owners/o", obj(json!(1)), "1");
+    put(&c, "deps/a", obj(json!(1)).with_owners(&["owners/o"]), "2");
+    c.delete("owners/o", None, &req("3")).unwrap();
+    put(&c, "owners/o", obj(json!(2)), "4");
+    assert!(gc.tick(c.now_ms()).unwrap().orphans.is_empty());
+    assert!(c.get("deps/a").unwrap().is_some());
+    let head = c.head().unwrap();
+    assert!(c.backend().range(ORPHANS_PREFIX, None, 1, head).unwrap().is_empty());
+    c.delete("owners/o", None, &req("5")).unwrap();
+    assert_eq!(gc.tick(c.now_ms()).unwrap().orphans, ["deps/a"]);
+}
+
+pub fn owned_by_names_a_keys_dependents_until_they_drop_the_reference<R: Rig>(rig: &R) {
+    let clock = VirtualClock::new(T0);
+    let c = open(rig.fresh(), &clock);
+    put(&c, "owners/o", obj(json!(1)), "1");
+    put(&c, "deps/a", obj(json!(1)).with_owners(&["owners/o"]), "2");
+    put(&c, "deps/b", obj(json!(1)).with_owners(&["owners/o", "owners/p"]), "3");
+    put(&c, "deps/c", obj(json!(1)).with_owners(&["owners/p"]), "4");
+    let b = c.backend();
+    let head = c.head().unwrap();
+    let owned = |owner: &str, after: Option<&str>, limit: usize| {
+        b.owned_by(owner, after, limit, c.head().unwrap()).unwrap()
+    };
+    assert_eq!(owned("owners/o", None, 10), ["deps/a", "deps/b"]);
+    assert_eq!(owned("owners/o", None, 1), ["deps/a"]);
+    assert_eq!(owned("owners/o", Some("deps/a"), 1), ["deps/b"]);
+    assert!(owned("owners/o", Some("deps/b"), 1).is_empty());
+    assert_eq!(owned("owners/p", None, 10), ["deps/b", "deps/c"]);
+    put(&c, "deps/a", obj(json!(2)), "5");
+    assert_eq!(owned("owners/o", None, 10), ["deps/b"]);
+    c.delete("deps/b", None, &req("6")).unwrap();
+    assert!(owned("owners/o", None, 10).is_empty());
+    assert_eq!(owned("owners/p", None, 10), ["deps/c"]);
+    assert!(matches!(
+        b.owned_by("owners/o", None, 1, head),
+        Err(Error::Stale { expected, .. }) if expected == head
+    ));
 }
 
 pub fn a_request_retry_after_an_ambiguous_commit_reports_already_applied<R: Rig>(rig: &R) {
@@ -1480,21 +1575,6 @@ pub fn gc_range_and_open_skip_the_history_prefix<R: Rig>(rig: &R) {
             }
             after = page.last().map(|(k, _)| k.clone());
         }
-        let head = c.head().expect("head");
-        let mut paged = Vec::new();
-        let mut after: Option<String> = None;
-        loop {
-            let (at, page) = c.backend().gc_page(after.as_deref(), 2).expect("gc_page");
-            assert_eq!(at, head, "gc_page reads at the head");
-            assert!(page.iter().all(|(k, _)| !k.starts_with(HISTORY_PREFIX)), "gc_page visited a history key");
-            paged.extend(page.iter().map(|(k, _)| k.clone()));
-            if page.len() < 2 {
-                break;
-            }
-            after = page.last().map(|(k, _)| k.clone());
-        }
-        let whole = c.backend().gc_range(None, usize::MAX, head).expect("gc_range");
-        assert_eq!(paged, whole.into_iter().map(|(k, _)| k).collect::<Vec<_>>(), "gc_page pages to the keys gc_range returns");
         rows
     };
     let without = open_rows(0);
@@ -1535,8 +1615,12 @@ scenarios!(
     a_paused_holders_fenced_write_is_refused_after_expiry_and_reacquisition,
     reopen_extends_every_lock,
     a_lock_ttl_below_the_minimum_is_refused,
-    a_finalizer_blocks_delete_until_gc_removes_the_key_once_cleared,
+    a_finalizer_blocks_delete_until_the_write_clearing_it_removes_the_key,
     an_owner_reference_orphan_is_collected,
+    an_owner_deleted_with_more_dependents_than_a_pass_is_drained_over_passes,
+    a_put_naming_an_owner_the_batch_writes_or_one_that_lives_queues_no_marker,
+    an_owner_recreated_before_collection_keeps_its_dependents,
+    owned_by_names_a_keys_dependents_until_they_drop_the_reference,
     a_request_retry_after_an_ambiguous_commit_reports_already_applied,
     retries_of_lock_create_delete_and_a_refusal_report_the_original_outcome,
     request_keys_expire_at_24h_of_virtual_time,

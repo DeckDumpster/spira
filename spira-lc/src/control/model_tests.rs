@@ -68,6 +68,9 @@ impl Backend for Recorded {
     fn head(&self) -> Result<u64> {
         self.inner.head()
     }
+    fn owned_by(&self, owner: &str, after: Option<&str>, limit: usize, at: u64) -> Result<Vec<String>> {
+        self.inner.owned_by(owner, after, limit, at)
+    }
     fn get(&self, key: &str, at: u64) -> Result<Option<Version>> {
         self.note(key);
         self.inner.get(key, at)
@@ -169,6 +172,9 @@ impl Stalled {
 impl Backend for Stalled {
     fn head(&self) -> Result<u64> {
         self.inner.head()
+    }
+    fn owned_by(&self, owner: &str, after: Option<&str>, limit: usize, at: u64) -> Result<Vec<String>> {
+        self.inner.owned_by(owner, after, limit, at)
     }
     fn get(&self, key: &str, at: u64) -> Result<Option<Version>> {
         self.seen.lock().unwrap().push(key.to_string());

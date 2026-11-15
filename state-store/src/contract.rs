@@ -1,6 +1,6 @@
 //! `Contract<B>`: every verb of the state-store design, implemented once above any [`Backend`].
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::convert::Infallible;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, RwLock};
@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use crate::backend::{Backend, Version, Write};
 use crate::{
     events_key, limits, request_key, Error, Item, Object, Result, Rev, EVENTS_PREFIX, LOCKS_PREFIX,
-    MAX_WATCH_WAIT_MS, REQUESTS_PREFIX, REQUEST_TTL_SECS, TELEMETRY_PREFIX, TTL_PREFIXES,
+    MAX_WATCH_WAIT_MS, ORPHANS_PREFIX, REQUESTS_PREFIX, REQUEST_TTL_SECS, TELEMETRY_PREFIX, TTL_PREFIXES,
 };
 
 pub struct Ports {
@@ -336,16 +336,6 @@ const TRIM_TXNS: usize = 16;
 pub(crate) const COMPACT_STEP: u64 = 5_000;
 pub(crate) const COMPACT_STEPS: usize = 8;
 
-/// A gc scan in progress: the cursor and what the pages read so far reduced to.
-#[derive(Default)]
-pub(crate) struct ScanProgress {
-    pub after: Option<String>,
-    pub keys: std::collections::BTreeSet<String>,
-    pub finalized: Vec<Item>,
-    pub owned: Vec<Item>,
-    pub pages: usize,
-}
-
 /// The wall time an audit record was written at, when it carries one.
 fn recorded_at(v: &Version) -> Result<Option<u64>> {
     #[derive(Deserialize)]
@@ -370,7 +360,7 @@ fn lock_err<T>(p: std::sync::PoisonError<T>) -> T {
 }
 
 fn is_reserved(key: &str) -> bool {
-    [EVENTS_PREFIX, REQUESTS_PREFIX, LOCKS_PREFIX]
+    [EVENTS_PREFIX, REQUESTS_PREFIX, LOCKS_PREFIX, ORPHANS_PREFIX]
         .iter()
         .any(|p| key.starts_with(p))
 }
@@ -1088,7 +1078,10 @@ impl<B: Backend> Contract<B> {
             if ops.is_empty() && (!rec.idempotent || (!ok && !rec.audited)) {
                 return Ok(Outcome::Nothing { head });
             }
-            let staged = self.build(req, rec, ok, &ops, head)?;
+            let staged = match self.build(req, rec, ok, &ops, head) {
+                Err(Error::Stale { .. }) => continue,
+                built => built?,
+            };
             limits::check_bytes(rec.compare_bytes + staged_bytes(&staged))?;
             match self.commit(head, staged) {
                 Ok(rev) => return Ok(Outcome::Applied { rev, ok }),
@@ -1168,11 +1161,12 @@ impl<B: Backend> Contract<B> {
                     if marked.is_some() {
                         v.metadata.deletion_timestamp = marked;
                     }
+                    let finished = marked.is_some() && v.metadata.finalizers.is_empty();
                     out.push(Staged {
                         key: k.clone(),
-                        value: Some(v),
+                        value: (!finished).then_some(v),
                         prev,
-                        op: "put",
+                        op: if finished { "delete" } else { "put" },
                     });
                 }
                 Op::LockAcquire { key, ttl_ms } => out.push(Staged {
@@ -1203,7 +1197,57 @@ impl<B: Backend> Contract<B> {
                 },
             }
         }
+        out.extend(self.orphan_markers(&out, head)?);
         Ok(out)
+    }
+
+    /// `orphans/<owner>` for each owner `staged` leaves with dependents it may not have: a key
+    /// deleted that other live keys name, and a key put that names only absent owners.
+    fn orphan_markers(&self, staged: &[Staged], head: u64) -> Result<Vec<Staged>> {
+        let mut deleted = BTreeSet::new();
+        let mut put = BTreeSet::new();
+        let mut owners = BTreeSet::new();
+        for s in staged {
+            if s.value.is_none() {
+                deleted.insert(s.key.as_str());
+                if !self.backend.owned_by(&s.key, None, 1, head)?.is_empty() {
+                    owners.insert(s.key.clone());
+                }
+            } else {
+                put.insert(s.key.as_str());
+            }
+        }
+        for s in staged {
+            let Some(v) = s.value.as_ref().filter(|v| v.metadata.deletion_timestamp.is_none())
+            else {
+                continue;
+            };
+            let named = &v.metadata.owner_references;
+            let mut any_alive = false;
+            for o in named {
+                if put.contains(o.as_str())
+                    || (!deleted.contains(o.as_str()) && self.exists_at(o, head)?)
+                {
+                    any_alive = true;
+                    break;
+                }
+            }
+            if !any_alive {
+                owners.extend(named.iter().cloned());
+            }
+        }
+        owners
+            .into_iter()
+            .map(|owner| {
+                let key = format!("{ORPHANS_PREFIX}{owner}");
+                Ok(Staged {
+                    prev: self.read(&key, head)?,
+                    key,
+                    value: Some(Object::new(serde_json::json!({ "after": null }))),
+                    op: "put",
+                })
+            })
+            .collect()
     }
 
     fn commit(&self, head: u64, staged: Vec<Staged>) -> Result<u64> {
@@ -1357,41 +1401,46 @@ impl<B: Backend> Contract<B> {
         Ok(done)
     }
 
-    /// Reads pages of every key but the audit history into `scan`, from its cursor, each page at
-    /// the head the backend serves it at, until the last page is in. On an error `scan`
-    /// keeps what was read, so the next call resumes. Pages at different heads are safe because
-    /// `collect` re-checks every candidate at its own commit head. A page the store ends for
-    /// outliving its read limit is retried at half the size.
-    pub(crate) fn gc_scan_pages(&self, scan: &mut ScanProgress, page: usize) -> Result<()> {
-        let mut page_size = page.max(1);
+    /// The keys naming `owner` after `after`, at most `limit`, read at a head the backend still
+    /// serves.
+    pub(crate) fn dependents(
+        &self,
+        owner: &str,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<String>> {
         loop {
-            let rows = match self.backend.gc_page(scan.after.as_deref(), page_size) {
-                Err(Error::Backend(m)) if m.starts_with(crate::READ_ENDED) && page_size > 1 => {
-                    page_size /= 2;
-                    continue;
-                }
-                r => r?.1,
-            };
-            let full = rows.len() == page_size;
-            let last = rows.last().map(|(k, _)| k.clone());
-            for (k, v) in rows {
-                let i = item(k, v)?;
-                scan.keys.insert(i.key.clone());
-                let m = &i.value.metadata;
-                if m.deletion_timestamp.is_some() && m.finalizers.is_empty() {
-                    scan.finalized.push(i);
-                } else if !m.owner_references.is_empty() && m.deletion_timestamp.is_none() {
-                    scan.owned.push(i);
-                }
-            }
-            scan.pages += 1;
-            if last.is_some() {
-                scan.after = last;
-            }
-            if !full {
-                return Ok(());
+            let head = self.backend.head()?;
+            match self.backend.owned_by(owner, after, limit, head) {
+                Err(Error::Stale { .. }) => continue,
+                r => return r,
             }
         }
+    }
+
+    /// Rewrites the marker `key`, as read at `seen`, to resume after `after`, or deletes it when
+    /// `after` is `None`; a marker written since is left, for its own pass.
+    pub(crate) fn settle_marker(&self, key: &str, seen: Rev, after: Option<&str>) -> Result<()> {
+        let rec = Record {
+            audited: false,
+            idempotent: false,
+            compare_bytes: 0,
+        };
+        self.engine(&Request::new("", "gc", "gc.orphan"), rec, |head| {
+            let current = self.read(key, head)?;
+            if current.is_none_or(|m| m.mod_rev != seen) {
+                return Ok(Step::Done(()));
+            }
+            let op = match after {
+                Some(a) => Op::Put(key.into(), Object::new(serde_json::json!({ "after": a }))),
+                None => Op::Delete(key.into()),
+            };
+            Ok(Step::Apply {
+                ok: true,
+                ops: vec![op],
+            })
+        })
+        .map(drop)
     }
 
     /// Deletes the audit records older than `window_ms` on the wall clock, oldest first, at most
