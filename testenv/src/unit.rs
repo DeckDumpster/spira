@@ -410,7 +410,7 @@ mod tests {
         let picked = write_crates(repo, "main", "work", repo, None, true).unwrap();
         assert_eq!(picked.crates, ["spira-sim"]);
         let written: Vec<String> = std::fs::read_to_string(repo.join(BUILD_REL)).unwrap().lines().map(String::from).collect();
-        let [gate_build, _] = gate::compose::unit_commands(&["spira-sim".into()], 7);
+        let [gate_build, _] = gate::compose::unit_commands(&["spira-sim".into()], Default::default(), 7);
         assert_eq!(gate_build.1.strip_prefix("CARGO_BUILD_JOBS=7 ").unwrap(), written.join(" "));
     }
 
@@ -492,7 +492,7 @@ mod tests {
         put("outer/target/debug/build/gen.rs", "fn only_target_has_this() {}\n");
         put("plain/src/lib.rs", "include!(concat!(env!(\"OUT_DIR\"), \"/rules.rs\"));\n");
         put("plain/src/rules/no_raw_pr.rs", "#[test]\nfn refused() {}\n");
-        let m = |name: &str, dir: &str| gate::compose::Member { name: name.into(), dir: dir.into(), deps: vec![], build_deps: vec![] };
+        let m = |name: &str, dir: &str| gate::compose::Member { name: name.into(), dir: dir.into(), deps: vec![], build_deps: vec![], targets: Default::default() };
         let members = [m("outer", "outer"), m("inner", "outer/inner"), m("plain", "plain")];
         let crates: Vec<String> = ["outer", "inner", "plain"].map(String::from).to_vec();
         let held = |names: &[&str]| holding(t.path(), &members, &crates, &names.iter().map(|n| n.to_string()).collect::<Vec<_>>());

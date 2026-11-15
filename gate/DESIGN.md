@@ -421,7 +421,7 @@ A fence red is still a `branch-red`; a unit test the branch breaks is the round'
 | `unit`, any **script** touched | `suites(script)` | the same |
 | `unit`, `SPIRA_GATE_ALL=1` | `suites(gate-all)` | the same — the caller asked for the corpus |
 | `unit`, the touched set or the graph unreadable | `suites(no-diff)` / `suites(no-metadata)` | the same — no guessing a cheaper gate |
-| `unit`, crates (± docs, config, suites) | `unit` | the gate string with **suites off** and **without the build fence** (below), then on the host: `CARGO_BUILD_JOBS=J cargo test --no-run --timings --features integration -p …` (build, `compose::unit_build_words`, the line testenv's unit tier also runs) and `cargo test -j J --features integration -p … -- --test-threads=J` (test), both in the `dev` profile |
+| `unit`, crates (± docs, config, suites) | `unit` | the gate string with **suites off** and **without the build fence** (below), then on the host: `CARGO_BUILD_JOBS=J cargo test --no-run --timings --features integration -p …` (build, `compose::unit_build_words`, the line testenv's unit tier also runs), then the test phase, three commands from `spira_config::unit_tier` that differ from the round's only in `-p …` for `--workspace`: `cargo nextest run --config-file target/gate-unit-nextest.toml --no-fail-fast --features integration -p … --lib --bins` (one process per test, each under `SPIRA_UNIT_TEST_DEADLINE_SECS` × `SPIRA_UNIT_TEST_DEADLINE_PERIODS`), `cargo test --no-fail-fast --features integration -p … --test '*'` and `… --doc`; a tier no selected crate has a target for is left out, and a host without `cargo-nextest` is no verdict (75); all in the `dev` profile |
 | `unit`, nothing buildable | `fences` | the gate string with **suites off** |
 | `fences`, a fresh bead | `fences` | the gate string **without its suites step** ("Fences mode") |
 | `fences`, a re-entering bead (named suites) or a changed suite | `fences+reentry` | the same, then the re-entry phase: exactly those suites |
@@ -476,8 +476,8 @@ whose gate names no `build-fence.sh`.
 
 The unit phases run through the same port as the gate string (`run_gate`: `env -i`, the same
 environment, `timeout`, the tree), in order, stopping at the first failure. **Admission** is the
-same slot the trial already holds. **The width** is the host's cores for both `cargo -j` and
-`--test-threads`. How many gates share the host is the pool size's job, never a narrower gate
+same slot the trial already holds. **The width** is the host's cores: the build's `CARGO_BUILD_JOBS`; the test phase names no
+width, so cargo and nextest take the cores. How many gates share the host is the pool size's job, never a narrower gate
 (sp-f4ig1, DESIGN-admission.md D3; law-reduce-the-count-never-throttle-the-job). It was `host
 cores ÷ the admission pool size` until then. **The timeout** is shared: each phase gets what is left of `SPIRA_GATE_TIMEOUT`, and a
 phase with nothing left is status 124 (NO_VERDICT `timeout`).

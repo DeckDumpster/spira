@@ -69,6 +69,7 @@ pub mod stack_conflict;
 pub mod target;
 pub mod ticked;
 pub mod unit;
+pub mod unit_tier;
 pub mod vtime;
 pub mod writeback;
 

@@ -13,10 +13,26 @@ pub struct Changed {
     pub exec: bool,
 }
 
+/// The kinds of test target a crate, or a selection of crates, has: cargo refuses `--doc` and
+/// `--lib` where no selected crate has a library, and `--test '*'` where none has a `tests/` target.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Targets {
+    pub lib: bool,
+    pub bin: bool,
+    pub test: bool,
+}
+
+impl Targets {
+    fn union(self, o: Targets) -> Targets {
+        Targets { lib: self.lib || o.lib, bin: self.bin || o.bin, test: self.test || o.test }
+    }
+}
+
 /// A workspace member, from `cargo metadata --no-deps`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Member {
     pub name: String,
+    pub targets: Targets,
     /// The member's directory relative to the workspace root, `/`-separated, no trailing `/`.
     pub dir: String,
     /// Names of the workspace members it depends on (normal, dev or build).
@@ -60,6 +76,7 @@ pub enum Composition {
     Unit {
         touched: Vec<String>,
         crates: Vec<String>,
+        targets: Targets,
     },
     /// The gate string with suites off: nothing buildable changed. Under `gate_mode = fences`
     /// every unforced trial composes this, and the string has lost its suites step
@@ -254,7 +271,7 @@ pub fn compose(
     // (a script, a workspace input, no metadata) stays fences-only: the full-suite round tests it.
     if fences_only(mode, forces) {
         return match compose(GateMode::Unit, forces, changed, members) {
-            Composition::Unit { touched, crates } if touched.iter().all(|t| t != "*") => Composition::Unit { touched, crates },
+            Composition::Unit { touched, crates, targets } if touched.iter().all(|t| t != "*") => Composition::Unit { touched, crates, targets },
             _ => Composition::Fences,
         };
     }
@@ -289,6 +306,7 @@ pub fn compose(
         }
         return Composition::Unit {
             touched: vec!["*".into()],
+            targets: targets_of(&all, members),
             crates: all,
         };
     }
@@ -302,8 +320,13 @@ pub fn compose(
     touched.extend(readers);
     Composition::Unit {
         touched: touched.into_iter().collect(),
+        targets: targets_of(&crates, members),
         crates,
     }
+}
+
+fn targets_of(crates: &[String], members: &[Member]) -> Targets {
+    members.iter().filter(|m| crates.contains(&m.name)).fold(Targets::default(), |acc, m| acc.union(m.targets))
 }
 
 /// `cargo metadata --format-version 1 --no-deps` → the workspace members.
@@ -329,7 +352,7 @@ pub fn parse_metadata(json: &str) -> Result<Vec<Member>, String> {
         .ok_or("cargo metadata: no packages")?;
     // (name, absolute dir)
     #[allow(clippy::type_complexity)]
-    let mut raw: Vec<(String, String, Vec<(String, bool)>)> = Vec::new();
+    let mut raw: Vec<(String, String, Vec<(String, bool)>, Targets)> = Vec::new();
     for p in pkgs {
         let id = p.get("id").and_then(|x| x.as_str()).unwrap_or("");
         if !members.contains(id) {
@@ -362,10 +385,19 @@ pub fn parse_metadata(json: &str) -> Result<Vec<Member>, String> {
         if name.is_empty() {
             return Err("cargo metadata: a member with no name".into());
         }
-        raw.push((name, dir, dep_dirs));
+        let mut targets = Targets::default();
+        for kind in p.get("targets").and_then(|t| t.as_array()).into_iter().flatten().flat_map(|t| t.get("kind").and_then(|k| k.as_array()).into_iter().flatten()).filter_map(|k| k.as_str()) {
+            match kind {
+                "lib" | "rlib" | "dylib" | "proc-macro" => targets.lib = true,
+                "bin" => targets.bin = true,
+                "test" => targets.test = true,
+                _ => {}
+            }
+        }
+        raw.push((name, dir, dep_dirs, targets));
     }
     let by_dir: HashMap<String, String> =
-        raw.iter().map(|(n, d, _)| (d.clone(), n.clone())).collect();
+        raw.iter().map(|(n, d, ..)| (d.clone(), n.clone())).collect();
     let rel = |d: &str| -> String {
         d.strip_prefix(&root)
             .map(|r| r.trim_start_matches('/').to_string())
@@ -373,7 +405,7 @@ pub fn parse_metadata(json: &str) -> Result<Vec<Member>, String> {
     };
     let mut out: Vec<Member> = raw
         .iter()
-        .map(|(n, d, deps)| {
+        .map(|(n, d, deps, targets)| {
             let names = |all: bool| -> Vec<String> {
                 let mut v: Vec<String> = deps
                     .iter()
@@ -389,6 +421,7 @@ pub fn parse_metadata(json: &str) -> Result<Vec<Member>, String> {
                 dir: rel(d),
                 deps: names(true),
                 build_deps: names(false),
+                targets: *targets,
             }
         })
         .collect();
@@ -418,7 +451,7 @@ pub fn parse_diff_raw(z: &[u8]) -> Vec<Changed> {
     out
 }
 
-/// The width of the host phases: `cargo -j` and `--test-threads` — the host's cores, whatever
+/// The width of the host phases: `CARGO_BUILD_JOBS` — the host's cores, whatever
 /// the pool's size. How many gates run together is `certify_par`'s job, never a narrower
 /// gate (law-reduce-the-count-never-throttle-the-job; gate/DESIGN-admission.md D3). It was
 /// `cores ÷ certify_par`, which slowed a lone gate for gates that did not exist.
@@ -580,44 +613,75 @@ pub fn run_all(cmd: &str) -> String {
 const NEEDS_BUILT: [(&str, &str); 1] = [("batcher-cut", "gate")];
 
 /// The words of the unit build line, shared by the gate's build phase and testenv's unit tier so
-/// both produce the same artefacts for the same crates: no profile, no config override, no `-j`.
+/// both produce the same artefacts for the same crates: the default profile, no config override, no `-j`.
 ///
-/// The build is `cargo test --no-run --timings`: it compiles the test harnesses only, with the flags the
-/// test phase uses, so the test phase recompiles nothing. The non-test build of each lib and
-/// bin (code behind `cfg(not(test))`) is the round's job, which builds the whole workspace in
-/// release before anything lands (operator ruling 2026-11-10: build targets once).
+/// The build is [`spira_config::unit_tier::build_words`] with `--timings`: it compiles the test
+/// harnesses only, with the flags the test phase uses, so the test phase recompiles nothing. The
+/// non-test build of each lib and bin (code behind `cfg(not(test))`) is the round's job, which
+/// builds the whole workspace in release before anything lands (operator ruling 2026-11-10:
+/// build targets once).
 ///
 /// Only the named crates build: linking every workspace binary on each gate is what pushed the
 /// build phase to the gate cap, and a test reaches its own package's binaries through
 /// `CARGO_BIN_EXE_*`, which cargo builds with the test. The exception is a binary of another
 /// package that a test runs from beside its own (`NEEDS_BUILT`): it is added to the build.
 pub fn unit_build_words(crates: &[String]) -> Vec<String> {
-    let mut words: Vec<String> = ["cargo", "test", "--no-run", "--timings", "--features", "integration"]
-        .map(String::from)
-        .to_vec();
-    for c in crates {
-        words.extend(["-p".into(), c.clone()]);
-    }
+    let mut sel = pkgs(crates);
     for (_, bin) in NEEDS_BUILT
         .iter()
         .filter(|(user, bin)| crates.iter().any(|c| c == user) && !crates.iter().any(|c| c == bin))
     {
-        words.extend(["-p".into(), bin.to_string()]);
+        sel.push_str(&format!(" -p {bin}"));
     }
+    let mut words = vec!["cargo".to_string()];
+    words.extend(spira_config::unit_tier::build_words(None, sel.trim()).split_whitespace().map(String::from));
+    words.insert(3, "--timings".into());
     words
 }
 
-/// The unit phases' commands, in order: build ([`unit_build_words`], the default `dev` profile), then the tests.
-pub fn unit_commands(crates: &[String], jobs: u64) -> [(&'static str, String); 2] {
-    let p = pkgs(crates);
+/// Where the unit phase's nextest config lives, relative to the trial tree.
+pub const NEXTEST_CONFIG: &str = "target/gate-unit-nextest.toml";
+
+/// The test phase's commands in the order they run, each over `crates`: the unit tier, the
+/// integration targets, the doc-tests ([`spira_config::unit_tier`]). A tier none of the selected
+/// crates has a target for is absent, since cargo refuses a flag no selected crate satisfies.
+pub fn unit_test_commands(crates: &[String], targets: Targets) -> Vec<String> {
+    use spira_config::unit_tier as tier;
+    let sel = pkgs(crates);
+    let sel = sel.trim();
+    let mut cmds = Vec::new();
+    if targets.lib || targets.bin {
+        let filter = if targets.lib { tier::LIB_BINS } else { "--bins" };
+        cmds.push(format!("cargo {}", tier::unit_words(NEXTEST_CONFIG, None, sel, filter)));
+    }
+    if targets.test {
+        cmds.push(format!("cargo {}", tier::integration_words(None, sel)));
+    }
+    if targets.lib {
+        cmds.push(format!("cargo {}", tier::doc_words(None, sel)));
+    }
+    cmds
+}
+
+/// The unit phases' commands, in order: build ([`unit_build_words`]), then the tests
+/// ([`unit_test_commands`]): each runs whatever the one before it did, the exit is the first
+/// non-zero status, and a missing `cargo-nextest` is 75, could not judge, never a red branch.
+pub fn unit_commands(crates: &[String], targets: Targets, jobs: u64) -> [(&'static str, String); 2] {
+    let mut test = String::from(
+        "cargo nextest --version >/dev/null 2>&1 || { echo 'gate: cargo-nextest is not installed on this host — refusing to judge unit tests without it'; exit 75; }; _g_rc=0",
+    );
+    for c in unit_test_commands(crates, targets) {
+        test.push_str(&format!("; {c}; _g_r=$?; [ \"$_g_rc\" -ne 0 ] || _g_rc=$_g_r"));
+    }
+    test.push_str("; exit $_g_rc");
     [
         ("build", format!("CARGO_BUILD_JOBS={jobs} {}", unit_build_words(crates).join(" "))),
-        ("test", test_command(jobs, &p)),
+        ("test", test),
     ]
 }
 
-fn test_command(jobs: u64, targets: &str) -> String {
-    format!("cargo test -j {jobs} --features integration{targets} -- --test-threads={jobs}")
+fn rerun_command(rerun: &str) -> String {
+    format!("cargo {}", spira_config::unit_tier::rerun_words(None, rerun))
 }
 
 fn sh_quote(v: &str) -> String {
@@ -627,9 +691,9 @@ fn sh_quote(v: &str) -> String {
 /// The unit test phase's command as one line a person can paste at a workspace root: the
 /// phase's cleared environment, then the test command narrowed to `rerun` (cargo's own
 /// `-p <package> <target>` words).
-pub fn reproduce_line(env: &[(String, String)], jobs: u64, rerun: &str) -> String {
+pub fn reproduce_line(env: &[(String, String)], rerun: &str) -> String {
     let vars: String = env.iter().map(|(k, v)| format!("{k}={} ", sh_quote(v))).collect();
-    format!("env -i {vars}{}", test_command(jobs, &format!(" {rerun}")))
+    format!("env -i {vars}{}", rerun_command(rerun))
 }
 
 /// The `-p` words of a unit composition's crates.
@@ -818,6 +882,7 @@ mod tests {
             dir: dir.into(),
             deps: deps.iter().map(|s| s.to_string()).collect(),
             build_deps: deps.iter().map(|s| s.to_string()).collect(),
+            targets: Targets::default(),
         }
     }
 
@@ -873,6 +938,7 @@ mod tests {
                 Unit {
                     touched: vec!["gate".into()],
                     crates: vec!["gate".into()],
+                    targets: Targets::default(),
                 },
             ),
             (
@@ -880,6 +946,7 @@ mod tests {
                 Unit {
                     touched: vec!["gate".into()],
                     crates: vec!["gate".into()],
+                    targets: Targets::default(),
                 },
             ),
             (
@@ -887,6 +954,7 @@ mod tests {
                 Unit {
                     touched: vec!["gate".into()],
                     crates: vec!["gate".into()],
+                    targets: Targets::default(),
                 },
             ),
             (
@@ -894,6 +962,7 @@ mod tests {
                 Unit {
                     touched: vec!["panel".into()],
                     crates: vec!["panel".into()],
+                    targets: Targets::default(),
                 },
             ),
             (
@@ -901,6 +970,7 @@ mod tests {
                 Unit {
                     touched: vec!["panel".into()],
                     crates: vec!["panel".into()],
+                    targets: Targets::default(),
                 },
             ),
             (&["gate/src/engine.rs", "spira/lib.sh"], s("script")),
@@ -921,6 +991,7 @@ mod tests {
                 Unit {
                     touched: vec!["release".into()],
                     crates: vec!["release".into()],
+                    targets: Targets::default(),
                 },
             ),
             (
@@ -928,6 +999,7 @@ mod tests {
                 Unit {
                     touched: vec!["release".into()],
                     crates: vec!["release".into()],
+                    targets: Targets::default(),
                 },
             ),
             (
@@ -1209,6 +1281,7 @@ mod tests {
         let u = Composition::Unit {
             touched: vec![],
             crates: vec![],
+            targets: Targets::default(),
         };
         assert_eq!(u.label(), "unit");
         assert!(u.suites_off());
@@ -1277,59 +1350,125 @@ mod tests {
         assert_eq!(jobs(0), 1);
     }
 
+    const ALL: Targets = Targets { lib: true, bin: true, test: true };
+
     #[test]
     fn the_unit_build_and_test_name_only_the_changed_crates() {
-        let [b, t] = unit_commands(&["spira-runtime".into()], 4);
+        let [b, t] = unit_commands(&["spira-runtime".into()], ALL, 4);
         assert!(!b.1.contains("--workspace") && !b.1.contains("&&"), "{}", b.1);
         assert!(b.1.ends_with(" --features integration -p spira-runtime"), "{}", b.1);
         assert!(!t.1.contains("--workspace") && !t.1.contains("spira-config"), "{}", t.1);
-        let [b, _] = unit_commands(&["spira-sim".into()], 4);
+        let [b, _] = unit_commands(&["spira-sim".into()], ALL, 4);
         assert!(b.1.ends_with(" --features integration -p spira-sim"), "{}", b.1);
     }
 
     #[test]
     fn the_build_compiles_the_test_harnesses_once_and_the_test_phase_reuses_them() {
-        let [b, t] = unit_commands(&["gate".into(), "queue".into()], 4);
+        let [b, _] = unit_commands(&["gate".into(), "queue".into()], ALL, 4);
         assert!(!b.1.contains("--all-targets"), "{}", b.1);
-        let (test_flags, _) = t.1.split_once(" -- ").unwrap();
         let build = b.1.strip_prefix("CARGO_BUILD_JOBS=4 ").unwrap();
-        assert_eq!(build, test_flags.replacen("cargo test -j 4 ", "cargo test --no-run --timings ", 1));
+        let sel = ["gate".to_string(), "queue".to_string()];
+        let [unit, integ, doc] = three(&unit_test_commands(&sel, ALL));
+        for tests in [&unit, &integ, &doc] {
+            assert!(tests.contains(" --features integration -p gate -p queue"), "{tests}");
+        }
+        assert_eq!(build, format!("cargo {}", spira_config::unit_tier::build_words(None, "-p gate -p queue").replacen("--no-run", "--no-run --timings", 1)));
+        let sel = ["batcher-cut".to_string()];
+        let [b, _] = unit_commands(&sel, ALL, 4);
+        assert_eq!(b.1.strip_prefix("CARGO_BUILD_JOBS=4 ").unwrap(), format!("cargo {}", spira_config::unit_tier::build_words(None, "-p batcher-cut -p gate").replacen("--no-run", "--no-run --timings", 1)), "only the extra built package differs");
+    }
 
-        let [b, t] = unit_commands(&["batcher-cut".into()], 4);
-        let (test_flags, _) = t.1.split_once(" -- ").unwrap();
-        let expected = test_flags.replacen("cargo test -j 4 ", "cargo test --no-run --timings ", 1) + " -p gate";
-        assert_eq!(b.1.strip_prefix("CARGO_BUILD_JOBS=4 ").unwrap(), expected, "only the extra built package differs");
+    fn three(v: &[String]) -> [String; 3] {
+        v.to_vec().try_into().unwrap_or_else(|v: Vec<String>| panic!("{v:?}"))
+    }
+
+    #[test]
+    fn the_gate_runs_the_rounds_tier_commands_differing_only_in_the_package_selection() {
+        use spira_config::unit_tier as t;
+        let sel = ["gate".to_string(), "queue".to_string()];
+        let [unit, integ, doc] = three(&unit_test_commands(&sel, ALL));
+        let w = |c: &str| c.replace("-p gate -p queue", "--workspace");
+        assert_eq!(w(&unit), format!("cargo {}", t::unit_words(NEXTEST_CONFIG, None, "--workspace", t::LIB_BINS)));
+        assert_eq!(w(&integ), format!("cargo {}", t::integration_words(None, "--workspace")));
+        assert_eq!(w(&doc), format!("cargo {}", t::doc_words(None, "--workspace")));
+    }
+
+    #[test]
+    fn no_unit_command_names_a_thread_count_or_a_job_width_on_the_tests() {
+        for (_, c) in unit_commands(&["gate".into(), "queue".into()], ALL, 4) {
+            assert!(!c.contains("--test-threads"), "{c}");
+        }
+        let [_, t] = unit_commands(&["gate".into()], ALL, 4);
+        assert!(!t.1.contains(" -j ") && !t.1.contains("-j4"), "{}", t.1);
+    }
+
+    #[test]
+    fn a_tier_no_selected_crate_has_a_target_for_is_not_run() {
+        let sel = ["spira-claim".to_string()];
+        let bins = Targets { lib: false, bin: true, test: false };
+        let cmds = unit_test_commands(&sel, bins);
+        assert_eq!(cmds.len(), 1, "{cmds:?}");
+        assert!(cmds[0].ends_with(" -p spira-claim --bins") && !cmds[0].contains("--lib"), "{cmds:?}");
+        assert!(unit_test_commands(&sel, Targets::default()).is_empty());
+        let lib = Targets { lib: true, bin: false, test: false };
+        let cmds = unit_test_commands(&sel, lib);
+        assert!(cmds[0].ends_with(" --lib --bins") && cmds[1].ends_with(" --doc") && cmds.len() == 2, "{cmds:?}");
+    }
+
+    #[test]
+    fn the_target_kinds_of_a_selection_come_from_cargo_metadata() {
+        let meta = |name: &str, kinds: &[&str]| {
+            let targets: Vec<String> = kinds.iter().map(|k| format!(r#"{{"kind":["{k}"]}}"#)).collect();
+            format!(r#"{{"id":"{name} 0.1.0 (path+file:///w/{name})","name":"{name}","manifest_path":"/w/{name}/Cargo.toml","dependencies":[],"targets":[{}]}}"#, targets.join(","))
+        };
+        let json = format!(
+            r#"{{"workspace_root":"/w","workspace_members":["a 0.1.0 (path+file:///w/a)","b 0.1.0 (path+file:///w/b)"],"packages":[{},{}]}}"#,
+            meta("a", &["bin"]),
+            meta("b", &["lib", "test"])
+        );
+        let members = parse_metadata(&json).unwrap();
+        let a = Targets { lib: false, bin: true, test: false };
+        assert_eq!(members[0].targets, a);
+        assert_eq!(targets_of(&["a".into(), "b".into()], &members), Targets { lib: true, bin: true, test: true });
+        assert_eq!(targets_of(&["a".into()], &members), a);
+    }
+
+    #[test]
+    fn a_missing_nextest_is_could_not_judge_not_a_red_branch() {
+        let [_, t] = unit_commands(&["gate".into()], ALL, 4);
+        assert!(t.1.starts_with("cargo nextest --version >/dev/null 2>&1 || {"), "{}", t.1);
+        let out = std::process::Command::new("/bin/bash").args(["-c", &t.1]).env("PATH", "/nonexistent").output().unwrap();
+        assert_eq!(out.status.code(), Some(75), "{}", String::from_utf8_lossy(&out.stdout));
     }
 
     #[test]
     fn selecting_batcher_cut_builds_the_gate_its_fence_probe_test_runs() {
-        let [b, t] = unit_commands(&["batcher-cut".into()], 4);
+        let [b, t] = unit_commands(&["batcher-cut".into()], ALL, 4);
         assert!(b.1.ends_with(" -p batcher-cut -p gate"), "{}", b.1);
         assert!(!t.1.contains("-p gate"), "{}", t.1);
-        let [b, _] = unit_commands(&["batcher-cut".into(), "gate".into()], 4);
+        let [b, _] = unit_commands(&["batcher-cut".into(), "gate".into()], ALL, 4);
         assert_eq!(b.1.matches("-p gate").count(), 1, "{}", b.1);
     }
 
     #[test]
     fn unit_commands_build_then_test_each_crate() {
-        let [b, t] = unit_commands(&["gate".into(), "queue".into()], 4);
+        let [b, t] = unit_commands(&["gate".into(), "queue".into()], ALL, 4);
         assert_eq!(b.0, "build");
         assert_eq!(b.1, "CARGO_BUILD_JOBS=4 cargo test --no-run --timings --features integration -p gate -p queue");
         assert_eq!(t.0, "test");
-        assert_eq!(t.1, "cargo test -j 4 --features integration -p gate -p queue -- --test-threads=4");
+        assert!(t.1.contains("; cargo nextest run --config-file target/gate-unit-nextest.toml --no-fail-fast --features integration -p gate -p queue --lib --bins; "), "{}", t.1);
+        assert!(t.1.contains("; cargo test --no-fail-fast --features integration -p gate -p queue --test '*'; "), "{}", t.1);
+        assert!(t.1.contains("; cargo test --no-fail-fast --features integration -p gate -p queue --doc; "), "{}", t.1);
     }
 
     #[test]
     fn reproduce_line_quotes_values_and_shares_the_test_commands_flags() {
         let env = vec![("A".to_string(), "x y'z".to_string()), ("PATH".to_string(), "/bin".to_string())];
-        let line = reproduce_line(&env, 6, "-p gate --lib");
+        let line = reproduce_line(&env, "-p gate --lib");
         assert_eq!(
             line,
-            "env -i A='x y'\\''z' PATH='/bin' cargo test -j 6 --features integration -p gate --lib -- --test-threads=6"
+            "env -i A='x y'\\''z' PATH='/bin' cargo test --no-fail-fast --features integration -p gate --lib"
         );
-        let [_, t] = unit_commands(&["gate".into()], 6);
-        let words = |s: &str| s.split(' ').filter(|w| w.starts_with("--") || *w == "-j").map(String::from).collect::<Vec<_>>();
-        assert!(words(&t.1).iter().all(|w| line.contains(w.as_str())), "{line} vs {}", t.1);
     }
 
     #[test]
@@ -1340,7 +1479,7 @@ mod tests {
 
     #[test]
     fn unit_commands_name_neither_a_profile_nor_an_incremental_override() {
-        for (_, c) in unit_commands(&["gate".into()], 4) {
+        for (_, c) in unit_commands(&["gate".into()], ALL, 4) {
             assert!(!c.contains("--profile") && !c.contains("incremental=false"), "{c}");
         }
     }
@@ -1483,6 +1622,7 @@ cargo: test tests::x ... ok";
         Composition::Unit {
             touched: vec!["tsd".into()],
             crates: vec!["tsd".into()],
+            targets: Targets::default(),
         }
     }
 
@@ -1496,7 +1636,7 @@ cargo: test tests::x ... ok";
         );
         assert!(!g.contains("build-fence"));
         // …and its build phase compiles the test harnesses the test phase then reuses.
-        let [b, _] = unit_commands(&["tsd".into()], 4);
+        let [b, _] = unit_commands(&["tsd".into()], ALL, 4);
         assert!(
             b.1.contains(" cargo test --no-run --timings "),
             "{}",
