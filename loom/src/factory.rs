@@ -21,7 +21,7 @@ const DAY: i64 = 86_400;
 const SEEN_WINDOW: i64 = DAY;
 
 /// The registered config keys a component's queue reads its configured limit from.
-pub const LIMIT_KEYS: [&str; 10] = [
+pub const LIMIT_KEYS: [&str; 11] = [
     "SPIRA_MAX_LIVE_DWARVES",
     "SPIRA_LANES_MAX_LIVE",
     "SPIRA_STACK_MAX_DEPTH",
@@ -32,6 +32,7 @@ pub const LIMIT_KEYS: [&str; 10] = [
     "SPIRA_QUEUE_LOCK_WAIT",
     "SPIRA_ROUND_CERTIFY_WALL_SECS",
     "SPIRA_BATCHER_WALL_SECS",
+    "SPIRA_BATCHER_STALL_SECS",
 ];
 
 /// Where each `spira-lc stats` verb is drawn; a verb not named here sits on the control bus.
@@ -207,7 +208,7 @@ const COMPONENTS: &[ComponentDef] = &[
         &[qk("round_certify_wall_secs", "SPIRA_ROUND_CERTIFY_WALL_SECS"), qk("batcher_wall_secs", "SPIRA_BATCHER_WALL_SECS")],
     ),
     component("pass-verdict", "pass verdict", Some("res"), &["suite results"], &[]),
-    component("attribution", "attribution verdict", Some("attr"), &["batcher attribute on a further VM"], &[]),
+    component("attribution", "attribution verdict", Some("attr"), &["batcher attribute on a further VM"], &[qk("batcher_stall_secs", "SPIRA_BATCHER_STALL_SECS")]),
     component("release-chain", "release machine", Some("rel"), &["build", "cut → accepted", "activate"], &[q("lock.activate")]),
     component("publish-pr", "publish PR", Some("pr"), &["queue.step", "publish", "queue verdict"], &[q("publish cadence")]),
 ];

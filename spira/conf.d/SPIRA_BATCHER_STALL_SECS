@@ -1,0 +1,6 @@
+TYPE=u64
+GROUP=batcher
+DOC=SPIRA_BATCHER_STALL_SECS — Seconds an attribution leg may wait with no new result and no change in what its runner collects before it stops, leaves the round open and pages Ops.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_BATCHER_STALL_SECS:=600}"
+SPIRA_CONF_DEFAULT_EOF

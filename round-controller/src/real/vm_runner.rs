@@ -735,7 +735,7 @@ impl RoundRunner for VmRunner<'_, '_> {
             Main::Finished(end) => {
                 return Ok(MainPoll {
                     results: vec![],
-                    done: Some(*end),
+                    done: Some(end.clone()),
                 })
             }
             Main::Corpus { suites, seen } => {
@@ -769,7 +769,7 @@ impl RoundRunner for VmRunner<'_, '_> {
                 reported,
                 total,
             )?;
-            p.done = Some(done);
+            p.done = Some(done.clone());
             self.main = Main::Finished(done);
             return Ok(p);
         };
@@ -800,7 +800,7 @@ impl RoundRunner for VmRunner<'_, '_> {
                 ))
             }
         };
-        p.done = Some(done);
+        p.done = Some(done.clone());
         self.main = Main::Finished(done);
         Ok(p)
     }

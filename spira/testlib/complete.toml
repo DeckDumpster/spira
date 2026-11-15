@@ -128,6 +128,7 @@ runtime_view_secs = 3
 runtime_reconciler_flow_secs = 1800
 batcher_orphan_redrive_secs = 600
 batcher_pause_lift_secs = 900
+batcher_stall_secs = 600
 unrounded_noverdict_grace_secs = 3600
 runtime_reconciler_secs = 60
 runtime_socket = "/fixture/userhome/spira/run/runtime-control.sock"

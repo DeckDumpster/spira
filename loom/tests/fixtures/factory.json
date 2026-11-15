@@ -2355,7 +2355,13 @@
    "steps": [
     "batcher attribute on a further VM"
    ],
-   "queues": []
+   "queues": [
+    {
+     "label": "batcher_stall_secs",
+     "key": "SPIRA_BATCHER_STALL_SECS",
+     "config": null
+    }
+   ]
   },
   {
    "id": "release-chain",

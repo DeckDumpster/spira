@@ -645,6 +645,7 @@ impl drive::RoundOps for LiveOps<'_> {
             "integration" => "red only in the merged tree, not fixed in the round",
             "mender-page" => "the menders' passes ended in a box fault the loop cannot fix",
             drive::CONFIG_DELTA => "the merged config delta does not apply",
+            drive::ATTRIBUTION_STALLED => "the attribution leg made no progress past its bound",
             _ => "workspace failed to build",
         };
         match io::file_local_red_incident(
@@ -1064,7 +1065,7 @@ fn stabilize_round(
             println!("batcher {}: round blocked — {why}", repo.name);
             Ok(Stabilized::Blocked)
         }
-        drive::RoundEnd::Faulted(why) => {
+        drive::RoundEnd::Faulted(why) | drive::RoundEnd::Stalled(why) => {
             println!("batcher {}: {why}", repo.name);
             Ok(Stabilized::Blocked)
         }
@@ -2293,7 +2294,7 @@ fn attribute_run(o: &Opts) -> Result<(), String> {
         },
         Ok(drive::RoundEnd::Blocked(why)) => Attribution::Blocked(why),
         Ok(drive::RoundEnd::Emptied(why)) => Attribution::Emptied(why),
-        Ok(drive::RoundEnd::Faulted(why)) => Attribution::Faulted(why),
+        Ok(drive::RoundEnd::Faulted(why) | drive::RoundEnd::Stalled(why)) => Attribution::Faulted(why),
         Ok(drive::RoundEnd::Abandoned) => Attribution::Blocked("the round was abandoned".into()),
         Err(e) if replaced.is_some() => return Err(format!("{}: {e}", replaced.unwrap_or_default())),
         Err(e) if batcher_cut::attribute::is_round_vm_fault(&e) => {

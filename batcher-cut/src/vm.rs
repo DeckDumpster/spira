@@ -287,6 +287,25 @@ pub struct VmRunner<'a> {
     subset: bool,
 }
 
+/// A number that changes when anything under `path` is added, grown or touched.
+fn tree_mark(path: &Path) -> u64 {
+    let Ok(meta) = fs::metadata(path) else { return 0 };
+    let stamp = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |d| d.as_nanos() as u64);
+    let own = stamp.wrapping_add(meta.len()).wrapping_add(1);
+    if !meta.is_dir() {
+        return own;
+    }
+    fs::read_dir(path)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .fold(own, |mark, e| mark.wrapping_add(tree_mark(&e.path())))
+}
+
 /// The member a `member=` line of the VM's lint report blames: the bead id after `land` in a
 /// `commit <sha> <subject>` culprit, or the leading token when the VM already resolved one.
 /// A base culprit, or an id outside the round, names nobody.
@@ -1073,7 +1092,7 @@ impl RoundRunner for VmRunner<'_> {
             Main::Finished(end) => {
                 return Ok(MainPoll {
                     results: vec![],
-                    done: Some(*end),
+                    done: Some(end.clone()),
                 })
             }
             Main::Corpus { suites, seen } => {
@@ -1116,7 +1135,7 @@ impl RoundRunner for VmRunner<'_> {
                     }
                 },
             });
-            self.main = Main::Finished(p.done.unwrap());
+            self.main = Main::Finished(p.done.clone().unwrap());
             return Ok(p);
         };
         let Some(rc) = read_rc(&res_root.join(format!("{job}.done"))) else {
@@ -1146,7 +1165,7 @@ impl RoundRunner for VmRunner<'_> {
                 ))
             }
         }
-        self.main = Main::Finished(p.done.unwrap());
+        self.main = Main::Finished(p.done.clone().unwrap());
         Ok(p)
     }
 
@@ -1188,6 +1207,16 @@ impl RoundRunner for VmRunner<'_> {
 
     fn now(&self) -> u64 {
         epoch()
+    }
+
+    fn stall_secs(&self) -> Option<u64> {
+        Some(self.env.stall_secs)
+    }
+
+    fn progress(&mut self) -> u64 {
+        [&self.results, &self.spool, &self.stderr_path]
+            .into_iter()
+            .fold(0, |mark, p| mark.wrapping_mul(31).wrapping_add(tree_mark(p)))
     }
 
     fn wait(&mut self) {
@@ -1915,6 +1944,21 @@ mod abandon_tests {
     }
 
     #[test]
+    fn a_runner_answers_the_configured_stall_bound_and_counts_a_writing_results_dir_as_progress() {
+        let d = testkit::TempDir::new("vm-progress");
+        let mut env = lifecycle_tests_env(d.path());
+        env.stall_secs = 4242;
+        let repo = repo(d.path());
+        let mut r = VmRunner::new(&env, &repo, d.path(), "base", "r1", BTreeMap::new()).unwrap();
+        assert_eq!(r.stall_secs(), Some(4242));
+        fs::create_dir_all(&r.results).unwrap();
+        let before = r.progress();
+        assert_eq!(r.progress(), before, "nothing written, nothing moved");
+        fs::write(r.results.join("test-a.sh.out"), "building\n").unwrap();
+        assert_ne!(r.progress(), before, "a file written under the results dir is progress");
+    }
+
+    #[test]
     fn an_attribution_runner_accepts_a_corpus_list_that_is_a_subset_of_the_tree_and_a_plain_one_refuses() {
         let d = testkit::TempDir::new("vm-corpus-list");
         let env = lifecycle_tests_env(d.path());
@@ -2006,4 +2050,19 @@ mod abandon_tests {
         assert_eq!(subset_scope("workspace", &["loom".into()]), "workspace");
     }
 
+    #[test]
+    fn a_tree_mark_changes_when_a_file_appears_or_grows_and_not_otherwise() {
+        let d = testkit::TempDir::new("vm-tree-mark");
+        let quiet = tree_mark(d.path());
+        assert_eq!(tree_mark(d.path()), quiet);
+        fs::create_dir_all(d.path().join("res")).unwrap();
+        let made = tree_mark(d.path());
+        assert_ne!(made, quiet, "a new directory is progress");
+        fs::write(d.path().join("res/out"), "a").unwrap();
+        let wrote = tree_mark(d.path());
+        assert_ne!(wrote, made, "a new file is progress");
+        fs::write(d.path().join("res/out"), "ab").unwrap();
+        assert_ne!(tree_mark(d.path()), wrote, "a growing file is progress");
+        assert_eq!(tree_mark(&d.path().join("missing")), 0);
+    }
 }
