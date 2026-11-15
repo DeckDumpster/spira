@@ -206,6 +206,12 @@ pub struct BeadRow {
     /// a row claimed before the field existed, which reads as READY.
     #[serde(default)]
     pub claimed_from: Option<BeadState>,
+    /// Seconds of completed WORKING sessions.
+    #[serde(default)]
+    pub worked_s: i64,
+    /// Entries into WORKING.
+    #[serde(default)]
+    pub sessions: u32,
 }
 
 impl BeadRow {
@@ -233,6 +239,8 @@ impl BeadRow {
             ejected_red_tip: None,
             sifted_tip: None,
             claimed_from: None,
+            worked_s: 0,
+            sessions: 0,
         }
     }
 }
@@ -488,6 +496,14 @@ pub fn apply(row: &BeadRow, ev: &BeadEvent) -> Outcome<BeadRow> {
     let mut out = apply_transition(row, ev);
     let entered = out.row.state != row.state;
     if out.applied && entered {
+        if out.row.state == BeadState::Working {
+            out.row.sessions += 1;
+        }
+        if row.state == BeadState::Working {
+            if let (Some(at), Some(since)) = (ev.at, row.since) {
+                out.row.worked_s += (at - since).max(0);
+            }
+        }
         out.row.since = ev.at;
     }
     if out.applied && out.row.state != row.state {
@@ -1540,6 +1556,47 @@ mod tests {
             BeadEventKind::Renew { lease_until: 2 },
             BeadEventKind::Promote,
         ]
+    }
+
+    #[test]
+    fn builder_time_and_sessions_accumulate_over_entries_to_and_exits_from_working() {
+        let tip = "1111111111111111111111111111111111111111";
+        let claim = BeadEventKind::Claim { holder: "h".into(), lease_until: 1, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None, directed: None };
+        let step = |r: &BeadRow, kind: BeadEventKind, at: i64| {
+            let mut e = ev(r.state, r.version, kind);
+            e.at = Some(at);
+            e.actor = "h".into();
+            let out = apply(r, &e);
+            assert!(out.applied, "{:?}", out.refusal);
+            out.row
+        };
+        let r = step(&row(BeadState::Ready), claim.clone(), 0);
+        assert_eq!((r.sessions, r.worked_s), (1, 0));
+        let r = step(&r, BeadEventKind::Renew { lease_until: 2 }, 600);
+        assert_eq!((r.sessions, r.worked_s), (1, 0), "a renewal is neither an entry nor an exit");
+        let r = step(&r, BeadEventKind::Submit { tip: tip.into() }, 17580);
+        assert_eq!((r.state, r.sessions, r.worked_s), (BeadState::Submitted, 1, 17580));
+        let r = step(&r, BeadEventKind::GateRed { tip: tip.into(), reason: GateRedReason::SuitesFailed, step: None, message: None }, 17600);
+        assert_eq!((r.state, r.worked_s), (BeadState::Rework, 17580), "leaving a state other than WORKING adds nothing");
+        let r = step(&r, claim, 18120);
+        assert_eq!((r.sessions, r.worked_s), (2, 17580));
+    }
+
+    #[test]
+    fn a_session_with_no_recorded_start_or_a_backwards_clock_adds_no_builder_time() {
+        let submit = |r: &BeadRow, at: Option<i64>| {
+            let mut e = ev(BeadState::Working, r.version, BeadEventKind::Submit { tip: "1111111111111111111111111111111111111111".into() });
+            e.actor = "h".into();
+            e.at = at;
+            apply(r, &e).row
+        };
+        let mut r = row(BeadState::Working);
+        r.holder = Some("h".into());
+        r.worked_s = 50;
+        assert_eq!(submit(&r, Some(10)).worked_s, 50, "no since");
+        r.since = Some(100);
+        assert_eq!(submit(&r, None).worked_s, 50, "no event time");
+        assert_eq!(submit(&r, Some(40)).worked_s, 50, "a backwards clock clamps to zero");
     }
 
     #[test]
