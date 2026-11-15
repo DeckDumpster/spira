@@ -477,7 +477,7 @@ pub fn eject_failure_brief(digest: &str, heads: &[&str]) -> String {
     if !heads.iter().any(|h| !h.is_empty() && *h == tip) {
         return String::new();
     }
-    format!("## You were ejected — the failure, verbatim\n\n{d}\n\nThis is the evidence the gate or the round held; start from it, not from a search of the box.\n\n")
+    format!("## You were ejected — the failure, verbatim\n\n{d}\n\nFull output of every step that judged you: `work logs`.\n\nThis is the evidence the gate or the round held; start from it, not from a search of the box.\n\n")
 }
 
 pub fn thrash_banner(streak: &str, last: &str) -> String {
@@ -899,6 +899,7 @@ mod tests {
         let d = spira_config::ejection::digest("aaa", &[], "---- t::boom stdout ----\nthread 't::boom' panicked at x/y.rs:7:1:\nit broke\n\nfailures:\n");
         let b = eject_failure_brief(&d, &["aaa"]);
         assert!(b.starts_with("## You were ejected") && b.contains("t::boom at x/y.rs:7") && b.contains("it broke"), "{b}");
+        assert!(b.contains("`work logs`"), "the brief names the reader of the full output: {b}");
         assert_eq!(eject_failure_brief(&d, &["bbb"]), "", "a red that judged another tip says nothing about this one");
         assert!(eject_failure_brief(&d, &["aaa", "bbb"]).starts_with("## You were ejected"), "judged before the rebase");
         assert_eq!(eject_failure_brief(&d, &["ccc", "bbb"]), "");

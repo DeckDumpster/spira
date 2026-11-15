@@ -289,7 +289,7 @@ pub fn foreign_bead_reference<'a>(verb: &str, bound: &str, args: &'a [String]) -
 }
 
 /// The verbs bound to the called bead: they act on it and nothing else.
-pub const BOUND_VERBS: &[&str] = &["show", "note", "submit", "done", "blocked", "file-followup", "split", "superseded-by", "ack"];
+pub const BOUND_VERBS: &[&str] = &["show", "note", "submit", "done", "blocked", "file-followup", "split", "superseded-by", "ack", "logs"];
 
 /// The verbs that name their own target (sp-st0mm): reads of other beads, a lane persona's
 /// writes to other beads, the operator mailbox, and the harness tools that reach bd. Which
@@ -301,7 +301,7 @@ pub const LANE_VERBS: &[&str] = &[
 ];
 
 pub const VERBS: &[&str] = &[
-    "show", "note", "submit", "done", "blocked", "file-followup", "split", "superseded-by", "ack", "ask", "read", "list", "search", "note-on", "label-add",
+    "show", "note", "submit", "done", "blocked", "file-followup", "split", "superseded-by", "ack", "logs", "ask", "read", "list", "search", "note-on", "label-add",
     "label-remove", "dep-add", "relate", "reopen", "close-other", "close-ask", "file", "groom", "incident", "sop", "census", "queue", "landing-pass", "strand",
     "fence", "hel", "mender", "forge",
 ];
@@ -484,7 +484,7 @@ pub fn build_request_in(bound: &str, verb: &str, verb_args: &[String], tip: Opti
             }
             req.extend(["--actor".to_string(), actor.to_string()]);
         }
-        "done" | "blocked" | "superseded-by" | "ack" => {
+        "done" | "blocked" | "superseded-by" | "ack" | "logs" => {
             req.extend(verb_args.iter().cloned());
             req.extend(["--actor".to_string(), actor.to_string()]);
         }
