@@ -30,7 +30,7 @@
 #
 # requires: testenv
 # tier: T2
-# covers: dwarf/src/* spira/hooks/pre-commit spira/pre-commit-guard.sh spira/worktree-hooks.sh UC-safety-fences-17
+# covers: dwarf/src/* spira/hooks/pre-commit spira/hooks/commit-msg spira/pre-commit-guard.sh spira/worktree-hooks.sh UC-safety-fences-17
 # defect: sp-rbxr
 # scar: a dwarf ran `git add -A` and staged a pre-existing dirty file; the commit named the bead but carried another process's uncommitted work instead of the dwarf's own.
 set -uo pipefail
@@ -42,6 +42,17 @@ export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT INT TERM
+
+# commit-msg asks spira-lc whether cited beads exist; this fixture has no store, so a stub
+# answers: a message citing sp-phantom is refused (3), anything else passes.
+unset SPIRA_WORK_BEAD_ID
+STUBBIN="$TMP/stubbin"; mkdir -p "$STUBBIN"
+cat > "$STUBBIN/spira-lc" <<'STUB'
+#!/usr/bin/env bash
+if grep -q 'sp-phantom'; then echo "commit-msg stub: sp-phantom is not a bead; reword" >&2; exit 3; fi
+exit 0
+STUB
+chmod +x "$STUBBIN/spira-lc"; export PATH="$STUBBIN:$PATH"
 
 # A GUARD ON THE GUARD: the hook must exist; testing with a missing hook would give a false
 # pass on every case (no hook = no refusal = commits succeed = looks like "excluded").

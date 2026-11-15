@@ -175,6 +175,15 @@ pub static ENTRIES: &[Entry] = &[
         checks: &["the bead is the bound one"],
         refusals: &[],
     },
+    Entry {
+        verb: "cite-check",
+        group: Group::Ask,
+        does: "Judges a commit message on stdin: refuses one citing a bead id the store does not hold.",
+        when: "The commit-msg hook runs it; run it by hand to try a message before you commit.",
+        args: &["-   (the message on stdin)"],
+        checks: &["the citation rule is the one `work submit` and the gate apply"],
+        refusals: &[],
+    },
     lane("ask", "Posts an ask to the operator's mailbox.", "A decision outside your bead needs a human; always give a default and a class basis.", &["--subject <q>", "--kind question", "--class <permissions|policy|destructive|design>", "--default <what you would do>", "--body-file -"]),
     Entry {
         verb: "blocked",

@@ -27,7 +27,7 @@
 # deletion in a real checkout would be the very thing the hook exists to prevent.
 #
 # tier: T2
-# covers: spira/hooks/reference-transaction spira/worktree-hooks.sh spira/hooks/pre-commit spira/pre-commit-guard.sh UC-safety-fences-20 UC-safety-fences-21
+# covers: spira/hooks/reference-transaction spira/worktree-hooks.sh spira/hooks/pre-commit spira/hooks/commit-msg spira/pre-commit-guard.sh UC-safety-fences-20 UC-safety-fences-21
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$HERE/testlib.sh"
@@ -38,6 +38,17 @@ HOOK="$HERE/hooks/reference-transaction"
 TR="$(mktemp -d)" || exit 1
 trap 'rm -rf "$TR"' EXIT
 cd "$TR" || exit 1
+
+# commit-msg asks spira-lc whether cited beads exist; this fixture has no store, so a stub
+# answers: a message citing sp-phantom is refused (3), anything else passes.
+unset SPIRA_WORK_BEAD_ID
+STUBBIN="$TR/stubbin"; mkdir -p "$STUBBIN"
+cat > "$STUBBIN/spira-lc" <<'STUB'
+#!/usr/bin/env bash
+if grep -q 'sp-phantom'; then echo "commit-msg stub: sp-phantom is not a bead; reword" >&2; exit 3; fi
+exit 0
+STUB
+chmod +x "$STUBBIN/spira-lc"; export PATH="$STUBBIN:$PATH"
 
 git init -q repo && cd repo || exit 1
 git config user.email guard-suite@example.invalid
@@ -215,6 +226,13 @@ printf 'ordinary\n' > "$TR/wt/ordinary.txt"
 git -C "$TR/wt" add ordinary.txt >/dev/null 2>&1
 out="$(commit_in_wt 'sp-test: ordinary commit')"; rc=$?
 is "case 15: an ordinary commit is not refused" "0" "$rc"
+printf 'phantom\n' > "$TR/wt/phantom.txt"
+git -C "$TR/wt" add phantom.txt >/dev/null 2>&1
+out="$(commit_in_wt 'sp-test: cites sp-phantom')"; rc=$?
+is   "case 15: a commit citing a phantom bead is refused by commit-msg" "1" "$rc"
+want "case 15: the refusal comes from the store's answer" "sp-phantom" "$out"
+git -C "$TR/wt" restore --staged phantom.txt >/dev/null 2>&1
+rm -f "$TR/wt/phantom.txt"
 
 echo
 echo "CASE 16: THE FIX. git pack-refs --all --prune (what git gc runs) completes on a loose bead branch, and the branch still resolves to the same commit afterward — packing is a representation change, not a deletion:"

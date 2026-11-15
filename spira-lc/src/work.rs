@@ -38,14 +38,23 @@ pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
         "superseded-by" => cmd_superseded_by(bead_id, rest, conn),
         "ack" => cmd_ack(bead_id, rest),
         "logs" => cmd_logs(bead_id, rest, conn),
+        "cite-check" => cmd_cite_check(bead_id, rest, &mut |ids| crate::callers::Bd::known(&mut crate::bd::LiveBd, ids)),
         "fence" => cmd_fence(rest),
         "forge" => cmd_forge(bead_id, rest),
         other if LANE_VERBS.contains(&other) => cmd_lane(bead_id, other, rest, conn),
         other => (
             CANNOT_TELL,
-            format!("work: unknown verb {other:?} (want show, note, submit, done, blocked, file-followup, split, superseded-by, ack, logs, {})", LANE_VERBS.join(", ")),
+            format!("work: unknown verb {other:?} (want show, note, submit, done, blocked, file-followup, split, superseded-by, ack, logs, cite-check, {})", LANE_VERBS.join(", ")),
         ),
     }
+}
+
+/// `work cite-check -`: the message on stdin, judged by the bound bead's own id prefix.
+fn cmd_cite_check(bead_id: &str, rest: &[String], known: &mut spira_config::cite::Lookup<'_>) -> (i32, String) {
+    let Some(message) = split_reserved(rest).stdin else {
+        return (CANNOT_TELL, "work cite-check: usage: work cite-check - (the commit message on stdin)".into());
+    };
+    crate::cite_check::message_verdict(&message, bead_id.split('-').next().unwrap_or_default(), known)
 }
 
 fn require_actor(args: &[String]) -> Result<String, (i32, String)> {
@@ -1175,7 +1184,7 @@ pub const LANE_VERBS: &[&str] = &[
     "sop", "census", "queue", "landing-pass", "strand", "fence", "hel", "mender", "forge",
 ];
 
-const BOUND_VERBS: &[&str] = &["show", "note", "submit", "done", "blocked", "file-followup", "split", "superseded-by", "ack", "logs"];
+const BOUND_VERBS: &[&str] = &["show", "note", "submit", "done", "blocked", "file-followup", "split", "superseded-by", "ack", "logs", "cite-check"];
 
 /// The tool verbs: `work <verb> <sub> ...` runs `<program> <sub> ...` — a harness tool that
 /// itself reaches bd, with `<sub>` one of the operations [`ALLOW`] names for it. `census`
@@ -1224,6 +1233,7 @@ pub const ALLOW: &[(&str, &[&str])] = &[
     ("superseded-by", ANY),
     ("ack", ANY),
     ("logs", ANY),
+    ("cite-check", ANY),
     // Reads and the operator mailbox.
     ("ask", ANY),
     ("read", ANY),
@@ -2136,6 +2146,35 @@ fn cmd_lane(bound: &str, verb: &str, rest: &[String], conn: &Conn) -> (i32, Stri
 
 #[cfg(test)]
 mod tests {
+    fn cite_check_of(msg: &str, held: &[&str], store_down: bool) -> (i32, String) {
+        let held: Vec<String> = held.iter().map(|h| h.to_string()).collect();
+        let mut known = |ids: &[String]| if store_down { Err("down".to_string()) } else { Ok(ids.iter().filter(|i| held.contains(i)).cloned().collect()) };
+        super::cmd_cite_check("sp-me1", &["-".into(), "--stdin".into(), msg.into(), "--actor".into(), "builder".into()], &mut known)
+    }
+
+    #[test]
+    fn cite_check_refuses_a_phantom_naming_the_id_and_the_fix() {
+        let (code, out) = cite_check_of("sp-me1: x\n\nsee sp-zzzzzz", &["sp-me1"], false);
+        assert_eq!(code, REFUSED);
+        assert!(out.contains("this message cites sp-zzzzzz") && out.contains("reword"), "{out}");
+    }
+
+    #[test]
+    fn cite_check_passes_fixture_tokens_and_real_beads() {
+        assert_eq!(cite_check_of("see sp-a and sp-b", &[], false).0, 0);
+        assert_eq!(cite_check_of("sp-me1: x", &["sp-me1"], false).0, 0);
+    }
+
+    #[test]
+    fn every_persona_may_run_cite_check() {
+        assert!(permitted("cite-check", Some("builder")).is_ok());
+    }
+
+    #[test]
+    fn cite_check_cannot_tell_when_the_store_errs() {
+        assert_eq!(cite_check_of("sp-me1: x", &[], true).0, CANNOT_TELL);
+    }
+
     fn send_tip(repo: &std::path::Path, remote: &std::path::Path, secs: &str) -> (i32, String) {
         let tip = testkit::git(repo, &["rev-parse", "HEAD"]);
         super::forge_git(repo, remote.to_str().unwrap(), &format!("{}:refs/heads/spira-round-candidate/sp-x-1", tip.trim()), "ami-push", "builder", secs)

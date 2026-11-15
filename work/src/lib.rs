@@ -290,7 +290,7 @@ pub fn foreign_bead_reference<'a>(verb: &str, bound: &str, args: &'a [String]) -
 }
 
 /// The verbs bound to the called bead: they act on it and nothing else.
-pub const BOUND_VERBS: &[&str] = &["show", "note", "submit", "done", "blocked", "file-followup", "split", "superseded-by", "ack", "logs"];
+pub const BOUND_VERBS: &[&str] = &["show", "note", "submit", "done", "blocked", "file-followup", "split", "superseded-by", "ack", "logs", "cite-check"];
 
 /// The verbs that name their own target (sp-st0mm): reads of other beads, a lane persona's
 /// writes to other beads, the operator mailbox, and the harness tools that reach bd. Which
@@ -302,7 +302,7 @@ pub const LANE_VERBS: &[&str] = &[
 ];
 
 pub const VERBS: &[&str] = &[
-    "show", "note", "submit", "done", "blocked", "file-followup", "split", "superseded-by", "ack", "logs", "ask", "read", "list", "search", "note-on", "label-add",
+    "show", "note", "submit", "done", "blocked", "file-followup", "split", "superseded-by", "ack", "logs", "cite-check", "ask", "read", "list", "search", "note-on", "label-add",
     "label-remove", "dep-add", "relate", "reopen", "close-other", "close-ask", "file", "groom", "incident", "sop", "census", "queue", "landing-pass", "strand",
     "fence", "hel", "mender", "forge",
 ];
@@ -456,7 +456,7 @@ pub fn build_request_in(bound: &str, verb: &str, verb_args: &[String], tip: Opti
     let mut req = vec!["work".to_string(), bound.to_string(), verb.to_string()];
     match verb {
         "show" => {}
-        "note" => {
+        "note" | "cite-check" => {
             req.extend(verb_args.iter().cloned());
             if let Some(b) = body {
                 req.extend(["--stdin".to_string(), b.to_string()]);
@@ -729,6 +729,14 @@ mod tests {
         assert!(build_request("sp-3m1p9", "done", &v(&["--delivers", "x", "--actor", "czar"]), None, "builder").is_err());
         assert!(build_request("sp-3m1p9", "note-on", &v(&["sp-x", "--stdin", "y"]), None, "czar").is_err());
         assert!(build_request("sp-3m1p9", "split", &v(&["t", "--for", "ops"]), None, "builder").is_err());
+    }
+
+    #[test]
+    fn cite_check_carries_the_message_as_a_stdin_body() {
+        assert_eq!(
+            build_request_with_body("sp-3m1p9", "cite-check", &v(&["-"]), None, "a", Some("sp-x: m")).unwrap(),
+            v(&["work", "sp-3m1p9", "cite-check", "-", "--stdin", "sp-x: m"])
+        );
     }
 
     #[test]
