@@ -343,9 +343,12 @@ fn hold_flags(args: &[String]) -> Result<HoldArgs, Answer> {
 
 fn is_iso_date(v: &str) -> bool {
     let b = v.as_bytes();
-    b.len() >= 10
-        && b[..10].iter().enumerate().all(|(i, c)| if i == 4 || i == 7 { *c == b'-' } else { c.is_ascii_digit() })
-        && !v.contains(char::is_whitespace)
+    let digits = |at: &[usize]| at.iter().all(|&i| b[i].is_ascii_digit());
+    (b.len() == 10 || b.len() == 20)
+        && digits(&[0, 1, 2, 3, 5, 6, 8, 9])
+        && b[4] == b'-'
+        && b[7] == b'-'
+        && (b.len() == 10 || (b[10] == b'T' && b[13] == b':' && b[16] == b':' && b[19] == b'Z' && digits(&[11, 12, 14, 15, 17, 18])))
 }
 
 /// Whether the bead's history has a Hold event at `seq`. Err: the history could not be read

@@ -150,17 +150,26 @@ fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
     era * 146_097 + doe - 719_468
 }
 
-/// The epoch second and the text of a `review-by:YYYY-MM-DD <text>` reason.
+/// The epoch second a `review-by:<date | instant> <text>` hold falls due, and its text.
+/// A bare date is due at the end of that UTC day.
 pub fn review(reason: &str) -> Option<(i64, String)> {
     let rest = reason.strip_prefix("review-by:")?;
-    let b = rest.as_bytes();
-    let digits = |r: std::ops::Range<usize>| b.get(r.clone()).filter(|s| s.iter().all(u8::is_ascii_digit)).and_then(|_| rest[r].parse::<i64>().ok());
-    let (y, m, d) = (digits(0..4)?, digits(5..7)?, digits(8..10)?);
-    if b[4] != b'-' || b[7] != b'-' || y < 1 || !(1..=12).contains(&m) {
-        return None;
-    }
-    let tail = rest[10..].trim_start_matches(|c: char| !c.is_whitespace()).trim_start();
-    Some(((days_from_civil(y, m, 1) + d - 1) * 86_400, tail.chars().take(70).collect()))
+    let (token, tail) = rest.split_once(char::is_whitespace).unwrap_or((rest, ""));
+    let b = token.as_bytes();
+    let shaped = |at: usize| b.get(at).is_some_and(u8::is_ascii_digit);
+    let date_shape = b.len() >= 10 && (0..10).all(|i| if i == 4 || i == 7 { b[i] == b'-' } else { shaped(i) });
+    let due = match b.len() {
+        10 if date_shape => {
+            let (y, m, d) = (token[0..4].parse::<i64>().ok()?, token[5..7].parse::<i64>().ok()?, token[8..10].parse::<i64>().ok()?);
+            if y < 1 || !(1..=12).contains(&m) {
+                return None;
+            }
+            (days_from_civil(y, m, 1) + d) * 86_400
+        }
+        20 if date_shape && b[10] == b'T' && b[13] == b':' && b[16] == b':' && b[19] == b'Z' && [11, 12, 14, 15, 17, 18].iter().all(|&i| shaped(i)) => bead::claimdesc::parse_iso(token)?,
+        _ => return None,
+    };
+    Some((due, tail.trim_start().chars().take(70).collect()))
 }
 
 fn details(x: &Value) -> Vec<String> {
@@ -286,10 +295,7 @@ pub fn suspects(p: &BeadSweep, snap: &Snapshot, room: Option<&Room>, now: f64) -
             Some(format!("ASK HOLD unanswered ({why})"))
         } else if has("manual") && review(hold_reason).is_some() {
             let (due, text) = review(hold_reason).unwrap_or_default();
-            (due as f64 <= now).then(|| {
-                let (y, m, d) = civil(due.div_euclid(86_400));
-                format!("HOLD REVIEW OVERDUE since {y:04}-{m:02}-{d:02} ({text})")
-            })
+            (due as f64 <= now).then(|| format!("HOLD REVIEW OVERDUE since {} ({text})", iso8601(due.max(0) as u64)))
         } else if has("manual") {
             match r.held_at {
                 None => Some(format!("MANUAL HOLD with no Hold event in its history ({why})")),
@@ -579,10 +585,24 @@ mod tests {
         assert!(decide(&p, &c, &snap, None, &[], 1800.0).1.is_empty());
     }
 
+    fn held_for_review(v: &str) -> Snapshot {
+        let row = Row { id: "sp-r".into(), state: "READY".into(), holds: vec!["manual".into()], reason: format!("review-by:{v} x"), ..Row::default() };
+        Snapshot { rows: vec![row], ..Snapshot::default() }
+    }
+
+    #[test]
+    fn a_hold_is_overdue_only_once_its_review_by_instant_has_passed() {
+        assert!(said(&held_for_review("1970-01-01T03:00:00Z"), None).is_empty());
+        assert!(said(&held_for_review("1970-01-01"), None).is_empty());
+        assert_eq!(said(&held_for_review("1970-01-01T00:59:00Z"), None), vec!["SUSPECT sp-r READY HOLD REVIEW OVERDUE since 1970-01-01T00:59:00Z (x)".to_string()]);
+    }
+
     #[test]
     fn a_review_by_reason_gives_its_date_and_its_text() {
         let (due, text) = review("review-by:2026-10-29 waits on tenancy").unwrap();
-        assert_eq!((due, text.as_str()), (1_793_232_000, "waits on tenancy"));
+        assert_eq!((due, text.as_str()), (1_793_318_400, "waits on tenancy"));
+        assert_eq!(review("review-by:2026-11-15T22:00:00Z x").unwrap().0, 1_794_780_000);
+        assert!(review("review-by:2026-11-15T22:00 x").is_none() && review("review-by:2026-11-15junk x").is_none());
         assert!(review("reviewed-by:2026-10-29 x").is_none() && review("review-by:2026-13-01 x").is_none() && review("review-by:26-10-29 x").is_none());
     }
 
