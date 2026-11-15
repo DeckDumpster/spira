@@ -328,6 +328,7 @@ SPIRA_HOME release/src/main.rs
 SPIRA_HOME release/src/repo.rs
 SPIRA_HOME release/src/stage.rs
 SPIRA_HOME release/src/units.rs
+SPIRA_HOME release/src/verify.rs
 SPIRA_HOME round-vm/src/config.rs
 SPIRA_HOME sentinel/src/cfg.rs
 SPIRA_HOME sentinel/src/dispatch.rs
