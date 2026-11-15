@@ -2841,6 +2841,8 @@ fn a_red_unit_test_on_a_green_base_is_the_branchs() {
     assert!(line.contains("PATH=") && line.contains("HOME="), "{line}");
     let j = line.split("cargo test -j ").nth(1).unwrap().split(' ').next().unwrap();
     assert!(line.ends_with(&format!(" --features integration -p gate --lib -- --test-threads={j}")), "{line}");
+    let test_cmd = f.cmds.borrow().iter().find(|c| c.contains("cargo test -j ") && !c.contains("--no-run")).cloned().unwrap();
+    assert!(test_cmd.contains(&format!("cargo test -j {j} ")), "{test_cmd}");
     assert_eq!(line.matches(" -p ").count(), 1, "{line}");
     let cmds = f.cmds.borrow().clone();
     assert_eq!(

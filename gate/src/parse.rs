@@ -28,7 +28,6 @@ pub fn red_suites(out: &str) -> Vec<String> {
     suites_where(out, &["RED", "TIMEOUT", "FAILED"], true)
 }
 
-/// `failed_tests`: the `<name>` of each cargo `test <name> ... FAILED` line, in order, unique.
 /// The backticked argument of each `error: test failed, to rerun pass `…`` line, once each.
 pub fn cargo_reruns(out: &str) -> Vec<String> {
     let mut v: Vec<String> = Vec::new();
@@ -42,6 +41,7 @@ pub fn cargo_reruns(out: &str) -> Vec<String> {
     v
 }
 
+/// `failed_tests`: the `<name>` of each cargo `test <name> ... FAILED` line, in order, unique.
 pub fn failed_tests(out: &str) -> Vec<String> {
     let mut seen = Vec::new();
     for l in out.lines() {
