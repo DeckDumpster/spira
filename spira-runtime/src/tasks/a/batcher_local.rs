@@ -79,7 +79,7 @@
 //! | `batcher.local.abandon` / `.promote` | store | 30 s | batch | already closed (`io.rs:1823`, `:1945`) |
 //! | `batcher.local.redrive` | unit | 60 s | batch | once per orphan (`io.rs:1772`) |
 //! | `batcher.local.file` (incident/judgement/flip) | store | 30 s | incident ref, e.g. `round-orphan:<repo>:<batch>` | duplicate ref (`io.rs:1780`, `:2066`, `:2129`, `:2178`) |
-//! | `batcher.local.supersede_reds` | store | 30 s | repo + landed head | none: a failure is said, never blocks the landing (`io.rs:2435`) |
+//! | `batcher.local.supersede_reds` | store | 30 s | repo + landed head | none: the close says its failure and never blocks the landing (`io.rs:2435`) |
 //! | `batcher.local.pause` | store | 5 s | repo + lane | — (`pace.rs:248`) |
 //! | `inbox.append` | store | 10 s | line | — (`pace.rs:269`, `main.rs:930`) |
 //!
