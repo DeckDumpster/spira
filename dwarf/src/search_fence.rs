@@ -401,12 +401,13 @@ pub fn refusal(payload: &Value, run: &Path, worktree: &Path, home: &str) -> Opti
             ctx.check("the Grep tool", &ops, Some(&cwd))
         }
         "Glob" => {
-            let path = input["path"].as_str()?;
-            if input["pattern"].as_str()?.contains("**") {
-                ctx.check("the Glob tool", &[path.to_string()], Some(&cwd))
-            } else {
-                None
+            let pattern = input["pattern"].as_str()?;
+            if !pattern.contains("**") {
+                return None;
             }
+            let root = input["path"].as_str();
+            let ops: Vec<String> = if pattern.starts_with(['/', '~']) { vec![pattern.to_string()] } else { root.map(String::from).into_iter().collect() };
+            ctx.check("the Glob tool", &ops, Some(&cwd))
         }
         _ => None,
     }
@@ -464,6 +465,10 @@ mod tests {
         let r = verdict(json!({"tool_name": "Grep", "tool_input": {"pattern": "x", "path": RUN}})).unwrap();
         assert!(r.contains("work show"));
         assert!(verdict(json!({"tool_name": "Glob", "tool_input": {"pattern": "**/*.log", "path": RUN}})).is_some());
+        assert!(verdict(json!({"tool_name": "Glob", "tool_input": {"pattern": "/r/spira/run/**/*.log"}})).is_some());
+        assert_eq!(verdict(json!({"tool_name": "Glob", "tool_input": {"pattern": "**/*.rs"}})), None);
+        assert!(verdict(json!({"tool_name": "Glob", "cwd": RUN, "tool_input": {"pattern": "**/*.rs"}})).is_some());
+        refused("find /r/spira/run/* -name x");
     }
 
     #[test]

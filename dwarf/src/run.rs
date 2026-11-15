@@ -1815,8 +1815,7 @@ pub fn dwarf_settings(home: &Path, run: &Path, prod: Option<&Path>, habits: bool
     }
     let dwarf_bin = home.parent().unwrap_or(home).join("bin").join("dwarf");
     if let Some((run, work)) = search.filter(|_| is_executable(&dwarf_bin)) {
-        let quote = |p: &Path| format!("'{}'", p.display().to_string().replace('\'', "'\\''"));
-        let cmd = format!("{} search-fence --run {} --worktree {}", quote(&dwarf_bin), quote(run), quote(work));
+        let cmd = format!("{} search-fence --run {} --worktree {}", sh_quote(&dwarf_bin), sh_quote(run), sh_quote(work));
         pre.push(format!("{{\"type\": \"command\", \"command\": {}, \"timeout\": 5}}", serde_json::to_string(&cmd).unwrap()));
     }
     if !pre.is_empty() {
