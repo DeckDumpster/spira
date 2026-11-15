@@ -1675,11 +1675,11 @@ fn cmd_reopen(a: &Args, env: &Env) -> Outcome {
         units: unpoison::UnitsPort::host(),
     };
     let o = reopen::Opts { id: id.clone(), cause, note, suites };
-    let rc = reopen::run(&o, &mut live);
+    let (rc, failures) = reopen::run(&o, &mut live);
     if rc == 0 {
         Outcome::ok(String::new())
     } else {
-        Outcome { code: rc, out: String::new(), err: format!("bead_reopen: {id} — {}\n", reopen::FAILURE_REASON) }
+        Outcome { code: rc, out: String::new(), err: format!("bead_reopen: {id} — {}: {}\n", reopen::FAILURE_REASON, failures.join("; ")) }
     }
 }
 

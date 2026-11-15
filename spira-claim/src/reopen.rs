@@ -95,14 +95,13 @@ pub struct Opts {
     pub suites: String,
 }
 
-/// `bead_reopen`'s own stderr line, printed by the caller (main.rs) when [`run`] returns
-/// non-zero: `printf 'bead_reopen: %s — bd refused the reopen, the release or the note\n'`.
+/// The prefix of `bead_reopen`'s stderr line when [`run`] returns non-zero; the failures follow it.
 pub const FAILURE_REASON: &str = "the lifecycle machine refused the reopen, or bd the note";
 
-/// `bead_reopen`. Returns the exit code (`rc` in bash: 0, or 1 if `bdq reopen`,
-/// `release_claim` or the note each separately failed).
-pub fn run(o: &Opts, w: &mut dyn World) -> i32 {
-    let mut rc = 0;
+/// `bead_reopen`. Returns the exit code (0, or 1 if a step failed) and each failure seen, in
+/// order, as `<step>: <its error>`.
+pub fn run(o: &Opts, w: &mut dyn World) -> (i32, Vec<String>) {
+    let mut failures = Vec::new();
     let exempt = admission_exempt(&o.cause);
     let rejected = !exempt && crate::events::classify(&o.cause) == crate::events::ReturnClass::Judged;
 
@@ -115,8 +114,10 @@ pub fn run(o: &Opts, w: &mut dyn World) -> i32 {
 
     // A deliberate conversion is the holder's own hand-off; every other reopen is the
     // harness acting on a bead whose dwarf may still be editing its worktree.
-    if !exempt && w.stop_holder(&o.id, &o.cause).is_err() {
-        return 1;
+    if !exempt {
+        if let Err(e) = w.stop_holder(&o.id, &o.cause) {
+            return (1, vec![format!("stop-holder: {e}")]);
+        }
     }
 
     // A deliberate conversion carries the bead's row forward untouched.
@@ -124,17 +125,21 @@ pub fn run(o: &Opts, w: &mut dyn World) -> i32 {
         w.record_rejection(&o.id, &spira_config::escalation::Rejection::new(&o.cause, &o.suites, "", &o.note));
     }
 
-    if !exempt && w.lc_reopen(&o.id, &o.cause).is_err() {
-        rc = 1;
+    if !exempt {
+        if let Err(e) = w.lc_reopen(&o.id, &o.cause) {
+            failures.push(format!("lc-reopen: {e}"));
+        }
     }
 
     w.write_reopen_event(&o.id, &o.cause);
 
-    if !o.note.is_empty() && w.note(&o.id, &o.note).is_err() {
-        rc = 1;
+    if !o.note.is_empty() {
+        if let Err(e) = w.note(&o.id, &o.note) {
+            failures.push(format!("note: {e}"));
+        }
     }
 
-    rc
+    (i32::from(!failures.is_empty()), failures)
 }
 
 /// The reopen cause of a red ejection; only it names failing checks that a resubmit must prove.
