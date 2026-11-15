@@ -53,9 +53,9 @@
 //! | Landing | land exit 0 / 3 | Promoting if staged else Done (verdict green) |
 //! | Landing | land refused (lock busy ×N, or any other refusal) | Done (output kept, round left open, page with the refusing line, no pause) |
 //! | Promoting | promotion named | Certifying for the staged round (`main.rs:1069`) |
+//! | Done | — | Idle (`pace.advance` writes carry, pages) |
 //!
 //! Corpus is entered only by a carry the previous release recorded; its rows stay so that round finishes.
-//! | Done | — | Idle (`pace.advance` writes carry, pages) |
 //!
 //! Illegal: any leg event whose `round_key` is not the carried round's is refused naming the state.
 //!
@@ -2531,10 +2531,8 @@ pub mod edge {
         runtime::units::effect(units, UNIT_RUN_SCOPE, &json(&scope)?)
     }
 
-    /// `batcher attribute` on the red round: `drive::attribute_round` as one captured leg.
-    pub fn attribute_for(task: &str, e: &Effects, env: &Env, leg: &Leg) -> Result<String, String> {
-        let batcher = spira_config::release_env::tool("batcher")?;
-        let mut argv = vec![batcher, "attribute".into(), leg.repo.clone(), "--members".into(), batcher_cut::attribute::members_arg(&leg.members), "--wt".into(), leg.wt.clone(), "--base".into(), leg.base.clone(), "--round-vm".into(), env.round_vm.display().to_string()];
+    fn attribute_argv(batcher: String, round_vm: &Path, run: &Path, leg: &Leg) -> Vec<String> {
+        let mut argv = vec![batcher, "attribute".into(), leg.repo.clone(), "--members".into(), batcher_cut::attribute::members_arg(&leg.members), "--wt".into(), leg.wt.clone(), "--base".into(), leg.base.clone(), "--round-vm".into(), round_vm.display().to_string()];
         if !leg.batch.is_empty() {
             argv.extend(["--batch".into(), leg.batch.clone()]);
         }
@@ -2542,10 +2540,16 @@ pub mod edge {
             argv.extend(["--suites".into(), leg.reds.join(",")]);
         }
         if leg.after_certify {
-            argv.extend(["--after-pass".into(), batcher_cut::io::round_results_dir(&env.run, &leg.batch).display().to_string()]);
+            argv.extend(["--after-pass".into(), batcher_cut::io::round_results_dir(run, &leg.batch).display().to_string()]);
         } else if !leg.after_pass.is_empty() {
             argv.extend(["--after-pass".into(), leg.after_pass.clone()]);
         }
+        argv
+    }
+
+    /// `batcher attribute` on the red round: `drive::attribute_round` as one captured leg.
+    pub fn attribute_for(task: &str, e: &Effects, env: &Env, leg: &Leg) -> Result<String, String> {
+        let argv = attribute_argv(spira_config::release_env::tool("batcher")?, &env.round_vm, &env.run, leg);
         start_scope(e, task, &leg.unit, argv, home_vars(env), None)
     }
 
@@ -2966,6 +2970,29 @@ pub mod edge {
             apply_pause(d.path(), &lift_leg("landed past base"), 1090).unwrap();
             assert!(p.exists());
             assert_eq!(landing(d.path()), "");
+        }
+    }
+
+    #[cfg(test)]
+    mod attribute_argv_tests {
+        use super::*;
+
+        fn after_pass(leg: &Leg) -> Option<String> {
+            let argv = attribute_argv("batcher".into(), Path::new("/rv"), Path::new("/var/spira-run"), leg);
+            argv.iter().position(|a| a == "--after-pass").map(|i| argv[i + 1].clone())
+        }
+
+        #[test]
+        fn an_attribution_after_a_certify_reads_the_batchs_kept_results_under_the_run_dir() {
+            let leg = Leg { batch: "r9".into(), after_certify: true, ..Leg::on("spira") };
+            assert_eq!(after_pass(&leg).as_deref(), Some("/var/spira-run/rounds/r9.results"));
+        }
+
+        #[test]
+        fn an_attribution_after_a_corpus_pass_reads_that_passs_dir_and_a_fresh_one_reads_none() {
+            let leg = Leg { batch: "r9".into(), after_pass: "/w/.round-results-u".into(), ..Leg::on("spira") };
+            assert_eq!(after_pass(&leg).as_deref(), Some("/w/.round-results-u"));
+            assert_eq!(after_pass(&Leg::on("spira")), None);
         }
     }
 
