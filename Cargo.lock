@@ -526,6 +526,7 @@ dependencies = [
 name = "gate"
 version = "0.1.0"
 dependencies = [
+ "incident",
  "libc",
  "serde",
  "serde_json",
