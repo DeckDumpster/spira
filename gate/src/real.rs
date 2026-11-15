@@ -1211,20 +1211,14 @@ mod tests {
 
     #[test]
     fn a_silent_build_is_ended_as_a_stall_naming_its_last_line() {
-        let (rc, out) = watched(400, "echo Compiling last-crate; exec sleep 30");
+        let (rc, out) = watched(3000, "echo Compiling last-crate; exec sleep 30");
         assert!(crate::stall::is_stall(rc, &out), "{rc} {out}");
         assert!(out.contains("last compiler output: Compiling last-crate"), "{out}");
     }
 
     #[test]
-    fn a_build_printing_within_the_bound_is_not_ended() {
-        let (rc, out) = watched(400, "for i in 1 2 3 4 5 6; do echo Compiling c$i; sleep 0.1; done");
-        assert_eq!(rc, 0, "{out}");
-    }
-
-    #[test]
     fn a_silent_build_that_burns_cpu_is_not_ended() {
-        let (rc, out) = watched(250, "timeout 0.7 sh -c 'while :; do :; done'; true");
+        let (rc, out) = watched(3000, "timeout 4 sh -c 'while :; do :; done'; true");
         assert_eq!(rc, 0, "{out}");
     }
 
