@@ -2796,15 +2796,31 @@ fn round_verb(env: &Env, args: &[&str], stdin: &str) -> Result<VerbRun, String> 
     round_verb_with(env, args, stdin, &[])
 }
 
+/// The round verbs that name who acts on the round (`queue round <verb> --by <actor>`).
+const ACTED_VERBS: [&str; 7] = [
+    "open", "certify", "eject", "land", "abandon", "preempt", "promote",
+];
+
+/// The whole argv after `queue` for a round verb: the batcher acts, so it says so.
+pub fn round_argv(args: &[&str]) -> Vec<String> {
+    let mut all: Vec<String> = std::iter::once("round")
+        .chain(args.iter().copied())
+        .map(String::from)
+        .collect();
+    if args.first().is_some_and(|v| ACTED_VERBS.contains(v)) && !args.contains(&"--by") {
+        all.extend(["--by".to_string(), "batcher".to_string()]);
+    }
+    all
+}
+
 fn round_verb_with(
     env: &Env,
     args: &[&str],
     stdin: &str,
     vars: &[(&str, &str)],
 ) -> Result<VerbRun, String> {
-    let all: Vec<&str> = std::iter::once("round")
-        .chain(args.iter().copied())
-        .collect();
+    let all = round_argv(args);
+    let all: Vec<&str> = all.iter().map(String::as_str).collect();
     let run = queue_verb(env, &all, stdin, vars)?;
     if !run.out.is_empty() {
         print!("{}", run.out);
@@ -3125,7 +3141,19 @@ pub fn round_preempt(env: &Env, repo: &Repo, batch: &str, ids: &[String], reason
 
 /// The arguments after `queue round` for [`round_preempt`]; the reason comes on stdin.
 pub fn preempt_args(batch: &str, repo: &str, ids: &[String]) -> Vec<String> {
-    ["preempt", batch, repo, "--eject", &ids.join(","), "--reason-file", "-"].map(String::from).to_vec()
+    [
+        "preempt",
+        batch,
+        repo,
+        "--eject",
+        &ids.join(","),
+        "--reason-file",
+        "-",
+        "--by",
+        "batcher",
+    ]
+    .map(String::from)
+    .to_vec()
 }
 
 /// `queue round eject` for a member the gate had already marked red while it sat in the round.
@@ -3151,7 +3179,19 @@ pub fn round_eject_after_refused_preempt(env: &Env, repo: &Repo, batch: &str, id
 /// The arguments after `queue round` for an eject; the reason comes on stdin. No csv names no
 /// suite, as the preempt's argv does.
 pub fn eject_args(batch: &str, repo: &str, id: &str, csv: &str) -> Vec<String> {
-    let mut args: Vec<String> = ["eject", batch, id, repo, "--reason-file", "-", "--no-rebuild"].map(String::from).to_vec();
+    let mut args: Vec<String> = [
+        "eject",
+        batch,
+        id,
+        repo,
+        "--reason-file",
+        "-",
+        "--no-rebuild",
+        "--by",
+        "batcher",
+    ]
+    .map(String::from)
+    .to_vec();
     if !csv.is_empty() {
         args.extend(["--suites".to_string(), csv.to_string()]);
     }
@@ -5596,7 +5636,37 @@ mod config_key_tests {
 
 #[cfg(test)]
 mod eject_args_tests {
-    use super::eject_args;
+    use super::{eject_args, preempt_args, round_argv};
+
+    #[test]
+    fn the_batchers_eject_and_preempt_name_the_batcher() {
+        for a in [
+            eject_args("r9", "spira", "sp-a", ""),
+            preempt_args("r9", "spira", &["sp-a".to_string()]),
+        ] {
+            let i = a.iter().position(|x| x == "--by").expect("--by");
+            assert_eq!(a[i + 1], "batcher", "{a:?}");
+        }
+    }
+
+    #[test]
+    fn open_land_and_abandon_are_run_as_the_batcher_and_status_is_left_alone() {
+        for verb in ["open", "land", "abandon"] {
+            let a = round_argv(&[verb, "r9"]);
+            assert_eq!(a, ["round", verb, "r9", "--by", "batcher"], "{a:?}");
+        }
+        assert_eq!(
+            round_argv(&["status", "spira"]),
+            ["round", "status", "spira"]
+        );
+        let e = round_argv(
+            &eject_args("r9", "spira", "sp-a", "")
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+        );
+        assert_eq!(e.iter().filter(|x| *x == "--by").count(), 1, "{e:?}");
+    }
 
     #[test]
     fn an_eject_naming_no_suite_sends_neither_red_nor_suites() {

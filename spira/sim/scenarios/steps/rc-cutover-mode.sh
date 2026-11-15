@@ -85,7 +85,7 @@ while :; do
         book cutover-leave || exit $?
         [ -f "$SPIRA_RUN/world.halted" ] && [ ! -f "$SPIRA_RUN/world.cutover-mode" ] || fail "world stop did not re-halt"
         if world status | grep -q 'owner=cutover-mode'; then fail "a stop of cutover mode's outlived world stop"; fi
-        queue round open "$repo" --members "$abandoned" --name rc-ab || fail "no round of $abandoned to roll back"
+        queue round open "$repo" --members "$abandoned" --name rc-ab --by batcher || fail "no round of $abandoned to roll back"
         next rollback ;;
     rollback) book rollback BATCH=rc-ab || exit $?; next done ;;
     done)

@@ -101,10 +101,24 @@ fn a_certify_leg_names_no_head_when_the_attribution_did_not_rebuild_the_tree() {
 
 #[test]
 fn certify_argv_carries_rehead_only_for_a_leg_that_names_a_head() {
-    let leg = Leg { batch: "r9".into(), repo: "spira".into(), head: REBUILT.into(), ..Leg::default() };
-    assert_eq!(certify_argv("q", &leg), ["q", "round", "certify", "r9", "spira", "--rehead", REBUILT]);
-    let bare = Leg { head: String::new(), ..leg };
-    assert_eq!(certify_argv("q", &bare), ["q", "round", "certify", "r9", "spira"]);
+    let leg = Leg {
+        batch: "r9".into(),
+        repo: "spira".into(),
+        head: REBUILT.into(),
+        ..Leg::default()
+    };
+    assert_eq!(
+        certify_argv("q", &leg),
+        ["q", "round", "certify", "r9", "spira", "--by", "batcher", "--rehead", REBUILT]
+    );
+    let bare = Leg {
+        head: String::new(),
+        ..leg
+    };
+    assert_eq!(
+        certify_argv("q", &bare),
+        ["q", "round", "certify", "r9", "spira", "--by", "batcher"]
+    );
 }
 
 #[test]

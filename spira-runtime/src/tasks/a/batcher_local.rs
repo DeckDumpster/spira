@@ -965,7 +965,15 @@ pub fn unit_key(repo: &str, round: &str, what: &str, run: u32) -> String {
 
 /// `queue round certify`'s argv for `leg`: it names the head the leg is for when the attribution rebuilt the tree.
 pub fn certify_argv(queue_bin: &str, leg: &Leg) -> Vec<String> {
-    let mut argv = vec![queue_bin.to_string(), "round".into(), "certify".into(), leg.batch.clone(), leg.repo.clone()];
+    let mut argv = vec![
+        queue_bin.to_string(),
+        "round".into(),
+        "certify".into(),
+        leg.batch.clone(),
+        leg.repo.clone(),
+        "--by".into(),
+        "batcher".into(),
+    ];
     if !leg.head.is_empty() {
         argv.extend(["--rehead".to_string(), leg.head.clone()]);
     }
@@ -2726,15 +2734,40 @@ pub mod edge {
     pub fn stage(e: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
         let (env, leg) = (env()?, leg(spec)?);
         let file = env.run.join(format!("round-stage-{}.members", leg.unit));
-        std::fs::write(&file, leg.members.iter().map(|(i, t)| format!("{i}:{t}\n")).collect::<String>()).map_err(|e| format!("{}: {e}", file.display()))?;
-        let argv = vec![env.queue_bin.display().to_string(), "round".into(), "stage".into(), leg.repo.clone(), "--members-file".into(), file.display().to_string(), "--worktree".into(), leg.wt.clone()];
+        std::fs::write(
+            &file,
+            leg.members
+                .iter()
+                .map(|(i, t)| format!("{i}:{t}\n"))
+                .collect::<String>(),
+        )
+        .map_err(|e| format!("{}: {e}", file.display()))?;
+        let argv = vec![
+            env.queue_bin.display().to_string(),
+            "round".into(),
+            "stage".into(),
+            leg.repo.clone(),
+            "--members-file".into(),
+            file.display().to_string(),
+            "--worktree".into(),
+            leg.wt.clone(),
+            "--by".into(),
+            "batcher".into(),
+        ];
         start_unit(e, super::NAME, &leg.unit, argv, home_vars(&env), None)
     }
 
     /// The staged round's own pass: `queue round stage-test`, as a unit.
     pub fn stage_test(e: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
         let (env, leg) = (env()?, leg(spec)?);
-        let argv = vec![env.queue_bin.display().to_string(), "round".into(), "stage-test".into(), leg.repo.clone()];
+        let argv = vec![
+            env.queue_bin.display().to_string(),
+            "round".into(),
+            "stage-test".into(),
+            leg.repo.clone(),
+            "--by".into(),
+            "batcher".into(),
+        ];
         start_unit(e, super::NAME, &leg.unit, argv, home_vars(&env), None)
     }
 

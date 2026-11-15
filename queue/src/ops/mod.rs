@@ -351,6 +351,29 @@ pub fn landing_log(run: &Path, line: &str) {
     }
 }
 
+/// One round event: its `QUEUE ROUND-<KIND>` line in landing.log and its OTLP record, both naming the actor.
+/// `fields` keep their order in the line, so the free-text `reason` goes last.
+pub fn round_event(
+    run: &Path,
+    kind: &str,
+    repo: &str,
+    batch: &str,
+    by: &str,
+    now: u64,
+    fields: &[(&str, String)],
+) {
+    let rest: String = fields.iter().map(|(k, v)| format!(" {k}={v}")).collect();
+    landing_log(
+        run,
+        &format!(
+            "QUEUE ROUND-{} {now} repo={repo} batch={batch} by={by}{rest}",
+            kind.to_uppercase()
+        ),
+    );
+    let at = std::time::UNIX_EPOCH + std::time::Duration::from_secs(now);
+    spira_otel::rounds::emit(run, "queue", kind, repo, batch, by, fields, at);
+}
+
 /// A bead title for a PR body line, cut to 120 characters (queue.sh's python).
 pub fn title_line(rows: &[crate::model::BeadRow], id: &str) -> String {
     let t = rows
