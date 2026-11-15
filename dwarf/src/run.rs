@@ -1341,7 +1341,7 @@ impl<'a> Run<'a> {
         if self.rune.project_instructions == "none" {
             a.extend(s(&["--setting-sources", "user"]));
         }
-        a.extend(s(&["--settings", &dwarf_settings(self.home(), self.run_dir(), Some(self.conf.or("SPIRA_PROD", "")).filter(|p| !p.is_empty()).as_deref().map(Path::new), self.rune.habits)]));
+        a.extend(s(&["--settings", &dwarf_settings(self.home(), self.run_dir(), Some(self.conf.s("SPIRA_PROD")).filter(|p| !p.is_empty()).as_deref().map(Path::new), self.rune.habits)]));
         Ok(a)
     }
 
