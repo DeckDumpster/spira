@@ -2166,7 +2166,7 @@ pub fn red_suite_steps(results: &Path, pass: Option<&Path>, suites: &[String]) -
 
 /// The failing tests, findings and compiler errors of the suites a member turned red, recorded on
 /// the bead for the builder's next brief. Best-effort: a refusal is said and never blocks the eject.
-pub fn record_ejection(env: &Env, id: &str, tip: &str, files: &[String], results_dir: &Path, pass: Option<&Path>, suites: &[String], fails: &[(String, String)]) {
+pub fn record_ejection(env: &Env, id: &str, tip: &str, files: &[String], (results_dir, pass): (&Path, Option<&Path>), suites: &[String], fails: &[(String, String)]) {
     let steps = red_suite_steps(results_dir, pass, suites);
     let why: Vec<String> = fails.iter().map(|(suite, line)| format!("{suite}: {line}")).collect();
     let lc = |args: &[String]| lcq(env, &args.iter().map(String::as_str).collect::<Vec<_>>());
