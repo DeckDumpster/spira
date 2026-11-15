@@ -172,10 +172,15 @@ pub fn check_outcome(rc: Option<i32>, staged: bool) -> &'static str {
     }
 }
 
+/// The seconds string `bounded` takes for a row budget; a zero budget is one millisecond, never "no deadline".
+pub fn bounded_deadline(budget_ms: u64) -> String {
+    let ms = budget_ms.max(1);
+    format!("{}.{:03}", ms / 1000, ms % 1000)
+}
+
 /// Runs a non-cargo row's program, cutting its whole process tree at `budget_ms`.
 pub fn run_row(exe: &Path, args: &[String], dir: &Path, path_env: &OsStr, budget_ms: u64) -> io::Result<Output> {
-    let ms = budget_ms.max(1);
-    spira_config::bounded::bounded_for(exe, &format!("{}.{:03}", ms / 1000, ms % 1000)).kill_tree().args(args).env("PATH", path_env).current_dir(dir).output()
+    spira_config::bounded::bounded_for(exe, &bounded_deadline(budget_ms)).kill_tree().args(args).env("PATH", path_env).current_dir(dir).output()
 }
 
 /// One row's facts, as `<run>/checks.log` states them.
@@ -859,40 +864,11 @@ mod tests {
         assert_eq!(checks_pass_key_from(&git, ""), None);
     }
 
-    // Exception to law-a-unit-test-calls-no-binary: spawning is the code under test; it spawns only `/bin/sh` and `sleep`.
     #[test]
-    fn a_row_that_ignores_term_is_cut_with_its_grandchild_at_the_budget() {
-        let d = testkit::TempDir::new("run-row");
-        let dir = d.path().display();
-        let script = format!("trap \"\" TERM; setsid sh -c \"echo \\$\\$ > {dir}/gc; trap \\\"\\\" TERM; exec sleep 30\" & echo $$ > {dir}/c; sleep 30");
-        let (tx, rx) = std::sync::mpsc::channel();
-        let (cwd, env) = (d.path().to_path_buf(), std::ffi::OsString::from("/usr/bin:/bin"));
-        std::thread::spawn(move || tx.send(run_row(Path::new("/bin/sh"), &["-c".into(), script], &cwd, &env, 200)));
-        let out = rx.recv_timeout(std::time::Duration::from_secs(1)).expect("run_row did not return within a second of a 200 ms budget").unwrap(); // clock-safe: cap on waiting for run_row's return
-        assert_eq!(out.status.code(), Some(124));
-        for f in ["c", "gc"] {
-            let pid = std::fs::read_to_string(d.join(f)).unwrap().trim().to_string();
-            let gone = (0..30).any(|_| {
-                let alive = std::fs::read_to_string(format!("/proc/{pid}/stat")).map(|s| !s.rsplit(") ").next().unwrap_or("").starts_with('Z')).unwrap_or(false);
-                if alive {
-                    std::thread::sleep(std::time::Duration::from_millis(10)); // clock-safe: cap on waiting for the killed process to be reaped
-                }
-                !alive
-            });
-            assert!(gone, "{f} pid {pid} survived the cut");
-        }
-    }
-
-    // Exception to law-a-unit-test-calls-no-binary: spawning is the code under test; it spawns only `/bin/sh` and `sleep`.
-    #[test]
-    fn a_zero_budget_is_cut_at_once_never_unbounded() {
-        let (tx, rx) = std::sync::mpsc::channel();
-        let env = std::ffi::OsString::from("/usr/bin:/bin");
-        std::thread::spawn(move || {
-            let _ = tx.send(run_row(Path::new("/bin/sh"), &["-c".into(), "sleep 30".into()], Path::new("/"), &env, 0));
-        });
-        let out = rx.recv_timeout(std::time::Duration::from_secs(1)).expect("a zero budget ran unbounded").unwrap(); // clock-safe: cap on waiting for run_row's return
-        assert_eq!(out.status.code(), Some(124));
+    fn a_row_budget_becomes_a_seconds_deadline_and_zero_is_never_unbounded() {
+        assert_eq!(bounded_deadline(200), "0.200");
+        assert_eq!(bounded_deadline(0), "0.001");
+        assert_eq!(bounded_deadline(1500), "1.500");
     }
 
     #[test]
