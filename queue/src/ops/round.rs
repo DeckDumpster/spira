@@ -278,6 +278,7 @@ pub fn run(w: &World, r: &Round) -> i32 {
             by,
             evidence,
             evidence_tip,
+            members,
         } => super::mend::run(
             w,
             outcome,
@@ -288,6 +289,7 @@ pub fn run(w: &World, r: &Round) -> i32 {
             checked,
             ask.as_deref(),
             reason,
+            members,
             super::mend::HandArgs {
                 by: by.clone(),
                 evidence: evidence.clone(),

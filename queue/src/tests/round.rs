@@ -8744,6 +8744,23 @@ fn failed_round_with_mender(t: &T, suite: &str, mender: &str) -> String {
 }
 
 #[test]
+fn a_return_names_the_member_it_sends_back_and_one_outside_the_round_or_none_is_refused() {
+    let t = round_world();
+    let batch = failed_round_with_mender(&t, "test-z.sh", "sp-m1");
+    for members in [vec![], vec!["--members=sp-z"], vec!["--members=sp-a,sp-z"]] {
+        let mut argv = vec!["round", "return", &batch, "test-z.sh", "--reason=bad at x.rs:9"];
+        argv.extend(members);
+        assert_ne!(t.run(&argv), 0);
+        assert!(t.err().contains("sp-a"), "the refusal names the round's members: {}", t.err());
+    }
+    assert!(!t.lc.has("mending-event"), "nothing was recorded: {:?}", t.lc.calls.borrow());
+    assert_eq!(t.run(&["round", "return", &batch, "test-z.sh", "--members=sp-a", "--reason=bad at x.rs:9"]), 0, "{}", t.err());
+    let calls = t.lc.calls.borrow();
+    let ev = calls.iter().find(|c| c.contains("Return")).unwrap();
+    assert!(ev.contains(r#""members":["sp-a"]"#), "{ev}");
+}
+
+#[test]
 fn a_concierge_hand_mends_a_waiting_failure_with_provenance_and_the_mender_bead_is_retired() {
     let t = round_world();
     let batch = failed_round_with_mender(&t, "test-z.sh", "sp-m1");
