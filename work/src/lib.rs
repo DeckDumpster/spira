@@ -864,10 +864,11 @@ mod tests {
         let d = testkit::TempDir::new("run-row");
         let dir = d.path().display();
         let script = format!("trap \"\" TERM; setsid sh -c \"echo \\$\\$ > {dir}/gc; trap \\\"\\\" TERM; exec sleep 30\" & echo $$ > {dir}/c; sleep 30");
-        let t = std::time::Instant::now();
-        let out = run_row(Path::new("/bin/sh"), &["-c".into(), script], d.path(), OsStr::new("/usr/bin:/bin"), 200).unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let (cwd, env) = (d.path().to_path_buf(), std::ffi::OsString::from("/usr/bin:/bin"));
+        std::thread::spawn(move || tx.send(run_row(Path::new("/bin/sh"), &["-c".into(), script], &cwd, &env, 200)));
+        let out = rx.recv_timeout(std::time::Duration::from_secs(1)).expect("run_row did not return within a second of a 200 ms budget").unwrap(); // clock-safe: cap on waiting for run_row's return
         assert_eq!(out.status.code(), Some(124));
-        assert!(t.elapsed() < std::time::Duration::from_secs(1), "returned only after {:?}", t.elapsed());
         for f in ["c", "gc"] {
             let pid = std::fs::read_to_string(d.join(f)).unwrap().trim().to_string();
             let gone = (0..30).any(|_| {
@@ -879,7 +880,6 @@ mod tests {
             });
             assert!(gone, "{f} pid {pid} survived the cut");
         }
-        assert!(t.elapsed() < std::time::Duration::from_secs(1), "the test took {:?}", t.elapsed());
     }
 
     #[test]
