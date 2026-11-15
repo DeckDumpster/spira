@@ -297,6 +297,8 @@ struct FLib {
     by_name: RefCell<BTreeMap<String, Result<RepoCtx, String>>>,
     /// `bead_close` fails (bd refused the close).
     close_fail: Cell<bool>,
+    /// Beads whose `bead_reopen` answers false.
+    reopen_fails: RefCell<BTreeSet<String>>,
 }
 
 impl FLib {
@@ -326,7 +328,7 @@ impl Lib for FLib {
     }
     fn bead_reopen(&self, id: &str, cause: &str, suites: &str) -> bool {
         self.log(format!("bead_reopen {id} {cause} {suites}"));
-        true
+        !self.reopen_fails.borrow().contains(id)
     }
     fn cause_event(&self, id: &str, cause: &str) {
         self.log(format!("cause_event {id} {cause}"));
@@ -1861,6 +1863,7 @@ impl T {
             repos: RefCell::new(Ok(vec!["spira".into()])),
             by_name: RefCell::default(),
             close_fail: Cell::new(false),
+            reopen_fails: RefCell::default(),
         };
         let scripts = FScripts::default();
         scripts.fence_ok.set(true);

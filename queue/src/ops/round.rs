@@ -4282,11 +4282,8 @@ fn eject(
                 "queue.sh {label}: cannot reopen {bead} (cause {})",
                 own_cause.as_str()
             ));
-            unreturned.push(bead);
         }
-        if lc_return(w, bead, bead == id && own_cause == EjectCause::EjectRed).is_err()
-            && !unreturned.contains(&bead)
-        {
+        if lc_return(w, bead, bead == id && own_cause == EjectCause::EjectRed).is_err() {
             unreturned.push(bead);
         }
         w.lib.release_claim(bead);
@@ -4692,10 +4689,17 @@ fn preempt(
             LeaseCheck::Inside,
         );
         if rc != OK {
-            w.err(format!(
-                "queue.sh {label}: eject of {id} failed (rc={rc}) — the next pass was not started"
-            ));
-            return rc;
+            match record_of(w, &c, batch) {
+                Ok(Some(kv)) if !kv.members().iter().any(|m| &m.id == id) => {}
+                Ok(None) => {}
+                _ => {
+                    w.err(format!(
+                        "queue.sh {label}: eject of {id} failed (rc={rc}) — the next pass was not started"
+                    ));
+                    return rc;
+                }
+            }
+            w.err(format!("queue.sh {label}: {id} left round {batch}; its eject reported rc={rc} after it was recorded — the next pass goes on"));
         }
     }
 
