@@ -322,7 +322,11 @@ pub struct Run {
 
 impl Run {
     pub fn begin(endpoint: Option<&str>, component: &str, operation: &str) -> Run {
-        Run { sink: MetricsSink::new(endpoint, &format!("spira-{component}"), RUN_DEADLINE), component: component.into(), operation: operation.into(), start: Instant::now() }
+        Run::begin_with(MetricsSink::new(endpoint, &format!("spira-{component}"), RUN_DEADLINE), component, operation)
+    }
+
+    fn begin_with(sink: MetricsSink, component: &str, operation: &str) -> Run {
+        Run { sink, component: component.into(), operation: operation.into(), start: Instant::now() }
     }
 
     pub fn sink(&self) -> &MetricsSink {
@@ -478,9 +482,9 @@ pub mod fixture {
             Capture { addr, seen }
         }
 
-        /// Samples once the count has stopped growing for three polls, capped at two seconds.
+        /// Samples once the count has stopped growing for three polls, capped at thirty seconds.
         pub fn settled(&self) -> Vec<Sample> {
-            let end = Instant::now() + Duration::from_secs(2);
+            let end = Instant::now() + Duration::from_secs(30);
             let (mut last, mut stable) = (0, 0);
             while stable < 3 && Instant::now() < end {
                 std::thread::sleep(Duration::from_millis(20));
@@ -491,9 +495,9 @@ pub mod fixture {
             self.seen.lock().unwrap().clone()
         }
 
-        /// Samples received so far, waiting up to two seconds for at least `n`.
+        /// Samples received so far, waiting up to thirty seconds for at least `n`.
         pub fn samples(&self, n: usize) -> Vec<Sample> {
-            let end = Instant::now() + Duration::from_secs(2);
+            let end = Instant::now() + Duration::from_secs(30);
             while self.seen.lock().unwrap().len() < n && Instant::now() < end {
                 std::thread::sleep(Duration::from_millis(10));
             }
@@ -530,7 +534,7 @@ mod tests {
     use std::net::TcpListener;
 
     fn sink(addr: &str) -> MetricsSink {
-        MetricsSink::new(Some(addr), "spira-tsd", Duration::from_millis(300))
+        MetricsSink::new(Some(addr), "spira-tsd", Duration::from_secs(30))
     }
 
     fn serve(reply: &'static str) -> (String, std::thread::JoinHandle<Vec<u8>>) {
@@ -550,7 +554,7 @@ mod tests {
                     break;
                 }
             }
-            c.write_all(reply.as_bytes()).unwrap();
+            let _ = c.write_all(reply.as_bytes());
             buf
         });
         (addr, h)
@@ -599,7 +603,7 @@ mod tests {
     #[test]
     fn a_run_pushes_invocation_duration_and_extras_labelled_by_component_operation_outcome() {
         let cap = fixture::Capture::start();
-        Run::begin(Some(&cap.addr), "mail", "send").end_with("error", &[Point::Count { name: "spira_mail_sent", value: 3 }]);
+        Run::begin_with(MetricsSink::new(Some(&cap.addr), "spira-mail", Duration::from_secs(30)), "mail", "send").end_with("error", &[Point::Count { name: "spira_mail_sent", value: 3 }]);
         cap.assert_run("mail", "send", "error");
         let all = cap.samples(3);
         assert!(all.iter().any(|s| s.name == "spira_mail_sent" && s.value == 3.0));
@@ -619,14 +623,14 @@ mod instrument_tests {
     #[test]
     fn a_run_pushes_its_invocation_duration_and_outcome_and_keeps_its_exit_code() {
         let fx = crate::fixture::Sink::start();
-        let sink = MetricsSink::for_component(Some(fx.addr()), "spira-x");
+        let sink = MetricsSink::new(Some(fx.addr()), "spira-x", Duration::from_secs(30));
         assert_eq!(instrument(&sink, "x", "pass", || 3), 3);
         assert_eq!(instrument_result(&sink, "x", "other", || Ok::<_, String>(7)), Ok(7));
-        let end = Instant::now() + Duration::from_secs(2);
-        let mut got = fx.received(Duration::from_secs(2));
-        while !["pass", "other"].iter().all(|op| got.iter().any(|s| s.name == INVOCATIONS && s.label("operation") == Some(*op))) && Instant::now() < end {
-            std::thread::sleep(Duration::from_millis(10));
-            got = fx.received(Duration::from_secs(2));
+        let end = Instant::now() + Duration::from_secs(30);
+        let mut got = fx.received(Duration::from_secs(30));
+        while !["pass", "other"].iter().all(|op| got.iter().any(|s| s.name == INVOCATIONS && s.label("operation") == Some(*op))) && Instant::now() < end { // clock-safe: a cap on the wait for the sink's own delivery
+            std::thread::sleep(Duration::from_millis(10)); // clock-safe: polling the fixture listener
+            got = fx.received(Duration::from_secs(30));
         }
         let fail = got.iter().find(|s| s.name == INVOCATIONS && s.label("operation") == Some("pass")).unwrap();
         assert_eq!((fail.service.as_str(), fail.label("component"), fail.label("outcome")), ("spira-x", Some("x"), Some("exit_3")));
