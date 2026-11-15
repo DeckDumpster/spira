@@ -139,10 +139,11 @@ pub trait RoundOps {
     /// S's suspect order among `members` (covers-touching first).
     fn suspects(&self, suite: &str, members: &[Id]) -> Vec<Id>;
     /// `owner`: the member's own tip owns the red; a stacked dependent leaves as collateral.
-    fn eject(&mut self, member: &Member, suites: &[String], owner: bool);
+    /// `Err` is the refusal, whole: the round ends on it rather than report the member gone.
+    fn eject(&mut self, member: &Member, suites: &[String], owner: bool) -> Result<(), String>;
     /// Ejects `member` on a filter's red, carrying the line that names it as the evidence.
-    fn eject_on(&mut self, member: &Member, filter: &str, _line: &str, owner: bool) {
-        self.eject(member, &[filter.to_string()], owner);
+    fn eject_on(&mut self, member: &Member, filter: &str, _line: &str, owner: bool) -> Result<(), String> {
+        self.eject(member, &[filter.to_string()], owner)
     }
     /// Reset the round tree to the base and merge `survivors`; the members that actually
     /// merged (a fresh conflict drops one).
@@ -171,13 +172,13 @@ pub trait RoundOps {
     }
     /// Holds `member` behind `behind` — it leaves this round and is admitted again only once
     /// they have landed — carrying the compiler error as the reason.
-    fn sequence(&mut self, member: &Member, behind: &[Id], line: &str) {
+    fn sequence(&mut self, member: &Member, behind: &[Id], line: &str) -> Result<(), String> {
         self.eject_on(
             member,
             WORKSPACE_BUILD,
             &format!("held behind {}: {line}", behind.join(",")),
             false,
-        );
+        )
     }
     /// `kind`: `base`, `unattributed`, `integration` or `workspace-build`.
     fn incident(&mut self, kind: &str, suites: &[String]);
@@ -745,8 +746,8 @@ fn eject_filter_owners<R: RoundRunner, O: RoundOps>(
     for m in members {
         if out.contains_key(&m.id) {
             match named.iter().find(|(id, _)| *id == m.id) {
-                Some((_, line)) => ops.eject_on(m, &f.name, line, true),
-                None => ops.eject(m, std::slice::from_ref(&f.name), false),
+                Some((_, line)) => ops.eject_on(m, &f.name, line, true).map_err(refused)?,
+                None => ops.eject(m, std::slice::from_ref(&f.name), false).map_err(refused)?,
             }
         }
     }
@@ -918,9 +919,9 @@ fn apply_build_actions<O: RoundOps>(
         match actions.iter().find(
             |a| matches!(a, Action::Eject { id, .. } | Action::Sequence { id, .. } if *id == m.id),
         ) {
-            Some(Action::Eject { line, .. }) => ops.eject_on(m, filter, line, true),
-            Some(Action::Sequence { behind, line, .. }) => ops.sequence(m, behind, line),
-            None if out.contains_key(&m.id) => ops.eject(m, &[filter.to_string()], false),
+            Some(Action::Eject { line, .. }) => ops.eject_on(m, filter, line, true).map_err(refused)?,
+            Some(Action::Sequence { behind, line, .. }) => ops.sequence(m, behind, line).map_err(refused)?,
+            None if out.contains_key(&m.id) => ops.eject(m, &[filter.to_string()], false).map_err(refused)?,
             None => {}
         }
     }
@@ -1110,9 +1111,32 @@ fn own_by_touch<O: RoundOps>(ops: &O, d: &mut Decision, members: &[Member]) {
     }
 }
 
+const EJECT_REFUSED: &str = "\u{1}eject-refused\u{1}";
+
+fn refused(reason: String) -> String {
+    format!("{EJECT_REFUSED}{reason}")
+}
+
 /// The whole round: corpus with concurrent attribution; then, while anyone was ejected, the
-/// owners' suites (only those) on the survivors' release build, attributed the same way.
+/// owners' suites (only those) on the survivors' release build, attributed the same way. A
+/// refused eject ends it `Blocked` with the refusal as the reason.
 pub fn attribute_round<R: RoundRunner, O: RoundOps>(
+    runner: &mut R,
+    ops: &mut O,
+    corpus: &[String],
+    starting: Vec<Member>,
+    budget: Budget,
+) -> Result<RoundEnd, String> {
+    match attribute_members(runner, ops, corpus, starting, budget) {
+        Err(e) => match e.strip_prefix(EJECT_REFUSED) {
+            Some(reason) => Ok(RoundEnd::Blocked(reason.to_string())),
+            None => Err(e),
+        },
+        ok => ok,
+    }
+}
+
+fn attribute_members<R: RoundRunner, O: RoundOps>(
     runner: &mut R,
     ops: &mut O,
     corpus: &[String],
@@ -1463,7 +1487,7 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
             if !d.flaky.is_empty() {
                 if let Err(red) = remove_flips(runner, ops, &d.flaky, &members, budget) {
                     if let ([only], true) = (members.as_slice(), red.member_owns) {
-                        ops.eject(only, &red.reds, true);
+                        ops.eject(only, &red.reds, true).map_err(refused)?;
                         return Ok(RoundEnd::Emptied("round emptied by ejection".into()));
                     }
                     ops.incident("unattributed", &red.reds);
@@ -1516,7 +1540,7 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
                                 .get(&l.id)
                                 .cloned()
                                 .unwrap_or_else(|| m.suites.clone());
-                            ops.eject(member, &own, d.owners.contains_key(&l.id));
+                            ops.eject(member, &own, d.owners.contains_key(&l.id)).map_err(refused)?;
                         }
                     }
                     if next.is_empty() {
@@ -1551,7 +1575,7 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
         }
         for m in &members {
             if let Some(s) = out.get(&m.id) {
-                ops.eject(m, s, d.owners.contains_key(&m.id));
+                ops.eject(m, s, d.owners.contains_key(&m.id)).map_err(refused)?;
             }
         }
         let survivors: Vec<Member> = members
@@ -1957,6 +1981,8 @@ pub(crate) mod tests {
         pub graph: Option<PackageGraph>,
         /// The re-cut of the survivors merges none of them.
         pub rebuilt_empty: bool,
+        /// Every eject is refused with this line.
+        pub refuse_eject: Option<String>,
     }
 
     impl RoundOps for Ops {
@@ -1966,14 +1992,18 @@ pub(crate) mod tests {
             v.extend(members.iter().filter(|m| !t.contains(m)).cloned());
             v
         }
-        fn eject(&mut self, member: &Member, suites: &[String], owner: bool) {
+        fn eject(&mut self, member: &Member, suites: &[String], owner: bool) -> Result<(), String> {
+            if let Some(line) = &self.refuse_eject {
+                return Err(line.clone());
+            }
             self.ejected.push((member.id.clone(), suites.to_vec()));
             self.owner_flags.push((member.id.clone(), owner));
+            Ok(())
         }
-        fn eject_on(&mut self, member: &Member, filter: &str, line: &str, owner: bool) {
+        fn eject_on(&mut self, member: &Member, filter: &str, line: &str, owner: bool) -> Result<(), String> {
             self.eject_evidence
                 .push((member.id.clone(), line.to_string()));
-            self.eject(member, &[filter.to_string()], owner);
+            self.eject(member, &[filter.to_string()], owner)
         }
         fn diffs(&self, _: &[Id]) -> Vec<MemberDiff> {
             self.diffs.clone()
@@ -1984,10 +2014,11 @@ pub(crate) mod tests {
         fn package_graph(&self) -> Option<PackageGraph> {
             self.graph.clone()
         }
-        fn sequence(&mut self, member: &Member, behind: &[Id], line: &str) {
+        fn sequence(&mut self, member: &Member, behind: &[Id], line: &str) -> Result<(), String> {
             self.sequenced.push((member.id.clone(), behind.to_vec()));
             self.eject_evidence
                 .push((member.id.clone(), line.to_string()));
+            Ok(())
         }
         fn rebuild(&mut self, survivors: &[Member]) -> Result<Vec<Member>, String> {
             self.rebuilt
@@ -2905,6 +2936,37 @@ pub(crate) mod tests {
         assert_eq!(ops.ejected, vec![("m1".to_string(), vec!["integration-tests".to_string()])]);
         assert!(f.scoped.is_empty() && f.main_kind.is_empty(), "{:?} {:?}", f.scoped, f.main_kind);
         assert!(ops.eject_evidence.iter().any(|(id, line)| id == "m1" && line.contains("FAIL dir:testenv t")), "{:?}", ops.eject_evidence);
+    }
+
+    fn fence_only_round(refusal: Option<&str>) -> (Fake, Ops) {
+        let mut f = Fake::new(|_, _| false);
+        f.prior = Some(FilterRed {
+            name: "fence-round-image-preflight".into(),
+            named: vec![],
+            failed: vec![],
+        });
+        let ops = Ops { refuse_eject: refusal.map(String::from), ..Ops::default() };
+        (f, ops)
+    }
+
+    #[test]
+    fn a_fence_red_ejects_the_sole_member_under_the_fence_name_without_a_pass() {
+        let (mut f, mut ops) = fence_only_round(None);
+        let end = attribute_round(&mut f, &mut ops, &corpus(4), vec![member("m1")], Budget { slots: 6, maxpar: 2 }).unwrap();
+        assert!(matches!(end, RoundEnd::Emptied(_)), "{end:?}");
+        assert_eq!(ops.ejected, vec![("m1".to_string(), vec!["fence-round-image-preflight".to_string()])]);
+        assert!(f.main_kind.is_empty(), "{:?}", f.main_kind);
+    }
+
+    #[test]
+    fn a_refused_eject_blocks_the_round_with_the_refusal_and_starts_no_pass() {
+        let (mut f, mut ops) = fence_only_round(Some("eject of m1 from b refused: --suites names gate"));
+        let end = attribute_round(&mut f, &mut ops, &corpus(4), vec![member("m1")], Budget { slots: 6, maxpar: 2 }).unwrap();
+        match end {
+            RoundEnd::Blocked(why) => assert!(why.contains("refused: --suites names gate"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert!(f.main_kind.is_empty(), "{:?}", f.main_kind);
     }
 
     #[test]

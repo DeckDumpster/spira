@@ -3909,6 +3909,8 @@ fn certify_pass(
 /// input leaves the round, with the fence's output as the evidence, and the rest certify again.
 /// With no such member the red is the harness's and nobody leaves. Prints `ejected=<csv>`, so the
 /// round's driver knows the red is attributed.
+pub const EJECT_REFUSED: &str = "eject-refused=";
+
 fn eject_recipe_changers(w: &World, label: &str, c: &Ctx, path: &Path, batch: &str, kv: &Kv) {
     let base = kv.get("base").unwrap_or("");
     let changers: Vec<(String, Vec<String>)> = kv
@@ -3966,6 +3968,8 @@ fn eject_recipe_changers(w: &World, label: &str, c: &Ctx, path: &Path, batch: &s
             w.err(format!(
                 "queue.sh {label}: could not eject {id} for the red {PREFLIGHT_RED} (rc={rc})"
             ));
+            w.out(format!("{EJECT_REFUSED}{id}: eject for the red {PREFLIGHT_RED} refused (rc={rc})"));
+            break;
         }
     }
     if !ejected.is_empty() {

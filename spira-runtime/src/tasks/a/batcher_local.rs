@@ -776,6 +776,14 @@ pub struct Leg {
     pub after_pass: String,
 }
 
+/// Whether a `fence-*` step left a red result in `results`.
+fn fence_red_in(results: &std::path::Path) -> bool {
+    std::fs::read_dir(results).into_iter().flatten().flatten().any(|e| {
+        let name = e.file_name().to_string_lossy().into_owned();
+        name.strip_suffix(".result").is_some_and(|stem| stem.starts_with("fence-") && batcher_cut::io::result_status(results, stem) == Some(false))
+    })
+}
+
 /// Where the corpus leg `unit` of the round tree `wt` keeps its results.
 pub fn round_results(wt: &str, unit: &str) -> std::path::PathBuf {
     std::path::Path::new(wt).join(format!(".round-results-{unit}"))
@@ -1715,10 +1723,19 @@ impl Machine<'_> {
             }
             (State::Certifying, false) if exit == Exit::Code(queue::ops::round::VM_LOST) => self.vm_lost(),
             (State::Certifying, false) if exit == Exit::Code(queue::ops::round::VM_NO_OUTPUT) => self.vm_no_output(),
+            (State::Certifying, false) if out.lines().any(|l| l.starts_with(queue::ops::round::EJECT_REFUSED)) => {
+                let said = out.lines().rev().find_map(|l| l.strip_prefix(queue::ops::round::EJECT_REFUSED)).unwrap_or_default().trim().to_string();
+                self.go(Trigger::LegLost);
+                self.red_naming(&format!("eject {said}"), Vec::new());
+            }
             (State::Certifying, false) if !self.rc.attributed && certify_red_evidence(out).1.is_empty() && !out.lines().any(|l| l.starts_with(RED_OUTPUT)) => {
                 self.rc.attributed = true;
                 self.go(Trigger::CertifyRedUnnamed);
-                self.attribute();
+                let results = self.rc.leg.as_deref().map(|unit| round_results(&self.rc.wt, unit)).filter(|dir| fence_red_in(dir));
+                match results {
+                    Some(dir) => self.attribute_after(Vec::new(), dir.display().to_string()),
+                    None => self.attribute(),
+                }
             }
             (State::Certifying, false) if !self.rc.attributed && self.rc.members.len() > 1 && !certify_red_evidence(out).1.is_empty() => {
                 self.rc.attributed = true;
@@ -1844,6 +1861,10 @@ impl Machine<'_> {
                 let key = format!("{}:{}:eject-gate-red:{}", self.repo, leg.batch, leg.bead);
                 let follow = Leg { why: leg.why.clone(), reds: vec![body.trim().to_string()], key, ..leg.clone() };
                 self.acts.push(follow.act(EJECT_GATE_RED));
+            }
+            (State::Corpus | State::Attributing | State::Certifying, EJECT) if !ok => {
+                self.go(Trigger::LegLost);
+                self.red_naming(&format!("eject of {} refused: {}", leg.bead, body.trim()), leg.reds.clone());
             }
             (State::Corpus | State::Attributing | State::Certifying, EJECT_GATE_RED) if ok => {
                 let gone = leg.bead.split(',').count();
@@ -2691,14 +2712,14 @@ pub mod edge {
             let changed: Vec<(String, Vec<String>)> = leg.members.iter().map(|(id, tip)| (id.clone(), io::changed_paths(&repo, &leg.base, tip))).collect();
             let guilty = io::implicated(&text, &changed);
             for id in &guilty {
-                io::round_eject(&env, &repo, &leg.batch, id, &["ci".to_string()], &[], true)?;
+                io::round_eject(&env, &repo, &leg.batch, id, &io::ci_red_suites(std::path::Path::new(&leg.wt)), &[], true)?;
                 if let Some((_, tip)) = leg.members.iter().find(|(m, _)| m == id) {
                     batcher_cut::redtip::record(&env.run, &leg.repo, id, tip);
                 }
             }
             return Ok(serde_json::json!({ "ejected": guilty }).to_string());
         }
-        let suites = if leg.reds.is_empty() { vec!["ci".to_string()] } else { leg.reds.clone() };
+        let suites = if leg.reds.is_empty() { io::ci_red_suites(std::path::Path::new(&leg.wt)) } else { leg.reds.clone() };
         io::round_eject_sole_red(&env, &repo_of(&env, &leg)?, &leg.batch, &leg.bead, &suites, &leg.why)?;
         batcher_cut::redtip::record(&env.run, &leg.repo, &leg.bead, &leg.head);
         Ok("{}".into())
