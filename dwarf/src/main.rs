@@ -153,7 +153,7 @@ fn run_search_fence(args: &[String]) -> i32 {
         eprintln!("usage: dwarf search-fence --run <dir> --worktree <dir>");
         return 2;
     };
-    if std::env::var_os("SPIRA_DWARF_OVERRIDE").is_some() {
+    if std::env::var_os(dwarf::restrict::FENCE_OVERRIDE).is_some() {
         return 0;
     }
     let mut raw = String::new();
