@@ -11,7 +11,7 @@ path = "src/main.rs"
 test = false
 
 [features]
-integration = ["spira-config/integration", "spira-desired-state/integration", "spira-otel/integration", "suite-select/integration", "testkit/integration", "tsd/integration"]
+integration = ["incident/integration", "spira-config/integration", "spira-desired-state/integration", "spira-otel/integration", "suite-select/integration", "testkit/integration", "tsd/integration"]
 
 [dependencies]
 libc = "0.2"
