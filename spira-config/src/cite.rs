@@ -79,11 +79,15 @@ pub fn phantoms(
         .collect())
 }
 
+fn short(sha: &str) -> &str {
+    if sha.bytes().all(|b| b.is_ascii_hexdigit()) { &sha[..sha.len().min(9)] } else { sha }
+}
+
 /// One line per phantom, then how to fix it.
 pub fn refusal(phantoms: &[Phantom]) -> String {
     let mut out: String = phantoms
         .iter()
-        .map(|p| format!("{} cites {}, which does not exist in the bead store\n", &p.sha[..p.sha.len().min(9)], p.id))
+        .map(|p| format!("{} cites {}, which does not exist in the bead store\n", short(&p.sha), p.id))
         .collect();
     out.push_str(
         "Reword the commit: `git commit --amend` for the tip, or `git rebase -i <landref>` and mark it `reword`. \

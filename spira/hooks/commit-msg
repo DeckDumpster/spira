@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+#
+# commit-msg — refuses a message that cites a bead id the store does not hold, in the
+# session that wrote it. The rule is spira_config::cite, the one `work submit` and the gate
+# apply; the lookup goes through spira-lc, the only program that talks to the stores.
+# A dwarf session (SPIRA_WORK_BEAD_ID set) asks through `work`; the operator through spira-lc.
+set -uo pipefail
+_hook_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+for _d in "$_hook_dir/../../bin" "$_hook_dir/.."; do
+    [ -d "$_d" ] && PATH="$(cd "$_d" && pwd -P):$PATH"
+done
+export PATH
+unset _hook_dir _d
+if [ -n "${SPIRA_WORK_BEAD_ID:-}" ]; then
+    _tool=work
+else
+    _tool=spira-lc
+fi
+command -v "$_tool" >/dev/null 2>&1 || {
+    echo "commit-msg: $_tool is not on PATH — the launcher sets PATH to a release; refusing to commit unchecked" >&2
+    exit 1
+}
+_msg="${1:-}"
+[ -r "$_msg" ] || { echo "commit-msg: no message file given; refusing to commit unchecked" >&2; exit 1; }
+if [ "$_tool" = work ]; then
+    grep -v '^#' "$_msg" | work cite-check -
+else
+    grep -v '^#' "$_msg" | spira-lc cite-check --message -
+fi
+case $? in
+    0) exit 0 ;;
+    3) exit 1 ;;
+    *) echo "commit-msg: the bead store did not answer — the citation check did not run; retry when it answers" >&2; exit 1 ;;
+esac

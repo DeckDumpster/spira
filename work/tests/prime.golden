@@ -44,6 +44,14 @@ Arguments:
 Checks:
   - the bead is the bound one
 
+### work cite-check
+Judges a commit message on stdin: refuses one citing a bead id the store does not hold.
+Use when: The commit-msg hook runs it; run it by hand to try a message before you commit.
+Arguments:
+  -   (the message on stdin)
+Checks:
+  - the citation rule is the one `work submit` and the gate apply
+
 ### work blocked
 Holds your bead and files the ask in one step.
 Use when: Only the operator can answer, and you cannot finish without it.

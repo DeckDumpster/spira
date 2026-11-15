@@ -15,9 +15,28 @@ fn parse_log(out: &str) -> Vec<(String, String)> {
         .collect()
 }
 
+/// The sha a lone commit message is shown under: it has none yet.
+const THIS_MESSAGE: &str = "this message";
+
+/// Judges one commit message that is not yet a commit.
+pub fn message_verdict(message: &str, prefix: &str, known: &mut spira_config::cite::Lookup<'_>) -> (i32, String) {
+    crate::work::phantom_refusal(&[(THIS_MESSAGE.to_string(), message.to_string())], prefix, known).unwrap_or((0, String::new()))
+}
+
 pub fn run(args: &[String]) -> (i32, String) {
+    if flag(args, "--message").as_deref() == Some("-") {
+        let mut message = String::new();
+        if let Err(e) = std::io::Read::read_to_string(&mut std::io::stdin(), &mut message) {
+            return (CANNOT_TELL, format!("cannot tell: reading the message on stdin: {e}"));
+        }
+        let prefix = match spira_config::process::cfg("SPIRA_ID_PREFIX") {
+            Ok(p) => p,
+            Err(e) => return (CANNOT_TELL, format!("cannot tell: {e}")),
+        };
+        return message_verdict(&message, &prefix, &mut |ids| crate::callers::Bd::known(&mut crate::bd::LiveBd, ids));
+    }
     let (Some(repo), Some(base), Some(branch)) = (flag(args, "--repo"), flag(args, "--base"), flag(args, "--branch")) else {
-        return (CANNOT_TELL, "cite-check: usage: cite-check --repo <path> --base <ref> --branch <ref>".into());
+        return (CANNOT_TELL, "cite-check: usage: cite-check --repo <path> --base <ref> --branch <ref> | cite-check --message -".into());
     };
     let prefix = match spira_config::process::cfg("SPIRA_ID_PREFIX") {
         Ok(p) => p,
