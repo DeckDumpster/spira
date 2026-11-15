@@ -2434,6 +2434,11 @@ impl Clock for SysClock {
     fn now(&self) -> u64 {
         spira_config::vtime::now_epoch()
     }
+    fn now_ms(&self) -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_millis() as u64)
+    }
     fn stamp(&self) -> String {
         utc_stamp(self.now())
     }

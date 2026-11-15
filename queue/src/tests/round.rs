@@ -5531,6 +5531,42 @@ fn a_second_round_with_disjoint_members_opens_beside_the_first() {
 }
 
 #[test]
+fn open_names_how_long_each_step_took_on_the_log_line_and_stdout() {
+    let t = round_world();
+    let ms = t.clock.extra_ms.clone();
+    *t.git.on_merge.borrow_mut() = Some(Box::new(move |tip| {
+        if tip == "ta" {
+            ms.set(ms.get() + 5_000);
+        }
+    }));
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b"]), 0, "{}", t.err());
+    let steps = t
+        .out()
+        .lines()
+        .find_map(|l| l.strip_prefix("steps=").map(str::to_string))
+        .unwrap_or_else(|| panic!("no steps= line: {}", t.out()));
+    assert_eq!(
+        steps,
+        "reconcile:0,lock:0,admit:0,worktree:0,merge.sp-a:5000,merge.sp-b:0,collide:0,record:0"
+    );
+    assert!(
+        t.landing_log()
+            .lines()
+            .any(|l| l.contains("QUEUE ROUND-OPEN ") && l.ends_with(&format!(" steps={steps}"))),
+        "{}",
+        t.landing_log()
+    );
+}
+
+#[test]
+fn a_refused_open_prints_the_steps_it_reached_on_stderr() {
+    let t = concurrent_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a", "--name", "r-1"]), 0, "{}", t.err());
+    assert_eq!(t.run(&["round", "open", "--members", "sp-b,sp-a", "--name", "r-2"]), 1);
+    assert!(t.err().contains("steps=reconcile:0,lock:0"), "{}", t.err());
+}
+
+#[test]
 fn a_second_round_naming_a_member_of_an_open_round_is_refused_naming_it() {
     let t = concurrent_world();
     assert_eq!(
