@@ -1360,6 +1360,7 @@ impl<'w, W: World> Trial<'w, W> {
                     let notes: String = flips.iter().map(|(t, beads)| format!(
                         "gate: not judged — {t} also failed on {} with disjoint diffs in the last 7d: a red on the base or in the gate, not this branch's\n",
                         beads.join(", "))).collect();
+                    self.file_flips(&flips, &out);
                     return v(PASS, "pass", format!("gate: {name}'s own gate failed: {cmd}\n{out}\n{notes}"));
                 }
                 v(FAIL, "branch-red", format!(
@@ -1567,6 +1568,21 @@ impl<'w, W: World> Trial<'w, W> {
         let digest = ejection::digest(tip, &self.changed_paths(), out);
         let prior = self.w.lc_prior_failures(self.w.now() as i64 - ejection::LOOKBACK_SECS).ok()?;
         ejection::flipped(&self.s.bead, &digest, &prior)
+    }
+
+    /// One deletion incident per flipping test; a filing failure is reported and never changes the verdict.
+    fn file_flips(&self, flips: &[(String, Vec<String>)], out: &str) {
+        let failures = ejection::failures(out);
+        for (test, beads) in flips {
+            let at = failures.iter().find(|f| &f.test == test).and_then(|f| f.location.clone()).unwrap_or_else(|| "an unknown location".into());
+            let title = format!("test {test} flips: red on {} beads with disjoint diffs", beads.len() + 1);
+            let body = format!(
+                "{test} fails at {at} on {} (tip {}) and on {} with disjoint diffs: a test that fails on unrelated diffs flips.\n\nDelete it in the same round (law-a-test-that-flips-is-deleted) and file a follow-on bead that restores the coverage it gave.\n",
+                self.s.bead, self.s.branch_tip, beads.join(", "));
+            if let Err(e) = self.w.file_flip(&self.s.repo_name, test, &title, &body) {
+                self.w.eprint(&format!("gate: could not file the deletion of flipping test {test}: {e}"));
+            }
+        }
     }
 
     /// EJECTED SUITES: the first line of `$SPIRA_RUN/ejected/<bead>` — the suites a

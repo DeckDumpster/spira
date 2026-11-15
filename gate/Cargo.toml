@@ -24,6 +24,7 @@ spira-otel = { path = "../spira-otel" }
 tsd = { path = "../tsd" }
 spira-desired-state = { path = "../desired-state" }
 suite-select = { path = "../suite-select" }
+incident = { path = "../incident" }
 
 [profile.release]
 opt-level = "z"

@@ -56,6 +56,9 @@ struct Fake {
     failures: RefCell<Vec<Recorded>>,
     kept_logs: RefCell<Vec<KeptLogs>>,
     prior_failures: RefCell<Result<Vec<(String, String)>, String>>,
+    flips: RefCell<Vec<(String, String)>>,
+    flips_body: RefCell<Vec<String>>,
+    flip_answer: RefCell<Result<(), String>>,
     prior_since: RefCell<Vec<i64>>,
     gate_starts: RefCell<Vec<String>>,
     lc_refusal: RefCell<String>,
@@ -251,6 +254,9 @@ impl Fake {
             failures: RefCell::new(Vec::new()),
             kept_logs: RefCell::new(Vec::new()),
             prior_failures: RefCell::new(Ok(Vec::new())),
+            flips: RefCell::new(Vec::new()),
+            flips_body: RefCell::new(Vec::new()),
+            flip_answer: RefCell::new(Ok(())),
             prior_since: RefCell::new(Vec::new()),
             gate_starts: RefCell::new(Vec::new()),
             lc_refusal: RefCell::new(String::new()),
@@ -582,6 +588,11 @@ impl World for Fake {
     fn lc_prior_failures(&self, since: i64) -> Result<Vec<(String, String)>, String> {
         self.prior_since.borrow_mut().push(since);
         self.prior_failures.borrow().clone()
+    }
+    fn file_flip(&self, repo: &str, test: &str, _title: &str, body: &str) -> Result<(), String> {
+        self.flips.borrow_mut().push((repo.into(), test.into()));
+        self.flips_body.borrow_mut().push(body.into());
+        self.flip_answer.borrow().clone()
     }
     fn lc_failure(&self, bead: &str, tip: &str, files: &[String], output: &str) {
         self.failures.borrow_mut().push((bead.into(), tip.into(), files.to_vec(), output.into()));
@@ -2884,6 +2895,31 @@ fn a_unit_red_that_two_other_beads_showed_on_disjoint_diffs_certifies_not_judged
     assert_eq!((certified(&f, "pass"), certified(&f, "red")), (1, 0));
     assert!(f.failures.borrow().is_empty());
     assert!(f.stderr().contains("not judged — t::flip"), "{}", f.stderr());
+}
+
+#[test]
+fn a_flip_the_gate_declines_to_judge_files_one_deletion_incident() {
+    let f = flip_fake(Ok(vec![other_red("sp-x", "t1", "a.rs"), other_red("sp-y", "t2", "b.rs")]));
+    assert_eq!(f.run(), PASS);
+    assert_eq!(*f.flips.borrow(), vec![("spira".to_string(), "t::flip".to_string())]);
+    let body = f.flips_body.borrow()[0].clone();
+    assert!(body.contains("law-a-test-that-flips-is-deleted") && body.contains("sp-x") && body.contains("sp-y"), "{body}");
+}
+
+#[test]
+fn a_branch_red_files_no_flip() {
+    let f = flip_fake(Ok(vec![]));
+    assert_eq!(f.run(), FAIL);
+    assert!(f.flips.borrow().is_empty());
+}
+
+#[test]
+fn a_flip_filing_that_fails_still_certifies() {
+    let f = flip_fake(Ok(vec![other_red("sp-x", "t1", "a.rs"), other_red("sp-y", "t2", "b.rs")]));
+    *f.flip_answer.borrow_mut() = Err("no db".into());
+    assert_eq!(f.run(), PASS);
+    assert_eq!(f.flips.borrow().len(), 1);
+    assert!(f.stderr().contains("could not file the deletion"), "{}", f.stderr());
 }
 
 #[test]

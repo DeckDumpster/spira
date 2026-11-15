@@ -753,6 +753,14 @@ impl World for Real {
     fn lc_prior_failures(&self, since: i64) -> Result<Vec<(String, String)>, String> {
         spira_config::ejection::prior(&spira_config::ejection::cli, since)
     }
+    fn file_flip(&self, repo: &str, test: &str, title: &str, body: &str) -> Result<(), String> {
+        incident::intake::file_payload_with(title, body.as_bytes(), |e| {
+            e.reference = Some(format!("test-flip:{repo}:{test}"));
+            e.cause = "test-flip".into();
+            e.repo = Some(repo.into());
+            e.actor = Some("gate".into());
+        })
+    }
     fn lc_gate_start(&self, bead: &str) {
         let _ = spira_config::bounded::bounded("spira-lc")
             .args(["fact", bead, "--kind", "gate-start", "--actor", "gate"])
