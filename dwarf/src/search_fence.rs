@@ -500,4 +500,22 @@ mod tests {
         assert_eq!(verdict(json!({})), None);
         assert_eq!(verdict(json!({"tool_name": "Bash"})), None);
     }
+
+    #[test]
+    fn cd_forms_and_command_wrappers_are_followed() {
+        refused("cd && grep -r x spira");
+        refused("pushd /r/spira/run && rg x");
+        refused("cd /r/spira/run && popd && grep -r x /r/spira/run");
+        refused("nice -n 5 grep -r x /r/spira/run");
+        refused("nohup command rg x /r/spira");
+        refused("find -L /r/spira/run -name x");
+        refused("find /r/spira/run \\( -name a -o -name b \\)");
+        allowed("popd && grep -r x .");
+        allowed("cd dwarf && cd .. && grep -r x .");
+    }
+
+    #[test]
+    fn a_subshell_cd_is_taken_to_change_the_directory() {
+        refused("(cd /r/spira/run && ls); grep -rn x .");
+    }
 }

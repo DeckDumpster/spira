@@ -75,11 +75,11 @@ pub fn model_bin_dir(base: &BTreeMap<String, String>, path: &str, is_exe: impl F
 /// source is), exactly work-env.sh's `"KEY=$VAR"` tokens (no `${VAR:+…}` guard).
 const UNCONDITIONAL: &[&str] = &["HOME", "SPIRA_LC_SOCKET"];
 
-/// The allow-listed vars carried through only when set and non-empty, exactly
-/// work-env.sh's `${VAR:+"KEY=$VAR"}` tokens.
 /// The operator's Ops-incident bypass of the session fences; environment only.
 pub const FENCE_OVERRIDE: &str = "SPIRA_DWARF_OVERRIDE";
 
+/// The allow-listed vars carried through only when set and non-empty, exactly
+/// work-env.sh's `${VAR:+"KEY=$VAR"}` tokens.
 const CONDITIONAL: &[&str] = &[
     "SPIRA_RUNE",
     "TERM",
