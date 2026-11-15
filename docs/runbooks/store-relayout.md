@@ -74,7 +74,7 @@ again. A non-empty `-wal` means the store did not close cleanly: move the old fi
 systemctl stop lc-serve.service spira-lc.service
 ASIDE="$STORE.new-layout"; mkdir "$ASIDE"
 mv "$STORE" "$ASIDE"/
-mv "${STORE%.db}".events-*.db "${STORE%.db}".receipts-*.db "$ASIDE"/
+for f in "${STORE%.db}".events-*.db "${STORE%.db}".receipts-*.db; do [ -e "$f" ] && mv "$f" "$ASIDE"/; done
 mv "${STORE%.db}-old-layout.db" "$STORE"
 ```
 
