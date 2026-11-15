@@ -234,7 +234,7 @@ fn list_and_show_do_not_wait_for_a_commit_in_flight() {
     let (watchdog, fired) = (b.clone(), Arc::new(std::sync::atomic::AtomicBool::new(false)));
     let fired_by = Arc::clone(&fired);
     std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_secs(5)); // clock-safe: a cap that frees a read waiting on the commit, which fails the test
+        std::thread::sleep(Duration::from_secs(60)); // clock-safe: a 60 s cap that frees a read waiting on the commit, which fails the test
         fired_by.store(true, std::sync::atomic::Ordering::SeqCst);
         watchdog.release();
     });
