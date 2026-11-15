@@ -86,6 +86,7 @@ fn env(dir: &Path) -> Env {
         poll: Duration::from_secs(1),
         maxpar: 1,
         wall_secs: 1,
+        stall_secs: 1,
         git_name: "t".into(),
         git_email: "t@t".into(),
         lc_bin: None,
