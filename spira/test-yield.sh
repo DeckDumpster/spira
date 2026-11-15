@@ -72,6 +72,7 @@ ALWAYS='echo "gate: test-boxreader.sh FAILED (rc=1)" >&2; false'
 # gate.sh execs `gate` by name (sp-0tpcs, sp-gypjk): the minimal PATH below carries this
 # fixture's spira/ and the directory the suite's own PATH resolves the release binaries in.
 BIN_DIR="$(dirname "$(command -v gate)")" || bail "gate is not on PATH"
+[ -z "${SPIRA_RELEASE:-}" ] || BIN_DIR="$SPIRA_RELEASE/bin:$BIN_DIR"
 rungate() {              # rungate <branch> [VAR=VAL ...]
     local br="$1"; shift
     tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB_NONE" SPIRA_REPO_MAP="$MAP"
