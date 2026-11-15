@@ -66,7 +66,7 @@ fn on_sqlite_across_days(body: fn(&Store<SqliteBackend>)) {
         .unwrap()
         .filter(|e| e.as_ref().unwrap().file_name().to_string_lossy().starts_with("control.events-"))
         .count();
-    assert!(commits < 5 || day_files > 1, "{commits} commits left the events in {day_files} file");
+    assert!(commits < 5 || day_files > 1, "{commits} commits left the events in {day_files} events file(s), not several");
 }
 
 /// Each scenario once on the reference backend and once on SQLite, both on the virtual clock.
