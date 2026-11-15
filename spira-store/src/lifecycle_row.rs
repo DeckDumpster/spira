@@ -112,11 +112,17 @@ pub fn set_express_on(c: &LcClient, id: &str, on: bool) -> Result<(), String> {
     if !c.is_socket() {
         return status_on(c, &[verb, id]);
     }
+    let kind = if on { BeadEventKind::Express } else { BeadEventKind::Unexpress };
+    bead_event_on(c, id, &kind, "bead")
+}
+
+/// A caller verb is not served by the socket: read the row, then send the primitive event.
+pub fn bead_event_on(c: &LcClient, id: &str, kind: &BeadEventKind, actor: &str) -> Result<(), String> {
     let shown = c.call(&["show", id])?;
     if shown.code != 0 {
-        return Err(format!("{verb} {id}: no lifecycle row to mark: {}", shown.why()));
+        return Err(format!("{id}: no lifecycle row to mark: {}", shown.why()));
     }
-    let v: serde_json::Value = serde_json::from_str(shown.out.trim()).map_err(|e| format!("{verb} {id}: show is not JSON: {e}"))?;
+    let v: serde_json::Value = serde_json::from_str(shown.out.trim()).map_err(|e| format!("{id}: show is not JSON: {e}"))?;
     let field = |k: &str| match &v["bead"][k] {
         serde_json::Value::String(s) => s.clone(),
         serde_json::Value::Number(n) => n.to_string(),
@@ -124,11 +130,14 @@ pub fn set_express_on(c: &LcClient, id: &str, on: bool) -> Result<(), String> {
     };
     let (state, version) = (field("state"), field("version"));
     if state.is_empty() || version.is_empty() {
-        return Err(format!("{verb} {id}: no lifecycle row to mark"));
+        return Err(format!("{id}: no lifecycle row to mark"));
     }
-    let kind = if on { BeadEventKind::Express } else { BeadEventKind::Unexpress };
-    let kind = serde_json::to_string(&kind).map_err(|e| e.to_string())?;
-    status_on(c, &["event", "bead", id, "--expect", &state, "--version", &version, "--actor", "bead", "--kind", &kind])
+    let kind = serde_json::to_string(kind).map_err(|e| e.to_string())?;
+    status_on(c, &["event", "bead", id, "--expect", &state, "--version", &version, "--actor", actor, "--kind", &kind])
+}
+
+pub fn content_on_base_on(c: &LcClient, id: &str, proof: &str, actor: &str) -> Result<(), String> {
+    bead_event_on(c, id, &BeadEventKind::ContentOnBase { proof: proof.into() }, actor)
 }
 
 /// The id `bd create` printed: `--silent` prints the bare id, `--json` an object (or a
