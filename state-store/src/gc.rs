@@ -110,10 +110,10 @@ impl<'a, B: Backend> Controller<'a, B> {
             tick.scan = Some(ScanReport {
                 pages: progress.pages,
                 keys: progress.keys.len(),
-                complete: matches!(read, Ok(true)),
+                complete: read.is_ok(),
             });
             match read {
-                Ok(true) => {
+                Ok(()) => {
                     let scan = progress;
                     let ready: Vec<String> = scan.finalized.iter().map(|i| i.key.clone()).collect();
                     match c.collect(&ready, "gc.finalize", |i, _| Ok(finalized(i))) {
@@ -150,7 +150,6 @@ impl<'a, B: Backend> Controller<'a, B> {
                         Err(e) => fail(&mut tick, "orphan", e),
                     }
                 }
-                Ok(false) => unreachable!("a scan that is not complete is an error"),
                 Err(e) => {
                     let error = Error::Backend(format!(
                         "{e} (after {} pages, {} keys, last key {:?})",

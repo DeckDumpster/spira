@@ -175,6 +175,7 @@ impl<B: Backend> Backend for Interpose<B> {
     fn gc_page(&self, after: Option<&str>, limit: usize) -> Result<(u64, Vec<(String, Version)>)> {
         let (head, rows) = self.inner.gc_page(after, limit)?;
         self.gc_rows.fetch_add(rows.len(), Ordering::SeqCst);
+        self.record(&rows);
         Ok((head, rows))
     }
 }
@@ -1476,6 +1477,21 @@ pub fn gc_range_and_open_skip_the_history_prefix<R: Rig>(rig: &R) {
             }
             after = page.last().map(|(k, _)| k.clone());
         }
+        let head = c.head().expect("head");
+        let mut paged = Vec::new();
+        let mut after: Option<String> = None;
+        loop {
+            let (at, page) = c.backend().gc_page(after.as_deref(), 2).expect("gc_page");
+            assert_eq!(at, head, "gc_page reads at the head");
+            assert!(page.iter().all(|(k, _)| !k.starts_with(HISTORY_PREFIX)), "gc_page visited a history key");
+            paged.extend(page.iter().map(|(k, _)| k.clone()));
+            if page.len() < 2 {
+                break;
+            }
+            after = page.last().map(|(k, _)| k.clone());
+        }
+        let whole = c.backend().gc_range(None, usize::MAX, head).expect("gc_range");
+        assert_eq!(paged, whole.into_iter().map(|(k, _)| k).collect::<Vec<_>>(), "gc_page pages to the keys gc_range returns");
         rows
     };
     let without = open_rows(0);

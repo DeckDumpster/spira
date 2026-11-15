@@ -1327,11 +1327,11 @@ impl<B: Backend> Contract<B> {
     }
 
     /// Reads pages of every key but the audit history into `scan`, from its cursor, each page at
-    /// the head the backend serves it at; true once the last page is in. On an error `scan`
+    /// the head the backend serves it at, until the last page is in. On an error `scan`
     /// keeps what was read, so the next call resumes. Pages at different heads are safe because
     /// `collect` re-checks every candidate at its own commit head. A page the store ends for
     /// outliving its read limit is retried at half the size.
-    pub(crate) fn gc_scan_pages(&self, scan: &mut ScanProgress, page: usize) -> Result<bool> {
+    pub(crate) fn gc_scan_pages(&self, scan: &mut ScanProgress, page: usize) -> Result<()> {
         let mut page_size = page.max(1);
         loop {
             let rows = match self.backend.gc_page(scan.after.as_deref(), page_size) {
@@ -1358,7 +1358,7 @@ impl<B: Backend> Contract<B> {
                 scan.after = last;
             }
             if !full {
-                return Ok(true);
+                return Ok(());
             }
         }
     }
