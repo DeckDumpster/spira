@@ -1926,8 +1926,36 @@ impl T {
         })
     }
 
+    /// The args as given: no actor is added to a round verb.
+    fn run_bare(&self, args: &[&str]) -> i32 {
+        self.run_argv(&self.git, args.iter().map(|s| s.to_string()).collect())
+    }
+
+    /// As given, with `--by batcher` on a round verb that needs an actor and names none.
     fn run_on(&self, git: &dyn Git, args: &[&str]) -> i32 {
-        let argv: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+        let mut argv: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+        let acted = [
+            "open",
+            "certify",
+            "eject",
+            "land",
+            "abandon",
+            "preempt",
+            "stage",
+            "stage-test",
+            "promote",
+            "discard",
+        ];
+        if argv.first().is_some_and(|a| a == "round")
+            && argv.get(1).is_some_and(|v| acted.contains(&v.as_str()))
+            && !argv.iter().any(|a| a == "--by" || a.starts_with("--by="))
+        {
+            argv.extend(["--by".to_string(), "batcher".to_string()]);
+        }
+        self.run_argv(git, argv)
+    }
+
+    fn run_argv(&self, git: &dyn Git, argv: Vec<String>) -> i32 {
         let cmd = match cli::parse(&argv) {
             Ok(c) => c,
             Err(cli::Usage(m)) => {

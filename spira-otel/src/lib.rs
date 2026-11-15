@@ -8,6 +8,7 @@ pub mod logs;
 pub mod metrics;
 pub mod oneshot;
 pub mod query;
+pub mod rounds;
 pub mod run;
 pub mod vlogs;
 

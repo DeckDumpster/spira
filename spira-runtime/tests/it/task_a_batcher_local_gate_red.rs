@@ -75,11 +75,56 @@ fn the_preempt_the_batcher_asks_is_one_the_queue_cli_parses_with_its_evidence_on
     let ids = vec!["sp-a".to_string(), "sp-b".to_string()];
     let argv: Vec<String> = std::iter::once("round".to_string()).chain(batcher_cut::io::preempt_args("r9", "spira", &ids)).collect();
     match queue::cli::parse(&argv) {
-        Ok(queue::cli::Cmd::Round(queue::cli::Round::Preempt { batch, repo, eject, reason, suites })) => {
-            assert_eq!((batch.as_str(), repo.as_deref(), eject.as_str(), suites.as_str()), ("r9", Some("spira"), "sp-a,sp-b", ""));
+        Ok(queue::cli::Cmd::Round(queue::cli::Round::Preempt {
+            by,
+            batch,
+            repo,
+            eject,
+            reason,
+            suites,
+        })) => {
+            assert_eq!(
+                (
+                    batch.as_str(),
+                    repo.as_deref(),
+                    eject.as_str(),
+                    suites.as_str()
+                ),
+                ("r9", Some("spira"), "sp-a,sp-b", "")
+            );
+            assert_eq!(by, "batcher");
             assert!(matches!(reason, queue::cli::Text::Stdin), "{reason:?}");
         }
         other => panic!("not a preempt: {other:?}"),
+    }
+}
+
+#[test]
+fn the_eject_the_batcher_asks_is_one_the_queue_cli_parses_as_the_batchers_with_its_reason_on_stdin()
+{
+    let argv: Vec<String> = std::iter::once("round".to_string())
+        .chain(batcher_cut::io::eject_args(
+            "r9",
+            "spira",
+            "sp-a",
+            "test-b.sh",
+        ))
+        .collect();
+    match queue::cli::parse(&argv) {
+        Ok(queue::cli::Cmd::Round(queue::cli::Round::Eject {
+            by,
+            batch,
+            id,
+            reason,
+            ..
+        })) => {
+            assert_eq!(
+                (by.as_str(), batch.as_str(), id.as_str()),
+                ("batcher", "r9", "sp-a")
+            );
+            assert!(matches!(reason, queue::cli::Text::Stdin), "{reason:?}");
+        }
+        other => panic!("not an eject: {other:?}"),
     }
 }
 
