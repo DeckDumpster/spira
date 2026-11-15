@@ -121,6 +121,7 @@ pub struct State {
     /// Kill time the brief promised the model; checked again at launch.
     pub wall_deadline: Option<i64>,
     pub rebase_conflicts: String,
+    pub claim_head: String,
     pub groom_lines_before: usize,
     /// The claim's stack proposal (design stacked-dependents-2026-09-28 §1): the certified
     /// tip of every prerequisite this claim was built on, keyed by prerequisite bead id.
@@ -962,6 +963,8 @@ impl<'a> Run<'a> {
 
         // ---- a retry is rebased now, while nothing else can be inside ----
         let mut rebase_text = String::new();
+        let branch_ref = format!("refs/heads/{}", self.s.branch);
+        self.s.claim_head = self.d.git.git(&work, &["rev-parse", "--verify", "--quiet", &branch_ref]).stdout.trim().to_string();
         let rb = self.d.seam.call("_dwarf_rebase", &s(&[&self.s.branch, &self.s.base_fq, &repo.display().to_string(), &self.s.repo_name]));
         for l in rb.stderr.lines() {
             self.d.sink.out(l);
@@ -1198,7 +1201,7 @@ impl<'a> Run<'a> {
         }
 
         let head = self.d.git.git(work, &["rev-parse", "HEAD"]).stdout.trim().to_string();
-        body = format!("{}{}{body}", brief::eject_failure_brief(&self.last_eject_failure(), &head), brief::fast_tier_red_brief(&crate::fast_tier::current_digest(self.d.git, &self.s.repo, work, &self.s.base_fq, &red)));
+        body = format!("{}{}{body}", brief::eject_failure_brief(&self.last_eject_failure(), &[&self.s.claim_head, &head]), brief::fast_tier_red_brief(&crate::fast_tier::current_digest(self.d.git, &self.s.repo, work, &self.s.base_fq, &red)));
 
         // A thrashed bead leads with its sticking point, while the tip has not moved.
         let mut banner = None;

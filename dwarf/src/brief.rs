@@ -488,10 +488,15 @@ pub fn fast_tier_red_brief(digest: &str) -> String {
 }
 
 /// The failure that ejected the bead, as the first section of a rework brief; empty when none
-/// was recorded or it judged a tip that is no longer `head`.
-pub fn eject_failure_brief(digest: &str, head: &str) -> String {
+/// was recorded or it judged a tip that is none of `heads` (the branch at claim, before the
+/// rebase, and after it).
+pub fn eject_failure_brief(digest: &str, heads: &[&str]) -> String {
     let d = digest.trim();
-    if d.is_empty() || spira_config::ejection::parse(d).tip != head {
+    if d.is_empty() {
+        return String::new();
+    }
+    let tip = spira_config::ejection::parse(d).tip;
+    if !heads.iter().any(|h| !h.is_empty() && *h == tip) {
         return String::new();
     }
     format!("## You were ejected — the failure, verbatim\n\n{d}\n\nThis is the evidence the gate or the round held; start from it, not from a search of the box.\n\n")
@@ -914,10 +919,13 @@ mod tests {
     #[test]
     fn an_eject_brief_leads_with_the_test_location_and_output_and_is_empty_without_one() {
         let d = spira_config::ejection::digest("aaa", &[], "---- t::boom stdout ----\nthread 't::boom' panicked at x/y.rs:7:1:\nit broke\n\nfailures:\n");
-        let b = eject_failure_brief(&d, "aaa");
+        let b = eject_failure_brief(&d, &["aaa"]);
         assert!(b.starts_with("## You were ejected") && b.contains("t::boom at x/y.rs:7") && b.contains("it broke"), "{b}");
-        assert_eq!(eject_failure_brief(&d, "bbb"), "", "a red that judged another tip says nothing about this one");
-        assert_eq!(eject_failure_brief("  \n", "aaa"), "");
+        assert_eq!(eject_failure_brief(&d, &["bbb"]), "", "a red that judged another tip says nothing about this one");
+        assert!(eject_failure_brief(&d, &["aaa", "bbb"]).starts_with("## You were ejected"), "judged before the rebase");
+        assert_eq!(eject_failure_brief(&d, &["ccc", "bbb"]), "");
+        assert_eq!(eject_failure_brief(&d, &["", "bbb"]), "");
+        assert_eq!(eject_failure_brief("  \n", &["aaa", "bbb"]), "");
     }
 
     #[test]
