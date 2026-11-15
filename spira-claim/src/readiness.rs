@@ -41,3 +41,11 @@ pub fn payload(live: &[&LifecycleRow], lc: &HashMap<String, LifecycleRow>, bd: &
         .collect();
     json!({ "computed_at": computed_at, "planning_watermark": planning_watermark, "entries": judged }).to_string()
 }
+
+#[cfg(test)]
+mod occupied_tests {
+    #[test]
+    fn an_occupied_verdict_is_not_claimable() {
+        assert!(!super::claimable(super::Kind::Occupied));
+    }
+}

@@ -582,6 +582,7 @@ fn machine_filter(a: &Args, env: &mut Env, st: &Store, rows: &mut Vec<rank::Read
     };
     rows.retain(|r| matches!(rank::claimable(r, &lc, &bd, rank::stack_cap(r, &env.config.incident_label, &env.config.pilgrim_label, stack_max)), Verdict::Claimable { .. }));
     retain_unstopped(rows, std::path::Path::new(&env.config.run));
+    retain_unoccupied(rows, std::path::Path::new("/proc"), std::path::Path::new(&env.config.run));
     let fixture = a.get("--lifecycle").is_some();
     if let Err(e) = retain_uncarried(rows, &mut lc, (!fixture).then_some(st), &env.config.queue_dir) {
         return Err(Outcome::cannot_tell(format!("{rune}: integrations: {e}")));
@@ -941,6 +942,7 @@ fn viewed(a: &Args, env: &Env, st: &Store) -> Result<Viewed, String> {
     let mut rows: Vec<rank::ReadyRow> = if ids.is_empty() { Vec::new() } else { st.items_by_ids(&ids)? };
     rows.retain(|r| ids.contains(&r.id) && ready::in_scope(r, &scope, &no_loop));
     retain_unstopped(&mut rows, std::path::Path::new(&env.config.run));
+    retain_unoccupied(&mut rows, std::path::Path::new("/proc"), std::path::Path::new(&env.config.run));
     rows.sort_by(|x, y| x.id.cmp(&y.id));
     let express = st.express_ids()?;
     let runes = view.iter().map(|v| (v.id.clone(), v.runes.clone())).collect();
@@ -1027,6 +1029,7 @@ fn judge_rows(a: &Args, env: &Env, st: &Store, only: Option<&BTreeSet<String>>, 
         entries.push(entry(&r.id, kind, blocker));
     }
     entries.extend(retain_unstopped(&mut claimable, std::path::Path::new(&env.config.run)).iter().map(|id| entry(id, Kind::Stopped, None)));
+    entries.extend(retain_unoccupied(&mut claimable, std::path::Path::new("/proc"), std::path::Path::new(&env.config.run)).iter().map(|id| entry(id, Kind::Occupied, None)));
     let carried = retain_uncarried(&mut claimable, &mut lc, Some(st), &env.config.queue_dir)?;
     entries.extend(carried.into_iter().map(|(id, carrier)| entry(&id, Kind::Carried, Some(carrier))));
     entries.extend(claimable.iter().map(|r| entry(&r.id, Kind::Claimable, None)));
@@ -1109,6 +1112,28 @@ fn retain_unstopped(rows: &mut Vec<rank::ReadyRow>, run: &std::path::Path) -> Ve
             dropped.push(r.id.clone());
         }
         !stopped
+    });
+    dropped
+}
+
+/// Drops the beads whose worktree is some live process's working directory: a claim would
+/// put two sessions in one checkout. `/proc` is read once. Returns the ids dropped.
+fn retain_unoccupied(rows: &mut Vec<rank::ReadyRow>, proc_root: &std::path::Path, run: &std::path::Path) -> Vec<String> {
+    let cwds: Vec<std::path::PathBuf> = std::fs::read_dir(proc_root)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().parse::<u32>().is_ok())
+        .filter_map(|e| std::fs::read_link(e.path().join("cwd")).ok())
+        .collect();
+    let mut dropped = Vec::new();
+    rows.retain(|r| {
+        let tree = run.join("worktree").join(&r.id);
+        let occupied = cwds.iter().any(|c| c.starts_with(&tree));
+        if occupied {
+            dropped.push(r.id.clone());
+        }
+        !occupied
     });
     dropped
 }

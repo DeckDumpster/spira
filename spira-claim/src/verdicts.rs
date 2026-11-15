@@ -13,6 +13,8 @@ pub enum Kind {
     StackUnchanged,
     Carried,
     Stopped,
+    /// A live process has its working directory in the bead's worktree.
+    Occupied,
     OutOfScope,
     /// A record the view is missing an input for.
     CannotTell,
@@ -58,7 +60,7 @@ mod tests {
 
     #[test]
     fn a_kind_round_trips_through_the_word_the_store_keeps() {
-        for k in [Kind::Claimable, Kind::Blocked, Kind::Held, Kind::Snoozed, Kind::TooDeep, Kind::StackUnchanged, Kind::Carried, Kind::Stopped, Kind::OutOfScope] {
+        for k in [Kind::Claimable, Kind::Blocked, Kind::Held, Kind::Snoozed, Kind::TooDeep, Kind::StackUnchanged, Kind::Carried, Kind::Stopped, Kind::Occupied, Kind::OutOfScope] {
             let word = serde_json::to_value(k).unwrap();
             assert_eq!(Kind::from_word(word.as_str().unwrap()), Some(k), "{word}");
         }
