@@ -5563,7 +5563,7 @@ fn a_refused_open_prints_the_steps_it_reached_on_stderr() {
     let t = concurrent_world();
     assert_eq!(t.run(&["round", "open", "--members", "sp-a", "--name", "r-1"]), 0, "{}", t.err());
     assert_eq!(t.run(&["round", "open", "--members", "sp-b,sp-a", "--name", "r-2"]), 1);
-    assert!(t.err().contains("steps=reconcile:0,lock:0"), "{}", t.err());
+    assert!(t.err().lines().any(|l| l == "steps=reconcile:0,lock:0"), "{}", t.err());
 }
 
 #[test]

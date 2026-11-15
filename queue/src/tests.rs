@@ -37,7 +37,7 @@ struct FGit {
     branch_set_fails: Cell<bool>,
     merge_fail: RefCell<BTreeSet<String>>,
     /// Runs on every merge with its tip: the world moving while git works.
-    on_merge: RefCell<Option<Box<dyn Fn(&str)>>>,
+    on_merge: RefCell<Option<MergeHook>>,
     settle_fails: Cell<bool>,
     /// Tips whose rebase onto the round's head conflicts, with the paths it names.
     rebase_fail: RefCell<BTreeMap<String, Vec<String>>>,
@@ -1707,6 +1707,8 @@ impl ConfigStore for FConfig {
         Ok(())
     }
 }
+
+type MergeHook = Box<dyn Fn(&str)>;
 
 struct FClock {
     now: Cell<u64>,
