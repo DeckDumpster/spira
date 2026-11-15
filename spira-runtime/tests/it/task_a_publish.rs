@@ -113,8 +113,8 @@ fn t5_no_run_past_the_bound_starts_ci_once_then_parks() {
 #[test]
 fn t5_no_run_past_the_bound_and_behind_supersedes() {
     let (_, acts) = decide_with(&bound(), &Carry::default(), &no_run_repo(true, 0));
-    assert_eq!(effects(&acts), [CANCEL_RUNS, PR_CLOSE, NOTIFY, RECORD], "{acts:?}");
-    assert!(acts[3].input.contains("no_run_paged"), "{acts:?}");
+    assert_eq!(effects(&acts), [NOTIFY, RECORD, CANCEL_RUNS, PR_CLOSE], "{acts:?}");
+    assert!(acts[1].input.contains("no_run_paged"), "{acts:?}");
 }
 
 #[test]

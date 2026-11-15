@@ -2577,6 +2577,14 @@ impl Emit for StdEmit {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn an_unregistered_key_reads_as_none_and_any_other_refusal_propagates() {
+        let unregistered = "K is not a registered config key (spira/conf.d) — refusing".to_string();
+        assert_eq!(unregistered_is_none::<u64>(Err(unregistered)), Ok(None));
+        assert_eq!(unregistered_is_none::<u64>(Ok(7)), Ok(Some(7)));
+        assert!(unregistered_is_none::<u64>(Err("K = \"x\" does not parse as a u64".into())).is_err());
+    }
+
+    #[test]
     fn check_config_names_every_key_context_reads() {
         let src = include_str!("real.rs");
         let body = &src[src.find("fn context(").unwrap()..src.find("let s = Settings {").unwrap()];

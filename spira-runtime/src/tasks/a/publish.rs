@@ -564,15 +564,15 @@ impl Machine<'_> {
             }
             Settle::Retire | Settle::Supersede => {
                 self.go(Trigger::SettleRetireOrSupersede);
-                let branch = rec.map(|r| r.branch.clone()).unwrap_or_default();
-                self.rc.retired = Some(pr);
-                self.acts.push(Pub { pr, branch: branch.clone(), key: format!("{}/{branch}", self.repo), ..Pub::on(self.repo) }.act(CANCEL_RUNS));
-                self.acts.push(Pub { pr, branch, head: r.head_sha.clone(), base: r.forge_sha.clone().unwrap_or_default(), key: format!("{}/{pr}", self.repo), ..Pub::on(self.repo) }.act(PR_CLOSE));
                 if let (Some(rec), Pr::Open { ci, .. }) = (rec, &r.pr) {
                     if ci == "no_run" {
                         self.page_no_run(rec, r.observed_at.saturating_sub(rec.opened), &format!("superseded for {}", r.head_sha));
                     }
                 }
+                let branch = rec.map(|r| r.branch.clone()).unwrap_or_default();
+                self.rc.retired = Some(pr);
+                self.acts.push(Pub { pr, branch: branch.clone(), key: format!("{}/{branch}", self.repo), ..Pub::on(self.repo) }.act(CANCEL_RUNS));
+                self.acts.push(Pub { pr, branch, head: r.head_sha.clone(), base: r.forge_sha.clone().unwrap_or_default(), key: format!("{}/{pr}", self.repo), ..Pub::on(self.repo) }.act(PR_CLOSE));
             }
         }
     }
