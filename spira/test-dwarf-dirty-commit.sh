@@ -43,6 +43,17 @@ export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT INT TERM
 
+# commit-msg asks spira-lc whether cited beads exist; this fixture has no store, so a stub
+# answers: a message citing sp-phantom is refused (3), anything else passes.
+unset SPIRA_WORK_BEAD_ID
+STUBBIN="$TMP/stubbin"; mkdir -p "$STUBBIN"
+cat > "$STUBBIN/spira-lc" <<'STUB'
+#!/usr/bin/env bash
+if grep -q 'sp-phantom'; then echo "commit-msg stub: sp-phantom is not a bead; reword" >&2; exit 3; fi
+exit 0
+STUB
+chmod +x "$STUBBIN/spira-lc"; export PATH="$STUBBIN:$PATH"
+
 # A GUARD ON THE GUARD: the hook must exist; testing with a missing hook would give a false
 # pass on every case (no hook = no refusal = commits succeed = looks like "excluded").
 [ -f "$HERE/pre-commit-guard.sh" ] || bail "pre-commit-guard.sh not found beside this suite"
