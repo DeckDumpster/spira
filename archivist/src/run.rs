@@ -784,7 +784,7 @@ mod tests {
     }
 
     fn claim_ask_for(dir: &Path, sid: &str, key: &str, question: &str, open: &str, transcript: Option<&Path>) -> AskClaim {
-        claim_ask(dir, sid, key, &AskQuery { question, beads: &[] }, open, transcript, 0).unwrap()
+        claim_ask(dir, sid, key, &AskQuery { question, beads: &[] }, open, transcript, 1_793_356_200).unwrap()
     }
 
     const FILED_TRANSCRIPT: &str = concat!(

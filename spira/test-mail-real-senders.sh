@@ -28,7 +28,7 @@
 # daily digest is the only path to the operator — so nothing here should ever reach the mailbox.
 #
 # tier: T2
-# covers: spira/lib.sh watchd/* skew/src/* spira/incident.sh archivist/src/* spira/ctx-meter.sh incident/src/stub_bd.rs mail/src/* incident/* sentinel/src/* UC-operator-channel-05
+# covers: spira/lib.sh watchd/* skew/src/* spira/incident.sh archivist/src/* spira/ctx-meter.sh spira/runes/archivist.md incident/src/stub_bd.rs mail/src/* incident/* sentinel/src/* UC-operator-channel-05
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -290,5 +290,18 @@ want "a deferred commit names the time it will retry" "deferred, will retry at 1
 printf 'state=failed\nat_turn=1\nitems_filed=0\n' > "$CM_RUN/archivist/s-fail.state"
 want "a terminal failure names the command that forces a sweep" "archivist now s-fail" "$(cm_status)"
 nowant "a terminal failure promises no retry" "will retry" "$(cm_status)"
+
+echo
+echo "brief text: the archivist brief states the ask rollup, close and claim rules"
+briefed="$(cat "$HERE/runes/archivist.md")"
+want "the brief uses a relates edge for a rollup" "work relate <rollup> <ask>" "$briefed"
+want "the brief forbids an untyped dependency between two ask beads" "Never wire an untyped dependency between two beads" "$briefed"
+want "the brief closes an answered ask with the operator's words" "work close-ask <ask-id> --exit answered --source" "$briefed"
+want "the brief closes only on an unambiguous answer" "only when his answer in" "$briefed"
+want "the brief forbids taking an ask's default" "never take its default" "$briefed"
+want "the brief claims an ask with its question" '--ask "<the question>"' "$briefed"
+want "the brief carries the session's liveness" "{{LIVENESS}}" "$briefed"
+stripped="${briefed//work relate <rollup> <ask>/}"
+nowant "positive control: a brief without the phrase is seen to lack it" "work relate <rollup> <ask>" "$stripped"
 
 tl_summary
