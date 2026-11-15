@@ -14,7 +14,7 @@ pub const LIVE_STATES: [&str; 7] = ["OPEN", "READY", "WORKING", "SUBMITTED", "CE
 
 /// Whether a verdict leaves the record claimable by someone. Scope and carriage are the
 /// caller's and the round's, not the record's, so they do not make it unclaimable.
-fn claimable(kind: Kind) -> bool {
+pub(crate) fn claimable(kind: Kind) -> bool {
     matches!(kind, Kind::Claimable | Kind::OutOfScope)
 }
 
@@ -40,4 +40,12 @@ pub fn payload(live: &[&LifecycleRow], lc: &HashMap<String, LifecycleRow>, bd: &
         })
         .collect();
     json!({ "computed_at": computed_at, "planning_watermark": planning_watermark, "entries": judged }).to_string()
+}
+
+#[cfg(test)]
+mod occupied_tests {
+    #[test]
+    fn an_occupied_verdict_is_not_claimable() {
+        assert!(!super::claimable(super::Kind::Occupied));
+    }
 }

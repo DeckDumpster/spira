@@ -439,3 +439,45 @@ fn the_verbs_a_caller_waits_on_push_no_run_metric_when_they_succeed() {
     assert!(!hot("rune-ready", 1), "a failing read still reports its failure");
     assert!(!hot("bulk-ready-by-rune", 0) && !hot("unpoison", 0) && !discards_run_metric(&[], 0));
 }
+
+fn fake_proc(t: &testkit::TempDir, pids: &[(&str, std::path::PathBuf)]) -> std::path::PathBuf {
+    let proc = t.join("proc");
+    for (pid, cwd) in pids {
+        std::fs::create_dir_all(proc.join(pid)).unwrap();
+        std::os::unix::fs::symlink(cwd, proc.join(pid).join("cwd")).unwrap();
+    }
+    std::fs::create_dir_all(proc.join("self")).unwrap();
+    proc
+}
+
+fn ready(id: &str) -> rank::ReadyRow {
+    rank::ReadyRow { id: id.into(), ..Default::default() }
+}
+
+#[test]
+fn a_bead_whose_worktree_a_live_process_holds_is_dropped_and_returns_once_it_exits() {
+    let t = testkit::TempDir::new("claim-occupied");
+    let run = t.join("run");
+    for d in ["sp-a/sub", "sp-b"] {
+        std::fs::create_dir_all(run.join("worktree").join(d)).unwrap();
+    }
+    let proc = fake_proc(&t, &[("100", run.join("worktree/sp-a/sub"))]);
+    let mut rows = vec![ready("sp-a"), ready("sp-b")];
+    assert_eq!(retain_unoccupied(&mut rows, &proc, &run), vec!["sp-a".to_string()]);
+    assert_eq!(rows.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), ["sp-b"]);
+    std::fs::remove_dir_all(proc.join("100")).unwrap();
+    let mut rows = vec![ready("sp-a"), ready("sp-b")];
+    assert!(retain_unoccupied(&mut rows, &proc, &run).is_empty());
+    assert_eq!(rows.len(), 2);
+}
+
+#[test]
+fn a_worktree_sharing_only_a_name_prefix_does_not_occupy_the_bead() {
+    let t = testkit::TempDir::new("claim-occupied-prefix");
+    let run = t.join("run");
+    std::fs::create_dir_all(run.join("worktree/sp-a2")).unwrap();
+    let proc = fake_proc(&t, &[("100", run.join("worktree/sp-a2"))]);
+    let mut rows = vec![ready("sp-a")];
+    assert!(retain_unoccupied(&mut rows, &proc, &run).is_empty());
+    assert_eq!(rows.len(), 1);
+}
