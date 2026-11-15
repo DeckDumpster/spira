@@ -89,7 +89,7 @@ impl Rule for Ledger {
         let now = std::fs::read_to_string(tree.root.join(self.path))
             .map_err(|_| LintError::Refused(format!("no ledger at {} — nothing to lint", self.path)))?;
         let prior = tree.show(&base, self.path).ok_or_else(|| {
-            LintError::Refused(format!("no {} at the base {base} — cannot judge shrink-only", self.path))
+            LintError::Refused(format!("no {} at the base {} — cannot judge shrink-only", self.path, tree.base.as_deref().unwrap_or_default()))
         })?;
         let exposed: BTreeSet<String> = exposures(&now).difference(&exposures(&prior)).cloned().collect();
         let prior: BTreeMap<String, String> =
@@ -211,6 +211,42 @@ pub fn rules() -> Vec<Box<dyn crate::Rule>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testutil::TempDir;
+
+    fn forked_tree(t: &TempDir) -> Tree {
+        Tree::from_paths(t.path(), [SUITE_LEDGER], Vec::<String>::new())
+            .with_base(Some("main".into()))
+            .with_git(Box::new(|a| match a {
+                ["rev-parse", ..] => Ok(b"B\n".to_vec()),
+                ["merge-base", "B", "HEAD"] => Ok(b"F\n".to_vec()),
+                ["show", "F:spira/tier-budget-allowlist"] => Ok(b"test-x.sh\t3\n".to_vec()),
+                ["show", "B:spira/tier-budget-allowlist"] => Ok(b"".to_vec()),
+                other => Err(format!("unexpected {other:?}")),
+            }))
+    }
+
+    fn check(ledger: &str) -> Vec<String> {
+        let t = TempDir::new("tb");
+        t.write(SUITE_LEDGER, ledger);
+        Ledger::suites().check(&forked_tree(&t)).unwrap().into_iter().map(|f| f.message).collect()
+    }
+
+    #[test]
+    fn an_entry_main_deleted_after_the_fork_is_not_a_new_entry() {
+        assert!(check("test-x.sh\t3\n").is_empty());
+    }
+
+    #[test]
+    fn a_key_added_on_the_branch_is_still_a_new_entry() {
+        let m = check("test-x.sh\t3\ntest-y.sh\t1\n");
+        assert_eq!(m, ["new entry test-y.sh — the allowlist may only shrink"]);
+    }
+
+    #[test]
+    fn a_value_raised_over_the_fork_is_still_raised() {
+        let m = check("test-x.sh\t5\n");
+        assert_eq!(m, ["test-x.sh raised 3 -> 5 — the allowlist may only shrink"]);
+    }
 
 
     #[test]

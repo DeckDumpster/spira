@@ -63,7 +63,7 @@ pub fn certify_anyway(red: &Red) -> bool {
 /// Whether the branch changes what spira-lint compiles in (the key registry), so the installed
 /// binary would judge the branch against keys it predates.
 fn changes_compiled_registry(git: &dyn Git, work: &Path, base_fq: &str) -> bool {
-    git.git(work, &["diff", "--name-only", base_fq, "HEAD"])
+    git.git(work, &["diff", "--name-only", &format!("{base_fq}...HEAD")])
         .stdout
         .lines()
         .any(|f| f.starts_with("spira/conf.d/") || f.starts_with("spira-config/") || f.starts_with("spira-lint/"))
@@ -223,6 +223,21 @@ mod tests {
                 Out { code: self.0, stdout: String::new(), stderr: String::new() }
             }
         }
+    }
+
+    struct Rec(Mutex<Vec<Vec<String>>>);
+    impl Git for Rec {
+        fn git(&self, _: &Path, a: &[&str]) -> Out {
+            self.0.lock().unwrap().push(a.iter().map(|s| s.to_string()).collect());
+            Out { code: 0, stdout: String::new(), stderr: String::new() }
+        }
+    }
+
+    #[test]
+    fn the_registry_change_probe_asks_for_the_three_dot_range() {
+        let g = Rec(Mutex::new(Vec::new()));
+        assert!(!changes_compiled_registry(&g, Path::new("."), "base_fq"));
+        assert_eq!(g.0.lock().unwrap()[0], ["diff", "--name-only", "base_fq...HEAD"]);
     }
 
     fn fence_red(lint: i32, fence: i32, stderr: &'static str) -> Red {

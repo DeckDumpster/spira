@@ -83,7 +83,7 @@ impl Rule for LockfileLint {
             .map_err(|_| LintError::Refused(format!("no {LOCK} in this tree — nothing to lint")))?;
         let prior = tree
             .show(&base, LOCK)
-            .ok_or_else(|| LintError::Refused(format!("no {LOCK} at the base {base} — nothing to compare a bump against")))?;
+            .ok_or_else(|| LintError::Refused(format!("no {LOCK} at the base {} — nothing to compare a bump against", tree.base.as_deref().unwrap_or_default())))?;
         let bad_lock = |which: &str, e: String| LintError::Refused(format!("{which} {LOCK} does not parse: {e}"));
         let head = package_versions(&head).map_err(|e| bad_lock("this tree's", e))?;
         let prior = package_versions(&prior).map_err(|e| bad_lock("the base's", e))?;
