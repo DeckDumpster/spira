@@ -64,8 +64,6 @@ if [ "$FORCE" = 0 ]; then
 fi
 
 command -v podman >/dev/null 2>&1 || { echo "round-image-preflight: podman is not on PATH" >&2; exit 75; }
-toolchain="$(sed -n 's/^channel *= *"\(.*\)"/\1/p' "$TREE/rust-toolchain.toml")"
-[ -n "$toolchain" ] || { echo "round-image-preflight: no channel in rust-toolchain.toml" >&2; exit 1; }
 
 mkdir -p "$CACHE/registry" "$CACHE/target" "$CACHE/apt" "$CACHE/toolchains" || exit 75
 log="$(mktemp)"; trap 'rm -f "$log"' EXIT
@@ -85,6 +83,8 @@ if [ "$pkg_only" = 1 ]; then
         | timeout "$LIMIT" podman run --rm -i --network host -v "$CACHE/apt:/var/cache/apt/archives" "$IMAGE" \
             bash -s >"$log" 2>&1
 else
+    toolchain="$(sed -n 's/^channel *= *"\(.*\)"/\1/p' "$TREE/rust-toolchain.toml")"
+    [ -n "$toolchain" ] || { echo "round-image-preflight: no channel in rust-toolchain.toml" >&2; exit 1; }
     timeout "$LIMIT" podman run --rm --network host "${mounts[@]}" "$IMAGE" \
         bash /guest.sh "$toolchain" >"$log" 2>&1
 fi
