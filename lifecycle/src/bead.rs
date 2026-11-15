@@ -965,11 +965,13 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
                 new.version += 1;
                 Outcome::applied(new)
             }
+            // A verdict settles the wait the gate placed after two verdictless runs (`gateq.rs` `settle`).
             GatePass { tip, gate_key } => {
                 if row.tip.as_deref() != Some(tip.as_str()) {
                     return tip_mismatch(row, tip);
                 }
                 let mut new = row.clone();
+                new.holds.remove(&HoldKind::Wait);
                 new.state = BeadState::Certified;
                 new.gate_key = Some(gate_key.clone());
                 new.version += 1;
@@ -980,6 +982,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
                     return tip_mismatch(row, tip);
                 }
                 let mut new = row.clone();
+                new.holds.remove(&HoldKind::Wait);
                 new.state = BeadState::Rework;
                 new.reason = Some(reason.as_str().to_string());
                 if gate_red_bars_tip(*reason) {
@@ -2098,6 +2101,41 @@ mod tests {
         assert!(out2.applied);
         assert_eq!(out2.row.state, BeadState::Submitted);
         assert!(out2.row.holds.contains(&HoldKind::Ask));
+    }
+
+    #[test]
+    fn a_verdict_on_the_held_tip_lifts_the_gates_no_verdict_wait() {
+        let held = || {
+            let mut r = row(BeadState::Submitted);
+            r.tip = Some(TIP.into());
+            let wait = BeadEventKind::Hold { kind: HoldKind::Wait, cause: HoldCause::UnlandedBlocker, detail: Some(format!("gate: no verdict twice on {TIP} (build-stall)")) };
+            let out = apply(&r, &ev(BeadState::Submitted, 0, wait));
+            assert!(out.applied && out.row.holds.contains(&HoldKind::Wait));
+            out.row
+        };
+        let go = |r: &BeadRow, k| apply(r, &ev(BeadState::Submitted, r.version, k));
+
+        let pass = go(&held(), BeadEventKind::GatePass { tip: TIP.into(), gate_key: "k".into() });
+        assert!(pass.applied);
+        assert_eq!(pass.row.state, BeadState::Certified);
+        assert!(!pass.row.holds.contains(&HoldKind::Wait));
+
+        let red = go(&held(), BeadEventKind::GateRed { tip: TIP.into(), reason: GateRedReason::SuitesFailed, step: None, message: None });
+        assert!(red.applied);
+        assert_eq!(red.row.state, BeadState::Rework);
+        assert!(!red.row.holds.contains(&HoldKind::Wait));
+
+        let other = go(&held(), BeadEventKind::GatePass { tip: OTHER_TIP.into(), gate_key: "k".into() });
+        assert!(matches!(other.refusal, Some(Refusal::TipMismatch { .. })));
+        assert!(other.row.holds.contains(&HoldKind::Wait));
+
+        let infra = go(&held(), BeadEventKind::GateInfra { tip: TIP.into() });
+        assert!(infra.row.holds.contains(&HoldKind::Wait));
+
+        let mut both = held();
+        both.holds.insert(HoldKind::Ask);
+        let pass = go(&both, BeadEventKind::GatePass { tip: TIP.into(), gate_key: "k".into() });
+        assert!(pass.row.holds.contains(&HoldKind::Ask) && !pass.row.holds.contains(&HoldKind::Wait));
     }
 
     fn gate_row() -> BeadRow {
