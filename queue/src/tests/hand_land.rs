@@ -121,6 +121,9 @@ fn subvert_voids_the_round_with_the_cause_lands_and_hands_the_members_back() {
     let log = t.landing_log();
     let abandon = log.lines().find(|l| l.contains("ROUND-ABANDON")).unwrap_or_default();
     assert!(abandon.contains("cause=hand-landing by=concierge bead=sp-z"), "{log}");
+    assert!(abandon.contains(" by=concierge reason=cause=hand-landing"), "the event itself names the hand landing's actor: {log}");
+    let recs = spira_otel::logs::read_all(&spira_otel::dir_of(&t.s().run), "queue");
+    assert!(recs.iter().any(|r| r.iter().any(|(k, v)| k == "by" && v["stringValue"] == "concierge")), "{recs:?}");
     assert!(log.contains("HAND-LAND") && log.contains("round=subvert") && log.contains("voided=hand-1"), "{log}");
     assert_eq!(t.landed_ref().as_deref(), Some(TIP));
     assert!(!t.qfile("round").exists(), "the round is closed");
