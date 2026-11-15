@@ -2517,6 +2517,17 @@ fn a_gate_worker_row_with_pass_certifies_and_one_with_fail_and_a_reason_reworks(
 }
 
 #[test]
+fn an_in_round_member_with_no_gate_on_file_gets_none_queued() {
+    let h = h_worker(LandMode::Queue);
+    h.closed("sp-a", "t1");
+    h.bead("sp-a", "IN_DELIVERY", &[]);
+    h.beads.batched.borrow_mut().insert("sp-a".into());
+    h.run();
+    assert!(crate::gateq::GateQueue::new(&h.s.run).queued().is_empty(), "{:?}", h.out.lines());
+    assert!(h.logged("sp-a: spira/sp-a is in a round — the round judges it, no per-bead gate"));
+}
+
+#[test]
 fn a_member_gated_before_its_cut_is_not_gated_again_in_the_round() {
     let h = h_worker(LandMode::Queue);
     h.closed("sp-a", "t1");
