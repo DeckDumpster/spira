@@ -256,6 +256,9 @@ pub struct Options {
     /// Runs after every side file has committed and before the main commit; an `Err` fails the
     /// commit as a failed main commit would.
     pub commit_probe: Option<CommitProbe>,
+    /// File receipts in day files. Off for a store being restored or verified, whose receipts
+    /// stay in its one file, where reads find them and the drain removes them once a day old.
+    pub day_receipts: bool,
 }
 
 /// See [`Options::commit_probe`].
@@ -274,6 +277,7 @@ impl Default for Options {
             outbox_segment_bytes: outbox::SEGMENT_BYTES,
             wall: Arc::new(runtime::ports::WallClock),
             commit_probe: None,
+            day_receipts: true,
         }
     }
 }
@@ -305,6 +309,7 @@ struct Inner {
     receipts: Files,
     wall: Arc<dyn Clock>,
     commit_probe: Option<CommitProbe>,
+    day_receipts: bool,
     /// Names the side file a failed commit could not clear: every commit is refused until a
     /// reopen trims it.
     unclear: Mutex<Option<String>>,
@@ -810,12 +815,17 @@ impl SqliteBackend {
             receipts,
             wall: opts.wall,
             commit_probe: opts.commit_probe,
+            day_receipts: opts.day_receipts,
             unclear: Mutex::new(None),
             receipts_from_at,
             drained: AtomicBool::new(false),
             read_steps: AtomicU64::new(0),
             _lock: OpenerLock(lock_file),
         })))
+    }
+
+    fn filed(&self, key: &str) -> bool {
+        self.0.day_receipts && RECEIPTS.holds(key)
     }
 
     /// Takes the rows `main` filed in `wrote` back out after its main commit failed, so the
@@ -837,7 +847,7 @@ impl SqliteBackend {
     /// failure is retried by the next commit.
     fn drain_receipts(&self, w: &mut Writer, now: u64) {
         let due = self.0.receipts_from_at.saturating_add(state_store::REQUEST_TTL_SECS * 1_000);
-        if now < due || self.0.drained.load(Ordering::SeqCst) {
+        if !self.0.day_receipts || now < due || self.0.drained.load(Ordering::SeqCst) {
             return;
         }
         let lo = state_store::REQUESTS_PREFIX.as_bytes();
@@ -1392,7 +1402,7 @@ impl Backend for SqliteBackend {
             )));
         }
         for wr in batch {
-            if matches!(wr, Write::Put { prev: Some(_), .. }) && RECEIPTS.holds(wr.key()) {
+            if matches!(wr, Write::Put { prev: Some(_), .. }) && self.filed(wr.key()) {
                 return Err(Error::Backend(format!("{}: a receipt is written once", wr.key())));
             }
         }
@@ -1407,7 +1417,7 @@ impl Backend for SqliteBackend {
         let mut written = Vec::with_capacity(batch.len());
         let mut filed: Vec<SideRow<'_>> = Vec::new();
         let mut unfiled: Vec<&str> = Vec::new();
-        let files = if batch.iter().any(|w| RECEIPTS.holds(w.key())) {
+        let files = if batch.iter().any(|w| self.filed(w.key())) {
             self.0.receipts.handles()
         } else {
             Vec::new()
@@ -1431,7 +1441,7 @@ impl Backend for SqliteBackend {
                     .optional()
                     .map_err(db)?
                     .unwrap_or((None, 0));
-                let filed_key = RECEIPTS.holds(w.key());
+                let filed_key = self.filed(w.key());
                 let rev = Rev::new(main, sub as u32);
                 let entry = match w {
                     Write::Put {

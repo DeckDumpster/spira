@@ -699,12 +699,93 @@ fn log_over_a_mixed_batch_sequence_is_the_same_on_the_memory_and_the_sqlite_back
         vec![put_write("a", b"1", 1, None), receipt("r1", b"x", 1), put_write("b", b"1", 1, None)],
         vec![put_write("a", b"2", 2, Some(Rev::new(1, 0)))],
         vec![receipt("r2", b"y", 3), Write::Delete { key: "b".into(), prev: Rev::new(1, 2) }],
+        vec![receipt("r3", b"z", 4), receipt("r4", b"z", 4)],
+        vec![receipt("r5", b"w", 5)],
     ];
     for (i, batch) in batches.iter().enumerate() {
+        wall.advance_to(D0 + (i as u64 / 2) * DAY_MS);
         s.commit(i as u64, batch).unwrap();
         m.commit(i as u64, batch).unwrap();
     }
+    assert_eq!(receipt_files(dir.path()).len(), 2, "the log spans two day files");
     assert_eq!(s.log(0, 10).unwrap(), m.log(0, 10).unwrap());
+    assert_eq!(s.log(2, 2).unwrap(), m.log(2, 2).unwrap());
+}
+
+#[test]
+fn a_receipt_is_written_once_and_a_failed_cleanup_refuses_every_commit_until_a_reopen_trims_it() {
+    let dir = TempDir::new("sqlite-receipt-refusals");
+    let wall = VirtualClock::new(D0);
+    let path = dir.path().join("s.db");
+    let file = day_file(dir.path(), "2024-10-04");
+    let sabotage = {
+        let file = file.clone();
+        Arc::new(move || {
+            let conn = rusqlite::Connection::open(&file).unwrap();
+            conn.prepare("CREATE TRIGGER stuck BEFORE DELETE ON rows BEGIN SELECT RAISE(ABORT, 'stuck'); END")
+                .unwrap()
+                .execute([])
+                .unwrap();
+            Err(Error::Backend("injected".into()))
+        }) as Arc<dyn Fn() -> state_store::Result<()> + Send + Sync>
+    };
+    let b = SqliteBackend::open(&path, Options { commit_probe: Some(sabotage), ..day_opts(&wall) }).unwrap();
+    let rewrite = put_write("requests/a", b"2", 1, Some(Rev::new(1, 0)));
+    assert!(b.commit(0, &[rewrite]).is_err());
+    assert_eq!(b.head().unwrap(), 0, "the refusal wrote nothing");
+    assert!(!file.exists());
+    let e = b.commit(0, &[receipt("a", b"1", 1)]).unwrap_err().to_string();
+    assert!(e.contains("could not take back"), "{e}");
+    let refused = b.commit(0, &[put_write("live/a", b"1", 1, None)]).unwrap_err().to_string();
+    assert!(refused.contains(&*file.display().to_string()), "{refused}");
+    drop(b);
+    rusqlite::Connection::open(&file).unwrap().prepare("DROP TRIGGER stuck").unwrap().execute([]).unwrap();
+    let b = SqliteBackend::open(&path, day_opts(&wall)).unwrap();
+    assert_eq!(count(&file, &format!("SELECT count(*) FROM rows WHERE main > {}", 0)), 0);
+    let head = b.head().unwrap();
+    b.commit(head, &[put_write("live/a", b"1", head + 1, None)]).unwrap();
+}
+
+#[test]
+fn deleting_a_receipt_removes_it_from_a_day_file_or_the_main_file_and_the_log_names_what_it_was() {
+    let dir = TempDir::new("sqlite-receipt-delete");
+    let wall = VirtualClock::new(D0);
+    let path = dir.path().join("s.db");
+    let b = SqliteBackend::open(&path, day_opts(&wall)).unwrap();
+    b.commit(0, &[receipt("filed", b"f", 1)]).unwrap();
+    rusqlite::Connection::open(&path)
+        .unwrap()
+        .prepare(
+            "INSERT INTO latest (key, main, sub, value, create_main, create_sub, version)
+             VALUES (CAST('requests/legacy' AS BLOB), 1, 0, X'6C', 1, 0, 1)",
+        )
+        .unwrap()
+        .execute([])
+        .unwrap();
+    b.commit(1, &[Write::Delete { key: "requests/filed".into(), prev: Rev::new(1, 0) }]).unwrap();
+    b.commit(2, &[Write::Delete { key: "requests/legacy".into(), prev: Rev::new(1, 0) }]).unwrap();
+    assert!(b.get("requests/filed", 3).unwrap().is_none());
+    assert!(b.get("requests/legacy", 3).unwrap().is_none());
+    assert_eq!(count(&day_file(dir.path(), "2024-10-04"), "SELECT count(*) FROM rows"), 0);
+    assert_eq!(b.get("requests/filed", 1).unwrap().unwrap().value, b"f", "as of the revision before the delete");
+    let log = b.log(1, 10).unwrap();
+    assert_eq!(log.iter().map(|e| e.key.as_str()).collect::<Vec<_>>(), ["requests/filed", "requests/legacy"]);
+    assert!(log.iter().all(|e| e.value.is_none()));
+}
+
+#[test]
+fn a_store_opened_without_day_receipts_keeps_them_in_its_one_file_and_never_drains_them() {
+    let dir = TempDir::new("sqlite-receipt-main");
+    let wall = VirtualClock::new(D0);
+    let path = dir.path().join("s.db");
+    let opts = Options { day_receipts: false, ..day_opts(&wall) };
+    let b = SqliteBackend::open(&path, opts).unwrap();
+    b.commit(0, &[receipt("a", b"1", 1)]).unwrap();
+    wall.advance_to(D0 + 3 * DAY_MS);
+    b.commit(1, &[put_write("live/a", b"1", 2, None)]).unwrap();
+    assert!(receipt_files(dir.path()).is_empty());
+    assert_eq!(count(&path, "SELECT count(*) FROM latest WHERE CAST(key AS TEXT) LIKE 'requests/%'"), 1);
+    assert_eq!(b.get("requests/a", 2).unwrap().unwrap().value, b"1");
 }
 
 #[test]
@@ -739,7 +820,8 @@ fn a_snapshot_copy_carries_the_receipts_up_to_its_revision_in_one_file() {
     let copy = SqliteBackend::open(&dest, Options { jump_on_open: false, ..Options::default() }).unwrap();
     assert_eq!(copy.get("requests/r1", rev).unwrap().unwrap().value, b"x");
     assert!(copy.get("requests/r2", rev).unwrap().is_none());
-    assert!(receipt_files(dir.path()).len() == 1, "the copy made no day file of its own");
+    assert_eq!(receipt_files(dir.path()).len(), 1, "the copy made no day file of its own");
+    assert!(copy.range_in_state("requests/", "none", None, 10, rev).unwrap().is_empty());
 }
 
 #[test]
