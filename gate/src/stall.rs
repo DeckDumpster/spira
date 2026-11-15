@@ -75,4 +75,12 @@ mod tests {
         w.cpu(400, 50);
         assert!(w.stalled(500));
     }
+
+    #[test]
+    fn the_stall_message_names_the_last_line_seen_or_none() {
+        let mut w = Watch::new(300, 0);
+        assert!(w.message(5).contains("last compiler output: (none)"));
+        w.line(10, "Compiling last-crate");
+        assert!(w.message(5).contains("last compiler output: Compiling last-crate"));
+    }
 }
