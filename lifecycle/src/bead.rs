@@ -336,7 +336,7 @@ pub enum BeadEventKind {
     /// at least one prerequisite and no bead twice over itself; `stack_depth` is the caller's.
     Restack { tip: String, stack: Stack, stack_depth: u32 },
     /// A REWORK bead held manual is re-tipped and put back to SUBMITTED, with no gate verdict:
-    /// the round it is admitted to certifies it. Refused without a manual hold. A break-glass
+    /// its own gate certifies it before a round admits it. Refused without a manual hold. A break-glass
     /// move: refused unless `break_glass` is complete.
     Resubmit { tip: String, #[serde(default)] break_glass: BreakGlass },
     /// Withdraw a red recorded against `tip` that was not the tree's fault (a misattributed

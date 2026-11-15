@@ -3072,19 +3072,52 @@ fn claim_without_reason_is_usage() {
 // -------------------------------------------------------------------------- open-batch
 
 #[test]
-fn open_batch_leaves_a_submitted_bead_whose_gate_is_already_fail_out() {
+fn open_batch_leaves_a_submitted_bead_out_whose_gate_has_not_passed() {
     let t = T::new(LandMode::Queue);
     t.git.set("origin/main", "b0");
     *t.git.branches.borrow_mut() = vec![("spira/sp-s".into(), "ts".into())];
     t.lc_row("sp-s", "SUBMITTED", "ts", 1);
-    round::file_gate_verdict(&t, "sp-s", "ts", 1);
-    assert_eq!(t.run(&["open-batch", "--skip-pregate"]), 1);
+    assert_eq!(
+        t.run(&["open-batch", "--members", "sp-s", "--skip-pregate"]),
+        1
+    );
     assert!(
         t.out()
-            .contains("sp-s: its gate is FAIL at ts (branch-red)"),
+            .contains("sp-s: SUBMITTED — its gate has not passed at ts; not admitted"),
         "{}",
         t.out()
     );
+    assert!(
+        t.forge
+            .calls
+            .borrow()
+            .iter()
+            .all(|c| !c.starts_with("pr-create")),
+        "no batch is cut"
+    );
+    assert!(!t.qfile("open").exists());
+}
+
+#[test]
+fn open_batch_admits_a_named_certified_bead() {
+    let t = T::new(LandMode::Queue);
+    t.git.set("origin/main", "b0");
+    t.git.set("refs/heads/spira/sp-c", "tc");
+    *t.git.branches.borrow_mut() = vec![("spira/sp-c".into(), "tc".into())];
+    t.lc_row("sp-c", "CERTIFIED", "tc", 1);
+    assert_eq!(
+        t.run(&["open-batch", "--members", "sp-c", "--skip-pregate"]),
+        0,
+        "{}\n{}",
+        t.out(),
+        t.err()
+    );
+    assert!(t
+        .forge
+        .calls
+        .borrow()
+        .iter()
+        .any(|c| c.starts_with("pr-create")));
 }
 
 #[test]

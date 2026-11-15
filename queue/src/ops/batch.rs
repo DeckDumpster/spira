@@ -811,7 +811,7 @@ pub fn open_batch(w: &World, a: &OpenArgs) -> i32 {
                     pin.unwrap_or_default()
                 )),
                 Some((i, t, _)) => cands.push((i.clone(), t.clone())),
-                None => skips.push(format!("{mid}: not SUBMITTED or CERTIFIED")),
+                None => skips.push(format!("{mid}: not CERTIFIED")),
             }
         }
     } else {
@@ -822,7 +822,7 @@ pub fn open_batch(w: &World, a: &OpenArgs) -> i32 {
                 Default::default()
             }
         };
-        for group in [&certs, &submitted] {
+        for group in [&certs] {
             if group.is_empty() {
                 continue;
             }
@@ -840,49 +840,34 @@ pub fn open_batch(w: &World, a: &OpenArgs) -> i32 {
         }
     }
 
-    // Admission: the member's lifecycle row, read fresh, is still CERTIFIED or SUBMITTED — waiting
-    // for a round; a SUBMITTED member is provisional, and its gate red ejects it (verdict). Never bd's status (design §3.4, sp-mve9i: bd status is inert for work beads, and
+    // Admission: the member's lifecycle row, read fresh, is CERTIFIED — its own gate has passed; a
+    // SUBMITTED member waits for that gate. Never bd's status (design §3.4, sp-mve9i: bd status is inert for work beads, and
     // the work verbs never move it). A row the machine cannot read is not admitted
     // (DESIGN.md §8 D8).
     let mut admitted = Vec::new();
-    let mut provisional: Vec<String> = Vec::new();
+    let provisional: Vec<String> = Vec::new();
     for (id, tip) in cands {
         match w.lc.bead_row(&id) {
             None => skips.push(format!(
                 "{id}: no lifecycle row (spira-lc could not say) — not admitted"
             )),
-            Some(r)
-                if matches!(r.state.as_str(), "CERTIFIED" | "SUBMITTED")
-                    && super::round::batch_red_at(&c, &id, &tip) =>
-            {
+            Some(r) if r.state == "SUBMITTED" => skips.push(format!(
+                "{id}: SUBMITTED — its gate has not passed at {tip}; not admitted"
+            )),
+            Some(r) if r.state == "CERTIFIED" && super::round::batch_red_at(&c, &id, &tip) => {
                 skips.push(format!(
                     "{id}: {tip} already went red in a batch — not admitted until the tip changes"
                 ))
             }
-            Some(r)
-                if matches!(r.state.as_str(), "CERTIFIED" | "SUBMITTED") && !r.holds.is_empty() =>
-            {
+            Some(r) if r.state == "CERTIFIED" && !r.holds.is_empty() => {
                 skips.push(format!("{id}: held ({}) — not admitted", r.holds.join(",")))
             }
-            Some(r) if matches!(r.state.as_str(), "CERTIFIED" | "SUBMITTED") => {
-                match barred_prereq(w, &r) {
-                    Some(p) => skips.push(format!("{id}: stacked on held {p} — not admitted")),
-                    None => {
-                        if r.state == "SUBMITTED" {
-                            if let Some(why) = super::round::gate_red_at(&c, &id, &tip) {
-                                skips.push(format!(
-                                    "{id}: its gate is FAIL at {tip} ({why}) — not admitted"
-                                ));
-                                continue;
-                            }
-                            provisional.push(id.clone());
-                        }
-                        admitted.push((id, tip))
-                    }
-                }
-            }
+            Some(r) if r.state == "CERTIFIED" => match barred_prereq(w, &r) {
+                Some(p) => skips.push(format!("{id}: stacked on held {p} — not admitted")),
+                None => admitted.push((id, tip)),
+            },
             Some(r) => skips.push(format!(
-                "{id}: lifecycle state={} (no longer SUBMITTED or CERTIFIED) — not admitted",
+                "{id}: lifecycle state={} (no longer CERTIFIED) — not admitted",
                 r.state
             )),
         }

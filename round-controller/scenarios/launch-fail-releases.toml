@@ -12,7 +12,7 @@ data = { landing_ref = "base-0", image_digest = "sha256:img-0", harness_version 
 
 [[store]]
 key = "lifecycle/sp-a"
-data = { repo = "home", state = "SUBMITTED", tip = "a1" }
+data = { repo = "home", state = "CERTIFIED", tip = "a1" }
 
 [[verb]]
 verb = "open"

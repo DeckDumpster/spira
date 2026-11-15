@@ -189,11 +189,12 @@ fn attempt(class: Class) -> Attempt {
 fn with_its_slot_held_a_cut_opens_the_pool_on_the_landing_ref() {
     let w = World::new(vec![open_ok("r1")]);
     w.member("sp-a", json!({}));
-    w.member("sp-b", json!({ "state": "SUBMITTED" }));
+    w.member("sp-b", json!({ "state": "CERTIFIED" }));
     w.member("sp-other", json!({ "repo": "elsewhere" }));
     w.member("sp-working", json!({ "state": "WORKING" }));
     w.member("sp-held", json!({ "holds": ["operator"] }));
     w.member("sp-ejected", json!({ "ejected_red_tip": "sp-ejected-t" }));
+    w.member("sp-submitted", json!({ "state": "SUBMITTED" }));
     w.member("sp-tipless", json!({ "tip": "" }));
     let o = w.cut().unwrap().unwrap();
     assert_eq!(o.batch, "r1");

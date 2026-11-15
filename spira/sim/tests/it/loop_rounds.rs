@@ -119,7 +119,7 @@ fn stale_round(seed: u64, until: u64, redrive_ends_it: bool) -> (Run, Vec<String
 /// while an abandoned round's record is stale. On the service's tasks the stale record is an
 /// open round with no driver: `batcher.local` waits out the orphan wait, re-drives it once (the
 /// `redrive` leg, `round-recert`), and once the ended record is reconciled away it cuts the pool
-/// into a round of its own, certifies it and lands it. The pool was SUBMITTED before the
+/// into a round of its own, certifies it and lands it. The pool was CERTIFIED by its own gate before the
 /// re-drive, so the stale record held it, and nothing landed under the stale round's id. The
 /// queue's half (land acts on the open round, never on an ended record) is
 /// `queue::tests::round::land_acts_on_the_open_round_and_promotes_no_ended_record`.
@@ -134,6 +134,8 @@ fn stale_round_pointer_a_redriven_stale_record_ends_and_the_next_round_certifies
     let opens = times(&r, bl::ROUND_OPEN);
     assert_eq!(opens.len(), 1, "one round opened: {}", r.dump());
     assert!(opens[0] > redrive, "no round was cut over the stale record: opened {opens:?}, re-driven {redrive}");
+    let certified = entered(&r, "sp-rp02", "CERTIFIED").unwrap_or_else(|| panic!("the bead was certified: {}", r.dump()));
+    assert!(certified <= opens[0], "its own gate certified it before the cut: certified {certified}, opened {:?}", opens[0]);
     assert_eq!(r.lifecycle_of("sp-rp02"), ["READY", "WORKING", "SUBMITTED", "CERTIFIED", "IN_DELIVERY", "LANDED"], "{}", r.dump());
     let tip = r.submitted["sp-rp02"][0].clone();
     assert_eq!(r.lands, [vec![("sp-rp02".to_string(), tip)]], "the new round landed its member");
@@ -180,7 +182,7 @@ fn a_corpus_leg_that_never_runs_is_started_again_once_then_the_round_is_abandone
     let abandons = times(&r, bl::ABANDON);
     assert!(abandons.len() >= 2, "abandoned, then re-cut with no backoff and abandoned again: {}", r.dump());
     assert!(abandons[1] - abandons[0] < 5 * 60_000, "the re-cut did not wait: {abandons:?}");
-    assert_eq!(batcher_states(&r)[..5], ["Idle", "Assembling", "Opened", "Corpus", "Idle"], "{}", r.dump());
+    assert_eq!(batcher_states(&r)[..5], ["Assembling", "Opened", "Corpus", "Idle", "Assembling"], "{}", r.dump());
     assert_no_process(&r);
 }
 
@@ -249,7 +251,7 @@ fn attributing_redrive_a_red_early_round_is_redriven_on_its_own_batch_and_lands_
         })
     });
     show("rc-attributing-redrive", &r);
-    assert_eq!(batcher_states(&r), ["Idle", "Assembling", "Opened", "Corpus", "Attributing", "Certifying", "Landing", "Idle"], "{}", r.dump());
+    assert_eq!(batcher_states(&r), ["Assembling", "Opened", "Corpus", "Attributing", "Certifying", "Landing", "Idle"], "{}", r.dump());
     let legs = legs.lock().unwrap_or_else(|e| e.into_inner()).clone();
     assert_eq!(legs.iter().map(|l| l.why.as_str()).collect::<Vec<_>>(), ["", bl::ATTRIBUTE], "one corpus pass, then one attribution leg: {legs:?}");
     assert!(legs.iter().all(|l| l.batch == "round-1"), "the attribution re-drives the open round's own batch: {legs:?}");
@@ -369,7 +371,9 @@ fn run_state_trail_the_landing_names_its_member_after_its_certificate_and_the_pu
 /// A provisional member (cut while SUBMITTED, its gate still running) whose own gate goes red
 /// minutes into the pass leaves the round at once: the pass is preempted, the member is ejected
 /// with the gate's mark as its evidence and goes back to its dwarf, and the other member lands.
+/// Covers a path no cut reaches now that the pool takes only CERTIFIED beads.
 #[test]
+#[ignore = "covers a path no cut reaches: the pool takes only CERTIFIED beads; the provisional-member work deletes it"]
 fn a_gate_red_recorded_for_a_provisional_member_mid_pass_preempts_the_pass_and_ejects_it() {
     let script = Script {
         beads: vec![early("sp-gr01"), early("sp-gr02")],
@@ -396,8 +400,10 @@ fn a_gate_red_recorded_for_a_provisional_member_mid_pass_preempts_the_pass_and_e
     assert_no_process(&r);
 }
 
-/// Two gate-red facts for one tip (the gate reported twice) preempt the member once.
+/// Two gate-red facts for one tip (the gate reported twice) preempt the member once. Covers a path
+/// no cut reaches now that the pool takes only CERTIFIED beads.
 #[test]
+#[ignore = "covers a path no cut reaches: the pool takes only CERTIFIED beads; the provisional-member work deletes it"]
 fn two_gate_red_facts_for_one_tip_preempt_the_member_once_and_the_other_lands() {
     let red = |at| loopworld::VerdictAt { at, bead: "sp-gr03".into(), verdict: loopworld::Verdict::Red };
     let script = Script { beads: vec![early("sp-gr03"), early("sp-gr04")], max_concurrent: 2, verdicts: vec![red(4 * MIN), red(4 * MIN + 10_000)], until: 40 * MIN, ..Script::default() };

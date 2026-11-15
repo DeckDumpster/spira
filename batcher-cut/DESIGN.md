@@ -31,8 +31,8 @@ Carrying it out means merges, the round's suites, the PR, the open-batch record 
 
 ## 2a. Rounds are the batcher's (sp-1oiokx)
 
-The pool is every unheld SUBMITTED or CERTIFIED lifecycle row whose tip is its branch's live
-tip: no gate verdict is required, because the round's full suite is the stronger trial. A
+The pool is every unheld CERTIFIED lifecycle row whose tip is its branch's live tip: a bead
+joins a round only after its own gate has passed. A
 non-empty pool cuts at once (`should_cut`: no count, no idle wait; an open batch prepares the
 next round). `select_round` is feature-first: the epic root (the id before its first `.`)
 shared by the most members, at least two, with the members they stack on or that stack on

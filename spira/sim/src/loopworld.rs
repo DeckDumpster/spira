@@ -39,6 +39,8 @@ pub const MIN: u64 = 60_000;
 pub const DWARF_MS: u64 = 10 * MIN;
 pub const CORPUS_MS: u64 = 5 * MIN;
 pub const CERTIFY_MS: u64 = 2 * MIN;
+/// How long the sim's own gate takes to certify a submitted bead no scripted verdict names.
+pub const GATE_MS: u64 = MIN;
 /// The value of a scenario's `driver` key that makes it a loop world.
 pub const DRIVER: &str = "loop";
 
@@ -136,6 +138,9 @@ pub struct Script {
     pub stopped_until: u64,
     #[serde(default, rename = "verdict")]
     pub verdicts: Vec<VerdictAt>,
+    /// The scenario plays its own gate, so the sim's default gate (a pass a minute after submit) is off.
+    #[serde(default)]
+    pub own_gate: bool,
     /// Where the run stops, in virtual ms.
     pub until: u64,
     /// Settings the service boots with over [`settings_with`]'s defaults, by key.
@@ -287,6 +292,9 @@ impl Lc {
                     if self.apply(at, &bead, &actor, BeadEventKind::Submit { tip: tip.clone() }).is_ok() {
                         let landings = self.landings_of(&file);
                         self.built_on.insert(tip.clone(), landings);
+                        if !script.own_gate && !script.verdicts.iter().any(|v| v.bead == bead) {
+                            self.due.push((at + GATE_MS, Due::Verdict { bead: bead.clone(), verdict: Verdict::Pass }));
+                        }
                         self.submitted.entry(bead).or_default().push(tip);
                     }
                 }
@@ -464,7 +472,7 @@ fn batcher_observe(w: &World, input: &str) -> Result<String, String> {
     let pool = lc
         .rows
         .values()
-        .filter(|r| matches!(r.state, BeadState::Submitted | BeadState::Certified))
+        .filter(|r| r.state == BeadState::Certified)
         .map(|r| bl::Member { id: r.bead_id.clone(), state: r.state.as_str().into(), version: r.version, tip: r.tip.clone().unwrap_or_default(), sifted_tip: r.sifted_tip.clone(), title: r.bead_id.clone(), priority: w.bead(&r.bead_id).map_or(2, |b| b.priority), ..bl::Member::default() })
         .collect();
     let open_round = lc.round.as_ref().map(|(id, m)| {

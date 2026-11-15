@@ -27,7 +27,7 @@ data = { batch_id = "g1", repo = "home", state = "Green", head = "g1-h", base = 
 # A member ready to cut.
 [[store]]
 key = "lifecycle/sp-n"
-data = { repo = "home", state = "SUBMITTED", tip = "n1" }
+data = { repo = "home", state = "CERTIFIED", tip = "n1" }
 
 [[launch]]
 ok = true

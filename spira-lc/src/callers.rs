@@ -858,7 +858,7 @@ fn resubmit(m: &mut dyn Machine, id: &str, tip: &str, actor: &str) -> Answer {
 }
 
 /// Move a REWORK bead held by hand, or a READY bead nobody has claimed, to SUBMITTED at a new tip
-/// with no gate verdict: the round it is admitted to certifies it. The machine refuses a REWORK
+/// with no gate verdict: its own gate certifies it before a round admits it. The machine refuses a REWORK
 /// row with no manual hold.
 fn retip(m: &mut dyn Machine, id: &str, tip: &str, actor: &str, glass: BreakGlass) -> Answer {
     let Some((state, version, _)) = state_version(m, id) else {
