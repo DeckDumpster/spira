@@ -2233,11 +2233,7 @@ fn attribute_run(o: &Opts) -> Result<(), String> {
         o.batch.as_deref(),
         matches!(end, Ok(drive::RoundEnd::Land { .. })),
     ) {
-        if o.after_pass.is_some() {
-            io::overlay_round_results(&env_.run, b, &runner.results);
-        } else {
-            io::keep_round_results(&env_.run, b, &runner.results);
-        }
+        io::keep_attribution_results(&env_.run, b, &runner.results, o.after_pass.is_some());
     }
     let mended = ops.prior != batcher::mender::Prior::default();
     let replaced = if end.is_err() { batcher_cut::attribute::replaced_by_preempt(&started_at, &head_now().unwrap_or_default()) } else { None };

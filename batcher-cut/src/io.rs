@@ -2291,6 +2291,16 @@ pub fn overlay_round_results(run: &Path, batch: &str, from: &Path) -> PathBuf {
     to
 }
 
+/// The end of an attribution: with a pass behind it the pass's kept output stays and the
+/// attribution's is laid over it; without one the attribution's output replaces the kept dir.
+pub fn keep_attribution_results(run: &Path, batch: &str, from: &Path, after_pass: bool) -> PathBuf {
+    if after_pass {
+        overlay_round_results(run, batch, from)
+    } else {
+        keep_round_results(run, batch, from)
+    }
+}
+
 fn round_results_dir(run: &Path, batch: &str) -> PathBuf {
     run.join("rounds").join(format!("{batch}.results"))
 }
@@ -4673,6 +4683,19 @@ mod fail_line_tests {
         fs::remove_dir_all(&pass).unwrap();
         let kept = overlay_round_results(run.path(), "b1", &corpus);
         assert_eq!(fs::read_to_string(kept.join("test-a.sh.out")).unwrap(), "not ok 1 - broke\n");
+        assert_eq!(fs::read_to_string(kept.join("test-b.sh.out")).unwrap(), "new");
+        assert_eq!(fs::read_to_string(kept.join("test-a.sh.result")).unwrap(), "red\n");
+    }
+
+    #[test]
+    fn an_attribution_without_a_pass_replaces_the_kept_results_and_one_with_a_pass_keeps_them() {
+        let run = testkit::TempDir::new("batcher-cut-attr-end");
+        let (pass, corpus) = pass_and_corpus(run.path(), true);
+        keep_round_results(run.path(), "b1", &pass);
+        let kept = keep_attribution_results(run.path(), "b1", &corpus, true);
+        assert!(kept.join("test-a.sh.out").is_file());
+        let kept = keep_attribution_results(run.path(), "b1", &corpus, false);
+        assert!(!kept.join("test-a.sh.out").exists());
         assert_eq!(fs::read_to_string(kept.join("test-b.sh.out")).unwrap(), "new");
     }
 
