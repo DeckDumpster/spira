@@ -2989,6 +2989,12 @@ pub mod edge {
         }
 
         #[test]
+        fn an_attribution_after_a_certify_with_no_batch_names_no_prior() {
+            let leg = Leg { after_certify: true, ..Leg::on("spira") };
+            assert_eq!(after_pass(&leg), None);
+        }
+
+        #[test]
         fn an_attribution_after_a_corpus_pass_reads_that_passs_dir_and_a_fresh_one_reads_none() {
             let leg = Leg { batch: "r9".into(), after_pass: "/w/.round-results-u".into(), ..Leg::on("spira") };
             assert_eq!(after_pass(&leg).as_deref(), Some("/w/.round-results-u"));
