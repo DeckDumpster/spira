@@ -564,6 +564,22 @@ mod tests {
     }
 
     #[test]
+    fn an_unapplied_or_non_manual_event_does_not_change_the_hold_a_bead_is_under() {
+        let ev = |event: &str, at: u64, applied: bool, kind: &str| serde_json::json!({"event": event, "applied": applied, "at": at, "evidence": {event: {"kind": kind}}});
+        let h = serde_json::json!([ev("Hold", 100, true, "Manual"), ev("Unhold", 200, false, "Manual"), ev("Unhold", 300, true, "Poison"), ev("Hold", 400, false, "Manual")]);
+        assert_eq!(hold_in_history(&h), Some((100.0, None)));
+    }
+
+    #[test]
+    fn a_line_the_carry_already_holds_for_another_class_is_not_said_again() {
+        let p = sweep();
+        let snap = Snapshot { rows: vec![poisoned("sp-a")], ..Snapshot::default() };
+        let (c, _) = decide(&p, &Carry::default(), &snap, None, &[], 0.0);
+        assert!(c.seen.contains("SUSPECT sp-a READY POISONED ()"));
+        assert!(decide(&p, &c, &snap, None, &[], 1800.0).1.is_empty());
+    }
+
+    #[test]
     fn a_review_by_reason_gives_its_date_and_its_text() {
         let (due, text) = review("review-by:2026-10-29 waits on tenancy").unwrap();
         assert_eq!((due, text.as_str()), (1_793_232_000, "waits on tenancy"));
