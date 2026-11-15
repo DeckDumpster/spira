@@ -1230,8 +1230,8 @@ impl<B: Backend> Contract<B> {
         let _writing = Writing(&self.writers);
         // Held across the backend commit, so no plan reads a deadline the commit is replacing;
         // the commit waits behind at most one compaction step.
-        let mut d = self.deadlines.lock().unwrap_or_else(lock_err);
-        let res = self.backend.commit(head, &batch);
+        let mut d = crate::phases::time(crate::phases::Phase::DeadlinesWait, || self.deadlines.lock().unwrap_or_else(lock_err));
+        let res = crate::phases::commit(|| self.backend.commit(head, &batch));
         if matches!(res, Err(Error::Stale { .. })) {
             return res;
         }

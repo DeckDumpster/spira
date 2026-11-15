@@ -20,6 +20,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Condvar, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
+use crate::phases::{self, Phase};
 use crate::backend::{state_of, Backend, LogEntry, Version, Write};
 use crate::{Error, Result, Rev};
 
@@ -407,11 +408,11 @@ impl<B: Backend> Backend for Modeled<B> {
     /// The inner backend's commit, applied to the copy before it returns. A commit whose
     /// outcome the inner backend could not report is read back from its log.
     fn commit(&self, expect: u64, batch: &[Write]) -> Result<u64> {
-        let _order = lock(&self.order);
+        let _order = phases::time(Phase::OrderWait, || lock(&self.order));
         if self.revision() != self.inner.head()? {
-            let _ = self.catch_up();
+            let _ = phases::time(Phase::CatchUp, || self.catch_up());
         }
-        let res = self.inner.commit(expect, batch);
+        let res = phases::commit(|| self.inner.commit(expect, batch));
         match &res {
             Ok(rev) if self.revision() == expect => {
                 let rev = *rev;

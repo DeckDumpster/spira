@@ -355,7 +355,7 @@ fn serve_one(stream: UnixStream, conn: &Arc<Conn>, spans: Option<&spira_otel::Si
         Ok(Some(r)) => r,
         Err((size, msg)) => {
             let _ = write_response(&stream, 2, &msg, "");
-            record_span(spans, "-", "-", size, msg.len(), 2, started, SystemTime::now(), Instant::now().saturating_duration_since(accepted));
+            record_span(spans, "-", "-", size, msg.len(), 2, started, SystemTime::now(), Instant::now().saturating_duration_since(accepted), &state_store::phases::Snapshot::default());
             return;
         }
     };
@@ -364,6 +364,7 @@ fn serve_one(stream: UnixStream, conn: &Arc<Conn>, spans: Option<&spira_otel::Si
     let map = std::fs::read_to_string(personas_path()).map(|t| crate::work::parse_persona_uids(&t)).unwrap_or_default();
     let argv_seen = req.argv.clone();
     let task = req.task.clone();
+    let recorder = Arc::new(state_store::phases::Recorder::default());
     let ans = match crate::work::bind_peer(&req.argv, peer_uid(&stream), &map) {
         Ok(argv) => {
             let worker = Arc::clone(conn);
@@ -372,13 +373,16 @@ fn serve_one(stream: UnixStream, conn: &Arc<Conn>, spans: Option<&spira_otel::Si
             let limit = request_deadline(&argv);
             let min_rev = req.min_rev;
             let req = Request { argv, stdin: req.stdin, caller: req.caller, min_rev, task: None };
+            let worker_rec = Arc::clone(&recorder);
             within(limit.saturating_sub(received.elapsed()), move || {
+                state_store::phases::track(worker_rec);
                 *began.lock().unwrap_or_else(|e| e.into_inner()) = Some(Instant::now());
                 crate::slow::set_caller(&who);
                 crate::db::set_request_deadline(Some(received + limit));
                 state_store::model::track(!min_rev.is_none_or(model_reached));
                 let mut local = Local(&worker);
                 let ans = answer(req, &mut local, &mut crate::bd::LiveBd, &crate::composed::LiveContent, &crate::lifecycle_run_dir);
+                state_store::phases::untrack();
                 (ans, state_store::model::stamp())
             })
             .unwrap_or_else(|| (Answer::out(2, format!("cannot tell: {}", crate::db::DEADLINE_MESSAGE)), None))
@@ -392,7 +396,7 @@ fn serve_one(stream: UnixStream, conn: &Arc<Conn>, spans: Option<&spira_otel::Si
     let _ = write_response_at(&stream, ans.code, &ans.stdout, &ans.stderr, rev);
     let began = *started_work.lock().unwrap_or_else(|e| e.into_inner());
     let waited = began.unwrap_or_else(Instant::now).saturating_duration_since(accepted);
-    record_span(spans, &verb, &caller, size, ans.stdout.len() + ans.stderr.len(), ans.code, started, SystemTime::now(), waited);
+    record_span(spans, &verb, &caller, size, ans.stdout.len() + ans.stderr.len(), ans.code, started, SystemTime::now(), waited, &recorder.snapshot());
 }
 
 /// One request: the argv `env::args().skip(1)` would have produced, and the bytes the CLI's
@@ -421,7 +425,7 @@ const MIN_REV_WAIT: Duration = Duration::from_millis(250);
 /// store, whose dolt reads have no model to lag.
 fn model_reached(rev: u64) -> bool {
     match crate::control::served::configured() {
-        Some(Ok(store)) => store.contract().backend().wait_for(rev, MIN_REV_WAIT),
+        Some(Ok(store)) => state_store::phases::time(state_store::phases::Phase::MinRevWait, || store.contract().backend().wait_for(rev, MIN_REV_WAIT)),
         _ => true,
     }
 }
@@ -521,7 +525,7 @@ pub(crate) fn answer(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn record_span(spans: Option<&spira_otel::Sink>, verb: &str, caller: &str, request_size: usize, response_size: usize, code: i32, start: SystemTime, end: SystemTime, queue_wait: Duration) {
+fn record_span(spans: Option<&spira_otel::Sink>, verb: &str, caller: &str, request_size: usize, response_size: usize, code: i32, start: SystemTime, end: SystemTime, queue_wait: Duration, store: &state_store::phases::Snapshot) {
     if let Some(sink) = spans {
         sink.emit(&spira_otel::Call {
             method: verb,
@@ -532,6 +536,10 @@ fn record_span(spans: Option<&spira_otel::Sink>, verb: &str, caller: &str, reque
             start,
             end,
             queue_wait,
+            phases: &store.phases,
+            commits_us: &store.commits_us,
+            reads: store.reads,
+            open_phase: store.open,
         });
     }
 }
@@ -744,6 +752,46 @@ mod tests {
         let (reply2, code2) = ask(Some(&dead), req);
         assert_eq!((reply2, code2), (reply, code), "a failing sink leaves the reply and exit code unchanged");
         assert_eq!(spira_otel::dropped(), before + 1);
+    }
+
+    fn span_of(snapshot: &state_store::phases::Snapshot) -> opentelemetry_proto::tonic::trace::v1::Span {
+        let dir = testkit::TempDir::new("lc-serve-phases");
+        let sink = spira_otel::Sink::new(dir.path(), "spira-lc", 14);
+        let now = std::time::SystemTime::now();
+        super::record_span(Some(&sink), "renew", "-", 1, 1, 0, now, now, std::time::Duration::ZERO, snapshot);
+        let file = std::fs::read_dir(&dir).unwrap().flatten().next().unwrap();
+        let text = std::fs::read_to_string(file.path()).unwrap();
+        let r: opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest = serde_json::from_str(text.trim()).unwrap();
+        r.resource_spans[0].scope_spans[0].spans[0].clone()
+    }
+
+    #[test]
+    fn a_span_from_a_recorder_with_two_commits_names_both() {
+        use state_store::phases::{self, Phase};
+        let rec = std::sync::Arc::new(phases::Recorder::default());
+        phases::track(rec.clone());
+        phases::time(Phase::Commit, || ());
+        phases::time(Phase::Commit, || ());
+        phases::time(Phase::Read, || ());
+        std::mem::forget(phases::begin(Phase::WriterWait));
+        phases::untrack();
+        let span = span_of(&rec.snapshot());
+        let attr = |k: &str| span.attributes.iter().find(|a| a.key == k).and_then(|a| a.value.clone()).and_then(|v| v.value);
+        use opentelemetry_proto::tonic::common::v1::any_value::Value;
+        assert!(matches!(attr("spira.store.commits"), Some(Value::IntValue(2))));
+        assert!(matches!(attr("spira.store.reads"), Some(Value::IntValue(1))));
+        assert!(matches!(attr("spira.phase.commits_us"), Some(Value::ArrayValue(a)) if a.values.len() == 2));
+        assert!(attr("spira.phase.commit_us").is_some() && attr("spira.phase.read_us").is_some());
+        assert!(matches!(attr("spira.phase.open"), Some(Value::StringValue(s)) if s == "writer_wait"));
+        assert!(attr("spira.queue_wait_us").is_some());
+    }
+
+    #[test]
+    fn a_request_that_touched_no_store_carries_no_phase_attribute() {
+        let span = span_of(&state_store::phases::Snapshot::default());
+        let named: Vec<_> = span.attributes.iter().map(|a| a.key.as_str()).filter(|k| k.starts_with("spira.phase.") || k.starts_with("spira.store.")).collect();
+        assert!(named.is_empty(), "{named:?}");
+        assert!(span.attributes.iter().any(|a| a.key == "spira.queue_wait_us"));
     }
 
     /// law-calls-have-deadlines: a store call is abandoned 3 s after it was received; only
