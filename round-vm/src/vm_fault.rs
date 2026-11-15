@@ -60,7 +60,7 @@ pub fn write_kind(results: &Path, kind: &str, detail: &str) -> std::io::Result<(
 pub fn name(results: &Path) -> RoundFault {
     let marker = fs::read_to_string(results.join(PHASE_FILE)).ok();
     let at = match marker.as_deref().and_then(parse_marker) {
-        Some((phase, rc)) => format!("phase={phase} rc={rc}"),
+        Some((phase, rc, at)) => format!("phase={phase} rc={rc}{at}"),
         None => format!("with no phase marker (the VM script never reached its EXIT trap, or {PHASE_FILE} did not come back)"),
     };
     // The trap's log holds stdout and stderr in order; without it the launcher's stderr is the
@@ -96,10 +96,14 @@ pub fn no_output(waited_secs: u64) -> RoundFault {
     RoundFault { cause: format!("FAULT vm-no-output: {NO_OUTPUT} within {waited_secs}s of ssh being up"), settings_key: None, tail: String::new() }
 }
 
-fn parse_marker(text: &str) -> Option<(String, String)> {
+fn parse_marker(text: &str) -> Option<(String, String, String)> {
     let line = text.lines().rev().find(|l| !l.trim().is_empty())?;
     let field = |k: &str| line.split_whitespace().find_map(|w| w.strip_prefix(k)).map(str::to_string);
-    Some((field("phase=")?, field("rc=")?))
+    let at = match (field("line="), line.split_once(" cmd=")) {
+        (Some(n), Some((_, cmd))) => format!(" line={n} cmd={}", cmd.trim()),
+        _ => String::new(),
+    };
+    Some((field("phase=")?, field("rc=")?, at))
 }
 
 /// testenv names a refused setting first on its `batch: ` line: `batch: KEY is not declared…`.
@@ -125,6 +129,12 @@ mod tests {
             fs::write(d.path().join(SCRIPT_LOG_FILE), l).unwrap();
         }
         d
+    }
+
+    #[test]
+    fn a_marker_with_the_failing_command_names_its_line_and_command() {
+        let d = results(Some("phase=release rc=1 line=712 cmd=cp /x /y\n"), Some("round-vm: PHASE release\n"));
+        assert_eq!(name(d.path()).cause, "FAULT phase=release rc=1 line=712 cmd=cp /x /y: the script wrote nothing");
     }
 
     #[test]

@@ -250,7 +250,7 @@ printf '%s %s %s - - - %s\n' "$status" 1 "$(( $(date +%s) - t0 ))" "$rc" > "$res
 /// Then it runs the round's own `testenv` (release profile — its binaries ship; its in-place
 /// build is incremental on the one just made) and stages `target/release`'s executables
 /// into `~/round-bins/` so the host pulls the binaries and not cargo's target directory.
-pub const REMOTE_SCRIPT: &str = concat!(r#"set -euo pipefail
+pub const REMOTE_SCRIPT: &str = concat!(r#"set -Eeuo pipefail
 unset SPIRA_HOME
 host_addr="$1" port="$2" suites="$3" maxpar="$4" toolchain="$5" cache_home="$6" registry="$7" setup_alarm="$8" cap="$9" post_guard="${10}" lint="${11}" build_image="${12}" round_ref="${13}" round_sha="${14}"
 testenv_limits="${16:-}" resume_url="${17:-}" fences="${18:-}" want_tag="${19:-}"
@@ -262,7 +262,19 @@ exec 2> >(tee -a ~/round-script.log ~/round-setup.log >&2)
 script_err_tee=${!:-}
 # Every exit leaves its phase and the script's log in the results, where the host names a pass
 # that ended with no verdict from them (round-phase: the first phase that failed, else the last).
-round_phase=start fault_phase="" fault_rc=""
+round_phase=start fault_phase="" fault_rc="" err_rc="" err_line="" err_cmd=""
+round_marker() {
+    local rc="$1" at="" out="$HOME/round-work/.runtime/spira/batch-results"
+    [ -z "$err_line" ] || [ "$err_rc" != "$rc" ] || [ -n "$fault_phase" ] || at=" line=$err_line cmd=$err_cmd"
+    { mkdir -p "$out" && printf 'phase=%s rc=%s%s\n' "${fault_phase:-$round_phase}" "${fault_rc:-$rc}" "$at" > "$out/round-phase"; } 2>/dev/null || true
+}
+round_err() {
+    err_rc=$1 err_line=$2 err_cmd=${3//$'\n'/ }
+    err_cmd=${err_cmd:0:200}
+    [ "$BASHPID" = "$$" ] || return 0
+    round_marker "$err_rc"
+}
+trap 'round_err $? $LINENO "$BASH_COMMAND"' ERR
 phase() { round_phase="$1"; echo "round-vm: PHASE $1" >&2; }
 phase_failed() {
     [ -n "$fault_phase" ] || { fault_phase="$1"; fault_rc="$2"; }
@@ -277,7 +289,7 @@ round_exit() {
         sleep 0.1
     done
     { mkdir -p "$dir" && cp -f ~/round-script.log "$dir/round-script.log" \
-        && printf 'phase=%s rc=%s\n' "${fault_phase:-$round_phase}" "${fault_rc:-$rc}" > "$dir/round-phase"; } 2>/dev/null || true
+        && round_marker "$rc"; } 2>/dev/null || true
     # The round's own cache server ends with the round: nothing of a pass outlives it.
     if [ -n "${SCCACHE_SERVER_PORT:-}" ] && [ -n "${RUSTC_WRAPPER:-}" ]; then "$RUSTC_WRAPPER" --stop-server >/dev/null 2>&1 || true; fi
     exit "$rc"
@@ -4782,7 +4794,7 @@ mod tests {
         assert!(out < trap && tee < trap && trap < first_exit, "the log and the trap are in place before the first exit");
         let exit_fn = &s[s.find("round_exit() {").unwrap()..trap];
         assert!(exit_fn.contains("cp -f ~/round-script.log \"$dir/round-script.log\""), "{exit_fn}");
-        assert!(exit_fn.contains("printf 'phase=%s rc=%s\\n' \"${fault_phase:-$round_phase}\" \"${fault_rc:-$rc}\" > \"$dir/round-phase\""), "{exit_fn}");
+        assert!(exit_fn.contains("round_marker \"$rc\""), "{exit_fn}");
         assert!(exit_fn.contains("dir=\"$HOME/round-work/.runtime/spira/batch-results\""), "into the dir REMOTE_RESULTS pulls");
         assert_eq!(REMOTE_RESULTS, "round-work/.runtime/spira/batch-results/");
         let wait = s.find("wait \"$testenv_pid\"").unwrap();
@@ -4790,6 +4802,29 @@ mod tests {
         for p in ["checkout", "build", "release", "unit-tests", "suites"] {
             assert!(s.contains(&format!("\nphase {p}\n")), "phase {p} is marked");
         }
+    }
+
+    #[test]
+    fn a_command_killed_by_set_e_is_named_in_the_phase_marker_without_the_tee() {
+        let home = TempDir::new();
+        let head = &REMOTE_SCRIPT[REMOTE_SCRIPT.find("round_phase=start").unwrap()..REMOTE_SCRIPT.find("trap round_exit EXIT").unwrap()];
+        let script = format!("set -Eeuo pipefail\nscript_out_tee= script_err_tee=\n{head}trap round_exit EXIT\nfalse\n");
+        let st = std::process::Command::new("bash").args(["-c", &script]).env_clear().env("HOME", home.path()).env("PATH", "/usr/bin:/bin").status().unwrap();
+        assert_eq!(st.code(), Some(1));
+        let marker = fs::read_to_string(home.path().join("round-work/.runtime/spira/batch-results/round-phase")).unwrap();
+        assert!(marker.starts_with("phase=start rc=1 line=") && marker.trim_end().ends_with("cmd=false"), "{marker}");
+    }
+
+    #[test]
+    fn a_named_failed_phase_leaves_a_marker_without_a_command() {
+        let home = TempDir::new();
+        fs::write(home.path().join("round-script.log"), "").unwrap();
+        let head = &REMOTE_SCRIPT[REMOTE_SCRIPT.find("round_phase=start").unwrap()..REMOTE_SCRIPT.find("trap round_exit EXIT").unwrap()];
+        let script = format!("set -Eeuo pipefail\nscript_out_tee= script_err_tee=\n{head}trap round_exit EXIT\nphase suites\n(exit 3) || true\nfalse || phase_failed suites 2\nexit 2\n");
+        let st = std::process::Command::new("bash").args(["-c", &script]).env_clear().env("HOME", home.path()).env("PATH", "/usr/bin:/bin").status().unwrap();
+        assert_eq!(st.code(), Some(2));
+        let marker = fs::read_to_string(home.path().join("round-work/.runtime/spira/batch-results/round-phase")).unwrap();
+        assert_eq!(marker, "phase=suites rc=2\n");
     }
 
     #[test]
