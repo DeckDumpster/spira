@@ -545,7 +545,7 @@ fn sp_8nlvra_a_paused_repo_is_held_and_names_the_pause() {
     assert_eq!(rc.state, State::Held);
     assert_eq!(rc.paused_on.as_deref(), Some("b0"), "the base the pause was seen on is carried");
     let why = rc.skip_why.clone().expect("a held repo names why");
-    assert!(why.contains("paused") && why.contains("local corpus red") && why.contains("rounds-pace/spira/pause"), "{why}");
+    assert!(why.contains("paused") && why.contains("local corpus red") && why.contains("batcher pause-lift --repo spira"), "{why}");
 }
 
 /// Once a round has landed past the base the pause was seen on, the red it guarded is behind the

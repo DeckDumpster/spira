@@ -1064,7 +1064,7 @@ fn hold_why(h: &pace::Hold, repo: &str, r: &Repo) -> String {
     match h {
         pace::Hold::Stopped => format!("the rounds lane is stopped ({}) — a landing does not lift it; lift with: queue round start {repo} --by <owner> --reason <why>", r.stop_why.as_deref().unwrap_or("no reason recorded")),
         pace::Hold::Paused => format!(
-            "paused by a red round ({}) — the next landing on {repo} lifts it, or rm run/rounds-pace/{repo}/pause",
+            "paused by a red round ({}) — the next landing on {repo} lifts it, or batcher pause-lift --repo {repo} --by concierge --reason \"<why>\"",
             r.paused.as_deref().unwrap_or("").trim()
         ),
     }
@@ -2413,7 +2413,7 @@ fn in_flight(view: &Projection, stream: &runtime::event::StreamKey, snap: &mut S
 /// round verbs where the store has no door yet); every long leg is a unit on `Effects::units`.
 pub mod edge {
     use std::collections::BTreeMap;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     use batcher_cut::io::{self, Env};
     use runtime::units::{ScopeSpec, UnitSpec, UNIT_RUN_SCOPE, UNIT_START};
@@ -2904,28 +2904,65 @@ pub mod edge {
     /// The pace's hold: the pause file on a red, the scoped stop on repeated infra faults.
     pub fn pause(_: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
         let (env, leg) = (env()?, leg(spec)?);
-        let files = batcher_cut::pace::Files::new(&env.run, &leg.repo);
+        apply_pause(&env.run, &leg, spira_config::vtime::now_epoch())?;
+        Ok("{}".into())
+    }
+
+    fn apply_pause(run: &Path, leg: &Leg, now: u64) -> Result<(), String> {
+        let files = batcher_cut::pace::Files::new(run, &leg.repo);
         if leg.bead == "stop" {
-            files.stop_rounds(&leg.why, spira_config::vtime::now_epoch())?;
+            files.stop_rounds(&leg.why, now)?;
         } else if leg.bead == "lift" {
             // A landing past the base the red round's pause was seen on: the pause is the loop's
-            // own and ends here; an operator's `hold:` is left as it stands.
-            let p = files.pause_file();
-            match std::fs::read_to_string(&p) {
+            // own and ends here; a person's `hold:` is left as it stands.
+            match std::fs::read_to_string(files.pause_file()) {
                 Ok(text) if !text.starts_with("hold:") => {
-                    std::fs::remove_file(&p).map_err(|e| format!("{}: {e}", p.display()))?;
+                    files.lift_pause("batcher", &leg.why, now)?;
                     eprintln!("{} {}: {}", super::NAME, leg.repo, leg.why);
                 }
                 _ => {}
             }
         } else {
-            let p = files.pause_file();
-            if let Some(d) = p.parent() {
-                std::fs::create_dir_all(d).map_err(|e| format!("{}: {e}", d.display()))?;
-            }
-            std::fs::write(&p, &leg.why).map_err(|e| format!("{}: {e}", p.display()))?;
+            files.set_pause(&leg.why, "batcher", &leg.why, now)?;
         }
-        Ok("{}".into())
+        Ok(())
+    }
+
+    #[cfg(test)]
+    mod pause_tests {
+        use super::*;
+
+        fn landing(run: &Path) -> String {
+            std::fs::read_to_string(run.join("landing.log")).unwrap_or_default()
+        }
+
+        fn lift_leg(why: &str) -> Leg {
+            Leg { why: why.into(), bead: "lift".into(), ..Leg::on("spira") }
+        }
+
+        #[test]
+        fn the_batchers_own_set_and_lift_each_record_the_batcher_as_actor() {
+            let d = testkit::TempDir::new("pause-effect");
+            let set = Leg { why: "local corpus red".into(), ..Leg::on("spira") };
+            apply_pause(d.path(), &set, 1000).unwrap();
+            let p = d.path().join("rounds-pace/spira/pause");
+            assert_eq!(std::fs::read_to_string(&p).unwrap(), "local corpus red");
+            assert!(landing(d.path()).contains("QUEUE ROUND-PAUSE 1000 repo=spira by=batcher kind=red reason=local corpus red"));
+            apply_pause(d.path(), &lift_leg("landed past base"), 1090).unwrap();
+            assert!(!p.exists());
+            assert!(landing(d.path()).contains("QUEUE ROUND-PAUSE-LIFT 1090 repo=spira by=batcher held_s="), "{}", landing(d.path()));
+        }
+
+        #[test]
+        fn a_lift_leaves_a_hold_in_place_and_records_nothing() {
+            let d = testkit::TempDir::new("pause-effect-hold");
+            let p = d.path().join("rounds-pace/spira/pause");
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(&p, "hold:operator working").unwrap();
+            apply_pause(d.path(), &lift_leg("landed past base"), 1090).unwrap();
+            assert!(p.exists());
+            assert_eq!(landing(d.path()), "");
+        }
     }
 
     #[cfg(test)]

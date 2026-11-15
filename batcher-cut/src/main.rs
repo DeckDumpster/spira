@@ -64,6 +64,9 @@ struct Opts {
     wt: Option<PathBuf>,
     base: Option<String>,
     batch: Option<String>,
+    by: Option<String>,
+    reason: Option<String>,
+    all: bool,
 }
 
 fn usage() -> ExitCode {
@@ -74,13 +77,18 @@ fn usage() -> ExitCode {
     eprintln!("       batcher judgement-ci <repo> --suites CSV --members CSV --evidence TEXT [--run DIR] [--db DIR] [--home DIR]");
     eprintln!("       batcher path-attribute <repo> --members id:tip,... --reds FILE [--record FILE] [--run DIR] [--db DIR] [--home DIR]");
     eprintln!("       batcher attribute <repo> --members id:tip,... --wt DIR --base SHA [--batch ID] [--after-pass RESULTS] [--run DIR] [--db DIR] [--home DIR] [--round-vm PATH]");
+    eprintln!("       batcher pause-set --repo R --by concierge|operator --reason TEXT [--run DIR]");
+    eprintln!("       batcher pause-show (--repo R | --all) [--run DIR]");
+    eprintln!("       batcher pause-lift --repo R --by concierge|operator --reason TEXT [--run DIR]");
+    eprintln!("exit codes: 0 done (a lift with no pause says so and exits 0); 1 refused or failed; 2 usage");
     ExitCode::from(2)
 }
 
 fn parse() -> Result<Opts, String> {
     let mut a = env::args().skip(1);
     let cmd = a.next().ok_or("missing command")?;
-    let repo = a.next().unwrap_or_default();
+    let mut a = a.peekable();
+    let repo = if a.peek().is_some_and(|f| f.starts_with("--")) { String::new() } else { a.next().unwrap_or_default() };
     // SPIRA_HOME is a per-copy fact (which checkout this process runs from), not something
     // spira.toml declares — it stays a bare env read. SPIRA_RUN/SPIRA_DB ARE registered keys
     // (spira/conf.d), so once no `--run`/`--db` flag names them explicitly below, they are
@@ -101,6 +109,9 @@ fn parse() -> Result<Opts, String> {
         wt: None,
         base: None,
         batch: None,
+        by: None,
+        reason: None,
+        all: false,
     };
     while let Some(f) = a.next() {
         let mut val = || a.next().ok_or(format!("{f} needs a value"));
@@ -118,6 +129,10 @@ fn parse() -> Result<Opts, String> {
             "--wt" => o.wt = Some(val()?.into()),
             "--base" => o.base = Some(val()?),
             "--batch" => o.batch = Some(val()?),
+            "--repo" => o.repo = val()?,
+            "--by" => o.by = Some(val()?),
+            "--reason" => o.reason = Some(val()?),
+            "--all" => o.all = true,
             other => return Err(format!("unknown flag {other}")),
         }
     }
@@ -2034,6 +2049,9 @@ fn rounds(o: &Opts, pass: Pass) -> Result<(), String> {
                 wt: None,
                 base: None,
                 batch: None,
+                by: None,
+                reason: None,
+                all: false,
             };
             if paced && reg.land(name) == "queue.local" {
                 paced_cut(&env_, name, &one).map_err(|e| e.msg)
@@ -2097,6 +2115,9 @@ fn sifts(o: &Opts) -> Result<(), String> {
             wt: None,
             base: None,
             batch: None,
+            by: None,
+            reason: None,
+            all: false,
         };
         if let Err(e) = sift_one(&one) {
             eprintln!("batcher sifts: {name}: {e}");
@@ -2457,6 +2478,69 @@ fn main() -> std::process::ExitCode {
     }))
 }
 
+fn person_flags(o: &Opts) -> Result<(String, String, String), String> {
+    let run = o.run.clone().ok_or("SPIRA_RUN unset (pass --run)")?;
+    if o.repo.is_empty() {
+        return Err("--repo is required".into());
+    }
+    let by = o.by.clone().ok_or("--by is required")?;
+    if !spira_otel::rounds::ACTORS.contains(&by.as_str()) || !spira_otel::rounds::is_hand(&by) {
+        return Err(format!("--by {by:?} must be concierge or operator"));
+    }
+    let reason = o.reason.clone().filter(|r| !r.trim().is_empty()).ok_or("--reason is required")?;
+    Ok((run.to_string_lossy().into_owned(), by, reason))
+}
+
+fn pause_set(o: &Opts, out: &mut dyn std::io::Write) -> Result<(), String> {
+    let (run, by, reason) = person_flags(o)?;
+    let text = format!("hold:{}", pace::one_line(&reason));
+    pace::Files::new(Path::new(&run), &o.repo).set_pause(&text, &by, &reason, now())?;
+    writeln!(out, "batcher: {}: paused by {by} — {text}", o.repo).map_err(|e| e.to_string())
+}
+
+fn pause_lift(o: &Opts, out: &mut dyn std::io::Write) -> Result<(), String> {
+    let (run, by, reason) = person_flags(o)?;
+    let line = match pace::Files::new(Path::new(&run), &o.repo).lift_pause(&by, &reason, now())? {
+        Some(held) => format!("batcher: {}: pause lifted by {by} after {held}s", o.repo),
+        None => format!("batcher: {}: there was no pause", o.repo),
+    };
+    writeln!(out, "{line}").map_err(|e| e.to_string())
+}
+
+fn pause_show(o: &Opts, out: &mut dyn std::io::Write) -> Result<(), String> {
+    let run = o.run.clone().ok_or("SPIRA_RUN unset (pass --run)")?;
+    let repos: Vec<String> = if o.all {
+        let mut names: Vec<String> = std::fs::read_dir(run.join("rounds-pace"))
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    } else if o.repo.is_empty() {
+        return Err("--repo or --all is required".into());
+    } else {
+        vec![o.repo.clone()]
+    };
+    let mut shown = false;
+    for r in &repos {
+        let files = pace::Files::new(&run, r);
+        if let Some(text) = files.pause_text() {
+            shown = true;
+            let kind = if text.starts_with("hold:") { "hold" } else { "red" };
+            let since = files.pause_set_at().map_or("unknown".to_string(), |t| t.to_string());
+            writeln!(out, "{r}: paused kind={kind} since={since} text={}", text.trim()).map_err(|e| e.to_string())?;
+        } else if !o.all {
+            writeln!(out, "{r}: no pause").map_err(|e| e.to_string())?;
+        }
+    }
+    if o.all && !shown {
+        writeln!(out, "no repo is paused").map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 fn dispatch() -> ExitCode {
     let o = match parse() {
         Ok(o) => o,
@@ -2483,6 +2567,9 @@ fn dispatch() -> ExitCode {
         "attribute" => attribute(&o),
         "sift" => sift_one(&o),
         "sifts" => sifts(&o),
+        "pause-set" => pause_set(&o, &mut std::io::stdout()),
+        "pause-show" => pause_show(&o, &mut std::io::stdout()),
+        "pause-lift" => pause_lift(&o, &mut std::io::stdout()),
         _ => return usage(),
     };
     match r {
@@ -2497,6 +2584,108 @@ fn dispatch() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn pause_opts(run: &Path, by: Option<&str>) -> Opts {
+        Opts {
+            cmd: String::new(),
+            repo: "a".into(),
+            run: Some(run.to_path_buf()),
+            db: None,
+            home: None,
+            round_vm: None,
+            suites: None,
+            members: None,
+            evidence: None,
+            reds: None,
+            after_pass: None,
+            record: None,
+            wt: None,
+            base: None,
+            batch: None,
+            by: by.map(String::from),
+            reason: Some("eject done".into()),
+            all: false,
+        }
+    }
+
+    fn red_pause(run: &Path) -> pace::Files {
+        let f = pace::Files::new(run, "a");
+        std::fs::create_dir_all(f.pause_file().parent().unwrap()).unwrap();
+        std::fs::write(f.pause_file(), "red:1\n").unwrap();
+        f
+    }
+
+    #[test]
+    fn pause_lift_by_the_concierge_lifts_and_records_the_concierge() {
+        let d = testkit::TempDir::new("batcher-pause-lift");
+        let f = red_pause(d.path());
+        let mut out = Vec::new();
+        pause_lift(&pause_opts(d.path(), Some("concierge")), &mut out).unwrap();
+        assert!(!f.pause_file().exists());
+        let log = std::fs::read_to_string(d.path().join("landing.log")).unwrap();
+        assert!(log.contains("QUEUE ROUND-PAUSE-LIFT") && log.contains("by=concierge"), "{log}");
+    }
+
+    #[test]
+    fn pause_lift_without_a_valid_actor_is_refused_naming_the_flag_and_the_pause_stands() {
+        let d = testkit::TempDir::new("batcher-pause-refuse");
+        let f = red_pause(d.path());
+        for by in [None, Some("dwarf"), Some("batcher")] {
+            let e = pause_lift(&pause_opts(d.path(), by), &mut Vec::new()).unwrap_err();
+            assert!(e.contains("--by"), "{e}");
+            assert!(f.pause_file().exists());
+        }
+        let mut o = pause_opts(d.path(), Some("operator"));
+        o.reason = None;
+        assert!(pause_lift(&o, &mut Vec::new()).unwrap_err().contains("--reason"));
+        assert!(f.pause_file().exists());
+    }
+
+    #[test]
+    fn pause_set_by_a_person_writes_a_hold_the_batcher_neither_pages_nor_lifts() {
+        let d = testkit::TempDir::new("batcher-pause-set");
+        pause_set(&pause_opts(d.path(), Some("operator")), &mut Vec::new()).unwrap();
+        let f = pace::Files::new(d.path(), "a");
+        assert_eq!(std::fs::read_to_string(f.pause_file()).unwrap(), "hold:eject done");
+        assert_eq!(f.pause_since(), None);
+        let log = std::fs::read_to_string(d.path().join("landing.log")).unwrap();
+        assert!(log.contains("by=operator kind=hold"), "{log}");
+        let recs = spira_otel::logs::read_all(&spira_otel::dir_of(d.path()), "batcher");
+        let has = |k: &str, v: &str| recs.iter().any(|r| r.iter().any(|(n, x)| n == k && x["stringValue"] == v));
+        assert!(has("kind", "pause") && has("by", "operator"));
+    }
+
+    #[test]
+    fn a_person_lifts_their_own_hold_and_show_reads_it_first() {
+        let d = testkit::TempDir::new("batcher-pause-hold-lift");
+        let mut o = pause_opts(d.path(), Some("operator"));
+        o.reason = Some("two\nlines".into());
+        pause_set(&o, &mut Vec::new()).unwrap();
+        let f = pace::Files::new(d.path(), "a");
+        assert_eq!(std::fs::read_to_string(f.pause_file()).unwrap(), "hold:two lines");
+        let mut out = Vec::new();
+        pause_show(&o, &mut out).unwrap();
+        assert!(String::from_utf8(out).unwrap().contains("kind=hold"));
+        pause_lift(&o, &mut Vec::new()).unwrap();
+        assert!(!f.pause_file().exists());
+    }
+
+    #[test]
+    fn pause_lift_with_no_pause_says_so_and_succeeds_and_show_reads_the_pause() {
+        let d = testkit::TempDir::new("batcher-pause-none");
+        let mut out = Vec::new();
+        pause_lift(&pause_opts(d.path(), Some("concierge")), &mut out).unwrap();
+        assert!(String::from_utf8(out).unwrap().contains("no pause"));
+        let mut o = pause_opts(d.path(), None);
+        let mut out = Vec::new();
+        pause_show(&o, &mut out).unwrap();
+        assert!(String::from_utf8(out).unwrap().contains("no pause"));
+        red_pause(d.path());
+        o.all = true;
+        let mut out = Vec::new();
+        pause_show(&o, &mut out).unwrap();
+        assert!(String::from_utf8(out).unwrap().contains("a: paused kind=red since=1"));
+    }
 
     #[test]
     fn named_suites_narrow_the_corpus_and_drop_names_the_tree_lacks() {
