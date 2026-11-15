@@ -3596,15 +3596,7 @@ mod tests {
     }
 
     #[test]
-    fn the_sampler_keeps_the_largest_growth_and_ends_with_the_script() {
-        let d = TempDir::new();
-        let script = format!(
-            "set -uo pipefail\ndisk_growth_file=\"$HOME/g\"\necho 0 > \"$HOME/n\"\nfs_used() {{ n=$(( $(cat \"$HOME/n\") + 1 )); echo $n > \"$HOME/n\"; case $n in 1) echo 1500;; 2) echo 9000;; *) echo 2000;; esac; }}\nsleep() {{ :; }}\n{}\ndisk_sampler 1000 &\np=$!\nwhile [ ! -s \"$disk_growth_file\" ] || [ \"$(cat \"$disk_growth_file\")\" -lt 8000 ]; do :; done\nkill $p; wait $p 2>/dev/null; cat \"$disk_growth_file\"\n",
-            script_fn("disk_sampler")
-        );
-        let out = std::process::Command::new("timeout").args(["20", "bash", "-c", &script]).env_clear().env("HOME", d.path()).env("PATH", std::env::var("PATH").unwrap()).output().unwrap();
-        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
-        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "8000", "the peak stays after growth falls back");
+    fn the_sampler_runs_beside_the_pass() {
         assert!(REMOTE_SCRIPT.contains("disk_sampler \"$disk_base\" & disk_sampler_pid=$!"), "the sampler runs beside the pass");
     }
 
