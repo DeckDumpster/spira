@@ -52,7 +52,7 @@
 //!
 //! `spira-gh-intake-prod.service` and `.timer` and their `world guard`; per tick `broker token`,
 //! `bdq list/create/note`, `git remote` ×2 per repo, `mail send operator` and the `spira-lc`
-//! close. Pinned config: [`KEYS`]. `closeout`, `unlanded-scan` and `backfill` stay library calls.
+//! close. Pinned config: [`KEYS`]. The closeout half is `intake.gh_closeout`.
 //!
 //! # Reverse
 //!

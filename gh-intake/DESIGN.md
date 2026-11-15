@@ -6,9 +6,8 @@ the script's intent and its one real caller (`systemd/spira-gh-intake.service`),
 line by line (law-rust-rewrites-start-from-intent).
 
 Bidirectional since sp-j3fim ("wave 4.31"): §§1-6 below are the one-way ingest gate as
-originally written; §7 is the write-back half — `gh-intake closeout`/`unlanded-scan`/
-`backfill` — ported from `spira/lib.sh`'s GitHub-closeout family (AB,
-wave4-decomposition.md row AB) rather than from a bash script of its own.
+originally written; §7 is the write-back half — `gh-intake closeout` and
+`closeout-pending`.
 
 ## 1. Intent
 
@@ -159,96 +158,49 @@ covers the closeout half's own 20.
   comment, `.github/workflows/gate.yml`'s `spira-lint --only gh-intake-lint` Lints step,
   and `spira/repo-map.example`'s illustrative gate-string comment.
 
-## 7. The closeout half (sp-j3fim, "wave 4.31")
+## 7. The closeout half
 
-The write-back complement to §§1-6's one-way ingest: `gh_issue_closeout`,
-`_gh_close_ask_unblock`, `gh_issue_ask_unlanded`, `_gh_resolve_stale_asks` and
-`_gh_unlanded_scan` ported natively from `spira/lib.sh` (wave4-decomposition.md row AB)
-into `closeout.rs`, plus `ask_already_open`/`ask_closed_subject` — family C's dedupe
-primitives sp-31hjr ("wave 4.30") left in lib.sh because this family was the last bash
-caller naming them directly. Intake still holds no credential; the closeout half runs
-only from the credentialed landing path, exactly as the lib.sh comment on
-`gh_issue_closeout` said, and sends nothing to GitHub but a commit sha/subject (already
-public) or a fixed sentence (law-beads-is-never-public).
+The write-back complement to §§1-6's one-way ingest. Intake holds no credential; this half
+runs only from the credentialed side, and sends GitHub nothing but a commit sha/subject
+(already public) or a fixed sentence (law-beads-is-never-public).
+
+The lifecycle store records a pending closeout (`gh-closeout/<bead>`) in the transaction that
+moves a bead whose external reference starts with `github:` to LANDED, SUPERSEDED or DROPPED.
+Nothing here finds work by listing beads: the drain reads the pending rows, then each bead by
+id.
 
 ### 7.1 Invocation
 
 ```
-gh-intake closeout <bead-id> <sha> <repo-path>   gh_issue_closeout alone
-gh-intake unlanded-scan                          _gh_unlanded_scan (one full pass)
-gh-intake backfill [--dry-run]                   replaces spira/gh-issue-backfill.sh
+gh-intake closeout <bead-id> <sha> <repo-path>   one issue, by hand
+gh-intake closeout-pending                       one drain of the pending rows
 ```
 
-### 7.2 Environment (closeout-side verbs only)
+The `intake.gh_closeout` runtime task runs the drain when `spira-lc gh-closeout pending` is
+not empty.
 
-| var | default | meaning |
-|---|---|---|
-| `SPIRA_DB` / `SPIRA_BD` | *(required)* / `bd` | the beads store |
-| `SPIRA_HOME` | `.` | the repo registry's root for `spira_config::repos` |
-| `SPIRA_RUN` | *(required)* | `gh-closed/`, `landstate/` and `gh-wait-log/` all live here |
-| `SPIRA_ASK_LABEL` | *(empty)* | the label an operator ask carries |
-| `SPIRA_GH_ASK_GRACE_SECS` | `3600` | how long after `closed_at` before an unlanded bead is asked about |
-| `SPIRA_MAIL_BIN` | `mail` | the operator-ask sender |
+### 7.2 The drain (`closeout::drain`)
 
-### 7.3 Ports added (`ports.rs`)
+Per row: LANDED comments on and closes the issue with the delivery's sha. SUPERSEDED and
+DROPPED follow `provenance::trace` over point reads: a settled non-landing outcome is
+reported on the issue; a landed successor closes it with the successor's sha; a successor
+still in flight leaves the row untouched; anything else asks the operator once, and the ask's
+id is recorded on the row (`gh-closeout asked`), which is what stops a second ask. A row with
+an ask is done once its issue is closed on GitHub (the ask is closed by id) or the ask is
+answered. A failed GitHub call leaves the row and bumps `attempts` (`gh-closeout failed`); the
+next drain retries it. The comment is posted once however often the close is retried
+(`$SPIRA_RUN/gh-reported/<id>`); `gh-closed/<id>` marks a settled issue.
 
-`Gh` (execs `bdq __ghq <args>` — lib.sh's `ghq() { command bdq __ghq "$@"; }` was never
-its own binary, so this is the same `bdq` subcommand every bash family already shells
-through: `timeout "${GH_TIMEOUT:-120}" "${SPIRA_GH:-gh}" "$@"`, never the `gh` binary
-directly) and `Git` (plain `git -C`, read-only). `Bd` gained `show_json`/`list_by_label`/`dep_remove`/`dep_relate`; `Mail`
-gained `send_question`. `$SPIRA_RUN`'s own state (`gh-closed/<id>` markers, the
-`landstate/<id>` read, the `gh-wait-log/<id>` throttle) is plain `std::fs` inside
-`closeout.rs`, not behind a port — the same choice `landing-pass/src/landstate.rs` made,
-single-process file I/O with nothing to fake.
+### 7.3 Ports
 
-### 7.4 Two readers of "is this landed", deliberately not unified
+`Closeouts` (pending, done, asked, failed), `Lifecycle` (`bead` by id only), `Bd`
+(`show_json` by id, `close`, `dep_remove`/`dep_relate`), `Gh`, `Git`, `Repo`, `Mail`.
+`Mail::send_question` returns the ask bead's id. `$SPIRA_RUN`'s markers are plain `std::fs`.
 
-`gh_unlanded_scan`'s `landed_sha` (subject-shape anchored: `spira: land <id>` or
-`<id>:...`, `-F` fixed-string `--grep`, both the base ref and its local counterpart) and
-`backfill`'s own `grep_ancestor` (loose: `git log --grep=<id>` on the base ref alone, no
-subject-shape check, first hit wins) are two separate `Git` methods, not one shared
-implementation — `spira/test-land-commit-contract.sh` ("gap G4") proved only that they
-*agree* on the one fixture that matters (a real `spira: land <id>` commit), not that they
-are the same algorithm. Unifying them would be a behaviour change this bead does not make.
+### 7.4 Tests
 
-### 7.5 `ask_already_open` is gh-intake's own copy, not a shared one
-
-sp-31hjr gave sentinel (`pass.rs`) and landing-pass (`real.rs`'s `RealBeads::ask_open`)
-each their own native copy rather than a shared library dependency between binaries; this
-crate's `closeout.rs` copy is the third, following the same precedent (see also
-`hel`'s/`cockpit-collect`'s/`sentinel`'s own separate copies of the subject-grep
-"landed" shape). lib.sh's bash copy retires outright with this bead — no caller is left
-anywhere in the tree.
-
-### 7.6 Callers repointed
-
-- `landing-pass/src/real.rs`: `Lib::closeout`/`Lib::gh_unlanded_scan` shell to `gh-intake
-  closeout`/`gh-intake unlanded-scan` by bare name now (stdout relayed through this
-  pass's own `Reporter::raw`); `Op::Closeout`/`Op::GhUnlandedScan` are gone from
-  `seam.rs` — no lib.sh snippet backs either op any more.
-- `queue/src/real.rs`: `Lib::gh_issue_closeout` shells to `gh-intake closeout` the same
-  way `land_mark` already shells to `landing-pass mark`; `Op::GhCloseout` is gone from
-  `seam.rs`.
-- `spira/gh-issue-backfill.sh` is deleted; `gh-intake backfill` replaces it.
-  `spira/test-land-commit-contract.sh`'s "other reader" section calls the new verb.
-- the retired gh-issue-closeout suite is rewritten as a thin T1 wiring smoke test of the
-  real binary (closeout, backfill, unlanded-scan — both directions of the ask dedupe),
-  the same role `spira/test-gh-intake.sh` plays for the ingest half; the exhaustive logic
-  moved to `cargo test -p gh-intake`'s own `closeout` module. Its `config-fence-allow`
-  entry is removed (the rewrite names no `spira.toml`/repo-map literal).
-
-### 7.7 Tests
-
-`closeout::tests` (20, inside `closeout.rs`, `cargo test -p gh-intake`): every pure
-parser/formatter against lib.sh's exact text; `gh_issue_closeout` comments+closes, is
-idempotent, no-ops on a non-github bead, marks-without-closing an already-forge-closed
-issue; `gh_issue_ask_unlanded` dedupes BOTH directions (files a missed ask, suppresses a
-duplicate) and separately proves an answered ask writes the durable marker instead of
-re-asking (the Defect-2 regression the original bash suite carried); mail refusal and the
-empty-stderr probe-fault case; `_gh_close_ask_unblock` converts a blocking dep and leaves
-a non-blocking one alone; `_gh_resolve_stale_asks` closes a stale ask once its issue is
-closed on the forge; `gh_unlanded_scan` distinguishes a landed-by-commit bead from a
-truly unlanded one in the same pass, waits silently (and throttles) on an in-flight
-landstate, and respects the grace period; `backfill`'s dry-run/real pass pair, via its
-own looser ancestry search. All against fakes — no network, no real `bd`/`ghq`/`mail`/
-git. the retired gh-issue-closeout suite (§7.6) is the real-binary complement.
+`closeout::tests`: a drain over a LANDED, a won't-fix DROPPED and a SUPERSEDED-then-LANDED row
+records only `pending`, `bead`, `show_json` and `done`, comments once per issue, and a second
+drain does nothing; a failed close keeps the row with `attempts` bumped and the next drain
+closes once; a successor in flight leaves the row; an unnamed drop asks once; an ask whose
+issue closed on GitHub is closed by id. All against fakes.

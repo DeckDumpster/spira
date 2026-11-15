@@ -377,7 +377,7 @@ version_probe = "readlink -f \"$(command -v gate-run)\""
 [[dep]]
 name = "gh-intake"
 tier = "release"
-purpose = "Spira's gh-intake binary, from the release's bin/ — ingest, and (sp-j3fim) the GitHub closeout/unlanded-scan/backfill verbs landing-pass and queue call directly"
+purpose = "Spira's gh-intake binary, from the release's bin/ — ingest, and (sp-j3fim) the GitHub closeout and closeout-pending verbs the intake.gh_closeout task and the operator call"
 version_min = ""
 version_probe = "readlink -f \"$(command -v gh-intake)\""
 
