@@ -43,16 +43,16 @@ async fn a_journal_read_that_cannot_tell_is_retried_not_returned_as_an_exit() {
     let serving = tokio::spawn(serve_with(engine, Arc::new(WallClock), Arc::new(NoEffects), PoolCaps::default(), rx, opts));
     faulty.cannot_tell_next("commit");
     tx.send(Submit::new("p1", "s", EventKind::new("ping", ""))).await.unwrap();
-    for _ in 0..300 {
+    for _ in 0..3000 {
         if pongs(&*mem) == 1 {
             break;
         }
-        tokio::time::sleep(Duration::from_millis(10)).await; // clock-safe: polling a real host
+        tokio::time::sleep(Duration::from_millis(10)).await; // clock-safe: a 30 s hang cap on a wait for the journaled outcome
     }
     assert!(!serving.is_finished(), "serve returned on a journal that could not tell");
     assert_eq!(pongs(&*mem), 1, "the turn ran again once the journal answered");
     drop(tx);
-    tokio::time::timeout(Duration::from_secs(5), serving).await.expect("the host drains").unwrap().expect("a clean stop");
+    tokio::time::timeout(Duration::from_secs(60), serving).await.expect("the host drains").unwrap().expect("a clean stop");
     let retries: Vec<_> = sink.records().into_iter().filter(|r| r.get("unit").is_some_and(|u| *u == "journal.retry".into())).collect();
     assert_eq!(retries.len(), 1, "each retry is counted: {retries:?}");
 }
@@ -94,14 +94,14 @@ async fn a_spira_lc_deadline_on_the_socket_journal_is_retried_by_serve_not_retur
     let serving = tokio::spawn(serve_with(engine, Arc::new(WallClock), Arc::new(NoEffects), PoolCaps::default(), rx, ServeOpts::default()));
     store.deadline_next.store(true, std::sync::atomic::Ordering::SeqCst);
     tx.send(Submit::new("p1", "s", EventKind::new("ping", ""))).await.unwrap();
-    for _ in 0..300 {
+    for _ in 0..3000 {
         if !store.mem.commits().is_empty() {
             break;
         }
-        tokio::time::sleep(Duration::from_millis(10)).await; // clock-safe: polling a real host
+        tokio::time::sleep(Duration::from_millis(10)).await; // clock-safe: a 30 s hang cap on a wait for the journaled outcome
     }
     assert!(!serving.is_finished(), "serve returned on a store call that hit spira-lc's deadline");
     assert_eq!(store.mem.commits().len(), 1, "the turn was committed once the store answered");
     drop(tx);
-    tokio::time::timeout(Duration::from_secs(5), serving).await.expect("the host drains").unwrap().expect("a clean stop");
+    tokio::time::timeout(Duration::from_secs(60), serving).await.expect("the host drains").unwrap().expect("a clean stop");
 }

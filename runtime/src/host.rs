@@ -606,3 +606,13 @@ impl VirtualDriver {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod fan_out_tests {
+    use super::task_fan_out;
+
+    #[test]
+    fn a_task_holds_half_its_class_and_at_least_one() {
+        assert_eq!([0, 1, 2, 4, 5].map(task_fan_out), [1, 1, 1, 2, 2]);
+    }
+}

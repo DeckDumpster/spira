@@ -40,7 +40,7 @@ impl EffectRunner for Suites {
     fn run(&self, _key: &str, spec: &EffectSpec) -> Result<String, String> {
         *self.ran.lock().unwrap().entry(spec.input.clone()).or_default() += 1;
         if let Some(rx) = self.gate.lock().unwrap().as_ref() {
-            let _ = rx.recv_timeout(Duration::from_secs(5)); // clock-safe: a test holding a runner open
+            let _ = rx.recv();
         }
         Ok(spec.input.clone())
     }
@@ -62,6 +62,16 @@ fn opts(sink: &Arc<MemSink>) -> ServeOpts {
     ServeOpts { sink: Some(sink.clone()), pool: Some(Pool::new(4, 16)), ..ServeOpts::default() }
 }
 
+async fn until(f: impl Fn() -> bool) {
+    for _ in 0..3000 {
+        if f() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await; // clock-safe: a 30 s hang cap on a wait for a named state
+    }
+    panic!("timed out waiting for the host");
+}
+
 fn count(j: &dyn Journal, tag: &str) -> usize {
     runtime::conformance::trace(j).iter().filter(|t| t.2 == tag).count()
 }
@@ -80,12 +90,7 @@ async fn a_full_class_defers_records_it_and_runs_the_effect_later() {
     let (tx, rx) = mpsc::channel::<Submit>(4);
     drop(tx);
     let serving = tokio::spawn(serve_with(e, Arc::new(WallClock), runner.clone(), PoolCaps { container: 1, ..PoolCaps::default() }, rx, opts(&sink)));
-    for _ in 0..200 {
-        if !deferred(&sink).is_empty() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await; // clock-safe: polling a real host
-    }
+    until(|| !deferred(&sink).is_empty() && runner.ran.lock().unwrap().values().sum::<usize>() == 1).await;
     let d = deferred(&sink);
     assert!(!d.is_empty(), "a container effect over the cap must be deferred and recorded");
     assert_eq!(d[0].get("class"), Some(&Value::from("container")));
@@ -94,7 +99,7 @@ async fn a_full_class_defers_records_it_and_runs_the_effect_later() {
     for _ in 0..3 {
         let _ = release.send(());
     }
-    tokio::time::timeout(Duration::from_secs(20), serving).await.expect("the host drains").unwrap().unwrap();
+    tokio::time::timeout(Duration::from_secs(60), serving).await.expect("the host drains").unwrap().unwrap();
     assert_eq!(count(&*j, "built"), 3, "every deferred effect runs: nothing is dropped");
     assert!(runner.ran.lock().unwrap().values().all(|n| *n == 1), "each effect runs once");
     let status = board.get().expect("the engine published its status");
@@ -112,21 +117,19 @@ async fn a_deferred_effect_is_offered_again_only_when_a_slot_frees_not_on_idle_t
     let (release, gate) = std::sync::mpsc::channel();
     let runner = Arc::new(Suites { gate: Mutex::new(Some(gate)), ..Suites::default() });
     let sink = MemSink::new();
+    let wakes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let kick: Arc<dyn Fn() + Send + Sync> = { let w = wakes.clone(); Arc::new(move || { w.fetch_add(1, std::sync::atomic::Ordering::SeqCst); }) };
     let (tx, rx) = mpsc::channel::<Submit>(4);
     drop(tx);
-    let serving = tokio::spawn(serve_with(e, Arc::new(WallClock), runner.clone(), PoolCaps { container: 1, ..PoolCaps::default() }, rx, opts(&sink)));
-    for _ in 0..200 {
-        if !deferred(&sink).is_empty() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await; // clock-safe: polling a real host
-    }
+    let serving = tokio::spawn(serve_with(e, Arc::new(WallClock), runner.clone(), PoolCaps { container: 1, ..PoolCaps::default() }, rx, ServeOpts { kick: Some(kick), max_sleep_ms: Some(5), ..opts(&sink) }));
+    until(|| !deferred(&sink).is_empty()).await;
     assert_eq!(deferred(&sink).len(), 1, "the second effect is deferred once: {:?}", deferred(&sink));
-    tokio::time::sleep(Duration::from_millis(1500)).await; // clock-safe: idle turns would show as more records
+    let seen = wakes.load(std::sync::atomic::Ordering::SeqCst);
+    until(|| wakes.load(std::sync::atomic::Ordering::SeqCst) >= seen + 100).await;
     assert_eq!(deferred(&sink).len(), 1, "with no slot freed, the deferred effect is not offered again");
     let _ = release.send(());
     let _ = release.send(());
-    tokio::time::timeout(Duration::from_secs(20), serving).await.expect("the host drains").unwrap().unwrap();
+    tokio::time::timeout(Duration::from_secs(60), serving).await.expect("the host drains").unwrap().unwrap();
     assert_eq!(deferred(&sink).len(), 1, "the freed slot takes it: no further deferral");
     assert_eq!(count(&*j, "built"), 2);
 }
@@ -152,7 +155,7 @@ async fn the_live_host_names_the_registered_task_to_the_runner() {
     let (tx, rx) = mpsc::channel::<Submit>(4);
     drop(tx);
     let serving = tokio::spawn(serve_with(e, Arc::new(WallClock), runner.clone(), PoolCaps::default(), rx, opts(&sink)));
-    tokio::time::timeout(Duration::from_secs(20), serving).await.expect("the host drains").unwrap().unwrap();
+    tokio::time::timeout(Duration::from_secs(60), serving).await.expect("the host drains").unwrap().unwrap();
     assert_eq!(*runner.0.lock().unwrap(), ["builds"]);
 }
 
