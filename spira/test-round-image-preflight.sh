@@ -58,6 +58,8 @@ want "payload carries the head's apt line" "apt-get install -y -qq podman git bu
 is "payload is update then the head's apt line" $'apt-get update -qq\napt-get install -y -qq podman git bubblewrap' "$(sed -n '/^apt-get update/,/^END/{/^END/!p}' <<<"$LOG")"
 nowant "package-list change does not run the full setup" "/guest.sh" "$LOG"
 want "package-list change says so" "package list installed" "$OUT"
+want "package-list check keeps podman storage under the cache root" "--root $TMP/cache/storage" "$LOG"
+want "package-list check mounts apt under the cache root" "$TMP/cache/cache/apt:" "$LOG"
 nowant "payload is not on argv" "bubblewrap" "$(grep '^ARGS' <<<"$LOG")"
 
 run apt-and-more
