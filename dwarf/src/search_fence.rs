@@ -3,7 +3,7 @@
 
 use std::path::{Component, Path, PathBuf};
 
-use serde_json::Value;
+use serde_json::{json, Value};
 
 struct Segment {
     words: Vec<String>,
@@ -205,6 +205,16 @@ fn resolve(operand: &str, cwd: Option<&Path>, home: &str) -> Option<PathBuf> {
     }
 }
 
+/// The hook's whole stdout for one stdin payload: the block JSON on a refusal, else nothing.
+/// An unparseable payload and the override both pass.
+pub fn hook_output(raw: &str, run: &Path, worktree: &Path, home: &str, overridden: bool) -> Option<String> {
+    if overridden {
+        return None;
+    }
+    let payload: Value = serde_json::from_str(raw).ok()?;
+    refusal(&payload, run, worktree, home).map(|reason| json!({"decision": "block", "reason": reason}).to_string())
+}
+
 const GREP_ARG_SHORT: &str = "efABCmdD";
 const GREP_ARG_LONG: &[&str] = &["include", "exclude", "exclude-dir", "exclude-from", "regexp", "file", "max-count", "after-context", "before-context", "context", "directories", "devices", "label", "binary-files"];
 const RG_ARG_SHORT: &str = "efgtTABCmjMEdr";
@@ -334,7 +344,7 @@ impl Ctx<'_> {
     fn reason(&self, head: &str, root: &Path) -> String {
         let (run, wt) = (self.run.display(), self.worktree.display());
         format!(
-            "dwarf search-fence: {head} searches {}, which holds every session's transcripts and logs (sp-7lcsyn: one such search took 30 minutes of a session). For a round or gate red, run `work show`: its LAST RED section is the failure the round recorded. To read one known file, name it without a recursive flag (grep <pattern> {run}/<file>). Your worktree {wt} is searched freely.",
+            "dwarf search-fence: {head} searches {}, which holds every session's transcripts and logs (sp-7lcsyn: one such search took 30 minutes of a session). For a round or gate red, run `work show`: its LAST RED section is the failure the round recorded. To read one known file, name it without a recursive flag (grep <pattern> {run}/<file>; rg always recurses, so use grep or the Read tool). Your worktree {wt} is searched freely.",
             root.display()
         )
     }
@@ -416,13 +426,31 @@ pub fn refusal(payload: &Value, run: &Path, worktree: &Path, home: &str) -> Opti
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
 
     const RUN: &str = "/r/spira/run";
     const WT: &str = "/r/spira/run/worktree/sp-a";
 
     fn verdict(payload: Value) -> Option<String> {
         refusal(&payload, Path::new(RUN), Path::new(WT), "/r")
+    }
+
+    #[test]
+    fn the_hook_prints_block_json_on_a_refusal_and_nothing_otherwise() {
+        let (run, wt) = (Path::new(RUN), Path::new(WT));
+        let call = |cmd: &str| json!({"tool_name": "Bash", "cwd": WT, "tool_input": {"command": cmd}}).to_string();
+        let out = hook_output(&call("grep -rl x /r/spira/run"), run, wt, "/r", false).expect("refused");
+        let v: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["decision"], "block");
+        assert!(v["reason"].as_str().unwrap().contains("work show"));
+        assert_eq!(hook_output(&call("grep -rn x ."), run, wt, "/r", false), None);
+        assert_eq!(hook_output(&call("grep -rl x /r/spira/run"), run, wt, "/r", true), None, "override passes");
+        assert_eq!(hook_output("not json", run, wt, "/r", false), None, "unparseable passes");
+    }
+
+    #[test]
+    fn rg_on_one_run_file_is_refused_and_the_reason_points_at_grep() {
+        let r = bash("rg foo /r/spira/run/sp-x.log").expect("rg always recurses");
+        assert!(r.contains("use grep or the Read tool"), "{r}");
     }
 
     fn bash(cmd: &str) -> Option<String> {

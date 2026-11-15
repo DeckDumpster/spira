@@ -153,15 +153,12 @@ fn run_search_fence(args: &[String]) -> i32 {
         eprintln!("usage: dwarf search-fence --run <dir> --worktree <dir>");
         return 0;
     };
-    if std::env::var_os(dwarf::restrict::FENCE_OVERRIDE).is_some() {
-        return 0;
-    }
+    let overridden = std::env::var_os(dwarf::restrict::FENCE_OVERRIDE).is_some();
     let mut raw = String::new();
     let _ = std::io::stdin().read_to_string(&mut raw);
-    let Ok(payload) = serde_json::from_str::<serde_json::Value>(&raw) else { return 0 };
     let home = std::env::var("HOME").unwrap_or_default();
-    if let Some(reason) = dwarf::search_fence::refusal(&payload, Path::new(&run), Path::new(&worktree), &home) {
-        println!("{}", serde_json::json!({"decision": "block", "reason": reason}));
+    if let Some(out) = dwarf::search_fence::hook_output(&raw, Path::new(&run), Path::new(&worktree), &home, overridden) {
+        println!("{out}");
     }
     0
 }
