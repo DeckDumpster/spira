@@ -1434,6 +1434,29 @@ mod tests {
     }
 
     #[test]
+    fn the_test_phase_exits_with_the_first_red_whichever_tier_it_is() {
+        let tmp = testkit::TempDir::new("gate-test-phase");
+        let bin = tmp.path().join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        testkit::write_exe(bin.join("cargo"), "#!/bin/bash\n[ \"$1\" = nextest ] && [ \"$2\" = --version ] && exit 0\ncase \"$*\" in *\"$RED\"*) exit \"$CODE\";; esac\nexit 0\n");
+        let [_, t] = unit_commands(&["gate".into()], ALL, 4);
+        let run = |red: &str, code: &str| {
+            let out = std::process::Command::new("/bin/bash")
+                .args(["-c", &t.1])
+                .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+                .env("RED", red)
+                .env("CODE", code)
+                .output()
+                .unwrap();
+            out.status.code()
+        };
+        assert_eq!(run("no-such-word", "9"), Some(0), "all green");
+        assert_eq!(run("--lib", "100"), Some(100), "a red unit tier");
+        assert_eq!(run("--doc", "101"), Some(101), "a red doc tier after green ones");
+        assert_eq!(run("--test", "101"), Some(101), "a red integration tier");
+    }
+
+    #[test]
     fn a_missing_nextest_is_could_not_judge_not_a_red_branch() {
         let [_, t] = unit_commands(&["gate".into()], ALL, 4);
         assert!(t.1.starts_with("cargo nextest --version >/dev/null 2>&1 || {"), "{}", t.1);

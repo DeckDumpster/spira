@@ -65,8 +65,12 @@ fn nextest_red(l: &str) -> Option<&str> {
     if !matches!(status, "FAIL" | "TIMEOUT" | "LEAK-FAIL" | "EXEC-FAIL") && !status.starts_with("SIG") {
         return None;
     }
-    let after = rest.trim_start().strip_prefix('[')?.split_once(']')?.1;
-    let mut words = after.split_whitespace().filter(|w| !(w.starts_with('(') && w.ends_with(')')));
+    let after = rest.trim_start().strip_prefix('[')?.split_once(']')?.1.trim_start();
+    let after = match after.strip_prefix('(') {
+        Some(counter) => counter.split_once(')')?.1,
+        None => after,
+    };
+    let mut words = after.split_whitespace();
     let (_binary, name) = (words.next()?, words.next()?);
     words.next().is_none().then_some(name)
 }
@@ -414,6 +418,8 @@ mod tests {
         assert!(failed_tests("test result: FAILED\n").is_empty());
         let nx = "        PASS [   0.007s] (1/2) fx t::quick\n     TIMEOUT [   4.002s] (2/2) fx t::sleeper\n        FAIL [   0.1s] fx t::bad\n     TIMEOUT [   4.002s] (2/2) fx t::sleeper\n";
         assert_eq!(failed_tests(nx), vec!["t::sleeper".to_string(), "t::bad".to_string()]);
+        let padded = "        FAIL [   0.1s] ( 3/12) fx t::padded\n  SIGSEGV [   0.1s] (12/12) fx t::crashed\n";
+        assert_eq!(failed_tests(padded), vec!["t::padded".to_string(), "t::crashed".to_string()]);
     }
 
     #[test]

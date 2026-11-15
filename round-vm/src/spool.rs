@@ -148,6 +148,7 @@ unit)
     git clone --quiet --reference "$HOME/round-work" --branch "$ref" "git://${host_addr}:${port}/mirror.git" "$d" || exit 2
     cd "$d" || exit 2
     scope_of unit
+    [ -f "$HOME/round-nextest.toml" ] || { echo "round-vm: no round-nextest.toml on this VM: the round's unit tier has not run here" >&2; exit 2; }
     env -i HOME="$HOME" PATH="$PATH" CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}" CARGO_TARGET_DIR="$HOME/attr-target" \
         cargo "#, spira_config::unit_tier_unit!("\"$HOME/round-nextest.toml\"", "unittest", "$scope"), r#" $filters >&2
     rc=$?
@@ -543,6 +544,7 @@ mod tests {
         fs::create_dir_all(&bin).unwrap();
         fs::create_dir_all(&home).unwrap();
         fs::write(home.join("round-launcher.env"), "").unwrap();
+        fs::write(home.join("round-nextest.toml"), "").unwrap();
         let stub = |name: &str, body: &str| testkit::write_exe(bin.join(name), &format!("#!/bin/bash\n{body}\n"));
         stub("git", "for a; do last=$a; done; mkdir -p \"$last\"");
         stub("cargo", &format!("echo \"$*\" > \"$HOME/cargo.args\"; env > \"$HOME/cargo.env\"; exit {cargo_rc}"));
@@ -589,6 +591,7 @@ mod tests {
         let r = parse_request("u1", "branch=spira/batcher-attr/x-u1\nsuites=unit\nbuild=unit\n").unwrap();
         assert_eq!(r.build, Build::Unit);
         assert_eq!(attr_job_rc("unit", 101, "unit-tests.result"), (5, false));
+        assert_eq!(attr_job_rc("unit", 100, "unit-tests.result"), (5, false), "nextest's own exit for a failed test run");
         assert_eq!(attr_job_rc("unit", 137, "unit-tests.result"), (137, false), "a killed run is a fault, not red");
         assert_eq!(attr_job_rc("unit", 0, "unit-tests.result"), (0, true));
     }
