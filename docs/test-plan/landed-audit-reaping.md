@@ -76,7 +76,7 @@ Tier key: T0 static · T1 unit · T2 component · T3 integration · T4 acceptanc
 - **UC-landed-audit-reaping-20.** Hel pass 2 removes orphaned worktrees whose branch is gone, unless a holder is live, and never touches the shared checkout. `spira_destroy_worktree` prunes an absent out-of-root registration and refuses an existing out-of-root directory. — recovery, fail-closed · **T2** · cert.
 - **UC-landed-audit-reaping-21.** The Hel skips loudly when a repo's land ref cannot be resolved, and exits non-zero when anything failed. — fail-closed · **T2** · cert.
 - **UC-landed-audit-reaping-22.** The hel counters count distinct branches, not log lines. `SP_SENT_FAILED_AGE_M` renders `?` when there is no failure. — correctness, observability · **T1** · cert.
-- **UC-landed-audit-reaping-23.** `slay --bead --close` deletes a landed branch without parking it. An unlanded tip is parked (default release keeps the branch instead) at `refs/slain/<id>` (same SHA) and the command reports "parked". — recovery, fail-closed · **T2** (stub `bd show`) · cert.
+- **UC-landed-audit-reaping-23.** `slay --bead --close` deletes a landed branch without parking it. An unlanded tip is parked (default release keeps the branch instead) at `refs/slain/<id>` (same SHA) and the command reports "parked". — recovery, fail-closed · **T1** (`spira_world::slay` tests) · cert.
 
 ### Epics and held branches
 - **UC-landed-audit-reaping-24.** `pilgrimage.sh check` announces a completed Spira-labelled epic once (a mail naming the epic, target and children) and then closes it. It skips epics that are unfinished or not Spira's. It defers the close while any live push-mode child branch lacks LANDED landstate, and pr-mode children are exempt. — correctness, idempotency, fail-closed · **T2** (`pilgrimage_branches_landed`, git + files) + **T3** once (announce/close/dedup) · cert / batch.
@@ -119,7 +119,7 @@ Verdict key: **KEEP** · **MERGE-INTO** · **DEMOTE-TO-T1** · **DELETE** · **S
 | 20 | worktree-absent::* | T1/T2 1 | **KEEP**; pass-2 orphan removal is a gap → test-hel.sh |
 | 21 | none | — | gap → test-hel.sh |
 | 22 | hel-metrics::* | T1 1 | **KEEP** (hermetic model unit test) |
-| 23 | reclaim-slay-branch-guard::slay landed / slay unlanded / parked ref | T3 13 | **MERGE-INTO test-slay.sh** using a stub `bd show` (the gate cases seed a bead nothing reads) |
+| 23 | reclaim-slay-branch-guard::slay landed / slay unlanded / parked ref | T3 13 | **RETIRED**: `spira_world::slay` unit tests (fake git and bead-store ports) (the gate cases seed a bead nothing reads) |
 | 24 | pilgrimage::* (9 cases, 4 db resets) | T3 22 | **DEMOTE-TO-T1/T2**: `pilgrimage_branches_landed` becomes a git+files table with `children_ids`/`spira_repos` stubbed. **KEEP** one real-bd seed for announce, close, second pass silent, unfinished and alien. |
 | 25 | held::* | T3 10 | **KEEP** at T2: replace testdb with a stub `bdjson show`, and add the missing "other repo excluded" assertion |
 | 26 | check2-reclaim::case 1–5 | T2 7 | **KEEP**, reassign area (note: header says four cases, there are five; the reaper itself is never invoked) |
@@ -206,7 +206,6 @@ Verdict key: **KEEP** · **MERGE-INTO** · **DEMOTE-TO-T1** · **DELETE** · **S
 | test-check5.sh (one seed, 2 passes, ~12 rows, seam contract, one real Hel run) | T3 | 15 | the cheapest current check5 file with 2 passes is 9 s (delivers-action); plus a second pass and one hel run |
 | test-destroy-branch.sh (+content_landed table, +3 refusal rows) | T2 | 2 | 1 s today |
 | test-hel.sh (stub bd, one pass, ~14 rows) | T2 | 4 | the git-only share of today's 5–9 s suites; the testdb_up (~4–6 s) is gone |
-| slay parking rows in test-slay.sh (stub bd show) | T2 | 3 | the git worktree ops in reclaim-slay today, without the 4 reseeds |
 | worktree-absent + hel-metrics | KEEP | 2 | unchanged 1 + 1 |
 | pilgrimage: T2 gate table + one bd seed | T2 + T3 | 9 | 1 + one reset in place of four (22/4 ≈ 5.5, plus the fixture) ≈ 8–9 |
 | held.sh with stub bd | T2 | 2 | testdb removed |

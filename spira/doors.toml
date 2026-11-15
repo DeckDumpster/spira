@@ -58,7 +58,7 @@ writes_only = true
 door = "slay.sh"
 door_commands = ["slay.sh", "slay", "dwarf direct"]
 usage = "slay.sh --bead <id> [--why \"<text>\"] [--keep-work] [--close \"<reason>\" | --reopen]"
-usage_in = "spira-world/src/bin/slay.rs"
+usage_in = "spira-world/src/slay.rs"
 why = "Stopping a builder without --keep-work parks its branch where no builder reads it."
 [resource.touched_by]
 units = ["dwarf-*", "spira-run-*"]
@@ -70,7 +70,7 @@ writes_only = true
 door = "slay.sh"
 door_commands = ["slay.sh", "slay", "work"]
 usage = "slay.sh --bead <id> [--why \"<text>\"] [--keep-work] [--close \"<reason>\" | --reopen]"
-usage_in = "spira-world/src/bin/slay.rs"
+usage_in = "spira-world/src/slay.rs"
 why = "A bead branch removed outside the chokepoint takes its unlanded commits with it."
 [resource.touched_by]
 refs = ["refs/heads/spira/*", "spira/*"]

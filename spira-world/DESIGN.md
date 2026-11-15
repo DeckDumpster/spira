@@ -97,22 +97,15 @@ No new persisted schema — this crate reads and writes the same stamp files (`w
   never interpolated into the script text (law-payloads-go-on-stdin). This is the only
   lib.sh dependency in `world`/`dwarves`/`slay`'s read paths.
 
-- **`slay`'s steps 0 (bead exists), 4a (release the claim), 5 (salvage/park/destroy the
-  work) and 4b/6 (the note, the final status) go through lib.sh's own chokepoints via one
-  seam (`SLAY_FINISH`), not a Rust reimplementation.** `lib.sh` is explicitly out of this
-  wave's scope (`remaining-bash-inventory.md` group 4: "Ryan's standing instruction during
-  the cutover was 'leave lib.sh alone.'"), and `spira_destroy_worktree`/`_branch` are, by
-  their own comment, "the only permitted callers of `git worktree remove` and `git branch
-  -D` in the harness" — a second, Rust implementation of that chokepoint is exactly the kind
-  of duplicate-writer hazard the chokepoint exists to prevent, and `bdq`'s own fencing
-  (repo-label validation, the schema-delete refusal, a dead-Dolt-
-  connection retry) would silently not apply to a direct `bd` call. What DID move to Rust:
-  argument parsing and every usage/exit-2 case (the 2026-09-13 positional-argument scar),
-  the marker write, the hold-vs-dwarf distinction, systemd-unit-or-pid resolution, and the
-  wait/escalate-to-KILL loop — the process-control half of the file, and historically the
-  half with the most scars (the pidfile-vs-environment `BEAD_ID` bug, the split-checkout
-  "both homes" bug). This is a real, bounded engineering judgement call, not a default —
-  flagged here for review rather than left implicit.
+- **`slay`'s decisions are `spira_world::slay`, behind four ports: git, bead store,
+  lifecycle and the dwarf's process.** Argument parsing returns a `Result` (every usage and
+  exit-2 case, the positional-argument scar), and the finish step (release the claim,
+  salvage/park/destroy the work, the note, the final status) is Rust over those ports, so
+  every mode and refusal is a unit test with no bash and no store. The real adapters in
+  `bin/slay.rs` still go through the chokepoints that own the dangerous verbs: `hel`'s
+  destruction chokepoint is the one door onto `git worktree remove` / `git branch -D`
+  (called in-process, never reimplemented), and `bdq` carries the store's fencing, so a
+  direct `bd` call would silently drop it.
 
 - **`world`, `ctrl`, `dwarves`, `slay` are the binaries' real names; `world.sh`, `ctrl.sh`,
   `dwarves.sh`, `slay.sh` are release-packaging symlinks to them (`build-tarball.sh`).** A
@@ -144,7 +137,7 @@ and in `spira-ctrl`'s own DESIGN.md, mapped as `[use_case.uncovered]` exceptions
 `docs/test-plan/instance-lifecycle.toml` (UC-42) citing this bead, following the same
 pattern `sp-pppt0`/`sp-ekkak` already used for an earlier bash-to-Rust coverage move.
 Every other suite that names `world.sh`/`ctrl.sh`/`dwarves.sh`/`slay.sh` (`test-world.sh`,
-`test-slay.sh`, `test-world-timer-*.sh`,
+`test-world-timer-*.sh`,
 …) drives the tool as a subprocess and needed no change beyond a
 `# covers:` path fix (spira-lint's `covers-entries` rule) — it now validates the Rust
 binary by the same bare name, unchanged.
