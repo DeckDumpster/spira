@@ -300,6 +300,7 @@ impl World {
             lines,
             fresh,
             halt: read_halt(&self.run_dir),
+            ..Snapshot::default()
         };
         serde_json::to_string(&snap).map_err(|e| e.to_string())
     }

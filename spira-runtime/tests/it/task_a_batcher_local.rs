@@ -1427,3 +1427,29 @@ fn sp_k7ltss_a_green_round_above_another_open_round_waits() {
     assert!(!effects(&acts).contains(&LAND) && !effects(&acts).contains(&ABANDON), "{acts:?}");
     assert_ne!(carry.repos["spira"].batch.as_deref(), Some("r10"), "the round above is not adopted");
 }
+
+#[test]
+fn sp_3uxw41_a_member_blocked_on_an_unlanded_dep_records_nothing_admissible() {
+    let blocked = Member { deps: vec!["sp-base".into()], ..member("sp-a", "t1") };
+    let s = Snapshot { repos: [("spira".to_string(), Repo { blockers: vec!["sp-base".into()], ..repo(vec![blocked]) })].into(), now_ms: NOW };
+    let (carry, acts) = decide(&Carry::default(), &s);
+    assert!(!effects(&acts).contains(&ASSEMBLE), "{acts:?}");
+    assert_eq!(carry.repos["spira"].admissible, Vec::<String>::new());
+}
+
+#[test]
+fn sp_3uxw41_an_unblocked_sifted_member_with_no_round_open_is_admissible() {
+    let s = Snapshot { repos: [("spira".to_string(), repo(vec![member("sp-a", "t1")]))].into(), now_ms: NOW };
+    let (carry, _) = decide(&Carry::default(), &s);
+    assert_eq!(carry.repos["spira"].admissible, ["sp-a"]);
+}
+
+#[test]
+fn sp_3uxw41_a_repo_with_its_rounds_at_max_open_records_nothing_admissible() {
+    let mut s = Snapshot { repos: [("spira".to_string(), repo(vec![member("sp-c", "t3")]))].into(), now_ms: NOW };
+    s.repos.get_mut("spira").unwrap().open_round = Some(Round { id: "r9".into(), members: vec!["sp-a".into()], head: "h0".into(), worktree: "/w".into(), driven: true, phase: "certifying".into(), ..Round::default() });
+    let mut before = driving(State::Certifying, "spira.c3");
+    before.repos.get_mut("spira").unwrap().admissible = vec!["sp-c".into()];
+    let (carry, _) = decide(&before, &s);
+    assert_eq!(carry.repos["spira"].admissible, Vec::<String>::new(), "a stale answer is cleared");
+}
