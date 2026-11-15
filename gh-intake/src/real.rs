@@ -369,8 +369,7 @@ fn send_in_process(args: &mail::cmds::SendArgs, body: String) -> Result<String, 
     let bdq = spira_config::release_env::tool("bdq").map_err(|e| format!("mail: {e}"))?;
     let bd = mail::bead::BdCli { bdq, conn_retries: env.bd_conn_retries };
     let sent = mail::cmds::send_recorded(&bd, &env, args, body).map_err(|e| format!("mail: send: {e}"))?;
-    let named = sent.delivered_path.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
-    Ok(sent.x_bead.unwrap_or(named))
+    Ok(sent.x_bead.unwrap_or_default())
 }
 
 impl RealMail {

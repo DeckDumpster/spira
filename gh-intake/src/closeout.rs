@@ -568,6 +568,19 @@ mod tests {
     }
 
     #[test]
+    fn a_landed_closeout_comments_the_machines_merge_sha_not_the_tip_recorded_at_enqueue() {
+        let tmp = testkit::TempDir::new("gh-intake-drain-sha");
+        let w = World::default();
+        w.bead("sp-l", "github:fixture/testrepo#1", "LANDED", "", "bbbbbbb2", "");
+        w.rows.borrow_mut().get_mut("sp-l").unwrap().sha = "aaaaaaa1".into();
+        let (gh, mail) = (FakeGh::default(), FakeMail::default());
+        drain_over(&w, &gh, &mail, tmp.path());
+        let comments = gh.comments.borrow();
+        assert!(comments.iter().all(|c| format!("{c:?}").contains("bbbbbbb")), "{comments:?}");
+        assert!(!comments.is_empty());
+    }
+
+    #[test]
     fn a_successor_still_in_flight_leaves_the_row_untouched() {
         let tmp = testkit::TempDir::new("gh-intake-drain-inflight");
         let w = World::default();
