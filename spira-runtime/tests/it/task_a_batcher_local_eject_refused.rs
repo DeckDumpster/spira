@@ -63,7 +63,7 @@ fn a_refused_eject_ends_the_round_red_with_the_refusal_and_runs_nothing_else() {
 }
 
 #[test]
-fn a_certify_killed_inside_a_red_fence_attributes_from_that_fence_not_a_fresh_pass() {
+fn a_certify_killed_inside_a_red_fence_attributes_after_the_certify_pass_not_a_fresh_one() {
     let dir = testkit::TempDir::new("eject-refused");
     let wt = dir.path().to_path_buf();
     let results = round_results(wt.to_str().unwrap(), UNIT);
@@ -84,7 +84,7 @@ fn a_certify_killed_inside_a_red_fence_attributes_from_that_fence_not_a_fresh_pa
             .input,
     )
     .unwrap();
-    assert_eq!(leg.after_pass, results.display().to_string());
+    assert!(leg.after_certify && leg.after_pass.is_empty(), "the certify pass's own kept results are the prior: {leg:?}");
 }
 
 #[test]

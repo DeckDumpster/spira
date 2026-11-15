@@ -35,7 +35,7 @@
 //! | Idle | observe: trigger | Assembling (`fetch`, `assemble`) |
 //! | Assembling | `assemble` ok, merged empty / held key | Idle |
 //! | Assembling | `assemble` ok | Opened (`round_open`) |
-//! | Opened | `round_open` ok, suites present | Corpus (`corpus` = unit.start; `stage` if hypervisor fits, `io.rs:52`) |
+//! | Opened | `round_open` ok, suites present | Certifying (one pass; green is the certificate) |
 //! | Opened | no suites and repo declares own testenv | Certifying |
 //! | Corpus, Attributing, Certifying | the leg's unit fails to start, or is unlisted for two observes with no `unit.ran` | the same state with the leg started once more; the second time Done (`abandon` naming the leg, pace Infra) |
 //! | Corpus | `unit.ran` red | Attributing (`eject` + re-run leg) |
@@ -43,8 +43,7 @@
 //! | Attributing | `unit.ran` (re-run) | Corpus-judged: Mending / Certifying / Done(blocked) |
 //! | Mending | `mending.settled` or timer 900 s (`main.rs:368`) | Certifying |
 //! | Certifying | `unit.ran` green | Landing (`lc_certify`, `land`) |
-//! | Certifying | `unit.ran` red naming no suite and no guilty file, first time | Attributing (the round is attributed, not abandoned whole) |
-//! | Certifying | `unit.ran` red naming suites in a round of several members, first time | Attributing (only the named suites run, alone on each member) |
+//! | Certifying | `unit.ran` red with no `red-output=`, first time (VM lost, no output and refused eject excepted) | Attributing, `after_certify` (the certify pass's own results are the prior) |
 //! | Certifying | `unit.ran` red / failed | Done (eject guilty, `abandon`, verdict red) |
 //! | Certifying | `unit.ran` failed naming no verdict and no suite, after the attribution | Done (output kept, round left open, pace Infra) |
 //! | Attributing | `unit.ran` land | Certifying, certify held until no pass of the round is running (a scope its pass has left is stopped, not waited on) |
@@ -53,7 +52,9 @@
 //! | Landing | observe: no `land` in flight (a restart) | Landing (`lc_certify`, `land` again; each walks the store's own state) |
 //! | Landing | land exit 0 / 3 | Promoting if staged else Done (verdict green) |
 //! | Landing | land refused (lock busy ×N, or any other refusal) | Done (output kept, round left open, page with the refusing line, no pause) |
-//! | Promoting | promotion named | Corpus / Certifying for the staged round (`main.rs:1069`) |
+//! | Promoting | promotion named | Certifying for the staged round (`main.rs:1069`) |
+//!
+//! Corpus is entered only by a carry the previous release recorded; its rows stay so that round finishes.
 //! | Done | — | Idle (`pace.advance` writes carry, pages) |
 //!
 //! Illegal: any leg event whose `round_key` is not the carried round's is refused naming the state.
@@ -378,19 +379,14 @@ pub enum Trigger {
     MendTimeout,
     CertifyGreen,
     CertifyRed,
-    /// A red certify named no suite and no guilty file: the round is attributed, once, instead of
-    /// abandoned whole.
-    CertifyRedUnnamed,
-    /// A red certify named suites: the round is attributed on those suites, once, so the member
-    /// that reds one is ejected before the round is abandoned.
-    CertifyRedNamed,
+    /// The round's first red certify: it is attributed, once, from that pass's results.
+    CertifyRedFirst,
     LandedStaged,
     Landed,
     LandRefused,
     /// `round land` refused base-moved (its exit, sp-tjrjca): the round is certified again on
     /// the base it was rebuilt on, at most once per base (not in the contract's table).
     LandBaseMoved,
-    PromotedToCorpus,
     PromotedToCertifying,
     /// `round promote` named no round (not in the contract's table): the cut goes on from the pool.
     PromoteFailed,
@@ -431,7 +427,7 @@ pub static TABLE: &[(State, Trigger, State)] = &[
     (State::Idle, Trigger::Cut, State::Assembling),
     (State::Assembling, Trigger::AssembledEmpty, State::Idle),
     (State::Assembling, Trigger::Assembled, State::Opened),
-    (State::Opened, Trigger::OpenedWithSuites, State::Corpus),
+    (State::Opened, Trigger::OpenedWithSuites, State::Certifying),
     (State::Opened, Trigger::OpenedOwnTestenv, State::Certifying),
     (State::Opened, Trigger::OpenFailed, State::Done),
     (State::Opened, Trigger::OpenRefusedSome, State::Opened),
@@ -446,13 +442,11 @@ pub static TABLE: &[(State, Trigger, State)] = &[
     (State::Mending, Trigger::MendTimeout, State::Certifying),
     (State::Certifying, Trigger::CertifyGreen, State::Landing),
     (State::Certifying, Trigger::CertifyRed, State::Done),
-    (State::Certifying, Trigger::CertifyRedUnnamed, State::Attributing),
-    (State::Certifying, Trigger::CertifyRedNamed, State::Attributing),
+    (State::Certifying, Trigger::CertifyRedFirst, State::Attributing),
     (State::Landing, Trigger::LandedStaged, State::Promoting),
     (State::Landing, Trigger::Landed, State::Done),
     (State::Landing, Trigger::LandRefused, State::Done),
     (State::Landing, Trigger::LandBaseMoved, State::Certifying),
-    (State::Promoting, Trigger::PromotedToCorpus, State::Corpus),
     (State::Promoting, Trigger::PromotedToCertifying, State::Certifying),
     (State::Promoting, Trigger::PromoteFailed, State::Done),
     (State::Done, Trigger::Advanced, State::Idle),
@@ -801,14 +795,9 @@ pub struct Leg {
     /// tests from them instead of running the corpus again.
     #[serde(default)]
     pub after_pass: String,
-}
-
-/// Whether a `fence-*` step left a red result in `results`.
-fn fence_red_in(results: &std::path::Path) -> bool {
-    std::fs::read_dir(results).into_iter().flatten().flatten().any(|e| {
-        let name = e.file_name().to_string_lossy().into_owned();
-        name.strip_suffix(".result").is_some_and(|stem| (stem.starts_with("fence-") || stem == "spira-lint") && batcher_cut::io::result_status(results, stem) == Some(false))
-    })
+    /// The attribution follows a red certify: it reads the pass `queue round certify` kept for the batch.
+    #[serde(default)]
+    pub after_certify: bool,
 }
 
 /// Where the corpus leg `unit` of the round tree `wt` keeps its results.
@@ -1173,23 +1162,27 @@ impl Machine<'_> {
     /// The attribution leg: `batcher attribute` (`drive::attribute_round`) on the red round, a
     /// corpus leg marked [`ATTRIBUTE`] so it runs under the same effect, captured.
     fn attribute(&mut self) {
-        self.attribute_after(Vec::new(), String::new());
-    }
-
-    /// [`Self::attribute`], restricted to `suites` when any are named.
-    fn attribute_suites(&mut self, suites: Vec<String>) {
-        self.attribute_after(suites, String::new());
+        self.attribute_after(String::new());
     }
 
     /// [`Self::attribute`] of the corpus pass whose results are at `after_pass`, when named.
-    fn attribute_after(&mut self, suites: Vec<String>, after_pass: String) {
+    fn attribute_after(&mut self, after_pass: String) {
         self.rc.run += 1;
         self.start(CORPUS, "attribute");
         if let Some(a) = self.acts.last_mut() {
             let mut leg: Leg = serde_json::from_str(&a.input).unwrap_or_default();
             leg.why = ATTRIBUTE.into();
-            leg.reds = suites;
             leg.after_pass = after_pass;
+            a.input = serde_json::to_string(&leg).unwrap_or_default();
+        }
+    }
+
+    /// The attribution of the certify pass just ended red: it reads that pass's kept results.
+    fn attribute_after_certify(&mut self) {
+        self.attribute_after(String::new());
+        if let Some(a) = self.acts.last_mut() {
+            let mut leg: Leg = serde_json::from_str(&a.input).unwrap_or_default();
+            leg.after_certify = true;
             a.input = serde_json::to_string(&leg).unwrap_or_default();
         }
     }
@@ -1725,7 +1718,7 @@ impl Machine<'_> {
                 // suites on the survivors.
                 self.go(Trigger::LegRed);
                 let pass = self.rc.leg.as_deref().map(|unit| round_results(&self.rc.wt, unit).display().to_string()).unwrap_or_default();
-                self.attribute_after(Vec::new(), pass);
+                self.attribute_after(pass);
             }
             (State::Attributing, _) => match Attribution::parse(out) {
                 Some(Attribution::Land { members, mended, head, .. }) if !members.is_empty() => {
@@ -1791,19 +1784,10 @@ impl Machine<'_> {
                 self.go(Trigger::LegLost);
                 self.red_naming(&format!("eject {said}"), Vec::new());
             }
-            (State::Certifying, false) if !self.rc.attributed && certify_red_evidence(out).1.is_empty() && !out.lines().any(|l| l.starts_with(RED_OUTPUT)) => {
+            (State::Certifying, false) if !self.rc.attributed && !out.lines().any(|l| l.starts_with(RED_OUTPUT)) => {
                 self.rc.attributed = true;
-                self.go(Trigger::CertifyRedUnnamed);
-                let results = self.rc.leg.as_deref().map(|unit| round_results(&self.rc.wt, unit)).filter(|dir| fence_red_in(dir));
-                match results {
-                    Some(dir) => self.attribute_after(Vec::new(), dir.display().to_string()),
-                    None => self.attribute(),
-                }
-            }
-            (State::Certifying, false) if !self.rc.attributed && self.rc.members.len() > 1 && !certify_red_evidence(out).1.is_empty() => {
-                self.rc.attributed = true;
-                self.go(Trigger::CertifyRedNamed);
-                self.attribute_suites(certify_red_evidence(out).1);
+                self.go(Trigger::CertifyRedFirst);
+                self.attribute_after_certify();
             }
             (State::Certifying, false) if self.rc.members.len() != 1 && certify_red_evidence(out).0.is_none() && certify_red_evidence(out).1.is_empty() && !out.lines().any(|l| l.starts_with(RED_OUTPUT)) => self.certify_faulted(exit, out),
             (State::Certifying, false) => {
@@ -1970,13 +1954,8 @@ impl Machine<'_> {
                 self.rc.batch = Some(p.batch);
                 self.rc.members = p.members;
                 self.rc.round_key = Some(core::round_key(&self.rc.members));
-                if p.attested {
-                    self.go(Trigger::PromotedToCertifying);
-                    self.certify();
-                } else {
-                    self.go(Trigger::PromotedToCorpus);
-                    self.corpus(1);
-                }
+                self.go(Trigger::PromotedToCertifying);
+                self.certify();
             }
             _ => {}
         }
@@ -1986,7 +1965,7 @@ impl Machine<'_> {
     fn opened(&mut self, suites: bool) {
         if suites {
             self.go(Trigger::OpenedWithSuites);
-            self.corpus(1);
+            self.certify();
         } else if self.rc.own_testenv {
             self.go(Trigger::OpenedOwnTestenv);
             self.certify();
@@ -2562,7 +2541,9 @@ pub mod edge {
         if !leg.reds.is_empty() {
             argv.extend(["--suites".into(), leg.reds.join(",")]);
         }
-        if !leg.after_pass.is_empty() {
+        if leg.after_certify {
+            argv.extend(["--after-pass".into(), batcher_cut::io::round_results_dir(&env.run, &leg.batch).display().to_string()]);
+        } else if !leg.after_pass.is_empty() {
             argv.extend(["--after-pass".into(), leg.after_pass.clone()]);
         }
         start_scope(e, task, &leg.unit, argv, home_vars(env), None)

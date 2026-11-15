@@ -2274,6 +2274,14 @@ pub fn keep_round_results(run: &Path, batch: &str, from: &Path, prune: Option<&R
     overlay_round_results(run, batch, from)
 }
 
+/// Keeps the pass an attribution follows as the batch's results. A pass already kept there
+/// stays as it is: `keep_round_results` empties the destination before it copies.
+pub fn keep_attributed_pass(run: &Path, batch: &str, pass: &Path, prune: Option<&RoundsPrune>) {
+    if pass != round_results_dir(run, batch) {
+        keep_round_results(run, batch, pass, prune);
+    }
+}
+
 /// What a write of a round's kept results may prune from `<run>/rounds`: `repo`'s own
 /// `*.results` outside `open`, the open rounds' ids.
 pub struct RoundsPrune {
@@ -2333,7 +2341,7 @@ pub fn keep_attribution_results(run: &Path, batch: &str, from: &Path, after_pass
     }
 }
 
-fn round_results_dir(run: &Path, batch: &str) -> PathBuf {
+pub fn round_results_dir(run: &Path, batch: &str) -> PathBuf {
     run.join("rounds").join(format!("{batch}.results"))
 }
 
@@ -4834,6 +4842,16 @@ mod fail_line_tests {
         let kept = keep_attribution_results(run.path(), "b1", &corpus, false, None);
         assert!(!kept.join("test-a.sh.out").exists());
         assert_eq!(fs::read_to_string(kept.join("test-b.sh.out")).unwrap(), "new");
+    }
+
+    #[test]
+    fn an_attribution_after_the_kept_pass_itself_leaves_its_results_in_place() {
+        let run = testkit::TempDir::new("batcher-cut-attr-kept");
+        let (pass, _) = pass_and_corpus(run.path(), true);
+        let kept = keep_round_results(run.path(), "b1", &pass, None);
+        keep_attributed_pass(run.path(), "b1", &kept, None);
+        assert_eq!(fs::read_to_string(kept.join("test-a.sh.out")).unwrap(), "not ok 1 - broke\n");
+        assert_eq!(fs::read_to_string(kept.join("test-a.sh.result")).unwrap(), "red\n");
     }
 
     #[test]
