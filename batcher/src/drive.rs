@@ -3204,15 +3204,17 @@ pub(crate) mod tests {
             "test-03.sh" => tree.contains("m1") && tree.contains("m3"),
             _ => false,
         });
-        let mut ops = Ops::default();
-        ops.menders = vec![Next::Pass {
-            members: vec![member("m1")],
-            left: vec![Left {
-                id: "m2".into(),
-                why: "bad at x.rs:9".into(),
+        let mut ops = Ops {
+            menders: vec![Next::Pass {
+                members: vec![member("m1")],
+                left: vec![Left {
+                    id: "m2".into(),
+                    why: "bad at x.rs:9".into(),
+                }],
+                retry: false,
             }],
-            retry: false,
-        }];
+            ..Ops::default()
+        };
         attribute_round(&mut f, &mut ops, &corpus(10), three(), Budget { slots: 8, maxpar: 2 }).unwrap();
         assert_eq!(ops.returned, vec![("m2".to_string(), "bad at x.rs:9".to_string())]);
         assert_eq!(ops.owner_flags.iter().find(|(id, _)| id == "m2"), Some(&("m2".to_string(), true)));

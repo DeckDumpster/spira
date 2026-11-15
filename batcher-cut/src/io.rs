@@ -2949,6 +2949,7 @@ pub fn ci_red_suites(wt: &Path) -> Vec<String> {
 
 /// `queue round eject`: `owner` is a member whose own tip reddened `suites`; a collateral
 /// member leaves uncharged. The batcher rebuilds the round tree itself, so the verb does not.
+#[allow(clippy::too_many_arguments)]
 pub fn round_eject(
     env: &Env,
     repo: &Repo,
