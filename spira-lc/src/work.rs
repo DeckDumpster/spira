@@ -59,13 +59,11 @@ fn cmd_show(bead_id: &str, conn: &Conn) -> (i32, String) {
     };
     match crate::plane::read(conn, &[s("show"), bead_id.to_string()]) {
         (0, row) => {
-            let tip = serde_json::from_str::<serde_json::Value>(&row).ok().and_then(|r| r["bead"]["tip"].as_str().map(str::to_string));
-            let shown = with_lifecycle(&text, &row);
-            let shown = match conn.query(&crate::facts::select_sql(&[bead_id.to_string()], &[spira_config::ejection::KIND.to_string()], None)) {
-                Ok(rows) => with_last_red(&shown, &crate::facts::shape(rows), tip.as_deref()),
-                Err(e) => format!("{shown}LAST RED: cannot tell: {e:?}\n"),
-            };
-            (0, with_logs(shown, kept_entries(bead_id, conn).len()))
+            let facts = conn
+                .query(&crate::facts::select_sql(&[bead_id.to_string()], &[spira_config::ejection::KIND.to_string()], None))
+                .map(crate::facts::shape)
+                .map_err(|crate::db::DbError::CannotTell(m)| m);
+            (0, with_logs(show_text(&text, &row, facts), kept_entries(bead_id, conn).len()))
         }
         (1, _) => (0, format!("{text}\nLIFECYCLE: no row\n")),
         (_, e) => (CANNOT_TELL, e),
@@ -163,6 +161,16 @@ fn with_lifecycle(bd_text: &str, show_json: &str) -> String {
         field("tip"),
         row["delivery"]["state"].as_str().map(|d| format!("  delivery: {d}\n")).unwrap_or_default(),
     )
+}
+
+/// bd's text, the lifecycle block, then the last red: a failed fact read costs one line, never the show.
+fn show_text(bd_text: &str, row_json: &str, facts: Result<Vec<serde_json::Value>, String>) -> String {
+    let row: serde_json::Value = serde_json::from_str(row_json).unwrap_or_default();
+    let shown = with_lifecycle(bd_text, row_json);
+    match facts {
+        Ok(rows) => with_last_red(&shown, &rows, row["bead"]["tip"].as_str()),
+        Err(e) => format!("{shown}LAST RED: cannot tell: {}\n", e.split_whitespace().collect::<Vec<_>>().join(" ")),
+    }
 }
 
 /// `text` with the newest `eject-failure` row (rows come oldest first) under a `LAST RED` heading.
@@ -2774,6 +2782,23 @@ mod tests {
         let rows = [red_row("2026-01-02 00:00:00", "tip aaa\nFAIL t")];
         assert!(with_last_red("t\n", &rows, Some("bbb")).contains("judged tip aaa; the bead's tip is now bbb\n"));
         assert!(!with_last_red("t\n", &rows, Some("aaa")).contains("judged tip"));
+    }
+
+    #[test]
+    fn show_composes_the_last_red_after_the_lifecycle_with_the_rows_tip() {
+        let row = r#"{"bead":{"state":"SUBMITTED","tip":"bbb"},"delivery":null}"#;
+        let red = [red_row("2026-01-02 00:00:00", "tip aaa\nFAIL t")];
+        let out = show_text("○ sp-1 · t   [P2 · OPEN]\n", row, Ok(red.to_vec()));
+        let (life, last) = (out.find("LIFECYCLE: SUBMITTED").unwrap(), out.find("LAST RED (").unwrap());
+        assert!(life < last && out.contains("judged tip aaa; the bead's tip is now bbb"), "{out}");
+        assert_eq!(show_text("t\n", row, Ok(vec![])), with_lifecycle("t\n", row));
+    }
+
+    #[test]
+    fn show_survives_a_failed_fact_read_with_one_line() {
+        let row = r#"{"bead":{"state":"SUBMITTED"},"delivery":null}"#;
+        let out = show_text("t\n", row, Err("db\n down".into()));
+        assert!(out.starts_with(&with_lifecycle("t\n", row)) && out.ends_with("LAST RED: cannot tell: db down\n"), "{out}");
     }
 
     fn logs_fixture() -> (testkit::TempDir, Vec<serde_json::Value>) {
