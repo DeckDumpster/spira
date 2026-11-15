@@ -7,6 +7,7 @@
 //! ingest gate until now; it is bidirectional from this bead on. `Mail::send_question`
 //! is the operator-ask half of the same addition.
 
+use crate::store::KnownRef;
 use std::path::Path;
 
 /// GitHub's REST API, read-only. `Http` has no credential parameter anywhere in its
@@ -33,22 +34,25 @@ pub trait Seen {
     /// `None` when intake has never read `slug`.
     fn load(&self, slug: &str) -> Option<Vec<u64>>;
     fn save(&self, slug: &str, numbers: &[u64]);
+    /// The external reference and bead id of the last work bead filed for `slug`.
+    fn last_filed(&self, slug: &str) -> Option<(String, String)>;
+    fn save_last_filed(&self, slug: &str, external_ref: &str, id: &str);
 }
 
 /// The beads store, called directly (`bd -C <db> ...`) exactly as gh-intake.sh did — not
 /// through lib.sh's `bdq` retry wrapper, which this script never used.
 pub trait Bd {
-    /// `bd -C <db> list --all --limit 0 --json`, parsed. `None` on any failure to invoke
-    /// or parse — never confused with a genuinely empty store (law-absence-needs-a-positive-control).
-    fn list_all_json(&self) -> Option<serde_json::Value>;
+    /// The beads whose external reference is exactly `external_ref`, any status. `Err` when
+    /// the store could not answer — never read as none (law-absence-needs-a-positive-control).
+    fn by_ref(&self, external_ref: &str) -> Result<Vec<KnownRef>, String>;
 
     /// Only the beads whose external reference is `github:…`, with the columns the closeout
     /// reads. A store that holds no such bead answers an empty list, not `None`.
     fn list_github_json(&self) -> Option<serde_json::Value>;
 
     /// `bd -C <db> create <title> --external-ref <ref> --labels <labels> -t bug -p <priority>
-    /// --body-file -`, body on stdin. Returns whether the call succeeded.
-    fn create(&self, title: &str, external_ref: &str, labels: &str, priority: &str, body: &[u8]) -> bool;
+    /// --body-file -`, body on stdin. Returns the new bead's id, `None` when it was not filed.
+    fn create(&self, title: &str, external_ref: &str, labels: &str, priority: &str, body: &[u8]) -> Option<String>;
 
     /// `bd -C <db> note <id> <text>`.
     fn note(&self, id: &str, text: &str) -> bool;

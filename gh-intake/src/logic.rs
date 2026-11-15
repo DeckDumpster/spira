@@ -1,10 +1,10 @@
 //! The triage engine, over the ports in `ports.rs`. One function, `run()`, walks exactly
-//! the sequence gh-intake.sh's bottom half did: resolve the repo, read what the store
-//! already holds, page GitHub's issues, triage each one, and check the post-condition.
+//! the sequence gh-intake.sh's bottom half did: resolve the repo, page GitHub's issues, triage each one, and check the post-condition.
 
 use crate::model::{association_trusted, own_bot_acceptance, has_accept_label, last_accept_actor, page_len, parse_issues_page, permission_grants_access, GhIssue};
 use crate::ports::{Bd, Http, Mail, Repo, Seen, Stamp};
-use crate::store::{find_ref, ingested, known_untrusted, known_work, total_beads, KnownRef};
+use crate::store::{shown_labels, KnownRef};
+use std::collections::HashMap;
 use sha2::{Digest, Sha256};
 
 #[derive(Clone)]
@@ -97,25 +97,9 @@ pub fn run(http: &dyn Http, bd: &dyn Bd, repo: &dyn Repo, mail: &dyn Mail, stamp
         }
     }
 
-    let before = match bd.list_all_json() {
-        Some(v) => v,
-        None => return r.die("could not read the store"),
-    };
-    let before_total = total_beads(&before);
-    if before_total == 0 {
-        return r.die("the store reports zero beads — the query is broken, not the store empty");
-    }
-
-    let all_ingested = ingested(&before);
-    r.log(format!(
-        "store holds {before_total} bead(s); {} work, {} untrusted",
-        known_work(&all_ingested, &cfg.scope).len(),
-        known_untrusted(&all_ingested).len()
-    ));
-
     for t in &targets {
         let tcfg = Config { repo: t.slug.clone(), bead_repo: t.bead_repo.clone(), ..cfg.clone() };
-        r = ingest_repo(r, http, bd, mail, stamp, seen, &tcfg, &all_ingested);
+        r = ingest_repo(r, http, bd, mail, stamp, seen, &tcfg);
         if r.stop {
             break;
         }
@@ -124,9 +108,15 @@ pub fn run(http: &dyn Http, bd: &dyn Bd, repo: &dyn Repo, mail: &dyn Mail, stamp
 }
 
 #[allow(clippy::too_many_arguments)]
-fn ingest_repo(mut r: Report, http: &dyn Http, bd: &dyn Bd, mail: &dyn Mail, stamp: &dyn Stamp, seen: &dyn Seen, cfg: &Config, all_ingested: &[KnownRef]) -> Report {
-    let known_work_rows = known_work(all_ingested, &cfg.scope);
-    let known_untrusted_rows = known_untrusted(all_ingested);
+fn ingest_repo(mut r: Report, http: &dyn Http, bd: &dyn Bd, mail: &dyn Mail, stamp: &dyn Stamp, seen: &dyn Seen, cfg: &Config) -> Report {
+    let mut refs = Lookups { bd, found: HashMap::new() };
+    if let Some((last_ref, last_id)) = seen.last_filed(&cfg.repo) {
+        match refs.get(&last_ref) {
+            Ok(rows) if rows.iter().any(|k| k.id == last_id) => {}
+            Ok(_) => return r.die(format!("store does not hold {last_id} for {last_ref} — wrong or broken store")),
+            Err(e) => return r.die(format!("could not look up {last_ref}: {e}")),
+        }
+    }
     r.log(format!("reading {} (beads against repo:{})", cfg.repo, cfg.bead_repo));
 
     // ── fetch open issues, paginated ────────────────────────────────────────────────────
@@ -143,7 +133,7 @@ fn ingest_repo(mut r: Report, http: &dyn Http, bd: &dyn Bd, mail: &dyn Mail, sta
 
     if all_issues.is_empty() {
         r.log("no open issues found (all items may be pull requests) — ingest is complete");
-        if !cfg.dry_run && seen.load(&cfg.repo).is_none() && !has_refs(all_ingested, &cfg.repo) {
+        if !cfg.dry_run && seen.load(&cfg.repo).is_none() {
             seen.save(&cfg.repo, &[]);
         }
         return r;
@@ -151,16 +141,21 @@ fn ingest_repo(mut r: Report, http: &dyn Http, bd: &dyn Bd, mail: &dyn Mail, sta
 
     let skip: Vec<u64> = match seen.load(&cfg.repo) {
         Some(s) => s,
-        None if has_refs(all_ingested, &cfg.repo) => Vec::new(),
         None => {
-            let numbers: Vec<u64> = all_issues.iter().map(|i| i.number).collect();
-            if cfg.dry_run {
-                r.log(format!("would record {} existing open issue(s) of {} as seen and file none", numbers.len(), cfg.repo));
-            } else {
-                seen.save(&cfg.repo, &numbers);
-                r.log(format!("first read of {}: recorded {} existing open issue(s) as seen, filed none", cfg.repo, numbers.len()));
+            let mut tracked = false;
+            for issue in &all_issues {
+                for ext in [format!("github:{}#{}", cfg.repo, issue.number), format!("github-untrusted:{}#{}", cfg.repo, issue.number)] {
+                    match refs.get(&ext) {
+                        Ok(rows) => tracked |= !rows.is_empty(),
+                        Err(e) => return r.die(format!("could not look up {ext}: {e}")),
+                    }
+                }
             }
-            return r;
+            if tracked {
+                Vec::new()
+            } else {
+                return first_read(r, seen, cfg, &all_issues);
+            }
         }
     };
 
@@ -169,6 +164,7 @@ fn ingest_repo(mut r: Report, http: &dyn Http, bd: &dyn Bd, mail: &dyn Mail, sta
     let mut untrusted_created = 0u32;
     let mut new_untrusted: Vec<(u64, String, String, String)> = Vec::new();
     let mut unverifiable: Vec<String> = Vec::new();
+    let mut filed: Vec<(String, String)> = Vec::new();
 
     for issue in &all_issues {
         if skip.contains(&issue.number) {
@@ -178,7 +174,11 @@ fn ingest_repo(mut r: Report, http: &dyn Http, bd: &dyn Bd, mail: &dyn Mail, sta
         let ext_ref = format!("github:{}#{}", cfg.repo, issue.number);
         let uref = format!("github-untrusted:{}#{}", cfg.repo, issue.number);
 
-        if let Some(existing) = find_ref(&known_work_rows, &ext_ref) {
+        let tracked = match refs.get(&ext_ref) {
+            Ok(rows) => rows.iter().find(|k| k.labels.iter().any(|l| l == &cfg.scope)).cloned(),
+            Err(e) => return r.die(format!("could not look up {ext_ref}: {e}")),
+        };
+        if let Some(existing) = tracked {
             skipped += 1;
             if cfg.dry_run {
                 r.out.push(format!("  would note: {ext_ref} already tracked as {}", existing.id));
@@ -213,20 +213,30 @@ fn ingest_repo(mut r: Report, http: &dyn Http, bd: &dyn Bd, mail: &dyn Mail, sta
                 created += 1;
                 continue;
             }
-            if let Some(u) = find_ref(&known_untrusted_rows, &uref) {
+            let record = match refs.get(&uref) {
+                Ok(rows) => rows.first().cloned(),
+                Err(e) => return r.die(format!("could not look up {uref}: {e}")),
+            };
+            if let Some(u) = record {
                 let _ = bd.close(&u.id, &promoted_reason(&accept_actor));
             }
             let labels = format!("{},{},repo:{}", cfg.scope, cfg.lane, cfg.bead_repo);
             let body_text = work_body(&ext_ref, &issue.login, own_bot, &issue.body);
-            if bd.create(&issue.title, &ext_ref, &labels, &cfg.priority, body_text.as_bytes()) {
+            if let Some(id) = bd.create(&issue.title, &ext_ref, &labels, &cfg.priority, body_text.as_bytes()) {
                 created += 1;
+                seen.save_last_filed(&cfg.repo, &ext_ref, &id);
+                filed.push((id, ext_ref.clone()));
             } else {
                 r.log(format!("WARNING: could not create work bead for {ext_ref}"));
             }
         } else {
-            if known_untrusted_rows.iter().any(|u| u.ext_ref == uref) {
-                skipped += 1;
-                continue;
+            match refs.get(&uref) {
+                Ok(rows) if !rows.is_empty() => {
+                    skipped += 1;
+                    continue;
+                }
+                Ok(_) => {}
+                Err(e) => return r.die(format!("could not look up {uref}: {e}")),
             }
             if cfg.dry_run {
                 r.out.push(format!(
@@ -246,7 +256,7 @@ fn ingest_repo(mut r: Report, http: &dyn Http, bd: &dyn Bd, mail: &dyn Mail, sta
                 note_unverifiable(&mut r, mail, cfg, &mut unverifiable, &issue.login);
             }
             let body_text = untrusted_body(&uref, &issue.login, &issue.body);
-            if bd.create(&issue.title, &uref, &cfg.untrusted_label, "4", body_text.as_bytes()) {
+            if bd.create(&issue.title, &uref, &cfg.untrusted_label, "4", body_text.as_bytes()).is_some() {
                 untrusted_created += 1;
                 new_untrusted.push((issue.number, issue.login.clone(), issue.title.clone(), issue.body.clone()));
             } else {
@@ -270,25 +280,20 @@ fn ingest_repo(mut r: Report, http: &dyn Http, bd: &dyn Bd, mail: &dyn Mail, sta
     }
 
     if !cfg.dry_run {
-        // The post-check: re-read the store and refuse to finish quietly if a work bead
-        // was filed that carries no scope label (dwarf.sh's runes can never claim it).
-        if let Some(after) = bd.list_all_json() {
-            let after_ingested = ingested(&after);
-            let left: Vec<&KnownRef> = after_ingested
-                .iter()
-                .filter(|k| k.ext_ref.starts_with("github:") && !k.labels.iter().any(|l| l == &cfg.scope))
-                .collect();
-            if !left.is_empty() {
-                r.err.push(format!(
-                    "gh-intake: {} work bead(s) carry no {} label and no rune can claim them:",
-                    left.len(),
-                    cfg.scope
-                ));
-                for k in &left {
-                    r.err.push(format!("{} {}", k.id, k.ext_ref));
-                }
-                return r.die("ingest filed work that nothing will pick up");
+        let mut left = Vec::new();
+        for (id, ext_ref) in &filed {
+            match bd.show_json(id) {
+                Some(v) if shown_labels(&v).iter().any(|l| l == &cfg.scope) => {}
+                Some(_) => left.push((id.clone(), ext_ref.clone())),
+                None => return r.die(format!("could not read back {id} ({ext_ref}) to check its {} label", cfg.scope)),
             }
+        }
+        if !left.is_empty() {
+            r.err.push(format!("gh-intake: {} work bead(s) carry no {} label and no rune can claim them:", left.len(), cfg.scope));
+            for (id, ext_ref) in &left {
+                r.err.push(format!("{id} {ext_ref}"));
+            }
+            return r.die("ingest filed work that nothing will pick up");
         }
     }
 
@@ -296,10 +301,31 @@ fn ingest_repo(mut r: Report, http: &dyn Http, bd: &dyn Bd, mail: &dyn Mail, sta
     r
 }
 
-pub fn has_refs(all: &[KnownRef], slug: &str) -> bool {
-    let work = format!("github:{slug}#");
-    let untrusted = format!("github-untrusted:{slug}#");
-    all.iter().any(|k| k.ext_ref.starts_with(&work) || k.ext_ref.starts_with(&untrusted))
+/// The store's answer per external reference, asked once per run.
+struct Lookups<'a> {
+    bd: &'a dyn Bd,
+    found: HashMap<String, Vec<KnownRef>>,
+}
+
+impl Lookups<'_> {
+    fn get(&mut self, external_ref: &str) -> Result<&[KnownRef], String> {
+        if !self.found.contains_key(external_ref) {
+            let rows = self.bd.by_ref(external_ref)?;
+            self.found.insert(external_ref.to_string(), rows);
+        }
+        Ok(&self.found[external_ref])
+    }
+}
+
+fn first_read(mut r: Report, seen: &dyn Seen, cfg: &Config, issues: &[GhIssue]) -> Report {
+    let numbers: Vec<u64> = issues.iter().map(|i| i.number).collect();
+    if cfg.dry_run {
+        r.log(format!("would record {} existing open issue(s) of {} as seen and file none", numbers.len(), cfg.repo));
+    } else {
+        seen.save(&cfg.repo, &numbers);
+        r.log(format!("first read of {}: recorded {} existing open issue(s) as seen, filed none", cfg.repo, numbers.len()));
+    }
+    r
 }
 
 pub fn rate_limited(status: u16, body: &[u8]) -> bool {

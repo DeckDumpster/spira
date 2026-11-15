@@ -158,6 +158,7 @@ pub struct List {
 pub enum Read {
     List(Box<List>),
     Show(Vec<String>),
+    Ref(String),
     Comments(String),
     Gates { all: bool },
     Memories,
@@ -174,6 +175,7 @@ impl Read {
     pub fn tables(&self) -> &'static [&'static str] {
         match self {
             Read::List(_) | Read::Show(_) | Read::Search { .. } => &["issues", "labels", "dependencies", "comments"],
+            Read::Ref(_) => &["issues", "labels"],
             Read::Comments(_) => &["comments"],
             Read::Gates { .. } | Read::Memories => &["issues", "labels", "dependencies"],
             Read::State { .. } | Read::Labels(_) => &["labels"],
@@ -339,6 +341,10 @@ pub fn parse(args: &[String]) -> Result<Read, String> {
                 None => Ok(Read::Show(ids)),
             }
         }
+        ["ref", ..] => match words(&args[1..]).as_slice() {
+            [x] if !x.starts_with('-') => Ok(Read::Ref(x.clone())),
+            _ => Err("ref takes one external reference".into()),
+        },
         ["comments", ..] => match words(&args[1..]).as_slice() {
             [id] if !id.starts_with('-') => Ok(Read::Comments(id.clone())),
             _ => Err("comments takes one bead id".into()),
@@ -549,6 +555,17 @@ pub fn answer(sql: &dyn Sql, db: &str, args: &[String]) -> Res<String> {
                 return Err(Failure::Request(format!("no issue found matching {}", ids.iter().map(|i| format!("{i:?}")).collect::<Vec<_>>().join(", "))));
             }
             Ok(array(fill(sql, db, &issues, false)?))
+        }
+        Read::Ref(x) => {
+            let issues = sql.rows(&format!("SELECT id, status, external_ref FROM {db}.issues WHERE external_ref = '{}' ORDER BY id", escape(&x)))?;
+            let mut out = Vec::new();
+            for i in &issues {
+                let Some(id) = present(i, "id") else { continue };
+                let labels = sql.rows(&format!("SELECT issue_id, label FROM {db}.labels WHERE issue_id IN ('{}') ORDER BY label", escape(&id)))?;
+                let labels: Vec<String> = labels.iter().filter_map(|r| present(r, "label")).collect();
+                out.push(json!({ "id": id, "labels": labels, "status": cell(i, "status"), "external_ref": cell(i, "external_ref") }));
+            }
+            Ok(Value::Array(out).to_string())
         }
         Read::Comments(id) => {
             let rows = sql.rows(&format!("SELECT id, issue_id, author, text, DATE_FORMAT(created_at, '{RFC3339}') AS created_at FROM {db}.comments WHERE issue_id = '{}' ORDER BY created_at, id", escape(&id)))?;
