@@ -173,7 +173,11 @@ fn rate_of(r: &ureq::Response) -> Option<api_budget::Rate> {
 /// never counted, so a test reads it from the return value.
 fn conditional_get(api: &str, url: &str, path: &str, caller: &str, now: u64, kept: Option<(String, Value)>, send: impl FnOnce(Option<&str>) -> Result<Reply, String>) -> Result<Got, (String, &'static str)> {
     if let Some(reset) = api_budget::exhausted_until(api, now) {
-        return Err((format!("the GitHub API budget is spent until {} (epoch {reset}); {caller} made no request", api_budget::clock_of(reset)), api_budget::REFUSED));
+        let why = format!("the GitHub API budget is spent until {} (epoch {reset}); {caller} made no request", api_budget::clock_of(reset));
+        if api_budget::first_report_of(api, reset) {
+            eprintln!("spira-runtime: {why}");
+        }
+        return Err((why, api_budget::REFUSED));
     }
     let failed = |why: String| (why, api_budget::FAILED);
     let reply = send(kept.as_ref().map(|(tag, _)| tag.as_str())).map_err(failed)?;
@@ -244,11 +248,6 @@ impl Forge {
             }
             Err((why, outcome)) => {
                 api_budget::count(caller, outcome);
-                if let Some(reset) = api_budget::exhausted_until(&self.api, now).filter(|_| outcome == api_budget::REFUSED) {
-                    if api_budget::first_report_of(&self.api, reset) {
-                        eprintln!("spira-runtime: {why}");
-                    }
-                }
                 Err(why)
             }
         }

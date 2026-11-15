@@ -89,7 +89,8 @@ pub fn flush(endpoint: Option<&str>) {
 }
 
 fn flush_to(sink: &MetricsSink) {
-    with(|l| flush_ledger(l, sink));
+    let mut taken = with(|l| Ledger { calls: std::mem::take(&mut l.calls), rate: l.rate.clone(), ..Ledger::default() });
+    flush_ledger(&mut taken, sink);
 }
 
 fn flush_ledger(l: &mut Ledger, sink: &MetricsSink) {
