@@ -430,9 +430,11 @@ impl LiveOps<'_> {
         }
         match self.batch {
             Some(batch) => {
-                if let Err(e) =
-                    io::round_eject(self.env, self.repo, batch, &member.id, suites, fails, owner, returned)
-                {
+                let ejected = match returned {
+                    Some(lead) => io::round_eject_returned(self.env, self.repo, batch, &member.id, suites, fails, lead),
+                    None => io::round_eject(self.env, self.repo, batch, &member.id, suites, fails, owner),
+                };
+                if let Err(e) = ejected {
                     let refusal = format!("eject of {} from {batch} refused: {e}", member.id);
                     println!("batcher {}: {refusal}", self.repo.name);
                     return Err(refusal);
@@ -1220,7 +1222,7 @@ fn finish_local_round(
                     } else {
                         vec![(ci[0].clone(), first)]
                     };
-                    match io::round_eject(env_, repo, batch, id, &ci, &fails, true, None) {
+                    match io::round_eject(env_, repo, batch, id, &ci, &fails, true) {
                         Ok(()) => {
                             ejected += 1;
                             println!("batcher {}: ejected {id} from round {batch} — the repository's ci is red on its files ({output})", repo.name)

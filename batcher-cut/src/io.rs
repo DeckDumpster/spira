@@ -2949,7 +2949,6 @@ pub fn ci_red_suites(wt: &Path) -> Vec<String> {
 
 /// `queue round eject`: `owner` is a member whose own tip reddened `suites`; a collateral
 /// member leaves uncharged. The batcher rebuilds the round tree itself, so the verb does not.
-#[allow(clippy::too_many_arguments)]
 pub fn round_eject(
     env: &Env,
     repo: &Repo,
@@ -2958,15 +2957,28 @@ pub fn round_eject(
     suites: &[String],
     first_fails: &[(String, String)],
     owner: bool,
-    returned: Option<&str>,
 ) -> Result<(), String> {
-    let reason = eject_reason(id, suites, first_fails, owner, returned);
+    let reason = eject_reason(id, suites, first_fails, owner, None);
     let csv = if owner {
         suites.join(",")
     } else {
         String::new()
     };
     round_eject_with(env, repo, batch, id, &reason, &csv)
+}
+
+/// `round_eject` for the member a mender's return named: `lead` opens the reason and the member owns the red.
+pub fn round_eject_returned(
+    env: &Env,
+    repo: &Repo,
+    batch: &str,
+    id: &str,
+    suites: &[String],
+    first_fails: &[(String, String)],
+    lead: &str,
+) -> Result<(), String> {
+    let reason = eject_reason(id, suites, first_fails, true, Some(lead));
+    round_eject_with(env, repo, batch, id, &reason, &suites.join(","))
 }
 
 /// A mender's return leads with its diagnosis; any other ejection says which red it turned.
