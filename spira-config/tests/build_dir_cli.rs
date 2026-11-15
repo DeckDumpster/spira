@@ -97,6 +97,21 @@ fn sleeper() -> Child {
         .unwrap()
 }
 
+fn wait_released(b: &Box_) {
+    // The holder notices the exit, records the tree and empties the lock file.
+    let lock = b.base.join("dir.1.lock");
+    let deadline = Instant::now() + Duration::from_secs(20); // clock-safe: a cap on waiting for the holder to empty the lock file
+    while std::fs::metadata(&lock).map_or(0, |m| m.len()) > 0 && Instant::now() < deadline {
+        // clock-safe: cap on the wait for the marker file
+        std::thread::sleep(Duration::from_millis(100)); // clock-safe: poll of the marker file
+    }
+    assert_eq!(
+        std::fs::metadata(&lock).map_or(0, |m| m.len()),
+        0,
+        "the holder released"
+    );
+}
+
 #[test]
 fn two_concurrent_hand_leases_get_different_owned_directories() {
     let b = setup("bdcli-two");
@@ -117,16 +132,15 @@ fn a_lease_after_the_holder_exits_reuses_the_warm_directory_with_a_selective_cle
     let mut p1 = sleeper();
     let (d1, err) = b.lease("hand-1", &p1);
     assert!(err.contains("— new"), "{err}");
+    assert_eq!(
+        std::fs::read_to_string(&b.log).unwrap().trim(),
+        "clean --workspace -q",
+        "a target with no record cleans the whole workspace: {err}"
+    );
     std::fs::create_dir_all(d1.join("debug/deps")).unwrap();
     std::fs::write(d1.join("debug/deps/libdep.rlib"), "dep").unwrap();
     let _ = (p1.kill(), p1.wait());
-    // The holder notices the exit, records the tree and releases.
-    let lock = b.base.join("dir.1.lock");
-    let deadline = Instant::now() + Duration::from_secs(20); // clock-safe: a cap on waiting for the holder to empty the lock file
-    while std::fs::metadata(&lock).map_or(0, |m| m.len()) > 0 && Instant::now() < deadline {
-        // clock-safe: cap on the wait for the marker file
-        std::thread::sleep(Duration::from_millis(100)); // clock-safe: poll of the marker file
-    }
+    wait_released(&b);
     std::fs::write(b.tree.join("b/src/lib.rs"), "pub fn f() { let _ = 1; }\n").unwrap();
     let _ = std::fs::remove_file(&b.log);
     let mut p2 = sleeper();
@@ -143,4 +157,33 @@ fn a_lease_after_the_holder_exits_reuses_the_warm_directory_with_a_selective_cle
         "only the changed crate is cleaned: {err}"
     );
     let _ = (p2.kill(), p2.wait());
+}
+
+#[test]
+fn an_unchanged_tree_cleans_nothing_and_a_release_records_a_change_without_cleaning() {
+    let b = setup("bdcli-record");
+    let mut p1 = sleeper();
+    let (d1, _) = b.lease("hand-1", &p1);
+    let _ = (p1.kill(), p1.wait());
+    wait_released(&b);
+
+    let _ = std::fs::remove_file(&b.log);
+    let mut p2 = sleeper();
+    let (d2, err) = b.lease("hand-2", &p2);
+    assert_eq!(d2, d1, "the released directory is reused");
+    assert!(!b.log.exists(), "the same tree again cleans nothing: {err}");
+
+    std::fs::write(b.tree.join("Cargo.lock"), "# lock changed\n").unwrap();
+    let _ = (p2.kill(), p2.wait());
+    wait_released(&b);
+    assert!(!b.log.exists(), "a release records the change and never cleans");
+
+    let mut p3 = sleeper();
+    let (d3, err) = b.lease("hand-3", &p3);
+    assert_eq!(d3, d1, "the released directory is reused");
+    assert!(
+        !b.log.exists(),
+        "the change the release recorded cleans nothing on the next lease: {err}"
+    );
+    let _ = (p3.kill(), p3.wait());
 }
