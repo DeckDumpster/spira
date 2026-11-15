@@ -13,7 +13,7 @@ use super::land::land_local_deferring;
 use super::round_files;
 use super::stage;
 use super::{
-    actor, batch_abandoned, converge_orphans, czar_ok, idents, landing_log, lc_abandon, lc_cas,
+    actor, batch_abandoned, converge_orphans, czar_ok, idents, lc_abandon, lc_cas,
     lc_eject_member, lock_held_by_caller, read_text, repo_path, require_lc, resolve, round_event,
     statute_gate, take_lock, Ctx, World, FAIL, OK, USAGE,
 };
@@ -1676,7 +1676,7 @@ fn open(
     worktree: Option<&Path>,
 ) -> i32 {
     let steps = Steps::new(w);
-    let rc = open_timed(w, repo, members_arg, name, worktree, &steps);
+    let rc = open_timed(w, by, repo, members_arg, name, worktree, &steps);
     if rc != OK && !steps.done.borrow().is_empty() {
         w.err(format!("steps={}", steps.field()));
     }
@@ -1685,6 +1685,7 @@ fn open(
 
 fn open_timed(
     w: &World,
+    by: &str,
     repo: Option<&str>,
     members_arg: &Text,
     name: Option<&str>,
