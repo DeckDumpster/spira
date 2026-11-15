@@ -380,16 +380,8 @@ impl LiveOps<'_> {
         if endpass::Menders::rows(&mut lc)?.is_empty() {
             return Ok(None);
         }
-        let mut failures = endpass::wait(&mut lc, deadline)?;
+        let failures = endpass::with_owners(endpass::wait(&mut lc, deadline)?, &d.owners);
         let ids: Vec<String> = members.iter().map(|m| m.id.clone()).collect();
-        for f in &mut failures {
-            f.members = d
-                .owners
-                .iter()
-                .filter(|(_, s)| s.contains(&f.suite))
-                .map(|(id, _)| id.clone())
-                .collect();
-        }
         let mut mended = BTreeMap::new();
         let owners: Vec<String> = failures
             .iter()

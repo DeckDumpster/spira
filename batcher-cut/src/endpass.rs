@@ -5,6 +5,7 @@
 
 use batcher::mender::{Failure, Outcome};
 use serde_json::Value;
+use std::collections::BTreeMap;
 
 pub const POLL_SECS: i64 = 2;
 
@@ -14,6 +15,8 @@ pub struct Row {
     pub state: String,
     pub deadline: Option<i64>,
     pub diagnosis: String,
+    /// The round members a return sends back; none for a deadline expiry.
+    pub returned: Vec<String>,
     /// The mend waits on an open ask; no deadline binds the wait while this holds.
     pub ask_open: bool,
 }
@@ -42,6 +45,11 @@ pub fn parse_rows(json: &str, batch_pass: u32) -> Result<Vec<Row>, String> {
                     .and_then(Value::as_str)
                     .unwrap_or("")
                     .to_string(),
+                returned: r
+                    .get("returned")
+                    .and_then(Value::as_array)
+                    .map(|a| a.iter().filter_map(|m| m.as_str().map(String::from)).collect())
+                    .unwrap_or_default(),
                 ask_open: r.get("ask_open").and_then(Value::as_bool).unwrap_or(false),
             })
         })
@@ -109,7 +117,7 @@ pub fn wait<M: Menders>(m: &mut M, deadline_s: i64) -> Result<Vec<Failure>, Stri
                 suite: r.suite,
                 outcome: o,
                 diagnosis: r.diagnosis,
-                members: vec![],
+                members: r.returned,
             },
             None => Failure {
                 suite: r.suite,
@@ -119,6 +127,19 @@ pub fn wait<M: Menders>(m: &mut M, deadline_s: i64) -> Result<Vec<Failure>, Stri
             },
         })
         .collect())
+}
+
+/// Fills a failure's members from the attribution's owners only when its row named none.
+pub fn with_owners(failures: Vec<Failure>, owners: &BTreeMap<String, Vec<String>>) -> Vec<Failure> {
+    failures
+        .into_iter()
+        .map(|mut f| {
+            if f.members.is_empty() {
+                f.members = owners.iter().filter(|(_, s)| s.contains(&f.suite)).map(|(id, _)| id.clone()).collect();
+            }
+            f
+        })
+        .collect()
 }
 
 pub struct LcMenders<'a> {
@@ -175,6 +196,7 @@ mod tests {
             state: state.into(),
             deadline,
             diagnosis: "d".into(),
+            returned: vec![],
             ask_open: false,
         }
     }
@@ -315,9 +337,25 @@ mod tests {
                 state: "MENDING".into(),
                 deadline: Some(9),
                 diagnosis: "x".into(),
+                returned: vec![],
                 ask_open: false
             }]
         );
         assert!(parse_rows("nope", 1).is_err());
+    }
+
+    #[test]
+    fn a_returned_row_names_its_members_and_the_owners_fill_only_a_row_that_named_none() {
+        let json = r#"[{"pass":2,"suite":"s","state":"RETURNED","deadline":9,"diagnosis":"x","returned":["sp-b"]}]"#;
+        let rows = parse_rows(json, 2).unwrap();
+        let mut f = fake(vec![(0, rows)]);
+        let out = wait(&mut f, 300).unwrap();
+        assert_eq!(out[0].members, ["sp-b"]);
+        let owners = BTreeMap::from([("sp-a".to_string(), vec!["s".to_string()])]);
+        assert_eq!(with_owners(out, &owners)[0].members, ["sp-b"]);
+        let mut f = fake(vec![(0, vec![row("s", "RETURNED", None)])]);
+        let unnamed = wait(&mut f, 300).unwrap();
+        assert!(unnamed[0].members.is_empty());
+        assert_eq!(with_owners(unnamed, &owners)[0].members, ["sp-a"]);
     }
 }
