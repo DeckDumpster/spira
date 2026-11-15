@@ -14,7 +14,7 @@ pub const LIVE_STATES: [&str; 7] = ["OPEN", "READY", "WORKING", "SUBMITTED", "CE
 
 /// Whether a verdict leaves the record claimable by someone. Scope and carriage are the
 /// caller's and the round's, not the record's, so they do not make it unclaimable.
-pub(crate) fn claimable(kind: Kind) -> bool {
+fn claimable(kind: Kind) -> bool {
     matches!(kind, Kind::Claimable | Kind::OutOfScope)
 }
 
