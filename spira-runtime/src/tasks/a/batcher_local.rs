@@ -2065,6 +2065,7 @@ impl Machine<'_> {
         if a.merged.is_empty() || self.rc.held_keys.contains(&key) {
             hold_key(&mut self.rc, &leg.round_key);
             self.rc.skip_why = Some(held_key_why(&leg.round_key));
+            self.rc.admissible.clear();
             self.go(Trigger::AssembledEmpty);
             self.rc.round_key = None;
             return;

@@ -115,6 +115,7 @@ fn with_one_round_open_allowed_a_running_round_cuts_nothing_more() {
     let mut seen = carry.clone();
     let rc = seen.repos.get_mut("spira").unwrap();
     (rc.head, rc.leg_head) = ("h1".into(), "h1".into());
+    rc.admissible.clear();
     assert_eq!(next, seen, "only the head the round was first seen at is learned");
     let (_, acts) = decide_with(&Policy { max_members: 2, ..Policy::default() }, &carry, &snap(vec![round("r1", &["sp-a", "sp-b"], "h1", 60)], NOW + 60_000));
     assert!(acts.is_empty(), "the default is one round: {acts:?}");
