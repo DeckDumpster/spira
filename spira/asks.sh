@@ -53,8 +53,11 @@ except Exception: sys.exit(0)
 last = None
 for r in rows:
     if r.get("event") != "Hold": continue
-    try: h = (json.loads(r.get("evidence") or "{}") or {}).get("Hold") or {}
-    except Exception: h = {}
+    ev = r.get("evidence") or {}
+    if isinstance(ev, str):
+        try: ev = json.loads(ev)
+        except Exception: ev = {}
+    h = (ev.get("Hold") if isinstance(ev, dict) else None) or {}
     last = (r.get("seq", "?"), " ".join(str(h.get("detail") or "").split())[:400])
 if last: print("%s\t%s" % last)' 2>/dev/null)"
     seq="${row%%$'\t'*}"; q="${row#*$'\t'}"
