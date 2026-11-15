@@ -30,6 +30,8 @@ pub const EVENTS_PREFIX: &str = "events/";
 pub const HISTORY_PREFIX: &str = "history/";
 pub const REQUESTS_PREFIX: &str = "requests/";
 pub const LOCKS_PREFIX: &str = "locks/";
+/// A marker `orphans/<owner>` says the owner is gone and keys may still name it.
+pub const ORPHANS_PREFIX: &str = "orphans/";
 /// Writes under this prefix are regenerable telemetry: revisioned and watched, never audited.
 pub const TELEMETRY_PREFIX: &str = "telemetry/";
 pub const INTENTS_PREFIX: &str = "intents/";
