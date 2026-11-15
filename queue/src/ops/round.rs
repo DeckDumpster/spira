@@ -3905,12 +3905,13 @@ fn certify_pass(
     finish_green(w, label, c, path, batch, &head, &who, &run_id, (ran, wall))
 }
 
+pub const EJECT_REFUSED: &str = "eject-refused=";
+
 /// A red image preflight is the recipe change's: every member whose diff touches a round-recipe
 /// input leaves the round, with the fence's output as the evidence, and the rest certify again.
 /// With no such member the red is the harness's and nobody leaves. Prints `ejected=<csv>`, so the
-/// round's driver knows the red is attributed.
-pub const EJECT_REFUSED: &str = "eject-refused=";
-
+/// round's driver knows the red is attributed, and `eject-refused=<id>: …` for an eject the
+/// verb refused, after which no further member is tried.
 fn eject_recipe_changers(w: &World, label: &str, c: &Ctx, path: &Path, batch: &str, kv: &Kv) {
     let base = kv.get("base").unwrap_or("");
     let changers: Vec<(String, Vec<String>)> = kv

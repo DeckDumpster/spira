@@ -780,7 +780,7 @@ pub struct Leg {
 fn fence_red_in(results: &std::path::Path) -> bool {
     std::fs::read_dir(results).into_iter().flatten().flatten().any(|e| {
         let name = e.file_name().to_string_lossy().into_owned();
-        name.strip_suffix(".result").is_some_and(|stem| stem.starts_with("fence-") && batcher_cut::io::result_status(results, stem) == Some(false))
+        name.strip_suffix(".result").is_some_and(|stem| (stem.starts_with("fence-") || stem == "spira-lint") && batcher_cut::io::result_status(results, stem) == Some(false))
     })
 }
 

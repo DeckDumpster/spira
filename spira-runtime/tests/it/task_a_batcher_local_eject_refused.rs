@@ -86,3 +86,15 @@ fn a_certify_killed_inside_a_red_fence_attributes_from_that_fence_not_a_fresh_pa
     .unwrap();
     assert_eq!(leg.after_pass, results.display().to_string());
 }
+
+#[test]
+fn a_certify_that_printed_a_refused_eject_ends_the_round_red_and_runs_nothing_else() {
+    let carry = certifying("/w");
+    let ran = UnitRan { handle: UnitHandle::of(NAME, UNIT).unwrap(), exit: Exit::Code(1), duration_ms: 1 };
+    let said = b"eject-refused=sp-a: eject for the red fence-round-image-preflight refused (rc=1)\n";
+    let (next, acts) = on_ran_with(&carry, &ran, &RanOutput::captured(said, b""), NOW).unwrap();
+    let abandon: Leg = serde_json::from_str(&acts.iter().find(|a| a.effect == ABANDON).expect("abandon").input).unwrap();
+    assert!(abandon.why.contains("sp-a: eject for the red fence-round-image-preflight refused"), "{}", abandon.why);
+    assert!(!names(&acts).contains(&CERTIFY) && !names(&acts).contains(&CORPUS), "{acts:?}");
+    assert!(next.repos["spira"].paused_on.is_some(), "a Red pause");
+}
