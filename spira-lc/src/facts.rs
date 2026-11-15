@@ -24,7 +24,7 @@ fn flag(args: &[String], name: &str) -> Option<String> {
     args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned()
 }
 
-fn bounded(s: &str) -> String {
+pub(crate) fn bounded(s: &str) -> String {
     s.chars().filter(|c| !c.is_control()).take(CAUSE_MAX).collect()
 }
 

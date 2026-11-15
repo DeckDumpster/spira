@@ -760,7 +760,7 @@ struct RedAt {
 
 impl RedAt {
     fn bounded(s: &str) -> Option<String> {
-        let s: String = s.chars().filter(|c| !c.is_control()).take(crate::facts::CAUSE_MAX).collect();
+        let s = crate::facts::bounded(s);
         (!s.trim().is_empty()).then_some(s)
     }
 }
