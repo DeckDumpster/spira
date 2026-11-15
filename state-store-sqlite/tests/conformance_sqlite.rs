@@ -1093,3 +1093,215 @@ fn an_open_whose_trim_of_rows_above_the_head_cannot_complete_fails() {
     drop(conn);
     assert!(SqliteBackend::open(&path, day_opts(&wall)).is_err());
 }
+
+mod relayout {
+    use super::*;
+    use rusqlite::{params, Connection};
+    use state_store::{events_key, request_key};
+    use state_store_sqlite::durability::ship::sha256_file;
+    use state_store_sqlite::relayout::{relayout, relayout_probed};
+
+    const HOUR: u64 = 3_600_000;
+    const HEAD: u64 = 5_000;
+    const WALL: u64 = D0 + 25 * DAY_MS + 12 * HOUR;
+    const EVENT_HOURS: u64 = 20 * 24;
+
+    /// The layout before the history ring: the base schema and migrations 1 and 2, frozen.
+    const OLD_LAYOUT: &[&str] = &[
+        "CREATE TABLE meta (name TEXT PRIMARY KEY, value INTEGER NOT NULL)",
+        "CREATE TABLE versions (key BLOB NOT NULL, main INTEGER NOT NULL, sub INTEGER NOT NULL, value BLOB,
+            create_main INTEGER, create_sub INTEGER, version INTEGER NOT NULL, prev_main INTEGER, prev_sub INTEGER,
+            PRIMARY KEY (key, main))",
+        "CREATE INDEX versions_by_rev ON versions (main, sub)",
+        "CREATE TABLE jumps (from_main INTEGER PRIMARY KEY, to_main INTEGER NOT NULL)",
+        "INSERT INTO meta (name, value) VALUES ('head', 0), ('compacted', 0)",
+        "CREATE TABLE latest (key BLOB PRIMARY KEY, main INTEGER NOT NULL, sub INTEGER NOT NULL, value BLOB NOT NULL,
+            create_main INTEGER, create_sub INTEGER, version INTEGER NOT NULL,
+            state TEXT GENERATED ALWAYS AS (CASE WHEN json_valid(CAST(value AS TEXT))
+                AND json_type(CAST(value AS TEXT), '$.data.state') = 'text'
+                THEN json_extract(CAST(value AS TEXT), '$.data.state') END) VIRTUAL) WITHOUT ROWID",
+        "CREATE INDEX latest_by_state ON latest (state, key) WHERE state IS NOT NULL",
+    ];
+
+    type Row = (Vec<u8>, i64, i64, Vec<u8>, i64, i64, i64);
+
+    fn obj(data: serde_json::Value) -> Vec<u8> {
+        serde_json::to_vec(&json!({ "metadata": {}, "data": data })).unwrap()
+    }
+
+    fn event_main(hour: u64) -> u64 {
+        1_000 + hour
+    }
+
+    fn event_at(hour: u64) -> u64 {
+        WALL - (EVENT_HOURS - 1 - hour) * HOUR
+    }
+
+    /// 200 live keys, an event an hour for twenty days (hour `EVENT_HOURS - 1` is at the wall),
+    /// one unstamped event, and a receipt an hour for forty-eight, each naming its own event.
+    fn fixture(path: &Path) -> Vec<Row> {
+        let conn = Connection::open(path).unwrap();
+        for sql in OLD_LAYOUT {
+            conn.prepare(sql).unwrap().execute([]).unwrap();
+        }
+        let mut rows: Vec<Row> = Vec::new();
+        for i in 0..200i64 {
+            let state = ["Queued", "Batched"][(i % 2) as usize];
+            rows.push((format!("deliveries/sp-{i:04}").into_bytes(), 10 + i, i % 3, obj(json!({ "state": state, "n": i })), 5 + i / 2, i % 5, 1 + i % 4));
+        }
+        rows.push((events_key(900).into_bytes(), 900, 0, obj(json!({ "refused": false })), 900, 0, 1));
+        for h in 0..EVENT_HOURS {
+            let m = event_main(h) as i64;
+            rows.push((events_key(m as u64).into_bytes(), m, 0, obj(json!({ "at": event_at(h) })), m, 0, 1));
+        }
+        for h in 0..48u64 {
+            let m = event_main(EVENT_HOURS - 1 - h) as i64;
+            rows.push((request_key(&format!("r{h:02}")).into_bytes(), m, 0, obj(json!({ "main": m, "succeeded": true })), m, 0, 1));
+        }
+        for (k, main, sub, v, cm, cs, ver) in &rows {
+            conn.prepare("INSERT INTO latest (key, main, sub, value, create_main, create_sub, version) VALUES (?1,?2,?3,?4,?5,?6,?7)")
+                .unwrap()
+                .execute(params![k, main, sub, v, cm, cs, ver])
+                .unwrap();
+        }
+        conn.prepare("UPDATE meta SET value = ?1 WHERE name = 'head'").unwrap().execute([HEAD as i64]).unwrap();
+        conn.prepare("INSERT INTO jumps VALUES (3000, 4000)").unwrap().execute([]).unwrap();
+        conn.pragma_update(None, "user_version", 2).unwrap();
+        conn.pragma_update(None, "wal_checkpoint", "TRUNCATE").ok();
+        drop(conn);
+        rows
+    }
+
+    fn is_audit(k: &[u8]) -> bool {
+        k.starts_with(b"events/") || k.starts_with(b"requests/")
+    }
+
+    fn files_beside(dir: &Path) -> Vec<String> {
+        let mut v: Vec<String> = std::fs::read_dir(dir).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
+        v.sort();
+        v
+    }
+
+    fn day_rows(dir: &Path, family: &str, date: &str) -> Vec<String> {
+        let file = dir.join(format!("new.{family}-{date}.db"));
+        let conn = Connection::open_with_flags(file, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+        let mut s = conn.prepare("SELECT CAST(key AS TEXT) FROM rows ORDER BY key").unwrap();
+        s.query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect()
+    }
+
+    fn date(ms: u64) -> String {
+        state_store_sqlite::dated::date_of(state_store_sqlite::dated::day_of(ms))
+    }
+
+    #[test]
+    fn relayout_builds_the_live_keys_exactly_and_files_the_young_audit_rows_by_their_own_day() {
+        let dir = TempDir::new("relayout");
+        let (old, new) = (dir.path().join("old.db"), dir.path().join("new.db"));
+        let rows = fixture(&old);
+        let sum = sha256_file(&old).unwrap();
+
+        let report = relayout(&old, &new, &VirtualClock::new(WALL)).unwrap();
+        assert_eq!(sha256_file(&old).unwrap(), sum, "the old file is never written");
+        assert_eq!((report.live.read, report.live.copied), (200, 200));
+
+        let b = SqliteBackend::open(&new, Options { jump_on_open: false, wall: Arc::new(VirtualClock::new(WALL)), ..Options::default() }).unwrap();
+        assert_eq!(b.head().unwrap(), HEAD);
+        assert_eq!(b.jumps(0, HEAD).unwrap(), vec![(3000, 4000)]);
+        let live: Vec<_> = b.range("", None, usize::MAX, HEAD).unwrap().into_iter().filter(|(k, _)| !is_audit(k.as_bytes())).collect();
+        let want: Vec<&Row> = rows.iter().filter(|r| !is_audit(&r.0)).collect();
+        assert_eq!(live.len(), 200);
+        for ((k, v), r) in live.iter().zip(&want) {
+            assert_eq!(k.as_bytes(), r.0.as_slice());
+            assert_eq!((v.mod_rev, v.create_rev, &v.value), (Rev::new(r.1 as u64, r.2 as u32), Rev::new(r.4 as u64, r.5 as u32), &r.3), "{k}");
+        }
+
+        let window = WALL - 14 * DAY_MS;
+        for h in 0..EVENT_HOURS {
+            let got = b.get(&events_key(event_main(h)), HEAD).unwrap();
+            assert_eq!(got.is_some(), event_at(h) >= window, "event of hour {h}");
+            if let Some(v) = got {
+                assert!(day_rows(dir.path(), "events", &date(event_at(h))).contains(&events_key(event_main(h))));
+                assert_eq!(v.value, obj(json!({ "at": event_at(h) })));
+            }
+        }
+        assert!(b.get(&events_key(900), HEAD).unwrap().is_none(), "an unstamped event is older than any stamped one");
+        for h in 0..48u64 {
+            let at = event_at(EVENT_HOURS - 1 - h);
+            let got = b.get(&request_key(&format!("r{h:02}")), HEAD).unwrap();
+            assert_eq!(got.is_some(), at > WALL - 24 * HOUR, "receipt {h} hours old");
+            if got.is_some() {
+                assert!(day_rows(dir.path(), "receipts", &date(at)).contains(&request_key(&format!("r{h:02}"))));
+            }
+        }
+        assert_eq!(report.events.copied, 14 * 24 + 1);
+        assert_eq!(report.receipts.copied, 24);
+        assert_eq!(report.events.read, EVENT_HOURS + 1);
+    }
+
+    #[test]
+    fn relayout_refuses_and_leaves_nothing_when_the_old_store_is_open_the_target_exists_or_the_wal_holds_frames() {
+        let dir = TempDir::new("relayout-refuse");
+        let (old, new) = (dir.path().join("old.db"), dir.path().join("new.db"));
+        fixture(&old);
+        let before = files_beside(dir.path());
+        let clock = VirtualClock::new(WALL);
+
+        let held = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(dir.path().join("old.db.lock")).unwrap();
+        held.try_lock().unwrap();
+        let e = relayout(&old, &new, &clock).unwrap_err().to_string();
+        assert!(e.contains("open") && e.contains("stop lc-serve"), "{e}");
+        drop(held);
+        std::fs::remove_file(dir.path().join("old.db.lock")).unwrap();
+        assert_eq!(files_beside(dir.path()), before);
+
+        std::fs::write(dir.path().join("old.db-wal"), b"frames").unwrap();
+        let e = relayout(&old, &new, &clock).unwrap_err().to_string();
+        assert!(e.contains("-wal") && e.contains("start and stop"), "{e}");
+        std::fs::remove_file(dir.path().join("old.db-wal")).unwrap();
+        assert!(!new.exists());
+
+        std::fs::write(dir.path().join("new.events-2024-10-04.db"), b"x").unwrap();
+        assert!(relayout(&old, &new, &clock).is_err(), "a day file of the target's stem is in the way");
+        std::fs::remove_file(dir.path().join("new.events-2024-10-04.db")).unwrap();
+        std::fs::write(&new, b"x").unwrap();
+        assert!(relayout(&old, &new, &clock).is_err(), "the target exists");
+        assert_eq!(std::fs::read(&new).unwrap(), b"x");
+        std::fs::remove_file(&new).unwrap();
+        assert!(files_beside(dir.path()).iter().all(|f| !f.starts_with("new")), "{:?}", files_beside(dir.path()));
+    }
+
+    #[test]
+    fn relayout_refuses_an_old_file_newer_than_this_binary() {
+        let dir = TempDir::new("relayout-newer");
+        let (old, new) = (dir.path().join("old.db"), dir.path().join("new.db"));
+        fixture(&old);
+        let conn = Connection::open(&old).unwrap();
+        conn.pragma_update(None, "user_version", 99).unwrap();
+        drop(conn);
+        let e = relayout(&old, &new, &VirtualClock::new(WALL)).unwrap_err().to_string();
+        assert!(e.contains("99"), "{e}");
+        assert!(!new.exists());
+    }
+
+    #[test]
+    fn certification_refuses_a_copy_that_differs_and_removes_every_new_file() {
+        let dir = TempDir::new("relayout-certify");
+        let (old, new) = (dir.path().join("old.db"), dir.path().join("new.db"));
+        fixture(&old);
+        let alter = |to: &Path| {
+            let conn = Connection::open(to).unwrap();
+            conn.prepare("UPDATE latest SET value = X'7b7d' WHERE key = CAST('deliveries/sp-0007' AS BLOB)").unwrap().execute([]).unwrap();
+        };
+        let e = relayout_probed(&old, &new, &VirtualClock::new(WALL), &alter).unwrap_err().to_string();
+        assert!(e.contains("deliveries/sp-0007"), "{e}");
+        assert!(files_beside(dir.path()).iter().all(|f| !f.starts_with("new")), "{:?}", files_beside(dir.path()));
+
+        let alter_event = |to: &Path| {
+            let file = to.with_file_name(format!("new.events-{}.db", date(WALL)));
+            let conn = Connection::open(file).unwrap();
+            conn.prepare("UPDATE rows SET value = X'7b7d' WHERE key = (SELECT max(key) FROM rows)").unwrap().execute([]).unwrap();
+        };
+        assert!(relayout_probed(&old, &new, &VirtualClock::new(WALL), &alter_event).is_err());
+        assert!(files_beside(dir.path()).iter().all(|f| !f.starts_with("new")));
+    }
+}
