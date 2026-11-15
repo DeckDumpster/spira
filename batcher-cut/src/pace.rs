@@ -107,9 +107,6 @@ pub struct Effects {
     pub pages: Vec<String>,
 }
 
-/// The cut's result and the repo's local verdict (`verdict`, `at`) as written during the pass.
-/// A cut that admitted nothing is `Quiet` whatever its wording: only a round that ran and did
-/// not land is red.
 pub const BASE_RED_WORD: &str = "base-red";
 
 /// The local verdict a base-red round writes: `base-red:<sha>:<why>`.
@@ -121,6 +118,9 @@ fn base_red_parts(word: &str) -> Option<(&str, &str)> {
     word.strip_prefix(BASE_RED_WORD)?.strip_prefix(':')?.split_once(':')
 }
 
+/// The cut's result and the repo's local verdict (`verdict`, `at`) as written during the pass.
+/// A cut that admitted nothing is `Quiet` whatever its wording: only a round that ran and did
+/// not land is red.
 pub fn classify(
     result: &Result<(), CutError>,
     verdict: Option<(&str, u64)>,
@@ -349,7 +349,13 @@ impl Files {
         fs::create_dir_all(&self.dir)
             .and_then(|_| fs::write(&p, text))
             .map_err(|e| format!("{}: {e}", p.display()))?;
-        let kind = if text.starts_with("hold:") { "hold" } else { "red" };
+        let kind = if text.starts_with("hold:") {
+            "hold"
+        } else if text.starts_with("base:") {
+            "base"
+        } else {
+            "red"
+        };
         let reason = one_line(reason);
         self.record_pause_event(
             format!("QUEUE ROUND-PAUSE {now} repo={} by={by} kind={kind} reason={reason}", self.repo),
@@ -956,12 +962,23 @@ mod tests {
         let f = Files::new(d, "a");
         assert_eq!(fs::read_to_string(f.pause_file()).unwrap(), "base:abc\n");
         assert!(inbox(d).contains("BASE RED a at abc — unit-tests red"), "{}", inbox(d));
+        assert!(landing_log(d).contains("by=batcher kind=base reason=base red at abc"));
         assert!(!run_at(d, "a", 1100, None, None, Ok(()), Some("abc")), "same head: held");
         assert!(run_at(d, "a", 1200, None, None, Ok(()), Some("def")), "moved head: lifts and cuts");
         assert!(!f.pause_file().exists());
         let log = landing_log(d);
         assert!(log.contains("by=batcher") && log.contains("reason=landing ref moved abc → def"), "{log}");
         assert_eq!(event(d, "kind").last(), Some(&Some("pause-lift".to_string())));
+    }
+
+    #[test]
+    fn a_stale_base_pause_pages_with_its_text_as_the_reason() {
+        let t = dir("base-stale");
+        let d = t.path();
+        let f = Files::new(d, "a");
+        f.set_pause("base:abc\n", PACE_OWNER, "base red at abc", 10).unwrap();
+        let since = f.pause_since().unwrap();
+        assert!(stale_page(d, "a", since + 4000, true).contains("PAUSE UNATTENDED a: base:abc, held"));
     }
 
     #[test]

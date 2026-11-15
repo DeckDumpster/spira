@@ -1695,7 +1695,7 @@ fn attribute_members<R: RoundRunner, O: RoundOps>(
             }
             if !base_red.is_empty() {
                 ops.incident("base", &base_red);
-                let paths: Vec<String> = base_red.clone();
+                let paths: Vec<String> = base_red.iter().map(|s| format!(":(glob)**/{s}")).collect();
                 return Ok(RoundEnd::BaseRed {
                     base: ops.base_sha(),
                     why: base_why(
