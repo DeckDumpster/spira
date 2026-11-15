@@ -688,8 +688,8 @@ mod tests {
 
     #[test]
     fn a_compaction_pass_is_logged_with_its_progress_and_whether_it_yielded() {
-        let mut tick = state_store::gc::Tick::default();
-        tick.compaction = Some(state_store::Compaction { from: 100, to: 400, target: 1_000, steps: 3, yielded: true });
+        let compaction = state_store::Compaction { from: 100, to: 400, target: 1_000, steps: 3, yielded: true };
+        let mut tick = state_store::gc::Tick { compaction: Some(compaction), ..Default::default() };
         let lines = super::gc_lines(&tick, 0);
         assert_eq!(lines.len(), 1, "{lines:?}");
         assert!(lines[0].ends_with("compact 100→400 of 1000, 3 steps, 600 revisions behind, yielded to a writer"), "{}", lines[0]);
