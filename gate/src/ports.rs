@@ -114,6 +114,10 @@ pub trait World {
     fn lc_failure(&self, _bead: &str, _tip: &str, _files: &[String], _output: &str) {}
     /// Keeps `files` as one send-back log entry and references it from each bead's facts.
     fn keep_logs(&self, _beads: &[&str], _files: &[(String, Vec<u8>)]) {}
+    /// The `eject-failure` digests recorded since `since` (unix seconds), as (bead, digest).
+    fn lc_prior_failures(&self, _since: i64) -> Result<Vec<(String, String)>, String> {
+        Err("no lifecycle store".into())
+    }
     /// `spira-lc fact <bead> --kind gate-start`: the gate holds its tree and begins running.
     fn lc_gate_start(&self, bead: &str);
     /// sha256 of gate.sh, exclude.sh, the resolved `skew` binary and this binary, concatenated.

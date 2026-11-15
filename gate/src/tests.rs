@@ -55,6 +55,8 @@ struct Fake {
     lc: RefCell<Vec<Vec<String>>>,
     failures: RefCell<Vec<Recorded>>,
     kept_logs: RefCell<Vec<KeptLogs>>,
+    prior_failures: RefCell<Result<Vec<(String, String)>, String>>,
+    prior_since: RefCell<Vec<i64>>,
     gate_starts: RefCell<Vec<String>>,
     lc_refusal: RefCell<String>,
     removed_trees: Cell<u32>,
@@ -248,6 +250,8 @@ impl Fake {
             lc: RefCell::new(Vec::new()),
             failures: RefCell::new(Vec::new()),
             kept_logs: RefCell::new(Vec::new()),
+            prior_failures: RefCell::new(Ok(Vec::new())),
+            prior_since: RefCell::new(Vec::new()),
             gate_starts: RefCell::new(Vec::new()),
             lc_refusal: RefCell::new(String::new()),
             removed_trees: Cell::new(0),
@@ -574,6 +578,10 @@ impl World for Fake {
         let mut v = vec![run.to_string()];
         v.extend(args.iter().map(|s| s.to_string()));
         self.yields.borrow_mut().push(v);
+    }
+    fn lc_prior_failures(&self, since: i64) -> Result<Vec<(String, String)>, String> {
+        self.prior_since.borrow_mut().push(since);
+        self.prior_failures.borrow().clone()
     }
     fn lc_failure(&self, bead: &str, tip: &str, files: &[String], output: &str) {
         self.failures.borrow_mut().push((bead.into(), tip.into(), files.to_vec(), output.into()));
@@ -2810,6 +2818,83 @@ fn a_red_unit_test_on_a_green_base_is_the_branchs() {
         "compose=unit phases=fences:7,build:7,test:7,base-fences:7 test_clock=7s\n"
     ));
     assert!(f.stderr().contains("phase 'test' failed (exit 101)"));
+}
+
+const FLIP_OUT: &str = "---- t::flip stdout ----\n...\ntest t::flip ... FAILED";
+
+fn flip_fake(prior: Result<Vec<(String, String)>, String>) -> Fake {
+    let f = unit_fake(&["gate/src/x.rs"]);
+    f.put_var("SPIRA_GATE_BEAD", "sp-a");
+    f.unit_runs.borrow_mut().insert((MERGE_SHA.into(), "test"), (101, FLIP_OUT.into()));
+    *f.prior_failures.borrow_mut() = prior;
+    f
+}
+
+fn other_red(bead: &str, tip: &str, file: &str) -> (String, String) {
+    (bead.into(), spira_config::ejection::digest(tip, &[file.into()], FLIP_OUT))
+}
+
+fn certified(f: &Fake, outcome: &str) -> usize {
+    f.lc.borrow().iter().filter(|c| c[2] == outcome).count()
+}
+
+#[test]
+fn a_unit_red_that_two_other_beads_showed_on_disjoint_diffs_certifies_not_judged() {
+    let f = flip_fake(Ok(vec![other_red("sp-x", "t1", "a.rs"), other_red("sp-y", "t2", "b.rs")]));
+    assert_eq!(f.run(), PASS);
+    assert_eq!((certified(&f, "pass"), certified(&f, "red")), (1, 0));
+    assert!(f.failures.borrow().is_empty());
+    assert!(f.stderr().contains("not judged — t::flip"), "{}", f.stderr());
+}
+
+#[test]
+fn the_prior_failures_are_read_from_seven_days_back() {
+    let f = flip_fake(Ok(vec![]));
+    f.run();
+    let since = f.prior_since.borrow().clone();
+    assert_eq!(since, vec![f.now() as i64 - spira_config::ejection::LOOKBACK_SECS]);
+}
+
+#[test]
+fn a_unit_red_no_other_bead_showed_stays_the_branchs() {
+    let f = flip_fake(Ok(vec![]));
+    assert_eq!(f.run(), FAIL);
+    assert!(f.verdict_line().contains("reason=branch-red"));
+    assert_eq!((certified(&f, "pass"), certified(&f, "red")), (0, 1));
+}
+
+#[test]
+fn a_unit_red_seen_on_one_other_bead_stays_the_branchs() {
+    let f = flip_fake(Ok(vec![other_red("sp-x", "t1", "a.rs")]));
+    assert_eq!(f.run(), FAIL);
+}
+
+#[test]
+fn a_shared_unit_red_beside_a_red_fence_stays_the_branchs() {
+    let f = flip_fake(Ok(vec![other_red("sp-x", "t1", "a.rs"), other_red("sp-y", "t2", "b.rs")]));
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, "literal-lint: RED".into()));
+    assert_eq!(f.run(), FAIL);
+    assert_eq!(certified(&f, "pass"), 0);
+    assert!(f.prior_since.borrow().is_empty(), "the shared-red read was reached past a red fence");
+}
+
+#[test]
+fn a_shared_unit_red_beside_a_red_suite_or_a_failed_build_stays_the_branchs() {
+    let prior = || Ok(vec![other_red("sp-x", "t1", "a.rs"), other_red("sp-y", "t2", "b.rs")]);
+    let f = flip_fake(prior());
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, "gate-step RED rc=1 :: fence-f\n  test-s1.sh RED rc=1".into()));
+    assert_eq!(f.run(), FAIL);
+    let f = flip_fake(prior());
+    f.unit_runs.borrow_mut().insert((MERGE_SHA.into(), "build"), (101, "error[E0308]: mismatched types".into()));
+    assert_eq!(f.run(), FAIL);
+    assert_eq!(certified(&f, "pass"), 0);
+}
+
+#[test]
+fn a_shared_unit_red_whose_prior_read_failed_stays_the_branchs() {
+    let f = flip_fake(Err("spira-lc: gone".into()));
+    assert_eq!(f.run(), FAIL);
+    assert_eq!(certified(&f, "pass"), 0);
 }
 
 #[test]

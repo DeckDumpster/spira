@@ -6,6 +6,7 @@ use crate::def::{self, Resolved};
 use crate::fence;
 use crate::compose::{self, Composition, Forces};
 use crate::key::{self, KeyInputs};
+use spira_config::ejection;
 use crate::machine::{self, GateState, Run};
 use crate::parse::{self, Attribution};
 use crate::ports::{Ctx, Merge, World};
@@ -1349,6 +1350,12 @@ impl<'w, W: World> Trial<'w, W> {
                         "gate: {name}'s own gate failed: {cmd}\n{out}\ngate: red on this branch and not on {base}: {}\ngate: inherited, not judged (red on {base} too): {}\ngate: {base} is red on: {}",
                         spaced(&own), spaced(&inherited), spaced(&base_reds)));
                 }
+                if let Some(flips) = self.shared_unit_red(&out) {
+                    let notes: String = flips.iter().map(|(t, beads)| format!(
+                        "gate: not judged — {t} also failed on {} with disjoint diffs in the last 7d: a red on the base or in the gate, not this branch's\n",
+                        beads.join(", "))).collect();
+                    return v(PASS, "pass", format!("gate: {name}'s own gate failed: {cmd}\n{out}\n{notes}"));
+                }
                 v(FAIL, "branch-red", format!(
                     "gate: {name}'s own gate failed: {cmd}\n{out}\ngate: the same command passes against {base}, so this is the branch's own."))
             }
@@ -1548,6 +1555,18 @@ impl<'w, W: World> Trial<'w, W> {
             ));
         }
         self.w.checkout(repo, tree, rev, want)
+    }
+
+    /// The failing tests of `out` when the unit test phase is its only red and every failing test
+    /// also failed on other beads with disjoint diffs; `None` on any doubt, leaving the red the branch's.
+    fn shared_unit_red(&self, out: &str) -> Option<Vec<(String, Vec<String>)>> {
+        let tip = self.s.branch_tip.as_str();
+        if self.s.bead.is_empty() || tip.is_empty() || tip == "-" || parse::red_units(out) != ["phase:test"] || parse::failed_tests(out).is_empty() || parse::fence_refusal(out).is_some() {
+            return None;
+        }
+        let digest = ejection::digest(tip, &self.s.changed, out);
+        let prior = self.w.lc_prior_failures(self.w.now() as i64 - ejection::LOOKBACK_SECS).ok()?;
+        ejection::flipped(&self.s.bead, &digest, &prior)
     }
 
     /// EJECTED SUITES: the first line of `$SPIRA_RUN/ejected/<bead>` — the suites a

@@ -20,6 +20,11 @@ const FILES_MAX: usize = 40;
 const DIGEST_MAX: usize = 5500;
 /// How far back a digest still says something about the base: older ones are another era's red.
 pub const LOOKBACK_SECS: i64 = 7 * 24 * 3600;
+/// How many other beads a test must have failed on, on unrelated diffs, before it is a flip.
+pub const FLIP_MIN_BEADS: usize = 2;
+const MORE_PREFIX: &str = "... and ";
+const MORE_SUFFIX: &str = " more failing tests";
+const CUT_SUFFIX: &str = " more lines cut";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Failure {
@@ -137,7 +142,7 @@ pub fn step_failure(text: &str) -> Vec<String> {
             out.extend(f.tail.iter().map(|l| format!("    {l}")));
         }
         if fs.len() > MAX_FAILURES {
-            out.push(format!("... and {} more failing tests", fs.len() - MAX_FAILURES));
+            out.push(format!("{MORE_PREFIX}{}{MORE_SUFFIX}", fs.len() - MAX_FAILURES));
         }
         return out;
     }
@@ -186,7 +191,7 @@ pub fn digest_steps(tip: &str, files: &[String], why: &[String], steps: &[(Strin
     let mut kept = 0;
     for l in &lines {
         let more = total - kept - 1;
-        let marker = format!("... {} more lines cut\n", more);
+        let marker = format!("... {more}{CUT_SUFFIX}\n");
         if d.chars().count() + l.chars().count() + 1 + if more > 0 { marker.len() } else { 0 } > DIGEST_MAX {
             break;
         }
@@ -195,7 +200,7 @@ pub fn digest_steps(tip: &str, files: &[String], why: &[String], steps: &[(Strin
         kept += 1;
     }
     if kept < total {
-        d += &format!("... {} more lines cut\n", total - kept);
+        d += &format!("... {}{CUT_SUFFIX}\n", total - kept);
     }
     d
 }
@@ -251,6 +256,24 @@ pub fn shared_reds(bead: &str, this: &str, prior: &[(String, String)]) -> Vec<(S
     seen
 }
 
+/// The failing tests of `this` when every one of them also failed on at least [`FLIP_MIN_BEADS`]
+/// other beads with unrelated diffs, each with those beads. `None` for a digest with no named test or a
+/// truncated list, and for any test the evidence does not cover.
+pub fn flipped(bead: &str, this: &str, prior: &[(String, String)]) -> Option<Vec<(String, Vec<String>)>> {
+    let tests = parse(this).tests;
+    if tests.is_empty() || this.lines().map(str::trim_start).any(|l| l.starts_with(MORE_PREFIX) && l.ends_with(MORE_SUFFIX) || l.starts_with("... ") && l.ends_with(CUT_SUFFIX)) {
+        return None;
+    }
+    let shared = shared_reds(bead, this, prior);
+    tests
+        .into_iter()
+        .map(|t| {
+            let beads: Vec<String> = shared.iter().filter(|(_, ts)| ts.contains(&t)).map(|(b, _)| b.clone()).collect();
+            (beads.len() >= FLIP_MIN_BEADS).then_some((t, beads))
+        })
+        .collect()
+}
+
 /// The digest with the shared-red verdict appended, when there is one.
 pub fn with_shared(this: &str, shared: &[(String, Vec<String>)]) -> String {
     if shared.is_empty() {
@@ -268,8 +291,7 @@ pub fn with_shared(this: &str, shared: &[(String, Vec<String>)]) -> String {
 /// and answers its stdout.
 pub fn record(lc: &dyn Fn(&[String]) -> Result<String, String>, bead: &str, tip: &str, files: &[String], why: &[String], steps: &[(String, String)], actor: &str) -> Result<(), String> {
     let d = digest_steps(tip, files, why, steps);
-    let since = (now() - LOOKBACK_SECS).to_string();
-    let prior = lc(&["facts".into(), "--kinds".into(), KIND.into(), "--since".into(), since]).ok().map(|o| prior_digests(&o)).unwrap_or_default();
+    let prior = prior(lc, now() - LOOKBACK_SECS).unwrap_or_default();
     let d = with_shared(&d, &shared_reds(bead, &d, &prior));
     lc(&["fact".into(), bead.into(), "--kind".into(), KIND.into(), "--actor".into(), actor.into(), "--cause".into(), d]).map(|_| ())
 }
@@ -296,6 +318,11 @@ pub fn reference(lc: &dyn Fn(&[String]) -> Result<String, String>, beads: &[&str
         lc(&["fact".into(), (*b).into(), "--kind".into(), LOGS_KIND.into(), "--actor".into(), actor.into(), "--cause".into(), id.into()])?;
     }
     Ok(())
+}
+
+/// The `eject-failure` digests recorded since `since`, as (bead, digest).
+pub fn prior(lc: &dyn Fn(&[String]) -> Result<String, String>, since: i64) -> Result<Vec<(String, String)>, String> {
+    lc(&["facts".into(), "--kinds".into(), KIND.into(), "--since".into(), since.to_string()]).map(|o| prior_digests(&o))
 }
 
 fn prior_digests(facts_json: &str) -> Vec<(String, String)> {
@@ -368,6 +395,59 @@ mod tests {
         for (id, theirs) in [("sp-a", overlap), ("sp-a", same_tip), ("sp-b", digest("t1", &["q.rs".into()], OUT)), ("sp-a", other_test)] {
             assert!(shared_reds("sp-b", &mine, &[(id.into(), theirs)]).is_empty());
         }
+    }
+
+    fn seen(bead: &str, tip: &str, file: &str) -> (String, String) {
+        (bead.into(), digest(tip, &[file.into()], OUT))
+    }
+
+    #[test]
+    fn a_test_shared_by_two_beads_on_disjoint_diffs_is_a_flip() {
+        let mine = digest("t3", &["m.rs".into()], OUT);
+        let f = flipped("sp-z", &mine, &[seen("sp-x", "t1", "a.rs"), seen("sp-y", "t2", "b.rs")]).unwrap();
+        assert_eq!(f, vec![("ci_cut::finds_config".to_string(), vec!["sp-x".to_string(), "sp-y".to_string()])]);
+    }
+
+    #[test]
+    fn one_bead_overlapping_diffs_or_a_partly_shared_digest_is_not_a_flip() {
+        let mine = digest("t3", &["m.rs".into()], OUT);
+        assert!(flipped("sp-z", &mine, &[seen("sp-x", "t1", "a.rs")]).is_none());
+        assert!(flipped("sp-z", &mine, &[seen("sp-x", "t1", "a.rs"), seen("sp-y", "t2", "m.rs")]).is_none());
+        assert!(flipped("sp-z", &mine, &[seen("sp-x", "t1", "a.rs"), seen("sp-x", "t2", "b.rs")]).is_none());
+        let two = format!("{OUT}test other::t ... FAILED\n");
+        let mine2 = digest("t3", &["m.rs".into()], &two);
+        assert!(flipped("sp-z", &mine2, &[seen("sp-x", "t1", "a.rs"), seen("sp-y", "t2", "b.rs")]).is_none());
+        assert!(flipped("sp-z", &digest("t3", &["m.rs".into()], "lint broke\n"), &[]).is_none());
+    }
+
+    #[test]
+    fn a_truncated_digest_is_not_a_flip() {
+        let many: String = (0..9).map(|i| format!("test t::n{i} ... FAILED\n")).collect();
+        let mine = digest("t3", &["m.rs".into()], &many);
+        let prior: Vec<(String, String)> = ["sp-x", "sp-y"].iter().map(|b| (b.to_string(), digest(&format!("t{b}"), &[format!("{b}.rs")], &many))).collect();
+        assert!(flipped("sp-z", &mine, &prior).is_none());
+    }
+
+    #[test]
+    fn a_digest_cut_for_size_is_not_a_flip() {
+        let lint: String = (0..300).map(|i| format!("some-rule: src/f{i}.rs:{i}: finding number {i} with padding to take room\n")).collect();
+        let make = |tip: &str, file: &str| digest_steps(tip, &[file.to_string()], &[], &[("phase:test".to_string(), "test t::a ... FAILED\n".to_string()), ("spira-lint".to_string(), lint.clone())]);
+        let mine = make("t3", "m.rs");
+        assert!(mine.lines().any(|l| l.ends_with(CUT_SUFFIX)), "{mine}");
+        let prior: Vec<(String, String)> = ["sp-x", "sp-y"].iter().map(|b| (b.to_string(), make(&format!("t{b}"), &format!("{b}.rs")))).collect();
+        assert!(flipped("sp-z", &mine, &prior).is_none());
+    }
+
+    #[test]
+    fn a_failed_prior_read_is_an_error_and_record_still_writes_the_fact() {
+        let calls: RefCell<Vec<String>> = RefCell::new(Vec::new());
+        let lc = |a: &[String]| {
+            calls.borrow_mut().push(a[0].clone());
+            if a[0] == "facts" { Err("down".to_string()) } else { Ok(String::new()) }
+        };
+        assert!(prior(&lc, 0).is_err());
+        record(&lc, "sp-b", "t2", &["y.rs".into()], &[], &red_steps(OUT), "gate").unwrap();
+        assert!(calls.borrow().iter().any(|c| c == "fact"));
     }
 
     #[test]
