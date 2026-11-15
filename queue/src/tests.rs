@@ -1069,6 +1069,10 @@ struct FLc {
     rows: RefCell<Result<Vec<LcBeadRow>, String>>,
     certify_refused: Cell<bool>,
     land_refused: Cell<Option<&'static str>>,
+    /// Another landing records the batch first: the next record writes LANDED and is refused.
+    landed_first: Cell<bool>,
+    /// The next record gets no reply.
+    land_no_reply_once: Cell<bool>,
     promote_refused: Cell<Option<&'static str>>,
     cut_refused: Cell<Option<&'static str>>,
     cut_refuses_member: Cell<Option<&'static str>>,
@@ -1134,6 +1138,8 @@ impl Default for FLc {
             rows: RefCell::new(Ok(Vec::new())),
             certify_refused: Cell::new(false),
             land_refused: Cell::new(None),
+            landed_first: Cell::new(false),
+            land_no_reply_once: Cell::new(false),
             promote_refused: Cell::new(None),
             cut_refused: Cell::new(None),
             cut_refuses_member: Cell::new(None),
@@ -1539,6 +1545,16 @@ impl Lc for FLc {
         self.calls.borrow_mut().push(format!("land {id} {v} {sha}"));
         if self.activated.get() && self.retired_keys.get() {
             return Err((2, "SPIRA_RETIRED_KEY is not declared".into()));
+        }
+        if self.land_no_reply_once.replace(false) {
+            return Err((1, "no reply".into()));
+        }
+        if self.landed_first.get() {
+            self.store_step(id, "LANDED");
+            self.batch_states
+                .borrow_mut()
+                .insert(id.into(), ("LANDED".into(), "5".into()));
+            return Err((3, "refused: Some(ExpectMismatch { expected: \"GREEN\", actual: \"LANDED\" })".into()));
         }
         match self.land_refused.get() {
             Some(why) => Err((3, why.into())),

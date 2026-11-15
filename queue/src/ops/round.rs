@@ -4829,6 +4829,13 @@ fn record_landing(w: &World, batch: &str, head: &str) -> Result<(), (i32, String
     }
 }
 
+/// A refused record (rc 3) whose row another landing already moved to LANDED, with the head on
+/// the landing ref, is a round recorded, not a record lost.
+fn landed_elsewhere(w: &World, batch: &str, path: &Path, head: &str, base: &str) -> bool {
+    matches!(w.lc.batch_state(batch), Some((s, _)) if s == "LANDED")
+        && w.git.is_ancestor(path, head, base)
+}
+
 fn unrecorded_marker(c: &Ctx, batch: &str) -> PathBuf {
     rounds_dir(c).join(format!("{batch}.unrecorded"))
 }
@@ -4859,6 +4866,9 @@ pub(super) fn reconcile_unrecorded(w: &World, c: &Ctx, path: &Path) {
                     Ok(()) => {
                         let _ = fs::remove_file(e.path());
                         w.out(format!("queue.sh: round {batch} was landed at {head} with no landing record — recorded now"));
+                    }
+                    Err((3, _)) if landed_elsewhere(w, batch, path, head, &base) => {
+                        let _ = fs::remove_file(e.path());
                     }
                     Err((rc, out)) => w.err(format!("queue.sh: WARNING — landing record for {batch} still refused (rc={rc}): {}", out.trim())),
                 }
@@ -5028,6 +5038,10 @@ fn land_round(
 
     let recorded = match record_landing(w, batch, &head) {
         Ok(()) => true,
+        Err((3, _)) if landed_elsewhere(w, batch, &path, &head, &base) => {
+            w.out(format!("queue.sh {label}: round {batch} was recorded LANDED by another landing; {head} is on {base}"));
+            true
+        }
         Err((rc, out)) => {
             let why = if out.trim().is_empty() {
                 "spira-lc gave no reason on stderr or stdout"
