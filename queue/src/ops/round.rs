@@ -1629,12 +1629,49 @@ fn refuse_open(w: &World, label: &str, repo: &str, named: usize, skips: &[Skip])
     FAIL
 }
 
+/// Milliseconds each step of an open took, read off the world's clock.
+struct Steps<'a> {
+    w: &'a World<'a>,
+    last: std::cell::Cell<u64>,
+    done: std::cell::RefCell<Vec<String>>,
+}
+
+impl<'a> Steps<'a> {
+    fn new(w: &'a World<'a>) -> Self {
+        Steps { w, last: w.clock.now_ms().into(), done: Default::default() }
+    }
+    fn lap(&self, step: &str) {
+        let at = self.w.clock.now_ms();
+        let took = at.saturating_sub(self.last.replace(at));
+        self.done.borrow_mut().push(format!("{step}:{took}"));
+    }
+    fn field(&self) -> String {
+        self.done.borrow().join(",")
+    }
+}
+
 fn open(
     w: &World,
     repo: Option<&str>,
     members_arg: &Text,
     name: Option<&str>,
     worktree: Option<&Path>,
+) -> i32 {
+    let steps = Steps::new(w);
+    let rc = open_timed(w, repo, members_arg, name, worktree, &steps);
+    if rc != OK && !steps.done.borrow().is_empty() {
+        w.err(format!("steps={}", steps.field()));
+    }
+    rc
+}
+
+fn open_timed(
+    w: &World,
+    repo: Option<&str>,
+    members_arg: &Text,
+    name: Option<&str>,
+    worktree: Option<&Path>,
+    steps: &Steps,
 ) -> i32 {
     let label = "round open";
     let text = match read_text(w, members_arg) {
@@ -1678,8 +1715,10 @@ fn open(
     let Ok((c, path)) = local_ctx(w, label, repo) else {
         return FAIL;
     };
+    steps.last.set(w.clock.now_ms());
     reconcile_unrecorded(w, &c, &path);
     reconcile_ended(w, &c);
+    steps.lap("reconcile");
     let repo_name = c.r.name.clone();
     if let Some(n) = name {
         if idents(w, label, &[("name", n)]).is_err() {
@@ -1702,7 +1741,9 @@ fn open(
     if require_lc(w, label).is_err() {
         return FAIL;
     }
-    let _g = match lock(w, label, &c) {
+    let locked = lock(w, label, &c);
+    steps.lap("lock");
+    let _g = match locked {
         Ok(g) => g,
         // A busy lock keeps its own exit (LOCK_BUSY), so a caller retries on the code.
         Err(rc) => return rc,
@@ -1855,6 +1896,7 @@ fn open(
         }
     }
 
+    steps.lap("admit");
     if !skips.is_empty() {
         return refuse_open(w, label, &repo_name, named_count, &skips);
     }
@@ -1876,12 +1918,14 @@ fn open(
         let _ = fs::create_dir_all(p);
     }
     if !w.git.worktree_add_detached(&path, &wt, &base_sha) {
+        steps.lap("worktree");
         w.err(format!(
             "queue.sh {label}: cannot create the round worktree {}",
             wt.display()
         ));
         return FAIL;
     }
+    steps.lap("worktree");
     let certified: BTreeMap<String, String> = admitted
         .iter()
         .map(|m| (m.id.clone(), m.tip.clone()))
@@ -1898,8 +1942,10 @@ fn open(
                     m.id, m.tip
                 ),
             ));
+            steps.lap(&format!("merge.{}", m.id));
             continue;
         }
+        let member = m.id.clone();
         if merge_member(w, &c, &wt, &m.id, &m.tip) {
             merged.push(m);
         } else {
@@ -1959,6 +2005,7 @@ fn open(
                 }
             }
         }
+        steps.lap(&format!("merge.{member}"));
     }
     if let Some((blocked, _)) = collided.first() {
         let mut involved = super::integrate::colliding(w, &path, &base_sha, blocked, &merged);
@@ -1976,6 +2023,7 @@ fn open(
             w, label, &c, &path, &base_sha, &involved, &source, &evidence,
         );
     }
+    steps.lap("collide");
     if !skips.is_empty() {
         w.git.worktree_remove(&path, &wt);
         return refuse_open(w, label, &repo_name, named_count, &skips);
@@ -2059,13 +2107,16 @@ fn open(
         return FAIL;
     }
     mark_running(&c, &batch);
+    steps.lap("record");
     landing_log(
         &c.s.run,
         &format!(
-            "QUEUE ROUND-OPEN {now} repo={repo_name} batch={batch} head={head} members={}",
-            csv(&merged)
+            "QUEUE ROUND-OPEN {now} repo={repo_name} batch={batch} head={head} members={} steps={}",
+            csv(&merged),
+            steps.field()
         ),
     );
+    w.out(format!("steps={}", steps.field()));
     w.out(format!("batch={batch}"));
     w.out(format!("head={head}"));
     w.out(format!("members={}", render_members(&merged)));

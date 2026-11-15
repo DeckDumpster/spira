@@ -36,6 +36,8 @@ struct FGit {
     /// `git branch -f` refuses a branch checked out in a worktree.
     branch_set_fails: Cell<bool>,
     merge_fail: RefCell<BTreeSet<String>>,
+    /// Runs on every merge with its tip: the world moving while git works.
+    on_merge: RefCell<Option<MergeHook>>,
     settle_fails: Cell<bool>,
     /// Tips whose rebase onto the round's head conflicts, with the paths it names.
     rebase_fail: RefCell<BTreeMap<String, Vec<String>>>,
@@ -213,6 +215,9 @@ impl Git for FGit {
         _git_email: &str,
     ) -> bool {
         self.calls.borrow_mut().push(format!("merge {tip} {msg}"));
+        if let Some(f) = self.on_merge.borrow().as_ref() {
+            f(tip);
+        }
         if self.merge_fail.borrow().contains(tip) {
             return false;
         }
@@ -1703,8 +1708,12 @@ impl ConfigStore for FConfig {
     }
 }
 
+type MergeHook = Box<dyn Fn(&str)>;
+
 struct FClock {
     now: Cell<u64>,
+    /// Milliseconds the world has moved beyond `now`'s whole seconds.
+    extra_ms: std::rc::Rc<Cell<u64>>,
     /// Runs on every sleep: the world moving while a verb waits.
     on_sleep: RefCell<Option<Box<dyn Fn()>>>,
 }
@@ -1712,6 +1721,9 @@ struct FClock {
 impl Clock for FClock {
     fn now(&self) -> u64 {
         self.now.get()
+    }
+    fn now_ms(&self) -> u64 {
+        self.now.get() * 1000 + self.extra_ms.get()
     }
     fn stamp(&self) -> String {
         "20260929T010203Z".into()
@@ -1886,6 +1898,7 @@ impl T {
             config: FConfig::default(),
             clock: FClock {
                 now: Cell::new(1_000),
+                extra_ms: Default::default(),
                 on_sleep: RefCell::default(),
             },
             env: FEnv::default(),

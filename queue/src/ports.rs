@@ -762,6 +762,8 @@ pub trait ConfigStore {
 
 pub trait Clock {
     fn now(&self) -> u64;
+    /// Epoch milliseconds, for timing a step shorter than `now`'s second.
+    fn now_ms(&self) -> u64;
     /// `date -u +%Y%m%dT%H%M%SZ`.
     fn stamp(&self) -> String;
     fn sleep(&self, secs: u64);
