@@ -364,35 +364,24 @@ disk_report() {
     total="$(fs_used)"
     case "$total" in ''|*[!0-9]*) total=unread ;; esac
     echo "round-vm: DISK $phase total $total -" | tee -a "$disk_out" >&2
-    [ "$phase" != start ] || disk_start_total="$total"
     own_dirs "$phase" & disk_walks+=($!)
 }
 # The phase reports see only their instants; per-suite scratch rises and is cleaned between them.
-# The sampler keeps the largest growth of the filesystem since the pass began.
-disk_growth_file="$HOME/round-disk-growth"
+# The sampler records readings between them; the host takes the peak.
 fs_used() { df -B1 --output=used "$HOME" 2>/dev/null | tail -n1 | tr -d ' '; }
 disk_sampler() {
-    local base="$1" now peak=0
+    local now
     while kill -0 "$$" 2>/dev/null; do
         now="$(fs_used)"
-        case "$now" in ''|*[!0-9]*) ;; *) [ $(( now - base )) -le "$peak" ] || peak=$(( now - base )); echo "$peak" > "$disk_growth_file" ;; esac
+        case "$now" in ''|*[!0-9]*) now=unread ;; esac
+        echo "round-vm: DISK sample total $now -" >> "$disk_out"
         sleep 5
     done
 }
-# The pass's last report. Its `peak` line is the pass's start total plus the largest growth sampled.
 disk_report_last() {
-    local growth
     [ -z "${disk_sampler_pid:-}" ] || { kill "$disk_sampler_pid" 2>/dev/null; wait "$disk_sampler_pid" 2>/dev/null || true; }
     disk_report "$1"
     [ -z "${disk_walks[*]-}" ] || wait "${disk_walks[@]}" 2>/dev/null || true
-    growth="$(cat "$disk_growth_file" 2>/dev/null || true)"
-    case "$growth" in
-        ''|*[!0-9]*) echo "round-vm: DISK $1 peak unread -" | tee -a "$disk_out" >&2 ;;
-        *) case "${disk_start_total:-}" in
-            ''|*[!0-9]*) echo "round-vm: DISK $1 peak unread -" | tee -a "$disk_out" >&2 ;;
-            *) echo "round-vm: DISK $1 peak $(( disk_start_total + growth )) -" | tee -a "$disk_out" >&2 ;;
-        esac ;;
-    esac
 }
 # Suites read only the executables directly under target/release; its intermediates are its bulk.
 prune_release_intermediates() {
@@ -410,9 +399,7 @@ prune_other_releases() {
     done
 }
 disk_report start
-rm -f "$disk_growth_file"
-disk_base="$(fs_used)"
-case "$disk_base" in ''|*[!0-9]*) ;; *) disk_sampler "$disk_base" & disk_sampler_pid=$! ;; esac
+disk_sampler & disk_sampler_pid=$!
 phase spira-env
 nix_bin=/nix/var/nix/profiles/default/bin
 env_flake="$HOME/spira-env-flake"
@@ -3563,28 +3550,6 @@ mod tests {
     }
 
     #[test]
-    fn the_last_report_names_the_pass_peak_as_the_start_total_plus_the_largest_growth_sampled() {
-        let d = TempDir::new();
-        let run = d.path().join("round-work/.runtime/spira/batch-results");
-        std::fs::create_dir_all(&run).unwrap();
-        std::fs::write(d.path().join("round-disk-growth"), "3000\n").unwrap();
-        let script = format!(
-            "set -uo pipefail\ndisk_out=\"$HOME/round-work/.runtime/spira/batch-results/disk-usage\"\ndisk_growth_file=\"$HOME/round-disk-growth\"\ndisk_start_total=1000\ndisk_report() {{ :; }}\n{}\ndisk_report_last suites\n",
-            script_fn("disk_report_last")
-        );
-        let out = std::process::Command::new("bash").args(["-c", &script]).env_clear().env("HOME", d.path()).env("PATH", std::env::var("PATH").unwrap()).output().unwrap();
-        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
-        let lines = std::fs::read_to_string(run.join("disk-usage")).unwrap();
-        assert_eq!(lines, "round-vm: DISK suites peak 4000 -\n");
-        assert_eq!(tsd::pass::disk_peak_bytes(&lines), Some(4000));
-        std::fs::remove_file(d.path().join("round-disk-growth")).unwrap();
-        std::fs::remove_file(run.join("disk-usage")).unwrap();
-        let out = std::process::Command::new("bash").args(["-c", &script]).env_clear().env("HOME", d.path()).env("PATH", std::env::var("PATH").unwrap()).output().unwrap();
-        assert!(out.status.success());
-        assert_eq!(std::fs::read_to_string(run.join("disk-usage")).unwrap(), "round-vm: DISK suites peak unread -\n", "no sample is unread, never a zero");
-    }
-
-    #[test]
     fn the_hosts_disk_peak_is_the_largest_total_or_peak_and_unread_is_none() {
         let text = "round-vm: DISK start total 100 -\nround-vm: DISK build cargo-target 9999 /t\nround-vm: DISK build total 700+unread -\nround-vm: DISK suites peak 500 -\nround-vm: DISK suites total unread -\n";
         assert_eq!(tsd::pass::disk_peak_bytes(text), Some(700));
@@ -3597,8 +3562,18 @@ mod tests {
     }
 
     #[test]
-    fn the_sampler_runs_beside_the_pass() {
-        assert!(REMOTE_SCRIPT.contains("disk_sampler \"$disk_base\" & disk_sampler_pid=$!"), "the sampler runs beside the pass");
+    fn the_sampler_appends_each_reading_as_a_disk_line_and_keeps_no_peak() {
+        let sampler = script_fn("disk_sampler");
+        assert!(sampler.contains("echo \"round-vm: DISK sample total $now -\" >> \"$disk_out\""), "{sampler}");
+        assert!(sampler.contains("now=unread"), "an unreadable tick is unread, never a zero: {sampler}");
+        assert!(!sampler.contains("peak") && !sampler.contains("disk_growth_file"), "the host takes the peak: {sampler}");
+        assert!(REMOTE_SCRIPT.contains("disk_sampler & disk_sampler_pid=$!"), "the sampler runs beside the pass");
+        assert!(!REMOTE_SCRIPT.contains("disk-growth"));
+        assert!(sampler.contains("while kill -0 \"$$\"") && sampler.contains("sleep 5"), "the sampler ends with the pass and paces itself: {sampler}");
+        assert!(sampler.contains("''|*[!0-9]*) now=unread"), "a non-number reading is unread: {sampler}");
+        let last = script_fn("disk_report_last");
+        assert!(last.contains("kill \"$disk_sampler_pid\"") && last.contains("disk_report \"$1\"") && last.contains("wait \"${disk_walks[@]}\""), "{last}");
+        assert!(!last.contains("peak") && !last.contains("growth"), "{last}");
     }
 
     #[test]
