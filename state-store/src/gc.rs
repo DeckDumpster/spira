@@ -2,8 +2,8 @@
 //! and expires keys whose TTL has run out.
 
 use crate::backend::Backend;
-use crate::contract::{Contract, COMPACT_STEP, COMPACT_STEPS};
-use std::cell::Cell;
+use crate::contract::{Contract, ScanProgress, COMPACT_STEP, COMPACT_STEPS, PAGE};
+use std::cell::{Cell, RefCell};
 
 use crate::{Error, Item, Result};
 
@@ -16,6 +16,15 @@ pub struct Tick {
     pub trimmed: usize,
     /// Steps that failed this pass; every other step still ran.
     pub failed: Vec<StepFailure>,
+    /// The scan this pass read from, when it read one.
+    pub scan: Option<ScanReport>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ScanReport {
+    pub pages: usize,
+    pub keys: usize,
+    pub complete: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -39,6 +48,8 @@ pub struct Controller<'a, B: Backend> {
     contract: &'a Contract<B>,
     scan_every_ms: u64,
     last_scan: Cell<Option<u64>>,
+    scan: RefCell<Option<ScanProgress>>,
+    page: usize,
 }
 
 fn finalized(i: &Item) -> bool {
@@ -57,7 +68,15 @@ impl<'a, B: Backend> Controller<'a, B> {
             contract,
             scan_every_ms: ms,
             last_scan: Cell::new(None),
+            scan: RefCell::new(None),
+            page: PAGE,
         }
+    }
+
+    /// Reads the scan `page` keys at a time instead of the default.
+    pub fn with_page(mut self, page: usize) -> Self {
+        self.page = page;
+        self
     }
 
     /// `now_ms` is on the contract's monotonic clock.
@@ -77,14 +96,25 @@ impl<'a, B: Backend> Controller<'a, B> {
             tick.failed.push(StepFailure { step, error })
         };
 
-        let scan_due = self
-            .last_scan
-            .get()
-            .is_none_or(|last| now_ms.saturating_sub(last) >= self.scan_every_ms);
+        let scan_due = self.scan.borrow().is_some()
+            || self
+                .last_scan
+                .get()
+                .is_none_or(|last| now_ms.saturating_sub(last) >= self.scan_every_ms);
         if scan_due {
-            self.last_scan.set(Some(now_ms));
-            match c.gc_scan() {
-                Ok(scan) => {
+            let mut progress = self.scan.borrow_mut().take().unwrap_or_else(|| {
+                self.last_scan.set(Some(now_ms));
+                ScanProgress::default()
+            });
+            let read = c.gc_scan_pages(&mut progress, self.page);
+            tick.scan = Some(ScanReport {
+                pages: progress.pages,
+                keys: progress.keys.len(),
+                complete: read.is_ok(),
+            });
+            match read {
+                Ok(()) => {
+                    let scan = progress;
                     let ready: Vec<String> = scan.finalized.iter().map(|i| i.key.clone()).collect();
                     match c.collect(&ready, "gc.finalize", |i, _| Ok(finalized(i))) {
                         Ok(done) => tick.finalized = done,
@@ -120,7 +150,16 @@ impl<'a, B: Backend> Controller<'a, B> {
                         Err(e) => fail(&mut tick, "orphan", e),
                     }
                 }
-                Err(e) => fail(&mut tick, "scan", e),
+                Err(e) => {
+                    let error = Error::Backend(format!(
+                        "{e} (after {} pages, {} keys, last key {:?})",
+                        progress.pages,
+                        progress.keys.len(),
+                        progress.after.as_deref().unwrap_or("")
+                    ));
+                    *self.scan.borrow_mut() = (progress.pages > 0).then_some(progress);
+                    fail(&mut tick, "scan", error);
+                }
             }
         }
 

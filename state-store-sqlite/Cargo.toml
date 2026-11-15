@@ -23,6 +23,11 @@ name = "durability"
 path = "tests/durability.rs"
 required-features = ["integration"]
 
+[[test]]
+name = "gc_scan"
+path = "tests/gc_scan.rs"
+required-features = ["integration"]
+
 [features]
 integration = ["runtime/integration", "spira-config/integration", "spira-otel/integration", "state-store/integration", "testkit/integration"]
 

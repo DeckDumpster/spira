@@ -420,6 +420,7 @@ const PUT_LATEST: &str = "INSERT OR REPLACE INTO latest
      (key, main, sub, value, create_main, create_sub, version) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)";
 
 /// Which rows a range reads: the head's from `latest`, an older revision's from `versions`.
+#[derive(Clone, Copy)]
 enum Source<'a> {
     Head,
     At(u64),
@@ -482,6 +483,43 @@ fn source(snap: &Snapshot, at: u64) -> Source<'static> {
 }
 
 impl SqliteBackend {
+    fn rows_outside(
+        &self,
+        conn: &Connection,
+        src: Source<'_>,
+        skip: &[&str],
+        after: Option<&str>,
+        limit: usize,
+        deadline: &dyn Fn() -> Result<()>,
+    ) -> Result<Vec<(String, Version)>> {
+        if skip.contains(&"") {
+            return Ok(Vec::new());
+        }
+        let mut sorted: Vec<&str> = skip.to_vec();
+        sorted.sort_unstable();
+        let mut skipped: Vec<(&[u8], Vec<u8>)> = Vec::new();
+        for p in sorted {
+            if skipped.last().is_some_and(|(q, _)| p.as_bytes().starts_with(q)) {
+                continue;
+            }
+            skipped.push((p.as_bytes(), successor(p.as_bytes()).unwrap_or_default()));
+        }
+        let mut lo = lower_bound(b"", after);
+        let steps = &self.0.read_steps;
+        let mut out = Vec::new();
+        let ends = skipped.iter().map(|(start, _)| Some(*start)).chain([None]);
+        for (end, skip) in ends.zip(skipped.iter().map(Some).chain([None])) {
+            if out.len() < limit && end.is_none_or(|hi| lo.as_slice() < hi) {
+                let rows = range_rows(conn, src, &lo, end, limit - out.len(), steps, deadline)?;
+                out.extend(rows);
+            }
+            if let Some((_, past)) = skip {
+                lo = lo.max(past.clone());
+            }
+        }
+        Ok(out)
+    }
+
     /// Opens (creating if absent) the store at `path`. A second opener, in this process or
     /// another, is refused while this handle or any clone of it lives. The lock is advisory:
     /// it stops another `SqliteBackend`, not a client that opens the file directly.
@@ -895,40 +933,14 @@ impl Backend for SqliteBackend {
     ) -> Result<Vec<(String, Version)>> {
         self.read(|conn, snap, deadline| {
             snap.readable(at)?;
-            if skip.contains(&"") {
-                return Ok(Vec::new());
-            }
-            let mut sorted: Vec<&str> = skip.to_vec();
-            sorted.sort_unstable();
-            let mut skipped: Vec<(&[u8], Vec<u8>)> = Vec::new();
-            for p in sorted {
-                if skipped.last().is_some_and(|(q, _)| p.as_bytes().starts_with(q)) {
-                    continue;
-                }
-                skipped.push((p.as_bytes(), successor(p.as_bytes()).unwrap_or_default()));
-            }
-            let mut lo = lower_bound(b"", after);
-            let steps = &self.0.read_steps;
-            let mut out = Vec::new();
-            let ends = skipped.iter().map(|(start, _)| Some(*start)).chain([None]);
-            for (end, skip) in ends.zip(skipped.iter().map(Some).chain([None])) {
-                if out.len() < limit && end.is_none_or(|hi| lo.as_slice() < hi) {
-                    let rows = range_rows(
-                        conn,
-                        source(snap, at),
-                        &lo,
-                        end,
-                        limit - out.len(),
-                        steps,
-                        deadline,
-                    )?;
-                    out.extend(rows);
-                }
-                if let Some((_, past)) = skip {
-                    lo = lo.max(past.clone());
-                }
-            }
-            Ok(out)
+            self.rows_outside(conn, source(snap, at), skip, after, limit, deadline)
+        })
+    }
+
+    fn gc_page(&self, after: Option<&str>, limit: usize) -> Result<(u64, Vec<(String, Version)>)> {
+        self.read(|conn, snap, deadline| {
+            let rows = self.rows_outside(conn, Source::Head, &[state_store::EVENTS_PREFIX, state_store::HISTORY_PREFIX], after, limit, deadline)?;
+            Ok((snap.head, rows))
         })
     }
 

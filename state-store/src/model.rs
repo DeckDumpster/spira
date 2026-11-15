@@ -461,6 +461,12 @@ impl<B: Backend> Backend for Modeled<B> {
         self.passed(at);
         self.inner.range_outside(skip, after, limit, at)
     }
+
+    fn gc_page(&self, after: Option<&str>, limit: usize) -> Result<(u64, Vec<(String, Version)>)> {
+        let (head, rows) = self.inner.gc_page(after, limit)?;
+        self.passed(head);
+        Ok((head, rows))
+    }
 }
 
 #[cfg(test)]

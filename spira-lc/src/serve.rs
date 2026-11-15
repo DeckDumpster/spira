@@ -250,12 +250,31 @@ fn accept_until_stopped<'scope, 'env, F>(
     }
 }
 
-/// One pass of the control store's GC controller; each failed step is logged under its name.
+/// One pass of the control store's GC controller; each failed step is logged under its name,
+/// and a pass that finished a scan or collected anything says what it did.
 fn gc_tick<B: state_store::Backend>(gc: &state_store::gc::Controller<B>, contract: &state_store::Contract<B>) {
-    for failure in gc.pass(contract.now_ms()).failed {
-        let wall_ms = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
-        eprintln!("spira-lc serve: {} control-store gc {failure}", spira_lc::sections::rfc3339(wall_ms));
+    let wall_ms = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
+    for line in gc_lines(&gc.pass(contract.now_ms()), wall_ms) {
+        eprintln!("{line}");
     }
+}
+
+fn gc_lines(tick: &state_store::gc::Tick, wall_ms: u64) -> Vec<String> {
+    let at = spira_lc::sections::rfc3339(wall_ms);
+    let mut lines: Vec<String> = tick.failed.iter().map(|f| format!("spira-lc serve: {at} control-store gc {f}")).collect();
+    let collected = tick.finalized.len() + tick.orphans.len() + tick.expired.len() + tick.trimmed;
+    let complete = tick.scan.as_ref().filter(|s| s.complete);
+    if complete.is_some() || collected > 0 {
+        let scan = complete.map_or(String::new(), |s| format!("scan complete: {} keys in {} pages, ", s.keys, s.pages));
+        lines.push(format!(
+            "spira-lc serve: {at} control-store gc: {scan}{} finalized, {} orphans, {} expired, {} trimmed",
+            tick.finalized.len(),
+            tick.orphans.len(),
+            tick.expired.len(),
+            tick.trimmed
+        ));
+    }
+    lines
 }
 
 /// On the store the sweep is `Expire` on overdue MENDING rows; the dolt ticks read tables
@@ -635,6 +654,25 @@ mod tests {
         assert_eq!(state("test-a.sh"), "RETURNED", "the overdue row expired");
         assert_eq!(state("test-b.sh"), "MENDING", "the row within its deadline is left");
         assert_eq!(super::store_sweep(&store, AT + 61), Ok(0), "a second sweep finds nothing overdue");
+    }
+
+    #[test]
+    fn a_completed_gc_scan_is_logged_with_its_keys_pages_and_what_it_collected() {
+        use state_store::{Config, Contract, MemBackend, Ports};
+        let clock = runtime::ports::VirtualClock::new(0);
+        let contract = Contract::open(MemBackend::new(), Ports::virtual_clock(&clock), Config { min_lock_ttl_ms: 1_000 }).unwrap();
+        let store = crate::control::store::Store::new(contract, 1_000);
+        lc(&store, &["create-bead", "sp-a", "--repo", "spira", "--ready"], 1_000);
+        let gc = state_store::gc::Controller::new(store.contract()).with_page(1);
+        let tick = gc.pass(store.contract().now_ms());
+        let keys = tick.scan.as_ref().unwrap().keys;
+        assert!(keys > 1, "the fixture holds several keys");
+        let lines = super::gc_lines(&tick, 0);
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(lines[0].contains(&format!("scan complete: {keys} keys in {} pages", keys + 1)), "{}", lines[0]);
+        assert!(lines[0].contains("0 finalized, 0 orphans"), "{}", lines[0]);
+        let idle = state_store::gc::Tick::default();
+        assert!(super::gc_lines(&idle, 0).is_empty(), "a pass that did nothing says nothing");
     }
 
     fn ask(sink: Option<&spira_otel::Sink>, request: &str) -> (String, i32) {
