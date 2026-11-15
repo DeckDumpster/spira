@@ -15,7 +15,7 @@ pub mod wire;
 
 use serde::{Deserialize, Serialize};
 
-pub use backend::{Backend, LogEntry, Version, Write};
+pub use backend::{Backend, LogEntry, Usage, UsagePage, Version, Write};
 pub use clock::MonotonicClock;
 pub use contract::{
     carries_ttl, Compare, Config, Contract, Created, Deleted, Event, Fence, ListPage, Op, Ports,

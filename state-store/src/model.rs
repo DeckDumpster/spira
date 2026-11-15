@@ -467,6 +467,18 @@ impl<B: Backend> Backend for Modeled<B> {
         self.passed(head);
         Ok((head, rows))
     }
+
+    fn usage_page(&self, after: Option<&str>, limit: usize) -> Result<crate::UsagePage> {
+        self.inner.usage_page(after, limit)
+    }
+
+    fn hot_keys(&self, revs: u64, n: usize) -> Result<Vec<(String, u64)>> {
+        self.inner.hot_keys(revs, n)
+    }
+
+    fn file_bytes(&self) -> Result<(u64, u64)> {
+        self.inner.file_bytes()
+    }
 }
 
 #[cfg(test)]

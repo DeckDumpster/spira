@@ -55,6 +55,8 @@ on_each_backend!(
     history_outlives_compaction,
     event_seq_names_only_the_beads_with_an_applied_event_after_the_revision,
     a_watch_of_several_prefixes_delivers_each_and_nothing_else,
+    store_usage_of_a_backend_that_keeps_no_history_still_pages_by_prefix,
+    store_usage_answers_one_bounded_page_with_a_cursor_and_refuses_a_page_above_the_cap,
 );
 
 fn req(id: &str) -> Request {
@@ -282,6 +284,22 @@ fn history_outlives_compaction<B: Backend>(s: &Store<B>) {
     assert_eq!(seqs, [first, second]);
 }
 
+fn store_usage_answers_one_bounded_page_with_a_cursor_and_refuses_a_page_above_the_cap<B: Backend>(
+    s: &Store<B>,
+) {
+    for id in ["sp-a", "sp-b", "sp-c"] {
+        create(s, id);
+    }
+    let (code, out) = verbs::run(s, &["store-usage", "--limit", "2"].map(String::from));
+    assert_eq!(code, 0, "{out}");
+    let v: Value = serde_json::from_str(&out).unwrap();
+    assert!(v["next"].is_string(), "{out}");
+    assert_eq!(v["examined"], 2);
+    let (code, out) = verbs::run(s, &["store-usage", "--limit", "10001"].map(String::from));
+    assert_eq!(code, 2);
+    assert!(out.contains("10000"), "{out}");
+}
+
 fn event_seq_names_only_the_beads_with_an_applied_event_after_the_revision<B: Backend>(
     s: &Store<B>,
 ) {
@@ -353,4 +371,37 @@ fn a_watch_of_several_prefixes_delivers_each_and_nothing_else<B: Backend>(s: &St
     assert_eq!(both["through"], later);
     let neither = call(s, &["watch", "nothing/", "elsewhere/", "--from-rev", &from_s, "--wait-ms", "0"]);
     assert!(neither["progress_rev"].is_u64(), "no event under either prefix: {neither}");
+}
+
+fn store_usage_of_a_backend_that_keeps_no_history_still_pages_by_prefix<B: Backend>(s: &Store<B>) {
+    create(s, "sp-a");
+    let (code, out) = verbs::run(s, &["store-usage".to_string()]);
+    assert_eq!(code, 0, "{out}");
+    let v: Value = serde_json::from_str(&out).unwrap();
+    assert!(v["next"].is_null(), "{out}");
+    assert!(v["prefixes"].as_object().is_some_and(|p| !p.is_empty()), "{out}");
+}
+
+#[test]
+fn store_usage_hot_and_file_are_served_on_sqlite_and_refused_elsewhere() {
+    let hot = |s: &Store<MemBackend>| verbs::run(s, &["store-usage", "--hot", "1"].map(String::from));
+    let mem = store(MemBackend::new(), &VirtualClock::new(0));
+    let (code, out) = hot(&mem);
+    assert_eq!((code, out.starts_with("cannot tell: ")), (2, true), "{out}");
+    let (code, _) = verbs::run(&mem, &["store-usage", "--file"].map(String::from));
+    assert_eq!(code, 2);
+    on_sqlite(|s| {
+        create(s, "sp-a");
+        toggle(s, "sp-a", 1);
+        let (code, out) = verbs::run(s, &["store-usage", "--hot", "1", "--revs", "50"].map(String::from));
+        assert_eq!(code, 0, "{out}");
+        let v: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["keys"].as_array().map(Vec::len), Some(1), "{out}");
+        let (code, out) = verbs::run(s, &["store-usage", "--hot", "1", "--revs", "999999"].map(String::from));
+        assert_eq!(code, 2, "{out}");
+        let (code, out) = verbs::run(s, &["store-usage", "--file"].map(String::from));
+        assert_eq!(code, 0, "{out}");
+        let v: Value = serde_json::from_str(&out).unwrap();
+        assert!(v["bytes"].as_u64().unwrap() > 0, "{out}");
+    });
 }
