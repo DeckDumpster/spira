@@ -681,7 +681,10 @@ impl World {
         let rows: Vec<Row> = rows.as_array().ok_or("list is not an array")?.iter().filter_map(sweep_row).map(|mut r| {
             let ours = r.holds.iter().any(|h| h == "manual") && !r.holds.iter().any(|h| h == "poison" || h == "ask") && !labels_of(&r.id).contains(&self.ask_label);
             if ours && bead_sweep::review(&r.reason).is_none() {
-                r.hold_review = self.lc_json(&["history", &r.id, "--machine", "bead"]).ok().and_then(|h| bead_sweep::review_in_history(&h));
+                if let Some((at, review)) = self.lc_json(&["history", &r.id, "--machine", "bead"]).ok().and_then(|h| bead_sweep::hold_in_history(&h)) {
+                    r.held_at = Some(at);
+                    r.hold_review = review;
+                }
             }
             r
         }).collect();
@@ -1187,6 +1190,7 @@ fn sweep_row(r: &Value) -> Option<Row> {
             other => Some(other.to_string()),
         },
         hold_review: None,
+        held_at: None,
         claim: r["claim_view"]["verdict"].as_str().map(str::to_string),
     })
 }
