@@ -1214,6 +1214,7 @@ fn a_non_holders_renewal_is_refused_and_the_lock_expiry_is_unchanged() {
         .unwrap();
     assert!(matches!(refused, Outcome::Refused { .. }), "{refused:?}");
     assert_eq!(lock_expiry(&s), before);
+}
 
 fn refs_of(pairs: &[(&str, &str)]) -> super::ExternalRefs {
     let held: std::collections::BTreeMap<String, String> = pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
