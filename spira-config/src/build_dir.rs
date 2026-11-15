@@ -121,6 +121,15 @@ fn holds_anything(dir: &Path) -> bool {
     std::fs::read_dir(dir).is_ok_and(|mut rd| rd.next().is_some())
 }
 
+/// One scanned slot: holds a build, idle since, index of its base, its number.
+type ScannedSlot = (bool, SystemTime, usize, u64);
+
+/// The order to try idle slots in: warm ones first, most recently idled first; then empty ones.
+fn lease_order(mut scanned: Vec<ScannedSlot>) -> Vec<ScannedSlot> {
+    scanned.sort_by(|a, b| b.cmp(a));
+    scanned
+}
+
 /// Lease a build directory under `bases` for `who`: the most recently idled one that holds a
 /// build, else an empty idle one, else a new one on the base holding the fewest slots (the
 /// first listed on a tie). Never waits and never touches a live one.
@@ -128,14 +137,13 @@ pub fn lease(bases: &[PathBuf], who: &str) -> std::io::Result<Lease> {
     for b in bases {
         let _ = std::fs::create_dir_all(b);
     }
-    // Warm ones first, most recently idled first; then empty ones. Taking each lock in that
-    // order means the first one won is the best idle directory, whatever races us.
-    let mut order: Vec<(bool, SystemTime, usize, u64)> = bases
+    // Taking each lock in `lease_order` means the first one won is the best idle directory, whatever races us.
+    let scanned: Vec<ScannedSlot> = bases
         .iter()
         .enumerate()
         .flat_map(|(i, b)| slots(b).into_iter().map(move |n| (holds_anything(&dir_path(b, n)), idle_since(b, n), i, n)))
         .collect();
-    order.sort_by(|a, b| b.cmp(a));
+    let order = lease_order(scanned);
     let mut won = order.iter().find_map(|&(warm, _, i, n)| try_lock(&bases[i], n).map(|f| (i, n, f, warm)));
     if won.is_none() {
         let mut fewest: Vec<(usize, usize)> = bases.iter().enumerate().map(|(i, b)| (slots(b).len(), i)).collect();
@@ -298,61 +306,82 @@ pub fn evict_idle_with(bases: &[PathBuf], budget_bytes: u64, size: &dyn Fn(&Path
 
 /// [`evict_idle_with`] with the process table's root injected.
 pub fn evict_idle_in(bases: &[PathBuf], budget_bytes: u64, size: &dyn Fn(&Path) -> u64, proc_root: &Path) -> Vec<PathBuf> {
-    enum Entry {
-        Slot(usize, u64),
-        Stray,
-    }
-    let mut sized: Vec<(Entry, PathBuf, u64)> = Vec::new();
+    let mut candidates = Vec::new();
     for (i, b) in bases.iter().enumerate() {
         let slot_dirs: Vec<PathBuf> = slots(b).into_iter().map(|n| dir_path(b, n)).collect();
         for n in slots(b) {
-            sized.push((Entry::Slot(i, n), dir_path(b, n), size(&dir_path(b, n))));
+            let path = dir_path(b, n);
+            candidates.push(Candidate { bytes: size(&path), age: idle_since(b, n), kind: Kind::Slot(i, n), path });
         }
-        for p in dirs(b).into_iter().filter(|p| !slot_dirs.contains(p)) {
-            let bytes = size(&p);
-            sized.push((Entry::Stray, p, bytes));
+        for path in dirs(b).into_iter().filter(|p| !slot_dirs.contains(p)) {
+            candidates.push(Candidate { bytes: size(&path), age: newest_touch(&path, true), kind: Kind::Stray, path });
         }
     }
-    let mut total: u64 = sized.iter().map(|(_, _, b)| b).sum();
+    evict_walk(candidates, budget_bytes, &mut |c| match c.kind {
+        // Under the slot's own lock: a directory a session takes meanwhile is skipped, and one
+        // evicted here is an empty directory the next lease takes last.
+        Kind::Slot(i, n) => {
+            let Some(_held) = try_lock(&bases[i], n) else { return false };
+            empty(&c.path);
+            true
+        }
+        // Read at the removal, not before the age scan: a process may have started standing here since.
+        Kind::Stray => {
+            if stood_in(&c.path, &held_by_processes(proc_root)) {
+                return false;
+            }
+            remove_any(&c.path);
+            true
+        }
+    })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    Slot(usize, u64),
+    Stray,
+}
+
+/// One directory under a base that eviction may remove; `age` is when it was last used.
+#[derive(Debug, Clone)]
+struct Candidate {
+    path: PathBuf,
+    kind: Kind,
+    bytes: u64,
+    age: SystemTime,
+}
+
+/// The candidates in the order eviction tries them: empty ones dropped, oldest first, ties by
+/// path; none at all while the total is within budget.
+fn eviction_order(candidates: &[Candidate], budget_bytes: u64) -> Vec<&Candidate> {
+    if candidates.iter().map(|c| c.bytes).sum::<u64>() <= budget_bytes {
+        return Vec::new();
+    }
+    let mut order: Vec<&Candidate> = candidates.iter().filter(|c| c.bytes > 0).collect();
+    order.sort_by(|a, b| (a.age, &a.path).cmp(&(b.age, &b.path)));
+    order
+}
+
+/// Walk [`eviction_order`] until the total is within budget. `remove` tries one removal and says
+/// whether it happened; a refused candidate stays counted. Returns the paths removed, in order.
+fn evict_walk(candidates: Vec<Candidate>, budget_bytes: u64, remove: &mut dyn FnMut(&Candidate) -> bool) -> Vec<PathBuf> {
+    let mut total: u64 = candidates.iter().map(|c| c.bytes).sum();
     let mut gone = Vec::new();
-    if total <= budget_bytes {
-        return gone;
-    }
-    let mut idle: Vec<(SystemTime, Entry, PathBuf, u64)> = sized
-        .into_iter()
-        .filter(|&(_, _, b)| b > 0)
-        .map(|(e, p, b)| {
-            let at = match e {
-                Entry::Slot(i, n) => idle_since(&bases[i], n),
-                Entry::Stray => newest_touch(&p, true),
-            };
-            (at, e, p, b)
-        })
-        .collect();
-    idle.sort_by_key(|(at, _, p, _)| (*at, p.clone()));
-    for (_, entry, dir, bytes) in idle {
+    for c in eviction_order(&candidates, budget_bytes) {
         if total <= budget_bytes {
             break;
         }
-        match entry {
-            // Under the slot's own lock: a directory a session takes meanwhile is skipped, and one
-            // evicted here is an empty directory the next lease takes last.
-            Entry::Slot(i, n) => {
-                let Some(_held) = try_lock(&bases[i], n) else { continue };
-                empty(&dir);
-            }
-            Entry::Stray => {
-                // Read at the removal, not before the age scan: a process may have started standing here since.
-                if held_by_processes(proc_root).iter().any(|h| h.starts_with(&dir)) {
-                    continue;
-                }
-                remove_any(&dir);
-            }
+        if remove(c) {
+            total = total.saturating_sub(c.bytes);
+            gone.push(c.path.clone());
         }
-        total = total.saturating_sub(bytes);
-        gone.push(dir);
     }
     gone
+}
+
+/// Whether any of the paths a process holds lies inside `dir`.
+fn stood_in(dir: &Path, held: &[PathBuf]) -> bool {
+    held.iter().any(|h| h.starts_with(dir))
 }
 
 /// One gauge the pool reports; `dir` labels the per-directory series.
@@ -588,12 +617,9 @@ mod tests {
         let b = lease(std::slice::from_ref(&base), "sp-b").expect("second lease");
         assert_ne!(a.dir(), b.dir(), "a live directory is never handed out twice");
         assert!(a.dir().join("debug/deps/liba.rlib").exists());
-        assert!(evict_idle_with(std::slice::from_ref(&base), 0, &held).is_empty(), "nothing idle: a budget of zero removes nothing live");
+        let proc = empty_proc(d.path());
+        assert!(evict_idle_in(std::slice::from_ref(&base), 0, &held, &proc).is_empty(), "nothing idle: a budget of zero removes nothing live");
         assert!(a.dir().join("debug/deps/liba.rlib").exists(), "the live directory is untouched under budget pressure");
-        b.release();
-        let c = lease(std::slice::from_ref(&base), "sp-c").expect("third lease");
-        assert_ne!(a.dir(), c.dir(), "still live: the released one is taken instead");
-        assert!(!c.reused, "the released directory held nothing, so it is no warm start");
     }
 
     #[test]
@@ -638,22 +664,6 @@ mod tests {
         assert!(lease(&bases[..1], "sp-b").is_err(), "positive control: with only the unusable base there is no slot");
     }
 
-    #[test]
-    fn eviction_counts_every_base_against_one_budget() {
-        let d = testkit::TempDir::new("bdir-two-bases-evict");
-        let bases = [d.path().join("b"), d.path().join("c")];
-        let ls: Vec<Lease> = ["sp-a", "sp-b"].iter().map(|who| lease(&bases, who).unwrap()).collect();
-        for (i, l) in ls.iter().enumerate() {
-            fill(&l.dir().join("debug/x"), 1);
-            assert_eq!(l.dir().parent(), Some(bases[i].as_path()));
-        }
-        for l in ls {
-            l.release();
-        }
-        let held = |p: &Path| u64::from(holds_anything(p)) * 100;
-        assert_eq!(evict_idle_with(&bases, 100, &held).len(), 1);
-    }
-
     fn value(s: &[Sample], name: &str, dir: Option<&str>) -> Option<f64> {
         s.iter().find(|x| x.name == name && x.dir.as_deref() == dir).map(|x| x.value)
     }
@@ -692,6 +702,12 @@ mod tests {
         }
     }
 
+    fn empty_proc(d: &Path) -> PathBuf {
+        let proc = d.join("empty-proc");
+        std::fs::create_dir_all(&proc).unwrap();
+        proc
+    }
+
     fn proc_naming(d: &Path, pid: u32, target: &Path) -> PathBuf {
         let proc = d.join("proc");
         std::fs::create_dir_all(proc.join(pid.to_string())).unwrap();
@@ -727,7 +743,7 @@ mod tests {
         let stray = base.join("hand.1");
         touch(&stray.join("x"), 3 * 86400, 3 * 86400);
         let held = |p: &Path| u64::from(holds_anything(p)) * 100;
-        assert_eq!(evict_idle_with(std::slice::from_ref(&base), 0, &held), vec![stray]);
+        assert_eq!(evict_idle_in(std::slice::from_ref(&base), 0, &held, &empty_proc(d.path())), vec![stray]);
     }
 
     #[test]
@@ -740,9 +756,105 @@ mod tests {
         fill(&stray.join("debug/x"), 64);
         touch(&stray.join("debug/x"), 3 * 86400, 3 * 86400);
         let budget = crate::build::size_of(live.dir()) + 1024;
-        assert_eq!(evict_idle(std::slice::from_ref(&base), budget), vec![stray.clone()]);
+        assert_eq!(evict_idle_in(std::slice::from_ref(&base), budget, &crate::build::size_of, &empty_proc(d.path())), vec![stray.clone()]);
         assert!(!stray.exists());
         assert!(live.dir().join("debug/x").exists());
+    }
+
+    fn at(secs: u64) -> SystemTime {
+        SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(secs)
+    }
+
+    const DAY: u64 = 86400;
+
+    fn slot(base: usize, n: u64, bytes: u64, age_days: u64) -> Candidate {
+        Candidate { path: PathBuf::from(format!("/b{base}/dir.{n}")), kind: Kind::Slot(base, n), bytes, age: at(100 * DAY - age_days * DAY) }
+    }
+
+    fn stray(name: &str, bytes: u64, age_days: u64) -> Candidate {
+        Candidate { path: PathBuf::from(format!("/b0/{name}")), kind: Kind::Stray, bytes, age: at(100 * DAY - age_days * DAY) }
+    }
+
+    fn numbers(order: &[ScannedSlot]) -> Vec<u64> {
+        order.iter().map(|s| s.3).collect()
+    }
+
+    #[test]
+    fn the_most_recently_idled_warm_slot_is_tried_first_then_the_rest_then_the_empty_ones() {
+        let scanned = vec![(false, at(100), 0, 1), (true, at(10), 0, 2), (true, at(50), 1, 3), (false, at(200), 0, 4)];
+        assert_eq!(numbers(&lease_order(scanned)), [3, 2, 4, 1]);
+    }
+
+    #[test]
+    fn a_single_idle_warm_slot_is_the_one_a_lease_takes_and_it_stays_on_its_base() {
+        let order = lease_order(vec![(true, at(5), 1, 7)]);
+        assert_eq!(order.first().map(|s| (s.2, s.3)), Some((1, 7)));
+    }
+
+    #[test]
+    fn a_budget_of_zero_with_one_idle_directory_removes_it_and_reports_one_event_naming_it() {
+        let gone = evict_walk(vec![slot(0, 1, 100, 3)], 0, &mut |_| true);
+        assert_eq!(gone, [PathBuf::from("/b0/dir.1")]);
+        assert_eq!(eviction_samples(&gone), [Sample { name: "build_dir_evicted", value: 1.0, dir: Some("/b0/dir.1".into()) }]);
+    }
+
+    #[test]
+    fn strays_are_ranked_with_idle_slots_oldest_first() {
+        let cs = vec![slot(0, 2, 10, 1), stray("hand.1", 10, 3), slot(0, 1, 10, 5)];
+        let gone = evict_walk(cs, 0, &mut |_| true);
+        assert_eq!(gone, [PathBuf::from("/b0/dir.1"), PathBuf::from("/b0/hand.1"), PathBuf::from("/b0/dir.2")]);
+    }
+
+    #[test]
+    fn a_stray_with_a_process_standing_in_it_is_spared_and_the_others_go() {
+        let held = [PathBuf::from("/b0/hand.1/debug")];
+        let cs = vec![slot(0, 2, 10, 1), stray("hand.1", 10, 3), slot(0, 1, 10, 5)];
+        let gone = evict_walk(cs, 0, &mut |c| !(c.kind == Kind::Stray && stood_in(&c.path, &held)));
+        assert_eq!(gone, [PathBuf::from("/b0/dir.1"), PathBuf::from("/b0/dir.2")]);
+    }
+
+    #[test]
+    fn a_directory_is_stood_in_by_its_own_path_and_anything_beneath_it_not_a_sibling_prefix() {
+        let held = [PathBuf::from("/b0/hand.1/debug"), PathBuf::from("/b0/hand.20")];
+        assert!(stood_in(Path::new("/b0/hand.1"), &held));
+        assert!(stood_in(Path::new("/b0/hand.20"), &held));
+        assert!(!stood_in(Path::new("/b0/hand.2"), &held));
+        assert!(!stood_in(Path::new("/b0/hand.1"), &[]));
+    }
+
+    #[test]
+    fn a_process_cwd_read_from_a_proc_directory_marks_the_stray_it_stands_in() {
+        let d = testkit::TempDir::new("bdir-proc-cwd");
+        let proc = d.path().join("proc");
+        std::fs::create_dir_all(proc.join("77")).unwrap();
+        std::fs::create_dir_all(proc.join("self-ish")).unwrap();
+        std::os::unix::fs::symlink("/b0/hand.1/debug", proc.join("77/cwd")).unwrap();
+        let held = held_by_processes(&proc);
+        assert_eq!(held, [PathBuf::from("/b0/hand.1/debug")]);
+        assert!(stood_in(Path::new("/b0/hand.1"), &held));
+        assert!(!stood_in(Path::new("/b0/hand.2"), &held));
+    }
+
+    #[test]
+    fn eviction_removes_least_recently_used_first_never_a_refused_live_one_and_stops_once_under_budget() {
+        let cs = vec![slot(0, 4, 100, 1), slot(0, 1, 100, 9), slot(0, 2, 100, 5), slot(0, 3, 100, 3)];
+        let gone = evict_walk(cs, 100, &mut |c| c.path != Path::new("/b0/dir.1"));
+        assert_eq!(gone, [PathBuf::from("/b0/dir.2"), PathBuf::from("/b0/dir.3"), PathBuf::from("/b0/dir.4")]);
+        let cs = vec![slot(0, 1, 100, 9), slot(0, 2, 100, 5), slot(0, 3, 100, 3)];
+        assert_eq!(evict_walk(cs, 150, &mut |_| true), [PathBuf::from("/b0/dir.1"), PathBuf::from("/b0/dir.2")], "dir.3 stays: the total is under budget");
+    }
+
+    #[test]
+    fn an_eviction_within_budget_removes_nothing_and_empty_directories_are_never_candidates() {
+        assert!(evict_walk(vec![slot(0, 1, 100, 9)], 100, &mut |_| panic!("under budget")).is_empty());
+        let cs = vec![slot(0, 1, 0, 9), slot(0, 2, 100, 1)];
+        assert_eq!(evict_walk(cs, 0, &mut |_| true), [PathBuf::from("/b0/dir.2")]);
+    }
+
+    #[test]
+    fn eviction_counts_every_base_against_one_budget() {
+        let cs = vec![slot(0, 1, 100, 2), slot(1, 1, 100, 1)];
+        assert_eq!(evict_walk(cs, 100, &mut |_| true), [PathBuf::from("/b0/dir.1")]);
     }
 
     #[test]
