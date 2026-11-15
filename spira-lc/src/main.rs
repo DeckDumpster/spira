@@ -182,6 +182,15 @@ fn main() {
         }
     }
 
+    // cite-check reads the bead store itself (bd::LiveBd), never the service socket or `Conn`.
+    if args.first().map(String::as_str) == Some("cite-check") {
+        let (code, out) = cite_check::run(&args[1..]);
+        if !out.is_empty() {
+            println!("{out}");
+        }
+        std::process::exit(code);
+    }
+
     // The caller verbs proved from the caller's own git checkout (callers.rs; DESIGN.md §2).
     if let Some(verb) = args.first().filter(|v| callers::is_verb(v)) {
         let ans = callers::run(verb, &args[1..], &mut Live { conn: None });
@@ -291,7 +300,6 @@ pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
         Some("journal") => journal::dispatch(&args[1..], conn),
         Some("fact") => facts::cmd_fact(&args[1..], conn),
         Some("facts") => facts::cmd_facts(&args[1..], conn),
-        Some("cite-check") => cite_check::run(&args[1..]),
         Some("plan") => plan::cmd_plan(&args[1..], conn),
         Some("ready-set") => ready_set::run(conn),
         Some("pane-facets") => plan::cmd_pane_facets(&args[1..], conn),
