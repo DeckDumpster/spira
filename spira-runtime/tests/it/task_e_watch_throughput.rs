@@ -245,6 +245,15 @@ fn leftover_round_records_are_cleared_and_the_ones_refused_are_paged_by_name_onc
 }
 
 #[test]
+fn a_snapshot_whose_records_are_all_live_clears_and_pages_nothing() {
+    let mut s = landed(400);
+    s.snap.records = Records { clear: vec![], held: vec![] };
+    let r = rig(Arc::new(Mutex::new(s)));
+    assert!(named(&r, CLEAR).is_empty());
+    assert!(named(&r, INBOX_APPEND).is_empty());
+}
+
+#[test]
 fn no_leftover_records_means_no_clear_effect() {
     let r = rig(Arc::new(Mutex::new(landed(400))));
     assert!(named(&r, CLEAR).is_empty());

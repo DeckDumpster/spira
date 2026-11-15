@@ -19,7 +19,14 @@ pub struct RoundFile {
 
 /// The forge batch's files: its open record, the batcher's prepared next round, and the verdict's
 /// last view of the forge.
-const FORGE_FILES: [&str; 3] = ["open", "prepared", "forge-state"];
+pub const FORGE_STATE: &str = "forge-state";
+const FORGE_FILES: [&str; 3] = ["open", "prepared", FORGE_STATE];
+
+impl RoundFile {
+    pub fn is_forge_state(&self) -> bool {
+        self.path.file_name().is_some_and(|n| n == FORGE_STATE)
+    }
+}
 
 fn is_round_file(name: &str) -> bool {
     name == "round"
