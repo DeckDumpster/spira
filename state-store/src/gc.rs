@@ -188,10 +188,10 @@ mod tests {
             write(&c, &format!("rec/{i}"), &format!("old{i}"));
         }
         clock.advance(15 * DAY_MS);
+        write(&c, "rec/new", "new");
         let gc = Controller::new(&c);
-        let pass = gc.pass(c.now_ms());
-        assert_eq!(pass.failed, vec![]);
-        assert_eq!(events(&c), 5);
+        gc.tick(c.now_ms()).unwrap();
+        assert_eq!(events(&c), 6);
     }
 
     /// Refuses `range` over `events/` with a plain error once armed, and counts the reads that

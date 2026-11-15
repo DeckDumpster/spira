@@ -256,8 +256,8 @@ pub struct Options {
     /// Runs after every side file has committed and before the main commit; an `Err` fails the
     /// commit as a failed main commit would.
     pub commit_probe: Option<CommitProbe>,
-    /// File receipts in day files. Off for a store being restored or verified, whose receipts
-    /// stay in its one file, where reads find them and the drain removes them once a day old.
+    /// File receipts and events in day files. Off for a store being restored or verified, whose
+    /// receipts and events stay in its one file, where reads find them and no drain removes them.
     pub day_receipts: bool,
 }
 
