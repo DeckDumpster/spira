@@ -960,7 +960,7 @@ impl SqliteBackend {
             let mut blocked_at = None;
             for (k, v) in &page {
                 let Some(at) = recorded_at(v).or(unstamped_age) else {
-                    blocked_at = Some(now.saturating_add(86_400_000));
+                    blocked_at = Some(now.saturating_add(dated::DAY_MS));
                     break;
                 };
                 if at >= cutoff {
