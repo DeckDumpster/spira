@@ -44,9 +44,6 @@ fn main() {
     if argv.first().map(String::as_str) == Some("fixture-config") {
         std::process::exit(gate::fixture::main(&argv[1..]));
     }
-    if argv.first().map(String::as_str) == Some("unit-build") {
-        std::process::exit(gate::compose::unit_build_main(&argv[1..]));
-    }
     if argv.first().map(String::as_str) == Some("fence-run") {
         std::process::exit(gate::fences::run_main(&argv[1..]));
     }
