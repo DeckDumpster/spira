@@ -513,6 +513,16 @@ fn git_remotes(repo: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// A key the toml in force gains only at activation, after pre-activate: absent is `None`, so it
+/// stays out of `CONFIG_KEYS`, whose check would refuse the release that introduces it.
+fn unregistered_is_none<T>(r: Result<T, String>) -> Result<Option<T>, String> {
+    match r {
+        Ok(v) => Ok(Some(v)),
+        Err(e) if e.contains("not a registered config key") => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
 /// Every key `context` must resolve; `queue check-config` refuses a registry that lacks one.
 pub const CONFIG_KEYS: &[&str] = &[
     "SPIRA_CERTIFY_SUITES",
@@ -526,7 +536,6 @@ pub const CONFIG_KEYS: &[&str] = &[
     "SPIRA_PUBLISH_RED_PRIORITY",
     "SPIRA_PUBLISH_RED_ESCALATE_AFTER",
     "SPIRA_PUBLISH_SETTLE_DEFER_MAX",
-    "SPIRA_PUBLISH_NO_RUN_SECS",
     "SPIRA_DWARF_BUILD_BASE",
 ];
 
@@ -643,12 +652,6 @@ impl Lib for RealLib {
                 Err(e) if e.contains("not a registered config key") => None,
                 Err(e) => return Err(e),
             };
-        let publish_no_run_secs =
-            match spira_config::process::cfg_parse::<u64>("SPIRA_PUBLISH_NO_RUN_SECS") {
-                Ok(n) => Some(n),
-                Err(e) if e.contains("not a registered config key") => None,
-                Err(e) => return Err(e),
-            };
         let s = Settings {
             home: PathBuf::from(g("home")),
             run: PathBuf::from(g("run")),
@@ -693,7 +696,9 @@ impl Lib for RealLib {
             publish_red_priority,
             publish_red_escalate_after,
             publish_defer_max,
-            publish_no_run_secs,
+            publish_no_run_secs: unregistered_is_none(
+                spira_config::process::cfg_parse::<u64>("SPIRA_PUBLISH_NO_RUN_SECS"),
+            )?,
         };
         let path = reg.root(&name);
         let landref = spira_config::repos::landref(&reg, &name).filter(|s| !s.is_empty());
