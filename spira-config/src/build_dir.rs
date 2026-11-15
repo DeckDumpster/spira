@@ -306,17 +306,31 @@ pub fn evict_idle_with(bases: &[PathBuf], budget_bytes: u64, size: &dyn Fn(&Path
 
 /// [`evict_idle_with`] with the process table's root injected.
 pub fn evict_idle_in(bases: &[PathBuf], budget_bytes: u64, size: &dyn Fn(&Path) -> u64, proc_root: &Path) -> Vec<PathBuf> {
-    let mut candidates = Vec::new();
+    let mut sized = Vec::new();
     for (i, b) in bases.iter().enumerate() {
         let slot_dirs: Vec<PathBuf> = slots(b).into_iter().map(|n| dir_path(b, n)).collect();
         for n in slots(b) {
             let path = dir_path(b, n);
-            candidates.push(Candidate { bytes: size(&path), age: idle_since(b, n), kind: Kind::Slot(i, n), path });
+            sized.push((Kind::Slot(i, n), size(&path), path));
         }
         for path in dirs(b).into_iter().filter(|p| !slot_dirs.contains(p)) {
-            candidates.push(Candidate { bytes: size(&path), age: newest_touch(&path, true), kind: Kind::Stray, path });
+            sized.push((Kind::Stray, size(&path), path));
         }
     }
+    if sized.iter().map(|(_, bytes, _)| bytes).sum::<u64>() <= budget_bytes {
+        return Vec::new();
+    }
+    let candidates = sized
+        .into_iter()
+        .filter(|(_, bytes, _)| *bytes > 0)
+        .map(|(kind, bytes, path)| {
+            let age = match kind {
+                Kind::Slot(i, n) => idle_since(&bases[i], n),
+                Kind::Stray => newest_touch(&path, true),
+            };
+            Candidate { path, kind, bytes, age }
+        })
+        .collect();
     evict_walk(candidates, budget_bytes, &mut |c| match c.kind {
         // Under the slot's own lock: a directory a session takes meanwhile is skipped, and one
         // evicted here is an empty directory the next lease takes last.
@@ -786,7 +800,7 @@ mod tests {
     }
 
     #[test]
-    fn a_single_idle_warm_slot_is_the_one_a_lease_takes_and_it_stays_on_its_base() {
+    fn a_single_idle_warm_slot_is_first_in_the_lease_order_on_its_own_base() {
         let order = lease_order(vec![(true, at(5), 1, 7)]);
         assert_eq!(order.first().map(|s| (s.2, s.3)), Some((1, 7)));
     }
@@ -855,6 +869,18 @@ mod tests {
     fn eviction_counts_every_base_against_one_budget() {
         let cs = vec![slot(0, 1, 100, 2), slot(1, 1, 100, 1)];
         assert_eq!(evict_walk(cs, 100, &mut |_| true), [PathBuf::from("/b0/dir.1")]);
+    }
+
+    #[test]
+    fn evicting_an_idle_slot_empties_it_and_keeps_the_directory_and_its_lock() {
+        let d = testkit::TempDir::new("bdir-evict-slot");
+        let base = d.path().join("base");
+        fill(&base.join("dir.1/debug/x"), 64);
+        std::fs::write(base.join("dir.1.lock"), "").unwrap();
+        let gone = evict_idle_in(std::slice::from_ref(&base), 0, &crate::build::size_of, &empty_proc(d.path()));
+        assert_eq!(gone, [base.join("dir.1")]);
+        assert!(base.join("dir.1").is_dir() && !holds_anything(&base.join("dir.1")), "emptied in place");
+        assert!(base.join("dir.1.lock").exists());
     }
 
     #[test]
