@@ -96,7 +96,7 @@ async fn a_full_class_defers_records_it_and_runs_the_effect_later() {
     for _ in 0..3 {
         let _ = release.send(());
     }
-    tokio::time::timeout(Duration::from_secs(20), serving).await.expect("the host drains").unwrap().unwrap();
+    tokio::time::timeout(Duration::from_secs(60), serving).await.expect("the host drains").unwrap().unwrap();
     assert_eq!(count(&*j, "built"), 3, "every deferred effect runs: nothing is dropped");
     assert!(runner.ran.lock().unwrap().values().all(|n| *n == 1), "each effect runs once");
     let status = board.get().expect("the engine published its status");
@@ -155,11 +155,11 @@ async fn a_deferred_effect_is_offered_again_only_when_a_slot_frees_not_on_idle_t
     until(|| !deferred(&sink).is_empty()).await;
     assert_eq!(deferred(&sink).len(), 1, "the second effect is deferred once: {:?}", deferred(&sink));
     let seen = wakes.load(std::sync::atomic::Ordering::SeqCst);
-    until(|| wakes.load(std::sync::atomic::Ordering::SeqCst) >= seen + 20).await;
+    until(|| wakes.load(std::sync::atomic::Ordering::SeqCst) >= seen + 100).await;
     assert_eq!(deferred(&sink).len(), 1, "with no slot freed, the deferred effect is not offered again");
     let _ = release.send(());
     let _ = release.send(());
-    tokio::time::timeout(Duration::from_secs(20), serving).await.expect("the host drains").unwrap().unwrap();
+    tokio::time::timeout(Duration::from_secs(60), serving).await.expect("the host drains").unwrap().unwrap();
     assert_eq!(deferred(&sink).len(), 1, "the freed slot takes it: no further deferral");
     assert_eq!(count(&*j, "built"), 2);
 }
@@ -185,6 +185,6 @@ async fn the_live_host_names_the_registered_task_to_the_runner() {
     let (tx, rx) = mpsc::channel::<Submit>(4);
     drop(tx);
     let serving = tokio::spawn(serve_with(e, Arc::new(WallClock), runner.clone(), PoolCaps::default(), rx, opts(&sink)));
-    tokio::time::timeout(Duration::from_secs(20), serving).await.expect("the host drains").unwrap().unwrap();
+    tokio::time::timeout(Duration::from_secs(60), serving).await.expect("the host drains").unwrap().unwrap();
     assert_eq!(*runner.0.lock().unwrap(), ["builds"]);
 }

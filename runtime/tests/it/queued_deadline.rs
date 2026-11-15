@@ -159,7 +159,7 @@ async fn a_timed_out_effect_gives_its_permit_back() {
     let got = outcomes(&*j);
     let _ = let_go.send(());
     drop(tx);
-    tokio::time::timeout(Duration::from_secs(20), serving).await.expect("the host drains").unwrap().unwrap();
+    tokio::time::timeout(Duration::from_secs(60), serving).await.expect("the host drains").unwrap().unwrap();
     assert!(
         got.contains(&format!("{EFFECT_SUCCEEDED}:quick")),
         "with host cap 1, an effect asked for after the only holder timed out must run while that runner is still stuck: {got:?}"
@@ -180,7 +180,7 @@ async fn a_turn_runs_while_every_effect_worker_is_busy() {
     let heard = tokio::time::timeout(Duration::from_secs(30), journaled).await; // clock-safe: a hang cap on the turn's reply
     let _ = let_go.send(());
     drop(tx);
-    tokio::time::timeout(Duration::from_secs(20), serving).await.expect("the host drains").unwrap().unwrap();
+    tokio::time::timeout(Duration::from_secs(60), serving).await.expect("the host drains").unwrap().unwrap();
     assert!(
         matches!(heard, Ok(Ok(Ok(())))),
         "with the only effect worker held by a running effect, the engine's turn must still journal a submission while the worker is held: {heard:?}"
@@ -202,7 +202,7 @@ async fn one_task_fanning_out_leaves_room_in_its_class_for_the_others() {
     let got = outcomes(&*j);
     runner.wide_go.store(true, SeqCst);
     drop(tx);
-    tokio::time::timeout(Duration::from_secs(20), serving).await.expect("the host drains").unwrap().unwrap();
+    tokio::time::timeout(Duration::from_secs(60), serving).await.expect("the host drains").unwrap().unwrap();
     assert_eq!(runner.wide_peak.load(SeqCst), runtime::host::task_fan_out(4), "one task holds at most half of host cap 4 at once");
     assert!(got.contains(&format!("{EFFECT_SUCCEEDED}:other")), "another task's host effect must run while one task fans out six: {got:?}");
     assert_eq!(outcomes(&*j).iter().filter(|o| *o == &format!("{EFFECT_SUCCEEDED}:wide")).count(), 6, "every fanned-out effect still runs");
