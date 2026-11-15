@@ -350,12 +350,12 @@ mod tests {
     #[test]
     fn a_stall_incident_is_filed_express_p0_against_the_home_repo() {
         let mut env = incident::intake::Env::load();
-        env.home_repo = "spira".into();
+        env.home_repo = "home-x".into();
         env.repo = None;
         env.express = false;
         env.reference = None;
         tune(&mut env, "incident:throughput-stall:alpha:7".into());
-        assert_eq!(env.repo.as_deref(), Some("spira"));
+        assert_eq!(env.repo.as_deref(), Some("home-x"));
         assert_eq!(env.priority, "0");
         assert!(env.express);
         assert_eq!(env.reference.as_deref(), Some("incident:throughput-stall:alpha:7"));
