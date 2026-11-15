@@ -829,6 +829,10 @@ mod tests {
             let _ = release_rx.recv();
         });
         assert!(out.is_none());
+        let patience = std::time::Instant::now() + Duration::from_secs(5);
+        while rec.snapshot().open.is_none() && std::time::Instant::now() < patience { // clock-safe: caps the wait for the worker to open its phase
+            std::thread::yield_now();
+        }
         assert_eq!(rec.snapshot().open, Some("writer_wait"));
         drop(release);
     }

@@ -805,14 +805,13 @@ mod tests {
 
     impl Bd for FakeBd {
         fn list_github_json(&self) -> Option<serde_json::Value> {
-            self.list_all_json()
-        }
-
-        fn list_all_json(&self) -> Option<serde_json::Value> {
             Some(self.all.borrow().clone())
         }
-        fn create(&self, _: &str, _: &str, _: &str, _: &str, _: &[u8]) -> bool {
-            true
+        fn by_ref(&self, _: &str) -> Result<Vec<crate::store::KnownRef>, String> {
+            Err("closeout reads no reference".into())
+        }
+        fn create(&self, _: &str, _: &str, _: &str, _: &str, _: &[u8]) -> Option<String> {
+            None
         }
         fn note(&self, _: &str, _: &str) -> bool {
             true

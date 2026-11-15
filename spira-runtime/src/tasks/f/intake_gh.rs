@@ -512,7 +512,7 @@ fn file(e: &Effects, s: &EffectSpec, labels: impl Fn(&BTreeMap<String, String>, 
         return Err(format!("{} is already in the store — refusing a second bead", p.act.ext_ref));
     }
     let (labels, priority) = labels(&p.cfg, &p.act);
-    if bd()?.create(&p.act.title, &p.act.ext_ref, &labels, &priority, p.act.body.as_bytes()) {
+    if bd()?.create(&p.act.title, &p.act.ext_ref, &labels, &priority, p.act.body.as_bytes()).is_some() {
         Ok(format!("filed {}", p.act.ext_ref))
     } else {
         Err(format!("could not create a bead for {}", p.act.ext_ref))

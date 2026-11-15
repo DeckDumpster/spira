@@ -108,6 +108,24 @@ impl Seen for FileSeen {
             let _ = std::fs::rename(&tmp, &path);
         }
     }
+    fn last_filed(&self, slug: &str) -> Option<(String, String)> {
+        let text = std::fs::read_to_string(self.last_path(slug)).ok()?;
+        let (r, id) = text.trim().split_once(' ')?;
+        Some((r.to_string(), id.to_string()))
+    }
+    fn save_last_filed(&self, slug: &str, external_ref: &str, id: &str) {
+        let path = self.last_path(slug);
+        let tmp = path.with_extension("tmp");
+        if std::fs::create_dir_all(self.0.join("last")).is_ok() && std::fs::write(&tmp, format!("{external_ref} {id}\n")).is_ok() {
+            let _ = std::fs::rename(&tmp, &path);
+        }
+    }
+}
+
+impl FileSeen {
+    fn last_path(&self, slug: &str) -> std::path::PathBuf {
+        self.0.join("last").join(slug.replace('/', "__"))
+    }
 }
 
 pub struct RealLifecycle {
@@ -180,13 +198,12 @@ pub struct RealBd {
     pub bdq: String,
 }
 
-/// Every bead, through the store's `content` door; `None` when it does not answer.
-pub fn list_all_on(lc: &spira_store::lc_call::LcClient) -> Option<serde_json::Value> {
-    let r = lc.call(&["content", "list", "--all", "--limit", "0", "--json"]).ok()?;
-    if r.code != 0 {
-        return None;
-    }
-    serde_json::from_str(&r.out).ok()
+/// The beads carrying exactly `external_ref`, through the store's `content ref` verb. Err
+/// carries the store's own text.
+pub fn by_ref_on(lc: &spira_store::lc_call::LcClient, external_ref: &str) -> Result<Vec<crate::store::KnownRef>, String> {
+    let out = lc.answer(&["content", "ref", external_ref, "--json"])?;
+    let v: serde_json::Value = serde_json::from_str(&out).map_err(|e| format!("content ref: unparsed reply: {e}"))?;
+    crate::store::known_refs(&v).ok_or_else(|| format!("content ref: reply is no list: {}", out.chars().take(200).collect::<String>()))
 }
 
 /// The work beads' external-reference prefix: `github-untrusted:` records do not contain it.
@@ -228,14 +245,14 @@ impl Bd for RealBd {
         github_refs_on(&lc, WORK_REF_PREFIX).ok()
     }
 
-    fn list_all_json(&self) -> Option<serde_json::Value> {
-        let lc = spira_store::lc_call::LcClient::configured().ok()?;
-        list_all_on(&lc)
+    fn by_ref(&self, external_ref: &str) -> Result<Vec<crate::store::KnownRef>, String> {
+        by_ref_on(&spira_store::lc_call::LcClient::configured()?, external_ref)
     }
 
-    fn create(&self, title: &str, external_ref: &str, labels: &str, priority: &str, body: &[u8]) -> bool {
+    fn create(&self, title: &str, external_ref: &str, labels: &str, priority: &str, body: &[u8]) -> Option<String> {
         let argv = ["content", "create", title, "--external-ref", external_ref, "--labels", labels, "-t", "bug", "-p", priority, "--body-file", "-", "--silent"];
-        content(&argv, Some(&String::from_utf8_lossy(body))).is_some()
+        let id = content(&argv, Some(&String::from_utf8_lossy(body)))?.trim().to_string();
+        (!id.is_empty()).then_some(id)
     }
 
     fn note(&self, id: &str, text: &str) -> bool {
@@ -606,11 +623,23 @@ mod transport_tests {
     }
 
     #[test]
-    fn the_bead_list_is_the_stores_content_door() {
+    fn last_filed_lines_round_trip_per_repository_including_dotted_slugs() {
+        let dir = testkit::TempDir::new("gh-intake-last");
+        let seen = FileSeen(dir.path().to_path_buf());
+        assert_eq!(seen.last_filed("acme/widgets"), None);
+        seen.save_last_filed("acme/widgets", "github:acme/widgets#4", "sp-a");
+        seen.save_last_filed("acme/widgets.js", "github:acme/widgets.js#9", "sp-b");
+        assert_eq!(seen.last_filed("acme/widgets"), Some(("github:acme/widgets#4".into(), "sp-a".into())));
+        assert_eq!(seen.last_filed("acme/widgets.js"), Some(("github:acme/widgets.js#9".into(), "sp-b".into())));
+    }
+
+    #[test]
+    fn a_reference_lookup_is_one_content_ref_read_and_a_failed_read_is_no_answer() {
         let t = Arc::new(Content(Mutex::default(), 0));
-        assert_eq!(list_all_on(&LcClient::over(t.clone(), true)).unwrap()[0]["id"], "sp-1");
-        assert_eq!(t.0.lock().unwrap()[0], ["content", "list", "--all", "--limit", "0", "--json"]);
-        assert_eq!(list_all_on(&LcClient::over(Arc::new(Content(Mutex::default(), 1)), true)), None, "a failed read is no list");
+        let got = by_ref_on(&LcClient::over(t.clone(), true), "github:o/r#1").unwrap();
+        assert_eq!(got[0].id, "sp-1");
+        assert_eq!(t.0.lock().unwrap()[0], ["content", "ref", "github:o/r#1", "--json"]);
+        assert!(by_ref_on(&LcClient::over(Arc::new(Content(Mutex::default(), 1)), true), "github:o/r#1").is_err(), "a failed read is not none");
     }
 
     struct Bounded(Mutex<Vec<Vec<String>>>, i32);
@@ -631,10 +660,9 @@ mod transport_tests {
         let t = Arc::new(Bounded(Mutex::default(), 0));
         let got = github_refs_on(&LcClient::over(t.clone(), true), "o/r#").unwrap();
         assert!(t.0.lock().unwrap().iter().all(|a| !spira_store::lc_call::reads_whole_history(a)));
-        assert_eq!(crate::store::ingested(&got)[0].id, "sp-1");
+        assert_eq!(got[0]["id"], "sp-1");
         let refused = github_refs_on(&LcClient::over(Arc::new(Bounded(Mutex::default(), 3)), true), "o/r#").unwrap_err();
         assert!(refused.contains("reads every bead"), "{refused}");
-        assert_eq!(list_all_on(&LcClient::over(Arc::new(Bounded(Mutex::default(), 0)), true)), None, "the whole-history read is what the store refuses");
     }
 
     #[test]

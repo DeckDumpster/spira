@@ -466,3 +466,16 @@ fn the_readers_columns_include_the_events_columns() {
         assert!(named.contains(&col), "{col}");
     }
 }
+
+#[test]
+fn a_ref_read_is_one_exact_match_on_external_ref_and_never_a_scan() {
+    let f = Fake { issues: vec![json!({ "id": "sp-a", "status": "open", "external_ref": "github:o/r#1" })], labels: vec![json!({ "label": "x" })], ..Fake::default() };
+    let out: Vec<Value> = serde_json::from_str(&answer(&f, DB, &v(&["ref", "github:o/r#1", "--json"])).unwrap()).unwrap();
+    assert_eq!(out, vec![json!({ "id": "sp-a", "labels": ["x"], "status": "open", "external_ref": "github:o/r#1" })]);
+    let sql = first_sql(&f);
+    assert!(sql.contains("external_ref = 'github:o/r#1'"), "{sql}");
+    assert!(!sql.contains("LOCATE") && !sql.contains("LIMIT 0"), "{sql}");
+    let none = Fake::default();
+    assert_eq!(answer(&none, DB, &v(&["ref", "github:o/r#2"])).unwrap(), "[]");
+    assert!(parse(&v(&["ref"])).is_err() && parse(&v(&["ref", "a", "b"])).is_err());
+}
