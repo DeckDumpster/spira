@@ -73,7 +73,12 @@ pub struct Store<B: Backend> {
     pub(super) dwell_index: std::sync::Mutex<super::dwell::LastIndex>,
     /// Where every applied transition is shipped once its txn commits.
     shipper: Option<spira_otel::vlogs::Shipper>,
+    /// A bead's external reference, read when it reaches a terminal state; `None` reads none.
+    refs: Option<ExternalRefs>,
 }
+
+/// `Ok(None)` when the bead has no reference; `Err` when the content store could not answer.
+pub type ExternalRefs = std::sync::Arc<dyn Fn(&str) -> std::result::Result<Option<String>, String> + Send + Sync>;
 
 /// Ops a pass puts in one txn, leaving room under etcd's limit for the request and events keys.
 const PASS_CHUNK: usize = state_store::limits::MAX_TXN_OPS - 2;
@@ -191,7 +196,14 @@ impl<B: Backend> Store<B> {
             claim_floor_ms,
             dwell_index: Default::default(),
             shipper: None,
+            refs: None,
         }
+    }
+
+    /// This store enqueues a GitHub closeout for every bead whose reference `refs` reads.
+    pub fn with_refs(mut self, refs: ExternalRefs) -> Self {
+        self.refs = Some(refs);
+        self
     }
 
     /// This store ships each transition it commits to VictoriaLogs, best effort.
@@ -596,6 +608,7 @@ impl<B: Backend> Store<B> {
         part: &str,
     ) -> Result<state_store::TxnResult> {
         let sub = sub_request(req, part, evidence(then, els));
+        t = self.enqueue_closeouts(t, then)?;
         let planned_at = self.contract.head()?;
         let entry = |id: &str| keys::history_entry(id, planned_at, &sub.id);
         for id in audited_ids(then) {
@@ -1137,6 +1150,7 @@ fn born_submit_audit(id: &str, tip: &str, at: i64, actor: &str) -> Audit {
 
 mod asks;
 mod direct;
+mod gh_closeout;
 mod mending;
 mod readiness;
 mod rounds;

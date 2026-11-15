@@ -3,6 +3,7 @@
 pub mod claimable;
 pub mod dwell;
 pub mod feed;
+pub mod gh_closeout;
 pub use spira_lc::keys;
 pub mod readiness;
 pub mod records;

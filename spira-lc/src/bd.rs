@@ -189,6 +189,11 @@ fn bead(bead_id: &str) -> Result<Option<Bead>, String> {
     store(|sql, db| content_sql::bead(sql, db, bead_id))
 }
 
+/// `bead_id`'s external reference; `Ok(None)` when it has none or the store holds no such bead.
+pub fn external_ref_of(bead_id: &str) -> Result<Option<String>, String> {
+    Ok(bead(bead_id)?.and_then(|b| b.external_ref).filter(|r| !r.trim().is_empty()))
+}
+
 /// The bound bead's own `repo:<name>` label, so `file-followup`/`split` never ask the
 /// dwarf for a repo it could get wrong.
 pub fn repo_label(bead_id: &str) -> Result<Option<String>, String> {
