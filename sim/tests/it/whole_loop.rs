@@ -778,7 +778,6 @@ fn converged(crashed: &Run, clean: &Run) -> Result<(), String> {
     Ok(())
 }
 
-
 fn crash_at(name: &str, script: fn() -> Script, seed: u64, double: &'static str, after: u32) {
     let interrupt = Interrupt { crash: Some(Crash { double, after }), ..Interrupt::default() };
     let clean = run(seed, script());
