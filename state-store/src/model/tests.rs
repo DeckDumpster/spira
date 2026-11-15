@@ -340,8 +340,8 @@ fn a_read_does_not_wait_for_a_commit_in_flight() {
             if self.stall.swap(false, Ordering::SeqCst) {
                 self.in_flight.store(true, Ordering::SeqCst);
                 self.entered.lock().unwrap().send(()).unwrap();
-                // clock-safe: a cap on the wait for the test to let the commit go
-                let _ = self.release.lock().unwrap().recv_timeout(Duration::from_secs(5));
+                // clock-safe: a 60 s cap on the wait for the test to let the commit go
+                let _ = self.release.lock().unwrap().recv_timeout(Duration::from_secs(60));
             }
             let out = self.inner.commit(expect, batch);
             self.in_flight.store(false, Ordering::SeqCst);
