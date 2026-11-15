@@ -305,7 +305,6 @@ _lcb_drill_control() {
     printf '%s\n' "$out"
     if [ "$rc" -eq 0 ]; then
         echo "lc-backup: drill ok — control: $(head -n1 <<<"$out")" > "$verdict"
-        date +%s > "$(dirname "$verdict")/drill.ok"
     else
         printf 'lc-backup: drill: control: %s\n' "$out" > "$verdict"
     fi

@@ -19,6 +19,8 @@
 //! - `NoDestination` when `SPIRA_LC_BACKUP_URL` is empty (`:174`); `NoDatabase` when `SPIRA_LC_BACKUP_DB` names none (`:175`).
 //! - Per db, the stamp `$SPIRA_RUN/lc-backup.<db>.ok` (`:52`), whose first field is the epoch of the last good upload. It is written only by the backup run after a successful `spira-lc admin-dolt-ship` (`:117-120`), so it is the backup component's own record of success, not a re-derivation. Absent → `Never` (`:162`); non-numeric → `Unreadable` (`:164`); age > `SPIRA_LC_BACKUP_MAX_AGE` → `Stale` (`:167`).
 //!
+//! Each store also gets a `drill:<db>` entry from `$SPIRA_RUN/lc-backup/<db>/drill.ok`, the epoch the daily drill last passed (a failed drill truncates `drill.verdict`, so the stamp is kept apart). Past `DRILL_STALE_S` (49h) it is `Stale`; ages under that are `Ok`; no stamp is `Never`, so a store whose drill has never passed is red. The control store's drill is not watched.
+//!
 //! ## Decide
 //!
 //! - Aggregate: `ok` only when every db is `Ok` (`_lcb_all_ok`, `:184`); `NoDestination`, `NoDatabase`, `Never`, `Stale`, `Unreadable` are all red (`:340-341`).
@@ -120,7 +122,9 @@ pub enum Carry {
 pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> (Carry, Vec<EffectSpec>) {
     let state = if all_ok(snap) { Carry::Ok } else { Carry::Red };
     let out = measured(snap);
+    let drill_late = matches!(snap, Snapshot::Dbs(dbs) if dbs.iter().any(|(n, d)| n.starts_with("drill:") && !matches!(d, Db::Ok { .. })));
     let line = match (state, carry) {
+        (Carry::Red, Carry::Ok) if drill_late => format!("RED: a store's restore drill has not passed within {DRILL_STALE_S}s ({out}) — its backups are unproven to restore"),
         (Carry::Red, Carry::Ok) => format!("RED: a store has no good backup within {}s ({out}) — losing its disk now loses its data and history", cfg.max_age_s),
         (Carry::Ok, Carry::Red) => format!("CLEAR: every store has a fresh backup again ({out})"),
         _ => return (state, vec![]),
