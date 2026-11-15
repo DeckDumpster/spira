@@ -291,7 +291,6 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
             ("SPIRA_TESTENV_SCRATCH_MIN_MEM_MIB", "0".into()),
             ("SPIRA_TESTENV_MAX_RUNS", "99".into()),
             ("SPIRA_UNIT_PAR", "1".into()),
-            ("SPIRA_COMPILE_PAR", "1".into()),
             ("SPIRA_TEST_PAR", "1".into()),
             ("HOME", root.display().to_string()),
         ]
@@ -353,14 +352,6 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
     #[test]
     fn a_unit_pool_wait_ends_interrupted_on_a_caught_signal_and_leaves_no_waiter_file() {
         let (last, left, slept) = run_cancelled_while_waiting("unit", "unit-tests.sh");
-        assert!(last.starts_with("VERDICT FAULT") && last.contains("reason=interrupted"), "{last}");
-        assert_eq!(left, ["slot.1"], "only the holder's file remains: {left:?}");
-        assert_eq!(slept, 1, "the wait loop, not an earlier check, ended the run");
-    }
-
-    #[test]
-    fn a_compile_pool_wait_ends_interrupted_on_a_caught_signal_and_leaves_no_waiter_file() {
-        let (last, left, slept) = run_cancelled_while_waiting("compile", "test-a.sh");
         assert!(last.starts_with("VERDICT FAULT") && last.contains("reason=interrupted"), "{last}");
         assert_eq!(left, ["slot.1"], "only the holder's file remains: {left:?}");
         assert_eq!(slept, 1, "the wait loop, not an earlier check, ended the run");

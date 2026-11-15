@@ -245,22 +245,6 @@ pub fn checks_already_passed(recorded: Option<&str>, key: &str, clean: bool) -> 
     clean && recorded.map(str::trim) == Some(key)
 }
 
-/// A cargo row run under `spira-admit run` when builds are admitted (`RUSTC_WRAPPER` is
-/// spira-admit): the row waits for its compile slot first, and its `timeout` starts only once
-/// admitted; the rustcs under it inherit the lease and never queue or yield again.
-pub fn admitted(argv: Vec<String>, rustc_wrapper: Option<&str>, who: &str) -> Vec<String> {
-    let Some(w) = rustc_wrapper.filter(|w| std::path::Path::new(w).file_name().is_some_and(|n| n == "spira-admit")) else { return argv };
-    [w, "run", "--pool", "compile", "--who", who, "--"].iter().map(|s| s.to_string()).chain(argv).collect()
-}
-
-/// The longest wait spira-admit reported (`admitted to compile slot N after Ns`).
-pub fn admission_wait_secs(stderr: &str) -> Option<u64> {
-    stderr
-        .lines()
-        .filter_map(|l| l.split_once("admitted to compile slot ")?.1.split_once(" after ")?.1.strip_suffix('s')?.trim().parse().ok())
-        .max()
-}
-
 /// The one enforcement point for "a verb naming any bead other than the bound one is
 /// refused" (acceptance criterion): every token in the verb's own arguments is checked,
 /// not just a designated slot, because a designated slot can be bypassed by whatever else
@@ -860,19 +844,6 @@ mod tests {
     fn a_pass_key_is_none_when_the_fork_cannot_be_read() {
         let git = |args: &[&str]| (args == ["rev-parse", "HEAD"]).then(|| "T".to_string());
         assert_eq!(checks_pass_key_from(&git, ""), None);
-    }
-
-    #[test]
-    fn a_cargo_check_waits_for_admission_before_its_budget_starts() {
-        let argv = v(&["timeout", "900", "cargo", "clippy", "-p", "a"]);
-        assert_eq!(
-            admitted(argv.clone(), Some("/r/bin/spira-admit"), "sp-x"),
-            v(&["/r/bin/spira-admit", "run", "--pool", "compile", "--who", "sp-x", "--", "timeout", "900", "cargo", "clippy", "-p", "a"])
-        );
-        assert_eq!(admitted(argv.clone(), Some("sccache"), "sp-x"), argv, "builds that are not admitted are run as they are");
-        assert_eq!(admitted(argv.clone(), None, "sp-x"), argv);
-        assert_eq!(admission_wait_secs("x\nspira-admit: admitted to compile slot 2 after 244s\n"), Some(244));
-        assert_eq!(admission_wait_secs("nothing waited"), None);
     }
 
     #[test]

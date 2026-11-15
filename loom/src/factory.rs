@@ -20,12 +20,11 @@ const DAY: i64 = 86_400;
 const SEEN_WINDOW: i64 = DAY;
 
 /// The registered config keys a component's queue reads its configured limit from.
-pub const LIMIT_KEYS: [&str; 11] = [
+pub const LIMIT_KEYS: [&str; 10] = [
     "SPIRA_MAX_LIVE_DWARVES",
     "SPIRA_LANES_MAX_LIVE",
     "SPIRA_STACK_MAX_DEPTH",
     "SPIRA_COLD_PAR",
-    "SPIRA_COMPILE_PAR",
     "SPIRA_TEST_PAR",
     "SPIRA_CERTIFY_PAR",
     "SPIRA_QUEUE_ROUNDS_MAX",
@@ -76,7 +75,7 @@ const STATIONS: &[StationDef] = &[
     station("bead.promote", "bead", "promote", "bead.sh", &["bead.Promote"]),
     StationDef { components: &["dwarf-session", "stack-proposal"], ..station("bead.claim", "bead", "claim", "dwarf → spira-lc CAS", &["bead.Claim"]) },
     StationDef {
-        components: &["worktree", "build-dir", "compile", "model-session", "checks", "submit-proof"],
+        components: &["worktree", "build-dir", "model-session", "checks", "submit-proof"],
         signals: &[("ask.OPEN", "asks")],
         ..station("bead.build", "bead", "build + submit", "dwarf + work submit broker", &["bead.Phase", "bead.Renew", "bead.Disposition", "bead.Submit"])
     },
@@ -174,10 +173,9 @@ const COMPONENTS: &[ComponentDef] = &[
         "build-dir",
         "build directory",
         Some("cold"),
-        &["warm pick", "cold judge", "cold-build slot", "jitter"],
+        &["warm pick", "cold judge", "cold-build slot", "jitter", "sccache"],
         &[qk("cold-build slot", "SPIRA_COLD_PAR"), q("warm slots")],
     ),
-    component("compile", "compile admission", Some("cc"), &["round yield", "stagger", "compile lease", "sccache"], &[qk("compile_par", "SPIRA_COMPILE_PAR")]),
     component("model-session", "model session", Some("llm"), &["claude code, rune model"], &[]),
     component("checks", "checks verdict", Some("chk"), &["work checks (clippy, spira-lint)", "work review"], &[q("checks budget")]),
     component(
@@ -1347,10 +1345,10 @@ mod tests {
     async fn a_queue_reads_the_limit_its_registered_key_carries() {
         let client = LcClient::over(Arc::new(Answers(script(batch_graph(), &quiet(), json!([])))), true);
         let mut reads = gather(client, Duration::from_secs(2), "/nonexistent-run", &sensing()).await;
-        reads.limits.insert("SPIRA_COMPILE_PAR".into(), "7".into());
+        reads.limits.insert("SPIRA_COLD_PAR".into(), "7".into());
         let f = build(&reads, NOW).unwrap();
-        let compile = by_id(&f, "components", "compile");
-        assert_eq!(compile["queues"][0]["config"], 7);
+        let build_dir = by_id(&f, "components", "build-dir");
+        assert_eq!(build_dir["queues"][0]["config"], 7);
         assert!(by_id(&f, "components", "checks")["queues"][0]["config"].is_null());
     }
 

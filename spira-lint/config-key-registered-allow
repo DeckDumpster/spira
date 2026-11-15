@@ -15,10 +15,7 @@ SPIRA_ACCEPT_ASSET_WAIT_SECS release/src/acceptance/mod.rs
 SPIRA_ACCEPT_CALL_SECS release/src/acceptance/mod.rs
 SPIRA_ACTIVATE_SH spira/deploy.sh
 SPIRA_ADMISSION spira-config/src/admission.rs
-SPIRA_ADMIT_INNER dwarf/src/restrict.rs
 SPIRA_ADMIT_INNER spira-config/src/admission.rs
-SPIRA_ADMIT_WHO dwarf/src/restrict.rs
-SPIRA_ADMIT_WHO spira-config/src/admission.rs
 SPIRA_ADOPT_CONFIGURE_DEFAULT spira/conf.sh
 SPIRA_ALARM_LABEL incident/src/intake.rs
 SPIRA_ALLOW_DIRTY_STAGE spira/pre-commit-guard.sh
@@ -937,7 +934,6 @@ SPIRA_WORK_ACTOR spira-runtime/src/tasks/f/persona_archivist.rs
 SPIRA_WORK_ACTOR work/src/main.rs
 SPIRA_WORK_BEAD_ID broker/src/login.rs
 SPIRA_WORK_BEAD_ID dwarf/src/restrict.rs
-SPIRA_WORK_BEAD_ID spira-config/src/admit_main.rs
 SPIRA_WORK_BEAD_ID spira/sim/src/call.rs
 SPIRA_WORK_BEAD_ID testenv/src/run.rs
 SPIRA_WORK_BEAD_ID testenv/src/shots.rs

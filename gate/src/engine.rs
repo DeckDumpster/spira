@@ -202,7 +202,7 @@ impl<'w, W: World> Trial<'w, W> {
         // tree builds — `bin` lines, unit phases) and every other box tool a step might name.
         // Unset SPIRA_RELEASE, or a tail entry inside a release or a checkout, is a refusal
         // naming it, never a fallback.
-        if let Err(e) = self.resolve_build(&ctx, &format!("gate:{br}")) {
+        if let Err(e) = self.resolve_build(&ctx) {
             return v(NOVERDICT, "release-unset", format!("gate: {e} — refusing to judge"));
         }
         self.s.home_dir = ctx.var("HOME").to_string();
@@ -1447,10 +1447,9 @@ impl<'w, W: World> Trial<'w, W> {
         )
     }
 
-    /// The command PATH (from SPIRA_RELEASE) and the build cache's environment, admitted as
-    /// `who`. Err only when SPIRA_RELEASE does not give a PATH; a missing build cache is kept
+    /// The command PATH (from SPIRA_RELEASE) and the build cache's environment. Err only when SPIRA_RELEASE does not give a PATH; a missing build cache is kept
     /// in `cache_refusal` for whatever builds to refuse on.
-    fn resolve_build(&mut self, ctx: &Ctx, who: &str) -> Result<(), String> {
+    fn resolve_build(&mut self, ctx: &Ctx) -> Result<(), String> {
         let w = self.w;
         match spira_config::release_path_from_env_with_tail(Some(ctx.var(spira_config::RELEASE_ENV)), ctx.var("SPIRA_PATH")) {
             Ok(p) => self.s.path = p,
@@ -1467,14 +1466,7 @@ impl<'w, W: World> Trial<'w, W> {
                 if wr == spira_config::build::Wrapper::Off {
                     w.eprint(&format!("gate: {}", wr.describe()));
                 }
-                // Every cargo the gate runs — tools, unit phases, the build fence's `make build`,
-                // release-bins — goes through `spira-admit` with the GATE's token (sp-f4ig1-fix,
-                // DESIGN-admission.md D11): it takes a compile lease for that cargo WITHOUT
-                // WAITING (oversubscribing a full pool), so the gate never queues and agent builds
-                // queue behind it instead of competing at full width. testenv's own build does
-                // the same in-process. The token also keeps every other admission inherited.
-                // Without spira-admit on PATH (an older release) the plain wrapper still carries
-                // the token: the gate never waits, it just holds nothing.
+                // The token keeps every other admission (testenv's run slot and unit pool) inherited.
                 // THE SHARED STORE (sp-xtdqi): `SPIRA_SCCACHE_DAV_ADDR`, resolved in-process
                 // (`merge_resolved_config`, `Real::context`) the same as every other
                 // `spira.toml`-only key this `ctx` already carries — never a bare env read.
@@ -1482,10 +1474,7 @@ impl<'w, W: World> Trial<'w, W> {
                     let v = ctx.var(k);
                     (!v.is_empty()).then(|| v.to_string())
                 });
-                self.s.build_env = match w.which(spira_config::admission::BIN) {
-                    Some(admit) => wr.admitted_env(&admit, ctx.var("SPIRA_RUN"), who, store.as_ref()),
-                    None => wr.env(store.as_ref()),
-                };
+                self.s.build_env = wr.env(store.as_ref());
                 self.s.build_env.push((spira_config::admission::INHERIT_ENV.to_string(), "gate".to_string()));
             }
             Err(e) => self.s.cache_refusal = Some(e),
@@ -1824,7 +1813,6 @@ impl<'w, W: World> Trial<'w, W> {
                     .unwrap_or_default(),
                 compiled: self.s.build_timing.as_ref().map_or(0, |(b, _)| b.compiled),
                 fresh: self.s.build_timing.as_ref().map_or(0, |(b, _)| b.fresh),
-                admit_wait_secs: self.s.build_timing.as_ref().map_or(0, |(b, _)| b.admit_wait_secs),
                 slowest: self.s.build_timing.as_ref().map_or(String::new(), |(b, _)| b.slowest_field()),
             };
             let ts = w.utc();
@@ -2202,29 +2190,18 @@ fn run_gate_uncached_once<W: World>(w: &W, tree: &Path, env: &[(String, String)]
     first
 }
 
-/// Whether the trial's builds compile through sccache: the admitted wrapper's inner compiler,
-/// or the wrapper itself when not admitted.
+/// Whether the trial's builds compile through sccache.
 pub(crate) fn cache_in_force(env: &[(String, String)]) -> bool {
-    let get = |k: &str| env.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
-    match get(spira_config::admission::INNER_ENV) {
-        Some(inner) => !inner.is_empty(),
-        None => get("RUSTC_WRAPPER").is_some_and(|w| !w.is_empty()),
-    }
+    env.iter().find(|(n, _)| n == "RUSTC_WRAPPER").is_some_and(|(_, w)| !w.is_empty())
 }
 
-/// The trial's environment with its compiler cache switched off: under `spira-admit` the
-/// wrapper stays (the compile slot) and its inner compiler is rustc itself.
+/// The trial's environment with its compiler cache switched off.
 pub(crate) fn without_cache(mut env: Vec<(String, String)>) -> Vec<(String, String)> {
-    let admitted = env.iter().any(|(k, _)| k == spira_config::admission::INNER_ENV);
     let mut set = |k: &str, v: &str| match env.iter_mut().find(|(n, _)| n == k) {
         Some(e) => e.1 = v.to_string(),
         None => env.push((k.to_string(), v.to_string())),
     };
-    if admitted {
-        set(spira_config::admission::INNER_ENV, "");
-    } else {
-        set("RUSTC_WRAPPER", "");
-    }
+    set("RUSTC_WRAPPER", "");
     set(spira_config::build::CACHE_ENV, "off");
     env
 }
@@ -2402,9 +2379,8 @@ pub fn run_composed<W: World>(
         if timed {
             *timing = w
                 .read(&report)
-                .and_then(|h| Some((crate::buildtiming::parse(&h, &o)?, h)))
-                .or_else(|| Some((crate::buildtiming::wait_only(&o), String::new())))
-                .filter(|(b, h)| !h.is_empty() || b.admit_wait_secs > 0);
+                .and_then(|h| Some((crate::buildtiming::parse(&h)?, h)))
+                .filter(|(_, h)| !h.is_empty());
         }
         if !o.is_empty() {
             if !out.is_empty() {

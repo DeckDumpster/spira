@@ -1367,13 +1367,6 @@ impl<'a> Run<'a> {
         // cold. A session is not a build: absent sccache falls back — loudly — to uncached.
         let path = env.child().get("PATH").cloned().unwrap_or_default();
         let setting = env.child().get(spira_config::build::CACHE_ENV).cloned();
-        //
-        // THE COMPILE POOL (sp-f4ig1; gate/DESIGN-admission.md §3.3): the same compiler, fronted
-        // by `spira-admit`, so each cargo the agent starts takes a host-wide compile slot and
-        // N agents never compile all at once. Absent spira-admit (an older release) falls back,
-        // loudly, to the plain wrapper: a scheduling tool never stops a session.
-        let admit = spira_config::build::find_on(&path, spira_config::admission::BIN);
-        let run_dir = self.conf.run.display().to_string();
         // THE SHARED STORE (sp-xtdqi): `SPIRA_SCCACHE_DAV_ADDR`, resolved in-process into
         // `self.conf` (`conf::merge_resolved_config`) the same as every other
         // `spira.toml`-only key — never a bare env read, which only ever saw it when an
@@ -1384,14 +1377,7 @@ impl<'a> Run<'a> {
         });
         match spira_config::build::wrapper(&path, setting.as_deref()) {
             Ok(w) => {
-                let vars = match &admit {
-                    Some(a) => w.admitted_env(a, &run_dir, &bead, store.as_ref()),
-                    None => {
-                        self.log(&format!("{}: spira-admit not on PATH — this session's builds are not admitted", self.f()));
-                        w.env(store.as_ref())
-                    }
-                };
-                for (k, v) in vars {
+                for (k, v) in w.env(store.as_ref()) {
                     env.set(&k, &v);
                 }
                 if w == spira_config::build::Wrapper::Off {

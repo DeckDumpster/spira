@@ -2319,18 +2319,14 @@ fn a_unit_builds_with_timings_and_the_gate_log_and_run_row_say_where_the_build_w
 const UNIT_DATA = [{"name":"runtime","target":"","start":4.2,"duration":88.4},{"name":"gate","target":" gate \"bin\" (test)","start":90.0,"duration":31.0}];"#
             .into(),
     );
-    f.unit_runs.borrow_mut().insert(
-        (MERGE_SHA.into(), "build"),
-        (0, "spira-admit: admitted to compile slot 1 after 86s\nspira-admit: admitted to compile slot 2 after 14s".into()),
-    );
     assert_eq!(f.run(), PASS);
     assert!(f.cmds.borrow().iter().any(|c| c.contains("cargo test --no-run") && c.contains(" --timings")), "{:?}", f.cmds.borrow());
     let m = meter(&f);
     assert!(
-        m.contains(" compiled=7 fresh=3 admit_wait=100 slowest=runtime/lib:88.4@4.2,gate/bin-test:31.0@90.0"),
+        m.contains(" compiled=7 fresh=3 slowest=runtime/lib:88.4@4.2,gate/bin-test:31.0@90.0"),
         "{m}"
     );
-    assert!(f.tsd.borrow().iter().any(|r| r.contains("\"admit_wait_secs\":100") && r.contains("\"compiled\":7")), "{:?}", f.tsd.borrow());
+    assert!(f.tsd.borrow().iter().any(|r| r.contains("\"compiled\":7")), "{:?}", f.tsd.borrow());
     assert!(f.written.borrow().iter().any(|(p, c)| p.to_string_lossy().contains("cargo-timing") && c.contains("UNIT_DATA")));
 }
 
@@ -3736,21 +3732,12 @@ fn only_a_cache_fault_on_a_cached_trial_is_retried_and_a_failed_retry_is_no_verd
     assert!(!f.stderr().contains("retrying the trial"), "{}", f.stderr());
 }
 
-/// Under `spira-admit` the wrapper stays (the compile slot) and only its inner compiler drops
-/// sccache; an admitted build with no inner compiler is not a cached one.
 #[test]
-fn the_uncached_env_of_an_admitted_build_keeps_the_admit_wrapper_and_empties_its_inner_compiler() {
-    let env = |inner: &str| -> Vec<(String, String)> {
-        vec![
-            ("RUSTC_WRAPPER".into(), "/box/bin/spira-admit".into()),
-            ("SPIRA_ADMIT_INNER".into(), inner.into()),
-        ]
-    };
-    assert!(crate::engine::cache_in_force(&env("/box/.cargo/bin/sccache")));
-    assert!(!crate::engine::cache_in_force(&env("")));
-    let off = crate::engine::without_cache(env("/box/.cargo/bin/sccache"));
-    assert!(off.contains(&("RUSTC_WRAPPER".to_string(), "/box/bin/spira-admit".to_string())), "{off:?}");
-    assert!(off.contains(&("SPIRA_ADMIT_INNER".to_string(), String::new())), "{off:?}");
+fn the_uncached_env_empties_the_wrapper_and_says_the_cache_is_off() {
+    let env = vec![("RUSTC_WRAPPER".to_string(), "/box/.cargo/bin/sccache".to_string())];
+    assert!(crate::engine::cache_in_force(&env));
+    let off = crate::engine::without_cache(env);
+    assert!(off.contains(&("RUSTC_WRAPPER".to_string(), String::new())), "{off:?}");
     assert!(off.contains(&("SPIRA_BUILD_CACHE".to_string(), "off".to_string())), "{off:?}");
     assert!(!crate::engine::cache_in_force(&off));
 }
@@ -3874,10 +3861,9 @@ fn release_bins_write_failure_is_loud_and_empties_the_target() {
     assert!(f.cmds.borrow().last().unwrap().contains("find target/release -mindepth 1 -delete"), "{:?}", f.cmds.borrow());
 }
 
-/// sp-f4ig1-fix: a gate never loses its verdict to a compile-slot wait. Every command that can
+/// sp-f4ig1-fix: a gate never loses its verdict to an admission wait. Every command that can
 /// compile — the trial's own and the after-PASS release-bins, which runs outside the trial's
-/// environment — carries the gate's admission token, so spira-admit (env or cargo config) and
-/// testenv run it on the gate's slot without queueing behind agent builds.
+/// environment — carries the gate's admission token, so testenv runs it on the gate's slot without queueing behind agent builds.
 #[test]
 fn every_build_the_gate_runs_rides_on_the_gate_slot_including_release_bins() {
     let f = Fake::new();
@@ -3895,19 +3881,17 @@ fn every_build_the_gate_runs_rides_on_the_gate_slot_including_release_bins() {
     assert_eq!(f.cmds.borrow().last().unwrap(), &crate::engine::release_bins_command());
 }
 
-/// D11 (option 2): with spira-admit on the PATH, every cargo the gate runs compiles through it
-/// with the gate's token, so each takes a compile lease for its cargo WITHOUT WAITING and agent
-/// builds queue behind it; sccache stays the inner compiler, and the lease names the branch.
+/// A `spira-admit` on the PATH is not a compiler wrapper: every cargo the gate runs compiles
+/// through sccache, with the gate's token for the pools that still read it.
 #[test]
-fn the_gates_cargo_takes_compile_leases_through_spira_admit_with_the_gate_token() {
+fn the_gates_cargo_compiles_through_sccache_even_with_spira_admit_on_the_path() {
     let f = Fake::new();
     f.files.borrow_mut().insert(PathBuf::from("/h/spira-admit"), String::new());
     assert_eq!(f.run_with(true), PASS, "{}", f.stderr());
     for (i, env) in f.ran.borrow().iter().enumerate() {
         let get = |k: &str| env.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
-        assert_eq!(get("RUSTC_WRAPPER"), Some("/h/spira-admit"), "command {i}: {env:?}");
-        assert_eq!(get("SPIRA_ADMIT_INNER"), Some("/box/.cargo/bin/sccache"), "command {i}");
-        assert_eq!(get("SPIRA_ADMIT_WHO"), Some(format!("gate:{BR}").as_str()), "command {i}");
+        assert_eq!(get("RUSTC_WRAPPER"), Some("/box/.cargo/bin/sccache"), "command {i}: {env:?}");
+        assert_eq!(get("SPIRA_ADMIT_INNER"), None, "command {i}");
         assert_eq!(get("SPIRA_ADMISSION"), Some("gate"), "command {i}");
     }
 }
