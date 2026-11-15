@@ -1496,6 +1496,53 @@ pub fn get_and_list_return_a_locks_expiry_and_renew_moves_it_forward<R: Rig>(rig
     assert_eq!(expiry("locks/job"), None, "an expired lock has no expiry");
 }
 
+pub fn a_lock_renew_op_keeps_the_token_restarts_the_ttl_and_runs_only_while_held<R: Rig>(rig: &R) {
+    const WALL: u64 = 1_700_000_000_000;
+    let clock = VirtualClock::new(T0);
+    let wall = VirtualClock::new(WALL);
+    let c = Contract::open(
+        rig.fresh(),
+        Ports {
+            mono: Arc::new(clock.clone()),
+            wall: Arc::new(wall.clone()),
+        },
+        Config {
+            min_lock_ttl_ms: MIN_LOCK_TTL_MS,
+        },
+    )
+    .expect("open");
+    let advance = |ms: u64| {
+        clock.advance(ms);
+        wall.advance(ms);
+    };
+    let a = c.lock("job", 5_000, &req("1")).unwrap();
+    advance(1_000);
+    let t = |v: &str| {
+        Txn::new()
+            .lock_renew(&a, 20_000)
+            .put("jobs/1", obj(json!(v)))
+            .or_put("jobs/1", obj(json!("else")))
+    };
+    assert!(c.txn(&t("renewed"), &req("2")).unwrap().succeeded);
+    let held = c.get("locks/job").unwrap().expect("held");
+    assert_eq!(held.create_rev, a.token, "the token survives");
+    assert_eq!(held.lock_expires_at_ms, Some(WALL + 21_000));
+    assert_eq!(data(&c, "jobs/1"), Some(json!("renewed")));
+
+    advance(20_000);
+    assert!(!c.txn(&t("lapsed"), &req("3")).unwrap().succeeded);
+    assert_eq!(data(&c, "jobs/1"), Some(json!("else")));
+
+    let b = c.lock("job", 5_000, &req("4")).unwrap();
+    let before = c.get("locks/job").unwrap().unwrap().lock_expires_at_ms;
+    assert!(!c.txn(&t("retaken"), &req("5")).unwrap().succeeded);
+    assert_eq!(c.get("locks/job").unwrap().unwrap().create_rev, b.token);
+    assert_eq!(
+        c.get("locks/job").unwrap().unwrap().lock_expires_at_ms,
+        before
+    );
+}
+
 pub fn a_renew_under_a_new_ttl_keeps_the_token_and_moves_the_expiry<R: Rig>(rig: &R) {
     const WALL: u64 = 1_700_000_000_000;
     let clock = VirtualClock::new(T0);
@@ -1711,6 +1758,7 @@ scenarios!(
     lock_check_fails_the_txn_after_the_lock_expired_or_was_retaken,
     get_and_list_return_a_locks_expiry_and_renew_moves_it_forward,
     a_renew_under_a_new_ttl_keeps_the_token_and_moves_the_expiry,
+    a_lock_renew_op_keeps_the_token_restarts_the_ttl_and_runs_only_while_held,
     a_state_filtered_range_reads_the_keys_in_that_state_at_the_head_and_below_it,
     gc_range_skips_the_history_prefix,
     committed_at_is_the_wall_time_of_the_first_audited_commit_at_or_after_a_main,

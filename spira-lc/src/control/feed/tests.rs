@@ -249,7 +249,7 @@ fn history_lists_a_beads_changes_in_order_with_its_refusals_and_lost_races<B: Ba
     let mut row = stale.value.row.clone();
     row.version += 1;
     let Outcome::LostRace { rev } = s
-        .write("sp-a", &ev, &stale, &item, row, None, &req("sp-a-stale"))
+        .write("sp-a", &ev, &stale, &item, row, None, None, &req("sp-a-stale"))
         .unwrap()
     else {
         panic!("the stale write applied")

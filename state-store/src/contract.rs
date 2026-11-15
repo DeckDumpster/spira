@@ -97,12 +97,22 @@ pub enum Op {
         key: String,
         ttl_ms: u64,
     },
+    /// Restarts the lock at `key` under `ttl_ms`, keeping its token; the then-branch runs only
+    /// if the lock is live under `token`.
+    LockRenew {
+        key: String,
+        token: Rev,
+        ttl_ms: u64,
+    },
 }
 
 impl Op {
     pub fn key(&self) -> &str {
         match self {
-            Op::Put(k, _) | Op::Delete(k) | Op::LockAcquire { key: k, .. } => k,
+            Op::Put(k, _)
+            | Op::Delete(k)
+            | Op::LockAcquire { key: k, .. }
+            | Op::LockRenew { key: k, .. } => k,
         }
     }
 }
@@ -150,6 +160,15 @@ impl Txn {
     pub fn lock_acquire(mut self, resource: &str, ttl_ms: u64) -> Self {
         self.ops.push(Op::LockAcquire {
             key: format!("{LOCKS_PREFIX}{resource}"),
+            ttl_ms,
+        });
+        self
+    }
+
+    pub fn lock_renew(mut self, f: &Fence, ttl_ms: u64) -> Self {
+        self.ops.push(Op::LockRenew {
+            key: f.key(),
+            token: f.token,
             ttl_ms,
         });
         self
@@ -417,7 +436,7 @@ fn lock_value(ttl_ms: u64) -> Object {
 /// `may_lock`: the branch may take locks, which only a txn's then-branch may.
 fn validate(ops: &[Op], may_lock: bool) -> Result<()> {
     for o in ops {
-        let lock = matches!(o, Op::LockAcquire { .. });
+        let lock = matches!(o, Op::LockAcquire { .. } | Op::LockRenew { .. });
         let refused = if lock {
             !may_lock || !o.key().starts_with(LOCKS_PREFIX)
         } else {
@@ -704,7 +723,7 @@ impl<B: Backend> Contract<B> {
         validate(&t.ops, true)?;
         validate(&t.else_ops, false)?;
         for o in &t.ops {
-            if let Op::LockAcquire { ttl_ms, .. } = o {
+            if let Op::LockAcquire { ttl_ms, .. } | Op::LockRenew { ttl_ms, .. } = o {
                 self.check_lock_ttl(*ttl_ms)?;
             }
         }
@@ -900,6 +919,14 @@ impl<B: Backend> Contract<B> {
         for k in t.lock_keys() {
             if self.read(k, head)?.is_some() {
                 return Ok(false);
+            }
+        }
+        for o in &t.ops {
+            if let Op::LockRenew { key, token, .. } = o {
+                let held = self.read(key, head)?.filter(|_| self.live(key));
+                if held.map(|i| i.create_rev) != Some(*token) {
+                    return Ok(false);
+                }
             }
         }
         Ok(true)
@@ -1176,7 +1203,7 @@ impl<B: Backend> Contract<B> {
                         op: if finished { "delete" } else { "put" },
                     });
                 }
-                Op::LockAcquire { key, ttl_ms } => out.push(Staged {
+                Op::LockAcquire { key, ttl_ms } | Op::LockRenew { key, ttl_ms, .. } => out.push(Staged {
                     key: key.clone(),
                     value: Some(lock_value(*ttl_ms)),
                     prev,

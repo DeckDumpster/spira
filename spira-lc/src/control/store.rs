@@ -828,9 +828,10 @@ impl<B: Backend> Store<B> {
             .max(self.claim_floor_ms)
     }
 
-    /// The holder's renewal: when the machine would take the Renew, the lock restarts under the
-    /// new lease's TTL, then the event is written fenced on it, so a lapsed or superseded
-    /// holder extends nothing. A refusal is written as the machine's, the lock untouched.
+    /// The holder's renewal: when the machine takes the Renew, one commit restarts the lock
+    /// under the new lease's TTL and writes the record, fenced on that lock, so a lapsed or
+    /// superseded holder extends nothing. A refusal is written as the machine's, the lock
+    /// untouched.
     pub fn renew_lease(
         &self,
         id: &str,
@@ -843,29 +844,11 @@ impl<B: Backend> Store<B> {
                 "a renewal of {id} takes a Renew event with an at"
             )));
         };
-        if self.replayed(id, req)?.is_none() {
-            let Some((cur, _)) = self.read::<LifecycleRecord>(&keys::lifecycle(id), None)? else {
-                return Err(Error::NotFound {
-                    key: keys::lifecycle(id),
-                });
-            };
-            if bead::apply(&cur.value.row, ev).applied {
-                let ttl_ms = self.lease_ttl_ms(*lease_until, at);
-                match self.contract.renew_for(
-                    fence,
-                    ttl_ms,
-                    &sub_request(req, "renew", Value::Null),
-                ) {
-                    Err(Error::LockLost { .. }) => {
-                        return Ok(Outcome::LockLost {
-                            rev: self.contract.head()?,
-                        })
-                    }
-                    other => other?,
-                }
-            }
+        if let Some(done) = self.replayed(id, req)? {
+            return Ok(done);
         }
-        self.holder_apply(id, fence, ev, req)
+        let ttl_ms = self.lease_ttl_ms(*lease_until, at);
+        self.settle(id, ev, Some(fence), Some(ttl_ms), req)
     }
 
     /// The machine's refusal of `ev` for a reason only the caller can judge, audited as one.
@@ -911,6 +894,17 @@ impl<B: Backend> Store<B> {
         if let Some(done) = self.replayed(id, req)? {
             return Ok(done);
         }
+        self.settle(id, ev, fence, None, req)
+    }
+
+    fn settle(
+        &self,
+        id: &str,
+        ev: &BeadEvent,
+        fence: Option<&Fence>,
+        renew_ttl_ms: Option<u64>,
+        req: &Request,
+    ) -> Result<Outcome> {
         let Some((cur, item)) = self.read::<LifecycleRecord>(&keys::lifecycle(id), None)? else {
             return Err(Error::NotFound {
                 key: keys::lifecycle(id),
@@ -934,7 +928,7 @@ impl<B: Backend> Store<B> {
             return self.refuse(id, ev, &cur.value, out.refusal, req);
         }
         let leaves = out.row.state != BeadState::Working;
-        let outcome = self.write(id, ev, &cur, &item, out.row, fence, req)?;
+        let outcome = self.write(id, ev, &cur, &item, out.row, fence, renew_ttl_ms, req)?;
         // Whoever moved the record out of WORKING, the claim's lock goes with it. A lock
         // already gone needs no release, and one left behind expires on its TTL.
         if let (Outcome::Applied { .. }, true, Some(held)) = (&outcome, leaves, held) {
@@ -984,6 +978,7 @@ impl<B: Backend> Store<B> {
         item: &Item,
         row: lifecycle::bead::BeadRow,
         fence: Option<&Fence>,
+        renew_ttl_ms: Option<u64>,
         req: &Request,
     ) -> Result<Outcome> {
         let key = keys::lifecycle(id);
@@ -994,7 +989,10 @@ impl<B: Backend> Store<B> {
             .put(&key, object_like(item, encode(&next)?));
         let mut t = self.gated(t, id, Some(&cur.value), &next)?;
         if let Some(f) = fence {
-            t = t.lock_check(f);
+            t = match renew_ttl_ms {
+                Some(ttl_ms) => t.lock_renew(f, ttl_ms),
+                None => t.lock_check(f),
+            };
         }
         let r = self.audited_txn(t, &applied, &[lost], req, "apply")?;
         if r.succeeded {
