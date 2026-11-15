@@ -283,6 +283,8 @@ pub struct VmRunner<'a> {
     batch: Option<String>,
     /// The results of the corpus pass this attribution follows.
     prior: Option<PathBuf>,
+    /// An attribution runs the suites it is given; only a full pass must cover the tree.
+    subset: bool,
 }
 
 /// The member a `member=` line of the VM's lint report blames: the bead id after `land` in a
@@ -575,11 +577,17 @@ impl<'a> VmRunner<'a> {
         ))
     }
 
-    fn corpus_list_ok(&self, suites: &[String]) -> Result<(), String> {
-        if self.prior.is_some() {
+    fn corpus_list_ok(&self, tree: &[String], suites: &[String]) -> Result<(), String> {
+        if self.subset {
             return Ok(());
         }
-        order::covers(&io::suites_in(&self.wt, "HEAD"), suites)
+        order::covers(tree, suites)
+    }
+
+    /// Marks this runner as an attribution: its suite list may be any subset of the tree.
+    pub fn attribution(mut self) -> Self {
+        self.subset = true;
+        self
     }
 
     /// Attributes from the results of the corpus pass that went red, found at `results`.
@@ -637,6 +645,7 @@ impl<'a> VmRunner<'a> {
             corpus_runs: 0,
             batch: None,
             prior: None,
+            subset: false,
         })
     }
 
@@ -895,7 +904,9 @@ impl RoundRunner for VmRunner<'_> {
                     return Err("the corpus already ran for this round".into());
                 }
                 if self.corpus_runs == 0 {
-                    self.corpus_list_ok(suites)?;
+                    if !self.subset {
+                        self.corpus_list_ok(&io::suites_in(&self.wt, "HEAD"), suites)?;
+                    }
                 } else {
                     clear_results(&self.results, suites);
                 }
@@ -1904,24 +1915,21 @@ mod abandon_tests {
     }
 
     #[test]
-    fn an_after_pass_runner_accepts_a_corpus_list_that_is_a_subset_of_the_tree_and_a_plain_one_refuses() {
+    fn an_attribution_runner_accepts_a_corpus_list_that_is_a_subset_of_the_tree_and_a_plain_one_refuses() {
         let d = testkit::TempDir::new("vm-corpus-list");
-        fs::create_dir_all(d.path().join("spira")).unwrap();
-        testkit::git(d.path(), &["init", "-q", "-b", "main"]);
-        for s in ["test-a.sh", "test-b.sh"] {
-            fs::write(d.path().join("spira").join(s), "#!/bin/sh\n").unwrap();
-        }
-        testkit::git(d.path(), &["add", "-A"]);
-        testkit::git(d.path(), &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "c"]);
         let env = lifecycle_tests_env(d.path());
         let repo = repo(d.path());
-        let red = vec!["test-b.sh".to_string()];
-        let plain = VmRunner::new(&env, &repo, d.path(), "base", "r1", BTreeMap::new()).unwrap();
-        assert!(plain.corpus_list_ok(&red).unwrap_err().contains("suite list omits"));
-        let after = VmRunner::new(&env, &repo, d.path(), "base", "r1", BTreeMap::new())
-            .unwrap()
-            .after_pass(Some(d.path().to_path_buf()));
-        assert!(after.corpus_list_ok(&red).is_ok());
+        let tree: Vec<String> = (0..43).map(|i| format!("test-{i}.sh")).collect();
+        let two = tree[..2].to_vec();
+        let mk = || VmRunner::new(&env, &repo, d.path(), "base", "r1", BTreeMap::new()).unwrap();
+        assert!(mk().attribution().corpus_list_ok(&tree, &two).is_ok());
+        assert!(mk()
+            .attribution()
+            .after_pass(Some(d.path().to_path_buf()))
+            .corpus_list_ok(&tree, &two)
+            .is_ok());
+        let err = mk().corpus_list_ok(&tree, &two).unwrap_err();
+        assert!(err.contains("suite list omits 41 of 43"), "{err}");
     }
 
     #[test]

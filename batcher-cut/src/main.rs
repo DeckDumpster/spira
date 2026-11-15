@@ -2187,6 +2187,7 @@ fn attribute_run(o: &Opts) -> Result<(), String> {
         .collect();
     let mut runner = vm::VmRunner::new(&env_, &repo, &wt, &start_sha, &round, changed.clone())?
         .in_batch(o.batch.as_deref())
+        .attribution()
         .after_pass(o.after_pass.clone());
     let mut ops = LiveOps {
         env: &env_,
