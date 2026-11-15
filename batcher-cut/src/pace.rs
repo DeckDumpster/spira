@@ -1,7 +1,7 @@
 //! The per-repo pacing a round scheduler owes its operator: hold on a red, back off on a
 //! harness fault, page an orphaned open round. State lives in files under
-//! `<run>/rounds-pace/<repo>/` so one repo's hold never touches another's and an operator
-//! lifts a hold with `rm`.
+//! `<run>/rounds-pace/<repo>/` so one repo's hold never touches another's; a person sets and
+//! lifts one with `batcher pause-set` and `batcher pause-lift`, which record who did.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -155,7 +155,7 @@ pub fn advance(st: &State, outcome: &Outcome, repo: &str, detail: &str) -> (Stat
                 ""
             };
             fx.pages.push(format!(
-                "ROUND RED {repo}{again} — attribute and eject, then rm the pause file ({detail})"
+                "ROUND RED {repo}{again} — attribute and eject, then batcher pause-lift --repo {repo} --by concierge --reason \"<why>\" ({detail})"
             ));
         }
         Outcome::StaleImage => {}
@@ -269,13 +269,20 @@ impl Files {
         self.dir.join("pause")
     }
     /// When the pause was set: the stamp it carries, else (a hand-made file) its mtime.
+    /// A `hold:` pause is a person's decision and has no age the batcher acts on.
     pub fn pause_since(&self) -> Option<u64> {
+        if fs::read_to_string(self.pause_file()).unwrap_or_default().starts_with("hold:") {
+            return None;
+        }
+        self.pause_set_at()
+    }
+    pub fn pause_text(&self) -> Option<String> {
+        fs::read_to_string(self.pause_file()).ok()
+    }
+    pub fn pause_set_at(&self) -> Option<u64> {
         let p = self.pause_file();
         let meta = fs::metadata(&p).ok()?;
         let text = fs::read_to_string(&p).unwrap_or_default();
-        if text.starts_with("hold:") {
-            return None;
-        }
         let stamped = text
             .trim()
             .strip_prefix("red:")
@@ -287,6 +294,61 @@ impl Files {
                 .ok()
                 .map(|d| d.as_secs())
         })
+    }
+    fn record_pause_event(&self, line: String, kind: &str, by: &str, fields: Vec<(&str, String)>, now: u64) {
+        if let Ok(mut f) = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(self.run.join("landing.log"))
+        {
+            let _ = writeln!(f, "{line}");
+        }
+        spira_otel::rounds::emit(
+            &self.run,
+            "batcher",
+            kind,
+            &self.repo,
+            "",
+            by,
+            &fields,
+            std::time::UNIX_EPOCH + std::time::Duration::from_secs(now),
+        );
+    }
+    /// Writes the pause file and records who set it and why.
+    pub fn set_pause(&self, text: &str, by: &str, reason: &str, now: u64) -> Result<(), String> {
+        let p = self.pause_file();
+        fs::create_dir_all(&self.dir)
+            .and_then(|_| fs::write(&p, text))
+            .map_err(|e| format!("{}: {e}", p.display()))?;
+        let kind = if text.starts_with("hold:") { "hold" } else { "red" };
+        let reason = one_line(reason);
+        self.record_pause_event(
+            format!("QUEUE ROUND-PAUSE {now} repo={} by={by} kind={kind} reason={reason}", self.repo),
+            "pause",
+            by,
+            vec![("pause_kind", kind.to_string()), ("reason", reason)],
+            now,
+        );
+        Ok(())
+    }
+    /// Removes the pause file, a `hold:` too, and records who lifted it, why and how long it stood.
+    /// `None`, and nothing written, when there is no pause.
+    pub fn lift_pause(&self, by: &str, reason: &str, now: u64) -> Result<Option<u64>, String> {
+        let Some(since) = self.pause_set_at() else {
+            return Ok(None);
+        };
+        let p = self.pause_file();
+        fs::remove_file(&p).map_err(|e| format!("{}: {e}", p.display()))?;
+        let held = now.saturating_sub(since);
+        let reason = one_line(reason);
+        self.record_pause_event(
+            format!("QUEUE ROUND-PAUSE-LIFT {now} repo={} by={by} held_s={held} reason={reason}", self.repo),
+            "pause-lift",
+            by,
+            vec![("held_s", held.to_string()), ("pause_since", since.to_string()), ("reason", reason)],
+            now,
+        );
+        Ok(Some(held))
     }
     pub fn load(&self) -> State {
         let kv: BTreeMap<String, String> = fs::read_to_string(self.dir.join("state"))
@@ -324,11 +386,12 @@ impl Files {
         fs::write(self.dir.join("state"), body).map_err(|e| format!("rounds-pace state: {e}"))
     }
     fn stamp_pause(&self, now: u64) -> Result<(), String> {
-        let p = self.pause_file();
-        fs::create_dir_all(&self.dir)
-            .and_then(|_| fs::write(&p, format!("red:{now}\n")))
-            .map_err(|e| format!("{}: {e}", p.display()))
+        self.set_pause(&format!("red:{now}\n"), PACE_OWNER, "a red round", now)
     }
+}
+
+fn one_line(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 #[derive(Default, Clone, PartialEq, Debug)]
@@ -491,7 +554,7 @@ pub fn page_stale_pause(
         t if t.is_empty() || t.starts_with("red:") => "a red round",
         t => t,
     };
-    page(sm, &format!("PAUSE UNATTENDED {}: {reason}, held {age}s with work waiting — attribute and eject, then rm run/rounds-pace/{}/pause", sm.repo, sm.repo))?;
+    page(sm, &format!("PAUSE UNATTENDED {}: {reason}, held {age}s with work waiting — attribute and eject, then batcher pause-lift --repo {} --by concierge --reason \"<why>\"", sm.repo, sm.repo))?;
     fs::write(&marker, since.to_string()).map_err(|e| format!("{}: {e}", marker.display()))
 }
 
@@ -508,8 +571,11 @@ pub fn paced(
     let mut st = files.load();
     if let Some(since) = files.pause_since() {
         if pause_expired(&st, sm.now.saturating_sub(since), sm.pause_lift_after) {
-            fs::remove_file(files.pause_file())
-                .map_err(|e| format!("{}: {e}", files.pause_file().display()))?;
+            files.lift_pause(
+                PACE_OWNER,
+                &format!("held past its {}s bound", sm.pause_lift_after),
+                sm.now,
+            )?;
             st.pause_lifts += 1;
             files.save(&st)?;
             println!(
@@ -803,6 +869,79 @@ mod tests {
         );
         assert!(!Files::new(d, "a").pause_file().exists());
         assert!(inbox(d).contains("PAUSE LIFTED a"));
+    }
+
+    fn event(d: &Path, key: &str) -> Vec<Option<String>> {
+        spira_otel::logs::read_all(&spira_otel::dir_of(d), "batcher")
+            .iter()
+            .map(|r| {
+                r.iter()
+                    .find(|(n, _)| n == key)
+                    .and_then(|(_, v)| v["stringValue"].as_str().map(String::from))
+            })
+            .collect()
+    }
+    fn landing_log(d: &Path) -> String {
+        fs::read_to_string(d.join("landing.log")).unwrap_or_default()
+    }
+
+    #[test]
+    fn a_person_lifting_a_red_pause_records_who_and_how_long_it_stood() {
+        let t = dir("lift-by-hand");
+        let d = t.path();
+        let f = Files::new(d, "a");
+        fs::create_dir_all(f.pause_file().parent().unwrap()).unwrap();
+        fs::write(f.pause_file(), "red:1000\n").unwrap();
+        let held = f.lift_pause("concierge", "eject done", 1090).unwrap();
+        assert_eq!(held, Some(90));
+        assert!(!f.pause_file().exists());
+        let log = landing_log(d);
+        assert_eq!(log.matches("QUEUE ROUND-PAUSE-LIFT").count(), 1, "{log}");
+        assert!(log.contains("by=concierge held_s=90 reason=eject done"), "{log}");
+        assert_eq!(event(d, "kind"), [Some("pause-lift".to_string())]);
+        assert_eq!(event(d, "by"), [Some("concierge".to_string())]);
+        assert_eq!(event(d, "held_s"), [Some("90".to_string())]);
+    }
+
+    #[test]
+    fn the_batchers_pause_keeps_its_text_and_records_the_batcher() {
+        let t = dir("set-by-batcher");
+        let d = t.path();
+        let f = Files::new(d, "a");
+        f.set_pause("red:5\n", PACE_OWNER, "a red round", 5).unwrap();
+        assert_eq!(fs::read_to_string(f.pause_file()).unwrap(), "red:5\n");
+        assert!(landing_log(d).contains("QUEUE ROUND-PAUSE 5 repo=a by=batcher kind=red reason=a red round"));
+        assert_eq!(event(d, "pause_kind"), [Some("red".to_string())]);
+    }
+
+    #[test]
+    fn lifting_no_pause_returns_none_and_writes_nothing() {
+        let t = dir("lift-none");
+        let d = t.path();
+        assert_eq!(Files::new(d, "a").lift_pause("concierge", "x", 9).unwrap(), None);
+        assert_eq!(landing_log(d), "");
+        assert!(event(d, "kind").is_empty());
+    }
+
+    #[test]
+    fn the_clock_lift_records_the_batcher_as_the_one_who_lifted() {
+        let t = dir("lift-by-clock");
+        let d = t.path();
+        assert!(run(d, "a", 1000, None, Some(("red", 1000)), Ok(())));
+        assert!(run(d, "a", 1000 + LIFT, None, None, Ok(())));
+        assert!(landing_log(d).contains(&format!("QUEUE ROUND-PAUSE-LIFT {} repo=a by=batcher held_s={LIFT}", 1000 + LIFT)));
+    }
+
+    #[test]
+    fn a_held_pause_is_read_by_no_age_and_lifted_only_by_a_person() {
+        let t = dir("hold-by-hand");
+        let d = t.path();
+        let f = Files::new(d, "a");
+        f.set_pause("hold:working", "operator", "working", 7).unwrap();
+        assert_eq!(f.pause_since(), None);
+        assert!(landing_log(d).contains("by=operator kind=hold"));
+        assert!(f.lift_pause("operator", "done", 20).unwrap().is_some());
+        assert!(!f.pause_file().exists());
     }
 
     #[test]
