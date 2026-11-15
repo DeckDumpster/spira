@@ -485,6 +485,13 @@ mod tests {
     const SUBMITTED_V3: &str = r#"{"bead":{"state":"SUBMITTED","version":3}}"#;
 
     #[test]
+    fn a_refused_content_on_base_sends_no_event_and_does_not_panic() {
+        let (store, r, _d) = over(|_| (1, "refused".into()));
+        r.content_on_base("sp-a", "merge-tree:abc");
+        assert_eq!(*store.seen.lock().unwrap(), vec!["show sp-a".to_string()]);
+    }
+
+    #[test]
     fn content_on_base_is_sent_as_a_bead_event_because_the_socket_refuses_the_caller_verb() {
         let (store, r, _d) = over(|a| match a[0].as_str() {
             "content-on-base" => (2, "usage: spira-lc show ...".into()),
