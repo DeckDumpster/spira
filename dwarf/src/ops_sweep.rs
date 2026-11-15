@@ -33,6 +33,7 @@ pub struct BriefCfg {
     pub statute_core: String,
     pub statute_core_local: String,
     pub harness_repo: String,
+    pub prod: String,
     /// The path `SPIRA_TOML` names: where `persona.<name>.model` is declared.
     pub toml: String,
 }
@@ -76,7 +77,7 @@ pub fn statutes(rune: &Rune, cfg: &BriefCfg, now: i64, memories: &dyn Fn() -> Re
 }
 
 /// `Run::claude_argv` for a sweep: the agent's flags, without the program.
-pub fn claude_args(home: &Path, rune: &Rune, sys_file: &Path, toml: &str) -> Result<Vec<String>, String> {
+pub fn claude_args(home: &Path, run: &Path, prod: &str, rune: &Rune, sys_file: &Path, toml: &str) -> Result<Vec<String>, String> {
     let flag = match rune.system_prompt {
         SystemPrompt::Replace => "--system-prompt-file",
         SystemPrompt::Append => "--append-system-prompt-file",
@@ -88,7 +89,7 @@ pub fn claude_args(home: &Path, rune: &Rune, sys_file: &Path, toml: &str) -> Res
     if rune.project_instructions == "none" {
         a.extend(["--setting-sources", "user"].iter().map(|s| s.to_string()));
     }
-    a.extend(["--settings".to_string(), crate::run::dwarf_settings(home, rune.habits)]);
+    a.extend(["--settings".to_string(), crate::run::dwarf_settings(home, run, Some(prod).filter(|p| !p.is_empty()).map(Path::new), rune.habits)]);
     Ok(a)
 }
 
@@ -114,7 +115,7 @@ pub fn brief(home: &Path, run: &Path, rune: &Rune, prompt: &str, id: &str, cfg: 
         return Err("SPIRA_AGENT is empty — no agent to run".into());
     }
     let mut argv = vec!["/bin/sh".to_string(), "-c".to_string(), "exec \"$0\" \"$@\" <\"$SPIRA_SWEEP_TASK\" >>\"$SPIRA_SWEEP_LOG\" 2>&1".to_string(), cfg.agent.clone()];
-    argv.extend(claude_args(home, rune, &sys_file, &cfg.toml)?);
+    argv.extend(claude_args(home, run, &cfg.prod, rune, &sys_file, &cfg.toml)?);
     let env = vec![
         ("SPIRA_DWARF".to_string(), name.clone()),
         ("BEADS_ACTOR".to_string(), actor.clone()),
