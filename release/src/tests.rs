@@ -1092,6 +1092,11 @@ fn world_activating_over_a_running_cache(binary_changes: bool) -> World {
         file(&rel.join("systemd/sccache-dav.service"), CACHE_UNIT);
         file(&rel.join("bin/sccache-dav"), bin);
         file(&rel.join("spira/sccache-dav.sh"), "#!/bin/sh\nexec sccache-dav\n");
+        file(&rel.join("sccache-dav/Cargo.toml"), "[dependencies]\ndep = { path = \"../dep\" }\n\n[dev-dependencies]\ndevdep = { path = \"../devdep\" }\n");
+        file(&rel.join("dep/Cargo.toml"), "[package]\nname = \"dep\"\n");
+        file(&rel.join("dep/src/lib.rs"), "pub fn f() {}\n");
+        file(&rel.join("devdep/src/lib.rs"), "pub fn g() {}\n");
+        file(&rel.join("Cargo.lock"), "# lock\n");
     }
     let rel = w.cfg.releases.join(A);
     let m = Manifest { commit: A.into(), built: None, repo: None, entries: Manifest::scan(&rel).unwrap() };
@@ -1118,6 +1123,7 @@ fn an_activation_that_changes_neither_the_cache_backends_unit_nor_its_binary_lea
 #[test]
 fn an_activation_that_changes_the_cache_backends_binary_restarts_it_and_stops_the_sccache_server() {
     let w = world_activating_over_a_running_cache(true);
+    change_new_release_file(&w, "Cargo.lock", "# lock v2\n");
     let sc = FakeSystemctl::new(w.cfg.unit_dir.clone());
     sc.states.borrow_mut().insert("sccache-dav.service".into(), UnitState { active: "active".into(), result: "success".into(), kind: "simple".into() });
     let out = activate_with(&w, &sc).unwrap();
@@ -1139,6 +1145,47 @@ fn an_activation_that_changes_the_cache_backends_unit_restarts_it_and_stops_the_
     activate_with(&w, &sc).unwrap();
     assert_eq!(*sc.restarts.borrow(), vec!["sccache-dav.service".to_string()]);
     assert_eq!(*sc.cache_server_stops.borrow(), 1);
+}
+
+fn change_new_release_file(w: &World, path: &str, content: &str) {
+    let rel = w.cfg.releases.join(A);
+    file(&rel.join(path), content);
+    let m = Manifest { commit: A.into(), built: None, repo: None, entries: Manifest::scan(&rel).unwrap() };
+    fs::write(rel.join("MANIFEST"), m.render()).unwrap();
+}
+
+fn activate_over_running_cache(w: &World) -> (activate::Switched, FakeSystemctl) {
+    let sc = FakeSystemctl::new(w.cfg.unit_dir.clone());
+    sc.states.borrow_mut().insert("sccache-dav.service".into(), UnitState { active: "active".into(), result: "success".into(), kind: "simple".into() });
+    let out = activate_with(w, &sc).unwrap();
+    (out, sc)
+}
+
+#[test]
+fn a_rebuild_that_changes_the_cache_backends_bytes_but_not_its_source_leaves_it_running() {
+    let w = world_activating_over_a_running_cache(true);
+    let (out, sc) = activate_over_running_cache(&w);
+    assert!(!out.restarted.iter().any(|u| u == "sccache-dav.service"), "{:?}", out.restarted);
+    assert_eq!(out.left_running, vec!["sccache-dav.service".to_string()]);
+    assert_eq!(*sc.cache_server_stops.borrow(), 0);
+}
+
+#[test]
+fn a_changed_binary_and_a_changed_dependency_source_restarts_the_cache_backend() {
+    let w = world_activating_over_a_running_cache(true);
+    change_new_release_file(&w, "dep/src/lib.rs", "pub fn f() { 1; }\n");
+    let (_, sc) = activate_over_running_cache(&w);
+    assert_eq!(*sc.restarts.borrow(), vec!["sccache-dav.service".to_string()]);
+    assert_eq!(*sc.cache_server_stops.borrow(), 1);
+}
+
+#[test]
+fn a_changed_binary_and_a_changed_dev_dependency_source_leaves_the_cache_backend_running() {
+    let w = world_activating_over_a_running_cache(true);
+    change_new_release_file(&w, "devdep/src/lib.rs", "pub fn g() { 1; }\n");
+    let (out, sc) = activate_over_running_cache(&w);
+    assert!(!out.restarted.iter().any(|u| u == "sccache-dav.service"), "{:?}", out.restarted);
+    assert_eq!(*sc.cache_server_stops.borrow(), 0);
 }
 
 const LC_UNIT: &str = "[Service]\nType=simple\nExecStart=@SPIRA_PROD_ROOT@/bin/spira-lc serve\n";
