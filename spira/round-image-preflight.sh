@@ -5,7 +5,8 @@
 #   round-image-preflight.sh [--tree DIR] [--base REF] [--head REF] [--force]
 #
 # Runs only when the diff base...head touches a recipe input; every other branch pays one
-# git diff. The inputs are read from round-vm/src/recipe.rs, the file the image hash is
+# git diff. A diff that only edits the apt-get install line of ami-setup.sh installs that
+# line alone. The inputs are read from round-vm/src/recipe.rs, the file the image hash is
 # computed from, never from a second list. A red prints the failing setup line and the last
 # 40 lines of output.
 
@@ -35,6 +36,15 @@ recipe_paths() {   # recipe_paths <tree> -> repo-relative path of every recipe i
     done
 }
 
+package_list_only() {   # package_list_only <tree> <base> <head> <hit> -> 0 iff only apt-get install lines of ami-setup.sh changed
+    local tree="$1" base="$2" head="$3" hit="$4" changed
+    [ "$hit" = "round-vm/ami-setup.sh" ] || return 1
+    changed="$(git -C "$tree" diff -U0 "$base...$head" -- round-vm/ami-setup.sh \
+        | grep -E '^[-+]' | grep -vE '^(---|\+\+\+) ')" || return 1
+    [ -n "$changed" ] || return 1
+    ! printf '%s\n' "$changed" | grep -qvE '^[-+]apt-get install '
+}
+
 paths="$(recipe_paths "$TREE")" || exit 1
 [ -n "$paths" ] || { echo "round-image-preflight: recipe.rs lists no inputs" >&2; exit 1; }
 npaths="$(printf '%s\n' "$paths" | wc -l)"
@@ -54,8 +64,6 @@ if [ "$FORCE" = 0 ]; then
 fi
 
 command -v podman >/dev/null 2>&1 || { echo "round-image-preflight: podman is not on PATH" >&2; exit 75; }
-toolchain="$(sed -n 's/^channel *= *"\(.*\)"/\1/p' "$TREE/rust-toolchain.toml")"
-[ -n "$toolchain" ] || { echo "round-image-preflight: no channel in rust-toolchain.toml" >&2; exit 1; }
 
 mkdir -p "$CACHE/registry" "$CACHE/target" "$CACHE/apt" "$CACHE/toolchains" || exit 75
 log="$(mktemp)"; trap 'rm -f "$log"' EXIT
@@ -63,9 +71,23 @@ mounts=(-v "$TREE:/src:ro" -v "$HERE/round-image-preflight-guest.sh:/guest.sh:ro
         -v "$CACHE/registry:/cache/registry" -v "$CACHE/target:/cache/target"
         -v "$CACHE/apt:/var/cache/apt/archives" -v "$CACHE/toolchains:/cache/toolchains")
 
+pkg_only=0
+if [ "$FORCE" = 0 ] && package_list_only "$TREE" "$BASE" "$HEAD_REF" "$hit"; then
+    apt_line="$(grep -E '^apt-get install ' "$TREE/round-vm/ami-setup.sh")"
+    [ "$(printf '%s\n' "$apt_line" | grep -c .)" = 1 ] && pkg_only=1
+fi
+
 start=$SECONDS
-timeout "$LIMIT" podman run --rm --network host "${mounts[@]}" "$IMAGE" \
-    bash /guest.sh "$toolchain" >"$log" 2>&1
+if [ "$pkg_only" = 1 ]; then
+    printf '%s\n' 'set -euo pipefail' 'export DEBIAN_FRONTEND=noninteractive' 'apt-get update -qq' "$apt_line" \
+        | timeout "$LIMIT" podman run --rm -i --network host -v "$CACHE/apt:/var/cache/apt/archives" "$IMAGE" \
+            bash -s >"$log" 2>&1
+else
+    toolchain="$(sed -n 's/^channel *= *"\(.*\)"/\1/p' "$TREE/rust-toolchain.toml")"
+    [ -n "$toolchain" ] || { echo "round-image-preflight: no channel in rust-toolchain.toml" >&2; exit 1; }
+    timeout "$LIMIT" podman run --rm --network host "${mounts[@]}" "$IMAGE" \
+        bash /guest.sh "$toolchain" >"$log" 2>&1
+fi
 rc=$?
 wall=$((SECONDS - start))
 
@@ -77,6 +99,11 @@ if [ "$rc" -ne 0 ]; then
     echo "round-image-preflight: last 40 lines:" >&2
     tail -n 40 "$log" | cut -c1-300 >&2
     exit 1
+fi
+if [ "$pkg_only" = 1 ]; then
+    echo "round-image-preflight: package list installs; wall ${wall}s"
+    echo "fence: round-image-preflight checked $npaths recipe paths against the diff (1 touched, package list installed)"
+    exit 0
 fi
 echo "round-image-preflight: setup exited 0; wall ${wall}s"
 echo "fence: round-image-preflight checked $npaths recipe paths against the diff ($(printf "%s" "$hit" | grep -c .) touched, setup ran)"
