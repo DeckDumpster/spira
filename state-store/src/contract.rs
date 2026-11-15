@@ -1558,16 +1558,26 @@ impl<B: Backend> Contract<B> {
         Ok(gone)
     }
 
+    /// The `at` field of the first `events/` record at or after main `m`, read at `head`:
+    /// the outer `None` when there is no such record, the inner when it is unstamped.
+    fn stamped_at_or_after(&self, m: u64, head: u64) -> Result<Option<Option<u64>>> {
+        let after = m.checked_sub(1).map(events_key);
+        let page = self.backend.range(EVENTS_PREFIX, after.as_deref(), 1, head)?;
+        page.first().map(|(_, v)| recorded_at(v)).transpose()
+    }
+
+    /// The wall time (ms) of the first audited commit at or after main `main`. A commit that
+    /// wrote only telemetry leaves no record, so this is exact only when `main` was audited.
+    pub fn committed_at(&self, main: u64) -> Result<Option<u64>> {
+        Ok(self.stamped_at_or_after(main, self.head()?)?.flatten())
+    }
+
     /// The `at` of the oldest stamped audit record. Stamped records are a suffix of the
     /// history, so it is found by bisecting the revisions.
     fn first_stamped_at(&self) -> Result<Option<u64>> {
         let head = self.head()?;
         let probe = |m: u64| -> Result<Option<(bool, Option<u64>)>> {
-            let after = m.checked_sub(1).map(events_key);
-            let page = self.backend.range(EVENTS_PREFIX, after.as_deref(), 1, head)?;
-            page.first()
-                .map(|(_, v)| recorded_at(v).map(|at| (at.is_some(), at)))
-                .transpose()
+            Ok(self.stamped_at_or_after(m, head)?.map(|at| (at.is_some(), at)))
         };
         let (mut lo, mut hi) = (0, head + 1);
         while lo < hi {

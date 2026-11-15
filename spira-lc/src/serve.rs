@@ -350,7 +350,25 @@ fn serve_one(stream: UnixStream, conn: &Arc<Conn>, spans: Option<&spira_otel::Si
         Ok(Some(r)) => r,
         Err((size, msg)) => {
             let _ = write_response(&stream, 2, &msg, "");
-            record_span(spans, "-", "-", size, msg.len(), 2, started, SystemTime::now(), Instant::now().saturating_duration_since(accepted), &state_store::phases::Snapshot::default());
+            let none = state_store::phases::Snapshot::default();
+            let call = spira_otel::Call {
+                method: "-",
+                caller: "-",
+                request_size: size as u64,
+                response_size: msg.len() as u64,
+                exit_code: 2,
+                start: started,
+                end: SystemTime::now(),
+                queue_wait: Instant::now().saturating_duration_since(accepted),
+                phases: &none.phases,
+                commits_us: &none.commits_us,
+                reads: none.reads,
+                open_phase: none.open,
+                lag_revs: None,
+                lag_ms: None,
+                too_old: false,
+            };
+            record_span(spans, &call);
             return;
         }
     };
@@ -377,20 +395,40 @@ fn serve_one(stream: UnixStream, conn: &Arc<Conn>, spans: Option<&spira_otel::Si
                 state_store::model::track(!min_rev.is_none_or(model_reached));
                 let mut local = Local(&worker);
                 let ans = answer(req, &mut local, &mut crate::bd::LiveBd, &crate::composed::LiveContent, &crate::lifecycle_run_dir);
-                (ans, state_store::model::stamp())
+                let stamp = state_store::model::stamp();
+                (ans, stamp.rev, past_of(&stamp))
             })
-            .unwrap_or_else(|| (Answer::out(2, format!("cannot tell: {}", crate::db::DEADLINE_MESSAGE)), None))
+            .unwrap_or_else(|| (Answer::out(2, format!("cannot tell: {}", crate::db::DEADLINE_MESSAGE)), None, Past::default()))
         }
-        Err((code, out)) => (Answer::out(code, out), None),
+        Err((code, out)) => (Answer::out(code, out), None, Past::default()),
     };
-    let (ans, rev) = ans;
+    let (ans, rev, past) = ans;
     let method = crate::slow::method_of(&argv_seen);
     crate::slow::request_done(&verb, &method, &caller, task.as_deref(), received.elapsed());
+    crate::slow::past_read_done(&verb, &caller, task.as_deref(), past.lag_revs, past.lag_ms, past.too_old);
     crate::slow::sample(&method, received.elapsed());
     let _ = write_response_at(&stream, ans.code, &ans.stdout, &ans.stderr, rev);
     let began = *started_work.lock().unwrap_or_else(|e| e.into_inner());
     let waited = began.unwrap_or_else(Instant::now).saturating_duration_since(accepted);
-    record_span(spans, &verb, &caller, size, ans.stdout.len() + ans.stderr.len(), ans.code, started, SystemTime::now(), waited, &recorder.snapshot());
+    let store = recorder.snapshot();
+    let call = spira_otel::Call {
+        method: &verb,
+        caller: &caller,
+        request_size: size as u64,
+        response_size: (ans.stdout.len() + ans.stderr.len()) as u64,
+        exit_code: ans.code,
+        start: started,
+        end: SystemTime::now(),
+        queue_wait: waited,
+        phases: &store.phases,
+        commits_us: &store.commits_us,
+        reads: store.reads,
+        open_phase: store.open,
+        lag_revs: past.lag_revs,
+        lag_ms: past.lag_ms,
+        too_old: past.too_old,
+    };
+    record_span(spans, &call);
 }
 
 /// One request: the argv `env::args().skip(1)` would have produced, and the bytes the CLI's
@@ -518,24 +556,29 @@ pub(crate) fn answer(
     ans
 }
 
-#[allow(clippy::too_many_arguments)]
-fn record_span(spans: Option<&spira_otel::Sink>, verb: &str, caller: &str, request_size: usize, response_size: usize, code: i32, start: SystemTime, end: SystemTime, queue_wait: Duration, store: &state_store::phases::Snapshot) {
+fn record_span(spans: Option<&spira_otel::Sink>, call: &spira_otel::Call) {
     if let Some(sink) = spans {
-        sink.emit(&spira_otel::Call {
-            method: verb,
-            caller,
-            request_size: request_size as u64,
-            response_size: response_size as u64,
-            exit_code: code,
-            start,
-            end,
-            queue_wait,
-            phases: &store.phases,
-            commits_us: &store.commits_us,
-            reads: store.reads,
-            open_phase: store.open,
-        });
+        sink.emit(call);
     }
+}
+
+/// What a request's reads behind the head cost it, for its span and the counters.
+#[derive(Clone, Copy, Default)]
+struct Past {
+    lag_revs: Option<u64>,
+    lag_ms: Option<u64>,
+    too_old: bool,
+}
+
+/// `stamp`'s lag with the wall time since the first audited commit at or after the oldest
+/// revision read; the lookup is made only for a read behind the head.
+fn past_of(stamp: &state_store::model::Stamp) -> Past {
+    let lag_ms = stamp.oldest.filter(|_| stamp.lag_revs.is_some()).and_then(|oldest| {
+        let store = crate::control::served::configured()?.ok()?;
+        let at = store.contract().committed_at(oldest).ok()??;
+        (spira_config::vtime::now_epoch().saturating_mul(1_000)).checked_sub(at)
+    });
+    Past { lag_revs: stamp.lag_revs, lag_ms, too_old: stamp.too_old }
 }
 
 /// How long after receiving a store request this service stops working on it
@@ -751,7 +794,24 @@ mod tests {
         let dir = testkit::TempDir::new("lc-serve-phases");
         let sink = spira_otel::Sink::new(dir.path(), "spira-lc", 14);
         let now = std::time::SystemTime::now();
-        super::record_span(Some(&sink), "renew", "-", 1, 1, 0, now, now, std::time::Duration::ZERO, snapshot);
+        let call = spira_otel::Call {
+            method: "renew",
+            caller: "-",
+            request_size: 1,
+            response_size: 1,
+            exit_code: 0,
+            start: now,
+            end: now,
+            queue_wait: std::time::Duration::ZERO,
+            phases: &snapshot.phases,
+            commits_us: &snapshot.commits_us,
+            reads: snapshot.reads,
+            open_phase: snapshot.open,
+            lag_revs: None,
+            lag_ms: None,
+            too_old: false,
+        };
+        super::record_span(Some(&sink), &call);
         let file = std::fs::read_dir(&dir).unwrap().flatten().next().unwrap();
         let text = std::fs::read_to_string(file.path()).unwrap();
         let r: opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest = serde_json::from_str(text.trim()).unwrap();

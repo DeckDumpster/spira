@@ -244,18 +244,18 @@ fn a_wait_for_a_revision_returns_once_the_copy_holds_it() {
 fn a_tracked_request_is_stamped_with_its_commit_or_the_oldest_revision_it_read() {
     let m = Modeled::open(MemBackend::new(), SKIP, 16).unwrap();
     track(false);
-    assert_eq!(stamp(), None, "a request that touched no store carries no revision");
+    assert_eq!(stamp().rev, None, "a request that touched no store carries no revision");
     let rev = m.commit(0, &[put("k", "1")]).unwrap();
     let rev = m.commit(rev, &[put("k", "2")]).unwrap();
     track(false);
     m.get("k", rev).unwrap();
     m.get("k", rev - 1).unwrap();
-    assert_eq!(stamp(), Some(rev - 1), "the answer is at least as fresh as its oldest read");
+    assert_eq!(stamp().rev, Some(rev - 1), "the answer is at least as fresh as its oldest read");
     track(false);
     m.get("k", rev).unwrap();
     let wrote = m.commit(rev, &[put("k", "3")]).unwrap();
-    assert_eq!(stamp(), Some(wrote), "a write is at or below the stamp");
-    assert_eq!(stamp(), None, "the stamp ends the recording");
+    assert_eq!(stamp().rev, Some(wrote), "a write is at or below the stamp");
+    assert_eq!(stamp().rev, None, "the stamp ends the recording");
 }
 
 #[test]
@@ -298,7 +298,7 @@ fn a_read_through_request_reads_the_inner_backend() {
     track(true);
     assert_eq!(value(m.get("k", rev).unwrap()).as_deref(), Some("1"));
     m.range("", None, 10, rev).unwrap();
-    assert_eq!(stamp(), Some(rev));
+    assert_eq!(stamp().rev, Some(rev));
     assert_eq!(inner.reads(), before + 2);
 }
 
@@ -399,4 +399,38 @@ fn the_load_reads_no_key_under_a_skipped_prefix() {
     assert_eq!(value(m.get("b", rev).unwrap()).as_deref(), Some("2"));
     assert_eq!(m.reads().0, memory + 2, "both served from memory");
     assert_eq!(m.reads().1, 0);
+}
+
+fn ten_commits(m: &Modeled<MemBackend>) -> u64 {
+    (0..10).fold(0, |rev, n| m.commit(rev, &[put("k", &n.to_string())]).unwrap())
+}
+
+#[test]
+fn a_log_read_behind_the_head_is_stamped_with_how_far_back_it_read() {
+    let m = Modeled::open(MemBackend::new(), SKIP, 16).unwrap();
+    let head = ten_commits(&m);
+    track(false);
+    m.log(head - 7, 100).unwrap();
+    let st = stamp();
+    assert_eq!((st.lag_revs, st.oldest, st.too_old), (Some(7), Some(head - 7), false));
+    track(false);
+    m.get("k", head).unwrap();
+    let st = stamp();
+    assert_eq!((st.lag_revs, st.oldest), (None, None), "a read at the head is not a read from the past");
+}
+
+#[test]
+fn a_read_below_the_compaction_point_is_stamped_too_old() {
+    let m = Modeled::open(MemBackend::new(), SKIP, 16).unwrap();
+    let head = ten_commits(&m);
+    m.compact(head).unwrap();
+    track(false);
+    assert_eq!(m.log(1, 100), Err(Error::TooOld { compacted: head }));
+    assert!(stamp().too_old);
+    track(false);
+    assert_eq!(m.get("k", 1), Err(Error::TooOld { compacted: head }));
+    assert!(stamp().too_old);
+    track(false);
+    m.get("k", head).unwrap();
+    assert!(!stamp().too_old);
 }

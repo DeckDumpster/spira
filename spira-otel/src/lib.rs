@@ -56,6 +56,9 @@ pub struct Call<'a> {
     pub reads: u64,
     /// The store phase a request cut at its deadline was still in.
     pub open_phase: Option<&'a str>,
+    pub lag_revs: Option<u64>,
+    pub lag_ms: Option<u64>,
+    pub too_old: bool,
 }
 
 /// Spans lost to a write error since this process started.
@@ -131,6 +134,15 @@ impl Sink {
         }
         if let Some(open) = c.open_phase {
             attributes.push(kv_str("spira.phase.open", open));
+        }
+        if let Some(v) = c.lag_revs {
+            attributes.push(kv_int("spira.store.lag_revs", v));
+        }
+        if let Some(v) = c.lag_ms {
+            attributes.push(kv_int("spira.store.lag_ms", v));
+        }
+        if c.too_old {
+            attributes.push(KeyValue { key: "spira.store.too_old".into(), value: Some(AnyValue { value: Some(Value::BoolValue(true)) }) });
         }
         if failed {
             attributes.push(KeyValue { key: "spira.exit_code".into(), value: Some(AnyValue { value: Some(Value::IntValue(i64::from(c.exit_code))) }) });
@@ -238,7 +250,7 @@ mod tests {
 
     fn call(code: i32) -> Call<'static> {
         let start = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
-        Call { method: "list", caller: "work/list", request_size: 40, response_size: 439_002, exit_code: code, start, end: start + Duration::from_millis(12), queue_wait: Duration::ZERO, phases: &[], commits_us: &[], reads: 0, open_phase: None }
+        Call { method: "list", caller: "work/list", request_size: 40, response_size: 439_002, exit_code: code, start, end: start + Duration::from_millis(12), queue_wait: Duration::ZERO, phases: &[], commits_us: &[], reads: 0, open_phase: None, lag_revs: None, lag_ms: None, too_old: false }
     }
 
     fn tmp(name: &str) -> testkit::TempDir {
@@ -280,6 +292,22 @@ mod tests {
         let s = &bad.resource_spans[0].scope_spans[0].spans[0];
         assert_eq!(s.status.as_ref().unwrap().code, StatusCode::Error as i32);
         assert_eq!(attr(s, "spira.exit_code"), Some(&Value::IntValue(3)));
+    }
+
+    #[test]
+    fn a_read_from_the_past_carries_its_lag_and_a_read_at_the_head_carries_none() {
+        let dir = tmp("lag");
+        let sink = Sink::new(dir.path(), "spira-lc", 14);
+        let now = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        sink.write(&Call { lag_revs: Some(7), lag_ms: Some(1234), too_old: true, ..call(0) }, now).unwrap();
+        sink.write(&call(0), now).unwrap();
+        let text = fs::read_to_string(dir.join("spira-lc.2023-11-14.jsonl")).unwrap();
+        let spans: Vec<Span> = text.lines().map(|l| serde_json::from_str::<ExportTraceServiceRequest>(l).unwrap().resource_spans[0].scope_spans[0].spans[0].clone()).collect();
+        assert_eq!(attr(&spans[0], "spira.store.lag_revs"), Some(&Value::IntValue(7)));
+        assert_eq!(attr(&spans[0], "spira.store.lag_ms"), Some(&Value::IntValue(1234)));
+        assert_eq!(attr(&spans[0], "spira.store.too_old"), Some(&Value::BoolValue(true)));
+        let keys: Vec<&str> = spans[1].attributes.iter().map(|a| a.key.as_str()).collect();
+        assert_eq!(keys, ["rpc.system", "rpc.method", "spira.caller", "rpc.request.size", "rpc.response.size", "spira.queue_wait_us"]);
     }
 
     fn attr_of<'a>(attrs: &'a [KeyValue], k: &str) -> Option<&'a Value> {
@@ -340,7 +368,7 @@ mod tests {
         let rows = [("show", "work/show", 61, 1_204, 0, 8), ("list", "work/list", 33, 439_002, 0, 212), ("show", "gate-run", 58, 96, 1, 3), ("event", "lifecycle/event", 412, 0, 0, 41)];
         for (i, (m, who, rq, rs, code, ms)) in rows.into_iter().enumerate() {
             let start = t0 + Duration::from_secs(i as u64);
-            let c = Call { method: m, caller: who, request_size: rq, response_size: rs, exit_code: code, start, end: start + Duration::from_millis(ms), queue_wait: Duration::ZERO, phases: &[], commits_us: &[], reads: 0, open_phase: None };
+            let c = Call { method: m, caller: who, request_size: rq, response_size: rs, exit_code: code, start, end: start + Duration::from_millis(ms), queue_wait: Duration::ZERO, phases: &[], commits_us: &[], reads: 0, open_phase: None, lag_revs: None, lag_ms: None, too_old: false };
             sink.write(&c, start).unwrap();
         }
         fs::copy(dir.join("spira-lc.2023-11-14.jsonl"), concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/spira-lc.ndjson")).unwrap();
