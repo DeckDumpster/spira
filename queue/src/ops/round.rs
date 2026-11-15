@@ -2891,6 +2891,7 @@ pub(super) fn round_fault(results: &Path) -> Option<RoundFault> {
 /// A setting the round VM refused is the fault of the member whose diff adds its key: present
 /// at the member's tip and absent at the landing ref. Each such member is ejected with the
 /// fault; when none is, the harness is named and no member is counted against.
+#[allow(clippy::too_many_arguments)]
 fn settings_refused(
     w: &World,
     by: &str,
@@ -3345,6 +3346,7 @@ pub(super) fn tail(text: &str, n: usize) -> String {
     lines[lines.len().saturating_sub(n)..].join("\n")
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn certify(
     w: &World,
     by: &str,
@@ -5199,6 +5201,7 @@ fn settled_parent(w: &World, c: &Ctx, parent: &str) {
 /// A round stacked on an open round lands only after that round has: it holds while the parent is
 /// open, is re-cut on the parent's head when that changed, and is rebuilt on the landing ref
 /// (to certify again) when the parent ended without landing. `None` means no stacking obstacle.
+#[allow(clippy::too_many_arguments)]
 fn settle_parent(
     w: &World,
     by: &str,
@@ -5415,6 +5418,7 @@ pub(super) fn abandon_for_landing(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn abandon_with(
     w: &World,
     by: &str,
@@ -5550,6 +5554,7 @@ fn name_surviving_driver(w: &World, label: &str, c: &Ctx, batch: &str) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn close_abandoned(
     w: &World,
     by: &str,

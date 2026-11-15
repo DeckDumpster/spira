@@ -9268,7 +9268,7 @@ fn open_land_and_abandon_record_their_actor_in_both_places() {
         t.err()
     );
     assert!(
-        t.landing_log().contains(&format!("QUEUE ROUND-ABANDON "))
+        t.landing_log().contains("QUEUE ROUND-ABANDON ")
             && t.landing_log()
                 .contains(&format!("batch={batch} by=operator reason=why"))
     );
