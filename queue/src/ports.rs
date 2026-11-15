@@ -153,6 +153,8 @@ pub trait Git {
     fn is_ancestor(&self, repo: &Path, a: &str, b: &str) -> bool;
     /// `merge-base <a> <b>`; None when they share no history.
     fn merge_base(&self, repo: &Path, a: &str, b: &str) -> Option<String>;
+    /// Merging `tip` onto `base` in memory: None when it merges cleanly, else the conflicting paths.
+    fn base_conflict_paths(&self, repo: &Path, base: &str, tip: &str) -> Option<Vec<String>>;
     /// `update-ref <ref> <new> [<old>]` — a CAS when `old` is given.
     fn update_ref(&self, repo: &Path, refname: &str, new: &str, old: Option<&str>) -> bool;
     /// `show-ref --verify --quiet <ref>`.
@@ -282,8 +284,6 @@ pub trait Lib {
     ) -> Vec<(String, String)>;
     fn cancel_runs(&self, forge: &Path, path: &Path, branch: &str);
     fn format_batch(&self, wt: &Path, base: &str, name: &str);
-    /// `_base_conflict`: true when the tip conflicts with the base.
-    fn base_conflict(&self, path: &Path, base: &str, tip: &str) -> bool;
     /// `_pf_gate` under a wall of `wall_secs`: (rc, output); 124 = wall hit.
     fn pf_gate(&self, branch: &str, name: &str, stamp: &str, wall_secs: u64) -> (i32, String);
     /// R23: `BEADS_ACTOR=<actor> bdq create <title> --type bug --priority P --labels L

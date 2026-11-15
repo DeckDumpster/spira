@@ -1952,12 +1952,19 @@ fn open_timed(
             merged.push(m);
         } else {
             w.git.merge_abort(&wt);
-            if w.lib.base_conflict(&path, &landed_sha, &m.tip) {
+            if let Some(paths) = w.git.base_conflict_paths(&path, &landed_sha, &m.tip) {
+                let paths = if paths.is_empty() { "unknown".to_string() } else { paths.join(" ") };
                 skips.push(skip(
                     &m.id,
                     "base-conflict",
                     match return_to_rework(w, &m) {
-                        Ok(()) => format!("{}: conflicts with base — returned to rework", m.id),
+                        Ok(()) => {
+                            w.lib.comment(
+                                &m.id,
+                                &format!("rebase-conflict: does not merge onto {landed_sha}\npaths: {paths}"),
+                            );
+                            format!("{}: conflicts with base — returned to rework — paths: {paths}", m.id)
+                        }
                         Err(e) => format!("{}: conflicts with base ({e})", m.id),
                     },
                 ));

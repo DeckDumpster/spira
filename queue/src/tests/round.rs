@@ -1789,7 +1789,7 @@ fn open_admits_a_member_whose_blocker_has_landed() {
 fn open_returns_a_base_conflict_to_rework_and_keeps_a_round_conflict_queued() {
     let t = round_world();
     t.git.merge_fail.borrow_mut().insert("tb".into());
-    t.lib.conflict_with_base.borrow_mut().insert("tb".into());
+    t.git.conflict_with_base.borrow_mut().insert("tb".into(), vec!["a.rs".into(), "b.rs".into()]);
     t.git.merge_fail.borrow_mut().insert("tc".into());
     t.git
         .rebase_fail
@@ -1803,7 +1803,7 @@ fn open_returns_a_base_conflict_to_rework_and_keeps_a_round_conflict_queued() {
     );
     let o = t.err();
     assert!(!t.qfile("round").exists() && !t.lc.has("cut"), "{o}");
-    assert!(o.contains("sp-b: conflicts with base — returned to rework") && o.contains("sp-c: conflicts with the round, and with a rebase onto its head — paths: c.txt d.txt\n"), "{o}");
+    assert!(o.contains("sp-b: conflicts with base — returned to rework — paths: a.rs b.rs\n") && o.contains("sp-c: conflicts with the round, and with a rebase onto its head — paths: c.txt d.txt\n"), "{o}");
     assert!(
         t.lc.has(
             "event bead sp-b CERTIFIED 3 {\"GateRed\":{\"tip\":\"tb\",\"reason\":\"no-rebase\"}}"
@@ -1813,6 +1813,24 @@ fn open_returns_a_base_conflict_to_rework_and_keeps_a_round_conflict_queued() {
     );
     assert!(!t.lc.has("event bead sp-c"), "{:?}", t.lc.calls.borrow());
     assert_eq!(t.lc.bead_state("sp-b").unwrap().0, "REWORK");
+    assert!(
+        t.lib.calls.borrow().iter().any(|c| c.starts_with("comment sp-b ") && c.contains("a.rs b.rs")),
+        "{:?}",
+        t.lib.calls.borrow()
+    );
+}
+
+#[test]
+fn open_admits_a_stale_member_the_merge_takes_without_a_skip() {
+    let t = round_world();
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a,sp-b"]),
+        0,
+        "{}",
+        t.err()
+    );
+    assert!(!t.err().contains("conflicts with base"), "{}", t.err());
+    assert!(t.out().contains("members=sp-a:ta sp-b:tb"), "{}", t.out());
 }
 
 #[test]
@@ -1820,7 +1838,7 @@ fn open_fails_and_does_not_claim_a_return_the_lifecycle_refused_or_ignored() {
     for ignored in [false, true] {
         let t = round_world();
         t.git.merge_fail.borrow_mut().insert("tb".into());
-        t.lib.conflict_with_base.borrow_mut().insert("tb".into());
+        t.git.conflict_with_base.borrow_mut().insert("tb".into(), vec![]);
         if ignored {
             t.lc.event_ignored.set(true);
         } else {
