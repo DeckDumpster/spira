@@ -451,13 +451,15 @@ fn set_meta(conn: &Connection, name: &str, value: u64) -> Result<()> {
 }
 
 /// The snapshot a read runs at: the head it saw, and the check every read makes against it.
-struct Snapshot {
+struct Snapshot<'a> {
     head: u64,
+    /// The VM steps a range statement has taken; see [`SqliteBackend::take_read_steps`].
+    steps: &'a AtomicU64,
     /// The receipt files this read may see, newest day first.
     receipts: Vec<Arc<DatedFile>>,
 }
 
-impl Snapshot {
+impl Snapshot<'_> {
     fn readable(&self, at: u64) -> Result<()> {
         if at > self.head {
             return Err(Error::FutureRev {
@@ -469,9 +471,10 @@ impl Snapshot {
     }
 }
 
-fn snapshot(conn: &Connection, files: &Files) -> Result<Snapshot> {
+fn snapshot<'a>(conn: &Connection, files: &Files, steps: &'a AtomicU64) -> Result<Snapshot<'a>> {
     Ok(Snapshot {
         head: meta(conn, "head")?.unwrap_or(0),
+        steps,
         receipts: files.handles(),
     })
 }
@@ -560,11 +563,10 @@ fn range_rows(
     lo: &[u8],
     hi: Option<&[u8]>,
     limit: usize,
-    steps: &AtomicU64,
     deadline: &dyn Fn() -> Result<()>,
 ) -> Result<Vec<(String, Version)>> {
     if matches!(source, Source::At(..)) {
-        return range_rows_at(conn, snap, source, lo, hi, limit, steps, deadline);
+        return range_rows_at(conn, snap, source, lo, hi, limit, deadline);
     }
     let want = limit;
     let limit = i64::try_from(limit).unwrap_or(i64::MAX);
@@ -596,7 +598,7 @@ fn range_rows(
         }
     }
     let n = stmt.reset_status(rusqlite::StatementStatus::VmStep);
-    steps.fetch_add(u64::try_from(n).unwrap_or(0), Ordering::Relaxed);
+    snap.steps.fetch_add(u64::try_from(n).unwrap_or(0), Ordering::Relaxed);
     let state = match source {
         Source::State(s) => Some(s),
         _ => None,
@@ -648,18 +650,17 @@ fn range_rows_at(
     lo: &[u8],
     hi: Option<&[u8]>,
     limit: usize,
-    steps: &AtomicU64,
     deadline: &dyn Fn() -> Result<()>,
 ) -> Result<Vec<(String, Version)>> {
     let Source::At(at, history) = source else {
-        return range_rows(conn, snap, source, lo, hi, limit, steps, deadline);
+        return range_rows(conn, snap, source, lo, hi, limit, deadline);
     };
     let touched = lock(history).touched_after(lo, hi, at)?;
     let mut out = Vec::new();
     let mut cursor = lo.to_vec();
     let mut next = 0;
     while out.len() < limit {
-        let page = range_rows(conn, snap, Source::Head, &cursor, hi, limit, steps, deadline)?;
+        let page = range_rows(conn, snap, Source::Head, &cursor, hi, limit, deadline)?;
         let upto = (page.len() == limit).then(|| page.last().map(|(k, _)| k.clone())).flatten();
         let span = touched[next..].partition_point(|(k, _)| upto.as_ref().is_none_or(|u| k <= u));
         out.extend(overlay(page, &touched[next..next + span], None, upto.as_deref()));
@@ -676,45 +677,43 @@ fn range_rows_at(
     Ok(out)
 }
 
-impl SqliteBackend {
-    fn rows_outside(
-        &self,
-        conn: &Connection,
-        snap: &Snapshot,
-        src: Source<'_>,
-        skip: &[&str],
-        after: Option<&str>,
-        limit: usize,
-        deadline: &dyn Fn() -> Result<()>,
-    ) -> Result<Vec<(String, Version)>> {
-        if skip.contains(&"") {
-            return Ok(Vec::new());
-        }
-        let mut sorted: Vec<&str> = skip.to_vec();
-        sorted.sort_unstable();
-        let mut skipped: Vec<(&[u8], Vec<u8>)> = Vec::new();
-        for p in sorted {
-            if skipped.last().is_some_and(|(q, _)| p.as_bytes().starts_with(q)) {
-                continue;
-            }
-            skipped.push((p.as_bytes(), successor(p.as_bytes()).unwrap_or_default()));
-        }
-        let mut lo = lower_bound(b"", after);
-        let steps = &self.0.read_steps;
-        let mut out = Vec::new();
-        let ends = skipped.iter().map(|(start, _)| Some(*start)).chain([None]);
-        for (end, skip) in ends.zip(skipped.iter().map(Some).chain([None])) {
-            if out.len() < limit && end.is_none_or(|hi| lo.as_slice() < hi) {
-                let rows = range_rows(conn, snap, src, &lo, end, limit - out.len(), steps, deadline)?;
-                out.extend(rows);
-            }
-            if let Some((_, past)) = skip {
-                lo = lo.max(past.clone());
-            }
-        }
-        Ok(out)
+fn rows_outside(
+    conn: &Connection,
+    snap: &Snapshot,
+    src: Source<'_>,
+    skip: &[&str],
+    after: Option<&str>,
+    limit: usize,
+    deadline: &dyn Fn() -> Result<()>,
+) -> Result<Vec<(String, Version)>> {
+    if skip.contains(&"") {
+        return Ok(Vec::new());
     }
+    let mut sorted: Vec<&str> = skip.to_vec();
+    sorted.sort_unstable();
+    let mut skipped: Vec<(&[u8], Vec<u8>)> = Vec::new();
+    for p in sorted {
+        if skipped.last().is_some_and(|(q, _)| p.as_bytes().starts_with(q)) {
+            continue;
+        }
+        skipped.push((p.as_bytes(), successor(p.as_bytes()).unwrap_or_default()));
+    }
+    let mut lo = lower_bound(b"", after);
+    let mut out = Vec::new();
+    let ends = skipped.iter().map(|(start, _)| Some(*start)).chain([None]);
+    for (end, skip) in ends.zip(skipped.iter().map(Some).chain([None])) {
+        if out.len() < limit && end.is_none_or(|hi| lo.as_slice() < hi) {
+            let rows = range_rows(conn, snap, src, &lo, end, limit - out.len(), deadline)?;
+            out.extend(rows);
+        }
+        if let Some((_, past)) = skip {
+            lo = lo.max(past.clone());
+        }
+    }
+    Ok(out)
+}
 
+impl SqliteBackend {
     /// Opens (creating if absent) the store at `path`. A second opener, in this process or
     /// another, is refused while this handle or any clone of it lives. The lock is advisory:
     /// it stops another `SqliteBackend`, not a client that opens the file directly.
@@ -1026,7 +1025,7 @@ impl SqliteBackend {
             let tx = conn
                 .transaction_with_behavior(TransactionBehavior::Deferred)
                 .map_err(db)?;
-            let snap = snapshot(&tx, &inner.receipts)?;
+            let snap = snapshot(&tx, &inner.receipts, &inner.read_steps)?;
             if let Some(p) = &inner.probe {
                 p();
             }
@@ -1213,8 +1212,7 @@ impl Backend for SqliteBackend {
             snap.readable(at)?;
             let lo = lower_bound(prefix.as_bytes(), after);
             let hi = successor(prefix.as_bytes());
-            let steps = &self.0.read_steps;
-            range_rows(conn, snap, source(snap, at, &self.0.history), &lo, hi.as_deref(), limit, steps, deadline)
+            range_rows(conn, snap, source(snap, at, &self.0.history), &lo, hi.as_deref(), limit, deadline)
         })
     }
 
@@ -1234,8 +1232,7 @@ impl Backend for SqliteBackend {
             }
             let lo = lower_bound(prefix.as_bytes(), after);
             let hi = successor(prefix.as_bytes());
-            let steps = &self.0.read_steps;
-            range_rows(conn, snap, Source::State(state), &lo, hi.as_deref(), limit, steps, deadline)
+            range_rows(conn, snap, Source::State(state), &lo, hi.as_deref(), limit, deadline)
                 .map(Some)
         })?;
         match indexed {
@@ -1254,7 +1251,7 @@ impl Backend for SqliteBackend {
     ) -> Result<Vec<(String, Version)>> {
         self.read(|conn, snap, deadline| {
             snap.readable(at)?;
-            self.rows_outside(conn, snap, source(snap, at, &self.0.history), skip, after, limit, deadline)
+            rows_outside(conn, snap, source(snap, at, &self.0.history), skip, after, limit, deadline)
         })
     }
 

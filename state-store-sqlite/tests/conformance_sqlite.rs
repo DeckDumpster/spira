@@ -502,7 +502,8 @@ fn day_file(dir: &Path, date: &str) -> PathBuf {
 
 fn count(path: &Path, sql: &str) -> i64 {
     let conn = rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
-    conn.query_row(sql, [], |r| r.get(0)).unwrap()
+    let n = conn.prepare(sql).unwrap().query_row([], |r| r.get(0)).unwrap();
+    n
 }
 
 fn receipt(id: &str, value: &[u8], main: u64) -> Write {
@@ -567,10 +568,9 @@ fn a_side_row_above_the_head_is_gone_when_the_store_reopens() {
     let file = day_file(dir.path(), "2024-10-04");
     rusqlite::Connection::open(&file)
         .unwrap()
-        .execute(
-            "INSERT INTO rows (key, main, sub, value, create_main, create_sub) VALUES (?1, ?2, 0, X'00', ?2, 0)",
-            rusqlite::params![b"requests/torn".as_slice(), head + 1],
-        )
+        .prepare("INSERT INTO rows (key, main, sub, value, create_main, create_sub) VALUES (?1, ?2, 0, X'00', ?2, 0)")
+        .unwrap()
+        .execute(rusqlite::params![b"requests/torn".as_slice(), head + 1])
         .unwrap();
     let b = SqliteBackend::open(&path, day_opts(&wall)).unwrap();
     assert_eq!(count(&file, "SELECT count(*) FROM rows"), 1, "trimmed before the first read");
@@ -660,15 +660,12 @@ fn main_file_receipts_drain_five_hundred_a_commit_once_they_are_a_day_old() {
     {
         let conn = rusqlite::Connection::open(&path).unwrap();
         for table in ["latest", "versions"] {
-            conn.execute(
-                &format!(
-                    "WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < 1199)
-                     INSERT INTO {table} (key, main, sub, value, create_main, create_sub, version)
-                     SELECT CAST(printf('requests/old%05d', i) AS BLOB), 1, 0, X'7B7D', 1, 0, 1 FROM n"
-                ),
-                [],
-            )
-            .unwrap();
+            let sql = format!(
+                "WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < 1199)
+                 INSERT INTO {table} (key, main, sub, value, create_main, create_sub, version)
+                 SELECT CAST(printf('requests/old%05d', i) AS BLOB), 1, 0, X'7B7D', 1, 0, 1 FROM n"
+            );
+            conn.prepare(&sql).unwrap().execute([]).unwrap();
         }
     }
     let b = SqliteBackend::open(&path, day_opts(&wall)).unwrap();
@@ -698,7 +695,7 @@ fn log_over_a_mixed_batch_sequence_is_the_same_on_the_memory_and_the_sqlite_back
     let wall = VirtualClock::new(D0);
     let s = SqliteBackend::open(&dir.path().join("s.db"), day_opts(&wall)).unwrap();
     let m = state_store::MemBackend::new();
-    let batches = vec![
+    let batches = [
         vec![put_write("a", b"1", 1, None), receipt("r1", b"x", 1), put_write("b", b"1", 1, None)],
         vec![put_write("a", b"2", 2, Some(Rev::new(1, 0)))],
         vec![receipt("r2", b"y", 3), Write::Delete { key: "b".into(), prev: Rev::new(1, 2) }],
