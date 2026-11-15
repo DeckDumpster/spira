@@ -310,22 +310,13 @@ pub fn suspects(p: &BeadSweep, snap: &Snapshot, room: Option<&Room>, now: f64) -
     out.into_iter().map(|l| format!("SUSPECT {l}")).collect()
 }
 
-fn judged_secs(iso: &str) -> Option<f64> {
-    let (date, time) = iso.split_once('T')?;
-    let mut d = date.split('-').map(|x| x.parse::<i64>().ok());
-    let (y, m, day) = (d.next()??, d.next()??, d.next()??);
-    let mut t = time.trim_end_matches('Z').split(':').map(|x| x.parse::<f64>().ok());
-    let (h, mi, sec) = (t.next()??, t.next()??, t.next()??);
-    Some(((days_from_civil(y, m, 1) + day - 1) * 86_400) as f64 + h * 3600.0 + mi * 60.0 + sec)
-}
-
 /// The row for a REWORK bead past the threshold, or none while the claim rule or a full scheduler explains the wait.
 fn unclaimed_rework(p: &BeadSweep, r: &Row, room: Option<&Room>, why: &str, now: f64) -> Option<String> {
     let stale = |at: f64| (now - at) / 60.0 > p.rework_min as f64;
     let head = format!("UNCLAIMED REWORK over {}m", p.rework_min);
     let claim_at = r.claim_at.as_deref();
     match r.claim_verdict.as_deref() {
-        Some("claimable") if claim_at.and_then(judged_secs).is_some_and(|t| !stale(t)) => {}
+        Some("claimable") if claim_at.and_then(bead::claimdesc::parse_iso).is_some_and(|t| !stale(t as f64)) => {}
         Some(v) if v != "claimable" => return None,
         Some(_) | None => {
             let from = match (r.claim_verdict.as_ref(), claim_at) {
@@ -493,6 +484,27 @@ mod tests {
         snap.rows[0].claim_at = Some("1970-01-01T00:10:00Z".into());
         let say = said(&snap, room);
         assert!(say.len() == 1 && say[0].contains("claimability unknown: verdict from 1970-01-01T00:10:00Z"), "{say:?}");
+    }
+
+    #[test]
+    fn finish_reads_the_scheduler_room_from_the_sentinel_call_stream() {
+        use crate::tasks::a::sentinel_call;
+        let p = sweep();
+        let (mut view, ctx) = (Projection::default(), Ctx::new(0, 0));
+        let mut snap = rework(Some("claimable"));
+        snap.rows[0].claim_at = Some("1970-01-01T00:59:30.5+00:00".into());
+        let ask = |view: &mut Projection| {
+            let tick = at(view, "t", 3_600_000, EventKind::new(TICK, ""), None);
+            let [Command::Probe(observe), _] = &p.handle(&ctx, view, &tick)[..] else { panic!("one look and the next tick") };
+            let req = at(view, "r", 3_600_000, EventKind::new(EFFECT_REQUESTED, &serde_json::json!({ "spec": observe, "deadline_at": 2 }).to_string()), Some("t"));
+            let seen = at(view, "o", 3_600_001, EventKind::new(EFFECT_SUCCEEDED, &serde_json::to_string(&snap).unwrap()), Some(&req.id.0));
+            p.handle(&ctx, view, &seen).len()
+        };
+        assert_eq!(ask(&mut view), 2, "the state, and the one row: the scheduler has not judged");
+        let mut view = Projection::default();
+        let state = sentinel_call::Carry { room_since_ms: None, room_at_ms: Some(3_600_000), ..Default::default() };
+        view.push(&Event { id: EventId("s".into()), stream: StreamKey(sentinel_call::STREAM.into()), kind: EventKind::new(sentinel_call::STATE, &serde_json::to_string(&state).unwrap()), at: 1, cause: None, correlation: CorrelationId("s".into()) });
+        assert_eq!(ask(&mut view), 1, "a full pool says nothing, so only the state");
     }
 
     #[test]

@@ -497,7 +497,10 @@ mod tests {
         let mut w = world();
         w.task[0].live = 5;
         w.max_live_dwarves = Some(9);
-        assert_eq!(room(&w), Some(4));
+        assert_eq!(room(&w), Some(4), "nine under the ceiling, five live");
+        w.task[0].live = 7;
+        assert_eq!(room(&w), Some(2));
+        w.task[0].live = 5;
         w.other_live = 2;
         assert_eq!(room(&w), Some(2));
     }
@@ -515,7 +518,9 @@ mod tests {
     #[test]
     fn task_room_is_zero_when_throttled_or_halted() {
         assert_eq!(room(&CallWorld { throttled: true, ..world() }), Some(0));
-        assert_eq!(room(&CallWorld { world: World::Halted, ..world() }), Some(0));
+        for closed in [CallWorld { world: World::Halted, ..world() }, CallWorld { world: World::Draining, ..world() }, CallWorld { skew: Some("old".into()), ..world() }, CallWorld { capacity: Capacity::Paused, ..world() }] {
+            assert_eq!(room(&closed), Some(0), "{closed:?}");
+        }
     }
 
     #[test]
