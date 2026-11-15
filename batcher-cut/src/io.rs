@@ -1680,6 +1680,23 @@ pub fn config_delta_at(repo: &Repo, rev: &str) -> Result<Option<String>, String>
     spira_config::delta::merge_delta_texts(&parts)
 }
 
+/// The last commit reachable from `at` that touched any of `paths`, as `<sha> <subject>`.
+pub fn last_touching(repo: &Repo, at: &str, paths: &[String]) -> Option<String> {
+    if paths.is_empty() {
+        return None;
+    }
+    let out = run(
+        Command::new("git")
+            .arg("-C")
+            .arg(&repo.path)
+            .args(["log", "-1", "--format=%h %s", at, "--"])
+            .args(paths),
+        "git log last touching",
+    )
+    .ok()?;
+    Some(out.trim().to_string()).filter(|l| !l.is_empty())
+}
+
 /// The paths `tip` changed since it forked from `base_sha` (`git diff base...tip`) — what
 /// attribution orders suspects by and decides a rerun's build by.
 pub fn changed_paths(repo: &Repo, base_sha: &str, tip: &str) -> Vec<String> {
@@ -4986,6 +5003,37 @@ mod land_exit_tests {
             forge: d.to_path_buf(),
             land: Land::Local,
         }
+    }
+
+    #[test]
+    fn last_touching_names_the_newest_commit_on_the_paths_and_nothing_for_none() {
+        let t = testkit::TempDir::new("batcher-cut-last-touching");
+        let d = t.path();
+        let git = |args: &[&str]| {
+            let o = Command::new("git")
+                .arg("-C")
+                .arg(d)
+                .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(o.status.success(), "{args:?}: {}", String::from_utf8_lossy(&o.stderr));
+        };
+        git(&["init", "-q"]);
+        fs::create_dir_all(d.join("a/tests")).unwrap();
+        fs::write(d.join("a/lib.rs"), "1").unwrap();
+        git(&["add", "."]);
+        git(&["commit", "-q", "-m", "touch a"]);
+        fs::write(d.join("test-x.sh"), "1").unwrap();
+        git(&["add", "."]);
+        git(&["commit", "-q", "-m", "touch x"]);
+        let repo = repo_at(d);
+        let got = last_touching(&repo, "HEAD", &["a".to_string()]).unwrap();
+        assert!(got.ends_with(" touch a"), "{got}");
+        let got = last_touching(&repo, "HEAD", &[":(glob)**/test-x.sh".to_string()]).unwrap();
+        assert!(got.ends_with(" touch x"), "{got}");
+        assert_eq!(last_touching(&repo, "HEAD", &["nope".to_string()]), None);
+        assert_eq!(last_touching(&repo, "HEAD", &[]), None);
     }
 
     #[test]

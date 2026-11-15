@@ -641,6 +641,14 @@ impl drive::RoundOps for LiveOps<'_> {
         Ok(Some((sha, rebuilt)))
     }
 
+    fn base_sha(&self) -> String {
+        self.start_sha.clone()
+    }
+
+    fn last_touching(&self, paths: &[String]) -> Option<String> {
+        io::last_touching(self.repo, &self.start_sha, paths)
+    }
+
     fn judge(&mut self, suites: &[String], members: &[String]) {
         let j = batcher::core::Judgement {
             source: batcher::core::RedSource::Local,
@@ -880,6 +888,7 @@ fn staged_worktree(env_: &Env, repo: &Repo) -> PathBuf {
 enum Stabilized {
     Stable(StableRound),
     Blocked,
+    BaseRed { base: String, why: String },
     Emptied,
     Abandoned,
 }
@@ -1079,6 +1088,10 @@ fn stabilize_round(
         drive::RoundEnd::Blocked(why) => {
             println!("batcher {}: round blocked — {why}", repo.name);
             Ok(Stabilized::Blocked)
+        }
+        drive::RoundEnd::BaseRed { base, why } => {
+            println!("batcher {}: base red at {base} — {why}", repo.name);
+            Ok(Stabilized::BaseRed { base, why })
         }
         drive::RoundEnd::Faulted(why) | drive::RoundEnd::Stalled(why) => {
             println!("batcher {}: {why}", repo.name);
@@ -1601,6 +1614,20 @@ fn cut_new_round_inner(
             );
             return Ok(());
         }
+        Ok(Stabilized::BaseRed { base, why }) => {
+            abandon("local corpus red — held before reaching CI: base red", "blocked");
+            io::write_local_verdict(env_, &repo.name, &pace::base_red_verdict(&base, &why), &why);
+            io::tsd_append_round(
+                env_,
+                &[
+                    ("repo", repo.name.clone()),
+                    ("verdict", "blocked".to_string()),
+                    ("duration_ms", ((now() - round_start) * 1000).to_string()),
+                    ("base", base_sha),
+                ],
+            );
+            return Ok(());
+        }
         Ok(Stabilized::Blocked) => {
             abandon("the round was blocked before it could land", "blocked");
             io::write_local_verdict(
@@ -1718,6 +1745,11 @@ fn follow_promoted(
                     io::RECUT_VERDICT,
                     "every member of the round was ejected",
                 );
+                return Ok(None);
+            }
+            Ok(Stabilized::BaseRed { base, why }) => {
+                abandon("local corpus red — held before reaching CI: base red", "blocked");
+                io::write_local_verdict(env_, &repo.name, &pace::base_red_verdict(&base, &why), &why);
                 return Ok(None);
             }
             Ok(Stabilized::Blocked) => {
@@ -1863,6 +1895,7 @@ fn page_stale_pauses(env_: &Env, repos: &[(String, String)]) {
             stamp: &stamp,
             redrive_after: env_.orphan_redrive_after,
             pause_lift_after: env_.pause_lift_after,
+            landing_head: None,
         };
         let waiting = || match find_repo(env_, name).and_then(|r| io::certified_pool(env_, &r)) {
             Ok(pool) => !pool.is_empty(),
@@ -1966,6 +1999,7 @@ fn paced_cut(env_: &Env, name: &str, one: &Opts) -> Result<(), pace::CutError> {
         stamp: &stamp,
         redrive_after: env_.orphan_redrive_after,
         pause_lift_after: env_.pause_lift_after,
+        landing_head: io::resolve_base_sha(&repo).ok(),
     };
     let (fit, redrive, incident) = (
         |id: &str| io::round_certifiable(env_, &repo, id),
@@ -2314,6 +2348,7 @@ fn attribute_run(o: &Opts) -> Result<(), String> {
             head: io::head_of(&wt).unwrap_or_default(),
         },
         Ok(drive::RoundEnd::Blocked(why)) => Attribution::Blocked(why),
+        Ok(drive::RoundEnd::BaseRed { base, why }) => Attribution::Blocked(format!("base red at {base}: {why}")),
         Ok(drive::RoundEnd::Emptied(why)) => Attribution::Emptied(why),
         Ok(drive::RoundEnd::Faulted(why) | drive::RoundEnd::Stalled(why)) => Attribution::Faulted(why),
         Ok(drive::RoundEnd::Abandoned) => Attribution::Blocked("the round was abandoned".into()),
