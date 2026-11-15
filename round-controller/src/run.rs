@@ -78,7 +78,6 @@ pub const EXITS: &str = "exits of run:
   0  the pass was judged and its attempt recorded
   3  held: the attempt is recorded and the round waits on a refused eject
   4  unfinished: no attempt yet; the progress so far stands for the re-drive
-  5  preempted: the verb that stopped the pass records it
   6  stopped: an off switch is set; the pass in hand is recorded, nothing new started
   7  lease lost: a renewal was refused; the VM torn down, no attempt
   8  lease lost: progress stalled past its phase deadline or the pass ran past its wall
@@ -91,7 +90,6 @@ impl RunEnd {
             RunEnd::Judged(Judged::Recorded { .. }) => 0,
             RunEnd::Judged(Judged::Held { .. }) => 3,
             RunEnd::Judged(Judged::Unfinished { .. }) => 4,
-            RunEnd::Judged(Judged::Preempted) => 5,
             RunEnd::Stopped { .. } => 6,
             RunEnd::LeaseLost { reason, .. } => match reason {
                 Lost::Expired => 7,
@@ -269,11 +267,11 @@ pub fn fault_reason(field: &str) -> String {
 }
 
 /// certify answered a pass rather than refusing to run one: green, a red naming its steps, a
-/// fault, a preempt or a lost VM. Any other exit (a refused or unknown argument, a round already
+/// fault or a lost VM. Any other exit (a refused or unknown argument, a round already
 /// being certified) judged nothing, so it records no attempt and backs no identity off.
 pub fn is_verdict(end: &CertifyEnd) -> bool {
     match end.exit {
-        0 | judge::FAULT | judge::PREEMPTED | judge::VM_LOST | judge::VM_NO_OUTPUT => true,
+        0 | judge::FAULT | judge::VM_LOST | judge::VM_NO_OUTPUT => true,
         1 => end
             .fields
             .get("red")
@@ -835,7 +833,7 @@ pub fn run<R: SubPasses>(p: &Ports, env: &RunEnv, subs: &mut R, a: &RunArgs) -> 
         drop(keeper);
         return lost_after(p, slot, lease, reason, killed);
     }
-    if matches!(judged, Judged::Recorded { .. } | Judged::Preempted) {
+    if matches!(judged, Judged::Recorded { .. }) {
         let t = fenced_txn(
             &lease,
             vec![],

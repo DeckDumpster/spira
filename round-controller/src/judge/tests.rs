@@ -36,7 +36,6 @@ fn pass(exit: i32, red: &[&str], reason: Option<&str>) -> PassResult {
 
 #[test]
 fn a_pass_is_typed_from_certify_s_exit_its_reason_and_its_red_steps() {
-    assert_eq!(type_pass(&pass(PREEMPTED, &["a"], None)), Typed::Preempted);
     assert_eq!(
         type_pass(&pass(VM_LOST, &["a"], None)),
         Typed::Fault(Cause::Vm)
@@ -111,7 +110,6 @@ fn a_member_reaches_the_failing_code_only_when_the_output_names_one_of_its_paths
     assert_eq!(reaching("panicked at src/sp-a.rs:3", &r), ["sp-a"]);
     assert!(reaching("ensurepip is not available", &r).is_empty());
     assert_eq!(r.identity(&["sp-a".into()]).members.len(), 1);
-    assert_eq!(Judged::Preempted.word(), "preempted");
     assert_eq!(
         (result_of("green"), result_of("red"), result_of("??")),
         (JobResult::Green, JobResult::Red, JobResult::Fault)

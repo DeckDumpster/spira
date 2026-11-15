@@ -457,7 +457,7 @@ mod tests {
         for v in Verb::ALL {
             assert_eq!(Verb::from_word(v.word()), Some(v));
         }
-        assert_eq!(Verb::from_word("preempt"), None);
+        assert_eq!(Verb::from_word("bogus"), None);
     }
 
     #[test]

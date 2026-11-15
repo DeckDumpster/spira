@@ -228,7 +228,6 @@ fn every_end_has_its_own_exit_and_help_lists_each() {
         RunEnd::Judged(Judged::Unfinished {
             text: String::new(),
         }),
-        RunEnd::Judged(Judged::Preempted),
         RunEnd::Stopped { why: String::new() },
         RunEnd::LeaseLost {
             reason: Lost::Expired,
@@ -245,14 +244,14 @@ fn every_end_has_its_own_exit_and_help_lists_each() {
         RunEnd::Refused { why: String::new() },
     ];
     let codes: Vec<i32> = ends.iter().map(RunEnd::code).collect();
-    assert_eq!(codes, [0, 3, 4, 5, 6, 7, 8, 9, 10]);
+    assert_eq!(codes, [0, 3, 4, 6, 7, 8, 9, 10]);
     for c in codes {
         assert!(
             EXITS.contains(&format!("\n  {c:<2} ")),
             "exit {c} is not in --help"
         );
     }
-    assert_eq!(ends[5].word(), "lease-lost");
+    assert_eq!(ends[4].word(), "lease-lost");
 }
 
 fn end(exit: i32, stdout: &str) -> CertifyEnd {
@@ -770,7 +769,6 @@ fn only_an_answered_pass_is_a_verdict() {
         (1, "", false),
         (2, "", false),
         (judge::FAULT, "fault=over-cap\n", true),
-        (judge::PREEMPTED, "", true),
         (judge::VM_LOST, "", true),
         (judge::VM_NO_OUTPUT, "", true),
         (101, "", false),

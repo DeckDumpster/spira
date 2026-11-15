@@ -577,7 +577,7 @@ impl JudgeCount {
             }
             ("proven", None) => Some(JudgeCount::Proven),
             ("judged", Some(w)) => {
-                pick(&["preempted", "recorded", "held", "unfinished"], w).map(JudgeCount::Judged)
+                pick(&["recorded", "held", "unfinished"], w).map(JudgeCount::Judged)
             }
             ("held-eject-refused", None) => Some(JudgeCount::EjectRefused),
             ("launches", None) => Some(JudgeCount::Launches(None)),

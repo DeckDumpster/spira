@@ -440,8 +440,8 @@ mod tests {
     #[test]
     fn a_script_must_name_a_verb_and_exactly_one_answer() {
         let err = |t: &str| fake(t).err().unwrap();
-        assert!(err("[[verb]]\nverb = \"preempt\"\nok = {}\n")
-            .contains("\"preempt\" is not a queue round verb"));
+        assert!(err("[[verb]]\nverb = \"bogus\"\nok = {}\n")
+            .contains("\"bogus\" is not a queue round verb"));
         assert!(err("[[verb]]\nverb = \"land\"\n").contains("exactly one of ok and refuse"));
         assert!(
             err("[[verb]]\nverb = \"land\"\nok = {}\nrefuse = { text = \"x\" }\n")

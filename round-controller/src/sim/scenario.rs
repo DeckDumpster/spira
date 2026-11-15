@@ -345,7 +345,6 @@ impl Count {
                     "recorded",
                     "held",
                     "unfinished",
-                    "preempted",
                     "stopped",
                     "lease-lost",
                     "refused",
@@ -1523,7 +1522,7 @@ mod tests {
     #[test]
     fn an_expectation_must_count_something_the_harness_counts() {
         for bad in [
-            "calls:preempt",
+            "calls:bogus",
             "outcomes:exploded",
             "seconds",
             "vm-runs:x",
