@@ -341,6 +341,7 @@ struct LiveOps<'a> {
     start_sha: String,
     round_branch: String,
     evidence: String,
+    pass: Option<PathBuf>,
     round: String,
     changed: BTreeMap<String, Vec<String>>,
     tips: BTreeMap<String, String>,
@@ -428,7 +429,7 @@ impl LiveOps<'_> {
         if owner {
             redtip::record(&self.env.run, &self.repo.name, &member.id, &member.tip);
             let files = self.changed.get(&member.id).cloned().unwrap_or_default();
-            io::record_ejection(self.env, &member.id, &member.tip, &files, Path::new(&self.evidence), suites, fails);
+            io::record_ejection(self.env, &member.id, &member.tip, &files, (Path::new(&self.evidence), self.pass.as_deref()), suites, fails);
         }
         match self.batch {
             Some(batch) => {
@@ -463,7 +464,7 @@ impl drive::RoundOps for LiveOps<'_> {
         let fails: Vec<(String, String)> = suites
             .iter()
             .filter_map(|s| {
-                io::suite_first_fail(Path::new(&self.evidence), s).map(|l| (s.clone(), l))
+                io::suite_first_fail(Path::new(&self.evidence), self.pass.as_deref(), s).map(|l| (s.clone(), l))
             })
             .collect();
         self.eject_with(member, suites, &fails, owner);
@@ -952,6 +953,7 @@ fn stabilize_round(
         start_sha: start_sha.to_string(),
         round_branch: round_branch.clone(),
         evidence: runner.results.display().to_string(),
+        pass: None,
         round,
         changed,
         tips: members
@@ -2196,6 +2198,7 @@ fn attribute_run(o: &Opts) -> Result<(), String> {
         start_sha: start_sha.clone(),
         round_branch,
         evidence: runner.results.display().to_string(),
+        pass: o.after_pass.clone(),
         round,
         changed,
         tips: members

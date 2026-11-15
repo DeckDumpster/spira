@@ -2152,20 +2152,25 @@ mod local_red_ref_tests {
     }
 }
 
-/// The saved output of each of `suites`, joined; a suite with none contributes nothing.
-fn suite_outputs(results_dir: &Path, suites: &[String]) -> String {
-    suites.iter().filter_map(|s| fs::read_to_string(locate(results_dir, s, "out")?).ok()).collect::<Vec<_>>().join("\n")
+/// The saved output of each red suite as (suite, text): from `results`, else from the corpus
+/// `pass` an attribution follows. A suite with no saved output contributes nothing.
+pub fn red_suite_steps(results: &Path, pass: Option<&Path>, suites: &[String]) -> Vec<(String, String)> {
+    suites
+        .iter()
+        .filter_map(|s| {
+            let path = locate(results, s, "out").or_else(|| locate(pass?, s, "out"))?;
+            Some((s.clone(), fs::read_to_string(path).ok()?))
+        })
+        .collect()
 }
 
-/// The failing tests and output tail of the suites a member turned red, recorded on the bead
-/// for the builder's next brief. Best-effort: a refusal is said and never blocks the eject.
-pub fn record_ejection(env: &Env, id: &str, tip: &str, files: &[String], results_dir: &Path, suites: &[String], fails: &[(String, String)]) {
-    let mut output = suite_outputs(results_dir, suites);
-    for (suite, line) in fails {
-        output += &format!("\n{suite}: {line}");
-    }
+/// The failing tests, findings and compiler errors of the suites a member turned red, recorded on
+/// the bead for the builder's next brief. Best-effort: a refusal is said and never blocks the eject.
+pub fn record_ejection(env: &Env, id: &str, tip: &str, files: &[String], (results_dir, pass): (&Path, Option<&Path>), suites: &[String], fails: &[(String, String)]) {
+    let steps = red_suite_steps(results_dir, pass, suites);
+    let why: Vec<String> = fails.iter().map(|(suite, line)| format!("{suite}: {line}")).collect();
     let lc = |args: &[String]| lcq(env, &args.iter().map(String::as_str).collect::<Vec<_>>());
-    if let Err(e) = spira_config::ejection::record(&lc, id, tip, files, &output, "batcher") {
+    if let Err(e) = spira_config::ejection::record(&lc, id, tip, files, &why, &steps, "batcher") {
         eprintln!("batcher: {id} failure not recorded on spira-lc: {e}");
     }
 }
@@ -2184,8 +2189,9 @@ pub fn first_fail_line(out: &str) -> Option<String> {
 }
 
 /// The first FAIL line of `suite`'s output in the round's results, for an ejection's reason.
-pub fn suite_first_fail(results_dir: &Path, suite: &str) -> Option<String> {
-    first_fail_line(&fs::read_to_string(locate(results_dir, suite, "out")?).ok()?)
+pub fn suite_first_fail(results_dir: &Path, pass: Option<&Path>, suite: &str) -> Option<String> {
+    let (_, text) = red_suite_steps(results_dir, pass, &[suite.to_string()]).pop()?;
+    first_fail_line(&text)
 }
 
 /// Copies the round VM's results (every suite's `.out` and `.result`, nested run directories
@@ -2231,7 +2237,7 @@ pub fn keep_red_evidence(run: &Path, batch: &str, why: &str, reds: &[String]) ->
         .map(|s| {
             format!(
                 "{s}: {}",
-                suite_first_fail(&results, s)
+                suite_first_fail(&results, None, s)
                     .unwrap_or_else(|| "(no FAIL line in its output)".into())
             )
         })
@@ -4561,9 +4567,22 @@ mod fail_line_tests {
         let d = testkit::TempDir::new("batcher-cut-ejection");
         fs::write(d.path().join("test-a.sh.out"), "---- t::boom stdout ----\nthread 't::boom' panicked at x/y.rs:7:1:\nit broke\n\nfailures:\n").unwrap();
         fs::write(d.path().join("test-green.sh.out"), "all fine\n").unwrap();
-        let out = suite_outputs(d.path(), &["test-a.sh".to_string(), "test-missing.sh".to_string()]);
-        let digest = spira_config::ejection::digest("t1", &[], &out);
+        let steps = red_suite_steps(d.path(), None, &["test-a.sh".to_string(), "test-missing.sh".to_string()]);
+        let digest = spira_config::ejection::digest_steps("t1", &[], &[], &steps);
         assert!(digest.contains("FAIL t::boom at x/y.rs:7") && digest.contains("it broke") && !digest.contains("all fine"), "{digest}");
+    }
+
+    #[test]
+    fn an_attributions_ejection_reads_the_red_from_the_pass_results() {
+        let results = testkit::TempDir::new("batcher-cut-results");
+        let pass = testkit::TempDir::new("batcher-cut-pass");
+        fs::write(pass.path().join("spira-lint.out"), "pass lint text\n").unwrap();
+        fs::write(pass.path().join("both.out"), "from pass\n").unwrap();
+        fs::write(results.path().join("both.out"), "from results\n").unwrap();
+        let suites = ["spira-lint".to_string(), "both".to_string()];
+        let steps = red_suite_steps(results.path(), Some(pass.path()), &suites);
+        assert_eq!(steps, vec![("spira-lint".to_string(), "pass lint text\n".to_string()), ("both".to_string(), "from results\n".to_string())]);
+        assert!(red_suite_steps(results.path(), None, &suites[..1]).is_empty());
     }
 
     #[test]
@@ -4606,10 +4625,10 @@ mod fail_line_tests {
         let d = testkit::TempDir::new("batcher-cut-failline");
         fs::write(d.join("test-a.sh.out"), "setup\nFAIL: boom\n").unwrap();
         assert_eq!(
-            suite_first_fail(&d, "test-a.sh").as_deref(),
+            suite_first_fail(&d, None, "test-a.sh").as_deref(),
             Some("FAIL: boom")
         );
-        assert_eq!(suite_first_fail(&d, "test-missing.sh"), None);
+        assert_eq!(suite_first_fail(&d, None, "test-missing.sh"), None);
         let _ = fs::remove_dir_all(&d);
     }
 }
