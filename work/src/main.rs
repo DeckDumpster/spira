@@ -506,8 +506,7 @@ impl work::image::Ports for ImagePorts {
     fn landing_ref(&self) -> Option<String> {
         let common = self.git(&["rev-parse", "--path-format=absolute", "--git-common-dir"]).ok()?;
         let checkout = std::path::Path::new(common.trim()).parent()?.to_path_buf();
-        let home = spira_config::process::cfg("SPIRA_HOME").ok().filter(|h| !h.is_empty()).map(std::path::PathBuf::from).unwrap_or_else(|| checkout.clone());
-        let reg = spira_config::repos::Registry::from_env_checkout(std::env::vars().collect(), &home);
+        let reg = spira_config::repos::Registry::from_env_checkout(std::env::vars().collect(), &checkout);
         spira_config::repos::landref(&reg, &checkout.to_string_lossy())
     }
     fn changed_paths(&self, base: &str) -> Option<Vec<String>> {
