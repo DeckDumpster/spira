@@ -175,8 +175,14 @@ pub fn doc_size(pool: Pool, doc: &crate::SpiraToml) -> Option<u64> {
 /// The pool's size as the pools read it: the config document first (the gate re-reads it live),
 /// then this process's environment, then derived from the box.
 pub fn size_configured(pool: Pool) -> u64 {
+    size_in(pool, doc_size_now(pool), std::env::var(pool.size_env()).ok().as_deref(), Host::read())
+}
+
+/// The size the config document on this box sets for `pool` right now, when it can be read
+/// and sets one. For a caller that brings its own environment seam (testenv).
+pub fn doc_size_now(pool: Pool) -> Option<u64> {
     let doc = crate::discover(None).and_then(|p| crate::load(&p).ok());
-    size_in(pool, doc.as_ref().and_then(|d| doc_size(pool, d)), std::env::var(pool.size_env()).ok().as_deref(), Host::read())
+    doc.as_ref().and_then(|d| doc_size(pool, d))
 }
 
 /// The order every reader of a pool's size shares: the size the config document holds now,
