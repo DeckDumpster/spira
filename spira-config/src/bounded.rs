@@ -34,6 +34,7 @@ pub fn bounded_for(program: impl AsRef<OsStr>, secs: &str) -> Bounded {
         stdin: None,
         stdout: None,
         stderr: None,
+        kill_tree: false,
     }
 }
 
@@ -88,9 +89,17 @@ pub struct Bounded {
     stdin: Option<Stdio>,
     stdout: Option<Stdio>,
     stderr: Option<Stdio>,
+    kill_tree: bool,
 }
 
 impl Bounded {
+    /// At the deadline, SIGKILL every descendant of the child too, including those that left its
+    /// process group; the group kill alone cannot reach them.
+    pub fn kill_tree(&mut self) -> &mut Self {
+        self.kill_tree = true;
+        self
+    }
+
     pub fn arg(&mut self, arg: impl AsRef<OsStr>) -> &mut Self {
         self.cmd.arg(arg);
         self
@@ -207,7 +216,7 @@ impl Bounded {
         let mut child = self.cmd.spawn()?;
         let expired = Arc::new(AtomicBool::new(false));
         if let Some(limit) = deadline {
-            if let Err(e) = watch(&child, limit, expired.clone()) {
+            if let Err(e) = watch(&child, limit, expired.clone(), self.kill_tree) {
                 let _ = child.kill();
                 let _ = child.wait();
                 return Err(e);
@@ -239,7 +248,7 @@ fn refusal(e: &io::Error, bad_deadline: bool) -> Option<ExitStatus> {
 
 /// One watchdog thread per child: sleeps in `poll` on the child's pidfd, so it costs nothing
 /// until the deadline, and kills the group if the child is still running then.
-fn watch(child: &Child, limit: Duration, expired: Arc<AtomicBool>) -> io::Result<()> {
+fn watch(child: &Child, limit: Duration, expired: Arc<AtomicBool>, tree: bool) -> io::Result<()> {
     let pid = child.id() as libc::pid_t;
     let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) };
     if fd < 0 {
@@ -260,11 +269,32 @@ fn watch(child: &Child, limit: Duration, expired: Arc<AtomicBool>) -> io::Result
         }
         if Instant::now() >= end || n < 0 {
             expired.store(true, Ordering::SeqCst);
+            if tree {
+                kill_descendants(pid as u32);
+            }
             unsafe { libc::kill(-pid, libc::SIGKILL) };
             return;
         }
     })?;
     Ok(())
+}
+
+fn children(pid: u32) -> Vec<u32> {
+    let Ok(rd) = std::fs::read_dir("/proc") else { return Vec::new() };
+    rd.flatten()
+        .filter_map(|e| e.file_name().to_str().and_then(|n| n.parse::<u32>().ok()))
+        .filter(|p| {
+            let ppid = std::fs::read_to_string(format!("/proc/{p}/stat")).ok().and_then(|s| s.rsplit_once(')').and_then(|(_, r)| r.split_whitespace().nth(1).and_then(|v| v.parse::<u32>().ok())));
+            ppid == Some(pid)
+        })
+        .collect()
+}
+
+fn kill_descendants(pid: u32) {
+    for c in children(pid) {
+        kill_descendants(c);
+        unsafe { libc::kill(c as libc::pid_t, libc::SIGKILL) };
+    }
 }
 
 pub struct BoundedChild {
