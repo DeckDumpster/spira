@@ -75,6 +75,9 @@ pub fn model_bin_dir(base: &BTreeMap<String, String>, path: &str, is_exe: impl F
 /// source is), exactly work-env.sh's `"KEY=$VAR"` tokens (no `${VAR:+…}` guard).
 const UNCONDITIONAL: &[&str] = &["HOME", "SPIRA_LC_SOCKET"];
 
+/// The operator's Ops-incident bypass of the session fences; environment only.
+pub const FENCE_OVERRIDE: &str = "SPIRA_DWARF_OVERRIDE";
+
 /// The allow-listed vars carried through only when set and non-empty, exactly
 /// work-env.sh's `${VAR:+"KEY=$VAR"}` tokens.
 const CONDITIONAL: &[&str] = &[
@@ -86,7 +89,7 @@ const CONDITIONAL: &[&str] = &[
     "GIT_COMMITTER_NAME",
     "GIT_COMMITTER_EMAIL",
     "SPIRA_DWARF",
-    "SPIRA_DWARF_OVERRIDE",
+    FENCE_OVERRIDE,
     // `work` (the one tool on the model's PATH) resolves its lifecycle socket from the one
     // source of config: it needs the spec and the release that locates its key registry.
     // Both only name files the model's HOME can already reach — no new exposure.

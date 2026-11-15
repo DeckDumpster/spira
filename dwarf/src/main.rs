@@ -145,6 +145,24 @@ fn run_fast_tier(args: &[String]) -> i32 {
     }
 }
 
+/// `dwarf search-fence --run <dir> --worktree <dir>`: the PreToolUse hook reading the payload on
+/// stdin; a refusal is the block JSON on stdout, anything else prints nothing. Always exit 0.
+fn run_search_fence(args: &[String]) -> i32 {
+    let flag = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned();
+    let (Some(run), Some(worktree)) = (flag("--run"), flag("--worktree")) else {
+        eprintln!("usage: dwarf search-fence --run <dir> --worktree <dir>");
+        return 0;
+    };
+    let overridden = std::env::var_os(dwarf::restrict::FENCE_OVERRIDE).is_some();
+    let mut raw = String::new();
+    let _ = std::io::stdin().read_to_string(&mut raw);
+    let home = std::env::var("HOME").unwrap_or_default();
+    if let Some(out) = dwarf::search_fence::hook_output(&raw, Path::new(&run), Path::new(&worktree), &home, overridden) {
+        println!("{out}");
+    }
+    0
+}
+
 fn main() {
     spira_otel::run::begin("dwarf", spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref());
     let t0 = util::now_epoch();
@@ -163,6 +181,9 @@ fn main() {
     }
     if args.first().map(String::as_str) == Some("fast-tier") {
         { let code = run_fast_tier(&args[1..]); spira_otel::run::finish(code); std::process::exit(code) };
+    }
+    if args.first().map(String::as_str) == Some("search-fence") {
+        { let code = run_search_fence(&args[1..]); spira_otel::run::finish(code); std::process::exit(code) };
     }
     if args.first().map(String::as_str) == Some("stop") {
         { let code = run_stop(&args[1..]); spira_otel::run::finish(code); std::process::exit(code) };
@@ -279,7 +300,7 @@ fn main() {
 /// The bounded operation label of an argv: a subcommand, `escape`, or the run mode.
 fn operation_of(args: &[String]) -> String {
     match args.first().map(String::as_str) {
-        Some(c @ ("dwarf-named" | "fast-tier" | "stop" | "capacity")) => c.to_string(),
+        Some(c @ ("dwarf-named" | "fast-tier" | "search-fence" | "stop" | "capacity")) => c.to_string(),
         Some("direct") => "direct".into(),
         _ if args.iter().any(|a| a == "--directed") => "directed".into(),
         _ if args.iter().any(|a| a == "--escape") => "escape".into(),

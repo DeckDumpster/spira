@@ -1341,7 +1341,7 @@ impl<'a> Run<'a> {
         if self.rune.project_instructions == "none" {
             a.extend(s(&["--setting-sources", "user"]));
         }
-        a.extend(s(&["--settings", &dwarf_settings(self.home(), self.run_dir(), Some(self.conf.s("SPIRA_PROD")).filter(|p| !p.is_empty()).as_deref().map(Path::new), self.rune.habits)]));
+        a.extend(s(&["--settings", &dwarf_settings(self.home(), self.run_dir(), Some(self.conf.s("SPIRA_PROD")).filter(|p| !p.is_empty()).as_deref().map(Path::new), self.rune.habits, self.s.work.as_deref().map(|w| (self.run_dir(), w)))]));
         Ok(a)
     }
 
@@ -1773,7 +1773,7 @@ fn fence_command(fence: &Path, run: &Path, prod: Option<&Path>) -> String {
 }
 
 /// `dwarf_settings`: the --settings JSON, spelled as python's json.dumps spells it.
-pub fn dwarf_settings(home: &Path, run: &Path, prod: Option<&Path>, habits: bool) -> String {
+pub fn dwarf_settings(home: &Path, run: &Path, prod: Option<&Path>, habits: bool, search: Option<(&Path, &Path)>) -> String {
     let q = |p: &Path| serde_json::to_string(&p.display().to_string()).unwrap();
     let hook = |p: &Path| format!("{{\"type\": \"command\", \"command\": {}, \"timeout\": 5}}", q(p));
     let fence = home.join("hooks").join("dwarf-fence.sh");
@@ -1813,6 +1813,11 @@ pub fn dwarf_settings(home: &Path, run: &Path, prod: Option<&Path>, habits: bool
             pre.push(hook(&p));
         }
     }
+    let dwarf_bin = home.parent().unwrap_or(home).join("bin").join("dwarf");
+    if let Some((run, work)) = search.filter(|_| is_executable(&dwarf_bin)) {
+        let cmd = format!("{} search-fence --run {} --worktree {}", sh_quote(&dwarf_bin), sh_quote(run), sh_quote(work));
+        pre.push(format!("{{\"type\": \"command\", \"command\": {}, \"timeout\": 5}}", serde_json::to_string(&cmd).unwrap()));
+    }
     if !pre.is_empty() {
         hooks.push_str(&format!(", \"PreToolUse\": [{{\"hooks\": [{}]}}]", pre.join(", ")));
     }
@@ -1833,10 +1838,10 @@ mod tests {
         std::fs::create_dir_all(&home).unwrap();
         std::fs::create_dir_all(hb.parent().unwrap()).unwrap();
         testkit::write_exe(&hb, "#!/bin/sh\n");
-        let off: serde_json::Value = serde_json::from_str(&dwarf_settings(&home, Path::new("/r/run"), None, false)).unwrap();
+        let off: serde_json::Value = serde_json::from_str(&dwarf_settings(&home, Path::new("/r/run"), None, false, None)).unwrap();
         assert_eq!(off["hooks"]["PostToolUse"].as_array().unwrap().len(), 1);
         assert!(off["hooks"]["Stop"].is_null());
-        let on: serde_json::Value = serde_json::from_str(&dwarf_settings(&home, Path::new("/r/run"), None, true)).unwrap();
+        let on: serde_json::Value = serde_json::from_str(&dwarf_settings(&home, Path::new("/r/run"), None, true, None)).unwrap();
         let post = on["hooks"]["PostToolUse"].as_array().unwrap();
         assert_eq!(post.len(), 2);
         assert_eq!(post[1]["matcher"], "Edit|Write|MultiEdit");
@@ -1845,7 +1850,7 @@ mod tests {
         assert_eq!(on["hooks"]["Stop"][0]["hooks"][0]["command"], abs.as_str());
         assert_eq!(post[0], off["hooks"]["PostToolUse"][0], "the existing group is untouched");
         std::fs::remove_file(&hb).unwrap();
-        let gone: serde_json::Value = serde_json::from_str(&dwarf_settings(&home, Path::new("/r/run"), None, true)).unwrap();
+        let gone: serde_json::Value = serde_json::from_str(&dwarf_settings(&home, Path::new("/r/run"), None, true, None)).unwrap();
         assert!(gone["hooks"]["Stop"].is_null(), "no habits binary, no habits hooks");
     }
 
@@ -1853,7 +1858,7 @@ mod tests {
     fn the_statute_hook_is_a_pre_tool_use_hook_once_the_release_ships_it() {
         let d = testkit::TempDir::new("dwarf-settings-statute");
         let pre = |d: &Path| -> Vec<String> {
-            let v: serde_json::Value = serde_json::from_str(&dwarf_settings(d, Path::new("/r/run"), None, false)).unwrap();
+            let v: serde_json::Value = serde_json::from_str(&dwarf_settings(d, Path::new("/r/run"), None, false, None)).unwrap();
             v["hooks"]["PreToolUse"].as_array().map_or(vec![], |g| g[0]["hooks"].as_array().unwrap().iter().map(|h| h["command"].as_str().unwrap().to_string()).collect())
         };
         assert!(pre(&d).is_empty());
@@ -1870,11 +1875,33 @@ mod tests {
         let fence = d.join("hooks").join("dwarf-fence.sh");
         testkit::write_exe(&fence, "#!/bin/sh\n");
         let cmd = |prod: Option<&Path>| -> String {
-            let v: serde_json::Value = serde_json::from_str(&dwarf_settings(&d, Path::new("/r/run"), prod, false)).unwrap();
+            let v: serde_json::Value = serde_json::from_str(&dwarf_settings(&d, Path::new("/r/run"), prod, false, None)).unwrap();
             v["hooks"]["PreToolUse"][0]["hooks"][0]["command"].as_str().unwrap().to_string()
         };
         assert_eq!(cmd(Some(Path::new("/r/prod"))), format!("SPIRA_RUN='/r/run' SPIRA_PROD='/r/prod' '{}'", fence.display()));
         assert_eq!(cmd(None), format!("SPIRA_RUN='/r/run' '{}'", fence.display()));
         assert_eq!(fence_command(&fence, Path::new("/a b/it's"), None), format!("SPIRA_RUN='/a b/it'\\''s' '{}'", fence.display()));
+    }
+
+    #[test]
+
+    fn the_search_fence_hook_is_added_only_with_a_worktree_and_the_dwarf_binary() {
+        let d = testkit::TempDir::new("dwarf-settings-search");
+        let home = d.path().join("spira");
+        std::fs::create_dir_all(&home).unwrap();
+        let (run, wt) = (Path::new("/r/run"), Path::new("/r/run/worktree/sp-a"));
+        let cmds = |s: Option<(&Path, &Path)>| -> Vec<String> {
+            let v: serde_json::Value = serde_json::from_str(&dwarf_settings(&home, Path::new("/r/run"), None, false, s)).unwrap();
+            v["hooks"]["PreToolUse"].as_array().map_or(vec![], |g| g[0]["hooks"].as_array().unwrap().iter().map(|h| h["command"].as_str().unwrap().to_string()).collect())
+        };
+        assert!(cmds(Some((run, wt))).is_empty(), "no bin/dwarf, no entry");
+        let bin = d.path().join("bin").join("dwarf");
+        std::fs::create_dir_all(bin.parent().unwrap()).unwrap();
+        testkit::write_exe(&bin, "#!/bin/sh\n");
+        assert!(cmds(None).is_empty());
+        let on = cmds(Some((run, wt)));
+        assert_eq!(on.len(), 1);
+        assert!(on[0].contains("search-fence") && on[0].contains("--run '/r/run'") && on[0].contains("--worktree '/r/run/worktree/sp-a'"), "{on:?}");
+        assert!(on[0].starts_with(&format!("'{}'", bin.display())));
     }
 }

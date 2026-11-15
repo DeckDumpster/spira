@@ -11,6 +11,7 @@ pub mod conf;
 pub mod decide;
 pub mod escape;
 pub mod fast_tier;
+pub mod search_fence;
 pub mod rune_keys;
 pub mod ledger;
 pub mod mailbox;
