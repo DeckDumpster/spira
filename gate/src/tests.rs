@@ -2849,6 +2849,13 @@ fn certified(f: &Fake, outcome: &str) -> usize {
 }
 
 #[test]
+fn a_unit_red_whose_diff_shares_a_path_with_the_other_beads_is_the_branchs_whatever_the_status_letters() {
+    let f = flip_fake(Ok(vec![other_red("sp-x", "t1", "src/a.rs"), other_red("sp-y", "t2", "b.rs")]));
+    assert_eq!(f.run(), FAIL);
+    assert_eq!(f.failures.borrow().len(), 1);
+}
+
+#[test]
 fn a_unit_red_that_two_other_beads_showed_on_disjoint_diffs_certifies_not_judged() {
     let f = flip_fake(Ok(vec![other_red("sp-x", "t1", "a.rs"), other_red("sp-y", "t2", "b.rs")]));
     assert_eq!(f.run(), PASS);
