@@ -1921,6 +1921,13 @@ mod tests {
     use spira_claim::verdicts::{Entry, Kind, VerdictFile};
 
     #[test]
+    fn a_gate_run_row_reaches_the_beads_detail_with_its_build_directory() {
+        let rows = vec![serde_json::json!({"bead": "sp-b", "ts": "t", "phases": "build:5", "build_dir": "cold: mtimes: denied"})];
+        let g = &latest_gate_runs(&rows)["sp-b"];
+        assert!(gate_why(g).ends_with("build dir cold: mtimes: denied"), "{}", gate_why(g));
+    }
+
+    #[test]
     fn the_world_line_reads_the_halt_stamp_as_world_status_printed_it() {
         assert_eq!(world_line(None), "plane work: RUNNING");
         assert_eq!(world_line(Some("2026-11-03T10:00:00Z\nwhy: drill\n")), "HALTED since 2026-11-03T10:00:00Z");

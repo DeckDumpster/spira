@@ -90,7 +90,7 @@ pub struct GateRun {
     pub compiled: u64,
     pub fresh: u64,
     pub slowest: String,
-    /// `leased from <bead>'s builder`, `warm from <commit>` or `cold: <why>`; empty when no build directory was prepared.
+    /// `warm from <commit>` or `cold: <why>`; empty when no build directory was prepared.
     pub build_dir: String,
 }
 
@@ -130,15 +130,16 @@ pub fn render(ts: &str, host: &str, r: &GateRun) -> Result<String, String> {
 /// The row's build-directory field from the lines `target_on_tmpfs` printed: the way the
 /// directory was filled, or why it was not.
 pub fn build_dir_field(line: &str) -> String {
+    use crate::warm::{COLD_OPEN, WARM_FROM};
     for l in line.lines() {
-        if let Some((_, rest)) = l.split_once("(leased from ") {
-            return format!("leased from {}", rest.trim_end_matches(')'));
-        }
-        if let Some(rest) = l.strip_prefix("gate: build directory warm from ") {
+        if let Some(rest) = l.strip_prefix(WARM_FROM) {
             return format!("warm from {}", rest.split(' ').next().unwrap_or(""));
         }
-        if let Some((_, rest)) = l.split_once("building cold (") {
+        if let Some((_, rest)) = l.split_once(COLD_OPEN) {
             return format!("cold: {}", rest.trim_end_matches(')'));
+        }
+        if l.contains("builds in the tree") {
+            return "cold: no tmpfs, built in the tree".into();
         }
     }
     "cold: no warm directory to adopt".into()
@@ -300,9 +301,9 @@ mod tests {
     #[test]
     fn the_build_directory_field_says_how_it_was_filled_or_why_cold() {
         let b = "gate: build on /t/x";
-        assert_eq!(build_dir_field(&format!("{b}\ngate: build directory warm from c0ffee (12 unchanged files aged)")), "warm from c0ffee");
-        assert_eq!(build_dir_field(&format!("{b}\ngate: warm build directory from c1 discarded, building cold (mtimes: denied)")), "cold: mtimes: denied");
-        assert_eq!(build_dir_field("gate: build in /d (leased from sp-b's builder)"), "leased from sp-b's builder");
+        assert_eq!(build_dir_field(&format!("{b}\n{}c0ffee (12 unchanged files aged)", crate::warm::WARM_FROM)), "warm from c0ffee");
+        assert_eq!(build_dir_field(&format!("{b}\ngate: warm build directory from c1 discarded, {}mtimes: denied)", crate::warm::COLD_OPEN)), "cold: mtimes: denied");
+        assert_eq!(build_dir_field("gate: no tmpfs for the build (x) — /t builds in the tree"), "cold: no tmpfs, built in the tree");
         assert_eq!(build_dir_field(b), "cold: no warm directory to adopt");
     }
 
