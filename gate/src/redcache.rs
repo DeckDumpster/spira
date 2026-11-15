@@ -45,6 +45,16 @@ pub fn forget_tip(verdicts: &Path, tip: &str) -> usize {
         .count()
 }
 
+pub fn holds_tip(verdicts: &Path, tip: &str) -> bool {
+    let Ok(rd) = std::fs::read_dir(verdicts.join("red")) else { return false };
+    let want = format!("tip={tip}");
+    rd.flatten().any(|e| {
+        let Ok(text) = std::fs::read_to_string(e.path()) else { return false };
+        let head = text.split_once(SEP).map_or(text.as_str(), |(h, _)| h);
+        head.lines().any(|l| l == want)
+    })
+}
+
 pub fn fresh(entry: &str, ttl: &str, now: u64) -> Option<Entry> {
     let (head, msg) = entry.split_once(SEP)?;
     let (when, by) = crate::key::cache_fresh(head, ttl, now)?;

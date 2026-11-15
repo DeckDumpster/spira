@@ -1186,7 +1186,8 @@ pub fn absolve(
     }
     let in_row = row.ejected_red_tip.as_deref() == Some(tip.as_str());
     let in_record = super::round::batch_red_at(&c, id, &tip);
-    if !in_row && !in_record {
+    let in_gate = gate::redcache::holds_tip(&super::land::verdicts_dir(w, &c.s), &tip);
+    if !in_row && !in_record && !in_gate {
         w.err(format!(
             "queue.sh absolve: no red is recorded against {id} at {tip} — nothing to absolve"
         ));

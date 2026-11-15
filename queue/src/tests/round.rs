@@ -6646,6 +6646,22 @@ fn absolve_refuses_without_evidence_and_with_it_readmits_a_red_tip() {
     assert!(t.out().contains("members=sp-b:tb"), "{}", t.out());
 }
 
+#[test]
+fn absolve_clears_a_red_only_the_gate_recorded() {
+    let t = round_world();
+    let red = t.s().run.join("verdicts/red");
+    fs::create_dir_all(&red).unwrap();
+    let rec = red.join("k1");
+    fs::write(&rec, gate::redcache::render(1, "branch-red", "s", "w", 1, "c", "tb", "m\n")).unwrap();
+    assert_eq!(
+        t.run(&["absolve", "sp-b", "--by=concierge", "--reason=r", "--evidence=e", "--evidence-tip=tb"]),
+        0,
+        "{}",
+        t.err()
+    );
+    assert!(!rec.exists());
+}
+
 fn declare_own_testenv(t: &T) {
     let wt = PathBuf::from(&kv_of(t, "round")["worktree"]);
     fs::create_dir_all(wt.join(".spira")).unwrap();

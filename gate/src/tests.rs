@@ -1838,6 +1838,25 @@ fn a_red_is_answered_from_its_record_and_does_not_run_again() {
     assert!(g.written.borrow().iter().all(|(p, _)| !p.to_string_lossy().contains("/verdicts/red/")));
     let log = g.appended.borrow()[0].clone();
     assert!(log.contains(" replayed=") && log.contains("replayed=key:"), "{log}");
+    let err = g.stderr();
+    assert!(err.contains("queue.sh absolve"), "{err}");
+    assert!(err.contains(&format!("when {BASE} moves")), "{err}");
+}
+
+#[test]
+fn a_red_recorded_before_the_base_moved_is_not_replayed_after() {
+    let f = Fake::new();
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, "test-b.sh RED".into()));
+    f.run();
+    let (p, entry) = f.written.borrow().iter().find(|(p, _)| p.to_string_lossy().contains("/verdicts/red/")).cloned().expect("a red record");
+    let g = Fake::new();
+    g.put_var("SPIRA_VERDICT_TTL", "86400");
+    *g.merge.borrow_mut() = Merge::Clean("a-merged-tree-after-the-base-moved".into());
+    let entry = entry.lines().map(|l| if l.starts_with("at=") { "at=999999".to_string() } else { l.to_string() }).collect::<Vec<_>>().join("\n") + "\n";
+    g.files.borrow_mut().insert(p, entry);
+    g.run();
+    assert!(!g.ran.borrow().is_empty(), "the moved base is judged again");
+    assert!(!g.appended.borrow()[0].contains("replayed"), "{}", g.appended.borrow()[0]);
 }
 
 #[test]
