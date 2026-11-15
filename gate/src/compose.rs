@@ -130,24 +130,26 @@ pub fn classify(c: &Changed, members: &[Member]) -> Class {
     Class::Config
 }
 
-/// Crates whose tests read the tree's config registry or delta.
-pub const REGISTRY_READERS: &[&str] = &["bead", "gate", "loom", "queue", "release", "spira-config", "spira-runtime", "testenv", "watchdog"];
+pub use suite_select::readers::REGISTRY_READERS;
 
-fn present_registry_readers(members: &[Member]) -> BTreeSet<String> {
-    REGISTRY_READERS.iter().filter(|r| members.iter().any(|m| m.name == **r)).map(|r| r.to_string()).collect()
+fn path_readers(path: &str, members: &[Member]) -> Vec<String> {
+    suite_select::readers::readers_of(path)
+        .into_iter()
+        .filter(|r| members.iter().any(|m| m.name == *r))
+        .map(str::to_string)
+        .collect()
 }
 
-/// Crates whose tests read `../systemd`.
-pub const UNIT_READERS: &[&str] = &["release", "spira-world", "cert-sweep"];
-
-/// The files that pin the bd version the harness runs, and the crates whose tests run against
-/// that bd: a bd upgrade runs the planning conformance gate.
-pub const BD_PIN: &[&str] = &["spira/conf.d/SPIRA_BD_TAG", "spira/bd-pin.sh", "spira/build-bd.sh"];
-pub const BD_READERS: &[&str] = &["spira-lc"];
-
-fn bd_readers<'a>(path: &str, members: &'a [Member]) -> impl Iterator<Item = String> + 'a {
-    let pinned = BD_PIN.contains(&path);
-    BD_READERS.iter().filter(move |r| pinned && members.iter().any(|m| m.name == **r)).map(|r| r.to_string())
+/// Readers of `path` land in `touched` (and get their dependents) — except a registry file's
+/// registry readers, which are added after the expansion.
+fn add_readers(path: &str, class: &Class, members: &[Member], touched: &mut BTreeSet<String>, after: &mut BTreeSet<String>) {
+    for r in path_readers(path, members) {
+        if matches!(class, Class::Registry) && REGISTRY_READERS.contains(&r.as_str()) {
+            after.insert(r);
+        } else {
+            touched.insert(r);
+        }
+    }
 }
 
 /// `seed` plus every member that depends directly on one of them; sorted.
@@ -193,15 +195,14 @@ pub fn select_crates(diff_raw: &[u8], metadata_json: &str, transitive: bool) -> 
     let mut workspace = false;
     let mut readers = BTreeSet::new();
     for c in parse_diff_raw(diff_raw) {
-        touched.extend(bd_readers(&c.path, &members));
-        match classify(&c, &members) {
+        let class = classify(&c, &members);
+        add_readers(&c.path, &class, &members, &mut touched, &mut readers);
+        match class {
             Class::Crate(n) => {
                 touched.insert(n);
             }
             Class::Workspace => workspace = true,
-            Class::Units => touched.extend(UNIT_READERS.iter().filter(|r| members.iter().any(|m| m.name == **r)).map(|r| r.to_string())),
-            Class::Registry => readers.extend(present_registry_readers(&members)),
-            Class::Doc | Class::Suite | Class::Script | Class::Config => {}
+            Class::Doc | Class::Suite | Class::Script | Class::Config | Class::Units | Class::Registry => {}
         }
     }
     if workspace {
@@ -265,21 +266,15 @@ pub fn compose(
     let mut workspace = false;
     let mut readers = BTreeSet::new();
     for c in changed {
-        touched.extend(bd_readers(&c.path, members));
-        match classify(c, members) {
+        let class = classify(c, members);
+        add_readers(&c.path, &class, members, &mut touched, &mut readers);
+        match class {
             Class::Script => return suites("script"),
             Class::Crate(n) => {
                 touched.insert(n);
             }
             Class::Workspace => workspace = true,
-            Class::Units => touched.extend(
-                UNIT_READERS
-                    .iter()
-                    .filter(|r| members.iter().any(|m| m.name == **r))
-                    .map(|r| r.to_string()),
-            ),
-            Class::Registry => readers.extend(present_registry_readers(members)),
-            Class::Doc | Class::Suite | Class::Config => {}
+            Class::Doc | Class::Suite | Class::Config | Class::Units | Class::Registry => {}
         }
     }
     if workspace {
