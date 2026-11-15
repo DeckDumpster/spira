@@ -8,7 +8,7 @@
 use std::sync::{Arc, Mutex};
 
 use lifecycle::bead::BeadState;
-use runtime::units::{self, Exit, ScopeSpec, StartSpec, UnitHandle, UnitSpec, UNIT_RUN_SCOPE, UNIT_START};
+use runtime::units::{self, Exit, ScopeSpec, UnitHandle, UnitSpec, UNIT_RUN_SCOPE};
 use spira_runtime::tasks::a::batcher_local as bl;
 use spira_sim::loopworld::{self, Bead, Run, Script, World, MIN, REPO};
 
