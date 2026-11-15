@@ -659,6 +659,33 @@ mod tests {
         assert_eq!((r["service_p99_ms"].as_f64(), r["slow_commits"].as_u64()), (Some(7.5), Some(3)));
     }
 
+    fn cas_args(path: std::path::PathBuf) -> CasArgs {
+        CasArgs {
+            path,
+            rate: 20.0,
+            duration_secs: 1,
+            load_dir: None,
+            load_mb_per_s: 0,
+            mix: Mix::Reconciler,
+            json: false,
+            limit_ms: None,
+            min_secs: 300,
+        }
+    }
+
+    #[test]
+    fn a_run_whose_store_cannot_be_opened_is_refused_naming_the_path() {
+        let path = std::path::PathBuf::from("/nonexistent-bench-dir/b.db");
+        let e = run_cas(&cas_args(path)).unwrap_err();
+        assert!(e.contains("nonexistent-bench-dir"), "{e}");
+    }
+
+    #[test]
+    fn inline_checkpoint_is_an_unknown_argument() {
+        let got = parse(&args(&["--path", "p", "--rate", "5", "--duration-secs", "1", "--inline-checkpoint"]));
+        assert!(got.is_err());
+    }
+
     #[test]
     fn too_few_samples_settle_nothing_however_slow() {
         assert_eq!(decide(500, 500), None);
