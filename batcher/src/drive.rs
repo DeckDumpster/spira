@@ -845,6 +845,20 @@ fn eject_filter_owners<R: RoundRunner, O: RoundOps>(
             .collect();
         let mut kind = "unattributed";
         let mut cleared = String::new();
+        if actions.len() > 1 {
+            let suspects: Vec<Member> = members
+                .iter()
+                .filter(|m| actions.iter().any(|a| action_id(a) == &m.id))
+                .cloned()
+                .collect();
+            let (mut found, _, _) = probe_filter_owners(runner, f, &tests, &scope, &suspects);
+            if found.is_empty() && scope != packages {
+                (found, _, _) = probe_filter_owners(runner, f, &tests, &packages, &suspects);
+            }
+            if !found.is_empty() {
+                actions = found;
+            }
+        }
         if actions.is_empty() {
             let narrow = probe_filter_owners(runner, f, &tests, &scope, members);
             (actions, kind, cleared) = narrow;
@@ -3947,6 +3961,111 @@ pub(crate) mod tests {
             matches!(end, RoundEnd::Land { ref members, .. } if members.len() == 3),
             "{end:?}"
         );
+    }
+
+    const RELEASE_FAILING: &str =
+        "FAIL release tests::the_shipped_delta_carries_every_required_key_with_every_task_in_act_on_systemd";
+
+    fn release_red_when(culprit: &'static str) -> FilterFn {
+        Box::new(move |tree| {
+            tree.contains(culprit).then(|| FilterRed {
+                name: "unit-tests".into(),
+                named: vec![],
+                failed: vec![RELEASE_FAILING.to_string()],
+            })
+        })
+    }
+
+    fn release_graph() -> PackageGraph {
+        PackageGraph {
+            dirs: [("release", "release"), ("runtime", "spira-runtime"), ("gate", "gate")]
+                .iter()
+                .map(|(p, d)| (p.to_string(), d.to_string()))
+                .collect(),
+            deps: std::collections::BTreeMap::new(),
+        }
+    }
+
+    fn diff_paths(id: &str, paths: &[&str]) -> MemberDiff {
+        MemberDiff {
+            id: id.into(),
+            paths: paths.iter().map(|p| p.to_string()).collect(),
+            added: String::new(),
+        }
+    }
+
+    fn budget6() -> Budget {
+        Budget { slots: 6, maxpar: 2 }
+    }
+
+    #[test]
+    fn a_unit_red_in_a_crate_that_reads_a_file_outside_its_dir_ejects_the_member_touching_that_file_and_no_other(
+    ) {
+        let mut f = Fake::new(|_, _| false);
+        f.filter = Some(release_red_when("m6"));
+        let mut ops = Ops {
+            graph: Some(release_graph()),
+            diffs: vec![
+                diff_paths("m1", &["spira-config/src/x.rs"]),
+                diff_paths("m2", &["runtime/src/y.rs"]),
+                diff_paths("m3", &["testenv/src/z.rs"]),
+                diff_paths("m4", &["batcher-cut/src/a.rs", "spira-runtime/src/b.rs"]),
+                diff_paths("m5", &["queue/src/c.rs", "spira-lint/src/d.rs", "spira-runtime/src/e.rs"]),
+                diff_paths(
+                    "m6",
+                    &["spira-runtime/src/f.rs", "spira/conf.d/SPIRA_TASK_MODES", "spira/config-delta.toml"],
+                ),
+            ],
+            ..Ops::default()
+        };
+        let members: Vec<Member> = (1..=6).map(|i| member(&format!("m{i}"))).collect();
+        let end = attribute_round(&mut f, &mut ops, &corpus(3), members, budget6()).unwrap();
+        assert_eq!(ops.ejected, vec![("m6".to_string(), vec!["unit-tests".to_string()])]);
+        assert!(f.probes.is_empty(), "one mapped suspect runs no subset: {:?}", f.probes);
+        let note = &ops.eject_evidence[0].1;
+        assert!(note.contains("read by release's tests"), "{note}");
+        assert!(matches!(end, RoundEnd::Land { ref members, .. } if members.len() == 5), "{end:?}");
+    }
+
+    fn two_suspects() -> Ops {
+        Ops {
+            graph: Some(release_graph()),
+            diffs: vec![
+                diff_paths("m1", &["spira-config/src/x.rs"]),
+                diff_paths("m2", &["spira/conf.d/SPIRA_TASK_MODES"]),
+                diff_paths("m3", &["spira/config-delta.d/m3.toml"]),
+                diff_paths("m4", &["docs/x.md"]),
+            ],
+            ..Ops::default()
+        }
+    }
+
+    #[test]
+    fn two_members_touching_what_the_failing_crate_reads_are_probed_and_only_the_red_one_leaves() {
+        let mut f = Fake::new(|_, _| false);
+        f.bisects = true;
+        f.filter = Some(release_red_when("m2"));
+        let mut ops = two_suspects();
+        attribute_round(&mut f, &mut ops, &corpus(3), four(), budget6()).unwrap();
+        assert_eq!(ops.ejected, vec![("m2".to_string(), vec!["unit-tests".to_string()])]);
+        assert!(!f.probes.is_empty(), "the suspects are probed");
+        assert!(
+            f.probes.iter().all(|p| p.iter().all(|id| id == "m2" || id == "m3")),
+            "only the suspects are probed: {:?}",
+            f.probes
+        );
+    }
+
+    #[test]
+    fn two_suspects_the_probes_cannot_tell_apart_both_leave() {
+        let mut f = Fake::new(|_, _| false);
+        f.bisects = false;
+        f.filter = Some(release_red_when("m2"));
+        let mut ops = two_suspects();
+        attribute_round(&mut f, &mut ops, &corpus(3), four(), budget6()).unwrap();
+        let mut gone: Vec<&str> = ops.ejected.iter().map(|(id, _)| id.as_str()).collect();
+        gone.sort();
+        assert_eq!(gone, ["m2", "m3"]);
     }
 
     #[test]

@@ -13,6 +13,7 @@ pub mod header;
 pub mod io;
 pub mod names;
 pub mod reach;
+pub mod readers;
 pub mod select;
 pub mod shell;
 pub mod timing;

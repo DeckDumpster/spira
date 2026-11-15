@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::buildattr::MemberDiff;
 use crate::core::Id;
+use suite_select::readers::readers_of;
 
 /// The workspace's packages: each one's directory (repo-relative, no trailing slash; empty for
 /// the root) and the workspace packages it depends on.
@@ -128,8 +129,8 @@ pub fn failing_lines(out: &str) -> Vec<String> {
     lines
 }
 
-/// Each member whose diff touches one of `packages` or a package one of them depends on, with
-/// the first such package it reaches. Empty when the graph does not know every failing package:
+/// Each member whose diff touches one of `packages`, a package one of them depends on, or a file
+/// outside it that the failing package's own tests read, with the first such thing it reaches. Empty when the graph does not know every failing package:
 /// a partial map would stop looking while a culprit sits in the part it cannot see.
 pub fn reaching(
     graph: &PackageGraph,
@@ -148,17 +149,15 @@ pub fn reaching(
         .iter()
         .filter_map(|d| {
             reach.iter().find_map(|(failing, closure)| {
-                let hit = closure
-                    .iter()
-                    .find(|p| d.paths.iter().any(|path| graph.owns(p, path)))?;
-                Some((
-                    d.id.clone(),
-                    if hit == failing {
-                        failing.to_string()
-                    } else {
-                        format!("{hit} (a dependency of {failing})")
-                    },
-                ))
+                let via = match closure.iter().find(|p| d.paths.iter().any(|path| graph.owns(p, path))) {
+                    Some(hit) if hit == failing => failing.to_string(),
+                    Some(hit) => format!("{hit} (a dependency of {failing})"),
+                    None => {
+                        let path = d.paths.iter().find(|path| readers_of(path).contains(failing))?;
+                        format!("{path} (read by {failing}'s tests)")
+                    }
+                };
+                Some((d.id.clone(), via))
             })
         })
         .collect()
@@ -231,6 +230,20 @@ mod tests {
             ["b", "c"]
         );
         assert!(got[0].1.contains("dependency of loom"), "{got:?}");
+    }
+
+    #[test]
+    fn a_member_reaches_the_package_whose_tests_read_a_file_it_touches_and_no_other() {
+        let g = PackageGraph {
+            dirs: [("release", "release"), ("gate", "gate")].iter().map(|(p, d)| (p.to_string(), d.to_string())).collect(),
+            deps: BTreeMap::new(),
+        };
+        let d = [diff("a", "spira/config-delta.d/x.toml"), diff("b", "docs/x.md")];
+        let got = reaching(&g, &["release".to_string()], &d);
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert_eq!(got[0].0.as_str(), "a");
+        assert!(got[0].1.contains("spira/config-delta.d/x.toml (read by release's tests)"), "{got:?}");
+        assert!(reaching(&g, &["gate".to_string()], &d).is_empty());
     }
 
     #[test]
