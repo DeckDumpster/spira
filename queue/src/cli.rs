@@ -1531,6 +1531,15 @@ mod tests {
     }
 
     #[test]
+    fn a_round_verb_that_writes_events_needs_a_known_actor() {
+        let want = "queue.sh round eject: --by batcher|concierge|operator is required — who is acting on the round";
+        let eject = ["round", "eject", "b1", "sp-a"];
+        assert_eq!(bare(&eject), Err(Usage(want.into())));
+        assert_eq!(bare(&[&eject[..], &["--by", "dwarf"]].concat()), Err(Usage(want.into())));
+        assert!(bare(&[&eject[..], &["--by", "operator"]].concat()).is_ok());
+    }
+
+    #[test]
     fn round_verbs_refuse_what_they_need() {
         assert_eq!(
             p(&["round", "open"]),
