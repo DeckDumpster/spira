@@ -590,6 +590,25 @@ mod tests {
     use super::*;
 
     #[test]
+    fn diff_scope_diffs_against_the_fork_not_the_base_tip() {
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let log = seen.clone();
+        let t = Tree::from_paths(Path::new("/nowhere"), Vec::<String>::new(), Vec::<String>::new())
+            .with_base(Some("main".into()))
+            .with_git(Box::new(move |a| {
+                log.lock().unwrap().push(a.join(" "));
+                match a[0] {
+                    "rev-parse" => Ok(b"B\n".to_vec()),
+                    "merge-base" => Ok(b"F\n".to_vec()),
+                    _ => Ok(Vec::new()),
+                }
+            }));
+        DiffScope::from_tree(&t).unwrap();
+        let seen = seen.lock().unwrap();
+        assert!(seen.iter().any(|c| c.starts_with("diff") && c.ends_with(" F")), "{seen:?}");
+    }
+
+    #[test]
     fn base_commit_with_no_merge_base_is_refused() {
         let t = Tree::from_paths(Path::new("/nowhere"), Vec::<String>::new(), Vec::<String>::new())
             .with_base(Some("main".into()))

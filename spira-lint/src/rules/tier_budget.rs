@@ -89,7 +89,7 @@ impl Rule for Ledger {
         let now = std::fs::read_to_string(tree.root.join(self.path))
             .map_err(|_| LintError::Refused(format!("no ledger at {} — nothing to lint", self.path)))?;
         let prior = tree.show(&base, self.path).ok_or_else(|| {
-            LintError::Refused(format!("no {} at the base {base} — cannot judge shrink-only", self.path))
+            LintError::Refused(format!("no {} at the base {} — cannot judge shrink-only", self.path, tree.base.as_deref().unwrap_or_default()))
         })?;
         let exposed: BTreeSet<String> = exposures(&now).difference(&exposures(&prior)).cloned().collect();
         let prior: BTreeMap<String, String> =
