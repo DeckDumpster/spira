@@ -565,7 +565,7 @@ fn checks(args: &[String], via: &str) -> i32 {
     run_checks(args, false, via).0
 }
 
-/// [`checks`], with the failing test names of every red row that declares `deferred_to` when
+/// [`checks`], with the failing test names of every red row deferred to the `gate` when
 /// `base_red` waives it (a submit naming the bead that records the base red).
 fn run_checks(args: &[String], base_red: bool, via: &str) -> (i32, Vec<String>) {
     let list_only = match args {
@@ -669,17 +669,18 @@ fn run_checks(args: &[String], base_red: bool, via: &str) -> (i32, Vec<String>) 
                     work::Outcome::Ok => println!("-- {}: ok", row.name),
                     work::Outcome::Deferred => {
                         let stage = row.deferred_to.as_deref().unwrap_or_default();
-                        println!("-- {}: deferred to the {stage} (cut at its {} ms budget): {}", row.name, row.budget_ms, selected_crates(work::CHECKS_BASE).join(" "));
+                        let crates = if stage == "gate" { format!(": {}", selected_crates(work::CHECKS_BASE).join(" ")) } else { String::new() };
+                        println!("-- {}: deferred to the {stage} (cut at its {} ms budget){crates}", row.name, row.budget_ms);
                         deferred = true;
                     }
                     work::Outcome::Fail => {
                         let tests = work::failing_tests(&stdout);
-                        if row.deferred_to.is_some() && base_red && !tests.is_empty() {
+                        if row.deferred_to.as_deref() == Some("gate") && base_red && !tests.is_empty() {
                             println!("-- {}: FAIL ({}) — waived: the red is recorded on the base (--unit-red-on-base)", row.name, o.status);
                             waived_tests.extend(tests);
                             deferred = true;
                         } else {
-                            let exit = if row.deferred_to.is_some() {
+                            let exit = if row.deferred_to.as_deref() == Some("gate") {
                                 " — if the same tests are red on the base, file a bead recording it and run `work submit --unit-red-on-base <bead-id>`"
                             } else {
                                 ""

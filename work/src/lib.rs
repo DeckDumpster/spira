@@ -47,7 +47,8 @@ const FENCE_ROW_BUDGET_MS: u64 = 300_000;
 /// The rows `work checks` owes for the fences the round runs before any suite: one per fence of
 /// the tree's `gate.steps` (`gate::fences::list`, the list the round itself is handed), run as
 /// `gate fence-run` on the tip. Nothing here names a fence, so a fence added to `gate.steps` is
-/// checked with no second edit.
+/// checked with no second edit. A row cut at its budget is deferred to the round, which runs every
+/// fence of `gate.steps` again under the fence's own limit (`round-vm` `fence_run`).
 pub fn fence_rows(gate_steps: &str) -> Result<Vec<habits::config::Check>, String> {
     let def = gate::def::parse(gate_steps)?;
     Ok(gate::fences::list(&def, None)?
@@ -57,7 +58,7 @@ pub fn fence_rows(gate_steps: &str) -> Result<Vec<habits::config::Check>, String
             name: format!("fence-{}", f.name),
             budget_ms: FENCE_ROW_BUDGET_MS,
             build: Some("gate".into()),
-            deferred_to: None,
+            deferred_to: Some("round".into()),
         })
         .collect())
 }
@@ -537,6 +538,18 @@ mod tests {
         assert!(declared_rows(dir.path()).err().unwrap().contains("gate.steps"));
         std::fs::write(dir.join("gate.steps"), "step bash spira/planted.sh\n").unwrap();
         assert_eq!(declared_rows(dir.path()).unwrap().into_iter().map(|r| r.name).collect::<Vec<_>>(), ["fence-planted"], "a planted fence is found, so an empty answer means none");
+    }
+
+    #[test]
+    fn a_fence_row_cut_at_its_budget_is_deferred_to_the_round_and_any_other_failure_is_red() {
+        let rows = fence_rows("step bash spira/one.sh\nstep bash spira/two.sh\n").unwrap();
+        assert_eq!(rows.len(), 2);
+        for row in &rows {
+            assert_eq!(row.deferred_to.as_deref(), Some("round"));
+            assert_eq!(row_outcome(124, row.deferred_to.as_deref()), Outcome::Deferred);
+        }
+        assert_eq!(row_outcome(1, Some("round")), Outcome::Fail);
+        assert_eq!(row_outcome(0, Some("round")), Outcome::Ok);
     }
 
     #[test]
