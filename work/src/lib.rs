@@ -883,6 +883,18 @@ mod tests {
         }
     }
 
+    // Exception to law-a-unit-test-calls-no-binary: spawning is the code under test; it spawns only `/bin/sh` and `sleep`.
+    #[test]
+    fn a_zero_budget_is_cut_at_once_never_unbounded() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let env = std::ffi::OsString::from("/usr/bin:/bin");
+        std::thread::spawn(move || {
+            let _ = tx.send(run_row(Path::new("/bin/sh"), &["-c".into(), "sleep 30".into()], Path::new("/"), &env, 0));
+        });
+        let out = rx.recv_timeout(std::time::Duration::from_secs(1)).expect("a zero budget ran unbounded").unwrap(); // clock-safe: cap on waiting for run_row's return
+        assert_eq!(out.status.code(), Some(124));
+    }
+
     #[test]
     fn a_diff_touching_no_crate_selects_nothing() {
         assert!(crates_selection(&raw(&["docs/x.md"]), META).unwrap().is_empty());
