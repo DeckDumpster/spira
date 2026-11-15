@@ -284,6 +284,10 @@ impl Deps<'_> {
     }
 }
 
+fn prune_results(s: &Settings, own: &str) {
+    s.results_retention.prune("testenv", &s.results_root, now_epoch(), &|n| n == own);
+}
+
 fn stderr(msg: &str) {
     eprintln!("{msg}");
 }
@@ -428,6 +432,7 @@ fn run_foreign(
     }
     let key = verdict::sha256_hex(format!("foreign\n{tree}\n{text}\n{}", tiers.join(",")).as_bytes());
     let results = s.results_root.join(&key);
+    prune_results(s, &key);
     if let Err(e) = fs::create_dir_all(&results) {
         stderr(&format!("batch: cannot create {}: {e}", results.display()));
         return Finish::fault(2, "results-dir", 0);
@@ -1494,6 +1499,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         s.verdict_ttl
     };
     let results = s.results_root.join(&key);
+    prune_results(&s, &key);
     if let Err(e) = fs::create_dir_all(&results) {
         stderr(&format!("batch: cannot create {}: {e}", results.display()));
         return Finish::fault(2, "results-dir", 0);

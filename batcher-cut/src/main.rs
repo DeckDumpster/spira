@@ -1026,7 +1026,7 @@ fn stabilize_round(
     let harness_fault = runner.harness_fault();
     runner.close();
     if let (Some(b), false) = (batch, matches!(end, Ok(drive::RoundEnd::Land { .. }))) {
-        io::keep_round_results(&env_.run, b, &runner.results);
+        io::keep_round_results(&env_.run, b, &runner.results, io::rounds_prune(env_, repo, b).as_ref());
     }
     let staged = stage_bg.and_then(|bg| io::round_stage_done(repo, bg));
     let end = end.map_err(|e| {
@@ -2239,7 +2239,7 @@ fn attribute_run(o: &Opts) -> Result<(), String> {
         .after_pass(o.after_pass.clone());
     if let (Some(b), Some(pass)) = (o.batch.as_deref(), o.after_pass.as_deref()) {
         if pass.is_dir() {
-            io::keep_round_results(&env_.run, b, pass);
+            io::keep_round_results(&env_.run, b, pass, io::rounds_prune(&env_, &repo, b).as_ref());
         }
     }
     let mut ops = LiveOps {
@@ -2278,7 +2278,7 @@ fn attribute_run(o: &Opts) -> Result<(), String> {
         o.batch.as_deref(),
         matches!(end, Ok(drive::RoundEnd::Land { .. })),
     ) {
-        io::keep_attribution_results(&env_.run, b, &runner.results, o.after_pass.is_some());
+        io::keep_attribution_results(&env_.run, b, &runner.results, o.after_pass.is_some(), io::rounds_prune(&env_, &repo, b).as_ref());
     }
     let mended = ops.prior != batcher::mender::Prior::default();
     let replaced = if end.is_err() { batcher_cut::attribute::replaced_by_preempt(&started_at, &head_now().unwrap_or_default()) } else { None };

@@ -13,7 +13,7 @@ use crate::records::Kv;
 const NO_STORE: &str = "the batch machine is not on the control store";
 
 /// Settings as conf.sh resolves them (seam R1).
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Settings {
     /// The harness script directory (`$SPIRA_HOME`, where lib.sh lives).
     pub home: PathBuf,
@@ -52,6 +52,9 @@ pub struct Settings {
     /// `SPIRA_ROUND_CERTIFY_WALL_SECS` (declared value): the wall `round certify` allows the
     /// round VM's corpus.
     pub round_wall_secs: u64,
+    /// `SPIRA_RESULTS_KEEP_DAYS` / `SPIRA_RESULTS_PRUNE_MAX` (declared values): how a round's
+    /// results write prunes `<run>/rounds`.
+    pub results_retention: spira_config::results_retention::Retention,
     /// `SPIRA_ROUND_AMI_WAIT_SECS` (declared value): how long `round certify` waits for a Round
     /// AMI build when the newest image is stale.
     pub round_ami_wait_secs: u64,

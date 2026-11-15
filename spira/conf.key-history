@@ -753,3 +753,5 @@ sendback_keep_days
 preflight_cache_root
 lc_history_ring_bytes
 batcher_stall_secs
+results_keep_days
+results_prune_max

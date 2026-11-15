@@ -6694,6 +6694,45 @@ fn a_repo_that_declares_its_own_testenv_certifies_and_lands_from_its_verdict() {
     assert_eq!(t.landed_ref().as_deref(), Some("merged-tb"));
 }
 
+fn prune_world(own_testenv: bool) -> (T, PathBuf) {
+    let t = round_world();
+    let store = t.lc.store.get_or_init(crate::batches::mem::MemDoor::default);
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    if own_testenv {
+        let kv = crate::batches::batch(store, "spira", &batch).unwrap().unwrap().kv;
+        let wt = PathBuf::from(kv.get("worktree").unwrap());
+        fs::create_dir_all(wt.join(".spira")).unwrap();
+        fs::write(wt.join(".spira").join("testenv.toml"), "ci_entry = \"deploy/ci.sh all\"\n").unwrap();
+    }
+    store.put_round("spira", "spira-open", "OPEN", &[("sp-c", "tc")], 10);
+    let rounds = t.s().run.join("rounds");
+    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(8 * 86400);
+    for n in ["spira-old.results", "spira-open.results", "cubby-old.results"] {
+        fs::create_dir_all(rounds.join(n)).unwrap();
+        fs::File::open(rounds.join(n)).unwrap().set_modified(old).unwrap();
+    }
+    t.run(&["round", "certify", &batch]);
+    (t, rounds)
+}
+
+#[test]
+fn a_round_pass_prunes_the_repos_old_closed_round_results_and_keeps_open_ones() {
+    let (t, rounds) = prune_world(false);
+    assert!(!rounds.join("spira-old.results").exists(), "{}", t.err());
+    assert!(rounds.join("spira-open.results").exists());
+    assert!(rounds.join("cubby-old.results").exists());
+}
+
+#[test]
+fn an_own_testenv_round_pass_prunes_the_repos_old_closed_round_results_and_keeps_open_ones() {
+    let (t, rounds) = prune_world(true);
+    assert!(t.scripts.calls.borrow().iter().any(|c| c.starts_with("repo-round-vm ")), "{}", t.err());
+    assert!(!rounds.join("spira-old.results").exists(), "{}", t.err());
+    assert!(rounds.join("spira-open.results").exists());
+    assert!(rounds.join("cubby-old.results").exists());
+}
+
 #[test]
 fn a_worktree_moved_by_stabilization_certifies_only_when_the_batcher_names_its_head() {
     let t = round_world();

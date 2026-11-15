@@ -1848,6 +1848,7 @@ impl T {
             git_email: "spira@spira.invalid".into(),
             mailbox: "concierge".into(),
             round_wall_secs: 900,
+            results_retention: spira_config::results_retention::Retention { keep_days: 7, max: 50 },
             round_ami_wait_secs: 5400,
             round_spill: String::new(),
             rounds_max: 1,

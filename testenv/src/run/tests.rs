@@ -238,6 +238,7 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
         unit_runner: crate::sandbox::Runner::Container,
         sandbox_target_root: String::new(),
         sandbox_target_keep: 24,
+        results_retention: spira_config::results_retention::Retention { keep_days: 7, max: 50 },
         foreign_target_max_gib: 40,
         foreign_target_idle_hours: 48,
         warm_slots: num!("SPIRA_TESTENV_WARM_SLOTS").unwrap_or(3),
