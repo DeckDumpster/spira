@@ -446,13 +446,7 @@ pub fn run_observe(e: &Effects, _key: &str, s: &EffectSpec) -> Result<String, St
         return serde_json::to_string(&empty).map_err(|e| e.to_string());
     }
     let lc = spira_store::lc_call::LcClient::socket(&e.world.lc_socket);
-    let mut listed = vec![];
-    for t in &targets {
-        if let serde_json::Value::Array(rows) = gh_intake::real::github_refs_on(&lc, &format!("{}#", t.slug))? {
-            listed.extend(rows);
-        }
-    }
-    let store: Vec<KnownRef> = gh_intake::store::ingested(&serde_json::Value::Array(listed)).into_iter().map(|k| KnownRef { id: k.id, ext_ref: k.ext_ref, labels: k.labels }).collect();
+    let mut store: Vec<KnownRef> = vec![];
     let api = Some(get(cfg, "SPIRA_GH_INTAKE_API")).filter(|a| !a.is_empty()).unwrap_or(gh::GITHUB_API).to_string();
     let http = gh_intake::real::RealHttp::from_broker();
     let (mut pages, mut accept, mut hidden) = (BTreeMap::new(), Vec::<Accept>::new(), Vec::new());
@@ -467,6 +461,7 @@ pub fn run_observe(e: &Effects, _key: &str, s: &EffectSpec) -> Result<String, St
                 pages.insert(t.slug.clone(), Pages::Error(err));
             }
             Ok(issues) => {
+                store.extend(known_for(&t.slug, &issues, input.seen.get(&t.slug), &|r| gh_intake::real::by_ref_on(&lc, r))?);
                 let (a, h) = trust_answers(&http, &api, &t.slug, &issues, input.seen.get(&t.slug));
                 accept.extend(a);
                 hidden.extend(h);
@@ -476,6 +471,24 @@ pub fn run_observe(e: &Effects, _key: &str, s: &EffectSpec) -> Result<String, St
         }
     }
     serde_json::to_string(&Snapshot { halted, targets, store, now, pages, accept, contributor_hidden: hidden }).map_err(|e| e.to_string())
+}
+
+/// The store's beads for the refs `decide` will ask about: one point lookup per work and
+/// untrusted ref of each open issue not yet handled. A slug with no carried set baselines and asks nothing.
+pub fn known_for(slug: &str, issues: &[gh_intake::model::GhIssue], seen: Option<&Vec<u64>>, by_ref: &dyn Fn(&str) -> Result<Vec<gh_intake::store::KnownRef>, String>) -> Result<Vec<KnownRef>, String> {
+    let Some(seen) = seen else { return Ok(vec![]) };
+    let mut out: Vec<KnownRef> = vec![];
+    for i in issues.iter().filter(|i| !seen.contains(&i.number)) {
+        for prefix in ["github", "github-untrusted"] {
+            let ext_ref = format!("{prefix}:{slug}#{}", i.number);
+            for k in by_ref(&ext_ref)? {
+                if k.ext_ref == ext_ref && !out.iter().any(|o| o.id == k.id) {
+                    out.push(KnownRef { id: k.id, ext_ref: k.ext_ref, labels: k.labels });
+                }
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// Trust answers for the issues not seen before: who is admitted, and which CONTRIBUTOR authors are hidden members.
@@ -507,7 +520,7 @@ pub fn trust_answers(http: &dyn gh_intake::ports::Http, api: &str, slug: &str, i
 fn file(e: &Effects, s: &EffectSpec, labels: impl Fn(&BTreeMap<String, String>, &Filing) -> (String, String)) -> Result<String, String> {
     use gh_intake::ports::Bd;
     let p: Pinned<Filing> = parse(&s.input)?;
-    let known = gh_intake::store::ingested(&gh_intake::real::github_refs_on(&spira_store::lc_call::LcClient::socket(&e.world.lc_socket), &p.act.ext_ref)?);
+    let known = gh_intake::real::by_ref_on(&spira_store::lc_call::LcClient::socket(&e.world.lc_socket), &p.act.ext_ref)?;
     if gh_intake::store::find_ref(&known, &p.act.ext_ref).is_some() {
         return Err(format!("{} is already in the store — refusing a second bead", p.act.ext_ref));
     }
@@ -578,6 +591,56 @@ mod tests {
     fn contributor(login: &str) -> gh_intake::model::GhIssue {
         let page = format!(r#"[{{"number":348,"title":"t","body":"b","user":{{"login":"{login}","type":"User"}},"labels":[],"author_association":"CONTRIBUTOR"}}]"#);
         gh_intake::model::parse_issues_page(page.as_bytes()).unwrap().remove(0)
+    }
+
+    fn issue(n: u64) -> gh_intake::model::GhIssue {
+        let page = format!(r#"[{{"number":{n},"title":"t","body":"b","user":{{"login":"a","type":"User"}},"labels":[],"author_association":"NONE"}}]"#);
+        gh_intake::model::parse_issues_page(page.as_bytes()).unwrap().remove(0)
+    }
+
+    fn row(id: &str, ext: &str) -> gh_intake::store::KnownRef {
+        gh_intake::store::KnownRef { id: id.into(), ext_ref: ext.into(), labels: vec![] }
+    }
+
+    #[test]
+    fn known_for_asks_one_point_lookup_per_ref_of_each_unseen_issue_and_lists_nothing() {
+        let asked = std::cell::RefCell::new(vec![]);
+        let by_ref = |r: &str| {
+            asked.borrow_mut().push(r.to_string());
+            Ok(if r == "github:acme/widgets#7" { vec![row("b-1", r), row("b-x", "github:acme/widgets#70")] } else { vec![] })
+        };
+        let got = known_for("acme/widgets", &[issue(3), issue(7)], Some(&vec![3]), &by_ref).unwrap();
+        assert_eq!(*asked.borrow(), ["github:acme/widgets#7", "github-untrusted:acme/widgets#7"]);
+        assert_eq!(got.iter().map(|k| k.id.as_str()).collect::<Vec<_>>(), ["b-1"]);
+    }
+
+    #[test]
+    fn decide_over_known_for_notes_a_tracked_ref_and_refiles_no_untrusted_record() {
+        let by_ref = |r: &str| Ok(match r {
+            "github:acme/widgets#7" => vec![row("b-7", r)],
+            "github-untrusted:acme/widgets#8" => vec![row("u-8", r)],
+            _ => vec![],
+        });
+        let list = vec![issue(7), issue(8)];
+        let store = known_for("acme/widgets", &list, Some(&vec![1]), &by_ref).unwrap();
+        let pages = BTreeMap::from([("acme/widgets".to_string(), Pages::Issues(list.into_iter().map(|i| GhIssue { number: i.number, title: i.title, body: i.body, author: i.login, is_pr: false }).collect()))]);
+        let targets = vec![Target { slug: "acme/widgets".into(), bead_repo: "r".into(), root_ok: true }];
+        let snap = Snapshot { halted: false, targets, store, now: 0, pages, accept: vec![], contributor_hidden: vec![] };
+        let carry = Carry { seen: BTreeMap::from([("acme/widgets".to_string(), vec![1])]), ..Carry::default() };
+        let (_, acts) = decide(&carry, &snap);
+        assert_eq!(acts.iter().map(|a| a.name.as_str()).collect::<Vec<_>>(), [NOTE_SEEN]);
+    }
+
+    #[test]
+    fn known_for_asks_nothing_on_a_slugs_first_read() {
+        let by_ref = |_: &str| -> Result<Vec<gh_intake::store::KnownRef>, String> { panic!("asked") };
+        assert!(known_for("acme/widgets", &[issue(1)], None, &by_ref).unwrap().is_empty());
+    }
+
+    #[test]
+    fn known_for_surfaces_a_failed_lookup() {
+        let by_ref = |_: &str| Err("deadline".to_string());
+        assert_eq!(known_for("acme/widgets", &[issue(1)], Some(&vec![]), &by_ref).unwrap_err(), "deadline");
     }
 
     #[test]
