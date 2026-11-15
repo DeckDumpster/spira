@@ -692,6 +692,210 @@ fn main_file_receipts_drain_five_hundred_a_commit_once_they_are_a_day_old() {
     assert_eq!(count(&path, "SELECT count(*) FROM latest WHERE CAST(key AS TEXT) LIKE 'live/%'"), 6);
 }
 
+fn family_files(dir: &Path, family: &str) -> Vec<String> {
+    let mut v: Vec<String> = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .filter(|n| n.starts_with(&format!("s.{family}-")) && n.ends_with(".db"))
+        .collect();
+    v.sort();
+    v
+}
+
+fn failing_once() -> (Arc<AtomicBool>, state_store_sqlite::CommitProbe) {
+    let fail = Arc::new(AtomicBool::new(false));
+    let probe = {
+        let fail = fail.clone();
+        Arc::new(move || {
+            if fail.swap(false, Ordering::SeqCst) {
+                Err(Error::Backend("injected".into()))
+            } else {
+                Ok(())
+            }
+        }) as state_store_sqlite::CommitProbe
+    };
+    (fail, probe)
+}
+
+#[test]
+fn an_event_lands_in_the_day_file_of_its_commit_and_not_in_the_main_file() {
+    let dir = TempDir::new("sqlite-event-day");
+    let wall = VirtualClock::new(D0 + 3_600_000);
+    let path = dir.path().join("s.db");
+    let c = contract(SqliteBackend::open(&path, day_opts(&wall)).unwrap(), &wall);
+    let rev = put(&c, "a", json!(1), "w1");
+    let file = dir.path().join("s.events-2024-10-04.db");
+    let key = state_store::events_key(rev);
+    assert_eq!(count(&file, &format!("SELECT count(*) FROM rows WHERE CAST(key AS TEXT) = '{key}'")), 1);
+    assert_eq!(count(&path, "SELECT count(*) FROM latest WHERE CAST(key AS TEXT) LIKE 'events/%'"), 0);
+    assert!(c.backend().get(&key, rev).unwrap().is_some());
+}
+
+#[test]
+fn thirty_days_of_audited_commits_keep_fifteen_event_files_and_an_event_reads_back_for_fourteen_days() {
+    let dir = TempDir::new("sqlite-event-thirty");
+    let wall = VirtualClock::new(D0);
+    let c = contract(SqliteBackend::open(&dir.path().join("s.db"), day_opts(&wall)).unwrap(), &wall);
+    let mut revs = Vec::new();
+    for i in 0..120u64 {
+        wall.advance_to(D0 + i * 6 * 3_600_000);
+        revs.push((i / 4, put(&c, "a", json!(i), &format!("w{i}"))));
+        let files = family_files(dir.path(), "events");
+        assert!(files.len() <= 15, "{files:?} after commit {i}");
+    }
+    let head = c.backend().head().unwrap();
+    for (day, rev) in revs {
+        let read = c.backend().get(&state_store::events_key(rev), head).unwrap();
+        assert_eq!(read.is_some(), 29 - day <= 14, "event of day {day}");
+    }
+}
+
+#[test]
+fn a_failed_main_commit_leaves_neither_an_event_nor_a_receipt_above_the_head_in_process_or_after_a_reopen() {
+    let dir = TempDir::new("sqlite-event-fail");
+    let wall = VirtualClock::new(D0);
+    let path = dir.path().join("s.db");
+    let (fail, probe) = failing_once();
+    let b = SqliteBackend::open(&path, Options { commit_probe: Some(probe), ..day_opts(&wall) }).unwrap();
+    let c = contract(b.clone(), &wall);
+    put(&c, "a", json!(1), "first");
+    let head = b.head().unwrap();
+    fail.store(true, Ordering::SeqCst);
+    assert!(c.txn(&Txn::new().put("b", Object::new(json!(2))), &req("second")).is_err());
+    assert_eq!(b.head().unwrap(), head);
+    let (events, receipts) = (dir.path().join("s.events-2024-10-04.db"), day_file(dir.path(), "2024-10-04"));
+    for file in [&events, &receipts] {
+        assert_eq!(count(file, &format!("SELECT count(*) FROM rows WHERE main > {head}")), 0, "{}", file.display());
+    }
+    drop(c);
+    drop(b);
+    for (file, key) in [(&events, "events/torn"), (&receipts, "requests/torn")] {
+        rusqlite::Connection::open(file)
+            .unwrap()
+            .prepare("INSERT INTO rows (key, main, sub, value, create_main, create_sub) VALUES (?1, ?2, 0, X'00', ?2, 0)")
+            .unwrap()
+            .execute(rusqlite::params![key.as_bytes(), head + 1])
+            .unwrap();
+    }
+    let _b = open_day(&path, &wall);
+    for file in [&events, &receipts] {
+        assert_eq!(count(file, &format!("SELECT count(*) FROM rows WHERE main > {head}")), 0, "{}", file.display());
+    }
+}
+
+fn open_day(path: &Path, wall: &VirtualClock) -> SqliteBackend {
+    SqliteBackend::open(path, day_opts(wall)).unwrap()
+}
+
+#[test]
+fn a_retired_events_file_waits_for_the_range_in_flight_and_then_leaves_nothing_behind() {
+    let dir = TempDir::new("sqlite-event-retire-wait");
+    let wall = VirtualClock::new(D0);
+    let armed = Arc::new(AtomicBool::new(false));
+    let barrier = Arc::new(std::sync::Barrier::new(2));
+    let probe = {
+        let (armed, barrier) = (armed.clone(), barrier.clone());
+        Arc::new(move || {
+            if armed.swap(false, Ordering::SeqCst) {
+                barrier.wait();
+                barrier.wait();
+            }
+        }) as Arc<dyn Fn() + Send + Sync>
+    };
+    let b = SqliteBackend::open(&dir.path().join("s.db"), Options { read_probe: Some(probe), ..day_opts(&wall) }).unwrap();
+    let ev = |main: u64| put_write(&state_store::events_key(main), b"{}", main, None);
+    b.commit(0, &[ev(1)]).unwrap();
+    let file = dir.path().join("s.events-2024-10-04.db");
+    assert!(file.exists());
+    armed.store(true, Ordering::SeqCst);
+    let reader = {
+        let b = b.clone();
+        std::thread::spawn(move || b.range(state_store::EVENTS_PREFIX, None, usize::MAX, 1))
+    };
+    barrier.wait();
+    wall.advance_to(D0 + 15 * DAY_MS);
+    b.commit(1, &[ev(2)]).unwrap();
+    assert!(file.exists(), "a read is still on the retired file");
+    barrier.wait();
+    let rows = reader.join().unwrap().unwrap();
+    assert_eq!(rows.len(), 1, "every row the range began with");
+    for suffix in ["", "-wal", "-shm"] {
+        let gone = PathBuf::from(format!("{}{suffix}", file.display()));
+        assert!(!gone.exists(), "{} remains", gone.display());
+    }
+    let own = format!("{}/s.events-2024-10-04", dir.path().display());
+    assert_eq!(open_fds_naming(&own), Vec::<String>::new());
+}
+
+fn seed_events(path: &Path, rows: &[(u64, Option<u64>)]) {
+    let conn = rusqlite::Connection::open(path).unwrap();
+    for (i, at) in rows {
+        let value = match at {
+            Some(at) => format!("{{\"data\":{{\"at\":{at}}}}}"),
+            None => "{\"data\":{}}".to_string(),
+        };
+        for table in ["latest", "versions"] {
+            conn.prepare(&format!(
+                "INSERT INTO {table} (key, main, sub, value, create_main, create_sub, version)
+                 VALUES (CAST(?1 AS BLOB), 1, 0, ?2, 1, 0, 1)"
+            ))
+            .unwrap()
+            .execute(rusqlite::params![format!("events/{i:020}"), value.as_bytes()])
+            .unwrap();
+        }
+    }
+}
+
+fn events_left(path: &Path) -> i64 {
+    count(path, "SELECT count(*) FROM latest WHERE CAST(key AS TEXT) LIKE 'events/%'")
+}
+
+fn seeded_store(dir: &TempDir, wall: &VirtualClock, rows: &[(u64, Option<u64>)]) -> (PathBuf, SqliteBackend) {
+    let path = dir.path().join("s.db");
+    let b = open_day(&path, wall);
+    b.commit(0, &[put_write("live/a", b"1", 1, None)]).unwrap();
+    drop(b);
+    seed_events(&path, rows);
+    let b = open_day(&path, wall);
+    (path, b)
+}
+
+fn live_commit(b: &SqliteBackend, i: u64) {
+    let head = b.head().unwrap();
+    b.commit(head, &[put_write(&format!("live/{i}"), b"1", head + 1, None)]).unwrap();
+}
+
+#[test]
+fn main_file_events_older_than_fourteen_days_drain_five_hundred_a_commit_and_the_rest_stay() {
+    let dir = TempDir::new("sqlite-event-drain");
+    let wall = VirtualClock::new(D0 + 30 * DAY_MS);
+    let rows: Vec<(u64, Option<u64>)> =
+        (1..=1_200).map(|i| (i, Some(if i <= 1_000 { D0 } else { D0 + 29 * DAY_MS }))).collect();
+    let (path, b) = seeded_store(&dir, &wall, &rows);
+    let mut seen = Vec::new();
+    for i in 0..5 {
+        live_commit(&b, i);
+        seen.push(events_left(&path));
+    }
+    assert_eq!(seen, [700, 200, 200, 200, 200]);
+    assert_eq!(count(&path, "SELECT count(*) FROM versions WHERE CAST(key AS TEXT) LIKE 'events/%'"), 200);
+}
+
+#[test]
+fn unstamped_main_file_events_are_as_old_as_the_first_stamped_one_after_them() {
+    let dir = TempDir::new("sqlite-event-unstamped");
+    let wall = VirtualClock::new(D0 + 30 * DAY_MS);
+    let rows = [(1, None), (2, None), (3, Some(D0)), (4, Some(D0 + 29 * DAY_MS))];
+    let (path, b) = seeded_store(&dir, &wall, &rows);
+    live_commit(&b, 1);
+    assert_eq!(events_left(&path), 1);
+    let dir = TempDir::new("sqlite-event-unstamped-young");
+    let rows = [(1, None), (2, Some(D0 + 29 * DAY_MS))];
+    let (path, b) = seeded_store(&dir, &wall, &rows);
+    live_commit(&b, 1);
+    assert_eq!(events_left(&path), 2, "nothing older than the window is stamped");
+}
+
 #[test]
 fn log_over_a_mixed_batch_sequence_is_the_same_on_the_memory_and_the_sqlite_backends() {
     let dir = TempDir::new("sqlite-log-same");
