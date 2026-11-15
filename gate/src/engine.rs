@@ -345,21 +345,24 @@ impl<'w, W: World> Trial<'w, W> {
             );
         }
 
-        let Some(cite) = w.which("commit-cite.sh") else {
+        let Some(cite) = w.which("spira-lc") else {
             return v(
                 NOVERDICT,
                 "missing-commit-cite",
-                "gate: commit-cite.sh is not on PATH — refusing to land unchecked".to_string(),
+                "gate: spira-lc is not on PATH — refusing to land unchecked".to_string(),
             );
         };
         let (cite_rc, cite_out) = w.commit_cite(&cite, &repo, &base_rev, &br);
-        if cite_rc == 3 {
-            return v(NOVERDICT, "commit-cite-fault", format!(
-                "gate: the bead store did not answer — the commit-citation check did not run.\ngate: this is a machinery fault, not a branch fault.\n{cite_out}"));
-        }
-        if cite_rc != 0 {
-            return v(FAIL, "phantom-bead-id", format!(
-                "gate: {br} cites a bead id that does not exist:\n{cite_out}"));
+        match cite_rc {
+            0 => {}
+            3 => {
+                return v(FAIL, "phantom-bead-id", format!(
+                    "gate: {br} cites a bead id that does not exist:\n{cite_out}"));
+            }
+            _ => {
+                return v(NOVERDICT, "commit-cite-fault", format!(
+                    "gate: the bead store did not answer — the commit-citation check did not run.\ngate: this is a machinery fault, not a branch fault.\n{cite_out}"));
+            }
         }
 
         // LAYER 2 — the repository's own gate. THE TREE OWNS ITS GATE (sp-quu2w): the

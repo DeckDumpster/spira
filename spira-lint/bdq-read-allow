@@ -65,7 +65,6 @@
 1 spira-world/src/checkpoint.rs
 1 spira-world/src/freeze.rs
 2 spira/citations.sh
-1 spira/commit-cite.sh
 1 spira/confine.sh
 2 spira/first-run.sh
 1 spira/law-synth.sh

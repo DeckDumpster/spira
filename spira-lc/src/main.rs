@@ -18,6 +18,7 @@ mod bd;
 mod bd_facts;
 mod callers;
 mod churn;
+mod cite_check;
 mod claim_sync;
 mod claim_verdicts;
 mod classify_cmd;
@@ -179,6 +180,15 @@ fn main() {
                 std::process::exit(CANNOT_TELL);
             }
         }
+    }
+
+    // cite-check reads the bead store itself (bd::LiveBd), never the service socket or `Conn`.
+    if args.first().map(String::as_str) == Some("cite-check") {
+        let (code, out) = cite_check::run(&args[1..]);
+        if !out.is_empty() {
+            println!("{out}");
+        }
+        std::process::exit(code);
     }
 
     // The caller verbs proved from the caller's own git checkout (callers.rs; DESIGN.md §2).
