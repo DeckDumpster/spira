@@ -939,7 +939,9 @@ pub mod edge {
     pub fn reconcile(e: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
         let s = step(spec)?;
         let started = queue_leg(e, &format!("reconcile.{}", s.batch), &["verdict", &s.repo])?;
-        queue::ops::forge_batch::clear_pending(&e.world.queue_dir, &s.repo)?;
+        if let Err(why) = queue::ops::forge_batch::clear_pending(&e.world.queue_dir, &s.repo) {
+            eprintln!("queue.step.reconcile: {} left in place: {why}", s.repo);
+        }
         Ok(started)
     }
 
