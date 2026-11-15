@@ -1167,8 +1167,7 @@ fn sweep_row(r: &Value) -> Option<Row> {
             other => Some(other.to_string()),
         },
         hold_review: None,
-        claim_verdict: r["claim_verdict"].as_str().map(str::to_string),
-        claim_at: r["claim_at"].as_str().map(str::to_string),
+        claim: r["claim_view"]["verdict"].as_str().map(str::to_string),
     })
 }
 
@@ -1279,10 +1278,10 @@ mod sweep_row_tests {
     use super::*;
 
     #[test]
-    fn a_list_row_keeps_the_claim_rules_verdict_and_when_it_judged() {
-        let r = sweep_row(&serde_json::json!({"bead_id": "sp-r", "state": "REWORK", "claim_verdict": "claimable", "claim_at": "2026-11-14T17:37:00Z"})).unwrap();
-        assert_eq!((r.claim_verdict.as_deref(), r.claim_at.as_deref()), (Some("claimable"), Some("2026-11-14T17:37:00Z")));
+    fn a_list_row_keeps_the_claim_views_verdict() {
+        let r = sweep_row(&serde_json::json!({"bead_id": "sp-r", "state": "REWORK", "claim_view": {"verdict": "claimable", "blocker": null, "runes": ["a"]}})).unwrap();
+        assert_eq!(r.claim.as_deref(), Some("claimable"));
         let bare = sweep_row(&serde_json::json!({"bead_id": "sp-r"})).unwrap();
-        assert_eq!((bare.claim_verdict, bare.claim_at), (None, None));
+        assert_eq!(bare.claim, None);
     }
 }

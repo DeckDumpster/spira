@@ -47,9 +47,8 @@ pub struct Row {
     pub holder: Option<String>,
     /// The review-by reason read from the hold's history when the row's own reason lost it.
     pub hold_review: Option<String>,
-    /// The claim rule's verdict on this row and when it judged (ISO-8601).
-    pub claim_verdict: Option<String>,
-    pub claim_at: Option<String>,
+    /// The claim rule's verdict on this row, as the `list` read computed it.
+    pub claim: Option<String>,
 }
 
 /// The call scheduler's judgement of task room: since when a slot has been open, and when it last judged.
@@ -314,17 +313,10 @@ pub fn suspects(p: &BeadSweep, snap: &Snapshot, room: Option<&Room>, now: f64) -
 fn unclaimed_rework(p: &BeadSweep, r: &Row, room: Option<&Room>, why: &str, now: f64) -> Option<String> {
     let stale = |at: f64| (now - at) / 60.0 > p.rework_min as f64;
     let head = format!("UNCLAIMED REWORK over {}m", p.rework_min);
-    let claim_at = r.claim_at.as_deref();
-    match r.claim_verdict.as_deref() {
-        Some("claimable") if claim_at.and_then(bead::claimdesc::parse_iso).is_some_and(|t| !stale(t as f64)) => {}
-        Some(v) if v != "claimable" => return None,
-        Some(_) | None => {
-            let from = match (r.claim_verdict.as_ref(), claim_at) {
-                (Some(_), Some(at)) => format!("verdict from {at}"),
-                _ => "no verdict".to_string(),
-            };
-            return Some(format!("{head} ({why}; claimability unknown: {from})"));
-        }
+    match r.claim.as_deref() {
+        Some("claimable") => {}
+        Some(_) => return None,
+        None => return Some(format!("{head} ({why}; claimability unknown: no verdict)")),
     }
     let Some(room) = room.filter(|x| !stale(x.at_ms as f64 / 1000.0)) else {
         let judged = room.map_or("the scheduler has not judged".to_string(), |x| format!("judged at {}", iso8601(x.at_ms / 1000)));
@@ -437,7 +429,7 @@ mod tests {
     const NOW: f64 = 3600.0;
 
     fn rework(verdict: Option<&str>) -> Snapshot {
-        let row = Row { id: "sp-r".into(), state: "REWORK".into(), since: Some(0.0), reason: "suites-failed".into(), claim_verdict: verdict.map(str::to_string), claim_at: verdict.map(|_| "1970-01-01T00:59:00Z".to_string()), ..Row::default() };
+        let row = Row { id: "sp-r".into(), state: "REWORK".into(), since: Some(0.0), reason: "suites-failed".into(), claim: verdict.map(str::to_string), ..Row::default() };
         Snapshot { rows: vec![row], ..Snapshot::default() }
     }
 
@@ -476,14 +468,9 @@ mod tests {
     }
 
     #[test]
-    fn a_missing_or_old_verdict_raises_a_row_that_says_so() {
-        let room = Some(Room { since_ms: None, at_ms: 3_600_000 });
-        let say = said(&rework(None), room);
+    fn a_missing_verdict_raises_a_row_that_says_so() {
+        let say = said(&rework(None), Some(Room { since_ms: None, at_ms: 3_600_000 }));
         assert!(say.len() == 1 && say[0].contains("claimability unknown: no verdict"), "{say:?}");
-        let mut snap = rework(Some("claimable"));
-        snap.rows[0].claim_at = Some("1970-01-01T00:10:00Z".into());
-        let say = said(&snap, room);
-        assert!(say.len() == 1 && say[0].contains("claimability unknown: verdict from 1970-01-01T00:10:00Z"), "{say:?}");
     }
 
     #[test]
@@ -491,8 +478,7 @@ mod tests {
         use crate::tasks::a::sentinel_call;
         let p = sweep();
         let (mut view, ctx) = (Projection::default(), Ctx::new(0, 0));
-        let mut snap = rework(Some("claimable"));
-        snap.rows[0].claim_at = Some("1970-01-01T00:59:30.5+00:00".into());
+        let snap = rework(Some("claimable"));
         let ask = |view: &mut Projection| {
             let tick = at(view, "t", 3_600_000, EventKind::new(TICK, ""), None);
             let [Command::Probe(observe), _] = &p.handle(&ctx, view, &tick)[..] else { panic!("one look and the next tick") };
