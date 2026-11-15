@@ -235,7 +235,7 @@ pub fn checks_pass_key(head: &str, base: &str, checks_toml: &str) -> String {
 /// does not change what `{affected}` selected), and the checks file's text.
 pub fn checks_pass_key_from(git: &dyn Fn(&[&str]) -> Option<String>, checks_toml: &str) -> Option<String> {
     let head = git(&["rev-parse", "HEAD"])?;
-    let fork = git(&["merge-base", CHECKS_BASE, "HEAD"]).unwrap_or_default();
+    let fork = git(&["merge-base", CHECKS_BASE, "HEAD"])?;
     Some(checks_pass_key(&head, &fork, checks_toml))
 }
 
@@ -866,6 +866,12 @@ mod tests {
             _ => None,
         };
         assert_eq!(checks_pass_key_from(&git, "[[check]]"), checks_pass_key_from(&git, "[[check]]"));
+    }
+
+    #[test]
+    fn a_pass_key_is_none_when_the_fork_cannot_be_read() {
+        let git = |args: &[&str]| (args == ["rev-parse", "HEAD"]).then(|| "T".to_string());
+        assert_eq!(checks_pass_key_from(&git, ""), None);
     }
 
     #[test]
