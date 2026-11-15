@@ -38,7 +38,7 @@ fn main() -> ExitCode {
     }
 }
 
-/// Sessions started before compile admission was deleted still carry this binary as their
+/// Sessions started before the compile pool was deleted still carry this binary as their
 /// RUSTC_WRAPPER: it execs the compiler and reads or writes no pool file.
 fn wrapper(args: &[OsString]) -> ExitCode {
     let inner = std::env::var(admission::INNER_ENV).ok();

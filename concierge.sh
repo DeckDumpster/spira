@@ -364,7 +364,7 @@ start)
         exit 1
     }
     # SPIRA_TOML RIDES INTO THE SESSION THE SAME WAY (sp-p35wed): every shell and subagent the
-    # Concierge starts resolves config from it, and spira-admit refuses a compile without it.
+    # Concierge starts resolves config from it.
     # No check here: conf.sh already refused, and the source line above exited, if it is unset
     # or any layer names no file — so by now it holds the value this process resolved (the
     # unit's, or a suite's base:override layers), handed on verbatim and never defaulted
