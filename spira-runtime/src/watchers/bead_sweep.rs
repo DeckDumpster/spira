@@ -47,6 +47,9 @@ pub struct Row {
     pub holder: Option<String>,
     /// The review-by reason read from the hold's history when the row's own reason lost it.
     pub hold_review: Option<String>,
+    /// When the manual hold the bead is under now was applied.
+    #[serde(default)]
+    pub held_at: Option<f64>,
     /// The claim rule's verdict on this row, as the `list` read computed it.
     pub claim: Option<String>,
 }
@@ -180,18 +183,35 @@ fn truthy(v: Option<&Value>) -> bool {
     }
 }
 
-/// The review-by reason of the hold a bead is under now: the newest applied Hold since the newest applied Unhold.
-pub fn review_in_history(history: &Value) -> Option<String> {
+fn manual_kind(e: &Value) -> bool {
+    let mut ev = e["evidence"].clone();
+    if let Value::String(s) = &ev {
+        ev = serde_json::from_str(s).unwrap_or_default();
+    }
+    ev[e["event"].as_str().unwrap_or_default()]["kind"] == "Manual"
+}
+
+/// When the manual hold a bead is under now was applied, and its review-by reason: the newest applied manual Hold with no applied manual Unhold after it.
+pub fn hold_in_history(history: &Value) -> Option<(f64, Option<String>)> {
     for e in history.as_array()?.iter().rev() {
-        let applied = truthy(e.get("applied"));
-        if e["event"] == "Unhold" && applied {
+        if !truthy(e.get("applied")) || !manual_kind(e) {
+            continue;
+        }
+        if e["event"] == "Unhold" {
             return None;
         }
-        if e["event"] == "Hold" && applied {
-            return details(&e["evidence"]).into_iter().find(|d| review(d).is_some());
+        if e["event"] == "Hold" {
+            return Some((e["at"].as_f64()?, details(&e["evidence"]).into_iter().find(|d| review(d).is_some())));
         }
     }
     None
+}
+
+/// One SUSPECT line and the key the carry remembers it by.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Suspect {
+    pub key: String,
+    pub line: String,
 }
 
 fn py_list(items: &[String]) -> String {
@@ -222,7 +242,7 @@ fn is_ours(ask_label: &str, b: &Bead, rows: &BTreeSet<&str>, term: &BTreeSet<&st
 }
 
 /// The SUSPECT lines of one pass, in the order the sweep prints them.
-pub fn suspects(p: &BeadSweep, snap: &Snapshot, room: Option<&Room>, now: f64) -> Vec<String> {
+pub fn suspects(p: &BeadSweep, snap: &Snapshot, room: Option<&Room>, now: f64) -> Vec<Suspect> {
     let home = format!("repo:{}", p.home_repo);
     let rows: BTreeMap<&str, &Row> = snap.rows.iter().map(|r| (r.id.as_str(), r)).collect();
     let row_ids: BTreeSet<&str> = rows.keys().copied().collect();
@@ -240,7 +260,7 @@ pub fn suspects(p: &BeadSweep, snap: &Snapshot, room: Option<&Room>, now: f64) -
             *e = e.min(since);
         }
     }
-    let mut out: Vec<String> = snap.content.iter().filter(|b| is_ours(&p.ask_label, b, &row_ids, &term_ids)).map(|b| format!("{} ROWLESS open bead with no lifecycle row", b.id)).collect();
+    let mut out: Vec<(String, String)> = snap.content.iter().filter(|b| is_ours(&p.ask_label, b, &row_ids, &term_ids)).map(|b| format!("{} ROWLESS open bead with no lifecycle row", b.id)).map(|l| (l.clone(), l)).collect();
     for (&i, r) in &rows {
         let st = r.state.as_str();
         let labels: &[String] = content.get(i).map(|b| b.labels.as_slice()).unwrap_or_default();
@@ -257,6 +277,7 @@ pub fn suspects(p: &BeadSweep, snap: &Snapshot, room: Option<&Room>, now: f64) -
             || matches!(st, "SUBMITTED" | "CERTIFIED") && lane_stopped(labels, "rounds")
             || st == "CERTIFIED" && !labels.contains(&home) && queued_behind_batch;
         let carrier = snap.carried.iter().find(|(x, ms)| ms.iter().any(|m| m == i) && rows.contains_key(x.as_str())).map(|(x, _)| x.as_str());
+        let mut key_tail: Option<String> = None;
         let suspect = if labels.contains(&p.ask_label) {
             None
         } else if has("poison") {
@@ -269,8 +290,17 @@ pub fn suspects(p: &BeadSweep, snap: &Snapshot, room: Option<&Room>, now: f64) -
                 let (y, m, d) = civil(due.div_euclid(86_400));
                 format!("HOLD REVIEW OVERDUE since {y:04}-{m:02}-{d:02} ({text})")
             })
-        } else if has("manual") && age > p.hold_min as i64 {
-            Some(format!("STALE HOLD manual, over {}m, no review-by ({why})", p.hold_min))
+        } else if has("manual") {
+            match r.held_at {
+                None => Some(format!("MANUAL HOLD with no Hold event in its history ({why})")),
+                Some(at) => {
+                    let held = ((now - at) / 60.0).trunc() as i64;
+                    (held > p.hold_min as i64).then(|| {
+                        key_tail = Some(format!("STALE HOLD manual, no review date; set one with --review-by ({why})"));
+                        format!("STALE HOLD manual, held {}h{:02}m, no review date; set one with --review-by ({why})", held / 60, held % 60)
+                    })
+                }
+            }
         } else if !r.holds.is_empty() {
             None
         } else if !r.blocked_by.is_empty() && live.is_empty() {
@@ -293,20 +323,24 @@ pub fn suspects(p: &BeadSweep, snap: &Snapshot, room: Option<&Room>, now: f64) -
             None
         };
         if let Some(msg) = suspect {
-            out.push(format!("{i} {st} {msg}").trim_end().to_string());
+            let line = format!("{i} {st} {msg}").trim_end().to_string();
+            let key = key_tail.map_or_else(|| line.clone(), |k| format!("{i} {st} {k}"));
+            out.push((key, line));
         }
     }
     for s in &snap.stops {
         if now - s.since >= p.stop_review_secs as f64 {
-            out.push(format!("- SCOPED stop {} {} OVERDUE: owner {}, release condition: {}", s.repo, s.lanes.join(","), s.owner, if s.until.is_empty() { "the bead lands" } else { &s.until }));
+            let l = format!("- SCOPED stop {} {} OVERDUE: owner {}, release condition: {}", s.repo, s.lanes.join(","), s.owner, if s.until.is_empty() { "the bead lands" } else { &s.until });
+            out.push((l.clone(), l));
         }
     }
     for s in &snap.reserved {
         if now - s.since >= p.stop_review_secs as f64 {
-            out.push(format!("- SCOPED reservation {} OVERDUE: owner {}, release condition: {}", s.bead, s.owner, if s.until.is_empty() { "the bead lands" } else { &s.until }));
+            let l = format!("- SCOPED reservation {} OVERDUE: owner {}, release condition: {}", s.bead, s.owner, if s.until.is_empty() { "the bead lands" } else { &s.until });
+            out.push((l.clone(), l));
         }
     }
-    out.into_iter().map(|l| format!("SUSPECT {l}")).collect()
+    out.into_iter().map(|(k, l)| Suspect { key: format!("SUSPECT {k}"), line: format!("SUSPECT {l}") }).collect()
 }
 
 /// The row for a REWORK bead past the threshold, or none while the claim rule or a full scheduler explains the wait.
@@ -333,13 +367,13 @@ pub fn decide(p: &BeadSweep, carry: &Carry, snap: &Snapshot, room: Option<&Room>
             say.push(format!("REPAIRED {id} open bead had no lifecycle row; created it (priority {}, repo {})", b.priority, b.labels.iter().find_map(|l| l.strip_prefix("repo:")).unwrap_or("none")));
         }
     }
-    let now_set: Vec<String> = suspects(p, snap, room, now).into_iter().filter(|l| !repaired.iter().any(|id| l.starts_with(&format!("SUSPECT {id} ROWLESS")))).collect();
+    let now_set: Vec<Suspect> = suspects(p, snap, room, now).into_iter().filter(|s| !repaired.iter().any(|id| s.line.starts_with(&format!("SUSPECT {id} ROWLESS")))).collect();
     let mut next = Carry::default();
-    for l in now_set {
-        if !carry.seen.contains(&l) {
-            say.push(l.clone());
+    for s in now_set {
+        if !carry.seen.contains(&s.key) {
+            say.push(s.line);
         }
-        next.seen.insert(l);
+        next.seen.insert(s.key);
     }
     (next, say)
 }
@@ -491,6 +525,42 @@ mod tests {
         let state = sentinel_call::Carry { room_since_ms: None, room_at_ms: Some(3_600_000), ..Default::default() };
         view.push(&Event { id: EventId("s".into()), stream: StreamKey(sentinel_call::STREAM.into()), kind: EventKind::new(sentinel_call::STATE, &serde_json::to_string(&state).unwrap()), at: 1, cause: None, correlation: CorrelationId("s".into()) });
         assert_eq!(ask(&mut view), 1, "a full pool says nothing, so only the state");
+    }
+
+    fn held(held_at: Option<f64>) -> Snapshot {
+        let row = Row { id: "sp-h".into(), state: "READY".into(), holds: vec!["manual".into()], since: Some(NOW - 86_400.0), held_at, ..Row::default() };
+        Snapshot { rows: vec![row], ..Snapshot::default() }
+    }
+
+    #[test]
+    fn a_fresh_hold_on_an_old_ready_bead_is_not_stale() {
+        assert!(said(&held(Some(NOW - 600.0)), None).is_empty());
+    }
+
+    #[test]
+    fn an_old_hold_states_its_own_age_and_is_said_once() {
+        let p = sweep();
+        let snap = held(Some(NOW - 10_800.0));
+        let (c, say) = decide(&p, &Carry::default(), &snap, None, &[], NOW);
+        assert_eq!(say.len(), 1);
+        assert!(say[0].contains("held 3h00m") && say[0].contains("no review date; set one with --review-by"), "{say:?}");
+        assert!(decide(&p, &c, &snap, None, &[], NOW + 1800.0).1.is_empty());
+    }
+
+    #[test]
+    fn a_hold_with_no_hold_event_is_said_without_an_age() {
+        let say = said(&held(None), None);
+        assert_eq!(say, ["SUSPECT sp-h READY MANUAL HOLD with no Hold event in its history ()"]);
+    }
+
+    #[test]
+    fn the_hold_a_bead_is_under_is_the_newest_manual_hold_not_since_unheld() {
+        let ev = |event: &str, at: u64, detail: &str| serde_json::json!({"event": event, "applied": true, "at": at, "evidence": {event: {"kind": "Manual", "detail": detail}}});
+        let h = serde_json::json!([ev("Hold", 100, ""), ev("Unhold", 200, ""), ev("Hold", 300, "review-by:2026-12-01 x")]);
+        assert_eq!(hold_in_history(&h), Some((300.0, Some("review-by:2026-12-01 x".to_string()))));
+        let mut a = h.as_array().unwrap().clone();
+        a.push(ev("Unhold", 400, ""));
+        assert_eq!(hold_in_history(&serde_json::Value::Array(a)), None);
     }
 
     #[test]
