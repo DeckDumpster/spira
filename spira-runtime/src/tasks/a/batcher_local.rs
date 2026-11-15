@@ -79,6 +79,7 @@
 //! | `batcher.local.abandon` / `.promote` | store | 30 s | batch | already closed (`io.rs:1823`, `:1945`) |
 //! | `batcher.local.redrive` | unit | 60 s | batch | once per orphan (`io.rs:1772`) |
 //! | `batcher.local.file` (incident/judgement/flip) | store | 30 s | incident ref, e.g. `round-orphan:<repo>:<batch>` | duplicate ref (`io.rs:1780`, `:2066`, `:2129`, `:2178`) |
+//! | `batcher.local.supersede_reds` | store | 30 s | repo + landed head | none: the close says its failure and never blocks the landing (`io.rs:2435`) |
 //! | `batcher.local.pause` | store | 5 s | repo + lane | — (`pace.rs:248`) |
 //! | `inbox.append` | store | 10 s | line | — (`pace.rs:269`, `main.rs:930`) |
 //!
@@ -132,6 +133,7 @@ pub const ABANDON: &str = "batcher.local.abandon";
 pub const PROMOTE: &str = "batcher.local.promote";
 pub const REDRIVE: &str = "batcher.local.redrive";
 pub const FILE: &str = "batcher.local.file";
+pub const SUPERSEDE_REDS: &str = "batcher.local.supersede_reds";
 pub const PAUSE: &str = "batcher.local.pause";
 pub const KEEP_CERTIFY_OUTPUT: &str = "batcher.local.keep_certify_output";
 pub const INBOX_APPEND: &str = crate::watchers::INBOX_APPEND;
@@ -166,6 +168,7 @@ pub const ACTS: &[(&str, u64)] = &[
     (PROMOTE, 30_000),
     (REDRIVE, 60_000),
     (FILE, 30_000),
+    (SUPERSEDE_REDS, 30_000),
     (PAUSE, 5_000),
     (KEEP_CERTIFY_OUTPUT, 5_000),
     (INBOX_APPEND, 10_000),
@@ -173,7 +176,7 @@ pub const ACTS: &[(&str, u64)] = &[
 pub const EMITS: &[EventKindTag] = &[];
 /// Hand-offs that wake it at once, besides its tick: a submission sifted, a batch settled.
 pub const WAKES: &[EventKindTag] = &[kit::WORK_SUBMITTED, super::queue_step::CUT_WANTED];
-pub const EFFECTS: &[&str] = &[runtime::units::UNIT_FACTS, OBSERVE, FETCH, ASSEMBLE, ROUND_OPEN, CORPUS, STAGE, STAGE_TEST, EJECT, EJECT_GATE_RED, PREEMPT, WITHDRAW, REBASE_STALE, CERTIFY, LC_CERTIFY, LAND, ABANDON, PROMOTE, REDRIVE, FILE, PAUSE, KEEP_CERTIFY_OUTPUT, INBOX_APPEND];
+pub const EFFECTS: &[&str] = &[runtime::units::UNIT_FACTS, OBSERVE, FETCH, ASSEMBLE, ROUND_OPEN, CORPUS, STAGE, STAGE_TEST, EJECT, EJECT_GATE_RED, PREEMPT, WITHDRAW, REBASE_STALE, CERTIFY, LC_CERTIFY, LAND, ABANDON, PROMOTE, REDRIVE, FILE, SUPERSEDE_REDS, PAUSE, KEEP_CERTIFY_OUTPUT, INBOX_APPEND];
 pub const KEYS: &[&str] = &[
     "SPIRA_RUN",
     "SPIRA_DB",
@@ -1948,6 +1951,7 @@ impl Machine<'_> {
                     self.base_moved(&base);
                     return;
                 }
+                self.acts.push(Leg { key: format!("supersede:{}", leg.batch), ..Leg::on(self.repo) }.act(SUPERSEDE_REDS));
                 match l.staged {
                     Some(staged) => {
                         self.go(Trigger::LandedStaged);
@@ -2911,6 +2915,15 @@ pub mod edge {
     pub fn file(_: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
         let (env, leg) = (env()?, leg(spec)?);
         io::file_orphan_round_incident(&env, &repo_of(&env, &leg)?, &leg.batch, &leg.why)
+    }
+
+    /// A round landed: the repo's open local-red incidents are over, and the landed head names the close.
+    pub fn supersede_reds(_: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
+        let (env, leg) = (env()?, leg(spec)?);
+        let repo = repo_of(&env, &leg)?;
+        let head = io::resolve_base_sha(&repo)?;
+        batcher_cut::io::close_superseded_reds(&repo, &head);
+        Ok("{}".into())
     }
 
     /// Keeps a certify leg's full output where `leg.key` (relative to the run dir's parent) names it.
