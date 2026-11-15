@@ -324,7 +324,7 @@ pub fn drive<R: RoundRunner, O: RoundOps + ?Sized>(
             let now = runner.now();
             return Ok(Settled {
                 preempt: None,
-                decision: Decision::default(),
+                decision: a.decision(),
                 end: MainEnd::Ran,
                 main_end_at: now,
                 settled_at: now,
@@ -3349,6 +3349,35 @@ pub(crate) mod tests {
         assert_eq!(ops.returned.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(), ["m2"]);
         assert_eq!(ops.owner_flags.iter().find(|(id, _)| id == "m1"), Some(&("m1".to_string(), false)));
         assert_eq!(ops.rebuilt[0], vec!["m3".to_string()]);
+    }
+
+    #[test]
+    fn the_pass_after_a_mid_pass_return_verifies_every_suite_already_red_and_each_return_leaves_its_member() {
+        let clock = std::rc::Rc::new(std::cell::Cell::new(0));
+        let mut f = Fake::new(|s, tree| s == "test-b.sh" && tree.contains("m3"));
+        f.dur.insert("test-a.sh".into(), 600);
+        f.clock = Some(clock.clone());
+        let mut ops = Ops {
+            returns: vec![
+                (6, returned_failure("test-a.sh", "m2")),
+                (6, returned_failure("test-c.sh", "m1")),
+            ],
+            clock: Some(clock),
+            ..Ops::default()
+        };
+        attribute_round(
+            &mut f,
+            &mut ops,
+            &["test-b.sh".to_string(), "test-a.sh".to_string()],
+            three(),
+            Budget { slots: 8, maxpar: 2 },
+        )
+        .unwrap();
+        let mut gone: Vec<&str> = ops.returned.iter().map(|(id, _)| id.as_str()).collect();
+        gone.sort();
+        assert_eq!(gone, ["m1", "m2"]);
+        assert_eq!(f.main_kind[1].0, MainKind::Verify);
+        assert!(f.main_kind[1].1.contains(&"test-b.sh".to_string()), "{:?}", f.main_kind[1]);
     }
 
     #[test]
