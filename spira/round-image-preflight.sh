@@ -9,6 +9,9 @@
 # line alone. The inputs are read from round-vm/src/recipe.rs, the file the image hash is
 # computed from, never from a second list. A red prints the failing setup line and the last
 # 40 lines of output.
+#
+# Under SPIRA_PREFLIGHT_CACHE_ROOT it keeps cache/, storage/ (podman's graphroot), run/ (podman's
+# runroot, so its layer-mount records never share a file with other containers') and tmp/.
 
 # covers: spira/round-image-preflight.sh spira/round-image-preflight-guest.sh round-vm/ami-setup.sh round-vm/src/template.sh round-vm/src/recipe.rs rust-toolchain.toml flake.nix flake.lock spira/testenv/Containerfile
 set -uo pipefail
@@ -100,12 +103,14 @@ case "$rot" in
     *) echo "round-image-preflight: SPIRA_PREFLIGHT_CACHE_ROOT resolves to $ROOT, whose disk cannot be read from ${SYSFS}; refusing" >&2; exit 75 ;;
 esac
 CACHE="$ROOT/cache"
-mkdir -p "$CACHE/registry" "$CACHE/target" "$CACHE/apt" "$CACHE/toolchains" "$ROOT/storage" "$ROOT/tmp" || exit 75
+mkdir -p "$CACHE/registry" "$CACHE/target" "$CACHE/apt" "$CACHE/toolchains" "$ROOT/storage" "$ROOT/run" "$ROOT/tmp" || exit 75
 export TMPDIR="$ROOT/tmp"
 log="$(mktemp)"; list="$(mktemp)"; trap 'rm -f "$log" "$list"' EXIT
 git -C "$TREE" ls-files -z --cached --others --exclude-standard \
     | while IFS= read -r -d '' f; do if [ -e "$TREE/$f" ] || [ -L "$TREE/$f" ]; then printf '%s\0' "$f"; fi; done > "$list" \
     || { echo "round-image-preflight: cannot list the tree's source files" >&2; exit 1; }
+# No --tmpdir: a fresh libpod tmpdir runs refresh, which frees every lock in uid-wide SHM shared with running containers (sp-s2gurw).
+PODMAN=(podman --root "$ROOT/storage" --runroot "$ROOT/run")
 mounts=(-v "$TREE:/src:ro" -v "$list:/tree.list:ro" -v "$HERE/round-image-preflight-guest.sh:/guest.sh:ro"
         -v "$CACHE/registry:/cache/registry" -v "$CACHE/target:/cache/target"
         -v "$CACHE/apt:/var/cache/apt/archives" -v "$CACHE/toolchains:/cache/toolchains")
@@ -119,12 +124,12 @@ fi
 start=$SECONDS
 if [ "$pkg_only" = 1 ]; then
     printf '%s\n' 'set -euo pipefail' 'export DEBIAN_FRONTEND=noninteractive' 'apt-get update -qq' "$apt_line" \
-        | timeout "$LIMIT" podman --root "$ROOT/storage" run --rm -i --network host -v "$CACHE/apt:/var/cache/apt/archives" "$IMAGE" \
+        | timeout "$LIMIT" "${PODMAN[@]}" run --rm -i --network host -v "$CACHE/apt:/var/cache/apt/archives" "$IMAGE" \
             bash -s >"$log" 2>&1
 else
     toolchain="$(sed -n 's/^channel *= *"\(.*\)"/\1/p' "$TREE/rust-toolchain.toml")"
     [ -n "$toolchain" ] || { echo "round-image-preflight: no channel in rust-toolchain.toml" >&2; exit 1; }
-    timeout "$LIMIT" podman --root "$ROOT/storage" run --rm --network host "${mounts[@]}" "$IMAGE" \
+    timeout "$LIMIT" "${PODMAN[@]}" run --rm --network host "${mounts[@]}" "$IMAGE" \
         bash /guest.sh "$toolchain" >"$log" 2>&1
 fi
 rc=$?

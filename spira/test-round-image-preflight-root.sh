@@ -83,6 +83,26 @@ bad_srcs="$(printf '%s\n' "$srcs" | grep -v "^$SCRATCH/" || true)"
 [ -n "$srcs" ] && [ -z "$bad_srcs" ] && ok "(b) every cache mount source is under the root" || bad "(b) every cache mount source is under the root" "srcs=[$srcs] outside=[$bad_srcs]"
 want "(b) TMPDIR for podman is under the root" "TMPDIR=$SCRATCH/tmp" "$(cat "$W/rec/env")"
 
+want "(b) podman runroot is under the root" "--runroot $SCRATCH/run" "$argv"
+nowant "(b) podman is given no --tmpdir" "--tmpdir" "$argv"
+[ "$(grep -c -- "--runroot $SCRATCH/run" "$W/rec/argv")" = "$(grep -c . "$W/rec/argv")" ] \
+    && ok "(b) every podman call carries the runroot" || bad "(b) every podman call carries the runroot" "$argv"
+
+# the package-list-only path: a diff that edits only the apt-get install line
+git -C "$T" -c user.email=t@t -c user.name=t commit -qm base
+printf 'apt-get install -y curl\n' > "$T/round-vm/ami-setup.sh"
+git -C "$T" -c user.email=t@t -c user.name=t commit -qam base2
+printf 'apt-get install -y curl git\n' > "$T/round-vm/ami-setup.sh"
+git -C "$T" -c user.email=t@t -c user.name=t commit -qam pkgs
+rm -f "$W/rec"/*
+env -i PATH="$W/bin:$PATH" HOME="$W/home" REC="$W/rec" SPIRA_TOML="$(tl_layer SPIRA_PREFLIGHT_CACHE_ROOT="$SCRATCH")" \
+    bash "$HERE/round-image-preflight.sh" --tree "$T" --base HEAD~1 --head HEAD --sysfs "$NONROT" >"$W/out" 2>"$W/err"; rc=$?
+wantrc "(b) the package-list-only path runs" 0 "$rc"
+want "(b) it took the package-list-only path" "package list installs" "$(cat "$W/out")"
+argv="$(cat "$W/rec/argv" 2>/dev/null)"
+want "(b) package-only podman carries the runroot" "--runroot $SCRATCH/run" "$argv"
+nowant "(b) package-only podman is given no --tmpdir" "--tmpdir" "$argv"
+
 run_pf "$SCRATCH" --sysfs "$ROT"; rc=$?
 wantrc "(c) a root on a rotational disk refuses with 75" 75 "$rc"
 want "(c) the refusal names the key" SPIRA_PREFLIGHT_CACHE_ROOT "$(cat "$W/err")"
