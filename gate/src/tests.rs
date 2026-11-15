@@ -589,8 +589,9 @@ impl World for Fake {
         self.prior_since.borrow_mut().push(since);
         self.prior_failures.borrow().clone()
     }
-    fn file_flip(&self, repo: &str, test: &str, _title: &str, body: &str) -> Result<(), String> {
+    fn file_flip(&self, repo: &str, test: &str, title: &str, body: &str) -> Result<(), String> {
         self.flips.borrow_mut().push((repo.into(), test.into()));
+        self.flips_body.borrow_mut().push(title.into());
         self.flips_body.borrow_mut().push(body.into());
         self.flip_answer.borrow().clone()
     }
@@ -2902,7 +2903,8 @@ fn a_flip_the_gate_declines_to_judge_files_one_deletion_incident() {
     let f = flip_fake(Ok(vec![other_red("sp-x", "t1", "a.rs"), other_red("sp-y", "t2", "b.rs")]));
     assert_eq!(f.run(), PASS);
     assert_eq!(*f.flips.borrow(), vec![("spira".to_string(), "t::flip".to_string())]);
-    let body = f.flips_body.borrow()[0].clone();
+    let (title, body) = (f.flips_body.borrow()[0].clone(), f.flips_body.borrow()[1].clone());
+    assert_eq!(title, "test t::flip flips: red on 3 beads with disjoint diffs");
     assert!(body.contains("law-a-test-that-flips-is-deleted") && body.contains("sp-x") && body.contains("sp-y"), "{body}");
 }
 
