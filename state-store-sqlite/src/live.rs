@@ -86,6 +86,15 @@ impl<B: Backend + Clone> Backend for Scoped<B> {
             .collect())
     }
 
+    fn due(&self, now: u64, limit: usize, at: u64) -> Result<Vec<String>> {
+        Ok(self
+            .inner
+            .due(now, limit, at)?
+            .into_iter()
+            .filter_map(|k| k.strip_prefix(&self.scope).map(str::to_string))
+            .collect())
+    }
+
     fn commit(&self, expect: u64, batch: &[Write]) -> Result<u64> {
         let batch: Vec<Write> = batch
             .iter()
@@ -178,7 +187,7 @@ live_scenarios!(
     a_put_under_telemetry_or_intents_without_ttl_secs_is_refused,
     ttl_keys_are_gone_after_their_ttl_and_present_one_tick_before,
     a_rewrite_restarts_a_keys_ttl,
-    reopen_restarts_every_ttl,
+    a_reopen_renews_no_lifetime,
     a_gc_expiry_writes_no_events_key,
     a_multi_prefix_list_reads_one_snapshot_while_a_commit_lands_between_prefixes,
     txn_ops_at_the_limit_pass_and_one_over_is_refused,
@@ -193,7 +202,7 @@ live_scenarios!(
     get_and_list_return_a_locks_expiry_and_renew_moves_it_forward,
     a_renew_under_a_new_ttl_keeps_the_token_and_moves_the_expiry,
     a_state_filtered_range_reads_the_keys_in_that_state_at_the_head_and_below_it,
-    gc_range_and_open_skip_the_history_prefix,
+    gc_range_skips_the_history_prefix,
 );
 
 /// Each scenario's store is its own sub-prefix of the run's scope.

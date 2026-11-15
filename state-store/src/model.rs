@@ -463,6 +463,11 @@ impl<B: Backend> Backend for Modeled<B> {
         self.inner.range_outside(skip, after, limit, at)
     }
 
+    fn due(&self, now: u64, limit: usize, at: u64) -> Result<Vec<String>> {
+        self.passed(at);
+        self.inner.due(now, limit, at)
+    }
+
     fn owned_by(&self, owner: &str, after: Option<&str>, limit: usize, at: u64) -> Result<Vec<String>> {
         self.passed(at);
         self.inner.owned_by(owner, after, limit, at)

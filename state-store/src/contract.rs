@@ -259,7 +259,8 @@ pub struct Contract<B: Backend> {
     backend: B,
     ports: Ports,
     cfg: Config,
-    /// Each TTL'd key's expiry on the monotonic clock, restarted on every write and at open.
+    /// Each lock's and request receipt's expiry on the monotonic clock, restarted on every
+    /// write and at open. A `telemetry/` or `intents/` key's expiry is stored in its value.
     deadlines: Mutex<BTreeMap<String, u64>>,
     /// The locks' entries of `deadlines`, for display: a read projecting a lock's expiry takes
     /// this, never `deadlines`, which a commit holds across the backend's write.
@@ -332,6 +333,8 @@ struct Staged {
 }
 
 pub(crate) const PAGE: usize = 1_000;
+/// The keys with a stored expiry one gc pass deletes: eight txns of [`limits::MAX_TXN_OPS`].
+pub const EXPIRE_PER_PASS: usize = 1_024;
 const TRIM_TXNS: usize = 16;
 pub(crate) const COMPACT_STEP: u64 = 5_000;
 pub(crate) const COMPACT_STEPS: usize = 8;
@@ -380,6 +383,28 @@ fn audited<'a>(keys: impl IntoIterator<Item = &'a str>) -> bool {
 /// The prefixes whose keys may carry `ttl_secs`.
 fn ttl_allowed(key: &str) -> bool {
     key.starts_with(REQUESTS_PREFIX) || TTL_PREFIXES.iter().any(|p| key.starts_with(p))
+}
+
+/// The lifetime, in ms, a key under a [`TTL_PREFIXES`] prefix carries in its value.
+fn stored_lifetime(key: &str, v: &Object) -> Option<u64> {
+    if stored_expiry(key) {
+        ttl_ms(key, v)
+    } else {
+        None
+    }
+}
+
+/// The lifetime of a key whose expiry the contract holds in memory: locks and receipts.
+fn held_lifetime(key: &str, v: &Object) -> Option<u64> {
+    if stored_expiry(key) {
+        None
+    } else {
+        ttl_ms(key, v)
+    }
+}
+
+fn stored_expiry(key: &str) -> bool {
+    TTL_PREFIXES.iter().any(|p| key.starts_with(p))
 }
 
 fn ttl_ms(key: &str, v: &Object) -> Option<u64> {
@@ -479,8 +504,9 @@ fn normalize<'a>(prefixes: &[&'a str]) -> Vec<&'a str> {
 }
 
 impl<B: Backend> Contract<B> {
-    /// Opens the store and restarts every TTL, locks' included, at now + TTL: a restart only
-    /// ever lengthens a key's life.
+    /// Opens the store and restarts the TTL of every lock and request receipt at now + TTL: a
+    /// restart only ever lengthens their life. It reads only those two prefixes; a key with a
+    /// stored lifetime keeps the expiry it was written with.
     pub fn open(backend: B, ports: Ports, cfg: Config) -> Result<Self> {
         let c = Contract {
             backend,
@@ -494,20 +520,22 @@ impl<B: Backend> Contract<B> {
         };
         let head = c.backend.head()?;
         let now = c.now_ms();
-        let mut after: Option<String> = None;
         let mut deadlines = BTreeMap::new();
-        loop {
-            let page = c.backend.gc_range(after.as_deref(), PAGE, head)?;
-            for (k, v) in &page {
-                let obj = Object::decode(&v.value)?;
-                if let Some(ttl) = ttl_ms(k, &obj) {
-                    deadlines.insert(k.clone(), now.saturating_add(ttl));
+        for prefix in [LOCKS_PREFIX, REQUESTS_PREFIX] {
+            let mut after: Option<String> = None;
+            loop {
+                let page = c.backend.range(prefix, after.as_deref(), PAGE, head)?;
+                for (k, v) in &page {
+                    let obj = Object::decode(&v.value)?;
+                    if let Some(ttl) = ttl_ms(k, &obj) {
+                        deadlines.insert(k.clone(), now.saturating_add(ttl));
+                    }
                 }
+                if page.len() < PAGE {
+                    break;
+                }
+                after = page.last().map(|(k, _)| k.clone());
             }
-            if page.len() < PAGE {
-                break;
-            }
-            after = page.last().map(|(k, _)| k.clone());
         }
         *c.shown.write().unwrap_or_else(lock_err) = deadlines
             .iter()
@@ -529,6 +557,11 @@ impl<B: Backend> Contract<B> {
 
     pub fn now_ms(&self) -> u64 {
         self.ports.mono.now_ms()
+    }
+
+    /// Wall milliseconds: the clock a stored expiry is judged on.
+    pub fn wall_ms(&self) -> u64 {
+        self.ports.wall.now_ms()
     }
 
     pub fn head(&self) -> Result<u64> {
@@ -1158,6 +1191,9 @@ impl<B: Backend> Contract<B> {
             match o {
                 Op::Put(k, v) => {
                     let mut v = v.clone();
+                    v.metadata.expires_at = stored_lifetime(k, &v)
+                        .filter(|_| marked.is_none())
+                        .map(|ttl| self.ports.wall.now_ms().saturating_add(ttl));
                     if marked.is_some() {
                         v.metadata.deletion_timestamp = marked;
                     }
@@ -1181,6 +1217,7 @@ impl<B: Backend> Contract<B> {
                         let mut v = p.value.clone();
                         v.metadata.deletion_timestamp =
                             Some(marked.unwrap_or_else(|| self.ports.wall.now_ms()));
+                        v.metadata.expires_at = None;
                         out.push(Staged {
                             key: k.clone(),
                             value: Some(v),
@@ -1284,7 +1321,7 @@ impl<B: Backend> Contract<B> {
             let mut shown = self.shown.write().unwrap_or_else(lock_err);
             for s in &staged {
                 let lock = s.key.starts_with(LOCKS_PREFIX);
-                match s.value.as_ref().and_then(|v| ttl_ms(&s.key, v)) {
+                match s.value.as_ref().and_then(|v| held_lifetime(&s.key, v)) {
                     Some(ttl) => {
                         d.insert(s.key.clone(), now.saturating_add(ttl));
                         if lock {
@@ -1307,7 +1344,7 @@ impl<B: Backend> Contract<B> {
         res
     }
 
-    /// Keys whose TTL has run out at `now`, in key order.
+    /// Locks and receipts whose TTL has run out at `now`, in key order.
     pub(crate) fn due(&self, now: u64) -> Vec<String> {
         let d = self.deadlines.lock().unwrap_or_else(lock_err);
         d.iter()
@@ -1361,6 +1398,38 @@ impl<B: Backend> Contract<B> {
                     shown.remove(k);
                 }
             }
+            gone.append(&mut planned);
+        }
+        Ok(gone)
+    }
+
+    /// Deletes the keys of `keys` whose stored `expiresAt` is at or before `now` and that no
+    /// finalizer holds, in unaudited txns. The check is the value at the plan's head, never
+    /// `deadlines`: a key rewritten since it was listed is not due.
+    pub(crate) fn expire_stored(&self, keys: &[String], now: u64) -> Result<Vec<String>> {
+        let mut gone = Vec::new();
+        for chunk in keys.chunks(limits::MAX_TXN_OPS) {
+            let rec = Record {
+                audited: false,
+                idempotent: false,
+                compare_bytes: 0,
+            };
+            let mut planned = Vec::new();
+            self.engine(&Request::new("", "gc", "gc.expire"), rec, |head| {
+                planned.clear();
+                for k in chunk {
+                    if let Some(i) = self.read(k, head)? {
+                        let m = &i.value.metadata;
+                        if m.deletion_timestamp.is_none() && m.expires_at.is_some_and(|at| at <= now) {
+                            planned.push(k.clone());
+                        }
+                    }
+                }
+                Ok(Step::<Infallible>::Apply {
+                    ok: true,
+                    ops: planned.iter().cloned().map(Op::Delete).collect(),
+                })
+            })?;
             gone.append(&mut planned);
         }
         Ok(gone)

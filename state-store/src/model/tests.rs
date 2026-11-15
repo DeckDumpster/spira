@@ -23,6 +23,10 @@ impl Backend for Counted {
     fn head(&self) -> Result<u64> {
         self.inner.head()
     }
+    fn due(&self, now: u64, limit: usize, at: u64) -> Result<Vec<String>> {
+        self.inner.due(now, limit, at)
+    }
+
     fn owned_by(&self, owner: &str, after: Option<&str>, limit: usize, at: u64) -> Result<Vec<String>> {
         self.inner.owned_by(owner, after, limit, at)
     }
@@ -189,6 +193,10 @@ impl Backend for Short {
     fn compacted(&self) -> Result<u64> {
         self.0.compacted()
     }
+    fn due(&self, now: u64, limit: usize, at: u64) -> Result<Vec<String>> {
+        self.0.due(now, limit, at)
+    }
+
     fn owned_by(&self, owner: &str, after: Option<&str>, limit: usize, at: u64) -> Result<Vec<String>> {
         self.0.owned_by(owner, after, limit, at)
     }
@@ -281,6 +289,10 @@ fn a_read_does_not_wait_for_a_commit_in_flight() {
         fn head(&self) -> Result<u64> {
             self.inner.head()
         }
+        fn due(&self, now: u64, limit: usize, at: u64) -> Result<Vec<String>> {
+            self.inner.due(now, limit, at)
+        }
+
         fn owned_by(&self, owner: &str, after: Option<&str>, limit: usize, at: u64) -> Result<Vec<String>> {
             self.inner.owned_by(owner, after, limit, at)
         }

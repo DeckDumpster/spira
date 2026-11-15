@@ -1025,6 +1025,10 @@ impl Backend for Counting {
     fn head(&self) -> state_store::Result<u64> {
         self.inner.head()
     }
+    fn due(&self, now: u64, limit: usize, at: u64) -> state_store::Result<Vec<String>> {
+        self.inner.due(now, limit, at)
+    }
+
     fn owned_by(&self, owner: &str, after: Option<&str>, limit: usize, at: u64) -> state_store::Result<Vec<String>> {
         self.inner.owned_by(owner, after, limit, at)
     }

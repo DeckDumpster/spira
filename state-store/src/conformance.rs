@@ -175,6 +175,10 @@ impl<B: Backend> Backend for Interpose<B> {
         self.record(&rows);
         Ok(rows)
     }
+    fn due(&self, now: u64, limit: usize, at: u64) -> Result<Vec<String>> {
+        self.inner.due(now, limit, at)
+    }
+
     fn owned_by(&self, owner: &str, after: Option<&str>, limit: usize, at: u64) -> Result<Vec<String>> {
         self.inner.owned_by(owner, after, limit, at)
     }
@@ -967,17 +971,21 @@ pub fn ttl_keys_are_gone_after_their_ttl_and_present_one_tick_before<R: Rig>(rig
         "1",
     );
     put(&c, "intents/A/x/1", obj(json!(1)).with_ttl(48 * 3_600), "2");
-    gc.tick(T0 + HOUR_MS - 1).unwrap();
+    clock.advance(HOUR_MS - 1);
+    gc.tick(c.now_ms()).unwrap();
     assert!(c.get("telemetry/sections/A/x").unwrap().is_some());
+    clock.advance(1);
     assert_eq!(
-        gc.tick(T0 + HOUR_MS).unwrap().expired,
+        gc.tick(c.now_ms()).unwrap().expired,
         ["telemetry/sections/A/x"]
     );
     assert!(c.get("telemetry/sections/A/x").unwrap().is_none());
-    gc.tick(T0 + 48 * HOUR_MS - 1).unwrap();
+    clock.advance(47 * HOUR_MS - 1);
+    gc.tick(c.now_ms()).unwrap();
     assert!(c.get("intents/A/x/1").unwrap().is_some());
+    clock.advance(1);
     assert!(gc
-        .tick(T0 + 48 * HOUR_MS)
+        .tick(c.now_ms())
         .unwrap()
         .expired
         .contains(&"intents/A/x/1".to_string()));
@@ -991,15 +999,18 @@ pub fn a_rewrite_restarts_a_keys_ttl<R: Rig>(rig: &R) {
     put(&c, "telemetry/s", obj(json!(1)).with_ttl(3_600), "1");
     clock.advance(HOUR_MS / 2);
     put(&c, "telemetry/s", obj(json!(2)).with_ttl(3_600), "2");
-    gc.tick(T0 + HOUR_MS).unwrap();
+    clock.advance(HOUR_MS / 2);
+    gc.tick(c.now_ms()).unwrap();
     assert!(c.get("telemetry/s").unwrap().is_some());
-    gc.tick(T0 + HOUR_MS / 2 + HOUR_MS - 1).unwrap();
+    clock.advance(HOUR_MS / 2 - 1);
+    gc.tick(c.now_ms()).unwrap();
     assert!(c.get("telemetry/s").unwrap().is_some());
-    gc.tick(T0 + HOUR_MS / 2 + HOUR_MS).unwrap();
+    clock.advance(1);
+    gc.tick(c.now_ms()).unwrap();
     assert!(c.get("telemetry/s").unwrap().is_none());
 }
 
-pub fn reopen_restarts_every_ttl<R: Rig>(rig: &R) {
+pub fn a_reopen_renews_no_lifetime<R: Rig>(rig: &R) {
     let clock = VirtualClock::new(T0);
     let b = rig.fresh();
     let c = open(rig.reopen(&b), &clock);
@@ -1008,11 +1019,9 @@ pub fn reopen_restarts_every_ttl<R: Rig>(rig: &R) {
     clock.advance(HOUR_MS / 2);
     drop(c);
     let c = open(rig.reopen(&b), &clock);
-    let gc = Controller::new(&c);
-    gc.tick(T0 + HOUR_MS).unwrap();
-    assert!(c.get("telemetry/s").unwrap().is_some());
-    assert!(c.get("intents/A/x/1").unwrap().is_some());
-    gc.tick(T0 + HOUR_MS / 2 + HOUR_MS).unwrap();
+    clock.advance(HOUR_MS / 2);
+    let expired = Controller::new(&c).tick(c.now_ms()).unwrap().expired;
+    assert_eq!(expired.len(), 2, "{expired:?}");
     assert!(c.get("telemetry/s").unwrap().is_none());
     assert!(c.get("intents/A/x/1").unwrap().is_none());
 }
@@ -1536,7 +1545,7 @@ pub fn a_state_filtered_range_reads_the_keys_in_that_state_at_the_head_and_below
 
 /// `gc_range` and `Contract::open` never visit `history/`, however many keys it holds: open
 /// reads exactly the rows it reads from a store without them.
-pub fn gc_range_and_open_skip_the_history_prefix<R: Rig>(rig: &R) {
+pub fn gc_range_skips_the_history_prefix<R: Rig>(rig: &R) {
     const HISTORY_KEYS: usize = 10_000;
     let clock = VirtualClock::new(T0);
     let open_rows = |history: usize| -> usize {
@@ -1561,7 +1570,6 @@ pub fn gc_range_and_open_skip_the_history_prefix<R: Rig>(rig: &R) {
         drop(c);
         let counted = Interpose::new(b);
         let c = open(counted, &clock);
-        let rows = c.backend().gc_rows();
         let mut after: Option<String> = None;
         loop {
             let head = c.head().expect("head");
@@ -1575,10 +1583,10 @@ pub fn gc_range_and_open_skip_the_history_prefix<R: Rig>(rig: &R) {
             }
             after = page.last().map(|(k, _)| k.clone());
         }
-        rows
+        c.backend().gc_rows()
     };
     let without = open_rows(0);
-    assert!(without >= 3, "open scanned the plain keys: {without}");
+    assert!(without >= 3, "gc_range read the plain keys: {without}");
     assert_eq!(open_rows(HISTORY_KEYS), without);
 }
 
@@ -1630,7 +1638,7 @@ scenarios!(
     a_put_under_telemetry_or_intents_without_ttl_secs_is_refused,
     ttl_keys_are_gone_after_their_ttl_and_present_one_tick_before,
     a_rewrite_restarts_a_keys_ttl,
-    reopen_restarts_every_ttl,
+    a_reopen_renews_no_lifetime,
     a_gc_expiry_writes_no_events_key,
     a_multi_prefix_list_reads_one_snapshot_while_a_commit_lands_between_prefixes,
     txn_ops_at_the_limit_pass_and_one_over_is_refused,
@@ -1645,5 +1653,5 @@ scenarios!(
     get_and_list_return_a_locks_expiry_and_renew_moves_it_forward,
     a_renew_under_a_new_ttl_keeps_the_token_and_moves_the_expiry,
     a_state_filtered_range_reads_the_keys_in_that_state_at_the_head_and_below_it,
-    gc_range_and_open_skip_the_history_prefix,
+    gc_range_skips_the_history_prefix,
 );

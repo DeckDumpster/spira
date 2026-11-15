@@ -150,6 +150,37 @@ pub const MIGRATIONS: &[&[&str]] = &[
               json_each(l.v, '$.metadata.ownerReferences') AS j
          WHERE j.type = 'text'",
     ],
+    // 4 (sp-3yru0z): a live key's absolute expiry, `metadata.expiresAt`, as an indexed column,
+    // so the keys due now are a range. Each existing `telemetry/` and `intents/` key with a
+    // positive `metadata.ttl_secs` is dated from its `events/` record's `at` when it has one,
+    // and otherwise from open time, which is the life a restart gave it and never shorter.
+    // Rewritten in place at its own revision, in `latest` and in the `versions` row it mirrors.
+    &[
+        "ALTER TABLE latest ADD COLUMN expires_at INTEGER GENERATED ALWAYS AS (CASE
+            WHEN json_valid(CAST(value AS TEXT))
+            THEN json_extract(CAST(value AS TEXT), '$.metadata.expiresAt') END) VIRTUAL",
+        "CREATE INDEX latest_by_expiry ON latest (expires_at, key) WHERE expires_at IS NOT NULL",
+        "UPDATE latest
+         SET value = CAST(json_set(CAST(value AS TEXT), '$.metadata.expiresAt',
+             coalesce(
+                 (SELECT json_extract(CAST(e.value AS TEXT), '$.data.at') FROM latest AS e
+                  WHERE e.key = CAST('events/' || printf('%020d', latest.main) AS BLOB)
+                    AND json_valid(CAST(e.value AS TEXT))
+                    AND json_type(CAST(e.value AS TEXT), '$.data.at') = 'integer'),
+                 CAST(unixepoch('subsec') * 1000 AS INTEGER))
+             + json_extract(CAST(value AS TEXT), '$.metadata.ttl_secs') * 1000) AS BLOB)
+         WHERE (key >= CAST('telemetry/' AS BLOB) AND key < CAST('telemetry0' AS BLOB)
+                OR key >= CAST('intents/' AS BLOB) AND key < CAST('intents0' AS BLOB))
+           AND json_valid(CAST(value AS TEXT))
+           AND json_type(CAST(value AS TEXT), '$.metadata.ttl_secs') = 'integer'
+           AND json_extract(CAST(value AS TEXT), '$.metadata.ttl_secs') > 0",
+        "UPDATE versions SET value = l.value
+         FROM latest AS l
+         WHERE l.key = versions.key AND l.main = versions.main
+           AND (l.key >= CAST('telemetry/' AS BLOB) AND l.key < CAST('telemetry0' AS BLOB)
+                OR l.key >= CAST('intents/' AS BLOB) AND l.key < CAST('intents0' AS BLOB))
+           AND versions.value IS NOT l.value",
+    ],
 ];
 
 /// How many schema migrations this binary knows: what a store's `user_version` is checked
@@ -463,6 +494,10 @@ const STATE_OPEN: &str = "SELECT key, main, sub, value, create_main, create_sub 
 
 /// The head's live keys naming owner `?1`, after `?2`: one range of `owner_refs`.
 const OWNED_BY: &str = "SELECT key FROM owner_refs WHERE owner = ?1 AND key > ?2 ORDER BY key LIMIT ?3";
+
+/// The head's live keys whose `expires_at` is at or before `?1`, oldest first: one range of
+/// `latest_by_expiry`.
+const DUE: &str = "SELECT key FROM latest WHERE expires_at <= ?1 ORDER BY expires_at, key LIMIT ?2";
 
 /// Whether a key's value may name owners: the contract writes none under these prefixes.
 fn may_be_owned(key: &str) -> bool {
@@ -1132,6 +1167,29 @@ impl Backend for SqliteBackend {
         })
     }
 
+    fn due(&self, now: u64, limit: usize, at: u64) -> Result<Vec<String>> {
+        self.read(|conn, snap, deadline| {
+            if at != snap.head {
+                return Err(Error::Stale {
+                    expected: at,
+                    head: snap.head,
+                });
+            }
+            deadline()?;
+            let mut stmt = conn.prepare_cached(DUE).map_err(db)?;
+            let rows = stmt
+                .query_map(
+                    params![
+                        i64::try_from(now).unwrap_or(i64::MAX),
+                        i64::try_from(limit).unwrap_or(i64::MAX)
+                    ],
+                    |r| r.get::<_, Vec<u8>>(0),
+                )
+                .map_err(db)?;
+            rows.map(|k| key_of(k.map_err(db)?)).collect()
+        })
+    }
+
     fn commit(&self, expect: u64, batch: &[Write]) -> Result<u64> {
         let mut w = lock(&self.0.writer);
         let head = self.0.head.load(Ordering::SeqCst);
@@ -1762,6 +1820,87 @@ mod tests {
         for step in plan(&b, OWNED_BY) {
             assert!(!step.starts_with("SCAN") && !step.contains("TEMP B-TREE"), "{step}");
         }
+    }
+
+    #[test]
+    fn the_due_query_neither_scans_nor_sorts() {
+        let dir = testkit::TempDir::new("sqlite-due-plan");
+        let b = SqliteBackend::open(&dir.path().join("d.db"), Options::default()).unwrap();
+        for step in plan(&b, DUE) {
+            assert!(!step.starts_with("SCAN") && !step.contains("TEMP B-TREE"), "{step}");
+        }
+    }
+
+    /// The lifetime migration dates each existing key from its `events/` record when it has one,
+    /// and from open time when it has none: a key is never given a shorter life than a restart did.
+    #[test]
+    fn the_lifetime_migration_dates_each_existing_key_from_its_audit_record() {
+        let dir = testkit::TempDir::new("sqlite-lifetime");
+        let path = dir.path().join("l.db");
+        let wall = || {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as i64
+        };
+        const HOUR: i64 = 3_600_000;
+        let now = wall();
+        let ttl = |secs: i64| {
+            serde_json::to_vec(&serde_json::json!({ "metadata": { "ttl_secs": secs }, "data": 1 })).unwrap()
+        };
+        let record = |at: i64| {
+            serde_json::to_vec(&serde_json::json!({ "metadata": {}, "data": { "at": at } })).unwrap()
+        };
+        let rows: Vec<(String, i64, Vec<u8>)> = vec![
+            ("intents/a".into(), 5, ttl(86_400)),
+            ("events/00000000000000000005".into(), 5, record(now - 25 * HOUR)),
+            ("intents/b".into(), 6, ttl(86_400)),
+            ("events/00000000000000000006".into(), 6, record(now - HOUR)),
+            ("telemetry/s".into(), 7, ttl(3_600)),
+        ];
+        {
+            let conn = Connection::open(&path).unwrap();
+            for sql in SCHEMA.iter().chain(MIGRATIONS[..3].iter().flat_map(|m| m.iter())) {
+                exec(&conn, sql, []).unwrap();
+            }
+            conn.pragma_update(None, "user_version", 3).unwrap();
+            for table in ["versions", "latest"] {
+                let sql = format!(
+                    "INSERT INTO {table} (key, main, sub, value, create_main, create_sub, version)
+                     VALUES (?1, ?2, 0, ?3, ?2, 0, 1)"
+                );
+                for (k, main, v) in &rows {
+                    exec(&conn, &sql, params![k.as_bytes(), main, v]).unwrap();
+                }
+            }
+            exec(&conn, "UPDATE meta SET value = 7 WHERE name = 'head'", []).unwrap();
+        }
+        let before = wall();
+        let opts = Options {
+            jump_on_open: false,
+            ..Options::default()
+        };
+        let b = SqliteBackend::open(&path, opts).unwrap();
+        let after = wall();
+        assert_eq!(b.schema_migrations().unwrap(), SCHEMA_MIGRATIONS);
+        let expires = |key: &str| {
+            let v = b.get(key, 7).unwrap().unwrap().value;
+            state_store::backend::expires_at_of(&v).unwrap() as i64
+        };
+        assert_eq!(b.due(now as u64, 10, 7).unwrap(), ["intents/a"]);
+        assert_eq!(expires("intents/b"), now - HOUR + 24 * HOUR);
+        let s = expires("telemetry/s");
+        assert!(before + HOUR <= s && s <= after + HOUR, "{before} <= {s} <= {after} + 1h");
+        let w = lock(&b.0.writer);
+        let mirrored: i64 = w
+            .conn
+            .prepare(
+                "SELECT count(*) FROM versions AS v JOIN latest AS l ON l.key = v.key AND l.main = v.main
+                 WHERE v.value IS NOT l.value",
+            )
+            .and_then(|mut s| s.query_row([], |r| r.get(0)))
+            .unwrap();
+        assert_eq!(mirrored, 0, "versions mirror latest");
     }
 
     /// The migration counts in `user_version`, and a store from a binary that knows more

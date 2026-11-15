@@ -1,9 +1,10 @@
 //! The GC controller: one `tick(now)` drains the markers of owners that went, and expires keys
 //! whose TTL has run out. A finished key is removed by the write that finished it, so no pass
-//! reads the key space.
+//! reads the key space. Locks and receipts expire on the monotonic clock; a key with a stored
+//! lifetime expires when its `expiresAt` passes on the wall clock.
 
 use crate::backend::Backend;
-use crate::contract::{Compaction, Contract, COMPACT_STEP, COMPACT_STEPS, PAGE};
+use crate::contract::{Compaction, Contract, COMPACT_STEP, COMPACT_STEPS, EXPIRE_PER_PASS, PAGE};
 use crate::{Error, Item, Result, ORPHANS_PREFIX};
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -102,6 +103,22 @@ impl<'a, B: Backend> Controller<'a, B> {
         Ok(())
     }
 
+    /// Deletes at most [`EXPIRE_PER_PASS`] keys whose stored expiry is at or before wall now. A
+    /// head that moves under the index read is read again.
+    fn expire_stored(&self) -> Result<Vec<String>> {
+        let c = self.contract;
+        let now = c.wall_ms();
+        let mut tries = 0;
+        let due = loop {
+            let head = c.head()?;
+            match c.backend().due(now, EXPIRE_PER_PASS, head) {
+                Err(Error::Stale { .. }) if tries < 8 => tries += 1,
+                other => break other?,
+            }
+        };
+        c.expire_stored(&due, now)
+    }
+
     /// Runs every step; a failed step is recorded and the others go ahead.
     pub fn pass(&self, now_ms: u64) -> Tick {
         let c = self.contract;
@@ -121,6 +138,10 @@ impl<'a, B: Backend> Controller<'a, B> {
         match c.expire(&due, now_ms) {
             Ok(expired) => tick.expired = expired,
             Err(e) => fail(&mut tick, "expire", e),
+        }
+        match self.expire_stored() {
+            Ok(mut expired) => tick.expired.append(&mut expired),
+            Err(e) => fail(&mut tick, "due", e),
         }
         match c.trim_events(EVENT_WINDOW_MS) {
             Ok(trimmed) => tick.trimmed = trimmed,
@@ -330,6 +351,10 @@ mod tests {
         ) -> crate::Result<Vec<(String, Version)>> {
             self.inner.gc_range(after, limit, at)
         }
+        fn due(&self, now: u64, limit: usize, at: u64) -> crate::Result<Vec<String>> {
+            self.inner.due(now, limit, at)
+        }
+
         fn owned_by(
             &self,
             owner: &str,
@@ -393,6 +418,9 @@ mod tests {
         refuse_markers: AtomicBool,
         stale_owned_by: AtomicUsize,
         key_space_reads: AtomicUsize,
+        whole_space_calls: AtomicUsize,
+        range_prefixes: std::sync::Mutex<Vec<String>>,
+        refuse_due: AtomicBool,
     }
 
     impl Flaky {
@@ -403,6 +431,9 @@ mod tests {
                 refuse_markers: Default::default(),
                 stale_owned_by: AtomicUsize::new(0),
                 key_space_reads: AtomicUsize::new(0),
+                whole_space_calls: AtomicUsize::new(0),
+                range_prefixes: Default::default(),
+                refuse_due: Default::default(),
             }
         }
     }
@@ -427,11 +458,19 @@ mod tests {
             if prefix == ORPHANS_PREFIX && self.refuse_markers.load(Ordering::SeqCst) {
                 return Err(Error::Backend("refused".into()));
             }
+            self.range_prefixes.lock().unwrap().push(prefix.to_string());
             if prefix != crate::EVENTS_PREFIX && prefix != ORPHANS_PREFIX {
                 self.key_space_reads.fetch_add(1, Ordering::SeqCst);
             }
             self.inner.range(prefix, after, limit, at)
         }
+        fn due(&self, now: u64, limit: usize, at: u64) -> crate::Result<Vec<String>> {
+            if self.refuse_due.load(Ordering::SeqCst) {
+                return Err(Error::Backend("refused".into()));
+            }
+            self.inner.due(now, limit, at)
+        }
+
         fn owned_by(
             &self,
             owner: &str,
@@ -467,6 +506,7 @@ mod tests {
             at: u64,
         ) -> crate::Result<Vec<(String, Version)>> {
             self.key_space_reads.fetch_add(1, Ordering::SeqCst);
+            self.whole_space_calls.fetch_add(1, Ordering::SeqCst);
             self.inner.gc_range(after, limit, at)
         }
         fn range_outside(
@@ -477,6 +517,7 @@ mod tests {
             at: u64,
         ) -> crate::Result<Vec<(String, Version)>> {
             self.key_space_reads.fetch_add(1, Ordering::SeqCst);
+            self.whole_space_calls.fetch_add(1, Ordering::SeqCst);
             self.inner.range_outside(skip, after, limit, at)
         }
     }
@@ -527,6 +568,85 @@ mod tests {
         assert_eq!(pass.failed.len(), 1, "{pass:?}");
         assert_eq!(pass.failed[0].step, "orphan");
         assert_eq!(pass.trimmed, 1, "trim ran after the failed step");
+    }
+
+    fn write_ttl(c: &Contract<impl Backend>, key: &str, ttl_secs: u64) {
+        let t = Txn::new().put(key, Object::new(json!(1)).with_ttl(ttl_secs));
+        c.txn(&t, &Request::new(&format!("w{key}"), "t", "test.write")).unwrap();
+    }
+
+    #[test]
+    fn one_pass_expires_at_most_the_per_pass_cap_of_due_keys() {
+        let clock = VirtualClock::new(0);
+        let c = open(MemBackend::new(), &clock);
+        for i in 0..3_000 {
+            write_ttl(&c, &format!("telemetry/{i}"), 1);
+        }
+        clock.advance(2_000);
+        let gc = Controller::new(&c);
+        let passes: Vec<usize> = (0..4).map(|_| gc.tick(c.now_ms()).unwrap().expired.len()).collect();
+        assert_eq!(passes, [1_024, 1_024, 952, 0]);
+    }
+
+    #[test]
+    fn open_reads_only_the_locks_and_the_receipts() {
+        let clock = VirtualClock::new(0);
+        let b = Flaky::new();
+        let c = open(b, &clock);
+        for i in 0..2_000 {
+            write_ttl(&c, &format!("telemetry/{i}"), 3_600);
+        }
+        for i in 0..10 {
+            c.lock(&format!("l{i}"), 60_000, &Request::new(&format!("l{i}"), "t", "test.lock")).unwrap();
+        }
+        let b = c.backend().inner.clone();
+        drop(c);
+        let counted = Flaky { inner: b, ..Flaky::new() };
+        let c = open(counted, &clock);
+        let seen = c.backend().range_prefixes.lock().unwrap().clone();
+        assert_eq!(c.backend().whole_space_calls.load(Ordering::SeqCst), 0);
+        assert!(!seen.is_empty() && seen.iter().all(|p| p == "locks/" || p == "requests/"), "{seen:?}");
+    }
+
+    #[test]
+    fn a_failed_due_read_is_one_failure_and_the_other_steps_still_run() {
+        let clock = VirtualClock::new(10 * DAY_MS);
+        let c = open(Flaky::new(), &clock);
+        write(&c, "rec/old", "old");
+        clock.advance(EVENT_WINDOW_MS + DAY_MS);
+        write(&c, "new/0", "new0");
+        c.backend().refuse_due.store(true, Ordering::SeqCst);
+        let pass = Controller::new(&c).pass(c.now_ms());
+        assert_eq!(pass.failed.len(), 1, "{pass:?}");
+        assert_eq!(pass.failed[0].step, "due");
+        assert_eq!(pass.trimmed, 1, "trim ran after the failed step");
+    }
+
+    #[test]
+    fn a_key_rewritten_after_it_was_listed_due_is_not_expired() {
+        let clock = VirtualClock::new(0);
+        let c = open(MemBackend::new(), &clock);
+        write_ttl(&c, "telemetry/a", 1);
+        clock.advance(2_000);
+        let listed = c.backend().due(c.wall_ms(), 10, c.head().unwrap()).unwrap();
+        assert_eq!(listed, ["telemetry/a"]);
+        let t = Txn::new().put("telemetry/a", Object::new(json!(2)).with_ttl(3_600));
+        c.txn(&t, &Request::new("again", "t", "test.write")).unwrap();
+        assert!(c.expire_stored(&listed, c.wall_ms()).unwrap().is_empty());
+        assert!(c.get("telemetry/a").unwrap().is_some());
+    }
+
+    #[test]
+    fn a_key_marked_for_deletion_carries_no_expiry() {
+        let clock = VirtualClock::new(0);
+        let c = open(MemBackend::new(), &clock);
+        let held = Object::new(json!(1)).with_ttl(1).with_finalizers(&["f"]);
+        c.txn(&Txn::new().put("telemetry/a", held), &Request::new("w", "t", "test.write")).unwrap();
+        c.delete("telemetry/a", None, &Request::new("d", "t", "test.delete")).unwrap();
+        clock.advance(2_000);
+        let head = c.head().unwrap();
+        assert!(c.backend().due(c.wall_ms(), 10, head).unwrap().is_empty());
+        assert!(Controller::new(&c).tick(c.now_ms()).unwrap().expired.is_empty());
     }
 
     #[test]

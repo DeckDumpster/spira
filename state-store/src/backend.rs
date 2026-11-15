@@ -117,6 +117,10 @@ pub trait Backend: Send + Sync {
     /// after `after`, in key order, at most `limit`; `Stale` unless `at` is the head.
     fn owned_by(&self, owner: &str, after: Option<&str>, limit: usize, at: u64)
         -> Result<Vec<String>>;
+    /// The head's live keys whose `metadata.expiresAt` is at or before `now`, ordered by
+    /// `(expiresAt, key)`, at most `limit`; `Stale` unless `at` is the head. No default: one
+    /// would be the scan an expiry index replaces.
+    fn due(&self, now: u64, limit: usize, at: u64) -> Result<Vec<String>>;
     /// Applies `batch` as main `expect + 1`, or `Stale` if the head is no longer `expect`. The
     /// contract never puts a key in a batch twice.
     fn commit(&self, expect: u64, batch: &[Write]) -> Result<u64>;
@@ -206,6 +210,21 @@ pub fn state_of(value: &[u8]) -> Option<String> {
         serde_json::Value::String(s) => Some(s),
         _ => None,
     }
+}
+
+/// The value's `metadata.expiresAt`, when it is a JSON object carrying one.
+pub fn expires_at_of(value: &[u8]) -> Option<u64> {
+    #[derive(serde::Deserialize)]
+    struct Meta {
+        #[serde(rename = "expiresAt")]
+        expires_at: Option<u64>,
+    }
+    #[derive(serde::Deserialize)]
+    struct Obj {
+        metadata: Option<Meta>,
+    }
+    let o: Obj = serde_json::from_slice(value).ok()?;
+    o.metadata?.expires_at
 }
 
 /// The owners a value names in `metadata.ownerReferences`; none when it is not an object value.
