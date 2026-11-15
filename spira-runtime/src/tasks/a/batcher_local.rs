@@ -2596,10 +2596,12 @@ pub mod edge {
         Some(live)
     }
 
-    /// Whether the manager runs round-recert's driver unit for `batch`; false when it cannot say.
+    /// Whether the manager runs round-recert's driver unit for `batch`, bare or under a lease token.
+    /// A manager that errs reads as driven: no land is started on a guess; with none, undriven.
     fn recert_driven(units: Option<&dyn runtime::units::Units>, batch: &str) -> bool {
-        let name = release::round_recert::unit_for(batch, None);
-        units.and_then(|u| u.list(&name).ok()).is_some_and(|l| super::recert_live(&l))
+        let Some(units) = units else { return false };
+        let bare = release::round_recert::unit_for(batch, None);
+        [bare.clone(), format!("{bare}-*")].iter().any(|glob| units.list(glob).map_or(true, |l| super::recert_live(&l)))
     }
 
     fn observe_repo(env: &Env, repo: &batcher_cut::io::Repo, units: Option<&dyn runtime::units::Units>) -> Result<Repo, String> {
@@ -2905,6 +2907,28 @@ pub mod edge {
             for s in [UnitState::Inactive, UnitState::Failed, UnitState::Deactivating, UnitState::Absent] {
                 assert!(!recert_live(&[unit(s)]), "{s:?}");
             }
+        }
+    }
+
+    #[cfg(test)]
+    mod green_round_tests {
+        use crate::tasks::a::batcher_local::{decide, Carry, Repo, Round, Snapshot, LAND};
+
+        fn lands(driven: bool) -> bool {
+            let open = Round { id: "b1".into(), members: vec!["m1".into()], tips: vec!["t1".into()], head: "h1".into(), phase: "green".into(), driven, ..Round::default() };
+            let repo = Repo { open_round: Some(open), base_sha: "base".into(), ..Repo::default() };
+            let snap = Snapshot { repos: [("r".to_string(), repo)].into(), now_ms: 1_000_000 };
+            decide(&Carry::default(), &snap).1.iter().any(|a| a.effect == LAND)
+        }
+
+        #[test]
+        fn a_green_round_round_recert_still_drives_is_not_landed_by_the_tick() {
+            assert!(!lands(true));
+        }
+
+        #[test]
+        fn a_green_round_with_no_driver_is_adopted_and_landed() {
+            assert!(lands(false));
         }
     }
 
