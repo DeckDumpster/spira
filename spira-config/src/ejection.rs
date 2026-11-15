@@ -104,7 +104,7 @@ pub fn red_steps(output: &str) -> Vec<(String, String)> {
         return vec![("gate".to_string(), output.to_string())];
     }
     if steps.is_empty() {
-        let unit = output.lines().find_map(|l| l.trim().strip_prefix("gate: phase '")?.split('\'').next().map(|n| format!("phase:{n}")));
+        let unit = output.lines().find_map(|l| l.trim().strip_prefix("gate: phase '")?.split_once("' failed").map(|(n, _)| format!("phase:{n}")));
         steps.push((unit.unwrap_or_else(|| "gate".to_string()), buf.join("\n")));
     }
     steps
@@ -518,7 +518,9 @@ mod tests {
     fn an_oversized_file_list_is_shortened_and_the_failure_kept() {
         let files: Vec<String> = (0..40).map(|i| format!("{i:03}{}", "p".repeat(147))).collect();
         let steps = vec![("test".to_string(), "---- t::x stdout ----\nthread 't::x' panicked at a/b.rs:1:2:\nboom\n\nfailures:\n".to_string())];
-        let d = digest_steps("abc", &files, &[], &steps);
+        let why = vec!["why kept".to_string()];
+        let d = digest_steps("abc", &files, &why, &steps);
+        assert!(d.lines().position(|l| l == "why why kept") > d.lines().position(|l| l.starts_with("files-cut ")), "{d}");
         assert!(d.contains("FAIL t::x at a/b.rs:1") && d.contains("boom"), "{d}");
         assert!(d.lines().any(|l| l.starts_with("files-cut ") && l.ends_with(" more")), "{d}");
         assert!(d.chars().count() <= DIGEST_MAX, "{}", d.chars().count());
