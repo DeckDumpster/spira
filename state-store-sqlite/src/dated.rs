@@ -16,7 +16,7 @@ use state_store::{Error, Result, Rev, Version, EVENTS_PREFIX, REQUESTS_PREFIX};
 
 use super::{db, exec, key_of, lock, main_i64, rev, successor};
 
-const DAY_MS: u64 = 86_400_000;
+pub(crate) const DAY_MS: u64 = 86_400_000;
 
 /// Rows a state-filtered read takes from a file at a time.
 const STATE_PAGE: usize = 500;
