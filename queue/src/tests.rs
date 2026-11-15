@@ -904,6 +904,7 @@ struct FForge {
     run: RefCell<Option<String>>,
     /// `workflow-rerun` fails (the forge refused it).
     rerun_refused: RefCell<bool>,
+    dispatch_refused: RefCell<bool>,
     /// `workflow-rerun` is refused as a decided run, with this reason.
     rerun_decided: RefCell<Option<String>>,
     meta: RefCell<String>,
@@ -1019,6 +1020,10 @@ impl Forge for FForge {
     }
     fn run_cancel(&self, _: &Path, _: &Path, run: &str) {
         self.calls.borrow_mut().push(format!("run-cancel {run}"));
+    }
+    fn workflow_dispatch(&self, _: &Path, _: &Path, ref_: &str, _: &str) -> bool {
+        self.calls.borrow_mut().push(format!("dispatch {ref_}"));
+        !*self.dispatch_refused.borrow()
     }
     fn workflow_rerun(&self, _: &Path, _: &Path, run: &str) -> Rerun {
         self.calls
@@ -1856,6 +1861,7 @@ impl T {
             publish_red_priority: "1".into(),
             publish_red_escalate_after: 3,
             publish_defer_max: Some(3),
+            publish_no_run_secs: Some(600),
         };
         fs::create_dir_all(s.queue_dir.join("spira")).unwrap();
         let landref = match mode {
@@ -4252,6 +4258,19 @@ fn settle_decision_table() {
     assert_eq!(decide(open(Ci::Untested, true)), Settle::Supersede);
     assert_eq!(decide(open(Ci::Red, false)), Settle::Wait);
     assert_eq!(decide(open(Ci::Untested, false)), Settle::Rerun);
+    let no_run = |past, started, behind| open(Ci::NoRun { past, started }, behind);
+    assert_eq!(decide(no_run(true, false, true)), Settle::Supersede);
+    assert_eq!(decide(no_run(true, false, false)), Settle::StartCi);
+    assert_eq!(decide(no_run(false, false, true)), Settle::Wait);
+    assert_eq!(decide(no_run(false, true, false)), Settle::Wait);
+    assert_eq!(decide(no_run(true, true, false)), Settle::Parked);
+    assert_eq!(
+        ci_of("pending\nno-run: Gate\n"),
+        Ci::NoRun {
+            past: false,
+            started: false
+        }
+    );
     assert_eq!(decide(tried(1)), Settle::Alarm);
     assert_eq!(decide(tried(2)), Settle::Parked);
     assert_eq!(decide(Some(Pr::Gone)), Settle::Retire);
@@ -4347,6 +4366,96 @@ fn settle_waits_on_a_green_or_pending_publish_and_on_an_unmoved_red_one() {
             .unwrap()
             .starts_with("pr=77\n"));
     }
+}
+
+const NO_RUN: &str = "pending\nno-run: Gate\n";
+
+fn count_calls(t: &T, call: &str) -> usize {
+    t.forge
+        .calls
+        .borrow()
+        .iter()
+        .filter(|c| c.as_str() == call)
+        .count()
+}
+
+#[test]
+fn settle_supersedes_a_publish_with_no_run_past_the_bound_when_local_is_ahead() {
+    let t = T::new(LandMode::QueueLocal);
+    stale_publish(&t, NO_RUN);
+    t.clock.now.set(900 + 600);
+    assert_eq!(t.run(&["publish-settle"]), 0, "{}", t.err());
+    let calls = t.forge.calls.borrow().clone();
+    assert!(calls.contains(&"pr-close 77".to_string()), "{calls:?}");
+    assert!(calls.iter().any(|c| c.starts_with("pr-create")), "{calls:?}");
+    assert_eq!(count_calls(&t, "dispatch spira/publish/OLD"), 0);
+    assert!(t.lib.has("notify spira publish PR 77 for spira has no CI run"));
+}
+
+#[test]
+fn settle_starts_ci_once_for_a_publish_with_no_run_past_the_bound() {
+    let t = T::new(LandMode::QueueLocal);
+    stale_publish(&t, NO_RUN);
+    t.git.set("refs/heads/local/main", "m3");
+    t.clock.now.set(900 + 600);
+    for _ in 0..3 {
+        t.forge.status.borrow_mut().push(Some(NO_RUN.into()));
+        assert_eq!(t.run(&["publish-settle"]), 0, "{}", t.err());
+    }
+    assert_eq!(count_calls(&t, "dispatch spira/publish/OLD"), 1);
+    assert!(fs::read_to_string(t.qfile("publish"))
+        .unwrap()
+        .contains("ci_started="));
+    let pages = t
+        .lib
+        .calls
+        .borrow()
+        .iter()
+        .filter(|l| l.starts_with("notify spira publish PR 77 for spira has no CI run"))
+        .count();
+    assert_eq!(pages, 1);
+}
+
+#[test]
+fn settle_waits_on_a_publish_with_no_run_inside_the_bound() {
+    let t = T::new(LandMode::QueueLocal);
+    stale_publish(&t, NO_RUN);
+    t.clock.now.set(900 + 599);
+    assert_eq!(t.run(&["publish-settle"]), 0, "{}", t.err());
+    let calls = t.forge.calls.borrow().clone();
+    assert!(
+        !calls
+            .iter()
+            .any(|c| c.starts_with("dispatch") || c.starts_with("pr-close")),
+        "{calls:?}"
+    );
+    assert!(!t.lib.has("notify spira publish PR 77 for spira has no CI run"));
+}
+
+#[test]
+fn settle_waits_on_a_publish_whose_run_is_in_progress() {
+    let t = T::new(LandMode::QueueLocal);
+    stale_publish(&t, "pending\n");
+    t.clock.now.set(900 + 6000);
+    assert_eq!(t.run(&["publish-settle"]), 0, "{}", t.err());
+    let calls = t.forge.calls.borrow().clone();
+    assert!(
+        !calls
+            .iter()
+            .any(|c| c.starts_with("dispatch") || c.starts_with("pr-close")),
+        "{calls:?}"
+    );
+}
+
+#[test]
+fn settle_refuses_no_run_when_the_bound_does_not_resolve() {
+    let mut t = T::new(LandMode::QueueLocal);
+    t.lib.s.publish_no_run_secs = None;
+    stale_publish(&t, NO_RUN);
+    t.clock.now.set(900 + 6000);
+    assert_ne!(t.run(&["publish-settle"]), 0, "{}", t.out());
+    assert!(t.err().contains("SPIRA_PUBLISH_NO_RUN_SECS"), "{}", t.err());
+    assert_eq!(count_calls(&t, "dispatch spira/publish/OLD"), 0);
 }
 
 #[test]

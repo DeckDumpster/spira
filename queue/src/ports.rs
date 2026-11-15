@@ -76,6 +76,9 @@ pub struct Settings {
     /// does not resolve, so only the settle that needs it refuses; a round verb must stay able
     /// to abandon a round under a registry that lacks it.
     pub publish_defer_max: Option<usize>,
+    /// `SPIRA_PUBLISH_NO_RUN_SECS` (declared value): seconds a publish PR's branch may go
+    /// without a gate run. `None` when the key does not resolve; only a no-run settle refuses.
+    pub publish_no_run_secs: Option<u64>,
 }
 
 /// `SPIRA_QUEUE_CI_MAXSEC[_<NAME>]`, `SPIRA_QUEUE_CI_IDLE_SEC[_<NAME>]` (already resolved for
@@ -465,6 +468,8 @@ pub trait Forge {
     /// `fail-lines <repo> <run> <suites>` → `fail-line: <suite>: <text>` lines (empty when it failed).
     fn fail_lines(&self, forge: &Path, repo: &Path, run: &str, suites: &str) -> String;
     fn run_cancel(&self, forge: &Path, repo: &Path, run: &str);
+    /// `dispatch <repo> <ref> <suites>`: whether the forge accepted a new gate run on `ref_`.
+    fn workflow_dispatch(&self, forge: &Path, repo: &Path, ref_: &str, suites: &str) -> bool;
     /// `workflow-rerun <repo> <run>`.
     fn workflow_rerun(&self, forge: &Path, repo: &Path, run: &str) -> Rerun;
     /// `ami-runs <repo>`: the Round AMI runs not yet completed; None when the forge cannot be read.

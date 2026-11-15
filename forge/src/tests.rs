@@ -95,6 +95,29 @@ fn check_status_no_run_is_pending() {
         "[]",
     );
     let out = check_status(&gh, &NoProc, repo(), "Gate", "spira/sp-x");
+    assert_eq!(out.lines, vec!["pending", "no-run: Gate"]);
+}
+
+#[test]
+fn check_status_failed_listing_is_pending_without_no_run() {
+    let gh = FakeGh::default();
+    gh.on(
+        &[
+            "run",
+            "list",
+            "--branch",
+            "spira/sp-x",
+            "--workflow",
+            "Gate",
+            "--json",
+            "databaseId,status,conclusion,headSha,url",
+            "--limit",
+            "1",
+        ],
+        1,
+        "",
+    );
+    let out = check_status(&gh, &NoProc, repo(), "Gate", "spira/sp-x");
     assert_eq!(out.lines, vec!["pending"]);
 }
 
@@ -183,7 +206,7 @@ fn check_status_other_workflow_ran_but_mapped_one_exists_is_pending() {
         r#"[{"name":"Gate"},{"name":"Test image"}]"#,
     );
     let out = check_status(&gh, &NoProc, repo(), "Gate", "spira/sp-x");
-    assert_eq!(out.lines, vec!["pending"]);
+    assert_eq!(out.lines, vec!["pending", "no-run: Gate"]);
 }
 
 #[test]

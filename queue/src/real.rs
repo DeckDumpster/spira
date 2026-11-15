@@ -526,6 +526,7 @@ pub const CONFIG_KEYS: &[&str] = &[
     "SPIRA_PUBLISH_RED_PRIORITY",
     "SPIRA_PUBLISH_RED_ESCALATE_AFTER",
     "SPIRA_PUBLISH_SETTLE_DEFER_MAX",
+    "SPIRA_PUBLISH_NO_RUN_SECS",
     "SPIRA_DWARF_BUILD_BASE",
 ];
 
@@ -642,6 +643,12 @@ impl Lib for RealLib {
                 Err(e) if e.contains("not a registered config key") => None,
                 Err(e) => return Err(e),
             };
+        let publish_no_run_secs =
+            match spira_config::process::cfg_parse::<u64>("SPIRA_PUBLISH_NO_RUN_SECS") {
+                Ok(n) => Some(n),
+                Err(e) if e.contains("not a registered config key") => None,
+                Err(e) => return Err(e),
+            };
         let s = Settings {
             home: PathBuf::from(g("home")),
             run: PathBuf::from(g("run")),
@@ -686,6 +693,7 @@ impl Lib for RealLib {
             publish_red_priority,
             publish_red_escalate_after,
             publish_defer_max,
+            publish_no_run_secs,
         };
         let path = reg.root(&name);
         let landref = spira_config::repos::landref(&reg, &name).filter(|s| !s.is_empty());
@@ -1689,6 +1697,16 @@ impl Forge for RealForge {
     }
     fn run_cancel(&self, forge: &Path, repo: &Path, run: &str) {
         let _ = shown(forge_call(forge, "run-cancel", repo, &[run], None));
+    }
+    fn workflow_dispatch(&self, forge: &Path, repo: &Path, ref_: &str, suites: &str) -> bool {
+        said(&shown(forge_call(
+            forge,
+            "dispatch",
+            repo,
+            &[ref_, suites],
+            None,
+        )))
+        .ok()
     }
     fn workflow_rerun(&self, forge: &Path, repo: &Path, run: &str) -> Rerun {
         rerun_of(said(&forge_call(
