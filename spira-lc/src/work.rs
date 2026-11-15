@@ -445,7 +445,10 @@ fn branch_refusal(conn: &Conn, bead_id: &str, tip: &str, stack_tips: &[String]) 
         Ok(p) => p,
         Err(e) => return Some((CANNOT_TELL, format!("cannot tell: {e}"))),
     };
-    let pairs: Vec<(String, String)> = commits.iter().flatten().map(|(sha, _, msg)| (sha.clone(), msg.clone())).collect();
+    let Some(commits) = commits.as_deref() else {
+        return Some((CANNOT_TELL, format!("cannot tell: the commits of {tip} could not be read for the citation check")));
+    };
+    let pairs: Vec<(String, String)> = commits.iter().map(|(sha, _, msg)| (sha.clone(), msg.clone())).collect();
     if let Some(r) = phantom_refusal(&pairs, &prefix, &mut |ids| crate::callers::Bd::known(&mut crate::bd::LiveBd, ids)) {
         return Some(r);
     }
