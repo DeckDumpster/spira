@@ -350,7 +350,8 @@ struct LiveOps<'a> {
     batch: Option<&'a str>,
     prior: batcher::mender::Prior,
     send_back: Option<String>,
-    mend_pass: u32,
+    mend_pass: std::cell::Cell<u32>,
+    returns_read: std::cell::RefCell<Option<(std::time::Instant, Vec<batcher::mender::Failure>)>>,
 }
 
 const MEND_DEADLINE_SECS: i64 = 900;
@@ -369,7 +370,7 @@ impl LiveOps<'_> {
             .and_then(|v| v.get("pass").and_then(serde_json::Value::as_u64))
             .ok_or_else(|| format!("spira-lc show-batch {batch}: no pass in the reply"))?
             as u32;
-        self.mend_pass = pass;
+        self.mend_pass.set(pass);
         let deadline = std::env::var("SPIRA_BATCHER_MEND_DEADLINE_SECS")
             .ok()
             .and_then(|v| v.trim().parse().ok())
@@ -414,6 +415,18 @@ impl LiveOps<'_> {
 }
 
 impl LiveOps<'_> {
+    fn read_returns(&self, batch: &str) -> Result<Vec<batcher::mender::Failure>, String> {
+        let shown = io::lcq_held(self.env, &["show-batch", batch])?;
+        let pass = serde_json::from_str::<serde_json::Value>(&shown)
+            .ok()
+            .and_then(|v| v.get("pass").and_then(serde_json::Value::as_u64))
+            .ok_or_else(|| format!("spira-lc show-batch {batch}: no pass in the reply"))?
+            as u32;
+        self.mend_pass.set(pass);
+        let mut lc = endpass::LcMenders { env: self.env, batch, pass };
+        Ok(endpass::returns(endpass::Menders::rows(&mut lc)?))
+    }
+
     fn eject_with(
         &mut self,
         member: &Member,
@@ -486,7 +499,7 @@ impl drive::RoundOps for LiveOps<'_> {
                 io::suite_first_fail(Path::new(&self.evidence), self.pass.as_deref(), s).map(|l| (s.clone(), l))
             })
             .collect();
-        let lead = io::returned_lead(suites, self.mend_pass, self.batch.unwrap_or_default(), why);
+        let lead = io::returned_lead(suites, self.mend_pass.get(), self.batch.unwrap_or_default(), why);
         self.eject_with(member, suites, &fails, true, Some(&lead))
     }
 
@@ -725,6 +738,22 @@ impl drive::RoundOps for LiveOps<'_> {
     ) -> Option<Result<drive::Mended, String>> {
         let batch = self.batch?;
         self.mending(batch, d, members).transpose()
+    }
+
+    fn mender_returns(&self) -> Vec<batcher::mender::Failure> {
+        let Some(batch) = self.batch else { return vec![] };
+        let every = std::time::Duration::from_secs(endpass::POLL_SECS as u64);
+        if let Some((at, read)) = &*self.returns_read.borrow() {
+            if at.elapsed() < every {
+                return read.clone();
+            }
+        }
+        let read = self.read_returns(batch).unwrap_or_else(|e| {
+            eprintln!("batcher {}: reading the mending rows mid-pass: {e}", self.repo.name);
+            vec![]
+        });
+        *self.returns_read.borrow_mut() = Some((std::time::Instant::now(), read.clone()));
+        read
     }
 
     fn preempted(&mut self, owner: &batcher::core::Id, unreached: &[String]) {
@@ -983,7 +1012,8 @@ fn stabilize_round(
         batch,
         prior: batcher::mender::Prior::default(),
         send_back: None,
-        mend_pass: 0,
+        mend_pass: Default::default(),
+        returns_read: Default::default(),
     };
     let budget = batcher::attrib::Budget::with_default(env_.maxpar, env_.round_slots);
     let round_members = members.clone();
@@ -2230,7 +2260,8 @@ fn attribute_run(o: &Opts) -> Result<(), String> {
         batch: o.batch.as_deref(),
         prior: batcher::mender::Prior::default(),
         send_back: None,
-        mend_pass: 0,
+        mend_pass: Default::default(),
+        returns_read: Default::default(),
     };
     let budget = batcher::attrib::Budget::with_default(env_.maxpar, env_.round_slots);
     let end = drive::attribute_round(&mut runner, &mut ops, &suites, members.clone(), budget);

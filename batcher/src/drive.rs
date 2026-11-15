@@ -207,6 +207,11 @@ pub trait RoundOps {
     fn settle_mending(&mut self, _: &Decision, _: &[Member]) -> Option<Result<Mended, String>> {
         None
     }
+    /// The current pass's settled RETURNED failures that name a member, read while the pass
+    /// still runs.
+    fn mender_returns(&self) -> Vec<crate::mender::Failure> {
+        vec![]
+    }
 }
 
 /// The round-level pseudo-suite name a --with-bins build failure (exit 4) reports under —
@@ -262,6 +267,8 @@ pub struct Settled {
     pub main_end_at: u64,
     pub settled_at: u64,
     pub filter: Option<FilterRed>,
+    /// Returns that named a round member and stopped the pass before it settled.
+    pub returned: Vec<crate::mender::Failure>,
 }
 
 /// One main run with concurrent attribution, to the point where every red is settled.
@@ -304,6 +311,25 @@ pub fn drive<R: RoundRunner, O: RoundOps + ?Sized>(
                 main_end_at: now,
                 settled_at: now,
                 filter: None,
+                returned: vec![],
+            });
+        }
+        let returned: Vec<_> = ops
+            .mender_returns()
+            .into_iter()
+            .filter(|f| f.members.iter().any(|m| ids.contains(m)))
+            .collect();
+        if !returned.is_empty() {
+            runner.stop_main()?;
+            let now = runner.now();
+            return Ok(Settled {
+                preempt: None,
+                decision: a.decision(),
+                end: MainEnd::Ran,
+                main_end_at: now,
+                settled_at: now,
+                filter: None,
+                returned,
             });
         }
         let poll = runner.poll_main()?;
@@ -329,6 +355,7 @@ pub fn drive<R: RoundRunner, O: RoundOps + ?Sized>(
                     main_end_at: now,
                     settled_at: now,
                     filter: None,
+                    returned: vec![],
                 });
             }
             if kind == MainKind::Corpus && main_end_at.is_none() {
@@ -340,6 +367,7 @@ pub fn drive<R: RoundRunner, O: RoundOps + ?Sized>(
                         main_end_at: now,
                         settled_at: now,
                         filter: Some(filter),
+                        returned: vec![],
                     });
                 }
             }
@@ -392,6 +420,7 @@ pub fn drive<R: RoundRunner, O: RoundOps + ?Sized>(
                     main_end_at: now,
                     settled_at: now,
                     filter: None,
+                    returned: vec![],
                 });
             }
         }
@@ -403,6 +432,7 @@ pub fn drive<R: RoundRunner, O: RoundOps + ?Sized>(
                 main_end_at: main_end_at.unwrap_or(now),
                 settled_at: now,
                 filter: None,
+                returned: vec![],
             });
         }
         runner.wait();
@@ -1349,6 +1379,49 @@ fn attribute_members<R: RoundRunner, O: RoundOps>(
             members = next;
             continue;
         }
+        if !s.returned.is_empty() {
+            let mut out: BTreeMap<Id, Vec<String>> = BTreeMap::new();
+            let mut why: BTreeMap<Id, String> = BTreeMap::new();
+            for f in &s.returned {
+                for id in f.members.iter().filter(|id| members.iter().any(|m| &m.id == *id)) {
+                    let suites = out.entry(id.clone()).or_default();
+                    if !suites.contains(&f.suite) {
+                        suites.push(f.suite.clone());
+                    }
+                    why.entry(id.clone()).or_insert_with(|| f.diagnosis.clone());
+                }
+            }
+            let named: Vec<Id> = out.keys().cloned().collect();
+            with_dependents(&members, &mut out);
+            println!(
+                "batcher: iteration {iteration}: a mender returned {} mid-pass — the pass stops and they leave",
+                named.join(",")
+            );
+            for m in members.iter().filter(|m| out.contains_key(&m.id)) {
+                match why.get(&m.id) {
+                    Some(why) => ops.eject_returned(m, &out[&m.id], why),
+                    None => ops.eject(m, &out[&m.id], false),
+                }
+                .map_err(refused)?;
+            }
+            let mut next_suites: Vec<String> = s.returned.iter().map(|f| f.suite.clone()).collect();
+            next_suites.extend(s.decision.records.iter().map(|r| r.suite.clone()));
+            next_suites.sort();
+            next_suites.dedup();
+            let survivors: Vec<Member> = members.iter().filter(|m| !out.contains_key(&m.id)).cloned().collect();
+            if survivors.is_empty() {
+                return Ok(RoundEnd::Emptied("round emptied by ejection".into()));
+            }
+            members = ops.rebuild(&survivors)?;
+            if members.is_empty() {
+                return Ok(RoundEnd::Emptied(
+                    "round emptied rebuilding the tree after the menders".into(),
+                ));
+            }
+            suites = next_suites;
+            kind = MainKind::Verify;
+            continue;
+        }
         let mut d = s.decision;
         let preempt = s.preempt;
         if !d.records.is_empty() {
@@ -1711,6 +1784,8 @@ pub(crate) mod tests {
         /// The round is abandoned from this many main runs started, or from this time.
         pub abandoned_after_starts: Option<usize>,
         pub abandoned_at: Option<u64>,
+        /// Mirrors the clock for an `Ops` that answers by time.
+        pub clock: Option<std::rc::Rc<std::cell::Cell<u64>>>,
     }
 
     pub type BuildFn = Box<dyn Fn(&BTreeSet<String>) -> Option<String>>;
@@ -1760,6 +1835,7 @@ pub(crate) mod tests {
                 added_by: BTreeMap::new(),
                 abandoned_after_starts: None,
                 abandoned_at: None,
+                clock: None,
             }
         }
         fn verdict(&mut self, suite: &str, tree: &BTreeSet<String>) -> bool {
@@ -1975,6 +2051,9 @@ pub(crate) mod tests {
             self.use_log
                 .push((self.t, self.corpus_running(), self.jobs_running()));
             self.t += 1;
+            if let Some(c) = &self.clock {
+                c.set(self.t);
+            }
             assert!(self.t < 100_000, "the loop never settled");
         }
     }
@@ -2010,6 +2089,10 @@ pub(crate) mod tests {
         pub rebuilt_empty: bool,
         /// Every eject is refused with this line.
         pub refuse_eject: Option<String>,
+        /// (time it settles, failure): what `mender_returns` answers once the fake clock reaches it.
+        pub returns: Vec<(u64, crate::mender::Failure)>,
+        pub clock: Option<std::rc::Rc<std::cell::Cell<u64>>>,
+        pub returned_at: Vec<u64>,
     }
 
     impl RoundOps for Ops {
@@ -2029,6 +2112,7 @@ pub(crate) mod tests {
         }
         fn eject_returned(&mut self, member: &Member, suites: &[String], why: &str) -> Result<(), String> {
             self.returned.push((member.id.clone(), why.to_string()));
+            self.returned_at.push(self.clock.as_ref().map_or(0, |c| c.get()));
             self.eject(member, suites, true)
         }
         fn eject_on(&mut self, member: &Member, filter: &str, line: &str, owner: bool) -> Result<(), String> {
@@ -2105,6 +2189,14 @@ pub(crate) mod tests {
                 unattributed: vec![],
                 suites: d.owned_suites(),
             }))
+        }
+        fn mender_returns(&self) -> Vec<crate::mender::Failure> {
+            let now = self.clock.as_ref().map_or(0, |c| c.get());
+            self.returns
+                .iter()
+                .filter(|(at, _)| *at <= now)
+                .map(|(_, f)| f.clone())
+                .collect()
         }
         fn preempted(&mut self, owner: &Id, unreached: &[String]) {
             self.preempts.push((owner.clone(), unreached.to_vec()));
@@ -3195,6 +3287,104 @@ pub(crate) mod tests {
             (MainKind::Verify, vec!["test-03.sh".into()])
         );
         assert!(matches!(end, RoundEnd::Land { .. } | RoundEnd::Blocked(_)));
+    }
+
+    fn returned_failure(suite: &str, member: &str) -> crate::mender::Failure {
+        crate::mender::Failure {
+            suite: suite.into(),
+            outcome: crate::mender::Outcome::Returned,
+            diagnosis: "bad at x.rs:9".into(),
+            members: vec![member.into()],
+        }
+    }
+
+    fn slow_a_and_a_return_at_30(
+        member_of: &str,
+        round: Vec<Member>,
+    ) -> (Fake, Ops, Result<RoundEnd, String>) {
+        let clock = std::rc::Rc::new(std::cell::Cell::new(0));
+        let mut f = Fake::new(|_, _| false);
+        f.dur.insert("test-a.sh".into(), 600);
+        f.clock = Some(clock.clone());
+        let mut ops = Ops {
+            returns: vec![(30, returned_failure("test-a.sh", member_of))],
+            clock: Some(clock),
+            ..Ops::default()
+        };
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &["test-a.sh".to_string()],
+            round,
+            Budget { slots: 8, maxpar: 2 },
+        );
+        (f, ops, end)
+    }
+
+    #[test]
+    fn a_return_that_settles_while_the_pass_runs_ejects_its_member_and_verifies_the_survivors() {
+        let (f, ops, end) = slow_a_and_a_return_at_30("m2", vec![member("m1"), member("m2")]);
+        assert_eq!(ops.returned.len(), 1);
+        assert_eq!(ops.returned[0].0, "m2");
+        assert!(ops.returned[0].1.contains("bad at x.rs:9"));
+        assert!(ops.returned_at[0] < 60, "the leg sat until t+{}", ops.returned_at[0]);
+        assert_eq!(ops.rebuilt[0], vec!["m1".to_string()]);
+        assert_eq!(f.main_kind[1], (MainKind::Verify, vec!["test-a.sh".to_string()]));
+        match end.unwrap() {
+            RoundEnd::Land { members, .. } => {
+                assert_eq!(members.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["m1"])
+            }
+            other => panic!("the round should land m1, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_return_naming_a_member_others_are_stacked_on_ejects_the_dependents_too() {
+        let mut m1 = member("m1");
+        m1.stack.insert("m2".into(), "m2-tip".into());
+        let (_, ops, _) = slow_a_and_a_return_at_30("m2", vec![m1, member("m2"), member("m3")]);
+        let mut gone: Vec<&str> = ops.ejected.iter().map(|(id, _)| id.as_str()).collect();
+        gone.sort();
+        assert_eq!(gone, ["m1", "m2"]);
+        assert_eq!(ops.returned.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(), ["m2"]);
+        assert_eq!(ops.owner_flags.iter().find(|(id, _)| id == "m1"), Some(&("m1".to_string(), false)));
+        assert_eq!(ops.rebuilt[0], vec!["m3".to_string()]);
+    }
+
+    #[test]
+    fn the_pass_after_a_mid_pass_return_verifies_every_suite_already_red_and_each_return_leaves_its_member() {
+        let clock = std::rc::Rc::new(std::cell::Cell::new(0));
+        let mut f = Fake::new(|s, tree| s == "test-b.sh" && tree.contains("m3"));
+        f.dur.insert("test-a.sh".into(), 600);
+        f.clock = Some(clock.clone());
+        let mut ops = Ops {
+            returns: vec![
+                (6, returned_failure("test-a.sh", "m2")),
+                (6, returned_failure("test-c.sh", "m1")),
+            ],
+            clock: Some(clock),
+            ..Ops::default()
+        };
+        attribute_round(
+            &mut f,
+            &mut ops,
+            &["test-b.sh".to_string(), "test-a.sh".to_string()],
+            three(),
+            Budget { slots: 8, maxpar: 2 },
+        )
+        .unwrap();
+        let mut gone: Vec<&str> = ops.returned.iter().map(|(id, _)| id.as_str()).collect();
+        gone.sort();
+        assert_eq!(gone, ["m1", "m2"]);
+        assert_eq!(f.main_kind[1].0, MainKind::Verify);
+        assert!(f.main_kind[1].1.contains(&"test-b.sh".to_string()), "{:?}", f.main_kind[1]);
+    }
+
+    #[test]
+    fn a_return_naming_no_round_member_leaves_the_pass_running() {
+        let (f, ops, _) = slow_a_and_a_return_at_30("stranger", vec![member("m1"), member("m2")]);
+        assert!(ops.ejected.is_empty());
+        assert_eq!(f.main_kind.len(), 1);
     }
 
     #[test]

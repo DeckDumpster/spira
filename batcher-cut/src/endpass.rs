@@ -129,6 +129,19 @@ pub fn wait<M: Menders>(m: &mut M, deadline_s: i64) -> Result<Vec<Failure>, Stri
         .collect())
 }
 
+/// The settled RETURNED rows that name at least one member.
+pub fn returns(rows: Vec<Row>) -> Vec<Failure> {
+    rows.into_iter()
+        .filter(|r| r.state == "RETURNED" && !r.returned.is_empty())
+        .map(|r| Failure {
+            suite: r.suite,
+            outcome: Outcome::Returned,
+            diagnosis: r.diagnosis,
+            members: r.returned,
+        })
+        .collect()
+}
+
 /// Fills a failure's members from the attribution's owners only when its row named none.
 pub fn with_owners(failures: Vec<Failure>, owners: &BTreeMap<String, Vec<String>>) -> Vec<Failure> {
     failures
@@ -238,6 +251,16 @@ mod tests {
             swept: 0,
             stuck: false,
         }
+    }
+
+    #[test]
+    fn only_returned_rows_that_name_a_member_are_returns() {
+        let mut named = row("test-a.sh", "RETURNED", None);
+        named.returned = vec!["m2".into()];
+        let rows = vec![named, row("test-b.sh", "RETURNED", None), row("test-c.sh", "MENDED", None)];
+        let got = returns(rows);
+        assert_eq!(got.len(), 1);
+        assert_eq!((got[0].suite.as_str(), got[0].members.clone()), ("test-a.sh", vec!["m2".to_string()]));
     }
 
     #[test]
