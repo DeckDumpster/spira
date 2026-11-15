@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use crate::backend::{owners_of, Backend, LogEntry, Version, Write};
+use crate::backend::{expires_at_of, owners_of, Backend, LogEntry, Version, Write};
 use crate::{Error, Result, Rev};
 
 #[derive(Clone, Default)]
@@ -19,6 +19,8 @@ struct State {
     log: Vec<LogEntry>,
     /// `(owner, key)` for every live key at the head, kept in `commit`.
     owned: BTreeSet<(String, String)>,
+    /// `(expiresAt, key)` for every live key at the head that carries one, kept in `commit`.
+    expiring: BTreeSet<(u64, String)>,
 }
 
 impl MemBackend {
@@ -111,6 +113,21 @@ impl Backend for MemBackend {
             .collect())
     }
 
+    fn due(&self, now: u64, limit: usize, at: u64) -> Result<Vec<String>> {
+        let s = self.state();
+        if at != s.head {
+            return Err(Error::Stale {
+                expected: at,
+                head: s.head,
+            });
+        }
+        Ok(s.expiring
+            .range(..(now.saturating_add(1), String::new()))
+            .map(|(_, k)| k.clone())
+            .take(limit)
+            .collect())
+    }
+
     fn commit(&self, expect: u64, batch: &[Write]) -> Result<u64> {
         let mut s = self.state();
         if s.head != expect {
@@ -154,13 +171,21 @@ impl Backend for MemBackend {
                 ),
             };
             let key = w.key().to_string();
-            let held: Vec<String> = s
+            let prev = s
                 .keys
                 .get(&key)
                 .and_then(|v| v.last())
                 .and_then(|(_, v)| v.as_ref())
-                .map(|v| owners_of(&v.value))
-                .unwrap_or_default();
+                .map(|v| v.value.clone());
+            if let Some(at) = prev.as_deref().and_then(expires_at_of) {
+                s.expiring.remove(&(at, key.clone()));
+            }
+            if let Write::Put { value, .. } = w {
+                if let Some(at) = expires_at_of(value) {
+                    s.expiring.insert((at, key.clone()));
+                }
+            }
+            let held: Vec<String> = prev.as_deref().map(owners_of).unwrap_or_default();
             for o in held {
                 s.owned.remove(&(o, key.clone()));
             }

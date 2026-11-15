@@ -77,6 +77,9 @@ pub struct Meta {
     pub deletion_timestamp: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ttl_secs: Option<u64>,
+    /// Wall ms after which gc deletes the key; written only by the contract.
+    #[serde(default, rename = "expiresAt", skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<u64>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]

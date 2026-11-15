@@ -68,6 +68,10 @@ impl Backend for Recorded {
     fn head(&self) -> Result<u64> {
         self.inner.head()
     }
+    fn due(&self, now: u64, limit: usize, at: u64) -> Result<Vec<String>> {
+        self.inner.due(now, limit, at)
+    }
+
     fn owned_by(&self, owner: &str, after: Option<&str>, limit: usize, at: u64) -> Result<Vec<String>> {
         self.inner.owned_by(owner, after, limit, at)
     }
@@ -173,6 +177,10 @@ impl Backend for Stalled {
     fn head(&self) -> Result<u64> {
         self.inner.head()
     }
+    fn due(&self, now: u64, limit: usize, at: u64) -> Result<Vec<String>> {
+        self.inner.due(now, limit, at)
+    }
+
     fn owned_by(&self, owner: &str, after: Option<&str>, limit: usize, at: u64) -> Result<Vec<String>> {
         self.inner.owned_by(owner, after, limit, at)
     }

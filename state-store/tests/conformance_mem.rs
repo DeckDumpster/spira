@@ -51,7 +51,7 @@ scenarios!(
     a_put_under_telemetry_or_intents_without_ttl_secs_is_refused,
     ttl_keys_are_gone_after_their_ttl_and_present_one_tick_before,
     a_rewrite_restarts_a_keys_ttl,
-    reopen_restarts_every_ttl,
+    a_reopen_renews_no_lifetime,
     a_gc_expiry_writes_no_events_key,
     a_multi_prefix_list_reads_one_snapshot_while_a_commit_lands_between_prefixes,
     txn_ops_at_the_limit_pass_and_one_over_is_refused,
@@ -65,7 +65,7 @@ scenarios!(
     get_and_list_return_a_locks_expiry_and_renew_moves_it_forward,
     a_renew_under_a_new_ttl_keeps_the_token_and_moves_the_expiry,
     a_state_filtered_range_reads_the_keys_in_that_state_at_the_head_and_below_it,
-    gc_range_and_open_skip_the_history_prefix,
+    gc_range_skips_the_history_prefix,
 );
 
 /// Scenarios with no unit test here: each runs over 100 ms (sp-bym7j8) and stays in the suite
