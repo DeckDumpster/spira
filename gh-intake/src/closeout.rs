@@ -324,7 +324,7 @@ fn follow_ask(d: &Deps, ctx: &Ctx, p: &Pending, ask: &str) -> (Verdict, Vec<Stri
     let mut log = Vec::new();
     let Some((gh_repo, issue_n)) = parse_gh_ref(&p.external_ref) else { return (Verdict::Done, log) };
     let ask_row = d.bd.show_json(ask);
-    let answered = ask_row.as_ref().is_some_and(|v| text_of(v, "status") == "closed");
+    let answered = ask_row.as_ref().and_then(show_row).is_some_and(|r| spira_config::nonwork::row_closed(spira_config::nonwork::Kind::Ask, r));
     if d.gh.issue_state(&gh_repo, &issue_n) == "CLOSED" {
         run_state::mark_write(&ctx.run, id);
         if !answered {
