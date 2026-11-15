@@ -3569,6 +3569,11 @@ mod tests {
         assert!(!sampler.contains("peak") && !sampler.contains("disk_growth_file"), "the host takes the peak: {sampler}");
         assert!(REMOTE_SCRIPT.contains("disk_sampler & disk_sampler_pid=$!"), "the sampler runs beside the pass");
         assert!(!REMOTE_SCRIPT.contains("disk-growth"));
+        assert!(sampler.contains("while kill -0 \"$$\"") && sampler.contains("sleep 5"), "the sampler ends with the pass and paces itself: {sampler}");
+        assert!(sampler.contains("''|*[!0-9]*) now=unread"), "a non-number reading is unread: {sampler}");
+        let last = script_fn("disk_report_last");
+        assert!(last.contains("kill \"$disk_sampler_pid\"") && last.contains("disk_report \"$1\"") && last.contains("wait \"${disk_walks[@]}\""), "{last}");
+        assert!(!last.contains("peak") && !last.contains("growth"), "{last}");
     }
 
     #[test]
