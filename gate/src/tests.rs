@@ -3079,6 +3079,7 @@ fn a_rust_only_unit_pass_records_its_branch_type_mode_and_wall() {
     assert_eq!(v["compose"], "unit");
     assert_eq!(v["branch_type"], "rust-only");
     assert_eq!(v["phases"], "fences:7,build:7,test:7");
+    assert_eq!(v["build_dir"], "cold: no warm directory to adopt");
     assert_eq!(v["wall_secs"], v["ran_secs"]);
     assert_eq!(v["repo"], "spira");
     assert_eq!(v["branch"], BR);

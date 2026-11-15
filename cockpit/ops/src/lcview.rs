@@ -374,6 +374,7 @@ pub struct GateRun {
     pub phases: String,
     pub compiled: u64,
     pub fresh: u64,
+    pub build_dir: String,
 }
 
 /// The gate run's phase times for a bead's expanded detail.
@@ -381,6 +382,9 @@ pub fn gate_why(g: &GateRun) -> String {
     let phases: Vec<String> = g.phases.split(',').filter_map(|p| p.split_once(':')).map(|(n, t)| format!("{n} {t}s")).collect();
     let mut parts = phases;
     parts.push(format!("compiled {} · fresh {}", g.compiled, g.fresh));
+    if !g.build_dir.is_empty() {
+        parts.push(format!("build dir {}", g.build_dir));
+    }
     format!("gate: {}", parts.join(" · "))
 }
 
@@ -394,7 +398,7 @@ pub fn latest_gate_runs(rows: &[serde_json::Value]) -> BTreeMap<String, GateRun>
         .into_iter()
         .filter_map(|r| {
             let bead = r["bead"].as_str().filter(|b| !b.is_empty())?;
-            Some((bead.to_string(), GateRun { phases: r["phases"].as_str().unwrap_or("").to_string(), compiled: n(r, "compiled"), fresh: n(r, "fresh") }))
+            Some((bead.to_string(), GateRun { phases: r["phases"].as_str().unwrap_or("").to_string(), compiled: n(r, "compiled"), fresh: n(r, "fresh"), build_dir: r["build_dir"].as_str().unwrap_or("").to_string() }))
         })
         .collect()
 }
