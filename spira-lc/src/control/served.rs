@@ -47,7 +47,7 @@ fn lock_floor_ms() -> Result<u64, String> {
 
 /// The wall clock lock expiries are read on: the whole second events are stamped at, pinned with
 /// the rest of the process by `SPIRA_NOW`, so a lease reads back as the second it was asked for.
-struct Wall;
+pub(crate) struct Wall;
 
 impl Clock for Wall {
     fn now_ms(&self) -> u64 {

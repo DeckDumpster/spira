@@ -121,7 +121,7 @@ fn main() {
             std::process::exit(code)
         }
         Some("admin-store-relayout") => {
-            let (code, out) = relayout::admin_store_relayout(&args[1..], &relayout::Wall::from_env());
+            let (code, out) = relayout::admin_store_relayout(&args[1..], &control::served::Wall);
             println!("{out}");
             std::process::exit(code)
         }

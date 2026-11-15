@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use runtime::ports::{Clock, WallClock};
+use runtime::ports::Clock;
 use state_store_sqlite::relayout::relayout;
 
 use crate::{CANNOT_TELL, REFUSED};
@@ -54,21 +54,6 @@ pub fn parse(args: &[String]) -> Result<Asked, String> {
     }
 }
 
-/// `SPIRA_NOW` (epoch seconds) when set, else the wall clock.
-pub struct Wall(Option<u64>);
-
-impl Wall {
-    pub fn from_env() -> Self {
-        Wall(spira_config::vtime::override_epoch().map(|s| s.saturating_mul(1_000)))
-    }
-}
-
-impl Clock for Wall {
-    fn now_ms(&self) -> u64 {
-        self.0.unwrap_or_else(|| WallClock.now_ms())
-    }
-}
-
 /// Exit code and the stdout text: JSON on every path but `-h`.
 pub fn admin_store_relayout(args: &[String], wall: &dyn Clock) -> (i32, String) {
     match parse(args) {
@@ -84,6 +69,15 @@ pub fn admin_store_relayout(args: &[String], wall: &dyn Clock) -> (i32, String) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use runtime::ports::Clock;
+
+    struct Fixed(u64);
+
+    impl Clock for Fixed {
+        fn now_ms(&self) -> u64 {
+            self.0
+        }
+    }
 
     fn s(xs: &[&str]) -> Vec<String> {
         xs.iter().map(|x| x.to_string()).collect()
@@ -116,10 +110,10 @@ mod tests {
 
     #[test]
     fn a_usage_error_exits_2_with_json_and_help_lists_both_flags_and_the_exits() {
-        let (code, out) = admin_store_relayout(&s(&["a.db"]), &WallClock);
+        let (code, out) = admin_store_relayout(&s(&["a.db"]), &Fixed(0));
         assert_eq!(code, 2);
         assert!(serde_json::from_str::<serde_json::Value>(&out).unwrap()["error"].as_str().unwrap().contains("--from a.db"));
-        let (code, help) = admin_store_relayout(&s(&["-h"]), &WallClock);
+        let (code, help) = admin_store_relayout(&s(&["-h"]), &Fixed(0));
         assert_eq!(code, 0);
         for want in ["--from", "--to", "0 done", "3 refused", "2 usage"] {
             assert!(help.contains(want), "{want}");
@@ -127,7 +121,15 @@ mod tests {
     }
 
     #[test]
-    fn spira_now_is_epoch_seconds() {
-        assert_eq!(Wall(Some(5_000)).now_ms(), 5_000);
+    fn a_refusal_exits_3_with_json_on_stdout_and_leaves_no_new_file() {
+        let dir = testkit::TempDir::new("lc-relayout-refused");
+        let to = dir.path().join("new.db");
+        let from = dir.path().join("missing.db");
+        let (code, out) = admin_store_relayout(&s(&["--from", &from.display().to_string(), "--to", &to.display().to_string()]), &Fixed(0));
+        assert_eq!(code, 3);
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["relayout"], "refused");
+        assert!(v["error"].as_str().unwrap().contains("missing.db"));
+        assert!(!to.exists());
     }
 }
