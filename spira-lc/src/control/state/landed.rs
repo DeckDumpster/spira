@@ -233,5 +233,10 @@ mod tests {
         let (code, out) = verb("nowhere");
         assert_eq!(code, CANNOT_TELL, "{out}");
         assert!(out.contains("no repository \"nowhere\""), "{out}");
+        let (code, out) = verb("");
+        assert_eq!(code, CANNOT_TELL, "{out}");
+        let (code, out) = verb("spira");
+        assert_eq!(code, REFUSED, "the home repo resolves to a checkout that lacks the commit: {out}");
+        assert!(out.contains("not reachable"), "{out}");
     }
 }
