@@ -184,16 +184,12 @@ fn artifact_urls(text: &str) -> Vec<String> {
 }
 
 /// The newest Hold event of a `spira-lc history` answer: its seq and its whitespace-folded
-/// detail, capped. The event's `evidence` is an object; older rows carried it as JSON text.
+/// detail, capped.
 fn last_hold(history_json: &str) -> Option<(String, String)> {
     let rows: Vec<Value> = serde_json::from_str(history_json).ok()?;
     let r = rows.iter().rfind(|r| r["event"] == "Hold")?;
     let seq = r["seq"].as_str().map(str::to_string).unwrap_or_else(|| r["seq"].to_string());
-    let evidence = match &r["evidence"] {
-        Value::String(text) => serde_json::from_str(text).unwrap_or_default(),
-        other => other.clone(),
-    };
-    let detail = evidence["Hold"]["detail"].as_str().unwrap_or("").split_whitespace().collect::<Vec<_>>().join(" ");
+    let detail = r["evidence"]["Hold"]["detail"].as_str().unwrap_or("").split_whitespace().collect::<Vec<_>>().join(" ");
     Some((seq, detail.chars().take(400).collect()))
 }
 
