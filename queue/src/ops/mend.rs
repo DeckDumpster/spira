@@ -38,6 +38,7 @@ pub fn run(
     checked: &str,
     ask: Option<&str>,
     reason: &Text,
+    members: &Text,
     hand: HandArgs,
 ) -> i32 {
     let label = format!("round {outcome}");
@@ -134,9 +135,24 @@ pub fn run(
                 ));
                 return USAGE;
             }
+            let named: Vec<String> = read_text(w, members)
+                .unwrap_or_default()
+                .split(',')
+                .map(|m| m.trim().to_string())
+                .filter(|m| !m.is_empty())
+                .collect();
+            let round: Vec<String> = kv.members().into_iter().map(|m| m.id).collect();
+            let strangers: Vec<&String> = named.iter().filter(|m| !round.contains(m)).collect();
+            if named.is_empty() || !strangers.is_empty() {
+                w.err(format!(
+                    "queue.sh {label}: --members <id,...> must name the member(s) the return sends back, each one of round {batch}: {}",
+                    round.join(", ")
+                ));
+                return USAGE;
+            }
             stamp_triage(&send, now());
             report(
-                send(serde_json::json!({"Return": {"at": now(), "diagnosis": diagnosis}})),
+                send(serde_json::json!({"Return": {"at": now(), "diagnosis": diagnosis, "members": named}})),
                 "returned",
             )
         }
@@ -242,7 +258,7 @@ fn mended(
             batch,
             pass,
             suite,
-            &serde_json::json!({"Return": {"at": 0, "diagnosis": why}}).to_string(),
+            &serde_json::json!({"Return": {"at": 0, "diagnosis": why, "members": []}}).to_string(),
             by,
         );
         w.err(format!(

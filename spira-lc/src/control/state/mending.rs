@@ -282,7 +282,7 @@ impl<B: Backend> Mender<'_, B> {
                 .diagnosis
                 .as_ref()
                 .map_or(why.to_string(), |d| format!("{d}\n{why}"));
-            let kind = MendingEventKind::Return { at: now, diagnosis };
+            let kind = MendingEventKind::Return { at: now, diagnosis, members: vec![] };
             closed += usize::from(self.apply(&row, kind, &actor).is_ok());
         }
         Ok(closed.to_string())
@@ -341,6 +341,7 @@ impl<B: Backend> Mender<'_, B> {
         let kind = MendingEventKind::Return {
             at: self.now,
             diagnosis,
+            members: vec![],
         };
         self.apply(row, kind, actor)
     }

@@ -39,6 +39,16 @@ pub struct Left {
     pub why: String,
 }
 
+const STACKED_WHY: &str = "stacked on ";
+
+impl Left {
+    /// Left only because a member it is stacked on was returned, not named by a mender.
+    pub fn is_stacked_dependent(&self, round: &[Member]) -> bool {
+        self.why.starts_with(STACKED_WHY)
+            && round.iter().any(|m| m.id == self.id && !m.stack.is_empty())
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Next {
     /// Run again at the round's head with `members` (mended tips in, `left` out). `retry` is
@@ -136,7 +146,7 @@ pub fn decide(
         let before = leaving.len();
         for m in round {
             if let Some(p) = m.stack.keys().find(|p| leaving.contains_key(*p)) {
-                let why = format!("stacked on {p}, which was returned from the round");
+                let why = format!("{STACKED_WHY}{p}, which was returned from the round");
                 leaving.entry(m.id.clone()).or_insert_with(|| vec![why]);
             }
         }
@@ -513,5 +523,16 @@ mod tests {
             unsettled(&expected, &[f("t1", Outcome::Flaky, &[])]),
             ["t2"]
         );
+    }
+
+    #[test]
+    fn a_member_left_only_for_its_stack_is_a_stacked_dependent_and_a_named_one_is_not() {
+        let mut b = member("b", "b0");
+        b.stack.insert("a".into(), "a0".into());
+        let round = vec![member("a", "a0"), b];
+        let d = decide("h", &round, &BTreeMap::new(), &[f("t1", Outcome::Returned, &["a"])], &Prior::default());
+        let Next::Pass { left, .. } = d.next else { panic!("stopped") };
+        let dependents: Vec<(&str, bool)> = left.iter().map(|l| (l.id.as_str(), l.is_stacked_dependent(&round))).collect();
+        assert_eq!(dependents, [("a", false), ("b", true)]);
     }
 }

@@ -39,6 +39,9 @@ pub struct Answer<'a> {
     pub diagnosis: &'a str,
     pub checks: Option<&'a str>,
     pub ask: Option<&'a str>,
+    /// The members a return sends back, and the members of the round it may name.
+    pub members: &'a [&'a str],
+    pub round: &'a [&'a str],
 }
 
 /// The diagnosis to record, or why the outcome cannot be recorded yet.
@@ -49,6 +52,13 @@ pub fn validate(a: &Answer) -> Result<String, String> {
     }
     match a.kind {
         Kind::Return if !cites_file_line(d) => Err("return: the diagnosis must cite the defect as <file>:<line>, so the builder never starts blind".into()),
+        Kind::Return => match a.members.iter().find(|m| !a.round.contains(m)) {
+            _ if a.members.is_empty() => Err(format!("return: name the member(s) it sends back with --member <bead>; the spec's members: {}", a.round.join(", "))),
+            Some(m) => Err(format!("return: {m} is not a member of the round; the spec's members: {}", a.round.join(", "))),
+            None if a.checks.is_some() || a.ask.is_some() => Err("--checks and --ask belong to mended alone".into()),
+            None => Ok(d.to_string()),
+        },
+        _ if !a.members.is_empty() => Err("--member belongs to return alone".into()),
         Kind::Mended => match a.checks.map(str::trim).filter(|c| !c.is_empty()) {
             None => Err("mended: --checks must say what ran (each touched crate's `cargo test -p`, the suites naming touched non-Rust files) and that it passed; a failing check is a return".into()),
             Some(c) => Ok(format!("{d}\nchecks: {c}")),
@@ -60,13 +70,13 @@ pub fn validate(a: &Answer) -> Result<String, String> {
 
 /// The terminal mending event for every outcome but a mend, which goes through `mending mend`.
 /// The clock is the machine's: `at` is overwritten there.
-pub fn terminal_event(kind: Kind, diagnosis: &str) -> Value {
+pub fn terminal_event(kind: Kind, diagnosis: &str, members: &[&str]) -> Value {
     match kind {
         Kind::Mended => unreachable!("a mend is assessed by `mending mend`, never sent as an event"),
         Kind::Environment => json!({"Environment": {"at": 0}}),
         Kind::Flaky => json!({"Flaky": {"at": 0}}),
         Kind::Unsure => json!({"Unsure": {"at": 0}}),
-        Kind::Return => json!({"Return": {"at": 0, "diagnosis": diagnosis}}),
+        Kind::Return => json!({"Return": {"at": 0, "diagnosis": diagnosis, "members": members}}),
     }
 }
 
@@ -75,7 +85,7 @@ mod tests {
     use super::*;
 
     fn a<'a>(kind: Kind, diagnosis: &'a str, checks: Option<&'a str>) -> Answer<'a> {
-        Answer { kind, diagnosis, checks, ask: None }
+        Answer { kind, diagnosis, checks, ask: None, members: if kind == Kind::Return { &["sp-a"] } else { &[] }, round: &["sp-a", "sp-b"] }
     }
 
     #[test]
@@ -119,8 +129,28 @@ mod tests {
 
     #[test]
     fn an_ask_on_any_outcome_but_a_mend_is_refused() {
-        let with_ask = |kind| validate(&Answer { kind, diagnosis: "bad at x/y.rs:9", checks: None, ask: Some("a1") });
+        let with_ask = |kind| validate(&Answer { kind, diagnosis: "bad at x/y.rs:9", checks: None, ask: Some("a1"), members: &["sp-a"], round: &["sp-a"] });
         assert!(with_ask(Kind::Return).is_err());
         assert!(with_ask(Kind::Flaky).is_err());
+    }
+
+    #[test]
+    fn a_return_names_a_member_of_the_round_or_is_refused_naming_the_round() {
+        let ret = |members: &[&str]| validate(&Answer { kind: Kind::Return, diagnosis: "bad at x/y.rs:9", checks: None, ask: None, members, round: &["sp-a", "sp-b"] });
+        assert!(ret(&["sp-b"]).is_ok());
+        for bad in [ret(&[]), ret(&["sp-z"]), ret(&["sp-a", "sp-z"])] {
+            assert!(bad.unwrap_err().contains("sp-a, sp-b"));
+        }
+    }
+
+    #[test]
+    fn a_member_on_any_other_outcome_is_refused() {
+        let flaky = validate(&Answer { kind: Kind::Flaky, diagnosis: "ok", checks: None, ask: None, members: &["sp-a"], round: &["sp-a"] });
+        assert!(flaky.is_err());
+    }
+
+    #[test]
+    fn the_return_event_carries_its_members() {
+        assert_eq!(terminal_event(Kind::Return, "d", &["sp-b"]), json!({"Return": {"at": 0, "diagnosis": "d", "members": ["sp-b"]}}));
     }
 }
