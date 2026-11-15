@@ -377,6 +377,8 @@ beads_sql_host = "127.0.0.1"
 beads_sql_port = "3307"
 beads_sql_user = "spira_lc_ro"
 beads_sql_password_file = ""
+batched_stranded_grace_secs = 300
+sendback_keep_days = 7
 
 [renamed]
 "persona.maechen" = "persona.mimir" # ffx-ok
