@@ -150,6 +150,46 @@ pub fn current_checks(check_runs: &[Value], runs: &[Value], branch: &str) -> Vec
         .collect()
 }
 
+struct Reply {
+    status: u16,
+    etag: Option<String>,
+    rate: Option<api_budget::Rate>,
+    body: String,
+}
+
+struct Got {
+    value: Value,
+    outcome: &'static str,
+    /// The ETag to keep with `value` for the next call; `None` when the answer carried none or came from the kept body.
+    etag: Option<String>,
+}
+
+fn rate_of(r: &ureq::Response) -> Option<api_budget::Rate> {
+    let num = |h: &str| r.header(h).and_then(|v| v.trim().parse::<u64>().ok());
+    Some(api_budget::Rate { limit: num("x-ratelimit-limit")?, remaining: num("x-ratelimit-remaining")?, reset: num("x-ratelimit-reset")? })
+}
+
+/// The decisions of one conditional GET, with the transport passed in. The outcome is returned,
+/// never counted, so a test reads it from the return value.
+fn conditional_get(api: &str, url: &str, path: &str, caller: &str, now: u64, kept: Option<(String, Value)>, send: impl FnOnce(Option<&str>) -> Result<Reply, String>) -> Result<Got, (String, &'static str)> {
+    if let Some(reset) = api_budget::exhausted_until(api, now) {
+        return Err((format!("the GitHub API budget is spent until {} (epoch {reset}); {caller} made no request", api_budget::clock_of(reset)), api_budget::REFUSED));
+    }
+    let failed = |why: String| (why, api_budget::FAILED);
+    let reply = send(kept.as_ref().map(|(tag, _)| tag.as_str())).map_err(failed)?;
+    if let Some(rate) = reply.rate {
+        api_budget::note_rate(api, rate);
+    }
+    if reply.status >= 400 {
+        return Err(failed(format!("{url}: status code {}", reply.status)));
+    }
+    if let (304, Some((_, body))) = (reply.status, kept) {
+        return Ok(Got { value: body, outcome: api_budget::CACHED, etag: None });
+    }
+    let value = serde_json::from_str(&reply.body).map_err(|e| failed(format!("{path}: {e}")))?;
+    Ok(Got { value, outcome: api_budget::FRESH, etag: reply.etag })
+}
+
 impl Forge {
     /// A static token when one is set, else whatever `gh auth token` answers now under the
     /// configured gh config dir. Read per call, so a rotated login is picked up; never logged.
@@ -175,52 +215,42 @@ impl Forge {
     /// and no request is made until it passes.
     fn try_get(&self, caller: &str, path: &str) -> Result<Value, String> {
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
-        if let Some(reset) = api_budget::exhausted_until(&self.api, now) {
-            api_budget::count(caller, api_budget::REFUSED);
-            let why = format!("the GitHub API budget is spent until {} (epoch {reset}); {caller} made no request", api_budget::clock_of(reset));
-            if api_budget::first_report_of(&self.api, reset) {
-                eprintln!("spira-runtime: {why}");
-            }
-            return Err(why);
-        }
-        let token = self.credential()?;
         let url = format!("{}{path}", self.api.trim_end_matches('/'));
-        let mut req = ureq::AgentBuilder::new().timeout(CALL_TIMEOUT).build().get(&url).set("Accept", "application/vnd.github+json").set("User-Agent", "spira-runtime").set("Authorization", &format!("Bearer {token}"));
-        if let (Some(tag), Some(_)) = (api_budget::etag(&url), api_budget::body_for(&url)) {
-            req = req.set("If-None-Match", &tag);
-        }
-        let resp = match req.call() {
-            Ok(r) => r,
-            Err(e) => {
-                api_budget::count(caller, api_budget::FAILED);
-                if let ureq::Error::Status(_, r) = &e {
-                    self.note_rate(r);
+        let kept = api_budget::etag(&url).zip(api_budget::body_for(&url));
+        let send = |tag: Option<&str>| {
+            let token = self.credential()?;
+            let mut req = ureq::AgentBuilder::new().timeout(CALL_TIMEOUT).build().get(&url).set("Accept", "application/vnd.github+json").set("User-Agent", "spira-runtime").set("Authorization", &format!("Bearer {token}"));
+            if let Some(tag) = tag {
+                req = req.set("If-None-Match", tag);
+            }
+            match req.call() {
+                Ok(r) => {
+                    let (status, etag, rate) = (r.status(), r.header("ETag").map(str::to_string), rate_of(&r));
+                    let mut body = String::new();
+                    r.into_reader().take(16 << 20).read_to_string(&mut body).map_err(|e| e.to_string())?;
+                    Ok(Reply { status, etag, rate, body })
                 }
-                return Err(e.to_string());
+                Err(ureq::Error::Status(status, r)) => Ok(Reply { status, etag: None, rate: rate_of(&r), body: String::new() }),
+                Err(e) => Err(e.to_string()),
             }
         };
-        self.note_rate(&resp);
-        if resp.status() == 304 {
-            if let Some(v) = api_budget::body_for(&url) {
-                api_budget::count(caller, api_budget::CACHED);
-                return Ok(v);
+        match conditional_get(&self.api, &url, path, caller, now, kept, send) {
+            Ok(got) => {
+                api_budget::count(caller, got.outcome);
+                if let Some(tag) = got.etag {
+                    api_budget::keep(&url, tag, got.value.clone());
+                }
+                Ok(got.value)
             }
-        }
-        let tag = resp.header("ETag").map(str::to_string);
-        let mut body = String::new();
-        resp.into_reader().take(16 << 20).read_to_string(&mut body).map_err(|e| e.to_string())?;
-        let value: Value = serde_json::from_str(&body).map_err(|e| format!("{path}: {e}"))?;
-        api_budget::count(caller, api_budget::FRESH);
-        if let Some(tag) = tag {
-            api_budget::keep(&url, tag, value.clone());
-        }
-        Ok(value)
-    }
-
-    fn note_rate(&self, r: &ureq::Response) {
-        let num = |h: &str| r.header(h).and_then(|v| v.trim().parse::<u64>().ok());
-        if let (Some(limit), Some(remaining), Some(reset)) = (num("x-ratelimit-limit"), num("x-ratelimit-remaining"), num("x-ratelimit-reset")) {
-            api_budget::note_rate(&self.api, api_budget::Rate { limit, remaining, reset });
+            Err((why, outcome)) => {
+                api_budget::count(caller, outcome);
+                if let Some(reset) = api_budget::exhausted_until(&self.api, now).filter(|_| outcome == api_budget::REFUSED) {
+                    if api_budget::first_report_of(&self.api, reset) {
+                        eprintln!("spira-runtime: {why}");
+                    }
+                }
+                Err(why)
+            }
         }
     }
 
@@ -489,30 +519,45 @@ pub(crate) mod tests {
         seen.join().unwrap();
     }
 
-    #[test]
-    fn an_unchanged_poll_is_revalidated_by_etag_and_answered_from_the_kept_body() {
-        let (api, seen) = stub(vec![answer("200 OK", "ETag: \"v1\"\r\n", "[]"), answer("304 Not Modified", "", "")]);
-        let forge = forge_at(api);
-        assert_eq!(forge.listed("etag-caller", "/repos/a/b/pulls"), Some(vec![]));
-        assert_eq!(forge.listed("etag-caller", "/repos/a/b/pulls"), Some(vec![]));
-        let seen = seen.join().unwrap();
-        assert!(!seen[0].contains("if-none-match"));
-        assert!(seen[1].contains("if-none-match: \"v1\""), "{}", seen[1]);
-        assert_eq!((api_budget::calls("etag-caller", api_budget::FRESH), api_budget::calls("etag-caller", api_budget::CACHED)), (1, 1));
+    fn reply(status: u16, etag: Option<&str>, rate: Option<api_budget::Rate>, body: &str) -> Result<Reply, String> {
+        Ok(Reply { status, etag: etag.map(str::to_string), rate, body: body.into() })
     }
 
     #[test]
-    fn the_budget_the_forge_reports_is_kept_and_a_spent_one_stops_requests_until_its_reset() {
-        let reset = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() + 600;
-        let spent = format!("X-RateLimit-Limit: 5000\r\nX-RateLimit-Remaining: 0\r\nX-RateLimit-Reset: {reset}\r\n");
-        let (api, seen) = stub(vec![answer("200 OK", &spent, "[]")]);
-        let forge = forge_at(api.clone());
-        assert!(forge.try_get("spend-caller", "/repos/a/b/pulls").is_ok());
-        assert_eq!(api_budget::rate(&api), Some(api_budget::Rate { limit: 5000, remaining: 0, reset }));
-        let why = forge.try_get("spend-caller", "/repos/a/b/pulls").unwrap_err();
+    fn an_unchanged_poll_is_revalidated_by_etag_and_answered_from_the_kept_body() {
+        let sent = std::cell::RefCell::new(vec![]);
+        let get = |kept, answer: Result<Reply, String>| {
+            conditional_get("etag-api", "http://etag-api/p", "/p", "etag-caller", 1_000, kept, |tag| {
+                sent.borrow_mut().push(tag.map(str::to_string));
+                answer
+            })
+        };
+        let first = get(None, reply(200, Some("\"v1\""), None, r#"[{"n":1}]"#)).unwrap();
+        assert_eq!((first.value.clone(), first.outcome), (serde_json::json!([{"n": 1}]), api_budget::FRESH));
+        let kept = first.etag.map(|t| (t, first.value));
+        assert_eq!(kept.as_ref().map(|k| k.0.as_str()), Some("\"v1\""));
+        let second = get(kept, reply(304, None, None, "")).unwrap();
+        assert_eq!((second.value, second.outcome), (serde_json::json!([{"n": 1}]), api_budget::CACHED));
+        assert_eq!(*sent.borrow(), [None, Some("\"v1\"".to_string())]);
+    }
+
+    #[test]
+    fn a_spent_budget_the_forge_reports_stops_requests_until_its_reset() {
+        let (api, reset) = ("spend-api", 1_600);
+        let spent = api_budget::Rate { limit: 5000, remaining: 0, reset };
+        let calls = std::cell::Cell::new(0);
+        let get = |answer: Result<Reply, String>| {
+            conditional_get(api, "http://spend-api/p", "/p", "spend-caller", 1_000, None, |_| {
+                calls.set(calls.get() + 1);
+                answer
+            })
+        };
+        assert_eq!(get(reply(200, None, Some(spent), "[]")).unwrap().outcome, api_budget::FRESH);
+        assert_eq!(api_budget::rate(api), Some(spent));
+        let (why, outcome) = get(Err("must not be sent".into())).err().expect("refused");
+        assert_eq!(outcome, api_budget::REFUSED);
         assert!(why.contains(&api_budget::clock_of(reset)) && why.contains("spend-caller"), "{why}");
-        assert_eq!(seen.join().unwrap().len(), 1, "no second request while the budget is spent");
-        assert_eq!(api_budget::calls("spend-caller", api_budget::REFUSED), 1);
+        assert_eq!(calls.get(), 1, "no second request while the budget is spent");
     }
 
     #[test]
