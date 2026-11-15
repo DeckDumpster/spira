@@ -31,6 +31,7 @@ use std::time::Duration;
 use runtime::ports::Clock;
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension, TransactionBehavior};
 use state_store::gc::HOT_KEYS_MAX_REVS;
+use state_store::limits::COMPACT_ROWS;
 use state_store::{
     Backend, Error, LogEntry, Result, Rev, UsagePage, Version, Write,
 };
@@ -224,6 +225,8 @@ struct Inner {
     probe: Option<Arc<dyn Fn() + Send + Sync>>,
     /// The VM steps every range statement has taken since [`SqliteBackend::take_read_steps`].
     read_steps: AtomicU64,
+    /// The VM steps compaction statements have taken since [`SqliteBackend::take_compact_steps`].
+    compact_steps: AtomicU64,
     /// Held for the life of the handle: the exclusive opener. Last, so it outlives the
     /// connections.
     _lock: OpenerLock,
@@ -307,6 +310,21 @@ fn connect(path: &Path) -> Result<Connection> {
             | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
     .map_err(db)
+}
+
+/// Everything above the compaction point is unsuperseded but for the window being compacted, so
+/// a step deletes only each window row's immediate predecessor, one seek on the key's index.
+const COMPACT_SUPERSEDED: &str = "DELETE FROM versions WHERE rowid IN (
+    SELECT (SELECT o.rowid FROM versions o WHERE o.key = n.key AND o.main < n.main
+            ORDER BY o.main DESC LIMIT 1)
+    FROM versions n WHERE n.main > ?1 AND n.main <= ?2)";
+const COMPACT_TOMBSTONES: &str = "DELETE FROM versions WHERE main > ?1 AND main <= ?2 AND value IS NULL";
+/// The main of the first row past the step's `COMPACT_ROWS` rows, found in `versions_by_rev`.
+const COMPACT_END: &str = "SELECT main FROM versions WHERE main > ?1 ORDER BY main, sub LIMIT 1 OFFSET ?2";
+
+fn meter_steps(stmt: &rusqlite::Statement<'_>, meter: &AtomicU64) {
+    let n = stmt.get_status(rusqlite::StatementStatus::VmStep);
+    meter.fetch_add(u64::try_from(n).unwrap_or(0), Ordering::Relaxed);
 }
 
 fn exec(conn: &Connection, sql: &str, p: impl rusqlite::Params) -> Result<usize> {
@@ -604,6 +622,7 @@ impl SqliteBackend {
             clock: opts.clock,
             probe: opts.read_probe,
             read_steps: AtomicU64::new(0),
+            compact_steps: AtomicU64::new(0),
             _lock: OpenerLock(lock_file),
         })))
     }
@@ -613,6 +632,12 @@ impl SqliteBackend {
     /// many rows a list read, for a test that holds a page to O(page).
     pub fn take_read_steps(&self) -> u64 {
         self.0.read_steps.swap(0, Ordering::Relaxed)
+    }
+
+    /// The VM steps compaction has taken since the last call, and resets the count: how many
+    /// rows a compaction step examined, for a test that holds a step to `COMPACT_ROWS`.
+    pub fn take_compact_steps(&self) -> u64 {
+        self.0.compact_steps.swap(0, Ordering::Relaxed)
     }
 
     /// How many schema migrations this store has applied (`PRAGMA user_version`).
@@ -1190,8 +1215,9 @@ impl Backend for SqliteBackend {
         SqliteBackend::compacted(self)
     }
 
-    /// Drops the superseded versions at or below `rev`, and the deletes there, but never above
-    /// the compaction floor.
+    /// Drops the superseded versions and the deletes in one step of at most `COMPACT_ROWS` rows
+    /// above the compaction point, never above `rev`, the head or the compaction floor: the
+    /// step may stop short of `rev`, and `compacted` says where.
     fn compact(&self, rev: u64) -> Result<()> {
         let mut w = lock(&self.0.writer);
         let tx = w
@@ -1201,26 +1227,31 @@ impl Backend for SqliteBackend {
         let head = meta(&tx, "head")?.unwrap_or(0);
         let compacted = meta(&tx, "compacted")?.unwrap_or(0);
         let floor = meta(&tx, "floor")?.unwrap_or(u64::MAX);
-        let to = rev.min(head).min(floor);
+        let mut to = rev.min(head).min(floor);
         if to <= compacted {
             return Ok(());
         }
-        // Everything superseded at or below `compacted` is already gone, so only the versions
-        // written in (compacted, to] can supersede a row or be a delete to drop: compaction
-        // visits that window, never the whole table.
-        let (from_i, to_i) = (main_i64(compacted)?, main_i64(to)?);
-        exec(
-            &tx,
-            "DELETE FROM versions WHERE rowid IN (
-                SELECT o.rowid FROM versions n JOIN versions o ON o.key = n.key AND o.main < n.main
-                WHERE n.main > ?1 AND n.main <= ?2)",
-            [from_i, to_i],
-        )?;
-        exec(
-            &tx,
-            "DELETE FROM versions WHERE main > ?1 AND main <= ?2 AND value IS NULL",
-            [from_i, to_i],
-        )?;
+        let steps = &self.0.compact_steps;
+        let from_i = main_i64(compacted)?;
+        let cap = i64::try_from(COMPACT_ROWS).unwrap_or(i64::MAX);
+        let past: Option<i64> = {
+            let mut stmt = tx.prepare_cached(COMPACT_END).map_err(db)?;
+            stmt.reset_status(rusqlite::StatementStatus::VmStep);
+            let past = stmt.query_row(params![from_i, cap], |r| r.get(0)).optional().map_err(db)?;
+            meter_steps(&stmt, steps);
+            past
+        };
+        if let Some(past) = past {
+            let past = u64::try_from(past).map_err(|_| Error::Backend("negative main".into()))?;
+            to = to.min((past - 1).max(compacted + 1));
+        }
+        let to_i = main_i64(to)?;
+        for sql in [COMPACT_SUPERSEDED, COMPACT_TOMBSTONES] {
+            let mut stmt = tx.prepare_cached(sql).map_err(db)?;
+            stmt.reset_status(rusqlite::StatementStatus::VmStep);
+            stmt.execute([from_i, to_i]).map_err(db)?;
+            meter_steps(&stmt, steps);
+        }
         set_meta(&tx, "compacted", to)?;
         tx.commit().map_err(db)
     }
@@ -1471,6 +1502,62 @@ mod tests {
             state_store::backend::range_in_state_by_scan(&b, "p/", "s3", Some("p/010000"), PAGE, head)
                 .unwrap();
         assert_eq!(page, scanned);
+    }
+
+    /// law: compaction is bounded by rows examined. One hot key written 20,000 times beside
+    /// 20,000 single-version keys: a step stops short of the head, takes a small multiple of
+    /// `COMPACT_ROWS` VM steps, runs on indexes alone, and the passes after it reach the head
+    /// without changing what any key reads as at the head.
+    #[test]
+    fn a_compaction_step_examines_at_most_compact_rows_rows_through_the_index() {
+        let dir = testkit::TempDir::new("sqlite-compact");
+        let path = dir.path().join("c.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            for sql in SCHEMA {
+                exec(&conn, sql, []).unwrap();
+            }
+            let versions = "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 40000)
+                 INSERT INTO versions (key, main, sub, value, create_main, create_sub, version)
+                 SELECT CASE WHEN i % 2 = 0 THEN CAST('hot' AS BLOB)
+                             ELSE CAST(printf('k/%06d', i) AS BLOB) END,
+                        i, 0, CAST('{}' AS BLOB), 1, 0, i FROM n";
+            exec(&conn, versions, []).unwrap();
+            exec(&conn, "UPDATE meta SET value = 40000 WHERE name = 'head'", []).unwrap();
+        }
+        let opts = Options {
+            jump_on_open: false,
+            ..Options::default()
+        };
+        let b = SqliteBackend::open(&path, opts).unwrap();
+        let head = b.head().unwrap();
+        let before = b.range("", None, 100_000, head).unwrap();
+        assert_eq!(before.len(), 20_001);
+        b.take_compact_steps();
+        b.compact(head).unwrap();
+        let steps = b.take_compact_steps();
+        let first = b.compacted().unwrap();
+        assert!(first > 0 && first < head, "one step stopped at {first} of {head}");
+        assert!(steps > 0, "the meter counted nothing");
+        assert!(steps <= 50 * COMPACT_ROWS as u64, "{steps} VM steps for one step");
+        for sql in [COMPACT_END, COMPACT_SUPERSEDED, COMPACT_TOMBSTONES] {
+            let sql = sql.replace("?1", "0").replace("?2", "40000");
+            for step in plan(&b, &sql) {
+                assert!(
+                    !step.starts_with("SCAN versions") && !step.contains("TEMP B-TREE"),
+                    "{sql}: {step}"
+                );
+            }
+        }
+        let mut calls = 1;
+        while b.compacted().unwrap() < head {
+            b.compact(head).unwrap();
+            calls += 1;
+            assert!(calls < 100, "compaction made no progress");
+        }
+        assert!(calls > 1);
+        assert_eq!(b.range("", None, 100_000, head).unwrap(), before);
+        assert_eq!(b.get("hot", head - 1), Err(Error::TooOld { compacted: head }));
     }
 
     /// Migration 2 fills each delivery's `entered` from its history once, in place: the newest

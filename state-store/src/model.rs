@@ -448,7 +448,8 @@ impl<B: Backend> Backend for Modeled<B> {
     fn compact(&self, rev: u64) -> Result<()> {
         let _order = lock(&self.order);
         self.inner.compact(rev)?;
-        self.write_model().raise_floor(rev);
+        let reached = self.inner.compacted()?;
+        self.write_model().raise_floor(reached);
         Ok(())
     }
 

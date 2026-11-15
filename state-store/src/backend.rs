@@ -119,7 +119,8 @@ pub trait Backend: Send + Sync {
     /// Whole txns with `main > from`, at most `max_mains` of them; `TooOld` if `from` is below
     /// the compaction point.
     fn log(&self, from: u64, max_mains: usize) -> Result<Vec<LogEntry>>;
-    /// Drops the watch log and superseded versions at or below `rev`.
+    /// Drops the watch log and superseded versions at or below `rev`, or at or below an earlier
+    /// revision if a bounded step stops short: `compacted` says where it stopped.
     fn compact(&self, rev: u64) -> Result<()>;
     /// The revision compaction has reached.
     fn compacted(&self) -> Result<u64> {

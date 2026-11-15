@@ -89,6 +89,9 @@ impl Backend for Recorded {
     fn compact(&self, rev: u64) -> Result<()> {
         self.inner.compact(rev)
     }
+    fn compacted(&self) -> Result<u64> {
+        self.inner.compacted()
+    }
 }
 
 #[test]
@@ -192,6 +195,9 @@ impl Backend for Stalled {
     }
     fn compact(&self, rev: u64) -> Result<()> {
         self.inner.compact(rev)
+    }
+    fn compacted(&self) -> Result<u64> {
+        self.inner.compacted()
     }
 }
 
