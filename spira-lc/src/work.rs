@@ -334,10 +334,10 @@ fn check_invocation(check: &str, tip: &str, repo: &str, checkout: Option<(&str, 
 
 /// The repository's checkout and landing ref.
 fn repo_checkout(repo: &str) -> Option<(String, String)> {
+    let root = crate::repo_config::registered_root(repo).ok()?.display().to_string();
     let home = spira_config::resolve::locate_home_for_process().ok()?;
     let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
     let reg = spira_config::repos::Registry::from_env(env, std::path::Path::new(&home));
-    let root = reg.root(repo)?;
     let landref = spira_config::repos::landref(&reg, &root)?;
     Some((root, landref))
 }
