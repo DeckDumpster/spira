@@ -2,7 +2,6 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::convert::Infallible;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::time::Duration;
 
@@ -267,27 +266,6 @@ pub struct Contract<B: Backend> {
     shown: RwLock<BTreeMap<String, u64>>,
     commits: Mutex<u64>,
     committed: Condvar,
-    /// Commits between entry and exit: a compaction pass stops when one is waiting.
-    writers: AtomicUsize,
-}
-
-/// What one `compact_behind` pass did.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Compaction {
-    pub from: u64,
-    pub to: u64,
-    pub target: u64,
-    pub steps: usize,
-    /// The pass stopped because a commit was waiting, not because it ran out of steps or work.
-    pub yielded: bool,
-}
-
-struct Writing<'a>(&'a AtomicUsize);
-
-impl Drop for Writing<'_> {
-    fn drop(&mut self) {
-        self.0.fetch_sub(1, Ordering::SeqCst);
-    }
 }
 
 /// What a plan decides at one snapshot head.
@@ -336,8 +314,6 @@ pub(crate) const PAGE: usize = 1_000;
 /// The keys with a stored expiry one gc pass deletes: eight txns of [`limits::MAX_TXN_OPS`].
 pub const EXPIRE_PER_PASS: usize = 1_024;
 const TRIM_TXNS: usize = 16;
-pub(crate) const COMPACT_STEP: u64 = 5_000;
-pub(crate) const COMPACT_STEPS: usize = 8;
 
 /// The wall time an audit record was written at, when it carries one.
 fn recorded_at(v: &Version) -> Result<Option<u64>> {
@@ -515,7 +491,6 @@ impl<B: Backend> Contract<B> {
             deadlines: Mutex::new(BTreeMap::new()),
             shown: RwLock::new(BTreeMap::new()),
             commits: Mutex::new(0),
-            writers: AtomicUsize::new(0),
             committed: Condvar::new(),
         };
         let head = c.backend.head()?;
@@ -544,11 +519,6 @@ impl<B: Backend> Contract<B> {
             .collect();
         *c.deadlines.lock().unwrap_or_else(lock_err) = deadlines;
         Ok(c)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn writers(&self) -> usize {
-        self.writers.load(Ordering::SeqCst)
     }
 
     pub fn backend(&self) -> &B {
@@ -1307,10 +1277,7 @@ impl<B: Backend> Contract<B> {
                 },
             })
             .collect();
-        self.writers.fetch_add(1, Ordering::SeqCst);
-        let _writing = Writing(&self.writers);
-        // Held across the backend commit, so no plan reads a deadline the commit is replacing;
-        // the commit waits behind at most one compaction step.
+        // Held across the backend commit, so no plan reads a deadline the commit is replacing.
         let mut d = crate::phases::time(crate::phases::Phase::DeadlinesWait, || self.deadlines.lock().unwrap_or_else(lock_err));
         let res = crate::phases::commit(|| self.backend.commit(head, &batch));
         if matches!(res, Err(Error::Stale { .. })) {
@@ -1578,33 +1545,6 @@ impl<B: Backend> Contract<B> {
             }
         }
         Ok(probe(lo)?.and_then(|(_, at)| at))
-    }
-
-    /// Drops superseded versions in steps of `step` revisions, each its own transaction, up to
-    /// `keep` revisions behind the head; at most `steps` steps, and none after the first once a
-    /// commit is waiting. A step may stop short of the revision asked for.
-    pub(crate) fn compact_behind(&self, keep: u64, step: u64, steps: usize) -> Result<Compaction> {
-        let target = self.head()?.saturating_sub(keep);
-        let from = self.backend.compacted()?;
-        let mut done = Compaction { from, to: from, target, ..Compaction::default() };
-        for n in 0..steps {
-            if n > 0 && self.writers.load(Ordering::SeqCst) > 0 {
-                done.yielded = true;
-                break;
-            }
-            let next = done.to.saturating_add(step).min(target);
-            if next <= done.to {
-                break;
-            }
-            self.backend.compact(next)?;
-            let now = self.backend.compacted()?;
-            if now <= done.to {
-                break;
-            }
-            done.to = now;
-            done.steps += 1;
-        }
-        Ok(done)
     }
 
     /// Whether `key` exists at `head`.

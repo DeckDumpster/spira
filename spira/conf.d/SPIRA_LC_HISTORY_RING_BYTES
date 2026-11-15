@@ -1,0 +1,6 @@
+TYPE=u64
+GROUP=lc
+DOC=Bytes of recent revision history the control store holds in memory: the change-log entries and the previous value of every key each recent commit overwrote or deleted. A read or watch older than the ring is answered TooOld and re-lists; the ring is empty after a restart.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_LC_HISTORY_RING_BYTES:=67108864}"
+SPIRA_CONF_DEFAULT_EOF

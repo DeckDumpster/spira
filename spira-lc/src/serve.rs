@@ -82,9 +82,8 @@ pub fn run(args: &[String]) -> i32 {
             match shipper {
                 Ok(None) => {
                     eprintln!("spira-lc serve: SPIRA_LC_BACKUP_URL is empty: the control store is not shipped off-box");
-                    // A floor left by an earlier shipper would pin compaction for good.
-                    if let Err(e) = store.contract().backend().inner().clear_compaction_floor() {
-                        eprintln!("spira-lc serve: the control store's compaction floor: {e}");
+                    if let Err(e) = store.contract().backend().inner().drop_outbox() {
+                        eprintln!("spira-lc serve: the control store's outbox: {e}");
                         return 2;
                     }
                     None
@@ -261,17 +260,6 @@ fn gc_tick<B: state_store::Backend>(gc: &state_store::gc::Controller<B>, contrac
 fn gc_lines(tick: &state_store::gc::Tick, wall_ms: u64) -> Vec<String> {
     let at = spira_lc::sections::rfc3339(wall_ms);
     let mut lines: Vec<String> = tick.failed.iter().map(|f| format!("spira-lc serve: {at} control-store gc {f}")).collect();
-    if let Some(c) = &tick.compaction {
-        let yielded = if c.yielded { ", yielded to a writer" } else { "" };
-        lines.push(format!(
-            "spira-lc serve: {at} control-store gc: compact {}→{} of {}, {} steps, {} revisions behind{yielded}",
-            c.from,
-            c.to,
-            c.target,
-            c.steps,
-            c.target - c.to
-        ));
-    }
     if tick.orphans.len() + tick.expired.len() + tick.trimmed > 0 {
         lines.push(format!(
             "spira-lc serve: {at} control-store gc: {} orphans, {} expired, {} trimmed",
@@ -685,17 +673,6 @@ mod tests {
         let lines = super::gc_lines(&failed, 0);
         assert_eq!(lines.len(), 1, "{lines:?}");
         assert!(lines[0].contains("control-store gc orphan: "), "{}", lines[0]);
-    }
-
-    #[test]
-    fn a_compaction_pass_is_logged_with_its_progress_and_whether_it_yielded() {
-        let compaction = state_store::Compaction { from: 100, to: 400, target: 1_000, steps: 3, yielded: true };
-        let mut tick = state_store::gc::Tick { compaction: Some(compaction), ..Default::default() };
-        let lines = super::gc_lines(&tick, 0);
-        assert_eq!(lines.len(), 1, "{lines:?}");
-        assert!(lines[0].ends_with("compact 100→400 of 1000, 3 steps, 600 revisions behind, yielded to a writer"), "{}", lines[0]);
-        tick.compaction.as_mut().unwrap().yielded = false;
-        assert!(super::gc_lines(&tick, 0)[0].ends_with("600 revisions behind"));
     }
 
     fn ask(sink: Option<&spira_otel::Sink>, request: &str) -> (String, i32) {

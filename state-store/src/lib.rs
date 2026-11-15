@@ -8,6 +8,7 @@ pub mod clock;
 pub mod conformance;
 pub mod contract;
 pub mod gc;
+pub mod history;
 pub mod limits;
 pub mod mem;
 pub mod model;
@@ -19,9 +20,10 @@ use serde::{Deserialize, Serialize};
 pub use backend::{Backend, LogEntry, Usage, UsagePage, Version, Write};
 pub use clock::MonotonicClock;
 pub use contract::{
-    carries_ttl, Compare, Compaction, Config, Contract, Created, Deleted, Event, Fence, ListPage, Op, Ports,
+    carries_ttl, Compare, Config, Contract, Created, Deleted, Event, Fence, ListPage, Op, Ports,
     Request, Selector, Txn, TxnResult, Watched,
 };
+pub use history::History;
 pub use mem::MemBackend;
 pub use model::Modeled;
 

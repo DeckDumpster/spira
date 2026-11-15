@@ -4,15 +4,16 @@
 //! commits to a power cut, so every open jumps the head past anything it could have issued and
 //! records the jump.
 //!
-//! Every version of a key is a row of `versions` until compaction drops it, so a read at any
-//! revision since the compaction point is served from the table itself, and the rows above that
-//! point, in revision order, are the watch log. The `main` counter lives in `meta`, never in a
-//! rowid, which SQLite may reuse.
-//!
-//! A read at the head never groups `versions`: `latest` holds each live key's newest version,
-//! written in the commit that writes `versions`, so a list at the head is a key-ordered range
-//! that reads only its page, and `latest_by_state` indexes each object's `data.state`, so a
-//! state-filtered list is a range too (sp-zjkgeh). Reads below the head still use `versions`.
+//! Each key's live row is the only copy of it on disk: `latest` holds every live key's newest
+//! version, so a read at the head is a key-ordered range that reads only its page, and
+//! `latest_by_state` indexes each object's `data.state`, so a state-filtered list is a range
+//! too (sp-zjkgeh). Recent history is a bounded ring in memory ([`state_store::History`]): a
+//! read below the head is the live row corrected by what the ring remembers writing after it,
+//! and the watch log is the ring. A revision the ring no longer holds is `TooOld`; after a
+//! restart the ring is empty and its floor is the head the file held at open. The off-box
+//! shipper reads the [`outbox`] instead, which every commit appends to before the main commit.
+//! The `versions` table is neither written nor read; a store that predates this keeps its rows
+//! there. The `main` counter lives in `meta`, never in a rowid, which SQLite may reuse.
 //!
 //! The schema is versioned: `PRAGMA user_version` counts the [`MIGRATIONS`] a store has applied,
 //! and every open applies the ones it lacks in place. A store that counts more migrations than
@@ -21,6 +22,7 @@
 pub mod bench;
 pub mod durability;
 pub mod live;
+pub mod outbox;
 
 use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
@@ -30,12 +32,11 @@ use std::time::Duration;
 
 use runtime::ports::Clock;
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension, TransactionBehavior};
-use state_store::gc::HOT_KEYS_MAX_REVS;
-use state_store::limits::COMPACT_ROWS;
+use state_store::history::{overlay, AsOf, Written};
 use state_store::phases::{self, Phase};
-use state_store::{
-    Backend, Error, LogEntry, Result, Rev, UsagePage, Version, Write,
-};
+use state_store::{Backend, Error, History, LogEntry, Result, Rev, UsagePage, Version, Write};
+
+use outbox::Outbox;
 
 const SCHEMA: &[&str] = &[
     "CREATE TABLE IF NOT EXISTS meta (name TEXT PRIMARY KEY, value INTEGER NOT NULL)",
@@ -239,6 +240,12 @@ pub struct Options {
     /// Jump an existing store's head by [`JUMP`] on open. Off only for a store being restored
     /// or verified, whose revisions must stay exactly as the log has them.
     pub jump_on_open: bool,
+    /// The most bytes of recent history the in-memory ring holds.
+    pub history_bytes: usize,
+    /// Keep the on-disk outbox the shipper reads. Off for a store being restored or verified.
+    pub outbox: bool,
+    /// A segment of the outbox is closed once it holds this many bytes.
+    pub outbox_segment_bytes: u64,
 }
 
 impl Default for Options {
@@ -249,6 +256,9 @@ impl Default for Options {
             clock: Arc::new(state_store::MonotonicClock::new()),
             read_probe: None,
             jump_on_open: true,
+            history_bytes: 64 * 1024 * 1024,
+            outbox: true,
+            outbox_segment_bytes: outbox::SEGMENT_BYTES,
         }
     }
 }
@@ -271,13 +281,14 @@ struct Inner {
     readers: Vec<Reader>,
     next_reader: AtomicUsize,
     head: AtomicU64,
+    history: Mutex<History>,
+    history_bytes: usize,
+    outbox: Mutex<Option<Outbox>>,
     max_read_ms: AtomicU64,
     clock: Arc<dyn Clock>,
     probe: Option<Arc<dyn Fn() + Send + Sync>>,
     /// The VM steps every range statement has taken since [`SqliteBackend::take_read_steps`].
     read_steps: AtomicU64,
-    /// The VM steps compaction statements have taken since [`SqliteBackend::take_compact_steps`].
-    compact_steps: AtomicU64,
     /// Held for the life of the handle: the exclusive opener. Last, so it outlives the
     /// connections.
     _lock: OpenerLock,
@@ -353,6 +364,11 @@ fn key_of(bytes: Vec<u8>) -> Result<String> {
     String::from_utf8(bytes).map_err(|e| Error::Backend(format!("a key is not UTF-8: {e}")))
 }
 
+/// Where the outbox of the store at `path` lives.
+pub fn outbox_dir(path: &Path) -> PathBuf {
+    PathBuf::from(format!("{}.outbox", path.display()))
+}
+
 fn connect(path: &Path) -> Result<Connection> {
     Connection::open_with_flags(
         path,
@@ -361,21 +377,6 @@ fn connect(path: &Path) -> Result<Connection> {
             | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
     .map_err(db)
-}
-
-/// Everything above the compaction point is unsuperseded but for the window being compacted, so
-/// a step deletes only each window row's immediate predecessor, one seek on the key's index.
-const COMPACT_SUPERSEDED: &str = "DELETE FROM versions WHERE rowid IN (
-    SELECT (SELECT o.rowid FROM versions o WHERE o.key = n.key AND o.main < n.main
-            ORDER BY o.main DESC LIMIT 1)
-    FROM versions n WHERE n.main > ?1 AND n.main <= ?2)";
-const COMPACT_TOMBSTONES: &str = "DELETE FROM versions WHERE main > ?1 AND main <= ?2 AND value IS NULL";
-/// The main of the first row past the step's `COMPACT_ROWS` rows, found in `versions_by_rev`.
-const COMPACT_END: &str = "SELECT main FROM versions WHERE main > ?1 ORDER BY main, sub LIMIT 1 OFFSET ?2";
-
-fn meter_steps(stmt: &rusqlite::Statement<'_>, meter: &AtomicU64) {
-    let n = stmt.get_status(rusqlite::StatementStatus::VmStep);
-    meter.fetch_add(u64::try_from(n).unwrap_or(0), Ordering::Relaxed);
 }
 
 fn exec(conn: &Connection, sql: &str, p: impl rusqlite::Params) -> Result<usize> {
@@ -424,20 +425,13 @@ fn set_meta(conn: &Connection, name: &str, value: u64) -> Result<()> {
     .map(drop)
 }
 
-/// The snapshot a read runs at: the head and compaction point it saw, and the check every read
-/// makes against them.
+/// The snapshot a read runs at: the head it saw, and the check every read makes against it.
 struct Snapshot {
     head: u64,
-    compacted: u64,
 }
 
 impl Snapshot {
     fn readable(&self, at: u64) -> Result<()> {
-        if at < self.compacted {
-            return Err(Error::TooOld {
-                compacted: self.compacted,
-            });
-        }
         if at > self.head {
             return Err(Error::FutureRev {
                 rev: at,
@@ -451,7 +445,6 @@ impl Snapshot {
 fn snapshot(conn: &Connection) -> Result<Snapshot> {
     Ok(Snapshot {
         head: meta(conn, "head")?.unwrap_or(0),
-        compacted: meta(conn, "compacted")?.unwrap_or(0),
     })
 }
 
@@ -467,20 +460,11 @@ fn version_row(r: &rusqlite::Row<'_>, from: usize) -> rusqlite::Result<Option<Ve
     })
 }
 
-const RANGE_BOUNDED: &str =
-    "SELECT key, max(main), sub, value, create_main, create_sub FROM versions
-     WHERE key >= ?1 AND key < ?2 AND main <= ?3 GROUP BY key HAVING value IS NOT NULL
-     ORDER BY key LIMIT ?4";
-const RANGE_OPEN: &str = "SELECT key, max(main), sub, value, create_main, create_sub FROM versions
-     WHERE key >= ?1 AND main <= ?2 GROUP BY key HAVING value IS NOT NULL
-     ORDER BY key LIMIT ?3";
 /// The live keys after `?1`, each with its value's bytes: one key-ordered range over `latest`.
 const USAGE_KEYS: &str =
     "SELECT key, length(CAST(value AS BLOB)) FROM latest WHERE key > ?1 ORDER BY key LIMIT ?2";
 const USAGE_PREFIX: &str =
     "CAST(CASE WHEN instr(key, X'2F') > 0 THEN substr(key, 1, instr(key, X'2F')) ELSE key END AS TEXT)";
-const HOT_KEYS: &str =
-    "SELECT key, count(*) FROM versions WHERE main > ?1 GROUP BY key ORDER BY 2 DESC, key LIMIT ?2";
 
 /// The head's live keys in `[?1, ?2)`: one key-ordered range over `latest`, reading its page.
 const LATEST_BOUNDED: &str = "SELECT key, main, sub, value, create_main, create_sub FROM latest
@@ -526,15 +510,16 @@ fn set_owner_refs(tx: &rusqlite::Transaction<'_>, key: &str, value: Option<&[u8]
     Ok(())
 }
 
-/// A key's newest version into `latest`, in the txn that writes it to `versions`.
+/// A key's newest version into `latest`: the only copy of it on disk.
 const PUT_LATEST: &str = "INSERT OR REPLACE INTO latest
      (key, main, sub, value, create_main, create_sub, version) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)";
 
-/// Which rows a range reads: the head's from `latest`, an older revision's from `versions`.
+/// Which rows a range reads: the head's from `latest`, an older revision's from `latest`
+/// corrected by the history ring.
 #[derive(Clone, Copy)]
 enum Source<'a> {
     Head,
-    At(u64),
+    At(u64, &'a Mutex<History>),
     State(&'a str),
 }
 
@@ -549,12 +534,14 @@ fn range_rows(
     steps: &AtomicU64,
     deadline: &dyn Fn() -> Result<()>,
 ) -> Result<Vec<(String, Version)>> {
+    if matches!(source, Source::At(..)) {
+        return range_rows_at(conn, source, lo, hi, limit, steps, deadline);
+    }
     let limit = i64::try_from(limit).unwrap_or(i64::MAX);
     let sql = match (&source, hi.is_some()) {
         (Source::Head, true) => LATEST_BOUNDED,
         (Source::Head, false) => LATEST_OPEN,
-        (Source::At(_), true) => RANGE_BOUNDED,
-        (Source::At(_), false) => RANGE_OPEN,
+        (Source::At(..), _) => unreachable!("a read below the head returned above"),
         (Source::State(_), true) => STATE_BOUNDED,
         (Source::State(_), false) => STATE_OPEN,
     };
@@ -565,8 +552,7 @@ fn range_rows(
         let mut rows = match (source, hi) {
             (Source::Head, Some(hi)) => stmt.query(params![lo, hi, limit]),
             (Source::Head, None) => stmt.query(params![lo, limit]),
-            (Source::At(at), Some(hi)) => stmt.query(params![lo, hi, main_i64(at)?, limit]),
-            (Source::At(at), None) => stmt.query(params![lo, main_i64(at)?, limit]),
+            (Source::At(..), _) => unreachable!("a read below the head returned above"),
             (Source::State(s), Some(hi)) => stmt.query(params![s, lo, hi, limit]),
             (Source::State(s), None) => stmt.query(params![s, lo, limit]),
         }
@@ -584,13 +570,51 @@ fn range_rows(
     Ok(out)
 }
 
-/// The source a read at `at` takes under `snap`: `latest` at the head, `versions` below it.
-fn source(snap: &Snapshot, at: u64) -> Source<'static> {
+/// The source a read at `at` takes under `snap`: `latest` at the head, `latest` with the
+/// ring's corrections below it.
+fn source<'a>(snap: &Snapshot, at: u64, history: &'a Mutex<History>) -> Source<'a> {
     if at == snap.head {
         Source::Head
     } else {
-        Source::At(at)
+        Source::At(at, history)
     }
+}
+
+/// Live keys in `[lo, hi)` as of the revision `source` names: pages of `latest`, each with the
+/// keys the ring says were written since put back as they were, until `limit` rows survive or
+/// the range ends.
+fn range_rows_at(
+    conn: &Connection,
+    source: Source<'_>,
+    lo: &[u8],
+    hi: Option<&[u8]>,
+    limit: usize,
+    steps: &AtomicU64,
+    deadline: &dyn Fn() -> Result<()>,
+) -> Result<Vec<(String, Version)>> {
+    let Source::At(at, history) = source else {
+        return range_rows(conn, source, lo, hi, limit, steps, deadline);
+    };
+    let touched = lock(history).touched_after(lo, hi, at)?;
+    let mut out = Vec::new();
+    let mut cursor = lo.to_vec();
+    let mut next = 0;
+    while out.len() < limit {
+        let page = range_rows(conn, Source::Head, &cursor, hi, limit, steps, deadline)?;
+        let upto = (page.len() == limit).then(|| page.last().map(|(k, _)| k.clone())).flatten();
+        let span = touched[next..].partition_point(|(k, _)| upto.as_ref().is_none_or(|u| k <= u));
+        out.extend(overlay(page, &touched[next..next + span], None, upto.as_deref()));
+        next += span;
+        match upto {
+            Some(u) => {
+                cursor = u.into_bytes();
+                cursor.push(0);
+            }
+            None => break,
+        }
+    }
+    out.truncate(limit);
+    Ok(out)
 }
 
 impl SqliteBackend {
@@ -675,6 +699,12 @@ impl SqliteBackend {
         migrate(&tx)?;
         tx.commit().map_err(db)?;
         let mut head = meta(&conn, "head")?.unwrap_or(0);
+        let floor = head;
+        let outbox = opts
+            .outbox
+            .then(|| Outbox::open(&outbox_dir(path), head, opts.outbox_segment_bytes))
+            .transpose()
+            .map_err(Error::Backend)?;
         if opts.jump_on_open && head > 0 {
             head = record_jump(&mut conn, head, head + JUMP)?;
         }
@@ -702,11 +732,13 @@ impl SqliteBackend {
             readers,
             next_reader: AtomicUsize::new(0),
             head: AtomicU64::new(head),
+            history: Mutex::new(History::new(floor, opts.history_bytes)),
+            history_bytes: opts.history_bytes,
+            outbox: Mutex::new(outbox),
             max_read_ms: AtomicU64::new(opts.max_read_ms),
             clock: opts.clock,
             probe: opts.read_probe,
             read_steps: AtomicU64::new(0),
-            compact_steps: AtomicU64::new(0),
             _lock: OpenerLock(lock_file),
         })))
     }
@@ -716,12 +748,6 @@ impl SqliteBackend {
     /// many rows a list read, for a test that holds a page to O(page).
     pub fn take_read_steps(&self) -> u64 {
         self.0.read_steps.swap(0, Ordering::Relaxed)
-    }
-
-    /// The VM steps compaction has taken since the last call, and resets the count: how many
-    /// rows a compaction step examined, for a test that holds a step to `COMPACT_ROWS`.
-    pub fn take_compact_steps(&self) -> u64 {
-        self.0.compact_steps.swap(0, Ordering::Relaxed)
     }
 
     /// How many schema migrations this store has applied (`PRAGMA user_version`).
@@ -762,6 +788,51 @@ impl SqliteBackend {
         let at = record_jump(&mut w.conn, head, through)?;
         self.0.head.store(at, Ordering::SeqCst);
         Ok(())
+    }
+
+    /// Whole commits after `from` as the outbox holds them, at most `max_mains`: the shipper's
+    /// source. `TooOld` when a revision after `from` is neither held nor a recorded jump, so
+    /// the shipper cannot replay it and must snapshot.
+    pub fn outbox_log(&self, from: u64, max_mains: usize) -> Result<Vec<LogEntry>> {
+        let head = self.0.head.load(Ordering::SeqCst);
+        let jumps = self.jumps(from, head)?;
+        let guard = lock(&self.0.outbox);
+        let Some(o) = guard.as_ref() else {
+            return Err(Error::Backend("the store keeps no outbox".into()));
+        };
+        match o.after(from, head, max_mains, &jumps).map_err(Error::Backend)? {
+            Ok(commits) => Ok(commits.into_iter().flat_map(|(_, e)| e).collect()),
+            Err(gap) => Err(Error::TooOld { compacted: gap.at }),
+        }
+    }
+
+    /// Removes the outbox's entries at or below `through`, once they are shipped.
+    pub fn outbox_release(&self, through: u64) -> Result<()> {
+        match lock(&self.0.outbox).as_mut() {
+            Some(o) => o.release(through).map_err(Error::Backend),
+            None => Ok(()),
+        }
+    }
+
+    /// The mains the outbox holds, oldest first.
+    pub fn outbox_mains(&self) -> Result<Vec<u64>> {
+        match lock(&self.0.outbox).as_ref() {
+            Some(o) => o.mains().map_err(Error::Backend),
+            None => Ok(Vec::new()),
+        }
+    }
+
+    /// Stops keeping the outbox and removes it: with nothing shipping the store off-box, nothing
+    /// would ever release it.
+    pub fn drop_outbox(&self) -> Result<()> {
+        let mut guard = lock(&self.0.outbox);
+        guard.take();
+        match std::fs::remove_dir_all(outbox_dir(&self.0.path)) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                Err(Error::Backend(format!("{}: {e}", outbox_dir(&self.0.path).display())))
+            }
+            _ => Ok(()),
+        }
     }
 
     pub fn path(&self) -> &Path {
@@ -865,7 +936,7 @@ impl SqliteBackend {
             .map_err(db)?;
         let head = meta(&tx, "head")?.unwrap_or(0);
         let any: Option<i64> = tx
-            .prepare_cached("SELECT 1 FROM versions LIMIT 1")
+            .prepare_cached("SELECT 1 FROM latest LIMIT 1")
             .and_then(|mut s| s.query_row([], |r| r.get(0)).optional())
             .map_err(db)?;
         if head != 0 || any.is_some() {
@@ -878,18 +949,10 @@ impl SqliteBackend {
         }
         let main = main_i64(rev)?;
         {
-            let mut ins = tx
-                .prepare_cached(
-                    "INSERT INTO versions (key, main, sub, value, create_main, create_sub, version)
-                     VALUES (?1, ?2, ?3, ?4, ?2, ?3, 1)",
-                )
-                .map_err(db)?;
             let mut put_latest = tx.prepare_cached(PUT_LATEST).map_err(db)?;
             for (sub, (key, value)) in items.into_iter().enumerate() {
                 let sub = u32::try_from(sub)
                     .map_err(|_| Error::Backend("bulk_load of more than u32::MAX keys".into()))?;
-                ins.execute(params![key.as_bytes(), main, sub, value])
-                    .map_err(db)?;
                 set_owner_refs(&tx, &key, Some(&value))?;
                 put_latest
                     .execute(params![key.as_bytes(), main, sub, value, main, sub, 1])
@@ -897,8 +960,8 @@ impl SqliteBackend {
             }
         }
         set_meta(&tx, "head", rev)?;
-        set_meta(&tx, "compacted", rev)?;
         tx.commit().map_err(db)?;
+        *lock(&self.0.history) = History::new(rev, self.0.history_bytes);
         self.0.head.store(rev, Ordering::SeqCst);
         Ok(())
     }
@@ -939,11 +1002,6 @@ impl SqliteBackend {
         Ok(rev)
     }
 
-    /// Compaction never drops a revision above `rev`; it persists across opens.
-    pub fn set_compaction_floor(&self, rev: u64) -> Result<()> {
-        set_meta(&lock(&self.0.writer).conn, "floor", rev)
-    }
-
     /// Sets the longest a read may run from here on; reads already running keep their deadline.
     pub fn set_max_read_ms(&self, ms: u64) {
         self.0.max_read_ms.store(ms, Ordering::SeqCst);
@@ -952,18 +1010,9 @@ impl SqliteBackend {
         }
     }
 
-    /// Lifts the floor: compaction may drop any revision again.
-    pub fn clear_compaction_floor(&self) -> Result<()> {
-        exec(
-            &lock(&self.0.writer).conn,
-            "DELETE FROM meta WHERE name = 'floor'",
-            [],
-        )
-        .map(drop)
-    }
-
+    /// The history floor: the newest revision the ring no longer holds.
     pub fn compacted(&self) -> Result<u64> {
-        Ok(meta(&lock(&self.0.writer).conn, "compacted")?.unwrap_or(0))
+        Ok(lock(&self.0.history).floor())
     }
 }
 
@@ -975,29 +1024,21 @@ impl Backend for SqliteBackend {
     fn get(&self, key: &str, at: u64) -> Result<Option<Version>> {
         self.read(|conn, snap, _| {
             snap.readable(at)?;
-            match source(snap, at) {
-                Source::At(at) => conn
-                    .prepare_cached(
-                        "SELECT main, sub, value, create_main, create_sub FROM versions
-                         WHERE key = ?1 AND main <= ?2 ORDER BY main DESC LIMIT 1",
-                    )
-                    .and_then(|mut s| {
-                        s.query_row(
-                            params![key.as_bytes(), main_i64(at).unwrap_or(i64::MAX)],
-                            |r| version_row(r, 0),
-                        )
-                        .optional()
-                    }),
-                _ => conn
-                    .prepare_cached(
-                        "SELECT main, sub, value, create_main, create_sub FROM latest
-                         WHERE key = ?1",
-                    )
-                    .and_then(|mut s| {
-                        s.query_row(params![key.as_bytes()], |r| version_row(r, 0))
-                            .optional()
-                    }),
+            let was = if at == snap.head {
+                AsOf::Live
+            } else {
+                lock(&self.0.history).as_of(key, at)?
+            };
+            if let AsOf::Was(v) = was {
+                return Ok(v);
             }
+            conn.prepare_cached(
+                "SELECT main, sub, value, create_main, create_sub FROM latest WHERE key = ?1",
+            )
+            .and_then(|mut s| {
+                s.query_row(params![key.as_bytes()], |r| version_row(r, 0))
+                    .optional()
+            })
             .map(Option::flatten)
             .map_err(db)
         })
@@ -1015,7 +1056,7 @@ impl Backend for SqliteBackend {
             let lo = lower_bound(prefix.as_bytes(), after);
             let hi = successor(prefix.as_bytes());
             let steps = &self.0.read_steps;
-            range_rows(conn, source(snap, at), &lo, hi.as_deref(), limit, steps, deadline)
+            range_rows(conn, source(snap, at, &self.0.history), &lo, hi.as_deref(), limit, steps, deadline)
         })
     }
 
@@ -1055,7 +1096,7 @@ impl Backend for SqliteBackend {
     ) -> Result<Vec<(String, Version)>> {
         self.read(|conn, snap, deadline| {
             snap.readable(at)?;
-            self.rows_outside(conn, source(snap, at), skip, after, limit, deadline)
+            self.rows_outside(conn, source(snap, at, &self.0.history), skip, after, limit, deadline)
         })
     }
 
@@ -1113,21 +1154,8 @@ impl Backend for SqliteBackend {
     }
 
     fn hot_keys(&self, revs: u64, n: usize) -> Result<Vec<(String, u64)>> {
-        if revs > HOT_KEYS_MAX_REVS {
-            return Err(Error::Backend(format!("revs {revs} is above the cap of {HOT_KEYS_MAX_REVS}")));
-        }
-        self.read(|conn, snap, deadline| {
-            let since = main_i64(snap.head.saturating_sub(revs))?;
-            let mut stmt = conn.prepare_cached(HOT_KEYS).map_err(db)?;
-            let mut rows = stmt.query(params![since, i64::try_from(n).unwrap_or(i64::MAX)]).map_err(db)?;
-            let mut out = Vec::new();
-            while let Some(r) = rows.next().map_err(db)? {
-                deadline()?;
-                let count: i64 = r.get(1).map_err(db)?;
-                out.push((key_of(r.get::<_, Vec<u8>>(0).map_err(db)?)?, u64::try_from(count).unwrap_or(0)));
-            }
-            Ok(out)
-        })
+        let since = self.0.head.load(Ordering::SeqCst).saturating_sub(revs);
+        Ok(lock(&self.0.history).hot_keys(since, n))
     }
 
     fn file_bytes(&self) -> Result<(u64, u64)> {
@@ -1210,188 +1238,107 @@ impl Backend for SqliteBackend {
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(db)?;
+        let mut written = Vec::with_capacity(batch.len());
         {
-            let mut ins = tx
+            let mut current = tx
                 .prepare_cached(
-                    "INSERT INTO versions
-                     (key, main, sub, value, create_main, create_sub, version, prev_main, prev_sub)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                    "SELECT main, sub, value, create_main, create_sub, version FROM latest
+                     WHERE key = ?1",
                 )
-                .map_err(db)?;
-            let mut latest = tx
-                .prepare_cached("SELECT version FROM latest WHERE key = ?1")
                 .map_err(db)?;
             let mut put_latest = tx.prepare_cached(PUT_LATEST).map_err(db)?;
             let mut drop_latest = tx
                 .prepare_cached("DELETE FROM latest WHERE key = ?1")
                 .map_err(db)?;
             for (sub, w) in batch.iter().enumerate() {
-                let sub = sub as i64;
-                match w {
+                let (previous, old_version) = current
+                    .query_row([w.key().as_bytes()], |r| {
+                        Ok((version_row(r, 0)?, r.get::<_, i64>(5)?))
+                    })
+                    .optional()
+                    .map_err(db)?
+                    .unwrap_or((None, 0));
+                let rev = Rev::new(main, sub as u32);
+                let entry = match w {
                     Write::Put {
                         key,
                         value,
                         create_rev,
                         prev,
                     } => {
-                        let version: i64 = match prev {
+                        let version = match prev {
                             None => 1,
-                            Some(_) => {
-                                latest
-                                    .query_row([key.as_bytes()], |r| r.get::<_, i64>(0))
-                                    .optional()
-                                    .map_err(db)?
-                                    .unwrap_or(0)
-                                    + 1
-                            }
+                            Some(_) => old_version + 1,
                         };
-                        ins.execute(params![
-                            key.as_bytes(),
-                            m,
-                            sub,
-                            value,
-                            main_i64(create_rev.main)?,
-                            create_rev.sub,
-                            version,
-                            prev.map(|p| p.main as i64),
-                            prev.map(|p| p.sub),
-                        ])
-                        .map_err(db)?;
                         set_owner_refs(&tx, key, Some(value))?;
                         put_latest
                             .execute(params![
                                 key.as_bytes(),
                                 m,
-                                sub,
+                                sub as i64,
                                 value,
                                 main_i64(create_rev.main)?,
                                 create_rev.sub,
                                 version,
                             ])
                             .map_err(db)?;
+                        LogEntry {
+                            key: key.clone(),
+                            rev,
+                            value: Some(value.clone()),
+                            create_rev: Some(*create_rev),
+                            prev: *prev,
+                        }
                     }
                     Write::Delete { key, prev } => {
-                        ins.execute(params![
-                            key.as_bytes(),
-                            m,
-                            sub,
-                            None::<Vec<u8>>,
-                            None::<i64>,
-                            None::<i64>,
-                            0,
-                            prev.main as i64,
-                            prev.sub,
-                        ])
-                        .map_err(db)?;
                         set_owner_refs(&tx, key, None)?;
                         drop_latest.execute([key.as_bytes()]).map_err(db)?;
+                        LogEntry {
+                            key: key.clone(),
+                            rev,
+                            value: None,
+                            create_rev: None,
+                            prev: Some(*prev),
+                        }
                     }
-                }
+                };
+                written.push(Written { entry, previous });
             }
         }
         set_meta(&tx, "head", main)?;
-        tx.commit().map_err(db)?;
+        let entries: Vec<LogEntry> = written.iter().map(|w| w.entry.clone()).collect();
+        let mark = match lock(&self.0.outbox).as_mut() {
+            Some(o) => Some(o.append(main, &entries).map_err(Error::Backend)?),
+            None => None,
+        };
+        lock(&self.0.history).push(main, written);
+        if let Err(e) = tx.commit().map_err(db) {
+            lock(&self.0.history).pop(main);
+            if let (Some(o), Some(mark)) = (lock(&self.0.outbox).as_mut(), mark) {
+                if let Err(u) = o.undo(mark) {
+                    return Err(Error::Backend(format!("{e}; the outbox could not take back main {main}: {u}")));
+                }
+            }
+            return Err(e);
+        }
         committing.confirm();
         self.0.head.store(main, Ordering::SeqCst);
         Ok(main)
     }
 
     fn log(&self, from: u64, max_mains: usize) -> Result<Vec<LogEntry>> {
-        self.read(|conn, snap, deadline| {
-            if from < snap.compacted {
-                return Err(Error::TooOld {
-                    compacted: snap.compacted,
-                });
-            }
-            if max_mains == 0 {
-                return Ok(Vec::new());
-            }
-            let from = main_i64(from)?;
-            let through: Option<i64> = conn
-                .prepare_cached(
-                    "SELECT max(main) FROM (SELECT DISTINCT main FROM versions WHERE main > ?1
-                     ORDER BY main LIMIT ?2)",
-                )
-                .and_then(|mut s| {
-                    s.query_row(
-                        params![from, i64::try_from(max_mains).unwrap_or(i64::MAX)],
-                        |r| r.get(0),
-                    )
-                })
-                .map_err(db)?;
-            let Some(through) = through else {
-                return Ok(Vec::new());
-            };
-            let mut stmt = conn
-                .prepare_cached(
-                    "SELECT key, main, sub, value, create_main, create_sub, prev_main, prev_sub
-                     FROM versions WHERE main > ?1 AND main <= ?2 ORDER BY main, sub",
-                )
-                .map_err(db)?;
-            let mut rows = stmt.query(params![from, through]).map_err(db)?;
-            let mut out = Vec::new();
-            while let Some(r) = rows.next().map_err(db)? {
-                deadline()?;
-                let key = key_of(r.get(0).map_err(db)?)?;
-                let create: (Option<i64>, Option<i64>) =
-                    (r.get(4).map_err(db)?, r.get(5).map_err(db)?);
-                let prev: (Option<i64>, Option<i64>) =
-                    (r.get(6).map_err(db)?, r.get(7).map_err(db)?);
-                out.push(LogEntry {
-                    key,
-                    rev: rev(r.get(1).map_err(db)?, r.get(2).map_err(db)?),
-                    value: r.get(3).map_err(db)?,
-                    create_rev: create.0.zip(create.1).map(|(m, s)| rev(m, s)),
-                    prev: prev.0.zip(prev.1).map(|(m, s)| rev(m, s)),
-                });
-            }
-            Ok(out)
-        })
+        lock(&self.0.history).log(from, max_mains)
     }
 
     fn compacted(&self) -> Result<u64> {
         SqliteBackend::compacted(self)
     }
 
-    /// Drops the superseded versions and the deletes in one step of at most `COMPACT_ROWS` rows
-    /// above the compaction point, never above `rev`, the head or the compaction floor: the
-    /// step may stop short of `rev`, and `compacted` says where.
+    /// Forgets the history at or below `rev`, as far as the head.
     fn compact(&self, rev: u64) -> Result<()> {
-        let mut w = lock(&self.0.writer);
-        let tx = w
-            .conn
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(db)?;
-        let head = meta(&tx, "head")?.unwrap_or(0);
-        let compacted = meta(&tx, "compacted")?.unwrap_or(0);
-        let floor = meta(&tx, "floor")?.unwrap_or(u64::MAX);
-        let mut to = rev.min(head).min(floor);
-        if to <= compacted {
-            return Ok(());
-        }
-        let steps = &self.0.compact_steps;
-        let from_i = main_i64(compacted)?;
-        let cap = i64::try_from(COMPACT_ROWS).unwrap_or(i64::MAX);
-        let past: Option<i64> = {
-            let mut stmt = tx.prepare_cached(COMPACT_END).map_err(db)?;
-            stmt.reset_status(rusqlite::StatementStatus::VmStep);
-            let past = stmt.query_row(params![from_i, cap], |r| r.get(0)).optional().map_err(db)?;
-            meter_steps(&stmt, steps);
-            past
-        };
-        if let Some(past) = past {
-            let past = u64::try_from(past).map_err(|_| Error::Backend("negative main".into()))?;
-            to = to.min((past - 1).max(compacted + 1));
-        }
-        let to_i = main_i64(to)?;
-        for sql in [COMPACT_SUPERSEDED, COMPACT_TOMBSTONES] {
-            let mut stmt = tx.prepare_cached(sql).map_err(db)?;
-            stmt.reset_status(rusqlite::StatementStatus::VmStep);
-            stmt.execute([from_i, to_i]).map_err(db)?;
-            meter_steps(&stmt, steps);
-        }
-        set_meta(&tx, "compacted", to)?;
-        tx.commit().map_err(db)
+        let rev = rev.min(self.0.head.load(Ordering::SeqCst));
+        lock(&self.0.history).forget_through(rev);
+        Ok(())
     }
 }
 
@@ -1455,6 +1402,150 @@ mod tests {
             .pragma_query_value(None, "busy_timeout", |r| r.get(0))
             .unwrap();
         assert_eq!(busy, 1_000);
+    }
+
+    /// Reads its first `free` times unchanged, then jumps an hour: the reads after that are the
+    /// progress handler's, inside a statement.
+    struct JumpAfter {
+        calls: AtomicUsize,
+        free: AtomicUsize,
+    }
+
+    impl Clock for JumpAfter {
+        fn now_ms(&self) -> u64 {
+            let n = self.calls.fetch_add(1, Ordering::SeqCst);
+            if n < self.free.load(Ordering::SeqCst) {
+                0
+            } else {
+                3_600_000
+            }
+        }
+    }
+
+    #[test]
+    fn a_single_long_statement_is_ended_past_max_read_ms_by_the_progress_handler() {
+        let dir = testkit::TempDir::new("sqlite-progress");
+        let clock = Arc::new(JumpAfter {
+            calls: AtomicUsize::new(0),
+            free: AtomicUsize::new(usize::MAX),
+        });
+        let opts = Options { max_read_ms: 100, readers: 1, clock: clock.clone(), ..Options::default() };
+        let b = SqliteBackend::open(&dir.path().join("s.db"), opts).unwrap();
+        let count = |b: &SqliteBackend| {
+            b.read(|conn, _, _| {
+                conn.prepare(
+                    "WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < 5000000)
+                     SELECT count(*) FROM n",
+                )
+                .and_then(|mut s| s.query_row([], |r| r.get::<_, i64>(0)))
+                .map_err(db)
+            })
+        };
+        assert_eq!(count(&b).unwrap(), 5_000_001);
+        clock.calls.store(0, Ordering::SeqCst);
+        clock.free.store(3, Ordering::SeqCst);
+        match count(&b) {
+            Err(Error::Backend(m)) => assert!(m.contains("max_read_ms"), "{m}"),
+            other => panic!("the long statement was not ended: {other:?}"),
+        }
+    }
+
+    fn put_write(key: &str, value: &[u8], main: u64, prev: Option<Rev>) -> Write {
+        Write::Put { key: key.into(), value: value.to_vec(), create_rev: Rev::new(main, 0), prev }
+    }
+
+    fn count(b: &SqliteBackend, table: &str) -> i64 {
+        lock(&b.0.writer)
+            .conn
+            .prepare(&format!("SELECT count(*) FROM {table}"))
+            .and_then(|mut s| s.query_row([], |r| r.get(0)))
+            .unwrap()
+    }
+
+    #[test]
+    fn a_commit_writes_the_live_row_and_nothing_to_versions() {
+        let dir = testkit::TempDir::new("sqlite-one-copy");
+        let b = SqliteBackend::open(&dir.path().join("s.db"), Options::default()).unwrap();
+        for i in 0..100u64 {
+            let key = format!("k/{}", i % 10);
+            let prev = (i >= 10).then(|| Rev::new(i - 9, 0));
+            b.commit(i, &[put_write(&key, b"{}", i + 1, prev)]).unwrap();
+        }
+        assert_eq!(count(&b, "versions"), 0);
+        assert_eq!(count(&b, "latest"), 10);
+    }
+
+    #[test]
+    fn a_commit_that_fails_leaves_no_ring_entry_and_no_log_line() {
+        let dir = testkit::TempDir::new("sqlite-failed-commit");
+        let b = SqliteBackend::open(&dir.path().join("s.db"), Options::default()).unwrap();
+        b.commit(0, &[put_write("a", b"1", 1, None)]).unwrap();
+        {
+            let w = lock(&b.0.writer);
+            for sql in [
+                "PRAGMA foreign_keys = ON",
+                "CREATE TABLE p (id INTEGER PRIMARY KEY)",
+                "CREATE TABLE c (id INTEGER REFERENCES p (id) DEFERRABLE INITIALLY DEFERRED)",
+                "CREATE TRIGGER refuse AFTER UPDATE ON meta BEGIN INSERT INTO c VALUES (1); END",
+            ] {
+                exec(&w.conn, sql, []).unwrap();
+            }
+        }
+        assert!(b.commit(1, &[put_write("a", b"2", 2, Some(Rev::new(1, 0)))]).is_err());
+        assert_eq!(b.head().unwrap(), 1);
+        assert_eq!(lock(&b.0.history).newest(), 1, "the ring holds nothing above the head");
+        assert_eq!(b.outbox_mains().unwrap(), [1], "nor does the outbox");
+        exec(&lock(&b.0.writer).conn, "DROP TRIGGER refuse", []).unwrap();
+        b.commit(1, &[put_write("a", b"3", 2, Some(Rev::new(1, 0)))]).unwrap();
+        let log = b.log(0, 10).unwrap();
+        let seen: Vec<_> = log.iter().map(|e| (e.rev.main, e.value.clone().unwrap())).collect();
+        assert_eq!(seen, [(1, b"1".to_vec()), (2, b"3".to_vec())]);
+        assert_eq!(b.outbox_mains().unwrap(), [1, 2]);
+        assert_eq!(b.get("a", 1).unwrap().unwrap().value, b"1");
+    }
+
+    #[test]
+    fn dropping_the_outbox_removes_it_and_later_commits_still_land() {
+        let dir = testkit::TempDir::new("sqlite-drop-outbox");
+        let path = dir.path().join("s.db");
+        let b = SqliteBackend::open(&path, Options::default()).unwrap();
+        b.commit(0, &[put_write("a", b"1", 1, None)]).unwrap();
+        assert!(outbox_dir(&path).is_dir());
+        b.drop_outbox().unwrap();
+        assert!(!outbox_dir(&path).exists());
+        b.commit(1, &[put_write("b", b"2", 2, None)]).unwrap();
+        assert!(!outbox_dir(&path).exists(), "nothing recreates it");
+        assert!(b.outbox_mains().unwrap().is_empty());
+        assert!(matches!(b.outbox_log(0, 10), Err(Error::Backend(_))));
+    }
+
+    #[test]
+    fn a_read_below_the_head_is_the_live_row_corrected_by_the_ring_across_pages() {
+        let dir = testkit::TempDir::new("sqlite-below-head");
+        let b = SqliteBackend::open(&dir.path().join("s.db"), Options::default()).unwrap();
+        let keys: Vec<String> = (0..50).map(|i| format!("p/{i:03}")).collect();
+        let puts: Vec<Write> = keys.iter().map(|k| put_write(k, b"old", 1, None)).collect();
+        b.commit(0, &puts).unwrap();
+        let mut batch: Vec<Write> = keys
+            .iter()
+            .step_by(2)
+            .enumerate()
+            .map(|(i, k)| Write::Delete { key: k.clone(), prev: Rev::new(1, (i * 2) as u32) })
+            .collect();
+        batch.push(put_write("p/new", b"n", 2, None));
+        b.commit(1, &batch).unwrap();
+        let (mut got, mut after) = (Vec::new(), None::<String>);
+        loop {
+            let page = b.range("p/", after.as_deref(), 7, 1).unwrap();
+            if page.is_empty() {
+                break;
+            }
+            after = page.last().map(|(k, _)| k.clone());
+            got.extend(page.into_iter().map(|(k, _)| k));
+        }
+        assert_eq!(got, keys);
+        let head = b.range("p/", None, 100, 2).unwrap();
+        assert_eq!(head.len(), 26);
     }
 
     #[test]
@@ -1574,16 +1665,26 @@ mod tests {
     }
 
     #[test]
-    fn usage_page_counts_each_prefixs_keys_bytes_and_versions() {
+    fn usage_page_counts_each_prefixs_keys_and_bytes_and_the_version_rows_a_store_inherited() {
         let dir = testkit::TempDir::new("sqlite-usage");
         let b = usage_store(&dir);
         let page = b.usage_page(None, 1000).unwrap();
         assert_eq!(page.next, None);
         assert_eq!(page.examined, 6);
-        assert_eq!(page.prefixes["a/"], usage(2, 5, 6, 13));
-        assert_eq!(page.prefixes["b/"], usage(2, 5, 2, 5));
-        assert_eq!(page.prefixes["events/"], usage(2, 7, 2, 7));
-        assert_eq!(page.prefixes.len(), 3);
+        assert_eq!(page.prefixes["a/"], usage(2, 5, 0, 0), "a commit writes no version row");
+        assert_eq!(page.prefixes["b/"], usage(2, 5, 0, 0));
+        assert_eq!(page.prefixes["events/"], usage(2, 7, 0, 0));
+        for (i, key) in ["a/old", "a/older", "b/old"].iter().enumerate() {
+            exec(
+                &lock(&b.0.writer).conn,
+                "INSERT INTO versions (key, main, sub, value, version) VALUES (?1, ?2, 0, X'01020304', 1)",
+                params![key.as_bytes(), i as i64 + 1],
+            )
+            .unwrap();
+        }
+        let page = b.usage_page(None, 1000).unwrap();
+        assert_eq!(page.prefixes["a/"], usage(2, 5, 2, 8));
+        assert_eq!(page.prefixes["b/"], usage(2, 5, 1, 4));
     }
 
     #[test]
@@ -1614,7 +1715,6 @@ mod tests {
         let dir = testkit::TempDir::new("sqlite-hot");
         let b = usage_store(&dir);
         assert_eq!(b.hot_keys(100, 1).unwrap(), vec![("a/hot".to_string(), 5)]);
-        assert!(b.hot_keys(HOT_KEYS_MAX_REVS + 1, 1).is_err());
     }
 
     #[test]
@@ -1674,62 +1774,6 @@ mod tests {
             state_store::backend::range_in_state_by_scan(&b, "p/", "s3", Some("p/010000"), PAGE, head)
                 .unwrap();
         assert_eq!(page, scanned);
-    }
-
-    /// law: compaction is bounded by rows examined. One hot key written 20,000 times beside
-    /// 20,000 single-version keys: a step stops short of the head, takes a small multiple of
-    /// `COMPACT_ROWS` VM steps, runs on indexes alone, and the passes after it reach the head
-    /// without changing what any key reads as at the head.
-    #[test]
-    fn a_compaction_step_examines_at_most_compact_rows_rows_through_the_index() {
-        let dir = testkit::TempDir::new("sqlite-compact");
-        let path = dir.path().join("c.db");
-        {
-            let conn = Connection::open(&path).unwrap();
-            for sql in SCHEMA {
-                exec(&conn, sql, []).unwrap();
-            }
-            let versions = "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 40000)
-                 INSERT INTO versions (key, main, sub, value, create_main, create_sub, version)
-                 SELECT CASE WHEN i % 2 = 0 THEN CAST('hot' AS BLOB)
-                             ELSE CAST(printf('k/%06d', i) AS BLOB) END,
-                        i, 0, CAST('{}' AS BLOB), 1, 0, i FROM n";
-            exec(&conn, versions, []).unwrap();
-            exec(&conn, "UPDATE meta SET value = 40000 WHERE name = 'head'", []).unwrap();
-        }
-        let opts = Options {
-            jump_on_open: false,
-            ..Options::default()
-        };
-        let b = SqliteBackend::open(&path, opts).unwrap();
-        let head = b.head().unwrap();
-        let before = b.range("", None, 100_000, head).unwrap();
-        assert_eq!(before.len(), 20_001);
-        b.take_compact_steps();
-        b.compact(head).unwrap();
-        let steps = b.take_compact_steps();
-        let first = b.compacted().unwrap();
-        assert!(first > 0 && first < head, "one step stopped at {first} of {head}");
-        assert!(steps > 0, "the meter counted nothing");
-        assert!(steps <= 50 * COMPACT_ROWS as u64, "{steps} VM steps for one step");
-        for sql in [COMPACT_END, COMPACT_SUPERSEDED, COMPACT_TOMBSTONES] {
-            let sql = sql.replace("?1", "0").replace("?2", "40000");
-            for step in plan(&b, &sql) {
-                assert!(
-                    !step.starts_with("SCAN versions") && !step.contains("TEMP B-TREE"),
-                    "{sql}: {step}"
-                );
-            }
-        }
-        let mut calls = 1;
-        while b.compacted().unwrap() < head {
-            b.compact(head).unwrap();
-            calls += 1;
-            assert!(calls < 100, "compaction made no progress");
-        }
-        assert!(calls > 1);
-        assert_eq!(b.range("", None, 100_000, head).unwrap(), before);
-        assert_eq!(b.get("hot", head - 1), Err(Error::TooOld { compacted: head }));
     }
 
     /// Migration 2 fills each delivery's `entered` from its history once, in place: the newest

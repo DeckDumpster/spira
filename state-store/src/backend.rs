@@ -1,6 +1,8 @@
 //! The seam every store sits behind. It knows nothing of txn, history, TTLs or locks: it reads at
 //! a snapshot revision, commits a batch atomically and durably if the head is still the one the
-//! caller read, serves the watch log and compacts. The contract computes every revision it stores.
+//! caller read, and serves the watch log. Only each key's live row is kept durably; history is
+//! bounded and in memory, so a read or watch below it is `TooOld`. The contract computes every
+//! revision it stores.
 
 use std::collections::BTreeMap;
 
@@ -89,7 +91,7 @@ pub fn usage_prefix(key: &str) -> &str {
 pub trait Backend: Send + Sync {
     /// The last committed main revision, kept in its own meta entry: never derived from keys.
     fn head(&self) -> Result<u64>;
-    /// The key as of `at`; `TooOld` below the compaction point, `FutureRev` above the head.
+    /// The key as of `at`; `TooOld` below the history floor, `FutureRev` above the head.
     fn get(&self, key: &str, at: u64) -> Result<Option<Version>>;
     /// Keys starting with `prefix`, strictly after `after`, in key order, at most `limit`.
     fn range(
@@ -124,13 +126,12 @@ pub trait Backend: Send + Sync {
     /// Applies `batch` as main `expect + 1`, or `Stale` if the head is no longer `expect`. The
     /// contract never puts a key in a batch twice.
     fn commit(&self, expect: u64, batch: &[Write]) -> Result<u64>;
-    /// Whole txns with `main > from`, at most `max_mains` of them; `TooOld` if `from` is below
-    /// the compaction point.
+    /// Whole txns with `main > from`, at most `max_mains` of them, from the in-memory history;
+    /// `TooOld` if `from` is below its floor.
     fn log(&self, from: u64, max_mains: usize) -> Result<Vec<LogEntry>>;
-    /// Drops the watch log and superseded versions at or below `rev`, or at or below an earlier
-    /// revision if a bounded step stops short: `compacted` says where it stopped.
+    /// Forgets history at or below `rev`: reads and watches there become `TooOld`.
     fn compact(&self, rev: u64) -> Result<()>;
-    /// The revision compaction has reached.
+    /// The history floor: the newest revision no longer held.
     fn compacted(&self) -> Result<u64> {
         Ok(0)
     }
@@ -151,7 +152,8 @@ pub trait Backend: Send + Sync {
         }
         Ok(page)
     }
-    /// The keys written most often in the last `revs` revisions, most first, at most `n`.
+    /// The keys written most often in the last `revs` revisions, most first, at most `n`; a
+    /// backend counts what its history still holds.
     fn hot_keys(&self, _revs: u64, _n: usize) -> Result<Vec<(String, u64)>> {
         Err(Error::Backend("not served by this backend".into()))
     }

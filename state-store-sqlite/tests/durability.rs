@@ -1,5 +1,5 @@
 //! The control store's off-box copy end to end on real files: the shipper's signed PUTs to an S3
-//! endpoint through a recording fake curl (no process is started), the compaction floor, a
+//! endpoint through a recording fake curl (no process is started), the outbox, a
 //! restore from the uploaded objects and the drill's fold-and-compare.
 
 use std::collections::BTreeSet;
@@ -185,54 +185,6 @@ fn the_shipper_puts_every_revision_to_a_put_only_endpoint_and_retries_a_refusal_
     assert_eq!(held.shipped_through, head);
 }
 
-#[test]
-fn compaction_past_the_last_shipped_revision_stops_at_it() {
-    let dir = TempDir::new("ship-floor");
-    let clock = VirtualClock::new(1_000);
-    let c = suite::open(open(&dir.path().join("live.db")), &clock);
-    let blocked = dir.path().join("not-a-dir");
-    std::fs::write(&blocked, "").unwrap();
-    let mut s = Shipper::open(
-        c.backend().clone(),
-        ship_cfg(dir.path(), u64::MAX),
-        file_put(&dir.path().join("off")),
-        Arc::new(clock.clone()),
-    )
-    .unwrap();
-    put(&c, "k", Object::new(json!(1)), "1");
-    let shipped = s.tick().unwrap().shipped_through;
-    assert_eq!(shipped, c.backend().head().unwrap());
-
-    let mut stuck = Shipper::open(
-        c.backend().clone(),
-        ship_cfg(dir.path(), u64::MAX),
-        file_put(&blocked),
-        Arc::new(clock.clone()),
-    )
-    .unwrap();
-    put(&c, "k", Object::new(json!(2)), "2");
-    put(&c, "k", Object::new(json!(3)), "3");
-    let t = stuck.tick().unwrap();
-    assert!(t.failed.is_some() && t.shipped_through == shipped, "{t:?}");
-    clock.advance(9_000);
-    assert_eq!(stuck.tick().unwrap().oldest_unshipped_ms, Some(9_000));
-
-    let b = c.backend();
-    b.compact(b.head().unwrap()).unwrap();
-    assert_eq!(
-        b.compacted().unwrap(),
-        shipped,
-        "compaction passed the last shipped revision"
-    );
-    assert!(
-        b.log(shipped, 10)
-            .unwrap()
-            .iter()
-            .any(|e| e.rev.main == b.head().unwrap()),
-        "the unshipped revisions are still in the log"
-    );
-}
-
 /// Ships a snapshot at `s` and two runs after it to `file://`; returns the live contract.
 fn shipped_store(dir: &Path, clock: &VirtualClock) -> (Contract<SqliteBackend>, Shipper) {
     let c = suite::open(open(&dir.join("live.db")), clock);
@@ -375,20 +327,15 @@ fn the_drill_passes_on_the_uploaded_objects_and_names_its_exclusions() {
 }
 
 /// Overwrites the newest version of `key` in the store file with `value`, keeping its revision:
-/// in `versions` and in `latest`, which reads at the head answer from.
+/// in `latest`, the only copy of it.
 fn tamper(path: &Path, key: &str, value: &[u8]) {
     let conn = rusqlite::Connection::open(path).unwrap();
-    for sql in [
-        "UPDATE versions SET value = ?1 WHERE key = ?2 AND main = (SELECT max(main) FROM versions WHERE key = ?2)",
-        "UPDATE latest SET value = ?1 WHERE key = ?2",
-    ] {
-        let n = conn
-            .prepare(sql)
-            .unwrap()
-            .execute(rusqlite::params![value, key.as_bytes()])
-            .unwrap();
-        assert_eq!(n, 1, "{key}: {sql}");
-    }
+    let n = conn
+        .prepare("UPDATE latest SET value = ?1 WHERE key = ?2")
+        .unwrap()
+        .execute(rusqlite::params![value, key.as_bytes()])
+        .unwrap();
+    assert_eq!(n, 1, "{key}");
 }
 
 fn restored_copy(dir: &Path, s: &Shipper) -> (PathBuf, PathBuf, Vec<revlog::Run>) {
@@ -747,19 +694,132 @@ fn a_ttl_d_key_deleted_by_an_audited_write_but_still_restored_missing_is_a_misma
     drop(c);
 }
 
+/// The store's live keys and values at its head.
+fn live(b: &SqliteBackend) -> Vec<(String, Vec<u8>)> {
+    keys_at(b, b.head().unwrap())
+}
+
 #[test]
-fn a_cleared_compaction_floor_lets_compaction_reach_the_head() {
-    let dir = TempDir::new("floor-clear");
+fn commits_made_then_the_store_dropped_without_a_stop_hook_ship_every_revision_with_no_snapshot_out_of_cadence(
+) {
+    let dir = TempDir::new("ship-outbox-restart");
     let clock = VirtualClock::new(1_000);
-    let c = suite::open(open(&dir.path().join("live.db")), &clock);
-    for i in 0..3 {
-        put(&c, "k", Object::new(json!(i)), &format!("{i}"));
+    let path = dir.path().join("live.db");
+    let off = dir.path().join("off");
+    let mut first = {
+        let c = suite::open(open(&path), &clock);
+        let mut s = Shipper::open(c.backend().clone(), ship_cfg(dir.path(), u64::MAX), file_put(&off), Arc::new(clock.clone())).unwrap();
+        put(&c, "a", Object::new(json!(1)), "1");
+        let t = s.tick().unwrap();
+        assert!(t.snapshot.is_some(), "the first tick takes the snapshot a restore starts from");
+        put(&c, "a", Object::new(json!(2)), "2");
+        put(&c, "b", Object::new(json!(3)), "3");
+        put(&c, "a", Object::new(json!(4)), "4");
+        c.backend().head().unwrap()
+    };
+    assert!(first > 3);
+    let c = suite::open(open(&path), &clock);
+    let mut s = Shipper::open(c.backend().clone(), ship_cfg(dir.path(), u64::MAX), file_put(&off), Arc::new(clock.clone())).unwrap();
+    let t = s.tick().unwrap();
+    assert_eq!(t.snapshot, None, "no snapshot out of cadence: {t:?}");
+    let head = c.backend().head().unwrap();
+    assert!(head > first, "the open jumped the head");
+    assert_eq!(t.shipped_through, head, "{t:?}");
+    first = c.backend().head().unwrap();
+    put(&c, "c", Object::new(json!(5)), "5");
+    s.tick().unwrap();
+    let (out, _, _) = restored_copy(dir.path(), &s);
+    let restored = verify(&out);
+    assert_eq!(restored.head().unwrap(), c.backend().head().unwrap());
+    assert!(restored.head().unwrap() > first);
+    assert_eq!(live(&restored), live(c.backend()));
+}
+
+#[test]
+fn shipped_entries_leave_the_outbox_and_unshipped_ones_stay() {
+    let dir = TempDir::new("ship-outbox-release");
+    let clock = VirtualClock::new(1_000);
+    let path = dir.path().join("live.db");
+    let c = suite::open(open(&path), &clock);
+    let curl = Curl::default();
+    let put_to: Arc<dyn Put> = Arc::new(Uploader {
+        dest: Dest::parse("s3://bucket/spira/lc/").unwrap(),
+        creds: Some(S3Creds {
+            access_key: "AKTEST".into(),
+            secret_key: "secret".into(),
+            session_token: None,
+            region: "us-test-1".into(),
+            endpoint: Some("http://endpoint.test".into()),
+            part_bytes: 256 << 20,
+        }),
+        proc: Arc::new(curl.clone()),
+        deadline: Duration::from_secs(10),
+    });
+    let mut s = Shipper::open(c.backend().clone(), ship_cfg(dir.path(), u64::MAX), put_to, Arc::new(clock.clone())).unwrap();
+    let b = c.backend().clone();
+    let r1 = put(&c, "a", Object::new(json!(1)), "1");
+    let r2 = put(&c, "a", Object::new(json!(2)), "2");
+    assert_eq!(b.outbox_mains().unwrap(), [r1, r2]);
+    let t = s.tick().unwrap();
+    assert_eq!(t.shipped_through, r2);
+    assert!(b.outbox_mains().unwrap().is_empty(), "everything shipped is gone");
+    let r3 = put(&c, "a", Object::new(json!(3)), "3");
+    let r4 = put(&c, "a", Object::new(json!(4)), "4");
+    *curl.refuse_next.lock().unwrap() = true;
+    let t = s.tick().unwrap();
+    assert!(t.failed.is_some() && t.shipped_through == r2, "{t:?}");
+    assert_eq!(b.outbox_mains().unwrap(), [r3, r4], "the unshipped entries remain");
+    let t = s.tick().unwrap();
+    assert_eq!(t.shipped_through, r4);
+    assert!(b.outbox_mains().unwrap().is_empty());
+}
+
+#[test]
+fn an_outbox_entry_above_the_main_head_at_open_is_removed() {
+    use state_store::{LogEntry, Rev};
+    let dir = TempDir::new("outbox-above-head");
+    let path = dir.path().join("live.db");
+    let clock = VirtualClock::new(1_000);
+    let head = {
+        let c = suite::open(open(&path), &clock);
+        put(&c, "a", Object::new(json!(1)), "1");
+        c.backend().head().unwrap()
+    };
+    let mut o = state_store_sqlite::outbox::Outbox::open(&state_store_sqlite::outbox_dir(&path), head, 1 << 20).unwrap();
+    let ghost = LogEntry { key: "ghost".into(), rev: Rev::new(head + 1, 0), value: Some(b"{}".to_vec()), create_rev: Some(Rev::new(head + 1, 0)), prev: None };
+    o.append(head + 1, &[ghost]).unwrap();
+    assert_eq!(o.mains().unwrap().last(), Some(&(head + 1)));
+    drop(o);
+    let b = open(&path);
+    assert_eq!(b.outbox_mains().unwrap().last(), Some(&head), "the commit that never happened is gone");
+}
+
+#[test]
+fn a_shipper_whose_outbox_does_not_reach_back_takes_a_snapshot_at_once_and_resumes_after_it() {
+    let dir = TempDir::new("ship-outbox-gap");
+    let clock = VirtualClock::new(1_000);
+    let path = dir.path().join("live.db");
+    let off = dir.path().join("off");
+    {
+        let c = suite::open(open(&path), &clock);
+        let mut s = Shipper::open(c.backend().clone(), ship_cfg(dir.path(), u64::MAX), file_put(&off), Arc::new(clock.clone())).unwrap();
+        put(&c, "a", Object::new(json!(1)), "1");
+        s.tick().unwrap();
+        put(&c, "a", Object::new(json!(2)), "2");
+        put(&c, "b", Object::new(json!(3)), "3");
     }
-    let b = c.backend();
-    b.set_compaction_floor(1).unwrap();
-    b.clear_compaction_floor().unwrap();
-    b.compact(3).unwrap();
-    assert_eq!(b.compacted().unwrap(), 3);
+    std::fs::remove_dir_all(state_store_sqlite::outbox_dir(&path)).unwrap();
+    let c = suite::open(open(&path), &clock);
+    let mut s = Shipper::open(c.backend().clone(), ship_cfg(dir.path(), u64::MAX), file_put(&off), Arc::new(clock.clone())).unwrap();
+    let t = s.tick().unwrap();
+    let head = c.backend().head().unwrap();
+    assert_eq!(t.snapshot, Some(head), "the snapshot taken out of cadence: {t:?}");
+    assert_eq!(t.staged, None);
+    put(&c, "c", Object::new(json!(4)), "4");
+    let t = s.tick().unwrap();
+    assert_eq!(t.staged.map(|(from, _)| from), Some(head + 1), "{t:?}");
+    let (out, _, _) = restored_copy(dir.path(), &s);
+    assert_eq!(live(&verify(&out)), live(c.backend()));
 }
 
 // ---- sp-r3yb7x: synchronous=NORMAL and the recorded jump on open --------------------------

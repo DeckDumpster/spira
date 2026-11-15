@@ -4,7 +4,7 @@
 //! lifetime expires when its `expiresAt` passes on the wall clock.
 
 use crate::backend::Backend;
-use crate::contract::{Compaction, Contract, COMPACT_STEP, COMPACT_STEPS, EXPIRE_PER_PASS, PAGE};
+use crate::contract::{Contract, EXPIRE_PER_PASS, PAGE};
 use crate::{Error, Item, Result, ORPHANS_PREFIX};
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -15,8 +15,6 @@ pub struct Tick {
     pub trimmed: usize,
     /// Steps that failed this pass; every other step still ran.
     pub failed: Vec<StepFailure>,
-    /// What this pass's compaction did, when it took a step.
-    pub compaction: Option<Compaction>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -33,10 +31,6 @@ impl std::fmt::Display for StepFailure {
 
 /// How long the audit history stays online.
 pub const EVENT_WINDOW_MS: u64 = 14 * 24 * 60 * 60 * 1_000;
-/// Revisions behind the head that compaction leaves, so a read as of a recent revision holds.
-pub const COMPACT_KEEP: u64 = 10_000;
-/// The most revisions a hot-key count looks back over: what compaction keeps plus one step.
-pub const HOT_KEYS_MAX_REVS: u64 = COMPACT_KEEP + crate::contract::COMPACT_STEP;
 /// The dependents of gone owners one pass looks at, however many markers name them.
 pub const ORPHANS_PER_PASS: usize = 1_024;
 
@@ -147,10 +141,6 @@ impl<'a, B: Backend> Controller<'a, B> {
             Ok(trimmed) => tick.trimmed = trimmed,
             Err(e) => fail(&mut tick, "trim", e),
         }
-        match c.compact_behind(COMPACT_KEEP, COMPACT_STEP, COMPACT_STEPS) {
-            Ok(done) => tick.compaction = Some(done).filter(|d| d.steps > 0),
-            Err(e) => fail(&mut tick, "compact", e),
-        }
         tick
     }
 }
@@ -255,158 +245,6 @@ mod tests {
         clock.advance(EVENT_WINDOW_MS + DAY_MS);
         assert_eq!(gc.tick(c.now_ms()).unwrap().trimmed, 4);
         assert_eq!(events(&c), 0);
-    }
-
-    #[test]
-    fn superseded_versions_are_compacted_in_steps_behind_the_head() {
-        let clock = VirtualClock::new(0);
-        let c = open(MemBackend::new(), &clock);
-        for i in 0..1_000 {
-            write(&c, "rec/a", &format!("r{i}"));
-        }
-        c.compact_behind(100, 200, 2).unwrap();
-        assert_eq!(c.backend().compacted().unwrap(), 400);
-        c.compact_behind(100, 200, 10).unwrap();
-        assert_eq!(c.backend().compacted().unwrap(), c.head().unwrap() - 100);
-    }
-
-    #[test]
-    fn a_compaction_over_many_steps_completes_across_passes() {
-        let clock = VirtualClock::new(0);
-        let c = open(MemBackend::new(), &clock);
-        let (keep, step) = (50, 20);
-        for i in 0..keep + 10 * step {
-            write(&c, "rec/a", &format!("r{i}"));
-        }
-        let target = c.head().unwrap() - keep;
-        let mut passes = Vec::new();
-        while c.backend().compacted().unwrap() < target {
-            let done = c.compact_behind(keep, step, 3).unwrap();
-            assert!(done.steps <= 3);
-            assert_eq!(done.to, c.backend().compacted().unwrap());
-            assert_eq!(done.target, target);
-            assert!(!done.yielded);
-            passes.push(done.steps);
-            assert!(passes.len() <= 4, "no progress: {passes:?}");
-        }
-        assert_eq!(passes, [3, 3, 3, 1]);
-        let idle = c.compact_behind(keep, step, 3).unwrap();
-        assert_eq!((idle.steps, idle.from, idle.to), (0, target, target));
-    }
-
-    /// A backend whose `compact` and `commit` exclude each other, as the store's writer does,
-    /// logging each call; its first `compact` runs `during` before it releases, and a commit
-    /// holds the lock until `release` is set.
-    struct Excluding {
-        inner: MemBackend,
-        lock: std::sync::Mutex<()>,
-        log: std::sync::Mutex<Vec<&'static str>>,
-        during: std::sync::Mutex<Option<Box<dyn FnOnce() + Send>>>,
-        release: std::sync::atomic::AtomicBool,
-    }
-
-    impl Backend for Excluding {
-        fn head(&self) -> crate::Result<u64> {
-            self.inner.head()
-        }
-        fn get(&self, key: &str, at: u64) -> crate::Result<Option<Version>> {
-            self.inner.get(key, at)
-        }
-        fn range(
-            &self,
-            prefix: &str,
-            after: Option<&str>,
-            limit: usize,
-            at: u64,
-        ) -> crate::Result<Vec<(String, Version)>> {
-            self.inner.range(prefix, after, limit, at)
-        }
-        fn commit(&self, expect: u64, batch: &[Write]) -> crate::Result<u64> {
-            let _held = self.lock.lock().unwrap();
-            self.log.lock().unwrap().push("commit");
-            while !self.release.load(Ordering::SeqCst) {
-                std::thread::yield_now();
-            }
-            self.inner.commit(expect, batch)
-        }
-        fn log(&self, from: u64, max_mains: usize) -> crate::Result<Vec<crate::LogEntry>> {
-            self.inner.log(from, max_mains)
-        }
-        fn compact(&self, rev: u64) -> crate::Result<()> {
-            let _held = self.lock.lock().unwrap();
-            self.log.lock().unwrap().push("compact");
-            if let Some(during) = self.during.lock().unwrap().take() {
-                during();
-            }
-            self.inner.compact(rev)
-        }
-        fn compacted(&self) -> crate::Result<u64> {
-            self.inner.compacted()
-        }
-        fn gc_range(
-            &self,
-            after: Option<&str>,
-            limit: usize,
-            at: u64,
-        ) -> crate::Result<Vec<(String, Version)>> {
-            self.inner.gc_range(after, limit, at)
-        }
-        fn due(&self, now: u64, limit: usize, at: u64) -> crate::Result<Vec<String>> {
-            self.inner.due(now, limit, at)
-        }
-
-        fn owned_by(
-            &self,
-            owner: &str,
-            after: Option<&str>,
-            limit: usize,
-            at: u64,
-        ) -> crate::Result<Vec<String>> {
-            self.inner.owned_by(owner, after, limit, at)
-        }
-    }
-
-    #[test]
-    fn a_commit_waiting_between_steps_is_applied_before_the_next_step() {
-        use std::sync::Arc;
-        let clock = VirtualClock::new(0);
-        let c = Arc::new(open(
-            Excluding {
-                inner: MemBackend::new(),
-                lock: Default::default(),
-                log: Default::default(),
-                during: Default::default(),
-                release: AtomicBool::new(true),
-            },
-            &clock,
-        ));
-        for i in 0..100 {
-            write(&c, "rec/a", &format!("r{i}"));
-        }
-        c.backend().release.store(false, Ordering::SeqCst);
-        c.backend().log.lock().unwrap().clear();
-        let writer = Arc::new(std::sync::Mutex::new(None));
-        let (c2, slot) = (Arc::clone(&c), Arc::clone(&writer));
-        let during: Box<dyn FnOnce() + Send> = Box::new(move || {
-            let c3 = Arc::clone(&c2);
-            let handle = std::thread::spawn(move || write(&c3, "rec/b", "late"));
-            while c2.writers() == 0 {
-                std::thread::yield_now();
-            }
-            *slot.lock().unwrap() = Some(handle);
-        });
-        *c.backend().during.lock().unwrap() = Some(during);
-        let first = c.compact_behind(10, 20, 5).unwrap();
-        assert!(first.yielded);
-        assert_eq!(first.steps, 1);
-        c.backend().release.store(true, Ordering::SeqCst);
-        writer.lock().unwrap().take().unwrap().join().unwrap();
-        assert_eq!(*c.backend().log.lock().unwrap(), ["compact", "commit"]);
-        let second = c.compact_behind(10, 20, 1).unwrap();
-        assert_eq!(second.from, first.to);
-        assert_eq!(second.steps, 1);
-        assert!(!second.yielded);
-        assert_eq!(*c.backend().log.lock().unwrap(), ["compact", "commit", "compact"]);
     }
 
     /// Refuses `range` over `events/` with a plain error once armed, and counts the reads that
@@ -650,18 +488,15 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_trim_still_compacts_and_names_its_step() {
+    fn a_failed_trim_names_its_step() {
         let clock = VirtualClock::new(0);
         let c = open(Flaky::new(), &clock);
-        for i in 0..(COMPACT_KEEP + COMPACT_STEP + 10) {
-            write(&c, "rec/a", &format!("r{i}"));
-        }
+        write(&c, "rec/a", "r");
         c.backend().refuse_events.store(true, Ordering::SeqCst);
         let err = Controller::new(&c).tick(c.now_ms()).unwrap_err();
         assert!(
             matches!(&err, Error::Backend(m) if m.starts_with("trim: ")),
             "{err:?}"
         );
-        assert!(c.backend().compacted().unwrap() > 0);
     }
 }

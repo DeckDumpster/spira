@@ -492,6 +492,44 @@ pub fn watch_returns_too_old_after_compaction<R: Rig>(rig: &R) {
     );
 }
 
+/// A value overwritten or deleted inside the history ring reads as it was at a revision between
+/// the writes, and a key created after that revision does not appear.
+pub fn a_value_overwritten_or_deleted_inside_the_ring_reads_as_of_a_revision_between_the_writes<
+    R: Rig,
+>(
+    rig: &R,
+) {
+    let clock = VirtualClock::new(T0);
+    let c = open(rig.fresh(), &clock);
+    let r1 = c
+        .txn(
+            &Txn::new().put("h/a", obj(json!(1))).put("h/b", obj(json!("b"))),
+            &req("1"),
+        )
+        .unwrap()
+        .rev;
+    put(&c, "h/a", obj(json!(2)), "2");
+    let r3 = c
+        .txn(&Txn::new().delete("h/b").put("h/c", obj(json!(3))), &req("3"))
+        .unwrap()
+        .rev;
+    let at = |key: &str, rev: u64| c.get_at(key, rev).unwrap().map(|i| i.value.data);
+    assert_eq!(at("h/a", r1), Some(json!(1)));
+    assert_eq!(at("h/b", r1), Some(json!("b")));
+    assert_eq!(at("h/c", r1), None);
+    let keys = |rev: u64| -> Vec<(String, serde_json::Value)> {
+        c.range_at("h/", None, 100, rev)
+            .unwrap()
+            .into_iter()
+            .map(|i| (i.key, i.value.data))
+            .collect()
+    };
+    assert_eq!(keys(r1), [("h/a".to_string(), json!(1)), ("h/b".to_string(), json!("b"))]);
+    assert_eq!(keys(r3), [("h/a".to_string(), json!(2)), ("h/c".to_string(), json!(3))]);
+    let page = c.range_at("h/", Some("h/a"), 1, r1).unwrap();
+    assert_eq!(page.iter().map(|i| i.key.as_str()).collect::<Vec<_>>(), ["h/b"]);
+}
+
 pub fn a_lock_expires_on_the_virtual_clock<R: Rig>(rig: &R) {
     let clock = VirtualClock::new(T0);
     let c = open(rig.fresh(), &clock);
@@ -1619,6 +1657,7 @@ scenarios!(
     watch_resumes_from_a_revision,
     a_watch_on_a_quiet_prefix_returns_progress_rev,
     watch_returns_too_old_after_compaction,
+    a_value_overwritten_or_deleted_inside_the_ring_reads_as_of_a_revision_between_the_writes,
     a_lock_expires_on_the_virtual_clock,
     a_paused_holders_fenced_write_is_refused_after_expiry_and_reacquisition,
     reopen_extends_every_lock,

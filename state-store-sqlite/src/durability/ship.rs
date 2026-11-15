@@ -12,7 +12,9 @@
 //! - `snapshot.partial`, `last-snapshot` and `last-snapshot-rev`: the copy in progress, and
 //!   when and at which revision the last one finished.
 //!
-//! Compaction is floored at the newest uploaded revision, so it never drops one not yet shipped.
+//! The runs are staged from the store's outbox, which keeps each commit's entries on disk until
+//! they are uploaded. When the outbox does not reach back to the last staged revision, the
+//! shipper takes a snapshot at once and resumes runs after it.
 
 use std::fs;
 use std::io::Write as _;
@@ -46,7 +48,7 @@ pub struct Tick {
     pub uploaded: Vec<String>,
     /// The refusal that stopped this tick's uploads; the object stays queued.
     pub failed: Option<String>,
-    /// The compaction floor: every revision at or below it is off-box.
+    /// Every revision at or below it is off-box.
     pub shipped_through: u64,
     /// How long the oldest revision not yet off-box has been waiting.
     pub oldest_unshipped_ms: Option<u64>,
@@ -59,6 +61,8 @@ pub struct Shipper {
     clock: Arc<dyn Clock>,
     /// The oldest revision not yet off-box, and when a tick first saw it so.
     oldest: Option<(u64, u64)>,
+    /// The snapshot `stage` took because the outbox no longer reached back, reported by the tick.
+    forced: Option<u64>,
 }
 
 fn io(p: &Path) -> impl Fn(std::io::Error) -> String + '_ {
@@ -172,6 +176,7 @@ impl Shipper {
             put,
             clock,
             oldest: None,
+            forced: None,
         };
         let staged = s.staged_through()?;
         if head < staged {
@@ -181,9 +186,6 @@ impl Shipper {
             ));
         }
         let shipped = s.shipped_through()?;
-        s.backend
-            .set_compaction_floor(shipped)
-            .map_err(|e| e.to_string())?;
         let mut queued = Vec::new();
         for kind in [REVLOG, SNAPSHOT] {
             for n in names(&s.queue(kind))? {
@@ -262,13 +264,13 @@ impl Shipper {
         let now = self.clock.now_ms();
         let mut t = Tick {
             staged: self.stage()?,
-            snapshot: self.snapshot_step(now)?,
+            snapshot: self.snapshot_step(now)?.or(self.forced.take()),
             ..Tick::default()
         };
         self.upload(&mut t)?;
         t.shipped_through = self.shipped_through()?;
         self.backend
-            .set_compaction_floor(t.shipped_through)
+            .outbox_release(t.shipped_through)
             .map_err(|e| e.to_string())?;
         self.prune()?;
         t.oldest_unshipped_ms = self.lag_ms()?;
@@ -281,10 +283,16 @@ impl Shipper {
         if head <= from {
             return Ok(None);
         }
-        let entries = self
-            .backend
-            .log(from, self.cfg.max_mains)
-            .map_err(|e| e.to_string())?;
+        let entries = match self.backend.outbox_log(from, self.cfg.max_mains) {
+            Ok(entries) => entries,
+            Err(state_store::Error::TooOld { .. }) => {
+                let (rev, taken) = self.take_snapshot(self.clock.now_ms())?;
+                self.forced = taken.then_some(rev);
+                write_durably(&self.cfg.dir.join("staged"), rev.to_string().as_bytes())?;
+                return Ok(None);
+            }
+            Err(e) => return Err(e.to_string()),
+        };
         // A run ends at its last entry, or past a recorded jump that follows it with no entry
         // after: a jump at the head is shipped too, or shipped_through would never reach it.
         let mut to = entries.last().map_or(from, |e| e.rev.main);
@@ -322,6 +330,13 @@ impl Shipper {
         if !self.snapshot_due(now)? {
             return Ok(None);
         }
+        let (rev, taken) = self.take_snapshot(now)?;
+        Ok(taken.then_some(rev))
+    }
+
+    /// A snapshot now, out of cadence: the revision it holds, which a run staged after it
+    /// continues from. One already taken at that revision is not taken twice.
+    fn take_snapshot(&mut self, now: u64) -> Result<(u64, bool), String> {
         let partial = self.cfg.dir.join("snapshot.partial");
         let rev = self
             .backend
@@ -332,7 +347,7 @@ impl Shipper {
         if read_u64(&last_rev)? == Some(rev) {
             fs::remove_file(&partial).map_err(io(&partial))?;
             write_durably(&last, now.to_string().as_bytes())?;
-            return Ok(None);
+            return Ok((rev, false));
         }
         let name = revlog::snapshot_name(rev);
         let to = self.queue(SNAPSHOT).join(&name);
@@ -348,7 +363,7 @@ impl Shipper {
         sync_dir(&self.queue(SNAPSHOT))?;
         write_durably(&last_rev, rev.to_string().as_bytes())?;
         write_durably(&last, now.to_string().as_bytes())?;
-        Ok(Some(rev))
+        Ok((rev, true))
     }
 
     fn upload(&self, t: &mut Tick) -> Result<(), String> {

@@ -158,6 +158,8 @@ fn dwell<B: Backend>(store: &Store<B>, args: &[String]) -> Result<String, String
     serde_json::to_string(&d).map_err(|e| e.to_string())
 }
 
+/// How far back `store-usage --hot` counts by default; it counts what the history ring holds.
+const HOT_KEYS_DEFAULT_REVS: u64 = 10_000;
 const USAGE_DEFAULT_LIMIT: u64 = 2_000;
 const USAGE_MAX_LIMIT: u64 = 10_000;
 
@@ -172,7 +174,7 @@ fn store_usage<B: Backend>(store: &Store<B>, args: &[String]) -> Result<String, 
     }
     if flag(args, "--hot").is_some() {
         let n = number(args, "--hot", 0).map_err(|e| format!("store-usage: {e}"))?;
-        let revs = number(args, "--revs", state_store::gc::COMPACT_KEEP).map_err(|e| format!("store-usage: {e}"))?;
+        let revs = number(args, "--revs", HOT_KEYS_DEFAULT_REVS).map_err(|e| format!("store-usage: {e}"))?;
         let keys = backend.hot_keys(revs, n as usize).map_err(fail)?;
         let keys: Vec<Value> = keys.into_iter().map(|(key, writes)| json!({ "key": key, "writes": writes })).collect();
         return Ok(json!({ "revs": revs, "keys": keys }).to_string());
