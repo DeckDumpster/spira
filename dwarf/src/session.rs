@@ -26,6 +26,7 @@ pub struct Stop {
     pub pgid: AtomicI32,
     /// Epoch at which a wait on a harness-owned slot began (0: not waiting).
     pub harness_wait: AtomicI64,
+    sent_back: std::sync::Mutex<Option<String>>,
 }
 
 impl Stop {
@@ -33,6 +34,13 @@ impl Stop {
     pub fn harness_waiting(&self, since: i64) -> HarnessWait<'_> {
         self.harness_wait.store(since.max(1), Ordering::SeqCst);
         HarnessWait(self)
+    }
+    pub fn mark_sent_back(&self, why: &str) {
+        *self.sent_back.lock().unwrap_or_else(|e| e.into_inner()) = Some(why.to_string());
+    }
+    /// The state and reason the heartbeat saw when it stopped the session.
+    pub fn sent_back_why(&self) -> Option<String> {
+        self.sent_back.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
     pub fn trip(&self, sig: i32) {
         let _ = self.sig.compare_exchange(0, sig, Ordering::SeqCst, Ordering::SeqCst);
@@ -176,6 +184,9 @@ pub trait Beat: Send + Sync {
     /// session runs: the lifecycle row's `spira-lc renew` (sp-2jf0a). False ends the
     /// heartbeat.
     fn renew(&self, lease_until: i64) -> bool;
+    /// The row's state and reason when the bead is claimable again (READY or REWORK) after
+    /// the last renewal; `None` while this session still holds it or the row cannot be read.
+    fn sent_back(&self) -> Option<String>;
     /// Record how this session was cut short on the bead's lifecycle row (`spira-lc
     /// disposition`); the teardown reads it from there.
     fn disposition(&self, status: &str, note: &str);
@@ -280,6 +291,12 @@ impl Heartbeat {
             if !b.renew(now + self.lease_s) {
                 return None;
             }
+            if let Some(why) = b.sent_back() {
+                b.log(&format!("{}: {} was sent back ({why}) while this session ran — stopping it", self.rune, self.bead));
+                stop.mark_sent_back(&why);
+                stop.trip(libc::SIGTERM);
+                return None;
+            }
         }
     }
 }
@@ -307,8 +324,14 @@ mod tests {
         stop_after: usize,
         /// Every (status, note) the heartbeat recorded as the session's disposition.
         dispositions: Mutex<Vec<(String, String)>>,
+        /// The beat (1-based) from which `sent_back` answers `Some(..)` (0: never).
+        sent_back_at: usize,
     }
     impl Beat for FakeBeat {
+        fn sent_back(&self) -> Option<String> {
+            let n = *self.beats.lock().unwrap() as usize;
+            (self.sent_back_at != 0 && n >= self.sent_back_at).then(|| "REWORK suites-failed".to_string())
+        }
         fn now(&self) -> i64 {
             let mut n = self.now.lock().unwrap();
             *n += 60;
@@ -472,5 +495,31 @@ mod tests {
         let stop = Stop::default();
         assert_eq!(hb.run(&b, &stop, &AtomicBool::new(true)), None);
         assert_eq!(stop.signalled(), None);
+    }
+
+    #[test]
+    fn a_send_back_stops_the_session_and_marks_it() {
+        let d = tmp("sentback");
+        let hb = Heartbeat { bead: "sp-a".into(), rune: "builder".into(), run: d.to_path_buf(), lease_s: 600, every: Duration::from_millis(1), wall_min: 10_000 };
+        let b = FakeBeat { mtimes: Mutex::new((1..=40).collect()), fuse: "?".into(), sent_back_at: 3, ..Default::default() };
+        let stop = Stop::default();
+        assert_eq!(hb.run(&b, &stop, &AtomicBool::new(false)), None);
+        assert_eq!(stop.signalled(), Some(libc::SIGTERM));
+        assert_eq!(stop.sent_back_why().as_deref(), Some("REWORK suites-failed"));
+        assert_eq!(*b.beats.lock().unwrap(), 3);
+        assert!(b.logs.lock().unwrap().iter().any(|l| l == "builder: sp-a was sent back (REWORK suites-failed) while this session ran — stopping it"));
+        assert!(b.dispositions.lock().unwrap().is_empty(), "the row is not touched");
+    }
+
+    #[test]
+    fn a_bead_never_sent_back_keeps_renewing() {
+        let d = tmp("notsentback");
+        let hb = Heartbeat { bead: "sp-a".into(), rune: "builder".into(), run: d.to_path_buf(), lease_s: 600, every: Duration::from_millis(1), wall_min: 10_000 };
+        let b = FakeBeat { mtimes: Mutex::new((1..=40).collect()), fuse: "?".into(), stop_after: 6, ..Default::default() };
+        let stop = Stop::default();
+        assert_eq!(hb.run(&b, &stop, &AtomicBool::new(false)), None);
+        assert_eq!(b.renewals.lock().unwrap().len(), 6);
+        assert_eq!(stop.signalled(), None);
+        assert_eq!(stop.sent_back_why(), None);
     }
 }

@@ -53,6 +53,7 @@ pub fn hb_tick(prev_mtime: i64, cur_mtime: i64, now: i64, deadline: i64, waiting
 /// `dwarf_disposition`'s note keys (DESIGN.md §4.3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NoteKey {
+    SentBack,
     Capacity,
     Slain,
     ThrashCharged,
@@ -74,6 +75,7 @@ pub enum NoteKey {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DispositionIn {
+    pub sent_back: bool,
     /// bd status at teardown (`?` when unreadable).
     pub status: String,
     pub capacity: bool,
@@ -140,9 +142,21 @@ pub fn tip_moved(start: &str, now: &str) -> bool {
     !start.is_empty() && start != "?" && !now.is_empty() && now != "?" && start != now
 }
 
+/// The row's state and reason once a refused renewal shows the bead claimable again.
+pub fn sent_back(row: Option<&spira_store::lc_state::Row>, renew_refused: bool) -> Option<String> {
+    let row = row.filter(|r| renew_refused && r.claimable())?;
+    Some(match row.disposition_note.as_deref().filter(|n| !n.is_empty()) {
+        Some(n) => format!("{} {n}", row.state),
+        None => row.state.clone(),
+    })
+}
+
 pub fn disposition(i: &DispositionIn) -> Disposition {
     use NoteKey::*;
     let status = if i.status.is_empty() { "?" } else { i.status.as_str() };
+    if i.sent_back {
+        return d("sent-back", false, None, SentBack);
+    }
     if i.capacity {
         return d("capacity", false, Some("unjudged-capacity"), Capacity);
     }
@@ -568,6 +582,31 @@ mod tests {
         assert_eq!(disposition(&i), d("slain", false, Some("unjudged-slain"), NoteKey::Slain));
         i.capacity = true;
         assert_eq!(disposition(&i), d("capacity", false, Some("unjudged-capacity"), NoteKey::Capacity));
+    }
+
+    fn row(state: &str) -> spira_store::lc_state::Row {
+        spira_store::lc_state::Row { bead_id: "sp-a".into(), state: state.into(), ..Default::default() }
+    }
+
+    #[test]
+    fn sent_back_needs_a_refused_renewal_and_a_claimable_row() {
+        for s in ["REWORK", "READY"] {
+            assert_eq!(sent_back(Some(&row(s)), false), None, "renewal applied: the session still holds it ({s})");
+            assert_eq!(sent_back(Some(&row(s)), true), Some(s.to_string()));
+        }
+        for s in ["SUBMITTED", "CERTIFIED", "IN_DELIVERY", "LANDED"] {
+            assert_eq!(sent_back(Some(&row(s)), true), None, "{s} is not claimable");
+        }
+        assert_eq!(sent_back(None, true), None, "an unreadable row is not a send-back");
+        let mut r = row("REWORK");
+        r.disposition_note = Some("suites-failed".into());
+        assert_eq!(sent_back(Some(&r), true), Some("REWORK suites-failed".to_string()));
+    }
+
+    #[test]
+    fn a_send_back_outranks_every_other_outcome() {
+        let i = DispositionIn { sent_back: true, slain: true, thrash: true, lapsed: true, capacity: true, ..base() };
+        assert_eq!(disposition(&i), d("sent-back", false, None, NoteKey::SentBack));
     }
 
     #[test]

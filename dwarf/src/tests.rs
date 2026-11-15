@@ -260,6 +260,31 @@ pub(crate) mod verdict_run {
         assert!(blocked);
     }
 
+    struct Notes(Mutex<Vec<Vec<String>>>);
+    impl Bd for Notes {
+        fn bd(&self, a: &[String]) -> Out {
+            self.0.lock().unwrap().push(a.to_vec());
+            Out::ok("[]")
+        }
+    }
+
+    #[test]
+    fn a_session_sent_back_after_submit_leaves_one_note_and_releases_and_charges_nothing() {
+        let (seam, bd) = (Seams(Default::default()), Notes(Default::default()));
+        let rc = with_run(&bd, &seam, Dirty(vec![]), "", |r| {
+            r.stop.mark_sent_back("REWORK suites-failed");
+            r.teardown(0)
+        });
+        assert_eq!(rc, 0);
+        let notes: Vec<_> = bd.0.lock().unwrap().iter().filter(|a| a[0] == "note").cloned().collect();
+        assert_eq!(notes.len(), 1);
+        assert!(notes[0][2].starts_with("Session stopped: this bead was sent back (REWORK suites-failed) after `work submit`"), "{:?}", notes[0]);
+        let calls: Vec<String> = seam.0.lock().unwrap().iter().map(|(f, _)| f.clone()).collect();
+        for f in ["release_own_claim", "bump_requeue", "thrash_streak_bump", "bump_lapsed"] {
+            assert!(!calls.iter().any(|c| c == f), "{f} must not run for a send-back: {calls:?}");
+        }
+    }
+
     #[test]
     fn the_claimed_bead_is_read_once_however_many_steps_ask_for_it() {
         let (seam, bd) = (Seams(Default::default()), CountingBd(Default::default()));

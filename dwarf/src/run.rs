@@ -1697,6 +1697,14 @@ impl Beat for RealBeat<'_> {
         }
         true
     }
+    fn sent_back(&self) -> Option<String> {
+        let refused = *self.renew_rc.lock().unwrap_or_else(|e| e.into_inner()) != 0;
+        if !refused {
+            return None;
+        }
+        let row = claim::ask_row(self.exec, &self.bead, 1, Duration::ZERO, &|_| {}).ok().flatten();
+        decide::sent_back(row.as_ref(), refused)
+    }
     fn disposition(&self, status: &str, note: &str) {
         let o = self.exec.exec("spira-lc", &s(&["disposition", &self.bead, status, note, &self.holder]), None, None);
         if o.code != 0 {
