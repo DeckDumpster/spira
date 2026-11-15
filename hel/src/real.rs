@@ -328,7 +328,9 @@ impl World for Real {
     }
     fn content_on_base(&self, id: &str, proof: &str) {
         if let Ok(c) = self.lc() {
-            let _ = c.call(&["content-on-base", id, proof, "hel"]);
+            if let Err(e) = spira_store::lifecycle_row::content_on_base_on(&c, id, proof, "hel") {
+                self.log(&format!("hel: content-on-base {id}: {e}"));
+            }
         }
     }
     fn pr_merged_tip(&self, repo: &Path, br: &str) -> Option<String> {
@@ -467,6 +469,7 @@ mod tests {
     fn the_writes_and_the_landed_read_go_to_the_store_in_process() {
         let (store, r, _d) = over(|a| match a[0].as_str() {
             "state" => (0, "LANDED\n".into()),
+            "show" => (0, SUBMITTED_V3.into()),
             _ => (0, String::new()),
         });
         r.label_remove("sp-a", "branch:x");
@@ -475,7 +478,33 @@ mod tests {
         assert!(r.lc_landed("sp-a"));
         assert_eq!(
             *store.seen.lock().unwrap(),
-            vec!["content update sp-a --remove-label branch:x", "close-on-land sp-a abc", "content-on-base sp-a proof hel", "state sp-a"]
+            vec!["content update sp-a --remove-label branch:x", "close-on-land sp-a abc", "show sp-a", r#"event bead sp-a --expect SUBMITTED --version 3 --actor hel --kind {"ContentOnBase":{"proof":"proof"}}"#, "state sp-a"]
+        );
+    }
+
+    const SUBMITTED_V3: &str = r#"{"bead":{"state":"SUBMITTED","version":3}}"#;
+
+    #[test]
+    fn a_refused_content_on_base_sends_no_event_and_does_not_panic() {
+        let (store, r, _d) = over(|_| (1, "refused".into()));
+        r.content_on_base("sp-a", "merge-tree:abc");
+        assert_eq!(*store.seen.lock().unwrap(), vec!["show sp-a".to_string()]);
+    }
+
+    #[test]
+    fn content_on_base_is_sent_as_a_bead_event_because_the_socket_refuses_the_caller_verb() {
+        let (store, r, _d) = over(|a| match a[0].as_str() {
+            "content-on-base" => (2, "usage: spira-lc show ...".into()),
+            "show" => (0, SUBMITTED_V3.into()),
+            _ => (0, String::new()),
+        });
+        r.content_on_base("sp-a", "merge-tree:abc");
+        assert_eq!(
+            *store.seen.lock().unwrap(),
+            vec![
+                "show sp-a".to_string(),
+                r#"event bead sp-a --expect SUBMITTED --version 3 --actor hel --kind {"ContentOnBase":{"proof":"merge-tree:abc"}}"#.to_string()
+            ]
         );
     }
 
