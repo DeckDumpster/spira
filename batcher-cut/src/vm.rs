@@ -617,6 +617,8 @@ impl<'a> VmRunner<'a> {
         let spool = root.join("spool");
         let results = root.join("corpus");
         let _ = fs::remove_dir_all(&root);
+        let own = root.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        env.results_retention.prune("batcher", &env.run.join("batch-results"), spira_config::vtime::now_epoch(), &|n| n == own);
         for d in [spool.join("req"), spool.join("res"), results.clone()] {
             fs::create_dir_all(&d).map_err(|e| format!("{}: {e}", d.display()))?;
         }
@@ -1898,6 +1900,22 @@ mod abandon_tests {
         let mut r = r.after_pass(Some(d.path().to_path_buf()));
         let red = r.prior_red().expect("the pass's red");
         assert_eq!((red.name.as_str(), red.failed), ("integration-tests", vec!["FAIL dir:testenv lint_x".to_string()]));
+    }
+
+    #[test]
+    fn a_new_attribution_root_prunes_old_batch_results_and_keeps_fresh_ones() {
+        let d = testkit::TempDir::new("vm-prune-batch-results");
+        let results = d.path().join("batch-results");
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(8 * 86400);
+        fs::create_dir_all(results.join("aa11")).unwrap();
+        fs::File::open(results.join("aa11")).unwrap().set_modified(old).unwrap();
+        fs::create_dir_all(results.join("bb22")).unwrap();
+        let env = lifecycle_tests_env(d.path());
+        let repo = repo(d.path());
+        let r = VmRunner::new(&env, &repo, d.path(), "base", "r1", BTreeMap::new()).unwrap();
+        assert!(!results.join("aa11").exists());
+        assert!(results.join("bb22").exists());
+        assert!(r.results.starts_with(&results) && r.results.is_dir());
     }
 
     #[test]

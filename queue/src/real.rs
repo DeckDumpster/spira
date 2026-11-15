@@ -598,6 +598,7 @@ impl Lib for RealLib {
         let mailbox = spira_config::process::cfg("SPIRA_MAIL_SESSION_MAILBOX")?;
         let round_wall_secs =
             spira_config::process::cfg_parse::<u64>("SPIRA_ROUND_CERTIFY_WALL_SECS")?;
+        let results_retention = spira_config::results_retention::Retention::from_config()?;
         let round_ami_wait_secs =
             spira_config::process::cfg_parse::<u64>("SPIRA_ROUND_AMI_WAIT_SECS")?;
         let rounds_max = spira_config::process::cfg_parse::<usize>("SPIRA_QUEUE_ROUNDS_MAX")?;
@@ -648,6 +649,7 @@ impl Lib for RealLib {
             git_email,
             mailbox,
             round_wall_secs,
+            results_retention,
             round_ami_wait_secs,
             round_spill: spira_config::process::cfg("SPIRA_ROUND_VM_SPILL").unwrap_or_default(),
             rounds_max,

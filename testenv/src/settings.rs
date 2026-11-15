@@ -34,6 +34,8 @@ impl Source<'_> {
 pub struct Settings {
     pub run: PathBuf,
     pub results_root: PathBuf,
+    /// `SPIRA_RESULTS_KEEP_DAYS` / `SPIRA_RESULTS_PRUNE_MAX`: a results directory is created only after older ones are pruned.
+    pub results_retention: spira_config::results_retention::Retention,
     pub verdicts: PathBuf,
     /// The resume store spec (`none`, `dir:<path>`, `s3://<bucket>/<prefix>`); unset is none.
     pub resume: Option<String>,
@@ -189,6 +191,7 @@ impl Settings {
         let spira_db = cfg("SPIRA_DB")?;
         Ok(Settings {
             results_root: path("SPIRA_BATCH_RESULTS").unwrap_or_else(|| run.join("batch-results")),
+            results_retention: spira_config::results_retention::Retention::from_config()?,
             resume: src.get("SPIRA_TESTENV_RESUME").filter(|v| !v.trim().is_empty()),
             verdicts: path("SPIRA_VERDICTS").unwrap_or_else(|| run.join("verdicts")),
             verdict_ttl: cfg_parse("SPIRA_VERDICT_TTL")?,

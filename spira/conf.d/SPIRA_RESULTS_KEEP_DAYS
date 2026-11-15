@@ -1,0 +1,6 @@
+TYPE=u32
+GROUP=lifecycle
+DOC=Days of round results (<run>/rounds/<batch>.results) and testenv or attribution results (<run>/batch-results/*) to keep; older entries are removed on write.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_RESULTS_KEEP_DAYS:=7}"
+SPIRA_CONF_DEFAULT_EOF

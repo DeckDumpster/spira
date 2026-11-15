@@ -259,6 +259,7 @@ fn e2e_three_members_one_breaks_a_fast_suite() {
         orphan_redrive_after: 600,
         pause_lift_after: 900,
         land_unpause: None,
+        results_retention: spira_config::results_retention::Retention { keep_days: 7, max: 50 },
     };
     let repo = Repo {
         name: "fx".into(),

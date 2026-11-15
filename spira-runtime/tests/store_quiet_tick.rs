@@ -96,6 +96,7 @@ fn env(dir: &Path) -> Env {
         orphan_redrive_after: 1,
         pause_lift_after: 1,
         land_unpause: None,
+        results_retention: spira_config::results_retention::Retention { keep_days: 7, max: 50 },
     }
 }
 

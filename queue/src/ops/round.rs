@@ -727,6 +727,25 @@ pub(super) fn retire_menders(w: &World, c: &Ctx, batch: &str, why: &str) {
     sweep_menders(w, c);
 }
 
+/// Before a round's results directory is recreated, drops the old closed rounds' `*.results` of
+/// this repo from `rounds`. When the open rounds cannot be listed nothing is removed.
+fn prune_round_results(w: &World, c: &Ctx, batch: &str) {
+    let mut open = match w.lc.open_batches(&c.r.name) {
+        Ok(open) => open.into_iter().map(|b| b.id).collect::<Vec<_>>(),
+        Err(e) => {
+            w.err(format!("queue.sh: round results not pruned: the open rounds of {} cannot be listed: {e}", c.r.name));
+            return;
+        }
+    };
+    open.push(batch.to_string());
+    c.s.results_retention.prune(
+        "queue.sh",
+        &rounds_dir(c),
+        spira_config::vtime::now_epoch(),
+        &spira_config::results_retention::rounds_keep(&c.r.name, &open),
+    );
+}
+
 pub(super) fn sweep_menders(w: &World, c: &Ctx) {
     if let Err((rc, e)) = w.lc.mending_close_ended("concierge") {
         w.err(format!(
@@ -3574,6 +3593,7 @@ fn certify_pass(
         build_s: 0,
     };
     if attest.is_none() && gate::own::declares_own_testenv(&wt) {
+        prune_round_results(w, c, batch);
         let results = rounds_dir(c).join(format!("{batch}.results"));
         let _ = fs::remove_dir_all(&results);
         let _ = fs::create_dir_all(&results);
@@ -3644,6 +3664,7 @@ fn certify_pass(
             return faulted_pass(w, label, c, batch, &format!("{why}\n{shown}"));
         }
     } else if attest.is_none() {
+        prune_round_results(w, c, batch);
         let results = rounds_dir(c).join(format!("{batch}.results"));
         let _ = fs::remove_dir_all(&results);
         let Some(base) = c.r.landref.clone() else {

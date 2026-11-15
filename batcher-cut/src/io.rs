@@ -110,6 +110,8 @@ pub struct Env {
     pub pause_lift_after: u64,
     /// The Concierge's cut-pause file; a landing clears it unless it starts with `hold:`. `None` is off.
     pub land_unpause: Option<PathBuf>,
+    /// `SPIRA_RESULTS_KEEP_DAYS` / `SPIRA_RESULTS_PRUNE_MAX`: how a write of results prunes its folder.
+    pub results_retention: spira_config::results_retention::Retention,
 }
 
 fn now() -> u64 {
@@ -2258,9 +2260,33 @@ pub fn suite_first_fail(results_dir: &Path, pass: Option<&Path>, suite: &str) ->
 /// Copies the round VM's results (every suite's `.out` and `.result`, nested run directories
 /// included) into `<run>/rounds/<batch>.results`, where a red round's Concierge and
 /// attribution step read them. Returns that directory.
-pub fn keep_round_results(run: &Path, batch: &str, from: &Path) -> PathBuf {
+pub fn keep_round_results(run: &Path, batch: &str, from: &Path, prune: Option<&RoundsPrune>) -> PathBuf {
+    if let Some(p) = prune {
+        p.retention.prune("batcher", &run.join("rounds"), spira_config::vtime::now_epoch(), &spira_config::results_retention::rounds_keep(&p.repo, &p.open));
+    }
     let _ = fs::remove_dir_all(round_results_dir(run, batch));
     overlay_round_results(run, batch, from)
+}
+
+/// What a write of a round's kept results may prune from `<run>/rounds`: `repo`'s own
+/// `*.results` outside `open`, the open rounds' ids.
+pub struct RoundsPrune {
+    pub repo: String,
+    pub open: Vec<String>,
+    pub retention: spira_config::results_retention::Retention,
+}
+
+/// The prune for a write of `batch`'s results; None, with the reason on stderr, when the
+/// open rounds cannot be listed: a control that cannot check removes nothing.
+pub fn rounds_prune(env: &Env, repo: &Repo, batch: &str) -> Option<RoundsPrune> {
+    let mut open: Vec<String> = open_rounds(env, repo)
+        .map_err(|e| eprintln!("batcher: round results not pruned: the open rounds of {} cannot be listed: {e}", repo.name))
+        .ok()?
+        .into_iter()
+        .map(|r| r.id)
+        .collect();
+    open.push(batch.to_string());
+    Some(RoundsPrune { repo: repo.name.clone(), open, retention: env.results_retention })
 }
 
 /// Copies `from` into the round's kept results without removing what is already there; a file
@@ -2293,11 +2319,11 @@ pub fn overlay_round_results(run: &Path, batch: &str, from: &Path) -> PathBuf {
 
 /// The end of an attribution: with a pass behind it the pass's kept output stays and the
 /// attribution's is laid over it; without one the attribution's output replaces the kept dir.
-pub fn keep_attribution_results(run: &Path, batch: &str, from: &Path, after_pass: bool) -> PathBuf {
+pub fn keep_attribution_results(run: &Path, batch: &str, from: &Path, after_pass: bool, prune: Option<&RoundsPrune>) -> PathBuf {
     if after_pass {
         overlay_round_results(run, batch, from)
     } else {
-        keep_round_results(run, batch, from)
+        keep_round_results(run, batch, from, prune)
     }
 }
 
@@ -4650,6 +4676,30 @@ mod fail_line_tests {
     }
 
     #[test]
+    fn keeping_a_rounds_results_prunes_only_its_repos_old_closed_rounds() {
+        let run = testkit::TempDir::new("batcher-cut-prune-results");
+        let rounds = run.path().join("rounds");
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(8 * 86400);
+        for n in ["spira-old.results", "spira-open.results", "cubby-old.results"] {
+            fs::create_dir_all(rounds.join(n)).unwrap();
+            fs::File::open(rounds.join(n)).unwrap().set_modified(old).unwrap();
+        }
+        let corpus = run.path().join("corpus");
+        fs::create_dir_all(&corpus).unwrap();
+        fs::write(corpus.join("test-red.sh.out"), "FAIL\n").unwrap();
+        let prune = RoundsPrune {
+            repo: "spira".into(),
+            open: vec!["spira-open".into(), "spira-b9".into()],
+            retention: spira_config::results_retention::Retention { keep_days: 7, max: 50 },
+        };
+        let kept = keep_round_results(run.path(), "spira-b9", &corpus, Some(&prune));
+        assert!(!rounds.join("spira-old.results").exists());
+        assert!(rounds.join("spira-open.results").exists());
+        assert!(rounds.join("cubby-old.results").exists());
+        assert!(kept.join("test-red.sh.out").exists());
+    }
+
+    #[test]
     fn a_red_rounds_suite_output_is_copied_under_the_rounds_results_and_named_in_the_reason() {
         let run = testkit::TempDir::new("batcher-cut-keep-results");
         let corpus = run.path().join("batch-results").join("r-1").join("corpus");
@@ -4660,7 +4710,7 @@ mod fail_line_tests {
             "FAIL: nested\n",
         )
         .unwrap();
-        let kept = keep_round_results(run.path(), "b9", &corpus);
+        let kept = keep_round_results(run.path(), "b9", &corpus, None);
         assert_eq!(kept, run.path().join("rounds").join("b9.results"));
         assert_eq!(
             fs::read_to_string(kept.join("test-red.sh.out")).unwrap(),
@@ -4698,7 +4748,7 @@ mod fail_line_tests {
     fn a_rerun_suites_output_is_laid_over_the_passs_after_the_round_tree_is_gone() {
         let run = testkit::TempDir::new("batcher-cut-overlay");
         let (pass, corpus) = pass_and_corpus(run.path(), true);
-        keep_round_results(run.path(), "b1", &pass);
+        keep_round_results(run.path(), "b1", &pass, None);
         fs::remove_dir_all(&pass).unwrap();
         let kept = overlay_round_results(run.path(), "b1", &corpus);
         assert_eq!(fs::read_to_string(kept.join("test-a.sh.out")).unwrap(), "not ok 1 - broke\n");
@@ -4710,10 +4760,10 @@ mod fail_line_tests {
     fn an_attribution_without_a_pass_replaces_the_kept_results_and_one_with_a_pass_keeps_them() {
         let run = testkit::TempDir::new("batcher-cut-attr-end");
         let (pass, corpus) = pass_and_corpus(run.path(), true);
-        keep_round_results(run.path(), "b1", &pass);
-        let kept = keep_attribution_results(run.path(), "b1", &corpus, true);
+        keep_round_results(run.path(), "b1", &pass, None);
+        let kept = keep_attribution_results(run.path(), "b1", &corpus, true, None);
         assert!(kept.join("test-a.sh.out").is_file());
-        let kept = keep_attribution_results(run.path(), "b1", &corpus, false);
+        let kept = keep_attribution_results(run.path(), "b1", &corpus, false, None);
         assert!(!kept.join("test-a.sh.out").exists());
         assert_eq!(fs::read_to_string(kept.join("test-b.sh.out")).unwrap(), "new");
     }
@@ -4722,7 +4772,7 @@ mod fail_line_tests {
     fn an_attribution_that_ran_nothing_leaves_the_passs_output_kept_and_cited() {
         let run = testkit::TempDir::new("batcher-cut-overlay-empty");
         let (pass, corpus) = pass_and_corpus(run.path(), false);
-        keep_round_results(run.path(), "b1", &pass);
+        keep_round_results(run.path(), "b1", &pass, None);
         fs::remove_dir_all(&pass).unwrap();
         let kept = overlay_round_results(run.path(), "b1", &corpus);
         assert_eq!(fs::read_to_string(kept.join("test-a.sh.out")).unwrap(), "not ok 1 - broke\n");
@@ -5091,6 +5141,7 @@ pub fn lifecycle_tests_env(dir: &Path) -> Env {
         orphan_redrive_after: 600,
         pause_lift_after: 900,
         land_unpause: None,
+        results_retention: spira_config::results_retention::Retention { keep_days: 7, max: 50 },
     }
 }
 
