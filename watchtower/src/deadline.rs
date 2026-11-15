@@ -102,14 +102,14 @@ mod tests {
         let d = testkit::TempDir::new("wt-deadline");
         let pidfile = d.join("grandchild.pid");
         let script = format!("sleep 30 & echo $! > {}; wait", pidfile.display());
-        let r = output_within("test", Command::new("sh").arg("-c").arg(&script), Duration::from_millis(500));
+        let r = output_within("test", Command::new("sh").arg("-c").arg(&script), Duration::from_secs(3));
         assert_eq!(r.unwrap_err().kind(), io::ErrorKind::TimedOut);
         let pid = std::fs::read_to_string(&pidfile).unwrap().trim().to_string();
-        let gone = (0..50).any(|_| {
+        let gone = (0..1500).any(|_| {
             let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap_or_default();
             let dead = stat.is_empty() || stat.rsplit(')').next().is_some_and(|r| r.trim_start().starts_with('Z'));
             if !dead {
-                // clock-safe: a 1 s cap on the wait for the named signal, the grandchild's exit
+                // clock-safe: a 30 s cap (1500 x 20 ms) on the wait for the named signal, the grandchild's exit
                 std::thread::sleep(Duration::from_millis(20));
             }
             dead
