@@ -6,7 +6,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::{Error, Result, Rev, EVENTS_PREFIX, HISTORY_PREFIX};
+use crate::{Error, Result, Rev, EVENTS_PREFIX, HISTORY_PREFIX, REQUESTS_PREFIX};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Version {
@@ -161,15 +161,15 @@ pub trait Backend: Send + Sync {
     fn file_bytes(&self) -> Result<(u64, u64)> {
         Err(Error::Backend("not served by this backend".into()))
     }
-    /// `range("")` without the keys under `events/` and `history/`: what the GC controller and the
-    /// TTL restart read, since neither carries metadata or a TTL and both grow without bound.
+    /// `range("")` without the keys under `events/`, `history/` and `requests/`: none carries
+    /// metadata or a TTL the contract acts on, and all grow without bound.
     fn gc_range(
         &self,
         after: Option<&str>,
         limit: usize,
         at: u64,
     ) -> Result<Vec<(String, Version)>> {
-        self.range_outside(&[EVENTS_PREFIX, HISTORY_PREFIX], after, limit, at)
+        self.range_outside(&[EVENTS_PREFIX, HISTORY_PREFIX, REQUESTS_PREFIX], after, limit, at)
     }
     /// `range("")` without the keys starting with any of `skip`, strictly after `after`, in key
     /// order, at most `limit`. The default pages `range` and filters; a backend whose index can

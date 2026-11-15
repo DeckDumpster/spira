@@ -883,17 +883,17 @@ pub fn retries_of_lock_create_delete_and_a_refusal_report_the_original_outcome<R
     assert_eq!((r.succeeded, r.already_applied), (false, true));
 }
 
-pub fn request_keys_expire_at_24h_of_virtual_time<R: Rig>(rig: &R) {
+pub fn the_gc_never_expires_a_receipt<R: Rig>(rig: &R) {
     let clock = VirtualClock::new(T0);
     let c = open(rig.fresh(), &clock);
     let gc = Controller::new(&c);
-    put(&c, "a", obj(json!(1)), "day");
-    clock.advance(24 * HOUR_MS - 1);
-    gc.tick(c.now_ms()).unwrap();
+    let t = Txn::new().put("a", obj(json!(1)));
+    let first = c.txn(&t, &req("day")).unwrap();
+    clock.advance(25 * HOUR_MS);
+    assert!(gc.tick(c.now_ms()).unwrap().expired.is_empty());
     assert!(c.get(&request_key("day")).unwrap().is_some());
-    clock.advance(1);
-    assert_eq!(gc.tick(c.now_ms()).unwrap().expired, [request_key("day")]);
-    assert!(c.get(&request_key("day")).unwrap().is_none());
+    let retry = c.txn(&t, &req("day")).unwrap();
+    assert_eq!((retry.rev, retry.already_applied), (first.rev, true));
 }
 
 pub fn a_txn_touching_only_telemetry_writes_no_events_key_and_its_refusal_stores_nothing<R: Rig>(
@@ -1670,7 +1670,7 @@ scenarios!(
     owned_by_names_a_keys_dependents_until_they_drop_the_reference,
     a_request_retry_after_an_ambiguous_commit_reports_already_applied,
     retries_of_lock_create_delete_and_a_refusal_report_the_original_outcome,
-    request_keys_expire_at_24h_of_virtual_time,
+    the_gc_never_expires_a_receipt,
     a_txn_touching_only_telemetry_writes_no_events_key_and_its_refusal_stores_nothing,
     a_txn_touching_telemetry_and_intents_writes_one_events_key_with_both_sub_events,
     a_put_under_intents_alone_writes_one_events_key,

@@ -111,7 +111,7 @@ pub fn restore(snapshot: &Path, revlog_dir: &Path, out: &Path) -> Result<Restore
     }
     fs::copy(snapshot, out).map_err(|e| format!("{}: {e}", snapshot.display()))?;
     let res = (|| {
-        let b = SqliteBackend::open(out, Options { jump_on_open: false, outbox: false, ..Options::default() }).map_err(|e| e.to_string())?;
+        let b = SqliteBackend::open(out, Options { jump_on_open: false, outbox: false, day_receipts: false, ..Options::default() }).map_err(|e| e.to_string())?;
         let snapshot_rev = b.head().map_err(|e| e.to_string())?;
         let mut runs = Vec::new();
         for p in plan(revlog_dir, snapshot_rev)? {

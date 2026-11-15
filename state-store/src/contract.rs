@@ -370,9 +370,10 @@ fn stored_lifetime(key: &str, v: &Object) -> Option<u64> {
     }
 }
 
-/// The lifetime of a key whose expiry the contract holds in memory: locks and receipts.
+/// The lifetime of a key whose expiry the contract holds in memory: a lock. A receipt has none,
+/// because its store retires it whole by the day.
 fn held_lifetime(key: &str, v: &Object) -> Option<u64> {
-    if stored_expiry(key) {
+    if stored_expiry(key) || key.starts_with(REQUESTS_PREFIX) {
         None
     } else {
         ttl_ms(key, v)
@@ -496,7 +497,7 @@ impl<B: Backend> Contract<B> {
         let head = c.backend.head()?;
         let now = c.now_ms();
         let mut deadlines = BTreeMap::new();
-        for prefix in [LOCKS_PREFIX, REQUESTS_PREFIX] {
+        for prefix in [LOCKS_PREFIX] {
             let mut after: Option<String> = None;
             loop {
                 let page = c.backend.range(prefix, after.as_deref(), PAGE, head)?;

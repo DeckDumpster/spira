@@ -20,13 +20,14 @@
 //! this binary knows is refused (law-pin-by-migration-count).
 
 pub mod bench;
+pub mod dated;
 pub mod durability;
 pub mod live;
 pub mod outbox;
 
 use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
@@ -36,6 +37,7 @@ use state_store::history::{overlay, AsOf, Written};
 use state_store::phases::{self, Phase};
 use state_store::{Backend, Error, History, LogEntry, Result, Rev, UsagePage, Version, Write};
 
+use dated::{DatedFile, Files, SideRow, RECEIPTS};
 use outbox::Outbox;
 
 const SCHEMA: &[&str] = &[
@@ -217,6 +219,9 @@ fn migrate(conn: &Connection) -> Result<()> {
 /// means a rewound store never reissues a revision a client was already handed.
 pub const JUMP: u64 = 1_000;
 
+/// The most `requests/` rows a commit deletes from the main file once they are all a day old.
+pub const DRAIN_PER_COMMIT: usize = 500;
+
 use state_store::READ_ENDED;
 
 /// Whether `e` is a read the store ended for outliving `max_read_ms`.
@@ -246,7 +251,18 @@ pub struct Options {
     pub outbox: bool,
     /// A segment of the outbox is closed once it holds this many bytes.
     pub outbox_segment_bytes: u64,
+    /// The wall clock whose UTC day a commit's receipts are filed under.
+    pub wall: Arc<dyn Clock>,
+    /// Runs after every side file has committed and before the main commit; an `Err` fails the
+    /// commit as a failed main commit would.
+    pub commit_probe: Option<CommitProbe>,
+    /// File receipts in day files. Off for a store being restored or verified, whose receipts
+    /// stay in its one file, where reads find them and the drain removes them once a day old.
+    pub day_receipts: bool,
 }
+
+/// See [`Options::commit_probe`].
+pub type CommitProbe = Arc<dyn Fn() -> Result<()> + Send + Sync>;
 
 impl Default for Options {
     fn default() -> Self {
@@ -259,6 +275,9 @@ impl Default for Options {
             history_bytes: 64 * 1024 * 1024,
             outbox: true,
             outbox_segment_bytes: outbox::SEGMENT_BYTES,
+            wall: Arc::new(runtime::ports::WallClock),
+            commit_probe: None,
+            day_receipts: true,
         }
     }
 }
@@ -287,6 +306,17 @@ struct Inner {
     max_read_ms: AtomicU64,
     clock: Arc<dyn Clock>,
     probe: Option<Arc<dyn Fn() + Send + Sync>>,
+    receipts: Files,
+    wall: Arc<dyn Clock>,
+    commit_probe: Option<CommitProbe>,
+    day_receipts: bool,
+    /// Names the side file a failed commit could not clear: every commit is refused until a
+    /// reopen trims it.
+    unclear: Mutex<Option<String>>,
+    /// When the store first opened with receipts in day files (wall ms).
+    receipts_from_at: u64,
+    /// The main file holds no receipt left to drain.
+    drained: AtomicBool,
     /// The VM steps every range statement has taken since [`SqliteBackend::take_read_steps`].
     read_steps: AtomicU64,
     /// Held for the life of the handle: the exclusive opener. Last, so it outlives the
@@ -426,11 +456,15 @@ fn set_meta(conn: &Connection, name: &str, value: u64) -> Result<()> {
 }
 
 /// The snapshot a read runs at: the head it saw, and the check every read makes against it.
-struct Snapshot {
+struct Snapshot<'a> {
     head: u64,
+    /// The VM steps a range statement has taken; see [`SqliteBackend::take_read_steps`].
+    steps: &'a AtomicU64,
+    /// The receipt files this read may see, newest day first.
+    receipts: Vec<Arc<DatedFile>>,
 }
 
-impl Snapshot {
+impl Snapshot<'_> {
     fn readable(&self, at: u64) -> Result<()> {
         if at > self.head {
             return Err(Error::FutureRev {
@@ -442,9 +476,11 @@ impl Snapshot {
     }
 }
 
-fn snapshot(conn: &Connection) -> Result<Snapshot> {
+fn snapshot<'a>(conn: &Connection, files: &Files, steps: &'a AtomicU64) -> Result<Snapshot<'a>> {
     Ok(Snapshot {
         head: meta(conn, "head")?.unwrap_or(0),
+        steps,
+        receipts: files.handles(),
     })
 }
 
@@ -527,16 +563,17 @@ enum Source<'a> {
 /// statement's VM steps to `steps`: the measure a test holds a page's reads to.
 fn range_rows(
     conn: &Connection,
+    snap: &Snapshot,
     source: Source<'_>,
     lo: &[u8],
     hi: Option<&[u8]>,
     limit: usize,
-    steps: &AtomicU64,
     deadline: &dyn Fn() -> Result<()>,
 ) -> Result<Vec<(String, Version)>> {
     if matches!(source, Source::At(..)) {
-        return range_rows_at(conn, source, lo, hi, limit, steps, deadline);
+        return range_rows_at(conn, snap, source, lo, hi, limit, deadline);
     }
+    let want = limit;
     let limit = i64::try_from(limit).unwrap_or(i64::MAX);
     let sql = match (&source, hi.is_some()) {
         (Source::Head, true) => LATEST_BOUNDED,
@@ -566,8 +603,36 @@ fn range_rows(
         }
     }
     let n = stmt.reset_status(rusqlite::StatementStatus::VmStep);
-    steps.fetch_add(u64::try_from(n).unwrap_or(0), Ordering::Relaxed);
-    Ok(out)
+    snap.steps.fetch_add(u64::try_from(n).unwrap_or(0), Ordering::Relaxed);
+    let state = match source {
+        Source::State(s) => Some(s),
+        _ => None,
+    };
+    merge_receipts(out, snap, lo, hi, want, state)
+}
+
+/// `main`'s rows with the receipts of the snapshot's day files in the same range laid in key
+/// order, at most `limit`: a receipt is read as if it sat in the one keyspace.
+fn merge_receipts(
+    main: Vec<(String, Version)>,
+    snap: &Snapshot,
+    lo: &[u8],
+    hi: Option<&[u8]>,
+    limit: usize,
+    state: Option<&str>,
+) -> Result<Vec<(String, Version)>> {
+    if snap.receipts.is_empty() || !RECEIPTS.overlaps(lo, hi) {
+        return Ok(main);
+    }
+    let mut merged: std::collections::BTreeMap<String, Version> = main.into_iter().collect();
+    let mut filed = std::collections::BTreeMap::new();
+    for f in &snap.receipts {
+        for (k, v) in f.range(lo, hi, limit, snap.head, state)? {
+            filed.entry(k).or_insert(v);
+        }
+    }
+    merged.extend(filed);
+    Ok(merged.into_iter().take(limit).collect())
 }
 
 /// The source a read at `at` takes under `snap`: `latest` at the head, `latest` with the
@@ -585,22 +650,22 @@ fn source<'a>(snap: &Snapshot, at: u64, history: &'a Mutex<History>) -> Source<'
 /// the range ends.
 fn range_rows_at(
     conn: &Connection,
+    snap: &Snapshot,
     source: Source<'_>,
     lo: &[u8],
     hi: Option<&[u8]>,
     limit: usize,
-    steps: &AtomicU64,
     deadline: &dyn Fn() -> Result<()>,
 ) -> Result<Vec<(String, Version)>> {
     let Source::At(at, history) = source else {
-        return range_rows(conn, source, lo, hi, limit, steps, deadline);
+        return range_rows(conn, snap, source, lo, hi, limit, deadline);
     };
     let touched = lock(history).touched_after(lo, hi, at)?;
     let mut out = Vec::new();
     let mut cursor = lo.to_vec();
     let mut next = 0;
     while out.len() < limit {
-        let page = range_rows(conn, Source::Head, &cursor, hi, limit, steps, deadline)?;
+        let page = range_rows(conn, snap, Source::Head, &cursor, hi, limit, deadline)?;
         let upto = (page.len() == limit).then(|| page.last().map(|(k, _)| k.clone())).flatten();
         let span = touched[next..].partition_point(|(k, _)| upto.as_ref().is_none_or(|u| k <= u));
         out.extend(overlay(page, &touched[next..next + span], None, upto.as_deref()));
@@ -617,44 +682,43 @@ fn range_rows_at(
     Ok(out)
 }
 
-impl SqliteBackend {
-    fn rows_outside(
-        &self,
-        conn: &Connection,
-        src: Source<'_>,
-        skip: &[&str],
-        after: Option<&str>,
-        limit: usize,
-        deadline: &dyn Fn() -> Result<()>,
-    ) -> Result<Vec<(String, Version)>> {
-        if skip.contains(&"") {
-            return Ok(Vec::new());
-        }
-        let mut sorted: Vec<&str> = skip.to_vec();
-        sorted.sort_unstable();
-        let mut skipped: Vec<(&[u8], Vec<u8>)> = Vec::new();
-        for p in sorted {
-            if skipped.last().is_some_and(|(q, _)| p.as_bytes().starts_with(q)) {
-                continue;
-            }
-            skipped.push((p.as_bytes(), successor(p.as_bytes()).unwrap_or_default()));
-        }
-        let mut lo = lower_bound(b"", after);
-        let steps = &self.0.read_steps;
-        let mut out = Vec::new();
-        let ends = skipped.iter().map(|(start, _)| Some(*start)).chain([None]);
-        for (end, skip) in ends.zip(skipped.iter().map(Some).chain([None])) {
-            if out.len() < limit && end.is_none_or(|hi| lo.as_slice() < hi) {
-                let rows = range_rows(conn, src, &lo, end, limit - out.len(), steps, deadline)?;
-                out.extend(rows);
-            }
-            if let Some((_, past)) = skip {
-                lo = lo.max(past.clone());
-            }
-        }
-        Ok(out)
+fn rows_outside(
+    conn: &Connection,
+    snap: &Snapshot,
+    src: Source<'_>,
+    skip: &[&str],
+    after: Option<&str>,
+    limit: usize,
+    deadline: &dyn Fn() -> Result<()>,
+) -> Result<Vec<(String, Version)>> {
+    if skip.contains(&"") {
+        return Ok(Vec::new());
     }
+    let mut sorted: Vec<&str> = skip.to_vec();
+    sorted.sort_unstable();
+    let mut skipped: Vec<(&[u8], Vec<u8>)> = Vec::new();
+    for p in sorted {
+        if skipped.last().is_some_and(|(q, _)| p.as_bytes().starts_with(q)) {
+            continue;
+        }
+        skipped.push((p.as_bytes(), successor(p.as_bytes()).unwrap_or_default()));
+    }
+    let mut lo = lower_bound(b"", after);
+    let mut out = Vec::new();
+    let ends = skipped.iter().map(|(start, _)| Some(*start)).chain([None]);
+    for (end, skip) in ends.zip(skipped.iter().map(Some).chain([None])) {
+        if out.len() < limit && end.is_none_or(|hi| lo.as_slice() < hi) {
+            let rows = range_rows(conn, snap, src, &lo, end, limit - out.len(), deadline)?;
+            out.extend(rows);
+        }
+        if let Some((_, past)) = skip {
+            lo = lo.max(past.clone());
+        }
+    }
+    Ok(out)
+}
 
+impl SqliteBackend {
     /// Opens (creating if absent) the store at `path`. A second opener, in this process or
     /// another, is refused while this handle or any clone of it lives. The lock is advisory:
     /// it stops another `SqliteBackend`, not a client that opens the file directly.
@@ -700,6 +764,18 @@ impl SqliteBackend {
         tx.commit().map_err(db)?;
         let mut head = meta(&conn, "head")?.unwrap_or(0);
         let floor = head;
+        let now = opts.wall.now_ms();
+        let receipts = Files::new(RECEIPTS, path);
+        receipts.open_existing()?;
+        for f in receipts.handles() {
+            f.trim_above(head)
+                .map_err(|e| Error::Backend(format!("{}: rows above the head {head} could not be removed: {e}", f.path().display())))?;
+        }
+        receipts.retire_behind(dated::day_of(now));
+        if opts.day_receipts {
+            exec(&conn, "INSERT OR IGNORE INTO meta (name, value) VALUES ('receipts_from_at', ?1)", [main_i64(now)?])?;
+        }
+        let receipts_from_at = meta(&conn, "receipts_from_at")?.unwrap_or(now);
         let outbox = opts
             .outbox
             .then(|| Outbox::open(&outbox_dir(path), head, opts.outbox_segment_bytes))
@@ -738,9 +814,66 @@ impl SqliteBackend {
             max_read_ms: AtomicU64::new(opts.max_read_ms),
             clock: opts.clock,
             probe: opts.read_probe,
+            receipts,
+            wall: opts.wall,
+            commit_probe: opts.commit_probe,
+            day_receipts: opts.day_receipts,
+            unclear: Mutex::new(None),
+            receipts_from_at,
+            drained: AtomicBool::new(false),
             read_steps: AtomicU64::new(0),
             _lock: OpenerLock(lock_file),
         })))
+    }
+
+    fn filed(&self, key: &str) -> bool {
+        self.0.day_receipts && RECEIPTS.holds(key)
+    }
+
+    /// Takes the rows `main` filed in `wrote` back out after its main commit failed, so the
+    /// next commit at the same revision meets none of them. When that cannot be done, every
+    /// later commit is refused until a reopen trims the file.
+    fn clear_sides(&self, wrote: &[Arc<DatedFile>], main: u64, cause: Error) -> Error {
+        for f in wrote {
+            if let Err(u) = f.delete_main(main) {
+                let file = f.path().display().to_string();
+                *lock(&self.0.unclear) = Some(file.clone());
+                return Error::Backend(format!("{cause}; {file} could not take back main {main}: {u}"));
+            }
+        }
+        cause
+    }
+
+    /// Deletes up to [`DRAIN_PER_COMMIT`] receipts from the main file once all of them are a
+    /// day old: a key-range delete that writes no log entry and does not move the head. A
+    /// failure is retried by the next commit.
+    fn drain_receipts(&self, w: &mut Writer, now: u64) {
+        let due = self.0.receipts_from_at.saturating_add(state_store::REQUEST_TTL_SECS * 1_000);
+        if !self.0.day_receipts || now < due || self.0.drained.load(Ordering::SeqCst) {
+            return;
+        }
+        let lo = state_store::REQUESTS_PREFIX.as_bytes();
+        let hi = successor(lo);
+        let drained = (|| {
+            let tx = w.conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(db)?;
+            let n = i64::try_from(DRAIN_PER_COMMIT).unwrap_or(i64::MAX);
+            let latest = exec(
+                &tx,
+                "DELETE FROM latest WHERE key IN (SELECT key FROM latest WHERE key >= ?1 AND key < ?2 LIMIT ?3)",
+                params![lo, hi, n],
+            )?;
+            let versions = exec(
+                &tx,
+                "DELETE FROM versions WHERE rowid IN
+                 (SELECT rowid FROM versions WHERE key >= ?1 AND key < ?2 LIMIT ?3)",
+                params![lo, hi, n],
+            )?;
+            tx.commit().map_err(db)?;
+            Ok::<bool, Error>(latest < DRAIN_PER_COMMIT && versions < DRAIN_PER_COMMIT)
+        })();
+        if drained == Ok(true) {
+            self.0.drained.store(true, Ordering::SeqCst);
+        }
     }
 
     /// The writer connection's `synchronous` setting: 1 is NORMAL, 2 is FULL.
@@ -904,7 +1037,7 @@ impl SqliteBackend {
             let tx = conn
                 .transaction_with_behavior(TransactionBehavior::Deferred)
                 .map_err(db)?;
-            let snap = snapshot(&tx)?;
+            let snap = snapshot(&tx, &inner.receipts, &inner.read_steps)?;
             if let Some(p) = &inner.probe {
                 p();
             }
@@ -976,14 +1109,15 @@ impl SqliteBackend {
                 dest.display()
             )));
         }
-        let result = self.copy_snapshot(dest);
+        let files = self.0.receipts.handles();
+        let result = self.copy_snapshot(dest, &files);
         if result.is_err() {
             let _ = std::fs::remove_file(dest);
         }
         result
     }
 
-    fn copy_snapshot(&self, dest: &Path) -> Result<u64> {
+    fn copy_snapshot(&self, dest: &Path, files: &[Arc<DatedFile>]) -> Result<u64> {
         let src = Connection::open_with_flags(
             &self.0.path,
             OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
@@ -997,8 +1131,36 @@ impl SqliteBackend {
             Error::Backend(format!("{}: not a UTF-8 path", dest.display()))
         })?;
         exec(&src, "VACUUM INTO ?1", [into])?;
-        let copy = Connection::open_with_flags(dest, OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(db)?;
+        let copy = Connection::open_with_flags(dest, OpenFlags::SQLITE_OPEN_READ_WRITE).map_err(db)?;
         let rev = meta(&copy, "head")?.unwrap_or(0);
+        for f in files {
+            let mut cursor = Vec::new();
+            loop {
+                let page = f.range(&cursor, None, 2_000, rev, None)?;
+                for (key, v) in &page {
+                    exec(
+                        &copy,
+                        "INSERT OR IGNORE INTO latest (key, main, sub, value, create_main, create_sub, version)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1)",
+                        params![
+                            key.as_bytes(),
+                            main_i64(v.mod_rev.main)?,
+                            v.mod_rev.sub,
+                            v.value,
+                            main_i64(v.create_rev.main)?,
+                            v.create_rev.sub,
+                        ],
+                    )?;
+                }
+                match page.last() {
+                    Some((k, _)) if page.len() == 2_000 => {
+                        cursor = k.as_bytes().to_vec();
+                        cursor.push(0);
+                    }
+                    _ => break,
+                }
+            }
+        }
         Ok(rev)
     }
 
@@ -1032,6 +1194,13 @@ impl Backend for SqliteBackend {
             if let AsOf::Was(v) = was {
                 return Ok(v);
             }
+            if RECEIPTS.holds(key) {
+                for f in &snap.receipts {
+                    if let Some(v) = f.get(key, at)? {
+                        return Ok(Some(v));
+                    }
+                }
+            }
             conn.prepare_cached(
                 "SELECT main, sub, value, create_main, create_sub FROM latest WHERE key = ?1",
             )
@@ -1055,8 +1224,7 @@ impl Backend for SqliteBackend {
             snap.readable(at)?;
             let lo = lower_bound(prefix.as_bytes(), after);
             let hi = successor(prefix.as_bytes());
-            let steps = &self.0.read_steps;
-            range_rows(conn, source(snap, at, &self.0.history), &lo, hi.as_deref(), limit, steps, deadline)
+            range_rows(conn, snap, source(snap, at, &self.0.history), &lo, hi.as_deref(), limit, deadline)
         })
     }
 
@@ -1076,8 +1244,7 @@ impl Backend for SqliteBackend {
             }
             let lo = lower_bound(prefix.as_bytes(), after);
             let hi = successor(prefix.as_bytes());
-            let steps = &self.0.read_steps;
-            range_rows(conn, Source::State(state), &lo, hi.as_deref(), limit, steps, deadline)
+            range_rows(conn, snap, Source::State(state), &lo, hi.as_deref(), limit, deadline)
                 .map(Some)
         })?;
         match indexed {
@@ -1096,7 +1263,7 @@ impl Backend for SqliteBackend {
     ) -> Result<Vec<(String, Version)>> {
         self.read(|conn, snap, deadline| {
             snap.readable(at)?;
-            self.rows_outside(conn, source(snap, at, &self.0.history), skip, after, limit, deadline)
+            rows_outside(conn, snap, source(snap, at, &self.0.history), skip, after, limit, deadline)
         })
     }
 
@@ -1231,6 +1398,17 @@ impl Backend for SqliteBackend {
                 head,
             });
         }
+        if let Some(file) = &*lock(&self.0.unclear) {
+            return Err(Error::Backend(format!(
+                "{file}: rows above the head could not be removed after a failed commit; reopen the store"
+            )));
+        }
+        for wr in batch {
+            if matches!(wr, Write::Put { prev: Some(_), .. }) && self.filed(wr.key()) {
+                return Err(Error::Backend(format!("{}: a receipt is written once", wr.key())));
+            }
+        }
+        let now = self.0.wall.now_ms();
         let main = expect + 1;
         let m = main_i64(main)?;
         let committing = phases::begin_unconfirmed(Phase::Commit);
@@ -1239,6 +1417,13 @@ impl Backend for SqliteBackend {
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(db)?;
         let mut written = Vec::with_capacity(batch.len());
+        let mut filed: Vec<SideRow<'_>> = Vec::new();
+        let mut unfiled: Vec<&str> = Vec::new();
+        let files = if batch.iter().any(|w| self.filed(w.key())) {
+            self.0.receipts.handles()
+        } else {
+            Vec::new()
+        };
         {
             let mut current = tx
                 .prepare_cached(
@@ -1251,13 +1436,14 @@ impl Backend for SqliteBackend {
                 .prepare_cached("DELETE FROM latest WHERE key = ?1")
                 .map_err(db)?;
             for (sub, w) in batch.iter().enumerate() {
-                let (previous, old_version) = current
+                let (mut previous, old_version) = current
                     .query_row([w.key().as_bytes()], |r| {
                         Ok((version_row(r, 0)?, r.get::<_, i64>(5)?))
                     })
                     .optional()
                     .map_err(db)?
                     .unwrap_or((None, 0));
+                let filed_key = self.filed(w.key());
                 let rev = Rev::new(main, sub as u32);
                 let entry = match w {
                     Write::Put {
@@ -1270,18 +1456,23 @@ impl Backend for SqliteBackend {
                             None => 1,
                             Some(_) => old_version + 1,
                         };
-                        set_owner_refs(&tx, key, Some(value))?;
-                        put_latest
-                            .execute(params![
-                                key.as_bytes(),
-                                m,
-                                sub as i64,
-                                value,
-                                main_i64(create_rev.main)?,
-                                create_rev.sub,
-                                version,
-                            ])
-                            .map_err(db)?;
+                        if filed_key {
+                            previous = None;
+                            filed.push(SideRow { key, sub: sub as u32, value, create_rev: *create_rev });
+                        } else {
+                            set_owner_refs(&tx, key, Some(value))?;
+                            put_latest
+                                .execute(params![
+                                    key.as_bytes(),
+                                    m,
+                                    sub as i64,
+                                    value,
+                                    main_i64(create_rev.main)?,
+                                    create_rev.sub,
+                                    version,
+                                ])
+                                .map_err(db)?;
+                        }
                         LogEntry {
                             key: key.clone(),
                             rev,
@@ -1293,6 +1484,17 @@ impl Backend for SqliteBackend {
                     Write::Delete { key, prev } => {
                         set_owner_refs(&tx, key, None)?;
                         drop_latest.execute([key.as_bytes()]).map_err(db)?;
+                        if filed_key {
+                            unfiled.push(key);
+                            if previous.is_none() {
+                                for f in &files {
+                                    previous = f.get(key, head)?;
+                                    if previous.is_some() {
+                                        break;
+                                    }
+                                }
+                            }
+                        }
                         LogEntry {
                             key: key.clone(),
                             rev,
@@ -1305,6 +1507,22 @@ impl Backend for SqliteBackend {
                 written.push(Written { entry, previous });
             }
         }
+        let mut wrote: Vec<Arc<DatedFile>> = Vec::new();
+        let sides = (|| {
+            if !filed.is_empty() {
+                let day = dated::day_of(now);
+                let (today, created) = self.0.receipts.today(day)?;
+                if created {
+                    self.0.receipts.retire_behind(day);
+                }
+                today.put(main, &filed)?;
+                wrote.push(today);
+            }
+            Ok(())
+        })();
+        if let Err(e) = sides {
+            return Err(self.clear_sides(&wrote, main, e));
+        }
         set_meta(&tx, "head", main)?;
         let entries: Vec<LogEntry> = written.iter().map(|w| w.entry.clone()).collect();
         let mark = match lock(&self.0.outbox).as_mut() {
@@ -1312,8 +1530,13 @@ impl Backend for SqliteBackend {
             None => None,
         };
         lock(&self.0.history).push(main, written);
-        if let Err(e) = tx.commit().map_err(db) {
+        let probed = match &self.0.commit_probe {
+            Some(p) => p(),
+            None => Ok(()),
+        };
+        if let Err(e) = probed.and_then(|()| tx.commit().map_err(db)) {
             lock(&self.0.history).pop(main);
+            let e = self.clear_sides(&wrote, main, e);
             if let (Some(o), Some(mark)) = (lock(&self.0.outbox).as_mut(), mark) {
                 if let Err(u) = o.undo(mark) {
                     return Err(Error::Backend(format!("{e}; the outbox could not take back main {main}: {u}")));
@@ -1323,6 +1546,12 @@ impl Backend for SqliteBackend {
         }
         committing.confirm();
         self.0.head.store(main, Ordering::SeqCst);
+        if !unfiled.is_empty() {
+            for f in &files {
+                let _ = f.delete_keys(&unfiled);
+            }
+        }
+        self.drain_receipts(&mut w, now);
         Ok(main)
     }
 
@@ -1726,7 +1955,7 @@ mod tests {
     }
 
     /// A read that skips a prefix steps over it in the index: ten modeled keys beside twenty
-    /// thousand `requests/` rows cost steps in the ten, not the twenty thousand.
+    /// thousand `history/` rows cost steps in the ten, not the twenty thousand.
     #[test]
     fn range_outside_never_visits_the_skipped_prefixes() {
         let dir = testkit::TempDir::new("sqlite-outside");
@@ -1738,7 +1967,7 @@ mod tests {
             prev: None,
         };
         let mut batch: Vec<Write> = (0..10).map(|i| put(format!("m/{i:02}"))).collect();
-        batch.extend((0..20_000).map(|i| put(format!("requests/{i:06}"))));
+        batch.extend((0..20_000).map(|i| put(format!("history/{i:06}"))));
         let head = b.commit(b.head().unwrap(), &batch).unwrap();
         let skip = ["events/", "requests/", "history/"];
         b.take_read_steps();
@@ -1752,10 +1981,11 @@ mod tests {
         let after_m = b.range_outside(&skip, Some("m/04"), 1000, head).unwrap();
         assert_eq!(after_m.len(), 5);
         assert!(b.range_outside(&[""], None, 1000, head).unwrap().is_empty());
+        b.take_read_steps();
         let gc = b.gc_range(None, 100_000, head).unwrap();
         let gc_steps = b.take_read_steps();
-        assert_eq!(gc.len(), 20_010, "gc_range still reads requests/");
-        assert!(gc_steps > steps * 100, "{gc_steps} gc steps against {steps}");
+        assert_eq!(gc.len(), 10, "gc_range skips history/");
+        assert!(gc_steps <= 20 * 10, "{gc_steps} VM steps for 10 rows");
     }
 
     /// law: a state filter is an indexed range. A page of one state's keys reads that page,

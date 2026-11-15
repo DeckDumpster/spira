@@ -45,7 +45,7 @@ scenarios!(
     owned_by_names_a_keys_dependents_until_they_drop_the_reference,
     a_request_retry_after_an_ambiguous_commit_reports_already_applied,
     retries_of_lock_create_delete_and_a_refusal_report_the_original_outcome,
-    request_keys_expire_at_24h_of_virtual_time,
+    the_gc_never_expires_a_receipt,
     a_txn_touching_only_telemetry_writes_no_events_key_and_its_refusal_stores_nothing,
     a_txn_touching_telemetry_and_intents_writes_one_events_key_with_both_sub_events,
     a_put_under_intents_alone_writes_one_events_key,
