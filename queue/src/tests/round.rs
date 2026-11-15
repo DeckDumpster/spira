@@ -504,6 +504,33 @@ fn land_with_the_record_refused_exits_nonzero_naming_the_batch() {
 }
 
 #[test]
+fn land_whose_record_another_landing_wrote_exits_zero() {
+    let (t, batch) = certified_round();
+    t.lc.landed_first.set(true);
+    t.git.ancestor("merged-tb", "local/main");
+    assert_eq!(t.run(&["round", "land", &batch]), 0, "{}", t.err());
+    let e = t.err();
+    assert!(!e.contains("ALARM") && !e.contains("NO batch landing record"), "{e}");
+    assert!(t.out().contains("was recorded LANDED by another landing"), "{}", t.out());
+    assert!(
+        !t.scripts.calls.borrow().iter().any(|c| c.contains("mail-operator")),
+        "{:?}",
+        t.scripts.calls.borrow()
+    );
+    assert!(!marker(&t, &batch, "unrecorded").exists());
+    assert_eq!(t.landed_ref().as_deref(), Some("merged-tb"));
+}
+
+#[test]
+fn land_retries_a_record_that_got_no_reply() {
+    let (t, batch) = certified_round();
+    t.lc.land_no_reply_once.set(true);
+    assert_eq!(t.run(&["round", "land", &batch]), 0, "{}", t.err());
+    assert!(!t.err().contains("ALARM"), "{}", t.err());
+    assert!(!marker(&t, &batch, "unrecorded").exists());
+}
+
+#[test]
 fn eject_then_land_rebuilds_the_head_without_the_member() {
     let t = round_world();
     *t.scripts.round_vm_results.borrow_mut() = vec![
