@@ -394,7 +394,7 @@ fn serve_one(stream: UnixStream, conn: &Arc<Conn>, spans: Option<&spira_otel::Si
     crate::slow::request_done(&verb, &method, &caller, task.as_deref(), received.elapsed());
     crate::slow::past_read_done(&verb, &caller, task.as_deref(), past.lag_revs, past.lag_ms, past.too_old);
     crate::slow::sample(&method, received.elapsed());
-    let _ = write_response_at(&stream, ans.code, &ans.stdout, &ans.stderr, rev);
+    reply_then_settle(&stream, &ans, rev, &mut |id, reason| crate::reconcile_content::settle_owed(&mut crate::bd::LiveBd, id, reason));
     let began = *started_work.lock().unwrap_or_else(|e| e.into_inner());
     let waited = began.unwrap_or_else(Instant::now).saturating_duration_since(accepted);
     let store = recorder.snapshot();
@@ -541,6 +541,12 @@ pub(crate) fn answer(
         ans.stderr.push_str(&format!("{e}\n"));
     }
     ans
+}
+
+/// The reply goes out first: an owed store write is bounded by bd's own cap, not the request's.
+fn reply_then_settle(stream: &UnixStream, ans: &Answer, rev: Option<u64>, settle: &mut dyn FnMut(&str, &str) -> Result<(), String>) {
+    let _ = write_response_at(stream, ans.code, &ans.stdout, &ans.stderr, rev);
+    crate::callers::settle_owed_with(&ans.owed, settle);
 }
 
 fn record_span(spans: Option<&spira_otel::Sink>, call: &spira_otel::Call) {
@@ -837,6 +843,29 @@ mod tests {
     }
 
     #[test]
+    fn the_reply_is_on_the_stream_before_an_owed_store_close_finishes() {
+        use std::io::Read;
+        let (server, mut client) = std::os::unix::net::UnixStream::pair().unwrap();
+        let (release, release_rx) = std::sync::mpsc::channel::<()>();
+        let (started, started_rx) = std::sync::mpsc::channel::<()>();
+        let settler = std::thread::spawn(move || {
+            let ans = super::Answer { owed: vec![("sp-d".into(), "why".into())], ..Default::default() };
+            super::reply_then_settle(&server, &ans, None, &mut |id, reason| {
+                assert_eq!((id, reason), ("sp-d", "why"));
+                let _ = started.send(());
+                let _ = release_rx.recv();
+                Ok(())
+            });
+        });
+        started_rx.recv().unwrap();
+        let mut head = [0u8; 1];
+        client.read_exact(&mut head).unwrap();
+        assert_eq!(head[0], b'{', "the reply was written while the settle still blocks");
+        drop(release);
+        settler.join().unwrap();
+    }
+
+    #[test]
     fn a_request_that_touched_no_store_carries_no_phase_attribute() {
         let span = span_of(&state_store::phases::Snapshot::default());
         let named: Vec<_> = span.attributes.iter().map(|a| a.key.as_str()).filter(|k| k.starts_with("spira.phase.") || k.starts_with("spira.store.")).collect();
@@ -994,7 +1023,7 @@ mod tests {
         let (req, _) = super::read_request(&mut reader).unwrap().unwrap();
         let (mut m, mut b) = (w, w);
         let ans = super::answer(req, &mut m, &mut b, content, &|| Err("no run dir here".to_string()));
-        super::write_response(&server, ans.code, &ans.stdout, &ans.stderr).unwrap();
+        super::reply_then_settle(&server, &ans, None, &mut |id, reason| crate::reconcile_content::settle_owed(&mut b, id, reason));
         drop(server);
         asked.join().unwrap()
     }

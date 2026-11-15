@@ -847,6 +847,7 @@ struct FakeBd {
     /// bead id -> the beads that `blocks`-depend on it (open unless in `closed`).
     dependents: BTreeMap<String, Vec<String>>,
     down: bool,
+    close_fails: bool,
 }
 
 impl Bd for FakeBd {
@@ -885,6 +886,9 @@ impl Bd for FakeBd {
         self.rows.get(id).map(|r| r.0.clone()).ok_or_else(|| "no such issue".into())
     }
     fn close(&mut self, id: &str, reason: &str) -> Result<(), String> {
+        if self.close_fails {
+            return Err("bd close failed".into());
+        }
         self.closed.push((id.into(), reason.into()));
         Ok(())
     }
@@ -1352,7 +1356,8 @@ fn close_records_the_end_on_the_row_before_the_store_closes() {
     let a = close(&v(&["sp-d", "--reason", "Decided by the Concierge: neither"]), &mut f, &mut bd, &mut no_file);
     assert_eq!(a.code, APPLIED, "{}", a.stderr);
     assert_eq!(f.state("sp-d"), "DROPPED", "a closed bead never stays READY on its row");
-    assert_eq!(bd.closed, vec![("sp-d".to_string(), "Decided by the Concierge: neither".to_string())]);
+    assert!(bd.closed.is_empty(), "the store close runs after the answer");
+    assert_eq!(a.owed, vec![("sp-d".to_string(), "Decided by the Concierge: neither".to_string())]);
     assert_eq!(f.events.last().unwrap().4, "close", "default actor");
 }
 
@@ -1435,7 +1440,27 @@ fn close_of_a_terminal_or_rowless_bead_closes_the_store_alone() {
     assert_eq!(close(&v(&["sp-l", "--reason", "landed at abc"]), &mut f, &mut bd, &mut no_file).code, APPLIED);
     assert_eq!(close(&v(&["sp-none", "--reason", "an alert"]), &mut f, &mut bd, &mut no_file).code, APPLIED);
     assert!(f.events.is_empty(), "nothing to record: already terminal, or no row");
-    assert_eq!(bd.closed.len(), 2);
+    assert_eq!(bd.closed, vec![("sp-none".to_string(), "an alert".to_string())], "a rowless bead's store close is its only record");
+    let a = close(&v(&["sp-l", "--reason", "landed at abc"]), &mut f, &mut bd, &mut no_file);
+    assert_eq!(a.owed, vec![("sp-l".to_string(), "landed at abc".to_string())]);
+}
+
+#[test]
+fn close_answers_success_once_the_row_is_terminal_even_when_the_store_close_would_fail() {
+    let mut f = Fake::default();
+    f.bead("sp-d", BeadState::Ready);
+    let mut bd = FakeBd { close_fails: true, ..Default::default() };
+    let a = close(&v(&["sp-d", "--reason", "shipped", "--delivered", "--actor", "concierge"]), &mut f, &mut bd, &mut no_file);
+    assert_eq!(a.code, APPLIED, "{}", a.stderr);
+    assert_eq!(f.state("sp-d"), "DONE");
+    assert!(bd.closed.is_empty());
+    assert_eq!(a.owed, vec![("sp-d".to_string(), "shipped".to_string())]);
+    let mut left = Vec::new();
+    crate::callers::settle_owed_with(&a.owed, &mut |id, r| {
+        left.push(id.to_string());
+        crate::reconcile_content::settle_owed(&mut bd, id, r)
+    });
+    assert_eq!(left, vec!["sp-d"]);
 }
 
 #[test]
@@ -1454,12 +1479,15 @@ fn close_reads_its_reason_from_a_file_and_refuses_without_one() {
     let mut bd = FakeBd::default();
     let mut file = |p: &str| -> Result<String, String> { if p == "-" { Ok("from stdin\n".into()) } else { Err("nope".into()) } };
     assert_eq!(close(&v(&["sp-r", "--reason-file", "-"]), &mut f, &mut bd, &mut file).code, APPLIED);
-    assert_eq!(bd.closed, vec![("sp-r".to_string(), "from stdin".to_string())]);
+    assert!(bd.closed.is_empty());
+    let a = close(&v(&["sp-r", "--reason-file", "-"]), &mut f, &mut bd, &mut file);
+    assert_eq!(a.owed, vec![("sp-r".to_string(), "from stdin".to_string())]);
     for bad in [&["sp-r"][..], &["--reason", "x"], &["sp-r", "--reason", "  "], &["sp-r", "--reason", "x", "--bogus", "y"]] {
         assert_eq!(close(&v(bad), &mut f, &mut bd, &mut no_file).code, CANNOT_TELL, "{bad:?}: usage");
     }
-    assert_eq!(close(&v(&["sp-r", "--reason-file", "/nope"]), &mut f, &mut bd, &mut file).code, CANNOT_TELL);
-    assert_eq!(bd.closed.len(), 1);
+    let a = close(&v(&["sp-r", "--reason-file", "/nope"]), &mut f, &mut bd, &mut file);
+    assert_eq!(a.code, CANNOT_TELL);
+    assert!(a.owed.is_empty() && bd.closed.is_empty());
 }
 
 #[test]
@@ -1470,15 +1498,16 @@ fn a_landing_close_leaves_the_row_to_the_delivery_and_is_refused_outside_it() {
         f.bead(id, st);
         let a = close(&v(&[id, "--reason", "landed at abc", "--landing"]), &mut f, &mut bd, &mut no_file);
         assert_eq!(a.code, APPLIED, "{id}: {}", a.stderr);
+        assert_eq!(a.owed.len(), usize::from(id == "sp-l"), "{id}: bd follows the record: only the LANDED one is over");
     }
     assert!(f.events.is_empty(), "the landing records LANDED itself");
     assert_eq!((f.state("sp-c"), f.state("sp-s")), ("CERTIFIED", "SUBMITTED"));
-    assert_eq!(bd.closed.iter().map(|(i, _)| i.as_str()).collect::<Vec<_>>(), ["sp-l"], "bd follows the record: only the LANDED one is over");
+    assert!(bd.closed.is_empty());
     f.bead("sp-r", BeadState::Ready);
     let a = close(&v(&["sp-r", "--reason", "x", "--landing"]), &mut f, &mut bd, &mut no_file);
     assert_eq!(a.code, REFUSED, "{}", a.stderr);
     assert_eq!(f.state("sp-r"), "READY");
-    assert_eq!(bd.closed.len(), 1, "nothing closed");
+    assert!(a.owed.is_empty(), "refused: nothing owed");
     assert_eq!(close(&v(&["sp-r", "--reason", "x", "--landing", "--superseded-by", "sp-z"]), &mut f, &mut bd, &mut no_file).code, CANNOT_TELL);
 }
 
@@ -1714,7 +1743,7 @@ fn close_delivered_ends_hand_delivered_work_done_with_its_reason_and_refuses_an_
     assert_eq!(a.code, APPLIED, "{}", a.stderr);
     assert_eq!(f.state("sp-h"), "DONE");
     assert_eq!(f.beads["sp-h"].reason.as_deref(), Some("live: dolt 2.4.2"));
-    assert_eq!(bd.closed.len(), 1);
+    assert_eq!(a.owed, vec![("sp-h".to_string(), "live: dolt 2.4.2".to_string())]);
     f.bead("sp-p", BeadState::Ready);
     assert_eq!(close(&v(&["sp-p", "--reason", "abandoned"]), &mut f, &mut bd, &mut no_file).code, APPLIED);
     assert_eq!(f.state("sp-p"), "DROPPED", "close without --delivered keeps its meaning");
@@ -1743,7 +1772,7 @@ fn drop_bead_ends_a_live_work_bead_as_dropped_with_the_reason_from_any_live_stat
         let a = drop_bead(&v(&["sp-x", "--reason", "failed five gates", "--actor", "concierge"]), &mut f, &mut bd);
         assert_eq!(a.code, APPLIED, "{st:?}: {}", a.stderr);
         assert_eq!(f.state("sp-x"), "DROPPED", "{st:?}");
-        assert_eq!(bd.closed, vec![("sp-x".to_string(), "dropped: failed five gates".to_string())]);
+        assert_eq!(a.owed, vec![("sp-x".to_string(), "dropped: failed five gates".to_string())]);
         assert_eq!(f.events.last().unwrap().4, "concierge");
     }
 }

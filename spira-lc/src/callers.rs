@@ -41,6 +41,9 @@ pub struct Answer {
     /// `(verb, detail)` for `$SPIRA_RUN/lifecycle-cert.log` — certify/resubmit only, the
     /// log lifecycle-cert.sh kept. Written by `main`, which owns the clock and the path.
     pub cert_log: Option<(String, String)>,
+    /// `(bead, reason)` store closes still owed once the answer is sent; the caller settles each
+    /// through `reconcile_content::settle_owed`, and reconcile-content redrives any that fail.
+    pub owed: Vec<(String, String)>,
 }
 
 impl Answer {
@@ -52,6 +55,16 @@ impl Answer {
     }
     fn cert(code: i32, verb: &str, detail: String) -> Self {
         Answer { code, cert_log: Some((verb.to_string(), detail)), ..Default::default() }
+    }
+}
+
+/// Settle each owed store close after the answer is out. A failure is one line: the row is
+/// terminal, so reconcile-content closes the bead on its next pass.
+pub fn settle_owed_with(owed: &[(String, String)], settle: &mut dyn FnMut(&str, &str) -> Result<(), String>) {
+    for (id, reason) in owed {
+        if let Err(e) = settle(id, reason) {
+            eprintln!("spira-lc close: {id}: the store close failed ({}); reconcile-content will close it", e.trim());
+        }
     }
 }
 
@@ -1442,8 +1455,11 @@ pub fn close_epic(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) -> Answ
 /// reason (a READY or WORKING bead; a DROPPED one is corrected to DONE). `reason_file` reads
 /// `--reason-file`'s argument (`-` is stdin) — injected so the composition is testable.
 ///
-/// Exit: 0 closed · 2 cannot tell (usage, the machine unreadable, or the store close failed
-/// after the event — the row is terminal either way) · 3 refused (the event lost its CAS:
+/// A bead with a row is closed in the store AFTER the answer: the answer carries it in `owed`,
+/// and reconcile-content closes it if that write fails.
+///
+/// Exit: 0 once the row is terminal · 2 cannot tell (usage, or the row unreadable or the event's
+/// outcome unknown; a rowless bead's store close failing) · 3 refused (the event lost its CAS:
 /// nothing is closed, the store is left as it was).
 pub fn close(
     args: &[String],
@@ -1501,6 +1517,7 @@ pub fn close(
         Err(e) => return Answer { code: CANNOT_TELL, stderr: format!("spira-lc close: {id}: its labels are unreadable — nothing closed: {}\n", e.trim()), ..Default::default() },
     };
     let mut rowless = false;
+    let mut row_terminal = false;
     match show(m, &id) {
         Err(NO_ROW) => rowless = true,
         Err(rc) => return Answer { code: rc, stderr: format!("spira-lc close: {id}: the lifecycle row is unreadable — nothing closed\n"), ..Default::default() },
@@ -1510,6 +1527,7 @@ pub fn close(
                 return Answer { code: CANNOT_TELL, stderr: format!("spira-lc close: {id}: unreadable row\n"), ..Default::default() };
             }
             let terminal = matches!(state.as_str(), "LANDED" | "SUPERSEDED" | "DROPPED" | "DONE");
+            row_terminal = terminal || !landing;
             if delivered && state == "DROPPED" {
                 let ev = serde_json::to_string(&BeadEventKind::Done { delivers: reason.clone() }).unwrap_or_default();
                 match event(m, "bead", &id, &state, &version, lifecycle::bead::DELIVERED_CORRECTION_ACTOR, &ev) {
@@ -1563,27 +1581,29 @@ pub fn close(
             }
         }
     }
-    let settled = if rowless {
+    if rowless {
         let a = close_ask_row(&id, &reason, &actor, m);
         if a.code != APPLIED {
             return a;
         }
-        match crate::reconcile_content::settle_ask(m, bd, &id) {
+        let settled = match crate::reconcile_content::settle_ask(m, bd, &id) {
             Ok(true) => Ok(()),
             Ok(false) => crate::reconcile_content::close_unowned(bd, &id, &reason),
             Err(e) => Err(e),
+        };
+        if let Err(e) = settled {
+            return Answer {
+                code: CANNOT_TELL,
+                stderr: format!("spira-lc close: {id}: the control plane records the end but the store close failed: {}\n", e.trim()),
+                ..Default::default()
+            };
         }
-    } else {
-        crate::reconcile_content::settle_close(m, bd, &id, &reason).map(|_| ())
-    };
-    match settled {
-        Ok(()) => withdraw_named_asks(&id, &asked_about, &actor, m),
-        Err(e) => Answer {
-            code: CANNOT_TELL,
-            stderr: format!("spira-lc close: {id}: the control plane records the end but the store close failed: {}\n", e.trim()),
-            ..Default::default()
-        },
     }
+    let mut ans = withdraw_named_asks(&id, &asked_about, &actor, m);
+    if !rowless && row_terminal && ans.code == APPLIED {
+        ans.owed.push((id, reason));
+    }
+    ans
 }
 
 /// A bead with no bead row may be an ask: its own machine records the close. Exit 1 (no ask
