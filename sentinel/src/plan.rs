@@ -165,6 +165,8 @@ pub struct CallPlan {
     pub lane_last: Option<String>,
     /// Why nobody was called, when a gate closed for the whole pass.
     pub refusal: Option<String>,
+    /// The task slots this pass found open before its own calls; `None` when no ceiling is configured.
+    pub task_room: Option<i64>,
     /// The pass log, one line per refusal or call, as the binary printed them.
     pub log: Vec<String>,
 }
@@ -338,10 +340,16 @@ pub fn plan(w: &CallWorld) -> CallPlan {
     if let Some(why) = gate {
         p.log(format!("CHECK7: {why}"));
         p.plan.refusal = Some(why);
+        p.plan.task_room = Some(0);
         return p.plan;
     }
     let lane_names: Vec<String> = w.lanes.iter().map(|l| l.name.clone()).collect();
     let mut pool = w.max_dwarves.map(|m| (m - w.task.iter().map(|t| t.live).sum::<i64>()).max(0));
+    p.plan.task_room = if w.throttled {
+        Some(0)
+    } else {
+        [pool, w.max_live_dwarves.map(|m| m - p.live_total())].into_iter().flatten().min().map(|n| n.max(0))
+    };
     let mut rotated = lane_rotate(w.lane_last.trim(), &lane_names);
     if !lane_names.is_empty() {
         match &w.urgent {
@@ -469,5 +477,54 @@ mod tests {
         let p = plan(&w);
         assert_eq!(called(&p), ["b"]);
         assert_eq!(p.lane_last.as_deref(), Some("b"));
+    }
+
+    fn room(w: &CallWorld) -> Option<i64> {
+        plan(w).task_room
+    }
+
+    #[test]
+    fn task_room_is_zero_when_the_task_pool_is_full() {
+        let mut w = world();
+        w.max_dwarves = Some(7);
+        w.task[0].live = 7;
+        w.max_live_dwarves = None;
+        assert_eq!(room(&w), Some(0));
+    }
+
+    #[test]
+    fn task_room_is_what_the_fleet_ceiling_leaves() {
+        let mut w = world();
+        w.task[0].live = 5;
+        w.max_live_dwarves = Some(9);
+        assert_eq!(room(&w), Some(4), "nine under the ceiling, five live");
+        w.task[0].live = 7;
+        assert_eq!(room(&w), Some(2));
+        w.task[0].live = 5;
+        w.other_live = 2;
+        assert_eq!(room(&w), Some(2));
+    }
+
+    #[test]
+    fn task_room_is_zero_when_the_fleet_is_full_though_the_pool_has_room() {
+        let mut w = world();
+        w.max_dwarves = Some(7);
+        w.task[0].live = 3;
+        w.other_live = 6;
+        w.max_live_dwarves = Some(9);
+        assert_eq!(room(&w), Some(0));
+    }
+
+    #[test]
+    fn task_room_is_zero_when_throttled_or_halted() {
+        assert_eq!(room(&CallWorld { throttled: true, ..world() }), Some(0));
+        for closed in [CallWorld { world: World::Halted, ..world() }, CallWorld { world: World::Draining, ..world() }, CallWorld { skew: Some("old".into()), ..world() }, CallWorld { capacity: Capacity::Paused, ..world() }] {
+            assert_eq!(room(&closed), Some(0), "{closed:?}");
+        }
+    }
+
+    #[test]
+    fn task_room_is_unknown_when_no_ceiling_is_configured() {
+        assert_eq!(room(&CallWorld { max_live_dwarves: None, ..world() }), None);
     }
 }

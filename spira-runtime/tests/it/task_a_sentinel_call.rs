@@ -229,3 +229,18 @@ fn a_started_builders_metric_rides_as_a_probe_and_is_not_journaled() {
     assert!(metrics.iter().all(|q| !q.journaled), "{metrics:?}");
     assert!(r.requested().iter().any(|q| q.name == UNIT_START && q.journaled), "the start itself stays journaled");
 }
+
+// ---------------------------------------------------------------------------------------------
+// sp-kyniae: the carry says since when a task slot has been open.
+
+#[test]
+fn the_carry_keeps_room_since_across_passes_with_room_and_a_full_pass_clears_it() {
+    let open = |now_ms| Snapshot { now_ms, ..busy() };
+    let (first, _) = decide(&Carry::default(), &open(1_000));
+    assert_eq!((first.room_since_ms, first.room_at_ms), (Some(1_000), Some(1_000)));
+    let (second, _) = decide(&first, &open(61_000));
+    assert_eq!((second.room_since_ms, second.room_at_ms), (Some(1_000), Some(61_000)));
+    let full = Snapshot { now_ms: 121_000, live_by_rune: [("builder".to_string(), 4)].into(), ..busy() };
+    let (third, _) = decide(&second, &full);
+    assert_eq!((third.room_since_ms, third.room_at_ms), (None, Some(121_000)));
+}
