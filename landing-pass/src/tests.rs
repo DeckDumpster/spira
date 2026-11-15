@@ -448,6 +448,7 @@ struct FakeLc {
     refuse_pass: Cell<bool>,
     held_tip: RefCell<Option<String>>,
     resubmits: RefCell<Vec<String>>,
+    holds: RefCell<Vec<String>>,
     waiting: RefCell<Vec<(String, String)>>,
 }
 impl crate::lifecycle::Lc for FakeLc {
@@ -465,6 +466,10 @@ impl crate::lifecycle::Lc for FakeLc {
     fn certify_red(&self, id: &str, tip: &str, reason: &str, step: &str, message: &str) -> Result<String, String> {
         self.reds.borrow_mut().push(format!("{id} {tip} {reason} step={step} message={message}"));
         self.certify(id, tip, "red", reason)
+    }
+    fn hold_wait(&self, id: &str, until: u64, why: &str) -> Result<String, String> {
+        self.holds.borrow_mut().push(format!("{id} wait {until} {why}"));
+        Ok("held".into())
     }
     fn resubmit_submitted(&self, id: &str, tip: &str) -> Result<String, String> {
         self.resubmits.borrow_mut().push(format!("{id} {tip}"));
@@ -568,6 +573,7 @@ impl H {
             title: String::new(),
             notes: Vec::new(),
             express: labels.contains(&"express"),
+            holds: Vec::new(),
         };
         self.beads.rows.borrow_mut().insert(id.into(), b.clone());
         b
@@ -825,20 +831,6 @@ fn no_verdict_is_counted_by_the_seam_and_never_reopens() {
 }
 
 #[test]
-fn repeated_no_verdicts_on_one_tip_defer_it_to_the_round() {
-    let h = H::new(LandMode::Queue);
-    h.closed("sp-a", "t1");
-    h.tools.gates.borrow_mut().insert("spira/sp-a".into(), (75, "gate: VERDICT=NO_VERDICT reason=lock-timeout branch=b repo=spira suite=-\n".into()));
-    for _ in 0..h.s.noverdict_max {
-        assert!(!h.logged("deferred to round: no gate verdict"));
-        h.run();
-    }
-    assert!(h.logged("deferred to round: no gate verdict"));
-    h.run();
-    assert!(h.logged("was deferred to round"));
-}
-
-#[test]
 fn a_submitted_bead_in_a_round_with_no_gate_is_not_escalated_as_unjudgeable() {
     let h = H::new(LandMode::Queue);
     h.closed("sp-a", "t1");
@@ -992,6 +984,7 @@ fn a_pass_between_two_dead_gates_makes_the_second_a_first_again() {
     h.closed("sp-a", "t1");
     h.tools.gates.borrow_mut().insert("spira/sp-a".into(), (75, DIED.into()));
     h.run();
+    h.clock.t.set(h.clock.t.get() + h.s.gate_backoff as u64 + 1);
     h.tools.gates.borrow_mut().insert("spira/sp-a".into(), (0, "gate: VERDICT=PASS reason=ok branch=b repo=spira suite=-\n".into()));
     h.run();
     retip(&h, "spira/sp-a", "t2");
@@ -2342,30 +2335,21 @@ fn an_over_cap_verdict_from_gate_worker_is_gated_again_after_the_backoff() {
 }
 
 #[test]
-fn a_no_verdict_from_gate_worker_is_queued_again_in_the_same_pass() {
+fn an_unjudged_tip_is_gated_again_after_the_backoff_and_never_deferred() {
     let h = h_worker(LandMode::Queue);
     h.closed("sp-a", "t1");
     let q = crate::gateq::GateQueue::new(&h.s.run);
     file_verdict(&h, "sp-a", "t1", 75, "gate: VERDICT=NO_VERDICT reason=deadline branch=b repo=spira suite=- (late)\n");
+    h.run();
+    assert!(q.queued().is_empty(), "inside the backoff the tip is not queued again");
+    h.clock.t.set(h.clock.t.get() + h.s.gate_backoff as u64 + 1);
     h.run();
     assert_eq!(q.queued().len(), 1, "{:?}", h.lib.calls.borrow());
     assert_eq!(q.queued()[0].tip, "t1");
 }
 
 #[test]
-fn a_no_verdict_that_defers_the_tip_to_a_round_is_not_queued_again() {
-    let mut h = h_worker(LandMode::Queue);
-    h.s.noverdict_max = 1;
-    h.closed("sp-a", "t1");
-    let q = crate::gateq::GateQueue::new(&h.s.run);
-    file_verdict(&h, "sp-a", "t1", 75, "gate: VERDICT=NO_VERDICT reason=deadline branch=b repo=spira suite=- (late)\n");
-    h.run();
-    assert!(h.logged("deferred to round"));
-    assert!(q.queued().is_empty());
-}
-
-#[test]
-fn a_tip_whose_gate_is_killed_over_cap_twice_goes_to_a_round_and_is_not_gated_a_third_time() {
+fn a_tip_killed_over_cap_twice_is_gated_again_after_the_backoff_not_deferred() {
     let h = h_worker(LandMode::Queue);
     h.closed("sp-a", "t1");
     let over_cap = "gate: VERDICT=FAIL reason=over-cap branch=b repo=spira suite=- (killed)\n";
@@ -2376,20 +2360,69 @@ fn a_tip_whose_gate_is_killed_over_cap_twice_goes_to_a_round_and_is_not_gated_a_
     h.run();
     q.claim(0).unwrap();
     q.discard(0, &crate::gateq::Job::new("spira", "spira/sp-a", "sp-a", "t1", false));
-    assert!(!h.lib.has("event gate.exhausted"));
     file_verdict(&h, "sp-a", "t1", 1, over_cap);
     h.run();
-    assert!(h.lib.has("event gate.exhausted sp-a"), "{:?}", h.lib.calls.borrow());
-    assert!(!h.lib.has("CERTIFIED"), "a round, not a gate PASS, certifies it");
+    h.clock.t.set(h.clock.t.get() + h.s.gate_backoff as u64 + 1);
+    h.run();
+    assert_eq!(q.queued().len(), 1, "{:?}", h.lib.calls.borrow());
+    assert!(!h.lib.has("event gate.exhausted"));
+}
+
+#[test]
+fn past_the_bound_an_unjudged_tip_is_held_once_and_one_incident_is_filed() {
+    let mut h = h_worker(LandMode::Queue);
+    h.s.noverdict_max = 2;
+    h.s.incident = std::path::PathBuf::from("/bin/true");
+    h.closed("sp-a", "t1");
+    let q = crate::gateq::GateQueue::new(&h.s.run);
+    let unjudged = "gate: VERDICT=NO_VERDICT reason=deadline branch=b repo=spira suite=- (late gate output)\n";
+    for i in 0..2 {
+        if i > 0 {
+            h.clock.t.set(h.clock.t.get() + h.s.gate_backoff as u64 + 1);
+        }
+        file_verdict(&h, "sp-a", "t1", 75, unjudged);
+        h.run();
+    }
+    let holds = h.lc.holds.borrow().clone();
+    assert_eq!(holds.len(), 1, "{holds:?}");
+    assert!(holds[0].starts_with("sp-a wait "), "{holds:?}");
+    assert!(holds[0].contains("t1") && holds[0].contains("deadline, deadline"), "{holds:?}");
+    assert_eq!(h.lib.calls.borrow().iter().filter(|c| c.starts_with("incident ")).count(), 1);
+    assert!(h.lib.calls.borrow().iter().any(|c| c.starts_with("incident ") && c.contains("late gate output")));
+    assert!(!h.lib.has("reopen"));
+    assert!(q.queued().is_empty());
+
+    let mut row = h.beads.rows.borrow().get("sp-a").unwrap().clone();
+    row.holds = vec!["wait".into()];
+    h.beads.rows.borrow_mut().insert("sp-a".into(), row.clone());
     for _ in 0..2 {
         h.clock.t.set(h.clock.t.get() + h.s.gate_backoff as u64 + 1);
         h.run();
-        assert!(q.queued().is_empty(), "an exhausted tip is not queued for a third gate");
     }
-    assert!(h.logged("was deferred to round"));
-    retip(&h, "spira/sp-a", "t2");
+    assert!(q.queued().is_empty());
+    assert_eq!(h.lib.calls.borrow().iter().filter(|c| c.starts_with("incident ")).count(), 1);
+    assert!(h.logged("is held"));
+
+    row.holds.clear();
+    h.beads.rows.borrow_mut().insert("sp-a".into(), row);
     h.run();
-    assert_eq!(q.queued().len(), 1, "a new tip is gated afresh");
+    assert_eq!(q.queued().len(), 1, "{:?}", h.out.lines());
+    assert_eq!(q.queued()[0].tip, "t1");
+}
+
+#[test]
+fn an_inline_gate_is_not_run_while_the_tip_is_backing_off() {
+    let mut h = H::new(LandMode::Queue);
+    h.s.gate_worker = false;
+    h.closed("sp-a", "t1");
+    h.tools.gates.borrow_mut().insert("spira/sp-a".into(), (75, "gate: VERDICT=NO_VERDICT reason=deadline branch=b repo=spira suite=-\n".into()));
+    h.run();
+    assert_eq!(h.tools.gate_calls.borrow().len(), 1);
+    h.run();
+    assert_eq!(h.tools.gate_calls.borrow().len(), 1, "inside the backoff the gate does not run");
+    h.clock.t.set(h.clock.t.get() + h.s.gate_backoff as u64 + 1);
+    h.run();
+    assert_eq!(h.tools.gate_calls.borrow().len(), 2);
 }
 
 #[test]

@@ -16,9 +16,6 @@ use std::path::{Path, PathBuf};
 /// Dead gates on one branch, with no gate dying elsewhere between, that make the branch the cause.
 const DEAD_GATES_RED: u32 = 2;
 
-/// Host-cause verdicts on one tip after which the round, not another gate, is its trial.
-const GATE_EXHAUSTED_AFTER: usize = 2;
-
 /// A NO_VERDICT that names no host-side cause: the gate ran the branch and never finished.
 fn is_dead_gate_reason(reason: &str) -> bool {
     matches!(reason, "died" | "timeout" | "unspecified") || reason == crate::model::DIED_TWICE
@@ -612,8 +609,8 @@ impl<'a> Pass<'a> {
             Ok(tip) => tip,
             Err(f) => return f,
         };
-        if self.files.deferred_to_round(br, &tip) {
-            self.log(&format!("CHECK6 {id}: {br} at {tip} was deferred to round — not gated again"));
+        if !bead.holds.is_empty() {
+            self.log(&format!("CHECK6 {id}: {br} is held ({}) — not gated until the hold lifts", bead.holds.join(", ")));
             return Flow::Next;
         }
         if self.beads.in_round(id) {
@@ -624,6 +621,10 @@ impl<'a> Pass<'a> {
         if self.s.gate_worker {
             return self.certify_queued(w, br, id, bead, &tip);
         }
+        if self.files.backing_off(br, &tip, self.clock.now()) {
+            self.log(&format!("CHECK6 {id}: {br} at {tip} found no room for a gate lately — not gated again yet"));
+            return Flow::Next;
+        }
         let g = self.run_gate(&w.repo.name, br, id);
         self.certify_judge(w, br, id, bead, &tip, g, &Cell::new(false))
     }
@@ -633,7 +634,7 @@ impl<'a> Pass<'a> {
     fn gate_provisional(&self, w: &Walk, br: &str, id: &str, bead: &BeadRow) {
         let name = &w.repo.name;
         let tip = self.git.rev_parse(&w.repo.path, br).unwrap_or_default();
-        if tip.is_empty() || self.files.gated(br, &tip) || self.files.deferred_to_round(br, &tip) {
+        if tip.is_empty() || self.files.gated(br, &tip) {
             return;
         }
         if !self.s.gate_worker {
@@ -670,7 +671,7 @@ impl<'a> Pass<'a> {
             self.files.note_gated(br, tip);
             let regate = Cell::new(false);
             let flow = self.certify_judge(w, br, id, bead, tip, d.run, &regate);
-            if !regate.get() || self.files.deferred_to_round(br, tip) {
+            if !regate.get() {
                 return flow;
             }
         }
@@ -681,7 +682,6 @@ impl<'a> Pass<'a> {
         let fix = is_base_fix(bead.external_ref.as_deref(), name);
         match q.enqueue(&GateJob::new(name, br, id, tip, fix).with_priority(bead.priority)) {
             Ok(true) => {
-                self.files.clear_round_deferral(br);
                 self.log(&format!("CHECK6 {id}: {br} queued for gate-worker at {tip}"));
             }
             Ok(false) => self.log(&format!("CHECK6 {id}: {br} is already with gate-worker at {tip}")),
@@ -743,30 +743,16 @@ impl<'a> Pass<'a> {
                     self.log(&format!("CHECK6 {id}: {br} has no per-bead gate and no round yet — not counted or escalated until the batcher has passed it over {}s", self.s.unrounded_grace));
                 }
                 GateOutcome::NoVerdict if dead_run.is_none() => {
-                    let host_cause = matches!(reason.as_str(), "scratch-short" | "died" | "over-cap");
-                    if host_cause {
-                        self.files.back_off(br, &tip, self.clock.now() + self.s.gate_backoff.max(0) as u64);
-                    }
                     self.lib.noverdict(id, br, name, &reason, g.outcome.word(), &g.out);
-                    if !moved && self.files.bump_infra(br, &tip) >= self.s.noverdict_max.max(1) && !host_cause {
-                        self.files.defer_to_round(br, &tip);
-                        self.log(&format!("CHECK6 {id}: {br} at {tip} deferred to round: no gate verdict {} time(s) running", self.s.noverdict_max.max(1)));
-                    }
-                    if !moved && matches!(reason.as_str(), "over-cap" | "died") {
+                    let mut held = false;
+                    if !moved {
+                        self.files.back_off(br, &tip, self.clock.now() + self.s.gate_backoff.max(0) as u64);
                         let seen = self.files.note_exhaust(br, &tip, &reason);
-                        if seen.len() >= GATE_EXHAUSTED_AFTER {
-                            self.files.defer_to_round(br, &tip);
-                            let verdicts = seen.join(", ");
-                            self.log(&format!("CHECK6 {id}: {br} at {tip} gate-exhausted: {verdicts} — admissible to a round, not gated again"));
-                            self.lib.event(
-                                "gate.exhausted",
-                                id,
-                                &format!("{id} gate-exhausted at {tip} — the round certifies it"),
-                                &format!("{name}'s gate ended without a verdict on this tip {} times running: {verdicts}", seen.len()),
-                            );
+                        if seen.len() >= self.s.noverdict_max.max(1) as usize {
+                            held = self.hold_unjudged(w, br, id, &tip, &seen, &g.out);
                         }
                     }
-                    regate.set(!moved);
+                    regate.set(!moved && !held);
                 }
                 _ => {
                     let (closed, st) = self.handed_on_now(id);
@@ -824,6 +810,56 @@ impl<'a> Pass<'a> {
         }
         self.out.progress(&format!("certified {br} in {name} — gate passed, round and CI are the remaining judges"));
         Flow::Next
+    }
+
+    /// The gate could not judge this tip `reasons.len()` times: hold the bead until the hold
+    /// lifts itself and file one incident. A harness fault, so no rework and no attempt charged.
+    /// True when the hold was placed.
+    fn hold_unjudged(&self, w: &Walk, br: &str, id: &str, tip: &str, reasons: &[String], out: &str) -> bool {
+        let repo = &w.repo.name;
+        let n = reasons.len();
+        let joined = reasons.join(", ");
+        let inc = if crate::util::runnable(&self.s.incident) {
+            let title = format!("{id}: {repo}'s gate could not judge {br} at {tip} {n} times");
+            let payload = [
+                format!("{repo}'s certification gate ended without a verdict on {br} at {tip} {n} times running."),
+                format!("Reasons, in order: {joined}"),
+                format!("Each run was followed by a backoff of {}s before the tip was gated again.", self.s.gate_backoff),
+                "A gate that cannot judge is a harness fault, not the bead's: the bead was not reopened and no attempt was charged.".into(),
+                "The bead is held and is not gated while the hold stands; it lifts itself at expiry.".into(),
+                String::new(),
+                "--- the last run's output -------------------------------------------------------------".into(),
+                tail_bytes(out, 6000),
+            ]
+            .join("\n");
+            let key = format!("gate-unjudged:{repo}:{br}@{tip}");
+            match self.lib.incident(&self.s.scope_label, repo, &key, &title, &payload) {
+                Ok(printed) => printed
+                    .lines()
+                    .map(str::trim)
+                    .find(|l| !self.s.id_prefix.is_empty() && l.starts_with(&self.s.id_prefix) && !l.contains(char::is_whitespace))
+                    .unwrap_or("")
+                    .to_string(),
+                Err(_) => String::new(),
+            }
+        } else {
+            self.log(&format!("CHECK6 {id}: no intake at {} — the gate's inability to judge {br} reaches nobody", self.s.incident.display()));
+            String::new()
+        };
+        let inc = if inc.is_empty() { "not filed".to_string() } else { inc };
+        let why = format!("gate could not judge {tip}: {joined} — incident {inc}; lifts at expiry, or `spira-lc unhold {id} wait` once the harness is fixed");
+        let until = self.clock.now() + self.s.noverdict_class_window.max(0) as u64;
+        match self.lc.hold_wait(id, until, &why) {
+            Ok(_) => {
+                self.files.clear_exhaust(br);
+                self.log(&format!("CHECK6 {id}: {br} at {tip} held — the gate could not judge it {n} time(s): {joined}; incident {inc}"));
+                true
+            }
+            Err(e) => {
+                self.log(&format!("CHECK6 {id}: {br} at {tip} held — the gate could not judge it {n} time(s): {joined}; incident {inc}; the hold was NOT placed: {e}"));
+                false
+            }
+        }
     }
 
     fn awaiting_first_cut(&self, br: &str) -> bool {

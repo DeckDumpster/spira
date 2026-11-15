@@ -669,6 +669,7 @@ impl RealBeads {
         for r in rows.iter_mut() {
             r.state = lc.get(&r.id).map(|x| x.state.clone()).filter(|s| !s.is_empty()).unwrap_or_else(|| "-".into());
             r.express = lc.get(&r.id).is_some_and(|x| x.express);
+            r.holds = lc.get(&r.id).map(|x| x.holds.clone()).unwrap_or_default();
         }
         Ok(())
     }
