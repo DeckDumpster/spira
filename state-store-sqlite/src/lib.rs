@@ -1752,6 +1752,10 @@ mod tests {
         assert_eq!(page.next, Some(("a/hot".to_string(), 1000)));
         assert_eq!(page.prefixes["a/"].versions, 1000);
         assert!(steps <= 20 * 1000, "{steps} VM steps");
+        let literal = VERSION_USAGE.replace("?1", "X''").replace("?2", "-1").replace("?3", "10");
+        let steps = plan(&b, &literal);
+        assert!(steps.iter().any(|s| s.starts_with("SEARCH versions USING INDEX sqlite_autoindex_versions_1")), "{steps:?}");
+        assert!(steps.iter().all(|s| !s.starts_with("SCAN") && !s.contains("TEMP B-TREE")), "{steps:?}");
     }
 
     #[test]
