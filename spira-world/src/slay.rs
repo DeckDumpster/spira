@@ -379,5 +379,7 @@ fn finish(ctx: &Ctx, p: &Ports, a: &Args, s: &Stopped, out: &mut Vec<String>) ->
     fail
 }
 
+pub mod gitops;
+
 #[cfg(test)]
 mod tests;

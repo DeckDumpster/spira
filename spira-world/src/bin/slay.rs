@@ -12,6 +12,7 @@ use std::process::Stdio;
 
 use hel::ports::World;
 use spira_store::lc_call::LcClient;
+use spira_world::slay::gitops;
 use spira_world::slay::{self, BeadView, Beads, Ctx, Dwarf, Git, Lifecycle, Parsed, Ports, SalvageFailed, Stopped};
 use spira_world::{proc, sysctl};
 
@@ -130,12 +131,6 @@ struct RealGit {
     world: hel::real::Real,
 }
 
-impl RealGit {
-    fn git(&self, repo: &Path, args: &[&str]) -> Option<String> {
-        hel::git::Git(repo).out(args)
-    }
-}
-
 impl Git for RealGit {
     fn is_dir(&self, p: &Path) -> bool {
         p.is_dir()
@@ -144,13 +139,13 @@ impl Git for RealGit {
         hel::git::Git(repo).branch_exists(br)
     }
     fn short_tip(&self, repo: &Path, br: &str) -> Option<String> {
-        self.git(repo, &["rev-parse", "--short", br]).map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+        gitops::short_tip(repo, br)
     }
     fn landref(&self, repo: &Path) -> Option<String> {
         self.world.base(repo).map(|b| b.landref)
     }
     fn names_bead_between(&self, repo: &Path, base: &str, br: &str, id: &str) -> bool {
-        self.git(repo, &["log", "--format=%s%n%b", &format!("{base}..{br}")]).is_some_and(|l| l.contains(id))
+        gitops::names_bead_between(repo, base, br, id)
     }
     fn ahead(&self, repo: &Path, base: &str, br: &str) -> u64 {
         hel::git::Git(repo).ahead(base, br).unwrap_or(0)
@@ -159,25 +154,13 @@ impl Git for RealGit {
         hel::git::Git(repo).content_on_base(br, base)
     }
     fn abort_inflight(&self, wt: &Path) {
-        let g = hel::git::Git(wt);
-        let _ = g.ok(&["rebase", "--abort"]);
-        let _ = g.ok(&["merge", "--abort"]);
+        gitops::abort_inflight(wt);
     }
     fn commit_all(&self, wt: &Path, msg: &str) -> bool {
-        let g = hel::git::Git(wt);
-        g.ok(&["add", "-A"])
-            && spira_config::bounded::bounded("git")
-                .arg("-C")
-                .arg(wt)
-                .args(["-c", "user.name=slay", "-c", "user.email=slay@spira.local", "-c", "commit.gpgsign=false", "commit", "--no-verify", "-m", msg])
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status()
-                .is_ok_and(|s| s.success())
+        gitops::commit_all(wt, msg)
     }
     fn park(&self, repo: &Path, refname: &str, br: &str) -> bool {
-        hel::git::Git(repo).update_ref(refname, br)
+        gitops::park(repo, refname, br)
     }
     fn salvage(&self, id: &str, wt: &Path) -> Result<Option<PathBuf>, SalvageFailed> {
         self.world.salvage(id, wt).map_err(|()| SalvageFailed)
