@@ -649,7 +649,7 @@ impl<'w, W: World> Trial<'w, W> {
 
         // A cached PASS keeps its verdict, but --release-bins still needs the judged tree's binaries.
         if let Some(hit) = cached {
-            match self.prepare_build_tree(&ctx, &tree) {
+            match self.prepare_build_tree(&ctx, &tree, false) {
                 Ok(field) => self.s.build_dir = field,
                 Err(e) => return e,
             }
@@ -811,7 +811,7 @@ impl<'w, W: World> Trial<'w, W> {
             || matches!(comp, Composition::Unit { .. })
             || self.a.release_bins;
         if builds {
-            match self.prepare_build_tree(&ctx, &tree) {
+            match self.prepare_build_tree(&ctx, &tree, matches!(comp, Composition::Unit { .. })) {
                 Ok(field) => self.s.build_dir = field,
                 Err(e) => return e,
             }
@@ -1728,15 +1728,26 @@ impl<'w, W: World> Trial<'w, W> {
         )
     }
 
+    /// Where the bead's builder built at its last submit, when the bead has one and the wait is configured.
+    fn builders_dir(&self, ctx: &Ctx) -> Option<crate::ports::Builder> {
+        let wait = key::digits(ctx.var("SPIRA_GATE_BUILD_LEASE_WAIT_SECS"))?;
+        if self.s.bead.is_empty() {
+            return None;
+        }
+        let (tip, dir) = self.w.lc_build_dir(&self.s.bead)?;
+        Some(crate::ports::Builder { bead: self.s.bead.clone(), tip, dir, wait: std::time::Duration::from_secs(wait), path: self.s.path.clone() })
+    }
+
     /// The refusals a tree build meets before it starts: no build cache, a target that cannot be prepared.
-    fn prepare_build_tree(&self, ctx: &Ctx, tree: &Path) -> Result<String, Verdict> {
+    fn prepare_build_tree(&self, ctx: &Ctx, tree: &Path, in_builders_dir: bool) -> Result<String, Verdict> {
         let w = self.w;
         if let Some(e) = &self.s.cache_refusal {
             return Err(v(NOVERDICT, "no-build-cache", format!("gate: {e} — refusing to judge")));
         }
         let lim = Self::target_limits(ctx);
         let short = |e: String| Err(v(NOVERDICT, "scratch-short", format!("{e}\ngate: the scratch target could not be prepared on the host, not a fault in the branch.")));
-        match w.target_on_tmpfs(tree, ctx.var("SPIRA_GATE_TARGET_ROOT"), &self.s.run, &lim) {
+        let builder = if in_builders_dir { self.builders_dir(ctx) } else { None };
+        match w.target_on_tmpfs(tree, ctx.var("SPIRA_GATE_TARGET_ROOT"), &self.s.run, &lim, builder.as_ref()) {
             Ok(line) => {
                 w.eprint(&line);
                 Ok(crate::telemetry::build_dir_field(&line))
@@ -1864,7 +1875,7 @@ impl<'w, W: World> Trial<'w, W> {
             w.append(
                 &self.s.gate_log,
                 &format!(
-                    "{} {} {} waited={}s ran={}s rc={} {}{}{}{}{}{}{} test_clock={}s\n",
+                    "{} {} {} waited={}s ran={}s rc={} {}{}{}{}{}{}{}{} test_clock={}s\n",
                     w.utc(),
                     self.s.repo_name,
                     self.a.branch,
@@ -1878,6 +1889,7 @@ impl<'w, W: World> Trial<'w, W> {
                     tools_field(&self.s.tools_from, &self.s.phases),
                     self.s.replay_note,
                     if self.s.waited_ms > 0 { format!(" waited_ms={}", self.s.waited_ms) } else { String::new() },
+                    if self.s.build_dir.is_empty() { String::new() } else { format!(" build_dir={}", crate::telemetry::build_dir_kind(&self.s.build_dir)) },
                     self.s.test_secs
                 ),
             );
