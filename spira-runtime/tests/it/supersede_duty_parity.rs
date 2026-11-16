@@ -4,12 +4,11 @@
 //! spira-lc socket serving the same state, `bd-supersede` and `bd-note` doors included.
 
 use std::fs;
-use std::path::Path;
 
 #[test]
 fn the_watchers_manifest_no_longer_carries_the_row() {
     let manifest =
-        fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/watchers"))
+        fs::read_to_string(spira_config::resolve::locate_home_for_process().unwrap().join("watchers"))
             .unwrap();
     assert!(
         manifest.lines().any(|l| l.starts_with("concierge-inbox|")),

@@ -41,7 +41,7 @@ fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
 #[test]
 fn no_unmarked_spira_child_remains_in_src() {
     let mut files = Vec::new();
-    rust_files(&Path::new(env!("CARGO_MANIFEST_DIR")).join("src"), &mut files);
+    rust_files(&testkit::manifest_dir().join("src"), &mut files);
     let mut found = Vec::new();
     for f in files {
         let text = std::fs::read_to_string(&f).expect("read");

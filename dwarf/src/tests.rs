@@ -25,7 +25,7 @@ pub(crate) fn complete_vars() -> BTreeMap<String, String> {
         .map(|(k, v)| if k.starts_with("COCKPIT_") { (k, v) } else { (format!("SPIRA_{k}"), v) })
         .chain(std::iter::once((
             "SPIRA_TOML".to_string(),
-            concat!(env!("CARGO_MANIFEST_DIR"), "/../spira/testlib/complete.toml").to_string(),
+            spira_config::resolve::locate_home_for_process().unwrap().join("testlib/complete.toml").display().to_string(),
         )))
         .collect()
 }

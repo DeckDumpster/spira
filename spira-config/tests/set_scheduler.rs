@@ -50,7 +50,7 @@ fn setup(name: &str, sock: &Path) -> Box_ {
 }
 
 fn run(b: &Box_, args: &[&str]) -> Output {
-    let mut c = Command::new(env!("CARGO_BIN_EXE_spira-config"));
+    let mut c = Command::new(testkit::bin_exe("spira-config"));
     c.env_clear().args(args);
     for (k, v) in &b.env {
         c.env(k, v);
@@ -112,7 +112,7 @@ fn a_write_typed_against_a_staged_release_says_nothing_about_the_scheduler() {
     let sock = d.path().join("c.sock");
     let seen = scheduler(&sock, "0", "4", true);
     let b = setup("set-sched-release-box", &sock);
-    let home = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
+    let home = spira_config::resolve::locate_home_for_process().unwrap();
     let o = run(&b, &["set", "--release", home.to_str().unwrap(), "spira.max_dwarves", "4", b.toml.to_str().unwrap()]);
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     assert!(!out(&o).contains("scheduler") && seen.lock().unwrap().is_empty(), "{}", out(&o));

@@ -158,14 +158,14 @@ pub fn metrics_sink(service: &str) -> spira_otel::metrics::MetricsSink {
 
 /// The complete fixture's text, read from the harness tree this crate was built in.
 pub fn complete_fixture_text() -> String {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/testlib/complete.toml");
+    let path = crate::resolve::locate_home_for_process().unwrap().join("testlib/complete.toml");
     std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
 }
 
 /// A release directory for a test: `<dir>/release/spira` linking this harness tree's
 /// `conf.toml.d`, and its `conf.d` when `with_conf_d`. Point `SPIRA_RELEASE` at the returned path.
 pub fn fixture_release(dir: &std::path::Path, with_conf_d: bool) -> std::path::PathBuf {
-    let tree = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
+    let tree = crate::resolve::locate_home_for_process().unwrap();
     let release = dir.join("release");
     std::fs::create_dir_all(release.join("spira")).expect("the fixture release is created");
     let dirs: &[&str] = if with_conf_d { &["conf.d", "conf.toml.d"] } else { &["conf.toml.d"] };
@@ -181,7 +181,7 @@ pub fn fixture_release(dir: &std::path::Path, with_conf_d: bool) -> std::path::P
 /// A harness home for a test that writes into it: `<dir>/home` holding copies of this tree's
 /// `conf.d` and `conf.toml.d`. Point `SPIRA_HOME` at the returned path.
 pub fn fixture_registry_home(dir: &std::path::Path) -> std::path::PathBuf {
-    let tree = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
+    let tree = crate::resolve::locate_home_for_process().unwrap();
     let home = dir.join("home");
     for d in ["conf.d", "conf.toml.d"] {
         std::fs::create_dir_all(home.join(d)).expect("the fixture home is created");
@@ -222,7 +222,7 @@ pub fn fixture_world_env(dir: &std::path::Path, run: &std::path::Path, repos: &[
     let (run_s, map_s) = (run.display().to_string(), map_path.display().to_string());
     let workspaces = dir.display().to_string();
     let toml = fixture_toml(dir, &[("SPIRA_RUN", &run_s), ("SPIRA_REPO_MAP", &map_s), ("SPIRA_HOME_REPO", repos[0]), ("SPIRA_WORKSPACES", &workspaces)]);
-    let home = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("spira");
+    let home = crate::resolve::locate_home_for_process().unwrap();
     vec![
         ("SPIRA_TOML", Some(toml.display().to_string())),
         ("SPIRA_HOME", Some(home.display().to_string())),
@@ -243,7 +243,7 @@ pub fn fixture_metrics_env(dir: &std::path::Path, endpoint: &str, declare: &[(&s
     let mut keys = vec![("SPIRA_METRICS_ENDPOINT", endpoint)];
     keys.extend_from_slice(declare);
     let toml = fixture_toml(dir, &keys);
-    let home = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("spira");
+    let home = crate::resolve::locate_home_for_process().unwrap();
     vec![("SPIRA_TOML", toml.display().to_string()), ("SPIRA_HOME", home.display().to_string())]
 }
 

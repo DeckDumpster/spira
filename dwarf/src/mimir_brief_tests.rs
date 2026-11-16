@@ -1,9 +1,9 @@
 //! The shipped Mimir brief, read as the dwarf is handed it.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 fn spira_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira")
+    spira_config::resolve::locate_home_for_process().unwrap()
 }
 
 fn brief() -> String {

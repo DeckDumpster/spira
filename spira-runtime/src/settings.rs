@@ -349,7 +349,7 @@ mod tests {
         assert_eq!(complete_fixture("SPIRA_POOL_CAP_CONTAINER").as_deref(), Some("2"), "the fixture reader must find a known key");
         assert_eq!(complete_fixture("SPIRA_PLANTED_NOT_A_KEY"), None);
         let pending = Settings::pending_keys();
-        let conf_d = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/conf.d");
+        let conf_d = spira_config::resolve::locate_home_for_process().unwrap().join("conf.d");
         let unregistered: Vec<&str> = pending.iter().copied().filter(|k| !conf_d.join(k).is_file() && !Settings::UNDECLARABLE.contains(k)).collect();
         assert!(unregistered.is_empty(), "keys pending rows declare that spira/conf.d does not register: {unregistered:?}");
         let stale: Vec<&&str> = Settings::UNDECLARABLE.iter().filter(|k| conf_d.join(k).is_file() || !pending.contains(k)).collect();
@@ -380,7 +380,7 @@ mod tests {
 
     #[test]
     fn every_key_read_is_registered_in_conf_d() {
-        let conf_d = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/conf.d");
+        let conf_d = spira_config::resolve::locate_home_for_process().unwrap().join("conf.d");
         let missing: Vec<&str> = Settings::keys().into_iter().filter(|k| !conf_d.join(k).is_file()).collect();
         assert!(missing.is_empty(), "keys the runtime reads but spira/conf.d does not register: {missing:?}");
     }

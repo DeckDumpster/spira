@@ -27,7 +27,7 @@ fn tree() -> testkit::TempDir {
 }
 
 fn retire(root: &Path, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_spira-config")).env_clear().arg("retire").args(args).args(if args.contains(&"--bead") { &[][..] } else { &["--bead", "sp-x"][..] }).arg("--tree").arg(root).output().unwrap()
+    Command::new(testkit::bin_exe("spira-config")).env_clear().arg("retire").args(args).args(if args.contains(&"--bead") { &[][..] } else { &["--bead", "sp-x"][..] }).arg("--tree").arg(root).output().unwrap()
 }
 
 fn read(root: &Path, rel: &str) -> String {

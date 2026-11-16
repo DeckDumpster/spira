@@ -399,7 +399,7 @@ mod tests {
     /// word of its Class cell, from every file under `src/tasks`, read from the source.
     fn act_tables() -> BTreeMap<String, (String, String)> {
         let mut paths = vec![];
-        files(&Path::new(env!("CARGO_MANIFEST_DIR")).join("src/tasks"), &mut paths);
+        files(&testkit::manifest_dir().join("src/tasks"), &mut paths);
         let mut out = BTreeMap::new();
         for p in paths {
             let src = std::fs::read_to_string(&p).unwrap();

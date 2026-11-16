@@ -897,7 +897,7 @@ mod tests {
     }
 
     fn shipped_rune_texts() -> Vec<(String, String)> {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/runes");
+        let dir = crate::resolve::locate_home_for_process().unwrap().join("runes");
         let mut v: Vec<(String, String)> = std::fs::read_dir(dir)
             .unwrap()
             .filter_map(|e| e.ok().map(|e| e.path()))
@@ -921,7 +921,7 @@ mod tests {
         write_rune(&ws, "newcomer", "RUNE_LABELS=a,d\n");
         assert!(spira_runes(&ws, None).contains("newcomer"), "installing a rune file is the whole registration");
 
-        let shipped = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
+        let shipped = crate::resolve::locate_home_for_process().unwrap();
         let _env = testkit::env(&[("SPIRA_RUNES_DIR", Some(shipped.join("runes").to_str().unwrap()))]);
         let split = |s: String| s.split_whitespace().map(str::to_string).collect::<std::collections::BTreeSet<_>>();
         let all = split(spira_runes(&shipped, None));

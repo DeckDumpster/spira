@@ -4,12 +4,11 @@
 
 use std::collections::BTreeSet;
 use std::fs;
-use std::path::Path;
 
 use spira_config::{is_secret_shaped, missing_from_retirement, validate};
 
 fn manifest_path(rel: &str) -> String {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+    testkit::manifest_dir()
         .join(rel)
         .to_string_lossy()
         .into_owned()

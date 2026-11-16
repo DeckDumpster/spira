@@ -2,12 +2,14 @@
 //! the service, in one place: the task's row, settings pinned from the complete fixture, the
 //! stream's health on the rig, and the static no-spawn scan of one module.
 
-use std::path::{Path, PathBuf};
+#[cfg(any(test, feature = "integration"))]
+use std::path::PathBuf;
 
 use runtime::taskrig::TaskRig;
 use runtime::{Journal, StreamKey};
 
 use crate::tasks::{self, Task};
+#[cfg(feature = "integration")]
 use crate::Settings;
 
 /// The row named `name` in `tasks::all()`; panics naming it when the row is missing, which is T1's
@@ -18,6 +20,7 @@ pub fn row(name: &str) -> &'static Task {
 
 /// Settings loaded through the one config door from the complete fixture (`spira/testlib`), with
 /// `declare` on top. Sets `SPIRA_TOML` for this process; call it before anything reads config.
+#[cfg(feature = "integration")]
 pub fn pinned_settings(declare: &[(&str, &str)]) -> Result<Settings, String> {
     let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
     let dir = std::env::temp_dir().join(format!("task-acceptance-{nanos}"));
@@ -27,7 +30,7 @@ pub fn pinned_settings(declare: &[(&str, &str)]) -> Result<Settings, String> {
     let service: &[(&str, &str)] = &[("SPIRA_LC_SOCKET", "/fixture/run/lc.sock"), ("SPIRA_TASK_MODES", &modes)];
     let toml = spira_config::process::fixture_toml(&dir, &[service, declare].concat());
     std::env::set_var(spira_config::process::TOML_ENV, &toml);
-    std::env::set_var("SPIRA_HOME", Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira"));
+    std::env::set_var("SPIRA_HOME", spira_config::resolve::locate_home_for_process().unwrap());
     Settings::load()
 }
 
@@ -41,8 +44,9 @@ pub fn assert_healthy(rig: &TaskRig, stream: &str) {
 }
 
 /// The source of the module at `rel` under `src/tasks/`.
+#[cfg(any(test, feature = "integration"))]
 pub fn module_source(rel: &str) -> String {
-    let path: PathBuf = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/tasks").join(rel);
+    let path: PathBuf = testkit::manifest_dir().join("src/tasks").join(rel);
     std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
 }
 

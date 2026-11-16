@@ -158,7 +158,7 @@ mod tests {
         let t = testkit::TempDir::new("mail-bare-login");
         let toml = t.path().join("login.toml");
         std::fs::write(&toml, spira_config::process::complete_fixture_text()).unwrap();
-        let home = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
+        let home = spira_config::resolve::locate_home_for_process().unwrap();
         let repo = home.parent().unwrap().to_path_buf();
         let login = |with_toml: bool| -> BTreeMap<String, String> {
             let mut e: BTreeMap<String, String> = [("HOME", "/nonexistent"), ("PATH", "/usr/bin"), ("SPIRA_RELEASE", repo.to_str().unwrap())].iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();

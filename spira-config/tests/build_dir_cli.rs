@@ -1,6 +1,6 @@
 //! `spira-build-dir lease` is the hand-build door onto the pool dwarves lease from.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -63,8 +63,8 @@ fn setup(name: &str) -> Box_ {
 
 impl Box_ {
     fn lease(&self, who: &str, holder: &Child) -> (PathBuf, String) {
-        let home = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
-        let out = Command::new(env!("CARGO_BIN_EXE_spira-build-dir"))
+        let home = spira_config::resolve::locate_home_for_process().unwrap();
+        let out = Command::new(testkit::bin_exe("spira-build-dir"))
             .args([
                 "lease",
                 "--who",

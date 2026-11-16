@@ -108,7 +108,7 @@ mod tests {
     /// The `SPIRA_TASK_MODES` value in the shipped default (`spira/conf.d`) and in the complete
     /// fixture (`spira/testlib/complete.toml`).
     fn declared_tables() -> Vec<(&'static str, String)> {
-        let conf = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/conf.d").join(KEY)).unwrap();
+        let conf = std::fs::read_to_string(spira_config::resolve::locate_home_for_process().unwrap().join("conf.d").join(KEY)).unwrap();
         let default = conf.split(&format!("${{{KEY}:=")).nth(1).and_then(|r| r.split("}\"").next()).expect("conf.d default").to_string();
         let toml = spira_config::process::complete_fixture_text();
         let fixture = toml.lines().find_map(|l| l.trim().strip_prefix("task_modes = \"")).and_then(|v| v.strip_suffix('"')).expect("complete.toml task_modes").to_string();

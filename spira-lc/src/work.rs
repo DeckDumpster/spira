@@ -2316,7 +2316,7 @@ mod tests {
 
     #[test]
     fn a_pilgrims_follow_up_is_filed_into_the_builder_partition_but_a_split_stays_put() {
-        let runes = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/runes");
+        let runes = spira_config::resolve::locate_home_for_process().unwrap().join("runes");
         let at = |p: &str| spira_config::runes::followup_persona_in(&runes, p).unwrap();
         assert_eq!(at("pilgrim"), "builder");
         assert_eq!(at("builder"), "builder");
@@ -2333,7 +2333,7 @@ mod tests {
 
     #[test]
     fn every_work_verb_a_persona_prompt_names_is_in_that_personas_allow_row() {
-        let runes = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/runes");
+        let runes = spira_config::resolve::locate_home_for_process().unwrap().join("runes");
         let mut bad = vec![];
         for e in std::fs::read_dir(&runes).unwrap().flatten() {
             let path = e.path();
@@ -2368,7 +2368,7 @@ mod tests {
 
     #[test]
     fn the_pilgrims_contract_files_defects_with_the_verb_the_broker_admits() {
-        let md = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/runes/pilgrim.md")).unwrap();
+        let md = std::fs::read_to_string(spira_config::resolve::locate_home_for_process().unwrap().join("runes/pilgrim.md")).unwrap();
         assert!(md.contains("work file-followup \""));
         assert!(!md.lines().any(|l| l.trim_start().starts_with("work file \"")));
     }
@@ -2611,7 +2611,7 @@ mod tests {
 
     #[test]
     fn the_shipped_runes_send_a_spike_to_done_and_a_builder_to_submitted() {
-        let runes = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/runes");
+        let runes = spira_config::resolve::locate_home_for_process().unwrap().join("runes");
         let go = |persona: &str, verb: &str, exit: &str| working_exit_refusal_in(&runes, verb, exit, &working_row(persona), persona);
         let (code, msg) = go("spike", "submit", "SUBMITTED").unwrap();
         assert_eq!(code, REFUSED);
@@ -3307,7 +3307,7 @@ mod tests {
 
     #[test]
     fn ask_kinds_are_the_kinds_mail_can_deliver() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/mail/kinds");
+        let dir = spira_config::resolve::locate_home_for_process().unwrap().join("mail/kinds");
         let mut on_disk: Vec<String> = std::fs::read_dir(&dir)
             .unwrap()
             .map(|e| e.unwrap().path().file_stem().unwrap().to_string_lossy().into_owned())

@@ -37,7 +37,7 @@ fn setup(name: &str) -> Box_ {
 }
 
 fn run(b: &Box_, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_spira-config"))
+    Command::new(testkit::bin_exe("spira-config"))
         .env_clear()
         .env("SPIRA_HOME", &b.installed)
         .args(args)

@@ -1104,8 +1104,8 @@ mod tests {
 
     #[test]
     fn the_real_migrations_plan_and_order() {
-        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../lifecycle/migrations");
-        let files = ordered_files(&[dir.to_string()]).unwrap();
+        let dir = spira_config::resolve::checkout_root_for_process().unwrap().join("lifecycle/migrations");
+        let files = ordered_files(&[dir.display().to_string()]).unwrap();
         let texts: Vec<(String, String)> = files.iter().map(|f| (f.file_name().unwrap().to_string_lossy().to_string(), std::fs::read_to_string(f).unwrap())).collect();
         let mut on_disk: Vec<String> = std::fs::read_dir(dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().to_string()).filter(|n| n.ends_with(".sql")).collect();
         on_disk.sort();
@@ -1292,8 +1292,8 @@ mod tests {
     }
 
     fn real_steps() -> Vec<(String, Stmt)> {
-        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../lifecycle/migrations");
-        let files = ordered_files(&[dir.to_string()]).unwrap();
+        let dir = spira_config::resolve::checkout_root_for_process().unwrap().join("lifecycle/migrations");
+        let files = ordered_files(&[dir.display().to_string()]).unwrap();
         plan(&files.iter().map(|f| (f.file_name().unwrap().to_string_lossy().to_string(), std::fs::read_to_string(f).unwrap())).collect::<Vec<_>>()).unwrap()
     }
 

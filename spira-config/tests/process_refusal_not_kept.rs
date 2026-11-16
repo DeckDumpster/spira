@@ -11,7 +11,7 @@ fn a_refused_resolution_is_not_kept_and_a_resolved_one_is() {
 
     let dir = testkit::TempDir::new("process-refusal-not-kept");
     let toml = spira_config::process::fixture_toml(dir.path(), &[]);
-    let home = format!("{}/../spira", env!("CARGO_MANIFEST_DIR"));
+    let home = spira_config::resolve::locate_home_for_process().unwrap().display().to_string();
     {
         let _env = testkit::env(&[("SPIRA_TOML", Some(toml.to_str().unwrap())), ("SPIRA_HOME", Some(&home))]);
         if let Err(e) = spira_config::process::config() {

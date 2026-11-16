@@ -226,7 +226,7 @@ mod tests {
     /// Every `pub const NAME` declared by a module under `watchers/`, read from the source so the
     /// list does not come from the table it checks.
     fn watcher_names() -> Vec<String> {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/watchers");
+        let dir = testkit::manifest_dir().join("src/watchers");
         let mut out = vec![];
         for e in std::fs::read_dir(dir).unwrap().flatten() {
             let src = std::fs::read_to_string(e.path()).unwrap();
@@ -264,7 +264,7 @@ mod tests {
     }
 
     fn family_stems() -> Vec<String> {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/tasks");
+        let dir = testkit::manifest_dir().join("src/tasks");
         // Files only: each family also has a `tasks/<x>/` directory of task modules beside `<x>.rs`.
         let mut out: Vec<String> = std::fs::read_dir(dir).unwrap().flatten().map(|e| e.path()).filter(|p| p.is_file() && p.extension().is_some_and(|x| x == "rs")).filter_map(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned())).collect();
         out.sort();
@@ -273,7 +273,7 @@ mod tests {
 
     #[test]
     fn every_family_file_is_in_the_families_list() {
-        let src = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/tasks.rs")).unwrap();
+        let src = std::fs::read_to_string(testkit::manifest_dir().join("src/tasks.rs")).unwrap();
         let stems = family_stems();
         assert_eq!(stems, ["a", "b", "c", "d", "e", "f", "g"], "the scan must find the family files");
         let planted = [stems.clone(), vec!["planted".to_string()]].concat();
@@ -339,7 +339,7 @@ mod tests {
 
     #[test]
     fn the_undeclarable_table_in_the_docs_is_the_rows() {
-        let src = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/tasks.rs")).unwrap();
+        let src = std::fs::read_to_string(testkit::manifest_dir().join("src/tasks.rs")).unwrap();
         let doc = src.split("pub static FAMILIES:").nth(1).and_then(|r| r.split("pub static PENDING_FAMILIES:").next()).unwrap_or("");
         let want = undeclarable_table();
         assert!(doc.contains(&want), "the table above PENDING_FAMILIES is stale; it is:\n{want}");

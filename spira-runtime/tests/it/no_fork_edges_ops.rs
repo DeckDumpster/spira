@@ -57,7 +57,7 @@ fn unmarked(name: &str, text: &str) -> Vec<String> {
 #[test]
 fn no_unmarked_fork_edge_remains() {
     let mut found = Vec::new();
-    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let src = testkit::manifest_dir().join("src");
     let mut files: Vec<PathBuf> = ["world.rs", "wake.rs", "wiki_git.rs", "reconcile_host.rs"].iter().map(|f| src.join(f)).collect();
     let before = files.len();
     rs_files(&src.join("tasks"), &mut files);
