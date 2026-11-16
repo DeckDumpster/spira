@@ -742,8 +742,7 @@ impl drive::RoundOps for LiveOps<'_> {
         let (env, repo, branch) = (self.env, self.repo, self.round_branch.clone());
         let rows = io::disable_flips_with(
             &mut |id| io::file_flip_bead(env, repo, id, &branch),
-            &registry,
-            env,
+            &mut io::through_registry(&registry, env),
             Path::new(&self.evidence),
             &branch,
             tests,
@@ -3124,8 +3123,7 @@ mod cut_tests {
                 n += 1;
                 Ok(format!("sp-new{n}"))
             },
-            bin.to_str().unwrap(),
-            &env,
+            &mut io::through_registry(bin.to_str().unwrap(), &env),
             &results,
             "spira/batcher-attr/fx-1",
             &["unit:tiny t::drop".to_string(), "suite:test-x.sh".to_string()],
@@ -3153,11 +3151,11 @@ mod cut_tests {
         let (env, results, bin, calls) = flip_fixture(&d);
         let before = std::fs::read_to_string(results.join("deny-list")).unwrap();
         let ids = ["unit:tiny t::drop".to_string()];
-        let err = io::disable_flips_with(&mut |_| Err("bead store down".into()), bin.to_str().unwrap(), &env, &results, "b", &ids).unwrap_err();
+        let err = io::disable_flips_with(&mut |_| Err("bead store down".into()), &mut io::through_registry(bin.to_str().unwrap(), &env), &results, "b", &ids).unwrap_err();
         assert!(err.contains("bead store down") && err.contains("unit:tiny t::drop"), "{err}");
         assert!(!calls.exists());
         testkit::write_exe(d.join("refuse"), "#!/bin/sh\necho locked\nexit 3\n");
-        let err = io::disable_flips_with(&mut |_| Ok("sp-n".into()), d.join("refuse").to_str().unwrap(), &env, &results, "b", &ids).unwrap_err();
+        let err = io::disable_flips_with(&mut |_| Ok("sp-n".into()), &mut io::through_registry(d.join("refuse").to_str().unwrap(), &env), &results, "b", &ids).unwrap_err();
         assert!(err.contains("locked") && err.contains("sp-n"), "{err}");
         assert_eq!(std::fs::read_to_string(results.join("deny-list")).unwrap(), before);
     }

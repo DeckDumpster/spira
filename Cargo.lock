@@ -1652,6 +1652,8 @@ dependencies = [
 name = "round-vm"
 version = "0.1.0"
 dependencies = [
+ "batcher",
+ "batcher-cut",
  "gate",
  "libc",
  "reconciler-engine",

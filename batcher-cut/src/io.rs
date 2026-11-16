@@ -4294,23 +4294,32 @@ pub fn registry_disable(bin: &str, env: &Env, test: &str, bead: &str, reason: &s
             String::from_utf8_lossy(&out.stderr).trim()
         ));
     }
-    let v: serde_json::Value = serde_json::from_str(&said).map_err(|e| format!("{bin} disable: unparsed output: {e}"))?;
+    parse_disabled_row(&said).map_err(|e| format!("{bin} disable: {e}"))
+}
+
+/// The row in `test-registry disable --json`'s stdout.
+pub fn parse_disabled_row(said: &str) -> Result<DisabledRow, String> {
+    let v: serde_json::Value = serde_json::from_str(said).map_err(|e| format!("unparsed output: {e}"))?;
     let row = &v["row"];
-    let text = |k: &str| row[k].as_str().map(str::to_string);
+    let text = |k: &str| row[k].as_str().map(str::to_string).ok_or_else(|| format!("no {k} in {said}"));
     Ok(DisabledRow {
-        test: text("test").ok_or_else(|| format!("{bin} disable: no test in {said}"))?,
-        state: text("state").ok_or_else(|| format!("{bin} disable: no state in {said}"))?,
-        bead: text("bead").ok_or_else(|| format!("{bin} disable: no bead in {said}"))?,
-        until: row["until"].as_i64().ok_or_else(|| format!("{bin} disable: no until in {said}"))?,
+        test: text("test")?,
+        state: text("state")?,
+        bead: text("bead")?,
+        until: row["until"].as_i64().ok_or_else(|| format!("no until in {said}"))?,
     })
+}
+
+/// `registry_disable` as the closure `disable_flips_with` takes.
+pub fn through_registry<'a>(bin: &'a str, env: &'a Env) -> impl FnMut(&str, &str, &str) -> Result<DisabledRow, String> + 'a {
+    move |test, bead, reason| registry_disable(bin, env, test, bead, reason)
 }
 
 /// Disables each flipped test: files its follow-on bead, writes its registry row, and adds the
 /// row to the deny list the round's next pass reads from `results`. Stops at the first failure.
 pub fn disable_flips_with(
     file_bead: &mut dyn FnMut(&str) -> Result<String, String>,
-    registry: &str,
-    env: &Env,
+    disable: &mut dyn FnMut(&str, &str, &str) -> Result<DisabledRow, String>,
     results: &Path,
     round_branch: &str,
     tests: &[String],
@@ -4319,7 +4328,7 @@ pub fn disable_flips_with(
     for id in tests {
         let bead = file_bead(id).map_err(|e| format!("cannot file the follow-up for flipped {id}: {e}"))?;
         let reason = format!("{id} flipped in {round_branch} (red on the round tree, green rerun unchanged, green on the base and on every member alone)");
-        let row = registry_disable(registry, env, id, &bead, &reason)
+        let row = disable(id, &bead, &reason)
             .map_err(|e| format!("cannot disable flipped {id} (follow-up {bead}): {e}"))?;
         let list = crate::vm::DenySnapshot::from_pass(results)
             .ok_or_else(|| format!("{} holds no deny list to add {id} to", results.display()))?;

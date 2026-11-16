@@ -907,7 +907,7 @@ fn eject_filter_owners<R: RoundRunner, O: RoundOps>(
 
 /// The registry id of each failing test line, `None` when one cannot be named: a `dir:` word
 /// no package owns, or a line that is not `<STATUS> <binary> <test>`.
-fn flip_ids(failed: &[String], graph: Option<&PackageGraph>) -> Option<Vec<String>> {
+pub fn flip_ids(failed: &[String], graph: Option<&PackageGraph>) -> Option<Vec<String>> {
     let mut ids: Vec<String> = vec![];
     for line in failed {
         let mut w = line.split_whitespace();
