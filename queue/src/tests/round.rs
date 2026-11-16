@@ -3594,7 +3594,7 @@ fn eject_refuses_while_a_pass_scope_runs_and_touches_nothing() {
     let before = t.git.calls.borrow().len();
     assert_eq!(
         t.run(&["round", "eject", &batch, "sp-b", "--reason", "red", "--red", "--suites", "test-b.sh"]),
-        1
+        crate::ops::round::PASS_RUNNING
     );
     assert!(t.err().contains(&scope), "{}", t.err());
     assert_eq!(t.git.calls.borrow().len(), before, "no worktree is pruned or removed");
