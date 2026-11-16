@@ -2545,6 +2545,35 @@ fn first_build_error(err: &str) -> Option<String> {
     })
 }
 
+/// `<phase>: <first failing line>` for the first red in pass order after the workspace build
+/// (which prints its own): lint and fences, then the test phases, then suites.
+fn first_red_reason(results: &Path, reds: &[String], phases: &[PhaseRed]) -> Option<String> {
+    if reds.iter().any(|r| r == BUILD_RED) {
+        return None;
+    }
+    let early = |r: &&String| *r == LINT_RED || r.starts_with(FENCE_RED_PREFIX);
+    let mut order: Vec<&String> = reds.iter().filter(early).collect();
+    order.sort_by_key(|r| (r.as_str() != LINT_RED, r.as_str()));
+    let phase_names: Vec<&str> = phases.iter().map(|p| p.stage.as_str()).collect();
+    let rest = reds.iter().filter(|r| !early(r));
+    order.extend(rest.clone().filter(|r| r.as_str() == UNIT_RED));
+    order.extend(rest.filter(|r| r.as_str() != UNIT_RED));
+    let first = order.first()?;
+    let out = suite_output(results, first, 0).or_else(|| {
+        let stage = phase_names.iter().find(|s| test_phase_step(s) == first.as_str())?;
+        suite_output(results, stage, 0)
+    });
+    let line = match out {
+        Some(o) if early(first) => o.lines().find(|l| !l.trim().is_empty())?.to_string(),
+        Some(o) => failure_excerpt(&o).lines().find(|l| !l.trim().is_empty())?.to_string(),
+        None => phases
+            .iter()
+            .find(|p| test_phase_step(&p.stage) == first.as_str())
+            .map_or_else(|| "red".to_string(), |p| p.cause.clone()),
+    };
+    Some(format!("{first}: {}", bounded_text(&line)))
+}
+
 /// `error[E0425]: message at file:line` as `error[E0425] at file:line`.
 fn reason_form(e: &str) -> String {
     let (head, at) = e.split_once(" at ").unwrap_or((e, ""));
@@ -4021,6 +4050,9 @@ fn certify_pass(
             {
                 w.out(format!("unit-tests-cause={cause}"));
             }
+        }
+        if let Some(line) = first_red_reason(&results, &reds, &phase_red) {
+            w.out(format!("red-reason={line}"));
         }
         reds.sort();
         reds.dedup();

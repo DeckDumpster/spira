@@ -2508,15 +2508,35 @@ fn certify_records_a_lint_or_fence_red_that_ended_the_pass_before_any_suite_ran(
     }
 }
 
-fn a_pass_ended_early_by(red: &str) {
+#[test]
+fn certify_names_the_phase_and_first_failing_line_of_a_lint_red() {
     let t = round_world();
+    *t.scripts.round_vm_files.borrow_mut() = vec![(
+        "spira-lint.out".into(),
+        "\nmember=sp-b r: g.rs:2: y\nlater line\n".into(),
+    )];
+    a_pass_ended_early_by_in(&t, "spira-lint");
+    assert!(
+        t.out()
+            .lines()
+            .any(|l| l == "red-reason=spira-lint: member=sp-b r: g.rs:2: y"),
+        "{}",
+        t.out()
+    );
+}
+
+fn a_pass_ended_early_by(red: &str) {
+    a_pass_ended_early_by_in(&round_world(), red);
+}
+
+fn a_pass_ended_early_by_in(t: &T, red: &str) {
     assert_eq!(
         t.run(&["round", "open", "--members", "sp-a"]),
         0,
         "{}",
         t.err()
     );
-    let batch = batch_of(&t);
+    let batch = batch_of(t);
     let spira = t
         .s()
         .run
@@ -2536,7 +2556,7 @@ fn a_pass_ended_early_by(red: &str) {
     assert_eq!(t.run(&["round", "certify", &batch]), 1, "{}", t.err());
     assert!(t.out().contains(&format!("red={red}")), "{}", t.out());
     assert!(!t.err().contains("not judged"), "{}", t.err());
-    assert_eq!(round_phase(&t), "ATTRIBUTING");
+    assert_eq!(round_phase(t), "ATTRIBUTING");
     assert_eq!(
         t.run(&["round", "eject", &batch, "sp-a", "--reason", "lint", "--red", "--suites", red]),
         0,
