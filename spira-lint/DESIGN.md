@@ -1835,10 +1835,25 @@ Run-time doors replace it: `spira_config::resolve::locate_home_for_process()` fo
 is skipped.
 
 **Violation.** In comment-stripped text, `env!`/`option_env!` of `CARGO_MANIFEST_DIR`, `OUT_DIR`
-or `CARGO_BIN_EXE_*`; or a string literal that starts with `/home/`, `/srv/`, `/root/` or `/Users/` and names `/spira/run/`,
-`/spira-releases/` or `/spira` (a made-up root such as `/r/spira-releases/x` is a fixture, not a real path). Allowed: a match inside the argument list of `include!`, `include_str!` or
-`include_bytes!` (the content is compiled in, the path is never read at run time), and
-`CARGO_PKG_*`. One finding per match, at its line, naming the door to use.
+or `CARGO_BIN_EXE_*`; or any string literal (`"…"`, `b"…"`, `c"…"`, `r#"…"#`) whose text starts with
+`/` and a path character (`[A-Za-z0-9_.~@$-]`). A made-up fixture root (`"/r/spira-releases/x"`,
+`"/home/x"`) is a finding. The rule rests on the operator's ruling of 2026-11-16: "no absolute
+paths make it into compiled code. i don't even think there should be an exception for fixtures.
+relative paths only." The `system-paths` crate (`system-paths/src/lib.rs`) is the only allowance.
+Not candidates: a text starting `/org/freedesktop/` (D-Bus); the first argument of `.pointer(`,
+`.pointer_mut(` or `.route(`; a one-segment fragment (`"/seg"`, `"/seg/"`) given to `contains`,
+`starts_with`, `ends_with`, `find`, `rfind`, `strip_prefix`, `strip_suffix`, `split_once`,
+`rsplit_once` or `replace`; a `"/{…"` text; a literal right after `env!(…),` (the `env!` finding
+speaks); and anything inside `include!`-family arguments. A line ending `// not a path: <reason>`
+excuses its literals; an empty reason is a finding, and so is a marker on a literal starting
+`/home/`, `/srv/`, `/root/`, `/Users/` or a system root (`/proc`, `/tmp`, `/etc`, …). One finding
+per match, at its line.
 
-**Refuses** (exit 3): no `.rs` file in scope. Prints `checked <n> rust files`. No allow file:
-nothing is grandfathered.
+**Pending list.** `spira-lint/compile-time-path-allow.d/<crate dir>` (e.g. `spira/sim`,
+`cockpit/ops`), first line the converting bead id (a malformed id is refused). A literal finding
+under a listed crate directory is suppressed; `env!` findings never are. An entry whose crate has
+no suppressed finding left is a finding ("stale: delete it"), and with a base an entry the base
+did not have is a finding ("the list only shrinks"). Deleting an entry touches one file, so
+branches converting different crates merge.
+
+**Refuses** (exit 3): no `.rs` file in scope. Prints `checked <n> rust files`.

@@ -119,7 +119,7 @@ mod tests {
 
     #[test]
     fn a_program_outside_the_release_bin_is_refused() {
-        for bad in ["/usr/bin/true", "../bin/x", "./x", "bin/x", "-x", "x;y"] {
+        for bad in [system_paths::USR_BIN_TRUE, "../bin/x", "./x", "bin/x", "-x", "x;y"] {
             let e = parse(&sop(&format!("RUN: {bad}\nDEADLINE: 5"))).unwrap_err();
             assert!(e.contains("bare program"), "{bad}: {e}");
         }

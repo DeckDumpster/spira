@@ -537,7 +537,7 @@ mod tests;
 pub fn own_unit_procs(proc_cgroup: &str) -> Option<String> {
     let path = proc_cgroup.lines().find_map(|l| l.strip_prefix("0::"))?.trim();
     let unit = path.rsplit('/').next()?;
-    (unit.starts_with("spira-cert-sweep-") && unit.ends_with(".service")).then(|| format!("/sys/fs/cgroup{path}/cgroup.procs"))
+    (unit.starts_with("spira-cert-sweep-") && unit.ends_with(".service")).then(|| format!("{}{path}/cgroup.procs", system_paths::SYS_FS_CGROUP))
 }
 
 #[cfg(test)]
@@ -549,7 +549,7 @@ mod unit_cgroup_tests {
         let svc = "0::/user.slice/user-1000.slice/user@1000.service/app.slice/spira-cert-sweep-sample-prod.service\n";
         assert_eq!(
             own_unit_procs(svc).unwrap(),
-            "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/spira-cert-sweep-sample-prod.service/cgroup.procs"
+            format!("{}/user.slice/user-1000.slice/user@1000.service/app.slice/spira-cert-sweep-sample-prod.service/cgroup.procs", system_paths::SYS_FS_CGROUP)
         );
         assert!(own_unit_procs("0::/user.slice/user-1000.slice/session-3.scope\n").is_none());
         assert!(own_unit_procs("0::/user.slice/user@1000.service/app.slice/other.service\n").is_none());
