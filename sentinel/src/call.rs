@@ -598,11 +598,12 @@ impl<'a> Sentinel<'a> {
             let live_all = self.live_total() as i64;
             let home = &self.cfg.home;
             let is_lane = !spira_config::runes::rune_get(home, f, "RUNE_LANE", "").is_empty();
+            let lane_capped = spira_config::runes::rune_get(home, f, "RUNE_SINGLE_FLIGHT", "0") == "1";
             if live_all >= max_live {
                 let spill = is_lane
                     && self.cfg.lanes_max_live.is_some_and(|m| {
                         let (_, lane_runes) = self.task_and_lane_runes();
-                        live_all < max_live + m && self.lanes_live_total(&lane_runes) < m
+                        live_all < max_live + m && (!lane_capped || self.lanes_live_total(&lane_runes) < m)
                     });
                 if !spill {
                     self.log(&format!("CHECK7 {f}: {live_all}/{max_live} dwarf(s) live across the whole fleet — not calling"));
@@ -628,7 +629,7 @@ impl<'a> Sentinel<'a> {
                 }
             }
             if is_lane {
-                if let Some(lanes_max) = self.cfg.lanes_max_live {
+                if let Some(lanes_max) = self.cfg.lanes_max_live.filter(|_| lane_capped) {
                     let (_, lane_runes) = self.task_and_lane_runes();
                     let live_lanes = self.lanes_live_total(&lane_runes);
                     if live_lanes >= lanes_max {
