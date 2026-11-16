@@ -234,7 +234,8 @@ fn batched_stranded(d: &SweepData, cfg: &Cfg, raise: Raise) {
         ));
         return;
     };
-    let (alive, gone): (Vec<&str>, Vec<&str>) = candidates.iter().partition(|id| held.iter().any(|b| b.id == **id));
+    let held: std::collections::HashSet<&str> = held.iter().map(|b| b.id.as_str()).collect();
+    let (alive, gone): (Vec<&str>, Vec<&str>) = candidates.iter().partition(|id| held.contains(**id));
     if alive.is_empty() {
         log(&format!("watchtower: batched-stranded — no candidate still IN_DELIVERY, not filed (dropped: {})", gone.join(" ")));
         return;
