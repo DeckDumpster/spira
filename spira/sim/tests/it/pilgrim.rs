@@ -158,7 +158,7 @@ fn a_pilgrim_session_with_no_bd_on_path_builds_a_pilgrim_world() {
     let toml = std::env::var("SPIRA_TOML").unwrap_or_else(|_| panic!("SPIRA_TOML is unset"));
     let t = testkit::TempDir::new("pw-nobd");
     let dir = t.join("w");
-    let out = std::process::Command::new(env!("CARGO_BIN_EXE_sim"))
+    let out = std::process::Command::new(testkit::bin_exe("sim"))
         .args(["world", "up"])
         .arg(&dir)
         .arg("--pilgrim")
