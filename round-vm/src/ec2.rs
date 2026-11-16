@@ -152,6 +152,8 @@ pub struct Ec2Config {
     pub run_deadline: Duration,
     pub host_addr: String,
     pub recipe_sha: String,
+    /// A recipe whose image is baking: `auto` launches an image carrying it, or refuses as pending.
+    pub candidate_recipe: Option<String>,
     /// How long after boot the instance powers itself off, and so terminates: zero is unset.
     pub max_lifetime: Duration,
 }
@@ -250,6 +252,7 @@ impl Ec2Config {
             run_deadline: Duration::from_secs(deadline),
             host_addr: s("SPIRA_ROUND_VM_EC2_HOST_ADDR"),
             recipe_sha: crate::recipe::sha(),
+            candidate_recipe: None,
             max_lifetime: Duration::from_secs(s(MAX_LIFETIME_KEY).parse().unwrap_or(0)),
         }
     }
@@ -290,6 +293,7 @@ pub struct Ec2<A: Ec2Api> {
     ami: String,
     instance_types: Vec<String>,
     recipe_sha: String,
+    candidate_recipe: Option<String>,
     resolved: std::sync::Mutex<Option<String>>,
     confirm_poll: Duration,
 }
@@ -310,6 +314,7 @@ impl<A: Ec2Api> Ec2<A> {
             ami: cfg.ami.clone(),
             instance_types: cfg.instance_types.clone(),
             recipe_sha: cfg.recipe_sha.clone(),
+            candidate_recipe: cfg.candidate_recipe.clone(),
             resolved: std::sync::Mutex::new(None),
             confirm_poll: if cfg!(test) { Duration::ZERO } else { Duration::from_secs(2) },
         })
@@ -325,9 +330,15 @@ impl<A: Ec2Api> Ec2<A> {
         if let Some(id) = g.as_ref() {
             return Ok(id.clone());
         }
-        let id = select_image(&self.api.images()?, &self.recipe_sha)?;
+        let id = select_image(&self.api.images()?, self.candidate_recipe.as_deref().unwrap_or(&self.recipe_sha))?;
         *g = Some(id.clone());
         Ok(id)
+    }
+
+    /// The candidate recipe no image carries yet; None once it is imaged, or when an image id is pinned.
+    fn pending_recipe(&self) -> Result<Option<String>, String> {
+        let Some(recipe) = self.candidate_recipe.as_ref().filter(|_| self.ami == AMI_AUTO) else { return Ok(None) };
+        Ok(self.image_for(recipe)?.is_none().then(|| recipe.clone()))
     }
 
     /// The newest image built from `recipe_sha`, whatever the release's own recipe is.
@@ -492,6 +503,10 @@ impl<A: Ec2Api> Provider for Ec2<A> {
         })?;
         eprintln!("round-vm: EC2 instance type {chosen} for {vmid}");
         Ok(())
+    }
+
+    fn image_pending(&self) -> Result<Option<String>, String> {
+        self.pending_recipe()
     }
 
     fn instance_type(&self, vmid: &str) -> Option<String> {
@@ -1113,7 +1128,7 @@ mod tests {
         Ec2Config {
             profile: "p".into(), region: "r".into(), ami: "ami-1".into(), instance_types: vec!["c7i.8xlarge".into()], subnet: "subnet-1".into(),
             security_group: String::new(), instance_profile: String::new(), spot_first: true, tailscale_key_file: key.to_string_lossy().into(),
-            run_deadline: Duration::from_secs(7200), host_addr: "100.64.0.1".into(), recipe_sha: "sha-now".into(), max_lifetime: LIFETIME,
+            run_deadline: Duration::from_secs(7200), host_addr: "100.64.0.1".into(), recipe_sha: "sha-now".into(), candidate_recipe: None, max_lifetime: LIFETIME,
         }
     }
 
@@ -1290,6 +1305,35 @@ mod tests {
         c.ami = "ami-pinned".into();
         let pinned = FakeEc2::default();
         provision(&Ec2::new(pinned.clone(), &c).unwrap(), &spec(), &mut |_| {}).unwrap();
+        assert_eq!(pinned.launched_amis(), ["ami-pinned"]);
+    }
+
+    #[test]
+    fn a_candidate_recipe_picks_its_own_image_and_with_none_launches_nothing() {
+        let d = TempDir::new();
+        let mut c = config(&d);
+        c.ami = AMI_AUTO.into();
+        c.candidate_recipe = Some("sha-cand".into());
+        let none = FakeEc2::default();
+        none.plant_image("ami-now", "sha-now", "2026-10-09T00:00:00.000Z");
+        let p = Ec2::new(none.clone(), &c).unwrap();
+        assert_eq!(p.image_pending().unwrap().as_deref(), Some("sha-cand"));
+        assert!(provision(&p, &spec(), &mut |_| {}).is_err());
+        assert!(none.launched_amis().is_empty());
+
+        let have = FakeEc2::default();
+        have.plant_image("ami-now", "sha-now", "2026-10-10T00:00:00.000Z");
+        have.plant_image("ami-cand", "sha-cand", "2026-10-09T00:00:00.000Z");
+        let p = Ec2::new(have.clone(), &c).unwrap();
+        assert_eq!(p.image_pending().unwrap(), None);
+        provision(&p, &spec(), &mut |_| {}).unwrap();
+        assert_eq!(have.launched_amis(), ["ami-cand"]);
+
+        c.ami = "ami-pinned".into();
+        let pinned = FakeEc2::default();
+        let p = Ec2::new(pinned.clone(), &c).unwrap();
+        assert_eq!(p.image_pending().unwrap(), None);
+        provision(&p, &spec(), &mut |_| {}).unwrap();
         assert_eq!(pinned.launched_amis(), ["ami-pinned"]);
     }
 

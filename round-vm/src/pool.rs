@@ -121,6 +121,22 @@ pub enum Forced {
     HostRefused(String),
 }
 
+/// Why a placed acquire gave no VM: the image the pass needs is still baking, or a fault.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AcquireError {
+    ImagePending(String),
+    Failed(String),
+}
+
+impl std::fmt::Display for AcquireError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AcquireError::ImagePending(r) => write!(f, "round-vm: acquire: no round image carries recipe {r} yet"),
+            AcquireError::Failed(e) => f.write_str(e),
+        }
+    }
+}
+
 impl Pool {
     pub fn state_file(&self) -> PathBuf {
         self.state_dir.join("pool.json")
@@ -344,7 +360,7 @@ impl Pool {
         owner: Option<ProcId>,
         holder: Option<ProcId>,
     ) -> Result<(Vm, AcquireMode), String> {
-        self.acquire_placed(deps, owner, holder, Forced::No)
+        self.acquire_placed(deps, owner, holder, Forced::No).map_err(|e| e.to_string())
     }
 
     /// As `acquire_held`; `forced` places the pass on EC2 whatever the spill rule says: the
@@ -357,6 +373,21 @@ impl Pool {
         owner: Option<ProcId>,
         holder: Option<ProcId>,
         forced: Forced,
+    ) -> Result<(Vm, AcquireMode), AcquireError> {
+        let mut pending = None;
+        self.acquire_inner(deps, owner, holder, forced, &mut pending).map_err(|e| match pending {
+            Some(recipe) => AcquireError::ImagePending(recipe),
+            None => AcquireError::Failed(e),
+        })
+    }
+
+    fn acquire_inner(
+        &self,
+        deps: &Deps,
+        owner: Option<ProcId>,
+        holder: Option<ProcId>,
+        forced: Forced,
+        pending: &mut Option<String>,
     ) -> Result<(Vm, AcquireMode), String> {
         let me = ProcId::current();
         let mut attempts = 0u32;
@@ -401,6 +432,11 @@ impl Pool {
                     }
                 };
                 if let Place::Ec2(reason) = place {
+                    if let Ok(Some(recipe)) = plan.ec2.image_pending() {
+                        let msg = format!("round-vm: acquire: no round image carries recipe {recipe} yet; the pass is placed on EC2 and waits for the build");
+                        *pending = Some(recipe);
+                        return Err(msg);
+                    }
                     match self.spill(&attempt, plan, owner, holder, &reason) {
                         Ok(vm) => return Ok((vm, AcquireMode::Cold)),
                         Err(e) if forced == Forced::Image => return Err(format!("round-vm: acquire: EC2 launch failed ({reason}), and a local VM would refuse the pass: {e}")),
@@ -2249,6 +2285,7 @@ mod tests {
             run_deadline: Duration::from_secs(7200),
             host_addr: "h".into(),
             recipe_sha: String::new(),
+            candidate_recipe: None,
             max_lifetime: Duration::from_secs(10_800),
         };
         Arc::new(crate::ec2::Ec2::new(fake.clone(), &cfg).unwrap())
@@ -2361,6 +2398,66 @@ mod tests {
         assert!(crate::ec2::is_ec2_handle(&vm.handle), "{vm:?}");
         assert!(fp.live_vms().is_empty());
         assert!(lease_reason(&pl, &vm.handle).contains("does not hold the round's image"));
+    }
+
+    fn ec2_candidate_provider(d: &TempDir, fake: &crate::testutil::FakeEc2, candidate: &str) -> Arc<dyn Provider> {
+        let key = d.path().join("ts.key");
+        std::fs::write(&key, "tskey").unwrap();
+        let cfg = crate::ec2::Ec2Config {
+            profile: "p".into(),
+            region: "r".into(),
+            ami: crate::ec2::AMI_AUTO.into(),
+            instance_types: vec!["t".into()],
+            subnet: "s".into(),
+            security_group: String::new(),
+            instance_profile: String::new(),
+            spot_first: false,
+            tailscale_key_file: key.to_string_lossy().into(),
+            run_deadline: Duration::from_secs(7200),
+            host_addr: "h".into(),
+            recipe_sha: "release-sha".into(),
+            candidate_recipe: Some(candidate.into()),
+            max_lifetime: Duration::from_secs(10_800),
+        };
+        Arc::new(crate::ec2::Ec2::new(fake.clone(), &cfg).unwrap())
+    }
+
+    #[test]
+    fn an_ec2_placement_whose_candidate_image_is_baking_launches_nothing_in_every_spill_mode() {
+        for (always, only) in [(false, false), (true, false), (true, true)] {
+            let d = TempDir::new();
+            let (fp, fake, alarm, sp) = (FakeProvider::new(), crate::testutil::FakeEc2::default(), FakeAlarm::default(), FakeSpawner::default());
+            fake.plant_image("ami-release", "release-sha", "2026-10-09T00:00:00.000Z");
+            let ec2 = ec2_candidate_provider(&d, &fake, "candidate-sha");
+            let pl = pool(&d, 1);
+            let f = || {
+                let mut a = spilling(&fp, ec2.clone(), None);
+                let plan = a.spill.as_mut().unwrap();
+                plan.rule.always = always;
+                plan.only = only;
+                Ok(a)
+            };
+            let deps = Deps { factory: &f, alarm: &alarm, spawner: &sp };
+            let e = pl.acquire_placed(&deps, None, None, Forced::HostRefused("the host round slot is taken".into())).unwrap_err();
+            assert_eq!(e, AcquireError::ImagePending("candidate-sha".into()), "always={always} only={only}");
+            assert!(fake.launched_amis().is_empty());
+            assert!(fp.live_vms().is_empty());
+        }
+    }
+
+    #[test]
+    fn an_ec2_placement_launches_the_image_that_carries_the_candidate_recipe() {
+        let d = TempDir::new();
+        let (fp, fake, alarm, sp) = (FakeProvider::new(), crate::testutil::FakeEc2::default(), FakeAlarm::default(), FakeSpawner::default());
+        fake.plant_image("ami-release", "release-sha", "2026-10-10T00:00:00.000Z");
+        fake.plant_image("ami-cand", "candidate-sha", "2026-10-09T00:00:00.000Z");
+        let ec2 = ec2_candidate_provider(&d, &fake, "candidate-sha");
+        let pl = pool(&d, 1);
+        let f = || Ok(spilling(&fp, ec2.clone(), None));
+        let deps = Deps { factory: &f, alarm: &alarm, spawner: &sp };
+        let (vm, _) = pl.acquire_placed(&deps, None, None, Forced::HostRefused("the host round slot is taken".into())).unwrap();
+        assert!(crate::ec2::is_ec2_handle(&vm.handle), "{vm:?}");
+        assert_eq!(fake.launched_amis(), ["ami-cand"]);
     }
 
     #[test]
@@ -2517,6 +2614,7 @@ mod tests {
             run_deadline: Duration::from_secs(7200),
             host_addr: "h".into(),
             recipe_sha: String::new(),
+            candidate_recipe: None,
             max_lifetime: Duration::from_secs(10_800),
         };
         Arc::new(crate::ec2::Ec2::new(fake.clone(), &cfg).unwrap())

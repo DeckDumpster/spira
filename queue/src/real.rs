@@ -1261,6 +1261,7 @@ impl Scripts for RealScripts {
         wall_secs: u64,
         handle: &Path,
         ami: Option<&str>,
+        candidate_recipe: Option<&str>,
     ) -> RunOut {
         run_round_vm(
             tree,
@@ -1270,6 +1271,7 @@ impl Scripts for RealScripts {
             wall_secs,
             handle,
             ami,
+            candidate_recipe,
         )
     }
     fn recipe_sha(&self, tree: Option<&Path>) -> Option<String> {
@@ -1319,6 +1321,7 @@ impl Scripts for RealScripts {
             round,
             wall_secs,
             handle,
+            None,
             None,
         )
     }
@@ -1424,6 +1427,7 @@ impl Scripts for RealScripts {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_round_vm(
     tree: &Path,
     results: &Path,
@@ -1432,6 +1436,7 @@ fn run_round_vm(
     wall_secs: u64,
     handle: &Path,
     ami: Option<&str>,
+    candidate_recipe: Option<&str>,
 ) -> RunOut {
     // batch-job: round-vm enforces the cap itself, on the suites and bare lane alone; this is its hang guard
     // FORK-EDGE: machine leg round-vm (certify)
@@ -1455,6 +1460,7 @@ fn run_round_vm(
         .args(judged_by)
         .args(["--round-batch", round.0, "--round-repo", round.1])
         .args(on_red_hook(round.0, round.1))
+        .args(candidate_recipe.iter().flat_map(|r| ["--candidate-recipe", *r]))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

@@ -372,6 +372,7 @@ pub trait Scripts {
     /// `handle` is where the run's pid is written while it runs: the pid
     /// other verbs address. The pid is the `timeout` wrapper, so a TERM reaches round-vm through it.
     /// `ami` is the image id the pass launches instead of the newest matching the release (`SPIRA_ROUND_VM_EC2_AMI`).
+    /// `candidate_recipe` is a recipe whose image is still baking: an EC2 placement exits `IMAGE_PENDING` rather than launch another.
     #[allow(clippy::too_many_arguments)]
     fn round_vm(
         &self,
@@ -382,6 +383,7 @@ pub trait Scripts {
         wall_secs: u64,
         handle: &Path,
         ami: Option<&str>,
+        candidate_recipe: Option<&str>,
     ) -> RunOut;
     /// `round-vm recipe-sha [--tree <dir>]`: the recipe hash of the release, or of the tree; None when unreadable.
     fn recipe_sha(&self, tree: Option<&Path>) -> Option<String>;
