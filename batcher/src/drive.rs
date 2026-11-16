@@ -1067,6 +1067,9 @@ fn confirmed_attribution<R: RoundRunner, O: RoundOps>(
         println!("batcher: {named} red on two certify passes; {} is the only member whose diff they cover", only.id);
         ops.eject(only, &its, false).map_err(refused)?;
         let out = leaving(members, &[Action::Eject { id: only.id.clone(), line: String::new() }], &named);
+        for m in members.iter().filter(|m| m.id != only.id && out.contains_key(&m.id)) {
+            ops.eject(m, &its, false).map_err(refused)?;
+        }
         let left = who_left(members, &out);
         let survivors: Vec<Member> = members.iter().filter(|m| !out.contains_key(&m.id)).cloned().collect();
         let rebuilt = if survivors.is_empty() { vec![] } else { ops.rebuild(&survivors)? };
