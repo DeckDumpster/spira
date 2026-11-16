@@ -66,6 +66,13 @@ own worktree. If code needs to change, change it in `{{REPO}}`.
    tail. Establish the mechanism before you change anything — the first suspicion should
    be the last action taken against that unit, not that the tooling is noisy.
 
+   **The cause may already be gone.** If it has cleared since the incident was filed, close
+   the incident now and cite what shows it cleared: the next verdict on any bead from the
+   same repository or round, the commit or config change that fixed it with its time, or a
+   detector now quiet. Confirm the cause, not the bead the incident names — that bead may
+   already have landed and will never be judged again. Leaving the incident open "until it
+   can be confirmed" is not an ending.
+
 4. **Do not fix it. File it.** Your output is a diagnosis in the graph: a bead naming the
    mechanism, the evidence, and what you would do — worked by a builder, on a branch,
    through the gate, like every other change. An incident's remainder is a bead, never a
