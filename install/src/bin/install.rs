@@ -1831,16 +1831,13 @@ fn system_user_phase(host: &install::values::HostValues) -> Result<(), String> {
         skip(&format!("{ro_file} already exists"));
     }
 
-    let host_values = host;
-    {
-        let unit = "spira-lc.service";
-        let text = install::values::render_file(&Path::new(home).join("systemd").join(unit), host_values, None)?;
-        let dest = format!("/etc/systemd/system/{unit}");
-        std::fs::write(format!("{dest}.tmp"), text).map_err(|e| e.to_string())?;
-        run_ok("install", &["-m", "0644", &format!("{dest}.tmp"), &dest])?;
-        let _ = std::fs::remove_file(format!("{dest}.tmp"));
-        info(&format!("install {dest}"));
-    }
+    let unit = "spira-lc.service";
+    let text = install::values::render_file(&Path::new(home).join("systemd").join(unit), host, None)?;
+    let dest = format!("/etc/systemd/system/{unit}");
+    std::fs::write(format!("{dest}.tmp"), text).map_err(|e| e.to_string())?;
+    run_ok("install", &["-m", "0644", &format!("{dest}.tmp"), &dest])?;
+    let _ = std::fs::remove_file(format!("{dest}.tmp"));
+    info(&format!("install {dest}"));
     install_dovecot_dropin(Path::new(home), Path::new("/etc/systemd/system"), &["/lib/systemd/system", "/usr/lib/systemd/system", "/etc/systemd/system"])?;
     run_ok("systemctl", &["daemon-reload"])?;
     info("reload systemd");

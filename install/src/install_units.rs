@@ -1060,8 +1060,9 @@ mod tests {
         assert!(!unit_dir.join("lc-serve.socket").exists());
         assert!(sc.disabled_now.borrow().contains(&"lc-serve.socket".to_string()));
         let order = sc.order.borrow();
-        let restart = order.iter().position(|o| o.starts_with("restart lc-serve.service"));
-        assert!(restart.is_some(), "{order:?}");
+        let disabled = order.iter().position(|o| o == "disable_now lc-serve.socket").expect("the socket is disabled");
+        let restart = order.iter().position(|o| o.starts_with("restart lc-serve.service")).expect("the service restarts");
+        assert!(disabled < restart, "{order:?}");
     }
 
     #[test]

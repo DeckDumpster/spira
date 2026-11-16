@@ -180,15 +180,9 @@ mod tests {
             match args {
                 ["daemon-reload"] => {
                     self.loaded.clear();
-                    {
-                        let unit = SERVICE;
-                        let conf = std::fs::read_to_string(self.dir.join(format!("{unit}.d")).join(DROPIN_NAME)).unwrap_or_default();
-                        let met = conf
-                            .lines()
-                            .filter_map(|l| l.strip_prefix("ConditionPathExists="))
-                            .all(|p| Path::new(p).exists());
-                        self.loaded.insert(unit.into(), met);
-                    }
+                    let conf = std::fs::read_to_string(self.dir.join(format!("{SERVICE}.d")).join(DROPIN_NAME)).unwrap_or_default();
+                    let met = conf.lines().filter_map(|l| l.strip_prefix("ConditionPathExists=")).all(|p| Path::new(p).exists());
+                    self.loaded.insert(SERVICE.into(), met);
                 }
                 ["stop", unit] => {
                     if self.stuck.as_deref() != Some(*unit) {
