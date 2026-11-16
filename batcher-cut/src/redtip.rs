@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use batcher::core::Member;
 
 fn file(run: &Path, repo: &str, id: &str) -> PathBuf {
-    run.join("batcher-red-tips").join(repo).join(id)
+    spira_config::red_tip_record::path(run, repo, id)
 }
 
 fn read(run: &Path, repo: &str, id: &str) -> Option<(String, bool)> {

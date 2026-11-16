@@ -48,6 +48,7 @@ pub mod locate;
 pub mod nonwork;
 pub mod process;
 pub mod red_at;
+pub mod red_tip_record;
 pub mod proof;
 pub mod results_retention;
 pub mod rebase_check;
