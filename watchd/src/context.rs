@@ -186,8 +186,8 @@ mod tests {
     fn seam_vars_keep_what_the_caller_set() {
         let (_tmp, root) = tree();
         let env: BTreeMap<String, String> =
-            [("SPIRA_HOME", "/h"), ("SPIRA_REPO", "/r"), ("SPIRA_CONF_FILE", "/c/spira.conf")].iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+            [("SPIRA_HOME", "h"), ("SPIRA_REPO", "r"), ("SPIRA_CONF_FILE", "c/spira.conf")].iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
         let v = seam_vars(&root.join("repo/spira"), &env);
-        assert_eq!((v["SPIRA_HOME"].as_str(), v["SPIRA_REPO"].as_str(), v["SPIRA_CONF_FILE"].as_str()), ("/h", "/r", "/c/spira.conf"));
+        assert_eq!((v["SPIRA_HOME"].as_str(), v["SPIRA_REPO"].as_str(), v["SPIRA_CONF_FILE"].as_str()), ("h", "r", "c/spira.conf"));
     }
 }

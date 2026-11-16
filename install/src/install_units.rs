@@ -62,7 +62,7 @@ fn is_convergence_root(unit: &str, instance: &str) -> bool {
 /// A mask is a symlink to `/dev/null` — detect without following it into a read that would
 /// fail (a character device fails a plain existence check the way a masked unit must not).
 pub fn is_masked(path: &Path) -> bool {
-    fs::symlink_metadata(path).map(|m| m.file_type().is_symlink()).unwrap_or(false) && fs::read_link(path).map(|t| t == Path::new("/dev/null")).unwrap_or(false)
+    fs::symlink_metadata(path).map(|m| m.file_type().is_symlink()).unwrap_or(false) && fs::read_link(path).map(|t| t == Path::new(system_paths::DEV_NULL)).unwrap_or(false)
 }
 
 pub(crate) fn write_unit(dir: &Path, inst: &str, text: &str) -> io::Result<()> {
@@ -700,7 +700,7 @@ mod tests {
     use std::fs;
 
     fn host() -> HostValues {
-        HostValues { toml: "/h/cfg.toml".into(), home: "/h".into(), repo: "/h".into(), run: "/run".into(), db: "/db".into(), cockpit: "/h/cockpit".into(), dolt_data: "".into(), dolt: "/usr/bin/dolt".into(), prod: "".into(), instance: "prod".into(), snap_stale_s: "600".into(), watchtower_start_timeout_s: "360".into(), path_tail: "".into(), env_bin: "/h/.local/lib/spira-env/bin".into(), sccache_dav_addr: "".into(), sccache_dav_root: "/run/sccache-dav".into(), repo_map: "".into(), lc_password_file: "/h/lc.credential".into(), watchdog_every_s: "60".into() }
+        HostValues { toml: "h/cfg.toml".into(), home: "h".into(), repo: "h".into(), run: "run".into(), db: "db".into(), cockpit: "h/cockpit".into(), dolt_data: "".into(), dolt: "usr/bin/dolt".into(), prod: "".into(), instance: "prod".into(), snap_stale_s: "600".into(), watchtower_start_timeout_s: "360".into(), path_tail: "".into(), env_bin: "h/.local/lib/spira-env/bin".into(), sccache_dav_addr: "".into(), sccache_dav_root: "run/sccache-dav".into(), repo_map: "".into(), lc_password_file: "h/lc.credential".into(), watchdog_every_s: "60".into() }
     }
 
     fn tiny_manifest() -> Manifest {
@@ -934,12 +934,12 @@ mod tests {
 
     #[test]
     fn the_watchdog_renders_a_service_and_timer_on_linux_and_a_plist_on_macos() {
-        let h = watchdog_host("/rel/current/spira");
-        let env = "Environment=SPIRA_RELEASE=/rel/current\nEnvironment=SPIRA_TOML=/h/cfg.toml\nEnvironment=SPIRA_HOME=/rel/current/spira\nEnvironment=SPIRA_RUN=/run\nEnvironment=PATH=/rel/current/bin:/rel/current/spira:/h/.local/lib/spira-env/bin:/usr/local/bin:/usr/bin:/bin\n";
+        let h = watchdog_host("rel/current/spira");
+        let env = "Environment=SPIRA_RELEASE=rel/current\nEnvironment=SPIRA_TOML=h/cfg.toml\nEnvironment=SPIRA_HOME=rel/current/spira\nEnvironment=SPIRA_RUN=run\nEnvironment=PATH=rel/current/bin:rel/current/spira:h/.local/lib/spira-env/bin:/usr/local/bin:/usr/bin:/bin\n";
         assert_eq!(
             watchdog_files(watchdog::render::Platform::Systemd, &h).unwrap(),
             vec![
-                ("spira-watchdog-prod.service".to_string(), format!("[Unit]\nDescription=spira-watchdog-prod — one pass: restart and page when the scheduler is wedged or absent\n\n[Service]\nType=oneshot\n{env}ExecStart=/rel/current/bin/spira-watchdog pass\nTimeoutStartSec=60\n")),
+                ("spira-watchdog-prod.service".to_string(), format!("[Unit]\nDescription=spira-watchdog-prod — one pass: restart and page when the scheduler is wedged or absent\n\n[Service]\nType=oneshot\n{env}ExecStart=rel/current/bin/spira-watchdog pass\nTimeoutStartSec=60\n")),
                 ("spira-watchdog-prod.timer".to_string(), "[Unit]\nDescription=spira-watchdog-prod timer\n\n[Timer]\nOnBootSec=60s\nOnUnitActiveSec=60s\nAccuracySec=1s\nUnit=spira-watchdog-prod.service\n\n[Install]\nWantedBy=timers.target\n".to_string()),
             ]
         );
@@ -948,7 +948,7 @@ mod tests {
         assert_eq!(plist[0].0, "spira-watchdog-prod.plist");
         assert_eq!(
             plist[0].1,
-            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n  <key>Label</key>\n  <string>spira-watchdog-prod</string>\n  <key>ProgramArguments</key>\n  <array>\n    <string>/rel/current/bin/spira-watchdog</string>\n    <string>pass</string>\n  </array>\n  <key>EnvironmentVariables</key>\n  <dict>\n    <key>SPIRA_RELEASE</key>\n    <string>/rel/current</string>\n    <key>SPIRA_TOML</key>\n    <string>/h/cfg.toml</string>\n    <key>SPIRA_HOME</key>\n    <string>/rel/current/spira</string>\n    <key>SPIRA_RUN</key>\n    <string>/run</string>\n    <key>PATH</key>\n    <string>/rel/current/bin:/rel/current/spira:/h/.local/lib/spira-env/bin:/usr/local/bin:/usr/bin:/bin</string>\n  </dict>\n  <key>StartInterval</key>\n  <integer>60</integer>\n  <key>RunAtLoad</key>\n  <true/>\n</dict>\n</plist>\n"
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n  <key>Label</key>\n  <string>spira-watchdog-prod</string>\n  <key>ProgramArguments</key>\n  <array>\n    <string>rel/current/bin/spira-watchdog</string>\n    <string>pass</string>\n  </array>\n  <key>EnvironmentVariables</key>\n  <dict>\n    <key>SPIRA_RELEASE</key>\n    <string>rel/current</string>\n    <key>SPIRA_TOML</key>\n    <string>h/cfg.toml</string>\n    <key>SPIRA_HOME</key>\n    <string>rel/current/spira</string>\n    <key>SPIRA_RUN</key>\n    <string>run</string>\n    <key>PATH</key>\n    <string>rel/current/bin:rel/current/spira:h/.local/lib/spira-env/bin:/usr/local/bin:/usr/bin:/bin</string>\n  </dict>\n  <key>StartInterval</key>\n  <integer>60</integer>\n  <key>RunAtLoad</key>\n  <true/>\n</dict>\n</plist>\n"
         );
         let unset = HostValues { watchdog_every_s: String::new(), ..h };
         assert!(watchdog_files(watchdog::render::Platform::Systemd, &unset).unwrap_err().contains("SPIRA_WATCHDOG_EVERY_SECS"), "no interval is a refusal, never a default");
@@ -1033,9 +1033,9 @@ mod tests {
     fn the_cache_service_roots_its_store_at_the_configured_path() {
         let tmpl = spira_config::resolve::checkout_root_for_process().unwrap().join("systemd/sccache-dav.service");
         let mut h = host();
-        h.sccache_dav_root = "/mnt/other-disk/store".into();
+        h.sccache_dav_root = "mnt/other-disk/store".into();
         let unit = crate::values::render_file(&tmpl, &h, None).unwrap();
-        assert!(unit.lines().any(|l| l == "Environment=SCCACHE_DAV_ROOT=/mnt/other-disk/store"), "{unit}");
+        assert!(unit.lines().any(|l| l == "Environment=SCCACHE_DAV_ROOT=mnt/other-disk/store"), "{unit}");
         assert!(!unit.contains("@SPIRA_"), "every placeholder is filled");
     }
 
@@ -1132,7 +1132,7 @@ mod tests {
         fs::create_dir_all(&unit_dir).unwrap();
         fs::create_dir_all(&tmpl_dir).unwrap();
         write_templates(&tmpl_dir);
-        std::os::unix::fs::symlink("/dev/null", unit_dir.join("spira-example-prod.service")).unwrap();
+        std::os::unix::fs::symlink(system_paths::DEV_NULL, unit_dir.join("spira-example-prod.service")).unwrap();
 
         let manifest = tiny_manifest();
         let h = host();

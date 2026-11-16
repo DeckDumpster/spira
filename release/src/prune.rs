@@ -19,7 +19,7 @@ pub struct Pruned {
 const STALE_WORKTREE_SECS: u64 = 3 * 24 * 3600;
 
 fn pid_alive(pid: &str) -> bool {
-    Path::new("/proc").join(pid).exists()
+    Path::new(system_paths::PROC).join(pid).exists()
 }
 
 /// Releases named by a git hook in any worktree under `<run>/worktree`: a hook that points at
@@ -67,7 +67,7 @@ fn shas_after(text: &str, prefix: &str, out: &mut BTreeSet<String>) {
 fn process_referenced(cfg: &Config) -> BTreeSet<String> {
     let mut out = BTreeSet::new();
     let prefix = format!("{}/", cfg.releases.display());
-    let Ok(rd) = fs::read_dir("/proc") else { return out };
+    let Ok(rd) = fs::read_dir(system_paths::PROC) else { return out };
     for e in rd.flatten() {
         if !e.file_name().to_string_lossy().bytes().all(|b| b.is_ascii_digit()) {
             continue;

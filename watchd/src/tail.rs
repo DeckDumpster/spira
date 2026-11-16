@@ -286,14 +286,14 @@ mod tests {
     #[test]
     fn an_off_row_is_refused() {
         let rows = vec![Row { name: "view".into(), kind: Kind::Off, target: "@SPIRA_VIEW@".into(), health: String::new() }];
-        let rc = cmd_tail(&rows, "/tmp", "spira.conf", crate::filter::DEFAULT, 0, &TailArgs { name: "view", all: false, takeover: false, from_start: false });
+        let rc = cmd_tail(&rows, system_paths::TMP, "spira.conf", crate::filter::DEFAULT, 0, &TailArgs { name: "view", all: false, takeover: false, from_start: false });
         assert_eq!(rc, 2);
     }
 
     #[test]
     fn an_unknown_name_is_refused() {
         let rows: Vec<Row> = vec![];
-        let rc = cmd_tail(&rows, "/tmp", "spira.conf", crate::filter::DEFAULT, 0, &TailArgs { name: "nope", all: false, takeover: false, from_start: false });
+        let rc = cmd_tail(&rows, system_paths::TMP, "spira.conf", crate::filter::DEFAULT, 0, &TailArgs { name: "nope", all: false, takeover: false, from_start: false });
         assert_eq!(rc, 2);
     }
 

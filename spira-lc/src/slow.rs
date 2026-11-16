@@ -93,22 +93,22 @@ fn cmdline_caller(cmdline: &[u8]) -> Option<String> {
 }
 
 fn parent_pid(pid: i32) -> Option<i32> {
-    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let stat = std::fs::read_to_string(format!("{}/{pid}/stat", system_paths::PROC)).ok()?;
     stat.rsplit_once(')')?.1.split_whitespace().nth(1)?.parse().ok()
 }
 
 /// Who a served request is for. The peer is almost always the `spira-lc` client, which names
 /// nobody, so its `SPIRA_CALLER` or else its parent process stands in; any other peer is itself.
 pub fn caller_of_pid(pid: i32) -> String {
-    let comm = std::fs::read_to_string(format!("/proc/{pid}/comm")).map(|c| c.trim().to_string()).unwrap_or_default();
+    let comm = std::fs::read_to_string(format!("{}/{pid}/comm", system_paths::PROC)).map(|c| c.trim().to_string()).unwrap_or_default();
     if comm != CLIENT {
         return clean(&comm);
     }
-    let named = std::fs::read(format!("/proc/{pid}/environ")).ok().and_then(|e| env_caller(&e));
+    let named = std::fs::read(format!("{}/{pid}/environ", system_paths::PROC)).ok().and_then(|e| env_caller(&e));
     let parent = || {
         let mut at = parent_pid(pid)?;
         for _ in 0..MAX_ANCESTORS {
-            let cmdline = std::fs::read(format!("/proc/{at}/cmdline")).ok()?;
+            let cmdline = std::fs::read(format!("{}/{at}/cmdline", system_paths::PROC)).ok()?;
             if !is_wrapper(&cmdline) {
                 return cmdline_caller(&cmdline);
             }
@@ -443,15 +443,15 @@ mod tests {
     #[test]
     fn a_parent_is_named_by_program_and_subcommand() {
         assert_eq!(cmdline_caller(b"cockpit-collect\0core\0--x\0").as_deref(), Some("cockpit-collect/core"));
-        assert_eq!(cmdline_caller(b"/usr/bin/batcher\0sifts\0").as_deref(), Some("batcher/sifts"));
-        assert_eq!(cmdline_caller(b"/bin/bash\0-e\0/x/bead-sweep.sh\0watch\0").as_deref(), Some("bead-sweep.sh/watch"));
+        assert_eq!(cmdline_caller(b"usr/bin/batcher\0sifts\0").as_deref(), Some("batcher/sifts"));
+        assert_eq!(cmdline_caller(b"bin/bash\0-e\0/x/bead-sweep.sh\0watch\0").as_deref(), Some("bead-sweep.sh/watch"));
         assert_eq!(cmdline_caller(b"queue\0").as_deref(), Some("queue"));
         assert_eq!(cmdline_caller(b""), None);
     }
 
     #[test]
     fn wrappers_are_recognised_and_programs_are_not() {
-        for w in [&b"timeout\x0030\0spira-lc\0show\0"[..], b"/usr/bin/env\0X=1\0y\0", b"nice\0-n\x0010\0z\0", b"bash\0-c\0. lib; f\0", b"spira-supervise\0x\0"] {
+        for w in [&b"timeout\x0030\0spira-lc\0show\0"[..], b"usr/bin/env\0X=1\0y\0", b"nice\0-n\x0010\0z\0", b"bash\0-c\0. lib; f\0", b"spira-supervise\0x\0"] {
             assert!(is_wrapper(w), "{:?}", String::from_utf8_lossy(w));
         }
         for p in [&b"gate-worker\0run\0"[..], b"bash\0-e\0/x/bead-sweep.sh\0watch\0", b"batcher\0sifts\0", b""] {
@@ -586,7 +586,7 @@ mod tests {
 
     #[test]
     fn a_caller_name_is_the_comm_of_the_pid_and_unknown_pids_are_dashes() {
-        let comm = std::fs::read_to_string("/proc/self/comm").unwrap();
+        let comm = std::fs::read_to_string(format!("{}/comm", system_paths::PROC_SELF)).unwrap();
         assert_eq!(caller_of_pid(std::process::id() as i32), clean(comm.trim()));
         assert_eq!(caller_of_pid(-1), "-");
     }

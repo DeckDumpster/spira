@@ -69,7 +69,7 @@ pub fn server_yaml(data_dir: &Path, port: u16) -> String {
 /// character, so grants.sql can carry it ([`lifecycle_store::substitute_grants`]).
 fn random_credential() -> Result<String, String> {
     let mut buf = [0u8; 32];
-    std::fs::File::open("/dev/urandom").and_then(|mut f| std::io::Read::read_exact(&mut f, &mut buf)).map_err(|e| format!("cannot read /dev/urandom: {e}"))?;
+    std::fs::File::open(system_paths::DEV_URANDOM).and_then(|mut f| std::io::Read::read_exact(&mut f, &mut buf)).map_err(|e| format!("cannot read /dev/urandom: {e}"))?;
     Ok(buf.iter().map(|b| format!("{b:02x}")).collect())
 }
 
@@ -177,7 +177,7 @@ fn build(dir: &Path, lifecycle_dir: &Path, path_env: &str, port: u16) -> Result<
 /// The recorded server pid, when that process is still the one started in `dir`.
 fn live_pid(dir: &Path) -> Option<u32> {
     let pid: u32 = std::fs::read_to_string(dir.join(PID_FILE)).ok()?.trim().parse().ok()?;
-    let cwd = std::fs::read_link(format!("/proc/{pid}/cwd")).ok()?;
+    let cwd = std::fs::read_link(format!("{}/{pid}/cwd", system_paths::PROC)).ok()?;
     let dir = std::fs::canonicalize(dir).ok()?;
     (cwd == dir).then_some(pid)
 }
@@ -204,7 +204,7 @@ mod tests {
 
     #[test]
     fn the_env_names_every_spira_lc_default_and_points_each_inside_the_stage() {
-        let s = Store { dir: PathBuf::from("/st/lc"), port: 4242 };
+        let s = Store { dir: PathBuf::from("st/lc"), port: 4242 };
         let e = s.env();
         let get = |k: &str| e.iter().find(|(x, _)| x == k).map(|(_, v)| v.clone()).unwrap_or_else(|| panic!("{k} unset"));
         assert_eq!(get("SPIRA_LC_HOST"), "127.0.0.1");
@@ -213,9 +213,9 @@ mod tests {
         assert_eq!(get("SPIRA_LC_DB"), "spira_lifecycle");
         assert_eq!(get("SPIRA_LC_PASSWORD"), "");
         // Unset, each of these would resolve to the operator's own credential and serve socket.
-        assert!(get("SPIRA_LC_PASSWORD_FILE").starts_with("/st/lc/"));
+        assert!(get("SPIRA_LC_PASSWORD_FILE").starts_with("st/lc/"));
         assert_eq!(get("SPIRA_LC_SOCKET"), "", "declared direct mode: no service, the operator's or any");
-        assert!(get("SPIRA_LC_DATA_DIR").starts_with("/st/lc/"));
+        assert!(get("SPIRA_LC_DATA_DIR").starts_with("st/lc/"));
     }
 
     #[test]
@@ -230,8 +230,8 @@ mod tests {
 
     #[test]
     fn the_server_listens_on_loopback_only_with_a_private_data_dir() {
-        let y = server_yaml(Path::new("/st/lc/data"), 4242);
-        assert!(y.contains("host: 127.0.0.1") && y.contains("port: 4242") && y.contains("data_dir: \"/st/lc/data\""), "{y}");
+        let y = server_yaml(Path::new("st/lc/data"), 4242);
+        assert!(y.contains("host: 127.0.0.1") && y.contains("port: 4242") && y.contains("data_dir: \"st/lc/data\""), "{y}");
     }
 
     #[test]

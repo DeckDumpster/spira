@@ -68,7 +68,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     fn parse(t: &str) -> Registry {
-        Registry::new(Some(t), &BTreeMap::new(), Path::new("/h"))
+        Registry::new(Some(t), &BTreeMap::new(), Path::new("h"))
     }
 
     const MAP: &str = "app | /a | queue.forge | origin/master | | | plan\nweb | /w | queue.forge | origin/trunk | | | plan\n";

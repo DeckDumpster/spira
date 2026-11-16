@@ -569,8 +569,8 @@ mod tests {
 
     #[test]
     fn the_context_settings_are_the_environment_lib_sh_saw() {
-        let m = context_settings(&|k| (k == "SPIRA_REAPLOG").then(|| "/r/reap.log".to_string()));
-        assert_eq!(m["reaplog"], "/r/reap.log");
+        let m = context_settings(&|k| (k == "SPIRA_REAPLOG").then(|| "r/reap.log".to_string()));
+        assert_eq!(m["reaplog"], "r/reap.log");
         assert_eq!(m["gh_timeout"], "120");
     }
 }

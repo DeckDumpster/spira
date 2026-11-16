@@ -916,12 +916,12 @@ mod password_tests {
 
     #[test]
     fn a_named_password_file_wins_and_is_trimmed() {
-        assert_eq!(password_from(Some("/c".into()), Some("pw".into()), |_| Ok("secret\n".into())), Ok("secret".into()));
+        assert_eq!(password_from(Some("c".into()), Some("pw".into()), |_| Ok("secret\n".into())), Ok("secret".into()));
     }
 
     #[test]
     fn an_unreadable_named_file_is_an_error_not_a_blank_password() {
-        assert!(password_from(Some("/missing".into()), None, no_read).is_err());
+        assert!(password_from(Some("missing".into()), None, no_read).is_err());
     }
 }
 
@@ -940,10 +940,10 @@ mod io_timeout_tests {
     #[test]
     fn a_rotated_credential_file_is_picked_up_and_an_unchanged_one_is_not() {
         let rotated = |_: &str| Ok("new\n".to_string());
-        assert_eq!(reloaded_password("/f", "old", rotated), Some("new".into()));
-        assert_eq!(reloaded_password("/f", "new", rotated), None, "same password: retrying cannot help");
-        assert_eq!(reloaded_password("/f", "old", |_| Ok("\n".into())), None);
-        assert_eq!(reloaded_password("/f", "old", |_| Err(std::io::ErrorKind::NotFound.into())), None);
+        assert_eq!(reloaded_password("f", "old", rotated), Some("new".into()));
+        assert_eq!(reloaded_password("f", "new", rotated), None, "same password: retrying cannot help");
+        assert_eq!(reloaded_password("f", "old", |_| Ok("\n".into())), None);
+        assert_eq!(reloaded_password("f", "old", |_| Err(std::io::ErrorKind::NotFound.into())), None);
         assert!(refused_login(&ScriptFailure::CannotTell("Error 1045 (28000): Access denied".into())));
         assert!(!refused_login(&ScriptFailure::CannotTell("Error 1049 (42000): Unknown database".into())));
     }

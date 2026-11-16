@@ -474,8 +474,8 @@ mod tests {
         for not in ["control.db", "control.db-wal", "control.receipts-2024-10-04.db-wal", "control.events-2024-10-04.db", "control.receipts-2024-10-04.db.bak", "control.receipts-.db"] {
             assert_eq!(RECEIPTS.day_of_file("control", not), None, "{not}");
         }
-        assert_eq!(stem_of(Path::new("/srv/control.db")), "control");
-        assert_eq!(stem_of(Path::new("/srv/control")), "control");
+        assert_eq!(stem_of(Path::new("srv/control.db")), "control");
+        assert_eq!(stem_of(Path::new("srv/control")), "control");
     }
 
     #[test]

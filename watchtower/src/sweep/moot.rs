@@ -182,7 +182,7 @@ mod tests {
 
     #[test]
     fn no_database_checks_nothing() {
-        let cfg = MootCfg { db: Some("/does/not/exist".into()), lc: crate::lc::scripted::scripted(0, "[]").1, ask_label: "a".into(), timeout_s: 1, resolve: "/bin/false".into() };
+        let cfg = MootCfg { db: Some("does/not/exist".into()), lc: crate::lc::scripted::scripted(0, "[]").1, ask_label: "a".into(), timeout_s: 1, resolve: system_paths::BIN_FALSE.into() };
         assert_eq!(sweep(&cfg, true), Summary::default());
     }
 }

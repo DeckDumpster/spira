@@ -48,7 +48,7 @@ pub struct SuiteTimingRow {
 
 /// The host's 1-minute load average; `None` where /proc/loadavg is unreadable.
 pub fn load1() -> Option<f64> {
-    fs::read_to_string("/proc/loadavg")
+    fs::read_to_string(format!("{}/loadavg", system_paths::PROC))
         .ok()?
         .split_whitespace()
         .next()?

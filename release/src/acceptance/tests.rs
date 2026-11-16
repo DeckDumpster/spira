@@ -85,7 +85,7 @@ fn gh_repo_prefers_env_then_a_github_origin() {
     assert_eq!(gh_repo_from([None, Some("a/b".into()), Some("c/d".into())], None).as_deref(), Some("a/b"));
     assert_eq!(gh_repo_from([None, None, None], Some("git@github.com:Deck/spira.git\n".into())).as_deref(), Some("Deck/spira"));
     assert_eq!(gh_repo_from([None, None, None], Some("https://github.com/Deck/spira".into())).as_deref(), Some("Deck/spira"));
-    assert_eq!(gh_repo_from([None, None, None], Some("/r/git/spira.git".into())), None);
+    assert_eq!(gh_repo_from([None, None, None], Some("r/git/spira.git".into())), None);
 }
 
 #[test]
@@ -437,8 +437,8 @@ impl Box_ {
             tmp: self.root.join("tmp"),
             xdg_config: self.root.join("config"),
             forensics: self.root.join("forensics"),
-            release_bin: PathBuf::from("/opt/candidate/bin/release"),
-            base_path: "/usr/bin:/bin".into(),
+            release_bin: PathBuf::from("opt/candidate/bin/release"),
+            base_path: "usr/bin:/bin".into(),
             spira_run: self.root.join("run"),
             token_projects: self.root.join("projects"),
             gh_repo: None,
@@ -471,7 +471,7 @@ fn a_missing_prerequisite_stops_before_any_phase_with_exit_2() {
 
 #[test]
 fn record_without_a_notes_repo_is_a_usage_error() {
-    let a = s(&["t", "--scratch-repo", "/nonexistent", "--record"]);
+    let a = s(&["t", "--scratch-repo", "nonexistent", "--record"]);
     let _env = testkit::env(&[("SPIRA_NOTES_REPO", None)]);
     assert_eq!(main(&a), 2);
 }
@@ -482,7 +482,7 @@ fn registry() -> spira_config::init::Registry<'static> {
     let bin: &'static testkit::TempDir = Box::leak(Box::new(testkit::TempDir::new("acc-registry-bd")));
     testkit::write_exe(bin.path().join("bd"), "#!/bin/sh\n");
     let env: &'static std::collections::BTreeMap<String, String> =
-        Box::leak(Box::new([("HOME".to_string(), "/home/test".to_string()), ("PATH".to_string(), bin.path().display().to_string())].into_iter().collect()));
+        Box::leak(Box::new([("HOME".to_string(), "home/test".to_string()), ("PATH".to_string(), bin.path().display().to_string())].into_iter().collect()));
     spira_config::init::Registry { conf_d: Box::leak(Box::new(spira_config::resolve::locate_home_for_process().unwrap().join("conf.d"))), env }
 }
 

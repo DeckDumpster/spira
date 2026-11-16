@@ -382,7 +382,8 @@ mod tests {
             pkg("top", Some("mid"))
         );
         let diff = b":100644 100644 aaa bbb M\0leaf/src/lib.rs\0";
-        let tree = Path::new("/nonexistent");
+        let root = testkit::TempDir::new("unit-pick");
+        let tree = &root.join("nonexistent");
         let names = |transitive| pick(diff, &meta, tree, None, transitive).unwrap().crates;
         assert_eq!(names(false), vec!["leaf", "mid"]);
         assert_eq!(names(true), vec!["leaf", "mid", "top"]);

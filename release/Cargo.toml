@@ -19,9 +19,10 @@ path = "src/bin/round-recert.rs"
 test = false
 
 [features]
-integration = ["runtime/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "state-store/integration", "testkit/integration"]
+integration = ["runtime/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "state-store/integration", "system-paths/integration", "testkit/integration"]
 
 [dependencies]
+system-paths = { path = "../system-paths" }
 sha2 = "0.10"
 toml = "0.8"
 serde = { version = "1", features = ["derive"] }

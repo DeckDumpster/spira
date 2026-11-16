@@ -583,7 +583,7 @@ fn a_side_row_above_the_head_is_gone_when_the_store_reopens() {
 }
 
 fn open_fds_naming(prefix: &str) -> Vec<String> {
-    std::fs::read_dir("/proc/self/fd")
+    std::fs::read_dir(format!("{}/fd", system_paths::PROC_SELF))
         .unwrap()
         .filter_map(|e| std::fs::read_link(e.unwrap().path()).ok())
         .map(|p| p.display().to_string())

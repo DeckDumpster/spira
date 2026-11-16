@@ -534,7 +534,7 @@ mod resolve_tests {
 
     #[test]
     fn a_path_is_never_searched() {
-        assert_eq!(resolve_tool("/x/y").unwrap(), "/x/y");
+        assert_eq!(resolve_tool("x/y").unwrap(), "x/y");
     }
 }
 

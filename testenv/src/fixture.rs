@@ -74,18 +74,18 @@ impl Provision {
 }
 
 pub const SPIRA_USER: &str = "spirauser";
-pub const USER_RUNTIME: &str = "/run/user/1001";
-pub const CONTAINER_CARGO: &str = "/var/spira/cargo";
-pub const CONTAINER_CARGO_TARGET: &str = "/var/spira/cargo/target";
-pub const WORKSPACE: &str = "/workspace";
+pub const USER_RUNTIME: &str = system_paths::guest::RUN_USER_1001;
+pub const CONTAINER_CARGO: &str = system_paths::guest::VAR_SPIRA_CARGO;
+pub const CONTAINER_CARGO_TARGET: &str = system_paths::guest::VAR_SPIRA_CARGO_TARGET;
+pub const WORKSPACE: &str = system_paths::guest::WORKSPACE;
 /// Where every test database lives inside the container (sp-t26yx): the container's `/tmp`
 /// is a tmpfs (`podman run --systemd=true`), so a throwaway database's fsyncs never reach the
 /// host disk. On the overlay (`/var/tmp`) a `bd init`'s CREATE DATABASE queued behind the
 /// host's writeback and overran bd's 10 s read timeout (`[mysql] i/o timeout`).
-pub const CONTAINER_TESTDB_ROOT: &str = "/tmp/spira-testdb";
+pub const CONTAINER_TESTDB_ROOT: &str = system_paths::guest::TMP_SPIRA_TESTDB;
 /// Where the host's template cache is bound, read-only, inside the container: the template
 /// step copies a cached template from it instead of building one ([`Session::keep_template`]).
-pub const CONTAINER_TESTDB_CACHE: &str = "/var/cache/spira-testdb-templates";
+pub const CONTAINER_TESTDB_CACHE: &str = system_paths::guest::VAR_CACHE_SPIRA_TESTDB_TEMPLATES;
 /// The longest a built template's copy out to the host cache may take; past it the batch
 /// goes on and the next batch builds again.
 // batch-job: a podman cp of a template out of a batch container, a step of the batch's setup
@@ -155,13 +155,15 @@ fn tail(s: &str, n: usize) -> String {
 /// The image's own PATH (Containerfile: `PATH=/usr/local/cargo/bin:$PATH` over Debian's
 /// default). A launched process's PATH is the staged release's `bin/` and `spira/`, then this
 /// — set outright, never appended to (sp-isom7).
-pub const IMAGE_PATH: &str =
-    "/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+pub fn image_path() -> String {
+    let tools: Vec<&str> = IMAGE_TOOL_PATH.split(':').collect();
+    [tools[0], tools[1], system_paths::USR_LOCAL_BIN, tools[2], system_paths::USR_BIN, tools[3], system_paths::BIN].join(":")
+}
 
 /// The image's tool directories outside the system ones every launcher PATH ends with: the
 /// suite's declared `SPIRA_PATH`, so a Rust child PATH built from the declaration
 /// (`release_env::launcher_path`) still reaches cargo.
-pub const IMAGE_TOOL_PATH: &str = "/usr/local/cargo/bin:/usr/local/sbin:/usr/sbin:/sbin";
+pub const IMAGE_TOOL_PATH: &str = system_paths::guest::IMAGE_TOOL_PATH;
 
 /// Writes the container's config file ([`Fixture::config_toml`]): the complete fixture with
 /// the installed release (`…/spira-releases/current`) rewritten to the staged one and
@@ -420,7 +422,7 @@ impl<'a> Session<'a> {
             name: format!("spira-batch-{instance}"),
             instance: instance.to_string(),
             artifacts: format!("{WORKSPACE}/target/{profile_dir}"),
-            release: format!("/tmp/spira-release-{instance}"),
+            release: format!("{}/spira-release-{instance}", system_paths::TMP),
             bins: Vec::new(),
             liveness_retries: 3,
             liveness_sleep: Duration::from_secs(3),
@@ -435,7 +437,7 @@ impl<'a> Session<'a> {
 
     /// `/tmp/spira-batch-<instance>`: the batch's SPIRA_RUN inside the container.
     pub fn batch_run(&self) -> String {
-        format!("/tmp/spira-batch-{}", self.instance)
+        format!("{}/spira-batch-{}", system_paths::TMP, self.instance)
     }
 
     /// The launcher contract every exec that runs harness code carries (DESIGN.md §5): the
@@ -451,7 +453,7 @@ impl<'a> Session<'a> {
 
     /// `<release>/bin:<release>/spira:<image PATH>`.
     pub fn release_path(&self) -> String {
-        format!("{r}/bin:{r}/spira:{IMAGE_PATH}", r = self.release)
+        format!("{r}/bin:{r}/spira:{}", image_path(), r = self.release)
     }
 
     /// A program in the staged release, by the path an exec names it.
@@ -572,7 +574,7 @@ impl<'a> Session<'a> {
     /// values declared over it ([`CONFIGURE_SCRIPT`]). Every later step and suite names it
     /// through `SPIRA_TOML` ([`Self::release_env`]); nothing is derived or defaulted.
     pub fn config_toml(&self) -> String {
-        format!("/tmp/spira-batch-{}.toml", self.instance)
+        format!("{}/spira-batch-{}.toml", system_paths::TMP, self.instance)
     }
 
     pub fn configure_request(&self) -> ExecRequest {
@@ -962,7 +964,7 @@ impl<'a> Session<'a> {
 
     /// Per-suite SPIRA_RUN in parallel mode (`n` is the 1-based launch index).
     pub fn suite_run(&self, n: usize) -> String {
-        format!("/tmp/spira-batch-{}-{n}", self.instance)
+        format!("{}/spira-batch-{}-{n}", system_paths::TMP, self.instance)
     }
 
     pub fn suite_home(&self, n: usize) -> String {
@@ -978,7 +980,7 @@ impl<'a> Session<'a> {
     }
 
     pub fn bd_timing_dir(&self) -> String {
-        format!("/tmp/bd-timing-{}", self.instance)
+        format!("{}/bd-timing-{}", system_paths::TMP, self.instance)
     }
 
     pub fn suite_request(
@@ -1047,7 +1049,7 @@ impl<'a> Session<'a> {
     /// `df` of the filesystems suites write to, one line each, for naming the full one.
     pub fn free_space(&self) -> String {
         let out = self.rt.exec(&self.as_user(
-            &["df", "-P", "-h", "/workspace", "/tmp"],
+            &["df", "-P", "-h", WORKSPACE, system_paths::TMP],
             vec![kv("XDG_RUNTIME_DIR", USER_RUNTIME)],
         ));
         df_summary(&out.output)
@@ -1137,7 +1139,7 @@ impl<'a> Session<'a> {
     /// Peak memory of the container's cgroup in MiB, if readable.
     pub fn cgroup_peak_mib(&self) -> Option<u64> {
         let cg = self.rt.inspect(&self.name, "{{.State.CgroupPath}}")?;
-        let p = format!("/sys/fs/cgroup/{}/memory.peak", cg.trim_start_matches('/'));
+        let p = format!("{}/{}/memory.peak", system_paths::SYS_FS_CGROUP, cg.trim_start_matches('/'));
         let bytes: u64 = std::fs::read_to_string(p).ok()?.trim().parse().ok()?;
         (bytes > 0).then_some(bytes / 1_048_576)
     }
@@ -1146,7 +1148,7 @@ impl<'a> Session<'a> {
     /// kernel exposes them.
     pub fn pids_peak_line(&self) -> Option<String> {
         let cg = self.rt.inspect(&self.name, "{{.State.CgroupPath}}")?;
-        let dir = format!("/sys/fs/cgroup/{}", cg.trim_start_matches('/'));
+        let dir = format!("{}/{}", system_paths::SYS_FS_CGROUP, cg.trim_start_matches('/'));
         let read = |f: &str| std::fs::read_to_string(format!("{dir}/{f}")).ok();
         pids_peak_line(&read("pids.peak")?, &read("pids.max")?)
     }
@@ -1297,7 +1299,7 @@ pub mod fake {
         }
         /// Answer a suite script (`bash /workspace/spira/<suite>`) with rc and output.
         pub fn suite(&self, suite: &str, rc: i32, output: &str) {
-            let path = format!("/workspace/spira/{suite}");
+            let path = format!("{WORKSPACE}/spira/{suite}");
             let out = output.to_string();
             self.on(
                 move |r| r.argv.get(1).map(String::as_str) == Some(path.as_str()),
@@ -1327,7 +1329,7 @@ pub mod fake {
                 .filter(|r| {
                     r.argv
                         .get(1)
-                        .is_some_and(|a| a.starts_with("/workspace/spira/test-"))
+                        .is_some_and(|a| a.starts_with(&format!("{WORKSPACE}/spira/test-")))
                 })
                 .cloned()
                 .collect()
@@ -1549,7 +1551,7 @@ mod tests {
             trip.store(true, std::sync::atomic::Ordering::SeqCst);
             ExecOutcome { rc: crate::runtime::RC_CANCELLED, output: String::new() }
         });
-        let runner = rt.exec(&ExecRequest::new(&s.name, &["/workspace/runner"]));
+        let runner = rt.exec(&ExecRequest::new(&s.name, &[&format!("{WORKSPACE}/runner")]));
         assert_eq!(runner.rc, crate::runtime::RC_CANCELLED);
         if settled {
             cut.store(false, std::sync::atomic::Ordering::SeqCst);
@@ -1592,6 +1594,14 @@ mod tests {
         }
     }
 
+    fn rel() -> String {
+        format!("{}/spira-release-abc123", system_paths::TMP)
+    }
+
+    fn run() -> String {
+        format!("{}/spira-batch-abc123", system_paths::TMP)
+    }
+
     fn session(rt: &FakeRuntime) -> Session<'_> {
         let mut s = Session::new(rt, "abc123", "debug");
         s.liveness_sleep = Duration::from_millis(1);
@@ -1608,7 +1618,7 @@ mod tests {
         assert_eq!(
             argv[0],
             vec![
-                "/tmp/spira-release-abc123/bin/bd-meter".to_string(),
+                format!("{}/bin/bd-meter", rel()),
                 "--install".into(),
                 s.suite_home(3)
             ]
@@ -1633,13 +1643,13 @@ mod tests {
         let rt = FakeRuntime::new();
         let s = session(&rt);
         let r = s.testdb_template_request();
-        assert_eq!(r.argv[0], "/tmp/spira-release-abc123/bin/testenv");
+        assert_eq!(r.argv[0], format!("{}/bin/testenv", rel()));
         assert_eq!(r.argv[1..], ["testdb", "template", "--bd", "bd", "--dolt", "dolt"]);
         assert_eq!(r.user.as_deref(), Some(SPIRA_USER));
-        assert_eq!(r.env_value("SPIRA_RELEASE"), Some("/tmp/spira-release-abc123"));
+        assert_eq!(r.env_value("SPIRA_RELEASE"), Some(rel().as_str()));
     }
 
-    const RUNNER: &str = "/workspace/target/.testenv-runner/testenv";
+    const RUNNER: &str = system_paths::guest::TESTENV_RUNNER;
 
     fn run_setup(s: &Session, provision: Provision, tokens: &[&str]) -> Result<Setup, SetupFault> {
         s.setup(RUNNER, provision, tokens.iter().copied(), &|_| {})
@@ -1659,21 +1669,21 @@ mod tests {
         assert_eq!(argv[0], vec!["bash", "-c", CONFIGURE_SCRIPT]);
         assert_eq!(
             argv[1][..6],
-            ["bash", "-c", "exec \"$0\" \"$@\"", "/tmp/spira-release-abc123/bin/ctrl", "suspend", "spira-loom"]
+            ["bash", "-c", "exec \"$0\" \"$@\"", &format!("{}/bin/ctrl", rel()), "suspend", "spira-loom"]
         );
         assert_eq!(argv[2][5], "spira-watch-queue-watch");
         assert_eq!(argv[3][5], "spira-call");
         assert_eq!(
             argv[4],
-            vec!["/tmp/spira-release-abc123/bin/units-install", "abc123"]
+            vec![format!("{}/bin/units-install", rel()).as_str(), "abc123"]
         );
         let execs = rt.execs.lock().unwrap();
         for r in execs.iter().take(5) {
             assert_eq!(r.user.as_deref(), Some("spirauser"));
-            assert_eq!(r.env_value("SPIRA_RELEASE"), Some("/tmp/spira-release-abc123"));
+            assert_eq!(r.env_value("SPIRA_RELEASE"), Some(rel().as_str()));
             assert_eq!(
                 r.env_value("PATH"),
-                Some("/tmp/spira-release-abc123/bin:/tmp/spira-release-abc123/spira:/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"),
+                Some(format!("{0}/bin:{0}/spira:{1}", rel(), image_path()).as_str()),
                 "PATH is set outright from the staged release"
             );
             assert_eq!(r.env_value("SPIRA_ARTIFACTS"), None);
@@ -1681,18 +1691,18 @@ mod tests {
         }
         assert_eq!(
             execs[0].env_value("CONFIGURE_PROD"),
-            Some("/tmp/spira-release-abc123/spira")
+            Some(format!("{}/spira", rel()).as_str())
         );
         assert_eq!(
             execs[4].env_value("SPIRA_PROD"),
-            Some("/tmp/spira-release-abc123/spira"),
+            Some(format!("{}/spira", rel()).as_str()),
             "units render against the staged release's root, which has bin/"
         );
         assert_eq!(execs[0].env_value("CONFIGURE_DOLT_DATA"), Some(""));
         assert_eq!(execs[4].env_value("SPIRA_INSTALL_FORCE"), Some("1"));
         assert_eq!(
             execs[4].env_value("SPIRA_RUN"),
-            Some("/tmp/spira-batch-abc123")
+            Some(run().as_str())
         );
     }
 
@@ -1708,7 +1718,7 @@ mod tests {
         assert_eq!(argv[0][..3], ["bash", "-c", STAGE_SCRIPT]);
         assert_eq!(argv[1], vec!["bash", "-c", CONFIGURE_SCRIPT]);
         assert_eq!(argv[3][1..3], ["testdb", "template"]);
-        assert!(!argv.iter().any(|a| a.iter().any(|w| w == "suspend" || w.ends_with("/bin/units-install"))));
+        assert!(!argv.iter().any(|a| a.iter().any(|w| w == "suspend" || w.ends_with("bin/units-install"))));
         let execs = rt.execs.lock().unwrap();
         assert_eq!(
             execs[1].env_value("CONFIGURE_OUT").map(str::to_string),
@@ -1738,7 +1748,7 @@ mod tests {
         assert_eq!(argv[0][..3], ["bash", "-c", STAGE_SCRIPT]);
         assert_eq!(
             argv[0][3..],
-            ["_", "/tmp/spira-release-abc123", "/workspace/target/debug", "/workspace", "spira-config", "testenv"]
+            ["_", &rel(), &format!("{WORKSPACE}/target/debug"), WORKSPACE, "spira-config", "testenv"]
         );
         let rt = FakeRuntime::new();
         rt.on(|r| r.argv.get(2).map(String::as_str) == Some(STAGE_SCRIPT), |_| ExecOutcome {
@@ -1792,7 +1802,7 @@ mod tests {
     fn a_setup_cut_during_install_is_a_deadline_fault_named_install() {
         let rt = FakeRuntime::new();
         rt.on(
-            |r| r.argv.first().is_some_and(|a| a.ends_with("/bin/units-install")),
+            |r| r.argv.first().is_some_and(|a| a.ends_with("bin/units-install")),
             |_| ExecOutcome { rc: RC_DEADLINE, output: String::new() },
         );
         let e = run_setup(&session(&rt), Provision::Install, &["jq"]).unwrap_err();
@@ -1852,50 +1862,54 @@ mod tests {
 
     #[test]
     fn up_then_probe_and_their_faults() {
+        let wt = testkit::TempDir::new("testenv-up");
         let rt = FakeRuntime::new();
-        session(&rt).up(Path::new("/wt")).unwrap();
+        session(&rt).up(wt.path()).unwrap();
         let calls = rt.testenv_calls.lock().unwrap().clone();
         assert_eq!(
             calls[0],
-            vec!["up", "--name", "spira-batch-abc123", "--checkout", "/wt"]
+            vec!["up", "--name", "spira-batch-abc123", "--checkout", &wt.path().display().to_string()]
         );
         assert_eq!(calls[1], vec!["probe", "--name", "spira-batch-abc123"]);
         let rt = FakeRuntime::new();
         rt.testenv_rc.lock().unwrap().insert("probe".into(), 1);
-        assert_eq!(session(&rt).up(Path::new("/wt")).unwrap_err().rc(), 2);
+        assert_eq!(session(&rt).up(wt.path()).unwrap_err().rc(), 2);
     }
 
     #[test]
     fn a_target_volume_is_passed_to_up_and_otherwise_absent() {
+        let wt = testkit::TempDir::new("testenv-up");
         let rt = FakeRuntime::new();
         let mut s = session(&rt);
         s.cargo_target_volume = Some("vol-x".into());
-        s.up(Path::new("/wt")).unwrap();
+        s.up(wt.path()).unwrap();
         let calls = rt.testenv_calls.lock().unwrap().clone();
         assert!(calls[0].windows(2).any(|w| w == ["--cargo-target-volume", "vol-x"]));
     }
 
     #[test]
     fn the_template_step_reads_the_host_cache_only_when_the_session_binds_one() {
+        let wt = testkit::TempDir::new("testenv-up");
+        let tpl = testkit::TempDir::new("testenv-tpl-cache");
         let rt = FakeRuntime::new();
         let s = session(&rt);
         assert!(!s.testdb_template_request().env.iter().any(|(k, _)| k == TESTDB_TEMPLATE_CACHE_ENV));
-        s.up(Path::new("/wt")).unwrap();
+        s.up(wt.path()).unwrap();
         assert!(!rt.testenv_calls.lock().unwrap()[0].iter().any(|a| a == "--testdb-cache"));
 
         let rt = FakeRuntime::new();
         let mut s = session(&rt);
-        s.testdb_cache = Some(PathBuf::from("/host/tpl-cache"));
+        s.testdb_cache = Some(tpl.path().join("tpl-cache"));
         let r = s.testdb_template_request();
         assert!(r
             .env
             .contains(&(TESTDB_TEMPLATE_CACHE_ENV.to_string(), CONTAINER_TESTDB_CACHE.to_string())));
         // A tree under test from before the cache rejects an unknown flag: argv stays as it was.
         assert_eq!(r.argv[1..], ["testdb", "template", "--bd", "bd", "--dolt", "dolt"]);
-        s.up(Path::new("/wt")).unwrap();
+        s.up(wt.path()).unwrap();
         assert!(rt.testenv_calls.lock().unwrap()[0]
             .windows(2)
-            .any(|w| w == ["--testdb-cache", "/host/tpl-cache"]));
+            .any(|w| w == ["--testdb-cache", &tpl.path().join("tpl-cache").display().to_string()]));
     }
 
     fn template_out(origin: crate::testdb::Origin) -> ExecOutcome {
@@ -1937,7 +1951,7 @@ mod tests {
         assert!(m.contains("stored in the host cache"), "{m}");
         assert_eq!(
             rt.copies.lock().unwrap().clone(),
-            [("spira-batch-abc123".to_string(), "/tmp/spira-testdb/template-k1".to_string())]
+            [("spira-batch-abc123".to_string(), format!("{CONTAINER_TESTDB_ROOT}/template-k1"))]
         );
         assert!(d.join("cache/template-k1/READY").is_file());
         assert!(d.join("cache/template-k1/ws/.beads").is_dir());
@@ -2014,6 +2028,7 @@ mod tests {
 
     #[test]
     fn a_container_up_past_the_cutoff_is_a_deadline_fault_named_up() {
+        let wt = testkit::TempDir::new("testenv-up");
         let rt = FakeRuntime::new();
         rt.testenv_delay
             .lock()
@@ -2021,16 +2036,17 @@ mod tests {
             .insert("up".into(), Duration::from_secs(5));
         let mut s = session(&rt);
         s.setup_deadline = Some(Instant::now() + Duration::from_millis(50));
-        assert_eq!(s.up(Path::new("/wt")), Err(Fault::Deadline("up")));
+        assert_eq!(s.up(wt.path()), Err(Fault::Deadline("up")));
         assert_eq!(Fault::Deadline("up").rc(), 2);
     }
 
     #[test]
     fn a_bounded_up_never_builds_and_an_unbuilt_image_is_its_own_fault() {
+        let wt = testkit::TempDir::new("testenv-up");
         let rt = FakeRuntime::new();
         let mut s = session(&rt);
         s.setup_deadline = Some(Instant::now() + Duration::from_secs(60));
-        let _ = s.up(Path::new("/wt"));
+        let _ = s.up(wt.path());
         let calls = rt.testenv_calls.lock().unwrap().clone();
         assert!(calls[0].contains(&"--no-build".to_string()), "{calls:?}");
         assert_eq!(Fault::ImageNotReady.rc(), 2);
@@ -2097,34 +2113,34 @@ mod tests {
         let rt = FakeRuntime::new();
         let s = session(&rt);
         let r = s.suite_request(Mode::Parallel, 3, "test-a.sh", &Fixtures::PerSuite);
-        assert_eq!(r.argv, vec!["bash", "/workspace/spira/test-a.sh"]);
+        assert_eq!(r.argv, vec!["bash".to_string(), format!("{WORKSPACE}/spira/test-a.sh")]);
         assert_eq!(
             r.env[0],
-            ("HOME".into(), "/tmp/spira-batch-abc123-3/home".into())
+            ("HOME".into(), format!("{}-3/home", run()))
         );
         assert_eq!(r.env_value("SPIRA_INSTANCE"), Some("abc123-3"));
-        assert_eq!(r.env_value("SPIRA_RUN"), Some("/tmp/spira-batch-abc123-3"));
+        assert_eq!(r.env_value("SPIRA_RUN"), Some(format!("{}-3", run()).as_str()));
         assert_eq!(
             r.env_value("SPIRA_BD_LOG"),
-            Some("/tmp/spira-batch-abc123-3/bd-calls.log")
+            Some(format!("{}-3/bd-calls.log", run()).as_str())
         );
         assert_eq!(r.env_value("SPIRA_IN_TESTENV"), Some("1"));
         assert_eq!(r.env_value("TMUX"), Some(""));
         assert_eq!(r.env_value("SPIRA_TEST_PLAN_BIN"), None);
         assert_eq!(r.env_value("SPIRA_ARTIFACTS"), None);
         assert_eq!(r.env_value("SPIRA_ARTIFACTS_ROOT"), None);
-        assert_eq!(r.env_value("SPIRA_RELEASE"), Some("/tmp/spira-release-abc123"));
+        assert_eq!(r.env_value("SPIRA_RELEASE"), Some(rel().as_str()));
         assert!(r
             .env_value("PATH")
             .unwrap()
-            .starts_with("/tmp/spira-release-abc123/bin:/tmp/spira-release-abc123/spira:"));
+            .starts_with(&format!("{0}/bin:{0}/spira:", rel())));
         let r = s.suite_request(Mode::Serial, 1, "test-a.sh", &Fixtures::PerSuite);
         assert_eq!(r.env_value("HOME"), None);
         assert_eq!(r.env_value("SPIRA_INSTANCE"), None);
-        assert_eq!(r.env_value("SPIRA_RUN"), Some("/tmp/spira-batch-abc123"));
+        assert_eq!(r.env_value("SPIRA_RUN"), Some(run().as_str()));
         assert_eq!(
             r.env_value("SPIRA_BD_LOG"),
-            Some("/tmp/spira-batch-abc123/bd/test-a.sh.log")
+            Some(format!("{}/bd/test-a.sh.log", run()).as_str())
         );
     }
 
@@ -2138,7 +2154,7 @@ mod tests {
                 output: "12 0 list\n30 0 show\n\n@@END@@\n\n@@END@@\n7 0 list\n\n@@END@@\n".into(),
             },
         );
-        let paths: Vec<String> = ["a", "b", "c"].iter().map(|s| format!("/tmp/{s}.log")).collect();
+        let paths: Vec<String> = ["a", "b", "c"].iter().map(|s| format!("{}/{s}.log", system_paths::TMP)).collect();
         let logs = session(&rt).read_files(&paths);
         assert_eq!(logs.len(), 3);
         assert_eq!(crate::timing::bd_totals(&logs[0]), (2, 42));
@@ -2211,8 +2227,8 @@ mod tests {
 
     #[test]
     fn df_summary_names_each_mount_and_its_free_space() {
-        let df = "Filesystem Size Used Avail Use% Mounted on\ntmpfs 2.0G 2.0G 0 100% /workspace\n";
-        assert_eq!(df_summary(df), "/workspace 0 free of 2.0G");
+        let df = &format!("Filesystem Size Used Avail Use% Mounted on\ntmpfs 2.0G 2.0G 0 100% {WORKSPACE}\n");
+        assert_eq!(df_summary(df), format!("{WORKSPACE} 0 free of 2.0G"));
         assert_eq!(df_summary("df: error"), "unknown");
     }
 

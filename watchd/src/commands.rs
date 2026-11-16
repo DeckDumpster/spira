@@ -310,7 +310,7 @@ pub fn cmd_tailers(rows: &[Row], run: &str) -> String {
         }
         let pid = crate::lock::read_holder_pid(&lock);
         let since = if pid != "?" {
-            std::fs::metadata(format!("/proc/{pid}"))
+            std::fs::metadata(format!("{}/{pid}", system_paths::PROC))
                 .ok()
                 .and_then(|m| m.modified().ok())
                 .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
@@ -636,7 +636,7 @@ mod tests {
         const CONF_PREFIX: &str = "notthedb";
 
         fn ctx_for(bdq: &str, id_prefix: &str) -> Context {
-            let mut c = ctx("/tmp/unused");
+            let mut c = ctx("tmp/unused");
             bdq.clone_into(&mut c.bdq);
             id_prefix.clone_into(&mut c.id_prefix);
             c

@@ -294,7 +294,7 @@ mod tests {
         assert_eq!((argv, body), (v(&["close", "sp-a", "--reason-file", "-"]), Some("landed: abc".into())));
         let mut piped = || Ok::<String, String>("from stdin".into());
         assert_eq!(client_request(&v(&["close", "sp-a", "--reason-file", "-"]), &mut piped).1.as_deref(), Some("from stdin"));
-        let missing = v(&["close", "sp-a", "--reason-file", "/no/such/file"]);
+        let missing = v(&["close", "sp-a", "--reason-file", "no/such/file"]);
         assert_eq!(client_request(&missing, &mut none), (missing.clone(), None), "an unreadable file is sent as named; the service refuses it");
         assert_eq!(client_request(&v(&["hold", "sp-a", "wait"]), &mut piped).1, None, "only close and a content write that takes one send a body");
     }

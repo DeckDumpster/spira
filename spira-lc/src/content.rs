@@ -521,7 +521,7 @@ mod tests {
             &["note", "sp-a", " "],
             &["create"],
             &["create", "--type", "task"],
-            &["create", "T", "--body-file", "/etc/passwd"],
+            &["create", "T", "--body-file", system_paths::ETC_PASSWD],
             &["create", "T", "--force"],
             &["comments", "add", "sp-a"],
             &["delete", "sp-a"],
@@ -566,7 +566,7 @@ mod tests {
 
     fn registry() -> spira_config::repos::Registry {
         let map = "# name|root|base|gate\nspira|/r/spira|main|gate.sh\ndeck|/r/deck|main|gate.sh\n";
-        spira_config::repos::Registry::new(Some(map), &BTreeMap::new(), std::path::Path::new("/r/spira"))
+        spira_config::repos::Registry::new(Some(map), &BTreeMap::new(), std::path::Path::new("r/spira"))
     }
 
     fn row_of(row: Option<&serde_json::Value>) -> Option<spira_store::lc_state::Row> {
@@ -709,7 +709,7 @@ mod tests {
             ],
             repos: bead::repos_by_name("spira | /r/spira | push | origin/main | | true | self\ndeck | /r/deck | push | origin/main | | true | develop\n"),
             identity: bead::identity::parse("spira | spira-only\ndeck | pokedex\n"),
-            statutes: Statutes::Registry { path: "/statutes".into(), text: "law-x | refuse | forbidden plan\nlaw-y | show | allocator\n".into() },
+            statutes: Statutes::Registry { path: "statutes".into(), text: "law-x | refuse | forbidden plan\nlaw-y | show | allocator\n".into() },
         }
     }
 
@@ -847,7 +847,7 @@ mod tests {
     #[test]
     fn the_door_serves_a_description_replacement_only_from_the_request_body() {
         assert_eq!(check(&v(&["update", "sp-a", "--body-file", "-"])), Ok(Kind::Write { body: true }));
-        assert!(check(&v(&["update", "sp-a", "--body-file", "/etc/passwd"])).is_err());
+        assert!(check(&v(&["update", "sp-a", "--body-file", system_paths::ETC_PASSWD])).is_err());
         assert!(takes_body(&v(&["update", "sp-a", "--body-file", "-"])));
     }
 

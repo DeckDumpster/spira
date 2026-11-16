@@ -478,7 +478,7 @@ mod tests {
     #[test]
     fn a_missing_incident_sh_never_panics_it_just_skips() {
         let d = testkit::TempDir::new("wt-escalate-missing-inc");
-        let cfg = cfg_with(&d, "/does/not/exist/incident.sh".into());
+        let cfg = cfg_with(&d, "does/not/exist/incident.sh".into());
         let mut data = SweepData::fixture_nominal(1_700_000_000);
         data.env.set("SP_UNADOPTED", "5");
         unadopted_refs(&data, &cfg, &mut alarm(&cfg)); // must not panic, and files nothing

@@ -332,10 +332,10 @@ mod tests {
             "dev"
         );
         assert_eq!(
-            run(&["--profile=release", "b", "/srv/repo"])
+            run(&["--profile=release", "b", "srv/repo"])
                 .repo
                 .as_deref(),
-            Some("/srv/repo")
+            Some("srv/repo")
         );
     }
 
@@ -403,8 +403,8 @@ mod tests {
             Some("bin")
         );
         assert_eq!(
-            run(&["--artifacts=/x/y", "b"]).artifacts.as_deref(),
-            Some("/x/y")
+            run(&["--artifacts=x/y", "b"]).artifacts.as_deref(),
+            Some("x/y")
         );
         for bad in [
             &["--artifacts", "bin", "--profile", "release", "b"][..],

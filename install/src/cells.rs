@@ -13,24 +13,24 @@ fn templates() -> PathBuf {
 
 fn host(instance: &str) -> HostValues {
     HostValues {
-        toml: "/h/cfg.toml".into(),
-        home: "/h/spira".into(),
-        repo: "/h/spira".into(),
-        run: "/run".into(),
-        db: "/db".into(),
-        cockpit: "/h/cockpit".into(),
-        dolt_data: "/d".into(),
-        dolt: "/usr/bin/dolt".into(),
-        prod: "/r/releases/current".into(),
+        toml: "h/cfg.toml".into(),
+        home: "h/spira".into(),
+        repo: "h/spira".into(),
+        run: "run".into(),
+        db: "db".into(),
+        cockpit: "h/cockpit".into(),
+        dolt_data: "d".into(),
+        dolt: "usr/bin/dolt".into(),
+        prod: "r/releases/current".into(),
         instance: instance.into(),
         snap_stale_s: "600".into(),
         watchtower_start_timeout_s: "360".into(),
         path_tail: "".into(),
-        env_bin: "/h/.local/lib/spira-env/bin".into(),
+        env_bin: "h/.local/lib/spira-env/bin".into(),
         sccache_dav_addr: "".into(),
-        sccache_dav_root: "/run/sccache-dav".into(),
+        sccache_dav_root: "run/sccache-dav".into(),
         repo_map: "".into(),
-        lc_password_file: "/h/lc.credential".into(),
+        lc_password_file: "h/lc.credential".into(),
         watchdog_every_s: "60".into(),
     }
 }
@@ -101,20 +101,20 @@ fn a_dolt_template_is_refused_without_dolt_and_an_empty_prod_falls_back_to_home(
     let err = render("dolt-beads.service", &tmpl, &h, None).unwrap_err();
     assert!(err.contains("dolt"), "{err}");
 
-    h.dolt = "/opt/dolt/bin/dolt".into();
+    h.dolt = "opt/dolt/bin/dolt".into();
     let ok = render("dolt-beads.service", &tmpl, &h, None).unwrap();
-    assert!(ok.lines().any(|l| l.starts_with("ExecStart=/opt/dolt/bin/dolt")), "no empty ExecStart:\n{ok}");
+    assert!(ok.lines().any(|l| l.starts_with("ExecStart=opt/dolt/bin/dolt")), "no empty ExecStart:\n{ok}");
 
     let plain = std::fs::read_to_string(templates().join("spira-runtime.service")).unwrap();
     h.dolt = String::new();
     render("spira-runtime.service", &plain, &h, None).expect("a template that never names dolt renders without it");
 
     let cockpit = std::fs::read_to_string(templates().join("cockpit-ensure.service")).unwrap();
-    h.prod = "/p/rel/current".into();
-    assert!(render("cockpit-ensure.service", &cockpit, &h, None).unwrap().contains("ExecStart=/p/rel/bin/layout ensure"), "derives from dirname(SPIRA_PROD)");
+    h.prod = "p/rel/current".into();
+    assert!(render("cockpit-ensure.service", &cockpit, &h, None).unwrap().contains("ExecStart=p/rel/bin/layout ensure"), "derives from dirname(SPIRA_PROD)");
     h.prod = String::new();
-    h.home = "/h/spira".into();
-    assert!(render("cockpit-ensure.service", &cockpit, &h, None).unwrap().contains("ExecStart=/h/bin/layout ensure"), "an empty SPIRA_PROD is SPIRA_HOME");
+    h.home = "h/spira".into();
+    assert!(render("cockpit-ensure.service", &cockpit, &h, None).unwrap().contains("ExecStart=h/bin/layout ensure"), "an empty SPIRA_PROD is SPIRA_HOME");
 }
 
 use crate::checks::preflight_unless_forced;
@@ -340,13 +340,13 @@ fn shipped_unit_files_are_listed_enabled_periodic_limited_and_watchdogged_correc
     }
 
     assert!(execstart_target("[Service]\nExecStart=/usr/bin/bash /x.sh\nWatchdogSec=60\n").ends_with("bash"), "positive control: a shell target is extracted");
-    assert_eq!(execstart_target("[Service]\nExecStart=/bin/spira-supervise /x/collect.sh loop\n"), "/bin/spira-supervise", "arguments are not the target");
+    assert_eq!(execstart_target("[Service]\nExecStart=bin/spira-supervise x/collect.sh loop\n"), "bin/spira-supervise", "arguments are not the target");
     let concierge = std::fs::read_to_string(templates().join("concierge.service")).unwrap();
     let mut h = host("t");
-    h.repo = "/the/git/checkout".into();
+    h.repo = "the/git/checkout".into();
     let exec = render("concierge.service", &concierge, &h, None).unwrap();
     let exec = exec.lines().find(|l| l.starts_with("ExecStart=")).unwrap().to_string();
-    assert!(exec.contains("/r/") && !exec.contains("/the/git/checkout"), "a shared unit runs from the release root, not the git checkout: {exec}");
+    assert!(exec.contains("r/") && !exec.contains("the/git/checkout"), "a shared unit runs from the release root, not the git checkout: {exec}");
     let shell: Vec<&(String, String)> = units.iter().filter(|(_, t)| {
         let target = execstart_target(t);
         target.contains("bash") || target.ends_with(".sh")

@@ -141,7 +141,7 @@ mod tests {
     fn beads_by_reference_come_through_the_content_door() {
         let d = testkit::TempDir::new("wt-cond-lc");
         let (t, lc) = crate::lc::scripted::scripted(0, "[]");
-        let ctx = Ctx { run: d.path(), db: "db", home_repo: "spira", incident_sh: "inc", lc: &lc, lc_bin: "/does/not/exist" };
+        let ctx = Ctx { run: d.path(), db: "db", home_repo: "spira", incident_sh: "inc", lc: &lc, lc_bin: "does/not/exist" };
         assert_eq!(open_beads(&ctx, "incident:x"), Some(Vec::new()));
         assert_eq!(t.seen.lock().unwrap()[0], vec!["content", "list", "--external-ref", "incident:x", "--all", "--json", "--limit", "0", "--brief"]);
         let down = crate::lc::scripted::scripted(2, "cannot tell").1;

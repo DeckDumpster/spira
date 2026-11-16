@@ -182,7 +182,7 @@ pub fn run(w: &dyn World, repos: &[Repo], opts: Opts) -> Tally {
             crate::reap::lc_state(id).filter(|l| matches!(l.as_str(), "LANDED" | "DROPPED")).unwrap_or(s)
         })
     };
-    for rs in scan(w, repos, Path::new("/proc"), &state_of) {
+    for rs in scan(w, repos, Path::new(system_paths::PROC), &state_of) {
         for tr in &rs.trees {
             let id = &tr.id;
             if let Some(pid) = tr.live_pid {

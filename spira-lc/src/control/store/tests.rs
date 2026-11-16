@@ -1169,7 +1169,7 @@ fn a_renewal_is_one_commit_that_restarts_the_lock_and_writes_the_record() {
         .unwrap()
         .0;
     assert!(
-        history.iter().any(|h| h.key.ends_with("/renew-1/apply")),
+        history.iter().any(|h| h.key.ends_with("/renew-1/apply")), // not a path: a store-key suffix
         "the record's history has a Renew entry: {history:?}"
     );
 }

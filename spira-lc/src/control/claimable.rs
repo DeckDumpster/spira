@@ -373,7 +373,7 @@ impl Inputs for Fixed {
     }
 
     fn run_dir(&self) -> Result<PathBuf, String> {
-        Ok(PathBuf::from("/nonexistent/run"))
+        Ok(PathBuf::from("nonexistent/run"))
     }
 
     fn partitions(&self, _: &Config) -> Result<Vec<Partition>, String> {

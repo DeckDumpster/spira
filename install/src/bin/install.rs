@@ -1744,7 +1744,7 @@ fn conflicts(instance: &str) -> Result<(), install::guards::Conflict> {
 
 fn proc_cmdlines() -> Vec<(String, String)> {
     let mut out = Vec::new();
-    let Ok(rd) = std::fs::read_dir("/proc") else { return out };
+    let Ok(rd) = std::fs::read_dir(system_paths::PROC) else { return out };
     for e in rd.flatten() {
         let name = e.file_name().to_string_lossy().to_string();
         if !name.chars().all(|c| c.is_ascii_digit()) {
@@ -1812,14 +1812,14 @@ fn system_user_phase(host: &install::values::HostValues) -> Result<(), String> {
     }
     if spira_config::bounded::bounded("id").arg("-u").arg(&user).status().map(|s| !s.success()).unwrap_or(true) {
         info(&format!("create user {user} (system, no login, no home)"));
-        run_ok("useradd", &["--system", "--no-create-home", "--shell", "/usr/sbin/nologin", "--gid", &group, &user])?;
+        run_ok("useradd", &["--system", "--no-create-home", "--shell", system_paths::USR_SBIN_NOLOGIN, "--gid", &group, &user])?;
     }
 
-    let cred_dir = "/etc/spira-lc";
+    let cred_dir = format!("{}/spira-lc", system_paths::ETC);
     let cred_file = format!("{cred_dir}/credential");
     if !Path::new(&cred_file).is_file() {
         info(&format!("create {cred_dir}"));
-        run_ok("install", &["-d", "-m", "0750", "-o", &user, "-g", &group, cred_dir])?;
+        run_ok("install", &["-d", "-m", "0750", "-o", &user, "-g", &group, &cred_dir])?;
         write_random_credential(&cred_file, 0o600, Some((&user, &group)))?;
     } else {
         skip(&format!("{cred_file} already exists"));
@@ -1833,12 +1833,12 @@ fn system_user_phase(host: &install::values::HostValues) -> Result<(), String> {
 
     let unit = "spira-lc.service";
     let text = install::values::render_file(&Path::new(home).join("systemd").join(unit), host, None)?;
-    let dest = format!("/etc/systemd/system/{unit}");
+    let dest = format!("{}/{unit}", system_paths::ETC_SYSTEMD_SYSTEM);
     std::fs::write(format!("{dest}.tmp"), text).map_err(|e| e.to_string())?;
     run_ok("install", &["-m", "0644", &format!("{dest}.tmp"), &dest])?;
     let _ = std::fs::remove_file(format!("{dest}.tmp"));
     info(&format!("install {dest}"));
-    install_dovecot_dropin(Path::new(home), Path::new("/etc/systemd/system"), &["/lib/systemd/system", "/usr/lib/systemd/system", "/etc/systemd/system"])?;
+    install_dovecot_dropin(Path::new(home), Path::new(system_paths::ETC_SYSTEMD_SYSTEM), &[system_paths::LIB_SYSTEMD_SYSTEM, system_paths::USR_LIB_SYSTEMD_SYSTEM, system_paths::ETC_SYSTEMD_SYSTEM])?;
     run_ok("systemctl", &["daemon-reload"])?;
     info("reload systemd");
     run_ok("systemctl", &["enable", "--now", "spira-lc.service"])?;
@@ -2071,7 +2071,7 @@ fn create_same_user_credential(path: &str) -> Result<(), String> {
 
 fn write_random_credential(path: &str, mode: u32, owner: Option<(&str, &str)>) -> Result<(), String> {
     let mut buf = [0u8; 32];
-    std::fs::File::open("/dev/urandom").and_then(|mut f| std::io::Read::read_exact(&mut f, &mut buf)).map_err(|e| e.to_string())?;
+    std::fs::File::open(system_paths::DEV_URANDOM).and_then(|mut f| std::io::Read::read_exact(&mut f, &mut buf)).map_err(|e| e.to_string())?;
     let encoded = base64_no_pad(&buf);
     let mut f = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(mode).open(path).map_err(|e| e.to_string())?;
     f.write_all(encoded.as_bytes()).map_err(|e| e.to_string())?;
@@ -2174,15 +2174,15 @@ mod dependency_fetch_tests {
     #[test]
     fn aerc_outgoing_at_a_deleted_checkout_path_is_rewritten() {
         let conf = "[spira]\nsource = maildir:///m\noutgoing = /co/spira/mail.sh\nfrom = O <o@s>\n";
-        let new = rewrite_aerc_outgoing(conf, "/h/.local/bin/spira-sendmail").unwrap();
-        assert_eq!(new, "[spira]\nsource = maildir:///m\noutgoing = /h/.local/bin/spira-sendmail\nfrom = O <o@s>\n");
-        assert!(rewrite_aerc_outgoing(&new, "/h/.local/bin/spira-sendmail").is_none());
+        let new = rewrite_aerc_outgoing(conf, "h/.local/bin/spira-sendmail").unwrap();
+        assert_eq!(new, "[spira]\nsource = maildir:///m\noutgoing = h/.local/bin/spira-sendmail\nfrom = O <o@s>\n");
+        assert!(rewrite_aerc_outgoing(&new, "h/.local/bin/spira-sendmail").is_none());
     }
 
     #[test]
     fn sendmail_wrapper_names_release_and_toml_and_passes_check_through() {
-        let w = render_sendmail_wrapper("/r", "/t.toml");
-        assert!(w.contains("readlink -f '/r/current'") && w.contains("SPIRA_TOML='/t.toml'") && w.contains("sendmail \"$@\""));
+        let w = render_sendmail_wrapper("r", "t.toml");
+        assert!(w.contains("readlink -f 'r/current'") && w.contains("SPIRA_TOML='t.toml'") && w.contains("sendmail \"$@\""));
         assert!(!w.contains("--check"), "the wrapper must hand --check to mail, not answer it");
     }
 

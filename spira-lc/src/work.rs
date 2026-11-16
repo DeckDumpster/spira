@@ -2737,12 +2737,12 @@ mod tests {
 
     #[test]
     fn each_forced_check_is_run_by_the_runner_that_owns_it() {
-        let ck = Some(("/repo", "local/main"));
+        let ck = Some(("repo", "local/main"));
         let inv = |c: &str| check_invocation(c, TIP, "spira", ck).unwrap();
         assert_eq!(inv("test-x.sh"), ("testenv", v(&["--suites", "test-x.sh", TIP, "spira"])));
         assert_eq!(inv("spira-lint"), ("testenv", v(&["lint", TIP, "spira"])));
         assert_eq!(inv("workspace-build"), ("testenv", v(&["lint", TIP, "spira"])));
-        assert_eq!(inv("fence-lifecycle-guard"), ("gate", v(&["fence-run", "lifecycle-guard", "--repo", "/repo", "--tip", TIP, "--base", "local/main"])));
+        assert_eq!(inv("fence-lifecycle-guard"), ("gate", v(&["fence-run", "lifecycle-guard", "--repo", "repo", "--tip", TIP, "--base", "local/main"])));
         assert!(check_invocation("fence-lifecycle-guard", TIP, "spira", None).is_none(), "a fence with no checkout cannot be run, and is not handed to testenv");
     }
 
@@ -2751,7 +2751,7 @@ mod tests {
         let dir = proof_dir("fence");
         let run = dir.path().to_path_buf();
         spira_config::proof::record_failing(&run, "sp-a", &["fence-lifecycle-guard".into()]).unwrap();
-        let ck = Some(("/repo", "local/main"));
+        let ck = Some(("repo", "local/main"));
         let seen = std::cell::RefCell::new(Vec::new());
         let runner = |c: &str, _: u64| {
             let (program, args) = check_invocation(c, TIP, "spira", ck).unwrap();
@@ -2801,13 +2801,13 @@ mod tests {
     #[test]
     fn only_the_mender_runs_the_mender_tool_and_it_forwards_verbatim() {
         for sub in ["start", "pack", "diff", "bead", "members", "failures", "passes", "verdicts", "landing", "triaged", "diagnose", "outcome"] {
-            assert!(gate("mender", &v(&[sub, "/s", "--actor", "mender"])).is_ok(), "{sub}");
-            assert_eq!(gate("mender", &v(&[sub, "/s", "--actor", "builder"])).unwrap_err().0, REFUSED, "{sub}");
+            assert!(gate("mender", &v(&[sub, "s", "--actor", "mender"])).is_ok(), "{sub}");
+            assert_eq!(gate("mender", &v(&[sub, "s", "--actor", "builder"])).unwrap_err().0, REFUSED, "{sub}");
         }
-        assert_eq!(gate("mender", &v(&["delete", "/s", "--actor", "mender"])).unwrap_err().0, REFUSED, "an operation the table does not name is refused");
+        assert_eq!(gate("mender", &v(&["delete", "s", "--actor", "mender"])).unwrap_err().0, REFUSED, "an operation the table does not name is refused");
         assert_eq!(
-            plan("mender", "-", &call(&["outcome", "/s", "return", "--checks", "x"], "mender")).unwrap(),
-            vec![tool("mender", &["outcome", "/s", "return", "--checks", "x"])]
+            plan("mender", "-", &call(&["outcome", "s", "return", "--checks", "x"], "mender")).unwrap(),
+            vec![tool("mender", &["outcome", "s", "return", "--checks", "x"])]
         );
     }
 
@@ -2928,7 +2928,7 @@ mod tests {
         assert_eq!(plan("read", "sp-me", &call(&["sp-x1", "--json"], "spike")).unwrap(), vec![Step::Read { id: s("sp-x1"), json: true }]);
         assert_eq!(plan("read", "sp-me", &call(&["sp-x1"], "spike")).unwrap(), vec![Step::Read { id: s("sp-x1"), json: false }]);
         assert!(plan("read", "sp-me", &call(&["not-an-id"], "spike")).is_err());
-        assert!(plan("read", "sp-me", &call(&["sp-x1", "-C", "/elsewhere"], "spike")).is_err());
+        assert!(plan("read", "sp-me", &call(&["sp-x1", "-C", "elsewhere"], "spike")).is_err());
     }
 
     #[test]
@@ -2937,7 +2937,7 @@ mod tests {
             plan("list", "-", &call(&["--state", "ready,rework", "--label", "plan", "--json"], "warden")).unwrap(),
             vec![Step::LcList { states: v(&["READY", "REWORK"]), all: false, filters: v(&["--label", "plan"]), json: true, full: false, limit: None }]
         );
-        assert!(plan("list", "-", &call(&["--db", "/x"], "warden")).is_err());
+        assert!(plan("list", "-", &call(&["--db", "x"], "warden")).is_err());
         assert!(plan("list", "-", &call(&["--state", "closed"], "warden")).is_err(), "a bd status word is not a lifecycle state");
         assert!(plan("list", "-", &call(&["--limit", "many"], "warden")).is_err());
     }
@@ -3251,7 +3251,7 @@ mod tests {
         assert!(plan("file", "-", &call(&["t"], "ops")).is_err(), "neither --for nor --kind");
         assert!(plan("file", "-", &call(&["t", "--for", "builder", "--kind", "insight", "--repo", "r"], "ops")).is_err());
         assert!(plan("file", "-", &call(&["t", "--for", "builder"], "ops")).is_err(), "no repo");
-        assert!(plan("file", "-", &call(&["t", "--for", "builder", "--repo", "r", "--body-file", "/etc/passwd"], "ops")).is_err());
+        assert!(plan("file", "-", &call(&["t", "--for", "builder", "--repo", "r", "--body-file", system_paths::ETC_PASSWD], "ops")).is_err());
         assert!(plan("file", "-", &call(&["t", "--for", "builder", "--repo", "r", "-l", "x"], "ops")).is_err());
     }
 
@@ -3393,7 +3393,7 @@ mod tests {
     #[test]
     fn split_piece_never_reaches_bd_with_a_foreign_flag() {
         assert!(plan("groom", "-", &call(&["split-piece", "sp-a1", "piece one", "-p", "2", "-t", "task"], "groomer")).is_ok());
-        assert!(plan("groom", "-", &call(&["split-piece", "sp-a1", "piece", "-C", "/other/db"], "groomer")).is_err());
+        assert!(plan("groom", "-", &call(&["split-piece", "sp-a1", "piece", "-C", "other/db"], "groomer")).is_err());
         assert!(plan("groom", "-", &call(&["split-piece", "sp-a1", "a", "b"], "groomer")).is_err());
         assert!(plan("groom", "-", &call(&["split-piece", "nope"], "groomer")).is_err());
     }

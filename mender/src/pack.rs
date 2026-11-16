@@ -118,7 +118,7 @@ mod tests {
     }
 
     fn spec() -> Spec {
-        Spec { batch: "r-1".into(), pass: 2, suite: "test-x.sh".into(), repo: "/r".into(), base: "main".into(), output: "/o".into(), tree: None, members: vec![] }
+        Spec { batch: "r-1".into(), pass: 2, suite: "test-x.sh".into(), repo: "r".into(), base: "main".into(), output: "o".into(), tree: None, members: vec![] }
     }
 
     #[test]
@@ -154,9 +154,9 @@ mod tests {
     #[test]
     fn the_pass_tree_is_named_when_the_spec_has_one() {
         let mut s = spec();
-        s.tree = Some("/pass/tree".into());
+        s.tree = Some("pass/tree".into());
         let text = Pack { spec: &s, output: "", hits: &[], covers: None, members: &[], diff_cap: 10 }.render();
-        assert!(text.contains("Pass tree (run the mend's checks here): /pass/tree"), "{text}");
+        assert!(text.contains("Pass tree (run the mend's checks here): pass/tree"), "{text}");
     }
 
     #[test]

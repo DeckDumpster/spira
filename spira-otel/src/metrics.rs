@@ -17,7 +17,7 @@ use prost::Message;
 
 static PUSH_FAILED: AtomicU64 = AtomicU64::new(0);
 
-pub const PATH: &str = "/opentelemetry/v1/metrics";
+pub const PATH: &str = "/opentelemetry/v1/metrics"; // not a path: OTLP metrics URL path
 
 /// Pushes pending metrics lost to a connect, write, read or status error since this process started.
 pub fn push_failed() -> u64 {

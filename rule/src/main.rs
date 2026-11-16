@@ -1098,8 +1098,8 @@ mod statute_dir_tests {
 
     #[test]
     fn an_empty_key_defaults_under_run() {
-        assert_eq!(statute_dir_from("", "/r"), Some("/r/statutes".into()));
-        assert_eq!(statute_dir_from("/s", "/r"), Some("/s".into()));
+        assert_eq!(statute_dir_from("", "r"), Some("r/statutes".into()));
+        assert_eq!(statute_dir_from("s", "r"), Some("s".into()));
         assert_eq!(statute_dir_from("", ""), None);
     }
 }

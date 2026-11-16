@@ -48,20 +48,20 @@ mod tests {
 
     #[test]
     fn the_release_comes_from_the_environment_never_the_executable() {
-        assert_eq!(release_root(Some("/r/env-rel/")), Some(PathBuf::from("/r/env-rel")));
+        assert_eq!(release_root(Some("r/env-rel/")), Some(PathBuf::from("r/env-rel")));
         assert_eq!(release_root(Some("")), None);
         assert_eq!(release_root(None), None);
     }
 
     #[test]
     fn the_release_bin_precedes_the_inherited_path() {
-        let d = search_dirs(Some(Path::new("/r")), "/t", "/usr/bin::/bin");
-        assert_eq!(join_path(&d), "/r/bin:/r/spira:/t:/usr/bin:/bin");
+        let d = search_dirs(Some(Path::new("r")), "t", "usr/bin::bin");
+        assert_eq!(join_path(&d), "r/bin:r/spira:t:usr/bin:bin");
     }
 
     #[test]
     fn a_missing_program_does_not_resolve() {
-        assert_eq!(resolve("no-such-program-sp-nqmjx7", &[PathBuf::from("/usr/bin")]), None);
-        assert!(resolve("sh", &[PathBuf::from("/bin"), PathBuf::from("/usr/bin")]).is_some());
+        assert_eq!(resolve("no-such-program-sp-nqmjx7", &[PathBuf::from("usr/bin")]), None);
+        assert!(resolve("sh", &[PathBuf::from(system_paths::BIN), PathBuf::from(system_paths::USR_BIN)]).is_some());
     }
 }

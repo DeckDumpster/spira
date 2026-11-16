@@ -71,7 +71,7 @@ impl Sink {
             .env_clear()
             .env("SPIRA_TOML", toml)
             .env("SPIRA_HOME", home)
-            .env("PATH", "/usr/bin:/bin")
+            .env("PATH", system_paths::SYSTEM_PATH_MIN)
             .envs(extra_env.iter().copied())
             .output()
             .unwrap();
@@ -240,7 +240,7 @@ fn serve_one(c: &mut std::net::TcpStream, samples: &Mutex<Vec<Stored>>) -> Vec<u
     }
     let target = line.split_whitespace().nth(1).unwrap_or("");
     let (path, query) = target.split_once('?').unwrap_or((target, ""));
-    if path != "/api/v1/export" {
+    if path != "/api/v1/export" { // not a path: VictoriaMetrics export route
         return b"HTTP/1.0 404 Not Found\r\n\r\n".to_vec();
     }
     let mut matchers = Vec::new();

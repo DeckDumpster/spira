@@ -315,15 +315,15 @@ mod tests {
     #[test]
     fn a_build_dir_fact_keeps_the_tab_between_the_tip_and_the_directory() {
         assert!(KINDS.contains(&"build-dir"));
-        assert_eq!(bounded_tabbed("abc\t/b/dir.1\n"), "abc\t/b/dir.1");
+        assert_eq!(bounded_tabbed("abc\tb/dir.1\n"), "abc\tb/dir.1");
         assert_eq!(bounded("abc\tdef"), "abcdef", "no other kind keeps a tab");
     }
 
     #[test]
     fn a_submits_build_dir_fact_is_an_applied_row_whose_cause_is_the_tip_tab_directory() {
-        let q = build_dir_sql("sp-a", "abc", "/b/dir.3", "builder", 7);
+        let q = build_dir_sql("sp-a", "abc", "b/dir.3", "builder", 7);
         assert!(q.contains("'fact', 'sp-a', 'build-dir'"), "{q}");
-        assert!(q.contains(r#"{"cause":"abc\\t/b/dir.3"}"#), "the tab survives the SQL literal as a JSON escape: {q}");
+        assert!(q.contains(r#"{"cause":"abc\\tb/dir.3"}"#), "the tab survives the SQL literal as a JSON escape: {q}");
     }
 
     #[test]

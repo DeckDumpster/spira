@@ -123,7 +123,7 @@ fn file_incident(prod: &ProdEnv, title: &str, body: &str) {
     let Some(db) = &prod.db else { return };
     let mut cmd = spira_config::bounded::bounded("incident.sh");
     cmd.env("SPIRA_DB", db)
-        .env("SPIRA_RUN", prod.run.as_deref().unwrap_or("/tmp/canary-inc"))
+        .env("SPIRA_RUN", prod.run.as_deref().unwrap_or(&format!("{}/canary-inc", system_paths::TMP)))
         .env("SPIRA_BD", &prod.bd)
         .env("PATH", &prod.path)
         .env("SPIRA_INCIDENT_TYPE", "bug")
@@ -142,7 +142,7 @@ fn file_incident(prod: &ProdEnv, title: &str, body: &str) {
     if let Some(n) = &prod.notify {
         cmd.env("SPIRA_NOTIFY", n);
     } else {
-        cmd.env("SPIRA_NOTIFY", "/bin/true");
+        cmd.env("SPIRA_NOTIFY", system_paths::BIN_TRUE);
     }
     if let Ok(mut child) = cmd.spawn() {
         use std::io::Write;

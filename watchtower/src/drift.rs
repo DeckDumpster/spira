@@ -125,8 +125,8 @@ mod tests {
 
     #[test]
     fn target_prefers_repo_then_release() {
-        assert_eq!(checkout_target(Some("/r".into()), Some("/rel".into())).as_deref(), Some("/r"));
-        assert_eq!(checkout_target(None, Some("/rel".into())).as_deref(), Some("/rel"));
+        assert_eq!(checkout_target(Some("r".into()), Some("rel".into())).as_deref(), Some("r"));
+        assert_eq!(checkout_target(None, Some("rel".into())).as_deref(), Some("rel"));
         assert_eq!(checkout_target(Some(String::new()), None), None);
     }
 }

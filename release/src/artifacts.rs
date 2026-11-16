@@ -123,7 +123,7 @@ impl Dav for CurlDav {
 
     fn put_from(&self, path: &str, src: &Path) -> Result<(), String> {
         let st = spira_config::bounded::bounded_for("curl", TRANSFER_SECS)
-            .args(["-sS", "-f", "-o", "/dev/null", "-T"])
+            .args(["-sS", "-f", "-o", system_paths::DEV_NULL, "-T"])
             .arg(src)
             .arg(self.url(path))
             .status()

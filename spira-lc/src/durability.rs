@@ -305,10 +305,10 @@ mod tests {
 
     #[test]
     fn the_shipper_stages_in_the_configured_directory_and_falls_back_to_the_run_dir() {
-        let run = Path::new("/run-here");
-        assert_eq!(ship_dir_at(Some("/ssd/ship".into()), run), Path::new("/ssd/ship"));
-        assert_eq!(ship_dir_at(Some(String::new()), run), Path::new("/run-here/lc-ship"));
-        assert_eq!(ship_dir_at(None, run), Path::new("/run-here/lc-ship"));
+        let run = Path::new("run-here");
+        assert_eq!(ship_dir_at(Some("ssd/ship".into()), run), Path::new("ssd/ship"));
+        assert_eq!(ship_dir_at(Some(String::new()), run), Path::new("run-here/lc-ship"));
+        assert_eq!(ship_dir_at(None, run), Path::new("run-here/lc-ship"));
     }
 
     #[test]

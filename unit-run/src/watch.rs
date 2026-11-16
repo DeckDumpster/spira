@@ -327,7 +327,7 @@ mod tests {
     fn a_unit_object_path_decodes_to_its_unit_name() {
         assert_eq!(unit_name(P).as_deref(), Some("job-x.service"));
         assert_eq!(unit_name("/org/freedesktop/systemd1/unit/bad_zz"), None);
-        assert_eq!(unit_name("/elsewhere"), None);
+        assert_eq!(unit_name("elsewhere"), None);
     }
 
     #[test]
@@ -398,20 +398,20 @@ mod idle_tests {
 
     #[test]
     fn a_listener_is_superseded_only_when_current_names_a_different_release() {
-        assert!(superseded(Some("/r/spira-releases/aaa"), Some("bbb")));
-        assert!(!superseded(Some("/r/spira-releases/bbb/"), Some("bbb")));
-        assert!(!superseded(Some("/r/spira-releases/current"), Some("bbb")), "a unit pinned to the link follows it");
-        assert!(!superseded(Some("/r/spira-releases/aaa"), None), "an unreadable link is not a reason to stop");
+        assert!(superseded(Some("r/spira-releases/aaa"), Some("bbb")));
+        assert!(!superseded(Some("r/spira-releases/bbb/"), Some("bbb")));
+        assert!(!superseded(Some("r/spira-releases/current"), Some("bbb")), "a unit pinned to the link follows it");
+        assert!(!superseded(Some("r/spira-releases/aaa"), None), "an unreadable link is not a reason to stop");
         assert!(!superseded(None, Some("bbb")));
     }
 
     #[test]
     fn a_superseded_listener_restarts_only_with_nothing_in_flight_and_its_rows_stored() {
-        let (old, cur) = (Some("/r/aaa"), Some("bbb"));
+        let (old, cur) = (Some("r/aaa"), Some("bbb"));
         assert!(restart_now(0, true, old, cur));
         assert!(!restart_now(1, true, old, cur), "a run in flight would be lost");
         assert!(!restart_now(0, false, old, cur), "rows the store has not taken would be lost");
-        assert!(!restart_now(0, true, Some("/r/bbb"), cur));
+        assert!(!restart_now(0, true, Some("r/bbb"), cur));
     }
 
     #[test]

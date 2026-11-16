@@ -58,7 +58,7 @@ pub fn spira_caller() -> String {
         if pid == 1 {
             break;
         }
-        let Ok(raw) = std::fs::read(format!("/proc/{pid}/cmdline")) else { break };
+        let Ok(raw) = std::fs::read(format!("{}/{pid}/cmdline", system_paths::PROC)) else { break };
         let cmd: Vec<String> = raw.split(|&b| b == 0).filter(|s| !s.is_empty()).map(|s| String::from_utf8_lossy(s).into_owned()).collect();
         let first = cmd
             .iter()
@@ -69,7 +69,7 @@ pub fn spira_caller() -> String {
         if let Some(name) = first {
             out.push(name);
         }
-        let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else { break };
+        let Ok(stat) = std::fs::read_to_string(format!("{}/{pid}/stat", system_paths::PROC)) else { break };
         let Some(ppid) = stat.rsplit(')').next().unwrap_or("").split_whitespace().nth(1).and_then(|s| s.parse::<u32>().ok()) else { break };
         pid = ppid;
     }
@@ -101,7 +101,7 @@ pub fn worktree_of(repo: &Path, br: &str) -> Option<PathBuf> {
 
 fn pid_alive(pid: &str) -> bool {
     let pid = pid.trim();
-    !pid.is_empty() && pid.chars().all(|c| c.is_ascii_digit()) && Path::new(&format!("/proc/{pid}")).is_dir()
+    !pid.is_empty() && pid.chars().all(|c| c.is_ascii_digit()) && Path::new(&format!("{}/{pid}", system_paths::PROC)).is_dir()
 }
 
 /// lib.sh `hold_alive <pidfile>`: 0 if the recorded pid is a live process. Unlike

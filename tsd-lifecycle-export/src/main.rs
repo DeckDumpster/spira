@@ -326,7 +326,7 @@ mod argv_secret_tests {
             user: "u".into(),
             password: "s3cret-pw".into(),
             database: "d".into(),
-            data_dir: "/x".into(),
+            data_dir: "x".into(),
         };
         let cmd = conn.command();
         let args: Vec<_> = cmd.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
@@ -341,13 +341,13 @@ mod credential_path_tests {
 
     #[test]
     fn the_read_only_user_reads_the_ro_sibling_of_the_configured_file() {
-        assert_eq!(credential_path("spira_lc_ro", "/etc/spira-lc/credential"), "/etc/spira-lc/credential-ro");
-        assert_eq!(credential_path("spira_lc_ro", "/h/spira-lc.credential"), "/h/spira-lc.credential-ro");
+        assert_eq!(credential_path("spira_lc_ro", "etc/spira-lc/credential"), "etc/spira-lc/credential-ro");
+        assert_eq!(credential_path("spira_lc_ro", "h/spira-lc.credential"), "h/spira-lc.credential-ro");
     }
 
     #[test]
     fn another_user_or_no_file_is_left_alone() {
-        assert_eq!(credential_path("spira_lc", "/h/c"), "/h/c");
+        assert_eq!(credential_path("spira_lc", "h/c"), "h/c");
         assert_eq!(credential_path("spira_lc_ro", ""), "");
     }
 }

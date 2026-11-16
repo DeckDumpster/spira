@@ -26,7 +26,7 @@ impl World for Fake {
     fn repos(&self) -> Vec<Repo> {
         let mut names: Vec<String> = self.files.keys().map(|(r, _)| r.clone()).collect();
         names.dedup();
-        names.into_iter().map(|name| Repo { name, path: "/r".into(), git_ref: "main".into() }).collect()
+        names.into_iter().map(|name| Repo { name, path: "r".into(), git_ref: "main".into() }).collect()
     }
     fn read(&self, repo: &Repo, file: &str) -> Result<Option<String>, String> {
         Ok(self.files.get(&(repo.name.clone(), file.into())).cloned())

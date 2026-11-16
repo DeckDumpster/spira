@@ -115,7 +115,7 @@ mod tests {
 
     #[test]
     fn the_log_line_is_what_bd_totals_sums() {
-        let args: Vec<String> = ["-C", "/db", "--json", "list"]
+        let args: Vec<String> = ["-C", "db", "--json", "list"]
             .iter()
             .map(|s| s.to_string())
             .collect();
@@ -137,7 +137,7 @@ mod tests {
         fs::write(d.join("bd"), "").unwrap();
         let path = std::env::join_paths([&d]).unwrap();
         assert_eq!(
-            find_real("bd", &path, Path::new("/nonexistent/meter")),
+            find_real("bd", &path, &d.join("nonexistent/meter")),
             None
         );
         let _ = fs::remove_dir_all(&d);

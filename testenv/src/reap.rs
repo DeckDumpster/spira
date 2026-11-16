@@ -590,6 +590,6 @@ mod tests {
     #[test]
     fn free_bytes_reads_the_filesystem_in_process() {
         assert!(free_bytes(Path::new("/")).is_some_and(|b| b > 0));
-        assert_eq!(free_bytes(Path::new("/no/such/dir/at/all")), None);
+        assert_eq!(free_bytes(&testkit::TempDir::new("free-bytes").join("nonexistent")), None);
     }
 }

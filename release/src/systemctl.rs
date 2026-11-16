@@ -50,7 +50,7 @@ pub fn release_of_environ(environ: &[u8]) -> Option<String> {
 /// Where each of `pids` is executing from, as `/proc/<pid>/exe` resolves; a pid that is gone
 /// or unreadable is left out.
 pub fn exes_of(pids: &[u32]) -> Vec<std::path::PathBuf> {
-    pids.iter().filter_map(|p| std::fs::read_link(format!("/proc/{p}/exe")).ok()).collect()
+    pids.iter().filter_map(|p| std::fs::read_link(format!("{}/{p}/exe", system_paths::PROC)).ok()).collect()
 }
 
 pub trait Systemctl {
@@ -226,13 +226,13 @@ impl Systemctl for RealSystemctl {
     }
     fn running_exe(&self, unit: &str) -> Option<std::path::PathBuf> {
         let pid: u32 = self.run(&["show", unit, "-p", "MainPID", "--value"]).ok()?.trim().parse().ok()?;
-        (pid > 0).then(|| std::path::PathBuf::from(format!("/proc/{pid}/exe")))
+        (pid > 0).then(|| std::path::PathBuf::from(format!("{}/{pid}/exe", system_paths::PROC)))
     }
     fn executables(&self, unit: &str) -> Vec<std::path::PathBuf> {
         let show = |p: &str| self.run(&["show", unit, "-p", p, "--value"]).ok().map(|t| t.trim().to_string());
         let mut pids: Vec<u32> = show("ControlGroup")
             .filter(|g| !g.is_empty())
-            .and_then(|g| std::fs::read_to_string(format!("/sys/fs/cgroup{g}/cgroup.procs")).ok())
+            .and_then(|g| std::fs::read_to_string(format!("{}{g}/cgroup.procs", system_paths::SYS_FS_CGROUP)).ok())
             .map(|t| t.lines().filter_map(|l| l.trim().parse().ok()).collect())
             .unwrap_or_default();
         if pids.is_empty() {
@@ -245,7 +245,7 @@ impl Systemctl for RealSystemctl {
         if pid == 0 {
             return None;
         }
-        release_of_environ(&std::fs::read(format!("/proc/{pid}/environ")).ok()?)
+        release_of_environ(&std::fs::read(format!("{}/{pid}/environ", system_paths::PROC)).ok()?)
     }
     fn restart(&self, unit: &str) -> Result<(), String> {
         let budget = self
@@ -307,10 +307,10 @@ impl Systemctl for RealSystemctl {
 /// Pids of this user's running sccache servers: an `sccache` process started with
 /// `SCCACHE_START_SERVER=1` (its clients lack it).
 fn cache_servers() -> Vec<u32> {
-    let Ok(rd) = std::fs::read_dir("/proc") else { return Vec::new() };
+    let Ok(rd) = std::fs::read_dir(system_paths::PROC) else { return Vec::new() };
     rd.flatten()
         .filter_map(|e| e.file_name().to_string_lossy().parse::<u32>().ok())
-        .filter(|pid| std::fs::read_to_string(format!("/proc/{pid}/comm")).is_ok_and(|c| c.trim() == "sccache"))
-        .filter(|pid| std::fs::read(format!("/proc/{pid}/environ")).is_ok_and(|env| env.split(|b| *b == 0).any(|kv| kv == b"SCCACHE_START_SERVER=1")))
+        .filter(|pid| std::fs::read_to_string(format!("{}/{pid}/comm", system_paths::PROC)).is_ok_and(|c| c.trim() == "sccache"))
+        .filter(|pid| std::fs::read(format!("{}/{pid}/environ", system_paths::PROC)).is_ok_and(|env| env.split(|b| *b == 0).any(|kv| kv == b"SCCACHE_START_SERVER=1")))
         .collect()
 }

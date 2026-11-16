@@ -366,7 +366,7 @@ mod templates_dir_tests {
     #[test]
     fn the_environment_still_wins_over_the_binarys_location() {
         let t = testkit::TempDir::new("tpl-dir-env");
-        let got = templates_dir_from(None, Some(t.path().display().to_string()), Some(Path::new("/nonexistent/bin/x")));
+        let got = templates_dir_from(None, Some(t.path().display().to_string()), Some(Path::new("nonexistent/bin/x")));
         assert_eq!(got, t.path().join("systemd"));
     }
 }
@@ -377,14 +377,14 @@ mod resolve_home_tests {
 
     #[test]
     fn spira_home_wins_over_everything() {
-        let got = resolve_home(Some("/explicit/spira".into()), Some("/repo".into()), Some(Path::new("/bin/x")));
-        assert_eq!(got, Ok("/explicit/spira".to_string()));
+        let got = resolve_home(Some("explicit/spira".into()), Some("repo".into()), Some(Path::new("bin/x")));
+        assert_eq!(got, Ok("explicit/spira".to_string()));
     }
 
     #[test]
     fn spira_repo_wins_over_the_binarys_location_when_home_is_unset() {
-        let got = resolve_home(None, Some("/repo".into()), Some(Path::new("/nonexistent/bin/x")));
-        assert_eq!(got, Ok("/repo/spira".to_string()));
+        let got = resolve_home(None, Some("repo".into()), Some(Path::new("nonexistent/bin/x")));
+        assert_eq!(got, Ok("repo/spira".to_string()));
     }
 
     /// NEITHER SET, exe resolves (sp-al35q): derives `<release>/spira` beside the binary's
@@ -407,7 +407,7 @@ mod resolve_home_tests {
     /// into "{repo}/spira" with no existence check at all).
     #[test]
     fn with_no_env_and_no_resolvable_exe_it_refuses_rather_than_guessing() {
-        let got = resolve_home(None, None, Some(Path::new("/nonexistent/bin/units-install")));
+        let got = resolve_home(None, None, Some(Path::new("nonexistent/bin/units-install")));
         assert!(got.is_err(), "{got:?}");
     }
 
@@ -444,7 +444,7 @@ mod stale_release_tests {
             .map(|(k, v)| (k.to_string(), v.display().to_string()))
             .collect();
         let cfg = |k: &str| Ok(if k == "SPIRA_SCCACHE_DAV_ROOT" { configured.to_string() } else { String::new() });
-        let host = host_from("prod", &env, &cfg, "/t/cfg".into(), String::new()).expect("host values");
+        let host = host_from("prod", &env, &cfg, "t/cfg".into(), String::new()).expect("host values");
         let tmpl = spira_config::resolve::checkout_root_for_process().unwrap().join("systemd/sccache-dav.service");
         let unit = crate::values::render_file(&tmpl, &host, None).expect("render");
         let line = unit.lines().find(|l| l.starts_with("Environment=SCCACHE_DAV_ROOT=")).expect("root line").to_string();
@@ -453,17 +453,17 @@ mod stale_release_tests {
 
     #[test]
     fn the_cache_root_in_the_unit_is_the_configured_key_or_the_run_directory() {
-        assert_eq!(rendered_cache_root("/mnt/other-disk/store"), "/mnt/other-disk/store");
-        assert_eq!(rendered_cache_root(""), "/fixture/userhome/spira/run/sccache-dav");
+        assert_eq!(rendered_cache_root("mnt/other-disk/store"), "mnt/other-disk/store");
+        assert_eq!(rendered_cache_root(""), std::path::Path::new(std::path::MAIN_SEPARATOR_STR).join("fixture/userhome/spira/run/sccache-dav").display().to_string());
     }
 
     #[test]
     fn units_repo_prefers_a_mapped_git_checkout_over_the_derived_release_dir() {
-        let git = |p: &Path| p == Path::new("/h/harness");
-        assert_eq!(units_repo(Some("/h/harness".into()), "/r/rel".into(), git), "/h/harness");
-        assert_eq!(units_repo(Some("/h/not-git".into()), "/r/rel".into(), git), "/r/rel", "a mapped path that is not a checkout is not used");
-        assert_eq!(units_repo(None, "/r/rel".into(), git), "/r/rel", "no map: the derivation, as before");
-        assert_eq!(units_repo(Some(String::new()), "/r/rel".into(), git), "/r/rel");
+        let git = |p: &Path| p == Path::new("h/harness");
+        assert_eq!(units_repo(Some("h/harness".into()), "r/rel".into(), git), "h/harness");
+        assert_eq!(units_repo(Some("h/not-git".into()), "r/rel".into(), git), "r/rel", "a mapped path that is not a checkout is not used");
+        assert_eq!(units_repo(None, "r/rel".into(), git), "r/rel", "no map: the derivation, as before");
+        assert_eq!(units_repo(Some(String::new()), "r/rel".into(), git), "r/rel");
     }
 }
 

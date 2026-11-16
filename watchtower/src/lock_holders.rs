@@ -155,7 +155,7 @@ mod tests {
     fn fake_proc(root: &Path, pid: u32, argv0: &str, lock: &Path) {
         let d = root.join(pid.to_string());
         fs::create_dir_all(d.join("fd")).unwrap();
-        fs::write(d.join("cmdline"), format!("/usr/bin/{argv0}\0--x\0")).unwrap();
+        fs::write(d.join("cmdline"), format!("usr/bin/{argv0}\0--x\0")).unwrap();
         symlink(lock, d.join("fd/9")).unwrap();
     }
 

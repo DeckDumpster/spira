@@ -549,18 +549,18 @@ mod tests {
         let req = RunRequest {
             name: "n".into(),
             image: "i".into(),
-            mount: "/t".into(),
-            workdir: "/w".into(),
+            mount: "t".into(),
+            workdir: "w".into(),
             env: vec![],
             mounts: vec![],
-            overlays: vec![Overlay { lower: "/l".into(), upper: "/u".into(), work: "/k".into(), ctr: "/c".into() }],
+            overlays: vec![Overlay { lower: "l".into(), upper: "u".into(), work: "k".into(), ctr: "c".into() }],
             argv: vec!["x".into()],
             timeout: None,
             deadline: None,
-            output: "/o".into(),
+            output: "o".into(),
             cpus: Some("1.5".into()),
         };
-        assert!(podman_run_args(&req).contains(&"/l:/c:O,upperdir=/u,workdir=/k".to_string()));
+        assert!(podman_run_args(&req).contains(&"l:c:O,upperdir=u,workdir=k".to_string()));
         let a = podman_run_args(&req);
         let i = a.iter().position(|x| x == "--cpus").expect("--cpus passed");
         assert_eq!(a[i + 1], "1.5");
@@ -593,7 +593,7 @@ mod tests {
 
     #[test]
     fn exec_args_put_user_and_env_before_the_container() {
-        let req = ExecRequest::new("c1", &["bash", "/workspace/spira/test-a.sh"])
+        let req = ExecRequest::new("c1", &["bash", "workspace/spira/test-a.sh"])
             .user("spirauser")
             .env(&[("A".into(), "1".into()), ("B".into(), "".into())]);
         assert_eq!(
@@ -608,7 +608,7 @@ mod tests {
                 "B=",
                 "c1",
                 "bash",
-                "/workspace/spira/test-a.sh"
+                "workspace/spira/test-a.sh"
             ]
         );
         assert_eq!(req.env_value("B"), Some(""));
@@ -618,11 +618,11 @@ mod tests {
 
     #[test]
     fn exec_wait_timeout_file_names_the_exact_path_podman_gave_up_on() {
-        let out = "TAP version 14\nok 1 - a\nError: timed out waiting for file /var/lib/containers/storage/overlay-containers/deadbeef/userdata/abc/exit/deadbeef\n";
+        let out = "TAP version 14\nok 1 - a\nError: timed out waiting for file var/lib/containers/storage/overlay-containers/deadbeef/userdata/abc/exit/deadbeef\n";
         assert_eq!(
             exec_wait_timeout_file(out),
             Some(PathBuf::from(
-                "/var/lib/containers/storage/overlay-containers/deadbeef/userdata/abc/exit/deadbeef"
+                "var/lib/containers/storage/overlay-containers/deadbeef/userdata/abc/exit/deadbeef"
             ))
         );
         assert_eq!(exec_wait_timeout_file("ok 1 - a\nFAIL something\n"), None);

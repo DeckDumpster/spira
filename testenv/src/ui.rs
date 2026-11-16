@@ -14,7 +14,7 @@ const CONFIGS: [&str; 3] = ["playwright.config.ts", "playwright.config.js", "pla
 const SEARCH: [&str; 6] = ["tests/visual", "tests/ui", "tests/e2e", "e2e", "frontend", "."];
 const IMAGE: &str = "mcr.microsoft.com/playwright";
 const RUN_SH: &str = "run.sh";
-const SRC: &str = "/src";
+const SRC: &str = system_paths::guest::SRC;
 const DEFAULT_ARGV: &str = "npm ci --no-audit --no-fund && npx playwright test $UI_SPECS";
 
 pub fn playwright_dir(tree: &Path, declared: Option<&str>) -> Option<String> {
@@ -107,7 +107,7 @@ pub fn main(args: &[String], run: &Path, resolve: &dyn Fn(&str) -> Option<PathBu
         name: name.clone(),
         image,
         mount: scratch.clone(),
-        workdir: "/work".into(),
+        workdir: system_paths::guest::WORK.into(),
         overlays: vec![Overlay { lower: tree.clone(), upper: scratch.join("upper"), work: scratch.join("work"), ctr: SRC.into() }],
         env: vec![("UI_SPECS".into(), specs.join(" ")), ("UI_DIR".into(), dir.clone()), ("CI".into(), "1".into())],
         argv: in_tree(argv_for(ui, &tree, &dir)),

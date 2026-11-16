@@ -290,7 +290,7 @@ impl Config {
             dirs.push(PathBuf::from(&h).join(".local/bin"));
             dirs.push(PathBuf::from(&h).join("go/bin"));
         }
-        dirs.extend(["/usr/local/bin", "/usr/bin", "/bin"].map(PathBuf::from));
+        dirs.extend([system_paths::USR_LOCAL_BIN, system_paths::USR_BIN, system_paths::BIN].map(PathBuf::from));
         dirs.iter().map(|d| d.join(prog)).find(|p| crate::fsutil::is_executable(p)).map(|p| p.display().to_string())
     }
 }

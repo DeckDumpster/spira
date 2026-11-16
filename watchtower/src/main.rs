@@ -204,7 +204,7 @@ fn main() {
                 &lock_holders::Ctx {
                     run: &run,
                     queue_dir: &queue_dir,
-                    proc_root: std::path::Path::new("/proc"),
+                    proc_root: std::path::Path::new(system_paths::PROC),
                     db: &reg("SPIRA_DB"),
                     home_repo: &reg("SPIRA_HOME_REPO"),
                     incident_sh: &resolved_incident_sh(),
@@ -268,7 +268,7 @@ fn main() {
             };
             sccache_wedge::run(
                 n,
-                std::path::Path::new("/proc"),
+                std::path::Path::new(system_paths::PROC),
                 &reg("SPIRA_DB"),
                 &reg("SPIRA_HOME_REPO"),
                 &resolved_incident_sh(),
@@ -284,7 +284,7 @@ fn main() {
                     .collect(),
                 owner_mark: getenv("SPIRA_LOAD_FENCE_OWNER_MARK").unwrap_or_else(|| load_fence::DEFAULT_OWNER_MARK.to_string()),
             };
-            load_fence::run(std::path::Path::new("/proc"), &cfg);
+            load_fence::run(std::path::Path::new(system_paths::PROC), &cfg);
         }
         Some("--conditions-check") => {
             if let Some(why) = stand_down(&run, "conditions-check") {
@@ -307,13 +307,13 @@ fn main() {
                 failed_runs: reg_i64("SPIRA_FAILED_UNIT_RUNS"),
                 oom_glob: getenv("SPIRA_OOM_UNITS").unwrap_or_else(|| "spira-*".to_string()),
                 oom_hold_secs: getenv_i64("SPIRA_OOM_HOLD_SECS", 21600),
-                tmp_path: getenv("SPIRA_TMP_PROBE_PATH").unwrap_or_else(|| "/tmp".to_string()),
+                tmp_path: getenv("SPIRA_TMP_PROBE_PATH").unwrap_or_else(|| system_paths::TMP.to_string()),
                 tmp_floor_mib: getenv_i64("SPIRA_TMPFS_SHED_FREE_MIB", 6144),
                 disk_floor_pct: reg_i64("SPIRA_DISK_FLOOR_PCT"),
                 disk_fill_hours: reg_i64("SPIRA_DISK_FILL_HOURS"),
                 disk_watch_paths: probes::watch_paths(&run, &reg("SPIRA_DISK_WATCH_PATHS"), &reg("SPIRA_DWARF_BUILD_BASE"), &reg("SPIRA_HAND_TARGET_ROOTS")),
                 disk_state: run.join("conditions").join("disk-fill.state"),
-                psi_dir: getenv("SPIRA_PSI_DIR").unwrap_or_else(|| "/proc/pressure".to_string()),
+                psi_dir: getenv("SPIRA_PSI_DIR").unwrap_or_else(|| system_paths::PROC_PRESSURE.to_string()),
                 psi_full_avg60: reg_parse::<f64>("SPIRA_PSI_FULL_AVG60"),
                 psi_sustain_secs: reg_i64("SPIRA_PSI_SUSTAIN_SECS"),
             };
@@ -418,13 +418,13 @@ mod tests {
     /// so a second test with a different fixture could not observe a different answer.
     #[test]
     fn getenv_falls_back_to_the_callers_default_with_no_registry_fallback() {
-        let g = testkit::env(&[("SPIRA_TOML", Some("/no/such/spira-toml-for-this-test")), ("SPIRA_DISK_WARN_PCT", None)]);
+        let g = testkit::env(&[("SPIRA_TOML", Some("no/such/spira-toml-for-this-test")), ("SPIRA_DISK_WARN_PCT", None)]);
 
         assert_eq!(getenv_i64("SPIRA_DISK_WARN_PCT", 90), 90, "no registry fallback for an unregistered key: the caller's own default must win");
         assert_eq!(getenv("SPIRA_NO_SUCH_KEY_AT_ALL_EVER"), None, "an unresolved key still falls through to None");
 
         drop(g);
-        let _g = testkit::env(&[("SPIRA_TOML", Some("/no/such/spira-toml-for-this-test")), ("SPIRA_DISK_WARN_PCT", Some("99"))]);
+        let _g = testkit::env(&[("SPIRA_TOML", Some("no/such/spira-toml-for-this-test")), ("SPIRA_DISK_WARN_PCT", Some("99"))]);
         assert_eq!(getenv_i64("SPIRA_DISK_WARN_PCT", 90), 99, "an explicit env override still wins over the registry");
     }
 

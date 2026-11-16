@@ -112,7 +112,7 @@ fn path_covers(pattern: &str, path: &str) -> bool {
 }
 
 fn default_workdir() -> String {
-    "/work".into()
+    system_paths::guest::WORK.into()
 }
 
 fn plausible_tier(n: &str) -> bool {
@@ -196,8 +196,8 @@ pub enum Outcome {
     Fault(&'static str),
 }
 
-const CACHE_TARGET: &str = "/var/cache/spira-foreign/target";
-const CACHE_CARGO: &str = "/var/cache/spira-foreign/cargo";
+const CACHE_TARGET: &str = system_paths::guest::VAR_CACHE_SPIRA_FOREIGN_TARGET;
+const CACHE_CARGO: &str = system_paths::guest::VAR_CACHE_SPIRA_FOREIGN_CARGO;
 const LOCK_POLL: Duration = Duration::from_secs(2);
 #[cfg(not(test))]
 const PUBLISH_WAIT: Duration = Duration::from_secs(120);

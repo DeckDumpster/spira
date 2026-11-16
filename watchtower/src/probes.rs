@@ -51,7 +51,7 @@ pub fn units_off_current(units: &[UnitDetail], current: &str, running: &dyn Fn(u
 }
 
 fn process_release(releases: &str, pid: u32) -> Option<String> {
-    let exe = std::fs::read_link(format!("/proc/{pid}/exe")).ok()?;
+    let exe = std::fs::read_link(format!("{}/{pid}/exe", system_paths::PROC)).ok()?;
     let canon_root = std::fs::canonicalize(releases).ok()?;
     let rest = exe.strip_prefix(&canon_root).ok().or_else(|| exe.strip_prefix(releases).ok())?;
     rest.components().next().map(|c| c.as_os_str().to_string_lossy().into_owned())
@@ -342,8 +342,8 @@ fn path_key(path: &str) -> String {
 }
 
 pub const ROOT_PATH: &str = "/";
-pub const DEFAULT_TMP_PATH: &str = "/tmp";
-pub const DEFAULT_PSI_DIR: &str = "/proc/pressure";
+pub const DEFAULT_TMP_PATH: &str = system_paths::TMP;
+pub const DEFAULT_PSI_DIR: &str = system_paths::PROC_PRESSURE;
 
 /// Root, the run directory, the build pool and the roots hand builds leave targets under, then
 /// the operator's extra paths.
@@ -868,11 +868,11 @@ mod tests {
             failed_runs: 3,
             oom_glob: "spira-*".into(),
             oom_hold_secs: 21600,
-            tmp_path: "/tmp".into(),
+            tmp_path: system_paths::TMP.into(),
             tmp_floor_mib: 100,
             disk_floor_pct: 15,
             disk_fill_hours: 6,
-            disk_watch_paths: vec!["/run-dir".into(), "/nix-store".into(), "/build-pool".into()],
+            disk_watch_paths: vec!["run-dir".into(), "nix-store".into(), "build-pool".into()],
             disk_state: dir.join("disk-fill.state"),
             psi_dir: dir.join("psi").to_string_lossy().into_owned(),
             psi_full_avg60: 10.0,
@@ -932,10 +932,10 @@ mod tests {
     fn disk_room_pages_a_filesystem_at_95_percent_used() {
         let d = testkit::TempDir::new("wt-disk-full");
         let c = cfg(&d);
-        let read = |p: &str| if p == "/run-dir" { fs(1, 28, 95) } else { fs(2, 400, 20) };
+        let read = |p: &str| if p == "run-dir" { fs(1, 28, 95) } else { fs(2, 400, 20) };
         let s = standing(disk_room(&c, 1_000, &read));
         assert_eq!(s.len(), 1);
-        assert_eq!(s[0].key, "disk-free-_run-dir");
+        assert_eq!(s[0].key, "disk-free-run-dir");
         assert!(s[0].title.contains("5% free"), "{}", s[0].title);
     }
 
@@ -947,7 +947,7 @@ mod tests {
         assert!(keys(disk_room(&c, t0, &|_| fs(1, 192, 64))).is_empty(), "the first sample has no rate");
         let five_hours = t0 + 5 * 3600;
         let s = standing(disk_room(&c, five_hours, &|_| fs(1, 29, 95 - 10)));
-        assert_eq!(s.iter().map(|c| c.key.as_str()).collect::<Vec<_>>(), vec!["disk-fill-_run-dir"]);
+        assert_eq!(s.iter().map(|c| c.key.as_str()).collect::<Vec<_>>(), vec!["disk-fill-run-dir"]);
         assert!(s[0].title.contains("FILLING"), "{}", s[0].title);
     }
 
@@ -973,27 +973,27 @@ mod tests {
         let d = testkit::TempDir::new("wt-disk-dev");
         let c = cfg(&d);
         let read = |p: &str| match p {
-            "/run-dir" | "/nix-store" => fs(1, 10, 98),
+            "run-dir" | "nix-store" => fs(1, 10, 98),
             _ => fs(2, 10, 98),
         };
-        assert_eq!(keys(disk_room(&c, 1_000, &read)), vec!["disk-free-_run-dir", "disk-free-_build-pool"]);
+        assert_eq!(keys(disk_room(&c, 1_000, &read)), vec!["disk-free-run-dir", "disk-free-build-pool"]);
     }
 
     #[test]
     fn a_hand_build_root_on_its_own_disk_pages_at_the_floor_and_names_it() {
         let d = testkit::TempDir::new("wt-disk-hand");
         let mut c = cfg(&d);
-        c.disk_watch_paths = watch_paths(Path::new("/run-dir"), "", "", "/srv/scratch");
-        let read = |p: &str| if p == "/srv/scratch" { fs(3, 6, 99) } else { fs(1, 400, 20) };
+        c.disk_watch_paths = watch_paths(Path::new("run-dir"), "", "", "srv/scratch");
+        let read = |p: &str| if p == "srv/scratch" { fs(3, 6, 99) } else { fs(1, 400, 20) };
         let s = standing(disk_room(&c, 1_000, &read));
         assert_eq!(s.len(), 1, "{s:?}");
-        assert_eq!(s[0].key, "disk-free-_srv_scratch");
-        assert!(s[0].title.contains("/srv/scratch") && s[0].title.contains("1% free"), "{}", s[0].title);
+        assert_eq!(s[0].key, "disk-free-srv_scratch");
+        assert!(s[0].title.contains("srv/scratch") && s[0].title.contains("1% free"), "{}", s[0].title);
     }
 
     #[test]
     fn watch_paths_always_name_root_run_build_pool_and_hand_roots_before_the_extras() {
-        assert_eq!(watch_paths(Path::new("/r"), "/nix/store /x", "/b /c", "/h /i"), ["/", "/r", "/b", "/c", "/h", "/i", "/nix/store", "/x"]);
+        assert_eq!(watch_paths(Path::new("r"), "nix/store x", "b c", "h i"), ["/", "r", "b", "c", "h", "i", "nix/store", "x"]);
     }
 
     #[test]

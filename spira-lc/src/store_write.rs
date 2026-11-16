@@ -73,7 +73,7 @@ mod tests {
     #[test]
     fn supersede_refuses_bad_ids_and_self_before_calling_bd() {
         let never = |_: &[&str]| -> Result<String, String> { panic!("bd must not run") };
-        for bad in [&["sp-a", "sp-a"][..], &["-x", "sp-b"], &["sp-a", ""], &["sp-a", "--force"], &["sp a", "sp-b"], &["/etc/passwd", "sp-b"]] {
+        for bad in [&["sp-a", "sp-a"][..], &["-x", "sp-b"], &["sp-a", ""], &["sp-a", "--force"], &["sp a", "sp-b"], &[system_paths::ETC_PASSWD, "sp-b"]] {
             assert_eq!(supersede(&v(bad), &never).code, REFUSED, "{bad:?}");
         }
         assert_eq!(supersede(&v(&["sp-a"]), &never).code, CANNOT_TELL);

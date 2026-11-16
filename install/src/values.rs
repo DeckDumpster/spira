@@ -141,21 +141,21 @@ mod tests {
 
     fn hv() -> HostValues {
         HostValues {
-            home: "/h/spira".into(),
-            repo: "/h".into(),
-            run: "/run".into(),
-            db: "/db".into(),
-            cockpit: "/h/cockpit".into(),
+            home: "h/spira".into(),
+            repo: "h".into(),
+            run: "run".into(),
+            db: "db".into(),
+            cockpit: "h/cockpit".into(),
             dolt_data: "".into(),
-            dolt: "/usr/bin/dolt".into(),
+            dolt: "usr/bin/dolt".into(),
             prod: "".into(),
             instance: "prod".into(),
             snap_stale_s: "600".into(),
             watchtower_start_timeout_s: "360".into(),
-            path_tail: "".into(), env_bin: "/h/.local/lib/spira-env/bin".into(),
-            lc_password_file: "/h/lc.credential".into(),
-            toml: "/h/cfg.toml".into(),
-            sccache_dav_addr: "".into(), sccache_dav_root: "/run/sccache-dav".into(),
+            path_tail: "".into(), env_bin: "h/.local/lib/spira-env/bin".into(),
+            lc_password_file: "h/lc.credential".into(),
+            toml: "h/cfg.toml".into(),
+            sccache_dav_addr: "".into(), sccache_dav_root: "run/sccache-dav".into(),
             repo_map: "".into(),
             watchdog_every_s: "60".into(),
         }
@@ -164,30 +164,30 @@ mod tests {
     #[test]
     fn prod_falls_back_to_home_and_derives_release_keys() {
         let m = hv().to_map();
-        assert_eq!(m["SPIRA_PROD"], "/h/spira");
-        assert_eq!(m["SPIRA_PROD_ROOT"], "/h");
-        assert_eq!(m["SPIRA_RELEASE"], "/h");
-        assert_eq!(m["SPIRA_PROD_COCK"], "/h/cockpit");
+        assert_eq!(m["SPIRA_PROD"], "h/spira");
+        assert_eq!(m["SPIRA_PROD_ROOT"], "h");
+        assert_eq!(m["SPIRA_RELEASE"], "h");
+        assert_eq!(m["SPIRA_PROD_COCK"], "h/cockpit");
         assert_eq!(m["SPIRA_PATH_TAIL"], "");
     }
 
     #[test]
     fn an_explicit_prod_is_kept_and_path_tail_gets_a_leading_colon() {
         let mut h = hv();
-        h.prod = "/rel/current/spira".into();
-        h.path_tail = "/opt/extra/bin".into();
+        h.prod = "rel/current/spira".into();
+        h.path_tail = "opt/extra/bin".into();
         let m = h.to_map();
-        assert_eq!(m["SPIRA_PROD"], "/rel/current/spira");
-        assert_eq!(m["SPIRA_PROD_ROOT"], "/rel/current");
-        assert_eq!(m["SPIRA_RELEASE"], "/rel/current");
-        assert_eq!(m["SPIRA_PROD_COCK"], "/rel/current/cockpit");
-        assert_eq!(m["SPIRA_PATH_TAIL"], ":/opt/extra/bin");
+        assert_eq!(m["SPIRA_PROD"], "rel/current/spira");
+        assert_eq!(m["SPIRA_PROD_ROOT"], "rel/current");
+        assert_eq!(m["SPIRA_RELEASE"], "rel/current");
+        assert_eq!(m["SPIRA_PROD_COCK"], "rel/current/cockpit");
+        assert_eq!(m["SPIRA_PATH_TAIL"], ":opt/extra/bin");
     }
 
     #[test]
     fn a_service_renders_and_an_unfilled_placeholder_refuses() {
         let out = render("x.service", "ExecStart=@SPIRA_HOME@/x\n", &hv(), None).unwrap();
-        assert_eq!(out, "ExecStart=/h/spira/x\n");
+        assert_eq!(out, "ExecStart=h/spira/x\n");
         let e = render("y.service", "ExecStart=@NOPE@\n", &hv(), None).unwrap_err();
         assert!(e.contains("NOPE"), "{e}");
     }

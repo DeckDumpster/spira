@@ -271,9 +271,9 @@ fn what_it_cannot_read_is_a_refusal_never_an_empty_selection() {
     let fls = fl.display().to_string();
     assert!(refused(run(&genv(&d.0, &[("SPIRA_GATE_FILES", &fls)]), &g, "main", "br")));
     // The file list cannot be read.
-    assert!(refused(run(&genv(&d.0, &[("SPIRA_GATE_FILES", "/nonexistent/flist")]), &diff_git(), "main", "br")));
+    assert!(refused(run(&genv(&d.0, &[("SPIRA_GATE_FILES", "nonexistent/flist")]), &diff_git(), "main", "br")));
     // No suite directory; an empty one.
-    assert!(refused(run(&genv(Path::new("/nonexistent/spira"), &[]), &diff_git(), "main", "br")));
+    assert!(refused(run(&genv(Path::new("nonexistent/spira"), &[]), &diff_git(), "main", "br")));
     let empty = dir("empty", &[]);
     assert!(refused(run(&genv(&empty.0, &[]), &diff_git(), "main", "br")));
     // A tier nobody can place.

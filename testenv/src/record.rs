@@ -356,10 +356,10 @@ fn norm_rules() -> &'static [(Regex, &'static str); 5] {
     static R: OnceLock<[(Regex, &'static str); 5]> = OnceLock::new();
     R.get_or_init(|| {
         [
-            (Regex::new(r"/tmp/[A-Za-z0-9._-]*").unwrap(), "/tmp/X"),
+            (Regex::new(&format!("{}/[A-Za-z0-9._-]*", system_paths::TMP)).unwrap(), format!("{}/X", system_paths::TMP).leak()),
             (
                 Regex::new(r"/[A-Za-z0-9._/-]*/sptest_[A-Za-z0-9_]*").unwrap(),
-                "/X",
+                "/X", // not a path: replacement text
             ),
             (
                 Regex::new(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.0-9]*Z?")

@@ -189,7 +189,7 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
     }
     let run = get("SPIRA_RUN")
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/nonexistent-run"));
+        .unwrap_or_else(|| PathBuf::from(format!("{}-run", system_paths::NONEXISTENT)));
     let (maxpar_requested, maxpar_refusal) =
         crate::settings::resolve_maxpar(&get("SPIRA_BATCH_MAXPAR").unwrap_or_default());
     Settings {

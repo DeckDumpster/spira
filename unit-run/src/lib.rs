@@ -128,9 +128,9 @@ pub fn io_controller_available(controllers_file: &std::path::Path) -> bool {
 }
 
 pub fn own_controllers_file() -> Option<std::path::PathBuf> {
-    let t = std::fs::read_to_string("/proc/self/cgroup").ok()?;
+    let t = std::fs::read_to_string(format!("{}/cgroup", system_paths::PROC_SELF)).ok()?;
     let rel = t.lines().find_map(|l| l.strip_prefix("0::"))?;
-    Some(std::path::Path::new("/sys/fs/cgroup").join(rel.trim_start_matches('/')).join("cgroup.controllers"))
+    Some(std::path::Path::new(system_paths::SYS_FS_CGROUP).join(rel.trim_start_matches('/')).join("cgroup.controllers"))
 }
 
 pub fn ensure_io_accounting(config_home: &std::path::Path) -> Result<bool, String> {

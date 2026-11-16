@@ -101,7 +101,7 @@ impl T {
         let conf = Conf {
             home_repo: "spira".into(),
             scope_label: Some("spira".into()),
-            db: "/db".into(),
+            db: "db".into(),
         };
         T {
             _dir: dir,
@@ -313,7 +313,7 @@ fn observe_flake_files_once_the_window_holds_enough_distinct_runs() {
     );
     let f = t.intake.filed.borrow()[0].clone();
     assert_eq!(f.title, "why does test-f.sh fail intermittently");
-    assert_eq!((f.priority, f.labels.as_str(), f.repo.as_str(), f.reference.as_str(), f.db.as_str()), (1, "spira,plan", "spira", "flake:test-f.sh", "/db"));
+    assert_eq!((f.priority, f.labels.as_str(), f.repo.as_str(), f.reference.as_str(), f.db.as_str()), (1, "spira,plan", "spira", "flake:test-f.sh", "db"));
     assert_eq!(f.path, t.s.suite_dir.join("test-f.sh"));
     assert_eq!(f.payload, cmd::flake_payload("test-f.sh", 2, 604_800));
     assert!(f.payload.starts_with("test-f.sh has 2 flake observation(s) within the 604800s window. It is filed and nothing is\nquarantined:"));

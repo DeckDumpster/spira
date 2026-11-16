@@ -22,7 +22,7 @@ fn proc_(root: &Path, pid: u32, comm: &str, argv: &[&str], cgroup: &str) {
     put(root, &format!("{pid}/cgroup"), format!("0::{cgroup}\n").as_bytes());
 }
 
-const SVC: &str = "/user.slice/user-1000.slice/user@1000.service/app.slice/spira-perf-watch.service";
+const SVC: &str = "/user.slice/user-1000.slice/user@1000.service/app.slice/spira-perf-watch.service"; // not a path: a cgroup v2 path
 
 #[test]
 fn a_fixture_tree_attributes_each_new_pid_to_its_unit() {
@@ -33,10 +33,10 @@ fn a_fixture_tree_attributes_each_new_pid_to_its_unit() {
     assert_eq!(s.tick(&fs).forks, 0, "the first tick only baselines");
 
     counters(t.path(), 104, 1004);
-    proc_(t.path(), 101, "sh", &["/bin/sh", "-c", "secret"], SVC);
+    proc_(t.path(), 101, "sh", &["bin/sh", "-c", "secret"], SVC);
     proc_(t.path(), 102, "git", &["git", "status"], SVC);
-    proc_(t.path(), 103, "dolt", &["dolt", "sql"], "/system.slice/dolt.service");
-    proc_(t.path(), 104, "bash", &["bash"], "/user.slice/user-1000.slice/session-3.scope");
+    proc_(t.path(), 103, "dolt", &["dolt", "sql"], "/system.slice/dolt.service"); // not a path: a cgroup v2 path
+    proc_(t.path(), 104, "bash", &["bash"], "/user.slice/user-1000.slice/session-3.scope"); // not a path: a cgroup v2 path
     proc_(t.path(), 99, "old", &["old"], SVC);
     let tick = s.tick(&fs);
     assert_eq!(tick.forks, 4);
@@ -99,11 +99,11 @@ fn a_thread_is_counted_as_a_launch_but_not_as_an_exec() {
 #[test]
 fn argv_is_cut_after_two_entries_and_environ_is_never_opened() {
     let t = TempDir::new("exec-census");
-    proc_(t.path(), 7, "tool", &["/usr/bin/tool", "sub", "--token=hunter2", "x"], SVC);
+    proc_(t.path(), 7, "tool", &["usr/bin/tool", "sub", "--token=hunter2", "x"], SVC);
     put(t.path(), "7/environ", b"SECRET=1\0");
     std::fs::set_permissions(t.path().join("7/environ"), std::os::unix::fs::PermissionsExt::from_mode(0o000)).unwrap();
     let Probe::Process(p) = ProcFs::new(t.path()).probe(7) else { panic!("not a process") };
-    assert_eq!(p.argv, ["/usr/bin/tool", "sub"]);
+    assert_eq!(p.argv, ["usr/bin/tool", "sub"]);
     assert!(!format!("{p:?}").contains("hunter2"));
     let named: Vec<&str> = include_str!("../src/lib.rs").lines().filter(|l| l.contains(&["env", "iron"].concat())).collect();
     assert!(named.iter().all(|l| l.starts_with("//!")), "code names the file: {named:?}");

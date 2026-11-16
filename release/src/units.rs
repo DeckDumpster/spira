@@ -389,7 +389,7 @@ mod exec_changed_tests {
     #[test]
     fn a_release_that_moves_only_environment_lines_is_not_an_exec_change() {
         let old = "[Service]\nEnvironment=SPIRA_RELEASE=/r/aaa\nExecStart=/bin/dolt sql-server\nExecStopPost=/p/store-persist pass --offline\n";
-        let new = old.replace("/r/aaa", "/r/bbb");
+        let new = old.replace("r/aaa", "r/bbb");
         assert!(!exec_changed(old, &new));
         assert!(exec_changed(old, &old.replace("--offline", "")));
     }
@@ -400,11 +400,11 @@ mod units_repo_tests {
     use super::*;
     #[test]
     fn units_repo_is_the_mapped_checkout_when_it_is_git_else_the_release() {
-        let rel = Path::new("/r/rel");
-        let git = |p: &Path| p == Path::new("/h/harness");
-        assert_eq!(units_repo(Some("/h/harness".into()), rel, git), "/h/harness");
-        assert_eq!(units_repo(Some("/h/plain".into()), rel, git), "/r/rel");
-        assert_eq!(units_repo(None, rel, git), "/r/rel");
+        let rel = Path::new("r/rel");
+        let git = |p: &Path| p == Path::new("h/harness");
+        assert_eq!(units_repo(Some("h/harness".into()), rel, git), "h/harness");
+        assert_eq!(units_repo(Some("h/plain".into()), rel, git), "r/rel");
+        assert_eq!(units_repo(None, rel, git), "r/rel");
     }
 }
 

@@ -1492,7 +1492,7 @@ fn close_reads_its_reason_from_a_file_and_refuses_without_one() {
     for bad in [&["sp-r"][..], &["--reason", "x"], &["sp-r", "--reason", "  "], &["sp-r", "--reason", "x", "--bogus", "y"]] {
         assert_eq!(close(&v(bad), &mut f, &mut bd, &mut no_file).code, CANNOT_TELL, "{bad:?}: usage");
     }
-    let a = close(&v(&["sp-r", "--reason-file", "/nope"]), &mut f, &mut bd, &mut file);
+    let a = close(&v(&["sp-r", "--reason-file", "nope"]), &mut f, &mut bd, &mut file);
     assert_eq!(a.code, CANNOT_TELL);
     assert!(a.owed.is_empty() && bd.closed.is_empty());
 }

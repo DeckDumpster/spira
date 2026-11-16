@@ -296,7 +296,7 @@ fn real_main() -> ExitCode {
         settings,
         stdin: &stdin,
         out: &out,
-        owner_dir: std::path::PathBuf::from("/tmp"),
+        owner_dir: std::path::PathBuf::from(system_paths::TMP),
         cwd: std::env::current_dir().unwrap_or_default(),
         runner_identity: identity,
         warm_refill: &spawn_refill,

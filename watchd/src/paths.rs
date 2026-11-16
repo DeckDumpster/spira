@@ -56,18 +56,18 @@ mod tests {
 
     #[test]
     fn log_row_points_at_its_own_target() {
-        assert_eq!(logfile("/run", "mail-deliver", Kind::Log, "/var/log/x"), Some(PathBuf::from("/var/log/x")));
+        assert_eq!(logfile("run", "mail-deliver", Kind::Log, "var/log/x"), Some(PathBuf::from("var/log/x")));
     }
 
     #[test]
     fn daemon_and_extern_rows_point_at_our_own_log() {
-        assert_eq!(logfile("/run", "pool", Kind::Daemon, "pool.sh"), Some(PathBuf::from("/run/watchd/pool.log")));
-        assert_eq!(logfile("/run", "mail-deliver", Kind::Extern, "mail-deliver"), Some(PathBuf::from("/run/watchd/mail-deliver.log")));
+        assert_eq!(logfile("run", "pool", Kind::Daemon, "pool.sh"), Some(PathBuf::from("run/watchd/pool.log")));
+        assert_eq!(logfile("run", "mail-deliver", Kind::Extern, "mail-deliver"), Some(PathBuf::from("run/watchd/mail-deliver.log")));
     }
 
     #[test]
     fn off_rows_have_no_log() {
-        assert_eq!(logfile("/run", "view", Kind::Off, "@SPIRA_VIEW@"), None);
+        assert_eq!(logfile("run", "view", Kind::Off, "@SPIRA_VIEW@"), None);
     }
 
     #[test]

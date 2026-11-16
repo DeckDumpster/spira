@@ -219,7 +219,7 @@ mod tests {
     fn record_spools_only_a_line_that_pushes() {
         let d = testkit::TempDir::new("inbox-record");
         let inbox = d.join("inbox.log");
-        let none = || Ok(PathBuf::from("/nonexistent/inbox-triage"));
+        let none = || Ok(PathBuf::from("nonexistent/inbox-triage"));
         assert_eq!(record(&inbox, "t plain line", "wake", r"\bP0\b", none), Ok(false));
         assert!(!d.join("inbox.log.push").exists());
         assert_eq!(record(&inbox, "t P0 down", "wake", "(", none), Ok(false), "a bad pattern records and does not push");

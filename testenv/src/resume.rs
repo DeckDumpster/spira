@@ -447,8 +447,9 @@ mod tests {
         let aws = Path::new("aws");
         assert!(backend_from_spec("", aws).unwrap().is_none());
         assert!(backend_from_spec(" none ", aws).unwrap().is_none());
-        assert!(backend_from_spec("dir:/x", aws).unwrap().is_some());
-        assert!(backend_from_spec("/x", aws).unwrap().is_some());
+        let root = testkit::TempDir::new("resume-spec");
+        assert!(backend_from_spec(&format!("dir:{}/x", root.display()), aws).unwrap().is_some());
+        assert!(backend_from_spec(&format!("{}/x", root.display()), aws).unwrap().is_some());
         assert!(backend_from_spec("s3://b/resume/", aws).unwrap().is_some());
         for bad in ["s3://", "s3:///x", "relative/dir", "dir:rel", "gha:cache"] {
             assert!(backend_from_spec(bad, aws).is_err(), "{bad}");
