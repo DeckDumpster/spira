@@ -44,3 +44,15 @@ pub fn up(world: &Path, fixture: &str, steps: &dyn Steps) -> Result<(), String> 
     steps.config_set(&release, &world.join("config/sim.toml"), "spira.loom_addr", &free_addr()?)?;
     seed(world, fixture)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_fixture_is_a_scenario_with_a_claimable_bead_for_the_pilgrim_to_stand_beside() {
+        let seeds = parse_scenario(FIXTURE).unwrap().seeds;
+        assert_eq!(seeds.len(), 1);
+        assert_eq!(seed_steps(&seeds).unwrap().len(), 1);
+    }
+}
