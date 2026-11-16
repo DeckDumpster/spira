@@ -565,7 +565,7 @@ mod tests {
     }
 
     fn registry() -> spira_config::repos::Registry {
-        let map = "# name|root|base|gate\nspira|/r/spira|main|gate.sh\ndeck|/r/deck|main|gate.sh\n";
+        let map = "# name|root|base|gate\nspira|r/spira|main|gate.sh\ndeck|r/deck|main|gate.sh\n";
         spira_config::repos::Registry::new(Some(map), &BTreeMap::new(), std::path::Path::new("r/spira"))
     }
 

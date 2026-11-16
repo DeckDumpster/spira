@@ -1346,7 +1346,7 @@ mod tests {
             Ok("needs-ryan".into())
         }
         fn registry(&self) -> spira_config::repos::Registry {
-            spira_config::repos::Registry::new(Some("spira|/r/spira|main|gate.sh\n"), &Default::default(), std::path::Path::new("r/spira"))
+            spira_config::repos::Registry::new(Some("spira|r/spira|main|gate.sh\n"), &Default::default(), std::path::Path::new("r/spira"))
         }
     }
 
@@ -1591,7 +1591,7 @@ mod tests {
             Ok("needs-ryan".into())
         }
         fn registry(&self) -> spira_config::repos::Registry {
-            spira_config::repos::Registry::new(Some("spira|/r/spira|main|gate.sh\n"), &Default::default(), std::path::Path::new("r/spira"))
+            spira_config::repos::Registry::new(Some("spira|r/spira|main|gate.sh\n"), &Default::default(), std::path::Path::new("r/spira"))
         }
         fn policy(&self) -> Result<bead::filing::Policy, String> {
             let builder = bead::filing::Persona { name: "builder".into(), labels: vec!["builder-lane".into()], requires_build_spec: true, unresolved: None };
@@ -1750,7 +1750,7 @@ mod tests {
                 Ok(String::new())
             }
             fn registry(&self) -> spira_config::repos::Registry {
-                spira_config::repos::Registry::new(Some("spira|/r/spira|main|gate.sh\n"), &Default::default(), std::path::Path::new("r/spira"))
+                spira_config::repos::Registry::new(Some("spira|r/spira|main|gate.sh\n"), &Default::default(), std::path::Path::new("r/spira"))
             }
         }
         let w = World::new();

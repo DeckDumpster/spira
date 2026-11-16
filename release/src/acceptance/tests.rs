@@ -438,7 +438,7 @@ impl Box_ {
             xdg_config: self.root.join("config"),
             forensics: self.root.join("forensics"),
             release_bin: PathBuf::from("opt/candidate/bin/release"),
-            base_path: "usr/bin:/bin".into(),
+            base_path: "usr/bin:bin".into(),
             spira_run: self.root.join("run"),
             token_projects: self.root.join("projects"),
             gh_repo: None,

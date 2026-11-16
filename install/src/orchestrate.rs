@@ -174,7 +174,7 @@ mod tests {
     fn conflicts_run_in_order_and_the_first_hit_wins() {
         let mut c = ConflictInputs { our_home: "home".into(), ..Default::default() };
         c.installed_foreign_exec_dir = Some("other".into());
-        c.dwarf_cmdlines = vec![("1".into(), "bash\0/home/dwarf.sh".into())];
+        c.dwarf_cmdlines = vec![("1".into(), "bash\0home/dwarf.sh".into())];
         let err = phase_0_5_conflicts("prod", &c).unwrap_err();
         assert!(err.message.contains("foreign") || err.message.contains("exec from"), "{}", err.message);
     }
