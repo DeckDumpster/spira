@@ -1,0 +1,26 @@
+[package]
+name = "test-registry"
+version = "0.1.0"
+edition = "2021"
+autotests = false
+description = "test-registry — the one SQLite file and the one binary that hold each test's lifecycle state (disabled, quarantined) and its history, and answer the deny list at an instant."
+
+[lib]
+name = "test_registry"
+
+[[bin]]
+name = "test-registry"
+path = "src/main.rs"
+test = false
+
+[features]
+integration = ["spira-config/integration", "testkit/integration"]
+
+[dependencies]
+rusqlite = { version = "0.37", features = ["bundled"] }
+serde_json = "1"
+sha2 = "0.10"
+spira-config = { path = "../spira-config" }
+
+[dev-dependencies]
+testkit = { path = "../testkit" }
