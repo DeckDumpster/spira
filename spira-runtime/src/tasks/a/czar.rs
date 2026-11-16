@@ -117,6 +117,7 @@ use reconciler_engine::core::{record_remedy, step, HysteresisState, RawStatus, V
 use runtime::event::*;
 use serde::{Deserialize, Serialize};
 
+use super::batcher_local;
 use super::kit::{self, Act, Cadence, Shape};
 use crate::Effects;
 
@@ -242,6 +243,12 @@ pub struct Snapshot {
     pub last_landing_pass_at_ms: Read<Option<u64>>,
     pub open_batch: BTreeMap<String, Read<Option<Batch>>>,
     pub certified: BTreeMap<String, Read<Vec<String>>>,
+    /// Per repo, the open rounds the store's round record holds.
+    #[serde(default)]
+    pub open_rounds: BTreeMap<String, Read<u64>>,
+    /// Per repo, the reason the batcher records for holding it.
+    #[serde(default)]
+    pub batcher_held: BTreeMap<String, String>,
     pub ci: BTreeMap<String, Read<Ci>>,
     pub base_ci: BTreeMap<String, Read<BaseCi>>,
     pub reconciler_last_pass_ms: Read<Option<u64>>,
@@ -604,15 +611,19 @@ pub fn decide(policy: &Policy, carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Ac
     for (repo, certified) in &snap.certified {
         let safe = czar_pass::repo_safe(repo);
         let key = format!("pool-idle:{safe}");
-        let raw = match (read(snap.open_batch.get(repo)), certified) {
-            (Ok(open), Read::Observed(c)) => czar_pass::pool_idle(repo, open.flatten().is_some(), c.len() as u64, policy.queue_round_min_n),
-            (Err(why), _) => unobservable(format!("{repo}: {why}")),
-            (_, Read::Unobservable(why)) => unobservable(format!("{repo}: {why}")),
+        let raw = match (read(snap.open_batch.get(repo)), certified, snap.open_rounds.get(repo)) {
+            (_, _, Some(Read::Observed(rounds))) if *rounds > 0 => RawStatus::Satisfied,
+            _ if snap.batcher_held.contains_key(repo) => RawStatus::Satisfied,
+            (Err(why), _, _) => unobservable(format!("{repo}: {why}")),
+            (_, Read::Unobservable(why), _) => unobservable(format!("{repo}: {why}")),
+            (_, _, Some(Read::Unobservable(why))) => unobservable(format!("{repo}: {why}")),
+            (_, _, None) => unobservable(format!("{repo}: open rounds not read")),
+            (Ok(open), Read::Observed(c), Some(Read::Observed(_))) => czar_pass::pool_idle(repo, open.flatten().is_some(), c.len() as u64, policy.queue_round_min_n),
         };
         let min_n = policy.queue_round_min_n;
         p.run("pool-idle", &key, raw, policy.queue_round_stall_secs, |v| {
             let age = v.since.map_or(0, |s| now.saturating_sub(s));
-            Remedy::File(czar_pass::Filing::queue("pool-idle", &format!("pool-idle-{safe}"), &format!("QUEUE: {repo}'s certified pool idle {age}s with no round cut"), &format!("{repo}'s certified pool has sat at the round threshold ({min_n}) for {age}s with no batch open.\n"), ""))
+            Remedy::File(czar_pass::Filing::queue("pool-idle", &format!("pool-idle-{safe}"), &format!("QUEUE: {repo}'s certified pool idle {age}s with no round cut"), &format!("{repo}'s certified pool has sat at the round threshold ({min_n}) for {age}s with no round open and the batcher not held.\n"), ""))
         });
     }
     {
@@ -632,6 +643,12 @@ fn labels(pinned: &BTreeMap<String, String>) -> String {
     let get = |k: &str| pinned.get(k).cloned().unwrap_or_default();
     let (scope, czar) = (get("SPIRA_SCOPE_LABEL"), get("SPIRA_CZAR_LABEL"));
     if scope.is_empty() { czar } else { format!("{scope},{czar}") }
+}
+
+/// `snap` with each repo the batcher holds, and the reason it recorded; a hold with no reason is not one.
+pub fn with_batcher_holds(mut snap: Snapshot, batcher: &batcher_local::Carry) -> Snapshot {
+    snap.batcher_held = batcher.repos.iter().filter(|(_, rc)| rc.state == batcher_local::State::Held).filter_map(|(n, rc)| rc.skip_why.clone().map(|w| (n.clone(), w))).collect();
+    snap
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -686,6 +703,7 @@ impl Handler for Czar {
             return kit::on_tick(&SHAPE, serde_json::to_string(&input).unwrap_or_default(), self.cadence.next_after(ev.at));
         }
         let Some(snap) = kit::observed::<Snapshot>(&SHAPE, view, ev) else { return vec![] };
+        let snap = with_batcher_holds(snap, &kit::carry::<batcher_local::Carry>(&batcher_local::SHAPE, view));
         let (next, mut acts) = decide(&self.policy, &carry, &snap);
         let labels = labels(&self.pinned);
         for a in acts.iter_mut().filter(|a| a.effect == FILE_INCIDENT || a.effect == FILE_BASE_RED) {
@@ -835,6 +853,14 @@ pub fn observe(e: &Effects, input: &str) -> Result<String, String> {
         if matches!(land.as_str(), "queue" | "queue.local") {
             let certified = certified_pool(&lc, &name);
             snap.certified.insert(name.clone(), certified);
+            let rounds = match (&views, &refreshed) {
+                (Ok(v), Ok(())) => match v.round_view(&name) {
+                    Ok(view) => Read::Observed(view.value.rounds.len() as u64),
+                    Err(err) => Read::Unobservable(format!("could not say: {err}")),
+                },
+                (Err(err), _) | (_, Err(err)) => Read::Unobservable(format!("could not say: {err}")),
+            };
+            snap.open_rounds.insert(name.clone(), rounds);
         }
         rows.push(RepoRow { name: name.clone(), land, root: path, landref });
         snap.open_batch.insert(name, batch);
@@ -1064,5 +1090,59 @@ mod tests {
         let again = Carry { base_pending: [("fa".to_string(), NOW + 100_000)].into(), ..c2 };
         let (_, acts) = decide(&pol, &again, &snap(NOW + 200_000, NOW + 150_000));
         assert!(acts.iter().any(|a| a.effect == FILE_BASE_RED));
+    }
+
+    fn idle_pool(rounds: Read<u64>) -> Snapshot {
+        Snapshot { open_batch: [("fa".to_string(), Read::Observed(None))].into(), certified: [("fa".to_string(), Read::Observed(vec!["a".into(), "b".into(), "c".into()]))].into(), open_rounds: [("fa".to_string(), rounds)].into(), ..Snapshot::default() }
+    }
+
+    fn two_passes(snap: Snapshot) -> (Carry, Vec<Act>, Vec<Act>) {
+        let mut pol = policy();
+        pol.stages.insert("pool-idle".into(), Stage::Act);
+        let first = Snapshot { now_ms: NOW, ..snap.clone() };
+        let (c1, a1) = decide(&pol, &Carry::default(), &first);
+        let (c2, a2) = decide(&pol, &c1, &Snapshot { now_ms: NOW + (pol.queue_round_stall_secs + 1) * 1000, ..snap });
+        (c2, a1, a2)
+    }
+
+    fn pool_filings(acts: &[Act]) -> usize {
+        acts.iter().filter(|a| a.effect == FILE_INCIDENT && a.input.contains("pool-idle-fa")).count()
+    }
+
+    #[test]
+    fn an_open_round_is_not_a_pool_idle_stall() {
+        let (next, a1, a2) = two_passes(idle_pool(Read::Observed(1)));
+        assert_eq!(pool_filings(&a1) + pool_filings(&a2), 0);
+        assert!(next.keys.get("pool-idle:fa").is_none_or(|k| k.phase != Phase::Gap), "{:?}", next.keys.get("pool-idle:fa"));
+    }
+
+    #[test]
+    fn a_batcher_hold_is_not_a_pool_idle_stall() {
+        let rc = batcher_local::RepoCarry { state: batcher_local::State::Held, skip_why: Some("the rounds lane is stopped (op: test)".into()), ..Default::default() };
+        let snap = with_batcher_holds(idle_pool(Read::Observed(0)), &batcher_local::Carry { repos: [("fa".to_string(), rc)].into() });
+        let (_, a1, a2) = two_passes(snap);
+        assert_eq!(pool_filings(&a1) + pool_filings(&a2), 0);
+    }
+
+    #[test]
+    fn a_held_state_with_no_recorded_reason_still_pages() {
+        let rc = batcher_local::RepoCarry { state: batcher_local::State::Held, skip_why: None, ..Default::default() };
+        let snap = with_batcher_holds(idle_pool(Read::Observed(0)), &batcher_local::Carry { repos: [("fa".to_string(), rc)].into() });
+        assert!(snap.batcher_held.is_empty());
+    }
+
+    #[test]
+    fn an_idle_pool_with_no_round_and_no_hold_files_once_past_the_stall() {
+        let (_, a1, a2) = two_passes(idle_pool(Read::Observed(0)));
+        assert_eq!(pool_filings(&a1), 0);
+        assert_eq!(pool_filings(&a2), 1);
+    }
+
+    #[test]
+    fn an_unreadable_round_record_is_unobservable_not_satisfied() {
+        let (next, a1, a2) = two_passes(idle_pool(Read::Unobservable("could not say: store down".into())));
+        assert_eq!(pool_filings(&a1) + pool_filings(&a2), 0);
+        let status = a1.iter().chain(&a2).filter(|a| a.effect == STATUS && a.input.contains("pool-idle:fa")).map(|a| a.input.clone()).collect::<Vec<_>>();
+        assert!(status.iter().any(|i| i.contains("\"unobservable\"")), "{status:?} {:?}", next.keys.get("pool-idle:fa"));
     }
 }
