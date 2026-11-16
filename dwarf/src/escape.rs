@@ -16,7 +16,7 @@
 //! WHAT THIS DOES NOT BYPASS. The rune must exist (checked by the caller, the same
 //! `home/runes/<rune>.rune` test every mode uses). Its partition must have ready
 //! work. The account must have API capacity. The bead must not be poisoned. The rune's
-//! own RUNE_MAX_CONCURRENT is enforced by the called dwarf internally. All of that
+//! own RUNE_SINGLE_FLIGHT is enforced by the called dwarf internally. All of that
 //! still applies — `world_gate` and `rune_ready`/`call_argv` are reached exactly as
 //! `call_rune` reaches them, through lib.sh (§5's seam), because a drain past its TTL
 //! being lifted and logged is family G's (not this bead's) to port. The capacity check is

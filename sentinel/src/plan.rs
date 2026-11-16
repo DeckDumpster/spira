@@ -101,7 +101,7 @@ pub enum Capacity {
 pub struct Rune {
     pub name: String,
     pub lane: bool,
-    pub max_concurrent: i64,
+    pub single_flight: bool,
     pub elastic: bool,
     pub live: i64,
     pub ready: Option<i64>,
@@ -216,8 +216,8 @@ impl Planner<'_> {
         match bound {
             Some(b) if r.elastic => b,
             _ => {
-                let free = (r.max_concurrent - self.live_of(f)).max(0);
-                pool.map_or(free, |p| free.min(p))
+                let own = if r.single_flight { (1 - self.live_of(f)).max(0) } else { self.ready_of(f).unwrap_or(0).max(0) };
+                pool.map_or(own, |p| own.min(p))
             }
         }
     }
@@ -435,7 +435,7 @@ mod tests {
     use super::*;
 
     fn rune(name: &str, ready: i64) -> Rune {
-        Rune { name: name.into(), max_concurrent: 1, ready: Some(ready), ..Rune::default() }
+        Rune { name: name.into(), ready: Some(ready), ..Rune::default() }
     }
 
     fn world() -> CallWorld {
@@ -447,11 +447,21 @@ mod tests {
     }
 
     #[test]
-    fn an_open_fleet_calls_the_ready_rune_up_to_its_own_cap() {
-        assert_eq!(called(&plan(&world())), ["builder"]);
-        let mut w = world();
-        w.task[0].max_concurrent = 3;
-        assert_eq!(called(&plan(&w)), ["builder", "builder"], "two ready, three allowed: two calls");
+    fn an_open_fleet_calls_one_per_ready_bead() {
+        assert_eq!(called(&plan(&world())), ["builder", "builder"]);
+    }
+
+    #[test]
+    fn a_single_flight_persona_runs_one_at_a_time() {
+        let sf = |live, ready| CallWorld { task: vec![Rune { single_flight: true, live, ..rune("warden", ready) }], ..world() };
+        assert!(called(&plan(&sf(1, 2))).is_empty(), "one live: no second");
+        assert_eq!(called(&plan(&sf(0, 2))), ["warden"], "none live, two ready: one");
+    }
+
+    #[test]
+    fn a_persona_without_single_flight_is_called_once_per_ready_bead() {
+        let w = CallWorld { task: vec![Rune { live: 2, ..rune("skuld", 3) }], max_live_dwarves: Some(9), ..world() };
+        assert_eq!(called(&plan(&w)), ["skuld", "skuld", "skuld"]);
     }
 
     #[test]
@@ -476,7 +486,6 @@ mod tests {
         let mut w = world();
         w.task[0].live = 4;
         assert!(plan(&w).calls.is_empty(), "4/4 live: nobody");
-        w.task[0].max_concurrent = 5;
         w.lanes = vec![Rune { lane: true, ..rune("triage", 1) }];
         w.lanes_max_live = Some(1);
         assert_eq!(called(&plan(&w)), ["triage"], "a lane may spill over the ceiling inside its own cap");
@@ -484,7 +493,7 @@ mod tests {
 
     #[test]
     fn throttled_with_an_express_bead_grants_exactly_one_restricted_slot() {
-        let w = CallWorld { throttled: true, express_ready: true, max_live_dwarves: Some(5), task: vec![Rune { max_concurrent: 5, ..rune("builder", 5) }], ..world() };
+        let w = CallWorld { throttled: true, express_ready: true, max_live_dwarves: Some(5), task: vec![rune("builder", 5)], ..world() };
         let p = plan(&w);
         assert_eq!(p.calls, [Call { rune: "builder".into(), require_express: true }]);
         assert!(plan(&CallWorld { express_ready: false, ..w }).calls.is_empty(), "throttled with nothing express: the pool is 0");
@@ -493,7 +502,6 @@ mod tests {
     #[test]
     fn urgent_work_yields_the_lanes_and_a_full_fleet_preempts_the_youngest_lane_dwarf() {
         let mut w = world();
-        w.task[0].max_concurrent = 2;
         w.task[0].live = 1;
         w.lanes = vec![Rune { lane: true, live: 3, ..rune("triage", 1) }];
         w.lane_dwarves = vec![LaneDwarf { lane: "triage".into(), bead: "sp-old".into(), started_ms: 1 }, LaneDwarf { lane: "triage".into(), bead: "sp-new".into(), started_ms: 9 }];
@@ -570,7 +578,7 @@ mod tests {
     }
 
     fn using(name: &str, ready: i64, live: i64, classes: &[&str], reactive: bool) -> Rune {
-        Rune { live, uses: classes.iter().map(|c| c.to_string()).collect(), reactive, max_concurrent: 8, ..rune(name, ready) }
+        Rune { live, uses: classes.iter().map(|c| c.to_string()).collect(), reactive, ..rune(name, ready) }
     }
 
     fn builder(ready: i64, live: i64) -> Rune {

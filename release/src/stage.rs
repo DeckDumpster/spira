@@ -85,11 +85,11 @@ fn lc_content_shim(db: &Path) -> String {
     )
 }
 
-/// `runes/canary.rune`'s content. `RUNE_MAX_CONCURRENT=1` lets sentinel call exactly
+/// `runes/canary.rune`'s content. `RUNE_SINGLE_FLIGHT=1` lets sentinel call exactly
 /// one worker; `RUNE_LABELS` must include `SPIRA_SCOPE_LABEL` (when non-empty) to pass
 /// `rune_fenced`.
 pub fn rune_content() -> &'static str {
-    "RUNE_NAME=canary\nRUNE_LABELS=\"${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}${SPIRA_PLAN_LABEL}\"\nRUNE_MAX_CONCURRENT=1\nRUNE_WORKING_EXITS=\"SUBMITTED ask park hold\"\n"
+    "RUNE_NAME=canary\nRUNE_LABELS=\"${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}${SPIRA_PLAN_LABEL}\"\nRUNE_SINGLE_FLIGHT=1\nRUNE_WORKING_EXITS=\"SUBMITTED ask park hold\"\n"
 }
 
 /// The stage's own repo map file's one line (the file `SPIRA_REPO_MAP` names; not literally

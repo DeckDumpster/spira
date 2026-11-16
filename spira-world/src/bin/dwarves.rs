@@ -52,8 +52,8 @@ fn lane_caps(lib_sh: Option<&std::path::Path>) -> (u32, String) {
     if pairs.is_empty() {
         return (0, "none".to_string());
     }
-    let total: u32 = pairs.iter().map(|(_, n)| n).sum();
-    let detail = pairs.iter().map(|(n, c)| format!("{n}={c}")).collect::<Vec<_>>().join(", ");
+    let total = pairs.iter().filter(|(_, sf)| *sf).count() as u32;
+    let detail = pairs.iter().map(|(n, sf)| if *sf { format!("{n}=single-flight") } else { n.clone() }).collect::<Vec<_>>().join(", ");
     (total, detail)
 }
 

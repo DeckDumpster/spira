@@ -333,6 +333,8 @@ pub fn dwarves_live_lanes(cfg: &Config) -> u32 {
         .sum()
 }
 
+const UNBOUNDED: i64 = 999_999;
+
 /// `rune_free <rune> [pool-remaining] [exclude-unit]` (lib.sh): how many more of this
 /// persona may be called right now. lib.sh's OWN `rune_free` stays bash — it calls
 /// `dwarf_count`/`rune_get` BY NAME, and several suites (test-dwarf-elastic-concurrency.sh, test-builder-qa-proposed.sh,
@@ -343,11 +345,14 @@ pub fn dwarves_live_lanes(cfg: &Config) -> u32 {
 /// any FUTURE in-process Rust caller, and lib.sh's bash body is deliberately left alone.
 pub fn rune_free(cfg: &Config, rune: &str, pool: Option<i64>, exclude: Option<&str>) -> i64 {
     let Some(home) = cfg.home.as_ref() else { return 0 };
-    let mut max: i64 = spira_config::runes::rune_get(home, rune, "RUNE_MAX_CONCURRENT", "1").trim().parse().unwrap_or(1);
+    let single_flight = spira_config::runes::rune_get(home, rune, "RUNE_SINGLE_FLIGHT", "0") == "1";
+    let mut max: i64 = if single_flight { 1 } else { UNBOUNDED };
     let elastic = spira_config::runes::rune_get(home, rune, "RUNE_ELASTIC", "0") == "1";
     let is_remainder = elastic && pool.is_some();
     if is_remainder {
         max = pool.unwrap();
+    } else if elastic {
+        max = 1;
     }
     let have: i64 = dwarf_count(cfg, rune, exclude).into();
     let mut free = if is_remainder { max } else { (max - have).max(0) };
@@ -641,9 +646,9 @@ mod tests {
         let t = testkit::TempDir::new("strand-rune-free");
         let _env = testkit::env(&[("SPIRA_TOML", None), ("SPIRA_RUNES_DIR", Some(t.join("runes").to_str().unwrap()))]);
         std::fs::create_dir_all(t.join("runes")).unwrap();
-        std::fs::write(t.join("runes/stretchy.rune"), "RUNE_MAX_CONCURRENT=4\nRUNE_ELASTIC=1\n").unwrap();
-        std::fs::write(t.join("runes/anchor.rune"), "RUNE_MAX_CONCURRENT=10\n").unwrap();
-        std::fs::write(t.join("runes/laner.rune"), "RUNE_MAX_CONCURRENT=1\n").unwrap();
+        std::fs::write(t.join("runes/stretchy.rune"), "RUNE_ELASTIC=1\n").unwrap();
+        std::fs::write(t.join("runes/anchor.rune"), "\n").unwrap();
+        std::fs::write(t.join("runes/laner.rune"), "RUNE_SINGLE_FLIGHT=1\n").unwrap();
         let run = t.join("run");
         std::fs::create_dir_all(&run).unwrap();
         // pid fallback, no real dwarves: have=0 throughout
@@ -652,8 +657,8 @@ mod tests {
         // here since the stub always reports 0 — the G18 regression this guards against is
         // "have" double-counted against a pool that already nets it out).
         assert_eq!(rune_free(&cfg, "stretchy", Some(5), None), 5);
-        // no pool: falls back to RUNE_MAX_CONCURRENT.
-        assert_eq!(rune_free(&cfg, "stretchy", None, None), 4);
+        // no pool: an elastic rune takes one.
+        assert_eq!(rune_free(&cfg, "stretchy", None, None), 1);
         // non-elastic: cap minus running (0), clamped at 0 from below.
         assert_eq!(rune_free(&cfg, "anchor", Some(10), None), 10);
         assert_eq!(rune_free(&cfg, "laner", None, None), 1);

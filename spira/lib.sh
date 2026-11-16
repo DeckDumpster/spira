@@ -271,7 +271,7 @@ spira_task_runes() {
 
 # spira_lane_runes -> the personas that belong to a declared lane (RUNE_LANE set).
 #
-# A lane rune draws from its own RUNE_MAX_CONCURRENT rather than from SPIRA_MAX_DWARVES,
+# A lane rune draws from SPIRA_LANES_MAX_LIVE rather than from SPIRA_MAX_DWARVES,
 # so the pool can be fully occupied by builders and a lane rune still has room. The
 # sentinel's CHECK 7 handles lane runes in a separate loop after the task pool, calling
 # call_rune without a pool argument so the pool never clamps a lane rune's capacity.
@@ -646,7 +646,7 @@ park_unmapped() {
 #   pool has.
 #
 # A rune is the CLASS, a persona definition, and a dwarf one called instance of it, which is
-# what lets RUNE_MAX_CONCURRENT exist at all.
+# what lets RUNE_SINGLE_FLIGHT exist at all.
 #
 # A PARTY MEMBER SHOULD ALWAYS BE PRESENT, which is the part that is not in this file: Ops
 # is only called when an incident bead is waiting, so a quiet hour means the healer is not
@@ -658,11 +658,9 @@ park_unmapped() {
 # them. Ops could take one and the builder three whether or not the box could carry four,
 # and an on-call persona had no more claim on a slot than a feature worker.
 #
-# The order in SPIRA_RUNES IS the priority. Each persona takes up to its own
-# RUNE_MAX_CONCURRENT from what the ones before it left, so the first one named can never be
-# crowded out by work that is merely plentiful — which is the whole point of putting Ops
-# there. A persona declaring RUNE_ELASTIC=1 ignores its own cap and takes the remainder,
-# which is what "builders scale to fill" means; it belongs last.
+# The order in SPIRA_RUNES IS the priority. A persona declaring RUNE_ELASTIC=1 takes the
+# remainder of the pool, which is what "builders scale to fill" means; it belongs last. A
+# RUNE_SINGLE_FLIGHT=1 persona is held to one live; any other has no cap of its own.
 #
 # WHY THERE IS NO RESERVATION MECHANISM. The first version of this gave Ops a reserved slot
 # inside the shared pool, because ordering alone only stops a builder taking a slot AHEAD of
@@ -685,28 +683,19 @@ park_unmapped() {
 # calling it by name already reaches strand exactly as a one-line shim would).
 rune_free() {           # rune_free <rune> [pool-remaining] [exclude-unit]
     local f="$1" pool="${2:-}" exclude="${3:-}" max have free
-    max="$(rune_get "$f" RUNE_MAX_CONCURRENT 1)"; max="${max:-1}"
-    # ELASTIC: the remainder of the pool, not this persona's own number. With no pool given
-    # there is no remainder to take, so it falls back to its declared cap rather than to
-    # unbounded — an elastic persona on a host that never enforced a pool must not become
-    # the one that discovers the box's limits.
+    if [ "$(rune_get "$f" RUNE_SINGLE_FLIGHT 0)" = 1 ]; then max=1; else max=999999; fi
     local is_remainder=0
-    if [ "$(rune_get "$f" RUNE_ELASTIC 0)" = 1 ] && [ -n "$pool" ]; then
-        max="$pool"
-        is_remainder=1
+    if [ "$(rune_get "$f" RUNE_ELASTIC 0)" = 1 ]; then
+        if [ -n "$pool" ]; then max="$pool"; is_remainder=1; else max=1; fi
     fi
-    # A REMAINDER IS NOT A CAP. A number that already nets out what is running (the pool
-    # from sentinel.sh) is how many MORE may start. Subtracting the running count from it
-    # again withholds more the more is running, so the system saturates at half its ceiling
-    # and reports itself at its limit.
+    # A remainder already nets out what is running; subtracting the running count again
+    # would saturate the fleet at half its ceiling.
     have="$(dwarf_count "$f" "$exclude")"
     if [ "$is_remainder" = 1 ]; then
         free="$max"
     else
         free=$(( max > have ? max - have : 0 ))
     fi
-    # AND THE POOL CLAMPS LAST, after this persona's cap, because it is the outermost of
-    # the two and the only one the personas share.
     [ -n "$pool" ] && [ "$pool" -lt "$free" ] 2>/dev/null && free="$pool"
     printf '%d' "$free"
 }
@@ -816,7 +805,7 @@ named_unit_stop() {      # named_unit_stop <systemd --user unit glob> -> stop ev
 # API CAPACITY — the account's own five-hour window, and the second unrelated thing in this
 # harness called "capacity".
 #
-# The other one: RUNE_MAX_CONCURRENT is how many dwarves may run at once. It has nothing to do
+# The other one: the concurrency of dwarves (RUNE_SINGLE_FLIGHT, the fleet ceiling). It has nothing to do
 # with this one, which is whether the API will answer at all. The name collision is why the
 # condition went unhandled for so long — `grep capacity` returned confident, irrelevant hits.
 #

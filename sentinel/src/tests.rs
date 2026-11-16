@@ -830,7 +830,7 @@ fn world_gate_refuses_while_the_claims_lane_is_stopped_on_every_repo() {
 // ---------------------------------------------------------------------------------------
 // call_rune's refusal ladder (rows once proved in a shell suite).
 // The roster is `builder`, `ops`; each rule binds to a declaration (RUNE_ELASTIC,
-// RUNE_LANE, RUNE_MAX_CONCURRENT), so the same two names play different roles per test.
+// RUNE_LANE), so the same two names play different roles per test.
 /// sp-hh599, law-a-control-that-cannot-check-must-refuse: `rune_ready`'s own rc contract
 /// (sp-3ntca) already maps every nonzero OTHER than 2 to `ReadyAnswer::Failed` — this
 /// proves the CONSUMING side holds up its half: a claim-error must be LOUD (stderr, not

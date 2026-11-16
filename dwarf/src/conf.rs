@@ -17,7 +17,7 @@ pub struct Rune {
     pub name: String,
     pub labels: String,
     pub exclude_labels: String,
-    pub max_concurrent: u32,
+    pub single_flight: bool,
     pub elastic: bool,
     pub lease_minutes: Option<u32>,
     pub heartbeat_seconds: u64,
@@ -51,7 +51,7 @@ impl Rune {
             name: name.to_string(),
             labels: get(v, "RUNE_LABELS").unwrap_or("").to_string(),
             exclude_labels: get(v, "RUNE_EXCLUDE_LABELS").unwrap_or("").to_string(),
-            max_concurrent: num(v, "RUNE_MAX_CONCURRENT").unwrap_or(1),
+            single_flight: get(v, "RUNE_SINGLE_FLIGHT") == Some("1"),
             elastic: get(v, "RUNE_ELASTIC") == Some("1"),
             lease_minutes: num(v, "RUNE_LEASE_MINUTES"),
             heartbeat_seconds: num(v, "RUNE_HEARTBEAT_SECONDS").unwrap_or(30),
@@ -369,7 +369,7 @@ mod tests {
     #[test]
     fn rune_defaults_match_dwarf_sh() {
         let f = Rune::from_vars("builder", &vars(&[("RUNE_LABELS", "spira,plan")]));
-        assert_eq!(f.max_concurrent, 1);
+        assert!(!f.single_flight);
         assert_eq!(f.heartbeat_seconds, 30);
         assert_eq!(f.lease_seconds(), 600);
         assert_eq!(f.memory_prefixes, "law-");

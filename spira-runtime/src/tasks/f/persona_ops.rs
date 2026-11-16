@@ -23,7 +23,7 @@
 //! `persona.ops.observe` returns a [`Snapshot`]: `halted` (the world's halt), `rune_present`
 //! (`runes/ops.rune`), `prompt_head` and `prompt` (read from `watch.tower`'s last emitted
 //! snapshot, not the file), `live` and `max` (`live` from the scheduler's own unit table, S6
-//! `unit.facts`; `RUNE_MAX_CONCURRENT`), `draining` (`world.draining`) and `pause` (the capacity
+//! `unit.facts`; `RUNE_SINGLE_FLIGHT`), `draining` (`world.draining`) and `pause` (the capacity
 //! pause: open, paused, or unknown, which fails closed).
 //!
 //! # Decide
@@ -482,7 +482,7 @@ pub fn run_observe(e: &Effects, _key: &str, s: &EffectSpec) -> Result<String, St
     let home = spira_config::resolve::locate_home_for_process()?;
     let rune_file = home.join("runes").join(format!("{RUNE}.rune"));
     let prompt = std::fs::read_to_string(run.join("ops-sweep-prompt.txt")).unwrap_or_default();
-    let max = if rune_file.is_file() { dwarf::ops_sweep::rune(&home, RUNE, &lookup(&cfg)).map(|r| r.max_concurrent).unwrap_or(1) } else { 0 };
+    let max = u32::from(rune_file.is_file());
     let live = e
         .units
         .as_deref()

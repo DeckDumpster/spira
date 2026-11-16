@@ -1004,4 +1004,29 @@ mod tests {
         assert_eq!(uses, ["builder", "mender", "pilgrim", "qa"]);
         assert_eq!(reactive, ["mender", "pilgrim", "qa"]);
     }
+
+    #[test]
+    fn the_shipped_runes_declare_single_flight_for_exactly_the_sweeps_over_shared_state() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/runes");
+        let mut single = vec![];
+        let mut seen = 0;
+        for d in [dir.clone(), dir.join("disabled")] {
+            for e in std::fs::read_dir(&d).unwrap().flatten() {
+                let path = e.path();
+                if path.extension().is_none_or(|x| x != "rune") {
+                    continue;
+                }
+                seen += 1;
+                let text = std::fs::read_to_string(&path).unwrap();
+                let name = path.file_stem().unwrap().to_string_lossy().into_owned();
+                assert!(!text.contains("RUNE_MAX_CONCURRENT"), "{name} still sets the retired cap");
+                if text.lines().any(|l| l.trim() == "RUNE_SINGLE_FLIGHT=1") {
+                    single.push(name);
+                }
+            }
+        }
+        assert!(seen > 10, "the matcher read {seen} runes");
+        single.sort();
+        assert_eq!(single, ["batcher", "czar", "groomer", "mimir", "pilgrim", "qa", "warden"]);
+    }
 }

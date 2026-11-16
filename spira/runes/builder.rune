@@ -80,14 +80,11 @@ RUNE_MODEL=claude-sonnet-5-5
 # Dwarves work in separate worktrees and claim atomically, so the risk is contention in a
 # shared repo, not lost work.
 # SPIRA_MAX_DWARVES in spira.conf is the pool ceiling: the sentinel reads it and draws
-# it down across the task roster. This number is the fallback for a host with no pool.
-RUNE_MAX_CONCURRENT=3
+# it down across the task roster.
 
 # ELASTIC, AND THEREFORE LAST IN SPIRA_RUNES. The builder takes whatever the pool has left
 # once every persona ahead of it has been served and every reserve has been honoured, rather
-# than a number of its own — "builders scale to fill the remaining spots". Its own
-# MAX_CONCURRENT above is the fallback on a host that declares no pool at all, so a clean
-# clone does not discover this box's limits by exceeding them.
+# than a number of its own — "builders scale to fill the remaining spots".
 RUNE_ELASTIC=1
 
 # Build-disk class (design "Lanes by bound resource"): admitted only while SPIRA_MAX_DWARVES has room.

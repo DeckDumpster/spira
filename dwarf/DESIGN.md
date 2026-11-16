@@ -267,7 +267,7 @@ struct Snapshot {
 }
 
 // [conf] the persona (RUNE_* after sourcing the .rune) and a typed view of conf.sh
-struct Rune { name, labels, exclude_labels: String, max_concurrent: u32, elastic: bool,
+struct Rune { name, labels, exclude_labels: String, single_flight: bool, elastic: bool,
     lease_minutes: Option<u32> /* 10 */, heartbeat_seconds: u64 /* 30 */,
     timeout_seconds: Option<u64>, memory_prefixes /* "law-" */, statute_core,
     tools /* "Bash,Read,Edit,Write,Glob,Grep" */, project_instructions: String,

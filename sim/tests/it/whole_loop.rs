@@ -129,12 +129,12 @@ impl Lc {
     }
 }
 
-/// What a scenario scripts: the beads it files (at what time), how many dwarves the rune may
-/// run at once, and which member's change turns the certify red (none: green).
+/// What a scenario scripts: the beads it files (at what time), whether the rune may
+/// run only one at a time, and which member's change turns the certify red (none: green).
 #[derive(Clone)]
 struct Script {
     file: Vec<(u64, &'static str)>,
-    max_concurrent: u32,
+    single_flight: bool,
     guilty: Option<&'static str>,
 }
 
@@ -234,7 +234,7 @@ fn sentinel_observe(w: &World) -> Result<String, String> {
         lanes_max_live: Some(4),
         max_dwarves: Some(4),
         roster: vec![RUNE.into()],
-        runes: [(RUNE.to_string(), sc::RuneCfg { lane: false, max_concurrent: w.script.max_concurrent, elastic: false, uses: vec![], reactive: false })].into(),
+        runes: [(RUNE.to_string(), sc::RuneCfg { lane: false, single_flight: w.script.single_flight, elastic: false, uses: vec![], reactive: false })].into(),
         live_units: live,
         now_ms: now,
         ..sc::Snapshot::default()
@@ -666,7 +666,7 @@ fn dump(r: &Run) -> String {
 
 #[test]
 fn one_bead_is_filed_claimed_submitted_cut_certified_and_landed_on_the_service_tasks() {
-    let script = Script { file: vec![(30_000, "sp-w3a")], max_concurrent: 1, guilty: None };
+    let script = Script { file: vec![(30_000, "sp-w3a")], single_flight: true, guilty: None };
     let a = run(11, script.clone());
     let b = run(11, script);
     println!("green scenario: wall {:?} and {:?} for {} virtual minutes", a.wall, b.wall, UNTIL_MS / MIN);
@@ -695,7 +695,7 @@ fn one_bead_is_filed_claimed_submitted_cut_certified_and_landed_on_the_service_t
 /// names the survivor, which is certified and landed.
 #[test]
 fn a_red_round_attributes_ejects_the_guilty_member_and_lands_the_rest() {
-    let script = Script { file: vec![(30_000, "sp-w3a"), (30_000, "sp-w3b")], max_concurrent: 2, guilty: Some("sp-w3b") };
+    let script = Script { file: vec![(30_000, "sp-w3a"), (30_000, "sp-w3b")], single_flight: false, guilty: Some("sp-w3b") };
     let a = run(12, script.clone());
     let b = run(12, script);
     println!("red scenario: wall {:?} and {:?} for {} virtual minutes", a.wall, b.wall, UNTIL_MS / MIN);
@@ -719,7 +719,7 @@ fn a_red_round_attributes_ejects_the_guilty_member_and_lands_the_rest() {
 /// next event (`runtime::conformance::a_handlers_writes_are_seen_before_its_streams_next_event`).
 #[test]
 fn two_members_sifted_in_one_pass_are_cut_into_one_round() {
-    let script = Script { file: vec![(30_000, "sp-w3a"), (30_000, "sp-w3b")], max_concurrent: 2, guilty: None };
+    let script = Script { file: vec![(30_000, "sp-w3a"), (30_000, "sp-w3b")], single_flight: false, guilty: None };
     let a = run(12, script);
     show("one-pass", &a);
     let opens = a.asked.iter().filter(|n| *n == bl::ROUND_OPEN).count();
@@ -731,8 +731,8 @@ fn two_members_sifted_in_one_pass_are_cut_into_one_round() {
 
 // --- a crash between a store write and its journaled outcome --------------------------------------
 
-const GREEN2: fn() -> Script = || Script { file: vec![(30_000, "sp-w3a"), (30_000, "sp-w3b")], max_concurrent: 2, guilty: None };
-const RED2: fn() -> Script = || Script { file: vec![(30_000, "sp-w3a"), (30_000, "sp-w3b")], max_concurrent: 2, guilty: Some("sp-w3b") };
+const GREEN2: fn() -> Script = || Script { file: vec![(30_000, "sp-w3a"), (30_000, "sp-w3b")], single_flight: false, guilty: None };
+const RED2: fn() -> Script = || Script { file: vec![(30_000, "sp-w3a"), (30_000, "sp-w3b")], single_flight: false, guilty: Some("sp-w3b") };
 const BEADS: [&str; 2] = ["sp-w3a", "sp-w3b"];
 /// The store writes one landing of `BEADS` makes: deliver and delivered per member, then the round's close.
 const LAND_WRITES: u32 = 2 * BEADS.len() as u32 + 1;
@@ -927,7 +927,7 @@ fn releases_of(j: &dyn Journal, held: &[String]) -> Vec<usize> {
 /// J4: a halt survives the restart; each effect held before it is released once on resume.
 #[test]
 fn a_halt_holds_across_a_joint_crash_and_the_resume_releases_each_held_effect_once() {
-    let rig = Rig::new(13, Script { file: vec![(30_000, "sp-w3a")], max_concurrent: 1, guilty: None }, None);
+    let rig = Rig::new(13, Script { file: vec![(30_000, "sp-w3a")], single_flight: true, guilty: None }, None);
     let journal = rig.journal();
     let finish = || rig.finish(std::time::Instant::now(), None);
     let mut driver = rig.boot(journal.clone());

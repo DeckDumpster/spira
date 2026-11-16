@@ -2,14 +2,14 @@
 #
 # groom-trigger.sh — file a trigger bead for the groomer persona.
 #
-# The groomer persona is a lane rune: it draws from its own RUNE_MAX_CONCURRENT
-# slot and is woken by trigger beads carrying SPIRA_GROOMER_LABEL. This script
+# The groomer persona is a lane rune: it is single-flight
+# (RUNE_SINGLE_FLIGHT) and is woken by trigger beads carrying SPIRA_GROOMER_LABEL. This script
 # files one such bead on a cadence (driven by spira-groom.timer), deduplicating
 # so at most one open trigger exists at a time.
 #
 # DEDUP. An open trigger bead means a groom pass is either waiting to be claimed
 # or actively running. Filing a second one while the first is still open would
-# queue a redundant pass; the groomer's RUNE_MAX_CONCURRENT=1 makes such a queue
+# queue a redundant pass; the groomer's RUNE_SINGLE_FLIGHT=1 makes such a queue
 # permanent — a lane with one slot and two trigger beads means the second trigger
 # waits forever after the first, building an ever-growing backlog of noop passes.
 # One open trigger is the correct steady state; this guard enforces it.

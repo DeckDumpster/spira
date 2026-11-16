@@ -119,11 +119,11 @@ fn start_all(u: &ScriptedUnits, acts: &[Act]) -> usize {
     n
 }
 
-/// Ten builder beads ready, a builder may run ten at once, and the fleet ceiling is 4.
+/// Ten builder beads ready, a builder is not single-flight, and the fleet ceiling is 4.
 fn crowded(f: &Fleet, now_ms: u64) -> Snapshot {
     Snapshot {
         ready_by_rune: [("builder".to_string(), Some(10))].into(),
-        runes: [("builder".to_string(), RuneCfg { max_concurrent: 10, ..RuneCfg::default() })].into(),
+        runes: [("builder".to_string(), RuneCfg::default())].into(),
         roster: vec!["builder".into()],
         max_live: Some(4),
         live_by_rune: f.live_by_rune.clone(),
@@ -262,7 +262,7 @@ fn shipped_runes(names: &[&str]) -> BTreeMap<String, RuneCfg> {
         .map(|n| {
             let cfg = RuneCfg {
                 lane: !get(n, "RUNE_LANE", "").is_empty(),
-                max_concurrent: get(n, "RUNE_MAX_CONCURRENT", "1").trim().parse().unwrap(),
+                single_flight: get(n, "RUNE_SINGLE_FLIGHT", "0") == "1",
                 elastic: get(n, "RUNE_ELASTIC", "0") == "1",
                 uses: spira_config::runes::rune_uses(&home, n).unwrap(),
                 reactive: get(n, "RUNE_REACTIVE", "0") == "1",

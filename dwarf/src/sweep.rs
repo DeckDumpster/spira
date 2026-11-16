@@ -20,9 +20,8 @@ impl Run<'_> {
         let f = self.rune.name.clone();
         let own = self.own_unit.clone();
         let have: i64 = self.sv("dwarf_count", &s(&[&f, &own])).text().trim().parse().unwrap_or(0);
-        let max = self.rune.max_concurrent as i64;
-        if have >= max {
-            self.log(&format!("{f}: at capacity ({have}/{max}), not sweeping"));
+        if have >= 1 {
+            self.log(&format!("{f}: at capacity ({have}/1), not sweeping"));
             self.ledger.awake(self.now(), &f, "capacity");
             return 0;
         }

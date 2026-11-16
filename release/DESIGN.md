@@ -355,7 +355,7 @@ Kept deliberately close to `spira/activate.sh`'s own behaviour rather than upgra
 `spira/stage.sh`'s replacement: stand up (or tear down) a fully isolated Spira for
 testing — its own git repo and bare remote, its own beads database (`bd-embedded`, via a
 private `bin/bd` symlink so nothing this stage runs can resolve the caller's real `bd`), its
-own `SPIRA_RUN`, a minimal runes (one `canary` rune, `RUNE_MAX_CONCURRENT=1`), a
+own `SPIRA_RUN`, a minimal runes (one `canary` rune, `RUNE_SINGLE_FLIGHT=1`), a
 six-column `repo-map` line, and the two synthetic dispatch scripts `sentinel` needs in place
 of `systemd-run`: `fake-call.sh` (execs `release canary-worker` synchronously) and
 `fake-launch.sh` (records the landing dispatch timestamp and exits 0 — `release canary` runs

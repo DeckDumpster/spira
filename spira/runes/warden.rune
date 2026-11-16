@@ -16,7 +16,8 @@ RUNE_MEMORY_PREFIXES="law-"
 RUNE_STATUTE_CORE="law-landed-is-not-in-force,law-closed-is-not-landed,law-anomalies-are-not-coincidences,law-absence-needs-a-positive-control,law-escalate-decisions-not-problems"
 
 RUNE_MODEL=claude-sonnet-5-5
-RUNE_MAX_CONCURRENT=1
+# One at a time: it sweeps shared state, and two sweeps would double-act on one finding.
+RUNE_SINGLE_FLIGHT=1
 RUNE_LANE=warden
 
 RUNE_TIMEOUT_SECONDS=1800
