@@ -284,8 +284,11 @@ fn bin_beside(test_exe: &Path, name: &str) -> PathBuf {
 /// found from `current_exe` at run time. `CARGO_BIN_EXE_*` is deliberately not read: cargo
 /// and nextest differ on it, and there is one way to find the binary.
 pub fn bin_exe(name: &str) -> PathBuf {
-    let exe = std::env::current_exe().expect("current_exe");
-    let bin = bin_beside(&exe, name);
+    built_beside(&std::env::current_exe().expect("current_exe"), name)
+}
+
+fn built_beside(test_exe: &Path, name: &str) -> PathBuf {
+    let bin = bin_beside(test_exe, name);
     assert!(
         bin.is_file(),
         "binary {name} is not built at {}: build it with cargo before running this test",
@@ -323,6 +326,14 @@ mod tests {
     #[should_panic(expected = "is not under <target>/<profile>/deps")]
     fn bin_beside_refuses_an_exe_with_no_profile_directory() {
         bin_beside(Path::new("x"), "a");
+    }
+
+    #[test]
+    fn a_binary_beside_the_test_exe_is_found() {
+        let t = TempDir::new("testkit-bin");
+        std::fs::create_dir_all(t.join("debug/deps")).unwrap();
+        std::fs::write(t.join("debug/a"), b"").unwrap();
+        assert_eq!(built_beside(&t.join("debug/deps/x-1"), "a"), t.join("debug/a"));
     }
 
     #[test]

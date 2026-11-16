@@ -308,7 +308,7 @@ pub fn locate_home_for_process() -> Result<PathBuf, String> {
 /// The tree `SPIRA_HOME` sits in: the checkout under cargo, the release under a unit.
 pub fn checkout_root(env: &BTreeMap<String, String>) -> Result<PathBuf, String> {
     let home = locate_home(env, Path::new(""))?;
-    home.parent().map(Path::to_path_buf).ok_or_else(|| format!("the harness home {} has no parent", home.display()))
+    home.parent().filter(|p| !p.as_os_str().is_empty()).map(Path::to_path_buf).ok_or_else(|| format!("the harness home {} has no parent", home.display()))
 }
 
 /// [`checkout_root`] for this process.
