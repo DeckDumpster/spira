@@ -2096,6 +2096,13 @@ fn open_timed(
     if let Err((rc, out)) = cut {
         match cut_outcome(w, &c, &batch) {
             CutOutcome::Exists(stored) => carried = stored,
+            CutOutcome::Absent if rc == 2 && w.lc.rounds_door().is_some() => {
+                w.err(format!(
+                    "queue.sh {label}: cannot tell whether round {batch} was cut (rc={rc}): {out}; the store does not show it yet — its worktree {} is kept; `queue round status` says whether it exists",
+                    wt.display()
+                ));
+                return FAIL;
+            }
             CutOutcome::Absent => {
                 w.err(format!(
                     "queue.sh {label}: spira-lc cut refused for {batch} (rc={rc}): {out}"

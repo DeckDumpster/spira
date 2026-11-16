@@ -9292,3 +9292,58 @@ fn a_round_verb_without_a_known_actor_is_usage_and_writes_nothing() {
         assert_eq!(t.landing_log(), before, "nothing is written");
     }
 }
+
+#[test]
+fn open_whose_cut_answers_cannot_tell_and_applies_later_keeps_its_worktree_and_one_round() {
+    let t = round_world();
+    t.lc.store.get_or_init(crate::batches::mem::MemDoor::default);
+    t.git.materialise.set(true);
+    t.lc.cut_applies_late.set(true);
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a,sp-b"]),
+        1,
+        "{}",
+        t.err()
+    );
+    assert!(
+        t.err().contains("cannot tell whether round") && !t.err().contains("cut refused"),
+        "{}",
+        t.err()
+    );
+    assert!(!t.lc.has("requeue-orphans"), "{:?}", t.lc.calls.borrow());
+    let calls = t.git.calls.borrow();
+    let last_remove = calls.iter().rposition(|c| c.starts_with("worktree-remove"));
+    let first_cut = t.lc.calls.borrow().iter().position(|c| c.starts_with("cut "));
+    assert!(first_cut.is_some(), "POSITIVE CONTROL: the cut ran");
+    drop(calls);
+    assert!(
+        t.git.calls.borrow().iter().skip(last_remove.map_or(0, |i| i + 1)).all(|c| !c.starts_with("worktree-remove")),
+        "no removal after the cut"
+    );
+    let tail_removes = t.git.calls.borrow().iter().filter(|c| c.starts_with("worktree-remove")).count();
+    assert!(tail_removes <= 1, "only the pre-add clearing of a stale tree removes one: {tail_removes}");
+
+    t.lc.apply_late_cut();
+    t.lc.cut_applies_late.set(false);
+    let before = t.git.calls.borrow().len();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a,sp-b"]), 1);
+    assert_eq!(
+        t.git.calls.borrow().len(),
+        before,
+        "the second open leaves the first round's worktree alone: {:?}",
+        t.git.calls.borrow()
+    );
+    let d = t.lc.store.get().unwrap();
+    let held = crate::batches::open_batches(d, "spira").unwrap();
+    assert_eq!(held.len(), 1, "one round: {}", t.err());
+    let ids: std::collections::BTreeSet<String> = t
+        .lc
+        .calls
+        .borrow()
+        .iter()
+        .filter_map(|c| c.strip_prefix("cut ").and_then(|r| r.split(' ').next()).map(String::from))
+        .collect();
+    assert_eq!(ids.len(), 1, "one cut id reaches the store: {ids:?}");
+    let wt = std::path::PathBuf::from(held[0].kv.get("worktree").unwrap_or(""));
+    assert!(wt.exists(), "the recorded worktree exists");
+}

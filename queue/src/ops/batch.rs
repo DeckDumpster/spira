@@ -1185,6 +1185,22 @@ impl PrRequest<'_> {
     }
 }
 
+/// A cut that answered "cannot tell" may yet apply, and the branch is the batch's head: only a
+/// definite refusal deletes it.
+fn cut_failed(w: &World, p: &PrRequest, lc_id: &str, rc: i32, out: &str) {
+    if rc == 2 {
+        w.err(format!(
+            "queue.sh open-batch: cannot tell whether {lc_id} was cut (rc={rc}): {out} — no PR opened; branch {} is kept",
+            p.branch
+        ));
+        return;
+    }
+    w.err(format!(
+        "queue.sh open-batch: spira-lc cut refused for {lc_id} (rc={rc}): {out} — no PR opened"
+    ));
+    w.git.branch_delete(p.path, p.branch);
+}
+
 /// `batch open` with the batch machine on the control store: the record first, then the PR, so
 /// no step leaves a PR the store holds no record of. Ok((PR, armed)).
 fn open_on_store(
@@ -1209,10 +1225,7 @@ fn open_on_store(
         "queue.sh",
         Some(&rec),
     ) {
-        w.err(format!(
-            "queue.sh open-batch: spira-lc cut refused for {lc_id} (rc={rc}): {out} — no PR opened"
-        ));
-        w.git.branch_delete(p.path, p.branch);
+        cut_failed(w, p, lc_id, rc, &out);
         return Err(());
     }
     w.out(format!(
@@ -1268,8 +1281,7 @@ fn open_with_file(
     let version = match cut_settled(w, lc_id, &c.r.name, p.head, base_sha, csv, "queue.sh", None) {
         Ok(v) => v,
         Err((rc, out)) => {
-            w.err(format!("queue.sh open-batch: spira-lc cut refused for {lc_id} (rc={rc}): {out} — no PR opened"));
-            w.git.branch_delete(p.path, p.branch);
+            cut_failed(w, p, lc_id, rc, &out);
             return Err(());
         }
     };
