@@ -18,8 +18,9 @@ const NAME: &str = "compile-time-path";
 const OWN_SOURCE: &str = "spira-lint/src/rules/compile_time_path.rs";
 const SYSTEM_PATHS_SOURCE: &str = "system-paths/src/lib.rs";
 const ALLOW_FILE: &str = "spira-lint/compile-time-path-allow.d";
-const ROOTS: [&str; 15] = [
+const ROOTS: [&str; 22] = [
     "/home", "/srv", "/root", "/Users", "/proc", "/sys", "/dev", "/tmp", "/var", "/etc", "/run", "/usr", "/bin", "/sbin", "/lib",
+    "/nonexistent", "/workspace", "/work", "/src", "/shots", "/spira-shots", "/.dockerenv",
 ];
 const LITERAL_MESSAGE: &str = "an absolute path literal: a fixture is relative, or joined to a `testkit::TempDir`; a real system path is a `system_paths` constant";
 const MARKER_MESSAGE: &str = "a `not a path` marker needs a reason and cannot excuse a filesystem root";
@@ -335,6 +336,10 @@ mod tests {
             "const A: &str = include_str!(\"/abs\");\n",
             "const A: &str = \"/u/x\"; // not a path: url route\n",
             "const A: char = '/';\n",
+            "fn f(v: V) { v.pointer_mut(\"/a/b\"); }\n",
+            "const A: &[u8] = b\"/u/x\"; // not a path: x\n",
+            "const A: &CStr = c\"/u/x\"; // not a path: x\n",
+            "fn f(p: &str) { p.starts_with(\"/s\"); p.find(\"/s/\"); p.rfind(\"/s\"); p.strip_prefix(\"/s\"); p.split_once(\"/s\"); p.rsplit_once(\"/s\"); p.replace(\"/s\", \"\"); }\n",
         ] {
             assert_eq!(run(src), Vec::<String>::new(), "{src}");
         }
@@ -343,7 +348,7 @@ mod tests {
 
     #[test]
     fn a_marker_needs_a_reason_and_cannot_excuse_a_root() {
-        for src in ["const A: &str = \"/u/x\"; // not a path:\n", "const A: &str = \"/u/x\"; // not a path:   \n", "const A: &str = \"/home/x\"; // not a path: url\n", "const A: &str = \"/proc/x\"; // not a path: url\n"] {
+        for src in ["const A: &str = \"/u/x\"; // not a path:\n", "const A: &str = \"/u/x\"; // not a path:   \n", "const A: &str = \"/home/x\"; // not a path: url\n", "const A: &str = \"/proc/x\"; // not a path: url\n", "const A: &str = \"/nonexistent\"; // not a path: x\n", "const A: &str = \"/srv/x\"; // not a path: x\n", "const A: &str = \"@U/x\"; // not a path: x\n", "const A: &[u8] = b\"/work/x\"; // not a path: x\n"] {
             let got = run(src);
             assert_eq!(got.len(), 1, "{src}: {got:?}");
             assert!(got[0].contains("needs a reason and cannot excuse a filesystem root"), "{got:?}");
