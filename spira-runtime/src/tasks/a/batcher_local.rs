@@ -3066,6 +3066,13 @@ pub mod edge {
         }
 
         #[test]
+        fn a_confirmed_attribution_passes_confirmed_and_an_ordinary_one_does_not() {
+            let argv = |confirmed| attribute_argv("batcher".into(), Path::new("/rv"), Path::new("/r"), &Leg { confirmed, ..Leg::on("spira") });
+            assert!(argv(true).contains(&"--confirmed".to_string()));
+            assert!(!argv(false).contains(&"--confirmed".to_string()));
+        }
+
+        #[test]
         fn an_attribution_after_a_certify_with_no_batch_names_no_prior() {
             let leg = Leg { after_certify: true, ..Leg::on("spira") };
             assert_eq!(after_pass(&leg), None);

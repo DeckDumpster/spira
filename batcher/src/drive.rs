@@ -3673,6 +3673,20 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_confirmed_red_no_suspect_reproduces_alone_runs_every_member_alone() {
+        let mut f = Fake::new(|s, tree| s.starts_with("test-0") && tree.len() == 1 && tree.contains("m3"));
+        f.confirmed = true;
+        f.runs_alone = true;
+        f.prior_suites = reds3();
+        let t: &[&str] = &["m1", "m2"];
+        let mut ops = touching_ops(&[("test-00.sh", t), ("test-01.sh", t), ("test-02.sh", t)]);
+        let end = attribute_round(&mut f, &mut ops, &corpus(4), vec![member("m1"), member("m2"), member("m3")], budget6()).unwrap();
+        let gone: Vec<&str> = ops.ejected.iter().map(|(id, _)| id.as_str()).collect();
+        assert_eq!(gone, ["m3"]);
+        assert!(matches!(&end, RoundEnd::Land { members, .. } if members.len() == 2), "{end:?}");
+    }
+
+    #[test]
     fn a_confirmed_red_the_base_reproduces_is_base_red() {
         let mut f = Fake::new(|s, _| s.starts_with("test-0"));
         f.confirmed = true;
