@@ -361,7 +361,7 @@ impl Fake {
                 .collect();
             return (0, out.join("\n") + "\nVERDICT GREEN");
         }
-        if cmd.starts_with("cargo ") || cmd.starts_with("CARGO_BUILD_JOBS=") {
+        if cmd.starts_with("cargo ") || cmd.starts_with("CARGO_BUILD_JOBS=") || cmd.starts_with("tools/test-sandbox/runner --around cargo ") {
             let kind = if cmd.starts_with("cargo build") || cmd.contains("cargo test --no-run") {
                 "build"
             } else {
@@ -3215,7 +3215,7 @@ fn a_red_fence_in_unit_mode_still_runs_the_unit_phases() {
     let cmds = f.cmds.borrow().clone();
     assert_eq!(cmds[0], "bash spira/fence.sh && run-suites");
     assert!(cmds[1].contains(" cargo test --no-run --timings"), "{cmds:?}");
-    assert!(cmds[2].contains("; cargo nextest run "), "{cmds:?}");
+    assert!(cmds[2].contains("; tools/test-sandbox/runner --around cargo nextest run "), "{cmds:?}");
     assert!(cmds[3].starts_with("bash spira/fence.sh"), "{cmds:?}");
 }
 
@@ -4737,7 +4737,7 @@ fn fences_mode_a_planted_fence_violation_still_fails_the_gate_and_the_base_runs_
     let runs = gate_runs(&f);
     let want = crate::def::parse(&checked_in_steps()).unwrap().fences_only(&[]).command();
     assert_eq!(runs, [want.clone(), want], "the base trial composes fences mode too");
-    assert!(!f.cmds.borrow().iter().any(|c| c.contains("; cargo nextest run ")));
+    assert!(!f.cmds.borrow().iter().any(|c| c.contains("; tools/test-sandbox/runner --around cargo nextest run ")));
 }
 
 #[test]
@@ -4747,7 +4747,7 @@ fn fences_mode_a_unit_test_failure_in_a_touched_crate_fails_the_branch_at_the_ga
     let f = fences_fake(&["gate/src/x.rs"]);
     f.unit_runs.borrow_mut().insert((MERGE_SHA.into(), "test"), (101, "test x ... FAILED\n     Summary [   0.010s] 1 test run: 0 passed, 1 failed, 0 skipped".into()));
     assert_eq!(f.run(), FAIL, "{}", f.stderr());
-    assert!(f.cmds.borrow().iter().any(|c| c.contains("; cargo nextest run ")), "the touched crate's tests ran");
+    assert!(f.cmds.borrow().iter().any(|c| c.contains("; tools/test-sandbox/runner --around cargo nextest run ")), "the touched crate's tests ran");
     // Control: a branch touching no crate runs no unit tests and passes on the same fixture.
     let d = fences_fake(&["docs/x.md"]);
     d.unit_runs.borrow_mut().insert((MERGE_SHA.into(), "test"), (101, "test x ... FAILED\n     Summary [   0.010s] 1 test run: 0 passed, 1 failed, 0 skipped".into()));

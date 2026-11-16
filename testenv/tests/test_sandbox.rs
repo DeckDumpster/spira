@@ -1,7 +1,7 @@
 //! Every test binary runs under cargo's target runner, `tools/test-sandbox/runner`, which
 //! `.cargo/config.toml` names: a bubblewrap sandbox in which the caller's installation is out of
 //! reach (sp-bpenvh). What a binary can reach inside it is the test-sandbox suite's to prove
-//! with a probe binary; these tests read files and spawn nothing.
+//! with a probe binary; these tests read files and spawn at most the runner's own `--print-args`.
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -79,4 +79,110 @@ fn a_test_finds_no_installation_under_its_home() {
     for p in [".config/spira", ".local/bin/work"] {
         assert!(!home.join(p).exists(), "$HOME/{p} is visible inside the sandbox");
     }
+}
+
+fn print_args(args: &[&str]) -> Vec<String> {
+    let out = std::process::Command::new(workspace().join("tools/test-sandbox/runner"))
+        .arg("--print-args")
+        .args(args)
+        .output()
+        .expect("the runner spawns");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    String::from_utf8(out.stdout).unwrap().lines().map(String::from).collect()
+}
+
+#[test]
+fn around_binds_each_target_link_destination_writable_and_keeps_the_environment() {
+    let ws = workspace();
+    let scratch = testkit::TempDir::new("around-dest");
+    let dest = scratch.path().to_path_buf();
+    let (target, link) = (ws.join("target"), ws.join("target/around-probe"));
+    let made_target = !target.exists();
+    fs::create_dir_all(&target).unwrap();
+    let _ = fs::remove_file(&link);
+    std::os::unix::fs::symlink(&dest, &link).unwrap();
+    let args = print_args(&["--around", "/usr/bin/true", "nextest", "run"]);
+    fs::remove_file(&link).unwrap();
+    if made_target {
+        let _ = fs::remove_dir(&target);
+    }
+    let want = fs::canonicalize(&dest).unwrap().display().to_string();
+    assert!(args.windows(3).any(|w| w[0] == "--bind" && w[1] == want && w[2] == want), "{want} bound writable: {args:?}");
+    assert!(!args.iter().any(|a| a == "--clearenv"), "the caller's environment is kept: {args:?}");
+    assert!(args.windows(3).any(|w| w[0] == "--setenv" && w[1] == "GIT_CONFIG_SYSTEM"), "{args:?}");
+    assert_eq!(&args[args.len() - 4..], ["--", "/usr/bin/true", "nextest", "run"]);
+}
+
+#[test]
+fn the_held_decision_comes_before_any_work_a_held_call_does_not_need() {
+    let text = fs::read_to_string(workspace().join("tools/test-sandbox/runner")).unwrap();
+    let held = text.find("[ -z \"$print\" ] && held").expect("the runner decides held");
+    for later in ["readlink -f", "sed -n", "/bwrap"] {
+        let first_use = text.find(later).unwrap();
+        assert!(held < first_use, "`{later}` runs at byte {first_use}, before the held decision at {held}");
+    }
+}
+
+#[test]
+fn print_args_for_a_binary_is_what_the_landing_ref_printed() {
+    let ws = workspace();
+    let old = std::process::Command::new("git").arg("-C").arg(&ws).args(["show", "local/main:tools/test-sandbox/runner"]).output();
+    let Some(old) = old.ok().filter(|o| o.status.success()) else { return };
+    let copy = ws.join("tools/test-sandbox/runner.landing-ref");
+    testkit::write_exe(&copy, &String::from_utf8(old.stdout).unwrap());
+    let before = std::process::Command::new(&copy).args(["--print-args", "/usr/bin/true", "a", "b"]).output();
+    fs::remove_file(&copy).unwrap();
+    let before = String::from_utf8(before.unwrap().stdout).unwrap();
+    assert_eq!(print_args(&["/usr/bin/true", "a", "b"]), before.lines().collect::<Vec<_>>());
+}
+
+fn gate_environment_runner(fixture_home: &Path, release: &Path, tail: &str, args: &[&str]) -> std::process::Output {
+    let path = spira_config::release_path_from_env_with_tail(Some(release.to_str().unwrap()), tail).unwrap();
+    std::process::Command::new(workspace().join("tools/test-sandbox/runner"))
+        .args(args)
+        .env_clear()
+        .env("PATH", path)
+        .env("HOME", fixture_home)
+        .output()
+        .expect("the runner spawns")
+}
+
+#[test]
+fn around_finds_the_cargo_the_gate_path_names_and_binds_its_toolchain_under_a_hidden_home() {
+    let real = PathBuf::from(std::env::var("CARGO").expect("cargo sets CARGO for a test"));
+    let tmp = testkit::TempDir::new("around-gate-env");
+    let home = fs::canonicalize(tmp.path()).unwrap().join("home");
+    let release = tmp.path().join("release");
+    fs::create_dir_all(home.join(".cargo/bin")).unwrap();
+    fs::create_dir_all(&release).unwrap();
+    std::os::unix::fs::symlink(&real, home.join(".cargo/bin/cargo")).unwrap();
+    let tail = format!("{}/.cargo/bin", home.display());
+    let out = gate_environment_runner(&home, &release, &tail, &["--print-args", "--around", "cargo", "--version"]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let args: Vec<String> = String::from_utf8(out.stdout).unwrap().lines().map(String::from).collect();
+    let cargo = format!("{}/.cargo/bin/cargo", home.display());
+    assert_eq!(&args[args.len() - 3..], ["--", cargo.as_str(), "--version"], "{args:?}");
+    let hidden = home.display().to_string();
+    let shadow = args.iter().position(|a| a == "--tmpfs").and_then(|_| args.windows(2).position(|w| w[0] == "--tmpfs" && w[1] == hidden)).expect("the home is shadowed");
+    let toolchain = fs::canonicalize(&real).unwrap();
+    let bound = |dir: &str| args.windows(3).enumerate().any(|(i, w)| i > shadow && w[0] == "--ro-bind" && w[1] == dir && w[2] == dir);
+    let bin = format!("{hidden}/.cargo/bin");
+    let root = toolchain.parent().unwrap().parent().unwrap().display().to_string();
+    assert!(bound(&bin) || bound(&root), "cargo's directory is bound back after the home tmpfs: {args:?}");
+    if toolchain.file_name().is_some_and(|n| n == "cargo") {
+        assert!(bound(&root), "the toolchain cargo links to is bound back: {args:?}");
+    }
+}
+
+#[test]
+fn around_without_the_command_on_path_is_no_verdict_and_names_the_path() {
+    let tmp = testkit::TempDir::new("around-no-cargo");
+    let home = fs::canonicalize(tmp.path()).unwrap().join("home");
+    let release = tmp.path().join("release");
+    fs::create_dir_all(&home).unwrap();
+    fs::create_dir_all(&release).unwrap();
+    let out = gate_environment_runner(&home, &release, "", &["--around", "cargo", "--version"]);
+    assert_eq!(out.status.code(), Some(75), "{}", String::from_utf8_lossy(&out.stderr));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("cargo is not on PATH") && err.contains(&release.display().to_string()), "{err}");
 }
