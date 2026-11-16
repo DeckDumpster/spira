@@ -1057,9 +1057,8 @@ struct Filing<'a> {
     body: Option<&'a str>,
 }
 
-/// A child of a bead that carries spira-open-children cannot land after it, and the store refuses
-/// a bead blocked by its own descendant, so every filing that makes the bound bead wait, or wait
-/// on the bound bead, is filed unparented.
+/// The store refuses a bead blocked by its own descendant, so a filing with a blocks edge to or
+/// from the bound bead is filed unparented.
 fn file_and_bind(f: &Filing, register: impl FnOnce(&str) -> (i32, String)) -> (i32, String) {
     let (verb, bead_id) = (f.verb, f.bound);
     let waits = blocking_edge(verb, f.actor, bead_id, bead_id).is_some();
@@ -2179,9 +2178,10 @@ mod store_tests {
         let filing = super::Filing { verb: "file-followup", actor: "pilgrim", title: "a defect", persona: "builder", repo: "spira", bound: &pilgrimage, after_landing: false, body: Some(BODY) };
         let (code, defect) = super::file_and_bind(&filing, |_| (0, String::new()));
         assert_eq!(code, 0, "{defect}");
-        let shown = std::process::Command::new("bd").args(["-C", &std::env::var("SPIRA_DB").unwrap(), "show", &pilgrimage]).output().unwrap();
-        let shown = String::from_utf8_lossy(&shown.stdout).into_owned();
-        assert!(shown.contains(&defect), "the pilgrimage lists {defect} as a blocker: {shown}");
+        let shown = std::process::Command::new("bd").args(["-C", &std::env::var("SPIRA_DB").unwrap(), "show", &pilgrimage, "--json"]).output().unwrap();
+        let shown: serde_json::Value = serde_json::from_slice(&shown.stdout).unwrap();
+        let blocks = shown[0]["dependencies"].as_array().unwrap().iter().any(|d| d["id"] == defect.as_str() && d["dependency_type"] == "blocks");
+        assert!(blocks, "{pilgrimage} waits on {defect}: {shown}");
     }
 }
 
