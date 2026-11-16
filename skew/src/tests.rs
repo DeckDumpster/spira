@@ -275,18 +275,18 @@ fn check_no_releases_env_cannot_check() {
 #[test]
 fn check_not_latest_and_manifest_mismatch_both_fire() {
     let f = Fake::default();
-    f.set_env("SPIRA_RELEASES", "/releases");
-    f.symlinks.borrow_mut().insert(PathBuf::from("/releases/current"), "rel-2".into());
-    f.files.borrow_mut().insert(PathBuf::from("/releases/rel-2/MANIFEST"), format!("commit {}\n", "a".repeat(40)));
-    f.set_env("SPIRA_REPO", "/repo");
-    f.git_repos.borrow_mut().push(PathBuf::from("/repo"));
+    f.set_env("SPIRA_RELEASES", "releases");
+    f.symlinks.borrow_mut().insert(PathBuf::from("releases/current"), "rel-2".into());
+    f.files.borrow_mut().insert(PathBuf::from("releases/rel-2/MANIFEST"), format!("commit {}\n", "a".repeat(40)));
+    f.set_env("SPIRA_REPO", "repo");
+    f.git_repos.borrow_mut().push(PathBuf::from("repo"));
     f.repo_lands.borrow_mut().insert("home".into(), "push".into());
     *f.home_repo.borrow_mut() = "home".into();
-    f.tags.borrow_mut().insert("/repo".into(), vec!["spira-release-spira-20260101T000000Z".into(), "spira-0.1.104".into()]);
+    f.tags.borrow_mut().insert("repo".into(), vec!["spira-release-spira-20260101T000000Z".into(), "spira-0.1.104".into()]);
     // release_tag resolves to spira-release-spira-20260101T000000Z (not latest), whose tag commit differs from MANIFEST.
-    f.rev_parse.borrow_mut().insert("/repo|spira-release-spira-20260101T000000Z^{commit}".to_string(), "b".repeat(40));
-    f.rev_parse.borrow_mut().insert("/repo|spira-0.1.104^{commit}".to_string(), "c".repeat(40));
-    f.files.borrow_mut().insert(PathBuf::from("/releases/.tags/rel-2"), "spira-release-spira-20260101T000000Z".into());
+    f.rev_parse.borrow_mut().insert("repo|spira-release-spira-20260101T000000Z^{commit}".to_string(), "b".repeat(40));
+    f.rev_parse.borrow_mut().insert("repo|spira-0.1.104^{commit}".to_string(), "c".repeat(40));
+    f.files.borrow_mut().insert(PathBuf::from("releases/.tags/rel-2"), "spira-release-spira-20260101T000000Z".into());
 
     let rc = check(&f, false);
     assert_eq!(rc, EXIT_FINDING);
@@ -299,17 +299,17 @@ fn check_not_latest_and_manifest_mismatch_both_fire() {
 #[test]
 fn check_clean_when_tag_matches_and_is_latest() {
     let f = Fake::default();
-    f.set_env("SPIRA_RELEASES", "/releases");
-    f.symlinks.borrow_mut().insert(PathBuf::from("/releases/current"), "rel-2".into());
+    f.set_env("SPIRA_RELEASES", "releases");
+    f.symlinks.borrow_mut().insert(PathBuf::from("releases/current"), "rel-2".into());
     let sha = "a".repeat(40);
-    f.files.borrow_mut().insert(PathBuf::from("/releases/rel-2/MANIFEST"), format!("commit {sha}\n"));
-    f.set_env("SPIRA_REPO", "/repo");
-    f.git_repos.borrow_mut().push(PathBuf::from("/repo"));
+    f.files.borrow_mut().insert(PathBuf::from("releases/rel-2/MANIFEST"), format!("commit {sha}\n"));
+    f.set_env("SPIRA_REPO", "repo");
+    f.git_repos.borrow_mut().push(PathBuf::from("repo"));
     f.repo_lands.borrow_mut().insert("home".into(), "push".into());
     *f.home_repo.borrow_mut() = "home".into();
-    f.tags.borrow_mut().insert("/repo".into(), vec!["spira-release-spira-20260101T000000Z".into(), "spira-0.1.104".into()]);
-    f.rev_parse.borrow_mut().insert("/repo|spira-0.1.104^{commit}".into(), sha.clone());
-    f.files.borrow_mut().insert(PathBuf::from("/releases/.tags/rel-2"), "spira-0.1.104".into());
+    f.tags.borrow_mut().insert("repo".into(), vec!["spira-release-spira-20260101T000000Z".into(), "spira-0.1.104".into()]);
+    f.rev_parse.borrow_mut().insert("repo|spira-0.1.104^{commit}".into(), sha.clone());
+    f.files.borrow_mut().insert(PathBuf::from("releases/.tags/rel-2"), "spira-0.1.104".into());
 
     assert_eq!(check(&f, false), EXIT_OK);
     assert!(f.stdout_joined().contains("in effect"));
@@ -321,17 +321,19 @@ fn check_clean_when_tag_matches_and_is_latest() {
 /// read as "no release tags found", caught live by testenv's "local-dir" cases, sp-yyk47).
 #[test]
 fn resolve_all_tags_reads_local_tag_sidecars_not_git_tag() {
+    let root = testkit::TempDir::new("skew-local-sidecars");
+    let source = root.join("release-source");
     let f = Fake::default();
-    f.set_env("SPIRA_RELEASE_REPO", "/release-source");
-    f.existing.borrow_mut().push(PathBuf::from("/release-source"));
+    f.set_env("SPIRA_RELEASE_REPO", source.to_str().unwrap());
+    f.existing.borrow_mut().push(source.clone());
     f.local_tag_sidecars
         .borrow_mut()
-        .insert("/release-source".into(), vec!["spira-release-spira-20260912T120000Z".into()]);
+        .insert(source.to_str().unwrap().into(), vec!["spira-release-spira-20260912T120000Z".into()]);
     // A decoy under `tags_matching` (the git-tag seam) that must never be consulted here —
     // if it were, this test would see the decoy instead of the sidecar-derived tag.
-    f.tags.borrow_mut().insert("/repo".into(), vec![]);
+    f.tags.borrow_mut().insert("repo".into(), vec![]);
 
-    let tags = resolve_all_tags(&f, Path::new("/repo")).expect("local-dir tags resolve");
+    let tags = resolve_all_tags(&f, Path::new("repo")).expect("local-dir tags resolve");
     assert_eq!(tags, vec!["spira-release-spira-20260912T120000Z".to_string()]);
 }
 
@@ -346,9 +348,9 @@ fn resolve_all_tags_reads_local_tag_sidecars_not_git_tag() {
 #[test]
 fn check_no_harness_checkout_is_not_applicable_not_cannot_verify() {
     let f = Fake::default();
-    f.set_env("SPIRA_RELEASES", "/releases");
-    f.symlinks.borrow_mut().insert(PathBuf::from("/releases/current"), "rel-1".into());
-    f.files.borrow_mut().insert(PathBuf::from("/releases/rel-1/MANIFEST"), format!("commit {}\n", "a".repeat(40)));
+    f.set_env("SPIRA_RELEASES", "releases");
+    f.symlinks.borrow_mut().insert(PathBuf::from("releases/current"), "rel-1".into());
+    f.files.borrow_mut().insert(PathBuf::from("releases/rel-1/MANIFEST"), format!("commit {}\n", "a".repeat(40)));
     // No SPIRA_REPO set, no repo:spira row, no git checkout anywhere -- a release-only box.
     *f.home_repo.borrow_mut() = "spira".into();
 
@@ -365,14 +367,14 @@ fn check_no_harness_checkout_is_not_applicable_not_cannot_verify() {
 fn check_local_tampered_and_behind_both_fire() {
     let f = Fake::default();
     *f.home_repo.borrow_mut() = "home".into();
-    f.repo_roots.borrow_mut().insert("home".into(), PathBuf::from("/repo"));
-    f.git_repos.borrow_mut().push(PathBuf::from("/repo"));
+    f.repo_roots.borrow_mut().insert("home".into(), PathBuf::from("repo"));
+    f.git_repos.borrow_mut().push(PathBuf::from("repo"));
     f.landrefs.borrow_mut().insert("home".into(), "local/main".into());
-    f.rev_parse.borrow_mut().insert("/repo|local/main".into(), "tip123".into());
+    f.rev_parse.borrow_mut().insert("repo|local/main".into(), "tip123".into());
     *f.release_verify_ok.borrow_mut() = false;
     *f.release_verify_out.borrow_mut() = "hash mismatch".into();
     f.ancestors.borrow_mut().push(("old456".into(), "tip123".into()));
-    f.rev_list_counts.borrow_mut().insert("/repo|old456..tip123".into(), 3);
+    f.rev_list_counts.borrow_mut().insert("repo|old456..tip123".into(), 3);
 
     let rc = check_local(&f, "rel-1", "old456", false);
     assert_eq!(rc, EXIT_FINDING);
@@ -387,13 +389,13 @@ fn check_local_tampered_and_behind_both_fire() {
 fn check_local_resolves_landref_by_name_never_by_path() {
     let f = Fake::default();
     *f.home_repo.borrow_mut() = "home".into();
-    f.repo_roots.borrow_mut().insert("home".into(), PathBuf::from("/repo"));
-    f.git_repos.borrow_mut().push(PathBuf::from("/repo"));
+    f.repo_roots.borrow_mut().insert("home".into(), PathBuf::from("repo"));
+    f.git_repos.borrow_mut().push(PathBuf::from("repo"));
     f.landrefs.borrow_mut().insert("home".into(), "local/main".into());
     // Decoy under the path key — must never be consulted.
-    f.landrefs.borrow_mut().insert("/repo".into(), "origin/decoy".into());
-    f.rev_parse.borrow_mut().insert("/repo|local/main".into(), "tip123".into());
-    f.rev_parse.borrow_mut().insert("/repo|origin/decoy".into(), "wrong-tip".into());
+    f.landrefs.borrow_mut().insert("repo".into(), "origin/decoy".into());
+    f.rev_parse.borrow_mut().insert("repo|local/main".into(), "tip123".into());
+    f.rev_parse.borrow_mut().insert("repo|origin/decoy".into(), "wrong-tip".into());
     *f.release_verify_ok.borrow_mut() = true;
 
     let rc = check_local(&f, "rel-1", "tip123", false);
@@ -405,10 +407,10 @@ fn check_local_resolves_landref_by_name_never_by_path() {
 fn check_local_hotfix_is_clean() {
     let f = Fake::default();
     *f.home_repo.borrow_mut() = "home".into();
-    f.repo_roots.borrow_mut().insert("home".into(), PathBuf::from("/repo"));
-    f.git_repos.borrow_mut().push(PathBuf::from("/repo"));
+    f.repo_roots.borrow_mut().insert("home".into(), PathBuf::from("repo"));
+    f.git_repos.borrow_mut().push(PathBuf::from("repo"));
     f.landrefs.borrow_mut().insert("home".into(), "local/main".into());
-    f.rev_parse.borrow_mut().insert("/repo|local/main".into(), "tip123".into());
+    f.rev_parse.borrow_mut().insert("repo|local/main".into(), "tip123".into());
     *f.release_verify_ok.borrow_mut() = true;
     *f.release_status.borrow_mut() = "RUNNING UNLANDED hot999: the operator's own stop-the-world fix\n".into();
 
@@ -421,10 +423,10 @@ fn check_local_hotfix_is_clean() {
 fn check_local_unresolvable_divergence_is_cannot_verify() {
     let f = Fake::default();
     *f.home_repo.borrow_mut() = "home".into();
-    f.repo_roots.borrow_mut().insert("home".into(), PathBuf::from("/repo"));
-    f.git_repos.borrow_mut().push(PathBuf::from("/repo"));
+    f.repo_roots.borrow_mut().insert("home".into(), PathBuf::from("repo"));
+    f.git_repos.borrow_mut().push(PathBuf::from("repo"));
     f.landrefs.borrow_mut().insert("home".into(), "local/main".into());
-    f.rev_parse.borrow_mut().insert("/repo|local/main".into(), "tip123".into());
+    f.rev_parse.borrow_mut().insert("repo|local/main".into(), "tip123".into());
     *f.release_verify_ok.borrow_mut() = true;
     // manifest_commit is neither the tip nor a recorded hotfix, and not an ancestor either.
     let rc = check_local(&f, "rel-1", "weird000", false);
@@ -439,7 +441,7 @@ fn check_local_unresolvable_divergence_is_cannot_verify() {
 fn foreign_override_env_exempts() {
     let f = Fake::default();
     f.set_env("SPIRA_ALLOW_FOREIGN_HARNESS", "1");
-    assert_eq!(foreign(&f, "/some/repo", "base", "ref"), 0);
+    assert_eq!(foreign(&f, "some/repo", "base", "ref"), 0);
 }
 
 #[test]
@@ -452,28 +454,28 @@ fn foreign_missing_args_refuses() {
 #[test]
 fn foreign_exempts_own_repo() {
     let f = Fake::default();
-    f.set_env("SPIRA_REPO", "/harness");
-    assert_eq!(foreign(&f, "/harness", "base", "ref"), 0);
+    f.set_env("SPIRA_REPO", "harness");
+    assert_eq!(foreign(&f, "harness", "base", "ref"), 0);
 }
 
 #[test]
 fn foreign_no_copy_in_ref_allows() {
     let f = Fake::default();
-    f.set_env("SPIRA_REPO", "/elsewhere");
+    f.set_env("SPIRA_REPO", "elsewhere");
     *f.home_repo.borrow_mut() = "home".into();
-    assert_eq!(foreign(&f, "/some/repo", "base", "ref"), 0);
+    assert_eq!(foreign(&f, "some/repo", "base", "ref"), 0);
 }
 
 // covers: UC-instance-lifecycle-36
 #[test]
 fn foreign_refuses_a_change_inside_the_vendored_copy() {
     let f = Fake::default();
-    f.set_env("SPIRA_REPO", "/elsewhere");
+    f.set_env("SPIRA_REPO", "elsewhere");
     *f.home_repo.borrow_mut() = "home".into();
-    f.harness_dirs_ref.borrow_mut().insert("/some/repo|ref".into(), vec!["vendor/harness".into()]);
-    f.changed.borrow_mut().insert("/some/repo|base|ref".into(), vec!["vendor/harness/spira/lib.sh".into(), "README.md".into()]);
+    f.harness_dirs_ref.borrow_mut().insert("some/repo|ref".into(), vec!["vendor/harness".into()]);
+    f.changed.borrow_mut().insert("some/repo|base|ref".into(), vec!["vendor/harness/spira/lib.sh".into(), "README.md".into()]);
 
-    let rc = foreign(&f, "/some/repo", "base", "ref");
+    let rc = foreign(&f, "some/repo", "base", "ref");
     assert_eq!(rc, 1);
     assert!(f.stdout_joined().contains("vendor/harness/spira/lib.sh"));
     assert!(!f.stdout_joined().contains("README.md"));
@@ -483,23 +485,23 @@ fn foreign_refuses_a_change_inside_the_vendored_copy() {
 #[test]
 fn foreign_dot_directory_matches_every_changed_file() {
     let f = Fake::default();
-    f.set_env("SPIRA_REPO", "/elsewhere");
+    f.set_env("SPIRA_REPO", "elsewhere");
     *f.home_repo.borrow_mut() = "home".into();
-    f.harness_dirs_ref.borrow_mut().insert("/some/repo|ref".into(), vec![".".into()]);
-    f.changed.borrow_mut().insert("/some/repo|base|ref".into(), vec!["anything.txt".into()]);
+    f.harness_dirs_ref.borrow_mut().insert("some/repo|ref".into(), vec![".".into()]);
+    f.changed.borrow_mut().insert("some/repo|base|ref".into(), vec!["anything.txt".into()]);
 
-    assert_eq!(foreign(&f, "/some/repo", "base", "ref"), 1);
+    assert_eq!(foreign(&f, "some/repo", "base", "ref"), 1);
 }
 
 #[test]
 fn foreign_change_outside_the_copy_allows() {
     let f = Fake::default();
-    f.set_env("SPIRA_REPO", "/elsewhere");
+    f.set_env("SPIRA_REPO", "elsewhere");
     *f.home_repo.borrow_mut() = "home".into();
-    f.harness_dirs_ref.borrow_mut().insert("/some/repo|ref".into(), vec!["vendor/harness".into()]);
-    f.changed.borrow_mut().insert("/some/repo|base|ref".into(), vec!["README.md".into()]);
+    f.harness_dirs_ref.borrow_mut().insert("some/repo|ref".into(), vec!["vendor/harness".into()]);
+    f.changed.borrow_mut().insert("some/repo|base|ref".into(), vec!["README.md".into()]);
 
-    assert_eq!(foreign(&f, "/some/repo", "base", "ref"), 0);
+    assert_eq!(foreign(&f, "some/repo", "base", "ref"), 0);
 }
 
 // ============================================================================ copies()
@@ -507,18 +509,18 @@ fn foreign_change_outside_the_copy_allows() {
 #[test]
 fn copies_found_reports_self_and_second() {
     let f = Fake::default();
-    f.set_env("SPIRA_REPO", "/repo-a");
-    f.repo_roots.borrow_mut().insert("a".into(), PathBuf::from("/repo-a"));
-    f.repo_roots.borrow_mut().insert("b".into(), PathBuf::from("/repo-b"));
-    f.existing.borrow_mut().push(PathBuf::from("/repo-a"));
-    f.existing.borrow_mut().push(PathBuf::from("/repo-b"));
-    f.harness_dirs_wd.borrow_mut().insert("/repo-a".into(), vec!["vendor/h".into()]);
-    f.harness_dirs_wd.borrow_mut().insert("/repo-b".into(), vec!["vendor/h".into()]);
+    f.set_env("SPIRA_REPO", "repo-a");
+    f.repo_roots.borrow_mut().insert("a".into(), PathBuf::from("repo-a"));
+    f.repo_roots.borrow_mut().insert("b".into(), PathBuf::from("repo-b"));
+    f.existing.borrow_mut().push(PathBuf::from("repo-a"));
+    f.existing.borrow_mut().push(PathBuf::from("repo-b"));
+    f.harness_dirs_wd.borrow_mut().insert("repo-a".into(), vec!["vendor/h".into()]);
+    f.harness_dirs_wd.borrow_mut().insert("repo-b".into(), vec!["vendor/h".into()]);
 
     assert_eq!(copies(&f), 0);
     let out = f.stdout_joined();
-    assert!(out.contains("a /repo-a vendor/h self"));
-    assert!(out.contains("b /repo-b vendor/h second"));
+    assert!(out.contains("a repo-a vendor/h self"));
+    assert!(out.contains("b repo-b vendor/h second"));
 }
 
 #[test]
@@ -532,13 +534,13 @@ fn copies_none_found_is_a_finding() {
 #[test]
 fn gap_clean() {
     let f = Fake::default();
-    f.set_env("SPIRA_REPO", "/repo");
-    f.git_repos.borrow_mut().push(PathBuf::from("/repo"));
-    f.landrefs.borrow_mut().insert("/repo".into(), "origin/main".into());
-    f.rev_parse.borrow_mut().insert("/repo|origin/main".into(), "x".into());
-    f.rev_list_counts.borrow_mut().insert("/repo|HEAD..origin/main".into(), 0);
-    f.rev_parse_short.borrow_mut().insert("/repo|HEAD".into(), "abc".into());
-    f.rev_parse_short.borrow_mut().insert("/repo|origin/main".into(), "x".into());
+    f.set_env("SPIRA_REPO", "repo");
+    f.git_repos.borrow_mut().push(PathBuf::from("repo"));
+    f.landrefs.borrow_mut().insert("repo".into(), "origin/main".into());
+    f.rev_parse.borrow_mut().insert("repo|origin/main".into(), "x".into());
+    f.rev_list_counts.borrow_mut().insert("repo|HEAD..origin/main".into(), 0);
+    f.rev_parse_short.borrow_mut().insert("repo|HEAD".into(), "abc".into());
+    f.rev_parse_short.borrow_mut().insert("repo|origin/main".into(), "x".into());
 
     assert_eq!(gap(&f, None), EXIT_OK);
 }
@@ -546,7 +548,7 @@ fn gap_clean() {
 #[test]
 fn gap_not_a_checkout_cannot_check() {
     let f = Fake::default();
-    f.set_env("SPIRA_REPO", "/repo");
+    f.set_env("SPIRA_REPO", "repo");
     assert_eq!(gap(&f, None), EXIT_CANNOT_CHECK);
     assert!(f.stderr_joined().contains("not a git checkout"));
 }
@@ -555,14 +557,14 @@ fn gap_not_a_checkout_cannot_check() {
 #[test]
 fn gap_behind_is_a_finding() {
     let f = Fake::default();
-    f.git_repos.borrow_mut().push(PathBuf::from("/r"));
-    f.landrefs.borrow_mut().insert("/r".into(), "origin/main".into());
-    f.rev_parse.borrow_mut().insert("/r|origin/main".into(), "x".into());
-    f.rev_list_counts.borrow_mut().insert("/r|HEAD..origin/main".into(), 4);
-    f.rev_parse_short.borrow_mut().insert("/r|HEAD".into(), "abc".into());
-    f.rev_parse_short.borrow_mut().insert("/r|origin/main".into(), "x".into());
+    f.git_repos.borrow_mut().push(PathBuf::from("r"));
+    f.landrefs.borrow_mut().insert("r".into(), "origin/main".into());
+    f.rev_parse.borrow_mut().insert("r|origin/main".into(), "x".into());
+    f.rev_list_counts.borrow_mut().insert("r|HEAD..origin/main".into(), 4);
+    f.rev_parse_short.borrow_mut().insert("r|HEAD".into(), "abc".into());
+    f.rev_parse_short.borrow_mut().insert("r|origin/main".into(), "x".into());
 
-    assert_eq!(gap(&f, Some("/r")), EXIT_FINDING);
+    assert_eq!(gap(&f, Some("r")), EXIT_FINDING);
     assert!(f.stdout_joined().contains("4 commit(s) behind"));
 }
 
@@ -597,17 +599,17 @@ fn escalate_picks_the_local_behind_default_action() {
 
 fn behind_latest_release() -> Fake {
     let f = Fake::default();
-    f.set_env("SPIRA_RELEASES", "/releases");
-    f.symlinks.borrow_mut().insert(PathBuf::from("/releases/current"), "rel-2".into());
-    f.files.borrow_mut().insert(PathBuf::from("/releases/rel-2/MANIFEST"), format!("commit {}\n", "a".repeat(40)));
-    f.set_env("SPIRA_REPO", "/repo");
-    f.git_repos.borrow_mut().push(PathBuf::from("/repo"));
+    f.set_env("SPIRA_RELEASES", "releases");
+    f.symlinks.borrow_mut().insert(PathBuf::from("releases/current"), "rel-2".into());
+    f.files.borrow_mut().insert(PathBuf::from("releases/rel-2/MANIFEST"), format!("commit {}\n", "a".repeat(40)));
+    f.set_env("SPIRA_REPO", "repo");
+    f.git_repos.borrow_mut().push(PathBuf::from("repo"));
     f.repo_lands.borrow_mut().insert("home".into(), "push".into());
     *f.home_repo.borrow_mut() = "home".into();
-    f.tags.borrow_mut().insert("/repo".into(), vec!["spira-release-spira-20260101T000000Z".into(), "spira-0.1.104".into()]);
-    f.rev_parse.borrow_mut().insert("/repo|spira-release-spira-20260101T000000Z^{commit}".to_string(), "a".repeat(40));
-    f.rev_parse.borrow_mut().insert("/repo|spira-0.1.104^{commit}".to_string(), "c".repeat(40));
-    f.files.borrow_mut().insert(PathBuf::from("/releases/.tags/rel-2"), "spira-release-spira-20260101T000000Z".into());
+    f.tags.borrow_mut().insert("repo".into(), vec!["spira-release-spira-20260101T000000Z".into(), "spira-0.1.104".into()]);
+    f.rev_parse.borrow_mut().insert("repo|spira-release-spira-20260101T000000Z^{commit}".to_string(), "a".repeat(40));
+    f.rev_parse.borrow_mut().insert("repo|spira-0.1.104^{commit}".to_string(), "c".repeat(40));
+    f.files.borrow_mut().insert(PathBuf::from("releases/.tags/rel-2"), "spira-release-spira-20260101T000000Z".into());
     f
 }
 
@@ -651,14 +653,14 @@ fn a_check_without_escalate_prints_the_finding_and_mails_nobody() {
 #[test]
 fn refresh_queue_local_match_is_clean() {
     let f = Fake::default();
-    f.set_env("SPIRA_REPO", "/repo");
+    f.set_env("SPIRA_REPO", "repo");
     *f.home_repo.borrow_mut() = "home".into();
-    f.repo_roots.borrow_mut().insert("home".into(), PathBuf::from("/repo"));
+    f.repo_roots.borrow_mut().insert("home".into(), PathBuf::from("repo"));
     f.repo_lands.borrow_mut().insert("home".into(), "queue.local".into());
-    f.git_repos.borrow_mut().push(PathBuf::from("/repo"));
+    f.git_repos.borrow_mut().push(PathBuf::from("repo"));
     f.landrefs.borrow_mut().insert("home".into(), "local/main".into());
-    f.rev_parse.borrow_mut().insert("/repo|local/main".into(), "tip".into());
-    f.rev_parse.borrow_mut().insert("/repo|HEAD".into(), "tip".into());
+    f.rev_parse.borrow_mut().insert("repo|local/main".into(), "tip".into());
+    f.rev_parse.borrow_mut().insert("repo|HEAD".into(), "tip".into());
 
     assert_eq!(refresh(&f, None), 0);
     assert!(f.stdout_joined().contains("nothing to deploy"));
@@ -672,19 +674,19 @@ fn refresh_queue_local_match_is_clean() {
 #[test]
 fn refresh_queue_local_resolves_landref_by_name_never_by_path() {
     let f = Fake::default();
-    f.set_env("SPIRA_REPO", "/repo");
+    f.set_env("SPIRA_REPO", "repo");
     *f.home_repo.borrow_mut() = "home".into();
-    f.repo_roots.borrow_mut().insert("home".into(), PathBuf::from("/repo"));
+    f.repo_roots.borrow_mut().insert("home".into(), PathBuf::from("repo"));
     f.repo_lands.borrow_mut().insert("home".into(), "queue.local".into());
-    f.git_repos.borrow_mut().push(PathBuf::from("/repo"));
+    f.git_repos.borrow_mut().push(PathBuf::from("repo"));
     f.landrefs.borrow_mut().insert("home".into(), "local/main".into());
     // Decoy: a DIFFERENT ref under the path key. If the implementation ever regresses to
     // `landref(repo)`, this is what it would pick up instead, resolving to "wrong-tip"
     // rather than "tip" and turning a clean match into a false LOCAL-SKEW.
-    f.landrefs.borrow_mut().insert("/repo".into(), "origin/decoy".into());
-    f.rev_parse.borrow_mut().insert("/repo|local/main".into(), "tip".into());
-    f.rev_parse.borrow_mut().insert("/repo|origin/decoy".into(), "wrong-tip".into());
-    f.rev_parse.borrow_mut().insert("/repo|HEAD".into(), "tip".into());
+    f.landrefs.borrow_mut().insert("repo".into(), "origin/decoy".into());
+    f.rev_parse.borrow_mut().insert("repo|local/main".into(), "tip".into());
+    f.rev_parse.borrow_mut().insert("repo|origin/decoy".into(), "wrong-tip".into());
+    f.rev_parse.borrow_mut().insert("repo|HEAD".into(), "tip".into());
 
     assert_eq!(refresh(&f, None), 0);
     assert!(f.stdout_joined().contains("nothing to deploy"));
@@ -694,14 +696,14 @@ fn refresh_queue_local_resolves_landref_by_name_never_by_path() {
 #[test]
 fn refresh_queue_local_mismatch_escalates_local_skew() {
     let f = Fake::default();
-    f.set_env("SPIRA_REPO", "/repo");
+    f.set_env("SPIRA_REPO", "repo");
     *f.home_repo.borrow_mut() = "home".into();
-    f.repo_roots.borrow_mut().insert("home".into(), PathBuf::from("/repo"));
+    f.repo_roots.borrow_mut().insert("home".into(), PathBuf::from("repo"));
     f.repo_lands.borrow_mut().insert("home".into(), "queue.local".into());
-    f.git_repos.borrow_mut().push(PathBuf::from("/repo"));
+    f.git_repos.borrow_mut().push(PathBuf::from("repo"));
     f.landrefs.borrow_mut().insert("home".into(), "local/main".into());
-    f.rev_parse.borrow_mut().insert("/repo|local/main".into(), "tip".into());
-    f.rev_parse.borrow_mut().insert("/repo|HEAD".into(), "stale".into());
+    f.rev_parse.borrow_mut().insert("repo|local/main".into(), "tip".into());
+    f.rev_parse.borrow_mut().insert("repo|HEAD".into(), "stale".into());
 
     let rc = refresh(&f, None);
     assert_eq!(rc, 1);
@@ -712,14 +714,14 @@ fn refresh_queue_local_mismatch_escalates_local_skew() {
 #[test]
 fn refresh_queue_local_mismatch_during_a_land_local_does_not_escalate() {
     let f = Fake::default();
-    f.set_env("SPIRA_REPO", "/repo");
+    f.set_env("SPIRA_REPO", "repo");
     *f.home_repo.borrow_mut() = "home".into();
-    f.repo_roots.borrow_mut().insert("home".into(), PathBuf::from("/repo"));
+    f.repo_roots.borrow_mut().insert("home".into(), PathBuf::from("repo"));
     f.repo_lands.borrow_mut().insert("home".into(), "queue.local".into());
-    f.git_repos.borrow_mut().push(PathBuf::from("/repo"));
+    f.git_repos.borrow_mut().push(PathBuf::from("repo"));
     f.landrefs.borrow_mut().insert("home".into(), "local/main".into());
-    f.rev_parse.borrow_mut().insert("/repo|local/main".into(), "tip".into());
-    f.rev_parse.borrow_mut().insert("/repo|HEAD".into(), "stale".into());
+    f.rev_parse.borrow_mut().insert("repo|local/main".into(), "tip".into());
+    f.rev_parse.borrow_mut().insert("repo|HEAD".into(), "stale".into());
     *f.queue_locked.borrow_mut() = true;
 
     assert_eq!(refresh(&f, None), 0);
@@ -730,14 +732,14 @@ fn refresh_queue_local_mismatch_during_a_land_local_does_not_escalate() {
 #[test]
 fn refresh_queue_local_hotfix_never_resets() {
     let f = Fake::default();
-    f.set_env("SPIRA_REPO", "/repo");
+    f.set_env("SPIRA_REPO", "repo");
     *f.home_repo.borrow_mut() = "home".into();
-    f.repo_roots.borrow_mut().insert("home".into(), PathBuf::from("/repo"));
+    f.repo_roots.borrow_mut().insert("home".into(), PathBuf::from("repo"));
     f.repo_lands.borrow_mut().insert("home".into(), "queue.local".into());
-    f.git_repos.borrow_mut().push(PathBuf::from("/repo"));
+    f.git_repos.borrow_mut().push(PathBuf::from("repo"));
     f.landrefs.borrow_mut().insert("home".into(), "local/main".into());
-    f.rev_parse.borrow_mut().insert("/repo|local/main".into(), "tip".into());
-    f.rev_parse.borrow_mut().insert("/repo|HEAD".into(), "stale".into());
+    f.rev_parse.borrow_mut().insert("repo|local/main".into(), "tip".into());
+    f.rev_parse.borrow_mut().insert("repo|HEAD".into(), "stale".into());
     *f.release_status.borrow_mut() = "RUNNING UNLANDED stale: deliberate\n".into();
 
     assert_eq!(refresh(&f, None), 0);
@@ -748,30 +750,30 @@ fn refresh_queue_local_hotfix_never_resets() {
 #[test]
 fn refresh_release_mode_already_at_base() {
     let f = Fake::default();
-    f.set_env("SPIRA_RELEASES", "/releases");
-    f.symlinks.borrow_mut().insert(PathBuf::from("/releases/current"), "rel-1".into());
-    f.set_env("SPIRA_REPO", "/repo");
-    f.git_repos.borrow_mut().push(PathBuf::from("/repo"));
-    f.landrefs.borrow_mut().insert("/repo".into(), "origin/main".into());
-    f.rev_list_counts.borrow_mut().insert("/repo|HEAD..origin/main".into(), 0);
+    f.set_env("SPIRA_RELEASES", "releases");
+    f.symlinks.borrow_mut().insert(PathBuf::from("releases/current"), "rel-1".into());
+    f.set_env("SPIRA_REPO", "repo");
+    f.git_repos.borrow_mut().push(PathBuf::from("repo"));
+    f.landrefs.borrow_mut().insert("repo".into(), "origin/main".into());
+    f.rev_list_counts.borrow_mut().insert("repo|HEAD..origin/main".into(), 0);
 
-    assert_eq!(refresh(&f, Some("/repo")), 0);
+    assert_eq!(refresh(&f, Some("repo")), 0);
     assert!(f.stdout_joined().contains("already at"));
 }
 
 #[test]
 fn refresh_release_mode_builds_and_activates() {
     let f = Fake::default();
-    f.set_env("SPIRA_RELEASES", "/releases");
-    f.symlinks.borrow_mut().insert(PathBuf::from("/releases/current"), "rel-1".into());
-    f.set_env("SPIRA_REPO", "/repo");
-    f.git_repos.borrow_mut().push(PathBuf::from("/repo"));
-    f.landrefs.borrow_mut().insert("/repo".into(), "origin/main".into());
-    f.rev_list_counts.borrow_mut().insert("/repo|HEAD..origin/main".into(), 2);
-    f.rev_parse.borrow_mut().insert("/repo|HEAD".into(), "newsha".into());
+    f.set_env("SPIRA_RELEASES", "releases");
+    f.symlinks.borrow_mut().insert(PathBuf::from("releases/current"), "rel-1".into());
+    f.set_env("SPIRA_REPO", "repo");
+    f.git_repos.borrow_mut().push(PathBuf::from("repo"));
+    f.landrefs.borrow_mut().insert("repo".into(), "origin/main".into());
+    f.rev_list_counts.borrow_mut().insert("repo|HEAD..origin/main".into(), 2);
+    f.rev_parse.borrow_mut().insert("repo|HEAD".into(), "newsha".into());
     *f.release_bva_ok.borrow_mut() = true;
 
-    assert_eq!(refresh(&f, Some("/repo")), 0);
+    assert_eq!(refresh(&f, Some("repo")), 0);
     assert!(f.stdout_joined().contains("refreshed — new release installed (2 commit(s))"));
     assert_eq!(f.overrides_applied.borrow().len(), 1);
 }
@@ -779,33 +781,33 @@ fn refresh_release_mode_builds_and_activates() {
 #[test]
 fn refresh_release_failure_logs_releases_first_error_line() {
     let f = Fake::default();
-    f.set_env("SPIRA_RELEASES", "/releases");
-    f.symlinks.borrow_mut().insert(PathBuf::from("/releases/current"), "rel-1".into());
-    f.set_env("SPIRA_REPO", "/repo");
-    f.git_repos.borrow_mut().push(PathBuf::from("/repo"));
-    f.landrefs.borrow_mut().insert("/repo".into(), "origin/main".into());
-    f.rev_list_counts.borrow_mut().insert("/repo|HEAD..origin/main".into(), 2);
-    f.rev_parse.borrow_mut().insert("/repo|HEAD".into(), "newsha".into());
+    f.set_env("SPIRA_RELEASES", "releases");
+    f.symlinks.borrow_mut().insert(PathBuf::from("releases/current"), "rel-1".into());
+    f.set_env("SPIRA_REPO", "repo");
+    f.git_repos.borrow_mut().push(PathBuf::from("repo"));
+    f.landrefs.borrow_mut().insert("repo".into(), "origin/main".into());
+    f.rev_list_counts.borrow_mut().insert("repo|HEAD..origin/main".into(), 2);
+    f.rev_parse.borrow_mut().insert("repo|HEAD".into(), "newsha".into());
 
-    assert_eq!(refresh(&f, Some("/repo")), 1);
+    assert_eq!(refresh(&f, Some("repo")), 1);
     assert!(f.stdout_joined().contains("of newsha failed: build failed"));
 }
 
 #[test]
 fn refresh_product_repo_never_calls_release() {
     let f = Fake::default();
-    f.set_env("SPIRA_RELEASES", "/releases");
-    f.symlinks.borrow_mut().insert(PathBuf::from("/releases/current"), "rel-1".into());
+    f.set_env("SPIRA_RELEASES", "releases");
+    f.symlinks.borrow_mut().insert(PathBuf::from("releases/current"), "rel-1".into());
     *f.home_repo.borrow_mut() = "home".into();
-    f.repo_roots.borrow_mut().insert("home".into(), PathBuf::from("/home-repo"));
-    f.repo_roots.borrow_mut().insert("prod".into(), PathBuf::from("/prod"));
-    f.git_repos.borrow_mut().push(PathBuf::from("/prod"));
-    f.landrefs.borrow_mut().insert("/prod".into(), "origin/main".into());
-    f.rev_list_counts.borrow_mut().insert("/prod|HEAD..origin/main".into(), 1);
-    f.current_branches.borrow_mut().insert("/prod".into(), "some-feature".into());
+    f.repo_roots.borrow_mut().insert("home".into(), PathBuf::from("home-repo"));
+    f.repo_roots.borrow_mut().insert("prod".into(), PathBuf::from("prod"));
+    f.git_repos.borrow_mut().push(PathBuf::from("prod"));
+    f.landrefs.borrow_mut().insert("prod".into(), "origin/main".into());
+    f.rev_list_counts.borrow_mut().insert("prod|HEAD..origin/main".into(), 1);
+    f.current_branches.borrow_mut().insert("prod".into(), "some-feature".into());
     *f.release_bva_ok.borrow_mut() = false;
 
-    let rc = refresh(&f, Some("/prod"));
+    let rc = refresh(&f, Some("prod"));
     assert_eq!(rc, 1);
     let out = f.stdout_joined();
     assert!(out.contains("declined"), "{out}");
@@ -815,13 +817,13 @@ fn refresh_product_repo_never_calls_release() {
 #[test]
 fn refresh_checkout_mode_declines_off_base_branch() {
     let f = Fake::default();
-    f.set_env("SPIRA_REPO", "/repo");
-    f.git_repos.borrow_mut().push(PathBuf::from("/repo"));
-    f.landrefs.borrow_mut().insert("/repo".into(), "origin/main".into());
-    f.rev_list_counts.borrow_mut().insert("/repo|HEAD..origin/main".into(), 1);
-    f.current_branches.borrow_mut().insert("/repo".into(), "some-feature".into());
+    f.set_env("SPIRA_REPO", "repo");
+    f.git_repos.borrow_mut().push(PathBuf::from("repo"));
+    f.landrefs.borrow_mut().insert("repo".into(), "origin/main".into());
+    f.rev_list_counts.borrow_mut().insert("repo|HEAD..origin/main".into(), 1);
+    f.current_branches.borrow_mut().insert("repo".into(), "some-feature".into());
 
-    let rc = refresh(&f, Some("/repo"));
+    let rc = refresh(&f, Some("repo"));
     assert_eq!(rc, 1);
     assert!(f.stdout_joined().contains("declined"));
 }
@@ -830,26 +832,26 @@ fn refresh_checkout_mode_declines_off_base_branch() {
 #[test]
 fn refresh_checkout_mode_stages_and_swaps() {
     let f = Fake::default();
-    f.set_env("SPIRA_REPO", "/repo");
-    f.git_repos.borrow_mut().push(PathBuf::from("/repo"));
-    f.landrefs.borrow_mut().insert("/repo".into(), "origin/main".into());
-    f.rev_list_counts.borrow_mut().insert("/repo|HEAD..origin/main".into(), 2);
-    f.current_branches.borrow_mut().insert("/repo".into(), "main".into());
+    f.set_env("SPIRA_REPO", "repo");
+    f.git_repos.borrow_mut().push(PathBuf::from("repo"));
+    f.landrefs.borrow_mut().insert("repo".into(), "origin/main".into());
+    f.rev_list_counts.borrow_mut().insert("repo|HEAD..origin/main".into(), 2);
+    f.current_branches.borrow_mut().insert("repo".into(), "main".into());
     f.diff_statuses.borrow_mut().insert(
-        "/repo|HEAD..origin/main".into(),
+        "repo|HEAD..origin/main".into(),
         vec![('M', "spira/conf.sh".into()), ('A', "spira/new.sh".into()), ('D', "spira/old.sh".into())],
     );
-    f.show_files.borrow_mut().insert("/repo|origin/main|spira/conf.sh".into(), b"new conf".to_vec());
-    f.show_files.borrow_mut().insert("/repo|origin/main|spira/new.sh".into(), b"#!/bin/bash\n".to_vec());
-    f.file_modes.borrow_mut().insert("/repo|origin/main|spira/new.sh".into(), "100755".into());
+    f.show_files.borrow_mut().insert("repo|origin/main|spira/conf.sh".into(), b"new conf".to_vec());
+    f.show_files.borrow_mut().insert("repo|origin/main|spira/new.sh".into(), b"#!/bin/bash\n".to_vec());
+    f.file_modes.borrow_mut().insert("repo|origin/main|spira/new.sh".into(), "100755".into());
 
-    let rc = refresh(&f, Some("/repo"));
+    let rc = refresh(&f, Some("repo"));
     assert_eq!(rc, 0);
-    assert!(f.written.borrow().contains_key(&PathBuf::from("/repo/spira/conf.sh")));
-    let (content, executable) = f.written.borrow().get(&PathBuf::from("/repo/spira/new.sh")).cloned().unwrap();
+    assert!(f.written.borrow().contains_key(&PathBuf::from("repo/spira/conf.sh")));
+    let (content, executable) = f.written.borrow().get(&PathBuf::from("repo/spira/new.sh")).cloned().unwrap();
     assert_eq!(content, b"#!/bin/bash\n");
     assert!(executable);
-    assert!(f.removed.borrow().contains(&PathBuf::from("/repo/spira/old.sh")));
+    assert!(f.removed.borrow().contains(&PathBuf::from("repo/spira/old.sh")));
     assert_eq!(f.overrides_applied.borrow().len(), 1);
 }
 
@@ -869,7 +871,7 @@ fn units_installer_missing_cannot_check() {
 #[test]
 fn units_clean() {
     let f = Fake::default();
-    f.which.borrow_mut().insert("units-install".into(), "/bin/units-install".into());
+    f.which.borrow_mut().insert("units-install".into(), "bin/units-install".into());
     *f.install_diff_rc.borrow_mut() = 0;
 
     assert_eq!(units(&f), EXIT_OK);
@@ -880,7 +882,7 @@ fn units_clean() {
 #[test]
 fn units_stale_is_a_finding() {
     let f = Fake::default();
-    f.which.borrow_mut().insert("units-install".into(), "/bin/units-install".into());
+    f.which.borrow_mut().insert("units-install".into(), "bin/units-install".into());
     *f.install_diff_rc.borrow_mut() = 1;
     *f.install_diff_out.borrow_mut() = "DIFFERS spira-gate.service\n".into();
 
@@ -894,7 +896,7 @@ fn units_stale_is_a_finding() {
 #[test]
 fn units_spira_install_sh_env_wins_over_path() {
     let f = Fake::default();
-    f.set_env("SPIRA_INSTALL_SH", "/explicit/units-install");
+    f.set_env("SPIRA_INSTALL_SH", "explicit/units-install");
     // Deliberately NOT registered in `which` -- if units() fell back to a PATH lookup
     // instead of honoring the env var, this would resolve to None and refuse.
     *f.install_diff_rc.borrow_mut() = 0;
@@ -910,8 +912,8 @@ fn units_spira_install_sh_env_wins_over_path() {
 #[test]
 fn units_spira_install_sh_set_but_not_executable_cannot_check() {
     let f = Fake::default();
-    f.set_env("SPIRA_INSTALL_SH", "/explicit/units-install");
-    f.not_executable.borrow_mut().push(PathBuf::from("/explicit/units-install"));
+    f.set_env("SPIRA_INSTALL_SH", "explicit/units-install");
+    f.not_executable.borrow_mut().push(PathBuf::from("explicit/units-install"));
     // If units() fell through to install_diff anyway, this would be exit 0 -- the fixture
     // deliberately makes "ran it successfully" distinguishable from "refused to run it".
     *f.install_diff_rc.borrow_mut() = 0;
@@ -922,12 +924,12 @@ fn units_spira_install_sh_set_but_not_executable_cannot_check() {
 
 fn dirty_checkout(dirty: &str) -> Fake {
     let f = Fake::default();
-    f.set_env("SPIRA_REPO", "/repo");
-    f.git_repos.borrow_mut().push(PathBuf::from("/repo"));
-    f.landrefs.borrow_mut().insert("/repo".into(), "origin/main".into());
-    f.rev_list_counts.borrow_mut().insert("/repo|HEAD..origin/main".into(), 2);
-    f.current_branches.borrow_mut().insert("/repo".into(), "main".into());
-    f.dirty.borrow_mut().insert("/repo".into(), dirty.into());
+    f.set_env("SPIRA_REPO", "repo");
+    f.git_repos.borrow_mut().push(PathBuf::from("repo"));
+    f.landrefs.borrow_mut().insert("repo".into(), "origin/main".into());
+    f.rev_list_counts.borrow_mut().insert("repo|HEAD..origin/main".into(), 2);
+    f.current_branches.borrow_mut().insert("repo".into(), "main".into());
+    f.dirty.borrow_mut().insert("repo".into(), dirty.into());
     f
 }
 
@@ -935,7 +937,7 @@ fn dirty_checkout(dirty: &str) -> Fake {
 fn refresh_checkout_with_every_tracked_file_deleted_is_restored_not_stashed() {
     let f = dirty_checkout(" D a.sh\n D b/c.sh\n");
     *f.stash_err.borrow_mut() = Some("stash must not be tried".into());
-    assert_eq!(refresh(&f, Some("/repo")), 0);
+    assert_eq!(refresh(&f, Some("repo")), 0);
     assert_eq!(f.restored.borrow().len(), 1);
     let out = f.stdout_joined();
     assert!(out.contains("restored 2 deleted tracked file(s)"), "{out}");
@@ -946,7 +948,7 @@ fn refresh_checkout_with_every_tracked_file_deleted_is_restored_not_stashed() {
 fn refresh_declines_naming_the_restore_failure() {
     let f = dirty_checkout(" D a.sh\n");
     *f.restore_err.borrow_mut() = Some("fatal: Unable to create index.lock".into());
-    assert_eq!(refresh(&f, Some("/repo")), 1);
+    assert_eq!(refresh(&f, Some("repo")), 1);
     assert!(f.stdout_joined().contains("restoring them failed: fatal: Unable to create index.lock"));
 }
 
@@ -954,7 +956,7 @@ fn refresh_declines_naming_the_restore_failure() {
 fn refresh_declines_naming_the_stash_failure_for_a_mixed_dirty_tree() {
     let f = dirty_checkout(" D a.sh\n M b.sh\n");
     *f.stash_err.borrow_mut() = Some("error: could not write index".into());
-    assert_eq!(refresh(&f, Some("/repo")), 1);
+    assert_eq!(refresh(&f, Some("repo")), 1);
     assert!(f.restored.borrow().is_empty());
     assert!(f.stdout_joined().contains("stash failed: error: could not write index"));
 }
@@ -964,10 +966,10 @@ fn refresh_declines_naming_the_stash_failure_for_a_mixed_dirty_tree() {
 fn declining_checkout() -> Fake {
     let f = Fake::default();
     f.set_env("SPIRA_RELEASES", "");
-    f.git_repos.borrow_mut().push(PathBuf::from("/prod"));
-    f.landrefs.borrow_mut().insert("/prod".into(), "origin/main".into());
-    f.rev_list_counts.borrow_mut().insert("/prod|HEAD..origin/main".into(), 2);
-    f.dirty.borrow_mut().insert("/prod".into(), " M ci.yml\n M CLAUDE.md\n".into());
+    f.git_repos.borrow_mut().push(PathBuf::from("prod"));
+    f.landrefs.borrow_mut().insert("prod".into(), "origin/main".into());
+    f.rev_list_counts.borrow_mut().insert("prod|HEAD..origin/main".into(), 2);
+    f.dirty.borrow_mut().insert("prod".into(), " M ci.yml\n M CLAUDE.md\n".into());
     *f.stash_err.borrow_mut() = Some("Unable to create index.lock".into());
     f
 }
@@ -978,7 +980,7 @@ fn refresh_decline_names_dirty_files_and_a_stale_lock_and_raises_a_row_on_the_th
     *f.lock_age.borrow_mut() = Some(86_400);
     *f.lock_remove_err.borrow_mut() = Some("Permission denied".into());
     for pass in 1..=3 {
-        assert_eq!(refresh(&f, Some("/prod")), 1);
+        assert_eq!(refresh(&f, Some("prod")), 1);
         let rows = f.run_log.borrow().iter().filter(|r| r.1.contains("consecutive")).count();
         assert_eq!(rows, if pass < 3 { 0 } else { 1 }, "pass {pass}");
     }
@@ -988,7 +990,7 @@ fn refresh_decline_names_dirty_files_and_a_stale_lock_and_raises_a_row_on_the_th
     let log = f.run_log.borrow();
     let row = log.iter().find(|r| r.1.contains("3 consecutive")).unwrap();
     assert_eq!(row.0, REFRESH_ALARM_LOG);
-    assert!(row.1.contains("/prod") && row.1.contains("STALE-INDEX-LOCK"), "{}", row.1);
+    assert!(row.1.contains("prod") && row.1.contains("STALE-INDEX-LOCK"), "{}", row.1);
     assert!(f.removed.borrow().is_empty(), "the dirt is never touched");
 }
 
@@ -996,7 +998,7 @@ fn refresh_decline_names_dirty_files_and_a_stale_lock_and_raises_a_row_on_the_th
 fn refresh_clears_a_stale_lock_with_no_live_git_before_stashing() {
     let f = declining_checkout();
     *f.lock_age.borrow_mut() = Some(1_188_963);
-    refresh(&f, Some("/prod"));
+    refresh(&f, Some("prod"));
     assert_eq!(f.locks_removed.get(), 1);
     assert!(f.stdout_joined().contains("removed stale index.lock"), "{}", f.stdout_joined());
 }
@@ -1007,7 +1009,7 @@ fn refresh_leaves_a_fresh_or_owned_lock_alone() {
         let f = declining_checkout();
         *f.lock_age.borrow_mut() = Some(age);
         *f.git_live.borrow_mut() = live;
-        refresh(&f, Some("/prod"));
+        refresh(&f, Some("prod"));
         assert_eq!(f.locks_removed.get(), 0, "age {age} live {live}");
     }
 }
@@ -1018,7 +1020,7 @@ fn refresh_escalates_a_lock_it_cannot_clear_once_not_every_pass() {
     *f.lock_age.borrow_mut() = Some(86_400);
     *f.lock_remove_err.borrow_mut() = Some("Permission denied".into());
     for _ in 0..5 {
-        assert_eq!(refresh(&f, Some("/prod")), 1);
+        assert_eq!(refresh(&f, Some("prod")), 1);
     }
     let rows: Vec<_> = f.run_log.borrow().iter().filter(|r| r.1.contains("cannot remove stale index.lock")).cloned().collect();
     assert_eq!(rows.len(), 1, "{rows:?}");
@@ -1029,24 +1031,24 @@ fn refresh_escalates_a_lock_it_cannot_clear_once_not_every_pass() {
 fn refresh_decline_does_not_call_a_fresh_or_owned_lock_stale() {
     let f = declining_checkout();
     *f.lock_age.borrow_mut() = Some(30);
-    refresh(&f, Some("/prod"));
+    refresh(&f, Some("prod"));
     assert!(!f.stdout_joined().contains("STALE-INDEX-LOCK"));
     *f.lock_age.borrow_mut() = Some(86_400);
     *f.git_live.borrow_mut() = true;
-    refresh(&f, Some("/prod"));
+    refresh(&f, Some("prod"));
     assert!(!f.stdout_joined().contains("STALE-INDEX-LOCK"));
 }
 
 #[test]
 fn refresh_success_resets_the_decline_streak() {
     let f = declining_checkout();
-    refresh(&f, Some("/prod"));
-    refresh(&f, Some("/prod"));
-    f.rev_list_counts.borrow_mut().insert("/prod|HEAD..origin/main".into(), 0);
-    assert_eq!(refresh(&f, Some("/prod")), 0);
-    f.rev_list_counts.borrow_mut().insert("/prod|HEAD..origin/main".into(), 2);
-    refresh(&f, Some("/prod"));
-    refresh(&f, Some("/prod"));
+    refresh(&f, Some("prod"));
+    refresh(&f, Some("prod"));
+    f.rev_list_counts.borrow_mut().insert("prod|HEAD..origin/main".into(), 0);
+    assert_eq!(refresh(&f, Some("prod")), 0);
+    f.rev_list_counts.borrow_mut().insert("prod|HEAD..origin/main".into(), 2);
+    refresh(&f, Some("prod"));
+    refresh(&f, Some("prod"));
     assert!(f.run_log.borrow().is_empty(), "two passes after a reset is not three in a row");
 }
 
@@ -1056,10 +1058,10 @@ fn refresh_escalates_again_for_a_new_uncleared_lock_after_the_old_one_vanished()
     *f.lock_remove_err.borrow_mut() = Some("Permission denied".into());
     for _ in 0..2 {
         *f.lock_age.borrow_mut() = Some(86_400);
-        refresh(&f, Some("/prod"));
-        refresh(&f, Some("/prod"));
+        refresh(&f, Some("prod"));
+        refresh(&f, Some("prod"));
         *f.lock_age.borrow_mut() = None;
-        refresh(&f, Some("/prod"));
+        refresh(&f, Some("prod"));
     }
     let rows = f.run_log.borrow().iter().filter(|r| r.1.contains("cannot remove stale index.lock")).count();
     assert_eq!(rows, 2);
@@ -1077,25 +1079,25 @@ fn the_refresh_stamp_is_read_from_the_clock_in_process() {
 #[test]
 fn check_cannot_check_without_current_or_manifest_and_reads_artifact_tags_through_gh() {
     let f = Fake::default();
-    f.set_env("SPIRA_RELEASES", "/releases");
-    f.symlinks.borrow_mut().insert(PathBuf::from("/releases/current"), "rel-1".into());
+    f.set_env("SPIRA_RELEASES", "releases");
+    f.symlinks.borrow_mut().insert(PathBuf::from("releases/current"), "rel-1".into());
     assert_eq!(check(&f, false), EXIT_CANNOT_CHECK, "no MANIFEST");
     assert!(f.stderr_joined().contains("MANIFEST missing"), "{}", f.stderr_joined());
 
     let g = Fake::default();
-    g.set_env("SPIRA_RELEASES", "/releases");
+    g.set_env("SPIRA_RELEASES", "releases");
     assert_eq!(check(&g, false), EXIT_CANNOT_CHECK, "no current");
 
     let sha = "a".repeat(40);
     let h = Fake::default();
-    h.set_env("SPIRA_RELEASES", "/releases");
-    h.set_env("SPIRA_REPO", "/repo");
+    h.set_env("SPIRA_RELEASES", "releases");
+    h.set_env("SPIRA_REPO", "repo");
     h.set_env("SPIRA_RELEASE_REPO", "owner/repo");
-    h.git_repos.borrow_mut().push(PathBuf::from("/repo"));
-    h.symlinks.borrow_mut().insert(PathBuf::from("/releases/current"), "rel-1".into());
-    h.files.borrow_mut().insert(PathBuf::from("/releases/rel-1/MANIFEST"), format!("commit {sha}\n"));
-    h.files.borrow_mut().insert(PathBuf::from("/releases/.tags/rel-1"), "spira-release-spira-20260101T000000Z".into());
-    h.rev_parse.borrow_mut().insert("/repo|spira-release-spira-20260101T000000Z^{commit}".into(), sha);
+    h.git_repos.borrow_mut().push(PathBuf::from("repo"));
+    h.symlinks.borrow_mut().insert(PathBuf::from("releases/current"), "rel-1".into());
+    h.files.borrow_mut().insert(PathBuf::from("releases/rel-1/MANIFEST"), format!("commit {sha}\n"));
+    h.files.borrow_mut().insert(PathBuf::from("releases/.tags/rel-1"), "spira-release-spira-20260101T000000Z".into());
+    h.rev_parse.borrow_mut().insert("repo|spira-release-spira-20260101T000000Z^{commit}".into(), sha);
     *h.gh_tags_json.borrow_mut() = Some(Ok(
         r#"[{"isDraft":true,"tagName":"spira-release-spira-20260301T000000Z"},{"isDraft":false,"tagName":"spira-release-spira-20260101T000000Z"}]"#.into(),
     ));
@@ -1114,22 +1116,22 @@ fn init_guard_reports_could_not_check_when_config_cannot_resolve() {
 #[test]
 fn refresh_stashes_dirty_files_and_advances_with_no_lease_consulted() {
     let f = dirty_checkout(" M conf.sh\n");
-    f.diff_statuses.borrow_mut().insert("/repo|HEAD..origin/main".into(), vec![('M', "spira/conf.sh".into())]);
-    f.show_files.borrow_mut().insert("/repo|origin/main|spira/conf.sh".into(), b"new".to_vec());
-    assert_eq!(refresh(&f, Some("/repo")), 0);
+    f.diff_statuses.borrow_mut().insert("repo|HEAD..origin/main".into(), vec![('M', "spira/conf.sh".into())]);
+    f.show_files.borrow_mut().insert("repo|origin/main|spira/conf.sh".into(), b"new".to_vec());
+    assert_eq!(refresh(&f, Some("repo")), 0);
     assert!(f.stdout_joined().contains("stashed dirty tracked files"), "{}", f.stdout_joined());
-    assert!(f.written.borrow().contains_key(&PathBuf::from("/repo/spira/conf.sh")));
+    assert!(f.written.borrow().contains_key(&PathBuf::from("repo/spira/conf.sh")));
 }
 
 // covers: UC-instance-lifecycle-35
 #[test]
 fn check_cannot_check_when_gh_cannot_list_the_forge_releases_and_says_why() {
     let f = Fake::default();
-    f.set_env("SPIRA_REPO", "/repo");
+    f.set_env("SPIRA_REPO", "repo");
     f.set_env("SPIRA_RELEASE_REPO", "owner/repo");
-    f.git_repos.borrow_mut().push(PathBuf::from("/repo"));
+    f.git_repos.borrow_mut().push(PathBuf::from("repo"));
     *f.gh_tags_json.borrow_mut() = Some(Err("HTTP 401: bad credentials".into()));
-    assert_eq!(resolve_all_tags(&f, Path::new("/repo")), Err(EXIT_CANNOT_CHECK));
+    assert_eq!(resolve_all_tags(&f, Path::new("repo")), Err(EXIT_CANNOT_CHECK));
     let said = f.stderr_joined();
     assert!(said.contains("HTTP 401: bad credentials") && said.contains("gh credential"), "{said}");
 }

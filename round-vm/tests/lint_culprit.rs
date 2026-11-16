@@ -14,7 +14,7 @@ fn sh(dir: &Path, home: &Path, script: &str) -> String {
         .current_dir(dir)
         .env_clear()
         .env("HOME", home)
-        .env("PATH", "/usr/local/bin:/usr/bin:/bin")
+        .env("PATH", system_paths::SYSTEM_PATH)
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_AUTHOR_NAME", "t")
         .env("GIT_AUTHOR_EMAIL", "t@t")

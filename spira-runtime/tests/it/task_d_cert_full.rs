@@ -19,7 +19,7 @@ const C1: &str = "1111111111111111111111111111111111111111";
 const C2: &str = "2222222222222222222222222222222222222222";
 
 fn config() -> Config {
-    Config { run: "/r".into(), metrics_endpoint: "127.0.0.1:9".into() }
+    Config { run: "r".into(), metrics_endpoint: "127.0.0.1:9".into() }
 }
 
 fn row(round: &str, commit: &str, tree: &str, verdict: &str) -> HistoryRow {

@@ -120,18 +120,19 @@ impl World for Beads {
 // covers: UC-test-infrastructure-37
 #[test]
 fn a_flaky_annotation_files_one_bead_and_a_red_twice_one_p1_deduplicated_raised_and_emitted_by_gate_retry() {
+    let root = testkit::TempDir::new("gate-check-filing");
     let w = Beads::with(&[]);
-    run(&w, Path::new("/nonexistent"));
+    run(&w, &root.join("nonexistent"));
     assert_eq!(w.priority("suite red on main: test-alpha.sh"), Some(1));
     assert_eq!(w.priority("suite red on main: test-beta.sh"), Some(1));
     assert_eq!(w.priority("flaky suite: test-gamma.sh"), Some(2));
     let filed = w.list.borrow().len();
     assert_eq!(filed, 3);
-    run(&w, Path::new("/nonexistent"));
+    run(&w, &root.join("nonexistent"));
     assert_eq!(w.list.borrow().len(), filed, "a rescan files nothing while the beads are open");
 
     let low = Beads::with(&[("sp-low", "suite red on main: test-alpha.sh", 3)]);
-    run(&low, Path::new("/nonexistent"));
+    run(&low, &root.join("nonexistent"));
     assert_eq!(low.priority("suite red on main: test-alpha.sh"), Some(1), "an existing lower-priority bead is raised");
     assert_eq!(low.count("suite red on main: test-alpha.sh"), 1);
     assert!(low.notes.borrow().iter().any(|(id, _)| id == "sp-low"));

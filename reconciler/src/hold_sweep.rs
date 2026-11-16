@@ -527,7 +527,7 @@ mod tests {
                 sent.borrow_mut().push(Mail { mailbox: m.mailbox.clone(), subject: m.subject.clone(), kind: m.kind.clone(), default: m.default.clone(), class: m.class.clone(), bead: m.bead.clone(), body: m.body.clone() });
                 Ok(())
             };
-            let mut live = Live { lc: &lc, send: &send, mail_root: PathBuf::from("/nonexistent"), actor: "reconciler".into(), now: 100_000 };
+            let mut live = Live { lc: &lc, send: &send, mail_root: PathBuf::from("nonexistent"), actor: "reconciler".into(), now: 100_000 };
             live.act(&held("sp-k1qi8v"), &action).unwrap();
             let sent = sent.borrow();
             assert_eq!(sent.len(), 1, "{}", action.name());
@@ -547,7 +547,7 @@ mod tests {
             Ok(String::new())
         };
         let send = |_: &Mail| -> Result<(), String> { Err("mail: lint: refused".into()) };
-        let mut live = Live { lc: &lc, send: &send, mail_root: PathBuf::from("/nonexistent"), actor: "reconciler".into(), now: 100_000 };
+        let mut live = Live { lc: &lc, send: &send, mail_root: PathBuf::from("nonexistent"), actor: "reconciler".into(), now: 100_000 };
         let err = live.act(&held("sp-k1qi8v"), &actions()[0]).unwrap_err();
         assert!(err.contains("refused"), "{err}");
         assert!(calls.borrow().iter().all(|c| !c.starts_with("hold ")), "{:?}", calls.borrow());
@@ -557,7 +557,7 @@ mod tests {
     fn a_breaker_hold_that_fails_after_the_question_was_delivered_says_so() {
         let lc = |_: &[&str]| -> Result<String, String> { Err("store down".into()) };
         let send = |_: &Mail| -> Result<(), String> { Ok(()) };
-        let mut live = Live { lc: &lc, send: &send, mail_root: PathBuf::from("/nonexistent"), actor: "reconciler".into(), now: 100_000 };
+        let mut live = Live { lc: &lc, send: &send, mail_root: PathBuf::from("nonexistent"), actor: "reconciler".into(), now: 100_000 };
         let err = live.act(&held("sp-k1qi8v"), &actions()[0]).unwrap_err();
         assert!(err.contains("WAS delivered") && err.contains("store down"), "{err}");
     }

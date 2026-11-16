@@ -30,8 +30,8 @@ fn config() -> Config {
         heartbeat_bound_s: 120,
         task_bound_s: 600,
         round_max_open: 1,
-        releases: "/rel".into(),
-        repo_map: "/map".into(),
+        releases: "rel".into(),
+        repo_map: "map".into(),
     }
 }
 

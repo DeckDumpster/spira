@@ -42,7 +42,7 @@ fn waiting_pool(settled: &str, now_ms: u64) -> Snapshot {
 }
 
 fn assembled() -> Assembled {
-    Assembled { merged: vec![("sp-ypesca".into(), "t1".into())], wt: "/w".into(), base: "b2".into(), own_testenv: true, ..Assembled::default() }
+    Assembled { merged: vec![("sp-ypesca".into(), "t1".into())], wt: "w".into(), base: "b2".into(), own_testenv: true, ..Assembled::default() }
 }
 
 fn tick_on_row(row: &str, settled: &str) -> Vec<String> {

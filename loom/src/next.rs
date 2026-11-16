@@ -283,7 +283,7 @@ fn progress_names(p: &lcview::PassProgress, r: &RepoRound, only_vm: bool) -> boo
 
 /// One line per round with its single progress bar; members, links and staging open under it.
 fn round_line(r: &RepoRound, prog: Option<&lcview::PassProgress>, now: i64, only_vm: bool) -> String {
-    let link = format!("/rounds/{}/{}", esc(&r.repo), r.batch.rsplit('/').next().map(esc).unwrap_or_default());
+    let link = format!("/rounds/{}/{}", esc(&r.repo), r.batch.rsplit('/').next().map(esc).unwrap_or_default()); // not a path: URL path
     if r.stale {
         return plain(&format!("<a class=id href=\"{link}\">{}</a><span class=\"badge red\">STALE</span><span class=\"small dim\">OPEN {} with no live run and no PR</span>", esc(&r.batch), esc(&r.age)));
     }

@@ -12,7 +12,7 @@ fn carried(state: State) -> Carry {
         round_key: Some("k".into()),
         batch: Some("r9".into()),
         members: vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into())],
-        wt: "/w".into(),
+        wt: "w".into(),
         base: "b1".into(),
         leg: Some("spira.r9.corpus1".into()),
         leg_at_ms: NOW - 180_000,

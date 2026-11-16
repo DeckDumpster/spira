@@ -62,7 +62,7 @@ mod tests {
         // the whole point is that a failed ioctl is indistinguishable from "not a tty" and
         // falls through to the next candidate fd (or the env-var/default fallback) rather
         // than crashing the pane.
-        let f = std::fs::File::open("/dev/null").expect("/dev/null must exist");
+        let f = std::fs::File::open(system_paths::DEV_NULL).unwrap_or_else(|e| panic!("{} must exist: {e}", system_paths::DEV_NULL));
         use std::os::unix::io::AsRawFd;
         assert_eq!(winsize_of_fd(f.as_raw_fd()), None);
         assert_eq!(winsize_of_fd(-1), None);

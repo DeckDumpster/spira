@@ -4,12 +4,12 @@ use crate::stuck::esc;
 
 pub const SECTIONS: [(&str, &str, &str); 7] = [
     ("overview", "Overview", "/"),
-    ("dwarves", "Dwarves", "/dwarves"),
-    ("goodput", "Goodput", "/goodput"),
-    ("rounds", "Rounds", "/rounds"),
-    ("stuck", "Stuck", "/stuck"),
-    ("units", "Units", "/units"),
-    ("factory", "Factory", "/factory"),
+    ("dwarves", "Dwarves", "/dwarves"), // not a path: route URL
+    ("goodput", "Goodput", "/goodput"), // not a path: route URL
+    ("rounds", "Rounds", "/rounds"), // not a path: route URL
+    ("stuck", "Stuck", "/stuck"), // not a path: route URL
+    ("units", "Units", "/units"), // not a path: route URL
+    ("factory", "Factory", "/factory"), // not a path: route URL
 ];
 
 const BAR_SLOT: &str = "<!--lm-bar-->";

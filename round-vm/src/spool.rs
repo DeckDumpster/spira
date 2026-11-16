@@ -481,20 +481,20 @@ mod tests {
         let write = line_of(crate::run::REMOTE_SCRIPT, "> ~/round-launcher.env");
         let source = line_of(REMOTE_ATTR_SCRIPT, ". \"$HOME/round-launcher.env\"");
         let d = TempDir::new();
-        let toml = "/vm/round-work/spira/testlib/complete.toml:/vm/round config.toml";
+        let toml = "vm/round-work/spira/testlib/complete.toml:vm/round config.toml";
         let wrote = std::process::Command::new("bash")
             .args(["-c", &format!("set -euo pipefail\n{write}")])
             .env("HOME", d.path())
-            .env("SPIRA_RELEASE", "/r/rel")
-            .env("SPIRA_HOME", "/r/rel/spira")
-            .env("SPIRA_REPO", "/r/work")
+            .env("SPIRA_RELEASE", "r/rel")
+            .env("SPIRA_HOME", "r/rel/spira")
+            .env("SPIRA_REPO", "r/work")
             .env("SPIRA_TOML", toml)
             .status()
             .unwrap();
         assert!(wrote.success(), "the corpus's launcher line runs");
         let env = std::fs::read_to_string(d.path().join(crate::run::LAUNCHER_ENV)).unwrap();
         assert!(env.contains("export SPIRA_TOML="), "the launcher env carries SPIRA_TOML:\n{env}");
-        assert!(env.contains("export SPIRA_HOME=/r/rel/spira\n"), "the launcher env carries the staged release's registry home:\n{env}");
+        assert!(env.contains("export SPIRA_HOME=r/rel/spira\n"), "the launcher env carries the staged release's registry home:\n{env}");
         let out = std::process::Command::new("bash")
             .args(["-c", &format!("set -euo pipefail\n{source}\nprintf %s \"${{SPIRA_TOML:?batch: SPIRA_TOML is not set}}\"")])
             .env_clear()
@@ -548,7 +548,7 @@ mod tests {
         let stub = |name: &str, body: &str| testkit::write_exe(bin.join(name), &format!("#!/bin/bash\n{body}\n"));
         stub("git", "for a; do last=$a; done; mkdir -p \"$last\"");
         stub("cargo", &format!("echo \"$*\" > \"$HOME/cargo.args\"; env > \"$HOME/cargo.env\"; exit {cargo_rc}"));
-        let status = std::process::Command::new("/bin/bash")
+        let status = std::process::Command::new(system_paths::BIN_BASH)
             .args(["-c", REMOTE_ATTR_SCRIPT, "bash", "h", "9430", "j1", "attr-j1", suites, build, ""])
             .env_clear()
             .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))

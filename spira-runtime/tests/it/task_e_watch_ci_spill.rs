@@ -14,7 +14,7 @@ const MISSING: &str = "jobs:\n  test:\n    steps:\n      - uses: org/actions/pro
 const COMPLIANT: &str = "jobs:\n  test:\n    steps:\n      - uses: org/actions/provision@v1\n        with:\n          spill: ec2-only\n";
 
 fn config() -> Config {
-    Config { repo_map: "/fixture/repos".into(), inbox: "/q/inbox".into() }
+    Config { repo_map: "fixture/repos".into(), inbox: "q/inbox".into() }
 }
 
 fn repo(sha: &str, workflow: &str) -> Repo {

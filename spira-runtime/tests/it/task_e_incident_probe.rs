@@ -11,7 +11,7 @@ use spira_runtime::tasks::d::acceptance as acc;
 use spira_runtime::tasks::e::incident_probe::*;
 
 fn config() -> Config {
-    Config { deadman_secs: 180, heartbeat_url: String::new(), run: "/r".into() }
+    Config { deadman_secs: 180, heartbeat_url: String::new(), run: "r".into() }
 }
 
 fn rig(seed: u64, world: Arc<Mutex<Snapshot>>, primary: fn(&str) -> Result<String, String>) -> TaskRig {

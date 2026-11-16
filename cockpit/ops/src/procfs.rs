@@ -8,7 +8,7 @@ use std::fs;
 
 /// argv of `pid`, or `None` if it cannot be read (process gone, or no permission).
 pub fn cmdline(pid: i32) -> Option<Vec<String>> {
-    let raw = fs::read(format!("/proc/{pid}/cmdline")).ok()?;
+    let raw = fs::read(format!("{}/{pid}/cmdline", system_paths::PROC)).ok()?;
     if raw.is_empty() {
         return None;
     }
@@ -25,7 +25,7 @@ pub fn cmdline(pid: i32) -> Option<Vec<String>> {
 /// for the LAST `)` before splitting on whitespace, exactly as the kernel's own docs say a
 /// robust reader must.
 pub fn ppid(pid: i32) -> Option<i32> {
-    let s = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let s = fs::read_to_string(format!("{}/{pid}/stat", system_paths::PROC)).ok()?;
     let close = s.rfind(')')?;
     let rest = s.get(close + 1..)?;
     let mut fields = rest.split_whitespace();
@@ -36,7 +36,7 @@ pub fn ppid(pid: i32) -> Option<i32> {
 /// Every pid currently in `/proc`.
 pub fn all_pids() -> Vec<i32> {
     let mut out = Vec::new();
-    if let Ok(rd) = fs::read_dir("/proc") {
+    if let Ok(rd) = fs::read_dir(system_paths::PROC) {
         for ent in rd.flatten() {
             if let Some(name) = ent.file_name().to_str() {
                 if let Ok(pid) = name.parse::<i32>() {
@@ -69,7 +69,7 @@ pub fn descendant_count(root: i32) -> usize {
 /// logic is tested once and used identically by every caller that needs it with different
 /// input (a real read here, a synthetic table in that module's own tests).
 fn listening_socket_inode(path: &str) -> Option<String> {
-    let net_unix = fs::read_to_string("/proc/net/unix").ok()?;
+    let net_unix = fs::read_to_string(format!("{}/net/unix", system_paths::PROC)).ok()?;
     crate::tmux::find_listening_inode(&net_unix, path)
 }
 
@@ -82,7 +82,7 @@ pub fn listening_socket_holder(path: &str) -> Option<i32> {
     let inode = listening_socket_inode(path)?;
     let needle = format!("socket:[{inode}]");
     for pid in all_pids() {
-        let fd_dir = format!("/proc/{pid}/fd");
+        let fd_dir = format!("{}/{pid}/fd", system_paths::PROC);
         let Ok(rd) = fs::read_dir(&fd_dir) else { continue };
         for ent in rd.flatten() {
             if let Ok(target) = fs::read_link(ent.path()) {

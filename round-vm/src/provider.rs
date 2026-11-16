@@ -137,9 +137,9 @@ pub fn destroy_fenced(p: &dyn Provider, vmid: &str, expected: &str, t: Timing) -
 /// relative path lands where sshd never reads (live bug 1).
 pub fn user_home(user: &str) -> String {
     if user == "root" {
-        "/root".to_string()
+        system_paths::ROOT_HOME.to_string()
     } else {
-        format!("/home/{user}")
+        format!("{}/{user}", system_paths::HOME)
     }
 }
 
@@ -269,7 +269,7 @@ mod tests {
 
     #[test]
     fn key_path_is_absolute_for_root_and_other_users() {
-        assert_eq!(authorized_keys_path("root"), "/root/.ssh/authorized_keys");
+        assert_eq!(authorized_keys_path("root"), format!("{}/.ssh/authorized_keys", system_paths::ROOT_HOME));
         let ci = user_home("ci");
         assert!(ci.starts_with("/home") && ci.ends_with("/ci") && ci.matches('/').count() == 2, "{ci}");
         assert_eq!(authorized_keys_path("ci"), format!("{ci}/.ssh/authorized_keys"));
@@ -287,7 +287,7 @@ mod tests {
             .expect("write to /root/.ssh/authorized_keys");
         assert!(mkdir < write, "{calls:?}");
         assert!(calls.contains(&format!("exec {} chmod 600 /root/.ssh/authorized_keys", vm.handle)));
-        assert_eq!(p.file(&vm.handle, "/root/.ssh/authorized_keys").as_deref(), Some("ssh-ed25519 AAAA host\n"));
+        assert_eq!(p.file(&vm.handle, &format!("{}/.ssh/authorized_keys", system_paths::ROOT_HOME)).as_deref(), Some("ssh-ed25519 AAAA host\n"));
     }
 
     #[test]

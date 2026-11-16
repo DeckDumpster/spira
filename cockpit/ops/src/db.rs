@@ -61,28 +61,28 @@ mod tests {
 
     #[test]
     fn cockpit_db_env_used_when_present_and_valid() {
-        let r = resolve_db(Some("/db1"), Some("/db2"), |p| p == Path::new("/db1/.beads"));
-        assert_eq!(r.unwrap(), PathBuf::from("/db1"));
+        let r = resolve_db(Some("db1"), Some("db2"), |p| p == Path::new("db1/.beads"));
+        assert_eq!(r.unwrap(), PathBuf::from("db1"));
     }
 
     #[test]
     fn falls_back_to_spira_db_when_cockpit_db_unset() {
-        let r = resolve_db(None, Some("/db2"), |p| p == Path::new("/db2/.beads"));
-        assert_eq!(r.unwrap(), PathBuf::from("/db2"));
+        let r = resolve_db(None, Some("db2"), |p| p == Path::new("db2/.beads"));
+        assert_eq!(r.unwrap(), PathBuf::from("db2"));
     }
 
     #[test]
     fn falls_back_to_spira_db_when_cockpit_db_empty() {
-        let r = resolve_db(Some(""), Some("/db2"), |p| p == Path::new("/db2/.beads"));
-        assert_eq!(r.unwrap(), PathBuf::from("/db2"));
+        let r = resolve_db(Some(""), Some("db2"), |p| p == Path::new("db2/.beads"));
+        assert_eq!(r.unwrap(), PathBuf::from("db2"));
     }
 
     #[test]
     fn refuses_with_named_path_when_no_beads_dir() {
-        let r = resolve_db(Some("/nope"), None, |_| false);
+        let r = resolve_db(Some("nope"), None, |_| false);
         assert_eq!(
             r.unwrap_err(),
-            "cockpit: /nope has no .beads — refusing to guess a database"
+            "cockpit: nope has no .beads — refusing to guess a database"
         );
     }
 
@@ -100,10 +100,10 @@ mod tests {
         // COCKPIT_DB set (even if it won't validate) must not silently fall through to
         // SPIRA_DB — matching bash's ${COCKPIT_DB:-${SPIRA_DB:-}}, which only falls back on
         // unset/empty, never on "set but invalid".
-        let r = resolve_db(Some("/db1"), Some("/db2"), |p| p == Path::new("/db2/.beads"));
+        let r = resolve_db(Some("db1"), Some("db2"), |p| p == Path::new("db2/.beads"));
         assert_eq!(
             r.unwrap_err(),
-            "cockpit: /db1 has no .beads — refusing to guess a database"
+            "cockpit: db1 has no .beads — refusing to guess a database"
         );
     }
 }

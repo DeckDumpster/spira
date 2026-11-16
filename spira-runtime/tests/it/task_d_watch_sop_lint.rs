@@ -13,7 +13,7 @@ use spira_runtime::tasks::d::watch_sop_lint::*;
 const GOOD: &str = "SYMPTOM: disk is full\nCHECK: df -h\nFIX: clear /tmp\n";
 
 fn config() -> Config {
-    Config { db: "/db".into() }
+    Config { db: "db".into() }
 }
 
 fn shelf(extra: &[(&str, &str)]) -> Snapshot {

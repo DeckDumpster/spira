@@ -27,7 +27,7 @@ pub fn pinned_settings(declare: &[(&str, &str)]) -> Result<Settings, String> {
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     // Every row needs a mode, and the complete fixture predates the family rows.
     let modes = tasks::all().map(|t| format!("{}=act", t.name)).collect::<Vec<_>>().join(" ");
-    let service: &[(&str, &str)] = &[("SPIRA_LC_SOCKET", "/fixture/run/lc.sock"), ("SPIRA_TASK_MODES", &modes)];
+    let service: &[(&str, &str)] = &[("SPIRA_LC_SOCKET", "fixture/run/lc.sock"), ("SPIRA_TASK_MODES", &modes)];
     let toml = spira_config::process::fixture_toml(&dir, &[service, declare].concat());
     std::env::set_var(spira_config::process::TOML_ENV, &toml);
     std::env::set_var("SPIRA_HOME", spira_config::resolve::locate_home_for_process().unwrap());

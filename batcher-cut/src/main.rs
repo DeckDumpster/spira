@@ -3090,7 +3090,7 @@ mod cut_tests {
         testkit::write_exe(&bin, "#!/bin/sh\necho \"registry locked $*\" >&2\nexit 3\n");
         let err = snapshot_from(io::deny_list_from(bin.to_str().unwrap(), &env, 77), 77).unwrap_err();
         assert!(err.msg.contains("registry locked deny-list --at 77") && err.msg.contains("exited 3"), "{}", err.msg);
-        assert!(snapshot_from(io::deny_list_from("/nonexistent/test-registry", &env, 77), 77).is_err());
+        assert!(snapshot_from(io::deny_list_from(d.join("nonexistent/test-registry").to_str().unwrap(), &env, 77), 77).is_err());
     }
 
     #[test]

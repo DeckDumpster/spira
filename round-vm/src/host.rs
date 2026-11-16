@@ -74,7 +74,7 @@ pub fn operator_dirs(get: &dyn Fn(&str) -> Option<String>) -> Vec<(&'static str,
 
 /// The search path a round script starts with on this host: what a fresh login on a round VM has.
 /// The script sets its own `PATH` in its preflight; nothing of the caller's is on it.
-pub const LOGIN_PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+pub const LOGIN_PATH: &str = system_paths::LOGIN_PATH;
 
 /// The caller's variables a host round is started with, besides its own `HOME`. A round VM's
 /// script starts in a fresh login, so this one starts with a cleared environment and these alone:
@@ -257,7 +257,7 @@ impl Remote for LocalRemote {
 
 /// Whether any process still running (a zombie is not) belongs to process group `pgid`.
 fn group_live(pgid: i32) -> bool {
-    let Ok(rd) = fs::read_dir("/proc") else { return false };
+    let Ok(rd) = fs::read_dir(system_paths::PROC) else { return false };
     rd.flatten().any(|e| {
         let Ok(stat) = fs::read_to_string(e.path().join("stat")) else { return false };
         let mut f = stat.rsplit_once(')').map(|x| x.1).unwrap_or("").split_whitespace();
@@ -288,26 +288,26 @@ mod tests {
     #[test]
     fn the_round_keeps_the_operators_container_store_not_the_one_under_its_own_home() {
         let env = |k: &str| match k {
-            "HOME" => Some("/ops/home".to_string()),
+            "HOME" => Some("ops/home".to_string()),
             _ => None,
         };
-        assert_eq!(operator_dirs(&env), vec![("XDG_DATA_HOME", "/ops/home/.local/share".to_string()), ("XDG_CONFIG_HOME", "/ops/home/.config".to_string())]);
+        assert_eq!(operator_dirs(&env), vec![("XDG_DATA_HOME", "ops/home/.local/share".to_string()), ("XDG_CONFIG_HOME", "ops/home/.config".to_string())]);
         let set = |k: &str| match k {
-            "HOME" => Some("/ops/home".to_string()),
-            "XDG_DATA_HOME" => Some("/data".to_string()),
+            "HOME" => Some("ops/home".to_string()),
+            "XDG_DATA_HOME" => Some("data".to_string()),
             _ => None,
         };
-        assert_eq!(operator_dirs(&set)[0], ("XDG_DATA_HOME", "/data".to_string()));
+        assert_eq!(operator_dirs(&set)[0], ("XDG_DATA_HOME", "data".to_string()));
         assert!(operator_dirs(&|_| None).is_empty());
     }
 
     #[test]
     fn a_host_round_starts_with_a_login_environment_not_the_callers() {
         let caller = |k: &str| match k {
-            "HOME" => Some("/ops/home".to_string()),
+            "HOME" => Some("ops/home".to_string()),
             "USER" => Some("ops".to_string()),
-            "XDG_RUNTIME_DIR" => Some("/run/user/7".to_string()),
-            "PATH" => Some("/active/release/bin:/usr/bin".to_string()),
+            "XDG_RUNTIME_DIR" => Some("run/user/7".to_string()),
+            "PATH" => Some("active/release/bin:usr/bin".to_string()),
             "SPIRA_HOME" | "SPIRA_RELEASE" | "SPIRA_TOML" | "SPIRA_DB" | "SPIRA_RUN" | "SSH_AUTH_SOCK" | "NOTIFY_SOCKET" => Some("leak".to_string()),
             _ => None,
         };
@@ -340,7 +340,7 @@ mod tests {
 
     #[test]
     fn the_host_is_on_unless_the_operator_says_off_and_a_stray_word_is_refused() {
-        let run = Path::new("/r");
+        let run = Path::new("r");
         let get = |v: Option<&'static str>| move |k: &str| (k == "SPIRA_ROUND_VM_HOST").then(|| v.map(String::from)).flatten();
         assert!(HostPlan::from_config(run, &get(None)).unwrap().is_some());
         assert!(HostPlan::from_config(run, &get(Some("on"))).unwrap().is_some());
@@ -355,11 +355,11 @@ mod tests {
             "SPIRA_ROUND_VM_HOST_CPU_SOME_5M_TM90" => Some("11".to_string()),
             _ => None,
         };
-        let p = HostPlan::from_config(Path::new("/some/run"), &get).unwrap().unwrap();
+        let p = HostPlan::from_config(Path::new("some/run"), &get).unwrap().unwrap();
         assert_eq!((p.rule.io_full_5m_tm90, p.rule.cpu_some_5m_tm90), (7.5, 11.0));
-        assert_eq!(p.home, Path::new("/some/run/host-round"));
+        assert_eq!(p.home, Path::new("some/run/host-round"));
         let bad = |k: &str| (k == "SPIRA_ROUND_VM_HOST_CPU_SOME_5M_TM90").then(|| "lots".to_string());
-        assert!(HostPlan::from_config(Path::new("/r"), &bad).err().is_some());
+        assert!(HostPlan::from_config(Path::new("r"), &bad).err().is_some());
     }
 
     #[test]
@@ -409,7 +409,7 @@ mod tests {
     }
 
     fn alive(pid: i32) -> bool {
-        fs::read_to_string(format!("/proc/{pid}/stat")).is_ok_and(|s| s.rsplit_once(')').is_some_and(|x| !x.1.trim_start().starts_with('Z')))
+        fs::read_to_string(format!("{}/{pid}/stat", system_paths::PROC)).is_ok_and(|s| s.rsplit_once(')').is_some_and(|x| !x.1.trim_start().starts_with('Z')))
     }
 
     #[test]

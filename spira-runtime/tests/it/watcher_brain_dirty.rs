@@ -11,7 +11,7 @@ fn registration() -> runtime::Registration {
 }
 
 fn dirty(paths: &[&str]) -> Snapshot {
-    Snapshot { wiki: "/w".into(), not_repo: false, dirty: paths.iter().map(|p| (p.to_string(), 0)).collect() }
+    Snapshot { wiki: "w".into(), not_repo: false, dirty: paths.iter().map(|p| (p.to_string(), 0)).collect() }
 }
 
 fn one_path_said_and_another_dirtied() -> TaskRig {

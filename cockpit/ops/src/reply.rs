@@ -225,7 +225,7 @@ mod tests {
     fn an_answer_lifts_the_hold_and_reaches_the_holder_in_one_call() {
         let c = Fake { success: true, combined: "" };
         let f = Rec::default();
-        run("sp-abc", "use A", None, Path::new("/db"), &c, &f);
+        run("sp-abc", "use A", None, Path::new("db"), &c, &f);
         assert_eq!(*f.calls.borrow(), vec!["lift sp-abc answer-sp-abc", "deliver sp-abc use A"]);
     }
 
@@ -233,7 +233,7 @@ mod tests {
     fn an_answer_to_an_open_ask_is_the_mail_reply_and_is_copied_to_the_operator() {
         let c = Fake { success: true, combined: "" };
         let f = Rec { has_ask: true, ..Rec::default() };
-        run("sp-abc", "use A", None, Path::new("/db"), &c, &f);
+        run("sp-abc", "use A", None, Path::new("db"), &c, &f);
         assert_eq!(*f.calls.borrow(), vec!["answer", "copy None", "deliver sp-abc use A"]);
     }
 
@@ -241,7 +241,7 @@ mod tests {
     fn a_revised_default_is_mailed_to_the_operator_without_answering_the_ask() {
         let c = Fake { success: true, combined: "" };
         let f = Rec { has_ask: true, ..Rec::default() };
-        let out = run("sp-abc", "use A", Some("B"), Path::new("/db"), &c, &f);
+        let out = run("sp-abc", "use A", Some("B"), Path::new("db"), &c, &f);
         assert!(matches!(out, Outcome::Replied(_)));
         assert_eq!(*f.calls.borrow(), vec!["copy Some(\"B\")", "deliver sp-abc use A"]);
     }
@@ -250,7 +250,7 @@ mod tests {
     fn a_failed_mail_delivery_fails_the_reply_after_the_store_write() {
         let c = Fake { success: true, combined: "" };
         let f = Rec { has_ask: true, copy_fails: true, ..Rec::default() };
-        match run("sp-abc", "use A", None, Path::new("/db"), &c, &f) {
+        match run("sp-abc", "use A", None, Path::new("db"), &c, &f) {
             Outcome::Failed(s) => assert!(s.contains("not delivered to the operator's mailbox: boom"), "{s}"),
             Outcome::Replied(s) => panic!("swallowed: {s}"),
         }
@@ -260,7 +260,7 @@ mod tests {
     fn a_default_with_no_open_ask_is_refused_before_anything_is_written() {
         let c = Fake { success: true, combined: "" };
         let f = Rec::default();
-        assert!(matches!(run("sp-abc", "x", Some("B"), Path::new("/db"), &c, &f), Outcome::Failed(_)));
+        assert!(matches!(run("sp-abc", "x", Some("B"), Path::new("db"), &c, &f), Outcome::Failed(_)));
         assert!(f.calls.borrow().is_empty());
     }
 
@@ -298,7 +298,7 @@ mod tests {
     fn a_failed_comment_neither_lifts_nor_delivers() {
         let c = Fake { success: false, combined: "no" };
         let f = Rec::default();
-        run("sp-abc", "use A", None, Path::new("/db"), &c, &f);
+        run("sp-abc", "use A", None, Path::new("db"), &c, &f);
         assert!(f.calls.borrow().is_empty());
     }
 
@@ -312,7 +312,7 @@ mod tests {
     #[test]
     fn success_message_names_id_and_db_basename() {
         let c = Fake { success: true, combined: "" };
-        let out = run("sp-abc", "an answer", None, Path::new("/var/spira/db"), &c, &Rec::default());
+        let out = run("sp-abc", "an answer", None, Path::new("var/spira/db"), &c, &Rec::default());
         match out {
             Outcome::Replied(s) => assert_eq!(s, "replied on sp-abc (db)"),
             Outcome::Failed(s) => panic!("expected Replied, got Failed({s})"),
@@ -325,10 +325,10 @@ mod tests {
             success: false,
             combined: "refused: no such bead",
         };
-        let out = run("sp-abc", "an answer", None, Path::new("/db"), &c, &Rec::default());
+        let out = run("sp-abc", "an answer", None, Path::new("db"), &c, &Rec::default());
         match out {
             Outcome::Failed(s) => {
-                assert!(s.starts_with("reply: failed to comment on sp-abc in /db\n"));
+                assert!(s.starts_with("reply: failed to comment on sp-abc in db\n"));
                 assert!(s.contains("  bd: refused: no such bead"));
             }
             Outcome::Replied(s) => panic!("expected Failed, got Replied({s})"),

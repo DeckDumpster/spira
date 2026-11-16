@@ -907,7 +907,7 @@ mod tests {
     fn declared(k: &str) -> Result<String, String> {
         match k {
             "SPIRA_PATH" => Ok(String::new()),
-            "COCKPIT_DB" => Ok("/db".into()),
+            "COCKPIT_DB" => Ok("db".into()),
             "SPIRA_OPERATOR_ACTOR" => Ok("op".into()),
             "SPIRA_ASK_LABEL" => Ok("ask".into()),
             _ => Err(format!("{k} is not declared")),
@@ -917,24 +917,24 @@ mod tests {
     #[test]
     fn cfg_refuses_a_missing_operator_actor_naming_it() {
         let cfg = |k: &str| if k == "SPIRA_OPERATOR_ACTOR" { Err(format!("{k} is not declared")) } else { declared(k) };
-        let e = Cfg::from_values(&cfg, Some("/r"), Some("/h")).err().unwrap();
+        let e = Cfg::from_values(&cfg, Some("r"), Some("h")).err().unwrap();
         assert!(e.contains("SPIRA_OPERATOR_ACTOR"), "{e}");
     }
 
     #[test]
     fn cfg_refuses_an_empty_database_naming_it() {
         let cfg = |k: &str| if k == "COCKPIT_DB" { Ok(String::new()) } else { declared(k) };
-        let e = Cfg::from_values(&cfg, Some("/r"), Some("/h")).err().unwrap();
+        let e = Cfg::from_values(&cfg, Some("r"), Some("h")).err().unwrap();
         assert!(e.contains("COCKPIT_DB"), "{e}");
     }
 
     #[test]
     fn cfg_refuses_without_spira_release_and_never_inherits_path() {
-        let e = Cfg::from_values(&declared, None, Some("/h")).err().unwrap();
+        let e = Cfg::from_values(&declared, None, Some("h")).err().unwrap();
         assert!(e.contains("SPIRA_RELEASE is not set"), "{e}");
-        let c = Cfg::from_values(&declared, Some("/r"), Some("/h")).unwrap();
-        assert_eq!(child_path(&c), "/r/bin:/r/spira:/h/.local/lib/spira-env/bin:/usr/local/bin:/usr/bin:/bin");
-        assert_eq!((c.db.as_str(), c.operator_actor.as_str(), c.ask_label.as_str()), ("/db", "op", "ask"));
+        let c = Cfg::from_values(&declared, Some("r"), Some("h")).unwrap();
+        assert_eq!(child_path(&c), format!("r/bin:r/spira:h/.local/lib/spira-env/bin:{}", system_paths::SYSTEM_PATH));
+        assert_eq!((c.db.as_str(), c.operator_actor.as_str(), c.ask_label.as_str()), ("db", "op", "ask"));
     }
 
     /// The exact body `ask.sh` wrote for every insight before this change, verbatim from

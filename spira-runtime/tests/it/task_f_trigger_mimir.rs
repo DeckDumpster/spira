@@ -23,7 +23,7 @@ fn launcher(code: &str) -> Option<&'static str> {
 }
 
 fn config() -> BTreeMap<String, String> {
-    [("SPIRA_SCOPE_LABEL", "spira"), ("SPIRA_MIMIR_LABEL", "mimir"), ("SPIRA_RUN", "/run"), ("SPIRA_MIMIR_MAX_GAP_SECONDS", "10800"), ("SPIRA_MIMIR_LANDING_INTERVAL", "10"), ("SPIRA_MIMIR_MAX_BEADS", "3")].into_iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+    [("SPIRA_SCOPE_LABEL", "spira"), ("SPIRA_MIMIR_LABEL", "mimir"), ("SPIRA_RUN", "run"), ("SPIRA_MIMIR_MAX_GAP_SECONDS", "10800"), ("SPIRA_MIMIR_LANDING_INTERVAL", "10"), ("SPIRA_MIMIR_MAX_BEADS", "3")].into_iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
 }
 
 fn handler() -> TriggerMimir {
@@ -115,7 +115,7 @@ fn t5_parity_an_open_trigger_or_no_condition_skips() {
 fn t5_parity_the_time_trigger_files_a_byte_equal_bead() {
     let Decision::File(bead) = decide(&snap(0, 10_800, 0), &config()) else { panic!("the max gap has elapsed") };
     assert_eq!(bead.title, "Mimir pass — 10800s elapsed");
-    assert_eq!(bead.labels, ["spira", "mimir", "delivers:note:/run/mimir.log"]);
+    assert_eq!(bead.labels, ["spira", "mimir", "delivers:note:run/mimir.log"]);
     let t = NOW - 10_800;
     assert_eq!(
         bead.body,

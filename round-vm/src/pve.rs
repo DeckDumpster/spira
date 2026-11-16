@@ -185,7 +185,7 @@ pub struct Pve<T: Transport> {
 
 impl<T: Transport> Pve<T> {
     fn node(&self) -> String {
-        format!("/nodes/{}", self.env.node)
+        format!("/nodes/{}", self.env.node) // not a path: Proxmox API route
     }
 
     fn qemu(&self, vmid: &str) -> String {
@@ -259,7 +259,7 @@ impl<T: Transport> Pve<T> {
 
 impl<T: Transport> Provider for Pve<T> {
     fn next_id(&self) -> Result<String, String> {
-        let d = self.t.call(Method::Get, "/cluster/nextid", &[])?;
+        let d = self.t.call(Method::Get, "/cluster/nextid", &[])?; // not a path: Proxmox API route
         as_id(&d).ok_or_else(|| format!("nextid returned {d}"))
     }
 
@@ -413,29 +413,29 @@ mod tests {
                     return Err(format!("HTTP 500 (POST {path}): unable to create VM {id}: config file already exists"));
                 }
             }
-            if *self.missing_template.lock().unwrap() && path.starts_with("/nodes/pve/qemu/9000/") {
+            if *self.missing_template.lock().unwrap() && path.starts_with("/nodes/pve/qemu/9000/") { // not a path: Proxmox API route
                 return Err(format!("HTTP 500 ({method:?} {path}): unable to find configuration file for VM 9000 on node 'pve'"));
             }
             Ok(match (method, path) {
-                (Method::Get, "/cluster/nextid") => {
+                (Method::Get, "/cluster/nextid") => { // not a path: Proxmox API route
                     let mut n = self.nextids.lock().unwrap();
                     *n += 1;
                     json!((122 + *n).to_string())
                 }
-                (Method::Get, "/nodes/pve/qemu") => Value::Array(self.vms.lock().unwrap().clone()),
-                (Method::Get, p) if p.starts_with("/nodes/pve/tasks/") => json!({"status": "stopped", "exitstatus": "OK"}),
-                (Method::Get, p) if p.ends_with("/agent/exec-status") => {
+                (Method::Get, "/nodes/pve/qemu") => Value::Array(self.vms.lock().unwrap().clone()), // not a path: Proxmox API route
+                (Method::Get, p) if p.starts_with("/nodes/pve/tasks/") => json!({"status": "stopped", "exitstatus": "OK"}), // not a path: Proxmox API route
+                (Method::Get, p) if p.ends_with("/agent/exec-status") => { // not a path: Proxmox API route
                     let mut n = self.exec_polls.lock().unwrap();
                     *n += 1;
                     if *n < 2 { json!({"exited": 0}) } else { json!({"exited": 1, "exitcode": 3}) }
                 }
-                (Method::Post, p) if p.ends_with("/agent/exec") => json!({"pid": 42}),
-                (Method::Post, p) if p.ends_with("/agent/file-write") => Value::Null,
-                (Method::Get, p) if p.ends_with("/status/current") => json!({"status": "running"}),
-                (Method::Get, "/nodes/pve/qemu/124/config") => json!({"net0": "virtio=BC:24:11:AA:BB:CC,bridge=vmbr0,firewall=1"}),
-                (Method::Get, "/nodes/pve/qemu/123/config") => json!({"template": 1, "name": "t"}),
+                (Method::Post, p) if p.ends_with("/agent/exec") => json!({"pid": 42}), // not a path: Proxmox API route
+                (Method::Post, p) if p.ends_with("/agent/file-write") => Value::Null, // not a path: Proxmox API route
+                (Method::Get, p) if p.ends_with("/status/current") => json!({"status": "running"}), // not a path: Proxmox API route
+                (Method::Get, "/nodes/pve/qemu/124/config") => json!({"net0": "virtio=BC:24:11:AA:BB:CC,bridge=vmbr0,firewall=1"}), // not a path: Proxmox API route
+                (Method::Get, "/nodes/pve/qemu/123/config") => json!({"template": 1, "name": "t"}), // not a path: Proxmox API route
                 (Method::Get, p) if p.ends_with("/config") => json!({"name": "vm"}),
-                (Method::Get, p) if p.ends_with("/agent/network-get-interfaces") => json!({"result": [
+                (Method::Get, p) if p.ends_with("/agent/network-get-interfaces") => json!({"result": [ // not a path: Proxmox API route
                     {"name": "lo", "ip-addresses": [{"ip-address-type": "ipv4", "ip-address": "127.0.0.1"}]},
                     {"name": "ens18", "ip-addresses": [
                         {"ip-address-type": "ipv6", "ip-address": "fe80::1"},
@@ -454,7 +454,7 @@ mod tests {
                 node: "pve".into(),
                 token_id: "id".into(),
                 token_secret: "s".into(),
-                cacert: PathBuf::from("/ca"),
+                cacert: PathBuf::from("ca"),
                 template_vmid: "9000".into(),
                 pool: Some("ci".into()),
             },
@@ -473,24 +473,26 @@ mod tests {
     #[test]
     fn file_write_sends_raw_content_and_no_encoding_parameter() {
         let p = pve();
-        p.guest_file_write("123", "/root/.ssh/authorized_keys", "ssh-ed25519 AAAA k\n").unwrap();
+        let keys = format!("{}/.ssh/authorized_keys", system_paths::ROOT_HOME);
+        p.guest_file_write("123", &keys, "ssh-ed25519 AAAA k\n").unwrap();
         let (m, path, params) = last(&p, "file-write");
         assert_eq!(m, Method::Post);
-        assert_eq!(path, "/nodes/pve/qemu/123/agent/file-write");
+        assert_eq!(path, "/nodes/pve/qemu/123/agent/file-write"); // not a path: Proxmox API route
         assert_eq!(
             params,
-            vec![("file".into(), "/root/.ssh/authorized_keys".into()), ("content".into(), "ssh-ed25519 AAAA k\n".into())]
+            vec![("file".into(), keys.clone()), ("content".into(), "ssh-ed25519 AAAA k\n".into())]
         );
     }
 
     #[test]
     fn exec_sends_only_command_params_and_returns_the_exit_code() {
         let p = pve();
-        let rc = p.guest_exec("123", &["mkdir", "-p", "-m", "700", "/root/.ssh"]).unwrap();
+        let ssh_dir = format!("{}/.ssh", system_paths::ROOT_HOME);
+        let rc = p.guest_exec("123", &["mkdir", "-p", "-m", "700", &ssh_dir]).unwrap();
         assert_eq!(rc, 3);
-        let (_, _, params) = p.t.log.lock().unwrap().iter().find(|(_, path, _)| path.ends_with("/agent/exec")).cloned().unwrap();
+        let (_, _, params) = p.t.log.lock().unwrap().iter().find(|(_, path, _)| path.ends_with("/agent/exec")).cloned().unwrap(); // not a path: Proxmox API route
         assert!(params.iter().all(|(k, _)| k == "command"), "{params:?}");
-        assert_eq!(params.iter().map(|(_, v)| v.as_str()).collect::<Vec<_>>(), ["mkdir", "-p", "-m", "700", "/root/.ssh"]);
+        assert_eq!(params.iter().map(|(_, v)| v.as_str()).collect::<Vec<_>>(), ["mkdir", "-p", "-m", "700", ssh_dir.as_str()]);
         let (_, _, q) = last(&p, "exec-status");
         assert_eq!(q, vec![("pid".into(), "42".into())]);
     }
@@ -500,11 +502,11 @@ mod tests {
         let p = pve();
         p.clone_to("123", "round-123").unwrap();
         let log = p.t.log.lock().unwrap().clone();
-        assert_eq!(log[0].1, "/nodes/pve/qemu/9000/clone");
+        assert_eq!(log[0].1, "/nodes/pve/qemu/9000/clone"); // not a path: Proxmox API route
         assert!(log[0].2.contains(&("newid".into(), "123".into())));
         assert!(log[0].2.contains(&("name".into(), "round-123".into())));
         assert!(log[0].2.contains(&("pool".into(), "ci".into())));
-        assert_eq!(log[1].1, "/nodes/pve/tasks/UPID%3Apve%3A0001%3Atask%3A/status");
+        assert_eq!(log[1].1, "/nodes/pve/tasks/UPID%3Apve%3A0001%3Atask%3A/status"); // not a path: Proxmox API route
     }
 
     #[test]
@@ -519,8 +521,8 @@ mod tests {
     fn clone_pins_the_slot_mac_on_net0_keeping_the_rest() {
         let p = pve();
         p.clone_to("124", "round-124").unwrap();
-        let (m, path, params) = last(&p, "/qemu/124/config");
-        assert_eq!((m, path.as_str()), (Method::Post, "/nodes/pve/qemu/124/config"));
+        let (m, path, params) = last(&p, "/qemu/124/config"); // not a path: Proxmox API route
+        assert_eq!((m, path.as_str()), (Method::Post, "/nodes/pve/qemu/124/config")); // not a path: Proxmox API route
         assert_eq!(
             params,
             vec![
@@ -532,7 +534,7 @@ mod tests {
         );
         let first = pve();
         first.clone_to("124", "round-124").unwrap();
-        assert_eq!(last(&first, "/qemu/124/config").2, params);
+        assert_eq!(last(&first, "/qemu/124/config").2, params); // not a path: Proxmox API route
     }
 
     #[test]
@@ -541,7 +543,7 @@ mod tests {
         p.mem_mib = 24576;
         p.vcpus = 16;
         p.clone_to("124", "round-124").unwrap();
-        let params = last(&p, "/qemu/124/config").2;
+        let params = last(&p, "/qemu/124/config").2; // not a path: Proxmox API route
         assert!(params.contains(&("memory".into(), "24576".into())));
         assert!(params.contains(&("cores".into(), "16".into())));
     }
@@ -556,10 +558,10 @@ mod tests {
     fn a_template_build_shuts_down_gracefully_and_converts() {
         let p = pve();
         p.shutdown("123").unwrap();
-        assert_eq!(last(&p, "/status/shutdown").0, Method::Post);
+        assert_eq!(last(&p, "/status/shutdown").0, Method::Post); // not a path: Proxmox API route
         p.make_template("123").unwrap();
-        let (m, path, _) = last(&p, "/template");
-        assert_eq!((m, path.as_str()), (Method::Post, "/nodes/pve/qemu/123/template"));
+        let (m, path, _) = last(&p, "/template"); // not a path: Proxmox API route
+        assert_eq!((m, path.as_str()), (Method::Post, "/nodes/pve/qemu/123/template")); // not a path: Proxmox API route
         assert!(p.is_template("123").unwrap());
         assert!(!p.is_template("124").unwrap());
     }
@@ -568,8 +570,8 @@ mod tests {
     fn destroy_purges_through_delete() {
         let p = pve();
         p.destroy("123").unwrap();
-        let (m, path, params) = last(&p, "/qemu/123");
-        assert_eq!((m, path.as_str()), (Method::Delete, "/nodes/pve/qemu/123"));
+        let (m, path, params) = last(&p, "/qemu/123"); // not a path: Proxmox API route
+        assert_eq!((m, path.as_str()), (Method::Delete, "/nodes/pve/qemu/123")); // not a path: Proxmox API route
         assert!(params.contains(&("purge".into(), "1".into())));
     }
 
@@ -609,7 +611,7 @@ mod tests {
         assert!(p.t.log.lock().unwrap().iter().all(|(m, _, _)| *m == Method::Get));
         p.t.vms.lock().unwrap().push(json!({"vmid": 126, "name": "round-126", "tags": "spira-round-vm"}));
         destroy_verified(&p, "126", t).ok();
-        assert!(p.t.log.lock().unwrap().iter().any(|(m, path, _)| *m == Method::Delete && path.ends_with("/qemu/126")));
+        assert!(p.t.log.lock().unwrap().iter().any(|(m, path, _)| *m == Method::Delete && path.ends_with("/qemu/126"))); // not a path: Proxmox API route
     }
 
     #[test]

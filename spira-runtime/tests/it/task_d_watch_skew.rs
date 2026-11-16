@@ -9,13 +9,13 @@ use spira_runtime::tasks::d::acceptance as acc;
 use spira_runtime::tasks::d::watch_skew::*;
 
 fn config() -> Config {
-    Config { releases: "/rel".into(), release_repo: "o/spira".into(), gh_intake_repo: "o/spira".into(), gh: "gh".into(), run: "/r".into(), queue_dir: "/q".into() }
+    Config { releases: "rel".into(), release_repo: "o/spira".into(), gh_intake_repo: "o/spira".into(), gh: "gh".into(), run: "r".into(), queue_dir: "q".into() }
 }
 
 /// `queue.local`, running the tip that landed, verify ok, no stamps.
 fn in_effect() -> Snapshot {
     Snapshot {
-        repo: "/h/spira".into(),
+        repo: "h/spira".into(),
         mode: Mode::Local,
         activated: Some("20261103T000000Z".into()),
         manifest_commit: Some("a".repeat(40)),
@@ -92,7 +92,7 @@ fn t3_a_condition_escalates_once_and_a_decline_streak_alarms_at_three() {
     r.advance(CADENCE_MS).unwrap();
     acc::assert_healthy(&r, STREAM);
     assert_eq!(asked(&r, LOG).len(), 1, "the third declined pass alarms");
-    assert_eq!(carry(&r).declined.get("/h/spira"), Some(&3));
+    assert_eq!(carry(&r).declined.get("h/spira"), Some(&3));
 }
 
 #[test]
@@ -115,7 +115,7 @@ fn t5_the_question_and_the_log_line_are_the_ones_skew_wrote() {
     r.advance(2 * CADENCE_MS).unwrap();
     acc::assert_healthy(&r, STREAM);
     let logged = asked(&r, LOG);
-    assert!(logged.len() == 1 && logged[0].starts_with("skew: refresh of /h/spira has declined 3 consecutive passes"), "{logged:?}");
+    assert!(logged.len() == 1 && logged[0].starts_with("skew: refresh of h/spira has declined 3 consecutive passes"), "{logged:?}");
 }
 
 #[test]

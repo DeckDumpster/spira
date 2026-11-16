@@ -26,11 +26,11 @@ use super::*;
 /// neither set is a refusal naming both — never a search from this executable.
 #[test]
 fn rune_home_is_spira_home_then_the_declared_release_and_refuses_naming_both() {
-    let pinned = testkit::env(&[("SPIRA_HOME", Some("/some/pinned/tree"))]);
-    assert_eq!(super::rune_home().as_deref(), Ok(std::path::Path::new("/some/pinned/tree")));
+    let pinned = testkit::env(&[("SPIRA_HOME", Some("some/pinned/tree"))]);
+    assert_eq!(super::rune_home().as_deref(), Ok(std::path::Path::new("some/pinned/tree")));
     drop(pinned);
-    let rel = testkit::env(&[("SPIRA_HOME", None), ("SPIRA_RELEASE", Some("/r"))]);
-    assert_eq!(super::rune_home().as_deref(), Ok(std::path::Path::new("/r/spira")));
+    let rel = testkit::env(&[("SPIRA_HOME", None), ("SPIRA_RELEASE", Some("r"))]);
+    assert_eq!(super::rune_home().as_deref(), Ok(std::path::Path::new("r/spira")));
     drop(rel);
     let _env = testkit::env(&[("SPIRA_HOME", None), ("SPIRA_RELEASE", None)]);
     let err = super::rune_home().unwrap_err();
@@ -157,10 +157,10 @@ mod published {
 
     fn judged(control_store: bool, publish: bool) -> (Vec<Vec<String>>, Vec<verdicts::Entry>) {
         let svc = Arc::new(Service(Mutex::new(Vec::new())));
-        let st = Store { bdq: "/nonexistent/bdq".into(), lc: LcClient::over(svc.clone(), true), lc_bin: "/nonexistent/spira-lc".into(), timeout: Duration::from_secs(1), views: None };
+        let st = Store { bdq: "nonexistent/bdq".into(), lc: LcClient::over(svc.clone(), true), lc_bin: "nonexistent/spira-lc".into(), timeout: Duration::from_secs(1), views: None };
         let mut stdin = std::io::empty();
         let none = |_: &str| None;
-        let config = Config { control_store, run: "/nonexistent/run".into(), queue_dir: "/nonexistent/queue".into(), ..Config::default() };
+        let config = Config { control_store, run: "nonexistent/run".into(), queue_dir: "nonexistent/queue".into(), ..Config::default() };
         let env = Env { stdin: &mut stdin, config, lookup: &none };
         let a = Args::parse(&[]).unwrap();
         let (_, entries) = judge_rows(&a, &env, &st, None, publish).unwrap();
@@ -206,7 +206,7 @@ mod published {
             let svc = Arc::new(Service(Mutex::new(Vec::new())));
             let mut stdin = std::io::empty();
             let none = |_: &str| None;
-            let config = Config { control_store: true, run: "/nonexistent/run".into(), queue_dir: "/nonexistent/queue".into(), ..Config::default() };
+            let config = Config { control_store: true, run: "nonexistent/run".into(), queue_dir: "nonexistent/queue".into(), ..Config::default() };
             let env = Env { stdin: &mut stdin, config, lookup: &none };
             machine_judged(&Args::parse(&[]).unwrap(), &env, &store_over(svc.clone()), publish).unwrap();
             let seen = svc.0.lock().unwrap().clone();
@@ -224,13 +224,13 @@ mod published {
     }
 
     fn store_over(t: Arc<dyn Transport>) -> Store {
-        Store { bdq: "/nonexistent/bdq".into(), lc: LcClient::over(t, true), lc_bin: "/nonexistent/spira-lc".into(), timeout: Duration::from_secs(1), views: None }
+        Store { bdq: "nonexistent/bdq".into(), lc: LcClient::over(t, true), lc_bin: "nonexistent/spira-lc".into(), timeout: Duration::from_secs(1), views: None }
     }
 
     fn judge_over(t: Arc<dyn Transport>) {
         let mut stdin = std::io::empty();
         let none = |_: &str| None;
-        let config = Config { control_store: true, run: "/nonexistent/run".into(), queue_dir: "/nonexistent/queue".into(), ..Config::default() };
+        let config = Config { control_store: true, run: "nonexistent/run".into(), queue_dir: "nonexistent/queue".into(), ..Config::default() };
         let env = Env { stdin: &mut stdin, config, lookup: &none };
         judge_rows(&Args::parse(&[]).unwrap(), &env, &store_over(t), None, true).unwrap();
     }
@@ -259,10 +259,10 @@ mod published {
     #[test]
     fn republish_dependents_judges_and_publishes_only_the_records_that_wait_on_or_descend_from_the_changed() {
         let svc = Arc::new(Service(Mutex::new(Vec::new())));
-        let st = Store { bdq: "/nonexistent/bdq".into(), lc: LcClient::over(svc.clone(), true), lc_bin: "/nonexistent/spira-lc".into(), timeout: Duration::from_secs(1), views: None };
+        let st = Store { bdq: "nonexistent/bdq".into(), lc: LcClient::over(svc.clone(), true), lc_bin: "nonexistent/spira-lc".into(), timeout: Duration::from_secs(1), views: None };
         let mut stdin = std::io::empty();
         let none = |_: &str| None;
-        let config = Config { control_store: true, run: "/nonexistent/run".into(), queue_dir: "/nonexistent/queue".into(), ..Config::default() };
+        let config = Config { control_store: true, run: "nonexistent/run".into(), queue_dir: "nonexistent/queue".into(), ..Config::default() };
         let env = Env { stdin: &mut stdin, config, lookup: &none };
         let a = Args::parse(&["--changed".into(), "sp-w".into()]).unwrap();
         assert_eq!(republish_dependents(&a, &env, &st), Ok(3));
@@ -275,10 +275,10 @@ mod published {
     #[test]
     fn republish_dependents_judges_the_changed_record_itself_when_nothing_waits_on_it() {
         let svc = Arc::new(Service(Mutex::new(Vec::new())));
-        let st = Store { bdq: "/nonexistent/bdq".into(), lc: LcClient::over(svc.clone(), true), lc_bin: "/nonexistent/spira-lc".into(), timeout: Duration::from_secs(1), views: None };
+        let st = Store { bdq: "nonexistent/bdq".into(), lc: LcClient::over(svc.clone(), true), lc_bin: "nonexistent/spira-lc".into(), timeout: Duration::from_secs(1), views: None };
         let mut stdin = std::io::empty();
         let none = |_: &str| None;
-        let config = Config { control_store: true, run: "/nonexistent/run".into(), queue_dir: "/nonexistent/queue".into(), ..Config::default() };
+        let config = Config { control_store: true, run: "nonexistent/run".into(), queue_dir: "nonexistent/queue".into(), ..Config::default() };
         let env = Env { stdin: &mut stdin, config, lookup: &none };
         let a = Args::parse(&["--changed".into(), "sp-n".into()]).unwrap();
         assert_eq!(republish_dependents(&a, &env, &st), Ok(1));
@@ -348,14 +348,14 @@ mod claim_view_read {
 
     fn setup(view_code: i32) -> (Arc<Double>, Store) {
         let svc = Arc::new(Double { seen: Mutex::new(Vec::new()), view_code });
-        let st = Store { bdq: "/nonexistent/bdq".into(), lc: LcClient::over(svc.clone(), true), lc_bin: "/nonexistent/spira-lc".into(), timeout: Duration::from_secs(1), views: None };
+        let st = Store { bdq: "nonexistent/bdq".into(), lc: LcClient::over(svc.clone(), true), lc_bin: "nonexistent/spira-lc".into(), timeout: Duration::from_secs(1), views: None };
         (svc, st)
     }
 
     fn env_over<R>(f: impl FnOnce(&mut Env) -> R) -> R {
         let mut stdin = std::io::empty();
         let none = |_: &str| None;
-        let config = Config { control_store: true, stack_max_depth: 4, run: "/nonexistent/run".into(), queue_dir: "/nonexistent/queue".into(), ..Config::default() };
+        let config = Config { control_store: true, stack_max_depth: 4, run: "nonexistent/run".into(), queue_dir: "nonexistent/queue".into(), ..Config::default() };
         f(&mut Env { stdin: &mut stdin, config, lookup: &none })
     }
 

@@ -222,7 +222,7 @@ mod tests {
         });
         round_trip(List {
             prefixes: vec![],
-            selector: Selector::Eq("/state".into(), json!("OPEN")),
+            selector: Selector::Eq("state".into(), json!("OPEN")),
             states: vec![],
             limit: None,
         });

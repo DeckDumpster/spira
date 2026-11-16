@@ -1269,9 +1269,9 @@ mod tests {
             "--head",
             "abc",
             "--members-file",
-            "/tmp/m",
+            "tmp/m",
             "--worktree",
-            "/w",
+            "w",
         ])
         .unwrap();
         assert_eq!(
@@ -1279,8 +1279,8 @@ mod tests {
             Cmd::LandLocal {
                 repo: Some("spira".into()),
                 head: "abc".into(),
-                members: Text::File("/tmp/m".into()),
-                worktree: Some("/w".into())
+                members: Text::File("tmp/m".into()),
+                worktree: Some("w".into())
             }
         );
     }
@@ -1296,7 +1296,7 @@ mod tests {
             "--name",
             "r1",
             "--worktree",
-            "/w",
+            "w",
         ])
         .unwrap();
         assert_eq!(
@@ -1306,7 +1306,7 @@ mod tests {
                 repo: Some("spira".into()),
                 members: Text::Arg("a:1,b".into()),
                 name: Some("r1".into()),
-                worktree: Some("/w".into())
+                worktree: Some("w".into())
             })
         );
         let c = p(&[

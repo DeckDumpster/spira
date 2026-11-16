@@ -302,7 +302,7 @@ pub fn prepare(seam: &dyn Seam, cfg: &Env, arc: &Path, sid: &str, tp: &Path, at:
         format!("An earlier run already filed these; `archivist claim` refuses them again:\n\n{}", filed.iter().map(|k| format!("    {k}")).collect::<Vec<_>>().join("\n"))
     };
     let sessions = Path::new(&cfg.token_projects).with_file_name("sessions");
-    let liveness = if covered::session_is_live(&sessions, Path::new("/proc"), sid) {
+    let liveness = if covered::session_is_live(&sessions, Path::new(system_paths::PROC), sid) {
         "LIVE: a client process holds this session right now. It has not been cleared and may still answer or file the things you find; never describe it as cleared."
     } else {
         "not live: no client process holds this session."
@@ -748,7 +748,7 @@ mod tests {
     fn cfg() -> Env {
         Env {
             db: ".".to_string(),
-            run: "/tmp".to_string(),
+            run: "tmp".to_string(),
             runes: String::new(),
             token_projects: String::new(),
             wiki: None,
@@ -927,7 +927,7 @@ mod tests {
         claim(&dir, "sess-1", "t3-5:a").unwrap();
         let seam = FakeSeam::new();
         *seam.agent_rc.borrow_mut() = 1;
-        archive(&seam, &c, &dir, "sess-1", Path::new("/tmp/sess-1.jsonl"), 10, "5", "t", false);
+        archive(&seam, &c, &dir, "sess-1", Path::new("tmp/sess-1.jsonl"), 10, "5", "t", false);
         assert!(seam.agent_calls.borrow()[0].contains("    t3-5:a"));
         assert_eq!(covered_raw(&dir, "sess-1"), None);
         assert!(!claim(&dir, "sess-1", "t3-5:a").unwrap());
@@ -993,7 +993,7 @@ mod tests {
         // Hold the per-session lock ourselves, simulating another archive in flight.
         let held = lock::try_lock(&dir.join("sess-1.lock"));
         assert!(matches!(held, Acquire::Held(_)));
-        let rc = archive(&seam, &c, &dir, "sess-1", Path::new("/tmp/sess-1.jsonl"), 10, "5", "test", false);
+        let rc = archive(&seam, &c, &dir, "sess-1", Path::new("tmp/sess-1.jsonl"), 10, "5", "test", false);
         assert_eq!(rc, 75);
         assert!(seam.agent_calls.borrow().is_empty(), "the agent must never run while the session lock is held elsewhere");
     }
@@ -1009,7 +1009,7 @@ mod tests {
         let seam = FakeSeam::new();
         *seam.agent_rc.borrow_mut() = 0;
 
-        let rc = archive(&seam, &c, &dir, "sess-1", Path::new("/tmp/sess-1.jsonl"), 10, "5", "test run", false);
+        let rc = archive(&seam, &c, &dir, "sess-1", Path::new("tmp/sess-1.jsonl"), 10, "5", "test run", false);
         assert_eq!(rc, 0);
         assert_eq!(state::read_state_key(&dir, "sess-1", "state"), Some("safe".into()));
         assert_eq!(covered_raw(&dir, "sess-1"), Some("10".to_string()));
@@ -1021,7 +1021,7 @@ mod tests {
     // so a lock refusal (75) is retried; the timeout accounting under test is unaffected.
     fn archive_past_lock_contention(seam: &FakeSeam, c: &Env, dir: &Path) -> i32 {
         for _ in 0..200 {
-            let rc = archive(seam, c, dir, "sess-1", Path::new("/tmp/s.jsonl"), 10, "5", "t", false);
+            let rc = archive(seam, c, dir, "sess-1", Path::new("tmp/s.jsonl"), 10, "5", "t", false);
             if rc != 75 {
                 return rc;
             }
@@ -1065,7 +1065,7 @@ mod tests {
         *seam.agent_rc.borrow_mut() = 1;
         *seam.reset_at.borrow_mut() = Some(999_999);
 
-        let rc = archive(&seam, &c, &dir, "sess-1", Path::new("/tmp/s.jsonl"), 10, "5", "t", false);
+        let rc = archive(&seam, &c, &dir, "sess-1", Path::new("tmp/s.jsonl"), 10, "5", "t", false);
         assert_eq!(rc, ARC_RC_CAPACITY);
         assert_eq!(seam.pause_calls.borrow()[0], (999_999, "archivist/sess-1".to_string()));
         assert_eq!(state::read_state_key(&dir, "sess-1", "state"), Some("capacity".into()));

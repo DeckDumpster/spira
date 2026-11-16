@@ -1859,7 +1859,7 @@ struct T {
     io: Cap,
 }
 
-const REPO: &str = "/repo";
+const REPO: &str = "repo";
 
 impl T {
     fn new(mode: LandMode) -> T {
@@ -1879,7 +1879,7 @@ impl T {
             // ordinary queue.local repository and publish no release; the §8 D13 tests make
             // "spira" the harness (harness_world).
             home_repo: "harness".into(),
-            db: "/db".into(),
+            db: "db".into(),
             transition_pollsec: 5,
             transition_maxsec: 30,
             preflight_wall_secs: 240,
@@ -3787,7 +3787,7 @@ fn activation_runs_the_built_releases_own_binary_when_the_round_build_has_none()
     testkit::write_exe(rel.join(sha).join("bin/release"), "#!/bin/sh\n");
     let gone = testkit::TempDir::new("queue-round-bins-gone");
     let plan = crate::ops::deploy::Plan {
-        repo: PathBuf::from("/repo"),
+        repo: PathBuf::from("repo"),
         landref: "local/main".into(),
         releases: rel.clone(),
         run: t.s().run.clone(),

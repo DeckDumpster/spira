@@ -19,9 +19,9 @@ const APP_ID: &str = "dev.hunk";
 const APP_REVISION: u64 = 16;
 const BROKER_REVISION: u64 = 1;
 const AUTH_DOMAIN: &str = "dev.hunk.session-broker.v1";
-const CHALLENGE_PATH: &str = "/session-auth/challenge";
-const PROOF_PATH: &str = "/session-auth/proof";
-const API_PATH: &str = "/session-api";
+const CHALLENGE_PATH: &str = "/session-auth/challenge"; // not a path: session API route
+const PROOF_PATH: &str = "/session-auth/proof"; // not a path: session API route
+const API_PATH: &str = "/session-api"; // not a path: session API route
 const CALL_TIMEOUT: Duration = Duration::from_secs(1);
 const BODY_LIMIT: u64 = 1 << 20;
 

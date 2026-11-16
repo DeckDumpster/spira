@@ -1798,7 +1798,7 @@ mod tests {
 
     #[test]
     fn a_testenv_abort_in_the_vm_reaches_the_attribution_as_a_signal_death() {
-        let err = "/root/round-script.sh: line 742: 37305 Aborted (core dumped) testenv --mode parallel\nround-vm: PHASE-FAILED phase=suites rc=134\nround-vm run: the remote runner exited 134, outside testenv's contract (0-4) — no verdict\n";
+        let err = "root/round-script.sh: line 742: 37305 Aborted (core dumped) testenv --mode parallel\nround-vm: PHASE-FAILED phase=suites rc=134\nround-vm run: the remote runner exited 134, outside testenv's contract (0-4) — no verdict\n";
         let e = corpus_end(2, err, 600, 0, 5).unwrap_err();
         assert!(batcher::buildattr::is_signal_death(&e), "{e}");
     }

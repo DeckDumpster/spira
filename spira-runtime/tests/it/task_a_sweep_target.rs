@@ -19,7 +19,7 @@ spira_runtime::family_a_acceptance! {
 const GIB: u64 = 1 << 30;
 
 fn target(id: &str, idle_secs: u64, busy: bool, gib: u64) -> Candidate {
-    Candidate { id: id.into(), target: format!("/run/worktree/{id}/target"), idle_secs, busy, bytes: gib * GIB }
+    Candidate { id: id.into(), target: format!("run/worktree/{id}/target"), idle_secs, busy, bytes: gib * GIB }
 }
 
 /// The contract's idle fixture: free space at the floor and an empty foreign-cache.
@@ -43,7 +43,7 @@ fn removed(acts: &[Act]) -> Vec<&str> {
 /// A recorded removal is not replayed: once the run is gone from the world it is asked for once.
 #[test]
 fn t3_a_recorded_removal_is_not_replayed() {
-    let stale = ForeignRun { path: "/run/foreign-cache/spira/runs/r1".into(), age_secs: 7_200, busy: false, bytes: GIB };
+    let stale = ForeignRun { path: "run/foreign-cache/spira/runs/r1".into(), age_secs: 7_200, busy: false, bytes: GIB };
     let world = Arc::new(Mutex::new(Snapshot { foreign_stale: vec![stale], ..idle() }));
     let (seen, gone) = (world.clone(), world.clone());
     let mut r = TaskRig::new(1, registration())
@@ -82,12 +82,12 @@ fn t5_above_the_floor_no_target_is_touched() {
 #[test]
 fn t5_only_stale_unbusy_foreign_runs_go() {
     let runs = vec![
-        ForeignRun { path: "/f/stale".into(), age_secs: 3_600, busy: false, bytes: 1 },
-        ForeignRun { path: "/f/busy".into(), age_secs: 9_000, busy: true, bytes: 1 },
-        ForeignRun { path: "/f/young".into(), age_secs: 3_599, busy: false, bytes: 1 },
+        ForeignRun { path: "f/stale".into(), age_secs: 3_600, busy: false, bytes: 1 },
+        ForeignRun { path: "f/busy".into(), age_secs: 9_000, busy: true, bytes: 1 },
+        ForeignRun { path: "f/young".into(), age_secs: 3_599, busy: false, bytes: 1 },
     ];
     let acts = decide(&Carry::default(), &Snapshot { foreign_stale: runs, ..idle() }).1;
-    assert_eq!(acts.iter().filter(|a| a.effect == REMOVE_FOREIGN_RUN).map(|a| a.key.as_str()).collect::<Vec<_>>(), ["/f/stale"]);
+    assert_eq!(acts.iter().filter(|a| a.effect == REMOVE_FOREIGN_RUN).map(|a| a.key.as_str()).collect::<Vec<_>>(), ["f/stale"]);
 }
 
 /// `target_reap_main.rs:89-92`: unreadable free space reclaims nothing.
@@ -116,16 +116,16 @@ fn a_boot_repeats_no_side_effect_and_misses_none() {
 }
 
 fn hand(path: &str, written_at: u64, busy: bool) -> HandTarget {
-    HandTarget { path: path.into(), guard: path.trim_end_matches("/target").into(), written_at, busy, bytes: GIB }
+    HandTarget { path: path.into(), guard: path.trim_end_matches("target").trim_end_matches('/').into(), written_at, busy, bytes: GIB }
 }
 
 /// A hand-built target is removed above the floor too, once, and keyed by when it was last
 /// written so a rebuild at the same path is a new removal; a held one stays.
 #[test]
 fn a_stale_hand_built_target_goes_at_any_free_space_and_a_held_one_stays() {
-    let snap = Snapshot { hand_stale: vec![hand("/h/a/target", 100, false), hand("/h/b/target", 100, true)], ..idle() };
+    let snap = Snapshot { hand_stale: vec![hand("h/a/target", 100, false), hand("h/b/target", 100, true)], ..idle() };
     let acts = decide(&Carry::default(), &snap).1;
-    assert_eq!(acts.iter().filter(|a| a.effect == REMOVE_HAND_TARGET).map(|a| a.key.as_str()).collect::<Vec<_>>(), ["/h/a/target@100"]);
-    let rebuilt = Snapshot { hand_stale: vec![hand("/h/a/target", 900, false)], ..idle() };
-    assert_eq!(decide(&Carry::default(), &rebuilt).1[0].key, "/h/a/target@900");
+    assert_eq!(acts.iter().filter(|a| a.effect == REMOVE_HAND_TARGET).map(|a| a.key.as_str()).collect::<Vec<_>>(), ["h/a/target@100"]);
+    let rebuilt = Snapshot { hand_stale: vec![hand("h/a/target", 900, false)], ..idle() };
+    assert_eq!(decide(&Carry::default(), &rebuilt).1[0].key, "h/a/target@900");
 }

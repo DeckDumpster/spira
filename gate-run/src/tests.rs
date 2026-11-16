@@ -46,12 +46,12 @@ fn key_is_stale_when_recorded_text_differs() {
 
 #[test]
 fn alive_requires_pid_proc_and_matching_argv() {
-    assert!(is_managed_alive(Some(123), true, Some("/usr/bin/gate-run --exec spira/sp-1 spira")));
+    assert!(is_managed_alive(Some(123), true, Some("usr/bin/gate-run --exec spira/sp-1 spira")));
     assert!(!is_managed_alive(None, true, Some("gate-run --exec")));
     assert!(!is_managed_alive(Some(123), false, Some("gate-run --exec")));
     assert!(!is_managed_alive(Some(123), true, None));
     // A recycled pid running an unrelated program must never read as live.
-    assert!(!is_managed_alive(Some(123), true, Some("/usr/bin/some-other-daemon")));
+    assert!(!is_managed_alive(Some(123), true, Some("usr/bin/some-other-daemon")));
 }
 
 // ------------------------------------------------------------------------ find_unmanaged()

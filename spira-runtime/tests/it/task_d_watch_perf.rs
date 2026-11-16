@@ -12,7 +12,7 @@ use spira_runtime::watchers::INBOX_APPEND;
 const MIN: u64 = 60_000;
 
 fn config() -> Config {
-    Config { budget_ms: 500, interval_secs: 300, remind_secs: 3600, inbox: "/q/inbox".into(), metrics_endpoint: "127.0.0.1:9".into(), run: "/r".into() }
+    Config { budget_ms: 500, interval_secs: 300, remind_secs: 3600, inbox: "q/inbox".into(), metrics_endpoint: "127.0.0.1:9".into(), run: "r".into() }
 }
 
 fn timing(name: &str, millis: u64) -> Timing {

@@ -482,7 +482,7 @@ impl World for Real {
     }
     fn git_running_in(&self, repo: &Path) -> bool {
         let Ok(want) = std::fs::canonicalize(repo) else { return false };
-        let Ok(procs) = std::fs::read_dir("/proc") else { return false };
+        let Ok(procs) = std::fs::read_dir(system_paths::PROC) else { return false };
         procs.flatten().any(|e| {
             let p = e.path();
             let is_git = std::fs::read_to_string(p.join("comm")).map(|c| c.trim() == "git").unwrap_or(false);

@@ -299,7 +299,7 @@ mod tests {
     #[test]
     fn a_work_bead_is_no_ask_for_a_label_another_bead_in_its_show_carries() {
         let c = DependsOnAnAsk { closed: Default::default() };
-        let Outcome::Failed(s) = run("sp-w1", "moot", Path::new("/db"), &c) else { panic!("a work bead was closed as an ask") };
+        let Outcome::Failed(s) = run("sp-w1", "moot", Path::new("db"), &c) else { panic!("a work bead was closed as an ask") };
         assert!(s.contains("is a work bead"), "{s}");
         assert!(!c.closed.get());
     }
@@ -307,27 +307,27 @@ mod tests {
     #[test]
     fn an_ask_with_no_work_bead_label_resolves_cleanly_through_the_ask_machine() {
         let c = MachineAsk { code: 0, closed: Default::default() };
-        let Outcome::Closed(s) = run("sp-ask1", "statute question answered in the pane", Path::new("/db"), &c) else { panic!() };
+        let Outcome::Closed(s) = run("sp-ask1", "statute question answered in the pane", Path::new("db"), &c) else { panic!() };
         assert_eq!(s, "resolved sp-ask1 (db)");
         assert_eq!(*c.closed.borrow(), vec![("sp-ask1".to_string(), "statute question answered in the pane".to_string())]);
     }
 
     #[test]
     fn an_ask_row_left_open_fails_the_resolve_and_a_closed_one_is_quiet() {
-        let Outcome::Failed(s) = run("sp-ask1", "moot", Path::new("/db"), &MachineAsk { code: 2, closed: Default::default() }) else { panic!() };
+        let Outcome::Failed(s) = run("sp-ask1", "moot", Path::new("db"), &MachineAsk { code: 2, closed: Default::default() }) else { panic!() };
         assert!(s.contains("FAILED: the ask row of sp-ask1 was not closed"), "{s}");
-        assert!(matches!(run("sp-ask1", "moot", Path::new("/db"), &MachineAsk { code: 3, closed: Default::default() }), Outcome::Closed(_)));
+        assert!(matches!(run("sp-ask1", "moot", Path::new("db"), &MachineAsk { code: 3, closed: Default::default() }), Outcome::Closed(_)));
     }
 
     #[test]
     fn an_ask_bead_with_a_lifecycle_row_still_closes() {
-        assert!(matches!(run("sp-a1", "moot", Path::new("/db"), &AskRowFake), Outcome::Closed(_)));
+        assert!(matches!(run("sp-a1", "moot", Path::new("db"), &AskRowFake), Outcome::Closed(_)));
     }
 
     #[test]
     fn a_work_bead_is_refused_naming_reply_and_nothing_is_written() {
         let c = WorkFake { closed: Default::default() };
-        let Outcome::Failed(s) = run("sp-w1", "moot", Path::new("/db"), &c) else { panic!("expected Failed") };
+        let Outcome::Failed(s) = run("sp-w1", "moot", Path::new("db"), &c) else { panic!("expected Failed") };
         assert!(s.contains("`reply`"), "{s}");
         assert!(!c.closed.get());
     }
@@ -337,7 +337,7 @@ mod tests {
     #[test]
     fn resolving_an_ask_about_a_work_bead_withdraws_its_ask_hold() {
         let c = AskFake { labels: r#""overseer","work-bead:sp-w1""#, code: 0, withdrawn: Default::default() };
-        let Outcome::Closed(s) = run("sp-ask1", "moot", Path::new("/db"), &c) else { panic!() };
+        let Outcome::Closed(s) = run("sp-ask1", "moot", Path::new("db"), &c) else { panic!() };
         assert_eq!(*c.withdrawn.borrow(), vec!["sp-w1".to_string()]);
         assert!(s.contains("withdrew the ask hold on sp-w1"), "{s}");
     }
@@ -345,13 +345,13 @@ mod tests {
     #[test]
     fn a_refused_withdraw_is_quiet_and_a_cannot_tell_is_reported() {
         let c = AskFake { labels: r#""work-bead:sp-w1""#, code: 3, withdrawn: Default::default() };
-        let Outcome::Closed(s) = run("sp-ask1", "moot", Path::new("/db"), &c) else { panic!() };
+        let Outcome::Closed(s) = run("sp-ask1", "moot", Path::new("db"), &c) else { panic!() };
         assert_eq!(s, "resolved sp-ask1 (db)");
         let c = AskFake { labels: r#""work-bead:sp-w1""#, code: 2, withdrawn: Default::default() };
-        let Outcome::Failed(s) = run("sp-ask1", "moot", Path::new("/db"), &c) else { panic!("a hold left in place is a failed resolve") };
+        let Outcome::Failed(s) = run("sp-ask1", "moot", Path::new("db"), &c) else { panic!("a hold left in place is a failed resolve") };
         assert!(s.contains("FAILED: the ask hold on sp-w1 was not lifted"), "{s}");
         let c = AskFake { labels: r#""overseer""#, code: 0, withdrawn: Default::default() };
-        run("sp-ask1", "moot", Path::new("/db"), &c);
+        run("sp-ask1", "moot", Path::new("db"), &c);
         assert!(c.withdrawn.borrow().is_empty());
     }
 
@@ -365,7 +365,7 @@ mod tests {
     #[test]
     fn success_message_names_id_and_db_basename() {
         let c = Fake { success: true, combined: "" };
-        let out = run("sp-abc", "did the thing, see diff", Path::new("/var/spira/db"), &c);
+        let out = run("sp-abc", "did the thing, see diff", Path::new("var/spira/db"), &c);
         match out {
             Outcome::Closed(s) => assert_eq!(s, "resolved sp-abc (db)"),
             Outcome::Failed(s) => panic!("expected Closed, got Failed({s})"),
@@ -377,10 +377,10 @@ mod tests {
         // The schema-mismatch scar this guards: bd's refusal text must survive, not just
         // a generic "failed to close" line.
         let c = Fake { success: false, combined: "refused: schema mismatch on write" };
-        let out = run("sp-abc", "why", Path::new("/db"), &c);
+        let out = run("sp-abc", "why", Path::new("db"), &c);
         match out {
             Outcome::Failed(s) => {
-                assert!(s.starts_with("resolve: failed to close sp-abc in /db\n"));
+                assert!(s.starts_with("resolve: failed to close sp-abc in db\n"));
                 assert!(s.contains("  bd: refused: schema mismatch on write"));
             }
             Outcome::Closed(s) => panic!("expected Failed, got Closed({s})"),

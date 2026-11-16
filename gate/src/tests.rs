@@ -10,8 +10,8 @@ use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-const REPO: &str = "/r/spira";
-const RUN: &str = "/run";
+const REPO: &str = "r/spira";
+const RUN: &str = "run";
 const BASE: &str = "local/main";
 const BR: &str = "spira/sp-a";
 const MERGE_SHA: &str = "m3rg3";
@@ -180,14 +180,14 @@ struct Fake {
 fn ctx() -> Ctx {
     let mut vars = HashMap::new();
     for (k, v) in [
-        ("SPIRA_REPO_MAP", "/cfg/repo-map"),
+        ("SPIRA_REPO_MAP", "cfg/repo-map"),
         ("SPIRA_RUN", RUN),
         ("SPIRA_VERDICT_TTL", "86400"),
         ("SPIRA_CERTIFY_PAR", "2"),
-        ("HOME", "/fixture-home"),
-        ("SPIRA_RELEASE", "/rel"),
+        ("HOME", "fixture-home"),
+        ("SPIRA_RELEASE", "rel"),
         // The box's own tool tail (sp-c7b85) — cargo, for the tree builds a gate step runs.
-        ("SPIRA_PATH", "/box/.cargo/bin"),
+        ("SPIRA_PATH", "box/.cargo/bin"),
         // ONE SOURCE (per Ryan 2026-10-05): engine.rs no longer falls back to a literal
         // default when one of these is absent from `Ctx.vars` — that is now `cfg`'s job,
         // once, at the real `Real::context()`. The fixture stands in for that resolved
@@ -219,11 +219,11 @@ fn ctx() -> Ctx {
 impl Fake {
     fn new() -> Fake {
         let readable: HashSet<PathBuf> = [
-            "/cfg/repo-map",
-            "/h/exclude.sh",
-            "/h/skew",
-            "/h/spira-lc",
-            "/h/yield.sh",
+            "cfg/repo-map",
+            "h/exclude.sh",
+            "h/skew",
+            "h/spira-lc",
+            "h/yield.sh",
         ]
         .iter()
         .map(PathBuf::from)
@@ -308,7 +308,7 @@ impl Fake {
             objects: RefCell::default(),
             timeouts: RefCell::default(),
             checkout_wants: RefCell::default(),
-            wrapper: RefCell::new(Ok(spira_config::build::Wrapper::Sccache(PathBuf::from("/box/.cargo/bin/sccache")))),
+            wrapper: RefCell::new(Ok(spira_config::build::Wrapper::Sccache(PathBuf::from("box/.cargo/bin/sccache")))),
             wrapper_asked: RefCell::new(Vec::new()),
             target_err: RefCell::new(None),
             target_swept: Cell::new(false),
@@ -465,7 +465,7 @@ impl Fake {
         Trial::new(
             self,
             Args {
-                home: PathBuf::from("/h"),
+                home: PathBuf::from("h"),
                 branch: branch.into(),
                 repo: Some("spira".into()),
                 release_bins,
@@ -501,7 +501,7 @@ impl World for Fake {
     }
     /// The fake PATH is one directory, /h: a script "is on PATH" when /h/<name> is readable.
     fn which(&self, name: &str) -> Option<PathBuf> {
-        let p = Path::new("/h").join(name);
+        let p = Path::new("h").join(name);
         self.readable(&p).then_some(p)
     }
     fn exists(&self, p: &Path) -> bool {
@@ -535,7 +535,7 @@ impl World for Fake {
     }
     fn remove(&self, _: &Path) {}
     fn temp_file(&self, _: &str) -> Option<PathBuf> {
-        Some(PathBuf::from("/tmp/files"))
+        Some(PathBuf::from("tmp/files"))
     }
     fn rev_parse(&self, _: &Path, rev: &str) -> Option<String> {
         if let Some(id) = self.objects.borrow().get(rev) {
@@ -890,30 +890,30 @@ fn a_current_branch_is_judged_as_itself() {
 fn the_gate_command_gets_the_launcher_path_set_outright_from_spira_release() {
     let f = Fake::new();
     f.ancestor.set(true);
-    f.put_var("PATH", "/inherited/.cargo/bin:/checkout/target/release:/usr/bin");
+    f.put_var("PATH", "inherited/.cargo/bin:checkout/target/release:usr/bin");
     assert_eq!(f.run(), PASS);
     assert_eq!(
         f.env_of(0, "PATH"),
-        format!("/rel/bin:/rel/spira:/usr/local/bin:/usr/bin:/bin:{}", ctx().var("SPIRA_PATH")),
+        format!("rel/bin:rel/spira:{}:{}", system_paths::SYSTEM_PATH, ctx().var("SPIRA_PATH")),
         "the release's bin/ and spira/, the system dirs, then the box's own tool tail — nothing inherited"
     );
-    assert_eq!(f.env_of(0, "SPIRA_RELEASE"), "/rel");
+    assert_eq!(f.env_of(0, "SPIRA_RELEASE"), "rel");
 }
 
 #[test]
 fn the_trial_env_carries_spira_toml_so_the_box_tools_a_suites_step_runs_can_resolve_config() {
     let f = Fake::new();
     f.ancestor.set(true);
-    f.put_var("SPIRA_TOML", "/box/spira.toml");
+    f.put_var("SPIRA_TOML", "box/spira.toml");
     assert_eq!(f.run(), PASS);
-    assert_eq!(f.env_of(0, "SPIRA_TOML"), "/box/spira.toml");
+    assert_eq!(f.env_of(0, "SPIRA_TOML"), "box/spira.toml");
 }
 
 #[test]
 fn a_path_tail_entry_inside_a_release_is_no_verdict_naming_it_and_nothing_runs() {
     let f = Fake::new();
     f.ancestor.set(true);
-    f.put_var("SPIRA_PATH", "/x/spira-releases/def/bin");
+    f.put_var("SPIRA_PATH", "x/spira-releases/def/bin");
     assert_eq!(f.run(), NOVERDICT);
     assert!(f.verdict_line().contains("reason=release-unset"), "{}", f.verdict_line());
     assert!(f.stderr().contains("spira-releases"), "{}", f.stderr());
@@ -1174,7 +1174,7 @@ fn a_red_the_base_re_run_passes_is_the_branchs() {
 const BASE_TREE_HEX: &str = "0123456789abcdef0123456789abcdef01234567";
 
 fn base_cache_path(suite: &str) -> PathBuf {
-    PathBuf::from(format!("/run/verdicts/base-suites/spira/{BASE_TREE_HEX}/{suite}"))
+    PathBuf::from(format!("run/verdicts/base-suites/spira/{BASE_TREE_HEX}/{suite}"))
 }
 
 /// A full cache hit answers every red suite without running anything extra on the base — the
@@ -1617,7 +1617,7 @@ fn a_gate_string_naming_a_file_the_base_lacks_is_configuration() {
 #[test]
 fn the_early_refusals() {
     let f = Fake::new();
-    f.readable.borrow_mut().remove(Path::new("/cfg/repo-map"));
+    f.readable.borrow_mut().remove(Path::new("cfg/repo-map"));
     assert_eq!(f.run(), NOVERDICT);
     assert!(f.verdict_line().contains("reason=no-repo-map-file"));
     assert!(
@@ -1674,7 +1674,7 @@ fn skew_init_fault_and_foreign_harness() {
 #[test]
 fn an_unreadable_repo_map_is_no_verdict_and_a_repo_absent_from_it_is_another() {
     let f = Fake::new();
-    f.readable.borrow_mut().remove(Path::new("/cfg/repo-map"));
+    f.readable.borrow_mut().remove(Path::new("cfg/repo-map"));
     assert_eq!(f.run(), NOVERDICT);
     assert!(f.verdict_line().contains("reason=no-repo-map-file"), "{}", f.verdict_line());
     assert!(f.ran.borrow().is_empty(), "no trial runs against a map that cannot be read");
@@ -1708,13 +1708,13 @@ fn an_unresolvable_branch_or_base_is_no_verdict_75_naming_the_range_the_repo_and
 #[test]
 fn a_missing_exclude_or_skew_tool_is_no_verdict_not_a_pass() {
     let f = Fake::new();
-    f.readable.borrow_mut().remove(Path::new("/h/exclude.sh"));
+    f.readable.borrow_mut().remove(Path::new("h/exclude.sh"));
     assert_eq!(f.run(), NOVERDICT);
     assert!(f.verdict_line().contains("reason=missing-exclude"), "{}", f.verdict_line());
     assert!(f.ran.borrow().is_empty());
 
     let f = Fake::new();
-    f.readable.borrow_mut().remove(Path::new("/h/skew"));
+    f.readable.borrow_mut().remove(Path::new("h/skew"));
     assert_eq!(f.run(), NOVERDICT);
     assert!(f.verdict_line().contains("reason=missing-skew"), "{}", f.verdict_line());
     assert!(f.ran.borrow().is_empty());
@@ -1868,7 +1868,7 @@ fn only_a_pass_is_cached() {
         .borrow_mut()
         .insert(MERGE_SHA.into(), (1, "test-b.sh RED".into()));
     f.run();
-    assert!(f.written.borrow().iter().all(|(p, _)| p.to_string_lossy().contains("/verdicts/red/")), "{:?}", f.written.borrow());
+    assert!(f.written.borrow().iter().all(|(p, _)| p.to_string_lossy().contains("verdicts/red/")), "{:?}", f.written.borrow());
 }
 
 #[test]
@@ -1878,7 +1878,7 @@ fn a_red_is_answered_from_its_record_and_does_not_run_again() {
         .borrow_mut()
         .insert(MERGE_SHA.into(), (1, "test-b.sh RED".into()));
     let first = f.run();
-    let (p, entry) = f.written.borrow().iter().find(|(p, _)| p.to_string_lossy().contains("/verdicts/red/")).cloned().expect("a red record");
+    let (p, entry) = f.written.borrow().iter().find(|(p, _)| p.to_string_lossy().contains("verdicts/red/")).cloned().expect("a red record");
     let line = f.verdict_line();
     let g = Fake::new();
     g.put_var("SPIRA_VERDICT_TTL", "86400");
@@ -1887,7 +1887,7 @@ fn a_red_is_answered_from_its_record_and_does_not_run_again() {
     assert_eq!(g.run(), first);
     assert!(g.ran.borrow().is_empty(), "{:?}", g.ran.borrow());
     assert!(g.verdict_line().contains("reason=branch-red") || line.contains("reason=base-red"), "{}", g.verdict_line());
-    assert!(g.written.borrow().iter().all(|(p, _)| !p.to_string_lossy().contains("/verdicts/red/")));
+    assert!(g.written.borrow().iter().all(|(p, _)| !p.to_string_lossy().contains("verdicts/red/")));
     let log = g.appended.borrow()[0].clone();
     assert!(log.contains(" replayed=") && log.contains("replayed=key:"), "{log}");
     let err = g.stderr();
@@ -1900,7 +1900,7 @@ fn a_red_recorded_before_the_base_moved_is_not_replayed_after() {
     let f = Fake::new();
     f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, "test-b.sh RED".into()));
     f.run();
-    let (p, entry) = f.written.borrow().iter().find(|(p, _)| p.to_string_lossy().contains("/verdicts/red/")).cloned().expect("a red record");
+    let (p, entry) = f.written.borrow().iter().find(|(p, _)| p.to_string_lossy().contains("verdicts/red/")).cloned().expect("a red record");
     let g = Fake::new();
     g.put_var("SPIRA_VERDICT_TTL", "86400");
     *g.merge.borrow_mut() = Merge::Clean("a-merged-tree-after-the-base-moved".into());
@@ -1916,7 +1916,7 @@ fn a_red_recorded_under_another_gate_is_not_replayed_and_the_tip_is_judged_again
     let f = Fake::new();
     f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, "test-b.sh RED".into()));
     f.run();
-    let (p, entry) = f.written.borrow().iter().find(|(p, _)| p.to_string_lossy().contains("/verdicts/red/")).cloned().expect("a red record");
+    let (p, entry) = f.written.borrow().iter().find(|(p, _)| p.to_string_lossy().contains("verdicts/red/")).cloned().expect("a red record");
     let g = Fake::new();
     g.harness.set("a-gate-that-changed");
     g.put_var("SPIRA_VERDICT_TTL", "86400");
@@ -1932,7 +1932,7 @@ fn forgetting_a_tip_removes_the_red_recorded_for_it_and_no_other() {
     let f = Fake::new();
     f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, "test-b.sh RED".into()));
     f.run();
-    let entry = f.written.borrow().iter().find(|(p, _)| p.to_string_lossy().contains("/verdicts/red/")).map(|(_, e)| e.clone()).expect("a red record");
+    let entry = f.written.borrow().iter().find(|(p, _)| p.to_string_lossy().contains("verdicts/red/")).map(|(_, e)| e.clone()).expect("a red record");
     let tip = entry.lines().find_map(|l| l.strip_prefix("tip=")).expect("the entry names its tip").to_string();
     assert!(!tip.is_empty() && tip != "-");
     let tmp = testkit::TempDir::new("redcache-forget");
@@ -2068,8 +2068,8 @@ fn gates_on_different_branches_lock_different_trees_and_one_branch_locks_one() {
     };
     let a = lock_of("spira/sp-a");
     let b = lock_of("spira/sp-b");
-    assert_eq!(a, PathBuf::from("/run/worktree/.gate.spira.spira-sp-a.lock"));
-    assert_eq!(b, PathBuf::from("/run/worktree/.gate.spira.spira-sp-b.lock"));
+    assert_eq!(a, PathBuf::from("run/worktree/.gate.spira.spira-sp-a.lock"));
+    assert_eq!(b, PathBuf::from("run/worktree/.gate.spira.spira-sp-b.lock"));
     assert_eq!(a, lock_of("spira/sp-a"), "the same branch always contends for the same lock");
 }
 
@@ -2705,7 +2705,7 @@ fn an_unreadable_config_composes_as_suites() {
 
 // ---------------------------------------------------------------------------- re-entry (sp-p3srm)
 
-const GATE_TREE: &str = "/run/worktree/.gate.spira.spira-sp-a";
+const GATE_TREE: &str = "run/worktree/.gate.spira.spira-sp-a";
 
 /// A fake whose bead the round returned with `suites` (the `.ejected` sidecar), each of which
 /// exists on the gate tree. Its gate string runs fences only (prints no suite line) on both
@@ -2782,7 +2782,7 @@ fn a_named_suite_red_again_on_a_green_base_fails_the_branch() {
         .written
         .borrow()
         .iter()
-        .all(|(p, _)| !p.starts_with("/run/verdicts/trees")));
+        .all(|(p, _)| !p.starts_with("run/verdicts/trees")));
 }
 
 #[test]
@@ -3222,7 +3222,7 @@ fn a_gate_on_a_tree_with_a_proved_fences_verdict_runs_no_fences_phase() {
         .insert(MERGE_SHA.into(), (1, "literal-lint: RED".into()));
     *f.base_tree_override.borrow_mut() = Some(BASE_TREE_HEX.into());
     f.files.borrow_mut().insert(
-        PathBuf::from(format!("/run/verdicts/fences/spira/{BASE_TREE_HEX}")),
+        PathBuf::from(format!("run/verdicts/fences/spira/{BASE_TREE_HEX}")),
         fencecache::render("harness", "bash spira/fence.sh && run-suites", "fence: x checked 3 files"),
     );
     assert_eq!(f.run(), FAIL);
@@ -3692,7 +3692,7 @@ fn the_definition_is_part_of_the_verdict_key() {
     assert_eq!(a.run(), PASS);
     let b = tree_owned(Some(STEPS), Some(&STEPS.replace("bin SPIRA_LINT_BIN spira-lint\n", "")));
     assert_eq!(b.run(), PASS);
-    let key = |f: &Fake| f.written.borrow().iter().find(|(p, _)| p.starts_with("/run/verdicts") && !p.to_string_lossy().contains("/trees/")).map(|(p, _)| p.clone());
+    let key = |f: &Fake| f.written.borrow().iter().find(|(p, _)| p.starts_with("run/verdicts") && !p.to_string_lossy().contains("/trees/")).map(|(p, _)| p.clone());
     assert!(key(&a).is_some() && key(&b).is_some());
     assert_ne!(key(&a), key(&b), "a different tool set is a different trial");
 }
@@ -3936,8 +3936,8 @@ fn every_run_compiles_through_the_wrapper_resolved_on_the_commands_path() {
     assert_eq!(f.run(), PASS, "{}", f.stderr());
     let asked = f.wrapper_asked.borrow().clone();
     assert_eq!(asked.len(), 1);
-    assert!(asked[0].0.ends_with(":/box/.cargo/bin"), "{asked:?}");
-    assert_eq!(f.env_of(0, "RUSTC_WRAPPER"), "/box/.cargo/bin/sccache");
+    assert!(asked[0].0.ends_with(":box/.cargo/bin"), "{asked:?}");
+    assert_eq!(f.env_of(0, "RUSTC_WRAPPER"), "box/.cargo/bin/sccache");
     assert_eq!(f.env_of(0, "SCCACHE_IGNORE_SERVER_IO_ERROR"), "1");
     // No CARGO_* variable: sccache hashes those into every key (DESIGN-build-cache.md §2.2).
     for e in f.ran.borrow().iter() {
@@ -4007,21 +4007,21 @@ fn the_gate_tree_builds_on_tmpfs_and_an_unpreparable_target_is_no_verdict() {
 #[test]
 fn the_gate_builds_on_the_configured_target_root() {
     let f = tree_owned(Some(STEPS), Some(STEPS));
-    f.put_var("SPIRA_GATE_TARGET_ROOT", "/cfg/root");
+    f.put_var("SPIRA_GATE_TARGET_ROOT", "cfg/root");
     assert_eq!(f.run(), PASS, "{}", f.stderr());
-    assert_eq!(f.target_roots.borrow().as_slice(), &["/cfg/root".to_string()]);
-    assert!(f.stderr().contains("gate: build on /cfg/root/"), "{}", f.stderr());
+    assert_eq!(f.target_roots.borrow().as_slice(), &["cfg/root".to_string()]);
+    assert!(f.stderr().contains("gate: build on cfg/root/"), "{}", f.stderr());
 }
 
 /// The gate's target root is config; a scratch-short verdict names the room the root had.
 #[test]
 fn a_scratch_short_verdict_names_the_configured_root_and_what_the_targets_held() {
     let f = Fake::new();
-    f.put_var("SPIRA_GATE_TARGET_ROOT", "/cfg/root");
+    f.put_var("SPIRA_GATE_TARGET_ROOT", "cfg/root");
     f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, "test-a.sh RED\nDisk quota exceeded (os error 122)".into()));
     assert_eq!(f.run(), NOVERDICT, "{}", f.stderr());
     let e = f.stderr();
-    assert!(e.contains("gate: target root /cfg/root: 1 MiB writable, gate targets hold 7 MiB there"), "{e}");
+    assert!(e.contains("gate: target root cfg/root: 1 MiB writable, gate targets hold 7 MiB there"), "{e}");
     assert!(e.contains("the user's quota"), "{e}");
 }
 
@@ -4147,7 +4147,7 @@ fn only_a_cache_fault_on_a_cached_trial_is_retried_and_a_failed_retry_is_no_verd
 
 #[test]
 fn the_uncached_env_empties_the_wrapper_and_says_the_cache_is_off() {
-    let env = vec![("RUSTC_WRAPPER".to_string(), "/box/.cargo/bin/sccache".to_string())];
+    let env = vec![("RUSTC_WRAPPER".to_string(), "box/.cargo/bin/sccache".to_string())];
     assert!(crate::engine::cache_in_force(&env));
     let off = crate::engine::without_cache(env);
     assert!(off.contains(&("RUSTC_WRAPPER".to_string(), String::new())), "{off:?}");
@@ -4214,8 +4214,8 @@ fn release_bins_builds_the_judged_tree_in_the_gate_tree_after_a_pass() {
     assert!(last.starts_with("cargo build --release --workspace --locked --config profile.release.incremental=false"), "{last}");
     assert!(last.contains("find target/release -mindepth 1 -delete"), "a failed build leaves nothing to land: {last}");
     let env = f.ran.borrow().last().unwrap().clone();
-    assert!(env.contains(&("RUSTC_WRAPPER".to_string(), "/box/.cargo/bin/sccache".to_string())), "{env:?}");
-    assert!(env.iter().any(|(k, v)| k == "PATH" && v.ends_with(":/box/.cargo/bin")), "{env:?}");
+    assert!(env.contains(&("RUSTC_WRAPPER".to_string(), "box/.cargo/bin/sccache".to_string())), "{env:?}");
+    assert!(env.iter().any(|(k, v)| k == "PATH" && v.ends_with(":box/.cargo/bin")), "{env:?}");
     assert_eq!(f.trees.borrow().last().map(PathBuf::as_path), Some(Path::new(GATE_TREE)));
     assert!(f.stderr().contains(&format!("--worktree {GATE_TREE}")), "{}", f.stderr());
     // Without the flag nothing extra is built.
@@ -4299,11 +4299,11 @@ fn every_build_the_gate_runs_rides_on_the_gate_slot_including_release_bins() {
 #[test]
 fn the_gates_cargo_compiles_through_sccache_even_with_spira_admit_on_the_path() {
     let f = Fake::new();
-    f.files.borrow_mut().insert(PathBuf::from("/h/spira-admit"), String::new());
+    f.files.borrow_mut().insert(PathBuf::from("h/spira-admit"), String::new());
     assert_eq!(f.run_with(true), PASS, "{}", f.stderr());
     for (i, env) in f.ran.borrow().iter().enumerate() {
         let get = |k: &str| env.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
-        assert_eq!(get("RUSTC_WRAPPER"), Some("/box/.cargo/bin/sccache"), "command {i}: {env:?}");
+        assert_eq!(get("RUSTC_WRAPPER"), Some("box/.cargo/bin/sccache"), "command {i}: {env:?}");
         assert_eq!(get("SPIRA_ADMIT_INNER"), None, "command {i}");
         assert_eq!(get("SPIRA_ADMISSION"), Some("gate"), "command {i}");
     }
@@ -4429,7 +4429,7 @@ fn release_fake() -> Fake {
         MERGE_SHA.into(),
         Ok(metadata_json(&[("spira-lint", &["spira-config"]), ("spira-config", &[]), ("gate", &["spira-config"])])),
     );
-    f.files.borrow_mut().insert(PathBuf::from("/rel/bin/spira-lint"), "#!release".into());
+    f.files.borrow_mut().insert(PathBuf::from("rel/bin/spira-lint"), "#!release".into());
     f
 }
 
@@ -4453,7 +4453,7 @@ fn a_diff_outside_the_tools_closure_runs_the_steps_with_the_releases_binaries() 
     touch(&f, &["gate/src/engine.rs", "spira/a-fence.sh"]);
     assert_eq!(f.run(), PASS, "{}", f.stderr());
     assert!(!built(&f), "{:?}", f.cmds.borrow());
-    assert_eq!(f.env_of(0, "SPIRA_LINT_BIN"), "/rel/bin/spira-lint");
+    assert_eq!(f.env_of(0, "SPIRA_LINT_BIN"), "rel/bin/spira-lint");
     let log = gate_log(&f);
     assert!(log.contains(" tools=release"), "{log}");
     assert!(!log.contains("tools:"), "no tools phase: {log}");
@@ -4489,7 +4489,7 @@ fn the_base_trial_uses_the_releases_tools_when_the_branch_built_its_own() {
     let n = f.ran.borrow().len();
     assert!(n >= 2, "branch and base steps both ran");
     assert_eq!(f.env_of(0, "SPIRA_LINT_BIN"), format!("{GATE_TREE}/target/tree-tools/{}/spira-lint", want()));
-    assert_eq!(f.env_of(n - 1, "SPIRA_LINT_BIN"), "/rel/bin/spira-lint");
+    assert_eq!(f.env_of(n - 1, "SPIRA_LINT_BIN"), "rel/bin/spira-lint");
     assert!(gate_log(&f).contains(" tools=tree:"), "{}", gate_log(&f));
 }
 
@@ -4497,7 +4497,7 @@ fn the_base_trial_uses_the_releases_tools_when_the_branch_built_its_own() {
 #[test]
 fn a_release_lacking_a_named_tool_is_a_fault_naming_it_not_a_silent_build() {
     let f = release_fake();
-    f.files.borrow_mut().remove(&PathBuf::from("/rel/bin/spira-lint"));
+    f.files.borrow_mut().remove(&PathBuf::from("rel/bin/spira-lint"));
     touch(&f, &["gate/src/engine.rs"]);
     assert_ne!(f.run(), PASS);
     assert!(!built(&f), "{:?}", f.cmds.borrow());
@@ -4901,7 +4901,7 @@ fn a_fences_mode_certification_runs_its_covered_suites_as_their_own_phase() {
 
 #[test]
 fn a_covered_fences_pass_is_never_reused_for_a_gate_with_no_bead() {
-    let key = |f: &Fake| f.written.borrow().iter().find(|(p, _)| p.starts_with("/run/verdicts") && !p.to_string_lossy().contains("/trees/")).map(|(p, _)| p.clone());
+    let key = |f: &Fake| f.written.borrow().iter().find(|(p, _)| p.starts_with("run/verdicts") && !p.to_string_lossy().contains("/trees/")).map(|(p, _)| p.clone());
     let with = fences_fake(&["docs/x.md"]);
     assert_eq!(with.run(), PASS, "{}", with.stderr());
     let without = fences_fake(&["docs/x.md"]);
@@ -4997,7 +4997,7 @@ fn a_harness_fault_record_carries_the_runners_words() {
 
 #[test]
 fn fences_mode_is_its_own_verdict_key_and_gate_all_runs_the_string_whole() {
-    let key = |f: &Fake| f.written.borrow().iter().find(|(p, _)| p.starts_with("/run/verdicts") && !p.to_string_lossy().contains("/trees/")).map(|(p, _)| p.clone());
+    let key = |f: &Fake| f.written.borrow().iter().find(|(p, _)| p.starts_with("run/verdicts") && !p.to_string_lossy().contains("/trees/")).map(|(p, _)| p.clone());
     let mut keys = Vec::new();
     for m in [GateMode::Fences, GateMode::Unit, GateMode::Suites] {
         let f = tree_owned(Some(STEPS), Some(STEPS));

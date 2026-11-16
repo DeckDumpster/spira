@@ -111,7 +111,7 @@ fn start_all(u: &ScriptedUnits, acts: &[Act]) -> usize {
     let mut n = 0;
     for a in acts.iter().filter(|a| a.effect == UNIT_START) {
         let start: Start = serde_json::from_str(&a.input).unwrap();
-        let unit = UnitSpec { task: NAME.into(), key: start.key, argv: vec!["/rel/bin/dwarf".into(), start.rune], env: vec![], cwd: None };
+        let unit = UnitSpec { task: NAME.into(), key: start.key, argv: vec!["rel/bin/dwarf".into(), start.rune], env: vec![], cwd: None };
         let spec = StartSpec { unit, props: dwarf_props("3600").unwrap() };
         units::effect(u, units::UNIT_START, &serde_json::to_string(&spec).unwrap()).unwrap();
         n += 1;
@@ -161,7 +161,7 @@ fn sp_bpnmzg_four_live_dwarves_started_by_unit_start_hold_the_next_tick_at_none(
 fn sp_bpnmzg_dwarves_sh_and_sentinel_call_count_the_same_units() {
     let (_clock, u) = manager(1_000_000);
     for key in ["builder-1000-0", "builder-1000-1", "ops-1000-0"] {
-        let unit = UnitSpec { task: NAME.into(), key: key.into(), argv: vec!["/rel/bin/dwarf".into()], env: vec![], cwd: None };
+        let unit = UnitSpec { task: NAME.into(), key: key.into(), argv: vec!["rel/bin/dwarf".into()], env: vec![], cwd: None };
         u.start(&unit).unwrap();
     }
     let facts = |state| UnitFacts { state, main_pid: Some(7), exit: None, since_ms: Some(1) };

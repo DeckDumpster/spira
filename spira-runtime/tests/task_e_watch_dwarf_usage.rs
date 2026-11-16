@@ -31,12 +31,12 @@ fn dwarf() -> Sample {
         repo: "spira".into(),
         started_ms: Some(1_762_500_000_000),
         cpu_usec: 12_500_000,
-        io: vec![DeviceIo { device: "sdc".into(), mount: "/srv/ssd-b".into(), role: "ssd-b".into(), read_bytes: 4096, write_bytes: 3_000_000_000 }],
+        io: vec![DeviceIo { device: "sdc".into(), mount: "srv/ssd-b".into(), role: "ssd-b".into(), read_bytes: 4096, write_bytes: 3_000_000_000 }],
         memory_current: 300,
         memory_peak: 900,
-        worktree: "/run/worktree/sp-abc".into(),
+        worktree: "run/worktree/sp-abc".into(),
         worktree_bytes: Some(10_000),
-        build_dir: "/warm/slot.1".into(),
+        build_dir: "warm/slot.1".into(),
         build_dir_bytes: Some(20_000),
     }
 }
@@ -120,7 +120,7 @@ fn a_dwarf_sample_is_one_series_per_counter_each_labelled_with_who_and_where() {
         assert_eq!(s.at, at);
     }
     let w = pushed[0].iter().find(|s| s.name == IO_WRITE_BYTES).unwrap();
-    assert_eq!((label(w, "device"), label(w, "mount"), label(w, "role")), ("sdc", "/srv/ssd-b", "ssd-b"));
+    assert_eq!((label(w, "device"), label(w, "mount"), label(w, "role")), ("sdc", "srv/ssd-b", "ssd-b"));
     let c = pushed[0].iter().find(|s| s.name == CPU_SECONDS).unwrap();
     assert_eq!(label(c, "device"), "", "only the IO series carry the disk");
 }

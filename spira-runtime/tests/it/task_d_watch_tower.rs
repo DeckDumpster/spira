@@ -9,7 +9,7 @@ use spira_runtime::tasks::d::acceptance as acc;
 use spira_runtime::tasks::d::watch_tower::*;
 
 fn config() -> Config {
-    Config { start_timeout_s: 360, probe_timeout_s: 30, db: "/db".into(), home_repo: "spira".into(), ask_label: "ask".into(), snap_stale_s: 60, queue_throttle_override: "off".into() }
+    Config { start_timeout_s: 360, probe_timeout_s: 30, db: "db".into(), home_repo: "spira".into(), ask_label: "ask".into(), snap_stale_s: 60, queue_throttle_override: "off".into() }
 }
 
 /// `SweepData::fixture_nominal`'s shape: nothing lapsed, a fresh snapshot, no breach.

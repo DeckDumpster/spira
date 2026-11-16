@@ -579,7 +579,7 @@ pub fn run_brief(_: &Effects, _key: &str, s: &EffectSpec) -> Result<String, Stri
     } else {
         std::fs::write(&wiki_before, before).map_err(|e| format!("{}: {e}", wiki_before.display()))?;
     }
-    let mut argv = vec!["/bin/sh".to_string(), "-c".to_string(), "exec timeout \"$SPIRA_ARCHIVIST_SECS\" \"$0\" \"$@\" <\"$SPIRA_ARCHIVIST_TASK\" >\"$SPIRA_ARCHIVIST_LOG\" 2>&1".to_string(), env.agent.clone()];
+    let mut argv = vec![system_paths::BIN_SH.to_string(), "-c".to_string(), "exec timeout \"$SPIRA_ARCHIVIST_SECS\" \"$0\" \"$@\" <\"$SPIRA_ARCHIVIST_TASK\" >\"$SPIRA_ARCHIVIST_LOG\" 2>&1".to_string(), env.agent.clone()];
     argv.extend(archivist::run::agent_args(&prepared.sysfile, &env.model, env.wiki.as_deref()));
     let mut unit_env = vec![
         ("SPIRA_MAIL_FROM".to_string(), archivist::run::MAIL_FROM.to_string()),

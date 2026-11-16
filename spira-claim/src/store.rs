@@ -424,7 +424,7 @@ mod tests {
 
     fn store_over_views(reply: fn(&[String]) -> Reply, views: Option<Arc<store_view::Projection>>) -> (Store, Arc<Scripted>) {
         let t = Arc::new(Scripted { seen: Mutex::new(Vec::new()), reply });
-        let st = Store { bdq: "/nonexistent/bdq".into(), lc: LcClient::over(t.clone(), true), lc_bin: "/nonexistent/spira-lc".into(), timeout: Duration::from_secs(1), views };
+        let st = Store { bdq: "nonexistent/bdq".into(), lc: LcClient::over(t.clone(), true), lc_bin: "nonexistent/spira-lc".into(), timeout: Duration::from_secs(1), views };
         (st, t)
     }
 

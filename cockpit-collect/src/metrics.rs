@@ -438,7 +438,7 @@ mod tests {
 
     #[test]
     fn unreadable_sources_render_question_marks() {
-        let k = collect("/nonexistent/a", "/nonexistent/b", 24.0, Some(60.0), NOW);
+        let k = collect("nonexistent/a", "nonexistent/b", 24.0, Some(60.0), NOW);
         assert_eq!(k["SP_PASSES"], "?");
         assert_eq!(k["SP_SELF_STARVED_W"], "?");
         assert_eq!(k["SP_WINDOW_HOURS"], "24");

@@ -2623,7 +2623,7 @@ mod tests {
     fn seams_refuse_naming_spira_release_when_it_is_unset_or_lacks_a_tool() {
         let e = Seams::from_release(None).err().unwrap();
         assert!(e.contains("SPIRA_RELEASE is not set"), "{e}");
-        let e = Seams::from_release(Some("/nonexistent-release")).err().unwrap();
+        let e = Seams::from_release(Some("nonexistent-release")).err().unwrap();
         assert!(e.contains("forge is not in SPIRA_RELEASE"), "{e}");
     }
     use std::time::SystemTime;
@@ -2645,8 +2645,8 @@ mod tests {
     fn repo_root_finds_the_named_repo() {
         let dir = scratch_dir("repo-root");
         let map = dir.join("repos");
-        fs::write(&map, "spira | /r/checkouts/spira | queue | origin/main | | \n").unwrap();
-        assert_eq!(repo_root("spira", &Some(map)), Some(PathBuf::from("/r/checkouts/spira")));
+        fs::write(&map, "spira | r/checkouts/spira | queue | origin/main | | \n").unwrap();
+        assert_eq!(repo_root("spira", &Some(map)), Some(PathBuf::from("r/checkouts/spira")));
     }
 
     #[test]
@@ -2789,7 +2789,7 @@ mod tests {
     fn served_config() -> (Config, Arc<Store>) {
         let store = Arc::new(Store(std::sync::Mutex::default()));
         let mut cfg = test_config();
-        cfg.seams.spira_lc = "/nonexistent/spira-lc".into();
+        cfg.seams.spira_lc = "nonexistent/spira-lc".into();
         cfg.lc_client = Some(LcClient::over(Arc::clone(&store) as Arc<dyn spira_store::lc_call::Transport>, true));
         (cfg, store)
     }
@@ -2807,7 +2807,7 @@ mod tests {
         assert_eq!(cfg.lc(&["hold", "sp-1", "ask", "q", "reconciler"]), Ok("answered hold".to_string()));
         assert_eq!(cfg.lc(&["content", "list", "--all"]), Ok("answered content".to_string()));
         let err = cfg.lc(&["deliver", "pr-merged", "sp-1"]).unwrap_err();
-        assert!(err.contains("refused") && err.contains("/nonexistent/spira-lc"), "{err}");
+        assert!(err.contains("refused") && err.contains("nonexistent/spira-lc"), "{err}");
         assert_eq!(store.0.lock().unwrap().len(), 2, "the unserved verb was never sent");
     }
 
@@ -3026,7 +3026,8 @@ mod tests {
     #[test]
     fn free_space_is_read_without_df() {
         assert!(free_pct("/").is_some_and(|p| (0..=100).contains(&p)));
-        assert_eq!(free_pct("/no/such/path/at/all"), None);
+        let root = testkit::TempDir::new("free-pct-none");
+        assert_eq!(free_pct(root.join("no/such/path/at/all").to_str().unwrap()), None);
     }
 
     /// A world answered entirely by the host. Every program a `Seams` names is a script that
@@ -3147,7 +3148,7 @@ mod tests {
             let edges = observe_epic_edges(&cfg);
             assert_eq!(edges.len(), 1, "{edges:?}");
             assert_eq!(edges[0].key, "epic-blocks:sp-kid:sp-epic");
-            assert_eq!(cfg.ref_read(Path::new("/r"), "loose-tag"), Ref::Sha("c".repeat(40)), "the peel is git's, once");
+            assert_eq!(cfg.ref_read(Path::new("r"), "loose-tag"), Ref::Sha("c".repeat(40)), "the peel is git's, once");
         }
         let seen = launches(&log);
         assert_eq!(launched(&log, "git"), 1, "one peel for the one tag sha, never again: {seen}");
@@ -3283,19 +3284,19 @@ mod tests {
     pub(super) fn test_config() -> Config {
         Config {
             seams: Seams::bare(),
-            spira_run: PathBuf::from("/tmp"),
+            spira_run: PathBuf::from(system_paths::TMP),
             spira_home: String::new(),
-            log: PathBuf::from("/dev/null"),
-            state_path: PathBuf::from("/dev/null"),
-            alerted_path: PathBuf::from("/dev/null"),
+            log: PathBuf::from(system_paths::DEV_NULL),
+            state_path: PathBuf::from(system_paths::DEV_NULL),
+            alerted_path: PathBuf::from(system_paths::DEV_NULL),
             store: std::sync::Arc::new(tsd::store::Pusher::new(None)),
-            effect_state: PathBuf::from("/dev/null"),
+            effect_state: PathBuf::from(system_paths::DEV_NULL),
             mail_root: PathBuf::new(),
             release: "r-test".into(),
             shadow_kinds: Vec::new(),
             effect_passes: 2,
-            lock_path: PathBuf::from("/dev/null"),
-            queue_dir: PathBuf::from("/dev/null"),
+            lock_path: PathBuf::from(system_paths::DEV_NULL),
+            queue_dir: PathBuf::from(system_paths::DEV_NULL),
             repo_map: None,
             releases_dir: PathBuf::new(),
             cockpit_sessions: vec!["brain".into(), "hunk".into(), "chat".into()],
@@ -3311,18 +3312,18 @@ mod tests {
             preflight_wall_secs: 240,
             now_secs: 0,
             now_iso: "2026-09-25T00:00:00Z".into(),
-            desired_dir: PathBuf::from("/dev/null"),
+            desired_dir: PathBuf::from(system_paths::DEV_NULL),
             desired: DesiredState::default(),
-            ctrl_path: PathBuf::from("/dev/null"),
+            ctrl_path: PathBuf::from(system_paths::DEV_NULL),
             instance: "prod".into(),
-            reminders_path: PathBuf::from("/dev/null"),
+            reminders_path: PathBuf::from(system_paths::DEV_NULL),
             breaker: Err("not configured".into()),
             host: None,
             lc_client: None,
             skip_units: Vec::new(),
             memo: Arc::default(),
             stranded_min_age: 600,
-            stranded_seen_path: PathBuf::from("/dev/null"),
+            stranded_seen_path: PathBuf::from(system_paths::DEV_NULL),
         }
     }
 

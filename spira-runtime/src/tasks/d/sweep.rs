@@ -803,7 +803,7 @@ pub fn record_rows(run: &str, spec: &EffectSpec) -> Result<String, String> {
     let run = std::path::Path::new(run);
     let _lock = cert_sweep::store::lock_history(run)?;
     let iso = crate::watchers::iso8601(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs()));
-    let host = std::fs::read_to_string("/proc/sys/kernel/hostname").map(|s| s.trim().to_string()).unwrap_or_else(|_| "unknown".into());
+    let host = std::fs::read_to_string(format!("{}/kernel/hostname", system_paths::PROC_SYS)).map(|s| s.trim().to_string()).unwrap_or_else(|_| "unknown".into());
     let (summary, events) = match rec.events.split_last() {
         Some((last, rest)) if matches!(last, Event::Summary { .. }) => (Some(last), rest),
         _ => (None, rec.events.as_slice()),

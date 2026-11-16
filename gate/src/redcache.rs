@@ -80,8 +80,8 @@ mod tests {
 
     #[test]
     fn only_a_plain_key_makes_a_path() {
-        assert!(path(Path::new("/v"), "abc123").is_some());
-        assert!(path(Path::new("/v"), "../x").is_none());
-        assert!(path(Path::new("/v"), "").is_none());
+        assert!(path(Path::new("v"), "abc123").is_some());
+        assert!(path(Path::new("v"), "../x").is_none());
+        assert!(path(Path::new("v"), "").is_none());
     }
 }

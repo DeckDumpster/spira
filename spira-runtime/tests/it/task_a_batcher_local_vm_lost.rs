@@ -11,7 +11,7 @@ const NOW: u64 = 1_793_000_000_000;
 
 /// The repo `spira` certifying round `r9` at head `h9`, its certify leg `leg`.
 fn certifying(leg: &str) -> Carry {
-    let rc = RepoCarry { state: State::Certifying, round_key: Some("k".into()), batch: Some("r9".into()), members: vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into())], wt: "/w".into(), base: "b1".into(), leg: Some(leg.into()), leg_at_ms: NOW, run: 1, ..RepoCarry::default() };
+    let rc = RepoCarry { state: State::Certifying, round_key: Some("k".into()), batch: Some("r9".into()), members: vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into())], wt: "w".into(), base: "b1".into(), leg: Some(leg.into()), leg_at_ms: NOW, run: 1, ..RepoCarry::default() };
     Carry { repos: [("spira".to_string(), rc)].into() }
 }
 
@@ -32,7 +32,7 @@ fn a_round_whose_vm_is_lost_is_certified_again_on_the_same_head_never_abandoned(
     let (again, acts) = vm_lost(&first);
     assert_eq!(names(&acts), [CERTIFY], "a lost VM re-certifies, it does not judge: {acts:?}");
     let leg: Leg = serde_json::from_str(&acts[0].input).unwrap();
-    assert_eq!((leg.batch.as_str(), leg.members.len(), leg.wt.as_str()), ("r9", 2, "/w"), "the same round, members and worktree (so the same head and tree)");
+    assert_eq!((leg.batch.as_str(), leg.members.len(), leg.wt.as_str()), ("r9", 2, "w"), "the same round, members and worktree (so the same head and tree)");
     let rc = &again.repos["spira"];
     assert_eq!(rc.state, State::Certifying);
     assert_ne!(rc.leg.as_deref(), first.repos["spira"].leg.as_deref(), "a new certify leg, so a new VM");

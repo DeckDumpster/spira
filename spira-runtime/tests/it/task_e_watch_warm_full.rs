@@ -11,7 +11,7 @@ use spira_runtime::tasks::e::watch_warm_full::*;
 use spira_runtime::watchers::INBOX_APPEND;
 
 fn config() -> Config {
-    Config { base: "/w".into(), cap_mib: 6144, inbox: "/q/inbox".into() }
+    Config { base: "w".into(), cap_mib: 6144, inbox: "q/inbox".into() }
 }
 
 fn slot(n: u32, mib: u64, held_by: Option<&str>) -> Slot {
@@ -19,7 +19,7 @@ fn slot(n: u32, mib: u64, held_by: Option<&str>) -> Slot {
 }
 
 fn fill(pct: u8, slots: Vec<Slot>) -> Snapshot {
-    Snapshot { base: Some("/w".into()), pct: Some(pct), slots }
+    Snapshot { base: Some("w".into()), pct: Some(pct), slots }
 }
 
 /// Full, with the only data in a slot a session holds: nothing can be reaped.
@@ -104,7 +104,7 @@ fn t4_every_effect_has_a_runner_and_a_double_and_the_module_spawns_nothing() {
 fn t5_the_reap_set_and_the_line_are_the_ones_warm_full_made() {
     let r = rig(1, Arc::new(Mutex::new(full())));
     assert!(asked(&r, REAP).is_empty(), "a held slot is never reaped");
-    assert_eq!(asked(&r, INBOX_APPEND), ["1970-01-01T00:00:00Z [watch:warm-full] dwarf warm tmpfs /w is 90% full (limit 85%): slot.1=4096MiB slot.2=0MiB ; the slots a session holds cannot be emptied (held by: slot.1=dwarf-ab)"]);
+    assert_eq!(asked(&r, INBOX_APPEND), ["1970-01-01T00:00:00Z [watch:warm-full] dwarf warm tmpfs w is 90% full (limit 85%): slot.1=4096MiB slot.2=0MiB ; the slots a session holds cannot be emptied (held by: slot.1=dwarf-ab)"]);
     let r = rig(1, Arc::new(Mutex::new(fill(50, vec![slot(3, 7000, None), slot(4, 100, None)]))));
     acc::assert_healthy(&r, STREAM);
     let reaped = asked(&r, REAP);

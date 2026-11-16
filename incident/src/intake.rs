@@ -90,7 +90,7 @@ pub fn hostname() -> String {
 }
 
 pub fn unit_from_cgroup() -> String {
-    let raw = std::fs::read_to_string("/proc/self/cgroup").unwrap_or_default();
+    let raw = std::fs::read_to_string(format!("{}/cgroup", system_paths::PROC_SELF)).unwrap_or_default();
     let first_line = raw.lines().next().unwrap_or("");
     let last = first_line.rsplit('/').next().unwrap_or("");
     if last.ends_with(".service") || last.ends_with(".timer") || last.ends_with(".scope") {
@@ -133,7 +133,7 @@ pub struct Env {
 
 impl Env {
     pub fn load() -> Env {
-        let spira_run = env_or("SPIRA_RUN", "/tmp");
+        let spira_run = env_or("SPIRA_RUN", system_paths::TMP);
         let incident_label = env_or("SPIRA_INCIDENT_LABEL", "incident");
         Env {
             db: env("SPIRA_DB"),

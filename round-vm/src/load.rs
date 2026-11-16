@@ -149,7 +149,7 @@ impl Watch {
     pub fn start(handle: &str) -> Watch {
         let stop = Arc::new(AtomicBool::new(false));
         let flag = stop.clone();
-        let mut s = Sampler::new(Path::new("/proc"), handle);
+        let mut s = Sampler::new(Path::new(system_paths::PROC), handle);
         let thread = std::thread::spawn(move || {
             let (mut next_sample, mut next_report) = (Instant::now(), Instant::now() + REPORT_EVERY);
             while !flag.load(Ordering::Relaxed) {

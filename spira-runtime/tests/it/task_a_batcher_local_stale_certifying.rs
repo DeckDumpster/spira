@@ -32,7 +32,7 @@ fn a_certifying_row_for_a_landed_batch_is_dropped_and_the_next_round_is_cut() {
     assert!(rc.reconciled.as_deref().is_some_and(|w| w.contains(BATCH)), "the carry says what was reconciled: {:?}", rc.reconciled);
 
     let assemble: Leg = serde_json::from_str(&acts[1].input).unwrap();
-    let merged = Assembled { merged: vec![("sp-olw42f".into(), "t1".into())], wt: "/w".into(), base: "b2".into(), ..Assembled::default() };
+    let merged = Assembled { merged: vec![("sp-olw42f".into(), "t1".into())], wt: "w".into(), base: "b2".into(), ..Assembled::default() };
     let (_, acts) = on_outcome(&carry, ASSEMBLE, true, &serde_json::to_string(&merged).unwrap(), &assemble, NOW);
     assert_eq!(names(&acts), [ROUND_OPEN], "{acts:?}");
 }

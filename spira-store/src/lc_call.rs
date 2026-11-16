@@ -578,7 +578,7 @@ mod tests {
     fn a_read_the_service_never_answers_gives_up_inside_its_budget() {
         let argv = vec!["list".to_string()];
         let mut tries = 0;
-        let r: Result<(), Fail> = retrying(&argv, Path::new("/s"), Duration::from_millis(200), Duration::ZERO, |_| {
+        let r: Result<(), Fail> = retrying(&argv, Path::new("s"), Duration::from_millis(200), Duration::ZERO, |_| {
             tries += 1;
             Err(Fail::Dropped("gone".into()))
         });
@@ -800,7 +800,7 @@ mod tests {
     /// every stage — and nothing else of its environment; any other request is unchanged.
     #[test]
     fn a_content_request_carries_the_guard_variables_and_nothing_else() {
-        let env = [("SPIRA_RUNE", "czar"), ("SPIRA_CZAR_CLASS", "deadlock"), ("SPIRA_CZAR_TRIGGER_BEAD", "sp-t"), ("SPIRA_CZAR_STAGE_DEADLOCK", "act"), ("SPIRA_DB", "/db"), ("HOME", "/h")];
+        let env = [("SPIRA_RUNE", "czar"), ("SPIRA_CZAR_CLASS", "deadlock"), ("SPIRA_CZAR_TRIGGER_BEAD", "sp-t"), ("SPIRA_CZAR_STAGE_DEADLOCK", "act"), ("SPIRA_DB", "db"), ("HOME", "h")];
         let vars = guard_vars(env.iter().map(|(k, v)| (k.to_string(), v.to_string())));
         assert_eq!(vars.keys().map(String::as_str).collect::<Vec<_>>(), ["SPIRA_CZAR_CLASS", "SPIRA_CZAR_STAGE_DEADLOCK", "SPIRA_CZAR_TRIGGER_BEAD", "SPIRA_RUNE"]);
         let argv: Vec<String> = ["content", "close", "sp-a"].iter().map(|s| s.to_string()).collect();
@@ -852,12 +852,12 @@ mod tests {
 
     #[test]
     fn only_a_declared_stand_in_or_direct_mode_runs_a_program_and_an_unresolved_socket_is_refused() {
-        let sock = || Ok::<_, String>("/run/x/sock".to_string());
-        assert_eq!(route_of(None, sock(), "/r/spira-lc"), Ok(Route::Socket("/run/x/sock".into())));
-        assert_eq!(route_of(Some(""), sock(), "/r/spira-lc"), Ok(Route::Socket("/run/x/sock".into())), "an empty override declares nothing");
-        assert_eq!(route_of(Some("/fix/spira-lc"), sock(), "/fix/spira-lc"), Ok(Route::Program("/fix/spira-lc".into())));
-        assert_eq!(route_of(None, Ok(" ".into()), "/r/spira-lc"), Ok(Route::Program("/r/spira-lc".into())));
-        let refused = route_of(None, Err("SPIRA_TOML is not set".into()), "/r/spira-lc").unwrap_err();
+        let sock = || Ok::<_, String>("run/x/sock".to_string());
+        assert_eq!(route_of(None, sock(), "r/spira-lc"), Ok(Route::Socket("run/x/sock".into())));
+        assert_eq!(route_of(Some(""), sock(), "r/spira-lc"), Ok(Route::Socket("run/x/sock".into())), "an empty override declares nothing");
+        assert_eq!(route_of(Some("fix/spira-lc"), sock(), "fix/spira-lc"), Ok(Route::Program("fix/spira-lc".into())));
+        assert_eq!(route_of(None, Ok(" ".into()), "r/spira-lc"), Ok(Route::Program("r/spira-lc".into())));
+        let refused = route_of(None, Err("SPIRA_TOML is not set".into()), "r/spira-lc").unwrap_err();
         assert!(refused.starts_with("cannot tell") && refused.contains("SPIRA_LC_SOCKET"), "{refused}");
     }
 

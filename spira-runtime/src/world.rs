@@ -1038,10 +1038,10 @@ struct ThroughputParams {
 /// Seconds the oldest `spira-lc serve` process has been running, read from `/proc`; `None` when none runs or `/proc` cannot say.
 // loop-safe: runs inside an observe effect, never in a handler or on the loop
 pub fn store_up_s() -> Option<u64> {
-    let uptime = fs::read_to_string("/proc/uptime").ok()?;
+    let uptime = fs::read_to_string(format!("{}/uptime", system_paths::PROC)).ok()?;
     // SAFETY: sysconf reads a constant and touches no memory.
     let hz = u64::try_from(unsafe { libc::sysconf(libc::_SC_CLK_TCK) }).ok().filter(|h| *h > 0)?;
-    fs::read_dir("/proc")
+    fs::read_dir(system_paths::PROC)
         .ok()?
         .flatten()
         .filter(|e| e.file_name().to_string_lossy().bytes().all(|b| b.is_ascii_digit()))
@@ -1090,8 +1090,8 @@ mod server_age_tests {
 
     #[test]
     fn only_a_spira_lc_serve_command_line_is_the_store_server() {
-        assert!(serves_the_store(b"/opt/current/bin/spira-lc\0serve\0/run/sock\0"));
-        assert!(!serves_the_store(b"/opt/current/bin/spira-lc\0list\0"));
+        assert!(serves_the_store(b"opt/current/bin/spira-lc\0serve\0run/sock\0"));
+        assert!(!serves_the_store(b"opt/current/bin/spira-lc\0list\0"));
         assert!(!serves_the_store(b"vim\0serve\0"));
         assert!(!serves_the_store(b""));
     }
@@ -1267,7 +1267,7 @@ mod pr_snapshot_tests {
         let out = pr_snapshot_from(&records, &[target("r", "queue")], &forge_at(api), &Carry::default()).unwrap();
         let seen = seen.join().unwrap();
         assert!(seen[0].starts_with("get /repos/o/r/pulls/12 "), "{}", seen[0]);
-        assert!(seen[1].contains("/commits/abc/check-runs") && seen[2].contains("head_sha=abc"));
+        assert!(seen[1].contains("/commits/abc/check-runs") && seen[2].contains("head_sha=abc")); // not a path: request URL path
         assert!(seen.iter().all(|r| !r.contains("state=open")));
         let open = snapshot(&out).repos[0].1.open.clone().unwrap();
         assert_eq!((open[0].number, open[0].status.as_str()), (12, "green"));

@@ -465,7 +465,7 @@ pub fn observe() -> Result<String, String> {
     let firewall = match &iface {
         None => Firewall::Absent,
         Some(i) => {
-            let lib_plan = p::Plan { toml_spec: String::new(), addr: plan.addr.clone(), cert: String::new(), key: String::new(), password_file: String::new(), from: String::new(), user: plan.user.clone(), port: plan.port.parse().map_err(|e| format!("SPIRA_SUBMISSION_PORT does not parse: {e}"))?, rcpt_domain: String::new(), users_file: String::new(), dir: dir.clone(), ufw_conf: "/etc/ufw/ufw.conf".into(), spira_config: String::new() };
+            let lib_plan = p::Plan { toml_spec: String::new(), addr: plan.addr.clone(), cert: String::new(), key: String::new(), password_file: String::new(), from: String::new(), user: plan.user.clone(), port: plan.port.parse().map_err(|e| format!("SPIRA_SUBMISSION_PORT does not parse: {e}"))?, rcpt_domain: String::new(), users_file: String::new(), dir: dir.clone(), ufw_conf: format!("{}/ufw/ufw.conf", system_paths::ETC).into(), spira_config: String::new() };
             match p::firewall_state(&host, &lib_plan, i) {
                 p::Firewall::Closed => Firewall::Closed,
                 p::Firewall::Open => Firewall::Open,

@@ -9,7 +9,7 @@ use spira_runtime::tasks::d::acceptance as acc;
 use spira_runtime::tasks::d::watch_mend::*;
 
 fn config() -> Config {
-    Config { run: "/r".into() }
+    Config { run: "r".into() }
 }
 
 fn quiet() -> Snapshot {

@@ -416,33 +416,40 @@ crate::tasks::b::hosted!(SweepReclaim);
 mod tests {
     use super::*;
 
-    fn read(pairs: &'static [(&'static str, &'static str)]) -> Pinned {
-        let get = move |k: &str| Ok(pairs.iter().find(|(n, _)| *n == k).map_or("", |p| p.1).to_string());
+    fn read(pairs: &[(&str, String)]) -> Pinned {
+        let get = move |k: &str| Ok(pairs.iter().find(|(n, _)| *n == k).map_or("", |p| p.1.as_str()).to_string());
         Pinned::read(&|k| if k.ends_with("_GIB") || k.ends_with("_DAYS") { Ok("1".into()) } else { get(k) }).unwrap()
     }
 
     #[test]
     fn the_cache_cap_follows_the_stores_configured_root() {
-        let p = read(&[("SPIRA_SCCACHE_DAV_ROOT", "/mnt/other/store"), ("SPIRA_RUN", "/r")]);
-        assert_eq!(p.cache_dir.as_deref(), Some(std::path::Path::new("/mnt/other/store")));
+        let root = testkit::TempDir::new("sweep-reclaim-store-root");
+        let store = format!("{}/mnt/other/store", root.display());
+        let p = read(&[("SPIRA_SCCACHE_DAV_ROOT", store.clone()), ("SPIRA_RUN", format!("{}/r", root.display()))]);
+        assert_eq!(p.cache_dir.as_deref(), Some(std::path::Path::new(&store)));
     }
 
     #[test]
     fn an_empty_store_root_means_the_run_dirs_sccache_dav() {
-        let p = read(&[("SPIRA_RUN", "/r")]);
-        assert_eq!(p.cache_dir.as_deref(), Some(std::path::Path::new("/r/sccache-dav")));
+        let root = testkit::TempDir::new("sweep-reclaim-run-dir");
+        let p = read(&[("SPIRA_RUN", format!("{}/r", root.display()))]);
+        assert_eq!(p.cache_dir.as_deref(), Some(std::path::Path::new(&format!("{}/r/sccache-dav", root.display()))));
     }
 
     #[test]
     fn an_explicit_reclaim_cache_dir_still_wins() {
-        let p = read(&[("SPIRA_RECLAIM_CACHE_DIR", "/x"), ("SPIRA_SCCACHE_DAV_ROOT", "/y")]);
-        assert_eq!(p.cache_dir.as_deref(), Some(std::path::Path::new("/x")));
+        let root = testkit::TempDir::new("sweep-reclaim-explicit");
+        let (x, y) = (format!("{}/x", root.display()), format!("{}/y", root.display()));
+        let p = read(&[("SPIRA_RECLAIM_CACHE_DIR", x.clone()), ("SPIRA_SCCACHE_DAV_ROOT", y)]);
+        assert_eq!(p.cache_dir.as_deref(), Some(std::path::Path::new(&x)));
     }
 
     #[test]
     fn explicit_dir_wins_over_root_and_run_when_all_three_are_set() {
-        let p = read(&[("SPIRA_RECLAIM_CACHE_DIR", "/x"), ("SPIRA_SCCACHE_DAV_ROOT", "/y"), ("SPIRA_RUN", "/r")]);
-        assert_eq!(p.cache_dir.as_deref(), Some(std::path::Path::new("/x")));
+        let root = testkit::TempDir::new("sweep-reclaim-all-three");
+        let (x, y) = (format!("{}/x", root.display()), format!("{}/y", root.display()));
+        let p = read(&[("SPIRA_RECLAIM_CACHE_DIR", x.clone()), ("SPIRA_SCCACHE_DAV_ROOT", y), ("SPIRA_RUN", format!("{}/r", root.display()))]);
+        assert_eq!(p.cache_dir.as_deref(), Some(std::path::Path::new(&x)));
     }
 
     #[test]

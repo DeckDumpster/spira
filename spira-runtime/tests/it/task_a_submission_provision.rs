@@ -20,13 +20,13 @@ fn plan() -> Plan {
     Plan {
         port: "587".into(),
         addr: "100.64.0.7:587".into(),
-        cert: "/c/cert.pem".into(),
-        key: "/c/key.pem".into(),
-        password_file: "/c/pw".into(),
+        cert: "c/cert.pem".into(),
+        key: "c/key.pem".into(),
+        password_file: "c/pw".into(),
         from: "spira@example.org".into(),
         user: "spira".into(),
         rcpt_domain: "example.org".into(),
-        users_file: "/c/users".into(),
+        users_file: "c/users".into(),
         unit: "spira-submission".into(),
     }
 }

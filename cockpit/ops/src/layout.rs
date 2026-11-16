@@ -143,7 +143,7 @@ impl Conf {
             .ok()
             .filter(|s| !s.is_empty())
             .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("/nonexistent-cockpit"));
+            .unwrap_or_else(|| PathBuf::from(format!("{}-cockpit", system_paths::NONEXISTENT)));
         // Split-checkout mode: the renderer must come from the same release the collector
         // reads, unless SPIRA_DEV_RENDERER=1 opts back in to this checkout's health binary.
         if env_nonempty("SPIRA_DEV_RENDERER").is_none() {
@@ -950,7 +950,7 @@ fn session_of(window: &str) -> &str {
 /// MUST NEVER answer 0 for "could not tell": every caller compares this against a file
 /// mtime, and 0 reads as "running code from before the file existed", forcing a respawn.
 fn proc_start(pid: i32) -> Option<i64> {
-    let stat = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let stat = fs::read_to_string(format!("{}/{pid}/stat", system_paths::PROC)).ok()?;
     let close = stat.rfind(')')?;
     let rest = stat.get(close + 1..)?;
     let fields: Vec<&str> = rest.split_whitespace().collect();
@@ -960,7 +960,7 @@ fn proc_start(pid: i32) -> Option<i64> {
     // `)`. Converted to wall-clock via the kernel boot time and clock ticks/sec.
     let starttime_ticks: i64 = fields.get(19)?.parse().ok()?;
     let hz = 100i64; // sysconf(_SC_CLK_TCK); 100 on every Linux this harness targets.
-    let uptime = fs::read_to_string("/proc/uptime").ok()?;
+    let uptime = fs::read_to_string(format!("{}/uptime", system_paths::PROC)).ok()?;
     let uptime_secs: f64 = uptime.split_whitespace().next()?.parse().ok()?;
     let now = now_epoch();
     let boot_time = now - uptime_secs as i64;
@@ -1053,9 +1053,9 @@ mod tests {
 
     #[test]
     fn classify_argv_matches_health_by_script_suffix_never_substring() {
-        assert_eq!(classify_argv("bash", "/opt/spira/cockpit/health.sh", None), Some(Role::Health));
+        assert_eq!(classify_argv("bash", "opt/spira/cockpit/health.sh", None), Some(Role::Health));
         // The lifecycle lens is the ops pane now (sp-lpw5ol).
-        assert_eq!(classify_argv("/opt/bin/lc-view", "loop", None), Some(Role::Health));
+        assert_eq!(classify_argv("opt/bin/lc-view", "loop", None), Some(Role::Health));
         assert_eq!(classify_argv("lc-view", "", None), Some(Role::Health));
         // A system prompt that merely mentions the path as argv text (not argv[0]/[1] of a
         // shell) must not classify — callers only ever pass exe/script, not the whole line,
@@ -1065,8 +1065,8 @@ mod tests {
 
     #[test]
     fn classify_argv_matches_mail_by_basename_only() {
-        assert_eq!(classify_argv("/usr/bin/aerc", "", Some("aerc")), Some(Role::Mail));
-        assert_eq!(classify_argv("/usr/bin/aerclike", "", Some("aerc")), None);
+        assert_eq!(classify_argv("usr/bin/aerc", "", Some("aerc")), Some(Role::Mail));
+        assert_eq!(classify_argv("usr/bin/aerclike", "", Some("aerc")), None);
     }
 
     #[test]
@@ -1076,16 +1076,16 @@ mod tests {
 
     #[test]
     fn stale_clients_filters_by_idle_secs() {
-        let lines = "/dev/pts/0 1000\n/dev/pts/1 500\n";
+        let lines = "dev/pts/0 1000\n/dev/pts/1 500\n";
         let now = 1000 + 21600 + 1;
         let out = stale_clients(lines, now, 21600);
         assert_eq!(out.len(), 2);
-        assert_eq!(out[0].0, "/dev/pts/0");
+        assert_eq!(out[0].0, "dev/pts/0");
     }
 
     #[test]
     fn stale_clients_disabled_at_zero() {
-        assert!(stale_clients("/dev/pts/0 0\n", 100_000, 0).is_empty());
+        assert!(stale_clients("dev/pts/0 0\n", 100_000, 0).is_empty());
     }
 
     #[test]
@@ -1127,14 +1127,16 @@ mod tests {
 
     #[test]
     fn concierge_script_missing_file_names_the_path_tried() {
-        let e = conf_with("/nonexistent-rel", "").concierge_script().unwrap_err();
-        assert!(e.contains("/nonexistent-rel/concierge.sh"), "{e}");
+        let root = testkit::TempDir::new("layout-concierge-missing");
+        let rel = root.join("nonexistent-rel");
+        let e = conf_with(rel.to_str().unwrap(), "").concierge_script().unwrap_err();
+        assert!(e.contains(&format!("{}/concierge.sh", rel.display())), "{e}");
     }
 
     #[test]
     fn rel_prefix_carries_release_and_conf() {
         let c = Conf {
-            spira_release: "/rel".into(),
+            spira_release: "rel".into(),
             cock: PathBuf::new(),
             run: PathBuf::new(),
             cwd: String::new(),
@@ -1146,11 +1148,11 @@ mod tests {
             mouse_on: true,
             clipboard_on: true,
             spira_repo: String::new(),
-            spira_conf: Some("/etc/spira-custom.conf".into()),
+            spira_conf: Some("etc/spira-custom.conf".into()),
         };
         let p = c.rel_prefix();
-        assert!(p.contains("SPIRA_CONF='/etc/spira-custom.conf'"));
-        assert!(p.contains("SPIRA_RELEASE='/rel'"));
-        assert!(p.contains("PATH='/rel/bin:/rel/spira:/usr/local/bin:/usr/bin:/bin'"));
+        assert!(p.contains("SPIRA_CONF='etc/spira-custom.conf'"));
+        assert!(p.contains("SPIRA_RELEASE='rel'"));
+        assert!(p.contains("PATH='rel/bin:rel/spira:/usr/local/bin:/usr/bin:/bin'"));
     }
 }

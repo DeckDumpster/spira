@@ -132,7 +132,7 @@ mod tests {
     }
 
     fn snap(dirty: &[(&str, u64)]) -> Snapshot {
-        Snapshot { wiki: "/w".into(), not_repo: false, dirty: dirty.iter().map(|(p, m)| (p.to_string(), *m)).collect() }
+        Snapshot { wiki: "w".into(), not_repo: false, dirty: dirty.iter().map(|(p, m)| (p.to_string(), *m)).collect() }
     }
 
     #[test]
@@ -146,7 +146,7 @@ mod tests {
     #[test]
     fn a_path_older_than_the_limit_is_said_once_per_mtime() {
         let (c, say) = decide(&cfg(), &Carry::default(), &snap(&[("old.md", 1000), ("fresh.md", 9000)]), 10_000);
-        assert_eq!(say, ["BRAIN DIRTY: old.md has been uncommitted for 150 min; commit it by explicit path (git -C /w add -- old.md)"]);
+        assert_eq!(say, ["BRAIN DIRTY: old.md has been uncommitted for 150 min; commit it by explicit path (git -C w add -- old.md)"]);
         assert!(decide(&cfg(), &c, &snap(&[("old.md", 1000)]), 10_100).1.is_empty());
         assert_eq!(decide(&cfg(), &c, &snap(&[("old.md", 2000)]), 10_100).1.len(), 1, "an edit is a new offence");
     }
@@ -177,7 +177,7 @@ mod tests {
     fn a_wiki_that_is_not_a_repository_is_said_once() {
         let s = Snapshot { not_repo: true, ..snap(&[]) };
         let (c, say) = decide(&cfg(), &Carry::default(), &s, 10_000);
-        assert_eq!(say, ["BRAIN DIRTY: SPIRA_WIKI (/w) is not a git repository; nothing it holds can be committed"]);
+        assert_eq!(say, ["BRAIN DIRTY: SPIRA_WIKI (w) is not a git repository; nothing it holds can be committed"]);
         assert!(decide(&cfg(), &c, &s, 10_600).1.is_empty());
     }
 }

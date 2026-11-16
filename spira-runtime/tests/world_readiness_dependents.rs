@@ -18,7 +18,7 @@ struct Double {
 
 fn double(keys: &'static [&'static str]) -> Double {
     let dir = testkit::TempDir::new("world-readiness-dependents");
-    let toml = spira_config::process::fixture_toml(&dir, &[("SPIRA_LC_STORE_PATH", "/fixture/control.db")]);
+    let toml = spira_config::process::fixture_toml(&dir, &[("SPIRA_LC_STORE_PATH", "fixture/control.db")]);
     let env = testkit::env(&[("SPIRA_TOML", toml.to_str())]);
     let path = dir.path().join("lc.sock");
     let listener = UnixListener::bind(&path).unwrap();

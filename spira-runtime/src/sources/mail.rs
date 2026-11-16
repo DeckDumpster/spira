@@ -100,8 +100,8 @@ mod tests {
 
     #[test]
     fn the_registered_readers_name_the_mailboxes_and_nothing_else() {
-        let got = mailboxes("# readers\nconcierge=inbox-append.sh\n\nops = wake ops\nconcierge=again\nbroken\n", Path::new("/m"));
-        assert_eq!(got, vec![("concierge".to_string(), PathBuf::from("/m/concierge")), ("ops".to_string(), PathBuf::from("/m/ops"))]);
+        let got = mailboxes("# readers\nconcierge=inbox-append.sh\n\nops = wake ops\nconcierge=again\nbroken\n", Path::new("m"));
+        assert_eq!(got, vec![("concierge".to_string(), PathBuf::from("m/concierge")), ("ops".to_string(), PathBuf::from("m/ops"))]);
     }
 
     #[test]

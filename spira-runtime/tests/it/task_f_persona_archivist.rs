@@ -28,7 +28,7 @@ fn config(wiki: &str) -> BTreeMap<String, String> {
 }
 
 fn handler() -> PersonaArchivist {
-    PersonaArchivist { interval_ms: CADENCE_MS, config: config("/brain") }
+    PersonaArchivist { interval_ms: CADENCE_MS, config: config("brain") }
 }
 
 fn running(r: &TaskRig) {
@@ -38,7 +38,7 @@ fn running(r: &TaskRig) {
 }
 
 fn candidate(sid: &str, drift: u64) -> Candidate {
-    Candidate { sid: sid.into(), tp: format!("/t/{sid}.jsonl"), ctx: 100_000, turns: 50, drift, band: "mid".into(), prev_state: "safe".into(), retry_at: None }
+    Candidate { sid: sid.into(), tp: format!("t/{sid}.jsonl"), ctx: 100_000, turns: 50, drift, band: "mid".into(), prev_state: "safe".into(), retry_at: None }
 }
 
 fn snap(drift: u64, stale: &[&str]) -> Snapshot {
@@ -105,7 +105,7 @@ fn t3_every_row_of_the_decide_table_is_a_legal_step() {
 fn t3_unit_ran_in_idle_and_a_commit_with_no_wiki_are_refused_naming_the_state() {
     let refused = step(State::Idle, "ran-ok").expect_err("no unit runs in Idle");
     assert!(refused.contains("Idle"), "{refused}");
-    let refused = decide(&Carry::default(), &Input::UnitRan(ran(Exit::Code(0))), &config("/brain")).expect_err("no unit runs in Idle");
+    let refused = decide(&Carry::default(), &Input::UnitRan(ran(Exit::Code(0))), &config("brain")).expect_err("no unit runs in Idle");
     assert!(refused.contains("Idle"), "{refused}");
     let refused = decide(&in_state(State::Running), &Input::Succeeded { effect: COMMIT.into(), body: String::new() }, &config("")).expect_err("no wiki, no commit");
     assert!(refused.contains("Running"), "{refused}");
@@ -113,7 +113,7 @@ fn t3_unit_ran_in_idle_and_a_commit_with_no_wiki_are_refused_naming_the_state() 
 
 #[test]
 fn t3_a_tick_in_idle_observes_and_the_carry_read_is_the_carry_recorded() {
-    let (next, acts) = decide(&Carry::default(), &Input::Tick, &config("/brain")).unwrap();
+    let (next, acts) = decide(&Carry::default(), &Input::Tick, &config("brain")).unwrap();
     assert_eq!((next.state, names(&acts)), (State::Observing, vec![OBSERVE]));
     let back: Carry = serde_json::from_str(&serde_json::to_string(&next).unwrap()).unwrap();
     assert_eq!(back, next);
@@ -142,9 +142,9 @@ fn t4_the_module_launches_no_process() {
 fn t5_parity_paused_marks_and_a_drift_above_every_is_briefed() {
     let observing = in_state(State::Observing);
     let paused = Snapshot { paused: true, ..snap(90, &[]) };
-    let (next, acts) = decide(&observing, &Input::Observed(paused), &config("/brain")).unwrap();
+    let (next, acts) = decide(&observing, &Input::Observed(paused), &config("brain")).unwrap();
     assert_eq!((next.state, names(&acts)), (State::Idle, vec![MARK]));
-    let (next, acts) = decide(&observing, &Input::Observed(snap(90, &[])), &config("/brain")).unwrap();
+    let (next, acts) = decide(&observing, &Input::Observed(snap(90, &[])), &config("brain")).unwrap();
     assert_eq!((next.state, names(&acts)), (State::Briefing, vec![BRIEF]));
     assert!(acts[0].input.contains("s1"), "{}", acts[0].input);
 }
@@ -152,12 +152,12 @@ fn t5_parity_paused_marks_and_a_drift_above_every_is_briefed() {
 #[test]
 fn t5_parity_rc_0_with_a_wiki_commits_and_rc_124_settles_as_timeout() {
     let r = in_state(State::Running);
-    let (next, acts) = decide(&r, &Input::UnitRan(ran(Exit::Code(0))), &config("/brain")).unwrap();
+    let (next, acts) = decide(&r, &Input::UnitRan(ran(Exit::Code(0))), &config("brain")).unwrap();
     assert_eq!((next.state, names(&acts)), (State::Committing, vec![COMMIT]));
-    let (next, acts) = decide(&r, &Input::UnitRan(ran(Exit::Code(124))), &config("/brain")).unwrap();
+    let (next, acts) = decide(&r, &Input::UnitRan(ran(Exit::Code(124))), &config("brain")).unwrap();
     assert_eq!(next.state, State::Settling);
     assert_eq!(settled(&acts), "timeout");
-    let (next, acts) = decide(&in_state(State::Committing), &Input::Failed { effect: COMMIT.into(), error: "dirty checkout".into() }, &config("/brain")).unwrap();
+    let (next, acts) = decide(&in_state(State::Committing), &Input::Failed { effect: COMMIT.into(), error: "dirty checkout".into() }, &config("brain")).unwrap();
     assert_eq!(next.state, State::Settling);
     assert_eq!(settled(&acts), "retry", "a dirty checkout settles as retry");
 }

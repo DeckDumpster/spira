@@ -2741,7 +2741,7 @@ mod tests {
         let v = view(&s);
         let pane = plain(&render(&v, 120));
         for (st, n) in &v.flow {
-            let line = v.machine.iter().find(|m| m.name == st.trim_end_matches("/24h")).map(|m| format!("{:<14}{:>4}", m.name, m.count));
+            let line = v.machine.iter().find(|m| m.name == st.trim_end_matches("/24h")).map(|m| format!("{:<14}{:>4}", m.name, m.count)); // not a path: a flow-name suffix
             assert!(line.is_some_and(|l| pane.contains(&l)), "pane lacks {st} {n:?}");
         }
         assert_page_draws_the_tree(&v);
@@ -2910,8 +2910,8 @@ mod tests {
     fn rounds_show_every_vm_run_and_the_idle_vm_and_an_open_pr_is_not_stale() {
         let mut s = rounds_snap();
         s.vm_runs = vec![
-            VmRun { vm: "109".into(), age_secs: 700, owner: "5@1".into(), cmd: vec!["round-vm".into(), "run".into(), "/r/run/cert-sweep/tree".into(), "--maxpar".into(), "16".into()], idle: false, ..Default::default() },
-            VmRun { vm: "111".into(), age_secs: 90, owner: "6@1".into(), cmd: vec!["round-vm".into(), "run".into(), "/r/run/r-auto-143".into()], idle: false, ..Default::default() },
+            VmRun { vm: "109".into(), age_secs: 700, owner: "5@1".into(), cmd: vec!["round-vm".into(), "run".into(), "r/run/cert-sweep/tree".into(), "--maxpar".into(), "16".into()], idle: false, ..Default::default() },
+            VmRun { vm: "111".into(), age_secs: 90, owner: "6@1".into(), cmd: vec!["round-vm".into(), "run".into(), "r/run/r-auto-143".into()], idle: false, ..Default::default() },
             VmRun { vm: "112".into(), age_secs: 4000, owner: String::new(), cmd: vec![], idle: true, ..Default::default() },
             VmRun { vm: "113".into(), age_secs: 33000, owner: String::new(), cmd: vec![], idle: false, run: "r-auto-141".into(), held: true, held_age_secs: 720 },
         ];
@@ -3133,15 +3133,16 @@ BATCH
         let mut s = healthy();
         s.forge_base = "https://github.com/acme".into();
         let p = |red: Vec<String>| PassProgress { round: "r-vm".into(), pass: 2, phase: "suites".into(), done: 1, total: 3, red, updated_at: s.now, ..Default::default() };
+        let root = testkit::TempDir::new("lcview-round-log");
         s.batches = vec![
             BatchRow { id: "b-609".into(), repo: "pokedumpster".into(), pr: 609, state: "CI_RUNNING".into(), phase: "red".into(), run_url: "https://github.com/acme/pokedumpster/actions/runs/77".into(), members: vec!["sp-p0".into()], progress: Some(p(vec!["test-x".into()])), ..Default::default() },
-            BatchRow { id: "r-vm".into(), repo: "spira".into(), state: "CI_RUNNING".into(), phase: "certifying pass 2".into(), log: "/run/round/r-vm.log".into(), members: vec!["sp-a0".into(), "sp-a1".into()], ..Default::default() },
+            BatchRow { id: "r-vm".into(), repo: "spira".into(), state: "CI_RUNNING".into(), phase: "certifying pass 2".into(), log: root.join("run/round/r-vm.log").to_string_lossy().into_owned(), members: vec!["sp-a0".into(), "sp-a1".into()], ..Default::default() },
         ];
         let v = view(&s);
         let text = render(&v, 160).join("\n");
         assert!(text.contains(&osc8("https://github.com/acme/pokedumpster/pull/609")), "{text}");
         assert!(text.contains(&osc8("https://github.com/acme/pokedumpster/actions/runs/77")), "{text}");
-        assert!(text.contains(&osc8("file:///run/round/r-vm.log")), "{text}");
+        assert!(text.contains(&osc8(&format!("file://{}/run/round/r-vm.log", root.display()))), "{text}");
         s.loom_base = Some("http://loom:9".into());
         let text = render(&view(&s), 160).join("\n");
         assert!(text.contains(&osc8("http://loom:9/rounds/r-vm")) && !text.contains("file://"), "{text}");

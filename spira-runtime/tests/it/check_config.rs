@@ -4,7 +4,7 @@
 use std::process::Command;
 
 /// The fixture leaves the store's socket undeclared, which the service refuses on its own.
-const SERVICE: &[(&str, &str)] = &[("SPIRA_LC_SOCKET", "/fixture/run/lc.sock")];
+const SERVICE: &[(&str, &str)] = &[("SPIRA_LC_SOCKET", "fixture/run/lc.sock")];
 
 fn check_config(declare: &[(&str, &str)]) -> (bool, String) {
     let dir = testkit::TempDir::new("runtime-check-config");

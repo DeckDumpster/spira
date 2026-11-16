@@ -836,7 +836,8 @@ mod tests {
 
     #[test]
     fn rule_sh_is_the_release_s_own_and_never_searched_for() {
-        assert!(rule_sh_in(Some("/nonexistent-release")).unwrap_err().contains("has no rule.sh"));
+        let root = testkit::TempDir::new("panel-rule-sh-missing");
+        assert!(rule_sh_in(Some(root.join("nonexistent-release").to_str().unwrap())).unwrap_err().contains("has no rule.sh"));
         let tree = spira_config::resolve::checkout_root_for_process().unwrap();
         let tree = tree.to_str().unwrap();
         assert_eq!(rule_sh_in(Some(tree)).unwrap(), format!("{tree}/rule.sh"));

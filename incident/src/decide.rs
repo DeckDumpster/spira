@@ -507,17 +507,17 @@ mod tests {
 
     #[test]
     fn home_repo_prefers_explicit_env() {
-        assert_eq!(home_repo(Some("brain"), Some("/whatever"), None), "brain");
+        assert_eq!(home_repo(Some("brain"), Some("whatever"), None), "brain");
     }
 
     #[test]
     fn home_repo_falls_back_to_repo_basename() {
-        assert_eq!(home_repo(None, Some("/r/spira/harness"), None), "harness");
+        assert_eq!(home_repo(None, Some("r/spira/harness"), None), "harness");
     }
 
     #[test]
     fn home_repo_falls_back_to_home_when_no_repo() {
-        assert_eq!(home_repo(None, None, Some("/r/spira/harness")), "harness");
+        assert_eq!(home_repo(None, None, Some("r/spira/harness")), "harness");
     }
 
     #[test]
@@ -528,7 +528,7 @@ mod tests {
 
     #[test]
     fn provenance_format() {
-        assert_eq!(provenance("spira-groom.service", "box1", "/some/path"), "spira-groom.service on box1: /some/path");
+        assert_eq!(provenance("spira-groom.service", "box1", "some/path"), "spira-groom.service on box1: some/path");
     }
 
     #[test]

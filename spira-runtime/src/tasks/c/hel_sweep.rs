@@ -921,14 +921,14 @@ mod tests {
         testkit::write_exe(bin.join("hel"), "exit 0\n");
         let rec = Recorder::default();
         let rel = release.path().display().to_string();
-        start_leg(&rec, &rel, std::path::Path::new("/run/x"), std::path::Path::new("/repo"), &one()).unwrap();
+        start_leg(&rec, &rel, std::path::Path::new("run/x"), std::path::Path::new("repo"), &one()).unwrap();
         let started = rec.0.lock().unwrap();
         assert_eq!(started.len(), 1);
         assert_eq!(started[0].argv[0], bin.join("hel").display().to_string());
         assert_eq!(started[0].argv[1], "reap-landed-branch");
         let has = |k: &str, v: &str| started[0].env.iter().any(|(a, b)| a == k && b == v);
         assert!(has("SPIRA_RELEASE", &rel));
-        assert!(has("SPIRA_RUN", "/run/x"));
+        assert!(has("SPIRA_RUN", "run/x"));
         assert!(started[0].env.iter().any(|(k, v)| k == "PATH" && v.starts_with(&format!("{rel}/bin:"))));
         assert!(started[0].env.iter().any(|(k, _)| k == "HOME"));
     }
@@ -938,7 +938,7 @@ mod tests {
         let release = testkit::TempDir::new("hel-sweep-no-hel");
         let rec = Recorder::default();
         let rel = release.path().display().to_string();
-        let err = start_leg(&rec, &rel, std::path::Path::new("/run/x"), std::path::Path::new("/repo"), &one()).unwrap_err();
+        let err = start_leg(&rec, &rel, std::path::Path::new("run/x"), std::path::Path::new("repo"), &one()).unwrap_err();
         assert!(err.contains(&release.path().join("bin").join("hel").display().to_string()), "{err}");
         assert!(rec.0.lock().unwrap().is_empty());
     }

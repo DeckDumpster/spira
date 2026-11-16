@@ -9,7 +9,7 @@ use spira_runtime::tasks::d::acceptance as acc;
 use spira_runtime::tasks::e::watch_pass_rate::*;
 
 fn config() -> Config {
-    Config { ledger: "/r/batch-timing.tsv".into(), window_s: 86_400, max_pct: 150 }
+    Config { ledger: "r/batch-timing.tsv".into(), window_s: 86_400, max_pct: 150 }
 }
 
 fn rate(passes: u64, landed: u64) -> Snapshot {

@@ -14,7 +14,7 @@ fn carried(head: &str, leg_head: &str) -> Carry {
         round_key: Some("k".into()),
         batch: Some("r9".into()),
         members: vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into())],
-        wt: "/w".into(),
+        wt: "w".into(),
         base: "b1".into(),
         leg: Some(STEP.into()),
         leg_at_ms: NOW - 60_000,
@@ -27,7 +27,7 @@ fn carried(head: &str, leg_head: &str) -> Carry {
 }
 
 fn snapshot(head: &str, phase: &str) -> Snapshot {
-    let round = Round { id: "r9".into(), members: vec!["sp-a".into()], head: head.into(), worktree: "/w".into(), driven: true, phase: phase.into(), ..Round::default() };
+    let round = Round { id: "r9".into(), members: vec!["sp-a".into()], head: head.into(), worktree: "w".into(), driven: true, phase: phase.into(), ..Round::default() };
     let repo = Repo { open_round: Some(round), base_sha: "b1".into(), live_legs: Some(vec![]), ..Repo::default() };
     Snapshot { repos: [("spira".to_string(), repo)].into(), now_ms: NOW }
 }

@@ -558,7 +558,7 @@ mod tests {
         let d = MemDoor::default();
         d.put_round("spira", "spira-1", "OPEN", &[("sp-a", "ta")], 10);
         let mut kv = batch(&d, "spira", "spira-1").unwrap().unwrap().kv;
-        kv.push("worktree", "/wt");
+        kv.push("worktree", "wt");
         kv.push("red", "test-a.sh");
         kv.remove("base");
         save(&d, "spira", &kv).unwrap();
@@ -567,7 +567,7 @@ mod tests {
         assert_eq!(b.state, "CI_RUNNING");
         assert_eq!(
             b.kv.render(),
-            "batch_id=spira-1\nrepo=spira\nhead=head-spira-1\nmembers=sp-a:ta\nworktree=/wt\nopened=10\nred=test-a.sh\n"
+            "batch_id=spira-1\nrepo=spira\nhead=head-spira-1\nmembers=sp-a:ta\nworktree=wt\nopened=10\nred=test-a.sh\n"
         );
     }
 

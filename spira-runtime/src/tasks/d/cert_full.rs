@@ -389,7 +389,7 @@ fn round_vm_leases() -> Option<Vec<String>> {
 
 fn proc_alive(id: &str) -> bool {
     let Some((pid, start)) = id.split_once('@') else { return false };
-    let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else { return false };
+    let Ok(stat) = std::fs::read_to_string(format!("{}/{pid}/stat", system_paths::PROC)) else { return false };
     stat.rfind(')').and_then(|i| stat[i + 1..].split_whitespace().nth(19).map(|s| s == start)).unwrap_or(false)
 }
 

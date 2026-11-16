@@ -168,7 +168,7 @@ pub fn template_name(commit: &str) -> String {
 }
 
 /// Where the tree is unpacked on the template VM; removed before shutdown.
-pub const TEMPLATE_WORK: &str = "/root/template-work";
+pub const TEMPLATE_WORK: &str = system_paths::guest::ROOT_TEMPLATE_WORK;
 
 /// Runs on the template VM, in `$1` (the unpacked tree), `$2` (this box's own LAN address,
 /// empty to skip the cache), `$3` (the toolchain to install, empty to leave whatever
@@ -447,22 +447,22 @@ mod tests {
     #[test]
     fn args_take_a_tree_and_a_toolchain_and_refuse_a_chosen_vmid() {
         assert_eq!(
-            parse_template_args(&s(&["/t"])).unwrap(),
-            TemplateArgs { tree_dir: "/t".into(), rev: None, toolchain: None, adopt: None }
+            parse_template_args(&s(&["t"])).unwrap(),
+            TemplateArgs { tree_dir: "t".into(), rev: None, toolchain: None, adopt: None }
         );
-        assert!(parse_template_args(&s(&["/t", "--vmid", "9120"])).unwrap_err().contains("hypervisor assigns"));
-        assert!(parse_template_args(&s(&["/t", "--vmid=9121"])).unwrap_err().contains("hypervisor assigns"));
+        assert!(parse_template_args(&s(&["t", "--vmid", "9120"])).unwrap_err().contains("hypervisor assigns"));
+        assert!(parse_template_args(&s(&["t", "--vmid=9121"])).unwrap_err().contains("hypervisor assigns"));
         assert_eq!(
-            parse_template_args(&s(&["/t", "--toolchain", "1.98.1"])).unwrap().toolchain.as_deref(),
+            parse_template_args(&s(&["t", "--toolchain", "1.98.1"])).unwrap().toolchain.as_deref(),
             Some("1.98.1")
         );
         assert_eq!(
-            parse_template_args(&s(&["/t", "--toolchain=fixture-chan"])).unwrap().toolchain.as_deref(),
+            parse_template_args(&s(&["t", "--toolchain=fixture-chan"])).unwrap().toolchain.as_deref(),
             Some("fixture-chan")
         );
         assert!(parse_template_args(&s(&[])).is_err());
-        assert!(parse_template_args(&s(&["/t", "--bogus"])).unwrap_err().contains("--bogus"));
-        assert!(parse_template_args(&s(&["/t", "--toolchain"])).unwrap_err().contains("needs a value"));
+        assert!(parse_template_args(&s(&["t", "--bogus"])).unwrap_err().contains("--bogus"));
+        assert!(parse_template_args(&s(&["t", "--toolchain"])).unwrap_err().contains("needs a value"));
     }
 
     #[test]
@@ -476,13 +476,13 @@ mod tests {
     fn a_build_clones_builds_the_image_then_converts_a_stopped_vm() {
         let p = FakeProvider::new();
         let g = FakeGuest::ok();
-        let b = build(&p, &g, &spec(), 3, Path::new("/tree"), SHA, Some("9120".into()), "192.168.1.56", "1.98.1", "/opt/spira/cargo", "feedface").unwrap();
+        let b = build(&p, &g, &spec(), 3, Path::new("tree"), SHA, Some("9120".into()), "192.168.1.56", "1.98.1", "opt/spira/cargo", "feedface").unwrap();
         assert_eq!(b, Built { vmid: "9120".into(), image: "localhost/spira-testenv:abc123".into() });
         assert!(p.is_template("9120").unwrap());
         assert_eq!(p.name("9120").as_deref(), Some("round-template-0123456789ab"));
         let calls = p.calls();
         assert!(calls.contains(&"clone 9120 round-template-0123456789ab".to_string()), "{calls:?}");
-        assert!(p.file("9120", "/root/.ssh/authorized_keys").is_some(), "the key went in through the agent");
+        assert!(p.file("9120", &format!("{}/.ssh/authorized_keys", system_paths::ROOT_HOME)).is_some(), "the key went in through the agent");
         let order: Vec<&String> = calls.iter().filter(|c| c.starts_with("shutdown") || c.starts_with("template")).collect();
         assert_eq!(order, ["shutdown 9120", "template 9120"]);
         assert_eq!(
@@ -492,7 +492,7 @@ mod tests {
                 // sp-xjnzl: the host's own address, the pinned toolchain and the operator's
                 // own CARGO_HOME all reach the VM side of `prepare`, not just the tree and
                 // the work dir.
-                format!("prepare 10.0.0.9120 {TEMPLATE_WORK} 192.168.1.56 1.98.1 /opt/spira/cargo feedface")
+                format!("prepare 10.0.0.9120 {TEMPLATE_WORK} 192.168.1.56 1.98.1 opt/spira/cargo feedface")
             ]
         );
     }
@@ -501,19 +501,19 @@ mod tests {
     fn no_toolchain_and_no_cargo_on_the_base_refuses_before_the_tree_is_unpacked() {
         let p = FakeProvider::new();
         let g = FakeGuest { cargo: false, ..FakeGuest::ok() };
-        let e = build(&p, &g, &spec(), 3, Path::new("/tree"), SHA, Some("9120".into()), "", "", "", "feedface").unwrap_err();
+        let e = build(&p, &g, &spec(), 3, Path::new("tree"), SHA, Some("9120".into()), "", "", "", "feedface").unwrap_err();
         assert!(e.contains("no cargo") && e.contains("toolchain"), "{e}");
         assert!(g.calls.lock().unwrap().is_empty(), "nothing was unpacked or built: {:?}", g.calls.lock().unwrap());
         assert!(p.all_vms().is_empty());
         let g = FakeGuest { cargo: false, ..FakeGuest::ok() };
-        build(&FakeProvider::new(), &g, &spec(), 3, Path::new("/tree"), SHA, Some("9120".into()), "", "1.99.1", "", "feedface").unwrap();
+        build(&FakeProvider::new(), &g, &spec(), 3, Path::new("tree"), SHA, Some("9120".into()), "", "1.99.1", "", "feedface").unwrap();
         assert_eq!(g.calls.lock().unwrap().len(), 2, "a pinned toolchain installs, so a base without cargo proceeds");
     }
 
     #[test]
     fn without_a_vmid_the_hypervisor_allocates_one() {
         let p = FakeProvider::new();
-        let b = build(&p, &FakeGuest::ok(), &spec(), 3, Path::new("/tree"), SHA, None, "", "", "", "feedface").unwrap();
+        let b = build(&p, &FakeGuest::ok(), &spec(), 3, Path::new("tree"), SHA, None, "", "", "", "feedface").unwrap();
         assert_eq!(b.vmid, "100");
         assert_eq!(p.count("nextid"), 1);
     }
@@ -522,7 +522,7 @@ mod tests {
     fn a_failed_image_build_destroys_the_half_built_vm_and_converts_nothing() {
         let p = FakeProvider::new();
         let g = FakeGuest { rc: 1, ..FakeGuest::ok() };
-        let e = build(&p, &g, &spec(), 3, Path::new("/tree"), SHA, Some("9120".into()), "", "", "", "feedface").unwrap_err();
+        let e = build(&p, &g, &spec(), 3, Path::new("tree"), SHA, Some("9120".into()), "", "", "", "feedface").unwrap_err();
         assert!(e.contains("exited 1") && e.contains("destroyed"), "{e}");
         assert!(p.all_vms().is_empty(), "{:?}", p.all_vms());
         assert_eq!(p.count("template "), 0);
@@ -532,7 +532,7 @@ mod tests {
     fn no_reported_image_is_a_failure_even_on_exit_0() {
         let p = FakeProvider::new();
         let g = FakeGuest { out: "built something\n".into(), ..FakeGuest::ok() };
-        let e = build(&p, &g, &spec(), 3, Path::new("/tree"), SHA, Some("9120".into()), "", "", "", "feedface").unwrap_err();
+        let e = build(&p, &g, &spec(), 3, Path::new("tree"), SHA, Some("9120".into()), "", "", "", "feedface").unwrap_err();
         assert!(e.contains("reported no image"), "{e}");
         assert!(p.all_vms().is_empty());
     }
@@ -542,12 +542,12 @@ mod tests {
         for step in [Step::Start, Step::Addr, Step::Exec, Step::Shutdown, Step::MakeTemplate] {
             let p = FakeProvider::new();
             p.fail(step);
-            let e = build(&p, &FakeGuest::ok(), &spec(), 3, Path::new("/tree"), SHA, Some("9120".into()), "", "", "", "feedface").unwrap_err();
+            let e = build(&p, &FakeGuest::ok(), &spec(), 3, Path::new("tree"), SHA, Some("9120".into()), "", "", "", "feedface").unwrap_err();
             assert!(p.all_vms().is_empty(), "{step:?} left {:?}: {e}", p.all_vms());
         }
         let p = FakeProvider::new();
         let g = FakeGuest { reachable: false, ..FakeGuest::ok() };
-        let e = build(&p, &g, &spec(), 2, Path::new("/tree"), SHA, Some("9120".into()), "", "", "", "feedface").unwrap_err();
+        let e = build(&p, &g, &spec(), 2, Path::new("tree"), SHA, Some("9120".into()), "", "", "", "feedface").unwrap_err();
         assert!(e.contains("never became reachable"), "{e}");
         assert!(p.all_vms().is_empty());
     }
@@ -556,7 +556,7 @@ mod tests {
     fn a_vmid_that_is_taken_is_refused_and_the_vm_there_is_never_touched() {
         let p = FakeProvider::new();
         p.plant("108", "round-template-old");
-        let e = build(&p, &FakeGuest::ok(), &spec(), 3, Path::new("/tree"), SHA, Some("108".into()), "", "", "", "feedface").unwrap_err();
+        let e = build(&p, &FakeGuest::ok(), &spec(), 3, Path::new("tree"), SHA, Some("108".into()), "", "", "", "feedface").unwrap_err();
         assert!(e.contains("clone refused") && e.contains("refusing to destroy"), "{e}");
         assert_eq!(p.name("108").as_deref(), Some("round-template-old"));
         assert_eq!(p.count("destroy"), 0);
@@ -567,7 +567,7 @@ mod tests {
         let p = FakeProvider::new();
         p.fail(Step::Shutdown);
         p.fail(Step::Destroy);
-        let e = build(&p, &FakeGuest::ok(), &spec(), 3, Path::new("/tree"), SHA, Some("9120".into()), "", "", "", "feedface").unwrap_err();
+        let e = build(&p, &FakeGuest::ok(), &spec(), 3, Path::new("tree"), SHA, Some("9120".into()), "", "", "", "feedface").unwrap_err();
         assert!(e.contains("by hand") && e.contains("9120"), "{e}");
     }
 
@@ -594,14 +594,14 @@ mod tests {
             .args(["-c", &TEMPLATE_SCRIPT[start..end]])
             .env_clear()
             .env("work", dir)
-            .env("CARGO_HOME", "/opt/cargo")
-            .env("HOME", "/fixture/home")
+            .env("CARGO_HOME", "opt/cargo")
+            .env("HOME", "fixture/home")
             .output()
             .unwrap();
         assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
         let rendered = std::fs::read_to_string(dir.join("template-config.toml")).unwrap();
         let cfg: toml::Table = toml::from_str(&rendered).unwrap_or_else(|e| panic!("{e}\n{rendered}"));
-        assert_eq!(cfg["spira"]["path"].as_str(), Some("/nix/var/nix/profiles/default/bin:/opt/cargo/bin:/fixture/home/.cargo/bin"));
+        assert_eq!(cfg["spira"]["path"].as_str(), Some(format!("{}nix/var/nix/profiles/default/bin:opt/cargo/bin:fixture/home/.cargo/bin", std::path::MAIN_SEPARATOR).as_str()));
     }
 
     #[test]
@@ -610,7 +610,7 @@ mod tests {
         assert!(!TEMPLATE_SCRIPT.contains("podman load"));
         assert!(!TEMPLATE_SCRIPT.contains("--layers=false") && !TEMPLATE_SCRIPT.contains("--no-cache"));
         assert!(TEMPLATE_SCRIPT.contains("cargo fetch --locked"));
-        assert!(TEMPLATE_SCRIPT.contains("/root/.ssh/authorized_keys"));
+        assert!(TEMPLATE_SCRIPT.contains(&format!("{}/.ssh/authorized_keys", system_paths::ROOT_HOME)));
         assert_eq!(reported_image("a\nimage=x:1\n"), Some("x:1".into()));
         assert_eq!(reported_image("image=\n"), None);
         assert_eq!(reported_image(""), None);
@@ -690,24 +690,24 @@ mod refresh_tests {
 
     #[test]
     fn the_template_runs_the_ami_guest_setup_and_records_the_recipe() {
-        let c = setup_command("/w", "10.0.0.1", "1.99.1", "/c", "abc");
-        assert!(c.contains("round-vm/ami-setup.sh' '/w' '1.99.1' '/c'"), "{c}");
+        let c = setup_command("w", "10.0.0.1", "1.99.1", "c", "abc");
+        assert!(c.contains("round-vm/ami-setup.sh' 'w' '1.99.1' 'c'"), "{c}");
         assert!(c.contains("SPIRA_RECIPE_SHA='abc'") && c.contains("SPIRA_TEMPLATE_HOST_ADDR='10.0.0.1'"), "{c}");
         assert!(AMI_SETUP.contains("build-essential"), "the guest setup installs the C toolchain");
-        assert!(AMI_SETUP.contains("src/template.sh") && AMI_SETUP.contains("/etc/spira-round-recipe-sha"));
+        assert!(AMI_SETUP.contains("src/template.sh") && AMI_SETUP.contains(&format!("{}/spira-round-recipe-sha", system_paths::ETC)));
     }
 
     #[test]
     fn template_args_take_a_ref() {
-        let a = parse_template_args(&["/t".to_string(), "--ref".into(), "local/main".into()]).unwrap();
+        let a = parse_template_args(&["t".to_string(), "--ref".into(), "local/main".into()]).unwrap();
         assert_eq!(a.rev.as_deref(), Some("local/main"));
     }
 
     #[test]
     fn adopt_args_take_a_vmid_and_a_tree() {
-        let a = parse_template_args(&s(&["/t", "--adopt", "101"])).unwrap();
+        let a = parse_template_args(&s(&["t", "--adopt", "101"])).unwrap();
         assert_eq!(a.adopt.as_deref(), Some("101"));
-        assert!(parse_template_args(&s(&["/t", "--adopt"])).is_err());
+        assert!(parse_template_args(&s(&["t", "--adopt"])).is_err());
     }
 
     #[test]

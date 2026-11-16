@@ -706,7 +706,8 @@ fn the_sweep_reclaims_an_open_round_whose_worktree_is_missing() {
         .unwrap()
         .unwrap()
         .kv;
-    kv.push("worktree", "/wt/spira-lost");
+    let root = testkit::TempDir::new("round-store-lost-worktree");
+    kv.push("worktree", root.join("wt/spira-lost").to_str().unwrap());
     batches::save(d, "spira", &kv).unwrap();
     assert_eq!(
         t.run(&["round", "open", "--members", "sp-b"]),

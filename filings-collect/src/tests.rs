@@ -2,7 +2,7 @@ use super::*;
 use std::cell::RefCell;
 
 fn host() -> Host {
-    Host { name: "prod".into(), ssh: "u@h".into(), home: "/d".into() }
+    Host { name: "prod".into(), ssh: "u@h".into(), home: "d".into() }
 }
 
 #[derive(Default)]
@@ -86,10 +86,12 @@ fn state_round_trips() {
 
 #[test]
 fn hosts_parse_and_refuse_malformed_entries() {
-    assert_eq!(parse_hosts("prod=u@h:/d").unwrap(), vec![host()]);
+    let root = testkit::TempDir::new("filings-collect-hosts");
+    let (d, e) = (root.join("d").display().to_string(), root.join("e").display().to_string());
+    assert_eq!(parse_hosts(&format!("prod=u@h:{d}")).unwrap(), vec![Host { home: d.clone(), ..host() }]);
     assert!(parse_hosts("").unwrap().is_empty());
-    for bad in ["prod", "prod=u@h", "prod=u@h:rel", "prod=-oProxy:/d", "a=u@h:/d a=u@h:/e"] {
-        assert!(parse_hosts(bad).is_err(), "{bad}");
+    for bad in ["prod".to_string(), "prod=u@h".into(), "prod=u@h:rel".into(), format!("prod=-oProxy:{d}"), format!("a=u@h:{d} a=u@h:{e}")] {
+        assert!(parse_hosts(&bad).is_err(), "{bad}");
     }
 }
 

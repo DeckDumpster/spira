@@ -1258,21 +1258,21 @@ mod tests {
     fn test_phase_env_drops_the_release_from_path_and_the_locator() {
         let e = |k: &str, v: &str| (k.to_string(), v.to_string());
         let env = vec![
-            e("PATH", "/r/rel/bin:/r/rel/spira:/usr/bin:/bin:/h/.cargo/bin:/r/release-x/bin"),
-            e(spira_config::RELEASE_ENV, "/r/rel/"),
-            e("SPIRA_RUN", "/run"),
-            e("HOME", "/h"),
+            e("PATH", "r/rel/bin:r/rel/spira:usr/bin:bin:h/.cargo/bin:r/release-x/bin"),
+            e(spira_config::RELEASE_ENV, "r/rel/"),
+            e("SPIRA_RUN", "run"),
+            e("HOME", "h"),
         ];
         let got = test_phase_env(&env);
         assert_eq!(
             got,
             vec![
-                e("PATH", "/usr/bin:/bin:/h/.cargo/bin:/r/release-x/bin"),
-                e("SPIRA_RUN", "/run"),
-                e("HOME", "/h"),
+                e("PATH", "usr/bin:bin:h/.cargo/bin:r/release-x/bin"),
+                e("SPIRA_RUN", "run"),
+                e("HOME", "h"),
             ]
         );
-        assert_eq!(test_phase_env(&[e("PATH", "/a:/b")]), vec![e("PATH", "/a:/b")]);
+        assert_eq!(test_phase_env(&[e("PATH", "a:b")]), vec![e("PATH", "a:b")]);
     }
 
     #[test]
@@ -1419,7 +1419,7 @@ mod tests {
         let [_, t] = unit_commands(&["gate".into()], ALL, 4, &Default::default());
         let script = t.1.replace(&format!("{AROUND} "), "");
         let run = |red: &str, code: &str| {
-            let out = std::process::Command::new("/bin/bash")
+            let out = std::process::Command::new(system_paths::BIN_BASH)
                 .args(["-c", &script])
                 .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
                 .env("RED", red)
@@ -1439,11 +1439,11 @@ mod tests {
         let [_, t] = unit_commands(&["gate".into()], ALL, 4, &Default::default());
         assert!(t.1.starts_with(&format!("{AROUND} cargo nextest --version >/dev/null 2>&1 || {{")), "{}", t.1);
         let ws = testkit::manifest_dir().parent().unwrap().to_path_buf();
-        let out = std::process::Command::new("/bin/bash")
+        let out = std::process::Command::new(system_paths::BIN_BASH)
             .args(["-c", &t.1])
             .current_dir(&ws)
             .env_clear()
-            .env("PATH", "/usr/bin:/bin")
+            .env("PATH", system_paths::SYSTEM_PATH_MIN)
             .env("HOME", &ws)
             .output()
             .unwrap();
@@ -1473,11 +1473,11 @@ mod tests {
 
     #[test]
     fn reproduce_line_quotes_values_and_shares_the_test_commands_flags() {
-        let env = vec![("A".to_string(), "x y'z".to_string()), ("PATH".to_string(), "/bin".to_string())];
+        let env = vec![("A".to_string(), "x y'z".to_string()), ("PATH".to_string(), "bin".to_string())];
         let line = reproduce_line(&env, "-p gate --lib");
         assert_eq!(
             line,
-            "env -i A='x y'\\''z' PATH='/bin' cargo test --no-fail-fast --features integration -p gate --lib"
+            "env -i A='x y'\\''z' PATH='bin' cargo test --no-fail-fast --features integration -p gate --lib"
         );
     }
 

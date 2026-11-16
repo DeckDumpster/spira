@@ -12,7 +12,7 @@ use spira_runtime::tasks::e::inbox_notify::*;
 const MIN: u64 = 60_000;
 
 fn config() -> Config {
-    Config { actionable: "FAIL|DEGRADED".into(), health_timeout_s: 10, notify_age_s: 1800, instance: "prod".into(), run: "/r".into(), watchers: "/h/spira/watchers".into(), watchers_overlay: String::new(), mail_readers: "concierge".into(), mail_unread_age_s: 1800, mail: "/m".into() }
+    Config { actionable: "FAIL|DEGRADED".into(), health_timeout_s: 10, notify_age_s: 1800, instance: "prod".into(), run: "r".into(), watchers: "h/spira/watchers".into(), watchers_overlay: String::new(), mail_readers: "concierge".into(), mail_unread_age_s: 1800, mail: "m".into() }
 }
 
 fn row(name: &str, lines: u64, cursor: u64, unread: &[&str]) -> RowView {

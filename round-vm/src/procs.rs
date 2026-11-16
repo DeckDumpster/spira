@@ -10,7 +10,7 @@ use crate::schema::ProcId;
 
 /// Start time of `pid` (field 22 of /proc/<pid>/stat), or None if it does not exist.
 pub fn start_time(pid: u32) -> Option<u64> {
-    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let stat = std::fs::read_to_string(format!("{}/{pid}/stat", system_paths::PROC)).ok()?;
     // comm (field 2) may contain spaces and parentheses; everything after the LAST ')' is
     // fields 3.. separated by single spaces.
     let rest = &stat[stat.rfind(')')? + 1..];
@@ -166,7 +166,7 @@ mod tests {
     #[test]
     fn a_stdin_write_error_other_than_broken_pipe_is_still_returned() {
         let mut c = command("sh").args(["-c", "exit 0"]).stdin(std::process::Stdio::null()).spawn().unwrap();
-        c.stdin = Some(std::process::ChildStdin::from(std::os::fd::OwnedFd::from(File::open("/dev/null").unwrap())));
+        c.stdin = Some(std::process::ChildStdin::from(std::os::fd::OwnedFd::from(File::open(system_paths::DEV_NULL).unwrap())));
         assert!(feed_script(&mut c, b"x").is_err());
         let _ = c.wait();
     }
