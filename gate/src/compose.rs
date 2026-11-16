@@ -642,10 +642,6 @@ pub fn unit_build_words(crates: &[String]) -> Vec<String> {
 /// Where the unit phase's nextest config lives, relative to the trial tree.
 pub const NEXTEST_CONFIG: &str = "target/gate-unit-nextest.toml";
 
-/// The unit nextest run's prefix: one sandbox for the whole run, so each test's own runner finds
-/// itself held instead of building a bubblewrap of its own.
-const AROUND: &str = "tools/test-sandbox/runner --around";
-
 /// The test phase's commands in the order they run, each over `crates`: the unit tier, the
 /// integration targets, the doc-tests ([`spira_config::unit_tier`]). A tier none of the selected
 /// crates has a target for is absent, since cargo refuses a flag no selected crate satisfies.
@@ -656,7 +652,7 @@ pub fn unit_test_commands(crates: &[String], targets: Targets) -> Vec<String> {
     let mut cmds = Vec::new();
     if targets.lib || targets.bin {
         let filter = if targets.lib { tier::LIB_BINS } else { "--bins" };
-        cmds.push(format!("{AROUND} cargo {}", tier::unit_words(NEXTEST_CONFIG, None, sel, filter)));
+        cmds.push(format!("cargo {}", tier::unit_words(NEXTEST_CONFIG, None, sel, filter)));
     }
     if targets.test {
         cmds.push(format!("cargo {}", tier::integration_words(None, sel)));
@@ -1323,7 +1319,7 @@ mod tests {
         let sel = ["gate".to_string(), "queue".to_string()];
         let [unit, integ, doc] = three(&unit_test_commands(&sel, ALL));
         let w = |c: &str| c.replace("-p gate -p queue", "--workspace");
-        assert_eq!(w(&unit), format!("{AROUND} cargo {}", t::unit_words(NEXTEST_CONFIG, None, "--workspace", t::LIB_BINS)));
+        assert_eq!(w(&unit), format!("cargo {}", t::unit_words(NEXTEST_CONFIG, None, "--workspace", t::LIB_BINS)));
         assert_eq!(w(&integ), format!("cargo {}", t::integration_words(None, "--workspace")));
         assert_eq!(w(&doc), format!("cargo {}", t::doc_words(None, "--workspace")));
     }
@@ -1335,17 +1331,6 @@ mod tests {
         }
         let [_, t] = unit_commands(&["gate".into()], ALL, 4);
         assert!(!t.1.contains(" -j ") && !t.1.contains("-j4"), "{}", t.1);
-    }
-
-    #[test]
-    fn only_the_unit_nextest_run_goes_through_one_sandbox() {
-        let [_, t] = unit_commands(&["gate".into()], ALL, 4);
-        let cmds: Vec<&str> = t.1.split("; ").collect();
-        let run = |needle: &str| *cmds.iter().find(|c| c.contains(needle)).unwrap();
-        assert!(run("nextest run").contains("tools/test-sandbox/runner --around cargo nextest run"), "{}", t.1);
-        for other in ["--test '*'", "--doc"] {
-            assert!(!run(other).contains("test-sandbox/runner"), "{}", t.1);
-        }
     }
 
     #[test]
@@ -1386,10 +1371,9 @@ mod tests {
         std::fs::create_dir_all(&bin).unwrap();
         testkit::write_exe(bin.join("cargo"), "#!/bin/bash\n[ \"$1\" = nextest ] && [ \"$2\" = --version ] && exit 0\ncase \"$*\" in *\"$RED\"*) exit \"$CODE\";; esac\nexit 0\n");
         let [_, t] = unit_commands(&["gate".into()], ALL, 4);
-        let script = t.1.replace(&format!("{AROUND} "), "");
         let run = |red: &str, code: &str| {
             let out = std::process::Command::new("/bin/bash")
-                .args(["-c", &script])
+                .args(["-c", &t.1])
                 .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
                 .env("RED", red)
                 .env("CODE", code)
@@ -1426,7 +1410,7 @@ mod tests {
         assert_eq!(b.0, "build");
         assert_eq!(b.1, "CARGO_BUILD_JOBS=4 cargo test --no-run --timings --features integration -p gate -p queue");
         assert_eq!(t.0, "test");
-        assert!(t.1.contains("; tools/test-sandbox/runner --around cargo nextest run --config-file target/gate-unit-nextest.toml --no-fail-fast --features integration -p gate -p queue --lib --bins; "), "{}", t.1);
+        assert!(t.1.contains("; cargo nextest run --config-file target/gate-unit-nextest.toml --no-fail-fast --features integration -p gate -p queue --lib --bins; "), "{}", t.1);
         assert!(t.1.contains("; cargo test --no-fail-fast --features integration -p gate -p queue --test '*'; "), "{}", t.1);
         assert!(t.1.contains("; cargo test --no-fail-fast --features integration -p gate -p queue --doc; "), "{}", t.1);
     }
