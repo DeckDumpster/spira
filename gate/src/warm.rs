@@ -13,6 +13,7 @@ pub const POOL: &str = "warm-debug";
 /// Donated directories kept; older ones are removed as new ones arrive.
 pub const KEEP: usize = 2;
 const BUILT_FROM: &str = "built-from";
+const BUILT_AT: &str = "built-at";
 const BUILD_DIR: &str = "debug";
 const AGED: Duration = Duration::from_secs(1_000_000_000);
 
@@ -40,8 +41,8 @@ pub fn shed(root: &Path) {
 }
 
 /// Move `dest` (a gate tree's finished `debug` directory) into the pool, recorded as built from
-/// `commit`. A directory with no compiled dependencies, or no commit, is not worth keeping.
-pub fn donate(root: &Path, dest: &Path, commit: &str) -> bool {
+/// `commit` in `tree`. A directory with no compiled dependencies, or no commit, is not worth keeping.
+pub fn donate(root: &Path, dest: &Path, commit: &str, tree: &Path) -> bool {
     if commit.is_empty() || !dest.join("deps").is_dir() {
         return false;
     }
@@ -55,7 +56,7 @@ pub fn donate(root: &Path, dest: &Path, commit: &str) -> bool {
         let _ = fs::remove_dir_all(&entry);
         return false;
     }
-    if fs::write(entry.join(BUILT_FROM), commit).is_err() {
+    if fs::write(entry.join(BUILT_FROM), commit).is_err() || fs::write(entry.join(BUILT_AT), tree.as_os_str().as_encoded_bytes()).is_err() {
         let _ = fs::remove_dir_all(&entry);
         return false;
     }
@@ -68,8 +69,8 @@ pub fn donate(root: &Path, dest: &Path, commit: &str) -> bool {
 
 /// Fill the empty directory `dest` from the newest pooled one; the commit it was built from.
 /// None when `dest` holds anything already or the pool has nothing to give. Claiming renames the
-/// entry first, so two gates never take the same one.
-pub fn adopt(root: &Path, dest: &Path) -> Option<String> {
+/// entry first, so two gates never take the same one. The commit and the tree path it was built in.
+pub fn adopt(root: &Path, dest: &Path) -> Option<(String, PathBuf)> {
     if fs::read_dir(dest).ok()?.next().is_some() {
         return None;
     }
@@ -79,16 +80,56 @@ pub fn adopt(root: &Path, dest: &Path) -> Option<String> {
             continue;
         }
         let commit = fs::read_to_string(claimed.join(BUILT_FROM)).unwrap_or_default().trim().to_string();
+        let at = fs::read_to_string(claimed.join(BUILT_AT)).unwrap_or_default();
         let moved = !commit.is_empty()
+            && !at.is_empty()
             && fs::remove_dir(dest).is_ok()
             && fs::rename(claimed.join(BUILD_DIR), dest).is_ok();
         let _ = fs::remove_dir_all(&claimed);
         if moved {
-            return Some(commit);
+            return Some((commit, PathBuf::from(at)));
         }
         let _ = fs::create_dir_all(dest);
     }
     None
+}
+
+/// Remove every unit of `dir` (a `debug` build directory) whose compile read an environment
+/// variable holding `built_in` — `env!("CARGO_MANIFEST_DIR")` bakes the tree's path into a
+/// binary, and cargo's fingerprints are tree-relative so would call it fresh in another tree.
+/// Reads rustc's `env-dep:` lines in `deps/*.d`. Returns the units removed.
+pub fn purge_path_bound_units(dir: &Path, built_in: &Path) -> usize {
+    let tree = built_in.to_string_lossy().into_owned();
+    let home = built_in.file_name().map(|n| format!("/{}/", n.to_string_lossy()));
+    let Ok(rd) = fs::read_dir(dir.join("deps")) else { return 0 };
+    let mut hashes = std::collections::BTreeSet::new();
+    for e in rd.flatten() {
+        let path = e.path();
+        if path.extension().is_none_or(|x| x != "d") {
+            continue;
+        }
+        let Ok(text) = fs::read_to_string(&path) else { continue };
+        let bound = text.lines().filter(|l| l.starts_with("# env-dep:")).any(|l| l.contains(&tree) || home.as_deref().is_some_and(|h| l.contains(h)));
+        if bound {
+            if let Some(h) = path.file_stem().and_then(|s| s.to_str()).and_then(|s| s.rsplit_once('-')).map(|(_, h)| h.to_string()) {
+                hashes.insert(h);
+            }
+        }
+    }
+    for h in &hashes {
+        let suffix = format!("-{h}");
+        for sub in ["deps", ".fingerprint", "build"] {
+            let Ok(rd) = fs::read_dir(dir.join(sub)) else { continue };
+            for e in rd.flatten() {
+                let name = e.file_name().to_string_lossy().into_owned();
+                let stem = name.split('.').next().unwrap_or(&name);
+                if stem.ends_with(&suffix) {
+                    let _ = fs::remove_dir_all(e.path()).or_else(|_| fs::remove_file(e.path()));
+                }
+            }
+        }
+    }
+    hashes.len()
 }
 
 /// Age every tracked file of `tree` that is unchanged from `built_from` to HEAD, and every
@@ -137,9 +178,12 @@ pub const COLD_OPEN: &str = "building cold (";
 /// The gate's side of adoption: fill `dest`, then age `tree`'s files. A failure empties `dest`.
 /// The line for the trial's log.
 pub fn warm_start(root: &Path, dest: &Path, tree: &Path) -> Option<String> {
-    let commit = adopt(root, dest)?;
+    let (commit, built_in) = adopt(root, dest)?;
     match normalize_mtimes(tree, &commit) {
-        Ok(n) => Some(format!("{WARM_FROM}{commit} ({n} unchanged files aged)")),
+        Ok(n) => {
+            let bound = if built_in == tree { 0 } else { purge_path_bound_units(dest, &built_in) };
+            Some(format!("{WARM_FROM}{commit} ({n} unchanged files aged, {bound} units rebuilt for their baked-in path)"))
+        }
         Err(e) => {
             let _ = fs::remove_dir_all(dest);
             let _ = fs::create_dir_all(dest);
@@ -178,7 +222,7 @@ pub fn donate_tree(tree: &Path, cap_mib: u64) -> Option<String> {
     let root = dest.parent().and_then(Path::parent).filter(|_| !crate::target::is_warm(&dest))?;
     let out = Command::new("git").arg("-C").arg(tree).args(["rev-parse", "HEAD"]).output(); // batch-job: local rev-parse in the gate tree
     let commit = out.ok().filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
-    donate(root, &dest, &commit).then(|| bound(root, cap_mib << 20))
+    donate(root, &dest, &commit, tree).then(|| bound(root, cap_mib << 20))
 }
 
 
@@ -206,13 +250,27 @@ mod tests {
         let root = t.path();
         let (a, b, c) = (root.join("tree-a/debug"), root.join("tree-b/debug"), root.join("tree-c/debug"));
         built(&a);
-        assert!(donate(root, &a, "abc123"));
+        assert!(donate(root, &a, "abc123", Path::new("/t")));
         assert!(!a.exists());
         fs::create_dir_all(&b).unwrap();
-        assert_eq!(adopt(root, &b).as_deref(), Some("abc123"));
+        assert_eq!(adopt(root, &b), Some(("abc123".to_string(), PathBuf::from("/t"))));
         assert!(b.join("deps/libx.rlib").is_file());
         fs::create_dir_all(&c).unwrap();
         assert_eq!(adopt(root, &c), None, "the entry was taken");
+    }
+
+    #[test]
+    fn a_pooled_entry_without_its_build_path_is_not_adopted() {
+        let t = testkit::TempDir::new("gate-warm-no-built-at");
+        let root = t.path();
+        let (a, b) = (root.join("tree-a/debug"), root.join("tree-b/debug"));
+        built(&a);
+        assert!(donate(root, &a, "abc123", Path::new("/t")));
+        let entry = entries(root).pop().unwrap();
+        fs::remove_file(entry.join(BUILT_AT)).unwrap();
+        fs::create_dir_all(&b).unwrap();
+        assert_eq!(adopt(root, &b), None);
+        assert!(!b.join("deps/libx.rlib").exists());
     }
 
     #[test]
@@ -221,7 +279,7 @@ mod tests {
         let root = t.path();
         let (a, b) = (root.join("a/debug"), root.join("b/debug"));
         built(&a);
-        donate(root, &a, "c1");
+        donate(root, &a, "c1", Path::new("/t"));
         built(&b);
         assert_eq!(adopt(root, &b), None);
         assert_eq!(entries(root).len(), 1);
@@ -233,9 +291,9 @@ mod tests {
         let root = t.path();
         let a = root.join("a/debug");
         fs::create_dir_all(&a).unwrap();
-        assert!(!donate(root, &a, "c1"));
+        assert!(!donate(root, &a, "c1", Path::new("/t")));
         built(&a);
-        assert!(!donate(root, &a, ""));
+        assert!(!donate(root, &a, "", Path::new("/t")));
         assert!(a.join("deps").is_dir());
     }
 
@@ -246,7 +304,7 @@ mod tests {
         for i in 0..KEEP + 2 {
             let d = root.join(format!("t{i}/debug"));
             built(&d);
-            assert!(donate(root, &d, &format!("c{i}")));
+            assert!(donate(root, &d, &format!("c{i}"), Path::new("/t")));
             let e = entries(root).pop().unwrap();
             fs::File::open(&e).unwrap().set_modified(UNIX_EPOCH + Duration::from_secs(1000 + i as u64)).unwrap();
         }
@@ -305,11 +363,27 @@ mod tests {
         git(&tree, &["commit", "-qm", "base"]);
         let (a, b) = (root.join("a/debug"), root.join("b/debug"));
         built(&a);
-        donate(&root, &a, "0123456789012345678901234567890123456789");
+        donate(&root, &a, "0123456789012345678901234567890123456789", Path::new("/t"));
         fs::create_dir_all(&b).unwrap();
         let line = warm_start(&root, &b, &tree).unwrap();
         assert!(line.contains("discarded"), "{line}");
         assert!(b.is_dir() && fs::read_dir(&b).unwrap().next().is_none());
+    }
+
+    #[test]
+    fn only_units_whose_compile_read_the_donors_path_are_purged() {
+        let t = testkit::TempDir::new("gate-warm-purge");
+        let d = t.path().join("debug");
+        for (unit, env) in [("bound-aaaa", "CARGO_MANIFEST_DIR=/w/.gate.h.a/bound"), ("plain-bbbb", "CARGO_PKG_NAME=plain"), ("out-cccc", "OUT_DIR=/root/.gate.h.a/debug/build/out")] {
+            fs::create_dir_all(d.join(".fingerprint").join(unit)).unwrap();
+            fs::create_dir_all(d.join("deps")).unwrap();
+            let h = unit.rsplit('-').next().unwrap();
+            fs::write(d.join(format!("deps/{}.d", unit)), format!("deps/x: src/lib.rs\n\n# env-dep:{env}\n")).unwrap();
+            fs::write(d.join(format!("deps/lib{}-{h}.rlib", unit.split('-').next().unwrap())), "x").unwrap();
+        }
+        assert_eq!(purge_path_bound_units(&d, Path::new("/w/.gate.h.a")), 2);
+        assert!(!d.join(".fingerprint/bound-aaaa").exists() && !d.join("deps/libbound-aaaa.rlib").exists());
+        assert!(d.join(".fingerprint/plain-bbbb").is_dir() && d.join("deps/libplain-bbbb.rlib").is_file());
     }
 
     fn fill(dir: &Path, mib: usize) {
@@ -324,7 +398,7 @@ mod tests {
         for i in 0..2 {
             let d = root.join(format!("t{i}/debug"));
             fill(&d, 2);
-            assert!(donate(root, &d, &format!("c{i}")));
+            assert!(donate(root, &d, &format!("c{i}"), Path::new("/t")));
             let e = entries(root).pop().unwrap();
             fs::File::open(&e).unwrap().set_modified(UNIX_EPOCH + Duration::from_secs(1000 + i as u64)).unwrap();
         }
@@ -349,7 +423,7 @@ mod tests {
         let f = fs::File::options().write(true).open(&stale).unwrap();
         f.set_modified(old).unwrap();
         f.set_times(fs::FileTimes::new().set_accessed(old).set_modified(old)).unwrap();
-        assert!(donate(root, &d, "c"));
+        assert!(donate(root, &d, "c", Path::new("/t")));
         bound(root, 1 << 30);
         let kept = entries(root).pop().unwrap().join("debug/deps");
         assert!(kept.join("libbig.rlib").is_file());
