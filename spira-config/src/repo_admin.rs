@@ -478,7 +478,7 @@ pub fn check(reg: &Registry, name: &str) -> Vec<Piece> {
             .ok_or_else(|| "the landing ref does not resolve".to_string())
     );
     let land = land.expect("checked");
-    piece!("worktree", cut_worktree(&path, &land));
+    piece!("worktree", cut_worktree(&path, &land).map(|_| format!("cut from {land}")));
     for (n, v) in [
         ("format", reg.format(name).unwrap_or_default()),
         ("gate", reg.gate(name).unwrap_or_default()),
@@ -554,7 +554,30 @@ pub fn check(reg: &Registry, name: &str) -> Vec<Piece> {
     out
 }
 
-fn cut_worktree(repo: &Path, land: &str) -> Result<String, String> {
+/// A detached worktree of a repository, removed when dropped.
+pub struct Worktree {
+    repo: PathBuf,
+    dir: PathBuf,
+}
+
+impl Worktree {
+    pub fn path(&self) -> PathBuf {
+        self.dir.join("wt")
+    }
+}
+
+impl Drop for Worktree {
+    fn drop(&mut self) {
+        let _ = git(
+            &self.repo,
+            &["worktree", "remove", "--force", &self.path().display().to_string()],
+        );
+        let _ = git(&self.repo, &["worktree", "prune"]);
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
+
+pub fn cut_worktree(repo: &Path, land: &str) -> Result<Worktree, String> {
     let dir = std::env::temp_dir().join(format!(
         "spira-repo-check-{}-{}",
         std::process::id(),
@@ -563,15 +586,17 @@ fn cut_worktree(repo: &Path, land: &str) -> Result<String, String> {
             .map(|d| d.as_nanos())
             .unwrap_or(0)
     ));
-    let wt = dir.join("wt");
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    let wt_s = wt.display().to_string();
-    let r = git(repo, &["worktree", "add", "-q", "--detach", &wt_s, land]);
-    let _ = git(repo, &["worktree", "remove", "--force", &wt_s]);
-    let _ = git(repo, &["worktree", "prune"]);
-    let _ = std::fs::remove_dir_all(&dir);
-    r.map(|_| format!("cut from {land}"))
-        .map_err(|e| format!("cannot cut a worktree from {land}: {e}"))
+    let guard = Worktree {
+        repo: repo.to_path_buf(),
+        dir,
+    };
+    git(
+        repo,
+        &["worktree", "add", "-q", "--detach", &guard.path().display().to_string(), land],
+    )
+    .map_err(|e| format!("cannot cut a worktree from {land}: {e}"))?;
+    Ok(guard)
 }
 
 #[cfg(test)]

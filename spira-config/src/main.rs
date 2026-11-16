@@ -739,13 +739,39 @@ fn cmd_repo_add(args: &[String]) -> ExitCode {
             if did.is_empty() {
                 println!("repo add: {name} already registered, nothing changed");
             }
-            cmd_repo_check(&repo_registry(), std::slice::from_ref(name))
+            let code = cmd_repo_check(&repo_registry(), std::slice::from_ref(name));
+            print_contract(name);
+            code
         }
         Err(e) => {
             eprintln!("{e}");
             ExitCode::FAILURE
         }
     }
+}
+
+/// The landing contract's clauses for a repository just added; informative, never fails the add.
+fn print_contract(repo: &str) {
+    let checker = spira_config::release_env::tool("repo-contract").unwrap_or_else(|_| "repo-contract".to_string());
+    let out = match spira_config::bounded::bounded_for(checker, "3600").args(["check", repo]).output() {
+        Ok(o) => o,
+        Err(e) => {
+            eprintln!("repo add: cannot run repo-contract: {e}");
+            return;
+        }
+    };
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    print!("{stdout}");
+    if let Some(hint) = contract_hint(repo, &stdout) {
+        println!("{hint}");
+    }
+}
+
+fn contract_hint(name: &str, check_output: &str) -> Option<String> {
+    check_output
+        .lines()
+        .any(|l| l.starts_with("not met "))
+        .then(|| format!("bring it in line: file a bead for {name} that runs repo-contract scaffold"))
 }
 
 fn repo_targets() -> spira_config::repo_admin::Targets {
@@ -1888,5 +1914,18 @@ fn dispatch(args: &[String]) -> ExitCode {
             );
             ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+mod contract_tests {
+    use super::contract_hint;
+
+    #[test]
+    fn a_clause_not_met_prints_the_scaffold_hint_and_all_met_prints_none() {
+        let red = "met landing: ok\nnot met deploy: no deploy.toml\n";
+        assert_eq!(contract_hint("probe", red).unwrap(), "bring it in line: file a bead for probe that runs repo-contract scaffold");
+        assert_eq!(contract_hint("probe", "met deploy: x\n"), None);
+        assert_eq!(contract_hint("probe", ""), None);
     }
 }

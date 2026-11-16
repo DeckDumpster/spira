@@ -1,0 +1,132 @@
+//! The ports over git, nix, `work`, `testenv` and the repo registry.
+
+use crate::ports::{Piece, Ports, Rows, Tier};
+use crate::shell::{self, ShellEnv};
+use spira_config::repo_admin::cut_worktree;
+use spira_config::repos::{self, Registry};
+use std::path::{Path, PathBuf};
+
+pub struct Real {
+    reg: Registry,
+}
+
+impl Real {
+    pub fn from_env() -> Result<Real, String> {
+        let home = spira_config::resolve::locate_home_for_process()?;
+        Ok(Real { reg: Registry::from_env_checkout(std::env::vars().collect(), &home) })
+    }
+
+    pub fn home_repo(&self) -> String {
+        self.reg.home_repo().to_string()
+    }
+
+    pub fn all(&self) -> Vec<String> {
+        self.reg.all()
+    }
+
+    fn root(&self, repo: &str) -> Result<PathBuf, String> {
+        self.reg.root(repo).map(PathBuf::from).ok_or_else(|| format!("{repo} is not in the repo registry"))
+    }
+
+    fn land(&self, repo: &str) -> Result<String, String> {
+        repos::landref(&self.reg, repo).ok_or_else(|| format!("{repo}'s landing ref does not resolve"))
+    }
+
+    fn git(&self, repo: &str, args: &[&str]) -> Result<std::process::Output, String> {
+        spira_config::bounded::bounded("git").args(args).current_dir(self.root(repo)?).output().map_err(|e| format!("git: {e}"))
+    }
+
+    fn in_tree<T>(&self, repo: &str, tree: Option<&Path>, f: impl FnOnce(&Path) -> Result<T, String>) -> Result<T, String> {
+        match tree {
+            Some(t) => f(t),
+            None => {
+                let wt = cut_worktree(&self.root(repo)?, &self.land(repo)?)?;
+                f(&wt.path())
+            }
+        }
+    }
+}
+
+fn tool(name: &str) -> PathBuf {
+    PathBuf::from(spira_config::release_env::tool(name).unwrap_or_else(|_| name.to_string()))
+}
+
+impl Ports for Real {
+    fn read(&self, repo: &str, tree: Option<&Path>, rel: &str) -> Result<Option<String>, String> {
+        if let Some(t) = tree {
+            return match std::fs::read_to_string(t.join(rel)) {
+                Ok(s) => Ok(Some(s)),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+                Err(e) => Err(format!("{}: {e}", t.join(rel).display())),
+            };
+        }
+        let spec = format!("{}:{rel}", self.land(repo)?);
+        if !self.git(repo, &["cat-file", "-e", &spec])?.status.success() {
+            return Ok(None);
+        }
+        let out = self.git(repo, &["show", &spec])?;
+        if !out.status.success() {
+            return Err(format!("git show {spec}: {}", String::from_utf8_lossy(&out.stderr).trim()));
+        }
+        Ok(Some(String::from_utf8_lossy(&out.stdout).into_owned()))
+    }
+
+    fn shell_env(&self, repo: &str, tree: Option<&Path>) -> Result<Option<ShellEnv>, String> {
+        let (nix, cache) = (shell::nix_bin()?, shell::cache_dir()?);
+        self.in_tree(repo, tree, |t| shell::shell_env(t, &nix, &cache))
+    }
+
+    fn on_path(&self, env: &ShellEnv, program: &str) -> bool {
+        env.path_dirs().iter().any(|d| d.join(program).is_file())
+    }
+
+    fn run_checks(&self, repo: &str, tree: Option<&Path>) -> Result<Rows, String> {
+        self.in_tree(repo, tree, |t| {
+            let out = spira_config::bounded::bounded_for(tool("work"), "3600").arg("checks").current_dir(t).output().map_err(|e| format!("cannot run work checks: {e}"))?;
+            let lines: Vec<String> = String::from_utf8_lossy(&out.stdout).lines().filter(|l| l.get(..3) == Some("-- ")).map(String::from).collect();
+            if lines.is_empty() && !out.status.success() {
+                return Err(format!("work checks: {}", String::from_utf8_lossy(&out.stderr).trim()));
+            }
+            Ok(Rows { ok: out.status.success(), lines })
+        })
+    }
+
+    fn run_tiers(&self, repo: &str, suites: &[String]) -> Result<Vec<Tier>, String> {
+        let out = spira_config::bounded::bounded_for(tool("testenv"), "3600")
+            .args(["--suites", &suites.join(","), &self.land(repo)?, repo])
+            .output()
+            .map_err(|e| format!("cannot run testenv: {e}"))?;
+        match out.status.code() {
+            Some(0) | Some(1) => Ok(suites.iter().map(|s| Tier { name: s.clone(), ok: out.status.success() }).collect()),
+            c => Err(format!("testenv exited {c:?}: {}", String::from_utf8_lossy(&out.stderr).trim())),
+        }
+    }
+
+    fn landing_pieces(&self, repo: &str) -> Vec<Piece> {
+        spira_config::repo_admin::check(&self.reg, repo).into_iter().map(|p| Piece { name: p.name.into(), detail: p.detail, ok: p.ok }).collect()
+    }
+
+    fn land_mode(&self, repo: &str) -> String {
+        self.reg.land(repo)
+    }
+
+    fn workflow(&self, repo: &str) -> Result<String, String> {
+        let default = spira_config::process::cfg("SPIRA_FORGE_WORKFLOW")?;
+        let table = spira_config::process::cfg("SPIRA_FORGE_WORKFLOWS")?;
+        Ok(forge::cmds::workflow_for(&default, &table, Some(repo)).to_string())
+    }
+
+    fn workflow_files(&self, repo: &str) -> Result<Vec<String>, String> {
+        let spec = format!("{}:{}/", self.land(repo)?, crate::clause::WORKFLOWS);
+        let out = self.git(repo, &["ls-tree", "--name-only", &spec])?;
+        Ok(String::from_utf8_lossy(&out.stdout).lines().map(|l| l.rsplit('/').next().unwrap_or(l).to_string()).collect())
+    }
+
+    fn product_repos(&self) -> Vec<String> {
+        crate::clause::without_home(self.reg.all(), self.reg.home_repo())
+    }
+
+    fn registered(&self, repo: &str) -> bool {
+        self.reg.names().iter().any(|n| n == repo)
+    }
+}
