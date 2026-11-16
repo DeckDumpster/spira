@@ -2,7 +2,7 @@ use spira_sim::gh;
 use spira_sim::world::{self, ProcessSteps};
 use std::path::PathBuf;
 
-const USAGE: &str = "usage: sim world up <dir> [--tree <rev>] [--pilgrim] [--repo <name>:<mode>[:<trunk>]]...\n       sim world fixture <tree root> <dir>\n       sim world seed [--tree <rev>]\n       sim world down <dir>\n       sim gh <gh arguments...>\n       sim round-vm run <tree> --results-dir <dir>\n       sim ghctl <state-dir> <verb> ...\n       sim run <scenario|name> [--seed N] [--world <dir>] [--keep] [--repo <name>:<mode>[:<trunk>]]...\n       sim step <dir> [--until <vtime|bead:<bead>:<STATE>>]\n       sim replay <dir> --seed N\n       sim probe <dir>
+const USAGE: &str = "usage: sim world up <dir> [--tree <rev>] [--pilgrim] [--repo <name>:<mode>[:<trunk>]]...\n       sim world fixture <tree root> <dir>\n       sim world exec <dir> <shell command>   (under the world's own environment)\n       sim world seed [--tree <rev>]\n       sim world down <dir>\n       sim gh <gh arguments...>\n       sim round-vm run <tree> --results-dir <dir>\n       sim ghctl <state-dir> <verb> ...\n       sim run <scenario|name> [--seed N] [--world <dir>] [--keep] [--repo <name>:<mode>[:<trunk>]]...\n       sim step <dir> [--until <vtime|bead:<bead>:<STATE>>]\n       sim replay <dir> --seed N\n       sim probe <dir>
        sim proc-summary <world|proc-trace.log>
        sim call <systemd-run argv ending in: dwarf --home H <rune>>   (also: invoked as sim-call)
        sim launch <systemd-run argv | --user is-active <unit>>   (also: invoked as sim-launch)
@@ -29,6 +29,11 @@ fn main() {
     if op == "launch" {
         spira_otel::oneshot::exit(launch_main(&args[1..], &|k| std::env::var(k).ok()));
     }
+    if let [w, e, dir, shell] = args.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
+        if (*w, *e) == ("world", "exec") {
+            spira_otel::oneshot::exit(exec_main(dir, shell));
+        }
+    }
     let code = match run(&args) {
         Ok(()) => 0,
         Err(e) => {
@@ -37,6 +42,22 @@ fn main() {
         }
     };
     spira_otel::oneshot::exit(code);
+}
+
+/// The tool's own exit code: a refusal (3) must reach the caller as itself.
+fn exec_main(dir: &str, shell: &str) -> i32 {
+    let out = PathBuf::from(dir).canonicalize().map_err(|e| e.to_string()).and_then(|d| spira_sim::pilgrim::exec(&d, shell));
+    match out {
+        Ok(o) => {
+            print!("{}", String::from_utf8_lossy(&o.stdout));
+            eprint!("{}", String::from_utf8_lossy(&o.stderr));
+            o.status.code().unwrap_or(1)
+        }
+        Err(e) => {
+            eprintln!("sim: {e}");
+            1
+        }
+    }
 }
 
 fn run(args: &[String]) -> Result<(), String> {
@@ -85,7 +106,7 @@ fn run(args: &[String]) -> Result<(), String> {
             let tree = set.get("--tree").map_or("HEAD", String::as_str);
             world::up_repos(&cwd, &PathBuf::from(dir), tree, &env, &ProcessSteps, &repos, &|_| Ok(()))?;
             if set.contains_key("--pilgrim") {
-                world::make_pilgrim_world(&PathBuf::from(dir))?;
+                spira_sim::pilgrim::up(&PathBuf::from(dir).canonicalize().map_err(|e| e.to_string())?, spira_sim::pilgrim::FIXTURE, &ProcessSteps)?;
             }
             Ok(())
         }

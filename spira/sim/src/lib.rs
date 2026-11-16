@@ -5,6 +5,7 @@ pub mod gh;
 pub mod jq;
 pub mod launch;
 pub mod loopworld;
+pub mod pilgrim;
 pub mod probe;
 pub mod proctrace;
 pub mod roundvm;
