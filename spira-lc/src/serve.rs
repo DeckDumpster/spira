@@ -378,8 +378,7 @@ fn serve_one(stream: UnixStream, conn: &Arc<Conn>, spans: Option<&spira_otel::Si
                 let _tracking = state_store::phases::track_scoped(worker_rec);
                 *began.lock().unwrap_or_else(|e| e.into_inner()) = Some(Instant::now());
                 crate::slow::set_caller(&who);
-                crate::db::set_request_deadline(Some(received + limit));
-                let _deadline = state_store::phases::deadline_scoped(received + limit);
+                let _deadline = bind_deadline(received, limit);
                 state_store::model::track(!min_rev.is_none_or(model_reached));
                 let mut local = Local(&worker);
                 let ans = answer(req, &mut local, &mut crate::bd::LiveBd, &crate::composed::LiveContent, &crate::lifecycle_run_dir);
@@ -598,6 +597,12 @@ fn request_deadline(argv: &[String]) -> Duration {
         Some(v) if crate::composed::SWEEPS.contains(&v) => crate::db::QUERY_DEADLINE,
         _ => REQUEST_DEADLINE,
     }
+}
+
+/// Binds the worker thread's stores to the request's deadline; the control store refuses a write begun past it.
+fn bind_deadline(received: Instant, limit: Duration) -> state_store::phases::DeadlineScope {
+    crate::db::set_request_deadline(Some(received + limit));
+    state_store::phases::deadline_scoped(received + limit)
 }
 
 /// `f`'s answer, or `None` once `deadline` passes; the abandoned work finishes unobserved.
@@ -854,7 +859,7 @@ mod tests {
         let limit = Duration::from_millis(30);
         let received = Instant::now();
         let out = super::within(limit, move || {
-            let _deadline = state_store::phases::deadline_scoped(received + limit);
+            let _deadline = super::bind_deadline(received, limit);
             let _ = release_rx.recv();
             let r = worker.txn(&Txn::new().put("late", Object::new(serde_json::json!(1))), &Request::new("1", "t", "w"));
             let _ = done.send(state_store::wire::answer(&r));
