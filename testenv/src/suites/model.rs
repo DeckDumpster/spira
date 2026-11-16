@@ -1,6 +1,6 @@
 //! The data `testenv suites` handles (DESIGN-suites.md §3): the population, the gate list,
 //! `# covers:` / `# priority:` headers, the last-result record, flake observations, clean-run
-//! counters, land state, and the suite-state rewrite. Pure functions over text; the file
+//! counters and land state. Pure functions over text; the file
 //! reads are thin wrappers so the commands can be tested against a scratch directory.
 
 use serde::{Deserialize, Serialize};
@@ -8,7 +8,6 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
-use crate::suite::SuiteState;
 
 /// Read a file as text (lossy), None when it cannot be read.
 pub fn read_text(p: &Path) -> Option<String> {
@@ -188,66 +187,9 @@ pub fn flakeobs_in_window(obs: &[FlakeObs], now: u64, window: u64) -> u64 {
     seen.len() as u64
 }
 
-// ------------------------------------------------------------------ suite-state rewrite
-
-/// A new row for `spira/suite-state`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Entry {
-    pub state: SuiteState,
-    pub since: String,
-    pub bead: String,
-    pub reason: String,
-    /// `until=<iso>` appended to the bead column.
-    pub until: Option<String>,
-}
-
-/// suite-state.sh's `suite_state_write`: every line kept except those whose first
-/// `|`-field (comment dropped, trimmed) is `suite`; blank and comment-only lines kept
-/// verbatim; each kept line ends in `\n`; a non-active entry appended.
-pub fn rewrite_state(text: &str, suite: &str, entry: Option<&Entry>) -> String {
-    let mut out = String::new();
-    for line in text.lines() {
-        let stripped = line.split('#').next().unwrap_or("").trim();
-        if !stripped.is_empty() {
-            let s = stripped.split('|').next().unwrap_or("").trim();
-            if s == suite {
-                continue;
-            }
-        }
-        out.push_str(line);
-        out.push('\n');
-    }
-    if let Some(e) = entry.filter(|e| e.state != SuiteState::Active) {
-        out.push_str(&format!(
-            "{suite} | {} | {} | {}{} | {}\n",
-            e.state.as_str(),
-            e.since,
-            e.bead,
-            e.until.as_ref().map(|u| format!(" until={u}")).unwrap_or_default(),
-            e.reason
-        ));
-    }
-    out
-}
-
 /// A suite name is a basename: no `/`, no leading `.`, not empty.
 pub fn valid_suite_name(s: &str) -> bool {
     !s.is_empty() && !s.contains('/') && !s.starts_with('.') && !s.contains('\0')
-}
-
-/// What the state file's line format cannot carry (DESIGN-suites.md §6 D6): a `#` (the
-/// reader drops everything after it) or a line break anywhere; a `|` in a non-final field.
-pub fn field_problem(value: &str, final_field: bool) -> Option<&'static str> {
-    if value.contains('#') {
-        return Some("'#'");
-    }
-    if value.contains('\n') || value.contains('\r') {
-        return Some("a line break");
-    }
-    if !final_field && value.contains('|') {
-        return Some("'|'");
-    }
-    None
 }
 
 // ------------------------------------------------------------------------------ time
@@ -368,36 +310,9 @@ mod tests {
     }
 
     #[test]
-    fn rewrite_replaces_the_suites_row_and_keeps_everything_else() {
-        let before = "# header\n\ntest-a.sh | disabled | 2026 | | old  # note\ntest-b.sh | quarantined | 2026 | sp-b | slow\ntest-a.sh # stray";
-        let e = Entry { state: SuiteState::Quarantined, since: "2026-09-29T01:02:03Z".into(), bead: "sp-x".into(), reason: "flaky".into(), until: None };
-        assert_eq!(
-            rewrite_state(before, "test-a.sh", Some(&e)),
-            "# header\n\ntest-b.sh | quarantined | 2026 | sp-b | slow\ntest-a.sh | quarantined | 2026-09-29T01:02:03Z | sp-x | flaky\n"
-        );
-        let active = Entry { state: SuiteState::Active, since: String::new(), bead: String::new(), reason: String::new(), until: None };
-        assert_eq!(rewrite_state(before, "test-b.sh", Some(&active)), "# header\n\ntest-a.sh | disabled | 2026 | | old  # note\ntest-a.sh # stray\n");
-        assert_eq!(rewrite_state("", "test-a.sh", None), "");
-    }
-
-    #[test]
-    fn a_rewritten_file_reads_back_through_the_runners_parser() {
-        let e = Entry { state: SuiteState::Disabled, since: "s".into(), bead: String::new(), reason: "a | b".into(), until: None };
-        let t = rewrite_state("test-x.sh | quarantined | s | sp-1 | r\n", "test-y.sh", Some(&e));
-        let st = crate::suite::SuiteStates::parse(&t);
-        assert_eq!(st.state_of("test-y.sh"), SuiteState::Disabled);
-        assert_eq!(st.state_of("test-x.sh"), SuiteState::Quarantined);
-        assert_eq!(st.rows().find(|r| r.suite == "test-y.sh").unwrap().reason, "a | b");
-    }
-
-    #[test]
-    fn names_and_fields_the_format_cannot_carry_are_refused() {
+    fn a_suite_name_is_a_basename() {
         assert!(valid_suite_name("test-a.sh"));
         assert!(!valid_suite_name("../x.sh") && !valid_suite_name(".hidden") && !valid_suite_name(""));
-        assert_eq!(field_problem("see #12", true), Some("'#'"));
-        assert_eq!(field_problem("a\nb", true), Some("a line break"));
-        assert_eq!(field_problem("a|b", false), Some("'|'"));
-        assert_eq!(field_problem("a|b", true), None);
     }
 
     #[test]

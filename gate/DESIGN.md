@@ -883,7 +883,7 @@ Rust gate already does:
   instead of a deleted `bash spira/<rule>.sh`, and `spira/repo-map.example`'s row is now
   explicitly illustrative only, since `gate.steps` (sp-quu2w, landed after this bead started)
   is this repository's actual, tree-owned gate definition — see its own header. `sop.sh lint`
-  and `suite-state-fence.sh` are still deliberately left out of both (need a real `SPIRA_DB`;
+  is still deliberately left out of both (needs a real `SPIRA_DB`;
   `sop.sh lint` also hangs past 120s under load until sp-oc2i6/sp-rjbrc's O(n²) fix lands on
   `local/main` — test-sop-gate-wired.sh says so and skips that row rather than asserting it).
   Its own suite-budget bead-filing and per-suite leaky-child watchdog had exactly one caller

@@ -283,8 +283,6 @@ pub trait Lib {
     fn sort_rows(
         &self,
         express: &HashSet<String>,
-        path: &Path,
-        base: &str,
         prio_json: &str,
         rows: &str,
     ) -> Vec<(String, String)>;

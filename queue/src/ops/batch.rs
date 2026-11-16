@@ -836,7 +836,7 @@ pub fn open_batch(w: &World, a: &OpenArgs) -> i32 {
                 acc.push_str(&format!("{i} {t} {e}\n"));
                 acc
             });
-            cands.extend(w.lib.sort_rows(&express, &path, &base_sha, &prio, &rows));
+            cands.extend(w.lib.sort_rows(&express, &prio, &rows));
         }
     }
 

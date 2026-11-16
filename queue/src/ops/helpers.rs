@@ -58,36 +58,6 @@ pub fn state_rows(
     out
 }
 
-/// `queue_is_suite_transition <repo> <tip> <base>`: true when `tip` touches
-/// `$SPIRA_SUITE_STATE_FILE` (default `spira/suite-state`) relative to `base` — a
-/// suite-state edit is a tiebreaker within one priority, never a rank of its own
-/// (sp-ihxa0).
-pub fn is_suite_transition(repo: &Path, tip: &str, base: &str) -> bool {
-    let file = match spira_config::resolve::suite_state_file() {
-        Ok(f) => f,
-        Err(e) => {
-            eprintln!("queue: {e}");
-            return false;
-        }
-    };
-    let out = spira_config::bounded::bounded("git")
-        .arg("-C")
-        .arg(repo)
-        .args(["diff", "--name-only", base, tip])
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output();
-    match out {
-        // grep -F: a fixed-string SUBSTRING match against any changed-path line, not an
-        // exact-line match — preserved here rather than tightened, to keep the port's
-        // output contract byte for byte.
-        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout)
-            .lines()
-            .any(|l| l.contains(file.as_str())),
-        _ => false,
-    }
-}
-
 /// Parse "<id> <tip> <epoch> …" lines the way the bash `read -r _id _tip _epoch` loop
 /// (followed by `${_epoch%% *}`) did: only the first three whitespace-separated tokens
 /// matter, and a line short of three is dropped silently (never a row in the output,
@@ -104,24 +74,21 @@ pub fn parse_rows(text: &str) -> Vec<(String, String, i64)> {
         .collect()
 }
 
-/// One ranked `queue_sort_rows` row in its own text columns. `express`/`trans` are 0 when
-/// true, 1 when false, so an ascending sort puts "true" first — the same encoding the
-/// bash function's own sort key used.
+/// One ranked `queue_sort_rows` row in its own text columns. `express` is 0 when true, 1
+/// when false, so an ascending sort puts "true" first.
 pub struct RankedRow {
     pub express: i64,
     pub prio: i64,
-    pub trans: i64,
     pub epoch: i64,
     pub id: String,
     pub tip: String,
 }
 
-/// `<express> <prio padded to 9> <trans> <epoch padded to 10> <id> <tip>` — the exact
-/// columns `queue_sort_rows` printed (callers outside this crate read `$5`/`$2` off it).
+/// `<express> <prio padded to 9> <epoch padded to 10> <id> <tip>`.
 pub fn render_row(r: &RankedRow) -> String {
     format!(
-        "{} {:09} {} {:010} {} {}",
-        r.express, r.prio, r.trans, r.epoch, r.id, r.tip
+        "{} {:09} {:010} {} {}",
+        r.express, r.prio, r.epoch, r.id, r.tip
     )
 }
 
@@ -131,9 +98,8 @@ fn value_as_i64(v: &serde_json::Value) -> Option<i64> {
 }
 
 /// `queue_sort_rows`'s ranking (lib.sh's own comment, carried forward verbatim in spirit):
-/// express first, then priority ascending; a `spira/suite-state` transition is only a
-/// tiebreaker WITHIN one priority, never ahead of it (sp-ihxa0); certification age
-/// (epoch, lowest first) breaks whatever tie remains.
+/// express first, then priority ascending; certification age (epoch, lowest first) breaks
+/// whatever tie remains.
 ///
 /// FAILS OPEN. Ranking is an optimisation; emptying the queue because it broke is the
 /// catastrophic outcome (sp-m5iq3: a 266 KiB `PRIO_JSON` once blew past Linux's 128 KiB
@@ -142,7 +108,7 @@ fn value_as_i64(v: &serde_json::Value) -> Option<i64> {
 /// `prio_json` returns every row in its ORIGINAL order, never dropped, with a warning
 /// naming why ranking was skipped.
 pub fn sort_rows(
-    rows: &[(String, String, i64, bool)],
+    rows: &[(String, String, i64)],
     prio_json: &str,
     express: &HashSet<String>,
 ) -> (Vec<RankedRow>, Option<String>) {
@@ -150,10 +116,9 @@ pub fn sort_rows(
     let Ok(parsed) = parsed else {
         let unranked = rows
             .iter()
-            .map(|(id, tip, epoch, is_trans)| RankedRow {
+            .map(|(id, tip, epoch)| RankedRow {
                 express: 1,
                 prio: 9,
-                trans: if *is_trans { 0 } else { 1 },
                 epoch: *epoch,
                 id: id.clone(),
                 tip: tip.clone(),
@@ -183,22 +148,20 @@ pub fn sort_rows(
         let prio = x.get("priority").and_then(value_as_i64).unwrap_or(9);
         prio_map.insert(id.to_string(), prio);
     }
-    let mut keyed: Vec<(i64, i64, i64, i64, String, String)> = rows
+    let mut keyed: Vec<(i64, i64, i64, String, String)> = rows
         .iter()
-        .map(|(id, tip, epoch, is_trans)| {
+        .map(|(id, tip, epoch)| {
             let express = if express.contains(id) { 0 } else { 1 };
             let prio = *prio_map.get(id).unwrap_or(&9);
-            let trans = if *is_trans { 0 } else { 1 };
-            (express, prio, trans, *epoch, id.clone(), tip.clone())
+            (express, prio, *epoch, id.clone(), tip.clone())
         })
         .collect();
     keyed.sort();
     let ranked = keyed
         .into_iter()
-        .map(|(express, prio, trans, epoch, id, tip)| RankedRow {
+        .map(|(express, prio, epoch, id, tip)| RankedRow {
             express,
             prio,
-            trans,
             epoch,
             id,
             tip,
@@ -498,8 +461,8 @@ pub fn close_on_land(w: &World, submitted_label: &str, id: &str, sha: &str) {
 mod tests {
     use super::*;
 
-    fn row(id: &str, tip: &str, epoch: i64, is_trans: bool) -> (String, String, i64, bool) {
-        (id.into(), tip.into(), epoch, is_trans)
+    fn row(id: &str, tip: &str, epoch: i64) -> (String, String, i64) {
+        (id.into(), tip.into(), epoch)
     }
 
     #[test]
@@ -516,7 +479,7 @@ mod tests {
 
     #[test]
     fn unparseable_prio_json_fails_open_in_original_order_with_a_warning() {
-        let rows = [row("sp-a", "ta", 6, false), row("sp-b", "tb", 5, true)];
+        let rows = [row("sp-a", "ta", 6), row("sp-b", "tb", 5)];
         let (ranked, warn) = sort_rows(&rows, "{not json", &HashSet::new());
         assert!(warn.unwrap().contains("ranking failed"));
         let ids: Vec<&str> = ranked.iter().map(|r| r.id.as_str()).collect();
@@ -527,16 +490,12 @@ mod tests {
         );
         assert_eq!(ranked[0].prio, 9);
         assert_eq!(ranked[0].express, 1);
-        assert_eq!(
-            ranked[1].trans, 0,
-            "is_trans=true renders as the 0 (first) slot even unranked"
-        );
     }
 
     // covers: UC-cockpit-observability-11
     #[test]
-    fn priority_orders_rows_and_wins_over_a_transition_tiebreak() {
-        let rows = [row("sp-p1", "t1", 2, true), row("sp-p0", "t2", 1, false)];
+    fn priority_orders_rows_whatever_their_certification_age() {
+        let rows = [row("sp-p1", "t1", 2), row("sp-p0", "t2", 1)];
         let (ranked, warn) = sort_rows(
             &rows,
             r#"[{"id":"sp-p0","priority":0},{"id":"sp-p1","priority":1}]"#,
@@ -547,36 +506,32 @@ mod tests {
         assert_eq!(
             ids,
             vec!["sp-p0", "sp-p1"],
-            "a P0 without a transition still sorts ahead of a P1 with one"
+            "a later-certified P0 still sorts ahead of an earlier P1"
         );
     }
 
     // covers: UC-cockpit-observability-11
     #[test]
     fn within_one_priority_the_earlier_certification_goes_first() {
-        let rows = [row("sp-late", "t1", 9, false), row("sp-early", "t2", 3, false)];
+        let rows = [row("sp-late", "t1", 9), row("sp-early", "t2", 3)];
         let prio = r#"[{"id":"sp-late","priority":1},{"id":"sp-early","priority":1}]"#;
         let (ranked, _) = sort_rows(&rows, prio, &HashSet::new());
         assert_eq!(ranked.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), ["sp-early", "sp-late"]);
     }
 
     #[test]
-    fn within_one_priority_a_transition_sorts_first_despite_a_later_epoch() {
-        let rows = [row("sp-p", "tp", 1, false), row("sp-t", "tt", 2, true)];
-        let (ranked, _) = sort_rows(
-            &rows,
-            r#"[{"id":"sp-t","priority":2},{"id":"sp-p","priority":2}]"#,
-            &HashSet::new(),
-        );
-        let ids: Vec<&str> = ranked.iter().map(|r| r.id.as_str()).collect();
-        assert_eq!(ids, vec!["sp-t", "sp-p"]);
+    fn two_rows_of_one_priority_keep_their_submitted_order_whatever_they_touch() {
+        let rows = [row("sp-z", "tip-a", 1), row("sp-a", "tip-b", 2)];
+        let prio = r#"[{"id":"sp-z","priority":2},{"id":"sp-a","priority":2}]"#;
+        let (ranked, _) = sort_rows(&rows, prio, &HashSet::new());
+        assert_eq!(ranked.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), ["sp-z", "sp-a"]);
     }
 
     #[test]
     fn express_ranks_ahead_of_everything_else() {
         let rows = [
-            row("sp-hi-prio", "t1", 1, false),
-            row("sp-express", "t2", 9, false),
+            row("sp-hi-prio", "t1", 1),
+            row("sp-express", "t2", 9),
         ];
         let (ranked, _) = sort_rows(
             &rows,
@@ -589,7 +544,7 @@ mod tests {
 
     #[test]
     fn malformed_prio_entries_default_to_priority_nine_rather_than_crashing() {
-        let rows = [row("sp-a", "ta", 1, false)];
+        let rows = [row("sp-a", "ta", 1)];
         let (ranked, warn) = sort_rows(
             &rows,
             r#"[{"id":"sp-a","priority":"not-a-number"}]"#,
@@ -604,11 +559,10 @@ mod tests {
         let r = RankedRow {
             express: 0,
             prio: 2,
-            trans: 1,
             epoch: 42,
             id: "sp-a".into(),
             tip: "deadbeef".into(),
         };
-        assert_eq!(render_row(&r), "0 000000002 1 0000000042 sp-a deadbeef");
+        assert_eq!(render_row(&r), "0 000000002 0000000042 sp-a deadbeef");
     }
 }

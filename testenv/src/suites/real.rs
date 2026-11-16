@@ -13,10 +13,8 @@ pub const HOST_CHECK_WALL: Duration = Duration::from_secs(30);
 
 pub struct Real {
     suite_dir: PathBuf,
-    /// incident.sh / mail: the SPIRA_INCIDENT / SPIRA_MAIL_CMD test seams, else found on
-    /// PATH (sp-gypjk). None = not on PATH.
+    /// incident.sh: the SPIRA_INCIDENT test seam, else found on PATH. None = not on PATH.
     incident: Option<PathBuf>,
-    mail: Option<PathBuf>,
     /// The PATH this run was given; host-check.sh is looked up on it at each call.
     path: String,
 }
@@ -27,23 +25,10 @@ impl Real {
         let path = env("PATH").unwrap_or_default();
         Real {
             incident: get("SPIRA_INCIDENT").or_else(|| crate::util::which_in(&path, "incident.sh")),
-            mail: get("SPIRA_MAIL_CMD").or_else(|| crate::util::which_in(&path, "mail")),
             suite_dir: s.suite_dir.clone(),
             path,
         }
     }
-}
-
-/// `--reason-file`: a path, or `-` for stdin.
-pub fn read_input(p: &str) -> Result<String, String> {
-    if p == "-" {
-        let mut s = String::new();
-        std::io::stdin()
-            .read_to_string(&mut s)
-            .map_err(|e| e.to_string())?;
-        return Ok(s);
-    }
-    fs::read_to_string(p).map_err(|e| format!("{p}: {e}"))
 }
 
 /// Wait for `child` up to `wall`; kill it past the wall. Some(exit code) when it exited.
@@ -94,16 +79,11 @@ IFS= read -r -d '' __home
 exec </dev/null
 . "$__home/lib.sh" || exit 96
 __n="${SPIRA_HOME_REPO:-}"; [ -n "$__n" ] || __n="$(spira_home_repo 2>/dev/null)"
-__p="$(repo_root "$__n" 2>/dev/null)"; __pok=$?
-__lr=""; [ "$__pok" -eq 0 ] && __lr="$(spira_landref "$__p" 2>/dev/null)"
 printf '\036'
 printf 'home_repo=%s\0' "$__n"
 printf 'scope_set=%s\0' "${SPIRA_SCOPE_LABEL+1}"
 printf 'scope=%s\0' "${SPIRA_SCOPE_LABEL:-}"
 printf 'db=%s\0' "${SPIRA_DB:-}"
-printf 'path_ok=%s\0' "$__pok"
-printf 'path=%s\0' "$__p"
-printf 'landref=%s\0' "$__lr"
 exit 0
 }
 "#;
@@ -126,8 +106,6 @@ pub fn parse_conf(stdout: &str) -> Result<Conf, String> {
         home_repo: g("home_repo").to_string(),
         scope_label: (g("scope_set") == "1").then(|| g("scope").to_string()),
         db: g("db").to_string(),
-        repo_path: (g("path_ok") == "0" && !g("path").is_empty()).then(|| PathBuf::from(g("path"))),
-        landref: Some(g("landref").to_string()).filter(|s| !s.is_empty()),
     })
 }
 
@@ -220,32 +198,6 @@ impl Intake for Real {
     }
 }
 
-impl Mail for Real {
-    fn send_operator(&self, from: &str, subject: &str, bead: Option<&str>, body: &str) -> bool {
-        let Some(mail) = self.mail.as_ref() else {
-            return false;
-        };
-        let mut c = spira_config::bounded::bounded("bash");
-        c.arg(mail)
-            .args(["send", "operator", "--from", from, "--subject", subject]);
-        if let Some(b) = bead {
-            c.args(["--bead", b]);
-        }
-        let Ok(mut child) = c
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-        else {
-            return false;
-        };
-        if let Some(mut si) = child.stdin.take() {
-            let _ = si.write_all(body.as_bytes());
-        }
-        child.wait().map(|s| s.success()).unwrap_or(false)
-    }
-}
-
 impl HostCheck for Real {
     fn count(&self, flag: &str) -> Option<String> {
         // host-check.sh on the launcher's PATH (sp-gypjk); absent or not executable is None.
@@ -273,230 +225,15 @@ impl HostCheck for Real {
     }
 }
 
-impl Queue for Real {
-    fn submit(&self, branch: &str) -> bool {
-        // The release's `queue`, by name on the launcher's PATH (sp-gypjk).
-        let mut c = spira_config::bounded::bounded("queue");
-        let err = std::io::stderr();
-        c.arg("submit")
-            .arg(branch)
-            .stdin(Stdio::null())
-            .stdout(Stdio::from(err))
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false)
-    }
-}
-
-// ------------------------------------------------------------------------ the change bead
-
-/// S2 `claim`: lib.sh's `lc_claim_bead`, the harness's one claim path (it creates the READY
-/// row first when the bead has none). Same shape as S1: a fixed script on stdin, then the
-/// lib.sh directory, the id, the holder and the lease, each NUL-terminated — nothing in argv
-/// or the environment (law-payloads-go-on-stdin).
-pub const CLAIM_SCRIPT: &str = r#"{
-set -uo pipefail
-IFS= read -r -d '' __home
-IFS= read -r -d '' __id
-IFS= read -r -d '' __holder
-IFS= read -r -d '' __lease
-exec </dev/null
-. "$__home/lib.sh" || exit 96
-lc_claim_bead "$__id" "$__holder" "$__lease"
-exit $?
-}
-"#;
-
-/// The wall on the filing and on the claim (spira-lint call-deadline's cap): both are a
-/// handful of store / lifecycle round trips, never a batch job.
-pub const CHANGE_WALL_SECS: &str = "5";
-
-/// lc_claim_bead's exit codes, as the transition reports them.
-pub fn claim_refusal(rc: i32) -> String {
-    match rc {
-        124 => format!("timed out after {CHANGE_WALL_SECS}s (rc=124)"),
-        3 => "refused (rc=3: the row is in no state a claim may take, or another holder has it)".into(),
-        2 => "cannot tell (rc=2: the lifecycle machine was unreachable)".into(),
-        96 => "lib.sh could not be sourced (rc=96)".into(),
-        rc => format!("failed (rc={rc})"),
-    }
-}
-
-/// The id `bead.sh file --json` printed: the first JSON object (or one-element array) on
-/// stdout, never an id-shaped token scanned out of human output
-/// (law-never-derive-an-id-from-output).
-pub fn filed_id(out: &str) -> Result<String, String> {
-    let start = out.find(['{', '[']).ok_or_else(|| format!("no JSON in bead.sh file's output: {out:?}"))?;
-    let v: serde_json::Value = serde_json::from_str(out[start..].trim()).map_err(|e| format!("bead.sh file's output is not JSON: {e}"))?;
-    let v = match v {
-        serde_json::Value::Array(a) => a.into_iter().next().ok_or("bead.sh file printed an empty JSON array")?,
-        o => o,
-    };
-    v.get("id").and_then(|i| i.as_str()).map(str::to_string).ok_or_else(|| format!("no id in bead.sh file's output: {out:?}"))
-}
-
-impl Change for Real {
-    fn file(&self, title: &str, repo: &str, db: &str) -> Result<String, String> {
-        // bead.sh, by name on the launcher's PATH (sp-gypjk), under the call-deadline wall.
-        let mut c = Command::new("timeout");
-        c.args([CHANGE_WALL_SECS, "bead.sh", "file", title, "--for", "ops", "--repo", repo, "--submitted", "--priority", "1", "--json"])
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        if !db.is_empty() {
-            c.env("SPIRA_DB", db);
-        }
-        let out = c.output().map_err(|e| format!("bead.sh: {e}"))?;
-        if !out.status.success() {
-            let code = out.status.code();
-            return Err(format!(
-                "bead.sh file exited {}{}: {}",
-                code.map_or("on a signal".into(), |c| c.to_string()),
-                if code == Some(124) { " (timed out — it may still have filed the bead; look before retrying)" } else { "" },
-                String::from_utf8_lossy(&out.stderr).trim()
-            ));
-        }
-        filed_id(&String::from_utf8_lossy(&out.stdout))
-    }
-
-    fn claim(&self, id: &str, holder: &str, lease_until: u64) -> Result<(), String> {
-        let mut child = Command::new("timeout")
-            .args([CHANGE_WALL_SECS, "bash"])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::inherit())
-            .envs(spira_config::release_env::child_path_env_for_process()?)
-            .spawn()
-            .map_err(|e| format!("bash: {e}"))?;
-        let lease = lease_until.to_string();
-        let mut input = CLAIM_SCRIPT.as_bytes().to_vec();
-        for v in [self.suite_dir.as_os_str().as_encoded_bytes(), id.as_bytes(), holder.as_bytes(), lease.as_bytes()] {
-            input.extend_from_slice(v);
-            input.push(0);
-        }
-        if let Some(mut si) = child.stdin.take() {
-            let _ = si.write_all(&input);
-        }
-        match child.wait().ok().and_then(|s| s.code()) {
-            Some(0) => Ok(()),
-            Some(rc) => Err(claim_refusal(rc)),
-            None => Err("the claim was killed by a signal".into()),
-        }
-    }
-}
-
-// --------------------------------------------------------------------------------- git
-
-fn git(repo: &Path) -> Command {
-    let mut c = Command::new("git");
-    c.arg("-C")
-        .arg(repo)
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE")
-        .env_remove("GIT_INDEX_FILE");
-    c
-}
-
-fn git_out(mut c: Command, stdin: Option<&[u8]>) -> Result<String, String> {
-    c.stdout(Stdio::piped()).stderr(Stdio::piped());
-    c.stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() });
-    let mut child = c.spawn().map_err(|e| format!("git: {e}"))?;
-    if let (Some(data), Some(mut si)) = (stdin, child.stdin.take()) {
-        let _ = si.write_all(data);
-    }
-    let o = child.wait_with_output().map_err(|e| format!("git: {e}"))?;
-    if o.status.success() {
-        Ok(String::from_utf8_lossy(&o.stdout).trim_end().to_string())
-    } else {
-        Err(String::from_utf8_lossy(&o.stderr).trim().to_string())
-    }
-}
-
-impl Git for Real {
-    fn commit_of(&self, repo: &Path, rev: &str) -> Option<String> {
-        let mut c = git(repo);
-        c.args(["rev-parse", "--verify", "-q"]).arg(format!("{rev}^{{commit}}"));
-        git_out(c, None).ok().filter(|s| !s.is_empty())
-    }
-    fn tree_has(&self, repo: &Path, commit: &str, path: &str) -> bool {
-        let mut c = git(repo);
-        c.args(["cat-file", "-e"]).arg(format!("{commit}:{path}"));
-        git_out(c, None).is_ok()
-    }
-    fn show(&self, repo: &Path, commit: &str, path: &str) -> Option<String> {
-        if !self.tree_has(repo, commit, path) {
-            return None;
-        }
-        let mut c = git(repo);
-        c.arg("cat-file").arg("blob").arg(format!("{commit}:{path}"));
-        c.stdout(Stdio::piped()).stderr(Stdio::null()).stdin(Stdio::null());
-        let o = c.output().ok()?;
-        o.status
-            .success()
-            .then(|| String::from_utf8_lossy(&o.stdout).into_owned())
-    }
-    fn commit_file(
-        &self,
-        repo: &Path,
-        parent: &str,
-        path: &str,
-        content: &str,
-        message: &str,
-        who: (&str, &str),
-    ) -> Result<String, String> {
-        let mut c = git(repo);
-        c.args(["hash-object", "-w", "--stdin"]);
-        let blob = git_out(c, Some(content.as_bytes()))?;
-        let index = std::env::temp_dir().join(format!(
-            "testenv-suites-index-{}-{}",
-            std::process::id(),
-            crate::batch::now_epoch()
-        ));
-        let with_index = |args: &[&str]| {
-            let mut c = git(repo);
-            c.env("GIT_INDEX_FILE", &index).args(args);
-            git_out(c, None)
-        };
-        let result = (|| {
-            with_index(&["read-tree", parent])?;
-            with_index(&["update-index", "--add", "--cacheinfo", &format!("100644,{blob},{path}")])?;
-            let tree = with_index(&["write-tree"])?;
-            let mut c = git(repo);
-            c.env("GIT_AUTHOR_NAME", who.0)
-                .env("GIT_AUTHOR_EMAIL", who.1)
-                .env("GIT_COMMITTER_NAME", who.0)
-                .env("GIT_COMMITTER_EMAIL", who.1)
-                .args(["commit-tree", &tree, "-p", parent, "-F", "-"]);
-            git_out(c, Some(message.as_bytes()))
-        })();
-        let _ = fs::remove_file(&index);
-        result
-    }
-    fn create_branch(&self, repo: &Path, branch: &str, commit: &str) -> bool {
-        let mut c = git(repo);
-        c.args(["update-ref", &format!("refs/heads/{branch}"), commit, ""]);
-        git_out(c, None).is_ok()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn filed_id_reads_the_json_never_a_token_from_the_noise() {
-        assert_eq!(filed_id("advisory: sp-fake1 looks similar\n{\"id\":\"sp-new9\",\"title\":\"t\"}\n").as_deref(), Ok("sp-new9"));
-        assert_eq!(filed_id("[{\"id\":\"sp-arr1\"}]").as_deref(), Ok("sp-arr1"));
-        assert!(filed_id("sp-bare1\n").is_err());
-        assert!(filed_id("[]").is_err());
-        assert!(filed_id("{\"title\":\"no id\"}").is_err());
-    }
-
-    #[test]
     fn parse_conf_needs_the_mark_and_a_home_repo() {
         assert!(parse_conf("no mark").is_err());
         assert!(parse_conf("\u{1e}home_repo=\0").is_err());
-        let c = parse_conf("log\n\u{1e}home_repo=x\0path_ok=1\0path=/p\0").unwrap();
-        assert_eq!(c.repo_path, None);
+        let c = parse_conf("log\n\u{1e}home_repo=x\0scope_set=1\0scope=s\0").unwrap();
+        assert_eq!((c.home_repo.as_str(), c.scope_label.as_deref()), ("x", Some("s")));
     }
 }

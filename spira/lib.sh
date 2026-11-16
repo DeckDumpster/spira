@@ -2242,7 +2242,7 @@ queue_certified_list() {
 # queue_cancel_branch_runs and queue_is_suite_transition are RETIRED (sp-hwjsq,
 # "wave 4.32" — queue decomposition row AA): ported in process into the queue crate
 # (queue/src/ops/helpers.rs `cancel_branch_runs`, called from queue's own in-process
-# Lib::cancel_runs; `is_suite_transition`, called from the queue_sort_rows port below).
+# Lib::cancel_runs; the transition check was deleted with the file it read).
 # Neither had any caller left outside that seam — no bash script called them by name — so
 # there is no shim here to keep working. The old lib.sh orphan-run sweep
 # (queue_sweep_orphan_runs, a periodic backstop for a run orphaned some other way — a
@@ -2250,14 +2250,11 @@ queue_certified_list() {
 # at sp-27hsi: nothing called it, bash or Rust. No in-process replacement exists; file one
 # if the plan still wants that backstop.
 
-# queue_sort_rows <repo-path> <base-sha>
+# queue_sort_rows <repo-path> <base-sha>   (both arguments are accepted and ignored)
 # Read "<id> <tip> <epoch>" lines from stdin; write sort-key rows sorted by batcher order:
-#   "<express_flag> <prio_pad> <trans_flag> <epoch_pad> <id> <tip>"
+#   "<express_flag> <prio_pad> <epoch_pad> <id> <tip>"
 # Set PRIO_JSON env to a bdjson array for priority (and label) lookups (defaults to []).
-# Sort order: express first (flag=0), then priority asc. A spira/suite-state transition
-# (flag=0) is only a tiebreaker within a priority class (sp-ihxa0: a suite-state edit going
-# stale is already handled at cut time by the conflict check, not by cutting it first).
-# Epoch asc breaks any tie still remaining. This is the canonical batcher sort used by both
+# Sort order: express first (flag=0), then priority asc, then epoch asc. This is the canonical batcher sort used by both
 # the batcher and the cockpit.
 #
 # EXPRESS RANKS FIRST, AHEAD OF EVERYTHING ELSE (sp-ebx8b).

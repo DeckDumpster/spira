@@ -4348,26 +4348,6 @@ pub fn date_of(epoch: i64) -> String {
         .unwrap_or_else(|_| epoch.to_string())
 }
 
-/// The checks a suite deletion can break: the plan-matrix and its orphan fence, where the
-/// round tree has them. Err names what failed.
-pub fn recheck_after_deletion(wt: &Path, base_sha: &str) -> Result<(), String> {
-    for (script, args) in [
-        ("plan-matrix.sh", vec![]),
-        ("plan-lint.sh", vec!["--orphans", base_sha]),
-    ] {
-        let path = wt.join("spira").join(script);
-        if !path.exists() {
-            continue;
-        }
-        // FORK-EDGE: the round tree's own plan scripts (that tree's version, not the release's)
-        run(
-            Command::new("bash").arg(&path).args(&args).current_dir(wt),
-            script,
-        )?;
-    }
-    Ok(())
-}
-
 // ---------------------------------------------------------------------------------------
 // Locking: one round-cut at a time per repo, same lock file batch.sh itself used.
 // ---------------------------------------------------------------------------------------
