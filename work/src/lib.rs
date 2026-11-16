@@ -865,8 +865,8 @@ mod tests {
 
     #[test]
     fn this_repository_declares_a_unit_build_row_deferred_to_the_gate() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
-        let row = declared_rows(root).unwrap().into_iter().find(|r| r.name == "unit-build").expect("a unit-build row");
+        let root = testkit::manifest_dir().parent().unwrap().to_path_buf();
+        let row = declared_rows(&root).unwrap().into_iter().find(|r| r.name == "unit-build").expect("a unit-build row");
         assert_eq!(row.run, UNIT_BUILD);
         assert_eq!(row.deferred_to.as_deref(), Some("gate"));
     }
