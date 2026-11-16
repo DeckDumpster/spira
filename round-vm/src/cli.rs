@@ -27,6 +27,11 @@ fn secs_env(key: &str, default: u64) -> Duration {
 
 /// One attempt's worth of provider, built from config and pve.env read NOW (G7).
 pub fn real_attempt() -> Result<Attempt, String> {
+    attempt_for(None)
+}
+
+/// As `real_attempt`; `candidate` is the recipe an EC2 launch must find an image for.
+fn attempt_for(candidate: Option<&str>) -> Result<Attempt, String> {
     let cfg = Config::load()?;
     let pubkey = std::fs::read_to_string(&cfg.host_pubkey)
         .map_err(|_| format!("round-vm: SPIRA_ROUND_VM_HOST_PUBKEY not readable: {}", cfg.host_pubkey.display()))?;
@@ -41,7 +46,7 @@ pub fn real_attempt() -> Result<Attempt, String> {
         mem_mib: cfg.mem_mib,
         vcpus: cfg.vcpus,
     };
-    let (ec2, spill) = spill_wiring(&cfg)?;
+    let (ec2, spill) = spill_wiring(&cfg, candidate)?;
     Ok(Attempt {
         provider: Box::new(Routed { local: Box::new(local), ec2 }),
         spill,
@@ -64,13 +69,14 @@ fn spill_listen() -> Vec<String> {
 /// cannot start says what is missing and the pool stays local: a half-configured spill must
 /// not take the local rounds down with it.
 #[allow(clippy::type_complexity)]
-fn spill_wiring(cfg: &Config) -> Result<(Option<std::sync::Arc<dyn crate::provider::Provider>>, Option<SpillPlan>), String> {
+fn spill_wiring(cfg: &Config, candidate: Option<&str>) -> Result<(Option<std::sync::Arc<dyn crate::provider::Provider>>, Option<SpillPlan>), String> {
     let mode = crate::config::declared("SPIRA_ROUND_VM_SPILL");
     if !matches!(mode.as_deref(), Some("ec2" | "ec2-always" | "ec2-only")) {
         return Ok((None, None));
     }
     let only = mode.as_deref() == Some("ec2-only");
-    let ec2cfg = Ec2Config::from_lookup(&crate::config::declared);
+    let mut ec2cfg = Ec2Config::from_lookup(&crate::config::declared);
+    ec2cfg.candidate_recipe = candidate.map(String::from);
     let api = AwsCli::new(&ec2cfg, cfg.state_dir.join("ec2"));
     let ec2: std::sync::Arc<dyn crate::provider::Provider> = match Ec2::new(api, &ec2cfg) {
         Ok(p) => std::sync::Arc::new(p),
@@ -495,7 +501,8 @@ pub fn main_with(args: Vec<String>) -> i32 {
     let pool = pool_for(&cfg);
     let alarm = MailAlarm { mail: "mail".into(), mailbox: cfg.mailbox.clone(), retry_secs: cfg.retry_interval.as_secs() };
     let spawner = SelfSpawner { state_dir: cfg.state_dir.clone() };
-    let factory = real_attempt;
+    let candidate = run_args.as_ref().and_then(|a| a.candidate_recipe.clone());
+    let factory = || attempt_for(candidate.as_deref());
     let deps = Deps { factory: &factory, alarm: &alarm, spawner: &spawner };
 
     match verb.as_str() {

@@ -6766,6 +6766,14 @@ fn a_round_image_that_stays_stale_reports_the_acquire_error_itself() {
     assert!(!err.contains("left no verdicts"), "{err}");
 }
 
+fn image_pending() -> RunOut {
+    RunOut {
+        rc: crate::ops::round::IMAGE_PENDING,
+        out: String::new(),
+        err: "round-vm run: the round image is still baking\n".into(),
+    }
+}
+
 fn recipe_changing_world() -> (T, String) {
     let mut t = round_world();
     t.lib.s.round_spill = "ec2-always".into();
@@ -6785,6 +6793,7 @@ fn recipe_changing_world() -> (T, String) {
 #[test]
 fn a_recipe_changing_round_builds_its_own_image_and_certifies_on_it() {
     let (t, batch) = recipe_changing_world();
+    *t.scripts.round_vm_queue.borrow_mut() = vec![image_pending()];
     *t.scripts.ami_for.borrow_mut() = vec![AmiLookup::Missing, AmiLookup::Found("ami-cand".into())];
     *t.forge.ami_results.borrow_mut() = vec![
         Some(AmiBuild::NotStarted),
@@ -6826,6 +6835,7 @@ fn a_round_reheaded_after_an_eject_builds_a_new_image_instead_of_reusing_the_fai
         t.err()
     );
     let batch = batch_of(&t);
+    *t.scripts.round_vm_queue.borrow_mut() = vec![image_pending(), image_pending()];
     *t.forge.ami_results.borrow_mut() = vec![
         Some(AmiBuild::NotStarted),
         Some(AmiBuild::Failure(
@@ -6881,6 +6891,66 @@ fn a_round_reheaded_after_an_eject_builds_a_new_image_instead_of_reusing_the_fai
 }
 
 #[test]
+fn a_recipe_changing_round_placed_on_the_host_starts_its_pass_without_the_image() {
+    let (t, batch) = recipe_changing_world();
+    *t.forge.ami_results.borrow_mut() = vec![
+        Some(AmiBuild::NotStarted),
+        Some(AmiBuild::Running("41".into())),
+    ];
+
+    assert_eq!(t.run(&["round", "certify", &batch]), 0, "{}", t.err());
+    let vm: Vec<String> = t
+        .scripts
+        .calls
+        .borrow()
+        .iter()
+        .filter(|c| c.starts_with("round-vm "))
+        .cloned()
+        .collect();
+    assert_eq!(vm.len(), 1, "{vm:?}");
+    assert!(vm[0].contains("candidate-recipe=candidate-recipe-sha"), "{vm:?}");
+    assert!(!vm[0].contains("ami="), "{vm:?}");
+    let forge = t.forge.calls.borrow().join("\n");
+    assert_eq!(forge.matches("ami-dispatch").count(), 1, "{forge}");
+    assert!(
+        !t.out().contains("waiting for the candidate round image build"),
+        "{}",
+        t.out()
+    );
+}
+
+#[test]
+fn a_recipe_changing_round_placed_on_ec2_waits_for_its_image_then_runs_on_it() {
+    let (t, batch) = recipe_changing_world();
+    *t.scripts.round_vm_queue.borrow_mut() = vec![image_pending()];
+    *t.scripts.ami_for.borrow_mut() = vec![AmiLookup::Missing, AmiLookup::Found("ami-cand".into())];
+    *t.forge.ami_results.borrow_mut() = vec![
+        Some(AmiBuild::NotStarted),
+        Some(AmiBuild::Running("41".into())),
+        Some(AmiBuild::Success("41".into())),
+    ];
+
+    assert_eq!(t.run(&["round", "certify", &batch]), 0, "{}", t.err());
+    let vm: Vec<String> = t
+        .scripts
+        .calls
+        .borrow()
+        .iter()
+        .filter(|c| c.starts_with("round-vm "))
+        .cloned()
+        .collect();
+    assert_eq!(vm.len(), 2, "{vm:?}");
+    assert!(!vm[0].contains("ami="), "{vm:?}");
+    assert!(vm[1].contains("ami=ami-cand"), "{vm:?}");
+    assert!(
+        t.out()
+            .contains("waiting for the candidate round image build 41"),
+        "{}",
+        t.out()
+    );
+}
+
+#[test]
 fn a_recipe_already_imaged_dispatches_no_build() {
     let (t, batch) = recipe_changing_world();
     *t.scripts.ami_for.borrow_mut() = vec![AmiLookup::Found("ami-have".into())];
@@ -6894,6 +6964,7 @@ fn a_recipe_already_imaged_dispatches_no_build() {
 #[test]
 fn a_recipe_change_whose_image_fails_to_build_reds_the_round_naming_the_step() {
     let (t, batch) = recipe_changing_world();
+    *t.scripts.round_vm_queue.borrow_mut() = vec![image_pending()];
     *t.forge.ami_results.borrow_mut() = vec![
         Some(AmiBuild::NotStarted),
         Some(AmiBuild::Failure(
@@ -6911,7 +6982,8 @@ fn a_recipe_change_whose_image_fails_to_build_reds_the_round_naming_the_step() {
         t.out()
     );
     let vm = t.scripts.calls.borrow().join("\n");
-    assert!(!vm.contains("round-vm "), "{vm}");
+    assert_eq!(vm.matches("round-vm ").count(), 1, "{vm}");
+    assert!(!vm.contains("ami="), "{vm}");
 }
 
 #[test]
@@ -6928,6 +7000,7 @@ fn a_round_whose_recipe_is_the_releases_never_touches_the_image_build() {
 #[test]
 fn a_candidate_image_build_that_outlasts_its_wait_leaves_the_round_unjudged() {
     let (t, batch) = recipe_changing_world();
+    *t.scripts.round_vm_queue.borrow_mut() = vec![image_pending()];
     *t.forge.ami_results.borrow_mut() = vec![Some(AmiBuild::Running("41".into()))];
 
     assert_eq!(

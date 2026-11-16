@@ -21,7 +21,7 @@ use crate::schema::{AcquireMode, Manifest, ProcId, Vm};
 use crate::spool::{linger, stream_into, Server, Spool};
 
 pub const RUN_USAGE: &str =
-    "round-vm run: usage: round-vm run <tree-dir> [--suites <csv>] [--maxpar <n>] [--toolchain <ver>] [--results-dir <dir>] [--attr-spool <dir>] [--base <ref>] [--round-batch <id> [--round-repo <repo>]] [--on-red <command>] [--ci-entry <command>]";
+    "round-vm run: usage: round-vm run <tree-dir> [--suites <csv>] [--maxpar <n>] [--toolchain <ver>] [--results-dir <dir>] [--attr-spool <dir>] [--base <ref>] [--round-batch <id> [--round-repo <repo>]] [--on-red <command>] [--ci-entry <command>] [--candidate-recipe <sha>]\n  --candidate-recipe <sha>: the recipe of a round image still baking; an EC2 placement with no image carrying it exits 78 before any launch, a host or local placement ignores it\n  exit 78: placed on EC2 and the candidate image is pending; run again once it exists";
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RunArgs {
@@ -43,6 +43,8 @@ pub struct RunArgs {
     /// A foreign repository's own full CI entry point: the VM clones the tree and runs this
     /// command instead of the harness corpus, and its exit status is the round's one verdict.
     pub ci_entry: Option<String>,
+    /// A recipe whose image is still baking. Only an EC2 placement reads it; with no image yet, the pass exits `IMAGE_PENDING_EXIT`.
+    pub candidate_recipe: Option<String>,
     /// The tree's fences (`gate fences`, `name<TAB>command` lines), listed on the host before the
     /// VM is taken; never a command-line option.
     pub fences: Option<String>,
@@ -73,6 +75,13 @@ pub fn parse_run_args(args: &[String]) -> Result<RunArgs, String> {
             "--round-repo" => r.round_repo = Some(val()?).filter(|v| !v.is_empty()),
             "--on-red" => r.on_red = Some(val()?.split_whitespace().map(String::from).collect()).filter(|v: &Vec<String>| !v.is_empty()),
             "--ci-entry" => r.ci_entry = Some(val()?).filter(|v| !v.trim().is_empty()),
+            "--candidate-recipe" => {
+                let v = val()?;
+                if v.trim().is_empty() {
+                    return Err("round-vm run: --candidate-recipe needs a recipe sha".into());
+                }
+                r.candidate_recipe = Some(v);
+            }
             other => return Err(format!("round-vm run: unknown option: {other}")),
         }
     }
@@ -2372,7 +2381,15 @@ fn run_pass(env: &RunEnv, args: &RunArgs, facts: &Mutex<Facts>) -> i32 {
     let mut progress = progress.into_inner().unwrap_or_else(|e| e.into_inner());
     let (vm, mode) = match acquired {
         Ok(v) => v,
-        Err(e) => {
+        Err(crate::pool::AcquireError::ImagePending(recipe)) => {
+            eprintln!("round-vm run: the round image for recipe {recipe} is still baking; the pass waits for it, then runs on it");
+            let e = format!("round image for recipe {recipe} pending");
+            let history = pool_recent(&env.pool.state_file(), leased_at);
+            progress.placement(&results_dir, placement_record(spill_setting.as_deref(), spill_reason.as_deref(), None, &history, Some(&e)));
+            progress.finish(&results_dir, IMAGE_PENDING_EXIT);
+            return IMAGE_PENDING_EXIT;
+        }
+        Err(crate::pool::AcquireError::Failed(e)) => {
             eprintln!("round-vm run: acquire failed: {e}");
             let history = pool_recent(&env.pool.state_file(), leased_at);
             progress.placement(&results_dir, placement_record(spill_setting.as_deref(), spill_reason.as_deref(), None, &history, Some(&e)));
@@ -2861,6 +2878,8 @@ fn no_output_pass(env: &RunEnv, args: &RunArgs, vm: &Vm, watch: &NoOutputWatch, 
 
 /// `run`'s exit when the VM died under the pass: no verdict, nothing to re-pull, retry the pass.
 pub const VM_LOST_EXIT: i32 = 75;
+/// The pass was placed on EC2 and the candidate recipe's image is still baking: wait, then run again with the image.
+pub const IMAGE_PENDING_EXIT: i32 = 78;
 
 /// Whether the hypervisor says `vm` is no longer running; a provider that cannot answer says no.
 fn vm_lost(env: &RunEnv, vm: &Vm) -> bool {
@@ -4967,6 +4986,55 @@ mod tests {
     }
 
     #[test]
+    fn a_host_placed_pass_with_a_candidate_recipe_runs_without_any_image_lookup() {
+        let fx = fixture();
+        let plan = host_plan(FakeRemote::green(), CALM);
+        let a = RunArgs { candidate_recipe: Some("cand".into()), ..round_args(&fx) };
+        let code = go_with_host(&fx, &FakeRemote::green(), &plan, &a);
+        assert_ne!(code, 2);
+        assert_ne!(code, IMAGE_PENDING_EXIT);
+        assert_eq!(recorded_where(&fx), "host");
+        assert_eq!(fx.fp.count("clone"), 0);
+    }
+
+    #[test]
+    fn an_ec2_placed_pass_whose_candidate_image_is_baking_exits_pending_before_any_launch() {
+        let fx = fixture();
+        let fake = crate::testutil::FakeEc2::default();
+        let key = fx.d.path().join("ts.key");
+        fs::write(&key, "tskey").unwrap();
+        let cfg = crate::ec2::Ec2Config {
+            profile: "p".into(), region: "r".into(), ami: crate::ec2::AMI_AUTO.into(), instance_types: vec!["t".into()], subnet: "s".into(), security_group: String::new(), instance_profile: String::new(), spot_first: false,
+            tailscale_key_file: key.to_string_lossy().into(), run_deadline: Duration::from_secs(7200), host_addr: "h".into(), recipe_sha: "release".into(), candidate_recipe: Some("cand".into()), max_lifetime: Duration::from_secs(10_800),
+        };
+        let ec2: std::sync::Arc<dyn crate::provider::Provider> = std::sync::Arc::new(crate::ec2::Ec2::new(fake.clone(), &cfg).unwrap());
+        let t = Timing { boot_tries: 1, poll: Duration::ZERO, gone_tries: 1 };
+        let (fp, ec2f) = (fx.fp.clone(), ec2.clone());
+        let f = move || {
+            let plan = crate::pool::SpillPlan { ec2: ec2f.clone(), rule: crate::spill::Rule { wait: Duration::ZERO, io_full_5m_tm90: 30.0, always: true }, only: true, pressure: Box::new(|| None), timing: t };
+            Ok(Attempt { provider: Box::new(crate::route::Routed { local: Box::new(fp.clone()), ec2: Some(ec2f.clone()) }), spill: Some(plan), iface: "ens18".into(), ssh_user: "root".into(), pubkey: "k".into(), timing: t })
+        };
+        let pool = Pool { state_dir: fx.cfg.state_dir.clone(), retry_interval: Duration::ZERO, max_retries: 1, wait_poll: Duration::ZERO, acquire_deadline: Duration::ZERO };
+        let alarm = FakeAlarm::default();
+        let deps = Deps { factory: &f, alarm: &alarm, spawner: &NoSpawn };
+        let remote = FakeRemote::green();
+        let a = RunArgs { candidate_recipe: Some("cand".into()), ..round_args(&fx) };
+        let code = run(&RunEnv { cfg: &fx.cfg, pool: &pool, deps: &deps, host: &FakeHost, remote: &remote, record: &FakeRecorder::default(), host_plan: None }, &a);
+        assert_eq!(code, IMAGE_PENDING_EXIT);
+        assert!(fake.launched_amis().is_empty());
+        assert_eq!(fx.fp.count("clone"), 0);
+    }
+
+    #[test]
+    fn candidate_recipe_is_parsed_and_an_empty_one_is_refused() {
+        let a = parse_run_args(&args(&["/t", "--candidate-recipe", "abc"])).unwrap();
+        assert_eq!(a.candidate_recipe.as_deref(), Some("abc"));
+        assert!(parse_run_args(&args(&["/t"])).unwrap().candidate_recipe.is_none());
+        assert!(parse_run_args(&args(&["/t", "--candidate-recipe", ""])).unwrap_err().contains("--candidate-recipe"));
+        assert!(parse_run_args(&args(&["/t", "--candidate-recipe="])).unwrap_err().contains("--candidate-recipe"));
+    }
+
+    #[test]
     fn a_round_cut_while_the_host_slot_is_busy_does_not_run_on_the_host() {
         let fx = fixture();
         let vm_remote = FakeRemote::green();
@@ -4987,7 +5055,7 @@ mod tests {
         fs::write(&key, "tskey").unwrap();
         let cfg = crate::ec2::Ec2Config {
             profile: "p".into(), region: "r".into(), ami: "a".into(), instance_types: vec!["t".into()], subnet: "s".into(), security_group: String::new(), instance_profile: String::new(), spot_first: false,
-            tailscale_key_file: key.to_string_lossy().into(), run_deadline: Duration::from_secs(7200), host_addr: "h".into(), recipe_sha: String::new(), max_lifetime: Duration::from_secs(10_800),
+            tailscale_key_file: key.to_string_lossy().into(), run_deadline: Duration::from_secs(7200), host_addr: "h".into(), recipe_sha: String::new(), candidate_recipe: None, max_lifetime: Duration::from_secs(10_800),
         };
         let ec2: std::sync::Arc<dyn crate::provider::Provider> = std::sync::Arc::new(crate::ec2::Ec2::new(fake, &cfg).unwrap());
         let t = Timing { boot_tries: 1, poll: Duration::ZERO, gone_tries: 1 };

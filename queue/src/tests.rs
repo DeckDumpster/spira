@@ -678,13 +678,17 @@ impl Scripts for FScripts {
         wall_secs: u64,
         handle: &Path,
         ami: Option<&str>,
+        candidate_recipe: Option<&str>,
     ) -> RunOut {
         self.calls.borrow_mut().push(format!(
-            "round-vm {} base={base} round={}/{} wall={wall_secs}{}",
+            "round-vm {} base={base} round={}/{} wall={wall_secs}{}{}",
             tree.display(),
             round.0,
             round.1,
-            ami.map(|a| format!(" ami={a}")).unwrap_or_default()
+            ami.map(|a| format!(" ami={a}")).unwrap_or_default(),
+            candidate_recipe
+                .map(|r| format!(" candidate-recipe={r}"))
+                .unwrap_or_default()
         ));
         fs::write(handle, "777").unwrap();
         if let Some(f) = self.during_vm.borrow().as_ref() {

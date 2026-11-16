@@ -12,6 +12,10 @@ pub trait Provider {
     fn next_id(&self) -> Result<String, String>;
     /// Clones the round template to `vmid`, named `name`.
     fn clone_to(&self, vmid: &str, name: &str) -> Result<(), String>;
+    /// The recipe whose image this provider was asked to launch and does not hold yet.
+    fn image_pending(&self) -> Result<Option<String>, String> {
+        Ok(None)
+    }
     fn start(&self, vmid: &str) -> Result<(), String>;
     /// The guest's IPv4 address on `iface`, once its agent reports one.
     fn guest_addr(&self, vmid: &str, iface: &str) -> Result<Option<String>, String>;
