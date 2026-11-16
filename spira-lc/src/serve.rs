@@ -277,7 +277,9 @@ impl Startup {
 /// Leaves 30 s of the unit's 90 s `TimeoutStopSec` to write the refusals and exit.
 pub const DRAIN_BOUND: Duration = Duration::from_secs(60);
 
-const STOPPED_FOR_RESTART: &str = "cannot tell: spira-lc stopped for a restart before this request finished (drain bound 60 s); it may have applied";
+fn stopped_for_restart() -> String {
+    format!("cannot tell: spira-lc stopped for a restart before this request finished (drain bound {} s); it may have applied", DRAIN_BOUND.as_secs())
+}
 
 /// One accepted connection: a clone of its stream for the drain's refusal, and whether any reply
 /// has gone out. The lock makes the worker's reply and the drain's mutually exclusive.
@@ -298,14 +300,23 @@ thread_local! {
 
 impl Flights {
     fn serve(&self, stream: UnixStream, f: impl FnOnce(UnixStream)) {
-        let Ok(clone) = stream.try_clone() else { return f(stream) };
+        struct Leave<'a>(&'a Flights, u64);
+        impl Drop for Leave<'_> {
+            fn drop(&mut self) {
+                CURRENT.with(|c| *c.borrow_mut() = None);
+                self.0.open.lock().unwrap().retain(|(i, _)| *i != self.1);
+            }
+        }
+        let Ok(clone) = stream.try_clone() else {
+            eprintln!("spira-lc serve: cannot register a connection for the drain; dropped unanswered");
+            return;
+        };
         let slot = Arc::new(Slot { stream: clone, answered: std::sync::Mutex::new(false) });
         let id = self.next.fetch_add(1, Ordering::SeqCst);
         self.open.lock().unwrap().push((id, slot.clone()));
         CURRENT.with(|c| *c.borrow_mut() = Some(slot));
+        let _leave = Leave(self, id);
         f(stream);
-        CURRENT.with(|c| *c.borrow_mut() = None);
-        self.open.lock().unwrap().retain(|(i, _)| *i != id);
     }
 
     fn len(&self) -> usize {
@@ -318,7 +329,7 @@ impl Flights {
         for (_, slot) in open {
             let mut answered = slot.answered.lock().unwrap();
             if !*answered {
-                let _ = write_raw(&slot.stream, 2, STOPPED_FOR_RESTART, "", None);
+                let _ = write_raw(&slot.stream, 2, &stopped_for_restart(), "", None);
                 *answered = true;
                 refused += 1;
             }
