@@ -632,6 +632,16 @@ pub fn convert_legacy_dir(
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_rune_carries_reactive_uses_and_single_flight_into_its_persona_section() {
+        let text = "RUNE_MODEL=m\nRUNE_REACTIVE=1\nRUNE_SINGLE_FLIGHT=1\nRUNE_USES=\"build-disk cpu\"\n";
+        let (_, p) = persona_section(text, &SpiraSection::default(), &mut ConvertWarnings::default());
+        assert!(p.reactive && p.single_flight, "{p:?}");
+        assert_eq!(p.uses, ["build-disk", "cpu"]);
+        let (_, plain) = persona_section("RUNE_MODEL=m\n", &SpiraSection::default(), &mut ConvertWarnings::default());
+        assert!(!plain.reactive && !plain.single_flight && plain.uses.is_empty(), "{plain:?}");
+    }
+
     fn sections(map: &str) -> Result<BTreeMap<String, RepoSection>, Vec<String>> {
         repo_sections(map, &mut ConvertWarnings::default())
     }

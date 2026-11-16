@@ -353,15 +353,17 @@ pub fn plan(w: &CallWorld) -> CallPlan {
         [p.class_room(BUILD_DISK), w.max_live_dwarves.map(|m| m - p.live_total())].into_iter().flatten().min().map(|n| n.max(0))
     };
     let mut yielded = false;
-    match &w.urgent {
-        Some(u) if u.iter().any(|b| b.p0 || b.express) => {
-            if let Some(x) = u.iter().find(|b| b.express && b.p0) {
-                p.preempt_for(&x.id);
+    if !w.reactive.is_empty() {
+        match &w.urgent {
+            Some(u) if u.iter().any(|b| b.p0 || b.express) => {
+                if let Some(x) = u.iter().find(|b| b.express && b.p0) {
+                    p.preempt_for(&x.id);
+                }
+                yielded = true;
             }
-            yielded = true;
+            Some(_) => {}
+            None => yielded = true,
         }
-        Some(_) => {}
-        None => yielded = true,
     }
     if !yielded {
         for r in &w.reactive {
@@ -487,6 +489,15 @@ mod tests {
         w.urgent = None;
         let p = plan(&w);
         assert!(p.preempt.is_none() && !called(&p).contains(&"triage"), "an unanswered urgent read yields the reactive runes");
+    }
+
+    #[test]
+    fn urgent_work_logs_no_preemption_when_no_reactive_rune_is_rostered() {
+        let mut w = world();
+        w.task[0].live = 4;
+        w.urgent = Some(vec![Urgent { id: "sp-x".into(), p0: true, express: true }]);
+        let p = plan(&w);
+        assert!(p.preempt.is_none() && !p.log.iter().any(|l| l.contains("CHECK7 reactive:")), "{:?}", p.log);
     }
 
     fn room(w: &CallWorld) -> Option<i64> {

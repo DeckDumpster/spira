@@ -387,7 +387,7 @@ impl<'a> Sentinel<'a> {
         let args: Vec<String> = std::iter::once("urgent".to_string()).chain(task_runes.iter().cloned()).collect();
         let o = self.h.claim(&args);
         if o.rc != 0 {
-            self.h.log_err(&format!("CHECK7 lanes: CLAIM-ERROR: urgent: {}", o.stderr.trim()));
+            self.h.log_err(&format!("CHECK7 reactive: CLAIM-ERROR: urgent: {}", o.stderr.trim()));
             return None;
         }
         Some(
@@ -441,11 +441,11 @@ impl<'a> Sentinel<'a> {
             matches!(self.rune_ready(f), ReadyAnswer::Count(n) if n > 0) && self.rune_free(f, None, None) > 0
         });
         if !ready_builder {
-            self.log(&format!("CHECK7 lanes: express {express} waits but no task persona can take a slot — no lane preempted"));
+            self.log(&format!("CHECK7 reactive: express {express} waits but no task persona can take a slot — no reactive dwarf preempted"));
             return;
         }
         let Some((lane, bead)) = self.youngest_reactive_dwarf(reactive_runes) else {
-            self.log(&format!("CHECK7 lanes: express {express} waits, {live}/{max_live} live, no lane dwarf to preempt"));
+            self.log(&format!("CHECK7 reactive: express {express} waits, {live}/{max_live} live, no reactive dwarf to preempt"));
             return;
         };
         let why = format!("preempted for P0 express {express}: lane yields its slot");
@@ -455,7 +455,7 @@ impl<'a> Sentinel<'a> {
             Spec::args_owned(self.cfg.slay_bin.clone(), vec!["--bead".into(), bead.clone(), "--why".into(), why]).err(Io::Null),
         );
         if !o.ok() {
-            self.log(&format!("CHECK7 lanes: could not preempt {lane} dwarf on {bead} for express {express}"));
+            self.log(&format!("CHECK7 reactive: could not preempt {lane} dwarf on {bead} for express {express}"));
             return;
         }
         self.act(&format!("preempted a {lane} lane dwarf on {bead} for P0 express {express}"));
@@ -681,13 +681,13 @@ impl<'a> Sentinel<'a> {
                         u.iter().filter(|b| (b.p0 || b.express) == blocking).map(|b| b.id.as_str()).collect::<Vec<_>>().join(" ")
                     };
                     if u.iter().any(|b| b.p0 || b.express) {
-                        self.log(&format!("CHECK7 lanes: yielding — urgent bead(s) unclaimed: {}", ids(true)));
+                        self.log(&format!("CHECK7 reactive: yielding — urgent bead(s) unclaimed: {}", ids(true)));
                         if let Some(x) = u.iter().find(|b| b.express && b.p0) {
                             self.preempt_reactive_for(&x.id, &task_runes, &reactive_runes);
                         }
                         reactive_now.clear();
                     } else {
-                        self.log(&format!("CHECK7 lanes: rework bead(s) waiting do not hold the lanes: {}", ids(false)));
+                        self.log(&format!("CHECK7 reactive: rework bead(s) waiting do not hold the reactive runes: {}", ids(false)));
                     }
                 }
                 None => {
