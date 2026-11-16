@@ -92,7 +92,10 @@ impl Control {
             ["scheduler", "bound"] => {
                 let s = self.board.get().ok_or_else(|| RuntimeError::new(NO_PASS))?;
                 let carried = s.tasks.iter().find(|t| t.name == crate::tasks::a::sentinel_call::NAME).and_then(|t| t.state.as_ref());
-                let carry: crate::tasks::a::sentinel_call::Carry = carried.and_then(|c| serde_json::from_str(&c.body).ok()).unwrap_or_default();
+                let carry: crate::tasks::a::sentinel_call::Carry = match carried {
+                    Some(c) => serde_json::from_str(&c.body).map_err(|e| RuntimeError::new(format!("the carried call state does not decode: {e}")))?,
+                    None => Default::default(),
+                };
                 let bound = carry.bound.ok_or_else(|| RuntimeError::new(NO_PASS))?;
                 serde_json::to_string(&bound).map_err(|e| RuntimeError::new(e.to_string()))
             }
