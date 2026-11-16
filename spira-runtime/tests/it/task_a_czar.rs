@@ -35,6 +35,8 @@ fn idle() -> Snapshot {
         last_landing_pass_at_ms: Read::Observed(Some(NOW - 60_000)),
         open_batch: [("spira".to_string(), Read::Observed(None))].into(),
         certified: [("spira".to_string(), Read::Observed(vec![]))].into(),
+        open_rounds: [("spira".to_string(), Read::Observed(0))].into(),
+        batcher_held: Default::default(),
         ci: [("spira".to_string(), Read::Observed(Ci::default()))].into(),
         base_ci: [("spira".to_string(), Read::Observed(BaseCi { conclusion: Some("success".into()), head_sha: "b1".into(), ..BaseCi::default() }))].into(),
         reconciler_last_pass_ms: Read::Observed(Some(NOW - 30_000)),

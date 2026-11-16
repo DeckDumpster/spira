@@ -612,13 +612,13 @@ pub fn decide(policy: &Policy, carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Ac
         let safe = czar_pass::repo_safe(repo);
         let key = format!("pool-idle:{safe}");
         let raw = match (read(snap.open_batch.get(repo)), certified, snap.open_rounds.get(repo)) {
+            (_, _, Some(Read::Observed(rounds))) if *rounds > 0 => RawStatus::Satisfied,
+            _ if snap.batcher_held.contains_key(repo) => RawStatus::Satisfied,
             (Err(why), _, _) => unobservable(format!("{repo}: {why}")),
             (_, Read::Unobservable(why), _) => unobservable(format!("{repo}: {why}")),
             (_, _, Some(Read::Unobservable(why))) => unobservable(format!("{repo}: {why}")),
             (_, _, None) => unobservable(format!("{repo}: open rounds not read")),
-            (_, _, Some(Read::Observed(rounds))) if *rounds > 0 => RawStatus::Satisfied,
-            _ if snap.batcher_held.contains_key(repo) => RawStatus::Satisfied,
-            (Ok(open), Read::Observed(c), _) => czar_pass::pool_idle(repo, open.flatten().is_some(), c.len() as u64, policy.queue_round_min_n),
+            (Ok(open), Read::Observed(c), Some(Read::Observed(_))) => czar_pass::pool_idle(repo, open.flatten().is_some(), c.len() as u64, policy.queue_round_min_n),
         };
         let min_n = policy.queue_round_min_n;
         p.run("pool-idle", &key, raw, policy.queue_round_stall_secs, |v| {
@@ -1142,6 +1142,7 @@ mod tests {
     fn an_unreadable_round_record_is_unobservable_not_satisfied() {
         let (next, a1, a2) = two_passes(idle_pool(Read::Unobservable("could not say: store down".into())));
         assert_eq!(pool_filings(&a1) + pool_filings(&a2), 0);
-        assert!(!matches!(next.keys["pool-idle:fa"].phase, Phase::Satisfied));
+        let status = a1.iter().chain(&a2).filter(|a| a.effect == STATUS && a.input.contains("pool-idle:fa")).map(|a| a.input.clone()).collect::<Vec<_>>();
+        assert!(status.iter().any(|i| i.contains("\"unobservable\"")), "{status:?} {:?}", next.keys.get("pool-idle:fa"));
     }
 }
