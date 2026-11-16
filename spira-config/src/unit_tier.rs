@@ -131,6 +131,89 @@ pub fn nextest_config(secs: u64, periods: u64) -> String {
     format!("[profile.default]\nslow-timeout = {{ period = \"{secs}s\", terminate-after = {periods} }}\n")
 }
 
+/// What one unit tier's nextest log says of its timings.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct UnitTimings {
+    /// The `Summary [` line's test count; the per-test lines seen when the run left no summary.
+    pub tests: u64,
+    /// `<binary> <test>` and seconds, the ten largest, ties in log order.
+    pub slowest: Vec<(String, f64)>,
+}
+
+/// How many tests `slowest` keeps.
+pub const SLOWEST: usize = 10;
+
+/// grep -E pattern for the lines [`timings`] reads: nextest's per-test lines and its summary.
+#[macro_export]
+macro_rules! unit_tier_timing_lines {
+    () => {
+        r"^ *([A-Z][A-Z-]+ +\[[ >]*[0-9.]+s\] +\( *[0-9]+/[0-9]+\) |Summary \[)"
+    };
+}
+
+fn per_test(line: &str) -> Option<(String, f64)> {
+    let t = line.trim_start();
+    let (status, rest) = t.split_once(' ')?;
+    if !status.chars().all(|c| c.is_ascii_uppercase() || c == '-') || status.is_empty() {
+        return None;
+    }
+    let rest = rest.trim_start().strip_prefix('[')?;
+    let (secs, rest) = rest.split_once("s]")?;
+    let secs = secs.trim().parse::<f64>().ok()?;
+    let rest = rest.trim_start().strip_prefix('(')?;
+    let (_, name) = rest.split_once(')')?;
+    let name = name.trim();
+    (!name.is_empty()).then(|| (name.to_string(), secs))
+}
+
+/// The one reader of nextest's output for timings: lines up to the first `Summary [` count, so
+/// the reds the end of the log repeats are not counted twice.
+pub fn timings(log: &str) -> UnitTimings {
+    let mut seen = Vec::new();
+    let mut tests = None;
+    for line in log.lines() {
+        if let Some(rest) = line.trim_start().strip_prefix("Summary [") {
+            tests = rest.split_once(']').and_then(|(_, r)| r.split_whitespace().next()?.parse().ok());
+            break;
+        }
+        seen.extend(per_test(line));
+    }
+    let tests = tests.unwrap_or(seen.len() as u64);
+    seen.sort_by(|a, b| b.1.total_cmp(&a.1));
+    seen.truncate(SLOWEST);
+    UnitTimings { tests, slowest: seen }
+}
+
+impl UnitTimings {
+    /// `<binary>/<test>:<secs>,…`, slowest first, one token so a log line stays splittable; `-` when empty.
+    pub fn slowest_field(&self) -> String {
+        if self.slowest.is_empty() {
+            return "-".into();
+        }
+        let f: Vec<String> = self.slowest.iter().map(|(n, s)| format!("{}:{s}", n.replace(' ', "/"))).collect();
+        f.join(",")
+    }
+}
+
+/// The unit tier's file form: the VM's seconds, then the log lines [`unit_tier_timing_lines!`] matches.
+#[derive(Clone, Debug, PartialEq)]
+pub struct UnitFile {
+    pub build_secs: u64,
+    pub run_secs: u64,
+    pub timings: UnitTimings,
+}
+
+pub fn render(build_secs: u64, run_secs: u64, lines: &str) -> String {
+    format!("unit_build_secs {build_secs}\nunit_secs {run_secs}\n{lines}")
+}
+
+pub fn parse(text: &str) -> Option<UnitFile> {
+    let mut it = text.splitn(3, '\n');
+    let build_secs = it.next()?.strip_prefix("unit_build_secs ")?.trim().parse().ok()?;
+    let run_secs = it.next()?.strip_prefix("unit_secs ")?.trim().parse().ok()?;
+    Some(UnitFile { build_secs, run_secs, timings: timings(it.next().unwrap_or("")) })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -187,5 +270,53 @@ mod tests {
         ] {
             assert!(!w.contains("-j") && !w.contains("test-threads"), "{w}");
         }
+    }
+
+    fn nextest_log() -> String {
+        let mut l = String::from("    Starting 12 tests across 2 binaries\n");
+        let rows = [
+            ("PASS", 0.007, "a t1"), ("PASS", 3.5, "a t2"), ("FAIL", 1.25, "a t3"),
+            ("PASS", 9.0, "b t4"), ("TIMEOUT", 60.0, "b t5"), ("PASS", 0.5, "b t6"),
+            ("PASS", 2.0, "b t7"), ("PASS", 3.5, "b t8"), ("PASS", 4.0, "b t9"),
+            ("PASS", 5.0, "b t10"), ("PASS", 6.0, "b t11"), ("PASS", 0.001, "b t12"),
+        ];
+        for (i, (st, s, n)) in rows.iter().enumerate() {
+            l.push_str(&format!("{st:>12} [{s:>8.3}s] ({:>2}/12) {n}\n", i + 1));
+        }
+        l.push_str("     SLOW [>120.000s] ( 5/12) b t5\n------------\n");
+        l.push_str("     Summary [  61.000s] 12 tests run: 10 passed, 1 failed, 1 timed out, 0 skipped\n");
+        l.push_str("        FAIL [   1.250s] ( 3/12) a t3\n     TIMEOUT [  60.000s] ( 5/12) b t5\n");
+        l
+    }
+
+    #[test]
+    fn timings_read_the_count_from_the_summary_and_keep_the_ten_slowest_once() {
+        let t = timings(&nextest_log());
+        assert_eq!(t.tests, 12);
+        let names: Vec<&str> = t.slowest.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names, ["b t5", "b t4", "b t11", "b t10", "b t9", "a t2", "b t8", "b t7", "a t3", "b t6"]);
+        assert_eq!(t.slowest[0].1, 60.0);
+    }
+
+    #[test]
+    fn timings_of_a_log_with_no_tests_are_empty() {
+        assert_eq!(timings("error: could not compile\n"), UnitTimings::default());
+    }
+
+    #[test]
+    fn the_file_form_round_trips_and_leaves_the_parse_to_timings() {
+        let lines: String = nextest_log().lines().filter(|l| l.contains("] (") || l.contains("Summary [")).map(|l| format!("{l}\n")).collect();
+        let text = render(12, 61, &lines);
+        let f = parse(&text).unwrap();
+        assert_eq!((f.build_secs, f.run_secs), (12, 61));
+        assert_eq!(f.timings, timings(&nextest_log()));
+        assert_eq!(parse("garbage"), None);
+    }
+
+    #[test]
+    fn the_slowest_field_is_name_colon_secs_joined_by_commas() {
+        let t = UnitTimings { tests: 2, slowest: vec![("a t1".into(), 1.5), ("b t2".into(), 0.25)] };
+        assert_eq!(t.slowest_field(), "a/t1:1.5,b/t2:0.25");
+        assert_eq!(UnitTimings::default().slowest_field(), "-");
     }
 }
