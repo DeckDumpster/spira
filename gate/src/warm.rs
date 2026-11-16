@@ -380,7 +380,7 @@ mod tests {
     /// dependents a gate selected.
     #[test]
     fn a_workspace_crates_features_do_not_depend_on_which_dependents_a_gate_selects() {
-        let manifest = Path::new(env!("CARGO_MANIFEST_DIR")).join("../Cargo.toml");
+        let manifest = spira_config::resolve::checkout_root_for_process().unwrap().join("Cargo.toml");
         let o = Command::new("cargo") // batch-job: reads the workspace manifest, no build
             .args(["metadata", "--format-version", "1", "--no-deps", "--offline", "--manifest-path"])
             .arg(&manifest)

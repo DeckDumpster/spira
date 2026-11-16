@@ -278,7 +278,7 @@ mod tests {
     }
 
     fn shipped_partition(rune: &str) -> RunePart {
-        let file = format!("{}/../spira/runes/{rune}.rune", env!("CARGO_MANIFEST_DIR"));
+        let file = spira_config::resolve::locate_home_for_process().unwrap().join(format!("runes/{rune}.rune"));
         let text = std::fs::read_to_string(&file).unwrap();
         let lookup = |n: &str| match n {
             "SPIRA_SCOPE_LABEL" => Some("scope-x".to_string()),
@@ -287,7 +287,7 @@ mod tests {
             "SPIRA_CI_LABEL" => Some("ci-x".to_string()),
             _ => None,
         };
-        let vars = spira_config::rune_file::parse(&file, &text, &lookup).unwrap();
+        let vars = spira_config::rune_file::parse(file.to_str().unwrap(), &text, &lookup).unwrap();
         part(rune, &split_csv(&vars["RUNE_LABELS"]).iter().map(String::as_str).collect::<Vec<_>>(), &split_csv(&vars["RUNE_EXCLUDE_LABELS"]).iter().map(String::as_str).collect::<Vec<_>>())
     }
 

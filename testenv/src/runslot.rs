@@ -78,7 +78,7 @@ mod tests {
 
     #[test]
     fn the_derived_ceiling_divides_by_the_jobs_the_unit_tier_defaults_to() {
-        let script = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/unit-tests.sh")).unwrap();
+        let script = std::fs::read_to_string(spira_config::resolve::locate_home_for_process().unwrap().join("unit-tests.sh")).unwrap();
         let want = format!("jobs=\"${{CARGO_BUILD_JOBS:-{}}}\"", adm::RUN_CARGO_JOBS);
         assert!(script.contains(&want), "spira/unit-tests.sh no longer defaults to {want}");
     }

@@ -438,14 +438,14 @@ mod stale_release_tests {
 
     fn rendered_cache_root(configured: &str) -> String {
         let t = testkit::TempDir::new("host-from-root");
-        let toml = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/testlib/complete.toml");
+        let toml = spira_config::resolve::locate_home_for_process().unwrap().join("testlib/complete.toml");
         let env: std::collections::BTreeMap<String, String> = [("SPIRA_HOME", t.path().join("h")), ("SPIRA_REPO", t.path().join("h")), ("SPIRA_TOML", toml)]
             .into_iter()
             .map(|(k, v)| (k.to_string(), v.display().to_string()))
             .collect();
         let cfg = |k: &str| Ok(if k == "SPIRA_SCCACHE_DAV_ROOT" { configured.to_string() } else { String::new() });
         let host = host_from("prod", &env, &cfg, "/t/cfg".into(), String::new()).expect("host values");
-        let tmpl = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../systemd/sccache-dav.service");
+        let tmpl = spira_config::resolve::checkout_root_for_process().unwrap().join("systemd/sccache-dav.service");
         let unit = crate::values::render_file(&tmpl, &host, None).expect("render");
         let line = unit.lines().find(|l| l.starts_with("Environment=SCCACHE_DAV_ROOT=")).expect("root line").to_string();
         line.replace("Environment=SCCACHE_DAV_ROOT=", "")

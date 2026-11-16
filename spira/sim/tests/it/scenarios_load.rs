@@ -11,7 +11,7 @@
 use spira_sim::call::{dwarf_command, rune_of};
 use spira_sim::drive::{parse_scenario, Scenario, SCENARIOS_DIR};
 use spira_sim::loopworld;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// Scenarios that still name a migrated actor, each with what it proves and why it is not yet
 /// ported. None: every one was ported or retired (`spira/sim/MIGRATION.md`). A row here must
@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 const BLOCKED: &[(&str, &str)] = &[];
 
 fn root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+    spira_config::resolve::checkout_root_for_process().unwrap()
 }
 
 fn shipped() -> Vec<(String, Scenario)> {

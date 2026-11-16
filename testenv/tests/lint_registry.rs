@@ -23,7 +23,7 @@ fn lint_does_not_refuse_a_key_the_live_config_declares_and_an_older_registry_lac
         ],
     );
     let lint = |args: &[&str]| {
-        let out = Command::new(env!("CARGO_BIN_EXE_testenv"))
+        let out = Command::new(testkit::bin_exe("testenv"))
             .args(args)
             .env_clear()
             .env("SPIRA_HOME", &home)

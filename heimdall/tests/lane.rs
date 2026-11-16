@@ -7,7 +7,7 @@ fn pass(d: &testkit::TempDir, run: &std::path::Path, args: &[&str]) -> (i32, Str
     let release = d.path().join("release");
     std::fs::create_dir_all(release.join("bin")).unwrap();
     testkit::write_exe(release.join("bin/spira-lc"), "#!/bin/sh\nexit 1\n");
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_heimdall"));
+    let mut cmd = Command::new(testkit::bin_exe("heimdall"));
     cmd.args(args).env_clear().env("PATH", std::env::var("PATH").unwrap_or_default());
     for (k, v) in spira_config::process::fixture_world_env(d.path(), run, &["spira", "other"]) {
         if let Some(v) = v {

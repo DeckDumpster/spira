@@ -60,7 +60,7 @@ fn the_seam_runs_only_beads_the_scenario_scripts() {
 #[test]
 fn a_worlds_config_moves_every_fixture_path_inside_it_and_registers_only_its_repository() {
     let home = Path::new("/w/hm");
-    let cfg = base_config(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."), home).unwrap();
+    let cfg = base_config(&spira_config::resolve::checkout_root_for_process().unwrap(), home).unwrap();
     assert!(!cfg.contains("/fixture/userhome"), "a path still points outside the world");
     assert!(!cfg.contains("[repo.spira]"));
     assert!(cfg.contains("/w/hm/spira/run"), "run moved under the world's home");

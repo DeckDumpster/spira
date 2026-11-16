@@ -3,7 +3,7 @@ use super::*;
 const REGISTRY: &str = include_str!("../../../spira/doors.toml");
 
 fn root() -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..")
+    spira_config::resolve::checkout_root_for_process().unwrap()
 }
 
 #[test]

@@ -235,7 +235,7 @@ mod tests {
     }
 
     fn shipped_priority(key: &str) -> u8 {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/conf.d").join(key);
+        let path = spira_config::resolve::locate_home_for_process().unwrap().join("conf.d").join(key);
         let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
         let marker = format!("${{{key}:=");
         let line = text.lines().find(|l| !l.trim_start().starts_with('#') && l.contains(&marker)).unwrap_or_else(|| panic!("{key} has no shipped default"));

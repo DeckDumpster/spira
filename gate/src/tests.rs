@@ -4274,7 +4274,7 @@ fn an_operator_timeout_shorter_than_the_deadline_stays_a_timeout() {
 fn phase_caps_sum_under_the_deadline() {
     let fixed: u64 = ["tools", "gate"].iter().filter_map(|p| crate::engine::phase_cap(p)).sum();
     assert!(fixed <= 300, "{fixed}");
-    let reg = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/conf.d/SPIRA_GATE_BUDGET")).unwrap();
+    let reg = std::fs::read_to_string(spira_config::resolve::locate_home_for_process().unwrap().join("conf.d/SPIRA_GATE_BUDGET")).unwrap();
     let budget: u64 = reg.split("SPIRA_GATE_BUDGET:=").nth(1).unwrap().split(|c: char| !c.is_ascii_digit()).next().unwrap().parse().unwrap();
     assert!(crate::engine::phase_cap("gate").unwrap() >= budget, "the gate phase is cut before testenv's budget {budget}");
     assert_eq!(crate::engine::phase_cap("base-tools"), crate::engine::phase_cap("tools"));
@@ -4642,7 +4642,7 @@ fn a_base_trial_that_reports_a_harness_fault_is_no_verdict_not_base_fail() {
 
 /// The repository's own checked-in definition: what production runs.
 fn checked_in_steps() -> String {
-    std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../gate.steps")).unwrap()
+    std::fs::read_to_string(spira_config::resolve::checkout_root_for_process().unwrap().join("gate.steps")).unwrap()
 }
 
 /// A fences-mode fake on the checked-in definition, certifying bead sp-a (suites off and a

@@ -802,7 +802,7 @@ mod tests {
 
     #[test]
     fn the_real_grants_file_substitutes_both_placeholders_and_leaves_none() {
-        let g = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../lifecycle/grants.sql")).unwrap();
+        let g = std::fs::read_to_string(spira_config::resolve::checkout_root_for_process().unwrap().join("lifecycle/grants.sql")).unwrap();
         let out = substitute_grants(&g, RW, RO).unwrap();
         assert!(!out.contains("@SPIRA_LC"), "no placeholder survives");
         assert!(out.contains(&format!("'spira_lc'@'%' IDENTIFIED BY '{RW}'")));

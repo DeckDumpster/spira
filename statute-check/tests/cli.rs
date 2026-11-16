@@ -1,25 +1,27 @@
 use std::io::Write;
 use std::process::{Command, Stdio};
 
-const BIN: &str = env!("CARGO_BIN_EXE_statute-check");
+fn bin() -> std::path::PathBuf {
+    testkit::bin_exe("statute-check")
+}
 
 fn shelf() -> String {
-    format!("{}/../spira/statutes", env!("CARGO_MANIFEST_DIR"))
+    spira_config::resolve::locate_home_for_process().unwrap().join("statutes").display().to_string()
 }
 fn vocab() -> String {
-    format!("{}/../spira/statute-vocab", env!("CARGO_MANIFEST_DIR"))
+    spira_config::resolve::locate_home_for_process().unwrap().join("statute-vocab").display().to_string()
 }
 
 fn check(args: &[&str]) -> (i32, String) {
-    let o = Command::new(BIN).env_clear().args(["--dir", &shelf(), "--vocab", &vocab()]).args(args).output().unwrap();
+    let o = Command::new(bin()).env_clear().args(["--dir", &shelf(), "--vocab", &vocab()]).args(args).output().unwrap();
     (o.status.code().unwrap(), String::from_utf8_lossy(&o.stdout).into_owned())
 }
 
 fn hook(state: &std::path::Path, env: &[(&str, &str)], command: &str) -> String {
     let payload = serde_json::json!({"tool_name": "Bash", "session_id": "s1", "tool_input": {"command": command}}).to_string();
     let log = state.join("overrides.log");
-    let mut c = Command::new(BIN);
-    let doors = format!("{}/../spira/doors.toml", env!("CARGO_MANIFEST_DIR"));
+    let mut c = Command::new(bin());
+    let doors = spira_config::resolve::locate_home_for_process().unwrap().join("doors.toml").display().to_string();
     let doors_log = state.join("doors.log");
     c.env_clear().args(["hook", "--dir", &shelf(), "--vocab", &vocab(), "--state", state.to_str().unwrap(), "--log", log.to_str().unwrap()]);
     c.args(["--doors", &doors, "--doors-log", doors_log.to_str().unwrap()]);
@@ -48,7 +50,7 @@ fn text_no_statute_governs_exits_one_and_prints_nothing() {
 #[test]
 fn an_empty_shelf_is_refused_not_passed() {
     let d = testkit::TempDir::new("statute-check-empty");
-    let o = Command::new(BIN).env_clear().args(["--dir", d.to_str().unwrap(), "x"]).output().unwrap();
+    let o = Command::new(bin()).env_clear().args(["--dir", d.to_str().unwrap(), "x"]).output().unwrap();
     assert_eq!(o.status.code(), Some(2));
 }
 

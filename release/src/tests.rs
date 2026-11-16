@@ -507,7 +507,7 @@ fn host_values_carries_the_cache_store_root_the_sccache_dav_unit_renders() {
     let reg = Registered { releases: "/e".into(), run: "/h/run".into(), releases_keep: "10".into(), sccache_dav_root: "/mnt/other/store".into(), ..Default::default() };
     let c = Config::resolve_with(&Flags::default(), &env, None, &reg).unwrap();
     assert_eq!(c.host_values().unwrap().get("SPIRA_SCCACHE_DAV_ROOT").map(String::as_str), Some("/mnt/other/store"));
-    let unit = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../systemd/sccache-dav.service")).unwrap();
+    let unit = std::fs::read_to_string(spira_config::resolve::checkout_root_for_process().unwrap().join("systemd/sccache-dav.service")).unwrap();
     let rendered = units::render("sccache-dav.service", &unit, std::path::Path::new("/e/0123"), &c.host_values().unwrap(), None, "");
     assert!(!rendered.as_ref().err().is_some_and(|e| e.contains("SPIRA_SCCACHE_DAV_ROOT")), "{rendered:?}");
 }
@@ -825,13 +825,13 @@ fn a_delta_naming_a_placeholder_path_is_refused_and_the_shipped_one_is_clean() {
     assert!(err.contains("placeholder path"), "{err}");
     let ok = config_delta::Delta::parse("[spira]\nbatch_ledger = \"/srv/run/batch-timing.tsv\"\ngroom_gate_label = \"placeholder-gate\"\n");
     assert!(ok.is_ok(), "{ok:?}");
-    let shipped = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../", "spira/config-delta.toml")).unwrap();
+    let shipped = std::fs::read_to_string(spira_config::resolve::locate_home_for_process().unwrap().join("config-delta.toml")).unwrap();
     let d = config_delta::Delta::parse(&shipped).unwrap();
     assert!(!d.added.contains_key("spira.batch_ledger"), "the ledger path derives from the install's run dir");
 }
 #[test]
 fn the_shipped_delta_declares_the_deleted_watch_tasks_removed() {
-    let shipped = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../", "spira/config-delta.toml")).unwrap();
+    let shipped = std::fs::read_to_string(spira_config::resolve::locate_home_for_process().unwrap().join("config-delta.toml")).unwrap();
     let d = config_delta::Delta::parse(&shipped).unwrap();
     for t in ["watch.perf_happy", "watch.spill_key", "watch.statute_audit"] {
         assert!(d.removed_tasks.iter().any(|r| r == t), "{t} missing from removed_tasks");
@@ -867,7 +867,7 @@ fn the_manifest_round_trips_and_the_key_names_tree_and_toolchain() {
 
 #[test]
 fn a_delta_value_of_the_wrong_type_is_refused_at_load_naming_the_key_and_file() {
-    let shipped = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
+    let shipped = spira_config::resolve::locate_home_for_process().unwrap();
     let tmp = TempDir::new("delta-type");
     let rel = tmp.path().to_path_buf();
     let spira = rel.join("spira");
@@ -888,7 +888,7 @@ fn a_delta_value_of_the_wrong_type_is_refused_at_load_naming_the_key_and_file() 
 /// release's own validation, every task runs in act (ruling D4) and the units run on systemd.
 #[test]
 fn the_shipped_delta_carries_every_required_key_with_every_task_in_act_on_systemd() {
-    let tree = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let tree = spira_config::resolve::checkout_root_for_process().unwrap();
     let d = config_delta::load(&tree).unwrap().expect("the tree ships a delta");
     let nothing_known = TempDir::new("no-active-release");
     let done = config_delta::complete(&[toml::map::Map::new()], &tree, Some(nothing_known.path()), Some(d.clone()));
@@ -978,7 +978,7 @@ fn completion_gives_a_task_the_live_task_modes_lacks_its_release_default_mode() 
 }
 
 fn shipped_unit(name: &str) -> String {
-    std::fs::read_to_string(format!("{}/../systemd/{name}", env!("CARGO_MANIFEST_DIR"))).unwrap()
+    std::fs::read_to_string(spira_config::resolve::checkout_root_for_process().unwrap().join("systemd").join(name)).unwrap()
 }
 
 #[test]

@@ -317,7 +317,7 @@ mod tests {
     /// key the fixture leaves empty refuses every round before any suite runs.
     #[test]
     fn the_complete_fixture_declares_every_required_path() {
-        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/testlib/complete.toml");
+        let fixture = spira_config::resolve::locate_home_for_process().unwrap().join("testlib/complete.toml");
         let doc: toml::Value = std::fs::read_to_string(&fixture).unwrap().parse().unwrap();
         for key in REQUIRED_PATHS {
             let bare = key.strip_prefix("SPIRA_").unwrap_or(key).to_ascii_lowercase();
