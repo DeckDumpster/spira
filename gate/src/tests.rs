@@ -2400,6 +2400,34 @@ const UNIT_DATA = [{"name":"runtime","target":"","start":4.2,"duration":88.4},{"
 }
 
 #[test]
+fn a_unit_gate_records_the_test_phases_count_seconds_and_slowest_tests_beside_the_build() {
+    let f = unit_fake(&["spira-config/src/lib.rs"]);
+    f.phase_secs.set(7);
+    f.unit_runs.borrow_mut().insert(
+        (MERGE_SHA.into(), "test"),
+        (
+            0,
+            "        PASS [   0.250s] ( 1/3) gate a::quick\n        PASS [   4.500s] ( 2/3) gate a::slow\n        PASS [   1.000s] ( 3/3) queue b::mid\n------------\n     Summary [   5.750s] 3 tests run: 3 passed, 0 skipped".into(),
+        ),
+    );
+    assert_eq!(f.run(), PASS);
+    let m = meter(&f);
+    assert!(m.contains(" unit_build_secs=7 unit_run_secs=7 unit_tests=3 unit_slowest=gate/a::slow:4.5,queue/b::mid:1,gate/a::quick:0.25"), "{m}");
+    let rows = f.tsd.borrow();
+    let row = rows.iter().find(|r| r.contains("\"unit_tests\"")).unwrap_or_else(|| panic!("{rows:?}"));
+    for want in ["\"unit_tests\":3", "\"unit_run_secs\":7", "\"unit_build_secs\":7", "gate/a::slow:4.5,queue/b::mid:1,gate/a::quick:0.25"] {
+        assert!(row.contains(want), "{want} missing from {row}");
+    }
+}
+
+#[test]
+fn a_gate_whose_test_phase_did_not_run_records_no_unit_timings() {
+    let f = unit_fake(&["docs/x.md"]);
+    assert_eq!(f.run(), PASS);
+    assert!(meter(&f).contains(" unit_build_secs=0 unit_run_secs=0 unit_tests=0 unit_slowest=-"), "{}", meter(&f));
+}
+
+#[test]
 fn unit_mode_rust_only_runs_fences_then_the_touched_crates_tests_and_no_suite() {
     let f = unit_fake(&["spira-config/src/lib.rs", "docs/x.md"]);
     f.runs

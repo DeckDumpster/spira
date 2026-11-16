@@ -92,6 +92,12 @@ pub struct GateRun {
     pub slowest: String,
     /// `warm from <commit>` or `cold: <why>`; empty when no build directory was prepared.
     pub build_dir: String,
+    /// The unit gate's build and test phase walls, its nextest test count, and the ten slowest
+    /// tests as `<binary>/<test>:secs,…`; zero and empty when no test phase ran.
+    pub unit_build_secs: u64,
+    pub unit_run_secs: u64,
+    pub unit_tests: u64,
+    pub unit_slowest: String,
 }
 
 /// Render the row through tsd's own builder. `wall_secs` is waited + ran: the certification
@@ -123,6 +129,10 @@ pub fn render(ts: &str, host: &str, r: &GateRun) -> Result<String, String> {
         ("fresh".into(), Value::from(r.fresh)),
         ("slowest".into(), s(&r.slowest)),
         ("build_dir".into(), s(&r.build_dir)),
+        ("unit_build_secs".into(), Value::from(r.unit_build_secs)),
+        ("unit_run_secs".into(), Value::from(r.unit_run_secs)),
+        ("unit_tests".into(), Value::from(r.unit_tests)),
+        ("unit_slowest".into(), s(&r.unit_slowest)),
     ];
     tsd::build_row(ts, host, FAMILY, &fields)
 }
