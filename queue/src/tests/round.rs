@@ -5030,7 +5030,8 @@ fn resubmit_at_the_ejected_red_tip_withdraws_the_red_in_one_step() {
     assert!(t.lib.has("comment sp-a Red at") && t.lib.calls.borrow().iter().any(|c| c.contains("clean rerun 9/0")), "{:?}", t.lib.calls.borrow());
 
     set_row(&t, "sp-a", |r| r.state = "CERTIFIED".into());
-    t.run(&["round", "open", "--members", &format!("sp-a:{T_FIX}")]);
+    let rc = t.run(&["round", "open", "--members", &format!("sp-a:{T_FIX}")]);
+    assert_eq!(rc, 0, "{}{}", t.out(), t.err());
     assert!(!format!("{}{}", t.out(), t.err()).contains("ejected-red"), "{}{}", t.out(), t.err());
 }
 
