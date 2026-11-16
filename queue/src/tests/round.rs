@@ -9402,3 +9402,42 @@ fn open_whose_cut_answers_cannot_tell_and_applies_later_keeps_its_worktree_and_o
     assert!(wt.exists(), "the recorded worktree exists");
     assert_eq!(wt, tree, "the round records the tree the first open kept");
 }
+
+fn plant_batcher_red_tip(t: &T, id: &str, tip: &str) -> PathBuf {
+    let p = spira_config::red_tip_record::path(&t.s().run, "spira", id);
+    fs::create_dir_all(p.parent().unwrap()).unwrap();
+    fs::write(&p, format!("{tip} filed\n")).unwrap();
+    p
+}
+
+#[test]
+fn absolve_clears_the_batchers_own_red_tip_record() {
+    let t = round_world();
+    set_row(&t, "sp-b", |r| r.ejected_red_tip = Some("tb".into()));
+    fs::write(t.qfile("red-tips"), "sp-b tb\n").unwrap();
+    let rec = plant_batcher_red_tip(&t, "sp-b", "tb");
+    let other = plant_batcher_red_tip(&t, "sp-c", "tc");
+    assert_eq!(
+        t.run(&["absolve", "sp-b", "--by=concierge", "--reason=infra red", "--evidence=e", "--evidence-tip=tb"]),
+        0,
+        "{}",
+        t.err()
+    );
+    assert!(!rec.exists(), "the absolved tip must not stay withheld from the cut");
+    assert!(other.exists(), "another bead's record is untouched");
+}
+
+#[test]
+fn resubmit_at_the_ejected_red_tip_clears_the_batchers_own_red_tip_record() {
+    let t = rework_world(&["manual"]);
+    set_row(&t, "sp-a", |r| r.ejected_red_tip = Some(T_FIX.into()));
+    let rec = plant_batcher_red_tip(&t, "sp-a", T_FIX);
+    let tip_arg = format!("--tip={T_FIX}");
+    assert_eq!(
+        t.run(&["resubmit", "sp-a", &tip_arg, "--by=concierge", "--reason=infra red", "--evidence=clean rerun", &ev_tip()]),
+        0,
+        "{}",
+        t.err()
+    );
+    assert!(!rec.exists());
+}

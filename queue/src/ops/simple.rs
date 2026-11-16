@@ -1128,7 +1128,7 @@ pub fn forced_suites(
     OK
 }
 
-/// The three places a red outlives the row, then the bead's own account of why it was withdrawn.
+/// The places a red outlives the row, then the bead's own account of why it was withdrawn.
 fn withdraw_red(
     w: &World,
     c: &Ctx,
@@ -1142,6 +1142,7 @@ fn withdraw_red(
     queue.forget_done(&c.r.name, &format!("spira/{id}"), tip);
     gate::redcache::forget_tip(&super::land::verdicts_dir(w, &c.s), tip);
     super::round::forget_batch_red(c, id, tip).map_err(|e| e.to_string())?;
+    spira_config::red_tip_record::forget(&c.s.run, &c.r.name, id, tip).map_err(|e| e.to_string())?;
     w.lib.comment(
         id,
         &format!("Red at {tip} absolved by {by}.\n\n{reason}\n\nEvidence:\n{evidence}"),

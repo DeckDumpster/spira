@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use batcher::core::Member;
 
 fn file(run: &Path, repo: &str, id: &str) -> PathBuf {
-    run.join("batcher-red-tips").join(repo).join(id)
+    spira_config::red_tip_record::path(run, repo, id)
 }
 
 fn read(run: &Path, repo: &str, id: &str) -> Option<(String, bool)> {
@@ -129,5 +129,15 @@ mod tests {
             1,
             "a later record replaces the earlier"
         );
+    }
+
+    #[test]
+    fn an_absolved_tip_is_no_longer_withheld() {
+        let run = testkit::TempDir::new("batcher-cut-redtip-absolved");
+        record(run.path(), "r", "sp-a", "t1");
+        spira_config::red_tip_record::forget(run.path(), "r", "sp-a", "t1").unwrap();
+        let (kept, out) = withhold(run.path(), "r", vec![member("sp-a", "t1")]);
+        assert_eq!(kept.len(), 1);
+        assert!(out.is_empty());
     }
 }
