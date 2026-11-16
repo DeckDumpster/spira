@@ -1376,7 +1376,11 @@ pub fn op_key(verb: &str, args: &[String]) -> String {
 pub const PILGRIM_WORLD_ALLOW: &[&str] = &["file", "dep-add", "close-other"];
 
 fn in_pilgrim_world() -> bool {
-    spira_config::process::cfg("SPIRA_LC_SOCKET").is_ok_and(|socket| std::path::Path::new(&spira_store::lc_call::pilgrim_world_marker(&socket)).is_file())
+    spira_config::process::cfg("SPIRA_LC_SOCKET").is_ok_and(|socket| socket_is_a_pilgrim_world(&socket))
+}
+
+fn socket_is_a_pilgrim_world(socket: &str) -> bool {
+    !socket.is_empty() && std::path::Path::new(&spira_store::lc_call::pilgrim_world_marker(socket)).is_file()
 }
 
 /// May `actor` run `op`? `Err` is the refusal to answer with.
@@ -2310,7 +2314,7 @@ mod tests {
                     let sub: Vec<String> = words.clone().next().map(|x| vec![x.to_string()]).unwrap_or_default();
                     let op = super::op_key(verb, &sub);
                     let op = if ALLOW.iter().any(|(k, _)| *k == op) { op } else { verb.to_string() };
-                    if super::permitted(&op, Some(&persona), persona == "pilgrim").is_err() {
+                    if super::permitted(&op, Some(&persona), persona == "pilgrim").is_err() || (persona == "pilgrim" && PILGRIM_WORLD_ALLOW.contains(&op.as_str()) && super::permitted(&op, Some(&persona), false).is_ok()) {
                         bad.push(format!("{persona}.md: `work {op}`"));
                     }
                 }
@@ -2764,6 +2768,20 @@ mod tests {
             plan("mender", "-", &call(&["outcome", "/s", "return", "--checks", "x"], "mender")).unwrap(),
             vec![tool("mender", &["outcome", "/s", "return", "--checks", "x"])]
         );
+    }
+
+    #[test]
+    fn only_a_socket_with_the_marker_beside_it_is_a_pilgrim_world() {
+        let t = testkit::TempDir::new("pw");
+        let socket = t.join("lc.sock").display().to_string();
+        let args = |a: &[&str]| a.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        let file = args(&["a title", "--for", "builder", "--repo", "r", "--actor", "pilgrim"]);
+        assert!(!super::socket_is_a_pilgrim_world(&socket));
+        assert!(!super::socket_is_a_pilgrim_world(""));
+        assert_eq!(gate_in("file", &file, || super::socket_is_a_pilgrim_world(&socket)).unwrap_err().0, REFUSED);
+        std::fs::write(spira_store::lc_call::pilgrim_world_marker(&socket), "").unwrap();
+        assert!(super::socket_is_a_pilgrim_world(&socket));
+        assert!(gate_in("file", &file, || super::socket_is_a_pilgrim_world(&socket)).is_ok());
     }
 
     #[test]
