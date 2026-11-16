@@ -162,7 +162,7 @@ pub fn run(argv: &[String], p: Ports<'_>) -> Answer {
         "reconcile-epics" => callers::reconcile_epics(rest, m, bd),
         "reconcile-content" => callers::reconcile_content(rest, m, bd),
         "backfill-repo" => crate::backfill_repo::backfill_repo(rest, m),
-        "backfill-claim-inputs" => crate::backfill_claim::backfill_claim_inputs(rest, m),
+        "backfill-claim-inputs" => crate::backfill_claim::backfill_claim_inputs(rest, m, bd),
         "drop-orphans" => callers::drop_orphans(rest, m, bd),
         "close" => {
             let mut read = |f: &str| -> Result<String, String> {
