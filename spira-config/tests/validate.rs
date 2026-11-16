@@ -366,17 +366,6 @@ fn strict_validation_refuses_a_rostered_persona_with_no_declared_model() {
 }
 
 #[test]
-fn strict_validation_refuses_a_declared_lane_the_roster_omits() {
-    let base = "[spira]\nid_prefix = \"sp\"\nlanes = \"ops warden\"\n";
-    let omits = format!("{base}runes = [\"ops\", \"builder\"]\n");
-    let err = spira_config::validate_strict(&omits).unwrap_err();
-    assert!(err.contains("spira.lanes") && err.contains("spira.runes") && err.contains("warden"), "{err}");
-    let covers = format!("{base}runes = [\"ops\", \"warden\"]\n{MODELS}");
-    spira_config::validate_strict(&covers).expect("a roster naming every lane passes");
-    spira_config::validate_strict(base).expect("no explicit roster means every runes rune");
-}
-
-#[test]
 fn strict_validation_refuses_a_timer_partition_label_whose_persona_is_unrostered() {
     let omits = "[spira]\nid_prefix = \"sp\"\nwarden_label = \"warden-sweep\"\nrunes = [\"ops\"]\n";
     let err = spira_config::validate_strict(omits).unwrap_err();

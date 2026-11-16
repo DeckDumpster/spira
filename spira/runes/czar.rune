@@ -54,11 +54,10 @@ RUNE_MODEL=claude-sonnet-5-5
 # One at a time: it acts on queue-state escalations, and two would act on the same one.
 RUNE_SINGLE_FLIGHT=1
 
-# THE CZAR LANE — draws from its own capacity so a full builder pool cannot starve the
+# Reactive: planned before the planned runes, so a full builder pool cannot starve the
 # queue. A stuck queue costs the whole project; a czar that waits behind three builders
-# for a slot is a historian. Declared in SPIRA_LANES so it is visible to operators reading
-# that key for the list of scheduled partitions.
-RUNE_LANE=czar
+# for a slot is a historian.
+RUNE_REACTIVE=1
 
 # CALLING LATENCY BUDGET. A czar called late is a historian — the queue stalled while
 # it waited. Target: first action within 5 minutes of the triggering event. The

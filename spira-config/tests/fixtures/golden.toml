@@ -133,7 +133,7 @@ labels = [
     "myproject",
     "incident",
 ]
-lane = "ops"
+reactive = true
 system_prompt = "replace"
 
 [persona.ops.lease]

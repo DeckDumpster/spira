@@ -437,7 +437,9 @@ pub fn persona_section(
     let mut model = String::new();
     let mut tools = Vec::new();
     let mut labels_raw = String::new();
-    let mut lane = None;
+    let mut reactive = false;
+    let mut uses = Vec::new();
+    let mut single_flight = false;
     let mut lease_minutes = None;
     let mut heartbeat_seconds = None;
     let mut system_prompt = None;
@@ -471,7 +473,9 @@ pub fn persona_section(
                     .collect()
             }
             "RUNE_LABELS" => labels_raw = val,
-            "RUNE_LANE" => lane = Some(val),
+            "RUNE_REACTIVE" => reactive = val == "1",
+            "RUNE_SINGLE_FLIGHT" => single_flight = val == "1",
+            "RUNE_USES" => uses = val.split_whitespace().map(str::to_string).collect(),
             "RUNE_LEASE_MINUTES" => {
                 lease_minutes = val.parse().ok().or_else(|| {
                     warnings.push(format!(
@@ -525,7 +529,9 @@ pub fn persona_section(
             model,
             tools,
             labels,
-            lane,
+            reactive,
+            uses,
+            single_flight,
             lease,
             system_prompt,
             escalation_model: None,
@@ -625,6 +631,16 @@ pub fn convert_legacy_dir(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_rune_carries_reactive_uses_and_single_flight_into_its_persona_section() {
+        let text = "RUNE_MODEL=m\nRUNE_REACTIVE=1\nRUNE_SINGLE_FLIGHT=1\nRUNE_USES=\"build-disk cpu\"\n";
+        let (_, p) = persona_section(text, &SpiraSection::default(), &mut ConvertWarnings::default());
+        assert!(p.reactive && p.single_flight, "{p:?}");
+        assert_eq!(p.uses, ["build-disk", "cpu"]);
+        let (_, plain) = persona_section("RUNE_MODEL=m\n", &SpiraSection::default(), &mut ConvertWarnings::default());
+        assert!(!plain.reactive && !plain.single_flight && plain.uses.is_empty(), "{plain:?}");
+    }
 
     fn sections(map: &str) -> Result<BTreeMap<String, RepoSection>, Vec<String>> {
         repo_sections(map, &mut ConvertWarnings::default())

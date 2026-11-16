@@ -108,7 +108,6 @@ impl World {
                 ready_by_rune: [("builder".to_string(), Some(ready))].into(),
                 live_by_rune: [("builder".to_string(), self.live)].into(),
                 max_live: Some(10),
-                lanes_max_live: Some(2),
                 express_ready: Some(0),
                 max_dwarves: pinned.get(KEY).and_then(|v| v.parse().ok()),
                 roster: vec!["builder".into()],

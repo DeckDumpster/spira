@@ -18,7 +18,7 @@ RUNE_STATUTE_CORE="law-landed-is-not-in-force,law-closed-is-not-landed,law-anoma
 RUNE_MODEL=claude-sonnet-5-5
 # One at a time: it sweeps shared state, and two sweeps would double-act on one finding.
 RUNE_SINGLE_FLIGHT=1
-RUNE_LANE=warden
+RUNE_REACTIVE=1
 
 RUNE_TIMEOUT_SECONDS=1800
 RUNE_LEASE_MINUTES=35

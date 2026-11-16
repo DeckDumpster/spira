@@ -59,7 +59,7 @@ bead = "sp-8fsql"
 [[use_case]]
 id = "UC-dispatch-07"
 tier = "T1"
-statement = "the roster is discovered from `runes/*.rune`; lane xor task xor operator, never two"
+statement = "the roster is discovered from `runes/*.rune`; reactive xor planned xor operator, never two"
 
 [[use_case]]
 id = "UC-dispatch-08"
@@ -114,7 +114,7 @@ bead = "sp-27hsi"
 [[use_case]]
 id = "UC-dispatch-14"
 tier = "T1"
-statement = "CHECK 7 draws lanes round-robin then fills the task pool in roster order, capped"
+statement = "CHECK 7 calls the reactive runes then fills the task pool in roster order, capped"
 
 [use_case.uncovered]
 reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
@@ -124,7 +124,7 @@ bead = "sp-q48ih9"
 [[use_case]]
 id = "UC-dispatch-15"
 tier = "T1"
-statement = "`escape.sh` calls directly on ready work, bypassing pool and lane caps"
+statement = "`escape.sh` calls directly on ready work, bypassing pool and class limits"
 
 [use_case.uncovered]
 reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"

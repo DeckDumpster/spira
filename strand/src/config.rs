@@ -45,11 +45,9 @@ pub struct Config {
     pub work_close_types: String,
     /// `SPIRA_ID_PREFIX` (detect_invalid_closed's tracking-reference regex).
     pub id_prefix: String,
-    /// `SPIRA_RUNES` — `dwarves_live_lanes`' override onto `spira_lane_runes`'s own runes
+    /// `SPIRA_RUNES` — the roster override onto the runes
     /// scan. Read here, once, so that pure probe logic never reads the environment itself.
     pub runes_override: Option<String>,
-    /// `SPIRA_LANES` — the declared lane names a lane persona must be listed in to be called.
-    pub lanes: Vec<String>,
 }
 
 /// The remaining, NOT-registered lookups `resolve` still makes: a test-only knob, a seam
@@ -128,7 +126,6 @@ impl Config {
             work_close_types: "task bug feature".into(),
             id_prefix: "sp".into(),
             runes_override: None,
-            lanes: Vec::new(),
         }
     }
 }
@@ -224,7 +221,6 @@ impl Config {
             work_close_types: cfg("SPIRA_WORK_CLOSE_TYPES")?,
             id_prefix: cfg("SPIRA_ID_PREFIX")?,
             runes_override: nonempty(cfg("SPIRA_RUNES")?),
-            lanes: cfg("SPIRA_LANES")?.split_whitespace().map(str::to_string).collect(),
         })
     }
 

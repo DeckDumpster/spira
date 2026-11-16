@@ -1,6 +1,6 @@
 //! The runes / rune registry — spira/lib.sh family D (wave 4 decomposition, row D;
 //! sp-r5zd2). lib.sh's own `rune_names`,
-//! `spira_runes` (and its `spira_task_runes`/`spira_lane_runes` splits), `rune_get`,
+//! `spira_runes` (and its `spira_task_runes`/`spira_reactive_runes` splits), `rune_get`,
 //! `rune_partitions`, `runes_for_labels` and `persona_model` all move here; lib.sh keeps
 //! one-line shims onto the `spira-config rune ...` CLI this module backs (see `main.rs`),
 //! so the 50-odd bash sourcers keep working unchanged.
@@ -438,8 +438,8 @@ pub fn spira_runes(home: &Path, env_override: Option<&str>) -> String {
 }
 
 /// `spira_task_runes` — the personas the sentinel's pool calls: everything from
-/// [`spira_runes`] that is not a party member (`RUNE_ROLE=party`) and not a lane rune
-/// (`RUNE_LANE` set), and that is callable at all (`RUNE_CALL=auto`, the default).
+/// [`spira_runes`] that is not a party member (`RUNE_ROLE=party`) and not reactive
+/// (`RUNE_REACTIVE=1`), and that is callable at all (`RUNE_CALL=auto`, the default).
 pub fn spira_task_runes(home: &Path, env_override: Option<&str>) -> String {
     let roster = spira_runes(home, env_override);
     let mut out = String::new();
@@ -450,7 +450,7 @@ pub fn spira_task_runes(home: &Path, env_override: Option<&str>) -> String {
         if rune_get(home, f, "RUNE_ROLE", "task") == "party" {
             continue;
         }
-        if !rune_get(home, f, "RUNE_LANE", "").is_empty() {
+        if rune_get(home, f, "RUNE_REACTIVE", "") == "1" {
             continue;
         }
         out.push(' ');
@@ -459,18 +459,18 @@ pub fn spira_task_runes(home: &Path, env_override: Option<&str>) -> String {
     out.strip_prefix(' ').unwrap_or(&out).to_string()
 }
 
-/// `spira_lane_runes` — the personas that belong to a declared lane (`RUNE_LANE` set),
+/// `spira_reactive_runes` — the personas that declare `RUNE_REACTIVE=1`,
 /// drawn from [`spira_runes`] under the same `RUNE_CALL=auto` gate `spira_task_runes`
 /// applies (the sentinel calls from both lists, so a persona excluded from one by
 /// `RUNE_CALL` must be excluded from the other too).
-pub fn spira_lane_runes(home: &Path, env_override: Option<&str>) -> String {
+pub fn spira_reactive_runes(home: &Path, env_override: Option<&str>) -> String {
     let roster = spira_runes(home, env_override);
     let mut out = String::new();
     for f in roster.split_whitespace() {
         if rune_get(home, f, "RUNE_CALL", "auto") != "auto" {
             continue;
         }
-        if !rune_get(home, f, "RUNE_LANE", "").is_empty() {
+        if rune_get(home, f, "RUNE_REACTIVE", "") == "1" {
             out.push(' ');
             out.push_str(f);
         }
@@ -712,22 +712,23 @@ mod tests {
     }
 
     #[test]
-    fn spira_task_runes_excludes_party_and_lane_and_uncallable() {
+    fn spira_task_runes_excludes_party_and_reactive_and_uncallable() {
         let ws = testkit::TempDir::new("spira-config-runes-task");
         write_rune(&ws, "builder", "RUNE_LABELS=spira,plan\n");
         write_rune(&ws, "human", "RUNE_CALL=manual\n");
-        write_rune(&ws, "warden", "RUNE_LANE=groom\n");
+        write_rune(&ws, "warden", "RUNE_REACTIVE=1\n");
         write_rune(&ws, "worker", "RUNE_ROLE=party\n");
         assert_eq!(spira_task_runes(&ws, None), "builder");
     }
 
     #[test]
-    fn spira_lane_runes_is_the_declared_lane_rune_only() {
-        let ws = testkit::TempDir::new("spira-config-runes-lane");
+    fn spira_reactive_runes_is_the_declared_reactive_rune_only() {
+        let ws = testkit::TempDir::new("spira-config-runes-reactive");
         write_rune(&ws, "builder", "RUNE_LABELS=spira,plan\n");
-        write_rune(&ws, "warden", "RUNE_LANE=groom\n");
-        write_rune(&ws, "human", "RUNE_CALL=manual\nRUNE_LANE=groom\n");
-        assert_eq!(spira_lane_runes(&ws, None), "warden");
+        write_rune(&ws, "warden", "RUNE_REACTIVE=1\n");
+        write_rune(&ws, "ordinary", "RUNE_REACTIVE=0\n");
+        write_rune(&ws, "human", "RUNE_CALL=manual\nRUNE_REACTIVE=1\n");
+        assert_eq!(spira_reactive_runes(&ws, None), "warden");
     }
 
     #[test]
@@ -769,7 +770,9 @@ mod tests {
             model: "".to_string(),
             tools: vec![],
             labels: vec![],
-            lane: None,
+            reactive: false,
+            uses: vec![],
+            single_flight: false,
             lease: None,
             system_prompt: None,
             escalation_model: None,
@@ -785,7 +788,9 @@ mod tests {
             model: "claude-sonnet-5".to_string(),
             tools: vec![],
             labels: vec![],
-            lane: None,
+            reactive: false,
+            uses: vec![],
+            single_flight: false,
             lease: None,
             system_prompt: None,
             escalation_model: None,
@@ -910,14 +915,14 @@ mod tests {
 
     // covers: UC-dispatch-07
     #[test]
-    fn the_roster_is_the_rune_files_and_no_persona_is_two_of_task_lane_and_operator() {
+    fn the_roster_is_the_rune_files_and_no_persona_is_two_of_planned_reactive_and_operator() {
         let ws = testkit::TempDir::new("spira-config-runes-exclusive");
         write_rune(&ws, "worker", "RUNE_LABELS=a,b\n");
-        write_rune(&ws, "warden", "RUNE_LABELS=a,c\nRUNE_LANE=priority\n");
+        write_rune(&ws, "warden", "RUNE_LABELS=a,c\nRUNE_REACTIVE=1\n");
         write_rune(&ws, "steward", "RUNE_CALL=operator\nRUNE_LABELS=\"\"\n");
         assert_eq!(spira_runes(&ws, None).split_whitespace().collect::<std::collections::BTreeSet<_>>(), ["steward", "warden", "worker"].into());
         assert_eq!(spira_task_runes(&ws, None), "worker");
-        assert_eq!(spira_lane_runes(&ws, None), "warden");
+        assert_eq!(spira_reactive_runes(&ws, None), "warden");
         write_rune(&ws, "newcomer", "RUNE_LABELS=a,d\n");
         assert!(spira_runes(&ws, None).contains("newcomer"), "installing a rune file is the whole registration");
 
@@ -925,7 +930,7 @@ mod tests {
         let _env = testkit::env(&[("SPIRA_RUNES_DIR", Some(shipped.join("runes").to_str().unwrap()))]);
         let split = |s: String| s.split_whitespace().map(str::to_string).collect::<std::collections::BTreeSet<_>>();
         let all = split(spira_runes(&shipped, None));
-        let (task, lane) = (split(spira_task_runes(&shipped, None)), split(spira_lane_runes(&shipped, None)));
+        let (task, lane) = (split(spira_task_runes(&shipped, None)), split(spira_reactive_runes(&shipped, None)));
         let operator: std::collections::BTreeSet<String> = all.iter().filter(|n| rune_get(&shipped, n, "RUNE_CALL", "auto") == "operator").cloned().collect();
         assert_eq!(all.len(), shipped_rune_texts().len(), "the roster is every rune file");
         assert!(!task.is_empty() && !lane.is_empty() && !operator.is_empty(), "positive control: every class is populated");
@@ -982,7 +987,7 @@ mod tests {
     }
 
     #[test]
-    fn the_shipped_runes_declare_build_disk_for_exactly_the_builder_and_the_reactive_lanes() {
+    fn the_shipped_runes_declare_build_disk_for_exactly_the_builder_mender_pilgrim_and_qa() {
         let ws = testkit::TempDir::new("spira-config-runes-shipped");
         let src = crate::resolve::locate_home_for_process().expect("SPIRA_HOME names the harness tree").join("runes");
         for dir in [src.clone(), src.join("disabled")] {
@@ -990,19 +995,35 @@ mod tests {
                 write_rune(&ws, &e.path().file_stem().unwrap().to_string_lossy(), &std::fs::read_to_string(e.path()).unwrap());
             }
         }
-        let (mut uses, mut reactive) = (vec![], vec![]);
+        let mut uses = vec![];
         for name in std::fs::read_dir(runes_dir(&ws)).unwrap().flatten().filter_map(|e| e.path().file_stem().map(|s| s.to_string_lossy().into_owned())) {
             if rune_uses(&ws, &name).unwrap().contains(&"build-disk".to_string()) {
                 uses.push(name.clone());
             }
-            if rune_get(&ws, &name, "RUNE_REACTIVE", "") == "1" {
-                reactive.push(name);
-            }
         }
         uses.sort();
-        reactive.sort();
         assert_eq!(uses, ["builder", "mender", "pilgrim", "qa"]);
-        assert_eq!(reactive, ["mender", "pilgrim", "qa"]);
+    }
+
+    #[test]
+    fn the_reactive_set_is_exactly_the_shipped_personas_that_were_lanes_and_no_rune_sets_rune_lane() {
+        let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/runes");
+        let ws = testkit::TempDir::new("spira-config-runes-reactive-set");
+        let mut any_lane = vec![];
+        for dir in [src.clone(), src.join("disabled")] {
+            for e in std::fs::read_dir(&dir).unwrap().flatten().filter(|e| e.path().extension().is_some_and(|x| x == "rune")) {
+                let name = e.path().file_stem().unwrap().to_string_lossy().into_owned();
+                let text = std::fs::read_to_string(e.path()).unwrap();
+                if assigned_value(&text, "RUNE_LANE").is_some() {
+                    any_lane.push(name.clone());
+                }
+                write_rune(&ws, &name, &text);
+            }
+        }
+        assert!(any_lane.is_empty(), "RUNE_LANE no longer exists: {any_lane:?}");
+        let mut reactive: Vec<String> = std::fs::read_dir(runes_dir(&ws)).unwrap().flatten().filter_map(|e| e.path().file_stem().map(|s| s.to_string_lossy().into_owned())).filter(|n| rune_get(&ws, n, "RUNE_REACTIVE", "") == "1").collect();
+        reactive.sort();
+        assert_eq!(reactive, ["czar", "groomer", "mender", "mimir", "ops", "pilgrim", "qa", "skuld", "warden"]);
     }
 
     #[test]

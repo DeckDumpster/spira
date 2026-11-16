@@ -46,7 +46,7 @@ heartbeat_seconds = 30
 model = "claude-haiku-4-5-20251001"
 tools = ["Bash", "Read", "Glob", "Grep", "TodoWrite"]
 labels = ["myproject", "incident"]
-lane = "ops"
+reactive = true
 system_prompt = "replace"
 
 [persona.ops.lease]

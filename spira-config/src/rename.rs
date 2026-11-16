@@ -1,5 +1,5 @@
 //! Renaming a persona across the one source: its `[persona.<old>]` table (lease included) and
-//! its `lane` when that is its own name, and its name in `spira.runes` and the space-separated `spira.lanes`. `set` and `unset` cannot
+//! and its name in `spira.runes`. `set` and `unset` cannot
 //! do this: they edit through the typed schema, which refuses a half-built persona table.
 
 use toml_edit::{value, Array, DocumentMut, Item};
@@ -20,7 +20,7 @@ pub fn rename_persona_text(text: &str, old: &str, new: &str) -> Result<String, S
     rename_persona_with(text, old, new, true)
 }
 
-/// A layer without `persona.<old>` still has its roster and lane entries rewritten, and a
+/// A layer without `persona.<old>` still has its roster entry rewritten, and a
 /// layer already holding `persona.<new>` with no `<old>` is left as it is, so applying a
 /// rename twice changes nothing.
 pub fn rename_persona_lenient(text: &str, old: &str, new: &str) -> Result<String, String> {
@@ -40,11 +40,6 @@ fn rename_persona_with(text: &str, old: &str, new: &str, strict: bool) -> Result
             }
             let table = personas.remove(old).ok_or("unreachable")?;
             personas.insert(new, table);
-            if let Some(lane) = personas.get_mut(new).and_then(Item::as_table_like_mut).and_then(|t| t.get_mut("lane")) {
-                if lane.as_str() == Some(old) {
-                    *lane = value(new);
-                }
-            }
         }
         _ if strict => return Err(format!("persona.{old} is not declared")),
         _ => {}
@@ -62,11 +57,6 @@ fn rename_persona_with(text: &str, old: &str, new: &str, strict: bool) -> Result
                 *item = value(rewrite_words(s.split_whitespace().map(String::from), old, new).join(" "));
             }
         }
-        if let Some(item) = spira.get_mut("lanes") {
-            if let Some(s) = item.as_str() {
-                *item = value(rewrite_words(s.split_whitespace().map(String::from), old, new).join(" "));
-            }
-        }
     }
     Ok(doc.to_string())
 }
@@ -75,15 +65,14 @@ fn rename_persona_with(text: &str, old: &str, new: &str, strict: bool) -> Result
 mod tests {
     use super::*;
 
-    const SRC: &str = "[spira]\nrunes = [\"ops\", \"maechen\"]\nlanes = \"ops maechen czar\"\n\n[persona.maechen]\nmodel = \"m\"\n\n[persona.maechen.lease]\nttl = 5\n\n[persona.ops]\nmodel = \"m\"\n"; // ffx-ok
+    const SRC: &str = "[spira]\nrunes = [\"ops\", \"maechen\"]\n\n[persona.maechen]\nmodel = \"m\"\n\n[persona.maechen.lease]\nttl = 5\n\n[persona.ops]\nmodel = \"m\"\n"; // ffx-ok
 
     #[test]
-    fn renames_table_lease_roster_and_lanes() {
+    fn renames_table_lease_and_roster() {
         let out = rename_persona_text(SRC, "maechen", "mimir").unwrap(); // ffx-ok
         let v: toml::Value = out.parse().unwrap();
         assert!(v["persona"].get("maechen").is_none()); // ffx-ok
         assert_eq!(v["persona"]["mimir"]["lease"]["ttl"].as_integer(), Some(5));
-        assert_eq!(v["spira"]["lanes"].as_str(), Some("ops mimir czar"));
         assert_eq!(v["spira"]["runes"][1].as_str(), Some("mimir"));
     }
 

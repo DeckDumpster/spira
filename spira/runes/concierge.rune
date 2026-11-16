@@ -27,12 +27,12 @@
 RUNE_NAME=concierge
 RUNE_DESC="Concierge — the operator's session: unbounded remit, reachable from the phone, claims nothing"
 
-# NOTHING CALLS THIS. Not the sentinel's pool, not a lane, not the watchtower. `auto` is
+# NOTHING CALLS THIS. Not the sentinel's pool, not a reactive rune, not the watchtower. `auto` is
 # the default and every other persona takes it; `operator` means a human starts it, which
 # in practice means `concierge.sh start` or the operator's own terminal.
 #
 # DECLARED RATHER THAN ARRANGED. Every other property that would keep this out of the pool
-# does so as a SIDE EFFECT — no RUNE_LABELS, no RUNE_LANE — and a side effect is exactly
+# does so as a SIDE EFFECT — no RUNE_LABELS, no RUNE_REACTIVE — and a side effect is exactly
 # what somebody changes while meaning something else.
 RUNE_CALL=operator
 

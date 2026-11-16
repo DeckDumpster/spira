@@ -61,21 +61,10 @@ RUNE_MEMORY_PREFIXES="law-,sop-"
 # convert and is no longer read at launch.
 RUNE_MODEL=claude-sonnet-5-5
 
-# THE OPS LANE — the declared configuration for what RUNE_ROLE=party expressed implicitly.
-# Ops is in the ops lane, which means it is not drawn from
-# SPIRA_MAX_DWARVES. The builder pool can be 100% occupied and Ops still has room,
-# because a lane rune is never competing for the pool's slots.
-#
-# This is the shippe example of a priority lane: a persona that must be reachable even when
-# the rest of the party is fully engaged. The ops lane is declared in SPIRA_LANES (default:
-# "ops"), and a user who wants ops-level scheduling for their own persona names their lane
-# there and sets RUNE_LANE=<name> in their rune file — without editing this one.
-#
-# WHY RUNE_ROLE=party IS GONE. The old property was a binary: party-or-task. A lane is a
-# named partition that any number of runes can join, with configurable semantics. The
-# mechanism is the same — not drawn from SPIRA_MAX_DWARVES — but the declaration is now
-# something an operator can read, set, and reason about rather than an opaque per-rune flag.
-RUNE_LANE=ops
+# Reactive: planned ahead of the planned runes, so the builder pool can be fully occupied and
+# Ops is still reachable. Only the fleet ceiling stops it. A persona of your own that must be
+# reachable when the rest of the party is engaged sets RUNE_REACTIVE=1 in its rune file.
+RUNE_REACTIVE=1
 
 # BOUNDED BY THE SWEEP INTERVAL, which is the number that actually constrains this persona.
 # A sweep arrives every `OnUnitActiveSec` in systemd/spira-watchtower.timer — THIRTY MINUTES,

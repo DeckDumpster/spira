@@ -48,12 +48,9 @@ RUNE_MODEL=claude-sonnet-5-5
 # One at a time: its retrospective is watermarked, and two passes would read the same mark.
 RUNE_SINGLE_FLIGHT=1
 
-# THE MIMIR LANE. Mimir draws from its own capacity rather than from SPIRA_MAX_DWARVES,
-# so a fully-occupied builder pool cannot prevent a retrospective pass. The mimir lane
-# is declared in SPIRA_LANES; without that declaration the lane still functions (the
-# mechanism is RUNE_LANE set, not membership in the list), but the declaration makes it
-# visible to operators reading SPIRA_LANES for the list of scheduled partitions.
-RUNE_LANE=mimir
+# Reactive: planned ahead of the planned runes, so a fully-occupied builder pool cannot
+# prevent a retrospective pass.
+RUNE_REACTIVE=1
 
 # TIMEOUT AND LEASE. A Mimir pass reads the whole corpus, demonstrates a mechanism,
 # and writes at most SPIRA_MIMIR_MAX_BEADS beads — more than QA's enumeration pass

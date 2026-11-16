@@ -197,7 +197,6 @@ pub struct Config {
     pub cockpit_mail: String,
     pub dolt_data: String,
     pub max_live_dwarves: String,
-    pub lanes_max_live: String,
     pub max_dwarves: String,
     pub disk_floor_pct: u32,
     pub untagged_images_max: u64,
@@ -267,7 +266,7 @@ pub trait Host: Send + Sync {
     fn lc(&self, argv: &[&str]) -> Result<String, String>;
     /// `<bead> <tip> <epoch>` per CERTIFIED bead with a `spira/<bead>` branch in `repo`.
     fn certified_list(&self, repo: &Path) -> String;
-    /// `rune task|lane|partitions|for-labels ...` and `repo landref <name>`.
+    /// `rune task|reactive|partitions|for-labels ...` and `repo landref <name>`.
     fn config(&self, argv: &[&str]) -> String;
     fn stranded_runners(&self, repo: &Path) -> String;
     /// Whether the harness has forge CI in flight for `repo_name`: an open forge batch or an open publish record.
@@ -330,7 +329,6 @@ impl Config {
         "SPIRA_RELEASES",
         "SPIRA_DOLT_DATA",
         "SPIRA_MAX_LIVE_DWARVES",
-        "SPIRA_LANES_MAX_LIVE",
         "SPIRA_MAX_DWARVES",
         "SPIRA_DISK_FLOOR_PCT",
         "SPIRA_UNTAGGED_IMAGES_MAX",
@@ -386,7 +384,6 @@ impl Config {
             cockpit_mail: get("COCKPIT_MAIL")?,
             dolt_data: get("SPIRA_DOLT_DATA")?,
             max_live_dwarves: get("SPIRA_MAX_LIVE_DWARVES")?,
-            lanes_max_live: get("SPIRA_LANES_MAX_LIVE")?,
             max_dwarves: get("SPIRA_MAX_DWARVES")?,
             disk_floor_pct: parsed::<u32>(get, "SPIRA_DISK_FLOOR_PCT")?,
             untagged_images_max: parsed::<u64>(get, "SPIRA_UNTAGGED_IMAGES_MAX")?,
@@ -1065,10 +1062,9 @@ fn observe_units(cfg: &Config) -> Vec<Check> {
 struct FleetReadings {
     /// `(labels, ready, live, is_task)` per builder partition.
     rows: Vec<(String, i64, i64, bool)>,
-    live_lanes: i64,
+    live_reactive: i64,
     live_total: i64,
     max_live: Option<i64>,
-    lanes_max: Option<i64>,
     pool: Option<i64>,
 }
 
@@ -1083,9 +1079,9 @@ fn fleet_readings(cfg: &Config) -> FleetReadings {
     let task_runes = words(cfg.config(&["rune", "task"]));
     let live_of = |rune: &str| cfg.dwarf_count(rune);
 
-    let lane_runes: Vec<String> = words(cfg.config(&["rune", "lane"])).into_iter().filter(|f| !task_runes.contains(f)).collect();
-    let live_lanes: i64 = lane_runes.iter().map(|f| live_of(f)).sum();
-    let live_total = live_lanes + task_runes.iter().map(|f| live_of(f)).sum::<i64>();
+    let reactive_runes: Vec<String> = words(cfg.config(&["rune", "reactive"])).into_iter().filter(|f| !task_runes.contains(f)).collect();
+    let live_reactive: i64 = reactive_runes.iter().map(|f| live_of(f)).sum();
+    let live_total = live_reactive + task_runes.iter().map(|f| live_of(f)).sum::<i64>();
 
     let mut rows = Vec::new();
     for line in cfg.config(&["rune", "partitions"]).lines() {
@@ -1103,16 +1099,15 @@ fn fleet_readings(cfg: &Config) -> FleetReadings {
 
     FleetReadings {
         rows,
-        live_lanes,
+        live_reactive,
         live_total,
         max_live: cfg.max_live_dwarves.trim().parse().ok(),
-        lanes_max: cfg.lanes_max_live.trim().parse().ok(),
         pool: cfg.max_dwarves.trim().parse().ok(),
     }
 }
 
 fn observe_fleet(cfg: &Config) -> Vec<Check> {
-    let FleetReadings { rows, live_lanes, live_total, max_live, lanes_max, pool } = fleet_readings(cfg);
+    let FleetReadings { rows, live_reactive, live_total, max_live, pool } = fleet_readings(cfg);
 
     // The Composite's FleetSpec.ceiling is the declared desired state; an install that has
     // not materialised one yet falls back to SPIRA_MAX_LIVE_DWARVES.
@@ -1139,19 +1134,13 @@ fn observe_fleet(cfg: &Config) -> Vec<Check> {
     };
 
     for (labels, ready, live, is_task) in rows {
-        let headroom = (max_live - live_lanes).max(0);
+        let headroom = (max_live - live_reactive).max(0);
         let desired_live = ready.min(headroom);
         // SPIRA_MAX_DWARVES=0 is an operator pausing the task pool on purpose (dwarves.sh
-        // pool 0) — a deliberate state, not a fault. A lane partition draws outside the
+        // pool 0) — a deliberate state, not a fault. A reactive partition draws outside the
         // pool, so its own gap still means something.
         let deliberately_paused = is_task && pool == Some(0);
-        // Mirrors the sentinel's CHECK7: a task partition needs a fleet slot; a lane needs a
-        // lane share, and may spill past the ceiling by at most the lane cap.
-        let slot_free = if is_task {
-            live_total < max_live
-        } else {
-            lanes_max.map_or(live_total < max_live, |m| live_lanes < m && live_total < max_live + m)
-        };
+        let slot_free = live_total < max_live;
         let raw = if live >= desired_live || deliberately_paused || !slot_free {
             RawStatus::Satisfied
         } else {
@@ -3073,7 +3062,7 @@ mod tests {
         fn config(&self, argv: &[&str]) -> String {
             match argv {
                 ["rune", "task"] => "builder\n".into(),
-                ["rune", "lane"] => "czar\n".into(),
+                ["rune", "reactive"] => "czar\n".into(),
                 ["rune", "partitions"] => "plan\tpoison\n".into(),
                 ["rune", "for-labels", _] => "builder\n".into(),
                 _ => String::new(),
@@ -3113,7 +3102,7 @@ mod tests {
         let bin_text = bin.display().to_string();
         let seams = Seams::resolving(|name| {
             let script = format!("{bin_text}/{name}");
-            let body = format!("#!/bin/sh\necho \"{name} $*\" >> {log_text}\ncase \"$*\" in\n*list-panes*) echo health;;\n*rev-parse*) echo {SHA};;\n\"rune task\"*|\"rune for-labels\"*) echo builder;;\n\"rune lane\"*) echo czar;;\n\"rune partitions\"*) printf 'plan\\\\tpoison\\\\n';;\nesac\nexit 0\n", SHA = "c".repeat(40));
+            let body = format!("#!/bin/sh\necho \"{name} $*\" >> {log_text}\ncase \"$*\" in\n*list-panes*) echo health;;\n*rev-parse*) echo {SHA};;\n\"rune task\"*|\"rune for-labels\"*) echo builder;;\n\"rune reactive\"*) echo czar;;\n\"rune partitions\"*) printf 'plan\\\\tpoison\\\\n';;\nesac\nexit 0\n", SHA = "c".repeat(40));
             testkit::write_exe(&script, &body);
             Ok(script)
         })
@@ -3218,6 +3207,71 @@ mod tests {
         assert!(pass(&[]).iter().any(|a| matches!(a, Act::Mail { .. })));
     }
 
+    /// A fleet of one planned and one reactive partition: `live` dwarves under the planned rune,
+    /// `reactive_live` under the reactive one, each with work ready.
+    struct Fleet {
+        planned_live: i64,
+        reactive_live: i64,
+    }
+
+    impl Host for Fleet {
+        fn unit_state(&self, _: &str, _: &str) -> Result<String, String> {
+            Ok("active".into())
+        }
+        fn list_enable(&self) -> String {
+            String::new()
+        }
+        fn free_pct(&self, _: &str) -> Option<i64> {
+            Some(90)
+        }
+        fn lc(&self, _: &[&str]) -> Result<String, String> {
+            Err("unexpected".into())
+        }
+        fn certified_list(&self, _: &Path) -> String {
+            String::new()
+        }
+        fn config(&self, argv: &[&str]) -> String {
+            match argv {
+                ["rune", "task"] => "builder\n".into(),
+                ["rune", "reactive"] => "ops\n".into(),
+                ["rune", "partitions"] => "ops\t\n".into(),
+                ["rune", "for-labels", _] => "ops\n".into(),
+                _ => String::new(),
+            }
+        }
+        fn stranded_runners(&self, _: &Path) -> String {
+            String::new()
+        }
+        fn send_mail(&self, _: &Mail) -> Result<(), String> {
+            Ok(())
+        }
+        fn dwarf_count(&self, rune: &str) -> Option<i64> {
+            Some(if rune == "builder" { self.planned_live } else { self.reactive_live })
+        }
+        fn ready_count(&self, _: &str, _: &str) -> Option<i64> {
+            Some(3)
+        }
+    }
+
+    fn reactive_check(planned_live: i64, ceiling: &str) -> RawStatus {
+        let mut cfg = test_config();
+        cfg.max_live_dwarves = ceiling.into();
+        cfg.host = Some(Arc::new(Fleet { planned_live, reactive_live: 0 }));
+        let checks = observe_fleet(&cfg);
+        assert_eq!(checks.len(), 1, "{checks:?}");
+        checks[0].raw.clone()
+    }
+
+    #[test]
+    fn a_reactive_partition_with_ready_work_below_the_ceiling_is_a_gap() {
+        assert!(matches!(reactive_check(3, "5"), RawStatus::Gap { .. }));
+    }
+
+    #[test]
+    fn a_reactive_partition_at_the_ceiling_is_satisfied() {
+        assert_eq!(reactive_check(5, "5"), RawStatus::Satisfied);
+    }
+
     pub(super) fn test_config() -> Config {
         Config {
             seams: Seams::bare(),
@@ -3240,7 +3294,6 @@ mod tests {
             cockpit_mail: String::new(),
             dolt_data: String::new(),
             max_live_dwarves: String::new(),
-            lanes_max_live: String::new(),
             max_dwarves: String::new(),
             disk_floor_pct: 15,
             untagged_images_max: 40,

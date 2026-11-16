@@ -320,7 +320,7 @@ impl Host for RuntimeHost {
         let roster = Some(self.runes.as_str());
         match argv {
             ["rune", "task"] => runes::spira_task_runes(&self.home, roster),
-            ["rune", "lane"] => runes::spira_lane_runes(&self.home, roster),
+            ["rune", "reactive"] => runes::spira_reactive_runes(&self.home, roster),
             ["rune", "partitions"] => runes::rune_partitions(&self.home, roster).into_iter().map(|(labels, exclude)| format!("{labels}\t{exclude}\n")).collect(),
             ["rune", "for-labels", labels] => runes::runes_for_labels(&self.home, labels).into_iter().map(|f| format!("{f}\n")).collect(),
             ["repo", "landref", name] => self.landref(name),

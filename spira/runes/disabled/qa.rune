@@ -41,15 +41,9 @@ RUNE_MODEL=claude-haiku-4-5-20251001
 # One at a time: it sweeps shared state, and two sweeps would double-act on one finding.
 RUNE_SINGLE_FLIGHT=1
 
-# THE QA LANE — QA must never compete with builders for the dwarf pool. A sweep that is
+# Reactive: QA must never compete with builders for the dwarf pool. A sweep that is
 # waiting on a pool slot already occupied by builders misses exactly the defects that
-# escaped during a busy sprint. RUNE_LANE=qa places it in a named partition whose capacity
-# is its own, never drawn from SPIRA_MAX_DWARVES.
-#
-# The qa lane is declared in SPIRA_LANES (default: "ops qa"), and a user who wants
-# QA-level scheduling for their own persona names their lane there and sets RUNE_LANE=qa
-# in their rune file — without editing this one.
-RUNE_LANE=qa
+# escaped during a busy sprint.
 # Build-disk class, reactive: starts over the SPIRA_MAX_DWARVES limit (design "Lanes by bound resource").
 RUNE_USES="build-disk"
 RUNE_REACTIVE=1

@@ -16,9 +16,6 @@ RUNE_STATUTE_CORE="law-escalate-decisions-not-problems,law-tests-run-only-throug
 # SEED ONLY: the live value is persona.mender.model, resolved by lib.sh's persona_model. Opus: a wrong attribution ejects a member or ships a wrong fix.
 RUNE_MODEL=claude-opus-5-5
 
-# Its own lane, outside the builder pool, one session per failure.
-RUNE_LANE=mender
-
 # Build-disk class, reactive: starts over the SPIRA_MAX_DWARVES limit (design "Lanes by bound resource").
 RUNE_USES="build-disk"
 RUNE_REACTIVE=1

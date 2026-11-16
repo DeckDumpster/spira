@@ -14,34 +14,27 @@ pub fn live_total_systemd(unit_count: impl Fn(&str) -> usize) -> u32 {
     unit_count("spira-dwarf-*") as u32
 }
 
-/// The live dwarves split by what governs them: lane dwarves count against the fleet
+/// The live dwarves split by what governs them: counted dwarves count against the fleet
 /// ceiling, directed ones (`dwarf direct`) run outside every cap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Roster {
-    pub lane: u32,
+    pub counted: u32,
     pub directed: u32,
 }
 
 impl Roster {
     pub fn of(units: &[String]) -> Roster {
         let directed = units.iter().filter(|u| runtime::units::is_directed(u)).count() as u32;
-        Roster { lane: units.len() as u32 - directed, directed }
+        Roster { counted: units.len() as u32 - directed, directed }
     }
 
     pub fn total(&self) -> u32 {
-        self.lane + self.directed
+        self.counted + self.directed
     }
 
-    /// The "live now" lines, and the spill line when lane dwarves exceed the ceiling.
-    /// Only lane dwarves are measured against the ceiling.
-    pub fn live_lines(&self, ceiling: Option<u32>, spill_enabled: bool) -> Vec<String> {
-        let mut out = vec![format!("  live now          {}   ({} lane + {} directed)", self.total(), self.lane, self.directed)];
-        if let (Some(c), true) = (ceiling, spill_enabled) {
-            if self.lane > c {
-                out.push(format!("  spill             lane {} / ceiling {c} — {} lane over, draining", self.lane, self.lane - c));
-            }
-        }
-        out
+    /// The "live now" line. Only counted dwarves are measured against the ceiling.
+    pub fn live_lines(&self) -> Vec<String> {
+        vec![format!("  live now          {}   ({} counted + {} directed)", self.total(), self.counted, self.directed)]
     }
 }
 
@@ -59,7 +52,7 @@ mod tests {
     }
 
     #[test]
-    fn a_directed_dwarf_is_named_directed_and_outside_the_over_cap_arithmetic() {
+    fn a_directed_dwarf_is_named_directed_and_outside_the_ceiling() {
         let r = Roster::of(&units(&[
             "spira-dwarf-builder-1.service",
             "spira-dwarf-builder-2.service",
@@ -67,19 +60,18 @@ mod tests {
             "spira-dwarf-builder-4.service",
             "spira-dwarf-builder-directed-1794009721.service",
         ]));
-        assert_eq!(r, Roster { lane: 4, directed: 1 });
-        let lines = r.live_lines(Some(4), true);
+        assert_eq!(r, Roster { counted: 4, directed: 1 });
+        let lines = r.live_lines();
         assert_eq!(lines.len(), 1, "{lines:?}");
-        assert!(lines[0].contains("5") && lines[0].contains("4 lane + 1 directed"), "{lines:?}");
-        assert!(r.live_lines(Some(3), true)[1].contains("1 lane over"));
+        assert!(lines[0].contains("5") && lines[0].contains("4 counted + 1 directed"), "{lines:?}");
     }
 
     #[test]
-    fn six_dwarves_against_a_cap_of_four_read_as_four_lane_and_two_directed() {
+    fn six_dwarves_against_a_cap_of_four_read_as_four_counted_and_two_directed() {
         let mut all: Vec<&str> = vec!["spira-dwarf-builder-1.service", "spira-dwarf-builder-2.service", "spira-dwarf-builder-3.service", "spira-dwarf-builder-4.service"];
         all.extend(["spira-dwarf-builder-directed-1.service", "spira-dwarf-czar-directed-2.service"]);
         let r = Roster::of(&units(&all));
-        assert_eq!((r.lane, r.directed, r.total()), (4, 2, 6));
-        assert_eq!(r.live_lines(Some(4), true), vec!["  live now          6   (4 lane + 2 directed)".to_string()]);
+        assert_eq!((r.counted, r.directed, r.total()), (4, 2, 6));
+        assert_eq!(r.live_lines(), vec!["  live now          6   (4 counted + 2 directed)".to_string()]);
     }
 }

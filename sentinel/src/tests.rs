@@ -259,10 +259,8 @@ impl World {
             ("SPIRA_LAND_MAXSEC", "3600"),
             ("SPIRA_MAX_DWARVES", ""),
             ("SPIRA_MAX_LIVE_DWARVES", ""),
-            ("SPIRA_LANES_MAX_LIVE", ""),
             ("SPIRA_QUEUE_THROTTLE_OVERRIDE", ""),
             ("SPIRA_CALL_LOCK_WAIT", "30"),
-            ("SPIRA_LANES", "ops groomer qa mimir czar warden"),
             ("SPIRA_REPO_MAP", ""),
             ("SPIRA_GH", ""),
             ("SPIRA_BATCH_MAXPAR", ""),
@@ -303,10 +301,8 @@ impl World {
             land_maxsec: get("SPIRA_LAND_MAXSEC"),
             max_dwarves: opt("SPIRA_MAX_DWARVES"),
             max_live_dwarves: opt("SPIRA_MAX_LIVE_DWARVES"),
-            lanes_max_live: opt("SPIRA_LANES_MAX_LIVE"),
             queue_throttle_override: get("SPIRA_QUEUE_THROTTLE_OVERRIDE"),
             call_lock_wait: get("SPIRA_CALL_LOCK_WAIT").parse().unwrap_or(30),
-            lanes: get("SPIRA_LANES"),
             repo_map: get("SPIRA_REPO_MAP"),
             gh: get("SPIRA_GH"),
             batch_maxpar: get("SPIRA_BATCH_MAXPAR"),
@@ -830,7 +826,7 @@ fn world_gate_refuses_while_the_claims_lane_is_stopped_on_every_repo() {
 // ---------------------------------------------------------------------------------------
 // call_rune's refusal ladder (rows once proved in a shell suite).
 // The roster is `builder`, `ops`; each rule binds to a declaration (RUNE_ELASTIC,
-// RUNE_LANE), so the same two names play different roles per test.
+// RUNE_REACTIVE), so the same two names play different roles per test.
 /// sp-hh599, law-a-control-that-cannot-check-must-refuse: `rune_ready`'s own rc contract
 /// (sp-3ntca) already maps every nonzero OTHER than 2 to `ReadyAnswer::Failed` — this
 /// proves the CONSUMING side holds up its half: a claim-error must be LOUD (stderr, not
@@ -1555,7 +1551,7 @@ fn on_check2d_an_unresolved_repo_map_hold_stands() {
 }
 
 // ---------------------------------------------------------------------------------------
-// P0 express preempts a running lane dwarf; only a P0 or express bead makes lanes yield
+// P0 express preempts a running reactive dwarf; only a P0 or express bead makes reactive runes yield
 
 // ---------------------------------------------------------------------------------------
 // Scheduler consolidation §2: the store, the claim, hel, the unit stops, the metrics row and
@@ -1699,23 +1695,4 @@ fn the_exact_inherited_branch_label_is_removed() {
     let (r, out) = park_with_labels("park-exact", r#"["branch:spira/sp-root"]"#);
     assert_eq!(r.count(|s| s.prog == "bd" && s.args.iter().any(|a| a == "remove") && s.args.iter().any(|a| a == "branch:spira/sp-root")), 1, "{:#?}", r.lines());
     assert!(matches!(out.first(), Some(crate::detect::ParkOutcome::Unlabeled { .. })), "{out:?}");
-}
-
-#[test]
-fn call_cmd_only_a_single_flight_lane_rune_is_held_to_the_lane_cap() {
-    let extra = [("SPIRA_MAX_LIVE_DWARVES", "1"), ("SPIRA_LANES_MAX_LIVE", "1")];
-    let mut spilled = vec![];
-    for (tag, single_flight) in [("lane-cap-free", false), ("lane-cap-sf", true)] {
-        let (w, r, sink, clock) = setup(tag);
-        let runes = w.home.join("runes");
-        std::fs::create_dir_all(&runes).unwrap();
-        std::fs::write(runes.join("builder.rune"), "RUNE_LANE=other\n").unwrap();
-        std::fs::write(runes.join("ops.rune"), format!("RUNE_LANE=ops\nRUNE_SINGLE_FLIGHT={}\n", u8::from(single_flight))).unwrap();
-        r.on(|s| s.args.iter().any(|a| a == "list-units").then(|| Out { rc: 0, stdout: "spira-dwarf-builder-1.service loaded active\n".into(), stderr: String::new() }));
-        r.on(|s| (s.prog == "spira-claim" && s.args.first().map(String::as_str) == Some("rune-ready")).then(|| Out { rc: 0, stdout: "1".into(), stderr: String::new() }));
-        run_mode(&w, &r, &sink, &clock, Mode::Call { rune: "ops".into(), pool: None, require_express: false }, &extra, None);
-        spilled.push(sink.has("a lane may spill over the ceiling"));
-        assert!(!sink.has("lane slot(s) in use") || single_flight, "{}", sink.text());
-    }
-    assert_eq!(spilled, [true, false]);
 }

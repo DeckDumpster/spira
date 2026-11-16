@@ -768,7 +768,6 @@ tools = [
     "TodoWrite",
 ]
 labels = ["czar-trigger"]
-lane = "czar"
 system_prompt = "replace"
 
 [persona.czar.lease]
@@ -785,7 +784,6 @@ tools = [
     "TodoWrite",
 ]
 labels = ["groom"]
-lane = "groomer"
 system_prompt = "replace"
 
 [persona.groomer.lease]
@@ -802,7 +800,6 @@ tools = [
     "TodoWrite",
 ]
 labels = ["mimir-sweep"]
-lane = "mimir"
 system_prompt = "replace"
 
 [persona.mimir.lease]
@@ -821,7 +818,6 @@ tools = [
     "TodoWrite",
 ]
 labels = ["mender-failure"]
-lane = "mender"
 system_prompt = "append"
 
 [persona.mender.lease]
@@ -838,7 +834,6 @@ tools = [
     "TodoWrite",
 ]
 labels = ["warden-sweep"]
-lane = "warden"
 system_prompt = "replace"
 
 [persona.warden.lease]
@@ -896,7 +891,6 @@ tools = [
     "TodoWrite",
 ]
 labels = ["incident"]
-lane = "ops"
 system_prompt = "replace"
 
 [persona.ops.lease]
@@ -913,7 +907,6 @@ tools = [
     "TodoWrite",
 ]
 labels = ["pilgrimage"]
-lane = "pilgrimage"
 system_prompt = "replace"
 
 [persona.pilgrim.lease]
@@ -953,7 +946,6 @@ tools = [
     "TodoWrite",
 ]
 labels = ["draft"]
-lane = "skuld"
 system_prompt = "replace"
 
 [persona.skuld.lease]

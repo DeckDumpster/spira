@@ -1,4 +1,4 @@
-//! CHECK 7's call planner, pure: the lane-then-pool loop of `_ck7_call_body` and the refusal
+//! CHECK 7's call planner, pure: the reactive-then-planned loop of `_ck7_call_body` and the refusal
 //! ladder of `call_rune` (`call.rs`) over one [`CallWorld`] read up front, so the scheduler's
 //! `sentinel-call` task decides with no IO. The binary's `Sentinel::ck7_call_body` asks the
 //! same questions of the live host one at a time; this asks them of the snapshot, counting
@@ -32,20 +32,6 @@ pub fn check7_pool_decision(throttled: bool, free: i64, express_ready: bool) -> 
         i64::from(express_ready)
     } else {
         free
-    }
-}
-
-/// lane_rotate <last> <lanes> -> this pass's lane evaluation order (lib.sh:489): `last`
-/// (and everything before it) rotates to the end, so the lane that won last pass draws
-/// last this pass and the collective cap cannot be monopolised by whichever lane happens
-/// to sort first. `last` absent from `lanes` (or empty) leaves the order unchanged.
-pub fn lane_rotate(last: &str, lanes: &[String]) -> Vec<String> {
-    if last.is_empty() || lanes.is_empty() {
-        return lanes.to_vec();
-    }
-    match lanes.iter().position(|l| l == last) {
-        Some(i) => lanes[i + 1..].iter().chain(lanes[..=i].iter()).cloned().collect(),
-        None => lanes.to_vec(),
     }
 }
 
@@ -101,7 +87,6 @@ pub enum Capacity {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Rune {
     pub name: String,
-    pub lane: bool,
     pub single_flight: bool,
     pub elastic: bool,
     pub live: i64,
@@ -112,7 +97,7 @@ pub struct Rune {
     pub reactive: bool,
 }
 
-/// One row of `spira-claim urgent`: a P0 or REWORK bead. Only `p0` or `express` hold the lanes.
+/// One row of `spira-claim urgent`: a P0 or REWORK bead. Only `p0` or `express` hold the reactive runes.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Urgent {
     pub id: String,
@@ -120,10 +105,10 @@ pub struct Urgent {
     pub express: bool,
 }
 
-/// A live lane dwarf and the bead it works, with when it started.
+/// A live reactive dwarf and the bead it works, with when it started.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct LaneDwarf {
-    pub lane: String,
+pub struct ReactiveDwarf {
+    pub rune: String,
     pub bead: String,
     pub started_ms: u64,
 }
@@ -135,21 +120,19 @@ pub struct CallWorld {
     /// The release skew refusal (`skew_gate`), when this process is not the current release.
     pub skew: Option<String>,
     pub capacity: Capacity,
-    /// The task runes, then the lane runes, each in roster order (`task_and_lane_runes`).
+    /// The planned runes, then the reactive runes, each in roster order.
     pub task: Vec<Rune>,
-    pub lanes: Vec<Rune>,
+    pub reactive: Vec<Rune>,
     /// Live dwarves of no rune on the roster: they count toward the fleet ceiling only.
     pub other_live: i64,
     /// The limit of each bound resource class; a class absent here is unbound.
     pub limits: BTreeMap<String, i64>,
     pub max_live_dwarves: Option<i64>,
-    pub lanes_max_live: Option<i64>,
     pub throttled: bool,
     pub express_ready: bool,
-    /// `None` when the machine could not answer: the lanes yield, never "nothing urgent".
+    /// `None` when the machine could not answer: the reactive runes yield, never "nothing urgent".
     pub urgent: Option<Vec<Urgent>>,
-    pub lane_last: String,
-    pub lane_dwarves: Vec<LaneDwarf>,
+    pub reactive_dwarves: Vec<ReactiveDwarf>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -158,10 +141,10 @@ pub struct Call {
     pub require_express: bool,
 }
 
-/// Stop the youngest lane dwarf so a P0 express bead's builder can take its slot.
+/// Stop the youngest reactive dwarf so a P0 express bead's builder can take its slot.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Preempt {
-    pub lane: String,
+    pub rune: String,
     pub bead: String,
     pub express: String,
 }
@@ -180,8 +163,6 @@ pub struct Bound {
 pub struct CallPlan {
     pub calls: Vec<Call>,
     pub preempt: Option<Preempt>,
-    /// The lane that won this pass, for the next pass's rotation.
-    pub lane_last: Option<String>,
     /// Why nobody was called, when a gate closed for the whole pass.
     pub refusal: Option<String>,
     /// The task slots this pass found open before its own calls; `None` when no ceiling is configured.
@@ -197,12 +178,11 @@ struct Planner<'a> {
     live: BTreeMap<String, i64>,
     ready: BTreeMap<String, Option<i64>>,
     plan: CallPlan,
-    only_slot_held: Vec<String>,
 }
 
 impl Planner<'_> {
     fn rune(&self, f: &str) -> Option<&Rune> {
-        self.w.task.iter().chain(&self.w.lanes).find(|r| r.name == f)
+        self.w.task.iter().chain(&self.w.reactive).find(|r| r.name == f)
     }
 
     fn live_of(&self, f: &str) -> i64 {
@@ -211,10 +191,6 @@ impl Planner<'_> {
 
     fn live_total(&self) -> i64 {
         self.live.values().sum::<i64>() + self.w.other_live
-    }
-
-    fn lanes_live(&self) -> i64 {
-        self.w.lanes.iter().map(|l| self.live_of(&l.name)).sum()
     }
 
     fn ready_of(&self, f: &str) -> Option<i64> {
@@ -237,7 +213,7 @@ impl Planner<'_> {
 
     /// Live sessions of every rune that declares class `c`, planned calls included.
     fn held(&self, c: &str) -> i64 {
-        self.w.task.iter().chain(&self.w.lanes).filter(|r| r.uses.iter().any(|u| u == c)).map(|r| self.live_of(&r.name)).sum()
+        self.w.task.iter().chain(&self.w.reactive).filter(|r| r.uses.iter().any(|u| u == c)).map(|r| self.live_of(&r.name)).sum()
     }
 
     /// What is left under class `c`'s limit; `None` when the class is unbound.
@@ -258,7 +234,7 @@ impl Planner<'_> {
             .limits
             .iter()
             .map(|(c, limit)| {
-                let waiting = self.w.task.iter().chain(&self.w.lanes).filter(|r| r.uses.iter().any(|u| u == c)).map(|r| self.ready_of(&r.name).unwrap_or(0)).sum();
+                let waiting = self.w.task.iter().chain(&self.w.reactive).filter(|r| r.uses.iter().any(|u| u == c)).map(|r| self.ready_of(&r.name).unwrap_or(0)).sum();
                 let held = self.held(c);
                 Bound { class: c.clone(), limit: *limit, held, waiting, over: held > *limit }
             })
@@ -269,59 +245,21 @@ impl Planner<'_> {
         self.plan.log.push(line);
     }
 
-    /// `task_can_take_slot`: the first task rune that could take a lone remaining slot.
-    fn task_can_take_slot(&self) -> Option<(String, i64)> {
-        for t in &self.w.task {
-            let Some(n) = self.ready_of(&t.name) else { continue };
-            if n <= 0 || self.free(&t.name, None) <= 0 {
-                continue;
-            }
-            if self.tightest_room(t) == Some(0) {
-                continue;
-            }
-            if self.w.throttled && !self.w.express_ready {
-                continue;
-            }
-            return Some((t.name.clone(), n));
-        }
-        None
-    }
-
-    /// `call_rune` past the pass-wide gates: the fleet ceiling, the elastic and only-slot
-    /// holds, readiness and the persona's own cap. A planned call counts as live at once.
+    /// `call_rune` past the pass-wide gates: the fleet ceiling, the elastic
+    /// hold, readiness and the persona's own cap. A planned call counts as live at once.
     fn call(&mut self, f: &str, pool: Option<i64>, require_express: bool) -> bool {
         let Some(rune) = self.rune(f).cloned() else { return false };
         if let Some(max_live) = self.w.max_live_dwarves {
             let live_all = self.live_total();
             if live_all >= max_live {
-                let spill = rune.lane && self.w.lanes_max_live.is_some_and(|m| live_all < max_live + m && (!rune.single_flight || self.lanes_live() < m));
-                if !spill {
-                    self.log(format!("CHECK7 {f}: {live_all}/{max_live} dwarf(s) live across the whole fleet — not calling"));
-                    return false;
-                }
-                self.log(format!("CHECK7 {f}: {live_all}/{max_live} dwarf(s) live — a lane may spill over the ceiling"));
+                self.log(format!("CHECK7 {f}: {live_all}/{max_live} dwarf(s) live across the whole fleet — not calling"));
+                return false;
             }
             if rune.elastic && max_live - live_all == 1 {
                 let held = self.w.task.iter().filter(|t| !t.elastic).find_map(|t| self.ready_of(&t.name).filter(|n| *n > 0).map(|n| (t.name.clone(), n)));
                 if let Some((nef, n)) = held {
                     self.log(format!("CHECK7 {f}: 1 fleet slot remaining, held back — {nef} has {n} ready bead(s)"));
                     return false;
-                }
-            }
-            if rune.lane {
-                if let Some(lanes_max) = self.w.lanes_max_live.filter(|_| rune.single_flight) {
-                    let live_lanes = self.lanes_live();
-                    if live_lanes >= lanes_max {
-                        self.log(format!("CHECK7 {f}: {live_lanes}/{lanes_max} lane slot(s) in use — not calling"));
-                        return false;
-                    }
-                }
-                if max_live - live_all == 1 {
-                    if let Some((t, n)) = self.task_can_take_slot() {
-                        self.log(format!("CHECK7 {f}: 1 fleet slot remaining, held for task work — {t} has {n} ready; the lane spills once the fleet is full"));
-                        self.only_slot_held.push(f.to_string());
-                        return false;
-                    }
                 }
             }
         }
@@ -360,7 +298,7 @@ impl Planner<'_> {
         true
     }
 
-    /// `preempt_lane_for`: the fleet is full and a P0 express bead waits.
+    /// `preempt_for`: the fleet is full and a P0 express bead waits.
     fn preempt_for(&mut self, express: &str) {
         let Some(max_live) = self.w.max_live_dwarves else { return };
         let live = self.live_total();
@@ -369,25 +307,25 @@ impl Planner<'_> {
         }
         let ready_builder = self.w.task.iter().any(|t| self.ready_of(&t.name).is_some_and(|n| n > 0) && self.free(&t.name, None) > 0);
         if !ready_builder {
-            self.log(format!("CHECK7 lanes: express {express} waits but no task persona can take a slot — no lane preempted"));
+            self.log(format!("CHECK7 reactive: express {express} waits but no task persona can take a slot — no reactive dwarf preempted"));
             return;
         }
-        let youngest = self.w.lane_dwarves.iter().filter(|d| !d.bead.starts_with("sweep-")).max_by_key(|d| d.started_ms).cloned();
+        let youngest = self.w.reactive_dwarves.iter().filter(|d| !d.bead.starts_with("sweep-")).max_by_key(|d| d.started_ms).cloned();
         let Some(d) = youngest else {
-            self.log(format!("CHECK7 lanes: express {express} waits, {live}/{max_live} live, no lane dwarf to preempt"));
+            self.log(format!("CHECK7 reactive: express {express} waits, {live}/{max_live} live, no reactive dwarf to preempt"));
             return;
         };
-        if let Some(n) = self.live.get_mut(&d.lane) {
+        if let Some(n) = self.live.get_mut(&d.rune) {
             *n = (*n - 1).max(0);
         }
-        self.plan.preempt = Some(Preempt { lane: d.lane, bead: d.bead, express: express.to_string() });
+        self.plan.preempt = Some(Preempt { rune: d.rune, bead: d.bead, express: express.to_string() });
     }
 }
 
 /// The calls one CHECK 7 pass makes over `w`, and at most one preemption.
 pub fn plan(w: &CallWorld) -> CallPlan {
-    let mut p = Planner { w, live: BTreeMap::new(), ready: BTreeMap::new(), plan: CallPlan::default(), only_slot_held: vec![] };
-    for r in w.task.iter().chain(&w.lanes) {
+    let mut p = Planner { w, live: BTreeMap::new(), ready: BTreeMap::new(), plan: CallPlan::default() };
+    for r in w.task.iter().chain(&w.reactive) {
         p.live.insert(r.name.clone(), r.live);
         p.ready.insert(r.name.clone(), r.ready);
     }
@@ -408,29 +346,28 @@ pub fn plan(w: &CallWorld) -> CallPlan {
         p.plan.bound = p.bound();
         return p.plan;
     }
-    let lane_names: Vec<String> = w.lanes.iter().map(|l| l.name.clone()).collect();
     let mut pool: Option<i64> = None;
     p.plan.task_room = if w.throttled {
         Some(0)
     } else {
         [p.class_room(BUILD_DISK), w.max_live_dwarves.map(|m| m - p.live_total())].into_iter().flatten().min().map(|n| n.max(0))
     };
-    let mut rotated = lane_rotate(w.lane_last.trim(), &lane_names);
-    if !lane_names.is_empty() {
+    let mut yielded = false;
+    if !w.reactive.is_empty() {
         match &w.urgent {
             Some(u) if u.iter().any(|b| b.p0 || b.express) => {
                 if let Some(x) = u.iter().find(|b| b.express && b.p0) {
                     p.preempt_for(&x.id);
                 }
-                rotated.clear();
+                yielded = true;
             }
             Some(_) => {}
-            None => rotated.clear(),
+            None => yielded = true,
         }
     }
-    for f in &rotated {
-        if p.call(f, None, false) {
-            p.plan.lane_last = Some(f.clone());
+    if !yielded {
+        for r in &w.reactive {
+            p.call(&r.name, None, false);
         }
     }
     let mut require_express = false;
@@ -446,11 +383,6 @@ pub fn plan(w: &CallWorld) -> CallPlan {
             if ck7_fill_cap(fill, pool, w.max_live_dwarves.unwrap_or(4)) {
                 break;
             }
-        }
-    }
-    for f in std::mem::take(&mut p.only_slot_held) {
-        if p.call(&f, None, false) {
-            p.plan.lane_last = Some(f);
         }
     }
     p.plan.bound = p.bound();
@@ -509,25 +441,19 @@ mod tests {
     }
 
     #[test]
-    fn the_fleet_ceiling_holds_and_a_lane_spills_within_its_own_cap() {
-        let mut w = world();
-        w.task[0].live = 4;
-        assert!(plan(&w).calls.is_empty(), "4/4 live: nobody");
-        w.lanes = vec![Rune { lane: true, ..rune("triage", 1) }];
-        w.lanes_max_live = Some(1);
-        assert_eq!(called(&plan(&w)), ["triage"], "a lane may spill over the ceiling inside its own cap");
+    fn the_fleet_ceiling_is_a_backstop_nobody_starts_above() {
+        let w = CallWorld { task: vec![Rune { live: 40, ..rune("builder", 2) }], reactive: vec![Rune { reactive: true, ..rune("ops", 1) }], max_live_dwarves: Some(40), ..world() };
+        let p = plan(&w);
+        assert!(p.calls.is_empty(), "{:?}", p.log);
+        assert!(p.log.iter().any(|l| l.contains("40/40 dwarf(s) live across the whole fleet — not calling")), "{:?}", p.log);
     }
 
     #[test]
-    fn a_lane_persona_that_is_not_single_flight_is_not_held_to_the_lane_cap() {
-        let mut w = world();
-        w.task.clear();
-        w.lanes = vec![Rune { lane: true, live: 1, ..rune("other", 0) }, Rune { lane: true, ..rune("skuld", 1) }, Rune { lane: true, ..rune("mender", 1) }];
-        w.lanes_max_live = Some(1);
-        assert_eq!(called(&plan(&w)), ["skuld", "mender"]);
-        w.lanes[1].single_flight = true;
-        w.lanes[2].single_flight = true;
-        assert!(called(&plan(&w)).is_empty(), "single-flight lane personas still draw from the lane cap");
+    fn reactive_runes_are_called_before_planned_ones() {
+        let w = CallWorld { task: vec![rune("builder", 1)], reactive: vec![Rune { reactive: true, ..rune("ops", 1) }], max_live_dwarves: Some(4), ..world() };
+        let w = CallWorld { other_live: 3, ..w };
+        let p = plan(&w);
+        assert_eq!(called(&p), ["ops"], "{:?}", p.log);
     }
 
     #[test]
@@ -539,30 +465,27 @@ mod tests {
     }
 
     #[test]
-    fn urgent_work_yields_the_lanes_and_a_full_fleet_preempts_the_youngest_lane_dwarf() {
+    fn urgent_work_yields_the_reactive_runes_and_a_full_fleet_preempts_the_youngest_reactive_dwarf() {
         let mut w = world();
         w.task[0].live = 1;
-        w.lanes = vec![Rune { lane: true, live: 3, ..rune("triage", 1) }];
-        w.lane_dwarves = vec![LaneDwarf { lane: "triage".into(), bead: "sp-old".into(), started_ms: 1 }, LaneDwarf { lane: "triage".into(), bead: "sp-new".into(), started_ms: 9 }];
+        w.reactive = vec![Rune { reactive: true, live: 3, ..rune("triage", 1) }];
+        w.reactive_dwarves = vec![ReactiveDwarf { rune: "triage".into(), bead: "sp-old".into(), started_ms: 1 }, ReactiveDwarf { rune: "triage".into(), bead: "sp-new".into(), started_ms: 9 }];
         w.urgent = Some(vec![Urgent { id: "sp-x".into(), p0: true, express: true }]);
         let p = plan(&w);
-        assert_eq!(p.preempt, Some(Preempt { lane: "triage".into(), bead: "sp-new".into(), express: "sp-x".into() }));
-        assert_eq!(called(&p), ["builder"], "the freed slot goes to the task pool, never back to a lane");
+        assert_eq!(p.preempt, Some(Preempt { rune: "triage".into(), bead: "sp-new".into(), express: "sp-x".into() }));
+        assert_eq!(called(&p), ["builder"], "the freed slot goes to the planned runes, never back to a reactive one");
         w.urgent = None;
         let p = plan(&w);
-        assert!(p.preempt.is_none() && !called(&p).contains(&"triage"), "an unanswered urgent read yields the lanes");
+        assert!(p.preempt.is_none() && !called(&p).contains(&"triage"), "an unanswered urgent read yields the reactive runes");
     }
 
     #[test]
-    fn the_lane_that_won_last_draws_last() {
+    fn urgent_work_logs_no_preemption_when_no_reactive_rune_is_rostered() {
         let mut w = world();
-        w.task.clear();
-        w.lanes = vec![Rune { lane: true, single_flight: true, ..rune("a", 1) }, Rune { lane: true, single_flight: true, ..rune("b", 1) }];
-        w.lanes_max_live = Some(1);
-        w.lane_last = "a".into();
+        w.task[0].live = 4;
+        w.urgent = Some(vec![Urgent { id: "sp-x".into(), p0: true, express: true }]);
         let p = plan(&w);
-        assert_eq!(called(&p), ["b"]);
-        assert_eq!(p.lane_last.as_deref(), Some("b"));
+        assert!(p.preempt.is_none() && !p.log.iter().any(|l| l.contains("CHECK7 reactive:")), "{:?}", p.log);
     }
 
     fn room(w: &CallWorld) -> Option<i64> {

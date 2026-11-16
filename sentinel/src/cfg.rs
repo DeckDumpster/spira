@@ -194,11 +194,8 @@ pub struct Declared {
     pub land_maxsec: String,
     pub max_dwarves: Option<i64>,
     pub max_live_dwarves: Option<i64>,
-    pub lanes_max_live: Option<i64>,
     pub queue_throttle_override: String,
     pub call_lock_wait: u64,
-    /// `SPIRA_LANES`, for CHECK 7's own log line (call.rs) — display only.
-    pub lanes: String,
     /// Forwarded verbatim to every spawned dwarf's `--setenv` (dispatch.rs/call.rs).
     pub repo_map: String,
     /// Forwarded verbatim; empty means "the system gh" (dispatch.rs).
@@ -244,10 +241,8 @@ impl Declared {
             land_maxsec: spira_config::process::cfg("SPIRA_LAND_MAXSEC")?,
             max_dwarves: opt_i64("SPIRA_MAX_DWARVES")?,
             max_live_dwarves: opt_i64("SPIRA_MAX_LIVE_DWARVES")?,
-            lanes_max_live: opt_i64("SPIRA_LANES_MAX_LIVE")?,
             queue_throttle_override: spira_config::process::cfg("SPIRA_QUEUE_THROTTLE_OVERRIDE")?,
             call_lock_wait: spira_config::process::cfg_parse::<u64>("SPIRA_CALL_LOCK_WAIT")?,
-            lanes: spira_config::process::cfg("SPIRA_LANES")?,
             repo_map: spira_config::process::cfg("SPIRA_REPO_MAP")?,
             gh: spira_config::process::cfg("SPIRA_GH")?,
             batch_maxpar: spira_config::process::cfg("SPIRA_BATCH_MAXPAR")?,
@@ -278,10 +273,8 @@ impl Declared {
             land_maxsec: "5400".into(),
             max_dwarves: None,
             max_live_dwarves: None,
-            lanes_max_live: None,
             queue_throttle_override: String::new(),
             call_lock_wait: 30,
-            lanes: "ops groomer qa mimir czar warden mender pilgrimage skuld".into(),
             repo_map: String::new(),
             gh: String::new(),
             batch_maxpar: String::new(),
@@ -346,8 +339,6 @@ pub struct Cfg {
     /// per-persona cap and above the pool. `None` means no ceiling (today's behaviour).
     /// `ck7_fill_cap`'s own per-persona-per-pass cap defaults this to 4 when unset.
     pub max_live_dwarves: Option<i64>,
-    /// `SPIRA_LANES_MAX_LIVE`: the collective cap on lane dwarves. `None` means no cap.
-    pub lanes_max_live: Option<i64>,
     /// `SPIRA_QUEUE_THROTTLE_OVERRIDE`: "off" pins the task pool unthrottled regardless of
     /// the admission-throttle stamp.
     pub queue_throttle_override: String,
@@ -359,14 +350,8 @@ pub struct Cfg {
     /// `SPIRA_CALL_LOCK_WAIT` (default 30s): how long `ck7_call_pass` waits on
     /// `call.lock` before giving up this pass to whoever already holds it.
     pub call_lock_wait: u64,
-    /// `$SPIRA_RUN/lane-round-robin`: the lane rune called last pass.
-    pub lane_round_robin: PathBuf,
     /// `$SPIRA_RUN/call.lock`: the one lock every `ck7_call_pass` caller serializes on.
     pub call_lock: PathBuf,
-    /// `SPIRA_LANES` as declared — call.rs's own CHECK 7 lane log line. From `Declared`,
-    /// never read ad hoc off `Context` (that used to default to "none" when unset; the key
-    /// itself always resolves now — `spira/conf.d/SPIRA_LANES` declares the default).
-    pub lanes_declared: String,
     /// For the systemd-run --setenv lists: the raw values, "" when unset.
     pub raw: BTreeMap<String, String>,
 }
@@ -473,7 +458,6 @@ impl Cfg {
             capacity_pause: dir("SPIRA_CAPACITY_PAUSE", "capacity-pause"),
             max_dwarves: d.max_dwarves,
             max_live_dwarves: d.max_live_dwarves,
-            lanes_max_live: d.lanes_max_live,
             queue_throttle_override: d.queue_throttle_override,
             throttle_stamp: c
                 .get("SPIRA_THROTTLE_STAMP")
@@ -482,9 +466,7 @@ impl Cfg {
                 .unwrap_or_else(|| run.join("queue-throttled")),
             pass_budget_secs: num("SPIRA_SENTINEL_PASS_BUDGET_SECS", 90),
             call_lock_wait: d.call_lock_wait,
-            lane_round_robin: run.join("lane-round-robin"),
             call_lock: run.join("call.lock"),
-            lanes_declared: d.lanes,
             raw,
             home,
         }
