@@ -81,6 +81,7 @@ fn env(dir: &Path) -> Env {
         rebase_stale_bin: "rebase-stale".into(),
         testenv_bin: "testenv".into(),
         gate_bin: "gate".into(),
+        test_registry_bin: None,
         round_slots: None,
         hypervisor: Hypervisor { host_mib: 0, round_vm_mib: 0, runner_mib: 0 },
         poll: Duration::from_secs(1),

@@ -1131,10 +1131,6 @@ fn install_fault_outcome(
     }
 }
 
-/// queue.local's terminal step: `terminal_ready` gates the round on the every-member-named,
-/// bins-present contract before anything changes, then the round's own `queue round certify`
-/// and `queue round land` do the rest. Never rebuilds binaries (law-deploy-the-tested-artifacts).
-#[allow(clippy::too_many_arguments)]
 fn registry_clearing_line(env_: &Env, repo: &Repo, beads: &[String]) -> Option<String> {
     match io::clear_landed_rows(env_, beads) {
         Ok(ids) if ids.is_empty() => None,
@@ -1143,6 +1139,10 @@ fn registry_clearing_line(env_: &Env, repo: &Repo, beads: &[String]) -> Option<S
     }
 }
 
+/// queue.local's terminal step: `terminal_ready` gates the round on the every-member-named,
+/// bins-present contract before anything changes, then the round's own `queue round certify`
+/// and `queue round land` do the rest. Never rebuilds binaries (law-deploy-the-tested-artifacts).
+#[allow(clippy::too_many_arguments)]
 fn finish_local_round(
     env_: &Env,
     repo: &Repo,
@@ -2738,18 +2738,19 @@ mod tests {
         let mut env = io::lifecycle_tests_env(d.path());
         let repo = Repo { name: "alpha".into(), path: d.path().to_path_buf(), base: "main".into(), forge: PathBuf::new(), land: Land::Local };
         let calls = d.path().join("calls");
-        env.test_registry_bin = d.path().join("registry-stub");
-        testkit::write_exe(&env.test_registry_bin, &format!("#!/bin/sh\necho \"$@\" >> {}\necho suite:a.sh\necho suite:b.sh\n", calls.display()));
+        let stub = d.path().join("registry-stub");
+        env.test_registry_bin = Some(stub.clone());
+        testkit::write_exe(&stub, &format!("#!/bin/sh\necho \"$@\" >> {}\necho suite:a.sh\necho suite:b.sh\n", calls.display()));
         let beads = vec!["sp-a".to_string(), "sp-b".to_string()];
         assert_eq!(
             registry_clearing_line(&env, &repo, &beads).unwrap(),
             "batcher alpha: landing cleared registry row(s) suite:a.sh suite:b.sh"
         );
         assert_eq!(std::fs::read_to_string(&calls).unwrap(), "clear-landed --bead sp-a --bead sp-b --actor batcher\n");
-        testkit::write_exe(&env.test_registry_bin, "#!/bin/sh\necho boom >&2\nexit 3\n");
+        testkit::write_exe(&stub, "#!/bin/sh\necho boom >&2\nexit 3\n");
         let said = registry_clearing_line(&env, &repo, &beads).unwrap();
         assert!(said.starts_with("batcher alpha: landed but registry rows were not cleared:") && said.contains("boom"), "{said}");
-        testkit::write_exe(&env.test_registry_bin, "#!/bin/sh\nexit 0\n");
+        testkit::write_exe(&stub, "#!/bin/sh\nexit 0\n");
         assert_eq!(registry_clearing_line(&env, &repo, &beads), None, "nothing cleared, nothing said");
     }
 

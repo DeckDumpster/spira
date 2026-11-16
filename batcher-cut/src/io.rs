@@ -80,8 +80,8 @@ pub struct Env {
     pub testenv_bin: PathBuf,
     /// The `gate` program, which runs one fence of a subset tree (`gate fence-run`).
     pub gate_bin: PathBuf,
-    /// The `test-registry` program, by bare name: a landing clears the rows that name its members.
-    pub test_registry_bin: PathBuf,
+    /// The release's `test-registry` program (None when it ships none; clearing is then said, not fatal): a landing clears the rows that name its members.
+    pub test_registry_bin: Option<PathBuf>,
     /// The round's slot budget for concurrent attribution (DESIGN.md §4.2):
     /// SPIRA_BATCHER_ROUND_SLOTS, else maxpar + 4.
     pub round_slots: Option<u32>,
@@ -2405,7 +2405,8 @@ pub fn close_superseded_reds(repo: &Repo, head: &str) {
 
 /// A round landed: the registry rows naming its members are over. Returns the cleared test ids.
 pub fn clear_landed_rows(env: &Env, beads: &[String]) -> Result<Vec<String>, String> {
-    let mut cmd = Command::new(&env.test_registry_bin);
+    let bin = env.test_registry_bin.as_ref().ok_or("test-registry is not in the release")?;
+    let mut cmd = Command::new(bin);
     cmd.arg("clear-landed");
     for b in beads {
         cmd.args(["--bead", b]);
@@ -5134,7 +5135,7 @@ pub fn lifecycle_tests_env(dir: &Path) -> Env {
         rebase_stale_bin: dir.join("rebase-stale"),
         testenv_bin: dir.join("testenv"),
         gate_bin: dir.join("gate"),
-        test_registry_bin: dir.join("test-registry"),
+        test_registry_bin: Some(dir.join("test-registry")),
         round_slots: None,
         hypervisor: Hypervisor {
             host_mib: 0,
