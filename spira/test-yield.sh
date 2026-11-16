@@ -75,7 +75,7 @@ BIN_DIR="$(dirname "$(command -v gate)")" || bail "gate is not on PATH"
 [ -z "${SPIRA_RELEASE:-}" ] || BIN_DIR="$SPIRA_RELEASE/bin:$BIN_DIR"
 rungate() {              # rungate <branch> [VAR=VAL ...]
     local br="$1"; shift
-    tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB_NONE" SPIRA_REPO_MAP="$MAP"
+    tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB_NONE" SPIRA_REPO_MAP="$MAP" SPIRA_TEST_REGISTRY_PATH="$RUN/test-registry.sqlite"
     env -i SPIRA_RELEASE="$SPIRA_RELEASE" HOME="$HOMEDIR" PATH="$SH:$BIN_DIR:/usr/bin:/bin" \
         GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t \
         SPIRA_CONF="$SPIRA_CONF_NONE" SPIRA_REPO="$REPO" SPIRA_TOML="$SPIRA_TOML" \
