@@ -1910,7 +1910,7 @@ impl<'w, W: World> Trial<'w, W> {
             w.append(
                 &self.s.gate_log,
                 &format!(
-                    "{} {} {} waited={}s ran={}s rc={} {}{}{}{}{}{}{}{} test_clock={}s\n",
+                    "{} {} {} waited={}s ran={}s rc={} {}{}{}{}{}{}{}{}{} test_clock={}s\n",
                     w.utc(),
                     self.s.repo_name,
                     self.a.branch,
