@@ -1007,7 +1007,7 @@ mod tests {
 
     #[test]
     fn the_shipped_runes_declare_single_flight_for_exactly_the_sweeps_over_shared_state() {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/runes");
+        let dir = crate::resolve::locate_home_for_process().expect("SPIRA_HOME names the harness tree").join("runes");
         let mut single = vec![];
         let mut seen = 0;
         for d in [dir.clone(), dir.join("disabled")] {
