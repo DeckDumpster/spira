@@ -229,14 +229,16 @@ pub fn spawns(src: &str) -> Vec<String> {
 }
 
 /// The source of the family-A task module `file` (a stem under `src/tasks/a/`).
+#[cfg(any(test, feature = "integration"))]
 pub fn module_source(file: &str) -> String {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/tasks/a").join(format!("{file}.rs"));
+    let path = testkit::manifest_dir().join("src/tasks/a").join(format!("{file}.rs"));
     std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
 }
 
 /// Each of `keys` that has no registration under `spira/conf.d` in this tree.
+#[cfg(any(test, feature = "integration"))]
 pub fn unregistered(keys: &[&str]) -> Vec<String> {
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/conf.d");
+    let dir = spira_config::resolve::locate_home_for_process().unwrap().join("conf.d");
     keys.iter().filter(|k| !dir.join(k).exists()).map(|k| k.to_string()).collect()
 }
 

@@ -179,7 +179,7 @@ mod escape_tests {
 
     #[test]
     fn only_one_escaper_exists_in_the_crate() {
-        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/src");
+        let dir = testkit::manifest_dir().join("src");
         let needle = ["replace('", "\\\\'", "'"].concat();
         for e in std::fs::read_dir(dir).unwrap().flatten() {
             let p = e.path();

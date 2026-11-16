@@ -35,7 +35,7 @@ fn the_matcher_sees_every_launcher_and_ignores_test_code() {
 
 #[test]
 fn no_task_module_launches_a_process() {
-    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let src = testkit::manifest_dir().join("src");
     let mut files = rs_files(&src.join("watchers"));
     files.extend(rs_files(&src.join("tasks")));
     files.extend([src.join("tasks.rs"), src.join("world.rs"), src.join("forge.rs"), src.join("reconcile_host.rs")].into_iter().filter(|p| p.exists()));

@@ -211,7 +211,7 @@ mod tests {
 
     #[test]
     fn the_gantt_read_is_covered_by_one_event_index_so_a_day_of_transitions_touches_no_table_row() {
-        let migrations = concat!(env!("CARGO_MANIFEST_DIR"), "/../lifecycle/migrations");
+        let migrations = spira_config::resolve::checkout_root_for_process().unwrap().join("lifecycle/migrations");
         let indexes: Vec<String> = std::fs::read_dir(migrations)
             .unwrap()
             .flat_map(|f| std::fs::read_to_string(f.unwrap().path()).unwrap().lines().map(String::from).collect::<Vec<_>>())

@@ -245,7 +245,7 @@ mod tests {
     // covers: UC-ops-detection-remediation-24
     #[test]
     fn every_czar_class_the_conf_declares_defaults_to_shadow_and_names_its_key() {
-        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../spira/conf.d");
+        let dir = spira_config::resolve::locate_home_for_process().unwrap().join("conf.d");
         let classes: Vec<String> = std::fs::read_dir(dir)
             .unwrap()
             .filter_map(|e| e.unwrap().file_name().into_string().ok()?.strip_prefix("SPIRA_CZAR_STAGE_").map(|c| c.to_lowercase().replace('_', "-")))

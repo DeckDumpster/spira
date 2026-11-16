@@ -4,7 +4,7 @@
     #[test]
     fn a_declared_key_answers_the_same_as_the_full_resolve_and_the_full_resolve_owns_the_rest() {
         let dir = testkit::TempDir::new("spira-config-declared-value");
-        let tree = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
+        let tree = crate::resolve::locate_home_for_process().unwrap();
         let declare: BTreeMap<String, String> = [("SPIRA_INSTANCE", "prod"), ("SPIRA_ASK_LABEL", "pinned-ask"), ("SPIRA_AGENT", "pinned-agent")]
             .iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))

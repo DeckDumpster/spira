@@ -6,7 +6,7 @@ use spira_config::SpiraSection;
 use std::fs;
 
 fn tools_of(persona: &str) -> Vec<String> {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../spira/runes/");
+    let path = spira_config::resolve::locate_home_for_process().unwrap().join("runes").display().to_string() + "/";
     let text = fs::read_to_string(format!("{path}{persona}.rune"))
         .unwrap_or_else(|e| panic!("{persona}.rune: {e}"));
     let (_, section) = persona_section(

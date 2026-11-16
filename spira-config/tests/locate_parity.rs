@@ -14,8 +14,7 @@ use std::fs;
 use std::path::PathBuf;
 
 fn repo_root() -> PathBuf {
-    // CARGO_MANIFEST_DIR is `<repo>/spira-config`; conf.sh lives at `<repo>/spira/conf.sh`.
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf()
+    spira_config::resolve::checkout_root_for_process().unwrap()
 }
 
 /// Pulls the verbatim body of `name() { ... }` out of `text` — the first line matching

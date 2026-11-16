@@ -21,7 +21,7 @@
         let map = t.path().join("my-repo-map");
         std::fs::write(&map, "spira|/nowhere|local|local/main\n").unwrap();
         let toml = crate::fixture_toml_file(t.path(), &[("SPIRA_REPO_MAP".to_string(), map.display().to_string())].into_iter().collect());
-        let home = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
+        let home = crate::resolve::locate_home_for_process().unwrap();
         let mut env = std::collections::BTreeMap::new();
         env.insert("HOME".to_string(), t.path().display().to_string());
         env.insert("SPIRA_REPO".to_string(), t.path().display().to_string());
@@ -79,7 +79,7 @@
         let release_spira = release.join("spira");
         std::fs::create_dir_all(&release_spira).unwrap();
         std::os::unix::fs::symlink(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/conf.d"),
+            crate::resolve::locate_home_for_process().unwrap().join("conf.d"),
             release_spira.join("conf.d"),
         )
         .unwrap();

@@ -2,7 +2,7 @@ use std::path::Path;
 use std::process::{Command, Output};
 
 fn admit(run: &Path, inner: Option<&str>, args: &[&str]) -> Output {
-    let mut c = Command::new(env!("CARGO_BIN_EXE_spira-admit"));
+    let mut c = Command::new(testkit::bin_exe("spira-admit"));
     c.env_clear().env("SPIRA_RUN", run).args(args);
     if let Some(i) = inner {
         c.env("SPIRA_ADMIT_INNER", i);

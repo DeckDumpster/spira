@@ -282,7 +282,7 @@ version_probe = ""
     // covers: UC-config-store-preflight-08
     #[test]
     fn every_program_the_shipped_manifest_declares_has_a_tier_a_purpose_and_a_version_probe() {
-        let text = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../spira/deps.toml")).unwrap();
+        let text = std::fs::read_to_string(crate::resolve::locate_home_for_process().unwrap().join("deps.toml")).unwrap();
         let manifest = parse(&text).unwrap();
         assert!(manifest.deps.len() >= 8, "the manifest loaded: {} programs", manifest.deps.len());
         let raw: toml::Value = text.parse().unwrap();

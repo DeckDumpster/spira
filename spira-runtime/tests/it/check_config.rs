@@ -1,7 +1,6 @@
 //! `spira-runtime check-config` against the complete fixture: every key the service reads is
 //! registered and declared, and a value the service refuses fails the check, named.
 
-use std::path::Path;
 use std::process::Command;
 
 /// The fixture leaves the store's socket undeclared, which the service refuses on its own.
@@ -10,8 +9,8 @@ const SERVICE: &[(&str, &str)] = &[("SPIRA_LC_SOCKET", "/fixture/run/lc.sock")];
 fn check_config(declare: &[(&str, &str)]) -> (bool, String) {
     let dir = testkit::TempDir::new("runtime-check-config");
     let toml = spira_config::process::fixture_toml(&dir, &[SERVICE, declare].concat());
-    let home = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
-    let out = Command::new(env!("CARGO_BIN_EXE_spira-runtime")).arg("check-config").env("SPIRA_TOML", &toml).env("SPIRA_HOME", &home).env("HOME", dir.path()).output().expect("spira-runtime runs");
+    let home = spira_config::resolve::locate_home_for_process().unwrap();
+    let out = Command::new(testkit::bin_exe("spira-runtime")).arg("check-config").env("SPIRA_TOML", &toml).env("SPIRA_HOME", &home).env("HOME", dir.path()).output().expect("spira-runtime runs");
     (out.status.success(), format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)))
 }
 

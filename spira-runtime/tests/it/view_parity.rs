@@ -4,7 +4,6 @@
 //! hunk daemon that verifies every signature it is shown, and launches a stubbed `tmux`.
 
 use std::fs;
-use std::path::Path;
 use std::sync::Arc;
 
 use runtime::ports::VirtualClock;
@@ -30,7 +29,7 @@ fn without_a_view_program_the_handler_schedules_nothing() {
 
 #[test]
 fn the_watchers_manifest_no_longer_carries_the_row() {
-    let manifest = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/watchers")).unwrap();
+    let manifest = fs::read_to_string(spira_config::resolve::locate_home_for_process().unwrap().join("watchers")).unwrap();
     assert!(manifest.lines().any(|l| l.starts_with("perf-watch|")), "the scan must be able to see a row");
     assert!(!manifest.lines().any(|l| l.trim_start_matches('?').starts_with("view|")), "spira-runtime hosts the view follower");
 }

@@ -897,7 +897,7 @@ mod tests {
     }
 
     fn shipped_rune_texts() -> Vec<(String, String)> {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/runes");
+        let dir = crate::resolve::locate_home_for_process().unwrap().join("runes");
         let mut v: Vec<(String, String)> = std::fs::read_dir(dir)
             .unwrap()
             .filter_map(|e| e.ok().map(|e| e.path()))
@@ -921,7 +921,7 @@ mod tests {
         write_rune(&ws, "newcomer", "RUNE_LABELS=a,d\n");
         assert!(spira_runes(&ws, None).contains("newcomer"), "installing a rune file is the whole registration");
 
-        let shipped = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
+        let shipped = crate::resolve::locate_home_for_process().unwrap();
         let _env = testkit::env(&[("SPIRA_RUNES_DIR", Some(shipped.join("runes").to_str().unwrap()))]);
         let split = |s: String| s.split_whitespace().map(str::to_string).collect::<std::collections::BTreeSet<_>>();
         let all = split(spira_runes(&shipped, None));
@@ -984,7 +984,7 @@ mod tests {
     #[test]
     fn the_shipped_runes_declare_build_disk_for_exactly_the_builder_and_the_reactive_lanes() {
         let ws = testkit::TempDir::new("spira-config-runes-shipped");
-        let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/runes");
+        let src = crate::resolve::locate_home_for_process().expect("SPIRA_HOME names the harness tree").join("runes");
         for dir in [src.clone(), src.join("disabled")] {
             for e in std::fs::read_dir(&dir).unwrap().flatten().filter(|e| e.path().extension().is_some_and(|x| x == "rune")) {
                 write_rune(&ws, &e.path().file_stem().unwrap().to_string_lossy(), &std::fs::read_to_string(e.path()).unwrap());
@@ -1007,7 +1007,7 @@ mod tests {
 
     #[test]
     fn the_shipped_runes_declare_single_flight_for_exactly_the_sweeps_over_shared_state() {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/runes");
+        let dir = crate::resolve::locate_home_for_process().expect("SPIRA_HOME names the harness tree").join("runes");
         let mut single = vec![];
         let mut seen = 0;
         for d in [dir.clone(), dir.join("disabled")] {

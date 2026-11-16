@@ -627,7 +627,7 @@ mod tests {
         let planted = "bd create -l \"plan,repo:sentinel-test-literal\" and repo:<name> and repo:${SPIRA_HOME_REPO}";
         assert_eq!(bare_repo_literals(planted), vec!["repo:sentinel-test-literal"], "positive control: the matcher fires on a literal only");
 
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/runes");
+        let dir = spira_config::resolve::locate_home_for_process().unwrap().join("runes");
         let mut checked = 0;
         let mut found = Vec::new();
         for e in std::fs::read_dir(&dir).unwrap().filter_map(Result::ok) {

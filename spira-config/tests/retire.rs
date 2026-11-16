@@ -27,7 +27,7 @@ fn tree() -> testkit::TempDir {
 }
 
 fn retire(root: &Path, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_spira-config")).env_clear().arg("retire").args(args).args(if args.contains(&"--bead") { &[][..] } else { &["--bead", "sp-x"][..] }).arg("--tree").arg(root).output().unwrap()
+    Command::new(testkit::bin_exe("spira-config")).env_clear().arg("retire").args(args).args(if args.contains(&"--bead") { &[][..] } else { &["--bead", "sp-x"][..] }).arg("--tree").arg(root).output().unwrap()
 }
 
 fn read(root: &Path, rel: &str) -> String {
@@ -97,7 +97,7 @@ fn retiring_a_key_twice_is_refused() {
 #[test]
 fn retire_without_a_bead_exits_non_zero_and_prints_the_usage() {
     let t = tree();
-    let out = Command::new(env!("CARGO_BIN_EXE_spira-config")).env_clear().args(["retire", "spira.old_knob", "--tree"]).arg(t.path()).output().unwrap();
+    let out = Command::new(testkit::bin_exe("spira-config")).env_clear().args(["retire", "spira.old_knob", "--tree"]).arg(t.path()).output().unwrap();
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("--bead"));
     assert!(t.path().join("spira/conf.d/SPIRA_OLD_KNOB").exists());
@@ -106,7 +106,7 @@ fn retire_without_a_bead_exits_non_zero_and_prints_the_usage() {
 #[test]
 fn two_branches_each_retiring_a_key_merge_clean_and_the_delta_lists_both() {
     let t = tree();
-    std::fs::write(t.path().join(".gitattributes"), std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../.gitattributes")).unwrap()).unwrap();
+    std::fs::write(t.path().join(".gitattributes"), std::fs::read_to_string(spira_config::resolve::checkout_root_for_process().unwrap().join(".gitattributes")).unwrap()).unwrap();
     testkit::git(t.path(), &["add", "-A"]);
     let id = ["-c", "user.name=t", "-c", "user.email=t@t"];
     let commit = |msg: &str| testkit::git(t.path(), &[&id[..], &["commit", "-qm", msg]].concat());

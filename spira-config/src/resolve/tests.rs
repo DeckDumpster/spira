@@ -111,7 +111,7 @@
     #[test]
     fn a_declared_mail_readers_beats_the_registered_default() {
         let ws = testkit::TempDir::new("spira-config-mail-readers");
-        let home = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
+        let home = crate::resolve::locate_home_for_process().unwrap();
         let repo = home.parent().unwrap().to_path_buf();
         let toml = crate::fixture_toml_file(ws.path(), &env(&[("SPIRA_MAIL_READERS", "concierge=echo wake")]));
         let e = env(&[("HOME", "/h"), ("SPIRA_TOML", toml.to_str().unwrap())]);
@@ -125,14 +125,14 @@
     fn resolve_ask_label_reads_the_declaration_never_the_environment() {
         let ws = testkit::TempDir::new("spira-config-ask-label");
         // The REAL registry, where SPIRA_ASK_LABEL is a key.
-        let home = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
+        let home = crate::resolve::locate_home_for_process().unwrap();
         let toml = crate::fixture_toml_file(ws.path(), &env(&[("SPIRA_ASK_LABEL", "declared-ask")]));
         let e = env(&[("HOME", "/h"), ("SPIRA_TOML", toml.to_str().unwrap()), ("SPIRA_ASK_LABEL", "from-the-environment")]);
         assert_eq!(resolve_ask_label(&e, &home).unwrap(), "declared-ask");
     }
 
     fn shipped_conf_d() -> std::path::PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/conf.d")
+        crate::resolve::locate_home_for_process().unwrap().join("conf.d")
     }
 
     fn declared(pairs: &[(&str, &str)]) -> crate::SpiraToml {

@@ -54,7 +54,7 @@ fn walk(dir: &Path, out: &mut Vec<String>) {
 #[test]
 fn no_unmarked_fork_edge_remains_in_src() {
     let mut hits = Vec::new();
-    walk(&Path::new(env!("CARGO_MANIFEST_DIR")).join("src"), &mut hits);
+    walk(&testkit::manifest_dir().join("src"), &mut hits);
     assert!(hits.is_empty(), "unmarked fork edges: {hits:?}");
 }
 
