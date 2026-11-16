@@ -275,11 +275,9 @@ pub fn manifest_dir() -> PathBuf {
 
 /// Where the built binary `name` sits relative to a test executable in `<target>/<profile>/deps/`.
 fn bin_beside(test_exe: &Path, name: &str) -> PathBuf {
-    test_exe
-        .parent()
-        .and_then(Path::parent)
-        .unwrap_or(Path::new(""))
-        .join(name)
+    let profile = test_exe.parent().and_then(Path::parent);
+    let profile = profile.unwrap_or_else(|| panic!("the test executable {} is not under <target>/<profile>/deps", test_exe.display()));
+    profile.join(name)
 }
 
 /// The built binary `name`, beside the running test executable (`<target>/<profile>/<name>`),
@@ -319,6 +317,12 @@ mod tests {
             bin_beside(Path::new("/t/debug/deps/x-1a2b"), "a"),
             PathBuf::from("/t/debug/a")
         );
+    }
+
+    #[test]
+    #[should_panic(expected = "is not under <target>/<profile>/deps")]
+    fn bin_beside_refuses_an_exe_with_no_profile_directory() {
+        bin_beside(Path::new("x"), "a");
     }
 
     #[test]
