@@ -274,27 +274,34 @@ impl Fence {
 }
 
 /// Expiry by key, and the same entries ordered by expiry so the due ones are read without a
-/// scan of the rest.
+/// scan of the rest. Every insert stamps its entry, so a writer undoes only what it wrote.
 #[derive(Default)]
 struct Deadlines {
-    by_key: BTreeMap<String, u64>,
+    by_key: BTreeMap<String, (u64, u64)>,
     by_at: BTreeSet<(u64, String)>,
+    stamps: u64,
 }
 
 impl Deadlines {
     fn get(&self, key: &str) -> Option<u64> {
-        self.by_key.get(key).copied()
+        self.by_key.get(key).map(|e| e.0)
     }
 
-    fn insert(&mut self, key: String, at: u64) {
-        if let Some(old) = self.by_key.insert(key.clone(), at) {
+    fn stamp(&self, key: &str) -> Option<u64> {
+        self.by_key.get(key).map(|e| e.1)
+    }
+
+    fn insert(&mut self, key: String, at: u64) -> u64 {
+        self.stamps += 1;
+        if let Some((old, _)) = self.by_key.insert(key.clone(), (at, self.stamps)) {
             self.by_at.remove(&(old, key.clone()));
         }
         self.by_at.insert((at, key));
+        self.stamps
     }
 
     fn remove(&mut self, key: &str) {
-        if let Some(old) = self.by_key.remove(key) {
+        if let Some((old, _)) = self.by_key.remove(key) {
             self.by_at.remove(&(old, key.to_string()));
         }
     }
@@ -571,7 +578,7 @@ impl<B: Backend> Contract<B> {
             .by_key
             .iter()
             .filter(|(k, _)| k.starts_with(LOCKS_PREFIX))
-            .map(|(k, d)| (k.clone(), *d))
+            .map(|(k, d)| (k.clone(), d.0))
             .collect();
         *c.deadlines.lock().unwrap_or_else(lock_err) = deadlines;
         Ok(c)
@@ -1347,18 +1354,23 @@ impl<B: Backend> Contract<B> {
         // Staged expiries go in before the backend commit, so a plan at a head that includes
         // this write never reads its lock as expired; only the removals wait for the result.
         let now = self.now_ms();
-        let mut prior: Vec<(String, Option<u64>, Option<u64>, u64)> = Vec::new();
+        let mut set: Vec<(String, Option<u64>, u64)> = Vec::new();
+        let mut cleared: Vec<(String, Option<u64>)> = Vec::new();
         {
             let mut d = crate::phases::time(crate::phases::Phase::DeadlinesWait, || self.deadlines.lock().unwrap_or_else(lock_err));
             let mut shown = self.shown.write().unwrap_or_else(lock_err);
             for s in &staged {
-                if let Some(ttl) = s.value.as_ref().and_then(|v| held_lifetime(&s.key, v)) {
-                    let at = now.saturating_add(ttl);
-                    prior.push((s.key.clone(), d.get(&s.key), shown.get(&s.key).copied(), at));
-                    d.insert(s.key.clone(), at);
-                    if s.key.starts_with(LOCKS_PREFIX) {
-                        shown.insert(s.key.clone(), at);
+                match s.value.as_ref().and_then(|v| held_lifetime(&s.key, v)) {
+                    Some(ttl) => {
+                        let at = now.saturating_add(ttl);
+                        let was = d.get(&s.key);
+                        let stamp = d.insert(s.key.clone(), at);
+                        if s.key.starts_with(LOCKS_PREFIX) {
+                            shown.insert(s.key.clone(), at);
+                        }
+                        set.push((s.key.clone(), was, stamp));
                     }
+                    None => cleared.push((s.key.clone(), d.stamp(&s.key))),
                 }
             }
         }
@@ -1367,28 +1379,30 @@ impl<B: Backend> Contract<B> {
             let mut d = crate::phases::time(crate::phases::Phase::DeadlinesWait, || self.deadlines.lock().unwrap_or_else(lock_err));
             let mut shown = self.shown.write().unwrap_or_else(lock_err);
             if matches!(res, Err(Error::Stale { .. })) {
-                // Restore only an entry still holding what this commit wrote: a later writer's is its own.
-                for (key, was, was_shown, at) in prior {
-                    if d.get(&key) == Some(at) {
-                        match was {
-                            Some(w) => d.insert(key.clone(), w),
-                            None => d.remove(&key),
-                        }
+                for (key, was, stamp) in set {
+                    if d.stamp(&key) != Some(stamp) {
+                        continue;
                     }
-                    if shown.get(&key) == Some(&at) {
-                        match was_shown {
-                            Some(w) => shown.insert(key, w),
-                            None => shown.remove(&key),
-                        };
+                    match was {
+                        Some(at) => {
+                            d.insert(key.clone(), at);
+                            if key.starts_with(LOCKS_PREFIX) {
+                                shown.insert(key, at);
+                            }
+                        }
+                        None => {
+                            d.remove(&key);
+                            shown.remove(&key);
+                        }
                     }
                 }
                 return res;
             }
             if res.is_ok() {
-                for s in &staged {
-                    if s.value.as_ref().and_then(|v| held_lifetime(&s.key, v)).is_none() {
-                        d.remove(&s.key);
-                        shown.remove(&s.key);
+                for (key, stamp) in cleared {
+                    if d.stamp(&key) == stamp {
+                        d.remove(&key);
+                        shown.remove(&key);
                     }
                 }
             }
@@ -1749,5 +1763,50 @@ mod phase_tests {
         a.join().unwrap().unwrap();
         b.join().unwrap();
         assert!(got.expect("B was blocked behind the commit").unwrap().succeeded, "the renewed lock read as absent");
+    }
+
+    #[test]
+    fn a_removal_applied_after_the_commit_leaves_a_lock_a_later_writer_retook() {
+        let clock = VirtualClock::new(1_000_000);
+        let c = Arc::new(Contract::open(Parked::new(), Ports::virtual_clock(&clock), Config { min_lock_ttl_ms: 1_000 }).unwrap());
+        let fence = c.lock("r", 10_000, &Request::new("l0", "t", "lock")).unwrap();
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        *c.backend().after.lock().unwrap() = Some((entered_tx, release_rx));
+        let a = {
+            let (c, f) = (c.clone(), fence.clone());
+            std::thread::spawn(move || c.release(&f, &Request::new("rel", "t", "release")))
+        };
+        entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        let retaken = within_50ms({
+            let c = c.clone();
+            move || c.lock("r", 10_000, &Request::new("l1", "t", "lock")).is_ok()
+        });
+        release_tx.send(()).unwrap();
+        a.join().unwrap().unwrap();
+        assert_eq!(retaken, Some(true));
+        assert!(c.live(&fence.key()), "the release erased the deadline of the lock taken after it");
+    }
+
+    #[test]
+    fn a_stale_commit_restores_nothing_a_later_writer_set() {
+        let clock = VirtualClock::new(1_000_000);
+        let c = Arc::new(Contract::open(Parked::new(), Ports::virtual_clock(&clock), Config { min_lock_ttl_ms: 1_000 }).unwrap());
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        *c.backend().before.lock().unwrap() = Some((entered_tx, release_rx));
+        let a = {
+            let c = c.clone();
+            std::thread::spawn(move || c.lock("r", 10_000, &Request::new("la", "t", "lock")))
+        };
+        entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        let taken = within_50ms({
+            let c = c.clone();
+            move || c.lock("r", 10_000, &Request::new("lb", "t", "lock")).is_ok()
+        });
+        release_tx.send(()).unwrap();
+        assert!(matches!(a.join().unwrap(), Err(Error::Locked { .. })));
+        assert_eq!(taken, Some(true));
+        assert!(c.live(&format!("{LOCKS_PREFIX}r")), "the stale commit's restore removed the winner's deadline");
     }
 }
