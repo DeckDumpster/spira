@@ -101,7 +101,7 @@ fn held_rows(q: &store_view::RowQuery) -> Option<Result<Vec<Value>, String>> {
 /// `show <id>`'s answer, from the held row when the process keeps the store's watch.
 fn show_text(lc: &LcClient, id: &str) -> Result<String, String> {
     let Some(views) = store_view::shared() else {
-        return lcq_with(lc, &["show", id]);
+        return lcq_with(lc, &["show", id]); // BDQ_READ_CONSIDERED="LcClient is the spira-lc door; no bdq"
     };
     match views.show(id).map_err(|e| format!("could not say: {e}"))?.value {
         Some(shown) => Ok(shown.to_string()),
@@ -314,7 +314,7 @@ struct Shown {
 }
 
 fn show(lc: &LcClient, id: &str) -> Result<Shown, String> {
-    let v = parsed(&lcq_with(lc, &["show", id])?, "show")?;
+    let v = parsed(&lcq_with(lc, &["show", id])?, "show")?; // BDQ_READ_CONSIDERED="LcClient is the spira-lc door; no bdq"
     let bead = v.get("bead").cloned().unwrap_or_default();
     Ok(Shown {
         state: str_of(&bead, "state").unwrap_or("").to_string(),
@@ -526,7 +526,7 @@ pub fn observe_repo(r: &Reads, name: &str, local: bool) -> Result<RepoFacts, Str
     let repo = find_repo(r.reg, name, local)?;
     let rows: Vec<Value> = match held_rows(&store_view::RowQuery { states: &["SUBMITTED", "CERTIFIED"], ..Default::default() }) {
         Some(rows) => rows?,
-        None => serde_json::from_str(&lcq_with(r.lc, &["list", "--state", "SUBMITTED,CERTIFIED"])?).map_err(|e| format!("spira-lc list: unparsed reply: {e}"))?,
+        None => serde_json::from_str(&lcq_with(r.lc, &["list", "--state", "SUBMITTED,CERTIFIED"])?).map_err(|e| format!("spira-lc list: unparsed reply: {e}"))?, // BDQ_READ_CONSIDERED="LcClient is the spira-lc door; no bdq"
     };
     let mut f = RepoFacts { rows: rows.iter().filter_map(PoolRow::of).collect(), branch_tips: branch_tips(&repo)?, ..RepoFacts::default() };
     let ids = at_live_tips(&rows, &f.branch_tips);
@@ -608,7 +608,7 @@ fn rows_of_with(lc: &LcClient, ids: &[String]) -> Result<Vec<Value>, String> {
     if let Some(rows) = held_rows(&store_view::RowQuery { ids: Some(ids), ..Default::default() }) {
         return rows;
     }
-    serde_json::from_str(&lcq_with(lc, &["list", "--ids", &ids.join(",")])?).map_err(|e| format!("spira-lc list --ids: unparsed reply: {e}"))
+    serde_json::from_str(&lcq_with(lc, &["list", "--ids", &ids.join(",")])?).map_err(|e| format!("spira-lc list --ids: unparsed reply: {e}")) // BDQ_READ_CONSIDERED="LcClient is the spira-lc door; no bdq"
 }
 
 /// Fetches `name`'s base remote: what the screen's pass is refused without.

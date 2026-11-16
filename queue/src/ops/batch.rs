@@ -649,10 +649,10 @@ pub struct OpenArgs<'a> {
 
 /// `batch open`. With the batch machine on the control store, in four steps, each leaving the
 /// record in the phase it reached, so a crash never leaves a PR the store has no record of:
-/// 1. the batch record is written with `forge.phase = opening`
-/// and its branch; 2. the branch is pushed and the PR created; 3. the record moves to `open` with
-/// the PR's number, compared on `opening`; 4. auto-merge is armed and the record moves to `armed`.
-/// A record left `opening` is `batch sweep`'s to adopt or release.
+/// the batch record is written with `forge.phase = opening` and its branch; the branch is pushed
+/// and the PR created; the record moves to `open` with the PR's number, compared on `opening`;
+/// auto-merge is armed and the record moves to `armed`. A record left `opening` is `batch
+/// sweep`'s to adopt or release.
 pub fn open_batch(w: &World, a: &OpenArgs) -> i32 {
     let OpenArgs {
         repo,
