@@ -1097,7 +1097,7 @@ pub fn config_settings(world: &Path, repos: &[RepoSpec], gh: &Path) -> Vec<(Stri
     repos
         .iter()
         .map(section)
-        .chain([("spira.gh".to_string(), gh.display().to_string()), ("spira.batcher_enable".to_string(), "1".to_string()), ("spira.mail_mute".to_string(), "false".to_string())])
+        .chain([("spira.gh".to_string(), gh.display().to_string()), ("spira.batcher_enable".to_string(), "1".to_string()), ("spira.mail_mute".to_string(), "false".to_string()), ("spira.test_registry_path".to_string(), world.join("run/test-registry.sqlite").display().to_string())])
         .collect()
 }
 
