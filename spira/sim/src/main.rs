@@ -87,8 +87,9 @@ fn run(args: &[String]) -> Result<(), String> {
             return Ok(());
         }
         Some("control-stub") => {
-            let [sock, phase_file] = &args[1..] else { return Err(USAGE.to_string()) };
-            return spira_sim::control_stub::serve(&PathBuf::from(sock), &PathBuf::from(phase_file));
+            let [sock, phase_file, secs] = &args[1..] else { return Err(USAGE.to_string()) };
+            let secs: u64 = secs.parse().map_err(|_| USAGE.to_string())?;
+            return spira_sim::control_stub::serve(&PathBuf::from(sock), &PathBuf::from(phase_file), std::time::Duration::from_secs(secs));
         }
         Some("probe") => {
             let [dir] = &args[1..] else { return Err(USAGE.to_string()) };

@@ -1,16 +1,16 @@
 //! A runtime control socket that answers every request with exit 0: world stop journals a
-//! scheduler halt there, and a world runs no scheduler. Serves until the phase file says `done`
-//! or the world's directory is gone; no wall-clock life bounds it.
+//! scheduler halt there, and a world runs no scheduler. Serves until the phase file says `done`.
 
 use std::os::unix::net::UnixListener;
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-pub fn serve(sock: &Path, phase_file: &Path) -> Result<(), String> {
+pub fn serve(sock: &Path, phase_file: &Path, limit: Duration) -> Result<(), String> {
     let _ = std::fs::remove_file(sock);
     let listener = UnixListener::bind(sock).map_err(|e| format!("{}: {e}", sock.display()))?;
     listener.set_nonblocking(true).map_err(|e| e.to_string())?;
-    while walk_goes_on(phase_file) {
+    let end = Instant::now() + limit;
+    while Instant::now() < end && std::fs::read_to_string(phase_file).map(|p| p.trim() != "done").unwrap_or(true) {
         match listener.accept() {
             Ok((stream, _)) => {
                 stream.set_nonblocking(false).map_err(|e| e.to_string())?;
@@ -22,11 +22,4 @@ pub fn serve(sock: &Path, phase_file: &Path) -> Result<(), String> {
     }
     let _ = std::fs::remove_file(sock);
     Ok(())
-}
-
-fn walk_goes_on(phase_file: &Path) -> bool {
-    match std::fs::read_to_string(phase_file) {
-        Ok(p) => p.trim() != "done",
-        Err(_) => phase_file.parent().is_some_and(Path::is_dir),
-    }
 }

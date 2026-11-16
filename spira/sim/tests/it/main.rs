@@ -4,7 +4,6 @@
 mod agent;
 mod callworld;
 mod ci;
-mod control_stub;
 mod jq;
 mod loop_gate;
 mod loop_ports;
