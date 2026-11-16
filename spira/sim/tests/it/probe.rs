@@ -103,3 +103,11 @@ fn a_worlds_mail_is_unmuted_and_rooted_inside_it() {
     assert!(s.contains(&("spira.mail_mute".to_string(), "false".to_string())));
     assert_eq!(spira_sim::world::mail_root(Path::new("/w")), Path::new("/w").join("home").join("spira").join("run").join("mail"));
 }
+
+#[test]
+fn a_dropped_row_carries_the_lifecycles_reason_and_a_row_without_one_is_null() {
+    let list = r#"[{"bead_id":"sp-a","state":"DROPPED","version":"2","reason":"unwanted"},{"bead_id":"sp-b","state":"READY","version":"1"}]"#;
+    let got = rows_of(list, &GitFacts::default());
+    assert_eq!(got["sp-a"]["lc_reason"], "unwanted");
+    assert!(got["sp-b"]["lc_reason"].is_null());
+}
