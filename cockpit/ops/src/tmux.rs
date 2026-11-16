@@ -54,12 +54,14 @@ pub fn classify_server_stderr(stderr: &str) -> ServerState {
     }
 }
 
+const HEALTH_SUFFIX: &str = "/cockpit/health.sh"; // not a path: suffix of an argv entry
+
 /// `classify_argv` — identity from the executable and (if the executable is a shell) the
 /// script it runs, by argv **position**, never by substring of the whole command line (a
 /// named scar: a system prompt merely *mentioning* `cockpit/health.sh` once mis-tagged an
 /// unrelated agent session).
 pub fn classify_argv(exe: &str, script: &str, mail_exe_basename: Option<&str>) -> Option<Role> {
-    if std::path::Path::new(exe).ends_with("cockpit/health.sh") || std::path::Path::new(script).ends_with("cockpit/health.sh") {
+    if exe.ends_with(HEALTH_SUFFIX) || script.ends_with(HEALTH_SUFFIX) {
         return Some(Role::Health);
     }
     if let Some(mail) = mail_exe_basename {
@@ -508,7 +510,7 @@ Num       RefCount Protocol Flags    Type St Inode Path
 
     #[test]
     fn stale_clients_only_past_threshold() {
-        let lines = "dev/pts/0 1000\n/dev/pts/1 1900\n";
+        let lines = "dev/pts/0 1000\ndev/pts/1 1900\n";
         let out = stale_clients(2000, lines, 500);
         assert_eq!(out, vec![("dev/pts/0".to_string(), 1000)]);
     }

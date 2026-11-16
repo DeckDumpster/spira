@@ -689,7 +689,7 @@ fn acceptance_section(out: &mut Kv, cfg: &Cfg) {
 
     let prod = &cfg.prod;
     if !prod.is_empty() {
-        let acc_repo = prod.trim_end_matches(format!("{}spira", std::path::MAIN_SEPARATOR).as_str()).to_string();
+        let acc_repo = prod.trim_end_matches("/spira").to_string(); // not a path: suffix of a repo path
         let acc_repo_path = Path::new(&acc_repo);
         if acc_repo_path.join(".git").exists() {
             let noted = io::git(acc_repo_path, &["notes", "--ref=acceptance", "list"])

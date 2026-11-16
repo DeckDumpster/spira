@@ -1076,7 +1076,7 @@ mod tests {
 
     #[test]
     fn stale_clients_filters_by_idle_secs() {
-        let lines = "dev/pts/0 1000\n/dev/pts/1 500\n";
+        let lines = "dev/pts/0 1000\ndev/pts/1 500\n";
         let now = 1000 + 21600 + 1;
         let out = stale_clients(lines, now, 21600);
         assert_eq!(out.len(), 2);
