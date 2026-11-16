@@ -168,7 +168,7 @@ pub(super) const REPO_TESTENV_RED: &str = "testenv";
 pub(crate) const LC_ACTOR: &str = "queue.sh";
 /// The actor of a round event the queue writes on its own, under no caller's verb.
 const HOUSEKEEPING: &str = "queue";
-const PASSING: [&str; 2] = ["ok", "skip"];
+const PASSING: [&str; 5] = ["ok", "skip", "disabled", "skip-req", "quarantined-red"];
 pub const BLOCKING: [&str; 5] = ["red", "timeout", "unreached", "deferred", "fault"];
 
 pub fn run(w: &World, r: &Round) -> i32 {
@@ -2417,7 +2417,8 @@ fn ci_result_ok(results: &Path) -> bool {
         .is_ok_and(|t| t.split_whitespace().next() == Some("ok"))
 }
 
-/// Names the suites whose verdict cannot be read: a word that is neither passing nor blocking
+/// Names the suites whose verdict cannot be read: a word that is neither a non-blocking status
+/// testenv writes (`ok`, `skip`, `disabled`, `skip-req`, `quarantined-red`) nor blocking
 /// (an empty file included), or a corpus suite with no result at all. A red lint or fence ends the
 /// pass before any suite runs, so it is the verdict and the missing suites are not a fault.
 pub(crate) fn unjudgeable(wt: &Path, found: &[(String, String)]) -> Option<String> {
@@ -2503,8 +2504,9 @@ fn result_dirs(dir: &Path) -> Vec<PathBuf> {
 
 /// A pass cut off by a cap holds no verdict: testenv's own suite cap ends the batch
 /// `verdict FAULT over-cap`, whatever exit round-vm reports, and round-vm's guard exits 124/137.
-fn batch_over_cap(results: &Path, rc: i32) -> bool {
-    let verdict = result_dirs(results)
+/// The last `verdict` line of the pass's `run.events`, if round-vm wrote one.
+fn run_events_verdict(results: &Path) -> Option<String> {
+    result_dirs(results)
         .iter()
         .find_map(|d| fs::read_to_string(d.join("run.events")).ok())
         .and_then(|t| {
@@ -2515,7 +2517,11 @@ fn batch_over_cap(results: &Path, rc: i32) -> bool {
                 })
                 .next_back()
                 .map(|v| v.trim().to_string())
-        });
+        })
+}
+
+fn batch_over_cap(results: &Path, rc: i32) -> bool {
+    let verdict = run_events_verdict(results);
     verdict.as_deref() == Some("FAULT over-cap")
         || (matches!(rc, 124 | 137) && over_cap_detail(results).is_some())
 }
@@ -3405,6 +3411,33 @@ fn infra_pass(w: &World, label: &str, c: &Ctx, batch: &str, why: &str) -> i32 {
     FAULT
 }
 
+/// round-vm judged the pass but the queue cannot read it: the reader is at fault, so no member is
+/// counted, ejected or ledgered, and the operator is told.
+fn unread_verdict_pass(
+    w: &World,
+    label: &str,
+    c: &Ctx,
+    batch: &str,
+    verdict: &str,
+    why: &str,
+    results: &Path,
+) -> i32 {
+    w.out("fault=unread-verdict");
+    w.err(format!(
+        "queue.sh {label}: round-vm judged the pass {verdict}; no member is counted"
+    ));
+    w.lib.notify(
+        &c.s.mailbox,
+        &c.r.name,
+        &format!("Round {batch}: round-vm judged the pass {verdict} and the queue could not read it"),
+        &format!(
+            "{why}\nresults: {}\nNo member was ejected and nothing was written to the pass ledger.",
+            results.display()
+        ),
+    );
+    FAULT
+}
+
 /// The pass of `batch` ended without a verdict: remember it, and eject each member that has now
 /// been aboard for [`FAULTED_PASSES_RED`] such passes. When every member of a multi-member pass
 /// qualifies, nothing separates them from the host, so none is ejected. Returns [`FAULT`] either way.
@@ -4034,6 +4067,11 @@ fn certify_pass(
             w.err(format!(
                 "queue.sh {label}: {why}; the round is not judged\n{shown}"
             ));
+            if let Some(v) = run_events_verdict(&results)
+                .filter(|v| v.starts_with("GREEN") || v.starts_with("RED"))
+            {
+                return unread_verdict_pass(w, label, c, batch, &v, &why, &results);
+            }
             let reached_no_suite = found.is_empty()
                 && vm_named.is_none()
                 && fixture_fault_cause(&results).is_none()

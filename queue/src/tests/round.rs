@@ -7975,6 +7975,91 @@ fn a_green_pass_between_two_faults_makes_the_second_a_first_again() {
     assert!(!t.lib.has("bead_reopen sp-a"));
 }
 
+fn pass_ledger_text(t: &T) -> String {
+    fs::read_dir(t.s().run.join("rounds"))
+        .unwrap()
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().starts_with("pass-ledger-"))
+        .map(|e| fs::read_to_string(e.path()).unwrap_or_default())
+        .collect()
+}
+
+fn green_by_round_vm_next_pass(t: &T, results: &[(&str, &str)]) {
+    *t.scripts.round_vm.borrow_mut() = RunOut {
+        rc: 0,
+        out: String::new(),
+        err: String::new(),
+    };
+    *t.scripts.round_vm_results.borrow_mut() = results
+        .iter()
+        .map(|(n, s)| (n.to_string(), s.to_string()))
+        .collect();
+    *t.scripts.round_vm_files.borrow_mut() =
+        vec![("run.events".into(), "1 verdict GREEN -\n".into())];
+}
+
+#[test]
+fn a_green_pass_whose_deny_listed_suites_report_a_non_blocking_word_lands_green() {
+    for word in ["disabled", "skip-req", "quarantined-red"] {
+        let t = round_world();
+        assert_eq!(
+            t.run(&["round", "open", "--members", "sp-a"]),
+            0,
+            "{}",
+            t.err()
+        );
+        let batch = batch_of(&t);
+        green_by_round_vm_next_pass(&t, &[("test-a.sh", "ok"), ("test-conf-watch.sh", word)]);
+        assert_eq!(
+            t.run(&["round", "certify", &batch]),
+            0,
+            "{word}: {}",
+            t.err()
+        );
+        assert!(
+            events_of(&t, &batch)
+                .iter()
+                .any(|e| e.starts_with("{\"PassGreen\"")),
+            "{word}: {:?}",
+            events_of(&t, &batch)
+        );
+        let ledger = pass_ledger_text(&t);
+        assert!(ledger.contains("judged sp-a"), "{word}: {ledger}");
+        assert!(!ledger.contains("fault"), "{word}: {ledger}");
+    }
+}
+
+#[test]
+fn a_pass_round_vm_judged_but_the_queue_cannot_read_ejects_nobody_and_tells_the_operator() {
+    let t = round_world();
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a"]),
+        0,
+        "{}",
+        t.err()
+    );
+    let batch = batch_of(&t);
+    green_by_round_vm_next_pass(&t, &[("test-a.sh", "garbage")]);
+    for _ in 0..2 {
+        assert_eq!(t.run(&["round", "certify", &batch]), 4, "{}", t.err());
+    }
+    assert!(
+        !pass_ledger_text(&t).contains("fault sp-a"),
+        "{}",
+        pass_ledger_text(&t)
+    );
+    assert!(!t.lib.has("bead_reopen sp-a"), "{:?}", t.lib.calls.borrow());
+    assert!(
+        t.lib
+            .calls
+            .borrow()
+            .iter()
+            .any(|c| c.starts_with("notify") && c.contains("could not read it")),
+        "{:?}",
+        t.lib.calls.borrow()
+    );
+}
+
 #[test]
 fn faulted_passes_with_the_same_members_aboard_blame_none_of_them() {
     let t = round_world();
