@@ -260,10 +260,72 @@ pub fn env_read() -> Option<std::sync::MutexGuard<'static, ()>> {
     }
 }
 
+fn run_time_var(var: &str) -> PathBuf {
+    match std::env::var_os(var) {
+        Some(v) if !v.is_empty() => PathBuf::from(v),
+        _ => panic!("{var} is not set: this test reads its crate's tree at run time — run it under cargo test or cargo nextest"),
+    }
+}
+
+/// The directory of the crate under test, read from `CARGO_MANIFEST_DIR` at run time —
+/// never `env!`, which bakes the compiling tree's path into the test binary.
+pub fn manifest_dir() -> PathBuf {
+    run_time_var("CARGO_MANIFEST_DIR")
+}
+
+/// Where the built binary `name` sits relative to a test executable in `<target>/<profile>/deps/`.
+fn bin_beside(test_exe: &Path, name: &str) -> PathBuf {
+    test_exe
+        .parent()
+        .and_then(Path::parent)
+        .unwrap_or(Path::new(""))
+        .join(name)
+}
+
+/// The built binary `name`, beside the running test executable (`<target>/<profile>/<name>`),
+/// found from `current_exe` at run time. `CARGO_BIN_EXE_*` is deliberately not read: cargo
+/// and nextest differ on it, and there is one way to find the binary.
+pub fn bin_exe(name: &str) -> PathBuf {
+    let exe = std::env::current_exe().expect("current_exe");
+    let bin = bin_beside(&exe, name);
+    assert!(
+        bin.is_file(),
+        "binary {name} is not built at {}: build it with cargo before running this test",
+        bin.display()
+    );
+    bin
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    #[test]
+    #[should_panic(expected = "CARGO_MANIFEST_DIR is not set")]
+    fn manifest_dir_refuses_when_unset() {
+        let _g = env(&[("CARGO_MANIFEST_DIR", None)]);
+        manifest_dir();
+    }
+
+    #[test]
+    fn manifest_dir_reads_the_variable_at_run_time() {
+        let _g = env(&[("CARGO_MANIFEST_DIR", Some("/x"))]);
+        assert_eq!(manifest_dir(), PathBuf::from("/x"));
+    }
+
+    #[test]
+    fn bin_beside_is_the_profile_directory_above_deps() {
+        assert_eq!(
+            bin_beside(Path::new("/t/debug/deps/x-1a2b"), "a"),
+            PathBuf::from("/t/debug/a")
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "binary no-such-bin-xyz is not built")]
+    fn bin_exe_refuses_a_binary_that_is_not_built() {
+        bin_exe("no-such-bin-xyz");
+    }
 
     #[test]
     fn a_temp_dir_is_fresh_distinct_and_gone_after_drop() {
