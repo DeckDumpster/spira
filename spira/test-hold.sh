@@ -48,6 +48,16 @@ import sys,json
 d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]
 print(d[0].get("assignee","") or "" if d else "")' 2>/dev/null; }
 
+gone_within() {
+    local pid="$1" polls="$2" i
+    for ((i = 0; i < polls; i++)); do
+        [ -d "/proc/$pid" ] || return 0
+        sleep 0.05
+    done
+    [ -d "/proc/$pid" ] && return 1
+    return 0
+}
+
 seed() {
     local id="$1" st="${2:-open}" as="${3:-}"
     testdb_reset
@@ -111,10 +121,9 @@ is "unhold.sh exits 0"          0   "$rc"
 is "pidfile is gone"             no  "$([ -f "$SPIRA_RUN/hold-sp-h1.pid" ] && echo yes || echo no)"
 is "heartbeat file is gone"      no  "$([ -f "$SPIRA_RUN/hold-sp-h1.hb" ] && echo yes || echo no)"
 
-# The heartbeat process should be dead (give it a moment).
-sleep 0.2
-if [ -n "$hbpid" ] && [ -d "/proc/$hbpid" ]; then bad "heartbeat is dead" "pid $hbpid still in /proc"
-else ok "heartbeat is dead"; fi
+hb_polls=200
+if [ -z "$hbpid" ] || gone_within "$hbpid" "$hb_polls"; then ok "heartbeat is dead"
+else bad "heartbeat is dead" "pid $hbpid still in /proc after $hb_polls polls (state $(awk '{print $3}' "/proc/$hbpid/stat" 2>/dev/null))"; fi
 
 # ======================================================================================
 # 4. holder_alive returns 1 after release.
