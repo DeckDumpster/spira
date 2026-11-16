@@ -1797,7 +1797,7 @@ impl<'w, W: World> Trial<'w, W> {
     }
 
     fn unit_slowest(&self) -> String {
-        self.s.unit_timings.as_ref().map_or(String::new(), |t| t.slowest_field())
+        self.s.unit_timings.as_ref().map_or(String::new(), |t| t.slowest_record())
     }
 
     /// ` unit_build_secs=… unit_run_secs=… unit_tests=… unit_slowest=…` after a unit test phase; empty without one.
