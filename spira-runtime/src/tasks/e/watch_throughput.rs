@@ -115,7 +115,11 @@ pub struct Waiting {
 }
 
 fn waited_s(l: &RepoLanding, now_ms: u64) -> Option<u64> {
-    l.oldest.as_ref().map(|o| (now_ms / 1000).saturating_sub(o.since.max(l.last_landing)))
+    l.oldest.as_ref().filter(|o| o.since != 0).map(|o| (now_ms / 1000).saturating_sub(o.since.max(l.last_landing)))
+}
+
+fn undated(l: &RepoLanding) -> bool {
+    l.oldest.as_ref().is_some_and(|o| o.since == 0)
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -169,6 +173,8 @@ pub struct Carry {
     pub diluted: Vec<String>,
     pub unlanded: Vec<String>,
     pub held: Vec<String>,
+    /// Repos whose oldest waiting bead has no entry time, already paged.
+    pub undated: Vec<String>,
     /// What holds the stall conditions while the work plane is halted; empty when it is not.
     pub halted: String,
     /// The last time a halt was seen: no wait counts from before it.
@@ -249,6 +255,14 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> Verd
         acts.push(EffectSpec::keyed(FILE, format!("{NAME}:file:{}:{}", f.repo, f.last_landing), serde_json::to_string(&f).unwrap_or_default(), FILE_DEADLINE_MS));
     }
 
+    for l in snap.landings.iter().filter(|l| undated(l)) {
+        if !carry.undated.contains(&l.repo) {
+            let bead = l.oldest.as_ref().map_or("", |o| o.bead.as_str());
+            acts.push(say(now_ms, &format!("P0 {}: data defect — oldest waiting bead {bead} has no entry time, so its wait is unknown and no stall is judged", l.repo)));
+        }
+    }
+    next.undated = snap.landings.iter().filter(|l| undated(l)).map(|l| l.repo.clone()).collect();
+
     let starving: Vec<&RepoRounds> = snap.repos.iter().filter(|r| r.abandoned_recent >= cfg.abandon_count && r.landed_recent == 0).collect();
     for r in &starving {
         if !carry.starved.contains(&r.repo) {
@@ -307,7 +321,7 @@ impl WatchThroughput {
     }
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("blind"), runtime::rows::Part::Map { name: "stalled", drop: &[] }, runtime::rows::Part::Field("starved"), runtime::rows::Part::Field("diluted"), runtime::rows::Part::Field("unlanded"), runtime::rows::Part::Field("held"), runtime::rows::Part::Field("halted"), runtime::rows::Part::Field("resumed_at"), runtime::rows::Part::Field("retried"), runtime::rows::Part::Field("readable_at")];
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("blind"), runtime::rows::Part::Map { name: "stalled", drop: &[] }, runtime::rows::Part::Field("starved"), runtime::rows::Part::Field("diluted"), runtime::rows::Part::Field("unlanded"), runtime::rows::Part::Field("held"), runtime::rows::Part::Field("undated"), runtime::rows::Part::Field("halted"), runtime::rows::Part::Field("resumed_at"), runtime::rows::Part::Field("retried"), runtime::rows::Part::Field("readable_at")];
 
 impl Handler for WatchThroughput {
     fn interests(&self) -> &[EventKindTag] {
