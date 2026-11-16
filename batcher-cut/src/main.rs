@@ -894,8 +894,12 @@ fn append_round(env_: &Env, deny: Option<&vm::DenySnapshot>, fields: &[(&str, St
     io::tsd_append_round(env_, &all);
 }
 
-fn resolve_deny(bin: &str, env_: &Env, at: u64) -> Result<vm::DenySnapshot, pace::CutError> {
-    let text = io::deny_list_from(bin, env_, at)
+fn resolve_deny(env_: &Env, at: u64) -> Result<vm::DenySnapshot, pace::CutError> {
+    snapshot_from(io::deny_list_snapshot(env_, at), at)
+}
+
+fn snapshot_from(resolved: Result<String, String>, at: u64) -> Result<vm::DenySnapshot, pace::CutError> {
+    let text = resolved
         .map_err(|e| pace::CutError::new(pace::CutKind::Other, format!("no round cut — the deny list could not be resolved: {e}")))?;
     Ok(vm::DenySnapshot { text, at })
 }
@@ -1556,7 +1560,7 @@ fn cut_new_round_inner(
         println!("batcher {}: round held — same members at the same tips as the integration red {bead} still open; not re-cut", repo.name);
         return Ok(());
     }
-    let deny = resolve_deny("test-registry", env_, round_start)?;
+    let deny = resolve_deny(env_, round_start)?;
     println!("{}", cut_event(reason, &combined).text);
 
     let batch = if repo.land == Land::Local {
@@ -1733,7 +1737,7 @@ fn follow_promoted(
             deny: None,
         }
     } else {
-        let deny = resolve_deny("test-registry", env_, round_start)?;
+        let deny = resolve_deny(env_, round_start)?;
         match stabilize_unlocked(env_, repo, &wt, &base_sha, members, Some(&p.batch), &[], &deny) {
             Err(e) => {
                 abandon(&e.msg, "error");
@@ -2294,7 +2298,7 @@ fn attribute_run(o: &Opts) -> Result<(), String> {
         .collect();
     let deny = match o.after_pass.as_deref().and_then(vm::DenySnapshot::from_pass) {
         Some(d) => d,
-        None => resolve_deny("test-registry", &env_, now()).map_err(|e| e.msg)?,
+        None => resolve_deny(&env_, now()).map_err(|e| e.msg)?,
     };
     let mut runner = vm::VmRunner::new(&env_, &repo, &wt, &start_sha, &round, changed.clone())?
         .in_batch(o.batch.as_deref())
@@ -3069,9 +3073,9 @@ mod cut_tests {
         let env = io::lifecycle_tests_env(&d);
         let bin = d.join("test-registry");
         testkit::write_exe(&bin, "#!/bin/sh\necho \"registry locked $*\" >&2\nexit 3\n");
-        let err = resolve_deny(bin.to_str().unwrap(), &env, 77).unwrap_err();
+        let err = snapshot_from(io::deny_list_from(bin.to_str().unwrap(), &env, 77), 77).unwrap_err();
         assert!(err.msg.contains("registry locked deny-list --at 77") && err.msg.contains("exited 3"), "{}", err.msg);
-        assert!(resolve_deny("/nonexistent/test-registry", &env, 77).is_err());
+        assert!(snapshot_from(io::deny_list_from("/nonexistent/test-registry", &env, 77), 77).is_err());
     }
 
     #[test]
@@ -3080,7 +3084,7 @@ mod cut_tests {
         let mut env = io::lifecycle_tests_env(&d);
         let bin = d.join("test-registry");
         testkit::write_exe(&bin, "#!/bin/sh\nprintf '# test-registry deny-list at=%s rows=1\\ndisabled\\tunit:tiny t::drop\\tsp-x\\t-\\n' \"$3\"\n");
-        let deny = resolve_deny(bin.to_str().unwrap(), &env, 77).unwrap();
+        let deny = snapshot_from(io::deny_list_from(bin.to_str().unwrap(), &env, 77), 77).unwrap();
         assert_eq!(deny.at, 77);
         assert_eq!(deny.text, "# test-registry deny-list at=77 rows=1\ndisabled\tunit:tiny t::drop\tsp-x\t-\n");
         let log = d.join("tsd.log");

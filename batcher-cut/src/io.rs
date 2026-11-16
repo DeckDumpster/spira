@@ -3977,7 +3977,7 @@ pub fn file_land_unverified_incident(
 /// `test-registry deny-list --at <at>` by bare name on the launcher's PATH: the text a round
 /// hands to every pass. A registry that does not answer is an Err naming what it said.
 pub fn deny_list_snapshot(env: &Env, at: u64) -> Result<String, String> {
-    deny_list_from("test-registry", env, at)
+    deny_list_from(&spira_config::release_env::tool("test-registry")?, env, at)
 }
 
 pub fn deny_list_from(bin: &str, env: &Env, at: u64) -> Result<String, String> {
