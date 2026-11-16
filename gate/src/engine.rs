@@ -831,7 +831,13 @@ impl<'w, W: World> Trial<'w, W> {
         let Some(stall) = key::digits(ctx.var("SPIRA_GATE_BUILD_STALL")).filter(|s| *s > 0) else {
             return v(NOVERDICT, "config", format!("gate: SPIRA_GATE_BUILD_STALL={:?} is not a number of seconds — refusing to run a build nothing watches.", ctx.var("SPIRA_GATE_BUILD_STALL")));
         };
-        let limits = Limits { deadline, stall };
+        let (Some(secs), Some(periods)) = (
+            key::digits(ctx.var("SPIRA_UNIT_TEST_DEADLINE_SECS")).filter(|n| *n > 0),
+            key::digits(ctx.var("SPIRA_UNIT_TEST_DEADLINE_PERIODS")).filter(|n| *n > 0),
+        ) else {
+            return v(NOVERDICT, "config", "gate: SPIRA_UNIT_TEST_DEADLINE_SECS and SPIRA_UNIT_TEST_DEADLINE_PERIODS must be positive numbers — refusing to run unit tests with no per-test deadline.");
+        };
+        let limits = Limits { deadline, stall, unit_deadline: (secs, periods) };
         let by_deadline = key::digits(&timeout).is_none_or(|t| deadline <= t);
         let eff = |spent: u64| {
             let rem = deadline.saturating_sub(spent).max(1);
@@ -1990,7 +1996,7 @@ pub fn describe(c: &Composition) -> String {
         Composition::Fences => {
             "gate: composition=fences — the fences and the build fence, suites off (nothing buildable touched, or gate_mode=fences)".into()
         }
-        Composition::Unit { touched, crates } => format!(
+        Composition::Unit { touched, crates, .. } => format!(
             "gate: composition=unit — fences (suites off, no build fence: the build phase is the compile check), then cargo build and test on the host for {} crates: {} (touched: {})",
             crates.len(),
             crates.join(" "),
@@ -2051,6 +2057,8 @@ pub fn stall_verdict(phases: &[(String, u64)], out: &str) -> Verdict {
 pub struct Limits {
     pub deadline: u64,
     pub stall: u64,
+    /// One unit test's deadline: the period in seconds and the periods before it is terminated.
+    pub unit_deadline: (u64, u64),
 }
 
 /// The most a charged phase may take, seconds (`base-` prefix ignored); the gate cap is no
@@ -2380,7 +2388,7 @@ pub fn run_composed<W: World>(
         }
     };
     let mut steps: Vec<(&str, String)> = match comp {
-        Composition::Unit { crates, .. } => compose::unit_commands(crates, jobs).into(),
+        Composition::Unit { crates, targets, .. } => compose::unit_commands(crates, *targets, jobs).into(),
         _ => Vec::new(),
     };
     // THE RE-ENTRY PHASE, last: whatever of the named suites the phases before did not show
@@ -2410,6 +2418,13 @@ pub fn run_composed<W: World>(
             return (124, out, phases);
         }
         mark(GateState::Trial, name);
+        if name == "test" {
+            let file = tree.join(compose::NEXTEST_CONFIG);
+            if let (Some(dir), Some(name)) = (file.parent(), file.file_name().and_then(|n| n.to_str())) {
+                w.mkdir_p(dir);
+                w.write_atomic(dir, name, &spira_config::unit_tier::nextest_config(limits.unit_deadline.0, limits.unit_deadline.1));
+            }
+        }
         let hermetic;
         let step_env = if name == "test" {
             hermetic = compose::test_phase_env(env);
@@ -2452,7 +2467,7 @@ pub fn run_composed<W: World>(
                 for rerun in reruns {
                     out.push_str(&format!(
                         "\ngate: reproduce (from the workspace root): {}",
-                        compose::reproduce_line(step_env, jobs, &rerun)
+                        compose::reproduce_line(step_env, &rerun)
                     ));
                 }
             }
