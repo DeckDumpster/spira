@@ -4736,8 +4736,8 @@ fn fences_fake(paths: &[&str]) -> Fake {
 
 #[test]
 fn fences_mode_runs_the_fence_tools_the_fences_and_the_build_fence_and_no_test_or_suite() {
-    // A Rust crate, a workspace input and a script: no touched set forces anything here.
-    let f = fences_fake(&["gate/src/x.rs", "Cargo.lock", "spira/lib.sh"]);
+    // A workspace input and a script, no crate: nothing here asks for a unit test.
+    let f = fences_fake(&["Cargo.lock", "spira/lib.sh"]);
     assert_eq!(f.run(), PASS, "{}", f.stderr());
     let cmds = f.cmds.borrow().clone();
     assert_eq!(cmds.len(), 2, "the tools phase, then the fences: {cmds:?}");
