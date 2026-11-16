@@ -1,0 +1,7 @@
+image localhost/spira-testenv:93400812ae94; network as testenv ISOLATED_NETWORK; NIX_CONFIG=experimental-features = nix-command flakes
+## B: /nix ro, eval
+2
+## C: print-dev-env path:/flake
+{"bashFunctions":{"_activatePkgs":" \n    local hostOffset targetOffset;\n    local pkg;\n    for hostOffset in \"${allPlatOffsets[@]}\";\n    do\n   error: write of 11156 bytes: Broken pipe
+## D: develop --command uv --version
+uv 0.13.0 (x86_64-unknown-linux-gnu)

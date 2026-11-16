@@ -1,0 +1,8 @@
+host uv uv 0.13.8 (x86_64-unknown-linux-gnu) by absolute path (bare 'uv' is exit 127 on the builder PATH); no nix shell; cgroup 0::/user.slice/user-1000.slice/user@1000.service/app.slice/spira-dwarf-builder-directed-1794855745.service
+row 'true' rc=0 us: 7089 6028 8154 6556 6607 7363 7051 7997 6249 6265 6357 6002 6635 6294 6058 6997 6514 6832 6281 6203
+row true: median=6.5ms max=8.2ms
+row '/home/ryan/.local/bin/uv run ruff check mtg_collector/' rc=0 us: 218711 61615 59492 57426 64702 58717 59968 60658 60760 58794 64066 61452 66401 62794 65509 64707 65604 62851 63152 64171
+row /home/ryan/.local/bin/uv run ruff check mtg_collector/: median=62.8ms max=218.7ms
+bare uv under builder PATH:
+/bin/bash: line 1: uv: command not found
+rc=127

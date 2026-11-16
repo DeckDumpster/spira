@@ -1,0 +1,3 @@
+/dev/mapper/ubuntu--vg-ubuntu--lv 565265528 330987448 210617512  62% /
+3418144	/nix/store
+3944368	/nix/store
