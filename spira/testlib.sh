@@ -266,6 +266,8 @@ _tl_declare() {
 # The shipped registry, so a decision-recording tool under test finds one; a suite about a missing
 # registry declares its own path after this.
 printf 'statute_guards = "%s"\n' "$_TL_HERE/statute-guards" >> "$_TL_CONF_OVERRIDE"
+# A registry file the run owns: a gate or round resolving its deny list opens one, and an empty one means no test is disabled.
+printf 'test_registry_path = "%s"\n' "$_TL_RUN_DIR/test-registry.sqlite" >> "$_TL_CONF_OVERRIDE"
 
 _tl_init() {
     [ "$_TL_INITED" = 1 ] && return 0
