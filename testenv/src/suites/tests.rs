@@ -6,7 +6,6 @@ use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 use std::fs;
 
-
 use super::ports::*;
 use super::*;
 
@@ -153,10 +152,6 @@ impl T {
     }
     fn err(&self) -> String {
         self.io.err.borrow().join("\n")
-    }
-    fn clear(&self) {
-        self.io.out.borrow_mut().clear();
-        self.io.err.borrow_mut().clear();
     }
 }
 
