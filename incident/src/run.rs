@@ -574,6 +574,28 @@ mod tests {
         assert_eq!(counters.len(), 1, "{counters:?}");
     }
 
+    #[test]
+    fn five_payloads_under_one_reference_make_one_bead_and_four_notes() {
+        let bd = FakeBd::new();
+        let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+        let clock = FixedClock(1_000_000);
+        let known = vec!["spira".to_string()];
+        let mut log = vec![];
+        let c = cfg(&known);
+        let mut ids = vec![];
+        for i in 0..5 {
+            let payload = format!("bead sp-{i} was not judged");
+            match file_one(&bd, &mailer, &clock, &c, "gate-unjudged:spira:deny-list", "spira's gate cannot judge: deny-list", payload.as_bytes(), "spira,incident", &mut log) {
+                FileOutcome::Filed(id) => ids.push(id),
+                _ => panic!("expected Filed"),
+            }
+        }
+        assert_eq!(bd.created.borrow().len(), 1);
+        assert!(ids.iter().all(|i| *i == ids[0]), "{ids:?}");
+        let notes = bd.notes.borrow().get(&ids[0]).cloned().unwrap_or_default();
+        assert_eq!(notes.len(), 4, "{notes:?}");
+    }
+
     // covers: UC-ops-detection-remediation-06
     #[test]
     fn three_identical_filings_write_the_payload_note_exactly_once() {

@@ -789,9 +789,10 @@ impl<'a> Pass<'a> {
         let repo = &w.repo.name;
         let n = reasons.len();
         let joined = reasons.join(", ");
-        let title = format!("{id}: {repo}'s gate could not judge {br} at {tip} {n} times");
+        let reason = reasons.last().map(String::as_str).unwrap_or("unknown");
+        let title = format!("{repo}'s gate cannot judge: {reason}");
         let body = [
-            format!("{repo}'s certification gate ended without a verdict on {br} at {tip} {n} times running."),
+            format!("{repo}'s certification gate ended without a verdict on {id} ({br} at {tip}) {n} times running."),
             format!("Reasons, in order: {joined}"),
             format!("Each run was followed by a backoff of {}s before the tip was gated again.", self.s.gate_backoff),
             "A gate that cannot judge is a harness fault, not the bead's: the bead was not reopened and no attempt was charged.".into(),
@@ -804,7 +805,7 @@ impl<'a> Pass<'a> {
         let filing = crate::model::IncidentFiling {
             cause: "gate-unjudged".into(),
             repo: repo.to_string(),
-            reference: format!("gate-unjudged:{repo}:{br}@{tip}"),
+            reference: format!("gate-unjudged:{repo}:{reason}"),
             title,
             body,
         };
