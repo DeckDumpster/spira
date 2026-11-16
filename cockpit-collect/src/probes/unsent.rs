@@ -58,7 +58,7 @@ fn branch_backlog_section(out: &mut Kv, cfg: &Cfg) {
         // spira_landref/spira_landrefs/ref_remote lib.sh seam.
         let base = spira_config::repos::landref(&reg, &rname);
         let land = reg.land(&rname);
-        let round_members = if in_delivery.is_empty() { HashSet::new() } else { round_status_members(&rname) };
+        let round_members = if in_delivery.is_empty() { Some(HashSet::new()) } else { round_status_members(&rname) };
         let forge_batch = forge.get(&rname);
 
         match io::git(rp_path, &["for-each-ref", "--format=%(refname:short) %(committerdate:unix)", "refs/heads/spira/*"]) {
@@ -140,7 +140,7 @@ struct Ctx<'a> {
     grace: i64,
     land: &'a str,
     in_delivery: &'a HashMap<String, super::lc::LcRow>,
-    round_members: &'a HashSet<String>,
+    round_members: &'a Option<HashSet<String>>,
     forge_batch: Option<&'a Option<ForgeBatch>>,
 }
 
@@ -234,12 +234,12 @@ impl Tally {
             if batched_check_applies(&status, in_delivery.contains_key(id)) {
                 if let Some(row) = in_delivery.get(id) {
                     let stranded_for = stranded_for(row.updated_at, now, grace);
-                    match forge_batch {
-                        Some(None) => {
+                    match (forge_batch, round_members) {
+                        (Some(None), _) | (_, None) => {
                             self.probe_fail += 1;
                             self.probe_fail_names.push(id.to_string());
                         }
-                        told => {
+                        (told, Some(round_members)) => {
                             let in_batch = told.is_some_and(|b| b.as_ref().is_some_and(|b| b.members.contains(id))) || round_members.contains(id);
                             if let (false, Some(secs)) = (in_batch, stranded_for) {
                                 self.batched_stranded += 1;
@@ -296,9 +296,9 @@ fn forge_batches(repos: &[String], show: &dyn Fn(&str) -> Option<String>) -> std
 }
 
 /// Every member in flight for a repo: its open rounds and the staged one, from the store's
-/// round view. A store that cannot answer reports nothing, so the grace and the forge batches decide.
-fn round_status_members(repo: &str) -> HashSet<String> {
-    crate::store::round_members(repo).unwrap_or_default()
+/// round view. A store that cannot answer is `None`: a delivering bead is then a probe fault, never stranded.
+fn round_status_members(repo: &str) -> Option<HashSet<String>> {
+    crate::store::round_members(repo)
 }
 
 /// A submitted bead's branch under queue.local waits for a round by design; only elsewhere
@@ -904,11 +904,15 @@ mod tests {
     const TEST_GRACE: i64 = 137;
 
     fn tally_of(lines: &str, delivering: &[(&str, i64)], batch: Option<&Option<ForgeBatch>>, wait: i64) -> Tally {
+        tally_with_rounds(lines, delivering, batch, wait, &Some(HashSet::new()))
+    }
+
+    fn tally_with_rounds(lines: &str, delivering: &[(&str, i64)], batch: Option<&Option<ForgeBatch>>, wait: i64, rounds: &Option<HashSet<String>>) -> Tally {
         let in_delivery: HashMap<String, super::super::lc::LcRow> = delivering
             .iter()
             .map(|(id, at)| (id.to_string(), super::super::lc::LcRow { id: id.to_string(), state: "IN_DELIVERY".into(), reason: String::new(), updated_at: Some(*at) }))
             .collect();
-        let ctx = Ctx { now: 100_000, batch_wait: wait, grace: TEST_GRACE, land: "push", in_delivery: &in_delivery, round_members: &HashSet::new(), forge_batch: batch };
+        let ctx = Ctx { now: 100_000, batch_wait: wait, grace: TEST_GRACE, land: "push", in_delivery: &in_delivery, round_members: rounds, forge_batch: batch };
         let status = |id: &str| match id {
             "sp-open" | "sp-bat" => BeadStatus::Open,
             "sp-done" => BeadStatus::Closed { submitted: false },
@@ -950,6 +954,20 @@ mod tests {
         let member = Some(ForgeBatch { members: ["sp-bat".to_string()].into(), ..ForgeBatch::default() });
         assert_eq!(tally_of(line, &[("sp-bat", stale)], Some(&member), 60).batched_stranded, 0, "a batch member is not stranded");
         assert_eq!(tally_of(line, &[("sp-bat", stale)], Some(&None), 60).probe_fail, 1, "an unreadable batch is a fault, not a stranding");
+    }
+
+    // covers: UC-cockpit-observability-12
+    #[test]
+    fn a_delivering_bead_whose_round_view_is_unreadable_is_a_probe_fault_not_stranded() {
+        let line = "spira/sp-bat 90000\n";
+        let stale = 100_000 - TEST_GRACE - 1;
+        let t = tally_with_rounds(line, &[("sp-bat", stale)], None, 60, &None);
+        assert_eq!((t.batched_stranded, t.probe_fail, t.probe_fail_names.as_slice()), (0, 1, ["sp-bat".to_string()].as_slice()));
+        let named = Some(HashSet::from(["sp-bat".to_string()]));
+        let t = tally_with_rounds(line, &[("sp-bat", stale)], None, 60, &named);
+        assert_eq!((t.batched_stranded, t.probe_fail), (0, 0), "a round naming the bead keeps it from stranding");
+        let t = tally_with_rounds(line, &[("sp-bat", stale)], None, 60, &Some(HashSet::new()));
+        assert_eq!(t.batched_stranded, 1, "a readable view that does not name it is a stranding");
     }
 
     // covers: UC-cockpit-observability-10

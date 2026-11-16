@@ -226,12 +226,28 @@ fn batched_stranded(d: &SweepData, cfg: &Cfg, raise: Raise) {
         log(&format!("watchtower: {} is missing — batched-stranded escalation not filed", cfg.incident_sh));
         return;
     };
-    let names = d.env.raw("SP_BATCHED_STRANDED_NAMES").unwrap_or("(unavailable)");
-    let ages = stranded_ages(d.env.raw("SP_BATCHED_STRANDED_AGES").unwrap_or(""), names);
+    let candidates: Vec<&str> = d.env.raw("SP_BATCHED_STRANDED_NAMES").unwrap_or("").split_whitespace().collect();
+    let Some(held) = crate::lc::beads_in_on(&cfg.lc, "IN_DELIVERY") else {
+        log(&format!(
+            "watchtower: batched-stranded — lifecycle did not answer; {} candidate(s) not re-confirmed, not filed",
+            candidates.len()
+        ));
+        return;
+    };
+    let held: std::collections::HashSet<&str> = held.iter().map(|b| b.id.as_str()).collect();
+    let (alive, gone): (Vec<&str>, Vec<&str>) = candidates.iter().partition(|id| held.contains(**id));
+    if alive.is_empty() {
+        log(&format!("watchtower: batched-stranded — no candidate still IN_DELIVERY, not filed (dropped: {})", gone.join(" ")));
+        return;
+    }
+    let n = alive.len();
+    let names = alive.join(" ");
+    let ages = stranded_ages(&kept_ages(d.env.raw("SP_BATCHED_STRANDED_AGES").unwrap_or(""), &alive), &names);
     let body = format!(
         "Stranded IN_DELIVERY branches: {n}\n\nThe branch(es) below are IN_DELIVERY on the lifecycle record but their ID is absent from every open batch members= line. The Hel refuses to reap in-delivery branches, so these are permanently stuck until the record is corrected.\n\nBranch IDs (spira/ prefix omitted), with how long each has been outside every open batch:\n{ages}\n\nCheck: for each id, `spira-lc state <id>` (IN_DELIVERY) and confirm the id does not appear in $SPIRA_QUEUE_DIR/*/open members= lines.\nFix: settle or abandon the batch the row names on the lifecycle record (`spira-lc show <id>`). If the tip moved, escalate — the branch has diverged from what was batched.\n"
     );
-    let f = Finding::new(&cfg.db, &cfg.home_repo, "HEL: BATCHED branch absent from open batch", &body)
+    let title = format!("HEL: BATCHED branch absent from open batch: {names}");
+    let f = Finding::new(&cfg.db, &cfg.home_repo, &title, &body)
         .priority(1)
         .reference("incident:hel-batched-stranded")
         .cause("batched-stranded");
@@ -241,6 +257,10 @@ fn batched_stranded(d: &SweepData, cfg: &Cfg, raise: Raise) {
         incident::AlarmOutcome::Failed => "NOT filed (incident alarm failed)",
     };
     log(&format!("watchtower: batched-stranded escalation {outcome} ({n} stranded: {names})"));
+}
+
+fn kept_ages(raw: &str, ids: &[&str]) -> String {
+    raw.split_whitespace().filter(|p| p.split_once('=').is_some_and(|(id, _)| ids.contains(&id))).collect::<Vec<_>>().join(" ")
 }
 
 /// `id=secs` pairs as one line per bead: `id — 6m10s`.
@@ -528,6 +548,45 @@ mod tests {
     fn batched_stranded_is_silent_at_zero_and_at_a_question_mark() {
         assert!(file_one("wt-esc-bs0", batched_stranded, &[("SP_BATCHED_STRANDED", "0")]).is_empty());
         assert!(file_one("wt-esc-bsq", batched_stranded, &[("SP_BATCHED_STRANDED", "?")]).is_empty());
+    }
+
+    fn stranded_raised(tag: &str, names: &str, ages: &str, lc: spira_store::lc_call::LcClient) -> Vec<Finding> {
+        let d = testkit::TempDir::new(tag);
+        let mut cfg = cfg_with(&d, fake_incident(&d));
+        cfg.lc = lc;
+        let mut data = SweepData::fixture_nominal(1_700_000_000);
+        data.env.set("SP_BATCHED_STRANDED", names.split_whitespace().count().to_string());
+        data.env.set("SP_BATCHED_STRANDED_NAMES", names);
+        data.env.set("SP_BATCHED_STRANDED_AGES", ages);
+        let mut raised: Vec<Finding> = Vec::new();
+        batched_stranded(&data, &cfg, &mut |f| {
+            raised.push(f.clone());
+            incident::AlarmOutcome::Noted
+        });
+        raised
+    }
+
+    #[test]
+    fn a_bead_the_machine_no_longer_holds_in_delivery_is_not_alarmed() {
+        let (_, lc) = crate::lc::scripted::scripted_by(&[("list --state IN_DELIVERY", 0, "[]")]);
+        assert!(stranded_raised("wt-esc-bs-landed", "sp-landed", "sp-landed=400", lc).is_empty());
+    }
+
+    #[test]
+    fn only_the_beads_still_in_delivery_are_named_in_the_title_and_body() {
+        let (_, lc) = crate::lc::scripted::scripted_by(&[("list --state IN_DELIVERY", 0, r#"[{"bead_id":"sp-stuck","tip":"t","since":1}]"#)]);
+        let raised = stranded_raised("wt-esc-bs-one", "sp-gone sp-stuck", "sp-gone=350 sp-stuck=410", lc);
+        assert_eq!(raised.len(), 1);
+        assert!(raised[0].title.contains("sp-stuck") && !raised[0].title.contains("sp-gone"), "{}", raised[0].title);
+        assert!(raised[0].body.contains("sp-stuck — 6m50s"), "{}", raised[0].body);
+        assert!(!raised[0].body.contains("sp-gone"), "{}", raised[0].body);
+        assert!(raised[0].body.contains("IN_DELIVERY branches: 1"), "{}", raised[0].body);
+    }
+
+    #[test]
+    fn a_lifecycle_that_does_not_answer_files_no_stranded_alarm() {
+        let (_, lc) = crate::lc::scripted::scripted(2, "cannot tell");
+        assert!(stranded_raised("wt-esc-bs-fault", "sp-a", "sp-a=400", lc).is_empty());
     }
 
     #[test]
