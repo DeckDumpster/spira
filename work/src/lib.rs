@@ -35,8 +35,12 @@ pub fn looks_like_bead_id(s: &str) -> bool {
 }
 
 /// A `[[check]]` row's command, run from the worktree root with no shell.
+pub fn is_unit_build(run: &str) -> bool {
+    run.trim() == UNIT_BUILD
+}
+
 pub fn done_argv(run: &str) -> Vec<String> {
-    if run.trim() == UNIT_BUILD {
+    if is_unit_build(run) {
         return vec!["cargo".to_string()];
     }
     habits::config::argv(run, &[])
@@ -116,8 +120,13 @@ pub fn affected_scope(diff_raw: &[u8], metadata_json: &str) -> Result<Affected, 
 /// crate, so there is nothing for it to check.
 pub fn check_argv(run: &str, affected: &Affected, branch: &str, record: &std::path::Path) -> Option<Vec<String>> {
     let argv = habits::config::argv(run, &[("branch", branch), ("record", &record.to_string_lossy())]);
-    if argv == [UNIT_BUILD] {
+    if is_unit_build(run) {
         return match affected {
+            Affected::Workspace(members) if members.is_empty() => {
+                let mut words = gate::compose::unit_build_words(&[]);
+                words.push("--workspace".into());
+                Some(words)
+            }
             Affected::Workspace(members) => Some(gate::compose::unit_build_words(members)),
             Affected::Crates(c) if c.is_empty() => None,
             Affected::Crates(c) => Some(gate::compose::unit_build_words(c)),
@@ -844,6 +853,14 @@ mod tests {
             check_argv(UNIT_BUILD, &scope, "spira/sp-x", rec_path()).unwrap(),
             gate::compose::unit_build_words(&["a".to_string(), "b".to_string(), "c".to_string()])
         );
+    }
+
+    #[test]
+    fn an_unreadable_workspace_builds_the_whole_workspace_and_a_padded_run_still_expands() {
+        let words = check_argv(" {unit-build} ", &Affected::Workspace(vec![]), "b", rec_path()).unwrap();
+        assert_eq!(&words[..2], ["cargo", "test"]);
+        assert_eq!(words.last().unwrap(), "--workspace");
+        assert_eq!(done_argv(" {unit-build} "), v(&["cargo"]));
     }
 
     #[test]

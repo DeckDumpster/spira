@@ -608,7 +608,7 @@ fn run_checks(args: &[String], base_red: bool, via: &str) -> (i32, Vec<String>) 
         }
         println!("== {}: {}", row.name, row.run);
         let none = work::Affected::Crates(Vec::new());
-        let scope = if row.run.contains(work::AFFECTED) || row.run == work::UNIT_BUILD { &*scope.get_or_insert_with(|| affected_scope(work::CHECKS_BASE)) } else { &none };
+        let scope = if row.run.contains(work::AFFECTED) || work::is_unit_build(&row.run) { &*scope.get_or_insert_with(|| affected_scope(work::CHECKS_BASE)) } else { &none };
         let record_file = log.record_file(&row.name);
         let _ = std::fs::remove_file(&record_file);
         let started = std::time::Instant::now();
