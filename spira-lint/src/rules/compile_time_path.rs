@@ -157,6 +157,16 @@ mod tests {
     }
 
     #[test]
+    fn the_registry_carries_the_rule_and_fires_it_on_a_planted_violation() {
+        let rule = crate::all_rules().into_iter().find(|r| r.name() == NAME).expect("registered by build.rs");
+        let t = TempDir::new("ctp-reg");
+        t.write("a/src/lib.rs", "const B: &str = env!(\"CARGO_MANIFEST_DIR\");\n");
+        let tree = Tree::from_paths(t.path(), ["a/src/lib.rs"], std::iter::empty::<&str>());
+        assert_eq!(rule.check(&tree).unwrap().len(), 1);
+        assert_eq!(rule.checked().map(|c| c.0), Some(1));
+    }
+
+    #[test]
     fn content_and_non_paths_are_clean() {
         for src in [
             "const A: &str = include_str!(concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/a.txt\"));\n",
