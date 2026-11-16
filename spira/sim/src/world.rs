@@ -4,7 +4,7 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 pub const PRODUCTION_LOCATORS: &[&str] = &["SPIRA_LC_PASSWORD_FILE", "SPIRA_LC_SOCKET", "SPIRA_RUN", "SPIRA_DB", "SPIRA_TOML"];
-pub const MARKER: &str = ".sim-world";
+pub const MARKER: &str = spira_store::lc_call::SIM_WORLD_MARKER;
 /// The world's landing ref: `repo.sim.base`, and the ref a LANDED bead's commit must reach.
 pub const LANDING_BASE: &str = "local/main";
 const CALL_DEADLINE: Duration = Duration::from_secs(120); // batch-job: git/tar/cp/testenv steps of building a world
@@ -226,6 +226,9 @@ pub fn lc_socket(world: &Path) -> PathBuf {
 /// Makes `world` a pilgrim world: its lifecycle service lets the pilgrim persona file, link and
 /// close beads, which no production store does.
 pub fn make_pilgrim_world(world: &Path) -> Result<(), String> {
+    if !is_world(world) {
+        return Err(format!("{} is not a sim world: a pilgrim marker is placed only beside a world's own socket", world.display()));
+    }
     std::fs::write(spira_store::lc_call::pilgrim_world_marker(&lc_socket(world).display().to_string()), "").map_err(|e| e.to_string())
 }
 

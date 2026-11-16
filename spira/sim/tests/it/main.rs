@@ -8,6 +8,7 @@ mod loop_gate;
 mod loop_ports;
 mod loop_rounds;
 mod loop_supersede;
+mod pilgrim;
 mod probe;
 mod proctrace;
 mod roundvm;
