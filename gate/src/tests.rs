@@ -4889,7 +4889,7 @@ fn a_unit_gate_whose_nextest_run_printed_no_summary_is_a_harness_fault_not_branc
     assert!(f.verdict_line().contains("reason=harness-fault"), "{}", f.verdict_line());
     assert!(f.stderr().contains("printed no `Summary [` line"), "{}", f.stderr());
     assert!(!f.stderr().contains("charged to this branch"));
-    assert!(!f.verdict_line().contains("reason=branch-red"));
+    assert!(!f.stderr().contains("reason=branch-red"));
 
     let g = unit_fake(&["gate/src/x.rs"]);
     g.unit_runs.borrow_mut().insert(
