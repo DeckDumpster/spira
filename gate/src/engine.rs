@@ -107,6 +107,8 @@ struct State {
     build_timing: Option<(crate::buildtiming::Build, String)>,
     /// The test phase's nextest timings, once a unit test phase ran.
     unit_timings: Option<spira_config::unit_tier::UnitTimings>,
+    /// The unit test phase failed and its nextest run named no test and printed no summary.
+    nextest_unreported: bool,
     /// Seconds the trial spent waiting for a slot (testenv's `queue-wait=` lines), inside
     /// the `gate` phase's wall.
     queue_secs: u64,
@@ -874,6 +876,7 @@ impl<'w, W: World> Trial<'w, W> {
                     &mut mark,
                     &mut self.s.build_timing,
                     &mut self.s.unit_timings,
+                    &mut self.s.nextest_unreported,
                 )
             };
             let first_env = env(&label, ctx.var("SPIRA_VERDICT_REPEAT_CONSIDERED"), &comp);
@@ -998,6 +1001,11 @@ impl<'w, W: World> Trial<'w, W> {
             return v(NOVERDICT, "harness-fault", format!(
                 "gate: {name}'s batch reported a harness fault — container died mid-batch ({d}).\ngate: command: {cmd}\n{out}"));
         }
+        if self.s.nextest_unreported {
+            return v(NOVERDICT, "harness-fault", format!(
+                "gate: {name}'s unit nextest run printed no `Summary [` line — no test was judged, so this is the harness, not {br}.\ngate: command: {cmd}\n{}",
+                parse::tail_bytes(&out, 4000)));
+        }
         if rc == 124 && by_deadline && last_phase_charged(&self.s.phases) {
             return killed_verdict(&self.s.phases, deadline, self.s.test_secs, &cmd, &out);
         }
@@ -1112,6 +1120,7 @@ impl<'w, W: World> Trial<'w, W> {
                 &mut |_, _| {},
                 &mut None,
                 &mut None,
+                &mut false,
             );
             let before_tests = r != 0 && ph.last().is_some_and(|(n, _)| n == "base-tools" || n == "base-build");
             self.s.phases.extend(ph);
@@ -2341,6 +2350,7 @@ pub fn run_composed<W: World>(
     mark: &mut dyn FnMut(GateState, &str),
     timing: &mut Option<(crate::buildtiming::Build, String)>,
     unit: &mut Option<spira_config::unit_tier::UnitTimings>,
+    unreported: &mut bool,
 ) -> (i32, String, Vec<(String, u64)>) {
     let first_state = if comp.suites_off() { GateState::Fences } else { GateState::Trial };
     let budget = key::digits(timeout);
@@ -2496,7 +2506,14 @@ pub fn run_composed<W: World>(
             None => phases.push((format!("{prefix}{name}"), wall)),
         }
         if name == "test" && prefix.is_empty() && matches!(comp, Composition::Unit { .. }) {
-            *unit = Some(spira_config::unit_tier::timings(&o));
+            let t = spira_config::unit_tier::timings(&o);
+            let ran_nextest = matches!(comp, Composition::Unit { targets, .. } if targets.lib || targets.bin);
+            *unreported = ran_nextest
+                && r != 0
+                && r != 124
+                && r != NOVERDICT
+                && !t.summarized;
+            *unit = Some(t);
         }
         if timed {
             *timing = w

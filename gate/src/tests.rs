@@ -2928,7 +2928,7 @@ fn a_red_unit_test_on_a_green_base_is_the_branchs() {
     let f = unit_fake(&["gate/src/x.rs"]);
     f.unit_runs.borrow_mut().insert(
         (MERGE_SHA.into(), "test"),
-        (101, "test tests::x ... FAILED\nerror: test failed, to rerun pass `-p gate --lib`".into()),
+        (101, "test tests::x ... FAILED\nerror: test failed, to rerun pass `-p gate --lib`\n     Summary [   0.010s] 1 test run: 0 passed, 1 failed, 0 skipped".into()),
     );
     assert_eq!(f.run(), FAIL);
     assert!(f.verdict_line().contains("reason=branch-red"));
@@ -2947,7 +2947,7 @@ fn a_red_unit_test_on_a_green_base_is_the_branchs() {
     assert!(!meter(&f).contains("base-build") && !meter(&f).contains("base-test"));
     assert_eq!(f.checkouts.borrow()[1], BASE);
     assert!(meter(&f).contains(
-        "compose=unit phases=fences:7,build:7,test:7,base-fences:7 unit_build_secs=7 unit_run_secs=7 unit_tests=0 unit_slowest=- test_clock=7s\n"
+        "compose=unit phases=fences:7,build:7,test:7,base-fences:7 unit_build_secs=7 unit_run_secs=7 unit_tests=1 unit_slowest=- test_clock=7s\n"
     ));
     assert!(f.stderr().contains("phase 'test' failed (exit 101)"));
     assert!(!f.stderr().contains("the same command passes against"));
@@ -2961,7 +2961,7 @@ fn a_red_units_failure_record_lists_bare_paths_not_name_status_lines() {
     f.put_var("SPIRA_GATE_BEAD", "sp-a");
     f.unit_runs.borrow_mut().insert(
         (MERGE_SHA.into(), "test"),
-        (101, "test tests::x ... FAILED".into()),
+        (101, "test tests::x ... FAILED\n     Summary [   0.010s] 1 test run: 0 passed, 1 failed, 0 skipped".into()),
     );
     assert_eq!(f.run(), FAIL);
     let got = f.failures.borrow();
@@ -2972,14 +2972,14 @@ fn a_red_units_failure_record_lists_bare_paths_not_name_status_lines() {
 #[test]
 fn a_red_unit_test_without_a_rerun_line_reproduces_with_the_phases_crates() {
     let f = unit_fake(&["gate/src/x.rs"]);
-    f.unit_runs.borrow_mut().insert((MERGE_SHA.into(), "test"), (101, "test tests::x ... FAILED".into()));
+    f.unit_runs.borrow_mut().insert((MERGE_SHA.into(), "test"), (101, "test tests::x ... FAILED\n     Summary [   0.010s] 1 test run: 0 passed, 1 failed, 0 skipped".into()));
     assert_eq!(f.run(), FAIL);
     let err = f.stderr();
     let line = err.lines().find(|l| l.starts_with("gate: reproduce (from the workspace root): env -i ")).expect(&err);
     assert!(line.contains(" --features integration -p gate"), "{line}");
 }
 
-const FLIP_OUT: &str = "---- t::flip stdout ----\n...\ntest t::flip ... FAILED";
+const FLIP_OUT: &str = "---- t::flip stdout ----\n...\ntest t::flip ... FAILED\n     Summary [   0.010s] 1 test run: 0 passed, 1 failed, 0 skipped";
 
 fn flip_fake(prior: Result<Vec<(String, String)>, String>) -> Fake {
     let f = unit_fake(&["gate/src/x.rs"]);
@@ -3094,7 +3094,7 @@ fn a_unit_base_trial_runs_fences_only_never_the_base_build_or_tests() {
     let f = unit_fake(&["gate/src/x.rs"]);
     f.unit_runs
         .borrow_mut()
-        .insert((MERGE_SHA.into(), "test"), (101, "test tests::x ... FAILED".into()));
+        .insert((MERGE_SHA.into(), "test"), (101, "test tests::x ... FAILED\n     Summary [   0.010s] 1 test run: 0 passed, 1 failed, 0 skipped".into()));
     assert_eq!(f.run(), FAIL);
     let m = meter(&f);
     assert!(m.contains("base-fences:7"), "{m}");
@@ -3131,7 +3131,7 @@ fn a_crate_the_base_lacks_is_not_tested_on_the_base() {
         .insert(BASE.into(), Ok(metadata_json(&[("gate", &[])])));
     f.unit_runs
         .borrow_mut()
-        .insert((MERGE_SHA.into(), "test"), (101, "FAILED".into()));
+        .insert((MERGE_SHA.into(), "test"), (101, "        FAIL [   0.010s] (1/1) newcrate t::x\n     Summary [   0.010s] 1 test run: 0 passed, 1 failed, 0 skipped\n".into()));
     assert_eq!(
         f.run(),
         FAIL,
@@ -4701,12 +4701,12 @@ fn fences_mode_a_unit_test_failure_in_a_touched_crate_fails_the_branch_at_the_ga
     // Fences mode runs the touched crates' unit tests after the fences: a broken unit test is
     // red here, not in a round 15 minutes and a VM pass later (Ryan 2026-10-29).
     let f = fences_fake(&["gate/src/x.rs"]);
-    f.unit_runs.borrow_mut().insert((MERGE_SHA.into(), "test"), (101, "test x ... FAILED".into()));
+    f.unit_runs.borrow_mut().insert((MERGE_SHA.into(), "test"), (101, "test x ... FAILED\n     Summary [   0.010s] 1 test run: 0 passed, 1 failed, 0 skipped".into()));
     assert_eq!(f.run(), FAIL, "{}", f.stderr());
     assert!(f.cmds.borrow().iter().any(|c| c.contains("; cargo nextest run ")), "the touched crate's tests ran");
     // Control: a branch touching no crate runs no unit tests and passes on the same fixture.
     let d = fences_fake(&["docs/x.md"]);
-    d.unit_runs.borrow_mut().insert((MERGE_SHA.into(), "test"), (101, "test x ... FAILED".into()));
+    d.unit_runs.borrow_mut().insert((MERGE_SHA.into(), "test"), (101, "test x ... FAILED\n     Summary [   0.010s] 1 test run: 0 passed, 1 failed, 0 skipped".into()));
     assert_eq!(d.run(), PASS, "{}", d.stderr());
     assert!(!d.cmds.borrow().iter().any(|c| c.contains("cargo nextest run")));
 }
@@ -4879,4 +4879,33 @@ fn the_configured_target_cap_reaches_the_release_of_the_gate_tree() {
     f.put_var("SPIRA_GATE_TARGET_CAP_MIB", "7777");
     assert_eq!(f.run(), PASS, "{}", f.stderr());
     assert_eq!(f.release_caps.borrow().as_slice(), &[7777]);
+}
+
+#[test]
+fn a_unit_gate_whose_nextest_run_printed_no_summary_is_a_harness_fault_not_branch_red() {
+    let f = unit_fake(&["gate/src/x.rs"]);
+    f.unit_runs.borrow_mut().insert((MERGE_SHA.into(), "test"), (1, "bwrap: execvp cargo: No such file or directory\n".into()));
+    assert_eq!(f.run(), NOVERDICT);
+    assert!(f.verdict_line().contains("reason=harness-fault"), "{}", f.verdict_line());
+    assert!(f.stderr().contains("printed no `Summary [` line"), "{}", f.stderr());
+    assert!(!f.stderr().contains("charged to this branch"));
+    assert!(!f.stderr().contains("reason=branch-red"));
+
+    let g = unit_fake(&["gate/src/x.rs"]);
+    g.unit_runs.borrow_mut().insert(
+        (MERGE_SHA.into(), "test"),
+        (101, "        FAIL [   0.010s] (1/3) gate tests::x\n     Summary [   1.000s] 3 tests run: 2 passed, 1 failed, 0 skipped\n".into()),
+    );
+    assert_eq!(g.run(), FAIL);
+    assert!(g.verdict_line().contains("reason=branch-red"), "{}", g.verdict_line());
+    assert!(g.stderr().contains("tests::x"));
+    assert!(!g.stderr().contains("harness-fault"), "{}", g.stderr());
+}
+
+#[test]
+fn a_unit_run_cut_at_its_deadline_without_a_summary_is_not_the_missing_report_fault() {
+    let f = unit_fake(&["gate/src/x.rs"]);
+    f.unit_runs.borrow_mut().insert((MERGE_SHA.into(), "test"), (124, String::new()));
+    f.run();
+    assert!(!f.stderr().contains("printed no `Summary [` line"), "{}", f.stderr());
 }
