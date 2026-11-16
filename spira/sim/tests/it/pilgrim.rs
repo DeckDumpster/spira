@@ -150,3 +150,32 @@ fn a_pilgrim_files_links_and_closes_in_a_world_of_its_own_and_both_views_follow(
         "an unmarked world refuses the pilgrim: {out}"
     );
 }
+
+#[test]
+#[ignore = "needs SPIRA_SIM_RELEASE, SPIRA_TOML naming spira.bd, and a Dolt fixture: run with --ignored"]
+fn a_pilgrim_session_with_no_bd_on_path_builds_a_pilgrim_world() {
+    let release = std::env::var(world::RELEASE_ENV).or_else(|_| std::env::var("SPIRA_RELEASE")).expect("SPIRA_SIM_RELEASE or SPIRA_RELEASE names a release");
+    let toml = std::env::var("SPIRA_TOML").unwrap_or_else(|_| panic!("SPIRA_TOML is unset"));
+    let t = testkit::TempDir::new("pw-nobd");
+    let dir = t.join("w");
+    let out = std::process::Command::new(testkit::bin_exe("sim"))
+        .args(["world", "up"])
+        .arg(&dir)
+        .arg("--pilgrim")
+        .env_clear()
+        .env("PATH", "/usr/bin:/bin")
+        .env("HOME", std::env::var("HOME").unwrap_or_default())
+        .env("SPIRA_RELEASE", &release)
+        .env(world::RELEASE_ENV, &release)
+        .env("SPIRA_TOML", toml)
+        .env("SPIRA_LC_SOCKET", t.join("production.sock"))
+        .output()
+        .unwrap();
+    let dir = dir.canonicalize();
+    if let Ok(d) = &dir {
+        let _ = world::down(d, &ProcessSteps);
+    }
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{err}");
+    assert!(!err.contains("bd not found"), "{err}");
+}

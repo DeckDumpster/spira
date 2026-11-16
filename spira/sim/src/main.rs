@@ -104,6 +104,16 @@ fn run(args: &[String]) -> Result<(), String> {
             let [dir] = pos.as_slice() else { return Err(USAGE.to_string()) };
             let repos = repos.iter().map(|r| world::RepoSpec::parse(r)).collect::<Result<Vec<_>, _>>()?;
             let tree = set.get("--tree").map_or("HEAD", String::as_str);
+            if set.contains_key("--pilgrim") {
+                let pinned = spira_config::process::cfg("SPIRA_BD").ok();
+                let (sets, removes) = world::pilgrim_session_env(&env, pinned);
+                for (k, v) in sets {
+                    std::env::set_var(k, v);
+                }
+                for k in removes {
+                    std::env::remove_var(k);
+                }
+            }
             world::up_repos(&cwd, &PathBuf::from(dir), tree, &env, &ProcessSteps, &repos, &|_| Ok(()))?;
             if set.contains_key("--pilgrim") {
                 spira_sim::pilgrim::up(&PathBuf::from(dir).canonicalize().map_err(|e| e.to_string())?, spira_sim::pilgrim::FIXTURE, &ProcessSteps)?;
