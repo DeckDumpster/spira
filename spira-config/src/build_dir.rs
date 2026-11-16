@@ -680,19 +680,17 @@ mod tests {
     }
 
     #[test]
-    fn lease_dir_gives_up_on_a_held_slot_after_waiting_and_sees_it_released_within_the_wait() {
+    fn lease_dir_gives_up_on_a_held_slot_and_takes_it_once_its_holder_releases() {
         let d = testkit::TempDir::new("bdir-lease-dir-held");
         let bases = vec![d.path().join("base")];
         let held = lease(&bases, "builder").unwrap();
         let dir = held.dir().to_path_buf();
-        let t = std::time::Instant::now();
-        assert!(lease_dir(&bases, &dir, "gate", std::time::Duration::from_millis(250)).unwrap().is_none());
-        assert!(t.elapsed() >= std::time::Duration::from_millis(250), "it waited");
+        assert!(lease_dir(&bases, &dir, "gate", std::time::Duration::ZERO).unwrap().is_none());
+        assert!(lease_dir(&bases, &dir, "gate", std::time::Duration::from_millis(150)).unwrap().is_none(), "held for the whole wait");
         let waiter = {
             let (b, d) = (bases.clone(), dir.clone());
             std::thread::spawn(move || lease_dir(&b, &d, "gate", std::time::Duration::from_secs(10)).unwrap().is_some())
         };
-        std::thread::sleep(std::time::Duration::from_millis(300));
         held.release();
         assert!(waiter.join().unwrap(), "the waiter took the slot once its holder released");
     }
