@@ -29,6 +29,11 @@ fn main() {
     if op == "launch" {
         spira_otel::oneshot::exit(launch_main(&args[1..], &|k| std::env::var(k).ok()));
     }
+    if let [w, e, dir, shell] = args.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
+        if (*w, *e) == ("world", "exec") {
+            spira_otel::oneshot::exit(exec_main(dir, shell));
+        }
+    }
     let code = match run(&args) {
         Ok(()) => 0,
         Err(e) => {
@@ -37,6 +42,22 @@ fn main() {
         }
     };
     spira_otel::oneshot::exit(code);
+}
+
+/// The tool's own exit code: a refusal (3) must reach the caller as itself.
+fn exec_main(dir: &str, shell: &str) -> i32 {
+    let out = PathBuf::from(dir).canonicalize().map_err(|e| e.to_string()).and_then(|d| spira_sim::pilgrim::exec(&d, shell));
+    match out {
+        Ok(o) => {
+            print!("{}", String::from_utf8_lossy(&o.stdout));
+            eprint!("{}", String::from_utf8_lossy(&o.stderr));
+            o.status.code().unwrap_or(1)
+        }
+        Err(e) => {
+            eprintln!("sim: {e}");
+            1
+        }
+    }
 }
 
 fn run(args: &[String]) -> Result<(), String> {
@@ -88,12 +109,6 @@ fn run(args: &[String]) -> Result<(), String> {
                 spira_sim::pilgrim::up(&PathBuf::from(dir).canonicalize().map_err(|e| e.to_string())?, spira_sim::pilgrim::FIXTURE, &ProcessSteps)?;
             }
             Ok(())
-        }
-        ["world", "exec", dir, shell] => {
-            let out = spira_sim::pilgrim::exec(&PathBuf::from(dir).canonicalize().map_err(|e| e.to_string())?, shell)?;
-            print!("{}", String::from_utf8_lossy(&out.stdout));
-            eprint!("{}", String::from_utf8_lossy(&out.stderr));
-            std::process::exit(out.status.code().unwrap_or(1));
         }
         ["world", "fixture", root, dir] => world::fixture_repo(&PathBuf::from(root), &PathBuf::from(dir)),
         ["world", "seed"] => world::ensure_seed(&cwd, "HEAD").map(|_| ()),

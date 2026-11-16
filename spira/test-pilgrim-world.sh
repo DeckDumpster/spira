@@ -68,7 +68,7 @@ ADDR="$(sed -n 's/^loom_addr *= *"\(.*\)"/\1/p' "$T/pilgrim/config/sim.toml" | h
 want "the world gave Loom an address of its own" "127.0.0.1:" "$ADDR"
 env "${NOLOC[@]}" "$SIM" world exec "$T/pilgrim" 'echo $$ > "$SPIRA_RUN/loom.pid"; exec loom' >"$T/loom.log" 2>&1 &
 env "${NOLOC[@]}" "$SIM" world exec "$T/pilgrim" 'echo $$ > "$SPIRA_RUN/lc-view.pid"; exec lc-view loop 1' >"$T/lv.log" 2>&1 &
-loom_view() { curl -s -m 20 "http://$ADDR/api/lifecycle"; }
+loom_view() { curl -s -m 5 "http://$ADDR/api/lifecycle"; }
 await_loom() { # await_loom <jq predicate over .view>
     local i
     for i in $(seq 1 40); do
