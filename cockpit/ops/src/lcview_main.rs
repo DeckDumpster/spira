@@ -706,7 +706,11 @@ fn main() {
         Some("fit") => {
             // One frame of the TUI layout at COLUMNS x LINES, for a non-interactive look.
             let h = std::env::var("LINES").ok().and_then(|c| c.parse().ok()).unwrap_or(50);
-            println!("{}", layout(&view(&gather()), &load_ui(), width(), h).lines.join("\n"));
+            let mut snap = gather();
+            if let Some(l) = seed() {
+                carry_forward(&mut snap, &l);
+            }
+            println!("{}", layout(&view(&snap), &load_ui(), width(), h).lines.join("\n"));
         }
         Some(other) => {
             eprintln!("usage: lc-view tui [secs] | once | fit | loop [secs] (unknown: {other})");
