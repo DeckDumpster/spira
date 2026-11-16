@@ -421,7 +421,7 @@ fn reap(dir: &Path, pool: Pool, size: u64, procs: &dyn Procs) -> (Vec<Lease>, Ve
 }
 
 /// The ancestors of `pid`, nearest first (at most 64, stopping at pid 1).
-fn ancestors(pid: u32, procs: &dyn Procs) -> Vec<u32> {
+pub fn ancestors(pid: u32, procs: &dyn Procs) -> Vec<u32> {
     let mut out = Vec::new();
     let mut p = pid;
     while out.len() < 64 {

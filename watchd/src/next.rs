@@ -14,6 +14,7 @@ pub struct NextArgs<'a> {
     pub dedup_window: u64,
     pub timeout: Option<Duration>,
     pub poll: Duration,
+    pub ancestors: Vec<u32>,
 }
 
 pub const EXIT_TIMEOUT: i32 = 124;
@@ -76,6 +77,7 @@ pub fn cmd_next(rows: &[Row], ctx: &Context, args: &NextArgs) -> Result<String, 
                 return Err(1);
             }
             if !out.is_empty() {
+                write_delivered(&ctx.run, &r.name, &out, &args.ancestors);
                 return Ok(out);
             }
         }
@@ -83,6 +85,17 @@ pub fn cmd_next(rows: &[Row], ctx: &Context, args: &NextArgs) -> Result<String, 
             return Err(EXIT_TIMEOUT);
         }
         std::thread::sleep(args.poll);
+    }
+}
+
+fn write_delivered(run: &str, name: &str, out: &str, ancestors: &[u32]) {
+    let exited_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
+    let chain = ancestors.iter().map(u32::to_string).collect::<Vec<_>>().join(",");
+    let body = format!("{{\"exited_ms\": {exited_ms}, \"lines\": {}, \"ancestors\": [{chain}]}}\n", out.lines().count());
+    let path = paths::deliveredfile(run, name);
+    let tmp = path.with_extension("delivered.tmp");
+    if std::fs::write(&tmp, body).and_then(|_| std::fs::rename(&tmp, &path)).is_err() {
+        eprintln!("watchd: cannot record the delivery {}", path.display());
     }
 }
 
@@ -126,7 +139,7 @@ mod tests {
 
     fn run_next(d: &TempDir, log: &std::path::Path, secs: u64) -> Result<String, i32> {
         let rows = vec![Row { name: "inbox".into(), kind: Kind::Log, target: log.display().to_string(), health: String::new() }];
-        let args = NextArgs { name: "inbox", dedup_window: 600, timeout: Some(Duration::from_secs(secs)), poll: Duration::from_millis(20) };
+        let args = NextArgs { name: "inbox", dedup_window: 600, timeout: Some(Duration::from_secs(secs)), poll: Duration::from_millis(20), ancestors: vec![4242, 77] };
         cmd_next(&rows, &ctx(&d.join("run").display().to_string()), &args)
     }
 
@@ -145,5 +158,25 @@ mod tests {
         append(&log, "2026-10-08T00:00:10Z something else\n");
         assert_eq!(run_next(&d, &log, 5).unwrap(), "something else\n", "a line written while no waiter ran is delivered by the next call");
         assert_eq!(fs_ops::read_pos(&cf, fs_ops::total_lines(&log)), fs_ops::total_lines(&log));
+    }
+
+    #[test]
+    fn a_delivery_leaves_a_record_of_its_exit_and_a_timeout_leaves_none() {
+        let d = unique_dir("watchd-next-rec");
+        let log = d.join("inbox.log");
+        append(&log, "");
+        let rec = paths::deliveredfile(&d.join("run").display().to_string(), "inbox");
+        assert_eq!(run_next(&d, &log, 0), Err(EXIT_TIMEOUT));
+        assert!(!rec.exists(), "a timeout is not a delivery");
+        append(&log, "2026-10-08T00:00:02Z one\n2026-10-08T00:00:03Z two\n");
+        let ms = || std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis();
+        let before = ms();
+        assert_eq!(run_next(&d, &log, 5).unwrap(), "one\ntwo\n");
+        let after = ms();
+        let text = std::fs::read_to_string(&rec).unwrap();
+        let num = |key: &str| -> u128 { text.split(key).nth(1).unwrap().trim_start_matches([':', ' ']).split([',', '}']).next().unwrap().trim().parse().unwrap() };
+        assert!((before..=after).contains(&num("\"exited_ms\"")));
+        assert_eq!(num("\"lines\""), 2);
+        assert!(text.contains("\"ancestors\": [4242,77]"), "{text}");
     }
 }
