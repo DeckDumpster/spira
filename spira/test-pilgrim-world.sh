@@ -79,7 +79,9 @@ await_loom() { # await_loom <jq predicate over .view>
     return 1
 }
 await_loom "[.view.blocked[].id] | index(\"$A\") != null"
-is "Loom shows A blocked" 0 "$?"
+loom_rc=$?
+[ "$loom_rc" -eq 0 ] || { echo "# loom.log: $(head -c 600 "$T/loom.log")"; echo "# loom api: $(curl -s -m 5 -i "http://$ADDR/api/lifecycle" | head -c 600)"; }
+is "Loom shows A blocked" 0 "$loom_rc"
 loom_view | jq -e "[.view.next[].id] | index(\"$A\") == null" >/dev/null
 is "Loom does not offer A as claimable while B is open" 0 "$?"
 
