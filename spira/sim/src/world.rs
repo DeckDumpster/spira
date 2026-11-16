@@ -925,7 +925,7 @@ pub fn fixture_repo(root: &Path, dst: &Path) -> Result<(), String> {
 /// harness scripts, and the fence scripts and allow list the commit hook's fence-scripts rule reads),
 /// not crate sources, docs, test suites or the config registry. A new
 /// worktree inherits the patterns, so every checkout the landing code makes is a fraction of the tree.
-const SPARSE_PATTERNS: &str = "/*\n!/*/\n/.github/\n/lifecycle/\n/out/\n/sim/\n/spira/\n/systemd/\n!/spira/test-*.sh\n!/spira/conf.d/\n/spira/test-*-lint.sh\n/spira/test-*-fence.sh\n/spira-lint/fence-scripts-allow\n";
+const SPARSE_PATTERNS: &str = "/*\n!/*/\n/.github/\n/lifecycle/\n/out/\n/sim/\n/spira/\n/systemd/\n!/spira/test-*.sh\n!/spira/conf.d/\n/spira/test-*-lint.sh\n/spira/test-*-fence.sh\n/spira/test-yield.sh\n/spira-lint/fence-scripts-allow\n";
 
 /// A copy of a seed repo, its pack files linked rather than copied: a pack is never written to
 /// again, where refs, the index and the reflogs are, and those are copied.
@@ -1269,5 +1269,21 @@ mod content_sql_tests {
         let s = content_sql_settings("41234");
         assert!(s.contains(&("spira.beads_sql_port".to_string(), "41234".to_string())));
         assert!(s.contains(&("spira.beads_sql_user".to_string(), "root".to_string())));
+    }
+}
+
+#[cfg(test)]
+mod sparse_tests {
+    use super::SPARSE_PATTERNS;
+
+    #[test]
+    fn a_worlds_sparse_tree_names_a_suite_the_repository_has_so_a_round_has_a_corpus() {
+        let spira = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let named: Vec<&str> = SPARSE_PATTERNS
+            .lines()
+            .filter_map(|l| l.strip_prefix("/spira/test-"))
+            .filter(|n| n.ends_with(".sh") && !n.contains('*'))
+            .collect();
+        assert!(named.iter().any(|n| spira.join(format!("test-{n}")).is_file()), "{named:?}");
     }
 }
