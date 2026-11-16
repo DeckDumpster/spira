@@ -91,7 +91,7 @@ and the `spira-runtime serve` task that does it.
    teardown decides whether the attempt is charged, and the unit's stop hook runs
    `sentinel --call-only` to refill the slot.
 
-6. **Screen.** The `sift` task (every minute) runs `round-controller sifts`, which screens each queue
+6. **Screen.** The `sift` task (every minute) screens each queue
    repository's proto-round (all `SUBMITTED` and `CERTIFIED` rows). A pass is recorded as
    `Sifted {tip}`; a conflict, duplicate or policy gap sends the bead back, supersedes it, or
    files a mend. The batcher cuts only beads whose current tip has a screen pass.

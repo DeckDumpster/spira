@@ -1,4 +1,4 @@
-//! `round-controller sifts`: the Sift over every queue repository. Each unheld SUBMITTED or
+//! The Sift's reads over every queue repository. Each unheld SUBMITTED or
 //! CERTIFIED bead whose recorded tip is still its branch's live tip is screened by the `sift`
 //! crate: its pass is recorded on the lifecycle store, or it is sent back, superseded or held
 //! out. On one pool its verdicts are `batcher sifts`'s, line for line.
@@ -13,7 +13,7 @@ use sift::{Candidate, GitProbe};
 use spira_store::lc_call::LcClient;
 use spira_config::repos::Registry;
 
-const WHO: &str = "round-controller";
+const WHO: &str = "sift";
 
 struct Repo {
     name: String,

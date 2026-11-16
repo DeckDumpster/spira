@@ -24,7 +24,7 @@ pub const INERT_TOOLS: &[&str] = &["unit-ensure", "target-reap", "spira-lint"];
 /// What the world's `SPIRA_CALL` runs: `sim` under this name, standing where `systemd-run` stands.
 pub const CALL_TOOL: &str = "sim-call";
 /// What the world's `SPIRA_LAUNCH` and `SPIRA_LAUNCH_CTL` run: `sim` under this name, standing
-/// where `systemd-run` and `systemctl` stand for the round controller's launcher.
+/// where `systemd-run` and `systemctl` stand for round-recert's launcher.
 pub const LAUNCH_TOOL: &str = "sim-launch";
 
 /// The world's `SPIRA_AGENT`: a launcher giving the stub agent the scenario and state paths the dwarf's restricted environment drops.

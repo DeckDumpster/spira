@@ -2889,7 +2889,7 @@ struct VerbHolds {
 }
 
 /// Drives one round through open, certify (red), eject, certify (green) and land, each verb run by
-/// itself as the round controller runs them, the caller holding no lock between them. While each
+/// itself as round-recert runs them, the caller holding no lock between them. While each
 /// certify's round VM runs, a hand `round abandon` tries the queue lock once: it gets it at once,
 /// or it is told the lock is busy. Answers each verb's holds and each hand try's answer.
 fn drive_beside_a_hand_driver(t: &T) -> (Vec<VerbHolds>, Vec<bool>) {
