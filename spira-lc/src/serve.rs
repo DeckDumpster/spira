@@ -329,6 +329,7 @@ impl Flights {
         for (_, slot) in open {
             let mut answered = slot.answered.lock().unwrap();
             if !*answered {
+                let _ = slot.stream.set_write_timeout(Some(Duration::from_secs(5)));
                 let _ = write_raw(&slot.stream, 2, &stopped_for_restart(), "", None);
                 *answered = true;
                 refused += 1;
@@ -1181,7 +1182,7 @@ mod tests {
         for unit in ["lc-serve.service", "spira-lc.service"] {
             let text = std::fs::read_to_string(spira_config::resolve::checkout_root_for_process().unwrap().join("systemd").join(unit)).unwrap();
             let stop: u64 = text.lines().find_map(|l| l.strip_prefix("TimeoutStopSec=")).unwrap().parse().unwrap();
-            assert!(std::time::Duration::from_secs(stop) >= super::DRAIN_BOUND + std::time::Duration::from_secs(15), "{unit}: TimeoutStopSec={stop}");
+            assert!(std::time::Duration::from_secs(stop) > super::DRAIN_BOUND + std::time::Duration::from_secs(15), "{unit}: TimeoutStopSec={stop}");
         }
     }
 
