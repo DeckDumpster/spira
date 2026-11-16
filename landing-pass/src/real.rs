@@ -1,7 +1,7 @@
 //! Production implementations of the ports: bd, git, the lib.sh seam, the harness
 //! programs, /proc and the clock.
 
-use crate::model::{BeadRow, LandMode, Rebase, Recut, RepoRow, Settings};
+use crate::model::{BeadRow, IncidentFiling, LandMode, Rebase, Recut, RepoRow, Settings};
 use crate::ports::{Beads, Clock, Git, Lib, Procs, Tools};
 use crate::report::Reporter;
 use crate::seam::{self, Op, FIELD};
@@ -400,6 +400,12 @@ impl<'a> Lib for RealLib<'a> {
         let intake = p(&self.incident);
         let (rc, ans) = self.seam.call(Op::Incident, &[&intake, labels, repo, ext_ref, title, payload]);
         if rc == 0 { Ok(ans) } else { Err(rc) }
+    }
+    fn file_incident(&self, f: &IncidentFiling) -> Result<String, String> {
+        match incident::intake::file_payload_with_id(&f.title, f.body.as_bytes(), |e| incident_tune(f, e))? {
+            Some(id) => Ok(id),
+            None => Err("the intake filed nothing".into()),
+        }
     }
     /// lib.sh `spira_ask_rebase_loop` — ported natively (sp-31hjr; was the S7 seam). Mail
     /// send **concierge**, kind note — every call, never deduped: the repetition is
@@ -1529,6 +1535,60 @@ mod store_tests {
         let e = lc.resubmit_submitted("sp-a", "t").unwrap_err();
         assert!(e.contains("exited 2: cannot tell"), "{e}");
         assert_eq!(s.seen.lock().unwrap()[0], "list --state IN_DELIVERY");
+    }
+}
+
+pub(crate) fn incident_tune(f: &IncidentFiling, env: &mut incident::intake::Env) {
+    env.reference = Some(f.reference.clone());
+    env.cause = f.cause.clone();
+    env.repo = Some(f.repo.clone());
+    env.actor = Some("landing".into());
+    env.kind = "bug".into();
+    env.priority = "1".into();
+}
+
+#[cfg(test)]
+mod incident_tests {
+    use super::*;
+
+    fn filing() -> IncidentFiling {
+        IncidentFiling {
+            cause: "gate-unjudged".into(),
+            repo: "spira".into(),
+            reference: "gate-unjudged:spira:spira/sp-a@t1".into(),
+            title: "t".into(),
+            body: "b".into(),
+        }
+    }
+
+    fn ops_matches(labels: &str, home: &Path) -> bool {
+        use spira_config::runes::{bucket_match, rune_predicate, split_csv};
+        let p = rune_predicate(home, "ops").expect("ops predicate");
+        assert!(!p.labels.is_empty(), "the ops predicate resolved empty: {p:?}");
+        let have = split_csv(labels);
+        let have: Vec<&str> = have.iter().map(String::as_str).collect();
+        bucket_match(&have, &split_csv(&p.labels), &split_csv(&p.exclude_labels), &[], "ops")
+    }
+
+    #[test]
+    fn the_unjudged_incident_carries_the_labels_the_ops_predicate_matches() {
+        let home = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
+        let dir = testkit::TempDir::new("landing-pass-unjudged-labels");
+        let runes = home.join("runes");
+        let toml = spira_config::process::fixture_toml(dir.path(), &[("SPIRA_RUNES_DIR", runes.to_str().unwrap())]);
+        let _g = testkit::env(&[
+            ("SPIRA_HOME", home.to_str()),
+            ("SPIRA_TOML", toml.to_str()),
+            ("SPIRA_INCIDENT_LABELS", None),
+            ("SPIRA_INCIDENT_LABEL", None),
+            ("SPIRA_SCOPE_LABEL", None),
+        ]);
+        let mut env = incident::intake::Env::load();
+        incident_tune(&filing(), &mut env);
+        assert!(ops_matches(&env.labels, &home), "ops cannot claim labels {:?}", env.labels);
+        assert_eq!(env.cause, "gate-unjudged");
+        assert_eq!((env.actor.as_deref(), env.kind.as_str(), env.priority.as_str()), (Some("landing"), "bug", "1"));
+        assert_eq!(env.reference.as_deref(), Some("gate-unjudged:spira:spira/sp-a@t1"));
     }
 }
 

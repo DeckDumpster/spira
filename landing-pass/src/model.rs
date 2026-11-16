@@ -482,6 +482,16 @@ impl RunRecord {
     }
 }
 
+/// One incident the pass files in-process: the intake sets its labels, never the caller.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct IncidentFiling {
+    pub cause: String,
+    pub repo: String,
+    pub reference: String,
+    pub title: String,
+    pub body: String,
+}
+
 /// What `rebase_branch` reports through its globals.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Rebase {
