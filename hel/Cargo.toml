@@ -2,6 +2,7 @@
 name = "hel"
 version = "1.0.0"
 edition = "2021"
+autotests = false
 description = "hel — the Hel: delete the branch and worktree of every bead whose work has landed, and nothing else. Replaces spira/hel.sh (sp-arpjt)."
 
 [features]
@@ -23,6 +24,11 @@ path = "src/lib.rs"
 name = "hel"
 path = "src/main.rs"
 test = false
+
+[[test]]
+name = "scan_spawns"
+path = "tests/scan_spawns.rs"
+required-features = ["integration"]
 
 [dev-dependencies]
 testkit = { path = "../testkit" }

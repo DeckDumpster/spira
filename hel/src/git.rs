@@ -52,6 +52,28 @@ impl Git<'_> {
         self.ok(&["-c", &format!("attr.tree={base}"), "merge-tree", "--write-tree", base, br])
     }
 
+    /// `(branch, tip)` of every `refs/heads/spira/*`, in git's own order, in one call.
+    pub fn spira_branch_tips(&self) -> Vec<(String, String)> {
+        self.out(&["for-each-ref", "--format=%(refname:short) %(objectname)", "refs/heads/spira/*"])
+            .map(|s| s.lines().filter_map(|l| l.split_once(' ')).map(|(b, t)| (b.to_string(), t.to_string())).collect())
+            .unwrap_or_default()
+    }
+
+    /// The `spira/*` branches whose tip is an ancestor of <base>, in one call. A failed read is
+    /// the empty set, never "all of them": nothing is then judged landed without proof.
+    pub fn spira_merged_into(&self, base: &str) -> std::collections::BTreeSet<String> {
+        let merged = format!("--merged={base}");
+        self.out(&["for-each-ref", merged.as_str(), "--format=%(refname:short)", "refs/heads/spira/*"])
+            .map(|s| s.lines().filter(|l| !l.is_empty()).map(String::from).collect())
+            .unwrap_or_default()
+    }
+
+    /// The tree `merge-tree` writes for merging <br> into <base>; None when the merge conflicts or fails.
+    pub fn merged_tree(&self, base: &str, br: &str) -> Option<String> {
+        let out = self.out(&["-c", &format!("attr.tree={base}"), "merge-tree", "--write-tree", base, br])?;
+        Some(out.lines().next().unwrap_or("").to_string())
+    }
+
     /// <base> already holds every change <br> makes: an ancestor, or a merge whose tree is the
     /// base's own (the proof that survives a squash). Same answer as `spira-lc content-landed`.
     pub fn content_on_base(&self, br: &str, base: &str) -> bool {
@@ -62,8 +84,7 @@ impl Git<'_> {
         if ahead == 0 {
             return false;
         }
-        let Some(merged) = self.out(&["-c", &format!("attr.tree={base}"), "merge-tree", "--write-tree", base, br]) else { return false };
-        let merged = merged.lines().next().unwrap_or("").to_string();
+        let Some(merged) = self.merged_tree(base, br) else { return false };
         !merged.is_empty() && self.rev_parse(&format!("{base}^{{tree}}")).is_some_and(|t| t == merged)
     }
 
