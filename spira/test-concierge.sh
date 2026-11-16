@@ -380,12 +380,12 @@ ST="$TMP/toml-pass"; mkdir -p "$ST/bin" "$ST/run" "$ST/wiki"
 cat > "$ST/bin/systemd-run" <<EOF
 #!/bin/sh
 printf '%s\n' "\$@" > "$ST/systemd-run.argv"
+cp -n "$ST/run/concierge-launch.sh" "$ST/launch.first" 2>/dev/null
 EOF
 chmod +x "$ST/bin/systemd-run"
 ST_SOCK="test-concierge-toml-$$"
 ST_TOML="$(tl_layer SPIRA_RUN="$ST/run" SPIRA_WIKI="$ST/wiki" SPIRA_RUNES_DIR="$FX/runes" \
-    SPIRA_MEMORIES_CACHE="" SPIRA_TOKEN_PROJECTS="$ST/projects")"
-mkdir -p "$ST/projects/p"
+    SPIRA_MEMORIES_CACHE="")"
 st_start() {  # st_start <env-args...> — `start` under the fixture persona and the stand-in unit
     env -u SPIRA_ADOPT_CONFIGURE_DEFAULT "$@" PATH="$ST/bin:$PATH" SPIRA_HOME="$FX" CONCIERGE_RUNE=fx \
         CONCIERGE_SOCKET="$ST_SOCK" CONCIERGE_SESSION="$ST_SOCK" \
@@ -430,7 +430,7 @@ st_start_args() {  # st_start_args <start-args...>
         CONCIERGE_SOCKET="$ST_SOCK" CONCIERGE_SESSION="$ST_SOCK" \
         SPIRA_MEMORIES_CMD="$(fixture_cmd)" bash "$HARNESS/concierge.sh" start "$@" 2>&1 </dev/null
 }
-st_clear() { rm -f "$ST/systemd-run.argv" "$ST/run/concierge-launch.sh" "$ST/run/concierge-session"; }
+st_clear() { rm -f "$ST/systemd-run.argv" "$ST/launch.first" "$ST/run/concierge-launch.sh" "$ST/run/concierge-session"; }
 OP_TEXT='Read handoff.md first; it'"'"'s "fresh"'
 printf '%s\n' "$OP_TEXT" > "$ST/op.txt"
 OP_WANT="$(printf '%q' "$(cat "$ST/op.txt")")"
@@ -446,10 +446,8 @@ esac
 
 st_clear
 printf '%s\n%s\n' "fx-resume-id" "$ST/wiki" > "$ST/run/concierge-session"
-: > "$ST/projects/p/fx-resume-id.jsonl"
 op_res_out="$(st_start_args --opening-prompt-file "$ST/op.txt")"
-rm -f "$ST/projects/p/fx-resume-id.jsonl"
-op_line="$(grep '^exec claude' "$ST/run/concierge-launch.sh" 2>/dev/null)"
+op_line="$(grep '^exec claude' "$ST/launch.first" 2>/dev/null)"
 want "a resume start carries --resume (positive control)" "--resume fx-resume-id" "$op_line"
 case "$op_line" in
 *"fresh"*) bad "a resume start does not carry the opening prompt" "$op_line" ;;
