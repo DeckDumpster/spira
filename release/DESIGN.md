@@ -176,7 +176,7 @@ oneshot mid-run, and a dwarf's tools stay on disk in its release. So there is no
 
 Every registry key is required and the typed config refuses unknown fields, so a release that
 adds or drops a key cannot load the config that predates it. The release declares the change
-in its own tree, `spira/config-delta.toml`:
+in its own tree, as a fragment `spira/config-delta.d/<bead>.toml` (the round folds fragments into `spira/config-delta.toml`; the `config-delta-folded` lint refuses a branch that edits that file):
 
 ```toml
 removed = ["spira.old_key"]
@@ -226,15 +226,15 @@ failure is an activation error, never a silent miss; the release stays active.
 
 ### Retiring a key or a task
 
-`spira-config retire spira.<key>` and `spira-config retire --task <name>`, run in the worktree,
+`spira-config retire spira.<key> --bead <id>` and `spira-config retire --task <name> --bead <id>`, run in the worktree,
 make every change below; its `--help` points here.
 
 | Rule | Where it fires | What retire does |
 | --- | --- | --- |
 | The registry no longer declares the key | `config-delta` lint | deletes `spira/conf.d/<KEY>` (or `conf.toml.d`) |
-| The delta names it | `config-delta` lint, activation | adds it to `removed` in `spira/config-delta.toml` |
+| The delta names it | `config-delta` lint, activation | adds it to `removed` in `spira/config-delta.d/<bead>.toml` (`--bead <id>`) |
 | The landing ref still requires the fixture line | `gate fixture-config --base` | leaves the line in `spira/testlib/complete.toml`; delete it in a follow-up once the retirement has landed |
-| A retired task is named | activation | drops it from the `SPIRA_TASK_MODES` default and adds it to `removed_tasks` |
+| A retired task is named | activation | drops it from the `SPIRA_TASK_MODES` default and adds it to `removed_tasks` in `spira/config-delta.d/<bead>.toml` |
 
 What retire cannot do is delete the code that reads the key or registers the task; it prints
 that as left to the builder. Fixture lines are removed only after the landing ref no longer

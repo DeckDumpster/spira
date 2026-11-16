@@ -3,6 +3,7 @@
 use std::path::Path;
 use std::process::{Command, Output};
 
+const BASE_DELTA: &str = "removed_tasks = [\"gone\"]\nremoved = [\"spira.gone\"] # keep\n[spira]\nadded = 1\n";
 const KEY: &str = "TYPE=string\nGROUP=g\nDOC=d\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\n    : \"${SPIRA_OLD_KNOB:=x}\"\nSPIRA_CONF_DEFAULT_EOF\n";
 const TASKS: &str = "TYPE=string\nGROUP=g\nDOC=d\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\n    : \"${SPIRA_TASK_MODES:=alpha=act old.task=act omega=act}\"\nSPIRA_CONF_DEFAULT_EOF\n";
 
@@ -18,7 +19,7 @@ fn tree() -> testkit::TempDir {
     w("spira/conf.d/SPIRA_TASK_MODES", TASKS);
     w("spira/conf.toml.d/SPIRA_ONLY_TOML", &KEY.replace("OLD_KNOB", "ONLY_TOML"));
     w("spira/testlib/complete.toml", "[spira]\nold_knob = \"x\"\nkept = \"x\"\ntask_modes = \"x\"\nonly_toml = \"x\"\n");
-    w("spira/config-delta.toml", "removed_tasks = [\"gone\"]\nremoved = [\"spira.gone\"] # keep\n[spira]\nadded = 1\n");
+    w("spira/config-delta.toml", BASE_DELTA);
     testkit::git(t.path(), &["init", "-q", "-b", "main"]);
     testkit::git(t.path(), &["add", "-A"]);
     testkit::git(t.path(), &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "base"]);
@@ -26,7 +27,7 @@ fn tree() -> testkit::TempDir {
 }
 
 fn retire(root: &Path, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_spira-config")).env_clear().arg("retire").args(args).arg("--tree").arg(root).output().unwrap()
+    Command::new(env!("CARGO_BIN_EXE_spira-config")).env_clear().arg("retire").args(args).args(if args.contains(&"--bead") { &[][..] } else { &["--bead", "sp-x"][..] }).arg("--tree").arg(root).output().unwrap()
 }
 
 fn read(root: &Path, rel: &str) -> String {
@@ -40,11 +41,12 @@ fn retiring_a_key_removes_its_registry_file_names_it_in_the_delta_and_keeps_the_
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     assert!(!t.path().join("spira/conf.d/SPIRA_OLD_KNOB").exists());
     assert!(t.path().join("spira/conf.d/SPIRA_KEPT").exists());
-    let delta = read(t.path(), "spira/config-delta.toml");
+    assert_eq!(read(t.path(), "spira/config-delta.toml"), BASE_DELTA, "the folded file is never edited");
+    let delta = spira_config::delta::delta_text(&t.path().join("spira")).unwrap().unwrap();
+    assert!(read(t.path(), "spira/config-delta.d/sp-x.toml").contains("spira.old_knob"));
     let (added, removed) = spira_config::parse_config_delta(&delta).unwrap();
     assert!(removed.contains(&"spira.old_knob".to_string()) && removed.contains(&"spira.gone".to_string()), "{removed:?}");
     assert_eq!(added, ["spira.added"], "the delta's own additions survive");
-    assert!(delta.contains("# keep"), "the delta's comments survive:\n{delta}");
     assert!(read(t.path(), "spira/testlib/complete.toml").contains("old_knob = \"x\""), "the landing ref still requires the line");
     let said = String::from_utf8_lossy(&out.stdout);
     assert!(said.contains("complete.toml") && said.contains("follow-up"), "{said}");
@@ -65,7 +67,9 @@ fn retiring_a_task_drops_it_from_the_default_and_names_it_in_removed_tasks() {
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     let reg = read(t.path(), "spira/conf.d/SPIRA_TASK_MODES");
     assert!(reg.contains("${SPIRA_TASK_MODES:=alpha=act omega=act}"), "{reg}");
-    let delta = read(t.path(), "spira/config-delta.toml");
+    assert_eq!(read(t.path(), "spira/config-delta.toml"), BASE_DELTA);
+    assert!(read(t.path(), "spira/config-delta.d/sp-x.toml").contains("removed_tasks = [\"old.task\"]"));
+    let delta = spira_config::delta::delta_text(&t.path().join("spira")).unwrap().unwrap();
     assert!(delta.contains("\"old.task\"") && delta.contains("\"gone\""), "{delta}");
     assert!(spira_config::parse_config_delta(&delta).is_ok());
     assert!(String::from_utf8_lossy(&out.stdout).contains("registers"), "names the code left to the builder");
@@ -79,7 +83,8 @@ fn an_unknown_key_or_task_is_refused_and_changes_nothing() {
         assert!(!out.status.success(), "{args:?}");
     }
     assert!(!retire(t.path(), &["spira.old_knob", "--tree"]).status.success(), "--tree needs a value");
-    assert_eq!(read(t.path(), "spira/config-delta.toml"), "removed_tasks = [\"gone\"]\nremoved = [\"spira.gone\"] # keep\n[spira]\nadded = 1\n");
+    assert_eq!(read(t.path(), "spira/config-delta.toml"), BASE_DELTA);
+    assert!(!t.path().join("spira/config-delta.d").exists());
 }
 
 #[test]
@@ -87,4 +92,44 @@ fn retiring_a_key_twice_is_refused() {
     let t = tree();
     assert!(retire(t.path(), &["spira.old_knob"]).status.success());
     assert!(!retire(t.path(), &["spira.old_knob"]).status.success());
+}
+
+#[test]
+fn retire_without_a_bead_exits_non_zero_and_prints_the_usage() {
+    let t = tree();
+    let out = Command::new(env!("CARGO_BIN_EXE_spira-config")).env_clear().args(["retire", "spira.old_knob", "--tree"]).arg(t.path()).output().unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("--bead"));
+    assert!(t.path().join("spira/conf.d/SPIRA_OLD_KNOB").exists());
+}
+
+#[test]
+fn two_branches_each_retiring_a_key_merge_clean_and_the_delta_lists_both() {
+    let t = tree();
+    std::fs::write(t.path().join(".gitattributes"), std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../.gitattributes")).unwrap()).unwrap();
+    testkit::git(t.path(), &["add", "-A"]);
+    let id = ["-c", "user.name=t", "-c", "user.email=t@t"];
+    let commit = |msg: &str| testkit::git(t.path(), &[&id[..], &["commit", "-qm", msg]].concat());
+    commit("attrs");
+    for (branch, key, bead) in [("a", "spira.old_knob", "sp-a"), ("b", "spira.kept", "sp-b")] {
+        testkit::git(t.path(), &["checkout", "-q", "-b", branch, "main"]);
+        assert!(retire(t.path(), &[key, "--bead", bead]).status.success());
+        testkit::git(t.path(), &["add", "-A"]);
+        commit(branch);
+    }
+    testkit::git(t.path(), &["checkout", "-q", "a"]);
+    testkit::git(t.path(), &[&id[..], &["merge", "-q", "--no-edit", "b"]].concat());
+    let delta = spira_config::delta::delta_text(&t.path().join("spira")).unwrap().unwrap();
+    let (_, removed) = spira_config::parse_config_delta(&delta).unwrap();
+    assert!(removed.contains(&"spira.old_knob".to_string()) && removed.contains(&"spira.kept".to_string()), "{removed:?}");
+}
+
+#[test]
+fn a_bead_that_is_not_an_id_is_refused_and_writes_nothing() {
+    let t = tree();
+    for bead in ["../x", ""] {
+        assert!(!retire(t.path(), &["spira.old_knob", "--bead", bead]).status.success(), "{bead:?}");
+    }
+    assert!(t.path().join("spira/conf.d/SPIRA_OLD_KNOB").exists());
+    assert!(!t.path().join("spira/config-delta.d").exists());
 }

@@ -1,2 +1,1 @@
 spira/conf.key-history merge=union
-spira/config-delta.toml merge=union

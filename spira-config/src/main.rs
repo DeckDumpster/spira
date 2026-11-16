@@ -109,16 +109,24 @@ fn describe_locate_failure(outcome: &LocateOutcome) -> String {
     }
 }
 
-const RETIRE_USAGE: &str = "usage: spira-config retire <spira.key> | --task <name>  [--tree <repo>]\n\nMakes every change the rules require when a config key or scheduler task goes away; run it in the worktree, then delete the code that reads it. The protocol: release/DESIGN.md, \"Retiring a key or a task\".";
+const RETIRE_USAGE: &str = "usage: spira-config retire <spira.key> | --task <name>  --bead <id>  [--tree <repo>]\n\nMakes every change the rules require when a config key or scheduler task goes away; run it in the worktree, then delete the code that reads it. The protocol: release/DESIGN.md, \"Retiring a key or a task\".";
 
 fn cmd_retire(args: &[String]) -> ExitCode {
     let mut tree = None;
+    let mut bead = None;
     let (mut task, mut key) = (false, None);
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--tree" => match it.next() {
                 Some(t) => tree = Some(t.clone()),
+                None => {
+                    eprintln!("{RETIRE_USAGE}");
+                    return ExitCode::FAILURE;
+                }
+            },
+            "--bead" => match it.next() {
+                Some(b) => bead = Some(b.clone()),
                 None => {
                     eprintln!("{RETIRE_USAGE}");
                     return ExitCode::FAILURE;
@@ -136,7 +144,7 @@ fn cmd_retire(args: &[String]) -> ExitCode {
             }
         }
     }
-    let Some(name) = key else {
+    let (Some(name), Some(bead)) = (key, bead) else {
         eprintln!("{RETIRE_USAGE}");
         return ExitCode::FAILURE;
     };
@@ -147,7 +155,7 @@ fn cmd_retire(args: &[String]) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let done = if task { spira_config::retire::retire_task(&root, &name) } else { spira_config::retire::retire_key(&root, &name) };
+    let done = if task { spira_config::retire::retire_task(&root, &name, &bead) } else { spira_config::retire::retire_key(&root, &name, &bead) };
     match done {
         Ok(rep) => {
             print!("{}", rep.render());

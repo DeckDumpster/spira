@@ -166,9 +166,84 @@ impl Rule for ConfigDelta {
     }
 }
 
+const FRAGMENTS: &str = "spira/config-delta.d/";
+const FOLDED_NAME: &str = "config-delta-folded";
+
+/// A branch never edits the folded delta; only the round's fold of fragments may.
+pub struct ConfigDeltaFolded;
+
+fn normalized(text: &str) -> Result<toml::Value, String> {
+    fn sort(v: &mut toml::Value) {
+        match v {
+            toml::Value::Array(a) => {
+                a.iter_mut().for_each(sort);
+                a.sort_by_key(|x| x.to_string());
+            }
+            toml::Value::Table(t) => t.iter_mut().for_each(|(_, x)| sort(x)),
+            _ => {}
+        }
+    }
+    let mut v: toml::Value = text.parse().map_err(|e: toml::de::Error| e.to_string())?;
+    sort(&mut v);
+    Ok(v)
+}
+
+fn is_exact_fold(tree: &Tree, base: &str, deleted: &[&str]) -> bool {
+    if deleted.is_empty() {
+        return false;
+    }
+    let show = |p: &str| tree.git(&["show", &format!("{base}:{p}")]).map(|b| String::from_utf8_lossy(&b).into_owned());
+    let mut parts = vec![(DELTA.to_string(), show(DELTA).unwrap_or_default())];
+    for p in deleted {
+        match show(p) {
+            Ok(t) => parts.push((p.to_string(), t)),
+            Err(_) => return false,
+        }
+    }
+    let Ok(Some(merged)) = spira_config::delta::merge_delta_texts(&parts) else { return false };
+    matches!((normalized(&merged), normalized(&tree.read_text(DELTA))), (Ok(a), Ok(b)) if a == b)
+}
+
+impl Rule for ConfigDeltaFolded {
+    fn name(&self) -> &'static str {
+        FOLDED_NAME
+    }
+
+    fn applies_to(&self, e: &Entry) -> bool {
+        e.path == DELTA || e.path.starts_with(FRAGMENTS)
+    }
+
+    fn check(&self, tree: &Tree) -> Result<Vec<Finding>, LintError> {
+        let base = tree.base_commit()?;
+        let out = tree
+            .git(&["diff", "--name-status", "--no-renames", &base, "--", DELTA, FRAGMENTS])
+            .map_err(|e| LintError::Refused(format!("cannot diff {DELTA} against the base: {e}")))?;
+        let text = String::from_utf8_lossy(&out);
+        let changes: Vec<(&str, &str)> = text.lines().filter_map(|l| l.split_once('\t')).collect();
+        if !changes.iter().any(|(_, p)| *p == DELTA) {
+            return Ok(Vec::new());
+        }
+        let deleted: Vec<&str> = changes.iter().filter(|(s, p)| *s == "D" && p.starts_with(FRAGMENTS) && p.ends_with(".toml")).map(|(_, p)| *p).collect();
+        if is_exact_fold(tree, &base, &deleted) {
+            return Ok(Vec::new());
+        }
+        Ok(vec![Finding {
+            rule: FOLDED_NAME,
+            path: DELTA.into(),
+            line: None,
+            message: format!("{DELTA} is edited by this branch; write the change to {FRAGMENTS}<bead>.toml instead"),
+        }])
+    }
+
+    fn hint(&self) -> &'static str {
+        "the folded delta is edited only by the round's fold of fragments; a branch adds spira/config-delta.d/<bead>.toml (`spira-config retire <key> --bead <bead>` writes it) so two branches never share a line"
+    }
+}
+
 pub fn rules() -> Vec<Box<dyn crate::Rule>> {
     vec![
         Box::new(ConfigDelta::default()),
+        Box::new(ConfigDeltaFolded),
     ]
 }
 
@@ -194,8 +269,47 @@ mod tests {
         t.remove("spira/conf.d/SPIRA_OLD_KNOB");
         assert!(rule.check(&tree()).unwrap().iter().any(|f| f.message.contains("registry key spira.old_knob is removed")), "control: an undeclared removal is found");
         t.write("spira/conf.d/SPIRA_OLD_KNOB", "TYPE=string\nDOC=d\n");
-        spira_config::retire::retire_key(t.path(), "spira.old_knob").unwrap();
+        spira_config::retire::retire_key(t.path(), "spira.old_knob", "sp-x").unwrap();
         let found = rule.check(&tree()).unwrap();
         assert!(found.is_empty(), "{:?}", found.iter().map(|f| &f.message).collect::<Vec<_>>());
+    }
+
+    fn folded_tree(t: &TempDir, status: &'static str, base_file: &'static str, frag: &'static str) -> Tree {
+        Tree::from_paths(t.path(), [DELTA], Vec::<String>::new()).with_base(Some("main".into())).with_git(Box::new(move |a| match a {
+            ["rev-parse", ..] => Ok(b"B\n".to_vec()),
+            ["merge-base", ..] => Ok(b"B\n".to_vec()),
+            ["diff", ..] => Ok(status.as_bytes().to_vec()),
+            ["show", "B:spira/config-delta.toml"] => Ok(base_file.as_bytes().to_vec()),
+            ["show", "B:spira/config-delta.d/sp-a.toml"] => Ok(frag.as_bytes().to_vec()),
+            other => Err(format!("unexpected {other:?}")),
+        }))
+    }
+
+    #[test]
+    fn a_branch_editing_the_folded_delta_gets_one_finding() {
+        let t = TempDir::new("folded-edit");
+        t.write(DELTA, "removed = [\"spira.a\"]\n");
+        let f = ConfigDeltaFolded.check(&folded_tree(&t, "M\tspira/config-delta.toml\n", "", "")).unwrap();
+        assert_eq!(f.len(), 1, "{f:?}");
+        assert!(f[0].message.contains("spira/config-delta.d/<bead>.toml"));
+    }
+
+    #[test]
+    fn a_tree_whose_diff_is_exactly_a_fold_gets_none() {
+        let t = TempDir::new("folded-fold");
+        t.write(DELTA, "removed = [\"spira.b\", \"spira.a\"]\n");
+        let st = "M\tspira/config-delta.toml\nD\tspira/config-delta.d/sp-a.toml\n";
+        let tree = folded_tree(&t, st, "removed = [\"spira.a\"]\n", "removed = [\"spira.b\"]\n");
+        assert!(ConfigDeltaFolded.check(&tree).unwrap().is_empty());
+        t.write(DELTA, "removed = [\"spira.a\"]\n");
+        let tree = folded_tree(&t, st, "removed = [\"spira.a\"]\n", "removed = [\"spira.b\"]\n");
+        assert_eq!(ConfigDeltaFolded.check(&tree).unwrap().len(), 1, "a fold that drops the fragment's entry is an edit");
+    }
+
+    #[test]
+    fn a_branch_adding_only_a_fragment_gets_none() {
+        let t = TempDir::new("folded-frag");
+        let tree = folded_tree(&t, "A\tspira/config-delta.d/sp-a.toml\n", "", "");
+        assert!(ConfigDeltaFolded.check(&tree).unwrap().is_empty());
     }
 }
