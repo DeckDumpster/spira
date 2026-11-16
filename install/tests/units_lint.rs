@@ -1,4 +1,4 @@
-// covers: systemd/*.service systemd/*.timer install/src/values.rs round-controller/Cargo.toml round-controller/src/main.rs
+// covers: systemd/*.service systemd/*.timer install/src/values.rs
 use std::path::{Path, PathBuf};
 fn dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../systemd")

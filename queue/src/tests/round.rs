@@ -8341,7 +8341,7 @@ fn the_holders_lease_token_lets_each_verb_through() {
     ];
     assert_eq!(t.run(&open), 0, "{}", t.err());
     seed_suite(&t, "test-b.sh");
-    leased_by(&t, "r-1", "round-controller", "12-0");
+    leased_by(&t, "r-1", "round-recert", "12-0");
     assert_eq!(
         t.run(&[
             "round",
@@ -8448,7 +8448,7 @@ fn an_eject_naming_the_testenv_run_of_a_repo_that_judges_itself_is_accepted() {
     assert!(t.lc.has("eject-member r-1"), "{:?}", t.lc.calls.borrow());
 }
 
-/// `queue round land` as the Lander calls it (round-controller's `RealVerbs::land` argv): the
+/// `queue round land` as the Lander calls it (the argv the landing pass drives): the
 /// exit the Lander classifies its refusal by, and stderr's first word, which is for the operator.
 fn land_as_the_lander(t: &T, batch: &str, token: Option<&str>) -> (i32, String) {
     let mut argv = vec!["round", "land", batch, "spira"];
@@ -8463,7 +8463,7 @@ fn each_land_refusal_exits_with_the_code_the_lander_acts_on() {
     let t = concurrent_world();
     two_green_stacked_rounds(&t);
     for b in ["r-1", "r-2"] {
-        leased_by(&t, b, "round-controller", "5-0");
+        leased_by(&t, b, "round-recert", "5-0");
     }
     let lander = |token| land_as_the_lander(&t, "r-2", Some(token));
     assert_eq!(

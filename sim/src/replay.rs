@@ -7,7 +7,6 @@
 
 pub mod checks;
 pub mod lifecycle;
-pub mod round_controller;
 
 use std::cell::{Ref, RefCell, RefMut};
 use std::collections::{BTreeMap, BTreeSet};
@@ -882,6 +881,3 @@ impl Replay {
         self.sim.trace_signature()
     }
 }
-
-#[cfg(test)]
-mod tests;

@@ -1,4 +1,4 @@
-//! `rc get|list|txn|lock|renew|release --json <body>`: the round controller's door to the control
+//! `rc get|list|txn|lock|renew|release --json <body>`: the queue's and the sift's door to the control
 //! store. A body and its answer are `state_store::wire`'s; the caller's request goes to the
 //! contract exactly as sent, so a retry under the same id finds its first commit.
 
@@ -9,21 +9,15 @@ use crate::flag;
 
 pub const VERB: &str = "rc";
 
-/// The keys an rc call may write: the prefixes of every key round-controller builds. A write
+/// The keys an rc call may write: the round records and their leases. A write
 /// anywhere else is refused, so this door cannot move bead state or any other owner's record.
 pub const WRITE_PREFIXES: &[&str] = &[
     "batches/",
     "verdicts/",
-    "faults/",
-    "green-digests/",
-    "lanes/",
-    "slots/",
-    "telemetry/round-controller/",
     "locks/round/",
-    "locks/runner-slot/",
 ];
 
-pub const USAGE: &str = "rc get|list|txn|lock|renew|release --json <body>|- (the round controller's calls on the control store; JSON answers: 0 {\"ok\"}, 3 {\"error\"}, 2 {\"cannot_tell\"})";
+pub const USAGE: &str = "rc get|list|txn|lock|renew|release --json <body>|- (the round records' calls on the control store; JSON answers: 0 {\"ok\"}, 3 {\"error\"}, 2 {\"cannot_tell\"})";
 
 pub fn run<B: Backend>(store: &Contract<B>, args: &[String]) -> (i32, String) {
     let sub = args.get(1).map(String::as_str).unwrap_or("");
@@ -195,7 +189,7 @@ mod tests {
         #[test]
         fn the_ledger_and_round_keys_are_written_read_and_listed_on_a_store_file() {
             let (_dir, s) = file();
-            for (i, key) in ["verdicts/r/h/attempt/1", "verdicts/r/h", "faults/r/b/d", "batches/r/b1"].iter().enumerate() {
+            for (i, key) in ["verdicts/r/h/attempt/1", "verdicts/r/h", "batches/r/b1"].iter().enumerate() {
                 let (code, out) = call(&s, "txn", put(key, &format!("w{i}")));
                 assert_eq!(code, wire::OK, "{key}: {out}");
             }
@@ -225,7 +219,7 @@ mod tests {
         }
 
         #[test]
-        fn a_write_outside_the_round_controllers_prefixes_is_refused_and_leaves_the_file_unchanged() {
+        fn a_write_outside_the_round_record_prefixes_is_refused_and_leaves_the_file_unchanged() {
             let (_dir, s) = file();
             let (code, out) = call(&s, "txn", put("lifecycle/sp-a", "x"));
             assert_eq!(code, wire::REFUSED, "{out}");

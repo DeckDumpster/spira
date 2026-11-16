@@ -1,6 +1,0 @@
-[Unit]
-Description=Spira round controller, in the world sim only — one pass over every registered repo
-
-[Service]
-Type=oneshot
-ExecStart=round-controller pass

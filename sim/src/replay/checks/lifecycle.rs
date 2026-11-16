@@ -4,8 +4,7 @@
 
 use serde_json::Value;
 
-use super::ranking::stack;
-use super::{open, round_controller, Slice, STACKED_REPO};
+use super::{open, stack, Slice, STACKED_REPO};
 use crate::replay::lifecycle;
 
 /// One pass's read of the Lifecycle section: the stacked repo's 1 h and 24 h rate.
@@ -21,7 +20,6 @@ fn value(v: &Value) -> Option<f64> {
 
 pub fn the_lifecycle_sections_one_hour_rate_falls_below_its_day_rate_while_the_stacked_pointer_stands() {
     let mut r = open(Slice::Oct31);
-    round_controller::register(&mut r);
     lifecycle::register(&mut r);
     let seen = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
     let out = seen.clone();
