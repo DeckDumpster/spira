@@ -2103,6 +2103,16 @@ fn unit_timings(results: &Path, started: u64) -> spira_config::unit_tier::UnitFi
     fresh.then(|| fs::read_to_string(&path).ok()).flatten().and_then(|t| spira_config::unit_tier::parse(&t)).unwrap_or_default()
 }
 
+fn with_unit_timings(rec: tsd::pass::PassRecord, unit: &spira_config::unit_tier::UnitFile) -> tsd::pass::PassRecord {
+    tsd::pass::PassRecord {
+        unit_build_secs: unit.build_secs,
+        unit_run_secs: unit.run_secs,
+        unit_tests: unit.timings.tests,
+        unit_slowest: unit.timings.slowest_record(),
+        ..rec
+    }
+}
+
 /// The pass's peak disk use, from the `disk-usage` file the round left in its results this pass.
 fn disk_peak(results: &Path, started: u64) -> Option<u64> {
     fn walk(dir: &Path, depth: u32, since: std::time::SystemTime, best: &mut Option<u64>) {
@@ -2225,11 +2235,12 @@ pub fn run(env: &RunEnv, args: &RunArgs) -> i32 {
         detail: lost.unwrap_or_default(),
         fences: fence_seconds(&results_root, started),
         disk_peak_b,
-        unit_build_secs: unit.build_secs,
-        unit_run_secs: unit.run_secs,
-        unit_tests: unit.timings.tests,
-        unit_slowest: if unit.timings.slowest.is_empty() { String::new() } else { unit.timings.slowest_field() },
+        unit_build_secs: 0,
+        unit_run_secs: 0,
+        unit_tests: 0,
+        unit_slowest: String::new(),
     };
+    let record = with_unit_timings(record, &unit);
     match env.record.pass_record(&env.cfg.run_dir, &record) {
         Ok(()) => {
             crate::telemetry::push_pass(&record);
@@ -3992,13 +4003,18 @@ mod tests {
         let (dir, started) = results_with_unit_timings(0);
         let u = unit_timings(dir.path(), started);
         assert_eq!((u.build_secs, u.run_secs, u.timings.tests), (41, 73, 2));
-        assert_eq!(u.timings.slowest_field(), "queue/b::u:9.5,gate/a::t:2");
+        let a: Vec<String> = "--repo r --batch b --pass 1 --where ec2 --cause green".split(' ').map(String::from).collect();
+        let r = with_unit_timings(tsd::pass::from_args(&a).unwrap(), &u);
+        assert_eq!((r.unit_build_secs, r.unit_run_secs, r.unit_tests, r.unit_slowest.as_str()), (41, 73, 2, "queue/b::u:9.5,gate/a::t:2"));
     }
 
     #[test]
     fn a_unit_timings_file_older_than_the_pass_is_not_counted() {
         let (dir, started) = results_with_unit_timings(10_000);
         assert_eq!(unit_timings(dir.path(), started), Default::default());
+        let a: Vec<String> = "--repo r --batch b --pass 1 --where ec2 --cause green".split(' ').map(String::from).collect();
+        let r = with_unit_timings(tsd::pass::from_args(&a).unwrap(), &unit_timings(dir.path(), started));
+        assert_eq!((r.unit_build_secs, r.unit_run_secs, r.unit_tests, r.unit_slowest.as_str()), (0, 0, 0, ""));
         assert_eq!(unit_timings(&dir.path().join("none"), started), Default::default());
     }
 

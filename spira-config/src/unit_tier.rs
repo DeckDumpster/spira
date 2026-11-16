@@ -195,6 +195,13 @@ impl UnitTimings {
     }
 }
 
+impl UnitTimings {
+    /// The record field: [`Self::slowest_field`], or empty when no test was timed.
+    pub fn slowest_record(&self) -> String {
+        if self.slowest.is_empty() { String::new() } else { self.slowest_field() }
+    }
+}
+
 /// The unit tier's file form: the VM's seconds, then the log lines [`unit_tier_timing_lines!`] matches.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct UnitFile {
