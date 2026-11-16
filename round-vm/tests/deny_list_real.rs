@@ -82,10 +82,10 @@ fn gate_unit_run(list: &str) -> String {
     let dir = tmp.path().to_path_buf();
     let deny = spira_config::unit_tier::DenyList::parse(list).unwrap();
     let cmds = gate::compose::unit_test_commands(&["tiny".to_string()], gate::compose::Targets { lib: true, bin: false, test: false }, &deny);
-    assert!(cmds[0].starts_with("cargo nextest run"), "{cmds:?}");
+    let unit = cmds.iter().find_map(|c| c.find("cargo nextest run").map(|i| &c[i..])).unwrap_or_else(|| panic!("no nextest command: {cmds:?}"));
     std::fs::create_dir_all(dir.join("target")).unwrap();
     std::fs::write(dir.join(gate::compose::NEXTEST_CONFIG), spira_config::unit_tier::nextest_config(10, 1, &deny)).unwrap();
-    let script = format!("export CARGO_HOME={cargo_home:?} RUSTC_WRAPPER= SCCACHE_WEBDAV_ENDPOINT= SCCACHE_WEBDAV_KEY_PREFIX=\n{}\n", cmds[0]);
+    let script = format!("export CARGO_HOME={cargo_home:?} RUSTC_WRAPPER= SCCACHE_WEBDAV_ENDPOINT= SCCACHE_WEBDAV_KEY_PREFIX=\n{unit}\n");
     bash_in(&dir, &cargo_home, &script, "")
 }
 
