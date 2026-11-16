@@ -6,6 +6,22 @@
 # conf.sh sets: SPIRA_LC_BIN, SPIRA_LOOM_ADDR, SPIRA_PATH and friends. A unit with a hardcoded
 # SPIRA_LC_BIN works on exactly one box; a wrapper that sources conf.sh works on any.
 set -uo pipefail
+
+_ts() { date -Is; }
+_loom_pid=""
+_stop_on() {
+    printf 'loom.sh: %s SIG%s received — stopping loom\n' "$(_ts)" "$1" >&2
+    local pid="${_loom_pid:-${!:-}}"
+    if [ -n "$pid" ]; then
+        kill "$pid" 2>/dev/null || true
+        wait "$pid" 2>/dev/null || true
+    fi
+    exit 0
+}
+trap '_stop_on INT' INT
+trap '_stop_on TERM' TERM
+trap '_stop_on HUP' HUP
+
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/conf.sh"
 
 command -v loom >/dev/null 2>&1 || { printf 'loom: not found on PATH (%s)\n' "$PATH" >&2; exit 2; }
@@ -15,20 +31,8 @@ _conf_stamp_0="$(conf_stamp "$_conf_file")"
 _pinned_0="$(loom --print-config 2>&1)"
 _tick="${SPIRA_LOOM_TICK:-5}"
 
-_ts() { date -Is; }
-
 loom "$@" &
 _loom_pid=$!
-
-_stop_on() {
-    printf 'loom.sh: %s SIG%s received — stopping loom\n' "$(_ts)" "$1" >&2
-    kill "$_loom_pid" 2>/dev/null || true
-    wait "$_loom_pid" 2>/dev/null || true
-    exit 0
-}
-trap '_stop_on INT' INT
-trap '_stop_on TERM' TERM
-trap '_stop_on HUP' HUP
 
 # Loom pins only what --print-config prints; a write to any other key leaves it running.
 _pinned_diff() {
