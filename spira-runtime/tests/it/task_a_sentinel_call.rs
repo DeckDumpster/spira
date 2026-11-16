@@ -293,3 +293,12 @@ fn skuld_starts_while_the_build_disk_class_is_full() {
     assert_eq!(started.len(), 1, "{started:?}");
     assert!(started.iter().all(|s| s.contains("\"rune\":\"skuld\"")), "{started:?}");
 }
+
+#[test]
+fn call_world_binds_only_the_classes_that_have_a_limit() {
+    let snap = Snapshot { max_dwarves: Some(7), class_limits: [("memory".to_string(), 3)].into(), ..idle() };
+    let w = call_world(&Carry::default(), &snap);
+    assert_eq!(w.limits, BTreeMap::from([("build-disk".to_string(), 7), ("memory".to_string(), 3)]));
+    let unbound = call_world(&Carry::default(), &idle());
+    assert!(unbound.limits.is_empty());
+}
