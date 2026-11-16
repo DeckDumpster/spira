@@ -260,6 +260,20 @@ mod tests {
     }
 
     #[test]
+    fn a_pooled_entry_without_its_build_path_is_not_adopted() {
+        let t = testkit::TempDir::new("gate-warm-no-built-at");
+        let root = t.path();
+        let (a, b) = (root.join("tree-a/debug"), root.join("tree-b/debug"));
+        built(&a);
+        assert!(donate(root, &a, "abc123", Path::new("/t")));
+        let entry = entries(root).pop().unwrap();
+        fs::remove_file(entry.join(BUILT_AT)).unwrap();
+        fs::create_dir_all(&b).unwrap();
+        assert_eq!(adopt(root, &b), None);
+        assert!(!b.join("deps/libx.rlib").exists());
+    }
+
+    #[test]
     fn a_directory_that_already_holds_output_is_never_overwritten_by_adoption() {
         let t = testkit::TempDir::new("gate-warm-busy");
         let root = t.path();

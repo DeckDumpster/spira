@@ -105,7 +105,7 @@ fn an_adopted_build_directory_never_serves_a_binary_with_the_donors_path_baked_i
 #[test]
 fn a_unit_cached_by_sccache_in_one_tree_is_recompiled_in_another() {
     let Some(sccache) = spira_config::build::find_on(&std::env::var("PATH").unwrap_or_default(), "sccache") else {
-        eprintln!("sccache is not on PATH: nothing to prove");
+        assert!(std::env::var_os("SPIRA_ALLOW_NO_SCCACHE").is_some(), "sccache is not on PATH: this test pins sccache's own per-tree key and cannot run without it (set SPIRA_ALLOW_NO_SCCACHE=1 to skip)");
         return;
     };
     let t = testkit::TempDir::new("gate-sccache-path");
