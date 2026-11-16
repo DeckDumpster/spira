@@ -2699,7 +2699,7 @@ enum Image {
     /// The wait for the build could not finish; the round is not judged.
     Unjudged(String),
     /// The build is running in the background; only an EC2 placement waits for it.
-    Pending { tree: String, head: String, batch: String, began: u64 },
+    Pending { tree: String, head: String, batch: String, began: u64, stale: Option<String> },
 }
 
 const IMAGE_UNJUDGED: i32 = 3;
@@ -2820,6 +2820,10 @@ fn begin_candidate_image(
         head: head.to_string(),
         batch: batch.to_string(),
         began,
+        stale: match &build {
+            Some(AmiBuild::Failure(run, _)) => Some(run.clone()),
+            _ => None,
+        },
     };
     match build {
         None => Image::Unjudged("the forge cannot be read for the candidate round image build".into()),
@@ -2874,7 +2878,7 @@ fn await_candidate_image(
     path: &Path,
     pending: Image,
 ) -> Image {
-    let Image::Pending { tree, head, batch, began } = pending else {
+    let Image::Pending { tree, head, batch, began, mut stale } = pending else {
         return pending;
     };
     let branch = candidate_branch(&tree);
@@ -2893,10 +2897,23 @@ fn await_candidate_image(
         let Some(build) = build else {
             break Image::Unjudged("the forge cannot be read for the candidate round image build".into());
         };
+        if matches!(&build, AmiBuild::Failure(run, _) if stale.as_ref() == Some(run)) {
+            idle += 1;
+            if idle >= AmiWait::IDLE_POLLS {
+                break Image::Unjudged(format!(
+                    "the Round AMI build dispatched on {branch} never started"
+                ));
+            }
+            w.clock.sleep(AmiWait::POLL_SECS); // waits-on: the dispatched run to replace the failed one; cap IDLE_POLLS
+            continue;
+        }
         if !rebaked
             && matches!(build, AmiBuild::Failure(..))
             && !bake_recorded(w, label, c, &batch, &mark)
         {
+            if let AmiBuild::Failure(run, _) = &build {
+                stale = Some(run.clone());
+            }
             if let Some(v) = rebake(w, label, c, path, &remote, &home_path, &head, &branch, &mark, &batch) {
                 break v;
             }

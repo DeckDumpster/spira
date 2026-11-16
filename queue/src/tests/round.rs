@@ -7008,6 +7008,23 @@ fn a_failed_bake_for_another_head_of_the_same_recipe_is_rebuilt_not_read() {
 }
 
 #[test]
+fn an_ec2_pass_does_not_red_on_the_stale_failure_a_rebuild_has_not_yet_replaced() {
+    let (t, batch) = recipe_changing_world();
+    *t.scripts.round_vm_queue.borrow_mut() = vec![image_pending()];
+    *t.scripts.ami_for.borrow_mut() = vec![AmiLookup::Missing, AmiLookup::Found("ami-cand".into())];
+    let old = || Some(AmiBuild::Failure("40".into(), vec!["build / x".into()]));
+    *t.forge.ami_results.borrow_mut() =
+        vec![old(), old(), old(), Some(AmiBuild::Success("41".into()))];
+
+    assert_eq!(t.run(&["round", "certify", &batch]), 0, "{}", t.err());
+    let forge = t.forge.calls.borrow().join("\n");
+    assert_eq!(forge.matches("ami-dispatch ").count(), 1, "{forge}");
+    let vm = t.scripts.calls.borrow().join("\n");
+    assert!(vm.contains("ami=ami-cand"), "{vm}");
+    assert!(!t.out().contains("red=workspace-build"), "{}", t.out());
+}
+
+#[test]
 fn a_recipe_already_imaged_dispatches_no_build() {
     let (t, batch) = recipe_changing_world();
     *t.scripts.ami_for.borrow_mut() = vec![AmiLookup::Found("ami-have".into())];
