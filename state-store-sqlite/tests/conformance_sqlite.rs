@@ -1324,3 +1324,32 @@ mod relayout {
         assert!(new.is_file());
     }
 }
+
+/// `spira-lc serve` after a restart: the copy is built over the reopened (jumped) store, and the
+/// first write must reach it by the commit's own advance, not by a catch-up or a reload.
+#[test]
+fn the_first_commit_after_a_restart_applies_to_the_copy_without_catch_up_or_reload() {
+    use state_store::phases::{self, Recorder};
+    use state_store::Modeled;
+    let dir = TempDir::new("sqlite-restart-first-commit");
+    let path = dir.path().join("s.db");
+    let clock = VirtualClock::new(1_000);
+    {
+        let c = contract(open(&path), &clock);
+        for i in 0..5 {
+            put(&c, &format!("t/k{i}"), json!(i), &format!("seed-{i}"));
+        }
+    }
+    let modeled = Modeled::open(open(&path), &["events/", "requests/", "history/"], 1_024).unwrap();
+    let c = suite::open(modeled, &clock);
+    let rec = Arc::new(Recorder::default());
+    phases::track(rec.clone());
+    let r = c.txn(&Txn::new().put("t/after", Object::new(json!(1))), &req("first")).unwrap();
+    phases::untrack();
+    assert!(r.succeeded, "{r:?}");
+    let rev = r.rev;
+    let names: Vec<_> = rec.snapshot().phases.iter().map(|p| p.0).collect();
+    assert!(!names.contains(&"catch_up") && !names.contains(&"reload"), "phases {names:?}");
+    assert!(names.contains(&"apply"), "phases {names:?}");
+    assert_eq!(c.backend().revision(), rev, "the copy holds the commit's revision");
+}

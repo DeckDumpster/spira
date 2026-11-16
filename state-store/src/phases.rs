@@ -17,9 +17,11 @@ pub enum Phase {
     ReaderWait,
     Read,
     MinRevWait,
+    Apply,
+    Reload,
 }
 
-const PHASES: usize = 8;
+const PHASES: usize = 10;
 
 impl Phase {
     pub fn name(self) -> &'static str {
@@ -32,6 +34,8 @@ impl Phase {
             Phase::ReaderWait => "reader_wait",
             Phase::Read => "read",
             Phase::MinRevWait => "min_rev_wait",
+            Phase::Apply => "apply",
+            Phase::Reload => "reload",
         }
     }
 
@@ -44,6 +48,8 @@ impl Phase {
         Phase::ReaderWait,
         Phase::Read,
         Phase::MinRevWait,
+        Phase::Apply,
+        Phase::Reload,
     ];
 }
 

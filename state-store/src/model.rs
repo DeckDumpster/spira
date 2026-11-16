@@ -318,6 +318,20 @@ impl<B: Backend> Modeled<B> {
         Ok(())
     }
 
+    /// [`Self::reload`] as a recorded phase, with one stderr line saying where the copy stood.
+    fn reloaded_for_catch_up(&self) -> Result<()> {
+        let (was, started) = (self.revision(), Instant::now());
+        let r = phases::time(Phase::Reload, || self.reload());
+        eprintln!(
+            "state-store: the copy reloaded under a commit: copy at {was}, head {:?}, ring floor {}, took {} ms: {}",
+            self.inner.head().ok(),
+            self.read_model().floor,
+            started.elapsed().as_millis(),
+            r.as_ref().map_or_else(|e| e.to_string(), |_| "ok".into()),
+        );
+        r
+    }
+
     /// Applies the commits the inner backend holds and the copy does not, from its watch log;
     /// a log compacted past the copy reloads it. Called under `order`.
     fn catch_up(&self) -> Result<()> {
@@ -329,7 +343,7 @@ impl<B: Backend> Modeled<B> {
             let log = match self.inner.log(rev, CATCH_UP_MAINS) {
                 Err(Error::TooOld { .. }) => {
                     seen(|s| s.too_old = true);
-                    return self.reload();
+                    return self.reloaded_for_catch_up();
                 }
                 r => r?,
             };
@@ -468,26 +482,28 @@ impl<B: Backend> Backend for Modeled<B> {
         match &res {
             Ok(rev) if self.revision() == expect => {
                 let rev = *rev;
-                self.advance(rev, |m| {
-                    for (i, w) in batch.iter().enumerate().filter(|(_, w)| !self.skipped(w.key())) {
-                        let mod_rev = Rev::new(rev, i as u32);
-                        let s = match w {
-                            Write::Put { value, create_rev, .. } => Some(slot(value, mod_rev, *create_rev)),
-                            Write::Delete { .. } => None,
-                        };
-                        m.put(w.key(), rev, s);
-                    }
+                phases::time(Phase::Apply, || {
+                    self.advance(rev, |m| {
+                        for (i, w) in batch.iter().enumerate().filter(|(_, w)| !self.skipped(w.key())) {
+                            let mod_rev = Rev::new(rev, i as u32);
+                            let s = match w {
+                                Write::Put { value, create_rev, .. } => Some(slot(value, mod_rev, *create_rev)),
+                                Write::Delete { .. } => None,
+                            };
+                            m.put(w.key(), rev, s);
+                        }
+                    })
                 });
                 seen(|s| s.wrote = Some(s.wrote.map_or(rev, |w| w.max(rev))));
             }
             Ok(rev) => {
                 let rev = *rev;
-                let _ = self.catch_up();
+                let _ = phases::time(Phase::CatchUp, || self.catch_up());
                 seen(|s| s.wrote = Some(s.wrote.map_or(rev, |w| w.max(rev))));
             }
             Err(Error::Stale { .. }) => {}
             Err(_) => {
-                let _ = self.catch_up();
+                let _ = phases::time(Phase::CatchUp, || self.catch_up());
             }
         }
         res
