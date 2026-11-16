@@ -301,7 +301,6 @@ pub struct OpenRound {
     /// When it entered `state`.
     pub since: u64,
     pub members: Vec<Member>,
-    pub parent: Option<String>,
 }
 
 impl OpenRound {
@@ -409,7 +408,6 @@ impl ReplayWorld {
         }
         let prev = self.rounds.get(&r.batch);
         let since = prev.filter(|o| o.state == r.state_to).map_or(at, |o| o.since);
-        let parent = r.parent.clone().or_else(|| prev.and_then(|o| o.parent.clone()));
         self.rounds.insert(
             r.batch.clone(),
             OpenRound {
@@ -417,7 +415,6 @@ impl ReplayWorld {
                 state: r.state_to,
                 since,
                 members: r.members.clone(),
-                parent,
             },
         );
     }
