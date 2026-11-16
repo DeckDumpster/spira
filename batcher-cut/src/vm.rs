@@ -257,6 +257,45 @@ fn subset_scope(build: &str, scope: &[String]) -> String {
     }
 }
 
+/// The deny list a round resolved when it was cut: the registry's exact output and the
+/// instant it was resolved at. One snapshot serves every pass of the round.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DenySnapshot {
+    pub text: String,
+    pub at: u64,
+}
+
+impl DenySnapshot {
+    pub const FILE: &'static str = "deny-list";
+
+    pub fn digest(&self) -> String {
+        use sha2::{Digest, Sha256};
+        let hex: String = Sha256::digest(self.text.as_bytes()).iter().map(|b| format!("{b:02x}")).collect();
+        hex[..12].to_string()
+    }
+
+    pub fn rows(&self) -> usize {
+        self.text.lines().filter(|l| !l.trim().is_empty() && !l.starts_with('#')).count()
+    }
+
+    /// `<at>/<digest>`, how a record names the list it ran with.
+    pub fn label(&self) -> String {
+        format!("{}/{}", self.at, self.digest())
+    }
+
+    /// The `batch-round` row's two fields.
+    pub fn fields(&self) -> [(&'static str, String); 2] {
+        [("deny_list", self.label()), ("deny_rows", self.rows().to_string())]
+    }
+
+    /// A snapshot an earlier pass of the round wrote at `dir/deny-list`; its instant is the header's `at=`.
+    pub fn from_pass(dir: &Path) -> Option<DenySnapshot> {
+        let text = fs::read_to_string(dir.join(Self::FILE)).ok()?;
+        let at = text.lines().next()?.split_whitespace().find_map(|w| w.strip_prefix("at=")?.parse().ok())?;
+        Some(DenySnapshot { text, at })
+    }
+}
+
 pub struct VmRunner<'a> {
     env: &'a Env,
     repo: &'a Repo,
@@ -285,6 +324,8 @@ pub struct VmRunner<'a> {
     prior: Option<PathBuf>,
     /// An attribution runs the suites it is given; only a full pass must cover the tree.
     subset: bool,
+    /// The round's deny list, handed to every round-vm the runner starts.
+    deny: Option<DenySnapshot>,
 }
 
 /// A number that changes when anything under `path` is added, grown or touched.
@@ -615,6 +656,22 @@ impl<'a> VmRunner<'a> {
         self
     }
 
+    /// Writes the round's deny list into the results directory and hands it to every round-vm
+    /// the runner starts; the file outlives a re-pass because `clear_results` takes suites only.
+    pub fn with_deny_list(mut self, deny: &DenySnapshot) -> Result<Self, String> {
+        let path = self.results.join(DenySnapshot::FILE);
+        fs::write(&path, &deny.text).map_err(|e| format!("{}: {e}", path.display()))?;
+        self.deny = Some(deny.clone());
+        Ok(self)
+    }
+
+    fn deny_args(&self) -> Vec<std::ffi::OsString> {
+        match self.deny {
+            Some(_) => vec!["--deny-list".into(), self.results.join(DenySnapshot::FILE).into()],
+            None => vec![],
+        }
+    }
+
     /// Names the round-vm scope after `batch`, so abandoning that batch stops it.
     pub fn in_batch(mut self, batch: Option<&str>) -> Self {
         self.batch = batch.map(str::to_string);
@@ -667,6 +724,7 @@ impl<'a> VmRunner<'a> {
             batch: None,
             prior: None,
             subset: false,
+            deny: None,
         })
     }
 
@@ -861,6 +919,7 @@ impl<'a> VmRunner<'a> {
                     .arg(self.env.maxpar.to_string())
                     .arg("--results-dir")
                     .arg(&results)
+                    .args(self.deny_args())
                     .env("SPIRA_HOME", &self.env.home)
                     .env("SPIRA_RUN", &self.env.run)
                     .stdin(Stdio::null())
@@ -952,6 +1011,7 @@ impl RoundRunner for VmRunner<'_> {
                 cmd.arg("--results-dir").arg(&self.results);
                 cmd.arg("--attr-spool").arg(&self.spool);
                 cmd.arg("--base").arg(&self.repo.base);
+                cmd.args(self.deny_args());
                 cmd.env("SPIRA_HOME", &self.env.home)
                     .env("SPIRA_RUN", &self.env.run);
                 cmd.stdin(Stdio::null()).stderr(Stdio::from(err));
@@ -2082,5 +2142,50 @@ mod abandon_tests {
         fs::write(d.path().join("res/out"), "ab").unwrap();
         assert_ne!(tree_mark(d.path()), wrote, "a growing file is progress");
         assert_eq!(tree_mark(&d.path().join("missing")), 0);
+    }
+}
+
+#[cfg(test)]
+mod deny_snapshot_tests {
+    use super::*;
+    use crate::io::{lifecycle_tests_env, Land, Repo};
+
+    const LIST: &str = "# test-registry deny-list at=2000 rows=1\ndisabled\tunit:tiny t::drop\tsp-x\t-\n";
+
+    fn runner<'a>(env: &'a Env, repo: &'a Repo, d: &Path) -> VmRunner<'a> {
+        let _ = d;
+        VmRunner::new(env, repo, d, "base", "r1", BTreeMap::new()).unwrap()
+    }
+
+    fn repo(d: &Path) -> Repo {
+        Repo { name: "fx".into(), path: d.join("repo"), base: "main".into(), forge: PathBuf::new(), land: Land::Local }
+    }
+
+    #[test]
+    fn a_round_writes_the_registry_text_unchanged_and_names_that_file_to_every_round_vm() {
+        let d = testkit::TempDir::new("vm-deny-args");
+        let (env, repo) = (lifecycle_tests_env(d.path()), repo(d.path()));
+        let r = runner(&env, &repo, d.path());
+        assert!(r.deny_args().is_empty(), "a runner given no list passes none");
+        let r = r.with_deny_list(&DenySnapshot { text: LIST.into(), at: 2000 }).unwrap();
+        let file = r.results.join("deny-list");
+        assert_eq!(fs::read_to_string(&file).unwrap(), LIST);
+        assert_eq!(r.deny_args(), vec![std::ffi::OsString::from("--deny-list"), file.clone().into()]);
+        clear_results(&r.results, &["a.sh".to_string()]);
+        assert!(file.exists(), "a re-pass keeps the round's list");
+    }
+
+    #[test]
+    fn a_snapshot_names_its_instant_digest_and_rows_and_is_read_back_from_a_pass() {
+        let s = DenySnapshot { text: LIST.into(), at: 2000 };
+        assert_eq!(s.rows(), 1);
+        assert_eq!(s.label(), format!("2000/{}", s.digest()));
+        assert_eq!(s.digest().len(), 12);
+        assert_eq!(s.fields(), [("deny_list", s.label()), ("deny_rows", "1".to_string())]);
+        assert_eq!(DenySnapshot { text: String::new(), at: 1 }.rows(), 0);
+        let d = testkit::TempDir::new("vm-deny-pass");
+        assert!(DenySnapshot::from_pass(d.path()).is_none());
+        fs::write(d.path().join("deny-list"), LIST).unwrap();
+        assert_eq!(DenySnapshot::from_pass(d.path()), Some(s));
     }
 }

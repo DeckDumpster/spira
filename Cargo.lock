@@ -128,6 +128,7 @@ dependencies = [
  "runtime",
  "serde",
  "serde_json",
+ "sha2",
  "sift",
  "spira-config",
  "spira-otel",
@@ -1651,6 +1652,7 @@ dependencies = [
 name = "round-vm"
 version = "0.1.0"
 dependencies = [
+ "gate",
  "libc",
  "reconciler-engine",
  "rustls",
@@ -1662,6 +1664,7 @@ dependencies = [
  "spira-desired-state",
  "spira-otel",
  "spira-store",
+ "test-registry",
  "testkit",
  "toml",
  "tsd",

@@ -682,7 +682,7 @@ pub mod edge {
             return Err(format!("refused to open — {} changed since the round was built (new patches); rebuild and retest", moved.join(", ")));
         }
         let head = io::head_of(std::path::Path::new(&leg.wt))?;
-        let (pr, armed) = batcher_cut::open_round_pr(&env, &repo, &members, &head, spira_config::vtime::now_epoch(), None, None)?;
+        let (pr, armed) = batcher_cut::open_round_pr(&env, &repo, &members, &head, spira_config::vtime::now_epoch(), None, None, None)?;
         if let Err(e) = armed {
             eprintln!("batcher.forge {}: PR {pr} opened, auto-merge not armed ({e}) — the reconciler arms it", leg.repo);
         }

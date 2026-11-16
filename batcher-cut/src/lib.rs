@@ -160,6 +160,7 @@ pub fn open_round_pr(
     round_start: u64,
     attribution_seconds: Option<u64>,
     regreen_seconds: Option<u64>,
+    deny: Option<&vm::DenySnapshot>,
 ) -> Result<(String, Result<(), String>), String> {
     let base_sha = io::confirm_base(repo, batch_head)?;
     let base_sha = base_sha.as_str();
@@ -228,6 +229,9 @@ pub fn open_round_pr(
     }
     if let Some(r) = regreen_seconds {
         fields.push(("regreen_seconds", r.to_string()));
+    }
+    for (k, v) in deny.into_iter().flat_map(|d| d.fields()) {
+        fields.push((k, v));
     }
     io::tsd_append_round(env_, &fields);
     Ok((pr_n_out, armed))

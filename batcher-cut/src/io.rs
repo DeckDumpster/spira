@@ -3974,6 +3974,32 @@ pub fn file_land_unverified_incident(
 // itself fails.
 // ---------------------------------------------------------------------------------------
 
+/// `test-registry deny-list --at <at>` by bare name on the launcher's PATH: the text a round
+/// hands to every pass. A registry that does not answer is an Err naming what it said.
+pub fn deny_list_snapshot(env: &Env, at: u64) -> Result<String, String> {
+    deny_list_from("test-registry", env, at)
+}
+
+pub fn deny_list_from(bin: &str, env: &Env, at: u64) -> Result<String, String> {
+    // batch-job: a registry read, bounded by the registry's own busy timeout
+    // FORK-EDGE: machine leg test-registry (deny-list snapshot at the cut)
+    let out = Command::new(bin)
+        .args(["deny-list", "--at", &at.to_string()])
+        .env("SPIRA_HOME", &env.home)
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| format!("{bin} deny-list: {e}"))?;
+    if out.status.success() {
+        return Ok(String::from_utf8_lossy(&out.stdout).into_owned());
+    }
+    Err(format!(
+        "{bin} deny-list --at {at} exited {}: {}{}",
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).trim(),
+        String::from_utf8_lossy(&out.stderr).trim()
+    ))
+}
+
 pub fn tsd_append_round(env: &Env, fields: &[(&str, String)]) {
     tsd_append(env, "batch-round", fields)
 }
