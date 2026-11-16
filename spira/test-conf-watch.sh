@@ -9,7 +9,8 @@
 #
 # The change is never timed: the fake Loom binary touches an "armed" marker, which loom.sh
 # spawns strictly after capturing its conf-mtime baseline, and the config is touched only once
-# that marker exists. A fixed-delay touch raced the baseline capture under a loaded corpus and
+# that marker exists. loom.sh installs its signal traps before it sources conf.sh or spawns
+# Loom, so the marker also implies the traps are in place. A fixed-delay touch raced the baseline capture under a loaded corpus and
 # left the loop silent for its whole window.
 #
 # tier: T1
@@ -25,7 +26,7 @@ BASE_PATH="$PATH"
 # A fake Loom binary that arms, then loops until killed; loom.sh starts it after its baseline.
 FAKE_DIR="$TMP/fake-bin"; mkdir -p "$FAKE_DIR"
 FAKE_BIN="$FAKE_DIR/loom"
-printf '#!/bin/sh\n[ "$1" = --print-config ] && exec cat "$PINNED_FILE"\ntouch "$ARMED_MARKER" 2>/dev/null\nexit_rc="${FAKE_EXIT:-}"\n[ -n "$exit_rc" ] && exit "$exit_rc"\nsleep 30\n' > "$FAKE_BIN"
+printf '#!/bin/sh\n[ "$1" = --print-config ] && { [ -n "${FAKE_TERM_ON_PRINT:-}" ] && pkill -TERM -f "$FAKE_TERM_ON_PRINT"; exec cat "$PINNED_FILE"; }\ntouch "$ARMED_MARKER" 2>/dev/null\nexit_rc="${FAKE_EXIT:-}"\n[ -n "$exit_rc" ] && exit "$exit_rc"\nsleep 30\n' > "$FAKE_BIN"
 chmod +x "$FAKE_BIN"
 
 # The positive control always waits its whole window (timeout must expire to prove nothing
@@ -62,7 +63,7 @@ run_loom() {      # run_loom <window> <marker>
     timeout "$1" env -i SPIRA_RELEASE="$(tl_release)" PATH="$FAKE_DIR:$BASE_PATH" HOME="$RUN" LC_ALL=C.UTF-8 \
         SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         SPIRA_GOAL=sp-test \
-        ARMED_MARKER="${2:-}" PINNED_FILE="$PINNED_FILE" FAKE_EXIT="${FAKE_EXIT:-}" \
+        ARMED_MARKER="${2:-}" PINNED_FILE="$PINNED_FILE" FAKE_EXIT="${FAKE_EXIT:-}" FAKE_TERM_ON_PRINT="${FAKE_TERM_ON_PRINT:-}" \
         SPIRA_LOOM_TICK="$TICK" \
         SPIRA_TOML="$SPIRA_TOML" \
         bash "$HERE/loom.sh" ${3:+"$3"}
@@ -134,6 +135,16 @@ for name in loom; do
     else
         bad "$label: SIGTERM — timestamped line" "$(cat "$TMP/$name-sig.log" 2>/dev/null)"
     fi
+
+    # ── EARLY SIGNAL: SIGTERM lands while loom.sh is still reading --print-config ──────
+    ec_early=0
+    FAKE_TERM_ON_PRINT="^bash $HERE/loom.sh earlycase-$$\$" "run_$name" "$WIN_CHANGE" "$RUN/armed-early" "earlycase-$$" >/dev/null 2>"$TMP/$name-early.log" || ec_early=$?
+    if grep -Eq '^loom\.sh: [0-9]{4}-[0-9]{2}-[0-9]{2}T[^ ]+ SIGTERM received' "$TMP/$name-early.log"; then
+        ok "$label: SIGTERM during start-up — timestamped line"
+    else
+        bad "$label: SIGTERM during start-up — timestamped line" "$(cat "$TMP/$name-early.log" 2>/dev/null)"
+    fi
+    is "$label: SIGTERM during start-up — exits 0" "0" "$ec_early"
 
     # ── CRASH: loom exits 3 — loom.sh says so and exits 3 ─────────────────────────────
     ec_crash=0
