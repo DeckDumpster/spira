@@ -620,4 +620,20 @@ mod tests {
         assert_eq!(called(&plan(&limited(tasks(), &[("memory", 1)]))), ["b"]);
         assert_eq!(called(&plan(&limited(tasks(), &[]))), ["a", "b"]);
     }
+
+    #[test]
+    fn a_reactive_session_over_the_limit_logs_it_and_a_live_one_leaves_no_room_for_a_builder() {
+        let p = plan(&limited(vec![builder(3, 7), mender(1, 0)], &[("build-disk", 7)]));
+        assert!(p.log.iter().any(|l| l.contains("build-disk 7 of 7 held — reactive, starting over the limit")), "{:?}", p.log);
+        let p = plan(&limited(vec![builder(3, 5), mender(0, 2)], &[("build-disk", 7)]));
+        assert_eq!(p.task_room, Some(0), "a live mender fills the class: {:?}", p.log);
+    }
+
+    #[test]
+    fn a_builder_takes_the_room_of_its_tightest_declared_class() {
+        let mut b = builder(5, 0);
+        b.uses.push("memory".into());
+        let p = plan(&limited(vec![b], &[("build-disk", 4), ("memory", 2)]));
+        assert_eq!(called(&p), ["builder", "builder"], "{:?}", p.log);
+    }
 }
