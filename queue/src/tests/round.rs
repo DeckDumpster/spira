@@ -9311,22 +9311,24 @@ fn open_whose_cut_answers_cannot_tell_and_applies_later_keeps_its_worktree_and_o
         t.err()
     );
     assert!(!t.lc.has("requeue-orphans"), "{:?}", t.lc.calls.borrow());
-    let calls = t.git.calls.borrow();
-    let last_remove = calls.iter().rposition(|c| c.starts_with("worktree-remove"));
-    let first_cut = t.lc.calls.borrow().iter().position(|c| c.starts_with("cut "));
-    assert!(first_cut.is_some(), "POSITIVE CONTROL: the cut ran");
-    drop(calls);
-    assert!(
-        t.git.calls.borrow().iter().skip(last_remove.map_or(0, |i| i + 1)).all(|c| !c.starts_with("worktree-remove")),
-        "no removal after the cut"
-    );
-    let tail_removes = t.git.calls.borrow().iter().filter(|c| c.starts_with("worktree-remove")).count();
-    assert!(tail_removes <= 1, "only the pre-add clearing of a stale tree removes one: {tail_removes}");
+    let tree = t
+        .git
+        .refs
+        .borrow()
+        .keys()
+        .find_map(|k| k.strip_suffix(":HEAD").map(std::path::PathBuf::from))
+        .expect("POSITIVE CONTROL: the open created a round worktree");
+    assert!(tree.exists(), "the round's worktree {} was removed", tree.display());
 
     t.lc.apply_late_cut();
     t.lc.cut_applies_late.set(false);
     let before = t.git.calls.borrow().len();
     assert_eq!(t.run(&["round", "open", "--members", "sp-a,sp-b"]), 1);
+    assert!(
+        t.err().contains("a round is already open") || t.err().contains("already a member"),
+        "{}",
+        t.err()
+    );
     assert_eq!(
         t.git.calls.borrow().len(),
         before,
@@ -9346,4 +9348,5 @@ fn open_whose_cut_answers_cannot_tell_and_applies_later_keeps_its_worktree_and_o
     assert_eq!(ids.len(), 1, "one cut id reaches the store: {ids:?}");
     let wt = std::path::PathBuf::from(held[0].kv.get("worktree").unwrap_or(""));
     assert!(wt.exists(), "the recorded worktree exists");
+    assert_eq!(wt, tree, "the round records the tree the first open kept");
 }
