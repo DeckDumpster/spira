@@ -206,8 +206,8 @@ const TESTREG_ROWS: usize = 10;
 /// a call that fails or prints what is not the registry's list is `SP_TESTREG=unread`.
 fn testreg_keys(call: &dyn Fn(&[&str]) -> Option<String>, now: i64) -> Kv {
     let mut out = Kv::new();
-    let at = now.to_string();
-    let rows = call(&["list", "--json", "--at", &at])
+    let argv = ["list", "--json", "--at", &now.to_string()];
+    let rows = call(&argv)
         .and_then(|raw| serde_json::from_str::<Value>(io::json_only(&raw)).ok())
         .and_then(|v| v.get("rows").and_then(Value::as_array).cloned());
     let Some(rows) = rows else {
