@@ -23,7 +23,7 @@ pub fn use_fixtures(dir: std::path::PathBuf) {
 }
 
 fn fixtures() -> std::path::PathBuf {
-    FIXTURES.get().cloned().unwrap_or_else(replay::fixtures_root)
+    FIXTURES.get().cloned().unwrap_or_else(|| replay::fixtures_root().unwrap_or_else(|e| panic!("{e}")))
 }
 
 fn open(slice: Slice) -> Replay {

@@ -12,7 +12,7 @@ const LANDING_STOP_BEAD: &str = "b-1226";
 
 fn oct31_world() -> ReplayWorld {
     let mut world = ReplayWorld::default();
-    for (at, r) in load(&fixtures_root().join(Slice::Oct31.dir())).unwrap() {
+    for (at, r) in load(&fixtures_root().unwrap().join(Slice::Oct31.dir())).unwrap() {
         world.apply(at, &r);
     }
     world
@@ -114,7 +114,7 @@ fn unjoined(records: &[(u64, Record)], from: u64) -> (Vec<String>, Vec<String>, 
 }
 
 fn slice_records(slice: Slice) -> Vec<(u64, Record)> {
-    load(&fixtures_root().join(slice.dir())).unwrap()
+    load(&fixtures_root().unwrap().join(slice.dir())).unwrap()
 }
 
 #[test]

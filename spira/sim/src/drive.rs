@@ -272,16 +272,14 @@ impl Scenario {
     }
 }
 
-/// A scenario argument: a path, or a bare name of a scenario shipped under `spira/sim/scenarios/`
-/// in the checkout `cwd` is in.
-pub fn scenario_path(cwd: &Path, arg: &str) -> PathBuf {
+/// A scenario argument: a path, or a bare name of a scenario shipped under `sim/scenarios/` in
+/// the harness `home`.
+pub fn scenario_path(home: &Path, arg: &str) -> PathBuf {
     let named = !arg.contains('/') && !arg.ends_with(".toml");
     if named {
-        for dir in cwd.ancestors() {
-            let shipped = dir.join(SCENARIOS_DIR).join(format!("{arg}.toml"));
-            if shipped.is_file() {
-                return shipped;
-            }
+        let shipped = home.join("sim/scenarios").join(format!("{arg}.toml"));
+        if shipped.is_file() {
+            return shipped;
         }
     }
     PathBuf::from(arg)
@@ -862,5 +860,20 @@ fn check_resumed(seed: u64, resume: &[Value], events: &[Value]) -> Result<(), St
     match crate::trace::first_divergence(resume, &events[..resume.len().min(events.len())]) {
         Some(d) => Err(format!("seed {seed}: the recorded trace diverges at seq {}", d.seq)),
         None => Ok(()),
+    }
+}
+
+#[cfg(test)]
+mod scenario_path_tests {
+    use super::*;
+
+    #[test]
+    fn a_bare_name_is_found_under_the_home_and_a_path_is_returned_as_given() {
+        let h = testkit::TempDir::new("scenario-home");
+        let dir = h.path().join("sim/scenarios");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("x.toml"), "").unwrap();
+        assert_eq!(scenario_path(h.path(), "x"), dir.join("x.toml"));
+        assert_eq!(scenario_path(h.path(), "a/b.toml"), PathBuf::from("a/b.toml"));
     }
 }
