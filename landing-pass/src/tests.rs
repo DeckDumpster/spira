@@ -214,6 +214,14 @@ impl Lib for FakeLib {
         self.rec(format!("incident {labels} {repo} {ext} {title}\n{payload}"));
         self.incident_out.borrow().clone().unwrap_or(Ok("filing…\nsp-inc1\n".into()))
     }
+    fn file_incident(&self, f: &crate::model::IncidentFiling) -> Result<String, String> {
+        self.rec(format!("incident {} {} {} {}\n{}", f.cause, f.repo, f.reference, f.title, f.body));
+        match self.incident_out.borrow().clone() {
+            Some(Err(rc)) => Err(format!("exit {rc}")),
+            Some(Ok(printed)) => Ok(printed.lines().map(str::trim).next_back().unwrap_or("").to_string()),
+            None => Ok("sp-inc1".into()),
+        }
+    }
     fn ask_rebase_loop(&self, a: &[&str]) {
         self.rec(format!("ask_rebase_loop {}", a.join(" ")));
     }
@@ -2376,7 +2384,6 @@ fn a_tip_killed_over_cap_twice_is_gated_again_after_the_backoff_not_deferred() {
 fn past_the_bound_an_unjudged_tip_is_held_once_and_one_incident_is_filed() {
     let mut h = h_worker(LandMode::Queue);
     h.s.noverdict_max = 2;
-    h.s.incident = std::path::PathBuf::from("/bin/true");
     h.closed("sp-a", "t1");
     let q = crate::gateq::GateQueue::new(&h.s.run);
     let unjudged = "gate: VERDICT=NO_VERDICT reason=deadline branch=b repo=spira suite=- (late gate output)\n";
@@ -2393,6 +2400,7 @@ fn past_the_bound_an_unjudged_tip_is_held_once_and_one_incident_is_filed() {
     assert!(holds[0].contains("t1") && holds[0].contains("deadline, deadline"), "{holds:?}");
     assert_eq!(h.lib.calls.borrow().iter().filter(|c| c.starts_with("incident ")).count(), 1);
     assert!(h.lib.calls.borrow().iter().any(|c| c.starts_with("incident ") && c.contains("late gate output")));
+    assert!(h.lib.calls.borrow().iter().any(|c| c.starts_with("incident gate-unjudged spira gate-unjudged:spira:spira/sp-a@t1 ")));
     assert!(!h.lib.has("reopen"));
     assert!(q.queued().is_empty());
 

@@ -498,6 +498,11 @@ pub fn file_payload(title: &str, body: &[u8]) -> Result<(), String> {
 /// `file_payload` with the per-call fields (`priority`, `express`, `reference`, ...) set on the
 /// loaded environment by `tune`, so a caller never writes them into the process environment.
 pub fn file_payload_with(title: &str, body: &[u8], tune: impl FnOnce(&mut Env)) -> Result<(), String> {
+    file_payload_with_id(title, body, tune).map(|_| ())
+}
+
+/// `file_payload_with`, naming the bead the event landed on (`None` is a skew with nothing filed).
+pub fn file_payload_with_id(title: &str, body: &[u8], tune: impl FnOnce(&mut Env)) -> Result<Option<String>, String> {
     let mut env = Env::load();
     tune(&mut env);
     if env.db.is_none() {
@@ -505,11 +510,8 @@ pub fn file_payload_with(title: &str, body: &[u8], tune: impl FnOnce(&mut Env)) 
         return Err("SPIRA_DB is not set".into());
     }
     let bd = crate::real::RealBd::from_env()?;
-    if file_body(&env, &bd, &crate::real::RealMailer, &crate::real::RealClock, title, body.to_vec()) {
-        Ok(())
-    } else {
-        Err(format!("incident file {title:?}: not filed; it stays spooled in {}", env.spool_dir.display()))
-    }
+    file_body_id(&env, &bd, &crate::real::RealMailer, &crate::real::RealClock, title, body.to_vec())
+        .map_err(|()| format!("incident file {title:?}: not filed; it stays spooled in {}", env.spool_dir.display()))
 }
 
 impl Env {

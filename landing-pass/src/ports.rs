@@ -74,6 +74,8 @@ pub trait Lib {
     fn noverdict(&self, id: &str, branch: &str, repo: &str, reason: &str, outcome: &str, out: &str);
     /// incident.sh file; Ok(the printed output, whose last line is the id).
     fn incident(&self, labels: &str, repo: &str, ext_ref: &str, title: &str, payload: &str) -> Result<String, i32>;
+    /// The gate-unjudged incident, filed in-process through the intake; Ok(the bead id).
+    fn file_incident(&self, f: &crate::model::IncidentFiling) -> Result<String, String>;
     fn ask_rebase_loop(&self, args: &[&str]);
     fn ask_red_recurring(&self, id: &str, branch: &str, repo: &str, class: &str, first_at: &str);
     fn ask_rebase_refused(&self, id: &str, branch: &str, repo: &str, reason: &str);

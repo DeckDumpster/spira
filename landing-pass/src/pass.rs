@@ -789,32 +789,31 @@ impl<'a> Pass<'a> {
         let repo = &w.repo.name;
         let n = reasons.len();
         let joined = reasons.join(", ");
-        let inc = if crate::util::runnable(&self.s.incident) {
-            let title = format!("{id}: {repo}'s gate could not judge {br} at {tip} {n} times");
-            let payload = [
-                format!("{repo}'s certification gate ended without a verdict on {br} at {tip} {n} times running."),
-                format!("Reasons, in order: {joined}"),
-                format!("Each run was followed by a backoff of {}s before the tip was gated again.", self.s.gate_backoff),
-                "A gate that cannot judge is a harness fault, not the bead's: the bead was not reopened and no attempt was charged.".into(),
-                "The bead is held and is not gated while the hold stands; it lifts itself at expiry.".into(),
-                String::new(),
-                "--- the last run's output -------------------------------------------------------------".into(),
-                tail_bytes(out, 6000),
-            ]
-            .join("\n");
-            let key = format!("gate-unjudged:{repo}:{br}@{tip}");
-            match self.lib.incident(&self.s.scope_label, repo, &key, &title, &payload) {
-                Ok(printed) => printed
-                    .lines()
-                    .map(str::trim)
-                    .find(|l| !self.s.id_prefix.is_empty() && l.starts_with(&self.s.id_prefix) && !l.contains(char::is_whitespace))
-                    .unwrap_or("")
-                    .to_string(),
-                Err(_) => String::new(),
+        let title = format!("{id}: {repo}'s gate could not judge {br} at {tip} {n} times");
+        let body = [
+            format!("{repo}'s certification gate ended without a verdict on {br} at {tip} {n} times running."),
+            format!("Reasons, in order: {joined}"),
+            format!("Each run was followed by a backoff of {}s before the tip was gated again.", self.s.gate_backoff),
+            "A gate that cannot judge is a harness fault, not the bead's: the bead was not reopened and no attempt was charged.".into(),
+            "The bead is held and is not gated while the hold stands; it lifts itself at expiry.".into(),
+            String::new(),
+            "--- the last run's output -------------------------------------------------------------".into(),
+            tail_bytes(out, 6000),
+        ]
+        .join("\n");
+        let filing = crate::model::IncidentFiling {
+            cause: "gate-unjudged".into(),
+            repo: repo.to_string(),
+            reference: format!("gate-unjudged:{repo}:{br}@{tip}"),
+            title,
+            body,
+        };
+        let inc = match self.lib.file_incident(&filing) {
+            Ok(id) => id,
+            Err(e) => {
+                self.log(&format!("CHECK6 {id}: the gate-unjudged incident was not filed: {e}"));
+                String::new()
             }
-        } else {
-            self.log(&format!("CHECK6 {id}: no intake at {} — the gate's inability to judge {br} reaches nobody", self.s.incident.display()));
-            String::new()
         };
         let inc = if inc.is_empty() { "not filed".to_string() } else { inc };
         let why = format!("gate could not judge {tip}: {joined} — incident {inc}; lifts at expiry, or `spira-lc unhold {id} wait` once the harness is fixed");

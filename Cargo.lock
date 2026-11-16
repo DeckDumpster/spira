@@ -962,6 +962,7 @@ name = "landing-pass"
 version = "2.0.0"
 dependencies = [
  "hel",
+ "incident",
  "libc",
  "mail",
  "regex",

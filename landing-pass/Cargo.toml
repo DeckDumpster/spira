@@ -32,6 +32,7 @@ spira-otel = { path = "../spira-otel" }
 hel = { path = "../hel" }
 tsd = { path = "../tsd" }
 mail = { path = "../mail" }
+incident = { path = "../incident" }
 
 [dev-dependencies]
 testkit = { path = "../testkit" }
