@@ -245,6 +245,7 @@ mod tests {
         let unit = Composition::Unit {
             touched: vec!["gate".into()],
             crates: vec!["gate".into()],
+            targets: Default::default(),
         };
         assert_eq!(branch_type(&unit), "rust-only");
         assert_eq!(branch_type(&Composition::Fences), "nothing-buildable");

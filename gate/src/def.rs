@@ -354,7 +354,7 @@ mod tests {
         let fences = crate::fence::expected(&d.command());
         assert!(fences.iter().any(|f| f == crate::fence::GUARD), "{fences:?}");
         // It is a fence of every composition: the unit composition drops only the build fence.
-        let unit = crate::compose::gate_string(&crate::compose::Composition::Unit { touched: Vec::new(), crates: Vec::new() }, &d.command()).0;
+        let unit = crate::compose::gate_string(&crate::compose::Composition::Unit { touched: Vec::new(), crates: Vec::new(), targets: Default::default() }, &d.command()).0;
         assert!(crate::fence::expected(&unit).iter().any(|f| f == crate::fence::GUARD), "{unit}");
     }
 }

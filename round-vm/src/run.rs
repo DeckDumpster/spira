@@ -555,20 +555,20 @@ unit_env() {
         cargo "$@"
 }
 unit_cargo() {
-    unit_env test --profile unittest --workspace --features integration --config profile.unittest.incremental=false "$@"
+    unit_env "#, spira_config::unit_tier_build!("unittest", "--workspace"), r#"
 }
 write_unit_nextest_config() {
-    printf '[profile.default]\nslow-timeout = { period = "%ss", terminate-after = %s }\n' "$1" "$2" > "$3"
+    printf '"#, spira_config::unit_tier_config_printf!(), r#"' "$1" "$2" > "$3"
 }
 unit_nextest() {
-    unit_env nextest run --config-file "$HOME/round-nextest.toml" --cargo-profile unittest --workspace --features integration --config profile.unittest.incremental=false "$@"
+    unit_env "#, spira_config::unit_tier_unit!("\"$HOME/round-nextest.toml\"", "unittest", "--workspace"), r#"
 }
 phase unit-build
 unit_build_mark="$HOME/round-work/.runtime/spira/batch-results/unit-build"
 mkdir -p "$(dirname "$unit_build_mark")"
 echo building > "$unit_build_mark"
 t_ut=$(date +%s)
-if ! unit_cargo --no-run > ~/round-unit-build.log 2>&1; then
+if ! unit_cargo > ~/round-unit-build.log 2>&1; then
     echo "round-vm: the round's unit-test build failed:" >&2
     tail -60 ~/round-unit-build.log >&2
     exit 4
@@ -948,7 +948,7 @@ unit_hung="$HOME/round-unit-hung"
 unit_t0=$(date +%s)
 unit_deadline_secs="$(target/release/spira-config get spira.unit_test_deadline_secs)" && unit_deadline_periods="$(target/release/spira-config get spira.unit_test_deadline_periods)" || { echo "round-vm: cannot read the unit-test deadline from the round's config" >&2; exit 2; }
 write_unit_nextest_config "$unit_deadline_secs" "$unit_deadline_periods" "$HOME/round-nextest.toml"
-unit_nextest --no-fail-fast --lib --bins > ~/round-unit-tests.log 2>&1 &
+unit_nextest > ~/round-unit-tests.log 2>&1 &
 unit_pid=$!
 tail -n +1 -f --pid="$unit_pid" ~/round-unit-tests.log | unit_stream "$unit_lib_total" "$unit_progress" &
 stream_pid=$!
@@ -972,8 +972,8 @@ else
 fi
 integ_cargo() {
     local rc=0 doc_rc=0
-    unit_cargo --no-fail-fast --test '*' || rc=$?
-    unit_cargo --no-fail-fast --doc || doc_rc=$?
+    unit_env "#, spira_config::unit_tier_integration!("unittest", "--workspace"), r#" || rc=$?
+    unit_env "#, spira_config::unit_tier_doc!("unittest", "--workspace"), r#" || doc_rc=$?
     [ "$rc" -ne 0 ] || rc=$doc_rc
     return "$rc"
 }
@@ -3910,12 +3910,12 @@ mod tests {
     #[test]
     fn the_unit_test_binaries_compile_in_the_build_phase_and_the_run_is_the_same_command() {
         let build = REMOTE_SCRIPT.find("cargo build -q --profile release --workspace").unwrap();
-        let no_run = REMOTE_SCRIPT.find("unit_cargo --no-run").unwrap();
+        let no_run = REMOTE_SCRIPT.find("unit_cargo > ~/round-unit-build.log").unwrap();
         let suites = REMOTE_SCRIPT.find("testenv --mode parallel").unwrap();
-        let run = REMOTE_SCRIPT.find("unit_nextest --no-fail-fast").unwrap();
+        let run = REMOTE_SCRIPT.find("unit_nextest > ~/round-unit-tests.log").unwrap();
         assert!(build < no_run && no_run < suites && no_run < run, "the compile precedes the suites and the run");
         let body = script_fn("unit_cargo");
-        assert!(body.contains("unit_env test --profile unittest --workspace --features integration --config profile.unittest.incremental=false"), "{body}");
+        assert!(body.contains(&format!("unit_env {}", spira_config::unit_tier::build_words(Some("unittest"), "--workspace"))), "{body}");
         for gone in ["llvm-cov", "unit_cov", "COVERAGE:", "profraw"] {
             assert!(!REMOTE_SCRIPT.contains(gone), "the round script carries no line-coverage step ({gone})");
         }
@@ -3940,13 +3940,18 @@ mod tests {
     #[test]
     fn the_unit_tier_alone_runs_under_a_per_test_deadline_read_from_config_and_the_rest_is_unchanged() {
         let cfg = REMOTE_SCRIPT.find("spira-config get spira.unit_test_deadline_secs").unwrap();
-        let run = REMOTE_SCRIPT.find("unit_nextest --no-fail-fast --lib --bins > ~/round-unit-tests.log 2>&1 &").unwrap();
+        let run = REMOTE_SCRIPT.find("unit_nextest > ~/round-unit-tests.log 2>&1 &").unwrap();
         assert!(cfg < run && REMOTE_SCRIPT.contains("spira-config get spira.unit_test_deadline_periods"));
         assert!(REMOTE_SCRIPT.contains("write_unit_nextest_config \"$unit_deadline_secs\" \"$unit_deadline_periods\" \"$HOME/round-nextest.toml\""));
         let body = script_fn("unit_nextest");
-        assert!(body.contains("--cargo-profile unittest --workspace --features integration --config profile.unittest.incremental=false"), "same profile and flags as the compile: {body}");
+        let words = spira_config::unit_tier::unit_words("\"$HOME/round-nextest.toml\"", Some("unittest"), "--workspace", spira_config::unit_tier::LIB_BINS);
+        assert!(body.contains(&format!("unit_env {words}")), "the definition's words: {body}");
+        assert!(body.contains("--cargo-profile unittest --features integration --config profile.unittest.incremental=false --workspace"), "same profile and flags as the compile: {body}");
+        let cfg = REMOTE_SCRIPT.split("write_unit_nextest_config() {").nth(1).and_then(|a| a.split("\n}\n").next()).unwrap();
+        assert!(cfg.contains(spira_config::unit_tier_config_printf!()), "{cfg}");
         assert!(!body.contains("nice"), "no niceness: the unit tier's wall is what it is today");
-        assert!(REMOTE_SCRIPT.contains("unit_cargo --no-fail-fast --test '*'") && REMOTE_SCRIPT.contains("unit_cargo --no-fail-fast --doc"), "the integration tier keeps cargo test");
+        let integ = script_fn("integ_cargo");
+        assert!(integ.contains(&spira_config::unit_tier::integration_words(Some("unittest"), "--workspace")) && integ.contains(&spira_config::unit_tier::doc_words(Some("unittest"), "--workspace")), "the integration tier keeps cargo test: {integ}");
         assert!(!REMOTE_SCRIPT.contains("unit_hang_watch ~/round-unit-tests.log"), "nextest terminates the test; no watcher kills the binary");
         assert!(REMOTE_SCRIPT.contains("unit_hang_watch ~/round-integration-tests.log"));
     }
@@ -3955,14 +3960,14 @@ mod tests {
     fn the_fences_finish_before_the_unit_tier_starts() {
         let fences = REMOTE_SCRIPT.find("fence_run \"$fname\" \"$fcmd\"").expect("the fence loop");
         let early = REMOTE_SCRIPT.find("LINT/FENCE RED before the suites").unwrap();
-        let units = REMOTE_SCRIPT.find("unit_nextest --no-fail-fast --lib --bins > ~/round-unit-tests.log 2>&1 &").expect("the unit tier's launch");
+        let units = REMOTE_SCRIPT.find("unit_nextest > ~/round-unit-tests.log 2>&1 &").expect("the unit tier's launch");
         assert!(fences < early && early < units, "the fences run in the foreground and the unit tier starts only after them");
         assert!(!REMOTE_SCRIPT[fences..fences + 80].contains('&'), "the fence loop is not backgrounded");
     }
 
     #[test]
     fn the_unit_tier_is_waited_for_before_the_bare_lane_or_any_suite_starts() {
-        let launch = REMOTE_SCRIPT.find("unit_nextest --no-fail-fast --lib --bins > ~/round-unit-tests.log 2>&1 &").expect("the unit tier's launch");
+        let launch = REMOTE_SCRIPT.find("unit_nextest > ~/round-unit-tests.log 2>&1 &").expect("the unit tier's launch");
         let waited = REMOTE_SCRIPT.find("wait \"$unit_pid\"; unit_rc=$?").expect("the unit wait");
         let early = REMOTE_SCRIPT.find("UNIT-TESTS RED before the suites: no suite was run").expect("the early exit");
         let bare = REMOTE_SCRIPT.find("bare_after_setup \"${bare_sel[@]}\"").expect("the bare lane's start");
@@ -3980,7 +3985,7 @@ mod tests {
     fn the_unit_phase_runs_only_the_tests_inside_src_and_the_integration_phase_the_rest() {
         let f = REMOTE_SCRIPT.find("integ_cargo() {").unwrap();
         let integ = &REMOTE_SCRIPT[f..f + REMOTE_SCRIPT[f..].find("\n}\n").unwrap()];
-        assert!(integ.contains("unit_cargo --no-fail-fast --test '*'") && integ.contains("unit_cargo --no-fail-fast --doc"), "{integ}");
+        assert!(integ.contains(&spira_config::unit_tier::integration_words(Some("unittest"), "--workspace")) && integ.contains(&spira_config::unit_tier::doc_words(Some("unittest"), "--workspace")), "{integ}");
         assert!(REMOTE_SCRIPT.contains("unit_lib_total=$(grep -c '^ *Executable unittests ' ~/round-unit-build.log)"));
         for line in ["round-vm: UNIT-TESTS took ${unit_secs}s", "round-vm: INTEGRATION-TESTS took ${integ_secs}s"] {
             assert!(REMOTE_SCRIPT.contains(line), "each phase says how long it took: {line}");

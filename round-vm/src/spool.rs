@@ -98,7 +98,7 @@ pub struct AttrJob {
 
 /// Remote side of one attribution rerun. Results go to `~/attr-results/<job>/<key>/`;
 /// `round` also restages `~/round-bins/`.
-pub const REMOTE_ATTR_SCRIPT: &str = r#"set -euo pipefail
+pub const REMOTE_ATTR_SCRIPT: &str = concat!(r#"set -euo pipefail
 host_addr="$1" port="$2" job="$3" ref="$4" suites="$5" build="$6" toolchain="$7"
 # The launcher the corpus set up (run.rs REMOTE_SCRIPT): the round's staged release on PATH and its SPIRA_TOML.
 . "$HOME/round-launcher.env" || { echo "round-vm: no staged release on this VM (round-launcher.env)" >&2; exit 2; }
@@ -148,11 +148,12 @@ unit)
     git clone --quiet --reference "$HOME/round-work" --branch "$ref" "git://${host_addr}:${port}/mirror.git" "$d" || exit 2
     cd "$d" || exit 2
     scope_of unit
+    [ -f "$HOME/round-nextest.toml" ] || { echo "round-vm: no round-nextest.toml on this VM: the round's unit tier has not run here" >&2; exit 2; }
     env -i HOME="$HOME" PATH="$PATH" CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}" CARGO_TARGET_DIR="$HOME/attr-target" \
-        cargo test -q --profile unittest $scope --features integration --no-fail-fast --lib --bins --config profile.unittest.incremental=false $filters >&2
+        cargo "#, spira_config::unit_tier_unit!("\"$HOME/round-nextest.toml\"", "unittest", "$scope"), r#" $filters >&2
     rc=$?
     cd "$HOME" && rm -rf "$d"
-    [ "$rc" -eq 101 ] && exit 5
+    [ "$rc" -eq 100 ] || [ "$rc" -eq 101 ] && exit 5
     [ "$rc" -eq 0 ] || exit "$rc"
     echo "ok 0 0 - - - 0" > "$SPIRA_BATCH_RESULTS/unit-tests.result"
     exit 0 ;;
@@ -163,7 +164,7 @@ integration)
     cd "$d" || exit 2
     scope_of integration
     env -i HOME="$HOME" PATH="$PATH" CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}" CARGO_TARGET_DIR="$HOME/attr-target" \
-        cargo test -q --profile unittest $scope --features integration --no-fail-fast --test '*' --config profile.unittest.incremental=false $filters >&2
+        cargo "#, spira_config::unit_tier_integration!("unittest", "$scope"), r#" $filters >&2
     rc=$?
     cd "$HOME" && rm -rf "$d"
     [ "$rc" -eq 101 ] && exit 5
@@ -197,7 +198,7 @@ artifacts|dev)
     exit "$rc" ;;
 *) exit 2 ;;
 esac
-"#;
+"#);
 
 pub fn attr_command(job: &AttrJob) -> String {
     let args = [
@@ -543,6 +544,7 @@ mod tests {
         fs::create_dir_all(&bin).unwrap();
         fs::create_dir_all(&home).unwrap();
         fs::write(home.join("round-launcher.env"), "").unwrap();
+        fs::write(home.join("round-nextest.toml"), "").unwrap();
         let stub = |name: &str, body: &str| testkit::write_exe(bin.join(name), &format!("#!/bin/bash\n{body}\n"));
         stub("git", "for a; do last=$a; done; mkdir -p \"$last\"");
         stub("cargo", &format!("echo \"$*\" > \"$HOME/cargo.args\"; env > \"$HOME/cargo.env\"; exit {cargo_rc}"));
@@ -568,12 +570,12 @@ mod tests {
 
     #[test]
     fn the_unit_probe_runs_the_command_the_round_runs_its_unit_phase_with() {
-        let flags = ["--profile unittest", "--features integration", "profile.unittest.incremental=false"];
+        let cfg = "\"$HOME/round-nextest.toml\"";
         let unit_arm = REMOTE_ATTR_SCRIPT.split("\nunit)").nth(1).and_then(|a| a.split("exit 0 ;;").next()).expect("a unit arm");
-        let round_cmd = crate::run::REMOTE_SCRIPT.split("unit_cargo() {").nth(1).and_then(|a| a.split("\n}\n").next()).expect("unit_cargo");
-        for f in flags {
-            assert!(unit_arm.contains(f) && round_cmd.contains(f), "{f}: the probe and the round must bisect the same run");
-        }
+        let round_cmd = crate::run::REMOTE_SCRIPT.split("unit_nextest() {").nth(1).and_then(|a| a.split("\n}\n").next()).expect("unit_nextest");
+        let lib_bins = spira_config::unit_tier::LIB_BINS;
+        assert!(unit_arm.contains(&spira_config::unit_tier::unit_words(cfg, Some("unittest"), "$scope", lib_bins)), "{unit_arm}");
+        assert!(round_cmd.contains(&spira_config::unit_tier::unit_words(cfg, Some("unittest"), "--workspace", lib_bins)), "{round_cmd}");
     }
 
     #[test]
@@ -589,6 +591,7 @@ mod tests {
         let r = parse_request("u1", "branch=spira/batcher-attr/x-u1\nsuites=unit\nbuild=unit\n").unwrap();
         assert_eq!(r.build, Build::Unit);
         assert_eq!(attr_job_rc("unit", 101, "unit-tests.result"), (5, false));
+        assert_eq!(attr_job_rc("unit", 100, "unit-tests.result"), (5, false), "nextest's own exit for a failed test run");
         assert_eq!(attr_job_rc("unit", 137, "unit-tests.result"), (137, false), "a killed run is a fault, not red");
         assert_eq!(attr_job_rc("unit", 0, "unit-tests.result"), (0, true));
     }
@@ -617,10 +620,9 @@ mod tests {
     #[test]
     fn the_integration_probe_runs_the_command_the_round_runs_its_integration_phase_with() {
         let arm = REMOTE_ATTR_SCRIPT.split("\nintegration)").nth(1).and_then(|a| a.split("exit 0 ;;").next()).expect("an integration arm");
-        let round_cmd = crate::run::REMOTE_SCRIPT.split("unit_cargo() {").nth(1).and_then(|a| a.split("\n}\n").next()).expect("unit_cargo");
-        for f in ["--profile unittest", "--features integration", "profile.unittest.incremental=false"] {
-            assert!(arm.contains(f) && round_cmd.contains(f), "{f}");
-        }
+        let round_cmd = crate::run::REMOTE_SCRIPT.split("integ_cargo() {").nth(1).and_then(|a| a.split("\n}\n").next()).expect("integ_cargo");
+        assert!(arm.contains(&spira_config::unit_tier::integration_words(Some("unittest"), "$scope")), "{arm}");
+        assert!(round_cmd.contains(&spira_config::unit_tier::integration_words(Some("unittest"), "--workspace")), "{round_cmd}");
     }
 
     #[test]

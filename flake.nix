@@ -61,6 +61,7 @@
             jq
             zstd
             sccache
+            cargo-nextest     # the gate's unit tier runs one process per test (round-vm/ami-setup.sh pins the round image's)
             awscli2
             inotify-tools
             aerc

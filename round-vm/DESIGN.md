@@ -120,6 +120,12 @@ red one is also a `fence-<name>.result` (status `red`) and ends the pass before 
 suite. The seconds reach the pass record as `fence_s` and the
 `spira_cert_pass_fence_seconds` series. Nothing runs the fences on the host.
 
+**The test tiers' words** come from `spira_config::unit_tier`, the one definition the gate's test
+phase shares: the unit tier (`cargo nextest run`, one process per test, `--lib --bins`), the
+integration tier (`cargo test --test '*'`, then `--doc`) and the nextest config. The round gives
+them `--workspace` and its `unittest` profile, the gate `-p <crate>…` and `dev`; the attribution
+reruns (`spool.rs`) use the same words.
+
 #### A VM that never starts the round
 
 While the batch's ssh runs, `run` looks every `stream_every` for the round script's log on the VM
