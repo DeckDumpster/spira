@@ -450,7 +450,7 @@ op_res_out="$(st_start_args --opening-prompt-file "$ST/op.txt")"
 op_line="$(grep '^exec claude' "$ST/launch.first" 2>/dev/null)"
 want "a resume start carries --resume (positive control)" "--resume fx-resume-id" "$op_line"
 case "$op_line" in
-*"fresh"*) bad "a resume start does not carry the opening prompt" "$op_line" ;;
+*"Read handoff.md"*) bad "a resume start does not carry the opening prompt" "$op_line" ;;
 *) ok "a resume start does not carry the opening prompt" ;;
 esac
 want "and says the flag was ignored" "--opening-prompt-file ignored" "$op_res_out"

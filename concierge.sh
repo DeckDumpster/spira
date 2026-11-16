@@ -519,7 +519,7 @@ start)
         chmod +x "$LAUNCHER"
     }
     [ -n "$RESUME_ID" ] && [ -n "$OPENING_PROMPT" ] &&
-        printf 'concierge: resuming %s — --opening-prompt-file ignored\n' "$RESUME_ID" >&2
+        printf 'concierge: resuming %s — --opening-prompt-file ignored (used only if the session must start fresh)\n' "$RESUME_ID" >&2
     write_launcher "$RESUME_ID"
     # concierge.service is Type=oneshot/KillMode=control-group: when start exits, systemd
     # kills the whole cgroup — the tmux server with it. A transient unit gives the server
