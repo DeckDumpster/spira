@@ -26,6 +26,7 @@ struct FakeDolt {
     fail_verify: Cell<bool>,
     bloat: Cell<usize>,
     gcs: RefCell<Vec<String>>,
+    fail_gc: RefCell<Option<String>>,
     free: Cell<Option<u64>>,
 }
 
@@ -44,7 +45,10 @@ impl Dolt for FakeDolt {
     }
     fn gc(&self, _conn: &Conn, _data: &Path, db: &str) -> Result<(), String> {
         self.gcs.borrow_mut().push(db.to_string());
-        Ok(())
+        match &*self.fail_gc.borrow() {
+            Some(bad) if bad == db => Err("planted gc failure".into()),
+            _ => Ok(()),
+        }
     }
     fn free_bytes(&self, _path: &Path) -> Result<u64, String> {
         Ok(self.free.get().unwrap_or(u64::MAX))
@@ -345,6 +349,17 @@ fn gc_collects_each_live_database_without_touching_the_durable_copy_and_fails_wh
     assert_eq!(*w.dolt.gcs.borrow(), ["spira", "spira_lifecycle"]);
     assert!(w.dolt.syncs.borrow().is_empty(), "{out:?}");
     assert_eq!(tree_bytes(&l.db("spira")), copy);
+}
+
+#[test]
+fn gc_still_collects_the_other_database_when_one_fails_and_reports_the_failure() {
+    let w = seeded();
+    restore(&w.cfg, &w.dolt).unwrap();
+    live_server(&w, 4242);
+    *w.dolt.fail_gc.borrow_mut() = Some("spira".into());
+    let err = gc(&w.cfg, &w.dolt).unwrap_err();
+    assert!(err.contains("spira: collection failed"), "{err}");
+    assert_eq!(*w.dolt.gcs.borrow(), ["spira", "spira_lifecycle"]);
 }
 
 #[test]
