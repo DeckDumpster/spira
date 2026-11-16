@@ -297,8 +297,12 @@ impl Real {
     /// Lease the builder's directory, clean and age for this tree, and link `debug` into it. Any
     /// failure releases the lease and leaves the tree's own directory.
     fn build_in(&self, tree: &Path, b: &crate::ports::Builder) -> Result<String, String> {
+        self.build_in_bases(tree, b, &spira_config::build_dir::configured_bases())
+    }
+
+    fn build_in_bases(&self, tree: &Path, b: &crate::ports::Builder, bases: &[PathBuf]) -> Result<String, String> {
         use spira_config::build_dir as bd;
-        let lease = bd::lease_dir(&bd::configured_bases(), &b.dir, &format!("gate {}", b.bead), b.wait)
+        let lease = bd::lease_dir(bases, &b.dir, &format!("gate {}", b.bead), b.wait)
             .map_err(|e| format!("cannot lease it: {e}"))?
             .ok_or("it is gone, held, or not a pool directory")?;
         let linked = (|| -> Result<(), String> {
@@ -306,11 +310,18 @@ impl Real {
             crate::warm::normalize_mtimes(tree, &b.tip)?;
             let (link, debug) = (tree.join("target").join("debug"), lease.dir().join("debug"));
             fs::create_dir_all(&debug).map_err(|e| format!("{}: {e}", debug.display()))?;
-            if let Ok(own) = fs::read_link(&link) {
+            let own = fs::read_link(&link).ok();
+            let next = tree.join("target").join(".debug.builder");
+            let _ = fs::remove_file(&next);
+            std::os::unix::fs::symlink(&debug, &next).map_err(|e| format!("cannot link {}: {e}", next.display()))?;
+            fs::rename(&next, &link).map_err(|e| {
+                let _ = fs::remove_file(&next);
+                format!("cannot link {}: {e}", link.display())
+            })?;
+            if let Some(own) = own {
                 let _ = fs::remove_dir_all(own);
             }
-            let _ = fs::remove_file(&link);
-            std::os::unix::fs::symlink(&debug, &link).map_err(|e| format!("cannot link {}: {e}", link.display()))
+            Ok(())
         })();
         if let Err(e) = linked {
             lease.release();
@@ -1242,6 +1253,88 @@ fn end_group(pgid: i32) {
 #[cfg(test)]
 mod tests {
     use crate::ports::World;
+
+    struct Pool {
+        t: testkit::TempDir,
+        bases: Vec<std::path::PathBuf>,
+        tree: std::path::PathBuf,
+        own: std::path::PathBuf,
+        tip: String,
+        slot: std::path::PathBuf,
+        real: super::Real,
+    }
+
+    fn pool(clean: &str) -> Pool {
+        use std::process::Command;
+        let t = testkit::TempDir::new("gate-builder-dir");
+        let home = t.path().join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(home.join("target-clean.sh"), clean).unwrap();
+        let tree = t.path().join("trees/.gate.r.b");
+        let own = t.path().join("root/.gate.r.b/debug");
+        std::fs::create_dir_all(&own).unwrap();
+        std::fs::create_dir_all(tree.join("target")).unwrap();
+        std::os::unix::fs::symlink(&own, tree.join("target/debug")).unwrap();
+        std::fs::write(tree.join("f"), "1").unwrap();
+        let git = |a: &[&str]| {
+            let o = Command::new("git").arg("-C").arg(&tree).args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(a).output().unwrap();
+            assert!(o.status.success(), "{a:?}");
+            String::from_utf8_lossy(&o.stdout).trim().to_string()
+        };
+        git(&["init", "-q"]);
+        git(&["add", "f"]);
+        git(&["commit", "-qm", "tip"]);
+        let tip = git(&["rev-parse", "HEAD"]);
+        let bases = vec![t.path().join("pool")];
+        let first = spira_config::build_dir::lease(&bases, "builder").unwrap();
+        let slot = first.dir().to_path_buf();
+        first.release();
+        Pool { real: super::Real::new(home), t, bases, tree, own, tip, slot }
+    }
+
+    fn builder(p: &Pool) -> crate::ports::Builder {
+        crate::ports::Builder { bead: "sp-a".into(), tip: p.tip.clone(), dir: p.slot.clone(), wait: std::time::Duration::ZERO, path: std::env::var("PATH").unwrap_or_default() }
+    }
+
+    fn lockable(p: &Pool) -> bool {
+        spira_config::build_dir::lease_dir(&p.bases, &p.slot, "probe", std::time::Duration::ZERO).unwrap().is_some()
+    }
+
+    #[test]
+    fn a_gate_links_debug_into_the_leased_builder_directory_and_releases_it_with_the_tree() {
+        let p = pool("exit 0\n");
+        let line = p.real.build_in_bases(&p.tree, &builder(&p), &p.bases).unwrap();
+        assert!(line.starts_with(&format!("{}{}", crate::warm::BUILDER_IN, p.slot.display())), "{line}");
+        assert_eq!(std::fs::read_link(p.tree.join("target/debug")).unwrap(), p.slot.join("debug"));
+        assert!(!p.own.exists(), "the gate's own directory is dropped");
+        assert!(!lockable(&p), "the lease is held for the gate");
+        std::fs::write(p.slot.join("debug/built"), "x").unwrap();
+        p.real.release_target(&p.tree, false, true, 1 << 10);
+        assert!(p.slot.join("debug/built").is_file(), "release leaves the builder's output");
+        assert!(std::fs::symlink_metadata(p.tree.join("target/debug")).is_err());
+        assert!(lockable(&p), "the lease is released");
+        let _ = &p.t;
+    }
+
+    #[test]
+    fn a_failed_clean_or_aging_or_lease_keeps_the_gates_own_link_and_frees_the_slot() {
+        let bad_clean = pool("exit 3\n");
+        let e = bad_clean.real.build_in_bases(&bad_clean.tree, &builder(&bad_clean), &bad_clean.bases).unwrap_err();
+        assert!(e.contains("exited"), "{e}");
+        assert_eq!(std::fs::read_link(bad_clean.tree.join("target/debug")).unwrap(), bad_clean.own);
+        assert!(lockable(&bad_clean));
+
+        let bad_tip = pool("exit 0\n");
+        let b = crate::ports::Builder { tip: "0".repeat(40), ..builder(&bad_tip) };
+        assert!(bad_tip.real.build_in_bases(&bad_tip.tree, &b, &bad_tip.bases).is_err());
+        assert_eq!(std::fs::read_link(bad_tip.tree.join("target/debug")).unwrap(), bad_tip.own);
+        assert!(lockable(&bad_tip));
+
+        let gone = pool("exit 0\n");
+        let b = crate::ports::Builder { dir: gone.t.path().join("pool/dir.99"), ..builder(&gone) };
+        assert!(gone.real.build_in_bases(&gone.tree, &b, &gone.bases).is_err());
+        assert_eq!(std::fs::read_link(gone.tree.join("target/debug")).unwrap(), gone.own);
+    }
 
     #[test]
     fn the_newest_build_dir_fact_names_the_tip_and_directory_of_the_last_submit() {
