@@ -17,6 +17,22 @@ sim_failed_commands() {  # sim_failed_commands <run output> — the output of ev
     awk '/^=== t=/ { show = ($0 ~ /exit status: [1-9]/ && $0 !~ /exit status: 3 /) } show' "$w/exec.log" | cut -c1-300 | head -40
 }
 
+sim_last_waits() {  # sim_last_waits <run output> — the last exit-3 run of each step in the kept world, with what it printed: why a move kept waiting
+    local w
+    w="$(sed -n 's/^sim: world kept at //p' "$1" | head -1)"
+    [ -f "$w/exec.log" ] || return 0
+    awk '
+        function flush() { if (key != "") last[key] = buf; key = ""; buf = "" }
+        /^=== t=/ {
+            flush()
+            if ($0 ~ /exit status: 3 /) { key = $0; sub(/^=== t=[0-9]+ /, "", key); sub(/: exit status.*/, "", key); if (!(key in last)) order[++n] = key; buf = $0 "\n" }
+            next
+        }
+        key != "" { buf = buf $0 "\n" }
+        END { flush(); for (i = 1; i <= n; i++) printf "%s", last[order[i]] }
+    ' "$w/exec.log" | cut -c1-300 | head -40
+}
+
 sim_call_lines() {  # sim_call_lines <run output> — what the calls printed in a kept world: the stub agent's or the real dwarf's own log
     local w
     w="$(sed -n 's/^sim: world kept at //p' "$1" | head -1)"
@@ -56,6 +72,7 @@ sim_scenario_shard() {  # sim_scenario_shard <scenario name>
         grep -h '^sim: profile' "$t/res.out" | sed "s/^/# $label /"
         [ "$rc" = 0 ] || grep -E '^sim' "$t/res.out" | cut -c1-300 | head -5 | sed 's/^/# /'
         [ "$rc" = 0 ] || sim_failed_commands "$t/res.out" | sed "s/^/# $label /"
+        [ "$rc" = 0 ] || sim_last_waits "$t/res.out" | sed "s/^/# $label /"
         [ "$rc" = 0 ] || sim_call_lines "$t/res.out" | sed "s/^/# $label /"
         [ "$rc" = 0 ] || tail -8 "$t/res.out" | cut -c1-300 | sed "s/^/# $label run: /"
         wantrc "$label exits 0 in $((SECONDS - start))s" 0 "$rc"
