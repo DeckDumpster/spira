@@ -60,9 +60,12 @@ pub fn measure(rows: &[Value], now: u64) -> Reading {
 }
 
 /// The newest [`RECENT_PER_REPO`] gate rows of each repo within [`RECENT_WINDOW`], newest first, cut to what the red-streak check reads.
+/// A row's time, then its place in the file: rows stamped in one second keep their append order.
+type Stamp = (u64, usize);
+
 fn recent(rows: &[Value], now: u64) -> Vec<(String, Vec<Value>)> {
     let from = now.saturating_sub(RECENT_WINDOW);
-    let mut by_repo: std::collections::BTreeMap<String, Vec<((u64, usize), Value)>> = Default::default();
+    let mut by_repo: std::collections::BTreeMap<String, Vec<(Stamp, Value)>> = Default::default();
     for (i, r) in rows.iter().enumerate().filter(|(_, r)| matches!(text(r, "status"), Some("PASS" | "FAIL" | "NO_VERDICT" | "BASE_FAIL"))) {
         let (Some(t), Some(repo)) = (ts_of(r), text(r, "repo")) else { continue };
         if t <= from || t > now {
@@ -75,7 +78,7 @@ fn recent(rows: &[Value], now: u64) -> Vec<(String, Vec<Value>)> {
     by_repo
         .into_iter()
         .map(|(repo, mut v)| {
-            v.sort_by(|a, b| b.0.cmp(&a.0));
+            v.sort_by_key(|a| std::cmp::Reverse(a.0));
             (repo, v.into_iter().take(RECENT_PER_REPO).map(|(_, r)| r).collect())
         })
         .collect()
