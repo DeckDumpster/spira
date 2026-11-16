@@ -297,12 +297,12 @@ spira: land sp-s0e1k
 
     #[test]
     fn parse_repo_map_skips_comments_and_blanks() {
-        let text = "# comment\n\nbrain | /srv/spira/brain | push\nspira | /srv/spira/harness | hold\n";
+        let text = "# comment\n\nbrain | /r/spira/brain | push\nspira | /r/spira/harness | hold\n";
         assert_eq!(
             parse_repo_map(text),
             vec![
-                ("brain".to_string(), "/srv/spira/brain".to_string()),
-                ("spira".to_string(), "/srv/spira/harness".to_string()),
+                ("brain".to_string(), "/r/spira/brain".to_string()),
+                ("spira".to_string(), "/r/spira/harness".to_string()),
             ]
         );
     }

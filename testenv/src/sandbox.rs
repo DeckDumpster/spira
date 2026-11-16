@@ -432,7 +432,7 @@ mod tests {
     fn profile() -> Profile {
         Profile {
             tree: "/tmp/spira-testenv-x/tree".into(),
-            target: "/srv/t/spira-unit-cargo-target-b".into(),
+            target: "/r/t/spira-unit-cargo-target-b".into(),
             home: "/h/u".into(),
             gitdir: Some("/h/u/repo/.git".into()),
             ro_under_home: vec!["/h/u/.rustup".into()],
@@ -468,7 +468,7 @@ mod tests {
         let a = profile().bwrap_args();
         assert_eq!(pairs(&a, "--ro-bind").first(), Some(&("/".into(), "/".into())), "the root is bound read-only first: {a:?}");
         let rw: Vec<String> = pairs(&a, "--bind").into_iter().map(|(src, _)| src).collect();
-        assert_eq!(rw, ["/h/u/.cargo/registry", "/tmp/spira-testenv-x/tree", "/srv/t/spira-unit-cargo-target-b"]);
+        assert_eq!(rw, ["/h/u/.cargo/registry", "/tmp/spira-testenv-x/tree", "/r/t/spira-unit-cargo-target-b"]);
         assert!(pairs(&a, "--bind").contains(&("/tmp/spira-testenv-x/tree".into(), TREE_MOUNT.into())), "the tree is bound at the fixed path: {a:?}");
         assert!(pairs(&a, "--ro-bind").contains(&("/h/u/repo/.git".into(), "/h/u/repo/.git".into())), "the repo's git dir is read-only: {a:?}");
     }
@@ -535,7 +535,7 @@ mod tests {
         let p = profile();
         let env = p.env();
         let sys = env.iter().find(|(k, _)| k == "GIT_CONFIG_SYSTEM").map(|(_, v)| v.clone());
-        assert_eq!(sys.as_deref(), Some("/srv/t/spira-unit-cargo-target-b.gitconfig"));
+        assert_eq!(sys.as_deref(), Some("/r/t/spira-unit-cargo-target-b.gitconfig"));
         assert!(env.iter().all(|(k, _)| !k.starts_with("GIT_AUTHOR") && !k.starts_with("GIT_COMMITTER")), "{env:?}");
         let d = testkit::TempDir::new("sandbox-gitconfig");
         let q = Profile { target: d.path().join("t"), ..profile() };
@@ -546,7 +546,7 @@ mod tests {
 
     #[test]
     fn two_branches_see_the_same_target_path_so_their_compiled_dependencies_share_cache_keys() {
-        let other = Profile { target: "/srv/t/spira-unit-cargo-target-c".into(), ..cached() };
+        let other = Profile { target: "/r/t/spira-unit-cargo-target-c".into(), ..cached() };
         for p in [cached(), other] {
             assert_eq!(value(&p.env(), "CARGO_TARGET_DIR").as_deref(), Some(TARGET_MOUNT));
             assert!(pairs(&p.bwrap_args(), "--bind").contains(&(p.target.display().to_string(), TARGET_MOUNT.into())));

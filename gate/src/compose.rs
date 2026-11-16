@@ -1186,7 +1186,7 @@ mod tests {
     #[test]
     fn without_suites_drops_the_suites_step_and_keeps_every_fence() {
         let d = crate::def::parse(&std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../gate.steps")).unwrap()).unwrap();
+            testkit::manifest_dir().join("../gate.steps")).unwrap()).unwrap();
         let got = without_suites(&d.command());
         assert_eq!(got, d.fences_only(&[]).command());
         assert!(got.contains(BUILD_FENCE_STEP), "{got}");

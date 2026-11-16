@@ -1835,8 +1835,8 @@ Run-time doors replace it: `spira_config::resolve::locate_home_for_process()` fo
 is skipped.
 
 **Violation.** In comment-stripped text, `env!`/`option_env!` of `CARGO_MANIFEST_DIR`, `OUT_DIR`
-or `CARGO_BIN_EXE_*`; or a string literal naming `/spira/run/`, `/spira-releases/` or
-`/home/<user>/spira`. Allowed: a match inside the argument list of `include!`, `include_str!` or
+or `CARGO_BIN_EXE_*`; or a string literal that starts with `/home/`, `/srv/`, `/root/` or `/Users/` and names `/spira/run/`,
+`/spira-releases/` or `/spira` (a made-up root such as `/r/spira-releases/x` is a fixture, not a real path). Allowed: a match inside the argument list of `include!`, `include_str!` or
 `include_bytes!` (the content is compiled in, the path is never read at run time), and
 `CARGO_PKG_*`. One finding per match, at its line, naming the door to use.
 

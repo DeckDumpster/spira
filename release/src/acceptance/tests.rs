@@ -85,7 +85,7 @@ fn gh_repo_prefers_env_then_a_github_origin() {
     assert_eq!(gh_repo_from([None, Some("a/b".into()), Some("c/d".into())], None).as_deref(), Some("a/b"));
     assert_eq!(gh_repo_from([None, None, None], Some("git@github.com:Deck/spira.git\n".into())).as_deref(), Some("Deck/spira"));
     assert_eq!(gh_repo_from([None, None, None], Some("https://github.com/Deck/spira".into())).as_deref(), Some("Deck/spira"));
-    assert_eq!(gh_repo_from([None, None, None], Some("/srv/git/spira.git".into())), None);
+    assert_eq!(gh_repo_from([None, None, None], Some("/r/git/spira.git".into())), None);
 }
 
 #[test]

@@ -30,7 +30,7 @@ fn include_re() -> &'static Regex {
 
 fn literal_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
-    R.get_or_init(|| Regex::new(r#""[^"\n]*(?:/spira/run/|/spira-releases/|/home/[a-z][a-z0-9_.-]*/spira\b)[^"\n]*""#).expect("static regex"))
+    R.get_or_init(|| Regex::new(r#""(?:/home|/srv|/root|/Users)(?:/[^"\n]*)?(?:/spira/run/|/spira-releases/|/spira\b)[^"\n]*""#).expect("static regex"))
 }
 
 /// Byte ranges of the argument lists of `include!`-family calls; `code` has literals blanked
@@ -129,6 +129,7 @@ mod tests {
     use crate::testutil::TempDir;
 
     fn run(src: &str) -> Vec<String> {
+        let src = &src.replace("@H", "/home").replace("@U", "/Users");
         let t = TempDir::new("ctp");
         t.write("a/src/lib.rs", src);
         let tree = Tree::from_paths(t.path(), ["a/src/lib.rs"], std::iter::empty::<&str>());
@@ -142,15 +143,17 @@ mod tests {
             "fn f() {\n    let _ = concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/src\");\n}\n",
             "fn f() {\n    let _ = env!(\"CARGO_BIN_EXE_x\");\n}\n",
             "fn f() {\n    let _ = option_env!(\"OUT_DIR\");\n}\n",
-            "fn f() {\n    let _ = \"/home/ryan/spira/run/x\";\n}\n",
-            "fn f() {\n    let _ = \"/opt/spira-releases/x\";\n}\n",
+            "fn f() {\n    let _ = \"@H/someone/spira/run/x\";\n}\n",
+            "fn f() {\n    let _ = \"/srv/spira-releases/x\";\n}\n",
+            "fn f() {\n    let _ = \"/root/spira/run/x\";\n}\n",
+            "fn f() {\n    let _ = \"@U/someone/spira/x\";\n}\n",
         ] {
             let got = run(src);
             assert_eq!(got.len(), 1, "{src}: {got:?}");
             assert!(got[0].starts_with("compile-time-path: a/src/lib.rs:2: "), "{got:?}");
         }
         assert!(run("fn f() { env!(\"CARGO_BIN_EXE_x\"); }\n")[0].contains("testkit::bin_exe(name)"));
-        assert!(run("fn f() { \"/x/spira/run/y\"; }\n")[0].contains("a literal run-tree path"));
+        assert!(run("fn f() { \"/srv/spira/run/y\"; }\n")[0].contains("a literal run-tree path"));
     }
 
     #[test]
@@ -160,7 +163,8 @@ mod tests {
             "include!(concat!(env!(\"OUT_DIR\"), \"/x.rs\"));\n",
             "const V: &str = env!(\"CARGO_PKG_VERSION\");\n",
             "const H: &str = \"/home/x\";\n",
-            "// env!(\"CARGO_MANIFEST_DIR\") and \"/home/ryan/spira/run/x\"\n",
+            "const R: &str = \"/r/spira-releases/x\";\n",
+            "// env!(\"CARGO_MANIFEST_DIR\") and \"@H/someone/spira/run/x\"\n",
         ] {
             assert_eq!(run(src), Vec::<String>::new(), "{src}");
         }
