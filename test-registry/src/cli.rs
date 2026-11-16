@@ -172,6 +172,16 @@ fn fail(code: i32, json_mode: bool, msg: String) -> Outcome {
     }
 }
 
+pub const REGISTRY_FILE: &str = "test-registry.sqlite";
+
+/// `cfg` with an empty registry path read as the registry file in the run directory.
+pub fn with_run_default(cfg: impl Fn(&str) -> Result<String, String>, run_dir: impl Fn() -> Result<String, String>) -> impl Fn(&str) -> Result<String, String> {
+    move |k| match cfg(k) {
+        Ok(p) if k == PATH_KEY && p.trim().is_empty() => run_dir().map(|d| format!("{}/{REGISTRY_FILE}", d.trim_end_matches('/'))),
+        other => other,
+    }
+}
+
 pub fn run(args: &[String], now: i64, cfg: Cfg, open: Opener) -> Outcome {
     let json_mode = args.iter().any(|a| a == "--json");
     let a = match parse(args) {
@@ -324,6 +334,17 @@ mod tests {
         let c = Connection::open_in_memory().map_err(|e| e.to_string())?;
         store::init(&c)?;
         Ok(c)
+    }
+
+    #[test]
+    fn an_empty_path_falls_back_to_the_registry_file_in_the_run_dir() {
+        let c = with_run_default(cfg_with(""), || Ok("/r/run/".into()));
+        assert_eq!(c(PATH_KEY).unwrap(), "/r/run/test-registry.sqlite");
+        assert_eq!(c(HOLD_KEY).unwrap(), "600");
+        let set = with_run_default(cfg_with("/elsewhere.sqlite"), || Err("no run dir".into()));
+        assert_eq!(set(PATH_KEY).unwrap(), "/elsewhere.sqlite");
+        let none = with_run_default(cfg_with(""), || Err("no run dir".into()));
+        assert!(none(PATH_KEY).is_err());
     }
 
     #[test]
