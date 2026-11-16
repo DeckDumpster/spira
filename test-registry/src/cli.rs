@@ -471,11 +471,6 @@ mod tests {
     #[test]
     fn clear_landed_takes_repeated_beads_and_prints_the_cleared_tests() {
         let dir = testkit::TempDir::new("test-registry-cli-clear");
-    }
-
-    #[test]
-    fn backup_writes_a_file_that_opens_with_the_same_rows() {
-        let dir = testkit::TempDir::new("test-registry-backup");
         let file: &'static str =
             Box::leak(dir.join("r.sqlite").display().to_string().into_boxed_str());
         let c = cfg_with(file);
@@ -517,6 +512,15 @@ mod tests {
             "{}",
             o.stdout
         );
+    }
+
+    #[test]
+    fn backup_writes_a_file_that_opens_with_the_same_rows() {
+        let dir = testkit::TempDir::new("test-registry-backup");
+        let file: &'static str =
+            Box::leak(dir.join("r.sqlite").display().to_string().into_boxed_str());
+        let c = cfg_with(file);
+        let real = |p: &str| store::open(p);
         for t in ["suite:a.sh", "suite:b.sh"] {
             let line = format!("disable --test {t} --bead sp-a --reason r --actor a --until 5000");
             assert_eq!(run(&argv(&line), 1000, &c, &real).code, 0);
