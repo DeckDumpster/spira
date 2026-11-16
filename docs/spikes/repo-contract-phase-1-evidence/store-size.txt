@@ -1,0 +1,3 @@
+before (du -sk /nix/store, KiB): 3418144
+after the cold build (du -sk /nix/store, KiB): 3944368
+added (KiB): 526224

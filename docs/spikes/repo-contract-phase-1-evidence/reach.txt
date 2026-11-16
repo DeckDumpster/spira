@@ -1,0 +1,50 @@
+== builder: PATH=/usr/bin:/bin:~/spira/spira-releases/current/model-bin:~/.cargo/bin
+$ bash -c command -v nix
+[exit 1]
+$ /nix/var/nix/profiles/default/bin/nix eval --expr 1+1
+2
+[exit 0]
+== gate env -i, PATH as engine.rs builds it (release bin:spira:system dirs:spira.path tail)
+$ env -i HOME=~ PATH=~/spira/spira-releases/current/bin:~/spira/spira-releases/current/spira:/usr/local/bin:/usr/bin:/bin:~/.local/bin:~/.cargo/bin bash -c command -v nix
+[exit 1]
+== gate env -i, tail extended with the nix profile bin
+$ env -i HOME=~ PATH=~/spira/spira-releases/current/bin:~/spira/spira-releases/current/spira:/usr/local/bin:/usr/bin:/bin:~/.local/bin:~/.cargo/bin:/nix/var/nix/profiles/default/bin nix eval --expr 1+1
+2
+[exit 0]
+$ env -i PATH=~/spira/spira-releases/current/bin:~/spira/spira-releases/current/spira:/usr/local/bin:/usr/bin:/bin:~/.local/bin:~/.cargo/bin:/nix/var/nix/profiles/default/bin nix develop <worktree>/docs/spikes/repo-contract-phase-1-evidence/flake --command uv --version
+warning: Git tree '<worktree>' is dirty
+uv 0.13.0 (x86_64-unknown-linux-gnu)
+[exit 0]
+$ env -i HOME=/nonexistent PATH=~/spira/spira-releases/current/bin:~/spira/spira-releases/current/spira:/usr/local/bin:/usr/bin:/bin:~/.local/bin:~/.cargo/bin:/nix/var/nix/profiles/default/bin nix develop <worktree>/docs/spikes/repo-contract-phase-1-evidence/flake --command uv --version
+error:
+       … while fetching the input 'git+file://<worktree>'
+
+       error: creating directory "/nonexistent/.cache/nix/fetcher-locks": Permission denied
+[exit 1]
+$ env -i HOME=~ XDG_CACHE_HOME=/tmp/xc-232764 PATH=~/spira/spira-releases/current/bin:~/spira/spira-releases/current/spira:/usr/local/bin:/usr/bin:/bin:~/.local/bin:~/.cargo/bin:/nix/var/nix/profiles/default/bin nix develop <worktree>/docs/spikes/repo-contract-phase-1-evidence/flake --command uv --version
+warning: Git tree '<worktree>' is dirty
+uv 0.13.0 (x86_64-unknown-linux-gnu)
+[exit 0]
+== testenv container (network as testenv ISOLATED_NETWORK)
+$ podman run --rm --network pasta:-T,none,--no-map-gw --security-opt apparmor=unconfined -e NIX_CONFIG=experimental-features = nix-command flakes localhost/spira-testenv:93400812ae94 sh -c command -v nix
+[exit 127]
+$ podman run --rm --network pasta:-T,none,--no-map-gw --security-opt apparmor=unconfined -e NIX_CONFIG=experimental-features = nix-command flakes -v /nix:/nix:ro localhost/spira-testenv:93400812ae94 /nix/var/nix/profiles/default/bin/nix eval --expr 1+1
+2
+[exit 0]
+$ podman run --rm --network pasta:-T,none,--no-map-gw --security-opt apparmor=unconfined -e NIX_CONFIG=experimental-features = nix-command flakes -v /nix:/nix:ro localhost/spira-testenv:93400812ae94 /nix/var/nix/profiles/default/bin/nix eval --expr 1+1
+2
+[exit 0]
+$ podman run --rm --network pasta:-T,none,--no-map-gw localhost/spira-testenv:93400812ae94 /nix/var/nix/profiles/default/bin/nix eval --expr 1+1
+Error: crun: executable file `/nix/var/nix/profiles/default/bin/nix` not found: No such file or directory: OCI runtime attempted to invoke a command that was not found
+[exit 127]
+$ podman run --rm --network pasta:-T,none,--no-map-gw --security-opt apparmor=unconfined -e NIX_CONFIG=experimental-features = nix-command flakes -v /nix:/nix:ro -v <worktree>/docs/spikes/repo-contract-phase-1-evidence/flake:/flake:ro localhost/spira-testenv:93400812ae94 sh -c cd /tmp && /nix/var/nix/profiles/default/bin/nix print-dev-env --json path:/flake > /tmp/e.json; rc=$?; echo print-dev-env rc=$rc bytes=$(wc -c < /tmp/e.json)
+print-dev-env rc=0 bytes=76693
+[exit 0]
+$ podman run --rm --network pasta:-T,none,--no-map-gw --security-opt apparmor=unconfined -e NIX_CONFIG=experimental-features = nix-command flakes -v /nix:/nix:ro -v <worktree>/docs/spikes/repo-contract-phase-1-evidence/flake:/flake:ro localhost/spira-testenv:93400812ae94 sh -c cd /tmp && /nix/var/nix/profiles/default/bin/nix develop path:/flake --command uv --version
+uv 0.13.0 (x86_64-unknown-linux-gnu)
+[exit 0]
+== acceptance command, from the worktree root
+$ /nix/var/nix/profiles/default/bin/nix develop ./docs/spikes/repo-contract-phase-1-evidence/flake --command uv --version
+warning: Git tree '<worktree>' is dirty
+uv 0.13.0 (x86_64-unknown-linux-gnu)
+[exit 0]
