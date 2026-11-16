@@ -120,7 +120,7 @@ pub(crate) mod verdict_run {
 
     #[allow(clippy::too_many_arguments)]
     fn with_run_sink<T>(vars: BTreeMap<String, String>, bd: &dyn Bd, git: Dirty, exec: &dyn Exec, clock: &(dyn Fn() -> i64 + Sync), seam: &dyn Seam, sink: &dyn Sink, claimed_raw: &str, f: impl FnOnce(&mut Run) -> T) -> T {
-        let conf = Conf::new(&Snapshot { vars, ..Default::default() }, Path::new("/home/spira"));
+        let conf = Conf::new(&Snapshot { vars, ..Default::default() }, Path::new("/h/spira"));
         let rune = Rune::from_vars("builder", &Default::default());
         let env = Env::new(Default::default(), Default::default());
         let stop = Arc::new(Stop::default());
@@ -254,7 +254,7 @@ pub(crate) mod verdict_run {
     fn the_teardown_reads_the_blocks_targets_in_one_list() {
         let seam = Seams(Default::default());
         let blocked = with_run(&AskBd, &seam, Dirty(vec![]), "", |r| {
-            r.conf = Conf::new(&Snapshot { vars: { let mut v = super::complete_vars(); v.insert("SPIRA_ASK_LABEL".into(), "fixture-ask".into()); v }, ..Default::default() }, Path::new("/home/spira"));
+            r.conf = Conf::new(&Snapshot { vars: { let mut v = super::complete_vars(); v.insert("SPIRA_ASK_LABEL".into(), "fixture-ask".into()); v }, ..Default::default() }, Path::new("/h/spira"));
             r.ask_blocked("sp-x")
         });
         assert!(blocked);

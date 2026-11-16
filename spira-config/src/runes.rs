@@ -1007,7 +1007,7 @@ mod tests {
 
     #[test]
     fn the_reactive_set_is_exactly_the_shipped_personas_that_were_lanes_and_no_rune_sets_rune_lane() {
-        let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/runes");
+        let src = crate::resolve::locate_home_for_process().expect("SPIRA_HOME names the harness tree").join("runes");
         let ws = testkit::TempDir::new("spira-config-runes-reactive-set");
         let mut any_lane = vec![];
         for dir in [src.clone(), src.join("disabled")] {

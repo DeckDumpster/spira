@@ -2637,8 +2637,8 @@ mod tests {
     fn repo_root_finds_the_named_repo() {
         let dir = scratch_dir("repo-root");
         let map = dir.join("repos");
-        fs::write(&map, "spira | /srv/checkouts/spira | queue | origin/main | | \n").unwrap();
-        assert_eq!(repo_root("spira", &Some(map)), Some(PathBuf::from("/srv/checkouts/spira")));
+        fs::write(&map, "spira | /r/checkouts/spira | queue | origin/main | | \n").unwrap();
+        assert_eq!(repo_root("spira", &Some(map)), Some(PathBuf::from("/r/checkouts/spira")));
     }
 
     #[test]

@@ -50,7 +50,7 @@ fn a_pilgrim_files_links_and_closes_in_a_world_of_its_own_and_both_views_follow(
     assert!(Path::new(&release).is_dir(), "{release}");
     let t = testkit::TempDir::new("pw-walk");
     let repo = t.join("repo");
-    world::fixture_repo(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."), &repo).unwrap();
+    world::fixture_repo(&testkit::manifest_dir().join("../.."), &repo).unwrap();
     let dir = t.join("w");
     world::up_repos(
         &repo,
