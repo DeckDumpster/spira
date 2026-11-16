@@ -599,7 +599,7 @@ fn request_deadline(argv: &[String]) -> Duration {
     }
 }
 
-/// Binds the worker thread's stores to the request's deadline; the control store refuses a write begun past it.
+/// Binds the worker thread to the request deadline: the control store refuses a write begun past it.
 fn bind_deadline(received: Instant, limit: Duration) -> state_store::phases::DeadlineScope {
     crate::db::set_request_deadline(Some(received + limit));
     state_store::phases::deadline_scoped(received + limit)
