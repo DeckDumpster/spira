@@ -278,7 +278,8 @@ impl Loom {
             *held = Some(Arc::new(snap));
         }
         let s = held.as_ref().expect("a snapshot was just stored");
-        (StatusCode::OK, s.body.clone())
+        let claim = lifecycle_snapshot(self).ok().map(|(snap, _)| snap);
+        (StatusCode::OK, s.body(claim.as_ref()))
     }
 }
 

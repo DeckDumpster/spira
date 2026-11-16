@@ -5,6 +5,9 @@
 //! freeze on every repaint. This route reads one small file, checks its stamp, and calls
 //! systemctl once — all inside the 5-second cache.
 //!
+//! CLAIMABILITY IS NOT READ FROM cockpit.env. SP_NEXT*, SP_READY and SP_SLOTS_READY are dropped
+//! from the file and answered per request from the claim view the pane and the Now page use.
+//!
 //! PARSE cockpit.env; DO NOT SOURCE IT. The format is KEY='VALUE' with '\'' for an embedded
 //! apostrophe. A line that does not match is skipped, never guessed at.
 //!
@@ -164,7 +167,26 @@ pub fn check_sentinel(units: &dyn runtime::units::Units, instance: &str) -> Opti
 /// One cached read of the ops endpoint.
 pub struct OpsSnapshot {
     pub taken: Instant,
-    pub body: String,
+    pub obj: Map<String, Value>,
+}
+
+fn is_claim_key(k: &str) -> bool {
+    let row = k.strip_prefix("SP_NEXT").map(|r| r.strip_suffix("_REPO").unwrap_or(r));
+    matches!(k, "SP_READY" | "SP_SLOTS_READY") || row.is_some_and(|r| r == "_N" || (!r.is_empty() && r.bytes().all(|b| b.is_ascii_digit())))
+}
+
+/// The claimable count and the NEXT rows as the claim view answers them: the one `View` the
+/// pane draws and the Now page counts, so N, READY and the rows cannot disagree.
+pub fn claim_keys(snap: &cockpit_ops::lcview::Snapshot) -> Vec<(String, String)> {
+    const MAX_NEXT_ROWS: usize = 5;
+    let v = cockpit_ops::lcview::view(snap);
+    let n = if v.next_unknown { "?".to_string() } else { v.next_count.to_string() };
+    let mut out = vec![("SP_NEXT_N".to_string(), n.clone()), ("SP_READY".to_string(), n.clone()), ("SP_SLOTS_READY".to_string(), n)];
+    for (i, it) in v.next.iter().take(MAX_NEXT_ROWS).enumerate() {
+        out.push((format!("SP_NEXT{i}"), format!("{} {} {} {}", it.prio, it.persona, it.id, it.title)));
+        out.push((format!("SP_NEXT{i}_REPO"), it.repo.clone()));
+    }
+    out
 }
 
 impl OpsSnapshot {
@@ -174,7 +196,7 @@ impl OpsSnapshot {
         let world = read_world_state(run, instance, units).await;
 
         let mut obj = Map::new();
-        for (k, v) in &data {
+        for (k, v) in data.iter().filter(|(k, _)| !is_claim_key(k)) {
             obj.insert(k.clone(), Value::String(v.clone()));
         }
         obj.insert(
@@ -201,11 +223,17 @@ impl OpsSnapshot {
             world.sentinel_active.map_or(Value::Null, Value::Bool),
         );
 
-        OpsSnapshot {
-            taken: Instant::now(),
-            body: serde_json::to_string(&Value::Object(obj))
-                .unwrap_or_else(|_| "{}".to_string()),
+        OpsSnapshot { taken: Instant::now(), obj }
+    }
+
+    /// The body, with the claimable keys read from `claim` now; with none, they are absent
+    /// and the renderer shows `?`.
+    pub fn body(&self, claim: Option<&cockpit_ops::lcview::Snapshot>) -> String {
+        let mut obj = self.obj.clone();
+        for (k, v) in claim.map(claim_keys).unwrap_or_default() {
+            obj.insert(k, Value::String(v));
         }
+        serde_json::to_string(&Value::Object(obj)).unwrap_or_else(|_| "{}".to_string())
     }
 }
 
@@ -303,5 +331,48 @@ mod tests {
     fn unreadable_file_returns_error() {
         let (_, _, err) = parse_env_file("/nonexistent/path/cockpit.env");
         assert!(err.is_some(), "unreadable file must produce an error string");
+    }
+
+    use cockpit_ops::lcview::{apply_claim_views, ClaimView, Meta, Row, Snapshot};
+
+    fn claim_snapshot(ids: &[&str]) -> Snapshot {
+        let mut s = Snapshot::default();
+        for (n, id) in ids.iter().enumerate() {
+            let claim = ClaimView { verdict: spira_claim::verdicts::Kind::Claimable, blocker: None, runes: vec!["builder".into()] };
+            s.rows.push(Row { id: id.to_string(), state: "READY".into(), claim: Some(claim), persona: Some("builder".into()), ..Default::default() });
+            s.meta.insert(id.to_string(), Meta { title: format!("title {id}"), priority: Some(n as i64), ..Default::default() });
+        }
+        apply_claim_views(&mut s);
+        s
+    }
+
+    fn json_of(body: &str) -> Map<String, Value> {
+        serde_json::from_str::<Value>(body).unwrap().as_object().unwrap().clone()
+    }
+
+    fn rows_in(o: &Map<String, Value>) -> usize {
+        (0..10).filter(|i| o.contains_key(&format!("SP_NEXT{i}"))).count()
+    }
+
+    #[tokio::test]
+    async fn ops_answers_claimable_keys_from_the_claim_view_not_the_collectors_copy() {
+        let d = testkit::TempDir::new("loom-ops-claim");
+        let stale = "SP_NEXT_N='1'\nSP_READY='1'\nSP_SLOTS_READY='1'\nSP_NEXT0='P0 old sp-o x'\nSP_NEXT1='P0 old sp-p x'\nSP_NEXT2='P0 old sp-q x'\nSP_NEXT2_REPO='r'\nSP_OPEN='5'\n";
+        std::fs::write(d.join("cockpit.env"), stale).unwrap();
+        let snap = OpsSnapshot::take(d.path().to_str().unwrap(), "t", None).await;
+
+        let four = json_of(&snap.body(Some(&claim_snapshot(&["sp-a", "sp-b", "sp-c", "sp-d"]))));
+        assert_eq!((four["SP_NEXT_N"].as_str(), four["SP_READY"].as_str(), four["SP_SLOTS_READY"].as_str()), (Some("4"), Some("4"), Some("4")));
+        assert_eq!(rows_in(&four), 4);
+        assert!(four["SP_NEXT0"].as_str().unwrap().contains("sp-a"), "{four:?}");
+        assert_eq!(four["SP_OPEN"], "5", "keys that are not claimability pass through");
+
+        let one = json_of(&snap.body(Some(&claim_snapshot(&["sp-a"]))));
+        assert_eq!(one["SP_NEXT_N"], "1");
+        assert_eq!(rows_in(&one), 1, "no row outlives a shorter set: {one:?}");
+        assert!(!one.contains_key("SP_NEXT2_REPO"));
+
+        let blind = json_of(&snap.body(None));
+        assert!(!blind.contains_key("SP_NEXT_N") && !blind.contains_key("SP_READY") && rows_in(&blind) == 0, "{blind:?}");
     }
 }
