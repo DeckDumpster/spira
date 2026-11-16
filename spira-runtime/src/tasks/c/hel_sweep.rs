@@ -680,11 +680,11 @@ pub fn observe(real: &hel::real::Real, lc: &spira_store::lc_call::LcClient, p: &
     serde_json::to_string(&snap).map_err(|e| e.to_string())
 }
 
-/// An observe cut by its time slice resumes after the last branch it judged; one that walked to
-/// the end leaves the cursor for the prune or `clear_cursor_when_idle` to clear.
+/// An observe cut by its time slice resumes after the last branch it judged. One that walked to
+/// the end moves an existing cursor onto that last branch, so the prune finds nothing after it and clears it.
 pub fn park_cursor(real: &hel::real::Real, repo: &str, cut: bool, last_judged: Option<&str>) {
     use hel::ports::World;
-    if let (true, Some(last)) = (cut, last_judged) {
+    if let Some(last) = last_judged.filter(|_| cut || real.resume_after(repo).is_some()) {
         real.set_resume_after(repo, Some(last));
     }
 }
@@ -841,7 +841,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_cut_observe_parks_the_cursor_on_the_last_branch_it_judged_and_a_walk_to_the_end_leaves_it() {
+    fn a_cut_observe_parks_the_cursor_on_the_last_branch_it_judged_and_a_walk_to_the_end_moves_it_to_the_last_branch() {
         use hel::ports::World;
         let dir = testkit::TempDir::new("hel-sweep-park");
         let real = hel::real::Real::minimal(dir.path().to_path_buf(), dir.path().to_path_buf(), None);
@@ -850,7 +850,7 @@ mod tests {
         park_cursor(&real, "spira", true, Some("spira/sp-c"));
         assert_eq!(real.resume_after("spira").as_deref(), Some("spira/sp-c"));
         park_cursor(&real, "spira", false, Some("spira/sp-z"));
-        assert_eq!(real.resume_after("spira").as_deref(), Some("spira/sp-c"));
+        assert_eq!(real.resume_after("spira").as_deref(), Some("spira/sp-z"));
     }
 
     #[test]
