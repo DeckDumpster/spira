@@ -48,7 +48,7 @@ pub enum LcError {
     Refused(String),
     /// No answer: unreachable, lost, past its deadline, or "cannot tell".
     Fault(String),
-    /// The socket was refused or absent: nothing was sent, and the store is coming back.
+    /// Nothing answered the socket (refused or absent), and nothing was sent.
     NotRunning(String),
 }
 

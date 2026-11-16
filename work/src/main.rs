@@ -188,8 +188,9 @@ fn read_tip(bead: &str) -> Option<String> {
 /// fallback exists here — see this file's module doc for why that absence is the point.
 fn send(argv: &[String], wait: Duration) -> Result<(i32, String), Unsent> {
     let socket_path = spira_config::process::cfg("SPIRA_LC_SOCKET")?;
+    let began = std::time::Instant::now();
     let stream = connect_waiting(&socket_path, REPLY_WAIT)?;
-    send_on(stream, argv, wait).map_err(Unsent::Other)
+    send_on(stream, argv, wait.saturating_sub(began.elapsed()).max(Duration::from_secs(1))).map_err(Unsent::Other)
 }
 
 /// Why a request got no answer: no store answered the socket (nothing was sent), or anything else.
