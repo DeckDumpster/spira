@@ -1,0 +1,6 @@
+TYPE=u64
+GROUP=test-registry
+DOC=SPIRA_TEST_REGISTRY_HOLD_SECS — Seconds a test stays disabled or quarantined when its row states no end time; the row then expires and the test blocks again.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_TEST_REGISTRY_HOLD_SECS:=604800}"
+SPIRA_CONF_DEFAULT_EOF

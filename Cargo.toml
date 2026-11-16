@@ -42,6 +42,7 @@ members = [
     "habits",
     "round-vm",
     "sccache-dav",
+    "test-registry",
     "spira-claim",
     "strand",
     "mender",
