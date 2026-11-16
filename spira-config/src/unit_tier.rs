@@ -226,6 +226,8 @@ pub fn nextest_config(secs: u64, periods: u64, deny: &DenyList) -> String {
 pub struct UnitTimings {
     /// The `Summary [` line's test count; the per-test lines seen when the run left no summary.
     pub tests: u64,
+    /// Whether the log carried a `Summary [` line: nextest's own report that it ran.
+    pub summarized: bool,
     /// `<binary> <test>` and seconds, the ten largest, ties in log order.
     pub slowest: Vec<(String, f64)>,
 }
@@ -261,8 +263,10 @@ fn per_test(line: &str) -> Option<(String, f64)> {
 pub fn timings(log: &str) -> UnitTimings {
     let mut seen = Vec::new();
     let mut tests = None;
+    let mut summarized = false;
     for line in log.lines() {
         if let Some(rest) = line.trim_start().strip_prefix("Summary [") {
+            summarized = true;
             tests = rest.split_once(']').and_then(|(_, r)| r.split_whitespace().next()?.parse().ok());
             break;
         }
@@ -271,7 +275,7 @@ pub fn timings(log: &str) -> UnitTimings {
     let tests = tests.unwrap_or(seen.len() as u64);
     seen.sort_by(|a, b| b.1.total_cmp(&a.1));
     seen.truncate(SLOWEST);
-    UnitTimings { tests, slowest: seen }
+    UnitTimings { tests, summarized, slowest: seen }
 }
 
 impl UnitTimings {
@@ -439,6 +443,15 @@ mod tests {
     }
 
     #[test]
+    fn timings_say_whether_nextest_printed_its_summary() {
+        assert!(!timings("").summarized);
+        assert!(!timings("bwrap: execvp cargo: No such file or directory\n").summarized);
+        let t = timings("     Summary [   1.000s] 3 tests run: 3 passed, 0 skipped\n");
+        assert!(t.summarized);
+        assert_eq!(t.tests, 3);
+    }
+
+    #[test]
     fn timings_of_a_log_with_no_tests_are_empty() {
         assert_eq!(timings("error: could not compile\n"), UnitTimings::default());
     }
@@ -455,7 +468,7 @@ mod tests {
 
     #[test]
     fn the_slowest_field_is_name_colon_secs_joined_by_commas() {
-        let t = UnitTimings { tests: 2, slowest: vec![("a t1".into(), 1.5), ("b t2".into(), 0.25)] };
+        let t = UnitTimings { tests: 2, summarized: true, slowest: vec![("a t1".into(), 1.5), ("b t2".into(), 0.25)] };
         assert_eq!(t.slowest_field(), "a/t1:1.5,b/t2:0.25");
         assert_eq!(UnitTimings::default().slowest_field(), "-");
     }

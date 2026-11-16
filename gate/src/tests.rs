@@ -3131,7 +3131,7 @@ fn a_crate_the_base_lacks_is_not_tested_on_the_base() {
         .insert(BASE.into(), Ok(metadata_json(&[("gate", &[])])));
     f.unit_runs
         .borrow_mut()
-        .insert((MERGE_SHA.into(), "test"), (101, "FAILED".into()));
+        .insert((MERGE_SHA.into(), "test"), (101, "        FAIL [   0.010s] (1/1) newcrate t::x\n     Summary [   0.010s] 1 test run: 0 passed, 1 failed, 0 skipped\n".into()));
     assert_eq!(
         f.run(),
         FAIL,
@@ -4879,4 +4879,24 @@ fn the_configured_target_cap_reaches_the_release_of_the_gate_tree() {
     f.put_var("SPIRA_GATE_TARGET_CAP_MIB", "7777");
     assert_eq!(f.run(), PASS, "{}", f.stderr());
     assert_eq!(f.release_caps.borrow().as_slice(), &[7777]);
+}
+
+#[test]
+fn a_unit_gate_whose_nextest_run_printed_no_summary_is_a_harness_fault_not_branch_red() {
+    let f = unit_fake(&["gate/src/x.rs"]);
+    f.unit_runs.borrow_mut().insert((MERGE_SHA.into(), "test"), (1, "bwrap: execvp cargo: No such file or directory\n".into()));
+    assert_eq!(f.run(), NOVERDICT);
+    assert!(f.verdict_line().contains("reason=harness-fault"), "{}", f.verdict_line());
+    assert!(f.stderr().contains("printed no `Summary [` line"), "{}", f.stderr());
+    assert!(!f.stderr().contains("charged to this branch"));
+    assert!(!f.verdict_line().contains("reason=branch-red"));
+
+    let g = unit_fake(&["gate/src/x.rs"]);
+    g.unit_runs.borrow_mut().insert(
+        (MERGE_SHA.into(), "test"),
+        (101, "        FAIL [   0.010s] (1/3) gate tests::x\n     Summary [   1.000s] 3 tests run: 2 passed, 1 failed, 0 skipped\n".into()),
+    );
+    assert_eq!(g.run(), FAIL);
+    assert!(g.verdict_line().contains("reason=branch-red"), "{}", g.verdict_line());
+    assert!(g.stderr().contains("tests::x"));
 }
