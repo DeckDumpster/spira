@@ -272,11 +272,11 @@ pub enum ScanError {
 }
 
 /// The beads a pass judges: each non-round branch's id and each registered worktree's name.
-fn judged_ids(w: &dyn World, g: &Git, brs: &[String]) -> Vec<String> {
+fn judged_ids(w: &dyn World, worktrees: &[(std::path::PathBuf, Option<String>)], brs: &[String]) -> Vec<String> {
     let wts = w.worktrees();
     let mut ids: Vec<String> = brs.iter().map(|b| b.strip_prefix("spira/").unwrap_or(b)).filter(|i| !i.starts_with("round-")).map(String::from).collect();
-    for (path, _) in g.worktrees() {
-        if !path.starts_with(&wts) || path == wts {
+    for (path, _) in worktrees {
+        if !path.starts_with(&wts) || path == &wts {
             continue;
         }
         if let Some(n) = path.file_name().map(|n| n.to_string_lossy().into_owned()) {
@@ -290,49 +290,155 @@ fn judged_ids(w: &dyn World, g: &Git, brs: &[String]) -> Vec<String> {
     ids
 }
 
-/// One repository's reads for a pass: its base, every `spira/*` branch's facts (after the
-/// fetch of the base's own remote, only when there is a branch), and its orphaned worktrees.
+/// A branch's facts, each read on first ask and only for a branch that was not merged: the
+/// ancestors come from one batched read, and judge stops at the first fact that settles it.
+struct Scanned<'a, 'b> {
+    c: &'a Ctx<'b>,
+    id: &'a str,
+    br: &'a str,
+    tip: &'a str,
+    merged: bool,
+    base_tree: Option<&'a str>,
+    bead: Option<Value>,
+    merge: std::cell::OnceCell<Option<String>>,
+    ahead: std::cell::OnceCell<Option<u64>>,
+    cherry: std::cell::OnceCell<bool>,
+    by_subject: std::cell::OnceCell<bool>,
+    pr: std::cell::OnceCell<Option<String>>,
+}
+
+impl Scanned<'_, '_> {
+    fn g(&self) -> Git<'_> {
+        Git(self.c.repo)
+    }
+    fn merge(&self) -> &Option<String> {
+        self.merge.get_or_init(|| self.g().merged_tree(&self.c.base.landref, self.br))
+    }
+}
+
+impl Facts for Scanned<'_, '_> {
+    fn content_on_base(&self) -> bool {
+        self.merged || self.merge().as_deref().is_some_and(|t| !t.is_empty() && Some(t) == self.base_tree)
+    }
+    fn has_bead(&self) -> bool {
+        self.bead.is_some()
+    }
+    fn superseded(&self) -> bool {
+        self.bead.as_ref().is_some_and(superseded)
+    }
+    fn ahead(&self) -> Option<u64> {
+        *self.ahead.get_or_init(|| if self.merged { Some(0) } else { self.g().ahead(&self.c.base.landref, self.br) })
+    }
+    fn merges_clean(&self) -> bool {
+        self.merged || self.merge().is_some()
+    }
+    fn terminal(&self) -> bool {
+        self.c.w.lc_terminal(self.id)
+    }
+    fn submitted(&self) -> bool {
+        self.bead.as_ref().is_some_and(|b| labels(b).iter().any(|l| l == self.c.submitted_label)) || self.c.w.lc_past_builder(self.id)
+    }
+    fn tip(&self) -> Option<String> {
+        Some(self.tip.to_string()).filter(|t| !t.is_empty())
+    }
+    fn pr_merged_tip(&self) -> Option<String> {
+        self.pr.get_or_init(|| self.c.w.pr_merged_tip(self.c.repo, self.br)).clone()
+    }
+    fn landed(&self) -> bool {
+        self.c.w.lc_landed(self.id)
+    }
+    fn cherry_unapplied(&self) -> bool {
+        *self.cherry.get_or_init(|| self.g().cherry_unapplied(&self.c.base.landref, self.br))
+    }
+    fn landed_by_subject(&self) -> bool {
+        *self.by_subject.get_or_init(|| self.g().landed_by_subject(&self.c.base.landref, self.br, self.id, 2000))
+    }
+}
+
+/// One repository's reads for a pass.
+pub struct Scan {
+    pub base: Base,
+    pub branches: Vec<BranchScan>,
+    pub orphans: Vec<OrphanScan>,
+    /// The time slice ran out before every branch past `after` was judged.
+    pub cut: bool,
+}
+
+/// One repository's reads for a pass: its base, the facts of each `spira/*` branch after
+/// `after` (after the fetch of the base's own remote, only when there is a branch), and its
+/// orphaned worktrees. Branches merged into the land ref are judged from batched reads; the
+/// rest ask git lazily, and none is started once `slice` has passed (`Scan::cut`).
 /// `Err` names why the repository is skipped, or that the store did not answer.
-pub fn scan_repo(w: &dyn World, root: &Path, submitted_label: &str, fetch: bool) -> Result<(Base, Vec<BranchScan>, Vec<OrphanScan>), ScanError> {
+pub fn scan_repo(w: &dyn World, root: &Path, submitted_label: &str, fetch: bool, after: Option<&str>, slice: Duration) -> Result<Scan, ScanError> {
+    let began = w.now();
     if !root.join(".git").exists() {
         return Err(ScanError::Skip(format!("{} is not a git checkout", root.display())));
     }
     let g = Git(root);
-    let brs = g.spira_branches();
+    let tips = g.spira_branch_tips();
     let base = w.base(root).ok_or_else(|| ScanError::Skip("cannot resolve the ref it lands on — configure its `base`".into()))?;
     if let Some(rem) = base.remote.as_deref() {
-        if fetch && !brs.is_empty() {
+        if fetch && !tips.is_empty() {
             g.fetch(rem);
         }
     }
-    if !brs.is_empty() {
-        w.prefetch(&judged_ids(w, &g, &brs)).map_err(ScanError::Store)?;
+    let worktrees = g.worktrees();
+    let pending: Vec<&(String, String)> = tips.iter().filter(|(b, _)| after.is_none_or(|c| b.as_str() > c)).collect();
+    if !pending.is_empty() {
+        let names: Vec<String> = pending.iter().map(|(b, _)| b.clone()).collect();
+        w.prefetch(&judged_ids(w, &worktrees, &names)).map_err(ScanError::Store)?;
     }
     let lr = base.landref.as_str();
+    let merged = g.spira_merged_into(lr);
+    let by_branch: std::collections::BTreeMap<&str, &Path> = worktrees.iter().filter_map(|(p, b)| Some((b.as_deref()?, p.as_path()))).collect();
+    let base_tree = g.rev_parse(&format!("{lr}^{{tree}}"));
+    let ctx = Ctx { w, repo: root, name: "", base: &base, submitted_label };
     let mut branches = vec![];
-    for br in &brs {
+    let mut cut = false;
+    for (br, tip) in pending {
+        if !branches.is_empty() && w.now().saturating_duration_since(began) >= slice {
+            cut = true;
+            break;
+        }
         let id = br.strip_prefix("spira/").unwrap_or(br).to_string();
         let held = if id.starts_with("round-") { None } else { w.witness(&id) };
         let bead = w.bead(&id);
-        let content = g.content_on_base(br, lr);
-        let superseded_ = bead.as_ref().is_some_and(superseded);
         let labels_ = bead.as_ref().map(labels).unwrap_or_default();
-        let submitted = bead.is_some() && (labels_.iter().any(|l| l == submitted_label) || w.lc_past_builder(&id));
-        let pr_merged_tip = if held.is_none() && !content && !superseded_ && submitted { w.pr_merged_tip(root, br) } else { None };
+        let superseded_ = bead.as_ref().is_some_and(superseded);
+        let facts = Scanned { c: &ctx, id: &id, br, tip, merged: merged.contains(br.as_str()), base_tree: base_tree.as_deref(), bead, merge: Default::default(), ahead: Default::default(), cherry: Default::default(), by_subject: Default::default(), pr: Default::default() };
+        let (mut has_own_commit, mut only_stacked_base, mut base_names) = (false, false, false);
+        if held.is_none() && !id.starts_with("round-") && judge(&facts) == Disp::SendContentLanded {
+            let ahead = facts.ahead().unwrap_or(0);
+            needs_evidence(
+                ahead,
+                || {
+                    has_own_commit = g.has_own_commit(lr, br, &id);
+                    has_own_commit
+                },
+                || {
+                    only_stacked_base = g.only_stacked_base(lr, br);
+                    only_stacked_base
+                },
+                || {
+                    base_names = g.base_names(lr, &id, 2000);
+                    base_names
+                },
+            );
+        }
         branches.push(BranchScan {
-            tip: g.rev_parse(br).unwrap_or_default(),
-            ahead: g.ahead(lr, br),
-            content_on_base: content,
-            merges_clean: g.merges_clean(lr, br),
-            cherry_unapplied: g.cherry_unapplied(lr, br),
-            landed_by_subject: g.landed_by_subject(lr, br, &id, 2000),
-            has_own_commit: g.has_own_commit(lr, br, &id),
-            only_stacked_base: g.only_stacked_base(lr, br),
-            base_names: g.base_names(lr, &id, 2000),
-            worktree: g.worktree_of(br),
+            tip: tip.clone(),
+            ahead: facts.ahead.get().copied().flatten(),
+            content_on_base: facts.content_on_base(),
+            merges_clean: facts.merge.get().is_some_and(Option::is_some) || facts.merged,
+            cherry_unapplied: facts.cherry.get().copied().unwrap_or(false),
+            landed_by_subject: facts.by_subject.get().copied().unwrap_or(false),
+            has_own_commit,
+            only_stacked_base,
+            base_names,
+            worktree: by_branch.get(br.as_str()).map(|p| p.to_path_buf()),
             labels: labels_,
             superseded: superseded_,
-            pr_merged_tip,
+            pr_merged_tip: facts.pr.get().cloned().flatten(),
             held,
             br: br.clone(),
             id,
@@ -340,7 +446,7 @@ pub fn scan_repo(w: &dyn World, root: &Path, submitted_label: &str, fetch: bool)
     }
     let wts = w.worktrees();
     let mut orphans = vec![];
-    for (path, br) in g.worktrees() {
+    for (path, br) in worktrees {
         if !path.starts_with(&wts) || path == wts {
             continue;
         }
@@ -349,13 +455,13 @@ pub fn scan_repo(w: &dyn World, root: &Path, submitted_label: &str, fetch: bool)
             continue;
         }
         let Some(br) = br else { continue };
-        if g.branch_exists(&br) {
+        if tips.iter().any(|(b, _)| *b == br) || g.branch_exists(&br) {
             continue;
         }
         let held = w.witness(&id);
         orphans.push(OrphanScan { id, path, br, held });
     }
-    Ok((base, branches, orphans))
+    Ok(Scan { base, branches, orphans, cut })
 }
 
 /// send_orphan's first half: park `br`'s tip at refs/archive/<br> and read it back. `Ok` is
@@ -472,7 +578,7 @@ impl<'a> Sweep<'a> {
         let c = Ctx { w: self.w, repo: root, name: &r.name, base: &base, submitted_label: &label };
 
         if !brs.is_empty() {
-            if let Err(e) = self.w.prefetch(&judged_ids(self.w, &g, &brs)) {
+            if let Err(e) = self.w.prefetch(&judged_ids(self.w, &g.worktrees(), &brs)) {
                 self.say(&format!("SKIP   {}  store unreadable: {e}", r.name));
                 return;
             }

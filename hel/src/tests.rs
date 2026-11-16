@@ -58,6 +58,8 @@ struct Fake {
     send_takes: std::time::Duration,
     /// Each branch judged takes this long on the fake clock (dry runs send nothing).
     judge_takes: std::time::Duration,
+    /// Every read of the clock advances it by this much.
+    step: std::time::Duration,
     started: std::cell::OnceCell<std::time::Instant>,
     elapsed: std::cell::Cell<std::time::Duration>,
 }
@@ -120,7 +122,9 @@ impl World for Fake {
         true
     }
     fn now(&self) -> std::time::Instant {
-        *self.started.get_or_init(std::time::Instant::now) + self.elapsed.get()
+        let e = self.elapsed.get();
+        self.elapsed.set(e + self.step);
+        *self.started.get_or_init(std::time::Instant::now) + e
     }
     fn rest(&self, d: std::time::Duration) {
         self.elapsed.set(self.elapsed.get() + d);
@@ -328,7 +332,7 @@ mod unreadable_store {
         git(&root, &["branch", "spira/sp-x"]);
         let base = Base { landref: "main".into(), landrefs: vec!["main".into()], remote: None };
         let f = Fake { base: Some(base), wts: t.path().join("wt"), refuse: Some("store said no".into()), ..Default::default() };
-        let e = crate::sweep::scan_repo(&f, &root, "submitted", false).err().unwrap();
+        let e = crate::sweep::scan_repo(&f, &root, "submitted", false, None, std::time::Duration::from_secs(60)).err().unwrap();
         assert!(matches!(&e, crate::sweep::ScanError::Store(m) if m == "store said no"), "{e:?}");
         assert_eq!(*f.prefetched.borrow(), ["sp-x"]);
     }
@@ -511,5 +515,166 @@ mod wire_token {
         let (line, counted) = sweep_says(&t, prepare, "sp-orph");
         assert!(line.starts_with("SENT"), "{line:?}");
         assert_eq!(counted, "1", "the sweep said {line:?}");
+    }
+}
+
+mod scan {
+    use super::*;
+    use crate::sweep::{disposition, judge, needs_evidence, scan_repo, Ctx, Disp, Facts};
+    use std::time::Duration;
+
+    fn commit_file(dir: &Path, name: &str, body: &str, msg: &str) {
+        std::fs::write(dir.join(name), body).unwrap();
+        git(dir, &["add", name]);
+        git(dir, &["commit", "-q", "-m", msg]);
+    }
+
+    fn repo_with_main(t: &testkit::TempDir) -> PathBuf {
+        let root = t.path().join("repo");
+        std::fs::create_dir_all(&root).unwrap();
+        git(&root, &["init", "-q", "-b", "main"]);
+        commit_file(&root, "f.txt", "base\n", "base");
+        root
+    }
+
+    /// A branch off main carrying one commit; main is left checked out.
+    fn branch_with(root: &Path, br: &str, file: &str, body: &str, msg: &str) {
+        git(root, &["checkout", "-q", "-b", br, "main"]);
+        commit_file(root, file, body, msg);
+        git(root, &["checkout", "-q", "main"]);
+    }
+
+    fn base() -> Base {
+        Base { landref: "main".into(), landrefs: vec!["main".into()], remote: None }
+    }
+
+    struct FromScan<'a> {
+        f: &'a Fake,
+        b: &'a crate::sweep::BranchScan,
+    }
+
+    impl Facts for FromScan<'_> {
+        fn content_on_base(&self) -> bool {
+            self.b.content_on_base
+        }
+        fn has_bead(&self) -> bool {
+            self.f.beads.contains_key(&self.b.id)
+        }
+        fn superseded(&self) -> bool {
+            self.b.superseded
+        }
+        fn ahead(&self) -> Option<u64> {
+            self.b.ahead
+        }
+        fn merges_clean(&self) -> bool {
+            self.b.merges_clean
+        }
+        fn terminal(&self) -> bool {
+            self.f.lc_terminal.contains(&self.b.id)
+        }
+        fn submitted(&self) -> bool {
+            self.b.labels.iter().any(|l| l == "submitted") || self.f.lc_past_builder(&self.b.id)
+        }
+        fn tip(&self) -> Option<String> {
+            Some(self.b.tip.clone())
+        }
+        fn pr_merged_tip(&self) -> Option<String> {
+            self.b.pr_merged_tip.clone()
+        }
+        fn landed(&self) -> bool {
+            self.f.lc_landed.contains(&self.b.id)
+        }
+        fn cherry_unapplied(&self) -> bool {
+            self.b.cherry_unapplied
+        }
+        fn landed_by_subject(&self) -> bool {
+            self.b.landed_by_subject
+        }
+    }
+
+    #[test]
+    fn a_scan_judges_every_disposition_as_the_live_facts_do() {
+        let t = testkit::TempDir::new("hel-scan-disp");
+        let root = repo_with_main(&t);
+        let bead = |id: &str, labels: &[&str], supersedes: bool| {
+            let deps = if supersedes { serde_json::json!([{"type": "supersedes"}]) } else { serde_json::json!([]) };
+            (id.to_string(), serde_json::json!({"id": id, "labels": labels, "dependencies": deps}))
+        };
+        git(&root, &["branch", "spira/sp-anc"]);
+        branch_with(&root, "spira/sp-squash", "g.txt", "g\n", "sp-squash: g");
+        branch_with(&root, "spira/sp-other", "h.txt", "h1\n", "sp-other: h");
+        branch_with(&root, "spira/sp-unsafe", "k.txt", "k\n", "sp-unsafe: k");
+        branch_with(&root, "spira/sp-unsafet", "k2.txt", "k\n", "sp-unsafet: k");
+        branch_with(&root, "spira/sp-safe", "f.txt", "branch\n", "sp-safe: f");
+        branch_with(&root, "spira/sp-pr", "m.txt", "m\n", "sp-pr: m");
+        branch_with(&root, "spira/sp-keep", "n.txt", "n\n", "sp-keep: n");
+        branch_with(&root, "spira/sp-nobead", "o.txt", "o\n", "sp-nobead: o");
+        branch_with(&root, "spira/sp-term", "p.txt", "p\n", "sp-term: p");
+        branch_with(&root, "spira/sp-lost", "q.txt", "q\n", "sp-lost: q");
+        commit_file(&root, "g.txt", "g\n", "land g");
+        commit_file(&root, "h.txt", "h1\n", "sp-other landed under another hash");
+        commit_file(&root, "h.txt", "h2\n", "later change");
+        commit_file(&root, "f.txt", "main\n", "main moves f");
+        let tip = |br: &str| git(&root, &["rev-parse", br]);
+        let beads: BTreeMap<String, Value> = [
+            bead("sp-anc", &[], false),
+            bead("sp-squash", &[], false),
+            bead("sp-other", &[], false),
+            bead("sp-unsafe", &[], true),
+            bead("sp-unsafet", &[], true),
+            bead("sp-safe", &[], true),
+            bead("sp-pr", &["submitted"], false),
+            bead("sp-keep", &[], false),
+            bead("sp-term", &[], false),
+            bead("sp-lost", &[], false),
+        ]
+        .into();
+        let f = Fake {
+            base: Some(base()),
+            beads,
+            wts: t.path().join("wt"),
+            lc_landed: ["sp-other".to_string(), "sp-lost".to_string()].into(),
+            lc_terminal: ["sp-unsafet".to_string(), "sp-term".to_string(), "sp-other".to_string(), "sp-lost".to_string()].into(),
+            prs: [("spira/sp-pr".to_string(), tip("spira/sp-pr"))].into(),
+            ..Default::default()
+        };
+        let scan = scan_repo(&f, &root, "submitted", false, None, Duration::from_secs(600)).ok().unwrap();
+        assert!(!scan.cut);
+        let b = base();
+        let c = Ctx { w: &f, repo: &root, name: "spira", base: &b, submitted_label: "submitted" };
+        let mut seen = BTreeSet::new();
+        for br in &scan.branches {
+            let live = disposition(&c, &br.id, &br.br);
+            let scanned = judge(&FromScan { f: &f, b: br });
+            assert_eq!(scanned, live, "{}", br.br);
+            seen.insert(live.code());
+        }
+        for d in [Disp::SendContentLanded, Disp::SendOtherPr, Disp::ReapSupersededSafe, Disp::ReapSquashMerged, Disp::KeepSupersededUnsafe, Disp::KeepUnlanded, Disp::OrphanNoBead, Disp::ArchiveTerminal] {
+            assert!(seen.contains(d.code()), "the fixture reaches {}: {seen:?}", d.code());
+        }
+        let squash = scan.branches.iter().find(|b| b.id == "sp-squash").unwrap();
+        let g = Git(&root);
+        assert_eq!(squash.ahead, g.ahead("main", "spira/sp-squash"));
+        assert_eq!(needs_evidence(squash.ahead.unwrap(), || squash.has_own_commit, || squash.only_stacked_base, || squash.base_names), needs_evidence(squash.ahead.unwrap(), || g.has_own_commit("main", "spira/sp-squash", "sp-squash"), || g.only_stacked_base("main", "spira/sp-squash"), || g.base_names("main", "sp-squash", 2000)));
+    }
+
+    #[test]
+    fn an_observe_slice_spent_after_k_branches_judges_k_and_the_next_scan_returns_the_rest() {
+        let t = testkit::TempDir::new("hel-scan-slice");
+        let root = repo_with_main(&t);
+        let ids = ["sp-a", "sp-b", "sp-c", "sp-d", "sp-e", "sp-f"];
+        for id in ids {
+            branch_with(&root, &format!("spira/{id}"), &format!("{id}.txt"), "x\n", &format!("{id}: x"));
+        }
+        let beads = ids.iter().map(|id| (id.to_string(), serde_json::json!({"id": id, "labels": []}))).collect();
+        let f = Fake { base: Some(base()), beads, wts: t.path().join("wt"), step: Duration::from_millis(100), ..Default::default() };
+        let slice = Duration::from_millis(250);
+        let first = scan_repo(&f, &root, "submitted", false, None, slice).ok().unwrap();
+        assert!(first.cut);
+        assert_eq!(first.branches.iter().map(|b| b.id.as_str()).collect::<Vec<_>>(), ["sp-a", "sp-b", "sp-c"]);
+        let last = first.branches.last().unwrap().br.clone();
+        let rest = scan_repo(&f, &root, "submitted", false, Some(&last), slice).ok().unwrap();
+        assert!(!rest.cut, "a walk to the end is not cut");
+        assert_eq!(rest.branches.iter().map(|b| b.id.as_str()).collect::<Vec<_>>(), ["sp-d", "sp-e", "sp-f"]);
     }
 }

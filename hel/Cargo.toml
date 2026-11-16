@@ -24,6 +24,11 @@ name = "hel"
 path = "src/main.rs"
 test = false
 
+[[test]]
+name = "scan_spawns"
+path = "tests/scan_spawns.rs"
+required-features = ["integration"]
+
 [dev-dependencies]
 testkit = { path = "../testkit" }
 cockpit-collect = { path = "../cockpit-collect" }

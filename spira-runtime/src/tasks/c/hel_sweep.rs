@@ -138,6 +138,10 @@ pub const KEYS: &[&str] = &[CADENCE_KEY, JITTER_KEY, BUDGET_KEY, "SPIRA_RUN", "S
 
 pub const SPEC: Spec = Spec { name: NAME, stream: STREAM, tick: TICK, state: STATE, probe: OBSERVE, probe_deadline_ms: 120_000, cadence_key: CADENCE_KEY, calendar: true, effects: EFFECTS, keys: KEYS, probe_input_key: None };
 
+/// How long one observe may keep asking git for facts: half its deadline, so the snapshot is
+/// built and answered inside it. Branches not reached are judged first on the next observe.
+pub const OBSERVE_SLICE: std::time::Duration = std::time::Duration::from_millis(SPEC.probe_deadline_ms / 2);
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Base {
@@ -631,13 +635,13 @@ pub fn observe(real: &hel::real::Real, lc: &spira_store::lc_call::LcClient, p: &
     snap.repos = names.iter().skip(at + 1).map(|r| r.name.clone()).collect();
     let Some(root) = r.root.as_deref() else { return serde_json::to_string(&snap).map_err(|e| e.to_string()) };
     // A repository the pass cannot read is skipped, as today: its snapshot carries nothing.
-    let (base, branches, orphans) = match hel::sweep::scan_repo(real, root, &p.submitted_label, true) {
+    let cursor = real.resume_after(&r.name);
+    let hel::sweep::Scan { base, branches, orphans, cut } = match hel::sweep::scan_repo(real, root, &p.submitted_label, true, cursor.as_deref(), OBSERVE_SLICE) {
         Ok(scan) => scan,
         Err(hel::sweep::ScanError::Skip(_)) => return serde_json::to_string(&snap).map_err(|e| e.to_string()),
         Err(hel::sweep::ScanError::Store(e)) => return Err(store_failure(&r.name, &e)),
     };
-    let cursor = real.resume_after(&r.name);
-    let branches: Vec<_> = branches.into_iter().filter(|b| past_cursor(&b.br, cursor.as_deref())).collect();
+    park_cursor(real, &r.name, cut, branches.last().map(|b| b.br.as_str()));
     snap.base = Base { landref: base.landref, landrefs: base.landrefs, remote: base.remote.unwrap_or_default() };
     let ids: Vec<String> = branches.iter().map(|b| b.id.clone()).chain(orphans.iter().map(|o| o.id.clone())).collect();
     snap.rows = spira_store::lc_state::list_ids_on(lc, &ids).map(|rs| rs.into_iter().map(|r| (r.bead_id, r.state)).collect()).unwrap_or_default();
@@ -670,10 +674,19 @@ pub fn observe(real: &hel::real::Real, lc: &spira_store::lc_call::LcClient, p: &
         }
         snap.orphans.push(Orphan { id: o.id, path: o.path.display().to_string(), br: o.br });
     }
-    if cursor.is_some() {
+    if cursor.is_some() && !cut {
         clear_cursor_when_idle(real, &p.submitted_label, &snap)?;
     }
     serde_json::to_string(&snap).map_err(|e| e.to_string())
+}
+
+/// An observe cut by its time slice resumes after the last branch it judged; one that walked to
+/// the end leaves the cursor for the prune or `clear_cursor_when_idle` to clear.
+pub fn park_cursor(real: &hel::real::Real, repo: &str, cut: bool, last_judged: Option<&str>) {
+    use hel::ports::World;
+    if let (true, Some(last)) = (cut, last_judged) {
+        real.set_resume_after(repo, Some(last));
+    }
 }
 
 /// Branches sort by refname, so a cursor is a position: a branch sent since is gone, the cursor still holds.
@@ -803,8 +816,11 @@ pub fn destroy_worktree(real: &hel::real::Real, kind: &str, input: &str) -> Resu
 pub fn prune(real: &hel::real::Real, input: &str) -> Result<String, String> {
     use hel::ports::World;
     let t: Target = serde_json::from_str(input).map_err(|e| e.to_string())?;
-    real.prune(&root_of(real, &t.repo)?);
-    real.set_resume_after(&t.repo, None);
+    let root = root_of(real, &t.repo)?;
+    real.prune(&root);
+    if real.resume_after(&t.repo).is_none_or(|c| !hel::git::Git(&root).spira_branches().iter().any(|b| b.as_str() > c.as_str())) {
+        real.set_resume_after(&t.repo, None);
+    }
     Ok(format!("pruned {}", t.repo))
 }
 
@@ -815,6 +831,19 @@ crate::tasks::b::hosted!(HelSweep, catch_up = catch_up);
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_cut_observe_parks_the_cursor_on_the_last_branch_it_judged_and_a_walk_to_the_end_leaves_it() {
+        use hel::ports::World;
+        let dir = testkit::TempDir::new("hel-sweep-park");
+        let real = hel::real::Real::minimal(dir.path().to_path_buf(), dir.path().to_path_buf(), None);
+        park_cursor(&real, "spira", false, Some("spira/sp-b"));
+        assert_eq!(real.resume_after("spira"), None);
+        park_cursor(&real, "spira", true, Some("spira/sp-c"));
+        assert_eq!(real.resume_after("spira").as_deref(), Some("spira/sp-c"));
+        park_cursor(&real, "spira", false, Some("spira/sp-z"));
+        assert_eq!(real.resume_after("spira").as_deref(), Some("spira/sp-c"));
+    }
 
     struct Store(std::sync::Mutex<Vec<String>>);
 
