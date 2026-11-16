@@ -399,10 +399,6 @@ fn tokens_section(out: &mut Kv) {
 mod tests {
     use super::*;
 
-    fn kv<'a>(out: &'a Kv, key: &str) -> Option<&'a str> {
-        out.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str())
-    }
-
     // covers: UC-cockpit-observability-08
     #[test]
     fn the_server_inflow_reply_parses_to_the_same_shape_as_the_row_aggregate() {
