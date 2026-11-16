@@ -2400,6 +2400,36 @@ const UNIT_DATA = [{"name":"runtime","target":"","start":4.2,"duration":88.4},{"
 }
 
 #[test]
+fn a_unit_gate_records_the_test_phases_count_seconds_and_slowest_tests_beside_the_build() {
+    let f = unit_fake(&["spira-config/src/lib.rs"]);
+    f.phase_secs.set(7);
+    f.unit_runs.borrow_mut().insert(
+        (MERGE_SHA.into(), "test"),
+        (
+            0,
+            "        PASS [   0.250s] ( 1/3) gate a::quick\n        PASS [   4.500s] ( 2/3) gate a::slow\n        PASS [   1.000s] ( 3/3) queue b::mid\n------------\n     Summary [   5.750s] 3 tests run: 3 passed, 0 skipped".into(),
+        ),
+    );
+    assert_eq!(f.run(), PASS);
+    let m = meter(&f);
+    assert!(m.contains(" unit_build_secs=7 unit_run_secs=7 unit_tests=3 unit_slowest=gate/a::slow:4.5,queue/b::mid:1,gate/a::quick:0.25"), "{m}");
+    let rows = f.tsd.borrow();
+    let row = rows.iter().find(|r| r.contains("\"unit_tests\"")).unwrap_or_else(|| panic!("{rows:?}"));
+    for want in ["\"unit_tests\":3", "\"unit_run_secs\":7", "\"unit_build_secs\":7", "gate/a::slow:4.5,queue/b::mid:1,gate/a::quick:0.25"] {
+        assert!(row.contains(want), "{want} missing from {row}");
+    }
+}
+
+#[test]
+fn a_gate_whose_test_phase_did_not_run_records_no_unit_timings() {
+    let f = unit_fake(&["docs/x.md"]);
+    assert_eq!(f.run(), PASS);
+    assert!(!meter(&f).contains("unit_"), "{}", meter(&f));
+    let rows = f.tsd.borrow();
+    assert!(rows.iter().any(|r| r.contains("\"unit_tests\":0") && r.contains("\"unit_slowest\":\"\"")), "{rows:?}");
+}
+
+#[test]
 fn unit_mode_rust_only_runs_fences_then_the_touched_crates_tests_and_no_suite() {
     let f = unit_fake(&["spira-config/src/lib.rs", "docs/x.md"]);
     f.runs
@@ -2430,7 +2460,7 @@ fn unit_mode_rust_only_runs_fences_then_the_touched_crates_tests_and_no_suite() 
         "gate: composition=unit — fences (suites off, no build fence: the build phase is the compile check), then cargo build and test on the host for 2 crates: queue spira-config (touched: spira-config)"
     ));
     assert!(
-        meter(&f).ends_with(" rc=0 pass compose=unit phases=fences:7,build:7,test:7 test_clock=7s\n"),
+        meter(&f).ends_with(" rc=0 pass compose=unit phases=fences:7,build:7,test:7 unit_build_secs=7 unit_run_secs=7 unit_tests=0 unit_slowest=- test_clock=7s\n"),
         "{}",
         meter(&f)
     );
@@ -2880,7 +2910,7 @@ fn a_red_unit_test_on_a_green_base_is_the_branchs() {
     assert!(!meter(&f).contains("base-build") && !meter(&f).contains("base-test"));
     assert_eq!(f.checkouts.borrow()[1], BASE);
     assert!(meter(&f).contains(
-        "compose=unit phases=fences:7,build:7,test:7,base-fences:7 test_clock=7s\n"
+        "compose=unit phases=fences:7,build:7,test:7,base-fences:7 unit_build_secs=7 unit_run_secs=7 unit_tests=0 unit_slowest=- test_clock=7s\n"
     ));
     assert!(f.stderr().contains("phase 'test' failed (exit 101)"));
     assert!(!f.stderr().contains("the same command passes against"));
@@ -3072,7 +3102,7 @@ fn a_crate_the_base_lacks_is_not_tested_on_the_base() {
     );
     let cmds = f.cmds.borrow().clone();
     assert_eq!(cmds.len(), 4, "base runs its fences only: {cmds:?}");
-    assert!(meter(&f).contains("base-fences:7 test_clock="));
+    assert!(meter(&f).contains("base-fences:7 unit_build_secs="));
 }
 
 #[test]
