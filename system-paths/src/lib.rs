@@ -88,8 +88,6 @@ pub const PSI_IO: &str = "/proc/pressure/io";
 pub const PSI_CPU: &str = "/proc/pressure/cpu";
 /// The system lifecycle controller's socket.
 pub const LC_SYSTEM_SOCKET: &str = "/run/spira-lc/sock";
-/// The system lifecycle controller's socket unit.
-pub const LC_SYSTEM_UNIT: &str = "/etc/systemd/system/spira-lc.socket";
 /// The dovecot unit drop-in the mail host carries.
 pub const DOVECOT_DROPIN: &str = "/etc/systemd/system/dovecot.service.d/spira-tailnet.conf";
 /// A unit condition path that never exists, so the store stays frozen.
