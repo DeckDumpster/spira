@@ -2536,7 +2536,7 @@ fn a_pass_ended_early_by_in(t: &T, red: &str) {
         "{}",
         t.err()
     );
-    let batch = batch_of(&t);
+    let batch = batch_of(t);
     let spira = t
         .s()
         .run
@@ -2556,7 +2556,7 @@ fn a_pass_ended_early_by_in(t: &T, red: &str) {
     assert_eq!(t.run(&["round", "certify", &batch]), 1, "{}", t.err());
     assert!(t.out().contains(&format!("red={red}")), "{}", t.out());
     assert!(!t.err().contains("not judged"), "{}", t.err());
-    assert_eq!(round_phase(&t), "ATTRIBUTING");
+    assert_eq!(round_phase(t), "ATTRIBUTING");
     assert_eq!(
         t.run(&["round", "eject", &batch, "sp-a", "--reason", "lint", "--red", "--suites", red]),
         0,
