@@ -737,7 +737,8 @@ fn start_leg(units: &dyn runtime::units::Units, release: &str, run: &std::path::
         return Err(format!("{}: {} is not an executable file — refusing to send", s.id, hel.display()));
     }
     let home = std::env::var("HOME").map_err(|_| "HOME is not set — hel reads its pinned tool environment from it; there is no fallback".to_string())?;
-    let mut env = vec![(spira_config::RELEASE_ENV.to_string(), release.to_string()), ("SPIRA_RUN".to_string(), run.display().to_string()), ("HOME".to_string(), home)];
+    let mut env = spira_config::release_env::child_path_env(Some(release), Some(&home), &spira_config::process::cfg("SPIRA_PATH")?)?;
+    env.extend([("SPIRA_RUN".to_string(), run.display().to_string()), ("HOME".to_string(), home)]);
     if let Ok(spec) = spira_config::process::spec() {
         env.push((spira_config::process::TOML_ENV.to_string(), spec));
     }
@@ -868,6 +869,7 @@ mod tests {
         let has = |k: &str, v: &str| started[0].env.iter().any(|(a, b)| a == k && b == v);
         assert!(has("SPIRA_RELEASE", &rel));
         assert!(has("SPIRA_RUN", "/run/x"));
+        assert!(started[0].env.iter().any(|(k, v)| k == "PATH" && v.starts_with(&format!("{rel}/bin:"))));
         assert!(started[0].env.iter().any(|(k, _)| k == "HOME"));
     }
 
