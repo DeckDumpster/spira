@@ -143,7 +143,7 @@ _lcb_run_registry() {
         && mv "$(_lcb_stamp "$_LCB_REGISTRY").tmp" "$(_lcb_stamp "$_LCB_REGISTRY")"; } \
         || { echo "lc-backup: $_LCB_REGISTRY: stamp step failed: uploaded as $key but the stamp cannot be written" >&2; return 1; }
     newest="$file"
-    for f in "$dir"/*.sqlite; do [ "$f" = "$newest" ] || rm -f "$f"; done
+    for f in "$dir"/*.sqlite "$dir"/*.sqlite.tmp; do [ "$f" = "$newest" ] || rm -f "$f"; done
     echo "lc-backup: uploaded $_LCB_REGISTRY as $key: $out"
 }
 

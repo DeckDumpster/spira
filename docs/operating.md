@@ -189,7 +189,8 @@ is the backup). The backup key can only upload, so a restore runs under your own
 
 The bucket's lifecycle rule may expire old `manifests/` but must never expire `files/`: a file
 is uploaded once and every later manifest may still name it. `lc-backup.sh drill` proves the
-same path once a day against the local backup dir.
+same path once a day against the local backup dir. Nor may it expire `archive/`: the newest
+`archive/test-registry-*` object is the only restore source for the test registry.
 
 ## Restoring the test registry from its off-box backup
 

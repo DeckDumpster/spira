@@ -62,6 +62,7 @@ cmp -s "$stamp" "$T/prev" && ok "a failing upload leaves the previous stamp" || 
 DB_RC=1 cmd_run >"$T/out" 2>&1; rc=$?
 [ "$rc" -eq 1 ] && [ "$(cmp -s "$stamp" "$T/prev"; echo $?)" = 1 ] && ok "a failing database still lets the registry ship, and run exits 1" || bad "a failing database still lets the registry ship, and run exits 1" "rc=$rc"
 
+touch "$T/sync/test-registry/orphan.sqlite.tmp"
 sleep 1; cmd_run >/dev/null 2>&1
 [ "$(ls "$T/sync/test-registry" | wc -l)" -eq 1 ] && ok "only the newest local copy is kept" || bad "only the newest local copy is kept" "$(ls "$T/sync/test-registry")"
 
@@ -69,6 +70,10 @@ out="$(cmd_age 2>&1)"
 grep -q '^test-registry: ok ' <<<"$out" && ok "age prints test-registry ok" || bad "age prints test-registry ok" "$out"
 out="$(cmd_age --now $(( $(date +%s) + 5000 )) 2>&1)"; rc=$?
 grep -q '^test-registry: stale ' <<<"$out" && [ "$rc" -ne 0 ] && ok "an old stamp is stale and red" || bad "an old stamp is stale and red" "rc=$rc $out"
+cp "$stamp" "$T/good"; echo garbage > "$stamp"
+out="$(cmd_age 2>&1)"; rc=$?
+grep -q '^test-registry: unreadable' <<<"$out" && [ "$rc" -ne 0 ] && ok "a garbage stamp is unreadable and red" || bad "a garbage stamp is unreadable and red" "rc=$rc $out"
+cp "$T/good" "$stamp"
 _lcb_measure_db() { case "$1" in alpha) echo "stale 9999" ;; *) echo "ok 1" ;; esac; }
 out="$(cmd_age 2>&1)"; rc=$?
 [ "$out" = "$(printf 'alpha: stale 9999\ntest-registry: ok 1')" ] && [ "$rc" -ne 0 ] && ok "a stale database is listed before a fresh registry and stays red" || bad "a stale database is listed before a fresh registry and stays red" "rc=$rc $out"
