@@ -206,7 +206,7 @@ pub static ENTRIES: &[Entry] = &[
     Entry {
         verb: "file-followup",
         group: Group::Followups,
-        does: "Files a bead for work that follows from yours, parented to it (a pilgrim's is unparented, and your pilgrimage waits on it).",
+        does: "Files a bead for work that follows from yours, parented to it.",
         when: "You found work you must not do now. A builder child needs a body with a `## Build` section naming the artifact and where.",
         args: &["\"<title>\"", "--repo <name>   (required: where the child's work lives)", "--body-file -   (body on stdin)"],
         checks: &["the parent is your bead", "the child never carries your `branch:` label"],
