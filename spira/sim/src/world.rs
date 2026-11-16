@@ -200,9 +200,8 @@ pub fn refuse_production(env: &dyn Fn(&str) -> Option<String>) -> Result<(), Str
 
 pub const BD_ENV: &str = "SPIRA_BD";
 
-/// The absolute path of a store tool: the declared one, else `name` on `path`, else `beside`
-/// (the directory of the `bd` it ships with). A pilgrim's PATH carries neither `bd` nor `dolt`,
-/// so a bare name there is a refusal that names the key.
+/// The absolute path of a store tool: the declared one, else `name` on `path`. A pilgrim's PATH
+/// carries neither `bd` nor `dolt`, so a bare name there is a refusal that names the key.
 pub fn store_tool(name: &str, declared: Option<String>, path: &str, key: &str) -> Result<PathBuf, String> {
     match declared.filter(|v| !v.is_empty()) {
         Some(p) => Ok(PathBuf::from(p)),
