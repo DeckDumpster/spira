@@ -1410,13 +1410,13 @@ mod tests {
     fn a_missing_nextest_is_could_not_judge_not_a_red_branch() {
         let [_, t] = unit_commands(&["gate".into()], ALL, 4, &Default::default());
         assert!(t.1.starts_with(&format!("{AROUND} cargo nextest --version >/dev/null 2>&1 || {{")), "{}", t.1);
-        let ws = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let ws = testkit::manifest_dir().parent().unwrap().to_path_buf();
         let out = std::process::Command::new("/bin/bash")
             .args(["-c", &t.1])
-            .current_dir(ws)
+            .current_dir(&ws)
             .env_clear()
             .env("PATH", "/usr/bin:/bin")
-            .env("HOME", ws)
+            .env("HOME", &ws)
             .output()
             .unwrap();
         assert_eq!(out.status.code(), Some(75), "{}", String::from_utf8_lossy(&out.stdout));
