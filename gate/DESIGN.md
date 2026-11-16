@@ -368,8 +368,9 @@ certifies on **the fences and the build fence only** (approved by Ryan 2026-10-2
 **Contract.** Under `fences` (and no `SPIRA_GATE_ALL=1`, `compose::fences_only`), the trial is
 tools + fences (with the build fence) + the re-entry suites when the bead has any:
 
-* every trial composes `fences`, whatever the branch touches (a script, a crate, a workspace
-  input alike); neither the touched set nor the workspace graph is read to decide it;
+* a branch touching no crate (scripts, workspace inputs, docs, config) composes `fences`; one
+  that touches crates composes `unit` for those crates, their dependents and their readers,
+  even beside a script or workspace input, which add no crate of their own;
 * the definition runs without its suites step (`Def::fences_only`: every step
   `compose::is_suites_step` names — the one reading `$SPIRA_SELECT_BIN`/`$SPIRA_TESTENV_BIN` —
   is dropped, and every `bin` neither a remaining step nor the re-entry phase reads goes with
