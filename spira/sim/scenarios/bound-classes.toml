@@ -52,7 +52,8 @@ exits = { builder = 1 }
 expect_calls = ["builder"]
 expect_bound = ["build-disk 7 7 * 0"]
 
-# The operator limits memory from the last pass: only its declarers wait, and Skuld is called beside them.
+# The operator's `spira.limit_memory` is the snapshot's `limits` here: the call world plays the
+# pass over a snapshot, not the config file. It limits memory from the last pass: only its declarers wait, and Skuld is called beside them.
 [[pass]]
 name = "memory-unlimited-holds-nobody"
 exits = { builder = 3, mender = 2 }
