@@ -278,7 +278,8 @@ impl Loom {
             *held = Some(Arc::new(snap));
         }
         let s = held.as_ref().expect("a snapshot was just stored");
-        (StatusCode::OK, s.body.clone())
+        let claim = lifecycle_snapshot(self).ok().filter(|(_, age)| *age <= LIFECYCLE_STALE_S).map(|(snap, _)| snap);
+        (StatusCode::OK, s.body(claim.as_ref()))
     }
 }
 
@@ -1042,6 +1043,44 @@ mod in_process_tests {
             transitions: Err("not pinned in this test".into()),
             deadman_secs: 300,
         }
+    }
+
+    fn serve_claim_snapshot(run: &std::path::Path, ids: &[&str], at: i64) {
+        use cockpit_ops::lcview::{apply_claim_views, ClaimView, Row, Snapshot};
+        let mut s = Snapshot { now: at, ..Default::default() };
+        for id in ids {
+            let claim = ClaimView { verdict: spira_claim::verdicts::Kind::Claimable, blocker: None, runes: vec!["builder".into()] };
+            s.rows.push(Row { id: id.to_string(), state: "READY".into(), claim: Some(claim), ..Default::default() });
+        }
+        apply_claim_views(&mut s);
+        std::fs::create_dir_all(run.join("lcview")).unwrap();
+        std::fs::write(run.join("lcview/snapshot.json"), serde_json::to_string(&s).unwrap()).unwrap();
+    }
+
+    #[tokio::test]
+    async fn api_ops_claimable_keys_follow_the_claim_view_and_go_unknown_when_it_is_stale() {
+        let d = testkit::TempDir::new("loom-serve-ops");
+        let cfg = Config { run: d.path().to_str().unwrap().into(), ..test_config() };
+        std::fs::write(d.join("cockpit.env"), "SP_NEXT_N='1'\nSP_READY='1'\nSP_NEXT0='P0 a sp-z t'\nSP_NEXT1='P0 a sp-y t'\nSP_NEXT7='P0 a sp-x t'\nSP_NEXTRA='keep'\n").unwrap();
+        async fn served(cfg: &Config) -> Value {
+            let loom = Loom::with_limits(cfg.clone(), Arc::new(|_| Ok(Default::default())));
+            serde_json::from_str(&loom.serve_ops().await.1).unwrap()
+        }
+
+        serve_claim_snapshot(d.path(), &["sp-a", "sp-b", "sp-c", "sp-d"], now_s());
+        let four = served(&cfg).await;
+        assert_eq!((four["SP_NEXT_N"].as_str(), four["SP_READY"].as_str()), (Some("4"), Some("4")));
+        assert!(four["SP_NEXT3"].is_string() && four.get("SP_NEXT7").is_none());
+        assert_eq!(four["SP_NEXTRA"], "keep", "a key that merely starts with SP_NEXT passes through");
+
+        serve_claim_snapshot(d.path(), &["sp-a"], now_s());
+        let one = served(&cfg).await;
+        assert_eq!(one["SP_NEXT_N"], "1");
+        assert!(one["SP_NEXT0"].is_string() && one.get("SP_NEXT1").is_none(), "{one}");
+
+        serve_claim_snapshot(d.path(), &["sp-a"], now_s() - LIFECYCLE_STALE_S - 5);
+        let stale = served(&cfg).await;
+        assert!(stale.get("SP_NEXT_N").is_none() && stale.get("SP_READY").is_none(), "an old claim view is unknown, not current: {stale}");
     }
 
     struct Counted(std::sync::atomic::AtomicUsize, Vec<(&'static str, i32, String)>);
