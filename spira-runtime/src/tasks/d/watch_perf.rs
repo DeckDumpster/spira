@@ -34,7 +34,7 @@
 //! | `watch.perf.slow_sample` | host | 5 s | `watch.perf:slow:<probe>:<epoch>` | a path outside `SPIRA_RUN` |
 //! | `watch.perf.metrics` | host | 5 s | `watch.perf:metrics:<epoch>` | nothing; a lost push is a gap in the series, not a failure |
 //!
-//! - **`inbox.append`** carries `<UTC ISO> [watch:perf-watch] <alarm>` (`inbox_line`, `lib.rs:226-239`, test `lib.rs:350-352`). The alarm is one of `PERF SLOW <name> <ms>ms (limit <L>ms) phases <p|unreported> [rest=<ms>ms]; top callers: <c1, c2, c3|unknown>` or `PERF UNRUNNABLE <name>: <err> (after <ms>ms; phases …)` (`lib.rs:116-117`). The shared runner adds the newline, so the task drops the trailing `\n` that `inbox_line` appends.
+//! - **`inbox.append`** carries `<UTC ISO> [watch:perf-watch] <alarm>` (`inbox_line`, `lib.rs:226-239`, test `lib.rs:350-352`). The alarm is one of `PERF SLOW <name> <ms>ms (limit <L>ms) phases <p|unreported> [rest=<ms>ms]; top callers: <c1, c2, c3|unknown>` `PERF UNRUNNABLE <name>: <err> (after <ms>ms; phases …)` (`lib.rs:116-117`), or `PERF TIMEOUT <name> timed out at <d>ms twice in a row (limit <L>ms); top callers: <c…>` when a probe was cut at its deadline on two passes running. The shared runner adds the newline, so the task drops the trailing `\n` that `inbox_line` appends.
 //! - **`watch.perf.log`** appends the bare alarm line to `run/perf-watch.log`, the log row `spira/watchers:122` that the unit's stdout fills today (`main.rs:144`).
 //! - **`watch.perf.slow_sample`** appends `<epoch>\t<probe>\t<ms>\t<phases>\trest=<ms>\t<top callers>` to `run/perf-slow.log` (`lib.rs:128-141`, `main.rs:147-151`).
 //! - **`watch.perf.metrics`** pushes `spira_perf_watch_probe_seconds{probe}` for every answered probe (`lib.rs:101-109`, `main.rs:152`).
@@ -62,7 +62,7 @@
 //!
 //! Release rollback restores the unit and timer. Per task, Observe mode (S4) shadows the four write effects while the probe still runs.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use runtime::event::*;
 use serde::{Deserialize, Serialize};
@@ -121,6 +121,8 @@ pub struct Timing {
     pub phases: Option<String>,
     #[serde(default)]
     pub error: Option<String>,
+    #[serde(default)]
+    pub timed_out_ms: Option<u64>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -138,6 +140,7 @@ pub struct Carry {
     pub alarms: BTreeMap<String, u64>,
     pub sample_at: u64,
     pub sample: BTreeMap<String, u64>,
+    pub timed_out: BTreeSet<String>,
     pub record: Vec<Timing>,
 }
 
@@ -149,11 +152,12 @@ fn health_of(carry: &Carry) -> perf_watch::Health {
         alarms: carry.alarms.clone(),
         sample_at: (!carry.sample.is_empty()).then_some(carry.sample_at),
         sample: carry.sample.clone(),
+        timed_out: carry.timed_out.clone(),
     }
 }
 
 fn to_lib(t: &Timing) -> perf_watch::Timing {
-    perf_watch::Timing { name: t.name.clone(), millis: t.millis, micros: t.micros, error: t.error.clone(), phases: t.phases.clone() }
+    perf_watch::Timing { name: t.name.clone(), millis: t.millis, micros: t.micros, error: t.error.clone(), phases: t.phases.clone(), timed_out_ms: t.timed_out_ms }
 }
 
 fn spec(name: &str, key: String, input: String, deadline_ms: u64) -> EffectSpec {
@@ -172,7 +176,7 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> (Car
     }
     let cur = (!snap.callers.is_empty()).then(|| snap.callers.clone());
     let pass = perf_watch::settle(&settings, &prior, now, snap.timings.iter().map(to_lib).collect(), cur);
-    let next = Carry { last_pass: now, alarms: pass.health.alarms, sample_at: pass.health.sample_at.unwrap_or(0), sample: pass.health.sample, record: snap.timings.clone() };
+    let next = Carry { last_pass: now, alarms: pass.health.alarms, sample_at: pass.health.sample_at.unwrap_or(0), sample: pass.health.sample, timed_out: pass.health.timed_out, record: snap.timings.clone() };
     let mut acts = vec![];
     for (i, l) in pass.lines.iter().enumerate() {
         acts.push(spec(INBOX_APPEND, format!("watch.perf:{now}:{i}"), perf_watch::inbox_line(now, l).trim_end().to_string(), WRITE_DEADLINE_MS));
@@ -201,29 +205,35 @@ fn phases_of(stderr: &[u8]) -> Option<String> {
 }
 
 /// One probe timed end to end: a `spira-lc` read goes over the in-process client (the path
-/// S7 left), any other probe is its program run through the `Proc` port.
-fn time_one(lc: &Result<spira_store::lc_call::LcClient, String>, argv: &[String]) -> Timing {
+/// S7 left), any other probe is its program run through `proc` and cut at `deadline`. A call
+/// that failed after at least its deadline was cut, not refused; the clock says so.
+fn time_one(lc: &Result<spira_store::lc_call::LcClient, String>, argv: &[String], proc: &dyn runtime::ports::Proc, deadline: std::time::Duration) -> Timing {
     let t0 = std::time::Instant::now();
     let mut phases = None;
+    let mut bound = deadline;
     let r: Result<(), String> = match (argv[0].as_str(), lc) {
-        ("spira-lc", Ok(lc)) => lc.call(&argv[1..]).map(|_| ()).map_err(|e| format!("{}: {e}", argv[0])),
+        ("spira-lc", Ok(lc)) => {
+            bound = spira_store::lc_call::DEADLINE;
+            lc.call(&argv[1..]).map(|_| ()).map_err(|e| format!("{}: {e}", argv[0]))
+        }
         ("spira-lc", Err(e)) => Err(format!("{}: {e}", argv[0])),
         _ => {
-            use runtime::ports::Proc;
             let phases_on = format!("{}=1", spira_otel::run::PHASES_ENV);
             let args = [phases_on, argv[0].clone()].into_iter().chain(argv[1..].iter().cloned()).collect();
-            let spec = runtime::ports::ProcSpec { prog: "env".into(), args, stdin: vec![], deadline: PROBE_DEADLINE };
-            runtime::ports::SysProc.run(&spec).map_err(|e| format!("{}: {e}", argv[0])).map(|o| phases = phases_of(&o.stderr))
+            let spec = runtime::ports::ProcSpec { prog: "env".into(), args, stdin: vec![], deadline };
+            proc.run(&spec).map_err(|e| format!("{}: {e}", argv[0])).map(|o| phases = phases_of(&o.stderr))
         }
     };
-    let micros = t0.elapsed().as_micros() as u64;
-    Timing { name: String::new(), micros, millis: micros / 1000, phases, error: r.err() }
+    let elapsed = t0.elapsed();
+    let micros = elapsed.as_micros() as u64;
+    let timed_out_ms = (r.is_err() && elapsed >= bound && !(argv[0] == "spira-lc" && lc.is_err())).then_some(bound.as_millis() as u64);
+    Timing { name: String::new(), micros, millis: micros / 1000, phases, error: r.err(), timed_out_ms }
 }
 
 /// `watch.perf.observe`: every probe timed, then the store's caller counts.
 pub fn observe(_: &crate::Effects, _: &str, _: &EffectSpec) -> Result<String, String> {
     let lc = spira_store::lc_call::LcClient::configured();
-    let timings = probes()?.iter().map(|p| Timing { name: p.name.clone(), ..time_one(&lc, &p.argv) }).collect();
+    let timings = probes()?.iter().map(|p| Timing { name: p.name.clone(), ..time_one(&lc, &p.argv, &runtime::ports::SysProc, PROBE_DEADLINE) }).collect();
     let callers = lc.as_ref().ok().and_then(|c| c.call(&["stats"]).ok()).map(|r| perf_watch::caller_counts(&r.out)).unwrap_or_default();
     serde_json::to_string(&Snapshot { timings, callers }).map_err(|e| e.to_string())
 }
@@ -275,7 +285,7 @@ impl WatchPerf {
     }
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("last_pass"), runtime::rows::Part::Map { name: "alarms", drop: &[] }, runtime::rows::Part::Field("sample_at"), runtime::rows::Part::Map { name: "sample", drop: &[] }];
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("last_pass"), runtime::rows::Part::Map { name: "alarms", drop: &[] }, runtime::rows::Part::Field("sample_at"), runtime::rows::Part::Map { name: "sample", drop: &[] }, runtime::rows::Part::Field("timed_out")];
 
 impl Handler for WatchPerf {
     fn interests(&self) -> &[EventKindTag] {
@@ -303,7 +313,39 @@ impl Handler for WatchPerf {
 
 #[cfg(test)]
 mod tests {
-    use super::phases_of;
+    use super::*;
+
+    struct Fails;
+    impl runtime::ports::Proc for Fails {
+        fn run(&self, _: &runtime::ports::ProcSpec) -> Result<runtime::ports::ProcOutput, String> {
+            Err("env exceeded its deadline".to_string())
+        }
+    }
+
+    fn probe(deadline: std::time::Duration) -> Timing {
+        time_one(&Err("no store".to_string()), &["claim-check".to_string()], &Fails, deadline)
+    }
+
+    #[test]
+    fn a_failed_probe_that_reached_its_deadline_is_timed_out_and_stays_an_error() {
+        let t = probe(std::time::Duration::ZERO);
+        assert_eq!(t.timed_out_ms, Some(0));
+        assert!(t.error.is_some());
+    }
+
+    #[test]
+    fn a_failed_probe_inside_its_deadline_is_not_timed_out() {
+        let t = probe(std::time::Duration::from_secs(3600));
+        assert_eq!(t.timed_out_ms, None);
+        assert!(t.error.is_some());
+    }
+
+    #[test]
+    fn timed_out_probes_round_trip_through_the_carry_rows() {
+        let carry = Carry { last_pass: 5, timed_out: ["claim-check".to_string()].into(), ..Carry::default() };
+        assert_eq!(health_of(&carry).timed_out, carry.timed_out);
+        assert_eq!(serde_json::from_str::<Carry>(&serde_json::to_string(&carry).unwrap()).unwrap(), carry);
+    }
 
     #[test]
     fn the_last_phases_line_on_stderr_is_the_probes_breakdown() {

@@ -3,7 +3,7 @@
 //! both and never waits on a real one.
 
 use spira_otel::metrics::{MetricsSink, Point};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 
 pub struct Probe {
@@ -83,6 +83,8 @@ pub struct Timing {
     pub micros: u64,
     pub error: Option<String>,
     pub phases: Option<String>,
+    /// The deadline the probe was cut at, in ms; `None` when it finished.
+    pub timed_out_ms: Option<u64>,
 }
 
 pub fn time_probes(probes: &[Probe], clock: &dyn Clock, runner: &mut dyn Runner) -> Vec<Timing> {
@@ -92,7 +94,7 @@ pub fn time_probes(probes: &[Probe], clock: &dyn Clock, runner: &mut dyn Runner)
             let t0 = clock.now_ms();
             let r = runner.run(&p.argv);
             let micros = runner.measured_us().unwrap_or_else(|| clock.now_ms().saturating_sub(t0) * 1000);
-            Timing { name: p.name.clone(), millis: micros / 1000, micros, error: r.err(), phases: runner.phases() }
+            Timing { name: p.name.clone(), millis: micros / 1000, micros, error: r.err(), phases: runner.phases(), timed_out_ms: None }
         })
         .collect()
 }
@@ -111,6 +113,7 @@ pub fn alarms(timings: &[Timing], limit_ms: u64, callers: &[String]) -> Vec<Stri
     let top = if callers.is_empty() { "unknown".to_string() } else { callers.join(", ") };
     timings
         .iter()
+        .filter(|t| t.timed_out_ms.is_none())
         .filter_map(|t| match (&t.error, t.millis > limit_ms) {
             (Some(e), _) => Some(format!("PERF UNRUNNABLE {}: {e} (after {}ms; {})", t.name, t.millis, breakdown(t))),
             (None, true) => Some(format!("PERF SLOW {} {}ms (limit {limit_ms}ms) {}; top callers: {top}", t.name, t.millis, breakdown(t))),
@@ -182,6 +185,7 @@ pub struct Health {
     pub alarms: BTreeMap<String, u64>,
     pub sample_at: Option<u64>,
     pub sample: BTreeMap<String, u64>,
+    pub timed_out: BTreeSet<String>,
 }
 
 impl Health {
@@ -198,6 +202,8 @@ impl Health {
                         h.sample.insert(key.to_string(), n);
                     }
                 }
+            } else if let Some(n) = l.strip_prefix("timeout ") {
+                h.timed_out.insert(n.to_string());
             } else if let Some(r) = l.strip_prefix("alarm ") {
                 if let Some((n, key)) = r.split_once('\t') {
                     if let Ok(n) = n.trim().parse() {
@@ -219,6 +225,9 @@ impl Health {
         }
         for (k, n) in &self.sample {
             out.push_str(&format!("count {n}\t{k}\n"));
+        }
+        for n in &self.timed_out {
+            out.push_str(&format!("timeout {n}\n"));
         }
         for (k, n) in &self.alarms {
             out.push_str(&format!("alarm {n}\t{k}\n"));
@@ -297,8 +306,17 @@ pub fn settle(cfg: &Settings, prior: &Health, now: u64, timings: Vec<Timing>, cu
         (Some(c), Some(at)) => top_callers(&prior.sample, at, c, now, 3),
         _ => vec![],
     };
-    let all = alarms(&timings, cfg.budget_ms, &callers);
-    let mut health = Health { last_pass: Some(now), ..Health::default() };
+    let mut all = alarms(&timings, cfg.budget_ms, &callers);
+    let top = if callers.is_empty() { "unknown".to_string() } else { callers.join(", ") };
+    let mut timed_out = BTreeSet::new();
+    for t in &timings {
+        let Some(d) = t.timed_out_ms else { continue };
+        if prior.timed_out.contains(&t.name) {
+            all.push(format!("PERF TIMEOUT {} timed out at {d}ms twice in a row (limit {}ms); top callers: {top}", t.name, cfg.budget_ms));
+        }
+        timed_out.insert(t.name.clone());
+    }
+    let mut health = Health { last_pass: Some(now), timed_out, ..Health::default() };
     match cur {
         Some(c) => (health.sample_at, health.sample) = (Some(now), c),
         None => (health.sample_at, health.sample) = (prior.sample_at, prior.sample.clone()),
@@ -438,7 +456,7 @@ mod tests {
 
     #[test]
     fn the_page_carries_the_probes_breakdown_slow_or_unrunnable() {
-        let t = |millis, error: Option<&str>| Timing { name: "claim-check".into(), millis, micros: millis * 1000, error: error.map(String::from), phases: Some("store=30,push=2000".into()) };
+        let t = |millis, error: Option<&str>| Timing { name: "claim-check".into(), millis, micros: millis * 1000, error: error.map(String::from), phases: Some("store=30,push=2000".into()), timed_out_ms: None };
         assert_eq!(alarms(&[t(2100, None)], 500, &[]), vec!["PERF SLOW claim-check 2100ms (limit 500ms) phases store=30,push=2000 rest=70ms; top callers: unknown"]);
         assert_eq!(alarms(&[t(5000, Some("x exceeded its 5s deadline"))], 500, &[]), vec!["PERF UNRUNNABLE claim-check: x exceeded its 5s deadline (after 5000ms; phases store=30,push=2000 rest=2970ms)"]);
         let bare = Timing { phases: None, ..t(900, None) };
@@ -590,5 +608,57 @@ mod tests {
         let first = stepped(1000, &Health::default(), 900).unwrap();
         assert_eq!(Health::parse(&first.health.render()), first.health);
         assert_eq!(Health::parse("garbage"), Health::default());
+    }
+
+    fn timing(millis: u64, phases: Option<&str>, timed_out_ms: Option<u64>) -> Timing {
+        let error = timed_out_ms.map(|d| format!("x exceeded its {}s deadline", d / 1000));
+        Timing { name: "claim-check".into(), millis, micros: millis * 1000, error, phases: phases.map(String::from), timed_out_ms }
+    }
+
+    fn settled(now: u64, prior: &Health, t: Timing) -> Pass {
+        let cfg = Settings { budget_ms: 500, interval_secs: 0, remind_secs: 1800 };
+        settle(&cfg, prior, now, vec![t], None)
+    }
+
+    #[test]
+    fn one_timeout_between_fast_passes_pages_nothing() {
+        let a = settled(1000, &Health::default(), timing(20, None, None));
+        let b = settled(1300, &a.health, timing(5000, None, Some(5000)));
+        assert!(b.lines.is_empty(), "{:?}", b.lines);
+        assert!(b.slow.is_empty());
+        assert!(b.health.timed_out.contains("claim-check"));
+        let c = settled(1600, &b.health, timing(20, None, None));
+        assert!(c.lines.is_empty() && c.health.timed_out.is_empty(), "{:?}", c.lines);
+    }
+
+    #[test]
+    fn two_timeouts_in_a_row_page_once_and_a_third_inside_the_remind_interval_is_quiet() {
+        let a = settled(1000, &Health::default(), timing(5000, None, Some(5000)));
+        let b = settled(1300, &a.health, timing(5000, None, Some(5000)));
+        assert_eq!(b.lines, vec!["PERF TIMEOUT claim-check timed out at 5000ms twice in a row (limit 500ms); top callers: unknown".to_string()]);
+        let c = settled(1600, &b.health, timing(5000, None, Some(5000)));
+        assert!(c.lines.is_empty(), "{:?}", c.lines);
+    }
+
+    #[test]
+    fn a_slow_answer_after_a_timeout_pages_slow_with_its_phases() {
+        let a = settled(1000, &Health::default(), timing(5000, None, Some(5000)));
+        let b = settled(1300, &a.health, timing(900, Some("store=870"), None));
+        assert_eq!(b.lines, vec!["PERF SLOW claim-check 900ms (limit 500ms) phases store=870 rest=30ms; top callers: unknown".to_string()]);
+        assert!(b.health.timed_out.is_empty());
+    }
+
+    #[test]
+    fn a_timed_out_probe_is_not_pushed_as_a_duration_or_logged_slow() {
+        let t = [timing(5000, None, Some(5000))];
+        let ((), seen) = spira_otel::metrics::fixture::capture(|sink| push_timings(sink, &t));
+        assert!(seen.is_empty(), "{seen:?}");
+        assert!(slow_samples(1, &t, 500, &[]).is_empty());
+    }
+
+    #[test]
+    fn health_round_trips_the_probes_that_timed_out() {
+        let h = Health { last_pass: Some(5), timed_out: ["a".to_string(), "b".to_string()].into(), ..Health::default() };
+        assert_eq!(Health::parse(&h.render()), h);
     }
 }
