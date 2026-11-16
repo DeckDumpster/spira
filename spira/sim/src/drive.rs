@@ -274,9 +274,12 @@ impl Scenario {
 
 /// A scenario argument: a path, or a bare name of a scenario shipped under `sim/scenarios/` in
 /// the harness `home`.
+pub fn is_bare_name(arg: &str) -> bool {
+    !arg.contains('/') && !arg.ends_with(".toml")
+}
+
 pub fn scenario_path(home: &Path, arg: &str) -> PathBuf {
-    let named = !arg.contains('/') && !arg.ends_with(".toml");
-    if named {
+    if is_bare_name(arg) {
         let shipped = home.join("sim/scenarios").join(format!("{arg}.toml"));
         if shipped.is_file() {
             return shipped;
