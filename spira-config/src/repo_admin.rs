@@ -601,7 +601,7 @@ mod tests {
     fn reg(f: &Fx) -> Registry {
         let text = std::fs::read_to_string(&f.map).unwrap();
         let publish = crate::load(&f.toml).map(|d| d.publish).unwrap_or_default();
-        Registry::new(Some(&text), &BTreeMap::new(), Path::new("/nonexistent"))
+        Registry::new(Some(&text), &BTreeMap::new(), Path::new("nonexistent"))
             .with_publish(publish)
     }
 
@@ -621,7 +621,7 @@ mod tests {
     fn registered(f: &Fx, gate: &str) -> Targets {
         std::fs::write(
             &f.map,
-            format!("# rows\nfixture | /srv/fx | queue.local | local/main | fmt | {gate} | plan\n"),
+            format!("# rows\nfixture | srv/fx | queue.local | local/main | fmt | {gate} | plan\n"),
         )
         .unwrap();
         Targets {
@@ -639,7 +639,7 @@ mod tests {
         let r = reg(&f);
         assert_eq!(r.gate("fixture").as_deref(), Some(""));
         assert_eq!(r.format("fixture").as_deref(), Some("fmt"));
-        assert_eq!(r.root("fixture").as_deref(), Some("/srv/fx"));
+        assert_eq!(r.root("fixture").as_deref(), Some("srv/fx"));
     }
 
     #[test]

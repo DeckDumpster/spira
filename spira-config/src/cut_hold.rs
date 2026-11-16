@@ -25,7 +25,7 @@ pub fn path(queue_dir: &Path, repo: &str) -> PathBuf {
 }
 
 fn alive(pid: u32) -> bool {
-    Path::new(&format!("/proc/{pid}")).exists()
+    Path::new(&format!("{}/{pid}", system_paths::PROC)).exists()
 }
 
 fn read(p: &Path) -> Option<CutHold> {

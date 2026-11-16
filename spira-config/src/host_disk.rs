@@ -63,8 +63,8 @@ mod tests {
     #[test]
     fn the_longest_mount_prefix_names_the_filesystem() {
         let mounts = "tmpfs /tmp tmpfs rw 0 0\n/dev/sda1 / ext4 rw 0 0\ntmpfs /tmpx tmpfs rw 0 0\n";
-        assert_eq!(mount_of(mounts, Path::new("/tmp/a/b")).as_deref(), Some("/tmp"));
-        assert_eq!(mount_of(mounts, Path::new("/var/x")).as_deref(), Some("/"));
+        assert_eq!(mount_of(mounts, Path::new(&format!("{}/a/b", system_paths::TMP))).as_deref(), Some(system_paths::TMP));
+        assert_eq!(mount_of(mounts, Path::new(&format!("{}/x", system_paths::VAR_TMP))).as_deref(), Some("/"));
     }
 
     #[test]
@@ -76,7 +76,7 @@ mod tests {
     #[test]
     fn the_named_filesystem_is_read_from_the_report_line() {
         let err = format!("noise\nround-vm run: {REPORT_MARK}/tmp is full; largest: /tmp/k5 6 GiB\n");
-        assert_eq!(named(&err).as_deref(), Some("/tmp is full; largest: /tmp/k5 6 GiB"));
+        assert_eq!(named(&err).as_deref(), Some(format!("{t} is full; largest: {t}/k5 6 GiB", t = system_paths::TMP).as_str()));
         assert_eq!(named("nothing"), None);
     }
 }

@@ -99,7 +99,7 @@ impl Limit {
             Err(why) => return Limit::Unanswered { file: file.map(str::to_string), why },
         };
         let pending = status
-            .and_then(|s| s.pointer(&format!("/repin/pending/{key}/wanted")))
+            .and_then(|s| s.pointer(&format!("/repin/pending/{key}/wanted"))) // not a path: a JSON pointer
             .and_then(serde_json::Value::as_str)
             .map(|config| Pending {
                 config: config.to_string(),

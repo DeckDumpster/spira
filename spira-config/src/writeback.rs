@@ -155,7 +155,7 @@ mod tests {
         let home = testkit::TempDir::new("writeback-wt-home");
         let repo = testkit::TempDir::new("writeback-wt-repo");
         let xdg = testkit::TempDir::new("writeback-wt-xdg");
-        let candidate = PathBuf::from("/wherever/spira.toml");
+        let candidate = PathBuf::from("wherever/spira.toml");
         let i = input(&home, None, &repo, &xdg);
         assert_eq!(writeback(&candidate, &i), repo.join("spira.toml"));
     }
@@ -165,7 +165,7 @@ mod tests {
         let home = testkit::TempDir::new("writeback-empty-prod-home");
         let repo = testkit::TempDir::new("writeback-empty-prod-repo");
         let xdg = testkit::TempDir::new("writeback-empty-prod-xdg");
-        let candidate = PathBuf::from("/wherever/spira.toml");
+        let candidate = PathBuf::from("wherever/spira.toml");
         let empty = PathBuf::new();
         let i = input(&home, Some(&empty), &repo, &xdg);
         assert_eq!(writeback(&candidate, &i), repo.join("spira.toml"));
@@ -182,7 +182,7 @@ mod tests {
         let repo = testkit::TempDir::new("writeback-unwritable-repo-repo");
         let xdg_parent = testkit::TempDir::new("writeback-unwritable-repo-xdgp");
         let xdg = xdg_parent.join("spira");
-        let candidate = PathBuf::from("/wherever/spira.toml");
+        let candidate = PathBuf::from("wherever/spira.toml");
         std::fs::set_permissions(&repo, std::fs::Permissions::from_mode(0o555)).unwrap();
         let i = input(&home, None, &repo, &xdg);
         let got = writeback(&candidate, &i);
@@ -200,7 +200,7 @@ mod tests {
         let home = testkit::TempDir::new("writeback-both-unwritable-home");
         let repo = testkit::TempDir::new("writeback-both-unwritable-repo");
         let xdg_parent = testkit::TempDir::new("writeback-both-unwritable-xdgp");
-        let candidate = PathBuf::from("/wherever/spira.toml");
+        let candidate = PathBuf::from("wherever/spira.toml");
         std::fs::set_permissions(&repo, std::fs::Permissions::from_mode(0o555)).unwrap();
         std::fs::set_permissions(&xdg_parent, std::fs::Permissions::from_mode(0o555)).unwrap();
         let xdg = xdg_parent.join("spira");
@@ -216,7 +216,7 @@ mod tests {
         let home = testkit::TempDir::new("writeback-basename-home");
         let repo = testkit::TempDir::new("writeback-basename-repo");
         let xdg = testkit::TempDir::new("writeback-basename-xdg");
-        let candidate = PathBuf::from("/some/deep/path/spira.toml");
+        let candidate = PathBuf::from("some/deep/path/spira.toml");
         let i = input(&home, None, &repo, &xdg);
         assert_eq!(writeback(&candidate, &i), repo.join("spira.toml"));
     }

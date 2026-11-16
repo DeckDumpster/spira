@@ -53,19 +53,19 @@ fn text(b: &Box_) -> String {
 fn a_key_only_the_staged_release_declares_is_written_through_set_release() {
     let b = setup("set-release-new");
     let (staged, toml) = (b.staged.to_str().unwrap(), b.toml.to_str().unwrap());
-    let refused = run(&b, &["set", "spira.new_box_path", "/box/p", toml]);
+    let refused = run(&b, &["set", "spira.new_box_path", "box/p", toml]);
     assert!(!refused.status.success(), "control: the installed registry does not declare it");
     assert!(!text(&b).contains("new_box_path"));
 
-    let ok = run(&b, &["set", "--release", staged, "spira.new_box_path", "/box/p", toml]);
+    let ok = run(&b, &["set", "--release", staged, "spira.new_box_path", "box/p", toml]);
     assert!(ok.status.success(), "{}", String::from_utf8_lossy(&ok.stderr));
-    assert!(text(&b).contains("new_box_path = \"/box/p\""), "{}", text(&b));
+    assert!(text(&b).contains("new_box_path = \"box/p\""), "{}", text(&b));
     assert!(text(&b).contains("old_key = \"x\""), "other lines survive");
     assert!(std::fs::read_dir(b.toml.parent().unwrap()).unwrap().any(|e| e.unwrap().file_name().to_string_lossy().starts_with("spira.toml.bak")), "a backup is kept");
 
     let again = run(&b, &["set", "--release", staged, "spira.new_count", "7", toml]);
     assert!(again.status.success(), "{}", String::from_utf8_lossy(&again.stderr));
-    assert!(text(&b).contains("new_box_path = \"/box/p\"") && text(&b).contains("new_count = 7"), "{}", text(&b));
+    assert!(text(&b).contains("new_box_path = \"box/p\"") && text(&b).contains("new_count = 7"), "{}", text(&b));
 }
 
 #[test]
@@ -102,7 +102,7 @@ fn a_key_the_staged_release_retires_is_unset_by_the_installed_registry_that_stil
 fn unset_release_removes_a_key_only_the_staged_release_declares() {
     let b = setup("unset-release");
     let (staged, toml) = (b.staged.to_str().unwrap(), b.toml.to_str().unwrap());
-    assert!(run(&b, &["set", "--release", staged, "spira.new_box_path", "/box/p", toml]).status.success());
+    assert!(run(&b, &["set", "--release", staged, "spira.new_box_path", "box/p", toml]).status.success());
     let out = run(&b, &["unset", "--release", staged, "spira.new_box_path", toml]);
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     assert!(!text(&b).contains("new_box_path"), "{}", text(&b));
@@ -112,10 +112,10 @@ fn unset_release_removes_a_key_only_the_staged_release_declares() {
 fn a_plain_set_keeps_a_staged_key_already_written_to_the_file() {
     let b = setup("plain-set-after-staged");
     let (staged, toml) = (b.staged.to_str().unwrap(), b.toml.to_str().unwrap());
-    assert!(run(&b, &["set", "--release", staged, "spira.new_box_path", "/box/p", toml]).status.success());
+    assert!(run(&b, &["set", "--release", staged, "spira.new_box_path", "box/p", toml]).status.success());
     let out = run(&b, &["set", "spira.old_key", "z", toml]);
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
-    assert!(text(&b).contains("old_key = \"z\"") && text(&b).contains("new_box_path = \"/box/p\""), "{}", text(&b));
+    assert!(text(&b).contains("old_key = \"z\"") && text(&b).contains("new_box_path = \"box/p\""), "{}", text(&b));
 }
 
 #[test]

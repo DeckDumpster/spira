@@ -32,7 +32,7 @@
         let pid = String::from_utf8_lossy(&out.stdout).trim().to_string();
         assert!(!pid.is_empty(), "the child never printed the backgrounded pid before the deadline");
         let gone = (0..3000).any(|_| {
-            let alive = std::fs::read_to_string(format!("/proc/{pid}/stat"))
+            let alive = std::fs::read_to_string(format!("{}/{pid}/stat", system_paths::PROC))
                 .map(|s| !s.rsplit(") ").next().unwrap_or("").starts_with('Z'))
                 .unwrap_or(false);
             if alive {
@@ -51,13 +51,13 @@
 
     #[test]
     fn a_missing_program_reads_127() {
-        let out = bounded("/nonexistent/spira-no-such-program").output().unwrap();
+        let out = bounded("nonexistent/spira-no-such-program").output().unwrap();
         assert_eq!(out.status.code(), Some(127));
     }
 
     #[test]
     fn a_program_that_cannot_execute_reads_126() {
-        let out = bounded("/etc/hostname").output().unwrap();
+        let out = bounded(system_paths::ETC_PASSWD).output().unwrap();
         assert_eq!(out.status.code(), Some(126));
     }
 
@@ -83,7 +83,7 @@
     }
 
     fn alive(pid: &str) -> bool {
-        std::fs::read_to_string(format!("/proc/{pid}/stat")).map(|s| !s.rsplit(") ").next().unwrap_or("").starts_with('Z')).unwrap_or(false)
+        std::fs::read_to_string(format!("{}/{pid}/stat", system_paths::PROC)).map(|s| !s.rsplit(") ").next().unwrap_or("").starts_with('Z')).unwrap_or(false)
     }
 
     fn setsid_grandchild(kill_tree: bool) -> (String, bool) {

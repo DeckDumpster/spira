@@ -271,7 +271,7 @@ pub const RELEASE_ENV: &str = "SPIRA_RELEASE";
 
 /// The system directories every launcher's PATH ends with (the release's name-clash rule
 /// checks these, `release::SYSTEM_DIRS`).
-pub const SYSTEM_PATH: &str = "/usr/local/bin:/usr/bin:/bin";
+pub const SYSTEM_PATH: &str = system_paths::SYSTEM_PATH;
 
 /// The launcher's PATH, set outright — never appended to an inherited one (sp-31gtu):
 /// `<release>/bin:<release>/spira:/usr/local/bin:/usr/bin:/bin`.

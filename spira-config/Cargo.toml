@@ -62,9 +62,10 @@ path = "tests/validate.rs"
 required-features = ["integration"]
 
 [features]
-integration = ["lifecycle/integration", "spira-otel/integration", "testkit/integration", "tsd/integration"]
+integration = ["lifecycle/integration", "spira-otel/integration", "system-paths/integration", "testkit/integration", "tsd/integration"]
 
 [dependencies]
+system-paths = { path = "../system-paths" }
 spira-otel = { path = "../spira-otel" }
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"

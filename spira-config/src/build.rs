@@ -391,7 +391,7 @@ mod tests {
             // inherit one and leave a concurrent exec of THIS file seeing ETXTBSY.
             testkit::write_exe(&p, "#!/bin/sh\n");
         }
-        let path = format!("/nonexistent-sp-z61hj:{}", d.path().display());
+        let path = format!("nonexistent-sp-z61hj:{}", d.path().display());
         (d, path)
     }
 
@@ -420,12 +420,12 @@ mod tests {
     #[test]
     fn the_shared_server_runs_as_its_own_foreground_unit_on_the_configured_store() {
         let store = Store { endpoint: "http://box:9431".into(), key_prefix: "/".into() };
-        let args = server_unit_args(Path::new("/opt/bin/sccache"), &store);
+        let args = server_unit_args(Path::new("opt/bin/sccache"), &store);
         assert!(args.contains(&"--user".to_string()) && args.contains(&format!("--unit={SERVER_UNIT}")), "{args:?}");
         for want in ["--setenv=SCCACHE_START_SERVER=1", "--setenv=SCCACHE_NO_DAEMON=1", "--setenv=SCCACHE_WEBDAV_ENDPOINT=http://box:9431", "--setenv=SCCACHE_WEBDAV_KEY_PREFIX=/"] {
             assert!(args.contains(&want.to_string()), "{want} in {args:?}");
         }
-        assert_eq!(args.last().map(String::as_str), Some("/opt/bin/sccache"), "the command comes after every option");
+        assert_eq!(args.last().map(String::as_str), Some("opt/bin/sccache"), "the command comes after every option");
     }
 
     // ------------------------------------------------------------- Store (sp-xtdqi)

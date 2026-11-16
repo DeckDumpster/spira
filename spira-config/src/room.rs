@@ -114,6 +114,6 @@ mod tests {
 
     #[test]
     fn real_probe_answers_on_a_real_path() {
-        assert!(avail_mib(Path::new("/tmp")).is_some());
+        assert!(avail_mib(Path::new(system_paths::TMP)).is_some());
     }
 }

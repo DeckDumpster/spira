@@ -126,7 +126,7 @@ mod tests {
 
     #[test]
     fn an_explicit_path_is_taken_as_given() {
-        let p = PathBuf::from("/explicit/spira.toml");
+        let p = PathBuf::from("explicit/spira.toml");
         assert_eq!(with_env(&[], || locate(Some(p.clone()))), LocateOutcome::Found(p));
     }
 }

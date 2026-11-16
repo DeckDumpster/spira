@@ -280,11 +280,11 @@ fn watch(child: &Child, limit: Duration, expired: Arc<AtomicBool>, tree: bool) -
 }
 
 fn children(pid: u32) -> Vec<u32> {
-    let Ok(rd) = std::fs::read_dir("/proc") else { return Vec::new() };
+    let Ok(rd) = std::fs::read_dir(system_paths::PROC) else { return Vec::new() };
     rd.flatten()
         .filter_map(|e| e.file_name().to_str().and_then(|n| n.parse::<u32>().ok()))
         .filter(|p| {
-            let ppid = std::fs::read_to_string(format!("/proc/{p}/stat")).ok().and_then(|s| s.rsplit_once(')').and_then(|(_, r)| r.split_whitespace().nth(1).and_then(|v| v.parse::<u32>().ok())));
+            let ppid = std::fs::read_to_string(format!("{}/{p}/stat", system_paths::PROC)).ok().and_then(|s| s.rsplit_once(')').and_then(|(_, r)| r.split_whitespace().nth(1).and_then(|v| v.parse::<u32>().ok())));
             ppid == Some(pid)
         })
         .collect()

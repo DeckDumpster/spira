@@ -221,7 +221,7 @@ version_probe = ""
 
     #[test]
     fn missing_file_is_an_empty_manifest_not_a_refusal() {
-        let deps = load(Path::new("/nonexistent-sp-wqj3o/deps.toml"));
+        let deps = load(Path::new("nonexistent-sp-wqj3o/deps.toml"));
         assert!(deps.is_empty());
     }
 
@@ -263,11 +263,11 @@ version_probe = ""
         let dir = testkit::TempDir::new("spira-config-deps-require-missing");
         let deps = load(&write_sample(dir.path()));
         let path = dir.path().to_string_lossy().into_owned();
-        let err = require(&deps, &["bd", "duckdb"], &path, "/etc/spira/spira.conf").unwrap_err();
+        let err = require(&deps, &["bd", "duckdb"], &path, "etc/spira/spira.conf").unwrap_err();
         assert!(err.contains("bd — the beads issue tracker"), "{err}");
         assert!(err.contains("duckdb — tsd queries"), "{err}");
         assert!(err.contains(&format!("PATH is {path}")), "{err}");
-        assert!(err.contains("set SPIRA_PATH in /etc/spira/spira.conf"), "{err}");
+        assert!(err.contains("set SPIRA_PATH in etc/spira/spira.conf"), "{err}");
     }
 
     #[test]

@@ -20,11 +20,11 @@
     #[test]
     fn nested_tables_merge_key_by_key() {
         let d = testkit::TempDir::new("spira-config-layer-nested");
-        let base = layer(d.path(), "base.toml", "[repo.alpha]\npath = \"/a\"\nmode = \"queue.local\"\nbase = \"local/main\"\n");
-        let over = layer(d.path(), "o.toml", "[repo.alpha]\npath = \"/b\"\n");
+        let base = layer(d.path(), "base.toml", "[repo.alpha]\npath = \"a\"\nmode = \"queue.local\"\nbase = \"local/main\"\n");
+        let over = layer(d.path(), "o.toml", "[repo.alpha]\npath = \"b\"\n");
         let doc = load(std::path::Path::new(&format!("{base}:{over}"))).unwrap();
         let rows = repos::rows_from_toml(&doc);
-        assert_eq!(rows.iter().find(|r| r.name == "alpha").map(|r| r.path.as_str()), Some("/b"));
+        assert_eq!(rows.iter().find(|r| r.name == "alpha").map(|r| r.path.as_str()), Some("b"));
         assert_eq!(rows.iter().find(|r| r.name == "alpha").map(|r| r.base.as_str()), Some("local/main"), "unset keys keep the base's value");
     }
 
@@ -41,10 +41,10 @@
     #[test]
     fn the_launcher_path_is_the_release_then_the_system_dirs_and_unset_is_refused() {
         assert_eq!(
-            release_path("/r/spira-releases/abc"),
-            "/r/spira-releases/abc/bin:/r/spira-releases/abc/spira:/usr/local/bin:/usr/bin:/bin"
+            release_path("r/spira-releases/abc"),
+            "r/spira-releases/abc/bin:r/spira-releases/abc/spira:/usr/local/bin:/usr/bin:/bin"
         );
-        assert_eq!(release_path_from_env(Some("/h/")).unwrap(), "/h/bin:/h/spira:/usr/local/bin:/usr/bin:/bin");
+        assert_eq!(release_path_from_env(Some("h/")).unwrap(), "h/bin:h/spira:/usr/local/bin:/usr/bin:/bin");
         for v in [None, Some(""), Some("  ")] {
             assert!(release_path_from_env(v).unwrap_err().contains("SPIRA_RELEASE is not set"));
         }
@@ -53,20 +53,20 @@
     #[test]
     fn release_path_with_tail_appends_after_the_system_dirs() {
         assert_eq!(
-            release_path_with_tail("/r/spira-releases/abc", "/h/.local/bin:/h/.cargo/bin").unwrap(),
-            "/r/spira-releases/abc/bin:/r/spira-releases/abc/spira:/usr/local/bin:/usr/bin:/bin:/h/.local/bin:/h/.cargo/bin"
+            release_path_with_tail("r/spira-releases/abc", "h/.local/bin:h/.cargo/bin").unwrap(),
+            "r/spira-releases/abc/bin:r/spira-releases/abc/spira:/usr/local/bin:/usr/bin:/bin:h/.local/bin:h/.cargo/bin"
         );
         // An empty (or all-whitespace) tail changes nothing — same as before this bead.
         for empty in ["", "   "] {
-            assert_eq!(release_path_with_tail("/r/spira-releases/abc", empty).unwrap(), release_path("/r/spira-releases/abc"));
+            assert_eq!(release_path_with_tail("r/spira-releases/abc", empty).unwrap(), release_path("r/spira-releases/abc"));
         }
     }
 
     #[test]
     fn release_path_with_tail_refuses_a_tail_entry_inside_a_release() {
-        let e = release_path_with_tail("/r/spira-releases/abc", "/r/spira-releases/def/bin").unwrap_err();
+        let e = release_path_with_tail("r/spira-releases/abc", "r/spira-releases/def/bin").unwrap_err();
         assert!(e.contains("spira-releases"), "{e}");
-        assert!(e.contains("/r/spira-releases/def/bin"), "{e}");
+        assert!(e.contains("r/spira-releases/def/bin"), "{e}");
     }
 
     #[test]
@@ -75,7 +75,7 @@
         let bin = dir.join("bin");
         std::fs::create_dir_all(&bin).unwrap();
         std::fs::create_dir_all(dir.join(".git")).unwrap();
-        let e = release_path_with_tail("/r/spira-releases/abc", bin.to_str().unwrap()).unwrap_err();
+        let e = release_path_with_tail("r/spira-releases/abc", bin.to_str().unwrap()).unwrap_err();
         assert!(e.contains("checkout"), "{e}");
         assert!(e.contains(".git"), "{e}");
     }
@@ -83,11 +83,11 @@
     #[test]
     fn release_path_from_env_with_tail_composes_both_refusals() {
         assert_eq!(
-            release_path_from_env_with_tail(Some("/h/"), "/x/y").unwrap(),
-            "/h/bin:/h/spira:/usr/local/bin:/usr/bin:/bin:/x/y"
+            release_path_from_env_with_tail(Some("h/"), "x/y").unwrap(),
+            "h/bin:h/spira:/usr/local/bin:/usr/bin:/bin:x/y"
         );
-        assert!(release_path_from_env_with_tail(None, "/x/y").unwrap_err().contains("SPIRA_RELEASE is not set"));
-        assert!(release_path_from_env_with_tail(Some("/h/"), "/r/spira-releases/def").unwrap_err().contains("spira-releases"));
+        assert!(release_path_from_env_with_tail(None, "x/y").unwrap_err().contains("SPIRA_RELEASE is not set"));
+        assert!(release_path_from_env_with_tail(Some("h/"), "r/spira-releases/def").unwrap_err().contains("spira-releases"));
     }
 
     #[test]
@@ -176,8 +176,8 @@
 
     #[test]
     fn the_inline_comment_scar_is_harmless_quoted() {
-        let doc = validate("[spira]\nid_prefix = \"sp\"\ndb = \"/home/x\" # a trailing comment\n").expect("valid");
-        assert_eq!(doc.spira.unwrap().get_str("SPIRA_DB").unwrap(), Some("/home/x".to_string()));
+        let doc = validate("[spira]\nid_prefix = \"sp\"\ndb = \"home/x\" # a trailing comment\n").expect("valid");
+        assert_eq!(doc.spira.unwrap().get_str("SPIRA_DB").unwrap(), Some("home/x".to_string()));
     }
 
     #[test]
@@ -208,16 +208,16 @@
 
     #[test]
     fn set_path_on_empty_document_creates_the_table() {
-        let doc = set_path(&SpiraToml::default(), "spira.prod", "/srv/x").unwrap();
-        assert_eq!(doc.spira.unwrap().get_str("SPIRA_PROD").unwrap(), Some("/srv/x".to_string()));
+        let doc = set_path(&SpiraToml::default(), "spira.prod", "srv/x").unwrap();
+        assert_eq!(doc.spira.unwrap().get_str("SPIRA_PROD").unwrap(), Some("srv/x".to_string()));
     }
 
     #[test]
     fn set_path_replaces_without_disturbing_siblings() {
         let doc = validate("[spira]\nid_prefix = \"sp\"\nprod = \"/old\"\nmax_dwarves = 4\n").unwrap();
-        let doc = set_path(&doc, "spira.prod", "/new").unwrap();
+        let doc = set_path(&doc, "spira.prod", "new").unwrap();
         let spira = doc.spira.unwrap();
-        assert_eq!(spira.get_str("SPIRA_PROD").unwrap(), Some("/new".to_string()));
+        assert_eq!(spira.get_str("SPIRA_PROD").unwrap(), Some("new".to_string()));
         assert_eq!(spira.get_u32("SPIRA_MAX_DWARVES").unwrap(), Some(4));
     }
 
@@ -392,8 +392,8 @@
 
     #[test]
     fn discover_prefers_the_explicit_path_over_the_environment() {
-        let _env = testkit::env(&[("SPIRA_TOML", Some("/should-not-be-used/spira.toml"))]);
-        let explicit = PathBuf::from("/explicit/spira.toml");
+        let _env = testkit::env(&[("SPIRA_TOML", Some("should-not-be-used/spira.toml"))]);
+        let explicit = PathBuf::from("explicit/spira.toml");
         assert_eq!(discover(Some(explicit.clone())), Some(explicit));
     }
 
@@ -406,7 +406,7 @@
         // there, with nothing at the XDG/etc tiers, must resolve to None, not that file. The
         // tier logic itself is exercised in full in `locate`'s own tests; this is the
         // public-wrapper regression guard.
-        if Path::new("/etc/spira/spira.toml").is_file() {
+        if Path::new(&format!("{}/spira/spira.toml", system_paths::ETC)).is_file() {
             eprintln!("skipping: this machine has a real /etc/spira/spira.toml");
             return;
         }
@@ -523,14 +523,14 @@
 
     #[test]
     fn migrate_derives_id_prefix_from_a_bead_shaped_goal_and_drops_goal() {
-        let (out, msg) = migrate_goal_to_id_prefix("[spira]\ngoal = \"sp-spira\"\ndb = \"/db\"\n")
+        let (out, msg) = migrate_goal_to_id_prefix("[spira]\ngoal = \"sp-spira\"\ndb = \"db\"\n")
             .expect("parses")
             .expect("a migration applies");
         assert!(msg.contains("sp-k6m1m") && msg.contains("sp-oppza"), "{msg}");
         let (doc, _) = validate_strict(&out).expect("the migrated document passes the same check doctor/pre-activate run");
         let s = doc.spira.unwrap();
         assert_eq!(s.get_str("SPIRA_ID_PREFIX").unwrap().as_deref(), Some("sp"));
-        assert_eq!(s.get_str("SPIRA_DB").unwrap().as_deref(), Some("/db"), "the rest of [spira] survives");
+        assert_eq!(s.get_str("SPIRA_DB").unwrap().as_deref(), Some("db"), "the rest of [spira] survives");
         assert!(!out.contains("goal"), "{out}");
     }
 
@@ -545,7 +545,7 @@
 
     #[test]
     fn migrate_is_a_no_op_with_nothing_to_migrate() {
-        assert_eq!(migrate_goal_to_id_prefix("[spira]\ndb = \"/db\"\n").unwrap(), None, "no goal at all");
+        assert_eq!(migrate_goal_to_id_prefix("[spira]\ndb = \"db\"\n").unwrap(), None, "no goal at all");
         assert_eq!(migrate_goal_to_id_prefix("[spira]\ngoal = \"nohyphen\"\n").unwrap(), None, "goal not bead-shaped");
         assert_eq!(migrate_goal_to_id_prefix("[repo.a]\npath = \"/a\"\nmode = \"push\"\n").unwrap(), None, "no [spira] table at all");
         assert_eq!(migrate_goal_to_id_prefix("").unwrap(), None, "empty document");
@@ -555,7 +555,7 @@
     fn migrate_in_file_writes_atomically_and_a_second_run_is_silent() {
         let dir = testkit::TempDir::new("spira-config-migrate");
         let path = dir.join("spira.toml");
-        std::fs::write(&path, "[spira]\ngoal = \"sp-spira\"\ndb = \"/db\"\n").unwrap();
+        std::fs::write(&path, "[spira]\ngoal = \"sp-spira\"\ndb = \"db\"\n").unwrap();
 
         let msg = migrate_goal_to_id_prefix_in_file(&path).unwrap().expect("first run migrates");
         assert!(msg.contains("sp-oppza"), "{msg}");

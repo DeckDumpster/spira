@@ -39,9 +39,9 @@ pub fn path_tail(current: &str, spira_path: &str, home: &str) -> String {
         .collect();
     segs.push(format!("{home}/.local/bin"));
     segs.push(format!("{home}/.cargo/bin"));
-    segs.push("/usr/local/bin".to_string());
-    segs.push("/usr/bin".to_string());
-    segs.push("/bin".to_string());
+    segs.push(system_paths::USR_LOCAL_BIN.to_string());
+    segs.push(system_paths::USR_BIN.to_string());
+    segs.push(system_paths::BIN.to_string());
     for seg in segs {
         let needle = format!(":{seg}:");
         let probe = format!(":{path}:");
@@ -167,7 +167,7 @@ pub fn check_bd_schema(bd: &str, db: &str, run: &str, doctor: bool, conf_file: &
         crate::shell_quote(bd),
         crate::shell_quote(db),
     );
-    let (rc, combined) = match crate::bounded::bounded("/bin/sh").arg("-c").arg(&script).output() {
+    let (rc, combined) = match crate::bounded::bounded(system_paths::BIN_SH).arg("-c").arg(&script).output() {
         Ok(o) => (o.status.code().unwrap_or(1), String::from_utf8_lossy(&o.stdout).into_owned()),
         Err(e) => (1, format!("spira: could not run {bd}: {e}")),
     };
@@ -274,10 +274,10 @@ mod tests {
 
     #[test]
     fn path_tail_appends_each_segment_once() {
-        let got = path_tail("/release/bin:/release/spira", "/opt/custom", "/fixture-home");
+        let got = path_tail("release/bin:release/spira", "opt/custom", "fixture-home");
         assert_eq!(
             got,
-            "/release/bin:/release/spira:/opt/custom:/fixture-home/.local/bin:/fixture-home/.cargo/bin:/usr/local/bin:/usr/bin:/bin"
+            "release/bin:release/spira:opt/custom:fixture-home/.local/bin:fixture-home/.cargo/bin:/usr/local/bin:/usr/bin:/bin"
         );
     }
 
@@ -286,27 +286,27 @@ mod tests {
         // THE LAUNCHER'S PATH COMES FIRST AND IS NEVER REWRITTEN (sp-gypjk): a tail segment
         // that already appears at the front (here, SPIRA_PATH naming /usr/bin, which is also
         // a hardcoded tail entry) must not be duplicated or reordered.
-        let got = path_tail("/release/bin", "/usr/bin", "/fixture-home");
-        assert_eq!(got, "/release/bin:/usr/bin:/fixture-home/.local/bin:/fixture-home/.cargo/bin:/usr/local/bin:/bin");
+        let got = path_tail("release/bin", system_paths::USR_BIN, "fixture-home");
+        assert_eq!(got, "release/bin:/usr/bin:fixture-home/.local/bin:fixture-home/.cargo/bin:/usr/local/bin:/bin");
     }
 
     #[test]
     fn path_tail_is_idempotent_on_resource() {
-        let once = path_tail("/release/bin", "", "/fixture-home");
-        let twice = path_tail(&once, "", "/fixture-home");
+        let once = path_tail("release/bin", "", "fixture-home");
+        let twice = path_tail(&once, "", "fixture-home");
         assert_eq!(once, twice, "re-sourcing conf.sh must not grow PATH");
     }
 
     #[test]
     fn path_tail_empty_spira_path_contributes_nothing() {
-        let got = path_tail("/release/bin", "", "/fixture-home");
-        assert_eq!(got, "/release/bin:/fixture-home/.local/bin:/fixture-home/.cargo/bin:/usr/local/bin:/usr/bin:/bin");
+        let got = path_tail("release/bin", "", "fixture-home");
+        assert_eq!(got, "release/bin:fixture-home/.local/bin:fixture-home/.cargo/bin:/usr/local/bin:/usr/bin:/bin");
     }
 
     #[test]
     fn path_tail_collapses_doubled_colons_in_spira_path() {
-        let got = path_tail("", "a::b", "/h");
-        assert_eq!(got, "a:b:/h/.local/bin:/h/.cargo/bin:/usr/local/bin:/usr/bin:/bin");
+        let got = path_tail("", "a::b", "h");
+        assert_eq!(got, "a:b:h/.local/bin:h/.cargo/bin:/usr/local/bin:/usr/bin:/bin");
     }
 
     #[test]
@@ -320,13 +320,13 @@ mod tests {
 
     #[test]
     fn resolve_bd_falls_back_to_bare_name_when_nothing_found() {
-        assert_eq!(resolve_bd("/nonexistent/one:/nonexistent/two"), "bd");
+        assert_eq!(resolve_bd("nonexistent/one:nonexistent/two"), "bd");
     }
 
     #[test]
     fn bootstrap_sh_leaves_an_existing_spira_bd_untouched() {
-        let out = bootstrap_sh("/release/bin", "", "/fixture-home", "/pinned/bd");
-        assert!(out.contains("SPIRA_BD='/pinned/bd'"), "{out}");
+        let out = bootstrap_sh("release/bin", "", "fixture-home", "pinned/bd");
+        assert!(out.contains("SPIRA_BD='pinned/bd'"), "{out}");
     }
 
     #[test]
@@ -361,7 +361,7 @@ mod tests {
             ("could not run bd", 1, "spira: could not run bd: no such file", false, false, true, Some("failed — spira: could not run")),
         ];
         for (name, rc, out, doctor, ok, refuse, needle) in rows {
-            let v = schema_verdict(*rc, out, "/x/bd", *doctor, "spira.conf");
+            let v = schema_verdict(*rc, out, "x/bd", *doctor, "spira.conf");
             assert_eq!((v.ok, v.refuse), (*ok, *refuse), "{name}: {v:?}");
             match needle {
                 Some(n) => assert!(v.messages.iter().any(|m| m.contains(n)), "{name}: {v:?}"),
@@ -373,19 +373,19 @@ mod tests {
     // covers: UC-config-store-preflight-09
     #[test]
     fn schema_verdict_mismatch_names_cause_and_remedy() {
-        let v = schema_verdict(1, "database is at v99\nbinary knows up to v53\n", "/x/bd", false, "/etc/spira.conf");
-        assert!(v.messages.iter().any(|m| m.contains("/x/bd") && m.contains("v53")), "{v:?}");
-        assert!(v.messages.iter().any(|m| m.contains("rebuild bd at v99") && m.contains("/etc/spira.conf")), "{v:?}");
+        let v = schema_verdict(1, "database is at v99\nbinary knows up to v53\n", "x/bd", false, "etc/spira.conf");
+        assert!(v.messages.iter().any(|m| m.contains("x/bd") && m.contains("v53")), "{v:?}");
+        assert!(v.messages.iter().any(|m| m.contains("rebuild bd at v99") && m.contains("etc/spira.conf")), "{v:?}");
     }
 
     // covers: UC-config-store-preflight-09
     #[test]
     fn an_unrunnable_bd_refuses_naming_the_binary_and_a_doctor_run_tolerates_it() {
-        let out = "spira: could not run /x/bd: no such file";
-        let v = schema_verdict(1, out, "/x/bd", false, "spira.conf");
+        let out = "spira: could not run x/bd: no such file";
+        let v = schema_verdict(1, out, "x/bd", false, "spira.conf");
         assert!(v.refuse && !v.ok, "{v:?}");
-        assert!(v.messages.iter().any(|m| m.contains("bd is /x/bd")), "{v:?}");
-        let d = schema_verdict(1, out, "/x/bd", true, "spira.conf");
+        assert!(v.messages.iter().any(|m| m.contains("bd is x/bd")), "{v:?}");
+        let d = schema_verdict(1, out, "x/bd", true, "spira.conf");
         assert!(!d.refuse && !d.ok, "doctor reports and carries on: {d:?}");
     }
 
@@ -393,11 +393,11 @@ mod tests {
     #[test]
     fn a_locked_store_is_a_configuration_error_naming_the_remedy_never_a_pass() {
         let locked = "Error: failed to open database: the database is locked by another dolt process\n";
-        let v = schema_verdict(1, locked, "/x/bd", false, "spira.conf");
+        let v = schema_verdict(1, locked, "x/bd", false, "spira.conf");
         assert!(v.refuse && !v.ok, "a lock must not be stamped as a pass: {v:?}");
         let said = v.messages.join("\n");
         assert!(said.contains("embedded") && said.contains("doctor"), "{said}");
-        let d = schema_verdict(1, locked, "/x/bd", true, "spira.conf");
+        let d = schema_verdict(1, locked, "x/bd", true, "spira.conf");
         assert!(!d.ok, "doctor still gets no pass, it only keeps going: {d:?}");
     }
 }

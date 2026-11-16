@@ -16,7 +16,7 @@ pub fn is_exhaustion(text: &str) -> bool {
 
 /// True when a live process has `p` (or anything under it) as its cwd or an open file.
 pub fn held_by_process(p: &Path) -> bool {
-    let Ok(procs) = fs::read_dir("/proc") else { return true };
+    let Ok(procs) = fs::read_dir(system_paths::PROC) else { return true };
     for pr in procs.flatten() {
         let n = pr.file_name().to_string_lossy().into_owned();
         if !n.bytes().all(|b| b.is_ascii_digit()) {
@@ -121,6 +121,6 @@ mod tests {
     fn a_process_holding_a_directory_as_cwd_is_seen() {
         let cwd = std::env::current_dir().unwrap();
         assert!(held_by_process(&cwd));
-        assert!(!held_by_process(Path::new("/nonexistent-scratch-probe")));
+        assert!(!held_by_process(Path::new("nonexistent-scratch-probe")));
     }
 }
