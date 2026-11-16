@@ -488,9 +488,10 @@ mod tests {
             &c,
             &real,
         );
+        let v: serde_json::Value = serde_json::from_str(&o.stdout).unwrap();
         assert_eq!(
-            (o.code, o.stdout.as_str()),
-            (0, r#"{"cleared":[],"ok":true}"#)
+            (o.code, v),
+            (0, serde_json::json!({"cleared": [], "ok": true}))
         );
         let o = run(&argv("list"), 1100, &c, &real);
         assert!(
