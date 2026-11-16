@@ -1378,7 +1378,7 @@ impl<B: Backend> Contract<B> {
         {
             let mut d = crate::phases::time(crate::phases::Phase::DeadlinesWait, || self.deadlines.lock().unwrap_or_else(lock_err));
             let mut shown = self.shown.write().unwrap_or_else(lock_err);
-            if matches!(res, Err(Error::Stale { .. })) {
+            if res.is_err() {
                 for (key, was, stamp) in set {
                     if d.stamp(&key) != Some(stamp) {
                         continue;
@@ -1647,11 +1647,12 @@ mod phase_tests {
         inner: MemBackend,
         before: Mutex<Option<(mpsc::Sender<()>, mpsc::Receiver<()>)>>,
         after: Mutex<Option<(mpsc::Sender<()>, mpsc::Receiver<()>)>>,
+        fail: Mutex<bool>,
     }
 
     impl Parked {
         fn new() -> Self {
-            Parked { inner: MemBackend::new(), before: Mutex::new(None), after: Mutex::new(None) }
+            Parked { inner: MemBackend::new(), before: Mutex::new(None), after: Mutex::new(None), fail: Mutex::new(false) }
         }
     }
 
@@ -1680,7 +1681,11 @@ mod phase_tests {
                 entered.send(()).unwrap();
                 release.recv().unwrap();
             }
-            let out = self.inner.commit(expect, batch);
+            let out = if std::mem::take(&mut *self.fail.lock().unwrap()) {
+                Err(Error::Backend("disk full".into()))
+            } else {
+                self.inner.commit(expect, batch)
+            };
             let gate = self.after.lock().unwrap().take();
             if let Some((entered, release)) = gate {
                 entered.send(()).unwrap();
@@ -1808,5 +1813,14 @@ mod phase_tests {
         assert!(matches!(a.join().unwrap(), Err(Error::Locked { .. })));
         assert_eq!(taken, Some(true));
         assert!(c.live(&format!("{LOCKS_PREFIX}r")), "the stale commit's restore removed the winner's deadline");
+    }
+
+    #[test]
+    fn a_commit_that_fails_for_any_reason_leaves_no_deadline_for_a_lock_never_written() {
+        let clock = VirtualClock::new(1_000_000);
+        let c = Contract::open(Parked::new(), Ports::virtual_clock(&clock), Config { min_lock_ttl_ms: 1_000 }).unwrap();
+        *c.backend().fail.lock().unwrap() = true;
+        assert!(matches!(c.lock("r", 10_000, &Request::new("la", "t", "lock")), Err(Error::Backend(_))));
+        assert!(!c.live(&format!("{LOCKS_PREFIX}r")), "a failed commit left a deadline for a lock that was never written");
     }
 }
