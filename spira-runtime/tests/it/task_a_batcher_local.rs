@@ -278,6 +278,11 @@ fn attributed(mut c: Carry) -> Carry {
     c
 }
 
+fn confirmed(mut c: Carry) -> Carry {
+    c.repos.get_mut("spira").unwrap().confirmed = true;
+    attributed(c)
+}
+
 fn sole_member(mut c: Carry) -> Carry {
     c.repos.get_mut("spira").unwrap().members = vec![("sp-a".into(), "t1".into())];
     c
@@ -317,7 +322,7 @@ fn sp_b0lhx6_an_abandon_carries_the_ejects_the_decision_made() {
     r.tick(STREAM, ended("spira.c3", runtime::units::Exit::Code(1), "red=test-a.sh\n")).unwrap();
     let after = asked_after(&r, n);
     assert_eq!(after.iter().find(|(e, _)| e == ABANDON).unwrap().1.ejected, Some(1));
-    let mut r = carried(&attributed(driving(State::Certifying, "spira.c3")));
+    let mut r = carried(&confirmed(driving(State::Certifying, "spira.c3")));
     let n = r.requested().len();
     r.tick(STREAM, ended("spira.c3", runtime::units::Exit::Code(1), "red=test-a.sh\n")).unwrap();
     let after = asked_after(&r, n);
@@ -329,11 +334,36 @@ fn sp_b0lhx6_an_abandon_carries_the_ejects_the_decision_made() {
 fn sp_z43b7y_a_red_certify_of_a_two_member_round_naming_no_member_still_pauses() {
     let mut c = driving(State::Certifying, "spira.c3");
     c.repos.get_mut("spira").unwrap().attributed = true;
+    c.repos.get_mut("spira").unwrap().confirmed = true;
     let mut r = carried(&c);
     let n = r.requested().len();
     r.tick(STREAM, ended("spira.c3", runtime::units::Exit::Code(1), "red=test-a.sh\n")).unwrap();
     let names: Vec<String> = asked_after(&r, n).into_iter().map(|(e, _)| e).collect();
     assert!(names.contains(&PAUSE.to_string()) && !names.contains(&EJECT.to_string()), "{names:?}");
+}
+
+const THREE_REDS: &str = "queue.sh round certify: round r9 is RED at abc123: test-a.sh,test-b.sh,test-c.sh\nred=test-a.sh,test-b.sh,test-c.sh\n";
+
+/// A red that survived its attribution is attributed once more, by suspect, before anything pauses.
+#[test]
+fn sp_mg27kj_a_red_that_survived_its_attribution_is_attributed_once_more_by_suspect() {
+    let mut r = carried(&attributed(driving(State::Certifying, "spira.c3")));
+    let n = r.requested().len();
+    r.tick(STREAM, ended("spira.c3", runtime::units::Exit::Code(1), THREE_REDS)).unwrap();
+    let after = asked_after(&r, n);
+    let names: Vec<&str> = after.iter().map(|(e, _)| e.as_str()).collect();
+    assert!(!names.contains(&PAUSE) && !names.contains(&ABANDON), "{names:?}");
+    let leg = &after.iter().find(|(e, _)| e == CORPUS).unwrap_or_else(|| panic!("no corpus leg: {after:?}")).1;
+    assert!(leg.why == ATTRIBUTE && leg.after_certify && leg.confirmed, "{leg:?}");
+}
+
+#[test]
+fn sp_mg27kj_a_red_after_the_confirmed_attribution_pauses_and_abandons() {
+    let mut r = carried(&confirmed(driving(State::Certifying, "spira.c3")));
+    let n = r.requested().len();
+    r.tick(STREAM, ended("spira.c3", runtime::units::Exit::Code(1), THREE_REDS)).unwrap();
+    let names: Vec<String> = asked_after(&r, n).into_iter().map(|(e, _)| e).collect();
+    assert!(names.contains(&PAUSE.to_string()) && names.contains(&ABANDON.to_string()), "{names:?}");
 }
 
 /// Every other path that pauses blames no member, so its pause carries the reason a person acts on.
@@ -352,7 +382,7 @@ fn sp_z43b7y_a_pause_without_a_culprit_carries_the_reason_a_person_acts_on() {
 /// act (sp-7yu70y): the Concierge attributes the red from the reason, not from a guess.
 #[test]
 fn sp_7yu70y_a_red_certify_abandons_naming_its_verdict_and_red_suites() {
-    let mut r = carried(&attributed(driving(State::Certifying, "spira.c3")));
+    let mut r = carried(&confirmed(driving(State::Certifying, "spira.c3")));
     let n = r.requested().len();
     let out = "queue.sh round certify: round r9 is RED at abc123: test-a.sh,test-b.sh\nred=test-a.sh,test-b.sh\n";
     r.tick(STREAM, ended("spira.c3", runtime::units::Exit::Code(1), out)).unwrap();
@@ -365,7 +395,7 @@ fn sp_7yu70y_a_red_certify_abandons_naming_its_verdict_and_red_suites() {
 
 #[test]
 fn sp_7yu70y_a_red_certify_with_only_a_red_line_still_says_what_it_had() {
-    let mut r = carried(&attributed(driving(State::Certifying, "spira.c3")));
+    let mut r = carried(&confirmed(driving(State::Certifying, "spira.c3")));
     let n = r.requested().len();
     r.tick(STREAM, ended("spira.c3", runtime::units::Exit::Code(1), "red=test-a.sh\n")).unwrap();
     let after = asked_after(&r, n);
@@ -624,7 +654,7 @@ fn no_path_runs_corpus_then_certify() {
 /// The named-suite attribution runs once; a second named red abandons and says what it had.
 #[test]
 fn sp_b0lhx6_a_named_suite_red_after_attribution_abandons_without_claiming_ejects() {
-    let mut r = carried(&attributed(driving(State::Certifying, "spira.c3")));
+    let mut r = carried(&confirmed(driving(State::Certifying, "spira.c3")));
     let n = r.requested().len();
     r.tick(STREAM, ended("spira.c3", runtime::units::Exit::Code(1), "red=test-a.sh\n")).unwrap();
     let after = asked_after(&r, n);

@@ -45,6 +45,7 @@
 //! | Mending | `mending.settled` or timer 900 s (`main.rs:368`) | Certifying |
 //! | Certifying | `unit.ran` green | Landing (`land`) |
 //! | Certifying | `unit.ran` red with no `red-output=`, first time (VM lost, no output and refused eject excepted) | Attributing, `after_certify` (the certify pass's own results are the prior) |
+//! | Certifying | `unit.ran` red after the attribution, two or more members, no `red-output=`, reds named, first time | Attributing, `after_certify` and `confirmed` (suspects named from the red suites' `# covers:` and the diffs) |
 //! | Certifying | `unit.ran` red / failed | Done (eject guilty, `abandon`, verdict red) |
 //! | Certifying | `unit.ran` failed naming no verdict and no suite, after the attribution | Done (output kept, round left open, pace Infra) |
 //! | Attributing | observe: the round's open round is green on the carried head | Landing (`land`), or Certified when stacked; the attribution leg is stopped in the same tick |
@@ -377,6 +378,8 @@ pub enum Trigger {
     CertifyRed,
     /// The round's first red certify: it is attributed, once, from that pass's results.
     CertifyRedFirst,
+    /// A red that survived its attribution is attributed once more, by suspect.
+    CertifyRedConfirmed,
     LandedStaged,
     Landed,
     LandRefused,
@@ -440,6 +443,7 @@ pub static TABLE: &[(State, Trigger, State)] = &[
     (State::Certifying, Trigger::CertifyGreen, State::Landing),
     (State::Certifying, Trigger::CertifyRed, State::Done),
     (State::Certifying, Trigger::CertifyRedFirst, State::Attributing),
+    (State::Certifying, Trigger::CertifyRedConfirmed, State::Attributing),
     (State::Landing, Trigger::LandedStaged, State::Promoting),
     (State::Landing, Trigger::Landed, State::Done),
     (State::Landing, Trigger::LandRefused, State::Done),
@@ -571,6 +575,9 @@ pub struct RepoCarry {
     /// This round's unnamed certify red has already been attributed.
     #[serde(default)]
     pub attributed: bool,
+    /// The red survived its attribution and was attributed once more, by suspect.
+    #[serde(default)]
+    pub confirmed: bool,
     /// The attribution's survivors await certify, which starts once no pass scope of the round is alive.
     #[serde(default)]
     pub certify_held: bool,
@@ -675,6 +682,7 @@ impl RepoCarry {
             suites: self.suites,
             lost_vms: self.lost_vms,
             attributed: self.attributed,
+            confirmed: self.confirmed,
             certify_held: self.certify_held,
             eject_held: self.eject_held.clone(),
             leg: self.leg.clone(),
@@ -711,6 +719,7 @@ impl RepoCarry {
             suites: round.suites,
             lost_vms: round.lost_vms,
             attributed: round.attributed,
+            confirmed: round.confirmed,
             certify_held: round.certify_held,
             eject_held: round.eject_held.clone(),
             leg: round.leg.clone(),
@@ -806,6 +815,9 @@ pub struct Leg {
     /// The attribution follows a red certify: it reads the pass `queue round certify` kept for the batch.
     #[serde(default)]
     pub after_certify: bool,
+    /// The attribution names suspects from the red suites' `# covers:` instead of mending.
+    #[serde(default)]
+    pub confirmed: bool,
 }
 
 /// Where the corpus leg `unit` of the round tree `wt` keeps its results.
@@ -1196,6 +1208,15 @@ impl Machine<'_> {
         if let Some(a) = self.acts.last_mut() {
             let mut leg: Leg = serde_json::from_str(&a.input).unwrap_or_default();
             leg.after_certify = true;
+            a.input = serde_json::to_string(&leg).unwrap_or_default();
+        }
+    }
+
+    fn attribute_confirmed(&mut self) {
+        self.attribute_after_certify();
+        if let Some(a) = self.acts.last_mut() {
+            let mut leg: Leg = serde_json::from_str(&a.input).unwrap_or_default();
+            leg.confirmed = true;
             a.input = serde_json::to_string(&leg).unwrap_or_default();
         }
     }
@@ -1861,6 +1882,11 @@ impl Machine<'_> {
                 self.rc.attributed = true;
                 self.go(Trigger::CertifyRedFirst);
                 self.attribute_after_certify();
+            }
+            (State::Certifying, false) if self.rc.attributed && !self.rc.confirmed && self.rc.members.len() >= 2 && !out.lines().any(|l| l.starts_with(RED_OUTPUT)) && !certify_red_evidence(out).1.is_empty() => {
+                self.rc.confirmed = true;
+                self.go(Trigger::CertifyRedConfirmed);
+                self.attribute_confirmed();
             }
             (State::Certifying, false) if self.rc.members.len() != 1 && certify_red_evidence(out).0.is_none() && certify_red_evidence(out).1.is_empty() && !out.lines().any(|l| l.starts_with(RED_OUTPUT)) => self.certify_faulted(exit, out),
             (State::Certifying, false) => {
@@ -2582,6 +2608,9 @@ pub mod edge {
         if !leg.reds.is_empty() {
             argv.extend(["--suites".into(), leg.reds.join(",")]);
         }
+        if leg.confirmed {
+            argv.push("--confirmed".into());
+        }
         if leg.after_certify && !leg.batch.is_empty() {
             argv.extend(["--after-pass".into(), batcher_cut::io::round_results_dir(run, &leg.batch).display().to_string()]);
         } else if !leg.after_pass.is_empty() {
@@ -3034,6 +3063,13 @@ pub mod edge {
         fn an_attribution_after_a_relative_pass_reads_it_under_the_runs_parent() {
             let leg = Leg { batch: "r9".into(), after_pass: super::super::kept_results_file("r9"), ..Leg::on("spira") };
             assert_eq!(after_pass(&leg).as_deref(), Some("/var/run/rounds/r9.results"));
+        }
+
+        #[test]
+        fn a_confirmed_attribution_passes_confirmed_and_an_ordinary_one_does_not() {
+            let argv = |confirmed| attribute_argv("batcher".into(), Path::new("/rv"), Path::new("/r"), &Leg { confirmed, ..Leg::on("spira") });
+            assert!(argv(true).contains(&"--confirmed".to_string()));
+            assert!(!argv(false).contains(&"--confirmed".to_string()));
         }
 
         #[test]

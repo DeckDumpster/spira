@@ -60,6 +60,7 @@ struct Opts {
     evidence: Option<String>,
     reds: Option<PathBuf>,
     after_pass: Option<PathBuf>,
+    confirmed: bool,
     record: Option<PathBuf>,
     wt: Option<PathBuf>,
     base: Option<String>,
@@ -105,6 +106,7 @@ fn parse() -> Result<Opts, String> {
         evidence: None,
         reds: None,
         after_pass: None,
+        confirmed: false,
         record: None,
         wt: None,
         base: None,
@@ -125,6 +127,7 @@ fn parse() -> Result<Opts, String> {
             "--evidence" => o.evidence = Some(val()?),
             "--reds" => o.reds = Some(val()?.into()),
             "--after-pass" => o.after_pass = Some(val()?.into()),
+            "--confirmed" => o.confirmed = true,
             "--record" => o.record = Some(val()?.into()),
             "--wt" => o.wt = Some(val()?.into()),
             "--base" => o.base = Some(val()?),
@@ -2090,6 +2093,7 @@ fn rounds(o: &Opts, pass: Pass) -> Result<(), String> {
                 evidence: None,
                 reds: None,
         after_pass: None,
+        confirmed: false,
                 record: None,
                 wt: None,
                 base: None,
@@ -2156,6 +2160,7 @@ fn sifts(o: &Opts) -> Result<(), String> {
             evidence: None,
             reds: None,
         after_pass: None,
+        confirmed: false,
             record: None,
             wt: None,
             base: None,
@@ -2302,7 +2307,8 @@ fn attribute_run(o: &Opts) -> Result<(), String> {
         .in_batch(o.batch.as_deref())
         .attribution()
         .after_pass(o.after_pass.clone())
-        .with_deny_list(&deny)?;
+        .with_deny_list(&deny)?
+        .confirmed(o.confirmed);
     if let (Some(b), Some(pass)) = (o.batch.as_deref(), o.after_pass.as_deref()) {
         if pass.is_dir() {
             io::keep_attributed_pass(&env_.run, b, pass, io::rounds_prune(&env_, &repo, b).as_ref());
@@ -2642,6 +2648,7 @@ mod tests {
             evidence: None,
             reds: None,
             after_pass: None,
+        confirmed: false,
             record: None,
             wt: None,
             base: None,

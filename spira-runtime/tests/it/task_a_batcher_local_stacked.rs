@@ -163,6 +163,7 @@ fn a_green_lower_with_the_upper_still_certifying_lands_at_once() {
 fn a_red_lower_round_leaves_the_upper_cut_again_on_the_new_base() {
     let mut carry = certifying_two();
     carry.repos.get_mut("spira").unwrap().attributed = true;
+    carry.repos.get_mut("spira").unwrap().confirmed = true;
     let (carry, acts) = ran(&carry, "spira.lower.certify1", 1, "queue.sh round certify: round r1 is RED at abc: test-a.sh\nred=test-a.sh\n");
     assert!(names(&acts).contains(&ABANDON), "{acts:?}");
     assert_eq!(leg_of(&acts, ABANDON).batch, "r1");
@@ -223,6 +224,7 @@ fn a_promotion_moves_the_round_that_landed_not_the_one_above_it() {
 fn the_end_of_a_leg_of_a_round_the_queue_voided_moves_nothing() {
     let mut carry = certifying_two();
     carry.repos.get_mut("spira").unwrap().attributed = true;
+    carry.repos.get_mut("spira").unwrap().confirmed = true;
     let (carry, _) = ran(&carry, "spira.lower.certify1", 1, "red=test-a.sh\n");
     let mut gone = snap(vec![], NOW + 300_000);
     gone.repos.get_mut("spira").unwrap().pool.clear();

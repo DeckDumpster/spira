@@ -92,6 +92,11 @@ pub trait RoundRunner {
     fn prior_red_suites(&mut self) -> Vec<String> {
         vec![]
     }
+    /// The red this attribution follows survived one attribution already: the members are named
+    /// as suspects by what the red suites cover, not mended.
+    fn confirmed(&self) -> bool {
+        false
+    }
     /// The compiler's output of the main run that ended `WorkspaceBuild`.
     fn build_output(&mut self) -> String {
         String::new()
@@ -1038,6 +1043,87 @@ fn eject_sole_member_on_suites<O: RoundOps>(
     Ok(RoundEnd::Emptied(format!("{named} red {left}")))
 }
 
+/// A red that survived its attribution belongs to the members whose diffs the red suites cover:
+/// one suspect leaves; several are each run alone; none, or none red alone, runs every member alone.
+fn confirmed_attribution<R: RoundRunner, O: RoundOps>(
+    runner: &mut R,
+    ops: &mut O,
+    members: &[Member],
+    reds: &[String],
+) -> Result<RoundEnd, String> {
+    let ids: Vec<Id> = members.iter().map(|m| m.id.clone()).collect();
+    let touched: Vec<(&String, Vec<Id>)> = reds.iter().map(|s| (s, ops.touching(s, &ids))).collect();
+    let suspects: Vec<Member> = members
+        .iter()
+        .filter(|m| touched.iter().any(|(_, t)| t.contains(&m.id)))
+        .cloned()
+        .collect();
+    let named = reds.join(",");
+    let mut found: Vec<Action> = vec![];
+    let mut base_red: Vec<String> = vec![];
+    let mut said: Vec<String> = vec![];
+    if let [only] = suspects.as_slice() {
+        let its: Vec<String> = touched.iter().filter(|(_, t)| t.contains(&only.id)).map(|(s, _)| (*s).clone()).collect();
+        println!("batcher: {named} red on two certify passes; {} is the only member whose diff they cover", only.id);
+        ops.eject(only, &its, false).map_err(refused)?;
+        let out = leaving(members, &[Action::Eject { id: only.id.clone(), line: String::new() }], &named);
+        for m in members.iter().filter(|m| m.id != only.id && out.contains_key(&m.id)) {
+            ops.eject(m, &its, false).map_err(refused)?;
+        }
+        let left = who_left(members, &out);
+        let survivors: Vec<Member> = members.iter().filter(|m| !out.contains_key(&m.id)).cloned().collect();
+        let rebuilt = if survivors.is_empty() { vec![] } else { ops.rebuild(&survivors)? };
+        return Ok(if rebuilt.is_empty() {
+            RoundEnd::Emptied(format!("{named} red {left}"))
+        } else {
+            RoundEnd::Land { members: rebuilt, attribution_secs: None }
+        });
+    }
+    let mut pools: Vec<&[Member]> = vec![];
+    if suspects.len() > 1 {
+        pools.push(&suspects);
+    }
+    pools.push(members);
+    for pool in pools {
+        said.clear();
+        for suite in reds {
+            match red_alone(&format!("{suite} red"), &mut |m| runner.suite_green(suite, m), pool) {
+                Alone::Owners(a) => {
+                    for act in a {
+                        if !found.iter().any(|f| action_id(f) == action_id(&act)) {
+                            found.push(act);
+                        }
+                    }
+                }
+                Alone::Base(w) => {
+                    base_red.push(suite.clone());
+                    said.push(format!("{suite}: {w}"));
+                }
+                Alone::Cleared(w) | Alone::Flipped(w) => said.push(format!("{suite}: {w}")),
+            }
+        }
+        if !found.is_empty() || !base_red.is_empty() {
+            break;
+        }
+    }
+    if !found.is_empty() {
+        return Ok(match apply_build_actions(ops, members, &found, &named)? {
+            Some(next) => RoundEnd::Land { members: next, attribution_secs: None },
+            None => RoundEnd::Emptied(format!("{named} red ejected every member")),
+        });
+    }
+    if !base_red.is_empty() {
+        ops.incident("base", &base_red);
+        let paths: Vec<String> = base_red.iter().map(|s| format!(":(glob)**/{s}")).collect();
+        return Ok(RoundEnd::BaseRed {
+            base: ops.base_sha(),
+            why: base_why(ops, &paths, &format!("{} (run alone: {})", base_red.join(","), said.join("; "))),
+        });
+    }
+    ops.judge(reds, &ids);
+    Ok(RoundEnd::Blocked(format!("unattributed red: {named} (run alone: {})", said.join("; "))))
+}
+
 /// The base-red reason: what failed, then the last commit on the base that touched it.
 fn base_why<O: RoundOps>(ops: &O, paths: &[String], red: &str) -> String {
     match ops.last_touching(paths) {
@@ -1468,6 +1554,9 @@ fn attribute_members<R: RoundRunner, O: RoundOps>(
         if let [_] = members[..] {
             let red = format!("{} red in the corpus pass", prior_reds.join(","));
             return eject_sole_member_on_suites(ops, &members, &red, &prior_reds);
+        }
+        if runner.confirmed() {
+            return confirmed_attribution(runner, ops, &members, &prior_reds);
         }
         suites = prior_reds;
         kind = MainKind::Corpus;
@@ -2016,6 +2105,7 @@ pub(crate) mod tests {
         pub prior: Option<FilterRed>,
         /// The suites the corpus pass this attribution follows ran red.
         pub prior_suites: Vec<String>,
+        pub confirmed: bool,
         /// Like the real runner: nothing answers a verify main or a job until a corpus main started.
         pub needs_runner: bool,
         pub runner_started: bool,
@@ -2079,6 +2169,7 @@ pub(crate) mod tests {
                 scoped: vec![],
                 prior: None,
                 prior_suites: vec![],
+                confirmed: false,
                 needs_runner: false,
                 runner_started: false,
                 narrow_clears: false,
@@ -2203,6 +2294,9 @@ pub(crate) mod tests {
         }
         fn prior_red(&mut self) -> Option<FilterRed> {
             self.prior.take()
+        }
+        fn confirmed(&self) -> bool {
+            self.confirmed
         }
         fn prior_red_suites(&mut self) -> Vec<String> {
             std::mem::take(&mut self.prior_suites)
@@ -3524,6 +3618,97 @@ pub(crate) mod tests {
             other => panic!("{other:?}"),
         }
         assert!(f.main_kind.is_empty(), "{:?}", f.main_kind);
+    }
+
+    fn reds3() -> Vec<String> {
+        vec!["test-00.sh".into(), "test-01.sh".into(), "test-02.sh".into()]
+    }
+
+    fn touching_ops(pairs: &[(&str, &[&str])]) -> Ops {
+        let mut ops = Ops::default();
+        for (suite, ids) in pairs {
+            ops.touch.insert(suite.to_string(), ids.iter().map(|i| i.to_string()).collect());
+        }
+        ops
+    }
+
+    #[test]
+    fn a_confirmed_red_whose_suites_only_one_member_touches_ejects_it_without_a_probe_or_a_mender() {
+        let mut f = Fake::new(|_, _| false);
+        f.confirmed = true;
+        f.runs_alone = true;
+        f.prior_suites = reds3();
+        let mut ops = touching_ops(&[("test-00.sh", &["m1"]), ("test-01.sh", &["m1"]), ("test-02.sh", &["m1"])]);
+        ops.menders = vec![crate::mender::Next::Stop { page: String::new() }];
+        let end = attribute_round(&mut f, &mut ops, &corpus(4), vec![member("m1"), member("m2")], budget6()).unwrap();
+        assert_eq!(ops.ejected, vec![("m1".to_string(), reds3())]);
+        assert!(matches!(&end, RoundEnd::Land { members, .. } if members.len() == 1 && members[0].id == "m2"), "{end:?}");
+        assert!(f.alone.is_empty(), "no probe runs: {:?}", f.alone);
+        assert!(f.main_kind.is_empty(), "no corpus or rerun pass: {:?}", f.main_kind);
+        assert_eq!(ops.menders.len(), 1, "no mender settled");
+    }
+
+    #[test]
+    fn a_confirmed_red_with_two_suspects_ejects_only_the_one_red_alone() {
+        let mut f = Fake::new(|s, tree| s.starts_with("test-0") && tree.contains("m2"));
+        f.confirmed = true;
+        f.runs_alone = true;
+        f.prior_suites = reds3();
+        let t: &[&str] = &["m1", "m2"];
+        let mut ops = touching_ops(&[("test-00.sh", t), ("test-01.sh", t), ("test-02.sh", t)]);
+        let end = attribute_round(&mut f, &mut ops, &corpus(4), vec![member("m1"), member("m2"), member("m3")], budget6()).unwrap();
+        let gone: Vec<&str> = ops.ejected.iter().map(|(id, _)| id.as_str()).collect();
+        assert_eq!(gone, ["m2"]);
+        assert!(matches!(&end, RoundEnd::Land { members, .. } if members.len() == 2), "{end:?}");
+        assert!(f.alone.iter().all(|(_, t)| !t.contains(&"m3".to_string())), "m3 is no suspect: {:?}", f.alone);
+    }
+
+    #[test]
+    fn a_confirmed_red_no_member_reproduces_alone_is_blocked() {
+        let mut f = Fake::new(|s, tree| s.starts_with("test-0") && tree.len() >= 2);
+        f.confirmed = true;
+        f.runs_alone = true;
+        f.prior_suites = reds3();
+        let mut ops = touching_ops(&[]);
+        let end = attribute_round(&mut f, &mut ops, &corpus(4), vec![member("m1"), member("m2")], budget6()).unwrap();
+        assert!(ops.ejected.is_empty(), "{:?}", ops.ejected);
+        assert!(matches!(&end, RoundEnd::Blocked(why) if why.starts_with("unattributed red: test-00.sh,test-01.sh,test-02.sh")), "{end:?}");
+    }
+
+    #[test]
+    fn a_confirmed_red_no_suspect_reproduces_alone_runs_every_member_alone() {
+        let mut f = Fake::new(|s, tree| s.starts_with("test-0") && tree.len() == 1 && tree.contains("m3"));
+        f.confirmed = true;
+        f.runs_alone = true;
+        f.prior_suites = reds3();
+        let t: &[&str] = &["m1", "m2"];
+        let mut ops = touching_ops(&[("test-00.sh", t), ("test-01.sh", t), ("test-02.sh", t)]);
+        let end = attribute_round(&mut f, &mut ops, &corpus(4), vec![member("m1"), member("m2"), member("m3")], budget6()).unwrap();
+        let gone: Vec<&str> = ops.ejected.iter().map(|(id, _)| id.as_str()).collect();
+        assert_eq!(gone, ["m3"]);
+        assert!(matches!(&end, RoundEnd::Land { members, .. } if members.len() == 2), "{end:?}");
+    }
+
+    #[test]
+    fn a_confirmed_red_the_base_reproduces_is_base_red() {
+        let mut f = Fake::new(|s, _| s.starts_with("test-0"));
+        f.confirmed = true;
+        f.runs_alone = true;
+        f.prior_suites = reds3();
+        let mut ops = touching_ops(&[]);
+        let end = attribute_round(&mut f, &mut ops, &corpus(4), vec![member("m1"), member("m2")], budget6()).unwrap();
+        assert!(matches!(end, RoundEnd::BaseRed { .. }), "{end:?}");
+        assert!(ops.ejected.is_empty());
+    }
+
+    #[test]
+    fn an_unconfirmed_red_in_prior_suites_still_runs_the_attribution_not_the_suspect_path() {
+        let mut f = Fake::new(|_, tree| tree.contains("m1"));
+        f.needs_runner = true;
+        f.prior_suites = reds3();
+        let mut ops = touching_ops(&[("test-00.sh", &["m1"])]);
+        attribute_round(&mut f, &mut ops, &corpus(4), vec![member("m1"), member("m2")], budget6()).unwrap();
+        assert!(!f.main_kind.is_empty(), "the corpus attribution ran");
     }
 
     #[test]
