@@ -594,8 +594,7 @@ pub fn compact(cfg: &Config, dolt: &dyn Dolt) -> Result<Vec<String>, String> {
     Ok(out)
 }
 
-/// The daemon: a pass every `interval_secs`, and an online collection every `gc_interval_secs`
-/// so the live journal does not grow unbounded between daily compactions. A failed pass is reported, never retried early,
+/// The daemon: a pass every `interval_secs`, an online collection every `gc_interval_secs`. A failed pass is reported, never retried early,
 /// and the state keeps the last good start, so `age` turns red on its own.
 pub fn run(cfg: &Config, dolt: &dyn Dolt, clock: &dyn Clock, passes: Option<u64>, log: &mut dyn FnMut(&str)) {
     let mut failing = false;
