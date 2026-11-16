@@ -361,7 +361,7 @@ impl Fake {
                 .collect();
             return (0, out.join("\n") + "\nVERDICT GREEN");
         }
-        if cmd.starts_with("cargo ") || cmd.starts_with("CARGO_BUILD_JOBS=") {
+        if cmd.starts_with("cargo ") || cmd.starts_with("CARGO_BUILD_JOBS=") || cmd.starts_with("tools/test-sandbox/runner --around cargo ") {
             let kind = if cmd.starts_with("cargo build") || cmd.contains("cargo test --no-run") {
                 "build"
             } else {
