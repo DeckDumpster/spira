@@ -167,6 +167,12 @@ fn read_drain(run: &std::path::Path, now: i64) -> Drain {
     Drain::Draining { since, mins }
 }
 
+/// The claimable count the claim view gives, or `?` when it is missing or stale.
+fn claim_ready(run: &std::path::Path, now: i64) -> String {
+    let claim = cockpit_ops::lcview::read_fresh_claim(run, now);
+    claim.map(|c| cockpit_ops::lcview::claim_keys(&c)).and_then(|k| k.into_iter().find(|(k, _)| k == "SP_READY")).map_or_else(|| "?".to_string(), |(_, v)| v)
+}
+
 pub fn collect(now: i64, cfg: &Cfg) -> SweepData {
     let run = &cfg.spira_run;
 
@@ -203,6 +209,7 @@ pub fn collect(now: i64, cfg: &Cfg) -> SweepData {
             }
         }
     }
+    env.set("SP_READY", claim_ready(run, now));
     let snap_age_disp_raw = snap_age.map(|s| s.to_string()).unwrap_or_else(|| "?".into());
     let snap_age_disp = match snap_age {
         Some(s) if s >= cfg.snap_stale_s => format!("FAULT ({s}s, stale above {}s)", cfg.snap_stale_s),
@@ -562,6 +569,19 @@ mod tests {
 
         let stalled: Vec<&str> = block.lines().find(|l| l.contains("loop-stalled")).unwrap().split_whitespace().collect();
         assert_eq!(stalled, vec!["loop-stalled", "?", "?", "?"]);
+    }
+
+    #[test]
+    fn the_ready_count_is_the_claim_views_and_a_stale_or_absent_view_is_unknown() {
+        let d = testkit::TempDir::new("wt-claim");
+        let row = |id: &str| cockpit_ops::lcview::Row { id: id.into(), state: "READY".into(), claim: Some(cockpit_ops::lcview::ClaimView { verdict: cockpit_ops::lcview::Kind::Claimable, blocker: None, runes: vec!["builder".into()] }), ..Default::default() };
+        let mut snap = cockpit_ops::lcview::Snapshot { now: 5_000, rows: vec![row("sp-a"), row("sp-b"), row("sp-c")], ..Default::default() };
+        cockpit_ops::lcview::apply_claim_views(&mut snap);
+        std::fs::create_dir_all(d.path().join("lcview")).unwrap();
+        std::fs::write(d.path().join("lcview/snapshot.json"), serde_json::to_string(&snap).unwrap()).unwrap();
+        assert_eq!(claim_ready(d.path(), 5_001), "3");
+        assert_eq!(claim_ready(d.path(), 5_000 + cockpit_ops::lcview::CLAIM_STALE_S + 1), "?");
+        assert_eq!(claim_ready(&d.path().join("none"), 5_001), "?");
     }
 
     fn probe(ready: &[(&str, u32)]) -> Option<seams::PipelineProbe> {

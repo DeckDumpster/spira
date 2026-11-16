@@ -2924,6 +2924,7 @@ dependencies = [
 name = "watchtower"
 version = "1.0.0"
 dependencies = [
+ "cockpit-ops",
  "forge",
  "libc",
  "reconciler-engine",

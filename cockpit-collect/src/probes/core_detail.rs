@@ -1,4 +1,4 @@
-//! `core_detail_keys` — the slow-tier NEXT/RECENT/INFLOW/AWAITING-CI/THROUGHPUT/TOKENS/
+//! `core_detail_keys` — the slow-tier RECENT/INFLOW/AWAITING-CI/THROUGHPUT/TOKENS/
 //! landing-funnel/acceptance/gate block. The largest single function in `spira/cockpit.sh`;
 //! ported section by section (DESIGN.md "Design"), each section keeping the bash's own
 //! comment naming why it exists, condensed.
@@ -12,22 +12,8 @@ use std::collections::{HashMap, HashSet};
 
 pub fn core_detail_keys(cfg: &Cfg) -> Kv {
     let mut out = Kv::new();
-    let home = io::home_dir();
     let run = io::run_dir();
 
-    // ---- partition map: label-set -> persona name, from the runes -------------------
-    let mut part_map: HashMap<String, String> = HashMap::new();
-    if let Some(runes) = io::lib_call(&home, "spira_runes", &[]) {
-        for f in runes.split_whitespace() {
-            let fname = io::lib_call(&home, "rune_get", &[f, "RUNE_NAME", f]).unwrap_or_else(|| f.to_string());
-            let flabels = io::lib_call(&home, "rune_get", &[f, "RUNE_LABELS"]).unwrap_or_default();
-            if !fname.is_empty() && !flabels.is_empty() {
-                part_map.insert(flabels, fname);
-            }
-        }
-    }
-
-    next_section(&mut out, &part_map, cfg, &ready_rows);
     recent_section(&mut out, &run);
     inflow_section(&mut out, &run);
     awaiting_ci_section(&mut out, cfg);
@@ -42,80 +28,6 @@ fn repo_tag(labels: Option<&Vec<Value>>) -> String {
         .and_then(|a| a.iter().filter_map(Value::as_str).find_map(|l| l.strip_prefix("repo:")))
         .map(|r| r.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_').collect())
         .unwrap_or_default()
-}
-
-// ---------------------------------------------------------------------------------------
-// NEXT
-// ---------------------------------------------------------------------------------------
-
-/// The machine's claimable rows that carry none of `excl`, from spira-claim in this process.
-fn ready_rows(excl: &str) -> Option<Vec<Value>> {
-    let argv: Vec<String> = ["ready-count", "", excl, "--json"].iter().map(|s| s.to_string()).collect();
-    let o = spira_claim::cli::dispatch_in(&argv, &mut std::io::empty(), &|k| std::env::var(k).ok());
-    if o.code != 0 {
-        return None;
-    }
-    io::json_rows(Some(o.out))
-}
-
-fn next_section(out: &mut Kv, part_map: &HashMap<String, String>, cfg: &Cfg, read: &dyn Fn(&str) -> Option<Vec<Value>>) {
-    let ci_label = &cfg.ci_label;
-    let queue_wait = &cfg.queue_wait_label;
-
-    if part_map.is_empty() {
-        push(out, "SP_NEXT_N", "?");
-        push(out, "SP_READY", "?");
-        return;
-    }
-
-    // Poison and ask are lifecycle holds, already left out of the machine's claimable set;
-    // only the labels that are not holds remain (sp-psztcc).
-    let mut excl = ci_label.to_string();
-    if !queue_wait.is_empty() {
-        excl = format!("{excl},{queue_wait}");
-    }
-    let Some(all) = read(&excl) else {
-        push(out, "SP_NEXT_N", "?");
-        push(out, "SP_READY", "?");
-        return;
-    };
-    let mut parts: Vec<(&String, &String)> = part_map.iter().collect();
-    parts.sort();
-    let mut rows: Vec<Value> = Vec::new();
-    let mut seen: HashSet<String> = HashSet::new();
-    for mut r in all {
-        let Some(id) = r.get("id").and_then(Value::as_str).map(String::from) else { continue };
-        let labels: HashSet<&str> = r.get("labels").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
-        let Some(name) = parts.iter().find(|(lset, _)| lset.split(',').filter(|l| !l.is_empty()).all(|l| labels.contains(l))).map(|(_, n)| (*n).clone()) else { continue };
-        if seen.insert(id) {
-            if let Value::Object(ref mut m) = r {
-                m.insert("_partition".to_string(), Value::String(name));
-            }
-            rows.push(r);
-        }
-    }
-    rows.sort_by_key(|r| r.get("priority").and_then(Value::as_i64).unwrap_or(9));
-
-    for (n, i) in rows.iter().take(5).enumerate() {
-        let labels: HashSet<&str> = i.get("labels").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
-        let pref: HashSet<&str> = labels.iter().filter_map(|l| l.strip_prefix("rune:")).collect();
-        let part = if !pref.is_empty() {
-            part_map
-                .iter()
-                .find(|(lset, pname)| pref.contains(pname.as_str()) && lset.split(',').all(|l| labels.contains(l)))
-                .map(|(_, pname)| pname.clone())
-                .unwrap_or_else(|| "unclaimable".to_string())
-        } else {
-            i.get("_partition").and_then(Value::as_str).unwrap_or("?").to_string()
-        };
-        let pri = i.get("priority").map(|v| v.to_string()).unwrap_or_else(|| "?".to_string());
-        let title = sanitize_title(i.get("title").and_then(Value::as_str).unwrap_or(""), 80);
-        let id = i.get("id").and_then(Value::as_str).unwrap_or("");
-        push(out, &format!("SP_NEXT{n}"), format!("P{pri} {part} {id} {title}"));
-        push(out, &format!("SP_NEXT{n}_REPO"), repo_tag(i.get("labels").and_then(Value::as_array)));
-    }
-    push(out, "SP_NEXT_N", rows.len().to_string());
-    push(out, "SP_READY", rows.len().to_string());
 }
 
 // ---------------------------------------------------------------------------------------
@@ -493,74 +405,6 @@ mod tests {
 
     // covers: UC-cockpit-observability-08
     #[test]
-    fn next_section_reads_the_ready_set_once_for_all_its_partitions() {
-        let cfg = Cfg::default();
-        let part_map: HashMap<String, String> = [("repo:a", "alpha"), ("repo:b", "beta"), ("repo:c", "gamma")].iter().map(|(l, n)| (l.to_string(), n.to_string())).collect();
-        let calls = std::cell::Cell::new(0);
-        let rows: Vec<Value> = serde_json::from_str(r#"[
-            {"id":"sp-1","priority":2,"title":"one","labels":["repo:a"]},
-            {"id":"sp-2","priority":1,"title":"two","labels":["repo:b"]},
-            {"id":"sp-3","priority":3,"title":"three","labels":["repo:c"]},
-            {"id":"sp-4","priority":0,"title":"none","labels":["repo:z"]}]"#).unwrap();
-        let read = |_: &str| {
-            calls.set(calls.get() + 1);
-            Some(rows.clone())
-        };
-        let mut out = Kv::new();
-        next_section(&mut out, &part_map, &cfg, &read);
-        assert_eq!(calls.get(), 1);
-        assert_eq!(kv(&out, "SP_READY"), Some("3"));
-        assert_eq!(kv(&out, "SP_NEXT_N"), Some("3"));
-        assert_eq!(kv(&out, "SP_NEXT0"), Some("P1 beta sp-2 two"));
-        assert_eq!(kv(&out, "SP_NEXT1"), Some("P2 alpha sp-1 one"));
-        assert_eq!(kv(&out, "SP_NEXT2"), Some("P3 gamma sp-3 three"));
-    }
-
-    #[test]
-    fn a_partition_with_no_labels_takes_every_row_no_other_partition_claimed() {
-        let part_map: HashMap<String, String> = [("repo:a", "alpha"), ("", "rest")].iter().map(|(l, n)| (l.to_string(), n.to_string())).collect();
-        let rows: Vec<Value> = serde_json::from_str(r#"[{"id":"sp-1","priority":2,"title":"one","labels":["repo:a"]}]"#).unwrap();
-        let mut out = Kv::new();
-        next_section(&mut out, &part_map, &Cfg::default(), &|_| Some(rows.clone()));
-        assert_eq!(kv(&out, "SP_READY"), Some("1"));
-        assert_eq!(kv(&out, "SP_NEXT0"), Some("P2 rest sp-1 one"));
-    }
-
-    // covers: UC-cockpit-observability-08
-    #[test]
-    fn next_section_says_unknown_when_the_ready_set_is_refused() {
-        let part_map: HashMap<String, String> = [("repo:a".to_string(), "alpha".to_string())].into();
-        let mut out = Kv::new();
-        next_section(&mut out, &part_map, &Cfg::default(), &|_| None);
-        assert_eq!((kv(&out, "SP_READY"), kv(&out, "SP_NEXT_N")), (Some("?"), Some("?")));
-    }
-
-    // covers: UC-cockpit-observability-17 UC-dispatch-17
-    #[test]
-    fn next_attributes_each_bead_to_its_claimant_or_unclaimable() {
-        let part_map: HashMap<String, String> =
-            [("plan,scp", "builder"), ("incident,scp", "ops")].iter().map(|(l, n)| (l.to_string(), n.to_string())).collect();
-        let bead = |id: &str, labels: &str| format!(r#"{{"id":"{id}","priority":1,"title":"t","labels":[{labels}]}}"#);
-        let rows: Vec<Value> = [
-            bead("sp-free", r#""plan","scp""#),
-            bead("sp-ops-on-plan", r#""rune:ops","plan","scp""#),
-            bead("sp-ops-on-incident", r#""rune:ops","incident","scp""#),
-            bead("sp-ghost", r#""rune:nobody","plan","scp""#),
-        ]
-        .iter()
-        .map(|b| serde_json::from_str(b).unwrap())
-        .collect();
-        let mut out = Kv::new();
-        next_section(&mut out, &part_map, &Cfg::default(), &|_| Some(rows.clone()));
-        let line_of = |id: &str| out.iter().find(|(k, v)| k.starts_with("SP_NEXT") && v.contains(id)).map(|(_, v)| v.clone()).unwrap_or_default();
-        assert_eq!(line_of("sp-free"), "P1 builder sp-free t");
-        assert_eq!(line_of("sp-ops-on-plan"), "P1 unclaimable sp-ops-on-plan t", "the partition query that found it is not who can claim it");
-        assert_eq!(line_of("sp-ops-on-incident"), "P1 ops sp-ops-on-incident t");
-        assert_eq!(line_of("sp-ghost"), "P1 unclaimable sp-ghost t");
-    }
-
-    // covers: UC-cockpit-observability-08
-    #[test]
     fn the_server_inflow_reply_parses_to_the_same_shape_as_the_row_aggregate() {
         let f = inflow_from_server(r#"{"n":3,"defect":1,"kinds":[["task",2],["bug",1]],"rows":[{"id":"sp-a"}]}"#).unwrap();
         assert_eq!((f.n, f.defect, f.kinds.len(), f.rows.len()), (3, 1, 2, 1));
@@ -568,18 +412,6 @@ mod tests {
         let rows: Vec<Value> = serde_json::from_str(r#"[{"id":"a","issue_type":"bug","created_at":"2026-01-01T00:10:00Z"},{"id":"b","issue_type":"event","created_at":"2026-01-01T00:11:00Z"},{"id":"c","created_at":"2026-01-01T00:00:00Z"}]"#).unwrap();
         let f = inflow_from_rows(&rows, parse_iso8601("2026-01-01T00:05:00Z").unwrap());
         assert_eq!((f.n, f.defect, f.rows.len()), (1, 1, 2));
-    }
-
-    // covers: UC-cockpit-observability-08
-    #[test]
-    fn an_empty_readable_ready_set_is_zero_and_no_resolvable_partition_is_unknown() {
-        let part_map: HashMap<String, String> = [("repo:a".to_string(), "alpha".to_string())].into();
-        let mut out = Kv::new();
-        next_section(&mut out, &part_map, &Cfg::default(), &|_| Some(Vec::new()));
-        assert_eq!((kv(&out, "SP_READY"), kv(&out, "SP_NEXT_N")), (Some("0"), Some("0")));
-        let mut out = Kv::new();
-        next_section(&mut out, &HashMap::new(), &Cfg::default(), &|_| Some(Vec::new()));
-        assert_eq!((kv(&out, "SP_READY"), kv(&out, "SP_NEXT_N")), (Some("?"), Some("?")), "an unresolvable persona is a refusal, not an empty queue");
     }
 
     #[test]

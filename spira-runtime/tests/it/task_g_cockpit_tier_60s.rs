@@ -159,6 +159,7 @@ fn t5_parity_an_ok_slots_fragment_samples_live_and_ceiling() {
     let (_, acts) = decide(&Carry::default(), &snap(3)).unwrap();
     let sample = acts.iter().find(|a| a.name == SLOTS_SAMPLE).expect("an ok slots fragment is sampled");
     assert!(sample.input.contains("live=3") && sample.input.contains("ceiling=4"), "{}", sample.input);
+    assert!(!sample.input.contains("ready="), "ready is the claim view's, read when the sample runs: {}", sample.input);
 }
 
 fn with_clock(mut s: Snapshot) -> Snapshot {

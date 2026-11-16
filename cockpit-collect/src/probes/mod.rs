@@ -662,7 +662,7 @@ fn py_truthy(v: Option<&Value>) -> bool {
 }
 
 // ---------------------------------------------------------------------------------------
-// core_counts_keys — SP_WAITING only (SP_READY belongs to core_detail_keys).
+// core_counts_keys — SP_WAITING only (the claimable count is the claim view's).
 // ---------------------------------------------------------------------------------------
 
 pub fn core_counts_keys() -> Kv {
@@ -879,16 +879,6 @@ pub fn slots_keys(cfg: &Cfg) -> Kv {
     push(&mut out, "SP_SLOTS_LANES_CAP", cfg.lanes_max_live.clone());
 
     push(&mut out, "SP_SLOTS_LANES_LIVE", lanes_live);
-
-    let snap = io::run_dir().join("cockpit.env");
-    let ready = std::fs::read_to_string(&snap)
-        .ok()
-        .and_then(|c| {
-            c.lines()
-                .find_map(|l| l.strip_prefix("SP_READY=").map(|v| v.trim_matches('\'').to_string()))
-        })
-        .unwrap_or_else(|| "?".to_string());
-    push(&mut out, "SP_SLOTS_READY", ready);
 
     let run = io::run_dir();
     let cap_now = io::now();

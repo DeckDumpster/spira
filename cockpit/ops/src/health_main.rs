@@ -133,6 +133,10 @@ fn mismatch_alt(run: &str) -> Option<String> {
     cockpit_ops::health::sections::mismatch_alt_of(run, &instance, env_nonempty("SPIRA_REPO").as_deref(), env_nonempty("XDG_DATA_HOME").as_deref(), &env_nonempty("HOME").unwrap_or_default())
 }
 
+fn claim_overlaid(content: &str, run: &str, now: i64) -> String {
+    cockpit_ops::lcview::with_claim_keys(content, cockpit_ops::lcview::read_fresh_claim(Path::new(run), now).as_ref())
+}
+
 fn build_inputs(run: &str) -> (FrameInputs<'static>, String) {
     let snap_path = Path::new(run).join("cockpit.env");
     let (content, exists) = read_snapshot(&snap_path);
@@ -148,7 +152,7 @@ fn build_inputs(run: &str) -> (FrameInputs<'static>, String) {
         // 'static is a lie we immediately own up to: content is leaked intentionally for the
         // life of one frame build in `loop` mode's tight repaint cycle to keep this function's
         // signature simple; `once`/`render-many` call it once and exit.
-        snapshot_content: Box::leak(content.clone().into_boxed_str()),
+        snapshot_content: Box::leak(claim_overlaid(&content, run, now).into_boxed_str()),
         snapshot_exists: exists,
         cols: 0,
         hhmm,

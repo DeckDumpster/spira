@@ -288,7 +288,7 @@ pub fn slots_samples_in_process(root: &Path) -> Result<(crate::core::SlotsSample
 /// The last two `slots` samples, most recent second — "two samples a pass apart" (design §3).
 /// `Err` when fewer than two rows exist yet (a fresh install, or the collector not running
 /// long enough), or when a sample has a field the collector could not read (written as the
-/// literal string `"?"` by `_tsd_slots_sample`, never fabricated as a number).
+/// literal string `"?"` by the slots sampler, never fabricated as a number).
 pub fn slots_samples(duckdb_bin: &str, root: &Path) -> Result<(crate::core::SlotsSample, crate::core::SlotsSample), String> {
     let path = family_path(root, "slots");
     if !path.exists() {
