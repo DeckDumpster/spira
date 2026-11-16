@@ -174,7 +174,7 @@ mod tests {
         let base = td();
         let unit_dir = base.join("units");
         std::fs::create_dir_all(&unit_dir).unwrap();
-        let tmpl_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../systemd");
+        let tmpl_dir = spira_config::resolve::checkout_root_for_process().unwrap().join("systemd");
         let dropped = ["spira-sentinel-prod.service", "spira-sentinel-prod.timer", "spira-refresh-prod.timer", "spira-watch-queue-watch-prod.service", "spira-mail-deliver-prod.service", "spira-cockpit-prod.service"];
         for u in dropped {
             std::fs::write(unit_dir.join(u), "[Service]\nExecStart=/bin/true\n").unwrap();

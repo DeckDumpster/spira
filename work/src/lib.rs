@@ -521,7 +521,7 @@ mod tests {
 
     #[test]
     fn the_repositorys_own_gate_steps_owe_the_lifecycle_guard_and_the_config_fence() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let root = spira_config::resolve::checkout_root_for_process().unwrap();
         let rows = declared_rows(&root).unwrap();
         let names: Vec<&str> = rows.iter().map(|r| r.name.as_str()).collect();
         let round: Vec<String> = gate::fences::list(&gate::def::parse(&std::fs::read_to_string(root.join("gate.steps")).unwrap()).unwrap(), None).unwrap().into_iter().map(|f| format!("fence-{}", f.name)).collect();
@@ -789,7 +789,7 @@ mod tests {
     }
 
     fn repo_clippy_row() -> String {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let root = &spira_config::resolve::checkout_root_for_process().unwrap();
         habits::config::load_checks(root).unwrap().into_iter().find(|r| r.name == "clippy").expect("a clippy check row").run
     }
 

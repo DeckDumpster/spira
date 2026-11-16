@@ -102,7 +102,7 @@ fn conflicting_siblings_priority_wins_the_conflict_and_the_loser_is_returned_and
 /// its landed head published by PR, as `sim run happy-path` checks it.
 #[test]
 fn happy_path_the_shipped_loop_scenario_lands_and_publishes_and_logs_its_effects() {
-    let text = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/scenarios/happy-path.toml")).expect("the shipped scenario");
+    let text = std::fs::read_to_string(testkit::manifest_dir().join("scenarios/happy-path.toml")).expect("the shipped scenario");
     assert!(loopworld::is_loop(&text), "happy-path is a loop world");
     let script = loopworld::parse(&text).expect("it parses");
     let r = run(7, script.clone());

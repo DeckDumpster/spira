@@ -5,10 +5,10 @@ use crate::install_units::{render_all, Ctx};
 use crate::manifest::{build, Inputs, Manifest};
 use crate::systemctl::FakeSystemctl;
 use crate::values::{render, HostValues};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 fn templates() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../systemd")
+    spira_config::resolve::checkout_root_for_process().unwrap().join("systemd")
 }
 
 fn host(instance: &str) -> HostValues {
@@ -357,7 +357,7 @@ fn shipped_unit_files_are_listed_enabled_periodic_limited_and_watchdogged_correc
 }
 
 fn workspace_binaries() -> std::collections::BTreeSet<String> {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let root = spira_config::resolve::checkout_root_for_process().unwrap();
     let members: Vec<String> = std::fs::read_to_string(root.join("Cargo.toml"))
         .unwrap()
         .lines()

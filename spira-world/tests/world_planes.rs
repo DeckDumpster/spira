@@ -3,13 +3,13 @@
 //! the one gate (S14). Plane membership is each shipped unit's own `[X-Spira] Plane=`; this
 //! suite reads the real shipped unit files, so a unit that loses its declaration fails here.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use spira_world::scheduler::{is_kept, keep_units};
 use spira_world::sysctl::{plane_from_unit_text, Plane};
 
 fn unit_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../systemd")
+    spira_config::resolve::checkout_root_for_process().unwrap().join("systemd")
 }
 
 /// Shipped units world does not act on: the dashboard's query engine, the socket.
@@ -65,7 +65,7 @@ fn the_scheduler_ships_and_is_on_the_keep_list() {
 /// `spira-mail-deliver` unit, and the template is not shipped.
 #[test]
 fn world_names_no_mail_delivery_unit() {
-    let src = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/bin/world.rs")).unwrap();
+    let src = std::fs::read_to_string(testkit::manifest_dir().join("src/bin/world.rs")).unwrap();
     assert!(src.contains("fn cmd_start"), "positive control: the scan reads world's source");
     assert!(!src.contains("spira-mail-deliver"), "world still starts the retired spira-mail-deliver unit");
     assert!(!unit_dir().join("spira-mail-deliver.service").exists(), "spira-mail-deliver.service is still a template");

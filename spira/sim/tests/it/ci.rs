@@ -33,7 +33,7 @@ jobs:
 ";
 
 fn gate() -> String {
-    std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.github/workflows/gate.yml")).unwrap()
+    std::fs::read_to_string(spira_config::resolve::checkout_root_for_process().unwrap().join(".github/workflows/gate.yml")).unwrap()
 }
 
 #[test]

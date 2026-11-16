@@ -28,7 +28,7 @@ fn unmarked(file: &str, src: &str) -> Vec<String> {
 
 #[test]
 fn no_spira_child_is_forked_without_a_fork_edge_mark() {
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let dir = testkit::manifest_dir().join("src");
     let mut bad = Vec::new();
     for entry in std::fs::read_dir(&dir).unwrap() {
         let p = entry.unwrap().path();

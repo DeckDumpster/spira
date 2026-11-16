@@ -980,7 +980,7 @@ mod tests {
 
     /// The watcher names a box installs from the shipped manifest's `daemon` rows plus `overlay`.
     fn shipped_daemon_rows(overlay: &[&str]) -> Vec<String> {
-        let text = fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/watchers")).unwrap();
+        let text = fs::read_to_string(spira_config::resolve::locate_home_for_process().unwrap().join("watchers")).unwrap();
         let mut names: Vec<String> = text.lines().filter(|l| !l.trim_start().starts_with('#')).filter_map(|l| l.split('|').collect::<Vec<_>>().get(..2).filter(|f| f[1].trim() == "daemon").map(|f| f[0].trim().trim_start_matches('?').to_string())).collect();
         names.extend(overlay.iter().map(|s| s.to_string()));
         names
@@ -999,7 +999,7 @@ mod tests {
     /// watcher unit outside the keep list. The loop runs in `spira-runtime serve`.
     #[test]
     fn rendering_the_manifest_yields_no_loop_timer_and_no_watcher_outside_the_keep_list() {
-        let tmpl_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../systemd");
+        let tmpl_dir = spira_config::resolve::checkout_root_for_process().unwrap().join("systemd");
         let td = tempdir();
         let unit_dir = td.join("units");
         let manifest = build(&Inputs { instance: "prod".into(), dolt_data_set: true, dolt_durable_set: true, sccache_dav_addr_set: true, repo_is_git_checkout: true, lc_system_mode: false, watch_names: Ok(shipped_daemon_rows(&[])) }).unwrap();
@@ -1020,7 +1020,7 @@ mod tests {
 
     #[test]
     fn the_cache_service_roots_its_store_at_the_configured_path() {
-        let tmpl = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../systemd/sccache-dav.service");
+        let tmpl = spira_config::resolve::checkout_root_for_process().unwrap().join("systemd/sccache-dav.service");
         let mut h = host();
         h.sccache_dav_root = "/mnt/other-disk/store".into();
         let unit = crate::values::render_file(&tmpl, &h, None).unwrap();

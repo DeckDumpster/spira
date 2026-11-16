@@ -1,7 +1,7 @@
 // covers: systemd/*.service systemd/*.timer install/src/values.rs
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 fn dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../systemd")
+    spira_config::resolve::checkout_root_for_process().unwrap().join("systemd")
 }
 
 fn raw(n: &str) -> String {

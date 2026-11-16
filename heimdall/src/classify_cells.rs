@@ -84,7 +84,7 @@ fn healthy() -> String {
 }
 
 fn replay(name: &str) -> (String, i64) {
-    let text = std::fs::read_to_string(format!("{}/../spira/testdata/{name}", env!("CARGO_MANIFEST_DIR"))).unwrap();
+    let text = std::fs::read_to_string(spira_config::resolve::locate_home_for_process().unwrap().join(format!("testdata/{name}"))).unwrap();
     let last = text
         .lines()
         .filter(|l| l.len() > 20 && l.as_bytes()[10] == b'T' && l.as_bytes()[19] == b'Z')

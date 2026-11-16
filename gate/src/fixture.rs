@@ -126,7 +126,7 @@ mod tests {
 
     fn copy_tree() -> testkit::TempDir {
         let t = testkit::TempDir::new("gate-fixture-config");
-        let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
+        let src = spira_config::resolve::locate_home_for_process().unwrap();
         let dst = t.path().join("spira");
         std::fs::create_dir_all(dst.join("testlib")).unwrap();
         std::fs::copy(src.join("testlib/complete.toml"), dst.join("testlib/complete.toml")).unwrap();
@@ -246,7 +246,7 @@ mod tests {
     #[test]
     fn a_retired_key_passes_the_fence_against_the_landing_ref_that_still_registers_it() {
         let t = copy_tree();
-        std::fs::copy(Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/config-delta.toml"), t.path().join("spira/config-delta.toml")).unwrap();
+        std::fs::copy(spira_config::resolve::locate_home_for_process().unwrap().join("config-delta.toml"), t.path().join("spira/config-delta.toml")).unwrap();
         testkit::git(t.path(), &["init", "-q", "-b", "main"]);
         testkit::git(t.path(), &["add", "-A"]);
         testkit::git(t.path(), &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "landing ref"]);

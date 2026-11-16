@@ -60,7 +60,7 @@ fn scan(dir: &Path, out: &mut Vec<String>) {
 #[test]
 fn no_unmarked_fork_edge_remains() {
     let mut found = Vec::new();
-    scan(&Path::new(env!("CARGO_MANIFEST_DIR")).join("src"), &mut found);
+    scan(&testkit::manifest_dir().join("src"), &mut found);
     assert!(found.is_empty(), "unmarked fork edges:\n{}", found.join("\n"));
 }
 

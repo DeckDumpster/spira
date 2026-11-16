@@ -106,7 +106,7 @@ fn note_carries_tarball_upgrade_path_and_waiver() {
 fn the_override_key_is_one_conf_sh_honours() {
     // conf.sh's allowlist is generated from spira/conf.d/, one file per key (sp-g3uwp): a key
     // with no file there is refused, and the override would never be in force.
-    let key = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../spira/conf.d")).join(OVERRIDE_KEY);
+    let key = spira_config::resolve::locate_home_for_process().unwrap().join("conf.d").join(OVERRIDE_KEY);
     assert!(key.is_file(), "{OVERRIDE_KEY} has no spira/conf.d entry: conf.sh would refuse it and the override would never be in force");
 }
 
@@ -483,7 +483,7 @@ fn registry() -> spira_config::init::Registry<'static> {
     testkit::write_exe(bin.path().join("bd"), "#!/bin/sh\n");
     let env: &'static std::collections::BTreeMap<String, String> =
         Box::leak(Box::new([("HOME".to_string(), "/home/test".to_string()), ("PATH".to_string(), bin.path().display().to_string())].into_iter().collect()));
-    spira_config::init::Registry { conf_d: Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../spira/conf.d")), env }
+    spira_config::init::Registry { conf_d: Box::leak(Box::new(spira_config::resolve::locate_home_for_process().unwrap().join("conf.d"))), env }
 }
 
 #[test]

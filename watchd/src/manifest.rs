@@ -289,7 +289,7 @@ mod tests {
 
     #[test]
     fn the_shipped_manifest_alone_parses_and_names_no_inbox_keeper_row() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/watchers");
+        let path = spira_config::resolve::locate_home_for_process().unwrap().join("watchers");
         let text = std::fs::read_to_string(&path).unwrap();
         let r = resolver(&[("SPIRA_HOME", "/h"), ("SPIRA_RUN", "/run"), ("SPIRA_DB", "/db"), ("SPIRA_CONCIERGE_INBOX", "/run/inbox"), ("SPIRA_COCKPIT", "/c")]);
         let (rows, faults) = parse(&text, &r);
@@ -303,7 +303,7 @@ mod tests {
     /// left name logs other components write. An operator overlay may still add a daemon row.
     #[test]
     fn the_shipped_manifest_has_no_daemon_rows() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/watchers");
+        let path = spira_config::resolve::locate_home_for_process().unwrap().join("watchers");
         let text = std::fs::read_to_string(&path).unwrap();
         let r = resolver(&[("SPIRA_HOME", "/h"), ("SPIRA_RUN", "/run"), ("SPIRA_DB", "/db"), ("SPIRA_CONCIERGE_INBOX", "/run/inbox"), ("SPIRA_COCKPIT", "/c")]);
         let (rows, faults) = parse(&text, &r);

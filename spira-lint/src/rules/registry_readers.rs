@@ -20,16 +20,22 @@ or a registry edit does not select it; a listed crate that reads nothing is sele
 
 const MANIFEST_DIR: &str = concat!("CARGO_MANIFEST", "_DIR");
 const REGISTRY_PATHS: [&str; 2] = [concat!("spira/", "conf.d"), concat!("spira/", "config-delta")];
+const HOME_DOOR: &str = "locate_home_for_process";
+const HOME_PATHS: [&str; 2] = ["\"conf.d", "\"config-delta"];
 const DELTA_LOAD: &str = concat!("config_delta::", "load(");
 
 /// The 1-based line of the file's first registry read, in its comment-stripped text.
 fn first_read(src: &[u8]) -> Option<usize> {
     let code = String::from_utf8_lossy(&classify(src).without_comments()).into_owned();
-    if !code.contains(MANIFEST_DIR) {
+    if !code.contains(MANIFEST_DIR) && !code.contains(HOME_DOOR) {
         return None;
     }
     code.lines()
-        .position(|l| (l.contains(MANIFEST_DIR) && REGISTRY_PATHS.iter().any(|p| l.contains(p))) || l.contains(DELTA_LOAD))
+        .position(|l| {
+            (l.contains(MANIFEST_DIR) && REGISTRY_PATHS.iter().any(|p| l.contains(p)))
+                || (l.contains(HOME_DOOR) && HOME_PATHS.iter().any(|p| l.contains(p)))
+                || l.contains(DELTA_LOAD)
+        })
         .map(|i| i + 1)
 }
 
@@ -190,6 +196,16 @@ mod tests {
         assert!(!messages(&without).iter().any(|x| x.contains("planted-crate")));
         let with = workspace(&t, &[("planted", &format!("const D: &str = env!(\"{MANIFEST_DIR}\");\n{load}"))]);
         assert!(messages(&with).iter().any(|x| x.contains("planted-crate")));
+    }
+
+    #[test]
+    fn a_registry_read_through_the_run_time_home_door_is_a_read() {
+        let t = TempDir::new("rr-door");
+        let door = format!("fn f() {{ let _ = spira_config::resolve::{HOME_DOOR}().unwrap().join(\"conf.d\"); }}\n");
+        let tree = workspace(&t, &[("planted", &door)]);
+        assert!(messages(&tree).iter().any(|x| x.starts_with("planted-crate reads")));
+        let other = workspace(&t, &[("planted", &door.replace("conf.d", "bd-pin.sh"))]);
+        assert!(!messages(&other).iter().any(|x| x.contains("planted-crate")));
     }
 
     #[test]

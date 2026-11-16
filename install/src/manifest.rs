@@ -319,7 +319,7 @@ mod tests {
         let m = build(&inputs()).unwrap();
         let shipped: Vec<&str> = m.units.iter().map(|u| u.name.as_str()).filter(|n| n.starts_with("spira-reconciler-flow")).collect();
         assert!(shipped.is_empty(), "{shipped:?}");
-        assert!(!std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../systemd/spira-reconciler-flow.timer").exists());
+        assert!(!spira_config::resolve::checkout_root_for_process().unwrap().join("systemd/spira-reconciler-flow.timer").exists());
     }
 
     /// The scheduler consolidation (`scheduler-consolidation-2026-11-03` §1, §3 P5): every loop
@@ -337,7 +337,7 @@ mod tests {
 
     #[test]
     fn no_unit_the_scheduler_replaces_is_shipped() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../systemd");
+        let dir = spira_config::resolve::checkout_root_for_process().unwrap().join("systemd");
         let union = union_template_names();
         let mut names: Vec<String> = RETIRED_BY_THE_SCHEDULER.iter().flat_map(|b| [format!("spira-{b}.service"), format!("spira-{b}.timer")]).collect();
         names.push("spira-submission.service".into());
@@ -356,7 +356,7 @@ mod tests {
         assert!(m.units.iter().any(|u| u.name == "spira-vm-pool-section.timer" && u.enable));
         assert!(m.units.iter().any(|u| u.name == "spira-vm-pool-section.service" && !u.enable), "the timer runs it, never boot");
         assert!(m.enable("prod").contains(&"spira-vm-pool-section-prod.timer".to_string()));
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../systemd");
+        let dir = spira_config::resolve::checkout_root_for_process().unwrap().join("systemd");
         let timer = std::fs::read_to_string(dir.join("spira-vm-pool-section.timer")).unwrap();
         assert!(timer.contains("OnUnitActiveSec=300s") && timer.contains("Plane=observability"), "{timer}");
         let service = std::fs::read_to_string(dir.join("spira-vm-pool-section.service")).unwrap();
@@ -369,7 +369,7 @@ mod tests {
         assert!(m.units.iter().any(|u| u.name == "spira-psi-sample.timer" && u.enable));
         assert!(m.units.iter().any(|u| u.name == "spira-psi-sample.service" && !u.enable), "the timer runs it, never boot");
         assert!(m.enable("prod").contains(&"spira-psi-sample-prod.timer".to_string()));
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../systemd");
+        let dir = spira_config::resolve::checkout_root_for_process().unwrap().join("systemd");
         let timer = std::fs::read_to_string(dir.join("spira-psi-sample.timer")).unwrap();
         assert!(timer.contains("OnUnitActiveSec=10s"), "{timer}");
         let service = std::fs::read_to_string(dir.join("spira-psi-sample.service")).unwrap();

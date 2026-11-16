@@ -2216,7 +2216,7 @@ mod dovecot_dropin_tests {
     fn the_dropin_orders_after_tailscaled_and_retries_and_is_written_only_where_dovecot_exists() {
         let td = testkit::TempDir::new("dovecot-dropin");
         let root = td.path().to_path_buf();
-        let home = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let home = spira_config::resolve::checkout_root_for_process().unwrap();
         let units = root.join("etc");
         let lib = root.join("lib");
         std::fs::create_dir_all(&lib).unwrap();
@@ -2240,15 +2240,15 @@ mod dolt_yaml_tests {
     fn dolt_template_renders_with_the_data_dir() {
         let td = testkit::TempDir::new("dolt-yaml");
         let root = td.path().to_path_buf();
-        let tpl = format!("{}/../systemd/dolt-server.yaml", env!("CARGO_MANIFEST_DIR"));
+        let tpl = spira_config::resolve::checkout_root_for_process().unwrap().join("systemd/dolt-server.yaml");
         let dest = root.join("dolt-server.yaml");
         let dest = dest.to_str().unwrap();
         let data = root.to_str().unwrap();
-        assert_eq!(place_dolt_yaml(&tpl, dest, &[("@SPIRA_DOLT_DATA@", data)], false), 1);
+        assert_eq!(place_dolt_yaml(tpl.to_str().unwrap(), dest, &[("@SPIRA_DOLT_DATA@", data)], false), 1);
         let out = std::fs::read_to_string(dest).unwrap();
         assert!(out.contains(&format!("data_dir: \"{data}\"")), "{out}");
         assert!(!out.contains("@SPIRA_"), "{out}");
-        assert_eq!(place_dolt_yaml(&tpl, dest, &[], false), 0);
+        assert_eq!(place_dolt_yaml(tpl.to_str().unwrap(), dest, &[], false), 0);
     }
 }
 
