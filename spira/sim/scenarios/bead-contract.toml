@@ -131,7 +131,7 @@ sql = "SELECT 1 FROM bead_state b JOIN events e ON e.seq = b.seq WHERE e.actor =
 
 [[expect]]
 name = "drop_records_its_reason"
-sql = "SELECT 1 FROM bead_state b JOIN events e ON e.seq = b.seq WHERE e.actor = 'drop' AND e.exit = 0 AND b.title = 'blocked work' AND b.lc_reason LIKE '%superseded by the sim%' AND b.lc_state = 'DROPPED'"
+sql = "SELECT 1 FROM bead_state b JOIN events e ON e.seq = b.seq WHERE e.actor = 'drop' AND e.exit = 0 AND b.title = 'blocked work' AND b.lc_reason = 'unwanted' AND b.lc_state = 'DROPPED'"
 
 [[step]]
 at = 30000
