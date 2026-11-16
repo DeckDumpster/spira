@@ -28,6 +28,11 @@ on:
   schedule:
     - cron: "17 5 * * 1"
   workflow_dispatch:
+    inputs:
+      force:
+        description: Rebuild even when an image already carries this recipe
+        type: boolean
+        default: false
 
 concurrency:
   group: round-ami-build
@@ -70,6 +75,7 @@ jobs:
           any="$(aws ec2 describe-images "${filters[@]}" --query "length(Images)" --output text)"
           if [ "$fresh" != 0 ] && [ "${{ github.event_name }}" = schedule ]; then echo "fresh=1" >> "$GITHUB_OUTPUT"; fi
           if [ "$any" != 0 ] && [ "${{ github.event_name }}" = push ]; then echo "fresh=1" >> "$GITHUB_OUTPUT"; fi
+          if [ "$any" != 0 ] && [ "${{ github.event_name }}" = workflow_dispatch ] && [ "${{ inputs.force }}" != true ]; then echo "fresh=1" >> "$GITHUB_OUTPUT"; fi
           if [ "$any" != 0 ] && [ "$GITHUB_REF" != refs/heads/main ]; then echo "fresh=1" >> "$GITHUB_OUTPUT"; fi
 
       - name: Stage the tree
