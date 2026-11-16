@@ -4,7 +4,7 @@
 
 use std::path::Path;
 
-use spira_store::lc_call::{LcClient, Reply};
+use spira_store::lc_call::{LcClient, LcError, Reply};
 
 /// The configured store client: the declared socket, with the release's `spira-lc` behind it
 /// only for the verbs the CLI answers.
@@ -18,12 +18,20 @@ fn last_line(r: &Reply) -> String {
 }
 
 /// What a read printed, when it exited 0; otherwise `spira-lc <argv>: exit <code> <last line>`.
-pub fn answer(c: &LcClient, argv: &[&str]) -> Result<String, String> {
-    let r = c.call(argv).map_err(|e| format!("spira-lc {}: {e}", argv.join(" ")))?;
+pub fn answer(c: &LcClient, argv: &[&str]) -> Result<String, LcError> {
+    let r = c.call(argv).map_err(|e| renamed(&e, format!("spira-lc {}: {e}", argv.join(" "))))?;
     if r.code != 0 {
-        return Err(format!("spira-lc {}: exit {} {}", argv.join(" "), r.code, last_line(&r)));
+        return Err(LcError::Fault(format!("spira-lc {}: exit {} {}", argv.join(" "), r.code, last_line(&r))));
     }
     Ok(r.out)
+}
+
+/// `e`'s kind with `text` as its message.
+pub fn renamed(e: &LcError, text: String) -> LcError {
+    match e {
+        LcError::Refused(_) => LcError::Refused(text),
+        LcError::Fault(_) => LcError::Fault(text),
+    }
 }
 
 /// Whether `id` has a lifecycle row: `show` answers 0 for a row and 1 for none.
@@ -107,7 +115,7 @@ mod tests {
         assert_eq!(answer(&ok, &["ops-graph"]).unwrap(), "[]");
         assert_eq!(*t.calls.lock().unwrap(), vec![vec!["ops-graph".to_string()]]);
         let (_, no) = scripted::client(2, "cannot tell: down");
-        assert_eq!(answer(&no, &["list", "--live"]).unwrap_err(), "spira-lc list --live: exit 2 cannot tell: down");
+        assert_eq!(answer(&no, &["list", "--live"]).unwrap_err().to_string(), "spira-lc list --live: exit 2 cannot tell: down");
     }
 
     #[test]
