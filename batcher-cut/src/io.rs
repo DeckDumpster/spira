@@ -401,15 +401,136 @@ fn holds_empty(r: &serde_json::Value) -> bool {
 
 type PoolRow = (String, String, u64, bool, Vec<String>);
 
-fn read_pool(env: &Env) -> Result<Vec<PoolRow>, String> {
+/// Why a CERTIFIED bead is not in the pool.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Cause {
+    Held(Vec<String>),
+    EjectedRed,
+    TipMoved { branch_tip: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LeftOut {
+    pub id: String,
+    pub tip: String,
+    pub cause: Cause,
+}
+
+impl LeftOut {
+    fn tag(&self) -> String {
+        match &self.cause {
+            Cause::Held(kinds) => format!("held-{}", kinds.join(",")),
+            Cause::EjectedRed => "ejected-red".into(),
+            Cause::TipMoved { .. } => "tip-moved".into(),
+        }
+    }
+
+    fn line(&self, repo: &str) -> String {
+        let (id, tip) = (&self.id, &self.tip);
+        let (why, exit) = match &self.cause {
+            Cause::Held(kinds) => (
+                format!("it is held {}", kinds.join(",")),
+                format!("spira-lc unhold {id} {} … readmits it", kinds.join("|")),
+            ),
+            Cause::EjectedRed => (
+                format!("its tip {tip} is a recorded ejected-red tip"),
+                format!("a new commit, or queue absolve {id} --evidence-tip {tip} (or an evidence resubmit at it) for a red that was not the tree's fault, readmits it"),
+            ),
+            Cause::TipMoved { branch_tip } => (
+                format!("its certified tip {tip} is no longer the tip of spira/{id}"),
+                format!("its gate certifies spira/{id} at {branch_tip}"),
+            ),
+        };
+        format!("batcher {repo}: {id} left out of the cut: {why} — {exit}")
+    }
+}
+
+fn left_out_dir(run: &Path, repo: &str) -> PathBuf {
+    run.join("batcher-left-out").join(repo)
+}
+
+/// First sight of each (id, cause, tip) yields its line; `note` leaves it on the bead, and the
+/// record is written only once that succeeds, so a failed note is tried again on the next cut.
+fn announce_with(
+    run: &Path,
+    repo: &str,
+    left: &[LeftOut],
+    note: &mut dyn FnMut(&str, &str) -> Result<(), String>,
+) -> Vec<String> {
+    let dir = left_out_dir(run, repo);
+    let mut lines = Vec::new();
+    for l in left {
+        let record = format!("{} {}\n", l.tag(), l.tip);
+        if fs::read_to_string(dir.join(&l.id)).ok().as_deref() == Some(record.as_str()) {
+            continue;
+        }
+        let line = l.line(repo);
+        lines.push(line.clone());
+        match note(&l.id, &line) {
+            Ok(()) => {
+                let _ = fs::create_dir_all(&dir);
+                if let Err(e) = fs::write(dir.join(&l.id), record) {
+                    eprintln!("batcher {repo}: left-out record of {} unwritable ({e}); it will be noted again", l.id);
+                }
+            }
+            Err(e) => eprintln!("batcher {repo}: {} not noted: {e}", l.id),
+        }
+    }
+    if let Ok(entries) = fs::read_dir(&dir) {
+        for e in entries.flatten() {
+            let name = e.file_name().to_string_lossy().to_string();
+            if !left.iter().any(|l| l.id == name) {
+                let _ = fs::remove_file(e.path());
+            }
+        }
+    }
+    lines
+}
+
+fn announce_left_out(env: &Env, repo: &Repo, left: &[LeftOut]) {
+    let lines = announce_with(&env.run, &repo.name, left, &mut |id, text| {
+        bead_note(env, id, text)
+    });
+    for l in lines {
+        eprintln!("{l}");
+    }
+}
+
+fn moved_tips(pool: &[PoolRow], branches: &BTreeMap<String, String>) -> Vec<LeftOut> {
+    pool.iter()
+        .filter(|(id, tip, ..)| !tip_current(tip, id, branches))
+        .map(|(id, tip, ..)| LeftOut {
+            id: id.clone(),
+            tip: tip.clone(),
+            cause: Cause::TipMoved {
+                branch_tip: branches.get(id).cloned().unwrap_or_else(|| "no branch".into()),
+            },
+        })
+        .collect()
+}
+
+fn hold_kinds(r: &serde_json::Value) -> Vec<String> {
+    let arr = match r.get("holds") {
+        Some(serde_json::Value::Array(a)) => a.clone(),
+        Some(serde_json::Value::String(t)) => serde_json::from_str(t).unwrap_or_default(),
+        _ => Vec::new(),
+    };
+    let mut kinds: Vec<String> = arr.iter().filter_map(|k| k.as_str().map(str::to_string)).collect();
+    if kinds.is_empty() {
+        kinds.push("unknown".into());
+    }
+    kinds
+}
+
+fn read_pool(env: &Env) -> Result<(Vec<PoolRow>, Vec<LeftOut>), String> {
     Ok(pool_rows(&lc_rows(env)?))
 }
 
-fn pool_rows(rows: &[serde_json::Value]) -> Vec<PoolRow> {
+fn pool_rows(rows: &[serde_json::Value]) -> (Vec<PoolRow>, Vec<LeftOut>) {
+    let mut left = Vec::new();
     let mut pool: Vec<PoolRow> = rows
         .iter()
         .filter(|r| in_pool_state(r))
-        .filter(|r| holds_empty(r))
         .filter_map(|r| {
             let id = r.get("bead_id")?.as_str()?.to_string();
             let tip = r
@@ -417,7 +538,12 @@ fn pool_rows(rows: &[serde_json::Value]) -> Vec<PoolRow> {
                 .and_then(|t| t.as_str())
                 .unwrap_or("none")
                 .to_string();
+            if !holds_empty(r) {
+                left.push(LeftOut { id, tip, cause: Cause::Held(hold_kinds(r)) });
+                return None;
+            }
             if r.get("ejected_red_tip").and_then(|t| t.as_str()) == Some(tip.as_str()) {
+                left.push(LeftOut { id, tip, cause: Cause::EjectedRed });
                 return None;
             }
             let epoch = [r.get("since"), r.get("updated_at")]
@@ -449,7 +575,7 @@ fn pool_rows(rows: &[serde_json::Value]) -> Vec<PoolRow> {
         .collect();
     pool.sort();
     pool.dedup_by(|a, b| a.0 == b.0);
-    pool
+    (pool, left)
 }
 
 /// Beads that carry their commits into whatever stacks on them yet may not be batched
@@ -587,8 +713,10 @@ fn tip_current(tip: &str, id: &str, branches: &BTreeMap<String, String>) -> bool
 /// record of an incident, an ask, a test bead or work already landed — is a row the machine
 /// must not hold CERTIFIED (drop it there), not one this reader second-guesses from bd.
 pub fn certified_pool(env: &Env, repo: &Repo) -> Result<Vec<Member>, String> {
-    let certified = read_pool(env)?;
+    let (certified, mut left) = read_pool(env)?;
     let branches = repo_branch_tips(repo)?;
+    left.extend(moved_tips(&certified, &branches));
+    announce_left_out(env, repo, &left);
     let mut barred = std::collections::BTreeSet::new();
     barred.extend(
         certified
@@ -4423,7 +4551,7 @@ mod pool_parity_tests {
         let rows = vec![
             serde_json::json!({"bead_id": "sp-s", "state": "SUBMITTED", "tip": "ts", "holds": []}),
         ];
-        assert!(pool_rows(&rows).is_empty());
+        assert!(pool_rows(&rows).0.is_empty());
     }
 
     #[test]
@@ -4431,9 +4559,66 @@ mod pool_parity_tests {
         let rows = vec![
             serde_json::json!({"bead_id": "sp-c", "state": "CERTIFIED", "tip": "tc", "holds": []}),
         ];
-        let pool = pool_rows(&rows);
+        let pool = pool_rows(&rows).0;
         assert_eq!(pool.len(), 1);
         assert_eq!((pool[0].0.as_str(), pool[0].1.as_str()), ("sp-c", "tc"));
+    }
+
+    #[test]
+    fn a_certified_bead_the_pool_leaves_out_is_named_once_per_cause() {
+        let rows = vec![
+            serde_json::json!({"bead_id": "sp-p", "state": "CERTIFIED", "tip": "tp", "holds": []}),
+            serde_json::json!({"bead_id": "sp-h", "state": "CERTIFIED", "tip": "th", "holds": ["manual"]}),
+            serde_json::json!({"bead_id": "sp-e", "state": "CERTIFIED", "tip": "te", "holds": [], "ejected_red_tip": "te"}),
+        ];
+        let (pool, left) = pool_rows(&rows);
+        assert_eq!(pool.iter().map(|p| p.0.as_str()).collect::<Vec<_>>(), ["sp-p"]);
+        let causes: Vec<_> = left.iter().map(|l| (l.id.as_str(), l.cause.clone())).collect();
+        assert_eq!(causes, [("sp-h", Cause::Held(vec!["manual".into()])), ("sp-e", Cause::EjectedRed)]);
+
+        let run = testkit::TempDir::new("batcher-cut-left-out");
+        let noted = std::cell::RefCell::new(Vec::new());
+        let announce = |left: &[LeftOut]| {
+            announce_with(run.path(), "r", left, &mut |id, _| {
+                noted.borrow_mut().push(id.to_string());
+                Ok(())
+            })
+        };
+        assert_eq!(announce(&left).len(), 2);
+        assert!(announce(&left).is_empty(), "an unchanged cause is named once");
+        let mut moved = left.clone();
+        moved[1].tip = "te2".into();
+        assert_eq!(announce(&moved).len(), 1, "a changed tip is named again");
+        moved[0].cause = Cause::TipMoved { branch_tip: "bt".into() };
+        let lines = announce(&moved);
+        assert!(lines.len() == 1 && lines[0].contains("spira/sp-h at bt"), "{lines:?}");
+        assert!(announce(&moved[..1]).is_empty());
+        assert!(!left_out_dir(run.path(), "r").join("sp-e").exists(), "a bead back in the pool loses its record");
+        assert_eq!(announce(&left).len(), 2, "and is named again if it is left out again");
+
+        let failing = announce_with(run.path(), "r", &left[..1].iter().cloned().map(|mut l| { l.id = "sp-n".into(); l }).collect::<Vec<_>>(), &mut |_, _| Err("down".into()));
+        assert_eq!(failing.len(), 1);
+        assert_eq!(
+            announce_with(run.path(), "r", &[LeftOut { id: "sp-n".into(), ..left[0].clone() }], &mut |_, _| Ok(())).len(),
+            1,
+            "a failed note leaves no record, so the line comes back"
+        );
+    }
+
+    #[test]
+    fn a_certified_tip_the_branch_moved_past_is_left_out_naming_the_branch_tip() {
+        let row = |id: &str, tip: &str| (id.to_string(), tip.to_string(), 0, false, vec![]);
+        let branches = BTreeMap::from([("sp-m".to_string(), "new".to_string()), ("sp-s".to_string(), "same".to_string())]);
+        let pool = [row("sp-m", "old"), row("sp-s", "same"), row("sp-x", "gone")];
+        let left = moved_tips(&pool, &branches);
+        let got: Vec<_> = left.iter().map(|l| (l.id.as_str(), l.cause.clone())).collect();
+        assert_eq!(
+            got,
+            [
+                ("sp-m", Cause::TipMoved { branch_tip: "new".into() }),
+                ("sp-x", Cause::TipMoved { branch_tip: "no branch".into() })
+            ]
+        );
     }
 
     #[test]

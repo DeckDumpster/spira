@@ -5001,6 +5001,58 @@ fn a_rework_bead_held_manual_is_retipped_and_admitted_to_a_round() {
     assert!(t.out().contains(&format!("sp-a:{T_FIX}")), "{}", t.out());
 }
 
+fn set_row(t: &T, id: &str, f: impl Fn(&mut crate::model::LcBeadRow)) {
+    t.lc.rows.borrow_mut().as_mut().unwrap().iter_mut().filter(|r| r.bead_id == id).for_each(f);
+}
+
+#[test]
+fn resubmit_at_the_ejected_red_tip_withdraws_the_red_in_one_step() {
+    let t = rework_world(&["manual"]);
+    set_row(&t, "sp-a", |r| r.ejected_red_tip = Some(T_FIX.into()));
+    fs::write(t.qfile("red-tips"), format!("sp-a {T_FIX}\n")).unwrap();
+    let verdicts = t.s().run.join("verdicts");
+    let red = verdicts.join("red");
+    fs::create_dir_all(&red).unwrap();
+    fs::write(red.join("k1"), gate::redcache::render(1, "branch-red", "s", "w", 1, "c", T_FIX, "m\n")).unwrap();
+    assert!(gate::redcache::holds_tip(&verdicts, T_FIX), "positive control");
+    assert!(fs::read_to_string(t.qfile("red-tips")).unwrap().contains(T_FIX), "positive control");
+
+    let tip_arg = format!("--tip={T_FIX}");
+    assert_eq!(
+        t.run(&["resubmit", "sp-a", &tip_arg, "--by=concierge", "--reason=infra red", "--evidence=clean rerun 9/0", &ev_tip()]),
+        0,
+        "{}",
+        t.err()
+    );
+    assert!(t.out().contains(&format!("red at {T_FIX} withdrawn")), "{}", t.out());
+    assert!(!fs::read_to_string(t.qfile("red-tips")).unwrap().contains(T_FIX));
+    assert!(!gate::redcache::holds_tip(&verdicts, T_FIX));
+    assert!(t.lib.has("comment sp-a Red at") && t.lib.calls.borrow().iter().any(|c| c.contains("clean rerun 9/0")), "{:?}", t.lib.calls.borrow());
+
+    set_row(&t, "sp-a", |r| r.state = "CERTIFIED".into());
+    let rc = t.run(&["round", "open", "--members", &format!("sp-a:{T_FIX}")]);
+    assert_eq!(rc, 0, "{}{}", t.out(), t.err());
+    assert!(!format!("{}{}", t.out(), t.err()).contains("ejected-red"), "{}{}", t.out(), t.err());
+}
+
+#[test]
+fn resubmit_says_a_held_bead_is_not_cut_by_the_batcher() {
+    let args = |tip_arg: &str| {
+        ["resubmit", "sp-a", tip_arg, "--by=concierge", "--reason=fix", "--evidence=e 1/0"].map(String::from).into_iter().chain([ev_tip()]).collect::<Vec<_>>()
+    };
+    let tip_arg = format!("--tip={T_FIX}");
+    let held = rework_world(&["manual"]);
+    let a = args(&tip_arg);
+    assert_eq!(held.run(&a.iter().map(String::as_str).collect::<Vec<_>>()), 0, "{}", held.err());
+    assert!(held.out().contains("stays held manual") && held.out().contains("queue round open --members sp-a:"), "{}", held.out());
+    assert!(!held.out().contains("joins the next round"), "{}", held.out());
+
+    let ready = rework_world(&[]);
+    set_row(&ready, "sp-a", |r| r.state = "READY".into());
+    assert_eq!(ready.run(&a.iter().map(String::as_str).collect::<Vec<_>>()), 0, "{}", ready.err());
+    assert!(ready.out().contains("the batcher cuts it once CERTIFIED"), "{}", ready.out());
+}
+
 #[test]
 fn resubmit_moves_the_local_branch_to_the_new_tip() {
     let t = rework_world(&["manual"]);
