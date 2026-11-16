@@ -858,9 +858,9 @@ impl World {
         Ok("forgot".into())
     }
 
-    /// The rows waiting to land: SUBMITTED and IN_DELIVERY.
+    /// The rows waiting to land: SUBMITTED, CERTIFIED and IN_DELIVERY.
     pub fn waiting_rows(&self) -> Result<Value, String> {
-        serde_json::from_str(&self.lc_listed(&["list", "--state", "SUBMITTED,IN_DELIVERY"])?).map_err(|e| e.to_string())
+        serde_json::from_str(&self.lc_listed(&["list", "--state", "SUBMITTED,CERTIFIED,IN_DELIVERY"])?).map_err(|e| e.to_string())
     }
 
     /// The day's landings and rounds for `watch.throughput`: per repo, the beads landed on its
@@ -890,9 +890,7 @@ impl World {
         };
         let Some(rows) = batches.as_array() else { return to_json(&blind("batches: not a list".into())) };
         stamp_landings(&mut landings, rows);
-        for l in &mut landings {
-            l.waiting = waiting.as_array().map_or(0, |rows| rows.iter().filter(|r| r["repo"].as_str() == Some(l.repo.as_str())).count() as u64);
-        }
+        stamp_waiting(&mut landings, waiting.as_array().map(Vec::as_slice).unwrap_or_default());
         let batches = batches.as_array().map(Vec::as_slice).unwrap_or_default();
         let repos = round_counts(batches, p.now, p.abandon_window_s);
         let unlanded = unlanded_rounds(batches, p.now);
@@ -930,7 +928,7 @@ impl World {
                     hourly[(23 - age / 3600) as usize] += 1;
                 }
             }
-            out.push(RepoLanding { repo: row.name, hourly, last_landing: landed.values().copied().max().unwrap_or(0), waiting: 0 });
+            out.push(RepoLanding { repo: row.name, hourly, last_landing: landed.values().copied().max().unwrap_or(0), waiting: 0, oldest: None });
         }
         Ok(out)
     }
@@ -1099,7 +1097,7 @@ mod server_age_tests {
     }
 }
 
-use crate::tasks::e::watch_throughput::{RepoLanding, RepoRounds, Records, Snapshot as ThroughputSnapshot, Unlanded};
+use crate::tasks::e::watch_throughput::{RepoLanding, RepoRounds, Records, Snapshot as ThroughputSnapshot, Unlanded, Waiting};
 
 fn to_json(s: &ThroughputSnapshot) -> Result<String, String> {
     serde_json::to_string(s).map_err(|e| e.to_string())
@@ -1164,6 +1162,16 @@ pub fn stamp_landings(landings: &mut [RepoLanding], batches: &[Value]) {
         if let Some(t) = landed {
             l.last_landing = t;
         }
+    }
+}
+
+/// Each repo's waiting count and its oldest waiting bead. A row with no `since` ages from 0, so
+/// it can only make the repo look older.
+pub fn stamp_waiting(landings: &mut [RepoLanding], rows: &[Value]) {
+    for l in landings {
+        let mine = rows.iter().filter(|r| r["repo"].as_str() == Some(l.repo.as_str()));
+        l.waiting = mine.clone().count() as u64;
+        l.oldest = mine.filter_map(|r| Some(Waiting { bead: r["bead_id"].as_str()?.to_string(), since: r["since"].as_u64().unwrap_or(0) })).min_by_key(|w| w.since);
     }
 }
 

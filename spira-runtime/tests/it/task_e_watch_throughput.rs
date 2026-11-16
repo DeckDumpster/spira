@@ -31,11 +31,12 @@ struct Host {
 fn landed(n: u64) -> Host {
     let mut hourly = vec![n / 24; 24];
     hourly[23] += n % 24;
-    Host { snap: Snapshot { readable: true, landings: vec![RepoLanding { repo: "alpha".into(), hourly, last_landing: 0, waiting: 0 }], ..Default::default() }, last: Last::Ago(60), first_seen: None }
+    Host { snap: Snapshot { readable: true, landings: vec![RepoLanding { repo: "alpha".into(), hourly, last_landing: 0, waiting: 0, oldest: None }], ..Default::default() }, last: Last::Ago(60), first_seen: None }
 }
 
 fn waiting(mut h: Host, n: u64, last: Last) -> Host {
     h.snap.landings[0].waiting = n;
+    h.snap.landings[0].oldest = (n > 0).then(|| Waiting { bead: "sp-x".into(), since: 0 });
     h.last = last;
     h
 }
@@ -56,7 +57,12 @@ fn rig(world: Arc<Mutex<Host>>) -> TaskRig {
             Last::FirstSight => first,
         };
         let mut snap = h.snap.clone();
-        snap.landings.iter_mut().for_each(|l| l.last_landing = at);
+        snap.landings.iter_mut().for_each(|l| {
+            l.last_landing = at;
+            if let Some(o) = &mut l.oldest {
+                o.since = at;
+            }
+        });
         Ok(serde_json::to_string(&snap).unwrap())
     };
     let mut r = TaskRig::new(1, WatchThroughput::new(config()).registration()).unwrap().double(OBSERVE, observe).double(FILE, |_| Ok("filed".into())).double(CLEAR, |_| Ok("cleared".into())).double(INBOX_APPEND, |_| Ok("appended".into()));
@@ -394,7 +400,7 @@ fn the_last_landing_is_when_the_round_landed_not_when_it_was_cut() {
     assert_eq!(landings[0].last_landing, cut + 2_400);
     let now_ms = (cut + 2_400 + 7_000) * 1000;
     let cfg = Config { stall_s: 3_600, abandon_count: 3, abandon_window_s: 7_200, ratio_min_pct: 10, ratio_min_runs: 10, passed_grace_s: 3_600 };
-    let snap = Snapshot { readable: true, landings: vec![RepoLanding { waiting: 2, ..landings[0].clone() }], ..Default::default() };
+    let snap = Snapshot { readable: true, landings: vec![RepoLanding { waiting: 2, oldest: Some(Waiting { bead: "sp-x".into(), since: cut }), ..landings[0].clone() }], ..Default::default() };
     let v = decide(&Carry::default(), &snap, now_ms, &cfg);
     let filed: Filing = serde_json::from_str(&v.acts.iter().find(|a| a.name == FILE).expect("a stall is filed").input).unwrap();
     assert!(filed.line.contains("(7000s ago)"), "{}", filed.line);
@@ -403,7 +409,7 @@ fn the_last_landing_is_when_the_round_landed_not_when_it_was_cut() {
 }
 
 fn stalled_snapshot(now_s: u64) -> Snapshot {
-    Snapshot { readable: true, landings: vec![RepoLanding { repo: "alpha".into(), hourly: vec![0; 24], last_landing: now_s - 10_000, waiting: 3 }], ..Default::default() }
+    Snapshot { readable: true, landings: vec![RepoLanding { repo: "alpha".into(), hourly: vec![0; 24], last_landing: now_s - 10_000, waiting: 3, oldest: Some(Waiting { bead: "sp-x".into(), since: now_s - 10_000 }) }], ..Default::default() }
 }
 
 fn halt(since: u64) -> Option<spira_runtime::watchers::halt::Halt> {
@@ -548,4 +554,51 @@ fn a_readable_tick_after_a_recorded_store_restart_stops_the_next_blind_page_nami
     let blind = Snapshot { why: REFUSAL.into(), store_restart: restart(), ..Default::default() };
     let v = decide(&carry, &blind, NOW_MS + 60_000, &config());
     assert!(v.acts.iter().all(|a| !a.input.contains("restarted")), "{:?}", v.acts);
+}
+
+fn one_waiting(now_s: u64, last_landing_ago: u64, bead: &str, waited: u64) -> Snapshot {
+    let oldest = Some(Waiting { bead: bead.into(), since: now_s - waited });
+    Snapshot { readable: true, landings: vec![RepoLanding { repo: "alpha".into(), hourly: vec![0; 24], last_landing: now_s - last_landing_ago, waiting: 1, oldest }], ..Default::default() }
+}
+
+#[test]
+fn a_bead_that_arrived_a_minute_ago_on_a_repo_idle_for_hours_files_and_pages_nothing() {
+    let now = 3 * DAY_MS;
+    let v = decide(&Carry::default(), &one_waiting(now / 1000, 14 * 3600, "sp-new", 60), now, &config());
+    assert!(!v.acts.iter().any(|a| a.name == FILE || a.name == INBOX_APPEND), "{:?}", v.acts.iter().map(|a| &a.name).collect::<Vec<_>>());
+}
+
+#[test]
+fn a_stall_names_the_oldest_waiting_bead_and_how_long_it_has_waited() {
+    let now = 3 * DAY_MS;
+    let v = decide(&Carry::default(), &one_waiting(now / 1000, 14 * 3600, "sp-old", 700), now, &config());
+    let files: Vec<_> = v.acts.iter().filter(|a| a.name == FILE).collect();
+    assert_eq!(files.len(), 1);
+    let f: Filing = serde_json::from_str(&files[0].input).unwrap();
+    assert!(f.title.contains("sp-old") && f.title.contains("700s"), "{}", f.title);
+    assert!(f.line.contains("sp-old") && f.line.contains("700s") && f.line.starts_with("P0 alpha: landing stalled"), "{}", f.line);
+    assert!(f.body.contains("CERTIFIED"), "{}", f.body);
+}
+
+#[test]
+fn a_long_waiting_bead_with_a_landing_five_minutes_ago_is_silent() {
+    let now = 3 * DAY_MS;
+    let v = decide(&Carry::default(), &one_waiting(now / 1000, 300, "sp-old", 7_200), now, &config());
+    assert!(!v.acts.iter().any(|a| a.name == FILE || a.name == INBOX_APPEND));
+}
+
+#[test]
+fn stamp_waiting_counts_all_three_states_and_picks_the_oldest_with_a_missing_since_as_zero() {
+    use spira_runtime::world::stamp_waiting;
+    let row = |bead: &str, repo: &str, state: &str, since: serde_json::Value| serde_json::json!({ "bead_id": bead, "repo": repo, "state": state, "since": since });
+    let mut landings = vec![RepoLanding { repo: "a".into(), ..Default::default() }, RepoLanding { repo: "b".into(), ..Default::default() }];
+    let rows = [row("sp-1", "a", "SUBMITTED", 900.into()), row("sp-2", "a", "CERTIFIED", 400.into()), row("sp-3", "a", "IN_DELIVERY", 700.into()), row("sp-4", "b", "SUBMITTED", 100.into())];
+    stamp_waiting(&mut landings, &rows);
+    assert_eq!(landings[0].waiting, 3);
+    assert_eq!(landings[0].oldest, Some(Waiting { bead: "sp-2".into(), since: 400 }));
+    assert_eq!((landings[1].waiting, landings[1].oldest.clone()), (1, Some(Waiting { bead: "sp-4".into(), since: 100 })));
+    let rows = [row("sp-1", "a", "SUBMITTED", 900.into()), row("sp-5", "a", "SUBMITTED", serde_json::Value::Null)];
+    stamp_waiting(&mut landings, &rows);
+    assert_eq!(landings[0].oldest, Some(Waiting { bead: "sp-5".into(), since: 0 }));
+    assert_eq!((landings[1].waiting, landings[1].oldest.clone()), (0, None));
 }
