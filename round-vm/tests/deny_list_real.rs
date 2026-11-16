@@ -7,6 +7,10 @@ fn function(name: &str) -> String {
 }
 
 fn tiny_crate() -> (testkit::TempDir, String) {
+    tiny_crate_with("#[cfg(test)]\nmod t {\n#[test] fn keep() {}\n#[test] fn drop() {}\n}\n")
+}
+
+fn tiny_crate_with(lib: &str) -> (testkit::TempDir, String) {
     let cargo_home = std::env::var("CARGO_HOME").unwrap_or_else(|_| format!("{}/.cargo", std::env::var("HOME").unwrap()));
     if !std::path::Path::new(&cargo_home).join("bin/cargo-nextest").exists() {
         panic!("cargo-nextest is required (round-vm/ami-setup.sh installs it) and absent from {cargo_home}/bin");
@@ -15,12 +19,18 @@ fn tiny_crate() -> (testkit::TempDir, String) {
     let dir = tmp.path().to_path_buf();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"tiny\"\nversion = \"0.1.0\"\nedition = \"2021\"\n[features]\nintegration = []\n[profile.unittest]\ninherits = \"dev\"\n").unwrap();
-    std::fs::write(dir.join("src/lib.rs"), "#[cfg(test)]\nmod t {\n#[test] fn keep() {}\n#[test] fn drop() {}\n}\n").unwrap();
+    std::fs::write(dir.join("src/lib.rs"), lib).unwrap();
     std::fs::write(dir.join("rust-toolchain.toml"), include_str!("../../rust-toolchain.toml")).unwrap();
     (tmp, cargo_home)
 }
 
 fn bash_in(dir: &std::path::Path, cargo_home: &str, script: &str, arg: &str) -> String {
+    let (code, err) = bash_in_code(dir, cargo_home, script, arg);
+    assert_eq!(code, Some(0), "{err}");
+    err
+}
+
+fn bash_in_code(dir: &std::path::Path, cargo_home: &str, script: &str, arg: &str) -> (Option<i32>, String) {
     let mut cmd = Command::new("bash");
     cmd.arg("-c").arg(script).arg("bash").arg(arg).current_dir(dir).env_clear().env("HOME", std::env::var("HOME").unwrap()).env("PATH", format!("{cargo_home}/bin:/usr/local/bin:/usr/bin:/bin"));
     for k in ["RUSTUP_TOOLCHAIN", "RUSTUP_HOME"] {
@@ -29,13 +39,17 @@ fn bash_in(dir: &std::path::Path, cargo_home: &str, script: &str, arg: &str) -> 
         }
     }
     let out = cmd.output().unwrap();
-    let err = String::from_utf8_lossy(&out.stderr).to_string();
-    assert_eq!(out.status.code(), Some(0), "{err}");
-    err
+    (out.status.code(), String::from_utf8_lossy(&out.stderr).to_string())
 }
 
 fn run_tiny(list: &str) -> String {
     let (tmp, cargo_home) = tiny_crate();
+    let (code, log) = run_in(&tmp, &cargo_home, list);
+    assert_eq!(code, Some(0), "{log}");
+    log
+}
+
+fn run_in(tmp: &testkit::TempDir, cargo_home: &str, list: &str) -> (Option<i32>, String) {
     let dir = tmp.path().to_path_buf();
     let deny = spira_config::unit_tier::DenyList::parse(list).unwrap();
     let script = format!(
@@ -45,7 +59,7 @@ fn run_tiny(list: &str) -> String {
         function("unit_cargo"),
         function("unit_nextest").replace("$HOME/round-nextest.toml", "$PWD/round-nextest.toml"),
     );
-    bash_in(&dir, &cargo_home, &script, &deny.config_filter_line())
+    bash_in_code(&dir, cargo_home, &script, &deny.config_filter_line())
 }
 
 #[test]
@@ -114,4 +128,49 @@ fn a_disabled_row_excludes_exactly_that_test_from_a_gate_run_and_a_round_run() {
 fn the_digest_the_registry_prints_is_the_one_the_gate_and_the_round_record() {
     assert_eq!(test_registry::digest("abc"), "ba7816bf8f01");
     assert_eq!(&gate::key::sha256_hex(b"abc")[..12], "ba7816bf8f01");
+}
+
+#[test]
+fn a_test_red_once_on_the_round_tree_is_disabled_through_the_rounds_own_path_and_the_next_pass_does_not_run_it() {
+    let flaky = "#[cfg(test)]\nmod t {\n#[test] fn keep() {}\n#[test] fn drop() {\nlet m = std::path::Path::new(env!(\"CARGO_MANIFEST_DIR\")).join(\"drop.mark\");\nif !m.exists() { std::fs::write(&m, \"\").unwrap(); panic!(\"flaked\"); }\n}\n}\n";
+    let (tmp, cargo_home) = tiny_crate_with(flaky);
+    let (code, log) = run_in(&tmp, &cargo_home, "");
+    assert_ne!(code, Some(0), "the first pass is red: {log}");
+    std::fs::write(tmp.path().join("red.log"), &log).unwrap();
+    let script = format!("{}\nnextest_reds red.log | awk '{{ print $1, $3, $2 }}'\n", function("nextest_reds"));
+    let out = Command::new("bash").arg("-c").arg(script).current_dir(tmp.path()).output().unwrap();
+    let failed = batcher::unitattr::failing_lines(&String::from_utf8_lossy(&out.stdout));
+    assert_eq!(failed, ["FAIL tiny t::drop"], "{log}");
+    let (code, log) = run_in(&tmp, &cargo_home, "");
+    assert_eq!(code, Some(0), "the unchanged tree reruns green: {log}");
+
+    let ids = batcher::drive::flip_ids(&failed, None).unwrap();
+    assert_eq!(ids, ["unit:tiny t::drop"]);
+    let reg = testkit::TempDir::new("flip-registry");
+    let path = reg.path().join("registry.sqlite").display().to_string();
+    let results = reg.path().join("results");
+    std::fs::create_dir_all(&results).unwrap();
+    std::fs::write(results.join("deny-list"), resolve(&path, 1000)).unwrap();
+    let rows = batcher_cut::io::disable_flips_with(
+        &mut |_| Ok("sp-flip1".to_string()),
+        &mut |test, bead, reason| {
+            let o = registry(&path, &["disable", "--json", "--test", test, "--bead", bead, "--reason", reason, "--actor", "batcher"], 1000);
+            assert_eq!(o.code, 0, "{}", o.stderr);
+            batcher_cut::io::parse_disabled_row(&o.stdout)
+        },
+        &results,
+        "spira/batcher-attr/tiny-1",
+        &ids,
+    )
+    .unwrap();
+    assert_eq!((rows[0].test.as_str(), rows[0].state.as_str(), rows[0].bead.as_str()), ("unit:tiny t::drop", "disabled", "sp-flip1"));
+    let held = resolve(&path, 1100);
+    assert!(held.contains("disabled\tunit:tiny t::drop\tsp-flip1"), "{held}");
+    let round_list = batcher_cut::vm::DenySnapshot::from_pass(&results).unwrap().text;
+    assert_eq!(round_list.lines().skip(1).collect::<Vec<_>>(), held.lines().skip(1).collect::<Vec<_>>());
+
+    std::fs::remove_file(tmp.path().join("drop.mark")).unwrap();
+    let (code, log) = run_in(&tmp, &cargo_home, &round_list);
+    assert_eq!(code, Some(0), "{log}");
+    assert!(log.contains("t::keep") && !log.contains("t::drop"), "the re-certifying pass does not run the disabled test: {log}");
 }

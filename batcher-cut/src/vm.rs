@@ -288,6 +288,28 @@ impl DenySnapshot {
         [("deny_list", self.label()), ("deny_rows", self.rows().to_string())]
     }
 
+    /// This list with one more row, in the registry's own row shape; the header's count follows.
+    pub fn with_row(&self, state: &str, test: &str, bead: &str, until: i64) -> DenySnapshot {
+        let mut lines = self.text.lines();
+        let header = lines.next().unwrap_or_default();
+        let rows: Vec<&str> = lines.collect();
+        let header = match header.split_whitespace().position(|w| w.starts_with("rows=")) {
+            Some(_) => header
+                .split_whitespace()
+                .map(|w| if w.starts_with("rows=") { format!("rows={}", rows.len() + 1) } else { w.to_string() })
+                .collect::<Vec<_>>()
+                .join(" "),
+            None => header.to_string(),
+        };
+        let mut text = format!("{header}\n");
+        for r in rows {
+            text.push_str(r);
+            text.push('\n');
+        }
+        text.push_str(&format!("{state}\t{test}\t{bead}\t{until}\n"));
+        DenySnapshot { text, at: self.at }
+    }
+
     /// A snapshot an earlier pass of the round wrote at `dir/deny-list`; its instant is the header's `at=`.
     pub fn from_pass(dir: &Path) -> Option<DenySnapshot> {
         let text = fs::read_to_string(dir.join(Self::FILE)).ok()?;
@@ -2173,6 +2195,18 @@ mod deny_snapshot_tests {
         assert_eq!(r.deny_args(), vec![std::ffi::OsString::from("--deny-list"), file.clone().into()]);
         clear_results(&r.results, &["a.sh".to_string()]);
         assert!(file.exists(), "a re-pass keeps the round's list");
+    }
+
+    #[test]
+    fn a_row_added_to_a_snapshot_keeps_the_registry_shape_counts_itself_and_changes_the_digest() {
+        let s = DenySnapshot { text: LIST.into(), at: 2000 };
+        let t = s.with_row("disabled", "unit:tiny t::flip", "sp-y", 9000);
+        assert_eq!(
+            t.text,
+            "# test-registry deny-list at=2000 rows=2\ndisabled\tunit:tiny t::drop\tsp-x\t-\ndisabled\tunit:tiny t::flip\tsp-y\t9000\n"
+        );
+        assert_eq!((t.rows(), t.at), (2, 2000));
+        assert_ne!(t.digest(), s.digest());
     }
 
     #[test]

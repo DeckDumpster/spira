@@ -737,20 +737,26 @@ impl drive::RoundOps for LiveOps<'_> {
             .collect()
     }
 
-    fn delete_flips(&mut self, suites: &[String]) -> Result<(), String> {
-        let mut flips = vec![];
-        for s in suites {
-            let bead = io::file_flip_bead(self.env, self.repo, s, &self.round_branch)
-                .map_err(|e| format!("cannot file the follow-up for flipped {s}: {e}"))?;
+    fn disable_flips(&mut self, tests: &[String]) -> Result<(), String> {
+        let registry = spira_config::release_env::tool("test-registry")?;
+        let (env, repo, branch) = (self.env, self.repo, self.round_branch.clone());
+        let rows = io::disable_flips_with(
+            &mut |id| io::file_flip_bead(env, repo, id, &branch),
+            &mut io::through_registry(&registry, env),
+            Path::new(&self.evidence),
+            &branch,
+            tests,
+        )?;
+        for r in rows {
             println!(
-                "batcher {}: {s} flipped — deleted from the round, follow-up {bead}",
-                self.repo.name
+                "batcher {}: {} flipped — disabled until {}, follow-up {}",
+                repo.name,
+                r.test,
+                io::date_of(r.until),
+                r.bead
             );
-            flips.push((s.clone(), bead));
         }
-        io::commit_flip_deletion(self.env, self.wt, &flips)?;
-        io::recheck_after_deletion(self.wt, &self.start_sha)
-            .map_err(|e| format!("a flip's deletion broke a check: {e}"))
+        Ok(())
     }
 
     fn record(&mut self, iteration: u32, d: &batcher::attrib::Decision) {
@@ -1076,7 +1082,7 @@ fn stabilize_round(
                 attribution_seconds: attribution_secs,
                 regreen_seconds: ops.first_red.map(|f| now().saturating_sub(f)),
                 staged,
-                deny: Some(deny.clone()),
+                deny: Some(vm::DenySnapshot::from_pass(&runner.results).unwrap_or_else(|| deny.clone())),
             }))
         }
         drive::RoundEnd::Blocked(why) => {
@@ -3087,6 +3093,71 @@ mod cut_tests {
         assert!(row.contains(&format!("--field-str deny_list={}", deny.label())) && row.contains("--field-str deny_rows=1"), "{row}");
         append_round(&env, None, &[("repo", "fx".to_string())]);
         assert!(!std::fs::read_to_string(&log).unwrap().lines().nth(1).unwrap().contains("deny_list"));
+    }
+
+    fn flip_fixture(d: &Path) -> (Env, PathBuf, PathBuf, PathBuf) {
+        let env = io::lifecycle_tests_env(d);
+        let results = d.join("results");
+        std::fs::create_dir_all(&results).unwrap();
+        std::fs::write(results.join("deny-list"), "# test-registry deny-list at=77 rows=1\ndisabled\tunit:tiny t::old\tsp-x\t900\n").unwrap();
+        let calls = d.join("registry-calls");
+        let bin = d.join("test-registry");
+        testkit::write_exe(&bin, &format!("#!/bin/sh\necho \"$@\" >> {}\nprintf '{{\"ok\":true,\"row\":{{\"test\":\"%s\",\"state\":\"disabled\",\"bead\":\"%s\",\"until\":5000}}}}' \"$4\" \"$6\"\n", calls.display()));
+        (env, results, bin, calls)
+    }
+
+    #[test]
+    fn a_flip_files_one_bead_per_test_then_writes_one_row_naming_it_as_the_batcher_and_extends_the_deny_list() {
+        let d = testkit::TempDir::new("batcher-cut-flip-rows");
+        let (env, results, bin, calls) = flip_fixture(&d);
+        let wt = d.join("wt");
+        std::fs::create_dir_all(&wt).unwrap();
+        testkit::git(&wt, &["init", "-q", "-b", "main"]);
+        testkit::git(&wt, &["commit", "-q", "--allow-empty", "-m", "base"]);
+        let head = io::head_of(&wt).unwrap();
+        let mut filed = vec![];
+        let mut n = 0;
+        let rows = io::disable_flips_with(
+            &mut |id| {
+                filed.push(id.to_string());
+                n += 1;
+                Ok(format!("sp-new{n}"))
+            },
+            &mut io::through_registry(bin.to_str().unwrap(), &env),
+            &results,
+            "spira/batcher-attr/fx-1",
+            &["unit:tiny t::drop".to_string(), "suite:test-x.sh".to_string()],
+        )
+        .unwrap();
+        assert_eq!(filed, ["unit:tiny t::drop", "suite:test-x.sh"]);
+        let calls = std::fs::read_to_string(&calls).unwrap();
+        let lines: Vec<&str> = calls.lines().collect();
+        assert_eq!(lines.len(), 2, "{calls}");
+        assert!(lines[0].starts_with("disable --json --test unit:tiny t::drop --bead sp-new1 --reason unit:tiny t::drop flipped in spira/batcher-attr/fx-1 ("), "{}", lines[0]);
+        assert!(lines[0].ends_with("--actor batcher") && !lines[0].contains("--until"), "{}", lines[0]);
+        assert!(lines[1].contains("--bead sp-new2"), "{}", lines[1]);
+        assert_eq!(rows.iter().map(|r| r.bead.as_str()).collect::<Vec<_>>(), ["sp-new1", "sp-new2"]);
+        let list = vm::DenySnapshot::from_pass(&results).unwrap();
+        assert_eq!(
+            list.text,
+            "# test-registry deny-list at=77 rows=3\ndisabled\tunit:tiny t::old\tsp-x\t900\ndisabled\tunit:tiny t::drop\tsp-new1\t5000\ndisabled\tsuite:test-x.sh\tsp-new2\t5000\n"
+        );
+        assert_eq!(io::head_of(&wt).unwrap(), head, "no commit is made in the round tree");
+    }
+
+    #[test]
+    fn a_flip_whose_bead_cannot_be_filed_writes_no_row_and_one_whose_row_is_refused_leaves_the_list_alone() {
+        let d = testkit::TempDir::new("batcher-cut-flip-fail");
+        let (env, results, bin, calls) = flip_fixture(&d);
+        let before = std::fs::read_to_string(results.join("deny-list")).unwrap();
+        let ids = ["unit:tiny t::drop".to_string()];
+        let err = io::disable_flips_with(&mut |_| Err("bead store down".into()), &mut io::through_registry(bin.to_str().unwrap(), &env), &results, "b", &ids).unwrap_err();
+        assert!(err.contains("bead store down") && err.contains("unit:tiny t::drop"), "{err}");
+        assert!(!calls.exists());
+        testkit::write_exe(d.join("refuse"), "#!/bin/sh\necho locked\nexit 3\n");
+        let err = io::disable_flips_with(&mut |_| Ok("sp-n".into()), &mut io::through_registry(d.join("refuse").to_str().unwrap(), &env), &results, "b", &ids).unwrap_err();
+        assert!(err.contains("locked") && err.contains("sp-n"), "{err}");
+        assert_eq!(std::fs::read_to_string(results.join("deny-list")).unwrap(), before);
     }
 
     #[test]
