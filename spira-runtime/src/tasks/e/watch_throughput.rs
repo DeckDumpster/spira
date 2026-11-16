@@ -1,7 +1,8 @@
 //! # watch.throughput — the landing stall
 //!
-//! Every minute, per registered repo: no landing for `SPIRA_THROUGHPUT_STALL_SECS` while
-//! beads sit SUBMITTED or IN_DELIVERY there is a stall. A stall files one express P0 incident
+//! Every minute, per registered repo: a bead SUBMITTED, CERTIFIED or IN_DELIVERY there that has
+//! waited `SPIRA_THROUGHPUT_STALL_SECS` with nothing landing (counted from the later of its entering
+//! that state and the last landing) is a stall, named by its oldest bead. A stall files one express P0 incident
 //! (hourly landings, the repo's rounds, the last landing) for the ops lane to root-cause and
 //! repair, and appends one inbox line once the filing succeeded. The episode is cleared by the
 //! next landing; a stall older than the 24 h landing window is one episode. A low trailing-day rate alone triggers nothing, and nothing here halts the world.
@@ -99,8 +100,22 @@ pub struct RepoLanding {
     pub hourly: Vec<u64>,
     /// Epoch seconds of the last landing inside the day; 0 when the day holds none.
     pub last_landing: u64,
-    /// Beads SUBMITTED or IN_DELIVERY for this repo.
+    /// Beads SUBMITTED, CERTIFIED or IN_DELIVERY for this repo.
     pub waiting: u64,
+    /// The waiting bead that entered its state first.
+    #[serde(default)]
+    pub oldest: Option<Waiting>,
+}
+
+/// A bead waiting to land, and the epoch second it entered its current state.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Waiting {
+    pub bead: String,
+    pub since: u64,
+}
+
+fn waited_s(l: &RepoLanding, now_ms: u64) -> Option<u64> {
+    l.oldest.as_ref().map(|o| (now_ms / 1000).saturating_sub(o.since.max(l.last_landing)))
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -177,14 +192,15 @@ fn stall_filing(l: &RepoLanding, rounds: Option<&RepoRounds>, now_ms: u64, cfg: 
     let hourly: Vec<String> = l.hourly.iter().map(u64::to_string).collect();
     let since = if l.last_landing == 0 { "no landing in the last 24h".to_string() } else { format!("last landing {} ({}s ago)", crate::watchers::iso8601(l.last_landing), (now_ms / 1000).saturating_sub(l.last_landing)) };
     let rounds = rounds.map_or("none".to_string(), |r| format!("cut {} abandoned {} landed {}", r.cut, r.abandoned, r.landed));
-    let title = format!("landing stalled on {}: {} beads waiting, no landing for {}s", l.repo, l.waiting, cfg.stall_s);
-    let body = format!("## Problem\nNo bead has landed on {} for at least {}s while {} sit SUBMITTED or IN_DELIVERY there.\n\n## Evidence\n- {since}\n- landings per hour over 24h, oldest first: {}\n- rounds over 24h: {rounds}\n\n## Ask\nRoot-cause why landing stopped and repair it. Nothing was halted.\n", l.repo, cfg.stall_s, l.waiting, hourly.join(" "));
-    let line = format!("P0 {}: landing stalled — {} beads waiting, {since}; incident filed for the ops lane", l.repo, l.waiting);
+    let oldest = l.oldest.as_ref().map_or(String::new(), |o| format!("oldest {} waiting {}s", o.bead, waited_s(l, now_ms).unwrap_or(0)));
+    let title = format!("landing stalled on {}: {} beads waiting, {oldest}", l.repo, l.waiting);
+    let body = format!("## Problem\nNo bead has landed on {} for at least {}s while {} sit SUBMITTED, CERTIFIED or IN_DELIVERY there.\n\n## Evidence\n- {oldest}\n- {since}\n- landings per hour over 24h, oldest first: {}\n- rounds over 24h: {rounds}\n\n## Ask\nRoot-cause why landing stopped and repair it. Nothing was halted.\n", l.repo, cfg.stall_s, l.waiting, hourly.join(" "));
+    let line = format!("P0 {}: landing stalled — {} beads waiting, {oldest}, {since}; incident filed for the ops lane", l.repo, l.waiting);
     Filing { repo: l.repo.clone(), last_landing: l.last_landing, title, body, line }
 }
 
 fn is_stalled(l: &RepoLanding, now_ms: u64, cfg: &Config) -> bool {
-    l.waiting > 0 && (now_ms / 1000).saturating_sub(l.last_landing) >= cfg.stall_s
+    waited_s(l, now_ms).is_some_and(|w| w >= cfg.stall_s)
 }
 
 fn past_halt(carry: &Carry, now_ms: u64, bound_s: u64) -> bool {

@@ -104,3 +104,33 @@ fn the_throughput_and_transitions_snapshots_carry_the_halt_even_when_unreadable(
     let x: spira_runtime::tasks::e::watch_transitions::Snapshot = serde_json::from_str(&w.transitions_snapshot(&input).unwrap()).unwrap();
     assert_eq!(x.halt.map(|h| h.why), Some("operator order: freeze".to_string()));
 }
+
+#[test]
+fn the_throughput_snapshot_names_the_oldest_waiting_bead_certified_ones_included() {
+    let dir = testkit::TempDir::new("world-throughput-oldest");
+    let repo = dir.path().join("alpha");
+    std::fs::create_dir_all(&repo).unwrap();
+    for args in [&["init", "-q", "-b", "main"][..], &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "base"]] {
+        assert!(std::process::Command::new("git").current_dir(&repo).args(args).status().unwrap().success());
+    }
+    let toml = spira_config::process::fixture_toml(&dir, &[("SPIRA_ID_PREFIX", "a")]);
+    let _env = testkit::env(&[("SPIRA_TOML", toml.to_str())]);
+    let sock = dir.path().join("lc.sock");
+    let listener = UnixListener::bind(&sock).unwrap();
+    std::thread::spawn(move || {
+        runtime::socket::answer(&listener, &|argv| match argv.iter().map(String::as_str).collect::<Vec<_>>()[..] {
+            ["list", "--state", "SUBMITTED,CERTIFIED,IN_DELIVERY"] => Ok(r#"[{"bead_id":"a-new","repo":"alpha","state":"SUBMITTED","since":1699999000},{"bead_id":"a-old","repo":"alpha","state":"CERTIFIED","since":1699990000}]"#.into()),
+            ["list", "--batches", "--window", "86400"] => Ok("[]".into()),
+            _ => Err(RuntimeError::new("the double has no such verb")),
+        })
+    });
+    let map = dir.path().join("repos");
+    std::fs::write(&map, format!("alpha|{}|queue.local|main\n", repo.display())).unwrap();
+    let w = World { lc_socket: sock, queue_dir: dir.path().join("queue"), repo_map: map, run_dir: dir.path().join("run"), home_repo: "alpha".into(), ..World::default() };
+    let t: spira_runtime::tasks::e::watch_throughput::Snapshot = serde_json::from_str(&w.throughput_snapshot(r#"{"now":1700000000,"abandon_window_s":3600}"#).unwrap()).unwrap();
+    assert!(t.readable, "{}", t.why);
+    let a = &t.landings[0];
+    assert_eq!(a.waiting, 2);
+    let oldest = a.oldest.as_ref().expect("the snapshot stamps the oldest waiting bead");
+    assert_eq!((oldest.bead.as_str(), oldest.since), ("a-old", 1699990000));
+}
