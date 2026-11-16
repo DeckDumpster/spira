@@ -1457,6 +1457,54 @@ mod tests {
         assert_eq!(listed_row(&world, "sp-new")["claim"], serde_json::json!({"blocks": [], "parent": "sp-e", "labels": ["incident"]}));
     }
 
+    /// The served path's machine: the primitives only, refusing a composed verb as `Local` does.
+    /// `stale` names records whose `list` row still reads `claim: null`, as when another writer's
+    /// claim lands between the sweep's list and its write.
+    struct Primitives<'w> {
+        world: &'w World,
+        stale: &'w [&'w str],
+    }
+
+    impl crate::callers::Machine for Primitives<'_> {
+        fn call(&mut self, args: &[String]) -> (i32, String) {
+            if args.first().is_some_and(|v| crate::composed::is_served(v)) {
+                return (2, "usage: spira-lc show <bead-id> | show-batch ...".to_string());
+            }
+            let mut w = self.world;
+            let (code, out) = w.call(args);
+            if args.first().map(String::as_str) != Some("list") || self.stale.is_empty() {
+                return (code, out);
+            }
+            let mut rows: Vec<serde_json::Value> = serde_json::from_str(&out).unwrap();
+            rows.iter_mut().filter(|r| self.stale.contains(&r["bead_id"].as_str().unwrap_or(""))).for_each(|r| r["claim"] = serde_json::Value::Null);
+            (code, serde_json::Value::Array(rows).to_string())
+        }
+    }
+
+    #[test]
+    fn a_served_backfill_sets_a_null_claim_and_keeps_a_written_one() {
+        let w = World::new();
+        w.file("sp-new", "task", Some("sp-e"), &["incident"]);
+        w.ok(&["create-bead", "sp-new", "--ready"]);
+        w.file("sp-set", "task", None, &["other"]);
+        w.ok(&["create-bead", "sp-set", "--ready"]);
+        w.ok(&["set-claim-inputs", "sp-set", "--block", "sp-b"]);
+        let req = super::Request {
+            argv: ["backfill-claim-inputs", "--apply", "sp-new", "sp-set"].iter().map(|a| a.to_string()).collect(),
+            stdin: None,
+            caller: Default::default(),
+            min_rev: None,
+            task: None,
+        };
+        let ans = super::answer(req, &mut Primitives { world: &w, stale: &["sp-set"] }, &mut &w, &Content::default(), &|| Err("no run dir here".to_string()));
+        assert_eq!(ans.code, 0, "{}{}", ans.stdout, ans.stderr);
+        assert!(ans.stdout.contains("1 set, 1 kept, 0 failed"), "{}", ans.stdout);
+        let rows: Vec<serde_json::Value> = serde_json::from_str(&w.ok(&["list", "--live"])).unwrap();
+        let claim = |id: &str| rows.iter().find(|r| r["bead_id"] == id).unwrap()["claim"].clone();
+        assert_eq!(claim("sp-new"), serde_json::json!({"blocks": [], "parent": "sp-e", "labels": ["incident"]}));
+        assert_eq!(claim("sp-set"), serde_json::json!({"blocks": ["sp-b"], "parent": null, "labels": []}));
+    }
+
     #[test]
     fn syncing_an_id_with_no_record_names_it_and_makes_none() {
         let world = std::sync::Arc::new(InProcess(std::sync::Mutex::new(World::new())));
