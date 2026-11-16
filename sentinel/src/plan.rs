@@ -294,7 +294,7 @@ impl Planner<'_> {
         if let Some(max_live) = self.w.max_live_dwarves {
             let live_all = self.live_total();
             if live_all >= max_live {
-                let spill = rune.lane && self.w.lanes_max_live.is_some_and(|m| live_all < max_live + m && self.lanes_live() < m);
+                let spill = rune.lane && self.w.lanes_max_live.is_some_and(|m| live_all < max_live + m && (!rune.single_flight || self.lanes_live() < m));
                 if !spill {
                     self.log(format!("CHECK7 {f}: {live_all}/{max_live} dwarf(s) live across the whole fleet — not calling"));
                     return false;
@@ -309,7 +309,7 @@ impl Planner<'_> {
                 }
             }
             if rune.lane {
-                if let Some(lanes_max) = self.w.lanes_max_live {
+                if let Some(lanes_max) = self.w.lanes_max_live.filter(|_| rune.single_flight) {
                     let live_lanes = self.lanes_live();
                     if live_lanes >= lanes_max {
                         self.log(format!("CHECK7 {f}: {live_lanes}/{lanes_max} lane slot(s) in use — not calling"));
@@ -519,6 +519,18 @@ mod tests {
     }
 
     #[test]
+    fn a_lane_persona_that_is_not_single_flight_is_not_held_to_the_lane_cap() {
+        let mut w = world();
+        w.task.clear();
+        w.lanes = vec![Rune { lane: true, live: 1, ..rune("other", 0) }, Rune { lane: true, ..rune("skuld", 1) }, Rune { lane: true, ..rune("mender", 1) }];
+        w.lanes_max_live = Some(1);
+        assert_eq!(called(&plan(&w)), ["skuld", "mender"]);
+        w.lanes[1].single_flight = true;
+        w.lanes[2].single_flight = true;
+        assert!(called(&plan(&w)).is_empty(), "single-flight lane personas still draw from the lane cap");
+    }
+
+    #[test]
     fn throttled_with_an_express_bead_grants_exactly_one_restricted_slot() {
         let w = CallWorld { throttled: true, express_ready: true, max_live_dwarves: Some(5), task: vec![rune("builder", 5)], ..world() };
         let p = plan(&w);
@@ -545,7 +557,7 @@ mod tests {
     fn the_lane_that_won_last_draws_last() {
         let mut w = world();
         w.task.clear();
-        w.lanes = vec![Rune { lane: true, ..rune("a", 1) }, Rune { lane: true, ..rune("b", 1) }];
+        w.lanes = vec![Rune { lane: true, single_flight: true, ..rune("a", 1) }, Rune { lane: true, single_flight: true, ..rune("b", 1) }];
         w.lanes_max_live = Some(1);
         w.lane_last = "a".into();
         let p = plan(&w);
