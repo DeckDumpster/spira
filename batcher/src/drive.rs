@@ -1099,7 +1099,7 @@ fn confirmed_attribution<R: RoundRunner, O: RoundOps>(
                     base_red.push(suite.clone());
                     said.push(format!("{suite}: {w}"));
                 }
-                Alone::Cleared(w) => said.push(format!("{suite}: {w}")),
+                Alone::Cleared(w) | Alone::Flipped(w) => said.push(format!("{suite}: {w}")),
             }
         }
         if !found.is_empty() || !base_red.is_empty() {
