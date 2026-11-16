@@ -333,6 +333,10 @@ struct Inner {
     events_drained: AtomicBool,
     /// Wall ms before which the main file's oldest event is within the retention window.
     events_due: AtomicU64,
+    /// Where an unfinished scan for the first stamped event resumes; the next commit continues it.
+    events_scan_from: Mutex<Option<Vec<u8>>>,
+    /// Rows the event drain has read since [`SqliteBackend::take_drain_rows`].
+    drain_rows: AtomicU64,
     /// The VM steps every range statement has taken since [`SqliteBackend::take_read_steps`].
     read_steps: AtomicU64,
     /// Held for the life of the handle: the exclusive opener. Last, so it outlives the
@@ -586,21 +590,40 @@ fn event_page(tx: &rusqlite::Transaction<'_>, lo: &[u8], hi: Option<&[u8]>, limi
     rows.collect::<std::result::Result<Vec<_>, _>>().map_err(db)
 }
 
-/// The `at` of the first stamped event after `key`, paging through unstamped ones.
-fn first_stamped_after(tx: &rusqlite::Transaction<'_>, key: &[u8], hi: Option<&[u8]>) -> Result<Option<u64>> {
-    let mut cursor = key.to_vec();
-    cursor.push(0);
+enum Scan {
+    Found(u64),
+    NoneLeft,
+    /// The budget ran out; resume from this key.
+    Spent(Vec<u8>),
+}
+
+/// The `at` of the first stamped event from `cursor`, paging through unstamped ones, examining at
+/// most `budget` rows.
+fn first_stamped_from(
+    tx: &rusqlite::Transaction<'_>,
+    mut cursor: Vec<u8>,
+    hi: Option<&[u8]>,
+    budget: usize,
+    rows: &AtomicU64,
+) -> Result<Scan> {
+    let mut left = budget;
     loop {
-        let page = event_page(tx, &cursor, hi, 2_000)?;
+        if left == 0 {
+            return Ok(Scan::Spent(cursor));
+        }
+        let take = left.min(2_000);
+        let page = event_page(tx, &cursor, hi, take)?;
+        rows.fetch_add(page.len() as u64, Ordering::Relaxed);
+        left -= page.len();
         if let Some(at) = page.iter().find_map(|(_, v)| recorded_at(v)) {
-            return Ok(Some(at));
+            return Ok(Scan::Found(at));
         }
         match page.last() {
-            Some((k, _)) if page.len() == 2_000 => {
+            Some((k, _)) if page.len() == take => {
                 cursor = k.clone();
                 cursor.push(0);
             }
-            _ => return Ok(None),
+            _ => return Ok(Scan::NoneLeft),
         }
     }
 }
@@ -888,6 +911,8 @@ impl SqliteBackend {
             drained: AtomicBool::new(false),
             events_drained: AtomicBool::new(false),
             events_due: AtomicU64::new(0),
+            events_scan_from: Mutex::new(None),
+            drain_rows: AtomicU64::new(0),
             read_steps: AtomicU64::new(0),
             _lock: OpenerLock(lock_file),
         })))
@@ -918,10 +943,10 @@ impl SqliteBackend {
     /// Deletes up to [`DRAIN_PER_COMMIT`] receipts from the main file once all of them are a
     /// day old: a key-range delete that writes no log entry and does not move the head. A
     /// failure is retried by the next commit.
-    fn drain_receipts(&self, w: &mut Writer, now: u64) {
+    fn drain_receipts(&self, w: &mut Writer, now: u64) -> bool {
         let due = self.0.receipts_from_at.saturating_add(state_store::REQUEST_TTL_SECS * 1_000);
         if !self.0.day_receipts || now < due || self.0.drained.load(Ordering::SeqCst) {
-            return;
+            return false;
         }
         let lo = state_store::REQUESTS_PREFIX.as_bytes();
         let hi = successor(lo);
@@ -945,14 +970,15 @@ impl SqliteBackend {
         if drained == Ok(true) {
             self.0.drained.store(true, Ordering::SeqCst);
         }
+        true
     }
 
     /// Deletes up to [`DRAIN_PER_COMMIT`] events from the main file, oldest first, while they are
     /// older than the retention window: no log entry, the head unmoved. A failure is retried by
     /// the next commit.
-    fn drain_events(&self, w: &mut Writer, now: u64) {
+    fn drain_events(&self, w: &mut Writer, now: u64) -> bool {
         if !self.0.day_receipts || self.0.events_drained.load(Ordering::SeqCst) || now < self.0.events_due.load(Ordering::SeqCst) {
-            return;
+            return false;
         }
         let cutoff = now.saturating_sub(state_store::gc::EVENT_WINDOW_MS);
         let lo = EVENTS.prefix.as_bytes();
@@ -960,14 +986,30 @@ impl SqliteBackend {
         let outcome = (|| {
             let tx = w.conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(db)?;
             let page = event_page(&tx, lo, hi.as_deref(), DRAIN_PER_COMMIT)?;
+            self.0.drain_rows.fetch_add(page.len() as u64, Ordering::Relaxed);
             if page.is_empty() {
                 return Ok::<Drain, Error>(Drain::Empty);
             }
             let unstamped_age = match page.iter().find_map(|(_, v)| recorded_at(v)) {
                 Some(at) => Some(at),
                 None if page.len() < DRAIN_PER_COMMIT => None,
-                None => first_stamped_after(&tx, &page[page.len() - 1].0, hi.as_deref())?,
+                None => {
+                    let resume = lock(&self.0.events_scan_from).clone().unwrap_or_else(|| {
+                        let mut c = page[page.len() - 1].0.clone();
+                        c.push(0);
+                        c
+                    });
+                    match first_stamped_from(&tx, resume, hi.as_deref(), DRAIN_PER_COMMIT, &self.0.drain_rows)? {
+                        Scan::Found(at) => Some(at),
+                        Scan::NoneLeft => None,
+                        Scan::Spent(cursor) => {
+                            *lock(&self.0.events_scan_from) = Some(cursor);
+                            return Ok(Drain::More);
+                        }
+                    }
+                }
             };
+            *lock(&self.0.events_scan_from) = None;
             let mut last = None;
             let mut blocked_at = None;
             for (k, v) in &page {
@@ -996,6 +1038,7 @@ impl SqliteBackend {
             Ok(Drain::Waiting(due)) => self.0.events_due.store(due.max(now.saturating_add(1)), Ordering::SeqCst),
             Ok(Drain::More) | Err(_) => {}
         }
+        true
     }
 
     /// The writer connection's `synchronous` setting: 1 is NORMAL, 2 is FULL.
@@ -1003,6 +1046,11 @@ impl SqliteBackend {
     /// many rows a list read, for a test that holds a page to O(page).
     pub fn take_read_steps(&self) -> u64 {
         self.0.read_steps.swap(0, Ordering::Relaxed)
+    }
+
+    /// The rows the event drain has read since the last call, and resets the count.
+    pub fn take_drain_rows(&self) -> u64 {
+        self.0.drain_rows.swap(0, Ordering::Relaxed)
     }
 
     /// How many schema migrations this store has applied (`PRAGMA user_version`).
@@ -1736,15 +1784,21 @@ impl Backend for SqliteBackend {
         }
         committing.confirm();
         self.0.head.store(main, Ordering::SeqCst);
+        let draining = state_store::phases::begin_unconfirmed(state_store::phases::Phase::Drain);
+        let mut drained = false;
         for (fam, keys) in unfiled.iter().enumerate() {
             if !keys.is_empty() {
+                drained = true;
                 for f in &files[fam] {
                     let _ = f.delete_keys(keys);
                 }
             }
         }
-        self.drain_receipts(&mut w, now);
-        self.drain_events(&mut w, now);
+        drained |= self.drain_receipts(&mut w, now);
+        drained |= self.drain_events(&mut w, now);
+        if drained {
+            draining.confirm();
+        }
         Ok(main)
     }
 

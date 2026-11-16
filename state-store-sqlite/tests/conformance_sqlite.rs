@@ -9,7 +9,7 @@ use runtime::ports::VirtualClock;
 use serde_json::json;
 use state_store::conformance::{self as suite, Rig, SCENARIOS};
 use state_store::{Backend, Contract, Error, Object, Request, Rev, Txn, Write};
-use state_store_sqlite::{Options, SqliteBackend};
+use state_store_sqlite::{Options, SqliteBackend, DRAIN_PER_COMMIT};
 use testkit::TempDir;
 
 struct Sqlite {
@@ -828,7 +828,8 @@ fn a_retired_events_file_waits_for_the_range_in_flight_and_then_leaves_nothing_b
 }
 
 fn seed_events(path: &Path, rows: &[(u64, Option<u64>)]) {
-    let conn = rusqlite::Connection::open(path).unwrap();
+    let mut conn = rusqlite::Connection::open(path).unwrap();
+    let conn = conn.transaction().unwrap();
     for (i, at) in rows {
         let value = match at {
             Some(at) => format!("{{\"data\":{{\"at\":{at}}}}}"),
@@ -844,6 +845,13 @@ fn seed_events(path: &Path, rows: &[(u64, Option<u64>)]) {
             .unwrap();
         }
     }
+    conn.commit().unwrap();
+}
+
+fn many_unstamped_then_one_stamped() -> Vec<(u64, Option<u64>)> {
+    let mut rows: Vec<(u64, Option<u64>)> = (1..=20_000).map(|i| (i, None)).collect();
+    rows.push((20_001, Some(D0 + 29 * DAY_MS)));
+    rows
 }
 
 fn events_left(path: &Path) -> i64 {
@@ -894,6 +902,27 @@ fn unstamped_main_file_events_are_as_old_as_the_first_stamped_one_after_them() {
     let (path, b) = seeded_store(&dir, &wall, &rows);
     live_commit(&b, 1);
     assert_eq!(events_left(&path), 2, "nothing older than the window is stamped");
+}
+
+#[test]
+fn a_restart_over_many_unstamped_main_file_events_drains_a_bounded_page_a_commit() {
+    let dir = TempDir::new("sqlite-event-unstamped-bounded");
+    let wall = VirtualClock::new(D0 + 30 * DAY_MS);
+    let (path, b) = seeded_store(&dir, &wall, &many_unstamped_then_one_stamped());
+    let bound = (2 * DRAIN_PER_COMMIT) as u64;
+    b.take_drain_rows();
+    let mut commits = 0;
+    loop {
+        live_commit(&b, commits);
+        commits += 1;
+        let rows = b.take_drain_rows();
+        assert!(rows <= bound, "commit {commits} examined {rows} rows");
+        if rows == 0 || commits > 20_000 / DRAIN_PER_COMMIT as u64 + 2 {
+            break;
+        }
+    }
+    assert!(commits <= 20_000 / DRAIN_PER_COMMIT as u64 + 2, "the scan did not resolve in {commits} commits");
+    assert_eq!(events_left(&path), 20_001, "nothing in the window is older");
 }
 
 #[test]
@@ -1334,13 +1363,17 @@ fn the_first_commit_after_a_restart_applies_to_the_copy_without_catch_up_or_relo
     let dir = TempDir::new("sqlite-restart-first-commit");
     let path = dir.path().join("s.db");
     let clock = VirtualClock::new(1_000);
+    let wall = VirtualClock::new(D0 + 30 * DAY_MS);
     {
-        let c = contract(open(&path), &clock);
+        let c = contract(open_day(&path, &wall), &clock);
         for i in 0..5 {
             put(&c, &format!("t/k{i}"), json!(i), &format!("seed-{i}"));
         }
     }
-    let modeled = Modeled::open(open(&path), &["events/", "requests/", "history/"], 1_024).unwrap();
+    seed_events(&path, &many_unstamped_then_one_stamped());
+    let store = open_day(&path, &wall);
+    let modeled = Modeled::open(store.clone(), &["events/", "requests/", "history/"], 1_024).unwrap();
+    store.take_drain_rows();
     let c = suite::open(modeled, &clock);
     let rec = Arc::new(Recorder::default());
     phases::track(rec.clone());
@@ -1351,5 +1384,8 @@ fn the_first_commit_after_a_restart_applies_to_the_copy_without_catch_up_or_relo
     let names: Vec<_> = rec.snapshot().phases.iter().map(|p| p.0).collect();
     assert!(!names.contains(&"catch_up") && !names.contains(&"reload"), "phases {names:?}");
     assert!(names.contains(&"apply"), "phases {names:?}");
+    assert!(names.contains(&"drain"), "phases {names:?}");
+    let rows = store.take_drain_rows();
+    assert!(rows <= (2 * DRAIN_PER_COMMIT) as u64, "the first commit examined {rows} rows");
     assert_eq!(c.backend().revision(), rev, "the copy holds the commit's revision");
 }
