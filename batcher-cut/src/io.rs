@@ -4508,7 +4508,7 @@ mod pool_parity_tests {
 
         let run = testkit::TempDir::new("batcher-cut-left-out");
         let noted = std::cell::RefCell::new(Vec::new());
-        let mut announce = |left: &[LeftOut]| {
+        let announce = |left: &[LeftOut]| {
             announce_with(run.path(), "r", left, &mut |id, _| {
                 noted.borrow_mut().push(id.to_string());
                 Ok(())
