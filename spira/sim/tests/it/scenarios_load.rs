@@ -31,6 +31,10 @@ fn shipped() -> Vec<(String, Scenario)> {
         .filter_map(|p| {
             let name = p.file_stem().and_then(|s| s.to_str()).unwrap_or_default().to_string();
             let text = std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("{}: {e}", p.display()));
+            if spira_sim::callworld::is_calls(&text) {
+                spira_sim::callworld::parse(&text).unwrap_or_else(|e| panic!("{name}: {e}"));
+                return None;
+            }
             if loopworld::is_loop(&text) {
                 loopworld::parse(&text).unwrap_or_else(|e| panic!("{name}: {e}"));
                 return None;

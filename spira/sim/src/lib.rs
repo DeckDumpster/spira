@@ -11,6 +11,7 @@ pub mod proctrace;
 pub mod roundvm;
 pub mod runstate;
 pub mod call;
+pub mod callworld;
 pub mod control_stub;
 pub mod trace;
 pub mod verbs;
