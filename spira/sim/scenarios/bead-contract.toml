@@ -130,7 +130,7 @@ name = "append_keeps_old_text_and_dates_it"
 sql = "SELECT 1 FROM bead_state b JOIN events e ON e.seq = b.seq WHERE e.actor = 'amend_append' AND e.exit = 0 AND b.title = 'amend target b' AND b.body LIKE '%ORIGINAL-B%' AND b.body LIKE '%NEW-BODY%' AND b.body LIKE '%--- appended 20%'"
 
 [[expect]]
-name = "drop_records_its_reason"
+name = "drop_leaves_the_row_dropped_as_unwanted"
 sql = "SELECT 1 FROM bead_state b JOIN events e ON e.seq = b.seq WHERE e.actor = 'drop' AND e.exit = 0 AND b.title = 'blocked work' AND b.lc_reason = 'unwanted' AND b.lc_state = 'DROPPED'"
 
 [[step]]
