@@ -426,7 +426,6 @@ unit_test_deadline_secs = 60
 test_deny_list = ""
 unit_test_deadline_periods = 2
 mender_label = "mender-failure"
-mender_max = 5
 max_live_dwarves = 6
 memories_cache = "/fixture/userhome/spira/run/memories-cache.json"
 metrics_data = ""
