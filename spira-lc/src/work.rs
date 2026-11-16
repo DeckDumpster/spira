@@ -1380,11 +1380,7 @@ fn in_pilgrim_world() -> bool {
 }
 
 /// May `actor` run `op`? `Err` is the refusal to answer with.
-pub fn permitted(op: &str, actor: Option<&str>) -> Result<(), (i32, String)> {
-    permitted_in(op, actor, false)
-}
-
-pub fn permitted_in(op: &str, actor: Option<&str>, pilgrim_world: bool) -> Result<(), (i32, String)> {
+pub fn permitted(op: &str, actor: Option<&str>, pilgrim_world: bool) -> Result<(), (i32, String)> {
     if pilgrim_world && actor == Some("pilgrim") && PILGRIM_WORLD_ALLOW.contains(&op) {
         return Ok(());
     }
@@ -1418,7 +1414,7 @@ fn gate_in(verb: &str, rest: &[String], pilgrim_world: impl Fn() -> bool) -> Res
     }
     let op = op_key(verb, &call.args);
     let world = PILGRIM_WORLD_ALLOW.contains(&op.as_str()) && pilgrim_world();
-    permitted_in(&op, call.actor.as_deref(), world)
+    permitted(&op, call.actor.as_deref(), world)
 }
 
 /// One thing a lane verb does: a bd call, a harness tool, — after a `bead.sh file` for a
@@ -2188,7 +2184,7 @@ mod tests {
 
     #[test]
     fn every_persona_may_run_cite_check() {
-        assert!(permitted("cite-check", Some("builder")).is_ok());
+        assert!(permitted("cite-check", Some("builder"), false).is_ok());
     }
 
     #[test]
@@ -2269,8 +2265,8 @@ mod tests {
             assert!(super::forge_op("sp-95s21z.2", &refused).is_err(), "{refused:?}");
         }
         let op = super::op_key("forge", &v(&["ami-result", own]));
-        assert!(super::permitted(&op, Some("builder")).is_ok());
-        assert!(super::permitted(&op, Some("groomer")).is_err());
+        assert!(super::permitted(&op, Some("builder"), false).is_ok());
+        assert!(super::permitted(&op, Some("groomer"), false).is_err());
     }
 
     #[test]
@@ -2314,7 +2310,7 @@ mod tests {
                     let sub: Vec<String> = words.clone().next().map(|x| vec![x.to_string()]).unwrap_or_default();
                     let op = super::op_key(verb, &sub);
                     let op = if ALLOW.iter().any(|(k, _)| *k == op) { op } else { verb.to_string() };
-                    if super::permitted(&op, Some(&persona)).is_err() {
+                    if super::permitted(&op, Some(&persona), false).is_err() {
                         bad.push(format!("{persona}.md: `work {op}`"));
                     }
                 }
@@ -2750,7 +2746,7 @@ mod tests {
 
     #[test]
     fn a_persona_may_not_run_a_verb_it_is_not_allowed() {
-        let (code, msg) = permitted("groom close", Some("builder")).unwrap_err();
+        let (code, msg) = permitted("groom close", Some("builder"), false).unwrap_err();
         assert_eq!(code, REFUSED);
         assert!(msg.contains("builder") && msg.contains("groom close"), "{msg}");
         assert_eq!(gate("note-on", &v(&["sp-x1", "hi", "--actor", "builder"])).unwrap_err().0, REFUSED);
@@ -3277,8 +3273,8 @@ mod tests {
 
     #[test]
     fn ops_may_collapse_a_duplicate_incident_and_a_builder_may_not() {
-        assert!(permitted(&op_key("incident", &v(&["collapse", "sp-a1", "--of", "sp-b2"])), Some("ops")).is_ok());
-        assert!(permitted("incident collapse", Some("builder")).is_err());
+        assert!(permitted(&op_key("incident", &v(&["collapse", "sp-a1", "--of", "sp-b2"])), Some("ops"), false).is_ok());
+        assert!(permitted("incident collapse", Some("builder"), false).is_err());
         assert_eq!(
             plan("incident", "-", &call(&["collapse", "sp-a1", "--of", "sp-b2"], "ops")).unwrap(),
             vec![Step::Tool { program: "incident.sh", args: v(&["collapse", "sp-a1", "--of", "sp-b2"]), stdin: None }]
