@@ -64,6 +64,12 @@ struct Fake {
     flip_answer: RefCell<Result<(), String>>,
     prior_since: RefCell<Vec<i64>>,
     gate_starts: RefCell<Vec<String>>,
+    /// The `build-dir` fact the bead's builder left, and why leasing it fails (when it does).
+    build_dir_fact: RefCell<Option<(String, PathBuf)>>,
+    builder_unusable: RefCell<Option<String>>,
+    /// The line a gate's own warm directory adds, when one was adopted.
+    warm_line: RefCell<Option<String>>,
+    builders: RefCell<Vec<Option<crate::ports::Builder>>>,
     lc_refusal: RefCell<String>,
     removed_trees: Cell<u32>,
     err: RefCell<Vec<String>>,
@@ -193,6 +199,7 @@ fn ctx() -> Ctx {
         ("SPIRA_GATE_BUDGET", "300"),
         ("SPIRA_GATE_DEADLINE", "300"),
         ("SPIRA_GATE_BUILD_STALL", "300"),
+        ("SPIRA_GATE_BUILDER_DIR_WAIT_SECS", "120"),
         ("SPIRA_UNIT_TEST_DEADLINE_SECS", "60"),
         ("SPIRA_UNIT_TEST_DEADLINE_PERIODS", "2"),
     ] {
@@ -268,6 +275,10 @@ impl Fake {
             flip_answer: RefCell::new(Ok(())),
             prior_since: RefCell::new(Vec::new()),
             gate_starts: RefCell::new(Vec::new()),
+            build_dir_fact: RefCell::new(None),
+            builder_unusable: RefCell::new(None),
+            warm_line: RefCell::new(None),
+            builders: RefCell::new(Vec::new()),
             lc_refusal: RefCell::new(String::new()),
             removed_trees: Cell::new(0),
             err: RefCell::new(Vec::new()),
@@ -692,18 +703,37 @@ impl World for Fake {
         self.wrapper_asked.borrow_mut().push((path.to_string(), setting.to_string()));
         self.wrapper.borrow().clone()
     }
-    fn target_on_tmpfs(&self, tree: &Path, root: &str, _: &str, _: &crate::target::Limits) -> Result<String, String> {
+    fn lc_build_dir(&self, _: &str) -> Option<(String, PathBuf)> {
+        self.build_dir_fact.borrow().clone()
+    }
+    fn target_on_tmpfs(&self, tree: &Path, root: &str, _: &str, _: &crate::target::Limits, builder: Option<&crate::ports::Builder>) -> Result<String, String> {
+        self.builders.borrow_mut().push(builder.cloned());
         self.targets.borrow_mut().push(tree.to_path_buf());
         self.target_roots.borrow_mut().push(root.to_string());
         if self.target_clears_tools.get() {
             let tools = tree.join("target/tree-tools");
             self.files.borrow_mut().retain(|p, _| !p.starts_with(&tools));
         }
-        match self.target_err.borrow().clone() {
-            Some(e) => Err(e),
-            None if !root.is_empty() => Ok(format!("gate: build on {root}/{}", tree.file_name().unwrap().to_string_lossy())),
-            None => Ok(format!("gate: build on /tmp/t/{}", tree.file_name().unwrap().to_string_lossy())),
+        let mut line = match self.target_err.borrow().clone() {
+            Some(e) => return Err(e),
+            None if !root.is_empty() => format!("gate: build on {root}/{}", tree.file_name().unwrap().to_string_lossy()),
+            None => format!("gate: build on /tmp/t/{}", tree.file_name().unwrap().to_string_lossy()),
+        };
+        let used = match (builder, self.builder_unusable.borrow().as_ref()) {
+            (Some(b), None) => {
+                line.push_str(&format!("\n{}{} (leased from {}'s builder at {})", crate::warm::BUILDER_IN, b.dir.display(), b.bead, b.tip));
+                true
+            }
+            (Some(b), Some(why)) => {
+                line.push_str(&format!("\ngate: builder directory {} not used ({why})", b.dir.display()));
+                false
+            }
+            (None, _) => false,
+        };
+        if let (false, Some(w)) = (used, self.warm_line.borrow().as_ref()) {
+            line.push_str(&format!("\n{}{w}", crate::warm::WARM_FROM));
         }
+        Ok(line)
     }
     fn target_room(&self, root: &str, _: &str) -> String {
         format!("gate: target root {root}: 1 MiB writable, gate targets hold 7 MiB there")
@@ -2491,7 +2521,7 @@ fn unit_mode_rust_only_runs_fences_then_the_touched_crates_tests_and_no_suite() 
         "gate: composition=unit — fences (suites off, no build fence: the build phase is the compile check), then cargo build and test on the host for 2 crates: queue spira-config (touched: spira-config)"
     ));
     assert!(
-        meter(&f).ends_with(" rc=0 pass compose=unit phases=fences:7,build:7,test:7 unit_build_secs=7 unit_run_secs=7 unit_tests=0 unit_slowest=- deny_list=1000000/e3b0c44298fc test_clock=7s\n"),
+        meter(&f).ends_with(" rc=0 pass compose=unit phases=fences:7,build:7,test:7 unit_build_secs=7 unit_run_secs=7 unit_tests=0 unit_slowest=- deny_list=1000000/e3b0c44298fc build_dir=cold test_clock=7s\n"),
         "{}",
         meter(&f)
     );
@@ -3029,7 +3059,7 @@ fn a_red_unit_test_on_a_green_base_is_the_branchs() {
     assert_eq!(f.deny_calls.get(), 1, "the branch trial and the base trial share one snapshot");
     assert_eq!(f.checkouts.borrow()[1], BASE);
     assert!(meter(&f).contains(
-        "compose=unit phases=fences:7,build:7,test:7,base-fences:7 unit_build_secs=7 unit_run_secs=7 unit_tests=1 unit_slowest=- deny_list=1000000/e3b0c44298fc test_clock=7s
+        "compose=unit phases=fences:7,build:7,test:7,base-fences:7 unit_build_secs=7 unit_run_secs=7 unit_tests=1 unit_slowest=- deny_list=1000000/e3b0c44298fc build_dir=cold test_clock=7s
 "
     ));
     assert!(f.stderr().contains("phase 'test' failed (exit 101)"));
@@ -5001,6 +5031,63 @@ fn a_gate_records_its_start_for_the_bead_once_it_holds_the_tree() {
     g.runs.borrow_mut().insert(BASE.into(), (0, String::new()));
     g.run();
     assert!(g.gate_starts.borrow().is_empty(), "a gate with no bead has no fact to write");
+}
+
+fn builder_fake() -> Fake {
+    let f = unit_fake(&["spira-config/src/lib.rs"]);
+    f.put_var("SPIRA_GATE_BEAD", "sp-a");
+    *f.build_dir_fact.borrow_mut() = Some(("abc123".into(), PathBuf::from("/pool/dir.4")));
+    f
+}
+
+#[test]
+fn a_unit_gate_builds_in_the_directory_its_beads_builder_submitted_from() {
+    let f = builder_fake();
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    let asked = f.builders.borrow();
+    let b = asked[0].as_ref().expect("the build tree was prepared for the builder's directory");
+    assert_eq!((b.bead.as_str(), b.tip.as_str(), b.dir.as_path()), ("sp-a", "abc123", Path::new("/pool/dir.4")));
+    assert_eq!(b.wait, std::time::Duration::from_secs(120));
+    assert!(b.path.contains("/box/.cargo/bin"), "{}", b.path);
+    assert!(f.stderr().contains("gate: build in /pool/dir.4 (leased from sp-a's builder at abc123)"), "{}", f.stderr());
+    assert!(meter(&f).contains(" build_dir=builder "), "{}", meter(&f));
+    assert_eq!(tsd_row(&f)["build_dir"], "builder");
+}
+
+#[test]
+fn a_unit_gate_whose_bead_has_no_build_dir_fact_takes_the_warm_or_cold_path() {
+    let f = builder_fake();
+    *f.build_dir_fact.borrow_mut() = None;
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    assert_eq!(f.builders.borrow()[0], None);
+    assert!(meter(&f).contains(" build_dir=cold "), "{}", meter(&f));
+
+    let w = builder_fake();
+    *w.build_dir_fact.borrow_mut() = None;
+    *w.warm_line.borrow_mut() = Some("c0ffee (3 unchanged files aged)".into());
+    assert_eq!(w.run(), PASS);
+    assert!(meter(&w).contains(" build_dir=warm "), "{}", meter(&w));
+}
+
+#[test]
+fn a_builders_directory_that_cannot_be_leased_cleaned_or_aged_leaves_the_gate_on_its_own_directory() {
+    for (warm, kind) in [(None, "cold"), (Some("c0ffee (3 unchanged files aged)".to_string()), "warm")] {
+        let f = builder_fake();
+        *f.builder_unusable.borrow_mut() = Some("it is gone, held, or not a pool directory".into());
+        *f.warm_line.borrow_mut() = warm;
+        assert_eq!(f.run(), PASS, "{}", f.stderr());
+        assert!(f.builders.borrow()[0].is_some(), "the gate tried the builder's directory first");
+        assert!(meter(&f).contains(&format!(" build_dir={kind} ")), "{}", meter(&f));
+        assert!(f.stderr().contains("builder directory /pool/dir.4 not used"), "{}", f.stderr());
+    }
+}
+
+#[test]
+fn a_gate_with_no_lease_wait_configured_does_not_look_for_the_builders_directory() {
+    let f = builder_fake();
+    f.put_var("SPIRA_GATE_BUILDER_DIR_WAIT_SECS", "");
+    assert_eq!(f.run(), PASS);
+    assert_eq!(f.builders.borrow()[0], None);
 }
 
 const REENTRY_PHASES: &str = "  test-b.sh   ok   3s\nbatch: phases: resolve:0,build:290,up:1,suites:8 (setup 291s, warm: cold)\nVERDICT GREEN";

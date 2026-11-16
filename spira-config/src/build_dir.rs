@@ -167,6 +167,35 @@ pub fn lease(bases: &[PathBuf], who: &str) -> std::io::Result<Lease> {
     take(base, n, lock, reused, who)
 }
 
+/// Lease the one named slot `dir` (`<base>/dir.<n>`, strictly under a configured base): waits at
+/// most `wait` for a live holder, naming it on stderr. `None` when `dir` is no slot of a base, is
+/// gone, or is still held after `wait`; the lease is a warm one.
+pub fn lease_dir(bases: &[PathBuf], dir: &Path, who: &str, wait: std::time::Duration) -> std::io::Result<Option<Lease>> {
+    let Some((base, n)) = dir.parent().zip(dir.file_name().and_then(|f| f.to_str()).and_then(|f| f.strip_prefix("dir.")).and_then(|n| n.parse::<u64>().ok())) else {
+        return Ok(None);
+    };
+    if !dir.is_absolute() || !bases.iter().any(|b| b == base) || !dir.is_dir() || !lock_path(base, n).is_file() {
+        return Ok(None);
+    }
+    let until = std::time::Instant::now() + wait;
+    let mut named = false;
+    let lock = loop {
+        if let Some(f) = try_lock(base, n) {
+            break f;
+        }
+        if std::time::Instant::now() >= until {
+            return Ok(None);
+        }
+        if !named {
+            named = true;
+            let holder = std::fs::read_to_string(lock_path(base, n)).unwrap_or_default();
+            eprintln!("waiting up to {}s for {} to release {}", wait.as_secs(), holder.trim(), dir.display());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100).min(wait));
+    };
+    take(base, n, lock, true, who).map(Some)
+}
+
 fn new_slot(base: &Path) -> std::io::Result<(u64, std::fs::File)> {
     let mut n = slots(base).last().copied().unwrap_or(0) + 1;
     loop {
@@ -634,6 +663,56 @@ mod tests {
         let proc = empty_proc(d.path());
         assert!(evict_idle_in(std::slice::from_ref(&base), 0, &held, &proc).is_empty(), "nothing idle: a budget of zero removes nothing live");
         assert!(a.dir().join("debug/deps/liba.rlib").exists(), "the live directory is untouched under budget pressure");
+    }
+
+    #[test]
+    fn lease_dir_takes_an_idle_named_slot_and_a_released_one_is_lockable_again() {
+        let d = testkit::TempDir::new("bdir-lease-dir");
+        let bases = vec![d.path().join("base")];
+        let first = lease(&bases, "builder").unwrap();
+        let dir = first.dir().to_path_buf();
+        first.release();
+        let got = lease_dir(&bases, &dir, "gate", std::time::Duration::ZERO).unwrap().expect("idle slot is leased");
+        assert_eq!(got.dir(), dir);
+        assert!(got.reused);
+        got.release();
+        assert!(lease_dir(&bases, &dir, "gate", std::time::Duration::ZERO).unwrap().is_some());
+    }
+
+    #[test]
+    fn lease_dir_gives_up_on_a_held_slot_and_takes_it_once_its_holder_releases() {
+        let d = testkit::TempDir::new("bdir-lease-dir-held");
+        let bases = vec![d.path().join("base")];
+        let held = lease(&bases, "builder").unwrap();
+        let dir = held.dir().to_path_buf();
+        assert!(lease_dir(&bases, &dir, "gate", std::time::Duration::ZERO).unwrap().is_none());
+        assert!(lease_dir(&bases, &dir, "gate", std::time::Duration::from_millis(150)).unwrap().is_none(), "held for the whole wait");
+        let waiter = {
+            let (b, d) = (bases.clone(), dir.clone());
+            std::thread::spawn(move || lease_dir(&b, &d, "gate", std::time::Duration::from_secs(10)).unwrap().is_some())
+        };
+        held.release();
+        assert!(waiter.join().unwrap(), "the waiter took the slot once its holder released");
+    }
+
+    #[test]
+    fn lease_dir_refuses_a_path_outside_the_bases_a_missing_slot_and_a_non_slot_name() {
+        let d = testkit::TempDir::new("bdir-lease-dir-refused");
+        let base = d.path().join("base");
+        let bases = vec![base.clone()];
+        let l = lease(&bases, "builder").unwrap();
+        let dir = l.dir().to_path_buf();
+        l.release();
+        let none = |p: &Path| lease_dir(&bases, p, "gate", std::time::Duration::ZERO).unwrap().is_none();
+        let outside = d.path().join("elsewhere/dir.1");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(d.path().join("elsewhere/dir.1.lock"), "").unwrap();
+        assert!(none(&outside));
+        assert!(none(&base.join("dir.99")), "no such slot");
+        assert!(none(&base), "the base is no slot");
+        assert!(none(&dir.join("debug")), "a path inside a slot is not a slot");
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(none(&dir), "a slot whose directory is gone");
     }
 
     #[test]

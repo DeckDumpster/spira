@@ -765,3 +765,4 @@ limit_cpu
 limit_memory
 limit_network
 heimdall_red_streak
+gate_builder_dir_wait_secs

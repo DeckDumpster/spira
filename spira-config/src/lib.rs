@@ -898,7 +898,6 @@ pub const RETIRED_SPIRA_KEYS: &[RetiredKey] = &[
     RetiredKey { key: "round_vm_ec2_key_warn_days", bead: "sp-1ka34x.2" },
     RetiredKey { key: "round_vm_ec2_launch_window", bead: "sp-1ka34x.2" },
     RetiredKey { key: "round_vm_ec2_probe_deadline", bead: "sp-1ka34x.2" },
-    RetiredKey { key: "gate_build_lease_wait_secs", bead: "sp-uipexv" },
 ];
 
 /// A retired `batcher_bin` value that is not the batcher itself (e.g. "/bin/true", the old
