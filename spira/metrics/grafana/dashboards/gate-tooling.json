@@ -485,6 +485,73 @@
           "refId": "D"
         }
       ]
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "fences-mode covered phase: median and p90 seconds it added, suites deferred to the round",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 48,
+        "w": 24,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "suites deferred (sum)"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "quantile_over_time(0.5, spira_gate_covered_seconds{gate_mode=\"fences\"}[$__interval])",
+          "legendFormat": "median seconds",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "quantile_over_time(0.9, spira_gate_covered_seconds{gate_mode=\"fences\"}[$__interval])",
+          "legendFormat": "p90 seconds",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "sum(sum_over_time(spira_gate_covered_deferred{gate_mode=\"fences\"}[$__interval]))",
+          "legendFormat": "suites deferred (sum)",
+          "refId": "C"
+        }
+      ]
     }
   ]
 }

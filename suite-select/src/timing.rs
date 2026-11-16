@@ -11,6 +11,8 @@ use std::path::Path;
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct P90s {
     pub by_suite: HashMap<String, f64>,
+    /// [`recent_reds`] of the same file.
+    pub reds: HashMap<String, u32>,
     pub skipped: usize,
 }
 
@@ -59,7 +61,31 @@ pub fn p90s(text: &str, runs: usize) -> P90s {
             by_suite.insert(s, p);
         }
     }
-    P90s { by_suite, skipped }
+    P90s { by_suite, reds: recent_reds(text, runs), skipped }
+}
+
+/// Per suite, how many of its last `runs` rows are red: an `rc` that is neither 0 (ok) nor 77
+/// (skip). Newest first by `ts`, ties by file order, as [`p90s`] reads them.
+pub fn recent_reds(text: &str, runs: usize) -> HashMap<String, u32> {
+    let mut rows: HashMap<String, Vec<(String, usize, bool)>> = HashMap::new();
+    for (i, l) in text.lines().enumerate() {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(l) else { continue };
+        let (Some(s), Some(ts), Some(rc)) = (
+            v.get("suite").and_then(|x| x.as_str()),
+            v.get("ts").and_then(|x| x.as_str()),
+            v.get("rc").and_then(|x| x.as_i64()),
+        ) else {
+            continue;
+        };
+        rows.entry(s.to_string()).or_default().push((ts.to_string(), i, rc != 0 && rc != 77));
+    }
+    rows.into_iter()
+        .map(|(s, mut r)| {
+            r.sort_by(|a, b| (&b.0, b.1).cmp(&(&a.0, a.1)));
+            (s, r.iter().take(runs.max(1)).filter(|x| x.2).count() as u32)
+        })
+        .filter(|(_, n)| *n > 0)
+        .collect()
 }
 
 /// P90 of the test runner's measured setup (`setup_secs` on its `__batch__` rows, testenv
@@ -146,5 +172,20 @@ mod tests {
     fn a_missing_family_is_no_timings_not_a_refusal() {
         let d = testkit::TempDir::new("suite-select-timing");
         assert_eq!(load(d.path(), 20).unwrap(), P90s::default());
+    }
+
+    #[test]
+    fn recent_reds_ignores_ok_and_skip_and_counts_only_each_suites_last_runs() {
+        let row = |ts: u32, suite: &str, rc: i32| format!(r#"{{"ts":"2026-11-{ts:02}","suite":"{suite}","rc":{rc},"wall_secs":1.0}}"#);
+        let text = [
+            row(1, "test-a.sh", 1), row(2, "test-a.sh", 0), row(3, "test-a.sh", 77), row(4, "test-a.sh", 2),
+            row(5, "test-b.sh", 0), row(6, "test-b.sh", 77),
+        ]
+        .join("\n");
+        let r = recent_reds(&text, 20);
+        assert_eq!(r.get("test-a.sh"), Some(&2));
+        assert_eq!(r.get("test-b.sh"), None, "ok and skip are not red");
+        assert_eq!(recent_reds(&text, 1).get("test-a.sh"), Some(&1), "only the newest row: the rc=2");
+        assert_eq!(recent_reds(&text, 2).get("test-a.sh"), Some(&1), "the 77 and the 2");
     }
 }

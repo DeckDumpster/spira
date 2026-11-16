@@ -143,10 +143,15 @@ the cgroup-aware core count (the width), `SPIRA_RUN` (timings), `SPIRA_BATCH_SUI
    suite directory also has, so a suite the branch adds cannot select itself through its own
    covers; without it, the diff is `<base>...<head>`.
 4. **Budget cut** (`budget`): rank the selection — tier bucket (T0/T1/untiered before T2+),
-   then specificity (fewer `# covers:` tokens first; an always-run suite last), then tagged
-   (`UC-` token) before untagged, then name — and add each while the running predicted total
-   divided by the width stays within the **suites' budget**. Predicted cost: the P90 of the
-   suite's last 20 timing rows, else its tier's cap. Each drop is named on stderr.
+   then recent reds (the count of the suite's last 20 timing rows whose `rc` is neither 0 nor
+   77, most first: the suite likeliest to catch runs first), then specificity (fewer
+   `# covers:` tokens first; an always-run suite last), then tagged (`UC-` token) before
+   untagged, then name. Walk that order, which is testenv's run order, placing each suite on
+   the least-loaded of `width` lanes and keeping it while that lane's predicted wall stays
+   within the **suites' budget**: a suite whose own predicted cost exceeds it is always
+   dropped, never started and killed. Predicted cost: the P90 of the suite's last 20 timing
+   rows, else its tier's cap. Each drop is named on stderr. A drop refuses (exit 75) unless
+   `SPIRA_GATE_COVERED=1`: a bead's certification defers the suite to the round, named.
    **The suites' budget (sp-govet).** `testenv --deadline` bounds the whole trial, setup
    included (testenv DESIGN.md D9), so the suites get the budget minus setup. When
    `SPIRA_GATE_BUDGET` is set (the landing gate always sets it and hands the same value to

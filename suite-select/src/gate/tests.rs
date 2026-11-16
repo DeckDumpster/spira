@@ -240,6 +240,22 @@ fn law_a_budget_is_a_cutoff_and_law_a_local_green_names_what_it_missed_the_gate_
     assert!(matches!(e, Fail::Refused(_)), "{e:?}");
 }
 
+#[test]
+fn a_covered_certification_defers_what_does_not_fit_and_names_it_instead_of_refusing() {
+    let mut suites: Vec<(String, String)> = Vec::new();
+    for i in 1..=5 {
+        let mut toks = vec!["spira/lib.sh".to_string()];
+        toks.extend((2..=i).map(|j| format!("spira/filler-{j}.sh")));
+        suites.push((format!("test-s{i}.sh"), format!("# covers: {}\n", toks.join(" "))));
+    }
+    let refs: Vec<(&str, &str)> = suites.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect();
+    let d = dir("budget-defer", &refs);
+    let g = git_changing("spira/lib.sh");
+    let o = run(&genv(&d.0, &[("SPIRA_GATE_BUDGET", "6"), ("SPIRA_GATE_SUITES", "off"), ("SPIRA_GATE_COVERED", "1")]), &g, "main", "br").unwrap();
+    assert!(o.suites.len() < 5 && !o.suites.is_empty(), "{:?}", o.suites);
+    assert!(o.log.iter().any(|l| l.contains("dropped test-s5.sh")), "{:?}", o.log);
+}
+
 // ------------------------------------------------------------------ failing closed
 
 #[test]

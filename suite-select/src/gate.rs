@@ -212,13 +212,13 @@ pub fn run(env: &GateEnv, g: &dyn Git, base: &str, head: &str) -> Result<GateOut
     // The budget cut.
     let mut kept: Vec<String> = Vec::new();
     if !covered.is_empty() {
-        let p90 = match &env.run {
+        let (p90, reds) = match &env.run {
             Some(r) => {
                 let p = timing::load(r, env.runs)?;
                 if p.skipped > 0 {
                     log.push(format!("suite-select gate: skipped {} unreadable suite-timing row(s)", p.skipped));
                 }
-                p.by_suite
+                (p.by_suite, p.reds)
             }
             None => Default::default(),
         };
@@ -232,13 +232,12 @@ pub fn run(env: &GateEnv, g: &dyn Git, base: &str, head: &str) -> Result<GateOut
             env.budget_secs
         ));
         let cands: Vec<&corpus::Suite> = covered.iter().filter_map(|n| corpus.get(n)).collect();
-        let cut = budget::fill(&budget::rank(&cands, &p90, &env.caps), suite_budget, env.width);
+        let cut = budget::fill(&budget::rank(&cands, &p90, &reds, &env.caps), suite_budget, env.width);
         log.extend(cut.log);
-        // law-a-budget-is-a-cutoff, law-a-local-green-names-what-it-missed (over-broad-scopes
-        // #6, sp-ipwlic): every suite here covers the change, so one that does not fit is never
-        // cut silently — a green over the rest would stand for suites nobody ran. Refuse, and
-        // name every suite that did not fit.
-        if !cut.dropped.is_empty() {
+        // law-a-local-green-names-what-it-missed: a suite over budget is refused, never cut
+        // silently. A bead's certification (`covered`) defers it to the round instead, and each
+        // drop is already named in the log above.
+        if !cut.dropped.is_empty() && !env.covered {
             return Err(Fail::Refused(Refusal(format!(
                 "suite-select gate: {} suite(s) covering this change do not fit the {suite_budget:.0}s suite budget and are not cut silently: {} — narrow the change, or run them where the budget allows",
                 cut.dropped.len(),
