@@ -56,6 +56,8 @@ struct Fake {
     resume: RefCell<Option<String>>,
     /// Each send takes this long on the fake clock, so a short budget cuts the sweep between branches.
     send_takes: std::time::Duration,
+    /// Each branch judged takes this long on the fake clock (dry runs send nothing).
+    judge_takes: std::time::Duration,
     started: std::cell::OnceCell<std::time::Instant>,
     elapsed: std::cell::Cell<std::time::Duration>,
 }
@@ -79,6 +81,7 @@ impl World for Fake {
         self.base.clone()
     }
     fn witness(&self, id: &str) -> Option<String> {
+        self.elapsed.set(self.elapsed.get() + self.judge_takes);
         self.held.contains(id).then(|| "in_progress — the lease has not been released".to_string())
     }
     fn bead(&self, id: &str) -> Option<Value> {
@@ -366,6 +369,58 @@ mod resume {
         let all = sent(&f);
         assert_eq!(all[first.len()..], ids.iter().map(|s| s.to_string()).skip(first.len()).collect::<Vec<_>>(), "the second pass starts after the last handled branch: {all:?}");
         assert_eq!(*f.resume.borrow(), None, "a finished pass clears the cursor");
+    }
+
+    #[test]
+    fn a_dry_run_cut_at_its_budget_names_every_branch_it_did_not_reach_and_totals_them() {
+        let t = testkit::TempDir::new("hel-dry-cut");
+        let root = t.path().join("repo");
+        std::fs::create_dir_all(&root).unwrap();
+        git(&root, &["init", "-q", "-b", "main"]);
+        git(&root, &["commit", "-q", "--allow-empty", "-m", "x"]);
+        let ids = ["sp-a", "sp-b", "sp-c", "sp-d", "sp-e"];
+        for id in ids {
+            git(&root, &["branch", &format!("spira/{id}")]);
+        }
+        let base = Base { landref: "main".into(), landrefs: vec!["main".into()], remote: None };
+        let beads = ids.iter().map(|id| (id.to_string(), serde_json::json!({"id": id, "labels": []}))).collect();
+        let f = Fake { base: Some(base), beads, wts: t.path().join("wt"), judge_takes: std::time::Duration::from_millis(100), ..Default::default() };
+        let opts = crate::sweep::Opts { dry: true, fetch: false, only: None, scope: Scope::All, budget: Some(std::time::Duration::from_millis(200)), pace: Default::default() };
+        let mut s = crate::sweep::Sweep { w: &f, opts, submitted_label: "submitted".into(), tally: Default::default(), deadline: None, truncated: false };
+        s.run(&[crate::ports::Repo { name: "spira".into(), root: Some(root), forge_queued: false }]);
+        let out = f.out.borrow().clone();
+        let lines: Vec<&String> = out.iter().filter(|l| !l.starts_with("LOG ")).collect();
+        let unjudged: Vec<&&String> = lines.iter().filter(|l| l.starts_with("UNJUDGED ")).collect();
+        assert_eq!(lines.len(), 2 + 3 + 1, "{lines:?}");
+        assert_eq!(unjudged.len(), 3, "{lines:?}");
+        for id in ["sp-c", "sp-d", "sp-e"] {
+            assert!(unjudged.iter().any(|l| **l == &format!("UNJUDGED {id}  budget spent")), "{lines:?}");
+        }
+        let summary = lines.last().unwrap();
+        assert!(summary.starts_with("hel: 5 branches — "), "{summary}");
+        assert!(summary.ends_with("3 UNJUDGED"), "{summary}");
+        let n: u32 = summary.split(" — ").nth(1).unwrap().split(", ").map(|p| p.split(' ').next().unwrap().parse::<u32>().unwrap()).sum();
+        assert_eq!(n, 5, "{summary}");
+    }
+
+    #[test]
+    fn a_dry_run_with_no_budget_ends_with_a_summary_counting_each_branch() {
+        let t = testkit::TempDir::new("hel-dry-total");
+        let root = t.path().join("repo");
+        std::fs::create_dir_all(&root).unwrap();
+        git(&root, &["init", "-q", "-b", "main"]);
+        git(&root, &["commit", "-q", "--allow-empty", "-m", "x"]);
+        git(&root, &["branch", "spira/sp-a"]);
+        git(&root, &["branch", "spira/sp-b"]);
+        let base = Base { landref: "main".into(), landrefs: vec!["main".into()], remote: None };
+        let beads = ["sp-a", "sp-b"].iter().map(|id| (id.to_string(), serde_json::json!({"id": id, "labels": []}))).collect();
+        let f = Fake { base: Some(base), beads, wts: t.path().join("wt"), held: ["sp-b".to_string()].into(), ..Default::default() };
+        let opts = crate::sweep::Opts { dry: true, fetch: false, only: None, scope: Scope::All, budget: None, pace: Default::default() };
+        let mut s = crate::sweep::Sweep { w: &f, opts, submitted_label: "submitted".into(), tally: Default::default(), deadline: None, truncated: false };
+        s.run(&[crate::ports::Repo { name: "spira".into(), root: Some(root), forge_queued: false }]);
+        let out = f.out.borrow().clone();
+        assert_eq!(out.len(), 3, "{out:?}");
+        assert_eq!(out[2], "hel: 2 branches — 1 WOULD, 0 KEEP, 1 HELD, 0 SKIP, 0 UNJUDGED", "{out:?}");
     }
 
     #[test]
