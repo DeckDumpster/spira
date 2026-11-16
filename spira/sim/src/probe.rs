@@ -162,6 +162,7 @@ pub fn rows(lc_list: &str, landstate: &dyn Fn(&str) -> Option<String>, git: &Git
             "bead": id,
             "bd_status": null,
             "lc_state": field("state"),
+            "lc_reason": field("reason"),
             "lc_version": version,
             "holds": r.map(|r| holds(r.get("holds"))),
             "landstate": landstate(id),
