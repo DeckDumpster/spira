@@ -93,7 +93,7 @@ fn run(args: &[String]) -> Result<(), String> {
             let out = spira_sim::pilgrim::exec(&PathBuf::from(dir).canonicalize().map_err(|e| e.to_string())?, shell)?;
             print!("{}", String::from_utf8_lossy(&out.stdout));
             eprint!("{}", String::from_utf8_lossy(&out.stderr));
-            if out.status.success() { Ok(()) } else { Err(format!("exit {}", out.status.code().unwrap_or(-1))) }
+            std::process::exit(out.status.code().unwrap_or(1));
         }
         ["world", "fixture", root, dir] => world::fixture_repo(&PathBuf::from(root), &PathBuf::from(dir)),
         ["world", "seed"] => world::ensure_seed(&cwd, "HEAD").map(|_| ()),
