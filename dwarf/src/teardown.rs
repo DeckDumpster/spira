@@ -178,7 +178,7 @@ impl Run<'_> {
     }
 
     fn head_tip(&self) -> String {
-        let work = self.s.work.as_deref().unwrap_or(Path::new("/dev/null"));
+        let work = self.s.work.as_deref().unwrap_or(Path::new(system_paths::DEV_NULL));
         let o = self.d.git.git(work, &["rev-parse", "HEAD"]);
         if o.success() { o.text().trim().to_string() } else { String::new() }
     }
@@ -297,13 +297,13 @@ impl Run<'_> {
         let mut unlanded_reason = String::new();
         let work = self.s.work.clone();
         let short_tip = |this: &Self| {
-            let o = this.d.git.git(work.as_deref().unwrap_or(Path::new("/dev/null")), &["rev-parse", "--short", "HEAD"]);
+            let o = this.d.git.git(work.as_deref().unwrap_or(Path::new(system_paths::DEV_NULL)), &["rev-parse", "--short", "HEAD"]);
             if o.success() { o.text() } else { "?".into() }
         };
         // Full hash, matching session_start_tip's own format (sp-1zxru-2) — short_tip's
         // truncated form is for notes/thrash-tip identity, not this equality check.
         let full_tip = |this: &Self| {
-            let o = this.d.git.git(work.as_deref().unwrap_or(Path::new("/dev/null")), &["rev-parse", "HEAD"]);
+            let o = this.d.git.git(work.as_deref().unwrap_or(Path::new(system_paths::DEV_NULL)), &["rev-parse", "HEAD"]);
             if o.success() { o.text().trim().to_string() } else { "?".into() }
         };
         let requeue_cause = self.s.requeue_cause.clone();
@@ -677,7 +677,7 @@ mod tests {
 
     #[test]
     fn the_session_tmpdir_lies_inside_the_worktree() {
-        let w = Path::new("/w/wt");
+        let w = Path::new("w/wt");
         assert!(Run::session_tmpdir(w).starts_with(w));
     }
 

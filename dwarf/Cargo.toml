@@ -12,7 +12,7 @@ name = "dwarf"
 path = "src/main.rs"
 
 [features]
-integration = ["bead/integration", "runtime/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "strand/integration", "testkit/integration"]
+integration = ["bead/integration", "runtime/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "strand/integration", "testkit/integration", "system-paths/integration"]
 
 [dependencies]
 bead = { path = "../bead" }
@@ -21,6 +21,7 @@ spira-store = { path = "../spira-store" }
 spira-otel = { path = "../spira-otel" }
 strand = { path = "../strand" }
 runtime = { path = "../runtime" }
+system-paths = { path = "../system-paths" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 libc = "0.2"

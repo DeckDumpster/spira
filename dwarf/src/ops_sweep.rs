@@ -114,7 +114,7 @@ pub fn brief(home: &Path, run: &Path, rune: &Rune, prompt: &str, id: &str, cfg: 
     if cfg.agent.is_empty() {
         return Err("SPIRA_AGENT is empty — no agent to run".into());
     }
-    let mut argv = vec!["/bin/sh".to_string(), "-c".to_string(), "exec \"$0\" \"$@\" <\"$SPIRA_SWEEP_TASK\" >>\"$SPIRA_SWEEP_LOG\" 2>&1".to_string(), cfg.agent.clone()];
+    let mut argv = vec![system_paths::BIN_SH.to_string(), "-c".to_string(), "exec \"$0\" \"$@\" <\"$SPIRA_SWEEP_TASK\" >>\"$SPIRA_SWEEP_LOG\" 2>&1".to_string(), cfg.agent.clone()];
     argv.extend(claude_args(home, run, &cfg.prod, rune, &sys_file, &cfg.toml)?);
     let env = vec![
         ("SPIRA_DWARF".to_string(), name.clone()),

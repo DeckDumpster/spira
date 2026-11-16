@@ -262,23 +262,23 @@ mod tests {
     #[test]
     fn the_lib_sh_seam_refuses_without_a_declared_path_naming_spira_release() {
         let mut orig = BTreeMap::new();
-        orig.insert("PATH".to_string(), "/inherited".to_string());
+        orig.insert("PATH".to_string(), "inherited".to_string());
         let e = Env::new(orig, BTreeMap::new()).seam().unwrap_err();
         assert!(e.contains("SPIRA_RELEASE"), "{e}");
     }
 
     #[test]
     fn frame_is_nul_separated_records() {
-        let f = frame("/l", "/f", "builder", "fn", &["a b".into(), "".into()]);
-        assert_eq!(f, b"/l\0/f\0builder\0fn\0a b\0\0");
+        let f = frame("l", "f", "builder", "fn", &["a b".into(), "".into()]);
+        assert_eq!(f, b"l\0f\0builder\0fn\0a b\0\0");
     }
 
     #[test]
     fn snapshot_parses_all_sections() {
-        let raw = "PATH=/bin\0HOME=/h\0__DWARF_VARS__\0SPIRA_RUN\0/run\0RUNE_LABELS\0spira,plan\0__DWARF_READY__\0ready\0--limit\0\u{30}\0__DWARF_EXCLUDE__\0spira-poison,rune:ops\0";
+        let raw = "PATH=bin\0HOME=h\0__DWARF_VARS__\0SPIRA_RUN\0run\0RUNE_LABELS\0spira,plan\0__DWARF_READY__\0ready\0--limit\0\u{30}\0__DWARF_EXCLUDE__\0spira-poison,rune:ops\0";
         let s = parse_snapshot(raw).unwrap();
-        assert_eq!(s.env.get("PATH").unwrap(), "/bin");
-        assert_eq!(s.vars.get("SPIRA_RUN").unwrap(), "/run");
+        assert_eq!(s.env.get("PATH").unwrap(), "bin");
+        assert_eq!(s.vars.get("SPIRA_RUN").unwrap(), "run");
         assert_eq!(s.vars.get("RUNE_LABELS").unwrap(), "spira,plan");
         assert_eq!(s.ready_args, vec!["ready", "--limit", "0"]);
         assert_eq!(s.claim_exclude, "spira-poison,rune:ops");

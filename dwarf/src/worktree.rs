@@ -282,8 +282,8 @@ mod tests {
     fn foreign_git(work: &Path) -> Scripted {
         let w = work.to_path_buf();
         Scripted::new(move |dir, a, _| match a {
-            ["rev-parse", ..] if dir == w => Out::ok("/x/otherrepo/.git\n"),
-            ["rev-parse", ..] => Out::ok("/x/thisrepo/.git\n"),
+            ["rev-parse", ..] if dir == w => Out::ok("x/otherrepo/.git\n"),
+            ["rev-parse", ..] => Out::ok("x/thisrepo/.git\n"),
             _ => Out::fail(1, "cannot move"),
         })
     }
@@ -311,7 +311,7 @@ mod tests {
         let work = t.join("worktree/sp-a");
         std::fs::create_dir_all(&work).unwrap();
         std::fs::write(work.join(".git"), "gitdir: x\n").unwrap();
-        let git = Scripted::new(|_, _, _| Out::ok("/x/thisrepo/.git\n"));
+        let git = Scripted::new(|_, _, _| Out::ok("x/thisrepo/.git\n"));
         assert_eq!(evict_foreign(&git, &work, &t.join("repo"), 7), Evict::Kept);
         assert!(git.called(&["worktree", "move"]).is_empty());
         assert!(work.join(".git").exists());

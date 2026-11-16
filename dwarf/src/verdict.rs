@@ -274,17 +274,17 @@ mod tests {
         let mut log = BTreeMap::new();
         log.insert("mybranch", "sp-a — the work");
         let git = FakeGit(log);
-        assert!(verdict_committed(&git, "", Path::new("/repo"), "mybranch", "sp-a", 400), "committed on the branch itself");
-        assert!(!verdict_committed(&git, "", Path::new("/repo"), "mybranch", "sp-x", 400), "not committed anywhere");
+        assert!(verdict_committed(&git, "", Path::new("repo"), "mybranch", "sp-a", 400), "committed on the branch itself");
+        assert!(!verdict_committed(&git, "", Path::new("repo"), "mybranch", "sp-x", 400), "not committed anywhere");
 
         let mut log2 = BTreeMap::new();
         log2.insert("mybranch", "unrelated");
         log2.insert("local/main", "sp-a — landed earlier");
         let git2 = FakeGit(log2);
-        assert!(verdict_committed(&git2, "local/main", Path::new("/repo"), "mybranch", "sp-a", 400), "not on the branch, but on the landing ref");
+        assert!(verdict_committed(&git2, "local/main", Path::new("repo"), "mybranch", "sp-a", 400), "not on the branch, but on the landing ref");
 
         // Empty landrefs short-circuits without a second git call that would need a ref.
-        assert!(!verdict_committed(&git2, "", Path::new("/repo"), "mybranch", "sp-a", 400));
+        assert!(!verdict_committed(&git2, "", Path::new("repo"), "mybranch", "sp-a", 400));
     }
 
     // ---- own_dirty (UC-dwarf-execution-16) --------------------------------------------
@@ -292,8 +292,8 @@ mod tests {
     // covers: UC-dwarf-execution-16
     #[test]
     fn own_dirty_worktree_is_refused_naming_path_and_override() {
-        let n = own_dirty("/w/own", " M f\n", &[], "local/main", false).expect("dirty worktree is refused");
-        assert!(n.contains("/w/own"), "{n}");
+        let n = own_dirty("w/own", " M f\n", &[], "local/main", false).expect("dirty worktree is refused");
+        assert!(n.contains("w/own"), "{n}");
         assert!(n.contains("Modified paths:\n   M f"), "{n}");
         assert!(n.contains("SPIRA_ALLOW_PROD_DIRTY=1"), "{n}");
         assert!(!n.contains("byte-for-byte"), "{n}");
@@ -302,22 +302,22 @@ mod tests {
     // covers: UC-dwarf-execution-16
     #[test]
     fn own_dirty_override_lets_the_hand_on_stand() {
-        assert_eq!(own_dirty("/w/own", " M f\n", &[], "local/main", true), None);
+        assert_eq!(own_dirty("w/own", " M f\n", &[], "local/main", true), None);
     }
 
     // covers: UC-dwarf-execution-16
     #[test]
     fn clean_worktree_is_not_refused() {
-        assert_eq!(own_dirty("/w/own", "", &[], "local/main", false), None);
-        assert_eq!(own_dirty("/w/own", "\n", &[], "local/main", false), None);
+        assert_eq!(own_dirty("w/own", "", &[], "local/main", false), None);
+        assert_eq!(own_dirty("w/own", "\n", &[], "local/main", false), None);
     }
 
     // covers: UC-dwarf-execution-16
     #[test]
     fn paths_identical_to_the_landing_ref_get_the_checkout_remedy() {
-        let n = own_dirty("/w/own", " M f\n M g\n", &["f".into(), "g".into()], "local/main", false).unwrap();
+        let n = own_dirty("w/own", " M f\n M g\n", &["f".into(), "g".into()], "local/main", false).unwrap();
         assert!(n.contains("Paths byte-for-byte identical to local/main"), "{n}");
-        assert!(n.contains("Remedy: git -C /w/own checkout -- f g"), "{n}");
+        assert!(n.contains("Remedy: git -C w/own checkout -- f g"), "{n}");
     }
 
     /// Records every directory git is asked about; answers as a dirty tree.
@@ -337,11 +337,11 @@ mod tests {
     #[test]
     fn guard_reads_only_the_dwarfs_own_worktree_never_the_shared_checkout() {
         let git = DirGit(Default::default());
-        let (n, names) = own_dirty_note(&git, Path::new("/w/own"), Some("local/main".into()), false).unwrap();
-        assert!(n.contains("/w/own") && names == ["f"]);
-        assert!(git.0.lock().unwrap().iter().all(|d| d == Path::new("/w/own")), "git was asked about another directory");
+        let (n, names) = own_dirty_note(&git, Path::new("w/own"), Some("local/main".into()), false).unwrap();
+        assert!(n.contains("w/own") && names == ["f"]);
+        assert!(git.0.lock().unwrap().iter().all(|d| d == Path::new("w/own")), "git was asked about another directory");
         let git = DirGit(Default::default());
-        assert!(own_dirty_note(&git, Path::new("/w/own"), None, true).is_none());
+        assert!(own_dirty_note(&git, Path::new("w/own"), None, true).is_none());
         assert!(git.0.lock().unwrap().is_empty(), "override must not read git at all");
     }
 }

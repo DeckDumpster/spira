@@ -427,34 +427,52 @@ pub fn refusal(payload: &Value, run: &Path, worktree: &Path, home: &str) -> Opti
 mod tests {
     use super::*;
 
-    const RUN: &str = "/r/spira/run";
-    const WT: &str = "/r/spira/run/worktree/sp-a";
+    thread_local! {
+        static ROOT: testkit::TempDir = testkit::TempDir::new("search-fence");
+    }
+
+    fn root() -> String {
+        ROOT.with(|r| r.path().display().to_string())
+    }
+
+    fn at(s: &str) -> String {
+        s.replace("@R", &root())
+    }
+
+    fn run_dir() -> String {
+        at("@R/spira/run")
+    }
+
+    fn wt_dir() -> String {
+        at("@R/spira/run/worktree/sp-a")
+    }
 
     fn verdict(payload: Value) -> Option<String> {
-        refusal(&payload, Path::new(RUN), Path::new(WT), "/r")
+        refusal(&payload, Path::new(&run_dir()), Path::new(&wt_dir()), &root())
     }
 
     #[test]
     fn the_hook_prints_block_json_on_a_refusal_and_nothing_otherwise() {
-        let (run, wt) = (Path::new(RUN), Path::new(WT));
-        let call = |cmd: &str| json!({"tool_name": "Bash", "cwd": WT, "tool_input": {"command": cmd}}).to_string();
-        let out = hook_output(&call("grep -rl x /r/spira/run"), run, wt, "/r", false).expect("refused");
+        let (run, wt) = (run_dir(), wt_dir());
+        let (run, wt) = (Path::new(&run), Path::new(&wt));
+        let call = |cmd: &str| json!({"tool_name": "Bash", "cwd": wt_dir(), "tool_input": {"command": cmd}}).to_string();
+        let out = hook_output(&call(&at("grep -rl x @R/spira/run")), run, wt, &root(), false).expect("refused");
         let v: Value = serde_json::from_str(&out).unwrap();
         assert_eq!(v["decision"], "block");
         assert!(v["reason"].as_str().unwrap().contains("work show"));
-        assert_eq!(hook_output(&call("grep -rn x ."), run, wt, "/r", false), None);
-        assert_eq!(hook_output(&call("grep -rl x /r/spira/run"), run, wt, "/r", true), None, "override passes");
-        assert_eq!(hook_output("not json", run, wt, "/r", false), None, "unparseable passes");
+        assert_eq!(hook_output(&call("grep -rn x ."), run, wt, &root(), false), None);
+        assert_eq!(hook_output(&call(&at("grep -rl x @R/spira/run")), run, wt, &root(), true), None, "override passes");
+        assert_eq!(hook_output("not json", run, wt, &root(), false), None, "unparseable passes");
     }
 
     #[test]
     fn rg_on_one_run_file_is_refused_and_the_reason_points_at_grep() {
-        let r = bash("rg foo /r/spira/run/sp-x.log").expect("rg always recurses");
+        let r = bash("rg foo @R/spira/run/sp-x.log").expect("rg always recurses");
         assert!(r.contains("use grep or the Read tool"), "{r}");
     }
 
     fn bash(cmd: &str) -> Option<String> {
-        verdict(json!({"tool_name": "Bash", "cwd": WT, "tool_input": {"command": cmd}}))
+        verdict(json!({"tool_name": "Bash", "cwd": wt_dir(), "tool_input": {"command": at(cmd)}}))
     }
 
     fn refused(cmd: &str) {
@@ -468,42 +486,42 @@ mod tests {
 
     #[test]
     fn a_recursive_search_with_no_operand_searches_the_cwd_and_is_refused_in_the_run_dir() {
-        refused("cd /r/spira/run && rg foo");
-        refused("cd /r/spira/run && grep -r foo");
-        allowed("cd /r/spira/run/worktree/sp-a/dwarf && rg foo");
+        refused("cd @R/spira/run && rg foo");
+        refused("cd @R/spira/run && grep -r foo");
+        allowed("cd @R/spira/run/worktree/sp-a/dwarf && rg foo");
     }
 
     #[test]
     fn the_scar_command_is_refused_through_its_cd() {
-        refused(r#"cd /r/spira/run; ls -dt */ 2>/dev/null | head -5; grep -rl "spira-20261114T055931Z" . 2>/dev/null | head"#);
+        refused(r#"cd @R/spira/run; ls -dt */ 2>/dev/null | head -5; grep -rl "spira-20261114T055931Z" . 2>/dev/null | head"#);
     }
 
     #[test]
     fn recursive_searches_of_the_run_dir_or_above_are_refused() {
-        refused("grep -rn foo /r/spira/run");
-        refused("rg foo /r/spira");
+        refused("grep -rn foo @R/spira/run");
+        refused("rg foo @R/spira");
         refused("grep -R foo ~/spira");
         refused("grep -R foo $HOME/spira");
-        refused("find /r/spira/run -name '*.log'");
-        refused("cd /r/spira/run/worktree/sp-b && rg x");
-        refused("bash -c 'grep -r x /r/spira/run'");
-        refused("timeout 5 env A=b grep -rl x /r/spira/run/*.log");
-        refused("grep --recursive x /r/spira/run");
-        refused("grep -d recurse x /r/spira/run");
-        refused("grep -e x -r /r/spira/run");
-        refused("find /r/spira/run -maxdepth 2 -name x");
-        refused("rg --files /r/spira/run");
+        refused("find @R/spira/run -name '*.log'");
+        refused("cd @R/spira/run/worktree/sp-b && rg x");
+        refused("bash -c 'grep -r x @R/spira/run'");
+        refused("timeout 5 env A=b grep -rl x @R/spira/run/*.log");
+        refused("grep --recursive x @R/spira/run");
+        refused("grep -d recurse x @R/spira/run");
+        refused("grep -e x -r @R/spira/run");
+        refused("find @R/spira/run -maxdepth 2 -name x");
+        refused("rg --files @R/spira/run");
     }
 
     #[test]
     fn the_grep_tool_and_a_recursive_glob_are_refused() {
-        let r = verdict(json!({"tool_name": "Grep", "tool_input": {"pattern": "x", "path": RUN}})).unwrap();
+        let r = verdict(json!({"tool_name": "Grep", "tool_input": {"pattern": "x", "path": run_dir()}})).unwrap();
         assert!(r.contains("work show"));
-        assert!(verdict(json!({"tool_name": "Glob", "tool_input": {"pattern": "**/*.log", "path": RUN}})).is_some());
-        assert!(verdict(json!({"tool_name": "Glob", "tool_input": {"pattern": "/r/spira/run/**/*.log"}})).is_some());
+        assert!(verdict(json!({"tool_name": "Glob", "tool_input": {"pattern": "**/*.log", "path": run_dir()}})).is_some());
+        assert!(verdict(json!({"tool_name": "Glob", "tool_input": {"pattern": at("@R/spira/run/**/*.log")}})).is_some());
         assert_eq!(verdict(json!({"tool_name": "Glob", "tool_input": {"pattern": "**/*.rs"}})), None);
-        assert!(verdict(json!({"tool_name": "Glob", "cwd": RUN, "tool_input": {"pattern": "**/*.rs"}})).is_some());
-        refused("find /r/spira/run/* -name x");
+        assert!(verdict(json!({"tool_name": "Glob", "cwd": run_dir(), "tool_input": {"pattern": "**/*.rs"}})).is_some());
+        refused("find @R/spira/run/* -name x");
     }
 
     #[test]
@@ -511,9 +529,9 @@ mod tests {
         allowed("grep -rn foo .");
         allowed("rg foo dwarf/src");
         allowed("find . -name x");
-        allowed("grep -rn foo /r/spira/run/worktree/sp-a/dwarf");
-        allowed("grep foo /r/spira/run/sp-x.log");
-        allowed("find /r/spira/run -maxdepth 1 -name 'sp-x*'");
+        allowed("grep -rn foo @R/spira/run/worktree/sp-a/dwarf");
+        allowed("grep foo @R/spira/run/sp-x.log");
+        allowed("find @R/spira/run -maxdepth 1 -name 'sp-x*'");
         allowed("grep -rn foo $(pwd)");
         allowed("cd dwarf && grep -rn foo .");
         allowed("grep -rn foo . 2>/dev/null | head");
@@ -521,18 +539,18 @@ mod tests {
 
     #[test]
     fn prose_and_heredoc_bodies_are_inert() {
-        allowed(r#"echo "grep -r x /r/spira/run""#);
-        allowed("work note - <<'EOF'\nran grep -r x /r/spira/run\nEOF");
-        allowed("cat <<EOF\ngrep -r x /r/spira/run\nEOF\nls");
-        refused("bash <<'EOF'\ngrep -r x /r/spira/run\nEOF");
-        refused("cat <<EOF >/dev/null\nx\nEOF\ngrep -r x /r/spira");
+        allowed(r#"echo "grep -r x @R/spira/run""#);
+        allowed("work note - <<'EOF'\nran grep -r x @R/spira/run\nEOF");
+        allowed("cat <<EOF\ngrep -r x @R/spira/run\nEOF\nls");
+        refused("bash <<'EOF'\ngrep -r x @R/spira/run\nEOF");
+        refused("cat <<EOF >/dev/null\nx\nEOF\ngrep -r x @R/spira");
     }
 
     #[test]
     fn the_grep_tool_without_a_path_and_other_tools_pass() {
         assert_eq!(verdict(json!({"tool_name": "Grep", "tool_input": {"pattern": "x"}})), None);
-        assert_eq!(verdict(json!({"tool_name": "Read", "tool_input": {"file_path": RUN}})), None);
-        assert_eq!(verdict(json!({"tool_name": "Glob", "tool_input": {"pattern": "*.log", "path": RUN}})), None);
+        assert_eq!(verdict(json!({"tool_name": "Read", "tool_input": {"file_path": run_dir()}})), None);
+        assert_eq!(verdict(json!({"tool_name": "Glob", "tool_input": {"pattern": "*.log", "path": run_dir()}})), None);
     }
 
     #[test]
@@ -544,18 +562,18 @@ mod tests {
     #[test]
     fn cd_forms_and_command_wrappers_are_followed() {
         refused("cd && grep -r x spira");
-        refused("pushd /r/spira/run && rg x");
-        refused("cd /r/spira/run && popd && grep -r x /r/spira/run");
-        refused("nice -n 5 grep -r x /r/spira/run");
-        refused("nohup command rg x /r/spira");
-        refused("find -L /r/spira/run -name x");
-        refused("find /r/spira/run \\( -name a -o -name b \\)");
+        refused("pushd @R/spira/run && rg x");
+        refused("cd @R/spira/run && popd && grep -r x @R/spira/run");
+        refused("nice -n 5 grep -r x @R/spira/run");
+        refused("nohup command rg x @R/spira");
+        refused("find -L @R/spira/run -name x");
+        refused("find @R/spira/run \\( -name a -o -name b \\)");
         allowed("popd && grep -r x .");
         allowed("cd dwarf && cd .. && grep -r x .");
     }
 
     #[test]
     fn a_subshell_cd_is_taken_to_change_the_directory() {
-        refused("(cd /r/spira/run && ls); grep -rn x .");
+        refused("(cd @R/spira/run && ls); grep -rn x .");
     }
 }

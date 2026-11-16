@@ -240,7 +240,7 @@ pub fn write_atomic(path: &Path, data: &[u8]) -> std::io::Result<()> {
 
 /// A process with this pid exists (`[ -d /proc/$pid ]`).
 pub fn pid_alive(pid: &str) -> bool {
-    !pid.is_empty() && pid.chars().all(|c| c.is_ascii_digit()) && Path::new("/proc").join(pid).is_dir()
+    !pid.is_empty() && pid.chars().all(|c| c.is_ascii_digit()) && Path::new(system_paths::PROC).join(pid).is_dir()
 }
 
 #[cfg(test)]

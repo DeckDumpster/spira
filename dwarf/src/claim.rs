@@ -142,7 +142,7 @@ impl Selector<'_> {
             let n: i64 = if n.success() { n.text().trim().parse().unwrap_or(0) } else { 0 };
             if n > 0 {
                 ids.push(t.id.clone());
-                label = Some(format!("P{}{}/P{}", t.eprio, if t.estarted == "0" { "/started" } else { "" }, t.bprio));
+                label = Some(format!("P{}{}/P{}", t.eprio, if t.estarted == "0" { "/started" } else { "" }, t.bprio)); // not a path: a priority label
             }
         }
         (ids, label)

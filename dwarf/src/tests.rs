@@ -108,7 +108,7 @@ pub(crate) mod verdict_run {
 
     fn with_run<T>(bd: &dyn Bd, seam: &Seams, git: Dirty, claimed_raw: &str, f: impl FnOnce(&mut Run) -> T) -> T {
         let mut vars = super::complete_vars();
-        vars.insert("SPIRA_REPO".into(), "/shared".into());
+        vars.insert("SPIRA_REPO".into(), "shared".into());
         vars.insert("SPIRA_ALLOW_PROD_DIRTY".into(), String::new());
         with_run_over(vars, bd, git, &Lc, &|| 0, seam, claimed_raw, f)
     }
@@ -120,13 +120,13 @@ pub(crate) mod verdict_run {
 
     #[allow(clippy::too_many_arguments)]
     fn with_run_sink<T>(vars: BTreeMap<String, String>, bd: &dyn Bd, git: Dirty, exec: &dyn Exec, clock: &(dyn Fn() -> i64 + Sync), seam: &dyn Seam, sink: &dyn Sink, claimed_raw: &str, f: impl FnOnce(&mut Run) -> T) -> T {
-        let conf = Conf::new(&Snapshot { vars, ..Default::default() }, Path::new("/h/spira"));
+        let conf = Conf::new(&Snapshot { vars, ..Default::default() }, Path::new("h/spira"));
         let rune = Rune::from_vars("builder", &Default::default());
         let env = Env::new(Default::default(), Default::default());
         let stop = Arc::new(Stop::default());
         let mut r = Run {
             d: Deps { bd, seam, git: &git, exec, launcher: &NoLaunch, sink, env: &env, clock, sleep: &|_| {} },
-            ledger: Ledger { path: PathBuf::from("/nonexistent/ledger"), dry: true },
+            ledger: Ledger { path: PathBuf::from("nonexistent/ledger"), dry: true },
             conf,
             rune,
             snap: Snapshot::default(),
@@ -139,7 +139,7 @@ pub(crate) mod verdict_run {
             hb_shutdown: Arc::new(AtomicBool::new(false)),
             hb_done: Arc::new(AtomicBool::new(false)),
             rune_file: PathBuf::new(),
-            s: State { bead: "sp-x".into(), branch: "b".into(), repo: PathBuf::from("/repo"), work: Some(PathBuf::from("/w/own")), lc_model_restricted: true, claimed_raw: claimed_raw.into(), ..Default::default() },
+            s: State { bead: "sp-x".into(), branch: "b".into(), repo: PathBuf::from("repo"), work: Some(PathBuf::from("w/own")), lc_model_restricted: true, claimed_raw: claimed_raw.into(), ..Default::default() },
         };
         f(&mut r)
     }
@@ -254,7 +254,7 @@ pub(crate) mod verdict_run {
     fn the_teardown_reads_the_blocks_targets_in_one_list() {
         let seam = Seams(Default::default());
         let blocked = with_run(&AskBd, &seam, Dirty(vec![]), "", |r| {
-            r.conf = Conf::new(&Snapshot { vars: { let mut v = super::complete_vars(); v.insert("SPIRA_ASK_LABEL".into(), "fixture-ask".into()); v }, ..Default::default() }, Path::new("/h/spira"));
+            r.conf = Conf::new(&Snapshot { vars: { let mut v = super::complete_vars(); v.insert("SPIRA_ASK_LABEL".into(), "fixture-ask".into()); v }, ..Default::default() }, Path::new("h/spira"));
             r.ask_blocked("sp-x")
         });
         assert!(blocked);
@@ -307,7 +307,7 @@ pub(crate) mod verdict_run {
     fn decline(run: &Path, repos: &[&str]) -> (Option<i32>, Vec<String>) {
         let map = spira_config::process::fixture_repo_map(run, repos);
         let mut vars = super::complete_vars();
-        vars.insert("SPIRA_REPO".into(), "/shared".into());
+        vars.insert("SPIRA_REPO".into(), "shared".into());
         vars.insert("SPIRA_ALLOW_PROD_DIRTY".into(), String::new());
         vars.insert("SPIRA_RUN".into(), run.display().to_string());
         vars.insert("SPIRA_REPO_MAP".into(), map.display().to_string());
@@ -334,7 +334,7 @@ pub(crate) mod verdict_run {
     fn at_live(persona: &str, rune_vars: &[(&str, &str)], live: i64, sweep: bool) -> (Option<i32>, Vec<String>) {
         let d = testkit::TempDir::new("dwarf-single-flight");
         let mut vars = super::complete_vars();
-        vars.insert("SPIRA_REPO".into(), "/shared".into());
+        vars.insert("SPIRA_REPO".into(), "shared".into());
         vars.insert("SPIRA_RUN".into(), d.path().display().to_string());
         let rv: BTreeMap<String, String> = rune_vars.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
         let sink = Mute::default();
@@ -378,7 +378,7 @@ pub(crate) mod verdict_run {
         stop_lane(d.path(), "fixture", "dwarves");
         let held = || {
             let mut vars = super::complete_vars();
-            vars.insert("SPIRA_REPO".into(), "/shared".into());
+            vars.insert("SPIRA_REPO".into(), "shared".into());
             vars.insert("SPIRA_RUN".into(), d.path().display().to_string());
             with_run_over(vars, &NoBd, Dirty(vec![]), &Lc, &|| 0, &Seams(Default::default()), "", |r| {
                 r.s.session_id = "sess".into();
@@ -409,7 +409,7 @@ pub(crate) mod verdict_run {
     // covers: UC-dwarf-execution-16
     #[test]
     fn own_dirty_hand_on_is_refused_and_requeued_with_the_note() {
-        let (reopens, cause) = run(vec!["/w/own"]);
+        let (reopens, cause) = run(vec!["w/own"]);
         assert_eq!(reopens.len(), 1);
         assert_eq!(reopens[0][1], crate::verdict::PROD_DIRTY);
         assert!(reopens[0][2].contains("Modified paths:\n   M f") && reopens[0][2].contains("SPIRA_ALLOW_PROD_DIRTY=1"), "{:?}", reopens[0]);
@@ -419,7 +419,7 @@ pub(crate) mod verdict_run {
     // covers: UC-dwarf-execution-16
     #[test]
     fn dirty_shared_checkout_lets_the_hand_on_stand() {
-        let (reopens, cause) = run(vec!["/shared"]);
+        let (reopens, cause) = run(vec!["shared"]);
         assert!(reopens.is_empty(), "sp-nqtrg: {reopens:?}");
         assert_eq!(cause, None);
     }

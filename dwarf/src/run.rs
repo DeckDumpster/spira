@@ -750,7 +750,7 @@ impl<'a> Run<'a> {
             return Err(rc);
         }
 
-        let occupants = worktree::live_occupants(std::path::Path::new("/proc"), &self.run_dir().join("worktree").join(&c.id), self.pid);
+        let occupants = worktree::live_occupants(std::path::Path::new(system_paths::PROC), &self.run_dir().join("worktree").join(&c.id), self.pid);
         if !occupants.is_empty() {
             self.release();
             let pids = occupants.iter().map(u32::to_string).collect::<Vec<_>>().join(",");
@@ -1380,7 +1380,7 @@ impl<'a> Run<'a> {
         env.set("GIT_SSH_COMMAND", "echo 'dwarf: no SSH credentials — landing.sh and the batcher handle forge writes' >&2; exit 1");
         env.set("GIT_TERMINAL_PROMPT", "0");
         self.export_session_tmpdir(work);
-        env.set("GIT_ASKPASS", "/bin/false");
+        env.set("GIT_ASKPASS", system_paths::BIN_FALSE);
         // THE BUILD CACHE (sp-z61hj; spira-config/DESIGN-build-cache.md): the agent's cargo
         // compiles through the box's one sccache, so a worktree never builds its dependencies
         // cold. A session is not a build: absent sccache falls back — loudly — to uncached.
@@ -1841,10 +1841,10 @@ mod tests {
         std::fs::create_dir_all(&home).unwrap();
         std::fs::create_dir_all(hb.parent().unwrap()).unwrap();
         testkit::write_exe(&hb, "#!/bin/sh\n");
-        let off: serde_json::Value = serde_json::from_str(&dwarf_settings(&home, Path::new("/r/run"), None, false, None)).unwrap();
+        let off: serde_json::Value = serde_json::from_str(&dwarf_settings(&home, Path::new("r/run"), None, false, None)).unwrap();
         assert_eq!(off["hooks"]["PostToolUse"].as_array().unwrap().len(), 1);
         assert!(off["hooks"]["Stop"].is_null());
-        let on: serde_json::Value = serde_json::from_str(&dwarf_settings(&home, Path::new("/r/run"), None, true, None)).unwrap();
+        let on: serde_json::Value = serde_json::from_str(&dwarf_settings(&home, Path::new("r/run"), None, true, None)).unwrap();
         let post = on["hooks"]["PostToolUse"].as_array().unwrap();
         assert_eq!(post.len(), 2);
         assert_eq!(post[1]["matcher"], "Edit|Write|MultiEdit");
@@ -1853,7 +1853,7 @@ mod tests {
         assert_eq!(on["hooks"]["Stop"][0]["hooks"][0]["command"], abs.as_str());
         assert_eq!(post[0], off["hooks"]["PostToolUse"][0], "the existing group is untouched");
         std::fs::remove_file(&hb).unwrap();
-        let gone: serde_json::Value = serde_json::from_str(&dwarf_settings(&home, Path::new("/r/run"), None, true, None)).unwrap();
+        let gone: serde_json::Value = serde_json::from_str(&dwarf_settings(&home, Path::new("r/run"), None, true, None)).unwrap();
         assert!(gone["hooks"]["Stop"].is_null(), "no habits binary, no habits hooks");
     }
 
@@ -1861,7 +1861,7 @@ mod tests {
     fn the_statute_hook_is_a_pre_tool_use_hook_once_the_release_ships_it() {
         let d = testkit::TempDir::new("dwarf-settings-statute");
         let pre = |d: &Path| -> Vec<String> {
-            let v: serde_json::Value = serde_json::from_str(&dwarf_settings(d, Path::new("/r/run"), None, false, None)).unwrap();
+            let v: serde_json::Value = serde_json::from_str(&dwarf_settings(d, Path::new("r/run"), None, false, None)).unwrap();
             v["hooks"]["PreToolUse"].as_array().map_or(vec![], |g| g[0]["hooks"].as_array().unwrap().iter().map(|h| h["command"].as_str().unwrap().to_string()).collect())
         };
         assert!(pre(&d).is_empty());
@@ -1878,12 +1878,12 @@ mod tests {
         let fence = d.join("hooks").join("dwarf-fence.sh");
         testkit::write_exe(&fence, "#!/bin/sh\n");
         let cmd = |prod: Option<&Path>| -> String {
-            let v: serde_json::Value = serde_json::from_str(&dwarf_settings(&d, Path::new("/r/run"), prod, false, None)).unwrap();
+            let v: serde_json::Value = serde_json::from_str(&dwarf_settings(&d, Path::new("r/run"), prod, false, None)).unwrap();
             v["hooks"]["PreToolUse"][0]["hooks"][0]["command"].as_str().unwrap().to_string()
         };
-        assert_eq!(cmd(Some(Path::new("/r/prod"))), format!("SPIRA_RUN='/r/run' SPIRA_PROD='/r/prod' '{}'", fence.display()));
-        assert_eq!(cmd(None), format!("SPIRA_RUN='/r/run' '{}'", fence.display()));
-        assert_eq!(fence_command(&fence, Path::new("/a b/it's"), None), format!("SPIRA_RUN='/a b/it'\\''s' '{}'", fence.display()));
+        assert_eq!(cmd(Some(Path::new("r/prod"))), format!("SPIRA_RUN='r/run' SPIRA_PROD='r/prod' '{}'", fence.display()));
+        assert_eq!(cmd(None), format!("SPIRA_RUN='r/run' '{}'", fence.display()));
+        assert_eq!(fence_command(&fence, Path::new("a b/it's"), None), format!("SPIRA_RUN='a b/it'\\''s' '{}'", fence.display()));
     }
 
     #[test]
@@ -1892,9 +1892,9 @@ mod tests {
         let d = testkit::TempDir::new("dwarf-settings-search");
         let home = d.path().join("spira");
         std::fs::create_dir_all(&home).unwrap();
-        let (run, wt) = (Path::new("/r/run"), Path::new("/r/run/worktree/sp-a"));
+        let (run, wt) = (Path::new("r/run"), Path::new("r/run/worktree/sp-a"));
         let cmds = |s: Option<(&Path, &Path)>| -> Vec<String> {
-            let v: serde_json::Value = serde_json::from_str(&dwarf_settings(&home, Path::new("/r/run"), None, false, s)).unwrap();
+            let v: serde_json::Value = serde_json::from_str(&dwarf_settings(&home, Path::new("r/run"), None, false, s)).unwrap();
             v["hooks"]["PreToolUse"].as_array().map_or(vec![], |g| g[0]["hooks"].as_array().unwrap().iter().map(|h| h["command"].as_str().unwrap().to_string()).collect())
         };
         assert!(cmds(Some((run, wt))).is_empty(), "no bin/dwarf, no entry");
@@ -1904,7 +1904,7 @@ mod tests {
         assert!(cmds(None).is_empty());
         let on = cmds(Some((run, wt)));
         assert_eq!(on.len(), 1);
-        assert!(on[0].contains("search-fence") && on[0].contains("--run '/r/run'") && on[0].contains("--worktree '/r/run/worktree/sp-a'"), "{on:?}");
+        assert!(on[0].contains("search-fence") && on[0].contains("--run 'r/run'") && on[0].contains("--worktree 'r/run/worktree/sp-a'"), "{on:?}");
         assert!(on[0].starts_with(&format!("'{}'", bin.display())));
     }
 }

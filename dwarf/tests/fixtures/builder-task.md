@@ -1,6 +1,6 @@
 # sp-a: Do the thing
 
-Repository spira, worktree /w/sp-a, branch spira/sp-a, landing ref local/main.
+Repository spira, worktree w/sp-a, branch spira/sp-a, landing ref local/main.
 Deadline **This session has no wall-clock deadline.**
 
 ## Outcome
