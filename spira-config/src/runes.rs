@@ -984,7 +984,7 @@ mod tests {
     #[test]
     fn the_shipped_runes_declare_build_disk_for_exactly_the_builder_and_the_reactive_lanes() {
         let ws = testkit::TempDir::new("spira-config-runes-shipped");
-        let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/runes");
+        let src = crate::resolve::locate_home_for_process().expect("SPIRA_HOME names the harness tree").join("runes");
         for dir in [src.clone(), src.join("disabled")] {
             for e in std::fs::read_dir(&dir).unwrap().flatten().filter(|e| e.path().extension().is_some_and(|x| x == "rune")) {
                 write_rune(&ws, &e.path().file_stem().unwrap().to_string_lossy(), &std::fs::read_to_string(e.path()).unwrap());
