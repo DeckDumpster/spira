@@ -17,6 +17,7 @@ fn config() -> Config {
 #[derive(Clone, Copy)]
 enum Last {
     Never,
+    Undated,
     Ago(u64),
     FirstSight,
 }
@@ -36,7 +37,7 @@ fn landed(n: u64) -> Host {
 
 fn waiting(mut h: Host, n: u64, last: Last) -> Host {
     h.snap.landings[0].waiting = n;
-    h.snap.landings[0].oldest = (n > 0).then(|| Waiting { bead: "sp-x".into(), since: 0 });
+    h.snap.landings[0].oldest = (n > 0).then(|| Waiting { bead: "sp-x".into(), since: 1 });
     h.last = last;
     h
 }
@@ -52,7 +53,7 @@ fn rig(world: Arc<Mutex<Host>>) -> TaskRig {
         let mut h = world.lock().unwrap();
         let first = *h.first_seen.get_or_insert(now);
         let at = match h.last {
-            Last::Never => 0,
+            Last::Never | Last::Undated => 0,
             Last::Ago(s) => now - s,
             Last::FirstSight => first,
         };
@@ -60,7 +61,11 @@ fn rig(world: Arc<Mutex<Host>>) -> TaskRig {
         snap.landings.iter_mut().for_each(|l| {
             l.last_landing = at;
             if let Some(o) = &mut l.oldest {
-                o.since = at;
+                o.since = match h.last {
+                    Last::Never => now - 100_000,
+                    Last::Undated => 0,
+                    _ => at,
+                };
             }
         });
         Ok(serde_json::to_string(&snap).unwrap())
@@ -123,6 +128,16 @@ fn no_landing_for_ten_minutes_with_beads_waiting_files_exactly_one_incident_and_
     let pages = named(&r, INBOX_APPEND);
     assert!(pages.len() == 1 && pages[0].contains("P0 alpha: landing stalled"), "{pages:?}");
     assert_eq!(halts(&r), 0, "a stall starts a repair, never a halt");
+}
+
+#[test]
+fn a_waiting_bead_with_no_entry_time_files_no_stall_and_pages_the_data_defect_once() {
+    let w = Arc::new(Mutex::new(waiting(landed(55), 3, Last::Undated)));
+    let mut r = rig(w);
+    r.advance(5 * CADENCE_MS).unwrap();
+    assert!(named(&r, FILE).is_empty(), "an unknown wait is not a stall");
+    let pages = named(&r, INBOX_APPEND);
+    assert!(pages.len() == 1 && pages[0].contains("data defect") && pages[0].contains("sp-x"), "{pages:?}");
 }
 
 #[test]
@@ -382,7 +397,7 @@ fn filed_and_said() -> TaskRig {
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&filed_and_said(), NAME);
-    assert_eq!(rows, ["blind", "diluted", "halted", "held", "readable_at", "resumed_at", "retried", "stalled/alpha", "starved", "unlanded"]);
+    assert_eq!(rows, ["blind", "diluted", "halted", "held", "readable_at", "resumed_at", "retried", "stalled/alpha", "starved", "undated", "unlanded"]);
 }
 
 #[test]
