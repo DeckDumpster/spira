@@ -269,6 +269,15 @@ mod tests {
     }
 
     #[test]
+    fn a_refusal_that_names_no_id_cannot_tell_and_writes_nothing() {
+        let mut m = fixture();
+        m.rows.push(json!({"bead_id": "-odd", "state": "READY", "claim": null}));
+        let a = backfill(&v(&["--apply"]), &mut m);
+        assert_eq!(a.code, CANNOT_TELL, "{}", a.stdout);
+        assert!(a.stderr.contains("sync-claim-inputs failed: usage:") && m.writes.is_empty(), "{}", a.stderr);
+    }
+
+    #[test]
     fn a_failure_on_one_id_is_refused_and_the_sweep_goes_on() {
         let mut m = fixture();
         m.fail = vec!["sp-ready"];
