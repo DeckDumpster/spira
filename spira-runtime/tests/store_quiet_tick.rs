@@ -147,7 +147,7 @@ fn a_quiet_tick_of_each_task_that_read_the_store_every_tick_never_reaches_its_so
     let repo = Repo { name: "alpha".into(), path: repo_dir.clone(), base: "main".into(), forge: "forge".into(), land: Land::Local };
     let map = format!("alpha|{}|queue.local|main\n", repo_dir.display());
     let reg = spira_config::repos::Registry::new(Some(&map), &BTreeMap::new(), dir.path());
-    let reads = round_controller::sifts::Reads { lc: &lc, views: &installed, reg: &reg, wiki: "", identity_projects: "", work: dir.path().join("sift") };
+    let reads = spira_runtime::tasks::a::sift::Reads { lc: &lc, views: &installed, reg: &reg, wiki: "", identity_projects: "", work: dir.path().join("sift") };
 
     let map = dir.path().join("repos");
     std::fs::write(&map, "alpha|/x|queue.local|main\n").unwrap();
@@ -158,7 +158,7 @@ fn a_quiet_tick_of_each_task_that_read_the_store_every_tick_never_reaches_its_so
         let pool = io::certified_pool(&env, &repo).expect("batcher reads its pool");
         assert_eq!(pool.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["sp-a"]);
         assert_eq!(io::lcq_held(&env, &["show-batch", "b-1"]).unwrap(), json!({ "pass": 1 }).to_string(), "batcher reads a round's pass");
-        round_controller::sifts::observe_repo(&reads, "alpha", true).expect("sift reads its repo");
+        spira_runtime::tasks::a::sift::observe_repo(&reads, "alpha", true).expect("sift reads its repo");
         assert_eq!(world.supersede_snapshot("{}").unwrap(), json!({ "held": [] }).to_string(), "supersede-duty lists the manual holds");
         assert_eq!(world.held_asks().unwrap(), Vec::<String>::new(), "the asks task lists the ask holds");
         assert_eq!(world.waiting_rows().unwrap().as_array().map(Vec::len), Some(0), "watch.throughput counts the waiting rows");

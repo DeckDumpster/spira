@@ -4,78 +4,16 @@
 //! out. On one pool its verdicts are `batcher sifts`'s, line for line.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::Command;
 
 use serde_json::Value;
-use sift::{Acts, Candidate, FileStore, GitProbe};
+use sift::{Candidate, GitProbe};
 use spira_store::lc_call::LcClient;
 use spira_config::repos::Registry;
 
 const WHO: &str = "round-controller";
-
-/// What one pass reads besides the registry, resolved once.
-#[derive(Clone, Debug)]
-pub struct Env {
-    pub home: PathBuf,
-    pub run: PathBuf,
-    pub lc_bin: String,
-    pub lc_timeout: u64,
-    pub wiki: String,
-    pub identity_projects: String,
-    /// The Concierge's inbox, or why there is none: a verdict is told there as well as logged.
-    pub inbox: Result<String, String>,
-}
-
-impl Env {
-    pub fn for_process() -> Result<Env, String> {
-        use spira_config::process::{cfg, cfg_parse};
-        let home = spira_config::resolve::locate_home_for_process()?;
-        let run = cfg("SPIRA_RUN")?;
-        if run.trim().is_empty() {
-            return Err("SPIRA_RUN unset".into());
-        }
-        Ok(Env {
-            home,
-            run: PathBuf::from(run),
-            lc_bin: spira_store::lifecycle_row::lc_bin()?,
-            lc_timeout: cfg_parse::<u64>("SPIRA_LC_TIMEOUT")?,
-            wiki: cfg("SPIRA_WIKI").unwrap_or_default(),
-            identity_projects: cfg("SPIRA_IDENTITY_PROJECTS").unwrap_or_default(),
-            inbox: cfg("SPIRA_CONCIERGE_INBOX"),
-        })
-    }
-}
-
-/// The `sifts` verb: this process's config and registry, every verdict line on `out`.
-pub fn for_process(out: &mut dyn Write) -> Result<(), String> {
-    let env = Env::for_process()?;
-    let reg = Registry::from_env(std::env::vars().collect(), &env.home);
-    sifts(&env, &reg, out)
-}
-
-/// Screens every `queue` and `queue.local` repository; one that cannot be screened is named in
-/// the error and does not stop the others.
-pub fn sifts(env: &Env, reg: &Registry, out: &mut dyn Write) -> Result<(), String> {
-    let mut failed = Vec::new();
-    for name in reg.all() {
-        let land = reg.land(&name);
-        if !matches!(land.as_str(), "queue" | "queue.local") {
-            continue;
-        }
-        if let Err(e) = sift_one(env, reg, &name, land == "queue.local", out) {
-            eprintln!("{WHO} sifts: {name}: {e}");
-            failed.push(name);
-        }
-    }
-    if failed.is_empty() {
-        Ok(())
-    } else {
-        Err(format!("sift failed for: {}", failed.join(", ")))
-    }
-}
 
 struct Repo {
     name: String,
@@ -103,125 +41,6 @@ fn find_repo(reg: &Registry, name: &str, local: bool) -> Result<Repo, String> {
     })
 }
 
-fn sift_one(
-    env: &Env,
-    reg: &Registry,
-    name: &str,
-    local: bool,
-    out: &mut dyn Write,
-) -> Result<(), String> {
-    let repo = find_repo(reg, name, local)?;
-    let open = open_round(&|r| batch_show(env, r), &repo.name)?;
-    let o = sift_repo(env, reg, &repo, &open, out)?;
-    let _ = writeln!(
-        out,
-        "{WHO} {}: sift: {} sifted, {} sent back, {} superseded, {} held",
-        repo.name,
-        o.sifted.len(),
-        o.sent_back.len(),
-        o.superseded.len(),
-        o.capped.len() + o.held.len()
-    );
-    Ok(())
-}
-
-fn sift_repo(
-    env: &Env,
-    reg: &Registry,
-    repo: &Repo,
-    open: &[Candidate],
-    out: &mut dyn Write,
-) -> Result<sift::Outcome, String> {
-    let rows = pool_rows(env)?;
-    let pool = certified_pool(env, repo, &rows)?;
-    if pool.is_empty() {
-        return Ok(sift::Outcome::default());
-    }
-    fetch_base(repo).map_err(|e| format!("base not fetched ({e})"))?;
-    let work = env.run.join("sift");
-    let probe = GitProbe {
-        repo: repo.path.clone(),
-        name: repo.name.clone(),
-        registered: reg.names(),
-        wiki: env.wiki.clone(),
-        identity_projects: env.identity_projects.clone(),
-        base_ref: repo.base.clone(),
-        work: work.clone(),
-        state: Box::new({
-            let env = env.clone();
-            move |id| lc_state(&env, id)
-        }),
-        shown: Box::new({
-            let env = env.clone();
-            move |id| bd_show_text(&env, id)
-        }),
-    };
-    let mut live = Live {
-        env,
-        sifted: sifted_tips(&rows),
-        out,
-    };
-    let o = sift::screen(&probe, &FileStore::new(work), &mut live, &pool, open);
-    for e in &o.errors {
-        eprintln!("{WHO} {}: {e}", repo.name);
-    }
-    Ok(o)
-}
-
-struct Live<'a> {
-    env: &'a Env,
-    sifted: BTreeMap<String, String>,
-    out: &'a mut dyn Write,
-}
-
-impl Acts for Live<'_> {
-    fn note(&mut self, id: &str, text: &str) -> Result<(), String> {
-        bead_note(self.env, id, text)
-    }
-    fn gate_red(&mut self, id: &str, tip: &str, reason: &str) -> Result<(), String> {
-        let lc = client_of(self.env)?;
-        keep_sift_logs(&lc, &self.env.run, id, reason);
-        lc_gate_red(&lc, id, tip, reason)
-    }
-    fn send_back(&mut self, id: &str, tip: &str, text: &str) -> Result<(), String> {
-        lc_send_back_fact(&client_of(self.env)?, id, tip, text)
-    }
-    fn supersede(&mut self, id: &str, keeper: &str) -> Result<(), String> {
-        let reason = format!("Sift: identical patch (patch-id) to {keeper}.");
-        // FORK-EDGE: unserved verb close (the spira-lc CLI answers it; the socket does not)
-        spira_store::lifecycle_row::close_with(&self.env.lc_bin, id, &reason, "sift", Some(keeper))
-    }
-    fn pass(&mut self, id: &str, tip: &str) -> Result<(), String> {
-        if self.sifted.get(id).map(String::as_str) == Some(tip) {
-            return Ok(());
-        }
-        lc_sifted(&client_of(self.env)?, id, tip, self.out)
-    }
-    fn tell(&mut self, msg: &str) {
-        let _ = writeln!(self.out, "{WHO}: {msg}");
-        let line = format!(
-            "{} [watch:sift] {msg}\n",
-            stamp(spira_config::vtime::now_epoch())
-        );
-        let wrote = self.env.inbox.clone().and_then(|p| {
-            OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(p)
-                .and_then(|mut f| f.write_all(line.as_bytes()))
-                .map_err(|e| e.to_string())
-        });
-        if let Err(e) = wrote {
-            eprintln!("{WHO}: sift: concierge not told ({e}): {msg}");
-        }
-    }
-}
-
-/// `%Y%m%dT%H%M%SZ`, the stamp the inbox's other writers use.
-fn stamp(epoch: u64) -> String {
-    crate::outcome::utc_stamp(epoch * 1000).replace(['-', ':'], "")
-}
-
 fn run(cmd: &mut impl spira_config::bounded::Runnable, what: &str) -> Result<String, String> {
     let o = cmd.output().map_err(|e| format!("{what}: {e}"))?;
     if !o.status.success() {
@@ -238,14 +57,6 @@ fn run(cmd: &mut impl spira_config::bounded::Runnable, what: &str) -> Result<Str
         ));
     }
     Ok(String::from_utf8_lossy(&o.stdout).to_string())
-}
-
-fn lcq(env: &Env, args: &[&str]) -> Result<String, String> {
-    lcq_with(&client_of(env)?, args)
-}
-
-fn client_of(env: &Env) -> Result<LcClient, String> {
-    Ok(LcClient::for_bin(&env.lc_bin)?.within(std::time::Duration::from_secs(env.lc_timeout)))
 }
 
 fn lcq_with(lc: &LcClient, args: &[&str]) -> Result<String, String> {
@@ -274,15 +85,6 @@ fn lc_answer(
     Ok(r.out)
 }
 
-/// [`lcq`] for a read the process's store views hold (content, planning): the held answer when the
-/// process keeps the store's watch.
-fn lcq_held(env: &Env, args: &[&str]) -> Result<String, String> {
-    match store_view::shared() {
-        Some(views) => lc_answer(views.answer(args).map(|r| r.value)),
-        None => lcq(env, args),
-    }
-}
-
 fn lcq_held_with(lc: &LcClient, args: &[&str]) -> Result<String, String> {
     match store_view::shared() {
         Some(views) => lc_answer(views.answer(args).map(|r| r.value)),
@@ -309,30 +111,6 @@ fn show_text(lc: &LcClient, id: &str) -> Result<String, String> {
 
 fn parsed(text: &str, what: &str) -> Result<Value, String> {
     serde_json::from_str(text).map_err(|e| format!("{what}: unparsed reply: {e}"))
-}
-
-/// The SUBMITTED and CERTIFIED rows, read once per repository: the pool and the sifted tips
-/// are both filters of this one snapshot.
-fn pool_rows(env: &Env) -> Result<Vec<Value>, String> {
-    if let Some(rows) = held_rows(&store_view::RowQuery { states: &["SUBMITTED", "CERTIFIED"], ..Default::default() }) {
-        return rows;
-    }
-    let text = lcq(
-        env,
-        &["list", "--state", "SUBMITTED,CERTIFIED"],
-    )?;
-    serde_json::from_str(&text).map_err(|e| format!("spira-lc list: unparsed reply: {e}"))
-}
-
-fn rows_of(env: &Env, ids: &[String]) -> Result<Vec<Value>, String> {
-    if ids.is_empty() {
-        return Ok(Vec::new());
-    }
-    if let Some(rows) = held_rows(&store_view::RowQuery { ids: Some(ids), ..Default::default() }) {
-        return rows;
-    }
-    let text = lcq(env, &["list", "--ids", &ids.join(",")])?;
-    serde_json::from_str(&text).map_err(|e| format!("spira-lc list --ids: unparsed reply: {e}"))
 }
 
 fn str_of<'a>(r: &'a Value, k: &str) -> Option<&'a str> {
@@ -374,18 +152,6 @@ fn read_pool(rows: &[Value]) -> Vec<(String, String)> {
     pool
 }
 
-fn sifted_tips(rows: &[Value]) -> BTreeMap<String, String> {
-    rows.iter()
-        .filter(|r| in_pool_states(r))
-        .filter_map(|r| {
-            Some((
-                str_of(r, "bead_id")?.to_string(),
-                str_of(r, "sifted_tip")?.to_string(),
-            ))
-        })
-        .collect()
-}
-
 /// `refs/heads/spira/*` of the repository's own checkout, by bead id: what scopes the
 /// machine's pool to this repository, and the live tip a recorded tip must still be.
 fn branch_tips(repo: &Repo) -> Result<BTreeMap<String, String>, String> {
@@ -418,25 +184,6 @@ struct Member {
     stacked_on: Vec<String>,
 }
 
-/// The pool the screen judges: every unheld pool row of this repository at its branch's live
-/// tip, with a content row, not stacked on a bead that is held, ejected at its tip or moved.
-fn certified_pool(env: &Env, repo: &Repo, rows: &[Value]) -> Result<Vec<Candidate>, String> {
-    let branches = branch_tips(repo)?;
-    let ids: Vec<String> = at_live_tips(rows, &branches);
-    let shown: BTreeSet<String> = match bd_show(env, &ids)? {
-        Value::Array(a) => a,
-        o => vec![o],
-    }
-    .iter()
-    .filter_map(|r| str_of(r, "id").map(str::to_string))
-    .collect();
-    let stacks: BTreeMap<String, Vec<String>> = ids.iter().filter(|id| shown.contains(*id)).map(|id| (id.clone(), live_stack(env, id))).collect();
-    let pooled: BTreeSet<&str> = rows.iter().filter_map(|r| str_of(r, "bead_id")).collect();
-    let outside: Vec<String> = stacks.values().flatten().filter(|id| !pooled.contains(id.as_str())).cloned().collect::<BTreeSet<_>>().into_iter().collect();
-    let outside = rows_of(env, &outside)?;
-    Ok(select_pool(rows, &outside, &branches, &shown, &stacks))
-}
-
 /// The ids of the unheld pool rows whose recorded tip is their branch's live tip.
 fn at_live_tips(rows: &[Value], branches: &BTreeMap<String, String>) -> Vec<String> {
     read_pool(rows).into_iter().filter(|(id, tip)| branches.get(id) == Some(tip)).map(|(id, _)| id).collect()
@@ -460,39 +207,6 @@ pub fn live_prereqs(stack: &[String], state: &BTreeMap<String, String>) -> Vec<S
     stack.iter().filter(|k| !matches!(state.get(*k).map(String::as_str), Some("LANDED" | "SUPERSEDED" | "DROPPED"))).cloned().collect()
 }
 
-/// The prerequisites `id`'s recorded stack names that are not yet finished. A failed or
-/// unparsed read is unstacked, said on stderr: the machine already answered the pool's read.
-fn live_stack(env: &Env, id: &str) -> Vec<String> {
-    let text = match client_of(env).and_then(|lc| show_text(&lc, id)) {
-        Ok(t) => t,
-        Err(e) => {
-            eprintln!("{WHO}: LIFECYCLE: spira-lc show {id} failed (read as unstacked): {e}");
-            return Vec::new();
-        }
-    };
-    let Ok(v) = serde_json::from_str::<Value>(&text) else {
-        eprintln!("{WHO}: LIFECYCLE: spira-lc show {id}: unparsed reply (read as unstacked)");
-        return Vec::new();
-    };
-    let stack = match v.get("bead").and_then(|b| b.get("stack")) {
-        Some(Value::String(s)) => serde_json::from_str::<Value>(s).unwrap_or(Value::Null),
-        Some(other) => other.clone(),
-        None => return Vec::new(),
-    };
-    stack
-        .as_object()
-        .map(|o| {
-            o.iter()
-                .filter(|(_, v)| v.is_string())
-                .map(|(k, _)| k.clone())
-                .collect::<BTreeSet<String>>()
-                .into_iter()
-                .filter(|k| !prereq_is_finished(env, k))
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
 /// The prerequisite ids a `show` answer's recorded stack names.
 fn stack_of(show: &Value) -> Vec<String> {
     let stack = match show.get("bead").and_then(|b| b.get("stack")) {
@@ -501,21 +215,6 @@ fn stack_of(show: &Value) -> Vec<String> {
         None => return Vec::new(),
     };
     stack.as_object().map(|o| o.iter().filter(|(_, v)| v.is_string()).map(|(k, _)| k.clone()).collect::<BTreeSet<String>>().into_iter().collect()).unwrap_or_default()
-}
-
-/// A prerequisite recorded LANDED, SUPERSEDED or DROPPED sequences nothing; an unreadable row
-/// is live, the safe side.
-fn prereq_is_finished(env: &Env, id: &str) -> bool {
-    let Ok(text) = client_of(env).and_then(|lc| show_text(&lc, id)) else {
-        return false;
-    };
-    let Ok(v) = serde_json::from_str::<Value>(&text) else {
-        return false;
-    };
-    matches!(
-        v.get("bead").and_then(|b| str_of(b, "state")),
-        Some("LANDED" | "SUPERSEDED" | "DROPPED")
-    )
 }
 
 /// Drops every member stacked on a barred bead, or on a member dropped for that reason.
@@ -537,14 +236,6 @@ fn drop_stacked_on_barred(mut kept: Vec<Member>, mut barred: BTreeSet<String>) -
     kept
 }
 
-/// The item rows of `ids`, from `spira-lc plan items --full`, the planning plane's read door.
-fn bd_show(env: &Env, ids: &[String]) -> Result<Value, String> {
-    if ids.is_empty() {
-        return Ok(Value::Array(vec![]));
-    }
-    plan_items(&lcq_held(env, &["plan", "items", "--full", "--ids", &ids.join(",")])?)
-}
-
 /// The `items` of a `plan items` answer.
 fn plan_items(text: &str) -> Result<Value, String> {
     let mut v: Value =
@@ -556,30 +247,6 @@ fn plan_items(text: &str) -> Result<Value, String> {
             text.chars().take(200).collect::<String>()
         )),
     }
-}
-
-/// The description and notes of `id`, where a target and its verdict live.
-fn bd_show_text(env: &Env, id: &str) -> Result<String, String> {
-    let rows = bd_show(env, &[id.to_string()])?;
-    let row = rows
-        .as_array()
-        .and_then(|a| a.first())
-        .ok_or_else(|| format!("plan items: no row for {id}"))?;
-    Ok(format!(
-        "{}\n{}",
-        str_of(row, "description").unwrap_or(""),
-        str_of(row, "notes").unwrap_or("")
-    ))
-}
-
-/// The repository's open forge batch record from the store's views, as `queue batch show --repo
-/// <repo>` printed it: `key=value` lines; nothing when none is open.
-fn batch_show(env: &Env, repo: &str) -> Result<String, String> {
-    let client = spira_store::lc_call::LcClient::for_bin(&env.lc_bin)
-        .map_err(|e| format!("could not say: {e}"))?
-        .within(std::time::Duration::from_secs(env.lc_timeout));
-    let views = store_view::Projection::hot(client).map_err(|e| format!("could not say: {e}"))?;
-    shown_in(&views, repo)
 }
 
 /// `repo`'s open batch record from `views`, its batch records current (read afresh unless a watch keeps them so). A read the store
@@ -659,14 +326,6 @@ fn show(lc: &LcClient, id: &str) -> Result<Shown, String> {
     })
 }
 
-fn lc_state(env: &Env, id: &str) -> Result<String, String> {
-    let v = parsed(&lcq(env, &["show", id])?, "show")?;
-    v.get("bead")
-        .and_then(|b| str_of(b, "state"))
-        .map(str::to_string)
-        .ok_or_else(|| "show: no state".to_string())
-}
-
 fn bead_event(lc: &LcClient, id: &str, state: &str, version: u64, kind: Value) -> Result<(), String> {
     let (version, kind) = (version.to_string(), kind.to_string());
     lcq_with(
@@ -739,17 +398,6 @@ pub fn lc_sifted(lc: &LcClient, id: &str, tip: &str, out: &mut dyn Write) -> Res
         version,
         serde_json::json!({"Sifted": {"tip": tip}}),
     )
-}
-
-/// The evidence a send-back stands on, written on the bead before the GateRed.
-fn bead_note(env: &Env, id: &str, text: &str) -> Result<(), String> {
-    // batch-job: bead.sh amend is a bead-store write that takes as long as the store does
-    // FORK-EDGE: bead.sh amend is the operator tool (it also mails the dwarf at work on the bead); no library entry does both
-    let mut cmd = Command::new("bash");
-    cmd.arg(env.home.join("bead.sh"))
-        .args(["amend", id, "--note", text])
-        .envs(spira_config::release_env::child_path_env_for_process()?);
-    run(&mut cmd, "bead.sh amend").map(|_| ())
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1014,7 +662,7 @@ mod tests {
     impl spira_store::lc_call::Transport for Store {
         fn exchange(&self, argv: &[String], _stdin: Option<&str>, _d: std::time::Duration) -> Result<spira_store::lc_call::Reply, String> {
             assert_eq!(argv[..2], ["rc", "list"], "only the batch records are read");
-            crate::lock(&self.0).remove(0)
+            self.0.lock().unwrap().remove(0)
         }
     }
 
@@ -1045,11 +693,6 @@ mod tests {
         let stale = views(vec![ok], std::time::Duration::ZERO);
         let e = open_round(&|r| shown_in(&stale, r), "deck").unwrap_err();
         assert!(e.starts_with("could not say:") && e.contains("stale past"), "{e}");
-    }
-
-    #[test]
-    fn the_inbox_stamp_is_the_compact_utc_form() {
-        assert_eq!(stamp(1_700_000_000), "20231114T221320Z");
     }
 
     #[test]

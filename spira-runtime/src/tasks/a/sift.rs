@@ -110,7 +110,8 @@
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 
-use round_controller::sifts;
+mod sifts;
+pub use sifts::{observe_repo, Reads};
 use runtime::event::*;
 use serde::{Deserialize, Serialize};
 use spira_store::lc_call::LcClient;
@@ -147,11 +148,11 @@ pub const UNREGISTERED: &[&str] = &[];
 pub const SHAPE: Shape = Shape { name: NAME, stream: STREAM, tick: TICK, state: STATE, observe: OBSERVE, observe_deadline_ms: OBSERVE_DEADLINE_MS };
 
 /// One SUBMITTED or CERTIFIED row.
-pub use round_controller::sifts::PoolRow;
+pub use sifts::PoolRow;
 /// The git facts of one candidate, computed in the probe so decide does no IO.
-pub use round_controller::sifts::CandidateFacts as Candidate;
+pub use sifts::CandidateFacts as Candidate;
 /// One repository's snapshot.
-pub use round_controller::sifts::RepoFacts as Repo;
+pub use sifts::RepoFacts as Repo;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
