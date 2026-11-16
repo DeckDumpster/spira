@@ -5,9 +5,6 @@
 //! freeze on every repaint. This route reads one small file, checks its stamp, and calls
 //! systemctl once — all inside the 5-second cache.
 //!
-//! CLAIMABILITY IS NOT READ FROM cockpit.env. SP_NEXT*, SP_READY and SP_SLOTS_READY are dropped
-//! from the file and answered per request from the claim view the pane and the Now page use.
-//!
 //! PARSE cockpit.env; DO NOT SOURCE IT. The format is KEY='VALUE' with '\'' for an embedded
 //! apostrophe. A line that does not match is skipped, never guessed at.
 //!
