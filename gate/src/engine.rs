@@ -2512,8 +2512,7 @@ pub fn run_composed<W: World>(
                 && r != 0
                 && r != 124
                 && r != NOVERDICT
-                && !t.summarized
-                && parse::failed_tests(&o).is_empty();
+                && !t.summarized;
             *unit = Some(t);
         }
         if timed {
