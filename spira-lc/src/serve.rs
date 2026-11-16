@@ -1441,6 +1441,37 @@ mod tests {
         assert!(ans.stderr.contains("claim inputs not written; repair: spira-lc sync-claim-inputs sp-a"), "{ans:?}");
     }
 
+    fn create_bead_served(w: &World) -> super::Answer {
+        let req = super::Request { argv: ["create-bead", "sp-new", "--repo", "spira", "--ready"].map(String::from).to_vec(), stdin: None, caller: Default::default(), min_rev: None, task: None };
+        let (mut m, mut b) = (w, w);
+        super::answer(req, &mut m, &mut b, &Content::default(), &|| Err("no run dir here".to_string()))
+    }
+
+    #[test]
+    fn a_row_created_over_the_socket_carries_its_claim_inputs_from_the_content_store() {
+        let w = World::new();
+        w.file("sp-new", "task", Some("sp-e"), &["incident"]);
+        let ans = create_bead_served(&w);
+        assert_eq!((ans.code, ans.stderr.as_str()), (0, ""), "{ans:?}");
+        let row = {
+            let rows: Vec<serde_json::Value> = serde_json::from_str(&w.ok(&["list", "--live"])).unwrap();
+            rows.into_iter().find(|r| r["bead_id"] == "sp-new").unwrap()
+        };
+        assert_eq!(row["claim"], serde_json::json!({"blocks": [], "parent": "sp-e", "labels": ["incident"]}));
+        assert_ne!(row["claim_view"]["verdict"], "cannot-tell", "{row}");
+    }
+
+    #[test]
+    fn a_create_whose_claim_sync_fails_stands_and_names_the_repair() {
+        let w = World::new();
+        w.file("sp-new", "task", Some("sp-e"), &["incident"]);
+        w.plan.borrow_mut().remove("sp-new");
+        let ans = create_bead_served(&w);
+        assert_eq!(ans.code, 0, "{ans:?}");
+        assert!(state(&w, "sp-new").is_some(), "the row stands");
+        assert!(ans.stderr.contains("repair: spira-lc sync-claim-inputs sp-new"), "{ans:?}");
+    }
+
     #[test]
     fn sync_claim_inputs_only_if_unset_keeps_a_written_claim_and_fills_a_null_one() {
         let (world, client) = filed_world(&["incident"], Some("sp-e"));

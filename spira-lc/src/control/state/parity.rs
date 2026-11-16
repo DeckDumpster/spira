@@ -69,6 +69,7 @@ const BEFORE_CALLERS: &[&str] = &[
     "bd-note",
     "content",
     "close-epic",
+    "create-bead",
     "unpublished",
     "content-landed",
     "drop",
