@@ -25,18 +25,18 @@ mod tests {
 
     #[test]
     fn no_stamp_no_refusal() {
-        assert_eq!(halt_refusal(Path::new("/run/world.halted"), None), None);
+        assert_eq!(halt_refusal(Path::new("run/world.halted"), None), None);
     }
 
     #[test]
     fn the_refusal_names_the_stamp_the_reason_and_what_lifts_it() {
-        let r = halt_refusal(Path::new("/run/world.halted"), Some("2000-01-01T00:00:00Z\nwhy: planted reason\n")).unwrap();
-        assert!(r.contains("/run/world.halted") && r.contains("2000-01-01T00:00:00Z") && r.contains("why: planted reason") && r.contains("world start"), "{r}");
+        let r = halt_refusal(Path::new("run/world.halted"), Some("2000-01-01T00:00:00Z\nwhy: planted reason\n")).unwrap();
+        assert!(r.contains("run/world.halted") && r.contains("2000-01-01T00:00:00Z") && r.contains("why: planted reason") && r.contains("world start"), "{r}");
     }
 
     #[test]
     fn an_empty_stamp_still_refuses() {
-        let r = halt_refusal(Path::new("/run/world.halted"), Some("")).unwrap();
+        let r = halt_refusal(Path::new("run/world.halted"), Some("")).unwrap();
         assert!(r.contains("why: unstated"), "{r}");
     }
 }

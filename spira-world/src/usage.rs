@@ -242,7 +242,7 @@ mod tests {
     }
 
     fn at(cpu_usec: u64, read: u64, write: u64) -> Sample {
-        Sample { kind: Kind::Dwarf, cgroup: "c".into(), unit: "u".into(), cpu_usec, io: vec![DeviceIo { device: "sdc".into(), mount: "/srv/ssd-b".into(), role: "ssd-b".into(), read_bytes: read, write_bytes: write }], ..Sample::default() }
+        Sample { kind: Kind::Dwarf, cgroup: "c".into(), unit: "u".into(), cpu_usec, io: vec![DeviceIo { device: "sdc".into(), mount: "srv/ssd-b".into(), role: "ssd-b".into(), read_bytes: read, write_bytes: write }], ..Sample::default() }
     }
 
     #[test]
@@ -251,7 +251,7 @@ mod tests {
         assert_eq!(r, Rate { cpu_pct: 200.0, read_mb_s: 5.0, write_mb_s: 44.0 });
         assert_eq!(rate(None, &at(500_000, 0, 0), 0.5).cpu_pct, 100.0, "a new cgroup moves from zero");
         let table = render_live(&[at(1_000_000, 0, 10_000_000)], &[at(3_000_000, 5_000_000, 54_000_000)], 1.0, 0);
-        assert!(table.contains("cpu 3.0s (200%)") && table.contains("io sdc (ssd-b /srv/ssd-b)") && table.contains("now 5.0/44.0 MB/s"), "{table}");
+        assert!(table.contains("cpu 3.0s (200%)") && table.contains("io sdc (ssd-b srv/ssd-b)") && table.contains("now 5.0/44.0 MB/s"), "{table}");
         assert_eq!(render_live(&[], &[], 1.0, 0), "no live dwarf and no hand build\n");
     }
 }

@@ -42,32 +42,32 @@ mod tests {
 
     #[test]
     fn finds_matching_repo() {
-        let map = "test-repo | /srv/checkouts/test-repo | push | origin/main | | \n";
+        let map = "test-repo | srv/checkouts/test-repo | push | origin/main | | \n";
         assert_eq!(
             parse(map, "test-repo"),
-            Some("/srv/checkouts/test-repo".to_string())
+            Some("srv/checkouts/test-repo".to_string())
         );
     }
 
     #[test]
     fn skips_comments_and_blank_lines() {
-        let map = "# a comment\n\ntest-repo | /srv/checkouts/test-repo | push | origin/main | | \n";
+        let map = "# a comment\n\ntest-repo | srv/checkouts/test-repo | push | origin/main | | \n";
         assert_eq!(
             parse(map, "test-repo"),
-            Some("/srv/checkouts/test-repo".to_string())
+            Some("srv/checkouts/test-repo".to_string())
         );
     }
 
     #[test]
     fn missing_repo_is_none() {
-        let map = "other | /srv/checkouts/other | push | origin/main | | \n";
+        let map = "other | srv/checkouts/other | push | origin/main | | \n";
         assert_eq!(parse(map, "test-repo"), None);
     }
 
     #[test]
     fn picks_first_matching_row_when_duplicated() {
-        let map = "test-repo | /first | push | origin/main | | \ntest-repo | /second | push | origin/main | | \n";
-        assert_eq!(parse(map, "test-repo"), Some("/first".to_string()));
+        let map = "test-repo | first | push | origin/main | | \ntest-repo | second | push | origin/main | | \n";
+        assert_eq!(parse(map, "test-repo"), Some("first".to_string()));
     }
 
     #[test]

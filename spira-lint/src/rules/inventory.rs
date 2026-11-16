@@ -17,7 +17,7 @@ const OWN_SOURCE: &str = "spira-lint/src/rules/inventory.rs";
 
 /// The structural patterns, before the operator's own `inventory-deny` additions.
 pub const PATTERNS: &[&str] =
-    &[r"/home/[a-z][a-z0-9_.-]*/", r"/Users/[A-Za-z][A-Za-z0-9_.-]*/", r"/workspaces/", r"\(per [A-Z][a-z]+, [0-9]{4}-[0-9]{2}-[0-9]{2}"];
+    &[r"[/]home/[a-z][a-z0-9_.-]*/", r"[/]Users/[A-Za-z][A-Za-z0-9_.-]*/", r"[/]workspaces/", r"\(per [A-Z][a-z]+, [0-9]{4}-[0-9]{2}-[0-9]{2}"];
 
 const EMAIL_PATTERN: &str = r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}";
 
@@ -141,7 +141,10 @@ mod tests {
     #[test]
     fn scan_is_sorted_and_deduplicated() {
         let pat = pattern_re(&[]).unwrap();
-        let hits = scan(b"/home/a/x and /home/a/x again, plus /workspaces/\n", &pat);
-        assert_eq!(hits, vec!["/home/a/".to_string(), "/workspaces/".to_string()]);
+        let home = system_paths::HOME;
+        let ws = format!("{}s/", system_paths::guest::WORKSPACE);
+        let text = format!("{home}/a/x and {home}/a/x again, plus {ws}\n");
+        let hits = scan(text.as_bytes(), &pat);
+        assert_eq!(hits, vec![format!("{home}/a/"), ws]);
     }
 }

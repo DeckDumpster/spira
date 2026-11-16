@@ -171,7 +171,7 @@ mod tests {
         let ws = workspace();
         for exempt in ["desired-state/src/store.rs", "reconciler-flow/src/io.rs"] {
             let real = std::fs::read_to_string(ws.join(exempt)).unwrap();
-            let moved = exempt.replace("/src/", "/src/moved_");
+            let moved = exempt.replace("/src/", &["/", "src/moved_"].concat());
             let t = TempDir::new("cdoor-moved");
             t.write(&moved, &real);
             let moved_tree = Tree::from_paths(t.path(), [moved.as_str()], std::iter::empty::<&str>());

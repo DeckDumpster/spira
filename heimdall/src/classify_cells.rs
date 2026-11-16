@@ -11,8 +11,8 @@ fn obs(log: &str, over: Value) -> Value {
     let mut o = json!({
         "now": NOW, "heimdall_first": 0,
         "sentinel_log": log, "sentinel_log_readable": true, "sentinel_log_error": "",
-        "sentinel_log_mtime": NOW - 30, "sentinel_log_path": "/run/sentinel.log", "sentinel_timer": "active",
-        "db_reachable": true, "db_error": "", "db_path": "/db", "fallback_path": "/run/a.json",
+        "sentinel_log_mtime": NOW - 30, "sentinel_log_path": "run/sentinel.log", "sentinel_timer": "active",
+        "db_reachable": true, "db_error": "", "db_path": "db", "fallback_path": "run/a.json",
         "mirror": {"configured": false}, "strands": {},
         "restart_alerts": [],
         "thresholds": {"pass_stale": 600, "starve_passes": 5, "mirror_stale": 90000, "ghost_stale": 1800,
@@ -171,8 +171,8 @@ fn database_mirror_ghost_and_restart_alerts_are_distinct_and_do_not_mask_each_ot
     assert_eq!(keys(&obs(&h, json!({"db_reachable": false, "db_error": "refused"}))), ["db-unreachable"]);
 
     assert!(keys(&obs(&h, json!({"mirror": {"configured": false}}))).is_empty());
-    assert_eq!(keys(&obs(&h, json!({"mirror": {"configured": true, "exists": false, "path": "/m", "exporter": "/e"}}))), ["mirror-stale"]);
-    let mirror = |mtime: i64| json!({"mirror": {"configured": true, "exists": true, "mtime": mtime, "path": "/m", "exporter": "/e"}});
+    assert_eq!(keys(&obs(&h, json!({"mirror": {"configured": true, "exists": false, "path": "m", "exporter": "e"}}))), ["mirror-stale"]);
+    let mirror = |mtime: i64| json!({"mirror": {"configured": true, "exists": true, "mtime": mtime, "path": "m", "exporter": "e"}});
     assert!(keys(&obs(&h, mirror(NOW - 3600))).is_empty());
     assert_eq!(keys(&obs(&h, mirror(NOW - 200_000))), ["mirror-stale"]);
 

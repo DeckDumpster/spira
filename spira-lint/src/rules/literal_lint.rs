@@ -78,10 +78,7 @@ fn configured_names_env(schema: &std::path::Path, extra_env: &[(&str, &str)]) ->
 /// SPIRA_TOML is pinned to the TREE's own complete fixture, never the box's file: under one
 /// source of config (per Ryan 2026-10-05) a missing spec is a refusal, so a path that does not
 /// exist would make every schema read fail and fall back to the shipped defaults.
-const BOX_CONFIG_PINS: &[(&str, &str)] = &[
-    ("SPIRA_CONF", "/nonexistent/spira-lint/conf"),
-    ("SPIRA_RUNES_DIR", "/nonexistent/spira-lint/runes"),
-];
+const BOX_CONFIG_PINS: &[(&str, &str)] = &[("SPIRA_CONF", "spira-lint/conf"), ("SPIRA_RUNES_DIR", "spira-lint/runes")];
 /// The tree's complete fixture, relative to its `spira/schema.sh`.
 const TREE_FIXTURE: &str = "../spira/testlib/complete.toml";
 
@@ -90,7 +87,7 @@ fn run_schema(schema: &std::path::Path, args: &[&str], extra_env: &[(&str, &str)
     let mut cmd = Command::new(schema);
     cmd.args(args);
     for (k, v) in BOX_CONFIG_PINS {
-        cmd.env(k, v);
+        cmd.env(k, format!("{}/{v}", system_paths::NONEXISTENT));
     }
     if let Some(dir) = schema.parent() {
         cmd.env("SPIRA_TOML", dir.join(TREE_FIXTURE));
@@ -275,7 +272,7 @@ mod tests {
 
     #[test]
     fn configured_names_falls_back_when_schema_is_missing() {
-        let (names, warning) = configured_names(std::path::Path::new("/nonexistent/schema.sh"));
+        let (names, warning) = configured_names(std::path::Path::new("nonexistent/schema.sh"));
         assert!(warning.is_some());
         for f in FALLBACK {
             assert!(names.iter().any(|n| n == f), "{names:?} missing {f}");

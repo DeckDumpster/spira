@@ -6,7 +6,8 @@ publish = false
 description = "testkit — test scaffolding shared across the workspace: write an executable without an ETXTBSY race (dev-dependency only)."
 
 [features]
-integration = []
+integration = ["system-paths/integration"]
 
 [dependencies]
+system-paths = { path = "../system-paths" }
 libc = "0.2"

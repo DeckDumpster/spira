@@ -730,7 +730,7 @@ fn cmd_drain(args: &[String]) -> i32 {
 
 fn owner_alive(d: &spira_world::drain::Drain) -> Option<bool> {
     if let Some(pid) = d.owner_pid {
-        return Some(std::path::Path::new(&format!("/proc/{pid}")).exists());
+        return Some(std::path::Path::new(&format!("{}/{pid}", system_paths::PROC)).exists());
     }
     d.owner_unit.as_deref().map(|u| sysctl::run(&["is-active", u]) == "active")
 }
@@ -1029,7 +1029,7 @@ fn cmd_status() -> i32 {
             let prod = resolved_prod(&home);
             let worker_paths = spira_world::live_worker_paths(&home, &prod);
             let worker_refs: Vec<&str> = worker_paths.iter().map(String::as_str).collect();
-            let wcount = spira_world::proc::live_workers(std::path::Path::new("/proc"), &worker_refs).len();
+            let wcount = spira_world::proc::live_workers(std::path::Path::new(system_paths::PROC), &worker_refs).len();
             println!("  {:<26} {}", "live workers (/proc)", wcount);
         }
         None => println!("  {:<26} ? (neither SPIRA_HOME nor SPIRA_RELEASE names a harness home)", "live workers (/proc)"),

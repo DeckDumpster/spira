@@ -131,7 +131,7 @@ mod tests {
     #[test]
     fn locate_home_prefers_the_explicit_env_var() {
         let t = testkit::TempDir::new("mail-home-env");
-        assert_eq!(locate_home(Some("/h"), &t.path().join("bin/mail")), Some(PathBuf::from("/h")));
+        assert_eq!(locate_home(Some("h"), &t.path().join("bin/mail")), Some(PathBuf::from("h")));
     }
 
     #[test]
@@ -161,7 +161,7 @@ mod tests {
         let home = spira_config::resolve::locate_home_for_process().unwrap();
         let repo = home.parent().unwrap().to_path_buf();
         let login = |with_toml: bool| -> BTreeMap<String, String> {
-            let mut e: BTreeMap<String, String> = [("HOME", "/nonexistent"), ("PATH", "/usr/bin"), ("SPIRA_RELEASE", repo.to_str().unwrap())].iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+            let mut e: BTreeMap<String, String> = [("HOME", system_paths::NONEXISTENT), ("PATH", system_paths::USR_BIN), ("SPIRA_RELEASE", repo.to_str().unwrap())].iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
             if with_toml {
                 e.insert("SPIRA_TOML".into(), toml.display().to_string());
             }

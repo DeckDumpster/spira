@@ -120,7 +120,7 @@ impl Fake {
             answers_id: "sp-s1".into(),
             state: RefCell::new("WORKING".into()),
             labels: RefCell::new(vec!["spira".into()]),
-            repo: Some(PathBuf::from("/repo")),
+            repo: Some(PathBuf::from("repo")),
             branch: RefCell::new(true),
             base: Some("origin/main".into()),
             ahead: 1,
@@ -264,7 +264,7 @@ impl Dwarf for Fake {
 
 fn run(f: &Fake, a: &[&str]) -> Report {
     let ports = Ports { git: f, beads: f, lc: f, dwarf: f };
-    let ctx = Ctx { run: Path::new("/run"), submitted_label: "custom-submitted", store: "the-store" };
+    let ctx = Ctx { run: Path::new("run"), submitted_label: "custom-submitted", store: "the-store" };
     let mut v = vec!["--bead", "sp-s1"];
     v.extend_from_slice(a);
     slay(&ctx, &ports, &parsed(&v))
@@ -305,7 +305,7 @@ fn default_slay_releases_the_claim_unassigns_and_removes_the_worktree() {
     assert!(said(&r, "slain: sp-s1"));
     assert!(f.called("holder_dead sp-s1"));
     assert!(f.called("clear_assignee sp-s1"));
-    assert!(f.call("destroy_worktree").contains("/run/worktree/sp-s1"));
+    assert!(f.call("destroy_worktree").contains("run/worktree/sp-s1"));
     assert!(f.call("destroy_worktree").ends_with("slain: slain by the operator"));
     assert!(f.called("abort_inflight"));
     assert!(!f.called("drop"), "reopen must not drop the bead");
@@ -401,7 +401,7 @@ fn keep_work_touches_neither_branch_nor_worktree_but_still_releases_the_claim() 
     let f = Fake::new();
     let r = run(&f, &["--keep-work"]);
     assert_eq!(r.code, 0, "{r:?}");
-    assert!(said(&r, "work: kept — branch spira/sp-s1 at abc1234, worktree /run/worktree/sp-s1"));
+    assert!(said(&r, "work: kept — branch spira/sp-s1 at abc1234, worktree run/worktree/sp-s1"));
     for c in ["destroy_worktree", "destroy_branch", "salvage", "park", "abort_inflight"] {
         assert!(!f.called(c), "{c} must not run with --keep-work");
     }
@@ -441,22 +441,22 @@ fn the_submitted_label_is_only_for_a_kept_reopen() {
 #[test]
 fn a_dirty_worktree_is_salvaged_wip_committed_and_the_branch_stays_in_refs_heads() {
     let mut f = Fake::new();
-    f.salvage = Ok(Some(PathBuf::from("/run/reaped/sp-s1.1.patch")));
+    f.salvage = Ok(Some(PathBuf::from("run/reaped/sp-s1.1.patch")));
     let r = run(&f, &["--why", "operator halted it", "--close", "drop"]);
     assert_eq!(r.code, 0, "{r:?}");
     let msg = f.call("commit_all");
     assert!(msg.contains("wip — salvaged at slay") && msg.contains("sp-s1") && msg.contains("operator halted it"), "{msg}");
-    assert!(said(&r, "uncommitted changes salvaged to /run/reaped/sp-s1.1.patch"));
+    assert!(said(&r, "uncommitted changes salvaged to run/reaped/sp-s1.1.patch"));
     assert!(said(&r, "wip committed to spira/sp-s1 at abc1234"));
     assert!(!f.called("park") && !f.called("destroy_branch"), "a wip branch is neither parked nor deleted");
-    assert!(f.call("note").contains("wip committed to spira/sp-s1; branch kept in refs/heads; patch at /run/reaped/sp-s1.1.patch"));
+    assert!(f.call("note").contains("wip committed to spira/sp-s1; branch kept in refs/heads; patch at run/reaped/sp-s1.1.patch"));
 }
 
 // covers: UC-dwarf-execution-26
 #[test]
 fn salvage_runs_before_the_worktree_is_destroyed() {
     let mut f = Fake::new();
-    f.salvage = Ok(Some(PathBuf::from("/run/reaped/p.patch")));
+    f.salvage = Ok(Some(PathBuf::from("run/reaped/p.patch")));
     run(&f, &[]);
     let calls = f.calls();
     let at = |p: &str| calls.iter().position(|c| c.starts_with(p)).unwrap();
@@ -475,7 +475,7 @@ fn a_clean_worktree_makes_no_wip_commit() {
 #[test]
 fn a_failed_wip_commit_says_the_patch_is_the_only_copy_and_carries_on() {
     let mut f = Fake::new();
-    f.salvage = Ok(Some(PathBuf::from("/run/reaped/p.patch")));
+    f.salvage = Ok(Some(PathBuf::from("run/reaped/p.patch")));
     f.commit_ok = false;
     let r = run(&f, &[]);
     assert!(said(&r, "could not make wip commit — patch is the only copy"));
@@ -489,7 +489,7 @@ fn a_failed_salvage_leaves_the_worktree_and_branch_alone_and_fails() {
     f.salvage = Err(SalvageFailed);
     let r = run(&f, &["--close", "drop"]);
     assert_eq!(r.code, 1);
-    assert!(said(&r, "could not salvage /run/worktree/sp-s1 — leaving it in place"));
+    assert!(said(&r, "could not salvage run/worktree/sp-s1 — leaving it in place"));
     assert!(!f.called("destroy_worktree") && !f.called("destroy_branch") && !f.called("park"));
     assert!(f.called("drop"), "the bead is still told what happened");
 }
@@ -501,7 +501,7 @@ fn a_worktree_that_will_not_go_fails_and_keeps_the_branch() {
     f.destroy_wt_ok = false;
     let r = run(&f, &["--close", "drop"]);
     assert_eq!(r.code, 1);
-    assert!(said(&r, "could not remove /run/worktree/sp-s1 — see /run/reap.log"));
+    assert!(said(&r, "could not remove run/worktree/sp-s1 — see run/reap.log"));
     assert!(!f.called("destroy_branch") && !f.called("park"));
 }
 

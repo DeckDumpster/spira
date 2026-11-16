@@ -470,7 +470,7 @@ mod tests {
 
     fn livelock_report(map: &str, held: &[&str], unclaimable: &str, asks: &str, ci: &str, all: &str) -> String {
         let cfg = Config { ci_label: "ci-wait".into(), groom_ask_label: "groomed-ask".into(), ..Config::test_fixture() };
-        let reg = Registry::new(Some(map), &Default::default(), std::path::Path::new("/nonexistent"));
+        let reg = Registry::new(Some(map), &Default::default(), std::path::Path::new("nonexistent"));
         let held = held.iter().map(|h| h.to_string()).collect();
         let beads = |j: &str| model::parse_beads(j).unwrap();
         livelock_rows(&cfg, &reg, &held, unclaimable, &beads(asks), &beads(ci), &beads(all))
@@ -528,7 +528,7 @@ mod tests {
     #[test]
     fn with_no_repo_map_no_bead_is_unmapped() {
         let cfg = Config::test_fixture();
-        let reg = Registry::new(None, &Default::default(), std::path::Path::new("/nonexistent"));
+        let reg = Registry::new(None, &Default::default(), std::path::Path::new("nonexistent"));
         let all = model::parse_beads(r#"[{"id":"sp-n1","labels":["repo:bogus"]}]"#).unwrap();
         assert_eq!(livelock_rows(&cfg, &reg, &HashSet::new(), "", &[], &[], &all), "");
     }

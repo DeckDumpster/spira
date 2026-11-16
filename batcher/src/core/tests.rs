@@ -983,12 +983,12 @@ fn base_fail_body_carries_repo_branch_suites_and_evidence() {
         "spira",
         "spira/queue/123",
         &["test-x.sh".to_string()],
-        "/run/batch-results/spira-123",
+        "run/batch-results/spira-123",
     );
     assert!(body.contains("Repo: spira"));
     assert!(body.contains("spira/queue/123"));
     assert!(body.contains("test-x.sh"));
-    assert!(body.contains("/run/batch-results/spira-123"));
+    assert!(body.contains("run/batch-results/spira-123"));
 }
 
 // -- End-to-end shaped replay: a full round on synthetic pool/merge/suite/bisect inputs ------
@@ -1150,13 +1150,13 @@ fn judgement_body_carries_repo_suites_members_and_evidence() {
         "spira",
         &j,
         &["sp-a".to_string(), "sp-x".to_string()],
-        "/run/batch-results/spira-123",
+        "run/batch-results/spira-123",
     );
     assert!(body.contains("Repo: spira"));
     assert!(body.contains("local corpus"));
     assert!(body.contains("test-real"));
     assert!(body.contains("sp-a, sp-x"));
-    assert!(body.contains("/run/batch-results/spira-123"));
+    assert!(body.contains("run/batch-results/spira-123"));
 }
 
 #[test]
@@ -1165,7 +1165,7 @@ fn judgement_body_renders_no_members_explicitly() {
         source: RedSource::Local,
         suites: vec!["test-real".into()],
     };
-    let body = judgement_body("spira", &j, &[], "/evidence");
+    let body = judgement_body("spira", &j, &[], "evidence");
     assert!(body.contains("Round member(s): (none)"));
 }
 

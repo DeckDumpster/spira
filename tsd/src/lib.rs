@@ -151,7 +151,7 @@ pub mod stop;
 pub mod testrun;
 
 pub fn default_host() -> String {
-    std::fs::read_to_string("/proc/sys/kernel/hostname")
+    std::fs::read_to_string(format!("{}/kernel/hostname", system_paths::PROC_SYS))
         .ok()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
@@ -263,8 +263,8 @@ mod tests {
 
     #[test]
     fn family_path_nests_under_tsd() {
-        let p = family_path(Path::new("/run"), "suite-timing");
-        assert_eq!(p, PathBuf::from("/run/tsd/suite-timing.jsonl"));
+        let p = family_path(Path::new("run"), "suite-timing");
+        assert_eq!(p, PathBuf::from("run/tsd/suite-timing.jsonl"));
     }
 
     #[test]

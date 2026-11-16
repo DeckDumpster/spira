@@ -95,7 +95,7 @@ pub fn round_trip(keys: &[String], reg: &Registry) -> Vec<String> {
         conf_text.push_str(&format!("{key} = {conf_val}\n"));
         expected.insert(key.clone(), exported_val.to_string());
     }
-    let (doc, warnings) = match convert_with(&conf_text, "/opt/fixture-home", "", &[], reg) {
+    let (doc, warnings) = match convert_with(&conf_text, "opt/fixture-home", "", &[], reg) {
         Ok(v) => v,
         Err(errors) => return errors.into_iter().map(|e| format!("convert refused: {e}")).collect(),
     };

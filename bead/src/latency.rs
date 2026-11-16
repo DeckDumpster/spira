@@ -39,9 +39,9 @@ pub fn caller_name(start: i32, comm_of: impl Fn(i32) -> Option<String>, parent_o
 
 /// The program that ran this process, from `/proc/<pid>/comm` and `/proc/<pid>/stat` only.
 pub fn parent_name() -> String {
-    let comm = |pid: i32| std::fs::read_to_string(format!("/proc/{pid}/comm")).ok();
+    let comm = |pid: i32| std::fs::read_to_string(format!("{}/{pid}/comm", system_paths::PROC)).ok();
     let parent = |pid: i32| {
-        let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+        let stat = std::fs::read_to_string(format!("{}/{pid}/stat", system_paths::PROC)).ok()?;
         stat.rsplit_once(')')?.1.split_whitespace().nth(1)?.parse().ok()
     };
     caller_name(std::os::unix::process::parent_id() as i32, comm, parent)

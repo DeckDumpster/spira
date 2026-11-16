@@ -32,7 +32,7 @@ fn marker() -> &'static Regex {
 
 fn process_or_file() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r#"/proc\b|procfs::|\.pid["']|dwarf-ledger|\.lease["']"#).expect("static regex"))
+    RE.get_or_init(|| Regex::new(r#"/proc\b|procfs::|\.pid["']|dwarf-ledger|\.lease["']"#).expect("static regex")) // not a path: regex
 }
 
 fn is_test_file(path: &str) -> bool {

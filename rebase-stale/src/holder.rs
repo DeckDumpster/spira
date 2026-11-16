@@ -28,7 +28,7 @@ pub enum Holder {
 /// The pid recorded in a pidfile, if that process is alive.
 fn live_pid(pidfile: &Path) -> Option<u32> {
     let pid: u32 = std::fs::read_to_string(pidfile).ok()?.trim().parse().ok()?;
-    Path::new(&format!("/proc/{pid}")).is_dir().then_some(pid)
+    Path::new(&format!("{}/{pid}", system_paths::PROC)).is_dir().then_some(pid)
 }
 
 /// Witnesses that somebody is working bead `id`; Some(why) when any says so.
@@ -63,7 +63,7 @@ pub fn witness(run: &Path, id: &str, seam: &dyn Seam) -> Option<String> {
 pub fn cwd_witness(dir: &Path) -> Option<String> {
     let dir = std::fs::canonicalize(dir).ok()?;
     let me = std::process::id();
-    for e in std::fs::read_dir("/proc").ok()?.flatten() {
+    for e in std::fs::read_dir(system_paths::PROC).ok()?.flatten() {
         let Some(pid) = e.file_name().to_str().and_then(|s| s.parse::<u32>().ok()) else {
             continue;
         };

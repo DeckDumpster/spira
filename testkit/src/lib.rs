@@ -174,9 +174,9 @@ pub fn write_exe(path: impl AsRef<Path>, body: &str) {
     // left the inner `cat` a bare word still resolved through that same mutated PATH, so the
     // race it was meant to remove kept firing, just one level deeper ("sh: 1: cat: not found",
     // sp-tuupa).
-    let mut c = Command::new("/bin/sh")
+    let mut c = Command::new(system_paths::BIN_SH)
         .arg("-c")
-        .arg("/bin/cat > \"$1\"")
+        .arg(format!("{}/cat > \"$1\"", system_paths::BIN))
         .arg("sh")
         .arg(path)
         .stdin(Stdio::piped())
@@ -310,15 +310,15 @@ mod tests {
 
     #[test]
     fn manifest_dir_reads_the_variable_at_run_time() {
-        let _g = env(&[("CARGO_MANIFEST_DIR", Some("/x"))]);
-        assert_eq!(manifest_dir(), PathBuf::from("/x"));
+        let _g = env(&[("CARGO_MANIFEST_DIR", Some("x"))]);
+        assert_eq!(manifest_dir(), PathBuf::from("x"));
     }
 
     #[test]
     fn bin_beside_is_the_profile_directory_above_deps() {
         assert_eq!(
-            bin_beside(Path::new("/t/debug/deps/x-1a2b"), "a"),
-            PathBuf::from("/t/debug/a")
+            bin_beside(Path::new("t/debug/deps/x-1a2b"), "a"),
+            PathBuf::from("t/debug/a")
         );
     }
 

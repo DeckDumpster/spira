@@ -59,7 +59,7 @@ impl Proc for NoProc {
 }
 
 fn repo() -> &'static Path {
-    Path::new("/tmp/repo-does-not-need-to-exist")
+    Path::new("repo-does-not-need-to-exist")
 }
 
 // ── check-status ─────────────────────────────────────────────────────────────────────────
@@ -1847,8 +1847,8 @@ fn only_the_default_name_runs_in_process_and_any_declared_path_is_a_stand_in() {
     use crate::client::{route_of, Route};
     assert_eq!(route_of(Path::new("forge")), Route::InProcess);
     assert_eq!(route_of(Path::new("")), Route::InProcess);
-    assert_eq!(route_of(Path::new("/fx/forge-fake.sh")), Route::Program("/fx/forge-fake.sh".into()));
-    assert_eq!(route_of(Path::new("/fx/forge")), Route::Program("/fx/forge".into()));
+    assert_eq!(route_of(Path::new("fx/forge-fake.sh")), Route::Program("fx/forge-fake.sh".into()));
+    assert_eq!(route_of(Path::new("fx/forge")), Route::Program("fx/forge".into()));
 }
 
 #[test]
@@ -1856,7 +1856,7 @@ fn a_stand_in_answers_with_its_code_stdout_stderr_and_reads_the_input() {
     let dir = testkit::TempDir::new("forge-stand-in");
     let bin = dir.path().join("forge-fake.sh");
     testkit::write_exe(&bin, "#!/bin/sh\necho \"$1 $2 $3\"\ncat\necho oops >&2\nexit 4\n");
-    let r = crate::client::run(&crate::client::Route::Program(bin), "pr-create", Path::new("/r"), &["h"], Some(b"body\n"));
-    assert_eq!(r, crate::client::Reply { code: 4, out: "pr-create /r h\nbody\n".into(), err: "oops\n".into() });
+    let r = crate::client::run(&crate::client::Route::Program(bin), "pr-create", Path::new("r"), &["h"], Some(b"body\n"));
+    assert_eq!(r, crate::client::Reply { code: 4, out: "pr-create r h\nbody\n".into(), err: "oops\n".into() });
     assert_eq!(r.stdout(), None);
 }

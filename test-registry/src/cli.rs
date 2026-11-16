@@ -351,11 +351,11 @@ mod tests {
 
     #[test]
     fn an_empty_path_falls_back_to_the_registry_file_in_the_run_dir() {
-        let c = with_run_default(cfg_with(""), || Ok("/r/run/".into()));
-        assert_eq!(c(PATH_KEY).unwrap(), "/r/run/test-registry.sqlite");
+        let c = with_run_default(cfg_with(""), || Ok("r/run/".into()));
+        assert_eq!(c(PATH_KEY).unwrap(), "r/run/test-registry.sqlite");
         assert_eq!(c(HOLD_KEY).unwrap(), "600");
-        let set = with_run_default(cfg_with("/elsewhere.sqlite"), || Err("no run dir".into()));
-        assert_eq!(set(PATH_KEY).unwrap(), "/elsewhere.sqlite");
+        let set = with_run_default(cfg_with("elsewhere.sqlite"), || Err("no run dir".into()));
+        assert_eq!(set(PATH_KEY).unwrap(), "elsewhere.sqlite");
         let none = with_run_default(cfg_with(""), || Err("no run dir".into()));
         assert!(none(PATH_KEY).is_err());
     }
@@ -382,7 +382,7 @@ mod tests {
     fn a_hold_that_is_not_an_unsigned_integer_exits_3() {
         let cfg = |k: &str| {
             Ok(if k == PATH_KEY {
-                "/x".to_string()
+                "x".to_string()
             } else {
                 "-5".to_string()
             })
@@ -398,7 +398,7 @@ mod tests {
 
     #[test]
     fn every_exit_path_prints_json_under_json() {
-        let ok_cfg = cfg_with("/x");
+        let ok_cfg = cfg_with("x");
         let cases: Vec<(Outcome, i32)> = vec![
             (run(&argv("list --json"), 1, &cfg_with(""), &mem), 3),
             (
@@ -433,7 +433,7 @@ mod tests {
 
     #[test]
     fn disable_without_a_bead_is_a_usage_error_and_a_malformed_bead_is_refused() {
-        let c = cfg_with("/x");
+        let c = cfg_with("x");
         assert_eq!(
             run(
                 &argv("disable --test suite:a.sh --reason r --actor a"),

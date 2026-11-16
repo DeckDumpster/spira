@@ -75,7 +75,7 @@ fn metrics() -> spira_otel::metrics::MetricsSink {
 
 fn operate(cmd: &str) -> i32 {
     let home = std::env::var("HOME").unwrap_or_default();
-    let plan = match Plan::from_spira(format!("{home}/.config/spira/submission").into(), "/etc/ufw/ufw.conf".into()) {
+    let plan = match Plan::from_spira(format!("{home}/.config/spira/submission").into(), format!("{}/ufw.conf", system_paths::guest::ETC_UFW).into()) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("spira-submission: {e}");

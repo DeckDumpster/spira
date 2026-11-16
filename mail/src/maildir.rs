@@ -205,11 +205,11 @@ mod tests {
 
     #[test]
     fn is_unread_rules() {
-        assert!(is_unread(Path::new("/m/box/new/123")));
-        assert!(is_unread(Path::new("/m/box/cur/123"))); // no flags at all
-        assert!(is_unread(Path::new("/m/box/cur/123:2,R"))); // R but no S
-        assert!(!is_unread(Path::new("/m/box/cur/123:2,S")));
-        assert!(!is_unread(Path::new("/m/box/cur/123:2,RS")));
+        assert!(is_unread(Path::new("m/box/new/123")));
+        assert!(is_unread(Path::new("m/box/cur/123"))); // no flags at all
+        assert!(is_unread(Path::new("m/box/cur/123:2,R"))); // R but no S
+        assert!(!is_unread(Path::new("m/box/cur/123:2,S")));
+        assert!(!is_unread(Path::new("m/box/cur/123:2,RS")));
     }
 
     #[test]
