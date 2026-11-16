@@ -112,7 +112,7 @@ pub struct RealProc;
 impl Proc for RealProc {
     fn inventory_scan(&self, text: &str) -> Result<Vec<String>, String> {
         let mut child = spira_config::bounded::bounded("spira-lint")
-            .args(["--only", "inventory", "--scan", "/dev/stdin"])
+            .args(["--only", "inventory", "--scan", system_paths::DEV_STDIN])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())

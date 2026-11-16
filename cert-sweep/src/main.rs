@@ -30,7 +30,7 @@ extern "C" {
 /// Podman conmon/exec processes outlive the runner in the unit's cgroup and time out the stop
 /// path, failing a green sweep; kill everything but ourselves once the runner has returned.
 fn reap_unit_leftovers() {
-    let Some(procs) = fs::read_to_string("/proc/self/cgroup").ok().and_then(|c| cert_sweep::own_unit_procs(&c)) else { return };
+    let Some(procs) = fs::read_to_string(format!("{}/cgroup", system_paths::PROC_SELF)).ok().and_then(|c| cert_sweep::own_unit_procs(&c)) else { return };
     let me = std::process::id() as i32;
     for pid in fs::read_to_string(procs).unwrap_or_default().lines().filter_map(|l| l.trim().parse::<i32>().ok()).filter(|p| *p != me) {
         // SAFETY: plain kill(2) on a pid read from our own cgroup.
@@ -126,7 +126,7 @@ fn now() -> u64 {
 }
 
 fn host() -> String {
-    fs::read_to_string("/proc/sys/kernel/hostname").map(|s| s.trim().to_string()).unwrap_or_else(|_| "unknown".into())
+    fs::read_to_string(format!("{}/kernel/hostname", system_paths::PROC_SYS)).map(|s| s.trim().to_string()).unwrap_or_else(|_| "unknown".into())
 }
 
 fn git(repo: &str, args: &[&str]) -> Result<String, String> {
@@ -438,7 +438,7 @@ impl Rt<'_> {
 
 fn proc_alive(id: &str) -> bool {
     let Some((pid, start)) = id.split_once('@') else { return false };
-    let Ok(stat) = fs::read_to_string(format!("/proc/{pid}/stat")) else { return false };
+    let Ok(stat) = fs::read_to_string(format!("{}/{pid}/stat", system_paths::PROC)) else { return false };
     stat.rfind(')').and_then(|i| stat[i + 1..].split_whitespace().nth(19).map(|s| s == start)).unwrap_or(false)
 }
 
@@ -475,7 +475,7 @@ const STALE_LOCK_SECS: u64 = 600;
 
 fn git_pid_in(tree: &Path) -> Option<u32> {
     let tree = tree.canonicalize().ok()?;
-    fs::read_dir("/proc").ok()?.flatten().find_map(|e| {
+    fs::read_dir(system_paths::PROC).ok()?.flatten().find_map(|e| {
         let pid: u32 = e.file_name().to_str()?.parse().ok()?;
         let comm = fs::read_to_string(e.path().join("comm")).ok()?;
         if comm.trim() != "git" {

@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "system-paths",
     "mail",
     "spira-ctrl",
     "spira-world",

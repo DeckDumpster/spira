@@ -1,0 +1,11 @@
+[package]
+name = "system-paths"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "system-paths — the one crate that names a real absolute system path (host or guest); everything else is relative or joined to a run-time root."
+
+[features]
+integration = []
+
+[dependencies]

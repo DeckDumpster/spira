@@ -637,7 +637,7 @@ mod tests {
         let paths = vec!["queue/src/a.rs".to_string(), "spira/lib.sh".to_string(), "spira/test-b.sh".to_string()];
         let got = required_checks(
             &paths,
-            |p| p.strip_suffix("/src/a.rs").map(String::from),
+            |p| p.split_once("/src/").map(|(c, _)| c.to_string()),
             |p| if p == "spira/lib.sh" { vec!["spira/test-a.sh".into()] } else { vec![] },
         );
         assert_eq!(got, vec!["crate:queue", "suite:spira/test-a.sh", "suite:spira/test-b.sh"]);
