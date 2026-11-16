@@ -407,6 +407,7 @@ pub fn sendmail_close_bead(bd: &dyn Bd, db_configured: bool, bead: &str, kind: &
     close(bd, bead, &reason).map_err(|e| match e {
         LcError::Refused(m) => LcError::Refused(format!("mail.sh: bead close refused for {bead}: {m}")),
         LcError::Fault(m) => LcError::Fault(format!("mail.sh: bead close failed for {bead}: {m}")),
+        LcError::NotRunning(m) => LcError::NotRunning(format!("mail.sh: bead close failed for {bead}: {m}")),
     })?;
     let mut warnings = Vec::new();
     if kind == "question" || kind == "decision" {

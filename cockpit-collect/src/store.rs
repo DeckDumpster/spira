@@ -47,7 +47,7 @@ pub fn fresh<T>(p: &Projection, read: impl Fn(&Projection) -> Result<Read<T>, Lc
             p.refresh_batches().ok()?;
             read(p).ok().map(|r| r.value)
         }
-        Err(LcError::Fault(_)) => None,
+        Err(LcError::Fault(_) | LcError::NotRunning(_)) => None,
     }
 }
 
