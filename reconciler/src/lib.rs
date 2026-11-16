@@ -1368,7 +1368,7 @@ fn default_disk_paths(cfg: &Config) -> Vec<String> {
 /// The store's data directory is RAM-backed: reaping build output and podman storage frees
 /// nothing there, so its remedy is an online collection of the live store.
 fn disk_remedy(cfg: &Config, path: &str) -> Remedy {
-    if !cfg.dolt_data.is_empty() && path == cfg.dolt_data {
+    if !cfg.dolt_data.is_empty() && Path::new(path) == Path::new(&cfg.dolt_data) {
         return Remedy::Command { program: cfg.seams.store_persist.clone(), args: vec!["gc".into()] };
     }
     let podman = |args: &[&str]| (cfg.seams.podman.clone(), args.iter().map(|a| a.to_string()).collect());
@@ -3332,9 +3332,9 @@ mod tests {
         let mut cfg = test_config();
         cfg.seams.store_persist = "sp-bin".into();
         cfg.dolt_data = store.path().display().to_string();
-        cfg.desired.disk = Some(DiskSpec { floor_pct: 101, paths: vec![cfg.dolt_data.clone(), other.path().display().to_string()] });
+        cfg.desired.disk = Some(DiskSpec { floor_pct: 101, paths: vec![format!("{}/", cfg.dolt_data), other.path().display().to_string()] });
         let checks = observe_disk(&cfg);
-        let remedy = |p: &Path| checks.iter().find(|c| c.key == format!("disk:{}", p.display())).unwrap().remedy.describe();
+        let remedy = |p: &Path| checks.iter().find(|c| c.key.starts_with(&format!("disk:{}", p.display()))).unwrap().remedy.describe();
         assert_eq!(remedy(store.path()), "sp-bin gc");
         assert!(remedy(other.path()).contains("image prune"), "other paths keep the podman remedy");
     }
