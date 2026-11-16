@@ -194,8 +194,8 @@ fn banner(v: &View) -> Vec<String> {
     if let Some(p) = v.progress.as_ref().filter(|p| p.running(v.now)) {
         out.push(pass_line(p, v.now));
     }
-    if let Some(a) = &v.read_age {
-        out.push(crate::lcview::read_age_line(a));
+    if let Some(l) = crate::lcview::read_age_notice(v) {
+        out.push(l);
     }
     if !v.errors.is_empty() {
         let first = v.errors.first().cloned().unwrap_or_default();

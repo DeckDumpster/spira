@@ -3,15 +3,23 @@
 //! commits (drift, cached by sha), `world status`, and the dwarf ceiling from config. Never runs `bd`.
 
 use cockpit_ops::lctui::{layout, parent_key, Frame, Mode, Ui};
-use cockpit_ops::lcview::{num, text, apply_claim_views, carry_forward, live_row, repo_column, AskRow, VmRun, holder_pid, own_ids, render, tail_lines, view, LiveDwarf, MenderRow, PassProgress, View, BatchRow, DwellRow, EdgeRow, GraphEdge, Meta, Row, Snapshot, Tail, TAIL_BYTES};
+use cockpit_ops::lcview::{first_frame, published_snapshot, num, text, apply_claim_views, carry_forward, live_row, repo_column, AskRow, VmRun, holder_pid, own_ids, render, tail_lines, view, LiveDwarf, MenderRow, PassProgress, View, BatchRow, DwellRow, EdgeRow, GraphEdge, Meta, Row, Snapshot, Tail, TAIL_BYTES};
+use spira_store::lc_call::LcError;
 use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom};
 use std::process::Command;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// The store's served reads, in process: no `spira-lc` per call.
-fn lc(args: &[&str]) -> Result<String, String> {
-    cockpit_ops::lcio::answer(&cockpit_ops::lcio::client()?, args)
+fn lc(args: &[&str]) -> Result<String, LcError> {
+    cockpit_ops::lcio::answer(&cockpit_ops::lcio::client().map_err(LcError::Fault)?, args)
+}
+
+/// Files a failed store read where `carry_forward` can cover it; a store that is not running is
+/// marked on the snapshot, decided by the error's kind and never its text.
+fn store_failed(s: &mut Snapshot, e: LcError) {
+    s.not_running |= matches!(e, LcError::NotRunning(_));
+    s.store_errors.push(e.to_string());
 }
 
 /// A non-Spira child (git) or a sibling the library cannot yet answer, under a 5 s cap.
@@ -48,24 +56,24 @@ fn read_tail(path: &std::path::Path) -> Option<Tail> {
     Some(Tail { lines: tail_lines(&buf, start > 0, 2), mtime })
 }
 
-fn lc_json(args: &[&str]) -> Result<Vec<serde_json::Value>, String> {
+fn lc_json(args: &[&str]) -> Result<Vec<serde_json::Value>, LcError> {
     let name = format!("spira-lc {}", args.join(" "));
     lc(args)
-        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).map_err(|e| format!("{name}: {e}")))
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).map_err(|e| LcError::Fault(format!("{name}: {e}"))))
         .map(|v| v.as_array().cloned().unwrap_or_default())
 }
 
 /// The `items` of a `spira-lc plan items` answer.
-fn plan_items(args: &[&str]) -> Result<Vec<serde_json::Value>, String> {
+fn plan_items(args: &[&str]) -> Result<Vec<serde_json::Value>, LcError> {
     let name = format!("spira-lc {}", args.join(" "));
-    let v: serde_json::Value = lc(args).and_then(|t| serde_json::from_str(&t).map_err(|e| format!("{name}: {e}")))?;
-    v["items"].as_array().cloned().ok_or_else(|| format!("{name}: no items in the answer"))
+    let v: serde_json::Value = lc(args).and_then(|t| serde_json::from_str(&t).map_err(|e| LcError::Fault(format!("{name}: {e}"))))?;
+    v["items"].as_array().cloned().ok_or_else(|| LcError::Fault(format!("{name}: no items in the answer")))
 }
 
 fn gather_state_machine(s: &mut Snapshot) {
     match lc_json(&["ops-graph"]) {
         Ok(rows) => s.graph = rows.iter().map(|g| GraphEdge { from: text(&g["from"]), event: text(&g["event"]), to: text(&g["to"]) }).collect(),
-        Err(e) => s.errors.push(e),
+        Err(e) => store_failed(s, e),
     }
     match lc_json(&["ops-view", "ops_edges"]) {
         Ok(rows) => {
@@ -81,7 +89,7 @@ fn gather_state_machine(s: &mut Snapshot) {
                 })
                 .collect()
         }
-        Err(e) => s.errors.push(e),
+        Err(e) => store_failed(s, e),
     }
     match lc_json(&["ops-view", "ops_dwell"]) {
         Ok(rows) => {
@@ -90,7 +98,7 @@ fn gather_state_machine(s: &mut Snapshot) {
                 .map(|d| DwellRow { bead_id: text(&d["bead_id"]), state: text(&d["state"]), entered_at: num(&d["entered_at"]).unwrap_or(0), p95_s: num(&d["p95_s"]) })
                 .collect()
         }
-        Err(e) => s.errors.push(e),
+        Err(e) => store_failed(s, e),
     }
     match lc_json(&["list", "--batches"]) {
         Ok(rows) => {
@@ -130,7 +138,7 @@ fn gather_state_machine(s: &mut Snapshot) {
                 })
                 .collect()
         }
-        Err(e) => s.errors.push(e),
+        Err(e) => store_failed(s, e),
     }
     match lc_json(&["list", "--delivery"]) {
         Ok(rows) => {
@@ -138,7 +146,7 @@ fn gather_state_machine(s: &mut Snapshot) {
                 b.pr = rows.iter().filter(|d| text(&d["batch_id"]) == b.id).filter_map(|d| num(&d["pr"])).max().unwrap_or(0);
             }
         }
-        Err(e) => s.errors.push(e),
+        Err(e) => store_failed(s, e),
     }
     // Eject times for the newest round only: that is the one the pane names.
     if let Some(b) = s.batches.iter_mut().max_by_key(|b| b.opened_at.max(b.last_at)).filter(|b| !b.ejected.is_empty()) {
@@ -150,7 +158,7 @@ fn gather_state_machine(s: &mut Snapshot) {
                     .filter_map(|e| num(&e["at"]))
                     .collect()
             }
-            Err(e) => s.errors.push(e),
+            Err(e) => store_failed(s, e),
         }
     }
 }
@@ -266,7 +274,7 @@ fn gather_menders(s: &mut Snapshot) {
                 .map(|m| MenderRow { batch_id: text(&m["batch_id"]), pass: num(&m["pass"]).unwrap_or(0), suite: text(&m["suite"]), state: text(&m["state"]), deadline: num(&m["deadline"]) })
                 .collect()
         }
-        Err(e) => s.errors.push(e),
+        Err(e) => store_failed(s, e),
     }
 }
 
@@ -344,13 +352,13 @@ fn gather() -> Snapshot {
                 apply_claim_views(&mut s);
             }
         }
-        Err(e) => s.errors.push(e),
+        Err(e) => store_failed(&mut s, e),
     }
     // `list --live` carries no terminal rows, so LANDED 24h is gathered from its own windowed view.
     // The same call carries the epic rollup (`--epics`), so EPICS costs the pane no store call; a
     // server without it answers with the bare array, and EPICS is then simply absent.
     match lc(&["ops-view", "ops_recent", "--epics"])
-        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).map_err(|e| format!("spira-lc ops-view ops_recent: {e}")))
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).map_err(|e| LcError::Fault(format!("spira-lc ops-view ops_recent: {e}"))))
         .map(|v| match v {
             serde_json::Value::Array(rows) => rows,
             mut o => {
@@ -373,7 +381,7 @@ fn gather() -> Snapshot {
                 s.rows.push(Row { id, state: "LANDED".into(), updated_at, since: num(&r["since"]).unwrap_or(updated_at), repo, ..Default::default() });
             }
         }
-        Err(e) => s.errors.push(e),
+        Err(e) => store_failed(&mut s, e),
     }
     match lc_json(&["list-asks"]) {
         Ok(asks) => {
@@ -387,15 +395,15 @@ fn gather() -> Snapshot {
             }
         }
         Err(e) => {
-            s.asks_error = Some(e.clone());
-            s.errors.push(e);
+            s.asks_error = Some(e.to_string());
+            store_failed(&mut s, e);
         }
     }
     if s.asks.iter().any(|a| a.title.is_empty()) {
         let ids = s.asks.iter().filter(|a| a.title.is_empty()).map(|a| a.id.as_str()).collect::<Vec<_>>().join(",");
         match plan_items(&["plan", "items", "--ids", &ids]) {
             Ok(rows) => cockpit_ops::lcview::fill_ask_titles(&mut s.asks, &rows),
-            Err(e) => s.errors.push(e),
+            Err(e) => store_failed(&mut s, e),
         }
     }
     match git.join().unwrap_or_else(|_| Err("git: panicked".into())) {
@@ -448,7 +456,7 @@ fn gather() -> Snapshot {
         s.ceiling_pending = p.config.clone();
         s.ceiling_waits = p.waits.clone();
     }
-    s.failures = s.errors.len() as u64;
+    s.failures = (s.errors.len() + s.store_errors.len()) as u64;
     s.gather_ms = started.elapsed().as_millis() as u64;
     s
 }
@@ -491,6 +499,16 @@ fn save_ui(ui: &Ui) {
         .and_then(|_| std::fs::rename(&tmp, &p));
 }
 
+fn unix_now() -> i64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
+}
+
+/// The snapshot the previous pane published, to draw before this pane's first gather returns.
+fn seed() -> Option<Snapshot> {
+    let run = spira_config::process::cfg("SPIRA_RUN").ok()?;
+    published_snapshot(std::path::Path::new(run.trim()))
+}
+
 /// The interactive pane: draws exactly the terminal's size, redraws at once on a key, a click or a
 /// resize, and gathers fresh data every `secs` on a worker thread so input never waits on a slow
 /// store. q leaves.
@@ -501,7 +519,8 @@ fn interactive(secs: u64) -> std::io::Result<()> {
     use std::sync::mpsc;
 
     let (tx, rx) = mpsc::channel::<Snapshot>();
-    let mut last: Option<Snapshot> = None;
+    let mut last = seed();
+    let first = first_frame(last.as_ref(), unix_now()).map(|s| view(&s));
     std::thread::spawn(move || loop {
         let mut snap = gather();
         if let Some(l) = last.as_ref() {
@@ -525,12 +544,12 @@ fn interactive(secs: u64) -> std::io::Result<()> {
     };
 
     let mut ui = load_ui();
-    let mut v: Option<View> = None;
+    let mut v: Option<View> = first;
     let mut frame = Frame::default();
     let mut said_waiting = false;
     let res = (|| -> std::io::Result<()> {
         loop {
-            let mut dirty = v.is_none() && !std::mem::replace(&mut said_waiting, true);
+            let mut dirty = !std::mem::replace(&mut said_waiting, true);
             while let Ok(snap) = rx.try_recv() {
                 let nv = view(&snap);
                 // Forget choices for beads that have left the tree, once a whole gather says so.
@@ -665,10 +684,18 @@ fn main() {
         Some("loop") => {
             let secs: u64 = args.get(2).and_then(|a| a.parse().ok()).unwrap_or(10);
             let mut failures = 0;
+            let mut last = seed();
+            if let Some(first) = first_frame(last.as_ref(), unix_now()) {
+                println!("\x1b[H\x1b[2J{}", render(&view(&first), width()).join("\n"));
+            }
             loop {
                 let mut snap = gather();
+                if let Some(l) = last.as_ref() {
+                    carry_forward(&mut snap, l);
+                }
                 failures += snap.failures;
                 snap.failures = failures;
+                last = Some(snap.clone());
                 publish(&snap);
                 let frame = render(&view(&snap), width());
                 println!("\x1b[H\x1b[2J{}", frame.join("\n"));
@@ -679,7 +706,11 @@ fn main() {
         Some("fit") => {
             // One frame of the TUI layout at COLUMNS x LINES, for a non-interactive look.
             let h = std::env::var("LINES").ok().and_then(|c| c.parse().ok()).unwrap_or(50);
-            println!("{}", layout(&view(&gather()), &load_ui(), width(), h).lines.join("\n"));
+            let mut snap = gather();
+            if let Some(l) = seed() {
+                carry_forward(&mut snap, &l);
+            }
+            println!("{}", layout(&view(&snap), &load_ui(), width(), h).lines.join("\n"));
         }
         Some(other) => {
             eprintln!("usage: lc-view tui [secs] | once | fit | loop [secs] (unknown: {other})");
@@ -690,6 +721,15 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_store_read_that_found_no_store_running_marks_the_snapshot_and_a_fault_does_not() {
+        let mut s = super::Snapshot::default();
+        super::store_failed(&mut s, super::LcError::Fault("spira-lc list --live: exit 2 x".into()));
+        assert!(!s.not_running && s.store_errors.len() == 1);
+        super::store_failed(&mut s, super::LcError::NotRunning("store not running: nothing was sent".into()));
+        assert!(s.not_running && s.store_errors.len() == 2 && s.errors.is_empty());
+    }
+
     fn removed_calls(src: &str) -> Vec<&'static str> {
         let code: String = src.split("#[cfg(test)]").next().unwrap_or("").lines().filter(|l| !l.trim_start().starts_with("//")).collect::<Vec<_>>().join("\n");
         let mut found = Vec::new();

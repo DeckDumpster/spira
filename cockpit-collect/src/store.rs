@@ -13,7 +13,18 @@ use store_view::{Projection, Read};
 /// key is unset or the route does not resolve.
 pub fn client() -> Option<LcClient> {
     let secs: u64 = spira_config::process::cfg("SPIRA_LC_TIMEOUT").ok().filter(|s| !s.is_empty())?.trim().parse().ok()?;
-    Some(LcClient::configured().ok()?.within(Duration::from_secs(secs)))
+    Some(unwaiting(LcClient::configured().ok()?.within(Duration::from_secs(secs))))
+}
+
+/// A probe never waits for an absent store: the read fails at once, and the probe serves what it last had.
+fn unwaiting(c: LcClient) -> LcClient {
+    c.not_running_wait(Duration::ZERO)
+}
+
+/// [`answer_on`] with a store that is not running told apart from any other failure.
+pub fn answer_kind(client: &LcClient, args: &[&str]) -> Result<String, crate::probes::lc::Gone> {
+    use crate::probes::lc::Gone;
+    client.answer(args).map_err(|e| if matches!(e, LcError::NotRunning(_)) { Gone::NotRunning } else { Gone::Failed })
 }
 
 /// `args`'s stdout when the store applied it (exit 0).
@@ -195,5 +206,25 @@ mod tests {
         assert_eq!(answer_on(&c, &["list", "--batches"]).as_deref(), Some("[{\"bead_id\":\"sp-a\"}]"));
         assert_eq!(answer_on(&c, &["pane-facets", "inflow"]), None);
         assert_eq!(sent.sent.lock().unwrap()[0], vec!["list".to_string(), "--batches".to_string()]);
+    }
+
+    struct Absent(std::sync::Mutex<Vec<Duration>>);
+
+    impl spira_store::lc_call::Transport for Absent {
+        fn exchange(&self, _: &[String], _: Option<&str>, _: Duration) -> Result<spira_store::lc_call::Reply, String> {
+            Err("exchange_kind only".into())
+        }
+        fn exchange_kind(&self, _: &[String], _: Option<&str>, _: Duration, wait: Duration) -> Result<spira_store::lc_call::Reply, LcError> {
+            self.0.lock().unwrap().push(wait);
+            Err(LcError::NotRunning("store not running".into()))
+        }
+    }
+
+    #[test]
+    fn a_probe_client_answers_not_running_after_one_call_with_no_wait() {
+        let seen = Arc::new(Absent(std::sync::Mutex::new(Vec::new())));
+        let c = unwaiting(LcClient::over(Arc::clone(&seen) as Arc<dyn spira_store::lc_call::Transport>, true));
+        assert_eq!(answer_kind(&c, &["ops-graph"]), Err(crate::probes::lc::Gone::NotRunning));
+        assert_eq!(*seen.0.lock().unwrap(), vec![Duration::ZERO], "one call, told not to wait for an absent store");
     }
 }

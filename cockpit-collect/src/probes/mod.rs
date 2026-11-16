@@ -345,6 +345,9 @@ pub fn now_keys(cfg: &Cfg) -> Kv {
     push(&mut out, "SP_HOTFIX_ALERT", rs_alert);
 
     push(&mut out, "SP_LC_STALE_S", lc::stale_age().to_string());
+    if lc::not_running() {
+        push(&mut out, "SP_LC_NOT_RUNNING", "1");
+    }
 
     let (ov_n, ov_failed, ov_list) = overrides_summary();
     push(&mut out, "SP_OVERRIDES_N", ov_n.to_string());

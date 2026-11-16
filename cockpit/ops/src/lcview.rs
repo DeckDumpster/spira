@@ -509,6 +509,12 @@ pub struct Snapshot {
     pub closed: Option<Closed24h>,
     /// Sources that failed this pass, named in the frame — never a silent empty section.
     pub errors: Vec<String>,
+    /// Failed reads of the lifecycle store, kept apart from `errors`: a carried read covers them.
+    #[serde(default)]
+    pub store_errors: Vec<String>,
+    /// A store read failed because no store answered at its socket, not because it faulted.
+    #[serde(default)]
+    pub not_running: bool,
     #[serde(default)]
     pub gather_ms: u64,
     /// Sources that failed, summed over the refreshes since the pane started.
@@ -542,7 +548,7 @@ pub struct Snapshot {
 /// refresh (per Ryan 2026-10-09: "i just collapsed it ... and then it just disappeared").
 /// The failure is still named in the frame, with how old the data shown is.
 pub fn carry_forward(new: &mut Snapshot, last: &Snapshot) {
-    if new.errors.is_empty() {
+    if new.errors.is_empty() && new.store_errors.is_empty() {
         return;
     }
     let mut kept = false;
@@ -561,6 +567,9 @@ pub fn carry_forward(new: &mut Snapshot, last: &Snapshot) {
     keep!(dwell);
     keep!(batches);
     keep!(epics);
+    if new.asks_error.is_some() {
+        keep!(asks);
+    }
     if new.live.is_none() && last.live.is_some() {
         new.live = last.live.clone();
         kept = true;
@@ -570,10 +579,44 @@ pub fn carry_forward(new: &mut Snapshot, last: &Snapshot) {
     }
     let from = if last.good_at > 0 { last.good_at } else { last.now };
     new.good_at = from;
-    if new.now - from <= STALE_WARN_S {
-        new.errors.retain(|e| !e.starts_with("spira-lc list:"));
-    } else {
+    if new.not_running || new.now - from <= STALE_WARN_S {
+        new.store_errors.clear();
+        new.asks_error = None;
+    } else if !new.store_errors.is_empty() {
         new.errors.push(format!("showing the last good read from {} ago", age(new.now - from)));
+    }
+}
+
+/// The snapshot a previous pane published under `run`, when it parses.
+pub fn published_snapshot(run: &std::path::Path) -> Option<Snapshot> {
+    serde_json::from_slice(&std::fs::read(run.join("lcview").join("snapshot.json")).ok()?).ok()
+}
+
+/// What the first frame draws before any gather has returned: the published snapshot, aged to
+/// `now`. `None` when nothing was published.
+pub fn first_frame(published: Option<&Snapshot>, now: i64) -> Option<Snapshot> {
+    let last = published?;
+    let mut s = last.clone();
+    s.good_at = if last.good_at > 0 { last.good_at } else { last.now };
+    s.now = now;
+    s.not_running = false;
+    s.store_errors.clear();
+    s.asks_error = None;
+    s.errors.clear();
+    if now - s.good_at > STALE_WARN_S {
+        s.errors.push(format!("showing the last good read from {} ago", age(now - s.good_at)));
+    }
+    Some(s)
+}
+
+/// The line under the banner that says the data drawn is not this pass's: no store is
+/// running, or a source did not answer and the previous read stands in.
+pub fn read_age_notice(v: &View) -> Option<String> {
+    match (&v.not_running, &v.read_age) {
+        (Some(a), _) if a.is_empty() => Some(format!("{YEL}  store not running; no earlier data to show{R}")),
+        (Some(a), _) => Some(format!("{YEL}  store not running; data from {a} ago{R}")),
+        (None, Some(a)) => Some(read_age_line(a)),
+        _ => None,
     }
 }
 
@@ -939,6 +982,8 @@ pub struct View {
     pub errors: Vec<String>,
     /// Set while a failed source is covered by an earlier read still inside the staleness bound.
     pub read_age: Option<String>,
+    /// Set while no store is running: the age of the data drawn in its place.
+    pub not_running: Option<String>,
     pub gather_ms: u64,
     pub failures: u64,
     /// FLOW: (state, count) in pipeline order, LANDED as its 24 h count.
@@ -1480,8 +1525,9 @@ pub fn view(s: &Snapshot) -> View {
         ceiling: s.ceiling,
         ceiling_pending: s.ceiling_pending.clone(),
         ceiling_waits: s.ceiling_waits.clone(),
-        errors: s.errors.clone(),
+        errors: s.errors.iter().chain(s.store_errors.iter().filter(|_| !s.not_running)).cloned().collect(),
         read_age: (s.good_at > 0 && s.now - s.good_at <= STALE_WARN_S).then(|| age(s.now - s.good_at)),
+        not_running: s.not_running.then(|| if s.good_at > 0 { age(s.now - s.good_at) } else { String::new() }),
         gather_ms: s.gather_ms,
         failures: s.failures,
         ready: ready.len(),
@@ -1703,7 +1749,7 @@ pub fn view(s: &Snapshot) -> View {
             ..Default::default()
         })
         .collect();
-    v.decide_error = s.asks_error.clone();
+    v.decide_error = s.asks_error.clone().filter(|_| !s.not_running);
     let mut nx: Vec<&Row> = pool
         .iter()
         .copied()
@@ -1804,8 +1850,8 @@ pub fn render(v: &View, width: usize) -> Vec<String> {
         v.gather_ms,
         v.failures
     ));
-    if let Some(a) = &v.read_age {
-        out.push(read_age_line(a));
+    if let Some(l) = read_age_notice(v) {
+        out.push(l);
     }
     for e in &v.errors {
         out.push(format!("{RED}  source failed: {}{R}", cut(e, w - 18)));
@@ -2205,7 +2251,7 @@ mod tests {
         let mut last = Snapshot { now: 100, ..Default::default() };
         last.rows.push(Row { id: "sp-a".into(), state: "WORKING".into(), ..Default::default() });
         last.batches.push(BatchRow { id: "r-1".into(), state: "OPEN".into(), ..Default::default() });
-        let mut new = Snapshot { now: 100 + STALE_WARN_S + 60, errors: vec!["spira-lc list: exit 124".into()], ..Default::default() };
+        let mut new = Snapshot { now: 100 + STALE_WARN_S + 60, store_errors: vec!["spira-lc list: exit 124".into()], ..Default::default() };
         carry_forward(&mut new, &last);
         assert_eq!(new.rows.len(), 1);
         assert_eq!(new.batches.len(), 1);
@@ -2216,7 +2262,7 @@ mod tests {
     }
 
     fn failed_after(last: &Snapshot, secs: i64) -> Snapshot {
-        let mut new = Snapshot { now: last.now + secs, errors: vec!["spira-lc list: exit 1".into()], ..Default::default() };
+        let mut new = Snapshot { now: last.now + secs, store_errors: vec!["spira-lc list: exit 1".into()], ..Default::default() };
         carry_forward(&mut new, last);
         new
     }
@@ -2245,22 +2291,86 @@ mod tests {
         assert!(page.contains("source failed"), "{page}");
     }
 
+    fn framed(s: &Snapshot) -> String {
+        plain(&crate::lctui::layout(&view(s), &crate::lctui::Ui::default(), 120, 80).lines)
+    }
+
     #[test]
-    fn a_live_failure_is_not_covered_by_a_carried_list_read() {
-        let mut last = snap(vec![]);
-        last.rows.push(Row { id: "sp-a".into(), state: "WORKING".into(), ..Default::default() });
-        let mut new = Snapshot { now: last.now + 30, errors: vec!["spira-lc list: exit 1".into(), "spira-lc list --live: exit 1".into()], ..Default::default() };
+    fn a_pane_with_no_store_running_keeps_its_rows_and_asks_and_says_how_old_they_are() {
+        let mut last = snap(vec![row("sp-keep", "WORKING", 99_000)]);
+        last.asks.push(AskRow { id: "sp-ask".into(), opened_at: 99_000, title: "carried question".into(), class: "design".into(), work_bead: String::new() });
+        let mut new = Snapshot {
+            now: last.now + 14,
+            not_running: true,
+            store_errors: vec!["spira-lc list --live: cannot tell: no store".into(), "spira-lc list-asks: cannot tell: no store".into()],
+            asks_error: Some("spira-lc list-asks: cannot tell: no store".into()),
+            ..Default::default()
+        };
         carry_forward(&mut new, &last);
-        let page = plain(&render(&view(&new), 100));
-        assert!(page.contains("source failed: spira-lc list --live"), "{page}");
-        assert!(!page.contains("source failed: spira-lc list: "), "{page}");
+        let frame = framed(&new);
+        assert!(frame.contains("sp-keep") && frame.contains("carried question"), "{frame}");
+        assert!(frame.contains("store not running; data from 14s ago"), "{frame}");
+        assert!(!frame.lines().any(|l| l.trim_start().starts_with("spira-lc")) && !frame.contains("source failed"), "{frame}");
+    }
+
+    #[test]
+    fn data_older_than_the_stale_bound_is_still_drawn_with_its_age_while_no_store_runs() {
+        let last = snap(vec![row("sp-keep", "WORKING", 99_000)]);
+        let mut new = Snapshot { now: last.now + 3 * STALE_WARN_S, not_running: true, store_errors: vec!["spira-lc list --live: x".into()], ..Default::default() };
+        carry_forward(&mut new, &last);
+        let frame = framed(&new);
+        assert!(frame.contains("sp-keep") && frame.contains("store not running; data from 15m ago"), "{frame}");
+        assert!(!frame.contains("spira-lc"), "{frame}");
+    }
+
+    #[test]
+    fn no_store_running_and_nothing_to_carry_says_so_without_raw_errors() {
+        let new = Snapshot { now: 100_000, not_running: true, store_errors: vec!["spira-lc list --live: x".into()], ..snap(vec![]) };
+        let frame = framed(&new);
+        assert!(frame.contains("store not running; no earlier data to show") && !frame.contains("spira-lc"), "{frame}");
+    }
+
+    #[test]
+    fn asks_a_failed_read_could_not_answer_are_carried_and_a_read_empty_answer_is_not() {
+        let mut last = snap(vec![]);
+        last.asks.push(AskRow { id: "sp-ask".into(), ..Default::default() });
+        let mut failed = Snapshot { now: 100_010, store_errors: vec!["spira-lc list-asks: x".into()], asks_error: Some("x".into()), ..Default::default() };
+        failed.rows.push(row("sp-r", "READY", 1));
+        carry_forward(&mut failed, &last);
+        assert_eq!(failed.asks.len(), 1);
+        let mut answered = Snapshot { now: 100_010, errors: vec!["victorialogs: refused".into()], ..Default::default() };
+        carry_forward(&mut answered, &last);
+        assert!(answered.asks.is_empty(), "an answered empty list is the truth");
+    }
+
+    #[test]
+    fn a_pane_started_with_only_a_published_snapshot_draws_its_rows_on_the_first_frame() {
+        let run = testkit::TempDir::new("lcview-seed");
+        let mut published = snap(vec![row("sp-pub", "WORKING", 99_000)]);
+        published.now = 99_990;
+        std::fs::create_dir_all(run.join("lcview")).unwrap();
+        std::fs::write(run.join("lcview/snapshot.json"), serde_json::to_vec(&published).unwrap()).unwrap();
+        let seeded = published_snapshot(&run).expect("the published file parses");
+        let first = first_frame(Some(&seeded), 100_000).expect("a published snapshot is a first frame");
+        assert!(framed(&first).contains("sp-pub"), "{}", framed(&first));
+        assert!(first_frame(published_snapshot(&run.join("nowhere")).as_ref(), 100_000).is_none(), "nothing published, nothing to draw");
+        std::fs::write(run.join("lcview/snapshot.json"), "{ torn").unwrap();
+        assert!(published_snapshot(&run).is_none());
+    }
+
+    #[test]
+    fn a_first_frame_from_an_old_publication_names_its_age() {
+        let mut published = snap(vec![row("sp-pub", "WORKING", 1)]);
+        published.now = 1_000;
+        let first = first_frame(Some(&published), 1_000 + 2 * STALE_WARN_S).unwrap();
+        assert!(framed(&first).contains("showing the last good read from 10m ago"), "{}", framed(&first));
     }
 
     #[test]
     fn a_fresh_read_covers_only_the_store_failure_and_a_failure_with_nothing_to_carry_stays_named() {
         let mut last = snap(vec![]);
         last.rows.push(Row { id: "sp-a".into(), state: "WORKING".into(), ..Default::default() });
-        let mut new = Snapshot { now: last.now + STALE_WARN_S, errors: vec!["spira-lc list: exit 1".into(), "victorialogs: refused".into()], ..Default::default() };
+        let mut new = Snapshot { now: last.now + STALE_WARN_S, store_errors: vec!["spira-lc list: exit 1".into(), "spira-lc list --live: exit 1".into()], errors: vec!["victorialogs: refused".into()], ..Default::default() };
         carry_forward(&mut new, &last);
         let page = plain(&render(&view(&new), 100));
         assert!(page.contains("source failed: victorialogs: refused"), "{page}");

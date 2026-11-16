@@ -40,18 +40,30 @@ pub fn parse_rows(raw: &str) -> Option<Vec<LcRow>> {
 const FAIL_LIMIT: u32 = 3;
 const FAIL_WINDOW_SECS: i64 = 30;
 
+/// Why a read has no answer: no store was running at the socket, or anything else.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Gone {
+    NotRunning,
+    Failed,
+}
+
 /// Keeps the last good answer of a lifecycle read across probe processes. A failed read serves
 /// it, marked stale with its age, until `FAIL_LIMIT` consecutive failures or `FAIL_WINDOW_SECS`
-/// since the first one — only then is it CANNOT TELL.
-fn last_good(dir: &std::path::Path, key: &str, now: i64, fetch: impl FnOnce() -> Option<String>) -> Option<String> {
+/// since the first one — only then is it CANNOT TELL. A store that is not running is served
+/// for as long as it stays so, and marked `.not-running` beside `.stale`.
+fn last_good(dir: &std::path::Path, key: &str, now: i64, fetch: impl FnOnce() -> Result<String, Gone>) -> Option<String> {
     let _ = std::fs::create_dir_all(dir);
-    let (good, fails, stale) = (dir.join(format!("{key}.json")), dir.join(format!("{key}.fails")), dir.join(format!("{key}.stale")));
-    if let Some(raw) = fetch() {
-        let _ = io::write_if_changed(&good, &raw);
-        let _ = std::fs::remove_file(&fails);
-        let _ = std::fs::remove_file(&stale);
-        return Some(raw);
-    }
+    let (good, fails, stale, gone) = (dir.join(format!("{key}.json")), dir.join(format!("{key}.fails")), dir.join(format!("{key}.stale")), dir.join(format!("{key}.not-running")));
+    let why = match fetch() {
+        Ok(raw) => {
+            let _ = io::write_if_changed(&good, &raw);
+            let _ = std::fs::remove_file(&fails);
+            let _ = std::fs::remove_file(&stale);
+            let _ = std::fs::remove_file(&gone);
+            return Some(raw);
+        }
+        Err(why) => why,
+    };
     let (n, since) = std::fs::read_to_string(&fails)
         .ok()
         .and_then(|t| {
@@ -61,7 +73,14 @@ fn last_good(dir: &std::path::Path, key: &str, now: i64, fetch: impl FnOnce() ->
         .unwrap_or((0, now));
     let (n, since) = (n + 1, since);
     let _ = io::write_if_changed(&fails, format!("{n} {since}"));
-    let raw = std::fs::read_to_string(&good).ok().filter(|_| n < FAIL_LIMIT && now - since < FAIL_WINDOW_SECS)?;
+    let within_limit = why == Gone::NotRunning || (n < FAIL_LIMIT && now - since < FAIL_WINDOW_SECS);
+    let raw = std::fs::read_to_string(&good).ok().filter(|_| within_limit);
+    if raw.is_some() && why == Gone::NotRunning {
+        let _ = io::write_if_changed(&gone, "1");
+    } else {
+        let _ = std::fs::remove_file(&gone);
+    }
+    let raw = raw?;
     let taken = std::fs::metadata(&good).ok().and_then(|m| m.modified().ok()).and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(now, |d| d.as_secs() as i64);
     let _ = io::write_if_changed(&stale, (now - taken).max(0).to_string());
     Some(raw)
@@ -84,6 +103,11 @@ pub fn stale_age() -> i64 {
         .unwrap_or(0)
 }
 
+/// Whether any lifecycle read was served from its cache because no store was running.
+pub fn not_running() -> bool {
+    std::fs::read_dir(cache_dir()).into_iter().flatten().flatten().any(|e| e.path().extension().is_some_and(|x| x == "not-running"))
+}
+
 const FUNNEL_STATES: &str = "SUBMITTED,CERTIFIED,REWORK,IN_DELIVERY";
 
 /// Rows in `state` (one of the funnel states), filtered from the single shared funnel read.
@@ -93,7 +117,10 @@ pub fn list(state: Option<&str>) -> Option<Vec<LcRow>> {
 }
 
 pub fn funnel_raw() -> Option<String> {
-    last_good(&cache_dir(), "list-funnel", io::now(), || shared_live("list-funnel", || list_live(FUNNEL_STATES)))
+    let why = std::cell::Cell::new(Gone::Failed);
+    last_good(&cache_dir(), "list-funnel", io::now(), || {
+        shared_live("list-funnel", || list_live(FUNNEL_STATES).map_err(|g| why.set(g)).ok()).ok_or(why.get())
+    })
 }
 
 fn funnel_rows() -> Option<Vec<LcRow>> {
@@ -106,21 +133,26 @@ pub fn shared_live(key: &str, fetch: impl FnOnce() -> Option<String>) -> Option<
     io::shared_read(&cache_dir().join("live"), key, ttl, io::now(), fetch)
 }
 
-fn list_live(states: &str) -> Option<String> {
+fn list_live(states: &str) -> Result<String, Gone> {
     let raw = match store_view::shared() {
         Some(held) => {
             let states: Vec<&str> = states.split(',').collect();
-            serde_json::Value::Array(held.rows(&store_view::RowQuery { states: &states, ..Default::default() }).ok()?.value).to_string()
+            serde_json::Value::Array(held.rows(&store_view::RowQuery { states: &states, ..Default::default() }).map_err(|_| Gone::Failed)?.value).to_string()
         }
-        None => verb(&["list", "--state", states])?,
+        None => verb_read(&["list", "--state", states])?,
     };
-    parse_rows(&raw).map(|_| raw)
+    parse_rows(&raw).map(|_| raw).ok_or(Gone::Failed)
 }
 
 /// `spira-lc <args>` over the store's client (in-process on the socket), bounded at the
 /// configured timeout; `None` when it failed.
 pub fn verb(args: &[&str]) -> Option<String> {
-    crate::store::answer_on(&crate::store::client()?, args)
+    verb_read(args).ok()
+}
+
+/// [`verb`] with the failure's kind kept.
+pub fn verb_read(args: &[&str]) -> Result<String, Gone> {
+    crate::store::answer_kind(&crate::store::client().ok_or(Gone::Failed)?, args)
 }
 
 /// Ids per `list --ids` read: keeps each answer far under the 64 KiB a probe may draw.
@@ -155,7 +187,17 @@ fn read_rows(key: &str, args: &[&str]) -> Option<HashMap<String, Row>> {
     if let Some(held) = store_view::held_list(args) {
         return lc_state::parse_rows(&held.ok()?).ok().map(lc_state::index);
     }
-    let raw = last_good(&cache_dir(), key, io::now(), || shared_live(key, || verb(args).filter(|r| lc_state::parse_rows(r).is_ok())))?;
+    let why = std::cell::Cell::new(Gone::Failed);
+    let raw = last_good(&cache_dir(), key, io::now(), || {
+        shared_live(key, || match verb_read(args) {
+            Ok(r) => lc_state::parse_rows(&r).is_ok().then_some(r),
+            Err(g) => {
+                why.set(g);
+                None
+            }
+        })
+        .ok_or(why.get())
+    })?;
     lc_state::parse_rows(&raw).ok().map(lc_state::index)
 }
 
@@ -211,26 +253,26 @@ mod tests {
     fn a_failed_read_serves_the_last_good_snapshot_then_gives_up() {
         let t = testkit::TempDir::new("lc-limit");
         let d = t.join("snap");
-        assert_eq!(last_good(&d, "k", 100, || Some("[1]".into())).as_deref(), Some("[1]"));
-        assert_eq!(last_good(&d, "k", 101, || None).as_deref(), Some("[1]"), "first failure is stale, not cannot-tell");
-        assert_eq!(last_good(&d, "k", 102, || None).as_deref(), Some("[1]"));
-        assert_eq!(last_good(&d, "k", 103, || None), None, "third consecutive failure shows");
-        assert_eq!(last_good(&d, "k", 104, || Some("[2]".into())).as_deref(), Some("[2]"));
-        assert_eq!(last_good(&d, "k", 105, || None).as_deref(), Some("[2]"), "a success resets the count");
+        assert_eq!(last_good(&d, "k", 100, || Ok("[1]".into())).as_deref(), Some("[1]"));
+        assert_eq!(last_good(&d, "k", 101, || Err(Gone::Failed)).as_deref(), Some("[1]"), "first failure is stale, not cannot-tell");
+        assert_eq!(last_good(&d, "k", 102, || Err(Gone::Failed)).as_deref(), Some("[1]"));
+        assert_eq!(last_good(&d, "k", 103, || Err(Gone::Failed)), None, "third consecutive failure shows");
+        assert_eq!(last_good(&d, "k", 104, || Ok("[2]".into())).as_deref(), Some("[2]"));
+        assert_eq!(last_good(&d, "k", 105, || Err(Gone::Failed)).as_deref(), Some("[2]"), "a success resets the count");
     }
 
     #[test]
     fn an_unchanged_snapshot_is_not_rewritten_but_keeps_its_age() {
         let t = testkit::TempDir::new("lc-nowrite");
         let d = t.join("snap");
-        last_good(&d, "k", 100, || Some("[1]".into()));
+        last_good(&d, "k", 100, || Ok("[1]".into()));
         let past = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
         std::fs::OpenOptions::new().write(true).open(d.join("k.json")).unwrap().set_modified(past).unwrap();
         let before = io::data_writes();
-        last_good(&d, "k", 101, || Some("[1]".into()));
+        last_good(&d, "k", 101, || Ok("[1]".into()));
         assert_eq!(io::data_writes(), before, "same content writes no data");
         assert!(std::fs::metadata(d.join("k.json")).unwrap().modified().unwrap() > past, "mtime still marks the last good read");
-        last_good(&d, "k", 102, || Some("[2]".into()));
+        last_good(&d, "k", 102, || Ok("[2]".into()));
         assert_eq!(io::data_writes(), before + 1, "changed content is written");
     }
 
@@ -238,20 +280,43 @@ mod tests {
     fn failures_older_than_the_window_show_even_below_the_count() {
         let t = testkit::TempDir::new("lc-window");
         let d = t.join("snap");
-        last_good(&d, "k", 100, || Some("[1]".into()));
-        assert!(last_good(&d, "k", 101, || None).is_some());
-        assert_eq!(last_good(&d, "k", 140, || None), None);
+        last_good(&d, "k", 100, || Ok("[1]".into()));
+        assert!(last_good(&d, "k", 101, || Err(Gone::Failed)).is_some());
+        assert_eq!(last_good(&d, "k", 140, || Err(Gone::Failed)), None);
     }
 
     #[test]
     fn a_failure_with_nothing_remembered_is_cannot_tell_and_a_stale_serve_leaves_its_age() {
         let t = testkit::TempDir::new("lc-age");
         let d = t.join("snap");
-        assert_eq!(last_good(&d, "k", 100, || None), None);
-        last_good(&d, "j", 100, || Some("[]".into()));
-        last_good(&d, "j", 105, || None);
+        assert_eq!(last_good(&d, "k", 100, || Err(Gone::Failed)), None);
+        last_good(&d, "j", 100, || Ok("[]".into()));
+        last_good(&d, "j", 105, || Err(Gone::Failed));
         assert!(std::fs::read_to_string(d.join("j.stale")).unwrap().parse::<i64>().is_ok());
-        last_good(&d, "j", 106, || Some("[]".into()));
+        last_good(&d, "j", 106, || Ok("[]".into()));
         assert!(!d.join("j.stale").exists(), "a live read clears the marker");
+    }
+
+    #[test]
+    fn a_store_that_is_not_running_keeps_serving_the_last_good_read_past_the_failure_window() {
+        let t = testkit::TempDir::new("lc-not-running");
+        let d = t.join("snap");
+        assert_eq!(last_good(&d, "k", 0, || Ok("[1]".into())).as_deref(), Some("[1]"));
+        for at in [0, 31, 63] {
+            assert_eq!(last_good(&d, "k", at, || Err(Gone::NotRunning)).as_deref(), Some("[1]"), "at {at}s");
+            assert!(d.join("k.stale").exists() && d.join("k.not-running").exists());
+        }
+        assert_eq!(last_good(&d, "k", 64, || Ok("[2]".into())).as_deref(), Some("[2]"));
+        assert!(!d.join("k.stale").exists() && !d.join("k.not-running").exists(), "a success clears the age and the marker");
+    }
+
+    #[test]
+    fn a_fault_after_not_running_gives_up_on_the_usual_rule_and_drops_the_marker() {
+        let t = testkit::TempDir::new("lc-not-running-then-fault");
+        let d = t.join("snap");
+        last_good(&d, "k", 0, || Ok("[1]".into()));
+        last_good(&d, "k", 1, || Err(Gone::NotRunning));
+        assert_eq!(last_good(&d, "k", 40, || Err(Gone::Failed)), None);
+        assert!(!d.join("k.not-running").exists());
     }
 }
