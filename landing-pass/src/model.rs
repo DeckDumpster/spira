@@ -387,17 +387,7 @@ impl GateRun {
     /// (else the first red `gate-step`), and the last line the gate printed that is not its own
     /// bookkeeping. Either is empty when the output does not say.
     pub fn red_at(&self) -> (String, String) {
-        let bookkeeping = |l: &str| l.starts_with("gate-step ") || l.starts_with("gate: ");
-        let step = match self.suite.as_str() {
-            "-" => self
-                .out
-                .lines()
-                .find_map(|l| l.trim().strip_prefix("gate-step RED ")?.split_once(" :: ").map(|(_, u)| u.trim().to_string()))
-                .unwrap_or_default(),
-            s => s.to_string(),
-        };
-        let message = self.out.lines().rev().map(str::trim).find(|l| !l.is_empty() && !bookkeeping(l)).unwrap_or("").to_string();
-        (step, message)
+        spira_config::red_at::red_at(&self.suite, &self.out)
     }
     pub fn reason_or(&self, dflt: &str) -> String {
         self.reason.clone().filter(|r| !r.is_empty()).unwrap_or_else(|| dflt.to_string())

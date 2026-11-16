@@ -12,6 +12,7 @@ pub mod pass;
 pub mod reconcile;
 pub mod restart;
 pub mod state;
+pub mod streak;
 pub mod util;
 
 #[cfg(test)]

@@ -16,6 +16,7 @@ pub const NO_VERDICT_SHARE: &str = "no_verdict_share_1h";
 pub const NO_VERDICT_HOURS_SHARE: &str = "no_verdict_hours_share_1h";
 pub const NO_VERDICT_BY_CAUSE: &str = "no_verdict_by_cause";
 pub const GATES: &str = "gates_1h";
+pub const RECENT_RUNS: &str = "recent_runs";
 
 pub const NO_VERDICT_SHARE_SPEC: &str = "no_verdict_share";
 
@@ -40,6 +41,15 @@ pub struct Status {
     pub no_verdict_hours_share_1h: Option<Numeric>,
     pub no_verdict_by_cause: Option<Vec<CauseCount>>,
     pub gates_1h: Option<Numeric>,
+    pub recent_runs: Option<Vec<RepoRuns>>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)]
+pub struct RepoRuns {
+    pub repo: String,
+    pub rows: Vec<Value>,
 }
 
 #[derive(Deserialize)]
@@ -68,6 +78,7 @@ pub const KIND: SectionKind = SectionKind {
         (NO_VERDICT_HOURS_SHARE, FieldShape::Numeric),
         (NO_VERDICT_BY_CAUSE, FieldShape::List),
         (GATES, FieldShape::Numeric),
+        (RECENT_RUNS, FieldShape::List),
     ],
     check_spec,
     check_status,

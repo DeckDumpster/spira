@@ -12,6 +12,10 @@ use tsd::query::{num, text, ts_of};
 pub const HOUR: u64 = 3_600;
 pub const TARGET_LATENCY: &str = "10m";
 pub const MAX_AGE: &str = "1h";
+/// Rows kept per repo for the red-streak check; any streak length is read from this window.
+pub const RECENT_PER_REPO: usize = 16;
+/// How far back the recent rows reach: a repo that gated nothing for an hour still shows its streak.
+pub const RECENT_WINDOW: u64 = 24 * HOUR;
 pub const UNSPECIFIED: &str = "unspecified";
 
 #[derive(Clone, Debug, PartialEq)]
@@ -20,6 +24,8 @@ pub struct Reading {
     pub no_verdict_share: f64,
     pub no_verdict_hours_share: f64,
     pub by_cause: Vec<(String, u64)>,
+    /// Per repo, its newest rows first.
+    pub recent: Vec<(String, Vec<Value>)>,
 }
 
 /// The hour's figures over the `gate-run` rows stamped in `(now - 1h, now]`. A row whose status
@@ -45,11 +51,34 @@ pub fn measure(rows: &[Value], now: u64) -> Reading {
     }
     by_cause.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     Reading {
+        recent: recent(rows, now),
         gates: gates.len() as u64,
         no_verdict_share: share(lost.len() as f64, gates.len() as f64),
         no_verdict_hours_share: share(lost.iter().map(|r| ran(r)).sum(), gates.iter().map(|r| ran(r)).sum()),
         by_cause,
     }
+}
+
+/// The newest [`RECENT_PER_REPO`] gate rows of each repo within [`RECENT_WINDOW`], newest first, cut to what the red-streak check reads.
+fn recent(rows: &[Value], now: u64) -> Vec<(String, Vec<Value>)> {
+    let from = now.saturating_sub(RECENT_WINDOW);
+    let mut by_repo: std::collections::BTreeMap<String, Vec<((u64, usize), Value)>> = Default::default();
+    for (i, r) in rows.iter().enumerate().filter(|(_, r)| matches!(text(r, "status"), Some("PASS" | "FAIL" | "NO_VERDICT" | "BASE_FAIL"))) {
+        let (Some(t), Some(repo)) = (ts_of(r), text(r, "repo")) else { continue };
+        if t <= from || t > now {
+            continue;
+        }
+        let keep = |k: &str| (k.to_string(), Value::String(text(r, k).unwrap_or("").to_string()));
+        let row: serde_json::Map<String, Value> = ["bead", "status", "reason", "red_unit", "red_line"].into_iter().map(keep).collect();
+        by_repo.entry(repo.to_string()).or_default().push(((t, i), Value::Object(row)));
+    }
+    by_repo
+        .into_iter()
+        .map(|(repo, mut v)| {
+            v.sort_by(|a, b| b.0.cmp(&a.0));
+            (repo, v.into_iter().take(RECENT_PER_REPO).map(|(_, r)| r).collect())
+        })
+        .collect()
 }
 
 /// The family's rows, or none when no gate ever recorded one; any other failure stops the publish.
@@ -68,6 +97,7 @@ pub fn status_of(prev: Option<&Section>, r: &Reading) -> Value {
         kind::NO_VERDICT_HOURS_SHARE: hour(r.no_verdict_hours_share),
         kind::GATES: hour(r.gates as f64),
         kind::NO_VERDICT_BY_CAUSE: r.by_cause.iter().map(|(cause, count)| json!({ "cause": cause, "count": count })).collect::<Vec<_>>(),
+        kind::RECENT_RUNS: r.recent.iter().map(|(repo, rows)| json!({ "repo": repo, "rows": rows })).collect::<Vec<_>>(),
     })
 }
 
@@ -113,6 +143,6 @@ pub fn run(lc: &dyn Lc, now: u64, rows: &[Value]) -> Result<Reading, String> {
 
 /// One worker tick's publish, gating or not: the hour's rows under `run`, then [`run`].
 pub fn publish(lc: &dyn Lc, run: &std::path::Path, now: u64) -> Result<Reading, String> {
-    let read = tsd::query::Source { reader: None, root: run }.rows(crate::telemetry::FAMILY, now.saturating_sub(HOUR));
+    let read = tsd::query::Source { reader: None, root: run }.rows(crate::telemetry::FAMILY, now.saturating_sub(RECENT_WINDOW));
     self::run(lc, now, &gate_rows(read)?)
 }

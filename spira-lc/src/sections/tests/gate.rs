@@ -88,6 +88,21 @@ fn a_row_that_is_no_gate_or_outside_the_hour_counts_for_nothing_and_a_blank_reas
 }
 
 #[test]
+fn the_newest_rows_of_each_repo_are_published_with_their_red_unit_and_line() {
+    let r = at_five();
+    let row = |age: u64, repo: &str, bead: &str, status: &str| {
+        json!({ "ts": format_rfc3339(FIVE - age), "repo": repo, "bead": bead, "status": status, "reason": "branch-red", "red_unit": "unit-tests", "red_line": "boom", "ran_secs": 1 })
+    };
+    let rows = vec![row(7200, "spira", "old", "FAIL"), row(300, "spira", "mid", "FAIL"), row(60, "spira", "new", "FAIL"), row(60, "other", "o", "PASS")];
+    publish(&r, &rows).unwrap();
+    let recent = published(&r)["status"]["recent_runs"].clone();
+    assert_eq!(recent[0]["repo"], "other");
+    let spira: Vec<&str> = recent[1]["rows"].as_array().unwrap().iter().map(|x| x["bead"].as_str().unwrap()).collect();
+    assert_eq!(spira, ["new", "mid", "old"], "newest first, beyond the hour the shares use");
+    assert_eq!(recent[1]["rows"][0]["red_line"], "boom");
+}
+
+#[test]
 fn an_hour_with_no_gate_or_no_run_time_publishes_zero_so_its_distance_is_defined() {
     let r = at_five();
     let reading = publish(&r, &[]).unwrap();
