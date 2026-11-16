@@ -1,5 +1,5 @@
 //! `queue_keys` — lifecycle funnel depth/age, the active batch, the next-up CERTIFIED rows
-//! and the quarantine count. Ported from `spira/cockpit.sh` (DESIGN.md "Design"); the
+//! and the tests the registry holds out of runs. Ported from `spira/cockpit.sh` (DESIGN.md "Design"); the
 //! per-repository sort order (`queue_sort_rows`) and the certified listing
 //! (`queue_certified_list`) stay `lib.sh`'s own — this bead does not own or re-derive them
 //! (wave 4, not this one).
@@ -182,20 +182,7 @@ pub fn queue_keys(cfg: &Cfg) -> Kv {
     push(&mut out, "SP_QUEUE_NEXT_N", next_total.to_string());
     push(&mut out, "SP_QUEUE_NEXT_MAX", next_max.to_string());
 
-    // --- Quarantine count ---
-    let mut quarantine_n = 0;
-    {
-        let reg = io::repo_registry();
-        for rname in reg.all() {
-            let Some(rp) = reg.root(&rname) else { continue };
-            let suite_state_file = spira_config::resolve::suite_state_file().unwrap_or_default();
-            let sf = std::path::Path::new(&rp).join(&suite_state_file);
-            if let Ok(content) = std::fs::read_to_string(&sf) {
-                quarantine_n += quarantined_in(&content);
-            }
-        }
-    }
-    push(&mut out, "SP_QUEUE_QUARANTINE_N", quarantine_n.to_string());
+    out.extend(testreg_keys(&|args| io::run_tool("test-registry", args, None), now));
 
     out
 }
@@ -213,9 +200,31 @@ fn unbatched<'a>(certified: &[&'a str], batch: &HashSet<&str>) -> Vec<&'a str> {
     certified.iter().copied().filter(|l| !batch.contains(l.split_whitespace().next().unwrap_or(""))).collect()
 }
 
-/// The quarantined suites a suite-state file lists.
-fn quarantined_in(content: &str) -> usize {
-    content.lines().filter(|l| l.contains(" | quarantined |")).count()
+const TESTREG_ROWS: usize = 10;
+
+/// The tests the registry holds out of runs and has not expired, soonest-expiring first;
+/// a call that fails or prints what is not the registry's list is `SP_TESTREG=unread`.
+fn testreg_keys(call: &dyn Fn(&[&str]) -> Option<String>, now: i64) -> Kv {
+    let mut out = Kv::new();
+    let argv = ["list", "--json", "--at", &now.to_string()];
+    let rows = call(&argv)
+        .and_then(|raw| serde_json::from_str::<Value>(io::json_only(&raw)).ok())
+        .and_then(|v| v.get("rows").and_then(Value::as_array).cloned());
+    let Some(rows) = rows else {
+        push(&mut out, "SP_TESTREG", "unread");
+        return out;
+    };
+    let mut held: Vec<&Value> = rows.iter().filter(|r| r.get("expired").and_then(Value::as_bool) == Some(false)).collect();
+    held.sort_by_key(|r| r.get("until").and_then(Value::as_i64).unwrap_or(i64::MAX));
+    push(&mut out, "SP_TESTREG_N", held.len().to_string());
+    for (i, r) in held.iter().take(TESTREG_ROWS).enumerate() {
+        let text = |k: &str| crate::quoting::sanitize(r.get(k).and_then(Value::as_str).unwrap_or(""));
+        push(&mut out, &format!("SP_TESTREG{i}_STATE"), text("state"));
+        push(&mut out, &format!("SP_TESTREG{i}_TEST"), text("test"));
+        push(&mut out, &format!("SP_TESTREG{i}_BEAD"), text("bead"));
+        push(&mut out, &format!("SP_TESTREG{i}_UNTIL"), r.get("until").and_then(Value::as_i64).unwrap_or(0).to_string());
+    }
+    out
 }
 
 /// The open forge batch the pane shows: the first forge repo, in name order, whose record
@@ -327,14 +336,35 @@ mod tests {
     }
     // covers: UC-cockpit-observability-11
     #[test]
-    fn next_rows_leave_out_the_open_batch_and_quarantined_suites_are_counted() {
+    fn next_rows_leave_out_the_open_batch() {
         let batch: HashSet<&str> = ["sp-b1", "sp-bopen"].into();
         let cert = ["sp-b1 tip1 100", "sp-c1 tip2 200", "sp-c2 tip3 300"];
         assert_eq!(unbatched(&cert, &batch), ["sp-c1 tip2 200", "sp-c2 tip3 300"]);
         let sorted: String = (0..32).map(|i| format!("0 1 2 3 sp-c{i}\n")).collect();
         assert_eq!(next_row_ids(&sorted, 0).len(), NEXT_ROW_CAP, "32 certified draw at most the row cap");
         assert_eq!(next_row_ids(&sorted, 15).len(), NEXT_ROW_CAP - 15, "a later repo only fills what is left");
-        assert_eq!(quarantined_in("a | passing |\nb | quarantined | since x\nc | quarantined |\n"), 2);
+    }
+
+    #[test]
+    fn the_registry_rows_still_held_are_emitted_soonest_first_and_a_failed_call_is_unread() {
+        let list = r#"{"ok":true,"at":100,"rows":[
+            {"test":"unit:old","state":"quarantined","bead":"sp-o","until":50,"expired":true},
+            {"test":"unit:loom factory::tests::b","state":"quarantined","bead":"sp-y2","until":900,"expired":false},
+            {"test":"unit:loom factory::tests::a","state":"disabled","bead":"sp-x1","until":300,"expired":false}]}"#;
+        let seen = std::cell::RefCell::new(Vec::new());
+        let kv = testreg_keys(&|a| { seen.borrow_mut().push(a.join(" ")); Some(list.to_string()) }, 100);
+        assert_eq!(seen.borrow()[0], "list --json --at 100");
+        let get = |k: &str| funnel_get(&kv, k);
+        assert_eq!(get("SP_TESTREG_N"), "2");
+        assert_eq!(
+            [get("SP_TESTREG0_STATE"), get("SP_TESTREG0_TEST"), get("SP_TESTREG0_BEAD"), get("SP_TESTREG0_UNTIL")],
+            ["disabled", "unit:loom factory::tests::a", "sp-x1", "300"]
+        );
+        assert_eq!(get("SP_TESTREG1_BEAD"), "sp-y2");
+        assert!(!kv.iter().any(|(k, _)| k == "SP_TESTREG2_TEST" || k == "SP_QUEUE_QUARANTINE_N"));
+        let none = testreg_keys(&|_| None, 100);
+        assert_eq!(none, [("SP_TESTREG".to_string(), "unread".to_string())]);
+        assert_eq!(funnel_get(&testreg_keys(&|_| Some("not json".into()), 100), "SP_TESTREG"), "unread");
     }
 
     // covers: UC-cockpit-observability-11

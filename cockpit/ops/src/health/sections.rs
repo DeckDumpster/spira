@@ -621,7 +621,6 @@ pub fn queue_section(snap: &Snapshot, cols: i64) -> Vec<String> {
         .or_else(|| snap.get("SP_UNLANDED_N"))
         .unwrap_or("0");
     let nm = snap.get("SP_QUEUE_NEXT_MAX").unwrap_or("0");
-    let qqn = snap.get("SP_QUEUE_QUARANTINE_N").unwrap_or("0");
     let fn_certify = snap.q("SP_FUNNEL_CERTIFY_N");
     let fn_certify_age = snap.get("SP_FUNNEL_CERTIFY_AGE").unwrap_or("");
     let fn_red = snap.q("SP_FUNNEL_RED_N");
@@ -746,16 +745,44 @@ pub fn queue_section(snap: &Snapshot, cols: i64) -> Vec<String> {
     if ej != "0" && ej != "?" {
         footer = format!("{ej} ejected");
     }
-    if qqn != "0" && qqn != "?" {
-        if !footer.is_empty() {
-            footer.push_str("  ");
-        }
-        footer.push_str(&format!("{qqn} quarantined"));
-    }
     if !footer.is_empty() {
         out.push(format!("        {WARN}{footer}{RST}"));
     }
+    out.extend(testreg_rows(snap, cols));
     out
+}
+
+const TESTREG_ROWS: i64 = 10;
+
+fn testreg_rows(snap: &Snapshot, cols: i64) -> Vec<String> {
+    if snap.get("SP_TESTREG") == Some("unread") {
+        return vec![unread_row("TESTS", "cannot read the test registry")];
+    }
+    let n: i64 = snap.get("SP_TESTREG_N").and_then(|v| v.parse().ok()).unwrap_or(0);
+    let more = if n > TESTREG_ROWS { format!(" +{} more", n - TESTREG_ROWS) } else { String::new() };
+    (0..n.min(TESTREG_ROWS))
+        .map(|i| {
+            let f = |k: &str| snap.get(&format!("SP_TESTREG{i}_{k}")).unwrap_or("").to_string();
+            let until = f("UNTIL").parse().map(utc_month_day_hm).unwrap_or_else(|_| "?".to_string());
+            let state = f("STATE");
+            let tail = if i == n.min(TESTREG_ROWS) - 1 { more.as_str() } else { "" };
+            let w = cols - 8 - state.chars().count() as i64 - 1 - tail.chars().count() as i64;
+            format!("        {WARN}{state}{RST} {}{DIM}{tail}{RST}", fit(&format!("{} {} until {until}", f("TEST"), f("BEAD")), w))
+        })
+        .collect()
+}
+
+/// `MM-DD HH:MM` in UTC for an epoch, by the days-to-civil-date arithmetic (no date crate here).
+fn utc_month_day_hm(epoch: i64) -> String {
+    let (days, secs) = (epoch.div_euclid(86_400), epoch.rem_euclid(86_400));
+    let z = days + 719_468;
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    format!("{month:02}-{day:02} {:02}:{:02}", secs / 3600, secs % 3600 / 60)
 }
 
 /// `recent_row`/`inflow_row` share a shape: `<age> <word> <word> <id-or-prose> <rest...>`,
@@ -1459,6 +1486,32 @@ mod tests {
 
     fn queue_text(snap: &str) -> String {
         queue_section(&Snapshot::parse(snap), 120).join("\n")
+    }
+
+    #[test]
+    fn queue_pane_lists_each_held_test_with_bead_and_expiry_within_the_columns() {
+        let held = "SP_QUEUE_DEPTH='1'\nSP_TESTREG_N='1'\nSP_TESTREG0_STATE='disabled'\n\
+            SP_TESTREG0_TEST='unit:loom factory::tests::a'\nSP_TESTREG0_BEAD='sp-x1'\nSP_TESTREG0_UNTIL='1794787200'\n";
+        let lines = queue_section(&Snapshot::parse(held), 40);
+        let rows: Vec<&String> = lines.iter().filter(|l| l.contains("disabled")).collect();
+        assert_eq!(rows.len(), 1, "{lines:?}");
+        let plain = regex::Regex::new("\x1b\\[[0-9;]*m").unwrap().replace_all(rows[0], "").to_string();
+        assert!(plain.chars().count() <= 40, "{plain:?}");
+        let wide = queue_section(&Snapshot::parse(held), 120).join("\n");
+        for want in ["unit:loom factory::tests::a", "sp-x1", "until 11-16 00:00"] {
+            assert!(wide.contains(want), "{want} missing from {wide:?}");
+        }
+        let none = queue_text("SP_QUEUE_DEPTH='1'\nSP_TESTREG_N='0'\n");
+        assert!(!none.contains("until") && !none.contains("quarantined"), "{none:?}");
+        let more = queue_text("SP_QUEUE_DEPTH='1'\nSP_TESTREG_N='12'\nSP_TESTREG0_STATE='disabled'\n");
+        assert!(more.contains("+2 more"), "{more:?}");
+        let full = format!("SP_QUEUE_DEPTH='1'\nSP_TESTREG_N='12'\n{}", (0..10).map(|i| format!("SP_TESTREG{i}_STATE='disabled'\nSP_TESTREG{i}_TEST='unit:loom factory::tests::long_name_{i}'\nSP_TESTREG{i}_BEAD='sp-x{i}'\nSP_TESTREG{i}_UNTIL='1794787200'\n")).collect::<String>());
+        let strip = regex::Regex::new("\x1b\\[[0-9;]*m").unwrap();
+        for l in queue_section(&Snapshot::parse(&full), 40).iter().filter(|l| l.contains("disabled")) {
+            assert!(strip.replace_all(l, "").chars().count() <= 40, "{l:?}");
+        }
+        let unread = queue_text("SP_QUEUE_DEPTH='1'\nSP_TESTREG='unread'\n");
+        assert!(unread.contains("cannot read the test registry"), "{unread:?}");
     }
 
     #[test]
