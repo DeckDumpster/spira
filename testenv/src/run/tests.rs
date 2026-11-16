@@ -485,16 +485,18 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
         )
         .unwrap();
         lines.lock().unwrap().clear();
-        let before = rt.testenv_calls.lock().unwrap().len();
+        let work_done = || rt.testenv_calls.lock().unwrap().iter().filter(|c| c.first().map(String::as_str) != Some("tag")).count() + rt.execs.lock().unwrap().len();
+        let before = work_done();
         go();
-        let after = rt.testenv_calls.lock().unwrap().len();
+        let after = work_done();
         let got = lines.lock().unwrap().clone();
         (got, after - before)
     }
 
     #[test]
     fn a_cached_green_replays_each_suites_recorded_line_before_the_verdict() {
-        let (lines, _) = replay_cached_green(Some("ok 100 334 - batch testenv 0"));
+        let (lines, calls) = replay_cached_green(Some("ok 100 334 - batch testenv 0"));
+        assert_eq!(calls, 0, "a hit must not reach the runtime: {lines:#?}");
         let at = lines.iter().position(|l| l.trim_start().starts_with("test-a.sh") && l.contains("ok") && l.contains("334s")).unwrap_or_else(|| panic!("no replayed suite line: {lines:#?}"));
         let verdict = lines.iter().position(|l| l.starts_with("VERDICT GREEN ran=0 cached=")).unwrap_or_else(|| panic!("not served from cache: {lines:#?}"));
         assert!(at < verdict, "{lines:#?}");
@@ -502,7 +504,8 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
 
     #[test]
     fn a_cached_green_replays_a_skipped_suite_as_skipped() {
-        let (lines, _) = replay_cached_green(Some("skip 100 0 - batch testenv 0"));
+        let (lines, calls) = replay_cached_green(Some("skip 100 0 - batch testenv 0"));
+        assert_eq!(calls, 0, "a hit must not reach the runtime: {lines:#?}");
         assert!(lines.iter().any(|l| l.contains("test-a.sh") && l.contains("SKIPPED")), "{lines:#?}");
         assert!(!lines.iter().any(|l| l.contains("test-a.sh") && l.contains(" ok ")), "{lines:#?}");
     }
@@ -513,5 +516,17 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
         assert!(lines.iter().any(|l| l.contains("has no record for test-a.sh — running")), "{lines:#?}");
         assert!(!lines.iter().any(|l| l.contains("cached=")), "{lines:#?}");
         assert!(calls > 0, "the run did not proceed to the runtime: {lines:#?}");
+    }
+
+    #[test]
+    fn one_missing_record_makes_the_whole_cached_replay_a_miss() {
+        let dir = testkit::TempDir::new("testenv-cached-lines");
+        fs::write(dir.join("test-a.sh.result"), "ok 100 5 - batch testenv 0\n").unwrap();
+        let both = ["test-a.sh".to_string(), "test-b.sh".to_string()];
+        assert_eq!(cached_suite_lines(&dir, &both), Err("test-b.sh".to_string()));
+        fs::write(dir.join("test-b.sh.result"), "skip 100 0 - batch testenv 0\n").unwrap();
+        let lines = cached_suite_lines(&dir, &both).unwrap();
+        assert!(lines[0].contains("test-a.sh") && lines[0].contains("ok"), "{lines:?}");
+        assert!(lines[1].contains("test-b.sh") && lines[1].contains("SKIPPED"), "{lines:?}");
     }
 }

@@ -2729,6 +2729,19 @@ fn a_cached_replay_of_a_passed_suite_proves_it() {
 }
 
 #[test]
+fn a_cached_replay_without_a_passed_suite_line_proves_nothing() {
+    for body in [
+        "VERDICT GREEN ran=0 cached=2026-11-16T07:33:31Z",
+        "  test-b.sh   SKIPPED\nVERDICT GREEN ran=0 cached=2026-11-16T07:33:31Z",
+    ] {
+        let f = returned(unit_fake(&["gate/src/x.rs"]), "test-b.sh");
+        f.reentry_runs.borrow_mut().insert(MERGE_SHA.into(), (0, body.into()));
+        assert_eq!(f.run(), NOVERDICT, "{body}");
+        assert!(f.verdict_line().contains("reason=reentry-unproven"), "{}", f.verdict_line());
+    }
+}
+
+#[test]
 fn a_named_suite_that_only_skips_proves_nothing() {
     let f = returned(unit_fake(&["gate/src/x.rs"]), "test-b.sh");
     f.reentry_runs.borrow_mut().insert(
