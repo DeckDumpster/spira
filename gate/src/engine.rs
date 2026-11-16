@@ -105,6 +105,8 @@ struct State {
     phases: Vec<(String, u64)>,
     /// The build phase's breakdown and cargo's report, once a unit build read one.
     build_timing: Option<(crate::buildtiming::Build, String)>,
+    /// The test phase's nextest timings, once a unit test phase ran.
+    unit_timings: Option<spira_config::unit_tier::UnitTimings>,
     /// Seconds the trial spent waiting for a slot (testenv's `queue-wait=` lines), inside
     /// the `gate` phase's wall.
     queue_secs: u64,
@@ -871,6 +873,7 @@ impl<'w, W: World> Trial<'w, W> {
                     fkey.as_ref(),
                     &mut mark,
                     &mut self.s.build_timing,
+                    &mut self.s.unit_timings,
                 )
             };
             let first_env = env(&label, ctx.var("SPIRA_VERDICT_REPEAT_CONSIDERED"), &comp);
@@ -1107,6 +1110,7 @@ impl<'w, W: World> Trial<'w, W> {
                 "base-",
                 base_fkey.as_ref(),
                 &mut |_, _| {},
+                &mut None,
                 &mut None,
             );
             let before_tests = r != 0 && ph.last().is_some_and(|(n, _)| n == "base-tools" || n == "base-build");
@@ -1784,6 +1788,29 @@ impl<'w, W: World> Trial<'w, W> {
         }
     }
 
+    /// Wall seconds of a phase of the branch trial, when a unit test phase ran.
+    fn unit_phase_secs(&self, name: &str) -> u64 {
+        match self.s.unit_timings {
+            Some(_) => self.s.phases.iter().find(|(n, _)| n == name).map_or(0, |p| p.1),
+            None => 0,
+        }
+    }
+
+    fn unit_slowest(&self) -> String {
+        self.s.unit_timings.as_ref().map_or(String::new(), |t| t.slowest_field())
+    }
+
+    /// ` unit_build_secs=… unit_run_secs=… unit_tests=… unit_slowest=…`, beside the build's own fields.
+    fn unit_suffix(&self) -> String {
+        format!(
+            " unit_build_secs={} unit_run_secs={} unit_tests={} unit_slowest={}",
+            self.unit_phase_secs("build"),
+            self.unit_phase_secs("test"),
+            self.s.unit_timings.as_ref().map_or(0, |t| t.tests),
+            self.s.unit_timings.as_ref().map_or("-".to_string(), |t| t.slowest_field()),
+        )
+    }
+
     fn finish(&mut self, vd: Verdict) -> i32 {
         let mut vd = vd;
         let w = self.w;
@@ -1836,7 +1863,7 @@ impl<'w, W: World> Trial<'w, W> {
             w.append(
                 &self.s.gate_log,
                 &format!(
-                    "{} {} {} waited={}s ran={}s rc={} {}{}{}{}{}{} test_clock={}s\n",
+                    "{} {} {} waited={}s ran={}s rc={} {}{}{}{}{}{}{} test_clock={}s\n",
                     w.utc(),
                     self.s.repo_name,
                     self.a.branch,
@@ -1846,6 +1873,7 @@ impl<'w, W: World> Trial<'w, W> {
                     vd.reason,
                     meter_suffix(&self.s.compose, &self.s.phases, self.s.queue_secs),
                     self.s.build_timing.as_ref().map_or(String::new(), |(b, _)| b.suffix()),
+                    self.unit_suffix(),
                     tools_field(&self.s.tools_from, &self.s.phases),
                     self.s.replay_note,
                     if self.s.waited_ms > 0 { format!(" waited_ms={}", self.s.waited_ms) } else { String::new() },
@@ -1874,6 +1902,10 @@ impl<'w, W: World> Trial<'w, W> {
                 fresh: self.s.build_timing.as_ref().map_or(0, |(b, _)| b.fresh),
                 slowest: self.s.build_timing.as_ref().map_or(String::new(), |(b, _)| b.slowest_field()),
                 build_dir: self.s.build_dir.clone(),
+                unit_build_secs: self.unit_phase_secs("build"),
+                unit_run_secs: self.unit_phase_secs("test"),
+                unit_tests: self.s.unit_timings.as_ref().map_or(0, |t| t.tests),
+                unit_slowest: self.unit_slowest(),
             };
             let ts = w.utc();
             if let Some((_, html)) = self.s.build_timing.as_ref().filter(|(_, h)| !h.is_empty()) {
@@ -2306,6 +2338,7 @@ pub fn run_composed<W: World>(
     fences: Option<&crate::fencecache::Key>,
     mark: &mut dyn FnMut(GateState, &str),
     timing: &mut Option<(crate::buildtiming::Build, String)>,
+    unit: &mut Option<spira_config::unit_tier::UnitTimings>,
 ) -> (i32, String, Vec<(String, u64)>) {
     let first_state = if comp.suites_off() { GateState::Fences } else { GateState::Trial };
     let budget = key::digits(timeout);
@@ -2444,6 +2477,9 @@ pub fn run_composed<W: World>(
                 phases.push((format!("{prefix}{name}"), suites));
             }
             None => phases.push((format!("{prefix}{name}"), wall)),
+        }
+        if name == "test" && prefix.is_empty() {
+            *unit = Some(spira_config::unit_tier::timings(&o));
         }
         if timed {
             *timing = w
