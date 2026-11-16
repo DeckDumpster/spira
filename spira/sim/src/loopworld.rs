@@ -831,3 +831,22 @@ impl Run {
         None
     }
 }
+
+#[cfg(test)]
+mod complete_fixture_home_tests {
+    use super::*;
+
+    #[test]
+    fn the_complete_fixture_is_read_from_spira_home_and_absent_without_one() {
+        let h = testkit::TempDir::new("complete-home");
+        std::fs::create_dir_all(h.path().join("testlib")).unwrap();
+        std::fs::write(h.path().join("testlib/complete.toml"), "marker").unwrap();
+        let home = h.path().to_str().unwrap();
+        {
+            let _env = testkit::env(&[("SPIRA_HOME", Some(home))]);
+            assert_eq!(complete_fixture_text().as_deref(), Some("marker"));
+        }
+        let _env = testkit::env(&[("SPIRA_HOME", None), ("SPIRA_RELEASE", None)]);
+        assert_eq!(complete_fixture_text(), None);
+    }
+}
