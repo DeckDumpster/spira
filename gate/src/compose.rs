@@ -1169,8 +1169,8 @@ mod tests {
     #[test]
     fn fences_mode_composes_unit_tests_for_touched_crates_and_fences_for_the_rest() {
         let w = ws();
-        // A touched crate runs its (and its dependents') unit tests; what unit mode would answer
-        // with suites or with every crate stays fences-only (the round tests it).
+        // A touched crate runs its (and its dependents') unit tests; a script or workspace input
+        // adds no crate of its own, so alone it stays fences-only (the round tests it).
         assert!(matches!(compose(GateMode::Fences, &Forces::default(), &ch(&["gate/src/x.rs"]), Ok(&w)), Composition::Unit { .. }));
         // A unit file is read by its reader crates: their tests run, as in unit mode.
         assert!(matches!(compose(GateMode::Fences, &Forces::default(), &ch(&["systemd/a.service"]), Ok(&w)), Composition::Unit { .. }));
