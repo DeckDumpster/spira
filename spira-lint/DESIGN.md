@@ -1017,6 +1017,17 @@ per key, path `spira/config-delta.toml`.
 **Refuses:** no base, no registry keys here or at the base, an unparseable delta.
 **Positive control:** `fence: config-delta checked <n> registry keys`.
 
+## Rule `config-delta-folded`
+
+**Intent.** Two branches that edit the one folded `spira/config-delta.toml` share a line, and a
+union merge kept both versions of it. A branch declares its change in
+`spira/config-delta.d/<bead>.toml`; the round folds fragments in. A diff from the merge-base
+that changes the folded file is a finding unless it also deletes fragments and the head's file
+equals the base's file unioned with those fragments (the round's fold). One finding, path
+`spira/config-delta.toml`.
+
+**Refuses:** no base.
+
 ## Rule `config-registry-runtime`
 
 **Intent.** The config key registry is read at run time, so adding a key changes no compiled

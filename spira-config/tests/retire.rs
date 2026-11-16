@@ -123,3 +123,13 @@ fn two_branches_each_retiring_a_key_merge_clean_and_the_delta_lists_both() {
     let (_, removed) = spira_config::parse_config_delta(&delta).unwrap();
     assert!(removed.contains(&"spira.old_knob".to_string()) && removed.contains(&"spira.kept".to_string()), "{removed:?}");
 }
+
+#[test]
+fn a_bead_that_is_not_an_id_is_refused_and_writes_nothing() {
+    let t = tree();
+    for bead in ["../x", ""] {
+        assert!(!retire(t.path(), &["spira.old_knob", "--bead", bead]).status.success(), "{bead:?}");
+    }
+    assert!(t.path().join("spira/conf.d/SPIRA_OLD_KNOB").exists());
+    assert!(!t.path().join("spira/config-delta.d").exists());
+}
