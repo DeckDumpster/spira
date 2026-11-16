@@ -153,12 +153,11 @@ pub fn decide(cfg: &RoundDuty, carry: &Carry, snap: &Snapshot, now: u64) -> (Car
         return (c, say);
     }
     c.last_unknown = 0;
-    let pool = certified + snap.submitted;
-    if snap.state == RoundState::None && pool >= 1 {
+    if snap.state == RoundState::None && admissible >= 1 {
         let since = *c.starved_since.get_or_insert(now);
         let waited = now.saturating_sub(since);
         if waited >= cfg.idle_cut_secs && now.saturating_sub(c.last_starved) >= cfg.remind_secs {
-            say.push(format!("ROUND NOT CUTTING: {} submitted and {certified} certified unheld beads waiting [submitted {}; certified {}] with no round open for {waited}s — nothing is cutting a round", snap.submitted, snap.submitted_by_repo, snap.by_repo));
+            say.push(format!("ROUND NOT CUTTING: {admissible} certified beads the batcher would cut waiting [{}] with no round open for {waited}s — nothing is cutting a round", snap.admissible_by_repo));
             c.last_starved = now;
         }
     } else {
@@ -304,25 +303,38 @@ mod tests {
         assert_eq!(decide(&cfg(), &c, &snap(RoundState::None, 1), 1600).1.len(), 1);
     }
 
+    fn not_cutting(c: &Carry, s: &Snapshot, now: u64) -> (Carry, Vec<String>) {
+        let (c, say) = decide(&cfg(), c, s, now);
+        (c, say.into_iter().filter(|m| m.starts_with("ROUND NOT CUTTING")).collect())
+    }
+
     #[test]
-    fn submitted_beads_with_no_round_open_raise_not_cutting_once_the_wait_passes_and_then_per_reminder() {
-        let s = Snapshot { submitted: 6, submitted_by_repo: "spira=6".into(), ..snap(RoundState::None, 0) };
-        let (c, say) = decide(&cfg(), &Carry::default(), &s, 1000);
+    fn cuttable_beads_with_no_round_open_raise_not_cutting_once_the_wait_passes_and_then_per_reminder() {
+        let s = Snapshot { admissible: 6, admissible_by_repo: "spira=6".into(), ..snap(RoundState::None, 6) };
+        let (c, say) = not_cutting(&Carry::default(), &s, 1000);
         assert!(say.is_empty(), "a fresh submission is the batcher's next tick, not an outage: {say:?}");
-        let (c, say) = decide(&cfg(), &c, &s, 1900);
+        let (c, say) = not_cutting(&c, &s, 1900);
         assert_eq!(say.len(), 1, "{say:?}");
-        assert!(say[0].starts_with("ROUND NOT CUTTING: 6 submitted") && say[0].contains("spira=6") && say[0].contains("900s"), "{say:?}");
-        assert!(decide(&cfg(), &c, &s, 2000).1.is_empty());
-        assert_eq!(decide(&cfg(), &c, &s, 2500).1.len(), 1);
+        assert!(say[0].starts_with("ROUND NOT CUTTING: 6 certified") && say[0].contains("spira=6") && say[0].contains("900s"), "{say:?}");
+        assert!(not_cutting(&c, &s, 2000).1.is_empty());
+        assert_eq!(not_cutting(&c, &s, 2500).1.len(), 1);
+    }
+
+    #[test]
+    fn submitted_beads_alone_never_raise_not_cutting() {
+        let s = Snapshot { submitted: 2, submitted_by_repo: "spira=2".into(), ..snap(RoundState::None, 0) };
+        let (c, _) = not_cutting(&Carry::default(), &s, 1000);
+        let (_, say) = not_cutting(&c, &s, 2200);
+        assert!(say.iter().all(|m| !m.starts_with("ROUND NOT CUTTING")), "{say:?}");
     }
 
     #[test]
     fn a_round_opening_or_the_pool_emptying_restarts_the_not_cutting_wait() {
-        let s = Snapshot { submitted: 1, ..snap(RoundState::None, 0) };
+        let s = Snapshot { admissible: 1, ..snap(RoundState::None, 1) };
         let (c, _) = decide(&cfg(), &Carry::default(), &s, 1000);
         let (c, _) = decide(&cfg(), &c, &snap(RoundState::Open, 0), 1500);
         assert_eq!(c.starved_since, None);
-        assert!(decide(&cfg(), &c, &s, 1900).1.is_empty());
+        assert!(not_cutting(&c, &s, 1900).1.is_empty());
     }
 
     #[test]
@@ -415,8 +427,8 @@ mod tests {
         let (c, say) = decide(&cfg(), &c, &snap(RoundState::None, 2), 5100);
         assert!(say[0].starts_with("ROUND DUE"), "min certified is met, so due at once: {say:?}");
         assert!(c.held.is_empty() && c.halt_paged.is_none());
-        let s = Snapshot { submitted: 1, ..snap(RoundState::None, 0) };
+        let s = Snapshot { admissible: 1, ..snap(RoundState::None, 1) };
         let (c, _) = decide(&cfg(), &Carry::default(), &Snapshot { halt: halted(0).halt, ..s.clone() }, 5000);
-        assert!(decide(&cfg(), &c, &s, 5900).1.is_empty(), "the not-cutting wait starts at the resume");
+        assert!(not_cutting(&c, &s, 5900).1.is_empty(), "the not-cutting wait starts at the resume");
     }
 }

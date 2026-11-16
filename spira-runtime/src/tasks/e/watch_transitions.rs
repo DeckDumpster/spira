@@ -14,7 +14,7 @@
 //!
 //! - WORKING→SUBMITTED: WORKING ≥ `SPIRA_TRANSITIONS_WORKING_MIN` and no Submit inside
 //!   `SPIRA_TRANSITIONS_SUBMIT_BOUND` seconds.
-//! - SUBMITTED→IN_DELIVERY: the oldest SUBMITTED or CERTIFIED bead (waiting for its gate or a cut) has itself waited `SPIRA_TRANSITIONS_CUT_BOUND`, fewer rounds are open on the repo than `SPIRA_ROUND_MAX_OPEN`, and no Delivered inside the bound. A bead waiting behind a full set of open rounds is queued, not stalled, and the round that just closed has not been closed that long. A held bead, and one whose tip is already on the landing ref, is not waiting and is left out of the SUBMITTED and CERTIFIED rows.
+//! - SUBMITTED→IN_DELIVERY: the oldest SUBMITTED or CERTIFIED bead waiting for a cut has itself waited `SPIRA_TRANSITIONS_CUT_BOUND` (a SUBMITTED bead whose gate is queued, or running inside `SPIRA_GATE_TIMEOUT`, is not waiting), fewer rounds are open on the repo than `SPIRA_ROUND_MAX_OPEN`, and no Delivered inside the bound. A bead waiting behind a full set of open rounds is queued, not stalled, and the round that just closed has not been closed that long. A held bead, and one whose tip is already on the landing ref, is not waiting and is left out of the SUBMITTED and CERTIFIED rows.
 //! - IN_DELIVERY→LANDED: the oldest IN_DELIVERY work older than `SPIRA_TRANSITIONS_DELIVER_BOUND` and no Delivered inside it;
 //!   a bead seen to leave IN_DELIVERY for good counts as Delivered.
 //! - LANDED→ACTIVATED: the release repo (`SPIRA_TRANSITIONS_RELEASE_REPO`) landed a commit the
@@ -54,6 +54,7 @@ pub const KEYS: &[&str] = &[
     "SPIRA_TRANSITIONS_WORKING_MIN",
     "SPIRA_TRANSITIONS_SUBMIT_BOUND",
     "SPIRA_TRANSITIONS_CUT_BOUND",
+    "SPIRA_GATE_TIMEOUT",
     "SPIRA_TRANSITIONS_DELIVER_BOUND",
     "SPIRA_TRANSITIONS_ACTIVATE_BOUND",
     "SPIRA_TRANSITIONS_ASK_BOUND",
@@ -83,6 +84,7 @@ pub struct Config {
     pub working_min: u64,
     pub submit_bound_s: u64,
     pub cut_bound_s: u64,
+    pub gate_timeout_s: u64,
     pub deliver_bound_s: u64,
     pub activate_bound_s: u64,
     pub ask_bound_s: u64,
@@ -105,6 +107,7 @@ impl Config {
             working_min: cfg_parse("SPIRA_TRANSITIONS_WORKING_MIN")?,
             submit_bound_s: cfg_parse("SPIRA_TRANSITIONS_SUBMIT_BOUND")?,
             cut_bound_s: cfg_parse("SPIRA_TRANSITIONS_CUT_BOUND")?,
+            gate_timeout_s: cfg_parse("SPIRA_GATE_TIMEOUT")?,
             deliver_bound_s: cfg_parse("SPIRA_TRANSITIONS_DELIVER_BOUND")?,
             activate_bound_s: cfg_parse("SPIRA_TRANSITIONS_ACTIVATE_BOUND")?,
             ask_bound_s: cfg_parse("SPIRA_TRANSITIONS_ASK_BOUND")?,
@@ -184,9 +187,28 @@ pub struct Bead {
     /// The tip is already an ancestor of the landing ref: the bead is landed, not waiting.
     #[serde(default)]
     pub landed: bool,
+    /// What the gate worker is doing with a SUBMITTED bead; the host reads it from the gate queue.
+    #[serde(default)]
+    pub gate: Option<Gating>,
+}
+
+/// A SUBMITTED bead's gate, as the gate queue and the gate's admission lease show it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Gating {
+    Queued,
+    Running { since: u64 },
 }
 
 impl Bead {
+    /// The gate worker has this bead: queued, or running for less than `cap` seconds.
+    pub fn gate_live(&self, now: u64, cap: u64) -> bool {
+        match self.gate {
+            Some(Gating::Queued) => true,
+            Some(Gating::Running { since }) => now.saturating_sub(since) < cap,
+            None => false,
+        }
+    }
+
     /// Whether the bead is waiting for its gate or a cut: SUBMITTED or CERTIFIED, not held, not landed.
     fn awaits_cut(&self) -> bool {
         matches!(self.state.as_str(), "SUBMITTED" | "CERTIFIED") && !self.held && !self.landed
@@ -446,10 +468,25 @@ fn round_slots_full(snap: &Snapshot, repo: &str, cfg: &Config) -> bool {
 fn uncovered_wait(snap: &Snapshot, scope: &str, now: u64, cfg: &Config) -> u64 {
     snap.beads
         .iter()
-        .filter(|b| (scope == ALL || b.repo == scope) && b.awaits_cut() && !round_slots_full(snap, &b.repo, cfg))
+        .filter(|b| uncovered(snap, b, scope, now, cfg))
         .map(|b| now.saturating_sub(b.since))
         .max()
         .unwrap_or(0)
+}
+
+fn uncovered(snap: &Snapshot, b: &Bead, scope: &str, now: u64, cfg: &Config) -> bool {
+    (scope == ALL || b.repo == scope) && b.awaits_cut() && !round_slots_full(snap, &b.repo, cfg) && !(b.state == "SUBMITTED" && b.gate_live(now, cfg.gate_timeout_s))
+}
+
+/// The oldest uncovered bead in `scope`, and what holds it back.
+fn oldest_uncovered(snap: &Snapshot, scope: &str, now: u64, cfg: &Config) -> String {
+    let Some(b) = snap.beads.iter().filter(|b| uncovered(snap, b, scope, now, cfg)).min_by_key(|b| b.since) else { return String::new() };
+    let why = match (b.state.as_str(), &b.gate) {
+        ("CERTIFIED", _) => "certified, not cut".to_string(),
+        (_, Some(Gating::Running { since })) => format!("gate running {}, past SPIRA_GATE_TIMEOUT {}", dur(now.saturating_sub(*since)), dur(cfg.gate_timeout_s)),
+        _ => "no gate queued or running".to_string(),
+    };
+    format!("; oldest uncovered: {} {} {} ({why})", b.id, b.state, dur(now.saturating_sub(b.since)))
 }
 
 /// Every edge stalled in every scope of `snap`. The `*` scope stands only for an edge no single
@@ -463,7 +500,7 @@ pub fn stalls(snap: &Snapshot, now: u64, cfg: &Config) -> Vec<Stall> {
             let found = match edge {
                 "WORKING→SUBMITTED" => (t["WORKING"].count as u64 >= cfg.working_min.max(1) && quiet(snap, &scope, "Submit", now, bound)).then(|| evidence(snap, &scope, now, &["WORKING"], "Submit", bound)),
                 CUT_EDGE => {
-                    (quiet(snap, &scope, "Delivered", now, bound) && uncovered_wait(snap, &scope, now, cfg) >= bound).then(|| evidence(snap, &scope, now, &["SUBMITTED", "CERTIFIED"], "Cut", bound))
+                    (quiet(snap, &scope, "Delivered", now, bound) && uncovered_wait(snap, &scope, now, cfg) >= bound).then(|| evidence(snap, &scope, now, &["SUBMITTED", "CERTIFIED"], "Cut", bound) + &oldest_uncovered(snap, &scope, now, cfg))
                 }
                 DELIVERY_EDGE => (t["IN_DELIVERY"].oldest >= bound && quiet(snap, &scope, "Delivered", now, bound)).then(|| evidence(snap, &scope, now, &["IN_DELIVERY"], "Delivered", bound)),
                 "LANDED→ACTIVATED" if scope == cfg.release_repo => snap.landed_after.get(&scope).copied().filter(|l| now.saturating_sub(*l) >= bound).map(|landed| {
@@ -582,6 +619,27 @@ pub fn ancestor_in(root: &str, commit: &str, of: &str) -> Result<bool, String> {
 pub fn mark_landed(snap: &mut Snapshot, on_landing_ref: &dyn Fn(&str, &str) -> Result<bool, String>) {
     for b in snap.beads.iter_mut().filter(|b| matches!(b.state.as_str(), "SUBMITTED" | "CERTIFIED")) {
         b.landed = b.tip.as_deref().is_some_and(|tip| on_landing_ref(&b.repo, tip) == Ok(true));
+    }
+}
+
+/// The gate each SUBMITTED bead is in, from the queued and claimed jobs and the gate's admission
+/// leases (`who` is the job's branch). A claimed job with no lease is still waiting for a slot.
+pub fn gates_of(jobs: &[(landing_pass::gateq::Where, landing_pass::gateq::Job)], holders: &[spira_config::admission::Lease]) -> BTreeMap<String, Gating> {
+    use landing_pass::gateq::Where;
+    jobs.iter()
+        .filter(|(w, _)| matches!(w, Where::Inbox | Where::Claimed))
+        .map(|(w, j)| {
+            let lease = (*w == Where::Claimed).then(|| holders.iter().find(|l| l.who == j.branch)).flatten();
+            (j.bead.clone(), lease.map_or(Gating::Queued, |l| Gating::Running { since: l.since }))
+        })
+        .collect()
+}
+
+/// Sets `gate` on each SUBMITTED bead the gate worker has. A bead it cannot place keeps none:
+/// the page errs toward speaking.
+pub fn mark_gated(snap: &mut Snapshot, gates: &BTreeMap<String, Gating>) {
+    for b in snap.beads.iter_mut().filter(|b| b.state == "SUBMITTED") {
+        b.gate = gates.get(&b.id).cloned();
     }
 }
 
