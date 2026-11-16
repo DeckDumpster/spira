@@ -8,8 +8,8 @@
 # Takes the units_lint binary testenv has already built and does not build.
 #
 # tier: T1
-# covers: install/tests/units_lint.rs testkit/src/lib.rs gate/src/real.rs
 # timeout: 60
+# covers: install/tests/units_lint.rs testkit/src/lib.rs gate/src/real.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 HARNESS="$(cd "$HERE/.." && pwd -P)"
