@@ -522,6 +522,36 @@ fn exchange(a: &Path, b: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Online `dolt_gc` of one live database, skipped when the filesystem lacks room for the second
+/// generation a collection writes. Returns the report line and whether it was collected.
+fn collect(cfg: &Config, dolt: &dyn Dolt, conn: &Conn, db: &str) -> Result<(String, bool), String> {
+    let noms = cfg.data.join(db).join(".dolt/noms");
+    let before = tree_bytes(&noms);
+    let free = dolt.free_bytes(&cfg.data)?;
+    if free < before {
+        return Ok((format!("{db}: not collected — {free} B free, a collection needs {before} B"), false));
+    }
+    match dolt.gc(conn, &cfg.data, db) {
+        Ok(()) => Ok((format!("{db}: collected, live {before} B -> {} B", tree_bytes(&noms)), true)),
+        Err(e) => Ok((format!("{db}: collection failed: {e}"), false)),
+    }
+}
+
+/// Collects every live database in the data directory and nothing else: no sync, no copy
+/// rebuild. Fails when any database was not collected, so a remedy that freed nothing says so.
+pub fn gc(cfg: &Config, dolt: &dyn Dolt) -> Result<Vec<String>, String> {
+    let conn = conn_for(&cfg.data, Mode::Online, dolt)?;
+    let dbs = child_dirs_with(&cfg.data, |p| p.join(".dolt/noms").is_dir())?;
+    let mut out = Vec::new();
+    let mut all = true;
+    for db in dbs.iter().filter(|d| tree_bytes(&cfg.data.join(d).join(".dolt/noms")) > 0) {
+        let (line, done) = collect(cfg, dolt, &conn, db)?;
+        all &= done;
+        out.push(line);
+    }
+    if all { Ok(out) } else { Err(out.join("; ")) }
+}
+
 /// Collects each live database first, when the filesystem has room for the second generation a
 /// collection writes beside the first; automatic GC alone left multi-GB table files standing.
 ///
@@ -534,17 +564,8 @@ pub fn compact(cfg: &Config, dolt: &dyn Dolt) -> Result<Vec<String>, String> {
     let mut out = Vec::new();
     for db in durable_dbs(&l)? {
         let noms = cfg.data.join(&db).join(".dolt/noms");
-        let before = tree_bytes(&noms);
-        if before > 0 {
-            let free = dolt.free_bytes(&cfg.data)?;
-            if free < before {
-                out.push(format!("{db}: not collected — {free} B free, a collection needs {before} B"));
-            } else {
-                match dolt.gc(&conn, &cfg.data, &db) {
-                    Ok(()) => out.push(format!("{db}: collected, live {before} B -> {} B", tree_bytes(&noms))),
-                    Err(e) => out.push(format!("{db}: collection failed: {e}")),
-                }
-            }
+        if tree_bytes(&noms) > 0 {
+            out.push(collect(cfg, dolt, &conn, &db)?.0);
         }
         let (copy, live) = (tree_bytes(&l.db(&db)), tree_bytes(&noms));
         if live == 0 || copy.saturating_mul(100) <= live.saturating_mul(cfg.compact_pct) {
