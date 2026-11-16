@@ -70,3 +70,34 @@ fn an_adopted_build_directory_rebuilds_the_dependents_of_a_changed_crate() {
     let t = testkit::TempDir::new("gate-warm-dep");
     assert_eq!(seeded(&t, "base/src/lib.rs", "pub fn f() -> u8 { 2 }\n"), ["base", "leaf"]);
 }
+
+#[test]
+fn an_adopted_build_directory_never_serves_a_binary_with_the_donors_path_baked_in() {
+    let t = testkit::TempDir::new("gate-warm-path");
+    let (root, a, b) = (t.path().join("root"), t.path().join("tree-a"), t.path().join("tree-b"));
+    std::fs::create_dir_all(a.join("pin/src")).unwrap();
+    std::fs::write(a.join("Cargo.toml"), "[workspace]\nresolver = \"2\"\nmembers = [\"pin\"]\n").unwrap();
+    std::fs::write(a.join("pin/Cargo.toml"), "[package]\nname = \"pin\"\nversion = \"0.1.0\"\nedition = \"2021\"\n").unwrap();
+    std::fs::write(a.join("pin/src/main.rs"), "fn main() { print!(\"{}\", env!(\"CARGO_MANIFEST_DIR\")); }\n").unwrap();
+    std::fs::write(a.join(".gitignore"), "target/\n").unwrap();
+    run(&a, "git", &["init", "-q"]);
+    run(&a, "git", &["add", "."]);
+    run(&a, "git", &["commit", "-qm", "base"]);
+    let link = |tree: &Path, name: &str| {
+        let dest = root.join(name).join("debug");
+        std::fs::create_dir_all(&dest).unwrap();
+        std::fs::create_dir_all(tree.join("target")).unwrap();
+        std::os::unix::fs::symlink(&dest, tree.join("target/debug")).unwrap();
+        dest
+    };
+    link(&a, "tree-a");
+    run(&a, "cargo", &["build", "--color", "never"]);
+    assert_eq!(run(&a, a.join("target/debug/pin").to_str().unwrap(), &[]), a.join("pin").to_str().unwrap());
+    assert!(gate::warm::donate_tree(&a, 1 << 20).is_some());
+
+    run(t.path(), "git", &["clone", "-q", a.to_str().unwrap(), b.to_str().unwrap()]);
+    let bdest = link(&b, "tree-b");
+    gate::warm::warm_start(&root, &bdest, &b).unwrap();
+    run(&b, "cargo", &["build", "--color", "never"]);
+    assert_eq!(run(&b, b.join("target/debug/pin").to_str().unwrap(), &[]), b.join("pin").to_str().unwrap());
+}
