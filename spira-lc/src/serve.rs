@@ -1178,6 +1178,11 @@ mod tests {
     #[test]
     fn the_drain_bound_leaves_the_unit_its_stop_timeout() {
         assert_eq!(super::DRAIN_BOUND, std::time::Duration::from_secs(60));
+        for unit in ["lc-serve.service", "spira-lc.service"] {
+            let text = std::fs::read_to_string(spira_config::resolve::checkout_root_for_process().unwrap().join("systemd").join(unit)).unwrap();
+            let stop: u64 = text.lines().find_map(|l| l.strip_prefix("TimeoutStopSec=")).unwrap().parse().unwrap();
+            assert!(std::time::Duration::from_secs(stop) >= super::DRAIN_BOUND + std::time::Duration::from_secs(15), "{unit}: TimeoutStopSec={stop}");
+        }
     }
 
     /// The one handler thread of a test is the only user of the world while the scope runs.
