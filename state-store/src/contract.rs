@@ -1823,4 +1823,15 @@ mod phase_tests {
         assert!(matches!(c.lock("r", 10_000, &Request::new("la", "t", "lock")), Err(Error::Backend(_))));
         assert!(!c.live(&format!("{LOCKS_PREFIX}r")), "a failed commit left a deadline for a lock that was never written");
     }
+
+    #[test]
+    fn a_failed_renew_restores_the_lock_deadline_it_replaced() {
+        let clock = VirtualClock::new(1_000_000);
+        let c = Contract::open(Parked::new(), Ports::virtual_clock(&clock), Config { min_lock_ttl_ms: 1_000 }).unwrap();
+        c.lock("r", 2_000, &Request::new("la", "t", "lock")).unwrap();
+        *c.backend().fail.lock().unwrap() = true;
+        assert!(c.lock("r", 100_000, &Request::new("lb", "t", "lock")).is_err());
+        clock.advance(3_000);
+        assert!(!c.live(&format!("{LOCKS_PREFIX}r")), "a failed renew left the lock live for its new TTL");
+    }
 }
