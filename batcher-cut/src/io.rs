@@ -4227,19 +4227,19 @@ fn bead_id(out: &str) -> Result<String, String> {
         .ok_or_else(|| format!("bead.sh file: no id in output: {out}"))
 }
 
-/// File the follow-up bead for a deleted flip and return its id.
+/// File the follow-up bead for a flipped test that the round disabled and return its id.
 pub fn file_flip_bead(
     env: &Env,
     repo: &Repo,
-    suite: &str,
+    test: &str,
     round_branch: &str,
 ) -> Result<String, String> {
     let title = format!(
-        "{}: {suite} flipped in a batcher round and was deleted — restore it fixed",
+        "{}: {test} flipped in a batcher round and was disabled — fix or delete it",
         repo.name
     );
     let body = format!(
-        "{suite} was red in the round's corpus and green on every re-run alone (twice on the round tree, on the base, and on each member touching it), so the batcher deleted it from the round ({round_branch}) rather than send a flip to CI (law-a-test-that-flips-is-deleted).\n\nDeliverable: find the nondeterminism, fix it and re-add the suite.\n"
+        "{test} was red on the round tree ({round_branch}) and green on a rerun of that unchanged tree, on the base, and on every member alone, so the batcher disabled it in the test registry for the registry's hold (spira.test_registry_hold_secs) and certified the round without it (law-a-test-that-flips-is-deleted). It runs again when the row expires.\n\nDeliverable: find the nondeterminism, then fix or delete the test; a deterministic test restores coverage parity.\n"
     );
     let tmp_dir = env.run.join("tmp");
     fs::create_dir_all(&tmp_dir).map_err(|e| format!("{}: {e}", tmp_dir.display()))?;
@@ -4266,36 +4266,77 @@ pub fn file_flip_bead(
     bead_id(&out?)
 }
 
-/// Commit the deletion of `flips` (suite, follow-up bead) into the round worktree, naming
-/// the follow-up beads in the message.
-pub fn commit_flip_deletion(
+/// A registry row a flip's disabling wrote.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DisabledRow {
+    pub test: String,
+    pub state: String,
+    pub bead: String,
+    pub until: i64,
+}
+
+/// `test-registry disable` of `test` for the registry's own hold, as the batcher.
+pub fn registry_disable(bin: &str, env: &Env, test: &str, bead: &str, reason: &str) -> Result<DisabledRow, String> {
+    // batch-job: a registry write, bounded by the registry's own busy timeout
+    // FORK-EDGE: machine leg test-registry (disable a flipped test)
+    let out = Command::new(bin)
+        .args(["disable", "--json", "--test", test, "--bead", bead, "--reason", reason, "--actor", "batcher"])
+        .env("SPIRA_HOME", &env.home)
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| format!("{bin} disable: {e}"))?;
+    let said = String::from_utf8_lossy(&out.stdout).into_owned();
+    if !out.status.success() {
+        return Err(format!(
+            "{bin} disable --test {test} exited {}: {}{}",
+            out.status.code().unwrap_or(-1),
+            said.trim(),
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    let v: serde_json::Value = serde_json::from_str(&said).map_err(|e| format!("{bin} disable: unparsed output: {e}"))?;
+    let row = &v["row"];
+    let text = |k: &str| row[k].as_str().map(str::to_string);
+    Ok(DisabledRow {
+        test: text("test").ok_or_else(|| format!("{bin} disable: no test in {said}"))?,
+        state: text("state").ok_or_else(|| format!("{bin} disable: no state in {said}"))?,
+        bead: text("bead").ok_or_else(|| format!("{bin} disable: no bead in {said}"))?,
+        until: row["until"].as_i64().ok_or_else(|| format!("{bin} disable: no until in {said}"))?,
+    })
+}
+
+/// Disables each flipped test: files its follow-on bead, writes its registry row, and adds the
+/// row to the deny list the round's next pass reads from `results`. Stops at the first failure.
+pub fn disable_flips_with(
+    file_bead: &mut dyn FnMut(&str) -> Result<String, String>,
+    registry: &str,
     env: &Env,
-    wt: &Path,
-    flips: &[(String, String)],
-) -> Result<(), String> {
+    results: &Path,
+    round_branch: &str,
+    tests: &[String],
+) -> Result<Vec<DisabledRow>, String> {
+    let mut rows = vec![];
+    for id in tests {
+        let bead = file_bead(id).map_err(|e| format!("cannot file the follow-up for flipped {id}: {e}"))?;
+        let reason = format!("{id} flipped in {round_branch} (red on the round tree, green rerun unchanged, green on the base and on every member alone)");
+        let row = registry_disable(registry, env, id, &bead, &reason)
+            .map_err(|e| format!("cannot disable flipped {id} (follow-up {bead}): {e}"))?;
+        let list = crate::vm::DenySnapshot::from_pass(results)
+            .ok_or_else(|| format!("{} holds no deny list to add {id} to", results.display()))?;
+        let path = results.join(crate::vm::DenySnapshot::FILE);
+        let next = list.with_row(&row.state, &row.test, &row.bead, row.until);
+        fs::write(&path, &next.text).map_err(|e| format!("{}: {e}", path.display()))?;
+        rows.push(row);
+    }
+    Ok(rows)
+}
+
+/// The local calendar date of an epoch second.
+pub fn date_of(epoch: i64) -> String {
     // EXTERNAL: date — the local calendar date; std has no local time zone
-    let date = run(Command::new("date").arg("+%F"), "date")?;
-    crate::flip::apply(wt, flips, date.trim())?;
-    run(
-        Command::new("git").arg("-C").arg(wt).args(["add", "-A"]),
-        "git add",
-    )?;
-    let names: Vec<String> = flips.iter().map(|(s, b)| format!("{s} ({b})")).collect();
-    let msg = format!("batcher: delete flipped suite(s) {}", names.join(", "));
-    run(
-        Command::new("git")
-            .arg("-C")
-            .arg(wt)
-            .args([
-                "-c",
-                &format!("user.name={}", env.git_name),
-                "-c",
-                &format!("user.email={}", env.git_email),
-            ])
-            .args(["commit", "-q", "-m", &msg]),
-        "git commit",
-    )?;
-    Ok(())
+    run(Command::new("date").arg("-d").arg(format!("@{epoch}")).arg("+%F"), "date")
+        .map(|d| d.trim().to_string())
+        .unwrap_or_else(|_| epoch.to_string())
 }
 
 /// The checks a suite deletion can break: the plan-matrix and its orphan fence, where the

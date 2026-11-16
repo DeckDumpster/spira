@@ -210,9 +210,9 @@ pub trait RoundOps {
     }
     /// The members whose diff touches `suite`.
     fn touching(&self, suite: &str, members: &[Id]) -> Vec<Id>;
-    /// Commit the deletion of every proven flip into the round tree and re-run the checks
-    /// the deletion can break; an error blocks the round.
-    fn delete_flips(&mut self, suites: &[String]) -> Result<(), String>;
+    /// Disables every proven flip (registry ids) for the registry's hold, naming a follow-on
+    /// bead for each, and puts the rows on the round's deny list; an error blocks the round.
+    fn disable_flips(&mut self, tests: &[String]) -> Result<(), String>;
     fn record(&mut self, iteration: u32, decision: &Decision);
     /// `member` owns red `suite`; `rerun` is that suite rerun on the full round tree (`None`
     /// when the rerun faulted): green there means it flipped.
@@ -498,6 +498,9 @@ fn present_on<O: RoundOps>(
 
 const FLIP_JOB_BASE: u64 = 1 << 40;
 
+/// A red naming more tests than this is not a flip: a flip is one or two flaky tests, not a broken package.
+const MAX_FLIP_TESTS: usize = 5;
+
 /// A flip is never shipped (law-a-test-that-flips-is-deleted): each flaky suite must run green
 /// alone twice on the round tree, alone on the base, and alone on every member that touches
 /// it; then it is deleted from the round. A plain run that is red while its twin is green is
@@ -625,10 +628,11 @@ fn remove_flips<R: RoundRunner, O: RoundOps>(
         });
     }
     println!(
-        "batcher: flip proven, deleting from the round: {}",
+        "batcher: flip proven, disabling for the round: {}",
         flaky.join(",")
     );
-    ops.delete_flips(flaky).map_err(NotAFlip::fault)
+    let ids: Vec<String> = flaky.iter().map(|s| format!("suite:{s}")).collect();
+    ops.disable_flips(&ids).map_err(NotAFlip::fault)
 }
 
 /// A flaky suite that did not prove green. `member_owns`: the base ran green and no job faulted,
@@ -723,6 +727,14 @@ fn probe_filter_owners<R: RoundRunner>(
             Alone::Owners(found) => return (with_probe_output(found, &said), "unattributed", String::new()),
             Alone::Base(said) => return (actions, "base", said),
             Alone::Cleared(said) => return (actions, "unattributed", said),
+            Alone::Flipped(said) => {
+                let kind = if runner.filter_green_in(&f.name, scope, members) == Some(true) {
+                    "flipped"
+                } else {
+                    "unattributed"
+                };
+                return (actions, kind, said);
+            }
         }
     }
     (with_probe_output(actions, &said), "unattributed", String::new())
@@ -812,9 +824,20 @@ fn eject_filter_owners<R: RoundRunner, O: RoundOps>(
         if actions.is_empty() {
             let narrow = probe_filter_owners(runner, f, &tests, &scope, members);
             (actions, kind, cleared) = narrow;
-            if actions.is_empty() && kind == "unattributed" && scope != packages {
+            if actions.is_empty() && matches!(kind, "unattributed" | "flipped") && scope != packages {
                 (actions, kind, cleared) = probe_filter_owners(runner, f, &tests, &packages, members);
             }
+        }
+        if actions.is_empty() && kind == "flipped" {
+            let ids = flip_ids(&f.failed, graph.as_ref());
+            if let Some(ids) = ids.filter(|ids| ids.len() <= MAX_FLIP_TESTS) {
+                println!(
+                    "batcher: {} red{tests} is red on the round tree, green on rerun, on the base and on every member alone — a flip",
+                    f.name
+                );
+                return Ok(FilterEject::Flipped(ids));
+            }
+            kind = "unattributed";
         }
         if actions.is_empty() {
             let mut page = vec![f.name.clone()];
@@ -880,6 +903,32 @@ fn eject_filter_owners<R: RoundRunner, O: RoundOps>(
     } else {
         FilterEject::Survivors(rebuilt)
     })
+}
+
+/// The registry id of each failing test line, `None` when one cannot be named: a `dir:` word
+/// no package owns, or a line that is not `<STATUS> <binary> <test>`.
+fn flip_ids(failed: &[String], graph: Option<&PackageGraph>) -> Option<Vec<String>> {
+    let mut ids: Vec<String> = vec![];
+    for line in failed {
+        let mut w = line.split_whitespace();
+        let (Some(_), Some(binary), Some(test), None) = (w.next(), w.next(), w.next(), w.next())
+        else {
+            return None;
+        };
+        let id = if binary.starts_with("dir:") {
+            let package = graph?.resolve(&[binary.to_string()]).remove(0);
+            if package.starts_with("dir:") {
+                return None;
+            }
+            format!("integration:{package} {test}")
+        } else {
+            format!("unit:{binary} {test}")
+        };
+        if !ids.contains(&id) {
+            ids.push(id);
+        }
+    }
+    (!ids.is_empty()).then_some(ids)
 }
 
 /// How many failing tests an eject note lists before it counts the rest.
@@ -952,6 +1001,8 @@ enum FilterEject {
     /// Nothing is left to land; who left and who stayed.
     Emptied(String),
     Survivors(Vec<Member>),
+    /// The registry ids of tests proven to flip: they are disabled and the same members certify again.
+    Flipped(Vec<String>),
 }
 
 /// The smallest `k` for which the first `k` of `members` fail to build, given that all of them do.
@@ -1117,6 +1168,8 @@ enum Alone {
     Base(String),
     /// No member's tree alone is red, or a run faulted before one could be named.
     Cleared(String),
+    /// The base and every member alone are green: red only together, or a flip.
+    Flipped(String),
 }
 
 fn verdict_word(v: Option<bool>) -> &'static str {
@@ -1168,7 +1221,11 @@ fn red_alone(
         })
         .collect();
     if owners.is_empty() {
-        Alone::Cleared(said)
+        if verdicts.iter().all(|(_, v)| *v == Some(true)) {
+            Alone::Flipped(said)
+        } else {
+            Alone::Cleared(said)
+        }
     } else {
         Alone::Owners(owners)
     }
@@ -1307,7 +1364,14 @@ fn attribute_members<R: RoundRunner, O: RoundOps>(
             let red = format!("{} red{}", f.name, noted_tests(&f.failed));
             return eject_sole_member(ops, &members, &red, &f.name);
         }
-        return Ok(match eject_filter_owners(runner, ops, &f, &members)? {
+        let ejected = eject_filter_owners(runner, ops, &f, &members)?;
+        if let FilterEject::Flipped(ids) = &ejected {
+            if let Err(e) = ops.disable_flips(ids) {
+                return Ok(RoundEnd::Blocked(format!("cannot disable the flip {}: {e}", ids.join(", "))));
+            }
+        } else {
+        return Ok(match ejected {
+            FilterEject::Flipped(_) => unreachable!("handled above"),
             FilterEject::Survivors(members) => RoundEnd::Land {
                 members,
                 attribution_secs: None,
@@ -1319,6 +1383,7 @@ fn attribute_members<R: RoundRunner, O: RoundOps>(
                 f.name
             )),
         });
+        }
     }
     let prior_reds: Vec<String> = runner
         .prior_red_suites()
@@ -1462,6 +1527,15 @@ fn attribute_members<R: RoundRunner, O: RoundOps>(
             );
             let next = match eject_filter_owners(runner, ops, f, &members)? {
                 FilterEject::Survivors(next) => next,
+                FilterEject::Flipped(ids) => {
+                    if let Err(e) = ops.disable_flips(&ids) {
+                        return Ok(RoundEnd::Blocked(format!(
+                            "cannot disable the flip {}: {e}",
+                            ids.join(", ")
+                        )));
+                    }
+                    members.clone()
+                }
                 FilterEject::Emptied(left) => {
                     return Ok(RoundEnd::Emptied(format!("{} red {left}", f.name)))
                 }
@@ -1634,7 +1708,7 @@ fn attribute_members<R: RoundRunner, O: RoundOps>(
                             base_red.push(suite.clone());
                             said.push(format!("{suite}: {w}"));
                         }
-                        Alone::Cleared(w) => said.push(format!("{suite}: {w}")),
+                        Alone::Cleared(w) | Alone::Flipped(w) => said.push(format!("{suite}: {w}")),
                     }
                 }
             }
@@ -1864,6 +1938,10 @@ pub(crate) mod tests {
         pub runner_started: bool,
         /// A probe scoped to named tests finds nothing red: the red needs its whole package.
         pub narrow_clears: bool,
+        /// The failing scope rerun on every member together comes back green.
+        pub rerun_green: bool,
+        /// A filter probe of exactly this member alone has no verdict.
+        pub unknown_alone: Option<String>,
         /// A runner that cannot build a tree with members taken out: every such job fails to launch.
         pub refuses_removals: bool,
         /// Suite → the members whose diff adds it: a run naming it on a tree holding none of them dies as round-vm does.
@@ -1921,6 +1999,8 @@ pub(crate) mod tests {
                 needs_runner: false,
                 runner_started: false,
                 narrow_clears: false,
+                rerun_green: false,
+                unknown_alone: None,
                 refuses_removals: false,
                 added_by: BTreeMap::new(),
                 abandoned_after_starts: None,
@@ -2075,6 +2155,16 @@ pub(crate) mod tests {
             members: &[Member],
         ) -> Option<bool> {
             self.scoped.push(packages.to_vec());
+            if self.rerun_green && members.len() == self.members.len() {
+                self.probes
+                    .push(members.iter().map(|m| m.id.clone()).collect());
+                return Some(true);
+            }
+            if let [only] = members {
+                if self.unknown_alone.as_deref() == Some(only.id.as_str()) {
+                    return None;
+                }
+            }
             if self.narrow_clears && packages.iter().any(|p| p.contains('=')) {
                 self.probes.push(vec![]);
                 return Some(true);
@@ -2175,7 +2265,7 @@ pub(crate) mod tests {
         pub fix_calls: u32,
         pub fixed: Option<std::rc::Rc<std::cell::Cell<bool>>>,
         pub recorded: Vec<(u32, Decision)>,
-        pub deleted: Vec<Vec<String>>,
+        pub disabled: Vec<Vec<String>>,
         pub escaped: Vec<(String, String, Option<JobResult>)>,
         pub judged: Vec<(Vec<String>, Vec<String>)>,
         /// Base shas the base will move to, one per `base_moved` call; empty means it never moves.
@@ -2192,6 +2282,8 @@ pub(crate) mod tests {
         pub rebuilt_empty: bool,
         /// Every eject is refused with this line.
         pub refuse_eject: Option<String>,
+        /// Every disable is refused with this line.
+        pub refuse_disable: Option<String>,
         /// (time it settles, failure): what `mender_returns` answers once the fake clock reaches it.
         pub returns: Vec<(u64, crate::mender::Failure)>,
         pub clock: Option<std::rc::Rc<std::cell::Cell<u64>>>,
@@ -2282,8 +2374,11 @@ pub(crate) mod tests {
             let t = self.touch.get(suite).cloned().unwrap_or_default();
             members.iter().filter(|m| t.contains(m)).cloned().collect()
         }
-        fn delete_flips(&mut self, suites: &[String]) -> Result<(), String> {
-            self.deleted.push(suites.to_vec());
+        fn disable_flips(&mut self, tests: &[String]) -> Result<(), String> {
+            if let Some(line) = &self.refuse_disable {
+                return Err(line.clone());
+            }
+            self.disabled.push(tests.to_vec());
             Ok(())
         }
         fn record(&mut self, iteration: u32, decision: &Decision) {
@@ -3077,7 +3172,7 @@ pub(crate) mod tests {
         )
         .unwrap();
         assert!(matches!(end, RoundEnd::Land { ref members, .. } if members.len() == 3));
-        assert_eq!(ops.deleted, vec![vec!["test-04.sh".to_string()]]);
+        assert_eq!(ops.disabled, vec![vec!["suite:test-04.sh".to_string()]]);
         let proofs: Vec<_> = f
             .jobs
             .iter()
@@ -3120,7 +3215,7 @@ pub(crate) mod tests {
             matches!(end, RoundEnd::Land { ref members, .. } if members.len() == 3),
             "{end:?}"
         );
-        assert_eq!(ops.deleted, vec![vec!["test-04.sh".to_string()]]);
+        assert_eq!(ops.disabled, vec![vec!["suite:test-04.sh".to_string()]]);
         assert!(ops.incidents.is_empty(), "{:?}", ops.incidents);
     }
 
@@ -3174,7 +3269,7 @@ pub(crate) mod tests {
             ops.ejected,
             vec![("m1".to_string(), vec!["test-04.sh".to_string()])]
         );
-        assert!(ops.deleted.is_empty());
+        assert!(ops.disabled.is_empty());
         assert!(ops.incidents.is_empty(), "{:?}", ops.incidents);
     }
 
@@ -3308,7 +3403,7 @@ pub(crate) mod tests {
         )
         .unwrap();
         assert!(matches!(end, RoundEnd::Blocked(_)), "{end:?}");
-        assert!(ops.deleted.is_empty());
+        assert!(ops.disabled.is_empty());
         assert_eq!(
             ops.incidents,
             vec![("unattributed".to_string(), vec!["test-04.sh".to_string()])]
@@ -5032,6 +5127,167 @@ pub(crate) mod tests {
         )
         .unwrap();
         assert!(matches!(end, RoundEnd::Blocked(_)), "{end:?}");
+    }
+
+    const FLIP_UNIT: &str = "FAIL loom factory::tests::a";
+
+    fn flip_red(failed: &[&str]) -> FilterRed {
+        FilterRed {
+            name: "unit-tests".into(),
+            named: vec![],
+            failed: failed.iter().map(|l| l.to_string()).collect(),
+        }
+    }
+
+    fn red_once_on_the_whole_tree(red: FilterRed) -> FilterFn {
+        let fired = std::cell::Cell::new(false);
+        Box::new(move |tree| (tree.len() == 3 && !fired.replace(true)).then(|| red.clone()))
+    }
+
+    fn flip_round(f: &mut Fake, ops: &mut Ops) -> RoundEnd {
+        attribute_round(
+            f,
+            ops,
+            &corpus(3),
+            three(),
+            Budget {
+                slots: 6,
+                maxpar: 2,
+            },
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn a_unit_red_green_on_the_base_on_every_member_alone_and_on_a_full_tree_rerun_is_disabled_and_the_round_lands_every_member(
+    ) {
+        let mut f = Fake::new(|_, _| false);
+        f.filter = Some(red_once_on_the_whole_tree(flip_red(&[FLIP_UNIT])));
+        f.bisects = true;
+        f.rerun_green = true;
+        let mut ops = Ops::default();
+        let end = flip_round(&mut f, &mut ops);
+        assert_eq!(
+            ops.disabled,
+            vec![vec!["unit:loom factory::tests::a".to_string()]]
+        );
+        assert!(ops.ejected.is_empty(), "{:?}", ops.ejected);
+        assert_eq!(
+            f.main_kind.len(),
+            2,
+            "the round certifies again: {:?}",
+            f.main_kind
+        );
+        assert!(
+            f.scoped.iter().any(|s| s == &["loom=factory::tests::a"]),
+            "{:?}",
+            f.scoped
+        );
+        assert_eq!(land_ids(end), vec!["m1", "m2", "m3"]);
+    }
+
+    #[test]
+    fn a_unit_red_that_reproduces_on_the_full_tree_rerun_is_not_a_flip_and_blocks() {
+        let mut f = Fake::new(|_, _| false);
+        f.filter = Some(unit_red_together(&["m1", "m2", "m3"]));
+        f.bisects = true;
+        let mut ops = Ops::default();
+        let end = flip_round(&mut f, &mut ops);
+        assert!(ops.disabled.is_empty());
+        assert!(matches!(end, RoundEnd::Blocked(_)), "{end:?}");
+    }
+
+    #[test]
+    fn a_unit_red_with_a_member_that_has_no_verdict_alone_is_not_a_flip_and_blocks() {
+        let mut f = Fake::new(|_, _| false);
+        f.filter = Some(red_once_on_the_whole_tree(flip_red(&[FLIP_UNIT])));
+        f.bisects = true;
+        f.rerun_green = true;
+        f.unknown_alone = Some("m2".into());
+        let mut ops = Ops::default();
+        let end = flip_round(&mut f, &mut ops);
+        assert!(ops.disabled.is_empty());
+        match end {
+            RoundEnd::Blocked(why) => {
+                assert!(why.contains("names no member that can be ejected"), "{why}")
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_red_naming_more_than_the_flip_limit_of_tests_is_not_a_flip() {
+        let lines: Vec<String> = (0..=MAX_FLIP_TESTS)
+            .map(|i| format!("FAIL loom t::t{i}"))
+            .collect();
+        let lines: Vec<&str> = lines.iter().map(String::as_str).collect();
+        let mut f = Fake::new(|_, _| false);
+        f.filter = Some(red_once_on_the_whole_tree(flip_red(&lines)));
+        f.bisects = true;
+        f.rerun_green = true;
+        let mut ops = Ops::default();
+        let end = flip_round(&mut f, &mut ops);
+        assert!(ops.disabled.is_empty());
+        assert!(matches!(end, RoundEnd::Blocked(_)), "{end:?}");
+    }
+
+    #[test]
+    fn an_integration_flip_is_named_by_the_package_its_directory_resolves_to() {
+        let mut f = Fake::new(|_, _| false);
+        f.filter = Some(red_once_on_the_whole_tree(FilterRed {
+            name: "integration-tests".into(),
+            named: vec![],
+            failed: vec!["FAIL dir:testenv lint_x".into()],
+        }));
+        f.bisects = true;
+        f.rerun_green = true;
+        let graph = PackageGraph {
+            dirs: [("testenv".to_string(), "testenv".to_string())].into(),
+            deps: Default::default(),
+        };
+        let mut ops = Ops {
+            graph: Some(graph),
+            ..Ops::default()
+        };
+        let end = flip_round(&mut f, &mut ops);
+        assert_eq!(
+            ops.disabled,
+            vec![vec!["integration:testenv lint_x".to_string()]]
+        );
+        assert_eq!(land_ids(end), vec!["m1", "m2", "m3"]);
+    }
+
+    #[test]
+    fn a_flip_in_a_directory_no_package_owns_is_not_a_flip() {
+        let mut f = Fake::new(|_, _| false);
+        f.filter = Some(red_once_on_the_whole_tree(flip_red(&[
+            "FAIL dir:nowhere t",
+        ])));
+        f.bisects = true;
+        f.rerun_green = true;
+        let mut ops = Ops::default();
+        let end = flip_round(&mut f, &mut ops);
+        assert!(ops.disabled.is_empty());
+        assert!(matches!(end, RoundEnd::Blocked(_)), "{end:?}");
+    }
+
+    #[test]
+    fn a_failure_to_disable_a_flip_blocks_the_round_naming_it() {
+        let mut f = Fake::new(|_, _| false);
+        f.filter = Some(red_once_on_the_whole_tree(flip_red(&[FLIP_UNIT])));
+        f.bisects = true;
+        f.rerun_green = true;
+        let mut ops = Ops {
+            refuse_disable: Some("registry locked".into()),
+            ..Ops::default()
+        };
+        match flip_round(&mut f, &mut ops) {
+            RoundEnd::Blocked(why) => assert!(
+                why.contains("registry locked") && why.contains("unit:loom factory::tests::a"),
+                "{why}"
+            ),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

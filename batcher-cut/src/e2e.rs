@@ -164,7 +164,7 @@ impl RoundOps for ProofOps {
     fn touching(&self, _suite: &str, _members: &[String]) -> Vec<String> {
         vec![]
     }
-    fn delete_flips(&mut self, suites: &[String]) -> Result<(), String> {
+    fn disable_flips(&mut self, suites: &[String]) -> Result<(), String> {
         panic!("no flip expected: {suites:?}");
     }
     fn record(&mut self, iteration: u32, d: &Decision) {
