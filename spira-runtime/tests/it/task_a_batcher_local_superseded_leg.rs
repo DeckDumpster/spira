@@ -106,7 +106,8 @@ fn a_stacked_green_round_on_its_own_head_is_held_certified_and_its_leg_stopped()
     let (next, acts) = decide(&carry, &snap);
     assert_eq!(next.repos["spira"].above[0].state, State::Certified, "{next:?}");
     assert!(!effects(&acts).contains(&LAND), "{acts:?}");
-    assert!(effects(&acts).contains(&runtime::units::UNIT_STOP), "{acts:?}");
+    let stop = acts.iter().find(|a| a.effect == runtime::units::UNIT_STOP).expect("the leg is stopped");
+    assert_eq!(serde_json::from_str::<UnitHandle>(&stop.input).unwrap(), UnitHandle::of(NAME, STEP).unwrap());
 }
 
 #[test]
