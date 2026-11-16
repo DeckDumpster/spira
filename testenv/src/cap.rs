@@ -390,7 +390,7 @@ fn argv_of(pid: u32) -> Option<Vec<String>> {
 
 pub fn live() -> Vec<Proc> {
     let hz = unsafe { libc::sysconf(libc::_SC_CLK_TCK) }.max(1) as u64;
-    let up = std::fs::read_to_string(&format!("{}/uptime", system_paths::PROC))
+    let up = std::fs::read_to_string(format!("{}/uptime", system_paths::PROC))
         .ok()
         .and_then(|s| s.split_whitespace().next().and_then(|v| v.parse::<f64>().ok()))
         .unwrap_or(0.0);

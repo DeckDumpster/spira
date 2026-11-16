@@ -259,7 +259,7 @@ fn the_template_report_round_trips() {
     assert_eq!(
         TemplateReport::parse(&format!("noise\n{out}")),
         Some(TemplateReport {
-            path: format!("{}/template-ab", system_paths::guest::TMP_SPIRA_TESTDB).into(),
+            path: format!("{}/template-ab", system_paths::guest::TMP_SPIRA_TESTDB),
             key: "ab".into(),
             origin: Origin::Built
         })
