@@ -780,24 +780,6 @@ impl drive::RoundOps for LiveOps<'_> {
         read
     }
 
-    fn preempted(&mut self, owner: &batcher::core::Id, unreached: &[String]) {
-        let history = std::fs::read_to_string(tsd::family_path(&self.env.run, "suite-timing"))
-            .unwrap_or_default();
-        let saved = order::expected_secs(unreached, &history);
-        println!("batcher {}: round {} pass preempted; {owner} ejected; {saved} suite-seconds across {} unreached suites not run", self.repo.name, self.round, unreached.len());
-        io::tsd_append(
-            self.env,
-            "round-preempt",
-            &[
-                ("repo", self.repo.name.clone()),
-                ("round", self.round.clone()),
-                ("owner", owner.clone()),
-                ("unreached_suites", unreached.len().to_string()),
-                ("saved_suite_secs", saved.to_string()),
-            ],
-        );
-    }
-
     fn escape(&mut self, member: &Member, suite: &str, rerun: Option<JobResult>) {
         let paths = self
             .changed
@@ -2238,11 +2220,6 @@ fn attribute_run(o: &Opts) -> Result<(), String> {
             }
         })
         .collect();
-    let head_now = || {
-        let batch = o.batch.as_deref()?;
-        io::open_rounds(&env_, &repo).ok()?.into_iter().find(|r| r.id == batch).map(|r| r.head)
-    };
-    let started_at = head_now().unwrap_or_default();
     let round = now().to_string();
     let round_branch = format!("spira/batcher-attr/{}-{round}", repo.name);
     io::set_branch(&repo, &round_branch, &io::head_of(&wt)?);
@@ -2312,7 +2289,6 @@ fn attribute_run(o: &Opts) -> Result<(), String> {
         io::keep_attribution_results(&env_.run, b, &runner.results, o.after_pass.is_some(), io::rounds_prune(&env_, &repo, b).as_ref());
     }
     let mended = ops.prior != batcher::mender::Prior::default();
-    let replaced = if end.is_err() { batcher_cut::attribute::replaced_by_preempt(&started_at, &head_now().unwrap_or_default()) } else { None };
     let outcome = match end {
         Ok(drive::RoundEnd::Land {
             members,
@@ -2328,7 +2304,6 @@ fn attribute_run(o: &Opts) -> Result<(), String> {
         Ok(drive::RoundEnd::Emptied(why)) => Attribution::Emptied(why),
         Ok(drive::RoundEnd::Faulted(why) | drive::RoundEnd::Stalled(why)) => Attribution::Faulted(why),
         Ok(drive::RoundEnd::Abandoned) => Attribution::Blocked("the round was abandoned".into()),
-        Err(e) if replaced.is_some() => return Err(format!("{}: {e}", replaced.unwrap_or_default())),
         Err(e) if batcher_cut::attribute::is_round_vm_fault(&e) => {
             Attribution::Fault(format!("the attribution did not finish: {e}"))
         }

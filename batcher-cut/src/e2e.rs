@@ -170,7 +170,6 @@ impl RoundOps for ProofOps {
     fn record(&mut self, iteration: u32, d: &Decision) {
         self.decisions.push((iteration, d.clone()));
     }
-    fn preempted(&mut self, _owner: &String, _unreached: &[String]) {}
     fn escape(
         &mut self,
         _member: &Member,
