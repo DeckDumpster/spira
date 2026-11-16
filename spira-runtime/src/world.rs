@@ -1171,7 +1171,7 @@ pub fn stamp_waiting(landings: &mut [RepoLanding], rows: &[Value]) {
     for l in landings {
         let mine = rows.iter().filter(|r| r["repo"].as_str() == Some(l.repo.as_str()));
         l.waiting = mine.clone().count() as u64;
-        l.oldest = mine.filter_map(|r| Some(Waiting { bead: r["bead_id"].as_str()?.to_string(), since: r["since"].as_u64().unwrap_or(0) })).min_by_key(|w| w.since);
+        l.oldest = mine.map(|r| Waiting { bead: r["bead_id"].as_str().unwrap_or_default().to_string(), since: r["since"].as_u64().unwrap_or(0) }).min_by_key(|w| w.since);
     }
 }
 
