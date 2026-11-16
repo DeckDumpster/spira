@@ -1408,13 +1408,13 @@ impl Machine<'_> {
         };
     }
 
-    /// A leg the unit manager does not list for [`LEG_MISSING_OBSERVES`] observes in a row, past
-    /// [`LEG_START_GRACE_MS`], never started or died with no `unit.ran`.
     /// `queue round certify` bounds itself, so a listed certify unit is never judged lost on the batcher's leg deadline.
     fn certify_listed(&self, repo: &Repo) -> bool {
         self.rc.state == State::Certifying && matches!((&repo.live_legs, &self.rc.leg), (Some(live), Some(leg)) if live.contains(leg))
     }
 
+    /// A leg the unit manager does not list for [`LEG_MISSING_OBSERVES`] observes in a row, past
+    /// [`LEG_START_GRACE_MS`], never started or died with no `unit.ran`.
     fn watch_leg(&mut self, repo: &Repo) {
         let (Some(live), Some(leg)) = (&repo.live_legs, self.rc.leg.clone()) else { return };
         if self.now_ms.saturating_sub(self.rc.leg_at_ms) < LEG_START_GRACE_MS || live.contains(&leg) {
