@@ -382,6 +382,7 @@ pub fn archive_tip(root: &Path, br: &str, expect_tip: &str) -> Result<String, St
 pub struct Tally {
     pub sent: u32,
     pub failed: u32,
+    pub said: std::collections::BTreeMap<String, u32>,
 }
 
 pub struct Sweep<'a> {
@@ -413,7 +414,14 @@ impl<'a> Sweep<'a> {
             }
             self.repo(r);
         }
-        if !self.opts.dry {
+        if self.opts.dry {
+            let n = |k: &str| self.tally.said.get(k).copied().unwrap_or(0);
+            let total: u32 = self.tally.said.values().sum();
+            self.w.emit(&format!(
+                "hel: {total} branches — {} WOULD, {} KEEP, {} HELD, {} SKIP, {} UNJUDGED",
+                n("WOULD"), n("KEEP"), n("HELD"), n("SKIP"), n("UNJUDGED")
+            ));
+        } else {
             self.w.log(&format!("hel: {} sent, {} failed", self.tally.sent, self.tally.failed));
         }
         i32::from(self.tally.failed != 0)
@@ -430,7 +438,10 @@ impl<'a> Sweep<'a> {
         false
     }
 
-    fn say(&self, s: &str) {
+    fn say(&mut self, s: &str) {
+        if let Some(k) = s.split_whitespace().next() {
+            *self.tally.said.entry(k.to_string()).or_insert(0) += 1;
+        }
         self.w.emit(s);
     }
 
@@ -476,6 +487,18 @@ impl<'a> Sweep<'a> {
         for br in &brs[skip..] {
             if self.out_of_time() {
                 cut = true;
+                if self.opts.dry {
+                    for rest in brs[skip..].iter().skip_while(|b| *b != br) {
+                        let rid = rest.strip_prefix("spira/").unwrap_or(rest);
+                        if self.opts.only.as_deref().is_some_and(|o| o != rid && o != rest) {
+                            continue;
+                        }
+                        if rid.starts_with("round-") {
+                            continue;
+                        }
+                        self.say(&format!("UNJUDGED {rid}  budget spent"));
+                    }
+                }
                 break;
             }
             cut_after = Some(br);
