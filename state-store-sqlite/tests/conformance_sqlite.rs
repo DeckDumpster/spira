@@ -926,6 +926,40 @@ fn a_restart_over_many_unstamped_main_file_events_drains_a_bounded_page_a_commit
 }
 
 #[test]
+fn a_restart_mid_scan_resumes_from_the_persisted_cursor_not_the_first_key() {
+    let dir = TempDir::new("sqlite-event-scan-resume");
+    let wall = VirtualClock::new(D0 + 30 * DAY_MS);
+    let (path, b) = seeded_store(&dir, &wall, &many_unstamped_then_one_stamped());
+    let until_resolved = |b: &SqliteBackend, first: u64| {
+        let mut n = 0;
+        loop {
+            live_commit(b, first + n);
+            n += 1;
+            if b.take_drain_rows() == 0 {
+                return n;
+            }
+        }
+    };
+    let cold = {
+        let dir = TempDir::new("sqlite-event-scan-cold");
+        let (_, c) = seeded_store(&dir, &wall, &many_unstamped_then_one_stamped());
+        until_resolved(&c, 0)
+    };
+    for i in 0..10 {
+        live_commit(&b, i);
+    }
+    drop(b);
+    let b = open_day(&path, &wall);
+    let resumed = until_resolved(&b, 100);
+    assert!(resumed + 8 <= cold, "resumed after {resumed} commits, a cold scan takes {cold}");
+    assert_eq!(events_left(&path), 20_001);
+    drop(b);
+    let b = open_day(&path, &wall);
+    live_commit(&b, 200);
+    assert_eq!(b.take_drain_rows(), 0, "a resolved scan's wait survives a restart");
+}
+
+#[test]
 fn log_over_a_mixed_batch_sequence_is_the_same_on_the_memory_and_the_sqlite_backends() {
     let dir = TempDir::new("sqlite-log-same");
     let wall = VirtualClock::new(D0);

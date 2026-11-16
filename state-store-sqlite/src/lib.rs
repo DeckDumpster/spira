@@ -465,6 +465,25 @@ fn meta(conn: &Connection, name: &str) -> Result<Option<u64>> {
         .map_err(db)
 }
 
+const EVENTS_DUE: &str = "events_due";
+const EVENTS_SCAN_FROM: &str = "events_scan_from";
+
+/// The persisted cursor of an unfinished event scan. It lives in `meta` as a blob: SQLite keeps
+/// whatever type it is given in an INTEGER column.
+fn scan_from(conn: &Connection) -> Result<Option<Vec<u8>>> {
+    conn.prepare_cached("SELECT value FROM meta WHERE name = ?1")
+        .and_then(|mut s| s.query_row([EVENTS_SCAN_FROM], |r| r.get::<_, Vec<u8>>(0)).optional())
+        .map_err(db)
+}
+
+fn set_scan_from(conn: &Connection, cursor: Option<&[u8]>) -> Result<()> {
+    match cursor {
+        Some(c) => exec(conn, "INSERT OR REPLACE INTO meta (name, value) VALUES (?1, ?2)", params![EVENTS_SCAN_FROM, c]),
+        None => exec(conn, "DELETE FROM meta WHERE name = ?1", params![EVENTS_SCAN_FROM]),
+    }
+    .map(drop)
+}
+
 fn set_meta(conn: &Connection, name: &str, value: u64) -> Result<()> {
     exec(
         conn,
@@ -864,6 +883,8 @@ impl SqliteBackend {
             exec(&conn, "INSERT OR IGNORE INTO meta (name, value) VALUES ('receipts_from_at', ?1)", [main_i64(now)?])?;
         }
         let receipts_from_at = meta(&conn, "receipts_from_at")?.unwrap_or(now);
+        let events_due = meta(&conn, EVENTS_DUE)?.unwrap_or(0);
+        let events_scan_from = scan_from(&conn)?;
         let outbox = opts
             .outbox
             .then(|| Outbox::open(&outbox_dir(path), head, opts.outbox_segment_bytes))
@@ -910,8 +931,8 @@ impl SqliteBackend {
             receipts_from_at,
             drained: AtomicBool::new(false),
             events_drained: AtomicBool::new(false),
-            events_due: AtomicU64::new(0),
-            events_scan_from: Mutex::new(None),
+            events_due: AtomicU64::new(events_due),
+            events_scan_from: Mutex::new(events_scan_from),
             drain_rows: AtomicU64::new(0),
             read_steps: AtomicU64::new(0),
             _lock: OpenerLock(lock_file),
@@ -983,6 +1004,7 @@ impl SqliteBackend {
         let cutoff = now.saturating_sub(state_store::gc::EVENT_WINDOW_MS);
         let lo = EVENTS.prefix.as_bytes();
         let hi = successor(lo);
+        let rows_before = self.0.drain_rows.load(Ordering::Relaxed);
         let outcome = (|| {
             let tx = w.conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(db)?;
             let page = event_page(&tx, lo, hi.as_deref(), DRAIN_PER_COMMIT)?;
@@ -1003,13 +1025,17 @@ impl SqliteBackend {
                         Scan::Found(at) => Some(at),
                         Scan::NoneLeft => None,
                         Scan::Spent(cursor) => {
+                            set_scan_from(&tx, Some(&cursor))?;
+                            tx.commit().map_err(db)?;
                             *lock(&self.0.events_scan_from) = Some(cursor);
                             return Ok(Drain::More);
                         }
                     }
                 }
             };
-            *lock(&self.0.events_scan_from) = None;
+            if lock(&self.0.events_scan_from).take().is_some() {
+                set_scan_from(&tx, None)?;
+            }
             let mut last = None;
             let mut blocked_at = None;
             for (k, v) in &page {
@@ -1027,6 +1053,9 @@ impl SqliteBackend {
                 exec(&tx, "DELETE FROM latest WHERE key >= ?1 AND key <= ?2", params![lo, last])?;
                 exec(&tx, "DELETE FROM versions WHERE key >= ?1 AND key <= ?2", params![lo, last])?;
             }
+            if let Some(due) = blocked_at {
+                set_meta(&tx, EVENTS_DUE, due.max(now.saturating_add(1)))?;
+            }
             tx.commit().map_err(db)?;
             Ok(match blocked_at {
                 Some(due) => Drain::Waiting(due),
@@ -1038,7 +1067,7 @@ impl SqliteBackend {
             Ok(Drain::Waiting(due)) => self.0.events_due.store(due.max(now.saturating_add(1)), Ordering::SeqCst),
             Ok(Drain::More) | Err(_) => {}
         }
-        true
+        self.0.drain_rows.load(Ordering::Relaxed) > rows_before
     }
 
     /// The writer connection's `synchronous` setting: 1 is NORMAL, 2 is FULL.
