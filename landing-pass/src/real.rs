@@ -1587,6 +1587,7 @@ mod incident_tests {
         incident_tune(&filing(), &mut env);
         assert!(ops_matches(&env.labels, &home), "ops cannot claim labels {:?}", env.labels);
         assert_eq!(env.cause, "gate-unjudged");
+        assert_eq!((env.actor.as_deref(), env.kind.as_str(), env.priority.as_str()), (Some("landing"), "bug", "1"));
         assert_eq!(env.reference.as_deref(), Some("gate-unjudged:spira:spira/sp-a@t1"));
     }
 }

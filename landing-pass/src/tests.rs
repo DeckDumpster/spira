@@ -2381,6 +2381,19 @@ fn a_tip_killed_over_cap_twice_is_gated_again_after_the_backoff_not_deferred() {
 }
 
 #[test]
+fn an_unjudged_tip_is_still_held_when_its_incident_cannot_be_filed() {
+    let mut h = h_worker(LandMode::Queue);
+    h.s.noverdict_max = 1;
+    h.closed("sp-a", "t1");
+    *h.lib.incident_out.borrow_mut() = Some(Err(1));
+    file_verdict(&h, "sp-a", "t1", 75, "gate: VERDICT=NO_VERDICT reason=deadline branch=b repo=spira suite=- (x)\n");
+    h.run();
+    let holds = h.lc.holds.borrow().clone();
+    assert!(holds.len() == 1 && holds[0].contains("incident not filed"), "{holds:?}");
+    assert!(h.logged("the gate-unjudged incident was not filed"));
+}
+
+#[test]
 fn past_the_bound_an_unjudged_tip_is_held_once_and_one_incident_is_filed() {
     let mut h = h_worker(LandMode::Queue);
     h.s.noverdict_max = 2;
@@ -2397,7 +2410,7 @@ fn past_the_bound_an_unjudged_tip_is_held_once_and_one_incident_is_filed() {
     let holds = h.lc.holds.borrow().clone();
     assert_eq!(holds.len(), 1, "{holds:?}");
     assert!(holds[0].starts_with("sp-a wait "), "{holds:?}");
-    assert!(holds[0].contains("t1") && holds[0].contains("deadline, deadline"), "{holds:?}");
+    assert!(holds[0].contains("t1") && holds[0].contains("deadline, deadline") && holds[0].contains("incident sp-inc1"), "{holds:?}");
     assert_eq!(h.lib.calls.borrow().iter().filter(|c| c.starts_with("incident ")).count(), 1);
     assert!(h.lib.calls.borrow().iter().any(|c| c.starts_with("incident ") && c.contains("late gate output")));
     assert!(h.lib.calls.borrow().iter().any(|c| c.starts_with("incident gate-unjudged spira gate-unjudged:spira:spira/sp-a@t1 ")));
