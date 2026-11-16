@@ -305,6 +305,18 @@ pub fn locate_home_for_process() -> Result<PathBuf, String> {
     locate_home(&env, &std::env::current_exe().unwrap_or_default())
 }
 
+/// The tree `SPIRA_HOME` sits in: the checkout under cargo, the release under a unit.
+pub fn checkout_root(env: &BTreeMap<String, String>) -> Result<PathBuf, String> {
+    let home = locate_home(env, Path::new(""))?;
+    home.parent().filter(|p| !p.as_os_str().is_empty()).map(Path::to_path_buf).ok_or_else(|| format!("the harness home {} has no parent", home.display()))
+}
+
+/// [`checkout_root`] for this process.
+pub fn checkout_root_for_process() -> Result<PathBuf, String> {
+    let env: BTreeMap<String, String> = std::env::vars().collect();
+    checkout_root(&env)
+}
+
 /// [`resolve_run_dir`] for this process: locates home, then resolves.
 pub fn run_dir_for_process() -> Result<PathBuf, String> {
     let env: BTreeMap<String, String> = std::env::vars().collect();

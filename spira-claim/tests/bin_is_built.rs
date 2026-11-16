@@ -4,5 +4,5 @@
 
 #[test]
 fn the_spira_claim_binary_is_built() {
-    assert!(std::path::Path::new(env!("CARGO_BIN_EXE_spira-claim")).is_file());
+    assert!(testkit::bin_exe("spira-claim").is_file());
 }

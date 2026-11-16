@@ -217,3 +217,24 @@
         assert_eq!(acc.get("SPIRA_DB"), "/h/.local/share/spira-acc/db");
         assert_eq!(acc.get("SPIRA_RUN"), "/h/.local/share/spira-acc/run");
     }
+
+#[test]
+fn checkout_root_is_the_parent_of_the_home() {
+    let env = |k: &str, v: &str| BTreeMap::from([(k.to_string(), v.to_string())]);
+    assert_eq!(checkout_root(&env("SPIRA_HOME", "/w/spira")), Ok(PathBuf::from("/w")));
+    assert_eq!(checkout_root(&env("SPIRA_RELEASE", "/r")), Ok(PathBuf::from("/r")));
+    assert!(checkout_root(&BTreeMap::new()).unwrap_err().contains("refusing to search"));
+    assert!(checkout_root(&env("SPIRA_HOME", "spira")).unwrap_err().contains("has no parent"));
+}
+
+#[test]
+fn checkout_root_refuses_a_home_with_no_parent() {
+    let env = BTreeMap::from([("SPIRA_HOME".to_string(), "/".to_string())]);
+    assert!(checkout_root(&env).unwrap_err().contains("has no parent"));
+}
+
+#[test]
+fn checkout_root_for_process_reads_the_process_environment() {
+    let _g = testkit::env(&[("SPIRA_HOME", Some("/w/spira"))]);
+    assert_eq!(checkout_root_for_process(), Ok(PathBuf::from("/w")));
+}
