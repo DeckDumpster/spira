@@ -62,24 +62,22 @@ pub fn run_for(lib_sh: &Path, name: &str, script: &str, envs: &[(&str, &str)], s
     }
 }
 
-/// `dwarves.sh status`'s lane report: every lane rune's name and `RUNE_MAX_CONCURRENT`,
-/// NUL-separated `name\tmax_concurrent` records — the same two `rune_get` reads
-/// `lane_caps()` made, in one process instead of two lib.sh sourcings.
+/// `dwarves.sh status`'s lane report: every lane rune's name and whether it is
+/// `RUNE_SINGLE_FLIGHT`, NUL-separated `name\tsingle-flight|` records.
 pub const LANE_CAPS: &str = r#"
 for f in $(spira_lane_runes); do
-    printf '%s\t%s\0' "$(rune_get "$f" RUNE_NAME "$f")" "$(rune_get "$f" RUNE_MAX_CONCURRENT 1)"
+    sf=""; [ "$(rune_get "$f" RUNE_SINGLE_FLIGHT 0)" = 1 ] && sf="single-flight"
+    printf '%s\t%s\0' "$(rune_get "$f" RUNE_NAME "$f")" "$sf"
 done
 "#;
 
-/// Parse [`LANE_CAPS`]'s output into `(name, max_concurrent)` pairs. A field that fails to
-/// parse as a number is skipped, matching bash's own arithmetic-context coercion of a bad
-/// value to 0 rather than crashing the whole report.
-pub fn parse_lane_caps(out: &str) -> Vec<(String, u32)> {
+/// Parse [`LANE_CAPS`]'s output into `(name, single_flight)` pairs.
+pub fn parse_lane_caps(out: &str) -> Vec<(String, bool)> {
     out.split('\0')
         .filter(|r| !r.is_empty())
         .filter_map(|rec| {
-            let (name, n) = rec.split_once('\t')?;
-            Some((name.to_string(), n.trim().parse().unwrap_or(0)))
+            let (name, sf) = rec.split_once('\t')?;
+            Some((name.to_string(), sf.trim() == "single-flight"))
         })
         .collect()
 }
@@ -90,14 +88,14 @@ mod tests {
 
     #[test]
     fn parse_lane_caps_reads_nul_separated_records() {
-        let out = "groomer\t1\0ops\t3\0";
-        assert_eq!(parse_lane_caps(out), vec![("groomer".to_string(), 1), ("ops".to_string(), 3)]);
+        let out = "groomer\tsingle-flight\0ops\t\0";
+        assert_eq!(parse_lane_caps(out), vec![("groomer".to_string(), true), ("ops".to_string(), false)]);
     }
 
     #[test]
-    fn parse_lane_caps_defaults_bad_number_to_zero() {
+    fn parse_lane_caps_reads_anything_but_single_flight_as_not() {
         let out = "x\tnotanumber\0";
-        assert_eq!(parse_lane_caps(out), vec![("x".to_string(), 0)]);
+        assert_eq!(parse_lane_caps(out), vec![("x".to_string(), false)]);
     }
 
     #[test]

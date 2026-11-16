@@ -70,7 +70,6 @@ round_redrive_retries = 3
 round_vm_ec2_max_lifetime_secs = 10800
 install_active_wait = 45
 ci_runner_mem_mib = 16384
-mender_max = 8
 mender_deadline_secs = 300
 testenv_suite_cap = 900
 testenv_gate_cap = 300

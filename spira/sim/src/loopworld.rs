@@ -372,14 +372,14 @@ fn sentinel_observe(w: &World) -> Result<String, String> {
     let ready = lc.open_rows().count() as u32;
     let snap = sc::Snapshot {
         live_by_rune: [(RUNE.to_string(), live.len() as u32)].into(),
-        ready_by_rune: [(RUNE.to_string(), Some(ready))].into(),
+        ready_by_rune: [(RUNE.to_string(), Some(if w.script.max_concurrent == 0 { 0 } else { ready }))].into(),
         urgent: Some(vec![]),
         express_ready: Some(0),
         max_live: Some(4),
         lanes_max_live: Some(4),
         max_dwarves: Some(4),
         roster: vec![RUNE.into()],
-        runes: [(RUNE.to_string(), sc::RuneCfg { lane: false, max_concurrent: w.script.max_concurrent, elastic: false, uses: vec![], reactive: false })].into(),
+        runes: [(RUNE.to_string(), sc::RuneCfg { lane: false, single_flight: w.script.max_concurrent == 1, elastic: false, uses: vec![], reactive: false })].into(),
         live_units: live,
         now_ms: now,
         ..sc::Snapshot::default()

@@ -18,7 +18,8 @@ RUNE_STATUTE_CORE="law-escalate-decisions-not-problems,law-absence-needs-a-posit
 RUNE_MODEL=claude-opus-5-5
 
 RUNE_LANE=pilgrimage
-RUNE_MAX_CONCURRENT=1
+# One at a time: it walks one identity and its tenants.
+RUNE_SINGLE_FLIGHT=1
 
 # Build-disk class, reactive: starts over the SPIRA_MAX_DWARVES limit (design "Lanes by bound resource").
 RUNE_USES="build-disk"

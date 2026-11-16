@@ -32,7 +32,8 @@ RUNE_MODEL=claude-opus-5-5
 # NOT ELASTIC. A double-red is rare — draining it fast does not need it to also absorb
 # whatever the pool has left over, and elastic here would compete with builder for slots on
 # every idle tick a judgement bead exists.
-RUNE_MAX_CONCURRENT=1
+# One at a time: it is the Judge on a round's red, and two judges would rule on one round.
+RUNE_SINGLE_FLIGHT=1
 
 RUNE_LEASE_MINUTES=90
 RUNE_HEARTBEAT_SECONDS=30

@@ -682,7 +682,7 @@ fn install_tarball_dry_run_reports_intent_and_changes_nothing() {
 fn stage_rune_names_the_canary_persona_with_one_concurrent_slot() {
     let f = crate::stage::rune_content();
     assert!(f.contains("RUNE_NAME=canary"));
-    assert!(f.contains("RUNE_MAX_CONCURRENT=1"));
+    assert!(f.contains("RUNE_SINGLE_FLIGHT=1"));
     assert!(f.contains("SPIRA_SCOPE_LABEL"));
 }
 

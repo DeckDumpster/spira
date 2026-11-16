@@ -59,11 +59,11 @@ RUNE_MEMORY_PREFIXES="law-,sop-"
 # every call dies and the role looks merely quiet, which is the shape of outage this
 # harness is worst at noticing. Probe a candidate id before writing it here.
 RUNE_MODEL=claude-haiku-4-5-20251001
-RUNE_MAX_CONCURRENT=1
+RUNE_SINGLE_FLIGHT=1
 
 # THE OPS LANE — the declared configuration for what RUNE_ROLE=party expressed implicitly.
-# Ops is in the ops lane, which means it draws from its own RUNE_MAX_CONCURRENT rather
-# than from SPIRA_MAX_DWARVES. The builder pool can be 100% occupied and Ops still has room,
+# Ops is in the ops lane, which means it is not drawn
+# from SPIRA_MAX_DWARVES. The builder pool can be 100% occupied and Ops still has room,
 # because a lane rune is never competing for the pool's slots.
 #
 # This is the shippe example of a priority lane: a persona that must be reachable even when

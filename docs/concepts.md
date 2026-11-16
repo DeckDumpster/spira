@@ -149,7 +149,7 @@ A **rune** is a persona *definition*: a file `spira/runes/<name>.rune` (shell-st
 fixes the **partition** of the work graph the persona may claim (`RUNE_LABELS`, ANDed, minus
 `RUNE_EXCLUDE_LABELS`), the statutes it must read (`RUNE_MEMORY_PREFIXES`,
 `RUNE_STATUTE_CORE`), the tools it may use (`RUNE_TOOLS`), and how it is woken and bounded
-(`RUNE_MAX_CONCURRENT`, `RUNE_LEASE_MINUTES`, `RUNE_HEARTBEAT_SECONDS`, `RUNE_LANE`,
+(`RUNE_SINGLE_FLIGHT`, `RUNE_LEASE_MINUTES`, `RUNE_HEARTBEAT_SECONDS`, `RUNE_LANE`,
 `RUNE_ELASTIC`). Its **brief**, the instructions the model receives, is the matching
 `spira/runes/<name>.md`, rendered with `{{TOKEN}}` substitutions. The model, lease, tool list
 and system-prompt mode of a running system come from the `[persona.<name>]` table in
@@ -186,7 +186,7 @@ Shipped personas (`spira/runes/`):
 "Lane" has two meanings, both in code.
 
 1. **Scheduling lane** (`SPIRA_LANES`, `RUNE_LANE`). A persona that declares a lane draws
-   capacity from its own `RUNE_MAX_CONCURRENT` instead of the shared pool
+   capacity from `SPIRA_LANES_MAX_LIVE` instead of the shared pool
    (`SPIRA_MAX_DWARVES`), so builders can occupy the whole pool without starving the rest.
 2. **Repository lane** (`lanes` in a repository's registry row): which kinds of bead a
    repository admits (`plan`, `incident`, `groom`, `mimir-sweep`, `spike`, `czar-trigger`).

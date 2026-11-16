@@ -38,11 +38,6 @@ RUNE_MEMORY_PREFIXES="law-"
 # convert and is no longer read at launch.
 RUNE_MODEL=claude-opus-5
 
-# ONE. A spike is not throughput work: its output is a decision, and two dwarves answering two
-# questions at once buys nothing that answering them in sequence does not, while competing
-# for the same account capacity as the builders who are actually landing code.
-RUNE_MAX_CONCURRENT=1
-
 # LONGER THAN THE BUILDER'S HEARTBEAT WINDOW WOULD SUGGEST, and deliberately. Research is
 # bursty: a spike can spend twenty minutes inside one fetch-and-read cycle producing no
 # observable file change, which is precisely the shape the stall detector is built to end.

@@ -111,7 +111,7 @@ RUNE_MODEL=claude-opus-5-5
 # and a wall would only end a conversation the operator is in the middle of. It runs until it
 # is stopped.
 #
-# RUNE_MAX_CONCURRENT IS 1 AND THAT ONE IS NOT ENFORCED HERE — concierge.sh refuses to start
+# ONE SESSION IS NOT ENFORCED HERE — concierge.sh refuses to start
 # a second tmux session of the same name, which is the mechanism. It is written down because
 # "one session, not a repo-by-repo list" is a design decision worth reading, not an accident
 # of how the launcher happens to work.
@@ -145,7 +145,6 @@ RUNE_MODEL=claude-opus-5-5
 #
 # A run that fails at the changed step is still valid evidence; the fence does not require
 # the run to be green, only that the step was reached.
-RUNE_MAX_CONCURRENT=1
 
 # The states a bead claimed by this rune may leave WORKING for; spira-lc refuses any other.
 RUNE_WORKING_EXITS="SUBMITTED DONE ask park hold"

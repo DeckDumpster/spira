@@ -16,7 +16,6 @@ RUNE_STATUTE_CORE="law-escalate-decisions-not-problems,law-absence-needs-a-posit
 RUNE_MODEL=claude-opus-5-5
 
 RUNE_LANE=skuld
-RUNE_MAX_CONCURRENT=2
 
 RUNE_TIMEOUT_SECONDS=2400
 RUNE_LEASE_MINUTES=45

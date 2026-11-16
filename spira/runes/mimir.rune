@@ -45,7 +45,8 @@ RUNE_MEMORY_PREFIXES="law-"
 # resolved by lib.sh's persona_model — this line only seeds that table on first
 # convert and is no longer read at launch.
 RUNE_MODEL=claude-sonnet-5-5
-RUNE_MAX_CONCURRENT=1
+# One at a time: its retrospective is watermarked, and two passes would read the same mark.
+RUNE_SINGLE_FLIGHT=1
 
 # THE MIMIR LANE. Mimir draws from its own capacity rather than from SPIRA_MAX_DWARVES,
 # so a fully-occupied builder pool cannot prevent a retrospective pass. The mimir lane

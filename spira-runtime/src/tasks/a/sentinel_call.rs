@@ -181,21 +181,21 @@ pub struct LiveUnit {
     pub started_ms: u64,
 }
 
-/// A rune's own call settings (`RUNE_LANE`, `RUNE_MAX_CONCURRENT`, `RUNE_ELASTIC`, `RUNE_USES`, `RUNE_REACTIVE`).
+/// A rune's own call settings (`RUNE_LANE`, `RUNE_SINGLE_FLIGHT`, `RUNE_ELASTIC`, `RUNE_USES`, `RUNE_REACTIVE`).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RuneCfg {
     pub lane: bool,
-    pub max_concurrent: u32,
+    pub single_flight: bool,
     pub elastic: bool,
     pub uses: Vec<String>,
     pub reactive: bool,
 }
 
 impl Default for RuneCfg {
-    /// `rune_get`'s own defaults: a task rune, one at a time, not elastic.
+    /// `rune_get`'s own defaults: a task rune, not single-flight, not elastic.
     fn default() -> Self {
-        RuneCfg { lane: false, max_concurrent: 1, elastic: false, uses: vec![], reactive: false }
+        RuneCfg { lane: false, single_flight: false, elastic: false, uses: vec![], reactive: false }
     }
 }
 
@@ -339,7 +339,7 @@ pub fn call_world(carry: &Carry, snap: &Snapshot) -> plan::CallWorld {
             live: i64::from(snap.live_by_rune.get(&name).copied().unwrap_or(0)),
             ready: snap.ready_by_rune.get(&name).copied().flatten().map(i64::from),
             lane: cfg.lane,
-            max_concurrent: i64::from(cfg.max_concurrent),
+            single_flight: cfg.single_flight,
             elastic: cfg.elastic,
             uses: cfg.uses,
             reactive: cfg.reactive,
@@ -650,7 +650,7 @@ pub fn observe(e: &Effects, input: &str) -> Result<String, String> {
         .map(|f| {
             let cfg = RuneCfg {
                 lane: !get(f, "RUNE_LANE", "").is_empty(),
-                max_concurrent: get(f, "RUNE_MAX_CONCURRENT", "1").trim().parse().unwrap_or(1),
+                single_flight: get(f, "RUNE_SINGLE_FLIGHT", "0") == "1",
                 elastic: get(f, "RUNE_ELASTIC", "0") == "1",
                 uses: uses.remove(f).unwrap_or_default(),
                 reactive: get(f, "RUNE_REACTIVE", "0") == "1",

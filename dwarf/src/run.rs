@@ -448,8 +448,11 @@ impl<'a> Run<'a> {
     pub(crate) fn decline(&mut self) -> Option<i32> {
         let own = self.own_unit.clone();
         let have: i64 = self.sv("dwarf_count", &s(&[self.f(), &own])).text().trim().parse().unwrap_or(0);
-        let mut limit = self.rune.max_concurrent as i64;
-        let mut pool = String::new();
+        let mut limit = 1;
+        let mut free = None;
+        if self.rune.single_flight {
+            free = Some((1 - have).max(0));
+        }
         if self.rune.elastic {
             // SPIRA_MAX_DWARVES is registered (a real spira/conf.d default, 4) — reached
             // through `Conf::i`, never `self.conf.v` directly: that raw map read used to
@@ -457,10 +460,10 @@ impl<'a> Run<'a> {
             // naming the key (per Ryan 2026-10-05, round 2: a missing key is an error).
             let max = self.conf.i("SPIRA_MAX_DWARVES");
             limit = max;
-            pool = (if max > have { max - have } else { 0 }).to_string();
+            let pool = (if max > have { max - have } else { 0 }).to_string();
+            free = self.sv("rune_free", &s(&[self.f(), &pool, &own])).text().trim().parse::<i64>().ok();
         }
-        let free = self.sv("rune_free", &s(&[self.f(), &pool, &own])).text();
-        if free.trim().parse::<i64>().ok() == Some(0) {
+        if free == Some(0) {
             self.log(&format!("{}: at capacity ({have}/{limit}), not calling", self.f()));
             self.ledger.awake(self.now(), self.f(), "capacity");
             return Some(0);

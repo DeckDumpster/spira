@@ -119,7 +119,7 @@ pub(crate) mod verdict_run {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn with_run_sink<T>(vars: BTreeMap<String, String>, bd: &dyn Bd, git: Dirty, exec: &dyn Exec, clock: &(dyn Fn() -> i64 + Sync), seam: &Seams, sink: &dyn Sink, claimed_raw: &str, f: impl FnOnce(&mut Run) -> T) -> T {
+    fn with_run_sink<T>(vars: BTreeMap<String, String>, bd: &dyn Bd, git: Dirty, exec: &dyn Exec, clock: &(dyn Fn() -> i64 + Sync), seam: &dyn Seam, sink: &dyn Sink, claimed_raw: &str, f: impl FnOnce(&mut Run) -> T) -> T {
         let conf = Conf::new(&Snapshot { vars, ..Default::default() }, Path::new("/home/spira"));
         let rune = Rune::from_vars("builder", &Default::default());
         let env = Env::new(Default::default(), Default::default());
@@ -316,6 +316,56 @@ pub(crate) mod verdict_run {
         let rc = with_run_sink(vars, &NoBd, Dirty(vec![]), &Lc, &|| 0, &Seams(Default::default()), &sink, "", |r| r.decline());
         let lines = sink.0.lock().unwrap().clone();
         (rc, lines)
+    }
+
+    /// `rune_free` always answers 0: any persona asking it for room is refused.
+    struct Live(i64);
+    impl Seam for Live {
+        fn call(&self, f: &str, _: &[String]) -> Out {
+            Out::ok(match f {
+                "dwarf_count" => self.0.to_string(),
+                "rune_free" => "0".into(),
+                _ => String::new(),
+            })
+        }
+    }
+
+    /// `decline()` or `sweep()` for `persona` with `live` of its dwarves running; the log lines it wrote.
+    fn at_live(persona: &str, rune_vars: &[(&str, &str)], live: i64, sweep: bool) -> (Option<i32>, Vec<String>) {
+        let d = testkit::TempDir::new("dwarf-single-flight");
+        let mut vars = super::complete_vars();
+        vars.insert("SPIRA_REPO".into(), "/shared".into());
+        vars.insert("SPIRA_RUN".into(), d.path().display().to_string());
+        let rv: BTreeMap<String, String> = rune_vars.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+        let sink = Mute::default();
+        let rc = with_run_sink(vars, &NoBd, Dirty(vec![]), &Lc, &|| 0, &Live(live), &sink, "", |r| {
+            r.rune = Rune::from_vars(persona, &rv);
+            if sweep { Some(r.sweep(None)) } else { r.decline() }
+        });
+        let lines = sink.0.lock().unwrap().clone();
+        (rc, lines)
+    }
+
+    #[test]
+    fn a_persona_without_single_flight_does_not_decline_for_capacity() {
+        let (rc, lines) = at_live("mender", &[], 9, false);
+        assert!(!lines.iter().any(|l| l.contains("at capacity")), "{lines:?} {rc:?}");
+    }
+
+    #[test]
+    fn a_single_flight_persona_with_one_live_declines_at_capacity() {
+        let (rc, lines) = at_live("warden", &[("RUNE_SINGLE_FLIGHT", "1")], 1, false);
+        assert_eq!(rc, Some(0));
+        assert!(lines.iter().any(|l| l.contains("at capacity (1/1)")), "{lines:?}");
+        let (_, lines) = at_live("warden", &[("RUNE_SINGLE_FLIGHT", "1")], 0, false);
+        assert!(!lines.iter().any(|l| l.contains("at capacity")), "{lines:?}");
+    }
+
+    #[test]
+    fn a_second_sweep_of_one_persona_declines_while_one_is_live() {
+        let (rc, lines) = at_live("ops", &[], 1, true);
+        assert_eq!(rc, Some(0));
+        assert!(lines.iter().any(|l| l.contains("at capacity (1/1), not sweeping")), "{lines:?}");
     }
 
     fn stop_lane(run: &Path, repo: &str, lane: &str) {
