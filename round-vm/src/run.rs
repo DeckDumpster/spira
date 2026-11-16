@@ -939,6 +939,9 @@ fi
 # the host pulls them by name (TEST_PHASE_FILES).
 phase unit-tests
 rdir="$HOME/round-work/.runtime/spira/batch-results"
+write_unit_timings() {
+    { echo "unit_build_secs $unit_build_secs"; echo "unit_secs $unit_secs"; grep -E '"#, spira_config::unit_tier_timing_lines!(), r#"' ~/round-unit-tests.log; } > "$rdir/unit-timings" || true
+}
 unit_progress="$rdir/unit-progress"
 mkdir -p "$rdir"
 unit_lib_total=$(grep -c '^ *Executable unittests ' ~/round-unit-build.log)
@@ -958,6 +961,7 @@ unit_secs=$(( $(date +%s) - unit_t0 ))
 wait "$stream_pid"
 [ ! -s "$unit_hung" ] || [ "$unit_rc" -ne 0 ] || unit_rc=1
 echo "round-vm: UNIT-TESTS took ${unit_secs}s (--lib --bins, ${unit_lib_total} test binaries)" >&2
+write_unit_timings
 if [ "$unit_rc" -eq 0 ]; then
     echo "round-vm: UNIT-TESTS: PASS ($(awk '/^ *Summary \[/ { print $4 }' ~/round-unit-tests.log) tests)" >&2
 else
@@ -2091,6 +2095,14 @@ fn fence_seconds(results: &Path, started: u64) -> Vec<(String, u64)> {
     out
 }
 
+/// The unit tier's seconds and nextest timings from this pass's pulled `unit-timings`; a file
+/// older than the pass is a previous pass's and reads as empty, as [`fence_seconds`] does.
+fn unit_timings(results: &Path, started: u64) -> spira_config::unit_tier::UnitFile {
+    let path = results.join(UNIT_TIMINGS);
+    let fresh = fs::metadata(&path).and_then(|m| m.modified()).is_ok_and(|t| t >= std::time::UNIX_EPOCH + Duration::from_secs(started));
+    fresh.then(|| fs::read_to_string(&path).ok()).flatten().and_then(|t| spira_config::unit_tier::parse(&t)).unwrap_or_default()
+}
+
 /// The pass's peak disk use, from the `disk-usage` file the round left in its results this pass.
 fn disk_peak(results: &Path, started: u64) -> Option<u64> {
     fn walk(dir: &Path, depth: u32, since: std::time::SystemTime, best: &mut Option<u64>) {
@@ -2117,6 +2129,9 @@ pub const DISK_USAGE: &str = "disk-usage";
 /// What REMOTE_SCRIPT records each fence's seconds in, at the top of the results.
 pub const FENCE_TIMES: &str = "fence-times";
 
+/// What REMOTE_SCRIPT writes after the unit tier, green or red: its build and run seconds and nextest's per-test lines.
+pub const UNIT_TIMINGS: &str = "unit-timings";
+
 /// What REMOTE_SCRIPT leaves at the top of the results when a test phase goes red (sp-cddf76):
 /// each phase's verdict as a record and its failures' output — the unit phase's, before any
 /// suite, and the integration phase's, beside them. They sit outside testenv's leaf, so the host
@@ -2128,7 +2143,7 @@ pub const SCRIPT_FILES: [&str; 3] = [crate::vm_fault::PHASE_FILE, crate::vm_faul
 
 /// Carries the files the VM leaves outside testenv's leaf from `pulled` to `results_dir`, by name.
 pub fn keep_top_files(pulled: &Path, results_dir: &Path) {
-    for top in [FIXTURE_FAULT_FILE, FENCE_TIMES].into_iter().chain(TEST_PHASE_FILES).chain(SCRIPT_FILES) {
+    for top in [FIXTURE_FAULT_FILE, FENCE_TIMES, UNIT_TIMINGS].into_iter().chain(TEST_PHASE_FILES).chain(SCRIPT_FILES) {
         if pulled.join(top).is_file() {
             let _ = fs::create_dir_all(results_dir);
             let _ = fs::copy(pulled.join(top), results_dir.join(top));
@@ -2192,6 +2207,7 @@ pub fn run(env: &RunEnv, args: &RunArgs) -> i32 {
         Some(b) => eprintln!("round-vm run: DISK peak {:.2} GiB this pass", b as f64 / (1u64 << 30) as f64),
         None => eprintln!("round-vm run: DISK peak unread: the pass left no disk-usage lines"),
     }
+    let unit = unit_timings(&results_root, started);
     let record = tsd::pass::PassRecord {
         repo: args.round_repo.clone().unwrap_or_else(|| "-".into()),
         batch: batch.to_string(),
@@ -2209,6 +2225,10 @@ pub fn run(env: &RunEnv, args: &RunArgs) -> i32 {
         detail: lost.unwrap_or_default(),
         fences: fence_seconds(&results_root, started),
         disk_peak_b,
+        unit_build_secs: unit.build_secs,
+        unit_run_secs: unit.run_secs,
+        unit_tests: unit.timings.tests,
+        unit_slowest: if unit.timings.slowest.is_empty() { String::new() } else { unit.timings.slowest_field() },
     };
     match env.record.pass_record(&env.cfg.run_dir, &record) {
         Ok(()) => {
@@ -3954,6 +3974,53 @@ mod tests {
         assert!(integ.contains(&spira_config::unit_tier::integration_words(Some("unittest"), "--workspace")) && integ.contains(&spira_config::unit_tier::doc_words(Some("unittest"), "--workspace")), "the integration tier keeps cargo test: {integ}");
         assert!(!REMOTE_SCRIPT.contains("unit_hang_watch ~/round-unit-tests.log"), "nextest terminates the test; no watcher kills the binary");
         assert!(REMOTE_SCRIPT.contains("unit_hang_watch ~/round-integration-tests.log"));
+    }
+
+    fn results_with_unit_timings(age_secs: u64) -> (TempDir, u64) {
+        let dir = TempDir::new();
+        let path = dir.path().join(UNIT_TIMINGS);
+        let log = "        PASS [   2.000s] ( 1/2) gate a::t\n        FAIL [   9.500s] ( 2/2) queue b::u\n     Summary [  9.600s] 2 tests run: 1 passed, 1 failed, 0 skipped\n";
+        fs::write(&path, spira_config::unit_tier::render(41, 73, log)).unwrap();
+        let started = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() - 100;
+        let at = std::time::UNIX_EPOCH + Duration::from_secs(started + 50 - age_secs);
+        fs::File::options().write(true).open(&path).unwrap().set_modified(at).unwrap();
+        (dir, started)
+    }
+
+    #[test]
+    fn a_fresh_unit_timings_file_fills_the_passs_four_unit_fields() {
+        let (dir, started) = results_with_unit_timings(0);
+        let u = unit_timings(dir.path(), started);
+        assert_eq!((u.build_secs, u.run_secs, u.timings.tests), (41, 73, 2));
+        assert_eq!(u.timings.slowest_field(), "queue/b::u:9.5,gate/a::t:2");
+    }
+
+    #[test]
+    fn a_unit_timings_file_older_than_the_pass_is_not_counted() {
+        let (dir, started) = results_with_unit_timings(10_000);
+        assert_eq!(unit_timings(dir.path(), started), Default::default());
+        assert_eq!(unit_timings(&dir.path().join("none"), started), Default::default());
+    }
+
+    #[test]
+    fn the_script_writes_unit_timings_after_the_unit_tier_on_the_green_and_the_red_path() {
+        let write = REMOTE_SCRIPT.find("write_unit_timings\n").expect("the unit tier's timings are written by a call");
+        let took = REMOTE_SCRIPT.find("UNIT-TESTS took").unwrap();
+        let red = REMOTE_SCRIPT.find("test_phase_red unit-tests").unwrap();
+        let green = REMOTE_SCRIPT.find("UNIT-TESTS: PASS").unwrap();
+        assert!(took < write && write < green && write < red, "after the unit run, before either verdict branch");
+        let body = script_fn("write_unit_timings");
+        assert!(body.contains("unit_build_secs") && body.contains("unit_secs") && body.contains("$rdir/unit-timings") && body.contains("round-unit-tests.log"), "{body}");
+        assert!(body.contains(&format!("grep -E '{}'", spira_config::unit_tier_timing_lines!())), "{body}");
+    }
+
+    #[test]
+    fn the_unit_timings_file_is_pulled_beside_the_fence_times() {
+        let pulled = TempDir::new();
+        let kept = TempDir::new();
+        fs::write(pulled.path().join(UNIT_TIMINGS), "unit_build_secs 1\nunit_secs 2\n").unwrap();
+        keep_top_files(pulled.path(), kept.path());
+        assert!(kept.path().join(UNIT_TIMINGS).is_file());
     }
 
     #[test]

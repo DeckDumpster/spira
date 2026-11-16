@@ -196,7 +196,7 @@ impl UnitTimings {
 }
 
 /// The unit tier's file form: the VM's seconds, then the log lines [`unit_tier_timing_lines!`] matches.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct UnitFile {
     pub build_secs: u64,
     pub run_secs: u64,

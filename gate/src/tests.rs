@@ -2424,7 +2424,9 @@ fn a_unit_gate_records_the_test_phases_count_seconds_and_slowest_tests_beside_th
 fn a_gate_whose_test_phase_did_not_run_records_no_unit_timings() {
     let f = unit_fake(&["docs/x.md"]);
     assert_eq!(f.run(), PASS);
-    assert!(meter(&f).contains(" unit_build_secs=0 unit_run_secs=0 unit_tests=0 unit_slowest=-"), "{}", meter(&f));
+    assert!(!meter(&f).contains("unit_"), "{}", meter(&f));
+    let rows = f.tsd.borrow();
+    assert!(rows.iter().any(|r| r.contains("\"unit_tests\":0") && r.contains("\"unit_slowest\":\"\"")), "{rows:?}");
 }
 
 #[test]
@@ -2458,7 +2460,7 @@ fn unit_mode_rust_only_runs_fences_then_the_touched_crates_tests_and_no_suite() 
         "gate: composition=unit — fences (suites off, no build fence: the build phase is the compile check), then cargo build and test on the host for 2 crates: queue spira-config (touched: spira-config)"
     ));
     assert!(
-        meter(&f).ends_with(" rc=0 pass compose=unit phases=fences:7,build:7,test:7 test_clock=7s\n"),
+        meter(&f).ends_with(" rc=0 pass compose=unit phases=fences:7,build:7,test:7 unit_build_secs=7 unit_run_secs=7 unit_tests=0 unit_slowest=- test_clock=7s\n"),
         "{}",
         meter(&f)
     );
@@ -2908,7 +2910,7 @@ fn a_red_unit_test_on_a_green_base_is_the_branchs() {
     assert!(!meter(&f).contains("base-build") && !meter(&f).contains("base-test"));
     assert_eq!(f.checkouts.borrow()[1], BASE);
     assert!(meter(&f).contains(
-        "compose=unit phases=fences:7,build:7,test:7,base-fences:7 test_clock=7s\n"
+        "compose=unit phases=fences:7,build:7,test:7,base-fences:7 unit_build_secs=7 unit_run_secs=7 unit_tests=0 unit_slowest=- test_clock=7s\n"
     ));
     assert!(f.stderr().contains("phase 'test' failed (exit 101)"));
     assert!(!f.stderr().contains("the same command passes against"));
@@ -3100,7 +3102,7 @@ fn a_crate_the_base_lacks_is_not_tested_on_the_base() {
     );
     let cmds = f.cmds.borrow().clone();
     assert_eq!(cmds.len(), 4, "base runs its fences only: {cmds:?}");
-    assert!(meter(&f).contains("base-fences:7 test_clock="));
+    assert!(meter(&f).contains("base-fences:7 unit_build_secs="));
 }
 
 #[test]
