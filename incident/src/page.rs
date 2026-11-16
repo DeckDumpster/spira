@@ -228,7 +228,7 @@ mod tests {
 
     fn nolever(conds: &[&str], steps: &[&str]) -> Candidate {
         let mut c = Candidate::new(
-            "RoundController/repo-b",
+            "DwarfFleet/repo-b",
             Source::NoLever,
             conds.iter().map(|s| s.to_string()).collect(),
             Decision { question: "q".into(), default: "d".into() },
@@ -274,7 +274,7 @@ mod tests {
 
     #[test]
     fn a_raise_pages_once_whatever_the_cap_and_a_new_raise_pages_again() {
-        let raise = |since: &str| Candidate::new("RoundController/r", Source::Raised { since: since.into() }, vec!["LaneBlocked".into()], Decision { question: "q".into(), default: "d".into() });
+        let raise = |since: &str| Candidate::new("DwarfFleet/r", Source::Raised { since: since.into() }, vec!["LaneBlocked".into()], Decision { question: "q".into(), default: "d".into() });
         let rows = sent(&[], &raise("t1"), "", 1000);
         assert_eq!(decide(&rows, &raise("t1"), 1060), Verdict::Quiet);
         assert_eq!(decide(&rows, &raise("t2"), 1120), Verdict::Send, "a raise is not capped by the window");
@@ -285,7 +285,7 @@ mod tests {
 
     #[test]
     fn a_raise_and_a_pass_record_entry_on_one_section_keep_their_own_rows() {
-        let raise = Candidate::new("RoundController/repo-b", Source::Raised { since: "t1".into() }, vec!["A".into()], Decision { question: "r".into(), default: "d".into() });
+        let raise = Candidate::new("DwarfFleet/repo-b", Source::Raised { since: "t1".into() }, vec!["A".into()], Decision { question: "r".into(), default: "d".into() });
         let lever = nolever(&["A"], &["s1"]);
         let mut exhausted = nolever(&["A"], &["s1"]);
         exhausted.source = Source::Exhausted;
@@ -315,7 +315,7 @@ mod tests {
         c.steps.clear();
         let b = c.body();
         assert!(b.contains("## Class basis") && b.contains("none\n"), "{b}");
-        assert_eq!(c.reference(), "page:RoundController/repo-b:StackedOnUndrivenParent");
-        assert!(c.subject().contains("RoundController/repo-b"));
+        assert_eq!(c.reference(), "page:DwarfFleet/repo-b:StackedOnUndrivenParent");
+        assert!(c.subject().contains("DwarfFleet/repo-b"));
     }
 }

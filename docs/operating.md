@@ -137,7 +137,7 @@ continues, and `world start` lifts it.
 The reconciler's goodput pass (the `reconcile.goodput` task, every minute) and the
 lifecycle section (the `reconcile.section` task) run in `spira-runtime serve`; a world stop (`scheduler halt`) holds their effects while they
 keep observing. Every section kind on `SPIRA_RECONCILER_SHADOW_KINDS` (by default
-`RoundController Lifecycle Alarms`) is planned and recorded as a would-step, and nothing is
+`Lifecycle Alarms`) is planned and recorded as a would-step, and nothing is
 written to `intents/` for it.
 
 Goodput charges halted time and reverts from typed records alone. Every `world` stop, drain,

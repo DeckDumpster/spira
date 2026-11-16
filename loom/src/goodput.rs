@@ -25,9 +25,9 @@ mod tests {
 
     const NOW: i64 = 1_000_000;
 
-    const FIXTURE: &str = "SP_GP_RATE='3.2'\nSP_GP_TARGET='5'\nSP_GP_PASS_AT='999986'\nSP_GP_BINDING='round-controller/pokebot'\n\
+    const FIXTURE: &str = "SP_GP_RATE='3.2'\nSP_GP_TARGET='5'\nSP_GP_PASS_AT='999986'\nSP_GP_BINDING='dwarf-fleet/pokebot'\n\
         SP_GP_DISTANCE='1 repeat identity open'\nSP_GP_STEP='hold-member b-17@3f2a'\nSP_GP_STEP_ACK='14:02'\nSP_GP_STEP_HORIZON='10m'\n\
-        SP_GP_SEC_N='3'\nSP_GP_SEC0_REF='round-controller/pokebot'\nSP_GP_SEC0_DIST='1'\nSP_GP_SEC0_AGE='12'\nSP_GP_SEC0_FRESH='fresh'\n\
+        SP_GP_SEC_N='3'\nSP_GP_SEC0_REF='dwarf-fleet/pokebot'\nSP_GP_SEC0_DIST='1'\nSP_GP_SEC0_AGE='12'\nSP_GP_SEC0_FRESH='fresh'\n\
         SP_GP_SEC1_REF='lifecycle/all'\nSP_GP_SEC1_DIST='0'\nSP_GP_SEC1_AGE='40'\nSP_GP_SEC1_FRESH='fresh'\n\
         SP_GP_SEC2_REF='alarms/all'\nSP_GP_SEC2_DIST='2'\nSP_GP_SEC2_AGE='7'\nSP_GP_SEC2_FRESH='fresh'\n";
 

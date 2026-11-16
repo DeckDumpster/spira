@@ -4,7 +4,7 @@
 use spira_runtime::tasks::b::kit::{names, testing as t, Input};
 use spira_runtime::tasks::b::reconcile_goodput::{self as task, Carry, LockAnswer, PassDigest, Phase, ReconcileGoodput as H, Snapshot};
 
-const SET: &[(&str, &str)] = &[(task::CADENCE_KEY, "60"), (task::PASS_TIMEOUT_KEY, "50"), (task::SHADOW_KINDS_KEY, "RoundController Lifecycle Alarms"), (task::DEADMAN_KEY, "180")];
+const SET: &[(&str, &str)] = &[(task::CADENCE_KEY, "60"), (task::PASS_TIMEOUT_KEY, "50"), (task::SHADOW_KINDS_KEY, "Lifecycle Alarms"), (task::DEADMAN_KEY, "180")];
 const MIN: u64 = 60_000;
 
 /// All sections fresh, distances below `close`, no intents due, the lock free.

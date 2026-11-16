@@ -304,8 +304,8 @@ mod tests {
     }
 
     const GOODPUT_FIXTURE: &str = "SP_AT='1000000000'\nSP_GP_RATE='3.2'\nSP_GP_TARGET='5'\nSP_GP_PASS_AT='986'\n\
-        SP_GP_BINDING='round-controller/pokebot'\nSP_GP_DISTANCE='1 repeat identity open'\nSP_GP_STEP='hold-member b-17@3f2a'\nSP_GP_STEP_ACK='14:02'\nSP_GP_STEP_HORIZON='10m'\n\
-        SP_GP_SEC_N='3'\nSP_GP_SEC0_REF='round-controller/pokebot'\nSP_GP_SEC0_DIST='1'\nSP_GP_SEC0_AGE='12'\nSP_GP_SEC0_FRESH='fresh'\n\
+        SP_GP_BINDING='dwarf-fleet/pokebot'\nSP_GP_DISTANCE='1 repeat identity open'\nSP_GP_STEP='hold-member b-17@3f2a'\nSP_GP_STEP_ACK='14:02'\nSP_GP_STEP_HORIZON='10m'\n\
+        SP_GP_SEC_N='3'\nSP_GP_SEC0_REF='dwarf-fleet/pokebot'\nSP_GP_SEC0_DIST='1'\nSP_GP_SEC0_AGE='12'\nSP_GP_SEC0_FRESH='fresh'\n\
         SP_GP_SEC1_REF='lifecycle/all'\nSP_GP_SEC1_DIST='0'\nSP_GP_SEC1_AGE='40'\nSP_GP_SEC1_FRESH='fresh'\n\
         SP_GP_SEC2_REF='alarms/all'\nSP_GP_SEC2_DIST='2'\nSP_GP_SEC2_AGE='7'\nSP_GP_SEC2_FRESH='fresh'\n";
 
@@ -320,8 +320,8 @@ mod tests {
     #[test]
     fn the_pane_shows_the_goodput_top_line_and_a_row_per_section() {
         let out = goodput_frame(GOODPUT_FIXTURE, 120).join("\n");
-        assert!(out.contains("round-controller/pokebot: 1 repeat identity open; step `hold-member b-17@3f2a` acked 14:02, horizon 10m"), "{out}");
-        for s in ["round-controller/pokebot distance 1", "lifecycle/all distance 0", "alarms/all distance 2"] {
+        assert!(out.contains("dwarf-fleet/pokebot: 1 repeat identity open; step `hold-member b-17@3f2a` acked 14:02, horizon 10m"), "{out}");
+        for s in ["dwarf-fleet/pokebot distance 1", "lifecycle/all distance 0", "alarms/all distance 2"] {
             assert_eq!(out.matches(s).count(), 1, "{s}: {out}");
         }
     }

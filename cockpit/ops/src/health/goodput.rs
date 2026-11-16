@@ -140,10 +140,10 @@ const NOW: i64 = 1_000_000;
     fn snap(age: i64) -> Snapshot {
         Snapshot::parse(&format!(
             "SP_GP_RATE='3.2'\nSP_GP_TARGET='5'\nSP_GP_PASS_AT='{}'\n\
-             SP_GP_BINDING='round-controller/pokebot'\nSP_GP_DISTANCE='1 repeat identity open'\n\
+             SP_GP_BINDING='dwarf-fleet/pokebot'\nSP_GP_DISTANCE='1 repeat identity open'\n\
              SP_GP_STEP='hold-member b-17@3f2a'\nSP_GP_STEP_ACK='14:02'\nSP_GP_STEP_HORIZON='10m'\n\
              SP_GP_SEC_N='3'\n\
-             SP_GP_SEC0_REF='round-controller/pokebot'\nSP_GP_SEC0_DIST='1'\nSP_GP_SEC0_AGE='12'\nSP_GP_SEC0_FRESH='fresh'\n\
+             SP_GP_SEC0_REF='dwarf-fleet/pokebot'\nSP_GP_SEC0_DIST='1'\nSP_GP_SEC0_AGE='12'\nSP_GP_SEC0_FRESH='fresh'\n\
              SP_GP_SEC1_REF='lifecycle/all'\nSP_GP_SEC1_DIST='0'\nSP_GP_SEC1_AGE='40'\nSP_GP_SEC1_FRESH='fresh'\n\
              SP_GP_SEC2_REF='alarms/all'\nSP_GP_SEC2_FRESH='stale'\n",
             NOW - age
@@ -156,7 +156,7 @@ const NOW: i64 = 1_000_000;
         assert!(top.contains("3.2/day of 5"), "{top}");
         assert!(top.contains("pass 14s"), "{top}");
         assert!(
-            top.contains("round-controller/pokebot: 1 repeat identity open; step `hold-member b-17@3f2a` acked 14:02, horizon 10m"),
+            top.contains("dwarf-fleet/pokebot: 1 repeat identity open; step `hold-member b-17@3f2a` acked 14:02, horizon 10m"),
             "{top}"
         );
     }
@@ -164,7 +164,7 @@ const NOW: i64 = 1_000_000;
     #[test]
     fn each_section_has_one_row_with_its_distance_age_and_freshness() {
         let rows = sections_section(&snap(14), 120, DEADMAN, NOW).iter().map(|r| strip(r)).collect::<Vec<_>>();
-        for (r, want) in [("round-controller/pokebot", "12s"), ("lifecycle/all", "40s")] {
+        for (r, want) in [("dwarf-fleet/pokebot", "12s"), ("lifecycle/all", "40s")] {
             assert_eq!(rows.iter().filter(|l| l.contains(r)).count(), 1, "{rows:?}");
             assert!(rows.iter().any(|l| l.contains(r) && l.contains(want)), "{rows:?}");
         }
@@ -238,6 +238,6 @@ const NOW: i64 = 1_000_000;
         let rows = sections_section(&snap(14), 30, DEADMAN, NOW);
         let warned: Vec<&String> = rows.iter().filter(|r| r.starts_with(WARN)).collect();
         assert!(!warned.is_empty() && warned.iter().all(|r| strip(r).contains("alarms") || strip(r).starts_with("    ")), "{rows:?}");
-        assert!(rows.iter().filter(|r| strip(r).contains("round-controller")).all(|r| r.starts_with(DIM)), "{rows:?}");
+        assert!(rows.iter().filter(|r| strip(r).contains("dwarf-fleet")).all(|r| r.starts_with(DIM)), "{rows:?}");
     }
 }

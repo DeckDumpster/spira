@@ -44,7 +44,7 @@
 //! - Config (pinned, S10): `SPIRA_RECONCILER_PASS_TIMEOUT_SECS` (default 50,
 //!   `spira/conf.d/SPIRA_RECONCILER_PASS_TIMEOUT_SECS`; lock TTL and pass deadline,
 //!   `reconciler/src/goodput_pass.rs:56`), `SPIRA_RECONCILER_SHADOW_KINDS` (default
-//!   `RoundController Lifecycle Alarms`, `goodput_pass.rs:57`; already in `spira-runtime/src/settings.rs:113`).
+//!   `Lifecycle Alarms`, `goodput_pass.rs:57`; already in `spira-runtime/src/settings.rs:113`).
 //! - Fixtures: `reconciler-engine/src/select/tests.rs` (9 tests), `assemble/tests.rs`,
 //!   `spira-lc/src/sections/tests/goodput_pass.rs` (the engine on a rig store).
 //!
