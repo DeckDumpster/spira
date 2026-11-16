@@ -9,7 +9,7 @@ use spira_store::lc_call::{LcClient, LcError, Reply};
 /// The configured store client: the declared socket, with the release's `spira-lc` behind it
 /// only for the verbs the CLI answers.
 pub fn client() -> Result<LcClient, String> {
-    LcClient::configured()
+    LcClient::configured().map(|c| c.not_running_wait(std::time::Duration::ZERO))
 }
 
 fn last_line(r: &Reply) -> String {
@@ -31,6 +31,7 @@ pub fn renamed(e: &LcError, text: String) -> LcError {
     match e {
         LcError::Refused(_) => LcError::Refused(text),
         LcError::Fault(_) => LcError::Fault(text),
+        LcError::NotRunning(_) => LcError::NotRunning(text),
     }
 }
 

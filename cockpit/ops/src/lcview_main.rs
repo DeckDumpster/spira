@@ -15,9 +15,10 @@ fn lc(args: &[&str]) -> Result<String, LcError> {
     cockpit_ops::lcio::answer(&cockpit_ops::lcio::client().map_err(LcError::Fault)?, args)
 }
 
-/// Files a failed store read where `carry_forward` can cover it, and says whether the store is
-/// not running rather than faulted.
+/// Files a failed store read where `carry_forward` can cover it; a store that is not running is
+/// marked on the snapshot, decided by the error's kind and never its text.
 fn store_failed(s: &mut Snapshot, e: LcError) {
+    s.not_running |= matches!(e, LcError::NotRunning(_));
     s.store_errors.push(e.to_string());
 }
 

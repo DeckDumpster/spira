@@ -13,7 +13,18 @@ use store_view::{Projection, Read};
 /// key is unset or the route does not resolve.
 pub fn client() -> Option<LcClient> {
     let secs: u64 = spira_config::process::cfg("SPIRA_LC_TIMEOUT").ok().filter(|s| !s.is_empty())?.trim().parse().ok()?;
-    Some(LcClient::configured().ok()?.within(Duration::from_secs(secs)))
+    Some(unwaiting(LcClient::configured().ok()?.within(Duration::from_secs(secs))))
+}
+
+/// A probe never waits for an absent store: the read fails at once, and the probe serves what it last had.
+fn unwaiting(c: LcClient) -> LcClient {
+    c.not_running_wait(Duration::ZERO)
+}
+
+/// [`answer_on`] with a store that is not running told apart from any other failure.
+pub fn answer_kind(client: &LcClient, args: &[&str]) -> Result<String, crate::probes::lc::Gone> {
+    use crate::probes::lc::Gone;
+    client.answer(args).map_err(|e| if matches!(e, LcError::NotRunning(_)) { Gone::NotRunning } else { Gone::Failed })
 }
 
 /// `args`'s stdout when the store applied it (exit 0).
@@ -195,5 +206,15 @@ mod tests {
         assert_eq!(answer_on(&c, &["list", "--batches"]).as_deref(), Some("[{\"bead_id\":\"sp-a\"}]"));
         assert_eq!(answer_on(&c, &["pane-facets", "inflow"]), None);
         assert_eq!(sent.sent.lock().unwrap()[0], vec!["list".to_string(), "--batches".to_string()]);
+    }
+
+    #[test]
+    fn a_probe_client_for_an_absent_socket_answers_not_running_at_once() {
+        let t = testkit::TempDir::new("store-absent");
+        let c = unwaiting(LcClient::socket(t.join("sock")));
+        let began = Instant::now();
+        let e = answer_kind(&c, &["list"]);
+        assert_eq!(e, Err(crate::probes::lc::Gone::NotRunning));
+        assert!(began.elapsed() < Duration::from_secs(2), "no retry loop: {:?}", began.elapsed());
     }
 }

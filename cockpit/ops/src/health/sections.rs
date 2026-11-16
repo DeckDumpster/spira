@@ -61,6 +61,15 @@ pub fn sentinel_timer_active(instance: &str, probe: impl Fn(&str) -> (bool, Stri
     None
 }
 
+fn lifecycle_line(snap: &Snapshot) -> Option<String> {
+    let age = snap.get("SP_LC_STALE_S").and_then(|v| v.parse::<i64>().ok()).filter(|n| *n > 0)?;
+    Some(if snap.get("SP_LC_NOT_RUNNING") == Some("1") {
+        format!(" {DIM}lifecycle{RST}  {BAD}store not running{RST}, data from {age}s ago")
+    } else {
+        format!(" {DIM}lifecycle{RST}  {BAD}STALE {age}s{RST} — last good read, the store did not answer")
+    })
+}
+
 fn halt_banner(h: &HaltState) -> Vec<String> {
     if !h.stamp_exists && h.sentinel_active == Some(true) {
         return Vec::new();
@@ -211,10 +220,7 @@ pub fn header_line(
         out.push(format!(" {DIM}ALERT{RST}  {BAD}{B}{firing}{RST} firing  {BAD}{keys}{RST}"));
     }
 
-    let lc_stale = snap.get("SP_LC_STALE_S").and_then(|v| v.parse::<i64>().ok()).unwrap_or(0);
-    if lc_stale > 0 {
-        out.push(format!(" {DIM}lifecycle{RST}  {BAD}STALE {lc_stale}s{RST} — last good read, the store did not answer"));
-    }
+    out.extend(lifecycle_line(snap));
 
     let overrides_n = snap.get("SP_OVERRIDES_N").unwrap_or("0");
     if overrides_n == "?" {
@@ -1268,6 +1274,14 @@ fn now_placeholder() -> i64 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_store_that_is_not_running_is_said_so_with_the_age_of_the_data() {
+        let line = |env: &str| lifecycle_line(&Snapshot::parse(env)).unwrap_or_default();
+        assert!(line("SP_LC_STALE_S=14\nSP_LC_NOT_RUNNING=1\n").contains("store not running") && line("SP_LC_STALE_S=14\nSP_LC_NOT_RUNNING=1\n").contains("data from 14s ago"));
+        assert!(line("SP_LC_STALE_S=14\n").contains("STALE 14s"), "a fault keeps its text");
+        assert_eq!(line("SP_LC_STALE_S=0\nSP_LC_NOT_RUNNING=1\n"), "", "no stale read, nothing to say");
+    }
+
     // covers: UC-cockpit-observability-25
     #[test]
     fn no_snapshot_anywhere_says_so_and_a_snapshot_at_the_other_path_is_a_path_mismatch_naming_both() {
