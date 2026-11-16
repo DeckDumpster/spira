@@ -208,13 +208,23 @@ mod tests {
         assert_eq!(sent.sent.lock().unwrap()[0], vec!["list".to_string(), "--batches".to_string()]);
     }
 
+    struct Absent(std::sync::Mutex<Vec<Duration>>);
+
+    impl spira_store::lc_call::Transport for Absent {
+        fn exchange(&self, _: &[String], _: Option<&str>, _: Duration) -> Result<spira_store::lc_call::Reply, String> {
+            Err("exchange_kind only".into())
+        }
+        fn exchange_kind(&self, _: &[String], _: Option<&str>, _: Duration, wait: Duration) -> Result<spira_store::lc_call::Reply, LcError> {
+            self.0.lock().unwrap().push(wait);
+            Err(LcError::NotRunning("store not running".into()))
+        }
+    }
+
     #[test]
-    fn a_probe_client_for_an_absent_socket_answers_not_running_at_once() {
-        let t = testkit::TempDir::new("store-absent");
-        let c = unwaiting(LcClient::socket(t.join("sock")));
-        let began = Instant::now();
-        let e = answer_kind(&c, &["list"]);
-        assert_eq!(e, Err(crate::probes::lc::Gone::NotRunning));
-        assert!(began.elapsed() < Duration::from_secs(2), "no retry loop: {:?}", began.elapsed());
+    fn a_probe_client_answers_not_running_after_one_call_with_no_wait() {
+        let seen = Arc::new(Absent(std::sync::Mutex::new(Vec::new())));
+        let c = unwaiting(LcClient::over(Arc::clone(&seen) as Arc<dyn spira_store::lc_call::Transport>, true));
+        assert_eq!(answer_kind(&c, &["ops-graph"]), Err(crate::probes::lc::Gone::NotRunning));
+        assert_eq!(*seen.0.lock().unwrap(), vec![Duration::ZERO], "one call, told not to wait for an absent store");
     }
 }
