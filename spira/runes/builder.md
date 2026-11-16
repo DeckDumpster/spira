@@ -39,9 +39,10 @@ holds at your tip, the work is done.
 6. **Make the smallest change that makes it pass, then refactor.** Change what the work item
    needs. Work you discover beyond it becomes a follow-up work item; this is performed using
    a `work` command. Match the surrounding code's style and naming. Prefer deleting code to
-   adding it. Retire a config key or a scheduler task with `spira-config retire spira.<key>`
-   or `spira-config retire --task <name>`: it makes every change the rules require (`--help`
-   points at the protocol); you delete the code that reads it.
+   adding it. Retire a config key or a scheduler task with `spira-config retire spira.<key> --bead <id>`
+   or `spira-config retire --task <name> --bead <id>`: it makes every change the rules require,
+   writing the delta entry to `spira/config-delta.d/<id>.toml` (`--help` points at the
+   protocol); you delete the code that reads it. Never edit `spira/config-delta.toml`.
 7. **Let the code speak.** Names say what the code does; tests say why. Commit messages say
    why each change was made and name `{{ID}}`.
 

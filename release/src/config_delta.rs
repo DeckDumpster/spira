@@ -746,9 +746,9 @@ mod retire_tests {
         let before = spira_config::registry::load(&t.path().join("spira/conf.d")).unwrap();
         let default = |m: &BTreeMap<String, spira_config::registry::RegistryKey>| m["SPIRA_TASK_MODES"].default_expr().unwrap().to_string();
         assert!(drop_removed_tasks(live, default(&before).replace("old.task=act", "").trim(), &[]).is_err(), "control: an unnamed dropped task is refused");
-        spira_config::retire::retire_task(t.path(), "old.task").unwrap();
+        spira_config::retire::retire_task(t.path(), "old.task", "sp-x").unwrap();
         let after = spira_config::registry::load(&t.path().join("spira/conf.d")).unwrap();
-        let delta = Delta::parse(&fs::read_to_string(t.path().join(spira_config::retire::DELTA)).unwrap()).unwrap();
+        let delta = Delta::parse(&spira_config::delta::delta_text(&t.path().join("spira")).unwrap().unwrap()).unwrap();
         assert_eq!(drop_removed_tasks(live, &default(&after), &delta.removed_tasks).unwrap(), "alpha=act");
     }
 }

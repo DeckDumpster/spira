@@ -37,23 +37,35 @@ fn write(root: &Path, rel: &str, text: &str) -> Result<(), String> {
     fs::write(root.join(rel), text).map_err(|e| format!("{rel}: {e}"))
 }
 
-fn delta_list(delta: &mut toml_edit::DocumentMut, list: &str, entry: &str) -> Result<(), String> {
-    let item = delta.entry(list).or_insert(toml_edit::value(toml_edit::Array::new()));
-    let arr = item.as_array_mut().ok_or_else(|| format!("{DELTA}: {list} is not a list"))?;
-    if arr.iter().any(|v| v.as_str() == Some(entry)) {
-        return Err(format!("{DELTA} already lists {entry} under {list}"));
+fn fragment_path(bead: &str) -> Result<String, String> {
+    if bead.is_empty() || !bead.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return Err(format!("{bead:?} is not a bead id"));
     }
-    arr.push(entry);
-    Ok(())
+    Ok(format!("spira/config-delta.d/{bead}.toml"))
 }
 
-fn read_delta(root: &Path) -> Result<toml_edit::DocumentMut, String> {
-    let text = fs::read_to_string(root.join(DELTA)).unwrap_or_default();
-    text.parse().map_err(|e: toml_edit::TomlError| format!("{DELTA}: {e}"))
+/// Adds `entry` to `list` in the bead's fragment, refusing one the merged delta already lists.
+fn fragment_list(root: &Path, bead: &str, list: &str, entry: &str) -> Result<(String, String), String> {
+    let frag = fragment_path(bead)?;
+    let merged = crate::delta::delta_text(&root.join("spira"))?.unwrap_or_default();
+    let merged: toml::Value = merged.parse().map_err(|e: toml::de::Error| format!("{DELTA}: {e}"))?;
+    if merged.get(list).and_then(|v| v.as_array()).is_some_and(|a| a.iter().any(|v| v.as_str() == Some(entry))) {
+        return Err(format!("the config delta already lists {entry} under {list}"));
+    }
+    let text = fs::read_to_string(root.join(&frag)).unwrap_or_default();
+    let mut doc: toml_edit::DocumentMut = text.parse().map_err(|e: toml_edit::TomlError| format!("{frag}: {e}"))?;
+    let item = doc.entry(list).or_insert(toml_edit::value(toml_edit::Array::new()));
+    item.as_array_mut().ok_or_else(|| format!("{frag}: {list} is not a list"))?.push(entry);
+    Ok((frag, doc.to_string()))
+}
+
+fn write_fragment(root: &Path, frag: &str, text: &str) -> Result<(), String> {
+    fs::create_dir_all(root.join("spira/config-delta.d")).map_err(|e| format!("spira/config-delta.d: {e}"))?;
+    write(root, frag, text)
 }
 
 /// Retires `spira.<field>`: deletes its registry file and names it in the delta's `removed`.
-pub fn retire_key(root: &Path, dotted: &str) -> Result<Report, String> {
+pub fn retire_key(root: &Path, dotted: &str, bead: &str) -> Result<Report, String> {
     let field = dotted.strip_prefix("spira.").filter(|f| !f.is_empty() && !f.contains('.')).ok_or_else(|| format!("{dotted:?} is not a spira.<key> path"))?;
     let file = REGISTRY_DIRS
         .iter()
@@ -64,14 +76,13 @@ pub fn retire_key(root: &Path, dotted: &str) -> Result<Report, String> {
             })
         })
         .ok_or_else(|| format!("no registry file declares {dotted} under {}", REGISTRY_DIRS.join(" or ")))?;
-    let mut delta = read_delta(root)?;
-    delta_list(&mut delta, "removed", dotted)?;
+    let (frag, text) = fragment_list(root, bead, "removed", dotted)?;
     fs::remove_file(root.join(&file)).map_err(|e| format!("{file}: {e}"))?;
-    write(root, DELTA, &delta.to_string())?;
+    write_fragment(root, &frag, &text)?;
 
     let mut rep = Report::default();
     rep.changed.push(format!("removed {file}"));
-    rep.changed.push(format!("{DELTA}: {dotted} added to removed"));
+    rep.changed.push(format!("{frag}: {dotted} added to removed"));
     if read(root, FIXTURE).is_ok_and(|f| f.lines().any(|l| l.starts_with(&format!("{field} =")))) {
         rep.left.push(format!(
             "follow-up: delete the `{field}` line from {FIXTURE} once the landing ref no longer registers the key (`gate fixture-config --base` requires it until then); {FIXTURE} is untouched"
@@ -82,7 +93,7 @@ pub fn retire_key(root: &Path, dotted: &str) -> Result<Report, String> {
 }
 
 /// Retires scheduler task `name`: drops it from the `SPIRA_TASK_MODES` default and names it in `removed_tasks`.
-pub fn retire_task(root: &Path, name: &str) -> Result<Report, String> {
+pub fn retire_task(root: &Path, name: &str, bead: &str) -> Result<Report, String> {
     let reg = read(root, TASK_MODES)?;
     let at = reg
         .match_indices(&format!("{name}="))
@@ -96,14 +107,13 @@ pub fn retire_task(root: &Path, name: &str) -> Result<Report, String> {
         _ => (at, after),
     };
     let edited = format!("{}{}", &reg[..from], &reg[to..]);
-    let mut delta = read_delta(root)?;
-    delta_list(&mut delta, "removed_tasks", name)?;
+    let (frag, text) = fragment_list(root, bead, "removed_tasks", name)?;
     write(root, TASK_MODES, &edited)?;
-    write(root, DELTA, &delta.to_string())?;
+    write_fragment(root, &frag, &text)?;
 
     let mut rep = Report::default();
     rep.changed.push(format!("{TASK_MODES}: {name} dropped from the default"));
-    rep.changed.push(format!("{DELTA}: {name} added to removed_tasks"));
+    rep.changed.push(format!("{frag}: {name} added to removed_tasks"));
     rep.left.push(format!("delete the code that registers task {name:?} with the scheduler, and any unit or test that names it"));
     Ok(rep)
 }
