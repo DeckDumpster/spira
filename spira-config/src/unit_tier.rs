@@ -151,11 +151,10 @@ impl DenyList {
             if f[0] != "disabled" && f[0] != "quarantined" {
                 return Err(format!("deny list line {n}: state {:?} is neither disabled nor quarantined", f[0]));
             }
+            let word = |w: &str| !w.is_empty() && w.chars().all(|c| c.is_ascii_alphanumeric() || "_:.-/".contains(c));
             let well_formed = match f[1].split_once(':') {
-                Some(("suite", name)) => !name.is_empty() && !name.contains(' '),
-                Some(("unit" | "integration", rest)) => {
-                    rest.split_once(' ').is_some_and(|(a, b)| !a.is_empty() && !b.is_empty() && !b.contains(' '))
-                }
+                Some(("suite", name)) => word(name),
+                Some(("unit" | "integration", rest)) => rest.split_once(' ').is_some_and(|(a, b)| word(a) && word(b)),
                 _ => false,
             };
             if !well_formed {
@@ -379,6 +378,9 @@ mod tests {
             ("\n\nfrozen\tsuite:a\t-\t-\n", "line 3"),
             ("disabled\tunit:nopath\t-\t-\n", "line 1"),
             ("disabled\tfoo:a b\t-\t-\n", "line 1"),
+            ("disabled\tintegration:p x;touch$IFS/tmp/y\t-\t-\n", "line 1"),
+            ("disabled\tunit:a b\t-\t-\nquarantined\tunit:a t::x)|(y\t-\t-\n", "line 2"),
+            ("disabled\tsuite:a$(id)\t-\t-\n", "line 1"),
         ] {
             let e = DenyList::parse(text).unwrap_err();
             assert!(e.contains(line), "{e}");

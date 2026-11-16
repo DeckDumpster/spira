@@ -1268,7 +1268,7 @@ pub fn remote_command(job: &BatchJob) -> String {
     args.push(job.resume_url.clone().unwrap_or_default());
     args.push(job.fences.clone());
     args.push(job.image_tag.clone().unwrap_or_default());
-    let deny = spira_config::unit_tier::DenyList::parse(&job.deny_list).unwrap_or_default();
+    let deny = spira_config::unit_tier::DenyList::parse(&job.deny_list).expect("a deny list is validated when the run is parsed; a bad one must never become an empty one");
     args.push(job.deny_list.clone());
     args.push(deny.config_filter_line());
     args.push(deny.integration_skips());
@@ -4203,6 +4203,19 @@ mod tests {
         assert!(REMOTE_SCRIPT.contains("export SPIRA_TEST_DENY_LIST=%q"), "the attribution reruns source it");
         assert!(script_fn("integ_cargo").contains("--test '*'$integ_skips"));
         assert!(REMOTE_SCRIPT.contains("\"$HOME/round-nextest.toml\" \"$deny_filter_line\""));
+    }
+
+    #[test]
+    fn the_rounds_integration_command_is_the_gates_words_plus_the_skips() {
+        let deny = spira_config::unit_tier::DenyList::parse("disabled\tintegration:p x::y\t-\t-\n").unwrap();
+        let body = script_fn("integ_cargo");
+        let out = std::process::Command::new("bash")
+            .args(["-c", &format!("unit_env() {{ echo \"$*\"; }}\ninteg_skips=\"$1\"\n{body}\ninteg_cargo", ), "bash", &deny.integration_skips()])
+            .output()
+            .unwrap();
+        let first = String::from_utf8_lossy(&out.stdout).lines().next().unwrap().to_string();
+        let words = spira_config::unit_tier::integration_words(Some("unittest"), "--workspace").replace("'*'", "*");
+        assert_eq!(first, format!("{words}{}", deny.integration_skips()));
     }
 
     #[test]
