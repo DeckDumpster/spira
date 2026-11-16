@@ -1,5 +1,5 @@
-warning: Git tree '/home/ryan/spira/run/worktree/sp-92j92i' is dirty
-warning: creating lock file "/home/ryan/spira/run/worktree/sp-92j92i/docs/spikes/repo-contract-phase-1-evidence/flake/flake.lock": 
+warning: Git tree '<worktree>' is dirty
+warning: creating lock file "<worktree>/docs/spikes/repo-contract-phase-1-evidence/flake/flake.lock": 
 • Added input 'nixpkgs':
     'github:NixOS/nixpkgs/7fd4004d0511991fff3a0524856a9be09e28c5f0?narHash=sha256-i5qk1kLiit98rRbh1AXmWBNT9QXC/y4l5Wk/u5EdpDQ%3D' (2026-10-11)
 copying path '/nix/store/qppfiapixbahy4nfvqky1dv5b2xgkdx5-expand-response-params' from 'https://cache.nixos.org'...

@@ -1,10 +1,10 @@
 ## builder: absolute path
-PATH=/usr/bin:/bin:/home/ryan/spira/spira-releases/current/model-bin:/home/ryan/.cargo/bin
+PATH=/usr/bin:/bin:~/spira/spira-releases/current/model-bin:~/.cargo/bin
 rc=1
 2
 SPIRA_NIX_PROFILE_BIN='unset'
 ## gate env -i (PATH as engine.rs builds it)
-PATH=/home/ryan/spira/spira-releases/current/bin:/home/ryan/spira/spira-releases/current/spira:/usr/local/bin:/usr/bin:/bin:/home/ryan/.local/bin:/home/ryan/.cargo/bin
+PATH=~/spira/spira-releases/current/bin:~/spira/spira-releases/current/spira:/usr/local/bin:/usr/bin:/bin:~/.local/bin:~/.cargo/bin
 rc=1
 bash: line 1: nix: command not found
 ## gate env -i + nix profile bin appended
@@ -12,21 +12,21 @@ bash: line 1: nix: command not found
 ## env -i with PATH only, no HOME
 2
 ## env -i HOME only var set, flake develop
-warning: Git tree '/home/ryan/spira/run/worktree/sp-92j92i' is dirty
+warning: Git tree '<worktree>' is dirty
 uv 0.13.0 (x86_64-unknown-linux-gnu)
 ## env -i no HOME develop
-warning: Git tree '/home/ryan/spira/run/worktree/sp-92j92i' is dirty
+warning: Git tree '<worktree>' is dirty
 uv 0.13.0 (x86_64-unknown-linux-gnu)
 ## env -i HOME=/nonexistent
-       … while fetching the input 'git+file:///home/ryan/spira/run/worktree/sp-92j92i'
+       … while fetching the input 'git+file://<worktree>'
 
        error: creating directory "/nonexistent/.cache/nix/fetcher-locks": Permission denied
 ## env -i HOME=$HOME XDG_CACHE_HOME=/tmp/xc
-warning: Git tree '/home/ryan/spira/run/worktree/sp-92j92i' is dirty
+warning: Git tree '<worktree>' is dirty
 uv 0.13.0 (x86_64-unknown-linux-gnu)
 ## env -i NIX_REMOTE=daemon, HOME=/tmp/emptyhome
-warning: Git tree '/home/ryan/spira/run/worktree/sp-92j92i' is dirty
+warning: Git tree '<worktree>' is dirty
 uv 0.13.0 (x86_64-unknown-linux-gnu)
 ## env -i HOME=/tmp/emptyhome (no NIX_REMOTE)
-warning: Git tree '/home/ryan/spira/run/worktree/sp-92j92i' is dirty
+warning: Git tree '<worktree>' is dirty
 uv 0.13.0 (x86_64-unknown-linux-gnu)
