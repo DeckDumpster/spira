@@ -698,7 +698,7 @@ fn run_checks(args: &[String], base_red: bool, via: &str) -> (i32, Vec<String>) 
                 if let Some(p) = &found {
                     println!("resolved: {}", p.display());
                 } else if let Some(s) = shell {
-                    println!("-- {}: FAIL ({prog} is not supplied by the repository's flake dev shell ({}))", row.name, s.key);
+                    println!("-- {}: FAIL ({prog} is not supplied by the flake dev shell of {} ({}))", row.name, root.join("flake.nix").display(), s.key);
                     failed.push(row.name.clone());
                     log.row(row, None, started.elapsed().as_secs(), &record_file);
                     continue;
@@ -936,7 +936,7 @@ fn build_from_worktree(root: &std::path::Path, package: &str, dirs: &[std::path:
 
 /// The worktree's flake dev shell environment, or `None` when it has no `flake.nix`.
 fn flake_shell(root: &std::path::Path) -> Result<Option<repo_contract::shell::ShellEnv>, String> {
-    if !std::fs::read_to_string(root.join("flake.nix")).is_ok_and(|f| f.contains("devShells")) {
+    if !std::fs::read(root.join("flake.nix")).is_ok_and(|f| repo_contract::shell::declares_dev_shell(&f)) {
         return Ok(None);
     }
     repo_contract::shell::shell_env(root, &repo_contract::shell::nix_bin()?, &repo_contract::shell::cache_dir()?)

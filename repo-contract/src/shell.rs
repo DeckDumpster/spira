@@ -56,6 +56,11 @@ pub fn parse_dev_env(json: &str) -> Result<ShellEnv, String> {
     Ok(ShellEnv { vars, key: String::new() })
 }
 
+/// Whether a `flake.nix` names `devShells`.
+pub fn declares_dev_shell(flake_nix: &[u8]) -> bool {
+    String::from_utf8_lossy(flake_nix).contains("devShells")
+}
+
 /// The tree's flake dev shell environment; `None` (nothing spawned) when it has no `flake.nix`
 /// or its flake names no `devShells`: `print-dev-env` would otherwise fall back to a package's
 /// build environment, which is not a shell anyone declared.
@@ -64,7 +69,7 @@ pub fn shell_env(tree: &Path, nix_bin: &Path, cache: &Path) -> Result<Option<She
     let Ok(flake_nix) = std::fs::read(tree.join("flake.nix")) else {
         return Ok(None);
     };
-    if !String::from_utf8_lossy(&flake_nix).contains("devShells") {
+    if !declares_dev_shell(&flake_nix) {
         return Ok(None);
     }
     let flake_lock = std::fs::read(tree.join("flake.lock")).unwrap_or_default();
