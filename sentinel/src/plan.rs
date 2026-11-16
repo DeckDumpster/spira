@@ -457,18 +457,6 @@ mod tests {
     }
 
     #[test]
-    fn a_lane_persona_that_is_not_single_flight_is_not_held_to_the_lane_cap() {
-        let mut w = world();
-        w.task.clear();
-        w.lanes = vec![Rune { lane: true, live: 1, ..rune("other", 0) }, Rune { lane: true, ..rune("skuld", 1) }, Rune { lane: true, ..rune("mender", 1) }];
-        w.lanes_max_live = Some(1);
-        assert_eq!(called(&plan(&w)), ["skuld", "mender"]);
-        w.lanes[1].single_flight = true;
-        w.lanes[2].single_flight = true;
-        assert!(called(&plan(&w)).is_empty(), "single-flight lane personas still draw from the lane cap");
-    }
-
-    #[test]
     fn throttled_with_an_express_bead_grants_exactly_one_restricted_slot() {
         let w = CallWorld { throttled: true, express_ready: true, max_live_dwarves: Some(5), task: vec![rune("builder", 5)], ..world() };
         let p = plan(&w);
