@@ -1636,6 +1636,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "repo-contract"
+version = "1.0.0"
+dependencies = [
+ "serde_json",
+ "spira-config",
+ "testkit",
+]
+
+[[package]]
 name = "ring"
 version = "0.17.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3097,6 +3106,7 @@ dependencies = [
  "forge",
  "gate",
  "habits",
+ "repo-contract",
  "rule",
  "serde_json",
  "spira-config",

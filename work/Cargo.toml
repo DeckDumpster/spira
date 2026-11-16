@@ -18,6 +18,7 @@ tsd = { path = "../tsd" }
 forge = { path = "../forge" }
 bead = { path = "../bead" }
 rule = { path = "../rule" }
+repo-contract = { path = "../repo-contract" }
 
 [[bin]]
 name = "work"

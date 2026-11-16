@@ -637,6 +637,7 @@ fn run_checks(args: &[String], base_red: bool, via: &str) -> (i32, Vec<String>) 
         println!("work checks: this repository declares no [[check]] rows");
         return (0, Vec::new());
     }
+    let shell = if list_only { Ok(None) } else { flake_shell(root) };
     let mut failed = Vec::new();
     let mut deferred = false;
     let mut waived_tests = Vec::new();
@@ -658,8 +659,18 @@ fn run_checks(args: &[String], base_red: bool, via: &str) -> (i32, Vec<String>) 
             println!("-- {}: ok (the diff affects no crate; nothing to check)", row.name);
             continue;
         };
-        if argv != work::done_argv(&row.run) || row.run.contains("{branch}") {
-            println!("runs: {}", argv.join(" "));
+        let shell = match &shell {
+            Ok(s) => s.as_ref(),
+            Err(e) => {
+                println!("-- {}: FAIL (cannot enter the repository's dev shell: {e})", row.name);
+                failed.push(row.name.clone());
+                log.row(row, None, started.elapsed().as_secs(), &record_file);
+                continue;
+            }
+        };
+        if shell.is_some() || argv != work::done_argv(&row.run) || row.run.contains("{branch}") {
+            let within = shell.map(|s| format!("   in: flake dev shell ({})", s.key)).unwrap_or_default();
+            println!("runs: {}{within}", argv.join(" "));
         }
         let Some((prog, rest)) = argv.split_first() else {
             println!("-- {}: FAIL (empty run)", row.name);
@@ -668,9 +679,9 @@ fn run_checks(args: &[String], base_red: bool, via: &str) -> (i32, Vec<String>) 
             continue;
         };
         let secs = row.budget_ms.div_ceil(1000).max(1).to_string();
-        let dirs = work::trusted::process_dirs(false);
+        let dirs = work::row_dirs(shell, work::trusted::process_dirs(false));
         let exe = match &row.build {
-            Some(pkg) => match build_from_worktree(root, pkg, &dirs, row.budget_ms) {
+            Some(pkg) => match build_from_worktree(root, pkg, &dirs, shell, row.budget_ms) {
                 Ok(path) => {
                     println!("built from worktree: {}", path.display());
                     path
@@ -686,19 +697,26 @@ fn run_checks(args: &[String], base_red: bool, via: &str) -> (i32, Vec<String>) 
                 let found = work::trusted::resolve(prog, &dirs);
                 if let Some(p) = &found {
                     println!("resolved: {}", p.display());
+                } else if let Some(s) = shell {
+                    println!("-- {}: FAIL ({prog} is not supplied by the repository's flake dev shell ({}))", row.name, s.key);
+                    failed.push(row.name.clone());
+                    log.row(row, None, started.elapsed().as_secs(), &record_file);
+                    continue;
                 }
                 found.unwrap_or_else(|| std::path::PathBuf::from(prog))
             }
         };
         let ran_from = std::time::Instant::now();
         let path_env = work::trusted::join_path(&dirs);
+        let shell_vars: Vec<(String, String)> = shell.map(|s| s.row_vars().map(|(k, v)| (k.clone(), v.clone())).collect()).unwrap_or_default();
         let out = if prog == "cargo" {
-            let mut bounded = vec!["timeout".to_string(), secs, exe.to_string_lossy().into_owned()];
+            let timeout = work::trusted::resolve("timeout", &work::trusted::process_dirs(false)).unwrap_or_else(|| std::path::PathBuf::from("timeout"));
+            let mut bounded = vec![timeout.to_string_lossy().into_owned(), secs, exe.to_string_lossy().into_owned()];
             bounded.extend(rest.iter().cloned());
             // batch-job: bounded by the row's budget through `timeout`
-            Command::new(&bounded[0]).args(&bounded[1..]).env("PATH", &path_env).current_dir(root).output()
+            Command::new(&bounded[0]).args(&bounded[1..]).envs(shell_vars.iter().map(|(k, v)| (k, v))).env("PATH", &path_env).current_dir(root).output()
         } else {
-            work::run_row(&exe, rest, root, std::ffi::OsStr::new(&path_env), row.budget_ms)
+            work::run_row(&exe, rest, root, std::ffi::OsStr::new(&path_env), &shell_vars, row.budget_ms)
         };
         match out {
             Ok(o) => {
@@ -892,7 +910,7 @@ fn checks_passed_at_tip() -> bool {
 
 /// Build `package` from the worktree and return its binary. Inherits `RUSTC_WRAPPER`, the
 /// `SPIRA_ADMIT_*` and `SCCACHE_*` vars, so the build is admitted and warm.
-fn build_from_worktree(root: &std::path::Path, package: &str, dirs: &[std::path::PathBuf], budget_ms: u64) -> Result<std::path::PathBuf, String> {
+fn build_from_worktree(root: &std::path::Path, package: &str, dirs: &[std::path::PathBuf], shell: Option<&repo_contract::shell::ShellEnv>, budget_ms: u64) -> Result<std::path::PathBuf, String> {
     let target = work::check_target(std::env::var_os("CARGO_TARGET_DIR"), root);
     let secs = budget_ms.div_ceil(1000).max(900).to_string();
     let path = target.join("debug").join(package);
@@ -903,6 +921,7 @@ fn build_from_worktree(root: &std::path::Path, package: &str, dirs: &[std::path:
     }
     let built = spira_config::bounded::bounded_for("cargo", &secs)
         .args(["build", "-p", package, "--bin", package])
+        .envs(shell.into_iter().flat_map(|s| s.row_vars()))
         .env("PATH", work::trusted::join_path(dirs))
         .env("CARGO_TARGET_DIR", &target)
         .current_dir(root)
@@ -913,6 +932,14 @@ fn build_from_worktree(root: &std::path::Path, package: &str, dirs: &[std::path:
         return Err(format!("`cargo build -p {package}` failed ({}): {}", built.status, err.trim()));
     }
     work::trusted::resolve(&path.to_string_lossy(), &[]).ok_or_else(|| format!("{} is not an executable after the build", path.display()))
+}
+
+/// The worktree's flake dev shell environment, or `None` when it has no `flake.nix`.
+fn flake_shell(root: &std::path::Path) -> Result<Option<repo_contract::shell::ShellEnv>, String> {
+    if !std::fs::read_to_string(root.join("flake.nix")).is_ok_and(|f| f.contains("devShells")) {
+        return Ok(None);
+    }
+    repo_contract::shell::shell_env(root, &repo_contract::shell::nix_bin()?, &repo_contract::shell::cache_dir()?)
 }
 
 /// Programs `work review` and `work checks` will exec that resolve nowhere, named so a missing
@@ -926,10 +953,22 @@ fn unresolved_programs() -> Vec<String> {
     }
     let root = spira_config::bounded::bounded("git").args(["rev-parse", "--show-toplevel"]).output().ok().filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
     if let Some(root) = root.as_deref().map(std::path::Path::new) {
+        let shell = flake_shell(root);
+        let row_dirs = match &shell {
+            Ok(s) => work::row_dirs(s.as_ref(), work::trusted::process_dirs(false)),
+            Err(e) => {
+                out.push(format!("`work checks` cannot enter the repository's dev shell: {e}"));
+                Vec::new()
+            }
+        };
         for row in work::declared_rows(root).unwrap_or_default().into_iter().filter(|r| r.build.is_none()) {
             let argv = work::done_argv(&row.run);
-            if let Some(prog) = argv.first().filter(|p| work::trusted::resolve(p, &dirs).is_none()) {
-                out.push(format!("check {:?} runs {prog:?}, which resolves nowhere; `work checks` will fail it", row.name));
+            if shell.is_err() {
+                break;
+            }
+            if let Some(prog) = argv.first().filter(|p| work::trusted::resolve(p, &row_dirs).is_none()) {
+                let within = if matches!(shell, Ok(Some(_))) { " in the repository's flake dev shell" } else { "" };
+                out.push(format!("check {:?} runs {prog:?}, which resolves nowhere{within}; `work checks` will fail it", row.name));
             }
         }
     }

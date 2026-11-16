@@ -38,6 +38,7 @@ members = [
     "hel",
     "tsd-lifecycle-export",
     "work",
+    "repo-contract",
     "spira-lint",
     "rebase-stale",
     "habits",
