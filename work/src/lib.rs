@@ -36,6 +36,9 @@ pub fn looks_like_bead_id(s: &str) -> bool {
 
 /// A `[[check]]` row's command, run from the worktree root with no shell.
 pub fn done_argv(run: &str) -> Vec<String> {
+    if run.trim() == UNIT_BUILD {
+        return vec!["cargo".to_string()];
+    }
     habits::config::argv(run, &[])
 }
 
@@ -79,6 +82,8 @@ pub fn declared_rows(root: &std::path::Path) -> Result<Vec<habits::config::Check
 pub const CHECKS_PASS_FILE: &str = "spira-checks.pass";
 /// The token in a `[[check]]` row's `run` that becomes the crates the diff affects.
 pub const AFFECTED: &str = "{affected}";
+/// A row whose `run` is exactly this token runs the unit gate's own build line over the affected crates.
+pub const UNIT_BUILD: &str = "{unit-build}";
 
 /// The file under the worktree's git directory a row's record is written to.
 pub const CHECKS_RECORD_FILE: &str = "spira-check-record.json";
@@ -88,8 +93,8 @@ pub const CHECKS_LOG: &str = "checks.log";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Affected {
     /// A workspace-wide build input changed (root `Cargo.toml`, `Cargo.lock`, the toolchain pin,
-    /// `.cargo/`): `--workspace`.
-    Workspace,
+    /// `.cargo/`): `--workspace`. Carries every workspace member, which the unit gate selects then.
+    Workspace(Vec<String>),
     /// The touched crates and every transitive dependent; empty when no crate is touched.
     Crates(Vec<String>),
 }
@@ -101,7 +106,7 @@ pub fn affected_scope(diff_raw: &[u8], metadata_json: &str) -> Result<Affected, 
     use gate::compose::{classify, parse_diff_raw, parse_metadata, select_crates, Class};
     let members = parse_metadata(metadata_json)?;
     if parse_diff_raw(diff_raw).iter().any(|c| classify(c, &members) == Class::Workspace) {
-        return Ok(Affected::Workspace);
+        return Ok(Affected::Workspace(members.into_iter().map(|m| m.name).collect()));
     }
     select_crates(diff_raw, metadata_json, true).map(Affected::Crates)
 }
@@ -111,11 +116,18 @@ pub fn affected_scope(diff_raw: &[u8], metadata_json: &str) -> Result<Affected, 
 /// crate, so there is nothing for it to check.
 pub fn check_argv(run: &str, affected: &Affected, branch: &str, record: &std::path::Path) -> Option<Vec<String>> {
     let argv = habits::config::argv(run, &[("branch", branch), ("record", &record.to_string_lossy())]);
+    if argv == [UNIT_BUILD] {
+        return match affected {
+            Affected::Workspace(members) => Some(gate::compose::unit_build_words(members)),
+            Affected::Crates(c) if c.is_empty() => None,
+            Affected::Crates(c) => Some(gate::compose::unit_build_words(c)),
+        };
+    }
     if !argv.iter().any(|t| t == AFFECTED) {
         return Some(argv);
     }
     let words: Vec<String> = match affected {
-        Affected::Workspace => vec!["--workspace".to_string()],
+        Affected::Workspace(_) => vec!["--workspace".to_string()],
         Affected::Crates(c) if c.is_empty() => return None,
         Affected::Crates(c) => c.iter().flat_map(|c| ["-p".to_string(), c.clone()]).collect(),
     };
@@ -803,7 +815,7 @@ mod tests {
     fn the_clippy_check_falls_back_to_the_workspace_only_on_a_workspace_input() {
         for input in ["Cargo.lock", "Cargo.toml", "rust-toolchain.toml", ".cargo/config.toml"] {
             let scope = affected_scope(&raw(&["c/src/lib.rs", input]), META).unwrap();
-            assert_eq!(scope, Affected::Workspace, "{input}");
+            assert!(matches!(scope, Affected::Workspace(_)), "{input}");
             assert_eq!(check_argv(&repo_clippy_row(), &scope, "spira/sp-x", rec_path()).unwrap(), v(&["cargo", "clippy", "--workspace", "--features", "integration", "--all-targets", "--", "-D", "warnings"]));
         }
     }
@@ -814,6 +826,32 @@ mod tests {
         assert_eq!(scope, Affected::Crates(vec![]));
         assert_eq!(check_argv(&repo_clippy_row(), &scope, "spira/sp-x", rec_path()), None);
         assert_eq!(check_argv("spira-lint --diff x", &scope, "spira/sp-x", rec_path()).unwrap(), v(&["spira-lint", "--diff", "x"]));
+    }
+
+    #[test]
+    fn the_unit_build_row_is_the_gates_own_build_line_over_the_affected_crates() {
+        let scope = Affected::Crates(vec!["batcher-cut".into()]);
+        let want = gate::compose::unit_build_words(&["batcher-cut".to_string()]);
+        assert!(want.windows(2).any(|w| w == ["-p", "gate"]));
+        assert_eq!(check_argv(UNIT_BUILD, &scope, "spira/sp-x", rec_path()).unwrap(), want);
+    }
+
+    #[test]
+    fn the_unit_build_row_is_skipped_for_no_crate_and_spans_every_member_for_a_workspace() {
+        assert_eq!(check_argv(UNIT_BUILD, &Affected::Crates(vec![]), "spira/sp-x", rec_path()), None);
+        let scope = affected_scope(&raw(&["Cargo.lock"]), META).unwrap();
+        assert_eq!(
+            check_argv(UNIT_BUILD, &scope, "spira/sp-x", rec_path()).unwrap(),
+            gate::compose::unit_build_words(&["a".to_string(), "b".to_string(), "c".to_string()])
+        );
+    }
+
+    #[test]
+    fn this_repository_declares_a_unit_build_row_deferred_to_the_gate() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let row = declared_rows(root).unwrap().into_iter().find(|r| r.name == "unit-build").expect("a unit-build row");
+        assert_eq!(row.run, UNIT_BUILD);
+        assert_eq!(row.deferred_to.as_deref(), Some("gate"));
     }
 
     #[test]
