@@ -24,6 +24,10 @@ pub fn cursorfile(run: &str, name: &str) -> PathBuf {
     watchd_dir(run).join(format!("{name}.cursor"))
 }
 
+pub fn deliveredfile(run: &str, name: &str) -> PathBuf {
+    watchd_dir(run).join(format!("{name}.delivered"))
+}
+
 pub fn tail_lockfile(run: &str, name: &str) -> PathBuf {
     watchd_dir(run).join(format!("{name}.tail.lock"))
 }

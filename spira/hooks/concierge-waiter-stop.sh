@@ -9,7 +9,8 @@
 # session pid instead of the nearest claude ancestor; SPIRA_PROC_ROOT replaces /proc.
 set -uo pipefail
 
-[ -t 0 ] || cat >/dev/null 2>&1 || true
+input=''
+[ -t 0 ] || input="$(cat 2>/dev/null)" || true
 [ "${SPIRA_CONCIERGE:-}" = 1 ] || exit 0
 [ "${SPIRA_CONCIERGE_ALLOW_IDLE:-}" = 1 ] && exit 0
 
@@ -49,6 +50,40 @@ if [ -n "$session" ]; then
 fi
 
 [ "$alive" = 1 ] && exit 0
+
+# A waiter that exits delivering is what wakes the session; its notice is queued, so a delivery
+# during this turn means the next turn is already coming.
+delivered_this_turn() {
+    python3 - "$SPIRA_RUN/watchd/concierge-inbox.delivered" "$session" "$input" <<'PY'
+import json, sys
+try:
+    rec = json.load(open(sys.argv[1]))
+    session = int(sys.argv[2])
+    path = json.loads(sys.argv[3])["transcript_path"]
+    if session not in rec["ancestors"] or rec["lines"] <= 0:
+        sys.exit(1)
+    from datetime import datetime
+    start = None
+    for raw in open(path):
+        try:
+            e = json.loads(raw)
+        except ValueError:
+            continue
+        t = e.get("type")
+        if t == "user":
+            c = e.get("message", {}).get("content")
+            fresh = isinstance(c, str) or (isinstance(c, list) and any(isinstance(b, dict) and b.get("type") != "tool_result" for b in c))
+        else:
+            fresh = t == "attachment" and e.get("attachment", {}).get("type") == "queued_command"
+        if fresh and e.get("timestamp"):
+            ms = datetime.fromisoformat(e["timestamp"].replace("Z", "+00:00")).timestamp() * 1000
+            start = ms if start is None else max(start, ms)
+    sys.exit(0 if start is not None and rec["exited_ms"] > start else 1)
+except Exception:
+    sys.exit(1)
+PY
+}
+[ -n "$session" ] && [ -n "${SPIRA_RUN:-}" ] && delivered_this_turn && exit 0
 
 reason="No inbox waiter ($WAITER) is running under this session, so a P0 landing in the inbox would go unseen. Re-arm it before idling: run \`$WAITER\` (with SPIRA_TOML set) with Bash run_in_background. To idle anyway, set SPIRA_CONCIERGE_ALLOW_IDLE=1."
 python3 -c 'import json,sys; print(json.dumps({"decision": "block", "reason": sys.argv[1]}))' "$reason"

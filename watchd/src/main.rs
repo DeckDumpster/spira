@@ -158,7 +158,7 @@ fn main() {
                     std::process::exit(1);
                 }
             };
-            match next::cmd_next(&rows, &ctx, &next::NextArgs { name, dedup_window, timeout, poll: std::time::Duration::from_millis(500) }) {
+            match next::cmd_next(&rows, &ctx, &next::NextArgs { name, dedup_window, timeout, poll: std::time::Duration::from_millis(500), ancestors: spira_config::admission::ancestors(std::process::id(), &spira_config::admission::RealProcs) }) {
                 Ok(out) => {
                     print!("{out}");
                     0
