@@ -246,6 +246,24 @@ impl GateQueue {
         v
     }
 
+    /// Every job waiting in the inbox or held by a worker, for a reader that only looks:
+    /// a file that cannot be parsed is skipped and left where it is.
+    pub fn pending(&self) -> Vec<(Where, Job)> {
+        let read = |dir: &Path| -> Vec<Job> {
+            let Ok(rd) = fs::read_dir(dir) else { return Vec::new() };
+            rd.flatten()
+                .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("json"))
+                .filter_map(|e| fs::read_to_string(e.path()).ok().and_then(|t| serde_json::from_str::<Job>(&t).ok()))
+                .collect()
+        };
+        let mut out: Vec<(Where, Job)> = read(&self.dir(Where::Inbox)).into_iter().map(|j| (Where::Inbox, j)).collect();
+        out.extend(read(&self.dir(Where::Claimed)).into_iter().map(|j| (Where::Claimed, j)));
+        for d in self.claimed_dirs() {
+            out.extend(read(&d).into_iter().map(|j| (Where::Claimed, j)));
+        }
+        out
+    }
+
     /// Jobs currently claimed by any slot, counted per repository. Read-only: a claimed
     /// file that cannot be parsed is not this call's to refuse.
     pub fn running_by_repo(&self) -> std::collections::HashMap<String, usize> {
@@ -442,6 +460,23 @@ mod tests {
 
     fn dead(job: &Job) -> Done {
         Done { job: job.clone(), run: GateRun::parse(1, CAP.into()), started_ms: 1, finished_ms: 2001, gate: String::new() }
+    }
+
+    #[test]
+    fn pending_lists_inbox_and_slot_claims_and_leaves_an_unparsable_file_in_place() {
+        let d = tmpdir("pending");
+        let q = GateQueue::new(&d);
+        q.enqueue(&Job::new("r", "spira/sp-a", "sp-a", "t1", false).with_priority(0)).unwrap();
+        q.enqueue(&Job::new("r", "spira/sp-b", "sp-b", "t2", false).with_priority(1)).unwrap();
+        let claimed = q.claim(1).unwrap();
+        let junk = d.join("gate-worker/inbox/x.json");
+        fs::write(&junk, "not json").unwrap();
+        let mut got: Vec<(Where, String)> = q.pending().into_iter().map(|(w, j)| (w, j.bead)).collect();
+        got.sort_by(|a, b| a.1.cmp(&b.1));
+        let want = if claimed.bead == "sp-a" { [(Where::Claimed, "sp-a"), (Where::Inbox, "sp-b")] } else { [(Where::Inbox, "sp-a"), (Where::Claimed, "sp-b")] };
+        assert_eq!(got, want.map(|(w, b)| (w, b.to_string())));
+        assert!(junk.exists(), "a read-only listing must not move a file");
+        assert!(!d.join("gate-worker/refused").exists());
     }
 
     #[test]

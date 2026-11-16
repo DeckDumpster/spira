@@ -952,6 +952,10 @@ impl World {
             let root = wt::repo_root(&self.repo_map, repo).or_else(|_| wt::repo_root(&self.repo_map, &p.release_repo))?;
             wt::ancestor_in(&root, tip, &crate::tasks::d::sweep::landing_ref(&root))
         });
+        wt::mark_gated(
+            &mut snap,
+            &wt::gates_of(&landing_pass::gateq::GateQueue::new(&self.run_dir).pending(), &spira_config::admission::gate_occupancy(&self.run_dir, 0).holders),
+        );
         serde_json::to_string(&snap).map_err(|e| e.to_string())
     }
 

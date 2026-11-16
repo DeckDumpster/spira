@@ -22,6 +22,7 @@ fn config() -> Config {
         working_min: 2,
         submit_bound_s: 90 * MIN,
         cut_bound_s: 45 * MIN,
+        gate_timeout_s: 45 * MIN,
         deliver_bound_s: 60 * MIN,
         activate_bound_s: 15 * MIN,
         ask_bound_s: 60 * MIN,
@@ -35,7 +36,7 @@ fn config() -> Config {
 }
 
 fn bead(id: &str, repo: &str, state: &str, since: u64) -> Bead {
-    Bead { id: id.into(), repo: repo.into(), state: state.into(), since, ask_held: false, ask_since: None, held: false, tip: None, landed: false }
+    Bead { id: id.into(), repo: repo.into(), state: state.into(), since, ask_held: false, ask_since: None, held: false, tip: None, landed: false, gate: None }
 }
 
 fn last(repo: &str, kinds: &[(&str, u64)]) -> BTreeMap<String, BTreeMap<String, u64>> {
@@ -1229,4 +1230,76 @@ fn a_stall_is_held_back_until_its_own_edges_bound_has_passed_since_the_plane_res
     assert!(pages(&held).is_empty(), "{:?}", pages(&held));
     let due = decide(&age(5_000), &s, now * 1000, &cfg).1;
     assert_eq!(pages(&due).len(), 1, "{:?}", pages(&due));
+}
+
+fn gate_cfg() -> Config {
+    Config { cut_bound_s: 5 * MIN, gate_timeout_s: 45 * MIN, ..config() }
+}
+
+fn gating_fixture(submitted_ago: u64, gate: Option<Gating>, state: &str) -> (Snapshot, u64) {
+    let now = T0;
+    let mut s = healthy(now);
+    let mut b = bead("sp-0m57dx", "spira", state, now - submitted_ago * MIN);
+    b.gate = gate;
+    s.beads = vec![b];
+    s.last = last("spira", &[("Cut", now - 2 * MIN), ("Delivered", now - 20 * MIN)]);
+    s.open_rounds = Some(BTreeMap::new());
+    s.owners.clear();
+    (s, now)
+}
+
+fn cut_stalls(s: &Snapshot, now: u64) -> Vec<Stall> {
+    spira_runtime::tasks::e::watch_transitions::stalls(s, now, &gate_cfg()).into_iter().filter(|x| x.edge == CUT_EDGE).collect()
+}
+
+#[test]
+fn a_submitted_bead_whose_gate_is_running_inside_the_gate_timeout_does_not_page() {
+    let (s, now) = gating_fixture(6, Some(Gating::Running { since: T0 - 387 }), "SUBMITTED");
+    assert_eq!(cut_stalls(&s, now), vec![]);
+}
+
+#[test]
+fn a_submitted_bead_whose_gate_is_queued_does_not_page() {
+    let (s, now) = gating_fixture(6, Some(Gating::Queued), "SUBMITTED");
+    assert_eq!(cut_stalls(&s, now), vec![]);
+}
+
+#[test]
+fn a_submitted_bead_with_no_gate_pages_and_the_page_says_so() {
+    let (s, now) = gating_fixture(6, None, "SUBMITTED");
+    let found = cut_stalls(&s, now);
+    assert_eq!(found.len(), 1);
+    assert!(found[0].evidence.contains("sp-0m57dx") && found[0].evidence.contains("no gate queued or running"), "{}", found[0].evidence);
+}
+
+#[test]
+fn a_submitted_bead_whose_gate_ran_past_the_gate_timeout_pages_and_the_page_says_so() {
+    let (s, now) = gating_fixture(50, Some(Gating::Running { since: T0 - 46 * MIN }), "SUBMITTED");
+    let found = cut_stalls(&s, now);
+    assert_eq!(found.len(), 1);
+    assert!(found[0].evidence.contains("past SPIRA_GATE_TIMEOUT"), "{}", found[0].evidence);
+}
+
+#[test]
+fn a_certified_bead_pages_whatever_its_gate_holds() {
+    for gate in [None, Some(Gating::Queued), Some(Gating::Running { since: T0 - 60 })] {
+        let (s, now) = gating_fixture(6, gate, "CERTIFIED");
+        let found = cut_stalls(&s, now);
+        assert_eq!(found.len(), 1);
+        assert!(found[0].evidence.contains("certified, not cut"), "{}", found[0].evidence);
+    }
+}
+
+#[test]
+fn a_gate_is_read_from_the_queue_and_the_admission_leases() {
+    use landing_pass::gateq::{Job, Where};
+    use spira_config::admission::Lease;
+    let job = |branch: &str, bead: &str| Job::new("spira", branch, bead, "t", false);
+    let lease = |who: &str, since: u64| Lease { slot: 1, pid: 1, start: 1, who: who.into(), since, waited: 0, last: since, weight: 1 };
+    let jobs = vec![(Where::Inbox, job("spira/sp-q", "sp-q")), (Where::Claimed, job("spira/sp-a1", "sp-a1")), (Where::Claimed, job("spira/sp-w", "sp-w"))];
+    let got = gates_of(&jobs, &[lease("spira/sp-a1", 100)]);
+    assert_eq!(got.get("sp-q"), Some(&Gating::Queued));
+    assert_eq!(got.get("sp-a1"), Some(&Gating::Running { since: 100 }));
+    assert_eq!(got.get("sp-w"), Some(&Gating::Queued));
+    assert_eq!(got.get("sp-none"), None);
 }

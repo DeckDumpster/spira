@@ -1,6 +1,6 @@
 TYPE=u32
 GROUP=runtime
-DOC=Seconds with SUBMITTED or CERTIFIED work and no round cut before watch.transitions pages a SUBMITTED→IN_DELIVERY STALL.
+DOC=Seconds with SUBMITTED work that has no gate queued or running (or a gate past SPIRA_GATE_TIMEOUT), or CERTIFIED work, and no round cut before watch.transitions pages a SUBMITTED→IN_DELIVERY STALL.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
     : "${SPIRA_TRANSITIONS_CUT_BOUND:=2700}"
 SPIRA_CONF_DEFAULT_EOF

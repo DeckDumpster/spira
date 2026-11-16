@@ -1082,6 +1082,7 @@ mod tests {
             working_min: 1,
             submit_bound_s: 3600,
             cut_bound_s: 600,
+            gate_timeout_s: 2700,
             deliver_bound_s: 3600,
             activate_bound_s: 3600,
             ask_bound_s: 3600,
