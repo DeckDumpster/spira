@@ -5036,7 +5036,7 @@ fn a_gate_records_its_start_for_the_bead_once_it_holds_the_tree() {
 fn builder_fake() -> Fake {
     let f = unit_fake(&["spira-config/src/lib.rs"]);
     f.put_var("SPIRA_GATE_BEAD", "sp-a");
-    *f.build_dir_fact.borrow_mut() = Some(("abc123".into(), PathBuf::from("/pool/dir.4")));
+    *f.build_dir_fact.borrow_mut() = Some(("abc123".into(), PathBuf::from("pool/dir.4")));
     f
 }
 
@@ -5046,10 +5046,10 @@ fn a_unit_gate_builds_in_the_directory_its_beads_builder_submitted_from() {
     assert_eq!(f.run(), PASS, "{}", f.stderr());
     let asked = f.builders.borrow();
     let b = asked[0].as_ref().expect("the build tree was prepared for the builder's directory");
-    assert_eq!((b.bead.as_str(), b.tip.as_str(), b.dir.as_path()), ("sp-a", "abc123", Path::new("/pool/dir.4")));
+    assert_eq!((b.bead.as_str(), b.tip.as_str(), b.dir.as_path()), ("sp-a", "abc123", Path::new("pool/dir.4")));
     assert_eq!(b.wait, std::time::Duration::from_secs(120));
-    assert!(b.path.contains("/box/.cargo/bin"), "{}", b.path);
-    assert!(f.stderr().contains("gate: build in /pool/dir.4 (leased from sp-a's builder at abc123)"), "{}", f.stderr());
+    assert!(b.path.contains("box/.cargo/bin"), "{}", b.path);
+    assert!(f.stderr().contains("gate: build in pool/dir.4 (leased from sp-a's builder at abc123)"), "{}", f.stderr());
     assert!(meter(&f).contains(" build_dir=builder "), "{}", meter(&f));
     assert_eq!(tsd_row(&f)["build_dir"], "builder");
 }
@@ -5078,7 +5078,7 @@ fn a_builders_directory_that_cannot_be_leased_cleaned_or_aged_leaves_the_gate_on
         assert_eq!(f.run(), PASS, "{}", f.stderr());
         assert!(f.builders.borrow()[0].is_some(), "the gate tried the builder's directory first");
         assert!(meter(&f).contains(&format!(" build_dir={kind} ")), "{}", meter(&f));
-        assert!(f.stderr().contains("builder directory /pool/dir.4 not used"), "{}", f.stderr());
+        assert!(f.stderr().contains("builder directory pool/dir.4 not used"), "{}", f.stderr());
     }
 }
 

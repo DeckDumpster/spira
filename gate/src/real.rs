@@ -1355,8 +1355,8 @@ mod tests {
 
     #[test]
     fn the_newest_build_dir_fact_names_the_tip_and_directory_of_the_last_submit() {
-        let json = r#"[{"event_type":"build-dir","new_value":"aaa\t/pool/dir.1"},{"event_type":"build-dir","new_value":"bbb\t/pool/dir.2"}]"#;
-        assert_eq!(super::newest_build_dir(json), Some(("bbb".into(), "/pool/dir.2".into())));
+        let json = r#"[{"event_type":"build-dir","new_value":"aaa\tpool/dir.1"},{"event_type":"build-dir","new_value":"bbb\tpool/dir.2"}]"#;
+        assert_eq!(super::newest_build_dir(json), Some(("bbb".into(), "pool/dir.2".into())));
         assert_eq!(super::newest_build_dir("[]"), None);
         assert_eq!(super::newest_build_dir(r#"[{"new_value":"no-tab"}]"#), None);
     }

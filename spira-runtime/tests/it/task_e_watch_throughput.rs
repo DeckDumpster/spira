@@ -258,7 +258,7 @@ fn leftover_round_records_are_cleared_and_the_ones_refused_are_paged_by_name_onc
     let mut s = landed(400);
     s.snap.records = Records { clear: vec!["q/a/rec-one".into(), "q/a/rec-two".into()], held: vec!["q/b/rec-three names round b-1, which is OPEN".into()] };
     let mut r = rig(Arc::new(Mutex::new(s)));
-    assert_eq!(named(&r, CLEAR), [r#"["/q/a/rec-one","/q/a/rec-two"]"#]);
+    assert_eq!(named(&r, CLEAR), [r#"["q/a/rec-one","q/a/rec-two"]"#]);
     let pages = named(&r, INBOX_APPEND);
     assert!(pages.len() == 1 && pages[0].contains("refused clearing: q/b/rec-three names round b-1, which is OPEN"), "{pages:?}");
     r.advance(CADENCE_MS).unwrap();
