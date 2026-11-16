@@ -290,7 +290,6 @@ mod tests {
     // Each recorded message goes through the real mail lint against the tree's kind files, as
     // `mail send` would.
 
-    use std::path::Path;
 
     /// Records every message and answers "is the Concierge running" with a fixed value.
     struct Recorder {
@@ -343,7 +342,7 @@ mod tests {
 
     /// What `mail send` would say of this message, judged by the tree's own kind files.
     fn mail_lint(m: &Message) -> Result<(), String> {
-        let kinds = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/mail/kinds");
+        let kinds = spira_config::resolve::locate_home_for_process().unwrap().join("mail/kinds");
         let input = mail::lint::LintInput {
             from: &m.from,
             subject: &m.subject,

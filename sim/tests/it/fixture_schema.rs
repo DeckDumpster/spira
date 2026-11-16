@@ -4,10 +4,10 @@
 //! by a later capture fails here, before a reader starts to depend on it.
 
 use serde::Deserialize;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 fn root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures").join("replay")
+    testkit::manifest_dir().join("fixtures").join("replay")
 }
 
 macro_rules! checked_string {

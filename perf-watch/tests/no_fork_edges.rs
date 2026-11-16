@@ -54,7 +54,7 @@ fn unmarked(name: &str, text: &str) -> Vec<String> {
 #[test]
 fn no_unmarked_spira_fork_edge_remains_in_src() {
     let mut files = Vec::new();
-    rs_files(&Path::new(env!("CARGO_MANIFEST_DIR")).join("src"), &mut files);
+    rs_files(&testkit::manifest_dir().join("src"), &mut files);
     assert!(!files.is_empty(), "the scan read no sources");
     let found: Vec<String> = files.iter().flat_map(|f| unmarked(&f.display().to_string(), &std::fs::read_to_string(f).unwrap())).collect();
     assert!(found.is_empty(), "Spira fork edges with no FORK-EDGE reason:\n{}", found.join("\n"));

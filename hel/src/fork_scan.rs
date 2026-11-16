@@ -57,7 +57,7 @@ mod tests {
 
     #[test]
     fn no_hel_source_starts_a_spira_program_as_a_child() {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let dir = testkit::manifest_dir().join("src");
         let hits = scan(&dir, BANNED, &["fork_scan.rs"]);
         assert!(hits.is_empty(), "Spira children left in hel (in-process them, or mark FORK-EDGE):\n{}", hits.join("\n"));
     }

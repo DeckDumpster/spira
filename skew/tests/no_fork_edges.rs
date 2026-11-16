@@ -56,7 +56,7 @@ fn walk(dir: &Path, out: &mut Vec<String>) {
 #[test]
 fn no_unmarked_spira_subprocess_edge_remains() {
     let mut found = Vec::new();
-    walk(&Path::new(env!("CARGO_MANIFEST_DIR")).join("src"), &mut found);
+    walk(&testkit::manifest_dir().join("src"), &mut found);
     assert!(found.is_empty(), "unmarked fork edges:\n{}", found.join("\n"));
 }
 
@@ -93,5 +93,5 @@ fn marks(dir: &std::path::Path) -> usize {
 
 #[test]
 fn the_marked_fork_edges_only_shrink() {
-    assert_eq!(marks(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src")), MARKED_EDGES, "a FORK-EDGE mark was added or removed: move MARKED_EDGES with it");
+    assert_eq!(marks(&testkit::manifest_dir().join("src")), MARKED_EDGES, "a FORK-EDGE mark was added or removed: move MARKED_EDGES with it");
 }

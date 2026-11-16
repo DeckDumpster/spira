@@ -124,7 +124,7 @@ mod tests {
 
     #[test]
     fn this_crate_starts_no_unmarked_child() {
-        let got = scan(&Path::new(env!("CARGO_MANIFEST_DIR")).join("src"));
+        let got = scan(&testkit::manifest_dir().join("src"));
         assert!(got.is_empty(), "unmarked children:\n{}", got.join("\n"));
     }
 }

@@ -2,7 +2,6 @@
 //! slayer, the metrics writer, mail, a shell, or hel — unless the site is marked FORK-EDGE with
 //! what it still needs.
 
-use std::path::Path;
 
 fn banned() -> Vec<&'static str> {
     let mut b = hel::fork_scan::BANNED.to_vec();
@@ -12,7 +11,7 @@ fn banned() -> Vec<&'static str> {
 
 #[test]
 fn no_landing_pass_source_starts_a_spira_program_as_a_child() {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let dir = testkit::manifest_dir().join("src");
     let hits = hel::fork_scan::scan(&dir, &banned(), &[]);
     assert!(hits.is_empty(), "Spira children left in landing-pass (in-process them, or mark FORK-EDGE):\n{}", hits.join("\n"));
 }

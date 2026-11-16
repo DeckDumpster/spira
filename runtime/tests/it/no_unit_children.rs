@@ -1,7 +1,6 @@
 //! The unit port reaches the manager over D-Bus only: no file of it starts the manager's own
 //! command-line clients as a child.
 
-use std::path::Path;
 
 // Spelled in pieces so this file does not name a launcher itself.
 const CLIENTS: [&str; 2] = [concat!("system", "ctl"), concat!("systemd", "-run")];
@@ -17,8 +16,8 @@ fn children(src: &str) -> Vec<String> {
 
 #[test]
 fn no_file_of_the_port_starts_a_manager_client() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let files = [root.join("src/units.rs"), root.join("src/sources.rs"), root.join("../unit-run/src/dbus.rs")];
+    let root = testkit::manifest_dir();
+    let files = [root.join("src/units.rs"), root.join("src/sources.rs"), spira_config::resolve::checkout_root_for_process().unwrap().join("unit-run/src/dbus.rs")];
     let mut found = Vec::new();
     for f in &files {
         let text = std::fs::read_to_string(f).unwrap_or_else(|e| panic!("{}: {e}", f.display()));

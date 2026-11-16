@@ -167,10 +167,9 @@ fn several_errors_in_real_compiler_output_each_map_and_a_bare_summary_line_is_sk
 
 #[test]
 fn the_recipe_paths_are_the_ones_the_image_workflow_builds_on() {
-    let yml = std::fs::read_to_string(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../.github/workflows/round-ami-build.yml"
-    ))
+    let yml = std::fs::read_to_string(
+        spira_config::resolve::checkout_root_for_process().unwrap().join(".github/workflows/round-ami-build.yml"),
+    )
     .unwrap();
     let mut triggers: Vec<&str> = yml
         .lines()

@@ -450,7 +450,7 @@ mod tests {
             std::fs::write(run.join("invalid-closed.allow"), a).unwrap();
         }
         let cfg = Config {
-            home: Some(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira")),
+            home: Some(spira_config::resolve::locate_home_for_process().unwrap()),
             run: Some(run),
             id_prefix: "zz".into(),
             ..Config::test_fixture()

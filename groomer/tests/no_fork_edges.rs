@@ -60,7 +60,7 @@ fn walk(dir: &Path, out: &mut Vec<String>) {
 #[test]
 fn no_unmarked_spira_fork_edge_remains() {
     let mut found = Vec::new();
-    walk(&Path::new(env!("CARGO_MANIFEST_DIR")).join("src"), &mut found);
+    walk(&testkit::manifest_dir().join("src"), &mut found);
     assert!(found.is_empty(), "unmarked Spira→Spira fork edges:\n{}", found.join("\n"));
 }
 
@@ -91,7 +91,7 @@ fn body_of<'a>(text: &'a str, name: &str) -> &'a str {
 /// door applies bdq's protections and writes a create's lifecycle row itself.
 #[test]
 fn the_verbs_the_content_door_serves_never_fork_bdq() {
-    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/bd.rs");
+    let src = testkit::manifest_dir().join("src/bd.rs");
     let bd = std::fs::read_to_string(src).unwrap();
     let real = &bd[bd.find("impl Bd for RealBd").expect("RealBd")..];
     for f in ["label_add", "label_remove", "note", "create_child", "show_json"] {

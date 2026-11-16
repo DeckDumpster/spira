@@ -110,7 +110,9 @@ name = "batcher"
 version = "0.1.0"
 dependencies = [
  "forge",
+ "spira-config",
  "suite-select",
+ "testkit",
 ]
 
 [[package]]
@@ -426,6 +428,7 @@ dependencies = [
  "spira-config",
  "spira-otel",
  "spira-store",
+ "testkit",
 ]
 
 [[package]]
@@ -1011,6 +1014,7 @@ dependencies = [
  "proptest",
  "serde",
  "serde_json",
+ "testkit",
 ]
 
 [[package]]
@@ -1581,6 +1585,7 @@ dependencies = [
  "serde_json",
  "spira-config",
  "spira-store",
+ "testkit",
 ]
 
 [[package]]
@@ -1685,6 +1690,7 @@ dependencies = [
  "serde",
  "serde_json",
  "socket2",
+ "spira-config",
  "spira-otel",
  "testkit",
  "tokio",

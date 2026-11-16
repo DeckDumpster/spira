@@ -380,7 +380,7 @@ mod tests {
 
     #[test]
     fn every_key_the_watchdog_and_its_timer_read_is_registered_in_conf_d() {
-        let conf_d = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/conf.d");
+        let conf_d = spira_config::resolve::locate_home_for_process().unwrap().join("conf.d");
         let missing = |keys: &[&str]| keys.iter().filter(|k| !conf_d.join(k).is_file()).map(|k| k.to_string()).collect::<Vec<_>>();
         assert_eq!(missing(&["SPIRA_WATCHDOG_PLANTED_UNREGISTERED"]).len(), 1, "positive control: an unregistered key is reported");
         let all: Vec<&str> = KEYS.iter().copied().chain([KEY_EVERY]).collect();

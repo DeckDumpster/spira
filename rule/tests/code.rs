@@ -204,7 +204,7 @@ fn code_check_reports_a_store_slug_the_toc_lacks() {
     }
     let home = repo.path().to_str().unwrap();
     let rule = |args: &[&str]| {
-        std::process::Command::new(env!("CARGO_BIN_EXE_rule")).args(["--home", home, "code"]).args(args).arg("--texts").arg(texts.path()).current_dir(repo.path()).env_clear().env("PATH", std::env::var("PATH").unwrap_or_default()).output().unwrap()
+        std::process::Command::new(testkit::bin_exe("rule")).args(["--home", home, "code"]).args(args).arg("--texts").arg(texts.path()).current_dir(repo.path()).env_clear().env("PATH", std::env::var("PATH").unwrap_or_default()).output().unwrap()
     };
     let written = rule(&[]);
     assert_eq!(written.status.code(), Some(0), "{}", String::from_utf8_lossy(&written.stderr));

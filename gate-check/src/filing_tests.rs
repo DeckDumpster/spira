@@ -137,7 +137,7 @@ fn a_flaky_annotation_files_one_bead_and_a_red_twice_one_p1_deduplicated_raised_
     assert!(low.notes.borrow().iter().any(|(id, _)| id == "sp-low"));
 
     // The strings parsed above are the ones the producer emits.
-    let producer = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/gate-retry.sh")).unwrap();
+    let producer = std::fs::read_to_string(spira_config::resolve::locate_home_for_process().unwrap().join("gate-retry.sh")).unwrap();
     assert!(producer.contains("::warning title=flaky suite::%s was red"), "gate-retry.sh no longer emits the flaky annotation gate-check reads");
     assert!(producer.contains("::error title=red-twice suite::"), "gate-retry.sh no longer emits the red-twice annotation gate-check reads");
 }

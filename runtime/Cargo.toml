@@ -11,7 +11,7 @@ path = "tests/it/main.rs"
 required-features = ["integration"]
 
 [features]
-integration = ["lifecycle/integration", "spira-otel/integration", "testkit/integration", "unit-run/integration"]
+integration = ["lifecycle/integration", "spira-config/integration", "spira-otel/integration", "testkit/integration", "unit-run/integration"]
 
 [dependencies]
 lifecycle = { path = "../lifecycle" }
@@ -25,4 +25,5 @@ tokio = { version = "1", features = ["rt", "sync", "time", "macros"] }
 unit-run = { path = "../unit-run" }
 
 [dev-dependencies]
+spira-config = { path = "../spira-config" }
 testkit = { path = "../testkit" }

@@ -1572,7 +1572,7 @@ mod incident_tests {
 
     #[test]
     fn the_unjudged_incident_carries_the_labels_the_ops_predicate_matches() {
-        let home = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
+        let home = spira_config::resolve::locate_home_for_process().unwrap();
         let dir = testkit::TempDir::new("landing-pass-unjudged-labels");
         let runes = home.join("runes");
         let toml = spira_config::process::fixture_toml(dir.path(), &[("SPIRA_RUNES_DIR", runes.to_str().unwrap())]);

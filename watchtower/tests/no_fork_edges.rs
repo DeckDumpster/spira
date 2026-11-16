@@ -66,7 +66,7 @@ fn rs_files(dir: &Path, out: &mut Vec<PathBuf>) {
 #[test]
 fn no_unmarked_fork_edge_remains_in_src() {
     let mut files = Vec::new();
-    rs_files(&Path::new(env!("CARGO_MANIFEST_DIR")).join("src"), &mut files);
+    rs_files(&testkit::manifest_dir().join("src"), &mut files);
     let mut found = Vec::new();
     for f in files {
         for n in unmarked(&std::fs::read_to_string(&f).unwrap()) {

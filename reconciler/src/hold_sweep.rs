@@ -513,7 +513,7 @@ mod tests {
 
     #[test]
     fn every_hold_sweep_mail_passes_the_mail_lint() {
-        let kinds = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/mail/kinds");
+        let kinds = spira_config::resolve::locate_home_for_process().unwrap().join("mail/kinds");
         let lc = |a: &[&str]| -> Result<String, String> {
             match a[0] {
                 "history" => Ok(HISTORY.into()),
