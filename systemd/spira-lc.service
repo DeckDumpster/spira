@@ -7,7 +7,6 @@
 Description=spira-lc — the lifecycle machine's system service (bead/delivery/batch state)
 Documentation=file://@SPIRA_HOME@/lifecycle/schema.sql
 After=dolt-beads.service
-Requires=spira-lc.socket
 StartLimitIntervalSec=30
 StartLimitBurst=5
 
@@ -22,6 +21,8 @@ Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:@SPIRA_ENV_PATH@:/usr
 Type=simple
 User=spira-lc
 Group=spira
+RuntimeDirectory=spira-lc
+RuntimeDirectoryMode=0750
 ExecStart=@SPIRA_PROD_ROOT@/bin/spira-lc serve
 Environment=SPIRA_LC_PASSWORD_FILE=/etc/spira-lc/credential
 Environment=SPIRA_LC_USER=spira_lc
@@ -35,5 +36,4 @@ StandardOutput=append:@SPIRA_RUN@/spira-lc.log
 StandardError=append:@SPIRA_RUN@/spira-lc.log
 
 [Install]
-# Socket-activated (spira-lc.socket), not enabled directly — see install.sh's
-# --system-user phase, which enables the socket, not this unit.
+WantedBy=multi-user.target

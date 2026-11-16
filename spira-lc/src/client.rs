@@ -47,7 +47,7 @@ fn down(socket_path: &str, e: &std::io::Error) -> (i32, String) {
     (
         2,
         format!(
-            "cannot tell: the lifecycle service (lc-serve) is not answering on {socket_path}: {e} — nothing was read or written; spira-lc does not fall back to a direct database connection (check: systemctl --user status lc-serve.socket lc-serve.service)"
+            "cannot tell: the lifecycle service (lc-serve) is not answering on {socket_path}: {e} — nothing was read or written; spira-lc does not fall back to a direct database connection (check: systemctl --user status lc-serve.service)"
         ),
     )
 }

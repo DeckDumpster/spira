@@ -54,7 +54,7 @@ fn no_shipped_unit_is_left_on_the_work_plane_or_carries_the_old_halt_guard() {
 #[test]
 fn the_scheduler_ships_and_is_on_the_keep_list() {
     assert!(unit_dir().join("spira-runtime.service").is_file());
-    assert!(unit_dir().join("lc-serve.socket").is_file());
+    assert!(unit_dir().join("lc-serve.service").is_file());
     assert!(unit_dir().join("dolt-beads.service").is_file());
     for u in keep_units("-prod") {
         assert!(is_kept(&u, "-prod"), "{u}");

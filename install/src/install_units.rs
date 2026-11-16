@@ -608,7 +608,7 @@ pub fn split_not_active(not_active: &[String], in_testenv: bool, instance: &str)
     let (watchers, other): (Vec<String>, Vec<String>) = not_active
         .iter()
         .cloned()
-        .partition(|u| u.starts_with("spira-watch-") || u == "lc-serve.service" || u == "lc-serve.socket" || *u == runtime);
+        .partition(|u| u.starts_with("spira-watch-") || u == "lc-serve.service" || *u == runtime);
     NotActiveSplit { warn_only: watchers, fatal: other }
 }
 
@@ -1034,6 +1034,35 @@ mod tests {
         assert!(!m.units.iter().any(|u| u.name.starts_with("spira-reconciler.")), "the runtime hosts the pass; its timer and service are retired");
         assert!(m.units.iter().any(|u| u.name == "spira-watchdog.timer"), "positive control: the manifest still ships timers");
         assert!(!m.enable("prod").iter().any(|u| u == "spira-reconciler-prod.timer"));
+    }
+
+    #[test]
+    fn an_installed_lc_serve_socket_is_disabled_and_removed_before_the_service_restarts() {
+        let td = tempdir();
+        let unit_dir = td.join("units");
+        let tmpl_dir = td.join("templates");
+        fs::create_dir_all(&unit_dir).unwrap();
+        fs::create_dir_all(&tmpl_dir).unwrap();
+        fs::write(tmpl_dir.join("lc-serve.service"), "[Service]\nExecStart=/bin/true\n").unwrap();
+        fs::write(unit_dir.join("lc-serve.socket"), "x").unwrap();
+        fs::write(unit_dir.join("lc-serve.service"), "old").unwrap();
+        fs::write(unit_dir.join(LEDGER), "lc-serve.service\nlc-serve.socket\n").unwrap();
+
+        let manifest = crate::manifest::Manifest { units: vec![crate::manifest::Template { name: "lc-serve.service".into(), enable: true }], ..Default::default() };
+        let h = host();
+        let sc = FakeSystemctl::default();
+        sc.set("lc-serve.service", crate::systemctl::FakeUnit { active: true, enabled: Some("enabled".into()), kind: "service".into(), file_listed: true });
+        let no_suspend = |_: &str| false;
+        let ctx = Ctx { unit_dir: &unit_dir, templates_dir: &tmpl_dir, host: &h, manifest: &manifest, systemctl: &sc, suspended: &no_suspend, world_halted: false, skip_migrate_watchers: false };
+        let r = run(&ctx);
+        assert!(r.errors.is_empty(), "{:?}", r.errors);
+        assert!(r.retired.contains(&"lc-serve.socket".to_string()), "{:?}", r.retired);
+        assert!(!unit_dir.join("lc-serve.socket").exists());
+        assert!(sc.disabled_now.borrow().contains(&"lc-serve.socket".to_string()));
+        let order = sc.order.borrow();
+        let disabled = order.iter().position(|o| o == "disable_now lc-serve.socket").expect("the socket is disabled");
+        let restart = order.iter().position(|o| o.starts_with("restart lc-serve.service")).expect("the service restarts");
+        assert!(disabled < restart, "{order:?}");
     }
 
     #[test]

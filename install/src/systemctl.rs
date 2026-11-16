@@ -267,6 +267,7 @@ impl Systemctl for FakeSystemctl {
     }
     fn disable_now(&self, unit: &str) -> Result<(), String> {
         self.disabled_now.borrow_mut().push(unit.to_string());
+        self.order.borrow_mut().push(format!("disable_now {unit}"));
         let mut m = self.units.borrow_mut();
         let e = m.entry(unit.to_string()).or_default();
         e.enabled = Some("disabled".into());

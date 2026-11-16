@@ -10,14 +10,14 @@
 use std::path::Path;
 
 /// Units a world stop never stops, by base name (no instance suffix, no `.service`/`.socket`/
-/// `.timer`): the scheduler, the store's socket activation, the database and the watchdog.
+/// `.timer`): the scheduler, the store, the database and the watchdog.
 pub const KEEP: &[&str] = &["spira-runtime", "lc-serve", "dolt-beads", "spira-watchdog"];
 
 /// The unit names the keep list resolves to on an instance, the order `status` prints them.
 pub fn keep_units(sfx: &str) -> Vec<String> {
     vec![
         format!("spira-runtime{sfx}.service"),
-        "lc-serve.socket".to_string(),
+        "lc-serve.service".to_string(),
         "dolt-beads.service".to_string(),
         format!("spira-watchdog{sfx}.timer"),
     ]
@@ -224,9 +224,9 @@ mod tests {
         assert_eq!(keep_row("spira-watchdog-prod.timer", "active", "timeout"), format!("  {:<30} active (svc: timeout)", "spira-watchdog-prod.timer"));
         assert_eq!(keep_row("spira-watchdog-prod.timer", "active", "success"), format!("  {:<30} active", "spira-watchdog-prod.timer"));
         assert_eq!(keep_row("spira-watchdog-prod.timer", "active", ""), format!("  {:<30} active", "spira-watchdog-prod.timer"));
-        assert_eq!(keep_row("lc-serve.socket", "", ""), format!("  {:<30} inactive", "lc-serve.socket"));
+        assert_eq!(keep_row("lc-serve.service", "", ""), format!("  {:<30} inactive", "lc-serve.service"));
         assert_eq!(timer_service("spira-watchdog-prod.timer").as_deref(), Some("spira-watchdog-prod.service"));
-        assert_eq!(timer_service("lc-serve.socket"), None);
+        assert_eq!(timer_service("lc-serve.service"), None);
     }
 
     #[test]
@@ -285,14 +285,14 @@ mod tests {
     }
 
     #[test]
-    fn the_keep_list_holds_the_scheduler_the_store_socket_dolt_and_the_watchdog() {
-        for u in ["spira-runtime-prod.service", "spira-runtime.service", "lc-serve.socket", "lc-serve.service", "dolt-beads.service", "spira-watchdog-prod.timer", "spira-watchdog-prod.service"] {
+    fn the_keep_list_holds_the_scheduler_the_store_dolt_and_the_watchdog() {
+        for u in ["spira-runtime-prod.service", "spira-runtime.service", "lc-serve.service", "dolt-beads.service", "spira-watchdog-prod.timer", "spira-watchdog-prod.service"] {
             assert!(is_kept(u, "-prod"), "{u}");
         }
         for u in ["spira-sentinel-prod.timer", "spira-loom-prod.service", "spira-runtime-watch-prod.service", "spira-mail-deliver-prod.service"] {
             assert!(!is_kept(u, "-prod"), "{u}");
         }
-        assert_eq!(keep_units("-prod"), vec!["spira-runtime-prod.service", "lc-serve.socket", "dolt-beads.service", "spira-watchdog-prod.timer"]);
+        assert_eq!(keep_units("-prod"), vec!["spira-runtime-prod.service", "lc-serve.service", "dolt-beads.service", "spira-watchdog-prod.timer"]);
     }
 
     const DOC: &str = r#"{"schema":1,"at":1000000,"halted":true,"held":3,"tasks":[

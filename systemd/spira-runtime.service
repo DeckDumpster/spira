@@ -1,7 +1,7 @@
 [Unit]
 Description=Spira runtime — the long-running host of the loop's workflows (heartbeat, wide events, stall quarantine)
-After=lc-serve.socket
-Wants=lc-serve.socket
+After=lc-serve.service
+Wants=lc-serve.service
 StartLimitIntervalSec=300
 StartLimitBurst=5
 

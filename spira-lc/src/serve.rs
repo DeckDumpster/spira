@@ -117,23 +117,6 @@ pub fn run(args: &[String]) -> i32 {
 
     startup.mark("connection");
 
-    let listener = match inherited_listener(
-        std::env::var("LISTEN_PID").ok().as_deref(),
-        std::env::var("LISTEN_FDS").ok().as_deref(),
-        std::process::id(),
-    ) {
-        Some(l) => l,
-        None => match bind_socket(&socket_path) {
-            Ok(l) => l,
-            Err(e) => {
-                eprintln!("spira-lc serve: cannot bind {socket_path}: {e}");
-                return 2;
-            }
-        },
-    };
-
-    startup.mark("bind");
-
     stop_on_sigterm();
     crate::plan::serve_on(Arc::clone(&conn));
     startup.mark("plan");
@@ -149,8 +132,6 @@ pub fn run(args: &[String]) -> i32 {
         eprintln!("spira-lc serve: content reads are refused until this is fixed: {e}");
     }
     startup.mark("content-check");
-    eprintln!("spira-lc serve: listening on {socket_path}");
-    startup.ready(SPANS.get());
     // A request may spawn a child (`work blocked` runs `mail`) that calls back into this
     // socket; serving one connection at a time deadlocks on that. The session mutex still
     // serializes the queries themselves.
@@ -202,8 +183,18 @@ pub fn run(args: &[String]) -> i32 {
             }
         });
     }
+    let listener = match bind_socket(&socket_path) {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("spira-lc serve: cannot bind {socket_path}: {e}");
+            return 2;
+        }
+    };
+    startup.mark("bind");
+    eprintln!("spira-lc serve: listening on {socket_path}");
+    startup.ready(SPANS.get());
     // The scope ends when the accept loop has stopped and every request it took is answered.
-    std::thread::scope(|scope| accept_until_stopped(&listener, scope, &STOPPING, |stream| handle(stream, &conn, Instant::now())));
+    std::thread::scope(|scope| accept_until_stopped(&listener, &socket_path, scope, &STOPPING, |stream| handle(stream, &conn, Instant::now())));
     eprintln!("spira-lc serve: stopped");
     0
 }
@@ -299,11 +290,12 @@ fn stop_on_sigterm() {
     unsafe { signal(SIGTERM, on_sigterm) };
 }
 
-/// Accept on `listener` until `stopping`, serving each connection on its own thread. A
-/// connection not yet accepted stays in the kernel queue, which the socket unit keeps for the
-/// next process; one accepted is served to its answer before the scope that owns it ends.
+/// Accept on `listener` until `stopping`, serving each connection on its own thread. On the
+/// stop the path is removed first, so a new connect is refused at once; connections already
+/// queued are then accepted and served, and only afterwards does the listener drop.
 fn accept_until_stopped<'scope, 'env, F>(
     listener: &UnixListener,
+    socket_path: &str,
     scope: &'scope std::thread::Scope<'scope, 'env>,
     stopping: &AtomicBool,
     serve: F,
@@ -324,6 +316,31 @@ fn accept_until_stopped<'scope, 'env, F>(
                 scope.spawn(move || serve(stream));
             }
             Err(e) => eprintln!("spira-lc serve: accept error: {e}"),
+        }
+    }
+    if let Err(e) = std::fs::remove_file(socket_path) {
+        eprintln!("spira-lc serve: cannot remove {socket_path}: {e}");
+    }
+    if let Err(e) = listener.set_nonblocking(true) {
+        eprintln!("spira-lc serve: cannot drain the queue: {e}");
+        return;
+    }
+    loop {
+        match listener.accept() {
+            Ok((stream, _)) => {
+                let serve = serve.clone();
+                scope.spawn(move || {
+                    let _ = stream.set_nonblocking(false);
+                    serve(stream)
+                });
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(e) => {
+                if e.kind() != std::io::ErrorKind::WouldBlock {
+                    eprintln!("spira-lc serve: accept error: {e}");
+                }
+                break;
+            }
         }
     }
 }
@@ -374,18 +391,6 @@ fn alarm_tick() {
     if let Err(e) = std::fs::OpenOptions::new().create(true).append(true).open(&path).and_then(|mut f| f.write_all(text.as_bytes())) {
         eprintln!("spira-lc serve: {}: {e}", path.display());
     }
-}
-
-/// The first descriptor systemd passes (fd 3) when it owns the listening socket, so a restart
-/// of this process queues connections in the kernel instead of refusing them. Only honoured
-/// when `LISTEN_PID` names this process.
-fn inherited_listener(pid: Option<&str>, fds: Option<&str>, me: u32) -> Option<UnixListener> {
-    use std::os::unix::io::FromRawFd;
-    if pid?.parse::<u32>().ok()? != me || fds?.parse::<u32>().ok()? < 1 {
-        return None;
-    }
-    // SAFETY: LISTEN_PID matched, so systemd opened fd 3 for this process and nothing else owns it.
-    Some(unsafe { UnixListener::from_raw_fd(3) })
 }
 
 fn bind_socket(socket_path: &str) -> std::io::Result<UnixListener> {
@@ -1015,7 +1020,7 @@ mod tests {
     }
 
     #[test]
-    fn a_stopping_server_finishes_the_request_it_took_and_leaves_the_next_in_the_queue() {
+    fn a_stopping_server_answers_what_is_queued_and_removes_its_path() {
         use super::accept_until_stopped;
         use std::io::BufReader;
         use std::os::unix::net::{UnixListener, UnixStream};
@@ -1023,6 +1028,7 @@ mod tests {
         use std::sync::mpsc;
         let dir = testkit::TempDir::new("lc-drain");
         let path = dir.join("sock");
+        let path_str = path.to_str().unwrap().to_string();
         let listener = UnixListener::bind(&path).unwrap();
         let stopping = AtomicBool::new(false);
         let mut first = UnixStream::connect(&path).unwrap();
@@ -1031,17 +1037,23 @@ mod tests {
         let (release, released) = mpsc::channel::<()>();
         let released = std::sync::Mutex::new(released);
         let began_tx = std::sync::Mutex::new(began_tx);
+        let mut queued = None;
         std::thread::scope(|scope| {
             let stopping = &stopping;
+            let queued = &mut queued;
+            let path = &path;
             scope.spawn(move || {
                 began.recv().unwrap();
                 stopping.store(true, Ordering::SeqCst);
+                let mut late = UnixStream::connect(path).unwrap();
+                std::io::Write::write_all(&mut late, b"y\n").unwrap();
+                *queued = Some(late);
                 release.send(()).unwrap();
             });
             let (released, began_tx) = (&released, &began_tx);
-            accept_until_stopped(&listener, scope, stopping, move |stream: UnixStream| {
-                began_tx.lock().unwrap().send(()).unwrap();
-                released.lock().unwrap().recv().unwrap();
+            accept_until_stopped(&listener, &path_str, scope, stopping, move |stream: UnixStream| {
+                let _ = began_tx.lock().unwrap().send(());
+                let _ = released.lock().unwrap().recv();
                 let mut line = String::new();
                 std::io::BufRead::read_line(&mut BufReader::new(&stream), &mut line).unwrap();
                 std::io::Write::write_all(&mut &stream, b"served\n").unwrap();
@@ -1050,9 +1062,11 @@ mod tests {
         let mut line = String::new();
         std::io::BufRead::read_line(&mut BufReader::new(&first), &mut line).unwrap();
         assert_eq!(line, "served\n", "the request taken before the stop is answered");
-        let _later = UnixStream::connect(&path).unwrap();
-        listener.set_nonblocking(true).unwrap();
-        assert!(listener.accept().is_ok(), "a connection arriving after the stop is still queued for the next process");
+        let late = queued.expect("a connection was made after the flag was set");
+        let mut line = String::new();
+        std::io::BufRead::read_line(&mut BufReader::new(&late), &mut line).unwrap();
+        assert_eq!(line, "served\n", "a connection queued at the stop is answered");
+        assert_eq!(UnixStream::connect(&path).unwrap_err().kind(), std::io::ErrorKind::NotFound);
     }
 
     #[test]
@@ -1065,14 +1079,6 @@ mod tests {
         // SAFETY: the handler installed above only stores to an atomic.
         unsafe { raise(15) };
         assert!(super::STOPPING.load(std::sync::atomic::Ordering::SeqCst));
-    }
-
-    #[test]
-    fn inherited_listener_needs_this_process_and_a_descriptor() {
-        assert!(super::inherited_listener(None, None, 7).is_none());
-        assert!(super::inherited_listener(Some("8"), Some("1"), 7).is_none(), "another process's descriptors are not ours");
-        assert!(super::inherited_listener(Some("7"), Some("0"), 7).is_none());
-        assert!(super::inherited_listener(Some("x"), Some("1"), 7).is_none());
     }
 
     #[test]
