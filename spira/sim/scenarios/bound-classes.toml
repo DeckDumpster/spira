@@ -1,0 +1,69 @@
+# The bound-class scheduler as a customer meets it: what the call pass starts, and what the
+# cockpit's SP_BOUND reads after it, while build-disk fills with planned and reactive sessions.
+# Run it with `sim run bound-classes`. The runes are the home's own; a [rune.<name>] table lays a
+# declaration over one.
+driver = "calls"
+max_dwarves = 7
+max_live = 40
+
+# Builder declares memory as well as build-disk.
+[rune.builder]
+uses = ["build-disk", "memory"]
+
+# Skuld declares nothing, so it is called whatever else is live.
+[[pass]]
+name = "skuld-called-beside-live-ops-and-mender"
+starts = { ops = 1, mender = 1 }
+ready = { skuld = 1 }
+expect_calls = ["skuld"]
+expect_bound = ["build-disk 1 7 0 0"]
+
+# Seven builders, then a red round of two mender beads: a pass calls one reactive session per
+# rune, and both start though build-disk is full.
+[[pass]]
+name = "red-round-spills-the-first-mender-over-the-limit"
+starts = { builder = 7 }
+exits = { mender = 1 }
+ready = { builder = 4, mender = 2 }
+expect_calls = ["mender"]
+expect_bound = ["build-disk 8 7 * 1"]
+
+[[pass]]
+name = "red-round-spills-the-second-mender-over-the-limit"
+expect_calls = ["mender"]
+expect_bound = ["build-disk 9 7 * 1"]
+
+[[pass]]
+name = "first-builder-exit-is-not-backfilled"
+exits = { builder = 1 }
+ready = { builder = 4 }
+expect_calls = []
+expect_bound = ["build-disk 8 7 4 1"]
+
+[[pass]]
+name = "second-builder-exit-is-not-backfilled"
+exits = { builder = 1 }
+expect_calls = []
+expect_bound = ["build-disk 7 7 4 0"]
+
+[[pass]]
+name = "third-builder-exit-fills-the-last-unit"
+exits = { builder = 1 }
+expect_calls = ["builder"]
+expect_bound = ["build-disk 7 7 * 0"]
+
+# The operator's `spira.limit_memory` is the snapshot's `limits` here: the call world plays the
+# pass over a snapshot, not the config file. It limits memory from the last pass: only its declarers wait, and Skuld is called beside them.
+[[pass]]
+name = "memory-unlimited-holds-nobody"
+exits = { builder = 3, mender = 2 }
+ready = { builder = 1, skuld = 1 }
+expect_calls = ["builder", "skuld"]
+
+[[pass]]
+name = "memory-limit-holds-only-its-declarers"
+exits = { builder = 2 }
+ready = { builder = 3, skuld = 1 }
+limits = { memory = 1 }
+expect_calls = ["skuld"]
+expect_bound = ["build-disk 1 7 3 0", "memory 1 1 3 0"]

@@ -289,6 +289,9 @@ fn run_main(cwd: &std::path::Path, args: &[String], env: &dyn Fn(&str) -> Option
         PathBuf::from(scenario)
     };
     let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    if spira_sim::callworld::is_calls(&text) {
+        return calls_main(&text);
+    }
     if spira_sim::loopworld::is_loop(&text) {
         return loop_main(&text, &set, &cli_repos, env);
     }
@@ -335,6 +338,25 @@ fn run_main(cwd: &std::path::Path, args: &[String], env: &dyn Fn(&str) -> Option
         eprintln!("sim: world kept at {}", dir.display());
     }
     outcome
+}
+
+/// `sim run` of a call world (`driver = "calls"`): the call pass played over the home's own runes,
+/// in-process, printing each pass's calls and the `SP_BOUND` the cockpit snapshot then carries.
+fn calls_main(text: &str) -> Result<(), String> {
+    use spira_sim::callworld;
+    let script = callworld::parse(text)?;
+    let home = spira_config::resolve::locate_home_for_process()?;
+    let out = callworld::run(&home, &script)?;
+    for o in &out {
+        println!("{}: calls {:?} SP_BOUND='{}'", o.name, o.calls, o.sp_bound);
+    }
+    match callworld::missed(&script, &out) {
+        None => {
+            println!("sim: ok");
+            Ok(())
+        }
+        Some(why) => Err(why),
+    }
 }
 
 /// `sim run` of a loop world (`driver = "loop"`): the service's registrations in-process on
