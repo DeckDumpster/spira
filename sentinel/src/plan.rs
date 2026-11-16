@@ -5,6 +5,7 @@
 //! each call it plans as live so a later rune in the same pass sees the slot taken.
 
 use std::collections::BTreeMap;
+use serde::{Deserialize, Serialize};
 
 pub fn parse_cache(text: &str) -> Vec<(String, usize)> {
     text.lines()
@@ -165,6 +166,16 @@ pub struct Preempt {
     pub express: String,
 }
 
+/// One bound resource class as this pass left it.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Bound {
+    pub class: String,
+    pub limit: i64,
+    pub held: i64,
+    pub waiting: i64,
+    pub over: bool,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CallPlan {
     pub calls: Vec<Call>,
@@ -175,6 +186,8 @@ pub struct CallPlan {
     pub refusal: Option<String>,
     /// The task slots this pass found open before its own calls; `None` when no ceiling is configured.
     pub task_room: Option<i64>,
+    /// Each class with a limit: its declarers' live count after this pass's calls, and their ready beads left uncalled.
+    pub bound: Vec<Bound>,
     /// The pass log, one line per refusal or call, as the binary printed them.
     pub log: Vec<String>,
 }
@@ -238,6 +251,18 @@ impl Planner<'_> {
             return None;
         }
         r.uses.iter().filter_map(|c| self.class_room(c)).min()
+    }
+
+    fn bound(&self) -> Vec<Bound> {
+        self.w
+            .limits
+            .iter()
+            .map(|(c, limit)| {
+                let waiting = self.w.task.iter().chain(&self.w.lanes).filter(|r| r.uses.iter().any(|u| u == c)).map(|r| self.ready_of(&r.name).unwrap_or(0)).sum();
+                let held = self.held(c);
+                Bound { class: c.clone(), limit: *limit, held, waiting, over: held > *limit }
+            })
+            .collect()
     }
 
     fn log(&mut self, line: String) {
@@ -380,6 +405,7 @@ pub fn plan(w: &CallWorld) -> CallPlan {
         p.log(format!("CHECK7: {why}"));
         p.plan.refusal = Some(why);
         p.plan.task_room = Some(0);
+        p.plan.bound = p.bound();
         return p.plan;
     }
     let lane_names: Vec<String> = w.lanes.iter().map(|l| l.name.clone()).collect();
@@ -427,6 +453,7 @@ pub fn plan(w: &CallWorld) -> CallPlan {
             p.plan.lane_last = Some(f);
         }
     }
+    p.plan.bound = p.bound();
     p.plan
 }
 
@@ -635,6 +662,12 @@ mod tests {
         assert!(p.log.iter().any(|l| l.contains("build-disk 7 of 7 held — reactive, starting over the limit")), "{:?}", p.log);
         let p = plan(&limited(vec![builder(3, 5), mender(0, 2)], &[("build-disk", 7)]));
         assert_eq!(p.task_room, Some(0), "a live mender fills the class: {:?}", p.log);
+    }
+
+    #[test]
+    fn bound_reports_held_waiting_and_over() {
+        let p = plan(&limited(vec![builder(3, 7), mender(0, 2)], &[("build-disk", 7)]));
+        assert_eq!(p.bound, [Bound { class: "build-disk".into(), limit: 7, held: 9, waiting: 3, over: true }], "{:?}", p.log);
     }
 
     #[test]

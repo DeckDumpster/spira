@@ -107,6 +107,9 @@ pub struct CarriedState {
     pub stream: String,
     pub tag: String,
     pub body_len: usize,
+    /// The emitted body, for a reader that decodes it; never part of the status document.
+    #[serde(skip)]
+    pub body: String,
 }
 
 /// The commands a handler returned for one event, and how many the engine admitted: a refused
@@ -900,7 +903,7 @@ impl Engine {
     }
 
     fn carry(&mut self, handler: &str, stream: &StreamKey, kind: &EventKind) {
-        self.tracks.entry(handler.into()).or_default().state = Some(CarriedState { stream: stream.0.clone(), tag: kind.tag.clone(), body_len: kind.body.len() });
+        self.tracks.entry(handler.into()).or_default().state = Some(CarriedState { stream: stream.0.clone(), tag: kind.tag.clone(), body_len: kind.body.len(), body: kind.body.clone() });
     }
 
     /// The newest own-stream emit of each kind is the task's carry: what a restart hands back.

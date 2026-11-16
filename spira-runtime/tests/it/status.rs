@@ -105,3 +105,45 @@ fn status_halt_and_resume_round_trip_over_the_socket() {
     let unknown = lc_call(&path, &["scheduler", "explode"]).unwrap_err();
     assert!(unknown.is_refused(), "an unknown verb is refused: {unknown}");
 }
+
+struct Passed(&'static str);
+impl Handler for Passed {
+    fn interests(&self) -> &[EventKindTag] {
+        &["tick"]
+    }
+    fn handle(&self, _: &Ctx, _: &Projection, _: &Event) -> Vec<Command> {
+        vec![Command::Emit(EventKind::new("sentinel-call.state", self.0))]
+    }
+}
+
+fn bound_rig(body: &'static str) -> (Engine, std::path::PathBuf, testkit::TempDir, VirtualClock) {
+    let clock = VirtualClock::new(0);
+    let board = Arc::new(StatusBoard::default());
+    let e = Engine::open(MemJournal::new(), Arc::new(clock.clone()), vec![Registration::new("sentinel-call", Passed(body))], 1).unwrap().with_status_board(board.clone());
+    let submit: status::SubmitFn = Arc::new(|_: &str, _: &str, _: EventKind| Ok(()));
+    let dir = testkit::TempDir::new("bound-sock");
+    let path = serve(status::Control::new(board, submit, Arc::new(clock.clone())), &dir);
+    (e, path, dir, clock)
+}
+
+#[test]
+fn scheduler_bound_answers_the_carried_array_and_refuses_before_the_first_pass() {
+    let (mut e, path, _dir, clock) = bound_rig(r#"{"bound":[{"class":"build-disk","limit":7,"held":9,"waiting":3,"over":true}]}"#);
+    let early = lc_call(&path, &["scheduler", "bound"]).unwrap_err();
+    assert!(early.0.contains("no call pass has run yet"), "{early}");
+    e.submit("t1", "t", EventKind::new("tick", "")).unwrap();
+    clock.advance_to(10);
+    e.run_until_idle().unwrap();
+    let got: serde_json::Value = serde_json::from_str(&lc_call(&path, &["scheduler", "bound"]).unwrap()).unwrap();
+    assert_eq!(got, serde_json::json!([{"class": "build-disk", "limit": 7, "held": 9, "waiting": 3, "over": true}]));
+}
+
+#[test]
+fn scheduler_bound_refuses_when_the_carry_holds_no_pass() {
+    let (mut e, path, _dir, clock) = bound_rig("{}");
+    e.submit("t1", "t", EventKind::new("tick", "")).unwrap();
+    clock.advance_to(10);
+    e.run_until_idle().unwrap();
+    let err = lc_call(&path, &["scheduler", "bound"]).unwrap_err();
+    assert!(err.0.contains("no call pass has run yet"), "{err}");
+}

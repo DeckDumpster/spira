@@ -243,19 +243,13 @@ pub fn header_line(
 }
 
 /// `slots_line` — live/ceiling/free dwarf slots. Fixed like the tokens rows so a long MAIL
-/// section cannot push it off a short pane; the builder/lane split shows only when a lane cap
-/// is declared.
+/// section cannot push it off a short pane.
 pub fn slots_line(snap: &Snapshot) -> String {
     let free = snap.q("SP_SLOTS_FREE");
     let col = match free {
         "?" => format!("{BAD}{B}"),
         "0" => WARN.to_string(),
         _ => OK.to_string(),
-    };
-    let pool = snap.q("SP_SLOTS_POOL");
-    let split = match (snap.get("SP_SLOTS_LANES_CAP").filter(|c| !c.is_empty()), pool.parse::<i64>(), snap.q("SP_SLOTS_LANES_CAP").parse::<i64>()) {
-        (Some(_), Ok(p), Ok(l)) => format!("  {DIM}(builders {}-{p}, lanes 0-{l}){RST}", (p - l).max(0)),
-        _ => String::new(),
     };
     let pending = match snap.get("SP_SLOTS_PENDING").filter(|p| !p.is_empty()) {
         Some(p) => {
@@ -273,10 +267,32 @@ pub fn slots_line(snap: &Snapshot) -> String {
         Some(d) => format!("  {DIM}{d} directed{RST}"),
     };
     format!(
-        " {DIM}SLOTS{RST}   {B}{}/{}{RST}  {col}{free} free{RST}{split}{pending}{unconfirmed}{directed}",
+        " {DIM}SLOTS{RST}   {B}{}/{}{RST}  {col}{free} free{RST}{pending}{unconfirmed}{directed}",
         snap.q("SP_SLOTS_LIVE"),
         snap.q("SP_SLOTS_CEILING"),
     )
+}
+
+/// `bound_line` — each resource class with a limit, as the scheduler decided it on its last
+/// pass. Absent when no class has a limit.
+pub fn bound_line(snap: &Snapshot) -> Option<String> {
+    let raw = snap.get("SP_BOUND").map(str::trim).filter(|b| !b.is_empty())?;
+    let body = if raw == "?" {
+        format!("{BAD}{B}?{RST} \u{2014} the scheduler did not answer")
+    } else {
+        raw.split(';')
+            .map(|rec| {
+                let f: Vec<&str> = rec.split_whitespace().collect();
+                match f.as_slice() {
+                    [class, held, limit, waiting, over] if *over == "1" => format!("{WARN}{class} {held} of {limit} held, {waiting} waiting, no backfill{RST}"),
+                    [class, held, limit, waiting, _] => format!("{class} {held} of {limit} held, {waiting} waiting"),
+                    _ => format!("{BAD}{B}?{RST}"),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("  \u{b7}  ")
+    };
+    Some(format!(" {DIM}BOUND{RST}   {body}"))
 }
 
 /// `tokens_section` — the account's spend, split by half. `spark_*` are pre-rendered

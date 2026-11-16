@@ -451,10 +451,9 @@ fn lib_inproc(home: &Path, func: &str, args: &[&str]) -> Option<Option<String>> 
         "rune_get" => roster().map(|_| spira_config::runes::rune_get(home, arg(0), arg(1), arg(2))),
         "persona_model" => roster().map(|_| spira_config::runes::persona_model(arg(0), Some(arg(1)))),
         "dwarf_named" => Some(dwarf::naming::dwarf_named(Path::new(arg(0)))),
-        "dwarves_live_total" | "dwarves_live_lanes" => {
+        "dwarves_live_total" => {
             let cfg = strand::config::Config::resolve(&strand::config::Live::load()).ok()?;
-            let n = if func == "dwarves_live_total" { strand::probe::dwarves_live_total(&cfg) } else { strand::probe::dwarves_live_lanes(&cfg) };
-            Some(n.to_string())
+            Some(strand::probe::dwarves_live_total(&cfg).to_string())
         }
         _ => return None,
     })

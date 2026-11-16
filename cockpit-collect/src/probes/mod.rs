@@ -54,7 +54,6 @@ pub struct Cfg {
     pub instance: String,
     pub trace_lines: i64,
     pub max_live_dwarves: i64,
-    pub lanes_max_live: String,
     pub scope_label: String,
     pub czar_label: String,
     pub wiki: String,
@@ -84,7 +83,6 @@ impl Cfg {
             instance: spira_config::resolve::resolve_instance(&env, &home)?,
             trace_lines: cfg_parse::<i64>("COCKPIT_TRACE_LINES")?,
             max_live_dwarves: cfg_parse::<i64>("SPIRA_MAX_LIVE_DWARVES")?,
-            lanes_max_live: cfg("SPIRA_LANES_MAX_LIVE")?,
             scope_label: cfg("SPIRA_SCOPE_LABEL")?,
             czar_label: cfg("SPIRA_CZAR_LABEL")?,
             wiki: cfg("SPIRA_WIKI")?,
@@ -851,6 +849,34 @@ mod waiting_tests {
 // slots_keys
 // ---------------------------------------------------------------------------------------
 
+#[cfg(test)]
+mod bound_tests {
+    use super::bound_records;
+
+    #[test]
+    fn bound_records_joins_each_class_and_says_question_when_the_scheduler_is_silent() {
+        let two = r#"[{"class":"build-disk","limit":7,"held":9,"waiting":3,"over":true},{"class":"memory","limit":4,"held":2,"waiting":1,"over":false}]"#;
+        assert_eq!(bound_records(Ok(two.into())), "build-disk 9 7 3 1;memory 2 4 1 0");
+        assert_eq!(bound_records(Ok("[]".into())), "");
+        assert_eq!(bound_records(Err("the scheduler is not answering".into())), "?");
+        assert_eq!(bound_records(Ok("not json".into())), "?");
+        assert_eq!(bound_records(Ok(r#"[{"class":"x"}]"#.into())), "?");
+    }
+}
+
+fn scheduler_bound() -> Result<String, String> {
+    let sock = spira_config::process::cfg("SPIRA_RUNTIME_SOCKET")?;
+    spira_config::scheduler_link::call(std::path::Path::new(sock.trim()), &["scheduler", "bound"])
+}
+
+/// `class held limit waiting over` records joined by `;`; `?` when the scheduler did not answer.
+fn bound_records(reply: Result<String, String>) -> String {
+    let Ok(doc) = reply.and_then(|r| serde_json::from_str::<Vec<serde_json::Value>>(&r).map_err(|e| e.to_string())) else { return "?".to_string() };
+    let num = |b: &serde_json::Value, k: &str| b[k].as_i64().map(|n| n.to_string());
+    let record = |b: &serde_json::Value| Some(format!("{} {} {} {} {}", b["class"].as_str()?, num(b, "held")?, num(b, "limit")?, num(b, "waiting")?, u8::from(b["over"].as_bool()?)));
+    doc.iter().map(record).collect::<Option<Vec<_>>>().map_or_else(|| "?".to_string(), |r| r.join(";"))
+}
+
 pub fn slots_keys(cfg: &Cfg) -> Kv {
     let mut out = Kv::new();
     let home = io::home_dir();
@@ -869,16 +895,13 @@ pub fn slots_keys(cfg: &Cfg) -> Kv {
     push(&mut out, "SP_SLOTS_WAITS", pending.first().map(|(_, p)| p.waits.clone()).unwrap_or_default());
     push(&mut out, "SP_SLOTS_DIRECTED", strand::probe::dwarves_live_directed(&strand_cfg()).map(|n| n.to_string()).unwrap_or_else(|_| "?".to_string()));
 
-    let lanes_live = io::lib_call(&home, "dwarves_live_lanes", &[]).unwrap_or_else(|| "?".to_string());
-    // A failed read must never resolve to a reassuring free count; free is the held ceiling less lane dwarves.
-    let free = match (live.trim().parse::<i64>(), lanes_live.trim().parse::<i64>(), ceiling.trim().parse::<i64>()) {
-        (Ok(_), Ok(l), Ok(c)) => (c - l).max(0).to_string(),
+    // A failed read must never resolve to a reassuring free count.
+    let free = match (live.trim().parse::<i64>(), ceiling.trim().parse::<i64>()) {
+        (Ok(l), Ok(c)) => (c - l).max(0).to_string(),
         _ => "?".to_string(),
     };
     push(&mut out, "SP_SLOTS_FREE", free);
-    push(&mut out, "SP_SLOTS_LANES_CAP", cfg.lanes_max_live.clone());
-
-    push(&mut out, "SP_SLOTS_LANES_LIVE", lanes_live);
+    push(&mut out, "SP_BOUND", bound_records(scheduler_bound()));
 
     let run = io::run_dir();
     let cap_now = io::now();
