@@ -136,8 +136,8 @@ pub const INBOX_APPEND: &str = crate::watchers::INBOX_APPEND;
 pub const CADENCE_MS: u64 = 30_000;
 pub const OBSERVE_DEADLINE_MS: u64 = 10_000;
 /// The unit legs (`corpus`, `stage`, `stage_test`, `certify`) are started under this deadline;
-/// the leg itself runs under `SPIRA_BATCHER_WALL_SECS` ([`Policy::wall_ms`]) and ends on its
-/// `unit.ran`.
+/// a corpus or attribution leg runs under `SPIRA_BATCHER_WALL_SECS` ([`Policy::wall_ms`]), the
+/// certify leg under `queue round certify`'s own caps; each ends on its `unit.ran`.
 pub const UNIT_START_DEADLINE_MS: u64 = 10_000;
 /// Past the longest effect this task waits on (`land`, 900 s): an outcome that has not come is lost.
 /// A just-opened round is given this long to be driven by whoever opened it before the tick starts its pass.
@@ -1307,7 +1307,7 @@ impl Machine<'_> {
         }
         match self.rc.state {
             State::Certifying if self.rc.certify_held => self.release_certify(policy, repo),
-            State::Corpus | State::Attributing | State::Certifying if self.now_ms.saturating_sub(self.rc.leg_at_ms) > leg_deadline_ms(policy, self.rc.state == State::Attributing, self.rc.members.len()) => self.leg_ended(Exit::Unknown),
+            State::Corpus | State::Attributing | State::Certifying if self.now_ms.saturating_sub(self.rc.leg_at_ms) > leg_deadline_ms(policy, self.rc.state == State::Attributing, self.rc.members.len()) && !self.certify_listed(repo) => self.leg_ended(Exit::Unknown),
             State::Corpus | State::Attributing | State::Certifying => self.watch_leg(repo),
             State::Opened if self.rc.batch.is_none() => {
                 self.adopt_opened(repo);
@@ -1410,6 +1410,11 @@ impl Machine<'_> {
 
     /// A leg the unit manager does not list for [`LEG_MISSING_OBSERVES`] observes in a row, past
     /// [`LEG_START_GRACE_MS`], never started or died with no `unit.ran`.
+    /// `queue round certify` bounds itself, so a listed certify unit is never judged lost on the batcher's leg deadline.
+    fn certify_listed(&self, repo: &Repo) -> bool {
+        self.rc.state == State::Certifying && matches!((&repo.live_legs, &self.rc.leg), (Some(live), Some(leg)) if live.contains(leg))
+    }
+
     fn watch_leg(&mut self, repo: &Repo) {
         let (Some(live), Some(leg)) = (&repo.live_legs, self.rc.leg.clone()) else { return };
         if self.now_ms.saturating_sub(self.rc.leg_at_ms) < LEG_START_GRACE_MS || live.contains(&leg) {
