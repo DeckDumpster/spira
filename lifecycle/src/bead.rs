@@ -337,7 +337,8 @@ pub enum BeadEventKind {
     Restack { tip: String, stack: Stack, stack_depth: u32 },
     /// A REWORK bead held manual is re-tipped and put back to SUBMITTED, with no gate verdict:
     /// its own gate certifies it before a round admits it. Refused without a manual hold. A break-glass
-    /// move: refused unless `break_glass` is complete.
+    /// move: refused unless `break_glass` is complete. A resubmit at the tip recorded as
+    /// `ejected_red_tip` withdraws that red, as `Absolve` does; at any other tip the red stays.
     Resubmit { tip: String, #[serde(default)] break_glass: BreakGlass },
     /// Withdraw a red recorded against `tip` that was not the tree's fault (a misattributed
     /// infrastructure failure). Legal only while `ejected_red_tip` is that tip; a REWORK row
@@ -771,6 +772,9 @@ fn apply_transition(row: &BeadRow, ev: &BeadEvent) -> Outcome<BeadRow> {
             let mut out = primary_transition(row, &ev.kind);
             if out.applied {
                 out.row.reason = Some(break_glass.stamp(&ev.actor, tip));
+                if row.ejected_red_tip.as_deref() == Some(tip.as_str()) {
+                    out.row.ejected_red_tip = None;
+                }
             }
             out
         }
@@ -1817,6 +1821,31 @@ mod tests {
 
         let bad = apply(&held, &ev(BeadState::Rework, 0, BeadEventKind::Resubmit { tip: "abc".into(), break_glass: bg("abc") }));
         assert!(matches!(bad.refusal, Some(Refusal::MalformedTip { .. })));
+    }
+
+    #[test]
+    fn a_resubmit_at_the_ejected_red_tip_withdraws_the_red() {
+        let t = "2222222222222222222222222222222222222222";
+        let u = "3333333333333333333333333333333333333333";
+        let mut held = row(BeadState::Rework);
+        held.holds.insert(HoldKind::Manual);
+        held.tip = Some(t.into());
+        held.ejected_red_tip = Some(t.into());
+        let kind = |tip: &str| BeadEventKind::Resubmit { tip: tip.into(), break_glass: bg(tip) };
+
+        let out = apply(&held, &ev(BeadState::Rework, 0, kind(t)));
+        assert!(out.applied, "{:?}", out.refusal);
+        assert_eq!((out.row.ejected_red_tip.clone(), out.row.state), (None, BeadState::Submitted));
+        let stamp = out.row.reason.unwrap_or_default();
+        assert!(stamp.contains("break_glass=true") && stamp.contains(t), "{stamp}");
+
+        let out = apply(&held, &ev(BeadState::Rework, 0, kind(u)));
+        assert!(out.applied, "{:?}", out.refusal);
+        assert_eq!(out.row.ejected_red_tip.as_deref(), Some(t));
+
+        let bare = BeadEventKind::Resubmit { tip: t.into(), break_glass: BreakGlass::default() };
+        let out = apply(&held, &ev(BeadState::Rework, 0, bare));
+        assert!(matches!(out.refusal, Some(Refusal::BreakGlassIncomplete { .. })), "{:?}", out.refusal);
     }
 
     #[test]

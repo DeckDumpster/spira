@@ -1691,6 +1691,9 @@ impl Lc for FLc {
         }
         r.state = "SUBMITTED".into();
         r.tip = Some(tip.into());
+        if r.ejected_red_tip.as_deref() == Some(tip) {
+            r.ejected_red_tip = None;
+        }
         Ok(())
     }
     fn absolve(

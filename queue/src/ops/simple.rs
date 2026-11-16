@@ -799,6 +799,10 @@ pub fn resubmit(
     if super::require_lc(w, "resubmit").is_err() {
         return FAIL;
     }
+    let _g = match take_lock(w, "resubmit", &c, "") {
+        Ok(g) => g,
+        Err(rc) => return rc,
+    };
     let Some(row) = w.lc.bead_row(id) else {
         w.err(format!(
             "queue.sh resubmit: {id}: no lifecycle row — refused"
@@ -835,6 +839,9 @@ pub fn resubmit(
         ));
         return FAIL;
     }
+    let in_row = row.ejected_red_tip.as_deref() == Some(tip);
+    let in_record = super::round::batch_red_at(&c, id, tip);
+    let in_gate = gate::redcache::holds_tip(&super::land::verdicts_dir(w, &c.s), tip);
     if let Err((rc, e)) =
         w.lc.retip(id, tip, by, reason.trim(), evidence.trim(), evidence_tip)
     {
@@ -842,6 +849,13 @@ pub fn resubmit(
             "queue.sh resubmit: spira-lc refused {id} (rc={rc}): {e}"
         ));
         return FAIL;
+    }
+    let withdrew = in_row || in_record || in_gate;
+    if withdrew {
+        if let Err(e) = withdraw_red(w, &c, id, tip, by, reason.trim(), evidence.trim()) {
+            w.err(format!("queue.sh resubmit: {id} re-tipped on spira-lc but the batch red-tip record is unwritable: {e}"));
+            return FAIL;
+        }
     }
     landing_log(
         &c.s.run,
@@ -854,7 +868,14 @@ pub fn resubmit(
     for note in &round_only_notes {
         w.out(note);
     }
-    w.out(format!("queue.sh resubmit: {id} re-tipped to {tip}, {} -> SUBMITTED; its gate certifies it, and it joins the next round once CERTIFIED", row.state));
+    if withdrew {
+        w.out(format!("queue.sh resubmit: {id} red at {tip} withdrawn (row={in_row} record={in_record} gate={in_gate} as found)"));
+    }
+    if row.holds.iter().any(|h| h == "manual") {
+        w.out(format!("queue.sh resubmit: {id} re-tipped to {tip}, {} -> SUBMITTED; its gate certifies it; it stays held manual, so the batcher will not cut it — once CERTIFIED, run queue round open --members {id}:{tip} --by concierge, or spira-lc unhold {id} manual … to return it to the batcher", row.state));
+    } else {
+        w.out(format!("queue.sh resubmit: {id} re-tipped to {tip}, {} -> SUBMITTED; its gate certifies it, and the batcher cuts it once CERTIFIED", row.state));
+    }
     OK
 }
 
@@ -1105,6 +1126,27 @@ pub fn forced_suites(
     OK
 }
 
+/// The three places a red outlives the row, then the bead's own account of why it was withdrawn.
+fn withdraw_red(
+    w: &World,
+    c: &Ctx,
+    id: &str,
+    tip: &str,
+    by: &str,
+    reason: &str,
+    evidence: &str,
+) -> Result<(), String> {
+    let queue = landing_pass::gateq::GateQueue::new(&c.s.run);
+    queue.forget_done(&c.r.name, &format!("spira/{id}"), tip);
+    gate::redcache::forget_tip(&super::land::verdicts_dir(w, &c.s), tip);
+    super::round::forget_batch_red(c, id, tip).map_err(|e| e.to_string())?;
+    w.lib.comment(
+        id,
+        &format!("Red at {tip} absolved by {by}.\n\n{reason}\n\nEvidence:\n{evidence}"),
+    );
+    Ok(())
+}
+
 /// The door for a red that was not the tree's fault: withdraw it from the lifecycle row and from the
 /// batch red-tip record, so the same tip is admitted again. Evidence is mandatory and must name the tip.
 pub fn absolve(
@@ -1203,20 +1245,10 @@ pub fn absolve(
             return FAIL;
         }
     }
-    let queue = landing_pass::gateq::GateQueue::new(&c.s.run);
-    queue.forget_done(&c.r.name, &format!("spira/{id}"), &tip);
-    gate::redcache::forget_tip(&super::land::verdicts_dir(w, &c.s), &tip);
-    if let Err(e) = super::round::forget_batch_red(&c, id, &tip) {
+    if let Err(e) = withdraw_red(w, &c, id, &tip, by, reason.trim(), evidence.trim()) {
         w.err(format!("queue.sh absolve: {id} absolved on spira-lc but the batch red-tip record is unwritable: {e}"));
         return FAIL;
     }
-    w.lib.comment(
-        id,
-        &format!(
-            "Red at {tip} absolved by {by}.\n\n{reason}\n\nEvidence:\n{}",
-            evidence.trim()
-        ),
-    );
     landing_log(
         &c.s.run,
         &format!(
