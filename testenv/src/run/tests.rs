@@ -412,4 +412,121 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
         assert_eq!(left, ["slot.1"], "only the holder's file remains: {left:?}");
         assert_eq!(slept, 1, "the wait loop, not an earlier check, ended the run");
     }
+
+    /// Runs `--suites test-a.sh topic` twice against one repo: once to learn the key, then with
+    /// a fresh green verdict for that key seeded and `record` (if any) as test-a.sh's result.
+    fn replay_cached_green(record: Option<&str>) -> (Vec<String>, usize) {
+        let root = testkit::TempDir::new("testenv-cached-replay");
+        let (repo, harness, owner) = (root.join("repo"), root.join("harness"), root.join("owner"));
+        for d in [&repo.join("spira"), &harness.join("spira"), &owner] {
+            fs::create_dir_all(d).unwrap();
+        }
+        fs::write(repo.join("spira/test-a.sh"), "#!/usr/bin/env bash\nset -uo pipefail\necho ok\n").unwrap();
+        fs::write(repo.join(".gitignore"), "target/\n").unwrap();
+        git(&repo, "git init -q -b main && git add . && git commit -qm base && git checkout -qb topic && echo x > x && git add . && git commit -qm topic && git checkout -q main");
+        let env: HashMap<String, String> = [
+            ("SPIRA_RUN", root.join("run").display().to_string()),
+            ("SPIRA_BATCH_LIVENESS_SLEEP", "0".into()),
+            ("SPIRA_BATCH_PSI_THRESHOLD", "0".into()),
+            ("SPIRA_BATCH_MAXPAR", "2".into()),
+            ("SPIRA_TESTENV_WARM_SLOTS", "0".into()),
+            ("SPIRA_TESTENV_SCRATCH_MIN_FREE_MIB", "0".into()),
+            ("SPIRA_TESTENV_SCRATCH_MIN_MEM_MIB", "0".into()),
+            ("SPIRA_TESTENV_MAX_RUNS", "99".into()),
+            ("SPIRA_TEST_PAR", "1".into()),
+            ("HOME", root.display().to_string()),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v))
+        .collect();
+        let exe = root.join("runner-exe");
+        fs::write(&exe, b"runner").unwrap();
+        let lines = std::sync::Mutex::new(vec![]);
+        let envf = |k: &str| env.get(k).cloned();
+        let out = |l: &str| lines.lock().unwrap().push(l.to_string());
+        let rt = FakeRuntime::new();
+        let full: Vec<String> = ["--suites", "test-a.sh", "topic"].iter().map(|s| s.to_string()).chain([repo.display().to_string()]).collect();
+        let go = || {
+            let deps = Deps {
+                rt: &rt,
+                builder: &NoBuild,
+                harness: Harness { root: harness.clone() },
+                env: &envf,
+                config: None,
+                repo_root: &|_| None,
+                settings: test_settings(&env),
+                stdin: &String::new,
+                out: &out,
+                owner_dir: owner.clone(),
+                cwd: root.to_path_buf(),
+                runner_identity: b"runner-v1".to_vec(),
+                warm_refill: &|_, _, _| {},
+                spawn_sweep: &|_| {},
+                runner_exe: exe.clone(),
+                load1: &|| Some(0.0),
+                sleep: &|_| {},
+            };
+            execute(parse(&full).unwrap(), &deps);
+        };
+        go();
+        let results_root = root.join("run/batch-results");
+        let key = fs::read_dir(&results_root).unwrap().flatten().next().expect("the first run made a results dir").file_name().to_string_lossy().into_owned();
+        let dir = results_root.join(&key);
+        for f in fs::read_dir(&dir).unwrap().flatten() {
+            let _ = fs::remove_file(f.path());
+        }
+        if let Some(r) = record {
+            fs::write(dir.join("test-a.sh.result"), format!("{r}\n")).unwrap();
+        }
+        fs::create_dir_all(root.join("run/verdicts")).unwrap();
+        fs::write(
+            root.join(format!("run/verdicts/batch-{key}")),
+            format!("verdict=green\nwhen=2026-11-16T07:33:31Z\nby=testenv-batch\nat={}\n", now_epoch()),
+        )
+        .unwrap();
+        lines.lock().unwrap().clear();
+        let work_done = || rt.testenv_calls.lock().unwrap().iter().filter(|c| c.first().map(String::as_str) != Some("tag")).count() + rt.execs.lock().unwrap().len();
+        let before = work_done();
+        go();
+        let after = work_done();
+        let got = lines.lock().unwrap().clone();
+        (got, after - before)
+    }
+
+    #[test]
+    fn a_cached_green_replays_each_suites_recorded_line_before_the_verdict() {
+        let (lines, calls) = replay_cached_green(Some("ok 100 334 - batch testenv 0"));
+        assert_eq!(calls, 0, "a hit must not reach the runtime: {lines:#?}");
+        let at = lines.iter().position(|l| l.trim_start().starts_with("test-a.sh") && l.contains("ok") && l.contains("334s")).unwrap_or_else(|| panic!("no replayed suite line: {lines:#?}"));
+        let verdict = lines.iter().position(|l| l.starts_with("VERDICT GREEN ran=0 cached=")).unwrap_or_else(|| panic!("not served from cache: {lines:#?}"));
+        assert!(at < verdict, "{lines:#?}");
+    }
+
+    #[test]
+    fn a_cached_green_replays_a_skipped_suite_as_skipped() {
+        let (lines, calls) = replay_cached_green(Some("skip 100 0 - batch testenv 0"));
+        assert_eq!(calls, 0, "a hit must not reach the runtime: {lines:#?}");
+        assert!(lines.iter().any(|l| l.contains("test-a.sh") && l.contains("SKIPPED")), "{lines:#?}");
+        assert!(!lines.iter().any(|l| l.contains("test-a.sh") && l.contains(" ok ")), "{lines:#?}");
+    }
+
+    #[test]
+    fn a_cached_green_with_no_suite_record_is_a_miss_and_runs() {
+        let (lines, calls) = replay_cached_green(None);
+        assert!(lines.iter().any(|l| l.contains("has no record for test-a.sh — running")), "{lines:#?}");
+        assert!(!lines.iter().any(|l| l.contains("cached=")), "{lines:#?}");
+        assert!(calls > 0, "the run did not proceed to the runtime: {lines:#?}");
+    }
+
+    #[test]
+    fn one_missing_record_makes_the_whole_cached_replay_a_miss() {
+        let dir = testkit::TempDir::new("testenv-cached-lines");
+        fs::write(dir.join("test-a.sh.result"), "ok 100 5 - batch testenv 0\n").unwrap();
+        let both = ["test-a.sh".to_string(), "test-b.sh".to_string()];
+        assert_eq!(cached_suite_lines(&dir, &both), Err("test-b.sh".to_string()));
+        fs::write(dir.join("test-b.sh.result"), "skip 100 0 - batch testenv 0\n").unwrap();
+        let lines = cached_suite_lines(&dir, &both).unwrap();
+        assert!(lines[0].contains("test-a.sh") && lines[0].contains("ok"), "{lines:?}");
+        assert!(lines[1].contains("test-b.sh") && lines[1].contains("SKIPPED"), "{lines:?}");
+    }
 }

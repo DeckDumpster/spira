@@ -250,6 +250,9 @@ ISO timestamps→`TIMESTAMP`, `HH:MM:SS`→`TIME`, `[0-9]{3,}`→`N`; then POSIX
   replays for a different set of binaries (another build of the same tree, a different
   toolchain), nor for a cargo run. Without the flag the key line is byte-for-byte what it was.
 * Under `--tests` only, ` tests=<names>` is appended the same way.
+* A cache hit prints each selected suite's recorded line (from `results_root/<key>/<suite>.result`) before
+  `VERDICT GREEN ran=0 cached=`, so a reader of the output sees what the run that made the entry
+  printed (`skip` replays as `SKIPPED`). A hit with a missing or unparsable record is a miss: the suites run.
 * When `unit-tests` is selected, ` unit-base=<merge base of landref and branch> unit-crates=<sorted
   comma list>` is appended: one tree selects different crates over different bases, and a pass
   over some crates says nothing about the others. A unit tier that selected **no** crate tested

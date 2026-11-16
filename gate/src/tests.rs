@@ -2732,6 +2732,33 @@ fn a_named_suite_red_on_the_base_too_is_the_bases() {
 }
 
 #[test]
+fn a_cached_replay_of_a_passed_suite_proves_it() {
+    let f = returned(unit_fake(&["gate/src/x.rs"]), "test-b.sh");
+    f.reentry_runs.borrow_mut().insert(
+        MERGE_SHA.into(),
+        (
+            0,
+            "batch: tree already passed at 2026-11-16T07:33:31Z — key batch-k\n  test-b.sh   ok      334s\nVERDICT GREEN ran=0 cached=2026-11-16T07:33:31Z".into(),
+        ),
+    );
+    assert_eq!(f.run(), PASS);
+    assert!(f.written.borrow()[0].1.contains("suites=test-b.sh"), "{:?}", f.written.borrow());
+}
+
+#[test]
+fn a_cached_replay_without_a_passed_suite_line_proves_nothing() {
+    for body in [
+        "VERDICT GREEN ran=0 cached=2026-11-16T07:33:31Z",
+        "  test-b.sh   SKIPPED\nVERDICT GREEN ran=0 cached=2026-11-16T07:33:31Z",
+    ] {
+        let f = returned(unit_fake(&["gate/src/x.rs"]), "test-b.sh");
+        f.reentry_runs.borrow_mut().insert(MERGE_SHA.into(), (0, body.into()));
+        assert_eq!(f.run(), NOVERDICT, "{body}");
+        assert!(f.verdict_line().contains("reason=reentry-unproven"), "{}", f.verdict_line());
+    }
+}
+
+#[test]
 fn a_named_suite_that_only_skips_proves_nothing() {
     let f = returned(unit_fake(&["gate/src/x.rs"]), "test-b.sh");
     f.reentry_runs.borrow_mut().insert(

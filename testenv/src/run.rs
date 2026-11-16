@@ -284,6 +284,20 @@ impl Deps<'_> {
     }
 }
 
+/// The per-suite lines a cached green replays; the first suite without a parsable record is the `Err`.
+fn cached_suite_lines(results: &Path, active: &[String]) -> Result<Vec<String>, String> {
+    active
+        .iter()
+        .map(|n| {
+            fs::read_to_string(results.join(format!("{n}.result")))
+                .ok()
+                .and_then(|t| ResultRecord::parse(&t))
+                .map(|rec| suite_line(n, &rec))
+                .ok_or_else(|| n.clone())
+        })
+        .collect()
+}
+
 fn prune_results(s: &Settings, own: &str) {
     s.results_retention.prune("testenv", &s.results_root, now_epoch(), &|n| n == own);
 }
@@ -1589,13 +1603,19 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         args.repeat_reason.is_some(),
     ) {
         CacheDecision::Miss => {}
-        CacheDecision::Green { when } => {
-            deps.log(&format!("tree already passed at {when} — key batch-{key}"));
-            return Finish {
-                cached: Some(when.into()),
-                ..Finish::green(0)
-            };
-        }
+        CacheDecision::Green { when } => match cached_suite_lines(&results, &active) {
+            Ok(lines) => {
+                for l in &lines {
+                    (deps.out)(l);
+                }
+                deps.log(&format!("tree already passed at {when} — key batch-{key}"));
+                return Finish {
+                    cached: Some(when.into()),
+                    ..Finish::green(0)
+                };
+            }
+            Err(suite) => deps.log(&format!("cached green at {when} has no record for {suite} — running")),
+        },
         CacheDecision::RepeatAllowed { reason } => {
             deps.log(&format!("repeat allowed — reason: {reason}"));
             override_reason = Some(reason);
