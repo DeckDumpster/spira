@@ -649,7 +649,7 @@ mod tests {
     fn the_lc_services_signal_only_serve_and_give_its_drain_time_to_finish() {
         const DRAIN_BOUND_SECS: u64 = 60;
         for unit in ["lc-serve.service", "spira-lc.service"] {
-            let text = fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../systemd/").to_string() + unit).unwrap();
+            let text = fs::read_to_string(spira_config::resolve::checkout_root_for_process().unwrap().join("systemd").join(unit)).unwrap();
             assert!(text.lines().any(|l| l == "KillMode=mixed"), "{unit}: SIGTERM must reach serve alone while it drains");
             let stop: u64 = text.lines().find_map(|l| l.strip_prefix("TimeoutStopSec=")).unwrap_or_else(|| panic!("{unit}: no TimeoutStopSec")).parse().unwrap();
             assert!(stop > DRAIN_BOUND_SECS + 15, "{unit}: TimeoutStopSec={stop} leaves no room after the drain bound");
