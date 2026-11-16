@@ -157,7 +157,7 @@ fn apply(bd: &dyn Bd, lc: &dyn Lc, mail_root: &Path, reply: &str, key: &str, don
                     converged = false;
                 }
             }
-            Err(LcError::Fault(e)) => {
+            Err(LcError::Fault(e) | LcError::NotRunning(e)) => {
                 let s = step(done, "close", || Err(e));
                 tally(s, "close", &mut converged, &mut abandoned);
             }

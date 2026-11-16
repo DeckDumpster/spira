@@ -469,3 +469,5 @@ Refusals:
     Fix: run inside the bead's session; exit 2 means nothing was done and a retry is safe
   - cannot tell: {err}
     Fix: nothing was recorded; retry. If it persists, leave a note with the evidence and exit non-zero
+  - store not running: nothing was sent; waited {secs}s
+    Fix: nothing was recorded; run the same verb again

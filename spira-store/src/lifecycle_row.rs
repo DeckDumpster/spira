@@ -310,7 +310,7 @@ fn close_args(bin: &str, id: &str, reason: &str, actor: &str, extra: Vec<&str>) 
     let c = client(bin)?;
     close_on(&c, id, reason, actor, &extra).map_err(|e| match e {
         LcError::Refused(m) => format!("{bin} close {id} exited {REFUSED}: {m}"),
-        LcError::Fault(m) => format!("{bin} close {id}: {m}"),
+        LcError::Fault(m) | LcError::NotRunning(m) => format!("{bin} close {id}: {m}"),
     })
 }
 

@@ -63,7 +63,7 @@ pub fn set_repo(lc: &LcClient, verb: &str, id: &str, repo: &str) -> SetRepo {
     match lc.call(&set_repo_argv(verb, id, repo)) {
         Ok(r) if r.code == 0 => SetRepo::Applied,
         Ok(r) if r.code == 1 => SetRepo::Refused(r.out),
-        Ok(_) | Err(LcError::Refused(_)) | Err(LcError::Fault(_)) => SetRepo::Failed,
+        Ok(_) | Err(LcError::Refused(_) | LcError::Fault(_) | LcError::NotRunning(_)) => SetRepo::Failed,
     }
 }
 

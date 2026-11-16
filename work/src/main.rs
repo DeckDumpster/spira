@@ -153,8 +153,9 @@ fn main() {
             { spira_otel::run::finish(code); std::process::exit(code) };
         }
         Err(e) => {
-            eprintln!("{}", refusal(R::SocketUnreachable, "", &[("err", &e)]));
-            { let code = CANNOT_TELL; spira_otel::run::finish(code); std::process::exit(code) };
+            let code = report_unsent(e);
+            spira_otel::run::finish(code);
+            std::process::exit(code)
         }
     }
 }
@@ -185,9 +186,56 @@ fn read_tip(bead: &str) -> Option<String> {
 /// The exact wire protocol spira-lc's own CLI speaks to its socket (client.rs): one JSON
 /// line in (the argv array), one header line out (`{exit_code, len}`) then `len` raw stdout bytes. No same-user
 /// fallback exists here — see this file's module doc for why that absence is the point.
-fn send(argv: &[String], wait: Duration) -> Result<(i32, String), String> {
+fn send(argv: &[String], wait: Duration) -> Result<(i32, String), Unsent> {
     let socket_path = spira_config::process::cfg("SPIRA_LC_SOCKET")?;
-    let stream = UnixStream::connect(&socket_path).map_err(|e| format!("connecting to {socket_path}: {e}"))?;
+    let began = std::time::Instant::now();
+    let stream = connect_waiting(&socket_path, REPLY_WAIT)?;
+    send_on(stream, argv, wait.saturating_sub(began.elapsed()).max(Duration::from_secs(1))).map_err(Unsent::Other)
+}
+
+/// Why a request got no answer: no store answered the socket (nothing was sent), or anything else.
+#[derive(Debug)]
+enum Unsent {
+    NotRunning { waited_secs: u64 },
+    Other(String),
+}
+
+impl std::fmt::Display for Unsent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Unsent::NotRunning { waited_secs } => write!(f, "store not running: nothing was sent; waited {waited_secs}s"),
+            Unsent::Other(e) => f.write_str(e),
+        }
+    }
+}
+
+impl From<String> for Unsent {
+    fn from(e: String) -> Self {
+        Unsent::Other(e)
+    }
+}
+
+/// Connects, trying again while no store answers the socket, for at most `wait`.
+fn connect_waiting(socket_path: &str, wait: Duration) -> Result<UnixStream, Unsent> {
+    use spira_store::lc_call::{connect, retrying, Fail};
+    let path = std::path::Path::new(socket_path);
+    let began = std::time::Instant::now();
+    retrying(&[], path, wait, wait, |_| connect(path)).map_err(|f| match f {
+        Fail::NotRunning(_) => Unsent::NotRunning { waited_secs: began.elapsed().as_secs() },
+        f => Unsent::Other(f.into_text()),
+    })
+}
+
+/// Reports an unanswered request and returns the exit code.
+fn report_unsent(e: Unsent) -> i32 {
+    match e {
+        Unsent::NotRunning { waited_secs } => eprintln!("{}", refusal(R::StoreNotRunning, "", &[("secs", &waited_secs.to_string())])),
+        Unsent::Other(e) => eprintln!("{}", refusal(R::SocketUnreachable, "", &[("err", &e)])),
+    }
+    CANNOT_TELL
+}
+
+fn send_on(stream: UnixStream, argv: &[String], wait: Duration) -> Result<(i32, String), String> {
     stream.set_read_timeout(Some(READ_SLICE.min(wait))).map_err(|e| e.to_string())?;
     stream.set_write_timeout(Some(TIMEOUT)).map_err(|e| e.to_string())?;
 
@@ -305,10 +353,7 @@ fn statute_check(args: &[String]) -> i32 {
             eprintln!("{}", refusal(R::StatuteNoteNotRecorded, "statute-check", &[("code", &code.to_string()), ("err", o.trim())]));
             return code;
         }
-        Err(e) => {
-            eprintln!("{}", refusal(R::SocketUnreachable, "", &[("err", &e)]));
-            return CANNOT_TELL;
-        }
+        Err(e) => return report_unsent(e),
     }
     print!("{out}");
     println!("Read every statute above in full before writing code. If one forbids the plan, change the plan or `work ask` with a default. The check is recorded on the bead.");
@@ -381,10 +426,7 @@ fn review(args: &[String]) -> i32 {
             eprintln!("{}", refusal(R::ReviewShow, "review", &[("code", &code.to_string()), ("err", o.trim())]));
             return code;
         }
-        Err(e) => {
-            eprintln!("{}", refusal(R::SocketUnreachable, "", &[("err", &e)]));
-            return CANNOT_TELL;
-        }
+        Err(e) => return report_unsent(e),
     };
     let diff = match spira_config::bounded::bounded("git").args(["diff", &format!("{}...HEAD", opts.base)]).output() {
         Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).into_owned(),
@@ -892,4 +934,29 @@ fn unresolved_programs() -> Vec<String> {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_absent_store_socket_is_not_running_after_the_wait_and_nothing_was_sent() {
+        let dir = testkit::TempDir::new("work-not-running");
+        let e = connect_waiting(dir.join("sock").to_str().unwrap(), Duration::from_millis(200)).unwrap_err();
+        assert!(matches!(e, Unsent::NotRunning { .. }), "{e:?}");
+    }
+
+    #[test]
+    fn a_socket_that_cannot_be_a_store_stays_a_fault_not_a_wait() {
+        let dir = testkit::TempDir::new("work-not-a-store");
+        std::fs::write(dir.join("a-file"), "").unwrap();
+        let e = connect_waiting(dir.join("a-file").join("sock").to_str().unwrap(), Duration::from_secs(30)).unwrap_err();
+        assert!(matches!(e, Unsent::Other(_)), "{e:?}");
+    }
+
+    #[test]
+    fn the_refusal_reports_the_wait() {
+        assert!(refusal(R::StoreNotRunning, "", &[("secs", "30")]).contains("store not running: nothing was sent; waited 30s"));
+    }
 }
