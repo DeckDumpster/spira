@@ -5,8 +5,8 @@ use std::time::{Duration, Instant};
 fn wait_until(what: &str, mut ready: impl FnMut() -> bool) {
     let by = Instant::now() + Duration::from_secs(20);
     while !ready() {
-        assert!(Instant::now() < by, "{what}"); // clock-safe: a cap on a wait for the stub's socket or exit
-        std::thread::sleep(Duration::from_millis(20)); // clock-safe: poll between checks of that signal
+        assert!(Instant::now() < by, "{what}");
+        std::thread::sleep(Duration::from_millis(20));
     }
 }
 
@@ -23,7 +23,7 @@ fn started(world: &Path, phase: &str) -> (std::path::PathBuf, std::path::PathBuf
 fn the_stub_answers_until_the_walk_is_done_with_no_wall_clock_life() {
     let world = testkit::TempDir::new("sim-control-stub");
     let (sock, phase_file, stub) = started(world.path(), "land\n");
-    std::thread::sleep(Duration::from_millis(1500)); // clock-safe: the property is that elapsed real time ends nothing, so the test lets some pass
+    std::thread::sleep(Duration::from_millis(1500));
     assert!(runtime::socket::lc_call(&sock, &["halt"]).is_ok(), "a stub mid-walk must still answer after any real time has passed");
     assert!(!stub.is_finished(), "the stub left before the walk was done");
     std::fs::write(&phase_file, "done\n").unwrap();
