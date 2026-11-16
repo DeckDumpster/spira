@@ -65,7 +65,7 @@ pub fn open(path: &str) -> Result<Connection, String> {
 }
 
 pub fn init(conn: &Connection) -> Result<(), String> {
-    conn.busy_timeout(std::time::Duration::from_secs(10))
+    conn.busy_timeout(std::time::Duration::from_secs(5))
         .map_err(sql)?;
     conn.prepare("PRAGMA journal_mode=WAL")
         .and_then(|mut s| s.query_row([], |_| Ok(())))
