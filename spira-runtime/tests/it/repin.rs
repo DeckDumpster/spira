@@ -112,7 +112,7 @@ impl World {
                 express_ready: Some(0),
                 max_dwarves: pinned.get(KEY).and_then(|v| v.parse().ok()),
                 roster: vec!["builder".into()],
-                runes: [("builder".to_string(), spira_runtime::tasks::a::sentinel_call::RuneCfg { uses: vec!["build-disk".into()], ..Default::default() })].into(),
+                runes: [("builder".to_string(), spira_runtime::tasks::a::sentinel_call::RuneCfg { elastic: true, uses: vec!["build-disk".into()], ..Default::default() })].into(),
                 ..Snapshot::default()
             };
             self.engine.complete(&p.key, Outcome::Succeeded(serde_json::to_string(&snap).unwrap())).unwrap();
@@ -157,7 +157,7 @@ fn a_pool_size_set_from_0_to_4_with_no_landing_calls_four_builders_within_one_ti
     assert_eq!(w.ask(&["scheduler", "running", KEY]).unwrap(), "4");
     let facts: Vec<String> = w.journal.log().into_iter().filter(|e| e.kind.tag == spira_runtime::repin::REPINNED).map(|e| e.kind.body).collect();
     assert_eq!(facts, vec![format!("re-pinned {KEY} 0 -> 4")], "one journal fact says what was re-pinned");
-    assert_eq!(w.calls(6), 1, "the first tick after the re-pin calls a builder");
+    assert_eq!(w.calls(6), 4, "the first tick after the re-pin calls four builders");
 
     let mut full = world("0");
     full.change(KEY, "4");
