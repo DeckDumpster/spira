@@ -2,7 +2,9 @@
 #
 # concierge.sh — the single Remote Control session the operator talks to from their phone.
 #
-#   concierge.sh start     launch it in tmux for the phone (idempotent; converges if running)
+#   concierge.sh start [--opening-prompt-file F]
+#                          launch it in tmux for the phone (idempotent; converges if running);
+#                          F is the session's opening prompt, used only on a fresh start
 #   concierge.sh here      attach to the running session (start first if needed)
 #   concierge.sh attach    attach locally
 #   concierge.sh brief     render the system prompt and print its path; change nothing
@@ -357,6 +359,19 @@ concierge_stray_holders() {
 case "${1:-status}" in
 
 start)
+    OPENING_PROMPT=""
+    shift
+    while [ $# -gt 0 ]; do
+        case "$1" in
+        --opening-prompt-file)
+            [ $# -ge 2 ] || { echo "concierge: --opening-prompt-file needs a path" >&2; exit 2; }
+            [ -f "$2" ] && [ -r "$2" ] || { echo "concierge: --opening-prompt-file: '$2' is not a readable file" >&2; exit 2; }
+            OPENING_PROMPT="$(cat "$2")"
+            [ -n "$OPENING_PROMPT" ] || { echo "concierge: --opening-prompt-file: '$2' is empty" >&2; exit 2; }
+            shift 2 ;;
+        *) echo "concierge: start: unexpected argument '$1' (only --opening-prompt-file <path> is taken)" >&2; exit 2 ;;
+        esac
+    done
     # The launcher's release (sp-31gtu): the session's gates, dwarves and panes build PATH from
     # it, so a start without it is refused here rather than failing later, one tool at a time.
     [ -n "${SPIRA_RELEASE:-}" ] || {
@@ -495,10 +510,16 @@ start)
             printf 'exec claude --remote-control %q --dangerously-skip-permissions --settings %q ' "$SESSION" "$(session_settings)"
             [ -n "$MODEL" ] && printf -- '--model %q ' "$MODEL"
             [ -n "${1:-}" ] && printf -- '--resume %q ' "$1"
-            printf -- '--append-system-prompt %q\n' "$(cat "$BRIEF")"
+            printf -- '--append-system-prompt %q' "$(cat "$BRIEF")"
+            if [ -z "${1:-}" ] && [ -n "$OPENING_PROMPT" ]; then
+                printf ' %q' "$OPENING_PROMPT"
+            fi
+            printf '\n'
         } > "$LAUNCHER"
         chmod +x "$LAUNCHER"
     }
+    [ -n "$RESUME_ID" ] && [ -n "$OPENING_PROMPT" ] &&
+        printf 'concierge: resuming %s — --opening-prompt-file ignored\n' "$RESUME_ID" >&2
     write_launcher "$RESUME_ID"
     # concierge.service is Type=oneshot/KillMode=control-group: when start exits, systemd
     # kills the whole cgroup — the tmux server with it. A transient unit gives the server
