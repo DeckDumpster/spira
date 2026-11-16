@@ -23,7 +23,7 @@ const SEEN_WINDOW: i64 = DAY;
 /// The registered config keys a component's queue reads its configured limit from.
 pub const LIMIT_KEYS: [&str; 11] = [
     "SPIRA_MAX_LIVE_DWARVES",
-    "SPIRA_LANES_MAX_LIVE",
+    "SPIRA_MAX_DWARVES",
     "SPIRA_STACK_MAX_DEPTH",
     "SPIRA_COLD_PAR",
     "SPIRA_TEST_PAR",
@@ -167,7 +167,7 @@ const COMPONENTS: &[ComponentDef] = &[
         "dwarf session",
         Some("dwf"),
         &["sentinel-call", "unit.start", "dwarf start", "rune-ready → rank"],
-        &[qk("fleet ceiling", "SPIRA_MAX_LIVE_DWARVES"), qk("lane cap", "SPIRA_LANES_MAX_LIVE"), q("call cadence")],
+        &[qk("fleet ceiling", "SPIRA_MAX_LIVE_DWARVES"), qk("build-disk limit", "SPIRA_MAX_DWARVES"), q("call cadence")],
     ),
     component("stack-proposal", "stack proposal", Some("stk"), &["spira-claim stack"], &[qk("stack_max_depth", "SPIRA_STACK_MAX_DEPTH")]),
     component("worktree", "worktree + base", Some("wt"), &["fetch land ref", "worktree", "fixture + brief"], &[]),
@@ -1352,6 +1352,15 @@ mod tests {
         for key in LIMIT_KEYS {
             assert!(conf_d.join(key).is_file(), "{key} is not registered in spira/conf.d");
         }
+    }
+
+    #[test]
+    fn the_dwarf_session_queues_the_build_disk_limit_and_nothing_reads_the_lane_cap() {
+        let session = COMPONENTS.iter().find(|c| c.id == "dwarf-session").unwrap();
+        assert!(session.queues.iter().any(|qd| qd.label == "build-disk limit" && qd.key == Some("SPIRA_MAX_DWARVES")));
+        let fixture = include_str!("../tests/fixtures/factory.json");
+        assert!(fixture.contains("\"label\": \"build-disk limit\"") && !fixture.contains("SPIRA_LANES_MAX_LIVE") && !fixture.contains("lane cap"));
+        assert!(!LIMIT_KEYS.contains(&"SPIRA_LANES_MAX_LIVE"));
     }
 
     #[tokio::test]

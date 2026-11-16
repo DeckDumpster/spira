@@ -11,6 +11,8 @@ use runtime::{EventKind, RuntimeError, HALT_STREAM, SCHEDULER_HALTED, SCHEDULER_
 /// Bumped when a field changes meaning or goes away.
 pub const SCHEMA: u64 = 1;
 
+const NO_PASS: &str = "cannot tell: no call pass has run yet";
+
 pub type SubmitFn = Arc<dyn Fn(&str, &str, EventKind) -> Result<(), String> + Send + Sync>;
 
 pub fn document(s: &SchedulerStatus) -> serde_json::Value {
@@ -87,9 +89,16 @@ impl Control {
                 let r = self.repin.as_ref().ok_or_else(|| RuntimeError::refused("this scheduler re-pins nothing"))?;
                 r.held(key).ok_or_else(|| RuntimeError::refused(format!("{key} is not a key the scheduler pins per task")))
             }
+            ["scheduler", "bound"] => {
+                let s = self.board.get().ok_or_else(|| RuntimeError::new(NO_PASS))?;
+                let carried = s.tasks.iter().find(|t| t.name == crate::tasks::a::sentinel_call::NAME).and_then(|t| t.state.as_ref());
+                let carry: crate::tasks::a::sentinel_call::Carry = carried.and_then(|c| serde_json::from_str(&c.body).ok()).unwrap_or_default();
+                let bound = carry.bound.ok_or_else(|| RuntimeError::new(NO_PASS))?;
+                serde_json::to_string(&bound).map_err(|e| RuntimeError::new(e.to_string()))
+            }
             ["scheduler", "halt", reason @ ..] => self.gate(SCHEDULER_HALTED, &reason.join(" ")),
             ["scheduler", "resume"] => self.gate(SCHEDULER_RESUMED, ""),
-            _ => Err(RuntimeError::refused(format!("unknown request {argv:?} (scheduler status|halt [reason]|resume|repin <key>|running <key>)"))),
+            _ => Err(RuntimeError::refused(format!("unknown request {argv:?} (scheduler status|halt [reason]|resume|repin <key>|running <key>|bound)"))),
         }
     }
 

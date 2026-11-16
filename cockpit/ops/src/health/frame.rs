@@ -54,7 +54,7 @@ pub fn frame(rows: i64, cols_in: i64, inputs: &FrameInputs) -> Vec<String> {
         inputs.deadman_secs,
     );
     let goodput_rows = super::goodput::sections_section(&snap, cols, inputs.deadman_secs, inputs.now);
-    let slots = slots_line(&snap);
+    let slots: Vec<String> = std::iter::once(slots_line(&snap)).chain(bound_line(&snap)).collect();
     let tokens = tokens_section(
         &snap,
         cols,
@@ -97,12 +97,12 @@ pub fn frame(rows: i64, cols_in: i64, inputs: &FrameInputs) -> Vec<String> {
         Spec::new(want[5], want[5], true),
     ];
 
-    let fixed = head.len() as i64 + 1 + tokens.len() as i64 + round.len() as i64 + inflight.len() as i64 + flow.len() as i64 + standing.len() as i64 + goodput_rows.len() as i64;
+    let fixed = head.len() as i64 + slots.len() as i64 + tokens.len() as i64 + round.len() as i64 + inflight.len() as i64 + flow.len() as i64 + standing.len() as i64 + goodput_rows.len() as i64;
     let give = share(rows, fixed, &specs);
 
     let mut out = Vec::new();
     out.extend(head);
-    out.push(slots);
+    out.extend(slots);
     out.extend(goodput_rows);
     out.extend(tokens);
     out.extend(round);
@@ -176,9 +176,46 @@ mod tests {
     }
 
     #[test]
-    fn slots_row_shows_live_ceiling_free_and_split() {
-        let out = slots_frame("SP_SLOTS_LIVE='3'\nSP_SLOTS_CEILING='8'\nSP_SLOTS_FREE='5'\nSP_SLOTS_POOL='8'\nSP_SLOTS_LANES_CAP='2'\n", 0);
-        assert!(out.contains("SLOTS   3/8  5 free  (builders 6-8, lanes 0-2)"), "{out}");
+    fn slots_row_shows_live_ceiling_and_free_without_a_split() {
+        let out = slots_frame("SP_SLOTS_LIVE='3'\nSP_SLOTS_CEILING='8'\nSP_SLOTS_FREE='5'\nSP_SLOTS_POOL='8'\n", 0);
+        assert!(out.contains("SLOTS   3/8  5 free"), "{out}");
+        assert!(!out.contains("lanes") && !out.contains("builders"), "{out}");
+    }
+
+    fn bound_frame(bound: &str) -> String {
+        slots_frame(Box::leak(format!("SP_SLOTS_LIVE='3'\nSP_SLOTS_CEILING='8'\nSP_SLOTS_FREE='5'\nSP_BOUND='{bound}'\n").into_boxed_str()), 0)
+    }
+
+    #[test]
+    fn the_bound_row_shows_held_limit_waiting_and_no_backfill_when_over() {
+        assert!(bound_frame("build-disk 9 7 3 1").contains("BOUND   build-disk 9 of 7 held, 3 waiting, no backfill"));
+        assert!(bound_frame("build-disk 5 7 0 0").contains("BOUND   build-disk 5 of 7 held, 0 waiting\n"));
+        assert!(bound_frame("build-disk 5 7 0 0;memory 2 4 1 0").contains("BOUND   build-disk 5 of 7 held, 0 waiting  \u{b7}  memory 2 of 4 held, 1 waiting"));
+        assert!(bound_frame("?").contains("BOUND   ? \u{2014} the scheduler did not answer"));
+    }
+
+    #[test]
+    fn the_bound_row_is_absent_when_no_class_has_a_limit() {
+        assert!(!bound_frame("").contains("BOUND"));
+        assert!(!slots_frame("SP_SLOTS_LIVE='3'\nSP_SLOTS_CEILING='8'\nSP_SLOTS_FREE='5'\n", 0).contains("BOUND"));
+    }
+
+    #[test]
+    fn an_over_class_renders_in_warn() {
+        let mut i = base_inputs();
+        i.snapshot_content = "SP_BOUND='build-disk 9 7 3 1'\n";
+        i.snapshot_exists = true;
+        let row = render(0, 80, &i).into_iter().find(|l| l.contains("BOUND")).unwrap();
+        assert!(row.contains(&format!("{}build-disk 9 of 7", crate::health::colors::WARN)), "{row:?}");
+    }
+
+    #[test]
+    fn no_frame_from_a_full_snapshot_says_lane() {
+        let snap = "SP_SLOTS_LIVE='3'\nSP_SLOTS_CEILING='8'\nSP_SLOTS_FREE='5'\nSP_SLOTS_POOL='8'\nSP_BOUND='build-disk 9 7 3 1;memory 2 4 1 0'\nSP_SLOTS_PENDING='ceiling 9'\nSP_SLOTS_DIRECTED='2'\nSP_MAIL_UNREAD='1'\nSP_MAIL_OLDEST_AGE='60'\nSP_MAIL_N='1'\nSP_MAIL0='60|NEW|a message'\nSP_QUEUE_DEPTH='2'\nSP_DWARF_N='1'\nSP_DWARF0_NAME='ada'\nSP_DWARF0_BEAD='sp-w1'\n";
+        for rows in [0, 8, 30] {
+            let out = slots_frame(snap, rows).to_lowercase();
+            assert!(!out.contains("lane"), "{out}");
+        }
     }
 
     #[test]
@@ -192,9 +229,9 @@ mod tests {
     }
 
     #[test]
-    fn slots_row_has_no_split_without_a_lane_cap_and_shows_question_on_failed_probe() {
-        let out = slots_frame("SP_SLOTS_LIVE='1'\nSP_SLOTS_CEILING='4'\nSP_SLOTS_FREE='3'\nSP_SLOTS_POOL='4'\nSP_SLOTS_LANES_CAP=''\n", 0);
-        assert!(out.contains("1/4  3 free") && !out.contains("builders"), "{out}");
+    fn slots_row_shows_question_on_failed_probe() {
+        let out = slots_frame("SP_SLOTS_LIVE='1'\nSP_SLOTS_CEILING='4'\nSP_SLOTS_FREE='3'\nSP_SLOTS_POOL='4'\n", 0);
+        assert!(out.contains("1/4  3 free"), "{out}");
         let bad = slots_frame("SP_SLOTS_LIVE='?'\nSP_SLOTS_CEILING='?'\nSP_SLOTS_FREE='?'\n", 0);
         assert!(bad.contains("? free"), "{bad}");
     }

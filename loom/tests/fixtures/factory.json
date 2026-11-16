@@ -2102,8 +2102,8 @@
      "config": 4
     },
     {
-     "label": "lane cap",
-     "key": "SPIRA_LANES_MAX_LIVE",
+     "label": "build-disk limit",
+     "key": "SPIRA_MAX_DWARVES",
      "config": null
     },
     {
