@@ -1303,3 +1303,22 @@ fn a_gate_is_read_from_the_queue_and_the_admission_leases() {
     assert_eq!(got.get("sp-w"), Some(&Gating::Queued));
     assert_eq!(got.get("sp-none"), None);
 }
+
+#[test]
+fn mark_gated_sets_a_gate_on_submitted_beads_only_and_clears_a_stale_one() {
+    let now = T0;
+    let mut s = healthy(now);
+    let mut stale = bead("sp-gone", "spira", "SUBMITTED", now - 6 * MIN);
+    stale.gate = Some(Gating::Queued);
+    s.beads = vec![bead("sp-0m57dx", "spira", "SUBMITTED", now - 6 * MIN), bead("sp-c1", "spira", "CERTIFIED", now - 6 * MIN), stale];
+    s.last = last("spira", &[("Cut", now - 2 * MIN), ("Delivered", now - 20 * MIN)]);
+    s.open_rounds = Some(BTreeMap::new());
+    s.owners.clear();
+    let gates = BTreeMap::from([("sp-0m57dx".to_string(), Gating::Queued), ("sp-c1".to_string(), Gating::Queued)]);
+    mark_gated(&mut s, &gates);
+    let gate_of = |id: &str| s.beads.iter().find(|b| b.id == id).unwrap().gate.clone();
+    assert_eq!((gate_of("sp-0m57dx"), gate_of("sp-c1"), gate_of("sp-gone")), (Some(Gating::Queued), None, None));
+    let found = cut_stalls(&s, now);
+    assert_eq!(found.len(), 1);
+    assert!(found[0].evidence.contains("oldest uncovered: sp-c1 CERTIFIED") || found[0].evidence.contains("oldest uncovered: sp-gone"), "{}", found[0].evidence);
+}
