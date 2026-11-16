@@ -1,7 +1,7 @@
 //! Every test binary runs under cargo's target runner, `tools/test-sandbox/runner`, which
 //! `.cargo/config.toml` names: a bubblewrap sandbox in which the caller's installation is out of
 //! reach (sp-bpenvh). What a binary can reach inside it is the test-sandbox suite's to prove
-//! with a probe binary; these tests read files and spawn nothing.
+//! with a probe binary; these tests read files and spawn at most the runner's own `--print-args`.
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -79,4 +79,63 @@ fn a_test_finds_no_installation_under_its_home() {
     for p in [".config/spira", ".local/bin/work"] {
         assert!(!home.join(p).exists(), "$HOME/{p} is visible inside the sandbox");
     }
+}
+
+fn print_args(args: &[&str]) -> Vec<String> {
+    let out = std::process::Command::new(workspace().join("tools/test-sandbox/runner"))
+        .arg("--print-args")
+        .args(args)
+        .output()
+        .expect("the runner spawns");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    String::from_utf8(out.stdout).unwrap().lines().map(String::from).collect()
+}
+
+#[test]
+fn around_binds_each_target_link_destination_writable_and_keeps_the_environment() {
+    let ws = workspace();
+    let scratch = testkit::TempDir::new("around-dest");
+    let dest = scratch.path().to_path_buf();
+    let (target, link) = (ws.join("target"), ws.join("target/debug"));
+    let made_target = !target.exists();
+    fs::create_dir_all(&target).unwrap();
+    let had_link = fs::symlink_metadata(&link).is_ok();
+    if !had_link {
+        std::os::unix::fs::symlink(&dest, &link).unwrap();
+    }
+    let args = print_args(&["--around", "cargo", "nextest", "run"]);
+    if !had_link {
+        fs::remove_file(&link).unwrap();
+    }
+    if made_target {
+        let _ = fs::remove_dir(&target);
+    }
+    let want = fs::canonicalize(if had_link { &link } else { &dest }).unwrap().display().to_string();
+    assert!(args.windows(3).any(|w| w[0] == "--bind" && w[1] == want && w[2] == want), "{want} bound writable: {args:?}");
+    assert!(!args.iter().any(|a| a == "--clearenv"), "the caller's environment is kept: {args:?}");
+    assert!(args.windows(3).any(|w| w[0] == "--setenv" && w[1] == "GIT_CONFIG_SYSTEM"), "{args:?}");
+    assert_eq!(&args[args.len() - 4..], ["--", "cargo", "nextest", "run"]);
+}
+
+#[test]
+fn the_held_decision_comes_before_any_work_a_held_call_does_not_need() {
+    let text = fs::read_to_string(workspace().join("tools/test-sandbox/runner")).unwrap();
+    let held = text.find("[ -z \"$print\" ] && held").expect("the runner decides held");
+    for later in ["readlink -f", "sed -n", "/bwrap"] {
+        let first_use = text.find(later).unwrap();
+        assert!(held < first_use, "`{later}` runs at byte {first_use}, before the held decision at {held}");
+    }
+}
+
+#[test]
+fn print_args_for_a_binary_is_what_the_landing_ref_printed() {
+    let ws = workspace();
+    let old = std::process::Command::new("git").arg("-C").arg(&ws).args(["show", "local/main:tools/test-sandbox/runner"]).output();
+    let Some(old) = old.ok().filter(|o| o.status.success()) else { return };
+    let copy = ws.join("tools/test-sandbox/runner.landing-ref");
+    testkit::write_exe(&copy, &String::from_utf8(old.stdout).unwrap());
+    let before = std::process::Command::new(&copy).args(["--print-args", "/usr/bin/true", "a", "b"]).output();
+    fs::remove_file(&copy).unwrap();
+    let before = String::from_utf8(before.unwrap().stdout).unwrap();
+    assert_eq!(print_args(&["/usr/bin/true", "a", "b"]), before.lines().collect::<Vec<_>>());
 }
