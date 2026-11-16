@@ -281,9 +281,8 @@ pub fn compose(
                 touched.insert(n);
             }
         }
-        if touched.is_empty() && readers.is_empty() {
-            return Composition::Fences;
-        }
+        return unit_of(touched, readers, members);
+    }
         let mut crates = with_transitive_dependents(&touched, members);
         crates.extend(readers.iter().cloned());
         crates.sort();
@@ -326,6 +325,10 @@ pub fn compose(
             crates: all,
         };
     }
+    unit_of(touched, readers, members)
+}
+
+fn unit_of(mut touched: BTreeSet<String>, readers: BTreeSet<String>, members: &[Member]) -> Composition {
     if touched.is_empty() && readers.is_empty() {
         return Composition::Fences;
     }
@@ -334,11 +337,7 @@ pub fn compose(
     crates.sort();
     crates.dedup();
     touched.extend(readers);
-    Composition::Unit {
-        touched: touched.into_iter().collect(),
-        targets: targets_of(&crates, members),
-        crates,
-    }
+    Composition::Unit { touched: touched.into_iter().collect(), targets: targets_of(&crates, members), crates }
 }
 
 fn targets_of(crates: &[String], members: &[Member]) -> Targets {
