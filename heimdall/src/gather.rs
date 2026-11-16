@@ -17,20 +17,16 @@ pub struct LogTail {
     pub text: String,
 }
 
-/// Each repo's newest gate-run rows, from the `Gate/gate` section. A section that cannot be read
-/// is no rows: the rule fails quiet, and the store's own reachability is judged elsewhere.
-pub fn gate_runs(lc: &spira_store::lc_call::LcClient) -> Vec<(String, Vec<serde_json::Value>)> {
-    let Ok(text) = lc.answer(&["section", "get", "Gate/gate"]) else { return Vec::new() };
-    parse_gate_runs(&text)
+/// Each repo's newest gate-run rows, from the `Gate/gate` section; `None` when it cannot be read.
+pub fn gate_runs(lc: &spira_store::lc_call::LcClient) -> Option<Vec<(String, Vec<serde_json::Value>)>> {
+    parse_gate_runs(&lc.answer(&["section", "get", "Gate/gate"]).ok()?)
 }
 
-pub fn parse_gate_runs(text: &str) -> Vec<(String, Vec<serde_json::Value>)> {
-    let Ok(v) = serde_json::from_str::<serde_json::Value>(util::json_only(text).trim()) else { return Vec::new() };
-    let Some(repos) = v["section"]["status"]["recent_runs"].as_array() else { return Vec::new() };
-    repos
-        .iter()
-        .filter_map(|r| Some((r["repo"].as_str()?.to_string(), r["rows"].as_array()?.clone())))
-        .collect()
+/// `None` when the answer is no readable Gate section; a section with no rows is `Some(empty)`.
+pub fn parse_gate_runs(text: &str) -> Option<Vec<(String, Vec<serde_json::Value>)>> {
+    let v = serde_json::from_str::<serde_json::Value>(util::json_only(text).trim()).ok()?;
+    let repos = v["section"]["status"]["recent_runs"].as_array()?;
+    Some(repos.iter().filter_map(|r| Some((r["repo"].as_str()?.to_string(), r["rows"].as_array()?.clone()))).collect())
 }
 
 /// Reads at most `tail_bytes` from the END of `path` — bounded, because an unbounded read
@@ -247,9 +243,9 @@ mod tests {
     #[test]
     fn the_gate_section_status_yields_each_repos_rows() {
         let text = r#"{"section":{"status":{"recent_runs":[{"repo":"spira","rows":[{"bead":"a"}]}]}}}"#;
-        assert_eq!(parse_gate_runs(text), vec![("spira".to_string(), vec![serde_json::json!({"bead":"a"})])]);
-        assert!(parse_gate_runs("{}").is_empty());
-        assert!(parse_gate_runs("not json").is_empty());
+        assert_eq!(parse_gate_runs(text), Some(vec![("spira".to_string(), vec![serde_json::json!({"bead":"a"})])]));
+        assert_eq!(parse_gate_runs("{}"), None);
+        assert_eq!(parse_gate_runs("not json"), None);
     }
 
     use super::*;

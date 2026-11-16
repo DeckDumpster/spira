@@ -59,6 +59,8 @@ pub struct Observation {
     pub world_drain_at: i64,
     /// Per repo, its newest gate-run rows first, as the Gate section serves them.
     pub gate_runs: Vec<(String, Vec<Value>)>,
+    /// The Gate section could not be read: no rows is not an all-clear.
+    pub gate_runs_unread: bool,
     pub thresholds: Thresholds,
 }
 

@@ -71,6 +71,10 @@ pub fn run(inp: &PassInput, ops: &dyn Conditions, state: &mut State, paths: &Pas
     obs.db_reachable = db_reachable;
     obs.db_error = db_error;
     rep.firing = classify::run(&obs);
+    if obs.gate_runs_unread {
+        let raised: Vec<String> = rows.iter().filter(|c| c.firing()).map(|c| c.key.clone()).collect();
+        crate::streak::hold(&raised, &mut rep.firing);
+    }
     if inp.report_only {
         return rep;
     }
@@ -201,11 +205,12 @@ mod tests {
         restart_delta: Option<i64>,
         refresh: i64,
         gate_rows: Vec<serde_json::Value>,
+        gate_unread: bool,
     }
 
     impl Rig {
         fn new() -> Rig {
-            Rig { dir: testkit::TempDir::new("heimdall-pass"), ops: Fake::default(), state: State::default(), now: 1_800_000_000, wedged: false, halted: false, restart_delta: None, refresh: 3600, gate_rows: Vec::new() }
+            Rig { dir: testkit::TempDir::new("heimdall-pass"), ops: Fake::default(), state: State::default(), now: 1_800_000_000, wedged: false, halted: false, restart_delta: None, refresh: 3600, gate_rows: Vec::new(), gate_unread: false }
         }
         fn paths(&self) -> PassPaths {
             PassPaths { fallback: self.dir.join("heimdall.alerts.json"), heartbeat: self.dir.join("heimdall.status") }
@@ -224,7 +229,8 @@ mod tests {
                 restart_alerts,
                 world_halted: self.halted,
                 thresholds: Thresholds { pass_stale: 600, starve_passes: 5, mirror_stale: 90_000, ghost_stale: 1800, restart_threshold: 3, restart_window: 3600, red_streak: 4 },
-                gate_runs: vec![("spira".into(), self.gate_rows.clone())],
+                gate_runs: if self.gate_unread { vec![] } else { vec![("spira".into(), self.gate_rows.clone())] },
+                gate_runs_unread: self.gate_unread,
                 ..Observation::default()
             };
             let inp = PassInput { obs, confirm: 2, clear_n: 2, refresh: self.refresh, tz: "UTC".into(), render_time: |e, _| format!("@{e}"), report_only: false };
@@ -305,6 +311,19 @@ mod tests {
         r.gate_rows = rows;
         r.passes(3);
         assert_eq!(r.ops.row(STREAK), None, "a no-verdict is not a red");
+    }
+
+    #[test]
+    fn a_streak_holds_through_a_no_verdict_and_an_unreadable_section_and_clears_only_on_a_pass() {
+        let mut r = Rig::new();
+        r.gate_rows = reds(&["a", "b", "c", "d"], CARGO);
+        r.passes(2);
+        r.gate_rows.insert(0, gate_row("e", "NO_VERDICT", "died", "", ""));
+        r.passes(3);
+        assert_eq!(r.status_and_flaps(STREAK), Some(("True".into(), 1)), "a no-verdict is not a PASS");
+        r.gate_unread = true;
+        r.passes(3);
+        assert_eq!(r.status_and_flaps(STREAK), Some(("True".into(), 1)), "an unreadable section is not a PASS");
     }
 
     // reconcile.rs holds the confirm rule (one_sighting_does_not_fire_a_condition_must_be_confirmed);

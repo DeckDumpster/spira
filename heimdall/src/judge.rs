@@ -405,11 +405,8 @@ pub fn classify(o: &Value) -> Result<Vec<Firing>, String> {
         let repo = text_of(repo_runs.get("repo"));
         let rows = repo_runs.get("rows").and_then(Value::as_array).map_or(&[][..], Vec::as_slice);
         let Some(s) = crate::streak::find(rows, red_streak.max(0) as usize) else { continue };
-        alert(
-            &format!("{}{repo}", crate::streak::KEY_PREFIX),
-            format!("Landing in {repo} is stopped by a red shared across branches: {} gates in a row failed the same way", s.beads.len()),
-            format!("BEADS     {}\nRED UNIT  {}\nLINE      {}\n\nThe last {} gates of {repo} failed branch-red on different beads at one unit and one line.\nBranches do not fail identically by coincidence: the red is in the base or the harness.\nIt clears itself at {repo}'s next gate PASS.", s.beads.join(", "), s.unit, s.line, s.beads.len()),
-        );
+        let f = crate::streak::firing(&repo, &s);
+        alert(&f.key, f.title, f.evidence);
     }
     Ok(out)
 }

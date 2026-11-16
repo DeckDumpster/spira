@@ -211,6 +211,7 @@ fn pass() -> i32 {
     }
 
     let ops = LcConditions { client: lc.within(Duration::from_secs(store_timeout as u64)) };
+    let gate_runs = heimdall::gather::gate_runs(&lc.within(Duration::from_secs(store_timeout as u64)));
     let obs = Observation {
         now,
         heimdall_first: state.first_run,
@@ -231,7 +232,8 @@ fn pass() -> i32 {
         world_halt_at: world.halt_at,
         world_draining: world.draining,
         world_drain_at: world.drain_at,
-        gate_runs: heimdall::gather::gate_runs(&lc.within(Duration::from_secs(store_timeout as u64))),
+        gate_runs: gate_runs.clone().unwrap_or_default(),
+        gate_runs_unread: gate_runs.is_none(),
         thresholds,
     };
     let inp = PassInput { obs, confirm, clear_n, refresh, tz, render_time: util::iso_display, report_only: report };

@@ -2212,6 +2212,23 @@ fn a_red_fence_certifies_with_its_message_when_the_message_precedes_the_gate_ste
 }
 
 #[test]
+fn a_branch_red_row_carries_its_red_unit_and_line_and_a_pass_row_carries_neither() {
+    let f = Fake::new();
+    f.put_var("SPIRA_GATE_BEAD", "sp-a");
+    let out = "bwrap: execvp cargo: No such file or directory\ngate-step RED rc=1 :: unit-tests";
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, out.into()));
+    f.runs.borrow_mut().insert(BASE.into(), (0, String::new()));
+    f.run();
+    let v = tsd_row(&f);
+    assert_eq!((v["status"].as_str(), v["reason"].as_str()), (Some("FAIL"), Some("branch-red")), "{v}");
+    assert_eq!((v["red_unit"].as_str(), v["red_line"].as_str()), (Some("unit-tests"), Some("bwrap: execvp cargo: No such file or directory")));
+    let f = unit_fake(&["spira-config/src/lib.rs"]);
+    assert_eq!(f.run(), PASS);
+    let v = tsd_row(&f);
+    assert_eq!((v["red_unit"].as_str(), v["red_line"].as_str()), (Some(""), Some("")));
+}
+
+#[test]
 fn certification_events_follow_the_outcome() {
     for (rc, out, base, want) in [
         (0, "test-a.sh ok", 0, "pass"),
