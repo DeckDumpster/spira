@@ -329,6 +329,25 @@ fn compaction_collects_the_live_store_only_when_the_filesystem_has_room_for_a_se
 }
 
 #[test]
+fn gc_collects_each_live_database_without_touching_the_durable_copy_and_fails_when_it_cannot() {
+    let w = seeded();
+    restore(&w.cfg, &w.dolt).unwrap();
+    live_server(&w, 4242);
+    let l = layout(&w);
+    let copy = tree_bytes(&l.db("spira"));
+    w.dolt.syncs.borrow_mut().clear();
+    w.dolt.free.set(Some(1));
+    let err = gc(&w.cfg, &w.dolt).unwrap_err();
+    assert!(err.contains("not collected"), "{err}");
+    assert!(w.dolt.gcs.borrow().is_empty());
+    w.dolt.free.set(Some(u64::MAX));
+    let out = gc(&w.cfg, &w.dolt).unwrap();
+    assert_eq!(*w.dolt.gcs.borrow(), ["spira", "spira_lifecycle"]);
+    assert!(w.dolt.syncs.borrow().is_empty(), "{out:?}");
+    assert_eq!(tree_bytes(&l.db("spira")), copy);
+}
+
+#[test]
 fn a_stop_time_pass_syncs_only_a_database_written_since_the_last_pass() {
     let w = seeded();
     restore(&w.cfg, &w.dolt).unwrap();

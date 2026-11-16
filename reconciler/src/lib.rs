@@ -120,6 +120,7 @@ pub struct Seams {
     pub spira_lc: String,
     pub bead: String,
     pub target_reap: String,
+    pub store_persist: String,
     pub podman: String,
     pub rebuild: String,
     pub layout: String,
@@ -159,6 +160,7 @@ impl Seams {
             spira_lc: name("spira-lc")?,
             bead: name("bead")?,
             target_reap: name("target-reap")?,
+            store_persist: name("store-persist")?,
             podman: name("podman")?,
             rebuild: name("rebuild")?,
             layout: name("layout")?,
@@ -1343,7 +1345,8 @@ fn observe_release(cfg: &Config) -> Check {
 // idea of its storage root — never a guessed path). The root filesystem once held 2.6 GB free
 // of 62 GB mid-round with every suite running 2x slower, and nothing noticed until it hit 100%
 // and crashed the store. The remedy reaps the build output of landed worktrees (target-reap)
-// and prunes dangling podman images and unattached volumes; if that still does not clear the
+// and prunes dangling podman images and unattached volumes (the store's own directory is
+// instead collected online with `store-persist gc`); if that still does not clear the
 // floor, the streak escalates to the Concierge exactly like any other remedy that did not hold.
 // ──────────────────────────────────────────────────────────────────────────────
 
@@ -1362,7 +1365,12 @@ fn default_disk_paths(cfg: &Config) -> Vec<String> {
     paths
 }
 
-fn disk_remedy(cfg: &Config) -> Remedy {
+/// The store's data directory is RAM-backed: reaping build output and podman storage frees
+/// nothing there, so its remedy is an online collection of the live store.
+fn disk_remedy(cfg: &Config, path: &str) -> Remedy {
+    if !cfg.dolt_data.is_empty() && path == cfg.dolt_data {
+        return Remedy::Command { program: cfg.seams.store_persist.clone(), args: vec!["gc".into()] };
+    }
     let podman = |args: &[&str]| (cfg.seams.podman.clone(), args.iter().map(|a| a.to_string()).collect());
     Remedy::Sequence(vec![
         (cfg.seams.target_reap.clone(), Vec::new()),
@@ -1395,7 +1403,7 @@ fn observe_disk(cfg: &Config) -> Vec<Check> {
             },
         };
         let remedy = match raw {
-            RawStatus::Gap { .. } => disk_remedy(cfg),
+            RawStatus::Gap { .. } => disk_remedy(cfg, &path),
             _ => Remedy::Escalate,
         };
         checks.push(Check { key: format!("disk:{}", path), raw, remedy });
@@ -3319,6 +3327,19 @@ mod tests {
     }
 
     #[test]
+    fn a_full_store_data_directory_is_remedied_by_an_online_gc_not_by_reaping_build_output() {
+        let (store, other) = (testkit::TempDir::new("disk-store"), testkit::TempDir::new("disk-other"));
+        let mut cfg = test_config();
+        cfg.seams.store_persist = "sp-bin".into();
+        cfg.dolt_data = store.path().display().to_string();
+        cfg.desired.disk = Some(DiskSpec { floor_pct: 101, paths: vec![cfg.dolt_data.clone(), other.path().display().to_string()] });
+        let checks = observe_disk(&cfg);
+        let remedy = |p: &Path| checks.iter().find(|c| c.key == format!("disk:{}", p.display())).unwrap().remedy.describe();
+        assert_eq!(remedy(store.path()), "sp-bin gc");
+        assert!(remedy(other.path()).contains("image prune"), "other paths keep the podman remedy");
+    }
+
+    #[test]
     fn a_sequence_remedy_describes_and_runs_every_step() {
         let r = Remedy::Sequence(vec![("a".into(), vec!["1".into()]), ("b".into(), vec![])]);
         assert_eq!(r.describe(), "a 1 ; b ");
@@ -3337,7 +3358,7 @@ mod lane_tests {
         let mut edits = spira_config::process::fixture_world_env(d.path(), &run, &["spira", "other"]);
         let release = d.path().join("release");
         std::fs::create_dir_all(release.join("bin")).unwrap();
-        for tool in ["forge", "units-install", "spira-config", "spira-claim", "strand", "queue-helpers", "queue", "spira-lc", "bead", "target-reap", "rebuild", "layout", "spira-lint", "lifecycle-guard"] {
+        for tool in ["forge", "units-install", "spira-config", "spira-claim", "strand", "queue-helpers", "queue", "spira-lc", "bead", "target-reap", "store-persist", "rebuild", "layout", "spira-lint", "lifecycle-guard"] {
             testkit::write_exe(release.join("bin").join(tool), "#!/bin/sh\n");
         }
         edits.retain(|(k, _)| *k != "SPIRA_RELEASE");
