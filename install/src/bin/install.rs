@@ -1832,7 +1832,8 @@ fn system_user_phase(host: &install::values::HostValues) -> Result<(), String> {
     }
 
     let host_values = host;
-    for unit in ["spira-lc.service"] {
+    {
+        let unit = "spira-lc.service";
         let text = install::values::render_file(&Path::new(home).join("systemd").join(unit), host_values, None)?;
         let dest = format!("/etc/systemd/system/{unit}");
         std::fs::write(format!("{dest}.tmp"), text).map_err(|e| e.to_string())?;

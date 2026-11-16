@@ -180,7 +180,8 @@ mod tests {
             match args {
                 ["daemon-reload"] => {
                     self.loaded.clear();
-                    for unit in [SERVICE] {
+                    {
+                        let unit = SERVICE;
                         let conf = std::fs::read_to_string(self.dir.join(format!("{unit}.d")).join(DROPIN_NAME)).unwrap_or_default();
                         let met = conf
                             .lines()

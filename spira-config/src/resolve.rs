@@ -654,18 +654,18 @@ pub fn lc_password_file(env: &BTreeMap<String, String>) -> String {
     }
 }
 
-/// The socket the root installer's `--system-user` phase runs as `spira-lc.service` (system mode).
+/// The socket the root installer's `--system-user` phase runs as the system lifecycle service (system mode).
 pub const LC_SYSTEM_SOCKET: &str = "/run/spira-lc/sock";
 
 /// The system-mode marker: the unit file `spira-install --system-user` writes. Its presence is
 /// what makes a box "system mode" (spira-lc runs as its own Unix user); without it the box is
 /// same-user mode, where `spira-install` itself installs the operator's own user-level serve
 /// unit, `lc-serve.service` (sp-xfqnr).
-pub const LC_SYSTEM_UNIT: &str = "/etc/systemd/system/spira-lc.service";
+pub const LC_SYSTEM_UNIT_DIR: &str = "/etc/systemd/system";
 
-/// Whether this box runs spira-lc in system mode (see [`LC_SYSTEM_UNIT`]).
+/// Whether this box runs spira-lc in system mode (see [`LC_SYSTEM_UNIT_DIR`]).
 pub fn lc_system_mode() -> bool {
-    Path::new(LC_SYSTEM_UNIT).is_file()
+    Path::new(LC_SYSTEM_UNIT_DIR).join(crate::unit::LC_SYSTEM_SERVICE).is_file()
 }
 
 /// This process's real uid.

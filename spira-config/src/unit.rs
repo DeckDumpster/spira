@@ -22,6 +22,9 @@ pub fn watch_unit_name(name: &str, instance: &str) -> String {
     format!("spira-watch-{name}-{inst}.service")
 }
 
+/// The one system-level lifecycle unit: not instance-suffixed, it runs as its own Unix user.
+pub const LC_SYSTEM_SERVICE: &str = "spira-lc.service";
+
 /// The installed name of a spira unit: `spira-<base>-<instance>.<kind>`, the form
 /// `install` writes. An empty `instance` defaults to `"prod"`, as [`watch_unit_name`] does.
 pub fn unit_name(base: &str, kind: &str, instance: &str) -> String {
