@@ -6,5 +6,6 @@ pub mod id;
 pub mod store;
 
 pub use store::{
-    activate, deny_list, digest, disable, history, init, list, open, quarantine, show, Row, State,
+    activate, deny_list, digest, disable, history, init, list, open, quarantine, show,
+    try_deny_list, Row, State,
 };

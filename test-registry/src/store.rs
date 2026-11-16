@@ -209,9 +209,8 @@ pub fn history(conn: &Connection, test: &str) -> Result<Vec<serde_json::Value>, 
 }
 
 /// The rows with `since <= at < until`, in the one text every gate and round parses.
-pub fn deny_list(conn: &Connection, at: i64) -> String {
-    let rows: Vec<Row> = list(conn)
-        .unwrap_or_default()
+pub fn try_deny_list(conn: &Connection, at: i64) -> Result<String, String> {
+    let rows: Vec<Row> = list(conn)?
         .into_iter()
         .filter(|r| r.since <= at && at < r.until)
         .collect();
@@ -222,7 +221,12 @@ pub fn deny_list(conn: &Connection, at: i64) -> String {
             r.state, r.test, r.bead, r.until
         ));
     }
-    out
+    Ok(out)
+}
+
+/// [`try_deny_list`] for a caller with no error path: an unreadable registry panics, never an empty list.
+pub fn deny_list(conn: &Connection, at: i64) -> String {
+    try_deny_list(conn, at).unwrap_or_else(|e| panic!("deny list unreadable: {e}"))
 }
 
 pub fn digest(text: &str) -> String {
@@ -360,6 +364,22 @@ mod tests {
         assert!(list(&c).unwrap().is_empty());
         let n = scalar(&c, "SELECT count(*) FROM test_state_history").unwrap();
         assert_eq!(n, 0);
+    }
+
+    #[test]
+    fn an_unreadable_registry_is_an_error_never_an_empty_list() {
+        let c = Connection::open_in_memory().unwrap();
+        assert!(try_deny_list(&c, 1).is_err());
+    }
+
+    #[test]
+    fn init_is_idempotent_and_refuses_a_newer_schema() {
+        let c = db();
+        disable(&c, 10, 600, &s("suite:test-a.sh", Some(100))).unwrap();
+        init(&c).unwrap();
+        assert_eq!(list(&c).unwrap().len(), 1);
+        exec(&c, "PRAGMA user_version = 2", []).unwrap();
+        assert!(init(&c).unwrap_err().contains("newer"));
     }
 
     #[test]

@@ -189,9 +189,9 @@ pub fn run(args: &[String], now: i64, cfg: Cfg, open: Opener) -> Outcome {
     match a.verb.as_str() {
         "disable" | "quarantine" => {
             let hold = match cfg(HOLD_KEY)
-                .and_then(|v| spira_config::process::parse_declared::<i64>(HOLD_KEY, &v))
+                .and_then(|v| spira_config::process::parse_declared::<u64>(HOLD_KEY, &v))
             {
-                Ok(h) => h,
+                Ok(h) => i64::try_from(h).unwrap_or(i64::MAX / 2),
                 Err(e) => return fail(3, j, e),
             };
             let set = Set {
@@ -272,7 +272,10 @@ pub fn run(args: &[String], now: i64, cfg: Cfg, open: Opener) -> Outcome {
         },
         _ => {
             let at = at.unwrap_or(now);
-            let text = store::deny_list(&conn, at);
+            let text = match store::try_deny_list(&conn, at) {
+                Ok(t) => t,
+                Err(e) => return fail(3, j, e),
+            };
             let rows = text.lines().count() - 1;
             let value = json!({"ok": true, "at": at, "rows": rows, "digest": store::digest(&text), "text": text});
             out(0, j, text, value)
@@ -307,6 +310,35 @@ mod tests {
         let o = run(&argv("list"), 1, &cfg_with(""), &mem);
         assert_eq!(o.code, 3);
         assert!(o.stderr.contains(PATH_KEY), "{}", o.stderr);
+    }
+
+    #[test]
+    fn an_empty_path_exits_3_for_a_write_verb_and_for_deny_list_even_with_a_bad_time() {
+        for line in [
+            "disable --test suite:a.sh --bead sp-a --reason r --actor a",
+            "deny-list --at 5",
+            "list --at 5",
+        ] {
+            assert_eq!(run(&argv(line), 1, &cfg_with(""), &mem).code, 3, "{line}");
+        }
+    }
+
+    #[test]
+    fn a_hold_that_is_not_an_unsigned_integer_exits_3() {
+        let cfg = |k: &str| {
+            Ok(if k == PATH_KEY {
+                "/x".to_string()
+            } else {
+                "-5".to_string()
+            })
+        };
+        let o = run(
+            &argv("disable --test suite:a.sh --bead sp-a --reason r --actor a"),
+            1,
+            &cfg,
+            &mem,
+        );
+        assert_eq!(o.code, 3, "{}", o.stderr);
     }
 
     #[test]
