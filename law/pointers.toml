@@ -5,3 +5,9 @@ slug = "law-throughput-floor"
 reason = "Ryan ruled on sp-qlliks (2026-11-08): fire on a stall and start diagnosis and repair, not a halt on a daily rate"
 replaced_by = "law-a-landing-stall-starts-a-repair"
 on = "2026-11-08"
+
+[[retired]]
+slug = "law-a-test-that-flips-is-deleted"
+reason = "the approved test registry design (test-registry-2026-11-15) replaces same-round deletion with a seven-day disabled row on a bead"
+replaced_by = "law-a-flipping-test-is-disabled-by-a-registry-row"
+on = "2026-11-16"
