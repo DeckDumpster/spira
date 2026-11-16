@@ -301,7 +301,6 @@ pub struct OpenRound {
     /// When it entered `state`.
     pub since: u64,
     pub members: Vec<Member>,
-    pub parent: Option<String>,
 }
 
 impl OpenRound {
@@ -312,54 +311,17 @@ impl OpenRound {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum PassVerdict {
-    Green,
-    Red,
-}
-
-/// A (member, tip) that has passed green and not landed. A later red at the same tip does not
-/// unmake the green it already had; a new tip, a landing or leaving delivery ends it.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct GreenWait {
-    pub repo: String,
-    /// Its first green.
-    pub since: u64,
-    pub batch: String,
-    pub parent: Option<String>,
-}
-
-/// A (member, tip) cut again after a red verdict at that tip, still open.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct Repeat {
-    pub repo: String,
-    pub since: u64,
-    pub cuts: u32,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
-pub struct Lane {
-    pub rounds_since_landing: u32,
-    /// Consecutive passes that ended with neither a green nor a red verdict.
-    pub passes_without_verdict: u32,
-    pub last_landed: Option<u64>,
-}
-
 /// The recorded day as of the last applied line.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct ReplayWorld {
     pub rounds: BTreeMap<String, OpenRound>,
     /// Each repo's latest cut round.
     pub pointers: BTreeMap<String, String>,
-    pub verdicts: BTreeMap<Member, PassVerdict>,
     /// Each bead's lifecycle state.
     pub beads: BTreeMap<String, String>,
     /// Paused repos, with the bead the pause names.
     pub paused: BTreeMap<String, Option<String>>,
     pub halted: bool,
-    pub green_waiting: BTreeMap<Member, GreenWait>,
-    pub repeats: BTreeMap<Member, Repeat>,
-    pub lanes: BTreeMap<String, Lane>,
     pub passes: BTreeMap<(String, String), u32>,
     pub lands: BTreeMap<String, u32>,
     pub alarms: BTreeMap<(String, String, String), u32>,
@@ -369,8 +331,6 @@ pub struct ReplayWorld {
     pub bead_repo: BTreeMap<String, String>,
     pub applied: usize,
 }
-
-const RED_CAUSES: [&str; 2] = ["red-attributed", "PassRed"];
 
 impl ReplayWorld {
     /// A stable digest of every field: equal worlds, equal fingerprints, on every run.
@@ -383,7 +343,7 @@ impl ReplayWorld {
     pub fn apply(&mut self, at: u64, r: &Record) {
         match r {
             Record::Round(x) => self.round(at, x),
-            Record::Transition(Transition::Bead { id, to, event, .. }) => self.bead(id, to, event),
+            Record::Transition(Transition::Bead { id, to, .. }) => self.bead(id, to),
             Record::Transition(Transition::Batch { id, event, member: Some(bead), .. }) if event == "Eject" => {
                 let repeat_n = 1 + self.loop_events.iter().filter(|e| matches!(e, LoopEvent::Eject { bead: b, .. } if b == bead)).count() as u32;
                 self.loop_events.push(LoopEvent::Eject { bead: bead.clone(), batch: id.clone(), at, repeat_n });
@@ -396,7 +356,6 @@ impl ReplayWorld {
                 }
             }
             Record::Attribution(x) => {
-                self.attribution(x);
                 for bead in &x.owner {
                     self.loop_events.push(LoopEvent::RedAttributed {
                         bead: bead.clone(),
@@ -409,7 +368,6 @@ impl ReplayWorld {
             }
             Record::Land(x) => {
                 *self.lands.entry(x.repo.clone()).or_default() += 1;
-                self.landed(&x.bead);
                 self.loop_events.push(LoopEvent::Landed {
                     bead: x.bead.clone(),
                     repo: x.repo.clone(),
@@ -438,61 +396,18 @@ impl ReplayWorld {
     }
 
     fn round(&mut self, at: u64, r: &Round) {
-        let lane = self.lanes.entry(r.repo.clone()).or_default();
         if r.state_from == BatchState::None {
-            lane.rounds_since_landing += 1;
             self.pointers.insert(r.repo.clone(), r.batch.clone());
         }
-        let ended = r.state_from == BatchState::CiRunning && r.state_to == BatchState::Attributing;
-        let red = ended && RED_CAUSES.contains(&r.cause.as_str());
-        match r.state_to {
-            BatchState::Green | BatchState::Landed => lane.passes_without_verdict = 0,
-            _ if red => lane.passes_without_verdict = 0,
-            _ if ended => lane.passes_without_verdict += 1,
-            _ => {}
-        }
-        if r.state_to == BatchState::Landed {
-            lane.rounds_since_landing = 0;
-            lane.last_landed = Some(at);
-        }
-
         for m in &r.members {
             self.bead_repo.entry(m.bead.clone()).or_insert_with(|| r.repo.clone());
         }
-        let before: BTreeSet<Member> = self.rounds.get(&r.batch).map(|o| o.members.iter().cloned().collect()).unwrap_or_default();
-        for m in r.members.iter().filter(|m| !before.contains(m)) {
-            self.cut(at, &r.repo, m);
-        }
-        match r.state_to {
-            BatchState::Green => {
-                for m in &r.members {
-                    self.verdicts.insert(m.clone(), PassVerdict::Green);
-                    self.repeats.remove(m);
-                    let since = self.green_waiting.get(m).map_or(at, |g| g.since);
-                    let wait = GreenWait {
-                        repo: r.repo.clone(),
-                        since,
-                        batch: r.batch.clone(),
-                        parent: r.parent.clone(),
-                    };
-                    self.green_waiting.insert(m.clone(), wait);
-                }
-            }
-            BatchState::Landed => r.members.iter().for_each(|m| self.landed(&m.bead)),
-            // A red with several members is only some member's: its attribution names whose.
-            _ if red && r.members.len() == 1 => {
-                self.verdicts.insert(r.members[0].clone(), PassVerdict::Red);
-            }
-            _ => {}
-        }
-
         if r.state_to.terminal() {
             self.rounds.remove(&r.batch);
             return;
         }
         let prev = self.rounds.get(&r.batch);
         let since = prev.filter(|o| o.state == r.state_to).map_or(at, |o| o.since);
-        let parent = r.parent.clone().or_else(|| prev.and_then(|o| o.parent.clone()));
         self.rounds.insert(
             r.batch.clone(),
             OpenRound {
@@ -500,52 +415,12 @@ impl ReplayWorld {
                 state: r.state_to,
                 since,
                 members: r.members.clone(),
-                parent,
             },
         );
     }
 
-    /// `m` enters a round: an earlier tip of its bead is no longer the identity waiting or
-    /// being re-cut, and this tip, if it was red, is cut again.
-    fn cut(&mut self, at: u64, repo: &str, m: &Member) {
-        let other_tip = |k: &Member| k.bead == m.bead && k.tip != m.tip;
-        self.repeats.retain(|k, _| !other_tip(k));
-        self.green_waiting.retain(|k, _| !other_tip(k));
-        if self.verdicts.get(m) == Some(&PassVerdict::Red) {
-            let r = self.repeats.entry(m.clone()).or_insert_with(|| Repeat {
-                repo: repo.to_string(),
-                since: at,
-                cuts: 0,
-            });
-            r.cuts += 1;
-        }
-    }
-
-    fn landed(&mut self, bead: &str) {
-        self.green_waiting.retain(|k, _| k.bead != bead);
-        self.repeats.retain(|k, _| k.bead != bead);
-    }
-
-    /// A bead that leaves delivery (landed, sent back, held or withdrawn) is no longer waiting
-    /// to land and no longer re-cut.
-    fn bead(&mut self, id: &str, to: &str, event: &str) {
+    fn bead(&mut self, id: &str, to: &str) {
         self.beads.insert(id.to_string(), to.to_string());
-        if matches!(to, "LANDED" | "REWORK" | "DROPPED" | "SUPERSEDED") || event == "Hold" {
-            self.landed(id);
-        }
-    }
-
-    /// An attributed red pass is its owners' red, at the tips the round holds them at, and
-    /// not its innocent members'.
-    fn attribution(&mut self, a: &Attribution) {
-        let Some(round) = self.rounds.get(&a.batch) else { return };
-        for m in &round.members {
-            if a.owner.contains(&m.bead) {
-                self.verdicts.insert(m.clone(), PassVerdict::Red);
-            } else if a.innocent.contains(&m.bead) && self.verdicts.get(m) == Some(&PassVerdict::Red) {
-                self.verdicts.remove(m);
-            }
-        }
     }
 
     fn stop(&mut self, s: &Stop) {
