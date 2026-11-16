@@ -5,10 +5,11 @@
 # builder's tree to the gate's tree; one that baked in its build tree's path reads the wrong
 # tree, or none.
 #
-# Takes the units_lint binary testenv has already built and does not build.
+# testenv's suite build covers the workspace's binaries, not its test binaries, so the
+# units_lint test binary is compiled here once (`--no-run`) and then run from a second tree.
 #
-# tier: T1
-# timeout: 60
+# tier: T2
+# timeout: 900
 # covers: install/tests/units_lint.rs testkit/src/lib.rs gate/src/real.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -18,16 +19,12 @@ HARNESS="$(cd "$HERE/.." && pwd -P)"
 TEST=exec_lines_carry_no_unescaped_percent_specifier
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 
-deps="${CARGO_TARGET_DIR:-$HARNESS/target}/debug/deps"
-bins=()
-for f in "$deps"/units_lint-*; do
-    [[ -f "$f" && -x "$f" && "${f##*/}" != *.* ]] && bins+=("$f")
-done
-if [[ ${#bins[@]} -ne 1 ]]; then
-    bad "exactly one built units_lint binary under $deps" "found ${#bins[@]}: ${bins[*]:-}"
+BIN="$(cd "$HARNESS" && cargo test -p install --features integration --test units_lint --no-run --message-format=json 2>/dev/null \
+    | jq -r 'select(.profile.test == true and .target.name == "units_lint") | .executable' | tail -1)"
+if [[ ! -x "$BIN" ]]; then
+    bad "the units_lint test binary builds" "no executable from cargo test --no-run"
     tl_summary
 fi
-BIN="${bins[0]}"
 
 B="$TMP/b"
 mkdir -p "$B/install"
