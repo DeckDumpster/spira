@@ -38,6 +38,7 @@ const VERBS: &[(&str, &[&str], &[&str])] = &[
     ("history", &["test"], &[]),
     ("deny-list", &["at"], &[]),
     ("clear-landed", &["bead", "actor"], &[]),
+    ("backup", &["out"], &[]),
 ];
 
 const REPEATABLE: &[(&str, &str)] = &[("clear-landed", "bead")];
@@ -291,6 +292,15 @@ pub fn run(args: &[String], now: i64, cfg: Cfg, open: Opener) -> Outcome {
             }
             Err(e) => refused(e),
         },
+        "backup" => match store::backup(&conn, get("out")) {
+            Ok((bytes, rows)) => out(
+                0,
+                j,
+                format!("{} {bytes} {rows}", get("out")),
+                json!({"ok": true, "out": get("out"), "bytes": bytes, "rows": rows}),
+            ),
+            Err(e) => fail(3, j, e),
+        },
         _ => {
             let at = at.unwrap_or(now);
             let text = match store::try_deny_list(&conn, at) {
@@ -458,6 +468,11 @@ mod tests {
     #[test]
     fn clear_landed_takes_repeated_beads_and_prints_the_cleared_tests() {
         let dir = testkit::TempDir::new("test-registry-cli-clear");
+    }
+
+    #[test]
+    fn backup_writes_a_file_that_opens_with_the_same_rows() {
+        let dir = testkit::TempDir::new("test-registry-backup");
         let file: &'static str =
             Box::leak(dir.join("r.sqlite").display().to_string().into_boxed_str());
         let c = cfg_with(file);
@@ -499,6 +514,25 @@ mod tests {
             "{}",
             o.stdout
         );
+        for t in ["suite:a.sh", "suite:b.sh"] {
+            let line = format!("disable --test {t} --bead sp-a --reason r --actor a --until 5000");
+            assert_eq!(run(&argv(&line), 1000, &c, &real).code, 0);
+        }
+        let out = dir.join("copy.sqlite").display().to_string();
+        let o = run(&argv(&format!("backup --out {out}")), 1000, &c, &real);
+        assert_eq!(o.code, 0, "{}", o.stderr);
+        let fields: Vec<&str> = o.stdout.split(' ').collect();
+        assert_eq!(fields[0], out);
+        assert_eq!(fields[2], "2", "{}", o.stdout);
+        assert!(fields[1].parse::<u64>().unwrap() > 0);
+        let copy = Connection::open(&out).unwrap();
+        let names: Vec<String> = store::list(&copy)
+            .unwrap()
+            .into_iter()
+            .map(|r| r.test)
+            .collect();
+        assert_eq!(names.len(), 2, "{names:?}");
+        assert!(!std::path::Path::new(&format!("{out}.tmp")).exists());
     }
 
     #[test]
