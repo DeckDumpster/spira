@@ -1033,7 +1033,8 @@ impl SqliteBackend {
                     }
                 }
             };
-            if lock(&self.0.events_scan_from).take().is_some() {
+            let had_cursor = lock(&self.0.events_scan_from).is_some();
+            if had_cursor {
                 set_scan_from(&tx, None)?;
             }
             let mut last = None;
@@ -1057,6 +1058,9 @@ impl SqliteBackend {
                 set_meta(&tx, EVENTS_DUE, due.max(now.saturating_add(1)))?;
             }
             tx.commit().map_err(db)?;
+            if had_cursor {
+                *lock(&self.0.events_scan_from) = None;
+            }
             Ok(match blocked_at {
                 Some(due) => Drain::Waiting(due),
                 None => Drain::More,
