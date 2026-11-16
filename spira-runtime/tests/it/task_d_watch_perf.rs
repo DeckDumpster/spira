@@ -16,7 +16,7 @@ fn config() -> Config {
 }
 
 fn timing(name: &str, millis: u64) -> Timing {
-    Timing { name: name.into(), micros: millis * 1000, millis, phases: None, error: None }
+    Timing { name: name.into(), micros: millis * 1000, millis, phases: None, error: None, timed_out_ms: None }
 }
 
 /// The six probes of `spira/perf-probes`, every one inside the 500 ms budget.
