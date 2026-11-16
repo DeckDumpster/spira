@@ -746,10 +746,10 @@ impl World {
     /// Nothing is created while `skew-check` refuses: after a restore bd can be hours behind the
     /// control plane, and its open beads may be ones the control plane already closed.
     pub fn sweep_repair(&self, input: &str) -> Result<String, String> {
-        let Repair { ids: asked } = serde_json::from_str(input).map_err(|e| e.to_string())?;
+        let Repair { ids: asked, claims } = serde_json::from_str(input).map_err(|e| e.to_string())?;
         if let Err(e) = lc_call(&self.lc_socket, &["skew-check"]) {
             eprintln!("bead-sweep: the rowless repair is refused: {e}");
-            return serde_json::to_string(&Repaired { ids: vec![] }).map_err(|e| e.to_string());
+            return serde_json::to_string(&Repaired::default()).map_err(|e| e.to_string());
         }
         let snap: bead_sweep::Snapshot = serde_json::from_str(&self.sweep_snapshot()?).map_err(|e| e.to_string())?;
         let todo: Vec<_> = bead_sweep::rowless(&self.ask_label, &snap).into_iter().filter(|r| asked.contains(&r.id)).collect();
@@ -765,7 +765,18 @@ impl World {
             })
             .map(|r| r.id.clone())
             .collect();
-        serde_json::to_string(&Repaired { ids }).map_err(|e| e.to_string())
+        let todo_claims: Vec<String> = bead_sweep::claim_unset(&snap).into_iter().filter(|id| claims.contains(id)).collect();
+        let claimed = todo_claims
+            .into_iter()
+            .filter(|id| match lc_call(&self.lc_socket, &["sync-claim-inputs", "--only-if-unset", id]) {
+                Ok(out) => !out.contains(&format!("kept {id}:")),
+                Err(e) => {
+                    eprintln!("bead-sweep: claim inputs of {id} not written: {e}");
+                    false
+                }
+            })
+            .collect();
+        serde_json::to_string(&Repaired { ids, claimed }).map_err(|e| e.to_string())
     }
 
     /// Per queue.local repo, how far the forge trails the landing ref, as `spira-lc unpublished` measures it.
@@ -1196,6 +1207,7 @@ fn sweep_row(r: &Value) -> Option<Row> {
         hold_review: None,
         held_at: None,
         claim: r["claim_view"]["verdict"].as_str().map(str::to_string),
+        claim_unset: r["claim"].is_null(),
     })
 }
 
@@ -1311,6 +1323,8 @@ mod sweep_row_tests {
         assert_eq!(r.claim.as_deref(), Some("claimable"));
         let bare = sweep_row(&serde_json::json!({"bead_id": "sp-r"})).unwrap();
         assert_eq!(bare.claim, None);
+        assert!(sweep_row(&serde_json::json!({"bead_id": "sp-r", "claim": null})).unwrap().claim_unset);
+        assert!(!sweep_row(&serde_json::json!({"bead_id": "sp-r", "claim": {"blocked_by": []}})).unwrap().claim_unset);
     }
 }
 
