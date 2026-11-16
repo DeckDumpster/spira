@@ -371,6 +371,7 @@ pub trait Scripts {
     /// other verbs address. The pid is the `timeout` wrapper, so a TERM reaches round-vm through it.
     /// `ami` is the image id the pass launches instead of the newest matching the release (`SPIRA_ROUND_VM_EC2_AMI`).
     /// `candidate_recipe` is a recipe whose image is still baking: an EC2 placement exits `IMAGE_PENDING` rather than launch another.
+    /// `deny_list` is the round's snapshot file, handed to round-vm as `--deny-list`.
     #[allow(clippy::too_many_arguments)]
     fn round_vm(
         &self,
@@ -382,7 +383,10 @@ pub trait Scripts {
         handle: &Path,
         ami: Option<&str>,
         candidate_recipe: Option<&str>,
+        deny_list: Option<&Path>,
     ) -> RunOut;
+    /// `test-registry deny-list --at <at>`: the registry's deny-list snapshot, the text a round hands to every pass.
+    fn deny_list(&self, at: u64) -> Result<String, String>;
     /// `round-vm recipe-sha [--tree <dir>]`: the recipe hash of the release, or of the tree; None when unreadable.
     fn recipe_sha(&self, tree: Option<&Path>) -> Option<String>;
     /// `round-vm ami-for <recipe-sha>`: the newest round image built from that recipe.

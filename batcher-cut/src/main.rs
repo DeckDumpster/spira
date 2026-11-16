@@ -2241,7 +2241,7 @@ fn attribute(o: &Opts) -> Result<(), String> {
 }
 
 fn attribute_run(o: &Opts) -> Result<(), String> {
-    use batcher_cut::attribute::{parse_members, Attribution};
+    use batcher_cut::attribute::parse_members;
     let home = o.home.clone().ok_or("SPIRA_HOME unset (pass --home)")?;
     let run = o.run.clone().ok_or("SPIRA_RUN unset (pass --run)")?;
     if o.repo.is_empty() {
@@ -2255,6 +2255,19 @@ fn attribute_run(o: &Opts) -> Result<(), String> {
     }
     let env_ = env_for(o, home, run)?;
     let repo = find_repo(&env_, &o.repo)?;
+    println!("{}", attribute_in(o, env_, repo, wt, start_sha, given)?);
+    Ok(())
+}
+
+fn attribute_in(
+    o: &Opts,
+    env_: Env,
+    repo: Repo,
+    wt: PathBuf,
+    start_sha: String,
+    given: Vec<(String, String)>,
+) -> Result<String, String> {
+    use batcher_cut::attribute::Attribution;
     // The pool's own rows carry each member's stack and blockers (the attribution shape); a
     // member the pool no longer holds is attributed as an unstacked one at the given tip.
     let pool = io::certified_pool(&env_, &repo).unwrap_or_default();
@@ -2288,12 +2301,10 @@ fn attribute_run(o: &Opts) -> Result<(), String> {
         o.suites.as_deref(),
     );
     if suites.is_empty() {
-        println!(
-            "{}",
+        return Ok(
             Attribution::Blocked("the round tree has none of the suites to attribute".into())
-                .line()
+                .line(),
         );
-        return Ok(());
     }
     let changed: BTreeMap<String, Vec<String>> = members
         .iter()
@@ -2373,8 +2384,7 @@ fn attribute_run(o: &Opts) -> Result<(), String> {
         }
         Err(e) => Attribution::Blocked(format!("the attribution did not finish: {e}")),
     };
-    println!("{}", outcome.line());
-    Ok(())
+    Ok(outcome.line())
 }
 
 /// `all` narrowed to the CSV `named` when one is given; a name the tree does not hold is dropped.
@@ -3165,6 +3175,85 @@ mod cut_tests {
         let err = io::disable_flips_with(&mut |_| Ok("sp-n".into()), &mut io::through_registry(d.join("refuse").to_str().unwrap(), &env), &results, "b", &ids).unwrap_err();
         assert!(err.contains("locked") && err.contains("sp-n"), "{err}");
         assert_eq!(std::fs::read_to_string(results.join("deny-list")).unwrap(), before);
+    }
+
+    fn lint_red_attribution(d: &Path, with_deny_list: bool) -> (Result<String, String>, PathBuf) {
+        let repo_dir = d.join("repo");
+        std::fs::create_dir_all(repo_dir.join("spira")).unwrap();
+        testkit::git(&repo_dir, &["init", "-q", "-b", "main"]);
+        std::fs::write(repo_dir.join("spira/test-a.sh"), "").unwrap();
+        testkit::git(&repo_dir, &["add", "-A"]);
+        testkit::git(&repo_dir, &["commit", "-q", "-m", "base"]);
+        let start = testkit::git(&repo_dir, &["rev-parse", "HEAD"]);
+        let mut tips = vec![];
+        for (id, file) in [("sp-8br220", "pilgrim.rs"), ("sp-x", "other.rs")] {
+            testkit::git(&repo_dir, &["checkout", "-q", "-b", &format!("spira/{id}"), &start]);
+            std::fs::write(repo_dir.join(file), "x\n").unwrap();
+            testkit::git(&repo_dir, &["add", "-A"]);
+            testkit::git(&repo_dir, &["commit", "-q", "-m", id]);
+            tips.push(testkit::git(&repo_dir, &["rev-parse", "HEAD"]));
+        }
+        testkit::git(&repo_dir, &["checkout", "-q", "main"]);
+        let wt = d.join("round-wt");
+        testkit::git(&repo_dir, &["worktree", "add", "-q", "--detach", wt.to_str().unwrap(), &start]);
+        for tip in &tips {
+            testkit::git(&wt, &["merge", "-q", "--no-ff", "--no-edit", tip]);
+        }
+        let pass = d.join("rounds/b-1.results");
+        std::fs::create_dir_all(&pass).unwrap();
+        for f in ["disk-usage", "fence-times", "round-phase", "round-script.log", "run.events", "runner.out", "unit-build", "vm-batch.err", "vm-batch.out"] {
+            std::fs::write(pass.join(f), "").unwrap();
+        }
+        std::fs::write(pass.join("spira-lint.result"), "red\n").unwrap();
+        std::fs::write(pass.join("spira-lint.out"), "member=sp-8br220 r: pilgrim.rs:161: y\n").unwrap();
+        if with_deny_list {
+            std::fs::write(pass.join("deny-list"), "# test-registry deny-list at=7 rows=0\n").unwrap();
+        }
+        let mut env = io::lifecycle_tests_env(d);
+        let calls = d.join("round-vm-calls");
+        testkit::write_exe(&env.round_vm, &format!("#!/bin/sh\necho \"$@\" >> {}\nexit 2\n", calls.display()));
+        testkit::write_exe(&env.queue_bin, "#!/bin/sh\nexit 0\n");
+        env.maxpar = 1;
+        let repo = io::Repo { name: "fx".into(), path: repo_dir, base: "main".into(), forge: PathBuf::new(), land: Land::Local };
+        let o = Opts {
+            cmd: "attribute".into(),
+            repo: "fx".into(),
+            run: Some(d.to_path_buf()),
+            db: None,
+            home: Some(d.to_path_buf()),
+            round_vm: None,
+            suites: None,
+            members: None,
+            evidence: None,
+            reds: None,
+            after_pass: Some(pass),
+            record: None,
+            wt: Some(wt.clone()),
+            base: Some(start.clone()),
+            batch: None,
+            by: None,
+            reason: None,
+            all: false,
+            confirmed: false,
+        };
+        let given = vec![("sp-8br220".to_string(), tips[0].clone()), ("sp-x".to_string(), tips[1].clone())];
+        (attribute_in(&o, env, repo, wt, start, given), calls)
+    }
+
+    #[test]
+    fn a_lint_red_certify_pass_with_its_deny_list_ejects_the_member_it_names_without_running_the_corpus() {
+        let d = testkit::TempDir::new("batcher-cut-attr-lint");
+        let (line, calls) = lint_red_attribution(&d, true);
+        let line = line.unwrap();
+        assert!(line.contains("\"end\":\"land\"") && line.contains("[[\"sp-x\"") && !line.contains("sp-8br220"), "{line}");
+        assert!(!calls.exists(), "the corpus was requested: {:?}", std::fs::read_to_string(&calls));
+    }
+
+    #[test]
+    fn a_pass_without_its_deny_list_still_refuses_to_attribute() {
+        let d = testkit::TempDir::new("batcher-cut-attr-nolist");
+        let (line, _) = lint_red_attribution(&d, false);
+        assert!(line.unwrap_err().contains("holds no deny list"));
     }
 
     #[test]

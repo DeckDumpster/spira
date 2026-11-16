@@ -9,6 +9,7 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, HashSet};
 use std::fs::{self, File};
 use std::io::{Read, Write};
+use std::ffi::OsStr;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -1249,6 +1250,7 @@ impl Scripts for RealScripts {
         handle: &Path,
         ami: Option<&str>,
         candidate_recipe: Option<&str>,
+        deny_list: Option<&Path>,
     ) -> RunOut {
         run_round_vm(
             tree,
@@ -1259,7 +1261,26 @@ impl Scripts for RealScripts {
             handle,
             ami,
             candidate_recipe,
+            deny_list,
         )
+    }
+    fn deny_list(&self, at: u64) -> Result<String, String> {
+        let bin = spira_config::release_env::tool("test-registry")?;
+        // FORK-EDGE: machine leg test-registry (deny-list snapshot at the round's first pass)
+        let out = spira_config::bounded::bounded(&bin)
+            .args(["deny-list", "--at", &at.to_string()])
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|e| format!("{bin} deny-list: {e}"))?;
+        if out.status.success() {
+            return Ok(String::from_utf8_lossy(&out.stdout).into_owned());
+        }
+        Err(format!(
+            "{bin} deny-list --at {at} exited {}: {}{}",
+            out.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&out.stdout).trim(),
+            String::from_utf8_lossy(&out.stderr).trim()
+        ))
     }
     fn recipe_sha(&self, tree: Option<&Path>) -> Option<String> {
         // FORK-EDGE: machine leg round-vm (recipe-sha)
@@ -1308,6 +1329,7 @@ impl Scripts for RealScripts {
             round,
             wall_secs,
             handle,
+            None,
             None,
             None,
         )
@@ -1424,6 +1446,7 @@ fn run_round_vm(
     handle: &Path,
     ami: Option<&str>,
     candidate_recipe: Option<&str>,
+    deny_list: Option<&Path>,
 ) -> RunOut {
     // batch-job: round-vm enforces the cap itself, on the suites and bare lane alone; this is its hang guard
     // FORK-EDGE: machine leg round-vm (certify)
@@ -1448,6 +1471,7 @@ fn run_round_vm(
         .args(["--round-batch", round.0, "--round-repo", round.1])
         .args(on_red_hook(round.0, round.1))
         .args(candidate_recipe.iter().flat_map(|r| ["--candidate-recipe", *r]))
+        .args(deny_list.iter().flat_map(|d| [OsStr::new("--deny-list"), d.as_os_str()]))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

@@ -76,7 +76,7 @@ pub struct Run {
 }
 
 /// Flags the batcher passes that say how a real VM runs, and mean nothing to a stub.
-const IGNORED_FLAGS: &[&str] = &["--maxpar", "--toolchain", "--attr-spool"];
+const IGNORED_FLAGS: &[&str] = &["--maxpar", "--toolchain", "--attr-spool", "--deny-list"];
 
 pub fn parse_args(args: &[String]) -> Result<Run, String> {
     let Some((verb, rest)) = args.split_first() else { return Err("usage: round-vm run <tree> --results-dir <dir>".into()) };
@@ -303,5 +303,18 @@ fn run_inner(world: &Path, args: &[String], env: &dyn Fn(&str) -> Option<String>
         Ok((0, String::new()))
     } else {
         Ok((1, format!("sim round-vm: red: {}\n", reds.join(","))))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_certify_that_hands_the_vm_a_deny_list_is_answered_not_refused() {
+        let args: Vec<String> = ["run", "/t", "--results-dir", "/r", "--deny-list", "/r/deny-list"].map(String::from).to_vec();
+        assert!(parse_args(&args).is_ok(), "{:?}", parse_args(&args).err());
+        let eq: Vec<String> = ["run", "/t", "--results-dir=/r", "--deny-list=/r/deny-list"].map(String::from).to_vec();
+        assert!(parse_args(&eq).is_ok());
     }
 }

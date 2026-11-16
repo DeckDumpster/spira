@@ -2565,6 +2565,64 @@ fn a_pass_ended_early_by_in(t: &T, red: &str) {
     );
 }
 
+fn lint_red_world() -> (T, String, std::path::PathBuf) {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    *t.scripts.round_vm.borrow_mut() = RunOut { rc: 1, out: String::new(), err: String::new() };
+    *t.scripts.round_vm_results.borrow_mut() = vec![("spira-lint".into(), "red".into())];
+    *t.scripts.round_vm_files.borrow_mut() =
+        vec![("spira-lint.out".into(), "member=sp-b r: g.rs:2: y\n".into())];
+    let results = t.lib.s.run.join("rounds").join(format!("{batch}.results"));
+    (t, batch, results)
+}
+
+#[test]
+fn certify_writes_the_deny_list_before_round_vm_takes_a_vm_and_hands_it_over() {
+    let (t, batch, results) = lint_red_world();
+    *t.scripts.deny_list.borrow_mut() = Some(Ok("# test-registry deny-list at=7 rows=1\nrow\n".into()));
+    assert_eq!(t.run(&["round", "certify", &batch]), 1, "{}", t.err());
+    assert_eq!(
+        fs::read_to_string(results.join("deny-list")).unwrap(),
+        "# test-registry deny-list at=7 rows=1\nrow\n"
+    );
+    let calls = t.scripts.calls.borrow();
+    let deny = calls.iter().position(|c| c.starts_with("deny-list --at ")).expect("deny-list call");
+    let vm = calls.iter().position(|c| c.starts_with("round-vm ")).expect("round-vm call");
+    assert!(deny < vm, "{calls:?}");
+    assert!(
+        calls[vm].ends_with(&format!(" deny-list={}", results.join("deny-list").display())),
+        "{calls:?}"
+    );
+}
+
+#[test]
+fn a_second_certify_pass_keeps_the_round_deny_list_with_its_flip_rows() {
+    let (t, batch, results) = lint_red_world();
+    assert_eq!(t.run(&["round", "certify", &batch]), 1, "{}", t.err());
+    let kept = "# test-registry deny-list at=7 rows=1\nrow\nflip-row\n";
+    fs::write(results.join("deny-list"), kept).unwrap();
+    assert_eq!(t.run(&["round", "certify", &batch]), 1, "{}", t.err());
+    assert_eq!(fs::read_to_string(results.join("deny-list")).unwrap(), kept);
+    let calls = t.scripts.calls.borrow();
+    assert_eq!(calls.iter().filter(|c| c.starts_with("deny-list --at ")).count(), 1, "{calls:?}");
+    assert!(
+        calls.iter().filter(|c| c.starts_with("round-vm ")).all(|c| c.ends_with(&format!(" deny-list={}", results.join("deny-list").display()))),
+        "{calls:?}"
+    );
+}
+
+#[test]
+fn certify_takes_no_vm_when_the_deny_list_cannot_be_resolved() {
+    let (t, batch, results) = lint_red_world();
+    *t.scripts.deny_list.borrow_mut() = Some(Err("test-registry deny-list --at 7 exited 3: registry busy".into()));
+    assert_ne!(t.run(&["round", "certify", &batch]), 0);
+    assert!(t.err().contains("the deny list could not be resolved: test-registry deny-list --at 7 exited 3: registry busy"), "{}", t.err());
+    assert!(!t.scripts.calls.borrow().iter().any(|c| c.starts_with("round-vm ")));
+    assert!(!results.join("deny-list").exists());
+    assert!(events_of(&t, &batch).iter().any(|e| e.contains("PassIncomplete")), "{:?}", events_of(&t, &batch));
+}
+
 fn judged_red_world() -> (T, String) {
     let mut t = round_world();
     t.lib.s.verdict.mender_label = "mend-fixture".into();
