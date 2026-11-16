@@ -6802,7 +6802,7 @@ fn a_recipe_changing_round_builds_its_own_image_and_certifies_on_it() {
     ];
 
     assert_eq!(t.run(&["round", "certify", &batch]), 0, "{}", t.err());
-    let branch = format!("spira-round-candidate/{batch}-candidate-re-merged-ta");
+    let branch = "spira-round-candidate/candidate-recipe-sha".to_string();
     let forge = t.forge.calls.borrow().join("\n");
     assert_eq!(
         forge.matches(&format!("ami-dispatch {branch}")).count(),
@@ -6951,6 +6951,63 @@ fn a_recipe_changing_round_placed_on_ec2_waits_for_its_image_then_runs_on_it() {
 }
 
 #[test]
+fn two_rounds_of_one_recipe_share_one_image_build() {
+    let (t, first) = recipe_changing_world();
+    t.forge.ami_branches_dispatched_only.set(true);
+    *t.forge.ami_results.borrow_mut() = vec![Some(AmiBuild::Running("41".into()))];
+
+    assert_eq!(t.run(&["round", "certify", &first]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "abandon", &first, "--reason", "next round"]),
+        0,
+        "{}",
+        t.err()
+    );
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-b"]),
+        0,
+        "{}",
+        t.err()
+    );
+    let second = batch_of(&t);
+    assert_eq!(t.run(&["round", "certify", &second]), 0, "{}", t.err());
+    let forge = t.forge.calls.borrow().clone();
+    assert_eq!(
+        forge.iter().filter(|c| c.starts_with("ami-dispatch")).count(),
+        1,
+        "{forge:?}"
+    );
+    let read: std::collections::BTreeSet<&String> =
+        forge.iter().filter(|c| c.starts_with("ami-result")).collect();
+    assert_eq!(
+        read.into_iter().collect::<Vec<_>>(),
+        vec!["ami-result spira-round-candidate/candidate-recipe-sha"],
+        "{forge:?}"
+    );
+}
+
+#[test]
+fn a_failed_bake_for_another_head_of_the_same_recipe_is_rebuilt_not_read() {
+    let (t, batch) = recipe_changing_world();
+    *t.forge.ami_results.borrow_mut() = vec![
+        Some(AmiBuild::Failure("40".into(), vec!["build / x".into()])),
+        Some(AmiBuild::Running("41".into())),
+    ];
+
+    assert_eq!(t.run(&["round", "certify", &batch]), 0, "{}", t.err());
+    let forge = t.forge.calls.borrow().join("\n");
+    assert_eq!(forge.matches("ami-dispatch ").count(), 1, "{forge}");
+    let git = t.lib.calls.borrow().join("\n");
+    assert_eq!(
+        git.matches("+merged-ta:refs/heads/spira-round-candidate/candidate-recipe-sha")
+            .count(),
+        1,
+        "{git}"
+    );
+    assert!(!t.out().contains("red=workspace-build"), "{}", t.out());
+}
+
+#[test]
 fn a_recipe_already_imaged_dispatches_no_build() {
     let (t, batch) = recipe_changing_world();
     *t.scripts.ami_for.borrow_mut() = vec![AmiLookup::Found("ami-have".into())];
@@ -6959,6 +7016,11 @@ fn a_recipe_already_imaged_dispatches_no_build() {
     let forge = t.forge.calls.borrow().join("\n");
     assert!(!forge.contains("ami-dispatch"), "{forge}");
     assert!(t.scripts.calls.borrow().join("\n").contains("ami=ami-have"));
+    let git = t.lib.calls.borrow().join("\n");
+    assert!(
+        git.contains("push origin :refs/heads/spira-round-candidate/candidate-recipe-sha"),
+        "{git}"
+    );
 }
 
 #[test]

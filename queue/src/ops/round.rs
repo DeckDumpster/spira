@@ -2699,24 +2699,70 @@ enum Image {
     /// The wait for the build could not finish; the round is not judged.
     Unjudged(String),
     /// The build is running in the background; only an EC2 placement waits for it.
-    Pending { tree: String, branch: String, began: u64 },
+    Pending { tree: String, head: String, batch: String, began: u64 },
 }
 
 const IMAGE_UNJUDGED: i32 = 3;
 
-fn candidate_branch(batch: &str, recipe: &str, head: &str) -> String {
-    format!(
-        "spira-round-candidate/{batch}-{}-{}",
-        &recipe[..recipe.len().min(12)],
-        &head[..head.len().min(12)]
-    )
+fn candidate_branch(recipe: &str) -> String {
+    format!("spira-round-candidate/{recipe}")
 }
 
-/// A round whose head changes the recipe certifies on an image built from that head: the head
-/// is pushed under a per-candidate branch and the Round AMI workflow is dispatched on it. The
-/// bake runs in the background (`Image::Pending`); only a pass placed on EC2 waits for it, in
-/// `await_candidate_image`. A recipe already imaged is not rebuilt.
-/// The branch names the head, so a failed build is never read back for a different head.
+fn bake_mark(recipe: &str, head: &str) -> String {
+    format!("{recipe}:{head}")
+}
+
+fn bake_recorded(w: &World, label: &str, c: &Ctx, batch: &str, mark: &str) -> bool {
+    load(w, label, c, batch)
+        .map(|kv| kv.get("candidate-bake") == Some(mark))
+        .unwrap_or(false)
+}
+
+fn record_bake(w: &World, label: &str, c: &Ctx, batch: &str, mark: &str) -> bool {
+    let Ok(_g) = lock(w, label, c) else {
+        return false;
+    };
+    let Ok(mut kv) = load(w, label, c, batch) else {
+        return false;
+    };
+    set(&mut kv, "candidate-bake", mark);
+    save(w, label, c, &kv).is_ok()
+}
+
+/// Push this head over the recipe branch, dispatch the bake, and record it as this round's.
+#[allow(clippy::too_many_arguments)]
+fn rebake(
+    w: &World,
+    label: &str,
+    c: &Ctx,
+    path: &Path,
+    remote: &str,
+    home_path: &Path,
+    head: &str,
+    branch: &str,
+    mark: &str,
+    batch: &str,
+) -> Option<Image> {
+    if !w.lib.push(path, remote, &format!("+{head}:refs/heads/{branch}")) {
+        return Some(Image::Unjudged(format!("could not push {branch}")));
+    }
+    if !w.forge.ami_dispatch(&c.s.forge, home_path, branch) {
+        return Some(Image::Unjudged(format!(
+            "the forge refused the Round AMI build on {branch}"
+        )));
+    }
+    if !record_bake(w, label, c, batch, mark) {
+        return Some(Image::Unjudged("cannot record the candidate image build".into()));
+    }
+    None
+}
+
+/// A round whose head changes the recipe certifies on an image built from that head. One branch
+/// per recipe hash carries the bake, so rounds of one recipe follow a run in flight instead of
+/// dispatching another. The bake runs in the background (`Image::Pending`); only a pass placed
+/// on EC2 waits for it, in `await_candidate_image`. A recipe already imaged is not rebuilt. A
+/// failed bake is a red only when this round's record names it: a failure left by another head
+/// is rebuilt with this head, never read back.
 fn begin_candidate_image(
     w: &World,
     label: &str,
@@ -2737,7 +2783,12 @@ fn begin_candidate_image(
         return Image::Release;
     }
     match w.scripts.ami_for(&tree) {
-        AmiLookup::Found(id) => return Image::Candidate(id),
+        AmiLookup::Found(id) => {
+            if let Some((remote, _)) = &c.r.publish {
+                let _ = w.lib.push(path, remote, &format!(":refs/heads/{}", candidate_branch(&tree)));
+            }
+            return Image::Candidate(id);
+        }
         AmiLookup::Unreadable(e) => {
             return Image::Unjudged(format!("cannot read the round images: {e}"))
         }
@@ -2753,21 +2804,28 @@ fn begin_candidate_image(
             "the repository has no publish remote to push the candidate image build to".into(),
         );
     };
-    let branch = candidate_branch(batch, &tree, head);
+    let branch = candidate_branch(&tree);
+    let mark = bake_mark(&tree, head);
     let began = w.clock.now();
     let build = w.forge.ami_result(&c.s.forge, &home_path, &branch);
-    if let Some(done) = build.as_ref().and_then(|b| finished_build(w, &tree, b)) {
-        return release_branch(w, path, &remote, &branch, done);
+    let ours = || bake_recorded(w, label, c, batch, &mark);
+    let foreign_failure = matches!(build, Some(AmiBuild::Failure(..))) && !ours();
+    if !foreign_failure {
+        if let Some(done) = build.as_ref().and_then(|b| finished_build(w, &tree, b)) {
+            return release_branch(w, path, &remote, &branch, done);
+        }
     }
-    let pending = Image::Pending { tree: tree.clone(), branch: branch.clone(), began };
+    let pending = Image::Pending {
+        tree: tree.clone(),
+        head: head.to_string(),
+        batch: batch.to_string(),
+        began,
+    };
     match build {
         None => Image::Unjudged("the forge cannot be read for the candidate round image build".into()),
-        Some(AmiBuild::NotStarted) => {
-            if !w.lib.push(path, &remote, &format!("{head}:refs/heads/{branch}")) {
-                return Image::Unjudged(format!("could not push {branch}"));
-            }
-            if !w.forge.ami_dispatch(&c.s.forge, &home_path, &branch) {
-                return Image::Unjudged(format!("the forge refused the Round AMI build on {branch}"));
+        Some(AmiBuild::NotStarted) | Some(AmiBuild::Failure(..)) => {
+            if let Some(v) = rebake(w, label, c, path, &remote, &home_path, head, &branch, &mark, batch) {
+                return v;
             }
             w.out(format!("queue.sh {label}: recipe {tree} has no image; dispatched the Round AMI build on {branch}"));
             pending
@@ -2816,9 +2874,11 @@ fn await_candidate_image(
     path: &Path,
     pending: Image,
 ) -> Image {
-    let Image::Pending { tree, branch, began } = pending else {
+    let Image::Pending { tree, head, batch, began } = pending else {
         return pending;
     };
+    let branch = candidate_branch(&tree);
+    let mark = bake_mark(&tree, &head);
     let (Ok(home), Some((remote, _))) = (resolve(w, label, Some(&c.s.home_repo)), c.r.publish.clone())
     else {
         return Image::Unjudged("cannot resolve the repository the Round AMI workflow runs in".into());
@@ -2827,11 +2887,23 @@ fn await_candidate_image(
         return Image::Unjudged("the Round AMI workflow's repository has no path".into());
     };
     let mut idle = 0u32;
+    let mut rebaked = false;
     let verdict = loop {
         let build = w.forge.ami_result(&c.s.forge, &home_path, &branch);
         let Some(build) = build else {
             break Image::Unjudged("the forge cannot be read for the candidate round image build".into());
         };
+        if !rebaked
+            && matches!(build, AmiBuild::Failure(..))
+            && !bake_recorded(w, label, c, &batch, &mark)
+        {
+            if let Some(v) = rebake(w, label, c, path, &remote, &home_path, &head, &branch, &mark, &batch) {
+                break v;
+            }
+            rebaked = true;
+            w.out(format!("queue.sh {label}: the build on {branch} failed for another head; rebuilt recipe {tree} from this head"));
+            continue;
+        }
         if let Some(done) = finished_build(w, &tree, &build) {
             break done;
         }

@@ -902,6 +902,8 @@ struct FForge {
     ami_runs: RefCell<Vec<Option<Vec<String>>>>,
     /// ami-result answers in order; the last one repeats. Empty is a run not started.
     ami_results: RefCell<Vec<Option<AmiBuild>>>,
+    /// When set, ami-result answers a branch no ami-dispatch has named as not started.
+    ami_branches_dispatched_only: Cell<bool>,
     /// pr-create makes this PR number upstream, then reports this error.
     create_then_err: RefCell<Option<(String, String)>>,
     record_at_close: RefCell<Option<(PathBuf, String)>>,
@@ -1044,6 +1046,14 @@ impl Forge for FForge {
     }
     fn ami_result(&self, _: &Path, _: &Path, branch: &str) -> Option<AmiBuild> {
         self.calls.borrow_mut().push(format!("ami-result {branch}"));
+        if self.ami_branches_dispatched_only.get()
+            && !self
+                .calls
+                .borrow()
+                .contains(&format!("ami-dispatch {branch}"))
+        {
+            return Some(AmiBuild::NotStarted);
+        }
         let mut q = self.ami_results.borrow_mut();
         match q.len() {
             0 => Some(AmiBuild::NotStarted),
