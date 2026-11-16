@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # concierge-waiter-stop.sh — Stop hook for the Concierge session: refuse idle without a live
-# inbox waiter descended from this session's claude process.
+# inbox waiter descended from this session's claude process, or a delivery by this session's
+# waiter (watchd's concierge-inbox.delivered record) after the turn's last input.
 #
 # The one waiter is `watchd next concierge-inbox`, found by walking /proc from the session pid
 # and comparing argv basenames and subcommand, never by a pattern over the whole process table:
