@@ -2,7 +2,7 @@ use spira_sim::gh;
 use spira_sim::world::{self, ProcessSteps};
 use std::path::PathBuf;
 
-const USAGE: &str = "usage: sim world up <dir> [--tree <rev>] [--repo <name>:<mode>[:<trunk>]]...\n       sim world fixture <tree root> <dir>\n       sim world seed [--tree <rev>]\n       sim world down <dir>\n       sim gh <gh arguments...>\n       sim round-vm run <tree> --results-dir <dir>\n       sim ghctl <state-dir> <verb> ...\n       sim run <scenario|name> [--seed N] [--world <dir>] [--keep] [--repo <name>:<mode>[:<trunk>]]...\n       sim step <dir> [--until <vtime|bead:<bead>:<STATE>>]\n       sim replay <dir> --seed N\n       sim probe <dir>
+const USAGE: &str = "usage: sim world up <dir> [--tree <rev>] [--pilgrim] [--repo <name>:<mode>[:<trunk>]]...\n       sim world fixture <tree root> <dir>\n       sim world seed [--tree <rev>]\n       sim world down <dir>\n       sim gh <gh arguments...>\n       sim round-vm run <tree> --results-dir <dir>\n       sim ghctl <state-dir> <verb> ...\n       sim run <scenario|name> [--seed N] [--world <dir>] [--keep] [--repo <name>:<mode>[:<trunk>]]...\n       sim step <dir> [--until <vtime|bead:<bead>:<STATE>>]\n       sim replay <dir> --seed N\n       sim probe <dir>
        sim proc-summary <world|proc-trace.log>
        sim call <systemd-run argv ending in: dwarf --home H <rune>>   (also: invoked as sim-call)
        sim launch <systemd-run argv | --user is-active <unit>>   (also: invoked as sim-launch)
@@ -79,11 +79,15 @@ fn run(args: &[String]) -> Result<(), String> {
     }
     match args.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
         ["world", "up", rest @ ..] => {
-            let (pos, set, repos) = flags_repeated(&rest.iter().map(|a| a.to_string()).collect::<Vec<_>>(), &["--tree"], &[], &["--repo"])?;
+            let (pos, set, repos) = flags_repeated(&rest.iter().map(|a| a.to_string()).collect::<Vec<_>>(), &["--tree"], &["--pilgrim"], &["--repo"])?;
             let [dir] = pos.as_slice() else { return Err(USAGE.to_string()) };
             let repos = repos.iter().map(|r| world::RepoSpec::parse(r)).collect::<Result<Vec<_>, _>>()?;
             let tree = set.get("--tree").map_or("HEAD", String::as_str);
-            world::up_repos(&cwd, &PathBuf::from(dir), tree, &env, &ProcessSteps, &repos, &|_| Ok(()))
+            world::up_repos(&cwd, &PathBuf::from(dir), tree, &env, &ProcessSteps, &repos, &|_| Ok(()))?;
+            if set.contains_key("--pilgrim") {
+                world::make_pilgrim_world(&PathBuf::from(dir))?;
+            }
+            Ok(())
         }
         ["world", "fixture", root, dir] => world::fixture_repo(&PathBuf::from(root), &PathBuf::from(dir)),
         ["world", "seed"] => world::ensure_seed(&cwd, "HEAD").map(|_| ()),

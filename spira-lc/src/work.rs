@@ -1371,8 +1371,23 @@ pub fn op_key(verb: &str, args: &[String]) -> String {
     }
 }
 
+/// What the pilgrim may run, and only in a pilgrim world: its scratch beads stay in a store the
+/// dispatcher never claims from.
+pub const PILGRIM_WORLD_ALLOW: &[&str] = &["file", "dep-add", "close-other"];
+
+fn in_pilgrim_world() -> bool {
+    spira_config::process::cfg("SPIRA_LC_SOCKET").is_ok_and(|socket| std::path::Path::new(&spira_store::lc_call::pilgrim_world_marker(&socket)).is_file())
+}
+
 /// May `actor` run `op`? `Err` is the refusal to answer with.
 pub fn permitted(op: &str, actor: Option<&str>) -> Result<(), (i32, String)> {
+    permitted_in(op, actor, false)
+}
+
+pub fn permitted_in(op: &str, actor: Option<&str>, pilgrim_world: bool) -> Result<(), (i32, String)> {
+    if pilgrim_world && actor == Some("pilgrim") && PILGRIM_WORLD_ALLOW.contains(&op) {
+        return Ok(());
+    }
     let Some((_, who)) = ALLOW.iter().find(|(k, _)| *k == op) else {
         return Err((REFUSED, format!("refused: `work {op}` is not an operation any persona may run")));
     };
@@ -1390,6 +1405,10 @@ pub fn permitted(op: &str, actor: Option<&str>) -> Result<(), (i32, String)> {
 }
 
 fn gate(verb: &str, rest: &[String]) -> Result<(), (i32, String)> {
+    gate_in(verb, rest, in_pilgrim_world)
+}
+
+fn gate_in(verb: &str, rest: &[String], pilgrim_world: impl Fn() -> bool) -> Result<(), (i32, String)> {
     if !BOUND_VERBS.contains(&verb) && !LANE_VERBS.contains(&verb) {
         return Ok(()); // dispatch's own "unknown verb" answer
     }
@@ -1397,7 +1416,9 @@ fn gate(verb: &str, rest: &[String]) -> Result<(), (i32, String)> {
     if call.actors > 1 {
         return Err((REFUSED, format!("refused: work {verb}: more than one --actor — the persona is the client's to send, never the caller's")));
     }
-    permitted(&op_key(verb, &call.args), call.actor.as_deref())
+    let op = op_key(verb, &call.args);
+    let world = PILGRIM_WORLD_ALLOW.contains(&op.as_str()) && pilgrim_world();
+    permitted_in(&op, call.actor.as_deref(), world)
 }
 
 /// One thing a lane verb does: a bd call, a harness tool, — after a `bead.sh file` for a
@@ -2747,6 +2768,26 @@ mod tests {
             plan("mender", "-", &call(&["outcome", "/s", "return", "--checks", "x"], "mender")).unwrap(),
             vec![tool("mender", &["outcome", "/s", "return", "--checks", "x"])]
         );
+    }
+
+    #[test]
+    fn the_pilgrim_files_links_and_closes_only_in_a_pilgrim_world() {
+        let calls: [(&str, Vec<String>); 3] = [
+            ("file", v(&["a title", "--for", "builder", "--repo", "r", "--actor", "pilgrim"])),
+            ("dep-add", v(&["sp-a1", "sp-b2", "--actor", "pilgrim"])),
+            ("close-other", v(&["sp-b2", "--evidence", "e", "--actor", "pilgrim"])),
+        ];
+        for (verb, args) in &calls {
+            assert_eq!(gate_in(verb, args, || false).unwrap_err().0, REFUSED, "{verb} on a production store");
+            assert!(gate_in(verb, args, || true).is_ok(), "{verb} in a pilgrim world");
+        }
+    }
+
+    #[test]
+    fn a_pilgrim_world_widens_nothing_but_the_pilgrims_three_verbs() {
+        assert_eq!(gate_in("dep-add", &v(&["sp-a1", "sp-b2", "--actor", "builder"]), || true).unwrap_err().0, REFUSED);
+        assert_eq!(gate_in("label-add", &v(&["sp-a1", "x", "--actor", "pilgrim"]), || true).unwrap_err().0, REFUSED);
+        assert_eq!(gate_in("reopen", &v(&["sp-a1", "--evidence", "e", "--actor", "pilgrim"]), || true).unwrap_err().0, REFUSED);
     }
 
     #[test]

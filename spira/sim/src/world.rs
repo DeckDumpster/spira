@@ -223,6 +223,12 @@ pub fn lc_socket(world: &Path) -> PathBuf {
     world.join(LC_SOCKET)
 }
 
+/// Makes `world` a pilgrim world: its lifecycle service lets the pilgrim persona file, link and
+/// close beads, which no production store does.
+pub fn make_pilgrim_world(world: &Path) -> Result<(), String> {
+    std::fs::write(spira_store::lc_call::pilgrim_world_marker(&lc_socket(world).display().to_string()), "").map_err(|e| e.to_string())
+}
+
 /// The world's control-plane store.
 pub fn control_store(world: &Path) -> PathBuf {
     world.join("control.db")

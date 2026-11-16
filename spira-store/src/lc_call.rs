@@ -13,6 +13,12 @@ use std::time::{Duration, Instant};
 
 pub const LC_TIMEOUT: Duration = Duration::from_secs(15); // batch-job: spira-lc requests queue behind a loaded Dolt in the round VM
 
+/// The file beside a store's socket that makes it a pilgrim world: a store of its own that no
+/// dispatcher claims from, where the pilgrim may file, link and close beads.
+pub fn pilgrim_world_marker(socket: &str) -> String {
+    format!("{socket}.pilgrim-world")
+}
+
 /// spira-lc's exit code for a request the machine looked at and refused.
 pub const REFUSED: i32 = 3;
 /// spira-lc's exit code for "cannot tell": the machine could not answer.
