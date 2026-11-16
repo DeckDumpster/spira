@@ -432,10 +432,14 @@ impl Pool {
                     }
                 };
                 if let Place::Ec2(reason) = place {
-                    if let Ok(Some(recipe)) = plan.ec2.image_pending() {
-                        let msg = format!("round-vm: acquire: no round image carries recipe {recipe} yet; the pass is placed on EC2 and waits for the build");
-                        *pending = Some(recipe);
-                        return Err(msg);
+                    match plan.ec2.image_pending() {
+                        Ok(Some(recipe)) => {
+                            let msg = format!("round-vm: acquire: no round image carries recipe {recipe} yet; the pass is placed on EC2 and waits for the build");
+                            *pending = Some(recipe);
+                            return Err(msg);
+                        }
+                        Ok(None) => {}
+                        Err(e) => eprintln!("round-vm: cannot read the round images for the candidate recipe; launching anyway: {e}"),
                     }
                     match self.spill(&attempt, plan, owner, holder, &reason) {
                         Ok(vm) => return Ok((vm, AcquireMode::Cold)),
