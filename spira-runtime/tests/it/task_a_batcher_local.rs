@@ -1086,6 +1086,13 @@ fn a_landed_round_asks_for_the_repos_local_reds_to_be_closed() {
 }
 
 #[test]
+fn a_landed_round_hands_its_members_to_the_registry_clearing() {
+    let land = Leg { batch: "r9".into(), members: vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into())], ..Leg::on("spira") };
+    let (_, acts) = on_outcome(&landing(), LAND, true, &serde_json::to_string(&Landed::default()).unwrap(), &land, NOW);
+    assert_eq!(supersede_legs(&acts)[0].members, land.members, "{acts:?}");
+}
+
+#[test]
 fn a_staged_landing_promotes_and_asks_for_the_local_reds_to_be_closed() {
     let land = Leg { batch: "r9".into(), ..Leg::on("spira") };
     let staged = serde_json::to_string(&Landed { staged: Some("r10".into()), ..Landed::default() }).unwrap();

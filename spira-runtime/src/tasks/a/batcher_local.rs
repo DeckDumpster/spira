@@ -80,7 +80,7 @@
 //! | `batcher.local.abandon` / `.promote` | store | 30 s | batch | already closed (`io.rs:1823`, `:1945`) |
 //! | `batcher.local.redrive` | unit | 60 s | batch | once per orphan (`io.rs:1772`) |
 //! | `batcher.local.file` (incident/judgement/flip) | store | 30 s | incident ref, e.g. `round-orphan:<repo>:<batch>` | duplicate ref (`io.rs:1780`, `:2066`, `:2129`, `:2178`) |
-//! | `batcher.local.supersede_reds` | store | 30 s | repo + landed head | none: the close says its failure and never blocks the landing (`io.rs:2435`) |
+//! | `batcher.local.supersede_reds` | store | 30 s | repo + landed head + members | none: the close and the registry clearing say their failure and never block the landing |
 //! | `batcher.local.pause` | store | 5 s | repo + lane | — (`pace.rs:248`) |
 //! | `inbox.append` | store | 10 s | line | — (`pace.rs:269`, `main.rs:930`) |
 //!
@@ -1984,7 +1984,7 @@ impl Machine<'_> {
                     self.base_moved(&base);
                     return;
                 }
-                self.acts.push(Leg { key: format!("supersede:{}", leg.batch), ..Leg::on(self.repo) }.act(SUPERSEDE_REDS));
+                self.acts.push(Leg { key: format!("supersede:{}", leg.batch), members: leg.members.clone(), ..Leg::on(self.repo) }.act(SUPERSEDE_REDS));
                 match l.staged {
                     Some(staged) => {
                         self.go(Trigger::LandedStaged);
@@ -2926,12 +2926,17 @@ pub mod edge {
         io::file_orphan_round_incident(&env, &repo_of(&env, &leg)?, &leg.batch, &leg.why)
     }
 
-    /// A round landed: the repo's open local-red incidents are over, and the landed head names the close.
+    /// A round landed: the repo's open local-red incidents are over, and the landed head names the close;
+    /// the registry rows naming its members are cleared too. Neither failure blocks the landing.
     pub fn supersede_reds(_: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
         let (env, leg) = (env()?, leg(spec)?);
         let repo = repo_of(&env, &leg)?;
         let head = io::resolve_base_sha(&repo)?;
         batcher_cut::io::close_superseded_reds(&repo, &head);
+        let beads: Vec<String> = leg.members.iter().map(|(id, _)| id.clone()).collect();
+        if let Some(line) = batcher_cut::io::registry_clearing_line(&env, &repo, &beads) {
+            println!("{line}");
+        }
         Ok("{}".into())
     }
 

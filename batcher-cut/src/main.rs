@@ -1135,14 +1135,6 @@ fn install_fault_outcome(
     }
 }
 
-fn registry_clearing_line(env_: &Env, repo: &Repo, beads: &[String]) -> Option<String> {
-    match io::clear_landed_rows(env_, beads) {
-        Ok(ids) if ids.is_empty() => None,
-        Ok(ids) => Some(format!("batcher {}: landing cleared registry row(s) {}", repo.name, ids.join(" "))),
-        Err(e) => Some(format!("batcher {}: landed but registry rows were not cleared: {e}", repo.name)),
-    }
-}
-
 /// queue.local's terminal step: `terminal_ready` gates the round on the every-member-named,
 /// bins-present contract before anything changes, then the round's own `queue round certify`
 /// and `queue round land` do the rest. Never rebuilds binaries (law-deploy-the-tested-artifacts).
@@ -1394,7 +1386,7 @@ fn finish_local_round(
         stable.members.len()
     );
     let landed_ids: Vec<String> = stable.members.iter().map(|m| m.id.clone()).collect();
-    if let Some(line) = registry_clearing_line(env_, repo, &landed_ids) {
+    if let Some(line) = io::registry_clearing_line(env_, repo, &landed_ids) {
         println!("{line}");
     }
 
@@ -2747,15 +2739,15 @@ mod tests {
         testkit::write_exe(&stub, &format!("#!/bin/sh\necho \"$@\" >> {}\necho suite:a.sh\necho suite:b.sh\n", calls.display()));
         let beads = vec!["sp-a".to_string(), "sp-b".to_string()];
         assert_eq!(
-            registry_clearing_line(&env, &repo, &beads).unwrap(),
+            io::registry_clearing_line(&env, &repo, &beads).unwrap(),
             "batcher alpha: landing cleared registry row(s) suite:a.sh suite:b.sh"
         );
         assert_eq!(std::fs::read_to_string(&calls).unwrap(), "clear-landed --bead sp-a --bead sp-b --actor batcher\n");
         testkit::write_exe(&stub, "#!/bin/sh\necho boom >&2\nexit 3\n");
-        let said = registry_clearing_line(&env, &repo, &beads).unwrap();
+        let said = io::registry_clearing_line(&env, &repo, &beads).unwrap();
         assert!(said.starts_with("batcher alpha: landed but registry rows were not cleared:") && said.contains("boom"), "{said}");
         testkit::write_exe(&stub, "#!/bin/sh\nexit 0\n");
-        assert_eq!(registry_clearing_line(&env, &repo, &beads), None, "nothing cleared, nothing said");
+        assert_eq!(io::registry_clearing_line(&env, &repo, &beads), None, "nothing cleared, nothing said");
     }
 
     const ALL: Switches = Switches {
