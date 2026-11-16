@@ -36,16 +36,16 @@ Baseline with no nix at all (`baseline-no-shell.txt`): `true` 6.5 ms; the ruff r
 - mechanism 1: about 320 ms (`true`), about 476 ms (ruff row);
 - mechanism 2: about 63 ms (`true`), about 124 ms (ruff row).
 
-All 80 timed runs exited 0 (`rcs` in `bench-raw.txt`); ruff reported "All checks passed".
+All 80 timed runs exited 0 (`rcs` in `bench-raw.txt`). Output was discarded in the timed loop; the ruff row printed "All checks passed" in an untimed run, not kept as a file.
 
 Mechanism 2 as measured: `nix print-dev-env --json <flake>` once, cached under
 `sha256(flake.nix flake.lock)`; each row is `env -i <exported variables from the JSON> HOME=$HOME
 TMPDIR=/tmp <argv>`. Two of the JSON's values must be overridden: `HOME=/homeless-shelter` (uv
-then cannot create its cache and the ruff row exits 2; an earlier run with this mistake is why the
-override is in `bench.sh`) and `TMPDIR=/build`. The JSON's PATH is the nix store's only; nothing
-from the host PATH leaks in. The parse step (`python3 -I`) is inside the timed cost.
+then cannot create its cache; the first bench run with the JSON's HOME left in place had every
+ruff-row run exit 2, so `bench.sh` overrides it; that first run's file was overwritten) and `TMPDIR=/build`. The JSON's PATH is the nix store's only; nothing
+from the host PATH leaks in. The JSON parse (`python3 -I`) is inside the timed cost; the cache-key hash and file lookup are not (the key is computed once per `bench.sh` run, a `sha256sum` of two small files, a few ms).
 
-Cold, once (`cold-build.txt`, `store-before.txt`): 9.1 s wall to fetch and build the shell from
+Cold, once (`cold-build.txt`, `store-size.txt`): 9.1 s wall to fetch and build the shell from
 cache.nixos.org, adding 526,224 KiB (about 514 MiB) to `/nix/store` (3,418,144 to 3,944,368 KiB).
 Informational only. Two further costs not in the table: the first `uv run` creates deckdumpster's
 `.venv` (PyPI traffic), and the first `print-dev-env` after a flake.lock change is the cold figure.
@@ -62,7 +62,7 @@ Findings worth carrying into drafts 2-8:
 
 ## (b) Reachability
 
-Evidence: `reach-builder-gate.txt`, `reach-testenv.txt`.
+Evidence: `reach.sh` (commands) and `reach.txt` (their output and exit statuses).
 
 **Builder session.** PATH is `/usr/bin:/bin:<release>/model-bin:~/.cargo/bin`; `command -v nix`
 fails. `/nix/var/nix/profiles/default/bin/nix eval --expr 1+1` prints `2`. The socket is

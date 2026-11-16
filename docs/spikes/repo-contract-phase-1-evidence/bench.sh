@@ -27,7 +27,6 @@ for k,v in d.items():
 ' "$j")
   env -i "${args[@]}" HOME="$HOME" TMPDIR=/tmp "$@"
 }
-mapfile -d '' -t X < /dev/null
 declare -A ROWS=([true]="true" [ruff]="uv run ruff check mtg_collector/")
 for row in true ruff; do
   read -ra argv <<< "${ROWS[$row]}"
