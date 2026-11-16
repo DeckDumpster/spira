@@ -355,13 +355,14 @@ fn cmd_budget(args: &[String]) -> i32 {
     };
     let p90 = match env("SPIRA_RUN").filter(|v| !v.is_empty()) {
         Some(r) => match timing::load(Path::new(&r), runs) {
-            Ok(p) => p.by_suite,
+            Ok(p) => (p.by_suite, p.reds),
             Err(r) => return refused("suite-select budget", &r),
         },
         None => Default::default(),
     };
+    let (p90, reds) = p90;
     let cands: Vec<&suite_select::corpus::Suite> = corpus.suites.iter().collect();
-    let cut = budget::fill(&budget::rank(&cands, &p90, &caps), b, width);
+    let cut = budget::fill(&budget::rank(&cands, &p90, &reds, &caps), b, width);
     for l in &cut.log {
         eprintln!("{l}");
     }
