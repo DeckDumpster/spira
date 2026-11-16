@@ -1039,14 +1039,34 @@ fn cmd_file(bead_id: &str, args: &[String], verb: &str, conn: &Conn) -> (i32, St
         Ok(r) => r,
         Err(e) => return (CANNOT_TELL, format!("refused: work {verb}: {e}")),
     };
-    // A child of a bead that carries spira-open-children cannot land after it, so a
-    // follow-up that needs this bead landed first is filed unparented and blocked on it.
     let after_landing = args.iter().any(|a| a == "--after-landing");
+    let actor = flag(args, "--actor").unwrap_or_default();
     let body = split_reserved(args).stdin;
-    let parent = if after_landing { None } else { Some(bead_id) };
-    match crate::bd::file_child(title, &persona, &repo, parent, body.as_deref()) {
-        Ok(new_id) => match crate::dispatch(&[s("create-bead"), new_id.clone(), s("--ready"), s("--repo"), repo.clone()], conn) {
-            (0, _) if after_landing => match crate::bd::add_blocker(&new_id, bead_id) {
+    let register = |new_id: &str| crate::dispatch(&[s("create-bead"), new_id.to_string(), s("--ready"), s("--repo"), repo.clone()], conn);
+    file_and_bind(&Filing { verb, actor: &actor, title, persona: &persona, repo: &repo, bound: bead_id, after_landing, body: body.as_deref() }, register)
+}
+
+struct Filing<'a> {
+    verb: &'a str,
+    actor: &'a str,
+    title: &'a str,
+    persona: &'a str,
+    repo: &'a str,
+    bound: &'a str,
+    after_landing: bool,
+    body: Option<&'a str>,
+}
+
+/// A child of a bead that carries spira-open-children cannot land after it, and the store refuses
+/// a bead blocked by its own descendant, so every filing that makes the bound bead wait, or wait
+/// on the bound bead, is filed unparented.
+fn file_and_bind(f: &Filing, register: impl FnOnce(&str) -> (i32, String)) -> (i32, String) {
+    let (verb, bead_id) = (f.verb, f.bound);
+    let waits = blocking_edge(verb, f.actor, bead_id, bead_id).is_some();
+    let parent = if f.after_landing || waits { None } else { Some(bead_id) };
+    match crate::bd::file_child(f.title, f.persona, f.repo, parent, f.body) {
+        Ok(new_id) => match register(&new_id) {
+            (0, _) if f.after_landing => match crate::bd::add_blocker(&new_id, bead_id) {
                 Ok(()) => (0, new_id),
                 Err(e) => (CANNOT_TELL, format!("{new_id} was filed but could not be made to wait on {bead_id} (do not file it again; add the dependency): {e}")),
             },
@@ -1054,7 +1074,7 @@ fn cmd_file(bead_id: &str, args: &[String], verb: &str, conn: &Conn) -> (i32, St
                 Ok(()) => (0, new_id),
                 Err(e) => (CANNOT_TELL, format!("{new_id} was filed but could not be marked a split child, so it would be claimable before {bead_id} lands (do not file it again; add the label {}): {e}", spira_config::nonwork::SPLIT_LABEL)),
             },
-            (0, _) => match blocking_edge(verb, flag(args, "--actor").as_deref().unwrap_or(""), bead_id, &new_id) {
+            (0, _) => match blocking_edge(verb, f.actor, bead_id, &new_id) {
                 Some((blocked, blocker)) => match crate::bd::add_blocker(blocked, blocker) {
                     Ok(()) => (0, new_id),
                     Err(e) => (CANNOT_TELL, format!("{new_id} was filed but {bead_id} could not be made to wait on it (do not file it again; add the dependency): {e}")),
@@ -2142,6 +2162,27 @@ fn cmd_lane(bound: &str, verb: &str, rest: &[String], conn: &Conn) -> (i32, Stri
         }
     }
     (0, out.trim_end_matches('\n').to_string())
+}
+
+/// Needs a real beads store, which the sandbox cannot start: `spira/test-pilgrim-followup-store.sh`
+/// runs this binary outside it, with `SPIRA_DB` set. Without that it has nothing to test.
+#[cfg(all(test, feature = "integration"))]
+mod store_tests {
+    const BODY: &str = "## Build\nthe thing, in spira-lc\n";
+
+    #[test]
+    fn a_pilgrims_file_followup_files_an_unparented_defect_the_pilgrimage_waits_on() {
+        if std::env::var_os("SPIRA_DB").is_none() {
+            return;
+        }
+        let pilgrimage = crate::bd::file_child("walk", "builder", "spira", None, Some(BODY)).unwrap();
+        let filing = super::Filing { verb: "file-followup", actor: "pilgrim", title: "a defect", persona: "builder", repo: "spira", bound: &pilgrimage, after_landing: false, body: Some(BODY) };
+        let (code, defect) = super::file_and_bind(&filing, |_| (0, String::new()));
+        assert_eq!(code, 0, "{defect}");
+        let shown = std::process::Command::new("bd").args(["-C", &std::env::var("SPIRA_DB").unwrap(), "show", &pilgrimage]).output().unwrap();
+        let shown = String::from_utf8_lossy(&shown.stdout).into_owned();
+        assert!(shown.contains(&defect), "the pilgrimage lists {defect} as a blocker: {shown}");
+    }
 }
 
 #[cfg(test)]
