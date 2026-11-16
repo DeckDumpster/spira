@@ -179,7 +179,6 @@ parses spira.toml or the repo-map itself (law-config-through-the-cli-only).
 | `SPIRA_BATCH_SKIP_INSTALL` | — | — |
 | `SPIRA_BATCH_TIERS` | `T2,T3` | — |
 | `SPIRA_BATCH_MAIL_CMD` / `SPIRA_BATCH_INCIDENT_CMD` | `mail` / `incident.sh` on PATH (sp-gypjk) | — |
-| `SPIRA_SUITE_STATE_FILE` | `spira/suite-state` | — |
 | `SPIRA_SKIP_ALLOWLIST_FILE` (new, §3.7) | `spira/skip-allowlist.tsv` | — |
 | `SPIRA_GATE_SELECT_HEAD` | `<branch>` | — |
 | `SPIRA_ROUND_BATCH_ID`, `SPIRA_ROUND_MEMBERS` | — | — |
@@ -196,7 +195,7 @@ testenv owns orchestration; these stay separate components with their own contra
 
 | collaborator | used for |
 |---|---|
-| `git` | rev-parse tree/commit, worktree list/add/checkout, status, `show <rev>:spira/suite-state`, `show <rev>:spira/skip-allowlist.tsv` (§3.7), landref rungs |
+| `git` | rev-parse tree/commit, worktree list/add/checkout, status, `show <rev>:spira/skip-allowlist.tsv` (§3.7), landref rungs |
 | `cargo` | `cargo build --profile <p> --workspace` in the worktree — **not** run at all under `--artifacts` |
 | `suite-select` (crate, linked) | diff-derived selection (the ONE selector, sp-wx2tw) |
 | this executable's `container` subcommand (§12; was `spira/testenv.sh`), run as a child against the harness copy `Harness::locate` found — a gate-built testenv therefore drives the tree under test's own image closure, sp-isom7 | `tag` (image build-closure hash), `up --name --checkout` (image acquisition, boot, linger, cargo-volume ownership), `probe`, `down --name --volumes` |
@@ -369,14 +368,13 @@ narrower `esc()` inside it) and a reader downstream may already depend on the di
 (633 files, exercising tier/UC extraction through the fallback branch) plus fixtures for
 the TAP branch, `1..0 # SKIP`, `Bail out!`, and the escaping asymmetry.
 
-### 3.6 Suite headers and state
+### 3.6 Suite headers
 
 Read from the **tree under test**. Headers before the first `set -` line:
 `# requires: a, b` (tokens; `testenv` is always met inside the container),
-`# exclusive: <reason>`, `# tier: T0..T4`. `spira/suite-state` at the revision:
-`<suite> | <state> | <since> | <bead> | <reason>`, `#` comments; state
-`active|quarantined|disabled`, unknown states and malformed lines read as active
-(fail-closed: absent file = everything active and blocking).
+`# exclusive: <reason>`, `# tier: T0..T4`. A suite's lifecycle state comes only from the
+deny list the run is handed (`SPIRA_TEST_DENY_LIST`); a suite with no row is active and
+blocking.
 
 ### 3.7 The skip contract — `spira/skip-allowlist.tsv` (sp-gjx1b)
 
@@ -390,7 +388,7 @@ produces: absence read as a positive result (law-absence-needs-a-positive-contro
 
 **The rule now:** a SKIP or SKIP-REQ is green only when it is **declared** — its exact
 requirement, for that exact suite, is a line in `spira/skip-allowlist.tsv` on the tree under
-test (read the same way as `suite_state_file`, §2.5/§2.6). Undeclared is red. There is no
+test. Undeclared is red. There is no
 third state: every SKIP is either declared-and-green or undeclared-and-red.
 
 **The requirement is the record's fingerprint, unchanged.** `ResultRecord.fingerprint`
@@ -774,12 +772,12 @@ production; `SPIRA_ARTIFACTS` inside a test run). A round that tests its own run
   Under a 300 s deadline the suite phase is now bounded; the ~300 s of setup around it is not,
   and on that day it was the larger half. **Closed by D9/D10 (sp-govet, §11).**
 
-## 10. `testenv suites` — the suite-state tooling (replaces spira/suites.sh)
+## 10. `testenv suites` — the suite population tooling (replaces spira/suites.sh)
 
 `spira/suites.sh` (population, gate/timed partition, the watchtower's `status` block, flake
-reports, quarantine hygiene and the `spira/suite-state` transitions) is folded into this
+reports) is folded into this
 crate as the `testenv suites <cmd>` subcommand family (module `suites`), not a crate of its
-own: it reads the same `spira/suite-state`, the same suite headers and the same result
+own: it reads the same suite headers and the same result
 record this runner already parses and writes, and a second crate would carry a second
 parser of each — the drift suite-covers.sh was written to end. Its contract, schema,
 seams, decisions and cutover are in [DESIGN-suites.md](DESIGN-suites.md). The runner's own

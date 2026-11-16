@@ -420,8 +420,6 @@ impl Lib for FLib {
     fn sort_rows(
         &self,
         _express: &HashSet<String>,
-        _: &Path,
-        _: &str,
         prio: &str,
         rows: &str,
     ) -> Vec<(String, String)> {
@@ -2082,17 +2080,17 @@ fn submit_queue_mode_refuses_a_branch_outside_spira() {
     assert!(t.scripts.calls.borrow().is_empty());
 }
 
-/// sp-lck63: a suite-state edit is a bead on spira/<id> like any other change; the old
-/// bead-less `spira-suite-state/*` route, certified only in a queue record, is refused.
+/// A queued change is a bead on spira/<id>; a bead-less branch, certified only in a queue
+/// record, is refused.
 // covers: UC-landing-merge-queue-27
 #[test]
-fn submit_refuses_a_bead_less_suite_state_branch() {
+fn submit_refuses_a_bead_less_branch() {
     for mode in [LandMode::Queue, LandMode::QueueLocal] {
         let t = T::new(mode);
         t.git
-            .set("refs/heads/spira-suite-state/test-a-20260101T000000Z", "t1");
+            .set("refs/heads/spira-adhoc/test-a-20260101T000000Z", "t1");
         assert_eq!(
-            t.run(&["submit", "spira-suite-state/test-a-20260101T000000Z"]),
+            t.run(&["submit", "spira-adhoc/test-a-20260101T000000Z"]),
             1
         );
         assert!(
@@ -2104,7 +2102,7 @@ fn submit_refuses_a_bead_less_suite_state_branch() {
         assert!(t.scripts.calls.borrow().is_empty(), "no gate ran");
         assert!(!t.lc.has("certify"));
         assert!(
-            !t.s().queue_dir.join("spira-suite-state").exists(),
+            !t.s().queue_dir.join("spira-adhoc").exists(),
             "no queue record"
         );
     }

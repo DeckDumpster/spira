@@ -36,8 +36,7 @@ pub fn submit(w: &World, branch: &str, repo: Option<&str>) -> i32 {
         return FAIL;
     };
     let mode = c.r.mode;
-    // Every change in a queued mode is a bead on spira/<id> with a lifecycle row — a
-    // suite-state edit included (sp-lck63: `testenv suites` files or is handed one).
+    // Every change in a queued mode is a bead on spira/<id> with a lifecycle row.
     if mode.is_queued() && !branch.starts_with("spira/") {
         w.err(format!(
             "queue.sh submit: {branch}: queue mode requires a branch under spira/"

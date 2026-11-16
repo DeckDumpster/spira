@@ -872,24 +872,11 @@ impl Lib for RealLib {
     fn sort_rows(
         &self,
         express: &HashSet<String>,
-        path: &Path,
-        base: &str,
         prio_json: &str,
         rows: &str,
     ) -> Vec<(String, String)> {
-        // In-process (sp-hwjsq, "wave 4.32"): queue_sort_rows and its internal
-        // queue_is_suite_transition, both ported here. queue_is_suite_transition has no
-        // caller left at all once this goes in-process, so lib.sh's copy is retired
-        // outright; queue_sort_rows itself keeps a shim (cockpit-collect
-        // still calls it by name).
-        let with_trans: Vec<(String, String, i64, bool)> = crate::ops::helpers::parse_rows(rows)
-            .into_iter()
-            .map(|(id, tip, epoch)| {
-                let is_trans = crate::ops::helpers::is_suite_transition(path, &tip, base);
-                (id, tip, epoch, is_trans)
-            })
-            .collect();
-        let (ranked, warning) = crate::ops::helpers::sort_rows(&with_trans, prio_json, express);
+        let rows = crate::ops::helpers::parse_rows(rows);
+        let (ranked, warning) = crate::ops::helpers::sort_rows(&rows, prio_json, express);
         if let Some(w) = warning {
             eprintln!("{w}");
         }

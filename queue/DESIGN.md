@@ -102,7 +102,7 @@ nothing changed), then effects in order.
 
 | cmd | mode | lock | effects |
 |---|---|---|---|
-| `submit <br> [repo]` | any | none | queue modes require `spira/*` (sp-lck63: a suite-state edit is a change bead's `spira/<bead>` too); branch must exist. Gate: `gate.sh <br> <repo>` with `SPIRA_GATE_BEAD=<id>` `SPIRA_GATE_SUITES=${SPIRA_CERTIFY_SUITES:-on}`. Red: gate output to stderr, `QUEUE CAUGHT` line, exit gate rc. Green: `QUEUE GATE_COST` line, then queue/queue.local: `land_mark <id> CERTIFIED <tip>` (spira-lc certify; the queue keeps no `$SPIRA_QUEUE_DIR/<id>` record of its own since sp-lck63); push: fetch, `rebase_branch`, push `<br>:<base-branch>`, `land_mark LANDED`, `bead_close_on_land`; pr/hold: `land_mark CERTIFIED`. |
+| `submit <br> [repo]` | any | none | queue modes require `spira/*`; branch must exist. Gate: `gate.sh <br> <repo>` with `SPIRA_GATE_BEAD=<id>` `SPIRA_GATE_SUITES=${SPIRA_CERTIFY_SUITES:-on}`. Red: gate output to stderr, `QUEUE CAUGHT` line, exit gate rc. Green: `QUEUE GATE_COST` line, then queue/queue.local: `land_mark <id> CERTIFIED <tip>` (spira-lc certify; the queue keeps no `$SPIRA_QUEUE_DIR/<id>` record of its own since sp-lck63); push: fetch, `rebase_branch`, push `<br>:<base-branch>`, `land_mark LANDED`, `bead_close_on_land`; pr/hold: `land_mark CERTIFIED`. |
 | `protect [repo]` | queue | none | `forge branch-protect <path> <base-branch>`; receipt `$SPIRA_RUN/queue-protected-<repo>` = `<base-branch>\n`; five fixed stdout lines. |
 | `stats` | — | none | reads `$SPIRA_RUN/landing.log`; five fixed lines (§3.5). |
 | `flush [repo]` | queue | none | `batcher cut <repo>` (by name, on the launcher's PATH — sp-gypjk) with `SPIRA_QUEUE_BATCH_WAIT=0`. `SPIRA_BATCHER_ENABLE=0`: no cut, rc 0 (the operator cuts rounds; replaces `batcher_bin = "/bin/true"`). Ran `batch.sh <repo>`'s pre-cut sweep first, until sp-uwhx0 (batch.sh retirement, below). |
@@ -674,13 +674,3 @@ stderr, the queue-side action proceeds (the machine's own state is the record of
 | `open-batch` | probe; `create-bead` per member, `cut`; `batch_id`/`version` appended on success |
 | `to-forge`, `to-local` (D5) | probe; in delivery = open batch record, BATCHED landstate, or IN_DELIVERY row of this repo; a failed read refuses |
 | `submit`, `protect`, `stats`, `flush`, `step`, `claim`, `release`, `land-local`, `publish`, `rollback-local` | none. queue emits no `stack`, `land` or `settle` events: those belong to batcher-cut (`stack`/`land` of a round) and verdict (`settle`) |
-
-## Suite-state branches
-
-Lifecycle governs beads (`lifecycle/DESIGN.md`). A suite-state branch (`spira/suite-state`'s
-edits, `$SPIRA_SUITE_STATE_FILE`) is not a bead, so it is the one thing the queue certifies
-on its own record rather than a lifecycle row. This is a specific written exception, not a
-precedent: any other branch needs a bead and a row, and a suite-state edit that is filed as a
-change bead (`spira/<bead>`, sp-lck63) is an ordinary bead branch and takes the lifecycle
-route. The exception is not extended to other bead-less branches, and a guard finding on it
-is cleared as `lifecycle-guard/DESIGN.md` "Clearing a finding" says.

@@ -15,8 +15,6 @@ it:
   lifecycle row; its state is bd's `status`, read through `spira_config::nonwork` naming the
   kind. An incident bead is non-work: a work bead that resolves one may refer to it and takes
   no state from it.
-- a suite-state branch is not a bead. It stays on the queue's own record, a specific written
-  exception argued in `queue/DESIGN.md` "Suite-state branches"; it never gets a lifecycle row.
 
 ## Reaching the state
 

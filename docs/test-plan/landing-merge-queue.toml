@@ -249,7 +249,7 @@ bead = "sp-qwh7oi"
 [[use_case]]
 id = "UC-landing-merge-queue-31"
 tier = "T1"
-statement = "`queue_sort_rows` keeps every row when the priority JSON is over 128 KiB, orders by priority with suite-state transitions first, and fails open on bad JSON."
+statement = "`queue_sort_rows` keeps every row when the priority JSON is over 128 KiB, orders express first, then by priority, then by certification age, and fails open on bad JSON."
 
 [use_case.uncovered]
 reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"

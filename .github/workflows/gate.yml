@@ -186,7 +186,7 @@ jobs:
              && printf '%s' "${{ github.head_ref }}" | grep -qE '^spira/(queue|publish)/'; then
             # A publish PR is the last gate before main: it runs every suite
             # (law-publish-ci-runs-the-full-suite). testenv drops disabled suites and
-            # excuses in-date quarantines from the tree's spira/suite-state, longest-first.
+            # excuses in-date quarantines from the deny list it is handed, longest-first.
             _s="$(ls spira/test-*.sh | xargs -n1 basename \
                   | tr '\n' ',' | sed 's/,$//')"
           elif [ "${{ github.event_name }}" = "pull_request" ]; then
@@ -571,7 +571,7 @@ jobs:
         # orphan-test.sh is not yet a
         # spira-lint rule, so it still runs as a script; it SKIPs (77) without a
         # SPIRA_GATE_BASE diff, which this job never sets, so it is inert here but
-        # harmless. `sop lint` and suite-state-fence.sh are not here: both need a
+        # harmless. `sop lint` is not here: it needs a
         # real SPIRA_DB, which this fresh runner never has.
         #
         # By name, from the staged release (the step above). The first line is the

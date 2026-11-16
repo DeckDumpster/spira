@@ -472,8 +472,6 @@ Every `spira/test-*.sh` on `local/main`, by name. Scenario `new:` names refer to
 | stranded-runner | no | - | ? | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |
 | submitted-lands | replaceable | happy-path | ? | submit → certify → land → close is the scenario's whole walk |
 | suite-select-cli | no | - | ? | gate engine, selector or test-infrastructure logic: tests the tooling, not the loop it guards |
-| suite-state-fence | no | - | 6 | gate engine, selector or test-infrastructure logic: tests the tooling, not the loop it guards |
-| suite-state-rules | no | - | ? | gate engine, selector or test-infrastructure logic: tests the tooling, not the loop it guards |
 | call-fast-path | partly | happy-path, long-gate-interleaving | ? | a freed slot refills in seconds; needs virtual-time assertion |
 | call-rune | no | - | 4 | single-tool or static contract: no hand-off between loop actors |
 | supersede-duty | replaceable | new:supersede | ? | supersede request adjudicated within one pass against a real spira-lc |

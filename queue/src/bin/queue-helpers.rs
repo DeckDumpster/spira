@@ -42,7 +42,6 @@ fn run_certified_list(args: &[String]) -> ExitCode {
 }
 
 fn run_sort_rows(args: &[String]) -> ExitCode {
-    let mut pos = Vec::new();
     let mut prio_file: Option<String> = None;
     let mut i = 0;
     while i < args.len() {
@@ -51,14 +50,10 @@ fn run_sort_rows(args: &[String]) -> ExitCode {
                 i += 1;
                 prio_file = args.get(i).cloned();
             }
-            other => pos.push(other.to_string()),
+            _ => {}
         }
         i += 1;
     }
-    let (Some(repo), Some(base)) = (pos.first(), pos.get(1)) else {
-        eprintln!("queue-helpers sort-rows: repo and base sha required");
-        return ExitCode::from(2);
-    };
     let Some(prio_file) = prio_file else {
         eprintln!("queue-helpers sort-rows: --prio-file is required");
         return ExitCode::from(2);
@@ -67,14 +62,6 @@ fn run_sort_rows(args: &[String]) -> ExitCode {
     let mut rows_text = String::new();
     let _ = std::io::stdin().read_to_string(&mut rows_text);
     let prio_json = std::fs::read_to_string(&prio_file).unwrap_or_else(|_| "[]".into());
-    let repo_path = Path::new(repo);
-    let with_trans: Vec<(String, String, i64, bool)> = queue::ops::helpers::parse_rows(&rows_text)
-        .into_iter()
-        .map(|(id, tip, epoch)| {
-            let is_trans = queue::ops::helpers::is_suite_transition(repo_path, &tip, base);
-            (id, tip, epoch, is_trans)
-        })
-        .collect();
     let express: std::collections::HashSet<String> =
         match queue::real::RealLc::configured(Some("spira-lc".into())).express_ids() {
             Ok(ids) => ids.into_iter().collect(),
@@ -85,7 +72,7 @@ fn run_sort_rows(args: &[String]) -> ExitCode {
                 Default::default()
             }
         };
-    let (ranked, warning) = queue::ops::helpers::sort_rows(&with_trans, &prio_json, &express);
+    let (ranked, warning) = queue::ops::helpers::sort_rows(&queue::ops::helpers::parse_rows(&rows_text), &prio_json, &express);
     if let Some(w) = warning {
         eprintln!("{w}");
     }

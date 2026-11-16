@@ -331,22 +331,6 @@ pub fn key_for_process(key: &str) -> Result<String, String> {
     resolve_key(&env, &home, key)
 }
 
-/// The repo-relative path of the suite-state file: `$SPIRA_SUITE_STATE_FILE`, else
-/// `spira.suite_state_file` in the document in force, else the registered default
-/// (`spira/conf.d/SPIRA_SUITE_STATE_FILE`).
-pub fn suite_state_file() -> Result<String, String> {
-    if let Some(v) = std::env::var("SPIRA_SUITE_STATE_FILE").ok().filter(|v| !v.is_empty()) {
-        return Ok(v);
-    }
-    let configured = match crate::discover(None) {
-        Some(p) => crate::load(&p)?.spira.map(|s| s.get_str("SPIRA_SUITE_STATE_FILE")).transpose()?.flatten(),
-        None => None,
-    };
-    Ok(configured.filter(|v| !v.is_empty()).unwrap_or_else(|| DEFAULT_SUITE_STATE_FILE.to_string()))
-}
-
-pub const DEFAULT_SUITE_STATE_FILE: &str = "spira/suite-state";
-
 /// Every resolved key, plus any warning `resolve` itself produced (today, only the
 /// `SPIRA_CLAUDE` deprecation notice) — a caller prints these to stderr; `resolve` itself
 /// never writes anywhere.

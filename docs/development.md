@@ -149,9 +149,8 @@ feature, or declared at a path that is not on disk; a new `tests/` file needs it
 - **Two places a suite runs.** `spira/gate-suites` is the only hand-written list: a short,
   reasoned set. Everything the glob finds that it does not name is run on a schedule by
   `testenv suites` and files a bead per red without blocking a landing. `testenv suites
-  list|names|corpus|status|hygiene|lint|observe-flake|quarantine|unquarantine|disable|activate`
-  reads and changes this; a suite's lifecycle state lives in `spira/suite-state` and changes
-  only through the queue like any other change.
+  list|names|corpus|status|observe-flake` reads this; a test's lifecycle state lives only in
+  the test registry.
 - **Use-case catalogue.** `test-plan validate --catalogue-dir docs/test-plan [--suites FILE|-]`,
   `test-plan matrix …`, `test-plan render`, `test-plan schema catalogue|matrix`.
 - **Habits every suite shares.** A check that finds nothing must first prove it could have

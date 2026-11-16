@@ -261,6 +261,11 @@ id = "UC-test-infrastructure-32"
 tier = "T1"
 statement = "The suite-state file parser, `state_of`, write, clear and lint behave as specified: replace never duplicates, `active` stores nothing, and bad lines are ignored. The fence refuses a quarantine that has no bead, no reason, a missing suite or a **CLOSED** bead, and passes an empty file."
 
+[use_case.uncovered]
+reason = "retired (sp-8sj5m1): the suite-state file, its parser, its fence and the `testenv suites` state verbs are gone; a test's lifecycle state lives only in the test registry"
+date = "2026-11-16"
+bead = "sp-8sj5m1"
+
 [[use_case]]
 id = "UC-test-infrastructure-33"
 tier = "T0"

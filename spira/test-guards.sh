@@ -556,21 +556,6 @@ nowant "gap8/bdclose-protocol-does-not-emit-decision-json"    '"decision":"block
 
 # ===========================================================================
 echo
-echo "testenv suites quarantine refuses from a dwarf session (not a UC in the catalogue; ported as-is):"
-# ===========================================================================
-command -v testenv >/dev/null 2>&1 || bad "suites-quarantine/testenv-on-path" "testenv is not on PATH"
-out_c0="$(SPIRA_DWARF="" SPIRA_CONF=/nonexistent SPIRA_RUN="$FAKE_RUN" SPIRA_TESTENV_HARNESS="$HERE/.." \
-    testenv suites quarantine nonexistent-suite.sh bead-id "reason" 2>&1 || true)"
-nowant "suites-quarantine/silent-without-SPIRA_DWARF" "dwarves may not" "$out_c0"
-
-out_c1="$(SPIRA_DWARF=test-dwarf SPIRA_CONF=/nonexistent SPIRA_RUN="$FAKE_RUN" SPIRA_TESTENV_HARNESS="$HERE/.." \
-    testenv suites quarantine nonexistent-suite.sh bead-id "reason" 2>&1)"
-rc_c1=$?
-is   "suites-quarantine/exits-nonzero-in-dwarf-session" 1               "$rc_c1"
-want "suites-quarantine/names-dwarves-may-not"           "dwarves may not" "$out_c1"
-want "suites-quarantine/names-operator-or-Ops"          "operator"      "$out_c1"
-# ===========================================================================
-echo
 echo "pattern kills are refused in a dwarf session; PID kills and unit stops pass:"
 # ===========================================================================
 for c in 'pkill -f "it-"' 'pkill cargo' 'killall cargo' 'pgrep -f it- | xargs kill' \
