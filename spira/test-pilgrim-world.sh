@@ -62,7 +62,7 @@ is "dep-add exits 0" 0 "$?"
 once="$(in_world "$T/pilgrim" "lc-view once" | plain)"
 want "lc-view shows A blocked on B" "$A <- $B" "$once"
 want "lc-view counts the blocked bead" "BLOCKED 1" "$once"
-nowant "lc-view does not offer A as claimable" "claimable (claim order" "$(echo "$once" | grep -F "P2 $A")"
+nowant "lc-view does not offer A as claimable" "P2 $A" "$(echo "$once" | sed -n '/^NEXT/,/^BLOCKED/p')"
 
 ADDR="$(sed -n 's/^loom_addr *= *"\(.*\)"/\1/p' "$T/pilgrim/config/sim.toml" | head -1)"
 want "the world gave Loom an address of its own" "127.0.0.1:" "$ADDR"
@@ -82,8 +82,8 @@ is "Loom shows A blocked" 0 "$?"
 loom_view | jq -e "[.view.next[].id] | index(\"$A\") == null" >/dev/null
 is "Loom does not offer A as claimable while B is open" 0 "$?"
 
-pilgrim_work "$T/pilgrim" close-other "$B" --evidence "the walk closes the blocker" >/dev/null 2>&1
-is "close-other exits 0" 0 "$?"
+closed="$(pilgrim_work "$T/pilgrim" close-other "$B" --evidence "the walk closes the blocker" 2>&1)"
+is "close-other exits 0: $closed" 0 "$?"
 once="$(in_world "$T/pilgrim" "lc-view once" | plain)"
 nowant "lc-view no longer shows A blocked" "$A <- $B" "$once"
 want "lc-view offers A as claimable" "P2 $A" "$(echo "$once" | sed -n '/^NEXT/,/^[A-Z]/p')"
