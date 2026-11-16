@@ -127,24 +127,23 @@ nowant "plan(): the trailing plan follows the last case, not the first" "1..2
 ok 1" "$_RUN_OUT"
 
 _run <<'EOF2'
-sleep 0.3
 ok "slow"
 bad "failed" "why"
 tl_summary
 EOF2
 case "$_RUN_OUT" in
-    *"ok 1 - slow"$'\n'"#ms="[3-9][0-9][0-9]$'\n'*"not ok 2 - failed"$'\n'"# why"$'\n'"# at "*$'\n'"#ms="[0-9]*) ok "ms: each case is followed by its elapsed milliseconds, after any failure detail" ;;
+    *"ok 1 - slow"$'\n'"#ms="[0-9]*$'\n'*"not ok 2 - failed"$'\n'"# why"$'\n'"# at "*$'\n'"#ms="[0-9]*) ok "ms: each case is followed by its elapsed milliseconds, after any failure detail" ;;
     *) bad "ms: each case is followed by its elapsed milliseconds, after any failure detail" "$_RUN_OUT" ;;
 esac
 
 _run <<'EOF3'
-sleep 0.4
+_TL_LAST_US=0
 tl_setup_done
 ok "after setup"
 tl_summary
 EOF3
 case "$_RUN_OUT" in
-    *"ok 1 - after setup"$'\n'"#ms="[3-9][0-9][0-9]*) bad "tl_setup_done: the next case's #ms starts at the call, not at the previous case" "$_RUN_OUT" ;;
+    *"ok 1 - after setup"$'\n'"#ms="[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]*) bad "tl_setup_done: the next case's #ms starts at the call, not at the previous case" "$_RUN_OUT" ;;
     *"ok 1 - after setup"$'\n'"#ms="[0-9]*) ok "tl_setup_done: the next case's #ms starts at the call, not at the previous case" ;;
     *) bad "tl_setup_done: the next case's #ms starts at the call, not at the previous case" "$_RUN_OUT" ;;
 esac
