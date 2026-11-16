@@ -82,7 +82,7 @@ is "Loom shows A blocked" 0 "$?"
 loom_view | jq -e "[.view.next[].id] | index(\"$A\") == null" >/dev/null
 is "Loom does not offer A as claimable while B is open" 0 "$?"
 
-closed="$(pilgrim_work "$T/pilgrim" close-other "$B" --evidence "the walk closes the blocker" 2>&1)"
+closed="$(pilgrim_work "$T/pilgrim" close-other "$B" --evidence walk-closes-the-blocker 2>&1)"
 is "close-other exits 0: $closed" 0 "$?"
 once="$(in_world "$T/pilgrim" "lc-view once" | plain)"
 nowant "lc-view no longer shows A blocked" "$A <- $B" "$once"
