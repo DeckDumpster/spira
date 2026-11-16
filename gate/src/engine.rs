@@ -2479,7 +2479,7 @@ pub fn run_composed<W: World>(
             }
             None => phases.push((format!("{prefix}{name}"), wall)),
         }
-        if name == "test" && prefix.is_empty() {
+        if name == "test" && prefix.is_empty() && matches!(comp, Composition::Unit { .. }) {
             *unit = Some(spira_config::unit_tier::timings(&o));
         }
         if timed {
