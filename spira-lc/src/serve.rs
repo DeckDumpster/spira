@@ -42,6 +42,7 @@ pub fn run(args: &[String]) -> i32 {
         },
     };
 
+    let mut startup = Startup::begin();
     let spans = spira_config::process::cfg("SPIRA_RUN")
         .and_then(|run| spira_config::process::cfg_parse::<u32>("SPIRA_OTEL_KEEP_DAYS").map(|keep| (run, keep)));
     match spans {
@@ -53,6 +54,8 @@ pub fn run(args: &[String]) -> i32 {
             return 2;
         }
     }
+
+    startup.mark("config");
 
     // With SPIRA_LC_STORE_PATH set the control store is opened here, once, so a store that
     // cannot be opened stops the service instead of failing every request it would serve.
@@ -70,6 +73,8 @@ pub fn run(args: &[String]) -> i32 {
         let (keys, bytes) = model.size();
         eprintln!("spira-lc serve: read model: {keys} keys, {} KiB, at revision {}", bytes / 1024, model.revision());
     }
+
+    startup.mark("read-model");
 
     // lc-serve is the store's only opener, so it is the one process that can ship it off-box.
     let shipping = match &control {
@@ -97,6 +102,8 @@ pub fn run(args: &[String]) -> i32 {
         }
     };
 
+    startup.mark("shipper");
+
     let conn = match Conn::from_env() {
         Ok(mut c) => {
             c.enable_group_commit();
@@ -107,6 +114,8 @@ pub fn run(args: &[String]) -> i32 {
             return 2;
         }
     };
+
+    startup.mark("connection");
 
     let listener = match inherited_listener(
         std::env::var("LISTEN_PID").ok().as_deref(),
@@ -123,8 +132,11 @@ pub fn run(args: &[String]) -> i32 {
         },
     };
 
+    startup.mark("bind");
+
     stop_on_sigterm();
     crate::plan::serve_on(Arc::clone(&conn));
+    startup.mark("plan");
     match crate::plan::read_watermark(&conn) {
         Ok(w) => crate::plan::install_mirror(w),
         Err(e) => {
@@ -132,10 +144,13 @@ pub fn run(args: &[String]) -> i32 {
             crate::plan::install_mirror(0);
         }
     }
+    startup.mark("watermark");
     if let Err(e) = crate::content_sql::check_at_startup() {
         eprintln!("spira-lc serve: content reads are refused until this is fixed: {e}");
     }
+    startup.mark("content-check");
     eprintln!("spira-lc serve: listening on {socket_path}");
+    startup.ready(SPANS.get());
     // A request may spawn a child (`work blocked` runs `mail`) that calls back into this
     // socket; serving one connection at a time deadlocks on that. The session mutex still
     // serializes the queries themselves.
@@ -191,6 +206,67 @@ pub fn run(args: &[String]) -> i32 {
     std::thread::scope(|scope| accept_until_stopped(&listener, scope, &STOPPING, |stream| handle(stream, &conn, Instant::now())));
     eprintln!("spira-lc serve: stopped");
     0
+}
+
+/// Wall-clock milliseconds since the epoch, for a log line's timestamp.
+pub(crate) fn wall_ms() -> u64 {
+    SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64)
+}
+
+pub(crate) fn startup_line(phase: &str, took: Duration, wall_ms: u64) -> String {
+    format!("spira-lc serve: {} start-up {phase} {} ms", spira_lc::sections::rfc3339(wall_ms), took.as_millis())
+}
+
+/// One line per phase in order, then `ready after` the sum of them.
+fn startup_lines(phases: &[(&str, Duration)], wall_ms: u64) -> Vec<String> {
+    let mut lines: Vec<String> = phases.iter().map(|(phase, took)| startup_line(phase, *took, wall_ms)).collect();
+    let total: Duration = phases.iter().map(|(_, took)| *took).sum();
+    lines.push(format!("spira-lc serve: {} ready after {} ms", spira_lc::sections::rfc3339(wall_ms), total.as_millis()));
+    lines
+}
+
+/// Times each start-up phase as it ends, so the log says where a restart's seconds went.
+struct Startup {
+    began: SystemTime,
+    mark: Instant,
+    phases: Vec<(&'static str, Duration)>,
+}
+
+impl Startup {
+    fn begin() -> Startup {
+        Startup { began: SystemTime::now(), mark: Instant::now(), phases: Vec::new() }
+    }
+
+    fn mark(&mut self, phase: &'static str) {
+        let took = self.mark.elapsed();
+        eprintln!("{}", startup_line(phase, took, wall_ms()));
+        self.phases.push((phase, took));
+        self.mark = Instant::now();
+    }
+
+    fn ready(&self, spans: Option<&spira_otel::Sink>) {
+        let lines = startup_lines(&self.phases, wall_ms());
+        eprintln!("{}", lines.last().expect("ready line"));
+        let Some(spans) = spans else { return };
+        let us: Vec<(&str, u64)> = self.phases.iter().map(|(p, d)| (*p, d.as_micros() as u64)).collect();
+        spans.emit(&spira_otel::Call {
+            method: "start-up",
+            caller: "-",
+            request_size: 0,
+            response_size: 0,
+            exit_code: 0,
+            start: self.began,
+            end: SystemTime::now(),
+            queue_wait: Duration::ZERO,
+            phases: &us,
+            commits_us: &[],
+            reads: 0,
+            open_phase: None,
+            lag_revs: None,
+            lag_ms: None,
+            too_old: false,
+        });
+    }
 }
 
 static STOPPING: AtomicBool = AtomicBool::new(false);
@@ -709,6 +785,19 @@ mod tests {
         assert_eq!(state("test-a.sh"), "RETURNED", "the overdue row expired");
         assert_eq!(state("test-b.sh"), "MENDING", "the row within its deadline is left");
         assert_eq!(super::store_sweep(&store, AT + 61), Ok(0), "a second sweep finds nothing overdue");
+    }
+
+    #[test]
+    fn start_up_logs_one_line_per_phase_in_order_and_ready_after_their_sum() {
+        use std::time::Duration;
+        let phases = [("config", Duration::from_millis(3)), ("read-model", Duration::from_millis(52_000)), ("bind", Duration::from_millis(5))];
+        let lines = super::startup_lines(&phases, 0);
+        assert_eq!(lines.len(), 4, "{lines:?}");
+        assert!(lines[0].ends_with("start-up config 3 ms"), "{}", lines[0]);
+        assert!(lines[1].ends_with("start-up read-model 52000 ms"), "{}", lines[1]);
+        assert!(lines[2].ends_with("start-up bind 5 ms"), "{}", lines[2]);
+        assert!(lines[3].ends_with("ready after 52008 ms"), "{}", lines[3]);
+        assert!(lines[3].starts_with("spira-lc serve: 1970-01-01T00:00:00"), "{}", lines[3]);
     }
 
     #[test]
