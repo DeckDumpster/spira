@@ -33,6 +33,7 @@ const OWN: &[&str] = &[
     "bd-note",
     "content",
     "close-epic",
+    "create-bead",
 ];
 
 /// Sweeps over every row: batch jobs, bounded at the query deadline rather than a call's 3 s.
@@ -153,6 +154,19 @@ pub fn run(argv: &[String], p: Ports<'_>) -> Answer {
                 if let Some(id) = rest.first() {
                     if let Err(e) = crate::reconcile_content::settle_ask(m, bd, id) {
                         ans.stderr.push_str(&format!("spira-lc close-ask: {id} is closed; its decision bead waits for reconcile-content: {}\n", e.trim()));
+                    }
+                }
+            }
+            ans
+        }
+        "create-bead" => {
+            let (code, out) = m.call(argv);
+            let mut ans = if spira_store::lc_call::is_refusal(code, &out) { Answer { code, stderr: line(&out), ..Default::default() } } else { Answer::out(code, out) };
+            if code == 0 {
+                if let Some(id) = rest.first() {
+                    let sync = crate::claim_sync::run(&[crate::claim_sync::ONLY_IF_UNSET.to_string(), id.clone()], m, bd);
+                    if sync.code != 0 {
+                        ans.stderr.push_str(&format!("spira-lc create-bead: LIFECYCLE: {}; claim inputs not written; repair: spira-lc sync-claim-inputs {id}\n", sync.stderr.trim()));
                     }
                 }
             }
