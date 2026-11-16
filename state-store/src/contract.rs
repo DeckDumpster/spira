@@ -273,15 +273,58 @@ impl Fence {
     }
 }
 
+/// Expiry by key, and the same entries ordered by expiry so the due ones are read without a
+/// scan of the rest. Every insert stamps its entry, so a writer undoes only what it wrote.
+#[derive(Default)]
+struct Deadlines {
+    by_key: BTreeMap<String, (u64, u64)>,
+    by_at: BTreeSet<(u64, String)>,
+    stamps: u64,
+}
+
+impl Deadlines {
+    fn get(&self, key: &str) -> Option<u64> {
+        self.by_key.get(key).map(|e| e.0)
+    }
+
+    fn stamp(&self, key: &str) -> Option<u64> {
+        self.by_key.get(key).map(|e| e.1)
+    }
+
+    fn insert(&mut self, key: String, at: u64) -> u64 {
+        self.stamps += 1;
+        if let Some((old, _)) = self.by_key.insert(key.clone(), (at, self.stamps)) {
+            self.by_at.remove(&(old, key.clone()));
+        }
+        self.by_at.insert((at, key));
+        self.stamps
+    }
+
+    fn remove(&mut self, key: &str) {
+        if let Some((old, _)) = self.by_key.remove(key) {
+            self.by_at.remove(&(old, key.to_string()));
+        }
+    }
+
+    fn due(&self, now: u64) -> Vec<String> {
+        let mut out: Vec<String> = self
+            .by_at
+            .range(..(now.saturating_add(1), String::new()))
+            .map(|(_, k)| k.clone())
+            .collect();
+        out.sort();
+        out
+    }
+}
+
 pub struct Contract<B: Backend> {
     backend: B,
     ports: Ports,
     cfg: Config,
     /// Each lock's and request receipt's expiry on the monotonic clock, restarted on every
     /// write and at open. A `telemetry/` or `intents/` key's expiry is stored in its value.
-    deadlines: Mutex<BTreeMap<String, u64>>,
-    /// The locks' entries of `deadlines`, for display: a read projecting a lock's expiry takes
-    /// this, never `deadlines`, which a commit holds across the backend's write.
+    deadlines: Mutex<Deadlines>,
+    /// The locks' entries of `deadlines`, for display.
     shown: RwLock<BTreeMap<String, u64>>,
     commits: Mutex<u64>,
     committed: Condvar,
@@ -507,14 +550,14 @@ impl<B: Backend> Contract<B> {
             backend,
             ports,
             cfg,
-            deadlines: Mutex::new(BTreeMap::new()),
+            deadlines: Mutex::new(Deadlines::default()),
             shown: RwLock::new(BTreeMap::new()),
             commits: Mutex::new(0),
             committed: Condvar::new(),
         };
         let head = c.backend.head()?;
         let now = c.now_ms();
-        let mut deadlines = BTreeMap::new();
+        let mut deadlines = Deadlines::default();
         for prefix in [LOCKS_PREFIX] {
             let mut after: Option<String> = None;
             loop {
@@ -532,9 +575,10 @@ impl<B: Backend> Contract<B> {
             }
         }
         *c.shown.write().unwrap_or_else(lock_err) = deadlines
+            .by_key
             .iter()
             .filter(|(k, _)| k.starts_with(LOCKS_PREFIX))
-            .map(|(k, d)| (k.clone(), *d))
+            .map(|(k, d)| (k.clone(), d.0))
             .collect();
         *c.deadlines.lock().unwrap_or_else(lock_err) = deadlines;
         Ok(c)
@@ -1042,7 +1086,7 @@ impl<B: Backend> Contract<B> {
             .lock()
             .unwrap_or_else(lock_err)
             .get(key)
-            .is_some_and(|d| *d > now)
+            .is_some_and(|d| d > now)
     }
 
     fn bookkeeping(&self, r: Record) -> usize {
@@ -1304,36 +1348,75 @@ impl<B: Backend> Contract<B> {
                 },
             })
             .collect();
-        // Held across the backend commit, so no plan reads a deadline the commit is replacing.
-        let mut d = crate::phases::time(crate::phases::Phase::DeadlinesWait, || self.deadlines.lock().unwrap_or_else(lock_err));
         if crate::phases::deadline_passed() {
             return Err(Error::Deadline);
         }
-        let res = crate::phases::commit(|| self.backend.commit(head, &batch));
-        if matches!(res, Err(Error::Stale { .. })) {
-            return res;
-        }
+        // Staged expiries go in before the backend commit, so a plan at a head that includes
+        // this write never reads its lock as expired; only the removals wait for the result.
         let now = self.now_ms();
+        let mut set: Vec<(String, Option<u64>, u64, u64)> = Vec::new();
+        let mut cleared: Vec<(String, Option<u64>)> = Vec::new();
         {
+            let mut d = crate::phases::time(crate::phases::Phase::DeadlinesWait, || self.deadlines.lock().unwrap_or_else(lock_err));
             let mut shown = self.shown.write().unwrap_or_else(lock_err);
             for s in &staged {
-                let lock = s.key.starts_with(LOCKS_PREFIX);
                 match s.value.as_ref().and_then(|v| held_lifetime(&s.key, v)) {
                     Some(ttl) => {
-                        d.insert(s.key.clone(), now.saturating_add(ttl));
-                        if lock {
-                            shown.insert(s.key.clone(), now.saturating_add(ttl));
+                        let at = now.saturating_add(ttl);
+                        let was = d.get(&s.key);
+                        let stamp = d.insert(s.key.clone(), at);
+                        if s.key.starts_with(LOCKS_PREFIX) {
+                            shown.insert(s.key.clone(), at);
                         }
+                        set.push((s.key.clone(), was, stamp, ttl));
                     }
-                    None if res.is_ok() => {
-                        d.remove(&s.key);
-                        shown.remove(&s.key);
-                    }
-                    None => {}
+                    None => cleared.push((s.key.clone(), d.stamp(&s.key))),
                 }
             }
         }
-        drop(d);
+        let res = crate::phases::commit(|| self.backend.commit(head, &batch));
+        {
+            let mut d = crate::phases::time(crate::phases::Phase::DeadlinesWait, || self.deadlines.lock().unwrap_or_else(lock_err));
+            let mut shown = self.shown.write().unwrap_or_else(lock_err);
+            if res.is_err() {
+                for (key, was, stamp, _) in set {
+                    if d.stamp(&key) != Some(stamp) {
+                        continue;
+                    }
+                    match was {
+                        Some(at) => {
+                            d.insert(key.clone(), at);
+                            if key.starts_with(LOCKS_PREFIX) {
+                                shown.insert(key, at);
+                            }
+                        }
+                        None => {
+                            d.remove(&key);
+                            shown.remove(&key);
+                        }
+                    }
+                }
+                return res;
+            }
+            if res.is_ok() {
+                let landed = self.now_ms();
+                for (key, _, stamp, ttl) in set {
+                    let at = landed.saturating_add(ttl);
+                    if d.stamp(&key) == Some(stamp) && d.get(&key).is_some_and(|cur| cur < at) {
+                        d.insert(key.clone(), at);
+                        if key.starts_with(LOCKS_PREFIX) {
+                            shown.insert(key, at);
+                        }
+                    }
+                }
+                for (key, stamp) in cleared {
+                    if d.stamp(&key) == stamp {
+                        d.remove(&key);
+                        shown.remove(&key);
+                    }
+                }
+            }
+        }
         if res.is_ok() {
             *self.commits.lock().unwrap_or_else(lock_err) += 1;
             self.committed.notify_all();
@@ -1343,11 +1426,7 @@ impl<B: Backend> Contract<B> {
 
     /// Locks and receipts whose TTL has run out at `now`, in key order.
     pub(crate) fn due(&self, now: u64) -> Vec<String> {
-        let d = self.deadlines.lock().unwrap_or_else(lock_err);
-        d.iter()
-            .filter(|(_, at)| **at <= now)
-            .map(|(k, _)| k.clone())
-            .collect()
+        self.deadlines.lock().unwrap_or_else(lock_err).due(now)
     }
 
     fn is_due(&self, key: &str, now: u64) -> bool {
@@ -1355,7 +1434,7 @@ impl<B: Backend> Contract<B> {
             .lock()
             .unwrap_or_else(lock_err)
             .get(key)
-            .is_none_or(|at| *at <= now)
+            .is_none_or(|at| at <= now)
     }
 
     /// Deletes the keys still due at `now` in txns that write no `events/` key: expiry is
@@ -1390,7 +1469,7 @@ impl<B: Backend> Contract<B> {
             let mut d = self.deadlines.lock().unwrap_or_else(lock_err);
             let mut shown = self.shown.write().unwrap_or_else(lock_err);
             for k in &settled {
-                if d.get(k).is_some_and(|at| *at <= now) {
+                if d.get(k).is_some_and(|at| at <= now) {
                     d.remove(k);
                     shown.remove(k);
                 }
@@ -1567,5 +1646,202 @@ mod phase_tests {
         assert!(c.get("on-time").unwrap().is_some() && c.get("within").unwrap().is_some());
         let _d = phases::deadline_scoped(Instant::now() - Duration::from_millis(1)); // clock-safe: already behind the monotonic clock
         assert!(c.get("on-time").unwrap().is_some(), "a read past the deadline is not refused");
+    }
+
+    use crate::backend::{LogEntry, Version, Write};
+    use std::sync::mpsc;
+
+    /// Delegates to a `MemBackend`; the next commit parks in `before` until released, and
+    /// every commit parks in `after` once applied when that is armed.
+    struct Parked {
+        inner: MemBackend,
+        before: Mutex<Option<(mpsc::Sender<()>, mpsc::Receiver<()>)>>,
+        after: Mutex<Option<(mpsc::Sender<()>, mpsc::Receiver<()>)>>,
+        fail: Mutex<bool>,
+    }
+
+    impl Parked {
+        fn new() -> Self {
+            Parked { inner: MemBackend::new(), before: Mutex::new(None), after: Mutex::new(None), fail: Mutex::new(false) }
+        }
+    }
+
+    impl Backend for Parked {
+        fn head(&self) -> Result<u64> {
+            self.inner.head()
+        }
+        fn get(&self, key: &str, at: u64) -> Result<Option<Version>> {
+            self.inner.get(key, at)
+        }
+        fn range(&self, prefix: &str, after: Option<&str>, limit: usize, at: u64) -> Result<Vec<(String, Version)>> {
+            self.inner.range(prefix, after, limit, at)
+        }
+        fn range_in_state(&self, prefix: &str, state: &str, after: Option<&str>, limit: usize, at: u64) -> Result<Vec<(String, Version)>> {
+            self.inner.range_in_state(prefix, state, after, limit, at)
+        }
+        fn owned_by(&self, owner: &str, after: Option<&str>, limit: usize, at: u64) -> Result<Vec<String>> {
+            self.inner.owned_by(owner, after, limit, at)
+        }
+        fn due(&self, now: u64, limit: usize, at: u64) -> Result<Vec<String>> {
+            self.inner.due(now, limit, at)
+        }
+        fn commit(&self, expect: u64, batch: &[Write]) -> Result<u64> {
+            let gate = self.before.lock().unwrap().take();
+            if let Some((entered, release)) = gate {
+                entered.send(()).unwrap();
+                release.recv().unwrap();
+            }
+            let out = if std::mem::take(&mut *self.fail.lock().unwrap()) {
+                Err(Error::Backend("disk full".into()))
+            } else {
+                self.inner.commit(expect, batch)
+            };
+            let gate = self.after.lock().unwrap().take();
+            if let Some((entered, release)) = gate {
+                entered.send(()).unwrap();
+                release.recv().unwrap();
+            }
+            out
+        }
+        fn log(&self, from: u64, max_mains: usize) -> Result<Vec<LogEntry>> {
+            self.inner.log(from, max_mains)
+        }
+        fn compact(&self, rev: u64) -> Result<()> {
+            self.inner.compact(rev)
+        }
+    }
+
+    /// `f`'s result, or `None` if it has not finished in 50 ms; the thread is left to finish.
+    fn within_50ms<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> Option<T> {
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(f());
+        });
+        rx.recv_timeout(Duration::from_millis(50)).ok()
+    }
+
+    fn put(c: &Contract<Parked>, id: &str, key: &str) -> Result<crate::TxnResult> {
+        c.txn(&Txn::new().put(key, Object::new(serde_json::json!(1))), &Request::new(id, "t", "w"))
+    }
+
+    #[test]
+    fn a_write_inside_the_backend_commit_blocks_no_other_deadline_bookkeeping() {
+        let clock = VirtualClock::new(1_000_000);
+        let c = Arc::new(Contract::open(Parked::new(), Ports::virtual_clock(&clock), Config { min_lock_ttl_ms: 1_000 }).unwrap());
+        c.lock("r", 1_000, &Request::new("l0", "t", "lock")).unwrap();
+        clock.advance(5_000);
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        *c.backend().before.lock().unwrap() = Some((entered_tx, release_rx));
+        let a = {
+            let c = c.clone();
+            std::thread::spawn(move || put(&c, "a", "a"))
+        };
+        entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        let (c1, c2, c3) = (c.clone(), c.clone(), c.clone());
+        let now = clock.now_ms();
+        let second = within_50ms(move || put(&c1, "b", "b").is_ok());
+        let due = within_50ms(move || c2.due(now));
+        let acquire = within_50ms(move || c3.lock("r", 1_000, &Request::new("l1", "t", "lock")).is_ok());
+        release_tx.send(()).unwrap();
+        let _ = a.join().unwrap();
+        assert_eq!(second, Some(true), "a second write waited on the write inside the backend");
+        assert_eq!(due, Some(vec![format!("{LOCKS_PREFIX}r")]), "due waited on the write inside the backend");
+        assert_eq!(acquire, Some(true), "a lock acquire waited on the write inside the backend");
+    }
+
+    #[test]
+    fn a_plan_at_a_head_holding_a_renew_reads_the_lock_live_before_the_renew_returns() {
+        let clock = VirtualClock::new(1_000_000);
+        let c = Arc::new(Contract::open(Parked::new(), Ports::virtual_clock(&clock), Config { min_lock_ttl_ms: 1_000 }).unwrap());
+        let fence = c.lock("r", 1_000, &Request::new("l0", "t", "lock")).unwrap();
+        clock.advance(900);
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        *c.backend().after.lock().unwrap() = Some((entered_tx, release_rx));
+        let a = {
+            let (c, f) = (c.clone(), fence.clone());
+            std::thread::spawn(move || c.renew_for(&f, 60_000, &Request::new("r1", "t", "renew")))
+        };
+        entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        clock.advance(500);
+        let (tx, rx) = mpsc::channel();
+        let b = {
+            let (c, f) = (c.clone(), fence.clone());
+            std::thread::spawn(move || {
+                let t = Txn::new().when(Compare::CreateRev(f.key(), Some(f.token))).put("x", Object::new(serde_json::json!(1)));
+                tx.send(c.txn(&t, &Request::new("b", "t", "w"))).unwrap();
+            })
+        };
+        let got = rx.recv_timeout(Duration::from_millis(500));
+        release_tx.send(()).unwrap();
+        a.join().unwrap().unwrap();
+        b.join().unwrap();
+        assert!(got.expect("B was blocked behind the commit").unwrap().succeeded, "the renewed lock read as absent");
+    }
+
+    #[test]
+    fn a_removal_applied_after_the_commit_leaves_a_lock_a_later_writer_retook() {
+        let clock = VirtualClock::new(1_000_000);
+        let c = Arc::new(Contract::open(Parked::new(), Ports::virtual_clock(&clock), Config { min_lock_ttl_ms: 1_000 }).unwrap());
+        let fence = c.lock("r", 10_000, &Request::new("l0", "t", "lock")).unwrap();
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        *c.backend().after.lock().unwrap() = Some((entered_tx, release_rx));
+        let a = {
+            let (c, f) = (c.clone(), fence.clone());
+            std::thread::spawn(move || c.release(&f, &Request::new("rel", "t", "release")))
+        };
+        entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        let retaken = within_50ms({
+            let c = c.clone();
+            move || c.lock("r", 10_000, &Request::new("l1", "t", "lock")).is_ok()
+        });
+        release_tx.send(()).unwrap();
+        a.join().unwrap().unwrap();
+        assert_eq!(retaken, Some(true));
+        assert!(c.live(&fence.key()), "the release erased the deadline of the lock taken after it");
+    }
+
+    #[test]
+    fn a_stale_commit_restores_nothing_a_later_writer_set() {
+        let clock = VirtualClock::new(1_000_000);
+        let c = Arc::new(Contract::open(Parked::new(), Ports::virtual_clock(&clock), Config { min_lock_ttl_ms: 1_000 }).unwrap());
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        *c.backend().before.lock().unwrap() = Some((entered_tx, release_rx));
+        let a = {
+            let c = c.clone();
+            std::thread::spawn(move || c.lock("r", 10_000, &Request::new("la", "t", "lock")))
+        };
+        entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        let taken = within_50ms({
+            let c = c.clone();
+            move || c.lock("r", 10_000, &Request::new("lb", "t", "lock")).is_ok()
+        });
+        release_tx.send(()).unwrap();
+        assert!(matches!(a.join().unwrap(), Err(Error::Locked { .. })));
+        assert_eq!(taken, Some(true));
+        assert!(c.live(&format!("{LOCKS_PREFIX}r")), "the stale commit's restore removed the winner's deadline");
+    }
+
+    #[test]
+    fn a_commit_that_fails_for_any_reason_leaves_no_deadline_for_a_lock_never_written() {
+        let clock = VirtualClock::new(1_000_000);
+        let c = Contract::open(Parked::new(), Ports::virtual_clock(&clock), Config { min_lock_ttl_ms: 1_000 }).unwrap();
+        *c.backend().fail.lock().unwrap() = true;
+        assert!(matches!(c.lock("r", 10_000, &Request::new("la", "t", "lock")), Err(Error::Backend(_))));
+        assert!(!c.live(&format!("{LOCKS_PREFIX}r")), "a failed commit left a deadline for a lock that was never written");
+    }
+
+    #[test]
+    fn a_failed_renew_restores_the_lock_deadline_it_replaced() {
+        let clock = VirtualClock::new(1_000_000);
+        let c = Contract::open(Parked::new(), Ports::virtual_clock(&clock), Config { min_lock_ttl_ms: 1_000 }).unwrap();
+        c.lock("r", 2_000, &Request::new("la", "t", "lock")).unwrap();
+        *c.backend().fail.lock().unwrap() = true;
+        assert!(c.lock("r", 100_000, &Request::new("lb", "t", "lock")).is_err());
+        clock.advance(3_000);
+        assert!(!c.live(&format!("{LOCKS_PREFIX}r")), "a failed renew left the lock live for its new TTL");
     }
 }
