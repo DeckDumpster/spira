@@ -154,12 +154,11 @@ fn a_pilgrim_files_links_and_closes_in_a_world_of_its_own_and_both_views_follow(
 #[test]
 #[ignore = "needs SPIRA_SIM_RELEASE, SPIRA_TOML naming spira.bd, and a Dolt fixture: run with --ignored"]
 fn a_pilgrim_session_with_no_bd_on_path_builds_a_pilgrim_world() {
-    let release = std::env::var(world::RELEASE_ENV).unwrap_or_else(|_| panic!("{} is unset", world::RELEASE_ENV));
+    let release = std::env::var(world::RELEASE_ENV).or_else(|_| std::env::var("SPIRA_RELEASE")).expect("SPIRA_SIM_RELEASE or SPIRA_RELEASE names a release");
     let toml = std::env::var("SPIRA_TOML").unwrap_or_else(|_| panic!("SPIRA_TOML is unset"));
     let t = testkit::TempDir::new("pw-nobd");
     let dir = t.join("w");
-    let sim = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/sim");
-    let out = std::process::Command::new(sim)
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_sim"))
         .args(["world", "up"])
         .arg(&dir)
         .arg("--pilgrim")
