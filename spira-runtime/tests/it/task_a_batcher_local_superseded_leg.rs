@@ -81,10 +81,41 @@ fn a_green_pass_on_the_current_head_lands_the_round_whatever_the_older_step_then
 }
 
 #[test]
-fn a_green_round_whose_head_never_moved_is_left_to_its_own_step() {
-    let (next, acts) = decide(&carried("A", "A"), &snapshot("A", "green"));
-    assert!(acts.is_empty(), "{acts:?}");
-    assert_eq!(next.repos["spira"].state, State::Attributing);
+fn a_green_round_on_the_attributions_own_head_lands_and_stops_the_leg() {
+    let (landing, acts) = decide(&carried("A", "A"), &snapshot("A", "green"));
+    assert!(effects(&acts).contains(&LAND), "{acts:?}");
+    let stop = acts.iter().find(|a| a.effect == runtime::units::UNIT_STOP).expect("the leg is stopped");
+    let handle: UnitHandle = serde_json::from_str(&stop.input).unwrap();
+    assert_eq!(handle, UnitHandle::of(NAME, STEP).unwrap());
+    assert_eq!(landing.repos["spira"].state, State::Landing);
+    assert!(on_ran_with(&landing, &ran(), &fault(), NOW).is_none());
+}
+
+#[test]
+fn a_stacked_green_round_on_its_own_head_is_held_certified_and_its_leg_stopped() {
+    let mut carry = carried("A", "A");
+    let top = carry.repos["spira"].clone();
+    let low = RepoCarry { state: State::Certifying, batch: Some("r1".into()), round_key: Some("k1".into()), leg: Some("spira.r1.certify1".into()), ..top.clone() };
+    carry.repos.insert("spira".into(), RepoCarry { above: vec![top], ..low });
+    let mut snap = snapshot("A", "green");
+    let repo = snap.repos.get_mut("spira").unwrap();
+    let above = repo.open_round.take().unwrap();
+    repo.open_round = Some(Round { id: "r1".into(), phase: "certifying".into(), head: "L".into(), ..above.clone() });
+    repo.open_above = vec![above];
+    repo.live_legs = Some(vec!["spira.r1.certify1".into(), STEP.into()]);
+    let (next, acts) = decide(&carry, &snap);
+    assert_eq!(next.repos["spira"].above[0].state, State::Certified, "{next:?}");
+    assert!(!effects(&acts).contains(&LAND), "{acts:?}");
+    assert!(effects(&acts).contains(&runtime::units::UNIT_STOP), "{acts:?}");
+}
+
+#[test]
+fn an_attribution_whose_round_is_still_certifying_or_red_is_not_landed() {
+    for phase in ["certifying", "red"] {
+        let (next, acts) = decide(&carried("A", "A"), &snapshot("A", phase));
+        assert!(!effects(&acts).contains(&LAND), "{phase}: {acts:?}");
+        assert_eq!(next.repos["spira"].state, State::Attributing);
+    }
 }
 
 /// The incident's order: the step runs for head A, the round moves to head B, the next
