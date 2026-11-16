@@ -632,6 +632,24 @@ fn a_first_red_certify_attributes_every_member_after_the_certify_pass() {
     }
 }
 
+/// The certify pass's red leads the pause of an attribution that ends with no outcome, and the
+/// attribution's own last line follows it.
+#[test]
+fn a_certify_red_leads_the_pause_of_an_attribution_that_ends_with_no_outcome() {
+    let refusal = "results holds no deny list of the round's pass; refusing to attribute with another";
+    let mut r = carried(&driving(State::Certifying, "spira.c3"));
+    let n = r.requested().len();
+    let certify = "queue.sh round certify: round r9 is RED at abc: spira-lint\nred-reason=spira-lint: member=sp-b r: g.rs:2: y\nred=spira-lint\n";
+    r.tick(STREAM, ended("spira.c3", runtime::units::Exit::Code(1), certify)).unwrap();
+    let leg = asked_after(&r, n).into_iter().find(|(e, _)| e == CORPUS).expect("attribution leg").1;
+    let n = r.requested().len();
+    r.tick(STREAM, ended(&leg.unit, runtime::units::Exit::Code(2), &format!("batcher spira: attributing\n{refusal}\n"))).unwrap();
+    let after = asked_after(&r, n);
+    let pause = after.iter().find(|(e, _)| e == PAUSE).unwrap_or_else(|| panic!("no pause: {after:?}"));
+    assert!(pause.1.why.starts_with("certify red in spira-lint: member=sp-b"), "{}", pause.1.why);
+    assert!(pause.1.why.contains(refusal), "{}", pause.1.why);
+}
+
 /// No row but the carried leg's own restart reaches Corpus, and a promotion that is not yet
 /// attested certifies like an opened round.
 #[test]

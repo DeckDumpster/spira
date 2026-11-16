@@ -578,6 +578,10 @@ pub struct RepoCarry {
     /// The red survived its attribution and was attributed once more, by suspect.
     #[serde(default)]
     pub confirmed: bool,
+    /// The phase and first failing line of the certify pass whose red this round was attributed
+    /// for; leads every later reason the round ends with.
+    #[serde(default)]
+    pub pass_red: String,
     /// The attribution's survivors await certify, which starts once no pass scope of the round is alive.
     #[serde(default)]
     pub certify_held: bool,
@@ -683,6 +687,7 @@ impl RepoCarry {
             lost_vms: self.lost_vms,
             attributed: self.attributed,
             confirmed: self.confirmed,
+            pass_red: self.pass_red.clone(),
             certify_held: self.certify_held,
             eject_held: self.eject_held.clone(),
             leg: self.leg.clone(),
@@ -720,6 +725,7 @@ impl RepoCarry {
             lost_vms: round.lost_vms,
             attributed: round.attributed,
             confirmed: round.confirmed,
+            pass_red: round.pass_red.clone(),
             certify_held: round.certify_held,
             eject_held: round.eject_held.clone(),
             leg: round.leg.clone(),
@@ -1031,6 +1037,20 @@ pub fn certify_red_evidence(out: &str) -> (Option<String>, Vec<String>) {
     (verdict, reds)
 }
 
+/// What a red certify pass said went red: its last `red-reason=` line, else the verdict line and
+/// red suites; empty when the output says neither.
+pub fn pass_red_of(out: &str) -> String {
+    if let Some(r) = out.lines().rev().find_map(|l| l.strip_prefix("red-reason=")) {
+        return r.trim().to_string();
+    }
+    let (verdict, reds) = certify_red_evidence(out);
+    match (verdict, reds.is_empty()) {
+        (Some(v), _) => v,
+        (None, false) => reds.join(","),
+        (None, true) => String::new(),
+    }
+}
+
 pub fn green(exit: Exit) -> bool {
     exit == Exit::Code(0)
 }
@@ -1320,6 +1340,13 @@ impl Machine<'_> {
     /// `Done`: the pace advances on the round's outcome, its pages and pause are written, and the
     /// machine is Idle with the round forgotten.
     fn finish(&mut self, outcome: pace::Outcome, detail: &str) {
+        let led;
+        let detail = if self.rc.pass_red.is_empty() || detail.is_empty() {
+            detail
+        } else {
+            led = format!("certify red in {}; {detail}", self.rc.pass_red);
+            &led
+        };
         let batch = self.rc.batch.clone().unwrap_or_default();
         let (st, fx, infra_batch) = self.advance_once(&self.rc.pace.core(), &outcome, detail, &batch);
         self.rc.pace = Pace { infra_batch, ..Pace::of(&st, &self.rc.pace) };
@@ -1880,6 +1907,9 @@ impl Machine<'_> {
             }
             (State::Certifying, false) if !self.rc.attributed && !out.lines().any(|l| l.starts_with(RED_OUTPUT)) => {
                 self.rc.attributed = true;
+                if self.rc.pass_red.is_empty() {
+                    self.rc.pass_red = pass_red_of(out);
+                }
                 self.go(Trigger::CertifyRedFirst);
                 self.attribute_after_certify();
             }
