@@ -2421,7 +2421,7 @@ fn past_the_bound_an_unjudged_tip_is_held_once_and_one_incident_is_filed() {
     assert!(holds[0].contains("t1") && holds[0].contains("deadline, deadline") && holds[0].contains("incident sp-inc1"), "{holds:?}");
     assert_eq!(h.lib.calls.borrow().iter().filter(|c| c.starts_with("incident ")).count(), 1);
     assert!(h.lib.calls.borrow().iter().any(|c| c.starts_with("incident ") && c.contains("late gate output")));
-    assert!(h.lib.calls.borrow().iter().any(|c| c.starts_with("incident gate-unjudged spira gate-unjudged:spira:spira/sp-a@t1 ")));
+    assert!(h.lib.calls.borrow().iter().any(|c| c.starts_with("incident gate-unjudged spira gate-unjudged:spira:deadline ")));
     assert!(!h.lib.has("reopen"));
     assert!(q.queued().is_empty());
 
@@ -2441,6 +2441,33 @@ fn past_the_bound_an_unjudged_tip_is_held_once_and_one_incident_is_filed() {
     h.run();
     assert_eq!(q.queued().len(), 1, "{:?}", h.out.lines());
     assert_eq!(q.queued()[0].tip, "t1");
+}
+
+#[test]
+fn unjudged_beads_with_one_reason_share_one_incident_reference() {
+    let mut h = h_worker(LandMode::Queue);
+    h.s.noverdict_max = 1;
+    let deny = "gate: VERDICT=NO_VERDICT reason=deny-list branch=b repo=spira suite=- (x)\n";
+    for id in ["sp-a", "sp-b", "sp-c", "sp-d", "sp-e"] {
+        h.closed(id, "t1");
+        file_verdict(&h, id, "t1", 75, deny);
+        h.run();
+    }
+    h.closed("sp-f", "t1");
+    file_verdict(&h, "sp-f", "t1", 75, "gate: VERDICT=NO_VERDICT reason=deadline branch=b repo=spira suite=- (x)\n");
+    h.run();
+    let calls = h.lib.calls.borrow().clone();
+    let refs: Vec<&str> = calls.iter().filter(|c| c.starts_with("incident ")).filter_map(|c| c.split(' ').nth(3)).collect();
+    assert_eq!(refs, ["gate-unjudged:spira:deny-list"; 5].iter().copied().chain(["gate-unjudged:spira:deadline"]).collect::<Vec<_>>(), "{calls:?}");
+    let holds = h.lc.holds.borrow().clone();
+    assert_eq!(holds.len(), 6, "{holds:?}");
+    for (hold, id) in holds.iter().zip(["sp-a", "sp-b", "sp-c", "sp-d", "sp-e", "sp-f"]) {
+        assert!(hold.starts_with(&format!("{id} wait ")) && hold.contains("incident sp-inc"), "{hold}");
+    }
+    let bodies: Vec<&String> = calls.iter().filter(|c| c.starts_with("incident ")).collect();
+    for (call, id) in bodies.iter().zip(["sp-a", "sp-b", "sp-c", "sp-d", "sp-e", "sp-f"]) {
+        assert!(call.contains(id), "the filing body names its bead: {call}");
+    }
 }
 
 #[test]
