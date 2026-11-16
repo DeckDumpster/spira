@@ -11,9 +11,9 @@
 # the repository map itself (spira-config is the only reader/writer config-fence admits) —
 # the caller already has the repository list and passes it in.
 #
-# DRAIN IS THE CALLER'S JOB, NOT THIS SCRIPT'S: whatever stopped spira-lc.socket and the
+# DRAIN IS THE CALLER'S JOB, NOT THIS SCRIPT'S: whatever stopped spira-lc.service and the
 # queue/sentinel/batch timers before calling this also resumes them afterwards — the same
-# split spira-install keeps between creating the credential and this script (spending it). This script only refuses to run while spira-lc.socket still looks active,
+# split spira-install keeps between creating the credential and this script (spending it). This script only refuses to run while spira-lc.service still looks active,
 # because a live socket means a writer could still reach the store while it is reclassified
 # and re-granted underneath it.
 #
@@ -45,8 +45,8 @@ while [ $# -gt 0 ]; do
 done
 [ "${#REPOS[@]}" -gt 0 ] || { printf 'cutover-deploy: at least one --repo NAME is required\n' >&2; exit 2; }
 
-if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet spira-lc.socket 2>/dev/null; then
-    printf 'cutover-deploy: spira-lc.socket is still active — drain it first (systemctl stop spira-lc.socket spira-lc.service)\n' >&2
+if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet spira-lc.service 2>/dev/null; then
+    printf 'cutover-deploy: spira-lc.service is still active — drain it first (systemctl stop spira-lc.service)\n' >&2
     exit 1
 fi
 
@@ -114,4 +114,4 @@ if [ "$DRY_RUN" != 1 ]; then
     spira_config_unset SPIRA_LIFECYCLE_ENFORCE || exit 1
 fi
 
-say "done — resume spira-lc.socket and the timers"
+say "done — resume spira-lc.service and the timers"

@@ -1,6 +1,6 @@
 //! Freezing the lifecycle store's same-user service so nothing restarts it, and thawing it.
 //!
-//! A plain stop does not hold: every unit that `Wants=` the socket starts it again on its own
+//! A plain stop does not hold: every unit that `Wants=` the service starts it again on its own
 //! next start, and the runtime restarts within seconds. A `--runtime` mask does not hold either,
 //! because a unit file under the user's config directory outranks the mask under `/run`. A
 //! runtime drop-in is merged into the unit wherever the unit file lives, so a condition that can
@@ -8,12 +8,11 @@
 
 use std::path::{Path, PathBuf};
 
-pub const SOCKET: &str = "lc-serve.socket";
 pub const SERVICE: &str = "lc-serve.service";
 pub const DROPIN_NAME: &str = "zz-spira-freeze.conf";
 pub const FROZEN_CONDITION: &str = "/nonexistent/spira-store-frozen-thaw-with-world-thaw-store";
 
-/// The drop-in written beside both frozen units.
+/// The drop-in written beside the frozen unit.
 pub fn dropin() -> String {
     format!("# world freeze-store wrote this; world thaw-store removes it.\n[Unit]\nConditionPathExists={FROZEN_CONDITION}\n")
 }
@@ -24,7 +23,7 @@ pub fn runtime_unit_dir(uid: u32) -> PathBuf {
     PathBuf::from(format!("/run/user/{uid}/systemd/user"))
 }
 
-/// What a freeze acts on: the two frozen units, and the runtime that wants the socket.
+/// What a freeze acts on: the frozen service, and the runtime that wants it.
 pub struct Store {
     pub unit_dir: PathBuf,
     pub runtime: String,
@@ -36,13 +35,13 @@ impl Store {
     }
 
     /// The units held frozen by a drop-in.
-    pub fn frozen(&self) -> [&str; 2] {
-        [SOCKET, SERVICE]
+    pub fn frozen(&self) -> [&str; 1] {
+        [SERVICE]
     }
 
-    /// Every unit a freeze stops, the runtime first so it cannot start the socket again.
-    pub fn stopped(&self) -> [&str; 3] {
-        [&self.runtime, SERVICE, SOCKET]
+    /// Every unit a freeze stops, the runtime first so it cannot start the service again.
+    pub fn stopped(&self) -> [&str; 2] {
+        [&self.runtime, SERVICE]
     }
 
     pub fn dropin_path(&self, unit: &str) -> PathBuf {
@@ -84,8 +83,8 @@ fn reload(u: &mut dyn Units) -> Result<(), String> {
     }
 }
 
-/// Writes the drop-ins, stops the runtime, service and socket, and reports frozen only once a
-/// re-read finds all three inactive. Returns the lines to print, or the refusal.
+/// Writes the drop-ins, stops the runtime and the service, and reports frozen only once a
+/// re-read finds both inactive. Returns the lines to print, or the refusal.
 pub fn freeze(s: &Store, u: &mut dyn Units) -> Result<Vec<String>, String> {
     let mut out = Vec::new();
     for unit in s.frozen() {
@@ -110,8 +109,8 @@ pub fn freeze(s: &Store, u: &mut dyn Units) -> Result<Vec<String>, String> {
     Ok(out)
 }
 
-/// Removes the drop-ins and starts the socket, then the runtime; reports thawed only once a
-/// re-read finds the socket active.
+/// Removes the drop-ins and starts the service, then the runtime; reports thawed only once a
+/// re-read finds the service active.
 pub fn thaw(s: &Store, u: &mut dyn Units) -> Result<Vec<String>, String> {
     let mut out = Vec::new();
     for unit in s.frozen() {
@@ -123,17 +122,17 @@ pub fn thaw(s: &Store, u: &mut dyn Units) -> Result<Vec<String>, String> {
         }
     }
     reload(u)?;
-    for unit in [SOCKET, &s.runtime] {
+    for unit in [SERVICE, &s.runtime] {
         if !u.run(&["start", unit]) {
             return Err(format!("systemctl --user start {unit} failed"));
         }
         out.push(format!("  started {unit}"));
     }
-    let state = u.active_state(SOCKET);
+    let state = u.active_state(SERVICE);
     if state != "active" {
-        return Err(format!("{SOCKET} is {state:?} after the start: not thawed"));
+        return Err(format!("{SERVICE} is {state:?} after the start: not thawed"));
     }
-    out.push(format!("thawed: {SOCKET} active, {} started", s.runtime));
+    out.push(format!("thawed: {SERVICE} active, {} started", s.runtime));
     Ok(out)
 }
 
@@ -145,7 +144,7 @@ mod tests {
 
     /// A user manager over a runtime unit directory: a unit's conditions are read from its
     /// drop-ins at daemon-reload, a start of a unit whose condition fails is skipped, and a
-    /// start of the runtime starts the socket it wants.
+    /// start of the runtime starts the service it wants.
     struct Fake {
         dir: PathBuf,
         runtime: String,
@@ -157,7 +156,7 @@ mod tests {
 
     impl Fake {
         fn new(s: &Store) -> Fake {
-            let active = [SOCKET, SERVICE, &s.runtime].map(String::from).into();
+            let active = [SERVICE, &s.runtime].map(String::from).into();
             Fake { dir: s.unit_dir.clone(), runtime: s.runtime.clone(), active, loaded: BTreeMap::new(), stuck: None, calls: Vec::new() }
         }
 
@@ -166,8 +165,8 @@ mod tests {
         }
 
         fn start(&mut self, unit: &str) {
-            if unit == self.runtime && self.condition_met(SOCKET) {
-                self.active.insert(SOCKET.into());
+            if unit == self.runtime && self.condition_met(SERVICE) {
+                self.active.insert(SERVICE.into());
             }
             if self.condition_met(unit) {
                 self.active.insert(unit.into());
@@ -181,7 +180,7 @@ mod tests {
             match args {
                 ["daemon-reload"] => {
                     self.loaded.clear();
-                    for unit in [SOCKET, SERVICE] {
+                    for unit in [SERVICE] {
                         let conf = std::fs::read_to_string(self.dir.join(format!("{unit}.d")).join(DROPIN_NAME)).unwrap_or_default();
                         let met = conf
                             .lines()
@@ -210,34 +209,33 @@ mod tests {
     }
 
     #[test]
-    fn the_freeze_dropin_is_a_condition_no_path_meets_on_the_socket_and_the_service() {
+    fn the_freeze_dropin_is_a_condition_no_path_meets_on_the_service() {
         let d = TempDir::new("freeze-dropin");
         let s = store(&d);
         assert_eq!(dropin().lines().filter(|l| !l.starts_with('#')).collect::<Vec<_>>(), ["[Unit]", &format!("ConditionPathExists={FROZEN_CONDITION}")]);
         assert!(!Path::new(FROZEN_CONDITION).exists());
-        assert_eq!(s.frozen(), ["lc-serve.socket", "lc-serve.service"]);
-        assert_eq!(s.stopped(), ["spira-runtime-test.service", "lc-serve.service", "lc-serve.socket"]);
-        assert_eq!(s.dropin_path(SOCKET), d.path().join("systemd/user/lc-serve.socket.d/zz-spira-freeze.conf"));
+        assert_eq!(s.frozen(), ["lc-serve.service"]);
+        assert_eq!(s.stopped(), ["spira-runtime-test.service", "lc-serve.service"]);
+        assert_eq!(s.dropin_path(SERVICE), d.path().join("systemd/user/lc-serve.service.d/zz-spira-freeze.conf"));
         assert_eq!(runtime_unit_dir(1000), PathBuf::from("/run/user/1000/systemd/user"));
     }
 
     #[test]
-    fn a_frozen_socket_is_not_restarted_when_the_runtime_that_wants_it_starts() {
+    fn a_frozen_service_is_not_restarted_when_the_runtime_that_wants_it_starts() {
         let d = TempDir::new("freeze-holds");
         let s = store(&d);
         let mut u = Fake::new(&s);
         let out = freeze(&s, &mut u).unwrap();
-        assert!(out.last().unwrap().starts_with("frozen: lc-serve.socket and lc-serve.service"), "{out:?}");
+        assert!(out.last().unwrap().starts_with("frozen: lc-serve.service held"), "{out:?}");
         assert_eq!(std::fs::read_to_string(s.dropin_path(SERVICE)).unwrap(), dropin());
-        assert_eq!(u.calls, ["daemon-reload", "stop spira-runtime-test.service", "stop lc-serve.service", "stop lc-serve.socket"]);
+        assert_eq!(u.calls, ["daemon-reload", "stop spira-runtime-test.service", "stop lc-serve.service"]);
         u.run(&["start", &s.runtime]);
         u.run(&["start", SERVICE]);
-        assert_eq!(u.active_state(SOCKET), "inactive");
         assert_eq!(u.active_state(SERVICE), "inactive");
     }
 
     #[test]
-    fn without_the_freeze_a_stopped_socket_comes_back_with_the_runtime() {
+    fn without_the_freeze_a_stopped_service_comes_back_with_the_runtime() {
         let d = TempDir::new("freeze-control");
         let s = store(&d);
         let mut u = Fake::new(&s);
@@ -245,7 +243,7 @@ mod tests {
             u.run(&["stop", unit]);
         }
         u.run(&["start", &s.runtime]);
-        assert_eq!(u.active_state(SOCKET), "active");
+        assert_eq!(u.active_state(SERVICE), "active");
     }
 
     #[test]
@@ -259,16 +257,16 @@ mod tests {
     }
 
     #[test]
-    fn a_thaw_removes_the_dropins_and_starts_the_socket_then_the_runtime() {
+    fn a_thaw_removes_the_dropins_and_starts_the_service_then_the_runtime() {
         let d = TempDir::new("freeze-thaw");
         let s = store(&d);
         let mut u = Fake::new(&s);
         freeze(&s, &mut u).unwrap();
         u.calls.clear();
         let out = thaw(&s, &mut u).unwrap();
-        assert!(!s.dropin_path(SOCKET).exists() && !s.dropin_path(SERVICE).exists());
-        assert_eq!(u.calls, ["daemon-reload", "start lc-serve.socket", "start spira-runtime-test.service"]);
-        assert_eq!(out.last().unwrap(), "thawed: lc-serve.socket active, spira-runtime-test.service started");
+        assert!(!s.dropin_path(SERVICE).exists());
+        assert_eq!(u.calls, ["daemon-reload", "start lc-serve.service", "start spira-runtime-test.service"]);
+        assert_eq!(out.last().unwrap(), "thawed: lc-serve.service active, spira-runtime-test.service started");
         assert_eq!(u.active_state(&s.runtime), "active");
     }
 }

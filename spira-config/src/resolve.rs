@@ -654,14 +654,14 @@ pub fn lc_password_file(env: &BTreeMap<String, String>) -> String {
     }
 }
 
-/// The socket the root installer's `--system-user` phase gives `spira-lc.socket` (system mode).
+/// The socket the root installer's `--system-user` phase runs as `spira-lc.service` (system mode).
 pub const LC_SYSTEM_SOCKET: &str = "/run/spira-lc/sock";
 
 /// The system-mode marker: the unit file `spira-install --system-user` writes. Its presence is
 /// what makes a box "system mode" (spira-lc runs as its own Unix user); without it the box is
 /// same-user mode, where `spira-install` itself installs the operator's own user-level serve
 /// unit, `lc-serve.service` (sp-xfqnr).
-pub const LC_SYSTEM_UNIT: &str = "/etc/systemd/system/spira-lc.socket";
+pub const LC_SYSTEM_UNIT: &str = "/etc/systemd/system/spira-lc.service";
 
 /// Whether this box runs spira-lc in system mode (see [`LC_SYSTEM_UNIT`]).
 pub fn lc_system_mode() -> bool {

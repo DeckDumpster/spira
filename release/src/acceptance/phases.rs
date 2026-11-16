@@ -1087,12 +1087,12 @@ fn phase_d(r: &mut Run, tag: &str, pt: &str, prev_tb: Option<PathBuf>, prev_dir:
         r.check("phase D: upgraded release carries cutover-deploy.sh", script.is_file(), || format!("missing: {}", script.display()));
         if script.is_file() {
             // The caller drains before the script; the socket is stopped here as a drain would.
-            r.systemctl(&["stop", "spira-lc.socket", "spira-lc.service"]);
+            r.systemctl(&["stop", "spira-lc.service"]);
             let repo = r.o.scratch_name();
             let c = r.tool("cutover-deploy.sh").args(["--repo", repo.as_str(), "--dry-run"]).env("SPIRA_LC_PASSWORD", "acceptance-dry-run").env("SPIRA_LC_RO_PASSWORD", "acceptance-dry-run-ro");
             let out = h.run(&c);
             r.check("phase D: cutover-deploy.sh --dry-run runs on the aged install", out.rc == 0 && out.text.contains("cutover-deploy: done"), || format!("exit {}\n{}", out.rc, tail(&out.text, 8)));
-            r.systemctl(&["start", "spira-lc.socket"]);
+            r.systemctl(&["start", "spira-lc.service"]);
         }
     }
 

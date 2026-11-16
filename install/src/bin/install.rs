@@ -1263,8 +1263,6 @@ fn run_main() -> ExitCode {
                 // lc-serve.service was enabled in phase 4, before this store existed, and may
                 // have given up (StartLimitBurst): restart it now and require it to be active —
                 // fail closed, since a dwarf cannot claim without it (sp-xfqnr).
-                // batch-job: one start of the socket; bounded by timeout 30.
-                let _ = Command::new("timeout").args(["30", "systemctl", "--user", "start", "lc-serve.socket"]).status();
                 // batch-job: one restart of a service during install; bounded by timeout 30.
                 let _ = Command::new("timeout").args(["30", "systemctl", "--user", "restart", "lc-serve.service"]).status();
                 let mut active = false;
@@ -1834,7 +1832,7 @@ fn system_user_phase(host: &install::values::HostValues) -> Result<(), String> {
     }
 
     let host_values = host;
-    for unit in ["spira-lc.service", "spira-lc.socket"] {
+    for unit in ["spira-lc.service"] {
         let text = install::values::render_file(&Path::new(home).join("systemd").join(unit), host_values, None)?;
         let dest = format!("/etc/systemd/system/{unit}");
         std::fs::write(format!("{dest}.tmp"), text).map_err(|e| e.to_string())?;
@@ -1845,8 +1843,8 @@ fn system_user_phase(host: &install::values::HostValues) -> Result<(), String> {
     install_dovecot_dropin(Path::new(home), Path::new("/etc/systemd/system"), &["/lib/systemd/system", "/usr/lib/systemd/system", "/etc/systemd/system"])?;
     run_ok("systemctl", &["daemon-reload"])?;
     info("reload systemd");
-    run_ok("systemctl", &["enable", "--now", "spira-lc.socket"])?;
-    info("enable spira-lc.socket (spira-lc.service itself is socket-activated, not enabled directly)");
+    run_ok("systemctl", &["enable", "--now", "spira-lc.service"])?;
+    info("enable spira-lc.service");
     Ok(())
 }
 
@@ -1883,7 +1881,7 @@ fn standalone_system_user(instance: &str, dry: bool) -> ExitCode {
         }
     };
     if dry {
-        would("would create the spira-lc system user, group and install spira-lc.service/.socket");
+        would("would create the spira-lc system user, group and install spira-lc.service");
         return ExitCode::SUCCESS;
     }
     if !is_root() {

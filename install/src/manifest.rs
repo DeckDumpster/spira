@@ -112,16 +112,14 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
     // lc-serve.service (sp-xfqnr): the SAME-USER answer to the socket a dwarf's `work`
     // reaches spira-lc through — `spira-lc serve` as the operator on %t/spira-lc/sock, the
     // path spira_config::resolve::lc_socket_default gives every caller in this mode. In
-    // system mode spira-lc.socket already answers /run/spira-lc/sock as its own Unix user,
+    // system mode spira-lc.service already answers /run/spira-lc/sock as its own Unix user,
     // and a second, operator-run copy would hand the store to the credential the privilege
     // split exists to keep away from the operator, so it is declined there.
     if inputs.lc_system_mode {
         m.optional.push("lc-serve.service".into());
-        m.optional.push("lc-serve.socket".into());
         m.notes.push("spira-lc runs as a system service (--system-user) — not installing lc-serve.service.".into());
     } else {
-        m.units.push(t("lc-serve.socket", true));
-        m.units.push(t("lc-serve.service", false));
+        m.units.push(t("lc-serve.service", true));
     }
 
     // Mail delivery is the scheduler's: the `mail.arrived` source watches each registered
@@ -389,9 +387,9 @@ mod tests {
     fn lc_serve_is_installed_and_enabled_only_in_same_user_mode() {
         let m = build(&inputs()).unwrap();
         let u = m.units.iter().find(|u| u.name == "lc-serve.service").expect("same-user mode installs it");
-        assert!(!u.enable, "socket-activated, never enabled directly");
-        assert!(m.enable("prod").contains(&"lc-serve.socket".to_string()), "shared name, never instance-suffixed");
-        assert!(!m.enable("prod").contains(&"lc-serve.service".to_string()));
+        assert!(u.enable, "the service starts itself and binds its own socket");
+        assert!(m.enable("prod").contains(&"lc-serve.service".to_string()), "shared name, never instance-suffixed");
+        assert!(!m.enable("prod").contains(&"lc-serve.socket".to_string()));
         assert!(!m.optional.contains(&"lc-serve.service".to_string()));
 
         let mut i = inputs();
@@ -401,6 +399,24 @@ mod tests {
         assert!(m2.optional.contains(&"lc-serve.service".to_string()), "declined, so never UNLISTED");
         assert!(!m2.enable("prod").iter().any(|u| u.starts_with("lc-serve")));
         assert!(m2.unlisted(["lc-serve.service"]).is_empty());
+    }
+
+    /// sp-pk9tyi: nothing holds the store's socket while no store is behind it.
+    #[test]
+    fn no_socket_unit_ships_and_the_serve_units_own_their_runtime_directory() {
+        let systemd = spira_config::resolve::checkout_root_for_process().unwrap().join("systemd");
+        let sockets: Vec<_> = std::fs::read_dir(&systemd).unwrap().filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().into_owned()).filter(|n| n.ends_with(".socket")).collect();
+        assert!(sockets.is_empty(), "{sockets:?}");
+        for (unit, target) in [("lc-serve.service", "default.target"), ("spira-lc.service", "multi-user.target")] {
+            let text = std::fs::read_to_string(systemd.join(unit)).unwrap();
+            let lines: Vec<&str> = text.lines().map(str::trim).collect();
+            assert!(!lines.iter().any(|l| l.starts_with("Requires=") && l.contains(".socket")), "{unit} requires a socket");
+            assert!(lines.contains(&"RuntimeDirectory=spira-lc"), "{unit}");
+            assert!(lines.contains(&format!("WantedBy={target}").as_str()), "{unit}");
+        }
+        let e = build(&inputs()).unwrap().enable("prod");
+        assert!(e.contains(&"lc-serve.service".to_string()));
+        assert!(!e.iter().any(|u| u.ends_with(".socket")), "{e:?}");
     }
 
     #[test]
@@ -502,7 +518,7 @@ mod tests {
     #[test]
     fn union_template_names_carries_a_conditionally_declined_template() {
         let names = union_template_names();
-        for n in ["spira-dolt-boot-check.service", "spira-dolt-boot-check.timer", "sccache-dav.service", "dolt-beads.service", "lc-serve.service", "lc-serve.socket"] {
+        for n in ["spira-dolt-boot-check.service", "spira-dolt-boot-check.timer", "sccache-dav.service", "dolt-beads.service", "lc-serve.service"] {
             assert!(names.contains(&n.to_string()), "{n} missing from union: {names:?}");
         }
         assert!(!names.iter().any(|n| n == "spira-watch@.service"), "the watcher template itself must never appear");
