@@ -7,6 +7,7 @@ use std::sync::Mutex;
 use crate::lex::rust::classify;
 use crate::{Entry, Finding, LintError, Rule, Tree};
 
+#[derive(Default)]
 pub struct RegistryReaders {
     checked: Mutex<Option<usize>>,
 }
@@ -20,12 +21,6 @@ or a registry edit does not select it; a listed crate that reads nothing is sele
 const MANIFEST_DIR: &str = concat!("CARGO_MANIFEST", "_DIR");
 const REGISTRY_PATHS: [&str; 2] = [concat!("spira/", "conf.d"), concat!("spira/", "config-delta")];
 const DELTA_LOAD: &str = concat!("config_delta::", "load(");
-
-impl RegistryReaders {
-    pub fn new() -> RegistryReaders {
-        RegistryReaders { checked: Mutex::new(None) }
-    }
-}
 
 /// The 1-based line of the file's first registry read, in its comment-stripped text.
 fn first_read(src: &[u8]) -> Option<usize> {
@@ -121,7 +116,7 @@ impl Rule for RegistryReaders {
 }
 
 pub fn rules() -> Vec<Box<dyn crate::Rule>> {
-    vec![Box::new(RegistryReaders::new())]
+    vec![Box::new(RegistryReaders::default())]
 }
 
 #[cfg(test)]
@@ -146,7 +141,7 @@ mod tests {
     }
 
     fn messages(tree: &Tree) -> Vec<String> {
-        RegistryReaders::new().check(tree).unwrap().iter().map(|f| f.message.clone()).collect()
+        RegistryReaders::default().check(tree).unwrap().iter().map(|f| f.message.clone()).collect()
     }
 
     #[test]
@@ -199,6 +194,6 @@ mod tests {
         let t = TempDir::new("rr-empty");
         t.write(ROOT, "[workspace]\nmembers = [\"a\"]\n");
         let tree = Tree::from_paths(t.path(), [ROOT], std::iter::empty::<&str>());
-        assert!(matches!(RegistryReaders::new().check(&tree), Err(LintError::EmptyScope | LintError::Refused(_))));
+        assert!(matches!(RegistryReaders::default().check(&tree), Err(LintError::EmptyScope | LintError::Refused(_))));
     }
 }
