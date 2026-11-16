@@ -142,20 +142,20 @@ mod tests {
             "undecodable": [],
             "knobs": {},
             "sections": [
-                section("RoundController", "pokebot", json!({ "repeat_identity_open": { "value": 1.0, "window": "1h" } }), Some("2026-11-12T14:09:48Z"), hold, true),
+                section("DwarfFleet", "pokebot", json!({ "repeat_identity_open": { "value": 1.0, "window": "1h" } }), Some("2026-11-12T14:09:48Z"), hold, true),
                 section("Lifecycle", "all", json!({ "landed_24h": { "value": 80.0, "window": "24h" } }), Some("2026-11-12T14:09:20Z"), json!([]), false),
                 section("Alarms", "all", json!({}), None, json!([]), true),
             ],
             "intents": [
-                { "key": "intents/RoundController/pokebot/i1", "mod_rev": 3, "intent": { "action": "old", "target": "b-1@aaaa", "taken_at": "2026-11-12T13:00:00Z", "horizon": "5m", "moves": "repeat_identity_open", "judgement": { "result": "fulfilled" } } },
-                { "key": "intents/RoundController/pokebot/i2", "mod_rev": 8, "intent": { "action": "hold-member", "target": "b-17@3f2a", "taken_at": "2026-11-12T14:01:00Z", "horizon": "10m", "moves": "repeat_identity_open", "ack": { "at": "2026-11-12T14:02:11Z", "result": "applied" } } }
+                { "key": "intents/DwarfFleet/pokebot/i1", "mod_rev": 3, "intent": { "action": "old", "target": "b-1@aaaa", "taken_at": "2026-11-12T13:00:00Z", "horizon": "5m", "moves": "repeat_identity_open", "judgement": { "result": "fulfilled" } } },
+                { "key": "intents/DwarfFleet/pokebot/i2", "mod_rev": 8, "intent": { "action": "hold-member", "target": "b-17@3f2a", "taken_at": "2026-11-12T14:01:00Z", "horizon": "10m", "moves": "repeat_identity_open", "ack": { "at": "2026-11-12T14:02:11Z", "result": "applied" } } }
             ],
             "pass": {
-                "n": 41, "at": "2026-11-12T14:09:45Z", "binding": "RoundController/pokebot",
+                "n": 41, "at": "2026-11-12T14:09:45Z", "binding": "DwarfFleet/pokebot",
                 "goodput": { "ratio": 0.6, "rate_per_day": 3.2 },
-                "gaps": [{ "section": "RoundController/pokebot", "distance": 1.0, "score": 2.0 }],
+                "gaps": [{ "section": "DwarfFleet/pokebot", "distance": 1.0, "score": 2.0 }],
                 "ages": {
-                    "RoundController/pokebot": { "age_secs": 12, "freshness": { "state": "Fresh" } },
+                    "DwarfFleet/pokebot": { "age_secs": 12, "freshness": { "state": "Fresh" } },
                     "Lifecycle/all": { "age_secs": 40, "freshness": { "state": "Fresh" } },
                     "Alarms/all": { "age_secs": null, "freshness": { "state": "Stale", "reason": "no status has been published" } }
                 }
@@ -175,7 +175,7 @@ mod tests {
         let want = [
             ("SP_GP_RATE", "3.2"),
             ("SP_GP_PASS_AT", "1794492585"),
-            ("SP_GP_BINDING", "RoundController/pokebot"),
+            ("SP_GP_BINDING", "DwarfFleet/pokebot"),
             ("SP_GP_DISTANCE", "1 repeat identity open"),
             ("SP_GP_STEP", "hold-member b-17@3f2a"),
             ("SP_GP_STEP_ACK", "14:02"),
@@ -191,7 +191,7 @@ mod tests {
         let k = keys(&snapshot());
         assert_eq!(k["SP_GP_SEC_N"], "3");
         let row = |i: usize| ["REF", "DIST", "AGE", "FRESH"].map(|f| k.get(&format!("SP_GP_SEC{i}_{f}")).cloned());
-        assert_eq!(row(0), [Some("RoundController/pokebot".into()), Some("1".into()), Some("12".into()), Some("fresh".into())]);
+        assert_eq!(row(0), [Some("DwarfFleet/pokebot".into()), Some("1".into()), Some("12".into()), Some("fresh".into())]);
         assert_eq!(row(1), [Some("Lifecycle/all".into()), None, Some("40".into()), Some("fresh".into())], "a section with no distance function has none to show");
         assert_eq!(row(2), [Some("Alarms/all".into()), None, None, Some("stale".into())], "an unpublished section has no age and no distance");
     }
@@ -234,7 +234,7 @@ mod tests {
 
     #[test]
     fn a_pass_with_no_open_gap_has_no_binding_section() {
-        let idle = snapshot().replace(r#""binding":"RoundController/pokebot""#, r#""binding":null"#);
+        let idle = snapshot().replace(r#""binding":"DwarfFleet/pokebot""#, r#""binding":null"#);
         let k = keys(&idle);
         assert_eq!(k["SP_GP_BINDING"], "-");
         assert!(!k.contains_key("SP_GP_STEP") && !k.contains_key("SP_GP_DISTANCE"), "{k:?}");
@@ -258,7 +258,7 @@ mod tests {
         let k = keys(&snap.to_string());
         assert_eq!(k["SP_GP_BINDING"], "Ghost/none");
         assert!(!k.contains_key("SP_GP_DISTANCE") && !k.contains_key("SP_GP_PASS_AT"), "an unparseable time is no time: {k:?}");
-        snap["pass"]["binding"] = json!("RoundController/pokebot");
+        snap["pass"]["binding"] = json!("DwarfFleet/pokebot");
         let k = keys(&snap.to_string());
         assert!(k.contains_key("SP_GP_STEP") && !k.contains_key("SP_GP_STEP_ACK"), "a step not yet acked names no ack time: {k:?}");
     }

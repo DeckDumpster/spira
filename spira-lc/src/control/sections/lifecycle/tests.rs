@@ -176,7 +176,7 @@ fn the_section_is_a_term_published_through_admission_with_goodput_from_landed_re
     let s = &got["section"];
     assert_eq!((s["metadata"]["owner"].as_str(), s["metadata"]["target_latency"].as_str(), s["metadata"]["max_age"].as_str()), (Some("spira-lc"), Some("5m"), Some("15m")));
     assert!(s.get("actions").is_none(), "a term declares no actions: {s}");
-    assert_eq!(s["flow"]["consumes"], json!(["round-controller/landed"]));
+    assert_eq!(s["flow"]["consumes"], json!([]));
     assert_eq!(got["freshness"]["state"], "Fresh");
 
     let st = &s["status"];

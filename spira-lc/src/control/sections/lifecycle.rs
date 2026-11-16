@@ -329,7 +329,7 @@ fn publish_lifecycle<B: Backend>(store: &Store<B>, call: &Call, outside: &dyn Ou
         spec: Default::default(),
         status: Default::default(),
         flow: Flow {
-            consumes: vec!["round-controller/landed".into()],
+            consumes: Vec::new(),
             produces: Vec::new(),
         },
         distance: distance(&rate, floor.filter(|_| releases), &dwell, spec_value(prev, "certified_dwell_p95_secs")),

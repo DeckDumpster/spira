@@ -69,7 +69,7 @@ fn every_shipped_scenario_names_only_sim_only_actors_or_is_listed_as_blocked() {
 fn the_ported_scenarios_call_through_the_seam_with_the_call_effects_argv() {
     let calls: Vec<(String, String)> = shipped().into_iter().flat_map(|(n, sc)| sc.actors.into_iter().filter(|a| a.name == "call").map(move |a| (n.clone(), a.command))).collect();
     let names: Vec<&str> = calls.iter().map(|(n, _)| n.as_str()).collect();
-    assert_eq!(names, ["builder-excludes-qa-proposed", "claim-rank", "dwarf-brief", "dwarf-slain", "rc-cutover-readiness", "rebase-loop-note", "resubmit-moved-tip", "submit-from-other-cwd"]);
+    assert_eq!(names, ["builder-excludes-qa-proposed", "claim-rank", "dwarf-brief", "dwarf-slain", "rebase-loop-note", "resubmit-moved-tip", "submit-from-other-cwd"]);
     let one = &calls[0].1;
     assert!(calls.iter().all(|(_, c)| c == one), "one call command: {calls:?}");
     let shell = one.strip_prefix("\"$SPIRA_CALL\"").expect("the call runs the world's SPIRA_CALL seam");
@@ -118,7 +118,7 @@ fn shipped_names() -> Vec<String> {
 
 /// What the loop's migrated units ran as processes. A world scenario's inline actor running one
 /// would bring the unit back as an actor process under another name (ruling D6).
-const MIGRATED_COMMANDS: &[&str] = &["sentinel --call-only", "landing-pass land", "landing-pass --pass", "round-controller sifts", "batcher rounds", "gate-worker run", "queue publish-settle", "supersede-duty.sh", "reconciler goodput-pass"];
+const MIGRATED_COMMANDS: &[&str] = &["sentinel --call-only", "landing-pass land", "landing-pass --pass", "batcher rounds", "gate-worker run", "queue publish-settle", "supersede-duty.sh", "reconciler goodput-pass"];
 
 /// Scenarios that call a migrated unit's binary on purpose: what they exercise is that binary's
 /// own cutover-lane refusal, which no task of the serve loop reaches.

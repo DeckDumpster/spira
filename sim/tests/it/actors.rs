@@ -36,6 +36,6 @@ fn every_actor_is_sim_only_and_its_units_are_in_the_tree() {
         assert!(s.units_in(&tree).join(&service).is_file(), "{}: {service}", s.name);
         parse_timer(&timer).unwrap();
     }
-    let shipped = "[[actor]]\nname = \"sift\"\ncommand = \"round-controller sifts\"\ntimer = \"spira-sift.timer\"\nduration = \"d\"\n";
+    let shipped = "[[actor]]\nname = \"sift\"\ncommand = \"sift run\"\ntimer = \"spira-sift.timer\"\nduration = \"d\"\n";
     assert!(sim::actors::parse_specs(shipped).unwrap_err().contains("ruling D6"));
 }

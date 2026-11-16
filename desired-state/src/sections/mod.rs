@@ -11,7 +11,6 @@ pub mod gate;
 pub mod host;
 pub mod lifecycle;
 pub mod probe;
-pub mod round_controller;
 pub mod supply;
 pub mod vm_pool;
 
@@ -69,7 +68,7 @@ pub fn typed<T: DeserializeOwned>(v: &Value) -> Result<(), SchemaError> {
         .map_err(|e| (e.path().to_string(), e.inner().to_string()))
 }
 
-static KINDS: &[SectionKind] = &[alarms::KIND, dwarf_fleet::KIND, gate::KIND, host::KIND, lifecycle::KIND, probe::KIND, round_controller::KIND, supply::KIND, vm_pool::KIND];
+static KINDS: &[SectionKind] = &[alarms::KIND, dwarf_fleet::KIND, gate::KIND, host::KIND, lifecycle::KIND, probe::KIND, supply::KIND, vm_pool::KIND];
 
 pub fn registry() -> &'static [SectionKind] {
     KINDS

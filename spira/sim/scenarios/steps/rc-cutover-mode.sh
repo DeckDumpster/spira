@@ -72,9 +72,7 @@ while :; do
         [ -f "$SPIRA_RUN/world.cutover-mode" ] && [ ! -f "$SPIRA_RUN/world.halted" ] || fail "cutover mode left no record, or the stamp in place"
         world unpause --reserve "$unclaimed" || fail "could not lift the reservation on $unclaimed"
         next land ;;
-    land) book hand-land BATCH=rc-cm BEAD="$landed" || exit $?; next lease ;;
-    lease) book clear-lease BATCH=rc-cm || exit $?; next check ;;
-    check) book cutover-check || exit $?; next hold-1 ;;
+    land) book hand-land BATCH=rc-cm BEAD="$landed" || exit $?; next hold-1 ;;
     hold-*)
         # Each hold is one move apart, so the sentinel's calls meet a claimable bead in the window.
         [ "$(state_of "$unclaimed")" = READY ] || fail "$unclaimed was claimed under cutover mode: $(state_of "$unclaimed")"

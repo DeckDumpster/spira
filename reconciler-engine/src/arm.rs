@@ -9,7 +9,7 @@
 use serde_json::Value;
 use spira_desired_state::section::Freshness;
 use spira_desired_state::sections::alarms::{self as alarms_kind, DeadManState, HeartbeatState};
-use spira_desired_state::sections::{dwarf_fleet, host, lifecycle, round_controller};
+use spira_desired_state::sections::{dwarf_fleet, host, lifecycle};
 
 use crate::assemble::{Assembled, Current};
 use crate::effect::is_shadowed;
@@ -19,7 +19,6 @@ use crate::pass_record::{PassRecord, Step};
 /// its arm day. The key holds an old kind's remedy and its page back, and the flow watcher
 /// reads it by full `flow:*` key. `Lifecycle` and `Alarms` swap in nothing here.
 pub const REPLACES: &[(&str, &[&str])] = &[
-    (round_controller::NAME, &["batch-landed", "queue-mergeable", "lc-orphan-in-delivery", "queue-lock-age", "flow:velocity:queue", "flow:round-health"]),
     (dwarf_fleet::NAME, &["fleet"]),
     (host::NAME, &["disk"]),
     (lifecycle::NAME, &[]),
@@ -51,18 +50,13 @@ pub fn armed_list(current: &[String], kind: &str) -> Result<Vec<String>, String>
     Ok(out)
 }
 
-/// Old kinds shadowed from the round-controller cutover, not from an arm day (the design's D9):
-/// arming lists them if they are missing, and disarming never takes them off.
-pub const SHADOWED_FROM_CUTOVER: &[&str] = &["queue-mergeable"];
-
-/// The reverse write: `kind` back on the list and the paths it replaced off it, but for those
-/// shadowed from the cutover.
+/// The reverse write: `kind` back on the list and the paths it replaced off it.
 pub fn disarmed_list(current: &[String], kind: &str) -> Result<Vec<String>, String> {
     let old = replaced_by(kind)?;
     if current.iter().any(|k| k == kind || k == "*") {
         return Err(format!("{kind} is not armed: the shadow list already shadows it"));
     }
-    let lifted = |k: &String| old.contains(&k.as_str()) && !SHADOWED_FROM_CUTOVER.contains(&k.as_str());
+    let lifted = |k: &String| old.contains(&k.as_str());
     let mut out: Vec<String> = current.iter().filter(|k| !lifted(k)).cloned().collect();
     out.push(kind.to_string());
     Ok(out)

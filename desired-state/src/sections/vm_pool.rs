@@ -1,5 +1,5 @@
 //! `VmPool`: how much of the last hour's certification passes the VM pool wasted, written by
-//! round-vm. A term only: capacity has one knob, the round controller's `concurrency`.
+//! round-vm. A term only: it declares no action.
 
 use serde::Deserialize;
 use serde_json::Value;

@@ -11,10 +11,13 @@ use spira_desired_state::sections::lifecycle::{Goodput as Fields, Status, BELOW_
 use spira_desired_state::store::format_rfc3339;
 use spira_lc::goodput::{self, Goodput, Measure, Scope, Window, DAY_SECS};
 
-use super::round_controller::{KEEPALIVE_MS, MAX_AGE, PERIOD_MS, TARGET_LATENCY};
 use super::{Replay, ReplayWorld, Store};
 
 pub const PUBLISHER: &str = "lifecycle";
+const PERIOD_MS: u64 = 60_000;
+const KEEPALIVE_MS: u64 = 300_000;
+const TARGET_LATENCY: &str = "5m";
+const MAX_AGE: &str = "15m";
 /// Landings per day the replayed loop is measured against.
 pub const FLOOR: f64 = 100.0;
 const HOUR_SECS: u64 = 3_600;

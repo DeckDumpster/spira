@@ -167,7 +167,7 @@ mod tests {
     fn request() -> Request {
         Request {
             evidence: json!({ "why": "test" }),
-            ..Request::new("rq-1", "round-controller", "run.renew")
+            ..Request::new("rq-1", "round-recert", "run.renew")
         }
     }
 

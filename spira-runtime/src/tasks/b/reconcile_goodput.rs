@@ -10,8 +10,7 @@
 //!   store's `watch` long-poll of S7b would supply it). Without it, cadence alone.
 //! - Single-flight: one pass in flight per task. The store-side lock `locks/reconciler`
 //!   (`desired-state/src/intent.rs:17`) stays as the fencing token every write carries; in-process
-//!   single-flight does not replace it, because round-controller's intents also fence on it
-//!   (unverified: `round-controller/src/intents/tests.rs` uses the engine).
+//!   single-flight does not replace it, because every write carries it.
 //! - No `world guard`: the unit runs on the observability plane (`systemd/spira-reconciler-goodput.service`
 //!   `[X-Spira] Plane=observability`). A halt is an input, not a skip (see Observe).
 //!
@@ -44,7 +43,7 @@
 //! - Config (pinned, S10): `SPIRA_RECONCILER_PASS_TIMEOUT_SECS` (default 50,
 //!   `spira/conf.d/SPIRA_RECONCILER_PASS_TIMEOUT_SECS`; lock TTL and pass deadline,
 //!   `reconciler/src/goodput_pass.rs:56`), `SPIRA_RECONCILER_SHADOW_KINDS` (default
-//!   `RoundController Lifecycle Alarms`, `goodput_pass.rs:57`; already in `spira-runtime/src/settings.rs:113`).
+//!   `Lifecycle Alarms`, `goodput_pass.rs:57`; already in `spira-runtime/src/settings.rs:113`).
 //! - Fixtures: `reconciler-engine/src/select/tests.rs` (9 tests), `assemble/tests.rs`,
 //!   `spira-lc/src/sections/tests/goodput_pass.rs` (the engine on a rig store).
 //!

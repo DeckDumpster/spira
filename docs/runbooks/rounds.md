@@ -65,35 +65,6 @@ round-recert --drive --batch "$BATCH" --repo "$REPO"   # exits 0, retried
 **If it fails:** `is not green: RED: <steps>` names the red steps; `LAND FAILED` prints the
 land verb's own refusal above it.
 
-## Clear a stuck lease
-
-A round whose driver died holds its lease until the TTL lapses. `round-controller lease clear`
-releases it only with proof the holder is dead, and says what it saw; a round with no lease
-answers `lease=none`.
-
-<!-- check: clear-lease -->
-```sh
-round-controller lease clear --repo "$REPO" --batch "$BATCH"   # exits 0
-```
-
-**Success:** `lease=cleared ... evidence=<proof>` or `lease=none`.
-**If it fails:** exit 1 is a refusal: the holder may be alive. Find it before anything else.
-
-## Read cutover-check
-
-`round-controller cutover-check --readiness` reports each registered round repo and the global
-preconditions (zero non-terminal rounds, zero `open`/`prepared` files); the world stops only when
-every row is green. After a cutover, `--since-rev` waits for one landed round per repo.
-
-<!-- check: cutover-check -->
-```sh
-round-controller cutover-check --readiness   # exits 1
-round-controller cutover-check --since-rev "$REV"   # exits 1
-```
-
-**Success:** every row green, exit 0. Any row not green, exit 1 with the failing rows printed; the checked block runs in a world that is not yet green and expects 1.
-**If it fails:** a red row names the repo and the precondition; fix that repo first.
-
 ## Enter and leave cutover mode
 
 `world cutover-mode` holds a stopped world with scoped stops instead of the halt stamp: every

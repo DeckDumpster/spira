@@ -150,8 +150,8 @@ mod tests {
         t.write("loom/src/a.rs", "let kv = kv(&dir.join(\"open\"));\nlet fs = kv(&dir.join(\"forge-state\"));\n");
         t.write("cockpit-collect/src/b.rs", "let p = queue_dir.join(\"r/open\");\nlet q = c.queue_file(\"prepared\");\n");
         t.write("spira/x.sh", "pr=$(grep pr= \"$QUEUEDIR/$REPO/open\")\ncat queue/deck/forge-state\n");
-        t.write("round-controller/src/c.rs", "const STATE: &str = \"forge-state\";\n");
-        let got = run(&t, &["loom/src/a.rs", "cockpit-collect/src/b.rs", "spira/x.sh", "round-controller/src/c.rs"]).unwrap();
+        t.write("sift/src/c.rs", "const STATE: &str = \"forge-state\";\n");
+        let got = run(&t, &["loom/src/a.rs", "cockpit-collect/src/b.rs", "spira/x.sh", "sift/src/c.rs"]).unwrap();
         assert_eq!(got.len(), 7, "{got:?}");
     }
 

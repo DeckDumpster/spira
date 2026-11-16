@@ -84,19 +84,19 @@ fn would(section: &str, action: &str) -> Step {
     }
 }
 
-const ALL: &str = "RoundController Lifecycle Alarms";
+const ALL: &str = "DwarfFleet Lifecycle Alarms";
 
 fn healthy() -> Assembled {
     assembled(vec![
-        ("RoundController/lane", current(true, json!({ "observedGeneration": 0 }))),
-        ("RoundController/other", current(true, json!({ "observedGeneration": 0 }))),
+        ("DwarfFleet/lane", current(true, json!({ "observedGeneration": 0 }))),
+        ("DwarfFleet/other", current(true, json!({ "observedGeneration": 0 }))),
         ("Alarms/all", alarms(true, "fresh", Some("unconfigured"))),
     ])
 }
 
 fn history() -> Vec<PassRecord> {
     vec![
-        record(1, ALL, vec![would("RoundController/lane", "hold-member"), would("Alarms/all", "retry-delivery")]),
+        record(1, ALL, vec![would("DwarfFleet/lane", "scale-up"), would("Alarms/all", "retry-delivery")]),
         record(2, ALL, vec![]),
     ]
 }
@@ -107,58 +107,50 @@ fn verdicts(c: &ArmCheck) -> Vec<(&'static str, bool)> {
 
 #[test]
 fn arming_a_kind_takes_it_off_the_list_and_puts_every_old_path_it_replaces_on_in_one_list() {
-    let armed = armed_list(&list(ALL), "RoundController").unwrap();
-    assert_eq!(armed, list("Lifecycle Alarms batch-landed queue-mergeable lc-orphan-in-delivery queue-lock-age flow:velocity:queue flow:round-health"));
-    let again = armed_list(&list("Lifecycle queue-mergeable RoundController"), "RoundController").unwrap();
-    assert_eq!(
-        again,
-        list("Lifecycle queue-mergeable batch-landed lc-orphan-in-delivery queue-lock-age flow:velocity:queue flow:round-health"),
-        "a path shadowed already at the cutover is not listed twice"
-    );
-    assert_eq!(armed_list(&list(ALL), "Lifecycle").unwrap(), list("RoundController Alarms"), "Lifecycle replaces no path still running");
+    let armed = armed_list(&list(ALL), "DwarfFleet").unwrap();
+    assert_eq!(armed, list("Lifecycle Alarms fleet"));
+    let again = armed_list(&list("Lifecycle fleet DwarfFleet"), "DwarfFleet").unwrap();
+    assert_eq!(again, list("Lifecycle fleet"), "a path shadowed already is not listed twice");
+    assert_eq!(armed_list(&list(ALL), "Lifecycle").unwrap(), list("DwarfFleet Alarms"), "Lifecycle replaces no path still running");
 }
 
 #[test]
 fn arming_host_hands_the_disk_remedies_to_its_levers_in_the_same_write() {
-    assert_eq!(armed_list(&list("Host RoundController"), "Host").unwrap(), list("RoundController disk"));
+    assert_eq!(armed_list(&list("Host DwarfFleet"), "Host").unwrap(), list("DwarfFleet disk"));
 }
 
 #[test]
 fn disarming_is_the_reverse_write() {
-    let armed = armed_list(&list(ALL), "RoundController").unwrap();
-    assert_eq!(
-        disarmed_list(&armed, "RoundController").unwrap(),
-        list("Lifecycle Alarms queue-mergeable RoundController"),
-        "queue-mergeable stays shadowed: it is the cutover's, not the arm day's"
-    );
+    let armed = armed_list(&list(ALL), "DwarfFleet").unwrap();
+    assert_eq!(disarmed_list(&armed, "DwarfFleet").unwrap(), list("Lifecycle Alarms DwarfFleet"));
 }
 
 #[test]
 fn a_kind_that_is_unknown_already_armed_or_hidden_behind_a_star_is_refused() {
     assert!(armed_list(&list(ALL), "Andon").unwrap_err().contains("no section kind"));
-    assert!(armed_list(&list("Lifecycle"), "RoundController").unwrap_err().contains("already armed"));
-    assert!(armed_list(&list("*"), "RoundController").unwrap_err().contains('*'));
+    assert!(armed_list(&list("Lifecycle"), "DwarfFleet").unwrap_err().contains("already armed"));
+    assert!(armed_list(&list("*"), "DwarfFleet").unwrap_err().contains('*'));
     assert!(disarmed_list(&list(ALL), "Alarms").unwrap_err().contains("not armed"));
     assert!(disarmed_list(&list(ALL), "Andon").unwrap_err().contains("no section kind"));
 }
 
 #[test]
 fn every_precondition_holds_on_fresh_sections_a_fresh_dead_man_and_shadow_passes() {
-    let c = arm_check("RoundController", &list(ALL), &healthy(), &history()).unwrap();
+    let c = arm_check("DwarfFleet", &list(ALL), &healthy(), &history()).unwrap();
     assert_eq!(verdicts(&c), [("sections-fresh", true), ("dead-man", true), ("heartbeat", true), ("shadow-passes", true)]);
     assert!(c.ready());
-    assert_eq!(c.list, armed_list(&list(ALL), "RoundController").unwrap());
-    assert_eq!(c.would_step, [(1, would("RoundController/lane", "hold-member"))], "only the kind's own would-be steps, for review");
+    assert_eq!(c.list, armed_list(&list(ALL), "DwarfFleet").unwrap());
+    assert_eq!(c.would_step, [(1, would("DwarfFleet/lane", "scale-up"))], "only the kind's own would-be steps, for review");
     assert!(c.checks[2].detail.contains("not a gate"), "{}", c.checks[2].detail);
 }
 
 #[test]
 fn a_stale_or_absent_section_of_the_kind_fails_its_precondition() {
     let mut a = healthy();
-    a.current.sections.insert("RoundController/other".into(), current(false, json!({ "observedGeneration": 0 })));
-    let c = arm_check("RoundController", &list(ALL), &a, &history()).unwrap();
+    a.current.sections.insert("DwarfFleet/other".into(), current(false, json!({ "observedGeneration": 0 })));
+    let c = arm_check("DwarfFleet", &list(ALL), &a, &history()).unwrap();
     assert_eq!(c.checks[0].name, "sections-fresh");
-    assert!(!c.checks[0].holds && c.checks[0].detail.contains("RoundController/other"), "{}", c.checks[0].detail);
+    assert!(!c.checks[0].holds && c.checks[0].detail.contains("DwarfFleet/other"), "{}", c.checks[0].detail);
     assert!(!c.ready());
     let c = arm_check("Lifecycle", &list(ALL), &healthy(), &history()).unwrap();
     assert!(!c.checks[0].holds && c.checks[0].detail.contains("no Lifecycle section"), "{}", c.checks[0].detail);
@@ -167,13 +159,13 @@ fn a_stale_or_absent_section_of_the_kind_fails_its_precondition() {
 #[test]
 fn a_dead_man_that_is_waiting_stale_or_unpublished_fails() {
     for a in [
-        assembled(vec![("RoundController/lane", current(true, json!({ "observedGeneration": 0 }))), ("Alarms/all", alarms(true, "waiting", None))]),
-        assembled(vec![("RoundController/lane", current(true, json!({ "observedGeneration": 0 }))), ("Alarms/all", alarms(true, "stale", None))]),
-        assembled(vec![("RoundController/lane", current(true, json!({ "observedGeneration": 0 }))), ("Alarms/all", alarms(false, "fresh", None))]),
-        assembled(vec![("RoundController/lane", current(true, json!({ "observedGeneration": 0 }))), ("Alarms/all", current(true, json!({ "observedGeneration": 0, "deadman": "fresh" })))]),
-        assembled(vec![("RoundController/lane", current(true, json!({ "observedGeneration": 0 })))]),
+        assembled(vec![("DwarfFleet/lane", current(true, json!({ "observedGeneration": 0 }))), ("Alarms/all", alarms(true, "waiting", None))]),
+        assembled(vec![("DwarfFleet/lane", current(true, json!({ "observedGeneration": 0 }))), ("Alarms/all", alarms(true, "stale", None))]),
+        assembled(vec![("DwarfFleet/lane", current(true, json!({ "observedGeneration": 0 }))), ("Alarms/all", alarms(false, "fresh", None))]),
+        assembled(vec![("DwarfFleet/lane", current(true, json!({ "observedGeneration": 0 }))), ("Alarms/all", current(true, json!({ "observedGeneration": 0, "deadman": "fresh" })))]),
+        assembled(vec![("DwarfFleet/lane", current(true, json!({ "observedGeneration": 0 })))]),
     ] {
-        let c = arm_check("RoundController", &list(ALL), &a, &history()).unwrap();
+        let c = arm_check("DwarfFleet", &list(ALL), &a, &history()).unwrap();
         assert_eq!(c.checks[1].name, "dead-man");
         assert!(!c.checks[1].holds, "{}", c.checks[1].detail);
     }
@@ -184,7 +176,7 @@ fn a_heartbeat_whose_last_ping_failed_or_that_is_unrecorded_fails_and_one_delive
     let with = |h: Option<&str>| {
         let mut a = healthy();
         a.current.sections.insert("Alarms/all".into(), alarms(true, "fresh", h));
-        arm_check("RoundController", &list(ALL), &a, &history()).unwrap()
+        arm_check("DwarfFleet", &list(ALL), &a, &history()).unwrap()
     };
     let failed = with(Some("failed"));
     assert_eq!((failed.checks[2].name, failed.checks[2].holds), ("heartbeat", false));
@@ -196,9 +188,9 @@ fn a_heartbeat_whose_last_ping_failed_or_that_is_unrecorded_fails_and_one_delive
 
 #[test]
 fn no_pass_that_shadowed_the_kind_is_no_evidence() {
-    let c = arm_check("RoundController", &list(ALL), &healthy(), &[]).unwrap();
+    let c = arm_check("DwarfFleet", &list(ALL), &healthy(), &[]).unwrap();
     assert_eq!((c.checks[3].name, c.checks[3].holds), ("shadow-passes", false));
-    let c = arm_check("RoundController", &list(ALL), &healthy(), &[record(1, "Lifecycle Alarms", vec![])]).unwrap();
+    let c = arm_check("DwarfFleet", &list(ALL), &healthy(), &[record(1, "Lifecycle Alarms", vec![])]).unwrap();
     assert!(!c.checks[3].holds, "a pass that acted on the kind is not shadow evidence");
 }
 

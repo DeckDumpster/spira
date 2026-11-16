@@ -30,16 +30,16 @@ pub fn lease_guard(
             Err(FAIL)
         }
         (Some(l), _) => {
-            w.err(refusal(label, repo, batch, &l));
+            w.err(refusal(label, batch, &l));
             Err(FAIL)
         }
     }
 }
 
-fn refusal(label: &str, repo: &str, batch: &str, l: &RoundLease) -> String {
+fn refusal(label: &str, batch: &str, l: &RoundLease) -> String {
     let holder = l.holder.as_deref().unwrap_or("a holder no record names");
     format!(
-        "queue.sh {label}: round {batch} is leased by {holder} under token {} with {}s left — refused, nothing changed; only its holder touches it, with --lease-token {}; it is free once the lease lapses, or once `round-controller lease clear --repo {repo} --batch {batch}` proves its holder dead",
+        "queue.sh {label}: round {batch} is leased by {holder} under token {} with {}s left — refused, nothing changed; only its holder touches it, with --lease-token {}; it is free once the lease lapses",
         l.token, l.ttl_left_secs, l.token
     )
 }

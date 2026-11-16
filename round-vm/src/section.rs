@@ -1,6 +1,6 @@
 //! The `VmPool/pool` section: how much of the last hour's certification passes the pool
 //! wasted, and the slots in use. The status core is pure; the store is a port. The section
-//! declares no action: VM capacity has one knob, the round controller's `concurrency`.
+//! declares no action.
 
 use reconciler_engine::goodput_pass::Lc;
 use serde_json::{json, Value};
@@ -44,7 +44,7 @@ pub fn measure(rows: &[Value], now: u64, slots_in_use: Vec<(String, u64)>) -> Re
     }
 }
 
-/// The pool words are the round controller's (`proxmox`, `ec2`).
+/// The pool words: `proxmox` and `ec2`.
 pub fn slots_by_pool(leases: &[crate::schema::Lease]) -> Vec<(String, u64)> {
     let ec2 = leases.iter().filter(|l| crate::ec2::is_ec2_handle(&l.vm.handle)).count() as u64;
     vec![("proxmox".to_string(), leases.len() as u64 - ec2), ("ec2".to_string(), ec2)]

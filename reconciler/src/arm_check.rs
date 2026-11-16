@@ -106,11 +106,11 @@ mod tests {
 
     fn canned(deadman: &str) -> Canned {
         let alarms = json!({ "observedGeneration": 0, "deadman": deadman, "deadman_state": deadman, "heartbeat_state": "unconfigured" });
-        let pass = json!({ "n": 1, "list_rev": 1, "at": NOW, "holder": "inv", "mode": "shadow", "shadow_kinds": ["RoundController"] });
+        let pass = json!({ "n": 1, "list_rev": 1, "at": NOW, "holder": "inv", "mode": "shadow", "shadow_kinds": ["DwarfFleet"] });
         Canned {
             snapshot: json!({
                 "list_rev": 5, "undecodable": [], "intents": [], "knobs": {}, "pass": null,
-                "sections": [section("RoundController", "lane", json!({ "observedGeneration": 0 })), section("Alarms", "all", alarms)],
+                "sections": [section("DwarfFleet", "lane", json!({ "observedGeneration": 0 })), section("Alarms", "all", alarms)],
             }),
             history: json!({ "passes": [pass], "list_rev": 5 }),
             calls: RefCell::new(Vec::new()),
@@ -122,15 +122,15 @@ mod tests {
     }
 
     fn shadow() -> Vec<String> {
-        ["RoundController", "Lifecycle", "Alarms"].map(String::from).to_vec()
+        ["DwarfFleet", "Lifecycle", "Alarms"].map(String::from).to_vec()
     }
 
     #[test]
     fn a_ready_kind_prints_the_one_write_that_arms_it_and_writes_nothing() {
         let lc = canned("fresh");
-        let out = run(&lc, &clock(), &shadow(), &["RoundController".into()]).unwrap();
+        let out = run(&lc, &clock(), &shadow(), &["DwarfFleet".into()]).unwrap();
         assert!(
-            out.ends_with("arm with: spira-config set spira.reconciler_shadow_kinds \"Lifecycle Alarms batch-landed queue-mergeable lc-orphan-in-delivery queue-lock-age flow:velocity:queue flow:round-health\" \"$SPIRA_TOML\"\n"),
+            out.ends_with("arm with: spira-config set spira.reconciler_shadow_kinds \"Lifecycle Alarms fleet\" \"$SPIRA_TOML\"\n"),
             "{out}"
         );
         assert!(out.contains("[ok] sections-fresh") && out.contains("[ok] shadow-passes"), "{out}");
@@ -140,16 +140,16 @@ mod tests {
     #[test]
     fn an_unmet_precondition_refuses_naming_it_with_the_report() {
         let lc = canned("waiting");
-        let e = run(&lc, &clock(), &shadow(), &["RoundController".into()]).unwrap_err();
-        assert!(e.contains("[FAIL] dead-man") && e.ends_with("RoundController is not ready to arm: dead-man"), "{e}");
+        let e = run(&lc, &clock(), &shadow(), &["DwarfFleet".into()]).unwrap_err();
+        assert!(e.contains("[FAIL] dead-man") && e.ends_with("DwarfFleet is not ready to arm: dead-man"), "{e}");
     }
 
     #[test]
     fn disarm_prints_the_reverse_write_without_reading_the_store_and_bad_words_are_usage() {
         let lc = canned("fresh");
-        let armed: Vec<String> = ["Lifecycle", "Alarms", "batch-landed", "queue-mergeable", "lc-orphan-in-delivery", "queue-lock-age"].map(String::from).to_vec();
-        let out = run(&lc, &clock(), &armed, &["RoundController".into(), "--disarm".into()]).unwrap();
-        assert_eq!(out, "disarm with: spira-config set spira.reconciler_shadow_kinds \"Lifecycle Alarms queue-mergeable RoundController\" \"$SPIRA_TOML\"\n");
+        let armed: Vec<String> = ["Lifecycle", "Alarms", "fleet"].map(String::from).to_vec();
+        let out = run(&lc, &clock(), &armed, &["DwarfFleet".into(), "--disarm".into()]).unwrap();
+        assert_eq!(out, "disarm with: spira-config set spira.reconciler_shadow_kinds \"Lifecycle Alarms DwarfFleet\" \"$SPIRA_TOML\"\n");
         assert!(lc.calls.borrow().is_empty());
         assert!(run(&lc, &clock(), &armed, &[]).unwrap_err().starts_with("usage:"));
     }

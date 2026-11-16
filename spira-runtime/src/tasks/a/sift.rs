@@ -1,8 +1,8 @@
 //! # sift — contract
 //!
-//! The pre-round screen, moving from `round-controller sifts` into the scheduler. Pattern P1, family
+//! The pre-round screen, a scheduler task. Pattern P1, family
 //! A of [[scheduler-consolidation-2026-11-03]]. Paths are relative to `spira-releases/current`
-//! (0ef4f0f93); `rs` = `round-controller/src/sifts.rs`, `sl` = `sift/src/lib.rs`, `sg` =
+//! (0ef4f0f93); `rs` = `spira-runtime/src/tasks/a/sift/sifts.rs`, `sl` = `sift/src/lib.rs`, `sg` =
 //! `sift/src/git.rs`.
 //!
 //! ## Tick
@@ -94,8 +94,7 @@
 //! `decide` is `sift::screen` over three adapters on the snapshot: a `Probe` answering from the
 //! probe's git facts, a `Store` on the carried `Sifted` machines (the per-tip verdict cache is
 //! gone: the probe computes each candidate's facts, and decide judges them every tick), and an
-//! `Acts` recording the writes. The pool is `round_controller::sifts::select_pool`, the same
-//! selection the binary's pass makes. The probe is `round_controller::sifts::observe_repo` per
+//! `Acts` recording the writes. The pool is `sifts::select_pool`. The probe is `sifts::observe_repo` per
 //! `queue`/`queue.local` repository: the store over `LcClient`, the open round from the
 //! projection, git for the branch tips, the base fetch and each candidate. A send-back waits in
 //! the carry until its evidence note has landed, so the note precedes the GateRed and a note that
@@ -110,7 +109,8 @@
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 
-use round_controller::sifts;
+mod sifts;
+pub use sifts::{observe_repo, Reads};
 use runtime::event::*;
 use serde::{Deserialize, Serialize};
 use spira_store::lc_call::LcClient;
@@ -147,11 +147,11 @@ pub const UNREGISTERED: &[&str] = &[];
 pub const SHAPE: Shape = Shape { name: NAME, stream: STREAM, tick: TICK, state: STATE, observe: OBSERVE, observe_deadline_ms: OBSERVE_DEADLINE_MS };
 
 /// One SUBMITTED or CERTIFIED row.
-pub use round_controller::sifts::PoolRow;
+pub use sifts::PoolRow;
 /// The git facts of one candidate, computed in the probe so decide does no IO.
-pub use round_controller::sifts::CandidateFacts as Candidate;
+pub use sifts::CandidateFacts as Candidate;
 /// One repository's snapshot.
-pub use round_controller::sifts::RepoFacts as Repo;
+pub use sifts::RepoFacts as Repo;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]

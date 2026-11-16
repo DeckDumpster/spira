@@ -1,5 +1,5 @@
 //! `sim-launch`: the world's `SPIRA_LAUNCH` and `SPIRA_LAUNCH_CTL`, standing where `systemd-run`
-//! and `systemctl` stand for the round controller's launcher. A `systemd-run` call records its
+//! and `systemctl` stand for round-recert's launcher. A `systemd-run` call records its
 //! unit under `run/sim-units/<unit>` and runs the command after the unit options inline in the
 //! world, with the `--setenv` pairs; `systemctl --user is-active <unit>` answers from what it
 //! recorded.

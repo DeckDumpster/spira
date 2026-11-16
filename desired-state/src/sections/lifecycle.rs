@@ -159,7 +159,7 @@ mod tests {
                 "observedAt": "2026-10-31T19:39:58Z", "target_latency": "5m", "max_age": "15m",
             },
             "status": status,
-            "flow": { "consumes": ["round-controller/landed"], "produces": [] },
+            "flow": { "consumes": [], "produces": [] },
             "distance": { "fn": "max(0, 1 - goodput_rate_24h / 150)", "open": 0.05, "close": 0.02 },
         })
     }

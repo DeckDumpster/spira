@@ -2570,7 +2570,7 @@ pub mod edge {
     /// A manager that errs reads as driven: no land is started on a guess; with none, undriven.
     pub fn recert_driven(units: Option<&dyn runtime::units::Units>, batch: &str) -> bool {
         let Some(units) = units else { return false };
-        let bare = release::round_recert::unit_for(batch, None);
+        let bare = release::round_recert::unit_for(batch);
         [format!("{bare}.service"), format!("{bare}-*.service")].iter().any(|glob| units.list(glob).map_or(true, |l| super::recert_live(&l)))
     }
 
