@@ -256,6 +256,29 @@ pub fn deny_list(conn: &Connection, at: i64) -> String {
     try_deny_list(conn, at).unwrap_or_else(|e| panic!("deny list unreadable: {e}"))
 }
 
+/// A consistent copy of the open file at `out`, written to `<out>.tmp` and renamed. Returns bytes and test_state rows.
+pub fn backup(conn: &Connection, out: &str) -> Result<(u64, i64), String> {
+    let tmp = format!("{out}.tmp");
+    let _ = std::fs::remove_file(&tmp);
+    let copied: Result<i64, String> = (|| {
+        let mut dst = Connection::open(&tmp).map_err(sql)?;
+        rusqlite::backup::Backup::new(conn, &mut dst)
+            .and_then(|b| b.run_to_completion(256, std::time::Duration::from_millis(10), None))
+            .map_err(sql)?;
+        let rows = scalar(&dst, "SELECT count(*) FROM test_state")?;
+        dst.close().map_err(|(_, e)| sql(e))?;
+        Ok(rows)
+    })();
+    let rows = copied.inspect_err(|_| {
+        let _ = std::fs::remove_file(&tmp);
+    })?;
+    std::fs::rename(&tmp, out).map_err(|e| format!("cannot rename {tmp} to {out}: {e}"))?;
+    let bytes = std::fs::metadata(out)
+        .map_err(|e| format!("cannot stat {out}: {e}"))?
+        .len();
+    Ok((bytes, rows))
+}
+
 pub fn digest(text: &str) -> String {
     let hex: String = Sha256::digest(text.as_bytes())
         .iter()

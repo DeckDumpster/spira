@@ -32,6 +32,10 @@
 # No destination, an unreadable stamp or an age beyond the limit is red, never a skip — a
 # store that was never backed up must look different from one that is.
 #
+# The test registry's SQLite file is copied by `test-registry backup` and put once to
+# <url>/archive/test-registry-<stamp>.sqlite by `spira-lc admin-archive-put`; its stamp and age
+# are read like a database's. A restore is one file copied back (docs/operating.md).
+#
 # The control store is not shipped here: lc-serve ships it to revlog/ and snapshot/ under the same
 # URL, and the drill restores its local copies with `spira-lc admin-drill`. Retention is the
 # bucket's lifecycle rule, which must expire revision runs no sooner than snapshots and must
@@ -122,6 +126,27 @@ _lcb_run_db_locked() {
     echo "lc-backup: uploaded $db at $head to $SPIRA_LC_BACKUP_URL: ${out#admin-dolt-ship: }"
 }
 
+_LCB_REGISTRY=test-registry
+
+# A consistent copy of the test registry, put once under archive/; the stamp names the uploaded key.
+_lcb_run_registry() {
+    local dir stamp file key out f newest
+    dir="$(_lcb_sync_dir "$_LCB_REGISTRY")"
+    mkdir -p "$dir" || { echo "lc-backup: $_LCB_REGISTRY: cannot make $dir" >&2; return 1; }
+    stamp="$(date -u +%Y%m%dT%H%M%S%3NZ)"
+    file="$dir/$stamp.sqlite"; key="$_LCB_REGISTRY-$stamp.sqlite"
+    out="$(test-registry backup --out "$file" 2>&1)" \
+        || { echo "lc-backup: $_LCB_REGISTRY: backup step failed: $out" >&2; return 1; }
+    out="$(spira-lc admin-archive-put --file "$file" --key "$key" 2>&1)" \
+        || { echo "lc-backup: $_LCB_REGISTRY: upload step failed: $out" >&2; return 1; }
+    { printf '%s %s -\n' "$(date +%s)" "$key" > "$(_lcb_stamp "$_LCB_REGISTRY").tmp" \
+        && mv "$(_lcb_stamp "$_LCB_REGISTRY").tmp" "$(_lcb_stamp "$_LCB_REGISTRY")"; } \
+        || { echo "lc-backup: $_LCB_REGISTRY: stamp step failed: uploaded as $key but the stamp cannot be written" >&2; return 1; }
+    newest="$file"
+    for f in "$dir"/*.sqlite "$dir"/*.sqlite.tmp; do [ "$f" = "$newest" ] || rm -f "$f"; done
+    echo "lc-backup: uploaded $_LCB_REGISTRY as $key: $out"
+}
+
 cmd_run() {
     _lcb_refuse_unconfigured || return 1
     _lcb_refuse_same_disk || return 1
@@ -129,6 +154,7 @@ cmd_run() {
     mkdir -p "$SPIRA_RUN/maintenance" || return 1
     exec 8>"$mlock" && flock -n 8 || { echo "lc-backup: another run holds $mlock" >&2; return 1; }
     for db in $(_lcb_dbs); do _lcb_run_db "$db" || rc=1; done
+    _lcb_run_registry || rc=1
     return "$rc"
 }
 
@@ -177,6 +203,8 @@ _lcb_measure() {
         out="$(_lcb_measure_db "$db" ${now:+"$now"})" || { echo "$db: unreadable"; rc=1; continue; }
         echo "$db: $out"
     done
+    out="$(_lcb_measure_db "$_LCB_REGISTRY" ${now:+"$now"})" || { echo "$_LCB_REGISTRY: unreadable"; return 1; }
+    echo "$_LCB_REGISTRY: $out"
     [ "$rc" = 0 ] || return 1
     return 0
 }

@@ -38,6 +38,7 @@ const VERBS: &[(&str, &[&str], &[&str])] = &[
     ("history", &["test"], &[]),
     ("deny-list", &["at"], &[]),
     ("clear-landed", &["bead", "actor"], &[]),
+    ("backup", &["out"], &[]),
 ];
 
 const REPEATABLE: &[(&str, &str)] = &[("clear-landed", "bead")];
@@ -200,6 +201,9 @@ pub fn run(args: &[String], now: i64, cfg: Cfg, open: Opener) -> Outcome {
         Ok(_) => return fail(3, j, format!("{PATH_KEY} (spira.test_registry_path) is empty: the registry has no file; refusing")),
         Err(e) => return fail(3, j, format!("cannot read {PATH_KEY}: {e}")),
     };
+    if a.verb == "backup" && !std::path::Path::new(&path).exists() {
+        return fail(3, j, format!("backup: {path} does not exist: there is nothing to copy, and opening it would create an empty registry"));
+    }
     let conn = match open(&path) {
         Ok(c) => c,
         Err(e) => return fail(3, j, e),
@@ -300,6 +304,15 @@ pub fn run(args: &[String], now: i64, cfg: Cfg, open: Opener) -> Outcome {
                 out(0, j, text, json!({"ok": true, "history": h}))
             }
             Err(e) => refused(e),
+        },
+        "backup" => match store::backup(&conn, get("out")) {
+            Ok((bytes, rows)) => out(
+                0,
+                j,
+                format!("{} {bytes} {rows}", get("out")),
+                json!({"ok": true, "out": get("out"), "bytes": bytes, "rows": rows}),
+            ),
+            Err(e) => fail(3, j, e),
         },
         _ => {
             let at = at.unwrap_or(now);
@@ -520,6 +533,54 @@ mod tests {
             "{}",
             o.stdout
         );
+    }
+
+    #[test]
+    fn backup_writes_a_file_that_opens_with_the_same_rows() {
+        let dir = testkit::TempDir::new("test-registry-backup");
+        let file: &'static str =
+            Box::leak(dir.join("r.sqlite").display().to_string().into_boxed_str());
+        let c = cfg_with(file);
+        let real = |p: &str| store::open(p);
+        for t in ["suite:a.sh", "suite:b.sh"] {
+            let line = format!("disable --test {t} --bead sp-a --reason r --actor a --until 5000");
+            assert_eq!(run(&argv(&line), 1000, &c, &real).code, 0);
+        }
+        let out = dir.join("copy.sqlite").display().to_string();
+        let o = run(&argv(&format!("backup --out {out}")), 1000, &c, &real);
+        assert_eq!(o.code, 0, "{}", o.stderr);
+        let fields: Vec<&str> = o.stdout.split(' ').collect();
+        assert_eq!(fields[0], out);
+        assert_eq!(fields[2], "2", "{}", o.stdout);
+        assert!(fields[1].parse::<u64>().unwrap() > 0);
+        let copy = Connection::open(&out).unwrap();
+        let names: Vec<String> = store::list(&copy)
+            .unwrap()
+            .into_iter()
+            .map(|r| r.test)
+            .collect();
+        assert_eq!(names.len(), 2, "{names:?}");
+        assert!(!std::path::Path::new(&format!("{out}.tmp")).exists());
+    }
+
+    #[test]
+    fn backup_of_a_registry_that_does_not_exist_refuses_and_creates_nothing() {
+        let dir = testkit::TempDir::new("test-registry-backup-missing");
+        let file: &'static str = Box::leak(
+            dir.join("absent.sqlite")
+                .display()
+                .to_string()
+                .into_boxed_str(),
+        );
+        let out = dir.join("copy.sqlite").display().to_string();
+        let o = run(
+            &argv(&format!("backup --out {out}")),
+            1,
+            &cfg_with(file),
+            &|p| store::open(p),
+        );
+        assert_eq!(o.code, 3, "{}", o.stderr);
+        assert!(!std::path::Path::new(file).exists() && !std::path::Path::new(&out).exists());
     }
 
     #[test]

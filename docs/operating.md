@@ -189,4 +189,17 @@ is the backup). The backup key can only upload, so a restore runs under your own
 
 The bucket's lifecycle rule may expire old `manifests/` but must never expire `files/`: a file
 is uploaded once and every later manifest may still name it. `lc-backup.sh drill` proves the
-same path once a day against the local backup dir.
+same path once a day against the local backup dir. Nor may it expire `archive/`: the newest
+`archive/test-registry-*` object is the only restore source for the test registry.
+
+## Restoring the test registry from its off-box backup
+
+`lc-backup.sh run` also puts a consistent copy of the test registry file to
+`<prefix>/archive/test-registry-<UTC stamp>.sqlite` and stamps it; `lc-backup.sh age` reports
+`test-registry: ok|stale|never` beside the databases. A restore is one file: stop every writer of
+the registry, copy the newest `archive/test-registry-*.sqlite` (keys sort by stamp) over
+`spira.test_registry_path`, remove any `-wal` and `-shm` files beside it, and start the writers.
+Like the databases, it runs under your own identity: the backup key can only upload.
+
+A box that has not set `spira.test_registry_path` has no registry file to copy: `run` exits 1 and
+`age` reports `test-registry: never`, the same as a database that was never backed up.
