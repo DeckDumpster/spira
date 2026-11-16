@@ -84,10 +84,14 @@ fn modeled(path: &str, opts: Options, build_ms: u64) -> Result<Served, String> {
         return Err(format!("no control store at {path}"));
     }
     let steady = opts.max_read_ms;
+    let began = std::time::Instant::now();
     let backend = SqliteBackend::open(Path::new(path), Options { max_read_ms: build_ms.max(steady), ..opts })
         .map_err(|e| format!("{path}: {e}"))?;
+    eprintln!("{}", crate::serve::startup_line("read-model open-sqlite", began.elapsed(), crate::serve::wall_ms()));
+    let built = std::time::Instant::now();
     let backend = Modeled::open(backend, UNMODELED, MODEL_WINDOW)
         .map_err(|e| format!("{path}: the read model: {e}"))?;
+    eprintln!("{}", crate::serve::startup_line("read-model build-from-rows", built.elapsed(), crate::serve::wall_ms()));
     backend.inner().set_max_read_ms(steady);
     Ok(backend)
 }
