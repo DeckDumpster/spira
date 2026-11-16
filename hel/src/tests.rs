@@ -420,7 +420,7 @@ mod resume {
         s.run(&[crate::ports::Repo { name: "spira".into(), root: Some(root), forge_queued: false }]);
         let out = f.out.borrow().clone();
         assert_eq!(out.len(), 3, "{out:?}");
-        assert!(out[2].starts_with("hel: 2 branches — ") && out[2].contains("1 HELD") && out[2].ends_with("0 UNJUDGED"), "{out:?}");
+        assert_eq!(out[2], "hel: 2 branches — 1 WOULD, 0 KEEP, 1 HELD, 0 SKIP, 0 UNJUDGED", "{out:?}");
     }
 
     #[test]
