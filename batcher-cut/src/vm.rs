@@ -1090,6 +1090,10 @@ impl RoundRunner for VmRunner<'_> {
         reds
     }
 
+    fn prior_build_output(&mut self) -> Option<String> {
+        fs::read_to_string(self.prior.as_deref()?.join("workspace-build.out")).ok()
+    }
+
     fn build_output(&mut self) -> String {
         self.stderr_text()
     }
@@ -2052,6 +2056,19 @@ mod abandon_tests {
         assert!(r.prior_red_suites().is_empty(), "no prior pass: the corpus runs");
         let mut r = r.after_pass(Some(d.path().to_path_buf()));
         assert_eq!(r.prior_red_suites(), vec!["b.sh".to_string(), "c.sh".to_string()]);
+    }
+
+    #[test]
+    fn an_attribution_after_a_build_red_pass_reads_the_compiler_output_that_pass_kept() {
+        let d = testkit::TempDir::new("vm-prior-build");
+        let env = lifecycle_tests_env(d.path());
+        let repo = repo(d.path());
+        let mut r = VmRunner::new(&env, &repo, d.path(), "base", "r1", BTreeMap::new()).unwrap();
+        assert!(r.prior_build_output().is_none(), "no prior pass");
+        let mut r = r.after_pass(Some(d.path().to_path_buf()));
+        assert!(r.prior_build_output().is_none(), "the pass kept no build output");
+        fs::write(d.path().join("workspace-build.out"), "error[E0004]: x\n").unwrap();
+        assert_eq!(r.prior_build_output().as_deref(), Some("error[E0004]: x\n"));
     }
 
     #[test]
