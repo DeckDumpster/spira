@@ -1128,7 +1128,7 @@ pub fn forced_suites(
     OK
 }
 
-/// The three places a red outlives the row, then the bead's own account of why it was withdrawn.
+/// The places a red outlives the row, then the bead's own account of why it was withdrawn.
 fn withdraw_red(
     w: &World,
     c: &Ctx,
