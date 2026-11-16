@@ -1792,3 +1792,21 @@ after it. A `batch-job: <why>` comment on the line or the one above exempts a tr
 Prompt files (`.md`) are not scanned; the serve side below is what names a dwarf's tool call.
 
 **Refuses** (exit 3): no file in scope.
+
+## Rule `registry-readers`
+
+**Intent.** The crates whose sources read the config registry or delta are exactly
+`suite_select::readers::REGISTRY_READERS`, so a registry edit selects every crate that reads it.
+Replaces the gate unit test `registry_readers_are_every_crate_whose_tests_read_the_registry`,
+which walked 26 MB of source at opt-level 0 on every gate.
+
+**Scope.** Tracked `.rs` files and the root `Cargo.toml`; each file belongs to the workspace
+member that is its longest directory prefix, and that member's `[package] name` is the crate.
+
+**Violation.** A file reads the registry when its comment-stripped text has a line holding
+`CARGO_MANIFEST_DIR` and `spira/conf.d` or `spira/config-delta`, or holds `CARGO_MANIFEST_DIR` and
+a line calling `config_delta::load(`. One finding per reading crate absent from the list, at the
+file and line; one per listed crate that reads nothing, at `suite-select/src/readers.rs`.
+
+**Refuses** (exit 3): no workspace member or no `.rs` file in scope. Prints `checked <n> crates`.
+No allow file. Base-relative: `--diff` leaves its findings whole.
