@@ -1399,7 +1399,7 @@ fn in_pilgrim_world() -> bool {
 }
 
 fn socket_is_a_pilgrim_world(socket: &str) -> bool {
-    !socket.is_empty() && std::path::Path::new(&spira_store::lc_call::pilgrim_world_marker(socket)).is_file()
+    !socket.is_empty() && spira_store::lc_call::socket_in_sim_world(socket) && std::path::Path::new(&spira_store::lc_call::pilgrim_world_marker(socket)).is_file()
 }
 
 /// May `actor` run `op`? `Err` is the refusal to answer with.
@@ -2821,8 +2821,40 @@ mod tests {
         assert!(!super::socket_is_a_pilgrim_world(""));
         assert_eq!(gate_in("file", &file, || super::socket_is_a_pilgrim_world(&socket)).unwrap_err().0, REFUSED);
         std::fs::write(spira_store::lc_call::pilgrim_world_marker(&socket), "").unwrap();
+        assert!(!super::socket_is_a_pilgrim_world(&socket), "a marker beside a socket outside any sim world is not honoured");
+        assert_eq!(gate_in("file", &file, || super::socket_is_a_pilgrim_world(&socket)).unwrap_err().0, REFUSED);
+        std::fs::write(t.join(spira_store::lc_call::SIM_WORLD_MARKER), "").unwrap();
         assert!(super::socket_is_a_pilgrim_world(&socket));
         assert!(gate_in("file", &file, || super::socket_is_a_pilgrim_world(&socket)).is_ok());
+    }
+
+    #[test]
+    fn the_pilgrims_file_plans_a_bead_and_its_lifecycle_row_in_the_named_repo() {
+        let mut c = call(&["a defect", "--for", "builder", "--repo", "spira", "--body-file", "-"], "pilgrim");
+        c.stdin = Some("body".into());
+        assert_eq!(
+            plan("file", "-", &c).unwrap(),
+            vec![
+                Step::Tool { program: "bead.sh", args: v(&["file", "a defect", "--for", "builder", "--repo", "spira", "--body-file", "-"]), stdin: Some("body".into()) },
+                Step::CreateRow { repo: s("spira") },
+            ]
+        );
+        assert!(plan("file", "-", &call(&["a defect", "--for", "builder"], "pilgrim")).is_err(), "--for needs --repo");
+    }
+
+    #[test]
+    fn the_pilgrims_dep_add_links_a_blocks_edge_through_bead_sh() {
+        assert_eq!(plan("dep-add", "-", &call(&["sp-a1", "sp-b2"], "pilgrim")).unwrap(), vec![tool("bead.sh", &["dep", "add", "sp-a1", "sp-b2"])]);
+        assert!(plan("dep-add", "-", &call(&["sp-a1"], "pilgrim")).is_err(), "a second bead is required");
+    }
+
+    #[test]
+    fn the_pilgrims_close_other_closes_through_the_groomer_with_its_evidence() {
+        assert_eq!(
+            plan("close-other", "-", &call(&["sp-b2", "--evidence", "walked"], "pilgrim")).unwrap(),
+            vec![tool("groomer", &["close", "sp-b2", "--evidence", "walked"])]
+        );
+        assert!(plan("close-other", "-", &call(&["sp-b2"], "pilgrim")).is_err(), "evidence is required");
     }
 
     #[test]

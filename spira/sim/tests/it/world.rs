@@ -162,6 +162,7 @@ fn a_pilgrim_world_is_marked_beside_its_own_socket_and_a_plain_world_is_not() {
     let t = testkit::TempDir::new("simw");
     let dir = t.join("w");
     std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join(spira_sim::world::MARKER), "").unwrap();
     let marker = spira_store::lc_call::pilgrim_world_marker(&spira_sim::world::lc_socket(&dir).display().to_string());
     assert!(!std::path::Path::new(&marker).exists());
     spira_sim::world::make_pilgrim_world(&dir).unwrap();

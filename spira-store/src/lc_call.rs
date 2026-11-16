@@ -19,6 +19,15 @@ pub fn pilgrim_world_marker(socket: &str) -> String {
     format!("{socket}.pilgrim-world")
 }
 
+/// The file a sim world's directory carries; only a socket inside such a directory may be marked
+/// a pilgrim world.
+pub const SIM_WORLD_MARKER: &str = ".sim-world";
+
+pub fn socket_in_sim_world(socket: &str) -> bool {
+    let path = std::path::Path::new(socket);
+    path.is_absolute() && path.parent().is_some_and(|dir| dir.join(SIM_WORLD_MARKER).is_file())
+}
+
 /// spira-lc's exit code for a request the machine looked at and refused.
 pub const REFUSED: i32 = 3;
 /// spira-lc's exit code for "cannot tell": the machine could not answer.
@@ -454,6 +463,14 @@ pub fn run_bounded(mut cmd: Command, limit: Duration) -> (i32, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_relative_socket_is_never_inside_a_sim_world_whatever_the_cwd() {
+        let dir = testkit::TempDir::new("lc-call-relative");
+        std::fs::write(dir.join(SIM_WORLD_MARKER), "").unwrap();
+        assert!(socket_in_sim_world(dir.join("sock").to_str().unwrap()), "the absolute socket beside the marker is inside");
+        assert!(!socket_in_sim_world("sock"), "a bare name resolves against the cwd, so it is refused");
+    }
 
     /// A service that drops its first `drops` connections after reading the request (a restart
     /// killing it mid-flight), then answers every later one. Returns the socket and the count
