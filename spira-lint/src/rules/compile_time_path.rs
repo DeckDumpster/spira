@@ -40,7 +40,7 @@ fn include_args(code: &[u8]) -> Vec<(usize, usize)> {
         .find_iter(code)
         .map(|m| {
             let mut depth = 1usize;
-            let mut end = code.len();
+            let mut end = m.end();
             for (i, &b) in code.iter().enumerate().skip(m.end()) {
                 match b {
                     b'(' => depth += 1,
@@ -175,6 +175,46 @@ mod tests {
         let got = run("const A: &str = include_str!(\"a.txt\");\nconst B: &str = env!(\"CARGO_MANIFEST_DIR\");\n");
         assert_eq!(got.len(), 1);
         assert!(got[0].contains(":2:"), "{got:?}");
+    }
+
+    #[test]
+    fn manifest_dir_message_names_every_run_time_door() {
+        let m = &run("fn f() { env!(\"CARGO_MANIFEST_DIR\"); }\n")[0];
+        for door in ["locate_home_for_process()", "checkout_root_for_process()", "testkit::manifest_dir()"] {
+            assert!(m.contains(door), "{m}");
+        }
+    }
+
+    #[test]
+    fn a_finding_deep_in_a_file_names_its_own_line() {
+        let got = run("// c\nconst A: &str = include_bytes!(\"a\");\n\n// env!(\"OUT_DIR\")\nfn f() { env!(\"OUT_DIR\"); }\n");
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert!(got[0].contains(":5:"), "{got:?}");
+    }
+
+    #[test]
+    fn an_unbalanced_include_does_not_exempt_the_rest_of_the_file() {
+        let got = run("const A: &str = include_str!(\"a.txt\";\nconst B: &str = env!(\"CARGO_MANIFEST_DIR\");\n");
+        assert_eq!(got.len(), 1, "{got:?}");
+    }
+
+    #[test]
+    fn a_string_with_a_paren_inside_an_include_does_not_end_the_exemption() {
+        assert_eq!(run("const A: &str = include_str!(concat!(\")\", env!(\"OUT_DIR\")));\n"), Vec::<String>::new());
+    }
+
+    #[test]
+    fn own_source_and_target_are_not_scanned_and_checked_counts_the_rest() {
+        let t = TempDir::new("ctp-scope");
+        let bad = "fn f() { env!(\"OUT_DIR\"); }\n";
+        for p in [OWN_SOURCE, "target/x.rs", "b/src/lib.rs"] {
+            t.write(p, bad);
+        }
+        let tree = Tree::from_paths(t.path(), [OWN_SOURCE, "target/x.rs", "b/src/lib.rs"], std::iter::empty::<&str>());
+        let rule = CompileTimePath::default();
+        let got = rule.check(&tree).unwrap();
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert_eq!(rule.checked(), Some((1, "rust files".to_string())));
     }
 
     #[test]
