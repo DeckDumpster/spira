@@ -133,7 +133,6 @@ pub fn normalize_mtimes(tree: &Path, built_from: &str) -> Result<usize, String> 
 
 pub const WARM_FROM: &str = "gate: build directory warm from ";
 pub const COLD_OPEN: &str = "building cold (";
-pub const BUILDER_IN: &str = "gate: build in ";
 
 /// The gate's side of adoption: fill `dest`, then age `tree`'s files. A failure empties `dest`.
 /// The line for the trial's log.
@@ -176,7 +175,7 @@ pub fn bound(root: &Path, cap_bytes: u64) -> String {
 /// the pool is then held under `cap_mib`. The line for the gate's log when something was donated.
 pub fn donate_tree(tree: &Path, cap_mib: u64) -> Option<String> {
     let dest = fs::read_link(tree.join("target").join(BUILD_DIR)).ok()?;
-    let root = dest.parent().and_then(Path::parent).filter(|_| !crate::target::is_warm(&dest) && !crate::target::is_pooled(&dest))?;
+    let root = dest.parent().and_then(Path::parent).filter(|_| !crate::target::is_warm(&dest))?;
     let out = Command::new("git").arg("-C").arg(tree).args(["rev-parse", "HEAD"]).output(); // batch-job: local rev-parse in the gate tree
     let commit = out.ok().filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
     donate(root, &dest, &commit).then(|| bound(root, cap_mib << 20))
