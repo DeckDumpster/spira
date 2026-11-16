@@ -1012,24 +1012,24 @@ mod tests {
             (
                 &["spira/conf.d/SPIRA_TASK_MODES"],
                 Unit {
-                    touched: vec!["gate".into(), "queue".into(), "release".into()],
-                    crates: vec!["gate".into(), "queue".into(), "release".into()],
+                    touched: vec!["gate".into(), "queue".into(), "release".into(), "spira-config".into()],
+                    crates: vec!["gate".into(), "queue".into(), "release".into(), "spira-config".into()],
                     targets: Targets::default(),
                 },
             ),
             (
                 &["spira/config-delta.d/sp-x.toml", "spira/config-delta.toml"],
                 Unit {
-                    touched: vec!["gate".into(), "queue".into(), "release".into()],
-                    crates: vec!["gate".into(), "queue".into(), "release".into()],
+                    touched: vec!["gate".into(), "queue".into(), "release".into(), "spira-config".into()],
+                    crates: vec!["gate".into(), "queue".into(), "release".into(), "spira-config".into()],
                     targets: Targets::default(),
                 },
             ),
             (
                 &["spira/conf.d/X", "gate/src/x.rs"],
                 Unit {
-                    touched: vec!["gate".into(), "queue".into(), "release".into()],
-                    crates: vec!["gate".into(), "queue".into(), "release".into()],
+                    touched: vec!["gate".into(), "queue".into(), "release".into(), "spira-config".into()],
+                    crates: vec!["gate".into(), "queue".into(), "release".into(), "spira-config".into()],
                     targets: Targets::default(),
                 },
             ),
@@ -1043,16 +1043,16 @@ mod tests {
     #[test]
     fn a_registry_edit_adds_the_readers_after_the_dependents_expansion_in_both_modes() {
         for mode in [GateMode::Unit, GateMode::Fences] {
-            assert_eq!(crates(&unit(mode, &["spira/conf.d/X"])), v(&["gate", "queue", "release"]), "{mode:?}");
+            assert_eq!(crates(&unit(mode, &["spira/conf.d/X"])), v(&["gate", "queue", "release", "spira-config"]), "{mode:?}");
             assert_eq!(
                 crates(&unit(mode, &["spira/conf.d/X", "dwarf/src/x.rs"])),
-                v(&["dwarf", "gate", "queue", "release"]),
+                v(&["dwarf", "gate", "queue", "release", "spira-config"]),
                 "{mode:?}"
             );
         }
         assert_eq!(
             crates(&unit(GateMode::Unit, &["spira/conf.d/X", "queue/src/x.rs"])),
-            v(&["gate", "landing-pass", "queue", "release"])
+            v(&["gate", "landing-pass", "queue", "release", "spira-config"])
         );
     }
 
@@ -1072,7 +1072,7 @@ mod tests {
             {"id":"c","name":"release","manifest_path":"/t/release/Cargo.toml","dependencies":[]}]}"#;
         let raw = b":100644 100644 aaa bbb M\0spira/conf.d/SPIRA_TASK_MODES\0";
         for transitive in [false, true] {
-            assert_eq!(select_crates(raw, json, transitive).unwrap(), v(&["queue", "release"]));
+            assert_eq!(select_crates(raw, json, transitive).unwrap(), v(&["queue", "release", "spira-config"]));
         }
     }
 

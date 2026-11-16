@@ -226,7 +226,7 @@ mod tests {
         let tree = Tree::from_paths(t.path(), [ROOT, "w/src/lib.rs"], std::iter::empty::<&str>());
         let m = messages(&tree);
         assert!(!m.iter().any(|x| x.contains("watchdog reads") || x.contains("names watchdog")), "{m:?}");
-        assert!(m.iter().any(|x| x.contains("names gate")), "{m:?}");
+        assert!(m.iter().any(|x| x.contains("names bead")), "{m:?}");
     }
 
     #[test]
