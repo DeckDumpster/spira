@@ -760,3 +760,4 @@ runtime_gh_closeout_secs
 test_registry_path
 test_registry_hold_secs
 gate_build_lease_wait_secs
+test_deny_list

@@ -3,6 +3,7 @@
 //! graph and the mode, and gets back the phases to run.
 
 use spira_config::GateMode;
+use spira_config::unit_tier as tier;
 use std::collections::{BTreeSet, HashMap};
 
 /// One changed path between the landing ref and the tree under test.
@@ -642,11 +643,13 @@ pub fn unit_build_words(crates: &[String]) -> Vec<String> {
 /// Where the unit phase's nextest config lives, relative to the trial tree.
 pub const NEXTEST_CONFIG: &str = "target/gate-unit-nextest.toml";
 
+/// Where the trial's deny list is written, relative to the trial tree.
+pub const DENY_LIST: &str = "target/gate-deny-list";
+
 /// The test phase's commands in the order they run, each over `crates`: the unit tier, the
 /// integration targets, the doc-tests ([`spira_config::unit_tier`]). A tier none of the selected
 /// crates has a target for is absent, since cargo refuses a flag no selected crate satisfies.
-pub fn unit_test_commands(crates: &[String], targets: Targets) -> Vec<String> {
-    use spira_config::unit_tier as tier;
+pub fn unit_test_commands(crates: &[String], targets: Targets, deny: &tier::DenyList) -> Vec<String> {
     let sel = pkgs(crates);
     let sel = sel.trim();
     let mut cmds = Vec::new();
@@ -655,7 +658,7 @@ pub fn unit_test_commands(crates: &[String], targets: Targets) -> Vec<String> {
         cmds.push(format!("cargo {}", tier::unit_words(NEXTEST_CONFIG, None, sel, filter)));
     }
     if targets.test {
-        cmds.push(format!("cargo {}", tier::integration_words(None, sel)));
+        cmds.push(format!("cargo {}{}", tier::integration_words(None, sel), deny.integration_skips()));
     }
     if targets.lib {
         cmds.push(format!("cargo {}", tier::doc_words(None, sel)));
@@ -666,11 +669,11 @@ pub fn unit_test_commands(crates: &[String], targets: Targets) -> Vec<String> {
 /// The unit phases' commands, in order: build ([`unit_build_words`]), then the tests
 /// ([`unit_test_commands`]): each runs whatever the one before it did, the exit is the first
 /// non-zero status, and a missing `cargo-nextest` is 75, could not judge, never a red branch.
-pub fn unit_commands(crates: &[String], targets: Targets, jobs: u64) -> [(&'static str, String); 2] {
+pub fn unit_commands(crates: &[String], targets: Targets, jobs: u64, deny: &tier::DenyList) -> [(&'static str, String); 2] {
     let mut test = String::from(
         "cargo nextest --version >/dev/null 2>&1 || { echo 'gate: cargo-nextest is not installed on this host — refusing to judge unit tests without it'; exit 75; }; _g_rc=0",
     );
-    for c in unit_test_commands(crates, targets) {
+    for c in unit_test_commands(crates, targets, deny) {
         test.push_str(&format!("; {c}; _g_r=$?; [ \"$_g_rc\" -ne 0 ] || _g_rc=$_g_r"));
     }
     test.push_str("; exit $_g_rc");
@@ -1285,27 +1288,27 @@ mod tests {
 
     #[test]
     fn the_unit_build_and_test_name_only_the_changed_crates() {
-        let [b, t] = unit_commands(&["spira-runtime".into()], ALL, 4);
+        let [b, t] = unit_commands(&["spira-runtime".into()], ALL, 4, &Default::default());
         assert!(!b.1.contains("--workspace") && !b.1.contains("&&"), "{}", b.1);
         assert!(b.1.ends_with(" --features integration -p spira-runtime"), "{}", b.1);
         assert!(!t.1.contains("--workspace") && !t.1.contains("spira-config"), "{}", t.1);
-        let [b, _] = unit_commands(&["spira-sim".into()], ALL, 4);
+        let [b, _] = unit_commands(&["spira-sim".into()], ALL, 4, &Default::default());
         assert!(b.1.ends_with(" --features integration -p spira-sim"), "{}", b.1);
     }
 
     #[test]
     fn the_build_compiles_the_test_harnesses_once_and_the_test_phase_reuses_them() {
-        let [b, _] = unit_commands(&["gate".into(), "queue".into()], ALL, 4);
+        let [b, _] = unit_commands(&["gate".into(), "queue".into()], ALL, 4, &Default::default());
         assert!(!b.1.contains("--all-targets"), "{}", b.1);
         let build = b.1.strip_prefix("CARGO_BUILD_JOBS=4 ").unwrap();
         let sel = ["gate".to_string(), "queue".to_string()];
-        let [unit, integ, doc] = three(&unit_test_commands(&sel, ALL));
+        let [unit, integ, doc] = three(&unit_test_commands(&sel, ALL, &Default::default()));
         for tests in [&unit, &integ, &doc] {
             assert!(tests.contains(" --features integration -p gate -p queue"), "{tests}");
         }
         assert_eq!(build, format!("cargo {}", spira_config::unit_tier::build_words(None, "-p gate -p queue").replacen("--no-run", "--no-run --timings", 1)));
         let sel = ["batcher-cut".to_string()];
-        let [b, _] = unit_commands(&sel, ALL, 4);
+        let [b, _] = unit_commands(&sel, ALL, 4, &Default::default());
         assert_eq!(b.1.strip_prefix("CARGO_BUILD_JOBS=4 ").unwrap(), format!("cargo {}", spira_config::unit_tier::build_words(None, "-p batcher-cut -p gate").replacen("--no-run", "--no-run --timings", 1)), "only the extra built package differs");
     }
 
@@ -1317,7 +1320,7 @@ mod tests {
     fn the_gate_runs_the_rounds_tier_commands_differing_only_in_the_package_selection() {
         use spira_config::unit_tier as t;
         let sel = ["gate".to_string(), "queue".to_string()];
-        let [unit, integ, doc] = three(&unit_test_commands(&sel, ALL));
+        let [unit, integ, doc] = three(&unit_test_commands(&sel, ALL, &Default::default()));
         let w = |c: &str| c.replace("-p gate -p queue", "--workspace");
         assert_eq!(w(&unit), format!("cargo {}", t::unit_words(NEXTEST_CONFIG, None, "--workspace", t::LIB_BINS)));
         assert_eq!(w(&integ), format!("cargo {}", t::integration_words(None, "--workspace")));
@@ -1326,10 +1329,10 @@ mod tests {
 
     #[test]
     fn no_unit_command_names_a_thread_count_or_a_job_width_on_the_tests() {
-        for (_, c) in unit_commands(&["gate".into(), "queue".into()], ALL, 4) {
+        for (_, c) in unit_commands(&["gate".into(), "queue".into()], ALL, 4, &Default::default()) {
             assert!(!c.contains("--test-threads"), "{c}");
         }
-        let [_, t] = unit_commands(&["gate".into()], ALL, 4);
+        let [_, t] = unit_commands(&["gate".into()], ALL, 4, &Default::default());
         assert!(!t.1.contains(" -j ") && !t.1.contains("-j4"), "{}", t.1);
     }
 
@@ -1337,12 +1340,12 @@ mod tests {
     fn a_tier_no_selected_crate_has_a_target_for_is_not_run() {
         let sel = ["spira-claim".to_string()];
         let bins = Targets { lib: false, bin: true, test: false };
-        let cmds = unit_test_commands(&sel, bins);
+        let cmds = unit_test_commands(&sel, bins, &Default::default());
         assert_eq!(cmds.len(), 1, "{cmds:?}");
         assert!(cmds[0].ends_with(" -p spira-claim --bins") && !cmds[0].contains("--lib"), "{cmds:?}");
-        assert!(unit_test_commands(&sel, Targets::default()).is_empty());
+        assert!(unit_test_commands(&sel, Targets::default(), &Default::default()).is_empty());
         let lib = Targets { lib: true, bin: false, test: false };
-        let cmds = unit_test_commands(&sel, lib);
+        let cmds = unit_test_commands(&sel, lib, &Default::default());
         assert!(cmds[0].ends_with(" --lib --bins") && cmds[1].ends_with(" --doc") && cmds.len() == 2, "{cmds:?}");
     }
 
@@ -1370,7 +1373,7 @@ mod tests {
         let bin = tmp.path().join("bin");
         std::fs::create_dir_all(&bin).unwrap();
         testkit::write_exe(bin.join("cargo"), "#!/bin/bash\n[ \"$1\" = nextest ] && [ \"$2\" = --version ] && exit 0\ncase \"$*\" in *\"$RED\"*) exit \"$CODE\";; esac\nexit 0\n");
-        let [_, t] = unit_commands(&["gate".into()], ALL, 4);
+        let [_, t] = unit_commands(&["gate".into()], ALL, 4, &Default::default());
         let run = |red: &str, code: &str| {
             let out = std::process::Command::new("/bin/bash")
                 .args(["-c", &t.1])
@@ -1389,7 +1392,7 @@ mod tests {
 
     #[test]
     fn a_missing_nextest_is_could_not_judge_not_a_red_branch() {
-        let [_, t] = unit_commands(&["gate".into()], ALL, 4);
+        let [_, t] = unit_commands(&["gate".into()], ALL, 4, &Default::default());
         assert!(t.1.starts_with("cargo nextest --version >/dev/null 2>&1 || {"), "{}", t.1);
         let out = std::process::Command::new("/bin/bash").args(["-c", &t.1]).env("PATH", "/nonexistent").output().unwrap();
         assert_eq!(out.status.code(), Some(75), "{}", String::from_utf8_lossy(&out.stdout));
@@ -1397,16 +1400,16 @@ mod tests {
 
     #[test]
     fn selecting_batcher_cut_builds_the_gate_its_fence_probe_test_runs() {
-        let [b, t] = unit_commands(&["batcher-cut".into()], ALL, 4);
+        let [b, t] = unit_commands(&["batcher-cut".into()], ALL, 4, &Default::default());
         assert!(b.1.ends_with(" -p batcher-cut -p gate"), "{}", b.1);
         assert!(!t.1.contains("-p gate"), "{}", t.1);
-        let [b, _] = unit_commands(&["batcher-cut".into(), "gate".into()], ALL, 4);
+        let [b, _] = unit_commands(&["batcher-cut".into(), "gate".into()], ALL, 4, &Default::default());
         assert_eq!(b.1.matches("-p gate").count(), 1, "{}", b.1);
     }
 
     #[test]
     fn unit_commands_build_then_test_each_crate() {
-        let [b, t] = unit_commands(&["gate".into(), "queue".into()], ALL, 4);
+        let [b, t] = unit_commands(&["gate".into(), "queue".into()], ALL, 4, &Default::default());
         assert_eq!(b.0, "build");
         assert_eq!(b.1, "CARGO_BUILD_JOBS=4 cargo test --no-run --timings --features integration -p gate -p queue");
         assert_eq!(t.0, "test");
@@ -1433,7 +1436,7 @@ mod tests {
 
     #[test]
     fn unit_commands_name_neither_a_profile_nor_an_incremental_override() {
-        for (_, c) in unit_commands(&["gate".into()], ALL, 4) {
+        for (_, c) in unit_commands(&["gate".into()], ALL, 4, &Default::default()) {
             assert!(!c.contains("--profile") && !c.contains("incremental=false"), "{c}");
         }
     }
@@ -1590,7 +1593,7 @@ cargo: test tests::x ... ok";
         );
         assert!(!g.contains("build-fence"));
         // …and its build phase compiles the test harnesses the test phase then reuses.
-        let [b, _] = unit_commands(&["tsd".into()], ALL, 4);
+        let [b, _] = unit_commands(&["tsd".into()], ALL, 4, &Default::default());
         assert!(
             b.1.contains(" cargo test --no-run --timings "),
             "{}",

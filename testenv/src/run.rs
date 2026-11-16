@@ -1515,11 +1515,27 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         )
         .unwrap_or_default(),
     );
+    let deny = match (deps.env)(spira_config::unit_tier::DENY_LIST_ENV).filter(|v| !v.is_empty()) {
+        None => spira_config::unit_tier::DenyList::default(),
+        Some(path) => match fs::read_to_string(&path).map_err(|e| e.to_string()).and_then(|t| spira_config::unit_tier::DenyList::parse(&t)) {
+            Ok(d) => d,
+            Err(e) => {
+                stderr(&format!("batch: {} {path}: {e}", spira_config::unit_tier::DENY_LIST_ENV));
+                return Finish::fault(2, "deny-list", 0);
+            }
+        },
+    };
+    let denied = |n: &str| {
+        let rows = deny.suites();
+        let mut hit = rows.iter().filter(|(f, _)| *f == n).map(|(_, st)| *st).peekable();
+        hit.peek()?;
+        Some(if hit.any(|st| st == "disabled") { SuiteState::Disabled } else { SuiteState::Quarantined })
+    };
     let mut active: Vec<String> = Vec::new();
     let mut quarantined: BTreeSet<String> = BTreeSet::new();
     let mut preempted: BTreeMap<String, ResultRecord> = BTreeMap::new();
     for n in &selected {
-        match states.state_at(n, now_epoch(), s.quarantine_max_age) {
+        match denied(n).unwrap_or_else(|| states.state_at(n, now_epoch(), s.quarantine_max_age)) {
             SuiteState::Disabled => {
                 let rec = ResultRecord {
                     status: Status::Disabled,

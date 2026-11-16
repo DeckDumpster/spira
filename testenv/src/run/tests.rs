@@ -270,18 +270,35 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
     /// cancels this thread on its first call and panics on its fifth. Returns the last line
     /// and the files left in the pool directory.
     fn run_cancelled_while_waiting(pool: &str, suite: &str) -> (String, Vec<String>, usize) {
+        let (last, left, slept, _) = run_with_deny(pool, suite, None, None);
+        (last, left, slept)
+    }
+
+    /// As above over the suites of the csv `suite`, with `deny` as the run's deny-list file; also the output lines.
+    fn run_with_deny(pool: &str, suite: &str, deny: Option<&str>, state: Option<&str>) -> (String, Vec<String>, usize, Vec<String>) {
         let root = testkit::TempDir::new("testenv-admission-cancel");
         let (repo, harness, owner) = (root.join("repo"), root.join("harness"), root.join("owner"));
         for d in [&repo.join("spira"), &harness.join("spira"), &owner] {
             fs::create_dir_all(d).unwrap();
         }
-        fs::write(repo.join("spira").join(suite), "#!/usr/bin/env bash\nset -uo pipefail\necho ok\n").unwrap();
+        for one in suite.split(',') {
+            fs::write(repo.join("spira").join(one), "#!/usr/bin/env bash\nset -uo pipefail\necho ok\n").unwrap();
+        }
+        if let Some(text) = state {
+            fs::write(repo.join("spira/suite-state"), text).unwrap();
+        }
         fs::write(repo.join(".gitignore"), "target/\n").unwrap();
         fs::create_dir_all(repo.join("c/src")).unwrap();
         fs::write(repo.join("Cargo.toml"), "[workspace]\nmembers = [\"c\"]\nresolver = \"2\"\n").unwrap();
         fs::write(repo.join("c/Cargo.toml"), "[package]\nname = \"c\"\nversion = \"0.1.0\"\nedition = \"2021\"\n").unwrap();
         fs::write(repo.join("c/src/lib.rs"), "").unwrap();
         git(&repo, "git init -q -b main && git add . && git commit -qm base && git checkout -qb topic && echo '// x' > c/src/lib.rs && git add . && git commit -qm topic && git checkout -q main");
+        let deny_file = root.join("deny-list");
+        let mut extra = vec![];
+        if let Some(text) = deny {
+            fs::write(&deny_file, text).unwrap();
+            extra.push(("SPIRA_TEST_DENY_LIST", deny_file.display().to_string()));
+        }
         let env: HashMap<String, String> = [
             ("SPIRA_RUN", root.join("run").display().to_string()),
             ("SPIRA_BATCH_LIVENESS_SLEEP", "0".into()),
@@ -296,6 +313,7 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
             ("HOME", root.display().to_string()),
         ]
         .into_iter()
+        .chain(extra)
         .map(|(k, v)| (k.to_string(), v))
         .collect();
         let start = spira_config::admission::Procs::start_of(&spira_config::admission::RealProcs, 1).expect("pid 1");
@@ -347,7 +365,36 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
         crate::runtime::LOCAL_CANCEL.with(|l| *l.borrow_mut() = None);
         let last = lines.lock().unwrap().last().cloned().unwrap_or_default();
         let left = fs::read_dir(&dir).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).filter(|n| n.starts_with("slot.") || n.starts_with("wait.")).collect();
-        (last, left, sleeps.load(Ordering::SeqCst))
+        let all = lines.lock().unwrap().clone();
+        (last, left, sleeps.load(Ordering::SeqCst), all)
+    }
+
+    #[test]
+    fn a_suite_the_deny_list_disables_is_preempted_and_the_others_still_run() {
+        let list = "disabled\tsuite:test-a.sh\tsp-1\t-\nquarantined\tunit:x y\tsp-2\t-\n";
+        let (last, _, slept, lines) = run_with_deny("test", "test-a.sh,test-b.sh", Some(list), None);
+        assert!(lines.iter().any(|l| l.contains("test-a.sh") && l.to_lowercase().contains("disabled")), "{lines:?}");
+        assert!(!lines.iter().any(|l| l.contains("test-b.sh") && l.to_lowercase().contains("disabled")), "{lines:?}");
+        assert_eq!(slept, 1, "test-b.sh went on to the pool wait; last={last}");
+    }
+
+    #[test]
+    fn a_quarantined_suite_row_runs_the_suite_and_a_deny_row_wins_over_suite_state() {
+        let one = |deny: &str, state: Option<&str>| run_with_deny("test", "test-a.sh", Some(deny), state);
+        let preempted = |lines: &[String]| lines.iter().any(|l| l.contains("test-a.sh") && l.to_lowercase().contains("disabled"));
+        let (_, _, slept, lines) = one("quarantined\tsuite:test-a.sh\tsp-1\t-\n", None);
+        assert!(!preempted(&lines) && slept == 1, "quarantined runs: {lines:?}");
+        let (_, _, slept, lines) = one("quarantined\tsuite:test-a.sh\tsp-1\t-\n", Some("test-a.sh | disabled | 2020-01-01T00:00:00Z | sp-9 | x\n"));
+        assert!(!preempted(&lines) && slept == 1, "the deny row beats a disabled suite-state row: {lines:?}");
+        let (_, _, _, lines) = one("quarantined\tsuite:test-a.sh\tsp-1\t-\ndisabled\tsuite:test-a.sh\tsp-2\t-\n", None);
+        assert!(preempted(&lines), "disabled and quarantined together disable: {lines:?}");
+    }
+
+    #[test]
+    fn a_malformed_deny_list_faults_the_run_before_any_suite() {
+        let (last, _, slept, _) = run_with_deny("test", "test-a.sh", Some("disabled\tsuite:test-a.sh\n"), None);
+        assert!(last.starts_with("VERDICT FAULT") && last.contains("reason=deny-list"), "{last}");
+        assert_eq!(slept, 0);
     }
 
     #[test]

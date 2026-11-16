@@ -21,7 +21,7 @@ use crate::schema::{AcquireMode, Manifest, ProcId, Vm};
 use crate::spool::{linger, stream_into, Server, Spool};
 
 pub const RUN_USAGE: &str =
-    "round-vm run: usage: round-vm run <tree-dir> [--suites <csv>] [--maxpar <n>] [--toolchain <ver>] [--results-dir <dir>] [--attr-spool <dir>] [--base <ref>] [--round-batch <id> [--round-repo <repo>]] [--on-red <command>] [--ci-entry <command>] [--candidate-recipe <sha>]\n  --candidate-recipe <sha>: the recipe of a round image still baking; an EC2 placement with no image carrying it exits 78 before any launch, a host or local placement ignores it\n  exit 78: placed on EC2 and the candidate image is pending; run again once it exists";
+    "round-vm run: usage: round-vm run <tree-dir> [--suites <csv>] [--maxpar <n>] [--toolchain <ver>] [--results-dir <dir>] [--attr-spool <dir>] [--base <ref>] [--round-batch <id> [--round-repo <repo>]] [--on-red <command>] [--ci-entry <command>] [--deny-list <file>] [--candidate-recipe <sha>]\n  --candidate-recipe <sha>: the recipe of a round image still baking; an EC2 placement with no image carrying it exits 78 before any launch, a host or local placement ignores it\n  exit 78: placed on EC2 and the candidate image is pending; run again once it exists";
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RunArgs {
@@ -48,6 +48,8 @@ pub struct RunArgs {
     /// The tree's fences (`gate fences`, `name<TAB>command` lines), listed on the host before the
     /// VM is taken; never a command-line option.
     pub fences: Option<String>,
+    /// The text of `--deny-list <file>`, already parsed once so a bad file is refused before any VM is taken.
+    pub deny_list: Option<String>,
 }
 
 /// Parses `run`'s arguments; `--opt value` and `--opt=value` both work.
@@ -74,6 +76,12 @@ pub fn parse_run_args(args: &[String]) -> Result<RunArgs, String> {
             "--round-batch" => r.round_batch = Some(val()?).filter(|v| !v.is_empty()),
             "--round-repo" => r.round_repo = Some(val()?).filter(|v| !v.is_empty()),
             "--on-red" => r.on_red = Some(val()?.split_whitespace().map(String::from).collect()).filter(|v: &Vec<String>| !v.is_empty()),
+            "--deny-list" => {
+                let f = val()?;
+                let text = fs::read_to_string(&f).map_err(|e| format!("round-vm run: --deny-list {f}: {e}"))?;
+                spira_config::unit_tier::DenyList::parse(&text).map_err(|e| format!("round-vm run: --deny-list {f}: {e}"))?;
+                r.deny_list = Some(text);
+            }
             "--ci-entry" => r.ci_entry = Some(val()?).filter(|v| !v.trim().is_empty()),
             "--candidate-recipe" => {
                 let v = val()?;
@@ -165,6 +173,8 @@ pub struct BatchJob {
     pub ci_entry: Option<String>,
     /// The tree's fences, `name<TAB>command` lines, run after the lint when `lint` is set.
     pub fences: String,
+    /// `test-registry deny-list` text; empty composes no filter anywhere.
+    pub deny_list: String,
     /// Set by the host when the VM showed no sign of the round: `run_batch` stops the batch's ssh.
     pub cancel: std::sync::atomic::AtomicBool,
 }
@@ -263,6 +273,7 @@ pub const REMOTE_SCRIPT: &str = concat!(r#"set -Eeuo pipefail
 unset SPIRA_HOME
 host_addr="$1" port="$2" suites="$3" maxpar="$4" toolchain="$5" cache_home="$6" registry="$7" setup_alarm="$8" cap="$9" post_guard="${10}" lint="${11}" build_image="${12}" round_ref="${13}" round_sha="${14}"
 testenv_limits="${16:-}" resume_url="${17:-}" fences="${18:-}" want_tag="${19:-}"
+deny_list="${20:-}" deny_filter_line="${21:-}" integ_skips="${22:-}"
 rm -rf ~/round-bins ~/round-launcher.env ~/round-setup.log ~/round-script.log
 : > ~/round-runner.out
 exec > >(tee -a ~/round-script.log)
@@ -568,6 +579,7 @@ unit_cargo() {
 }
 write_unit_nextest_config() {
     printf '"#, spira_config::unit_tier_config_printf!(), r#"' "$1" "$2" > "$3"
+    printf '%s' "${4:-}" >> "$3"
 }
 unit_nextest() {
     unit_env "#, spira_config::unit_tier_unit!("\"$HOME/round-nextest.toml\"", "unittest", "--workspace"), r#"
@@ -760,6 +772,9 @@ fi
 # The attribution reruns (spool.rs REMOTE_ATTR_SCRIPT) source this and run the batch, which
 # refuses without the round's config: SPIRA_TOML rides with the release (sp-anhnd6).
 printf 'export SPIRA_RELEASE=%q\nexport SPIRA_HOME=%q\nexport SPIRA_REPO=%q\nexport SPIRA_TOML=%q\nexport PATH=%q\n' "$SPIRA_RELEASE" "$SPIRA_HOME" "$SPIRA_REPO" "$SPIRA_TOML" "$PATH" > ~/round-launcher.env
+printf '%s' "$deny_list" > ~/round-deny-list
+export SPIRA_TEST_DENY_LIST="$HOME/round-deny-list"
+printf 'export SPIRA_TEST_DENY_LIST=%q\n' "$SPIRA_TEST_DENY_LIST" >> ~/round-launcher.env
 echo "round-vm: launcher: SPIRA_RELEASE=$SPIRA_RELEASE" >&2
 phase image
 tag="$(testenv container tag)" || tag=""
@@ -959,7 +974,7 @@ unit_hung="$HOME/round-unit-hung"
 : > "$unit_hung"
 unit_t0=$(date +%s)
 unit_deadline_secs="$(target/release/spira-config get spira.unit_test_deadline_secs)" && unit_deadline_periods="$(target/release/spira-config get spira.unit_test_deadline_periods)" || { echo "round-vm: cannot read the unit-test deadline from the round's config" >&2; exit 2; }
-write_unit_nextest_config "$unit_deadline_secs" "$unit_deadline_periods" "$HOME/round-nextest.toml"
+write_unit_nextest_config "$unit_deadline_secs" "$unit_deadline_periods" "$HOME/round-nextest.toml" "$deny_filter_line"
 unit_nextest > ~/round-unit-tests.log 2>&1 &
 unit_pid=$!
 tail -n +1 -f --pid="$unit_pid" ~/round-unit-tests.log | unit_stream "$unit_lib_total" "$unit_progress" &
@@ -985,7 +1000,7 @@ else
 fi
 integ_cargo() {
     local rc=0 doc_rc=0
-    unit_env "#, spira_config::unit_tier_integration!("unittest", "--workspace"), r#" || rc=$?
+    unit_env "#, spira_config::unit_tier_integration!("unittest", "--workspace"), r#"$integ_skips || rc=$?
     unit_env "#, spira_config::unit_tier_doc!("unittest", "--workspace"), r#" || doc_rc=$?
     [ "$rc" -ne 0 ] || rc=$doc_rc
     return "$rc"
@@ -1253,6 +1268,10 @@ pub fn remote_command(job: &BatchJob) -> String {
     args.push(job.resume_url.clone().unwrap_or_default());
     args.push(job.fences.clone());
     args.push(job.image_tag.clone().unwrap_or_default());
+    let deny = spira_config::unit_tier::DenyList::parse(&job.deny_list).expect("a deny list is validated when the run is parsed; a bad one must never become an empty one");
+    args.push(job.deny_list.clone());
+    args.push(deny.config_filter_line());
+    args.push(deny.integration_skips());
     let quoted: Vec<String> = args.iter().map(|a| shell_quote(a)).collect();
     format!("bash -c {} launcher {}", shell_quote(REMOTE_LAUNCHER), quoted.join(" "))
 }
@@ -2692,6 +2711,7 @@ fn on_vm_run(
         ci_entry: args.ci_entry.clone(),
         resume_url: resume_url_for(&vm.handle, args.ci_entry.is_none(), cfg.resume_url.as_deref(), env.host_plan.map(|p| p.home.as_path())),
         fences: args.fences.clone().unwrap_or_default(),
+        deny_list: args.deny_list.clone().unwrap_or_default(),
         cancel: Default::default(),
     };
     if let (Some(dir), None) = (&cfg.resume_credentials, &args.ci_entry) {
@@ -4115,9 +4135,8 @@ mod tests {
         assert!(parse_run_args(&["/t".into()]).unwrap().base.is_none());
     }
 
-    #[test]
-    fn remote_command_keeps_empty_arguments_in_place() {
-        let cmd = remote_command(&BatchJob {
+    fn sample_job() -> BatchJob {
+        BatchJob {
             host_addr: "10.0.0.1".into(),
             mirror_port: 9430,
             suites: None,
@@ -4137,11 +4156,81 @@ mod tests {
             round_ref: "refs/rounds/7-abc".into(),
             round_sha: "abc".into(),
             ci_entry: Some("deploy/ci.sh all".into()),
-            fences: String::new(),
+            fences: String::new(), deny_list: String::new(),
             cancel: Default::default(),
-        });
-        assert_eq!(cmd, format!("bash -c {} launcher '10.0.0.1' '9430' '' '16' '1.82.0' '/opt/spira/cargo' 'registry.example/spira' '45' '900' '600' '' '' 'refs/rounds/7-abc' 'abc' 'deploy/ci.sh all' 'testenv_suite_cap = 600\n' '' '' ''", shell_quote(REMOTE_LAUNCHER)));
+        }
+    }
+
+    #[test]
+    fn remote_command_keeps_empty_arguments_in_place() {
+        let cmd = remote_command(&sample_job());
+        assert_eq!(cmd, format!("bash -c {} launcher '10.0.0.1' '9430' '' '16' '1.82.0' '/opt/spira/cargo' 'registry.example/spira' '45' '900' '600' '' '' 'refs/rounds/7-abc' 'abc' 'deploy/ci.sh all' 'testenv_suite_cap = 600\n' '' '' '' '' '' ''", shell_quote(REMOTE_LAUNCHER)));
         assert_eq!(shell_quote("a'b"), "'a'\\''b'");
+    }
+
+    #[test]
+    fn a_deny_list_file_is_read_at_parse_time_and_a_bad_or_missing_one_is_refused() {
+        let d = crate::testutil::TempDir::new();
+        let good = d.path().join("good");
+        std::fs::write(&good, "disabled\tunit:a b\t-\t-\n").unwrap();
+        let a = parse_run_args(&["/t".into(), "--deny-list".into(), good.display().to_string()]).unwrap();
+        assert_eq!(a.deny_list.as_deref(), Some("disabled\tunit:a b\t-\t-\n"));
+        assert!(parse_run_args(&["/t".into()]).unwrap().deny_list.is_none());
+        let bad = d.path().join("bad");
+        std::fs::write(&bad, "nonsense\n").unwrap();
+        assert!(parse_run_args(&["/t".into(), "--deny-list".into(), bad.display().to_string()]).unwrap_err().contains("line 1"));
+        assert!(parse_run_args(&["/t".into(), "--deny-list".into(), "/nonexistent/x".into()]).is_err());
+    }
+
+    #[test]
+    fn remote_command_carries_the_deny_list_and_its_composed_words_last() {
+        let text = "disabled\tunit:a::b t::drop\tsp-1\t-\ndisabled\tintegration:p x::y\tsp-2\t-\n";
+        let deny = spira_config::unit_tier::DenyList::parse(text).unwrap();
+        let mut job = BatchJob { deny_list: text.into(), ..sample_job() };
+        let cmd = remote_command(&job);
+        let tail = format!("'{}' '{}' '{}'", text, deny.config_filter_line(), deny.integration_skips());
+        assert!(cmd.ends_with(&tail), "{cmd}");
+        job.deny_list = String::new();
+        assert!(remote_command(&job).ends_with(" '' '' ''"));
+    }
+
+    #[test]
+    fn the_script_exports_the_deny_list_before_the_first_testenv_and_into_the_launcher_env() {
+        let export = REMOTE_SCRIPT.find("export SPIRA_TEST_DENY_LIST=\"$HOME/round-deny-list\"").unwrap();
+        assert!(REMOTE_SCRIPT.find("printf '%s' \"$deny_list\" > ~/round-deny-list").unwrap() < export);
+        assert!(export < REMOTE_SCRIPT.find("testenv container tag").unwrap());
+        assert!(export < REMOTE_SCRIPT.find("testenv --mode parallel").unwrap());
+        assert!(REMOTE_SCRIPT.contains("export SPIRA_TEST_DENY_LIST=%q"), "the attribution reruns source it");
+        assert!(script_fn("integ_cargo").contains("--test '*'$integ_skips"));
+        assert!(REMOTE_SCRIPT.contains("\"$HOME/round-nextest.toml\" \"$deny_filter_line\""));
+    }
+
+    #[test]
+    fn the_rounds_integration_command_is_the_gates_words_plus_the_skips() {
+        let deny = spira_config::unit_tier::DenyList::parse("disabled\tintegration:p x::y\t-\t-\n").unwrap();
+        let body = script_fn("integ_cargo");
+        let out = std::process::Command::new("bash")
+            .args(["-c", &format!("unit_env() {{ echo \"$*\"; }}\ninteg_skips=\"$1\"\n{body}\ninteg_cargo", ), "bash", &deny.integration_skips()])
+            .output()
+            .unwrap();
+        let first = String::from_utf8_lossy(&out.stdout).lines().next().unwrap().to_string();
+        let words = spira_config::unit_tier::integration_words(Some("unittest"), "--workspace").replace("'*'", "*");
+        assert_eq!(first, format!("{words}{}", deny.integration_skips()));
+    }
+
+    #[test]
+    fn the_config_the_script_writes_is_the_one_the_gate_writes() {
+        let deny = spira_config::unit_tier::DenyList::parse("disabled\tunit:a b::c\t-\t-\n").unwrap();
+        let d = crate::testutil::TempDir::new();
+        let f = REMOTE_SCRIPT.find("write_unit_nextest_config() {").unwrap();
+        let func = &REMOTE_SCRIPT[f..f + REMOTE_SCRIPT[f..].find("\n}\n").unwrap() + 3];
+        let out = d.path().join("c.toml");
+        let ok = std::process::Command::new("bash")
+            .args(["-c", &format!("{func}\nwrite_unit_nextest_config 7 3 \"$1\" \"$2\""), "bash", out.to_str().unwrap(), &deny.config_filter_line()])
+            .status()
+            .unwrap();
+        assert!(ok.success());
+        assert_eq!(std::fs::read_to_string(out).unwrap(), spira_config::unit_tier::nextest_config(7, 3, &deny));
     }
 
     /// A rerun checks the survivors' tree out over `round-work`, so layers that name files
@@ -4279,9 +4368,9 @@ mod tests {
             host_addr: "h".into(), mirror_port: 1, suites: None, maxpar: 1, toolchain: None, cache_home: None,
             testenv_registry: None, resume_url: Some("s3://bkt/pre".into()), setup_alarm_secs: 1, cap_secs: 1,
             testenv_limits: "x".into(), post_guard_secs: 1, lint: false, build_image: false, image_tag: None,
-            ssh_log: PathBuf::from("ssh.log"), round_ref: "r".into(), round_sha: "s".into(), ci_entry: None, fences: String::new(), cancel: Default::default(),
+            ssh_log: PathBuf::from("ssh.log"), round_ref: "r".into(), round_sha: "s".into(), ci_entry: None, fences: String::new(), deny_list: String::new(), cancel: Default::default(),
         };
-        assert!(remote_command(&job).ends_with("'x' 's3://bkt/pre' '' ''"));
+        assert!(remote_command(&job).ends_with("'x' 's3://bkt/pre' '' '' '' '' ''"));
         assert!(!REMOTE_SCRIPT.contains("AWS_SECRET_ACCESS_KEY"), "the script never carries a key");
         let remote = FakeRemote::green();
         push_resume_credentials(&remote, "10.0.0.2", Path::new("/creds"));
