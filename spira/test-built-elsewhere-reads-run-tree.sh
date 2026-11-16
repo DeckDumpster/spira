@@ -14,17 +14,16 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 HARNESS="$(cd "$HERE/.." && pwd -P)"
-. "$HERE/testlib.sh"
 
 TEST=exec_lines_carry_no_unescaped_percent_specifier
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 
 BIN="$(cd "$HARNESS" && cargo test -p install --features integration --test units_lint --no-run --message-format=json 2>/dev/null \
     | jq -r 'select(.profile.test == true and .target.name == "units_lint") | .executable' | tail -1)"
-if [[ ! -x "$BIN" ]]; then
-    bad "the units_lint test binary builds" "no executable from cargo test --no-run"
-    tl_summary
-fi
+[[ -x "$BIN" ]] || { echo "no units_lint test binary from cargo test --no-run"; exit 1; }
+
+# Sourced after the build: the case deadline arms here, and a compile is not a case.
+. "$HERE/testlib.sh"
 
 B="$TMP/b"
 mkdir -p "$B/install"
