@@ -47,12 +47,11 @@ RUNE_MAX_CONCURRENT=1
 #
 # The qa lane is declared in SPIRA_LANES (default: "ops qa"), and a user who wants
 # QA-level scheduling for their own persona names their lane there and sets RUNE_LANE=qa
+# in their rune file — without editing this one.
+RUNE_LANE=qa
 # Build-disk class, reactive: starts over the SPIRA_MAX_DWARVES limit (design "Lanes by bound resource").
 RUNE_USES="build-disk"
 RUNE_REACTIVE=1
-
-# in their rune file — without editing this one.
-RUNE_LANE=qa
 
 # BOUNDED BY THE SWEEP INTERVAL. The timer (spira-qa.timer) fires every six hours. A QA
 # session that outlives its cadence accumulates a backlog of unread snapshots, and since
