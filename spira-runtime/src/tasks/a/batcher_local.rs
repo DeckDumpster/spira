@@ -30,6 +30,7 @@
 //! |---|---|---|
 //! | Idle | observe: stopped / paused (`pace.rs:77`) | Held (no write) |
 //! | Idle | observe: open round, driven | Idle |
+//! | Idle | observe: open round, undriven, last pass red | Attributing (`adopt_red`: attribute that pass's kept results) |
 //! | Idle | observe: open round, undriven | Orphan (`orphan_step`: Wait / Redrive once / then `abandon` naming why, pace Infra) |
 //! | Idle | observe: `should_cut` = None | Idle (silent) |
 //! | Idle | observe: trigger | Assembling (`fetch`, `assemble`) |
@@ -345,6 +346,8 @@ pub enum Trigger {
     OpenRoundUndriven,
     /// A round the queue holds with no driver is green and the lowest open: it lands.
     OpenRoundGreen,
+    /// An open round no pass drives whose last pass ended red: attributed as one of this task's own.
+    OpenRoundRed,
     /// `orphan_step` answered Wait, Redrive or Incident (not in the contract's table, which gives
     /// `Orphan` no exit).
     OrphanStepped,
@@ -415,6 +418,7 @@ pub static TABLE: &[(State, Trigger, State)] = &[
     (State::Idle, Trigger::OpenRoundDriven, State::Idle),
     (State::Idle, Trigger::OpenRoundUndriven, State::Orphan),
     (State::Idle, Trigger::OpenRoundGreen, State::Landing),
+    (State::Idle, Trigger::OpenRoundRed, State::Attributing),
     (State::Orphan, Trigger::OrphanStepped, State::Idle),
     (State::Idle, Trigger::NoTrigger, State::Idle),
     (State::Idle, Trigger::Cut, State::Assembling),
@@ -968,6 +972,11 @@ pub fn certify_argv(queue_bin: &str, leg: &Leg) -> Vec<String> {
 /// Where a certify leg's output is kept, relative to the run's parent.
 pub fn certify_output_file(batch: &str, run: u32) -> String {
     format!("run/rounds/{batch}.certify-{run}.out")
+}
+
+/// Where a round's kept pass results are, relative to the run's parent.
+pub fn kept_results_file(batch: &str) -> String {
+    format!("run/rounds/{batch}.results")
 }
 
 /// Where a refused land leg's output is kept, relative to the run's parent.
@@ -1576,10 +1585,13 @@ impl Machine<'_> {
             return;
         }
         if open.phase == "green" {
-            let whole = open.tips.len() == open.members.len() && open.tips.iter().all(|t| !t.is_empty());
-            if whole && repo.open_round.as_ref().is_some_and(|r| r.id == open.id) {
+            if self.adoptable(open, repo) {
                 self.adopt_green(open, st);
             }
+            return;
+        }
+        if open.red && open.phase == "attributing" && self.adoptable(open, repo) {
+            self.adopt_red(open, st, &repo.base_sha);
             return;
         }
         self.go(Trigger::OpenRoundUndriven);
@@ -1609,14 +1621,32 @@ impl Machine<'_> {
         self.go(Trigger::OrphanStepped);
     }
 
-    /// A green round no pass drives is landed on the pass that made it green, as one of this task's own.
-    fn adopt_green(&mut self, open: &Round, st: &pace::State) {
+    /// The round is the repo's first open one and every member's tip is known.
+    fn adoptable(&self, open: &Round, repo: &Repo) -> bool {
+        let whole = open.tips.len() == open.members.len() && open.tips.iter().all(|t| !t.is_empty());
+        whole && repo.open_round.as_ref().is_some_and(|r| r.id == open.id)
+    }
+
+    /// A round no pass drives whose last pass ended red is attributed from that pass's kept results.
+    fn adopt_red(&mut self, open: &Round, st: &pace::State, base: &str) {
+        self.adopt(open, st);
+        self.rc.base = base.to_string();
+        self.go(Trigger::OpenRoundRed);
+        self.attribute_after(kept_results_file(&open.id));
+    }
+
+    fn adopt(&mut self, open: &Round, st: &pace::State) {
         self.rc.pace = Pace::of(&pace::State { orphan: String::new(), orphan_since: 0, redriven: String::new(), ..st.clone() }, &self.rc.pace);
         self.rc.batch = Some(open.id.clone());
         self.rc.members = open.members.iter().enumerate().map(|(i, id)| (id.clone(), open.tips[i].clone())).collect();
         self.rc.round_key = Some(core::round_key(&self.rc.members));
         self.rc.wt = open.worktree.clone();
         self.rc.head = open.head.clone();
+    }
+
+    /// A green round no pass drives is landed on the pass that made it green, as one of this task's own.
+    fn adopt_green(&mut self, open: &Round, st: &pace::State) {
+        self.adopt(open, st);
         self.go(Trigger::OpenRoundGreen);
         self.land_now();
     }
@@ -2487,7 +2517,9 @@ pub mod edge {
         if leg.after_certify && !leg.batch.is_empty() {
             argv.extend(["--after-pass".into(), batcher_cut::io::round_results_dir(run, &leg.batch).display().to_string()]);
         } else if !leg.after_pass.is_empty() {
-            argv.extend(["--after-pass".into(), leg.after_pass.clone()]);
+            let pass = Path::new(&leg.after_pass);
+            let pass = if pass.is_relative() { run.parent().unwrap_or(run).join(pass) } else { pass.to_path_buf() };
+            argv.extend(["--after-pass".into(), pass.display().to_string()]);
         }
         argv
     }
@@ -2916,6 +2948,12 @@ pub mod edge {
         fn an_attribution_after_a_certify_reads_the_batchs_kept_results_under_the_run_dir() {
             let leg = Leg { batch: "r9".into(), after_certify: true, ..Leg::on("spira") };
             assert_eq!(after_pass(&leg).as_deref(), Some("/var/spira-run/rounds/r9.results"));
+        }
+
+        #[test]
+        fn an_attribution_after_a_relative_pass_reads_it_under_the_runs_parent() {
+            let leg = Leg { batch: "r9".into(), after_pass: super::super::kept_results_file("r9"), ..Leg::on("spira") };
+            assert_eq!(after_pass(&leg).as_deref(), Some("/var/run/rounds/r9.results"));
         }
 
         #[test]
