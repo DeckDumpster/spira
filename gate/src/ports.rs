@@ -62,6 +62,11 @@ pub trait World {
     /// `. lib.sh` once, then the values the trial needs. Err when lib.sh would not source.
     fn context(&self, repo_name: Option<&str>) -> Result<Ctx, String>;
 
+    /// The tests the trial leaves out; none until a registry resolves them.
+    fn deny_list(&self) -> spira_config::unit_tier::DenyList {
+        Default::default()
+    }
+
     // ---- files
     fn readable(&self, p: &Path) -> bool;
     /// `command -v <name>`: a harness script found on the gate's PATH (the release's

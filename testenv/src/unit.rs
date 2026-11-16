@@ -410,7 +410,7 @@ mod tests {
         let picked = write_crates(repo, "main", "work", repo, None, true).unwrap();
         assert_eq!(picked.crates, ["spira-sim"]);
         let written: Vec<String> = std::fs::read_to_string(repo.join(BUILD_REL)).unwrap().lines().map(String::from).collect();
-        let [gate_build, _] = gate::compose::unit_commands(&["spira-sim".into()], Default::default(), 7);
+        let [gate_build, _] = gate::compose::unit_commands(&["spira-sim".into()], Default::default(), 7, &Default::default());
         assert_eq!(gate_build.1.strip_prefix("CARGO_BUILD_JOBS=7 ").unwrap(), written.join(" "));
     }
 

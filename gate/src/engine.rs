@@ -839,7 +839,7 @@ impl<'w, W: World> Trial<'w, W> {
         ) else {
             return v(NOVERDICT, "config", "gate: SPIRA_UNIT_TEST_DEADLINE_SECS and SPIRA_UNIT_TEST_DEADLINE_PERIODS must be positive numbers — refusing to run unit tests with no per-test deadline.");
         };
-        let limits = Limits { deadline, stall, unit_deadline: (secs, periods) };
+        let limits = Limits { deadline, stall, unit_deadline: (secs, periods), deny: w.deny_list() };
         let by_deadline = key::digits(&timeout).is_none_or(|t| deadline <= t);
         let eff = |spent: u64| {
             let rem = deadline.saturating_sub(spent).max(1);
@@ -2104,6 +2104,7 @@ pub struct Limits {
     pub stall: u64,
     /// One unit test's deadline: the period in seconds and the periods before it is terminated.
     pub unit_deadline: (u64, u64),
+    pub deny: spira_config::unit_tier::DenyList,
 }
 
 /// The most a charged phase may take, seconds (`base-` prefix ignored); the gate cap is no
@@ -2402,6 +2403,21 @@ pub fn run_composed<W: World>(
             return (NOVERDICT, e, phases);
         }
     }
+    let deny_env;
+    let env = if limits.deny.is_empty() {
+        env
+    } else {
+        let file = tree.join(compose::DENY_LIST);
+        if let (Some(dir), Some(name)) = (file.parent(), file.file_name().and_then(|n| n.to_str())) {
+            w.mkdir_p(dir);
+            w.write_atomic(dir, name, &limits.deny.render());
+        }
+        let mut e = env.to_vec();
+        e.retain(|(k, _)| k != spira_config::unit_tier::DENY_LIST_ENV);
+        e.push((spira_config::unit_tier::DENY_LIST_ENV.to_string(), file.to_string_lossy().into_owned()));
+        deny_env = e;
+        &deny_env[..]
+    };
     let first = if comp.suites_off() { "fences" } else { "gate" };
     mark(first_state, if comp.suites_off() { "fences" } else { "the gate command: fences and suites" });
     // A unit composition builds once (sp-aprxm): its build phase, not the build fence.
@@ -2434,7 +2450,7 @@ pub fn run_composed<W: World>(
         }
     };
     let mut steps: Vec<(&str, String)> = match comp {
-        Composition::Unit { crates, targets, .. } => compose::unit_commands(crates, *targets, jobs).into(),
+        Composition::Unit { crates, targets, .. } => compose::unit_commands(crates, *targets, jobs, &limits.deny).into(),
         _ => Vec::new(),
     };
     // THE RE-ENTRY PHASE, last: whatever of the named suites the phases before did not show
@@ -2468,7 +2484,7 @@ pub fn run_composed<W: World>(
             let file = tree.join(compose::NEXTEST_CONFIG);
             if let (Some(dir), Some(name)) = (file.parent(), file.file_name().and_then(|n| n.to_str())) {
                 w.mkdir_p(dir);
-                w.write_atomic(dir, name, &spira_config::unit_tier::nextest_config(limits.unit_deadline.0, limits.unit_deadline.1));
+                w.write_atomic(dir, name, &spira_config::unit_tier::nextest_config(limits.unit_deadline.0, limits.unit_deadline.1, &limits.deny));
             }
         }
         let hermetic;

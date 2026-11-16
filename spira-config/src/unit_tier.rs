@@ -126,9 +126,100 @@ pub fn doc_words(profile: Option<&str>, selection: &str) -> String {
     )
 }
 
+/// The environment variable naming the file of a run's deny list, read by testenv.
+pub const DENY_LIST_ENV: &str = "SPIRA_TEST_DENY_LIST";
+
+/// The tests a caller is handed to leave out of the unit and integration tiers, as
+/// `test-registry deny-list` prints them: `<state>\t<test>\t<bead>\t<until>` per row.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct DenyList {
+    rows: Vec<(String, String)>,
+}
+
+impl DenyList {
+    pub fn parse(text: &str) -> Result<DenyList, String> {
+        let mut rows = Vec::new();
+        for (i, line) in text.lines().enumerate() {
+            if line.trim().is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let n = i + 1;
+            let f: Vec<&str> = line.split('\t').collect();
+            if f.len() != 4 {
+                return Err(format!("deny list line {n}: want 4 tab-separated fields, got {}", f.len()));
+            }
+            if f[0] != "disabled" && f[0] != "quarantined" {
+                return Err(format!("deny list line {n}: state {:?} is neither disabled nor quarantined", f[0]));
+            }
+            let well_formed = match f[1].split_once(':') {
+                Some(("suite", name)) => !name.is_empty() && !name.contains(' '),
+                Some(("unit" | "integration", rest)) => {
+                    rest.split_once(' ').is_some_and(|(a, b)| !a.is_empty() && !b.is_empty() && !b.contains(' '))
+                }
+                _ => false,
+            };
+            if !well_formed {
+                return Err(format!("deny list line {n}: test {:?} is not suite:<file>, unit:<binary-id> <path> or integration:<package> <path>", f[1]));
+            }
+            rows.push((f[0].to_string(), f[1].to_string()));
+        }
+        Ok(DenyList { rows })
+    }
+
+    /// The text [`Self::parse`] reads back: one row per denied test, state and test only.
+    pub fn render(&self) -> String {
+        self.rows.iter().map(|(s, t)| format!("{s}\t{t}\t-\t-\n")).collect()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.rows.is_empty()
+    }
+
+    /// The tests of one kind (`suite`, `unit`, `integration`), the part after the prefix.
+    pub fn tests(&self, kind: &str) -> Vec<&str> {
+        self.rows.iter().filter_map(|(_, t)| t.strip_prefix(kind)?.strip_prefix(':')).collect()
+    }
+
+    /// Each `suite:` row's file and state.
+    pub fn suites(&self) -> Vec<(&str, &str)> {
+        self.rows.iter().filter_map(|(s, t)| Some((t.strip_prefix("suite:")?, s.as_str()))).collect()
+    }
+
+    pub fn nextest_filter(&self) -> Option<String> {
+        let terms: Vec<String> = self
+            .tests("unit")
+            .into_iter()
+            .filter_map(|t| t.split_once(' '))
+            .map(|(bin, path)| format!("(binary_id(={bin}) & test(={path}))"))
+            .collect();
+        (!terms.is_empty()).then(|| format!("not ({})", terms.join(" | ")))
+    }
+
+    /// ` -- --exact --skip <path> …` for the `--test '*'` invocation; empty for no `integration:` row.
+    pub fn integration_skips(&self) -> String {
+        let paths: Vec<&str> = self.tests("integration").into_iter().filter_map(|t| t.split_once(' ').map(|x| x.1)).collect();
+        if paths.is_empty() {
+            return String::new();
+        }
+        let skips: Vec<String> = paths.iter().map(|p| format!("--skip {p}")).collect();
+        format!(" -- --exact {}", skips.join(" "))
+    }
+
+    /// The config line that applies [`Self::nextest_filter`]; empty for none.
+    pub fn config_filter_line(&self) -> String {
+        match self.nextest_filter() {
+            Some(f) => format!("default-filter = \"{}\"\n", f.replace('\\', "\\\\").replace('"', "\\\"")),
+            None => String::new(),
+        }
+    }
+}
+
 /// The nextest config of one deadline: `secs` per period, terminated after `periods`.
-pub fn nextest_config(secs: u64, periods: u64) -> String {
-    format!("[profile.default]\nslow-timeout = {{ period = \"{secs}s\", terminate-after = {periods} }}\n")
+pub fn nextest_config(secs: u64, periods: u64, deny: &DenyList) -> String {
+    format!(
+        "[profile.default]\nslow-timeout = {{ period = \"{secs}s\", terminate-after = {periods} }}\n{}",
+        deny.config_filter_line()
+    )
 }
 
 /// What one unit tier's nextest log says of its timings.
@@ -251,7 +342,47 @@ mod tests {
             .replace("\\n", "\n")
             .replacen("%s", "7", 1)
             .replacen("%s", "3", 1);
-        assert_eq!(fmt, nextest_config(7, 3));
+        assert_eq!(fmt, nextest_config(7, 3, &DenyList::default()));
+    }
+
+    const TWO: &str = "# test-registry deny-list at=1 rows=2\ndisabled\tunit:a::b t::drop\tsp-1\t-\nquarantined\tunit:c d::e\tsp-2\t5\n";
+
+    #[test]
+    fn an_empty_deny_list_composes_no_filter_no_skips_and_todays_config() {
+        let d = DenyList::default();
+        assert_eq!(d.nextest_filter(), None);
+        assert_eq!(d.integration_skips(), "");
+        assert_eq!(nextest_config(7, 3, &d), "[profile.default]\nslow-timeout = { period = \"7s\", terminate-after = 3 }\n");
+        assert_eq!(DenyList::parse("# test-registry deny-list at=1 rows=0\n").unwrap(), d);
+    }
+
+    #[test]
+    fn two_unit_rows_of_either_state_give_the_exact_filter_expression() {
+        let d = DenyList::parse(TWO).unwrap();
+        assert_eq!(d.nextest_filter().unwrap(), "not ((binary_id(=a::b) & test(=t::drop)) | (binary_id(=c) & test(=d::e)))");
+        assert!(nextest_config(7, 3, &d).ends_with("default-filter = \"not ((binary_id(=a::b) & test(=t::drop)) | (binary_id(=c) & test(=d::e)))\"\n"));
+        assert_eq!(DenyList::parse(&d.render()).unwrap(), d);
+    }
+
+    #[test]
+    fn integration_rows_become_exact_skips_and_suite_rows_reach_neither_filter() {
+        let d = DenyList::parse("disabled\tintegration:p x::y\t-\t-\nquarantined\tintegration:q z\t-\t-\ndisabled\tsuite:test-a.sh\t-\t-\n").unwrap();
+        assert_eq!(d.integration_skips(), " -- --exact --skip x::y --skip z");
+        assert_eq!(d.nextest_filter(), None);
+        assert_eq!(d.suites(), [("test-a.sh", "disabled")]);
+    }
+
+    #[test]
+    fn a_malformed_deny_list_line_is_refused_by_its_number() {
+        for (text, line) in [
+            ("disabled\tsuite:a\t-\t-\nbroken\n", "line 2"),
+            ("\n\nfrozen\tsuite:a\t-\t-\n", "line 3"),
+            ("disabled\tunit:nopath\t-\t-\n", "line 1"),
+            ("disabled\tfoo:a b\t-\t-\n", "line 1"),
+        ] {
+            let e = DenyList::parse(text).unwrap_err();
+            assert!(e.contains(line), "{e}");
+        }
     }
 
     #[test]

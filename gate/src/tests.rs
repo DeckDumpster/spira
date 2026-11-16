@@ -48,6 +48,7 @@ struct Fake {
     checkouts: RefCell<Vec<String>>,
     written: RefCell<Vec<(PathBuf, String)>>,
     unit_config: RefCell<Vec<(PathBuf, String)>>,
+    deny: RefCell<spira_config::unit_tier::DenyList>,
     appended: RefCell<Vec<String>>,
     harness: Cell<&'static str>,
     /// run/tsd rows (telemetry.rs), kept apart from the gate.log meter.
@@ -257,6 +258,7 @@ impl Fake {
             checkouts: RefCell::new(Vec::new()),
             written: RefCell::new(Vec::new()),
             unit_config: RefCell::new(Vec::new()),
+            deny: Default::default(),
             appended: RefCell::new(Vec::new()),
             harness: Cell::new("harness"),
             tsd: RefCell::new(Vec::new()),
@@ -479,6 +481,9 @@ impl Fake {
 }
 
 impl World for Fake {
+    fn deny_list(&self) -> spira_config::unit_tier::DenyList {
+        self.deny.borrow().clone()
+    }
     fn context(&self, _: Option<&str>) -> Result<Ctx, String> {
         self.ctx.borrow().clone()
     }
@@ -2480,7 +2485,7 @@ fn unit_mode_rust_only_runs_fences_then_the_touched_crates_tests_and_no_suite() 
         cmds[1],
         "CARGO_BUILD_JOBS=8 cargo test --no-run --timings --features integration -p queue -p spira-config"
     );
-    assert_eq!(cmds[2], crate::compose::unit_commands(&["queue".into(), "spira-config".into()], crate::compose::Targets { lib: true, bin: true, test: true }, 8)[1].1);
+    assert_eq!(cmds[2], crate::compose::unit_commands(&["queue".into(), "spira-config".into()], crate::compose::Targets { lib: true, bin: true, test: true }, 8, &Default::default())[1].1);
     assert!(!cmds[2].contains("--test-threads"), "{}", cmds[2]);
     let cfg = f.unit_config.borrow().clone();
     assert_eq!(cfg.len(), 1, "{cfg:?}");
@@ -2500,6 +2505,29 @@ fn unit_mode_rust_only_runs_fences_then_the_touched_crates_tests_and_no_suite() 
         "{}",
         written[0].1
     );
+}
+
+#[test]
+fn a_deny_list_reaches_the_nextest_config_the_integration_command_and_the_suites_env() {
+    let list = "disabled\tunit:a::b t::drop\tsp-1\t-\nquarantined\tintegration:p x::y\tsp-2\t-\n";
+    let f = unit_fake(&["spira-config/src/lib.rs"]);
+    *f.deny.borrow_mut() = spira_config::unit_tier::DenyList::parse(list).unwrap();
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (0, "build-fence: make build ok".into()));
+    assert_eq!(f.run(), PASS);
+    let cfg = f.unit_config.borrow().clone();
+    assert!(cfg[0].1.contains("default-filter = \"not ((binary_id(=a::b) & test(=t::drop)))\"\n"), "{cfg:?}");
+    let cmds = f.cmds.borrow().clone();
+    assert!(cmds[2].contains("--test '*' -- --exact --skip x::y"), "{}", cmds[2]);
+    assert!(f.env_of(0, "SPIRA_TEST_DENY_LIST").ends_with("target/gate-deny-list"), "the gate-string step names the list file");
+    let written = f.written.borrow();
+    assert!(written.iter().any(|(p, c)| p.ends_with("target/gate-deny-list") && c.contains("t::drop")), "{written:?}");
+
+    let f = unit_fake(&["spira-config/src/lib.rs"]);
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (0, "build-fence: make build ok".into()));
+    assert_eq!(f.run(), PASS);
+    assert_eq!(f.env_of(0, "SPIRA_TEST_DENY_LIST"), "");
+    assert!(!f.cmds.borrow()[2].contains("--skip"));
+    assert!(!f.unit_config.borrow()[0].1.contains("default-filter"));
 }
 
 /// sp-aprxm: a unit-mode gate builds once. The build fence's cold release `make build` is
