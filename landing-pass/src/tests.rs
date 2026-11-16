@@ -2451,7 +2451,15 @@ fn unjudged_beads_with_one_reason_share_one_incident_reference() {
     let calls = h.lib.calls.borrow().clone();
     let refs: Vec<&str> = calls.iter().filter(|c| c.starts_with("incident ")).filter_map(|c| c.split(' ').nth(3)).collect();
     assert_eq!(refs, ["gate-unjudged:spira:deny-list"; 5].iter().copied().chain(["gate-unjudged:spira:deadline"]).collect::<Vec<_>>(), "{calls:?}");
-    assert_eq!(h.lc.holds.borrow().len(), 6);
+    let holds = h.lc.holds.borrow().clone();
+    assert_eq!(holds.len(), 6, "{holds:?}");
+    for (hold, id) in holds.iter().zip(["sp-a", "sp-b", "sp-c", "sp-d", "sp-e", "sp-f"]) {
+        assert!(hold.starts_with(&format!("{id} wait ")) && hold.contains("incident sp-inc"), "{hold}");
+    }
+    let bodies: Vec<&String> = calls.iter().filter(|c| c.starts_with("incident ")).collect();
+    for (call, id) in bodies.iter().zip(["sp-a", "sp-b", "sp-c", "sp-d", "sp-e", "sp-f"]) {
+        assert!(call.contains(id), "the filing body names its bead: {call}");
+    }
 }
 
 #[test]
