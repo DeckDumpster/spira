@@ -463,6 +463,10 @@ impl LiveOps<'_> {
                     None => io::round_eject(self.env, self.repo, batch, &member.id, suites, fails, owner),
                 };
                 if let Err(e) = ejected {
+                    if io::HeldEject::parse(&e).is_some() {
+                        println!("batcher {}: eject of {} from {batch} held: a pass of the round is running", self.repo.name, member.id);
+                        return Err(e);
+                    }
                     let refusal = format!("eject of {} from {batch} refused: {e}", member.id);
                     println!("batcher {}: {refusal}", self.repo.name);
                     return Err(refusal);

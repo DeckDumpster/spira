@@ -457,6 +457,81 @@ fn sp_byw57t_certify_waits_for_the_attribution_passs_scope_to_end() {
     assert!(acts.iter().any(|a| a.effect == CERTIFY), "certify starts once the scope has ended: {acts:?}");
 }
 
+fn held_eject_error() -> String {
+    let held = batcher_cut::io::HeldEject { id: "sp-a".into(), reason: "red on x".into(), csv: "test-x.sh".into(), said: "queue round eject exited 79: a pass of round r9 is running".into() };
+    format!("{}{}", batcher_cut::io::EJECT_HELD, serde_json::to_string(&held).unwrap())
+}
+
+/// An eject the queue holds for a running pass is not a refusal: no abandon, no pause, and the
+/// same eject is issued again once the pass is gone, after which the survivors certify.
+#[test]
+fn sp_3p7m5b_an_eject_held_for_a_running_pass_is_issued_again_when_the_pass_ends() {
+    let c = driving(State::Certifying, "spira.e1");
+    let leg = Leg { bead: "sp-a".into(), batch: "r9".into(), ..Leg::on("spira") };
+    let (held, acts) = on_outcome(&c, EJECT, false, &held_eject_error(), &leg, NOW);
+    let names: Vec<&str> = acts.iter().map(|a| a.effect.as_str()).collect();
+    assert!(!names.contains(&ABANDON) && !names.contains(&PAUSE), "{names:?}");
+    assert_eq!(held.repos["spira"].eject_held.as_ref().map(|h| h.eject.id.as_str()), Some("sp-a"));
+
+    let mut snap = idle();
+    snap.repos.get_mut("spira").unwrap().scoped_batches = Some(vec!["r9".into()]);
+    let (still, acts) = decide(&held, &snap);
+    assert!(acts.iter().all(|a| a.effect != EJECT), "a live pass scope holds the eject: {acts:?}");
+    snap.repos.get_mut("spira").unwrap().scoped_batches = Some(vec![]);
+    let (issued, acts) = decide(&still, &snap);
+    let eject: Vec<Leg> = acts.iter().filter(|a| a.effect == EJECT).map(|a| serde_json::from_str(&a.input).unwrap()).collect();
+    assert_eq!(eject.len(), 1, "{acts:?}");
+    assert_eq!((eject[0].bead.as_str(), eject[0].held.as_ref().map(|h| h.csv.as_str())), ("sp-a", Some("test-x.sh")));
+
+    let (done, acts) = on_outcome(&issued, EJECT, true, "{}", &eject[0], NOW);
+    let rc = &done.repos["spira"];
+    assert!(rc.eject_held.is_none() && rc.certify_held, "{rc:?}");
+    assert_eq!(rc.members, vec![("sp-b".to_string(), "t2".to_string())]);
+    assert!(acts.iter().all(|a| a.effect != ABANDON && a.effect != PAUSE), "{acts:?}");
+}
+
+/// The one re-issue is not retried for ever: refused again, held or not, the round ends red.
+#[test]
+fn sp_3p7m5b_a_held_eject_that_fails_again_after_its_re_issue_ends_the_round_red() {
+    let mut c = driving(State::Certifying, "spira.e1");
+    c.repos.get_mut("spira").unwrap().eject_held = Some(EjectHold { eject: Default::default(), issued: true });
+    let leg = Leg { bead: "sp-a".into(), batch: "r9".into(), ..Leg::on("spira") };
+    for body in [held_eject_error(), "queue round eject exited 1: refused".to_string()] {
+        let (next, acts) = on_outcome(&c, EJECT, false, &body, &leg, NOW);
+        assert!(acts.iter().any(|a| a.effect == ABANDON) && acts.iter().any(|a| a.effect == PAUSE), "{body}: {acts:?}");
+        assert!(next.repos["spira"].eject_held.is_none());
+    }
+}
+
+/// The eject the attribution leg could not issue comes back in its outcome line: it is held the same way.
+#[test]
+fn sp_3p7m5b_an_attribution_blocked_by_a_held_eject_holds_it_instead_of_pausing() {
+    let c = driving(State::Attributing, "spira.a1");
+    let line = batcher_cut::attribute::Attribution::Blocked(format!("eject of sp-a from r9 held: {}", held_eject_error())).line();
+    let mut r = carried(&c);
+    let n = r.requested().len();
+    r.tick(STREAM, ended("spira.a1", runtime::units::Exit::Code(0), &format!("{line}\n"))).unwrap();
+    let after = asked_after(&r, n);
+    let names: Vec<&str> = after.iter().map(|(e, _)| e.as_str()).collect();
+    assert!(!names.contains(&ABANDON) && !names.contains(&PAUSE), "{names:?}");
+}
+
+#[test]
+fn sp_3p7m5b_the_pass_running_exit_is_the_one_the_queue_returns() {
+    assert_eq!(batcher_cut::io::QUEUE_PASS_RUNNING_EXIT, queue::ops::round::PASS_RUNNING);
+}
+
+/// A refused eject still keeps the member's red tip out of the next cut.
+#[test]
+fn sp_3p7m5b_the_red_tip_is_recorded_before_the_eject_even_when_it_is_refused() {
+    let dir = testkit::TempDir::new("red-tip");
+    let got = spira_runtime::tasks::a::batcher_local::edge::record_then_eject(dir.path(), "spira", "sp-a", "t1", || Err("refused".into()));
+    assert_eq!(got, Err("refused".into()));
+    let pool = vec![batcher::core::Member { id: "sp-a".into(), tip: "t1".into(), title: String::new(), priority: None, express: false, base_fix: false, certified_at: 0, stack: BTreeMap::new(), blocked_by: vec![] }];
+    let (kept, withheld) = batcher_cut::redtip::withhold(dir.path(), "spira", pool);
+    assert!(kept.is_empty() && withheld.len() == 1, "{withheld:?}");
+}
+
 /// The pass exits green while the shared build-cache server is left in its scope: observe
 /// stops the scope and certify starts on the next decide, not when the daemon dies.
 #[test]

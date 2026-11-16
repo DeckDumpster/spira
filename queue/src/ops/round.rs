@@ -42,6 +42,10 @@ pub const IMAGE_PENDING: i32 = 78;
 /// verdict, no member at fault, and the driver runs the pass once more on a fresh VM.
 pub const VM_NO_OUTPUT: i32 = 77;
 
+/// eject's and rebuild's exit when a pass of the round is still running: nothing changed, and the
+/// caller issues the same verb again once no pass is running.
+pub const PASS_RUNNING: i32 = 79;
+
 pub(super) const BUILD_RED: &str = "workspace-build";
 pub(super) const LINT_RED: &str = "spira-lint";
 const FENCE_RED_PREFIX: &str = "fence-";
@@ -4421,7 +4425,7 @@ fn eject(
             Ok(live) if live.is_empty() => {}
             Ok(live) => {
                 w.err(format!("queue.sh {label}: a pass of round {batch} is running ({}); rebuilding the round would pull its worktree from under it — nothing changed", live.join(" ")));
-                return FAIL;
+                return PASS_RUNNING;
             }
             Err(e) => {
                 w.err(format!("queue.sh {label}: cannot tell whether a pass of round {batch} is running ({e}) — nothing changed"));
