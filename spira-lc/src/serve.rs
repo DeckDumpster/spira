@@ -1442,7 +1442,7 @@ mod tests {
     }
 
     fn create_bead_served(w: &World) -> super::Answer {
-        let req = super::Request { argv: ["create-bead", "sp-new", "--ready"].map(String::from).to_vec(), stdin: None, caller: Default::default(), min_rev: None, task: None };
+        let req = super::Request { argv: ["create-bead", "sp-new", "--repo", "spira", "--ready"].map(String::from).to_vec(), stdin: None, caller: Default::default(), min_rev: None, task: None };
         let (mut m, mut b) = (w, w);
         super::answer(req, &mut m, &mut b, &Content::default(), &|| Err("no run dir here".to_string()))
     }
@@ -1458,6 +1458,7 @@ mod tests {
             rows.into_iter().find(|r| r["bead_id"] == "sp-new").unwrap()
         };
         assert_eq!(row["claim"], serde_json::json!({"blocks": [], "parent": "sp-e", "labels": ["incident"]}));
+        assert_ne!(row["claim_view"]["verdict"], "cannot-tell", "{row}");
     }
 
     #[test]
