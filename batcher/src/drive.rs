@@ -97,6 +97,11 @@ pub trait RoundRunner {
     fn confirmed(&self) -> bool {
         false
     }
+    /// The compiler's output of the pass this attribution follows, when that pass was red in
+    /// workspace-build and kept it.
+    fn prior_build_output(&mut self) -> Option<String> {
+        None
+    }
     /// The compiler's output of the main run that ended `WorkspaceBuild`.
     fn build_output(&mut self) -> String {
         String::new()
@@ -1206,6 +1211,32 @@ fn bisect_members(
     }])
 }
 
+/// A round image build red ejects the one member that changes the image recipe; `None` when no
+/// single member does.
+fn eject_recipe_owner<O: RoundOps>(
+    ops: &mut O,
+    members: &[Member],
+    output: &str,
+) -> Result<Option<Vec<Member>>, String> {
+    let diffs = ops.diffs(&members.iter().map(|m| m.id.clone()).collect::<Vec<_>>());
+    let [owner] = buildattr::recipe_touchers(&diffs)[..] else {
+        return Ok(None);
+    };
+    let line = format!(
+        "the round image build failed and this member changes its recipe: {}",
+        buildattr::error_tail(output)
+    );
+    apply_build_actions(
+        ops,
+        members,
+        &[Action::Eject {
+            id: owner.id.clone(),
+            line,
+        }],
+        WORKSPACE_BUILD,
+    )
+}
+
 /// A workspace-build red whose compiler errors map to members: owners leave with the error as
 /// their evidence, a member lacking what another adds is held behind it, the rest re-cut. An
 /// error that maps to no file is bisected by building member subsets. `None` when no member can
@@ -1214,12 +1245,10 @@ fn eject_build_culprits<R: RoundRunner, O: RoundOps>(
     runner: &mut R,
     ops: &mut O,
     members: &[Member],
+    output: &str,
 ) -> Result<Option<Vec<Member>>, String> {
     let ids: Vec<Id> = members.iter().map(|m| m.id.clone()).collect();
-    let mut actions = buildattr::attribute(
-        &buildattr::compile_errors(&runner.build_output()),
-        &ops.diffs(&ids),
-    );
+    let mut actions = buildattr::attribute(&buildattr::compile_errors(output), &ops.diffs(&ids));
     if actions.is_empty() {
         actions = bisect_members(
             "the workspace fails to build",
@@ -1500,6 +1529,29 @@ fn attribute_members<R: RoundRunner, O: RoundOps>(
     if runner.abandoned() {
         return Ok(RoundEnd::Abandoned);
     }
+    if let Some(out) = runner.prior_build_output() {
+        let next = if buildattr::is_image_build_red(&out) {
+            eject_recipe_owner(ops, &members, &out)?
+        } else if let [_] = members[..] {
+            let first = buildattr::compile_errors(&out)
+                .first()
+                .map(|e| e.head.clone())
+                .unwrap_or_else(|| buildattr::error_tail(&out));
+            return eject_sole_member(ops, &members, &first, WORKSPACE_BUILD);
+        } else {
+            eject_build_culprits(runner, ops, &members, &out)?
+        };
+        if let Some(survivors) = next {
+            println!(
+                "batcher: the corpus pass was red in workspace-build — attributed from its compiler output without a run, re-certifying {} member(s)",
+                survivors.len()
+            );
+            return Ok(RoundEnd::Land {
+                members: survivors,
+                attribution_secs: None,
+            });
+        }
+    }
     if let Some(f) = runner.prior_red() {
         println!(
             "batcher: {} red in the corpus pass — attributing it by its failing tests, without running the corpus again",
@@ -1667,7 +1719,7 @@ fn attribute_members<R: RoundRunner, O: RoundOps>(
                 ops.incident("workspace-build", &[WORKSPACE_BUILD.to_string()]);
                 return Ok(RoundEnd::Blocked("the round's image build failed".into()));
             }
-            if let Some(next) = eject_build_culprits(runner, ops, &members)? {
+            if let Some(next) = eject_build_culprits(runner, ops, &members, &output)? {
                 println!("batcher: the round's workspace failed to build — culprits left, re-cutting {} member(s)", next.len());
                 runner.stop_main()?;
                 members = next;
@@ -2106,6 +2158,8 @@ pub(crate) mod tests {
         /// The suites the corpus pass this attribution follows ran red.
         pub prior_suites: Vec<String>,
         pub confirmed: bool,
+        /// The compiler output of the corpus pass this attribution follows, red in workspace-build.
+        pub prior_build: Option<String>,
         /// Like the real runner: nothing answers a verify main or a job until a corpus main started.
         pub needs_runner: bool,
         pub runner_started: bool,
@@ -2170,6 +2224,7 @@ pub(crate) mod tests {
                 prior: None,
                 prior_suites: vec![],
                 confirmed: false,
+                prior_build: None,
                 needs_runner: false,
                 runner_started: false,
                 narrow_clears: false,
@@ -2300,6 +2355,9 @@ pub(crate) mod tests {
         }
         fn prior_red_suites(&mut self) -> Vec<String> {
             std::mem::take(&mut self.prior_suites)
+        }
+        fn prior_build_output(&mut self) -> Option<String> {
+            self.prior_build.take()
         }
         fn build_output(&mut self) -> String {
             self.build_failed.clone().unwrap_or_default()
@@ -4793,6 +4851,62 @@ pub(crate) mod tests {
                 .all(|m| tree.contains(*m))
                 .then(|| E0063.to_string())
         })
+    }
+
+    const E0004: &str = "error[E0004]: non-exhaustive patterns: `Alone::Flipped` not covered\n --> batcher/src/x.rs:10:5\n";
+
+    fn run_prior_build(prior: &str, diffs: Vec<MemberDiff>, members: Vec<Member>) -> (Fake, Ops, RoundEnd) {
+        let mut f = Fake::new(|_, _| false);
+        f.prior_build = Some(prior.to_string());
+        let mut ops = Ops { diffs, ..Ops::default() };
+        let end = attribute_round(&mut f, &mut ops, &corpus(3), members, Budget { slots: 6, maxpar: 2 }).unwrap();
+        (f, ops, end)
+    }
+
+    #[test]
+    fn a_prior_build_red_at_a_file_one_member_changes_ejects_it_without_a_main_run() {
+        let (f, ops, end) = run_prior_build(
+            E0004,
+            vec![md("m1", "batcher/src/x.rs", "+x\n"), md("m2", "doc/y.md", "+q\n")],
+            vec![member("m1"), member("m2")],
+        );
+        let RoundEnd::Land { members, .. } = end else { panic!("{end:?}") };
+        assert_eq!(members.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), vec!["m2"]);
+        assert_eq!(ops.ejected, vec![("m1".to_string(), vec![WORKSPACE_BUILD.to_string()])]);
+        assert!(ops.eject_evidence[0].1.contains("E0004"), "{:?}", ops.eject_evidence);
+        assert!(f.main_kind.is_empty(), "{:?}", f.main_kind);
+    }
+
+    #[test]
+    fn a_prior_build_red_naming_a_file_no_member_changes_runs_the_corpus_as_before() {
+        let (f, ops, _) = run_prior_build(
+            E0004,
+            vec![md("m1", "doc/x.md", "+x\n"), md("m2", "doc/y.md", "+q\n")],
+            vec![member("m1"), member("m2")],
+        );
+        assert!(ops.ejected.is_empty(), "{:?}", ops.ejected);
+        assert!(!f.main_kind.is_empty(), "the corpus runs");
+    }
+
+    #[test]
+    fn a_prior_build_red_that_is_an_image_build_ejects_the_one_member_changing_the_recipe() {
+        let out = "round image build failed\n";
+        let (f, ops, end) = run_prior_build(
+            out,
+            vec![md("m1", buildattr::RECIPE_PATHS[0], "+x\n"), md("m2", "doc/y.md", "+q\n")],
+            vec![member("m1"), member("m2")],
+        );
+        assert!(matches!(end, RoundEnd::Land { ref members, .. } if members.len() == 1), "{end:?}");
+        assert_eq!(ops.ejected[0].0, "m1");
+        assert!(f.main_kind.is_empty());
+    }
+
+    #[test]
+    fn a_one_member_round_with_a_prior_build_red_ejects_it_on_the_first_error() {
+        let (f, ops, end) = run_prior_build(E0004, vec![], vec![member("m1")]);
+        assert!(matches!(end, RoundEnd::Emptied(_)), "{end:?}");
+        assert!(ops.eject_evidence[0].1.contains("E0004"), "{:?}", ops.eject_evidence);
+        assert!(f.main_kind.is_empty());
     }
 
     #[test]
