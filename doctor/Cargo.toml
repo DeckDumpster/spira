@@ -14,12 +14,14 @@ path = "src/main.rs"
 test = false
 
 [features]
-integration = ["spira-config/integration", "testkit/integration"]
+integration = ["spira-config/integration", "system-paths/integration", "testkit/integration"]
 
 [dependencies]
 spira-config = { path = "../spira-config" }
+system-paths = { path = "../system-paths" }
 
 [dev-dependencies]
+system-paths = { path = "../system-paths" }
 testkit = { path = "../testkit" }
 
 [profile.release]

@@ -294,10 +294,10 @@ fn release_tools_all_resolve() {
     f.deps_release.borrow_mut().push("gate".into());
     f.deps_release.borrow_mut().push("world".into());
     f.deps_release.borrow_mut().push("mail".into());
-    f.which.borrow_mut().insert("gate".into(), "/bin/gate".into());
-    f.which.borrow_mut().insert("world".into(), "/bin/world".into());
-    f.which.borrow_mut().insert("mail".into(), "/bin/mail".into());
-    f.which.borrow_mut().insert("gate.sh".into(), "/bin/gate.sh".into());
+    f.which.borrow_mut().insert("gate".into(), "bin/gate".into());
+    f.which.borrow_mut().insert("world".into(), "bin/world".into());
+    f.which.borrow_mut().insert("mail".into(), "bin/mail".into());
+    f.which.borrow_mut().insert("gate.sh".into(), "bin/gate.sh".into());
     let out = check_release_tools(&f);
     assert_eq!(levels(&out), vec![Level::Ok]);
 }
@@ -308,7 +308,7 @@ fn release_tools_all_resolve() {
 #[test]
 fn release_tools_world_and_mail_binaries_come_through_deps_list_not_a_hand_added_suffix() {
     let f = Fake::default();
-    f.which.borrow_mut().insert("gate.sh".into(), "/bin/gate.sh".into());
+    f.which.borrow_mut().insert("gate.sh".into(), "bin/gate.sh".into());
     // deps_release is empty -- "world" and "mail" are deliberately absent from it, and
     // nothing else in check_release_tools should supply either.
     let out = check_release_tools(&f);
@@ -399,15 +399,15 @@ fn config_files_fails_when_the_document_does_not_validate() {
 #[test]
 fn runes_overlays_none_active() {
     let f = Fake::default();
-    f.set("SPIRA_RUNES_OVERLAY", "/overlay");
+    f.set("SPIRA_RUNES_OVERLAY", "overlay");
     assert_eq!(levels(&check_runes_overlays(&f)), vec![Level::Ok]);
 }
 
 #[test]
 fn runes_overlays_active_named() {
     let f = Fake::default();
-    f.set("SPIRA_RUNES_OVERLAY", "/overlay");
-    f.md_files.borrow_mut().insert(PathBuf::from("/overlay"), vec!["builder/note.md".into()]);
+    f.set("SPIRA_RUNES_OVERLAY", "overlay");
+    f.md_files.borrow_mut().insert(PathBuf::from("overlay"), vec!["builder/note.md".into()]);
     let out = check_runes_overlays(&f);
     assert_eq!(out[0].level, Level::Ok);
     assert!(out[0].msg.contains("builder/note.md"));
@@ -446,8 +446,8 @@ fn gate_compile_check_no_rust_repos() {
 fn gate_compile_check_reaches_build_fence() {
     let f = Fake::default();
     f.repo_names.borrow_mut().push("spira".into());
-    f.repo_fields.borrow_mut().insert(("spira".into(), "path".into()), "/repo".into());
-    f.cargo_dirs.borrow_mut().push(PathBuf::from("/repo"));
+    f.repo_fields.borrow_mut().insert(("spira".into(), "path".into()), "repo".into());
+    f.cargo_dirs.borrow_mut().push(PathBuf::from("repo"));
     f.gate_defs.borrow_mut().insert("spira".into(), Ok("fence1.sh && bash spira/build-fence.sh && fence2.sh".into()));
     let out = check_gate_compile_check(&f);
     assert_eq!(out.len(), 1);
@@ -458,8 +458,8 @@ fn gate_compile_check_reaches_build_fence() {
 fn gate_compile_check_missing_build_fence_fails() {
     let f = Fake::default();
     f.repo_names.borrow_mut().push("spira".into());
-    f.repo_fields.borrow_mut().insert(("spira".into(), "path".into()), "/repo".into());
-    f.cargo_dirs.borrow_mut().push(PathBuf::from("/repo"));
+    f.repo_fields.borrow_mut().insert(("spira".into(), "path".into()), "repo".into());
+    f.cargo_dirs.borrow_mut().push(PathBuf::from("repo"));
     f.gate_defs.borrow_mut().insert("spira".into(), Ok("fence1.sh && fence2.sh".into()));
     let out = check_gate_compile_check(&f);
     assert_eq!(out[0].level, Level::Fail);
@@ -469,8 +469,8 @@ fn gate_compile_check_missing_build_fence_fails() {
 fn gate_compile_check_unresolved_gate_fails() {
     let f = Fake::default();
     f.repo_names.borrow_mut().push("spira".into());
-    f.repo_fields.borrow_mut().insert(("spira".into(), "path".into()), "/repo".into());
-    f.cargo_dirs.borrow_mut().push(PathBuf::from("/repo"));
+    f.repo_fields.borrow_mut().insert(("spira".into(), "path".into()), "repo".into());
+    f.cargo_dirs.borrow_mut().push(PathBuf::from("repo"));
     f.gate_defs.borrow_mut().insert("spira".into(), Err("no gate.steps".into()));
     let out = check_gate_compile_check(&f);
     assert_eq!(out[0].level, Level::Fail);
@@ -482,7 +482,7 @@ fn gate_compile_check_unresolved_gate_fails() {
 #[test]
 fn store_missing_beads_fails_outside_install() {
     let f = Fake::default();
-    f.set("SPIRA_DB", "/db");
+    f.set("SPIRA_DB", "db");
     let out = check_store(&f);
     assert_eq!(out[0].level, Level::Fail);
 }
@@ -490,7 +490,7 @@ fn store_missing_beads_fails_outside_install() {
 #[test]
 fn store_missing_beads_warns_during_install() {
     let f = Fake::default();
-    f.set("SPIRA_DB", "/db");
+    f.set("SPIRA_DB", "db");
     f.set("SPIRA_DOCTOR_INSTALLING", "1");
     let out = check_store(&f);
     assert_eq!(out[0].level, Level::Warn);
@@ -499,11 +499,11 @@ fn store_missing_beads_warns_during_install() {
 #[test]
 fn store_bd_read_ok_and_server_mode() {
     let f = Fake::default();
-    f.set("SPIRA_DB", "/db");
-    f.dirs.borrow_mut().push(PathBuf::from("/db/.beads"));
+    f.set("SPIRA_DB", "db");
+    f.dirs.borrow_mut().push(PathBuf::from("db/.beads"));
     *f.bd_list.borrow_mut() = Ok("[]".into());
-    f.files.borrow_mut().push(PathBuf::from("/db/.beads/metadata.json"));
-    f.store_meta.borrow_mut().insert(PathBuf::from("/db/.beads/metadata.json"), StoreMeta { dolt_mode: Some("server".into()), ..Default::default() });
+    f.files.borrow_mut().push(PathBuf::from("db/.beads/metadata.json"));
+    f.store_meta.borrow_mut().insert(PathBuf::from("db/.beads/metadata.json"), StoreMeta { dolt_mode: Some("server".into()), ..Default::default() });
     let out = check_store(&f);
     assert!(out.iter().any(|l| l.msg.contains("has a .beads")));
     assert!(out.iter().any(|l| l.msg == "bd can read it"));
@@ -514,9 +514,9 @@ fn store_bd_read_ok_and_server_mode() {
 #[test]
 fn store_role_warning_is_named_with_its_fix() {
     let f = Fake::default();
-    f.set("SPIRA_DB", "/db");
-    f.set("SPIRA_HOME", "/harness");
-    f.dirs.borrow_mut().push(PathBuf::from("/db/.beads"));
+    f.set("SPIRA_DB", "db");
+    f.set("SPIRA_HOME", "harness");
+    f.dirs.borrow_mut().push(PathBuf::from("db/.beads"));
     *f.bd_list.borrow_mut() = Ok("[]".into());
     *f.role_warnings.borrow_mut() = Some(3);
     let out = check_store(&f);
@@ -529,11 +529,11 @@ fn store_role_warning_is_named_with_its_fix() {
 #[test]
 fn store_embedded_mode_fails() {
     let f = Fake::default();
-    f.set("SPIRA_DB", "/db");
-    f.dirs.borrow_mut().push(PathBuf::from("/db/.beads"));
+    f.set("SPIRA_DB", "db");
+    f.dirs.borrow_mut().push(PathBuf::from("db/.beads"));
     *f.bd_list.borrow_mut() = Ok("[]".into());
-    f.files.borrow_mut().push(PathBuf::from("/db/.beads/metadata.json"));
-    f.store_meta.borrow_mut().insert(PathBuf::from("/db/.beads/metadata.json"), StoreMeta { dolt_mode: Some("embedded".into()), ..Default::default() });
+    f.files.borrow_mut().push(PathBuf::from("db/.beads/metadata.json"));
+    f.store_meta.borrow_mut().insert(PathBuf::from("db/.beads/metadata.json"), StoreMeta { dolt_mode: Some("embedded".into()), ..Default::default() });
     let out = check_store(&f);
     assert!(out.iter().any(|l| l.level == Level::Fail && l.msg.contains("embedded mode")));
 }
@@ -541,10 +541,10 @@ fn store_embedded_mode_fails() {
 #[test]
 fn store_bd_cannot_read_softens_during_install_when_server_not_active() {
     let f = Fake::default();
-    f.set("SPIRA_DB", "/db");
+    f.set("SPIRA_DB", "db");
     f.set("SPIRA_DOCTOR_INSTALLING", "1");
-    f.set("SPIRA_DOLT_DATA", "/dolt");
-    f.dirs.borrow_mut().push(PathBuf::from("/db/.beads"));
+    f.set("SPIRA_DOLT_DATA", "dolt");
+    f.dirs.borrow_mut().push(PathBuf::from("db/.beads"));
     *f.bd_list.borrow_mut() = Err("connection refused".into());
     let out = check_store(&f);
     assert!(out.iter().any(|l| l.level == Level::Warn && l.msg.contains("bd cannot read")));
@@ -553,8 +553,8 @@ fn store_bd_cannot_read_softens_during_install_when_server_not_active() {
 #[test]
 fn store_bd_cannot_read_fails_outside_install() {
     let f = Fake::default();
-    f.set("SPIRA_DB", "/db");
-    f.dirs.borrow_mut().push(PathBuf::from("/db/.beads"));
+    f.set("SPIRA_DB", "db");
+    f.dirs.borrow_mut().push(PathBuf::from("db/.beads"));
     *f.bd_list.borrow_mut() = Err("connection refused".into());
     let out = check_store(&f);
     assert!(out.iter().any(|l| l.level == Level::Fail && l.msg.contains("bd cannot read")));
@@ -563,10 +563,10 @@ fn store_bd_cannot_read_fails_outside_install() {
 #[test]
 fn store_dolt_server_answering() {
     let f = Fake::default();
-    f.set("SPIRA_DB", "/db");
+    f.set("SPIRA_DB", "db");
     *f.tcp_open.borrow_mut() = true;
-    f.files.borrow_mut().push(PathBuf::from("/db/.beads/metadata.json"));
-    f.store_meta.borrow_mut().insert(PathBuf::from("/db/.beads/metadata.json"), StoreMeta { dolt_server_host: "127.0.0.1".into(), dolt_server_port: Some(3306), ..Default::default() });
+    f.files.borrow_mut().push(PathBuf::from("db/.beads/metadata.json"));
+    f.store_meta.borrow_mut().insert(PathBuf::from("db/.beads/metadata.json"), StoreMeta { dolt_server_host: "127.0.0.1".into(), dolt_server_port: Some(3306), ..Default::default() });
     let out = check_store(&f);
     assert!(out.iter().any(|l| l.level == Level::Ok && l.msg.contains("answering on 127.0.0.1:3306")));
 }
@@ -574,10 +574,10 @@ fn store_dolt_server_answering() {
 #[test]
 fn store_dolt_server_unreachable_fails() {
     let f = Fake::default();
-    f.set("SPIRA_DB", "/db");
+    f.set("SPIRA_DB", "db");
     *f.tcp_open.borrow_mut() = false;
-    f.files.borrow_mut().push(PathBuf::from("/db/.beads/metadata.json"));
-    f.store_meta.borrow_mut().insert(PathBuf::from("/db/.beads/metadata.json"), StoreMeta { dolt_server_host: "127.0.0.1".into(), dolt_server_port: Some(3306), ..Default::default() });
+    f.files.borrow_mut().push(PathBuf::from("db/.beads/metadata.json"));
+    f.store_meta.borrow_mut().insert(PathBuf::from("db/.beads/metadata.json"), StoreMeta { dolt_server_host: "127.0.0.1".into(), dolt_server_port: Some(3306), ..Default::default() });
     let out = check_store(&f);
     assert!(out.iter().any(|l| l.level == Level::Fail && l.msg.contains("no server answers")));
 }
@@ -587,7 +587,7 @@ fn store_dolt_server_unreachable_fails() {
 #[test]
 fn duckdb_present() {
     let f = Fake::default();
-    f.which.borrow_mut().insert("duckdb".into(), "/usr/bin/duckdb".into());
+    f.which.borrow_mut().insert("duckdb".into(), "usr/bin/duckdb".into());
     assert_eq!(levels(&check_duckdb(&f)), vec![Level::Ok]);
 }
 
@@ -620,7 +620,7 @@ fn sccache_missing_only_warns_off_an_operated_box() {
 #[test]
 fn sccache_present_but_built_without_webdav_fails_rather_than_passing_on_presence_alone() {
     let f = Fake::default();
-    f.which.borrow_mut().insert("sccache".into(), "/opt/spira/cargo/bin/sccache".into());
+    f.which.borrow_mut().insert("sccache".into(), "opt/spira/cargo/bin/sccache".into());
     *f.sccache_help.borrow_mut() = Some(
         "Usage: sccache ...\n\nEnabled features:\n    S3:        false\n    WebDAV:    false\n    OSS:       false\n".into(),
     );
@@ -633,7 +633,7 @@ fn sccache_present_but_built_without_webdav_fails_rather_than_passing_on_presenc
 #[test]
 fn sccache_with_webdav_enabled_passes() {
     let f = Fake::default();
-    f.which.borrow_mut().insert("sccache".into(), "/opt/spira/cargo/bin/sccache".into());
+    f.which.borrow_mut().insert("sccache".into(), "opt/spira/cargo/bin/sccache".into());
     *f.sccache_help.borrow_mut() = Some(
         "Usage: sccache ...\n\nEnabled features:\n    S3:        false\n    WebDAV:    true\n    OSS:       false\n".into(),
     );
@@ -643,7 +643,7 @@ fn sccache_with_webdav_enabled_passes() {
 #[test]
 fn sccache_present_but_unresponsive_to_help_fails() {
     let f = Fake::default();
-    f.which.borrow_mut().insert("sccache".into(), "/opt/spira/cargo/bin/sccache".into());
+    f.which.borrow_mut().insert("sccache".into(), "opt/spira/cargo/bin/sccache".into());
     // sccache_help left at its default None: the binary could not be run (permissions,
     // a wrapper script that shadows the real one, etc).
     let lines = check_sccache(&f);
@@ -661,17 +661,17 @@ fn build_base_check_names_an_unset_key_a_base_in_ram_and_a_good_one() {
     assert!(unset[0].msg.contains("SPIRA_DWARF_BUILD_BASE"), "{:?}", unset[0].msg);
     assert!(unset[0].detail.as_deref().unwrap_or("").contains("dwarf_build_base"), "{:?}", unset[0].detail);
 
-    *f.build_base.borrow_mut() = vec!["/srv/ssd-b/dwarf-build".into()];
+    *f.build_base.borrow_mut() = vec!["srv/ssd-b/dwarf-build".into()];
     assert_eq!(levels(&check_dwarf_build(&f)), vec![Level::Ok], "a base on the compile disk is good");
 
-    f.tmpfs.borrow_mut().push("/srv/ssd-b".into());
+    f.tmpfs.borrow_mut().push("srv/ssd-b".into());
     let ram = check_dwarf_build(&f);
     assert_eq!(levels(&ram), vec![Level::Warn], "planted offender: a base in RAM must be caught");
     assert!(ram[0].msg.contains("tmpfs"), "{:?}", ram[0].msg);
 
-    *f.build_base.borrow_mut() = vec!["/srv/ssd-b/dwarf-build".into(), "/srv/ssd-c/dwarf-build".into()];
+    *f.build_base.borrow_mut() = vec!["srv/ssd-b/dwarf-build".into(), "srv/ssd-c/dwarf-build".into()];
     f.tmpfs.borrow_mut().clear();
-    f.tmpfs.borrow_mut().push("/srv/ssd-c".into());
+    f.tmpfs.borrow_mut().push("srv/ssd-c".into());
     assert_eq!(levels(&check_dwarf_build(&f)), vec![Level::Ok, Level::Warn], "each listed base is judged on its own");
 }
 
@@ -761,15 +761,15 @@ fn backend_check_fails_on_an_address_resolved_from_a_fixture_config_with_nothing
 #[test]
 fn events_probe_no_database_warns() {
     let f = Fake::default();
-    f.set("SPIRA_DB", "/db");
+    f.set("SPIRA_DB", "db");
     assert_eq!(levels(&check_events_probe(&f)), vec![Level::Warn]);
 }
 
 #[test]
 fn events_probe_no_anchor_bead_warns() {
     let f = Fake::default();
-    f.set("SPIRA_DB", "/db");
-    f.dirs.borrow_mut().push(PathBuf::from("/db/.beads"));
+    f.set("SPIRA_DB", "db");
+    f.dirs.borrow_mut().push(PathBuf::from("db/.beads"));
     let out = check_events_probe(&f);
     assert_eq!(out[0].level, Level::Warn);
 }
@@ -777,8 +777,8 @@ fn events_probe_no_anchor_bead_warns() {
 #[test]
 fn events_probe_round_trip_ok() {
     let f = Fake::default();
-    f.set("SPIRA_DB", "/db");
-    f.dirs.borrow_mut().push(PathBuf::from("/db/.beads"));
+    f.set("SPIRA_DB", "db");
+    f.dirs.borrow_mut().push(PathBuf::from("db/.beads"));
     *f.bd_first_id.borrow_mut() = Some("sp-123".into());
     *f.bump_ok.borrow_mut() = true;
     *f.counter.borrow_mut() = "3".into();
@@ -788,8 +788,8 @@ fn events_probe_round_trip_ok() {
 #[test]
 fn events_probe_write_refused_fails() {
     let f = Fake::default();
-    f.set("SPIRA_DB", "/db");
-    f.dirs.borrow_mut().push(PathBuf::from("/db/.beads"));
+    f.set("SPIRA_DB", "db");
+    f.dirs.borrow_mut().push(PathBuf::from("db/.beads"));
     *f.bd_first_id.borrow_mut() = Some("sp-123".into());
     *f.bump_ok.borrow_mut() = false;
     *f.counter.borrow_mut() = "0".into();
@@ -801,8 +801,8 @@ fn events_probe_write_refused_fails() {
 #[test]
 fn events_probe_write_discarded_fails() {
     let f = Fake::default();
-    f.set("SPIRA_DB", "/db");
-    f.dirs.borrow_mut().push(PathBuf::from("/db/.beads"));
+    f.set("SPIRA_DB", "db");
+    f.dirs.borrow_mut().push(PathBuf::from("db/.beads"));
     *f.bd_first_id.borrow_mut() = Some("sp-123".into());
     *f.bump_ok.borrow_mut() = true;
     *f.counter.borrow_mut() = "?".into();
@@ -922,24 +922,24 @@ fn orphan_units_probe_failure_is_fail_not_silent_ok() {
 #[test]
 fn snapshot_missing_warns() {
     let f = Fake::default();
-    f.set("SPIRA_RUN", "/run");
+    f.set("SPIRA_RUN", "run");
     assert_eq!(levels(&check_snapshot_fresh(&f)), vec![Level::Warn]);
 }
 
 #[test]
 fn snapshot_fresh_ok() {
     let f = Fake::default();
-    f.set("SPIRA_RUN", "/run");
-    f.file_ages.borrow_mut().insert(PathBuf::from("/run/cockpit.env"), 5);
+    f.set("SPIRA_RUN", "run");
+    f.file_ages.borrow_mut().insert(PathBuf::from("run/cockpit.env"), 5);
     assert_eq!(levels(&check_snapshot_fresh(&f)), vec![Level::Ok]);
 }
 
 #[test]
 fn snapshot_stale_fails() {
     let f = Fake::default();
-    f.set("SPIRA_RUN", "/run");
+    f.set("SPIRA_RUN", "run");
     f.set("SPIRA_SNAP_STALE_S", "60");
-    f.file_ages.borrow_mut().insert(PathBuf::from("/run/cockpit.env"), 120);
+    f.file_ages.borrow_mut().insert(PathBuf::from("run/cockpit.env"), 120);
     let out = check_snapshot_fresh(&f);
     assert_eq!(out[0].level, Level::Fail);
 }
@@ -947,8 +947,8 @@ fn snapshot_stale_fails() {
 #[test]
 fn a_stale_snapshot_hint_names_the_scheduler_unit() {
     let f = Fake::default();
-    f.set("SPIRA_RUN", "/run");
-    f.file_ages.borrow_mut().insert(PathBuf::from("/run/cockpit.env"), 600);
+    f.set("SPIRA_RUN", "run");
+    f.file_ages.borrow_mut().insert(PathBuf::from("run/cockpit.env"), 600);
     check_snapshot_fresh(&f);
     assert_eq!(*f.spira_unit_asked.borrow(), vec![("runtime".to_string(), "service".to_string())]);
 }
@@ -956,11 +956,11 @@ fn a_stale_snapshot_hint_names_the_scheduler_unit() {
 #[test]
 fn snapshot_threshold_key_decides_between_fresh_and_stale() {
     let f = Fake::default();
-    f.set("SPIRA_RUN", "/run");
+    f.set("SPIRA_RUN", "run");
     f.set("SPIRA_SNAP_STALE_S", "7");
-    f.file_ages.borrow_mut().insert(PathBuf::from("/run/cockpit.env"), 20);
+    f.file_ages.borrow_mut().insert(PathBuf::from("run/cockpit.env"), 20);
     assert_eq!(levels(&check_snapshot_fresh(&f)), vec![Level::Fail]);
-    f.file_ages.borrow_mut().insert(PathBuf::from("/run/cockpit.env"), 0);
+    f.file_ages.borrow_mut().insert(PathBuf::from("run/cockpit.env"), 0);
     assert_eq!(levels(&check_snapshot_fresh(&f)), vec![Level::Ok]);
 }
 
@@ -969,9 +969,9 @@ fn snapshot_threshold_key_decides_between_fresh_and_stale() {
 #[test]
 fn operator_channel_everything_present() {
     let f = Fake::default();
-    f.which.borrow_mut().insert("inotifywait".into(), "/bin/inotifywait".into());
-    f.which.borrow_mut().insert("go".into(), "/usr/bin/go".into());
-    f.exec_files.borrow_mut().push("/usr/bin/go".into());
+    f.which.borrow_mut().insert("inotifywait".into(), "bin/inotifywait".into());
+    f.which.borrow_mut().insert("go".into(), "usr/bin/go".into());
+    f.exec_files.borrow_mut().push("usr/bin/go".into());
     let out = check_operator_channel(&f);
     assert!(out.iter().all(|l| l.level == Level::Ok));
 }
@@ -979,9 +979,9 @@ fn operator_channel_everything_present() {
 #[test]
 fn operator_channel_reports_mail_mute_only_when_on() {
     let f = Fake::default();
-    f.which.borrow_mut().insert("inotifywait".into(), "/bin/inotifywait".into());
-    f.which.borrow_mut().insert("go".into(), "/usr/bin/go".into());
-    f.exec_files.borrow_mut().push("/usr/bin/go".into());
+    f.which.borrow_mut().insert("inotifywait".into(), "bin/inotifywait".into());
+    f.which.borrow_mut().insert("go".into(), "usr/bin/go".into());
+    f.exec_files.borrow_mut().push("usr/bin/go".into());
     let has = |f: &Fake| check_operator_channel(f).iter().any(|l| l.msg.contains("mail is muted"));
     assert!(!has(&f));
     f.set("SPIRA_MAIL_MUTE", "0");
@@ -996,8 +996,8 @@ fn operator_channel_reports_mail_mute_only_when_on() {
 #[test]
 fn operator_channel_missing_inotify_fails_when_operated() {
     let f = Fake::default();
-    f.exec_files.borrow_mut().push("/usr/bin/go".into());
-    f.which.borrow_mut().insert("go".into(), "/usr/bin/go".into());
+    f.exec_files.borrow_mut().push("usr/bin/go".into());
+    f.which.borrow_mut().insert("go".into(), "usr/bin/go".into());
     let out = check_operator_channel(&f);
     assert!(out.iter().any(|l| l.level == Level::Fail && l.msg.contains("inotifywait")));
 }
@@ -1006,8 +1006,8 @@ fn operator_channel_missing_inotify_fails_when_operated() {
 fn operator_channel_missing_inotify_warns_when_not_operated() {
     let f = Fake::default();
     f.set("SPIRA_OPERATED", "0");
-    f.exec_files.borrow_mut().push("/usr/bin/go".into());
-    f.which.borrow_mut().insert("go".into(), "/usr/bin/go".into());
+    f.exec_files.borrow_mut().push("usr/bin/go".into());
+    f.which.borrow_mut().insert("go".into(), "usr/bin/go".into());
     let out = check_operator_channel(&f);
     assert!(out.iter().any(|l| l.level == Level::Warn && l.msg.contains("inotifywait")));
 }
@@ -1015,7 +1015,7 @@ fn operator_channel_missing_inotify_warns_when_not_operated() {
 #[test]
 fn operator_channel_no_go_but_bd_current_and_prebuilt_is_ok() {
     let f = Fake::default();
-    f.which.borrow_mut().insert("inotifywait".into(), "/bin/inotifywait".into());
+    f.which.borrow_mut().insert("inotifywait".into(), "bin/inotifywait".into());
     f.set("SPIRA_BD_TAG", "v1.2.3");
     *f.bd_version.borrow_mut() = Some("1.2.3".into());
     *f.arch.borrow_mut() = "x86_64".into();
@@ -1026,7 +1026,7 @@ fn operator_channel_no_go_but_bd_current_and_prebuilt_is_ok() {
 #[test]
 fn operator_channel_no_go_mismatched_bd_no_prebuilt_fails() {
     let f = Fake::default();
-    f.which.borrow_mut().insert("inotifywait".into(), "/bin/inotifywait".into());
+    f.which.borrow_mut().insert("inotifywait".into(), "bin/inotifywait".into());
     f.set("SPIRA_BD_TAG", "v1.2.3");
     *f.bd_version.borrow_mut() = Some("1.0.0".into());
     *f.arch.borrow_mut() = "riscv64".into();
@@ -1037,9 +1037,9 @@ fn operator_channel_no_go_mismatched_bd_no_prebuilt_fails() {
 #[test]
 fn operator_channel_hunk_checked_only_when_configured() {
     let f = Fake::default();
-    f.which.borrow_mut().insert("inotifywait".into(), "/bin/inotifywait".into());
-    f.which.borrow_mut().insert("go".into(), "/usr/bin/go".into());
-    f.exec_files.borrow_mut().push("/usr/bin/go".into());
+    f.which.borrow_mut().insert("inotifywait".into(), "bin/inotifywait".into());
+    f.which.borrow_mut().insert("go".into(), "usr/bin/go".into());
+    f.exec_files.borrow_mut().push("usr/bin/go".into());
     f.set("COCKPIT_SESSIONS", "chat hunk");
     let out = check_operator_channel(&f);
     assert!(out.iter().any(|l| l.level == Level::Fail && l.msg.contains("hunk")));
@@ -1050,16 +1050,16 @@ fn operator_channel_hunk_checked_only_when_configured() {
 #[test]
 fn concierge_singleton_none_found() {
     let f = Fake::default();
-    f.set("SPIRA_REPO", "/repo");
-    f.exec_files.borrow_mut().push("/repo/concierge.sh".into());
+    f.set("SPIRA_REPO", "repo");
+    f.exec_files.borrow_mut().push("repo/concierge.sh".into());
     assert_eq!(levels(&check_concierge_singleton(&f)), vec![Level::Ok]);
 }
 
 #[test]
 fn concierge_singleton_stray_found_fails() {
     let f = Fake::default();
-    f.set("SPIRA_REPO", "/repo");
-    f.exec_files.borrow_mut().push("/repo/concierge.sh".into());
+    f.set("SPIRA_REPO", "repo");
+    f.exec_files.borrow_mut().push("repo/concierge.sh".into());
     f.stray.borrow_mut().push("12345".into());
     let out = check_concierge_singleton(&f);
     assert_eq!(out[0].level, Level::Fail);
@@ -1069,15 +1069,15 @@ fn concierge_singleton_stray_found_fails() {
 #[test]
 fn concierge_singleton_resolves_from_release_when_repo_unset() {
     let f = Fake::default();
-    f.set("SPIRA_HOME", "/rel/spira");
-    f.exec_files.borrow_mut().push("/rel/spira/../concierge.sh".into());
+    f.set("SPIRA_HOME", "rel/spira");
+    f.exec_files.borrow_mut().push("rel/spira/../concierge.sh".into());
     assert_eq!(levels(&check_concierge_singleton(&f)), vec![Level::Ok]);
 }
 
 #[test]
 fn concierge_singleton_no_concierge_sh_warns() {
     let f = Fake::default();
-    f.set("SPIRA_REPO", "/repo");
+    f.set("SPIRA_REPO", "repo");
     let out = check_concierge_singleton(&f);
     assert_eq!(out[0].level, Level::Warn);
 }
@@ -1093,38 +1093,38 @@ fn exec_row(unit: &str, state: &str, path: &str) -> (String, String, String) {
 #[test]
 fn prod_checkout_unit_outside_releases_fails() {
     let f = Fake::default();
-    f.set("SPIRA_RELEASES", "/fixture/releases");
-    *f.unit_execs.borrow_mut() = Ok(vec![exec_row("spira-sentinel-prod.service", "enabled", "/fixture/checkout/spira/sentinel.sh")]);
+    f.set("SPIRA_RELEASES", "fixture/releases");
+    *f.unit_execs.borrow_mut() = Ok(vec![exec_row("spira-sentinel-prod.service", "enabled", "fixture/checkout/spira/sentinel.sh")]);
     let out = check_prod_checkout(&f);
     assert_eq!(levels(&out), vec![Level::Fail]);
     assert!(out[0].msg.contains("spira-sentinel-prod.service"));
-    assert!(out[0].detail.as_deref().unwrap().contains("/fixture/checkout/spira/sentinel.sh"));
+    assert!(out[0].detail.as_deref().unwrap().contains("fixture/checkout/spira/sentinel.sh"));
 }
 
 #[test]
 fn prod_checkout_all_under_releases_is_ok() {
     let f = Fake::default();
-    f.set("SPIRA_RELEASES", "/fixture/releases");
-    *f.unit_execs.borrow_mut() = Ok(vec![exec_row("spira-x.service", "enabled", "/fixture/releases/current/x.sh")]);
+    f.set("SPIRA_RELEASES", "fixture/releases");
+    *f.unit_execs.borrow_mut() = Ok(vec![exec_row("spira-x.service", "enabled", "fixture/releases/current/x.sh")]);
     assert_eq!(levels(&check_prod_checkout(&f)), vec![Level::Ok]);
 }
 
 #[test]
 fn prod_checkout_sibling_prefix_is_outside() {
     let f = Fake::default();
-    f.set("SPIRA_RELEASES", "/fixture/releases");
-    *f.unit_execs.borrow_mut() = Ok(vec![exec_row("spira-x.service", "enabled", "/fixture/releases-old/x")]);
+    f.set("SPIRA_RELEASES", "fixture/releases");
+    *f.unit_execs.borrow_mut() = Ok(vec![exec_row("spira-x.service", "enabled", "fixture/releases-old/x")]);
     assert_eq!(levels(&check_prod_checkout(&f)), vec![Level::Fail]);
 }
 
 #[test]
 fn prod_checkout_each_offender_gets_a_line() {
     let f = Fake::default();
-    f.set("SPIRA_RELEASES", "/fixture/releases");
+    f.set("SPIRA_RELEASES", "fixture/releases");
     *f.unit_execs.borrow_mut() = Ok(vec![
-        exec_row("a.service", "enabled", "/co/a"),
-        exec_row("b.service", "enabled", "/fixture/releases/b"),
-        exec_row("c.service", "static", "/co/c"),
+        exec_row("a.service", "enabled", "co/a"),
+        exec_row("b.service", "enabled", "fixture/releases/b"),
+        exec_row("c.service", "static", "co/c"),
     ]);
     assert_eq!(levels(&check_prod_checkout(&f)), vec![Level::Fail, Level::Fail]);
 }
@@ -1132,10 +1132,10 @@ fn prod_checkout_each_offender_gets_a_line() {
 #[test]
 fn prod_checkout_transient_and_dwarf_units_are_not_flagged() {
     let f = Fake::default();
-    f.set("SPIRA_RELEASES", "/fixture/releases");
+    f.set("SPIRA_RELEASES", "fixture/releases");
     *f.unit_execs.borrow_mut() = Ok(vec![
-        exec_row("spira-job.service", "transient", "/co/job"),
-        exec_row("spira-dwarf-x.service", "static", "/co/dwarf"),
+        exec_row("spira-job.service", "transient", "co/job"),
+        exec_row("spira-dwarf-x.service", "static", "co/dwarf"),
         exec_row("spira-nopath.service", "enabled", ""),
     ]);
     assert_eq!(levels(&check_prod_checkout(&f)), vec![Level::Ok]);
@@ -1144,7 +1144,7 @@ fn prod_checkout_transient_and_dwarf_units_are_not_flagged() {
 #[test]
 fn prod_checkout_probe_failure_fails() {
     let f = Fake::default();
-    f.set("SPIRA_RELEASES", "/fixture/releases");
+    f.set("SPIRA_RELEASES", "fixture/releases");
     *f.unit_execs.borrow_mut() = Err("Failed to connect to bus".into());
     assert_eq!(levels(&check_prod_checkout(&f)), vec![Level::Fail]);
 }
@@ -1152,46 +1152,46 @@ fn prod_checkout_probe_failure_fails() {
 #[test]
 fn mirror_check_warns_on_a_daemon_serving_another_state_dir() {
     let f = Fake::default();
-    f.set("SPIRA_ROUND_VM_STATE_DIR", "/srv/round-vm");
-    *f.daemon_bases.borrow_mut() = vec!["/old/place".into()];
+    f.set("SPIRA_ROUND_VM_STATE_DIR", "srv/round-vm");
+    *f.daemon_bases.borrow_mut() = vec!["old/place".into()];
     let lines = check_round_vm_mirror(&f);
     assert_eq!(levels(&lines), vec![Level::Warn]);
-    assert!(lines[0].msg.contains("/old/place") && lines[0].msg.contains("/srv/round-vm"), "{:?}", lines[0].msg);
+    assert!(lines[0].msg.contains("old/place") && lines[0].msg.contains("srv/round-vm"), "{:?}", lines[0].msg);
 }
 
 #[test]
 fn mirror_check_passes_on_the_configured_dir_and_when_no_daemon_runs() {
     let f = Fake::default();
-    f.set("SPIRA_ROUND_VM_STATE_DIR", "/srv/round-vm");
+    f.set("SPIRA_ROUND_VM_STATE_DIR", "srv/round-vm");
     assert_eq!(levels(&check_round_vm_mirror(&f)), vec![Level::Ok]);
-    *f.daemon_bases.borrow_mut() = vec!["/srv/round-vm/".into()];
+    *f.daemon_bases.borrow_mut() = vec!["srv/round-vm/".into()];
     assert_eq!(levels(&check_round_vm_mirror(&f)), vec![Level::Ok]);
 }
 
 #[test]
 fn mirror_check_defaults_the_state_dir_to_run_round_vm() {
     let f = Fake::default();
-    f.set("SPIRA_RUN", "/r");
-    *f.daemon_bases.borrow_mut() = vec!["/r/round-vm".into()];
+    f.set("SPIRA_RUN", "r");
+    *f.daemon_bases.borrow_mut() = vec!["r/round-vm".into()];
     assert_eq!(levels(&check_round_vm_mirror(&f)), vec![Level::Ok]);
-    *f.daemon_bases.borrow_mut() = vec!["/elsewhere".into()];
+    *f.daemon_bases.borrow_mut() = vec!["elsewhere".into()];
     assert_eq!(levels(&check_round_vm_mirror(&f)), vec![Level::Warn]);
 }
 
 #[test]
 fn daemon_base_path_reads_only_a_git_daemon_on_the_port() {
     let v = |s: &[&str]| s.iter().map(|x| x.to_string()).collect::<Vec<_>>();
-    let argv = v(&["git", "daemon", "--port=9430", "--base-path=/x", "--export-all"]);
-    assert_eq!(crate::real::daemon_base_path(&argv, 9430), Some("/x".into()));
+    let argv = v(&["git", "daemon", "--port=9430", "--base-path=x", "--export-all"]);
+    assert_eq!(crate::real::daemon_base_path(&argv, 9430), Some("x".into()));
     assert_eq!(crate::real::daemon_base_path(&argv, 9431), None);
-    assert_eq!(crate::real::daemon_base_path(&v(&["vim", "daemon", "--port=9430", "--base-path=/x"]), 9430), None);
+    assert_eq!(crate::real::daemon_base_path(&v(&["vim", "daemon", "--port=9430", "--base-path=x"]), 9430), None);
 }
 
 
 #[test]
 fn dolt_telemetry_check_passes_when_disabled_and_the_backlog_is_small() {
     let f = Fake::default();
-    f.env.borrow_mut().insert("SPIRA_DOLT_DATA".into(), "/d".into());
+    f.env.borrow_mut().insert("SPIRA_DOLT_DATA".into(), "d".into());
     let out = check_dolt_telemetry(&f);
     assert!(out.iter().all(|l| l.level == Level::Ok), "{out:?}");
 }
@@ -1199,7 +1199,7 @@ fn dolt_telemetry_check_passes_when_disabled_and_the_backlog_is_small() {
 #[test]
 fn dolt_telemetry_check_fails_when_metrics_are_not_disabled() {
     let f = Fake::default();
-    f.env.borrow_mut().insert("SPIRA_DOLT_DATA".into(), "/d".into());
+    f.env.borrow_mut().insert("SPIRA_DOLT_DATA".into(), "d".into());
     *f.dolt_metrics_off.borrow_mut() = false;
     let out = check_dolt_telemetry(&f);
     assert!(out.iter().any(|l| l.level == Level::Fail && l.msg.contains("metrics.disabled")), "{out:?}");
@@ -1208,7 +1208,7 @@ fn dolt_telemetry_check_fails_when_metrics_are_not_disabled() {
 #[test]
 fn dolt_telemetry_check_fails_on_an_events_backlog_over_the_bound() {
     let f = Fake::default();
-    f.env.borrow_mut().insert("SPIRA_DOLT_DATA".into(), "/d".into());
+    f.env.borrow_mut().insert("SPIRA_DOLT_DATA".into(), "d".into());
     *f.dolt_events.borrow_mut() = 101;
     assert!(check_dolt_telemetry(&f).iter().any(|l| l.level == Level::Fail && l.msg.contains("eventsData")));
     *f.dolt_events.borrow_mut() = 100;
@@ -1225,9 +1225,9 @@ fn dolt_telemetry_check_is_silent_on_a_host_that_runs_no_dolt_server() {
 
 fn root_fixture(state: Option<bool>) -> Fake {
     let f = Fake::default();
-    f.env.borrow_mut().insert("SPIRA_DB".into(), "/db".into());
-    f.files.borrow_mut().push(PathBuf::from("/db/.beads/metadata.json"));
-    f.store_meta.borrow_mut().insert(PathBuf::from("/db/.beads/metadata.json"), StoreMeta { dolt_server_host: "127.0.0.1".into(), dolt_server_port: Some(3307), ..Default::default() });
+    f.env.borrow_mut().insert("SPIRA_DB".into(), "db".into());
+    f.files.borrow_mut().push(PathBuf::from("db/.beads/metadata.json"));
+    f.store_meta.borrow_mut().insert(PathBuf::from("db/.beads/metadata.json"), StoreMeta { dolt_server_host: "127.0.0.1".into(), dolt_server_port: Some(3307), ..Default::default() });
     *f.root_passwordless.borrow_mut() = state;
     f
 }
@@ -1247,18 +1247,22 @@ fn doctor_accepts_a_closed_dolt_root_and_is_silent_when_it_cannot_probe() {
 // ============================================================================ git hooks
 
 fn hooks_fixture(path: Option<&str>) -> Fake {
+    hooks_fixture_at("repo", path)
+}
+
+fn hooks_fixture_at(repo: &str, path: Option<&str>) -> Fake {
     let f = Fake::default();
-    f.set("SPIRA_REPO", "/repo");
-    f.set("SPIRA_HOME", "/repo/spira");
+    f.set("SPIRA_REPO", repo);
+    f.set("SPIRA_HOME", &format!("{repo}/spira"));
     *f.hooks_path.borrow_mut() = path.map(String::from);
     f
 }
 
 #[test]
 fn hooks_path_fails_naming_a_displaced_value() {
-    let out = check_hooks_path(&hooks_fixture(Some("/somewhere/else")));
+    let out = check_hooks_path(&hooks_fixture(Some("somewhere/else")));
     assert_eq!(levels(&out), vec![Level::Fail]);
-    assert!(out[0].msg.contains("/somewhere/else") && out[0].msg.contains("/repo/spira/hooks"), "{:?}", out[0].msg);
+    assert!(out[0].msg.contains("somewhere/else") && out[0].msg.contains("repo/spira/hooks"), "{:?}", out[0].msg);
 }
 
 #[test]
@@ -1269,15 +1273,18 @@ fn hooks_path_fails_when_unset() {
 #[test]
 fn hooks_path_passes_relative_and_absolute_forms() {
     assert_eq!(levels(&check_hooks_path(&hooks_fixture(Some("spira/hooks")))), vec![Level::Ok]);
-    assert_eq!(levels(&check_hooks_path(&hooks_fixture(Some("/repo/spira/hooks/")))), vec![Level::Ok]);
+    let root = testkit::TempDir::new("doctor-hooks-path");
+    let repo = root.join("repo").display().to_string();
+    let abs = format!("{repo}/spira/hooks/");
+    assert_eq!(levels(&check_hooks_path(&hooks_fixture_at(&repo, Some(&abs)))), vec![Level::Ok]);
 }
 
-const STORE_A: &str = "/nix/store/aaa-spira-env";
-const STORE_B: &str = "/nix/store/bbb-spira-env";
+const STORE_A: &str = "nix/store/aaa-spira-env";
+const STORE_B: &str = "nix/store/bbb-spira-env";
 
 fn env_fixture(installed: &str, locked: &str, bd: &str) -> Fake {
     let f = Fake::default();
-    f.set("HOME", "/h");
+    f.set("HOME", "h");
     *f.env_provided.borrow_mut() = vec!["bd".into()];
     *f.env_installed.borrow_mut() = Some(installed.into());
     *f.env_locked.borrow_mut() = Ok(locked.into());
@@ -1287,13 +1294,13 @@ fn env_fixture(installed: &str, locked: &str, bd: &str) -> Fake {
 
 #[test]
 fn spira_env_clean_when_installed_matches_locked_and_tool_resolves_inside() {
-    let f = env_fixture(STORE_A, STORE_A, "/h/.local/lib/spira-env/bin/bd");
+    let f = env_fixture(STORE_A, STORE_A, "h/.local/lib/spira-env/bin/bd");
     assert_eq!(levels(&check_spira_env(&f)), vec![Level::Ok]);
 }
 
 #[test]
 fn spira_env_names_both_paths_when_stale() {
-    let f = env_fixture(STORE_A, STORE_B, "/h/.local/lib/spira-env/bin/bd");
+    let f = env_fixture(STORE_A, STORE_B, "h/.local/lib/spira-env/bin/bd");
     let out = check_spira_env(&f);
     assert_eq!(levels(&out), vec![Level::Warn]);
     let d = out[0].detail.as_deref().unwrap();
@@ -1302,23 +1309,23 @@ fn spira_env_names_both_paths_when_stale() {
 
 #[test]
 fn spira_env_flags_a_stray_binary_ahead_of_the_env() {
-    let f = env_fixture(STORE_A, STORE_A, "/h/.local/bin/bd");
+    let f = env_fixture(STORE_A, STORE_A, "h/.local/bin/bd");
     let out = check_spira_env(&f);
     assert_eq!(levels(&out), vec![Level::Ok, Level::Warn]);
-    assert!(out[1].msg.contains("/h/.local/bin/bd"), "{:?}", out[1].msg);
+    assert!(out[1].msg.contains("h/.local/bin/bd"), "{:?}", out[1].msg);
 }
 
 #[test]
 fn spira_env_flags_a_commit_stamped_dev_build() {
-    let f = env_fixture(STORE_A, STORE_A, "/h/.local/bin/bd");
-    f.tool_versions.borrow_mut().insert(PathBuf::from("/h/.local/bin/bd"), "bd version 1.3.1 (dev: abc1234)".into());
+    let f = env_fixture(STORE_A, STORE_A, "h/.local/bin/bd");
+    f.tool_versions.borrow_mut().insert(PathBuf::from("h/.local/bin/bd"), "bd version 1.3.1 (dev: abc1234)".into());
     let out = check_spira_env(&f);
     assert!(out.iter().any(|l| l.msg.contains("dev build")), "{out:?}");
 }
 
 #[test]
 fn spira_env_warns_when_not_installed() {
-    let f = env_fixture(STORE_A, STORE_A, "/h/.local/lib/spira-env/bin/bd");
+    let f = env_fixture(STORE_A, STORE_A, "h/.local/lib/spira-env/bin/bd");
     *f.env_installed.borrow_mut() = None;
     assert_eq!(levels(&check_spira_env(&f)), vec![Level::Warn]);
 }
@@ -1402,12 +1409,12 @@ fn dovecot_dropin_absent_where_dovecot_is_not_installed_says_nothing() {
 #[test]
 fn dovecot_dropin_missing_warns_and_present_is_ok() {
     let f = Fake::default();
-    f.files.borrow_mut().push(Path::new("/usr/lib/systemd/system/dovecot.service").to_path_buf());
+    f.files.borrow_mut().push(Path::new(&format!("{}/dovecot.service", system_paths::USR_LIB_SYSTEMD_SYSTEM)).to_path_buf());
     let out = check_dovecot_dropin(&f);
     assert_eq!(levels(&out), vec![Level::Warn]);
     assert!(out[0].detail.as_deref().unwrap().contains("--system-user"));
     assert!(out[0].detail.as_deref().unwrap().contains("systemctl restart dovecot"));
-    f.files.borrow_mut().push(Path::new("/etc/systemd/system/dovecot.service.d/spira-tailnet.conf").to_path_buf());
+    f.files.borrow_mut().push(Path::new(system_paths::DOVECOT_DROPIN).to_path_buf());
     assert_eq!(levels(&check_dovecot_dropin(&f)), vec![Level::Ok]);
 }
 
@@ -1416,5 +1423,5 @@ fn doctor_without_spira_toml_refuses_naming_it() {
     let e = require_spec(None).unwrap_err();
     assert!(e.contains("SPIRA_TOML is not set"), "{e}");
     assert!(require_spec(Some("")).unwrap_err().contains("SPIRA_TOML"));
-    assert_eq!(require_spec(Some("/c/one-source.toml")).unwrap(), "/c/one-source.toml");
+    assert_eq!(require_spec(Some("c/one-source.toml")).unwrap(), "c/one-source.toml");
 }
