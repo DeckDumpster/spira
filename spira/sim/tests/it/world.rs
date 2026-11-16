@@ -156,3 +156,15 @@ fn the_db_root_is_testenvs_tmpfs_root_when_nested_and_the_worlds_own_otherwise()
     assert_eq!(db_root(w, &env_of(vec![("TESTDB_ROOT", String::new())])), PathBuf::from("/w/db"));
     assert_eq!(db_root(w, &env_of(vec![("TESTDB_ROOT", "/tmp/spira-testdb".into())])), PathBuf::from("/tmp/spira-testdb"));
 }
+
+#[test]
+fn a_pilgrim_world_is_marked_beside_its_own_socket_and_a_plain_world_is_not() {
+    let t = testkit::TempDir::new("simw");
+    let dir = t.join("w");
+    std::fs::create_dir_all(&dir).unwrap();
+    let marker = spira_store::lc_call::pilgrim_world_marker(&spira_sim::world::lc_socket(&dir).display().to_string());
+    assert!(!std::path::Path::new(&marker).exists());
+    spira_sim::world::make_pilgrim_world(&dir).unwrap();
+    assert!(std::path::Path::new(&marker).is_file());
+    assert!(marker.starts_with(&dir.display().to_string()), "the marker is inside the world, never beside production's socket");
+}

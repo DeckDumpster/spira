@@ -1371,8 +1371,23 @@ pub fn op_key(verb: &str, args: &[String]) -> String {
     }
 }
 
+/// What the pilgrim may run, and only in a pilgrim world: its scratch beads stay in a store the
+/// dispatcher never claims from.
+pub const PILGRIM_WORLD_ALLOW: &[&str] = &["file", "dep-add", "close-other"];
+
+fn in_pilgrim_world() -> bool {
+    spira_config::process::cfg("SPIRA_LC_SOCKET").is_ok_and(|socket| socket_is_a_pilgrim_world(&socket))
+}
+
+fn socket_is_a_pilgrim_world(socket: &str) -> bool {
+    !socket.is_empty() && std::path::Path::new(&spira_store::lc_call::pilgrim_world_marker(socket)).is_file()
+}
+
 /// May `actor` run `op`? `Err` is the refusal to answer with.
-pub fn permitted(op: &str, actor: Option<&str>) -> Result<(), (i32, String)> {
+pub fn permitted(op: &str, actor: Option<&str>, pilgrim_world: bool) -> Result<(), (i32, String)> {
+    if pilgrim_world && actor == Some("pilgrim") && PILGRIM_WORLD_ALLOW.contains(&op) {
+        return Ok(());
+    }
     let Some((_, who)) = ALLOW.iter().find(|(k, _)| *k == op) else {
         return Err((REFUSED, format!("refused: `work {op}` is not an operation any persona may run")));
     };
@@ -1390,6 +1405,10 @@ pub fn permitted(op: &str, actor: Option<&str>) -> Result<(), (i32, String)> {
 }
 
 fn gate(verb: &str, rest: &[String]) -> Result<(), (i32, String)> {
+    gate_in(verb, rest, in_pilgrim_world)
+}
+
+fn gate_in(verb: &str, rest: &[String], pilgrim_world: impl Fn() -> bool) -> Result<(), (i32, String)> {
     if !BOUND_VERBS.contains(&verb) && !LANE_VERBS.contains(&verb) {
         return Ok(()); // dispatch's own "unknown verb" answer
     }
@@ -1397,7 +1416,9 @@ fn gate(verb: &str, rest: &[String]) -> Result<(), (i32, String)> {
     if call.actors > 1 {
         return Err((REFUSED, format!("refused: work {verb}: more than one --actor — the persona is the client's to send, never the caller's")));
     }
-    permitted(&op_key(verb, &call.args), call.actor.as_deref())
+    let op = op_key(verb, &call.args);
+    let world = PILGRIM_WORLD_ALLOW.contains(&op.as_str()) && pilgrim_world();
+    permitted(&op, call.actor.as_deref(), world)
 }
 
 /// One thing a lane verb does: a bd call, a harness tool, — after a `bead.sh file` for a
@@ -2167,7 +2188,7 @@ mod tests {
 
     #[test]
     fn every_persona_may_run_cite_check() {
-        assert!(permitted("cite-check", Some("builder")).is_ok());
+        assert!(permitted("cite-check", Some("builder"), false).is_ok());
     }
 
     #[test]
@@ -2248,8 +2269,8 @@ mod tests {
             assert!(super::forge_op("sp-95s21z.2", &refused).is_err(), "{refused:?}");
         }
         let op = super::op_key("forge", &v(&["ami-result", own]));
-        assert!(super::permitted(&op, Some("builder")).is_ok());
-        assert!(super::permitted(&op, Some("groomer")).is_err());
+        assert!(super::permitted(&op, Some("builder"), false).is_ok());
+        assert!(super::permitted(&op, Some("groomer"), false).is_err());
     }
 
     #[test]
@@ -2293,7 +2314,7 @@ mod tests {
                     let sub: Vec<String> = words.clone().next().map(|x| vec![x.to_string()]).unwrap_or_default();
                     let op = super::op_key(verb, &sub);
                     let op = if ALLOW.iter().any(|(k, _)| *k == op) { op } else { verb.to_string() };
-                    if super::permitted(&op, Some(&persona)).is_err() {
+                    if super::permitted(&op, Some(&persona), persona == "pilgrim").is_err() || (persona == "pilgrim" && PILGRIM_WORLD_ALLOW.contains(&op.as_str()) && super::permitted(&op, Some(&persona), false).is_ok()) {
                         bad.push(format!("{persona}.md: `work {op}`"));
                     }
                 }
@@ -2729,7 +2750,7 @@ mod tests {
 
     #[test]
     fn a_persona_may_not_run_a_verb_it_is_not_allowed() {
-        let (code, msg) = permitted("groom close", Some("builder")).unwrap_err();
+        let (code, msg) = permitted("groom close", Some("builder"), false).unwrap_err();
         assert_eq!(code, REFUSED);
         assert!(msg.contains("builder") && msg.contains("groom close"), "{msg}");
         assert_eq!(gate("note-on", &v(&["sp-x1", "hi", "--actor", "builder"])).unwrap_err().0, REFUSED);
@@ -2747,6 +2768,40 @@ mod tests {
             plan("mender", "-", &call(&["outcome", "/s", "return", "--checks", "x"], "mender")).unwrap(),
             vec![tool("mender", &["outcome", "/s", "return", "--checks", "x"])]
         );
+    }
+
+    #[test]
+    fn only_a_socket_with_the_marker_beside_it_is_a_pilgrim_world() {
+        let t = testkit::TempDir::new("pw");
+        let socket = t.join("lc.sock").display().to_string();
+        let args = |a: &[&str]| a.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        let file = args(&["a title", "--for", "builder", "--repo", "r", "--actor", "pilgrim"]);
+        assert!(!super::socket_is_a_pilgrim_world(&socket));
+        assert!(!super::socket_is_a_pilgrim_world(""));
+        assert_eq!(gate_in("file", &file, || super::socket_is_a_pilgrim_world(&socket)).unwrap_err().0, REFUSED);
+        std::fs::write(spira_store::lc_call::pilgrim_world_marker(&socket), "").unwrap();
+        assert!(super::socket_is_a_pilgrim_world(&socket));
+        assert!(gate_in("file", &file, || super::socket_is_a_pilgrim_world(&socket)).is_ok());
+    }
+
+    #[test]
+    fn the_pilgrim_files_links_and_closes_only_in_a_pilgrim_world() {
+        let calls: [(&str, Vec<String>); 3] = [
+            ("file", v(&["a title", "--for", "builder", "--repo", "r", "--actor", "pilgrim"])),
+            ("dep-add", v(&["sp-a1", "sp-b2", "--actor", "pilgrim"])),
+            ("close-other", v(&["sp-b2", "--evidence", "e", "--actor", "pilgrim"])),
+        ];
+        for (verb, args) in &calls {
+            assert_eq!(gate_in(verb, args, || false).unwrap_err().0, REFUSED, "{verb} on a production store");
+            assert!(gate_in(verb, args, || true).is_ok(), "{verb} in a pilgrim world");
+        }
+    }
+
+    #[test]
+    fn a_pilgrim_world_widens_nothing_but_the_pilgrims_three_verbs() {
+        assert_eq!(gate_in("dep-add", &v(&["sp-a1", "sp-b2", "--actor", "builder"]), || true).unwrap_err().0, REFUSED);
+        assert_eq!(gate_in("label-add", &v(&["sp-a1", "x", "--actor", "pilgrim"]), || true).unwrap_err().0, REFUSED);
+        assert_eq!(gate_in("reopen", &v(&["sp-a1", "--evidence", "e", "--actor", "pilgrim"]), || true).unwrap_err().0, REFUSED);
     }
 
     #[test]
@@ -3236,8 +3291,8 @@ mod tests {
 
     #[test]
     fn ops_may_collapse_a_duplicate_incident_and_a_builder_may_not() {
-        assert!(permitted(&op_key("incident", &v(&["collapse", "sp-a1", "--of", "sp-b2"])), Some("ops")).is_ok());
-        assert!(permitted("incident collapse", Some("builder")).is_err());
+        assert!(permitted(&op_key("incident", &v(&["collapse", "sp-a1", "--of", "sp-b2"])), Some("ops"), false).is_ok());
+        assert!(permitted("incident collapse", Some("builder"), false).is_err());
         assert_eq!(
             plan("incident", "-", &call(&["collapse", "sp-a1", "--of", "sp-b2"], "ops")).unwrap(),
             vec![Step::Tool { program: "incident.sh", args: v(&["collapse", "sp-a1", "--of", "sp-b2"]), stdin: None }]
