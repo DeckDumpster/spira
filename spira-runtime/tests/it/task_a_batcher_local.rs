@@ -650,6 +650,26 @@ fn a_certify_red_leads_the_pause_of_an_attribution_that_ends_with_no_outcome() {
     assert!(pause.1.why.contains(refusal), "{}", pause.1.why);
 }
 
+/// A certify red that printed no `red-reason=` leads with its red suites, and a round whose
+/// certify never went red keeps the reason it always had.
+#[test]
+fn a_certify_red_without_a_reason_line_leads_with_its_red_suites_and_no_red_leaves_the_reason() {
+    let mut r = carried(&driving(State::Certifying, "spira.c3"));
+    let n = r.requested().len();
+    r.tick(STREAM, ended("spira.c3", runtime::units::Exit::Code(1), "queue.sh round certify: round r9 is RED at abc: test-a.sh\nred=test-a.sh\n")).unwrap();
+    let leg = asked_after(&r, n).into_iter().find(|(e, _)| e == CORPUS).expect("attribution leg").1;
+    let n = r.requested().len();
+    r.tick(STREAM, ended(&leg.unit, runtime::units::Exit::Code(2), "boom\n")).unwrap();
+    let why = asked_after(&r, n).into_iter().find(|(e, _)| e == PAUSE).expect("pause").1.why;
+    assert!(why.starts_with("certify red in test-a.sh; local corpus red — the attribution leg ended"), "{why}");
+
+    let mut r = carried(&driving(State::Attributing, "spira.a2"));
+    let n = r.requested().len();
+    r.tick(STREAM, ended("spira.a2", runtime::units::Exit::Code(2), "boom\n")).unwrap();
+    let why = asked_after(&r, n).into_iter().find(|(e, _)| e == PAUSE).expect("pause").1.why;
+    assert!(why.starts_with("local corpus red — the attribution leg ended"), "{why}");
+}
+
 /// No row but the carried leg's own restart reaches Corpus, and a promotion that is not yet
 /// attested certifies like an opened round.
 #[test]

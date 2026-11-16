@@ -2566,7 +2566,10 @@ fn first_red_reason(results: &Path, reds: &[String], phases: &[PhaseRed]) -> Opt
     let line = match out {
         Some(o) if early(first) => o.lines().find(|l| !l.trim().is_empty())?.to_string(),
         Some(o) => failure_excerpt(&o).lines().find(|l| !l.trim().is_empty())?.to_string(),
-        None => phases.iter().find(|p| test_phase_step(&p.stage) == first.as_str())?.cause.clone(),
+        None => phases
+            .iter()
+            .find(|p| test_phase_step(&p.stage) == first.as_str())
+            .map_or_else(|| "red".to_string(), |p| p.cause.clone()),
     };
     Some(format!("{first}: {}", bounded_text(&line)))
 }

@@ -1037,17 +1037,16 @@ pub fn certify_red_evidence(out: &str) -> (Option<String>, Vec<String>) {
     (verdict, reds)
 }
 
-/// What a red certify pass said went red: its last `red-reason=` line, else the verdict line and
-/// red suites; empty when the output says neither.
+/// What a red certify pass said went red: its last `red-reason=` line, else its red suites, else
+/// its verdict line; empty when the output says none.
 pub fn pass_red_of(out: &str) -> String {
     if let Some(r) = out.lines().rev().find_map(|l| l.strip_prefix("red-reason=")) {
         return r.trim().to_string();
     }
-    let (verdict, reds) = certify_red_evidence(out);
-    match (verdict, reds.is_empty()) {
+    match certify_red_evidence(out) {
+        (_, reds) if !reds.is_empty() => reds.join(","),
         (Some(v), _) => v,
-        (None, false) => reds.join(","),
-        (None, true) => String::new(),
+        (None, _) => String::new(),
     }
 }
 
