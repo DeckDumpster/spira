@@ -2417,6 +2417,15 @@ pub fn clear_landed_rows(env: &Env, beads: &[String]) -> Result<Vec<String>, Str
     Ok(said.lines().map(str::trim).filter(|l| !l.is_empty()).map(String::from).collect())
 }
 
+/// The line a landing says about its registry clearing; `None` when nothing was cleared.
+pub fn registry_clearing_line(env_: &Env, repo: &Repo, beads: &[String]) -> Option<String> {
+    match clear_landed_rows(env_, beads) {
+        Ok(ids) if ids.is_empty() => None,
+        Ok(ids) => Some(format!("batcher {}: landing cleared registry row(s) {}", repo.name, ids.join(" "))),
+        Err(e) => Some(format!("batcher {}: landed but registry rows were not cleared: {e}", repo.name)),
+    }
+}
+
 fn local_red_cause(reason: &str) -> &'static str {
     if reason == spira_config::host_disk::CAUSE {
         spira_config::host_disk::CAUSE
