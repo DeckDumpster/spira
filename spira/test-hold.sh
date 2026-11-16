@@ -121,8 +121,9 @@ is "unhold.sh exits 0"          0   "$rc"
 is "pidfile is gone"             no  "$([ -f "$SPIRA_RUN/hold-sp-h1.pid" ] && echo yes || echo no)"
 is "heartbeat file is gone"      no  "$([ -f "$SPIRA_RUN/hold-sp-h1.hb" ] && echo yes || echo no)"
 
-if [ -z "$hbpid" ] || gone_within "$hbpid" 200; then ok "heartbeat is dead"
-else bad "heartbeat is dead" "pid $hbpid still in /proc after 200 polls (state $(awk '{print $3}' "/proc/$hbpid/stat" 2>/dev/null))"; fi
+hb_polls=200
+if [ -z "$hbpid" ] || gone_within "$hbpid" "$hb_polls"; then ok "heartbeat is dead"
+else bad "heartbeat is dead" "pid $hbpid still in /proc after $hb_polls polls (state $(awk '{print $3}' "/proc/$hbpid/stat" 2>/dev/null))"; fi
 
 # ======================================================================================
 # 4. holder_alive returns 1 after release.
