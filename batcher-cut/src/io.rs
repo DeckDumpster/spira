@@ -2406,6 +2406,7 @@ pub fn close_superseded_reds(repo: &Repo, head: &str) {
 /// A round landed: the registry rows naming its members are over. Returns the cleared test ids.
 pub fn clear_landed_rows(env: &Env, beads: &[String]) -> Result<Vec<String>, String> {
     let bin = env.test_registry_bin.as_ref().ok_or("test-registry is not in the release")?;
+    // FORK-EDGE: the registry's own binary owns its store; the row delete and its history row are one transaction only it can make
     let mut cmd = Command::new(bin);
     cmd.arg("clear-landed");
     for b in beads {
