@@ -297,7 +297,7 @@ fn width_and_defaults_read_like_the_bash() {
 /// root-installer-only diff is never unselected.
 #[test]
 fn the_real_corpus_claims_the_root_installer() {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
+    let dir = spira_config::resolve::locate_home_for_process().unwrap();
     let c = Corpus::load_named(&dir, &["test-install-rehearsal-stray.sh".into()]).unwrap();
     let s = select::select(
         &c,

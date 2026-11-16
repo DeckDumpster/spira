@@ -3,7 +3,7 @@ use testkit::TempDir;
 use unit_run::*;
 
 fn shipped(name: &str) -> String {
-    std::fs::read_to_string(format!("{}/../systemd/{name}", env!("CARGO_MANIFEST_DIR"))).unwrap_or_default()
+    std::fs::read_to_string(spira_config::resolve::checkout_root_for_process().unwrap().join("systemd").join(name)).unwrap_or_default()
 }
 
 #[test]
@@ -35,7 +35,7 @@ fn the_listener_unit_turns_accounting_on() {
 #[test]
 fn the_journal_follower_unit_is_not_shipped() {
     assert!(shipped("spira-unit-run-dbus.service").contains("[Service]"), "positive control: shipped() finds a unit");
-    assert!(!std::path::Path::new(&format!("{}/../systemd/spira-unit-run.service", env!("CARGO_MANIFEST_DIR"))).exists());
+    assert!(!spira_config::resolve::checkout_root_for_process().unwrap().join("systemd/spira-unit-run.service").exists());
 }
 
 #[test]

@@ -1348,7 +1348,7 @@ mod tests {
 
     #[test]
     fn every_limit_key_is_a_registered_config_key() {
-        let conf_d = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/conf.d");
+        let conf_d = spira_config::resolve::locate_home_for_process().unwrap().join("conf.d");
         for key in LIMIT_KEYS {
             assert!(conf_d.join(key).is_file(), "{key} is not registered in spira/conf.d");
         }

@@ -5,7 +5,7 @@ use std::fs;
 use std::path::PathBuf;
 
 fn root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    testkit::manifest_dir()
 }
 
 fn strip_comments(sql: &str) -> String {

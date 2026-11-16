@@ -60,7 +60,7 @@ fn walk(dir: &Path, out: &mut Vec<String>) {
 #[test]
 fn no_unmarked_spira_fork_edge_remains() {
     let mut found = Vec::new();
-    walk(&Path::new(env!("CARGO_MANIFEST_DIR")).join("src"), &mut found);
+    walk(&testkit::manifest_dir().join("src"), &mut found);
     assert!(found.is_empty(), "unmarked Spira→Spira fork edges:\n{}", found.join("\n"));
 }
 

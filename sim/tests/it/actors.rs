@@ -28,7 +28,7 @@ fn fit_refuses_missing_and_empty_logs() {
 /// `sim/units`; a shipped actor (a unit the loop ran, now a task of the service) is refused.
 #[test]
 fn every_actor_is_sim_only_and_its_units_are_in_the_tree() {
-    let tree = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let tree = spira_config::resolve::checkout_root_for_process().unwrap();
     let specs = sim::actors::parse_specs(&std::fs::read_to_string(tree.join("sim/actors.toml")).unwrap()).unwrap();
     for s in &specs {
         let timer = std::fs::read_to_string(s.units_in(&tree).join(&s.timer)).unwrap_or_else(|e| panic!("{}: {e}", s.timer));

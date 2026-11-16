@@ -41,7 +41,7 @@ pub fn unmarked(name: &str, text: &str) -> Vec<String> {
 
 #[test]
 fn no_unmarked_spira_child_remains() {
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let dir = testkit::manifest_dir().join("src");
     let mut found = Vec::new();
     for e in std::fs::read_dir(&dir).unwrap() {
         let p = e.unwrap().path();

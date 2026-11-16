@@ -372,7 +372,7 @@ mod tests {
             let c = Call { method: m, caller: who, request_size: rq, response_size: rs, exit_code: code, start, end: start + Duration::from_millis(ms), queue_wait: Duration::ZERO, phases: &[], commits_us: &[], reads: 0, open_phase: None, lag_revs: None, lag_ms: None, too_old: false };
             sink.write(&c, start).unwrap();
         }
-        fs::copy(dir.join("spira-lc.2023-11-14.jsonl"), concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/spira-lc.ndjson")).unwrap();
+        fs::copy(dir.join("spira-lc.2023-11-14.jsonl"), testkit::manifest_dir().join("tests/fixtures/spira-lc.ndjson")).unwrap();
     }
 
     #[test]

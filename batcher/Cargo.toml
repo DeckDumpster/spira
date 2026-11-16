@@ -17,4 +17,6 @@ codegen-units = 1
 strip = true
 
 [dev-dependencies]
+testkit = { path = "../testkit" }
+spira-config = { path = "../spira-config" }
 forge = { path = "../forge" }

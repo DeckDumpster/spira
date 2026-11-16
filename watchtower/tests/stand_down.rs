@@ -19,7 +19,7 @@ const CHECKS: [&str; 12] = [
 ];
 
 fn run_check(d: &testkit::TempDir, run: &std::path::Path, check: &str) -> String {
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_watchtower"));
+    let mut cmd = Command::new(testkit::bin_exe("watchtower"));
     if check != "sweep" {
         cmd.arg(format!("--{check}"));
     }

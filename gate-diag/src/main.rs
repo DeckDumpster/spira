@@ -393,7 +393,7 @@ mod diagnostics_tests {
     // covers: UC-test-infrastructure-36
     #[test]
     fn the_workflow_runs_the_diagnostics_and_uploads_the_batch_results_whatever_the_batch_did() {
-        let yml = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../.github/workflows/gate.yml")).unwrap();
+        let yml = std::fs::read_to_string(spira_config::resolve::checkout_root_for_process().unwrap().join(".github/workflows/gate.yml")).unwrap();
         for wanted in ["upload-artifact", "always()", "gate-diag", "batch"] {
             assert!(yml.contains(wanted), "gate.yml no longer carries `{wanted}`");
         }
