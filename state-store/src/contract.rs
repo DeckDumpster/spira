@@ -1626,7 +1626,6 @@ mod phase_tests {
 
     use crate::backend::{LogEntry, Version, Write};
     use std::sync::mpsc;
-    use std::time::Instant;
 
     /// Delegates to a `MemBackend`; the next commit parks in `before` until released, and
     /// every commit parks in `after` once applied when that is armed.
