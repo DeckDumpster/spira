@@ -1019,7 +1019,7 @@ mod tests {
                 seen += 1;
                 let text = std::fs::read_to_string(&path).unwrap();
                 let name = path.file_stem().unwrap().to_string_lossy().into_owned();
-                assert!(!text.contains("RUNE_MAX_CONCURRENT"), "{name} still sets the retired cap");
+                assert!(!text.contains(concat!("RUNE_MAX", "_CONCURRENT")), "{name} still sets the retired cap");
                 if text.lines().any(|l| l.trim() == "RUNE_SINGLE_FLIGHT=1") {
                     single.push(name);
                 }
