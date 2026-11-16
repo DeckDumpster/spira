@@ -6,11 +6,15 @@ use super::*;
 use crate::conformance::Interpose;
 use crate::MemBackend;
 
+type Hook = Box<dyn FnOnce() + Send>;
+
 /// Counts the reads that reach it, so a test can tell memory from the inner backend.
 #[derive(Clone, Default)]
 struct Counted {
     inner: MemBackend,
     reads: Arc<AtomicU64>,
+    /// Runs once, inside the next commit, before it reaches `inner`.
+    before_commit: Arc<std::sync::Mutex<Option<Hook>>>,
 }
 
 impl Counted {
@@ -39,6 +43,9 @@ impl Backend for Counted {
         self.inner.range(prefix, after, limit, at)
     }
     fn commit(&self, expect: u64, batch: &[Write]) -> Result<u64> {
+        if let Some(f) = self.before_commit.lock().unwrap().take() {
+            f();
+        }
         self.inner.commit(expect, batch)
     }
     fn log(&self, from: u64, max_mains: usize) -> Result<Vec<LogEntry>> {
@@ -270,7 +277,27 @@ fn a_tracked_commit_records_the_order_wait_and_one_commit() {
     let names: Vec<_> = s.phases.iter().map(|p| p.0).collect();
     assert!(names.contains(&"order_wait"), "{names:?}");
     assert!(!names.contains(&"catch_up"), "{names:?}");
+    assert!(names.contains(&"apply"), "{names:?}");
     assert_eq!(s.commits_us.len(), 1);
+}
+
+#[test]
+fn a_commit_that_lands_on_a_copy_that_fell_behind_after_the_check_records_the_catch_up() {
+    use crate::phases::{self, Recorder};
+    let inner = Counted::default();
+    let m = Modeled::open(inner.clone(), SKIP, 16).unwrap();
+    let behind = inner.inner.clone();
+    *inner.before_commit.lock().unwrap() = Some(Box::new(move || {
+        behind.commit(0, &[put("k", "1")]).unwrap();
+    }));
+    let rec = Arc::new(Recorder::default());
+    phases::track(rec.clone());
+    m.commit(1, &[put("j", "2")]).unwrap();
+    phases::untrack();
+    let names: Vec<_> = rec.snapshot().phases.iter().map(|p| p.0).collect();
+    assert!(names.contains(&"catch_up"), "{names:?}");
+    assert!(!names.contains(&"apply"), "{names:?}");
+    assert_eq!(m.revision(), 2);
 }
 
 #[test]
@@ -462,4 +489,35 @@ fn a_reload_under_a_commit_is_stamped_too_old_without_lagging_the_request() {
     let st = stamp();
     assert!(st.too_old, "the copy reloaded under this request");
     assert_eq!((st.rev, st.lag_revs), (Some(wrote), None));
+}
+
+#[test]
+fn a_copy_reloaded_under_a_commit_records_the_reload() {
+    use crate::phases::{self, Recorder};
+    let inner = MemBackend::new();
+    let m = Modeled::open(inner.clone(), SKIP, 16).unwrap();
+    let mut rev = m.commit(0, &[put("k", "0")]).unwrap();
+    for n in 1..5 {
+        rev = inner.commit(rev, &[put("k", &n.to_string())]).unwrap();
+    }
+    inner.compact(rev).unwrap();
+    let rec = Arc::new(Recorder::default());
+    phases::track(rec.clone());
+    m.commit(rev, &[put("k", "5")]).unwrap();
+    phases::untrack();
+    let names: Vec<_> = rec.snapshot().phases.iter().map(|p| p.0).collect();
+    assert!(names.contains(&"reload") && names.contains(&"catch_up"), "{names:?}");
+}
+
+#[test]
+fn a_commit_whose_reply_was_lost_records_the_catch_up() {
+    use crate::phases::{self, Recorder};
+    let m = Modeled::open(Interpose::new(MemBackend::new()), SKIP, 16).unwrap();
+    m.inner().lose_next_commit_reply();
+    let rec = Arc::new(Recorder::default());
+    phases::track(rec.clone());
+    assert!(m.commit(0, &[put("k", "1")]).is_err());
+    phases::untrack();
+    let names: Vec<_> = rec.snapshot().phases.iter().map(|p| p.0).collect();
+    assert!(names.contains(&"catch_up"), "{names:?}");
 }
