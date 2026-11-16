@@ -2952,7 +2952,7 @@ pub mod edge {
 
         #[test]
         fn an_attribution_after_a_relative_pass_reads_it_under_the_runs_parent() {
-            let leg = Leg { batch: "r9".into(), after_pass: kept_results_file("r9"), ..Leg::on("spira") };
+            let leg = Leg { batch: "r9".into(), after_pass: super::super::kept_results_file("r9"), ..Leg::on("spira") };
             assert_eq!(after_pass(&leg).as_deref(), Some("/var/run/rounds/r9.results"));
         }
 
