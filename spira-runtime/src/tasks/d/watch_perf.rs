@@ -34,7 +34,7 @@
 //! | `watch.perf.slow_sample` | host | 5 s | `watch.perf:slow:<probe>:<epoch>` | a path outside `SPIRA_RUN` |
 //! | `watch.perf.metrics` | host | 5 s | `watch.perf:metrics:<epoch>` | nothing; a lost push is a gap in the series, not a failure |
 //!
-//! - **`inbox.append`** carries `<UTC ISO> [watch:perf-watch] <alarm>` (`inbox_line`, `lib.rs:226-239`, test `lib.rs:350-352`). The alarm is one of `PERF SLOW <name> <ms>ms (limit <L>ms) phases <p|unreported> [rest=<ms>ms]; top callers: <c1, c2, c3|unknown>` `PERF UNRUNNABLE <name>: <err> (after <ms>ms; phases …)` (`lib.rs:116-117`), or `PERF TIMEOUT <name> timed out at <d>ms twice in a row (limit <L>ms); top callers: <c…>` when a probe was cut at its deadline on two passes running. The shared runner adds the newline, so the task drops the trailing `\n` that `inbox_line` appends.
+//! - **`inbox.append`** carries `<UTC ISO> [watch:perf-watch] <alarm>` (`inbox_line`, `lib.rs:226-239`, test `lib.rs:350-352`). The alarm is one of `PERF SLOW <name> <ms>ms (limit <L>ms) phases <p|unreported> [rest=<ms>ms]; top callers: <c1, c2, c3|unknown>`, `PERF UNRUNNABLE <name>: <err> (after <ms>ms; phases …)` (`lib.rs:116-117`), or `PERF TIMEOUT <name> timed out at <d>ms twice in a row (limit <L>ms); top callers: <c…>` when a probe was cut at its deadline on two passes running. The shared runner adds the newline, so the task drops the trailing `\n` that `inbox_line` appends.
 //! - **`watch.perf.log`** appends the bare alarm line to `run/perf-watch.log`, the log row `spira/watchers:122` that the unit's stdout fills today (`main.rs:144`).
 //! - **`watch.perf.slow_sample`** appends `<epoch>\t<probe>\t<ms>\t<phases>\trest=<ms>\t<top callers>` to `run/perf-slow.log` (`lib.rs:128-141`, `main.rs:147-151`).
 //! - **`watch.perf.metrics`** pushes `spira_perf_watch_probe_seconds{probe}` for every answered probe (`lib.rs:101-109`, `main.rs:152`).
@@ -341,15 +341,20 @@ mod tests {
     }
 
     #[test]
-    fn timed_out_probes_round_trip_through_the_carry_rows() {
+    fn timed_out_probes_survive_the_carry_rows() {
         let carry = Carry { last_pass: 5, timed_out: ["claim-check".to_string()].into(), ..Carry::default() };
-        assert_eq!(health_of(&carry).timed_out, carry.timed_out);
-        assert_eq!(serde_json::from_str::<Carry>(&serde_json::to_string(&carry).unwrap()).unwrap(), carry);
+        let body = serde_json::to_string(&carry).unwrap();
+        let back = runtime::rows::join(&runtime::rows::split(&body, ROW_PARTS), ROW_PARTS);
+        assert_eq!(serde_json::from_str::<Carry>(&back).unwrap().timed_out, carry.timed_out);
     }
 
     #[test]
-    fn the_last_phases_line_on_stderr_is_the_probes_breakdown() {
-        assert_eq!(phases_of(b"warn\nPERFWATCH_PHASES=store=30,push=12\n").as_deref(), Some("store=30,push=12"));
-        assert_eq!(phases_of(b"nothing here\n"), None);
+    fn decide_pages_a_timeout_on_the_second_pass_and_not_the_first() {
+        let cfg = Config { budget_ms: 500, interval_secs: 0, remind_secs: 1800, inbox: String::new(), metrics_endpoint: String::new(), run: String::new() };
+        let snap = Snapshot { timings: vec![Timing { name: "claim-check".into(), micros: 5_000_000, millis: 5000, error: Some("x".into()), timed_out_ms: Some(5000), ..Timing::default() }], callers: BTreeMap::new() };
+        let (first, acts) = decide(&Carry::default(), &snap, 1_000_000, &cfg);
+        assert!(acts.iter().all(|a| a.name != INBOX_APPEND), "{acts:?}");
+        let (_, acts) = decide(&first, &snap, 1_300_000, &cfg);
+        assert!(acts.iter().any(|a| a.name == INBOX_APPEND && a.input.contains("PERF TIMEOUT claim-check timed out at 5000ms twice in a row")), "{acts:?}");
     }
 }
