@@ -148,11 +148,11 @@ pub fn publish(run_dir: &Path, tier: &str, kv_text: &str) -> Result<String, Stri
     Ok(snap.display().to_string())
 }
 
-/// The `slots` tsd row, from `field=value` lines (`live`, `ceiling`, `lanes_live`, `ready`,
+/// The `slots` tsd row, from `field=value` lines (`live`, `ceiling`, `ready`,
 /// `capacity_paused`); a missing field is `?`.
 pub fn slots_sample(run_dir: &Path, fields_text: &str) -> Result<String, String> {
     let given: BTreeMap<String, String> = parse_lines(fields_text).into_iter().collect();
-    let fields: Vec<(&str, String)> = ["live", "ceiling", "lanes_live", "ready", "capacity_paused"].iter().map(|k| (*k, given.get(*k).cloned().unwrap_or_else(|| "?".into()))).collect();
+    let fields: Vec<(&str, String)> = ["live", "ceiling", "ready", "capacity_paused"].iter().map(|k| (*k, given.get(*k).cloned().unwrap_or_else(|| "?".into()))).collect();
     io::slots_row(run_dir, &fields, &tsd::iso_utc(io::now() as u64), &tsd::default_host())?;
     Ok(String::new())
 }

@@ -302,3 +302,14 @@ fn call_world_binds_only_the_classes_that_have_a_limit() {
     let unbound = call_world(&Carry::default(), &idle());
     assert!(unbound.limits.is_empty());
 }
+
+#[test]
+fn a_decided_pass_carries_each_bound_class_as_it_left_it_and_the_carry_round_trips() {
+    let snap = Snapshot { max_dwarves: Some(7), class_limits: [("memory".to_string(), 3)].into(), ..idle() };
+    let (carry, _) = decide(&Carry::default(), &snap);
+    let bound = carry.bound.clone().expect("a decided pass carries its bound classes");
+    assert_eq!(bound.iter().map(|b| (b.class.as_str(), b.limit)).collect::<Vec<_>>(), [("build-disk", 7), ("memory", 3)]);
+    let back: Carry = serde_json::from_str(&serde_json::to_string(&carry).unwrap()).unwrap();
+    assert_eq!(back.bound, carry.bound);
+    assert_eq!(Carry::default().bound, None, "no pass yet is not an empty array");
+}

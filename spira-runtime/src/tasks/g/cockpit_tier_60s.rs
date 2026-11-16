@@ -109,7 +109,7 @@ pub fn decide(carry: &Carry, snap: &Snapshot) -> Result<(Carry, Vec<EffectSpec>)
 
 /// The `slots` tsd fields an ok `slots` fragment carries, by the field names `tsd-write`
 /// wrote; `ready` is not among them, the sample runner reads it from the claim view.
-const SAMPLED: &[(&str, &str)] = &[("live", "SP_SLOTS_LIVE"), ("ceiling", "SP_SLOTS_CEILING"), ("lanes_live", "SP_SLOTS_LANES_LIVE"), ("capacity_paused", "SP_SLOTS_CAPACITY_PAUSED")];
+const SAMPLED: &[(&str, &str)] = &[("live", "SP_SLOTS_LIVE"), ("ceiling", "SP_SLOTS_CEILING"), ("capacity_paused", "SP_SLOTS_CAPACITY_PAUSED")];
 
 /// The tier decision plus the supervisor's `slots` tsd sample after an ok `slots` read that moved
 /// the snapshot (an idle tick asks for nothing beyond its observe), run by `cockpit::answer` as a
