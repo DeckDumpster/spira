@@ -398,6 +398,23 @@ impl World for Real {
         })
     }
 
+    fn deny_list(&self, at: u64) -> Result<String, String> {
+        // batch-job: a registry read, bounded by the registry's own busy timeout
+        let o = Command::new("test-registry")
+            .args(["deny-list", "--at", &at.to_string()])
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|e| format!("test-registry: {e}"))?;
+        if o.status.success() {
+            return Ok(String::from_utf8_lossy(&o.stdout).into_owned());
+        }
+        Err(format!(
+            "test-registry deny-list exited {}: {}{}",
+            o.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        ))
+    }
     fn readable(&self, p: &Path) -> bool {
         File::open(p).is_ok()
     }

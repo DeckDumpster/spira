@@ -101,6 +101,8 @@ pub struct GateRun {
     /// On a branch-red: the unit that failed (`-` when none) and the line that says why; empty otherwise.
     pub red_unit: String,
     pub red_line: String,
+    /// `<at>/<digest>` of the deny list the trial ran with; empty when it ended before resolving one.
+    pub deny_list: String,
 }
 
 /// Render the row through tsd's own builder. `wall_secs` is waited + ran: the certification
@@ -138,6 +140,7 @@ pub fn render(ts: &str, host: &str, r: &GateRun) -> Result<String, String> {
         ("unit_slowest".into(), s(&r.unit_slowest)),
         ("red_unit".into(), s(&r.red_unit)),
         ("red_line".into(), s(&r.red_line)),
+        ("deny_list".into(), s(&r.deny_list)),
     ];
     tsd::build_row(ts, host, FAMILY, &fields)
 }
