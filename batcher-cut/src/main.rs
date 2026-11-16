@@ -3234,6 +3234,7 @@ mod cut_tests {
             by: None,
             reason: None,
             all: false,
+            confirmed: false,
         };
         let given = vec![("sp-8br220".to_string(), tips[0].clone()), ("sp-x".to_string(), tips[1].clone())];
         (attribute_in(&o, env, repo, wt, start, given), calls)
