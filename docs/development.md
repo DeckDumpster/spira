@@ -37,7 +37,7 @@ Generic mechanism. A colleague clones this and it carries none of the operator's
 | `spira/inventory-deny` | the tokens that fence refuses beyond the structural ones. Ships EMPTY: a list of somebody else's names is itself the inventory |
 | `spira/actors.example` | commit author to harness, for authors the commit graph cannot vote on. Its rows are one installation's roster |
 | `heimdall/` | the watchdog over the loop (Rust) — reads timestamps and counters, raises or clears an alert bead. Its only power is speech: it repairs nothing, restarts nothing and calls nothing |
-| `repo-contract/` | what a repository declares about the environment its check rows run in (Rust library) — the flake dev shell `work checks` enters, read by `nix print-dev-env` and cached by the flake's content |
+| `repo-contract/` | what a repository declares about the environment its check rows run in (Rust library and the `repo-contract check` binary) — the flake dev shell `work checks` enters, read by `nix print-dev-env` and cached by the flake's content |
 | `skew/` | is the activated release the latest published (Rust) — the hourly check that the installed release matches the most recent release tag; also the landing gate's fence against work landing in a copy nothing executes |
 | `doctor/` | read-only preflight (Rust) — every missing program, unreadable database, unmapped repository and unbuilt panel, named in one pass |
 | `census/` | the Mimir census (Rust) — failure classes ranked by frequency from the events table, with open-remedy suppression |

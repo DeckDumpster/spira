@@ -16,14 +16,6 @@ impl Real {
         Ok(Real { reg: Registry::from_env_checkout(std::env::vars().collect(), &home) })
     }
 
-    pub fn home_repo(&self) -> String {
-        self.reg.home_repo().to_string()
-    }
-
-    pub fn all(&self) -> Vec<String> {
-        self.reg.all()
-    }
-
     fn root(&self, repo: &str) -> Result<PathBuf, String> {
         self.reg.root(repo).map(PathBuf::from).ok_or_else(|| format!("{repo} is not in the repo registry"))
     }
@@ -77,7 +69,8 @@ impl Ports for Real {
     }
 
     fn on_path(&self, env: &ShellEnv, program: &str) -> bool {
-        env.path_dirs().iter().any(|d| d.join(program).is_file())
+        use std::os::unix::fs::PermissionsExt;
+        env.path_dirs().iter().any(|d| d.join(program).metadata().is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0))
     }
 
     fn run_checks(&self, repo: &str, tree: Option<&Path>) -> Result<Rows, String> {
@@ -97,7 +90,7 @@ impl Ports for Real {
             .output()
             .map_err(|e| format!("cannot run testenv: {e}"))?;
         match out.status.code() {
-            Some(0) | Some(1) => Ok(suites.iter().map(|s| Tier { name: s.clone(), ok: out.status.success() }).collect()),
+            Some(0) | Some(1) => Ok(vec![Tier { name: suites.join(","), ok: out.status.success() }]),
             c => Err(format!("testenv exited {c:?}: {}", String::from_utf8_lossy(&out.stderr).trim())),
         }
     }

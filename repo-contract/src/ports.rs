@@ -3,7 +3,7 @@
 use crate::shell::ShellEnv;
 use std::path::Path;
 
-/// One tier's verdict from the test entry point.
+/// The verdict of the test entry point's run of a tier list, which reports one verdict for it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Tier {
     pub name: String,
