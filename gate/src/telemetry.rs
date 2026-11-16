@@ -153,11 +153,19 @@ pub fn render(ts: &str, host: &str, r: &GateRun) -> Result<String, String> {
     tsd::build_row(ts, host, FAMILY, &fields)
 }
 
+/// The kind of a build-directory field: `builder`, `warm` or `cold`.
+pub fn build_dir_kind(field: &str) -> &str {
+    field.split([' ', ':']).next().unwrap_or("")
+}
+
 /// The row's build-directory field from the lines `target_on_tmpfs` printed: the way the
 /// directory was filled, or why it was not.
 pub fn build_dir_field(line: &str) -> String {
-    use crate::warm::{COLD_OPEN, WARM_FROM};
+    use crate::warm::{BUILDER_IN, COLD_OPEN, WARM_FROM};
     for l in line.lines() {
+        if l.starts_with(BUILDER_IN) {
+            return "builder".into();
+        }
         if let Some(rest) = l.strip_prefix(WARM_FROM) {
             return format!("warm from {}", rest.split(' ').next().unwrap_or(""));
         }
@@ -347,6 +355,9 @@ mod tests {
         assert_eq!(build_dir_field(&format!("{b}\ngate: warm build directory from c1 discarded, {}mtimes: denied)", crate::warm::COLD_OPEN)), "cold: mtimes: denied");
         assert_eq!(build_dir_field("gate: no tmpfs for the build (x) — /t builds in the tree"), "cold: no tmpfs, built in the tree");
         assert_eq!(build_dir_field(b), "cold: no warm directory to adopt");
+        let leased = format!("{b}\n{}/pool/dir.2 (leased from sp-a's builder at c1)", crate::warm::BUILDER_IN);
+        assert_eq!(build_dir_field(&leased), "builder");
+        assert_eq!(["builder", "warm from c1", "cold: no tmpfs"].map(build_dir_kind), ["builder", "warm", "cold"]);
     }
 
     #[test]
