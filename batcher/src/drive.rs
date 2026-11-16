@@ -3848,7 +3848,7 @@ pub(crate) mod tests {
     }
 
     const RELEASE_FAILING: &str =
-        "FAIL queue tests::the_shipped_delta_carries_every_required_key_with_every_task_in_act_on_systemd";
+        "FAIL release tests::the_shipped_delta_carries_every_required_key_with_every_task_in_act_on_systemd";
 
     fn release_red_when(culprit: &'static str) -> FilterFn {
         Box::new(move |tree| {
@@ -3862,7 +3862,7 @@ pub(crate) mod tests {
 
     fn release_graph() -> PackageGraph {
         PackageGraph {
-            dirs: [("queue", "queue"), ("runtime", "spira-runtime"), ("gate", "gate")]
+            dirs: [("release", "release"), ("runtime", "spira-runtime"), ("gate", "gate")]
                 .iter()
                 .map(|(p, d)| (p.to_string(), d.to_string()))
                 .collect(),
@@ -3894,7 +3894,7 @@ pub(crate) mod tests {
                 diff_paths("m2", &["runtime/src/y.rs"]),
                 diff_paths("m3", &["testenv/src/z.rs"]),
                 diff_paths("m4", &["batcher-cut/src/a.rs", "spira-runtime/src/b.rs"]),
-                diff_paths("m5", &["doctor/src/c.rs", "spira-lint/src/d.rs", "spira-runtime/src/e.rs"]),
+                diff_paths("m5", &["queue/src/c.rs", "spira-lint/src/d.rs", "spira-runtime/src/e.rs"]),
                 diff_paths(
                     "m6",
                     &["spira-runtime/src/f.rs", "spira/conf.d/SPIRA_TASK_MODES", "spira/config-delta.toml"],
@@ -3907,7 +3907,7 @@ pub(crate) mod tests {
         assert_eq!(ops.ejected, vec![("m6".to_string(), vec!["unit-tests".to_string()])]);
         assert!(f.probes.is_empty(), "one mapped suspect runs no subset: {:?}", f.probes);
         let note = &ops.eject_evidence[0].1;
-        assert!(note.contains("read by queue's tests"), "{note}");
+        assert!(note.contains("read by release's tests"), "{note}");
         assert!(matches!(end, RoundEnd::Land { ref members, .. } if members.len() == 5), "{end:?}");
     }
 
