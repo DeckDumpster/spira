@@ -1757,7 +1757,7 @@ impl<'w, W: World> Trial<'w, W> {
 
     /// Where the bead's builder built at its last submit, when the bead has one and the wait is configured.
     fn builders_dir(&self, ctx: &Ctx) -> Option<crate::ports::Builder> {
-        let wait = key::digits(ctx.var("SPIRA_GATE_BUILD_LEASE_WAIT_SECS"))?;
+        let wait = key::digits(ctx.var("SPIRA_GATE_BUILDER_DIR_WAIT_SECS"))?;
         if self.s.bead.is_empty() {
             return None;
         }

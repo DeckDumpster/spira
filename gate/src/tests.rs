@@ -199,7 +199,7 @@ fn ctx() -> Ctx {
         ("SPIRA_GATE_BUDGET", "300"),
         ("SPIRA_GATE_DEADLINE", "300"),
         ("SPIRA_GATE_BUILD_STALL", "300"),
-        ("SPIRA_GATE_BUILD_LEASE_WAIT_SECS", "120"),
+        ("SPIRA_GATE_BUILDER_DIR_WAIT_SECS", "120"),
         ("SPIRA_UNIT_TEST_DEADLINE_SECS", "60"),
         ("SPIRA_UNIT_TEST_DEADLINE_PERIODS", "2"),
     ] {
@@ -5085,7 +5085,7 @@ fn a_builders_directory_that_cannot_be_leased_cleaned_or_aged_leaves_the_gate_on
 #[test]
 fn a_gate_with_no_lease_wait_configured_does_not_look_for_the_builders_directory() {
     let f = builder_fake();
-    f.put_var("SPIRA_GATE_BUILD_LEASE_WAIT_SECS", "");
+    f.put_var("SPIRA_GATE_BUILDER_DIR_WAIT_SECS", "");
     assert_eq!(f.run(), PASS);
     assert_eq!(f.builders.borrow()[0], None);
 }
