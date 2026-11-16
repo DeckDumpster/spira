@@ -689,6 +689,16 @@ pub fn park_cursor(real: &hel::real::Real, repo: &str, cut: bool, last_judged: O
     }
 }
 
+/// The prune ends a repository's pass: its cursor is cleared unless a branch sorts after it, which
+/// only a cut observe left unjudged (an observe that walked to the end has none to leave).
+pub fn clear_cursor_when_walked(real: &hel::real::Real, repo: &str, root: &std::path::Path) {
+    use hel::ports::World;
+    let unwalked = real.resume_after(repo).is_some_and(|c| hel::git::Git(root).spira_branches().iter().any(|b| b.as_str() > c.as_str()));
+    if !unwalked {
+        real.set_resume_after(repo, None);
+    }
+}
+
 /// Branches sort by refname, so a cursor is a position: a branch sent since is gone, the cursor still holds.
 pub fn past_cursor(br: &str, cursor: Option<&str>) -> bool {
     cursor.is_none_or(|c| br > c)
@@ -818,9 +828,7 @@ pub fn prune(real: &hel::real::Real, input: &str) -> Result<String, String> {
     let t: Target = serde_json::from_str(input).map_err(|e| e.to_string())?;
     let root = root_of(real, &t.repo)?;
     real.prune(&root);
-    if real.resume_after(&t.repo).is_none_or(|c| !hel::git::Git(&root).spira_branches().iter().any(|b| b.as_str() > c.as_str())) {
-        real.set_resume_after(&t.repo, None);
-    }
+    clear_cursor_when_walked(real, &t.repo, &root);
     Ok(format!("pruned {}", t.repo))
 }
 
@@ -843,6 +851,29 @@ mod tests {
         assert_eq!(real.resume_after("spira").as_deref(), Some("spira/sp-c"));
         park_cursor(&real, "spira", false, Some("spira/sp-z"));
         assert_eq!(real.resume_after("spira").as_deref(), Some("spira/sp-c"));
+    }
+
+    #[test]
+    fn a_prune_keeps_the_cursor_while_a_branch_sorts_after_it_and_clears_it_at_the_end() {
+        use hel::ports::World;
+        let dir = testkit::TempDir::new("hel-sweep-prune-cursor");
+        let root = dir.path().join("repo");
+        std::fs::create_dir_all(&root).unwrap();
+        let git = |args: &[&str]| {
+            let o = std::process::Command::new("git").arg("-C").arg(&root).args(args).env("GIT_AUTHOR_NAME", "t").env("GIT_AUTHOR_EMAIL", "t@t").env("GIT_COMMITTER_NAME", "t").env("GIT_COMMITTER_EMAIL", "t@t").output().unwrap();
+            assert!(o.status.success(), "{args:?}");
+        };
+        git(&["init", "-q", "-b", "main"]);
+        git(&["commit", "-q", "--allow-empty", "-m", "x"]);
+        git(&["branch", "spira/sp-a"]);
+        git(&["branch", "spira/sp-c"]);
+        let real = hel::real::Real::minimal(dir.path().to_path_buf(), dir.path().to_path_buf(), None);
+        real.set_resume_after("spira", Some("spira/sp-a"));
+        clear_cursor_when_walked(&real, "spira", &root);
+        assert_eq!(real.resume_after("spira").as_deref(), Some("spira/sp-a"));
+        real.set_resume_after("spira", Some("spira/sp-c"));
+        clear_cursor_when_walked(&real, "spira", &root);
+        assert_eq!(real.resume_after("spira"), None);
     }
 
     struct Store(std::sync::Mutex<Vec<String>>);

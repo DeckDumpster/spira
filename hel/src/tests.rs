@@ -648,6 +648,12 @@ mod scan {
             let scanned = judge(&FromScan { f: &f, b: br });
             assert_eq!(scanned, live, "{}", br.br);
             seen.insert(live.code());
+            let g = Git(&root);
+            let evidence_asked = live == Disp::SendContentLanded && br.ahead != Some(0);
+            let own = evidence_asked && g.has_own_commit("main", &br.br, &br.id);
+            assert_eq!(br.has_own_commit, own, "{}", br.br);
+            assert_eq!(br.only_stacked_base, evidence_asked && !own && g.only_stacked_base("main", &br.br), "{}", br.br);
+            assert_eq!(br.base_names, evidence_asked && !own && !br.only_stacked_base && g.base_names("main", &br.id, 2000), "{}", br.br);
         }
         for d in [Disp::SendContentLanded, Disp::SendOtherPr, Disp::ReapSupersededSafe, Disp::ReapSquashMerged, Disp::KeepSupersededUnsafe, Disp::KeepUnlanded, Disp::OrphanNoBead, Disp::ArchiveTerminal] {
             assert!(seen.contains(d.code()), "the fixture reaches {}: {seen:?}", d.code());
