@@ -4870,6 +4870,18 @@ fn a_fences_mode_certification_runs_its_covered_suites_as_their_own_phase() {
 }
 
 #[test]
+fn a_covered_fences_pass_is_never_reused_for_a_gate_with_no_bead() {
+    let key = |f: &Fake| f.written.borrow().iter().find(|(p, _)| p.starts_with("/run/verdicts") && !p.to_string_lossy().contains("/trees/")).map(|(p, _)| p.clone());
+    let with = fences_fake(&["docs/x.md"]);
+    assert_eq!(with.run(), PASS, "{}", with.stderr());
+    let without = fences_fake(&["docs/x.md"]);
+    without.put_var("SPIRA_GATE_BEAD", "");
+    assert_eq!(without.run(), PASS, "{}", without.stderr());
+    let (a, b) = (key(&with).expect("a PASS is cached"), key(&without).expect("a PASS is cached"));
+    assert!(a != b, "{a:?}");
+}
+
+#[test]
 fn a_fences_mode_gate_with_no_bead_runs_no_covered_phase_and_takes_no_slot() {
     let f = fences_fake(&["docs/x.md"]);
     f.put_var("SPIRA_GATE_BEAD", "");

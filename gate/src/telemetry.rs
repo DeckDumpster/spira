@@ -214,6 +214,7 @@ pub fn push_metrics(sink: &spira_otel::metrics::MetricsSink, r: &GateRun) {
     let mode = if r.gate_mode.is_empty() { "unknown" } else { &r.gate_mode };
     let bt = if r.branch_type.is_empty() { "unknown" } else { &r.branch_type };
     let secs = |name, v: u64| Point::Seconds { name, value: v as f64 };
+    let covered_ran = r.phases.split(',').any(|p| p.starts_with("covered:"));
     sink.push(
         &[
             secs("spira_gate_run_seconds", r.ran_secs),
@@ -222,8 +223,8 @@ pub fn push_metrics(sink: &spira_otel::metrics::MetricsSink, r: &GateRun) {
             Point::Count { name: "spira_gate_runs", value: 1 },
         ]
         .into_iter()
-        .chain((r.covered_secs > 0 || r.covered_deferred > 0).then(|| secs("spira_gate_covered_seconds", r.covered_secs)))
-        .chain((r.covered_secs > 0 || r.covered_deferred > 0).then_some(Point::Count { name: "spira_gate_covered_deferred", value: r.covered_deferred }))
+        .chain(covered_ran.then(|| secs("spira_gate_covered_seconds", r.covered_secs)))
+        .chain(covered_ran.then_some(Point::Count { name: "spira_gate_covered_deferred", value: r.covered_deferred }))
         .collect::<Vec<_>>(),
         &[("repo", &r.repo), ("status", &r.status), ("gate_mode", mode), ("branch_type", bt)],
     );
@@ -378,7 +379,7 @@ mod tests {
             String::from_utf8_lossy(&buf).into_owned()
         });
         let sink = spira_otel::metrics::MetricsSink::new(Some(&addr), "spira-gate", std::time::Duration::from_secs(2));
-        let r = GateRun { repo: "r".into(), status: "PASS".into(), gate_mode: "fences".into(), covered_secs: 31, covered_deferred: 2, covered_deferred_suites: "a,b".into(), ..Default::default() };
+        let r = GateRun { repo: "r".into(), status: "PASS".into(), gate_mode: "fences".into(), phases: "fences:7,covered:0".into(), covered_secs: 0, covered_deferred: 2, covered_deferred_suites: "a,b".into(), ..Default::default() };
         push_metrics(&sink, &r);
         let body = h.join().unwrap();
         for name in ["spira_gate_covered_seconds", "spira_gate_covered_deferred"] {
