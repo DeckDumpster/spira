@@ -1420,6 +1420,8 @@ mod tests {
             .output()
             .unwrap();
         assert_eq!(out.status.code(), Some(75), "{}", String::from_utf8_lossy(&out.stdout));
+        assert!(String::from_utf8_lossy(&out.stdout).contains("the test sandbox could not start cargo nextest"));
+        assert!(String::from_utf8_lossy(&out.stderr).contains("--around: cargo is not on PATH"), "the runner's own 75 ended it");
     }
 
     #[test]

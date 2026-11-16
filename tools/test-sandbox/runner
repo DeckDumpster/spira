@@ -71,8 +71,6 @@ held() {
 
 is_held=""
 [ -z "$print" ] && held && is_held=1
-[ -n "$around" ] && [ -n "$is_held" ] && exec "$@"
-
 # The command is found on the PATH it was handed, then run by that absolute path: the sandbox's
 # home is a tmpfs, and bwrap's own lookup would not see what was bound back after it.
 if [ -n "$around" ]; then
@@ -81,6 +79,8 @@ if [ -n "$around" ]; then
     shift
     set -- "$cmd" "$@"
 fi
+[ -n "$around" ] && [ -n "$is_held" ] && exec "$@"
+
 
 path="$home/.local/lib/spira-env/bin:${CARGO_HOME:+$CARGO_HOME/bin:}/usr/local/bin:/usr/bin:/bin"
 [ -n "${CARGO:-}" ] && path="$(dirname "$CARGO"):$path"

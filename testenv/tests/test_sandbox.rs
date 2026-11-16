@@ -169,6 +169,9 @@ fn around_finds_the_cargo_the_gate_path_names_and_binds_its_toolchain_under_a_hi
     let bin = format!("{hidden}/.cargo/bin");
     let root = toolchain.parent().unwrap().parent().unwrap().display().to_string();
     assert!(bound(&bin) || bound(&root), "cargo's directory is bound back after the home tmpfs: {args:?}");
+    if toolchain.file_name().is_some_and(|n| n == "cargo") {
+        assert!(bound(&root), "the toolchain cargo links to is bound back: {args:?}");
+    }
 }
 
 #[test]
