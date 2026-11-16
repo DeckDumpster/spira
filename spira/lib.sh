@@ -2250,7 +2250,7 @@ queue_certified_list() {
 # at sp-27hsi: nothing called it, bash or Rust. No in-process replacement exists; file one
 # if the plan still wants that backstop.
 
-# queue_sort_rows <repo-path> <base-sha>
+# queue_sort_rows <repo-path> <base-sha>   (both arguments are accepted and ignored)
 # Read "<id> <tip> <epoch>" lines from stdin; write sort-key rows sorted by batcher order:
 #   "<express_flag> <prio_pad> <epoch_pad> <id> <tip>"
 # Set PRIO_JSON env to a bdjson array for priority (and label) lookups (defaults to []).

@@ -520,6 +520,14 @@ mod tests {
     }
 
     #[test]
+    fn two_rows_of_one_priority_keep_their_submitted_order_whatever_they_touch() {
+        let rows = [row("sp-z", "tip-a", 1), row("sp-a", "tip-b", 2)];
+        let prio = r#"[{"id":"sp-z","priority":2},{"id":"sp-a","priority":2}]"#;
+        let (ranked, _) = sort_rows(&rows, prio, &HashSet::new());
+        assert_eq!(ranked.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), ["sp-z", "sp-a"]);
+    }
+
+    #[test]
     fn express_ranks_ahead_of_everything_else() {
         let rows = [
             row("sp-hi-prio", "t1", 1),
