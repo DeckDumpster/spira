@@ -9,9 +9,9 @@ use crate::host::{Io, Spec};
 use crate::pass::{self, Sentinel};
 
 
-pub use sentinel::plan::{check7_pool_decision, ck7_fill_cap, ck7_pool, ck7_throttled, lane_rotate, parse_cache, render_cache};
+pub use sentinel::plan::{check7_pool_decision, ck7_fill_cap, ck7_pool, ck7_throttled, parse_cache, render_cache};
 
-/// One row of `spira-claim urgent`: a P0 or REWORK bead. Only `p0` or `express` hold the lanes.
+/// One row of `spira-claim urgent`: a P0 or REWORK bead. Only `p0` or `express` hold the reactive runes.
 struct Urgent {
     id: String,
     p0: bool,
@@ -223,7 +223,7 @@ impl<'a> Sentinel<'a> {
     }
 
     /// A live unit/pidfile count for one name — the mechanism `live_total` already uses
-    /// for the fleet ceiling, factored out so `dwarf_count`/`lanes_live_total` share it
+    /// for the fleet ceiling, factored out so `dwarf_count` shares it
     /// rather than keeping a third copy (lib.sh family E's own Rust port, `strand::probe`,
     /// does the same thing for its own caller; this crate's copy stays `Host`-driven so
     /// its own fixtures can fake it exactly as `live_total`'s already do).
@@ -267,20 +267,6 @@ impl<'a> Sentinel<'a> {
         self.unit_count(rune, exclude)
     }
 
-    /// dwarves_live_lanes, restricted to the lane runes already known to the caller (so it
-    /// is asked once per lane, in the SAME roster the CK7 loop itself computed) — `RUNE_NAME`
-    /// is resolved per lane rune, exactly as the bash original, so a lane free to declare a
-    /// different unit/pidfile name than its runes filename is still counted correctly.
-    fn lanes_live_total(&self, lanes: &[String]) -> i64 {
-        lanes
-            .iter()
-            .map(|f| {
-                let name = spira_config::runes::rune_get(&self.cfg.home, f, "RUNE_NAME", f);
-                self.unit_count(&name, None)
-            })
-            .sum()
-    }
-
     /// rune_free <rune> [pool-remaining] [exclude-unit] -> how many more of this persona
     /// may be called right now (lib.sh:1003). THIS STAYS HOST-DRIVEN RATHER THAN A ONE-LINE
     /// SHIM for the same reason lib.sh's own copy stays bash: callers need to drive
@@ -306,17 +292,12 @@ impl<'a> Sentinel<'a> {
         free
     }
 
-    /// `spira_task_runes`/`spira_lane_runes` (spira-config's own runes functions),
-    /// applied to THIS pass's already-resolved roster (`ctx.rune_names()`, which the
-    /// probe built via `spira_runes()` — already `SPIRA_RUNES`-correct and in priority
-    /// order) rather than re-deriving the roster a second time: the same three predicates
-    /// (`RUNE_CALL=auto`, not a party member, `RUNE_LANE` set or not) applied per name
-    /// in roster order produce the identical split, with no need to thread `SPIRA_RUNES`
-    /// itself from bash into this process a second way.
-    fn task_and_lane_runes(&self) -> (Vec<String>, Vec<String>) {
+    /// `spira_task_runes`/`spira_reactive_runes` applied to this pass's already-resolved roster:
+    /// the same predicates (`RUNE_CALL=auto`, not a party member, `RUNE_REACTIVE` or not) per name.
+    fn task_and_reactive_runes(&self) -> (Vec<String>, Vec<String>) {
         let home = &self.cfg.home;
         let mut task = Vec::new();
-        let mut lane = Vec::new();
+        let mut reactive = Vec::new();
         for f in self.ctx.rune_names() {
             if spira_config::runes::rune_get(home, &f, "RUNE_CALL", "auto") != "auto" {
                 continue;
@@ -324,13 +305,13 @@ impl<'a> Sentinel<'a> {
             if spira_config::runes::rune_get(home, &f, "RUNE_ROLE", "task") == "party" {
                 continue;
             }
-            if spira_config::runes::rune_get(home, &f, "RUNE_LANE", "").is_empty() {
-                task.push(f);
+            if spira_config::runes::rune_get(home, &f, "RUNE_REACTIVE", "") == "1" {
+                reactive.push(f);
             } else {
-                lane.push(f);
+                task.push(f);
             }
         }
-        (task, lane)
+        (task, reactive)
     }
 
     /// rune_ready <rune> -> spira-claim's own answer, in-process via the binary on PATH
@@ -422,13 +403,13 @@ impl<'a> Sentinel<'a> {
     }
 
     /// The youngest live lane dwarf: (lane rune, bead). Only lanes are ever candidates.
-    fn youngest_lane_dwarf(&self, lane_runes: &[String]) -> Option<(String, String)> {
+    fn youngest_reactive_dwarf(&self, reactive_runes: &[String]) -> Option<(String, String)> {
         let mut best: Option<(std::time::SystemTime, String, String)> = None;
         let rd = std::fs::read_dir(&self.cfg.run).ok()?;
         for e in rd.flatten() {
             let name = e.file_name().to_string_lossy().into_owned();
             let Some(stem) = name.strip_prefix("dwarf-").and_then(|n| n.strip_suffix(".pid")) else { continue };
-            let Some(lane) = lane_runes.iter().find(|l| {
+            let Some(lane) = reactive_runes.iter().find(|l| {
                 let unit = spira_config::runes::rune_get(&self.cfg.home, l, "RUNE_NAME", l);
                 stem.starts_with(&format!("{unit}-"))
             }) else {
@@ -450,7 +431,7 @@ impl<'a> Sentinel<'a> {
     /// A P0 express bead is waiting and the fleet is full: stop the youngest lane dwarf
     /// through slay so a builder can take the slot this pass. Builders and rounds are never
     /// candidates.
-    fn preempt_lane_for(&self, express: &str, task_runes: &[String], lane_runes: &[String]) {
+    fn preempt_reactive_for(&self, express: &str, task_runes: &[String], reactive_runes: &[String]) {
         let Some(max_live) = self.cfg.max_live_dwarves else { return };
         let live = self.live_total() as i64;
         if live < max_live {
@@ -463,7 +444,7 @@ impl<'a> Sentinel<'a> {
             self.log(&format!("CHECK7 lanes: express {express} waits but no task persona can take a slot — no lane preempted"));
             return;
         }
-        let Some((lane, bead)) = self.youngest_lane_dwarf(lane_runes) else {
+        let Some((lane, bead)) = self.youngest_reactive_dwarf(reactive_runes) else {
             self.log(&format!("CHECK7 lanes: express {express} waits, {live}/{max_live} live, no lane dwarf to preempt"));
             return;
         };
@@ -543,36 +524,11 @@ impl<'a> Sentinel<'a> {
         0
     }
 
-    /// The first task rune (roster order) that could take a lone remaining fleet slot now.
-    fn task_can_take_slot(&self, task_runes: &[String]) -> Option<(String, i64)> {
-        let task_live: i64 = match self.cfg.max_dwarves {
-            Some(_) => task_runes.iter().map(|f| self.dwarf_count(f, None)).sum(),
-            None => 0,
-        };
-        let throttled = ck7_throttled(self.cfg.throttle_stamp.is_file(), &self.cfg.queue_throttle_override);
-        for t in task_runes {
-            let ReadyAnswer::Count(n) = self.rune_ready(t) else { continue };
-            if n <= 0 || self.rune_free(t, None, None) <= 0 {
-                continue;
-            }
-            if let Some(max_dwarves) = self.cfg.max_dwarves {
-                if ck7_pool(Some(max_dwarves), task_live) == Some(0) {
-                    continue;
-                }
-            }
-            if throttled && !self.express_ready_in_task_pool(task_runes) {
-                continue;
-            }
-            return Some((t.clone(), n));
-        }
-        None
-    }
-
     /// call_rune <rune> [pool-remaining] [require-label] [reuse-ready] -> lib.sh:1160,
     /// the whole refusal ladder: world gate, the account's own capacity, the fleet ceiling
     /// (above every per-persona cap and the pool — SPIRA_MAX_LIVE_DWARVES unset means no
-    /// ceiling, today's behaviour exactly), the elastic last-slot and the lane only-slot
-    /// holds, this persona's own readiness and concurrency cap, then the
+    /// ceiling, today's behaviour exactly), the elastic last-slot
+    /// hold, this persona's own readiness and concurrency cap, then the
     /// call itself. **Safety-critical** (wave4-decomposition.md (c)8) — every refusal
     /// keeps its own log line, because the pass's stdout IS the sentinel log.
     pub fn call_rune(&self, f: &str, pool: Option<i64>, require_express: bool, reuse_ready: Option<i64>) -> Attempt {
@@ -597,24 +553,14 @@ impl<'a> Sentinel<'a> {
         if let Some(max_live) = self.cfg.max_live_dwarves {
             let live_all = self.live_total() as i64;
             let home = &self.cfg.home;
-            let is_lane = !spira_config::runes::rune_get(home, f, "RUNE_LANE", "").is_empty();
-            let lane_capped = spira_config::runes::rune_get(home, f, "RUNE_SINGLE_FLIGHT", "0") == "1";
             if live_all >= max_live {
-                let spill = is_lane
-                    && self.cfg.lanes_max_live.is_some_and(|m| {
-                        let (_, lane_runes) = self.task_and_lane_runes();
-                        live_all < max_live + m && (!lane_capped || self.lanes_live_total(&lane_runes) < m)
-                    });
-                if !spill {
-                    self.log(&format!("CHECK7 {f}: {live_all}/{max_live} dwarf(s) live across the whole fleet — not calling"));
-                    return Attempt { called: false, ready: reuse_ready };
-                }
-                self.log(&format!("CHECK7 {f}: {live_all}/{max_live} dwarf(s) live — a lane may spill over the ceiling"));
+                self.log(&format!("CHECK7 {f}: {live_all}/{max_live} dwarf(s) live across the whole fleet — not calling"));
+                return Attempt { called: false, ready: reuse_ready };
             }
             if spira_config::runes::rune_get(home, f, "RUNE_ELASTIC", "0") == "1" {
                 let slots_free = max_live - live_all;
                 if slots_free == 1 {
-                    let (task_runes, _) = self.task_and_lane_runes();
+                    let (task_runes, _) = self.task_and_reactive_runes();
                     for nef in &task_runes {
                         if spira_config::runes::rune_get(home, nef, "RUNE_ELASTIC", "0") == "1" {
                             continue;
@@ -625,24 +571,6 @@ impl<'a> Sentinel<'a> {
                                 return Attempt { called: false, ready: reuse_ready };
                             }
                         }
-                    }
-                }
-            }
-            if is_lane {
-                if let Some(lanes_max) = self.cfg.lanes_max_live.filter(|_| lane_capped) {
-                    let (_, lane_runes) = self.task_and_lane_runes();
-                    let live_lanes = self.lanes_live_total(&lane_runes);
-                    if live_lanes >= lanes_max {
-                        self.log(&format!("CHECK7 {f}: {live_lanes}/{lanes_max} lane slot(s) in use — not calling"));
-                        return Attempt { called: false, ready: reuse_ready };
-                    }
-                }
-                if max_live - live_all == 1 {
-                    let (task_runes, _) = self.task_and_lane_runes();
-                    if let Some((t, n)) = self.task_can_take_slot(&task_runes) {
-                        self.log(&format!("CHECK7 {f}: 1 fleet slot remaining, held for task work — {t} has {n} ready; the lane spills once the fleet is full"));
-                        self.only_slot_held.borrow_mut().push(f.to_string());
-                        return Attempt { called: false, ready: reuse_ready };
                     }
                 }
             }
@@ -722,7 +650,7 @@ impl<'a> Sentinel<'a> {
         i32::from(!self.call_rune(f, pool, require_express, None).called)
     }
 
-    /// _ck7_call_body -> CHECK 7's lane-then-pool call loop, unlocked (lib.sh:1314).
+    /// _ck7_call_body -> CHECK 7's reactive-then-planned call loop, unlocked (lib.sh:1314).
     /// Never reachable on its own any more: the one bash caller that used to call it bare,
     /// to prove the race `ck7_call_pass`'s flock prevents, called a shell function that
     /// could stub `dwarf_count`/`capacity_paused`/`world_gate` by name — a technique a
@@ -731,7 +659,7 @@ impl<'a> Sentinel<'a> {
     /// (`ck7_call_pass`, below); the lock itself is proven by `call::tests::
     /// the_lock_actually_serializes_two_contenders`.
     fn ck7_call_body(&self) {
-        let (task_runes, lane_runes) = self.task_and_lane_runes();
+        let (task_runes, reactive_runes) = self.task_and_reactive_runes();
         // task_live is asked only when a pool is configured — exactly `[ -n
         // "${SPIRA_MAX_DWARVES:-}" ]`'s own guard, never a cost paid on a host with no pool.
         let mut pool: Option<i64> = None;
@@ -744,15 +672,8 @@ impl<'a> Sentinel<'a> {
             ));
             pool = Some(p);
         }
-        if !lane_runes.is_empty() {
-            // SPIRA_LANES always resolves now (spira/conf.d/SPIRA_LANES declares the
-            // default) — no more Context-side "none" fallback for an unset key.
-            self.log(&format!("CHECK7 lanes ({} declared): {}", self.cfg.lanes_declared, lane_runes.join(" ")));
-        }
-        let last = std::fs::read_to_string(&self.cfg.lane_round_robin).unwrap_or_default();
-        let mut rotated_lanes = lane_rotate(last.trim(), &lane_runes);
-        self.only_slot_held.borrow_mut().clear();
-        if !lane_runes.is_empty() {
+        let mut reactive_now = reactive_runes.clone();
+        if !reactive_runes.is_empty() {
             match self.urgent_beads(&task_runes) {
                 Some(u) if u.is_empty() => {}
                 Some(u) => {
@@ -762,28 +683,27 @@ impl<'a> Sentinel<'a> {
                     if u.iter().any(|b| b.p0 || b.express) {
                         self.log(&format!("CHECK7 lanes: yielding — urgent bead(s) unclaimed: {}", ids(true)));
                         if let Some(x) = u.iter().find(|b| b.express && b.p0) {
-                            self.preempt_lane_for(&x.id, &task_runes, &lane_runes);
+                            self.preempt_reactive_for(&x.id, &task_runes, &reactive_runes);
                         }
-                        rotated_lanes.clear();
+                        reactive_now.clear();
                     } else {
                         self.log(&format!("CHECK7 lanes: rework bead(s) waiting do not hold the lanes: {}", ids(false)));
                     }
                 }
                 None => {
-                    rotated_lanes.clear();
+                    reactive_now.clear();
                 }
             }
         }
         let start = self.h.now();
         let budget = self.cfg.pass_budget_secs;
-        for f in &rotated_lanes {
+        for f in &reactive_now {
             if self.h.now() - start >= budget {
                 self.log(&format!("CHECK7 {f}: not evaluated (pass budget exhausted)"));
                 continue;
             }
             if self.call_rune(f, None, false, None).called {
-                self.act(&format!("called a {f} lane dwarf"));
-                let _ = std::fs::write(&self.cfg.lane_round_robin, f);
+                self.act(&format!("called a {f} reactive dwarf"));
             }
         }
         // ADMISSION THROTTLE: the stamp holds the task pool at 0 unless the override pins
@@ -839,17 +759,6 @@ impl<'a> Sentinel<'a> {
                 if self.h.now() - start >= budget {
                     break;
                 }
-            }
-        }
-        let held: Vec<String> = self.only_slot_held.borrow_mut().drain(..).collect();
-        for f in &held {
-            if self.h.now() - start >= budget {
-                self.log(&format!("CHECK7 {f}: not evaluated (pass budget exhausted)"));
-                continue;
-            }
-            if self.call_rune(f, None, false, None).called {
-                self.act(&format!("called a {f} lane dwarf"));
-                let _ = std::fs::write(&self.cfg.lane_round_robin, f);
             }
         }
     }
@@ -984,7 +893,7 @@ mod tests {
         );
     }
 
-    // ---- check7_pool_decision, lane_rotate, ck7_pool, ck7_throttled, ck7_fill_cap -------
+    // ---- check7_pool_decision, ck7_pool, ck7_throttled, ck7_fill_cap -------
     // (lib.sh G1-G3; retired outright with `_ck7_call_body`.)
 
     #[test]

@@ -105,8 +105,6 @@ pub struct Sentinel<'a> {
     pub mode: Mode,
     pub acted: Cell<u32>,
     pub progressed: Cell<u32>,
-    /// Lanes `call_rune` held off the fleet's only slot this pass, to be retried once task work has filled it.
-    pub only_slot_held: RefCell<Vec<String>>,
     /// The seams' act/progress mailbox (DESIGN.md §6).
     pub tally_file: PathBuf,
     pub lib: PathBuf,
@@ -142,7 +140,6 @@ impl<'a> Sentinel<'a> {
             mode,
             acted: Cell::new(0),
             progressed: Cell::new(0),
-            only_slot_held: RefCell::new(Vec::new()),
             tally_file,
             lib,
             pass_id,
