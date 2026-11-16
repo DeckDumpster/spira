@@ -1448,6 +1448,56 @@ fn sp_5u1oru_an_open_round_with_no_pass_and_no_driver_is_redriven_at_once_and_on
     assert!(!effects(&again).contains(&REDRIVE) && !effects(&again).contains(&ABANDON), "the second tick waits: {again:?}");
 }
 
+// --- sp-4odl0h: an undriven round whose last pass ended red is attributed, not abandoned ---
+
+fn red_orphan() -> (Carry, Snapshot) {
+    let mut snap = open_with("attributing", &["sp-a", "sp-b"], "/w");
+    let round = snap.repos.get_mut("spira").unwrap().open_round.as_mut().unwrap();
+    round.tips = vec!["t1".into(), "t2".into()];
+    round.red = true;
+    round.age_secs = 1_400;
+    (Carry::default(), snap)
+}
+
+#[test]
+fn sp_4odl0h_an_undriven_round_whose_last_pass_ended_red_is_attributed_not_redriven_or_abandoned() {
+    let (carry, snap) = red_orphan();
+    let (carry, acts) = decide(&carry, &snap);
+    assert_eq!(effects(&acts), [CORPUS], "{acts:?}");
+    let leg: Leg = serde_json::from_str(&acts[0].input).unwrap();
+    assert_eq!((leg.why.as_str(), leg.after_pass.as_str(), leg.batch.as_str()), (ATTRIBUTE, "run/rounds/r9.results", "r9"), "{leg:?}");
+    assert_eq!(leg.members.len(), 2, "every member is attributed");
+    let rc = &carry.repos["spira"];
+    assert_eq!((rc.state, rc.batch.as_deref()), (State::Attributing, Some("r9")));
+    let (_, again) = decide(&carry, &snap);
+    assert!(!effects(&again).contains(&REDRIVE) && !effects(&again).contains(&ABANDON), "{again:?}");
+}
+
+#[test]
+fn sp_4odl0h_an_adopted_red_rounds_attribution_naming_one_member_certifies_the_survivor() {
+    let (carry, snap) = red_orphan();
+    let (carry, acts) = decide(&carry, &snap);
+    let leg: Leg = serde_json::from_str(&acts[0].input).unwrap();
+    let survivor = batcher_cut::attribute::Attribution::Land { members: vec![("sp-b".into(), "t2".into())], attribution_secs: None, mended: false, head: String::new() };
+    let mut r = carried(&carry);
+    let n = r.requested().len();
+    r.tick(STREAM, ended(&leg.unit, runtime::units::Exit::Code(0), &format!("{}\n", survivor.line()))).unwrap();
+    r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
+    let after = asked_after(&r, n);
+    assert_eq!(after.iter().map(|(e, _)| e.as_str()).collect::<Vec<_>>(), [CERTIFY], "{after:?}");
+    assert_eq!(after[0].1.members, [("sp-b".to_string(), "t2".to_string())]);
+}
+
+#[test]
+fn sp_4odl0h_an_undriven_round_with_no_red_pass_is_still_redriven() {
+    let (carry, mut snap) = red_orphan();
+    let round = snap.repos.get_mut("spira").unwrap().open_round.as_mut().unwrap();
+    round.red = false;
+    round.phase = "opened".into();
+    let (_, acts) = decide(&carry, &snap);
+    assert!(effects(&acts).contains(&REDRIVE) && !effects(&acts).contains(&CORPUS), "{acts:?}");
+}
+
 // --- sp-k7ltss: a green round no pass drives is landed, not abandoned ---
 
 fn green_orphan() -> (Carry, Snapshot) {
