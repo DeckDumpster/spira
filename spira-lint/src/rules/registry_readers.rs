@@ -76,6 +76,7 @@ impl Rule for RegistryReaders {
             return Err(LintError::Refused("no .rs file in scope — nothing to judge".into()));
         }
 
+        let mut counted = std::collections::BTreeSet::new();
         let mut readers: BTreeMap<String, (String, usize)> = BTreeMap::new();
         for e in rs {
             let Some(dir) = members
@@ -85,6 +86,7 @@ impl Rule for RegistryReaders {
             else {
                 continue;
             };
+            counted.insert(dir.clone());
             let Some(line) = tree.content(e).and_then(first_read) else { continue };
             let name = package_name(tree, dir)?;
             readers.entry(name).or_insert((e.path.clone(), line));
@@ -102,7 +104,7 @@ impl Rule for RegistryReaders {
                 out.push(finding(LIST_FILE, None, format!("REGISTRY_READERS names {name}, whose sources read neither the registry nor the delta — remove it")));
             }
         }
-        *self.checked.lock().unwrap() = Some(members.len());
+        *self.checked.lock().unwrap() = Some(counted.len());
         Ok(out)
     }
 
@@ -174,8 +176,9 @@ mod tests {
     #[test]
     fn a_file_outside_the_walk_is_never_read() {
         let t = TempDir::new("rr-target");
-        let tree = workspace(&t, &[("planted", "fn f() {}\n")]);
         t.write("planted/target/debug/x.rs", &reader_src());
+        let tree = workspace(&t, &[("planted", "fn f() {}\n")]);
+        assert!(t.path().join("planted/target/debug/x.rs").exists() && tree.entry("planted/target/debug/x.rs").is_none());
         assert!(!messages(&tree).iter().any(|x| x.contains("planted-crate")));
     }
 
@@ -190,10 +193,19 @@ mod tests {
     }
 
     #[test]
+    fn checked_counts_the_crates_whose_sources_were_scanned() {
+        let t = TempDir::new("rr-count");
+        let tree = workspace(&t, &[("a", "fn f() {}\n"), ("b", "fn g() {}\n")]);
+        let rule = RegistryReaders::default();
+        rule.check(&tree).unwrap();
+        assert_eq!(rule.checked(), Some((2, "crates".to_string())));
+    }
+
+    #[test]
     fn a_workspace_with_no_rust_file_is_refused() {
         let t = TempDir::new("rr-empty");
         t.write(ROOT, "[workspace]\nmembers = [\"a\"]\n");
         let tree = Tree::from_paths(t.path(), [ROOT], std::iter::empty::<&str>());
-        assert!(matches!(RegistryReaders::default().check(&tree), Err(LintError::EmptyScope | LintError::Refused(_))));
+        assert!(matches!(RegistryReaders::default().check(&tree), Err(LintError::Refused(m)) if m.contains("no .rs file")));
     }
 }
