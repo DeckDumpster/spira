@@ -1821,3 +1821,24 @@ file and line; one per listed crate that reads nothing, at `suite-select/src/rea
 
 **Refuses** (exit 3): no workspace member or no `.rs` file in scope. Prints `checked <n> crates`.
 No allow file. Base-relative: `--diff` leaves its findings whole.
+
+## Rule `compile-time-path`
+
+**Intent.** No `.rs` file fixes a path at compile time. A baked path does not fail closed: while
+the builder's tree still exists, the code silently reads that tree instead of the one it runs in.
+Run-time doors replace it: `spira_config::resolve::locate_home_for_process()` for `spira/…`,
+`checkout_root_for_process()` for the checkout, `testkit::manifest_dir()` for a crate, and
+`testkit::bin_exe(name)` for a built binary.
+
+**Scope.** Tracked `.rs` files outside `target/`, `build.rs` included (a build script reading
+`env::var` at its own run time is fine; only the `env!` macro is flagged). The rule's own source
+is skipped.
+
+**Violation.** In comment-stripped text, `env!`/`option_env!` of `CARGO_MANIFEST_DIR`, `OUT_DIR`
+or `CARGO_BIN_EXE_*`; or a string literal naming `/spira/run/`, `/spira-releases/` or
+`/home/<user>/spira`. Allowed: a match inside the argument list of `include!`, `include_str!` or
+`include_bytes!` (the content is compiled in, the path is never read at run time), and
+`CARGO_PKG_*`. One finding per match, at its line, naming the door to use.
+
+**Refuses** (exit 3): no `.rs` file in scope. Prints `checked <n> rust files`. No allow file:
+nothing is grandfathered.
