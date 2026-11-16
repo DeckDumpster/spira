@@ -10,6 +10,7 @@ const OPERATIONS: &[&str] = &[
     "list",
     "history",
     "deny-list",
+    "clear-landed",
 ];
 
 fn main() -> ExitCode {
