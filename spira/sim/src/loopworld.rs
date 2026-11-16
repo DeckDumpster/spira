@@ -19,8 +19,8 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use lifecycle::bead::{BeadEvent, BeadEventKind, BeadRow, BeadState};
-use lifecycle::reason::GateRedReason;
+use lifecycle::bead::{BeadEvent, BeadEventKind, BeadRow, BeadState, HoldKind};
+use lifecycle::reason::{GateRedReason, HoldCause};
 use runtime::host::{EffectRunner, VirtualDriver};
 use runtime::journal::Journal;
 use runtime::ports::{Clock, CountingProc, Proc, ProcSpec, VirtualClock};
@@ -29,6 +29,7 @@ use runtime::units::{self, Exit, ScopeSpec, ScriptedUnits, StartSpec, UnitSpec, 
 use runtime::{Engine, EffectSpec, MemJournal};
 use serde::Deserialize;
 use sim::doubles::Doubles;
+use crate::registryworld::{self, Registry};
 use spira_runtime::tasks::a::{batcher_local as bl, publish as pb, queue_step as qs, sentinel_call as sc, sift};
 use spira_runtime::{registrations, tasks, Settings};
 
@@ -115,6 +116,42 @@ fn one() -> u32 {
     1
 }
 
+fn yes() -> bool {
+    true
+}
+
+/// A test that is red on the combined tree of any round carrying one of `members` and green on
+/// each member alone, until the registry holds it out of the run. The round's flip handling
+/// disables it and files `follow_on`, which the world files READY, or held when it does not land.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Flip {
+    pub test: String,
+    pub members: Vec<String>,
+    pub follow_on: String,
+    #[serde(default = "yes")]
+    pub follow_on_lands: bool,
+    /// From this virtual time (ms) a round carrying the test must find it red again.
+    #[serde(default)]
+    pub blocks_again_after: Option<u64>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LookRow {
+    pub test: String,
+    pub bead: String,
+}
+
+/// A read of the ops pane's queue section at a virtual time, which must list exactly `rows`.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Look {
+    pub at: u64,
+    #[serde(default)]
+    pub rows: Vec<LookRow>,
+}
+
 /// What a loop scenario scripts.
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -138,6 +175,10 @@ pub struct Script {
     pub stopped_until: u64,
     #[serde(default, rename = "verdict")]
     pub verdicts: Vec<VerdictAt>,
+    #[serde(default, rename = "flip")]
+    pub flips: Vec<Flip>,
+    #[serde(default, rename = "look")]
+    pub looks: Vec<Look>,
     /// The scenario plays its own gate, so the sim's default gate (a pass a minute after submit) is off.
     #[serde(default)]
     pub own_gate: bool,
@@ -159,8 +200,8 @@ pub fn parse(text: &str) -> Result<Script, String> {
     }
     if let Some(g) = &s.goal {
         let (b, _) = crate::drive::parse_bead_state(g)?;
-        if !s.beads.iter().any(|x| x.id == b) {
-            return Err(format!("loop scenario: goal {g:?} names no bead the scenario files"));
+        if !s.beads.iter().any(|x| x.id == b) && !s.flips.iter().any(|f| f.follow_on == b) {
+            return Err(format!("loop scenario: goal {g:?} names no bead the scenario files or a flip files"));
         }
     }
     let mut seen: Vec<&str> = vec![];
@@ -172,6 +213,11 @@ pub fn parse(text: &str) -> Result<Script, String> {
     }
     if let Some(v) = s.verdicts.iter().find(|v| !seen.contains(&v.bead.as_str())) {
         return Err(format!("loop scenario: a verdict names {}, which the scenario does not file", v.bead));
+    }
+    for f in &s.flips {
+        if f.members.iter().any(|m| !seen.contains(&m.as_str())) || seen.contains(&f.follow_on.as_str()) {
+            return Err(format!("loop scenario: flip {} names a member the scenario does not file, or a follow-on it files itself", f.test));
+        }
     }
     Ok(s)
 }
@@ -190,6 +236,24 @@ pub enum Due {
     File(String),
     Submit { bead: String, actor: String, n: usize },
     Verdict { bead: String, verdict: Verdict },
+    Look(usize),
+}
+
+/// A registry row a round's flip handling wrote.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Disabled {
+    pub test: String,
+    pub bead: String,
+    pub since: i64,
+    pub until: i64,
+}
+
+/// What the ops pane's queue section showed at a look.
+#[derive(Clone, Debug)]
+pub struct Looked {
+    pub at: u64,
+    pub held: Vec<registryworld::Held>,
+    pub pane: String,
 }
 
 /// A write the scenario made from outside the loop, and whether the store applied it.
@@ -229,6 +293,13 @@ pub struct Lc {
     pub prs: Vec<(u64, String)>,
     /// The publish records written, as `(pr, head)`.
     pub published: Vec<(u64, String)>,
+    pub reg: Option<Arc<Registry>>,
+    pub disabled: Vec<Disabled>,
+    pub looks: Vec<(usize, Looked)>,
+    /// Corpus passes the world scripted red: when, the round, the test.
+    pub reds: Vec<(u64, String, String)>,
+    /// The registry rows a landing cleared, with when.
+    pub cleared: Vec<(u64, Vec<String>)>,
 }
 
 impl Lc {
@@ -291,6 +362,12 @@ impl Lc {
                             self.due.push((at + GATE_MS, Due::Verdict { bead: bead.clone(), verdict: Verdict::Pass }));
                         }
                         self.submitted.entry(bead).or_default().push(tip);
+                    }
+                }
+                Due::Look(i) => {
+                    if let Some(reg) = &self.reg {
+                        let pane = reg.pane(at, self.rows.values().filter(|r| r.state == BeadState::Certified).count());
+                        self.looks.push((i, Looked { at, held: pane.held, pane: pane.text }));
                     }
                 }
                 Due::Verdict { bead, verdict } => {
@@ -509,20 +586,83 @@ pub fn batcher_round_open(w: &World, input: &str) -> Result<String, String> {
     json(&bl::Opened { batch, ..bl::Opened::default() })
 }
 
-/// The corpus is green: these ports turn on the store and the cut, not on attribution.
+/// The flips of `script` the round of `leg` carries that the registry does not hold out of the
+/// run at `now`: red on the combined tree.
+fn undenied(w: &World, leg: &bl::Leg) -> Result<Vec<Flip>, String> {
+    let Some(reg) = w.lc().reg.clone() else { return Ok(vec![]) };
+    let denied = reg.denied(w.now())?;
+    Ok(w.script.flips.iter().filter(|f| f.members.iter().any(|m| leg.members.iter().any(|(id, _)| id == m)) && !denied.contains(&f.test)).cloned().collect())
+}
+
+fn note_reds(w: &World, leg: &bl::Leg, red: &[Flip]) {
+    let now = w.now();
+    w.lc().reds.extend(red.iter().map(|f| (now, leg.batch.clone(), f.test.clone())));
+}
+
+fn run_leg(w: &World, leg: &bl::Leg, argv: Vec<String>, code: i32, ms: u64, said: &str, scoped: bool) -> Result<String, String> {
+    let spec = UnitSpec { task: bl::NAME.into(), key: leg.unit.clone(), argv, env: vec![], cwd: None };
+    w.units.script(bl::NAME, ms, Exit::Code(code));
+    if !said.is_empty() {
+        w.units.script_output(bl::NAME, said.as_bytes(), b"");
+    }
+    if scoped {
+        units::effect(&*w.units, UNIT_RUN_SCOPE, &json(&ScopeSpec { unit: spec, cpu_quota_pct: None, memory_max_bytes: None })?)
+    } else {
+        units::effect(&*w.units, UNIT_START, &json(&StartSpec { unit: spec, props: Default::default() })?)
+    }
+}
+
+/// `batcher attribute` on a red round: a flip is disabled through batcher-cut's own flip handling
+/// against the world's registry, and a test the registry already disabled once reproduces.
+fn attribute_flips(w: &World, leg: &bl::Leg, flips: &[Flip]) -> Result<String, String> {
+    let now = w.now();
+    let reg = w.lc().reg.clone().ok_or("flips without a registry")?;
+    for f in flips {
+        if reg.ever_disabled(&f.test)? {
+            let why = format!("{} reproduces on the rerun: red on the round tree and on the base", f.test);
+            let said = format!("attribution\t{}\n", serde_json::json!({ "end": "blocked", "why": why }));
+            return run_leg(w, leg, vec!["batcher".into(), "attribute".into()], 0, CORPUS_MS, &said, true);
+        }
+    }
+    let pass = reg.pass_dir(now, &format!("pass-{}", leg.batch))?;
+    let tests: Vec<String> = flips.iter().map(|f| f.test.clone()).collect();
+    let rows = {
+        let mut lc = w.lc();
+        let mut file_bead = |test: &str| {
+            let f = flips.iter().find(|f| f.test == test).ok_or_else(|| format!("{test} is no flip"))?;
+            lc.file(now, &f.follow_on);
+            if !f.follow_on_lands {
+                lc.apply(now, &f.follow_on, bl::NAME, BeadEventKind::Hold { kind: HoldKind::Manual, cause: HoldCause::ManualHold, detail: Some("a follow-on the scenario never lands".into()) })?;
+            }
+            Ok(f.follow_on.clone())
+        };
+        batcher_cut::io::disable_flips_with(&mut file_bead, &mut |t, b, r| reg.disable(now, t, b, r), &pass, &leg.batch, &tests)?
+    };
+    let since = registryworld::epoch_at(now);
+    w.lc().disabled.extend(rows.iter().map(|r| Disabled { test: r.test.clone(), bead: r.bead.clone(), since, until: r.until }));
+    let said = format!("attribution\t{}\n", serde_json::json!({ "end": "land", "members": leg.members, "attribution_secs": 60, "mended": false }));
+    run_leg(w, leg, vec!["batcher".into(), "attribute".into()], 0, CORPUS_MS, &said, true)
+}
+
+/// The corpus is green unless the scenario's flips make it red: these ports turn on the store and
+/// the cut, not on attribution.
 fn batcher_corpus(w: &World, input: &str) -> Result<String, String> {
     let leg: bl::Leg = parse_json(bl::CORPUS, input)?;
-    let spec = UnitSpec { task: bl::NAME.into(), key: leg.unit.clone(), argv: vec!["round-vm".into(), "run".into(), leg.wt.clone()], env: vec![], cwd: None };
-    w.units.script(bl::NAME, CORPUS_MS, Exit::Code(0));
-    units::effect(&*w.units, UNIT_START, &json(&StartSpec { unit: spec, props: Default::default() })?)
+    let red = undenied(w, &leg)?;
+    if leg.why == bl::ATTRIBUTE && !red.is_empty() {
+        return attribute_flips(w, &leg, &red);
+    }
+    note_reds(w, &leg, &red);
+    run_leg(w, &leg, vec!["round-vm".into(), "run".into(), leg.wt.clone()], i32::from(!red.is_empty()), CORPUS_MS, "", false)
 }
 
 fn batcher_certify(w: &World, input: &str) -> Result<String, String> {
     let leg: bl::Leg = parse_json(bl::CERTIFY, input)?;
-    let spec = UnitSpec { task: bl::NAME.into(), key: leg.unit.clone(), argv: vec!["queue".into(), "round".into(), "certify".into(), leg.batch, REPO.into()], env: vec![], cwd: None };
-    w.units.script(bl::NAME, CERTIFY_MS, Exit::Code(0));
-    w.units.script_output(bl::NAME, b"certified\n", b"");
-    units::effect(&*w.units, UNIT_RUN_SCOPE, &json(&ScopeSpec { unit: spec, cpu_quota_pct: None, memory_max_bytes: None })?)
+    let red = undenied(w, &leg)?;
+    note_reds(w, &leg, &red);
+    let said = if red.is_empty() { "certified\n".to_string() } else { format!("red={}\n", red[0].test.replace(' ', "_")) };
+    let argv = vec!["queue".into(), "round".into(), "certify".into(), leg.batch.clone(), REPO.into()];
+    run_leg(w, &leg, argv, i32::from(!red.is_empty()), CERTIFY_MS, &said, true)
 }
 
 fn batcher_land(w: &World, input: &str) -> Result<String, String> {
@@ -539,6 +679,14 @@ fn batcher_land(w: &World, input: &str) -> Result<String, String> {
         lc.apply(now, id, bl::NAME, BeadEventKind::Delivered { merge_sha, proof: format!("round {}", leg.batch) })?;
         let file = w.bead(id).map_or(id.as_str(), |b| b.file()).to_string();
         lc.landed.push((id.clone(), file));
+    }
+    if let Some(reg) = lc.reg.clone() {
+        let ids: Vec<String> = leg.members.iter().map(|(id, _)| id.clone()).collect();
+        match reg.clear_landed(now, &ids) {
+            Ok(cleared) if !cleared.is_empty() => lc.cleared.push((now, cleared)),
+            Ok(_) => {}
+            Err(e) => lc.refused.push(e),
+        }
     }
     lc.lands.push(leg.members.clone());
     lc.round = None;
@@ -718,6 +866,11 @@ pub struct Run {
     pub sifted: Vec<(String, String)>,
     pub prs: Vec<(u64, String)>,
     pub published: Vec<(u64, String)>,
+    pub disabled: Vec<Disabled>,
+    pub looks: Vec<(usize, Looked)>,
+    pub reds: Vec<(u64, String, String)>,
+    pub cleared: Vec<(u64, Vec<String>)>,
+    pub hold_secs: i64,
     pub asked: Vec<String>,
     pub exec_log: Vec<String>,
     pub spawned: u64,
@@ -750,6 +903,13 @@ pub fn run_with(seed: u64, script: Script, extra: impl FnOnce(Doubles, &Arc<Worl
     for v in &script.verdicts {
         lc.due.push((v.at, Due::Verdict { bead: v.bead.clone(), verdict: v.verdict }));
     }
+    for (i, l) in script.looks.iter().enumerate() {
+        lc.due.push((l.at, Due::Look(i)));
+    }
+    if !script.flips.is_empty() || !script.looks.is_empty() {
+        let hold = script.settings.get("SPIRA_TEST_REGISTRY_HOLD_SECS").cloned().unwrap_or_else(|| registryworld::DEFAULT_HOLD_SECS.to_string());
+        lc.reg = Some(Arc::new(Registry::new(&hold)?));
+    }
     let settings = settings_for(&script)?;
     let world = Arc::new(World { clock: clock.clone(), units: units.clone(), lc: Mutex::new(lc), script, proc: CountingProc::refusing(), pass_scopes: Mutex::default() });
     let inner = Arc::new(extra(doubles(&world), &world));
@@ -777,6 +937,11 @@ pub fn run_with(seed: u64, script: Script, extra: impl FnOnce(Doubles, &Arc<Worl
         sifted: lc.sifted.clone(),
         prs: lc.prs.clone(),
         published: lc.published.clone(),
+        disabled: lc.disabled.clone(),
+        looks: lc.looks.clone(),
+        reds: lc.reds.clone(),
+        cleared: lc.cleared.clone(),
+        hold_secs: world.script.settings.get("SPIRA_TEST_REGISTRY_HOLD_SECS").and_then(|v| v.parse().ok()).unwrap_or(registryworld::DEFAULT_HOLD_SECS),
         asked: inner.asked(),
         exec_log,
         spawned: world.proc.spawned(),
@@ -806,6 +971,40 @@ impl Run {
         format!("history {:?}\nrefused {:?}\noutside {:?}\nopened {:?}\nlands {:?}\nsifted {:?}\nprs {:?}\n{}", self.history, self.refused, self.outside, self.opened, self.lands, self.sifted, self.prs, interesting.join("\n"))
     }
 
+    /// Why the registry's walk missed what `script` expects of it, or `None`.
+    fn registry_missed(&self, script: &Script) -> Option<String> {
+        for f in &script.flips {
+            if !self.disabled.iter().any(|d| d.test == f.test && d.bead == f.follow_on) {
+                return Some(format!("flip {} was never disabled with follow-on {}: disabled {:?}, reds {:?}", f.test, f.follow_on, self.disabled, self.reds));
+            }
+            if let Some(after) = f.blocks_again_after {
+                if !self.reds.iter().any(|(at, _, t)| *t == f.test && *at >= after) {
+                    return Some(format!("{} did not block a round again after {after} ms: reds {:?}", f.test, self.reds));
+                }
+            }
+        }
+        if let Some(d) = self.disabled.iter().find(|d| d.until - d.since != self.hold_secs) {
+            return Some(format!("{} was disabled for {} s, not the registry's hold of {} s", d.test, d.until - d.since, self.hold_secs));
+        }
+        for (i, look) in script.looks.iter().enumerate() {
+            let Some((_, got)) = self.looks.iter().find(|(n, _)| *n == i) else { return Some(format!("the look at {} ms was never taken", look.at)) };
+            let mut want: Vec<(String, String)> = look.rows.iter().map(|r| (r.test.clone(), r.bead.clone())).collect();
+            let mut shown: Vec<(String, String)> = got.held.iter().map(|(t, b, _)| (t.clone(), b.clone())).collect();
+            want.sort();
+            shown.sort();
+            if want != shown {
+                return Some(format!("the ops pane at {} ms held {shown:?}, not {want:?}:\n{}", look.at, got.pane));
+            }
+            for (t, b, until) in &got.held {
+                let drawn = got.pane.lines().any(|l| l.contains("disabled") && l.contains(t.as_str()) && l.contains(b.as_str()) && l.contains("until "));
+                if !drawn || *until <= registryworld::epoch_at(look.at) {
+                    return Some(format!("the pane at {} ms does not show {t} with {b} and a future expiry:\n{}", look.at, got.pane));
+                }
+            }
+        }
+        None
+    }
+
     /// Why this run missed `script`'s goal and publish expectation, or `None` when it met both.
     pub fn missed(&self, script: &Script) -> Option<String> {
         if self.spawned != 0 {
@@ -820,6 +1019,9 @@ impl Run {
             if at.as_deref() != Some(state.as_str()) {
                 return Some(format!("goal {g} unmet: {bead} is {at:?}"));
             }
+        }
+        if let Some(why) = self.registry_missed(script) {
+            return Some(why);
         }
         if script.publish {
             let head = main_after(self.lands.len());

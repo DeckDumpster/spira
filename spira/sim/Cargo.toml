@@ -40,6 +40,10 @@ lifecycle = { path = "../../lifecycle" }
 spira-config = { path = "../../spira-config" }
 spira-store = { path = "../../spira-store" }
 system-paths = { path = "../../system-paths" }
+batcher-cut = { path = "../../batcher-cut" }
+test-registry = { path = "../../test-registry" }
+cockpit-collect = { path = "../../cockpit-collect" }
+cockpit-ops = { path = "../../cockpit/ops" }
 
 [dev-dependencies]
 testkit = { path = "../../testkit" }

@@ -1,0 +1,50 @@
+# The test registry's flip path as an operator meets it: a round finds two tests red on its
+# combined tree and green on every member alone, disables each in the registry for its hold (seven
+# days) with a follow-on bead, and lands without them; the ops pane lists both with their beads and
+# expiry; the first follow-on lands and its landing clears its row; the second never lands, its row
+# expires, the pane empties, and a later round finds the test red again. Run it with
+# `sim run test-registry-flip`.
+#
+# A loop world: the registry is the real file and verbs, the flip handling is batcher-cut's own,
+# and the pane is drawn by the cockpit's own collector and renderer (spira/sim/src/loopworld.rs).
+driver = "loop"
+goal = "sp-tr02:LANDED"
+until = 700000000
+
+[[bead]]
+id = "sp-tr01"
+at = 30000
+
+# Past the second row's expiry: its test is out of the deny list and blocks its round again.
+[[bead]]
+id = "sp-tr04"
+at = 650000000
+
+[[flip]]
+test = "unit:loom factory::tests::cleared_by_landing"
+members = ["sp-tr01"]
+follow_on = "sp-tr02"
+
+[[flip]]
+test = "unit:loom factory::tests::left_to_expire"
+members = ["sp-tr01", "sp-tr04"]
+follow_on = "sp-tr03"
+follow_on_lands = false
+blocks_again_after = 650000000
+
+# The round has landed and neither follow-on has: both rows are held.
+[[look]]
+at = 1500000
+rows = [
+  { test = "unit:loom factory::tests::cleared_by_landing", bead = "sp-tr02" },
+  { test = "unit:loom factory::tests::left_to_expire", bead = "sp-tr03" },
+]
+
+# sp-tr02 has landed: its row is gone, the other stays.
+[[look]]
+at = 10000000
+rows = [{ test = "unit:loom factory::tests::left_to_expire", bead = "sp-tr03" }]
+
+# Seven days and a little on: nothing is held.
+[[look]]
+at = 640000000
