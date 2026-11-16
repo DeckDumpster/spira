@@ -662,6 +662,13 @@ version_min = ""
 version_probe = "readlink -f \"$(command -v test-plan)\""
 
 [[dep]]
+name = "test-registry"
+tier = "release"
+purpose = "Spira's test-registry binary, from the release's bin/ — the one holder of the test registry file; the gate and every round take their deny list from it"
+version_min = ""
+version_probe = "readlink -f \"$(command -v test-registry)\""
+
+[[dep]]
 name = "tsd-lifecycle-export"
 tier = "release"
 purpose = "Spira's tsd-lifecycle-export binary, from the release's bin/"

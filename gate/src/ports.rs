@@ -51,10 +51,10 @@ pub trait World {
     /// `. lib.sh` once, then the values the trial needs. Err when lib.sh would not source.
     fn context(&self, repo_name: Option<&str>) -> Result<Ctx, String>;
 
-    /// The tests the trial leaves out; none until a registry resolves them.
-    fn deny_list(&self) -> spira_config::unit_tier::DenyList {
-        Default::default()
-    }
+    /// `test-registry deny-list --at <at>`: the tests the trial leaves out, as the registry
+    /// prints them. Err is the registry's message; a trial never runs with a list it could
+    /// not resolve.
+    fn deny_list(&self, at: u64) -> Result<String, String>;
 
     // ---- files
     fn readable(&self, p: &Path) -> bool;

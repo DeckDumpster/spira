@@ -346,6 +346,8 @@ struct StableRound {
     regreen_seconds: Option<u64>,
     /// The round staged behind this one while its suites ran, if the verb wrote one.
     staged: Option<String>,
+    /// The deny list the round ran with; None for an attested round, whose pass ran elsewhere.
+    deny: Option<vm::DenySnapshot>,
 }
 
 /// The effects of a round besides running suites (drive::RoundOps), on this box.
@@ -886,6 +888,23 @@ enum Stabilized {
 /// reds do not block (a base red is filed for Ops); an unattributed red or a workspace that
 /// does not build does. Returns `Blocked` or `Emptied` for a round that cannot land — the caller opens
 /// no PR and changes no open-batch record, as if the round had never been cut.
+fn append_round(env_: &Env, deny: Option<&vm::DenySnapshot>, fields: &[(&str, String)]) {
+    let mut all = fields.to_vec();
+    all.extend(deny.into_iter().flat_map(|d| d.fields()));
+    io::tsd_append_round(env_, &all);
+}
+
+fn resolve_deny(env_: &Env, at: u64) -> Result<vm::DenySnapshot, pace::CutError> {
+    snapshot_from(io::deny_list_snapshot(env_, at), at)
+}
+
+fn snapshot_from(resolved: Result<String, String>, at: u64) -> Result<vm::DenySnapshot, pace::CutError> {
+    let text = resolved
+        .map_err(|e| pace::CutError::new(pace::CutKind::Other, format!("no round cut — the deny list could not be resolved: {e}")))?;
+    Ok(vm::DenySnapshot { text, at })
+}
+
+#[allow(clippy::too_many_arguments)]
 fn stabilize_unlocked(
     env_: &Env,
     repo: &Repo,
@@ -894,13 +913,15 @@ fn stabilize_unlocked(
     starting: Vec<Member>,
     batch: Option<&str>,
     stage: &[Member],
+    deny: &vm::DenySnapshot,
 ) -> Result<Stabilized, pace::CutError> {
     let wait_secs = cfg_parse::<u64>("SPIRA_QUEUE_LOCK_WAIT")?;
     io::unlocked(env_, &repo.name, batch, wait_secs, || {
-        stabilize_round(env_, repo, wt, start_sha, starting, batch, stage)
+        stabilize_round(env_, repo, wt, start_sha, starting, batch, stage, deny)
     })?
 }
 
+#[allow(clippy::too_many_arguments)]
 fn stabilize_round(
     env_: &Env,
     repo: &Repo,
@@ -909,6 +930,7 @@ fn stabilize_round(
     starting: Vec<Member>,
     batch: Option<&str>,
     stage: &[Member],
+    deny: &vm::DenySnapshot,
 ) -> Result<Stabilized, pace::CutError> {
     let members = merge_round(env_, repo, wt, start_sha, starting)?;
     if members.is_empty() {
@@ -942,6 +964,7 @@ fn stabilize_round(
             attribution_seconds: None,
             regreen_seconds: None,
             staged: None,
+            deny: None,
         }));
     }
     if suites.is_empty() && repo.land == Land::Local && gate::own::declares_own_testenv(wt) {
@@ -953,6 +976,7 @@ fn stabilize_round(
             attribution_seconds: None,
             regreen_seconds: None,
             staged: None,
+            deny: None,
         }));
     }
     if suites.is_empty() {
@@ -965,7 +989,7 @@ fn stabilize_round(
         .collect();
 
     let mut runner =
-        vm::VmRunner::new(env_, repo, wt, start_sha, &round, changed.clone())?.in_batch(batch);
+        vm::VmRunner::new(env_, repo, wt, start_sha, &round, changed.clone())?.in_batch(batch).with_deny_list(deny)?;
     let stage_bg = match batch {
         Some(_) if !stage.is_empty() && !env_.hypervisor.fits_a_staged_round() => {
             println!("batcher {}: no round staged — the hypervisor cannot hold the staged round beside this one and a CI runner", repo.name);
@@ -1052,6 +1076,7 @@ fn stabilize_round(
                 attribution_seconds: attribution_secs,
                 regreen_seconds: ops.first_red.map(|f| now().saturating_sub(f)),
                 staged,
+                deny: Some(deny.clone()),
             }))
         }
         drive::RoundEnd::Blocked(why) => {
@@ -1158,8 +1183,9 @@ fn finish_local_round(
         io::round_abandon(env_, repo, batch, &msg, "refused");
         stop_on_repeat(env_, &repo.name, batch, &msg);
         io::write_local_verdict(env_, &repo.name, "red", &msg);
-        io::tsd_append_round(
+        append_round(
             env_,
+            stable.deny.as_ref(),
             &[
                 ("repo", repo.name.clone()),
                 ("verdict", "refused".to_string()),
@@ -1264,8 +1290,9 @@ fn finish_local_round(
                     "ci-red",
                     Some(ejected),
                 );
-                io::tsd_append_round(
+                append_round(
                     env_,
+                    stable.deny.as_ref(),
                     &[
                         ("repo", repo.name.clone()),
                         ("verdict", "ejected".to_string()),
@@ -1353,8 +1380,9 @@ fn finish_local_round(
             "red",
             "queue round land refused — see its own stderr above",
         );
-        io::tsd_append_round(
+        append_round(
             env_,
+            stable.deny.as_ref(),
             &[
                 ("repo", repo.name.clone()),
                 ("verdict", "refused".to_string()),
@@ -1403,7 +1431,7 @@ fn finish_local_round(
     if let Some(r) = stable.regreen_seconds {
         fields.push(("regreen_seconds", r.to_string()));
     }
-    io::tsd_append_round(env_, &fields);
+    append_round(env_, stable.deny.as_ref(), &fields);
 
     let Some(bg) = stage_test else {
         return Ok(None);
@@ -1524,6 +1552,7 @@ fn cut_new_round_inner(
         println!("batcher {}: round held — same members at the same tips as the integration red {bead} still open; not re-cut", repo.name);
         return Ok(());
     }
+    let deny = resolve_deny(env_, round_start)?;
     println!("{}", cut_event(reason, &combined).text);
 
     let batch = if repo.land == Land::Local {
@@ -1551,6 +1580,7 @@ fn cut_new_round_inner(
         combined.merged.clone(),
         batch.as_deref(),
         &stage_pool,
+        &deny,
     ) {
         Err(e) => {
             abandon(&e.msg, "error");
@@ -1569,8 +1599,9 @@ fn cut_new_round_inner(
                 io::RECUT_VERDICT,
                 "every member of the round was ejected",
             );
-            io::tsd_append_round(
+            append_round(
                 env_,
+                Some(&deny),
                 &[
                     ("repo", repo.name.clone()),
                     ("verdict", "emptied".to_string()),
@@ -1583,8 +1614,9 @@ fn cut_new_round_inner(
         Ok(Stabilized::BaseRed { base, why }) => {
             abandon("local corpus red — held before reaching CI: base red", "blocked");
             io::write_local_verdict(env_, &repo.name, &pace::base_red_verdict(&base, &why), &why);
-            io::tsd_append_round(
+            append_round(
                 env_,
+                Some(&deny),
                 &[
                     ("repo", repo.name.clone()),
                     ("verdict", "blocked".to_string()),
@@ -1602,8 +1634,9 @@ fn cut_new_round_inner(
                 "red",
                 "local corpus red — held before reaching CI",
             );
-            io::tsd_append_round(
+            append_round(
                 env_,
+                Some(&deny),
                 &[
                     ("repo", repo.name.clone()),
                     ("verdict", "blocked".to_string()),
@@ -1625,8 +1658,9 @@ fn cut_new_round_inner(
         println!("{msg}");
         abandon(&msg, "moved");
         io::write_local_verdict(env_, &repo.name, "red", &msg);
-        io::tsd_append_round(
+        append_round(
             env_,
+            Some(&deny),
             &[
                 ("repo", repo.name.clone()),
                 ("verdict", "refused".to_string()),
@@ -1654,6 +1688,7 @@ fn cut_new_round_inner(
         round_start,
         stable.attribution_seconds,
         stable.regreen_seconds,
+        stable.deny.as_ref(),
     )?)
 }
 
@@ -1691,9 +1726,11 @@ fn follow_promoted(
             attribution_seconds: None,
             regreen_seconds: None,
             staged: None,
+            deny: None,
         }
     } else {
-        match stabilize_unlocked(env_, repo, &wt, &base_sha, members, Some(&p.batch), &[]) {
+        let deny = resolve_deny(env_, round_start)?;
+        match stabilize_unlocked(env_, repo, &wt, &base_sha, members, Some(&p.batch), &[], &deny) {
             Err(e) => {
                 abandon(&e.msg, "error");
                 return Err(e);
@@ -1759,6 +1796,7 @@ fn open_round_pr(
     round_start: u64,
     attribution_seconds: Option<u64>,
     regreen_seconds: Option<u64>,
+    deny: Option<&vm::DenySnapshot>,
 ) -> Result<(), String> {
     batcher_cut::open_round_pr(
         env_,
@@ -1768,6 +1806,7 @@ fn open_round_pr(
         round_start,
         attribution_seconds,
         regreen_seconds,
+        deny,
     )?
     .1
 }
@@ -2249,10 +2288,15 @@ fn attribute_run(o: &Opts) -> Result<(), String> {
         .iter()
         .map(|m| (m.id.clone(), io::changed_paths(&repo, &start_sha, &m.tip)))
         .collect();
+    let deny = match o.after_pass.as_deref() {
+        Some(pass) => vm::DenySnapshot::from_pass(pass).ok_or_else(|| format!("{} holds no deny list of the round's pass; refusing to attribute with another", pass.display()))?,
+        None => resolve_deny(&env_, now()).map_err(|e| e.msg)?,
+    };
     let mut runner = vm::VmRunner::new(&env_, &repo, &wt, &start_sha, &round, changed.clone())?
         .in_batch(o.batch.as_deref())
         .attribution()
-        .after_pass(o.after_pass.clone());
+        .after_pass(o.after_pass.clone())
+        .with_deny_list(&deny)?;
     if let (Some(b), Some(pass)) = (o.batch.as_deref(), o.after_pass.as_deref()) {
         if pass.is_dir() {
             io::keep_attributed_pass(&env_.run, b, pass, io::rounds_prune(&env_, &repo, b).as_ref());
@@ -3014,6 +3058,36 @@ mod fork_fence {
 #[cfg(test)]
 mod cut_tests {
     use super::*;
+
+    #[test]
+    fn a_failing_registry_cuts_no_round_and_says_what_it_printed() {
+        let d = testkit::TempDir::new("batcher-cut-deny-fail");
+        let env = io::lifecycle_tests_env(&d);
+        let bin = d.join("test-registry");
+        testkit::write_exe(&bin, "#!/bin/sh\necho \"registry locked $*\" >&2\nexit 3\n");
+        let err = snapshot_from(io::deny_list_from(bin.to_str().unwrap(), &env, 77), 77).unwrap_err();
+        assert!(err.msg.contains("registry locked deny-list --at 77") && err.msg.contains("exited 3"), "{}", err.msg);
+        assert!(snapshot_from(io::deny_list_from("/nonexistent/test-registry", &env, 77), 77).is_err());
+    }
+
+    #[test]
+    fn a_cut_resolves_the_list_at_its_start_and_every_round_row_names_it() {
+        let d = testkit::TempDir::new("batcher-cut-deny-row");
+        let mut env = io::lifecycle_tests_env(&d);
+        let bin = d.join("test-registry");
+        testkit::write_exe(&bin, "#!/bin/sh\nprintf '# test-registry deny-list at=%s rows=1\\ndisabled\\tunit:tiny t::drop\\tsp-x\\t-\\n' \"$3\"\n");
+        let deny = snapshot_from(io::deny_list_from(bin.to_str().unwrap(), &env, 77), 77).unwrap();
+        assert_eq!(deny.at, 77);
+        assert_eq!(deny.text, "# test-registry deny-list at=77 rows=1\ndisabled\tunit:tiny t::drop\tsp-x\t-\n");
+        let log = d.join("tsd.log");
+        env.tsd_bin = Some(d.join("tsd-write"));
+        testkit::write_exe(env.tsd_bin.as_ref().unwrap(), &format!("#!/bin/sh\necho \"$@\" >> {}\n", log.display()));
+        append_round(&env, Some(&deny), &[("repo", "fx".to_string()), ("verdict", "emptied".to_string())]);
+        let row = std::fs::read_to_string(&log).unwrap();
+        assert!(row.contains(&format!("--field-str deny_list={}", deny.label())) && row.contains("--field-str deny_rows=1"), "{row}");
+        append_round(&env, None, &[("repo", "fx".to_string())]);
+        assert!(!std::fs::read_to_string(&log).unwrap().lines().nth(1).unwrap().contains("deny_list"));
+    }
 
     #[test]
     fn a_cut_on_an_ec2_only_repo_never_calls_round_vm_refresh() {

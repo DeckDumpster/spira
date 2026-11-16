@@ -48,7 +48,8 @@ struct Fake {
     checkouts: RefCell<Vec<String>>,
     written: RefCell<Vec<(PathBuf, String)>>,
     unit_config: RefCell<Vec<(PathBuf, String)>>,
-    deny: RefCell<spira_config::unit_tier::DenyList>,
+    deny: RefCell<Result<String, String>>,
+    deny_calls: Cell<u32>,
     appended: RefCell<Vec<String>>,
     harness: Cell<&'static str>,
     /// run/tsd rows (telemetry.rs), kept apart from the gate.log meter.
@@ -251,7 +252,8 @@ impl Fake {
             checkouts: RefCell::new(Vec::new()),
             written: RefCell::new(Vec::new()),
             unit_config: RefCell::new(Vec::new()),
-            deny: Default::default(),
+            deny: RefCell::new(Ok(String::new())),
+            deny_calls: Cell::new(0),
             appended: RefCell::new(Vec::new()),
             harness: Cell::new("harness"),
             tsd: RefCell::new(Vec::new()),
@@ -470,7 +472,8 @@ impl Fake {
 }
 
 impl World for Fake {
-    fn deny_list(&self) -> spira_config::unit_tier::DenyList {
+    fn deny_list(&self, _at: u64) -> Result<String, String> {
+        self.deny_calls.set(self.deny_calls.get() + 1);
         self.deny.borrow().clone()
     }
     fn context(&self, _: Option<&str>) -> Result<Ctx, String> {
@@ -2178,7 +2181,7 @@ fn the_meter_row_and_yield_on_a_pass() {
     f.run();
     assert_eq!(
         f.appended.borrow()[0],
-        "2026-09-29T00:00:00Z spira spira/sp-a waited=0s ran=7s rc=0 pass compose=suites(mode) phases=gate:7 test_clock=7s\n",
+        "2026-09-29T00:00:00Z spira spira/sp-a waited=0s ran=7s rc=0 pass compose=suites(mode) phases=gate:7 deny_list=1000000/e3b0c44298fc test_clock=7s\n",
         "the composition and its phase walls trail the reason (sp-2ghui)"
     );
     assert_eq!(
@@ -2482,7 +2485,7 @@ fn unit_mode_rust_only_runs_fences_then_the_touched_crates_tests_and_no_suite() 
         "gate: composition=unit — fences (suites off, no build fence: the build phase is the compile check), then cargo build and test on the host for 2 crates: queue spira-config (touched: spira-config)"
     ));
     assert!(
-        meter(&f).ends_with(" rc=0 pass compose=unit phases=fences:7,build:7,test:7 unit_build_secs=7 unit_run_secs=7 unit_tests=0 unit_slowest=- test_clock=7s\n"),
+        meter(&f).ends_with(" rc=0 pass compose=unit phases=fences:7,build:7,test:7 unit_build_secs=7 unit_run_secs=7 unit_tests=0 unit_slowest=- deny_list=1000000/e3b0c44298fc test_clock=7s\n"),
         "{}",
         meter(&f)
     );
@@ -2498,7 +2501,7 @@ fn unit_mode_rust_only_runs_fences_then_the_touched_crates_tests_and_no_suite() 
 fn a_deny_list_reaches_the_nextest_config_the_integration_command_and_the_suites_env() {
     let list = "disabled\tunit:a::b t::drop\tsp-1\t-\nquarantined\tintegration:p x::y\tsp-2\t-\n";
     let f = unit_fake(&["spira-config/src/lib.rs"]);
-    *f.deny.borrow_mut() = spira_config::unit_tier::DenyList::parse(list).unwrap();
+    *f.deny.borrow_mut() = Ok(list.to_string());
     f.runs.borrow_mut().insert(MERGE_SHA.into(), (0, "build-fence: make build ok".into()));
     assert_eq!(f.run(), PASS);
     let cfg = f.unit_config.borrow().clone();
@@ -2510,7 +2513,7 @@ fn a_deny_list_reaches_the_nextest_config_the_integration_command_and_the_suites
     assert!(written.iter().any(|(p, c)| p.ends_with("target/gate-deny-list") && c.contains("t::drop")), "{written:?}");
 
     let f = returned(unit_fake(&["gate/src/x.rs"]), "test-b.sh");
-    *f.deny.borrow_mut() = spira_config::unit_tier::DenyList::parse(list).unwrap();
+    *f.deny.borrow_mut() = Ok(list.to_string());
     f.runs.borrow_mut().insert(MERGE_SHA.into(), (0, "build-fence: make build ok".into()));
     assert_eq!(f.run(), PASS);
     let n = f.cmds.borrow().len();
@@ -2524,6 +2527,34 @@ fn a_deny_list_reaches_the_nextest_config_the_integration_command_and_the_suites
     assert_eq!(f.env_of(0, "SPIRA_TEST_DENY_LIST"), "");
     assert!(!f.cmds.borrow()[2].contains("--skip"));
     assert!(!f.unit_config.borrow()[0].1.contains("default-filter"));
+}
+
+#[test]
+fn a_gate_names_the_deny_list_it_ran_with_on_stderr_in_the_record_and_in_the_tsd_row() {
+    let list = "disabled\tunit:a::b t::drop\tsp-1\t-\n";
+    let f = unit_fake(&["spira-config/src/lib.rs"]);
+    *f.deny.borrow_mut() = Ok(list.to_string());
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (0, "build-fence: make build ok".into()));
+    assert_eq!(f.run(), PASS);
+    assert_eq!(&crate::key::sha256_hex(b"abc")[..12], "ba7816bf8f01", "the digest test-registry prints for the same text");
+    let digest = &crate::key::sha256_hex(list.as_bytes())[..12];
+    let line = f.stderr().lines().find(|l| l.starts_with("gate: deny list ")).unwrap_or_default().to_string();
+    let label = line.trim_start_matches("gate: deny list ").split(' ').next().unwrap().to_string();
+    assert!(label.ends_with(&format!("/{digest}")) && line.ends_with("(1 rows)"), "{line}");
+    assert!(f.unit_config.borrow()[0].1.contains("default-filter"), "the filter reaches the nextest config");
+    assert!(meter(&f).contains(&format!(" deny_list={label} ")), "{}", meter(&f));
+    assert!(f.tsd.borrow().iter().any(|r| r.contains(&format!("\"deny_list\":\"{label}\""))), "{:?}", f.tsd.borrow());
+}
+
+#[test]
+fn a_deny_list_that_cannot_be_resolved_is_no_verdict_and_no_phase_runs() {
+    for bad in [Err("registry locked".to_string()), Ok("garbage\n".to_string())] {
+        let f = unit_fake(&["spira-config/src/lib.rs"]);
+        *f.deny.borrow_mut() = bad;
+        assert_eq!(f.run(), NOVERDICT);
+        assert!(f.cmds.borrow().is_empty(), "no phase ran");
+        assert!(f.stderr().contains("deny list"), "{}", f.stderr());
+    }
 }
 
 /// sp-aprxm: a unit-mode gate builds once. The build fence's cold release `make build` is
@@ -2989,9 +3020,11 @@ fn a_red_unit_test_on_a_green_base_is_the_branchs() {
         "branch fences/build/test, base fences only: {cmds:?}"
     );
     assert!(!meter(&f).contains("base-build") && !meter(&f).contains("base-test"));
+    assert_eq!(f.deny_calls.get(), 1, "the branch trial and the base trial share one snapshot");
     assert_eq!(f.checkouts.borrow()[1], BASE);
     assert!(meter(&f).contains(
-        "compose=unit phases=fences:7,build:7,test:7,base-fences:7 unit_build_secs=7 unit_run_secs=7 unit_tests=1 unit_slowest=- test_clock=7s\n"
+        "compose=unit phases=fences:7,build:7,test:7,base-fences:7 unit_build_secs=7 unit_run_secs=7 unit_tests=1 unit_slowest=- deny_list=1000000/e3b0c44298fc test_clock=7s
+"
     ));
     assert!(f.stderr().contains("phase 'test' failed (exit 101)"));
     assert!(!f.stderr().contains("the same command passes against"));
@@ -4014,7 +4047,7 @@ fn a_trial_that_loses_sccache_retries_once_without_the_cache() {
     let n = f.ran.borrow().len();
     assert_eq!(f.env_of(n - 1, "SPIRA_BUILD_CACHE"), "off");
     assert_eq!(f.env_of(n - 1, "RUSTC_WRAPPER"), "");
-    assert!(meter(&f).contains(" phases=gate:7,gate:7 test_clock=14s"), "{}", meter(&f));
+    assert!(meter(&f).contains(" phases=gate:7,gate:7 deny_list=1000000/e3b0c44298fc test_clock=14s"), "{}", meter(&f));
 }
 
 /// A base re-run that loses its sccache server is run once more with the cache off; a

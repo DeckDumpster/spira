@@ -109,6 +109,8 @@ struct State {
     unit_timings: Option<spira_config::unit_tier::UnitTimings>,
     /// The unit test phase failed and its nextest run named no test and printed no summary.
     nextest_unreported: bool,
+    /// `<at>/<digest>` of the deny list the trial ran with; empty before one was resolved.
+    deny_label: String,
     /// Seconds the trial spent waiting for a slot (testenv's `queue-wait=` lines), inside
     /// the `gate` phase's wall.
     queue_secs: u64,
@@ -841,7 +843,18 @@ impl<'w, W: World> Trial<'w, W> {
         ) else {
             return v(NOVERDICT, "config", "gate: SPIRA_UNIT_TEST_DEADLINE_SECS and SPIRA_UNIT_TEST_DEADLINE_PERIODS must be positive numbers — refusing to run unit tests with no per-test deadline.");
         };
-        let limits = Limits { deadline, stall, unit_deadline: (secs, periods), deny: w.deny_list() };
+        let at = w.now();
+        let deny_text = match w.deny_list(at) {
+            Ok(t) => t,
+            Err(e) => return v(NOVERDICT, "deny-list", format!("gate: cannot resolve the deny list: {e}\ngate: no trial of {br} ran — refusing to judge as if no test were denied.")),
+        };
+        let deny = match spira_config::unit_tier::DenyList::parse(&deny_text) {
+            Ok(d) => d,
+            Err(e) => return v(NOVERDICT, "deny-list", format!("gate: the deny list does not parse: {e}\ngate: no trial of {br} ran — refusing to judge as if no test were denied.")),
+        };
+        self.s.deny_label = format!("{at}/{}", &key::sha256_hex(deny_text.as_bytes())[..12]);
+        w.eprint(&format!("gate: deny list {} ({} rows)", self.s.deny_label, deny.render().lines().count()));
+        let limits = Limits { deadline, stall, unit_deadline: (secs, periods), deny };
         let by_deadline = key::digits(&timeout).is_none_or(|t| deadline <= t);
         let eff = |spent: u64| {
             let rem = deadline.saturating_sub(spent).max(1);
@@ -1811,6 +1824,14 @@ impl<'w, W: World> Trial<'w, W> {
         )
     }
 
+    fn deny_suffix(&self) -> String {
+        if self.s.deny_label.is_empty() {
+            String::new()
+        } else {
+            format!(" deny_list={}", self.s.deny_label)
+        }
+    }
+
     fn finish(&mut self, vd: Verdict) -> i32 {
         let mut vd = vd;
         let w = self.w;
@@ -1863,7 +1884,7 @@ impl<'w, W: World> Trial<'w, W> {
             w.append(
                 &self.s.gate_log,
                 &format!(
-                    "{} {} {} waited={}s ran={}s rc={} {}{}{}{}{}{}{} test_clock={}s\n",
+                    "{} {} {} waited={}s ran={}s rc={} {}{}{}{}{}{}{}{} test_clock={}s\n",
                     w.utc(),
                     self.s.repo_name,
                     self.a.branch,
@@ -1874,6 +1895,7 @@ impl<'w, W: World> Trial<'w, W> {
                     meter_suffix(&self.s.compose, &self.s.phases, self.s.queue_secs),
                     self.s.build_timing.as_ref().map_or(String::new(), |(b, _)| b.suffix()),
                     self.unit_suffix(),
+                    self.deny_suffix(),
                     tools_field(&self.s.tools_from, &self.s.phases),
                     self.s.replay_note,
                     if self.s.waited_ms > 0 { format!(" waited_ms={}", self.s.waited_ms) } else { String::new() },
@@ -1914,6 +1936,7 @@ impl<'w, W: World> Trial<'w, W> {
                 unit_slowest: self.unit_slowest(),
                 red_unit,
                 red_line,
+                deny_list: self.s.deny_label.clone(),
             };
             let ts = w.utc();
             if let Some((_, html)) = self.s.build_timing.as_ref().filter(|(_, h)| !h.is_empty()) {
