@@ -16,7 +16,7 @@ path = "tests/schema_views.rs"
 required-features = ["integration"]
 
 [features]
-integration = []
+integration = ["testkit/integration"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
