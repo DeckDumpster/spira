@@ -357,7 +357,7 @@ mod tests {
         assert!(lines.iter().all(|l| l.starts_with("not met ")));
         assert_eq!(code, 1);
         let mut lines = Vec::new();
-        assert_eq!(run(&green(), "r", Some(&PathBuf::from("/t")), &ALL, &mut |l| lines.push(l.to_string())), 0);
+        assert_eq!(run(&green(), "r", Some(&PathBuf::from("t")), &ALL, &mut |l| lines.push(l.to_string())), 0);
         assert!(lines.iter().all(|l| l.starts_with("met ")));
     }
 
