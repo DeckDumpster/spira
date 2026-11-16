@@ -709,7 +709,7 @@ pub fn pr_tip(real: &hel::real::Real, input: &str) -> Result<String, String> {
 /// The runner of [`SEND`]: the witness re-checked, the content-on-base evidence recorded
 /// first when asked, then the leg (`hel reap-landed-branch`, the verified deletion) started
 /// as a transient unit named for `repo:br:tip`; it ends on that unit's `unit.ran`.
-pub fn send(real: &hel::real::Real, lc: &spira_store::lc_call::LcClient, units: Option<&dyn runtime::units::Units>, p: &Pinned, input: &str) -> Result<String, String> {
+pub fn send(real: &hel::real::Real, lc: &spira_store::lc_call::LcClient, units: Option<&dyn runtime::units::Units>, p: &Pinned, release: &str, input: &str) -> Result<String, String> {
     use hel::ports::World;
     let units = units.ok_or("no unit manager configured")?;
     let s: Send = serde_json::from_str(input).map_err(|e| e.to_string())?;
@@ -722,15 +722,28 @@ pub fn send(real: &hel::real::Real, lc: &spira_store::lc_call::LcClient, units: 
         let sha = hel::git::Git(&root).rev_parse(&base.landref).unwrap_or_default();
         record_content_on_base(lc, &s.id, &sha)?;
     }
-    let mut env = vec![];
-    if let Ok(spec) = spira_config::process::spec() {
-        env.push((spira_config::process::TOML_ENV.to_string(), spec));
-    }
-    let unit = runtime::units::UnitSpec { task: NAME.into(), key: leg_key(&s.repo, &s.br, &s.tip), argv: vec!["hel".into(), "reap-landed-branch".into(), s.id.clone(), s.br.clone(), root.display().to_string(), s.why.clone(), s.caller.clone()], env, cwd: Some(root) };
-    let started = runtime::units::effect(units, runtime::units::UNIT_START, &serde_json::to_string(&unit).map_err(|e| e.to_string())?)?;
+    let started = start_leg(units, release, &real.run(), &root, &s)?;
     mark_handled(real, &s.repo, &s.br);
     real.rest(p.pace);
     Ok(started)
+}
+
+/// The leg's unit: `hel` is the release's own binary by absolute path (a transient unit has no
+/// `PATH` to find it on), under the environment `hel reap-landed-branch` resolves its world from.
+fn start_leg(units: &dyn runtime::units::Units, release: &str, run: &std::path::Path, root: &std::path::Path, s: &Send) -> Result<String, String> {
+    use std::os::unix::fs::PermissionsExt;
+    let hel = spira_config::release_env::release_root(Some(release))?.join("bin").join("hel");
+    if !hel.metadata().is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0) {
+        return Err(format!("{}: {} is not an executable file — refusing to send", s.id, hel.display()));
+    }
+    let home = std::env::var("HOME").map_err(|_| "HOME is not set — hel reads its pinned tool environment from it; there is no fallback".to_string())?;
+    let mut env = vec![(spira_config::RELEASE_ENV.to_string(), release.to_string()), ("SPIRA_RUN".to_string(), run.display().to_string()), ("HOME".to_string(), home)];
+    if let Ok(spec) = spira_config::process::spec() {
+        env.push((spira_config::process::TOML_ENV.to_string(), spec));
+    }
+    let argv = vec![hel.display().to_string(), "reap-landed-branch".into(), s.id.clone(), s.br.clone(), root.display().to_string(), s.why.clone(), s.caller.clone()];
+    let unit = runtime::units::UnitSpec { task: NAME.into(), key: leg_key(&s.repo, &s.br, &s.tip), argv, env, cwd: Some(root.to_path_buf()) };
+    runtime::units::effect(units, runtime::units::UNIT_START, &serde_json::to_string(&unit).map_err(|e| e.to_string())?)
 }
 
 /// The runner of [`CONTENT_ON_BASE`]: the evidence verb on its own, for one branch.
@@ -814,6 +827,58 @@ mod tests {
             };
             Ok(spira_store::lc_call::Reply { code, out, err: String::new() })
         }
+    }
+
+    #[derive(Default)]
+    struct Recorder(std::sync::Mutex<Vec<runtime::units::UnitSpec>>);
+
+    impl runtime::units::Units for Recorder {
+        fn start(&self, spec: &runtime::units::UnitSpec) -> runtime::Result<runtime::units::UnitHandle> {
+            self.0.lock().unwrap().push(spec.clone());
+            Ok(runtime::units::UnitHandle { name: "u".into() })
+        }
+        fn stop(&self, _: &runtime::units::UnitHandle) -> runtime::Result<()> {
+            Ok(())
+        }
+        fn restart(&self, _: &runtime::units::UnitHandle) -> runtime::Result<()> {
+            Ok(())
+        }
+        fn facts(&self, _: &runtime::units::UnitHandle) -> runtime::Result<runtime::units::UnitFacts> {
+            Err(runtime::RuntimeError("no facts".into(), runtime::Class::Fault))
+        }
+    }
+
+    fn one() -> Send {
+        Send { repo: "spira".into(), id: "sp-a".into(), br: "spira/sp-a".into(), tip: "abc".into(), why: "landed".into(), caller: "hel.sweep".into(), proof: false }
+    }
+
+    #[test]
+    fn the_leg_execs_hel_from_the_release_by_absolute_path_with_the_env_hel_reads() {
+        let release = testkit::TempDir::new("hel-sweep-release");
+        let bin = release.path().join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        testkit::write_exe(bin.join("hel"), "exit 0\n");
+        let rec = Recorder::default();
+        let rel = release.path().display().to_string();
+        start_leg(&rec, &rel, std::path::Path::new("/run/x"), std::path::Path::new("/repo"), &one()).unwrap();
+        let started = rec.0.lock().unwrap();
+        assert_eq!(started.len(), 1);
+        assert_eq!(started[0].argv[0], bin.join("hel").display().to_string());
+        assert_eq!(started[0].argv[1], "reap-landed-branch");
+        let has = |k: &str, v: &str| started[0].env.iter().any(|(a, b)| a == k && b == v);
+        assert!(has("SPIRA_RELEASE", &rel));
+        assert!(has("SPIRA_RUN", "/run/x"));
+        assert!(started[0].env.iter().any(|(k, _)| k == "HOME"));
+    }
+
+    #[test]
+    fn a_release_without_hel_refuses_naming_the_path_and_starts_no_unit() {
+        let release = testkit::TempDir::new("hel-sweep-no-hel");
+        let rec = Recorder::default();
+        let rel = release.path().display().to_string();
+        let err = start_leg(&rec, &rel, std::path::Path::new("/run/x"), std::path::Path::new("/repo"), &one()).unwrap_err();
+        assert!(err.contains(&release.path().join("bin").join("hel").display().to_string()), "{err}");
+        assert!(rec.0.lock().unwrap().is_empty());
     }
 
     #[test]
