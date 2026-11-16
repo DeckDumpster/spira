@@ -1071,6 +1071,7 @@ pub fn lc_settings(world: &Path) -> Vec<(String, String)> {
         ("spira.run".to_string(), world.join("run").display().to_string()),
         ("spira.lc_store_path".to_string(), control_store(world).display().to_string()),
         ("spira.lc_lifecycle_on_store".to_string(), "1".to_string()),
+        ("spira.test_registry_path".to_string(), world.join("run/test-registry.sqlite").display().to_string()),
     ]
 }
 
@@ -1180,6 +1181,12 @@ mod locator_tests {
     fn a_world_is_refused_while_spira_toml_names_a_config() {
         let e = refuse_production(&|k| (k == "SPIRA_TOML").then(|| "/c/one-source.toml".to_string())).unwrap_err();
         assert!(e.contains("SPIRA_TOML"), "{e}");
+    }
+
+    #[test]
+    fn a_worlds_test_registry_is_a_file_under_its_own_run_dir() {
+        let s = lc_settings(Path::new("/w"));
+        assert!(s.contains(&("spira.test_registry_path".to_string(), "/w/run/test-registry.sqlite".to_string())));
     }
 }
 
