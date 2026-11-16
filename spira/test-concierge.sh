@@ -380,6 +380,7 @@ ST="$TMP/toml-pass"; mkdir -p "$ST/bin" "$ST/run" "$ST/wiki"
 cat > "$ST/bin/systemd-run" <<EOF
 #!/bin/sh
 printf '%s\n' "\$@" > "$ST/systemd-run.argv"
+cp -n "$ST/run/concierge-launch.sh" "$ST/launch.first" 2>/dev/null
 EOF
 chmod +x "$ST/bin/systemd-run"
 ST_SOCK="test-concierge-toml-$$"
@@ -422,6 +423,64 @@ is   "start refuses when a SPIRA_TOML layer names no file" 1 "$st_nofile_rc"
 want "and names SPIRA_TOML"                      "SPIRA_TOML" "$st_nofile"
 [ ! -e "$ST/systemd-run.argv" ] && ok "and launches no unit" \
     || bad "and launches no unit" "systemd-run was called: $(cat "$ST/systemd-run.argv")"
+# --opening-prompt-file (sp-di6ib8): a fresh start hands the file's text to claude as its
+# positional prompt, so nothing is typed into the pane.
+st_start_args() {  # st_start_args <start-args...>
+    env -u SPIRA_ADOPT_CONFIGURE_DEFAULT SPIRA_TOML="$ST_TOML" PATH="$ST/bin:$PATH" SPIRA_HOME="$FX" CONCIERGE_RUNE=fx \
+        CONCIERGE_SOCKET="$ST_SOCK" CONCIERGE_SESSION="$ST_SOCK" \
+        SPIRA_MEMORIES_CMD="$(fixture_cmd)" bash "$HARNESS/concierge.sh" start "$@" 2>&1 </dev/null
+}
+st_clear() { rm -f "$ST/systemd-run.argv" "$ST/launch.first" "$ST/run/concierge-launch.sh" "$ST/run/concierge-session"; }
+OP_TEXT='Read handoff.md first; it'"'"'s "fresh"'
+printf '%s\n' "$OP_TEXT" > "$ST/op.txt"
+OP_WANT="$(printf '%q' "$(cat "$ST/op.txt")")"
+
+st_clear
+st_start_args --opening-prompt-file "$ST/op.txt" >/dev/null
+op_fresh_line="$(grep '^exec claude' "$ST/run/concierge-launch.sh" 2>/dev/null)"
+want "fresh start with the flag still carries --remote-control (positive control)" "--remote-control" "$op_fresh_line"
+case "$op_fresh_line" in
+*"--append-system-prompt "*" $OP_WANT") ok "the opening prompt is the launcher's last argument, after --append-system-prompt" ;;
+*) bad "the opening prompt is the launcher's last argument, after --append-system-prompt" "$op_fresh_line" ;;
+esac
+
+st_clear
+printf '%s\n%s\n' "fx-resume-id" "$ST/wiki" > "$ST/run/concierge-session"
+op_res_out="$(st_start_args --opening-prompt-file "$ST/op.txt")"
+op_line="$(grep '^exec claude' "$ST/launch.first" 2>/dev/null)"
+want "a resume start carries --resume (positive control)" "--resume fx-resume-id" "$op_line"
+case "$op_line" in
+*"Read handoff.md"*) bad "a resume start does not carry the opening prompt" "$op_line" ;;
+*) ok "a resume start does not carry the opening prompt" ;;
+esac
+want "and says the flag was ignored" "--opening-prompt-file ignored" "$op_res_out"
+op_retry="$(grep '^exec claude' "$ST/run/concierge-launch.sh" 2>/dev/null)"
+case "$op_retry" in
+*"--resume"*) bad "the fresh retry (no transcript) drops --resume" "$op_retry" ;;
+*" $OP_WANT") ok "the fresh retry (no transcript) opens with the prompt and drops --resume" ;;
+*) bad "the fresh retry (no transcript) opens with the prompt and drops --resume" "$op_retry" ;;
+esac
+
+: > "$ST/empty.txt"
+for op_case in "--opening-prompt-file" "--opening-prompt-file $ST/no-such.txt" "--opening-prompt-file $ST/empty.txt" "stray-word"; do
+    st_clear
+    # shellcheck disable=SC2086
+    op_out="$(st_start_args $op_case)"; op_rc=$?
+    is   "start $op_case exits 2" 2 "$op_rc"
+    want "and names the flag" "--opening-prompt-file" "$op_out"
+    [ ! -e "$ST/systemd-run.argv" ] && ok "and launches nothing" \
+        || bad "and launches nothing" "systemd-run was called"
+done
+
+st_clear
+st_start_args >/dev/null
+op_line="$(grep '^exec claude' "$ST/run/concierge-launch.sh" 2>/dev/null)"
+case "$op_line" in
+*"$OP_WANT"*) bad "a start without the flag carries no opening prompt" "$op_line" ;;
+*) ok "a start without the flag carries no opening prompt" ;;
+esac
+is "a start without the flag ends at the --append-system-prompt value" "$op_line $OP_WANT" "$op_fresh_line"
+
 
 echo
 echo "start — a session whose pane has died is respawned, not reported as already running"
