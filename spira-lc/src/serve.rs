@@ -223,6 +223,7 @@ fn ready_line(phases: &[(&str, Duration)], wall_ms: u64) -> String {
 }
 
 /// One line per phase in order, then `ready after` the sum of them.
+#[cfg(test)]
 fn startup_lines(phases: &[(&str, Duration)], wall_ms: u64) -> Vec<String> {
     let mut lines: Vec<String> = phases.iter().map(|(phase, took)| startup_line(phase, *took, wall_ms)).collect();
     lines.push(ready_line(phases, wall_ms));
