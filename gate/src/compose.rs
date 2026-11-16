@@ -1007,6 +1007,7 @@ mod tests {
                 Unit {
                     touched: vec!["gate".into(), "queue".into(), "release".into(), "spira-config".into()],
                     crates: vec!["gate".into(), "queue".into(), "release".into(), "spira-config".into()],
+                    targets: Targets::default(),
                 },
             ),
             (
@@ -1014,6 +1015,7 @@ mod tests {
                 Unit {
                     touched: vec!["gate".into(), "queue".into(), "release".into(), "spira-config".into()],
                     crates: vec!["gate".into(), "queue".into(), "release".into(), "spira-config".into()],
+                    targets: Targets::default(),
                 },
             ),
             (
@@ -1021,6 +1023,7 @@ mod tests {
                 Unit {
                     touched: vec!["gate".into(), "queue".into(), "release".into(), "spira-config".into()],
                     crates: vec!["gate".into(), "queue".into(), "release".into(), "spira-config".into()],
+                    targets: Targets::default(),
                 },
             ),
             (&[], Fences),
