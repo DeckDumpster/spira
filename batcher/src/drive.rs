@@ -1686,21 +1686,35 @@ fn attribute_members<R: RoundRunner, O: RoundOps>(
         if s.end == MainEnd::WorkspaceBuild {
             let output = runner.build_output();
             if buildattr::is_image_build_red(&output) {
-                match eject_recipe_owner(ops, &members, &output)? {
-                    Some(next) => {
-                        println!("batcher: the round image build failed — its recipe's owner left, re-cutting {} member(s)", next.len());
-                        runner.stop_main()?;
-                        members = next;
-                        continue;
+                let diffs = ops.diffs(&members.iter().map(|m| m.id.clone()).collect::<Vec<_>>());
+                match buildattr::recipe_touchers(&diffs)[..] {
+                    [owner] => {
+                        let line = format!(
+                            "the round image build failed and this member changes its recipe: {}",
+                            buildattr::error_tail(&output)
+                        );
+                        if let Some(next) = apply_build_actions(
+                            ops,
+                            &members,
+                            &[Action::Eject {
+                                id: owner.id.clone(),
+                                line,
+                            }],
+                            WORKSPACE_BUILD,
+                        )? {
+                            println!("batcher: the round image build failed — {} left, re-cutting {} member(s)", owner.id, next.len());
+                            runner.stop_main()?;
+                            members = next;
+                            continue;
+                        }
                     }
-                    None if image_retried => {}
-                    None if ops.diffs(&members.iter().map(|m| m.id.clone()).collect::<Vec<_>>()).iter().all(|d| buildattr::recipe_touchers(std::slice::from_ref(d)).is_empty()) => {
+                    [] if !image_retried => {
                         image_retried = true;
                         println!("batcher: the round image build failed and no member changes its recipe — a harness fault, retrying once");
                         runner.stop_main()?;
                         continue;
                     }
-                    None => {}
+                    _ => {}
                 }
                 ops.incident("workspace-build", &[WORKSPACE_BUILD.to_string()]);
                 return Ok(RoundEnd::Blocked("the round's image build failed".into()));
@@ -4872,6 +4886,19 @@ pub(crate) mod tests {
         );
         assert!(ops.ejected.is_empty(), "{:?}", ops.ejected);
         assert!(!f.main_kind.is_empty(), "the corpus runs");
+    }
+
+    #[test]
+    fn a_prior_build_red_that_is_an_image_build_ejects_the_one_member_changing_the_recipe() {
+        let out = "round image build failed\n";
+        let (f, ops, end) = run_prior_build(
+            out,
+            vec![md("m1", buildattr::RECIPE_PATHS[0], "+x\n"), md("m2", "doc/y.md", "+q\n")],
+            vec![member("m1"), member("m2")],
+        );
+        assert!(matches!(end, RoundEnd::Land { ref members, .. } if members.len() == 1), "{end:?}");
+        assert_eq!(ops.ejected[0].0, "m1");
+        assert!(f.main_kind.is_empty());
     }
 
     #[test]
