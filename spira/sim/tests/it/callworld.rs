@@ -54,7 +54,7 @@ fn a_scenario_naming_a_rune_the_home_lacks_is_refused() {
 }
 
 fn sim_run(scenario: &std::path::Path) -> std::process::Output {
-    std::process::Command::new(env!("CARGO_BIN_EXE_sim")).arg("run").arg(scenario).current_dir(root()).output().expect("sim runs")
+    std::process::Command::new(testkit::bin_exe("sim")).arg("run").arg(scenario).current_dir(root()).output().expect("sim runs")
 }
 
 #[test]
