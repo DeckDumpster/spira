@@ -242,6 +242,29 @@ fn an_attribution_leg_still_listed_past_one_walls_grace_is_not_judged_lost() {
     assert_eq!(carry.repos["spira"].state, State::Attributing);
 }
 
+fn certifying(at: u64) -> Carry {
+    let mut carry = corpus("spira.r9.certify1", at);
+    carry.repos.get_mut("spira").unwrap().state = State::Certifying;
+    carry
+}
+
+#[test]
+fn a_live_certify_leg_past_one_walls_grace_starts_no_attribution() {
+    let past_one_wall = Policy::default().wall_ms + LEG_GRACE_MS + TICK;
+    let (carry, acts) = decide(&certifying(NOW), &snap(NOW + past_one_wall, Some(vec!["spira.r9.certify1".into()])));
+    assert!(acts.is_empty(), "{acts:?}");
+    let rc = &carry.repos["spira"];
+    assert_eq!(rc.state, State::Certifying);
+    assert_eq!(rc.leg.as_deref(), Some("spira.r9.certify1"));
+    assert!(!rc.attributed);
+}
+
+#[test]
+fn a_certify_leg_the_manager_does_not_list_is_started_once_more() {
+    let (_, acts) = observe_gone(certifying(NOW), NOW + LEG_START_GRACE_MS, LEG_MISSING_OBSERVES as u64);
+    assert_eq!(names(&acts), [CERTIFY], "{acts:?}");
+}
+
 #[test]
 fn an_attribution_leg_is_judged_lost_past_its_iterations_deadline() {
     let p = Policy::default();
