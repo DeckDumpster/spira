@@ -147,7 +147,7 @@ pub const ACTS: &[(&str, u64)] = &[(UNIT_START, 10_000), (PREEMPT, 30_000), (PRE
 pub const EMITS: &[EventKindTag] = &[];
 pub const EFFECTS: &[&str] = &[OBSERVE, UNIT_START, PREEMPT, PREEMPT_LOG, METRIC];
 /// The pinned keys registered in `spira/conf.d`.
-pub const KEYS: &[&str] = &["SPIRA_RUN", "SPIRA_RUNES", "SPIRA_MAX_DWARVES", "SPIRA_MAX_LIVE_DWARVES", "SPIRA_LANES_MAX_LIVE", "SPIRA_QUEUE_THROTTLE_OVERRIDE"];
+pub const KEYS: &[&str] = &["SPIRA_RUN", "SPIRA_RUNES", "SPIRA_MAX_DWARVES", "SPIRA_MAX_LIVE_DWARVES", "SPIRA_LANES_MAX_LIVE", "SPIRA_LIMIT_CPU", "SPIRA_LIMIT_MEMORY", "SPIRA_LIMIT_NETWORK", "SPIRA_QUEUE_THROTTLE_OVERRIDE"];
 /// Keys the contract pins that `spira/conf.d` does not register: none. The five the contract
 /// listed are retired or are paths under `SPIRA_RUN` (the module doc, "The port").
 pub const UNREGISTERED: &[&str] = &[];
@@ -181,18 +181,21 @@ pub struct LiveUnit {
     pub started_ms: u64,
 }
 
-/// A rune's own call settings (`RUNE_LANE`, `RUNE_MAX_CONCURRENT`, `RUNE_ELASTIC`).
+/// A rune's own call settings (`RUNE_LANE`, `RUNE_MAX_CONCURRENT`, `RUNE_ELASTIC`, `RUNE_USES`, `RUNE_REACTIVE`).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct RuneCfg {
     pub lane: bool,
     pub max_concurrent: u32,
     pub elastic: bool,
+    pub uses: Vec<String>,
+    pub reactive: bool,
 }
 
 impl Default for RuneCfg {
     /// `rune_get`'s own defaults: a task rune, one at a time, not elastic.
     fn default() -> Self {
-        RuneCfg { lane: false, max_concurrent: 1, elastic: false }
+        RuneCfg { lane: false, max_concurrent: 1, elastic: false, uses: vec![], reactive: false }
     }
 }
 
@@ -222,8 +225,10 @@ pub struct Snapshot {
     /// The fleet ceiling `SPIRA_MAX_LIVE_DWARVES` and lane spill `SPIRA_LANES_MAX_LIVE`, as pinned.
     pub max_live: Option<u32>,
     pub lanes_max_live: Option<u32>,
-    /// The task pool `SPIRA_MAX_DWARVES`, as pinned.
+    /// The `build-disk` limit `SPIRA_MAX_DWARVES`, as pinned.
     pub max_dwarves: Option<u32>,
+    /// The limits of the other bound classes (`cpu`, `memory`, `network`); an unset one is absent.
+    pub class_limits: BTreeMap<String, u32>,
     /// The callable runes in roster order; empty reads the order of `ready_by_rune`.
     pub roster: Vec<String>,
     /// Each rune's call settings; a rune missing here has `RuneCfg::default()`.
@@ -336,6 +341,8 @@ pub fn call_world(carry: &Carry, snap: &Snapshot) -> plan::CallWorld {
             lane: cfg.lane,
             max_concurrent: i64::from(cfg.max_concurrent),
             elastic: cfg.elastic,
+            uses: cfg.uses,
+            reactive: cfg.reactive,
             name,
         };
         if rune.lane {
@@ -359,7 +366,7 @@ pub fn call_world(carry: &Carry, snap: &Snapshot) -> plan::CallWorld {
         task,
         lanes,
         other_live: i64::from(snap.other_live),
-        max_dwarves: snap.max_dwarves.map(i64::from),
+        limits: snap.max_dwarves.map(|n| (plan::BUILD_DISK.to_string(), n)).into_iter().chain(snap.class_limits.iter().map(|(c, n)| (c.clone(), *n))).map(|(c, n)| (c, i64::from(n))).collect(),
         max_live_dwarves: snap.max_live.map(i64::from),
         lanes_max_live: snap.lanes_max_live.map(i64::from),
         throttled: snap.throttle,
@@ -622,15 +629,44 @@ pub fn observe(e: &Effects, input: &str) -> Result<String, String> {
     let unitp = e.units.as_deref().ok_or("no unit manager configured")?;
     let roster_all = spira_config::runes::spira_runes(&home, pinned.get("SPIRA_RUNES").map(String::as_str).filter(|v| !v.is_empty()));
     let get = |f: &str, k: &str, d: &str| spira_config::runes::rune_get(&home, f, k, d);
-    let roster: Vec<String> = roster_all.split_whitespace().filter(|f| get(f, "RUNE_CALL", "auto") == "auto" && get(f, "RUNE_ROLE", "task") != "party").map(str::to_string).collect();
+    let mut uses: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let roster: Vec<String> = roster_all
+        .split_whitespace()
+        .filter(|f| get(f, "RUNE_CALL", "auto") == "auto" && get(f, "RUNE_ROLE", "task") != "party")
+        .filter(|f| match spira_config::runes::rune_uses(&home, f) {
+            Ok(u) => {
+                uses.insert(f.to_string(), u);
+                true
+            }
+            Err(why) => {
+                eprintln!("CHECK7 {why} — not calling");
+                false
+            }
+        })
+        .map(str::to_string)
+        .collect();
     let runes: BTreeMap<String, RuneCfg> = roster
         .iter()
-        .map(|f| (f.clone(), RuneCfg { lane: !get(f, "RUNE_LANE", "").is_empty(), max_concurrent: get(f, "RUNE_MAX_CONCURRENT", "1").trim().parse().unwrap_or(1), elastic: get(f, "RUNE_ELASTIC", "0") == "1" }))
+        .map(|f| {
+            let cfg = RuneCfg {
+                lane: !get(f, "RUNE_LANE", "").is_empty(),
+                max_concurrent: get(f, "RUNE_MAX_CONCURRENT", "1").trim().parse().unwrap_or(1),
+                elastic: get(f, "RUNE_ELASTIC", "0") == "1",
+                uses: uses.remove(f).unwrap_or_default(),
+                reactive: get(f, "RUNE_REACTIVE", "0") == "1",
+            };
+            (f.clone(), cfg)
+        })
         .collect();
     let mut snap = Snapshot { world: world_of(&run), skew: skew(), capacity: capacity_of(&run), roster: roster.clone(), runes, now_ms: now_ms(), ..Snapshot::default() };
     snap.max_dwarves = pinned_num(pinned, "SPIRA_MAX_DWARVES");
     snap.max_live = pinned_num(pinned, "SPIRA_MAX_LIVE_DWARVES");
     snap.lanes_max_live = pinned_num(pinned, "SPIRA_LANES_MAX_LIVE");
+    for (class, key) in [("cpu", "SPIRA_LIMIT_CPU"), ("memory", "SPIRA_LIMIT_MEMORY"), ("network", "SPIRA_LIMIT_NETWORK")] {
+        if let Some(n) = pinned_num(pinned, key) {
+            snap.class_limits.insert(class.to_string(), n);
+        }
+    }
     let rune_name = |f: &str| get(f, "RUNE_NAME", f);
     let fleet = fleet(unitp, &roster, &rune_name)?;
     (snap.live_by_rune, snap.other_live, snap.live_units) = (fleet.live_by_rune, fleet.other_live, fleet.live_units);

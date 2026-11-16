@@ -74,6 +74,9 @@ pub fn ck7_fill_cap(fill: i64, pool: Option<i64>, max_live_dwarves: i64) -> bool
     fill >= max_live_dwarves
 }
 
+/// The one class whose limit is `SPIRA_MAX_DWARVES`.
+pub const BUILD_DISK: &str = "build-disk";
+
 /// The world gate (`world_gate`): halted and draining both refuse every call.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum World {
@@ -102,6 +105,10 @@ pub struct Rune {
     pub elastic: bool,
     pub live: i64,
     pub ready: Option<i64>,
+    /// The scarce resource classes this rune uses heavily (`RUNE_USES`).
+    pub uses: Vec<String>,
+    /// May start over a class limit (`RUNE_REACTIVE=1`, an explicit designation).
+    pub reactive: bool,
 }
 
 /// One row of `spira-claim urgent`: a P0 or REWORK bead. Only `p0` or `express` hold the lanes.
@@ -132,7 +139,8 @@ pub struct CallWorld {
     pub lanes: Vec<Rune>,
     /// Live dwarves of no rune on the roster: they count toward the fleet ceiling only.
     pub other_live: i64,
-    pub max_dwarves: Option<i64>,
+    /// The limit of each bound resource class; a class absent here is unbound.
+    pub limits: BTreeMap<String, i64>,
     pub max_live_dwarves: Option<i64>,
     pub lanes_max_live: Option<i64>,
     pub throttled: bool,
@@ -203,13 +211,33 @@ impl Planner<'_> {
     /// `rune_free`: how many more of this persona may be called now.
     fn free(&self, f: &str, pool: Option<i64>) -> i64 {
         let Some(r) = self.rune(f) else { return 0 };
-        let remainder = r.elastic && pool.is_some();
-        let max = if remainder { pool.unwrap_or(0) } else { r.max_concurrent };
-        let mut free = if remainder { max } else { (max - self.live_of(f)).max(0) };
-        if let Some(p) = pool {
-            free = free.min(p);
+        let room = if r.elastic { self.tightest_room(r) } else { None };
+        let bound = [pool, room].into_iter().flatten().min();
+        match bound {
+            Some(b) if r.elastic => b,
+            _ => {
+                let free = (r.max_concurrent - self.live_of(f)).max(0);
+                pool.map_or(free, |p| free.min(p))
+            }
         }
-        free
+    }
+
+    /// Live sessions of every rune that declares class `c`, planned calls included.
+    fn held(&self, c: &str) -> i64 {
+        self.w.task.iter().chain(&self.w.lanes).filter(|r| r.uses.iter().any(|u| u == c)).map(|r| self.live_of(&r.name)).sum()
+    }
+
+    /// What is left under class `c`'s limit; `None` when the class is unbound.
+    fn class_room(&self, c: &str) -> Option<i64> {
+        self.w.limits.get(c).map(|l| (l - self.held(c)).max(0))
+    }
+
+    /// The room left in the tightest bound class `r` declares; a reactive rune is never held by one.
+    fn tightest_room(&self, r: &Rune) -> Option<i64> {
+        if r.reactive {
+            return None;
+        }
+        r.uses.iter().filter_map(|c| self.class_room(c)).min()
     }
 
     fn log(&mut self, line: String) {
@@ -218,13 +246,12 @@ impl Planner<'_> {
 
     /// `task_can_take_slot`: the first task rune that could take a lone remaining slot.
     fn task_can_take_slot(&self) -> Option<(String, i64)> {
-        let task_live: i64 = if self.w.max_dwarves.is_some() { self.w.task.iter().map(|t| self.live_of(&t.name)).sum() } else { 0 };
         for t in &self.w.task {
             let Some(n) = self.ready_of(&t.name) else { continue };
             if n <= 0 || self.free(&t.name, None) <= 0 {
                 continue;
             }
-            if self.w.max_dwarves.is_some() && ck7_pool(self.w.max_dwarves, task_live) == Some(0) {
+            if self.tightest_room(t) == Some(0) {
                 continue;
             }
             if self.w.throttled && !self.w.express_ready {
@@ -282,6 +309,18 @@ impl Planner<'_> {
         };
         if ready == 0 {
             return false;
+        }
+        for c in &rune.uses {
+            let Some(limit) = self.w.limits.get(c).copied() else { continue };
+            let held = self.held(c);
+            if held < limit {
+                continue;
+            }
+            if !rune.reactive {
+                self.log(format!("CHECK7 {f}: {c} {held} of {limit} held — no backfill"));
+                return false;
+            }
+            self.log(format!("CHECK7 {f}: {c} {held} of {limit} held — reactive, starting over the limit"));
         }
         let free = self.free(f, pool);
         if free == 0 {
@@ -344,11 +383,11 @@ pub fn plan(w: &CallWorld) -> CallPlan {
         return p.plan;
     }
     let lane_names: Vec<String> = w.lanes.iter().map(|l| l.name.clone()).collect();
-    let mut pool = w.max_dwarves.map(|m| (m - w.task.iter().map(|t| t.live).sum::<i64>()).max(0));
+    let mut pool: Option<i64> = None;
     p.plan.task_room = if w.throttled {
         Some(0)
     } else {
-        [pool, w.max_live_dwarves.map(|m| m - p.live_total())].into_iter().flatten().min().map(|n| n.max(0))
+        [p.class_room(BUILD_DISK), w.max_live_dwarves.map(|m| m - p.live_total())].into_iter().flatten().min().map(|n| n.max(0))
     };
     let mut rotated = lane_rotate(w.lane_last.trim(), &lane_names);
     if !lane_names.is_empty() {
@@ -486,7 +525,8 @@ mod tests {
     #[test]
     fn task_room_is_zero_when_the_task_pool_is_full() {
         let mut w = world();
-        w.max_dwarves = Some(7);
+        w.limits.insert("build-disk".into(), 7);
+        w.task[0].uses = vec!["build-disk".into()];
         w.task[0].live = 7;
         w.max_live_dwarves = None;
         assert_eq!(room(&w), Some(0));
@@ -508,7 +548,8 @@ mod tests {
     #[test]
     fn task_room_is_zero_when_the_fleet_is_full_though_the_pool_has_room() {
         let mut w = world();
-        w.max_dwarves = Some(7);
+        w.limits.insert("build-disk".into(), 7);
+        w.task[0].uses = vec!["build-disk".into()];
         w.task[0].live = 3;
         w.other_live = 6;
         w.max_live_dwarves = Some(9);
@@ -526,5 +567,57 @@ mod tests {
     #[test]
     fn task_room_is_unknown_when_no_ceiling_is_configured() {
         assert_eq!(room(&CallWorld { max_live_dwarves: None, ..world() }), None);
+    }
+
+    fn using(name: &str, ready: i64, live: i64, classes: &[&str], reactive: bool) -> Rune {
+        Rune { live, uses: classes.iter().map(|c| c.to_string()).collect(), reactive, max_concurrent: 8, ..rune(name, ready) }
+    }
+
+    fn builder(ready: i64, live: i64) -> Rune {
+        Rune { elastic: true, ..using("builder", ready, live, &["build-disk"], false) }
+    }
+
+    fn mender(ready: i64, live: i64) -> Rune {
+        using("mender", ready, live, &["build-disk"], true)
+    }
+
+    fn limited(task: Vec<Rune>, limits: &[(&str, i64)]) -> CallWorld {
+        CallWorld { task, limits: limits.iter().map(|(c, l)| (c.to_string(), *l)).collect(), max_live_dwarves: None, urgent: Some(vec![]), ..CallWorld::default() }
+    }
+
+    #[test]
+    fn a_session_with_no_bound_class_is_admitted_with_every_limit_full() {
+        let w = limited(vec![builder(0, 7), using("hasher", 0, 1, &["cpu"], false), rune("spike", 1)], &[("build-disk", 7), ("cpu", 1)]);
+        let p = plan(&w);
+        assert_eq!(called(&p), ["spike"], "{:?}", p.log);
+    }
+
+    #[test]
+    fn a_planned_build_disk_session_waits_at_the_limit() {
+        let w = limited(vec![builder(3, 5), mender(0, 2)], &[("build-disk", 7)]);
+        let p = plan(&w);
+        assert!(p.calls.is_empty(), "{:?}", p.log);
+        assert!(p.log.iter().any(|l| l.contains("build-disk 7 of 7 held — no backfill")), "{:?}", p.log);
+    }
+
+    #[test]
+    fn a_reactive_session_spills_and_no_planned_session_starts_until_back_under() {
+        let pass = |builders: i64, menders: i64| {
+            let waiting = if menders == 0 { 2 } else { 0 };
+            let w = limited(vec![builder(4, builders), mender(waiting, menders)], &[("build-disk", 7)]);
+            let p = plan(&w);
+            (called(&p).iter().map(|s| s.to_string()).collect::<Vec<_>>(), p.log)
+        };
+        assert_eq!(pass(7, 0).0, ["mender", "mender"], "a full class still starts reactive sessions: {:?}", pass(7, 0).1);
+        assert!(pass(6, 2).0.is_empty(), "{:?}", pass(6, 2).1);
+        assert!(pass(5, 2).0.is_empty(), "over the limit, no planned session: {:?}", pass(5, 2).1);
+        assert_eq!(pass(4, 2).0, ["builder"], "back under: one builder fills the last unit: {:?}", pass(4, 2).1);
+    }
+
+    #[test]
+    fn a_limit_on_a_class_makes_only_its_declarers_wait() {
+        let tasks = || vec![using("a", 1, 1, &["memory"], false), using("b", 1, 0, &[], false)];
+        assert_eq!(called(&plan(&limited(tasks(), &[("memory", 1)]))), ["b"]);
+        assert_eq!(called(&plan(&limited(tasks(), &[]))), ["a", "b"]);
     }
 }
