@@ -112,6 +112,7 @@ pub const RETIRED_VARS: &[&str] = &[
     "SPIRA_GATE_BUDGET",
     "SPIRA_GATE_DEADLINE",
     "SPIRA_GATE_BUILD_STALL",
+    "SPIRA_GATE_BUILD_LEASE_WAIT_SECS",
     "SPIRA_UNIT_TEST_DEADLINE_SECS",
     "SPIRA_UNIT_TEST_DEADLINE_PERIODS",
     "SPIRA_CERTIFY_ALWAYS_COVERS",
@@ -148,11 +149,20 @@ __kv host_cores "$(host_cores)"
 exit 0
 "#;
 
+/// The `(tip, dir)` of the last `build-dir` fact in `spira-lc facts` output (oldest first).
+fn newest_build_dir(json: &str) -> Option<(String, PathBuf)> {
+    let rows: Vec<serde_json::Value> = serde_json::from_str(json.trim()).ok()?;
+    let (tip, dir) = rows.last()?.get("new_value")?.as_str()?.split_once('\t')?;
+    (!tip.is_empty() && !dir.is_empty()).then(|| (tip.to_string(), PathBuf::from(dir)))
+}
+
 pub struct Real {
     pub home: PathBuf,
     admission: RefCell<Vec<File>>,
     tree_lock: RefCell<Option<File>>,
     cancel: RefCell<Option<PathBuf>>,
+    /// The pool directory each gate tree builds in, held until the tree is released.
+    leases: RefCell<std::collections::HashMap<PathBuf, (spira_config::build_dir::Lease, String)>>,
 }
 
 impl Real {
@@ -280,7 +290,35 @@ impl Real {
             admission: RefCell::new(Vec::new()),
             tree_lock: RefCell::new(None),
             cancel: RefCell::new(None),
+            leases: RefCell::new(std::collections::HashMap::new()),
         }
+    }
+
+    /// Lease the builder's directory, clean and age for this tree, and link `debug` into it. Any
+    /// failure releases the lease and leaves the tree's own directory.
+    fn build_in(&self, tree: &Path, b: &crate::ports::Builder) -> Result<String, String> {
+        use spira_config::build_dir as bd;
+        let lease = bd::lease_dir(&bd::configured_bases(), &b.dir, &format!("gate {}", b.bead), b.wait)
+            .map_err(|e| format!("cannot lease it: {e}"))?
+            .ok_or("it is gone, held, or not a pool directory")?;
+        let linked = (|| -> Result<(), String> {
+            bd::clean(&self.home.join(bd::CLEAN_SCRIPT), tree, lease.dir(), &b.path, false)?;
+            crate::warm::normalize_mtimes(tree, &b.tip)?;
+            let (link, debug) = (tree.join("target").join("debug"), lease.dir().join("debug"));
+            fs::create_dir_all(&debug).map_err(|e| format!("{}: {e}", debug.display()))?;
+            if let Ok(own) = fs::read_link(&link) {
+                let _ = fs::remove_dir_all(own);
+            }
+            let _ = fs::remove_file(&link);
+            std::os::unix::fs::symlink(&debug, &link).map_err(|e| format!("cannot link {}: {e}", link.display()))
+        })();
+        if let Err(e) = linked {
+            lease.release();
+            return Err(e);
+        }
+        let line = format!("{}{} (leased from {}'s builder at {})", crate::warm::BUILDER_IN, lease.dir().display(), b.bead, b.tip);
+        self.leases.borrow_mut().insert(tree.to_path_buf(), (lease, b.path.clone()));
+        Ok(line)
     }
 
     fn git(&self, repo: &Path) -> Command {
@@ -940,7 +978,7 @@ impl World for Real {
     fn build_wrapper(&self, path: &str, setting: &str) -> Result<spira_config::build::Wrapper, String> {
         spira_config::build::wrapper(path, Some(setting))
     }
-    fn target_on_tmpfs(&self, tree: &Path, explicit_root: &str, run: &str, lim: &crate::target::Limits) -> Result<String, String> {
+    fn target_on_tmpfs(&self, tree: &Path, explicit_root: &str, run: &str, lim: &crate::target::Limits, builder: Option<&crate::ports::Builder>) -> Result<String, String> {
         use crate::target;
         let Some(root) = target::root(explicit_root, run, target::on_tmpfs(Path::new("/tmp"))) else {
             return Ok(format!("gate: no tmpfs for the build (/tmp is not one and SPIRA_GATE_TARGET_ROOT is unset) — {} builds in the tree", tree.display()));
@@ -949,8 +987,17 @@ impl World for Real {
         let held = |name: &str| target::held_by_gate(Path::new(run), name);
         let p = target::prepare(&root, trees, tree, lim, &target::free_mib, &held)?;
         let mut line = format!("gate: build on {}", p.dir.display());
-        if let Some(warm) = crate::warm::warm_start(&root, &p.dir.join("debug"), tree) {
-            line.push_str(&format!("\n{warm}"));
+        let built_in = builder.map(|b| self.build_in(tree, b));
+        match built_in {
+            Some(Ok(l)) => line.push_str(&format!("\n{l}")),
+            other => {
+                if let (Some(Err(why)), Some(b)) = (other, builder) {
+                    line.push_str(&format!("\ngate: builder directory {} not used ({why}) — building as without one", b.dir.display()));
+                }
+                if let Some(warm) = crate::warm::warm_start(&root, &p.dir.join("debug"), tree) {
+                    line.push_str(&format!("\n{warm}"));
+                }
+            }
         }
         if p.disk_freed_mib > 0 {
             line.push_str(&format!(" ({} MiB of build output moved off the disk)", p.disk_freed_mib));
@@ -983,6 +1030,22 @@ impl World for Real {
             }
         }
         crate::target::release_tree(tree, keep_release);
+        if let Some((lease, path)) = self.leases.borrow_mut().remove(tree) {
+            if let Err(e) = spira_config::build_dir::clean(&self.home.join(spira_config::build_dir::CLEAN_SCRIPT), tree, lease.dir(), &path, true) {
+                self.eprint(&format!("gate: could not record the tree {} holds ({e}) — the next lease cleans its workspace crates", lease.dir().display()));
+            }
+            lease.release();
+        }
+    }
+    fn lc_build_dir(&self, bead: &str) -> Option<(String, PathBuf)> {
+        let out = spira_config::bounded::bounded("spira-lc")
+            .args(["facts", "--ids", bead, "--kinds", "build-dir"])
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .output()
+            .ok()
+            .filter(|o| o.status.success())?;
+        newest_build_dir(&String::from_utf8_lossy(&out.stdout))
     }
     fn remove_worktree(&self, repo: &Path, tree: &Path) {
         let _ = self
@@ -1181,6 +1244,14 @@ mod tests {
     use crate::ports::World;
 
     #[test]
+    fn the_newest_build_dir_fact_names_the_tip_and_directory_of_the_last_submit() {
+        let json = r#"[{"event_type":"build-dir","new_value":"aaa\t/pool/dir.1"},{"event_type":"build-dir","new_value":"bbb\t/pool/dir.2"}]"#;
+        assert_eq!(super::newest_build_dir(json), Some(("bbb".into(), "/pool/dir.2".into())));
+        assert_eq!(super::newest_build_dir("[]"), None);
+        assert_eq!(super::newest_build_dir(r#"[{"new_value":"no-tab"}]"#), None);
+    }
+
+    #[test]
     fn the_gate_builds_where_the_configured_target_root_says() {
         let t = testkit::TempDir::new("gate-root");
         let root = t.path().join("configured-root");
@@ -1188,7 +1259,7 @@ mod tests {
         std::fs::create_dir_all(&tree).unwrap();
         let lim = crate::target::Limits { cap_mib: 1024, shed_free_mib: 0 };
         let line = super::Real::new(t.path().to_path_buf())
-            .target_on_tmpfs(&tree, root.to_str().unwrap(), t.path().to_str().unwrap(), &lim)
+            .target_on_tmpfs(&tree, root.to_str().unwrap(), t.path().to_str().unwrap(), &lim, None)
             .unwrap();
         assert!(line.starts_with(&format!("gate: build on {}", root.display())), "{line}");
         assert!(root.join(".gate.r.b").is_dir());
@@ -1256,11 +1327,11 @@ mod tests {
         let lim = crate::target::Limits { cap_mib: 1 << 20, shed_free_mib: 0 };
         let r = super::Real::new(t.path().to_path_buf());
         let run = t.path().to_str().unwrap();
-        r.target_on_tmpfs(&a, root.to_str().unwrap(), run, &lim).unwrap();
+        r.target_on_tmpfs(&a, root.to_str().unwrap(), run, &lim, None).unwrap();
         fs::create_dir_all(a.join("target/debug/deps")).unwrap();
         fs::write(a.join("target/debug/deps/libx.rlib"), "x").unwrap();
         r.release_target(&a, false, true, 1 << 20);
-        let line = r.target_on_tmpfs(&b, root.to_str().unwrap(), run, &lim).unwrap();
+        let line = r.target_on_tmpfs(&b, root.to_str().unwrap(), run, &lim, None).unwrap();
         assert!(line.contains("warm from"), "{line}");
         assert!(b.join("target/debug/deps/libx.rlib").is_file());
     }
@@ -1279,7 +1350,7 @@ mod tests {
         }
         let lim = crate::target::Limits { cap_mib: 3, shed_free_mib: 0 };
         let r = super::Real::new(t.path().to_path_buf());
-        r.target_on_tmpfs(&a, root.to_str().unwrap(), t.path().to_str().unwrap(), &lim).unwrap();
+        r.target_on_tmpfs(&a, root.to_str().unwrap(), t.path().to_str().unwrap(), &lim, None).unwrap();
         fs::create_dir_all(a.join("target/debug/deps")).unwrap();
         fs::write(a.join("target/debug/deps/libbig.rlib"), vec![7u8; 5 << 20]).unwrap();
         r.release_target(&a, false, true, lim.cap_mib);

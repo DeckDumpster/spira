@@ -47,6 +47,17 @@ pub enum Merge {
     Failed(String),
 }
 
+/// The build directory a bead's builder submitted from, which a unit gate builds in when it can lease it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Builder {
+    pub bead: String,
+    pub tip: String,
+    pub dir: PathBuf,
+    pub wait: std::time::Duration,
+    /// The PATH cargo is found on, for the selective clean.
+    pub path: String,
+}
+
 pub trait World {
     /// `. lib.sh` once, then the values the trial needs. Err when lib.sh would not source.
     fn context(&self, repo_name: Option<&str>) -> Result<Ctx, String>;
@@ -165,7 +176,13 @@ pub trait World {
     /// trial's stderr), Err(the refusal — short of room; never a fall back to the disk).
     /// What the target root has left for this user and what the gate's own targets hold there.
     fn target_room(&self, explicit_root: &str, run: &str) -> String;
-    fn target_on_tmpfs(&self, tree: &Path, explicit_root: &str, run: &str, lim: &crate::target::Limits) -> Result<String, String>;
+    /// With a `builder`, the tree's `debug` links into that leased directory (the line says
+    /// `warm::BUILDER_IN`); any step that fails leaves the gate's own directory, warm or cold.
+    fn target_on_tmpfs(&self, tree: &Path, explicit_root: &str, run: &str, lim: &crate::target::Limits, builder: Option<&Builder>) -> Result<String, String>;
+    /// The newest `build-dir` fact of `bead` (its last `work submit`): the tip and the directory.
+    fn lc_build_dir(&self, _bead: &str) -> Option<(String, PathBuf)> {
+        None
+    }
     /// False when a build directory `target_on_tmpfs` linked no longer resolves: something
     /// else removed the output this trial built.
     fn target_intact(&self, tree: &Path) -> bool;
