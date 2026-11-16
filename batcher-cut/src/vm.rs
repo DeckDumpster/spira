@@ -344,6 +344,7 @@ pub struct VmRunner<'a> {
     batch: Option<String>,
     /// The results of the corpus pass this attribution follows.
     prior: Option<PathBuf>,
+    confirmed: bool,
     /// An attribution runs the suites it is given; only a full pass must cover the tree.
     subset: bool,
     /// The round's deny list, handed to every round-vm the runner starts.
@@ -694,6 +695,12 @@ impl<'a> VmRunner<'a> {
         }
     }
 
+    /// The red followed survived one attribution: the members are named as suspects.
+    pub fn confirmed(mut self, on: bool) -> Self {
+        self.confirmed = on;
+        self
+    }
+
     /// Names the round-vm scope after `batch`, so abandoning that batch stops it.
     pub fn in_batch(mut self, batch: Option<&str>) -> Self {
         self.batch = batch.map(str::to_string);
@@ -745,6 +752,7 @@ impl<'a> VmRunner<'a> {
             corpus_runs: 0,
             batch: None,
             prior: None,
+            confirmed: false,
             subset: false,
             deny: None,
         })
@@ -1066,6 +1074,9 @@ impl RoundRunner for VmRunner<'_> {
         filter_red_in(self.prior.as_deref()?, &self.members, &self.changed)
     }
 
+    fn confirmed(&self) -> bool {
+        self.confirmed
+    }
     fn prior_red_suites(&mut self) -> Vec<String> {
         let Some(dir) = self.prior.as_deref() else { return vec![] };
         let mut reds: Vec<String> = fs::read_dir(dir)
