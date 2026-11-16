@@ -37,7 +37,10 @@ const VERBS: &[(&str, &[&str], &[&str])] = &[
     ("list", &[], &["at"]),
     ("history", &["test"], &[]),
     ("deny-list", &["at"], &[]),
+    ("clear-landed", &["bead", "actor"], &[]),
 ];
+
+const REPEATABLE: &[(&str, &str)] = &[("clear-landed", "bead")];
 
 fn parse(args: &[String]) -> Result<Args, String> {
     let (verb, rest) = args
@@ -62,7 +65,13 @@ fn parse(args: &[String]) -> Result<Args, String> {
         let value = it
             .next()
             .ok_or_else(|| format!("{verb}: --{name} needs a value"))?;
-        if named.insert(name.to_string(), value.clone()).is_some() {
+        if REPEATABLE.contains(&(verb.as_str(), name)) {
+            let joined = named.entry(name.to_string()).or_insert_with(String::new);
+            if !joined.is_empty() {
+                joined.push('\n');
+            }
+            joined.push_str(value);
+        } else if named.insert(name.to_string(), value.clone()).is_some() {
             return Err(format!("{verb}: --{name} given twice"));
         }
     }
@@ -225,6 +234,18 @@ pub fn run(args: &[String], now: i64, cfg: Cfg, open: Opener) -> Outcome {
             ),
             Err(e) => refused(e),
         },
+        "clear-landed" => {
+            let beads: Vec<&str> = get("bead").split('\n').collect();
+            match store::clear_landed(&conn, now, &beads, get("actor")) {
+                Ok(cleared) => out(
+                    0,
+                    j,
+                    cleared.join("\n"),
+                    json!({"ok": true, "cleared": cleared}),
+                ),
+                Err(e) => refused(e),
+            }
+        }
         "show" => match store::show(&conn, get("test")) {
             Ok(Some(r)) => out(
                 0,
@@ -432,6 +453,51 @@ mod tests {
         );
         let o = run(&argv("deny-list --at 5000 --json"), 1000, &c, &real);
         assert!(o.stdout.contains("\"rows\":0"), "{}", o.stdout);
+    }
+
+    #[test]
+    fn clear_landed_takes_repeated_beads_and_prints_the_cleared_tests() {
+        let dir = testkit::TempDir::new("test-registry-cli-clear");
+        let file: &'static str =
+            Box::leak(dir.join("r.sqlite").display().to_string().into_boxed_str());
+        let c = cfg_with(file);
+        let real = |p: &str| store::open(p);
+        for (t, b) in [
+            ("suite:a.sh", "sp-a"),
+            ("suite:b.sh", "sp-b"),
+            ("suite:c.sh", "sp-c"),
+        ] {
+            let line = format!("disable --test {t} --bead {b} --reason r --actor a --until 5000");
+            assert_eq!(run(&argv(&line), 1000, &c, &real).code, 0);
+        }
+        let o = run(
+            &argv("clear-landed --bead sp-a --bead sp-b --actor batcher"),
+            1100,
+            &c,
+            &real,
+        );
+        assert_eq!(
+            (o.code, o.stdout.as_str()),
+            (0, "suite:a.sh\nsuite:b.sh"),
+            "{}",
+            o.stderr
+        );
+        let o = run(
+            &argv("clear-landed --bead sp-none --actor batcher --json"),
+            1100,
+            &c,
+            &real,
+        );
+        assert_eq!(
+            (o.code, o.stdout.as_str()),
+            (0, r#"{"cleared":[],"ok":true}"#)
+        );
+        let o = run(&argv("list"), 1100, &c, &real);
+        assert!(
+            o.stdout.contains("suite:c.sh") && !o.stdout.contains("suite:a.sh"),
+            "{}",
+            o.stdout
+        );
     }
 
     #[test]

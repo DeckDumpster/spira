@@ -239,6 +239,7 @@ fn e2e_three_members_one_breaks_a_fast_suite() {
         rebase_stale_bin: root.join("rebase-stale"),
         testenv_bin: root.join("testenv"),
         gate_bin: root.join("gate"),
+        test_registry_bin: root.join("test-registry"),
         round_slots: Some(4),
         hypervisor: crate::io::Hypervisor {
             host_mib: 0,
