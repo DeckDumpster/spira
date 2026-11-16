@@ -49,7 +49,6 @@ impl Env {
         }
     }
 
-    #[cfg(test)]
     pub fn set(&mut self, key: impl Into<String>, value: impl Into<String>) {
         self.0.insert(key.into(), value.into());
     }

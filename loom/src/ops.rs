@@ -167,24 +167,7 @@ pub struct OpsSnapshot {
     pub obj: Map<String, Value>,
 }
 
-fn is_claim_key(k: &str) -> bool {
-    let row = k.strip_prefix("SP_NEXT").map(|r| r.strip_suffix("_REPO").unwrap_or(r));
-    matches!(k, "SP_READY" | "SP_SLOTS_READY") || row.is_some_and(|r| r == "_N" || (!r.is_empty() && r.bytes().all(|b| b.is_ascii_digit())))
-}
-
-/// The claimable count and the NEXT rows as the claim view answers them: the one `View` the
-/// pane draws and the Now page counts, so N, READY and the rows cannot disagree.
-pub fn claim_keys(snap: &cockpit_ops::lcview::Snapshot) -> Vec<(String, String)> {
-    const MAX_NEXT_ROWS: usize = 5;
-    let v = cockpit_ops::lcview::view(snap);
-    let n = if v.next_unknown { "?".to_string() } else { v.next_count.to_string() };
-    let mut out = vec![("SP_NEXT_N".to_string(), n.clone()), ("SP_READY".to_string(), n.clone()), ("SP_SLOTS_READY".to_string(), n)];
-    for (i, it) in v.next.iter().take(MAX_NEXT_ROWS).enumerate() {
-        out.push((format!("SP_NEXT{i}"), format!("{} {} {} {}", it.prio, it.persona, it.id, it.title)));
-        out.push((format!("SP_NEXT{i}_REPO"), it.repo.clone()));
-    }
-    out
-}
+pub use cockpit_ops::lcview::{claim_keys, is_claim_key};
 
 impl OpsSnapshot {
     pub async fn take(run: &str, instance: &str, units: Option<&dyn runtime::units::Units>) -> OpsSnapshot {

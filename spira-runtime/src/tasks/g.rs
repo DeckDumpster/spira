@@ -348,7 +348,18 @@ pub mod cockpit {
         if e.world.run_dir.as_os_str().is_empty() {
             return Err("no run dir configured".into());
         }
-        cockpit_collect::tiers::slots_sample(&e.world.run_dir, &s.input)
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
+        let claim = cockpit_ops::lcview::read_fresh_claim(&e.world.run_dir, now);
+        cockpit_collect::tiers::slots_sample(&e.world.run_dir, &with_ready(&s.input, claim.as_ref()))
+    }
+
+    /// `input` plus the `ready` field as the claim view counts it; no claim view leaves it unwritten, which the row reads as `?`.
+    fn with_ready(input: &str, claim: Option<&cockpit_ops::lcview::Snapshot>) -> String {
+        let ready = claim.and_then(|c| cockpit_ops::lcview::claim_keys(c).into_iter().find(|(k, _)| k == "SP_READY")).map(|(_, v)| v);
+        match ready {
+            Some(n) => format!("{input}ready={n}\n"),
+            None => input.to_string(),
+        }
     }
 
     #[cfg(test)]
@@ -361,6 +372,13 @@ pub mod cockpit {
 
         fn snap(at: u64, round: &str) -> Snapshot {
             Snapshot { supervised: true, fragments: [("cockpit.now".to_string(), frag(FragmentState::Ok, at, &[("SP_AT", &at.to_string())])), ("cockpit.round".to_string(), frag(FragmentState::Ok, at, &[("SP_ROUND", round)]))].into() }
+        }
+
+        #[test]
+        fn the_slots_sample_counts_ready_from_the_claim_view_and_leaves_it_unknown_without_one() {
+            let claim = cockpit_ops::lcview::Snapshot { claimable: Some(vec!["sp-a".into(), "sp-b".into()]), rows: ["sp-a", "sp-b"].iter().map(|id| cockpit_ops::lcview::Row { id: id.to_string(), state: "READY".into(), claim: Some(cockpit_ops::lcview::ClaimView { verdict: cockpit_ops::lcview::Kind::Claimable, blocker: None, runes: vec!["builder".into()] }), ..Default::default() }).collect(), ..Default::default() };
+            assert_eq!(with_ready("live=1\n", Some(&claim)), "live=1\nready=2\n");
+            assert_eq!(with_ready("live=1\n", None), "live=1\n");
         }
 
         #[test]

@@ -111,6 +111,48 @@ pub fn apply_claim_views(s: &mut Snapshot) {
     s.cannot_tell = cannot_tell;
 }
 
+/// A claim view older than this is unknown, not current.
+pub const CLAIM_STALE_S: i64 = 60;
+
+/// The keys the collector used to cache from the claimable queue; they are answered from the
+/// claim view now, so a copy found in `cockpit.env` is stale by construction.
+pub fn is_claim_key(k: &str) -> bool {
+    let row = k.strip_prefix("SP_NEXT").map(|r| r.strip_suffix("_REPO").unwrap_or(r));
+    matches!(k, "SP_READY" | "SP_SLOTS_READY") || row.is_some_and(|r| r == "_N" || (!r.is_empty() && r.bytes().all(|b| b.is_ascii_digit())))
+}
+
+/// The claimable count and the NEXT rows as the claim view answers them: the one `View` the
+/// pane draws and the Now page counts, so N, READY and the rows cannot disagree.
+pub fn claim_keys(snap: &Snapshot) -> Vec<(String, String)> {
+    const MAX_NEXT_ROWS: usize = 5;
+    let v = view(snap);
+    let n = if v.next_unknown { "?".to_string() } else { v.next_count.to_string() };
+    let mut out = vec![("SP_NEXT_N".to_string(), n.clone()), ("SP_READY".to_string(), n.clone()), ("SP_SLOTS_READY".to_string(), n)];
+    for (i, it) in v.next.iter().take(MAX_NEXT_ROWS).enumerate() {
+        out.push((format!("SP_NEXT{i}"), format!("{} {} {} {}", it.prio, it.persona, it.id, it.title)));
+        out.push((format!("SP_NEXT{i}_REPO"), it.repo.clone()));
+    }
+    out
+}
+
+/// The claim view the lc-view pane last wrote under `run`, when it is no older than
+/// `CLAIM_STALE_S` at `now`; anything else reads as unknown.
+pub fn read_fresh_claim(run: &std::path::Path, now: i64) -> Option<Snapshot> {
+    let text = std::fs::read_to_string(run.join("lcview").join("snapshot.json")).ok()?;
+    let snap: Snapshot = serde_json::from_str(&text).ok()?;
+    (now - snap.now <= CLAIM_STALE_S).then_some(snap)
+}
+
+/// `content` (a `cockpit.env` body) with its claimable keys replaced by the claim view's;
+/// with no claim view they are absent, so a reader shows `?` rather than a cached copy.
+pub fn with_claim_keys(content: &str, claim: Option<&Snapshot>) -> String {
+    let mut out: String = content.lines().filter(|l| !is_claim_key(l.split('=').next().unwrap_or(""))).map(|l| format!("{l}\n")).collect();
+    for (k, v) in claim.map(claim_keys).unwrap_or_default() {
+        out.push_str(&format!("{k}='{}'\n", v.replace('\'', "'\\''")));
+    }
+    out
+}
+
 /// The `repo` of a server bead row: the key must be present, and null means the bead has none.
 pub fn repo_column(row: &serde_json::Value) -> Result<String, String> {
     match row.get("repo") {
@@ -2333,6 +2375,34 @@ mod tests {
         assert_eq!(view(&live_session(12420, r)).now_items[0].age, "3h27 · total 8h20 ×2");
     }
 
+    fn claim_fixture(now: i64) -> Snapshot {
+        let mut s = snap(vec![Row { id: "sp-a".into(), state: "READY".into(), ..Default::default() }]);
+        s.now = now;
+        s
+    }
+
+    // covers: UC-cockpit-observability-08
+    #[test]
+    fn a_cached_claimable_key_in_cockpit_env_is_replaced_by_the_claim_view() {
+        let stale = "SP_OPEN='5'\nSP_READY='9'\nSP_NEXT_N='9'\nSP_SLOTS_READY='9'\nSP_NEXT0='P0 old sp-o x'\nSP_NEXT0_REPO='r'\nSP_NEXTRA='keep'\n";
+        let kept = with_claim_keys(stale, Some(&claim_fixture(100_000)));
+        assert!(kept.contains("SP_READY='1'\n") && kept.contains("SP_NEXT_N='1'\n") && kept.contains("SP_SLOTS_READY='1'\n"), "{kept}");
+        assert!(!kept.contains("'9'") && !kept.contains("sp-o"), "the cached copy is gone: {kept}");
+        assert!(kept.contains("SP_OPEN='5'") && kept.contains("SP_NEXTRA='keep'"), "other keys pass through: {kept}");
+        let blind = with_claim_keys(stale, None);
+        assert!(!blind.contains("SP_READY") && !blind.contains("SP_NEXT_N") && blind.contains("SP_OPEN='5'"), "no claim view is absent, not cached: {blind}");
+    }
+
+    #[test]
+    fn a_claim_view_older_than_the_staleness_bound_reads_as_unknown() {
+        let d = testkit::TempDir::new("claim-fresh");
+        std::fs::create_dir_all(d.path().join("lcview")).unwrap();
+        std::fs::write(d.path().join("lcview/snapshot.json"), serde_json::to_string(&claim_fixture(1_000)).unwrap()).unwrap();
+        assert!(read_fresh_claim(d.path(), 1_000 + CLAIM_STALE_S).is_some());
+        assert!(read_fresh_claim(d.path(), 1_000 + CLAIM_STALE_S + 1).is_none());
+        assert!(read_fresh_claim(&d.path().join("absent"), 1_000).is_none());
+    }
+
     #[test]
     fn hm_is_minutes_under_an_hour_and_hours_with_padded_minutes_after() {
         assert_eq!([hm(0), hm(2820), hm(3600), hm(12420), hm(30000)], ["0m", "47m", "1h00", "3h27", "8h20"]);
@@ -2486,6 +2556,7 @@ mod tests {
         assert_eq!(ready.beads[0].claim, "#1");
     }
 
+    // covers: UC-cockpit-observability-17 UC-dispatch-17
     #[test]
     fn ready_rows_after_the_ranked_ones_run_held_then_blocked_then_unclaimable() {
         let mut held = row("sp-held", "READY", 1);

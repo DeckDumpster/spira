@@ -34,7 +34,6 @@ spira/lib.sh:park_unmapped
 spira/lib.sh:spira_status_seam
 spira/lib.sh:spira_bead_status
 spira/lib.sh:spira_db_reachable
-spira/lib.sh:_tsd_slots_sample
 
 # --- conf.sh's own bootstrap: this IS the logic that locates and, if needed, converts the
 # --- config BEFORE any `spira-config` subprocess call can be made — it cannot shim onto

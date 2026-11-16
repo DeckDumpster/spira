@@ -63,7 +63,7 @@ _spira_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # function here that is not a shim fails the gate unless it is named, with why, in
 # `spira-lint/lib-sh-shims-allow` — today that is `host_cores`; `ready_raw_args`/
 # `ready_count` (and the bare `READY_ARGS` array); `rune_free`; dwarf.sh's own bead-machine
-# seam (`lc_bead_row` through `park_unmapped`, row I's "dwarf half"); `spira_status_seam`/`spira_bead_status`/`spira_db_reachable`/`_tsd_slots_sample`, each
+# seam (`lc_bead_row` through `park_unmapped`, row I's "dwarf half"); `spira_status_seam`/`spira_bead_status`/`spira_db_reachable`, each
 # with a live bash caller a Rust port has not yet replaced; and conf.sh's own locator
 # family, which cannot shim onto `spira-config` because it is what finds `spira-config`'s
 # own inputs — see that allow file for the reasoning on each, not repeated here.
@@ -2240,28 +2240,6 @@ recut_onto() {
 # rather than port" applies to this function too, since the plan's "port to tsd" assumed a
 # live caller that the inventory for THIS bead found gone). Grepped the whole tree: no
 # other caller, bash or Rust, ever existed.
-
-# _tsd_slots_sample <fragment-file> — appends the slots family's row (run/tsd/) from a
-# successful slots probe's own fragment (collect.sh). Best-effort, like every tsd producer
-# here. Reads the fragment directly, never the merged cockpit.env: the fragment is this
-# probe's own fresh sample, and the merge's first-wins rule can otherwise repeat a stale one.
-_tsd_slots_sample() {
-    local frag="$1" k v
-    local live="?" ceiling="?" lanes_live="?" ready="?" paused="?"
-    while IFS='=' read -r k v; do
-        case "$k" in
-            SP_SLOTS_LIVE)            live="$v" ;;
-            SP_SLOTS_CEILING)         ceiling="$v" ;;
-            SP_SLOTS_LANES_LIVE)      lanes_live="$v" ;;
-            SP_SLOTS_READY)           ready="$v" ;;
-            SP_SLOTS_CAPACITY_PAUSED) paused="$v" ;;
-        esac
-    done < "$frag"
-    tsd-write --family slots --root "${SPIRA_RUN:-}" \
-        --field "live=$live" --field "ceiling=$ceiling" --field "lanes_live=$lanes_live" \
-        --field "ready=$ready" --field "capacity_paused=$paused" \
-        >/dev/null 2>&1 || true
-}
 
 # _tsd_escape <member> <suite> <class> [batch_id] — appends one escape record (run/tsd/
 # escape): a round red attributed to <member> on <suite>, classified per sp-6vd2s

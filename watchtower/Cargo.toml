@@ -16,7 +16,7 @@ path = "tests/stand_down.rs"
 required-features = ["integration"]
 
 [features]
-integration = ["spira-claim/integration", "forge/integration", "reconciler-engine/integration", "spira-desired-state/integration", "runtime/integration", "spira-config/integration", "spira-store/integration", "spira-ctrl/integration", "strand/integration", "testkit/integration"]
+integration = ["spira-claim/integration", "forge/integration", "reconciler-engine/integration", "spira-desired-state/integration", "runtime/integration", "spira-config/integration", "spira-store/integration", "spira-ctrl/integration", "strand/integration", "testkit/integration", "cockpit-ops/integration"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
@@ -30,6 +30,7 @@ runtime = { path = "../runtime" }
 spira-desired-state = { path = "../desired-state" }
 reconciler-engine = { path = "../reconciler-engine" }
 forge = { path = "../forge" }
+cockpit-ops = { path = "../cockpit/ops" }
 
 [lib]
 name = "watchtower"
