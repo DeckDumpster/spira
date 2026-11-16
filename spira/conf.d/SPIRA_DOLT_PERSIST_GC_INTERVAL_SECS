@@ -1,0 +1,7 @@
+TYPE=u32
+GROUP=dolt
+DOC=store-persist run collects the live RAM-backed store online (dolt_gc) this often, so the chunk journal's garbage does not accumulate between the daily compact; 0 leaves collection to the daily compact.
+SCHEMA=Seconds between online dolt_gc runs of the RAM-backed store by store-persist run (default 3600; 0 disables).
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_DOLT_PERSIST_GC_INTERVAL_SECS:=3600}"
+SPIRA_CONF_DEFAULT_EOF

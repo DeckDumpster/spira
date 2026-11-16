@@ -97,7 +97,7 @@ fn world() -> World {
     put(&old.join(".doltcfg/privileges.db"), "grants");
     put(&old.join("dolt-server.yaml"), &yaml(&old));
     put(&data.join("dolt-server.yaml"), &yaml(&data));
-    let cfg = Config { data, durable: Some(durable), interval_secs: 7, max_lag_secs: 40, compact_pct: 150 };
+    let cfg = Config { data, durable: Some(durable), interval_secs: 7, max_lag_secs: 40, compact_pct: 150, gc_interval_secs: 100 };
     World { _tmp: tmp, cfg, old, dolt: FakeDolt::default(), clock: FakeClock(Cell::new(1_000)) }
 }
 
@@ -123,6 +123,7 @@ fn values(drop: Option<&str>) -> BTreeMap<String, String> {
         (KEY_INTERVAL, "7"),
         (KEY_MAX_LAG, "40"),
         (KEY_COMPACT_PCT, "150"),
+        (KEY_GC_INTERVAL, "100"),
     ]
     .into_iter()
     .map(|(k, v)| (k.to_string(), v.to_string()))
@@ -137,7 +138,7 @@ fn values(drop: Option<&str>) -> BTreeMap<String, String> {
 fn config_reads_every_key_and_refuses_a_missing_one_by_name() {
     let c = Config::from_values(|k| values(None).get(k).cloned()).unwrap();
     assert_eq!(c.durable, Some(PathBuf::from("/disk/dolt-durable")));
-    assert_eq!((c.interval_secs, c.max_lag_secs, c.compact_pct), (7, 40, 150));
+    assert_eq!((c.interval_secs, c.max_lag_secs, c.compact_pct, c.gc_interval_secs), (7, 40, 150, 100));
     for k in KEYS {
         let e = Config::from_values(|q| values(Some(k)).get(q).cloned()).unwrap_err();
         assert!(e.contains(k), "{k}: {e}");
@@ -279,6 +280,39 @@ fn the_daemon_reports_a_recovery_once() {
     assert_eq!(log.len(), 3, "{log:?}");
     assert!(log[0].contains("failed") && log[1].contains("failed") && log[2].contains("recovered"), "{log:?}");
     assert_eq!(w.clock.now_ms(), 1_000 + 4 * 7 * 1000, "one interval between passes");
+}
+
+#[test]
+fn the_daemon_collects_the_live_store_once_per_gc_interval_between_passes() {
+    let w = seeded();
+    restore(&w.cfg, &w.dolt).unwrap();
+    live_server(&w, 4242);
+    let mut log = Vec::new();
+    run(&w.cfg, &w.dolt, &w.clock, Some(32), &mut |l| log.push(l.to_string()));
+    assert_eq!(w.dolt.gcs.borrow().len(), 2 * 2, "interval 7s, gc every 100s: two collections of both databases in 32 passes");
+    assert!(log.iter().any(|l| l.contains("collected, live")), "{log:?}");
+}
+
+#[test]
+fn a_gc_interval_of_zero_leaves_collection_to_the_daily_compact() {
+    let mut w = seeded();
+    w.cfg.gc_interval_secs = 0;
+    restore(&w.cfg, &w.dolt).unwrap();
+    live_server(&w, 4242);
+    run(&w.cfg, &w.dolt, &w.clock, Some(30), &mut |_| {});
+    assert!(w.dolt.gcs.borrow().is_empty());
+}
+
+#[test]
+fn the_daemon_does_not_collect_when_the_filesystem_lacks_room_for_a_second_generation() {
+    let w = seeded();
+    restore(&w.cfg, &w.dolt).unwrap();
+    live_server(&w, 4242);
+    w.dolt.free.set(Some(1));
+    let mut log = Vec::new();
+    run(&w.cfg, &w.dolt, &w.clock, Some(30), &mut |l| log.push(l.to_string()));
+    assert!(w.dolt.gcs.borrow().is_empty());
+    assert!(log.iter().any(|l| l.contains("not collected")), "{log:?}");
 }
 
 #[test]

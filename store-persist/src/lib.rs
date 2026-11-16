@@ -22,7 +22,8 @@ pub const KEY_DURABLE: &str = "SPIRA_DOLT_DURABLE";
 pub const KEY_INTERVAL: &str = "SPIRA_DOLT_PERSIST_INTERVAL_SECS";
 pub const KEY_MAX_LAG: &str = "SPIRA_DOLT_PERSIST_MAX_LAG_SECS";
 pub const KEY_COMPACT_PCT: &str = "SPIRA_DOLT_PERSIST_COMPACT_PCT";
-pub const KEYS: [&str; 5] = [KEY_DATA, KEY_DURABLE, KEY_INTERVAL, KEY_MAX_LAG, KEY_COMPACT_PCT];
+pub const KEY_GC_INTERVAL: &str = "SPIRA_DOLT_PERSIST_GC_INTERVAL_SECS";
+pub const KEYS: [&str; 6] = [KEY_DATA, KEY_DURABLE, KEY_INTERVAL, KEY_MAX_LAG, KEY_COMPACT_PCT, KEY_GC_INTERVAL];
 
 const SERVER_YAML: &str = "dolt-server.yaml";
 const DB_META: [&str; 2] = ["repo_state.json", "config.json"];
@@ -36,6 +37,8 @@ pub struct Config {
     pub interval_secs: u64,
     pub max_lag_secs: u64,
     pub compact_pct: u64,
+    /// Seconds between online collections of the live store by `run`; 0 leaves it to `compact`.
+    pub gc_interval_secs: u64,
 }
 
 impl Config {
@@ -57,6 +60,7 @@ impl Config {
             interval_secs: num(KEY_INTERVAL)?,
             max_lag_secs: num(KEY_MAX_LAG)?,
             compact_pct: num(KEY_COMPACT_PCT)?,
+            gc_interval_secs: num(KEY_GC_INTERVAL)?,
         };
         if cfg.max_lag_secs <= cfg.interval_secs {
             return Err(format!("{KEY_MAX_LAG} ({}) must exceed {KEY_INTERVAL} ({})", cfg.max_lag_secs, cfg.interval_secs));
@@ -590,11 +594,12 @@ pub fn compact(cfg: &Config, dolt: &dyn Dolt) -> Result<Vec<String>, String> {
     Ok(out)
 }
 
-/// The daemon: a pass every `interval_secs`. A failed pass is reported, never retried early,
+/// The daemon: a pass every `interval_secs`, an online collection every `gc_interval_secs`. A failed pass is reported, never retried early,
 /// and the state keeps the last good start, so `age` turns red on its own.
 pub fn run(cfg: &Config, dolt: &dyn Dolt, clock: &dyn Clock, passes: Option<u64>, log: &mut dyn FnMut(&str)) {
     let mut failing = false;
     let mut n = 0u64;
+    let mut last_gc_ms = clock.now_ms();
     loop {
         match pass(cfg, Mode::Online, dolt, clock) {
             Ok(st) if failing => {
@@ -610,6 +615,13 @@ pub fn run(cfg: &Config, dolt: &dyn Dolt, clock: &dyn Clock, passes: Option<u64>
         n += 1;
         if passes.is_some_and(|p| n >= p) {
             return;
+        }
+        if cfg.gc_interval_secs > 0 && clock.now_ms().saturating_sub(last_gc_ms) >= cfg.gc_interval_secs * 1000 {
+            match gc(cfg, dolt) {
+                Ok(lines) => lines.iter().for_each(|l| log(&format!("store-persist: {l}"))),
+                Err(e) => log(&format!("store-persist: collection: {e}")),
+            }
+            last_gc_ms = clock.now_ms();
         }
         clock.sleep(cfg.interval_secs);
     }
