@@ -508,6 +508,9 @@ struct FScripts {
     judgement: RefCell<RunOut>,
     /// What `round-vm run` answers, and the `<suite>.result` files it leaves in --results-dir.
     round_vm: RefCell<RunOut>,
+    /// What `test-registry deny-list` answers.
+    /// None answers an empty snapshot of that moment.
+    deny_list: RefCell<Option<Result<String, String>>>,
     /// Answers `round_vm` gives before it falls back to `round_vm`.
     round_vm_queue: RefCell<Vec<RunOut>>,
     /// `round-vm recipe-sha` of the release and of the round tree; None is unreadable.
@@ -679,15 +682,19 @@ impl Scripts for FScripts {
         handle: &Path,
         ami: Option<&str>,
         candidate_recipe: Option<&str>,
+        deny_list: Option<&Path>,
     ) -> RunOut {
         self.calls.borrow_mut().push(format!(
-            "round-vm {} base={base} round={}/{} wall={wall_secs}{}{}",
+            "round-vm {} base={base} round={}/{} wall={wall_secs}{}{}{}",
             tree.display(),
             round.0,
             round.1,
             ami.map(|a| format!(" ami={a}")).unwrap_or_default(),
             candidate_recipe
                 .map(|r| format!(" candidate-recipe={r}"))
+                .unwrap_or_default(),
+            deny_list
+                .map(|d| format!(" deny-list={}", d.display()))
                 .unwrap_or_default()
         ));
         fs::write(handle, "777").unwrap();
@@ -720,6 +727,13 @@ impl Scripts for FScripts {
         } else {
             queued.remove(0)
         }
+    }
+    fn deny_list(&self, at: u64) -> Result<String, String> {
+        self.calls.borrow_mut().push(format!("deny-list --at {at}"));
+        self.deny_list
+            .borrow()
+            .clone()
+            .unwrap_or_else(|| Ok(format!("# test-registry deny-list at={at} rows=0\n")))
     }
     fn repo_round_vm(
         &self,

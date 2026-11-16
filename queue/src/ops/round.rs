@@ -26,6 +26,8 @@ use crate::ports::{ref_branch, AmiBuild, AmiLookup, RunOut};
 use crate::records::{self, one_line, write_atomic, Kv};
 use spira_config::scoped_stop;
 
+const DENY_LIST: &str = "deny-list";
+
 const ROUNDS_LANE: &str = "rounds";
 
 /// certify's exit when the corpus could not be judged (the VM, the wall, the install), as
@@ -3816,6 +3818,7 @@ fn certify_pass(
     } else if attest.is_none() {
         prune_round_results(w, c, batch);
         let results = rounds_dir(c).join(format!("{batch}.results"));
+        let kept_deny = fs::read_to_string(results.join(DENY_LIST)).ok();
         let _ = fs::remove_dir_all(&results);
         let Some(base) = c.r.landref.clone() else {
             w.err(format!("queue.sh {label}: cannot resolve the landing ref of {} — the round's lint has nothing to judge against", c.r.name));
@@ -3823,6 +3826,28 @@ fn certify_pass(
         };
         let began = w.clock.now();
         let _ = fs::create_dir_all(rounds_dir(c));
+        let deny_path = results.join(DENY_LIST);
+        let snapshot = match kept_deny {
+            Some(text) => Ok(text),
+            None => w.scripts.deny_list(w.clock.now()),
+        }
+        .and_then(|text| {
+            fs::create_dir_all(&results)
+                .map_err(|e| format!("{}: {e}", results.display()))?;
+            write_atomic(&deny_path, &text)
+        });
+        if let Err(e) = snapshot {
+            let why = format!("the deny list could not be resolved: {e}");
+            warn_unrecorded(
+                w,
+                label,
+                batch,
+                "the incomplete pass",
+                pass_verdict_event(w, batch, &Verdict::Incomplete(&bounded_text(&why)), false),
+            );
+            w.err(format!("queue.sh {label}: {why}; the round is not judged"));
+            return faulted_pass(w, by, label, c, batch, &why);
+        }
         let mut image = begin_candidate_image(w, label, c, path, &wt, &head, batch);
         let run_vm = |ami: Option<&str>, recipe: Option<&str>| {
             w.scripts.round_vm(
@@ -3834,6 +3859,7 @@ fn certify_pass(
                 &handle_of(c, batch),
                 ami,
                 recipe,
+                Some(&deny_path),
             )
         };
         let run_on = |image: &Image| match image {
