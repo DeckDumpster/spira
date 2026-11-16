@@ -76,6 +76,8 @@ pub trait Lib {
     fn incident(&self, labels: &str, repo: &str, ext_ref: &str, title: &str, payload: &str) -> Result<String, i32>;
     /// The gate-unjudged incident, filed in-process through the intake; Ok(the bead id).
     fn file_incident(&self, f: &crate::model::IncidentFiling) -> Result<String, String>;
+    /// Closes a filed incident with `evidence` through the lifecycle machine.
+    fn close_incident(&self, id: &str, evidence: &str) -> Result<(), String>;
     fn ask_rebase_loop(&self, args: &[&str]);
     fn ask_red_recurring(&self, id: &str, branch: &str, repo: &str, class: &str, first_at: &str);
     fn ask_rebase_refused(&self, id: &str, branch: &str, repo: &str, reason: &str);

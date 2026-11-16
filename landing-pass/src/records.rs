@@ -227,6 +227,38 @@ impl Files {
         n
     }
 
+    fn unjudged_incident_file(&self, repo: &str) -> PathBuf {
+        self.run.join("gate-unjudged-incident").join(repo)
+    }
+
+    pub fn unjudged_incidents(&self, repo: &str) -> Vec<String> {
+        let t = fs::read_to_string(self.unjudged_incident_file(repo)).unwrap_or_default();
+        t.lines().map(str::trim).filter(|l| !l.is_empty()).map(String::from).collect()
+    }
+
+    pub fn note_unjudged_incident(&self, repo: &str, id: &str) {
+        let mut ids = self.unjudged_incidents(repo);
+        if ids.iter().any(|i| i == id) {
+            return;
+        }
+        ids.push(id.to_string());
+        self.write_unjudged_incidents(repo, &ids);
+    }
+
+    pub fn forget_unjudged_incident(&self, repo: &str, id: &str) {
+        let ids: Vec<String> = self.unjudged_incidents(repo).into_iter().filter(|i| i != id).collect();
+        if ids.is_empty() {
+            let _ = fs::remove_file(self.unjudged_incident_file(repo));
+        } else {
+            self.write_unjudged_incidents(repo, &ids);
+        }
+    }
+
+    fn write_unjudged_incidents(&self, repo: &str, ids: &[String]) {
+        let _ = fs::create_dir_all(self.run.join("gate-unjudged-incident"));
+        let _ = atomic_write(&self.unjudged_incident_file(repo), &format!("{}\n", ids.join("\n")));
+    }
+
     /// A gate reached a verdict for `branch`: its run of dead gates is over.
     pub fn note_gate_judged(&self, branch: &str) {
         let _ = fs::remove_file(self.dead_file(branch));

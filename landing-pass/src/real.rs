@@ -407,6 +407,9 @@ impl<'a> Lib for RealLib<'a> {
             None => Err("the intake filed nothing".into()),
         }
     }
+    fn close_incident(&self, id: &str, evidence: &str) -> Result<(), String> {
+        spira_store::lifecycle_row::close(id, evidence, "landing", None)
+    }
     /// lib.sh `spira_ask_rebase_loop` — ported natively (sp-31hjr; was the S7 seam). Mail
     /// send **concierge**, kind note — every call, never deduped: the repetition is
     /// reported every time the caller's own escalate-at threshold fires.

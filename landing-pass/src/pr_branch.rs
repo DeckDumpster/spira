@@ -264,6 +264,9 @@ mod tests {
         fn file_incident(&self, _: &crate::model::IncidentFiling) -> Result<String, String> {
             Ok(String::new())
         }
+        fn close_incident(&self, _: &str, _: &str) -> Result<(), String> {
+            Ok(())
+        }
         fn ask_rebase_loop(&self, a: &[&str]) {
             self.rec(format!("ask_rebase_loop {}", a.join(" ")));
         }
