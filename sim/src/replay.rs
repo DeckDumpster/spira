@@ -58,8 +58,13 @@ impl Slice {
     }
 }
 
-pub fn fixtures_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures").join("replay")
+pub fn fixtures_root() -> Result<PathBuf, String> {
+    let dir = spira_config::resolve::checkout_root_for_process()?.join("sim/fixtures/replay");
+    if dir.is_dir() {
+        Ok(dir)
+    } else {
+        Err(format!("{}: no captured fixtures — pass --fixtures <dir>", dir.display()))
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize)]
@@ -614,7 +619,7 @@ pub struct Replay {
 
 impl Replay {
     pub fn new(seed: u64, slice: Slice) -> Result<Replay, String> {
-        Replay::from_dir(seed, &fixtures_root().join(slice.dir()), slice.window())
+        Replay::from_dir(seed, &fixtures_root()?.join(slice.dir()), slice.window())
     }
 
     /// The slice in `dir`, its hooks running over `window` (epoch seconds, end exclusive).
@@ -754,5 +759,21 @@ impl Replay {
 
     pub fn trace_signature(&self) -> Vec<(u64, crate::EventKind, bool)> {
         self.sim.trace_signature()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fixtures_root_is_the_checkout_spira_home_sits_in_not_the_build_tree() {
+        let tmp = testkit::TempDir::new("replay-root");
+        let home = tmp.path().join("spira");
+        let _env = testkit::env(&[("SPIRA_HOME", Some(home.to_str().unwrap()))]);
+        let err = fixtures_root().unwrap_err();
+        assert!(err.contains("--fixtures"), "{err}");
+        std::fs::create_dir_all(tmp.path().join("sim/fixtures/replay")).unwrap();
+        assert_eq!(fixtures_root(), Ok(tmp.path().join("sim/fixtures/replay")));
     }
 }

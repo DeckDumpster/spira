@@ -273,7 +273,11 @@ fn run_main(cwd: &std::path::Path, args: &[String], env: &dyn Fn(&str) -> Option
     use spira_sim::drive::{ProcessExec, ProcessProbe, parse_scenario};
     let (pos, set, cli_repos) = flags_repeated(args, &["--seed", "--world"], &["--keep"], &["--repo"])?;
     let [scenario] = pos.as_slice() else { return Err(USAGE.to_string()) };
-    let path = spira_sim::drive::scenario_path(cwd, scenario);
+    let path = if spira_sim::drive::is_bare_name(scenario) {
+        spira_sim::drive::scenario_path(&spira_config::resolve::locate_home_for_process()?, scenario)
+    } else {
+        PathBuf::from(scenario)
+    };
     let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
     if spira_sim::loopworld::is_loop(&text) {
         return loop_main(&text, &set, &cli_repos, env);

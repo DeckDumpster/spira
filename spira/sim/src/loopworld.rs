@@ -672,12 +672,11 @@ impl EffectRunner for Timed {
     }
 }
 
-/// The complete fixture (`spira/testlib/complete.toml`) of the checkout this process runs in,
-/// found the way a bare scenario name is (`drive::scenario_path`): the sim is a binary, and the
-/// tree it was compiled in (`process::complete_fixture_text`) is not where it runs under testenv.
+/// The complete fixture (`testlib/complete.toml`) under the harness home: the sim is a binary,
+/// and the tree it was compiled in is not where it runs.
 fn complete_fixture_text() -> Option<String> {
-    let cwd = std::env::current_dir().ok()?;
-    cwd.ancestors().map(|d| d.join("spira/testlib/complete.toml")).find(|p| p.is_file()).and_then(|p| std::fs::read_to_string(p).ok())
+    let path = spira_config::resolve::locate_home_for_process().ok().map(|h| h.join("testlib/complete.toml"))?;
+    std::fs::read_to_string(path).ok()
 }
 
 /// `key`'s value under `[spira]` in the complete fixture (`spira/testlib/complete.toml`).
@@ -830,5 +829,24 @@ impl Run {
             }
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod complete_fixture_home_tests {
+    use super::*;
+
+    #[test]
+    fn the_complete_fixture_is_read_from_spira_home_and_absent_without_one() {
+        let h = testkit::TempDir::new("complete-home");
+        std::fs::create_dir_all(h.path().join("testlib")).unwrap();
+        std::fs::write(h.path().join("testlib/complete.toml"), "marker").unwrap();
+        let home = h.path().to_str().unwrap();
+        {
+            let _env = testkit::env(&[("SPIRA_HOME", Some(home))]);
+            assert_eq!(complete_fixture_text().as_deref(), Some("marker"));
+        }
+        let _env = testkit::env(&[("SPIRA_HOME", None), ("SPIRA_RELEASE", None)]);
+        assert_eq!(complete_fixture_text(), None);
     }
 }

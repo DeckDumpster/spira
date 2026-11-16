@@ -16,14 +16,13 @@ pub use lifecycle::the_lifecycle_sections_one_hour_rate_falls_below_its_day_rate
 
 static FIXTURES: OnceLock<std::path::PathBuf> = OnceLock::new();
 
-/// Reads the slices from `dir` instead of the source tree's: an installed binary was built
-/// elsewhere. Set it before the first check runs.
+/// Reads the slices from `dir` instead of the checkout SPIRA_HOME names. Set it before the first check runs.
 pub fn use_fixtures(dir: std::path::PathBuf) {
     assert!(FIXTURES.set(dir).is_ok(), "the fixtures root is set once, before any check");
 }
 
 fn fixtures() -> std::path::PathBuf {
-    FIXTURES.get().cloned().unwrap_or_else(replay::fixtures_root)
+    FIXTURES.get().cloned().unwrap_or_else(|| replay::fixtures_root().unwrap_or_else(|e| panic!("{e}")))
 }
 
 fn open(slice: Slice) -> Replay {

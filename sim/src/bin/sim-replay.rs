@@ -1,5 +1,5 @@
 //! `sim-replay [--fixtures <dir>]`: every whole-slice replay check (sim::replay::checks), each
-//! named as it runs, over the slices in `<dir>` (default: the tree it was built from). Exit 0
+//! named as it runs, over the slices in `<dir>` (default: the checkout SPIRA_HOME names; refuses when it holds no slices). Exit 0
 //! when all pass; a failing check panics with its assertion and the process exits 101.
 
 fn main() {
