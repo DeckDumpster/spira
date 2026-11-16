@@ -1278,7 +1278,7 @@ mod sparse_tests {
 
     #[test]
     fn a_worlds_sparse_tree_names_a_suite_the_repository_has_so_a_round_has_a_corpus() {
-        let spira = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let spira = testkit::manifest_dir().parent().unwrap().to_path_buf();
         let named: Vec<&str> = SPARSE_PATTERNS
             .lines()
             .filter_map(|l| l.strip_prefix("/spira/test-"))
