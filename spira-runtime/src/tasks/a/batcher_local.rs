@@ -1984,7 +1984,7 @@ impl Machine<'_> {
                     self.base_moved(&base);
                     return;
                 }
-                self.acts.push(Leg { key: format!("supersede:{}", leg.batch), ..Leg::on(self.repo) }.act(SUPERSEDE_REDS));
+                self.acts.push(Leg { key: format!("supersede:{}", leg.batch), members: leg.members.clone(), ..Leg::on(self.repo) }.act(SUPERSEDE_REDS));
                 match l.staged {
                     Some(staged) => {
                         self.go(Trigger::LandedStaged);
@@ -2926,12 +2926,19 @@ pub mod edge {
         io::file_orphan_round_incident(&env, &repo_of(&env, &leg)?, &leg.batch, &leg.why)
     }
 
-    /// A round landed: the repo's open local-red incidents are over, and the landed head names the close.
+    /// A round landed: the repo's open local-red incidents are over, and the landed head names the close;
+    /// the registry rows naming its members are cleared too. Neither failure blocks the landing.
     pub fn supersede_reds(_: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
         let (env, leg) = (env()?, leg(spec)?);
         let repo = repo_of(&env, &leg)?;
         let head = io::resolve_base_sha(&repo)?;
         batcher_cut::io::close_superseded_reds(&repo, &head);
+        let beads: Vec<String> = leg.members.iter().map(|(id, _)| id.clone()).collect();
+        match batcher_cut::io::clear_landed_rows(&env, &beads) {
+            Ok(ids) if ids.is_empty() => {}
+            Ok(ids) => println!("batcher.local {}: landing cleared registry row(s) {}", leg.repo, ids.join(" ")),
+            Err(e) => eprintln!("batcher.local {}: landed but registry rows were not cleared: {e}", leg.repo),
+        }
         Ok("{}".into())
     }
 
