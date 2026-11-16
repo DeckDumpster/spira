@@ -1354,7 +1354,7 @@ impl<B: Backend> Contract<B> {
         // Staged expiries go in before the backend commit, so a plan at a head that includes
         // this write never reads its lock as expired; only the removals wait for the result.
         let now = self.now_ms();
-        let mut set: Vec<(String, Option<u64>, u64)> = Vec::new();
+        let mut set: Vec<(String, Option<u64>, u64, u64)> = Vec::new();
         let mut cleared: Vec<(String, Option<u64>)> = Vec::new();
         {
             let mut d = crate::phases::time(crate::phases::Phase::DeadlinesWait, || self.deadlines.lock().unwrap_or_else(lock_err));
@@ -1368,7 +1368,7 @@ impl<B: Backend> Contract<B> {
                         if s.key.starts_with(LOCKS_PREFIX) {
                             shown.insert(s.key.clone(), at);
                         }
-                        set.push((s.key.clone(), was, stamp));
+                        set.push((s.key.clone(), was, stamp, ttl));
                     }
                     None => cleared.push((s.key.clone(), d.stamp(&s.key))),
                 }
@@ -1379,7 +1379,7 @@ impl<B: Backend> Contract<B> {
             let mut d = crate::phases::time(crate::phases::Phase::DeadlinesWait, || self.deadlines.lock().unwrap_or_else(lock_err));
             let mut shown = self.shown.write().unwrap_or_else(lock_err);
             if res.is_err() {
-                for (key, was, stamp) in set {
+                for (key, was, stamp, _) in set {
                     if d.stamp(&key) != Some(stamp) {
                         continue;
                     }
@@ -1399,6 +1399,16 @@ impl<B: Backend> Contract<B> {
                 return res;
             }
             if res.is_ok() {
+                let landed = self.now_ms();
+                for (key, _, stamp, ttl) in set {
+                    let at = landed.saturating_add(ttl);
+                    if d.stamp(&key) == Some(stamp) && d.get(&key).is_some_and(|cur| cur < at) {
+                        d.insert(key.clone(), at);
+                        if key.starts_with(LOCKS_PREFIX) {
+                            shown.insert(key, at);
+                        }
+                    }
+                }
                 for (key, stamp) in cleared {
                     if d.stamp(&key) == stamp {
                         d.remove(&key);
