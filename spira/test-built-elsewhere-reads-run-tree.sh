@@ -35,11 +35,13 @@ cp -R "$HARNESS/systemd" "$B/systemd"
 cp -R "$HARNESS/spira" "$B/spira"
 
 # Env is explicit: nothing ambient decides which tree the binary reads.
-run_in_b() {
+run_in() {
+    local home="$1"
     (cd "$B/install" && env -i PATH="$PATH" HOME="$TMP" \
-        CARGO_MANIFEST_DIR="$B/install" SPIRA_HOME="$B/spira" \
+        CARGO_MANIFEST_DIR="$B/install" SPIRA_HOME="$home" \
         "$BIN" --exact "$TEST" --test-threads=1 2>&1)
 }
+run_in_b() { run_in "$B/spira"; }
 
 out="$(run_in_b)"; rc=$?
 is "the binary passes against the unplanted second checkout" 0 "$rc"
@@ -52,6 +54,9 @@ unit="$B/systemd/planted-bad-percent.service"
 out="$(run_in_b)"; rc=$?
 wantrc "the binary fails against the second checkout's plant" 101 "$rc"
 want "the failure names the planted unit" "planted-bad-percent.service" "$out"
+
+out="$(run_in "$HARNESS/spira")"; rc=$?
+is "the same binary follows SPIRA_HOME back to the clean tree" 0 "$rc"
 
 rm -f "$unit"
 out="$(run_in_b)"; rc=$?
