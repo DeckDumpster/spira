@@ -16,7 +16,7 @@ spira_runtime::family_a_acceptance! {
 
 /// The contract's idle fixture: world running, every rune `ready=0`.
 fn idle() -> Snapshot {
-    Snapshot { ready_by_rune: [("builder".to_string(), Some(0)), ("ops".to_string(), Some(0))].into(), max_live: Some(4), lanes_max_live: Some(2), express_ready: Some(0), ..Snapshot::default() }
+    Snapshot { ready_by_rune: [("builder".to_string(), Some(0)), ("ops".to_string(), Some(0))].into(), max_live: Some(4), express_ready: Some(0), ..Snapshot::default() }
 }
 
 /// Two builder beads ready, nothing live, room under the fleet ceiling.
@@ -261,7 +261,6 @@ fn shipped_runes(names: &[&str]) -> BTreeMap<String, RuneCfg> {
         .iter()
         .map(|n| {
             let cfg = RuneCfg {
-                lane: !get(n, "RUNE_LANE", "").is_empty(),
                 single_flight: get(n, "RUNE_SINGLE_FLIGHT", "0") == "1",
                 elastic: get(n, "RUNE_ELASTIC", "0") == "1",
                 uses: spira_config::runes::rune_uses(&home, n).unwrap(),
@@ -282,7 +281,6 @@ fn skuld_starts_while_the_build_disk_class_is_full() {
         ready_by_rune: [("builder".to_string(), Some(4)), ("mender".to_string(), Some(0)), ("ops".to_string(), Some(0)), ("skuld".to_string(), Some(1))].into(),
         max_dwarves: Some(7),
         max_live: Some(40),
-        lanes_max_live: Some(3),
         urgent: Some(vec![]),
         express_ready: Some(0),
         ..Snapshot::default()
@@ -297,9 +295,9 @@ fn skuld_starts_while_the_build_disk_class_is_full() {
 #[test]
 fn call_world_binds_only_the_classes_that_have_a_limit() {
     let snap = Snapshot { max_dwarves: Some(7), class_limits: [("memory".to_string(), 3)].into(), ..idle() };
-    let w = call_world(&Carry::default(), &snap);
+    let w = call_world(&snap);
     assert_eq!(w.limits, BTreeMap::from([("build-disk".to_string(), 7), ("memory".to_string(), 3)]));
-    let unbound = call_world(&Carry::default(), &idle());
+    let unbound = call_world(&idle());
     assert!(unbound.limits.is_empty());
 }
 

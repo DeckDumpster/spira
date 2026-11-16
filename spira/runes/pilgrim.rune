@@ -17,7 +17,6 @@ RUNE_STATUTE_CORE="law-escalate-decisions-not-problems,law-absence-needs-a-posit
 # SEED ONLY: the live value is persona.pilgrim.model, resolved by lib.sh's persona_model. Opus: the pilgrim judges what counts as a defect.
 RUNE_MODEL=claude-opus-5-5
 
-RUNE_LANE=pilgrimage
 # One at a time: it walks one identity and its tenants.
 RUNE_SINGLE_FLIGHT=1
 

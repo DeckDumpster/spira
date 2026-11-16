@@ -9,11 +9,11 @@
     #[test]
     fn an_override_changes_only_its_own_keys() {
         let d = testkit::TempDir::new("spira-config-layer-keys");
-        let base = layer(d.path(), "base.toml", "[spira]\nid_prefix = \"sp\"\nlanes_max_live = 2\n");
-        let over = layer(d.path(), "t.override.toml", "[spira]\nlanes_max_live = 5\n");
+        let base = layer(d.path(), "base.toml", "[spira]\nid_prefix = \"sp\"\nmax_live_dwarves = 2\n");
+        let over = layer(d.path(), "t.override.toml", "[spira]\nmax_live_dwarves = 5\n");
         let doc = load(std::path::Path::new(&format!("{base}:{over}"))).unwrap();
         let m = spira_string_map(&doc);
-        assert_eq!(m.get("LANES_MAX_LIVE").map(String::as_str), Some("5"), "the override wins");
+        assert_eq!(m.get("MAX_LIVE_DWARVES").map(String::as_str), Some("5"), "the override wins");
         assert_eq!(m.get("ID_PREFIX").map(String::as_str), Some("sp"), "the base fills the rest");
     }
 

@@ -200,15 +200,9 @@ json_count() { command bdq __json_count; }           # stdin: JSON; stdout: an i
 # teardown. No pidfile pid is probed, no /proc cmdline read, and never pgrep -f (the pattern
 # is a substring of any command line that mentions it, the caller's own included).
 #
-# dwarf_alive/dwarf_count/dwarves_live_total/dwarves_live_lanes are SHIMS onto `strand dwarf-alive
-# / dwarf-count / dwarves-live-total / dwarves-live-lanes`; the logic lives in
+# dwarf_alive/dwarf_count/dwarves_live_total are SHIMS onto `strand dwarf-alive
+# / dwarf-count / dwarves-live-total`; the logic lives in
 # strand/src/probe.rs, and this file keeps the names so bash sourcers (hold.sh) need no change.
-#
-# dwarves_live_lanes ALONE threads SPIRA_HOME/SPIRA_RUNES through explicitly: conf.sh
-# deliberately never exports either (a fact about this one copy of the harness, not
-# configuration — see _spira_config_rune's own comment), so a bare exec would see neither
-# and silently count zero lane dwarves forever, the exact shape of sp-nki5w's scar. The other
-# three need only SPIRA_RUN/SPIRA_CALL/SPIRA_SYSTEMCTL, all already exported.
 # --------------------------------------------------------------------------------------
 dwarf_alive() {           # dwarf_alive <pidfile> -> 0 if the identity's lease is still running
     strand dwarf-alive "$1"
@@ -218,12 +212,8 @@ dwarf_count() {           # dwarf_count <rune> [exclude-unit] -> live dwarves of
     strand dwarf-count "$@"
 }
 
-dwarves_live_total() {     # how many dwarves exist right now, across every persona and lane
+dwarves_live_total() {     # how many dwarves exist right now, across every persona
     strand dwarves-live-total
-}
-
-dwarves_live_lanes() {     # how many lane dwarves exist right now, across all lane runes
-    SPIRA_HOME="${SPIRA_HOME:-}" SPIRA_RUNES="${SPIRA_RUNES:-}" strand dwarves-live-lanes
 }
 
 # --------------------------------------------------------------------------------------
@@ -239,7 +229,7 @@ dwarves_live_lanes() {     # how many lane dwarves exist right now, across all l
 # meant a persona that landed was not a persona that ran, and nothing said so; enumerating
 # the runes makes installing a rune the whole of installing a persona.
 # --------------------------------------------------------------------------------------
-# rune_names, spira_runes and its task/lane splits, rune_get, rune_partitions,
+# rune_names, spira_runes and its task/reactive splits, rune_get, rune_partitions,
 # runes_for_labels and persona_model (below) are SHIMS onto `spira-config rune ...`
 # (wave 4.22, sp-r5zd2: the runes registry's home is spira-config now — the runes IS
 # config). The logic, including the leading-space quirk `spira_runes` can carry when
@@ -254,7 +244,7 @@ spira_runes() {         # the personas this harness runs, space separated, IN PR
 }
 
 # spira_task_runes -> the personas the sentinel's pool calls: everything that is not a
-# party member and not a lane rune.
+# party member and not reactive.
 #
 # EVERY OTHER USE OF THE ROSTER KEEPS THEM. A party member's beads must still be reaped when
 # its lease dies, its partition still swept for stalled work, and its closed beads still
@@ -262,26 +252,16 @@ spira_runes() {         # the personas this harness runs, space separated, IN PR
 # and the fix was to ask every persona's own predicate. Narrowing THAT would restore the bug
 # by another door. This narrows only who the pool calls.
 #
-# RUNE_LANE is the declared form; RUNE_ROLE=party is preserved as a backward-compatible
-# alias so an operator's custom rune still works after upgrading. Both say the same thing:
-# this persona is not drawn from SPIRA_MAX_DWARVES.
+# RUNE_REACTIVE=1 is the declared form; RUNE_ROLE=party is preserved as a backward-compatible
+# alias so an operator's custom rune still works after upgrading.
 spira_task_runes() {
     _spira_config_rune task
 }
 
-# spira_lane_runes -> the personas that belong to a declared lane (RUNE_LANE set).
-#
-# A lane rune draws from SPIRA_LANES_MAX_LIVE rather than from SPIRA_MAX_DWARVES,
-# so the pool can be fully occupied by builders and a lane rune still has room. The
-# sentinel's CHECK 7 handles lane runes in a separate loop after the task pool, calling
-# call_rune without a pool argument so the pool never clamps a lane rune's capacity.
-#
-# THE NAME MUST APPEAR IN SPIRA_LANES for the lane to be declared, but that is a
-# documentation and validation concern — a rune that names an undeclared lane still
-# functions, because the mechanism (RUNE_LANE present → not a task rune) does not
-# require the name to be on the list.
-spira_lane_runes() {
-    _spira_config_rune lane
+# spira_reactive_runes -> the personas that declare RUNE_REACTIVE=1: planned before the
+# planned runes every pass, and not held by a bound class's limit.
+spira_reactive_runes() {
+    _spira_config_rune reactive
 }
 
 # persona_model <rune> [default] -> the model this persona launches under.
@@ -427,13 +407,12 @@ ready_shared_exclude() {
     _spira_claim shared-exclude
 }
 
-# check7_pool_decision/lane_rotate/ck7_pool/ck7_throttled/ck7_fill_cap RETIRED OUTRIGHT
+# check7_pool_decision/ck7_pool/ck7_throttled/ck7_fill_cap RETIRED OUTRIGHT
 # (wave 4.27, family G, sp-gzmd2): each was pure arithmetic with no caller left but
 # `_ck7_call_body`, itself retired the same bead onto `sentinel`'s own in-process
 # `ck7_call_pass` (sentinel/src/call.rs). Ported, not just deleted — see
 # `call::tests::check7_pool_decision_matches_the_throttle_leak_fix`,
-# `lane_rotate_moves_last_and_everything_before_it_to_the_end`,
-# `ck7_pool_subtracts_task_live_and_floors_at_zero`,
+# # `ck7_pool_subtracts_task_live_and_floors_at_zero`,
 # `ck7_throttled_is_the_stamp_unless_the_override_pins_it_clear` and
 # `ck7_fill_cap_stops_on_either_the_pool_or_the_per_persona_cap` for the same cases
 # shell suites used to assert directly against the bash originals.

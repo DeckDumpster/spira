@@ -2,8 +2,8 @@
 //! spira/dwarves.sh (bash).
 //!
 //!   dwarves.sh                  what the ceiling is, what is live, what the real ceiling is
-//!   dwarves.sh set <n>          allow at most <n> dwarves at once, across every persona and lane
-//!   dwarves.sh unset            remove the fleet ceiling (back to pool + one per lane)
+//!   dwarves.sh set <n>          allow at most <n> dwarves at once, across every persona
+//!   dwarves.sh unset            remove the fleet ceiling (back to pool + one per reactive rune)
 //!   dwarves.sh pool <n>         set the TASK pool (SPIRA_MAX_DWARVES) — the older, narrower knob
 //!   dwarves.sh usage            each live dwarf's CPU, IO per disk, memory and disk, now
 //!   dwarves.sh usage bead <id>  a bead's sessions and totals, from the metrics store
@@ -13,7 +13,7 @@
 //! "anybody reaching for 'one dwarf' has to know that lanes exist... that is a rung-4
 //! problem"). Config reads and writes go straight through the `spira-config` crate — the
 //! crate that already owns the box's config file (law-config-through-the-cli-only) — never
-//! through conf.sh's bash wrapper. The live-now count and the lane report still need lib.sh (see
+//! through conf.sh's bash wrapper. The live-now count and the reactive report still need lib.sh (see
 //! `spira_world::fleet` and `spira_world::seam` for why, and why it is one seam, not a
 //! hand-rolled `.rune` parser).
 
@@ -42,13 +42,13 @@ fn load_doc() -> Result<(PathBuf, SpiraToml), String> {
     Ok((path, doc))
 }
 
-fn lane_caps(lib_sh: Option<&std::path::Path>) -> (u32, String) {
+fn reactive_caps(lib_sh: Option<&std::path::Path>) -> (u32, String) {
     let Some(lib_sh) = lib_sh else { return (0, "?".to_string()) };
-    let (out, ok) = seam::run(lib_sh, "dwarves-lane-caps", seam::LANE_CAPS, &[], "");
+    let (out, ok) = seam::run(lib_sh, "dwarves-reactive-caps", seam::REACTIVE_CAPS, &[], "");
     if !ok {
         return (0, "?".to_string());
     }
-    let pairs = seam::parse_lane_caps(&out);
+    let pairs = seam::parse_reactive_caps(&out);
     if pairs.is_empty() {
         return (0, "none".to_string());
     }
@@ -78,44 +78,32 @@ fn cmd_status() -> i32 {
     let enforced = |l: &Limit, file: Option<u32>| l.shown().and_then(|h| h.parse::<u32>().ok()).or(file);
     let ceiling = enforced(&limit_ceiling, file_ceiling);
     let pool = enforced(&limit_pool, file_pool);
-    let lanes_cap = spira.and_then(|s| spira_config::said(s.get_u32("SPIRA_LANES_MAX_LIVE")));
 
     let lib_sh = spira_world::locate_home().map(|h| h.join("lib.sh"));
-    let (lt, ld) = lane_caps(lib_sh.as_deref());
+    let (lt, ld) = reactive_caps(lib_sh.as_deref());
     let roster = fleet::Roster::of(&sysctl::live_dwarf_units());
 
-    for line in roster.live_lines(None, false) {
+    for line in roster.live_lines() {
         println!("{line}");
     }
     match (&limit_ceiling, file_ceiling) {
         (Limit::Unanswered { file: None, .. }, None) => println!("  fleet ceiling     none  (SPIRA_MAX_LIVE_DWARVES unset)"),
-        (l, _) => println!("  fleet ceiling     {}   (SPIRA_MAX_LIVE_DWARVES — counts every lane dwarf; a directed one is outside it)", l.render()),
+        (l, _) => println!("  fleet ceiling     {}   (SPIRA_MAX_LIVE_DWARVES — counts every dwarf; a directed one is outside it)", l.render()),
     }
     match (&limit_pool, file_pool) {
         (Limit::Unanswered { file: None, .. }, None) => println!("  task pool         ?   (SPIRA_MAX_DWARVES — builders and other task runes)"),
         (l, _) => println!("  task pool         {}   (SPIRA_MAX_DWARVES — builders and other task runes)", l.render()),
     }
-    println!("  lanes             {lt}   ({ld} — each draws OUTSIDE the pool)");
+    println!("  reactive          {lt}   ({ld} — planned ahead of the pool; only the ceiling stops them)");
     let pool_n = pool.unwrap_or(0);
-    if let Some(cap) = lanes_cap {
-        println!("  lane cap          {cap}   (SPIRA_LANES_MAX_LIVE — lanes share this many fleet slots)");
-        let task_min = pool_n.saturating_sub(cap);
-        println!("  effective split   builders {task_min}-{pool_n}, lanes 0-{cap}");
-    }
-    if let (Some(c), Some(cap)) = (ceiling, lanes_cap) {
-        for line in roster.live_lines(Some(c), true).into_iter().skip(1) {
-            println!("{line}");
-        }
-        println!("  lane spill        up to {cap} over the ceiling while a lane has ready work; no refill until lane dwarves <= {c}");
-    }
     if let Some(c) = ceiling {
         println!(
-            "  ---\n  at most {c} dwarf(s) at once. Without the ceiling it would be {} ({pool_n} pool + {lt} lanes).",
+            "  ---\n  at most {c} dwarf(s) at once. Without the ceiling it would be {} ({pool_n} pool + {lt} reactive).",
             pool_n + lt
         );
     } else {
         println!(
-            "  ---\n  at most {} dwarf(s) at once ({pool_n} pool + {lt} lanes). `dwarves.sh set <n>` to cap the total.",
+            "  ---\n  at most {} dwarf(s) at once ({pool_n} pool + {lt} reactive). `dwarves.sh set <n>` to cap the total.",
             pool_n + lt
         );
     }
@@ -160,7 +148,7 @@ fn cmd_unset() -> i32 {
     if let Err(e) = spira_config::serialize_and_write(&path, &new) {
         die(&format!("could not remove the fleet ceiling: {e}"));
     }
-    println!("fleet ceiling removed — the limit is again the task pool plus one per lane.");
+    println!("fleet ceiling removed — the limit is again the task pool plus one per reactive rune.");
     0
 }
 
@@ -175,7 +163,7 @@ fn cmd_pool(args: &[String]) -> i32 {
     if let Err(e) = spira_config::serialize_and_write(&path, &new) {
         die(&format!("could not write the task pool: {e}"));
     }
-    println!("task pool set to {n}. NOTE: lanes draw outside it — `dwarves.sh set <n>` is the total.");
+    println!("task pool set to {n}. NOTE: reactive runes are planned ahead of it — `dwarves.sh set <n>` is the total.");
     0
 }
 
@@ -227,8 +215,8 @@ fn main() {
         "-h" | "--help" | "help" => {
             println!("dwarves.sh — how many dwarves may run at once, and how many are running.\n");
             println!("  dwarves.sh                  what the ceiling is, what is live, what the real ceiling is");
-            println!("  dwarves.sh set <n>          allow at most <n> dwarves at once, across every persona and lane");
-            println!("  dwarves.sh unset            remove the fleet ceiling (back to pool + one per lane)");
+            println!("  dwarves.sh set <n>          allow at most <n> dwarves at once, across every persona");
+            println!("  dwarves.sh unset            remove the fleet ceiling (back to pool + one per reactive rune)");
             println!("  dwarves.sh pool <n>         set the TASK pool (SPIRA_MAX_DWARVES) — the older, narrower knob");
             println!("  dwarves.sh usage            each live dwarf's CPU, IO per disk, memory and disk, now");
             println!("  dwarves.sh usage bead <id>  a bead's sessions and totals, from the metrics store");

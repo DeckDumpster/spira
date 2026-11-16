@@ -709,7 +709,14 @@ pub struct PersonaSection {
     pub tools: Vec<String>,
     #[serde(default)]
     pub labels: Vec<String>,
-    pub lane: Option<String>,
+    /// `RUNE_REACTIVE=1`: starts over a class limit, ahead of the planned runes.
+    #[serde(default)]
+    pub reactive: bool,
+    /// Bound resource classes this persona uses heavily (`RUNE_USES`).
+    #[serde(default)]
+    pub uses: Vec<String>,
+    #[serde(default)]
+    pub single_flight: bool,
     #[serde(default)]
     pub lease: Option<Lease>,
     pub system_prompt: Option<SystemPromptMode>,
@@ -785,6 +792,8 @@ pub const RETIRED_SPIRA_KEYS: &[RetiredKey] = &[
     RetiredKey { key: "chamber", bead: "sp-yyuunv" }, // ffx-ok
     RetiredKey { key: "chamber_overlay", bead: "sp-yyuunv" }, // ffx-ok
     RetiredKey { key: "lanes_reserve", bead: "sp-6evjfc" }, // ffx-ok
+    RetiredKey { key: "lanes", bead: "sp-vyt8y2" }, // ffx-ok
+    RetiredKey { key: "lanes_max_live", bead: "sp-vyt8y2" }, // ffx-ok
     RetiredKey { key: "fayths", bead: "sp-yyuunv" }, // ffx-ok
     RetiredKey { key: "unit_test_slow_secs", bead: "sp-1qi6zt" },
     RetiredKey { key: "unit_test_terminate_after", bead: "sp-1qi6zt" },
@@ -944,7 +953,7 @@ pub fn validate_strict(text: &str) -> Result<(SpiraToml, Vec<String>), String> {
     let (doc, warnings) = validate_with_warnings(text)?;
     require_id_prefix(&doc)?;
     let root: toml::Value = text.parse().map_err(|e: toml::de::Error| e.to_string())?;
-    require_roster_covers_lanes(&root)?;
+    require_roster_covers_partitions(&root)?;
     require_roster_declares_models(&root)?;
     Ok((doc, warnings))
 }
@@ -971,9 +980,9 @@ fn require_roster_declares_models(root: &toml::Value) -> Result<(), String> {
 
 const TIMER_PARTITION_PERSONAS: &[&str] = &["groomer", "mimir", "czar", "warden", "mender", "pilgrim", "skuld"];
 
-/// A declared lane, or a timer-filed partition label, whose persona is not in an explicit
-/// `spira.runes` roster is work nothing can claim: refused, naming both keys.
-fn require_roster_covers_lanes(root: &toml::Value) -> Result<(), String> {
+/// A timer-filed partition label whose persona is not in an explicit `spira.runes` roster is
+/// work nothing can claim: refused, naming both keys.
+fn require_roster_covers_partitions(root: &toml::Value) -> Result<(), String> {
     let Some(spira) = root.get("spira").and_then(|v| v.as_table()) else { return Ok(()) };
     let roster: Vec<&str> = match spira.get("runes") {
         Some(toml::Value::Array(a)) => a.iter().filter_map(|v| v.as_str()).collect(),
@@ -982,21 +991,6 @@ fn require_roster_covers_lanes(root: &toml::Value) -> Result<(), String> {
     };
     if roster.is_empty() {
         return Ok(());
-    }
-    let lanes: Vec<&str> = match spira.get("lanes") {
-        Some(toml::Value::Array(a)) => a.iter().filter_map(|v| v.as_str()).collect(),
-        Some(toml::Value::String(s)) => s.split_whitespace().collect(),
-        _ => Vec::new(),
-    };
-    let persona_lane = |l: &str| {
-        roster.iter().any(|p| {
-            root.get("persona").and_then(|v| v.get(*p)).and_then(|v| v.get("lane")).and_then(|v| v.as_str()) == Some(l)
-        })
-    };
-    if let Some(l) = lanes.iter().find(|l| !roster.contains(l) && !persona_lane(l)) {
-        return Err(format!(
-            "spira.lanes declares {l:?} but spira.runes does not roster it — nothing can claim that lane's beads; add {l:?} to spira.runes or drop it from spira.lanes"
-        ));
     }
     for p in TIMER_PARTITION_PERSONAS {
         let key = format!("{p}_label");

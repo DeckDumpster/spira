@@ -16,7 +16,6 @@ pub struct Persona {
     pub exclude: Vec<String>,
     pub rostered: bool,
     pub call: String,
-    pub lane: String,
 }
 
 impl Persona {
@@ -26,21 +25,18 @@ impl Persona {
             && !self.exclude.iter().any(|x| labels.contains(x))
     }
 
-    fn absent_because(&self, lanes: &[String]) -> Option<String> {
+    fn absent_because(&self) -> Option<String> {
         if !self.rostered {
             return Some("not in spira.runes".into());
         }
         if self.call != "auto" {
             return Some(format!("RUNE_CALL={}", self.call));
         }
-        if !self.lane.is_empty() && !lanes.contains(&self.lane) {
-            return Some(format!("lane {} not in spira.lanes", self.lane));
-        }
         None
     }
 }
 
-pub fn rows(claimable: &HashSet<String>, store: &Store, personas: &[Persona], lanes: &[String], shared_exclude: &[String]) -> Vec<Row> {
+pub fn rows(claimable: &HashSet<String>, store: &Store, personas: &[Persona], shared_exclude: &[String]) -> Vec<Row> {
     let mut ids: Vec<&String> = claimable.iter().collect();
     ids.sort();
     let mut out = Vec::new();
@@ -56,14 +52,14 @@ pub fn rows(claimable: &HashSet<String>, store: &Store, personas: &[Persona], la
             continue;
         }
         let matching: Vec<&Persona> = personas.iter().filter(|p| p.matches(&b.labels)).collect();
-        if matching.iter().any(|p| p.absent_because(lanes).is_none()) {
+        if matching.iter().any(|p| p.absent_because().is_none()) {
             continue;
         }
         let detail = if matching.is_empty() {
             "READY but no persona in the runes matches its labels".to_string()
         } else {
             let why: Vec<String> =
-                matching.iter().map(|p| format!("{} ({})", p.name, p.absent_because(lanes).unwrap_or_default())).collect();
+                matching.iter().map(|p| format!("{} ({})", p.name, p.absent_because().unwrap_or_default())).collect();
             format!("READY but no rostered persona can claim it; would match: {}", why.join(", "))
         };
         out.push(Row::new(
@@ -90,7 +86,6 @@ pub fn personas(cfg: &Config) -> Result<Vec<Persona>, String> {
             exclude: split(rune_get(home, &n, "RUNE_EXCLUDE_LABELS", "")),
             rostered: roster.contains(&n),
             call: rune_get(home, &n, "RUNE_CALL", "auto"),
-            lane: rune_get(home, &n, "RUNE_LANE", ""),
             name: n,
         })
         .collect())
@@ -105,7 +100,7 @@ mod tests {
         Store::new(parse_beads(json).unwrap())
     }
     fn persona(name: &str, label: &str, rostered: bool) -> Persona {
-        Persona { name: name.into(), labels: vec![label.into()], exclude: vec![], rostered, call: "auto".into(), lane: String::new() }
+        Persona { name: name.into(), labels: vec![label.into()], exclude: vec![], rostered, call: "auto".into() }
     }
     fn one(id: &str) -> HashSet<String> {
         [id.to_string()].into()
@@ -115,7 +110,7 @@ mod tests {
     fn a_ready_bead_for_an_unrostered_persona_is_reported_naming_it() {
         let s = store(r#"[{"id":"sp-a","status":"open","labels":["warden-sweep"]}]"#);
         let ps = [persona("builder", "plan", true), persona("warden", "warden-sweep", false)];
-        let r = rows(&one("sp-a"), &s, &ps, &[], &[]);
+        let r = rows(&one("sp-a"), &s, &ps, &[]);
         assert_eq!(r.len(), 1);
         assert!(r[0].detail.contains("warden (not in spira.runes)"), "{}", r[0].detail);
     }
@@ -124,20 +119,16 @@ mod tests {
     fn a_rostered_match_is_not_reported() {
         let s = store(r#"[{"id":"sp-a","status":"open","labels":["warden-sweep"]}]"#);
         let ps = [persona("warden", "warden-sweep", true)];
-        assert!(rows(&one("sp-a"), &s, &ps, &[], &[]).is_empty());
+        assert!(rows(&one("sp-a"), &s, &ps, &[]).is_empty());
     }
 
     #[test]
-    fn a_lane_persona_in_an_undeclared_lane_or_a_non_auto_call_is_named() {
-        let s = store(r#"[{"id":"sp-a","status":"open","labels":["x"]},{"id":"sp-b","status":"open","labels":["y"]}]"#);
-        let mut lane = persona("laned", "x", true);
-        lane.lane = "nolane".into();
+    fn a_non_auto_call_persona_is_named() {
+        let s = store(r#"[{"id":"sp-b","status":"open","labels":["y"]}]"#);
         let mut manual = persona("manual", "y", true);
         manual.call = "manual".into();
-        let both: HashSet<String> = ["sp-a".to_string(), "sp-b".to_string()].into();
-        let r = rows(&both, &s, &[lane, manual], &[], &[]);
-        assert!(r[0].detail.contains("lane nolane not in spira.lanes"), "{}", r[0].detail);
-        assert!(r[1].detail.contains("RUNE_CALL=manual"), "{}", r[1].detail);
+        let r = rows(&one("sp-b"), &s, &[manual], &[]);
+        assert!(r[0].detail.contains("RUNE_CALL=manual"), "{}", r[0].detail);
     }
 
     #[test]
@@ -147,7 +138,7 @@ mod tests {
                 {"id":"sp-b","status":"open","labels":["orphan"],"dependencies":[{"depends_on_id":"sp-a","type":"blocks"}]}]"#,
         );
         let both: HashSet<String> = ["sp-a".to_string(), "sp-b".to_string()].into();
-        let r = rows(&both, &s, &[persona("builder", "plan", true)], &[], &[]);
+        let r = rows(&both, &s, &[persona("builder", "plan", true)], &[]);
         assert!(r.iter().any(|x| x.id == "sp-a" && x.detail.contains("no persona in the runes")));
         assert_eq!(r.len(), 1, "sp-b waits on open sp-a");
     }

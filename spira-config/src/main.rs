@@ -33,7 +33,7 @@
 //!   spira-config convert ...            spira.conf + repo-map + *.rune -> spira.toml
 //!   spira-config set <path> <v> <file>  write one value into <file> in place
 //!   spira-config unset <path> <file>    remove one value from <file> in place
-//!   spira-config rename-persona <old> <new> <file>  move [persona.<old>] and its runes/lanes entries
+//!   spira-config rename-persona <old> <new> <file>  move [persona.<old>] and its runes entry
 //!   spira-config writeback <candidate>  the write target any REGENERATING caller resolves
 //!                                       through first (wave 4.7, sp-ksrss) — `candidate`
 //!                                       unchanged on the installed release or
@@ -1496,7 +1496,7 @@ fn rune_home() -> Result<PathBuf, String> {
 }
 
 /// `rune ...` — the runes registry (wave 4.22, sp-r5zd2): `spira-config rune <verb>`
-/// backs lib.sh's own `rune_names`/`spira_runes`/`spira_task_runes`/`spira_lane_runes`/
+/// backs lib.sh's own `rune_names`/`spira_runes`/`spira_task_runes`/`spira_reactive_runes`/
 /// `rune_get`/`rune_partitions`/`runes_for_labels`/`persona_model`, each now a one-line
 /// shim onto one of these verbs.
 fn cmd_rune(args: &[String]) -> ExitCode {
@@ -1542,8 +1542,8 @@ fn cmd_rune(args: &[String]) -> ExitCode {
             print!("{}", runes::spira_task_runes(&home, roster_override));
             ExitCode::SUCCESS
         }
-        Some("lane") => {
-            print!("{}", runes::spira_lane_runes(&home, roster_override));
+        Some("reactive") => {
+            print!("{}", runes::spira_reactive_runes(&home, roster_override));
             ExitCode::SUCCESS
         }
         Some("partitions") => {
@@ -1606,7 +1606,7 @@ fn cmd_rune(args: &[String]) -> ExitCode {
                  \x20 get <rune> <var> [default]      one field of a rune\n\
                  \x20 roster                           spira_runes: the active roster, in priority order\n\
                  \x20 task                             spira_task_runes: the pool's call set\n\
-                 \x20 lane                              spira_lane_runes: the declared lane runes\n\
+                 \x20 reactive                          spira_reactive_runes: the reactive runes\n\
                  \x20 partitions                       rune_partitions: labels\\texclude-labels, one per line\n\
                  \x20 for-labels <labels>              runes_for_labels: personas whose partition IS <labels>\n\
                  \x20 model <rune> [default]          persona_model: the model this persona launches under"

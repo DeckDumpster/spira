@@ -13,7 +13,7 @@
 //! use this crate in-process instead):
 //!
 //!   strand dwarf-alive <pidfile>            strand dwarves-live-total
-//!   strand dwarf-count <rune> [exclude]     strand dwarves-live-lanes
+//!   strand dwarf-count <rune> [exclude]
 //!
 //! lib.sh family T-b (wave 4.29, sp-8ofmt) — the stranded-work detectors its now-shimmed
 //! functions call, plus the direct target for `groomer`/`mimir-trigger`/`cockpit-collect`
@@ -136,16 +136,6 @@ fn cmd_dwarves_live_total(args: Vec<String>) -> i32 {
     0
 }
 
-/// `dwarves_live_lanes` (lib.sh): every lane dwarf, across all lane runes.
-fn cmd_dwarves_live_lanes(args: Vec<String>) -> i32 {
-    if !args.is_empty() {
-        return die("dwarves-live-lanes");
-    }
-    let cfg = cfg_or_die();
-    print!("{}", probe::dwarves_live_lanes(&cfg));
-    0
-}
-
 /// Every detector prints its rows newline-terminated (bash: one `printf '...\n'` per row)
 /// and nothing at all when there are none — never a bare trailing blank line.
 fn print_lines(s: &str) {
@@ -245,7 +235,6 @@ fn main() {
             "dwarf-alive" => Some(cmd_dwarf_alive(rest())),
             "dwarf-count" => Some(cmd_dwarf_count(rest())),
             "dwarves-live-total" => Some(cmd_dwarves_live_total(rest())),
-            "dwarves-live-lanes" => Some(cmd_dwarves_live_lanes(rest())),
             "detect-livelocked" => Some(cmd_detect_livelocked(rest())),
             "detect-incident-needs-builder" => Some(cmd_detect_incident_needs_builder(rest())),
             "detect-invalid-closed" => Some(cmd_detect_invalid_closed(rest())),

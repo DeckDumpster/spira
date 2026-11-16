@@ -220,7 +220,7 @@ pub fn classify_live(cfg: &Config) -> Result<Classified, String> {
             .collect();
         match crate::unrostered::personas(cfg) {
             Ok(ps) => rows.extend(
-                crate::unrostered::rows(&claimable, &store, &ps, &cfg.lanes, &cfg.shared_exclude())
+                crate::unrostered::rows(&claimable, &store, &ps, &cfg.shared_exclude())
                     .into_iter()
                     .map(|row| PartRow { part: crate::unrostered::PART.to_string(), row }),
             ),

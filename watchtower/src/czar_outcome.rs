@@ -172,7 +172,7 @@ fn check(now: i64, lc: &LcClient, db: &str, home_repo: &str, cfg: &Cfg, raise: &
         match finding {
             Outcome::Unclaimed { id, external_ref } => {
                 let body = format!(
-                    "Czar-trigger bead {id} (class: {external_ref}) has been open for more than {} minutes without being claimed or closed.\n\nThe czar's calling budget is 5 minutes. If the czar lane is not running, check: SPIRA_RUNES, SPIRA_LANES, and the spira-dwarf-czar unit.\n\nBead: {id}\nClass: {external_ref}\n",
+                    "Czar-trigger bead {id} (class: {external_ref}) has been open for more than {} minutes without being claimed or closed.\n\nThe czar's calling budget is 5 minutes. If the czar is not running, check: SPIRA_RUNES, the czar rune's RUNE_REACTIVE, and the spira-dwarf-czar unit.\n\nBead: {id}\nClass: {external_ref}\n",
                     cfg.unclaimed_mins
                 );
                 let f = Finding::new(

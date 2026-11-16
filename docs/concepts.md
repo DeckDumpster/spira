@@ -149,8 +149,8 @@ A **rune** is a persona *definition*: a file `spira/runes/<name>.rune` (shell-st
 fixes the **partition** of the work graph the persona may claim (`RUNE_LABELS`, ANDed, minus
 `RUNE_EXCLUDE_LABELS`), the statutes it must read (`RUNE_MEMORY_PREFIXES`,
 `RUNE_STATUTE_CORE`), the tools it may use (`RUNE_TOOLS`), and how it is woken and bounded
-(`RUNE_SINGLE_FLIGHT`, `RUNE_LEASE_MINUTES`, `RUNE_HEARTBEAT_SECONDS`, `RUNE_LANE`,
-`RUNE_ELASTIC`). Its **brief**, the instructions the model receives, is the matching
+(`RUNE_SINGLE_FLIGHT`, `RUNE_LEASE_MINUTES`, `RUNE_HEARTBEAT_SECONDS`, `RUNE_REACTIVE`,
+`RUNE_ELASTIC`, `RUNE_USES`). Its **brief**, the instructions the model receives, is the matching
 `spira/runes/<name>.md`, rendered with `{{TOKEN}}` substitutions. The model, lease, tool list
 and system-prompt mode of a running system come from the `[persona.<name>]` table in
 `spira.toml` (a `model` is required: a persona with no model is refused); the `.rune` values
@@ -183,11 +183,13 @@ Shipped personas (`spira/runes/`):
 
 ## Lane
 
-"Lane" has two meanings, both in code.
+"Lane" has one meaning in the scheduler's vocabulary now, and a second in the registry.
 
-1. **Scheduling lane** (`SPIRA_LANES`, `RUNE_LANE`). A persona that declares a lane draws
-   capacity from `SPIRA_LANES_MAX_LIVE` instead of the shared pool
-   (`SPIRA_MAX_DWARVES`), so builders can occupy the whole pool without starving the rest.
+1. **Reactive personas and bound classes** (`RUNE_REACTIVE`, `RUNE_USES`). A persona that
+   declares `RUNE_REACTIVE=1` is planned before the planned personas every pass and starts
+   over a bound class's limit; a persona that declares `RUNE_USES` counts toward that class's
+   limit. The fleet ceiling (`SPIRA_MAX_LIVE_DWARVES`) is the one backstop on total sessions:
+   nobody starts above it.
 2. **Repository lane** (`lanes` in a repository's registry row): which kinds of bead a
    repository admits (`plan`, `incident`, `groom`, `mimir-sweep`, `spike`, `czar-trigger`).
 

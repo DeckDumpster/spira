@@ -48,11 +48,8 @@ RUNE_MODEL=claude-sonnet-5-5
 # One at a time: it merges and closes across the DAG, and two passes would race on the same beads.
 RUNE_SINGLE_FLIGHT=1
 
-# THE GROOMER LANE. A lane rune draws from the lane ceiling rather than from
-# SPIRA_MAX_DWARVES, so a fully-occupied builder pool cannot prevent a groom pass. The groomer
-# lane is declared in SPIRA_LANES; without that declaration the lane still functions — a
-# rune with RUNE_LANE set is never a task rune — but the lane is invisible to operators
-# reading SPIRA_LANES for the list of scheduled partitions.
+# Reactive: planned ahead of the planned runes, so a fully-occupied builder pool cannot
+# prevent a groom pass.
 #
 # WHY NOT A CRON JOB. Deciding two beads are duplicates, or that a bead's premise is gone,
 # is judgement. A shell script running on a timer cannot exercise it — it can only call a
@@ -60,7 +57,7 @@ RUNE_SINGLE_FLIGHT=1
 # correctly. The persona shape gets all three via the brief and the database; a cron job gets
 # none of them. (Decided when cutting this bead; reversible if the cadence proves workable
 # from a simpler trigger. sp-gsmx.8)
-RUNE_LANE=groomer
+RUNE_REACTIVE=1
 
 # LEASE AND HEARTBEAT. A groom pass reads the graph breadth-first and then acts on its
 # findings — it is bursty in a different way than a builder, but its wall is naturally the

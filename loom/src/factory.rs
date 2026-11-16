@@ -1355,12 +1355,11 @@ mod tests {
     }
 
     #[test]
-    fn the_dwarf_session_queues_the_build_disk_limit_and_nothing_reads_the_lane_cap() {
+    fn the_dwarf_session_queues_the_build_disk_limit_and_no_lane_cap_is_shown() {
         let session = COMPONENTS.iter().find(|c| c.id == "dwarf-session").unwrap();
         assert!(session.queues.iter().any(|qd| qd.label == "build-disk limit" && qd.key == Some("SPIRA_MAX_DWARVES")));
         let fixture = include_str!("../tests/fixtures/factory.json");
-        assert!(fixture.contains("\"label\": \"build-disk limit\"") && !fixture.contains("SPIRA_LANES_MAX_LIVE") && !fixture.contains("lane cap"));
-        assert!(!LIMIT_KEYS.contains(&"SPIRA_LANES_MAX_LIVE"));
+        assert!(fixture.contains("\"label\": \"build-disk limit\"") && !fixture.contains("lane cap"));
     }
 
     #[tokio::test]

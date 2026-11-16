@@ -8,8 +8,8 @@
 //! group 4: "Ryan's standing instruction during the cutover was 'leave lib.sh alone.'");
 //! its chokepoint below is called, never re-implemented:
 //!
-//!   - `spira_lane_runes` + `rune_get`: a `.rune` file is SOURCED as bash to read one
-//!     field (dwarves.sh's own `lane_caps`), and a rune file may compute that field from
+//!   - `spira_reactive_runes` + `rune_get`: a `.rune` file is SOURCED as bash to read one
+//!     field (dwarves.sh's own `reactive_caps`), and a rune file may compute that field from
 //!     other shell variables (groomer.rune's `RUNE_LABELS` does exactly this for a
 //!     different field) — a hand-written Rust parser would silently disagree on the one
 //!     rune that does, which is the exact failure `dwarves.sh` exists to prevent
@@ -62,17 +62,17 @@ pub fn run_for(lib_sh: &Path, name: &str, script: &str, envs: &[(&str, &str)], s
     }
 }
 
-/// `dwarves.sh status`'s lane report: every lane rune's name and whether it is
+/// `dwarves.sh status`'s reactive report: every reactive rune's name and whether it is
 /// `RUNE_SINGLE_FLIGHT`, NUL-separated `name\tsingle-flight|` records.
-pub const LANE_CAPS: &str = r#"
-for f in $(spira_lane_runes); do
+pub const REACTIVE_CAPS: &str = r#"
+for f in $(spira_reactive_runes); do
     sf=""; [ "$(rune_get "$f" RUNE_SINGLE_FLIGHT 0)" = 1 ] && sf="single-flight"
     printf '%s\t%s\0' "$(rune_get "$f" RUNE_NAME "$f")" "$sf"
 done
 "#;
 
-/// Parse [`LANE_CAPS`]'s output into `(name, single_flight)` pairs.
-pub fn parse_lane_caps(out: &str) -> Vec<(String, bool)> {
+/// Parse [`REACTIVE_CAPS`]'s output into `(name, single_flight)` pairs.
+pub fn parse_reactive_caps(out: &str) -> Vec<(String, bool)> {
     out.split('\0')
         .filter(|r| !r.is_empty())
         .filter_map(|rec| {
@@ -87,19 +87,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_lane_caps_reads_nul_separated_records() {
+    fn parse_reactive_caps_reads_nul_separated_records() {
         let out = "groomer\tsingle-flight\0ops\t\0";
-        assert_eq!(parse_lane_caps(out), vec![("groomer".to_string(), true), ("ops".to_string(), false)]);
+        assert_eq!(parse_reactive_caps(out), vec![("groomer".to_string(), true), ("ops".to_string(), false)]);
     }
 
     #[test]
-    fn parse_lane_caps_reads_anything_but_single_flight_as_not() {
+    fn parse_reactive_caps_reads_anything_but_single_flight_as_not() {
         let out = "x\tnotanumber\0";
-        assert_eq!(parse_lane_caps(out), vec![("x".to_string(), false)]);
+        assert_eq!(parse_reactive_caps(out), vec![("x".to_string(), false)]);
     }
 
     #[test]
-    fn parse_lane_caps_of_empty_output_is_empty() {
-        assert!(parse_lane_caps("").is_empty());
+    fn parse_reactive_caps_of_empty_output_is_empty() {
+        assert!(parse_reactive_caps("").is_empty());
     }
 }

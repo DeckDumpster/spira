@@ -309,28 +309,13 @@ fn dwarf_count_named(cfg: &Config, rune: &str, rune_name: &str, exclude: Option<
     pidfiles(run_dir, &format!("dwarf-{rune_name}-"), ".pid").iter().filter(|p| dwarf_alive(p)).count() as u32
 }
 
-/// How many dwarves exist right now, across every persona and every lane.
+/// How many dwarves exist right now, across every persona.
 pub fn dwarves_live_total(cfg: &Config) -> u32 {
     if cfg.call == "systemd-run" {
         return unit_count(cfg, &|_| true, None);
     }
     let Some(run_dir) = cfg.run.as_ref() else { return 0 };
     pidfiles(run_dir, "dwarf-", ".pid").iter().filter(|p| dwarf_alive(p)).count() as u32
-}
-
-/// How many lane dwarves exist right now, across all lane runes. `RUNE_NAME` is resolved
-/// per lane rune (default: the rune id itself), exactly as the bash original — a lane
-/// rune is free to declare a different unit/pidfile name than its runes filename.
-pub fn dwarves_live_lanes(cfg: &Config) -> u32 {
-    let Some(home) = cfg.home.as_ref() else { return 0 };
-    let lanes = spira_config::runes::spira_lane_runes(home, cfg.runes_override.as_deref());
-    lanes
-        .split_whitespace()
-        .map(|f| {
-            let name = spira_config::runes::rune_get(home, f, "RUNE_NAME", f);
-            dwarf_count_named(cfg, f, &name, None)
-        })
-        .sum()
 }
 
 const UNBOUNDED: i64 = 999_999;
@@ -561,7 +546,7 @@ mod tests {
         assert!(holder_alive(&run, "sp-a1"), "the pid is never probed");
     }
 
-    // ---- dwarf_count / dwarves_live_lanes / rune_free (wave 4.23, sp-0ffox) ------------------
+    // ---- dwarf_count / rune_free (wave 4.23, sp-0ffox) ------------------
 
     #[test]
     fn dwarf_count_pid_fallback_ignores_exclude_exactly_as_the_bash_original() {

@@ -437,7 +437,9 @@ pub fn persona_section(
     let mut model = String::new();
     let mut tools = Vec::new();
     let mut labels_raw = String::new();
-    let mut lane = None;
+    let mut reactive = false;
+    let mut uses = Vec::new();
+    let mut single_flight = false;
     let mut lease_minutes = None;
     let mut heartbeat_seconds = None;
     let mut system_prompt = None;
@@ -471,7 +473,9 @@ pub fn persona_section(
                     .collect()
             }
             "RUNE_LABELS" => labels_raw = val,
-            "RUNE_LANE" => lane = Some(val),
+            "RUNE_REACTIVE" => reactive = val == "1",
+            "RUNE_SINGLE_FLIGHT" => single_flight = val == "1",
+            "RUNE_USES" => uses = val.split_whitespace().map(str::to_string).collect(),
             "RUNE_LEASE_MINUTES" => {
                 lease_minutes = val.parse().ok().or_else(|| {
                     warnings.push(format!(
@@ -525,7 +529,9 @@ pub fn persona_section(
             model,
             tools,
             labels,
-            lane,
+            reactive,
+            uses,
+            single_flight,
             lease,
             system_prompt,
             escalation_model: None,

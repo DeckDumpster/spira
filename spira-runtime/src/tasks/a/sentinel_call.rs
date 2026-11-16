@@ -19,7 +19,7 @@
 //!
 //! ## Observe — `sentinel-call.observe` (probe, 5 s)
 //!
-//! Snapshot `{ world, skew, capacity, live_by_rune, ready_by_rune, urgent, express_ready, throttle, lane_last }`:
+//! Snapshot `{ world, skew, capacity, live_by_rune, ready_by_rune, urgent, express_ready, throttle }`:
 //!
 //! | Field | Today | Contract source |
 //! |---|---|---|
@@ -31,20 +31,18 @@
 //! | `urgent` | `spira-claim urgent <task runes>` (`call.rs:382-402`) | spira-claim library `urgent` |
 //! | `express_ready` | `spira-claim rune-exclude` + `ready-count … --express` (`call.rs:349-376`) | spira-claim library `ready_count` |
 //! | `throttle` | `$SPIRA_RUN/queue-throttled` stamp (`cfg.rs:471-475`, `call.rs:793`) | batcher's throttle projection (unverified that one exists) |
-//! | `lane_last` | `$SPIRA_RUN/lane-round-robin` (`call.rs:747`) | carried state (`sentinel-call.state`), not a file |
-//! | youngest lane dwarf | pidfile mtimes in `$SPIRA_RUN` (`call.rs:405-428`) | `unit.facts` start times |
+//! | youngest reactive dwarf | pidfile mtimes in `$SPIRA_RUN` (`call.rs:405-428`) | `unit.facts` start times |
 //!
 //! A failed ready answer is `None`, never 0 (`call.rs:314-325`, sp-hh599).
 //!
 //! ## Decide
 //!
 //! Pure `decide(carry, snap) -> (carry, Vec<Call>, Option<Preempt>)`, ported from the existing
-//! pure helpers: `check7_pool_decision`, `lane_rotate`, `ck7_pool`, `ck7_throttled`, `ck7_fill_cap`
+//! pure helpers: `check7_pool_decision`, `ck7_pool`, `ck7_throttled`, `ck7_fill_cap`
 //! (`call.rs:127-173`) plus the gates of `call_rune` (`call.rs:577-675`: world, skew, capacity,
-//! fleet ceiling `SPIRA_MAX_LIVE_DWARVES`, lane spill `SPIRA_LANES_MAX_LIVE`, elastic hold-back,
-//! only-slot hold) and the loop of `ck7_call_body` (`call.rs:728-850`). The per-pass time budget
+//! fleet ceiling `SPIRA_MAX_LIVE_DWARVES`, elastic hold-back) and the loop of `ck7_call_body` (`call.rs:728-850`). The per-pass time budget
 //! (`SPIRA_SENTINEL_PASS_BUDGET_SECS`, `call.rs:773`) becomes moot: decide is O(runes), no IO.
-//! Carry: `lane_last`, `in_flight: {unit → rune}` (units started, no `unit.ran` yet).
+//! Carry: `in_flight: {unit → rune}` (units started, no `unit.ran` yet).
 //! Fixtures: the existing `call::tests` table tests (`call.rs:951-1000`) and `tests.rs:593-670`.
 //!
 //! ## Act
@@ -52,7 +50,7 @@
 //! | Effect | Class | Deadline | Idempotency key | Refuses |
 //! |---|---|---|---|---|
 //! | `sentinel-call.unit_start` (`unit.start` of `spira-dwarf-<rune>-<now>` running `dwarf --home <home> <rune>`, props from `call_argv` `call.rs:519-533`) | unit | 10 s (unverified) | unit name | world halted/draining, skew, capacity paused/unknown, rune not on roster, `dwarf` not resolvable (`call.rs:680`) |
-//! | `sentinel-call.preempt` (stop youngest lane dwarf; today `slay.sh --bead` `call.rs:451-462`) | unit (`unit.stop`) | 30 s (unverified) | `(bead, express)` | no lane dwarf; no task rune can take the slot (`call.rs:439-445`) |
+//! | `sentinel-call.preempt` (stop youngest reactive dwarf; today `slay.sh --bead` `call.rs:451-462`) | unit (`unit.stop`) | 30 s (unverified) | `(bead, express)` | no reactive dwarf; no task rune can take the slot (`call.rs:439-445`) |
 //! | `sentinel-call.preempt_log` (append `lane-preemptions`, `call.rs:459-462`) | host | 1 s | `(bead, express)` | — |
 //! | `sentinel-call.metric` (otel `call` event, `call.rs:704`) | host | 1 s | unit name | — |
 //!
@@ -85,7 +83,7 @@
 //! `spira-call-prod.service`/`.timer` and `world guard` ExecStartPre; every dwarf unit's
 //! `ExecStopPost=sentinel --call-only`; `call.lock`. Children retired: `spira-claim` ×4 verbs,
 //! `systemctl list-units`, `systemd-run`, `slay.sh`. Keys pinned (S10): `SPIRA_RUN`, `SPIRA_MAX_DWARVES`,
-//! `SPIRA_MAX_LIVE_DWARVES`, `SPIRA_LANES_MAX_LIVE`, `SPIRA_LANES`, `SPIRA_QUEUE_THROTTLE_OVERRIDE`,
+//! `SPIRA_MAX_LIVE_DWARVES`, `SPIRA_QUEUE_THROTTLE_OVERRIDE`,
 //! `SPIRA_CALL_LOCK_WAIT` (retired), `SPIRA_CALL`, `SPIRA_SYSTEMCTL`, `SPIRA_THROTTLE_STAMP`,
 //! `SPIRA_CAPACITY_PAUSE`, `SPIRA_SENTINEL_PASS_BUDGET_SECS` (`cfg.rs:239-247,442-476`), per-rune
 //! `RUNE_*` (`call.rs:256,268-272,299-305,520`). The CLI modes `--call`, `--call-argv`, `--world-gate`,
@@ -103,7 +101,7 @@
 //! retired: the refill is the dwarf's own `unit.ran` on this stream, and the minute calendar. `SPIRA_CALL`, `SPIRA_SYSTEMCTL`
 //! and `SPIRA_SENTINEL_PASS_BUDGET_SECS` are retired (the port replaces the first two, decide
 //! is O(runes)); the throttle stamp and the capacity pause are the paths under `SPIRA_RUN`
-//! the binary defaulted them to; `SPIRA_LANES` only named the lanes in a log line and is dropped.
+//! the binary defaulted them to.
 //!
 //! ## Reverse
 //!
@@ -147,7 +145,7 @@ pub const ACTS: &[(&str, u64)] = &[(UNIT_START, 10_000), (PREEMPT, 30_000), (PRE
 pub const EMITS: &[EventKindTag] = &[];
 pub const EFFECTS: &[&str] = &[OBSERVE, UNIT_START, PREEMPT, PREEMPT_LOG, METRIC];
 /// The pinned keys registered in `spira/conf.d`.
-pub const KEYS: &[&str] = &["SPIRA_RUN", "SPIRA_RUNES", "SPIRA_MAX_DWARVES", "SPIRA_MAX_LIVE_DWARVES", "SPIRA_LANES_MAX_LIVE", "SPIRA_LIMIT_CPU", "SPIRA_LIMIT_MEMORY", "SPIRA_LIMIT_NETWORK", "SPIRA_QUEUE_THROTTLE_OVERRIDE"];
+pub const KEYS: &[&str] = &["SPIRA_RUN", "SPIRA_RUNES", "SPIRA_MAX_DWARVES", "SPIRA_MAX_LIVE_DWARVES", "SPIRA_LIMIT_CPU", "SPIRA_LIMIT_MEMORY", "SPIRA_LIMIT_NETWORK", "SPIRA_QUEUE_THROTTLE_OVERRIDE"];
 /// Keys the contract pins that `spira/conf.d` does not register: none. The five the contract
 /// listed are retired or are paths under `SPIRA_RUN` (the module doc, "The port").
 pub const UNREGISTERED: &[&str] = &[];
@@ -172,7 +170,7 @@ pub enum Capacity {
     Unknown,
 }
 
-/// One live dwarf unit, for the youngest-lane-dwarf preemption.
+/// One live dwarf unit, for the youngest-reactive-dwarf preemption.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LiveUnit {
     pub unit: String,
@@ -181,11 +179,10 @@ pub struct LiveUnit {
     pub started_ms: u64,
 }
 
-/// A rune's own call settings (`RUNE_LANE`, `RUNE_SINGLE_FLIGHT`, `RUNE_ELASTIC`, `RUNE_USES`, `RUNE_REACTIVE`).
+/// A rune's own call settings (`RUNE_SINGLE_FLIGHT`, `RUNE_ELASTIC`, `RUNE_USES`, `RUNE_REACTIVE`).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RuneCfg {
-    pub lane: bool,
     pub single_flight: bool,
     pub elastic: bool,
     pub uses: Vec<String>,
@@ -195,7 +192,7 @@ pub struct RuneCfg {
 impl Default for RuneCfg {
     /// `rune_get`'s own defaults: a task rune, not single-flight, not elastic.
     fn default() -> Self {
-        RuneCfg { lane: false, single_flight: false, elastic: false, uses: vec![], reactive: false }
+        RuneCfg { single_flight: false, elastic: false, uses: vec![], reactive: false }
     }
 }
 
@@ -217,14 +214,13 @@ pub struct Snapshot {
     pub capacity: Capacity,
     pub live_by_rune: BTreeMap<String, u32>,
     pub ready_by_rune: BTreeMap<String, Option<u32>>,
-    /// `None` when the machine could not answer: the lanes yield.
+    /// `None` when the machine could not answer: the reactive runes yield.
     pub urgent: Option<Vec<UrgentBead>>,
     pub express_ready: Option<u32>,
     pub throttle: bool,
-    pub lane_dwarves: Vec<LiveUnit>,
-    /// The fleet ceiling `SPIRA_MAX_LIVE_DWARVES` and lane spill `SPIRA_LANES_MAX_LIVE`, as pinned.
+    pub reactive_dwarves: Vec<LiveUnit>,
+    /// The fleet ceiling `SPIRA_MAX_LIVE_DWARVES`, as pinned.
     pub max_live: Option<u32>,
-    pub lanes_max_live: Option<u32>,
     /// The `build-disk` limit `SPIRA_MAX_DWARVES`, as pinned.
     pub max_dwarves: Option<u32>,
     /// The limits of the other bound classes (`cpu`, `memory`, `network`); an unset one is absent.
@@ -300,14 +296,13 @@ pub enum LegTrigger {
 
 pub static LEG_TABLE: &[(Leg, LegTrigger, Leg)] = &[(Leg::Started, LegTrigger::StartOk, Leg::Running), (Leg::Started, LegTrigger::StartFailed, Leg::Ran), (Leg::Running, LegTrigger::UnitRan, Leg::Ran)];
 
-/// Carried between ticks: the machine, the lane rotation, and every unit started with no
+/// Carried between ticks: the machine and every unit started with no
 /// `unit.ran` yet (unit name → rune); `refusal` is the last gate reason noted, so a refusal is
 /// noted only when it changes.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Carry {
     pub state: State,
-    pub lane_last: Option<String>,
     pub in_flight: BTreeMap<String, String>,
     pub refusal: Option<String>,
     /// Since when a task slot has been open on every pass; `None` while none is.
@@ -331,24 +326,23 @@ pub fn step_leg(leg: Leg, event: LegTrigger) -> Result<Leg, String> {
     moved(LEG_TABLE, leg, event)
 }
 
-/// The world `sentinel::plan` reads, from the snapshot and the carried lane rotation.
-pub fn call_world(carry: &Carry, snap: &Snapshot) -> plan::CallWorld {
+/// The world `sentinel::plan` reads, from the snapshot.
+pub fn call_world(snap: &Snapshot) -> plan::CallWorld {
     let roster: Vec<String> = if snap.roster.is_empty() { snap.ready_by_rune.keys().cloned().collect() } else { snap.roster.clone() };
-    let (mut task, mut lanes) = (vec![], vec![]);
+    let (mut task, mut reactive) = (vec![], vec![]);
     for name in roster {
         let cfg = snap.runes.get(&name).cloned().unwrap_or_default();
         let rune = plan::Rune {
             live: i64::from(snap.live_by_rune.get(&name).copied().unwrap_or(0)),
             ready: snap.ready_by_rune.get(&name).copied().flatten().map(i64::from),
-            lane: cfg.lane,
             single_flight: cfg.single_flight,
             elastic: cfg.elastic,
             uses: cfg.uses,
             reactive: cfg.reactive,
             name,
         };
-        if rune.lane {
-            lanes.push(rune);
+        if rune.reactive {
+            reactive.push(rune);
         } else {
             task.push(rune);
         }
@@ -366,16 +360,14 @@ pub fn call_world(carry: &Carry, snap: &Snapshot) -> plan::CallWorld {
             Capacity::Unknown => plan::Capacity::Unknown,
         },
         task,
-        lanes,
+        reactive,
         other_live: i64::from(snap.other_live),
         limits: snap.max_dwarves.map(|n| (plan::BUILD_DISK.to_string(), n)).into_iter().chain(snap.class_limits.iter().map(|(c, n)| (c.clone(), *n))).map(|(c, n)| (c, i64::from(n))).collect(),
         max_live_dwarves: snap.max_live.map(i64::from),
-        lanes_max_live: snap.lanes_max_live.map(i64::from),
         throttled: snap.throttle,
         express_ready: snap.express_ready.is_some_and(|n| n > 0),
         urgent: snap.urgent.as_ref().map(|u| u.iter().map(|b| plan::Urgent { id: b.id.clone(), p0: b.p0, express: b.express }).collect()),
-        lane_last: carry.lane_last.clone().unwrap_or_default(),
-        lane_dwarves: snap.lane_dwarves.iter().map(|d| plan::LaneDwarf { lane: d.rune.clone(), bead: d.bead.clone(), started_ms: d.started_ms }).collect(),
+        reactive_dwarves: snap.reactive_dwarves.iter().map(|d| plan::ReactiveDwarf { rune: d.rune.clone(), bead: d.bead.clone(), started_ms: d.started_ms }).collect(),
     }
 }
 
@@ -390,7 +382,7 @@ pub struct Start {
 /// What a `preempt` act asks the runner to stop, and its log line.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Preempt {
-    pub lane: String,
+    pub rune: String,
     pub bead: String,
     pub express: String,
     pub at_ms: u64,
@@ -398,13 +390,10 @@ pub struct Preempt {
 
 /// The calls (`unit_start` per rune) and at most one preemption, from the snapshot alone.
 pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Act>) {
-    let p = plan::plan(&call_world(carry, snap));
+    let p = plan::plan(&call_world(snap));
     let mut next = carry.clone();
     next.state = State::Idle;
     next.in_flight.retain(|unit, _| snap.live_units.contains(unit));
-    if let Some(l) = &p.lane_last {
-        next.lane_last = Some(l.clone());
-    }
     next.refusal = p.refusal.clone();
     next.room_since_ms = if p.task_room == Some(0) { None } else { carry.room_since_ms.or(Some(snap.now_ms)) };
     next.room_at_ms = Some(snap.now_ms);
@@ -412,7 +401,7 @@ pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Act>) {
     let mut acts = vec![];
     if let Some(x) = &p.preempt {
         let key = format!("{}:{}", x.bead, x.express);
-        let input = serde_json::to_string(&Preempt { lane: x.lane.clone(), bead: x.bead.clone(), express: x.express.clone(), at_ms: snap.now_ms }).unwrap_or_default();
+        let input = serde_json::to_string(&Preempt { rune: x.rune.clone(), bead: x.bead.clone(), express: x.express.clone(), at_ms: snap.now_ms }).unwrap_or_default();
         acts.push(Act::new(PREEMPT, &key).with_input(&input));
         acts.push(Act::new(PREEMPT_LOG, &key).with_input(input));
     }
@@ -465,7 +454,7 @@ impl SentinelCall {
     }
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("state"), runtime::rows::Part::Field("lane_last"), runtime::rows::Part::Field("refusal"), runtime::rows::Part::Field("room_since_ms"), runtime::rows::Part::Field("room_at_ms"), runtime::rows::Part::Field("bound"), runtime::rows::Part::Map { name: "in_flight", drop: &[] }];
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("state"), runtime::rows::Part::Field("refusal"), runtime::rows::Part::Field("room_since_ms"), runtime::rows::Part::Field("room_at_ms"), runtime::rows::Part::Field("bound"), runtime::rows::Part::Map { name: "in_flight", drop: &[] }];
 
 impl Handler for SentinelCall {
     fn interests(&self) -> &[EventKindTag] {
@@ -652,7 +641,6 @@ pub fn observe(e: &Effects, input: &str) -> Result<String, String> {
         .iter()
         .map(|f| {
             let cfg = RuneCfg {
-                lane: !get(f, "RUNE_LANE", "").is_empty(),
                 single_flight: get(f, "RUNE_SINGLE_FLIGHT", "0") == "1",
                 elastic: get(f, "RUNE_ELASTIC", "0") == "1",
                 uses: uses.remove(f).unwrap_or_default(),
@@ -664,7 +652,6 @@ pub fn observe(e: &Effects, input: &str) -> Result<String, String> {
     let mut snap = Snapshot { world: world_of(&run), skew: skew(), capacity: capacity_of(&run), roster: roster.clone(), runes, now_ms: now_ms(), ..Snapshot::default() };
     snap.max_dwarves = pinned_num(pinned, "SPIRA_MAX_DWARVES");
     snap.max_live = pinned_num(pinned, "SPIRA_MAX_LIVE_DWARVES");
-    snap.lanes_max_live = pinned_num(pinned, "SPIRA_LANES_MAX_LIVE");
     for (class, key) in [("cpu", "SPIRA_LIMIT_CPU"), ("memory", "SPIRA_LIMIT_MEMORY"), ("network", "SPIRA_LIMIT_NETWORK")] {
         if let Some(n) = pinned_num(pinned, key) {
             snap.class_limits.insert(class.to_string(), n);
@@ -685,7 +672,7 @@ pub fn observe(e: &Effects, input: &str) -> Result<String, String> {
         };
         snap.ready_by_rune.insert(f.clone(), n);
     }
-    let task: Vec<String> = roster.iter().filter(|f| !snap.runes[*f].lane).cloned().collect();
+    let task: Vec<String> = roster.iter().filter(|f| !snap.runes[*f].reactive).cloned().collect();
     snap.urgent = if task.is_empty() {
         Some(vec![])
     } else {
@@ -712,17 +699,17 @@ pub fn observe(e: &Effects, input: &str) -> Result<String, String> {
     });
     snap.express_ready = Some(u32::from(express));
     snap.throttle = plan::ck7_throttled(run.join("queue-throttled").is_file(), pinned.get("SPIRA_QUEUE_THROTTLE_OVERRIDE").map_or("", String::as_str));
-    let lane_names: Vec<(String, String)> = roster.iter().filter(|f| snap.runes[*f].lane).map(|f| (f.clone(), get(f, "RUNE_NAME", f))).collect();
+    let reactive_names: Vec<(String, String)> = roster.iter().filter(|f| snap.runes[*f].reactive).map(|f| (f.clone(), get(f, "RUNE_NAME", f))).collect();
     for entry in std::fs::read_dir(&run).into_iter().flatten().flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
         let Some(stem) = name.strip_prefix("dwarf-").and_then(|n| n.strip_suffix(".pid")) else { continue };
-        let Some((lane, unit)) = lane_names.iter().find(|(_, u)| stem.starts_with(&format!("{u}-"))) else { continue };
+        let Some((rune, unit)) = reactive_names.iter().find(|(_, u)| stem.starts_with(&format!("{u}-"))) else { continue };
         let bead = stem[unit.len() + 1..].to_string();
         if bead.starts_with("sweep-") || !sentinel::dwarf_alive(&entry.path()) {
             continue;
         }
         let started_ms = entry.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_millis() as u64);
-        snap.lane_dwarves.push(LiveUnit { unit: format!("dwarf-{stem}"), rune: lane.clone(), bead, started_ms });
+        snap.reactive_dwarves.push(LiveUnit { unit: format!("dwarf-{stem}"), rune: rune.clone(), bead, started_ms });
     }
     serde_json::to_string(&snap).map_err(|e| e.to_string())
 }
@@ -776,13 +763,13 @@ pub fn dwarf_props(timeout_secs: &str) -> Result<units::UnitProps, String> {
     Ok(units::UnitProps { start_timeout_ms: Some(secs * 1000), io_class: Some("idle".into()), io_weight: Some(10), ..units::UnitProps::default() })
 }
 
-/// `sentinel-call.preempt`: stop the unit the lane dwarf on `bead` runs in, found by the pid
+/// `sentinel-call.preempt`: stop the unit the reactive dwarf on `bead` runs in, found by the pid
 /// its pidfile names.
 pub fn preempt(e: &Effects, input: &str) -> Result<String, String> {
     let p: Preempt = serde_json::from_str(input).map_err(|e| format!("{PREEMPT}: {e}"))?;
     let unitp = e.units.as_deref().ok_or("no unit manager configured")?;
     let home = spira_config::resolve::locate_home_for_process()?;
-    let unit_name = spira_config::runes::rune_get(&home, &p.lane, "RUNE_NAME", &p.lane);
+    let unit_name = spira_config::runes::rune_get(&home, &p.rune, "RUNE_NAME", &p.rune);
     let pidfile = e.world.run_dir.join(format!("dwarf-{unit_name}-{}.pid", p.bead));
     let pid: u32 = std::fs::read_to_string(&pidfile).map_err(|err| format!("{PREEMPT}: {}: {err}", pidfile.display()))?.split_whitespace().next().and_then(|s| s.parse().ok()).ok_or_else(|| format!("{PREEMPT}: {} names no pid", pidfile.display()))?;
     let mut found = vec![];
@@ -791,7 +778,7 @@ pub fn preempt(e: &Effects, input: &str) -> Result<String, String> {
     }
     let unit = found.into_iter().find(|d| d.main_pid == Some(pid)).ok_or_else(|| format!("{PREEMPT}: no live unit runs pid {pid} for {}", p.bead))?;
     unitp.stop(&units::UnitHandle::named(&unit.name)).map_err(|e| e.to_string())?;
-    Ok(format!("preempted a {} lane dwarf on {} for P0 express {}", p.lane, p.bead, p.express))
+    Ok(format!("preempted a {} reactive dwarf on {} for P0 express {}", p.rune, p.bead, p.express))
 }
 
 /// `sentinel-call.preempt_log`: one line in `lane-preemptions`, as the binary wrote it.
@@ -800,7 +787,7 @@ pub fn preempt_log(e: &Effects, input: &str) -> Result<String, String> {
     let p: Preempt = serde_json::from_str(input).map_err(|e| format!("{PREEMPT_LOG}: {e}"))?;
     let path = e.world.run_dir.join("lane-preemptions");
     let mut f = std::fs::OpenOptions::new().create(true).append(true).open(&path).map_err(|err| format!("{}: {err}", path.display()))?;
-    writeln!(f, "{}\t{}\t{}\t{}", p.at_ms / 1000, p.lane, p.bead, p.express).map_err(|err| err.to_string())?;
+    writeln!(f, "{}\t{}\t{}\t{}", p.at_ms / 1000, p.rune, p.bead, p.express).map_err(|err| err.to_string())?;
     Ok(path.display().to_string())
 }
 
