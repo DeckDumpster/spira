@@ -183,6 +183,7 @@ struct FakeLib {
     requeues: Cell<u32>,
     incident_out: RefCell<Option<Result<String, i32>>>,
     push_err: RefCell<Option<String>>,
+    close_err: RefCell<Option<String>>,
 }
 
 impl FakeLib {
@@ -220,6 +221,13 @@ impl Lib for FakeLib {
             Some(Err(rc)) => Err(format!("exit {rc}")),
             Some(Ok(printed)) => Ok(printed.lines().map(str::trim).next_back().unwrap_or("").to_string()),
             None => Ok("sp-inc1".into()),
+        }
+    }
+    fn close_incident(&self, id: &str, evidence: &str) -> Result<(), String> {
+        self.rec(format!("close_incident {id} {evidence}"));
+        match self.close_err.borrow().clone() {
+            Some(e) => Err(e),
+            None => Ok(()),
         }
     }
     fn ask_rebase_loop(&self, a: &[&str]) {
@@ -2558,4 +2566,100 @@ fn a_member_gated_before_its_cut_is_not_gated_again_in_the_round() {
     h.beads.batched.borrow_mut().insert("sp-a".into());
     h.run();
     assert!(crate::gateq::GateQueue::new(&h.s.run).queued().is_empty());
+}
+
+const FAIL_OUT: &str = "gate: VERDICT=FAIL reason=suite-red branch=b repo=spira suite=test-x.sh\n";
+const PASS_OUT: &str = "gate: VERDICT=PASS\n";
+const UNJUDGED_OUT: &str = "gate: VERDICT=NO_VERDICT reason=deny-list branch=b repo=spira suite=- (x)\n";
+
+fn h_with_unjudged_incident() -> H {
+    let mut h = h_worker(LandMode::Queue);
+    h.s.noverdict_max = 1;
+    h.closed("sp-a", "t1");
+    file_verdict(&h, "sp-a", "t1", 75, UNJUDGED_OUT);
+    h.run();
+    assert!(h.lib.has("incident gate-unjudged spira"), "{:?}", h.lib.calls.borrow());
+    assert_eq!(h.lib.count("close_incident"), 0);
+    h
+}
+
+fn verdict_on_sp_b(h: &H, rc: i32, out: &str) {
+    h.closed("sp-b", "t2");
+    file_verdict(h, "sp-b", "t2", rc, out);
+    h.run();
+}
+
+#[test]
+fn a_passing_verdict_closes_the_repos_gate_unjudged_incident_once() {
+    let h = h_with_unjudged_incident();
+    verdict_on_sp_b(&h, 0, PASS_OUT);
+    assert_eq!(h.lib.count("close_incident"), 1, "{:?}", h.lib.calls.borrow());
+    let c = h.lib.find("close_incident sp-inc1 ");
+    assert!(c.contains("spira/sp-b") && c.contains("t2") && c.contains("pass"), "{c}");
+    h.run();
+    assert_eq!(h.lib.count("close_incident"), 1);
+}
+
+#[test]
+fn a_failing_verdict_closes_the_repos_gate_unjudged_incident_once() {
+    let h = h_with_unjudged_incident();
+    verdict_on_sp_b(&h, 1, FAIL_OUT);
+    assert_eq!(h.lib.count("close_incident"), 1, "{:?}", h.lib.calls.borrow());
+    let c = h.lib.find("close_incident sp-inc1 ");
+    assert!(c.contains("spira/sp-b") && c.contains("t2") && c.contains("fail"), "{c}");
+    h.run();
+    assert_eq!(h.lib.count("close_incident"), 1);
+}
+
+#[test]
+fn a_verdict_in_another_repo_leaves_the_incident_open() {
+    let mut h = h_with_unjudged_incident();
+    h.repos.push(repo_row(&h.dir, "other", LandMode::Queue));
+    let mut b = h.bead("sp-o", "closed", &[]);
+    b.repo = "other".into();
+    h.beads.rows.borrow_mut().insert("sp-o".into(), b);
+    h.git.add("spira/sp-o", "t3");
+    let q = crate::gateq::GateQueue::new(&h.s.run);
+    let job = crate::gateq::Job::new("other", "spira/sp-o", "sp-o", "t3", false);
+    q.enqueue(&job).unwrap();
+    q.claim(0).unwrap();
+    q.complete(0, &crate::gateq::Done { job, run: GateRun::parse(0, PASS_OUT.into()), started_ms: 1, finished_ms: 2, gate: String::new() }).unwrap();
+    h.run();
+    assert!(h.lc.certified.borrow().iter().any(|c| c.starts_with("sp-o t3")), "{:?}", h.lc.certified.borrow());
+    assert_eq!(h.lib.count("close_incident"), 0, "{:?}", h.lib.calls.borrow());
+}
+
+#[test]
+fn a_base_fail_verdict_closes_the_repos_gate_unjudged_incident_once() {
+    let h = h_with_unjudged_incident();
+    fs::create_dir_all(h.s.incident.parent().unwrap()).unwrap();
+    fs::write(&h.s.incident, "").unwrap();
+    verdict_on_sp_b(&h, 76, "--- base\ntest-x.sh RED\ngate: VERDICT=BASE_FAIL reason=base-red branch=b repo=spira suite=test-x.sh\n");
+    assert_eq!(h.lib.count("close_incident"), 1, "{:?}", h.lib.calls.borrow());
+    let c = h.lib.find("close_incident sp-inc1 ");
+    assert!(c.contains("spira/sp-b") && c.contains("t2") && c.contains("base-fail"), "{c}");
+}
+
+#[test]
+fn a_no_verdict_run_never_closes_the_incident() {
+    let h = h_with_unjudged_incident();
+    h.clock.t.set(h.clock.t.get() + h.s.gate_backoff as u64 + 1);
+    verdict_on_sp_b(&h, 75, UNJUDGED_OUT);
+    assert_eq!(h.lib.count("close_incident"), 0, "{:?}", h.lib.calls.borrow());
+}
+
+#[test]
+fn a_close_that_fails_keeps_the_incident_for_the_next_verdict() {
+    let h = h_with_unjudged_incident();
+    *h.lib.close_err.borrow_mut() = Some("store down".into());
+    verdict_on_sp_b(&h, 0, PASS_OUT);
+    assert_eq!(h.lib.count("close_incident"), 1);
+    assert!(h.logged("store down"));
+    *h.lib.close_err.borrow_mut() = None;
+    h.closed("sp-c", "t3");
+    file_verdict(&h, "sp-c", "t3", 1, FAIL_OUT);
+    h.run();
+    assert_eq!(h.lib.count("close_incident"), 2, "{:?}", h.lib.calls.borrow());
+    h.run();
+    assert_eq!(h.lib.count("close_incident"), 2);
 }
