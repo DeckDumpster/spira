@@ -399,9 +399,8 @@ impl World for Real {
     }
 
     fn deny_list(&self, at: u64) -> Result<String, String> {
-        // batch-job: a registry read, bounded by the registry's own busy timeout
         let bin = spira_config::release_env::tool("test-registry")?;
-        let o = Command::new(bin)
+        let o = spira_config::bounded::bounded(&bin)
             .args(["deny-list", "--at", &at.to_string()])
             .stdin(Stdio::null())
             .output()
