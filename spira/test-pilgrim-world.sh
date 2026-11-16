@@ -26,12 +26,12 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 143' INT TERM
 
-simenv() { env "${NOLOC[@]}" TMPDIR="$T" SPIRA_SIM_RELEASE="$SPIRA_RELEASE" SPIRA_IN_TESTENV=1 "$SIM" "$@"; }
+SIMENV=(env "${NOLOC[@]}" TMPDIR="$T" SPIRA_SIM_RELEASE="$SPIRA_RELEASE" SPIRA_IN_TESTENV=1)
 repo="$T/repo"
 "$SIM" world fixture "$HERE/.." "$repo" || bail "fixture repo failed"
 export SPIRA_SIM_CACHE="${SPIRA_SIM_CACHE:-/tmp/sim-seed-cache}"
-(cd "$repo" && timeout 280 simenv world up "$T/pilgrim" --pilgrim) >"$T/up1.out" 2>&1 || bail "pilgrim world up: $(cat "$T/up1.out")" # batch-job: a whole world
-(cd "$repo" && timeout 280 simenv world up "$T/plain") >"$T/up2.out" 2>&1 || bail "plain world up: $(cat "$T/up2.out")" # batch-job: a whole world
+(cd "$repo" && timeout 280 "${SIMENV[@]}" "$SIM" world up "$T/pilgrim" --pilgrim) >"$T/up1.out" 2>&1 || bail "pilgrim world up: $(cat "$T/up1.out")" # batch-job: a whole world
+(cd "$repo" && timeout 280 "${SIMENV[@]}" "$SIM" world up "$T/plain") >"$T/up2.out" 2>&1 || bail "plain world up: $(cat "$T/up2.out")" # batch-job: a whole world
 
 in_world() { local w="$1"; shift; env "${NOLOC[@]}" "$SIM" world exec "$w" "$*"; } # batch-job: one tool call in a world
 pilgrim_work() { # pilgrim_work <world> <verb and args...>
