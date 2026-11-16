@@ -45,12 +45,9 @@ fn run_sort_rows(args: &[String]) -> ExitCode {
     let mut prio_file: Option<String> = None;
     let mut i = 0;
     while i < args.len() {
-        match args[i].as_str() {
-            "--prio-file" => {
-                i += 1;
-                prio_file = args.get(i).cloned();
-            }
-            _ => {}
+        if args[i] == "--prio-file" {
+            i += 1;
+            prio_file = args.get(i).cloned();
         }
         i += 1;
     }

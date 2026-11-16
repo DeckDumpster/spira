@@ -210,7 +210,6 @@ SPIRA_DWARF spira/bd-close-unacked-guard.sh
 SPIRA_DWARF spira/hooks/dwarf-fence.sh
 SPIRA_DWARF spira/hooks/session.sh
 SPIRA_DWARF spira/lib.sh
-SPIRA_DWARF testenv/src/suites/ports.rs
 SPIRA_DWARF_CPU_QUOTA spira-config/src/convert.rs
 SPIRA_DWARF_OVERRIDE dwarf/src/restrict.rs
 SPIRA_DWARF_OVERRIDE spira/hooks/dwarf-fence.sh
@@ -549,7 +548,6 @@ SPIRA_LOOM_BIN spira-config/src/convert.rs
 SPIRA_LOOM_PROBE spira/ready.sh
 SPIRA_LOOM_TICK spira/loom.sh
 SPIRA_MAIL_ALLOW_BLOCKING mail/src/env.rs
-SPIRA_MAIL_CMD testenv/src/suites/real.rs
 SPIRA_MAIL_FROM archivist/src/seam.rs
 SPIRA_MAIL_FROM dwarf/src/run.rs
 SPIRA_MAIL_FROM mail/src/env.rs
