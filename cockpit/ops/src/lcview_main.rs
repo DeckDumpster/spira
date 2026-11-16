@@ -721,6 +721,15 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_store_read_that_found_no_store_running_marks_the_snapshot_and_a_fault_does_not() {
+        let mut s = super::Snapshot::default();
+        super::store_failed(&mut s, super::LcError::Fault("spira-lc list --live: exit 2 x".into()));
+        assert!(!s.not_running && s.store_errors.len() == 1);
+        super::store_failed(&mut s, super::LcError::NotRunning("store not running: nothing was sent".into()));
+        assert!(s.not_running && s.store_errors.len() == 2 && s.errors.is_empty());
+    }
+
     fn removed_calls(src: &str) -> Vec<&'static str> {
         let code: String = src.split("#[cfg(test)]").next().unwrap_or("").lines().filter(|l| !l.trim_start().starts_with("//")).collect::<Vec<_>>().join("\n");
         let mut found = Vec::new();
