@@ -546,6 +546,8 @@ exits 0.
   block a round either, so a round never ejects on them). `SKIPPED`, `SKIP-REQ`, `UNREACHED`,
   `DEFERRED` or no line proves nothing: NO_VERDICT `reason=reentry-unproven suite=<first>`,
   no cache entry, no certificate. A red is an ordinary red (exit 1) and goes to attribution.
+  A testenv verdict-cache hit replays each suite's recorded line before its verdict, and those lines
+  count like a run's: a cached `ok` proves, a cached `SKIPPED` proves nothing.
 * **The base trial** runs the same re-entry phase on the landing ref, so a named suite that is
   red on the base too is `base-red`, not the branch's, as for any other red.
 * **Admission**: a gate with named suites takes a slot even when `SPIRA_GATE_SUITES=off`,
