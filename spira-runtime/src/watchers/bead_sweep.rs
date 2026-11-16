@@ -52,6 +52,9 @@ pub struct Row {
     pub held_at: Option<f64>,
     /// The claim rule's verdict on this row, as the `list` read computed it.
     pub claim: Option<String>,
+    /// The `list` row's `claim` is null: the record's claim inputs were never written.
+    #[serde(default)]
+    pub claim_unset: bool,
 }
 
 /// The call scheduler's judgement of task room: since when a slot has been open, and when it last judged.
@@ -118,12 +121,17 @@ pub const REPAIR_BYTES: usize = 16 * 1024;
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Repair {
     pub ids: Vec<String>,
+    /// READY/REWORK records whose claim inputs were never written.
+    #[serde(default)]
+    pub claims: Vec<String>,
 }
 
 /// What the repair effect hands back: the beads it gave a row.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Repaired {
     pub ids: Vec<String>,
+    #[serde(default)]
+    pub claimed: Vec<String>,
 }
 
 /// Carried between passes: the SUSPECT lines already announced and not yet cleared.
@@ -235,6 +243,11 @@ fn cut(s: &str, n: usize) -> String {
     s.chars().take(n).collect()
 }
 
+/// The READY/REWORK records whose claim inputs were never written.
+pub fn claim_unset(snap: &Snapshot) -> Vec<String> {
+    snap.rows.iter().filter(|r| r.claim_unset && matches!(r.state.as_str(), "READY" | "REWORK")).map(|r| r.id.clone()).collect()
+}
+
 pub fn rowless(ask_label: &str, snap: &Snapshot) -> Vec<Rowless> {
     let rows: BTreeSet<&str> = snap.rows.iter().map(|r| r.id.as_str()).collect();
     let term: BTreeSet<&str> = snap.terminal.iter().map(|(i, _)| i.as_str()).collect();
@@ -255,7 +268,7 @@ fn is_ours(ask_label: &str, b: &Bead, rows: &BTreeSet<&str>, term: &BTreeSet<&st
 }
 
 /// The SUSPECT lines of one pass, in the order the sweep prints them.
-pub fn suspects(p: &BeadSweep, snap: &Snapshot, room: Option<&Room>, now: f64) -> Vec<Suspect> {
+pub fn suspects(p: &BeadSweep, snap: &Snapshot, room: Option<&Room>, claimed: &[String], now: f64) -> Vec<Suspect> {
     let home = format!("repo:{}", p.home_repo);
     let rows: BTreeMap<&str, &Row> = snap.rows.iter().map(|r| (r.id.as_str(), r)).collect();
     let row_ids: BTreeSet<&str> = rows.keys().copied().collect();
@@ -291,8 +304,11 @@ pub fn suspects(p: &BeadSweep, snap: &Snapshot, room: Option<&Room>, now: f64) -
             || st == "CERTIFIED" && !labels.contains(&home) && queued_behind_batch;
         let carrier = snap.carried.iter().find(|(x, ms)| ms.iter().any(|m| m == i) && rows.contains_key(x.as_str())).map(|(x, _)| x.as_str());
         let mut key_tail: Option<String> = None;
+        let unjudged = matches!(st, "READY" | "REWORK") && r.claim.as_deref() == Some("cannot-tell") && !claimed.iter().any(|c| c == i);
         let suspect = if labels.contains(&p.ask_label) {
             None
+        } else if unjudged {
+            Some("CLAIM UNJUDGED (claim view cannot tell)".to_string())
         } else if has("poison") {
             Some(format!("POISONED ({why})"))
         } else if has("ask") {
@@ -370,14 +386,19 @@ fn unclaimed_rework(p: &BeadSweep, r: &Row, room: Option<&Room>, why: &str, now:
     stale(r.since.unwrap_or(now).max(since)).then(|| format!("{head} ({why})"))
 }
 
-pub fn decide(p: &BeadSweep, carry: &Carry, snap: &Snapshot, room: Option<&Room>, repaired: &[String], now: f64) -> (Carry, Vec<String>) {
+pub fn decide(p: &BeadSweep, carry: &Carry, snap: &Snapshot, room: Option<&Room>, repaired: &Repaired, now: f64) -> (Carry, Vec<String>) {
     let mut say = vec![];
-    for id in repaired {
+    for id in &repaired.claimed {
+        if let Some(r) = snap.rows.iter().find(|r| &r.id == id) {
+            say.push(format!("REPAIRED {id} {} bead had no claim inputs; wrote them", r.state));
+        }
+    }
+    for id in &repaired.ids {
         if let Some(b) = snap.content.iter().find(|b| &b.id == id) {
             say.push(format!("REPAIRED {id} open bead had no lifecycle row; created it (priority {}, repo {})", b.priority, b.labels.iter().find_map(|l| l.strip_prefix("repo:")).unwrap_or("none")));
         }
     }
-    let now_set: Vec<Suspect> = suspects(p, snap, room, now).into_iter().filter(|s| !repaired.iter().any(|id| s.line.starts_with(&format!("SUSPECT {id} ROWLESS")))).collect();
+    let now_set: Vec<Suspect> = suspects(p, snap, room, &repaired.claimed, now).into_iter().filter(|s| !repaired.ids.iter().any(|id| s.line.starts_with(&format!("SUSPECT {id} ROWLESS")))).collect();
     let mut next = Carry::default();
     for s in now_set {
         if !carry.seen.contains(&s.key) {
@@ -401,7 +422,7 @@ impl BeadSweep {
         super::carried(view, stream, STATE)
     }
 
-    fn finish(&self, ctx: &Ctx, view: &Projection, ev: &Event, snap: &Snapshot, repaired: &[String]) -> Vec<Command> {
+    fn finish(&self, ctx: &Ctx, view: &Projection, ev: &Event, snap: &Snapshot, repaired: &Repaired) -> Vec<Command> {
         let now = ev.at as f64 / 1000.0;
         let called: crate::tasks::a::sentinel_call::Carry = crate::tasks::a::kit::carry(&crate::tasks::a::sentinel_call::SHAPE, view);
         let room = called.room_at_ms.map(|at_ms| Room { since_ms: called.room_since_ms, at_ms });
@@ -435,7 +456,7 @@ impl Handler for BeadSweep {
                 let Ok(snap) = serde_json::from_str::<Snapshot>(&ev.kind.body) else { return vec![] };
                 let repaired = super::answered_spec(view, ev).map(|s| s.input).filter(|i| !i.is_empty());
                 if let Some(ids) = repaired {
-                    return self.finish(ctx, view, ev, &snap, &serde_json::from_str::<Repaired>(&ids).unwrap_or_default().ids);
+                    return self.finish(ctx, view, ev, &snap, &serde_json::from_str::<Repaired>(&ids).unwrap_or_default());
                 }
                 let mut spent = "{\"ids\":[]}".len();
                 let ids: Vec<String> = rowless(&self.ask_label, &snap).into_iter().take(REPAIR_BATCH).map(|r| r.id).take_while(|id| {
@@ -443,10 +464,19 @@ impl Handler for BeadSweep {
                     let first = spent == "{\"ids\":[]}".len();
                     (next <= REPAIR_BYTES || first).then(|| spent = next).is_some()
                 }).collect();
-                if ids.is_empty() {
-                    return self.finish(ctx, view, ev, &snap, &[]);
+                let mut claims = vec![];
+                for id in claim_unset(&snap).into_iter().take(REPAIR_BATCH.saturating_sub(ids.len())) {
+                    let next = spent + serde_json::to_string(&id).map_or(0, |j| j.len()) + 1;
+                    if next > REPAIR_BYTES {
+                        break;
+                    }
+                    spent = next;
+                    claims.push(id);
                 }
-                let input = serde_json::to_string(&Repair { ids }).unwrap_or_default();
+                if ids.is_empty() && claims.is_empty() {
+                    return self.finish(ctx, view, ev, &snap, &Repaired::default());
+                }
+                let input = serde_json::to_string(&Repair { ids, claims }).unwrap_or_default();
                 vec![Command::Effect(EffectSpec::keyed(REPAIR, format!("{NAME}:repair:{}", ev.at), input, DEADLINE_MS))]
             }
             Some(REPAIR) => match serde_json::from_str::<Repaired>(&ev.kind.body) {
@@ -478,7 +508,7 @@ mod tests {
     }
 
     fn said(snap: &Snapshot, room: Option<Room>) -> Vec<String> {
-        decide(&sweep(), &Carry::default(), snap, room.as_ref(), &[], NOW).1
+        decide(&sweep(), &Carry::default(), snap, room.as_ref(), &Repaired::default(), NOW).1
     }
 
     const ROW: &str = "SUSPECT sp-r REWORK UNCLAIMED REWORK over 5m (suites-failed)";
@@ -551,10 +581,10 @@ mod tests {
     fn an_old_hold_states_its_own_age_and_is_said_once() {
         let p = sweep();
         let snap = held(Some(NOW - 10_800.0));
-        let (c, say) = decide(&p, &Carry::default(), &snap, None, &[], NOW);
+        let (c, say) = decide(&p, &Carry::default(), &snap, None, &Repaired::default(), NOW);
         assert_eq!(say.len(), 1);
         assert!(say[0].contains("held 3h00m") && say[0].contains("no review date; set one with --review-by"), "{say:?}");
-        assert!(decide(&p, &c, &snap, None, &[], NOW + 1800.0).1.is_empty());
+        assert!(decide(&p, &c, &snap, None, &Repaired::default(), NOW + 1800.0).1.is_empty());
     }
 
     #[test]
@@ -584,9 +614,9 @@ mod tests {
     fn a_line_the_carry_already_holds_for_another_class_is_not_said_again() {
         let p = sweep();
         let snap = Snapshot { rows: vec![poisoned("sp-a")], ..Snapshot::default() };
-        let (c, _) = decide(&p, &Carry::default(), &snap, None, &[], 0.0);
+        let (c, _) = decide(&p, &Carry::default(), &snap, None, &Repaired::default(), 0.0);
         assert!(c.seen.contains("SUSPECT sp-a READY POISONED ()"));
-        assert!(decide(&p, &c, &snap, None, &[], 1800.0).1.is_empty());
+        assert!(decide(&p, &c, &snap, None, &Repaired::default(), 1800.0).1.is_empty());
     }
 
     fn held_for_review(v: &str) -> Snapshot {
@@ -615,12 +645,12 @@ mod tests {
     fn a_suspect_is_said_when_it_appears_not_while_it_stays_and_again_after_it_clears() {
         let p = sweep();
         let snap = Snapshot { rows: vec![poisoned("sp-a")], ..Snapshot::default() };
-        let (c, say) = decide(&p, &Carry::default(), &snap, None, &[], 0.0);
+        let (c, say) = decide(&p, &Carry::default(), &snap, None, &Repaired::default(), 0.0);
         assert_eq!(say, ["SUSPECT sp-a READY POISONED ()"]);
-        let (c, say) = decide(&p, &c, &snap, None, &[], 0.0);
+        let (c, say) = decide(&p, &c, &snap, None, &Repaired::default(), 0.0);
         assert!(say.is_empty());
-        let (c, _) = decide(&p, &c, &Snapshot::default(), None, &[], 0.0);
-        assert_eq!(decide(&p, &c, &snap, None, &[], 0.0).1.len(), 1);
+        let (c, _) = decide(&p, &c, &Snapshot::default(), None, &Repaired::default(), 0.0);
+        assert_eq!(decide(&p, &c, &snap, None, &Repaired::default(), 0.0).1.len(), 1);
     }
 
     #[test]
@@ -628,8 +658,8 @@ mod tests {
         let p = sweep();
         let bead = Bead { id: "sp-o".into(), status: "open".into(), priority: 2, ..Bead::default() };
         let snap = Snapshot { content: vec![bead], ..Snapshot::default() };
-        assert_eq!(decide(&p, &Carry::default(), &snap, None, &[], 0.0).1, ["SUSPECT sp-o ROWLESS open bead with no lifecycle row"]);
-        assert_eq!(decide(&p, &Carry::default(), &snap, None, &["sp-o".into()], 0.0).1, ["REPAIRED sp-o open bead had no lifecycle row; created it (priority 2, repo none)"]);
+        assert_eq!(decide(&p, &Carry::default(), &snap, None, &Repaired::default(), 0.0).1, ["SUSPECT sp-o ROWLESS open bead with no lifecycle row"]);
+        assert_eq!(decide(&p, &Carry::default(), &snap, None, &Repaired { ids: vec!["sp-o".into()], ..Repaired::default() }, 0.0).1, ["REPAIRED sp-o open bead had no lifecycle row; created it (priority 2, repo none)"]);
     }
 
     fn at(view: &mut Projection, id: &str, at: u64, kind: EventKind, cause: Option<&str>) -> Event {
@@ -674,7 +704,7 @@ mod tests {
         assert_eq!(serde_json::from_str::<Repair>(&repair.input).unwrap().ids.len(), 50);
 
         let req = at(&mut view, "r2", 1_001, EventKind::new(EFFECT_REQUESTED, &serde_json::json!({ "spec": repair, "deadline_at": 2 }).to_string()), Some("o1"));
-        let done = at(&mut view, "o2", 1_002, EventKind::new(EFFECT_SUCCEEDED, &serde_json::to_string(&Repaired { ids: vec!["sp-012999".into()] }).unwrap()), Some(&req.id.0));
+        let done = at(&mut view, "o2", 1_002, EventKind::new(EFFECT_SUCCEEDED, &serde_json::to_string(&Repaired { ids: vec!["sp-012999".into()], ..Repaired::default() }).unwrap()), Some(&req.id.0));
         let cmds = p.handle(&ctx, &view, &done);
         let [Command::Probe(look)] = &cmds[..] else { panic!("one more look") };
         assert!(look.input.len() < 8 * 1024);
@@ -694,5 +724,46 @@ mod tests {
         let content = (0..REPAIR_BATCH + 30).map(|i| Bead { id: format!("sp-{i}"), status: "open".into(), ..Bead::default() }).collect();
         let ids: Vec<String> = rowless(&p.ask_label, &Snapshot { content, ..Snapshot::default() }).into_iter().take(REPAIR_BATCH).map(|r| r.id).collect();
         assert_eq!(ids.len(), REPAIR_BATCH);
+    }
+
+    fn claim_row(state: &str, claim: Option<&str>, unset: bool) -> Snapshot {
+        Snapshot { rows: vec![Row { id: "sp-r".into(), state: state.into(), claim: claim.map(str::to_string), claim_unset: unset, ..Row::default() }], ..Snapshot::default() }
+    }
+
+    #[test]
+    fn a_ready_row_with_no_claim_inputs_asks_for_a_repair_naming_it() {
+        let p = sweep();
+        let snap = claim_row("READY", Some("cannot-tell"), true);
+        let (mut view, ctx) = (Projection::default(), Ctx::new(0, 0));
+        let tick = at(&mut view, "t", 1_000, EventKind::new(TICK, ""), None);
+        let [Command::Probe(observe), _] = &p.handle(&ctx, &view, &tick)[..] else { panic!("one look and the next tick") };
+        let req = at(&mut view, "r1", 1_000, EventKind::new(EFFECT_REQUESTED, &serde_json::json!({ "spec": observe, "deadline_at": 2 }).to_string()), Some("t"));
+        let seen = at(&mut view, "o1", 1_001, EventKind::new(EFFECT_SUCCEEDED, &serde_json::to_string(&snap).unwrap()), Some(&req.id.0));
+        let [Command::Effect(repair)] = &p.handle(&ctx, &view, &seen)[..] else { panic!("one repair") };
+        assert_eq!(repair.name, REPAIR);
+        let asked = serde_json::from_str::<Repair>(&repair.input).unwrap();
+        assert_eq!((asked.ids, asked.claims), (vec![], vec!["sp-r".to_string()]));
+    }
+
+    #[test]
+    fn a_claim_repair_is_announced_once_per_record() {
+        let snap = claim_row("READY", Some("claimable"), false);
+        let (_, say) = decide(&sweep(), &Carry::default(), &snap, None, &Repaired { claimed: vec!["sp-r".into()], ..Repaired::default() }, NOW);
+        assert_eq!(say, ["REPAIRED sp-r READY bead had no claim inputs; wrote them"]);
+    }
+
+    #[test]
+    fn a_ready_row_the_claim_view_cannot_judge_is_announced_on_the_first_pass_only() {
+        let snap = claim_row("READY", Some("cannot-tell"), false);
+        let (carry, say) = decide(&sweep(), &Carry::default(), &snap, None, &Repaired::default(), NOW);
+        assert_eq!(say, ["SUSPECT sp-r READY CLAIM UNJUDGED (claim view cannot tell)"]);
+        assert!(decide(&sweep(), &carry, &snap, None, &Repaired::default(), NOW).1.is_empty());
+    }
+
+    #[test]
+    fn a_row_repaired_this_pass_is_not_called_unjudged() {
+        let snap = claim_row("READY", Some("cannot-tell"), false);
+        let (_, say) = decide(&sweep(), &Carry::default(), &snap, None, &Repaired { claimed: vec!["sp-r".into()], ..Repaired::default() }, NOW);
+        assert!(say.iter().all(|l| !l.contains("UNJUDGED")), "{say:?}");
     }
 }
