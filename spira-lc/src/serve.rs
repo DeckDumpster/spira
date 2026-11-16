@@ -193,9 +193,19 @@ pub fn run(args: &[String]) -> i32 {
     startup.mark("bind");
     eprintln!("spira-lc serve: listening on {socket_path}");
     startup.ready(SPANS.get());
-    // The scope ends when the accept loop has stopped and every request it took is answered.
-    std::thread::scope(|scope| accept_until_stopped(&listener, &socket_path, scope, &STOPPING, |stream| handle(stream, &conn, Instant::now())));
-    eprintln!("spira-lc serve: stopped");
+    let flights = Arc::new(Flights::default());
+    let (done, finished) = std::sync::mpsc::channel::<()>();
+    {
+        let flights = flights.clone();
+        std::thread::spawn(move || {
+            std::thread::scope(|scope| {
+                accept_until_stopped(&listener, &socket_path, scope, &STOPPING, |stream| flights.serve(stream, |stream| handle(stream, &conn, Instant::now())))
+            });
+            let _ = done.send(());
+        });
+    }
+    let (drained, answered) = drain(&flights, &STOPPING, &finished, DRAIN_BOUND);
+    eprintln!("spira-lc serve: stopped after draining {drained}, answered {answered} at the bound");
     0
 }
 
@@ -261,6 +271,89 @@ impl Startup {
             lag_ms: None,
             too_old: false,
         });
+    }
+}
+
+/// Leaves 30 s of the unit's 90 s `TimeoutStopSec` to write the refusals and exit.
+pub const DRAIN_BOUND: Duration = Duration::from_secs(60);
+
+fn stopped_for_restart() -> String {
+    format!("cannot tell: spira-lc stopped for a restart before this request finished (drain bound {} s); it may have applied", DRAIN_BOUND.as_secs())
+}
+
+/// One accepted connection: a clone of its stream for the drain's refusal, and whether any reply
+/// has gone out. The lock makes the worker's reply and the drain's mutually exclusive.
+struct Slot {
+    stream: UnixStream,
+    answered: std::sync::Mutex<bool>,
+}
+
+#[derive(Default)]
+struct Flights {
+    open: std::sync::Mutex<Vec<(u64, Arc<Slot>)>>,
+    next: std::sync::atomic::AtomicU64,
+}
+
+thread_local! {
+    static CURRENT: std::cell::RefCell<Option<Arc<Slot>>> = const { std::cell::RefCell::new(None) };
+}
+
+impl Flights {
+    fn serve(&self, stream: UnixStream, f: impl FnOnce(UnixStream)) {
+        struct Leave<'a>(&'a Flights, u64);
+        impl Drop for Leave<'_> {
+            fn drop(&mut self) {
+                CURRENT.with(|c| *c.borrow_mut() = None);
+                self.0.open.lock().unwrap().retain(|(i, _)| *i != self.1);
+            }
+        }
+        let Ok(clone) = stream.try_clone() else {
+            eprintln!("spira-lc serve: cannot register a connection for the drain; dropped unanswered");
+            return;
+        };
+        let slot = Arc::new(Slot { stream: clone, answered: std::sync::Mutex::new(false) });
+        let id = self.next.fetch_add(1, Ordering::SeqCst);
+        self.open.lock().unwrap().push((id, slot.clone()));
+        CURRENT.with(|c| *c.borrow_mut() = Some(slot));
+        let _leave = Leave(self, id);
+        f(stream);
+    }
+
+    fn len(&self) -> usize {
+        self.open.lock().unwrap().len()
+    }
+
+    fn refuse_unanswered(&self) -> usize {
+        let open = self.open.lock().unwrap().clone();
+        let mut refused = 0;
+        for (_, slot) in open {
+            let mut answered = slot.answered.lock().unwrap();
+            if !*answered {
+                let _ = slot.stream.set_write_timeout(Some(Duration::from_secs(5)));
+                let _ = write_raw(&slot.stream, 2, &stopped_for_restart(), "", None);
+                *answered = true;
+                refused += 1;
+            }
+        }
+        refused
+    }
+}
+
+/// Wait for the accept loop and its connections to finish (`finished`), but for no more than
+/// `bound` after `stopping` was seen; then answer every connection still unanswered.
+/// Returns (in flight when the stop was seen, answered at the bound).
+fn drain(flights: &Flights, stopping: &AtomicBool, finished: &std::sync::mpsc::Receiver<()>, bound: Duration) -> (usize, usize) {
+    use std::sync::mpsc::RecvTimeoutError::{Disconnected, Timeout};
+    while !stopping.load(Ordering::SeqCst) {
+        match finished.recv_timeout(Duration::from_millis(50)) {
+            Ok(()) | Err(Disconnected) => return (0, 0),
+            Err(Timeout) => {}
+        }
+    }
+    let drained = flights.len();
+    match finished.recv_timeout(bound) {
+        Ok(()) | Err(Disconnected) => (drained, 0),
+        Err(Timeout) => (drained, flights.refuse_unanswered()),
     }
 }
 
@@ -742,7 +835,21 @@ fn write_response(stream: &UnixStream, exit_code: i32, stdout: &str, stderr: &st
 /// read it made was at that revision or later, and every write it made is at or below it, so a
 /// caller that needs its own write passes it back as `min_rev`. A client that predates it
 /// ignores the key.
-fn write_response_at(mut stream: &UnixStream, exit_code: i32, stdout: &str, stderr: &str, rev: Option<u64>) -> std::io::Result<()> {
+fn write_response_at(stream: &UnixStream, exit_code: i32, stdout: &str, stderr: &str, rev: Option<u64>) -> std::io::Result<()> {
+    match CURRENT.with(|c| c.borrow().clone()) {
+        None => write_raw(stream, exit_code, stdout, stderr, rev),
+        Some(slot) => {
+            let mut answered = slot.answered.lock().unwrap();
+            if *answered {
+                return Ok(());
+            }
+            *answered = true;
+            write_raw(stream, exit_code, stdout, stderr, rev)
+        }
+    }
+}
+
+fn write_raw(mut stream: &UnixStream, exit_code: i32, stdout: &str, stderr: &str, rev: Option<u64>) -> std::io::Result<()> {
     let mut buf = Vec::with_capacity(stdout.len() + stderr.len() + 64);
     let mut head = serde_json::json!({"exit_code": exit_code, "len": stdout.len()});
     if !stderr.is_empty() {
@@ -1067,6 +1174,109 @@ mod tests {
         std::io::BufRead::read_line(&mut BufReader::new(&late), &mut line).unwrap();
         assert_eq!(line, "served\n", "a connection queued at the stop is answered");
         assert_eq!(UnixStream::connect(&path).unwrap_err().kind(), std::io::ErrorKind::NotFound);
+    }
+
+    #[test]
+    fn the_drain_bound_leaves_the_unit_its_stop_timeout() {
+        assert_eq!(super::DRAIN_BOUND, std::time::Duration::from_secs(60));
+        for unit in ["lc-serve.service", "spira-lc.service"] {
+            let text = std::fs::read_to_string(spira_config::resolve::checkout_root_for_process().unwrap().join("systemd").join(unit)).unwrap();
+            let stop: u64 = text.lines().find_map(|l| l.strip_prefix("TimeoutStopSec=")).unwrap().parse().unwrap();
+            assert!(std::time::Duration::from_secs(stop) > super::DRAIN_BOUND + std::time::Duration::from_secs(15), "{unit}: TimeoutStopSec={stop}");
+        }
+    }
+
+    /// The one handler thread of a test is the only user of the world while the scope runs.
+    struct Lent<'a>(&'a World);
+    unsafe impl Sync for Lent<'_> {}
+    unsafe impl Send for Lent<'_> {}
+
+    /// `argv` through the server's real reader, answer and reply on a connection that
+    /// `accept_until_stopped` took, with the stop flag set while the handler has the request.
+    fn stopped_during(w: &World, argv: &[&str], stop: &std::sync::atomic::AtomicBool) -> (i32, String, String) {
+        use std::os::unix::net::UnixListener;
+        let dir = testkit::TempDir::new("lc-drain-hold");
+        let path = dir.join("sock");
+        let listener = UnixListener::bind(&path).unwrap();
+        let argv: Vec<String> = argv.iter().map(|s| s.to_string()).collect();
+        let client = std::os::unix::net::UnixStream::connect(&path).unwrap();
+        let asked = std::thread::spawn(move || crate::client::exchange(client, &argv, None));
+        let flights = super::Flights::default();
+        let lent = Lent(w);
+        std::thread::scope(|scope| {
+            let (lent, flights) = (&lent, &flights);
+            super::accept_until_stopped(&listener, path.to_str().unwrap(), scope, stop, move |stream| {
+                let (w, content) = (lent.0, Content::default());
+                let mut reader = std::io::BufReader::new(stream.try_clone().unwrap());
+                let (req, _) = super::read_request(&mut reader).unwrap().unwrap();
+                stop.store(true, std::sync::atomic::Ordering::SeqCst);
+                let (mut m, mut b) = (w, w);
+                let ans = super::answer(req, &mut m, &mut b, &content, &|| Err("no run dir here".to_string()));
+                flights.serve(stream.try_clone().unwrap(), |_| {
+                    super::reply_then_settle(&stream, &ans, None, &mut |id, reason| crate::reconcile_content::settle_owed(&mut b, id, reason));
+                });
+            });
+        });
+        asked.join().unwrap()
+    }
+
+    #[test]
+    fn a_hold_taken_before_the_stop_is_answered_and_durable() {
+        let w = World::new();
+        filed(&w, "sp-a");
+        let stop = std::sync::atomic::AtomicBool::new(false);
+        let got = stopped_during(&w, &["hold", "sp-a", "wait", "--reason", "x"], &stop);
+        assert_eq!(got.0, 0, "{got:?}");
+        assert_eq!(over(&w, &Content::default(), &["held", "sp-a", "wait"], None).0, 0);
+    }
+
+    #[test]
+    fn a_handler_that_never_finishes_is_answered_by_name_at_the_drain_bound() {
+        use std::os::unix::net::{UnixListener, UnixStream};
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::mpsc;
+        let dir = testkit::TempDir::new("lc-drain-bound");
+        let path = dir.join("sock");
+        let listener = UnixListener::bind(&path).unwrap();
+        let client = UnixStream::connect(&path).unwrap();
+        let asked = std::thread::spawn(move || crate::client::exchange(client, &["held".to_string()], None));
+        let stopping: &'static AtomicBool = Box::leak(Box::new(AtomicBool::new(false)));
+        let flights = std::sync::Arc::new(super::Flights::default());
+        let (hold, held) = mpsc::channel::<()>();
+        let held = std::sync::Arc::new(std::sync::Mutex::new(held));
+        let (began_tx, began) = mpsc::channel::<()>();
+        let began_tx = std::sync::Mutex::new(began_tx);
+        let (done, finished) = mpsc::channel::<()>();
+        {
+            let (flights, held) = (flights.clone(), held.clone());
+            std::thread::spawn(move || {
+                std::thread::scope(|scope| {
+                    super::accept_until_stopped(&listener, path.to_str().unwrap(), scope, stopping, |stream| {
+                        flights.serve(stream, |stream| {
+                            let mut reader = std::io::BufReader::new(stream.try_clone().unwrap());
+                            super::read_request(&mut reader).unwrap();
+                            began_tx.lock().unwrap().send(()).unwrap();
+                            let _ = held.lock().unwrap().recv();
+                        })
+                    })
+                });
+                let _ = done.send(());
+            });
+        }
+        began.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+        stopping.store(true, Ordering::SeqCst);
+        let (verdict_tx, verdict) = mpsc::channel();
+        let drained = std::thread::spawn(move || {
+            let r = super::drain(&flights, stopping, &finished, std::time::Duration::from_millis(200));
+            verdict_tx.send(r).unwrap();
+        });
+        let (n, m) = verdict.recv_timeout(std::time::Duration::from_secs(5)).expect("the drain returns instead of joining a handler that never finishes");
+        assert_eq!((n, m), (1, 1));
+        let (code, out, _) = asked.join().unwrap();
+        assert_eq!(code, 2);
+        assert!(out.contains("stopped for a restart"), "{out}");
+        hold.send(()).unwrap();
+        drained.join().unwrap();
     }
 
     #[test]

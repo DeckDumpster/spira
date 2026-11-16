@@ -30,6 +30,8 @@ Environment=SPIRA_LC_DATA_DIR=/tmp
 # Read by work.rs/bd.rs to find bead.sh/mail — this service has no other reason to
 # know or care what its own working directory is.
 Environment=SPIRA_REPO=@SPIRA_REPO@
+KillMode=mixed
+TimeoutStopSec=90
 Restart=on-failure
 RestartSec=5
 StandardOutput=append:@SPIRA_RUN@/spira-lc.log
