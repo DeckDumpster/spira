@@ -33,12 +33,6 @@ pub fn is_warm(dest: &Path) -> bool {
     dest.parent().and_then(Path::parent).and_then(Path::file_name).is_some_and(|n| n == WARM_DIR)
 }
 
-/// True when `dest` is `<base>/dir.<n>/<dir>`: a build directory of the builders' pool, which a
-/// gate leases and never removes or donates.
-pub fn is_pooled(dest: &Path) -> bool {
-    dest.parent().and_then(Path::file_name).and_then(|n| n.to_str()).and_then(|n| n.strip_prefix("dir.")).is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
-}
-
 /// Marker inside a kept `release` dir: the binaries are promised to a hand landing, so no
 /// eviction or reaping removes them until the landing clears it or [`PIN_MAX_AGE`] passes.
 pub const PIN: &str = ".gate-pinned";
@@ -249,7 +243,7 @@ pub fn release_tree(tree: &Path, keep_release: bool) -> u64 {
             continue;
         }
         let Ok(dest) = fs::read_link(&link) else { continue };
-        if is_warm(&dest) || is_pooled(&dest) {
+        if is_warm(&dest) {
             let _ = fs::remove_file(&link);
             continue;
         }
@@ -688,23 +682,6 @@ mod tests {
         let stale = std::time::SystemTime::now() - PIN_MAX_AGE - std::time::Duration::from_secs(60);
         fs::File::open(root.join(".gate.harness.pin/release").join(PIN)).unwrap().set_modified(stale).unwrap();
         assert!(!pinned(&root.join(".gate.harness.pin")), "an old pin expires");
-    }
-
-    #[test]
-    fn a_tree_linked_into_a_builders_pool_directory_is_unlinked_never_cleared() {
-        let s = Scratch::new("pooled");
-        let tree = s.1.join("worktree/.gate.harness.p");
-        let pooled = s.1.join("pool/dir.7/debug");
-        fs::create_dir_all(tree.join("target")).unwrap();
-        write_mib(&pooled.join("deps/libz.rlib"), 1);
-        std::os::unix::fs::symlink(&pooled, tree.join("target/debug")).unwrap();
-        assert!(is_pooled(&pooled));
-        assert!(!is_pooled(&s.1.join("root/.gate.harness.p/debug")));
-        assert!(crate::warm::donate_tree(&tree, 1 << 20).is_none(), "a pool directory is never donated");
-        assert!(pooled.join("deps/libz.rlib").is_file());
-        release_tree(&tree, false);
-        assert!(pooled.join("deps/libz.rlib").is_file(), "release_tree cleared the builders' directory through the link");
-        assert!(fs::symlink_metadata(tree.join("target/debug")).is_err(), "the link itself is gone");
     }
 
     #[test]
