@@ -766,19 +766,16 @@ impl World {
             .map(|r| r.id.clone())
             .collect();
         let todo_claims: Vec<String> = bead_sweep::claim_unset(&snap).into_iter().filter(|id| claims.contains(id)).collect();
-        let claimed = if todo_claims.is_empty() {
-            vec![]
-        } else {
-            let mut argv = vec!["sync-claim-inputs", "--only-if-unset"];
-            argv.extend(todo_claims.iter().map(String::as_str));
-            match lc_call(&self.lc_socket, &argv) {
-                Ok(out) => todo_claims.into_iter().filter(|id| !out.contains(&format!("kept {id}:"))).collect(),
+        let claimed = todo_claims
+            .into_iter()
+            .filter(|id| match lc_call(&self.lc_socket, &["sync-claim-inputs", "--only-if-unset", id]) {
+                Ok(out) => !out.contains(&format!("kept {id}:")),
                 Err(e) => {
-                    eprintln!("bead-sweep: claim inputs not written: {e}");
-                    vec![]
+                    eprintln!("bead-sweep: claim inputs of {id} not written: {e}");
+                    false
                 }
-            }
-        };
+            })
+            .collect();
         serde_json::to_string(&Repaired { ids, claimed }).map_err(|e| e.to_string())
     }
 

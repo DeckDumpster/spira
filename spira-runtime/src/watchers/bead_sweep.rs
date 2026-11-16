@@ -307,8 +307,6 @@ pub fn suspects(p: &BeadSweep, snap: &Snapshot, room: Option<&Room>, claimed: &[
         let unjudged = matches!(st, "READY" | "REWORK") && r.claim.as_deref() == Some("cannot-tell") && !claimed.iter().any(|c| c == i);
         let suspect = if labels.contains(&p.ask_label) {
             None
-        } else if unjudged {
-            Some("CLAIM UNJUDGED (claim view cannot tell)".to_string())
         } else if has("poison") {
             Some(format!("POISONED ({why})"))
         } else if has("ask") {
@@ -348,6 +346,10 @@ pub fn suspects(p: &BeadSweep, snap: &Snapshot, room: Option<&Room>, claimed: &[
         } else {
             None
         };
+        if unjudged {
+            let line = format!("{i} {st} CLAIM UNJUDGED (claim view cannot tell)");
+            out.push((line.clone(), line));
+        }
         if let Some(msg) = suspect {
             let line = format!("{i} {st} {msg}").trim_end().to_string();
             let key = key_tail.map_or_else(|| line.clone(), |k| format!("{i} {st} {k}"));
@@ -758,6 +760,14 @@ mod tests {
         let (carry, say) = decide(&sweep(), &Carry::default(), &snap, None, &Repaired::default(), NOW);
         assert_eq!(say, ["SUSPECT sp-r READY CLAIM UNJUDGED (claim view cannot tell)"]);
         assert!(decide(&sweep(), &carry, &snap, None, &Repaired::default(), NOW).1.is_empty());
+    }
+
+    #[test]
+    fn an_unjudged_claim_adds_to_a_poisoned_rows_own_line() {
+        let mut snap = claim_row("READY", Some("cannot-tell"), false);
+        snap.rows[0].holds = vec!["poison".into()];
+        let say = decide(&sweep(), &Carry::default(), &snap, None, &Repaired::default(), NOW).1;
+        assert!(say.iter().any(|l| l.contains("POISONED")) && say.iter().any(|l| l.contains("CLAIM UNJUDGED")), "{say:?}");
     }
 
     #[test]
