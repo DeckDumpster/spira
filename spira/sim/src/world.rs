@@ -199,10 +199,10 @@ pub fn refuse_production(env: &dyn Fn(&str) -> Option<String>) -> Result<(), Str
 }
 
 pub const BD_ENV: &str = "SPIRA_BD";
-pub const DOLT_ENV: &str = "SPIRA_DOLT";
 
-/// The absolute path of a store tool: the declared one, else `name` on `path`. A pilgrim's PATH
-/// carries neither `bd` nor `dolt`, so a bare name there is a refusal that names the key.
+/// The absolute path of a store tool: the declared one, else `name` on `path`, else `beside`
+/// (the directory of the `bd` it ships with). A pilgrim's PATH carries neither `bd` nor `dolt`,
+/// so a bare name there is a refusal that names the key.
 pub fn store_tool(name: &str, declared: Option<String>, path: &str, key: &str) -> Result<PathBuf, String> {
     match declared.filter(|v| !v.is_empty()) {
         Some(p) => Ok(PathBuf::from(p)),
@@ -210,17 +210,21 @@ pub fn store_tool(name: &str, declared: Option<String>, path: &str, key: &str) -
     }
 }
 
+/// `dolt`: on `path`, else beside `bd`.
+pub fn dolt_for(bd: &Path, path: &str) -> Result<PathBuf, String> {
+    on_path("dolt", path)
+        .or_else(|| bd.parent().map(|d| d.join("dolt")).filter(|p| p.is_file()))
+        .ok_or_else(|| format!("dolt is not on PATH nor beside {}", bd.display()))
+}
+
 /// What `sim world up --pilgrim` does to its own environment before building: name the store
-/// tools (from the environment, else `pinned_bd`, the install's configured `bd`, with `dolt`
-/// beside it) and set aside the production locators a pilgrim session always carries.
+/// tools (from the environment, else `pinned_bd`, the install's configured `bd`, and
+/// `dolt` is found beside it) and set aside the production locators a pilgrim session always carries.
 pub fn pilgrim_session_env(env: &dyn Fn(&str) -> Option<String>, pinned_bd: Option<String>) -> (Vec<(&'static str, String)>, Vec<&'static str>) {
     let set = |k: &str| env(k).filter(|v| !v.is_empty());
     let path = env("PATH").unwrap_or_default();
     let bd = set(BD_ENV).or(pinned_bd.filter(|v| !v.is_empty())).or_else(|| on_path("bd", &path).map(|p| p.display().to_string()));
-    let dolt = set(DOLT_ENV)
-        .or_else(|| on_path("dolt", &path).map(|p| p.display().to_string()))
-        .or_else(|| bd.as_ref().and_then(|b| Path::new(b).parent().map(|d| d.join("dolt"))).filter(|p| p.is_file()).map(|p| p.display().to_string()));
-    let sets = bd.map(|b| (BD_ENV, b)).into_iter().chain(dolt.map(|d| (DOLT_ENV, d))).collect();
+    let sets = bd.map(|b| (BD_ENV, b)).into_iter().collect();
     let removes = PRODUCTION_LOCATORS.iter().copied().filter(|k| set(k).is_some()).collect();
     (sets, removes)
 }
@@ -448,12 +452,13 @@ impl Steps for ProcessSteps {
         Ok(out)
     }
     fn db_up(&self, world: &Path) -> Result<String, String> {
+        let bd = self.bd()?;
         let out = run(
             Command::new(spira_config::release_env::tool("testenv")?)
                 .args(["testdb", "up", "--tag", "simworld", "--bd"])
-                .arg(self.bd()?)
+                .arg(&bd)
                 .arg("--dolt")
-                .arg(store_tool("dolt", std::env::var(DOLT_ENV).ok(), &std::env::var("PATH").unwrap_or_default(), DOLT_ENV)?)
+                .arg(dolt_for(&bd, &std::env::var("PATH").unwrap_or_default())?)
                 .arg("--root")
                 .arg(db_root(world, &|k| std::env::var(k).ok())),
             CALL_DEADLINE,
@@ -1244,7 +1249,8 @@ mod locator_tests {
             _ => None,
         };
         let (sets, removes) = pilgrim_session_env(&env, Some(bd.clone()));
-        assert_eq!(sets, vec![(BD_ENV, bd), (DOLT_ENV, d.join("dolt").display().to_string())]);
+        assert_eq!(sets, vec![(BD_ENV, bd.clone())]);
+        assert_eq!(dolt_for(Path::new(&bd), "/nonexistent").unwrap(), d.join("dolt"));
         assert_eq!(removes, vec!["SPIRA_LC_SOCKET", "SPIRA_TOML"]);
     }
 
