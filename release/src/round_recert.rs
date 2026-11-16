@@ -539,11 +539,11 @@ mod tests {
     #[test]
     fn every_verb_the_pass_drives_names_the_operator_as_its_actor() {
         let rec = Recorder(RefCell::new(vec![]));
-        drive(&rec, "b1", "r");
+        drive(&rec, "b", "r");
         let calls = rec.0.borrow();
         for verb in ["certify", "land"] {
             let call = calls.iter().find(|(_, a)| a.get(1).map(String::as_str) == Some(verb)).unwrap_or_else(|| panic!("{verb} was not run"));
-            assert_eq!(call.1, ["round", verb, "b1", "r", "--by", "operator"]);
+            assert_eq!(call.1, ["round", verb, "b", "r", "--by", "operator"]);
         }
     }
 
