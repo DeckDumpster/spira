@@ -217,7 +217,7 @@ impl Tree {
 
 /// Rules that already judge the branch against the base themselves; `--diff` leaves their
 /// findings whole.
-pub const BASE_RELATIVE: &[&str] = &["plan-matrix", "lockfile-lint", "config-delta", "tier-budget-allowlist", "tier-budget-area-allowlist", "tier-budget-areas", "workflow-config", "otel-binaries", "journal-reads", "release-tool-exec", "bare-unit-name", "test-real-clock"];
+pub const BASE_RELATIVE: &[&str] = &["plan-matrix", "lockfile-lint", "config-delta", "tier-budget-allowlist", "tier-budget-area-allowlist", "tier-budget-areas", "workflow-config", "otel-binaries", "journal-reads", "release-tool-exec", "bare-unit-name", "test-real-clock", "registry-readers"];
 
 /// What a branch changed relative to `git merge-base <base> HEAD`: per touched file, the
 /// new-side line ranges it adds or changes (`None` for a whole file: untracked, or binary).
