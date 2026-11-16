@@ -2625,7 +2625,19 @@ fn a_verdict_in_another_repo_leaves_the_incident_open() {
     q.claim(0).unwrap();
     q.complete(0, &crate::gateq::Done { job, run: GateRun::parse(0, PASS_OUT.into()), started_ms: 1, finished_ms: 2, gate: String::new() }).unwrap();
     h.run();
+    assert!(h.lc.certified.borrow().iter().any(|c| c.starts_with("sp-o t3")), "{:?}", h.lc.certified.borrow());
     assert_eq!(h.lib.count("close_incident"), 0, "{:?}", h.lib.calls.borrow());
+}
+
+#[test]
+fn a_base_fail_verdict_closes_the_repos_gate_unjudged_incident_once() {
+    let h = h_with_unjudged_incident();
+    fs::create_dir_all(h.s.incident.parent().unwrap()).unwrap();
+    fs::write(&h.s.incident, "").unwrap();
+    verdict_on_sp_b(&h, 76, "--- base\ntest-x.sh RED\ngate: VERDICT=BASE_FAIL reason=base-red branch=b repo=spira suite=test-x.sh\n");
+    assert_eq!(h.lib.count("close_incident"), 1, "{:?}", h.lib.calls.borrow());
+    let c = h.lib.find("close_incident sp-inc1 ");
+    assert!(c.contains("spira/sp-b") && c.contains("t2") && c.contains("base-fail"), "{c}");
 }
 
 #[test]
