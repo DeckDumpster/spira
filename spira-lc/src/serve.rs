@@ -379,6 +379,7 @@ fn serve_one(stream: UnixStream, conn: &Arc<Conn>, spans: Option<&spira_otel::Si
                 *began.lock().unwrap_or_else(|e| e.into_inner()) = Some(Instant::now());
                 crate::slow::set_caller(&who);
                 crate::db::set_request_deadline(Some(received + limit));
+                let _deadline = state_store::phases::deadline_scoped(received + limit);
                 state_store::model::track(!min_rev.is_none_or(model_reached));
                 let mut local = Local(&worker);
                 let ans = answer(req, &mut local, &mut crate::bd::LiveBd, &crate::composed::LiveContent, &crate::lifecycle_run_dir);
@@ -840,6 +841,29 @@ mod tests {
         }
         assert_eq!(rec.snapshot().open, Some("writer_wait"));
         drop(release);
+    }
+
+    #[test]
+    fn a_write_held_past_its_request_deadline_answers_cannot_tell_and_never_commits() {
+        use state_store::{contract::{Config, Contract, Ports}, MemBackend, Object, Request, Txn};
+        use std::{sync::Arc, time::{Duration, Instant}};
+        let c = Arc::new(Contract::open(MemBackend::new(), Ports::virtual_clock(&runtime::ports::VirtualClock::new(0)), Config { min_lock_ttl_ms: 1_000 }).unwrap());
+        let worker = Arc::clone(&c);
+        let (release, release_rx) = std::sync::mpsc::channel::<()>();
+        let (done, done_rx) = std::sync::mpsc::channel();
+        let limit = Duration::from_millis(30);
+        let received = Instant::now();
+        let out = super::within(limit, move || {
+            let _deadline = state_store::phases::deadline_scoped(received + limit);
+            let _ = release_rx.recv();
+            let r = worker.txn(&Txn::new().put("late", Object::new(serde_json::json!(1))), &Request::new("1", "t", "w"));
+            let _ = done.send(state_store::wire::answer(&r));
+        });
+        assert!(out.is_none());
+        drop(release);
+        let (code, text) = done_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!((code, text.as_str()), (2, r#"{"cannot_tell":"deadline"}"#));
+        assert!(c.get("late").unwrap().is_none(), "the abandoned write never commits");
     }
 
     #[test]

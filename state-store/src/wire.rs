@@ -113,6 +113,7 @@ pub fn cannot_tell(reason: &str) -> (i32, String) {
 pub fn refused(e: &Error) -> (i32, String) {
     match e {
         Error::Backend(why) => cannot_tell(why),
+        Error::Deadline => cannot_tell("deadline"),
         e => (REFUSED, json!({ "error": e }).to_string()),
     }
 }
@@ -334,6 +335,11 @@ mod tests {
         for e in errors {
             through::<()>(Err(e));
         }
+    }
+
+    #[test]
+    fn a_write_past_its_deadline_is_cannot_tell() {
+        assert_eq!(refused(&Error::Deadline), cannot_tell("deadline"));
     }
 
     #[test]

@@ -128,6 +128,29 @@ pub fn untrack() {
     CURRENT.with(|c| *c.borrow_mut() = None);
 }
 
+thread_local! {
+    static DEADLINE: std::cell::Cell<Option<Instant>> = const { std::cell::Cell::new(None) };
+}
+
+/// Clears the thread's request deadline when dropped.
+pub struct DeadlineScope;
+
+impl Drop for DeadlineScope {
+    fn drop(&mut self) {
+        DEADLINE.with(|d| d.set(None));
+    }
+}
+
+/// A write on this thread that reaches its commit after `at` is refused unstarted.
+pub fn deadline_scoped(at: Instant) -> DeadlineScope {
+    DEADLINE.with(|d| d.set(Some(at)));
+    DeadlineScope
+}
+
+pub fn deadline_passed() -> bool {
+    DEADLINE.with(|d| d.get()).is_some_and(|at| Instant::now() >= at) // clock-safe: the deadline is a monotonic instant the server sets
+}
+
 fn current() -> Option<Arc<Recorder>> {
     CURRENT.with(|c| c.borrow().clone())
 }
