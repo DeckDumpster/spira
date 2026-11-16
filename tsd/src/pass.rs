@@ -104,6 +104,11 @@ pub struct PassRecord {
     pub fences: Vec<(String, u64)>,
     /// Largest bytes the pass held on its VM's disk (round-work, TMPDIR, podman, scratch); `None` when unread.
     pub disk_peak_b: Option<u64>,
+    /// The unit tier's build and run seconds, nextest test count, and ten slowest tests as `<binary>/<test>:secs,…`; zero and empty when the pass recorded none.
+    pub unit_build_secs: u64,
+    pub unit_run_secs: u64,
+    pub unit_tests: u64,
+    pub unit_slowest: String,
 }
 
 /// The largest byte count the pass's DISK lines (`round-vm: DISK <phase> <label> <bytes> <path>`) put on a
@@ -151,6 +156,10 @@ impl PassRecord {
             f("detail", self.detail.clone().into()),
             f("fence_s", Value::Object(self.fences.iter().map(|(n, v)| (n.clone(), Value::from(*v))).collect())),
             f("disk_peak_b", self.disk_peak_b.map_or(Value::Null, Value::from)),
+            f("unit_build_secs", self.unit_build_secs.into()),
+            f("unit_run_secs", self.unit_run_secs.into()),
+            f("unit_tests", self.unit_tests.into()),
+            f("unit_slowest", self.unit_slowest.clone().into()),
         ]
     }
 
@@ -174,6 +183,10 @@ impl PassRecord {
             detail: s("detail").unwrap_or_default(),
             fences: row.get("fence_s").and_then(Value::as_object).map(|o| o.iter().filter_map(|(k, v)| v.as_u64().map(|n| (k.clone(), n))).collect()).unwrap_or_default(),
             disk_peak_b: row.get("disk_peak_b").and_then(Value::as_u64),
+            unit_build_secs: row.get("unit_build_secs").and_then(Value::as_u64).unwrap_or(0),
+            unit_run_secs: row.get("unit_run_secs").and_then(Value::as_u64).unwrap_or(0),
+            unit_tests: row.get("unit_tests").and_then(Value::as_u64).unwrap_or(0),
+            unit_slowest: s("unit_slowest").unwrap_or_default(),
         };
         rec.validate()?;
         Ok(rec)
@@ -321,6 +334,20 @@ mod tests {
         let r = from_args(&a).unwrap();
         assert_eq!((r.cause, r.vcpus, r.members.len()), (Cause::VmLost, Some(8), 2));
         assert!(from_args(&["--repo".into(), "r".into()]).is_err());
+    }
+
+    #[test]
+    fn a_pass_carries_its_unit_timings_through_its_row_and_an_older_row_reads_them_as_empty() {
+        let a: Vec<String> = "--repo r --batch b --pass 1 --where ec2 --cause green".split(' ').map(String::from).collect();
+        let mut r = from_args(&a).unwrap();
+        (r.unit_build_secs, r.unit_run_secs, r.unit_tests, r.unit_slowest) = (41, 73, 12, "a/t:2.5".into());
+        let mut row: serde_json::Map<String, Value> = r.fields().into_iter().collect();
+        assert_eq!(PassRecord::from_row(&Value::Object(row.clone())).unwrap(), r);
+        for k in ["unit_build_secs", "unit_run_secs", "unit_tests", "unit_slowest"] {
+            row.remove(k);
+        }
+        let old = PassRecord::from_row(&Value::Object(row)).unwrap();
+        assert_eq!((old.unit_build_secs, old.unit_run_secs, old.unit_tests, old.unit_slowest.as_str()), (0, 0, 0, ""));
     }
 
     #[test]

@@ -303,6 +303,10 @@ mod tests {
             detail: String::new(),
             fences: Vec::new(),
             disk_peak_b: None,
+            unit_build_secs: 0,
+            unit_run_secs: 0,
+            unit_tests: 0,
+            unit_slowest: String::new(),
         }
     }
 

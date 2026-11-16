@@ -1800,14 +1800,15 @@ impl<'w, W: World> Trial<'w, W> {
         self.s.unit_timings.as_ref().map_or(String::new(), |t| t.slowest_field())
     }
 
-    /// ` unit_build_secs=… unit_run_secs=… unit_tests=… unit_slowest=…`, beside the build's own fields.
+    /// ` unit_build_secs=… unit_run_secs=… unit_tests=… unit_slowest=…` after a unit test phase; empty without one.
     fn unit_suffix(&self) -> String {
+        let Some(t) = &self.s.unit_timings else { return String::new() };
         format!(
             " unit_build_secs={} unit_run_secs={} unit_tests={} unit_slowest={}",
             self.unit_phase_secs("build"),
             self.unit_phase_secs("test"),
-            self.s.unit_timings.as_ref().map_or(0, |t| t.tests),
-            self.s.unit_timings.as_ref().map_or("-".to_string(), |t| t.slowest_field()),
+            t.tests,
+            t.slowest_field(),
         )
     }
 
