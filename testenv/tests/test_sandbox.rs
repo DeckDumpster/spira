@@ -96,21 +96,17 @@ fn around_binds_each_target_link_destination_writable_and_keeps_the_environment(
     let ws = workspace();
     let scratch = testkit::TempDir::new("around-dest");
     let dest = scratch.path().to_path_buf();
-    let (target, link) = (ws.join("target"), ws.join("target/debug"));
+    let (target, link) = (ws.join("target"), ws.join("target/around-probe"));
     let made_target = !target.exists();
     fs::create_dir_all(&target).unwrap();
-    let had_link = fs::symlink_metadata(&link).is_ok();
-    if !had_link {
-        std::os::unix::fs::symlink(&dest, &link).unwrap();
-    }
+    let _ = fs::remove_file(&link);
+    std::os::unix::fs::symlink(&dest, &link).unwrap();
     let args = print_args(&["--around", "cargo", "nextest", "run"]);
-    if !had_link {
-        fs::remove_file(&link).unwrap();
-    }
+    fs::remove_file(&link).unwrap();
     if made_target {
         let _ = fs::remove_dir(&target);
     }
-    let want = fs::canonicalize(if had_link { &link } else { &dest }).unwrap().display().to_string();
+    let want = fs::canonicalize(&dest).unwrap().display().to_string();
     assert!(args.windows(3).any(|w| w[0] == "--bind" && w[1] == want && w[2] == want), "{want} bound writable: {args:?}");
     assert!(!args.iter().any(|a| a == "--clearenv"), "the caller's environment is kept: {args:?}");
     assert!(args.windows(3).any(|w| w[0] == "--setenv" && w[1] == "GIT_CONFIG_SYSTEM"), "{args:?}");
