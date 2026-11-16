@@ -386,6 +386,9 @@ batcher_stall_secs = 600
 publish_no_run_secs = 1800
 preflight_cache_root = ""
 runtime_gh_closeout_secs = 120
+gate_build_lease_wait_secs = 120
+test_registry_path = ""
+test_registry_hold_secs = 604800
 
 [renamed]
 "persona.maechen" = "persona.mimir" # ffx-ok
