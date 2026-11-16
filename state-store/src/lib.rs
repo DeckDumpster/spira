@@ -206,6 +206,8 @@ pub enum Error {
         head: u64,
     },
     Backend(String),
+    /// The request's deadline passed before the commit started; nothing was written.
+    Deadline,
 }
 
 impl std::fmt::Display for Error {

@@ -1306,6 +1306,9 @@ impl<B: Backend> Contract<B> {
             .collect();
         // Held across the backend commit, so no plan reads a deadline the commit is replacing.
         let mut d = crate::phases::time(crate::phases::Phase::DeadlinesWait, || self.deadlines.lock().unwrap_or_else(lock_err));
+        if crate::phases::deadline_passed() {
+            return Err(Error::Deadline);
+        }
         let res = crate::phases::commit(|| self.backend.commit(head, &batch));
         if matches!(res, Err(Error::Stale { .. })) {
             return res;
@@ -1543,5 +1546,26 @@ mod phase_tests {
         let s = rec.snapshot();
         assert!(s.phases.iter().any(|p| p.0 == "deadlines_wait"), "{:?}", s.phases);
         assert_eq!(s.commits_us.len(), 1);
+    }
+
+    #[test]
+    fn a_write_past_the_thread_deadline_is_refused_unstarted_and_one_before_it_commits() {
+        use std::time::{Duration, Instant};
+        let clock = VirtualClock::new(1_000_000);
+        let c = Contract::open(MemBackend::new(), Ports::virtual_clock(&clock), Config { min_lock_ttl_ms: 1_000 }).unwrap();
+        let put = |id: &str, k: &str| c.txn(&Txn::new().put(k, Object::new(serde_json::json!(1))), &Request::new(id, "t", "w"));
+        {
+            let _d = phases::deadline_scoped(Instant::now() - Duration::from_millis(1)); // clock-safe: a deadline already behind the monotonic clock
+            assert_eq!(put("1", "late").unwrap_err(), Error::Deadline);
+        }
+        assert!(c.get("late").unwrap().is_none(), "the refused write did not apply");
+        put("2", "on-time").unwrap();
+        {
+            let _d = phases::deadline_scoped(Instant::now() + Duration::from_secs(60)); // clock-safe: far ahead of the monotonic clock
+            put("3", "within").unwrap();
+        }
+        assert!(c.get("on-time").unwrap().is_some() && c.get("within").unwrap().is_some());
+        let _d = phases::deadline_scoped(Instant::now() - Duration::from_millis(1)); // clock-safe: already behind the monotonic clock
+        assert!(c.get("on-time").unwrap().is_some(), "a read past the deadline is not refused");
     }
 }
