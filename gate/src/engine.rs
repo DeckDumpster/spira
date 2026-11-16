@@ -114,6 +114,9 @@ struct State {
     /// Seconds the trial spent waiting for a slot (testenv's `queue-wait=` lines), inside
     /// the `gate` phase's wall.
     queue_secs: u64,
+    /// The covered phase's seconds (its build and its suites) and the suites it deferred to
+    /// the round; None when no covered phase ran.
+    covered: Option<(u64, Vec<String>)>,
     /// `release` or `tree`: where the branch trial's tools came from; empty when it needs none.
     tools_from: String,
     build_dir: String,
@@ -440,10 +443,21 @@ impl<'w, W: World> Trial<'w, W> {
         let may_reenter = !ejected.trim().is_empty()
             || files.lines().any(|p| p.trim().strip_prefix("spira/").is_some_and(compose::is_suite_name));
         let reentry_reads = if may_reenter { vec![compose::reentry_command(&[])] } else { Vec::new() };
+        // A bead's certification never runs suites-blind: with suites off it still runs the
+        // budgeted suites covering what the bead touched, whatever the composition. Under
+        // fences mode that is a phase of its own (`covered`), for a tree definition only.
+        let suites_mode = ctx.var("SPIRA_GATE_SUITES").to_string();
+        let certifying = suites_mode == "off" && !self.s.bead.is_empty();
+        let covered = certifying && (!fences_only || tree_def.is_some());
+        if certifying && !covered {
+            w.eprint("gate: gate_mode=fences on a repository with no gate.steps runs its fences only — a bead's covering suites are left to the round.");
+        }
+        let covered_step = tree_def.as_ref().filter(|_| fences_only && covered).and_then(def::Def::suites_step);
         let (cmd, tree_def) = match (fences_only, tree_def) {
             (false, d) => (cmd, d),
             (true, Some(d)) => {
-                let f = d.fences_only(&reentry_reads);
+                let also: Vec<String> = reentry_reads.iter().cloned().chain(covered_step.clone()).collect();
+                let f = d.fences_only(&also);
                 (f.command(), Some(f))
             }
             (true, None) => (compose::without_suites(&cmd), None),
@@ -458,11 +472,6 @@ impl<'w, W: World> Trial<'w, W> {
         };
 
         // THE VERDICT CACHE.
-        let suites_mode = ctx.var("SPIRA_GATE_SUITES").to_string();
-        // A bead's certification never runs suites-blind: with suites off it still runs the
-        // budgeted suites covering what the bead touched, whatever the composition.
-        // Fences mode runs no suites at all, a certification's covering ones included.
-        let covered = suites_mode == "off" && !self.s.bead.is_empty() && !fences_only;
         let key_suites = if covered { "off+covered" } else { &suites_mode };
         let verdict_dir = self.s.verdict_dir.clone();
         if let Some(h) = w.harness_hash() {
@@ -884,6 +893,7 @@ impl<'w, W: World> Trial<'w, W> {
                     tools.as_ref(),
                     jobs,
                     &re.required,
+                    covered_step.as_deref(),
                     "",
                     fkey.as_ref(),
                     &mut mark,
@@ -914,6 +924,10 @@ impl<'w, W: World> Trial<'w, W> {
             return v(NOVERDICT, "machine-fault", format!("gate: cannot record the gate's moves: {e} — refusing to judge what it cannot record"));
         }
         self.s.queue_secs = parse::queue_secs(&out);
+        if self.s.phases.iter().any(|(n, _)| n == "covered") {
+            let secs = self.s.phases.iter().filter(|(n, _)| n == "covered" || n == "covered-build").map(|p| p.1).sum();
+            self.s.covered = Some((secs, parse::covered_deferred(&out)));
+        }
         if stall::is_stall(rc, &out) {
             return stall_verdict(&self.s.phases, &out);
         }
@@ -1128,6 +1142,7 @@ impl<'w, W: World> Trial<'w, W> {
                 base_tools.as_ref(),
                 jobs,
                 &base_required,
+                None,
                 "base-",
                 base_fkey.as_ref(),
                 &mut |_, _| {},
@@ -1892,7 +1907,7 @@ impl<'w, W: World> Trial<'w, W> {
                     ran,
                     vd.status,
                     vd.reason,
-                    meter_suffix(&self.s.compose, &self.s.phases, self.s.queue_secs),
+                    meter_suffix(&self.s.compose, &self.s.phases, self.s.queue_secs, self.s.covered.as_ref().map(|(t, d)| (*t, d.len()))),
                     self.s.build_timing.as_ref().map_or(String::new(), |(b, _)| b.suffix()),
                     self.unit_suffix(),
                     self.deny_suffix(),
@@ -1922,7 +1937,10 @@ impl<'w, W: World> Trial<'w, W> {
                 compose: self.s.compose.clone(),
                 branch_type: self.s.branch_type.clone(),
                 queue_secs: self.s.queue_secs,
-                phases: meter_suffix(&self.s.compose, &self.s.phases, 0)
+                covered_secs: self.s.covered.as_ref().map_or(0, |c| c.0),
+                covered_deferred: self.s.covered.as_ref().map_or(0, |c| c.1.len() as u64),
+                covered_deferred_suites: self.s.covered.as_ref().map_or(String::new(), |c| c.1.join(",")),
+                phases: meter_suffix(&self.s.compose, &self.s.phases, 0, None)
                     .split_once(" phases=")
                     .map(|(_, p)| p.to_string())
                     .unwrap_or_default(),
@@ -2020,10 +2038,11 @@ fn summary_mismatch(listed: usize, runner_ran: Option<usize>) -> Option<String> 
     }
 }
 
-/// The gate.log fields after the reason: ` compose=<label> phases=<name>:<secs>,… queue=<secs>`
-/// (the last only when the trial waited for a slot), empty until a composition was chosen. Readers split the note on spaces and take its first word
+/// The gate.log fields after the reason: ` compose=<label> phases=<name>:<secs>,… queue=<secs>
+/// covered=<secs> covered_deferred=<n>` (queue only when the trial waited for a slot, covered
+/// only when a covered phase ran), empty until a composition was chosen. Readers split the note on spaces and take its first word
 /// as the reason (yield.sh), so trailing fields are compatible.
-pub fn meter_suffix(compose: &str, phases: &[(String, u64)], queue_secs: u64) -> String {
+pub fn meter_suffix(compose: &str, phases: &[(String, u64)], queue_secs: u64, covered: Option<(u64, usize)>) -> String {
     if compose.is_empty() {
         return String::new();
     }
@@ -2038,7 +2057,8 @@ pub fn meter_suffix(compose: &str, phases: &[(String, u64)], queue_secs: u64) ->
     } else {
         String::new()
     };
-    format!(" compose={compose} phases={ph}{queue}")
+    let covered = covered.map_or(String::new(), |(secs, deferred)| format!(" covered={secs} covered_deferred={deferred}"));
+    format!(" compose={compose} phases={ph}{queue}{covered}")
 }
 
 /// ` tools=release` or ` tools=tree:<secs>` (the tools phase's wall), empty when the trial needed none.
@@ -2097,12 +2117,12 @@ pub fn describe_reentry(bead: &str, r: &compose::Reentry) -> Option<String> {
 /// Whether a phase's wall counts against SPIRA_GATE_DEADLINE (`base-` prefix ignored).
 /// Compilation is never charged: a build is ended for stalling, not for taking long.
 pub fn charged(name: &str) -> bool {
-    !matches!(name.strip_prefix("base-").unwrap_or(name), "tools" | "fences" | "build" | "reentry-build")
+    !matches!(name.strip_prefix("base-").unwrap_or(name), "tools" | "fences" | "build" | "reentry-build" | "covered-build")
 }
 
-/// A re-entry phase is watched for stall and charged the suites' seconds testenv reports, not its wall.
+/// A re-entry or covered phase is watched for stall and charged the suites' seconds testenv reports, not its wall.
 fn reports_its_own_time(name: &str) -> bool {
-    name.strip_prefix("base-").unwrap_or(name) == "reentry"
+    matches!(name.strip_prefix("base-").unwrap_or(name), "reentry" | "covered")
 }
 
 pub fn last_phase_charged(phases: &[(String, u64)]) -> bool {
@@ -2366,6 +2386,7 @@ pub fn run_composed<W: World>(
     tools: Option<&Tools>,
     jobs: u64,
     reentry: &[String],
+    covered: Option<&str>,
     prefix: &str,
     fences: Option<&crate::fencecache::Key>,
     mark: &mut dyn FnMut(GateState, &str),
@@ -2472,6 +2493,11 @@ pub fn run_composed<W: World>(
         Composition::Unit { crates, targets, .. } => compose::unit_commands(crates, *targets, jobs, &limits.deny).into(),
         _ => Vec::new(),
     };
+    // THE COVERED PHASE: the suites covering what the bead touched, a fences composition's own
+    // phase so the fences keep their cache and the gate can say what the suites added.
+    if let Some(c) = covered {
+        steps.push(("covered", c.to_string()));
+    }
     // THE RE-ENTRY PHASE, last: whatever of the named suites the phases before did not show
     // passing (all of them after a unit or fences gate or suites-off; only those the gate
     // string's budget deferred or skipped after a suites gate).

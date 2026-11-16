@@ -97,6 +97,7 @@ struct Fake {
     /// (status, output) of the re-entry phase by the tree revision (sp-p3srm); absent, every
     /// suite it names reports `ok`.
     reentry_runs: RefCell<HashMap<String, (i32, String)>>,
+    covered_runs: RefCell<HashMap<String, (i32, String)>>,
     // ---- positive controls (sp-ufbkh)
     /// Fences that exit 0 without their `fence: <name> checked` line. Every other fence the
     /// gate string names prints `checked 1` when the string exits 0, as a real one does.
@@ -284,6 +285,7 @@ impl Fake {
             reruns: RefCell::new(HashMap::new()),
             base_lacks: RefCell::new(HashSet::new()),
             reentry_runs: RefCell::new(HashMap::new()),
+            covered_runs: RefCell::new(HashMap::new()),
             silent_fences: RefCell::new(HashSet::new()),
             trees: RefCell::new(Vec::new()),
             gone: RefCell::new(HashSet::new()),
@@ -332,6 +334,10 @@ impl Fake {
             .find(|(k, _)| k == "SPIRA_GATE_BRANCH")
             .map(|(_, v)| v.clone())
             .unwrap_or_default();
+        if cmd.starts_with("{ ") && cmd.contains("SPIRA_SELECT_BIN") && !cmd.contains("SPIRA_LINT_BIN") {
+            let at = self.checkouts.borrow().last().cloned().unwrap_or_default();
+            return self.covered_runs.borrow().get(&at).cloned().unwrap_or((0, String::new()));
+        }
         if let Some(list) = cmd
             .split_once("--suites ")
             .and_then(|(_, r)| r.split_whitespace().next())
@@ -4738,6 +4744,7 @@ fn fences_fake(paths: &[&str]) -> Fake {
 fn fences_mode_runs_the_fence_tools_the_fences_and_the_build_fence_and_no_test_or_suite() {
     // A workspace input and a script, no crate: nothing here asks for a unit test.
     let f = fences_fake(&["Cargo.lock", "spira/lib.sh"]);
+    f.put_var("SPIRA_GATE_BEAD", "");
     assert_eq!(f.run(), PASS, "{}", f.stderr());
     let cmds = f.cmds.borrow().clone();
     assert_eq!(cmds.len(), 2, "the tools phase, then the fences: {cmds:?}");
@@ -4755,7 +4762,7 @@ fn fences_mode_runs_the_fence_tools_the_fences_and_the_build_fence_and_no_test_o
     }
     assert!(!cmds.iter().any(|c| c.contains("cargo nextest run")), "no unit test phase: {cmds:?}");
     assert_eq!(f.env_of(1, "SPIRA_GATE_SUITES"), "off");
-    assert_eq!(f.env_of(1, "SPIRA_GATE_COVERED"), "", "a certification selects no covering suites");
+    assert_eq!(f.env_of(1, "SPIRA_GATE_COVERED"), "", "a gate with no bead selects no covering suites");
     assert_eq!(f.env_of(1, "SPIRA_TESTENV_BIN"), "", "the suite runner is not built or handed over");
     assert!(f.stderr().contains("gate: composition=fences"), "{}", f.stderr());
     assert!(meter(&f).contains(" compose=fences phases=tools:7,fences:7"), "{}", meter(&f));
@@ -4798,13 +4805,14 @@ fn fences_mode_a_re_entering_bead_runs_exactly_its_named_suites_and_a_fresh_one_
     f.files.borrow_mut().insert(PathBuf::from(format!("{GATE_TREE}/spira/test-c.sh")), "#!".into());
     assert_eq!(f.run(), PASS, "{}", f.stderr());
     let cmds = f.cmds.borrow().clone();
-    assert_eq!(cmds.len(), 3, "tools, fences, re-entry: {cmds:?}");
-    assert!(cmds[0].contains("-p testenv") && !cmds[0].contains("suite-select"), "{}", cmds[0]);
+    assert_eq!(cmds.len(), 4, "tools, fences, covered, re-entry: {cmds:?}");
+    assert!(cmds[0].contains("-p testenv"), "{}", cmds[0]);
     assert!(!cmds[1].contains("--suites") && !cmds[1].contains("SPIRA_SELECT_BIN"), "{}", cmds[1]);
-    assert!(cmds[2].contains("--suites test-b.sh,test-c.sh \"$SPIRA_GATE_BRANCH\""), "{}", cmds[2]);
-    assert!(f.env_of(2, "SPIRA_TESTENV_BIN").ends_with("/testenv"), "the tree's own runner");
+    assert!(cmds[2].contains("SPIRA_SELECT_BIN"), "{}", cmds[2]);
+    assert!(cmds[3].contains("--suites test-b.sh,test-c.sh \"$SPIRA_GATE_BRANCH\""), "{}", cmds[3]);
+    assert!(f.env_of(3, "SPIRA_TESTENV_BIN").ends_with("/testenv"), "the tree's own runner");
     assert!(!cmds.iter().any(|c| c.contains("cargo nextest run")), "{cmds:?}");
-    assert!(meter(&f).contains("compose=fences+reentry phases=tools:7,fences:7,reentry:7"), "{}", meter(&f));
+    assert!(meter(&f).contains("compose=fences+reentry phases=tools:7,fences:7,covered:7,reentry:7"), "{}", meter(&f));
     assert!(f.stderr().contains("gate PASS covered suites: test-b.sh,test-c.sh"), "{}", f.stderr());
 
     // A named suite red again fails the bead before it rides a round.
@@ -4818,8 +4826,8 @@ fn fences_mode_a_re_entering_bead_runs_exactly_its_named_suites_and_a_fresh_one_
     *fresh.diff.borrow_mut() = Ok("docs/x.md".into());
     assert_eq!(fresh.run(), PASS, "{}", fresh.stderr());
     let cmds = fresh.cmds.borrow().clone();
-    assert_eq!(cmds.len(), 2, "{cmds:?}");
-    assert!(!cmds.iter().any(|c| c.contains("--suites") || c.contains("-p testenv")), "{cmds:?}");
+    assert_eq!(cmds.len(), 3, "tools, fences, covered: {cmds:?}");
+    assert!(!cmds.iter().any(|c| c.contains("release config-stage")), "no re-entry command: {cmds:?}");
     assert!(!meter(&fresh).contains("reentry"), "{}", meter(&fresh));
 }
 
@@ -4831,12 +4839,106 @@ fn fences_mode_a_branch_touching_one_suite_runs_that_suite_through_the_trees_run
     f.runs.borrow_mut().insert(MERGE_SHA.into(), (0, "fences ok".into()));
     assert_eq!(f.run(), PASS, "{}", f.stderr());
     let cmds = f.cmds.borrow().clone();
-    assert_eq!(cmds.len(), 3, "tools, fences, re-entry: {cmds:?}");
+    assert_eq!(cmds.len(), 4, "tools, fences, covered, re-entry: {cmds:?}");
     assert!(cmds[0].contains("-p testenv"), "{}", cmds[0]);
-    assert!(cmds[2].contains("--suites test-c.sh \"$SPIRA_GATE_BRANCH\""), "{}", cmds[2]);
-    assert!(f.env_of(2, "SPIRA_TESTENV_BIN").ends_with("/testenv"), "the tree's own runner");
-    assert!(!f.env_of(2, "SPIRA_GATE_REPO").is_empty());
-    assert!(cmds[2].contains("release config-stage ."), "the runner reads the tree's config delta: {}", cmds[2]);
+    assert!(cmds[3].contains("--suites test-c.sh \"$SPIRA_GATE_BRANCH\""), "{}", cmds[3]);
+    assert!(f.env_of(3, "SPIRA_TESTENV_BIN").ends_with("/testenv"), "the tree's own runner");
+    assert!(!f.env_of(3, "SPIRA_GATE_REPO").is_empty());
+    assert!(cmds[3].contains("release config-stage ."), "the runner reads the tree's config delta: {}", cmds[3]);
+}
+
+const COVERED_OUT: &str = "  test-a.sh   ok      3s\nbatch: phases: resolve:0,build:20,up:1,suites:3 (setup 21s, warm: cold)\nVERDICT GREEN ran=1";
+
+#[test]
+fn a_fences_mode_certification_runs_its_covered_suites_as_their_own_phase() {
+    let f = fences_fake(&["docs/x.md"]);
+    f.put_var("SPIRA_GATE_BUDGET", "140");
+    f.covered_runs.borrow_mut().insert(MERGE_SHA.into(), (0, COVERED_OUT.into()));
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    let cmds = f.cmds.borrow().clone();
+    assert_eq!(cmds.len(), 3, "tools, fences, covered: {cmds:?}");
+    assert_eq!(f.env_of(2, "SPIRA_GATE_COVERED"), "1");
+    assert_eq!(f.env_of(2, "SPIRA_GATE_SUITES"), "off");
+    assert!(cmds[2].contains("--deadline \"${SPIRA_GATE_BUDGET:-300}\""), "{}", cmds[2]);
+    assert_eq!(f.env_of(2, "SPIRA_GATE_BUDGET"), "140", "the phase is bounded by the budget it was given");
+    assert!(f.env_of(2, "SPIRA_SELECT_BIN").ends_with("/suite-select") && f.env_of(2, "SPIRA_TESTENV_BIN").ends_with("/testenv"));
+    assert!(!cmds[1].contains("SPIRA_SELECT_BIN"), "the fences string, and so its cache, is unchanged: {}", cmds[1]);
+    let m = meter(&f);
+    assert!(m.contains(" compose=fences phases=tools:7,fences:7,covered-build:4,covered:3"), "{m}");
+    assert!(m.contains(" covered=7 covered_deferred=0"), "{m}");
+    assert!(f.tsd.borrow().iter().any(|r| r.contains("\"covered_secs\":7") && r.contains("\"covered_deferred\":0")), "{:?}", f.tsd.borrow());
+}
+
+#[test]
+fn a_fences_mode_gate_with_no_bead_runs_no_covered_phase_and_takes_no_slot() {
+    let f = fences_fake(&["docs/x.md"]);
+    f.put_var("SPIRA_GATE_BEAD", "");
+    f.admission_free.set(false);
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    assert_eq!(f.cmds.borrow().len(), 2);
+    assert!(!meter(&f).contains("covered"), "{}", meter(&f));
+    // Control: the same gate with a bead waits for a slot.
+    let g = fences_fake(&["docs/x.md"]);
+    g.admission_free.set(false);
+    g.put_var("SPIRA_GATE_LOCK_WAIT", "5");
+    assert_eq!(g.run(), NOVERDICT);
+    assert!(g.verdict_line().contains("reason=admission-timeout"), "{}", g.verdict_line());
+}
+
+#[test]
+fn what_the_covered_phase_deferred_is_counted_as_a_set_of_suites_and_recorded_by_name() {
+    let f = fences_fake(&["docs/x.md"]);
+    f.covered_runs.borrow_mut().insert(
+        MERGE_SHA.into(),
+        (
+            0,
+            "suite-select budget: dropped test-x.sh (tier=T1 predicted=92.000s from p90 — over budget)\nsuite-select budget: dropped test-x.sh (tier=T1 predicted=92.000s from p90 — over budget)\n  test-y.sh                        DEFERRED deadline\n  test-a.sh   ok      3s\nVERDICT GREEN ran=1"
+                .into(),
+        ),
+    );
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    assert!(meter(&f).contains(" covered_deferred=2"), "{}", meter(&f));
+    assert!(f.tsd.borrow().iter().any(|r| r.contains("\"covered_deferred_suites\":\"test-x.sh,test-y.sh\"")), "{:?}", f.tsd.borrow());
+}
+
+#[test]
+fn a_covered_phase_red_is_the_branchs_only_when_the_base_is_not_red_on_it_too() {
+    let red = "  test-b.sh   RED     rc=1 after 4s\nVERDICT RED ran=1 red=1";
+    let f = fences_fake(&["docs/x.md"]);
+    f.covered_runs.borrow_mut().insert(MERGE_SHA.into(), (1, red.into()));
+    assert_eq!(f.run(), FAIL, "{}", f.stderr());
+    assert!(f.verdict_line().contains("reason=branch-red") && f.verdict_line().contains("suite=test-b.sh"), "{}", f.verdict_line());
+
+    let g = fences_fake(&["docs/x.md"]);
+    g.covered_runs.borrow_mut().insert(MERGE_SHA.into(), (1, red.into()));
+    g.reruns.borrow_mut().insert((BASE.into(), "test-b.sh".into()), (1, "  test-b.sh   RED     rc=1 after 4s".into()));
+    assert_eq!(g.run(), PASS, "{}", g.stderr());
+    assert!(g.stderr().contains("inherited, not judged"), "{}", g.stderr());
+}
+
+#[test]
+fn a_named_suite_the_covered_phase_showed_ok_is_not_run_again_by_reentry() {
+    let f = returned(fences_fake(&["docs/x.md"]), "test-b.sh");
+    f.covered_runs.borrow_mut().insert(MERGE_SHA.into(), (0, "  test-b.sh   ok      3s\nVERDICT GREEN ran=1".into()));
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    assert!(!meter(&f).contains("reentry:"), "{}", meter(&f));
+    assert!(!f.cmds.borrow().iter().any(|c| c.contains("release config-stage")), "{:?}", f.cmds.borrow());
+    // Control: a covered phase that did not show it ok leaves it to the re-entry phase.
+    let g = returned(fences_fake(&["docs/x.md"]), "test-b.sh");
+    assert_eq!(g.run(), PASS, "{}", g.stderr());
+    assert!(meter(&g).contains("reentry:"), "{}", meter(&g));
+}
+
+#[test]
+fn a_fences_mode_column_repository_stays_fences_only_and_says_so() {
+    let f = Fake::new();
+    *f.mode.borrow_mut() = Ok(GateMode::Fences);
+    f.put_var("SPIRA_GATE_BEAD", "sp-a");
+    f.put_var("SPIRA_GATE_SUITES", "off");
+    f.admission_free.set(false);
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    assert_eq!(f.env_of(0, "SPIRA_GATE_COVERED"), "");
+    assert!(f.stderr().contains("runs its fences only"), "{}", f.stderr());
 }
 
 #[test]
