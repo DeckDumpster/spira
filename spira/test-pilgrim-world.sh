@@ -49,8 +49,10 @@ claimable_ids() { in_world "$1" "spira-lc list --live --json" | jq -r '[.[] | se
 STANDING="$(claimable_ids "$T/pilgrim")"
 is "the fixture seeds one claimable bead" 1 "$(echo "$STANDING" | wc -w)"
 PROD_BEFORE="$(claimable_ids "$T/plain")"
+PROD_ROWS="$(in_world "$T/plain" "spira-lc list --live --json" | jq length)"
 pilgrim_file "$T/plain" "refused in production" >/dev/null 2>&1; rc=$?
 wantrc "the pilgrim cannot file in a world that is not a pilgrim world" 3 "$rc"
+is "the refused filing left no bead behind" "$PROD_ROWS" "$(in_world "$T/plain" "spira-lc list --live --json" | jq length)"
 
 B="$(pilgrim_file "$T/pilgrim" "blocker B")"
 A="$(pilgrim_file "$T/pilgrim" "blocked A")"

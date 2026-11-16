@@ -4,7 +4,7 @@ use std::path::Path;
 use std::process::{Command, Output};
 
 pub const FIXTURE: &str = include_str!("../fixtures/pilgrim-world.toml");
-const SHELL_DEADLINE: std::time::Duration = std::time::Duration::from_secs(120); // batch-job: a bead filing in a world
+const SHELL_DEADLINE: std::time::Duration = std::time::Duration::from_secs(600); // batch-job: a tool run in a world, Loom and lc-view's loop for a whole suite
 
 /// A command under the world's own environment and PATH — its config, socket and release — so a
 /// tool run through it reads the world's store and never production's.
