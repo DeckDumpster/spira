@@ -163,6 +163,33 @@ pub fn activate(
     tx.commit().map_err(sql)
 }
 
+/// Deletes every row whose bead is named, one `cleared-landed` history row each; returns the cleared test ids.
+pub fn clear_landed(
+    conn: &Connection,
+    now: i64,
+    beads: &[&str],
+    actor: &str,
+) -> Result<Vec<String>, String> {
+    if actor.trim().is_empty() {
+        return Err("actor must not be empty".into());
+    }
+    if let Some(bad) = beads.iter().find(|b| !valid_bead_id(b)) {
+        return Err(format!("bead {bad:?} is not a bead id"));
+    }
+    let tx = Transaction::new_unchecked(conn, TransactionBehavior::Immediate).map_err(sql)?;
+    let mut cleared = Vec::new();
+    for row in list(&tx)? {
+        if !beads.contains(&row.bead.as_str()) {
+            continue;
+        }
+        exec(&tx, "DELETE FROM test_state WHERE test = ?1", [&row.test])?;
+        exec(&tx, "INSERT INTO test_state_history(at, verb, test, state, since, until, bead, reason, actor) VALUES (?1,'cleared-landed',?2,'active',?3,?4,?5,?6,?7)", params![now, row.test, row.since, row.until, row.bead, format!("the landing of {} cleared the row", row.bead), actor])?;
+        cleared.push(row.test);
+    }
+    tx.commit().map_err(sql)?;
+    Ok(cleared)
+}
+
 fn row_of(r: &rusqlite::Row) -> rusqlite::Result<Row> {
     Ok(Row {
         test: r.get(0)?,
@@ -386,5 +413,42 @@ mod tests {
     fn the_schema_is_version_one() {
         let v = scalar(&db(), "PRAGMA user_version").unwrap();
         assert_eq!(v, 1);
+    }
+
+    #[test]
+    fn clear_landed_deletes_the_rows_naming_the_bead_and_keeps_the_rest() {
+        let c = db();
+        let named = |test, bead| Set {
+            bead,
+            ..s(test, Some(9000))
+        };
+        disable(&c, 100, 600, &named("suite:a.sh", "sp-a")).unwrap();
+        quarantine(&c, 100, 600, &named("suite:b.sh::t", "sp-a")).unwrap();
+        disable(&c, 100, 600, &named("suite:c.sh", "sp-b")).unwrap();
+        let cleared = clear_landed(&c, 200, &["sp-a"], "batcher").unwrap();
+        assert_eq!(cleared, ["suite:a.sh", "suite:b.sh::t"]);
+        let left: Vec<String> = list(&c).unwrap().into_iter().map(|r| r.test).collect();
+        assert_eq!(left, ["suite:c.sh"]);
+        for t in &cleared {
+            let h = history(&c, t).unwrap();
+            let last = h.last().unwrap();
+            assert_eq!(
+                (last["verb"].as_str(), last["state"].as_str()),
+                (Some("cleared-landed"), Some("active"))
+            );
+            assert_eq!(last["actor"], "batcher");
+        }
+        assert_eq!(history(&c, "suite:c.sh").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn clear_landed_for_a_bead_with_no_rows_changes_nothing() {
+        let c = db();
+        disable(&c, 100, 600, &s("suite:a.sh", Some(9000))).unwrap();
+        assert!(clear_landed(&c, 200, &["sp-zzz"], "batcher")
+            .unwrap()
+            .is_empty());
+        assert_eq!(list(&c).unwrap().len(), 1);
+        assert_eq!(history(&c, "suite:a.sh").unwrap().len(), 1);
     }
 }
