@@ -19,9 +19,10 @@ pub enum Phase {
     MinRevWait,
     Apply,
     Reload,
+    Drain,
 }
 
-const PHASES: usize = 10;
+const PHASES: usize = 11;
 
 impl Phase {
     pub fn name(self) -> &'static str {
@@ -36,6 +37,7 @@ impl Phase {
             Phase::MinRevWait => "min_rev_wait",
             Phase::Apply => "apply",
             Phase::Reload => "reload",
+            Phase::Drain => "drain",
         }
     }
 
@@ -50,6 +52,7 @@ impl Phase {
         Phase::MinRevWait,
         Phase::Apply,
         Phase::Reload,
+        Phase::Drain,
     ];
 }
 
