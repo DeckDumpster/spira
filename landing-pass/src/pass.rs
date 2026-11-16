@@ -693,6 +693,7 @@ impl<'a> Pass<'a> {
             }
             if g.outcome == GateOutcome::Fail {
                 self.files.note_gate_judged(br);
+                self.settle_unjudged(name, br, &tip, "fail");
             }
             if moved {
                 self.log(&format!("CHECK6 {id}: {br} moved during the gate — verdict on {tip} not recorded"));
@@ -706,6 +707,7 @@ impl<'a> Pass<'a> {
             }
             match g.outcome {
                 GateOutcome::BaseFail => {
+                    self.settle_unjudged(name, br, &tip, "base-fail");
                     self.log(&format!("CHECK6 {id}: held — the base fails its own gate (suite {})", g.suite));
                     self.base_fail(w, br, id, bead, &tip, &g);
                 }
@@ -768,6 +770,7 @@ impl<'a> Pass<'a> {
         }
         self.files.clear_noverdict(br);
         self.files.note_gate_judged(br);
+        self.settle_unjudged(name, br, &tip, "pass");
         let (closed, st) = self.handed_on_now(id);
         if !closed {
             self.log(&format!("CHECK6 {id}: bead is now {st} (was closed at scan time) — not certifying {br}"));
@@ -780,6 +783,22 @@ impl<'a> Pass<'a> {
         }
         self.out.progress(&format!("certified {br} in {name} — gate passed, round and CI are the remaining judges"));
         Flow::Next
+    }
+
+    /// A verdict contradicts "the gate cannot judge": close every such incident filed for `repo`.
+    /// An id whose close fails stays recorded for the next verdict.
+    fn settle_unjudged(&self, repo: &str, br: &str, tip: &str, verdict: &str) {
+        let at = crate::util::iso_utc(self.clock.now());
+        let evidence = format!("{repo}'s gate reached a verdict ({verdict}) on {br} at {tip} at {at}: the gate can judge again");
+        for inc in self.files.unjudged_incidents(repo) {
+            match self.lib.close_incident(&inc, &evidence) {
+                Ok(()) => {
+                    self.files.forget_unjudged_incident(repo, &inc);
+                    self.log(&format!("CHECK6 {br}: closed incident {inc} — {repo}'s gate reached a verdict ({verdict})"));
+                }
+                Err(e) => self.log(&format!("CHECK6 {br}: incident {inc} not closed, kept for the next verdict: {e}")),
+            }
+        }
     }
 
     /// The gate could not judge this tip `reasons.len()` times: hold the bead until the hold
@@ -815,6 +834,9 @@ impl<'a> Pass<'a> {
                 String::new()
             }
         };
+        if !inc.is_empty() {
+            self.files.note_unjudged_incident(repo, &inc);
+        }
         let inc = if inc.is_empty() { "not filed".to_string() } else { inc };
         let why = format!("gate could not judge {tip}: {joined} — incident {inc}; lifts at expiry, or `spira-lc unhold {id} wait` once the harness is fixed");
         let until = self.clock.now() + self.s.noverdict_class_window.max(0) as u64;
