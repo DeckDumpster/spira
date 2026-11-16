@@ -235,14 +235,14 @@ mod tests {
     #[test]
     fn a_member_reaches_the_package_whose_tests_read_a_file_it_touches_and_no_other() {
         let g = PackageGraph {
-            dirs: [("release", "release"), ("spira-world", "spira-world")].iter().map(|(p, d)| (p.to_string(), d.to_string())).collect(),
+            dirs: [("queue", "queue"), ("spira-world", "spira-world")].iter().map(|(p, d)| (p.to_string(), d.to_string())).collect(),
             deps: BTreeMap::new(),
         };
         let d = [diff("a", "spira/config-delta.d/x.toml"), diff("b", "docs/x.md")];
-        let got = reaching(&g, &["release".to_string()], &d);
+        let got = reaching(&g, &["queue".to_string()], &d);
         assert_eq!(got.len(), 1, "{got:?}");
         assert_eq!(got[0].0.as_str(), "a");
-        assert!(got[0].1.contains("spira/config-delta.d/x.toml (read by release's tests)"), "{got:?}");
+        assert!(got[0].1.contains("spira/config-delta.d/x.toml (read by queue's tests)"), "{got:?}");
         assert!(reaching(&g, &["spira-world".to_string()], &d).is_empty());
     }
 
