@@ -2310,7 +2310,7 @@ mod tests {
                     let sub: Vec<String> = words.clone().next().map(|x| vec![x.to_string()]).unwrap_or_default();
                     let op = super::op_key(verb, &sub);
                     let op = if ALLOW.iter().any(|(k, _)| *k == op) { op } else { verb.to_string() };
-                    if super::permitted(&op, Some(&persona), false).is_err() {
+                    if super::permitted(&op, Some(&persona), persona == "pilgrim").is_err() {
                         bad.push(format!("{persona}.md: `work {op}`"));
                     }
                 }
