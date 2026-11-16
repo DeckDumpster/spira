@@ -217,11 +217,15 @@ pub(crate) fn startup_line(phase: &str, took: Duration, wall_ms: u64) -> String 
     format!("spira-lc serve: {} start-up {phase} {} ms", spira_lc::sections::rfc3339(wall_ms), took.as_millis())
 }
 
+fn ready_line(phases: &[(&str, Duration)], wall_ms: u64) -> String {
+    let total: Duration = phases.iter().map(|(_, took)| *took).sum();
+    format!("spira-lc serve: {} ready after {} ms", spira_lc::sections::rfc3339(wall_ms), total.as_millis())
+}
+
 /// One line per phase in order, then `ready after` the sum of them.
 fn startup_lines(phases: &[(&str, Duration)], wall_ms: u64) -> Vec<String> {
     let mut lines: Vec<String> = phases.iter().map(|(phase, took)| startup_line(phase, *took, wall_ms)).collect();
-    let total: Duration = phases.iter().map(|(_, took)| *took).sum();
-    lines.push(format!("spira-lc serve: {} ready after {} ms", spira_lc::sections::rfc3339(wall_ms), total.as_millis()));
+    lines.push(ready_line(phases, wall_ms));
     lines
 }
 
@@ -245,8 +249,7 @@ impl Startup {
     }
 
     fn ready(&self, spans: Option<&spira_otel::Sink>) {
-        let lines = startup_lines(&self.phases, wall_ms());
-        eprintln!("{}", lines.last().expect("ready line"));
+        eprintln!("{}", ready_line(&self.phases, wall_ms()));
         let Some(spans) = spans else { return };
         let us: Vec<(&str, u64)> = self.phases.iter().map(|(p, d)| (*p, d.as_micros() as u64)).collect();
         spans.emit(&spira_otel::Call {
