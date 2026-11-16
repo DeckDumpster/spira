@@ -591,7 +591,7 @@ pub fn batcher_round_open(w: &World, input: &str) -> Result<String, String> {
 fn undenied(w: &World, leg: &bl::Leg) -> Result<Vec<Flip>, String> {
     let Some(reg) = w.lc().reg.clone() else { return Ok(vec![]) };
     let denied = reg.denied(w.now())?;
-    Ok(w.script.flips.iter().filter(|f| f.members.iter().any(|m| leg.members.iter().any(|(id, _)| id == m)) && !denied.contains(&f.test)).cloned().collect())
+    Ok(w.script.flips.iter().filter(|f| f.members.iter().any(|m| leg.members.iter().any(|(id, _)| id == m)) && !denied.iter().map(String::as_str).any(|d| d == f.test)).cloned().collect())
 }
 
 fn note_reds(w: &World, leg: &bl::Leg, red: &[Flip]) {
