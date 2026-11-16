@@ -3146,7 +3146,7 @@ pub const QUEUE_PASS_RUNNING_EXIT: i32 = 79;
 pub const EJECT_HELD: &str = "eject-held=";
 
 /// An eject to issue again, verbatim, once no pass of the round is running.
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct HeldEject {
     pub id: String,
     pub reason: String,

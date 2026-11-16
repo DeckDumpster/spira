@@ -570,6 +570,9 @@ pub struct RepoCarry {
     /// The attribution's survivors await certify, which starts once no pass scope of the round is alive.
     #[serde(default)]
     pub certify_held: bool,
+    /// An eject the queue held because a pass of the round was running; issued again once none is.
+    #[serde(default)]
+    pub eject_held: Option<EjectHold>,
     /// Certify passes of this round whose VM answered ssh and never started the round.
     #[serde(default)]
     pub no_output_vms: u32,
@@ -636,6 +639,14 @@ pub struct RepoCarry {
     pub reconciled: Option<String>,
 }
 
+/// A held eject, and whether its act is out: the round is waiting on that act's outcome.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EjectHold {
+    pub eject: batcher_cut::io::HeldEject,
+    #[serde(default)]
+    pub issued: bool,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Waiting {
     pub state: State,
@@ -661,6 +672,7 @@ impl RepoCarry {
             lost_vms: self.lost_vms,
             attributed: self.attributed,
             certify_held: self.certify_held,
+            eject_held: self.eject_held.clone(),
             leg: self.leg.clone(),
             leg_at_ms: self.leg_at_ms,
             head: self.head.clone(),
@@ -696,6 +708,7 @@ impl RepoCarry {
             lost_vms: round.lost_vms,
             attributed: round.attributed,
             certify_held: round.certify_held,
+            eject_held: round.eject_held.clone(),
             leg: round.leg.clone(),
             leg_at_ms: round.leg_at_ms,
             head: round.head.clone(),
@@ -746,6 +759,9 @@ pub fn driving(body: &str) -> bool {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Leg {
     pub repo: String,
+    /// The eject an EJECT act issues again verbatim, when it is a held one.
+    #[serde(default)]
+    pub held: Option<batcher_cut::io::HeldEject>,
     /// The act's idempotency key, as the contract's Act table gives it.
     #[serde(default)]
     pub key: String,
@@ -1186,6 +1202,42 @@ impl Machine<'_> {
         self.rc.leg_at_ms = self.now_ms;
     }
 
+    fn hold_eject(&mut self, eject: batcher_cut::io::HeldEject) {
+        self.rc.eject_held = Some(EjectHold { eject, issued: false });
+        self.rc.leg = None;
+        self.rc.leg_at_ms = self.now_ms;
+    }
+
+    fn release_eject(&mut self, policy: &Policy, repo: &Repo) {
+        let Some(hold) = self.rc.eject_held.as_mut() else { return };
+        if hold.issued {
+            return;
+        }
+        let alive = self.rc.batch.as_ref().is_some_and(|b| repo.scoped_batches.as_ref().is_some_and(|s| s.contains(b)));
+        if alive && self.now_ms.saturating_sub(self.rc.leg_at_ms) <= policy.wall_ms {
+            return;
+        }
+        hold.issued = true;
+        let eject = hold.eject.clone();
+        let tip = self.rc.members.iter().find(|(id, _)| *id == eject.id).map(|(_, t)| t.clone()).unwrap_or_default();
+        let key = format!("{}:{}:{}:eject-held:{}", self.repo, self.rc.batch.clone().unwrap_or_default(), eject.id, self.now_ms);
+        self.acts.push(Leg { bead: eject.id.clone(), head: tip, key, held: Some(eject), ..self.leg() }.act(EJECT));
+    }
+
+    /// The held eject went through: the survivors are certified, as after an ordinary eject.
+    fn eject_released(&mut self) {
+        let Some(hold) = self.rc.eject_held.take() else { return };
+        self.rc.members.retain(|(id, _)| *id != hold.eject.id);
+        if self.rc.members.is_empty() {
+            self.go(Trigger::RerunBlocked);
+            self.emptied("the held eject left the round with no member — nothing is left to land");
+            return;
+        }
+        self.rc.round_key = Some(core::round_key(&self.rc.members));
+        self.go(Trigger::RerunCertifying);
+        self.hold_certify();
+    }
+
     fn release_certify(&mut self, policy: &Policy, repo: &Repo) {
         let alive = self.rc.batch.as_ref().is_some_and(|b| repo.scoped_batches.as_ref().is_some_and(|s| s.contains(b)));
         if alive && self.now_ms.saturating_sub(self.rc.leg_at_ms) <= policy.wall_ms {
@@ -1302,6 +1354,10 @@ impl Machine<'_> {
         }
         self.note_waiting();
         if self.superseded_by_green_head(repo) {
+            return;
+        }
+        if self.rc.eject_held.is_some() {
+            self.release_eject(policy, repo);
             return;
         }
         let passing = matches!(self.rc.state, State::Corpus | State::Attributing | State::Certifying) && !self.rc.certify_held;
@@ -1734,6 +1790,9 @@ impl Machine<'_> {
                     self.go(Trigger::RerunBlocked);
                     self.finish(pace::Outcome::AttributionFaulted, &why);
                 }
+                Some(Attribution::Blocked(why)) if batcher_cut::io::HeldEject::parse(&why).is_some() => {
+                    self.hold_eject(batcher_cut::io::HeldEject::parse(&why).unwrap_or_default());
+                }
                 Some(Attribution::Blocked(why)) => {
                     self.go(Trigger::RerunBlocked);
                     self.red(&format!("local corpus red — held before reaching CI: {why}"));
@@ -1876,6 +1935,10 @@ impl Machine<'_> {
                 self.opened(leg.why == "suites");
             }
             (State::Corpus | State::Attributing, CORPUS) | (State::Certifying, CERTIFY) if !ok && self.rc.leg.as_deref() == Some(leg.unit.as_str()) => self.leg_unstarted(&format!("it could not be started ({})", body.trim())),
+            (State::Attributing | State::Certifying, EJECT) if ok && self.rc.eject_held.as_ref().is_some_and(|h| h.issued) => self.eject_released(),
+            (State::Corpus | State::Attributing | State::Certifying, EJECT) if !ok && batcher_cut::io::HeldEject::parse(body).is_some() => {
+                self.hold_eject(batcher_cut::io::HeldEject::parse(body).unwrap_or_default());
+            }
             (State::Corpus | State::Attributing | State::Certifying, EJECT) if !ok => {
                 self.go(Trigger::LegLost);
                 self.red_naming(&format!("eject of {} refused: {}", leg.bead, body.trim()), leg.reds.clone());
@@ -2730,8 +2793,18 @@ pub mod edge {
         start_unit(e, super::NAME, &leg.unit, argv, home_vars(&env), None)
     }
 
+    /// Records the red tip, then ejects: a refused eject still keeps the tip out of the next cut.
+    pub fn record_then_eject(run: &Path, repo: &str, id: &str, tip: &str, eject: impl FnOnce() -> Result<(), String>) -> Result<(), String> {
+        batcher_cut::redtip::record(run, repo, id, tip);
+        eject()
+    }
+
     pub fn eject(_: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
         let (env, leg) = (env()?, leg(spec)?);
+        if let Some(held) = &leg.held {
+            io::round_eject_held(&env, &repo_of(&env, &leg)?, &leg.batch, held)?;
+            return Ok("{}".into());
+        }
         if leg.bead.is_empty() {
             // The guilty of a red certify: the members whose files its output names.
             let repo = repo_of(&env, &leg)?;
@@ -2739,16 +2812,13 @@ pub mod edge {
             let changed: Vec<(String, Vec<String>)> = leg.members.iter().map(|(id, tip)| (id.clone(), io::changed_paths(&repo, &leg.base, tip))).collect();
             let guilty = io::implicated(&text, &changed);
             for id in &guilty {
-                io::round_eject(&env, &repo, &leg.batch, id, &io::ci_red_suites(std::path::Path::new(&leg.wt)), &[], true)?;
-                if let Some((_, tip)) = leg.members.iter().find(|(m, _)| m == id) {
-                    batcher_cut::redtip::record(&env.run, &leg.repo, id, tip);
-                }
+                let tip = leg.members.iter().find(|(m, _)| m == id).map_or("", |(_, t)| t.as_str());
+                record_then_eject(&env.run, &leg.repo, id, tip, || io::round_eject(&env, &repo, &leg.batch, id, &io::ci_red_suites(std::path::Path::new(&leg.wt)), &[], true))?;
             }
             return Ok(serde_json::json!({ "ejected": guilty }).to_string());
         }
         let suites = if leg.reds.is_empty() { io::ci_red_suites(std::path::Path::new(&leg.wt)) } else { leg.reds.clone() };
-        io::round_eject_sole_red(&env, &repo_of(&env, &leg)?, &leg.batch, &leg.bead, &suites, &leg.why)?;
-        batcher_cut::redtip::record(&env.run, &leg.repo, &leg.bead, &leg.head);
+        record_then_eject(&env.run, &leg.repo, &leg.bead, &leg.head, || io::round_eject_sole_red(&env, &repo_of(&env, &leg)?, &leg.batch, &leg.bead, &suites, &leg.why))?;
         Ok("{}".into())
     }
 
