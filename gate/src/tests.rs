@@ -49,6 +49,7 @@ struct Fake {
     written: RefCell<Vec<(PathBuf, String)>>,
     unit_config: RefCell<Vec<(PathBuf, String)>>,
     deny: RefCell<Result<String, String>>,
+    deny_calls: Cell<u32>,
     appended: RefCell<Vec<String>>,
     harness: Cell<&'static str>,
     /// run/tsd rows (telemetry.rs), kept apart from the gate.log meter.
@@ -252,6 +253,7 @@ impl Fake {
             written: RefCell::new(Vec::new()),
             unit_config: RefCell::new(Vec::new()),
             deny: RefCell::new(Ok(String::new())),
+            deny_calls: Cell::new(0),
             appended: RefCell::new(Vec::new()),
             harness: Cell::new("harness"),
             tsd: RefCell::new(Vec::new()),
@@ -471,6 +473,7 @@ impl Fake {
 
 impl World for Fake {
     fn deny_list(&self, _at: u64) -> Result<String, String> {
+        self.deny_calls.set(self.deny_calls.get() + 1);
         self.deny.borrow().clone()
     }
     fn context(&self, _: Option<&str>) -> Result<Ctx, String> {
@@ -2533,6 +2536,7 @@ fn a_gate_names_the_deny_list_it_ran_with_on_stderr_in_the_record_and_in_the_tsd
     *f.deny.borrow_mut() = Ok(list.to_string());
     f.runs.borrow_mut().insert(MERGE_SHA.into(), (0, "build-fence: make build ok".into()));
     assert_eq!(f.run(), PASS);
+    assert_eq!(&crate::key::sha256_hex(b"abc")[..12], "ba7816bf8f01", "the digest test-registry prints for the same text");
     let digest = &crate::key::sha256_hex(list.as_bytes())[..12];
     let line = f.stderr().lines().find(|l| l.starts_with("gate: deny list ")).unwrap_or_default().to_string();
     let label = line.trim_start_matches("gate: deny list ").split(' ').next().unwrap().to_string();
@@ -3016,6 +3020,7 @@ fn a_red_unit_test_on_a_green_base_is_the_branchs() {
         "branch fences/build/test, base fences only: {cmds:?}"
     );
     assert!(!meter(&f).contains("base-build") && !meter(&f).contains("base-test"));
+    assert_eq!(f.deny_calls.get(), 1, "the branch trial and the base trial share one snapshot");
     assert_eq!(f.checkouts.borrow()[1], BASE);
     assert!(meter(&f).contains(
         "compose=unit phases=fences:7,build:7,test:7,base-fences:7 unit_build_secs=7 unit_run_secs=7 unit_tests=1 unit_slowest=- deny_list=1000000/e3b0c44298fc test_clock=7s

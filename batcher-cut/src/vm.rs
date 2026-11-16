@@ -2181,6 +2181,7 @@ mod deny_snapshot_tests {
         assert_eq!(s.rows(), 1);
         assert_eq!(s.label(), format!("2000/{}", s.digest()));
         assert_eq!(s.digest().len(), 12);
+        assert_eq!(DenySnapshot { text: "abc".into(), at: 0 }.digest(), "ba7816bf8f01", "the digest test-registry prints for the same text");
         assert_eq!(s.fields(), [("deny_list", s.label()), ("deny_rows", "1".to_string())]);
         assert_eq!(DenySnapshot { text: String::new(), at: 1 }.rows(), 0);
         let d = testkit::TempDir::new("vm-deny-pass");

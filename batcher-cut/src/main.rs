@@ -2296,8 +2296,8 @@ fn attribute_run(o: &Opts) -> Result<(), String> {
         .iter()
         .map(|m| (m.id.clone(), io::changed_paths(&repo, &start_sha, &m.tip)))
         .collect();
-    let deny = match o.after_pass.as_deref().and_then(vm::DenySnapshot::from_pass) {
-        Some(d) => d,
+    let deny = match o.after_pass.as_deref() {
+        Some(pass) => vm::DenySnapshot::from_pass(pass).ok_or_else(|| format!("{} holds no deny list of the round's pass; refusing to attribute with another", pass.display()))?,
         None => resolve_deny(&env_, now()).map_err(|e| e.msg)?,
     };
     let mut runner = vm::VmRunner::new(&env_, &repo, &wt, &start_sha, &round, changed.clone())?
