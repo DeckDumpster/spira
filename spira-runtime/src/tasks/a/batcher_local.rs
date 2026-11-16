@@ -46,6 +46,7 @@
 //! | Certifying | `unit.ran` red with no `red-output=`, first time (VM lost, no output and refused eject excepted) | Attributing, `after_certify` (the certify pass's own results are the prior) |
 //! | Certifying | `unit.ran` red / failed | Done (eject guilty, `abandon`, verdict red) |
 //! | Certifying | `unit.ran` failed naming no verdict and no suite, after the attribution | Done (output kept, round left open, pace Infra) |
+//! | Attributing | observe: the round's open round is green on the carried head | Landing (`land`), or Certified when stacked; the attribution leg is stopped in the same tick |
 //! | Attributing | `unit.ran` land | Certifying, certify held until no pass of the round is running (a scope its pass has left is stopped, not waited on) |
 //! | Certifying | `unit.ran` exit 75, the VM lost under the pass | Certifying (`certify` again: same head, a new VM), at most [`LOST_VM_RECERTIFIES`] times; then Done (pace Infra, the round left open, never abandoned) (sp-e30jhh) |
 //! | Certifying | `unit.ran` exit 77, the VM produced no output | Certifying (`certify` again, a fresh VM), at most [`NO_OUTPUT_RECERTIFIES`] times; then Done (pace Infra, the round parked open, never abandoned) |
@@ -67,6 +68,7 @@
 //! | `batcher.local.fetch` | git | 60 s | repo + base sha | — (`io.rs:672`) |
 //! | `batcher.local.assemble` | git | 120 s | repo + round_key | dirty lock (`io.rs:698-753`) |
 //! | `batcher.local.round_open` | store | 30 s | repo + round_key | members ≠ named (`io.rs:1574-1597`) |
+//! | `unit.stop` | unit | `UNIT_START_DEADLINE_MS` | `batcher.local:stop:<leg key>` | — (the leg's later `unit.ran` changes nothing) |
 //! | `batcher.local.corpus` | unit (`unit.start`) | `SPIRA_BATCHER_WALL_SECS` | batch + run n | 2nd run while one live (`vm.rs:370`) |
 //! | `batcher.local.stage` / `.stage_test` | unit | wall secs | staged batch | hypervisor full (`io.rs:1881`, `:1906`) |
 //! | `batcher.local.eject` | store | 30 s | batch + bead | not in round (`io.rs:1600`, `:1628`) |
@@ -155,6 +157,7 @@ pub const ACTS: &[(&str, u64)] = &[
     (WITHDRAW, 10_000),
     (REBASE_STALE, UNIT_START_DEADLINE_MS),
     (CERTIFY, UNIT_START_DEADLINE_MS),
+    (runtime::units::UNIT_STOP, UNIT_START_DEADLINE_MS),
     (LAND, 900_000),
     (ABANDON, 30_000),
     (PROMOTE, 30_000),
@@ -168,7 +171,7 @@ pub const ACTS: &[(&str, u64)] = &[
 pub const EMITS: &[EventKindTag] = &[];
 /// Hand-offs that wake it at once, besides its tick: a submission sifted, a batch settled.
 pub const WAKES: &[EventKindTag] = &[kit::WORK_SUBMITTED, super::queue_step::CUT_WANTED];
-pub const EFFECTS: &[&str] = &[runtime::units::UNIT_FACTS, OBSERVE, FETCH, ASSEMBLE, ROUND_OPEN, CORPUS, STAGE, STAGE_TEST, EJECT, WITHDRAW, REBASE_STALE, CERTIFY, LAND, ABANDON, PROMOTE, REDRIVE, FILE, SUPERSEDE_REDS, PAUSE, KEEP_CERTIFY_OUTPUT, INBOX_APPEND];
+pub const EFFECTS: &[&str] = &[runtime::units::UNIT_FACTS, runtime::units::UNIT_STOP, OBSERVE, FETCH, ASSEMBLE, ROUND_OPEN, CORPUS, STAGE, STAGE_TEST, EJECT, WITHDRAW, REBASE_STALE, CERTIFY, LAND, ABANDON, PROMOTE, REDRIVE, FILE, SUPERSEDE_REDS, PAUSE, KEEP_CERTIFY_OUTPUT, INBOX_APPEND];
 pub const KEYS: &[&str] = &[
     "SPIRA_RUN",
     "SPIRA_DB",
@@ -1359,6 +1362,10 @@ impl Machine<'_> {
         if self.rc.leg_head.is_empty() {
             self.rc.leg_head = open.head.clone();
         }
+        if self.rc.leg_head == open.head && self.rc.state == State::Attributing && open.phase == "green" {
+            self.stop_carried_leg();
+            return self.land_green();
+        }
         if self.rc.leg_head == open.head || self.certifying_rebuilt_head(&seen, &open.head) {
             return false;
         }
@@ -1372,11 +1379,21 @@ impl Machine<'_> {
         if open.phase != "green" {
             return false;
         }
+        self.land_green()
+    }
+
+    fn land_green(&mut self) -> bool {
         self.go(if self.below { Trigger::HeadGreenHeld } else { Trigger::HeadGreen });
         if !self.below {
             self.land_now();
         }
         true
+    }
+
+    fn stop_carried_leg(&mut self) {
+        let Some(key) = self.rc.leg.clone() else { return };
+        let Ok(handle) = UnitHandle::of(NAME, &key) else { return };
+        self.acts.push(Act::new(runtime::units::UNIT_STOP, format!("{NAME}:stop:{key}")).with_input(serde_json::to_string(&handle).unwrap_or_default()));
     }
 
     /// The state waits on `effect`'s outcome and the scheduler holds none in flight for the repo:
