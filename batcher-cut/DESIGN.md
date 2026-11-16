@@ -174,6 +174,15 @@ Every owner ejection, and the repository-ci eject, first records the member's ti
 leaves out a member whose tip equals the recorded one (`redtip::withhold`) and files one bead note
 for it; a new commit changes the tip and readmits it. Tests: `redtip::tests`.
 
+## Left-out beads
+
+`io::certified_pool` names each CERTIFIED bead the pool leaves out: held (`Held`), tip recorded
+ejected-red (`EjectedRed`), or certified tip no longer the branch tip (`TipMoved`). The first time an
+(id, cause, tip) is seen, one stderr line `batcher <repo>: <id> left out of the cut: <why> — <exit>`
+and one bead note say why and the way back in; the record `<run>/batcher-left-out/<repo>/<id>` holds
+`<cause-tag> <tip>` and is written only once the note is left, so a failed note is retried. A record whose
+bead is no longer left out is removed. Tests: `io::pool_parity_tests`.
+
 ## Staged rounds
 
 A queue.local cut stages the next round while the open one's suites run. Once the VM

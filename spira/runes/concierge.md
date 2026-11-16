@@ -161,6 +161,11 @@ the tip, command and result> --evidence-tip <the same 40-hex>`, wait for CERTIFI
 <id>:<tip>`. A REWORK bead needs `spira-lc hold <id> manual --reason <why> concierge` first. It is a
 break-glass move and is refused without every field; the event records actor, reason, evidence and
 tip. Its own gate certifies it; a SUBMITTED bead is not admitted to a round. A bead a live dwarf holds is refused.
+A resubmit at the tip a round ejected as red withdraws that red with the evidence it carries, so no
+`queue absolve` is needed; `queue absolve` stays the verb for a red at a tip that is not being resubmitted.
+A REWORK resubmit keeps the manual hold, so the batcher will not cut the bead: cut it by hand with
+`queue round open --members <id>:<tip> --by concierge`. The batcher notes on a bead why it leaves a
+CERTIFIED bead out of a cut (held, ejected-red, or its branch moved), once per cause.
 
 Lifting the manual hold on a REWORK bead whose tip a round ejected as red is the same kind of move: `spira-lc unhold <id> manual concierge --reason <why> --evidence <checks run on the tip, command and result> --evidence-tip <the bead's tip>`. It is refused without every flag, and the row records actor, reason, evidence and tip.
 
