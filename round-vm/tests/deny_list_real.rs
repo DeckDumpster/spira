@@ -109,3 +109,9 @@ fn a_disabled_row_excludes_exactly_that_test_from_a_gate_run_and_a_round_run() {
         assert!(log.contains("t::keep") && log.contains("t::drop"), "{who}: an activated row runs both: {log}");
     }
 }
+
+#[test]
+fn the_digest_the_registry_prints_is_the_one_the_gate_and_the_round_record() {
+    assert_eq!(test_registry::digest("abc"), "ba7816bf8f01");
+    assert_eq!(&gate::key::sha256_hex(b"abc")[..12], "ba7816bf8f01");
+}
