@@ -494,6 +494,19 @@ fn announce_left_out(env: &Env, repo: &Repo, left: &[LeftOut]) {
     }
 }
 
+fn moved_tips(pool: &[PoolRow], branches: &BTreeMap<String, String>) -> Vec<LeftOut> {
+    pool.iter()
+        .filter(|(id, tip, ..)| !tip_current(tip, id, branches))
+        .map(|(id, tip, ..)| LeftOut {
+            id: id.clone(),
+            tip: tip.clone(),
+            cause: Cause::TipMoved {
+                branch_tip: branches.get(id).cloned().unwrap_or_else(|| "no branch".into()),
+            },
+        })
+        .collect()
+}
+
 fn hold_kinds(r: &serde_json::Value) -> Vec<String> {
     let arr = match r.get("holds") {
         Some(serde_json::Value::Array(a)) => a.clone(),
@@ -700,13 +713,7 @@ fn tip_current(tip: &str, id: &str, branches: &BTreeMap<String, String>) -> bool
 pub fn certified_pool(env: &Env, repo: &Repo) -> Result<Vec<Member>, String> {
     let (certified, mut left) = read_pool(env)?;
     let branches = repo_branch_tips(repo)?;
-    left.extend(certified.iter().filter(|(id, tip, ..)| !tip_current(tip, id, &branches)).map(
-        |(id, tip, ..)| LeftOut {
-            id: id.clone(),
-            tip: tip.clone(),
-            cause: Cause::TipMoved { branch_tip: branches.get(id).cloned().unwrap_or_else(|| "no branch".into()) },
-        },
-    ));
+    left.extend(moved_tips(&certified, &branches));
     announce_left_out(env, repo, &left);
     let mut barred = std::collections::BTreeSet::new();
     barred.extend(
@@ -4532,6 +4539,22 @@ mod pool_parity_tests {
             announce_with(run.path(), "r", &[LeftOut { id: "sp-n".into(), ..left[0].clone() }], &mut |_, _| Ok(())).len(),
             1,
             "a failed note leaves no record, so the line comes back"
+        );
+    }
+
+    #[test]
+    fn a_certified_tip_the_branch_moved_past_is_left_out_naming_the_branch_tip() {
+        let row = |id: &str, tip: &str| (id.to_string(), tip.to_string(), 0, false, vec![]);
+        let branches = BTreeMap::from([("sp-m".to_string(), "new".to_string()), ("sp-s".to_string(), "same".to_string())]);
+        let pool = [row("sp-m", "old"), row("sp-s", "same"), row("sp-x", "gone")];
+        let left = moved_tips(&pool, &branches);
+        let got: Vec<_> = left.iter().map(|l| (l.id.as_str(), l.cause.clone())).collect();
+        assert_eq!(
+            got,
+            [
+                ("sp-m", Cause::TipMoved { branch_tip: "new".into() }),
+                ("sp-x", Cause::TipMoved { branch_tip: "no branch".into() })
+            ]
         );
     }
 
