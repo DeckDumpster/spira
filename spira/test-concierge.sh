@@ -454,6 +454,12 @@ case "$op_line" in
 *) ok "a resume start does not carry the opening prompt" ;;
 esac
 want "and says the flag was ignored" "--opening-prompt-file ignored" "$op_res_out"
+op_retry="$(grep '^exec claude' "$ST/run/concierge-launch.sh" 2>/dev/null)"
+case "$op_retry" in
+*"--resume"*) bad "the fresh retry (no transcript) drops --resume" "$op_retry" ;;
+*" $OP_WANT") ok "the fresh retry (no transcript) opens with the prompt and drops --resume" ;;
+*) bad "the fresh retry (no transcript) opens with the prompt and drops --resume" "$op_retry" ;;
+esac
 
 : > "$ST/empty.txt"
 for op_case in "--opening-prompt-file" "--opening-prompt-file $ST/no-such.txt" "--opening-prompt-file $ST/empty.txt" "stray-word"; do
@@ -469,6 +475,10 @@ done
 st_clear
 st_start_args >/dev/null
 op_line="$(grep '^exec claude' "$ST/run/concierge-launch.sh" 2>/dev/null)"
+case "$op_line" in
+*"$OP_WANT"*) bad "a start without the flag carries no opening prompt" "$op_line" ;;
+*) ok "a start without the flag carries no opening prompt" ;;
+esac
 is "a start without the flag ends at the --append-system-prompt value" "$op_line $OP_WANT" "$op_fresh_line"
 
 
