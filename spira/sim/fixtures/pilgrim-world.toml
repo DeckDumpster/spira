@@ -1,0 +1,9 @@
+epoch = 1800000000
+horizon = 1000
+
+[[seed]]
+handle = "standing"
+title = "standing work the pilgrim world starts with"
+for = "builder"
+body = "## Build\nthe fixture's own claimable bead"
+priority = 2
