@@ -268,13 +268,28 @@ pub fn compose(
     }
     // Fences mode: the fences and the build fence always run; a branch that touches crates also
     // runs those crates' unit tests (and their dependents'), so a broken unit test is red at the
-    // gate rather than in a round. What unit mode would answer with suites or with every crate
-    // (a script, a workspace input, no metadata) stays fences-only: the full-suite round tests it.
+    // gate rather than in a round. Scripts and workspace inputs add nothing here: the round still
+    // tests them.
     if fences_only(mode, forces) {
-        return match compose(GateMode::Unit, forces, changed, members) {
-            Composition::Unit { touched, crates, targets } if touched.iter().all(|t| t != "*") => Composition::Unit { touched, crates, targets },
-            _ => Composition::Fences,
-        };
+        let Ok(members) = members else { return Composition::Fences };
+        let mut touched = BTreeSet::new();
+        let mut readers = BTreeSet::new();
+        for c in changed {
+            let class = classify(c, members);
+            add_readers(&c.path, &class, members, &mut touched, &mut readers);
+            if let Class::Crate(n) = class {
+                touched.insert(n);
+            }
+        }
+        if touched.is_empty() && readers.is_empty() {
+            return Composition::Fences;
+        }
+        let mut crates = with_transitive_dependents(&touched, members);
+        crates.extend(readers.iter().cloned());
+        crates.sort();
+        crates.dedup();
+        touched.extend(readers);
+        return Composition::Unit { touched: touched.into_iter().collect(), targets: targets_of(&crates, members), crates };
     }
     let members = match members {
         Ok(m) => m,
@@ -1169,11 +1184,18 @@ mod tests {
         assert!(matches!(compose(GateMode::Fences, &Forces::default(), &ch(&["systemd/a.service"]), Ok(&w)), Composition::Unit { .. }));
         for paths in [
             &["Cargo.lock"][..],
-            &["spira/lib.sh", "gate/src/x.rs"],
+            &["spira/lib.sh"],
+            &["Cargo.lock", "spira/lib.sh"],
             &["docs/a.md"],
             &[],
         ] {
             assert_eq!(compose(GateMode::Fences, &Forces::default(), &ch(paths), Ok(&w)), Composition::Fences, "{paths:?}");
+        }
+        let alone = compose(GateMode::Fences, &Forces::default(), &ch(&["gate/src/x.rs"]), Ok(&w));
+        for paths in [&["spira/lib.sh", "gate/src/x.rs"][..], &["Cargo.lock", "gate/src/x.rs"]] {
+            let got = compose(GateMode::Fences, &Forces::default(), &ch(paths), Ok(&w));
+            assert!(matches!(got, Composition::Unit { .. }), "{paths:?}");
+            assert_eq!(crates(&got), crates(&alone), "{paths:?}");
         }
         assert_eq!(compose(GateMode::Fences, &Forces::default(), &ch(&["gate/src/x.rs"]), Err("no cargo")), Composition::Fences);
         assert!(fences_only(GateMode::Fences, &Forces::default()));
@@ -1181,6 +1203,20 @@ mod tests {
         assert!(!fences_only(GateMode::Fences, &all));
         assert_eq!(compose(GateMode::Fences, &all, &ch(&["gate/src/x.rs"]), Ok(&w)).label(), "suites(gate-all)");
         assert!(!fences_only(GateMode::Unit, &Forces::default()) && !fences_only(GateMode::Suites, &Forces::default()));
+    }
+
+    #[test]
+    fn fences_mode_diff_with_lockfile_script_and_crate_files_runs_the_crate_and_its_dependents() {
+        let w = ws();
+        let got = compose(
+            GateMode::Fences,
+            &Forces::default(),
+            &ch(&["Cargo.lock", "spira/testlib.sh", "queue/Cargo.toml", "queue/src/x.rs", "queue/tests/y.rs"]),
+            Ok(&w),
+        );
+        let Composition::Unit { touched, .. } = &got else { panic!("not unit: {got:?}") };
+        assert_eq!(touched, &vec!["queue".to_string()]);
+        assert_eq!(crates(&got), vec!["landing-pass".to_string(), "queue".to_string()]);
     }
 
     #[test]
