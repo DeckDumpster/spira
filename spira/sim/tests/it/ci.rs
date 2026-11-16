@@ -58,8 +58,8 @@ fn the_shipped_cut_job_reads_as_its_named_script_steps() {
 
 #[test]
 fn only_the_expressions_a_runner_provides_are_expanded() {
-    let cx = Context { sha: "abc", workspace: Path::new("/w"), temp: Path::new("/t") };
-    assert_eq!(expand("${{ github.sha }}:${{github.workspace}}:${{ github.head_ref }}|", &cx).unwrap(), "abc:/w:|");
+    let cx = Context { sha: "abc", workspace: Path::new("w"), temp: Path::new("t") };
+    assert_eq!(expand("${{ github.sha }}:${{github.workspace}}:${{ github.head_ref }}|", &cx).unwrap(), "abc:w:|");
     assert!(expand("${{ matrix.os }}", &cx).unwrap_err().contains("matrix.os"));
     assert!(expand("${{ github.sha", &cx).is_err());
 }

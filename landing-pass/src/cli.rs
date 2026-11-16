@@ -162,22 +162,22 @@ mod tests {
     fn family_r_verbs() {
         assert_eq!(parse(&v(&["land-subject", "sp-a"])), Ok(Cmd::LandSubject { id: "sp-a".into() }));
         assert_eq!(parse(&v(&["land-subject"])).unwrap_err().0, 2);
-        assert_eq!(parse(&v(&["pr-merged", "/repo", "spira/sp-a"])), Ok(Cmd::PrMerged { repo: "/repo".into(), branch: "spira/sp-a".into() }));
-        assert_eq!(parse(&v(&["pr-merged", "/repo"])).unwrap_err().0, 2);
+        assert_eq!(parse(&v(&["pr-merged", "repo", "spira/sp-a"])), Ok(Cmd::PrMerged { repo: "repo".into(), branch: "spira/sp-a".into() }));
+        assert_eq!(parse(&v(&["pr-merged", "repo"])).unwrap_err().0, 2);
         assert_eq!(
-            parse(&v(&["conflict-note", "/repo", "spira/sp-a", "origin/main", "spira", "f.txt", "sentinel", "2"])),
-            Ok(Cmd::ConflictNote(v(&["/repo", "spira/sp-a", "origin/main", "spira", "f.txt", "sentinel", "2"])))
+            parse(&v(&["conflict-note", "repo", "spira/sp-a", "origin/main", "spira", "f.txt", "sentinel", "2"])),
+            Ok(Cmd::ConflictNote(v(&["repo", "spira/sp-a", "origin/main", "spira", "f.txt", "sentinel", "2"])))
         );
         assert_eq!(
-            parse(&v(&["conflict-note", "/repo", "spira/sp-a", "origin/main", "spira", "f.txt", "sentinel"])),
-            Ok(Cmd::ConflictNote(v(&["/repo", "spira/sp-a", "origin/main", "spira", "f.txt", "sentinel"])))
+            parse(&v(&["conflict-note", "repo", "spira/sp-a", "origin/main", "spira", "f.txt", "sentinel"])),
+            Ok(Cmd::ConflictNote(v(&["repo", "spira/sp-a", "origin/main", "spira", "f.txt", "sentinel"])))
         );
-        assert_eq!(parse(&v(&["conflict-note", "/repo"])).unwrap_err().0, 2);
+        assert_eq!(parse(&v(&["conflict-note", "repo"])).unwrap_err().0, 2);
         assert_eq!(
-            parse(&v(&["other-beads", "/repo", "spira/sp-a", "origin/main", "f.txt"])),
-            Ok(Cmd::OtherBeads { repo: "/repo".into(), branch: "spira/sp-a".into(), base: "origin/main".into(), files: "f.txt".into() })
+            parse(&v(&["other-beads", "repo", "spira/sp-a", "origin/main", "f.txt"])),
+            Ok(Cmd::OtherBeads { repo: "repo".into(), branch: "spira/sp-a".into(), base: "origin/main".into(), files: "f.txt".into() })
         );
-        assert_eq!(parse(&v(&["other-beads", "/repo"])).unwrap_err().0, 2);
+        assert_eq!(parse(&v(&["other-beads", "repo"])).unwrap_err().0, 2);
         assert_eq!(parse(&v(&["is-work-type", "bug"])), Ok(Cmd::IsWorkType { ty: "bug".into() }));
         assert_eq!(parse(&v(&["is-work-type"])).unwrap_err().0, 2);
     }

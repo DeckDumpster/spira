@@ -51,7 +51,7 @@ const DEFAULT_TRUNK: &str = "main";
 /// Where the repositories beyond the world's own live: `repos/<name>/{work,origin.git}`.
 const EXTRA_REPOS: &str = "repos";
 /// The home every path in the complete fixture config is rooted at (spira-config/tests/fixtures).
-const FIXTURE_HOME: &str = "/fixture/userhome";
+const FIXTURE_HOME: &str = "fixture/userhome";
 /// The PID world up recorded for the world's `spira-lc serve`; world down signals only it.
 const LC_PID: &str = "lc-serve.pid";
 const LC_LOG: &str = "lc-serve.log";
@@ -316,7 +316,7 @@ fn alive(pid: u32) -> bool {
     let mut status = 0;
     // SAFETY: waitpid with WNOHANG on a pid only reaps our own exited child; otherwise -1.
     unsafe { waitpid(pid as i32, &mut status, WNOHANG) };
-    match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+    match std::fs::read_to_string(format!("{}/{pid}/stat", system_paths::PROC)) {
         Ok(stat) => stat.rsplit_once(')').and_then(|(_, rest)| rest.split_whitespace().next()).is_some_and(|st| st != "Z"),
         Err(_) => false,
     }
@@ -562,7 +562,7 @@ impl Steps for ProcessSteps {
     }
 
     fn lc_stop(&self, world: &Path, pid: u32) -> Result<(), String> {
-        let cmdline = std::fs::read(format!("/proc/{pid}/cmdline")).unwrap_or_default();
+        let cmdline = std::fs::read(format!("{}/{pid}/cmdline", system_paths::PROC)).unwrap_or_default();
         if !alive(pid) || !is_world_serve(&cmdline, world) {
             eprintln!("sim: lifecycle serve pid {pid} is gone or is no longer this world's serve; nothing signalled");
             return Ok(());
@@ -925,7 +925,7 @@ pub fn fixture_repo(root: &Path, dst: &Path) -> Result<(), String> {
 /// harness scripts, and the fence scripts and allow list the commit hook's fence-scripts rule reads),
 /// not crate sources, docs, test suites or the config registry. A new
 /// worktree inherits the patterns, so every checkout the landing code makes is a fraction of the tree.
-const SPARSE_PATTERNS: &str = "/*\n!/*/\n/.github/\n/lifecycle/\n/out/\n/sim/\n/spira/\n/systemd/\n!/spira/test-*.sh\n!/spira/conf.d/\n/spira/test-*-lint.sh\n/spira/test-*-fence.sh\n/spira/test-yield.sh\n/spira-lint/fence-scripts-allow\n";
+const SPARSE_PATTERNS: &str = "/*\n!/*/\n/.github/\n/lifecycle/\n/out/\n/sim/\n/spira/\n/systemd/\n!/spira/test-*.sh\n!/spira/conf.d/\n/spira/test-*-lint.sh\n/spira/test-*-fence.sh\n/spira/test-yield.sh\n/spira-lint/fence-scripts-allow\n"; // not a path: gitignore patterns
 
 /// A copy of a seed repo, its pack files linked rather than copied: a pack is never written to
 /// again, where refs, the index and the reflogs are, and those are copied.
@@ -1055,9 +1055,10 @@ pub fn base_config(harness: &Path, home: &Path) -> Result<String, String> {
     let release = home.parent().unwrap_or(home).join("release");
     let base_path = harness.join(CONFIG_BASE_PATH);
     let base = std::fs::read_to_string(&base_path).map_err(|e| format!("{}: {e}", base_path.display()))?;
+    let fixture_home = format!("{}{FIXTURE_HOME}", std::path::MAIN_SEPARATOR);
     let moved = base
-        .replace(&format!("{FIXTURE_HOME}/spira/spira-releases/current"), &release.display().to_string())
-        .replace(FIXTURE_HOME, &home.display().to_string());
+        .replace(&format!("{fixture_home}/spira/spira-releases/current"), &release.display().to_string())
+        .replace(&fixture_home, &home.display().to_string());
     let mut out = String::new();
     let mut skipping = false;
     for line in moved.lines() {
@@ -1220,14 +1221,14 @@ mod locator_tests {
 
     #[test]
     fn a_world_is_refused_while_spira_toml_names_a_config() {
-        let e = refuse_production(&|k| (k == "SPIRA_TOML").then(|| "/c/one-source.toml".to_string())).unwrap_err();
+        let e = refuse_production(&|k| (k == "SPIRA_TOML").then(|| "c/one-source.toml".to_string())).unwrap_err();
         assert!(e.contains("SPIRA_TOML"), "{e}");
     }
 
     #[test]
     fn a_worlds_test_registry_is_a_file_under_its_own_run_dir() {
-        let s = lc_settings(Path::new("/w"));
-        assert!(s.contains(&("spira.test_registry_path".to_string(), "/w/run/test-registry.sqlite".to_string())));
+        let s = lc_settings(Path::new("w"));
+        assert!(s.contains(&("spira.test_registry_path".to_string(), "w/run/test-registry.sqlite".to_string())));
     }
 
     #[test]
@@ -1243,19 +1244,19 @@ mod locator_tests {
         std::fs::write(d.join("dolt"), "").unwrap();
         let bd = d.join("bd").display().to_string();
         let env = |k: &str| match k {
-            "PATH" => Some("/nonexistent".to_string()),
-            "SPIRA_TOML" | "SPIRA_LC_SOCKET" => Some("/p".to_string()),
+            "PATH" => Some(system_paths::NONEXISTENT.to_string()),
+            "SPIRA_TOML" | "SPIRA_LC_SOCKET" => Some("p".to_string()),
             _ => None,
         };
         let (sets, removes) = pilgrim_session_env(&env, Some(bd.clone()));
         assert_eq!(sets, vec![(BD_ENV, bd.clone())]);
-        assert_eq!(dolt_for(Path::new(&bd), "/nonexistent").unwrap(), d.join("dolt"));
+        assert_eq!(dolt_for(Path::new(&bd), system_paths::NONEXISTENT).unwrap(), d.join("dolt"));
         assert_eq!(removes, vec!["SPIRA_LC_SOCKET", "SPIRA_TOML"]);
     }
 
     #[test]
     fn a_store_tool_missing_from_path_and_undeclared_is_refused_naming_its_key() {
-        let e = store_tool("bd", None, "/nonexistent", BD_ENV).unwrap_err();
+        let e = store_tool("bd", None, system_paths::NONEXISTENT, BD_ENV).unwrap_err();
         assert!(e.contains("SPIRA_BD is not set"), "{e}");
     }
 }
@@ -1281,7 +1282,7 @@ mod sparse_tests {
         let spira = testkit::manifest_dir().parent().unwrap().to_path_buf();
         let named: Vec<&str> = SPARSE_PATTERNS
             .lines()
-            .filter_map(|l| l.strip_prefix("/spira/test-"))
+            .filter_map(|l| l.strip_prefix("/spira/test-")) // not a path: gitignore pattern line
             .filter(|n| n.ends_with(".sh") && !n.contains('*'))
             .collect();
         assert!(named.iter().any(|n| spira.join(format!("test-{n}")).is_file()), "{named:?}");

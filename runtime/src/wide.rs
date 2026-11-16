@@ -139,7 +139,7 @@ impl TurnRss {
 
 /// Resident set size of this process in KiB; 0 where `/proc` is absent.
 pub fn rss_kb() -> u64 {
-    std::fs::read_to_string("/proc/self/statm")
+    std::fs::read_to_string(format!("{}/statm", system_paths::PROC_SELF))
         .ok()
         .and_then(|s| s.split_whitespace().nth(1)?.parse::<u64>().ok())
         .map_or(0, |pages| pages * 4)

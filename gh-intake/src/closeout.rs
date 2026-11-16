@@ -496,7 +496,7 @@ mod tests {
 
     impl Repo for FakeRepo {
         fn root_with_git(&self, name: &str) -> Option<String> {
-            (name == "fixture").then(|| "/r".to_string())
+            (name == "fixture").then(|| "r".to_string())
         }
         fn all_names(&self) -> Vec<String> {
             vec!["fixture".to_string()]
@@ -627,7 +627,7 @@ mod tests {
         w.bead("sp-b", "", "LANDED", "", "deadbeef", "");
         let gh = FakeGh::default();
         let d = Deps { bd: &w, gh: &gh, git: &FakeGit, repo: &FakeRepo, mail: &FakeMail::default(), lc: &w, co: &w };
-        let log = gh_issue_closeout(&d, &Ctx { run: tmp.path().to_path_buf() }, "sp-b", "deadbeef", Path::new("/r"));
+        let log = gh_issue_closeout(&d, &Ctx { run: tmp.path().to_path_buf() }, "sp-b", "deadbeef", Path::new("r"));
         assert!(log.is_empty() && gh.comments.borrow().is_empty());
     }
 }

@@ -89,8 +89,8 @@ mod tests {
         let tree = dir.path().to_path_buf();
         let mut inside = Command::new("sleep").arg("30").current_dir(tree.join("sub")).spawn().unwrap();
         let mut outside = Command::new("sleep").arg("30").current_dir("/").spawn().unwrap();
-        let found: Vec<u32> = holders(Path::new("/proc"), &tree, &[]).iter().map(|h| h.pid).collect();
-        let spared: Vec<u32> = holders(Path::new("/proc"), &tree, &[inside.id()]).iter().map(|h| h.pid).collect();
+        let found: Vec<u32> = holders(Path::new(system_paths::PROC), &tree, &[]).iter().map(|h| h.pid).collect();
+        let spared: Vec<u32> = holders(Path::new(system_paths::PROC), &tree, &[inside.id()]).iter().map(|h| h.pid).collect();
         inside.kill().unwrap();
         outside.kill().unwrap();
         let _ = inside.wait();
@@ -113,9 +113,9 @@ mod tests {
             let mut c = child;
             c.wait()
         });
-        let stopped = stop_holders(Path::new("/proc"), &tree, &[], Duration::from_millis(300)).unwrap();
+        let stopped = stop_holders(Path::new(system_paths::PROC), &tree, &[], Duration::from_millis(300)).unwrap();
         let _ = reaper.join();
         assert!(stopped.iter().any(|h| h.pid == pid), "{stopped:?}");
-        assert!(holders(Path::new("/proc"), &tree, &[]).is_empty());
+        assert!(holders(Path::new(system_paths::PROC), &tree, &[]).is_empty());
     }
 }

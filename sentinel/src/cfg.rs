@@ -257,7 +257,7 @@ impl Declared {
     /// field(s) it cares about: `Declared { scope: "x".into(), ..Declared::test_default() }`.
     pub fn test_default() -> Declared {
         Declared {
-            run: PathBuf::from("/tmp"),
+            run: PathBuf::from("tmp"),
             db: String::new(),
             bd: "bd".into(),
             scope: String::new(),

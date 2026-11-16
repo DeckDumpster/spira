@@ -19,7 +19,7 @@ path = "tests/no_fork_edges.rs"
 required-features = ["integration"]
 
 [features]
-integration = ["hel/integration", "incident/integration", "mail/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "testkit/integration", "tsd/integration"]
+integration = ["hel/integration", "incident/integration", "mail/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "testkit/integration", "tsd/integration", "system-paths/integration"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
@@ -33,6 +33,7 @@ hel = { path = "../hel" }
 tsd = { path = "../tsd" }
 mail = { path = "../mail" }
 incident = { path = "../incident" }
+system-paths = { path = "../system-paths" }
 
 [dev-dependencies]
 testkit = { path = "../testkit" }

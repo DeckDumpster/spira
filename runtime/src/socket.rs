@@ -250,7 +250,7 @@ mod tests {
 
     #[test]
     fn a_turn_past_the_stores_widths_is_refused_before_any_send() {
-        let j = SocketJournal::new("/nonexistent/lc.sock", Shipper::start("http://127.0.0.1:9"));
+        let j = SocketJournal::new(format!("{}/lc.sock", system_paths::NONEXISTENT), Shipper::start("http://127.0.0.1:9"));
         let wide = Turn { state: vec![StateRow { task: "t".into(), skey: "k".repeat(KEY_MAX + 1), value: "v".into(), at: 1 }], ..Turn::default() };
         let e = j.commit(&wide).unwrap_err();
         assert!(e.is_refused() && e.0.contains("state key"), "{e}");

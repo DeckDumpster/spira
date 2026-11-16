@@ -44,7 +44,7 @@ fn a_goal_tag_needs_a_goal_and_real_actors_are_read_by_name() {
 
 #[test]
 fn the_seam_takes_the_rune_from_the_dwarf_argument_of_a_systemd_run_argv_and_ranks_by_the_sixth_field() {
-    let argv: Vec<String> = ["--user", "--setenv=A=dwarf", "/w/release/bin/dwarf", "--home", "/h", "builder"].iter().map(|s| s.to_string()).collect();
+    let argv: Vec<String> = ["--user", "--setenv=A=dwarf", "w/release/bin/dwarf", "--home", "h", "builder"].iter().map(|s| s.to_string()).collect();
     assert_eq!(rune_of(&argv).unwrap(), "builder");
     assert!(rune_of(&argv[..3]).is_err() && rune_of(&[]).is_err());
     assert_eq!(ranked_ids("2\t1\t2\t1\tt\tsp-b\t\n2\t1\t2\t1\tt\tsp-a\t\nshort\n"), vec!["sp-b", "sp-a"]);
@@ -59,28 +59,29 @@ fn the_seam_runs_only_beads_the_scenario_scripts() {
 
 #[test]
 fn a_worlds_config_moves_every_fixture_path_inside_it_and_registers_only_its_repository() {
-    let home = Path::new("/w/hm");
+    let home = Path::new("w/hm");
     let cfg = base_config(&spira_config::resolve::checkout_root_for_process().unwrap(), home).unwrap();
-    assert!(!cfg.contains("/fixture/userhome"), "a path still points outside the world");
+    let fixture_home = format!("{}fixture/userhome", std::path::MAIN_SEPARATOR);
+    assert!(!cfg.contains(&fixture_home), "a path still points outside the world");
     assert!(!cfg.contains("[repo.spira]"));
-    assert!(cfg.contains("/w/hm/spira/run"), "run moved under the world's home");
-    assert!(cfg.contains("/w/release/spira/runes"), "the release paths follow the world's release link");
+    assert!(cfg.contains("w/hm/spira/run"), "run moved under the world's home");
+    assert!(cfg.contains("w/release/spira/runes"), "the release paths follow the world's release link");
 }
 
 #[test]
 fn a_world_registers_one_queue_local_row_and_names_its_tools_absolutely() {
-    assert_eq!(registry_rows(Path::new("/w"), &repo_set(&[]).unwrap()), format!("{REPO_NAME}|/w/work|queue.local|local/main|||plan\n"));
-    let s = home_settings(Path::new("/w"), "/fx/f1\n", Path::new("/usr/bin/bd"));
+    assert_eq!(registry_rows(Path::new("w"), &repo_set(&[]).unwrap()), format!("{REPO_NAME}|w/work|queue.local|local/main|||plan\n"));
+    let s = home_settings(Path::new("w"), "fx/f1\n", Path::new("usr/bin/bd"));
     let get = |k: &str| s.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
-    assert_eq!(get("spira.bd"), Some("/usr/bin/bd"));
-    assert_eq!(get("spira.db"), Some(bead_db("/fx/f1").to_str().unwrap()));
+    assert_eq!(get("spira.bd"), Some("usr/bin/bd"));
+    assert_eq!(get("spira.db"), Some(bead_db("fx/f1").to_str().unwrap()));
     assert_eq!(get("spira.home_repo"), Some(REPO_NAME));
-    assert_eq!(get("spira.prod"), Some("/w/release/spira"));
+    assert_eq!(get("spira.prod"), Some("w/release/spira"));
 }
 
 #[test]
 fn the_worlds_gate_is_the_stub_runner_alone_and_host_touching_tools_are_inert() {
-    assert_eq!(stub_gate_steps(Path::new("/w/config/suite-runner")), "step \"/w/config/suite-runner\"\n");
+    assert_eq!(stub_gate_steps(Path::new("w/config/suite-runner")), "step \"w/config/suite-runner\"\n");
     assert!(INERT_TOOLS.contains(&"unit-ensure") && INERT_TOOLS.contains(&"target-reap"));
 }
 
@@ -143,11 +144,11 @@ fn a_world_always_has_its_own_repository_first_and_registers_every_repository_it
     let named = repo_set(&[spec("docs:pr"), spec("sim:push")]).unwrap();
     assert_eq!(named.iter().map(|r| (r.name.as_str(), r.mode.as_str())).collect::<Vec<_>>(), [(REPO_NAME, "push"), ("docs", "pr")]);
     assert!(repo_set(&[spec("docs:pr"), spec("docs:push")]).is_err());
-    let w = Path::new("/w");
-    assert_eq!(registry_rows(w, &named), "sim|/w/work|push|origin/main|||plan\ndocs|/w/repos/docs/work|pr|origin/main|||plan\n");
-    let settings = config_settings(w, &only, Path::new("/w/bin/gh"));
+    let w = Path::new("w");
+    assert_eq!(registry_rows(w, &named), "sim|w/work|push|origin/main|||plan\ndocs|w/repos/docs/work|pr|origin/main|||plan\n");
+    let settings = config_settings(w, &only, Path::new("w/bin/gh"));
     let section = |k: &str| settings.iter().find(|(n, _)| n == k).map(|(_, v)| serde_json::from_str::<serde_json::Value>(v).unwrap());
-    assert_eq!(section("repo.docs").unwrap(), serde_json::json!({"path": "/w/repos/docs/work", "mode": "hold", "base": "origin/master"}));
+    assert_eq!(section("repo.docs").unwrap(), serde_json::json!({"path": "w/repos/docs/work", "mode": "hold", "base": "origin/master"}));
     assert_eq!(section("repo.sim").unwrap()["mode"], "queue.local");
 }
 
@@ -183,10 +184,10 @@ fn the_real_dwarf_is_asked_for_by_one_marker_line_and_not_by_a_bead_named_like_i
 
 #[test]
 fn a_systemd_run_argv_becomes_the_dwarf_command_with_its_setenv_pairs_and_another_home() {
-    let argv: Vec<String> = ["--property=X=1", "--setenv=PATH=/r/bin:/bin", "--setenv=HOME=/h", "/r/bin/dwarf", "--home", "/r/spira", "builder"].iter().map(|s| s.to_string()).collect();
+    let argv: Vec<String> = ["--property=X=1", "--setenv=PATH=r/bin:bin", "--setenv=HOME=h", "r/bin/dwarf", "--home", "r/spira", "builder"].iter().map(|s| s.to_string()).collect();
     let (env, cmd) = dwarf_command(&argv).unwrap();
-    assert_eq!(env, vec![("PATH".to_string(), "/r/bin:/bin".to_string()), ("HOME".to_string(), "/h".to_string())]);
-    assert_eq!(with_home(&cmd, Path::new("/w/dwarf-home")), vec!["/r/bin/dwarf", "--home", "/w/dwarf-home", "builder"]);
+    assert_eq!(env, vec![("PATH".to_string(), "r/bin:bin".to_string()), ("HOME".to_string(), "h".to_string())]);
+    assert_eq!(with_home(&cmd, Path::new("w/dwarf-home")), vec!["r/bin/dwarf", "--home", "w/dwarf-home", "builder"]);
     assert!(dwarf_command(&argv[..2]).is_err());
 }
 
@@ -200,10 +201,10 @@ fn a_file_step_carries_a_body_and_only_a_file_step_may() {
 
 #[test]
 fn a_world_names_the_stub_agent_launcher_as_its_agent_and_the_launcher_carries_the_paths_the_dwarf_drops() {
-    let s = home_settings(Path::new("/w"), "/fx/f1\n", Path::new("/usr/bin/bd"));
+    let s = home_settings(Path::new("w"), "fx/f1\n", Path::new("usr/bin/bd"));
     let get = |k: &str| s.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
-    assert_eq!(get("spira.agent"), Some("/w/bin/sim-dwarf-agent"));
+    assert_eq!(get("spira.agent"), Some("w/bin/sim-dwarf-agent"));
     assert_eq!(get("spira.call_jitter"), Some("0"));
-    let script = spira_sim::world::agent_launcher(Path::new("/r/bin/sim-agent"), Path::new("/w/agent.scenario"), Path::new("/w/agent-state"));
-    assert!(script.contains("SPIRA_SIM_SCENARIO='/w/agent.scenario'") && script.contains("exec '/r/bin/sim-agent' \"$@\""), "{script}");
+    let script = spira_sim::world::agent_launcher(Path::new("r/bin/sim-agent"), Path::new("w/agent.scenario"), Path::new("w/agent-state"));
+    assert!(script.contains("SPIRA_SIM_SCENARIO='w/agent.scenario'") && script.contains("exec 'r/bin/sim-agent' \"$@\""), "{script}");
 }

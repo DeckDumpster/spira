@@ -450,7 +450,7 @@ fn is_git_dir(root: &str) -> bool {
 mod tests {
     use super::*;
 
-    const PORCELAIN: &str = "worktree /r/wt/sp-hold\nHEAD abc123\nbranch refs/heads/spira/sp-root\n\nworktree /r/wt/sp-fine\nHEAD def456\nbranch refs/heads/spira/sp-fine\n\nworktree /r/repo\nHEAD 000\ndetached\n\n";
+    const PORCELAIN: &str = "worktree r/wt/sp-hold\nHEAD abc123\nbranch refs/heads/spira/sp-root\n\nworktree r/wt/sp-fine\nHEAD def456\nbranch refs/heads/spira/sp-fine\n\nworktree r/repo\nHEAD 000\ndetached\n\n";
 
     #[test]
     fn porcelain_pairs_branch_with_its_own_worktree_and_skips_detached() {
@@ -458,8 +458,8 @@ mod tests {
         assert_eq!(
             got,
             vec![
-                ("refs/heads/spira/sp-root".to_string(), "/r/wt/sp-hold".to_string()),
-                ("refs/heads/spira/sp-fine".to_string(), "/r/wt/sp-fine".to_string()),
+                ("refs/heads/spira/sp-root".to_string(), "r/wt/sp-hold".to_string()),
+                ("refs/heads/spira/sp-fine".to_string(), "r/wt/sp-fine".to_string()),
             ]
         );
     }
@@ -467,7 +467,7 @@ mod tests {
     #[test]
     fn find_holder_fires_on_a_squatted_branch_and_stays_quiet_on_a_free_one() {
         let list = parse_worktree_porcelain(PORCELAIN);
-        assert_eq!(find_holder(&list, "spira/sp-root"), Some("/r/wt/sp-hold".to_string()));
+        assert_eq!(find_holder(&list, "spira/sp-root"), Some("r/wt/sp-hold".to_string()));
         assert_eq!(find_holder(&list, "spira/sp-nobody"), None);
     }
 
@@ -478,9 +478,9 @@ mod tests {
             repo: "fixture".into(),
             branch: "spira/sp-root".into(),
             holder_id: "sp-hold".into(),
-            holder_path: "/r/worktree/sp-hold".into(),
+            holder_path: "r/worktree/sp-hold".into(),
         };
-        assert_eq!(c.line(), "COLLISION sp-root fixture spira/sp-root sp-hold /r/worktree/sp-hold");
+        assert_eq!(c.line(), "COLLISION sp-root fixture spira/sp-root sp-hold r/worktree/sp-hold");
         assert_eq!(Collision::parse_line(&c.line()), Some(c));
         assert_eq!(Collision::parse_line("not a collision line"), None);
     }
@@ -503,10 +503,10 @@ mod tests {
                 repo: "fixture".into(),
                 branch: "spira/sp-root3".into(),
                 holder_id: "sp-hold3".into(),
-                holder_path: "/r/worktree/sp-hold3".into(),
+                holder_path: "r/worktree/sp-hold3".into(),
             }
             .line(),
-            "FREED sp-root3 fixture spira/sp-root3 sp-hold3 /r/worktree/sp-hold3"
+            "FREED sp-root3 fixture spira/sp-root3 sp-hold3 r/worktree/sp-hold3"
         );
     }
 

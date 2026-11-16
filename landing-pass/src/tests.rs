@@ -2264,13 +2264,13 @@ fn the_pr_pass_proves_a_content_delivery_once_per_tip() {
 fn halt_children_run_under_conf_path_then_spira_path_then_inherit() {
     use crate::halt::child_path;
     // conf.sh's answer wins: it already put SPIRA_PATH (from env or the typed config) first.
-    assert_eq!(child_path(Some("/conf:/bin"), Some("/sp"), Some("/usr/bin")).as_deref(), Some("/conf:/bin"));
+    assert_eq!(child_path(Some("conf:bin"), Some("sp"), Some("usr/bin")).as_deref(), Some("conf:bin"));
     // No context (unloadable conf): SPIRA_PATH is prepended, as conf.sh would have.
-    assert_eq!(child_path(None, Some("/sp"), Some("/usr/bin")).as_deref(), Some("/sp:/usr/bin"));
-    assert_eq!(child_path(Some(""), Some("/sp"), None).as_deref(), Some("/sp"));
+    assert_eq!(child_path(None, Some("sp"), Some("usr/bin")).as_deref(), Some("sp:usr/bin"));
+    assert_eq!(child_path(Some(""), Some("sp"), None).as_deref(), Some("sp"));
     // Neither: inherit (None leaves the Command's PATH alone).
-    assert_eq!(child_path(None, None, Some("/usr/bin")), None);
-    assert_eq!(child_path(None, Some(""), Some("/usr/bin")), None);
+    assert_eq!(child_path(None, None, Some("usr/bin")), None);
+    assert_eq!(child_path(None, Some(""), Some("usr/bin")), None);
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

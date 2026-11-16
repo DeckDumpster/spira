@@ -92,7 +92,7 @@ impl<'a> crate::services::Services for RunnerServices<'a> {
         self.ask(bin, args.to_vec())
     }
     fn content(&self, _bin: &str, args: &[String]) -> Out {
-        self.ask("bd", ["-C".to_string(), "/db".to_string()].into_iter().chain(args.iter().cloned()).collect())
+        self.ask("bd", ["-C".to_string(), "db".to_string()].into_iter().chain(args.iter().cloned()).collect())
     }
     fn claim(&self, args: &[String], env: &[(String, String)]) -> Out {
         let mut s = Spec::args_owned("spira-claim", args.to_vec());
@@ -196,14 +196,14 @@ impl World {
         let mut env: Vec<(&str, &str)> = vec![
             ("SPIRA_RUN", &run),
             ("SPIRA_HOME", &home),
-            ("SPIRA_DB", "/db"),
+            ("SPIRA_DB", "db"),
             ("SPIRA_SCOPE_LABEL", "spira"),
             ("SPIRA_ASK_LABEL", "needs-operator"), // literal-ok: test fixture
             ("SPIRA_NO_LOOP_LABEL", "no-loop"), // literal-ok: test fixture
             ("SPIRA_QUEUE_WAIT_LABEL", "spira-queue-waiting"),
             ("SPIRA_SUBMITTED_LABEL", "spira-submitted"),
-            ("PATH", "/usr/bin:/bin"),
-            ("HOME", "/home/x"),
+            ("PATH", "usr/bin:bin"),
+            ("HOME", "home/x"),
             ("SPIRA_CALL", "systemd-run"),
         ];
         let owned: Vec<(String, String)> = extra
@@ -239,7 +239,7 @@ impl World {
         let run = self.run.to_string_lossy().into_owned();
         let mut env: Vec<(&str, &str)> = vec![
             ("SPIRA_RUN", &run),
-            ("SPIRA_DB", "/db"),
+            ("SPIRA_DB", "db"),
             ("SPIRA_BD", "bd"),
             ("SPIRA_SCOPE_LABEL", "spira"),
             ("SPIRA_ASK_LABEL", "needs-operator"), // literal-ok: test fixture
@@ -438,7 +438,7 @@ fn unreadable_store_is_exit_1_and_reports_no_state() {
     let (w, r, sink, clock) = setup("dbfail");
     r.on(|s| if is_bd(s, "list") { fail(1) } else { None });
     assert_eq!(run_mode(&w, &r, &sink, &clock, Mode::Pass, &[], None), 1);
-    assert!(sink.has("spira: DATABASE UNREADABLE — bd cannot reach /db; state is unknown and this pass cannot close any gap"));
+    assert!(sink.has("spira: DATABASE UNREADABLE — bd cannot reach db; state is unknown and this pass cannot close any gap"));
     assert!(!sink.has("state:"), "a pass that cannot see the graph never reports a backlog");
     assert!(!sink.has("pass complete"));
 }
@@ -562,16 +562,16 @@ fn landing_dispatch_argv_carries_no_cpu_fence() {
         &clock,
         Mode::Pass,
         &[
-            ("SPIRA_LAUNCH", "/stub/launch"),
+            ("SPIRA_LAUNCH", "stub/launch"),
         ],
         None,
     );
     assert!(
-        r.find(|s| s.prog == "/stub/launch" && s.args.iter().any(|x| x.contains("spira-audit"))).is_none(),
+        r.find(|s| s.prog == "stub/launch" && s.args.iter().any(|x| x.contains("spira-audit"))).is_none(),
         "no audit worker is dispatched"
     );
     let land = r
-        .find(|s| s.prog == "/stub/launch" && s.args.iter().any(|x| x == "land"))
+        .find(|s| s.prog == "stub/launch" && s.args.iter().any(|x| x == "land"))
         .expect("landing dispatched");
     assert!(land
         .line()
@@ -1026,7 +1026,7 @@ fn on_check2_reaps_stale_leases_and_2c_reports_desync() {
         .is_some());
     assert!(r.find(|s| is_bd(s, "sql") && !s.args.iter().any(|a| a.contains("dolt_hashof_db"))).is_none(), "a fact is never a bd write");
     let note = r.find(|s| is_bd(s, "note")).unwrap();
-    assert_eq!(note.args, vec!["-C", "/db", "note", "sp-b", "--stdin"]);
+    assert_eq!(note.args, vec!["-C", "db", "note", "sp-b", "--stdin"]);
     assert_eq!(String::from_utf8(note.stdin.unwrap()).unwrap(), "Reclaimed by CHECK 2: in_progress with a lease that expired 333m ago and was never released.");
     assert!(sink.has("ACT reclaimed 1 stale lease(s)"));
     assert!(sink.has("INCONSISTENT\tsp-c\tREADY with a holder still set"));
@@ -1036,7 +1036,7 @@ fn on_check2_reaps_stale_leases_and_2c_reports_desync() {
 // ---------------------------------------------------------------------------------------
 // CHECK 2 on the control store: expire-claims and sweep-open
 
-const STORE: &[(&str, &str)] = &[("SPIRA_LC_STORE_PATH", "/control/store.db"), ("SPIRA_OPEN_PROMOTE_GRACE_SECS", "90")];
+const STORE: &[(&str, &str)] = &[("SPIRA_LC_STORE_PATH", "control/store.db"), ("SPIRA_OPEN_PROMOTE_GRACE_SECS", "90")];
 
 fn lc_verbs(r: &FakeRunner, verb: &str) -> Vec<Vec<String>> {
     r.calls.borrow().iter().filter(|s| s.prog == "spira-lc" && s.args.first().map(String::as_str) == Some(verb)).map(|s| s.args.clone()).collect()
@@ -1197,8 +1197,8 @@ fn on_a_refused_ready_count_is_unknown_not_zero() {
 
 #[test]
 fn home_is_spira_home_or_the_declared_release_and_never_searched_for() {
-    assert_eq!(crate::locate_home(Some("/x"), Some("/r")).unwrap(), PathBuf::from("/x"));
-    assert_eq!(crate::locate_home(None, Some("/r/")).unwrap(), PathBuf::from("/r/spira"));
+    assert_eq!(crate::locate_home(Some("x"), Some("r")).unwrap(), PathBuf::from("x"));
+    assert_eq!(crate::locate_home(None, Some("r/")).unwrap(), PathBuf::from("r/spira"));
     let e = crate::locate_home(None, None).unwrap_err();
     assert!(e.contains("SPIRA_RELEASE is not set"), "{e}");
 }
@@ -1207,13 +1207,13 @@ fn home_is_spira_home_or_the_declared_release_and_never_searched_for() {
 fn probe_failure_is_reported() {
     let r = FakeRunner::new();
     r.on(|_| fail(97));
-    let e = crate::probe(&r, Path::new("/h"), &[("PATH".into(), "/usr/bin:/bin".into())]).unwrap_err();
+    let e = crate::probe(&r, Path::new("h"), &[("PATH".into(), "usr/bin:bin".into())]).unwrap_err();
     assert!(e.contains("rc=97"));
     let s = r.find(|_| true).unwrap();
     // repos (sp-k6lku, "wave 4.13") no longer widens the probe's own bash seam — it is
     // resolved in-process from @vars after a successful probe, so a failed probe never
     // reaches that code at all, and the seam call itself carries no SENTINEL_PROBE_REPOS.
-    assert_eq!(env_of(&s, "SENTINEL_LIB"), Some("/h/lib.sh"));
+    assert_eq!(env_of(&s, "SENTINEL_LIB"), Some("h/lib.sh"));
 }
 
 // `resolve_repos` reads `$SPIRA_TOML` only (`spira_config::repos::registry_env` drops
@@ -1226,7 +1226,7 @@ fn roster_warnings_name_each_left_out_persona_once() {
     let b = crate::cfg::tests::probe_bytes(
         &[
             ("SPIRA_RUN", &run),
-            ("SPIRA_DB", "/db"),
+            ("SPIRA_DB", "db"),
             ("SPIRA_RUNES", "builder"),
         ],
         &[],
@@ -1239,7 +1239,7 @@ fn roster_warnings_name_each_left_out_persona_once() {
     // SPIRA_RUN/SPIRA_DB above are the probe's identity Context, not `d`: `Cfg` now takes
     // registered-key values from `Declared` only, so this test's own roster-stamp
     // assertion (`w.run.join(...)`) needs `d.run` set to match.
-    let declared = || Declared { run: w.run.clone(), db: "/db".into(), ..Declared::test_default() };
+    let declared = || Declared { run: w.run.clone(), db: "db".into(), ..Declared::test_default() };
     let h = test_host(&r, &clock, &sink);
     Sentinel::new(
         &h,
@@ -1678,7 +1678,7 @@ fn park_with_labels(tag: &str, child_labels: &'static str) -> (FakeRunner, Vec<c
         repo: "fixture".into(),
         branch: "spira/sp-root".into(),
         holder_id: "sp-root".into(),
-        holder_path: "/r/worktree/sp-root".into(),
+        holder_path: "r/worktree/sp-root".into(),
     };
     let out = s.park_branch_collisions(&[c]);
     (r, out)

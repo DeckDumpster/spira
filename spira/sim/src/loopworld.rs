@@ -403,7 +403,7 @@ fn sentinel_unit_start(w: &World, input: &str) -> Result<String, String> {
     lc.dwarves.insert(unit, now + DWARF_MS);
     drop(lc);
     w.units.script(sc::NAME, DWARF_MS, Exit::Code(0));
-    let spec = UnitSpec { task: sc::NAME.into(), key: start.key, argv: vec!["dwarf".into(), "--home".into(), "/sim/home".into(), start.rune], env: vec![], cwd: None };
+    let spec = UnitSpec { task: sc::NAME.into(), key: start.key, argv: vec!["dwarf".into(), "--home".into(), "sim/home".into(), start.rune], env: vec![], cwd: None };
     units::effect(&*w.units, UNIT_START, &json(&StartSpec { unit: spec, props: sc::dwarf_props("3600")? })?)
 }
 
@@ -492,7 +492,7 @@ fn batcher_assemble(w: &World, input: &str) -> Result<String, String> {
             merged.push((id.clone(), tip.clone()));
         }
     }
-    json(&bl::Assembled { merged, conflicts, base_conflicts, wt: format!("/sim/wt/{}", bl::digest(&leg.round_key)), base: leg.base, suites: true, ..bl::Assembled::default() })
+    json(&bl::Assembled { merged, conflicts, base_conflicts, wt: format!("sim/wt/{}", bl::digest(&leg.round_key)), base: leg.base, suites: true, ..bl::Assembled::default() })
 }
 
 pub fn batcher_round_open(w: &World, input: &str) -> Result<String, String> {

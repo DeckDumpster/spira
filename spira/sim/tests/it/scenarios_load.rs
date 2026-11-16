@@ -81,16 +81,17 @@ fn the_ported_scenarios_call_through_the_seam_with_the_call_effects_argv() {
         .arg("-c")
         .arg(format!("printf '%s\\n'{shell}"))
         .env_clear()
-        .envs([("SPIRA_RELEASE", "/r"), ("SPIRA_HOME", "/h"), ("HOME", "/home/u"), ("SPIRA_TOML", "/c/sim.toml")])
+        .envs([("SPIRA_RELEASE", "r"), ("SPIRA_HOME", "h"), ("HOME", "home/u"), ("SPIRA_TOML", "c/sim.toml")])
         .output()
         .expect("sh");
     assert!(out.status.success(), "{out:?}");
     let argv: Vec<String> = String::from_utf8_lossy(&out.stdout).lines().map(str::to_string).collect();
     assert_eq!(rune_of(&argv), Ok("builder"), "{argv:?}");
     let (env, command) = dwarf_command(&argv).expect("a dwarf call");
-    assert_eq!(command, ["/r/bin/dwarf", "--home", "/h", "builder"]);
+    assert_eq!(command, ["r/bin/dwarf", "--home", "h", "builder"]);
     let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
-    assert_eq!(env, [("SPIRA_RELEASE", "/r"), ("PATH", "/r/bin:/r/spira:/usr/local/bin:/usr/bin:/bin"), ("HOME", "/home/u"), ("SPIRA_TOML", "/c/sim.toml")]);
+    let path = format!("r/bin:r/spira:{}", system_paths::SYSTEM_PATH);
+    assert_eq!(env, [("SPIRA_RELEASE", "r"), ("PATH", path.as_str()), ("HOME", "home/u"), ("SPIRA_TOML", "c/sim.toml")]);
     for p in ["--property=TimeoutStartSec=3600", "--property=IOSchedulingClass=idle", "--property=IOWeight=10"] {
         assert!(argv.iter().any(|a| a == p), "{p} (sentinel_call::dwarf_props): {argv:?}");
     }

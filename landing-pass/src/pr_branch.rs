@@ -504,7 +504,7 @@ mod tests {
     fn repo_row() -> RepoRow {
         RepoRow {
             name: "spira".into(),
-            path: PathBuf::from("/repo"),
+            path: PathBuf::from("repo"),
             mode: LandMode::Pr,
             landref: Some("origin/main".into()),
             base_fq: Some("refs/remotes/origin/main".into()),
@@ -540,7 +540,7 @@ mod tests {
             let row = repo_row();
             let log = |m: &str| self.logs.borrow_mut().push(m.to_string());
             let ctx = Ctx { lib: &self.lib, git: &self.git, beads: &self.beads, tools: &self.tools, files: &self.files, pr_refresh_max: 5, log: &log };
-            run(&ctx, Path::new("/repo"), br, id, "origin/main", "spira", tip, "refs/remotes/origin/main", &row)
+            run(&ctx, Path::new("repo"), br, id, "origin/main", "spira", tip, "refs/remotes/origin/main", &row)
         }
     }
 
@@ -589,7 +589,7 @@ mod tests {
         f.tools.pr_create_n.set(Some(1));
         let row = RepoRow {
             name: "spira".into(),
-            path: PathBuf::from("/repo"),
+            path: PathBuf::from("repo"),
             mode: LandMode::Pr,
             landref: Some("origin/master".into()),
             base_fq: Some("refs/remotes/origin/master".into()),
@@ -599,7 +599,7 @@ mod tests {
         };
         let log = |m: &str| f.logs.borrow_mut().push(m.to_string());
         let ctx = Ctx { lib: &f.lib, git: &f.git, beads: &f.beads, tools: &f.tools, files: &f.files, pr_refresh_max: 5, log: &log };
-        let rc = run(&ctx, Path::new("/repo"), "spira/sp-a", "sp-a", "origin/master", "spira", "t1", "refs/remotes/origin/master", &row);
+        let rc = run(&ctx, Path::new("repo"), "spira/sp-a", "sp-a", "origin/master", "spira", "t1", "refs/remotes/origin/master", &row);
         assert_eq!(rc, 0);
         assert!(f.tools.forge_calls.borrow().iter().any(|c| c == "pr-create spira/sp-a master sp-a: a bead"), "{:?}", f.tools.forge_calls.borrow());
     }
@@ -797,7 +797,7 @@ mod tests {
         let row = repo_row();
         let log = |m: &str| f.logs.borrow_mut().push(m.to_string());
         let ctx = Ctx { lib: &f.lib, git: &dup_git, beads: &f.beads, tools: &f.tools, files: &f.files, pr_refresh_max: 5, log: &log };
-        let rc = run(&ctx, Path::new("/repo"), "spira/sp-a", "sp-a", "origin/main", "spira", "t1", "refs/remotes/origin/main", &row);
+        let rc = run(&ctx, Path::new("repo"), "spira/sp-a", "sp-a", "origin/main", "spira", "t1", "refs/remotes/origin/main", &row);
         assert_eq!(rc, 1, "not opening a duplicate PR is a no-op this pass, not a defect");
         assert!(f.lib.has("note sp-a"));
         assert!(f.tools.pr_create_n.get().is_none() || !f.logs.borrow().iter().any(|l| l.contains("opened a pull request")));

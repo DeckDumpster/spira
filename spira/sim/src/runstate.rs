@@ -216,5 +216,5 @@ pub fn read(run: &Path, proc_locks: &str) -> Vec<(&'static str, Value)> {
 /// What a snapshot of the world's `run/` holds, read from the world's own directory and the
 /// kernel's lock list.
 pub fn observe(world: &Path) -> Vec<(&'static str, Value)> {
-    read(&world.join("run"), &std::fs::read_to_string("/proc/locks").unwrap_or_default())
+    read(&world.join("run"), &std::fs::read_to_string(format!("{}/locks", system_paths::PROC)).unwrap_or_default())
 }
