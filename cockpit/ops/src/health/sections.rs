@@ -759,21 +759,17 @@ fn testreg_rows(snap: &Snapshot, cols: i64) -> Vec<String> {
         return vec![unread_row("TESTS", "cannot read the test registry")];
     }
     let n: i64 = snap.get("SP_TESTREG_N").and_then(|v| v.parse().ok()).unwrap_or(0);
-    let mut rows: Vec<String> = (0..n.min(TESTREG_ROWS))
+    let more = if n > TESTREG_ROWS { format!(" +{} more", n - TESTREG_ROWS) } else { String::new() };
+    (0..n.min(TESTREG_ROWS))
         .map(|i| {
             let f = |k: &str| snap.get(&format!("SP_TESTREG{i}_{k}")).unwrap_or("").to_string();
             let until = f("UNTIL").parse().map(utc_month_day_hm).unwrap_or_else(|_| "?".to_string());
-            let (state, rest) = (f("STATE"), format!("{} {} until {until}", f("TEST"), f("BEAD")));
-            let w = cols - 8 - state.chars().count() as i64 - 1;
-            format!("        {WARN}{state}{RST} {}", fit(&rest, w))
+            let state = f("STATE");
+            let tail = if i == n.min(TESTREG_ROWS) - 1 { more.as_str() } else { "" };
+            let w = cols - 8 - state.chars().count() as i64 - 1 - tail.chars().count() as i64;
+            format!("        {WARN}{state}{RST} {}{DIM}{tail}{RST}", fit(&format!("{} {} until {until}", f("TEST"), f("BEAD")), w))
         })
-        .collect();
-    if n > TESTREG_ROWS {
-        if let Some(last) = rows.last_mut() {
-            last.push_str(&format!(" {DIM}+{} more{RST}", n - TESTREG_ROWS));
-        }
-    }
-    rows
+        .collect()
 }
 
 /// `MM-DD HH:MM` in UTC for an epoch, by the days-to-civil-date arithmetic (no date crate here).
@@ -1509,6 +1505,11 @@ mod tests {
         assert!(!none.contains("until") && !none.contains("quarantined"), "{none:?}");
         let more = queue_text("SP_QUEUE_DEPTH='1'\nSP_TESTREG_N='12'\nSP_TESTREG0_STATE='disabled'\n");
         assert!(more.contains("+2 more"), "{more:?}");
+        let full = format!("SP_QUEUE_DEPTH='1'\nSP_TESTREG_N='12'\n{}", (0..10).map(|i| format!("SP_TESTREG{i}_STATE='disabled'\nSP_TESTREG{i}_TEST='unit:loom factory::tests::long_name_{i}'\nSP_TESTREG{i}_BEAD='sp-x{i}'\nSP_TESTREG{i}_UNTIL='1794787200'\n")).collect::<String>());
+        let strip = regex::Regex::new("\x1b\\[[0-9;]*m").unwrap();
+        for l in queue_section(&Snapshot::parse(&full), 40).iter().filter(|l| l.contains("disabled")) {
+            assert!(strip.replace_all(l, "").chars().count() <= 40, "{l:?}");
+        }
         let unread = queue_text("SP_QUEUE_DEPTH='1'\nSP_TESTREG='unread'\n");
         assert!(unread.contains("cannot read the test registry"), "{unread:?}");
     }
