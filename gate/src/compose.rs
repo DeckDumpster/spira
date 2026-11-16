@@ -283,13 +283,6 @@ pub fn compose(
         }
         return unit_of(touched, readers, members);
     }
-        let mut crates = with_transitive_dependents(&touched, members);
-        crates.extend(readers.iter().cloned());
-        crates.sort();
-        crates.dedup();
-        touched.extend(readers);
-        return Composition::Unit { touched: touched.into_iter().collect(), targets: targets_of(&crates, members), crates };
-    }
     let members = match members {
         Ok(m) => m,
         Err(_) => return suites("no-metadata"),
