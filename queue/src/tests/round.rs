@@ -9292,3 +9292,61 @@ fn a_round_verb_without_a_known_actor_is_usage_and_writes_nothing() {
         assert_eq!(t.landing_log(), before, "nothing is written");
     }
 }
+
+#[test]
+fn open_whose_cut_answers_cannot_tell_and_applies_later_keeps_its_worktree_and_one_round() {
+    let t = round_world();
+    t.lc.store.get_or_init(crate::batches::mem::MemDoor::default);
+    t.git.materialise.set(true);
+    t.lc.cut_applies_late.set(true);
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a,sp-b"]),
+        1,
+        "{}",
+        t.err()
+    );
+    assert!(
+        t.err().contains("cannot tell whether round") && !t.err().contains("cut refused"),
+        "{}",
+        t.err()
+    );
+    assert!(!t.lc.has("requeue-orphans"), "{:?}", t.lc.calls.borrow());
+    let tree = t
+        .git
+        .refs
+        .borrow()
+        .keys()
+        .find_map(|k| k.strip_suffix(":HEAD").map(std::path::PathBuf::from))
+        .expect("POSITIVE CONTROL: the open created a round worktree");
+    assert!(tree.exists(), "the round's worktree {} was removed", tree.display());
+
+    t.lc.apply_late_cut();
+    t.lc.cut_applies_late.set(false);
+    let before = t.git.calls.borrow().len();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a,sp-b"]), 1);
+    assert!(
+        t.err().contains("a round is already open") || t.err().contains("already a member"),
+        "{}",
+        t.err()
+    );
+    assert_eq!(
+        t.git.calls.borrow().len(),
+        before,
+        "the second open leaves the first round's worktree alone: {:?}",
+        t.git.calls.borrow()
+    );
+    let d = t.lc.store.get().unwrap();
+    let held = crate::batches::open_batches(d, "spira").unwrap();
+    assert_eq!(held.len(), 1, "one round: {}", t.err());
+    let ids: std::collections::BTreeSet<String> = t
+        .lc
+        .calls
+        .borrow()
+        .iter()
+        .filter_map(|c| c.strip_prefix("cut ").and_then(|r| r.split(' ').next()).map(String::from))
+        .collect();
+    assert_eq!(ids.len(), 1, "one cut id reaches the store: {ids:?}");
+    let wt = std::path::PathBuf::from(held[0].kv.get("worktree").unwrap_or(""));
+    assert!(wt.exists(), "the recorded worktree exists");
+    assert_eq!(wt, tree, "the round records the tree the first open kept");
+}

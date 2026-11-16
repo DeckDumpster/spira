@@ -1088,6 +1088,9 @@ struct FLc {
     cut_reply_lost: Cell<bool>,
     /// The next write of this verb (cut, abandon-batch, eject-member) applies, then reports a deadline.
     deadline_after_write: Cell<Option<&'static str>>,
+    /// Every cut answers "cannot tell" without writing; `apply_late_cut` is the server catching up.
+    cut_applies_late: Cell<bool>,
+    late_cut: RefCell<Option<LateCut>>,
     /// Per-batch answers to `show-batch`, ahead of `batch_view`.
     batch_states: RefCell<BTreeMap<String, (String, String)>>,
     /// Reads of `show-batch` that fail once the release is activated (the store restarting).
@@ -1153,6 +1156,8 @@ impl Default for FLc {
             cut_refuses_member: Cell::new(None),
             cut_reply_lost: Cell::new(false),
             deadline_after_write: Cell::new(None),
+            cut_applies_late: Cell::new(false),
+            late_cut: RefCell::default(),
             retired_keys: Cell::new(false),
             no_batch_row: Cell::new(false),
             activated: Default::default(),
@@ -1180,7 +1185,16 @@ impl Default for FLc {
     }
 }
 
+type LateCut = (String, String, String, Option<Kv>);
+
 impl FLc {
+    fn apply_late_cut(&self) {
+        let late = self.late_cut.borrow_mut().take();
+        if let (Some((repo, id, members, round)), Some(d)) = (late, self.store.get()) {
+            let ms: Vec<(&str, &str)> = members.split(',').filter_map(|m| m.split_once(':')).collect();
+            d.cut_round(&repo, &id, "OPEN", &ms, 0, round.as_ref());
+        }
+    }
     fn has(&self, prefix: &str) -> bool {
         self.calls.borrow().iter().any(|c| c.starts_with(prefix))
     }
@@ -1258,7 +1272,7 @@ impl Lc for FLc {
     }
     fn batch_state(&self, id: &str) -> Option<(String, String)> {
         self.calls.borrow_mut().push(format!("show-batch {id}"));
-        if self.no_batch_row.get() || self.cut_reply_lost.get() {
+        if self.no_batch_row.get() || self.cut_reply_lost.get() || self.late_cut.borrow().is_some() {
             return None;
         }
         if let Some((_, state, version)) = self.store.get().and_then(|d| d.find(id)) {
@@ -1327,6 +1341,11 @@ impl Lc for FLc {
             .filter(|b| members.split(',').any(|m| m.split(':').next() == Some(*b)))
         {
             return Err((2, format!("cut: Deliver refused unexpectedly for {bad}: Some(EjectedRedTip {{ tip: \"x\" }})")));
+        }
+        if self.cut_applies_late.get() {
+            *self.late_cut.borrow_mut() =
+                Some((repo.into(), id.into(), members.into(), round.cloned()));
+            return Err((2, "cannot tell: deadline".into()));
         }
         self.batch_view
             .borrow_mut()
@@ -5580,4 +5599,22 @@ fn backfill_carriers_partial_failure_fails_only_the_member_the_verb_names() {
     let out = t.out();
     assert!(out.contains("failed sp-ghost") && out.contains("set sp-a -> sp-bad") && !out.contains("failed sp-a"), "{out}");
     assert!(out.contains("spira: set=1 kept=0 failed=1"), "{out}");
+}
+
+#[test]
+fn open_batch_whose_cut_answers_cannot_tell_keeps_the_branch() {
+    let t = T::new(LandMode::Queue);
+    t.git.set("origin/main", "b0");
+    t.git.set("refs/heads/spira/sp-c", "tc");
+    *t.git.branches.borrow_mut() = vec![("spira/sp-c".into(), "tc".into())];
+    t.lc_row("sp-c", "CERTIFIED", "tc", 1);
+    t.lc.cut_applies_late.set(true);
+    assert_eq!(t.run(&["open-batch", "--members", "sp-c", "--skip-pregate"]), 1);
+    assert!(t.err().contains("cannot tell whether"), "{}", t.err());
+    assert!(!t.err().contains("cut refused"), "{}", t.err());
+    assert!(
+        t.git.calls.borrow().iter().all(|c| !c.starts_with("branch -D")),
+        "{:?}",
+        t.git.calls.borrow()
+    );
 }

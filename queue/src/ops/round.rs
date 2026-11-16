@@ -2094,7 +2094,13 @@ fn open_timed(
     };
     let mut carried = carried;
     if let Err((rc, out)) = cut {
-        match cut_outcome(w, &c, &batch) {
+        let outcome = match cut_outcome(w, &c, &batch) {
+            CutOutcome::Absent if rc == 2 && w.lc.rounds_door().is_some() => {
+                CutOutcome::Unknown("the store does not show it yet".into())
+            }
+            seen => seen,
+        };
+        match outcome {
             CutOutcome::Exists(stored) => carried = stored,
             CutOutcome::Absent => {
                 w.err(format!(
