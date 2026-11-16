@@ -1209,14 +1209,13 @@ impl Machine<'_> {
     }
 
     fn release_eject(&mut self, policy: &Policy, repo: &Repo) {
+        if self.rc.eject_held.as_ref().is_none_or(|h| h.issued) {
+            return;
+        }
+        if self.pass_running(policy, repo) {
+            return;
+        }
         let Some(hold) = self.rc.eject_held.as_mut() else { return };
-        if hold.issued {
-            return;
-        }
-        let alive = self.rc.batch.as_ref().is_some_and(|b| repo.scoped_batches.as_ref().is_some_and(|s| s.contains(b)));
-        if alive && self.now_ms.saturating_sub(self.rc.leg_at_ms) <= policy.wall_ms {
-            return;
-        }
         hold.issued = true;
         let eject = hold.eject.clone();
         let tip = self.rc.members.iter().find(|(id, _)| *id == eject.id).map(|(_, t)| t.clone()).unwrap_or_default();
@@ -1238,9 +1237,14 @@ impl Machine<'_> {
         self.hold_certify();
     }
 
-    fn release_certify(&mut self, policy: &Policy, repo: &Repo) {
+    /// A pass scope of the round is alive and the wait for it is within the wall.
+    fn pass_running(&self, policy: &Policy, repo: &Repo) -> bool {
         let alive = self.rc.batch.as_ref().is_some_and(|b| repo.scoped_batches.as_ref().is_some_and(|s| s.contains(b)));
-        if alive && self.now_ms.saturating_sub(self.rc.leg_at_ms) <= policy.wall_ms {
+        alive && self.now_ms.saturating_sub(self.rc.leg_at_ms) <= policy.wall_ms
+    }
+
+    fn release_certify(&mut self, policy: &Policy, repo: &Repo) {
+        if self.pass_running(policy, repo) {
             return;
         }
         self.rc.certify_held = false;
@@ -1935,11 +1939,12 @@ impl Machine<'_> {
                 self.opened(leg.why == "suites");
             }
             (State::Corpus | State::Attributing, CORPUS) | (State::Certifying, CERTIFY) if !ok && self.rc.leg.as_deref() == Some(leg.unit.as_str()) => self.leg_unstarted(&format!("it could not be started ({})", body.trim())),
-            (State::Attributing | State::Certifying, EJECT) if ok && self.rc.eject_held.as_ref().is_some_and(|h| h.issued) => self.eject_released(),
-            (State::Corpus | State::Attributing | State::Certifying, EJECT) if !ok && batcher_cut::io::HeldEject::parse(body).is_some() => {
+            (State::Corpus | State::Attributing | State::Certifying, EJECT) if ok && self.rc.eject_held.as_ref().is_some_and(|h| h.issued) => self.eject_released(),
+            (State::Corpus | State::Attributing | State::Certifying, EJECT) if !ok && self.rc.eject_held.as_ref().is_none_or(|h| !h.issued) && batcher_cut::io::HeldEject::parse(body).is_some() => {
                 self.hold_eject(batcher_cut::io::HeldEject::parse(body).unwrap_or_default());
             }
             (State::Corpus | State::Attributing | State::Certifying, EJECT) if !ok => {
+                self.rc.eject_held = None;
                 self.go(Trigger::LegLost);
                 self.red_naming(&format!("eject of {} refused: {}", leg.bead, body.trim()), leg.reds.clone());
             }

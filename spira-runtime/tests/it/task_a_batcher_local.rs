@@ -490,6 +490,19 @@ fn sp_3p7m5b_an_eject_held_for_a_running_pass_is_issued_again_when_the_pass_ends
     assert!(acts.iter().all(|a| a.effect != ABANDON && a.effect != PAUSE), "{acts:?}");
 }
 
+/// The one re-issue is not retried for ever: refused again, held or not, the round ends red.
+#[test]
+fn sp_3p7m5b_a_held_eject_that_fails_again_after_its_re_issue_ends_the_round_red() {
+    let mut c = driving(State::Certifying, "spira.e1");
+    c.repos.get_mut("spira").unwrap().eject_held = Some(EjectHold { eject: Default::default(), issued: true });
+    let leg = Leg { bead: "sp-a".into(), batch: "r9".into(), ..Leg::on("spira") };
+    for body in [held_eject_error(), "queue round eject exited 1: refused".to_string()] {
+        let (next, acts) = on_outcome(&c, EJECT, false, &body, &leg, NOW);
+        assert!(acts.iter().any(|a| a.effect == ABANDON) && acts.iter().any(|a| a.effect == PAUSE), "{body}: {acts:?}");
+        assert!(next.repos["spira"].eject_held.is_none());
+    }
+}
+
 /// The eject the attribution leg could not issue comes back in its outcome line: it is held the same way.
 #[test]
 fn sp_3p7m5b_an_attribution_blocked_by_a_held_eject_holds_it_instead_of_pausing() {
