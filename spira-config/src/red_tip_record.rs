@@ -8,14 +8,14 @@ pub fn path(run: &Path, repo: &str, id: &str) -> PathBuf {
     run.join("batcher-red-tips").join(repo).join(id)
 }
 
-/// Removes `id`'s record when it names `tip` (either may be an abbreviation of the other).
+/// Removes `id`'s record when it names `tip` exactly, as the cut compares it.
 pub fn forget(run: &Path, repo: &str, id: &str, tip: &str) -> std::io::Result<()> {
     let p = path(run, repo, id);
     let Ok(text) = fs::read_to_string(&p) else {
         return Ok(());
     };
     match text.split_whitespace().next() {
-        Some(t) if !t.is_empty() && (tip.starts_with(t) || t.starts_with(tip)) => {
+        Some(t) if t == tip => {
             fs::remove_file(&p)
         }
         _ => Ok(()),
