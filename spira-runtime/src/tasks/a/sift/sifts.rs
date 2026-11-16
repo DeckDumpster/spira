@@ -6,7 +6,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 use std::path::PathBuf;
-use std::process::Command;
 
 use serde_json::Value;
 use sift::{Candidate, GitProbe};
@@ -298,7 +297,7 @@ fn fetch_base(repo: &Repo) -> Result<(), String> {
         .map(|(r, _)| r)
         .unwrap_or("origin");
     run(
-        Command::new("git")
+        spira_config::bounded::bounded("git")
             .arg("-C")
             .arg(&repo.path)
             .args(["fetch", "-q", remote]),
