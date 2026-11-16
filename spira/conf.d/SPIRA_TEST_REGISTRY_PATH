@@ -1,7 +1,7 @@
 TYPE=string
 GROUP=test-registry
-DOC=SPIRA_TEST_REGISTRY_PATH — The SQLite file the test registry keeps each test's lifecycle state in; empty is refused by the test-registry binary, never defaulted.
-SCHEMA=The test registry file, owned by the test-registry binary alone. Put it on the disk that holds run/, apart from the control store, and include it in the off-box backup. Empty is refused by name.
+DOC=SPIRA_TEST_REGISTRY_PATH — The SQLite file the test registry keeps each test's lifecycle state in; defaults to test-registry.sqlite under the run directory.
+SCHEMA=The test registry file, owned by the test-registry binary alone. Put it on the disk that holds run/, apart from the control store, and include it in the off-box backup. The binary creates and initialises the file on first open; an empty value is refused by name.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    : "${SPIRA_TEST_REGISTRY_PATH:=}"
+    : "${SPIRA_TEST_REGISTRY_PATH:=$SPIRA_RUN/test-registry.sqlite}"
 SPIRA_CONF_DEFAULT_EOF
