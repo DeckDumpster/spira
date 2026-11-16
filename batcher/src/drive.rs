@@ -5187,6 +5187,19 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_flip_in_the_corpus_pass_red_is_disabled_and_the_round_runs_its_own_pass_without_it() {
+        let mut f = Fake::new(|_, _| false);
+        f.prior = Some(flip_red(&[FLIP_UNIT]));
+        f.bisects = true;
+        f.rerun_green = true;
+        let mut ops = Ops::default();
+        let end = flip_round(&mut f, &mut ops);
+        assert_eq!(ops.disabled, vec![vec!["unit:loom factory::tests::a".to_string()]]);
+        assert_eq!(f.main_kind.len(), 1, "one certifying pass: {:?}", f.main_kind);
+        assert_eq!(land_ids(end), vec!["m1", "m2", "m3"]);
+    }
+
+    #[test]
     fn a_unit_red_that_reproduces_on_the_full_tree_rerun_is_not_a_flip_and_blocks() {
         let mut f = Fake::new(|_, _| false);
         f.filter = Some(unit_red_together(&["m1", "m2", "m3"]));
