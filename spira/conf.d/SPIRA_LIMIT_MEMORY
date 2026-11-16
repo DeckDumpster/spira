@@ -1,0 +1,9 @@
+TYPE=string
+GROUP=max
+DOC=THE MEMORY LIMIT — how many sessions that declare memory in RUNE_USES may run at once; empty is unbound.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # THE MEMORY LIMIT — how many sessions that declare memory in RUNE_USES may run at once.
+    # A reactive one may run over it, and no planned one starts while it is over.
+    # Declared empty: the class is unbound and holds nobody.
+    : "${SPIRA_LIMIT_MEMORY:=}"
+SPIRA_CONF_DEFAULT_EOF

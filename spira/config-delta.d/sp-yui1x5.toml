@@ -1,0 +1,4 @@
+[spira]
+limit_cpu = ""
+limit_memory = ""
+limit_network = ""

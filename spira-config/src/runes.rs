@@ -194,6 +194,20 @@ pub fn rune_get(home: &Path, rune: &str, var: &str, default: &str) -> String {
     v
 }
 
+/// The closed list of resource classes a rune may declare in `RUNE_USES`.
+pub const RESOURCE_CLASSES: &[&str] = &["build-disk", "cpu", "memory", "network"];
+
+/// `RUNE_USES` of a rune: the scarce resource classes it uses heavily, split on whitespace.
+/// A name outside [`RESOURCE_CLASSES`] is refused, naming the rune and the name.
+pub fn rune_uses(home: &Path, rune: &str) -> Result<Vec<String>, String> {
+    let raw = rune_get(home, rune, "RUNE_USES", "");
+    let names: Vec<String> = raw.split_whitespace().map(str::to_string).collect();
+    match names.iter().find(|n| !RESOURCE_CLASSES.contains(&n.as_str())) {
+        Some(bad) => Err(format!("{rune}: RUNE_USES names {bad}, not a resource class ({})", RESOURCE_CLASSES.join(" "))),
+        None => Ok(names),
+    }
+}
+
 /// A `.rune`'s partition predicate, fully evaluated.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Predicate {
@@ -953,5 +967,41 @@ mod tests {
                 assert!(labels.contains(&format!("pinned-{n}")), "{name}: predicate {labels:?} does not follow {n}");
             }
         }
+    }
+
+    #[test]
+    fn rune_uses_reads_declared_classes_refuses_a_stranger_and_reads_absent_as_empty() {
+        let ws = testkit::TempDir::new("spira-config-runes-uses");
+        write_rune(&ws, "both", "RUNE_USES=\"build-disk cpu\"\n");
+        write_rune(&ws, "typo", "RUNE_USES=\"disk\"\n");
+        write_rune(&ws, "none", "RUNE_LABELS=x\n");
+        assert_eq!(rune_uses(&ws, "both").unwrap(), ["build-disk", "cpu"]);
+        let err = rune_uses(&ws, "typo").unwrap_err();
+        assert!(err.contains("typo") && err.contains("disk"), "{err}");
+        assert!(rune_uses(&ws, "none").unwrap().is_empty());
+    }
+
+    #[test]
+    fn the_shipped_runes_declare_build_disk_for_exactly_the_builder_and_the_reactive_lanes() {
+        let ws = testkit::TempDir::new("spira-config-runes-shipped");
+        let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/runes");
+        for dir in [src.clone(), src.join("disabled")] {
+            for e in std::fs::read_dir(&dir).unwrap().flatten().filter(|e| e.path().extension().is_some_and(|x| x == "rune")) {
+                write_rune(&ws, &e.path().file_stem().unwrap().to_string_lossy(), &std::fs::read_to_string(e.path()).unwrap());
+            }
+        }
+        let (mut uses, mut reactive) = (vec![], vec![]);
+        for name in std::fs::read_dir(runes_dir(&ws)).unwrap().flatten().filter_map(|e| e.path().file_stem().map(|s| s.to_string_lossy().into_owned())) {
+            if rune_uses(&ws, &name).unwrap().contains(&"build-disk".to_string()) {
+                uses.push(name.clone());
+            }
+            if rune_get(&ws, &name, "RUNE_REACTIVE", "") == "1" {
+                reactive.push(name);
+            }
+        }
+        uses.sort();
+        reactive.sort();
+        assert_eq!(uses, ["builder", "mender", "pilgrim", "qa"]);
+        assert_eq!(reactive, ["mender", "pilgrim", "qa"]);
     }
 }

@@ -21,6 +21,10 @@ RUNE_MODEL=claude-opus-5-5
 RUNE_LANE=mender
 RUNE_MAX_CONCURRENT="${SPIRA_MENDER_MAX:-8}"
 
+# Build-disk class, reactive: starts over the SPIRA_MAX_DWARVES limit (design "Lanes by bound resource").
+RUNE_USES="build-disk"
+RUNE_REACTIVE=1
+
 # The deadline is the machine's (SPIRA_MENDER_DEADLINE_SECS from pickup); the session wall
 # only has to outlast it so the machine, not a timeout, ends a mend.
 RUNE_TIMEOUT_SECONDS=$(( ${SPIRA_MENDER_DEADLINE_SECS:-300} + 120 ))

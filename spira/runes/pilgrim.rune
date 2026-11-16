@@ -20,6 +20,10 @@ RUNE_MODEL=claude-opus-5-5
 RUNE_LANE=pilgrimage
 RUNE_MAX_CONCURRENT=1
 
+# Build-disk class, reactive: starts over the SPIRA_MAX_DWARVES limit (design "Lanes by bound resource").
+RUNE_USES="build-disk"
+RUNE_REACTIVE=1
+
 RUNE_TIMEOUT_SECONDS=4200
 RUNE_LEASE_MINUTES=70
 RUNE_HEARTBEAT_SECONDS=30

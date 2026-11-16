@@ -90,6 +90,9 @@ RUNE_MAX_CONCURRENT=3
 # clone does not discover this box's limits by exceeding them.
 RUNE_ELASTIC=1
 
+# Build-disk class (design "Lanes by bound resource"): admitted only while SPIRA_MAX_DWARVES has room.
+RUNE_USES="build-disk"
+
 # THE LIVENESS LEASE, in minutes: renewed each time the dwarf's trace file grows, and the
 # dwarf is killed with work preserved if it lapses. Ninety minutes because the builder does
 # the long work and a ten-minute default lease would kill it mid-task. RUNE_HEARTBEAT_SECONDS

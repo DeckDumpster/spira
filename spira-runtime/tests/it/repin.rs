@@ -112,6 +112,7 @@ impl World {
                 express_ready: Some(0),
                 max_dwarves: pinned.get(KEY).and_then(|v| v.parse().ok()),
                 roster: vec!["builder".into()],
+                runes: [("builder".to_string(), spira_runtime::tasks::a::sentinel_call::RuneCfg { uses: vec!["build-disk".into()], ..Default::default() })].into(),
                 ..Snapshot::default()
             };
             self.engine.complete(&p.key, Outcome::Succeeded(serde_json::to_string(&snap).unwrap())).unwrap();

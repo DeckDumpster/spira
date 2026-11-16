@@ -761,3 +761,6 @@ test_registry_path
 test_registry_hold_secs
 gate_build_lease_wait_secs
 test_deny_list
+limit_cpu
+limit_memory
+limit_network

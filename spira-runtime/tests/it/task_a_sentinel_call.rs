@@ -244,3 +244,61 @@ fn the_carry_keeps_room_since_across_passes_with_room_and_a_full_pass_clears_it(
     let (third, _) = decide(&second, &full);
     assert_eq!((third.room_since_ms, third.room_at_ms), (None, Some(121_000)));
 }
+
+// ---------------------------------------------------------------------------------------------
+// sp-yui1x5: a session is held only by the bound classes its rune declares.
+
+/// Each named rune's call settings read from the shipped rune files, as `observe` reads them.
+fn shipped_runes(names: &[&str]) -> BTreeMap<String, RuneCfg> {
+    let home = testkit::TempDir::new("sentinel-call-shipped-runes");
+    let dir = spira_config::runes::runes_dir(&home);
+    std::fs::create_dir_all(&dir).unwrap();
+    for n in names {
+        std::fs::copy(concat!(env!("CARGO_MANIFEST_DIR"), "/../spira/runes/").to_string() + n + ".rune", dir.join(format!("{n}.rune"))).unwrap();
+    }
+    let get = |n: &str, k: &str, d: &str| spira_config::runes::rune_get(&home, n, k, d);
+    names
+        .iter()
+        .map(|n| {
+            let cfg = RuneCfg {
+                lane: !get(n, "RUNE_LANE", "").is_empty(),
+                max_concurrent: get(n, "RUNE_MAX_CONCURRENT", "1").trim().parse().unwrap(),
+                elastic: get(n, "RUNE_ELASTIC", "0") == "1",
+                uses: spira_config::runes::rune_uses(&home, n).unwrap(),
+                reactive: get(n, "RUNE_REACTIVE", "0") == "1",
+            };
+            (n.to_string(), cfg)
+        })
+        .collect()
+}
+
+#[test]
+fn skuld_starts_while_the_build_disk_class_is_full() {
+    let roster = ["builder", "mender", "ops", "skuld"];
+    let snap = Snapshot {
+        roster: roster.iter().map(|n| n.to_string()).collect(),
+        runes: shipped_runes(&roster),
+        live_by_rune: [("builder".to_string(), 6), ("mender".to_string(), 1), ("ops".to_string(), 1)].into(),
+        ready_by_rune: [("builder".to_string(), Some(4)), ("mender".to_string(), Some(0)), ("ops".to_string(), Some(0)), ("skuld".to_string(), Some(1))].into(),
+        max_dwarves: Some(7),
+        max_live: Some(40),
+        lanes_max_live: Some(3),
+        urgent: Some(vec![]),
+        express_ready: Some(0),
+        ..Snapshot::default()
+    };
+    let mut r = rig(1, snap);
+    r.advance(60_000).unwrap();
+    let started: std::collections::BTreeSet<String> = r.requested().iter().filter(|q| q.name == UNIT_START).map(|q| q.input.clone()).collect();
+    assert_eq!(started.len(), 1, "{started:?}");
+    assert!(started.iter().all(|s| s.contains("\"rune\":\"skuld\"")), "{started:?}");
+}
+
+#[test]
+fn call_world_binds_only_the_classes_that_have_a_limit() {
+    let snap = Snapshot { max_dwarves: Some(7), class_limits: [("memory".to_string(), 3)].into(), ..idle() };
+    let w = call_world(&Carry::default(), &snap);
+    assert_eq!(w.limits, BTreeMap::from([("build-disk".to_string(), 7), ("memory".to_string(), 3)]));
+    let unbound = call_world(&Carry::default(), &idle());
+    assert!(unbound.limits.is_empty());
+}
