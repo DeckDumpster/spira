@@ -15,6 +15,7 @@ pub enum R {
     BodyRead,
     NoBinding,
     SocketUnreachable,
+    StoreNotRunning,
     SubmitNoTip,
     SubmitTipArg,
     StatuteUsage,
@@ -46,7 +47,7 @@ pub enum R {
 
 impl R {
     pub const ALL: &'static [R] = &[
-        R::UnknownVerb, R::ReservedFlag, R::NotBound, R::ForeignBead, R::ForFlag, R::TwoBodies, R::BodyRead, R::NoBinding, R::SocketUnreachable, R::SubmitNoTip,
+        R::UnknownVerb, R::ReservedFlag, R::NotBound, R::ForeignBead, R::ForFlag, R::TwoBodies, R::BodyRead, R::NoBinding, R::SocketUnreachable, R::StoreNotRunning, R::SubmitNoTip,
         R::SubmitTipArg, R::StatuteUsage, R::StatuteStdin, R::StatuteConfig, R::StatuteConfigUnset, R::StatuteRegistry, R::StatuteReport,
         R::StatuteNoteNotRecorded, R::CratesGit, R::CratesCargo, R::CratesSelect, R::HelpUsage, R::HelpUnknown, R::LawUsage, R::LawNotFound,
         R::ReviewArgs, R::ReviewShow, R::ReviewGit, R::ReviewConfig, R::ReviewAgentUnset, R::ReviewTimedOut, R::ReviewFailed,
@@ -141,6 +142,7 @@ pub const GENERAL: Entry = Entry {
         Refusal { id: R::BodyRead, text: "{err}", fix: "check the path you passed to the body flag, or pipe the text on stdin" },
         Refusal { id: R::NoBinding, text: "cannot tell: SPIRA_WORK_BEAD_ID is not set — this environment is not bound to a bead", fix: "run inside the bead's session; exit 2 means nothing was done and a retry is safe" },
         Refusal { id: R::SocketUnreachable, text: "cannot tell: {err}", fix: "nothing was recorded; retry. If it persists, leave a note with the evidence and exit non-zero" },
+        Refusal { id: R::StoreNotRunning, text: "store not running: nothing was sent; waited {secs}s", fix: "nothing was recorded; run the same verb again" },
     ],
 };
 

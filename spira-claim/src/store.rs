@@ -112,7 +112,7 @@ impl Store {
     pub fn lc_full<S: AsRef<str>>(&self, args: &[S]) -> Result<Ran, String> {
         match self.lc.call(args) {
             Ok(r) => Ok(Ran { code: r.code, stdout: r.out, stderr: r.err }),
-            Err(LcError::Refused(m) | LcError::Fault(m)) => Err(m),
+            Err(LcError::Refused(m) | LcError::Fault(m) | LcError::NotRunning(m)) => Err(m),
         }
     }
 

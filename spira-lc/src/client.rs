@@ -10,7 +10,6 @@
 //! outage and was the connection churn on :3307. Direct mode is a declared choice, never a
 //! fallback: `spira.lc_socket = ""` (test fixtures, which run no service).
 
-use std::os::unix::net::UnixStream;
 use std::time::Duration;
 
 /// law-calls-have-deadlines: a client waits at most 5 s; the service stops at 3 s.
@@ -82,27 +81,33 @@ pub(crate) fn forward(socket_path: &str, args: &[String]) -> (i32, String) {
     (code, format!("{out}{err}"))
 }
 
-/// One request with `stdin` as its body; the answer's stdout and stderr apart.
+/// One request with `stdin` as its body; the answer's stdout and stderr apart. A refused or
+/// absent socket is waited for as long as the call's own limit.
 pub(crate) fn forward_with(socket_path: &str, args: &[String], stdin: Option<&str>) -> (i32, String, String) {
-    use spira_store::lc_call::{retrying, Fail};
     let batch = args.first().is_some_and(|v| v == "facts-query" || crate::composed::SWEEPS.contains(&v.as_str()));
     let limit = if batch { BATCH_TIMEOUT } else { TIMEOUT };
-    let answer = retrying(args, limit, |left| {
-        let stream = UnixStream::connect(socket_path).map_err(|e| Fail::Final(down(socket_path, &e).1))?;
+    forward_within(socket_path, args, stdin, limit, limit)
+}
+
+fn forward_within(socket_path: &str, args: &[String], stdin: Option<&str>, limit: Duration, not_running_wait: Duration) -> (i32, String, String) {
+    use spira_store::lc_call::{connect, retrying, Fail};
+    let path = std::path::Path::new(socket_path);
+    let answer = retrying(args, path, limit, not_running_wait, |left| {
+        let stream = connect(path)?;
         let left = left.max(Duration::from_millis(1));
         stream.set_read_timeout(Some(left)).and_then(|_| stream.set_write_timeout(Some(left))).map_err(|e| Fail::Final(down(socket_path, &e).1))?;
         spira_store::lc_call::exchange_once(stream, args, stdin)
     });
     match answer {
         Ok(r) => (r.code, r.out, r.err),
-        Err(msg) => (2, msg, String::new()),
+        Err(f) => (2, f.into_text(), String::new()),
     }
 }
 
 /// One attempt on `stream`. Once the request is on the wire the service may apply it whatever
 /// happens to the reply, so a lost reply is "cannot tell" and never a fallback.
 #[cfg(test)]
-pub(crate) fn exchange(stream: UnixStream, args: &[String], stdin: Option<&str>) -> (i32, String, String) {
+pub(crate) fn exchange(stream: std::os::unix::net::UnixStream, args: &[String], stdin: Option<&str>) -> (i32, String, String) {
     match spira_store::lc_call::exchange(stream, args, stdin) {
         Ok(r) => (r.code, r.out, r.err),
         Err(msg) => (2, msg, String::new()),
@@ -124,7 +129,8 @@ mod tests {
     #[test]
     fn a_list_carrying_an_old_snapshot_flag_still_reaches_the_service() {
         let dir = testkit::TempDir::new("lc-client-flag");
-        let path = dir.join("no-such.sock");
+        let path = dir.join("a-file").join("sock");
+        std::fs::write(dir.join("a-file"), "").unwrap();
         let args: Vec<String> = ["list", "--live", "--snapshot"].map(String::from).to_vec();
         let (code, out) = super::route_call(&args, Ok(super::Route::Service(path.to_str().unwrap().into()))).expect("a routed call is answered");
         assert_eq!(code, 2, "{out}");
@@ -146,11 +152,21 @@ mod tests {
     #[test]
     fn a_declared_socket_that_does_not_answer_fails_naming_the_service() {
         let dir = testkit::TempDir::new("lc-client-down");
-        let path = dir.join("no-such.sock");
+        std::fs::write(dir.join("a-file"), "").unwrap();
+        let path = dir.join("a-file").join("sock");
         let (code, out) = super::forward(path.to_str().unwrap(), &["show".to_string(), "sp-x".to_string()]);
         assert_eq!(code, 2, "{out}");
-        assert!(out.contains("lc-serve") && out.contains(path.to_str().unwrap()), "names the service and its socket: {out}");
-        assert!(out.contains("does not fall back"), "{out}");
+        assert!(out.starts_with("cannot tell") && out.contains("not answering") && out.contains(path.to_str().unwrap()), "names the socket: {out}");
+    }
+
+    #[test]
+    fn an_absent_socket_is_store_not_running_after_its_wait() {
+        let dir = testkit::TempDir::new("lc-client-not-running");
+        let path = dir.join("no-such.sock");
+        let wait = std::time::Duration::from_millis(200);
+        let (code, out, _) = super::forward_within(path.to_str().unwrap(), &["hold".to_string(), "sp-a".to_string()], None, wait, wait);
+        assert_eq!(code, 2, "{out}");
+        assert!(out.contains("store not running") && out.contains("nothing was sent") && out.contains(path.to_str().unwrap()), "{out}");
     }
 
     fn serve_once(reply: &'static [u8]) -> (std::os::unix::net::UnixStream, std::thread::JoinHandle<()>) {

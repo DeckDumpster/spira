@@ -6,7 +6,8 @@
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::net::UnixStream;
-use std::path::PathBuf;
+use std::io::ErrorKind;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -47,12 +48,14 @@ pub enum LcError {
     Refused(String),
     /// No answer: unreachable, lost, past its deadline, or "cannot tell".
     Fault(String),
+    /// Nothing answered the socket (refused or absent), and nothing was sent.
+    NotRunning(String),
 }
 
 impl std::fmt::Display for LcError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            LcError::Refused(m) | LcError::Fault(m) => f.write_str(m),
+            LcError::Refused(m) | LcError::Fault(m) | LcError::NotRunning(m) => f.write_str(m),
         }
     }
 }
@@ -87,6 +90,12 @@ impl Reply {
 /// How a request reaches the machine. `Err` is a call that produced no answer at all.
 pub trait Transport: Send + Sync {
     fn exchange(&self, argv: &[String], stdin: Option<&str>, deadline: Duration) -> Result<Reply, String>;
+
+    /// [`exchange`](Self::exchange) with a socket nobody answers told apart from a fault; `not_running_wait` is how
+    /// long a refused or absent socket is waited for.
+    fn exchange_kind(&self, argv: &[String], stdin: Option<&str>, deadline: Duration, _not_running_wait: Duration) -> Result<Reply, LcError> {
+        self.exchange(argv, stdin, deadline).map_err(LcError::Fault)
+    }
 }
 
 /// The service on its Unix socket: no process is launched.
@@ -94,17 +103,42 @@ pub struct Socket {
     path: PathBuf,
 }
 
-impl Transport for Socket {
-    fn exchange(&self, argv: &[String], stdin: Option<&str>, _deadline: Duration) -> Result<Reply, String> {
-        let down = |e: &dyn std::fmt::Display| format!("cannot tell: the lifecycle service is not answering on {}: {e} — nothing was read or written", self.path.display());
+impl Socket {
+    fn call(&self, argv: &[String], stdin: Option<&str>, not_running_wait: Duration) -> Result<Reply, Fail> {
+        let down = |e: &dyn std::fmt::Display| Fail::Final(format!("cannot tell: the lifecycle service is not answering on {}: {e} — nothing was read or written", self.path.display()));
         let wait = if argv.first().is_some_and(|v| SWEEPS.contains(&v.as_str())) { SWEEP_DEADLINE } else { DEADLINE };
-        retrying(argv, wait, |left| {
-            let stream = UnixStream::connect(&self.path).map_err(|e| Fail::Final(down(&e)))?;
+        retrying(argv, &self.path, wait, not_running_wait, |left| {
+            let stream = connect(&self.path)?;
             let left = left.max(Duration::from_millis(1));
-            stream.set_read_timeout(Some(left)).and_then(|_| stream.set_write_timeout(Some(left))).map_err(|e| Fail::Final(down(&e)))?;
+            stream.set_read_timeout(Some(left)).and_then(|_| stream.set_write_timeout(Some(left))).map_err(|e| down(&e))?;
             exchange_once(stream, argv, stdin)
         })
     }
+}
+
+impl Transport for Socket {
+    fn exchange(&self, argv: &[String], stdin: Option<&str>, deadline: Duration) -> Result<Reply, String> {
+        self.call(argv, stdin, deadline).map_err(Fail::into_text)
+    }
+
+    fn exchange_kind(&self, argv: &[String], stdin: Option<&str>, _deadline: Duration, not_running_wait: Duration) -> Result<Reply, LcError> {
+        self.call(argv, stdin, not_running_wait).map_err(|f| match f {
+            Fail::NotRunning(m) => LcError::NotRunning(m),
+            f => LcError::Fault(f.into_text()),
+        })
+    }
+}
+
+/// Connects to the store's socket. A refused or absent socket is the store not running and
+/// nothing was sent; any other failure is final.
+pub fn connect(path: &Path) -> Result<UnixStream, Fail> {
+    let down = |e: &dyn std::fmt::Display| Fail::Final(format!("cannot tell: the lifecycle service is not answering on {}: {e} — nothing was read or written", path.display()));
+    let stream = UnixStream::connect(path).map_err(|e| match e.kind() {
+        ErrorKind::ConnectionRefused | ErrorKind::NotFound => Fail::NotRunning(format!("store not running: nothing was sent to {} ({e})", path.display())),
+        _ => down(&e),
+    })?;
+    stream.set_read_timeout(Some(DEADLINE)).and_then(|_| stream.set_write_timeout(Some(DEADLINE))).map_err(|e| down(&e))?;
+    Ok(stream)
 }
 
 /// Whether `argv` only reads: the one kind of call that may be sent again when the service
@@ -118,27 +152,45 @@ pub fn is_read(argv: &[String]) -> bool {
     )
 }
 
-/// Why one attempt has no answer: `Dropped` is a connection the service took down or never
-/// answered (a restart), which a read may repeat; `Final` is anything else.
-#[derive(Debug)]
+/// Why one attempt has no answer: `NotRunning` is a socket refused or absent, where nothing was
+/// sent, so any call may repeat; `Dropped` is a connection the service took down or never
+/// answered, which a read may repeat; `Final` is anything else.
+#[derive(Debug, PartialEq, Eq)]
 pub enum Fail {
+    NotRunning(String),
     Dropped(String),
     Final(String),
 }
 
+impl Fail {
+    pub fn into_text(self) -> String {
+        let (Fail::NotRunning(m) | Fail::Dropped(m) | Fail::Final(m)) = self;
+        m
+    }
+}
+
 const RETRY_EVERY: Duration = Duration::from_millis(50);
 
-/// Runs `once` (given the time left) until it answers; a read whose attempt was `Dropped` is
-/// tried again after a pause, within `budget`. A write has exactly one attempt.
-pub fn retrying<T>(argv: &[String], budget: Duration, mut once: impl FnMut(Duration) -> Result<T, Fail>) -> Result<T, String> {
+/// Runs `once` (given the time left) until it answers. A `NotRunning` attempt is tried again
+/// for any argv, within `not_running_wait` of the start; a read whose attempt was `Dropped` is tried
+/// again within `budget`, measured from the first attempt that reached the service. A write
+/// that reached the service has exactly one attempt.
+pub fn retrying<T>(argv: &[String], target: &Path, budget: Duration, not_running_wait: Duration, mut once: impl FnMut(Duration) -> Result<T, Fail>) -> Result<T, Fail> {
     let began = Instant::now();
+    let mut reached: Option<Instant> = None;
     loop {
-        match once(budget.saturating_sub(began.elapsed())) {
+        let attempt = Instant::now();
+        match once(reached.map_or(budget, |r| budget.saturating_sub(r.elapsed()))) {
             Ok(v) => return Ok(v),
-            Err(Fail::Final(m)) => return Err(m),
+            Err(Fail::Final(m)) => return Err(Fail::Final(m)),
+            Err(Fail::NotRunning(_)) if began.elapsed() >= not_running_wait => {
+                return Err(Fail::NotRunning(format!("store not running: nothing was sent; waited {} s for {}", began.elapsed().as_secs(), target.display())));
+            }
+            Err(Fail::NotRunning(_)) => std::thread::sleep(RETRY_EVERY.min(not_running_wait.saturating_sub(began.elapsed()))),
             Err(Fail::Dropped(m)) => {
-                if !is_read(argv) || began.elapsed() + RETRY_EVERY >= budget {
-                    return Err(m);
+                let since = *reached.get_or_insert(attempt);
+                if !is_read(argv) || since.elapsed() + RETRY_EVERY >= budget {
+                    return Err(Fail::Dropped(m));
                 }
                 std::thread::sleep(RETRY_EVERY);
             }
@@ -256,7 +308,7 @@ pub fn exchange_once(stream: UnixStream, argv: &[String], stdin: Option<&str>) -
 
 /// [`exchange_once`] with the failure as its text: one attempt, never repeated.
 pub fn exchange(stream: UnixStream, argv: &[String], stdin: Option<&str>) -> Result<Reply, String> {
-    exchange_once(stream, argv, stdin).map_err(|(Fail::Dropped(m) | Fail::Final(m))| m)
+    exchange_once(stream, argv, stdin).map_err(Fail::into_text)
 }
 
 /// A `spira-lc` program, run once per call: the stand-in a fixture declares, or the CLI in the
@@ -328,17 +380,18 @@ pub struct LcClient {
     transport: Arc<dyn Transport>,
     socket: bool,
     deadline: Duration,
+    not_running_wait: Duration,
 }
 
 impl LcClient {
     /// The service on `path`.
     pub fn socket(path: impl Into<PathBuf>) -> Self {
-        LcClient { transport: Arc::new(Socket { path: path.into() }), socket: true, deadline: DEADLINE }
+        LcClient { transport: Arc::new(Socket { path: path.into() }), socket: true, deadline: DEADLINE, not_running_wait: DEADLINE }
     }
 
     /// Every call through `transport` (a test's scripted double, typically).
     pub fn over(transport: Arc<dyn Transport>, socket: bool) -> Self {
-        LcClient { transport, socket, deadline: DEADLINE }
+        LcClient { transport, socket, deadline: DEADLINE, not_running_wait: DEADLINE }
     }
 
     /// The route the configuration declares for a caller holding `bin`.
@@ -347,7 +400,7 @@ impl LcClient {
         let route = route_of(stand_in.as_deref(), spira_config::process::cfg("SPIRA_LC_SOCKET"), bin)?;
         Ok(match route {
             Route::Socket(path) => LcClient::socket(path),
-            Route::Program(bin) => LcClient { transport: Arc::new(Program { bin }), socket: false, deadline: DEADLINE },
+            Route::Program(bin) => LcClient { transport: Arc::new(Program { bin }), socket: false, deadline: DEADLINE, not_running_wait: DEADLINE },
         })
     }
 
@@ -356,9 +409,15 @@ impl LcClient {
         Self::for_bin(&crate::lifecycle_row::lc_bin()?)
     }
 
-    /// Bounds a program call at `d` (a batch caller's wait); the socket keeps [`DEADLINE`].
+    /// Bounds a program call at `d` and the wait for an absent store at `d`; a socket
+    /// exchange that reached the store keeps [`DEADLINE`].
     pub fn within(&self, d: Duration) -> Self {
-        LcClient { deadline: d, ..self.clone() }
+        LcClient { deadline: d, not_running_wait: d, ..self.clone() }
+    }
+
+    /// Sets how long a refused or absent socket is waited for, apart from [`within`](Self::within).
+    pub fn not_running_wait(&self, d: Duration) -> Self {
+        LcClient { not_running_wait: d, ..self.clone() }
     }
 
     /// Whether calls reach the service in-process rather than through a program.
@@ -379,7 +438,7 @@ impl LcClient {
 
     fn send<S: AsRef<str>>(&self, argv: &[S], stdin: Option<&str>) -> Result<Reply, LcError> {
         let argv: Vec<String> = argv.iter().map(|a| a.as_ref().to_string()).collect();
-        self.transport.exchange(&argv, stdin, self.deadline).map_err(LcError::Fault)
+        self.transport.exchange_kind(&argv, stdin, self.deadline, self.not_running_wait)
     }
 
     /// The answer's stdout when it applied (exit 0); a refusal (3) or anything else is an error.
@@ -519,11 +578,11 @@ mod tests {
     fn a_read_the_service_never_answers_gives_up_inside_its_budget() {
         let argv = vec!["list".to_string()];
         let mut tries = 0;
-        let r: Result<(), String> = retrying(&argv, Duration::from_millis(200), |_| {
+        let r: Result<(), Fail> = retrying(&argv, Path::new("/s"), Duration::from_millis(200), Duration::ZERO, |_| {
             tries += 1;
             Err(Fail::Dropped("gone".into()))
         });
-        assert_eq!(r, Err("gone".to_string()));
+        assert_eq!(r, Err(Fail::Dropped("gone".to_string())));
         assert!(tries > 1, "{tries}");
     }
 
@@ -536,6 +595,62 @@ mod tests {
         for w in [&["hold", "x"][..], &["event", "x"], &["content", "close", "x"], &["content", "note", "x"], &["content", "comments", "add", "x", "text"], &["content", "label", "add", "sp-a", "x"], &["work", "x", "show"], &["create-bead"], &[]] {
             assert!(!is_read(&s(w)), "{w:?}");
         }
+    }
+
+    fn answering(listener: std::os::unix::net::UnixListener, accepted: Arc<std::sync::atomic::AtomicUsize>) {
+        for stream in listener.incoming().flatten() {
+            accepted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let mut line = String::new();
+            BufReader::new(&stream).read_line(&mut line).unwrap();
+            (&stream).write_all(b"{\"exit_code\":0,\"len\":0}\n").unwrap();
+        }
+    }
+
+    fn bound_after_300ms(path: PathBuf) -> Arc<std::sync::atomic::AtomicUsize> {
+        let accepted = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let count = Arc::clone(&accepted);
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(300)); // clock-safe: the outage the caller must wait through
+            let _ = std::fs::remove_file(&path);
+            answering(std::os::unix::net::UnixListener::bind(&path).unwrap(), count);
+        });
+        accepted
+    }
+
+    #[test]
+    fn a_write_made_while_the_store_is_absent_is_applied_once_when_it_returns() {
+        let dir = testkit::TempDir::new("lc-call-absent");
+        let path = dir.join("sock");
+        let accepted = bound_after_300ms(path.clone());
+        let r = LcClient::socket(&path).within(Duration::from_secs(2)).call(&["hold", "sp-a", "wait"]).expect("the write waits for the store");
+        assert_eq!(r.code, 0);
+        assert_eq!(accepted.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn a_write_made_while_the_socket_refuses_is_applied_once_when_it_returns() {
+        let dir = testkit::TempDir::new("lc-call-stale");
+        let path = dir.join("sock");
+        drop(std::os::unix::net::UnixListener::bind(&path).unwrap());
+        assert!(path.exists(), "the stale file is left behind");
+        let accepted = bound_after_300ms(path.clone());
+        let r = LcClient::socket(&path).within(Duration::from_secs(2)).call(&["hold", "sp-a", "wait"]).expect("the write waits for the store");
+        assert_eq!(r.code, 0);
+        assert_eq!(accepted.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn an_absent_store_past_the_wait_is_not_running_with_nothing_sent() {
+        let dir = testkit::TempDir::new("lc-call-wait");
+        let e = LcClient::socket(dir.join("sock")).within(Duration::from_millis(300)).call(&["hold", "sp-a", "wait"]).unwrap_err();
+        assert!(matches!(&e, LcError::NotRunning(m) if m.contains("store not running") && m.contains("nothing was sent")), "{e:?}");
+    }
+
+    #[test]
+    fn a_not_running_wait_set_apart_from_within_bounds_only_the_wait() {
+        let dir = testkit::TempDir::new("lc-call-apart");
+        let e = LcClient::socket(dir.join("sock")).within(Duration::from_secs(30)).not_running_wait(Duration::ZERO).call(&["list"]).unwrap_err();
+        assert!(matches!(e, LcError::NotRunning(_)));
     }
 
     fn whole(a: &[&str]) -> bool {
@@ -642,7 +757,7 @@ mod tests {
         assert!(matches!(c.answer(&["nope"]), Err(LcError::Fault(m)) if m.starts_with("cannot tell")));
         assert!(matches!(c.answer(&["hold", "sp-a", "wait"]), Err(LcError::Refused(m)) if m == "lc: sp-a: refused"), "a refusal's stderr is its text");
         let dead = LcClient::socket(dir.join("no-such.sock"));
-        assert!(matches!(dead.call(&["list"]), Err(LcError::Fault(m)) if m.contains("not answering")));
+        assert!(matches!(dead.within(Duration::ZERO).call(&["list"]), Err(LcError::NotRunning(m)) if m.contains("store not running")));
     }
 
     fn closer(argv: &[String]) -> (i32, String) {
