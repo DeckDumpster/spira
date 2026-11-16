@@ -940,7 +940,11 @@ Full contract: `spira-config/DESIGN-build-cache.md`. In the gate:
   next gate whose `dwarf` is empty adopts the newest, then ages the mtime of every tracked
   file that did not change between that commit and its own HEAD, so cargo finds those
   crates fresh and rebuilds only what the branch (and its dependents) changed. An unreadable
-  commit discards the directory and builds cold.
+  commit or tree path discards the directory and builds cold. The pool also records the tree
+  path it was built in; adopting at another path removes every unit whose rustc `env-dep:`
+  lines name that path (`env!("CARGO_MANIFEST_DIR")`), because cargo's fingerprints are
+  tree-relative and would serve its binary with the donor's path baked in. sccache is not a
+  carrier: its Rust keys hash the manifest dir, and `gate/tests/warm_build.rs` pins that.
 * **No on-disk warm target (concierge/gate-overcap, 2026-10-14; retires sp-nv7btk's slots).**
   sp-nv7btk linked the `dwarf`-profile directory to a per-admission-slot directory on the disk,
   `<run>/gate-warm/slot.N/dwarf`, so a unit build would "recompile only what the branch

@@ -360,14 +360,14 @@ mod tests {
     fn only_units_whose_compile_read_the_donors_path_are_purged() {
         let t = testkit::TempDir::new("gate-warm-purge");
         let d = t.path().join("debug");
-        for (unit, env) in [("bound-aaaa", "CARGO_MANIFEST_DIR=/w/.gate.h.a/bound"), ("plain-bbbb", "CARGO_PKG_NAME=plain")] {
+        for (unit, env) in [("bound-aaaa", "CARGO_MANIFEST_DIR=/w/.gate.h.a/bound"), ("plain-bbbb", "CARGO_PKG_NAME=plain"), ("out-cccc", "OUT_DIR=/root/.gate.h.a/debug/build/out")] {
             fs::create_dir_all(d.join(".fingerprint").join(unit)).unwrap();
             fs::create_dir_all(d.join("deps")).unwrap();
             let h = unit.rsplit('-').next().unwrap();
             fs::write(d.join(format!("deps/{}.d", unit)), format!("deps/x: src/lib.rs\n\n# env-dep:{env}\n")).unwrap();
             fs::write(d.join(format!("deps/lib{}-{h}.rlib", unit.split('-').next().unwrap())), "x").unwrap();
         }
-        assert_eq!(purge_path_bound_units(&d, Path::new("/w/.gate.h.a")), 1);
+        assert_eq!(purge_path_bound_units(&d, Path::new("/w/.gate.h.a")), 2);
         assert!(!d.join(".fingerprint/bound-aaaa").exists() && !d.join("deps/libbound-aaaa.rlib").exists());
         assert!(d.join(".fingerprint/plain-bbbb").is_dir() && d.join("deps/libplain-bbbb.rlib").is_file());
     }

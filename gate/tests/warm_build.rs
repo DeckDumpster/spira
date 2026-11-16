@@ -101,3 +101,42 @@ fn an_adopted_build_directory_never_serves_a_binary_with_the_donors_path_baked_i
     run(&b, "cargo", &["build", "--color", "never"]);
     assert_eq!(run(&b, b.join("target/debug/pin").to_str().unwrap(), &[]), b.join("pin").to_str().unwrap());
 }
+
+#[test]
+fn a_unit_cached_by_sccache_in_one_tree_is_recompiled_in_another() {
+    let Some(sccache) = spira_config::build::find_on(&std::env::var("PATH").unwrap_or_default(), "sccache") else {
+        eprintln!("sccache is not on PATH: nothing to prove");
+        return;
+    };
+    let t = testkit::TempDir::new("gate-sccache-path");
+    let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port().to_string();
+    let cache = t.path().join("cache");
+    let sc = sccache.to_str().unwrap();
+    let env: Vec<(&str, &str)> = vec![
+        ("RUSTC_WRAPPER", sc),
+        ("SCCACHE_DIR", cache.to_str().unwrap()),
+        ("SCCACHE_SERVER_PORT", &port),
+        ("SCCACHE_IGNORE_SERVER_IO_ERROR", "1"),
+        ("SCCACHE_WEBDAV_ENDPOINT", ""),
+    ];
+    let build = |tree: &Path| {
+        let o = Command::new("cargo").current_dir(tree).env_remove("CARGO_TARGET_DIR").envs(env.iter().cloned()).args(["build", "--color", "never"]).output().unwrap();
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+        let o = Command::new(tree.join("target/debug/pin")).output().unwrap();
+        String::from_utf8_lossy(&o.stdout).into_owned()
+    };
+    let (a, b) = (t.path().join("tree-a"), t.path().join("tree-b"));
+    for tree in [&a, &b] {
+        std::fs::create_dir_all(tree.join("lib/src")).unwrap();
+        std::fs::create_dir_all(tree.join("pin/src")).unwrap();
+        std::fs::write(tree.join("Cargo.toml"), "[workspace]\nresolver = \"2\"\nmembers = [\"lib\", \"pin\"]\n").unwrap();
+        std::fs::write(tree.join("lib/Cargo.toml"), "[package]\nname = \"lib\"\nversion = \"0.1.0\"\nedition = \"2021\"\n").unwrap();
+        std::fs::write(tree.join("lib/src/lib.rs"), "pub fn dir() -> &'static str { env!(\"CARGO_MANIFEST_DIR\") }\n").unwrap();
+        std::fs::write(tree.join("pin/Cargo.toml"), "[package]\nname = \"pin\"\nversion = \"0.1.0\"\nedition = \"2021\"\n[dependencies]\nlib = { path = \"../lib\" }\n").unwrap();
+        std::fs::write(tree.join("pin/src/main.rs"), "fn main() { print!(\"{}\", lib::dir()); }\n").unwrap();
+    }
+    let (from_a, from_b) = (build(&a), build(&b));
+    let _ = Command::new(sc).arg("--stop-server").envs(env.iter().cloned()).output();
+    assert_eq!(from_a, a.join("lib").to_str().unwrap());
+    assert_eq!(from_b, b.join("lib").to_str().unwrap());
+}
