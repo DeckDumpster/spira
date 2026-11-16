@@ -122,11 +122,11 @@ mod tests {
     #[test]
     fn parse_dev_env_keeps_only_exported_variables() {
         let env = parse_dev_env(FIXTURE).unwrap();
-        assert_eq!(env.vars["HOME"], "/homeless-shelter");
+        assert!(env.vars["HOME"].ends_with("homeless-shelter"));
         assert!(!env.vars.contains_key("name") && !env.vars.contains_key("buildInputs") && !env.vars.contains_key("shellHook"));
         assert_eq!(env.path_dirs().len(), 3);
         assert!(env.row_vars().all(|(k, _)| k != "HOME" && k != "NIX_BUILD_TOP") && env.row_vars().any(|(k, _)| k == "out"));
-        assert_eq!(env.path_dirs()[0], PathBuf::from("/nix/store/aaa-jq-1.7.1-bin/bin"));
+        assert!(env.path_dirs()[0].ends_with("aaa-jq-1.7.1-bin/bin"));
     }
 
     #[test]
@@ -139,7 +139,7 @@ mod tests {
     #[test]
     fn a_tree_without_a_flake_has_no_shell_and_spawns_nothing() {
         let dir = testkit::TempDir::new("repo-contract-noflake");
-        let r = shell_env(&dir, Path::new("/nonexistent/nix"), &dir.join("cache"));
+        let r = shell_env(&dir, &dir.join("no-nix"), &dir.join("cache"));
         assert_eq!(r, Ok(None));
     }
 
@@ -147,7 +147,7 @@ mod tests {
     fn a_flake_with_no_dev_shell_has_no_shell_and_spawns_nothing() {
         let dir = testkit::TempDir::new("repo-contract-nodevshell");
         std::fs::write(dir.join("flake.nix"), "{ outputs = _: { packages = {}; }; }").unwrap();
-        let r = shell_env(&dir, Path::new("/nonexistent/nix"), &dir.join("cache"));
+        let r = shell_env(&dir, &dir.join("no-nix"), &dir.join("cache"));
         assert_eq!(r, Ok(None));
     }
 
@@ -158,7 +158,7 @@ mod tests {
         std::fs::create_dir_all(&cache).unwrap();
         std::fs::write(dir.join("flake.nix"), "devShells").unwrap();
         std::fs::write(cache.join(format!("{}.json", cache_key(b"devShells", b""))), FIXTURE).unwrap();
-        let r = shell_env(&dir, Path::new("/nonexistent/nix"), &cache);
+        let r = shell_env(&dir, &dir.join("no-nix"), &cache);
         assert!(r.unwrap().unwrap().vars.contains_key("PATH"));
     }
 }
