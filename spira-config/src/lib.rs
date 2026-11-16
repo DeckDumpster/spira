@@ -47,6 +47,7 @@ pub mod escalation;
 pub mod locate;
 pub mod nonwork;
 pub mod process;
+pub mod red_at;
 pub mod proof;
 pub mod results_retention;
 pub mod rebase_check;

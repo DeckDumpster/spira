@@ -17,6 +17,18 @@ pub struct LogTail {
     pub text: String,
 }
 
+/// Each repo's newest gate-run rows, from the `Gate/gate` section; `None` when it cannot be read.
+pub fn gate_runs(lc: &spira_store::lc_call::LcClient) -> Option<Vec<(String, Vec<serde_json::Value>)>> {
+    parse_gate_runs(&lc.answer(&["section", "get", "Gate/gate"]).ok()?)
+}
+
+/// `None` when the answer is no readable Gate section; a section with no rows is `Some(empty)`.
+pub fn parse_gate_runs(text: &str) -> Option<Vec<(String, Vec<serde_json::Value>)>> {
+    let v = serde_json::from_str::<serde_json::Value>(util::json_only(text).trim()).ok()?;
+    let repos = v["section"]["status"]["recent_runs"].as_array()?;
+    Some(repos.iter().filter_map(|r| Some((r["repo"].as_str()?.to_string(), r["rows"].as_array()?.clone()))).collect())
+}
+
 /// Reads at most `tail_bytes` from the END of `path` — bounded, because an unbounded read
 /// of a file that grows forever is the one way this program could still become slow.
 pub fn read_log_tail(path: &Path, tail_bytes: u64) -> LogTail {
@@ -228,6 +240,14 @@ pub fn world_state(run_dir: &Path) -> WorldState {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_gate_section_status_yields_each_repos_rows() {
+        let text = r#"{"section":{"status":{"recent_runs":[{"repo":"spira","rows":[{"bead":"a"}]}]}}}"#;
+        assert_eq!(parse_gate_runs(text), Some(vec![("spira".to_string(), vec![serde_json::json!({"bead":"a"})])]));
+        assert_eq!(parse_gate_runs("{}"), None);
+        assert_eq!(parse_gate_runs("not json"), None);
+    }
+
     use super::*;
 
     #[test]

@@ -98,6 +98,9 @@ pub struct GateRun {
     pub unit_run_secs: u64,
     pub unit_tests: u64,
     pub unit_slowest: String,
+    /// On a branch-red: the unit that failed (`-` when none) and the line that says why; empty otherwise.
+    pub red_unit: String,
+    pub red_line: String,
 }
 
 /// Render the row through tsd's own builder. `wall_secs` is waited + ran: the certification
@@ -133,6 +136,8 @@ pub fn render(ts: &str, host: &str, r: &GateRun) -> Result<String, String> {
         ("unit_run_secs".into(), Value::from(r.unit_run_secs)),
         ("unit_tests".into(), Value::from(r.unit_tests)),
         ("unit_slowest".into(), s(&r.unit_slowest)),
+        ("red_unit".into(), s(&r.red_unit)),
+        ("red_line".into(), s(&r.red_line)),
     ];
     tsd::build_row(ts, host, FAMILY, &fields)
 }
@@ -307,6 +312,16 @@ mod tests {
         assert_eq!(v["gate_mode"], "unit");
         assert_eq!(v["phases"], "fences:30,unit:120");
         assert_eq!(v["build_dir"], "warm from abc");
+    }
+
+    #[test]
+    fn a_branch_red_renders_its_unit_and_line_and_a_pass_renders_both_empty() {
+        let red = GateRun { status: "FAIL".into(), reason: "branch-red".into(), red_unit: "unit-tests".into(), red_line: "bwrap: execvp cargo".into(), ..Default::default() };
+        let v: Value = serde_json::from_str(&render("t", "h", &red).unwrap()).unwrap();
+        assert_eq!((v["red_unit"].as_str(), v["red_line"].as_str()), (Some("unit-tests"), Some("bwrap: execvp cargo")));
+        let pass = GateRun { status: "PASS".into(), ..Default::default() };
+        let v: Value = serde_json::from_str(&render("t", "h", &pass).unwrap()).unwrap();
+        assert_eq!((v["red_unit"].as_str(), v["red_line"].as_str()), (Some(""), Some("")));
     }
 
     #[test]

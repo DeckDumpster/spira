@@ -31,6 +31,7 @@ pub struct Thresholds {
     pub ghost_stale: i64,
     pub restart_threshold: i64,
     pub restart_window: i64,
+    pub red_streak: i64,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -56,6 +57,10 @@ pub struct Observation {
     pub world_halt_at: i64,
     pub world_draining: bool,
     pub world_drain_at: i64,
+    /// Per repo, its newest gate-run rows first, as the Gate section serves them.
+    pub gate_runs: Vec<(String, Vec<Value>)>,
+    /// The Gate section could not be read: no rows is not an all-clear.
+    pub gate_runs_unread: bool,
     pub thresholds: Thresholds,
 }
 
@@ -90,6 +95,7 @@ impl Observation {
             "world_halt_at": self.world_halt_at,
             "world_draining": self.world_draining,
             "world_drain_at": self.world_drain_at,
+            "gate_runs": self.gate_runs.iter().map(|(repo, rows)| json!({ "repo": repo, "rows": rows })).collect::<Vec<_>>(),
             "thresholds": {
                 "pass_stale": self.thresholds.pass_stale,
                 "starve_passes": self.thresholds.starve_passes,
@@ -97,6 +103,7 @@ impl Observation {
                 "ghost_stale": self.thresholds.ghost_stale,
                 "restart_threshold": self.thresholds.restart_threshold,
                 "restart_window": self.thresholds.restart_window,
+                "red_streak": self.thresholds.red_streak,
             },
         })
     }
@@ -149,7 +156,7 @@ mod tests {
 
     #[test]
     fn observation_json_shape_matches_the_classifier_contract() {
-        let obs = Observation { now: 1000, heimdall_first: 500, thresholds: Thresholds { pass_stale: 600, starve_passes: 5, mirror_stale: 90000, ghost_stale: 1800, restart_threshold: 5, restart_window: 3600 }, ..Default::default() };
+        let obs = Observation { now: 1000, heimdall_first: 500, thresholds: Thresholds { pass_stale: 600, starve_passes: 5, mirror_stale: 90000, ghost_stale: 1800, restart_threshold: 5, restart_window: 3600, red_streak: 4 }, ..Default::default() };
         let v = obs.to_json();
         assert_eq!(v["now"], 1000);
         assert_eq!(v["heimdall_first"], 500);

@@ -1672,16 +1672,6 @@ impl<'w, W: World> Trial<'w, W> {
         par.min(par_mem)
     }
 
-    /// The step a red failed at (the verdict's suite, `-` when none) and the last line of its message that is not the gate's own bookkeeping.
-    fn red_at(&self, vd: &Verdict) -> (String, String) {
-        let step = match self.s.suite.as_str() {
-            "-" => vd.msg.lines().find_map(|l| l.trim().strip_prefix("gate-step RED ")?.split_once(" :: ").map(|(_, u)| u.trim().to_string())).unwrap_or_default(),
-            s => s.to_string(),
-        };
-        let message = vd.msg.lines().map(str::trim).rev().find(|l| !l.is_empty() && !l.starts_with("gate: ") && !l.starts_with("gate-step ")).unwrap_or("").to_string();
-        (step, message)
-    }
-
     /// Every PASS certifies the merged tree it judged (cert.rs; queue/DESIGN.md §8 D12): the
     /// record `queue land-local` requires before it lands a head with that tree. Keyed by
     /// `(repo, tree)` only; a PASS that never reached the merge certifies nothing.
@@ -1890,6 +1880,12 @@ impl<'w, W: World> Trial<'w, W> {
                     self.s.test_secs
                 ),
             );
+            let (red_unit, red_line) = if outcome(vd.status) == "FAIL" && vd.reason == "branch-red" {
+                let (u, l) = spira_config::red_at::red_at(&self.s.suite, &vd.msg);
+                (if u.is_empty() { "-".to_string() } else { u }, l)
+            } else {
+                Default::default()
+            };
             let run = crate::telemetry::GateRun {
                 repo: self.s.repo_name.clone(),
                 branch: self.a.branch.clone(),
@@ -1916,6 +1912,8 @@ impl<'w, W: World> Trial<'w, W> {
                 unit_run_secs: self.unit_phase_secs("test"),
                 unit_tests: self.s.unit_timings.as_ref().map_or(0, |t| t.tests),
                 unit_slowest: self.unit_slowest(),
+                red_unit,
+                red_line,
             };
             let ts = w.utc();
             if let Some((_, html)) = self.s.build_timing.as_ref().filter(|(_, h)| !h.is_empty()) {
@@ -1969,7 +1967,7 @@ impl<'w, W: World> Trial<'w, W> {
             if o == "red" {
                 w.lc_failure(&self.s.bead, &self.s.branch_tip, &self.changed_paths(), &vd.msg);
             }
-            let (step, message) = if o == "red" { self.red_at(&vd) } else { Default::default() };
+            let (step, message) = if o == "red" { spira_config::red_at::red_at(&self.s.suite, &vd.msg) } else { Default::default() };
             let refused = w.lc_certify(&self.s.bead, &self.s.branch_tip, o, &d, &step, &message);
             if refused.contains("tip mismatch") && self.s.armed {
                 w.append(

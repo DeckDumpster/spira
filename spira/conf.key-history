@@ -764,3 +764,4 @@ test_deny_list
 limit_cpu
 limit_memory
 limit_network
+heimdall_red_streak

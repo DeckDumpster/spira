@@ -1,0 +1,8 @@
+TYPE=u64
+GROUP=heimdall
+DOC=How many consecutive gates of one repo must fail branch-red on different beads at the same unit and line before Heimdall raises gate-red-streak/<repo>.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # Consecutive branch-red gates of one repo, on different beads, sharing one red unit and
+    # first failing line, that raise gate-red-streak/<repo>: landing is stopped by a shared red.
+    : "${SPIRA_HEIMDALL_RED_STREAK:=4}"
+SPIRA_CONF_DEFAULT_EOF

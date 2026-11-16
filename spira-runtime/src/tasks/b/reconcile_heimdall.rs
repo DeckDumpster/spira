@@ -134,6 +134,7 @@ pub const KEYS: &[&str] = &[
     "SPIRA_HEIMDALL_STARVE_PASSES",
     "SPIRA_HEIMDALL_MIRROR_STALE",
     "SPIRA_HEIMDALL_GHOST_STALE",
+    "SPIRA_HEIMDALL_RED_STREAK",
 ];
 
 pub const SPEC: Spec = Spec { name: NAME, stream: STREAM, tick: TICK, state: STATE, probe: OBSERVE, probe_deadline_ms: 10_000, cadence_key: CADENCE_KEY, calendar: false, effects: EFFECTS, keys: KEYS, probe_input_key: Some(CONTROL_SOCKET_KEY) };
@@ -163,6 +164,10 @@ pub struct Snapshot {
     pub world_halted: bool,
     pub world_draining: bool,
     pub strands: Vec<String>,
+    /// Per repo, its newest gate-run rows from the `Gate/gate` section.
+    pub gate_runs: Vec<(String, Vec<serde_json::Value>)>,
+    /// The Gate section could not be read; a raised streak is held, not cleared.
+    pub gate_runs_unread: bool,
 }
 
 /// Per key (T3).
@@ -254,7 +259,7 @@ fn readings(cfg: &Cfg, snap: &Snapshot, now: i64) -> heimdall::hosted::Readings 
         let first: i64 = first.trim().parse().unwrap_or(0);
         ghost.filter(|g| first > 0 && now - first > *g).map(|_| id.to_string())
     });
-    heimdall::hosted::Readings { now, sentinel_armed: snap.sentinel.armed, sentinel_last_fired: snap.sentinel.last_fired_ms.map(|ms| (ms / 1000) as i64), restart_alerts: snap.restart_alerts.clone(), mirror_age_secs: snap.mirror_age_secs, world_halted: snap.world_halted, world_draining: snap.world_draining, strands: strands.collect() }
+    heimdall::hosted::Readings { now, sentinel_armed: snap.sentinel.armed, sentinel_last_fired: snap.sentinel.last_fired_ms.map(|ms| (ms / 1000) as i64), restart_alerts: snap.restart_alerts.clone(), mirror_age_secs: snap.mirror_age_secs, world_halted: snap.world_halted, world_draining: snap.world_draining, strands: strands.collect(), gate_runs: snap.gate_runs.clone() }
 }
 
 /// What a raise or refresh writes.
@@ -295,9 +300,12 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
         Input::Ran(r) => return Err(format!("{NAME}: no unit is expected, got {r:?}")),
     };
     let (confirm, clear_n, refresh) = (num(cfg, "SPIRA_HEIMDALL_CONFIRM")?, num(cfg, "SPIRA_HEIMDALL_CLEAR")?, num(cfg, "SPIRA_HEIMDALL_REFRESH")?);
-    let th = heimdall::hosted::Thresholds { pass_stale: num(cfg, "SPIRA_HEIMDALL_PASS_STALE")?, mirror_stale: optional(cfg, "SPIRA_HEIMDALL_MIRROR_STALE").unwrap_or(i64::MAX), restart_threshold: optional(cfg, "SPIRA_HEIMDALL_RESTARTS").unwrap_or(i64::MAX), restart_window: optional(cfg, "SPIRA_HEIMDALL_RESTART_WINDOW").unwrap_or(3600) };
+    let th = heimdall::hosted::Thresholds { pass_stale: num(cfg, "SPIRA_HEIMDALL_PASS_STALE")?, mirror_stale: optional(cfg, "SPIRA_HEIMDALL_MIRROR_STALE").unwrap_or(i64::MAX), restart_threshold: optional(cfg, "SPIRA_HEIMDALL_RESTARTS").unwrap_or(i64::MAX), restart_window: optional(cfg, "SPIRA_HEIMDALL_RESTART_WINDOW").unwrap_or(3600), red_streak: optional(cfg, "SPIRA_HEIMDALL_RED_STREAK").unwrap_or(4) };
     let now = (now_ms / 1000) as i64;
-    let firing = heimdall::hosted::classify(&readings(cfg, snap, now), &th);
+    let mut firing = heimdall::hosted::classify(&readings(cfg, snap, now), &th);
+    if snap.gate_runs_unread {
+        heimdall::streak::hold(&snap.alert_rows, &mut firing);
+    }
     let prior: BTreeMap<String, heimdall::state::KeyState> = carry.keys.iter().map(|(k, v)| (k.clone(), to_heimdall(v))).collect();
     if !snap.db_reachable {
         let would = heimdall::hosted::raises(&heimdall::hosted::step(now, confirm, clear_n, refresh, true, &firing, &prior));
@@ -379,7 +387,8 @@ pub fn observe(lc: &spira_store::lc_call::LcClient, run_dir: &std::path::Path, c
     }
     let strands = std::fs::read_to_string(run_dir.join("strands.json")).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok()).and_then(|v| v.as_object().cloned()).unwrap_or_default();
     let strands = strands.iter().filter_map(|(k, v)| k.strip_prefix("ghost:").map(|id| format!("{id}\t{}", v["first"].as_i64().or_else(|| v["first"].as_str().and_then(|s| s.parse().ok())).unwrap_or(0)))).collect();
-    let snap = Snapshot { sentinel, restart_alerts: vec![], db_reachable, alert_rows, mirror_age_secs, world_halted: run_dir.join("world.halted").exists(), world_draining: run_dir.join("world.draining").exists(), strands };
+    let gate_runs = heimdall::gather::gate_runs(lc);
+    let snap = Snapshot { sentinel, restart_alerts: vec![], db_reachable, alert_rows, mirror_age_secs, world_halted: run_dir.join("world.halted").exists(), world_draining: run_dir.join("world.draining").exists(), strands, gate_runs: gate_runs.clone().unwrap_or_default(), gate_runs_unread: gate_runs.is_none() };
     serde_json::to_string(&snap).map_err(|e| e.to_string())
 }
 
