@@ -199,3 +199,6 @@ same path once a day against the local backup dir.
 the registry, copy the newest `archive/test-registry-*.sqlite` (keys sort by stamp) over
 `spira.test_registry_path`, remove any `-wal` and `-shm` files beside it, and start the writers.
 Like the databases, it runs under your own identity: the backup key can only upload.
+
+A box that has not set `spira.test_registry_path` has no registry file to copy: `run` exits 1 and
+`age` reports `test-registry: never`, the same as a database that was never backed up.

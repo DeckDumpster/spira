@@ -191,6 +191,9 @@ pub fn run(args: &[String], now: i64, cfg: Cfg, open: Opener) -> Outcome {
         Ok(_) => return fail(3, j, format!("{PATH_KEY} (spira.test_registry_path) is empty: the registry has no file; refusing")),
         Err(e) => return fail(3, j, format!("cannot read {PATH_KEY}: {e}")),
     };
+    if a.verb == "backup" && !std::path::Path::new(&path).exists() {
+        return fail(3, j, format!("backup: {path} does not exist: there is nothing to copy, and opening it would create an empty registry"));
+    }
     let conn = match open(&path) {
         Ok(c) => c,
         Err(e) => return fail(3, j, e),
@@ -533,6 +536,26 @@ mod tests {
             .collect();
         assert_eq!(names.len(), 2, "{names:?}");
         assert!(!std::path::Path::new(&format!("{out}.tmp")).exists());
+    }
+
+    #[test]
+    fn backup_of_a_registry_that_does_not_exist_refuses_and_creates_nothing() {
+        let dir = testkit::TempDir::new("test-registry-backup-missing");
+        let file: &'static str = Box::leak(
+            dir.join("absent.sqlite")
+                .display()
+                .to_string()
+                .into_boxed_str(),
+        );
+        let out = dir.join("copy.sqlite").display().to_string();
+        let o = run(
+            &argv(&format!("backup --out {out}")),
+            1,
+            &cfg_with(file),
+            &|p| store::open(p),
+        );
+        assert_eq!(o.code, 3, "{}", o.stderr);
+        assert!(!std::path::Path::new(file).exists() && !std::path::Path::new(&out).exists());
     }
 
     #[test]

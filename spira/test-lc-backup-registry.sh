@@ -22,6 +22,7 @@ STUB
 cat > "$T/bin/spira-lc" <<'STUB'
 #!/usr/bin/env bash
 echo "spira-lc $*" >> "$STUB_LOG"
+[ "${STUB_PUT_FAIL:-}" = 1 ] && { echo "denied" >&2; exit 1; }
 [ "$1" = admin-archive-put ] && echo "archived"
 exit 0
 STUB
@@ -32,7 +33,7 @@ SPIRA_RUN="$T/run"
 # shellcheck disable=SC1091
 . "$HERE/lc-backup.sh"
 _lcb_dbs() { echo alpha; }
-_lcb_run_db() { return 0; }
+_lcb_run_db() { echo "ran $1" >> "$T/dbs"; return "${DB_RC:-0}"; }
 export PATH="$T/bin:$PATH" STUB_LOG="$T/log"
 stamp="$SPIRA_RUN/lc-backup.test-registry.ok"
 
@@ -54,6 +55,13 @@ grep -q 'spira-lc admin-archive-put --file .* --key test-registry-[0-9T]*Z\.sqli
 read -r t key dash < "$stamp" 2>/dev/null
 [[ "$key" == test-registry-*.sqlite && "$dash" = - ]] && ok "the stamp is <epoch> <key> -" || bad "the stamp is <epoch> <key> -" "$(cat "$stamp" 2>/dev/null)"
 
+cp "$stamp" "$T/prev"; sleep 1
+STUB_PUT_FAIL=1 cmd_run >"$T/out" 2>&1; rc=$?
+[ "$rc" -eq 1 ] && grep -q '^lc-backup: test-registry: upload step failed' "$T/out" && ok "a failing upload exits 1 naming the step" || bad "a failing upload exits 1 naming the step" "rc=$rc $(cat "$T/out")"
+cmp -s "$stamp" "$T/prev" && ok "a failing upload leaves the previous stamp" || bad "a failing upload leaves the previous stamp" "changed"
+DB_RC=1 cmd_run >"$T/out" 2>&1; rc=$?
+[ "$rc" -eq 1 ] && [ "$(cmp -s "$stamp" "$T/prev"; echo $?)" = 1 ] && ok "a failing database still lets the registry ship, and run exits 1" || bad "a failing database still lets the registry ship, and run exits 1" "rc=$rc"
+
 sleep 1; cmd_run >/dev/null 2>&1
 [ "$(ls "$T/sync/test-registry" | wc -l)" -eq 1 ] && ok "only the newest local copy is kept" || bad "only the newest local copy is kept" "$(ls "$T/sync/test-registry")"
 
@@ -61,4 +69,7 @@ out="$(cmd_age 2>&1)"
 grep -q '^test-registry: ok ' <<<"$out" && ok "age prints test-registry ok" || bad "age prints test-registry ok" "$out"
 out="$(cmd_age --now $(( $(date +%s) + 5000 )) 2>&1)"; rc=$?
 grep -q '^test-registry: stale ' <<<"$out" && [ "$rc" -ne 0 ] && ok "an old stamp is stale and red" || bad "an old stamp is stale and red" "rc=$rc $out"
+_lcb_measure_db() { case "$1" in alpha) echo "stale 9999" ;; *) echo "ok 1" ;; esac; }
+out="$(cmd_age 2>&1)"; rc=$?
+[ "$out" = "$(printf 'alpha: stale 9999\ntest-registry: ok 1')" ] && [ "$rc" -ne 0 ] && ok "a stale database is listed before a fresh registry and stays red" || bad "a stale database is listed before a fresh registry and stays red" "rc=$rc $out"
 tl_summary
