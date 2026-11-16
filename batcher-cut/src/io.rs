@@ -3136,11 +3136,46 @@ fn round_eject_with(
         std::thread::sleep(env.land_lock_wait);
         last = round_verb(env, &args, reason)?;
     }
-    if last.code == Some(0) {
-        Ok(())
-    } else {
-        Err(verb_failed("queue round eject", &last))
+    eject_result(&last, id, reason, csv)
+}
+
+/// Must equal queue::ops::round::PASS_RUNNING: a pass of the round is running, nothing changed.
+pub const QUEUE_PASS_RUNNING_EXIT: i32 = 79;
+
+/// Starts the error of an eject that was held, not refused: what follows is a [`HeldEject`].
+pub const EJECT_HELD: &str = "eject-held=";
+
+/// An eject to issue again, verbatim, once no pass of the round is running.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct HeldEject {
+    pub id: String,
+    pub reason: String,
+    pub csv: String,
+    pub said: String,
+}
+
+impl HeldEject {
+    /// The held eject an error carries, wherever in the text its marker sits.
+    pub fn parse(err: &str) -> Option<HeldEject> {
+        let at = err.find(EJECT_HELD)?;
+        serde_json::from_str(err[at + EJECT_HELD.len()..].lines().next()?).ok()
     }
+}
+
+fn eject_result(run: &VerbRun, id: &str, reason: &str, csv: &str) -> Result<(), String> {
+    match run.code {
+        Some(0) => Ok(()),
+        Some(QUEUE_PASS_RUNNING_EXIT) => {
+            let held = HeldEject { id: id.into(), reason: reason.into(), csv: csv.into(), said: verb_failed("queue round eject", run) };
+            Err(format!("{EJECT_HELD}{}", serde_json::to_string(&held).unwrap_or_default()))
+        }
+        _ => Err(verb_failed("queue round eject", run)),
+    }
+}
+
+/// The eject a [`HeldEject`] stands for, issued again.
+pub fn round_eject_held(env: &Env, repo: &Repo, batch: &str, held: &HeldEject) -> Result<(), String> {
+    round_eject_with(env, repo, batch, &held.id, &held.reason, &held.csv)
 }
 
 /// `queue round certify`: with `Some((head, ran))` the batcher's own corpus ran `ran` suites green
@@ -4353,6 +4388,18 @@ mod pool_parity_tests {
         assert!(!lock_busy(Some(1)));
         assert!(!lock_busy(Some(0)));
         assert!(!lock_busy(None));
+    }
+
+    #[test]
+    fn an_eject_refused_for_a_running_pass_is_held_with_what_it_takes_to_issue_it_again() {
+        let run = |code| VerbRun { code: Some(code), out: String::new(), err: "queue.sh round eject: a pass of round b is running (x.scope)\n".into() };
+        let held = eject_result(&run(QUEUE_PASS_RUNNING_EXIT), "sp-a", "why\nit", "s1,s2").unwrap_err();
+        let h = HeldEject::parse(&format!("eject of sp-a refused: {held}")).expect("held");
+        assert_eq!((h.id.as_str(), h.reason.as_str(), h.csv.as_str()), ("sp-a", "why\nit", "s1,s2"));
+        assert!(h.said.contains("a pass of round b is running"), "{}", h.said);
+        let other = eject_result(&run(1), "sp-a", "r", "").unwrap_err();
+        assert!(HeldEject::parse(&other).is_none() && !other.contains(EJECT_HELD), "{other}");
+        assert!(eject_result(&run(0), "sp-a", "r", "").is_ok());
     }
 
     #[test]
