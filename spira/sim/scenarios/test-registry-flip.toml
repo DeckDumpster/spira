@@ -5,8 +5,10 @@
 # expires, the pane empties, and a later round finds the test red again. Run it with
 # `sim run test-registry-flip`.
 #
-# A loop world: the registry is the real file and verbs, the flip handling is batcher-cut's own,
-# and the pane is drawn by the cockpit's own collector and renderer (spira/sim/src/loopworld.rs).
+# A loop world: the registry is the real file and verbs, the disabling is batcher-cut's own
+# `disable_flips_with`, and the pane is drawn by the cockpit's own collector and renderer. The
+# world scripts the attribution's verdict (red together, green alone) instead of rerunning trees;
+# the attribution itself is the batcher's tests (spira/sim/src/loopworld.rs).
 driver = "loop"
 goal = "sp-tr02:LANDED"
 until = 700000000

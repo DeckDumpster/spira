@@ -102,3 +102,45 @@ fn the_scenario_fails_when_the_hold_is_shorter_than_the_landing() {
     let r = walk(script.clone());
     assert!(r.missed(&script).is_some_and(|why| why.contains("ops pane")), "{:?}", r.missed(&script));
 }
+
+/// A run of `sim run` on `scenario`, the way a pilgrim starts it.
+fn sim_run(scenario: &std::path::Path) -> std::process::Output {
+    let home = spira_config::resolve::locate_home_for_process().unwrap();
+    std::process::Command::new(testkit::bin_exe("sim"))
+        .arg("run")
+        .arg(scenario)
+        .env_remove("SPIRA_LC_SOCKET")
+        .env_remove("SPIRA_TOML")
+        .current_dir(home)
+        .output()
+        .expect("sim runs")
+}
+
+#[test]
+fn sim_run_walks_test_registry_flip_and_fails_when_no_flip_is_scripted() {
+    let ok = sim_run(&testkit::manifest_dir().join("scenarios/test-registry-flip.toml"));
+    assert!(ok.status.success(), "{}", String::from_utf8_lossy(&ok.stderr));
+    let dir = testkit::TempDir::new("loop-registry-miss");
+    let miss = dir.join("miss.toml");
+    let text = shipped();
+    let flips = text.find("[[flip]]").unwrap()..text.find("# The round has landed").unwrap();
+    let bare = text.replace(&text[flips], "").replace("until = 700000000", "until = 3000000").replace("goal = \"sp-tr02:LANDED\"\n", "");
+    let bare = bare[..bare.find("# sp-tr02 has landed").unwrap()].to_string();
+    std::fs::write(&miss, bare).unwrap();
+    let bad = sim_run(&miss);
+    assert!(!bad.status.success(), "{}", String::from_utf8_lossy(&bad.stdout));
+    assert!(String::from_utf8_lossy(&bad.stderr).contains("ops pane"), "{}", String::from_utf8_lossy(&bad.stderr));
+}
+
+/// The scenario's expectations bite each branch: the shared run, judged against a script that
+/// expects what the world did not do, misses.
+#[test]
+fn the_scenario_fails_when_a_landing_does_not_clear_its_row_or_a_test_does_not_block_again() {
+    let r = shipped_run();
+    let mut kept = shipped_script();
+    kept.looks[1].rows.push(loopworld::LookRow { test: CLEARED.into(), bead: "sp-tr02".into() });
+    assert!(r.missed(&kept).is_some_and(|why| why.contains("ops pane")), "{:?}", r.missed(&kept));
+    let mut never_red = shipped_script();
+    never_red.flips[1].blocks_again_after = Some(r.reds.iter().map(|(at, ..)| *at).max().unwrap() + 1);
+    assert!(r.missed(&never_red).is_some_and(|why| why.contains("block a round again")), "{:?}", r.missed(&never_red));
+}
