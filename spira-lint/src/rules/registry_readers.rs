@@ -202,6 +202,18 @@ mod tests {
     }
 
     #[test]
+    fn a_listed_crate_that_reads_the_registry_is_not_reported() {
+        let t = TempDir::new("rr-clean");
+        t.write(ROOT, "[workspace]\nmembers = [\"w\"]\n");
+        t.write("w/Cargo.toml", "[package]\nname = \"watchdog\"\n");
+        t.write("w/src/lib.rs", &reader_src());
+        let tree = Tree::from_paths(t.path(), [ROOT, "w/src/lib.rs"], std::iter::empty::<&str>());
+        let m = messages(&tree);
+        assert!(!m.iter().any(|x| x.contains("watchdog reads") || x.contains("names watchdog")), "{m:?}");
+        assert!(m.iter().any(|x| x.contains("names bead")), "{m:?}");
+    }
+
+    #[test]
     fn a_workspace_with_no_rust_file_is_refused() {
         let t = TempDir::new("rr-empty");
         t.write(ROOT, "[workspace]\nmembers = [\"a\"]\n");
