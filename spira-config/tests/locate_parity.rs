@@ -40,5 +40,8 @@ fn extract_function(text: &str, name: &str) -> String {
 fn extraction_pulls_the_real_current_conf_sh_text() {
     let conf_sh = fs::read_to_string(repo_root().join("spira/conf.sh")).unwrap();
     let f = extract_function(&conf_sh, "spira_toml_file");
-    assert!(f.contains("SPIRA_TOML") && !f.contains("XDG_CONFIG_HOME"), "{f}");
+    assert!(
+        f.contains("SPIRA_TOML") && !f.contains("XDG_CONFIG_HOME"),
+        "{f}"
+    );
 }

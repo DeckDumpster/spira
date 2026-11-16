@@ -58,13 +58,22 @@ pub fn record(run: &Path, kind: Kind, sha: &str, producer: &str, now: &str) -> R
         return Err(format!("local-pass: not a full commit sha: {sha:?}"));
     }
     let p = record_path(run, kind, sha);
-    fs::create_dir_all(p.parent().unwrap()).map_err(|e| format!("local-pass: {}: {e}", p.display()))?;
+    fs::create_dir_all(p.parent().unwrap())
+        .map_err(|e| format!("local-pass: {}: {e}", p.display()))?;
     let tmp = p.with_extension("tmp");
-    fs::write(&tmp, format!("{now} {producer}\n")).map_err(|e| format!("local-pass: {}: {e}", tmp.display()))?;
+    fs::write(&tmp, format!("{now} {producer}\n"))
+        .map_err(|e| format!("local-pass: {}: {e}", tmp.display()))?;
     fs::rename(&tmp, &p).map_err(|e| format!("local-pass: {}: {e}", p.display()))
 }
 
-pub fn check(run: &Path, kind: Kind, sha: &str, override_reason: Option<&str>, who: &str, now: &str) -> Result<Verdict, String> {
+pub fn check(
+    run: &Path,
+    kind: Kind,
+    sha: &str,
+    override_reason: Option<&str>,
+    who: &str,
+    now: &str,
+) -> Result<Verdict, String> {
     if !valid_sha(sha) {
         return Err(format!("local-pass: not a full commit sha: {sha:?}"));
     }
@@ -82,14 +91,25 @@ pub fn check(run: &Path, kind: Kind, sha: &str, override_reason: Option<&str>, w
         return Err(missing);
     }
     let log = run.join(DIR).join("overrides.log");
-    fs::create_dir_all(run.join(DIR)).map_err(|e| format!("local-pass: cannot log the override: {e}"))?;
+    fs::create_dir_all(run.join(DIR))
+        .map_err(|e| format!("local-pass: cannot log the override: {e}"))?;
     let mut f = OpenOptions::new()
         .create(true)
         .append(true)
         .open(&log)
-        .map_err(|e| format!("local-pass: cannot log the override ({}): {e}", log.display()))?;
-    writeln!(f, "{now} OVERRIDE kind={} sha={sha} by={who} reason={}", kind.as_str(), reason.replace('\n', " "))
-        .map_err(|e| format!("local-pass: cannot log the override: {e}"))?;
+        .map_err(|e| {
+            format!(
+                "local-pass: cannot log the override ({}): {e}",
+                log.display()
+            )
+        })?;
+    writeln!(
+        f,
+        "{now} OVERRIDE kind={} sha={sha} by={who} reason={}",
+        kind.as_str(),
+        reason.replace('\n', " ")
+    )
+    .map_err(|e| format!("local-pass: cannot log the override: {e}"))?;
     Ok(Verdict::Overridden(reason.to_string()))
 }
 
@@ -108,7 +128,10 @@ mod tests {
     fn a_record_passes_only_its_own_commit_and_kind() {
         let d = run_dir("own");
         record(d.path(), Kind::FullSuite, SHA, "t", "now").unwrap();
-        assert_eq!(check(d.path(), Kind::FullSuite, SHA, None, "me", "now"), Ok(Verdict::Passed));
+        assert_eq!(
+            check(d.path(), Kind::FullSuite, SHA, None, "me", "now"),
+            Ok(Verdict::Passed)
+        );
         assert!(check(d.path(), Kind::FullSuite, OTHER, None, "me", "now").is_err());
         assert!(check(d.path(), Kind::AcceptanceAd, SHA, None, "me", "now").is_err());
     }
@@ -117,7 +140,13 @@ mod tests {
     fn the_refusal_names_the_missing_record_and_the_producing_command() {
         let d = run_dir("refuse");
         let e = check(d.path(), Kind::AcceptanceAd, SHA, None, "me", "now").unwrap_err();
-        assert!(e.contains("acceptance-ad") && e.contains(SHA) && e.contains("acceptance-local.sh") && e.contains(OVERRIDE_ENV), "{e}");
+        assert!(
+            e.contains("acceptance-ad")
+                && e.contains(SHA)
+                && e.contains("acceptance-local.sh")
+                && e.contains(OVERRIDE_ENV),
+            "{e}"
+        );
     }
 
     #[test]
@@ -125,10 +154,24 @@ mod tests {
         let d = run_dir("override");
         assert!(check(d.path(), Kind::FullSuite, SHA, Some("short"), "me", "now").is_err());
         assert!(!d.path().join(DIR).join("overrides.log").exists());
-        let v = check(d.path(), Kind::FullSuite, SHA, Some("ci is the only runner for this"), "me", "t0").unwrap();
-        assert_eq!(v, Verdict::Overridden("ci is the only runner for this".into()));
+        let v = check(
+            d.path(),
+            Kind::FullSuite,
+            SHA,
+            Some("ci is the only runner for this"),
+            "me",
+            "t0",
+        )
+        .unwrap();
+        assert_eq!(
+            v,
+            Verdict::Overridden("ci is the only runner for this".into())
+        );
         let log = fs::read_to_string(d.path().join(DIR).join("overrides.log")).unwrap();
-        assert!(log.contains("full-suite") && log.contains(SHA) && log.contains("by=me"), "{log}");
+        assert!(
+            log.contains("full-suite") && log.contains(SHA) && log.contains("by=me"),
+            "{log}"
+        );
     }
 
     #[test]

@@ -5,7 +5,6 @@
 use std::collections::BTreeSet;
 use std::fs;
 
-
 fn only_in_first(a: &BTreeSet<String>, b: &BTreeSet<String>) -> Vec<String> {
     a.difference(b).cloned().collect()
 }

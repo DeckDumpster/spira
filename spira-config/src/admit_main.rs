@@ -7,8 +7,8 @@
 
 use spira_config::admission::{self, Pool, RealProcs};
 use std::ffi::OsString;
-use std::path::PathBuf;
 use std::os::unix::process::CommandExt;
+use std::path::PathBuf;
 use std::process::{Command, ExitCode};
 
 /// `spira.run` alone, never the whole registry: a tree that adds a config key must still be
@@ -30,7 +30,11 @@ fn main() -> ExitCode {
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
     match args.first().and_then(|a| a.to_str()) {
         Some("status") => {
-            spira_otel::oneshot::begin(spira_config::process::metrics_endpoint().as_deref(), "spira-admit", "status");
+            spira_otel::oneshot::begin(
+                spira_config::process::metrics_endpoint().as_deref(),
+                "spira-admit",
+                "status",
+            );
             spira_otel::oneshot::finish(status(&args[1..]))
         }
         None | Some("-h" | "--help" | "help") => usage(),
@@ -98,7 +102,12 @@ fn status(args: &[OsString]) -> ExitCode {
                 .iter()
                 .map(|l| {
                     if l.since > 0 {
-                        format!("{} (pid {}, {}s)", l.who, l.pid, now.saturating_sub(l.since))
+                        format!(
+                            "{} (pid {}, {}s)",
+                            l.who,
+                            l.pid,
+                            now.saturating_sub(l.since)
+                        )
                     } else {
                         l.who.clone()
                     }
@@ -114,8 +123,17 @@ fn status(args: &[OsString]) -> ExitCode {
                 names.join(", ")
             );
             for w in &o.waiters {
-                let wt = if w.weight > 1 { format!(" ×{}", w.weight) } else { String::new() };
-                println!("           waiting: {}{wt} (pid {}, {}s)", w.who, w.pid, now.saturating_sub(w.since));
+                let wt = if w.weight > 1 {
+                    format!(" ×{}", w.weight)
+                } else {
+                    String::new()
+                };
+                println!(
+                    "           waiting: {}{wt} (pid {}, {}s)",
+                    w.who,
+                    w.pid,
+                    now.saturating_sub(w.since)
+                );
             }
             if let Some(line) = o.head_blocked() {
                 println!("           {line}");

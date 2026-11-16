@@ -62,7 +62,11 @@ pub fn read_conf(text: &str, home: &str) -> BTreeMap<String, String> {
 }
 
 fn parse_int(w: &mut ConvertWarnings, key: &str, val: &str, ty: &str) -> Option<toml::Value> {
-    let n = if ty == "u32" { val.parse::<u32>().map(i64::from).ok() } else { val.parse::<u64>().ok().and_then(|n| i64::try_from(n).ok()) };
+    let n = if ty == "u32" {
+        val.parse::<u32>().map(i64::from).ok()
+    } else {
+        val.parse::<u64>().ok().and_then(|n| i64::try_from(n).ok())
+    };
     if n.is_none() {
         w.push(format!("spira.{key}: not an integer: {val:?}"));
     }
@@ -82,9 +86,17 @@ fn conf_value(rk: &RegistryKey, val: &str, warnings: &mut ConvertWarnings) -> Op
                 None
             }
         },
-        "list" => Some(toml::Value::Array(val.split_whitespace().map(|v| toml::Value::String(v.to_string())).collect())),
+        "list" => Some(toml::Value::Array(
+            val.split_whitespace()
+                .map(|v| toml::Value::String(v.to_string()))
+                .collect(),
+        )),
         "onoff" | "czar_stage" => {
-            let (words, shown) = if rk.ty == "onoff" { (["on", "off"], "on/off") } else { (["shadow", "act"], "shadow/act") };
+            let (words, shown) = if rk.ty == "onoff" {
+                (["on", "off"], "on/off")
+            } else {
+                (["shadow", "act"], "shadow/act")
+            };
             if words.contains(&val) {
                 Some(toml::Value::String(val.to_string()))
             } else {
@@ -478,9 +490,7 @@ pub fn persona_section(
             "RUNE_USES" => uses = val.split_whitespace().map(str::to_string).collect(),
             "RUNE_LEASE_MINUTES" => {
                 lease_minutes = val.parse().ok().or_else(|| {
-                    warnings.push(format!(
-                        "rune: RUNE_LEASE_MINUTES not an integer: {val:?}"
-                    ));
+                    warnings.push(format!("rune: RUNE_LEASE_MINUTES not an integer: {val:?}"));
                     None
                 })
             }
@@ -549,7 +559,13 @@ pub fn convert(
     repo_map_text: &str,
     rune_texts: &[(&str, &str)],
 ) -> Result<(SpiraToml, ConvertWarnings), Vec<String>> {
-    convert_with(conf_text, home, repo_map_text, rune_texts, registry::for_process().map_err(|e| vec![e])?)
+    convert_with(
+        conf_text,
+        home,
+        repo_map_text,
+        rune_texts,
+        registry::for_process().map_err(|e| vec![e])?,
+    )
 }
 
 /// [`convert`] against a registry the caller already holds.
@@ -609,19 +625,28 @@ pub fn convert_legacy_dir(
     if toml_path.is_file() {
         return Ok(LegacyOutcome::Present(toml_path));
     }
-    let read = |p: &std::path::Path| std::fs::read_to_string(p).map_err(|e| format!("{}: {e}", p.display()));
+    let read = |p: &std::path::Path| {
+        std::fs::read_to_string(p).map_err(|e| format!("{}: {e}", p.display()))
+    };
     let conf_path = dir.join("spira.conf");
     if !conf_path.is_file() {
         return Ok(LegacyOutcome::Nothing);
     }
     let conf = read(&conf_path)?;
     let map_path = dir.join("repo-map");
-    let repo_map = if map_path.is_file() { read(&map_path)? } else { String::new() };
+    let repo_map = if map_path.is_file() {
+        read(&map_path)?
+    } else {
+        String::new()
+    };
     let mut texts = Vec::new();
     for f in runes {
         texts.push((f.display().to_string(), read(f)?));
     }
-    let refs: Vec<(&str, &str)> = texts.iter().map(|(p, t)| (p.as_str(), t.as_str())).collect();
+    let refs: Vec<(&str, &str)> = texts
+        .iter()
+        .map(|(p, t)| (p.as_str(), t.as_str()))
+        .collect();
     let (doc, warnings) = convert(&conf, home, &repo_map, &refs).map_err(|e| e.join("; "))?;
     let out = toml::to_string_pretty(&doc).map_err(|e| e.to_string())?;
     crate::write_atomic(&toml_path, &out).map_err(|e| format!("{}: {e}", toml_path.display()))?;
@@ -634,12 +659,24 @@ mod tests {
 
     #[test]
     fn a_rune_carries_reactive_uses_and_single_flight_into_its_persona_section() {
-        let text = "RUNE_MODEL=m\nRUNE_REACTIVE=1\nRUNE_SINGLE_FLIGHT=1\nRUNE_USES=\"build-disk cpu\"\n";
-        let (_, p) = persona_section(text, &SpiraSection::default(), &mut ConvertWarnings::default());
+        let text =
+            "RUNE_MODEL=m\nRUNE_REACTIVE=1\nRUNE_SINGLE_FLIGHT=1\nRUNE_USES=\"build-disk cpu\"\n";
+        let (_, p) = persona_section(
+            text,
+            &SpiraSection::default(),
+            &mut ConvertWarnings::default(),
+        );
         assert!(p.reactive && p.single_flight, "{p:?}");
         assert_eq!(p.uses, ["build-disk", "cpu"]);
-        let (_, plain) = persona_section("RUNE_MODEL=m\n", &SpiraSection::default(), &mut ConvertWarnings::default());
-        assert!(!plain.reactive && !plain.single_flight && plain.uses.is_empty(), "{plain:?}");
+        let (_, plain) = persona_section(
+            "RUNE_MODEL=m\n",
+            &SpiraSection::default(),
+            &mut ConvertWarnings::default(),
+        );
+        assert!(
+            !plain.reactive && !plain.single_flight && plain.uses.is_empty(),
+            "{plain:?}"
+        );
     }
 
     fn sections(map: &str) -> Result<BTreeMap<String, RepoSection>, Vec<String>> {
@@ -658,18 +695,32 @@ eps   | /srv/eps   | queue | origin/main | | bash a.sh || bash b.sh
 ";
         let got = sections(map).unwrap();
         assert_eq!(got["alpha"].lanes, vec![Lane::Plan]);
-        assert_eq!(got["beta"].lanes, vec![Lane::Plan, Lane::Incident, Lane::Groom, Lane::Spike]);
+        assert_eq!(
+            got["beta"].lanes,
+            vec![Lane::Plan, Lane::Incident, Lane::Groom, Lane::Spike]
+        );
         assert_eq!(got["beta"].base.as_deref(), Some("origin/dev"));
         assert_eq!(got["gamma"].lanes, vec![Lane::Plan, Lane::Spike]);
-        assert_eq!(got["delta"].lanes.len(), 6, "an empty lanes column admits every lane");
-        assert_eq!(got["eps"].lanes.len(), 6, "a gate with pipes is not mistaken for a lanes column");
+        assert_eq!(
+            got["delta"].lanes.len(),
+            6,
+            "an empty lanes column admits every lane"
+        );
+        assert_eq!(
+            got["eps"].lanes.len(),
+            6,
+            "a gate with pipes is not mistaken for a lanes column"
+        );
         assert_eq!(got["eps"].path, "/srv/eps");
     }
 
     // covers: UC-config-store-preflight-12
     #[test]
     fn the_lanes_parser_rejects_an_unknown_mode_or_lane_naming_every_offending_row() {
-        assert!(sections("ok | /srv/ok | push | origin/main | | true | develop\n").is_ok(), "positive control");
+        assert!(
+            sections("ok | /srv/ok | push | origin/main | | true | develop\n").is_ok(),
+            "positive control"
+        );
         let errs = sections(
             "alpha | /srv/alpha | push | origin/main | | true | fullaccess\n\
              beta | /srv/beta | push | origin/main | | true | plan,bogus-lane\n\
@@ -677,7 +728,13 @@ eps   | /srv/eps   | queue | origin/main | | bash a.sh || bash b.sh
         )
         .unwrap_err();
         assert_eq!(errs.len(), 2, "{errs:?}");
-        assert!(errs[0].contains("alpha") && errs[0].contains("fullaccess"), "{errs:?}");
-        assert!(errs[1].contains("beta") && errs[1].contains("bogus-lane"), "{errs:?}");
+        assert!(
+            errs[0].contains("alpha") && errs[0].contains("fullaccess"),
+            "{errs:?}"
+        );
+        assert!(
+            errs[1].contains("beta") && errs[1].contains("bogus-lane"),
+            "{errs:?}"
+        );
     }
 }

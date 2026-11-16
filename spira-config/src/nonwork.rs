@@ -75,7 +75,10 @@ pub fn status_filter(_kind: Kind, which: Which) -> &'static str {
 
 /// `["--status", <filter>]` for a bd list over beads of `kind`.
 pub fn status_args(kind: Kind, which: Which) -> [String; 2] {
-    ["--status".to_string(), status_filter(kind, which).to_string()]
+    [
+        "--status".to_string(),
+        status_filter(kind, which).to_string(),
+    ]
 }
 
 /// The bd status of a row (`""` when absent).
@@ -114,12 +117,20 @@ mod tests {
 
     #[test]
     fn filters_and_predicates() {
-        assert_eq!(status_args(Kind::Ask, Which::Live), ["--status".to_string(), "open,in_progress,blocked,deferred".to_string()]);
+        assert_eq!(
+            status_args(Kind::Ask, Which::Live),
+            [
+                "--status".to_string(),
+                "open,in_progress,blocked,deferred".to_string()
+            ]
+        );
         assert_eq!(status_filter(Kind::Insight, Which::Closed), "closed");
         let row: Value = serde_json::from_str(r#"{"id":"sp-a","status":"closed"}"#).unwrap();
         assert!(row_closed(Kind::Insight, &row));
         assert!(is_active(Kind::Insight, "in_progress") && !is_active(Kind::Insight, "closed"));
-        assert!(!is_work_type(Some("decision")) && is_work_type(Some("task")) && is_work_type(None));
+        assert!(
+            !is_work_type(Some("decision")) && is_work_type(Some("task")) && is_work_type(None)
+        );
         assert_eq!(status_of(Kind::Ask, &serde_json::json!({})), "");
     }
 }

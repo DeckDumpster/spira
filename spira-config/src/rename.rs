@@ -29,7 +29,9 @@ pub fn rename_persona_lenient(text: &str, old: &str, new: &str) -> Result<String
 
 fn rename_persona_with(text: &str, old: &str, new: &str, strict: bool) -> Result<String, String> {
     if old.is_empty() || new.is_empty() || old.contains(['.', ' ']) || new.contains(['.', ' ']) {
-        return Err(format!("persona names are single words, got {old:?} -> {new:?}"));
+        return Err(format!(
+            "persona names are single words, got {old:?} -> {new:?}"
+        ));
     }
     let mut doc: DocumentMut = text.parse().map_err(|e| format!("not valid TOML: {e}"))?;
     let personas = doc.get_mut("persona").and_then(Item::as_table_like_mut);
@@ -47,14 +49,20 @@ fn rename_persona_with(text: &str, old: &str, new: &str, strict: bool) -> Result
     if let Some(spira) = doc.get_mut("spira").and_then(Item::as_table_like_mut) {
         if let Some(item) = spira.get_mut("runes") {
             if let Some(arr) = item.as_array() {
-                let words = rewrite_words(arr.iter().filter_map(|v| v.as_str().map(String::from)), old, new);
+                let words = rewrite_words(
+                    arr.iter().filter_map(|v| v.as_str().map(String::from)),
+                    old,
+                    new,
+                );
                 let mut out = Array::new();
                 for w in words {
                     out.push(w);
                 }
                 *item = value(out);
             } else if let Some(s) = item.as_str() {
-                *item = value(rewrite_words(s.split_whitespace().map(String::from), old, new).join(" "));
+                *item = value(
+                    rewrite_words(s.split_whitespace().map(String::from), old, new).join(" "),
+                );
             }
         }
     }

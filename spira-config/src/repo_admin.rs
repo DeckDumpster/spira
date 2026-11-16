@@ -314,9 +314,13 @@ fn register(a: &AddArgs, land_ref: &str, t: &Targets, did: &mut Vec<String>) -> 
 }
 
 fn map_row_index(text: &str, name: &str) -> Option<(usize, repos::Row)> {
-    text.lines()
-        .enumerate()
-        .find_map(|(i, l)| repos::parse(l).into_iter().next().filter(|r| r.name == name).map(|r| (i, r)))
+    text.lines().enumerate().find_map(|(i, l)| {
+        repos::parse(l)
+            .into_iter()
+            .next()
+            .filter(|r| r.name == name)
+            .map(|r| (i, r))
+    })
 }
 
 fn rebuild(text: &str, idx: usize, replacement: Option<String>) -> String {
@@ -350,7 +354,9 @@ pub fn set(name: &str, field: &str, value: &str, t: &Targets) -> Result<(String,
     let (idx, mut row) = map_row_index(&text, name)
         .ok_or_else(|| format!("repo set: {name} is not registered in {}", map.display()))?;
     if matches!(field, "format" | "gate") && (value.contains('|') || value.contains('\n')) {
-        return Err(format!("repo set: {field} may not contain a pipe or newline"));
+        return Err(format!(
+            "repo set: {field} may not contain a pipe or newline"
+        ));
     }
     let old = match field {
         "path" => {
@@ -369,10 +375,14 @@ pub fn set(name: &str, field: &str, value: &str, t: &Targets) -> Result<(String,
         "gate" => std::mem::replace(&mut row.gate, value.to_string()),
         "lanes" => {
             let word = |l: &str| {
-                !l.is_empty() && l.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
+                !l.is_empty()
+                    && l.chars()
+                        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
             };
             if !value.split(',').all(word) {
-                return Err(format!("repo set: lanes must be a comma list of lane names, not {value:?}"));
+                return Err(format!(
+                    "repo set: lanes must be a comma list of lane names, not {value:?}"
+                ));
             }
             std::mem::replace(&mut row.lanes, value.to_string())
         }
@@ -591,11 +601,7 @@ mod tests {
         let toml = d.path().join("spira.toml");
         std::fs::write(&map, "# rows\n").unwrap();
         std::fs::write(&toml, "").unwrap();
-        Fx {
-            map,
-            toml,
-            _d: d,
-        }
+        Fx { map, toml, _d: d }
     }
 
     fn reg(f: &Fx) -> Registry {
@@ -656,7 +662,9 @@ mod tests {
     fn set_refuses_an_unregistered_name_and_bad_values() {
         let f = fx();
         let t = registered(&f, "g");
-        assert!(set("nope", "gate", "", &t).unwrap_err().contains("not registered"));
+        assert!(set("nope", "gate", "", &t)
+            .unwrap_err()
+            .contains("not registered"));
         assert!(set("fixture", "path", "rel", &t).is_err());
         assert!(set("fixture", "gate", "a|b", &t).is_err());
         assert!(set("fixture", "queue", "sideways", &t).is_err());

@@ -55,10 +55,18 @@ pub fn rewrite_row(text: &str, name: &str, land: &str, base: &str) -> Result<Str
 }
 
 /// Rewrite `name`'s land/base in the repo-map file at `path`, atomically.
-pub fn set_row_in_file(path: &std::path::Path, name: &str, land: &str, base: &str) -> Result<(), String> {
+pub fn set_row_in_file(
+    path: &std::path::Path,
+    name: &str,
+    land: &str,
+    base: &str,
+) -> Result<(), String> {
     let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let new = rewrite_row(&text, name, land, base).map_err(|e| match e {
-        MapError::ShortRow => format!("{name} row in {} has no base column (NF<6) — add one by hand first", path.display()),
+        MapError::ShortRow => format!(
+            "{name} row in {} has no base column (NF<6) — add one by hand first",
+            path.display()
+        ),
         MapError::NoRow => format!("{} has no {name} row", path.display()),
         MapError::Empty => "the rewrite produced an empty file".to_string(),
     })?;
@@ -81,7 +89,23 @@ mod tests {
 
     #[test]
     fn short_row_and_missing_row_refuse() {
-        assert_eq!(rewrite_row("spira | /h | queue | x | y\n", "spira", "queue.local", "local/main"), Err(MapError::ShortRow));
-        assert_eq!(rewrite_row("a | /h | queue | x | y | z\n", "spira", "queue.local", "local/main"), Err(MapError::NoRow));
+        assert_eq!(
+            rewrite_row(
+                "spira | /h | queue | x | y\n",
+                "spira",
+                "queue.local",
+                "local/main"
+            ),
+            Err(MapError::ShortRow)
+        );
+        assert_eq!(
+            rewrite_row(
+                "a | /h | queue | x | y | z\n",
+                "spira",
+                "queue.local",
+                "local/main"
+            ),
+            Err(MapError::NoRow)
+        );
     }
 }

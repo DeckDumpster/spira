@@ -19,7 +19,11 @@ pub fn stamp(run_dir: &Path, task: &str) {
 
 /// Seconds since the task last stamped; `None` when it never has.
 pub fn quiet_secs(run_dir: &Path, task: &str) -> Option<u64> {
-    std::fs::metadata(path(run_dir, task)).and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).map(|d| d.as_secs())
+    std::fs::metadata(path(run_dir, task))
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.elapsed().ok())
+        .map(|d| d.as_secs())
 }
 
 /// The task an effect name is the observe probe of: `batcher.local.observe` is `batcher.local`'s.
@@ -33,7 +37,10 @@ mod tests {
 
     #[test]
     fn only_an_observe_probe_names_a_task() {
-        assert_eq!(task_of_probe("batcher.local.observe"), Some("batcher.local"));
+        assert_eq!(
+            task_of_probe("batcher.local.observe"),
+            Some("batcher.local")
+        );
         assert_eq!(task_of_probe("batcher.local.land"), None);
         assert_eq!(task_of_probe(".observe"), None);
     }

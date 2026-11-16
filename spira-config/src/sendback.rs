@@ -28,7 +28,13 @@ fn epoch_of(id: &str) -> Option<i64> {
 }
 
 /// Writes `files` as a new entry and returns its id; entries older than `keep_days` go.
-pub fn keep(run: &Path, actor: &str, files: &[(String, Vec<u8>)], keep_days: u32, now: i64) -> Result<String, String> {
+pub fn keep(
+    run: &Path,
+    actor: &str,
+    files: &[(String, Vec<u8>)],
+    keep_days: u32,
+    now: i64,
+) -> Result<String, String> {
     plain_name(actor)?;
     for (name, _) in files {
         plain_name(name)?;
@@ -60,7 +66,11 @@ fn prune(dir: &Path, keep_days: u32, now: i64) {
     let cutoff = now - i64::from(keep_days) * DAY_SECS;
     let Ok(rd) = fs::read_dir(dir) else { return };
     for e in rd.flatten() {
-        if e.file_name().to_str().and_then(epoch_of).is_some_and(|at| at < cutoff) {
+        if e.file_name()
+            .to_str()
+            .and_then(epoch_of)
+            .is_some_and(|at| at < cutoff)
+        {
             let _ = fs::remove_dir_all(e.path());
         }
     }
@@ -72,7 +82,9 @@ fn entry_dir(run: &Path, id: &str) -> Result<PathBuf, String> {
     if d.is_dir() {
         Ok(d)
     } else {
-        Err(format!("{id}: pruned (entries are kept SPIRA_SENDBACK_KEEP_DAYS days)"))
+        Err(format!(
+            "{id}: pruned (entries are kept SPIRA_SENDBACK_KEEP_DAYS days)"
+        ))
     }
 }
 
@@ -83,7 +95,12 @@ pub fn list(run: &Path, id: &str) -> Result<Vec<(String, u64)>, String> {
         .map_err(|e| format!("{}: {e}", d.display()))?
         .flatten()
         .filter(|e| e.path().is_file())
-        .map(|e| (e.file_name().to_string_lossy().into_owned(), e.metadata().map(|m| m.len()).unwrap_or(0)))
+        .map(|e| {
+            (
+                e.file_name().to_string_lossy().into_owned(),
+                e.metadata().map(|m| m.len()).unwrap_or(0),
+            )
+        })
         .collect();
     out.sort();
     Ok(out)
@@ -104,7 +121,10 @@ mod tests {
     }
 
     fn files() -> Vec<(String, Vec<u8>)> {
-        vec![("trial.out".into(), b"red \xff\n".to_vec()), ("sift.txt".into(), b"why".to_vec())]
+        vec![
+            ("trial.out".into(), b"red \xff\n".to_vec()),
+            ("sift.txt".into(), b"why".to_vec()),
+        ]
     }
 
     #[test]
@@ -112,9 +132,15 @@ mod tests {
         let run = tmp("rt");
         let id = keep(run.path(), "gate", &files(), 7, 1000).unwrap();
         assert_eq!(id, "gate-1000-0");
-        assert_eq!(list(run.path(), &id).unwrap(), vec![("sift.txt".to_string(), 3), ("trial.out".to_string(), 6)]);
+        assert_eq!(
+            list(run.path(), &id).unwrap(),
+            vec![("sift.txt".to_string(), 3), ("trial.out".to_string(), 6)]
+        );
         assert_eq!(read(run.path(), &id, "trial.out").unwrap(), b"red \xff\n");
-        assert_eq!(keep(run.path(), "gate", &files(), 7, 1000).unwrap(), "gate-1000-1");
+        assert_eq!(
+            keep(run.path(), "gate", &files(), 7, 1000).unwrap(),
+            "gate-1000-1"
+        );
     }
 
     #[test]
@@ -124,7 +150,9 @@ mod tests {
         let old = keep(run.path(), "round", &files(), 7, now - 8 * DAY_SECS).unwrap();
         let young = keep(run.path(), "batch-cut", &files(), 7, now - 6 * DAY_SECS).unwrap();
         keep(run.path(), "gate", &files(), 7, now).unwrap();
-        assert!(read(run.path(), &old, "sift.txt").unwrap_err().contains("pruned"));
+        assert!(read(run.path(), &old, "sift.txt")
+            .unwrap_err()
+            .contains("pruned"));
         assert!(read(run.path(), &young, "sift.txt").is_ok());
     }
 

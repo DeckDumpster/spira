@@ -14,7 +14,10 @@ pub fn merge_onto(git: &dyn Fn(&[&str]) -> (i32, String), base_fq: &str, tip: &s
     let attr = format!("attr.tree={base_fq}");
     match git(&["-c", &attr, "merge-tree", "--write-tree", base_fq, tip]) {
         (0, _) => Merge::Clean,
-        (1, text) => Merge::Conflict { paths: conflict_paths(&text), text },
+        (1, text) => Merge::Conflict {
+            paths: conflict_paths(&text),
+            text,
+        },
         (_, out) => Merge::Unknown(out),
     }
 }
@@ -28,7 +31,9 @@ pub fn conflict_paths(text: &str) -> Vec<String> {
                 return Some(p.trim());
             }
             let rest = l.split_once("): ")?.1;
-            rest.split_once(" deleted in ").or_else(|| rest.split_once(" renamed ")).map(|(p, _)| p.trim())
+            rest.split_once(" deleted in ")
+                .or_else(|| rest.split_once(" renamed "))
+                .map(|(p, _)| p.trim())
         })
         .map(String::from)
         .collect()
@@ -56,7 +61,13 @@ mod tests {
     fn exit_one_is_a_conflict_naming_its_paths() {
         let out = "t\n\nAuto-merging x\nCONFLICT (content): Merge conflict in state-store-sqlite/src/lib.rs\n";
         let (m, _) = run(1, out);
-        assert_eq!(m, Merge::Conflict { paths: vec!["state-store-sqlite/src/lib.rs".into()], text: out.into() });
+        assert_eq!(
+            m,
+            Merge::Conflict {
+                paths: vec!["state-store-sqlite/src/lib.rs".into()],
+                text: out.into()
+            }
+        );
     }
 
     #[test]
@@ -66,25 +77,43 @@ mod tests {
 
     #[test]
     fn any_other_exit_is_unknown() {
-        assert_eq!(run(128, "fatal: bad\n").0, Merge::Unknown("fatal: bad\n".into()));
+        assert_eq!(
+            run(128, "fatal: bad\n").0,
+            Merge::Unknown("fatal: bad\n".into())
+        );
     }
 
     #[test]
     fn the_argv_is_exactly_the_merge_tree_write_tree_form() {
         let (_, argv) = run(0, "");
-        assert_eq!(argv, ["-c", "attr.tree=base1", "merge-tree", "--write-tree", "base1", "tip1"]);
+        assert_eq!(
+            argv,
+            [
+                "-c",
+                "attr.tree=base1",
+                "merge-tree",
+                "--write-tree",
+                "base1",
+                "tip1"
+            ]
+        );
     }
 
     #[test]
     fn conflict_paths_are_read_from_conflict_lines_only() {
         let text = "Auto-merging x\nCONFLICT (content): Merge conflict in deploy/ci.sh\nCONFLICT (add/add): Merge conflict in a/__init__.py\nCONFLICT (modify/delete): gone.rs deleted in HEAD and modified in b.\nnot a CONFLICT line\n";
-        assert_eq!(conflict_paths(text), ["deploy/ci.sh", "a/__init__.py", "gone.rs"]);
+        assert_eq!(
+            conflict_paths(text),
+            ["deploy/ci.sh", "a/__init__.py", "gone.rs"]
+        );
         assert!(conflict_paths("clean\n").is_empty());
     }
 
     #[test]
     fn two_hundred_conflicting_paths_are_all_read() {
-        let text: String = (0..200).map(|i| format!("CONFLICT (content): Merge conflict in f{i}.rs\n")).collect();
+        let text: String = (0..200)
+            .map(|i| format!("CONFLICT (content): Merge conflict in f{i}.rs\n"))
+            .collect();
         assert_eq!(conflict_paths(&text).len(), 200);
     }
 }

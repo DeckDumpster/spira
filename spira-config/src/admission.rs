@@ -42,7 +42,12 @@ pub const RUN_CARGO_JOBS: u64 = 6;
 /// session still does.
 pub const COLD_HOLD_SECS: u64 = 1200;
 /// Files whose change makes a session's first build a cold one.
-pub const COLD_FILES: [&str; 4] = ["rust-toolchain.toml", "rust-toolchain", "flake.lock", "Cargo.lock"];
+pub const COLD_FILES: [&str; 4] = [
+    "rust-toolchain.toml",
+    "rust-toolchain",
+    "flake.lock",
+    "Cargo.lock",
+];
 /// How often a waiter repeats its waiting line.
 pub const SAY_EVERY: u64 = 30;
 
@@ -98,17 +103,26 @@ pub struct Host {
 
 impl Host {
     pub fn read() -> Host {
-        let cores = std::thread::available_parallelism().map(|n| n.get() as u64).unwrap_or(4);
+        let cores = std::thread::available_parallelism()
+            .map(|n| n.get() as u64)
+            .unwrap_or(4);
         let mem_avail_mib = fs::read_to_string("/proc/meminfo")
             .ok()
             .and_then(|m| {
                 m.lines()
                     .find(|l| l.starts_with("MemAvailable"))
-                    .and_then(|l| l.split_whitespace().nth(1).and_then(|k| k.parse::<u64>().ok()))
+                    .and_then(|l| {
+                        l.split_whitespace()
+                            .nth(1)
+                            .and_then(|k| k.parse::<u64>().ok())
+                    })
             })
             .map(|kib| kib / 1024)
             .unwrap_or(1600);
-        Host { cores, mem_avail_mib }
+        Host {
+            cores,
+            mem_avail_mib,
+        }
     }
 }
 
@@ -143,7 +157,11 @@ pub fn size(pool: Pool, var: Option<&str>, h: Host) -> u64 {
 
 /// [`size`] from this process's environment and box.
 pub fn size_from_env(pool: Pool) -> u64 {
-    size(pool, std::env::var(pool.size_env()).ok().as_deref(), Host::read())
+    size(
+        pool,
+        std::env::var(pool.size_env()).ok().as_deref(),
+        Host::read(),
+    )
 }
 
 /// The size the config document sets for `pool`, when it sets one.
@@ -161,7 +179,12 @@ pub fn doc_size(pool: Pool, doc: &crate::SpiraToml) -> Option<u64> {
 /// The pool's size as the pools read it: the config document first (the gate re-reads it live),
 /// then this process's environment, then derived from the box.
 pub fn size_configured(pool: Pool) -> u64 {
-    size_in(pool, doc_size_now(pool), std::env::var(pool.size_env()).ok().as_deref(), Host::read())
+    size_in(
+        pool,
+        doc_size_now(pool),
+        std::env::var(pool.size_env()).ok().as_deref(),
+        Host::read(),
+    )
 }
 
 /// The size the config document on this box sets for `pool` right now, when it can be read
@@ -204,7 +227,10 @@ pub struct Lease {
 }
 
 fn clean_who(w: &str) -> String {
-    let w: String = w.chars().map(|c| if c.is_whitespace() { '_' } else { c }).collect();
+    let w: String = w
+        .chars()
+        .map(|c| if c.is_whitespace() { '_' } else { c })
+        .collect();
     if w.is_empty() {
         "-".into()
     } else {
@@ -227,7 +253,16 @@ impl Lease {
     }
 
     pub fn parse(slot: u64, text: &str) -> Option<Lease> {
-        let mut l = Lease { slot, pid: 0, start: 0, who: String::new(), since: 0, waited: 0, last: 0, weight: 1 };
+        let mut l = Lease {
+            slot,
+            pid: 0,
+            start: 0,
+            who: String::new(),
+            since: 0,
+            waited: 0,
+            last: 0,
+            weight: 1,
+        };
         for f in text.split_whitespace() {
             let (k, v) = f.split_once('=')?;
             match k {
@@ -277,7 +312,12 @@ impl Procs for RealProcs {
 
 /// A holder for a live process: its pid and starttime.
 pub fn holder_for(pid: u32, who: &str, weight: u64, procs: &dyn Procs) -> Option<Holder> {
-    Some(Holder { pid, start: procs.start_of(pid)?, who: who.to_string(), weight: weight.max(1) })
+    Some(Holder {
+        pid,
+        start: procs.start_of(pid)?,
+        who: who.to_string(),
+        weight: weight.max(1),
+    })
 }
 
 fn alive(pid: u32, start: u64, procs: &dyn Procs) -> bool {
@@ -311,7 +351,11 @@ struct Mutex(File);
 impl Mutex {
     fn lock(dir: &Path) -> std::io::Result<Mutex> {
         fs::create_dir_all(dir)?;
-        let f = OpenOptions::new().create(true).truncate(false).write(true).open(dir.join("lock"))?;
+        let f = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(dir.join("lock"))?;
         loop {
             // SAFETY: flock on an fd we own for the life of `f`.
             let rc = unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX) };
@@ -348,7 +392,10 @@ fn read_leases(dir: &Path) -> Vec<(u64, Option<Lease>)> {
     if let Ok(rd) = fs::read_dir(dir) {
         for e in rd.flatten() {
             let name = e.file_name().to_string_lossy().into_owned();
-            let Some(n) = name.strip_prefix("slot.").and_then(|n| n.parse::<u64>().ok()) else {
+            let Some(n) = name
+                .strip_prefix("slot.")
+                .and_then(|n| n.parse::<u64>().ok())
+            else {
                 continue;
             };
             let text = fs::read_to_string(e.path()).unwrap_or_default();
@@ -369,7 +416,10 @@ pub struct Waiter {
 }
 
 fn stagger_secs() -> u64 {
-    std::env::var(STAGGER_ENV).ok().and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(0)
+    std::env::var(STAGGER_ENV)
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .unwrap_or(0)
 }
 
 /// Whether a fresh lease must still wait out the stagger: others are held and the pool's last
@@ -378,13 +428,21 @@ fn staggered(dir: &Path, held: bool, now: u64, stagger: u64) -> bool {
     if !held || stagger == 0 {
         return false;
     }
-    let last = fs::read_to_string(dir.join("last-start")).ok().and_then(|t| t.trim().parse::<u64>().ok()).unwrap_or(0);
+    let last = fs::read_to_string(dir.join("last-start"))
+        .ok()
+        .and_then(|t| t.trim().parse::<u64>().ok())
+        .unwrap_or(0);
     now.saturating_sub(last) < stagger
 }
 
 /// Remove dead leases and dead waiters; return the live leases, the ended ones (for
 /// telemetry) and the live waiters, oldest first.
-fn reap(dir: &Path, pool: Pool, size: u64, procs: &dyn Procs) -> (Vec<Lease>, Vec<Ended>, Vec<Waiter>) {
+fn reap(
+    dir: &Path,
+    pool: Pool,
+    size: u64,
+    procs: &dyn Procs,
+) -> (Vec<Lease>, Vec<Ended>, Vec<Waiter>) {
     let mut live = Vec::new();
     let mut ended = Vec::new();
     for (n, l) in read_leases(dir) {
@@ -396,7 +454,13 @@ fn reap(dir: &Path, pool: Pool, size: u64, procs: &dyn Procs) -> (Vec<Lease>, Ve
                 let _ = fs::remove_file(dir.join(format!("slot.{n}")));
                 if let Some(l) = other {
                     let held = l.last.max(l.since).saturating_sub(l.since);
-                    ended.push(Ended { pool, lease: l, size, held, end: "reclaimed" });
+                    ended.push(Ended {
+                        pool,
+                        lease: l,
+                        size,
+                        held,
+                        end: "reclaimed",
+                    });
                 }
             }
         }
@@ -405,10 +469,18 @@ fn reap(dir: &Path, pool: Pool, size: u64, procs: &dyn Procs) -> (Vec<Lease>, Ve
     if let Ok(rd) = fs::read_dir(dir) {
         for e in rd.flatten() {
             let name = e.file_name().to_string_lossy().into_owned();
-            if let Some(pid) = name.strip_prefix("wait.").and_then(|p| p.parse::<u32>().ok()) {
+            if let Some(pid) = name
+                .strip_prefix("wait.")
+                .and_then(|p| p.parse::<u32>().ok())
+            {
                 let text = fs::read_to_string(e.path()).unwrap_or_default();
                 match Lease::parse(0, &format!("pid={pid} {text}")) {
-                    Some(w) if alive(pid, w.start, procs) => waiters.push(Waiter { pid, since: w.since, who: w.who, weight: w.weight.max(1) }),
+                    Some(w) if alive(pid, w.start, procs) => waiters.push(Waiter {
+                        pid,
+                        since: w.since,
+                        who: w.who,
+                        weight: w.weight.max(1),
+                    }),
                     _ => {
                         let _ = fs::remove_file(e.path());
                     }
@@ -475,22 +547,51 @@ pub fn try_take_staggered(
             l2.last = now;
             let _ = write_atomic(&dir.join(format!("slot.{}", l.slot)), &l2.render());
         }
-        return Ok((Take::Admitted { slot: l.slot, fresh: false }, ended));
+        return Ok((
+            Take::Admitted {
+                slot: l.slot,
+                fresh: false,
+            },
+            ended,
+        ));
     }
     let anc = ancestors(me.pid, procs);
     if let Some(l) = live.iter().find(|l| anc.contains(&l.pid)) {
-        return Ok((Take::Inherited { slot: l.slot, pid: l.pid }, ended));
+        return Ok((
+            Take::Inherited {
+                slot: l.slot,
+                pid: l.pid,
+            },
+            ended,
+        ));
     }
     let used: u64 = live.iter().map(|l| l.weight.max(1)).sum();
     let first = waiters.first().is_none_or(|w| w.pid == me.pid);
     let fits = used == 0 || used + me.weight.max(1) <= size.max(1);
     if first && fits && !staggered(&dir, used > 0, now, stagger) {
         let _ = write_atomic(&dir.join("last-start"), &format!("{now}\n"));
-        let n = (1..).find(|n| !live.iter().any(|l| l.slot == *n)).unwrap_or(1);
-        let l = Lease { slot: n, pid: me.pid, start: me.start, who: me.who.clone(), since: now, waited, last: now, weight: me.weight.max(1) };
+        let n = (1..)
+            .find(|n| !live.iter().any(|l| l.slot == *n))
+            .unwrap_or(1);
+        let l = Lease {
+            slot: n,
+            pid: me.pid,
+            start: me.start,
+            who: me.who.clone(),
+            since: now,
+            waited,
+            last: now,
+            weight: me.weight.max(1),
+        };
         write_atomic(&dir.join(format!("slot.{n}")), &l.render())?;
         let _ = fs::remove_file(dir.join(format!("wait.{}", me.pid)));
-        return Ok((Take::Admitted { slot: n, fresh: true }, ended));
+        return Ok((
+            Take::Admitted {
+                slot: n,
+                fresh: true,
+            },
+            ended,
+        ));
     }
     let wf = dir.join(format!("wait.{}", me.pid));
     let queued = fs::read_to_string(&wf)
@@ -499,13 +600,29 @@ pub fn try_take_staggered(
         .is_some_and(|w| w.start == me.start);
     if !queued {
         // Written once: `since` is the queue position (first come, first served).
-        let _ = write_atomic(&wf, &format!("start={} who={} since={} weight={}\n", me.start, clean_who(&me.who), now, me.weight.max(1)));
+        let _ = write_atomic(
+            &wf,
+            &format!(
+                "start={} who={} since={} weight={}\n",
+                me.start,
+                clean_who(&me.who),
+                now,
+                me.weight.max(1)
+            ),
+        );
     }
     Ok((Take::Busy { holders: live }, ended))
 }
 
 /// Release `slot` if it still names `me`; the ended lease for telemetry.
-pub fn release(run: &Path, pool: Pool, size: u64, slot: u64, me: &Holder, now: u64) -> Option<Ended> {
+pub fn release(
+    run: &Path,
+    pool: Pool,
+    size: u64,
+    slot: u64,
+    me: &Holder,
+    now: u64,
+) -> Option<Ended> {
     let dir = pool.dir(run);
     let _m = Mutex::lock(&dir).ok()?;
     let path = dir.join(format!("slot.{slot}"));
@@ -515,7 +632,13 @@ pub fn release(run: &Path, pool: Pool, size: u64, slot: u64, me: &Holder, now: u
     }
     let _ = fs::remove_file(&path);
     let held = now.saturating_sub(l.since);
-    Some(Ended { pool, lease: l, size, held, end: "released" })
+    Some(Ended {
+        pool,
+        lease: l,
+        size,
+        held,
+        end: "released",
+    })
 }
 
 /// Drop a waiter's `wait.<pid>` file (a waiter that gives up or is inherited).
@@ -527,13 +650,25 @@ pub fn unwait(run: &Path, pool: Pool, pid: u32) {
 /// weight (`×4`).
 pub fn wait_line(pool: Pool, size: u64, holders: &[Lease], now: u64) -> String {
     if pool == Pool::Run {
-        return format!("testenv: waiting for a CPU slot ({} running)", holders.len());
+        return format!(
+            "testenv: waiting for a CPU slot ({} running)",
+            holders.len()
+        );
     }
     let named: Vec<String> = holders
         .iter()
         .map(|l| {
-            let w = if l.weight > 1 { format!(" ×{}", l.weight) } else { String::new() };
-            format!("{}{w} (pid {}, {}s)", l.who, l.pid, now.saturating_sub(l.since))
+            let w = if l.weight > 1 {
+                format!(" ×{}", l.weight)
+            } else {
+                String::new()
+            };
+            format!(
+                "{}{w} (pid {}, {}s)",
+                l.who,
+                l.pid,
+                now.saturating_sub(l.since)
+            )
         })
         .collect();
     format!(
@@ -541,12 +676,19 @@ pub fn wait_line(pool: Pool, size: u64, holders: &[Lease], now: u64) -> String {
         pool.name(),
         holders.iter().map(|l| l.weight.max(1)).sum::<u64>(),
         size,
-        if named.is_empty() { "-".to_string() } else { named.join(", ") }
+        if named.is_empty() {
+            "-".to_string()
+        } else {
+            named.join(", ")
+        }
     )
 }
 
 pub fn now_epoch() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 fn host_name() -> String {
@@ -618,7 +760,15 @@ pub struct Guard {
 impl Guard {
     /// A job that runs on someone else's slot (or with no admission): releases nothing.
     pub fn inherited(pool: Pool, token: &str) -> Guard {
-        Guard { run: PathBuf::new(), pool, size: 0, slot: 0, me: None, waited: 0, token: token.to_string() }
+        Guard {
+            run: PathBuf::new(),
+            pool,
+            size: 0,
+            slot: 0,
+            me: None,
+            waited: 0,
+            token: token.to_string(),
+        }
     }
     pub fn slot(&self) -> u64 {
         self.slot
@@ -668,14 +818,22 @@ pub fn acquire(q: &Request, s: &Seams, say: &mut dyn FnMut(&str)) -> Guard {
 }
 
 /// [`acquire`] that gives up, leaving no waiter file, once `stopped` says so.
-pub fn acquire_unless(q: &Request, s: &Seams, say: &mut dyn FnMut(&str), stopped: &dyn Fn() -> bool) -> Option<Guard> {
+pub fn acquire_unless(
+    q: &Request,
+    s: &Seams,
+    say: &mut dyn FnMut(&str),
+    stopped: &dyn Fn() -> bool,
+) -> Option<Guard> {
     let (run, pool, holder_pid, who, inherit) = (q.run, q.pool, q.holder_pid, q.who, q.inherit);
     let (size_of, procs, sleep) = (s.size_of, s.procs, s.sleep);
     if let Some(t) = inherit.map(str::trim).filter(|t| !t.is_empty()) {
         return Some(Guard::inherited(pool, t));
     }
     let Some(me) = holder_for(holder_pid, who, q.weight, procs) else {
-        say(&format!("admission: cannot read process {holder_pid} — running without a {} slot", pool.name()));
+        say(&format!(
+            "admission: cannot read process {holder_pid} — running without a {} slot",
+            pool.name()
+        ));
         return Some(Guard::inherited(pool, "none"));
     };
     let t0 = now_epoch();
@@ -694,7 +852,10 @@ pub fn acquire_unless(q: &Request, s: &Seams, say: &mut dyn FnMut(&str), stopped
                 match take {
                     Take::Admitted { slot, .. } => {
                         if said_at.is_some() {
-                            say(&format!("admitted to {} slot {slot} after {waited}s", pool.name()));
+                            say(&format!(
+                                "admitted to {} slot {slot} after {waited}s",
+                                pool.name()
+                            ));
                         }
                         return Some(Guard {
                             run: run.to_path_buf(),
@@ -719,7 +880,11 @@ pub fn acquire_unless(q: &Request, s: &Seams, say: &mut dyn FnMut(&str), stopped
                 }
             }
             Err(e) => {
-                say(&format!("admission: {} pool at {} unusable ({e}) — running without a slot", pool.name(), pool.dir(run).display()));
+                say(&format!(
+                    "admission: {} pool at {} unusable ({e}) — running without a slot",
+                    pool.name(),
+                    pool.dir(run).display()
+                ));
                 return Some(Guard::inherited(pool, "none"));
             }
         }
@@ -763,7 +928,10 @@ impl Hold {
             }
             drop(guard);
         });
-        Hold { done, thread: Some(thread) }
+        Hold {
+            done,
+            thread: Some(thread),
+        }
     }
 }
 
@@ -809,9 +977,15 @@ impl Occupancy {
             return None;
         }
         Some(if head.weight >= size {
-            format!("head needs {} of {}: waits for an empty pool", head.weight, size)
+            format!(
+                "head needs {} of {}: waits for an empty pool",
+                head.weight, size
+            )
         } else {
-            format!("head needs {} of {} with {} held: waits until {} free", head.weight, size, used, head.weight)
+            format!(
+                "head needs {} of {} with {} held: waits until {} free",
+                head.weight, size, used, head.weight
+            )
         })
     }
 }
@@ -822,12 +996,24 @@ pub fn read_occupancy(run: &Path, pool: Pool, size: u64, procs: &dyn Procs) -> O
     let _m = Mutex::lock(&dir).ok()?;
     let (holders, ended, waiters) = reap(&dir, pool, size, procs);
     record(run, &ended);
-    Some(Occupancy { pool, size, holders, waiting: waiters.len(), waiters })
+    Some(Occupancy {
+        pool,
+        size,
+        holders,
+        waiting: waiters.len(),
+        waiters,
+    })
 }
 
 /// [`read_occupancy`], an empty pool when unreadable.
 pub fn occupancy(run: &Path, pool: Pool, size: u64, procs: &dyn Procs) -> Occupancy {
-    read_occupancy(run, pool, size, procs).unwrap_or(Occupancy { pool, size, holders: Vec::new(), waiting: 0, waiters: Vec::new() })
+    read_occupancy(run, pool, size, procs).unwrap_or(Occupancy {
+        pool,
+        size,
+        holders: Vec::new(),
+        waiting: 0,
+        waiters: Vec::new(),
+    })
 }
 
 /// The gate's flock pool: a slot is held when its lock cannot be taken; its holder is the
@@ -838,7 +1024,9 @@ pub fn gate_occupancy(run: &Path, size: u64) -> Occupancy {
     let top = size.max(highest_gate_slot(&dir));
     for n in 1..=top {
         let lock = dir.join(format!("slot.{n}.lock"));
-        let Ok(f) = OpenOptions::new().write(true).open(&lock) else { continue };
+        let Ok(f) = OpenOptions::new().write(true).open(&lock) else {
+            continue;
+        };
         // SAFETY: probing our own fd; released at once on success.
         let got = unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0;
         if got {
@@ -857,7 +1045,13 @@ pub fn gate_occupancy(run: &Path, size: u64) -> Occupancy {
             weight: 1,
         }));
     }
-    Occupancy { pool: Pool::Gate, size, holders, waiting: 0, waiters: Vec::new() }
+    Occupancy {
+        pool: Pool::Gate,
+        size,
+        holders,
+        waiting: 0,
+        waiters: Vec::new(),
+    }
 }
 
 fn highest_gate_slot(dir: &Path) -> u64 {
@@ -866,7 +1060,10 @@ fn highest_gate_slot(dir: &Path) -> u64 {
             rd.flatten()
                 .filter_map(|e| {
                     let n = e.file_name().to_string_lossy().into_owned();
-                    n.strip_prefix("slot.")?.strip_suffix(".lock")?.parse::<u64>().ok()
+                    n.strip_prefix("slot.")?
+                        .strip_suffix(".lock")?
+                        .parse::<u64>()
+                        .ok()
                 })
                 .max()
                 .unwrap_or(0)
@@ -876,7 +1073,17 @@ fn highest_gate_slot(dir: &Path) -> u64 {
 
 /// The gate's holder sidecar line for slot `n`.
 pub fn gate_holder_line(pid: u32, start: u64, who: &str, since: u64) -> String {
-    Lease { slot: 0, pid, start, who: who.to_string(), since, waited: 0, last: since, weight: 1 }.render()
+    Lease {
+        slot: 0,
+        pid,
+        start,
+        who: who.to_string(),
+        since,
+        waited: 0,
+        last: since,
+        weight: 1,
+    }
+    .render()
 }
 
 /// A uniform jitter in `0..=max` seconds from `seed` (the dwarf's pid and clock), so a batch
@@ -901,7 +1108,10 @@ pub fn is_gate_token(t: &str) -> bool {
 
 /// What the retired RUSTC_WRAPPER execs for `args` (`<rustc> <rustc args…>`): `inner` with every
 /// argument when set, else `args[0]` with the rest.
-pub fn passthrough(inner: Option<&str>, args: &[std::ffi::OsString]) -> (std::ffi::OsString, Vec<std::ffi::OsString>) {
+pub fn passthrough(
+    inner: Option<&str>,
+    args: &[std::ffi::OsString],
+) -> (std::ffi::OsString, Vec<std::ffi::OsString>) {
     match inner.map(str::trim).filter(|i| !i.is_empty()) {
         Some(i) => (i.into(), args.to_vec()),
         None => (args[0].clone(), args[1..].to_vec()),

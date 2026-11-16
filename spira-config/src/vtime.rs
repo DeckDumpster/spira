@@ -13,7 +13,10 @@ pub fn override_epoch() -> Option<u64> {
 }
 
 pub fn wall_epoch() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 pub const GIT_DATE_VARS: [&str; 2] = ["GIT_AUTHOR_DATE", "GIT_COMMITTER_DATE"];
@@ -30,7 +33,11 @@ pub fn passthrough() -> Vec<(&'static str, String)> {
 /// The environment the simulator gives an actor run at virtual time `now` (epoch seconds).
 pub fn actor_env(now: u64) -> Vec<(&'static str, String)> {
     let date = format!("{now} +0000");
-    vec![(VAR, now.to_string()), (GIT_DATE_VARS[0], date.clone()), (GIT_DATE_VARS[1], date)]
+    vec![
+        (VAR, now.to_string()),
+        (GIT_DATE_VARS[0], date.clone()),
+        (GIT_DATE_VARS[1], date),
+    ]
 }
 
 /// Runs `f` with `SPIRA_NOW` set to `now`, serialised against other callers in this process.

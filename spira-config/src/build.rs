@@ -82,8 +82,15 @@ impl Store {
                 return None;
             }
         };
-        let endpoint = if addr.contains("://") { addr } else { format!("http://{addr}") };
-        Some(Store { endpoint, key_prefix: "/".to_string() })
+        let endpoint = if addr.contains("://") {
+            addr
+        } else {
+            format!("http://{addr}")
+        };
+        Some(Store {
+            endpoint,
+            key_prefix: "/".to_string(),
+        })
     }
 
     /// [`Store::from_values`], resolved in-process from this binary's own environment and
@@ -127,7 +134,11 @@ pub enum BackendCheck {
 /// environment (this process's, via `extra_env`) names, which is exactly why callers pass the
 /// configured store's own vars here rather than the bare ambient environment.
 fn show_stats_cache_location(sccache_bin: &Path, extra_env: &[(String, String)]) -> Option<String> {
-    let out = crate::bounded::bounded(sccache_bin).arg("--show-stats").envs(extra_env.iter().map(|(k, v)| (k.as_str(), v.as_str()))).output().ok()?;
+    let out = crate::bounded::bounded(sccache_bin)
+        .arg("--show-stats")
+        .envs(extra_env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
+        .output()
+        .ok()?;
     String::from_utf8_lossy(&out.stdout)
         .lines()
         .find(|l| l.trim_start().starts_with("Cache location"))
@@ -163,7 +174,9 @@ fn ensure_store_backend(sccache_bin: &Path, store: &Store) -> BackendCheck {
         None => BackendCheck::Unknown,
         Some(line) if is_webdav_location(&line) => BackendCheck::Matches,
         Some(line) => {
-            let _ = crate::bounded::bounded(sccache_bin).arg("--stop-server").output();
+            let _ = crate::bounded::bounded(sccache_bin)
+                .arg("--stop-server")
+                .output();
             start_server_unit(sccache_bin, store);
             BackendCheck::Restarted(line)
         }
@@ -177,8 +190,23 @@ pub const SERVER_UNIT: &str = "spira-sccache-server";
 
 /// `systemd-run` arguments that run the sccache server in the foreground as [`SERVER_UNIT`].
 pub fn server_unit_args(sccache_bin: &Path, store: &Store) -> Vec<String> {
-    let mut args: Vec<String> = ["--user", "--quiet", "--collect", &format!("--unit={SERVER_UNIT}"), "--setenv=SCCACHE_START_SERVER=1", "--setenv=SCCACHE_NO_DAEMON=1"].iter().map(|s| s.to_string()).collect();
-    args.extend(store.env_pairs().iter().map(|(k, v)| format!("--setenv={k}={v}")));
+    let mut args: Vec<String> = [
+        "--user",
+        "--quiet",
+        "--collect",
+        &format!("--unit={SERVER_UNIT}"),
+        "--setenv=SCCACHE_START_SERVER=1",
+        "--setenv=SCCACHE_NO_DAEMON=1",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
+    args.extend(
+        store
+            .env_pairs()
+            .iter()
+            .map(|(k, v)| format!("--setenv={k}={v}")),
+    );
     args.push(sccache_bin.display().to_string());
     args
 }
@@ -186,7 +214,9 @@ pub fn server_unit_args(sccache_bin: &Path, store: &Store) -> Vec<String> {
 /// Starts the server as its own unit unless one is already running; a host without a user
 /// manager, or a unit already there, leaves the server to be spawned by its first client.
 fn start_server_unit(sccache_bin: &Path, store: &Store) {
-    let _ = crate::bounded::bounded(Path::new("systemd-run")).args(server_unit_args(sccache_bin, store)).output();
+    let _ = crate::bounded::bounded(Path::new("systemd-run"))
+        .args(server_unit_args(sccache_bin, store))
+        .output();
 }
 
 /// [`ensure_store_backend`] plus the two `SCCACHE_WEBDAV_*` vars, in one call — the one place
@@ -243,14 +273,18 @@ impl Wrapper {
                  DESIGN-build-cache.md §2.5)",
                 p.display()
             ),
-            Wrapper::Off => format!("build cache: OFF ({CACHE_ENV}=off) — every dependency compiles cold"),
+            Wrapper::Off => {
+                format!("build cache: OFF ({CACHE_ENV}=off) — every dependency compiles cold")
+            }
         }
     }
 }
 
 fn executable(p: &Path) -> bool {
     use std::os::unix::fs::PermissionsExt;
-    std::fs::metadata(p).map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0).unwrap_or(false)
+    std::fs::metadata(p)
+        .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
 }
 
 /// The first executable `name` on `path` (a PATH string), as an absolute path.
@@ -286,7 +320,10 @@ pub fn wrapper_from_env() -> Result<Wrapper, String> {
 /// (write-heavy, useless to a build that is not repeated in place). A `--config` switch, not
 /// `CARGO_INCREMENTAL=0`, so the dependencies' cache keys match an interactive build's.
 pub fn one_shot(profile: &str) -> [String; 2] {
-    ["--config".into(), format!("profile.{profile}.incremental=false")]
+    [
+        "--config".into(),
+        format!("profile.{profile}.incremental=false"),
+    ]
 }
 
 /// [`one_shot`] as shell words, for a command string.
@@ -311,7 +348,9 @@ pub fn on_tmpfs(p: &Path) -> bool {
     let mut cur = Some(p);
     while let Some(d) = cur {
         if d.exists() {
-            let Ok(c) = std::ffi::CString::new(d.as_os_str().as_encoded_bytes()) else { return false };
+            let Ok(c) = std::ffi::CString::new(d.as_os_str().as_encoded_bytes()) else {
+                return false;
+            };
             // SAFETY: statfs into a zeroed struct we own, on a NUL-terminated path.
             let mut st: libc::statfs = unsafe { std::mem::zeroed() };
             let r = unsafe { libc::statfs(c.as_ptr(), &mut st) };
@@ -334,7 +373,9 @@ pub fn size_of(p: &Path) -> u64 {
 
 fn within(p: &Path) -> u64 {
     use std::os::unix::fs::MetadataExt;
-    let Ok(md) = std::fs::symlink_metadata(p) else { return 0 };
+    let Ok(md) = std::fs::symlink_metadata(p) else {
+        return 0;
+    };
     if !md.is_dir() {
         return md.blocks() * 512;
     }
@@ -342,7 +383,9 @@ fn within(p: &Path) -> u64 {
 }
 
 fn entries_size(p: &Path) -> u64 {
-    std::fs::read_dir(p).map(|rd| rd.flatten().map(|e| within(&e.path())).sum()).unwrap_or(0)
+    std::fs::read_dir(p)
+        .map(|rd| rd.flatten().map(|e| within(&e.path())).sum())
+        .unwrap_or(0)
 }
 
 #[cfg(test)]
@@ -358,11 +401,17 @@ mod tests {
     fn size_counts_blocks_so_a_sparse_file_holds_nothing() {
         let d = testkit::TempDir::new("warm-sparse");
         let sparse = d.path().join("sparse");
-        std::fs::File::create(&sparse).unwrap().set_len(512 * 1024).unwrap();
+        std::fs::File::create(&sparse)
+            .unwrap()
+            .set_len(512 * 1024)
+            .unwrap();
         let dense = d.path().join("dense");
         fill(&dense, 512);
         assert_eq!(std::fs::metadata(&sparse).unwrap().len(), 512 * 1024);
-        assert!(size_of(&sparse) < 512 * 1024, "length is not usage: unallocated blocks do not count");
+        assert!(
+            size_of(&sparse) < 512 * 1024,
+            "length is not usage: unallocated blocks do not count"
+        );
         assert!(size_of(&dense) >= 512 * 1024, "allocated blocks count");
     }
 
@@ -376,8 +425,14 @@ mod tests {
         std::os::unix::fs::symlink(&elsewhere, real.join("inner")).unwrap();
         let link = d.path().join("link");
         std::os::unix::fs::symlink(&real, &link).unwrap();
-        assert!(size_of(&link) >= 512 * 1024, "a linked build directory holds what its target holds");
-        assert!(size_of(&link) < 1024 * 1024, "a link below the root is not followed");
+        assert!(
+            size_of(&link) >= 512 * 1024,
+            "a linked build directory holds what its target holds"
+        );
+        assert!(
+            size_of(&link) < 1024 * 1024,
+            "a link below the root is not followed"
+        );
         assert_eq!(size_of(&link), size_of(&real));
     }
 
@@ -400,7 +455,10 @@ mod tests {
         let (_d, path) = bin_dir(false);
         let e = wrapper(&path, None).unwrap_err();
         assert!(e.contains("sccache is not on the build's PATH"), "{e}");
-        assert!(e.contains("spira/deps.toml") && e.contains("SPIRA_BUILD_CACHE=off"), "{e}");
+        assert!(
+            e.contains("spira/deps.toml") && e.contains("SPIRA_BUILD_CACHE=off"),
+            "{e}"
+        );
         // A relative PATH entry is never searched.
         assert!(wrapper("relative/dir", None).is_err());
     }
@@ -410,43 +468,78 @@ mod tests {
         let (_d, path) = bin_dir(false);
         let w = wrapper(&path, Some("off")).unwrap();
         assert_eq!(w, Wrapper::Off);
-        assert_eq!(w.env(None), vec![("RUSTC_WRAPPER".to_string(), String::new())]);
+        assert_eq!(
+            w.env(None),
+            vec![("RUSTC_WRAPPER".to_string(), String::new())]
+        );
         assert!(w.describe().contains("OFF"));
         // Off ignores a configured store too — there is no wrapper to point at it.
-        let store = Store { endpoint: "http://box:9431".into(), key_prefix: "/".into() };
-        assert_eq!(w.env(Some(&store)), vec![("RUSTC_WRAPPER".to_string(), String::new())]);
+        let store = Store {
+            endpoint: "http://box:9431".into(),
+            key_prefix: "/".into(),
+        };
+        assert_eq!(
+            w.env(Some(&store)),
+            vec![("RUSTC_WRAPPER".to_string(), String::new())]
+        );
     }
 
     #[test]
     fn the_shared_server_runs_as_its_own_foreground_unit_on_the_configured_store() {
-        let store = Store { endpoint: "http://box:9431".into(), key_prefix: "/".into() };
+        let store = Store {
+            endpoint: "http://box:9431".into(),
+            key_prefix: "/".into(),
+        };
         let args = server_unit_args(Path::new("/opt/bin/sccache"), &store);
-        assert!(args.contains(&"--user".to_string()) && args.contains(&format!("--unit={SERVER_UNIT}")), "{args:?}");
-        for want in ["--setenv=SCCACHE_START_SERVER=1", "--setenv=SCCACHE_NO_DAEMON=1", "--setenv=SCCACHE_WEBDAV_ENDPOINT=http://box:9431", "--setenv=SCCACHE_WEBDAV_KEY_PREFIX=/"] {
+        assert!(
+            args.contains(&"--user".to_string()) && args.contains(&format!("--unit={SERVER_UNIT}")),
+            "{args:?}"
+        );
+        for want in [
+            "--setenv=SCCACHE_START_SERVER=1",
+            "--setenv=SCCACHE_NO_DAEMON=1",
+            "--setenv=SCCACHE_WEBDAV_ENDPOINT=http://box:9431",
+            "--setenv=SCCACHE_WEBDAV_KEY_PREFIX=/",
+        ] {
             assert!(args.contains(&want.to_string()), "{want} in {args:?}");
         }
-        assert_eq!(args.last().map(String::as_str), Some("/opt/bin/sccache"), "the command comes after every option");
+        assert_eq!(
+            args.last().map(String::as_str),
+            Some("/opt/bin/sccache"),
+            "the command comes after every option"
+        );
     }
 
     // ------------------------------------------------------------- Store (sp-xtdqi)
 
     #[test]
     fn store_from_values_defaults_the_scheme_and_fixes_the_key_prefix() {
-        let v: std::collections::BTreeMap<_, _> = [(STORE_ADDR_ENV.to_string(), "192.168.1.56:9431".to_string())].into();
+        let v: std::collections::BTreeMap<_, _> =
+            [(STORE_ADDR_ENV.to_string(), "192.168.1.56:9431".to_string())].into();
         let s = Store::from_values(|k| v.get(k).cloned()).expect("an address was given");
         assert_eq!(s.endpoint, "http://192.168.1.56:9431");
         assert_eq!(s.key_prefix, "/");
 
-        let v2: std::collections::BTreeMap<_, _> = [(STORE_ADDR_ENV.to_string(), "https://box:9431".to_string())].into();
+        let v2: std::collections::BTreeMap<_, _> =
+            [(STORE_ADDR_ENV.to_string(), "https://box:9431".to_string())].into();
         let s2 = Store::from_values(|k| v2.get(k).cloned()).unwrap();
-        assert_eq!(s2.endpoint, "https://box:9431", "a scheme already present is kept, not doubled");
+        assert_eq!(
+            s2.endpoint, "https://box:9431",
+            "a scheme already present is kept, not doubled"
+        );
     }
 
     #[test]
     fn store_from_values_is_none_when_the_operator_never_named_a_store() {
         assert!(Store::from_values(|_| None).is_none(), "absent key");
-        assert!(Store::from_values(|_| Some("   ".to_string())).is_none(), "blank value");
-        assert!(Store::from_values(|_| Some(String::new())).is_none(), "empty value");
+        assert!(
+            Store::from_values(|_| Some("   ".to_string())).is_none(),
+            "blank value"
+        );
+        assert!(
+            Store::from_values(|_| Some(String::new())).is_none(),
+            "empty value"
+        );
     }
 
     // ---------------------------------------------------- backend sync (sp-xtdqi, part c)

@@ -15,7 +15,11 @@ pub struct Skew {
 
 impl Skew {
     pub fn describe(&self) -> String {
-        format!("running from release {} but current is {}", self.own.display(), self.current.display())
+        format!(
+            "running from release {} but current is {}",
+            self.own.display(),
+            self.current.display()
+        )
     }
 }
 
@@ -29,7 +33,10 @@ pub fn skew(own_release: &Path) -> Option<Skew> {
 
 /// `path` with every entry under `skew.own` moved under `skew.current`.
 pub fn repoint_path(path: &str, skew: &Skew) -> String {
-    path.replace(skew.own.to_string_lossy().as_ref(), skew.current.to_string_lossy().as_ref())
+    path.replace(
+        skew.own.to_string_lossy().as_ref(),
+        skew.current.to_string_lossy().as_ref(),
+    )
 }
 
 #[cfg(test)]
@@ -50,7 +57,13 @@ mod tests {
         let (_t, d) = releases();
         let s = skew(&d.join("aaa")).expect("aaa is not current");
         assert!(s.own.ends_with("aaa") && s.current.ends_with("bbb"));
-        let p = repoint_path(&format!("{}/aaa/bin:/usr/bin", fs::canonicalize(&d).unwrap().display()), &s);
+        let p = repoint_path(
+            &format!(
+                "{}/aaa/bin:/usr/bin",
+                fs::canonicalize(&d).unwrap().display()
+            ),
+            &s,
+        );
         assert!(p.contains("/bbb/bin") && !p.contains("/aaa/"));
     }
 

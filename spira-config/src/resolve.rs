@@ -117,7 +117,10 @@ pub fn derive_repo_filesystem(home: &Path, _env: &BTreeMap<String, String>) -> s
     // cost every Spira process ~100 ms at start, and from a release's bundled `spira/` (no
     // checkout at all) it only ever failed into the fallback below.
     let start = home.canonicalize().unwrap_or_else(|_| home.to_path_buf());
-    let toplevel = start.ancestors().find(|d| d.join(".git").exists()).map(Path::to_path_buf);
+    let toplevel = start
+        .ancestors()
+        .find(|d| d.join(".git").exists())
+        .map(Path::to_path_buf);
     toplevel.unwrap_or_else(|| {
         home.join("..")
             .canonicalize()
@@ -171,20 +174,27 @@ fn resolve_process(
     let doc = Some(crate::load(&toml_path)?);
     let conf_d = default_conf_d(home);
     let registry = registry::for_process()?;
-    resolve_checked(ResolveInput {
-        env,
-        home,
-        repo,
-        toml: doc.as_ref(),
-        conf_d: &conf_d,
-    }, &registry.keys)
+    resolve_checked(
+        ResolveInput {
+            env,
+            home,
+            repo,
+            toml: doc.as_ref(),
+            conf_d: &conf_d,
+        },
+        &registry.keys,
+    )
     .map_err(|e| e.to_string())
 }
 
-
 /// [`resolve_for_process`] for a long-lived binary that must stay live on a bad config:
 /// the error is named on stderr, then the empty [`Resolved`] is returned. Call once per start.
-pub fn resolve_or_say(who: &str, home: &Path, repo: &Path, env: &BTreeMap<String, String>) -> Resolved {
+pub fn resolve_or_say(
+    who: &str,
+    home: &Path,
+    repo: &Path,
+    env: &BTreeMap<String, String>,
+) -> Resolved {
     resolve_for_process(home, repo, env).unwrap_or_else(|e| {
         eprintln!("{who}: config resolve failed, running on built-in defaults: {e}");
         Resolved::default()
@@ -207,12 +217,20 @@ pub fn resolve_run_dir(env: &BTreeMap<String, String>, home: &Path) -> Result<Pa
     // spira.run from the one file, judged against the instance's confinement — no environment
     // override and no fallback home (per Ryan 2026-10-05: one source of config).
     let repo = derive_home_repo(home, env);
-    let resolved = resolve_for_process(home, &repo, env).map_err(|e| format!("cannot resolve spira.run: {e}"))?;
+    let resolved = resolve_for_process(home, &repo, env)
+        .map_err(|e| format!("cannot resolve spira.run: {e}"))?;
     let run = resolved.get("SPIRA_RUN");
     if run.is_empty() {
-        return Err("spira.run is empty in spira.toml — refusing to guess a run directory".to_string());
+        return Err(
+            "spira.run is empty in spira.toml — refusing to guess a run directory".to_string(),
+        );
     }
-    crate::containment::check_path(resolved.get("SPIRA_INSTANCE"), resolved.get("SPIRA_WORKSPACES"), "SPIRA_RUN", run)?;
+    crate::containment::check_path(
+        resolved.get("SPIRA_INSTANCE"),
+        resolved.get("SPIRA_WORKSPACES"),
+        "SPIRA_RUN",
+        run,
+    )?;
     Ok(PathBuf::from(run))
 }
 
@@ -231,9 +249,16 @@ pub fn declared_run_dir(env: &BTreeMap<String, String>) -> Result<PathBuf, Strin
     let declared = |key: &str| map.get(key).cloned().ok_or_else(|| undeclared(key));
     let run = declared("SPIRA_RUN")?;
     if run.is_empty() {
-        return Err("spira.run is empty in spira.toml — refusing to guess a run directory".to_string());
+        return Err(
+            "spira.run is empty in spira.toml — refusing to guess a run directory".to_string(),
+        );
     }
-    crate::containment::check_path(&declared("SPIRA_INSTANCE")?, &declared("SPIRA_WORKSPACES")?, "SPIRA_RUN", &run)?;
+    crate::containment::check_path(
+        &declared("SPIRA_INSTANCE")?,
+        &declared("SPIRA_WORKSPACES")?,
+        "SPIRA_RUN",
+        &run,
+    )?;
     Ok(PathBuf::from(run))
 }
 
@@ -247,7 +272,8 @@ pub fn declared_run_dir_for_process() -> Result<PathBuf, String> {
 /// does not export it, and a guessed label hides asks from the operator's queue.
 pub fn resolve_ask_label(env: &BTreeMap<String, String>, home: &Path) -> Result<String, String> {
     let repo = derive_home_repo(home, env);
-    let resolved = resolve_for_process(home, &repo, env).map_err(|e| format!("cannot resolve ask label: {e}"))?;
+    let resolved = resolve_for_process(home, &repo, env)
+        .map_err(|e| format!("cannot resolve ask label: {e}"))?;
     let v = resolved.get("SPIRA_ASK_LABEL");
     if v.is_empty() {
         return Err("ask label resolved empty — refusing to guess one".to_string());
@@ -268,7 +294,8 @@ pub fn resolve_instance(env: &BTreeMap<String, String>, home: &Path) -> Result<S
     // already has it explicitly has no need of the containment check the rest of
     // `resolve` runs unconditionally, over repos this key never touches.
     let repo = derive_home_repo(home, env);
-    let resolved = resolve_for_process(home, &repo, env).map_err(|e| format!("cannot resolve spira.instance: {e}"))?;
+    let resolved = resolve_for_process(home, &repo, env)
+        .map_err(|e| format!("cannot resolve spira.instance: {e}"))?;
     let instance = resolved.get("SPIRA_INSTANCE");
     if instance.is_empty() {
         return Err("spira.instance resolved empty — refusing to guess".to_string());
@@ -277,11 +304,18 @@ pub fn resolve_instance(env: &BTreeMap<String, String>, home: &Path) -> Result<S
 }
 
 /// Any one registry key, from the one config file; a named refusal when it resolves empty.
-pub fn resolve_key(env: &BTreeMap<String, String>, home: &Path, key: &str) -> Result<String, String> {
+pub fn resolve_key(
+    env: &BTreeMap<String, String>,
+    home: &Path,
+    key: &str,
+) -> Result<String, String> {
     let repo = derive_home_repo(home, env);
-    let resolved = resolve_for_process(home, &repo, env).map_err(|e| format!("cannot resolve {key}: {e}"))?;
+    let resolved =
+        resolve_for_process(home, &repo, env).map_err(|e| format!("cannot resolve {key}: {e}"))?;
     match resolved.get(key) {
-        "" => Err(format!("{key} is not set and spira.toml does not resolve it")),
+        "" => Err(format!(
+            "{key} is not set and spira.toml does not resolve it"
+        )),
         v => Ok(v.to_string()),
     }
 }
@@ -296,7 +330,10 @@ pub fn locate_home(env: &BTreeMap<String, String>, _exe: &Path) -> Result<PathBu
     if let Some(r) = env.get("SPIRA_RELEASE").filter(|r| !r.is_empty()) {
         return Ok(PathBuf::from(r).join("spira"));
     }
-    Err("neither SPIRA_HOME nor SPIRA_RELEASE is set — refusing to search for the harness home".to_string())
+    Err(
+        "neither SPIRA_HOME nor SPIRA_RELEASE is set — refusing to search for the harness home"
+            .to_string(),
+    )
 }
 
 /// [`locate_home`] for this process.
@@ -308,7 +345,10 @@ pub fn locate_home_for_process() -> Result<PathBuf, String> {
 /// The tree `SPIRA_HOME` sits in: the checkout under cargo, the release under a unit.
 pub fn checkout_root(env: &BTreeMap<String, String>) -> Result<PathBuf, String> {
     let home = locate_home(env, Path::new(""))?;
-    home.parent().filter(|p| !p.as_os_str().is_empty()).map(Path::to_path_buf).ok_or_else(|| format!("the harness home {} has no parent", home.display()))
+    home.parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .map(Path::to_path_buf)
+        .ok_or_else(|| format!("the harness home {} has no parent", home.display()))
 }
 
 /// [`checkout_root`] for this process.
@@ -335,14 +375,23 @@ pub fn key_for_process(key: &str) -> Result<String, String> {
 /// `spira.suite_state_file` in the document in force, else the registered default
 /// (`spira/conf.d/SPIRA_SUITE_STATE_FILE`).
 pub fn suite_state_file() -> Result<String, String> {
-    if let Some(v) = std::env::var("SPIRA_SUITE_STATE_FILE").ok().filter(|v| !v.is_empty()) {
+    if let Some(v) = std::env::var("SPIRA_SUITE_STATE_FILE")
+        .ok()
+        .filter(|v| !v.is_empty())
+    {
         return Ok(v);
     }
     let configured = match crate::discover(None) {
-        Some(p) => crate::load(&p)?.spira.map(|s| s.get_str("SPIRA_SUITE_STATE_FILE")).transpose()?.flatten(),
+        Some(p) => crate::load(&p)?
+            .spira
+            .map(|s| s.get_str("SPIRA_SUITE_STATE_FILE"))
+            .transpose()?
+            .flatten(),
         None => None,
     };
-    Ok(configured.filter(|v| !v.is_empty()).unwrap_or_else(|| DEFAULT_SUITE_STATE_FILE.to_string()))
+    Ok(configured
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| DEFAULT_SUITE_STATE_FILE.to_string()))
 }
 
 pub const DEFAULT_SUITE_STATE_FILE: &str = "spira/suite-state";
@@ -400,7 +449,11 @@ impl Resolved {
     /// fence `SPIRA_HOME`/`SPIRA_REPO` keep by never entering `values` at all.
     pub fn to_sh_all(&self) -> String {
         let mut out = String::new();
-        for (key, v) in self.values.iter().filter(|(k, _)| k.as_str() != crate::RELEASE_ENV) {
+        for (key, v) in self
+            .values
+            .iter()
+            .filter(|(k, _)| k.as_str() != crate::RELEASE_ENV)
+        {
             out.push_str(key);
             out.push('=');
             out.push_str(&crate::shell_quote(v));
@@ -549,18 +602,31 @@ impl std::fmt::Display for ResolveError {
 fn toml_key_map(doc: &SpiraToml) -> BTreeMap<String, String> {
     crate::spira_value_map(doc, true)
         .into_iter()
-        .map(|(k, v)| if k.starts_with("COCKPIT_") { (k, v) } else { (format!("SPIRA_{k}"), v) })
+        .map(|(k, v)| {
+            if k.starts_with("COCKPIT_") {
+                (k, v)
+            } else {
+                (format!("SPIRA_{k}"), v)
+            }
+        })
         .collect()
 }
 
 /// A key's value: the declaration in spira.toml, and nothing else — never the environment,
 /// never a default (per Ryan 2026-10-05: one source of config).
-fn seed(key: &str, _env: &BTreeMap<String, String>, toml_map: &BTreeMap<String, String>) -> Option<String> {
+fn seed(
+    key: &str,
+    _env: &BTreeMap<String, String>,
+    toml_map: &BTreeMap<String, String>,
+) -> Option<String> {
     toml_map.get(key).cloned()
 }
 
 fn undeclared(key: &str) -> String {
-    let k = key.strip_prefix("SPIRA_").unwrap_or(key).to_ascii_lowercase();
+    let k = key
+        .strip_prefix("SPIRA_")
+        .unwrap_or(key)
+        .to_ascii_lowercase();
     format!("{key} is not declared: spira.toml has no spira.{k} — every key is required; refusing")
 }
 
@@ -590,7 +656,9 @@ thread_local! {
 /// config (`init`), never for reading one: a process reads only what the file declares.
 pub fn resolve_with_defaults(input: ResolveInput<'_>) -> Result<Resolved, ResolveError> {
     GENERATING.set(true);
-    let r = registry::load(input.conf_d).map_err(ResolveError::Registry).and_then(|reg| resolve_unchecked(input, &reg));
+    let r = registry::load(input.conf_d)
+        .map_err(ResolveError::Registry)
+        .and_then(|reg| resolve_unchecked(input, &reg));
     GENERATING.set(false);
     r
 }
@@ -649,7 +717,11 @@ pub fn lc_password_file(env: &BTreeMap<String, String>) -> String {
         Some(v) if !v.is_empty() => v.clone(),
         _ => {
             let path = lc_credential_default(env);
-            if Path::new(&path).is_file() { path } else { String::new() }
+            if Path::new(&path).is_file() {
+                path
+            } else {
+                String::new()
+            }
         }
     }
 }
@@ -690,7 +762,10 @@ pub fn lc_socket_default(system_mode: bool, uid: u32) -> String {
 fn xdg_data_home(env: &BTreeMap<String, String>) -> String {
     match env.get("XDG_DATA_HOME") {
         Some(v) if !v.is_empty() => v.clone(),
-        _ => format!("{}/.local/share", env.get("HOME").cloned().unwrap_or_default()),
+        _ => format!(
+            "{}/.local/share",
+            env.get("HOME").cloned().unwrap_or_default()
+        ),
     }
 }
 
@@ -725,7 +800,9 @@ fn read_manifest_field(repo: &Path, field: &str) -> Option<String> {
 /// upgrade and so cannot stand in for `SPIRA_HOME_REPO`'s identity (`conf.sh`'s own comment,
 /// `law-scope-is-a-runtime-key`).
 fn looks_like_release_timestamp(s: &str) -> bool {
-    let Some(dash) = s.rfind('-') else { return false };
+    let Some(dash) = s.rfind('-') else {
+        return false;
+    };
     let suffix = &s[dash + 1..];
     let b = suffix.as_bytes();
     b.len() == 16
@@ -737,7 +814,9 @@ fn looks_like_release_timestamp(s: &str) -> bool {
 
 fn is_executable(path: &str) -> bool {
     use std::os::unix::fs::PermissionsExt;
-    std::fs::metadata(path).map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0).unwrap_or(false)
+    std::fs::metadata(path)
+        .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
 }
 
 fn compute_home_repo_default(repo: &Path) -> String {
@@ -762,16 +841,19 @@ fn compute_home_repo_default(repo: &Path) -> String {
     }
 }
 
-
 /// `spira_conf_defaults` plus `spira_containment_check`, ported.
 pub fn resolve(input: ResolveInput<'_>) -> Result<Resolved, ResolveError> {
     let registry = registry::load(input.conf_d).map_err(ResolveError::Registry)?;
     resolve_checked(input, &registry)
 }
 
-fn resolve_checked(input: ResolveInput<'_>, registry: &BTreeMap<String, registry::RegistryKey>) -> Result<Resolved, ResolveError> {
+fn resolve_checked(
+    input: ResolveInput<'_>,
+    registry: &BTreeMap<String, registry::RegistryKey>,
+) -> Result<Resolved, ResolveError> {
     let resolved = resolve_unchecked(input, registry)?;
-    let repo_map_text = crate::containment::read_repo_map(Path::new(resolved.get("SPIRA_REPO_MAP")));
+    let repo_map_text =
+        crate::containment::read_repo_map(Path::new(resolved.get("SPIRA_REPO_MAP")));
     crate::containment::check(
         resolved.get("SPIRA_INSTANCE"),
         resolved.get("SPIRA_WORKSPACES"),
@@ -782,7 +864,10 @@ fn resolve_checked(input: ResolveInput<'_>, registry: &BTreeMap<String, registry
 }
 
 /// Every key, with no containment judgement; callers go through [`resolve`].
-fn resolve_unchecked(input: ResolveInput<'_>, registry: &BTreeMap<String, registry::RegistryKey>) -> Result<Resolved, ResolveError> {
+fn resolve_unchecked(
+    input: ResolveInput<'_>,
+    registry: &BTreeMap<String, registry::RegistryKey>,
+) -> Result<Resolved, ResolveError> {
     let env = input.env;
     let toml_map = input.toml.map(toml_key_map).unwrap_or_default();
     let home_str = input.home.to_string_lossy().to_string();
@@ -804,8 +889,9 @@ fn resolve_unchecked(input: ResolveInput<'_>, registry: &BTreeMap<String, regist
     let mut warnings: Vec<String> = Vec::new();
     // The retired lifecycle switch (sp-v62vn): on is a deprecation warning, off is refused —
     // every conf.sh source and every in-process resolve goes through here.
-    if let Some(w) = crate::check_lifecycle_switch_env(env.get(crate::LIFECYCLE_ENFORCE_ENV).map(String::as_str))
-        .map_err(ResolveError::Registry)?
+    if let Some(w) =
+        crate::check_lifecycle_switch_env(env.get(crate::LIFECYCLE_ENFORCE_ENV).map(String::as_str))
+            .map_err(ResolveError::Registry)?
     {
         warnings.push(format!("spira: {w}"));
     }
@@ -836,10 +922,14 @@ fn resolve_unchecked(input: ResolveInput<'_>, registry: &BTreeMap<String, regist
     set!("SPIRA_HOME_REPO", home_repo.clone());
 
     // 2. SPIRA_INSTANCE
-    let instance =
-        resolve_colon("SPIRA_INSTANCE", env, &toml_map, ok_str!("prod")).map_err(ResolveError::Registry)?;
+    let instance = resolve_colon("SPIRA_INSTANCE", env, &toml_map, ok_str!("prod"))
+        .map_err(ResolveError::Registry)?;
     set!("SPIRA_INSTANCE", instance.clone());
-    let inst_sfx = if instance == "prod" { String::new() } else { format!("-{instance}") };
+    let inst_sfx = if instance == "prod" {
+        String::new()
+    } else {
+        format!("-{instance}")
+    };
 
     // 3. SPIRA_DB (preserve-empty)
     let db = resolve_eq("SPIRA_DB", env, &toml_map, || {
@@ -915,24 +1005,33 @@ fn resolve_unchecked(input: ResolveInput<'_>, registry: &BTreeMap<String, regist
         "SPIRA_LC_PASSWORD_FILE",
         resolve_colon("SPIRA_LC_PASSWORD_FILE", env, &toml_map, || {
             let path = lc_credential_default(env);
-            Ok(if Path::new(&path).is_file() { path } else { String::new() })
+            Ok(if Path::new(&path).is_file() {
+                path
+            } else {
+                String::new()
+            })
         })
         .map_err(ResolveError::Registry)?
     );
     set!(
         "SPIRA_LC_SOCKET",
-        resolve_colon("SPIRA_LC_SOCKET", env, &toml_map, || Ok(lc_socket_default(lc_system_mode(), current_uid())))
-            .map_err(ResolveError::Registry)?
+        resolve_colon("SPIRA_LC_SOCKET", env, &toml_map, || Ok(lc_socket_default(
+            lc_system_mode(),
+            current_uid()
+        )))
+        .map_err(ResolveError::Registry)?
     );
 
     // 15. SPIRA_GH_INTAKE_REPO
-    let gh_intake_repo =
-        resolve_colon("SPIRA_GH_INTAKE_REPO", env, &toml_map, ok_str!("")).map_err(ResolveError::Registry)?;
+    let gh_intake_repo = resolve_colon("SPIRA_GH_INTAKE_REPO", env, &toml_map, ok_str!(""))
+        .map_err(ResolveError::Registry)?;
     set!("SPIRA_GH_INTAKE_REPO", gh_intake_repo.clone());
 
     // 16. SPIRA_RELEASE_REPO (+ MANIFEST fallback)
-    let mut release_repo = resolve_colon("SPIRA_RELEASE_REPO", env, &toml_map, || Ok(gh_intake_repo.clone()))
-        .map_err(ResolveError::Registry)?;
+    let mut release_repo = resolve_colon("SPIRA_RELEASE_REPO", env, &toml_map, || {
+        Ok(gh_intake_repo.clone())
+    })
+    .map_err(ResolveError::Registry)?;
     if release_repo.is_empty() {
         if let Some(v) = read_manifest_field(input.repo, "release-repo") {
             release_repo = v;
@@ -942,13 +1041,15 @@ fn resolve_unchecked(input: ResolveInput<'_>, registry: &BTreeMap<String, regist
 
     set!(
         "SPIRA_SCCACHE_DAV_ADDR",
-        resolve_colon("SPIRA_SCCACHE_DAV_ADDR", env, &toml_map, ok_str!("")).map_err(ResolveError::Registry)?
+        resolve_colon("SPIRA_SCCACHE_DAV_ADDR", env, &toml_map, ok_str!(""))
+            .map_err(ResolveError::Registry)?
     );
 
     // 17-19. Rebase / certify literals.
     set!(
         "SPIRA_CERTIFY_SUITES",
-        resolve_colon("SPIRA_CERTIFY_SUITES", env, &toml_map, ok_str!("on")).map_err(ResolveError::Registry)?
+        resolve_colon("SPIRA_CERTIFY_SUITES", env, &toml_map, ok_str!("on"))
+            .map_err(ResolveError::Registry)?
     );
     set!(
         "SPIRA_REBASE_DECOMPOSE_FILES",
@@ -961,14 +1062,21 @@ fn resolve_unchecked(input: ResolveInput<'_>, registry: &BTreeMap<String, regist
             "SPIRA_REBASE_GENERATED_FILES",
             env,
             &toml_map,
-            ok_str!("coverage.json COVERAGE.md standard-operating-procedures.md spira-config/schema")
+            ok_str!(
+                "coverage.json COVERAGE.md standard-operating-procedures.md spira-config/schema"
+            )
         )
         .map_err(ResolveError::Registry)?
     );
 
     // 20. SPIRA_SCOPE_LABEL (preserve-empty)
-    let scope_label = resolve_eq("SPIRA_SCOPE_LABEL", env, &toml_map, || Ok(home_repo.clone()))
-        .map_err(ResolveError::Registry)?;
+    let scope_label = resolve_eq(
+        "SPIRA_SCOPE_LABEL",
+        env,
+        &toml_map,
+        || Ok(home_repo.clone()),
+    )
+    .map_err(ResolveError::Registry)?;
     set!("SPIRA_SCOPE_LABEL", scope_label);
 
     // 21-22. Czar outcome windows.
@@ -986,7 +1094,8 @@ fn resolve_unchecked(input: ResolveInput<'_>, registry: &BTreeMap<String, regist
     // 23-24. Cockpit mail pane.
     set!(
         "COCKPIT_MAIL",
-        resolve_eq("COCKPIT_MAIL", env, &toml_map, ok_str!("aerc")).map_err(ResolveError::Registry)?
+        resolve_eq("COCKPIT_MAIL", env, &toml_map, ok_str!("aerc"))
+            .map_err(ResolveError::Registry)?
     );
     set!(
         "COCKPIT_CLIENT_IDLE_SECS",
@@ -1028,7 +1137,10 @@ fn resolve_unchecked(input: ResolveInput<'_>, registry: &BTreeMap<String, regist
     let agent = match agent_seed {
         Some(v) => v,
         None if !claude_val.is_empty() => {
-            warnings.push("spira: SPIRA_CLAUDE is deprecated; rename it to SPIRA_AGENT in spira.conf".to_string());
+            warnings.push(
+                "spira: SPIRA_CLAUDE is deprecated; rename it to SPIRA_AGENT in spira.conf"
+                    .to_string(),
+            );
             claude_val
         }
         None => "claude".to_string(),
@@ -1058,7 +1170,9 @@ fn resolve_unchecked(input: ResolveInput<'_>, registry: &BTreeMap<String, regist
             continue; // already hand-resolved above
         }
         let rk = &registry[key];
-        let expr = rk.default_expr().expect("topo_order only names defaulted keys");
+        let expr = rk
+            .default_expr()
+            .expect("topo_order only names defaulted keys");
         let value = resolve_colon(key, env, &toml_map, || crate::eval::eval_expr(expr, &known))
             .map_err(|e| ResolveError::Registry(format!("{key}: {e}")))?;
         set!(key.as_str(), value);

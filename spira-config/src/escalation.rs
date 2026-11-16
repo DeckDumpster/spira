@@ -24,7 +24,12 @@ pub struct Rejection {
 impl Rejection {
     pub fn new(cause: &str, suites: &str, tip: &str, reason: &str) -> Self {
         let cut = |s: &str, n: usize| s.chars().take(n).collect::<String>();
-        Rejection { cause: cut(cause, FIELD_MAX), suites: cut(suites, FIELD_MAX), tip: cut(tip, FIELD_MAX), reason: cut(reason, REASON_MAX) }
+        Rejection {
+            cause: cut(cause, FIELD_MAX),
+            suites: cut(suites, FIELD_MAX),
+            tip: cut(tip, FIELD_MAX),
+            reason: cut(reason, REASON_MAX),
+        }
     }
 
     pub fn encode(&self) -> String {
@@ -34,7 +39,10 @@ impl Rejection {
 
 /// The `rejection` facts' causes, oldest first; a cause that does not parse is dropped.
 pub fn parse_all(causes: &[String]) -> Vec<Rejection> {
-    causes.iter().filter_map(|c| serde_json::from_str(c).ok()).collect()
+    causes
+        .iter()
+        .filter_map(|c| serde_json::from_str(c).ok())
+        .collect()
 }
 
 /// What `spira-claim rejections` answers: how many times the bead has been rejected and the
@@ -78,8 +86,21 @@ pub fn history_brief(history: &[Rejection], model: &str) -> String {
         history.len()
     );
     for (i, r) in history.iter().enumerate() {
-        let shown = |v: &str| if v.is_empty() { "unrecorded".to_string() } else { v.to_string() };
-        out.push_str(&format!("\n{}. cause: {}\n   failing checks: {}\n   tip: {}\n   reason: {}\n", i + 1, r.cause, shown(&r.suites), shown(&r.tip), shown(&r.reason)));
+        let shown = |v: &str| {
+            if v.is_empty() {
+                "unrecorded".to_string()
+            } else {
+                v.to_string()
+            }
+        };
+        out.push_str(&format!(
+            "\n{}. cause: {}\n   failing checks: {}\n   tip: {}\n   reason: {}\n",
+            i + 1,
+            r.cause,
+            shown(&r.suites),
+            shown(&r.tip),
+            shown(&r.reason)
+        ));
     }
     out
 }
@@ -90,10 +111,21 @@ mod tests {
 
     #[test]
     fn the_second_rejection_escalates_and_the_third_on_the_stronger_model_holds() {
-        let st = |rejections, stronger_rejections| Standing { rejections, stronger_rejections, history: vec![] };
+        let st = |rejections, stronger_rejections| Standing {
+            rejections,
+            stronger_rejections,
+            history: vec![],
+        };
         assert_eq!(
             [st(0, 0), st(1, 0), st(2, 0), st(3, 1), st(9, 2), st(5, 3)].map(|s| tier(&s)),
-            [Tier::Normal, Tier::Normal, Tier::Stronger, Tier::Stronger, Tier::Stronger, Tier::Hold]
+            [
+                Tier::Normal,
+                Tier::Normal,
+                Tier::Stronger,
+                Tier::Stronger,
+                Tier::Stronger,
+                Tier::Hold
+            ]
         );
     }
 
@@ -105,9 +137,21 @@ mod tests {
 
     #[test]
     fn the_brief_names_every_rejection_with_checks_tip_and_reason() {
-        let h = vec![Rejection::new("eject-red", "test-x.sh", "t1", "five tests failed"), Rejection::new("gate-red", "", "t2", "did not compile")];
+        let h = vec![
+            Rejection::new("eject-red", "test-x.sh", "t1", "five tests failed"),
+            Rejection::new("gate-red", "", "t2", "did not compile"),
+        ];
         let b = history_brief(&h, "big-model");
-        for want in ["big-model", "rejected 2 times", "test-x.sh", "t1", "five tests failed", "t2", "did not compile", "unrecorded"] {
+        for want in [
+            "big-model",
+            "rejected 2 times",
+            "test-x.sh",
+            "t1",
+            "five tests failed",
+            "t2",
+            "did not compile",
+            "unrecorded",
+        ] {
             assert!(b.contains(want), "{want}: {b}");
         }
         assert_eq!(history_brief(&[], "m"), "");
@@ -115,6 +159,11 @@ mod tests {
 
     #[test]
     fn a_reason_is_bounded() {
-        assert_eq!(Rejection::new("c", "s", "t", &"x".repeat(9000)).reason.len(), REASON_MAX);
+        assert_eq!(
+            Rejection::new("c", "s", "t", &"x".repeat(9000))
+                .reason
+                .len(),
+            REASON_MAX
+        );
     }
 }

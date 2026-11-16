@@ -83,17 +83,17 @@ fn env_nonempty(key: &str) -> Option<String> {
     env::var(key).ok().filter(|v| !v.is_empty())
 }
 
-use spira_config::runes;
-use spira_config::{edit_text, is_retired_path, remove_retired_text};
 use spira_config::locate::locate;
 use spira_config::registry::Registry as ConfRegistry;
 use spira_config::repos::{Column, Registry};
 use spira_config::resolve::{resolve, ResolveError, ResolveInput, EXPORT_KEYS};
+use spira_config::runes;
 use spira_config::{
     atomic_write_commit, atomic_write_start, backup_existing, convert, discover, export_sh,
     get_path, json_schema, load, migrate_goal_to_id_prefix_in_file, set_path, shrink_reason,
     tail_refusals, unset_path, validate, validate_strict, write_atomic, LocateOutcome, SpiraToml,
 };
+use spira_config::{edit_text, is_retired_path, remove_retired_text};
 
 /// The message `locate`'s CLI surface and `read_input`'s no-file-argument path both print on
 /// refusal — one wording, so a diagnostic and an actual read failure never disagree about
@@ -101,10 +101,16 @@ use spira_config::{
 fn describe_locate_failure(outcome: &LocateOutcome) -> String {
     match outcome {
         LocateOutcome::Found(p) => unreachable!("describe_locate_failure called on Found({p:?})"),
-        LocateOutcome::NotFound { tried } if tried.is_empty() => "SPIRA_TOML is not set — it names the one spira.toml".to_string(),
+        LocateOutcome::NotFound { tried } if tried.is_empty() => {
+            "SPIRA_TOML is not set — it names the one spira.toml".to_string()
+        }
         LocateOutcome::NotFound { tried } => format!(
             "SPIRA_TOML names {}, which is not a file",
-            tried.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", ")
+            tried
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
         ),
     }
 }
@@ -155,7 +161,11 @@ fn cmd_retire(args: &[String]) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let done = if task { spira_config::retire::retire_task(&root, &name, &bead) } else { spira_config::retire::retire_key(&root, &name, &bead) };
+    let done = if task {
+        spira_config::retire::retire_task(&root, &name, &bead)
+    } else {
+        spira_config::retire::retire_key(&root, &name, &bead)
+    };
     match done {
         Ok(rep) => {
             print!("{}", rep.render());
@@ -191,7 +201,11 @@ fn load_input(file: Option<&str>, strict: bool) -> Result<(SpiraToml, Vec<String
             std::io::stdin()
                 .read_to_string(&mut s)
                 .map_err(|e| e.to_string())?;
-            return if strict { validate_strict(&s) } else { spira_config::validate_with_warnings(&s) };
+            return if strict {
+                validate_strict(&s)
+            } else {
+                spira_config::validate_with_warnings(&s)
+            };
         }
         Some(f) => PathBuf::from(f),
         // FAIL CLOSED (sp-hconl): no file argument means the config SPIRA_TOML names, never
@@ -264,8 +278,18 @@ fn cmd_get(path: &str, file: Option<&str>) -> ExitCode {
 /// After a write to the config in force, says whether the running scheduler took the new value.
 /// A write typed against a staged release is not the config the scheduler runs on.
 fn tell_scheduler(written: ExitCode, in_force: bool, path: &str) -> ExitCode {
-    if let (true, true, Some(key)) = (in_force, format!("{written:?}") == format!("{:?}", ExitCode::SUCCESS), spira_config::scheduler_link::key_of_path(path)) {
-        println!("{}", spira_config::scheduler_link::told(spira_config::process::cfg("SPIRA_RUNTIME_SOCKET"), &key));
+    if let (true, true, Some(key)) = (
+        in_force,
+        format!("{written:?}") == format!("{:?}", ExitCode::SUCCESS),
+        spira_config::scheduler_link::key_of_path(path),
+    ) {
+        println!(
+            "{}",
+            spira_config::scheduler_link::told(
+                spira_config::process::cfg("SPIRA_RUNTIME_SOCKET"),
+                &key
+            )
+        );
     }
     written
 }
@@ -273,7 +297,8 @@ fn tell_scheduler(written: ExitCode, in_force: bool, path: &str) -> ExitCode {
 /// `get --running <KEY>` — the value the running scheduler holds for `KEY`, which is the one
 /// `get` of the file does not tell once a change is waiting for its safe point.
 fn cmd_get_running(key: &str) -> ExitCode {
-    let held = spira_config::process::cfg("SPIRA_RUNTIME_SOCKET").and_then(|sock| spira_config::scheduler_link::running(&sock, key));
+    let held = spira_config::process::cfg("SPIRA_RUNTIME_SOCKET")
+        .and_then(|sock| spira_config::scheduler_link::running(&sock, key));
     match held {
         Ok(v) => {
             println!("{v}");
@@ -311,7 +336,10 @@ fn cmd_path_tail() -> ExitCode {
     let tail = match env::var("SPIRA_PATH") {
         Ok(v) if !v.trim().is_empty() => v,
         _ => match discover(None).map(|p| load(&p)).transpose() {
-            Ok(doc) => doc.and_then(|d| d.spira).and_then(|s| spira_config::said(s.get_str("SPIRA_PATH"))).unwrap_or_default(),
+            Ok(doc) => doc
+                .and_then(|d| d.spira)
+                .and_then(|s| spira_config::said(s.get_str("SPIRA_PATH")))
+                .unwrap_or_default(),
             Err(e) => {
                 eprintln!("spira-config path-tail: {e}");
                 return ExitCode::FAILURE;
@@ -421,9 +449,17 @@ fn cmd_resolve_sh(all: bool, file: Option<&str>, conf_d_override: Option<&str>) 
         None => None,
     };
 
-    let conf_d = conf_d_override.map(PathBuf::from).unwrap_or_else(|| home.join("conf.d"));
+    let conf_d = conf_d_override
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join("conf.d"));
     let env_map: BTreeMap<String, String> = env::vars().collect();
-    match resolve(ResolveInput { env: &env_map, home: &home, repo: &repo, toml: doc.as_ref(), conf_d: &conf_d }) {
+    match resolve(ResolveInput {
+        env: &env_map,
+        home: &home,
+        repo: &repo,
+        toml: doc.as_ref(),
+        conf_d: &conf_d,
+    }) {
         Ok(resolved) => {
             for w in &resolved.warnings {
                 eprintln!("{w}");
@@ -485,8 +521,18 @@ fn cmd_env_bootstrap_sh() -> ExitCode {
 /// to stderr, so `conf.sh` itself prints nothing further.
 fn cmd_check_bd() -> ExitCode {
     // Handed explicitly by conf.sh from the resolved config; a missing one is a refusal.
-    let need = |k: &str| env::var(k).ok().filter(|v| !v.is_empty()).ok_or_else(|| format!("spira-config check-bd: {k} was not handed in — refusing"));
-    let (bd, db, run, conf_file) = match (need("SPIRA_BD"), need("SPIRA_DB"), need("SPIRA_RUN"), need("SPIRA_TOML_FILE")) {
+    let need = |k: &str| {
+        env::var(k)
+            .ok()
+            .filter(|v| !v.is_empty())
+            .ok_or_else(|| format!("spira-config check-bd: {k} was not handed in — refusing"))
+    };
+    let (bd, db, run, conf_file) = match (
+        need("SPIRA_BD"),
+        need("SPIRA_DB"),
+        need("SPIRA_RUN"),
+        need("SPIRA_TOML_FILE"),
+    ) {
         (Ok(a), Ok(b), Ok(c), Ok(d)) => (a, b, c, d),
         (a, b, c, d) => {
             for e in [a.err(), b.err(), c.err(), d.err()].into_iter().flatten() {
@@ -530,8 +576,14 @@ fn cmd_unit(args: &[String]) -> ExitCode {
         return ExitCode::FAILURE;
     };
     let kind = args.get(1).map(String::as_str).unwrap_or("service");
-    let systemctl = env::var("SPIRA_SYSTEMCTL").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "systemctl".to_string());
-    println!("{}", spira_config::unit::resolve_unit(base, kind, &instance, &systemctl));
+    let systemctl = env::var("SPIRA_SYSTEMCTL")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "systemctl".to_string());
+    println!(
+        "{}",
+        spira_config::unit::resolve_unit(base, kind, &instance, &systemctl)
+    );
     ExitCode::SUCCESS
 }
 
@@ -599,7 +651,10 @@ fn cmd_deps(args: &[String]) -> ExitCode {
         Some("require") if args.len() > 1 => {
             let bins: Vec<&str> = args[1..].iter().map(String::as_str).collect();
             let path = env::var("PATH").unwrap_or_default();
-            let conf_file = env::var("SPIRA_TOML_FILE").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "$SPIRA_TOML".to_string());
+            let conf_file = env::var("SPIRA_TOML_FILE")
+                .ok()
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| "$SPIRA_TOML".to_string());
             match spira_config::deps::require(&deps, &bins, &path, &conf_file) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(msg) => {
@@ -664,11 +719,18 @@ fn cmd_repo_containment_check() -> ExitCode {
         .filter(|p| !p.is_empty())
         .and_then(|p| spira_config::containment::read_repo_map(Path::new(&p)))
         .or_else(|| {
-            let doc = spira_config::locate::locate(None).found().and_then(|p| spira_config::load(&p).ok())?;
+            let doc = spira_config::locate::locate(None)
+                .found()
+                .and_then(|p| spira_config::load(&p).ok())?;
             Some(
                 spira_config::repos::rows_from_toml(&doc)
                     .iter()
-                    .map(|r| format!("{} | {} | {} | {} | {} | {} | {}\n", r.name, r.path, r.land, r.base, r.format, r.gate, r.lanes))
+                    .map(|r| {
+                        format!(
+                            "{} | {} | {} | {} | {} | {} | {}\n",
+                            r.name, r.path, r.land, r.base, r.format, r.gate, r.lanes
+                        )
+                    })
                     .collect::<String>(),
             )
         });
@@ -762,7 +824,9 @@ fn repo_targets() -> spira_config::repo_admin::Targets {
 
 fn cmd_repo_set(args: &[String]) -> ExitCode {
     let [name, field, value] = args else {
-        eprintln!("usage: spira-config repo set <name> <path|queue|land|format|gate|lanes> <value>");
+        eprintln!(
+            "usage: spira-config repo set <name> <path|queue|land|format|gate|lanes> <value>"
+        );
         return ExitCode::FAILURE;
     };
     match spira_config::repo_admin::set(name, field, value, &repo_targets()) {
@@ -836,7 +900,10 @@ fn cmd_repo_check(reg: &Registry, args: &[String]) -> ExitCode {
 fn cmd_repo(args: &[String]) -> ExitCode {
     let reg = repo_registry();
     match args.first().map(String::as_str) {
-        Some("field") => match (args.get(1), args.get(2).map(String::as_str).and_then(parse_column)) {
+        Some("field") => match (
+            args.get(1),
+            args.get(2).map(String::as_str).and_then(parse_column),
+        ) {
             (Some(name), Some(col)) => match reg.field(name, col) {
                 Some(v) => {
                     println!("{v}");
@@ -845,7 +912,9 @@ fn cmd_repo(args: &[String]) -> ExitCode {
                 None => ExitCode::FAILURE,
             },
             _ => {
-                eprintln!("usage: spira-config repo field <name> <path|land|base|format|gate|lanes>");
+                eprintln!(
+                    "usage: spira-config repo field <name> <path|land|base|format|gate|lanes>"
+                );
                 ExitCode::FAILURE
             }
         },
@@ -991,7 +1060,10 @@ fn cmd_repo(args: &[String]) -> ExitCode {
             // means "no repo given" — same convention as `root`'s empty name defaulting to
             // the home repo elsewhere in this file, not a literal empty path to shell `git
             // -C` onto.
-            Some(r) => match spira_config::repos::ref_remote(r, args.get(2).map(String::as_str).filter(|s| !s.is_empty())) {
+            Some(r) => match spira_config::repos::ref_remote(
+                r,
+                args.get(2).map(String::as_str).filter(|s| !s.is_empty()),
+            ) {
                 Some(v) => {
                     println!("{v}");
                     ExitCode::SUCCESS
@@ -1094,9 +1166,20 @@ fn cmd_schema() -> ExitCode {
     }
 }
 
-fn read_text_and_doc(file: &str, reg: Option<&ConfRegistry>) -> Result<(String, SpiraToml), String> {
-    let text = if Path::new(file).exists() { fs::read_to_string(file).map_err(|e| format!("{file}: {e}"))? } else { String::new() };
-    let doc = if text.trim().is_empty() { SpiraToml::default() } else { validate_in(&text, reg)? };
+fn read_text_and_doc(
+    file: &str,
+    reg: Option<&ConfRegistry>,
+) -> Result<(String, SpiraToml), String> {
+    let text = if Path::new(file).exists() {
+        fs::read_to_string(file).map_err(|e| format!("{file}: {e}"))?
+    } else {
+        String::new()
+    };
+    let doc = if text.trim().is_empty() {
+        SpiraToml::default()
+    } else {
+        validate_in(&text, reg)?
+    };
     Ok((text, doc))
 }
 
@@ -1104,7 +1187,9 @@ fn read_text_and_doc(file: &str, reg: Option<&ConfRegistry>) -> Result<(String, 
 /// leaves its `.bak.*` backup in the tree for every later scan to find.
 fn is_checked_in_fixture(path: &Path) -> bool {
     let parts: Vec<_> = path.components().collect();
-    parts.windows(2).any(|w| w[0].as_os_str() == "tests" && w[1].as_os_str() == "fixtures")
+    parts
+        .windows(2)
+        .any(|w| w[0].as_os_str() == "tests" && w[1].as_os_str() == "fixtures")
 }
 
 /// Writes `doc` to `file` for `set`/`unset`: temp file, validate the temp file's own
@@ -1126,7 +1211,9 @@ fn write_doc(file: &str, text: &str, verb: &str, reg: Option<&ConfRegistry>) -> 
         }
     };
     if let Err(e) = validate_in(&out, reg) {
-        eprintln!("spira-config {verb}: {file}: refusing to write a document that fails to validate: {e}");
+        eprintln!(
+            "spira-config {verb}: {file}: refusing to write a document that fails to validate: {e}"
+        );
         return ExitCode::FAILURE;
     }
     if let Err(e) = backup_existing(path) {
@@ -1157,7 +1244,12 @@ fn staged_registry(dir: &str) -> Result<ConfRegistry, String> {
     let home = [dir.to_path_buf(), dir.join("spira")]
         .into_iter()
         .find(|h| h.join("conf.d").is_dir())
-        .ok_or_else(|| format!("--release {}: no conf.d there or under spira/ — not a release", dir.display()))?;
+        .ok_or_else(|| {
+            format!(
+                "--release {}: no conf.d there or under spira/ — not a release",
+                dir.display()
+            )
+        })?;
     ConfRegistry::load(&home)
 }
 
@@ -1240,7 +1332,11 @@ fn cmd_unset(reg: Option<&ConfRegistry>, path: &str, file: &str) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let edited = if is_retired_path(path) { remove_retired_text(&text, path) } else { edit_text(&text, &doc, &new_doc) };
+    let edited = if is_retired_path(path) {
+        remove_retired_text(&text, path)
+    } else {
+        edit_text(&text, &doc, &new_doc)
+    };
     match edited {
         Ok(out) => write_doc(file, &out, "unset", reg),
         Err(e) => {
@@ -1260,9 +1356,14 @@ fn cmd_unset(reg: Option<&ConfRegistry>, path: &str, file: &str) -> ExitCode {
 fn cmd_writeback(candidate: &str) -> ExitCode {
     use spira_config::writeback::{writeback, WritebackInput};
 
-    let config_write = env::var("SPIRA_CONFIG_WRITE").map(|v| v == "1").unwrap_or(false);
+    let config_write = env::var("SPIRA_CONFIG_WRITE")
+        .map(|v| v == "1")
+        .unwrap_or(false);
     let home = PathBuf::from(env::var("SPIRA_HOME").unwrap_or_default());
-    let prod = env::var("SPIRA_PROD").ok().filter(|v| !v.is_empty()).map(PathBuf::from);
+    let prod = env::var("SPIRA_PROD")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from);
     // Unset is no repository, not a default one: an empty path is never writable, so the
     // write is never redirected there (writeback::is_writable).
     let repo = match env::var("SPIRA_REPO") {
@@ -1276,7 +1377,13 @@ fn cmd_writeback(candidate: &str) -> ExitCode {
         .unwrap_or_else(|| PathBuf::from(env::var("HOME").unwrap_or_default()).join(".config"))
         .join("spira");
 
-    let input = WritebackInput { config_write, home: &home, prod: prod.as_deref(), repo: &repo, xdg_spira_dir: xdg };
+    let input = WritebackInput {
+        config_write,
+        home: &home,
+        prod: prod.as_deref(),
+        repo: &repo,
+        xdg_spira_dir: xdg,
+    };
     println!("{}", writeback(Path::new(candidate), &input).display());
     ExitCode::SUCCESS
 }
@@ -1555,7 +1662,10 @@ fn cmd_rune(args: &[String]) -> ExitCode {
         Some("taking") => {
             let labels = runes::split_csv(args.get(1).map(String::as_str).unwrap_or(""));
             let cfg = spira_config::process::cfg;
-            let (wait, open) = match (cfg("SPIRA_QUEUE_WAIT_LABEL"), cfg("SPIRA_OPEN_CHILDREN_LABEL")) {
+            let (wait, open) = match (
+                cfg("SPIRA_QUEUE_WAIT_LABEL"),
+                cfg("SPIRA_OPEN_CHILDREN_LABEL"),
+            ) {
                 (Ok(w), Ok(o)) => (w, o),
                 (Err(e), _) | (_, Err(e)) => {
                     eprintln!("spira-config rune taking: {e}");
@@ -1622,7 +1732,11 @@ fn cmd_local_pass(args: &[String]) -> ExitCode {
         eprintln!("usage: spira-config local-pass <record|check> <full-suite|acceptance-ad> <commit-sha> [producer]");
         ExitCode::from(2)
     };
-    let (Some(op), Some(kind), Some(sha)) = (args.first(), args.get(1).and_then(|k| Kind::parse(k)), args.get(2)) else {
+    let (Some(op), Some(kind), Some(sha)) = (
+        args.first(),
+        args.get(1).and_then(|k| Kind::parse(k)),
+        args.get(2),
+    ) else {
         return usage();
     };
     // The run dir is resolved from config like every other reader (publish checks the same
@@ -1646,17 +1760,33 @@ fn cmd_local_pass(args: &[String]) -> ExitCode {
         .to_string();
     let who = env::var("USER").unwrap_or_else(|_| "unknown".into());
     match op.as_str() {
-        "record" => match record(&run, kind, sha, args.get(3).map(String::as_str).unwrap_or("unknown"), &now) {
+        "record" => match record(
+            &run,
+            kind,
+            sha,
+            args.get(3).map(String::as_str).unwrap_or("unknown"),
+            &now,
+        ) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
                 eprintln!("{e}");
                 ExitCode::FAILURE
             }
         },
-        "check" => match check(&run, kind, sha, env::var(OVERRIDE_ENV).ok().as_deref(), &who, &now) {
+        "check" => match check(
+            &run,
+            kind,
+            sha,
+            env::var(OVERRIDE_ENV).ok().as_deref(),
+            &who,
+            &now,
+        ) {
             Ok(Verdict::Passed) => ExitCode::SUCCESS,
             Ok(Verdict::Overridden(r)) => {
-                eprintln!("local-pass: {} check for {sha} OVERRIDDEN: {r}", kind.as_str());
+                eprintln!(
+                    "local-pass: {} check for {sha} OVERRIDDEN: {r}",
+                    kind.as_str()
+                );
                 ExitCode::SUCCESS
             }
             Err(e) => {
@@ -1679,7 +1809,10 @@ fn cmd_init(args: &[String]) -> ExitCode {
         }
     };
     if !rest.is_empty() {
-        eprintln!("spira-config init: unexpected argument(s): {}", rest.join(" "));
+        eprintln!(
+            "spira-config init: unexpected argument(s): {}",
+            rest.join(" ")
+        );
         return ExitCode::from(2);
     }
     let out = flags.remove("out").map(std::path::PathBuf::from);
@@ -1710,12 +1843,18 @@ fn cmd_init(args: &[String]) -> ExitCode {
 
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
-    let endpoint = env_nonempty("SPIRA_METRICS_ENDPOINT").or_else(spira_config::process::metrics_endpoint);
+    let endpoint =
+        env_nonempty("SPIRA_METRICS_ENDPOINT").or_else(spira_config::process::metrics_endpoint);
     let op = args.first().map(String::as_str).unwrap_or("usage");
     spira_otel::oneshot::begin(endpoint.as_deref(), "spira-config", op);
     let code = dispatch(&args);
     let failed = format!("{code:?}") != format!("{:?}", ExitCode::SUCCESS);
-    if failed && matches!(op, "validate" | "get" | "export" | "resolve" | "env-bootstrap" | "check-bd") {
+    if failed
+        && matches!(
+            op,
+            "validate" | "get" | "export" | "resolve" | "env-bootstrap" | "check-bd"
+        )
+    {
         spira_otel::oneshot::event("spira_config_resolve_failures", 1, &[]);
     }
     spira_otel::oneshot::finish(code)
@@ -1764,7 +1903,9 @@ fn dispatch(args: &[String]) -> ExitCode {
                     "--conf-d" => {
                         conf_d = args.get(i + 1).cloned();
                         if conf_d.is_none() {
-                            eprintln!("usage: spira-config resolve --sh|--sh-all [--conf-d DIR] [file]");
+                            eprintln!(
+                                "usage: spira-config resolve --sh|--sh-all [--conf-d DIR] [file]"
+                            );
                             return ExitCode::FAILURE;
                         }
                         i += 2;
@@ -1790,7 +1931,11 @@ fn dispatch(args: &[String]) -> ExitCode {
         Some("repo") => cmd_repo(&args[1..]),
         Some("retire") => cmd_retire(&args[1..]),
         Some("set") => match split_release(&args[1..]) {
-            Ok((reg, [path, value, file])) => tell_scheduler(cmd_set(reg.as_ref(), path, value, file), reg.is_none(), path),
+            Ok((reg, [path, value, file])) => tell_scheduler(
+                cmd_set(reg.as_ref(), path, value, file),
+                reg.is_none(),
+                path,
+            ),
             Ok(_) => {
                 eprintln!("usage: spira-config set [--release <dir>] <dotted.path> <value> <file>");
                 ExitCode::FAILURE
@@ -1801,7 +1946,9 @@ fn dispatch(args: &[String]) -> ExitCode {
             }
         },
         Some("unset") => match split_release(&args[1..]) {
-            Ok((reg, [path, file])) => tell_scheduler(cmd_unset(reg.as_ref(), path, file), reg.is_none(), path),
+            Ok((reg, [path, file])) => {
+                tell_scheduler(cmd_unset(reg.as_ref(), path, file), reg.is_none(), path)
+            }
             Ok(_) => {
                 eprintln!("usage: spira-config unset [--release <dir>] <dotted.path> <file>");
                 ExitCode::FAILURE

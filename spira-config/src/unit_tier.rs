@@ -115,7 +115,10 @@ pub fn integration_words(profile: Option<&str>, selection: &str) -> String {
 
 /// The words that rerun one cargo-named failing target (`rerun` is cargo's own `-p <package> <target>`).
 pub fn rerun_words(profile: Option<&str>, rerun: &str) -> String {
-    format!("test --no-fail-fast {} {rerun}", profile_words(profile, "--profile"))
+    format!(
+        "test --no-fail-fast {} {rerun}",
+        profile_words(profile, "--profile")
+    )
 }
 
 /// [`unit_tier_doc!`].
@@ -146,15 +149,27 @@ impl DenyList {
             let n = i + 1;
             let f: Vec<&str> = line.split('\t').collect();
             if f.len() != 4 {
-                return Err(format!("deny list line {n}: want 4 tab-separated fields, got {}", f.len()));
+                return Err(format!(
+                    "deny list line {n}: want 4 tab-separated fields, got {}",
+                    f.len()
+                ));
             }
             if f[0] != "disabled" && f[0] != "quarantined" {
-                return Err(format!("deny list line {n}: state {:?} is neither disabled nor quarantined", f[0]));
+                return Err(format!(
+                    "deny list line {n}: state {:?} is neither disabled nor quarantined",
+                    f[0]
+                ));
             }
-            let word = |w: &str| !w.is_empty() && w.chars().all(|c| c.is_ascii_alphanumeric() || "_:.-/".contains(c));
+            let word = |w: &str| {
+                !w.is_empty()
+                    && w.chars()
+                        .all(|c| c.is_ascii_alphanumeric() || "_:.-/".contains(c))
+            };
             let well_formed = match f[1].split_once(':') {
                 Some(("suite", name)) => word(name),
-                Some(("unit" | "integration", rest)) => rest.split_once(' ').is_some_and(|(a, b)| word(a) && word(b)),
+                Some(("unit" | "integration", rest)) => rest
+                    .split_once(' ')
+                    .is_some_and(|(a, b)| word(a) && word(b)),
                 _ => false,
             };
             if !well_formed {
@@ -167,7 +182,10 @@ impl DenyList {
 
     /// The text [`Self::parse`] reads back: one row per denied test, state and test only.
     pub fn render(&self) -> String {
-        self.rows.iter().map(|(s, t)| format!("{s}\t{t}\t-\t-\n")).collect()
+        self.rows
+            .iter()
+            .map(|(s, t)| format!("{s}\t{t}\t-\t-\n"))
+            .collect()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -176,12 +194,18 @@ impl DenyList {
 
     /// The tests of one kind (`suite`, `unit`, `integration`), the part after the prefix.
     pub fn tests(&self, kind: &str) -> Vec<&str> {
-        self.rows.iter().filter_map(|(_, t)| t.strip_prefix(kind)?.strip_prefix(':')).collect()
+        self.rows
+            .iter()
+            .filter_map(|(_, t)| t.strip_prefix(kind)?.strip_prefix(':'))
+            .collect()
     }
 
     /// Each `suite:` row's file and state.
     pub fn suites(&self) -> Vec<(&str, &str)> {
-        self.rows.iter().filter_map(|(s, t)| Some((t.strip_prefix("suite:")?, s.as_str()))).collect()
+        self.rows
+            .iter()
+            .filter_map(|(s, t)| Some((t.strip_prefix("suite:")?, s.as_str())))
+            .collect()
     }
 
     pub fn nextest_filter(&self) -> Option<String> {
@@ -196,7 +220,11 @@ impl DenyList {
 
     /// ` -- --exact --skip <path> …` for the `--test '*'` invocation; empty for no `integration:` row.
     pub fn integration_skips(&self) -> String {
-        let paths: Vec<&str> = self.tests("integration").into_iter().filter_map(|t| t.split_once(' ').map(|x| x.1)).collect();
+        let paths: Vec<&str> = self
+            .tests("integration")
+            .into_iter()
+            .filter_map(|t| t.split_once(' ').map(|x| x.1))
+            .collect();
         if paths.is_empty() {
             return String::new();
         }
@@ -207,7 +235,10 @@ impl DenyList {
     /// The config line that applies [`Self::nextest_filter`]; empty for none.
     pub fn config_filter_line(&self) -> String {
         match self.nextest_filter() {
-            Some(f) => format!("default-filter = \"{}\"\n", f.replace('\\', "\\\\").replace('"', "\\\"")),
+            Some(f) => format!(
+                "default-filter = \"{}\"\n",
+                f.replace('\\', "\\\\").replace('"', "\\\"")
+            ),
             None => String::new(),
         }
     }
@@ -267,7 +298,9 @@ pub fn timings(log: &str) -> UnitTimings {
     for line in log.lines() {
         if let Some(rest) = line.trim_start().strip_prefix("Summary [") {
             summarized = true;
-            tests = rest.split_once(']').and_then(|(_, r)| r.split_whitespace().next()?.parse().ok());
+            tests = rest
+                .split_once(']')
+                .and_then(|(_, r)| r.split_whitespace().next()?.parse().ok());
             break;
         }
         seen.extend(per_test(line));
@@ -275,7 +308,11 @@ pub fn timings(log: &str) -> UnitTimings {
     let tests = tests.unwrap_or(seen.len() as u64);
     seen.sort_by(|a, b| b.1.total_cmp(&a.1));
     seen.truncate(SLOWEST);
-    UnitTimings { tests, summarized, slowest: seen }
+    UnitTimings {
+        tests,
+        summarized,
+        slowest: seen,
+    }
 }
 
 impl UnitTimings {
@@ -284,7 +321,11 @@ impl UnitTimings {
         if self.slowest.is_empty() {
             return "-".into();
         }
-        let f: Vec<String> = self.slowest.iter().map(|(n, s)| format!("{}:{s}", n.replace(' ', "/"))).collect();
+        let f: Vec<String> = self
+            .slowest
+            .iter()
+            .map(|(n, s)| format!("{}:{s}", n.replace(' ', "/")))
+            .collect();
         f.join(",")
     }
 }
@@ -292,7 +333,11 @@ impl UnitTimings {
 impl UnitTimings {
     /// The record field: [`Self::slowest_field`], or empty when no test was timed.
     pub fn slowest_record(&self) -> String {
-        if self.slowest.is_empty() { String::new() } else { self.slowest_field() }
+        if self.slowest.is_empty() {
+            String::new()
+        } else {
+            self.slowest_field()
+        }
     }
 }
 
@@ -310,9 +355,18 @@ pub fn render(build_secs: u64, run_secs: u64, lines: &str) -> String {
 
 pub fn parse(text: &str) -> Option<UnitFile> {
     let mut it = text.splitn(3, '\n');
-    let build_secs = it.next()?.strip_prefix("unit_build_secs ")?.trim().parse().ok()?;
+    let build_secs = it
+        .next()?
+        .strip_prefix("unit_build_secs ")?
+        .trim()
+        .parse()
+        .ok()?;
     let run_secs = it.next()?.strip_prefix("unit_secs ")?.trim().parse().ok()?;
-    Some(UnitFile { build_secs, run_secs, timings: timings(it.next().unwrap_or("")) })
+    Some(UnitFile {
+        build_secs,
+        run_secs,
+        timings: timings(it.next().unwrap_or("")),
+    })
 }
 
 #[cfg(test)]
@@ -355,14 +409,23 @@ mod tests {
         let d = DenyList::default();
         assert_eq!(d.nextest_filter(), None);
         assert_eq!(d.integration_skips(), "");
-        assert_eq!(nextest_config(7, 3, &d), "[profile.default]\nslow-timeout = { period = \"7s\", terminate-after = 3 }\n");
-        assert_eq!(DenyList::parse("# test-registry deny-list at=1 rows=0\n").unwrap(), d);
+        assert_eq!(
+            nextest_config(7, 3, &d),
+            "[profile.default]\nslow-timeout = { period = \"7s\", terminate-after = 3 }\n"
+        );
+        assert_eq!(
+            DenyList::parse("# test-registry deny-list at=1 rows=0\n").unwrap(),
+            d
+        );
     }
 
     #[test]
     fn two_unit_rows_of_either_state_give_the_exact_filter_expression() {
         let d = DenyList::parse(TWO).unwrap();
-        assert_eq!(d.nextest_filter().unwrap(), "not ((binary_id(=a::b) & test(=t::drop)) | (binary_id(=c) & test(=d::e)))");
+        assert_eq!(
+            d.nextest_filter().unwrap(),
+            "not ((binary_id(=a::b) & test(=t::drop)) | (binary_id(=c) & test(=d::e)))"
+        );
         assert!(nextest_config(7, 3, &d).ends_with("default-filter = \"not ((binary_id(=a::b) & test(=t::drop)) | (binary_id(=c) & test(=d::e)))\"\n"));
         assert_eq!(DenyList::parse(&d.render()).unwrap(), d);
     }
@@ -382,8 +445,14 @@ mod tests {
             ("\n\nfrozen\tsuite:a\t-\t-\n", "line 3"),
             ("disabled\tunit:nopath\t-\t-\n", "line 1"),
             ("disabled\tfoo:a b\t-\t-\n", "line 1"),
-            ("disabled\tintegration:p x;touch$IFS/tmp/y\t-\t-\n", "line 1"),
-            ("disabled\tunit:a b\t-\t-\nquarantined\tunit:a t::x)|(y\t-\t-\n", "line 2"),
+            (
+                "disabled\tintegration:p x;touch$IFS/tmp/y\t-\t-\n",
+                "line 1",
+            ),
+            (
+                "disabled\tunit:a b\t-\t-\nquarantined\tunit:a t::x)|(y\t-\t-\n",
+                "line 2",
+            ),
             ("disabled\tsuite:a$(id)\t-\t-\n", "line 1"),
         ] {
             let e = DenyList::parse(text).unwrap_err();
@@ -419,17 +488,29 @@ mod tests {
     fn nextest_log() -> String {
         let mut l = String::from("    Starting 12 tests across 2 binaries\n");
         let rows = [
-            ("PASS", 0.007, "a t1"), ("PASS", 3.5, "a t2"), ("FAIL", 1.25, "a t3"),
-            ("PASS", 9.0, "b t4"), ("TIMEOUT", 60.0, "b t5"), ("PASS", 0.5, "b t6"),
-            ("PASS", 2.0, "b t7"), ("PASS", 3.5, "b t8"), ("PASS", 4.0, "b t9"),
-            ("PASS", 5.0, "b t10"), ("PASS", 6.0, "b t11"), ("PASS", 0.001, "b t12"),
+            ("PASS", 0.007, "a t1"),
+            ("PASS", 3.5, "a t2"),
+            ("FAIL", 1.25, "a t3"),
+            ("PASS", 9.0, "b t4"),
+            ("TIMEOUT", 60.0, "b t5"),
+            ("PASS", 0.5, "b t6"),
+            ("PASS", 2.0, "b t7"),
+            ("PASS", 3.5, "b t8"),
+            ("PASS", 4.0, "b t9"),
+            ("PASS", 5.0, "b t10"),
+            ("PASS", 6.0, "b t11"),
+            ("PASS", 0.001, "b t12"),
         ];
         for (i, (st, s, n)) in rows.iter().enumerate() {
             l.push_str(&format!("{st:>12} [{s:>8.3}s] ({:>2}/12) {n}\n", i + 1));
         }
         l.push_str("     SLOW [>120.000s] ( 5/12) b t5\n------------\n");
-        l.push_str("     Summary [  61.000s] 12 tests run: 10 passed, 1 failed, 1 timed out, 0 skipped\n");
-        l.push_str("        FAIL [   1.250s] ( 3/12) a t3\n     TIMEOUT [  60.000s] ( 5/12) b t5\n");
+        l.push_str(
+            "     Summary [  61.000s] 12 tests run: 10 passed, 1 failed, 1 timed out, 0 skipped\n",
+        );
+        l.push_str(
+            "        FAIL [   1.250s] ( 3/12) a t3\n     TIMEOUT [  60.000s] ( 5/12) b t5\n",
+        );
         l
     }
 
@@ -438,7 +519,10 @@ mod tests {
         let t = timings(&nextest_log());
         assert_eq!(t.tests, 12);
         let names: Vec<&str> = t.slowest.iter().map(|(n, _)| n.as_str()).collect();
-        assert_eq!(names, ["b t5", "b t4", "b t11", "b t10", "b t9", "a t2", "b t8", "b t7", "a t3", "b t6"]);
+        assert_eq!(
+            names,
+            ["b t5", "b t4", "b t11", "b t10", "b t9", "a t2", "b t8", "b t7", "a t3", "b t6"]
+        );
         assert_eq!(t.slowest[0].1, 60.0);
     }
 
@@ -453,12 +537,19 @@ mod tests {
 
     #[test]
     fn timings_of_a_log_with_no_tests_are_empty() {
-        assert_eq!(timings("error: could not compile\n"), UnitTimings::default());
+        assert_eq!(
+            timings("error: could not compile\n"),
+            UnitTimings::default()
+        );
     }
 
     #[test]
     fn the_file_form_round_trips_and_leaves_the_parse_to_timings() {
-        let lines: String = nextest_log().lines().filter(|l| l.contains("] (") || l.contains("Summary [")).map(|l| format!("{l}\n")).collect();
+        let lines: String = nextest_log()
+            .lines()
+            .filter(|l| l.contains("] (") || l.contains("Summary ["))
+            .map(|l| format!("{l}\n"))
+            .collect();
         let text = render(12, 61, &lines);
         let f = parse(&text).unwrap();
         assert_eq!((f.build_secs, f.run_secs), (12, 61));
@@ -468,7 +559,11 @@ mod tests {
 
     #[test]
     fn the_slowest_field_is_name_colon_secs_joined_by_commas() {
-        let t = UnitTimings { tests: 2, summarized: true, slowest: vec![("a t1".into(), 1.5), ("b t2".into(), 0.25)] };
+        let t = UnitTimings {
+            tests: 2,
+            summarized: true,
+            slowest: vec![("a t1".into(), 1.5), ("b t2".into(), 0.25)],
+        };
         assert_eq!(t.slowest_field(), "a/t1:1.5,b/t2:0.25");
         assert_eq!(UnitTimings::default().slowest_field(), "-");
     }

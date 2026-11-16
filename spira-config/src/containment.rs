@@ -92,7 +92,11 @@ fn fetch_remotes(path: &str) -> Vec<String> {
 /// port returns the decision instead and leaves exiting to the caller, so a library consumer
 /// (a future in-process `resolve()` caller) can choose how to fail rather than this function
 /// taking the process down under it.
-pub fn check(instance: &str, workspaces: &str, repo_map_text: Option<&str>) -> Result<(), Vec<String>> {
+pub fn check(
+    instance: &str,
+    workspaces: &str,
+    repo_map_text: Option<&str>,
+) -> Result<(), Vec<String>> {
     check_with(instance, workspaces, repo_map_text, &fetch_remotes)
 }
 
@@ -105,7 +109,9 @@ fn check_with(
     if instance.is_empty() || instance == "prod" {
         return Ok(());
     }
-    let Some(text) = repo_map_text else { return Ok(()) };
+    let Some(text) = repo_map_text else {
+        return Ok(());
+    };
 
     let mut violations = Vec::new();
     // De-duplicate identical messages across rows is unnecessary (bash doesn't either) — a
@@ -187,8 +193,15 @@ mod tests {
         let map = "inside|/ws/inside\noutside|/elsewhere/outside\n";
         let err = check_with("test", "/ws", Some(map), &no_remotes).unwrap_err();
         assert_eq!(err.len(), 1, "{err:?}");
-        assert!(err[0].contains("outside") && err[0].contains("/elsewhere/outside"), "{err:?}");
-        assert_eq!(check_with("test", "/ws", Some("inside|/ws/inside\n"), &no_remotes), Ok(()), "positive control");
+        assert!(
+            err[0].contains("outside") && err[0].contains("/elsewhere/outside"),
+            "{err:?}"
+        );
+        assert_eq!(
+            check_with("test", "/ws", Some("inside|/ws/inside\n"), &no_remotes),
+            Ok(()),
+            "positive control"
+        );
     }
 
     // covers: UC-config-store-preflight-16
@@ -198,9 +211,18 @@ mod tests {
             "/ws/net" => vec!["https://example.invalid/x.git".to_string()],
             _ => vec!["/ws/local-origin".to_string()],
         };
-        let err = check_with("test", "/ws", Some("net|/ws/net\nlocal|/ws/local\n"), &remotes).unwrap_err();
+        let err = check_with(
+            "test",
+            "/ws",
+            Some("net|/ws/net\nlocal|/ws/local\n"),
+            &remotes,
+        )
+        .unwrap_err();
         assert_eq!(err.len(), 1, "{err:?}");
-        assert!(err[0].contains("net") && err[0].contains("example.invalid"), "{err:?}");
+        assert!(
+            err[0].contains("net") && err[0].contains("example.invalid"),
+            "{err:?}"
+        );
     }
 
     // covers: UC-config-store-preflight-16
@@ -216,8 +238,15 @@ mod tests {
         let root = ws.canonicalize().unwrap();
         let root = root.to_str().unwrap();
         let map = |name: &str| format!("{name}|{}/{name}\n", root);
-        assert!(check_with("test", root, Some(&map("escapes")), &no_remotes).is_err(), "a link pointing out is outside");
-        assert_eq!(check_with("test", root, Some(&map("stays")), &no_remotes), Ok(()), "a link pointing in is inside");
+        assert!(
+            check_with("test", root, Some(&map("escapes")), &no_remotes).is_err(),
+            "a link pointing out is outside"
+        );
+        assert_eq!(
+            check_with("test", root, Some(&map("stays")), &no_remotes),
+            Ok(()),
+            "a link pointing in is inside"
+        );
     }
 
     // covers: UC-config-store-preflight-16
@@ -225,14 +254,20 @@ mod tests {
     fn a_workspace_of_slash_confines_nothing_and_a_sibling_prefix_is_not_inside() {
         assert!(is_under("/anywhere/at/all", "/"));
         assert!(is_under("/ws/a", "/ws/"));
-        assert!(!is_under("/ws-other/a", "/ws"), "a shared name prefix is not containment");
+        assert!(
+            !is_under("/ws-other/a", "/ws"),
+            "a shared name prefix is not containment"
+        );
     }
 
     // covers: UC-config-store-preflight-16
     #[test]
     fn prod_is_not_confined_even_with_an_outside_path_and_a_network_remote() {
         let remotes = |_: &str| vec!["https://example.invalid/x.git".to_string()];
-        assert_eq!(check_with("prod", "/ws", Some("x|/elsewhere\n"), &remotes), Ok(()));
+        assert_eq!(
+            check_with("prod", "/ws", Some("x|/elsewhere\n"), &remotes),
+            Ok(())
+        );
     }
 
     #[test]

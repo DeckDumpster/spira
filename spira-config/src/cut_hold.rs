@@ -53,11 +53,16 @@ pub fn place(queue_dir: &Path, repo: &str, hold: &CutHold) -> Result<(), String>
         match fs::OpenOptions::new().write(true).create_new(true).open(&p) {
             Ok(mut f) => {
                 use std::io::Write;
-                return f.write_all(body.as_bytes()).map_err(|e| format!("{}: {e}", p.display()));
+                return f
+                    .write_all(body.as_bytes())
+                    .map_err(|e| format!("{}: {e}", p.display()));
             }
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
                 if let Some(h) = held(queue_dir, repo, hold.since) {
-                    return Err(format!("cut already held by {} ({}) until {}", h.owner, h.reason, h.until));
+                    return Err(format!(
+                        "cut already held by {} ({}) until {}",
+                        h.owner, h.reason, h.until
+                    ));
                 }
                 let _ = fs::remove_file(&p);
             }
@@ -80,7 +85,13 @@ mod tests {
     use super::*;
 
     fn hold(pid: u32, until: u64) -> CutHold {
-        CutHold { owner: "hand-land sp-x".into(), reason: "landing".into(), pid, since: 100, until }
+        CutHold {
+            owner: "hand-land sp-x".into(),
+            reason: "landing".into(),
+            pid,
+            since: 100,
+            until,
+        }
     }
 
     fn dir() -> testkit::TempDir {
@@ -95,7 +106,10 @@ mod tests {
         assert!(held_if(&d, "r", 200, |_| true).is_some());
         assert!(held_if(&d, "r", 500, |_| true).is_none(), "time is up");
         assert!(held_if(&d, "r", 200, |_| false).is_none(), "holder is gone");
-        assert!(held_if(&d, "other", 200, |_| true).is_none(), "another repo is not held");
+        assert!(
+            held_if(&d, "other", 200, |_| true).is_none(),
+            "another repo is not held"
+        );
     }
 
     #[test]
@@ -110,7 +124,11 @@ mod tests {
         assert!(path(&d, "r").exists(), "only the placer lifts it");
         lift(&d, "r", me);
         assert!(!path(&d, "r").exists());
-        fs::write(path(&d, "r"), serde_json::to_string(&hold(u32::MAX - 1, 500)).unwrap()).unwrap();
+        fs::write(
+            path(&d, "r"),
+            serde_json::to_string(&hold(u32::MAX - 1, 500)).unwrap(),
+        )
+        .unwrap();
         place(&d, "r", &hold(me, 500)).unwrap();
     }
 }

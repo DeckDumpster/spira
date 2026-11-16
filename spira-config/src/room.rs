@@ -58,7 +58,10 @@ pub fn user_quota(p: &Path) -> Option<Quota> {
     if rc != 0 || d.bhardlimit == 0 {
         return None;
     }
-    Some(Quota { limit: d.bhardlimit.saturating_mul(1024), used: d.curspace })
+    Some(Quota {
+        limit: d.bhardlimit.saturating_mul(1024),
+        used: d.curspace,
+    })
 }
 
 pub fn combine_mib(fs_free_mib: Option<u64>, quota: Option<Quota>) -> Option<u64> {
@@ -76,9 +79,14 @@ pub fn avail_mib(p: &Path) -> Option<u64> {
 
 /// True when build output carries a write failure from a full disk or an exhausted quota.
 pub fn is_space_failure(output: &str) -> bool {
-    ["Disk quota exceeded", "No space left on device", "EDQUOT", "ENOSPC"]
-        .iter()
-        .any(|m| output.contains(m))
+    [
+        "Disk quota exceeded",
+        "No space left on device",
+        "EDQUOT",
+        "ENOSPC",
+    ]
+    .iter()
+    .any(|m| output.contains(m))
 }
 
 #[cfg(test)]
@@ -87,13 +95,19 @@ mod tests {
 
     #[test]
     fn quota_headroom_below_fs_free_wins() {
-        let q = Quota { limit: 20 * 1024 * MIB, used: 18 * 1024 * MIB };
+        let q = Quota {
+            limit: 20 * 1024 * MIB,
+            used: 18 * 1024 * MIB,
+        };
         assert_eq!(combine_mib(Some(6200), Some(q)), Some(2048));
     }
 
     #[test]
     fn fs_free_wins_when_smaller_and_no_quota_means_fs_free() {
-        let q = Quota { limit: 20 * 1024 * MIB, used: MIB };
+        let q = Quota {
+            limit: 20 * 1024 * MIB,
+            used: MIB,
+        };
         assert_eq!(combine_mib(Some(100), Some(q)), Some(100));
         assert_eq!(combine_mib(Some(6200), None), Some(6200));
         assert_eq!(combine_mib(None, None), None);
@@ -101,13 +115,18 @@ mod tests {
 
     #[test]
     fn over_quota_is_zero_headroom() {
-        let q = Quota { limit: MIB, used: 5 * MIB };
+        let q = Quota {
+            limit: MIB,
+            used: 5 * MIB,
+        };
         assert_eq!(combine_mib(Some(9000), Some(q)), Some(0));
     }
 
     #[test]
     fn space_failures_are_recognised_and_ordinary_output_is_not() {
-        assert!(is_space_failure("error: write: Disk quota exceeded (os error 122)"));
+        assert!(is_space_failure(
+            "error: write: Disk quota exceeded (os error 122)"
+        ));
         assert!(is_space_failure("No space left on device"));
         assert!(!is_space_failure("Compiling x v0.1.0\nFinished release"));
     }

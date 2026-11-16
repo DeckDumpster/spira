@@ -46,7 +46,11 @@ pub fn path_tail(current: &str, spira_path: &str, home: &str) -> String {
         let needle = format!(":{seg}:");
         let probe = format!(":{path}:");
         if !probe.contains(&needle) {
-            path = if path.is_empty() { seg } else { format!("{path}:{seg}") };
+            path = if path.is_empty() {
+                seg
+            } else {
+                format!("{path}:{seg}")
+            };
         }
     }
     path
@@ -116,10 +120,16 @@ pub struct SchemaCheckResult {
 
 impl SchemaCheckResult {
     fn ok(messages: Vec<String>) -> Self {
-        SchemaCheckResult { messages, refuse: false }
+        SchemaCheckResult {
+            messages,
+            refuse: false,
+        }
     }
     fn refuse(messages: Vec<String>) -> Self {
-        SchemaCheckResult { messages, refuse: true }
+        SchemaCheckResult {
+            messages,
+            refuse: true,
+        }
     }
 }
 
@@ -142,14 +152,22 @@ impl SchemaCheckResult {
 /// way, the stamp is written only after an OK outcome (`bd` exited 0, or the one known-safe
 /// deprecation warning matched — see below), so a tolerated failure keeps re-checking, and
 /// re-opening the store, on every single source until it actually clears.
-pub fn check_bd_schema(bd: &str, db: &str, run: &str, doctor: bool, conf_file: &str) -> SchemaCheckResult {
+pub fn check_bd_schema(
+    bd: &str,
+    db: &str,
+    run: &str,
+    doctor: bool,
+    conf_file: &str,
+) -> SchemaCheckResult {
     let beads_dir = format!("{db}/.beads");
     if !Path::new(&beads_dir).is_dir() {
         return SchemaCheckResult::ok(Vec::new());
     }
 
     let stamp_path = format!("{run}/bd-schema-stamp");
-    let stamp_val = fs::metadata(bd).ok().map(|m| format!("{} {}", m.mtime(), m.len()));
+    let stamp_val = fs::metadata(bd)
+        .ok()
+        .map(|m| format!("{} {}", m.mtime(), m.len()));
 
     if let Some(want) = &stamp_val {
         if let Ok(have) = fs::read_to_string(&stamp_path) {
@@ -167,12 +185,23 @@ pub fn check_bd_schema(bd: &str, db: &str, run: &str, doctor: bool, conf_file: &
         crate::shell_quote(bd),
         crate::shell_quote(db),
     );
-    let (rc, combined) = match crate::bounded::bounded("/bin/sh").arg("-c").arg(&script).output() {
-        Ok(o) => (o.status.code().unwrap_or(1), String::from_utf8_lossy(&o.stdout).into_owned()),
+    let (rc, combined) = match crate::bounded::bounded("/bin/sh")
+        .arg("-c")
+        .arg(&script)
+        .output()
+    {
+        Ok(o) => (
+            o.status.code().unwrap_or(1),
+            String::from_utf8_lossy(&o.stdout).into_owned(),
+        ),
         Err(e) => (1, format!("spira: could not run {bd}: {e}")),
     };
 
-    let SchemaVerdict { ok, refuse, messages } = schema_verdict(rc, &combined, bd, doctor, conf_file);
+    let SchemaVerdict {
+        ok,
+        refuse,
+        messages,
+    } = schema_verdict(rc, &combined, bd, doctor, conf_file);
 
     // Write the stamp only after a successful check (best-effort; failure is silent, exactly
     // as the bash `|| true` this replaces was).
@@ -201,7 +230,13 @@ pub struct SchemaVerdict {
 
 /// The pure half of the schema check: exit code and combined output in, verdict out. No
 /// process, filesystem or clock, so every refusal path is a table row.
-pub fn schema_verdict(rc: i32, combined: &str, bd: &str, doctor: bool, conf_file: &str) -> SchemaVerdict {
+pub fn schema_verdict(
+    rc: i32,
+    combined: &str,
+    bd: &str,
+    doctor: bool,
+    conf_file: &str,
+) -> SchemaVerdict {
     let combined = combined.to_string();
     let mut ok = false;
     let mut refuse = false;
@@ -215,7 +250,9 @@ pub fn schema_verdict(rc: i32, combined: &str, bd: &str, doctor: bool, conf_file
     } else if combined.contains("locked by another dolt process") {
         // Lock contention means the store is in embedded mode — one exclusive lock, many
         // waiters. Embedded mode is refused by doctor; run it to diagnose.
-        messages.push("spira: bd locked — store is in embedded mode (dolt_mode); run doctor".to_string());
+        messages.push(
+            "spira: bd locked — store is in embedded mode (dolt_mode); run doctor".to_string(),
+        );
         refuse = !doctor;
     } else {
         let db_v = extract_version(&combined, "database is at v");
@@ -240,7 +277,11 @@ pub fn schema_verdict(rc: i32, combined: &str, bd: &str, doctor: bool, conf_file
         refuse = !doctor;
     }
 
-    SchemaVerdict { ok, refuse, messages }
+    SchemaVerdict {
+        ok,
+        refuse,
+        messages,
+    }
 }
 
 /// `grep -q 'dolt_server_port.*deprecated'` — a per-line basic-regex match, not a whole-text
@@ -274,7 +315,11 @@ mod tests {
 
     #[test]
     fn path_tail_appends_each_segment_once() {
-        let got = path_tail("/release/bin:/release/spira", "/opt/custom", "/fixture-home");
+        let got = path_tail(
+            "/release/bin:/release/spira",
+            "/opt/custom",
+            "/fixture-home",
+        );
         assert_eq!(
             got,
             "/release/bin:/release/spira:/opt/custom:/fixture-home/.local/bin:/fixture-home/.cargo/bin:/usr/local/bin:/usr/bin:/bin"
@@ -306,7 +351,10 @@ mod tests {
     #[test]
     fn path_tail_collapses_doubled_colons_in_spira_path() {
         let got = path_tail("", "a::b", "/h");
-        assert_eq!(got, "a:b:/h/.local/bin:/h/.cargo/bin:/usr/local/bin:/usr/bin:/bin");
+        assert_eq!(
+            got,
+            "a:b:/h/.local/bin:/h/.cargo/bin:/usr/local/bin:/usr/bin:/bin"
+        );
     }
 
     #[test]
@@ -333,10 +381,19 @@ mod tests {
     fn check_bd_schema_skips_when_no_store() {
         let dir = testkit::TempDir::new("spira-config-check-bd-no-store");
         let run = dir.path().join("run");
-        let result = check_bd_schema("bd", &dir.path().join("no-such-db").to_string_lossy(), &run.to_string_lossy(), false, "spira.conf");
+        let result = check_bd_schema(
+            "bd",
+            &dir.path().join("no-such-db").to_string_lossy(),
+            &run.to_string_lossy(),
+            false,
+            "spira.conf",
+        );
         assert!(!result.refuse);
         assert!(result.messages.is_empty());
-        assert!(!run.exists(), "a skipped check must not even create SPIRA_RUN");
+        assert!(
+            !run.exists(),
+            "a skipped check must not even create SPIRA_RUN"
+        );
     }
 
     #[test]
@@ -346,19 +403,107 @@ mod tests {
         // (name, rc, output, doctor, ok, refuse, first-message needle)
         type Row<'a> = (&'a str, i32, &'a str, bool, bool, bool, Option<&'a str>);
         let rows: &[Row<'_>] = &[
-            ("clean exit", 0, "Schema already at v61\n", false, true, false, None),
+            (
+                "clean exit",
+                0,
+                "Schema already at v61\n",
+                false,
+                true,
+                false,
+                None,
+            ),
             ("clean exit under doctor", 0, "", true, true, false, None),
-            ("exit 0 with mismatch text is still ok", 0, MISMATCH, false, true, false, None),
-            ("port deprecation", 1, "warning: dolt_server_port is deprecated\n", false, true, false, None),
-            ("port and deprecated on different lines is a failure", 1, "dolt_server_port\ndeprecated\n", false, false, true, Some("migrate schema failed")),
+            (
+                "exit 0 with mismatch text is still ok",
+                0,
+                MISMATCH,
+                false,
+                true,
+                false,
+                None,
+            ),
+            (
+                "port deprecation",
+                1,
+                "warning: dolt_server_port is deprecated\n",
+                false,
+                true,
+                false,
+                None,
+            ),
+            (
+                "port and deprecated on different lines is a failure",
+                1,
+                "dolt_server_port\ndeprecated\n",
+                false,
+                false,
+                true,
+                Some("migrate schema failed"),
+            ),
             ("mismatch", 1, MISMATCH, false, false, true, Some("v99")),
-            ("mismatch under doctor", 1, MISMATCH, true, false, false, Some("v99")),
-            ("mismatch with only the database side", 1, "database is at v7\n", false, false, true, Some("knows up to v?")),
-            ("mismatch with only the binary side", 1, "binary knows up to v3\n", false, false, true, Some("database is at v?")),
-            ("locked", 1, LOCKED, false, false, true, Some("embedded mode")),
-            ("locked under doctor", 1, LOCKED, true, false, false, Some("embedded mode")),
-            ("unrecognised failure", 2, "boom\nsecond\n", false, false, true, Some("failed — boom")),
-            ("could not run bd", 1, "spira: could not run bd: no such file", false, false, true, Some("failed — spira: could not run")),
+            (
+                "mismatch under doctor",
+                1,
+                MISMATCH,
+                true,
+                false,
+                false,
+                Some("v99"),
+            ),
+            (
+                "mismatch with only the database side",
+                1,
+                "database is at v7\n",
+                false,
+                false,
+                true,
+                Some("knows up to v?"),
+            ),
+            (
+                "mismatch with only the binary side",
+                1,
+                "binary knows up to v3\n",
+                false,
+                false,
+                true,
+                Some("database is at v?"),
+            ),
+            (
+                "locked",
+                1,
+                LOCKED,
+                false,
+                false,
+                true,
+                Some("embedded mode"),
+            ),
+            (
+                "locked under doctor",
+                1,
+                LOCKED,
+                true,
+                false,
+                false,
+                Some("embedded mode"),
+            ),
+            (
+                "unrecognised failure",
+                2,
+                "boom\nsecond\n",
+                false,
+                false,
+                true,
+                Some("failed — boom"),
+            ),
+            (
+                "could not run bd",
+                1,
+                "spira: could not run bd: no such file",
+                false,
+                false,
+                true,
+                Some("failed — spira: could not run"),
+            ),
         ];
         for (name, rc, out, doctor, ok, refuse, needle) in rows {
             let v = schema_verdict(*rc, out, "/x/bd", *doctor, "spira.conf");
@@ -373,9 +518,25 @@ mod tests {
     // covers: UC-config-store-preflight-09
     #[test]
     fn schema_verdict_mismatch_names_cause_and_remedy() {
-        let v = schema_verdict(1, "database is at v99\nbinary knows up to v53\n", "/x/bd", false, "/etc/spira.conf");
-        assert!(v.messages.iter().any(|m| m.contains("/x/bd") && m.contains("v53")), "{v:?}");
-        assert!(v.messages.iter().any(|m| m.contains("rebuild bd at v99") && m.contains("/etc/spira.conf")), "{v:?}");
+        let v = schema_verdict(
+            1,
+            "database is at v99\nbinary knows up to v53\n",
+            "/x/bd",
+            false,
+            "/etc/spira.conf",
+        );
+        assert!(
+            v.messages
+                .iter()
+                .any(|m| m.contains("/x/bd") && m.contains("v53")),
+            "{v:?}"
+        );
+        assert!(
+            v.messages
+                .iter()
+                .any(|m| m.contains("rebuild bd at v99") && m.contains("/etc/spira.conf")),
+            "{v:?}"
+        );
     }
 
     // covers: UC-config-store-preflight-09
@@ -384,7 +545,10 @@ mod tests {
         let out = "spira: could not run /x/bd: no such file";
         let v = schema_verdict(1, out, "/x/bd", false, "spira.conf");
         assert!(v.refuse && !v.ok, "{v:?}");
-        assert!(v.messages.iter().any(|m| m.contains("bd is /x/bd")), "{v:?}");
+        assert!(
+            v.messages.iter().any(|m| m.contains("bd is /x/bd")),
+            "{v:?}"
+        );
         let d = schema_verdict(1, out, "/x/bd", true, "spira.conf");
         assert!(!d.refuse && !d.ok, "doctor reports and carries on: {d:?}");
     }
@@ -392,12 +556,22 @@ mod tests {
     // covers: UC-config-store-preflight-10
     #[test]
     fn a_locked_store_is_a_configuration_error_naming_the_remedy_never_a_pass() {
-        let locked = "Error: failed to open database: the database is locked by another dolt process\n";
+        let locked =
+            "Error: failed to open database: the database is locked by another dolt process\n";
         let v = schema_verdict(1, locked, "/x/bd", false, "spira.conf");
-        assert!(v.refuse && !v.ok, "a lock must not be stamped as a pass: {v:?}");
+        assert!(
+            v.refuse && !v.ok,
+            "a lock must not be stamped as a pass: {v:?}"
+        );
         let said = v.messages.join("\n");
-        assert!(said.contains("embedded") && said.contains("doctor"), "{said}");
+        assert!(
+            said.contains("embedded") && said.contains("doctor"),
+            "{said}"
+        );
         let d = schema_verdict(1, locked, "/x/bd", true, "spira.conf");
-        assert!(!d.ok, "doctor still gets no pass, it only keeps going: {d:?}");
+        assert!(
+            !d.ok,
+            "doctor still gets no pass, it only keeps going: {d:?}"
+        );
     }
 }

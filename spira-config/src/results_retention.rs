@@ -43,7 +43,13 @@ impl Retention {
 }
 
 fn mtime(p: &Path) -> Option<u64> {
-    fs::symlink_metadata(p).ok()?.modified().ok()?.duration_since(UNIX_EPOCH).ok().map(|d| d.as_secs())
+    fs::symlink_metadata(p)
+        .ok()?
+        .modified()
+        .ok()?
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .map(|d| d.as_secs())
 }
 
 /// What a write into `<run>/rounds` keeps: anything that is not a `*.results` directory of
@@ -62,14 +68,24 @@ pub fn rounds_keep<'a>(repo: &'a str, open: &'a [String]) -> impl Fn(&str) -> bo
 /// The newest mtime of the entry and of its direct children.
 fn age_stamp(p: &Path) -> Option<u64> {
     let own = mtime(p)?;
-    let kids = fs::read_dir(p).into_iter().flatten().flatten().filter_map(|e| mtime(&e.path()));
+    let kids = fs::read_dir(p)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| mtime(&e.path()));
     Some(kids.fold(own, u64::max))
 }
 
 /// Removes up to `max` entries of `dir`, oldest first, whose newest mtime is more than
 /// `keep_days` days before `now` and whose name `keep` does not claim. A failed removal is
 /// skipped; the entry stays among `left`.
-pub fn prune(dir: &Path, keep_days: u32, max: usize, now: u64, keep: &dyn Fn(&str) -> bool) -> Pruned {
+pub fn prune(
+    dir: &Path,
+    keep_days: u32,
+    max: usize,
+    now: u64,
+    keep: &dyn Fn(&str) -> bool,
+) -> Pruned {
     let Ok(rd) = fs::read_dir(dir) else {
         return Pruned::default();
     };
@@ -83,7 +99,12 @@ pub fn prune(dir: &Path, keep_days: u32, max: usize, now: u64, keep: &dyn Fn(&st
     old.sort();
     let mut out = Pruned::default();
     for (_, p) in old {
-        let gone = out.removed < max && if p.is_dir() && !p.is_symlink() { fs::remove_dir_all(&p).is_ok() } else { fs::remove_file(&p).is_ok() };
+        let gone = out.removed < max
+            && if p.is_dir() && !p.is_symlink() {
+                fs::remove_dir_all(&p).is_ok()
+            } else {
+                fs::remove_file(&p).is_ok()
+            };
         if gone {
             out.removed += 1;
         } else {
@@ -120,7 +141,13 @@ mod tests {
     fn an_entry_older_than_the_window_is_removed() {
         let t = testkit::TempDir::new("retention-old");
         file(t.path(), "a", 8);
-        assert_eq!(prune(t.path(), 7, 50, NOW, &none), Pruned { removed: 1, left: 0 });
+        assert_eq!(
+            prune(t.path(), 7, 50, NOW, &none),
+            Pruned {
+                removed: 1,
+                left: 0
+            }
+        );
         assert!(!t.path().join("a").exists());
     }
 
@@ -149,7 +176,13 @@ mod tests {
         file(t.path(), "live", 8);
         file(t.path(), "shut", 8);
         let p = prune(t.path(), 7, 50, NOW, &|n| n == "live");
-        assert_eq!(p, Pruned { removed: 1, left: 0 });
+        assert_eq!(
+            p,
+            Pruned {
+                removed: 1,
+                left: 0
+            }
+        );
         assert!(t.path().join("live").exists() && !t.path().join("shut").exists());
     }
 
@@ -159,7 +192,13 @@ mod tests {
         for (i, d) in [20u64, 10, 12, 9, 15].iter().enumerate() {
             file(t.path(), &format!("e{i}"), *d);
         }
-        assert_eq!(prune(t.path(), 7, 2, NOW, &none), Pruned { removed: 2, left: 3 });
+        assert_eq!(
+            prune(t.path(), 7, 2, NOW, &none),
+            Pruned {
+                removed: 2,
+                left: 3
+            }
+        );
         assert!(!t.path().join("e0").exists() && !t.path().join("e4").exists());
         assert!(t.path().join("e1").exists());
     }
@@ -170,12 +209,17 @@ mod tests {
         let keep = rounds_keep("spira", &open);
         assert!(!keep("spira-old.results") && !keep("spira%2Fold.results"));
         assert!(keep("spira-open.results") && keep("spira%2Fb2.results"));
-        assert!(keep("cubby-old.results") && keep("spira-old.result") && keep("spira-old.mender-x"));
+        assert!(
+            keep("cubby-old.results") && keep("spira-old.result") && keep("spira-old.mender-x")
+        );
     }
 
     #[test]
     fn a_missing_dir_returns_zeros() {
         let t = testkit::TempDir::new("retention-missing");
-        assert_eq!(prune(&t.path().join("nope"), 7, 50, NOW, &none), Pruned::default());
+        assert_eq!(
+            prune(&t.path().join("nope"), 7, 50, NOW, &none),
+            Pruned::default()
+        );
     }
 }
