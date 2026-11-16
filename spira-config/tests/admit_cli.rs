@@ -13,21 +13,10 @@ fn admit(run: &Path, inner: Option<&str>, args: &[&str]) -> Output {
 #[test]
 fn a_retired_wrapper_call_execs_the_inner_compiler_and_writes_no_pool_file() {
     let run = testkit::TempDir::new("admit-cli-wrapper");
-    let out = admit(
-        run.path(),
-        Some("/bin/echo"),
-        &["rustc", "--crate-name", "x"],
-    );
-    assert_eq!(
-        String::from_utf8_lossy(&out.stdout),
-        "rustc --crate-name x\n"
-    );
+    let out = admit(run.path(), Some("/bin/echo"), &["rustc", "--crate-name", "x"]);
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "rustc --crate-name x\n");
     assert!(out.status.success());
-    assert_eq!(
-        std::fs::read_dir(run.path()).unwrap().count(),
-        0,
-        "a pass-through writes no pool file"
-    );
+    assert_eq!(std::fs::read_dir(run.path()).unwrap().count(), 0, "a pass-through writes no pool file");
 }
 
 #[test]
@@ -44,9 +33,6 @@ fn help_and_no_argument_print_usage_and_exit_2() {
     for args in [&[][..], &["help"][..], &["--help"][..]] {
         let out = admit(run.path(), Some("/bin/echo"), args);
         assert_eq!(out.status.code(), Some(2), "{args:?}");
-        assert!(
-            String::from_utf8_lossy(&out.stderr).contains("usage: spira-admit status"),
-            "{args:?}"
-        );
+        assert!(String::from_utf8_lossy(&out.stderr).contains("usage: spira-admit status"), "{args:?}");
     }
 }

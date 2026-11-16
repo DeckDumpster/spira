@@ -29,11 +29,7 @@ pub const MODEL_BIN_OVERRIDE_ENV: &str = "SPIRA_MODEL_BIN_CONSIDERED";
 /// Empty for a release that ships none of them (a repository other than the harness).
 pub fn model_bin_problems(release: &Path) -> Vec<String> {
     let bin = release.join("bin");
-    let wanted: Vec<&str> = MODEL_BINS
-        .iter()
-        .copied()
-        .filter(|b| std::fs::symlink_metadata(bin.join(b)).is_ok())
-        .collect();
+    let wanted: Vec<&str> = MODEL_BINS.iter().copied().filter(|b| std::fs::symlink_metadata(bin.join(b)).is_ok()).collect();
     if wanted.is_empty() {
         return Vec::new();
     }
@@ -41,28 +37,16 @@ pub fn model_bin_problems(release: &Path) -> Vec<String> {
     let mut problems = Vec::new();
     for b in &wanted {
         let p = dir.join(b);
-        let exe = std::fs::metadata(&p)
-            .map(|m| {
-                m.is_file()
-                    && std::os::unix::fs::PermissionsExt::mode(&m.permissions()) & 0o111 != 0
-            })
-            .unwrap_or(false);
+        let exe = std::fs::metadata(&p).map(|m| m.is_file() && std::os::unix::fs::PermissionsExt::mode(&m.permissions()) & 0o111 != 0).unwrap_or(false);
         if !exe {
             problems.push(format!("{MODEL_BIN_DIR}/{b}: missing or not executable (bin/{b} is shipped, so the model's PATH needs it)"));
         }
     }
     if let Ok(rd) = std::fs::read_dir(&dir) {
-        let mut extra: Vec<String> = rd
-            .flatten()
-            .map(|e| e.file_name().to_string_lossy().to_string())
-            .filter(|n| !MODEL_BINS.contains(&n.as_str()))
-            .collect();
+        let mut extra: Vec<String> = rd.flatten().map(|e| e.file_name().to_string_lossy().to_string()).filter(|n| !MODEL_BINS.contains(&n.as_str())).collect();
         extra.sort();
         for n in extra {
-            problems.push(format!(
-                "{MODEL_BIN_DIR}/{n}: not a model binary — {MODEL_BIN_DIR}/ holds only {}",
-                MODEL_BINS.join(", ")
-            ));
+            problems.push(format!("{MODEL_BIN_DIR}/{n}: not a model binary — {MODEL_BIN_DIR}/ holds only {}", MODEL_BINS.join(", ")));
         }
     }
     problems
@@ -75,11 +59,7 @@ pub fn model_bin_problems(release: &Path) -> Vec<String> {
 /// accepted when it already points at `../bin/<name>`.
 pub fn link_model_bin(release: &Path) -> Result<Vec<String>, String> {
     let bin = release.join("bin");
-    let present: Vec<&str> = MODEL_BINS
-        .iter()
-        .copied()
-        .filter(|b| bin.join(b).is_file())
-        .collect();
+    let present: Vec<&str> = MODEL_BINS.iter().copied().filter(|b| bin.join(b).is_file()).collect();
     if present.is_empty() {
         return Ok(Vec::new());
     }
@@ -91,14 +71,8 @@ pub fn link_model_bin(release: &Path) -> Result<Vec<String>, String> {
         if std::fs::symlink_metadata(&link).is_err() {
             match std::os::unix::fs::symlink(&target, &link) {
                 Ok(()) => {}
-                Err(e)
-                    if e.kind() == std::io::ErrorKind::AlreadyExists
-                        && std::fs::read_link(&link).is_ok_and(|t| t == Path::new(&target)) => {}
-                Err(e) => {
-                    return Err(format!(
-                        "cannot symlink {MODEL_BIN_DIR}/{b} -> {target}: {e}"
-                    ))
-                }
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && std::fs::read_link(&link).is_ok_and(|t| t == Path::new(&target)) => {}
+                Err(e) => return Err(format!("cannot symlink {MODEL_BIN_DIR}/{b} -> {target}: {e}")),
             }
         }
     }
@@ -110,10 +84,7 @@ pub fn link_model_bin(release: &Path) -> Result<Vec<String>, String> {
 pub fn release_root(value: Option<&str>) -> Result<PathBuf, String> {
     match value.map(str::trim).filter(|v| !v.is_empty()) {
         Some(r) => Ok(PathBuf::from(r.trim_end_matches('/'))),
-        None => Err(format!(
-            "{} is not set — it names the release this process runs from; there is no fallback",
-            crate::RELEASE_ENV
-        )),
+        None => Err(format!("{} is not set — it names the release this process runs from; there is no fallback", crate::RELEASE_ENV)),
     }
 }
 
@@ -126,21 +97,11 @@ pub fn release_root_for_process() -> Result<PathBuf, String> {
 /// `<release>/bin:<release>/spira:<spira-env bin>:<system dirs>[:<tail>]`. Built outright
 /// from the declared release, `HOME` (whose pinned tool environment it names) and the
 /// configured `SPIRA_PATH` tail — never from an inherited `PATH`.
-pub fn launcher_path(
-    release: Option<&str>,
-    home: Option<&str>,
-    tail: &str,
-) -> Result<String, String> {
+pub fn launcher_path(release: Option<&str>, home: Option<&str>, tail: &str) -> Result<String, String> {
     let release = release_root(release)?;
-    let home = home.filter(|h| !h.is_empty()).ok_or_else(|| {
-        "HOME is not set — the child PATH names its spira-env bin; there is no fallback".to_string()
-    })?;
+    let home = home.filter(|h| !h.is_empty()).ok_or_else(|| "HOME is not set — the child PATH names its spira-env bin; there is no fallback".to_string())?;
     let r = release.display();
-    let base = format!(
-        "{r}/bin:{r}/spira:{}:{}",
-        crate::spira_env_bin(home),
-        crate::SYSTEM_PATH
-    );
+    let base = format!("{r}/bin:{r}/spira:{}:{}", crate::spira_env_bin(home), crate::SYSTEM_PATH);
     let tail = tail.trim();
     if tail.is_empty() {
         return Ok(base);
@@ -153,20 +114,10 @@ pub fn launcher_path(
 }
 
 /// `PATH` and `SPIRA_RELEASE` for a child process: [`launcher_path`] and the release it names.
-pub fn child_path_env(
-    release: Option<&str>,
-    home: Option<&str>,
-    tail: &str,
-) -> Result<Vec<(String, String)>, String> {
+pub fn child_path_env(release: Option<&str>, home: Option<&str>, tail: &str) -> Result<Vec<(String, String)>, String> {
     let path = launcher_path(release, home, tail)?;
     let release = release_root(release)?;
-    Ok(vec![
-        (
-            crate::RELEASE_ENV.to_string(),
-            release.display().to_string(),
-        ),
-        ("PATH".to_string(), path),
-    ])
+    Ok(vec![(crate::RELEASE_ENV.to_string(), release.display().to_string()), ("PATH".to_string(), path)])
 }
 
 /// `PATH`/`SPIRA_RELEASE` for a child run against a release being BUILT: `stage` is the release it
@@ -174,10 +125,7 @@ pub fn child_path_env(
 /// Declared by the builder, so a build needs no installed release and no config.
 pub fn stage_child_path_env(stage: &Path) -> Vec<(String, String)> {
     let s = stage.display().to_string();
-    vec![
-        (crate::RELEASE_ENV.to_string(), s.clone()),
-        ("PATH".to_string(), crate::release_path(&s)),
-    ]
+    vec![(crate::RELEASE_ENV.to_string(), s.clone()), ("PATH".to_string(), crate::release_path(&s))]
 }
 
 /// [`child_path_env`] for THIS process: its `$SPIRA_RELEASE`, `$HOME` and configured
@@ -185,11 +133,7 @@ pub fn stage_child_path_env(stage: &Path) -> Vec<(String, String)> {
 /// e.g. `cmd.envs(child_path_env_for_process()?)`.
 pub fn child_path_env_for_process() -> Result<Vec<(String, String)>, String> {
     let tail = crate::process::cfg("SPIRA_PATH")?;
-    child_path_env(
-        std::env::var(crate::RELEASE_ENV).ok().as_deref(),
-        std::env::var("HOME").ok().as_deref(),
-        &tail,
-    )
+    child_path_env(std::env::var(crate::RELEASE_ENV).ok().as_deref(), std::env::var("HOME").ok().as_deref(), &tail)
 }
 
 /// Sets this process's own `PATH` to [`child_path_env_for_process`]'s, so every child it
@@ -207,22 +151,14 @@ pub fn ensure_release_path() -> Result<(), String> {
 /// not ship, is a refusal naming the key — never a `PATH` lookup or a bare name.
 pub fn resolve_tool(name: &str, release: Option<&str>) -> Result<String, String> {
     let root = release_root(release).map_err(|e| format!("cannot resolve {name}: {e}"))?;
-    let runnable = |p: &Path| {
-        std::fs::metadata(p).is_ok_and(|m| {
-            m.is_file() && std::os::unix::fs::PermissionsExt::mode(&m.permissions()) & 0o111 != 0
-        })
-    };
+    let runnable = |p: &Path| std::fs::metadata(p).is_ok_and(|m| m.is_file() && std::os::unix::fs::PermissionsExt::mode(&m.permissions()) & 0o111 != 0);
     for dir in ["bin", "spira"] {
         let p = root.join(dir).join(name);
         if runnable(&p) {
             return Ok(p.display().to_string());
         }
     }
-    Err(format!(
-        "{name} is not in {} ({}) bin/ or spira/",
-        crate::RELEASE_ENV,
-        root.display()
-    ))
+    Err(format!("{name} is not in {} ({}) bin/ or spira/", crate::RELEASE_ENV, root.display()))
 }
 
 /// [`resolve_tool`] for this process: how every exec of a release-shipped tool names its

@@ -54,15 +54,9 @@ pub fn locate(explicit: Option<PathBuf>) -> LocateOutcome {
     match env::var("SPIRA_TOML") {
         Ok(spec) if !spec.is_empty() => {
             // A file, or base:override layers — every one must exist.
-            let layers: Vec<PathBuf> = spec
-                .split(':')
-                .filter(|p| !p.is_empty())
-                .map(PathBuf::from)
-                .collect();
+            let layers: Vec<PathBuf> = spec.split(':').filter(|p| !p.is_empty()).map(PathBuf::from).collect();
             match layers.iter().find(|p| !p.is_file()) {
-                Some(missing) => LocateOutcome::NotFound {
-                    tried: vec![missing.clone()],
-                },
+                Some(missing) => LocateOutcome::NotFound { tried: vec![missing.clone()] },
                 None => LocateOutcome::Found(PathBuf::from(spec)),
             }
         }
@@ -83,10 +77,7 @@ mod tests {
 
     fn with_env<R>(vars: &[(&str, Option<&str>)], f: impl FnOnce() -> R) -> R {
         let mut edits: Vec<(&str, Option<&str>)> =
-            ["SPIRA_TOML", "SPIRA_CONF", "XDG_CONFIG_HOME", "HOME"]
-                .iter()
-                .map(|n| (*n, None))
-                .collect();
+            ["SPIRA_TOML", "SPIRA_CONF", "XDG_CONFIG_HOME", "HOME"].iter().map(|n| (*n, None)).collect();
         edits.extend_from_slice(vars);
         let _env = testkit::env(&edits);
         f()
@@ -97,9 +88,7 @@ mod tests {
         let d = scratch_dir("pin");
         let p = d.join("spira.toml");
         std::fs::write(&p, "[spira]\n").unwrap();
-        let got = with_env(&[("SPIRA_TOML", Some(p.to_str().unwrap()))], || {
-            locate(None)
-        });
+        let got = with_env(&[("SPIRA_TOML", Some(p.to_str().unwrap()))], || locate(None));
         assert_eq!(got, LocateOutcome::Found(p));
     }
 
@@ -107,9 +96,7 @@ mod tests {
     fn a_pin_to_a_missing_file_is_not_found_naming_it() {
         let d = scratch_dir("missing");
         let p = d.join("nope.toml");
-        let got = with_env(&[("SPIRA_TOML", Some(p.to_str().unwrap()))], || {
-            locate(None)
-        });
+        let got = with_env(&[("SPIRA_TOML", Some(p.to_str().unwrap()))], || locate(None));
         assert_eq!(got, LocateOutcome::NotFound { tried: vec![p] });
     }
 
@@ -140,9 +127,6 @@ mod tests {
     #[test]
     fn an_explicit_path_is_taken_as_given() {
         let p = PathBuf::from("/explicit/spira.toml");
-        assert_eq!(
-            with_env(&[], || locate(Some(p.clone()))),
-            LocateOutcome::Found(p)
-        );
+        assert_eq!(with_env(&[], || locate(Some(p.clone()))), LocateOutcome::Found(p));
     }
 }

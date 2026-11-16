@@ -18,54 +18,54 @@ use std::path::{Path, PathBuf};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-pub mod admission;
 pub mod amendment;
+pub mod scheduler_link;
+pub mod admission;
 pub mod bounded;
+pub mod cite;
 pub mod build;
 pub mod build_dir;
-pub mod cite;
+pub mod runes;
 pub mod containment;
 pub mod convert;
 pub mod cut_hold;
+pub mod host_disk;
 pub mod delta;
 pub mod deps;
 pub mod edges;
 pub mod ejection;
+pub mod sendback;
+pub mod send_back;
 pub mod env_bootstrap;
-pub mod escalation;
-pub mod eval;
-pub mod host_disk;
 pub mod hostaddr;
+pub mod eval;
+pub mod rune_file;
 pub mod init;
 pub mod legacy_map;
 pub mod local_pass;
+pub mod escalation;
 pub mod locate;
 pub mod nonwork;
 pub mod process;
-pub mod proof;
-pub mod rebase_check;
-pub mod recipe;
 pub mod red_at;
 pub mod red_tip_record;
+pub mod proof;
+pub mod results_retention;
+pub mod rebase_check;
+pub mod recipe;
+pub mod round_ended;
+pub mod rename;
 pub mod registry;
 pub mod release_env;
 pub mod release_skew;
 pub mod release_tag;
-pub mod rename;
 pub mod repo_admin;
 pub mod repos;
 pub mod resolve;
-pub mod results_retention;
 pub mod retire;
 pub mod room;
-pub mod round_ended;
-pub mod rune_file;
-pub mod runes;
-pub mod scheduler_link;
 pub mod scoped_stop;
 pub mod scratch;
-pub mod send_back;
-pub mod sendback;
 pub mod session;
 pub mod stack_conflict;
 pub mod target;
@@ -76,6 +76,7 @@ pub mod vtime;
 pub mod writeback;
 
 pub use locate::LocateOutcome;
+
 
 /// The one filename this schema's document is ever named on disk — every path-resolution
 /// function below builds on this instead of a caller spelling `"spira.toml"` itself.
@@ -100,21 +101,9 @@ pub fn toml_path_at(dir: &Path) -> PathBuf {
 /// [--rune <f>]...`, built (not run) — for a writer at a root other than this process's
 /// own (`install`'s cross-checkout instance seed, sp-31dm0), which must not name this
 /// binary's own flags itself (config-fence: only spira-config names `repo-map`).
-pub fn convert_command(
-    conf: &Path,
-    home: &Path,
-    out: &Path,
-    repo_map: Option<&Path>,
-    rune: &[PathBuf],
-) -> Result<std::process::Command, String> {
+pub fn convert_command(conf: &Path, home: &Path, out: &Path, repo_map: Option<&Path>, rune: &[PathBuf]) -> Result<std::process::Command, String> {
     let mut cmd = std::process::Command::new(crate::release_env::tool("spira-config")?);
-    cmd.arg("convert")
-        .arg("--conf")
-        .arg(conf)
-        .arg("--home")
-        .arg(home)
-        .arg("--out")
-        .arg(out);
+    cmd.arg("convert").arg("--conf").arg(conf).arg("--home").arg(home).arg("--out").arg(out);
     if let Some(rm) = repo_map {
         cmd.arg("--repo-map").arg(rm);
     }
@@ -154,15 +143,9 @@ pub fn load(path: &Path) -> Result<SpiraToml, String> {
 
 /// Refuses an added value that names a host path through a `placeholder` segment: a delta is
 /// written without knowing the host, so such a path is right on none.
-pub fn placeholder_paths<'a>(
-    added: impl Iterator<Item = (&'a str, &'a toml::Value)>,
-) -> Result<(), String> {
+pub fn placeholder_paths<'a>(added: impl Iterator<Item = (&'a str, &'a toml::Value)>) -> Result<(), String> {
     for (k, v) in added {
-        if let Some(s) = v.as_str().filter(|s| {
-            s.starts_with('/')
-                && s.split('/')
-                    .any(|seg| seg.eq_ignore_ascii_case("placeholder"))
-        }) {
+        if let Some(s) = v.as_str().filter(|s| s.starts_with('/') && s.split('/').any(|seg| seg.eq_ignore_ascii_case("placeholder"))) {
             return Err(format!("{k} = {s:?} is a placeholder path; omit the key so its registry default derives from the install's own roots"));
         }
     }
@@ -191,17 +174,9 @@ pub fn delta_added(text: &str) -> Result<toml::map::Map<String, toml::Value>, St
 
 /// The dotted path and value of every leaf under `t`.
 pub fn leaf_paths(t: &toml::map::Map<String, toml::Value>) -> Vec<(String, toml::Value)> {
-    fn walk(
-        prefix: &str,
-        t: &toml::map::Map<String, toml::Value>,
-        out: &mut Vec<(String, toml::Value)>,
-    ) {
+    fn walk(prefix: &str, t: &toml::map::Map<String, toml::Value>, out: &mut Vec<(String, toml::Value)>) {
         for (k, v) in t {
-            let path = if prefix.is_empty() {
-                k.clone()
-            } else {
-                format!("{prefix}.{k}")
-            };
+            let path = if prefix.is_empty() { k.clone() } else { format!("{prefix}.{k}") };
             match v {
                 toml::Value::Table(inner) => walk(&path, inner, out),
                 v => out.push((path, v.clone())),
@@ -217,12 +192,8 @@ pub fn leaf_paths(t: &toml::map::Map<String, toml::Value>) -> Vec<(String, toml:
 /// registry of `<home>`: a value the key's type refuses is an error naming the key.
 pub fn check_delta(home: &Path, added: &toml::map::Map<String, toml::Value>) -> Result<(), String> {
     let fixture = home.join("testlib/complete.toml");
-    let text =
-        std::fs::read_to_string(&fixture).map_err(|e| format!("{}: {e}", fixture.display()))?;
-    let toml::Value::Table(mut merged) = text
-        .parse::<toml::Value>()
-        .map_err(|e| format!("{}: {e}", fixture.display()))?
-    else {
+    let text = std::fs::read_to_string(&fixture).map_err(|e| format!("{}: {e}", fixture.display()))?;
+    let toml::Value::Table(mut merged) = text.parse::<toml::Value>().map_err(|e| format!("{}: {e}", fixture.display()))? else {
         return Err(format!("{}: not a TOML table", fixture.display()));
     };
     union_into(&mut merged, added.clone());
@@ -239,11 +210,7 @@ pub fn parse_config_delta(text: &str) -> Result<(Vec<String>, Vec<String>), Stri
     let removed = v
         .get("removed")
         .and_then(|a| a.as_array())
-        .map(|a| {
-            a.iter()
-                .filter_map(|s| s.as_str().map(str::to_string))
-                .collect()
-        })
+        .map(|a| a.iter().filter_map(|s| s.as_str().map(str::to_string)).collect())
         .unwrap_or_default();
     Ok((added, removed))
 }
@@ -263,8 +230,7 @@ pub fn load_strict(path: &Path) -> Result<(SpiraToml, Vec<String>), String> {
 /// file must exist. Callers never see layers — they get one [`SpiraToml`].
 fn load_layered(spec: &str) -> Result<(SpiraToml, Vec<String>), String> {
     let merged = merge_layers(spec)?;
-    validate_value(toml::Value::Table(merged), registry::for_process()?)
-        .map_err(|e| format!("{spec}: {e}"))
+    validate_value(toml::Value::Table(merged), registry::for_process()?).map_err(|e| format!("{spec}: {e}"))
 }
 
 /// The layers `spec` names, read and merged, and nothing else: no schema, no registry.
@@ -274,10 +240,7 @@ pub(crate) fn merge_layers(spec: &str) -> Result<toml::map::Map<String, toml::Va
     for p in spec.split(':').filter(|p| !p.is_empty()) {
         any = true;
         let text = registry::read_counted(Path::new(p)).map_err(|e| format!("{p}: {e}"))?;
-        let toml::Value::Table(layer) = text
-            .parse::<toml::Value>()
-            .map_err(|e| format!("{p}: {e}"))?
-        else {
+        let toml::Value::Table(layer) = text.parse::<toml::Value>().map_err(|e| format!("{p}: {e}"))? else {
             return Err(format!("{p}: not a TOML table"));
         };
         union_into(&mut merged, layer);
@@ -289,10 +252,7 @@ pub(crate) fn merge_layers(spec: &str) -> Result<toml::map::Map<String, toml::Va
 }
 
 /// `over`'s keys into `base`: a nested table merges, anything else replaces.
-fn union_into(
-    base: &mut toml::map::Map<String, toml::Value>,
-    over: toml::map::Map<String, toml::Value>,
-) {
+fn union_into(base: &mut toml::map::Map<String, toml::Value>, over: toml::map::Map<String, toml::Value>) {
     for (k, v) in over {
         match (base.get_mut(&k), v) {
             (Some(toml::Value::Table(b)), toml::Value::Table(o)) => union_into(b, o),
@@ -372,10 +332,7 @@ pub fn spira_env_bin(home: &str) -> String {
 /// Every colon-separated entry of `tail` that [`tail_segment_refusal`] flags, in order — the
 /// pure check [`release_path_with_tail`] applies before it will append anything.
 pub fn tail_refusals(tail: &str) -> Vec<String> {
-    tail.split(':')
-        .filter(|s| !s.is_empty())
-        .filter_map(tail_segment_refusal)
-        .collect()
+    tail.split(':').filter(|s| !s.is_empty()).filter_map(tail_segment_refusal).collect()
 }
 
 /// [`release_path`] plus the box's own tool-directory tail (`spira.path`: `~/.local/bin` for
@@ -401,10 +358,7 @@ pub fn release_path_with_tail(release: &str, tail: &str) -> Result<String, Strin
 /// [`release_path_with_tail`] of `$SPIRA_RELEASE`, or the refusal naming it — the tail-aware
 /// counterpart to [`release_path_from_env`], for a launcher that resets its environment
 /// (`env -i`) and so cannot lean on an inherited PATH for either half.
-pub fn release_path_from_env_with_tail(
-    release: Option<&str>,
-    tail: &str,
-) -> Result<String, String> {
+pub fn release_path_from_env_with_tail(release: Option<&str>, tail: &str) -> Result<String, String> {
     let base = release_path_from_env(release)?;
     let tail = tail.trim();
     if tail.is_empty() {
@@ -526,20 +480,14 @@ impl JsonSchema for SpiraSection {
         "SpiraSection".into()
     }
     fn json_schema(_: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
-        schemars::schema::SchemaObject {
-            instance_type: Some(schemars::schema::InstanceType::Object.into()),
-            ..Default::default()
-        }
-        .into()
+        schemars::schema::SchemaObject { instance_type: Some(schemars::schema::InstanceType::Object.into()), ..Default::default() }.into()
     }
 }
 
 impl SpiraSection {
     fn value(&self, key: &str, want: &[&str]) -> Result<Option<&toml::Value>, String> {
         let reg = registry::for_process()?;
-        let rk = reg
-            .get(key)
-            .ok_or_else(|| format!("{key} is not a registered config key — refusing"))?;
+        let rk = reg.get(key).ok_or_else(|| format!("{key} is not a registered config key — refusing"))?;
         if !want.contains(&rk.ty.as_str()) {
             return Err(format!("{key} is TYPE={}, not {}", rk.ty, want.join("/")));
         }
@@ -547,24 +495,15 @@ impl SpiraSection {
     }
 
     pub fn get_str(&self, key: &str) -> Result<Option<String>, String> {
-        Ok(self
-            .value(key, &["string", "onoff", "czar_stage"])?
-            .and_then(|v| v.as_str())
-            .map(str::to_string))
+        Ok(self.value(key, &["string", "onoff", "czar_stage"])?.and_then(|v| v.as_str()).map(str::to_string))
     }
 
     pub fn get_u32(&self, key: &str) -> Result<Option<u32>, String> {
-        Ok(self
-            .value(key, &["u32"])?
-            .and_then(|v| v.as_integer())
-            .and_then(|n| u32::try_from(n).ok()))
+        Ok(self.value(key, &["u32"])?.and_then(|v| v.as_integer()).and_then(|n| u32::try_from(n).ok()))
     }
 
     pub fn get_u64(&self, key: &str) -> Result<Option<u64>, String> {
-        Ok(self
-            .value(key, &["u64", "u32"])?
-            .and_then(|v| v.as_integer())
-            .and_then(|n| u64::try_from(n).ok()))
+        Ok(self.value(key, &["u64", "u32"])?.and_then(|v| v.as_integer()).and_then(|n| u64::try_from(n).ok()))
     }
 
     pub fn get_bool(&self, key: &str) -> Result<Option<bool>, String> {
@@ -575,18 +514,12 @@ impl SpiraSection {
         Ok(self
             .value(key, &["list"])?
             .and_then(|v| v.as_array())
-            .map(|a| {
-                a.iter()
-                    .filter_map(|v| v.as_str().map(str::to_string))
-                    .collect()
-            }))
+            .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()))
     }
 
     /// Whether any key is set at all, an empty list not counting.
     fn sets_anything(&self) -> bool {
-        self.0
-            .values()
-            .any(|v| !matches!(v, toml::Value::Array(a) if a.is_empty()))
+        self.0.values().any(|v| !matches!(v, toml::Value::Array(a) if a.is_empty()))
     }
 }
 
@@ -615,21 +548,13 @@ fn type_error(ty: &str, v: &toml::Value) -> Option<String> {
         Some(s) if words.contains(&s) => None,
         Some(s) => Some(format!(
             "unknown variant `{s}`, expected {}",
-            words
-                .iter()
-                .map(|w| format!("`{w}`"))
-                .collect::<Vec<_>>()
-                .join(" or ")
+            words.iter().map(|w| format!("`{w}`")).collect::<Vec<_>>().join(" or ")
         )),
         None => invalid_type(&format!("one of {}", words.join(", "))),
     };
     match ty {
-        "string" => v
-            .as_str()
-            .map_or_else(|| invalid_type("a string"), |_| None),
-        "bool" => v
-            .as_bool()
-            .map_or_else(|| invalid_type("a boolean"), |_| None),
+        "string" => v.as_str().map_or_else(|| invalid_type("a string"), |_| None),
+        "bool" => v.as_bool().map_or_else(|| invalid_type("a boolean"), |_| None),
         "u32" | "u64" => match v.as_integer() {
             None => invalid_type(ty),
             Some(n) if (ty == "u32" && u32::try_from(n).is_err()) || n < 0 => {
@@ -752,15 +677,9 @@ impl GateMode {
 pub fn repo_gate_mode(doc: &SpiraToml, repo: &str) -> Result<GateMode, String> {
     let path = format!("repo.{repo}.gate_mode");
     if let Some(v) = doc.unknown_values.get(&path) {
-        return Err(format!(
-            "{path}: unknown value {v:?}; this release knows unit, suites, fences"
-        ));
+        return Err(format!("{path}: unknown value {v:?}; this release knows unit, suites, fences"));
     }
-    Ok(doc
-        .repo
-        .get(repo)
-        .map(RepoSection::gate_mode)
-        .unwrap_or_default())
+    Ok(doc.repo.get(repo).map(RepoSection::gate_mode).unwrap_or_default())
 }
 
 /// `append` keeps Claude Code's own coding guidance underneath the persona layer;
@@ -818,25 +737,14 @@ pub fn json_schema() -> Result<schemars::schema::RootSchema, String> {
 pub fn json_schema_with(reg: &registry::Registry) -> schemars::schema::RootSchema {
     use schemars::schema::{InstanceType, Metadata, Schema, SchemaObject, SingleOrVec};
     let mut root = schemars::schema_for!(SpiraToml);
-    let Some(Schema::Object(section)) = root.definitions.get_mut("SpiraSection") else {
-        return root;
-    };
+    let Some(Schema::Object(section)) = root.definitions.get_mut("SpiraSection") else { return root };
     let mut keys: Vec<&registry::RegistryKey> = reg.keys.values().collect();
     keys.sort_by(|a, b| a.field.cmp(&b.field));
     for k in keys {
-        let strings = || SchemaObject {
-            instance_type: Some(InstanceType::String.into()),
-            ..Default::default()
-        };
+        let strings = || SchemaObject { instance_type: Some(InstanceType::String.into()), ..Default::default() };
         let mut prop = match k.ty.as_str() {
-            "u32" | "u64" => SchemaObject {
-                instance_type: Some(InstanceType::Integer.into()),
-                ..Default::default()
-            },
-            "bool" => SchemaObject {
-                instance_type: Some(InstanceType::Boolean.into()),
-                ..Default::default()
-            },
+            "u32" | "u64" => SchemaObject { instance_type: Some(InstanceType::Integer.into()), ..Default::default() },
+            "bool" => SchemaObject { instance_type: Some(InstanceType::Boolean.into()), ..Default::default() },
             "list" => SchemaObject {
                 instance_type: Some(InstanceType::Array.into()),
                 array: Some(Box::new(schemars::schema::ArrayValidation {
@@ -845,29 +753,17 @@ pub fn json_schema_with(reg: &registry::Registry) -> schemars::schema::RootSchem
                 })),
                 ..Default::default()
             },
-            "onoff" => SchemaObject {
-                enum_values: Some(vec!["on".into(), "off".into()]),
-                ..strings()
-            },
-            "czar_stage" => SchemaObject {
-                enum_values: Some(vec!["shadow".into(), "act".into()]),
-                ..strings()
-            },
+            "onoff" => SchemaObject { enum_values: Some(vec!["on".into(), "off".into()]), ..strings() },
+            "czar_stage" => SchemaObject { enum_values: Some(vec!["shadow".into(), "act".into()]), ..strings() },
             _ => strings(),
         };
         if let Some(d) = &k.schema_doc {
-            prop.metadata = Some(Box::new(Metadata {
-                description: Some(d.clone()),
-                ..Default::default()
-            }));
+            prop.metadata = Some(Box::new(Metadata { description: Some(d.clone()), ..Default::default() }));
         }
         if let Some(m) = k.max {
             prop.number().maximum = Some(m);
         }
-        section
-            .object()
-            .properties
-            .insert(k.field.clone(), prop.into());
+        section.object().properties.insert(k.field.clone(), prop.into());
     }
     root
 }
@@ -886,426 +782,123 @@ pub struct RetiredKey {
 pub const RETIRED_SPIRA_KEYS: &[RetiredKey] = &[
     // Spira works the whole backlog continuously; there is no single goal bead (per Ryan,
     // 2026-09-30, sp-2f9sa). The id prefix it used to imply is its own key now: id_prefix.
-    RetiredKey {
-        key: "goal",
-        bead: "sp-k6m1m",
-    },
-    RetiredKey {
-        key: "maechen_label",
-        bead: "sp-vt8lbr",
-    }, // ffx-ok
-    RetiredKey {
-        key: "maechen_landing_interval",
-        bead: "sp-vt8lbr",
-    }, // ffx-ok
-    RetiredKey {
-        key: "maechen_max_beads",
-        bead: "sp-vt8lbr",
-    }, // ffx-ok
-    RetiredKey {
-        key: "maechen_max_gap_seconds",
-        bead: "sp-vt8lbr",
-    }, // ffx-ok
-    RetiredKey {
-        key: "maechen_remedy_label",
-        bead: "sp-vt8lbr",
-    }, // ffx-ok
-    RetiredKey {
-        key: "auron_restarts",
-        bead: "sp-acp3lx",
-    }, // ffx-ok
-    RetiredKey {
-        key: "auron_restart_window",
-        bead: "sp-acp3lx",
-    }, // ffx-ok
-    RetiredKey {
-        key: "chamber",
-        bead: "sp-yyuunv",
-    }, // ffx-ok
-    RetiredKey {
-        key: "chamber_overlay",
-        bead: "sp-yyuunv",
-    }, // ffx-ok
-    RetiredKey {
-        key: "lanes_reserve",
-        bead: "sp-6evjfc",
-    }, // ffx-ok
-    RetiredKey {
-        key: "lanes",
-        bead: "sp-vyt8y2",
-    }, // ffx-ok
-    RetiredKey {
-        key: "lanes_max_live",
-        bead: "sp-vyt8y2",
-    }, // ffx-ok
-    RetiredKey {
-        key: "fayths",
-        bead: "sp-yyuunv",
-    }, // ffx-ok
-    RetiredKey {
-        key: "unit_test_slow_secs",
-        bead: "sp-1qi6zt",
-    },
-    RetiredKey {
-        key: "unit_test_terminate_after",
-        bead: "sp-1qi6zt",
-    },
-    RetiredKey {
-        key: "throughput_floor_per_day",
-        bead: "sp-ner2yi",
-    },
-    RetiredKey {
-        key: "throughput_restop_after",
-        bead: "sp-ner2yi",
-    },
-    RetiredKey {
-        key: "queue_local_gate",
-        bead: "sp-vsob2",
-    },
-    RetiredKey {
-        key: "queue_batch_idle_cut",
-        bead: "sp-vsob2",
-    },
-    RetiredKey {
-        key: "cert_idle_skip",
-        bead: "sp-6d9th",
-    },
-    RetiredKey {
-        key: "hook_lines",
-        bead: "sp-o9nkc",
-    },
-    RetiredKey {
-        key: "lc_snapshot",
-        bead: "sp-hpv48b.2",
-    },
-    RetiredKey {
-        key: "lc_snapshot_secs",
-        bead: "sp-hpv48b.2",
-    },
-    RetiredKey {
-        key: "round_vm_host_io_full_avg60",
-        bead: "sp-dpz6g6.3",
-    },
-    RetiredKey {
-        key: "round_vm_spill_io_full_avg60",
-        bead: "sp-dpz6g6.3",
-    },
-    RetiredKey {
-        key: "round_vm_host_cpu_some_avg60",
-        bead: "sp-dpz6g6.3",
-    },
-    RetiredKey {
-        key: "answer_state",
-        bead: "sp-xsl8i",
-    },
-    RetiredKey {
-        key: "answer_mark",
-        bead: "sp-xsl8i",
-    },
-    RetiredKey {
-        key: "answer_comment_mark",
-        bead: "sp-xsl8i",
-    },
-    RetiredKey {
-        key: "self_closed",
-        bead: "sp-xsl8i",
-    },
-    RetiredKey {
-        key: "wake_watchers",
-        bead: "sp-xsl8i",
-    },
-    RetiredKey {
-        key: "reclaim_skip_label",
-        bead: "sp-i2m7y",
-    },
+    RetiredKey { key: "goal", bead: "sp-k6m1m" },
+    RetiredKey { key: "maechen_label", bead: "sp-vt8lbr" }, // ffx-ok
+    RetiredKey { key: "maechen_landing_interval", bead: "sp-vt8lbr" }, // ffx-ok
+    RetiredKey { key: "maechen_max_beads", bead: "sp-vt8lbr" }, // ffx-ok
+    RetiredKey { key: "maechen_max_gap_seconds", bead: "sp-vt8lbr" }, // ffx-ok
+    RetiredKey { key: "maechen_remedy_label", bead: "sp-vt8lbr" }, // ffx-ok
+    RetiredKey { key: "auron_restarts", bead: "sp-acp3lx" }, // ffx-ok
+    RetiredKey { key: "auron_restart_window", bead: "sp-acp3lx" }, // ffx-ok
+    RetiredKey { key: "chamber", bead: "sp-yyuunv" }, // ffx-ok
+    RetiredKey { key: "chamber_overlay", bead: "sp-yyuunv" }, // ffx-ok
+    RetiredKey { key: "lanes_reserve", bead: "sp-6evjfc" }, // ffx-ok
+    RetiredKey { key: "lanes", bead: "sp-vyt8y2" }, // ffx-ok
+    RetiredKey { key: "lanes_max_live", bead: "sp-vyt8y2" }, // ffx-ok
+    RetiredKey { key: "fayths", bead: "sp-yyuunv" }, // ffx-ok
+    RetiredKey { key: "unit_test_slow_secs", bead: "sp-1qi6zt" },
+    RetiredKey { key: "unit_test_terminate_after", bead: "sp-1qi6zt" },
+    RetiredKey { key: "throughput_floor_per_day", bead: "sp-ner2yi" },
+    RetiredKey { key: "throughput_restop_after", bead: "sp-ner2yi" },
+    RetiredKey { key: "queue_local_gate", bead: "sp-vsob2" },
+    RetiredKey { key: "queue_batch_idle_cut", bead: "sp-vsob2" },
+    RetiredKey { key: "cert_idle_skip", bead: "sp-6d9th" },
+    RetiredKey { key: "hook_lines", bead: "sp-o9nkc" },
+    RetiredKey { key: "lc_snapshot", bead: "sp-hpv48b.2" },
+    RetiredKey { key: "lc_snapshot_secs", bead: "sp-hpv48b.2" },
+    RetiredKey { key: "round_vm_host_io_full_avg60", bead: "sp-dpz6g6.3" },
+    RetiredKey { key: "round_vm_spill_io_full_avg60", bead: "sp-dpz6g6.3" },
+    RetiredKey { key: "round_vm_host_cpu_some_avg60", bead: "sp-dpz6g6.3" },
+    RetiredKey { key: "answer_state", bead: "sp-xsl8i" },
+    RetiredKey { key: "answer_mark", bead: "sp-xsl8i" },
+    RetiredKey { key: "answer_comment_mark", bead: "sp-xsl8i" },
+    RetiredKey { key: "self_closed", bead: "sp-xsl8i" },
+    RetiredKey { key: "wake_watchers", bead: "sp-xsl8i" },
+    RetiredKey { key: "reclaim_skip_label", bead: "sp-i2m7y" },
     // No explicit CPU quotas anywhere (law-isolate-greedy-work-in-vms): the dwarf launch and the
     // sentinel's landing dispatch no longer pass CPUQuota, so these keys have no consumer.
-    RetiredKey {
-        key: "aeon_cpu_quota",
-        bead: "sp-b4oct",
-    }, // ffx-ok
-    RetiredKey {
-        key: "max_aeons",
-        bead: "sp-vti1l1",
-    }, // ffx-ok
-    RetiredKey {
-        key: "max_live_aeons",
-        bead: "sp-vti1l1",
-    }, // ffx-ok
-    RetiredKey {
-        key: "aeon_warm_base",
-        bead: "sp-vti1l1",
-    }, // ffx-ok
-    RetiredKey {
-        key: "aeon_warm_cap_mib",
-        bead: "sp-vti1l1",
-    }, // ffx-ok
-    RetiredKey {
-        key: "summon_jitter",
-        bead: "sp-vti1l1",
-    }, // ffx-ok
-    RetiredKey {
-        key: "summon_lock_wait",
-        bead: "sp-vti1l1",
-    }, // ffx-ok
-    RetiredKey {
-        key: "land_cpu_quota",
-        bead: "sp-b4oct",
-    },
+    RetiredKey { key: "aeon_cpu_quota", bead: "sp-b4oct" }, // ffx-ok
+    RetiredKey { key: "max_aeons", bead: "sp-vti1l1" }, // ffx-ok
+    RetiredKey { key: "max_live_aeons", bead: "sp-vti1l1" }, // ffx-ok
+    RetiredKey { key: "aeon_warm_base", bead: "sp-vti1l1" }, // ffx-ok
+    RetiredKey { key: "aeon_warm_cap_mib", bead: "sp-vti1l1" }, // ffx-ok
+    RetiredKey { key: "summon_jitter", bead: "sp-vti1l1" }, // ffx-ok
+    RetiredKey { key: "summon_lock_wait", bead: "sp-vti1l1" }, // ffx-ok
+    RetiredKey { key: "land_cpu_quota", bead: "sp-b4oct" },
     // Every Spira tool is invoked by bare name on the launcher's PATH (sp-gypjk, design
     // runtime-is-a-release): a key naming a tool's path has no consumer. `batcher_bin` is
     // retired too, but a value that is not the batcher (prod's "/bin/true") is honoured as
     // `batcher_enable = "0"` by [`validate_with_warnings`], so the batcher stays off.
-    RetiredKey {
-        key: "lc_bin",
-        bead: "sp-gypjk",
-    },
-    RetiredKey {
-        key: "panel",
-        bead: "sp-gypjk",
-    },
-    RetiredKey {
-        key: "broker_bin",
-        bead: "sp-gypjk",
-    },
+    RetiredKey { key: "lc_bin", bead: "sp-gypjk" },
+    RetiredKey { key: "panel", bead: "sp-gypjk" },
+    RetiredKey { key: "broker_bin", bead: "sp-gypjk" },
     // The broker intent queue is gone; only `broker token` and `broker read` remain.
-    RetiredKey {
-        key: "broker_enable",
-        bead: "sp-1tvphb",
-    },
-    RetiredKey {
-        key: "czar_pass_bin",
-        bead: "sp-gypjk",
-    },
-    RetiredKey {
-        key: "queue_watch_bin",
-        bead: "sp-gypjk",
-    },
-    RetiredKey {
-        key: "supervise_bin",
-        bead: "sp-gypjk",
-    },
-    RetiredKey {
-        key: "landing_pass_bin",
-        bead: "sp-gypjk",
-    },
-    RetiredKey {
-        key: "tsd_bin",
-        bead: "sp-gypjk",
-    },
-    RetiredKey {
-        key: "tsd_lifecycle_export_bin",
-        bead: "sp-gypjk",
-    },
-    RetiredKey {
-        key: "reconciler_bin",
-        bead: "sp-gypjk",
-    },
-    RetiredKey {
-        key: "test_plan_bin",
-        bead: "sp-gypjk",
-    },
-    RetiredKey {
-        key: "reconciler_flow_bin",
-        bead: "sp-gypjk",
-    },
-    RetiredKey {
-        key: "loom_bin",
-        bead: "sp-gypjk",
-    },
-    RetiredKey {
-        key: "batcher_bin",
-        bead: "sp-gypjk",
-    },
+    RetiredKey { key: "broker_enable", bead: "sp-1tvphb" },
+    RetiredKey { key: "czar_pass_bin", bead: "sp-gypjk" },
+    RetiredKey { key: "queue_watch_bin", bead: "sp-gypjk" },
+    RetiredKey { key: "supervise_bin", bead: "sp-gypjk" },
+    RetiredKey { key: "landing_pass_bin", bead: "sp-gypjk" },
+    RetiredKey { key: "tsd_bin", bead: "sp-gypjk" },
+    RetiredKey { key: "tsd_lifecycle_export_bin", bead: "sp-gypjk" },
+    RetiredKey { key: "reconciler_bin", bead: "sp-gypjk" },
+    RetiredKey { key: "test_plan_bin", bead: "sp-gypjk" },
+    RetiredKey { key: "reconciler_flow_bin", bead: "sp-gypjk" },
+    RetiredKey { key: "loom_bin", bead: "sp-gypjk" },
+    RetiredKey { key: "batcher_bin", bead: "sp-gypjk" },
     // Flaky suites are deleted, not quarantined, so nothing reactivates on clean runs.
-    RetiredKey {
-        key: "quarantine_clean_runs",
-        bead: "sp-op2c2",
-    },
+    RetiredKey { key: "quarantine_clean_runs", bead: "sp-op2c2" },
     // The lifecycle machine is the only mode (sp-v62vn): `true` is accepted with this warning;
     // any other value is refused by [`validate_with_warnings`] before the strip.
-    RetiredKey {
-        key: "lifecycle_enforce",
-        bead: "sp-v62vn",
-    },
+    RetiredKey { key: "lifecycle_enforce", bead: "sp-v62vn" },
     // Express is lifecycle state (`spira-lc list --express`); no consumer reads a bd label.
-    RetiredKey {
-        key: "express_label",
-        bead: "sp-38yq9j",
-    },
+    RetiredKey { key: "express_label", bead: "sp-38yq9j" },
     // Rework is never deferred behind another bead's branch: rounds merge and rebase, Sift screens.
-    RetiredKey {
-        key: "overlap_defer_label",
-        bead: "sp-dzwj7w",
-    },
+    RetiredKey { key: "overlap_defer_label", bead: "sp-dzwj7w" },
     // Registered but read by no code under any spelling.
-    RetiredKey {
-        key: "round_marker_max_age",
-        bead: "sp-dm7mjb",
-    },
-    RetiredKey {
-        key: "liveness_model",
-        bead: "sp-dm7mjb",
-    },
-    RetiredKey {
-        key: "tier_budget_window",
-        bead: "sp-dm7mjb",
-    },
-    RetiredKey {
-        key: "attribute_maxpar",
-        bead: "sp-dm7mjb",
-    },
-    RetiredKey {
-        key: "batch_bins_ttl",
-        bead: "sp-dm7mjb",
-    },
-    RetiredKey {
-        key: "gate_select_cap",
-        bead: "sp-dm7mjb",
-    },
-    RetiredKey {
-        key: "preflight_suite_max_secs",
-        bead: "sp-dm7mjb",
-    },
-    RetiredKey {
-        key: "queue_repro_ci_maxsec",
-        bead: "sp-dm7mjb",
-    },
-    RetiredKey {
-        key: "queue_repro_ci_pollsec",
-        bead: "sp-dm7mjb",
-    },
-    RetiredKey {
-        key: "queue_stuck_age",
-        bead: "sp-dm7mjb",
-    },
-    RetiredKey {
-        key: "reconciler_label",
-        bead: "sp-dm7mjb",
-    },
-    RetiredKey {
-        key: "round_vm_provider",
-        bead: "sp-dm7mjb",
-    },
-    RetiredKey {
-        key: "suites_budget",
-        bead: "sp-dm7mjb",
-    },
-    RetiredKey {
-        key: "suite_times_log",
-        bead: "sp-dm7mjb",
-    },
-    RetiredKey {
-        key: "tier_allowlist",
-        bead: "sp-dm7mjb",
-    },
-    RetiredKey {
-        key: "tier_area_allowlist",
-        bead: "sp-dm7mjb",
-    },
+    RetiredKey { key: "round_marker_max_age", bead: "sp-dm7mjb" },
+    RetiredKey { key: "liveness_model", bead: "sp-dm7mjb" },
+    RetiredKey { key: "tier_budget_window", bead: "sp-dm7mjb" },
+    RetiredKey { key: "attribute_maxpar", bead: "sp-dm7mjb" },
+    RetiredKey { key: "batch_bins_ttl", bead: "sp-dm7mjb" },
+    RetiredKey { key: "gate_select_cap", bead: "sp-dm7mjb" },
+    RetiredKey { key: "preflight_suite_max_secs", bead: "sp-dm7mjb" },
+    RetiredKey { key: "queue_repro_ci_maxsec", bead: "sp-dm7mjb" },
+    RetiredKey { key: "queue_repro_ci_pollsec", bead: "sp-dm7mjb" },
+    RetiredKey { key: "queue_stuck_age", bead: "sp-dm7mjb" },
+    RetiredKey { key: "reconciler_label", bead: "sp-dm7mjb" },
+    RetiredKey { key: "round_vm_provider", bead: "sp-dm7mjb" },
+    RetiredKey { key: "suites_budget", bead: "sp-dm7mjb" },
+    RetiredKey { key: "suite_times_log", bead: "sp-dm7mjb" },
+    RetiredKey { key: "tier_allowlist", bead: "sp-dm7mjb" },
+    RetiredKey { key: "tier_area_allowlist", bead: "sp-dm7mjb" },
     // The promote/review flow is gone; review.sh was its only consumer.
-    RetiredKey {
-        key: "reviewer_model",
-        bead: "sp-fm92p0",
-    },
-    RetiredKey {
-        key: "reviewer_timeout",
-        bead: "sp-fm92p0",
-    },
-    RetiredKey {
-        key: "reviewer_verdicts",
-        bead: "sp-fm92p0",
-    },
-    RetiredKey {
-        key: "reviewer_diff_limit",
-        bead: "sp-fm92p0",
-    },
-    RetiredKey {
-        key: "queue_batcher",
-        bead: "sp-qu3k0s",
-    },
-    RetiredKey {
-        key: "mirror",
-        bead: "sp-qu3k0s",
-    },
-    RetiredKey {
-        key: "qa_depth",
-        bead: "sp-qu3k0s",
-    },
-    RetiredKey {
-        key: "self_test",
-        bead: "sp-qu3k0s",
-    },
-    RetiredKey {
-        key: "prefix_map",
-        bead: "sp-qu3k0s",
-    },
-    RetiredKey {
-        key: "check5_max_resolve",
-        bead: "sp-qu3k0s",
-    },
-    RetiredKey {
-        key: "delivers_check_timeout",
-        bead: "sp-qu3k0s",
-    },
-    RetiredKey {
-        key: "cert_prices",
-        bead: "sp-qu3k0s",
-    },
-    RetiredKey {
-        key: "dolt_maintenance_units",
-        bead: "sp-qu3k0s",
-    },
+    RetiredKey { key: "reviewer_model", bead: "sp-fm92p0" },
+    RetiredKey { key: "reviewer_timeout", bead: "sp-fm92p0" },
+    RetiredKey { key: "reviewer_verdicts", bead: "sp-fm92p0" },
+    RetiredKey { key: "reviewer_diff_limit", bead: "sp-fm92p0" },
+    RetiredKey { key: "queue_batcher", bead: "sp-qu3k0s" },
+    RetiredKey { key: "mirror", bead: "sp-qu3k0s" },
+    RetiredKey { key: "qa_depth", bead: "sp-qu3k0s" },
+    RetiredKey { key: "self_test", bead: "sp-qu3k0s" },
+    RetiredKey { key: "prefix_map", bead: "sp-qu3k0s" },
+    RetiredKey { key: "check5_max_resolve", bead: "sp-qu3k0s" },
+    RetiredKey { key: "delivers_check_timeout", bead: "sp-qu3k0s" },
+    RetiredKey { key: "cert_prices", bead: "sp-qu3k0s" },
+    RetiredKey { key: "dolt_maintenance_units", bead: "sp-qu3k0s" },
     // Every fixture runs a private server of its own; no shared test server has a data directory or a port.
-    RetiredKey {
-        key: "testdb_data",
-        bead: "sp-iulew8",
-    },
-    RetiredKey {
-        key: "testdb_port",
-        bead: "sp-iulew8",
-    },
-    RetiredKey {
-        key: "lc_testdb_data",
-        bead: "sp-iulew8",
-    },
-    RetiredKey {
-        key: "lc_testdb_port",
-        bead: "sp-iulew8",
-    },
+    RetiredKey { key: "testdb_data", bead: "sp-iulew8" },
+    RetiredKey { key: "testdb_port", bead: "sp-iulew8" },
+    RetiredKey { key: "lc_testdb_data", bead: "sp-iulew8" },
+    RetiredKey { key: "lc_testdb_port", bead: "sp-iulew8" },
     // rust-toolchain.toml is the one pin; every consumer reads it.
-    RetiredKey {
-        key: "release_rust_toolchain",
-        bead: "sp-nx83lb",
-    },
-    RetiredKey {
-        key: "sift_mend_hold_secs",
-        bead: "sp-luwtqz",
-    },
-    RetiredKey {
-        key: "lc_live_check_secs",
-        bead: "sp-kti9ip",
-    },
-    RetiredKey {
-        key: "runtime_repo_events_secs",
-        bead: "sp-nao9lu.2",
-    },
-    RetiredKey {
-        key: "round_vm_ec2_key_warn_days",
-        bead: "sp-1ka34x.2",
-    },
-    RetiredKey {
-        key: "round_vm_ec2_launch_window",
-        bead: "sp-1ka34x.2",
-    },
-    RetiredKey {
-        key: "round_vm_ec2_probe_deadline",
-        bead: "sp-1ka34x.2",
-    },
-    RetiredKey {
-        key: "gate_build_lease_wait_secs",
-        bead: "sp-uipexv",
-    },
+    RetiredKey { key: "release_rust_toolchain", bead: "sp-nx83lb" },
+    RetiredKey { key: "sift_mend_hold_secs", bead: "sp-luwtqz" },
+    RetiredKey { key: "lc_live_check_secs", bead: "sp-kti9ip" },
+    RetiredKey { key: "runtime_repo_events_secs", bead: "sp-nao9lu.2" },
+    RetiredKey { key: "round_vm_ec2_key_warn_days", bead: "sp-1ka34x.2" },
+    RetiredKey { key: "round_vm_ec2_launch_window", bead: "sp-1ka34x.2" },
+    RetiredKey { key: "round_vm_ec2_probe_deadline", bead: "sp-1ka34x.2" },
+    RetiredKey { key: "gate_build_lease_wait_secs", bead: "sp-uipexv" },
 ];
 
 /// A retired `batcher_bin` value that is not the batcher itself (e.g. "/bin/true", the old
@@ -1321,10 +914,7 @@ pub const RETIRED_REPO_KEYS: &[RetiredKey] = &[
     // The gate string moved into the tree under test (`gate.steps`, gate/DESIGN.md "The tree
     // owns its gate"): a branch that ports a fence edits it in the same commit. The legacy
     // repo-map column still gates a repository whose landing ref has never carried one.
-    RetiredKey {
-        key: "gate",
-        bead: "sp-quu2w",
-    },
+    RetiredKey { key: "gate", bead: "sp-quu2w" },
 ];
 
 /// Every key in `history` that is neither an active `[spira]` field (`active`) nor listed in
@@ -1352,10 +942,7 @@ pub fn validate(text: &str) -> Result<SpiraToml, String> {
 }
 
 /// [`validate_with_warnings`] against a registry the caller already holds.
-pub fn validate_with(
-    text: &str,
-    reg: &registry::Registry,
-) -> Result<(SpiraToml, Vec<String>), String> {
+pub fn validate_with(text: &str, reg: &registry::Registry) -> Result<(SpiraToml, Vec<String>), String> {
     let root: toml::Value = text.parse().map_err(|e: toml::de::Error| e.to_string())?;
     validate_value(root, reg)
 }
@@ -1375,20 +962,14 @@ pub fn validate_strict(text: &str) -> Result<(SpiraToml, Vec<String>), String> {
 /// A rostered persona with no `persona.<name>.model` is called and dies before its session
 /// starts: refused here, naming the key, rather than at every call.
 fn require_roster_declares_models(root: &toml::Value) -> Result<(), String> {
-    let Some(spira) = root.get("spira").and_then(|v| v.as_table()) else {
-        return Ok(());
-    };
+    let Some(spira) = root.get("spira").and_then(|v| v.as_table()) else { return Ok(()) };
     let roster: Vec<&str> = match spira.get("runes") {
         Some(toml::Value::Array(a)) => a.iter().filter_map(|v| v.as_str()).collect(),
         Some(toml::Value::String(s)) => s.split_whitespace().collect(),
         _ => return Ok(()),
     };
     for p in roster {
-        let model = root
-            .get("persona")
-            .and_then(|v| v.get(p))
-            .and_then(|v| v.get("model"))
-            .and_then(|v| v.as_str());
+        let model = root.get("persona").and_then(|v| v.get(p)).and_then(|v| v.get("model")).and_then(|v| v.as_str());
         if model.is_none_or(str::is_empty) {
             return Err(format!(
                 "spira.runes rosters {p:?} but persona.{p}.model is not declared — every call of it would die before its session starts; run `spira-config set persona.{p}.model <model>`"
@@ -1398,16 +979,12 @@ fn require_roster_declares_models(root: &toml::Value) -> Result<(), String> {
     Ok(())
 }
 
-const TIMER_PARTITION_PERSONAS: &[&str] = &[
-    "groomer", "mimir", "czar", "warden", "mender", "pilgrim", "skuld",
-];
+const TIMER_PARTITION_PERSONAS: &[&str] = &["groomer", "mimir", "czar", "warden", "mender", "pilgrim", "skuld"];
 
 /// A timer-filed partition label whose persona is not in an explicit `spira.runes` roster is
 /// work nothing can claim: refused, naming both keys.
 fn require_roster_covers_partitions(root: &toml::Value) -> Result<(), String> {
-    let Some(spira) = root.get("spira").and_then(|v| v.as_table()) else {
-        return Ok(());
-    };
+    let Some(spira) = root.get("spira").and_then(|v| v.as_table()) else { return Ok(()) };
     let roster: Vec<&str> = match spira.get("runes") {
         Some(toml::Value::Array(a)) => a.iter().filter_map(|v| v.as_str()).collect(),
         Some(toml::Value::String(s)) => s.split_whitespace().collect(),
@@ -1461,11 +1038,7 @@ pub fn migrate_goal_to_id_prefix(text: &str) -> Result<Option<(String, String)>,
     let root: toml::Value = text.parse().map_err(|e: toml::de::Error| e.to_string())?;
     let prefix = match root.get("spira").and_then(|v| v.as_table()) {
         Some(spira) if !spira.contains_key("id_prefix") => {
-            match spira
-                .get("goal")
-                .and_then(|v| v.as_str())
-                .and_then(id_prefix_from_goal)
-            {
+            match spira.get("goal").and_then(|v| v.as_str()).and_then(id_prefix_from_goal) {
                 Some(p) => p,
                 None => return Ok(None),
             }
@@ -1513,9 +1086,7 @@ pub fn migrate_goal_to_id_prefix_in_file(file: &std::path::Path) -> Result<Optio
 /// refuse a whole document for it: a daemon that cannot parse its config falls back to
 /// defaults for every key, which is a far wider failure than the one key being absent.
 pub fn require_id_prefix(doc: &SpiraToml) -> Result<(), String> {
-    let Some(s) = doc.spira.as_ref() else {
-        return Ok(());
-    };
+    let Some(s) = doc.spira.as_ref() else { return Ok(()) };
     match s.get_str("SPIRA_ID_PREFIX")?.as_deref() {
         Some(p) if valid_id_prefix(p) => Ok(()),
         Some(p) => Err(format!(
@@ -1544,19 +1115,12 @@ pub fn validate_with_warnings(text: &str) -> Result<(SpiraToml, Vec<String>), St
 
 /// The checks and the typed deserialize, on an already-parsed document — one parse per layer,
 /// never a text round trip after a merge.
-fn validate_value(
-    mut root: toml::Value,
-    reg: &registry::Registry,
-) -> Result<(SpiraToml, Vec<String>), String> {
+fn validate_value(mut root: toml::Value, reg: &registry::Registry) -> Result<(SpiraToml, Vec<String>), String> {
     let mut warnings = Vec::new();
     if let Some(spira) = root.get_mut("spira").and_then(|v| v.as_table_mut()) {
         // BEFORE the generic strip: a batcher_bin that is not the batcher switched the cuts
         // off, and dropping it silently would switch them back on (sp-gypjk).
-        let off = spira
-            .get("batcher_bin")
-            .and_then(|v| v.as_str())
-            .map(batcher_bin_means_off)
-            .unwrap_or(false);
+        let off = spira.get("batcher_bin").and_then(|v| v.as_str()).map(batcher_bin_means_off).unwrap_or(false);
         if off && !spira.contains_key("batcher_enable") {
             spira.insert("batcher_enable".into(), toml::Value::String("0".into()));
             warnings.push(
@@ -1567,16 +1131,10 @@ fn validate_value(
         // dropped — a document that believes the box runs off is wrong (sp-v62vn).
         if let Some(v) = spira.get("lifecycle_enforce") {
             if v.as_bool() != Some(true) {
-                return Err(lifecycle_switch_refusal(
-                    "spira.lifecycle_enforce",
-                    &v.to_string(),
-                ));
+                return Err(lifecycle_switch_refusal("spira.lifecycle_enforce", &v.to_string()));
             }
         }
-        for retired in RETIRED_SPIRA_KEYS
-            .iter()
-            .filter(|r| reg.by_field(r.key).is_none())
-        {
+        for retired in RETIRED_SPIRA_KEYS.iter().filter(|r| reg.by_field(r.key).is_none()) {
             if spira.remove(retired.key).is_some() {
                 warnings.push(format!(
                     "{} is retired ({}) and ignored — remove it",
@@ -1587,9 +1145,7 @@ fn validate_value(
     }
     if let Some(repos) = root.get_mut("repo").and_then(|v| v.as_table_mut()) {
         for (name, table) in repos.iter_mut() {
-            let Some(table) = table.as_table_mut() else {
-                continue;
-            };
+            let Some(table) = table.as_table_mut() else { continue };
             for retired in RETIRED_REPO_KEYS {
                 if table.remove(retired.key).is_some() {
                     warnings.push(format!(
@@ -1611,9 +1167,7 @@ fn validate_value(
             };
             let v = &spira[&field];
             if let Some(e) = type_error(&rk.ty, v) {
-                let Some(value) = unknown_variant(&e) else {
-                    return Err(format!("spira.{field}: {e}"));
-                };
+                let Some(value) = unknown_variant(&e) else { return Err(format!("spira.{field}: {e}")) };
                 spira.remove(&field);
                 warnings.push(format!(
                     "spira.{field}: unknown value {value:?} (written by a newer release?); ignored until a reader needs it"
@@ -1660,12 +1214,7 @@ fn validate_value(
 
 /// The value serde refused, from `unknown variant \`v\`, expected ...`.
 fn unknown_variant(msg: &str) -> Option<String> {
-    Some(
-        msg.strip_prefix("unknown variant `")?
-            .split("`, expected")
-            .next()?
-            .to_string(),
-    )
+    Some(msg.strip_prefix("unknown variant `")?.split("`, expected").next()?.to_string())
 }
 
 /// Removes the table key or array element at a serde path (`repo.r.gate_mode`, `repo.r.lanes[2]`).
@@ -1681,17 +1230,10 @@ fn remove_at(root: &mut toml::Value, path: &str) -> bool {
         if last && idx.is_none() {
             return cur.as_table_mut().is_some_and(|t| t.remove(name).is_some());
         }
-        let Some(next) = cur.get_mut(name) else {
-            return false;
-        };
+        let Some(next) = cur.get_mut(name) else { return false };
         match idx {
             Some(i) if last => {
-                return next.as_array_mut().is_some_and(|a| {
-                    i < a.len() && {
-                        a.remove(i);
-                        true
-                    }
-                });
+                return next.as_array_mut().is_some_and(|a| i < a.len() && { a.remove(i); true });
             }
             Some(i) => match next.get_mut(i) {
                 Some(v) => cur = v,
@@ -1718,9 +1260,7 @@ fn unknown_key_path(path: &str, msg: &str) -> Option<String> {
 
 fn remove_key(root: &mut toml::Value, path: &str) -> bool {
     let mut parts: Vec<&str> = path.split('.').collect();
-    let Some(last) = parts.pop() else {
-        return false;
-    };
+    let Some(last) = parts.pop() else { return false };
     let mut cur = root;
     for p in parts {
         match cur.get_mut(p) {
@@ -1741,12 +1281,7 @@ fn remove_key(root: &mut toml::Value, path: &str) -> bool {
 pub fn shrink_reason(existing: &SpiraToml, new: &SpiraToml) -> Option<String> {
     let existing_repos = existing.repo.len();
     let new_repos = new.repo.len();
-    let runes = |d: &SpiraToml| {
-        d.spira
-            .as_ref()
-            .and_then(|s| crate::said(s.get_list("SPIRA_RUNES")))
-            .map_or(0, |r| r.len())
-    };
+    let runes = |d: &SpiraToml| d.spira.as_ref().and_then(|s| crate::said(s.get_list("SPIRA_RUNES"))).map_or(0, |r| r.len());
     let (existing_runes, new_runes) = (runes(existing), runes(new));
     if new_repos < existing_repos || new_runes < existing_runes {
         Some(format!(
@@ -1934,11 +1469,7 @@ pub(crate) fn shell_value(val: &toml::Value) -> Option<String> {
         toml::Value::Integer(n) => n.to_string(),
         toml::Value::Array(items) => items
             .iter()
-            .map(|v| {
-                v.as_str()
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| v.to_string())
-            })
+            .map(|v| v.as_str().map(|s| s.to_string()).unwrap_or_else(|| v.to_string()))
             .collect::<Vec<_>>()
             .join(" "),
         _ => return None,
@@ -1978,25 +1509,16 @@ fn set_path_leaf(
     };
     let mut json = serde_json::to_value(doc).map_err(|e| e.to_string())?;
     if let ["spira", field] = segs.as_slice() {
-        let rk = reg
-            .by_field(field)
-            .ok_or_else(|| format!("spira.{field}: unknown field `{field}`"))?;
-        let table = json
-            .as_object_mut()
-            .expect("a document is an object")
-            .entry("spira")
-            .or_insert_with(|| serde_json::Value::Object(Default::default()));
+        let rk = reg.by_field(field).ok_or_else(|| format!("spira.{field}: unknown field `{field}`"))?;
+        let table = json.as_object_mut().expect("a document is an object").entry("spira").or_insert_with(|| serde_json::Value::Object(Default::default()));
         if table.is_null() {
             *table = serde_json::Value::Object(Default::default());
         }
-        let table = table
-            .as_object_mut()
-            .ok_or_else(|| "spira: not a table".to_string())?;
+        let table = table.as_object_mut().ok_or_else(|| "spira: not a table".to_string())?;
         if leaf_value.is_null() {
             table.remove(*field);
         } else {
-            let v: toml::Value = serde_json::from_value(leaf_value.clone())
-                .map_err(|e| format!("spira.{field}: {e}"))?;
+            let v: toml::Value = serde_json::from_value(leaf_value.clone()).map_err(|e| format!("spira.{field}: {e}"))?;
             if let Some(e) = type_error(&rk.ty, &v) {
                 return Err(format!("spira.{field}: {e}"));
             }
@@ -2035,9 +1557,7 @@ fn set_path_leaf(
 /// comments, order, quoting, empty strings — stays byte-identical. A whole-file re-serialise
 /// rewrites keys the caller never named.
 pub fn edit_text(text: &str, old: &SpiraToml, new: &SpiraToml) -> Result<String, String> {
-    let mut edited: toml_edit::DocumentMut = text
-        .parse()
-        .map_err(|e: toml_edit::TomlError| e.to_string())?;
+    let mut edited: toml_edit::DocumentMut = text.parse().map_err(|e: toml_edit::TomlError| e.to_string())?;
     let old_v = toml::Value::try_from(old).map_err(|e| e.to_string())?;
     let new_v = toml::Value::try_from(new).map_err(|e| e.to_string())?;
     let mut path = Vec::new();
@@ -2063,9 +1583,7 @@ fn diff_apply(
         }
         return Ok(());
     }
-    let Some((leaf, parents)) = path.split_last() else {
-        return Ok(());
-    };
+    let Some((leaf, parents)) = path.split_last() else { return Ok(()) };
     let mut cur: &mut dyn toml_edit::TableLike = root;
     for seg in parents {
         if new.is_none() && cur.get(seg).is_none() {
@@ -2076,9 +1594,7 @@ fn diff_apply(
             t.set_implicit(true);
             toml_edit::Item::Table(t)
         });
-        cur = entry
-            .as_table_like_mut()
-            .ok_or_else(|| format!("{}: not a table", parents.join(".")))?;
+        cur = entry.as_table_like_mut().ok_or_else(|| format!("{}: not a table", parents.join(".")))?;
     }
     let Some(new) = new else {
         cur.remove(leaf);
@@ -2086,14 +1602,10 @@ fn diff_apply(
     };
     let mut wrap = toml::map::Map::new();
     wrap.insert(leaf.clone(), new.clone());
-    let doc: toml_edit::DocumentMut = toml::to_string(&wrap)
-        .map_err(|e| e.to_string())?
-        .parse()
-        .map_err(|e: toml_edit::TomlError| e.to_string())?;
+    let doc: toml_edit::DocumentMut =
+        toml::to_string(&wrap).map_err(|e| e.to_string())?.parse().map_err(|e: toml_edit::TomlError| e.to_string())?;
     let mut item = doc.as_table().get(leaf).cloned().ok_or("lost the value")?;
-    if let (Some(prev), toml_edit::Item::Value(v)) =
-        (cur.get(leaf).and_then(|i| i.as_value()), &mut item)
-    {
+    if let (Some(prev), toml_edit::Item::Value(v)) = (cur.get(leaf).and_then(|i| i.as_value()), &mut item) {
         *v.decor_mut() = prev.decor().clone();
     }
     cur.insert(leaf, item);
@@ -2120,17 +1632,12 @@ pub fn set_path(doc: &SpiraToml, path: &str, value: &str) -> Result<SpiraToml, S
 
 /// [`set_path`] typed against `reg` rather than this process's release: a staged release's
 /// registry declares keys the installed one does not yet.
-pub fn set_path_with(
-    reg: &registry::Registry,
-    doc: &SpiraToml,
-    path: &str,
-    value: &str,
-) -> Result<SpiraToml, String> {
-    let as_string_err =
-        match set_path_leaf(reg, doc, path, serde_json::Value::String(value.to_string())) {
-            Ok(d) => return Ok(d),
-            Err(e) => e,
-        };
+pub fn set_path_with(reg: &registry::Registry, doc: &SpiraToml, path: &str, value: &str) -> Result<SpiraToml, String> {
+    let as_string_err = match set_path_leaf(reg, doc, path, serde_json::Value::String(value.to_string()))
+    {
+        Ok(d) => return Ok(d),
+        Err(e) => e,
+    };
     if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(value) {
         if !parsed.is_string() {
             if let Ok(d) = set_path_leaf(reg, doc, path, parsed) {
@@ -2157,11 +1664,7 @@ pub fn unset_path(doc: &SpiraToml, path: &str) -> Result<SpiraToml, String> {
 }
 
 /// [`unset_path`] typed against `reg`; see [`set_path_with`].
-pub fn unset_path_with(
-    reg: &registry::Registry,
-    doc: &SpiraToml,
-    path: &str,
-) -> Result<SpiraToml, String> {
+pub fn unset_path_with(reg: &registry::Registry, doc: &SpiraToml, path: &str) -> Result<SpiraToml, String> {
     if is_retired_path(path) {
         return Ok(doc.clone());
     }
@@ -2170,14 +1673,10 @@ pub fn unset_path_with(
 
 /// `text` without the retired key at `path`, every other line untouched.
 pub fn remove_retired_text(text: &str, path: &str) -> Result<String, String> {
-    let mut edited: toml_edit::DocumentMut = text
-        .parse()
-        .map_err(|e: toml_edit::TomlError| e.to_string())?;
+    let mut edited: toml_edit::DocumentMut = text.parse().map_err(|e: toml_edit::TomlError| e.to_string())?;
     let mut cur: &mut dyn toml_edit::TableLike = edited.as_table_mut();
     let segs: Vec<&str> = path.split('.').collect();
-    let Some((leaf, parents)) = segs.split_last() else {
-        return Ok(text.to_string());
-    };
+    let Some((leaf, parents)) = segs.split_last() else { return Ok(text.to_string()) };
     for seg in parents {
         match cur.get_mut(seg).and_then(|i| i.as_table_like_mut()) {
             Some(t) => cur = t,
@@ -2205,11 +1704,7 @@ pub fn is_retired_path(path: &str) -> bool {
 /// document is never observed with one written and not the other.
 pub fn set_paths_in_file(file: &std::path::Path, pairs: &[(&str, &str)]) -> Result<(), String> {
     let text = std::fs::read_to_string(file).map_err(|e| format!("{}: {e}", file.display()))?;
-    let before = if text.trim().is_empty() {
-        SpiraToml::default()
-    } else {
-        validate(&text)?
-    };
+    let before = if text.trim().is_empty() { SpiraToml::default() } else { validate(&text)? };
     let mut doc = before.clone();
     for (path, value) in pairs {
         doc = set_path(&doc, path, value)?;
@@ -2224,8 +1719,7 @@ pub fn set_paths_in_file(file: &std::path::Path, pairs: &[(&str, &str)]) -> Resu
 /// pairs in `declare` are written as `spira.<key>`, the only place a value can come from.
 #[cfg(test)]
 pub(crate) fn fixture_doc(declare: &std::collections::BTreeMap<String, String>) -> SpiraToml {
-    let mut d =
-        validate(&process::complete_fixture_text()).expect("the complete fixture validates");
+    let mut d = validate(&process::complete_fixture_text()).expect("the complete fixture validates");
     for (k, v) in declare {
         if let Some(rest) = k.strip_prefix("SPIRA_") {
             if let Ok(n) = set_path(&d, &format!("spira.{}", rest.to_ascii_lowercase()), v) {
@@ -2239,10 +1733,7 @@ pub(crate) fn fixture_doc(declare: &std::collections::BTreeMap<String, String>) 
 /// [`fixture_doc`] written to `<dir>/spira.toml`, its path returned: for a test that resolves
 /// through a process-level entry point, which reads only the file `SPIRA_TOML` names.
 #[cfg(test)]
-pub(crate) fn fixture_toml_file(
-    dir: &std::path::Path,
-    declare: &std::collections::BTreeMap<String, String>,
-) -> PathBuf {
+pub(crate) fn fixture_toml_file(dir: &std::path::Path, declare: &std::collections::BTreeMap<String, String>) -> PathBuf {
     let p = dir.join(FILE_NAME);
     serialize_and_write(&p, &fixture_doc(declare)).expect("the fixture writes");
     p

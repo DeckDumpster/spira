@@ -10,9 +10,7 @@ use std::path::{Path, PathBuf};
 
 /// `land` is landing-pass, `dwarves` a dwarf deciding to work, `czar` czar-pass, `heimdall` the
 /// detectors that page (heimdall, watchtower), `remedies` the reconciler.
-pub const LANES: [&str; 8] = [
-    "claims", "rounds", "publish", "land", "dwarves", "czar", "heimdall", "remedies",
-];
+pub const LANES: [&str; 8] = ["claims", "rounds", "publish", "land", "dwarves", "czar", "heimdall", "remedies"];
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 pub struct RepoStop {
@@ -38,54 +36,31 @@ pub fn dir(run: &Path) -> PathBuf {
 }
 
 fn valid_name(s: &str) -> bool {
-    !s.is_empty()
-        && s.chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
-        && !s.starts_with('.')
+    !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')) && !s.starts_with('.')
 }
 
 /// The bead and state of a `bead:ID=STATE` release condition; `None` for free text, which only
 /// a person lifts. A `bead:` condition that does not parse is an error, never free text.
 pub fn bead_condition(until: &str) -> Option<Result<(String, String), String>> {
     let rest = until.trim().strip_prefix("bead:")?;
-    let parsed = rest.split_once('=').filter(|(b, st)| {
-        valid_name(b) && !st.is_empty() && st.chars().all(|c| c.is_ascii_uppercase() || c == '_')
-    });
-    Some(
-        parsed
-            .map(|(b, st)| (b.to_string(), st.to_string()))
-            .ok_or_else(|| {
-                format!("release condition {until:?} is not bead:<id>=<STATE> (STATE in capitals)")
-            }),
-    )
+    let parsed = rest.split_once('=').filter(|(b, st)| valid_name(b) && !st.is_empty() && st.chars().all(|c| c.is_ascii_uppercase() || c == '_'));
+    Some(parsed.map(|(b, st)| (b.to_string(), st.to_string())).ok_or_else(|| format!("release condition {until:?} is not bead:<id>=<STATE> (STATE in capitals)")))
 }
 
 /// Whether lifecycle `history` rows show the bead entering `state` at or after `since`.
 pub fn entered_state(history: &[serde_json::Value], state: &str, since: u64) -> bool {
-    let num = |v: Option<&serde_json::Value>| {
-        v.and_then(|x| {
-            x.as_u64()
-                .or_else(|| x.as_str().and_then(|s| s.parse().ok()))
-        })
-    };
+    let num = |v: Option<&serde_json::Value>| v.and_then(|x| x.as_u64().or_else(|| x.as_str().and_then(|s| s.parse().ok())));
     history.iter().any(|r| {
-        r.get("to_state").and_then(|v| v.as_str()) == Some(state)
-            && num(r.get("applied")).unwrap_or(0) == 1
-            && num(r.get("at")).is_some_and(|at| at >= since)
+        r.get("to_state").and_then(|v| v.as_str()) == Some(state) && num(r.get("applied")).unwrap_or(0) == 1 && num(r.get("at")).is_some_and(|at| at >= since)
     })
 }
 
 /// Lifts every stop whose `bead:ID=STATE` condition `reached` reports met; a stop whose
 /// state cannot be read stays. Returns the repos lifted and the conditions that could not be read.
-pub fn sweep(
-    run: &Path,
-    reached: &mut dyn FnMut(&str, &str, u64) -> Result<bool, String>,
-) -> (Vec<String>, Vec<String>) {
+pub fn sweep(run: &Path, reached: &mut dyn FnMut(&str, &str, u64) -> Result<bool, String>) -> (Vec<String>, Vec<String>) {
     let (mut lifted, mut unread) = (Vec::new(), Vec::new());
     for s in repo_stops(run) {
-        let Some(Ok((bead, state))) = bead_condition(&s.until) else {
-            continue;
-        };
+        let Some(Ok((bead, state))) = bead_condition(&s.until) else { continue };
         match reached(&bead, &state, s.since) {
             Ok(true) if unpause_repo(run, &s.repo, &[]).is_ok() => lifted.push(s.repo),
             Ok(_) => {}
@@ -99,10 +74,7 @@ pub fn parse_lanes(csv: &str) -> Result<Vec<String>, String> {
     let mut out: Vec<String> = Vec::new();
     for l in csv.split(',').map(str::trim).filter(|l| !l.is_empty()) {
         if !LANES.contains(&l) {
-            return Err(format!(
-                "unknown lane {l:?} — lanes are {}",
-                LANES.join(",")
-            ));
+            return Err(format!("unknown lane {l:?} — lanes are {}", LANES.join(",")));
         }
         if !out.iter().any(|o| o == l) {
             out.push(l.to_string());
@@ -117,10 +89,7 @@ pub fn parse_lanes(csv: &str) -> Result<Vec<String>, String> {
 fn write_atomic(path: &Path, body: &str) -> Result<(), String> {
     let d = path.parent().ok_or("no parent directory")?;
     fs::create_dir_all(d).map_err(|e| format!("{}: {e}", d.display()))?;
-    let tmp = d.join(format!(
-        ".{}.tmp",
-        path.file_name().and_then(|n| n.to_str()).unwrap_or("stop")
-    ));
+    let tmp = d.join(format!(".{}.tmp", path.file_name().and_then(|n| n.to_str()).unwrap_or("stop")));
     fs::write(&tmp, body).map_err(|e| format!("{}: {e}", tmp.display()))?;
     fs::rename(&tmp, path).map_err(|e| format!("{}: {e}", path.display()))
 }
@@ -135,50 +104,18 @@ fn reserve_path(run: &Path, bead: &str) -> PathBuf {
 
 /// Records a stop of `lanes` for `repo`; lanes already stopped keep their record's lane set
 /// merged in, with the newest owner, reason and release condition.
-pub fn pause_repo(
-    run: &Path,
-    repo: &str,
-    lanes: &[String],
-    owner: &str,
-    reason: &str,
-    until: &str,
-    now: u64,
-) -> Result<RepoStop, String> {
-    pause_repo_typed(
-        run,
-        repo,
-        lanes,
-        owner,
-        reason,
-        until,
-        now,
-        tsd::stop::Reason::Landing,
-        None,
-    )
+pub fn pause_repo(run: &Path, repo: &str, lanes: &[String], owner: &str, reason: &str, until: &str, now: u64) -> Result<RepoStop, String> {
+    pause_repo_typed(run, repo, lanes, owner, reason, until, now, tsd::stop::Reason::Landing, None)
 }
 
 /// [`pause_repo`] with the closed reason and the bead the stop is charged to, both written to the
 /// `loop-stop` family beside the stop's current-state file.
 #[allow(clippy::too_many_arguments)]
-pub fn pause_repo_typed(
-    run: &Path,
-    repo: &str,
-    lanes: &[String],
-    owner: &str,
-    reason: &str,
-    until: &str,
-    now: u64,
-    cause: tsd::stop::Reason,
-    bead: Option<&str>,
-) -> Result<RepoStop, String> {
+pub fn pause_repo_typed(run: &Path, repo: &str, lanes: &[String], owner: &str, reason: &str, until: &str, now: u64, cause: tsd::stop::Reason, bead: Option<&str>) -> Result<RepoStop, String> {
     if !valid_name(repo) {
         return Err(format!("bad repo name {repo:?}"));
     }
-    for (what, v) in [
-        ("owner", owner),
-        ("reason", reason),
-        ("release condition (--until)", until),
-    ] {
+    for (what, v) in [("owner", owner), ("reason", reason), ("release condition (--until)", until)] {
         if v.trim().is_empty() {
             return Err(format!("a stop needs a {what}"));
         }
@@ -202,38 +139,20 @@ pub fn pause_repo_typed(
         until: until.into(),
         since: prev.map(|p| p.since).unwrap_or(now),
     };
-    write_atomic(
-        &repo_path(run, repo),
-        &serde_json::to_string_pretty(&stop).map_err(|e| e.to_string())?,
-    )?;
-    let typed = tsd::stop::StopRecord {
-        kind: tsd::stop::Kind::Pause,
-        reason: cause,
-        actor: owner.into(),
-        repo: Some(repo.into()),
-        bead: bead.map(str::to_string),
-        detail: reason.into(),
-    };
-    typed
-        .write(run, &tsd::default_host(), &tsd::iso_utc(now))
-        .map_err(|e| format!("the stop is in force but its typed record failed: {e}"))?;
+    write_atomic(&repo_path(run, repo), &serde_json::to_string_pretty(&stop).map_err(|e| e.to_string())?)?;
+    let typed = tsd::stop::StopRecord { kind: tsd::stop::Kind::Pause, reason: cause, actor: owner.into(), repo: Some(repo.into()), bead: bead.map(str::to_string), detail: reason.into() };
+    typed.write(run, &tsd::default_host(), &tsd::iso_utc(now)).map_err(|e| format!("the stop is in force but its typed record failed: {e}"))?;
     Ok(stop)
 }
 
 /// Lifts `lanes` (all when empty) of `repo`'s stop; returns the lanes still stopped, `None`
 /// when no stop was recorded.
-pub fn unpause_repo(
-    run: &Path,
-    repo: &str,
-    lanes: &[String],
-) -> Result<Option<Vec<String>>, String> {
+pub fn unpause_repo(run: &Path, repo: &str, lanes: &[String]) -> Result<Option<Vec<String>>, String> {
     if !valid_name(repo) {
         return Err(format!("bad repo name {repo:?}"));
     }
     let path = repo_path(run, repo);
-    let Some(mut stop) = read_repo(&path) else {
-        return Ok(None);
-    };
+    let Some(mut stop) = read_repo(&path) else { return Ok(None) };
     if !lanes.is_empty() {
         stop.lanes.retain(|l| !lanes.contains(l));
     } else {
@@ -243,21 +162,11 @@ pub fn unpause_repo(
         fs::remove_file(&path).map_err(|e| format!("{}: {e}", path.display()))?;
         return Ok(Some(Vec::new()));
     }
-    write_atomic(
-        &path,
-        &serde_json::to_string_pretty(&stop).map_err(|e| e.to_string())?,
-    )?;
+    write_atomic(&path, &serde_json::to_string_pretty(&stop).map_err(|e| e.to_string())?)?;
     Ok(Some(stop.lanes))
 }
 
-pub fn reserve(
-    run: &Path,
-    bead: &str,
-    owner: &str,
-    reason: &str,
-    until: &str,
-    now: u64,
-) -> Result<(), String> {
+pub fn reserve(run: &Path, bead: &str, owner: &str, reason: &str, until: &str, now: u64) -> Result<(), String> {
     if !valid_name(bead) {
         return Err(format!("bad bead id {bead:?}"));
     }
@@ -266,17 +175,8 @@ pub fn reserve(
             return Err(format!("a reservation needs a {what}"));
         }
     }
-    let r = Reservation {
-        bead: bead.into(),
-        owner: owner.into(),
-        reason: reason.into(),
-        until: until.into(),
-        since: now,
-    };
-    write_atomic(
-        &reserve_path(run, bead),
-        &serde_json::to_string_pretty(&r).map_err(|e| e.to_string())?,
-    )
+    let r = Reservation { bead: bead.into(), owner: owner.into(), reason: reason.into(), until: until.into(), since: now };
+    write_atomic(&reserve_path(run, bead), &serde_json::to_string_pretty(&r).map_err(|e| e.to_string())?)
 }
 
 /// Returns whether a reservation existed.
@@ -301,21 +201,14 @@ fn entries(run: &Path, prefix: &str) -> Vec<PathBuf> {
         .flatten()
         .flatten()
         .map(|e| e.path())
-        .filter(|p| {
-            p.file_name()
-                .and_then(|n| n.to_str())
-                .is_some_and(|n| n.starts_with(prefix) && n.ends_with(".json"))
-        })
+        .filter(|p| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with(prefix) && n.ends_with(".json")))
         .collect();
     v.sort();
     v
 }
 
 pub fn repo_stops(run: &Path) -> Vec<RepoStop> {
-    entries(run, "repo-")
-        .iter()
-        .filter_map(|p| read_repo(p))
-        .collect()
+    entries(run, "repo-").iter().filter_map(|p| read_repo(p)).collect()
 }
 
 /// Every repo stop, or an error naming the first file that cannot be read: a caller about to
@@ -323,19 +216,12 @@ pub fn repo_stops(run: &Path) -> Vec<RepoStop> {
 pub fn repo_stops_strict(run: &Path) -> Result<Vec<RepoStop>, String> {
     entries(run, "repo-")
         .iter()
-        .map(|p| {
-            fs::read_to_string(p)
-                .map_err(|e| format!("{}: {e}", p.display()))
-                .and_then(|t| serde_json::from_str(&t).map_err(|e| format!("{}: {e}", p.display())))
-        })
+        .map(|p| fs::read_to_string(p).map_err(|e| format!("{}: {e}", p.display())).and_then(|t| serde_json::from_str(&t).map_err(|e| format!("{}: {e}", p.display()))))
         .collect()
 }
 
 pub fn reservations(run: &Path) -> Vec<Reservation> {
-    entries(run, "reserve-")
-        .iter()
-        .filter_map(|p| serde_json::from_str(&fs::read_to_string(p).ok()?).ok())
-        .collect()
+    entries(run, "reserve-").iter().filter_map(|p| serde_json::from_str(&fs::read_to_string(p).ok()?).ok()).collect()
 }
 
 /// The stop on `repo`'s `lane`, if one is recorded.
@@ -360,39 +246,22 @@ pub fn stop_everywhere<S: AsRef<str>>(run: &Path, repos: &[S], lane: &str) -> Op
 /// [`stop_everywhere`] over this process's registered repos, for a binary that holds no registry
 /// of its own. A process that cannot locate its home cannot tell, and says so.
 pub fn stop_everywhere_registered(run: &Path, lane: &str) -> Result<Option<RepoStop>, String> {
-    let home = crate::resolve::locate_home_for_process()
-        .map_err(|e| format!("cannot tell whether the {lane} lane is stopped: {e}"))?;
-    Ok(stop_everywhere(
-        run,
-        &crate::repos::Registry::from_env(std::env::vars().collect(), &home).all(),
-        lane,
-    ))
+    let home = crate::resolve::locate_home_for_process().map_err(|e| format!("cannot tell whether the {lane} lane is stopped: {e}"))?;
+    Ok(stop_everywhere(run, &crate::repos::Registry::from_env(std::env::vars().collect(), &home).all(), lane))
 }
 
 /// The line an actor logs when it skips work under a stop on `lane`: deliberate, never a fault.
 pub fn skip_line(actor: &str, lane: &str, s: &RepoStop) -> String {
-    format!(
-        "{actor}: skipped — the {lane} lane of {} is stopped on purpose by {} ({}); lifts on: {}",
-        s.repo, s.owner, s.reason, s.until
-    )
+    format!("{actor}: skipped — the {lane} lane of {} is stopped on purpose by {} ({}); lifts on: {}", s.repo, s.owner, s.reason, s.until)
 }
 
 /// The line an actor logs when `lane` is stopped on every repo in `repos`, `None` while any runs.
-pub fn skip_if_stopped<S: AsRef<str>>(
-    run: &Path,
-    repos: &[S],
-    actor: &str,
-    lane: &str,
-) -> Option<String> {
+pub fn skip_if_stopped<S: AsRef<str>>(run: &Path, repos: &[S], actor: &str, lane: &str) -> Option<String> {
     stop_everywhere(run, repos, lane).map(|s| skip_line(actor, lane, &s))
 }
 
 /// [`skip_if_stopped`] over this process's registered repos.
-pub fn skip_if_stopped_registered(
-    run: &Path,
-    actor: &str,
-    lane: &str,
-) -> Result<Option<String>, String> {
+pub fn skip_if_stopped_registered(run: &Path, actor: &str, lane: &str) -> Result<Option<String>, String> {
     Ok(stop_everywhere_registered(run, lane)?.map(|s| skip_line(actor, lane, &s)))
 }
 
@@ -402,10 +271,7 @@ pub fn put_repo(run: &Path, stop: &RepoStop) -> Result<(), String> {
     if !valid_name(&stop.repo) {
         return Err(format!("bad repo name {:?}", stop.repo));
     }
-    write_atomic(
-        &repo_path(run, &stop.repo),
-        &serde_json::to_string_pretty(stop).map_err(|e| e.to_string())?,
-    )
+    write_atomic(&repo_path(run, &stop.repo), &serde_json::to_string_pretty(stop).map_err(|e| e.to_string())?)
 }
 
 pub fn reserved_ids(run: &Path) -> BTreeSet<String> {
@@ -436,11 +302,7 @@ pub fn describe_stop(s: &RepoStop, now: u64, review_secs: u64) -> String {
         age(s.since, now),
         s.until,
         s.reason,
-        if overdue(s.since, now, review_secs) {
-            " — OVERDUE: release condition unmet past review age"
-        } else {
-            ""
-        }
+        if overdue(s.since, now, review_secs) { " — OVERDUE: release condition unmet past review age" } else { "" }
     )
 }
 
@@ -450,17 +312,9 @@ pub fn describe_reservation(r: &Reservation, now: u64, review_secs: u64) -> Stri
         r.bead,
         r.owner,
         age(r.since, now),
-        if r.until.is_empty() {
-            "the bead lands"
-        } else {
-            &r.until
-        },
+        if r.until.is_empty() { "the bead lands" } else { &r.until },
         r.reason,
-        if overdue(r.since, now, review_secs) {
-            " — OVERDUE"
-        } else {
-            ""
-        }
+        if overdue(r.since, now, review_secs) { " — OVERDUE" } else { "" }
     )
 }
 
@@ -475,84 +329,28 @@ mod tests {
     #[test]
     fn every_pause_leaves_a_typed_row_whoever_made_it() {
         let d = testkit::TempDir::new("scoped-stop-typed");
-        pause_repo(
-            d.path(),
-            "spira",
-            &lanes("rounds"),
-            "pace",
-            "why",
-            "fix lands",
-            100,
-        )
-        .unwrap();
-        pause_repo_typed(
-            d.path(),
-            "cubby",
-            &lanes("claims"),
-            "o",
-            "r",
-            "u",
-            200,
-            tsd::stop::Reason::Incident,
-            Some("sp-x"),
-        )
-        .unwrap();
+        pause_repo(d.path(), "spira", &lanes("rounds"), "pace", "why", "fix lands", 100).unwrap();
+        pause_repo_typed(d.path(), "cubby", &lanes("claims"), "o", "r", "u", 200, tsd::stop::Reason::Incident, Some("sp-x")).unwrap();
         let text = std::fs::read_to_string(tsd::family_path(d.path(), tsd::stop::FAMILY)).unwrap();
-        let rows: Vec<_> = text
-            .lines()
-            .map(|l| tsd::stop::StopRecord::from_row(&serde_json::from_str(l).unwrap()).unwrap())
-            .collect();
-        let got: Vec<_> = rows
-            .iter()
-            .map(|r| (r.reason, r.repo.as_deref(), r.bead.as_deref()))
-            .collect();
-        assert_eq!(
-            got,
-            vec![
-                (tsd::stop::Reason::Landing, Some("spira"), None),
-                (tsd::stop::Reason::Incident, Some("cubby"), Some("sp-x"))
-            ]
-        );
+        let rows: Vec<_> = text.lines().map(|l| tsd::stop::StopRecord::from_row(&serde_json::from_str(l).unwrap()).unwrap()).collect();
+        let got: Vec<_> = rows.iter().map(|r| (r.reason, r.repo.as_deref(), r.bead.as_deref())).collect();
+        assert_eq!(got, vec![(tsd::stop::Reason::Landing, Some("spira"), None), (tsd::stop::Reason::Incident, Some("cubby"), Some("sp-x"))]);
     }
 
     #[test]
     fn a_stop_is_per_repo_and_per_lane() {
         let d = testkit::TempDir::new("scoped-stop-lanes");
-        pause_repo(
-            d.path(),
-            "spira",
-            &lanes("rounds"),
-            "concierge",
-            "why",
-            "fix lands",
-            100,
-        )
-        .unwrap();
+        pause_repo(d.path(), "spira", &lanes("rounds"), "concierge", "why", "fix lands", 100).unwrap();
         assert!(stop_for(d.path(), "spira", "rounds").is_some());
         assert!(stop_for(d.path(), "spira", "claims").is_none());
-        assert!(
-            stop_for(d.path(), "cubby", "rounds").is_none(),
-            "another repo is untouched"
-        );
+        assert!(stop_for(d.path(), "cubby", "rounds").is_none(), "another repo is untouched");
     }
 
     #[test]
     fn unpause_lifts_named_lanes_then_the_record() {
         let d = testkit::TempDir::new("scoped-stop-lift");
-        pause_repo(
-            d.path(),
-            "spira",
-            &lanes("claims,rounds,publish"),
-            "o",
-            "r",
-            "u",
-            1,
-        )
-        .unwrap();
-        assert_eq!(
-            unpause_repo(d.path(), "spira", &lanes("rounds")).unwrap(),
-            Some(vec!["claims".into(), "publish".into()])
-        );
+        pause_repo(d.path(), "spira", &lanes("claims,rounds,publish"), "o", "r", "u", 1).unwrap();
+        assert_eq!(unpause_repo(d.path(), "spira", &lanes("rounds")).unwrap(), Some(vec!["claims".into(), "publish".into()]));
         assert_eq!(unpause_repo(d.path(), "spira", &[]).unwrap(), Some(vec![]));
         assert!(repo_stops(d.path()).is_empty());
         assert_eq!(unpause_repo(d.path(), "spira", &[]).unwrap(), None);
@@ -586,24 +384,12 @@ mod tests {
 
     #[test]
     fn a_bead_condition_is_typed_and_free_text_is_not() {
-        assert_eq!(
-            bead_condition("bead:sp-x=REWORK"),
-            Some(Ok(("sp-x".into(), "REWORK".into())))
-        );
+        assert_eq!(bead_condition("bead:sp-x=REWORK"), Some(Ok(("sp-x".into(), "REWORK".into()))));
         assert!(bead_condition("fix lands").is_none());
         assert!(bead_condition("bead:sp-x").unwrap().is_err());
         assert!(bead_condition("bead:sp-x=rework").unwrap().is_err());
         let d = testkit::TempDir::new("scoped-stop-bad-cond");
-        assert!(pause_repo(
-            d.path(),
-            "spira",
-            &lanes("rounds"),
-            "o",
-            "r",
-            "bead:sp-x",
-            1
-        )
-        .is_err());
+        assert!(pause_repo(d.path(), "spira", &lanes("rounds"), "o", "r", "bead:sp-x", 1).is_err());
     }
 
     #[test]
@@ -611,65 +397,23 @@ mod tests {
         let h = |to: &str, at: u64| serde_json::json!({"to_state": to, "applied": 1, "at": at.to_string()});
         let rows = vec![h("REWORK", 100), h("CERTIFIED", 200)];
         assert!(entered_state(&rows, "REWORK", 100));
-        assert!(
-            !entered_state(&rows, "REWORK", 101),
-            "an entry before the pause is not a release"
-        );
-        assert!(
-            !entered_state(
-                &[serde_json::json!({"to_state": "REWORK", "applied": 0, "at": 150})],
-                "REWORK",
-                100
-            ),
-            "a refused event did not happen"
-        );
+        assert!(!entered_state(&rows, "REWORK", 101), "an entry before the pause is not a release");
+        assert!(!entered_state(&[serde_json::json!({"to_state": "REWORK", "applied": 0, "at": 150})], "REWORK", 100), "a refused event did not happen");
     }
 
     #[test]
     fn sweep_lifts_only_stops_whose_condition_is_met() {
         let d = testkit::TempDir::new("scoped-stop-sweep");
-        pause_repo(
-            d.path(),
-            "cubby",
-            &lanes("rounds"),
-            "o",
-            "r",
-            "bead:sp-x=REWORK",
-            10,
-        )
-        .unwrap();
-        pause_repo(
-            d.path(),
-            "spira",
-            &lanes("rounds"),
-            "o",
-            "r",
-            "fix lands",
-            10,
-        )
-        .unwrap();
-        let (lifted, unread) = sweep(d.path(), &mut |b, st, since| {
-            Ok(b == "sp-x" && st == "REWORK" && since == 10)
-        });
+        pause_repo(d.path(), "cubby", &lanes("rounds"), "o", "r", "bead:sp-x=REWORK", 10).unwrap();
+        pause_repo(d.path(), "spira", &lanes("rounds"), "o", "r", "fix lands", 10).unwrap();
+        let (lifted, unread) = sweep(d.path(), &mut |b, st, since| Ok(b == "sp-x" && st == "REWORK" && since == 10));
         assert_eq!((lifted, unread), (vec!["cubby".to_string()], vec![]));
         assert!(stop_for(d.path(), "cubby", "rounds").is_none());
         assert!(stop_for(d.path(), "spira", "rounds").is_some());
-        pause_repo(
-            d.path(),
-            "cubby",
-            &lanes("rounds"),
-            "o",
-            "r",
-            "bead:sp-y=DONE",
-            10,
-        )
-        .unwrap();
+        pause_repo(d.path(), "cubby", &lanes("rounds"), "o", "r", "bead:sp-y=DONE", 10).unwrap();
         let (lifted, unread) = sweep(d.path(), &mut |_, _, _| Err("store down".into()));
         assert!(lifted.is_empty() && unread.len() == 1);
-        assert!(
-            stop_for(d.path(), "cubby", "rounds").is_some(),
-            "an unreadable bead keeps the stop"
-        );
+        assert!(stop_for(d.path(), "cubby", "rounds").is_some(), "an unreadable bead keeps the stop");
     }
 
     #[test]
@@ -677,41 +421,21 @@ mod tests {
         let d = testkit::TempDir::new("scoped-stop-everywhere");
         let repos = ["spira", "other"];
         pause_repo(d.path(), "spira", &lanes("czar"), "o", "r", "u", 1).unwrap();
-        assert!(
-            stop_everywhere(d.path(), &repos, "czar").is_none(),
-            "the other repo still runs"
-        );
+        assert!(stop_everywhere(d.path(), &repos, "czar").is_none(), "the other repo still runs");
         pause_repo(d.path(), "other", &lanes("czar,land"), "o", "r", "u", 1).unwrap();
-        assert_eq!(
-            stop_everywhere(d.path(), &repos, "czar").map(|s| s.repo),
-            Some("spira".into())
-        );
+        assert_eq!(stop_everywhere(d.path(), &repos, "czar").map(|s| s.repo), Some("spira".into()));
         assert!(stop_everywhere(d.path(), &repos, "land").is_none());
-        assert!(
-            stop_everywhere::<&str>(d.path(), &[], "czar").is_none(),
-            "no repos is no stop"
-        );
+        assert!(stop_everywhere::<&str>(d.path(), &[], "czar").is_none(), "no repos is no stop");
     }
 
     #[test]
     fn every_actor_lane_parses_and_a_skip_names_who_lifts_it() {
         assert_eq!(lanes("land,dwarves,czar,heimdall,remedies").len(), 5);
-        let s = RepoStop {
-            repo: "spira".into(),
-            lanes: vec!["land".into()],
-            owner: "cutover-mode".into(),
-            reason: "cutover".into(),
-            until: "world stop".into(),
-            since: 1,
-        };
+        let s = RepoStop { repo: "spira".into(), lanes: vec!["land".into()], owner: "cutover-mode".into(), reason: "cutover".into(), until: "world stop".into(), since: 1 };
         let line = skip_line("landing-pass", "land", &s);
-        assert!(
-            line.contains("cutover-mode")
-                && line.contains("world stop")
-                && line.contains("land lane of spira"),
-            "{line}"
-        );
+        assert!(line.contains("cutover-mode") && line.contains("world stop") && line.contains("land lane of spira"), "{line}");
     }
+
 
     #[test]
     fn a_process_reads_a_stop_over_its_own_registered_repos() {
@@ -719,31 +443,15 @@ mod tests {
         let run = d.path().join("run");
         std::fs::create_dir_all(&run).unwrap();
         let edits = crate::process::fixture_world_env(d.path(), &run, &["spira", "other"]);
-        let edits: Vec<(&str, Option<&str>)> =
-            edits.iter().map(|(k, v)| (*k, v.as_deref())).collect();
+        let edits: Vec<(&str, Option<&str>)> = edits.iter().map(|(k, v)| (*k, v.as_deref())).collect();
         let _env = testkit::env(&edits);
         pause_repo(&run, "spira", &lanes("czar"), "o", "r", "u", 1).unwrap();
-        assert!(
-            stop_everywhere_registered(&run, "czar").unwrap().is_none(),
-            "the other registered repo still runs"
-        );
-        assert!(skip_if_stopped_registered(&run, "czar pass", "czar")
-            .unwrap()
-            .is_none());
+        assert!(stop_everywhere_registered(&run, "czar").unwrap().is_none(), "the other registered repo still runs");
+        assert!(skip_if_stopped_registered(&run, "czar pass", "czar").unwrap().is_none());
         pause_repo(&run, "other", &lanes("czar"), "o", "r", "u", 1).unwrap();
-        let line = skip_if_stopped_registered(&run, "czar pass", "czar")
-            .unwrap()
-            .expect("stopped on both registered repos");
-        assert!(
-            line.starts_with("czar pass: skipped") && line.contains("czar lane of spira"),
-            "{line}"
-        );
-        assert!(
-            skip_if_stopped_registered(&run, "reconciler", "remedies")
-                .unwrap()
-                .is_none(),
-            "another lane is no stop"
-        );
+        let line = skip_if_stopped_registered(&run, "czar pass", "czar").unwrap().expect("stopped on both registered repos");
+        assert!(line.starts_with("czar pass: skipped") && line.contains("czar lane of spira"), "{line}");
+        assert!(skip_if_stopped_registered(&run, "reconciler", "remedies").unwrap().is_none(), "another lane is no stop");
     }
     #[test]
     fn an_unresolvable_home_refuses_rather_than_reading_not_stopped() {
@@ -756,24 +464,8 @@ mod tests {
     #[test]
     fn put_repo_replaces_the_record_whole() {
         let d = testkit::TempDir::new("scoped-stop-put");
-        pause_repo(
-            d.path(),
-            "spira",
-            &lanes("rounds,claims"),
-            "cutover-mode",
-            "c",
-            "world stop",
-            5,
-        )
-        .unwrap();
-        let prior = RepoStop {
-            repo: "spira".into(),
-            lanes: vec!["rounds".into()],
-            owner: "concierge".into(),
-            reason: "drain".into(),
-            until: "fix lands".into(),
-            since: 2,
-        };
+        pause_repo(d.path(), "spira", &lanes("rounds,claims"), "cutover-mode", "c", "world stop", 5).unwrap();
+        let prior = RepoStop { repo: "spira".into(), lanes: vec!["rounds".into()], owner: "concierge".into(), reason: "drain".into(), until: "fix lands".into(), since: 2 };
         put_repo(d.path(), &prior).unwrap();
         assert_eq!(stop_for(d.path(), "spira", "rounds"), Some(prior));
         assert!(stop_for(d.path(), "spira", "claims").is_none());

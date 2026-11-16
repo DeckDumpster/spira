@@ -25,24 +25,15 @@ pub fn citations(message: &str, prefix: &str) -> Vec<String> {
     while let Some(at) = message[from..].find(&head) {
         let start = from + at;
         from = start + head.len();
-        if message[..start]
-            .chars()
-            .next_back()
-            .is_some_and(|c| id_char(c) || c == '-')
-        {
+        if message[..start].chars().next_back().is_some_and(|c| id_char(c) || c == '-') {
             continue;
         }
         let rest = &message[from..];
-        let word = rest
-            .bytes()
-            .take_while(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
-            .count();
+        let word = rest.bytes().take_while(|b| b.is_ascii_lowercase() || b.is_ascii_digit()).count();
         let mut end = word;
         loop {
             let tail = &rest[end..];
-            let digits = tail
-                .strip_prefix('.')
-                .map_or(0, |t| t.bytes().take_while(u8::is_ascii_digit).count());
+            let digits = tail.strip_prefix('.').map_or(0, |t| t.bytes().take_while(u8::is_ascii_digit).count());
             if digits == 0 {
                 break;
             }
@@ -72,14 +63,8 @@ pub fn phantoms(
     prefix: &str,
     known: &mut Lookup<'_>,
 ) -> Result<Vec<Phantom>, String> {
-    let cited: Vec<(&str, Vec<String>)> = commits
-        .iter()
-        .map(|(sha, msg)| (sha.as_str(), citations(msg, prefix)))
-        .collect();
-    let mut all: Vec<String> = cited
-        .iter()
-        .flat_map(|(_, ids)| ids.iter().cloned())
-        .collect();
+    let cited: Vec<(&str, Vec<String>)> = commits.iter().map(|(sha, msg)| (sha.as_str(), citations(msg, prefix))).collect();
+    let mut all: Vec<String> = cited.iter().flat_map(|(_, ids)| ids.iter().cloned()).collect();
     all.sort();
     all.dedup();
     if all.is_empty() {
@@ -90,32 +75,19 @@ pub fn phantoms(
         .into_iter()
         .flat_map(|(sha, ids)| ids.into_iter().map(move |id| (sha, id)))
         .filter(|(_, id)| !present.contains(id))
-        .map(|(sha, id)| Phantom {
-            sha: sha.to_string(),
-            id,
-        })
+        .map(|(sha, id)| Phantom { sha: sha.to_string(), id })
         .collect())
 }
 
 fn short(sha: &str) -> &str {
-    if sha.bytes().all(|b| b.is_ascii_hexdigit()) {
-        &sha[..sha.len().min(9)]
-    } else {
-        sha
-    }
+    if sha.bytes().all(|b| b.is_ascii_hexdigit()) { &sha[..sha.len().min(9)] } else { sha }
 }
 
 /// One line per phantom, then how to fix it.
 pub fn refusal(phantoms: &[Phantom]) -> String {
     let mut out: String = phantoms
         .iter()
-        .map(|p| {
-            format!(
-                "{} cites {}, which does not exist in the bead store\n",
-                short(&p.sha),
-                p.id
-            )
-        })
+        .map(|p| format!("{} cites {}, which does not exist in the bead store\n", short(&p.sha), p.id))
         .collect();
     out.push_str(
         "Reword the commit: `git commit --amend` for the tip, or `git rebase -i <landref>` and mark it `reword`. \
@@ -131,15 +103,10 @@ mod tests {
     // The retired commit-cite.sh rule: any-length head. Kept so the red against it is a test.
     fn old_regex_hits(message: &str) -> Vec<String> {
         let mut out = Vec::new();
-        for tok in message
-            .split(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '.' || c == '_'))
-        {
+        for tok in message.split(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '.' || c == '_')) {
             let t = tok.trim_end_matches('.');
             if let Some(h) = t.strip_prefix("sp-") {
-                if !h.is_empty()
-                    && h.bytes()
-                        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
-                {
+                if !h.is_empty() && h.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit()) {
                     out.push(t.to_string());
                 }
             }
@@ -149,45 +116,24 @@ mod tests {
 
     #[test]
     fn the_old_rule_counted_fixture_ids() {
-        assert_eq!(
-            old_regex_hits("answers sp-a claimable and sp-b blocked"),
-            ["sp-a", "sp-b"]
-        );
+        assert_eq!(old_regex_hits("answers sp-a claimable and sp-b blocked"), ["sp-a", "sp-b"]);
     }
 
     #[test]
     fn fixture_ids_in_prose_are_not_citations() {
-        assert!(citations(
-            "a claim view that answers sp-a claimable and sp-b blocked",
-            "sp"
-        )
-        .is_empty());
+        assert!(citations("a claim view that answers sp-a claimable and sp-b blocked", "sp").is_empty());
     }
 
     #[test]
     fn allocator_shaped_tokens_are_citations() {
-        let got = citations(
-            "sp-zzzzzz and sp-abc, also sp-boo22.2 and sp-vx3oi. done",
-            "sp",
-        );
+        let got = citations("sp-zzzzzz and sp-abc, also sp-boo22.2 and sp-vx3oi. done", "sp");
         assert_eq!(got, ["sp-abc", "sp-boo22.2", "sp-vx3oi", "sp-zzzzzz"]);
     }
 
     #[test]
     fn tokens_that_are_not_whole_ids_are_not_citations() {
-        for m in [
-            "sp-ow-mail",
-            "xsp-abcdef",
-            "SP-ABCDEF",
-            "sp-ab",
-            "sp-abcDEF",
-            "sp-abc_x",
-        ] {
-            assert!(
-                citations(m, "sp").is_empty(),
-                "{m}: {:?}",
-                citations(m, "sp")
-            );
+        for m in ["sp-ow-mail", "xsp-abcdef", "SP-ABCDEF", "sp-ab", "sp-abcDEF", "sp-abc_x"] {
+            assert!(citations(m, "sp").is_empty(), "{m}: {:?}", citations(m, "sp"));
         }
     }
 
@@ -197,28 +143,15 @@ mod tests {
     }
 
     fn commits() -> Vec<(String, String)> {
-        vec![(
-            "0123456789abcdef".into(),
-            "sp-real1: x\n\nsee sp-zzzzzz".into(),
-        )]
+        vec![("0123456789abcdef".into(), "sp-real1: x\n\nsee sp-zzzzzz".into())]
     }
 
     #[test]
     fn a_cited_id_the_store_lacks_is_a_phantom_with_its_sha() {
         let got = phantoms(&commits(), "sp", &mut |_| Ok(vec!["sp-real1".to_string()])).unwrap();
-        assert_eq!(
-            got,
-            [Phantom {
-                sha: "0123456789abcdef".into(),
-                id: "sp-zzzzzz".into()
-            }]
-        );
+        assert_eq!(got, [Phantom { sha: "0123456789abcdef".into(), id: "sp-zzzzzz".into() }]);
         let text = refusal(&got);
-        assert!(
-            text.contains("012345678 cites sp-zzzzzz, which does not exist in the bead store")
-                && text.contains("Reword"),
-            "{text}"
-        );
+        assert!(text.contains("012345678 cites sp-zzzzzz, which does not exist in the bead store") && text.contains("Reword"), "{text}");
     }
 
     #[test]
@@ -229,9 +162,6 @@ mod tests {
     #[test]
     fn a_message_citing_nothing_asks_the_store_nothing() {
         let c = vec![("a".to_string(), "no ids sp-a".to_string())];
-        assert_eq!(
-            phantoms(&c, "sp", &mut |_| Err("asked".into())).unwrap(),
-            []
-        );
+        assert_eq!(phantoms(&c, "sp", &mut |_| Err("asked".into())).unwrap(), []);
     }
 }

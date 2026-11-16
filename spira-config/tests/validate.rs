@@ -51,20 +51,13 @@ mod spira_section {
 
     #[test]
     fn valid() {
-        validate("[spira]\nid_prefix = \"sp\"\nhome_repo = \"home\"\nmax_dwarves = 4\n")
-            .expect("valid");
+        validate("[spira]\nid_prefix = \"sp\"\nhome_repo = \"home\"\nmax_dwarves = 4\n").expect("valid");
     }
 
     #[test]
     fn unknown_key() {
-        let (_, w) = spira_config::validate_with_warnings(
-            "[spira]\nid_prefix = \"sp\"\nhome_repo = \"home\"\nspelled_rong = 1\n",
-        )
-        .unwrap();
-        assert!(
-            w.iter().any(|m| m.starts_with("spira.spelled_rong")),
-            "{w:?}"
-        );
+        let (_, w) = spira_config::validate_with_warnings("[spira]\nid_prefix = \"sp\"\nhome_repo = \"home\"\nspelled_rong = 1\n").unwrap();
+        assert!(w.iter().any(|m| m.starts_with("spira.spelled_rong")), "{w:?}");
     }
 
     #[test]
@@ -75,15 +68,8 @@ mod spira_section {
 
     #[test]
     fn an_unknown_enum_value_is_dropped_with_a_warning_and_a_mistyped_one_errors() {
-        let (doc, w) = spira_config::validate_with_warnings(
-            "[spira]\nid_prefix = \"sp\"\ncertify_suites = \"maybe\"\n",
-        )
-        .unwrap();
-        assert!(
-            w.iter()
-                .any(|m| m.starts_with("spira.certify_suites") && m.contains("maybe")),
-            "{w:?}"
-        );
+        let (doc, w) = spira_config::validate_with_warnings("[spira]\nid_prefix = \"sp\"\ncertify_suites = \"maybe\"\n").unwrap();
+        assert!(w.iter().any(|m| m.starts_with("spira.certify_suites") && m.contains("maybe")), "{w:?}");
         assert_eq!(doc.unknown_values["spira.certify_suites"], "maybe");
         let err = validate("[spira]\nid_prefix = \"sp\"\ncertify_suites = 3\n").unwrap_err();
         assert!(err.starts_with("spira.certify_suites"), "{err}");
@@ -95,14 +81,8 @@ mod spira_section {
         let s = doc.spira.unwrap();
         assert_eq!(s.get_u32("SPIRA_MAX_DWARVES"), Ok(Some(4)));
         assert_eq!(s.get_u32("SPIRA_MAX_LIVE_DWARVES"), Ok(None));
-        assert!(s
-            .get_u32("SPIRA_NOT_A_KEY")
-            .unwrap_err()
-            .contains("not a registered config key"));
-        assert!(s
-            .get_str("SPIRA_MAX_DWARVES")
-            .unwrap_err()
-            .contains("TYPE=u32"));
+        assert!(s.get_u32("SPIRA_NOT_A_KEY").unwrap_err().contains("not a registered config key"));
+        assert!(s.get_str("SPIRA_MAX_DWARVES").unwrap_err().contains("TYPE=u32"));
     }
 
     #[test]
@@ -139,44 +119,28 @@ mod spira_section {
         assert!(err.contains("sp-k6m1m"), "{err}");
         validate(text).expect("a reader still loads it");
         // Positive control: the same table with the prefix passes strict validation.
-        let (doc, _) =
-            spira_config::validate_strict("[spira]\nhome_repo = \"home\"\nid_prefix = \"sp\"\n")
-                .expect("valid");
-        assert_eq!(
-            doc.spira
-                .unwrap()
-                .get_str("SPIRA_ID_PREFIX")
-                .unwrap()
-                .as_deref(),
-            Some("sp")
-        );
+        let (doc, _) = spira_config::validate_strict("[spira]\nhome_repo = \"home\"\nid_prefix = \"sp\"\n").expect("valid");
+        assert_eq!(doc.spira.unwrap().get_str("SPIRA_ID_PREFIX").unwrap().as_deref(), Some("sp"));
         spira_config::validate_strict("[spira]\n").expect("an empty table configures nothing");
-        spira_config::validate_strict("[repo.a]\npath = \"/a\"\nmode = \"push\"\n")
-            .expect("no [spira] at all");
+        spira_config::validate_strict("[repo.a]\npath = \"/a\"\nmode = \"push\"\n").expect("no [spira] at all");
     }
 
     #[test]
     fn an_unusable_id_prefix_is_refused() {
         for bad in ["", "sp-", "s p", "sp-spira"] {
-            let err = spira_config::validate_strict(&format!("[spira]\nid_prefix = {bad:?}\n"))
-                .unwrap_err();
+            let err = spira_config::validate_strict(&format!("[spira]\nid_prefix = {bad:?}\n")).unwrap_err();
             assert!(err.starts_with("spira.id_prefix:"), "{bad:?}: {err}");
         }
     }
 
     #[test]
     fn the_retired_goal_key_warns_and_does_not_stand_in_for_the_prefix() {
-        let (doc, w) =
-            spira_config::validate_strict("[spira]\nid_prefix = \"sp\"\ngoal = \"sp-spira\"\n")
-                .expect("a retired key is a warning, not an error");
-        assert!(
-            w.iter().any(|w| w.contains("goal is retired (sp-k6m1m)")),
-            "{w:?}"
-        );
+        let (doc, w) = spira_config::validate_strict("[spira]\nid_prefix = \"sp\"\ngoal = \"sp-spira\"\n")
+            .expect("a retired key is a warning, not an error");
+        assert!(w.iter().any(|w| w.contains("goal is retired (sp-k6m1m)")), "{w:?}");
         assert!(!spira_config::export_sh(&doc).contains("GOAL"));
         // Production's shape before the migration: goal set, id_prefix absent — refused.
-        let err = spira_config::validate_strict("[spira]\ngoal = \"sp-spira\"\ndb = \"/db\"\n")
-            .unwrap_err();
+        let err = spira_config::validate_strict("[spira]\ngoal = \"sp-spira\"\ndb = \"/db\"\n").unwrap_err();
         assert!(err.starts_with("spira.id_prefix: required"), "{err}");
     }
 
@@ -187,15 +151,8 @@ mod spira_section {
         let fixed = spira_config::set_path(&doc, "spira.id_prefix", "sp").unwrap();
         let out = toml::to_string_pretty(&fixed).unwrap();
         let (back, _) = spira_config::validate_strict(&out).expect("repaired");
-        assert_eq!(
-            back.spira.unwrap().get_str("SPIRA_DB").unwrap().as_deref(),
-            Some("/db"),
-            "the rest of [spira] survives"
-        );
-        assert!(
-            !out.contains("goal"),
-            "and the retired key is gone from the rewrite: {out}"
-        );
+        assert_eq!(back.spira.unwrap().get_str("SPIRA_DB").unwrap().as_deref(), Some("/db"), "the rest of [spira] survives");
+        assert!(!out.contains("goal"), "and the retired key is gone from the rewrite: {out}");
     }
 
     #[test]
@@ -204,30 +161,21 @@ mod spira_section {
         // would still pass if the code had the default hard-coded instead of actually
         // reading the key.
         let doc = validate("[spira]\nid_prefix = \"sp\"\nstack_max_depth = 2\n").expect("valid");
-        assert_eq!(
-            doc.spira.unwrap().get_u32("SPIRA_STACK_MAX_DEPTH").unwrap(),
-            Some(2)
-        );
+        assert_eq!(doc.spira.unwrap().get_u32("SPIRA_STACK_MAX_DEPTH").unwrap(), Some(2));
     }
 
     #[test]
     fn stack_max_depth_zero_is_valid() {
         // stacked-dependents-2026-09-28 §1: 0 reproduces today's no-stacking behaviour.
         let doc = validate("[spira]\nid_prefix = \"sp\"\nstack_max_depth = 0\n").expect("valid");
-        assert_eq!(
-            doc.spira.unwrap().get_u32("SPIRA_STACK_MAX_DEPTH").unwrap(),
-            Some(0)
-        );
+        assert_eq!(doc.spira.unwrap().get_u32("SPIRA_STACK_MAX_DEPTH").unwrap(), Some(0));
     }
 
     #[test]
     fn mail_mute_true_is_valid() {
         // sp-9hwim: the typed replacement for the mail-mute file-existence override.
         let doc = validate("[spira]\nid_prefix = \"sp\"\nmail_mute = true\n").expect("valid");
-        assert_eq!(
-            doc.spira.unwrap().get_bool("SPIRA_MAIL_MUTE").unwrap(),
-            Some(true)
-        );
+        assert_eq!(doc.spira.unwrap().get_bool("SPIRA_MAIL_MUTE").unwrap(), Some(true));
     }
 
     #[test]
@@ -248,10 +196,7 @@ mod spira_section {
     #[test]
     fn stack_max_depth_at_the_hard_ceiling_is_valid() {
         let doc = validate("[spira]\nid_prefix = \"sp\"\nstack_max_depth = 4\n").expect("valid");
-        assert_eq!(
-            doc.spira.unwrap().get_u32("SPIRA_STACK_MAX_DEPTH").unwrap(),
-            Some(4)
-        );
+        assert_eq!(doc.spira.unwrap().get_u32("SPIRA_STACK_MAX_DEPTH").unwrap(), Some(4));
     }
 }
 
@@ -261,50 +206,34 @@ mod retired_keys {
 
     #[test]
     fn a_toml_still_setting_cert_idle_skip_loads_with_a_warning() {
-        let (_, w) =
-            validate_with_warnings("[spira]\nid_prefix = \"sp\"\ncert_idle_skip = false\n")
-                .expect("a retired key must validate, not error");
-        assert!(
-            w.iter()
-                .any(|m| m.contains("cert_idle_skip") && m.contains("sp-6d9th")),
-            "{w:?}"
-        );
+        let (_, w) = validate_with_warnings("[spira]\nid_prefix = \"sp\"\ncert_idle_skip = false\n")
+            .expect("a retired key must validate, not error");
+        assert!(w.iter().any(|m| m.contains("cert_idle_skip") && m.contains("sp-6d9th")), "{w:?}");
     }
 
     #[test]
     fn a_toml_still_setting_broker_enable_loads_with_a_warning() {
         let (_, w) = validate_with_warnings("[spira]\nid_prefix = \"sp\"\nbroker_enable = \"0\"\n")
             .expect("a retired key must validate, not error");
-        assert!(
-            w.iter()
-                .any(|m| m.contains("broker_enable") && m.contains("sp-1tvphb")),
-            "{w:?}"
-        );
+        assert!(w.iter().any(|m| m.contains("broker_enable") && m.contains("sp-1tvphb")), "{w:?}");
     }
 
     #[test]
     fn retired_key_warns_naming_the_key_and_bead() {
-        let (doc, warnings) =
-            validate_with_warnings("[spira]\nid_prefix = \"sp\"\nqueue_local_gate = 1\n")
-                .expect("a retired key must validate, not error");
+        let (doc, warnings) = validate_with_warnings("[spira]\nid_prefix = \"sp\"\nqueue_local_gate = 1\n")
+            .expect("a retired key must validate, not error");
         assert!(doc.spira.is_some());
         assert!(
-            warnings
-                .iter()
-                .any(|w| w.contains("queue_local_gate") && w.contains("sp-vsob2")),
+            warnings.iter().any(|w| w.contains("queue_local_gate") && w.contains("sp-vsob2")),
             "expected a warning naming queue_local_gate and sp-vsob2, got {warnings:?}"
         );
     }
 
     #[test]
     fn lanes_reserve_is_a_retired_key() {
-        let (_, warnings) =
-            validate_with_warnings("[spira]\nid_prefix = \"sp\"\nlanes_reserve = 1\n")
-                .expect("a retired key must validate, not error");
-        assert!(
-            warnings.iter().any(|w| w.contains("lanes_reserve")),
-            "got {warnings:?}"
-        );
+        let (_, warnings) = validate_with_warnings("[spira]\nid_prefix = \"sp\"\nlanes_reserve = 1\n")
+            .expect("a retired key must validate, not error");
+        assert!(warnings.iter().any(|w| w.contains("lanes_reserve")), "got {warnings:?}");
     }
 
     #[test]
@@ -313,117 +242,63 @@ mod retired_keys {
             "[spira]\nid_prefix = \"sp\"\nunit_test_slow_secs = 60\nunit_test_terminate_after = 2\n",
         )
         .expect("a retired key must validate, not error");
-        assert!(
-            warnings.iter().any(|w| w.contains("unit_test_slow_secs")),
-            "got {warnings:?}"
-        );
-        assert!(
-            warnings
-                .iter()
-                .any(|w| w.contains("unit_test_terminate_after")),
-            "got {warnings:?}"
-        );
+        assert!(warnings.iter().any(|w| w.contains("unit_test_slow_secs")), "got {warnings:?}");
+        assert!(warnings.iter().any(|w| w.contains("unit_test_terminate_after")), "got {warnings:?}");
     }
 
     #[test]
     fn a_config_written_while_the_round_vm_disk_preflight_shipped_still_validates() {
-        let (_, warnings) =
-            validate_with_warnings("[spira]\nid_prefix = \"sp\"\nround_vm_disk_need_gib = 40\n")
-                .expect("the key is still registered, so a config carrying it validates");
-        assert!(
-            !warnings
-                .iter()
-                .any(|w| w.contains("round_vm_disk_need_gib")),
-            "a registered key is not retired: {warnings:?}"
-        );
+        let (_, warnings) = validate_with_warnings("[spira]\nid_prefix = \"sp\"\nround_vm_disk_need_gib = 40\n")
+            .expect("the key is still registered, so a config carrying it validates");
+        assert!(!warnings.iter().any(|w| w.contains("round_vm_disk_need_gib")), "a registered key is not retired: {warnings:?}");
     }
 
     #[test]
     fn a_config_written_while_the_throughput_floor_shipped_still_validates() {
         let (_, warnings) = validate_with_warnings("[spira]\nid_prefix = \"sp\"\nthroughput_floor_per_day = 150\nthroughput_restop_after = 3600\n")
             .expect("a retired key must validate, not error");
-        assert!(
-            warnings
-                .iter()
-                .any(|w| w.contains("throughput_floor_per_day is retired (sp-ner2yi)")),
-            "got {warnings:?}"
-        );
-        assert!(
-            warnings
-                .iter()
-                .any(|w| w.contains("throughput_restop_after is retired (sp-ner2yi)")),
-            "got {warnings:?}"
-        );
+        assert!(warnings.iter().any(|w| w.contains("throughput_floor_per_day is retired (sp-ner2yi)")), "got {warnings:?}");
+        assert!(warnings.iter().any(|w| w.contains("throughput_restop_after is retired (sp-ner2yi)")), "got {warnings:?}");
     }
 
     #[test]
     fn a_config_written_while_lc_serve_held_live_rows_still_validates() {
-        let (_, warnings) =
-            validate_with_warnings("[spira]\nid_prefix = \"sp\"\nlc_live_check_secs = 60\n")
-                .expect("a retired key must validate, not error");
-        assert!(
-            warnings
-                .iter()
-                .any(|w| w.contains("lc_live_check_secs is retired (sp-kti9ip)")),
-            "got {warnings:?}"
-        );
+        let (_, warnings) = validate_with_warnings("[spira]\nid_prefix = \"sp\"\nlc_live_check_secs = 60\n")
+            .expect("a retired key must validate, not error");
+        assert!(warnings.iter().any(|w| w.contains("lc_live_check_secs is retired (sp-kti9ip)")), "got {warnings:?}");
     }
 
     #[test]
     fn a_config_written_while_the_repo_events_poll_shipped_still_validates() {
-        let (_, warnings) =
-            validate_with_warnings("[spira]\nid_prefix = \"sp\"\nruntime_repo_events_secs = 45\n")
-                .expect("a retired key must validate, not error");
-        assert!(
-            warnings
-                .iter()
-                .any(|w| w.contains("runtime_repo_events_secs is retired (sp-nao9lu.2)")),
-            "got {warnings:?}"
-        );
+        let (_, warnings) = validate_with_warnings("[spira]\nid_prefix = \"sp\"\nruntime_repo_events_secs = 45\n")
+            .expect("a retired key must validate, not error");
+        assert!(warnings.iter().any(|w| w.contains("runtime_repo_events_secs is retired (sp-nao9lu.2)")), "got {warnings:?}");
     }
 
     #[test]
     fn a_config_written_while_the_ec2_spill_watchers_shipped_still_validates() {
-        for key in [
-            "round_vm_ec2_key_warn_days",
-            "round_vm_ec2_launch_window",
-            "round_vm_ec2_probe_deadline",
-        ] {
-            let (_, warnings) =
-                validate_with_warnings(&format!("[spira]\nid_prefix = \"sp\"\n{key} = 5\n"))
-                    .expect("a retired key must validate, not error");
-            assert!(
-                warnings
-                    .iter()
-                    .any(|w| w.contains(&format!("{key} is retired (sp-1ka34x.2)"))),
-                "got {warnings:?}"
-            );
+        for key in ["round_vm_ec2_key_warn_days", "round_vm_ec2_launch_window", "round_vm_ec2_probe_deadline"] {
+            let (_, warnings) = validate_with_warnings(&format!("[spira]\nid_prefix = \"sp\"\n{key} = 5\n"))
+                .expect("a retired key must validate, not error");
+            assert!(warnings.iter().any(|w| w.contains(&format!("{key} is retired (sp-1ka34x.2)"))), "got {warnings:?}");
         }
     }
 
     #[test]
     fn a_misspelt_key_warns_and_is_ignored() {
-        let (_, w) = spira_config::validate_with_warnings(
-            "[spira]\nid_prefix = \"sp\"\nqueue_batch_idle_cutt = 1\n",
-        )
-        .unwrap();
-        assert!(
-            w.iter()
-                .any(|m| m.starts_with("spira.queue_batch_idle_cutt")),
-            "{w:?}"
-        );
+        let (_, w) = spira_config::validate_with_warnings("[spira]\nid_prefix = \"sp\"\nqueue_batch_idle_cutt = 1\n").unwrap();
+        assert!(w.iter().any(|m| m.starts_with("spira.queue_batch_idle_cutt")), "{w:?}");
     }
 
     #[test]
     fn dropping_a_key_without_retiring_it_fails_the_suite() {
-        let history: BTreeSet<String> = ["home_repo", "max_dwarves", "never_retired_by_anything"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
-        let active: BTreeSet<String> = ["home_repo", "max_dwarves"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
+        let history: BTreeSet<String> =
+            ["home_repo", "max_dwarves", "never_retired_by_anything"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
+        let active: BTreeSet<String> =
+            ["home_repo", "max_dwarves"].iter().map(|s| s.to_string()).collect();
         let missing = missing_from_retirement(&history, &active);
         assert_eq!(missing, vec!["never_retired_by_anything".to_string()]);
     }
@@ -443,10 +318,7 @@ mod repo_section {
             "[repo.home]\npath = \"/srv/checkouts/home\"\nmode = \"push\"\nnickname = \"x\"\n",
         )
         .unwrap();
-        assert!(
-            w.iter().any(|m| m.starts_with("repo.home.nickname")),
-            "{w:?}"
-        );
+        assert!(w.iter().any(|m| m.starts_with("repo.home.nickname")), "{w:?}");
     }
 
     #[test]
@@ -483,32 +355,26 @@ mod persona_section {
     }
 }
 
-const MODELS: &str =
-    "[persona.ops]\nmodel = \"claude-x\"\n[persona.warden]\nmodel = \"claude-x\"\n";
+const MODELS: &str = "[persona.ops]\nmodel = \"claude-x\"\n[persona.warden]\nmodel = \"claude-x\"\n";
 
 #[test]
 fn strict_validation_refuses_a_rostered_persona_with_no_declared_model() {
     let roster = "[spira]\nid_prefix = \"sp\"\nrunes = [\"ops\", \"warden\"]\n[persona.ops]\nmodel = \"claude-x\"\n";
     let err = spira_config::validate_strict(roster).unwrap_err();
     assert!(err.contains("persona.warden.model"), "{err}");
-    spira_config::validate_strict(&format!("{roster}[persona.warden]\nmodel = \"claude-x\"\n"))
-        .expect("every rostered persona declares a model");
+    spira_config::validate_strict(&format!("{roster}[persona.warden]\nmodel = \"claude-x\"\n")).expect("every rostered persona declares a model");
 }
 
 #[test]
 fn strict_validation_refuses_a_timer_partition_label_whose_persona_is_unrostered() {
     let omits = "[spira]\nid_prefix = \"sp\"\nwarden_label = \"warden-sweep\"\nrunes = [\"ops\"]\n";
     let err = spira_config::validate_strict(omits).unwrap_err();
-    assert!(
-        err.contains("spira.warden_label") && err.contains("spira.runes"),
-        "{err}"
-    );
+    assert!(err.contains("spira.warden_label") && err.contains("spira.runes"), "{err}");
     let ok = format!("[spira]\nid_prefix = \"sp\"\nwarden_label = \"warden-sweep\"\nrunes = [\"ops\", \"warden\"]\n{MODELS}");
     spira_config::validate_strict(&ok).expect("rostered");
 }
 
 #[test]
 fn the_complete_fixture_roster_covers_its_lanes_and_timer_labels() {
-    spira_config::validate_strict(&spira_config::process::complete_fixture_text())
-        .expect("a roster that omits a lane's persona strands that lane's beads");
+    spira_config::validate_strict(&spira_config::process::complete_fixture_text()).expect("a roster that omits a lane's persona strands that lane's beads");
 }

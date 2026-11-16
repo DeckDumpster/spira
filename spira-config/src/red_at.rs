@@ -7,12 +7,7 @@ pub fn red_at(suite: &str, out: &str) -> (String, String) {
     let step = match suite {
         "-" | "" => out
             .lines()
-            .find_map(|l| {
-                l.trim()
-                    .strip_prefix("gate-step RED ")?
-                    .split_once(" :: ")
-                    .map(|(_, u)| u.trim().to_string())
-            })
+            .find_map(|l| l.trim().strip_prefix("gate-step RED ")?.split_once(" :: ").map(|(_, u)| u.trim().to_string()))
             .unwrap_or_default(),
         s => s.to_string(),
     };
@@ -32,8 +27,7 @@ mod tests {
 
     #[test]
     fn a_named_suite_wins_and_bookkeeping_lines_are_skipped() {
-        let out =
-            "boom\ngate-step RED rc=1 :: fence\ngate: VERDICT=FAIL reason=branch-red suite=s\n";
+        let out = "boom\ngate-step RED rc=1 :: fence\ngate: VERDICT=FAIL reason=branch-red suite=s\n";
         assert_eq!(red_at("s", out), ("s".into(), "boom".into()));
     }
 

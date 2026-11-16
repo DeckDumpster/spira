@@ -34,15 +34,7 @@ fn resolve_now() -> Result<Resolved, String> {
 /// A caller that re-pins takes exactly the keys it names; everything else stays as it was read.
 pub fn fresh(keys: &[String]) -> Result<BTreeMap<String, String>, String> {
     let resolved = resolve_now()?;
-    keys.iter()
-        .map(|k| {
-            resolved
-                .values
-                .get(k)
-                .map(|v| (k.clone(), v.clone()))
-                .ok_or_else(|| format!("{k} is not a registered config key — refusing"))
-        })
-        .collect()
+    keys.iter().map(|k| resolved.values.get(k).map(|v| (k.clone(), v.clone())).ok_or_else(|| format!("{k} is not a registered config key — refusing"))).collect()
 }
 
 /// The environment variable naming the one config spec: for a caller that must strip or hand
@@ -66,10 +58,7 @@ const COMPUTED_KEYS: &[&str] = &["SPIRA_RELEASE_REPO", "SPIRA_AGENT", "SPIRA_RUN
 /// plainly-valued key of a `prod` instance. It does not check the file's schema (the cost this path
 /// exists to skip; `check-config` and [`config`] still do); [`cfg`] checks the key is registered. Anything
 /// else is `None` and takes the full resolve, which owns every other refusal.
-pub(crate) fn declared_value(
-    merged: &toml::map::Map<String, toml::Value>,
-    key: &str,
-) -> Option<String> {
+pub(crate) fn declared_value(merged: &toml::map::Map<String, toml::Value>, key: &str) -> Option<String> {
     if !(key.starts_with("SPIRA_") || key.starts_with("COCKPIT_")) || COMPUTED_KEYS.contains(&key) {
         return None;
     }
@@ -116,22 +105,11 @@ pub fn cfg(key: &str) -> Result<String, String> {
 pub fn check_config(keys: &[&str]) -> Result<String, String> {
     let reg = crate::registry::for_process()?;
     let resolved = config()?;
-    let bad: Vec<&str> = keys
-        .iter()
-        .copied()
-        .filter(|k| reg.get(k).is_none() || !resolved.values.contains_key(*k))
-        .collect();
+    let bad: Vec<&str> = keys.iter().copied().filter(|k| reg.get(k).is_none() || !resolved.values.contains_key(*k)).collect();
     if !bad.is_empty() {
-        return Err(format!(
-            "unregistered or unresolved config keys: {} — refusing",
-            bad.join(", ")
-        ));
+        return Err(format!("unregistered or unresolved config keys: {} — refusing", bad.join(", ")));
     }
-    Ok(format!(
-        "{} registered keys, {} checked",
-        reg.keys.len(),
-        keys.len()
-    ))
+    Ok(format!("{} registered keys, {} checked", reg.keys.len(), keys.len()))
 }
 
 /// The `check-config` verb of a long-running binary: prints `ok <summary>` and returns 0, or
@@ -168,43 +146,29 @@ pub fn parse_declared<T: FromStr>(key: &str, value: &str) -> Result<T, String>
 where
     T::Err: std::fmt::Display,
 {
-    value
-        .trim()
-        .parse::<T>()
-        .map_err(|e| format!("{key} = {value:?} in spira.toml does not parse: {e}"))
+    value.trim().parse::<T>().map_err(|e| format!("{key} = {value:?} in spira.toml does not parse: {e}"))
 }
 
 /// The metrics sink for `service`: `SPIRA_METRICS_ENDPOINT` as declared, disabled when the config
 /// does not resolve. Short deadline: a push never holds its producer.
 pub fn metrics_sink(service: &str) -> spira_otel::metrics::MetricsSink {
     let endpoint = cfg("SPIRA_METRICS_ENDPOINT").ok();
-    spira_otel::metrics::MetricsSink::new(
-        endpoint.as_deref(),
-        service,
-        std::time::Duration::from_millis(500),
-    )
+    spira_otel::metrics::MetricsSink::new(endpoint.as_deref(), service, std::time::Duration::from_millis(500))
 }
 
 /// The complete fixture's text, read from the harness tree this crate was built in.
 pub fn complete_fixture_text() -> String {
-    let path = crate::resolve::locate_home_for_process()
-        .expect("SPIRA_HOME names the harness tree")
-        .join("testlib/complete.toml");
+    let path = crate::resolve::locate_home_for_process().expect("SPIRA_HOME names the harness tree").join("testlib/complete.toml");
     std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
 }
 
 /// A release directory for a test: `<dir>/release/spira` linking this harness tree's
 /// `conf.toml.d`, and its `conf.d` when `with_conf_d`. Point `SPIRA_RELEASE` at the returned path.
 pub fn fixture_release(dir: &std::path::Path, with_conf_d: bool) -> std::path::PathBuf {
-    let tree =
-        crate::resolve::locate_home_for_process().expect("SPIRA_HOME names the harness tree");
+    let tree = crate::resolve::locate_home_for_process().expect("SPIRA_HOME names the harness tree");
     let release = dir.join("release");
     std::fs::create_dir_all(release.join("spira")).expect("the fixture release is created");
-    let dirs: &[&str] = if with_conf_d {
-        &["conf.d", "conf.toml.d"]
-    } else {
-        &["conf.toml.d"]
-    };
+    let dirs: &[&str] = if with_conf_d { &["conf.d", "conf.toml.d"] } else { &["conf.toml.d"] };
     for d in dirs {
         let link = release.join("spira").join(d);
         if !link.exists() {
@@ -217,17 +181,12 @@ pub fn fixture_release(dir: &std::path::Path, with_conf_d: bool) -> std::path::P
 /// A harness home for a test that writes into it: `<dir>/home` holding copies of this tree's
 /// `conf.d` and `conf.toml.d`. Point `SPIRA_HOME` at the returned path.
 pub fn fixture_registry_home(dir: &std::path::Path) -> std::path::PathBuf {
-    let tree =
-        crate::resolve::locate_home_for_process().expect("SPIRA_HOME names the harness tree");
+    let tree = crate::resolve::locate_home_for_process().expect("SPIRA_HOME names the harness tree");
     let home = dir.join("home");
     for d in ["conf.d", "conf.toml.d"] {
         std::fs::create_dir_all(home.join(d)).expect("the fixture home is created");
-        for e in std::fs::read_dir(tree.join(d))
-            .expect("the registry is readable")
-            .flatten()
-        {
-            std::fs::copy(e.path(), home.join(d).join(e.file_name()))
-                .expect("a registry file is copied");
+        for e in std::fs::read_dir(tree.join(d)).expect("the registry is readable").flatten() {
+            std::fs::copy(e.path(), home.join(d).join(e.file_name())).expect("a registry file is copied");
         }
     }
     home
@@ -249,10 +208,7 @@ pub fn fixture_toml(dir: &std::path::Path, declare: &[(&str, &str)]) -> std::pat
 
 /// The repo map of a registry holding exactly `repos`, written under `dir`.
 pub fn fixture_repo_map(dir: &std::path::Path, repos: &[&str]) -> std::path::PathBuf {
-    let map: String = repos
-        .iter()
-        .map(|r| format!("{r}|{}|local|local/main\n", dir.join(r).display()))
-        .collect();
+    let map: String = repos.iter().map(|r| format!("{r}|{}|local|local/main\n", dir.join(r).display())).collect();
     let path = dir.join("fixture.repos");
     std::fs::write(&path, map).expect("the fixture map is written");
     path
@@ -261,25 +217,12 @@ pub fn fixture_repo_map(dir: &std::path::Path, repos: &[&str]) -> std::path::Pat
 /// The environment of a world whose registry holds exactly `repos` (the first is the home repo)
 /// and whose run directory is `run`, for a test that reads stops through the process's own
 /// registry: `Some` sets, `None` unsets.
-pub fn fixture_world_env(
-    dir: &std::path::Path,
-    run: &std::path::Path,
-    repos: &[&str],
-) -> Vec<(&'static str, Option<String>)> {
+pub fn fixture_world_env(dir: &std::path::Path, run: &std::path::Path, repos: &[&str]) -> Vec<(&'static str, Option<String>)> {
     let map_path = fixture_repo_map(dir, repos);
     let (run_s, map_s) = (run.display().to_string(), map_path.display().to_string());
     let workspaces = dir.display().to_string();
-    let toml = fixture_toml(
-        dir,
-        &[
-            ("SPIRA_RUN", &run_s),
-            ("SPIRA_REPO_MAP", &map_s),
-            ("SPIRA_HOME_REPO", repos[0]),
-            ("SPIRA_WORKSPACES", &workspaces),
-        ],
-    );
-    let home =
-        crate::resolve::locate_home_for_process().expect("SPIRA_HOME names the harness tree");
+    let toml = fixture_toml(dir, &[("SPIRA_RUN", &run_s), ("SPIRA_REPO_MAP", &map_s), ("SPIRA_HOME_REPO", repos[0]), ("SPIRA_WORKSPACES", &workspaces)]);
+    let home = crate::resolve::locate_home_for_process().expect("SPIRA_HOME names the harness tree");
     vec![
         ("SPIRA_TOML", Some(toml.display().to_string())),
         ("SPIRA_HOME", Some(home.display().to_string())),
@@ -296,30 +239,18 @@ pub fn spira_home() -> std::path::PathBuf {
 
 /// The environment that points a spawned binary's config door at a fixture declaring
 /// `SPIRA_METRICS_ENDPOINT = endpoint` (and `declare`'s other keys), for tests of what it pushes.
-pub fn fixture_metrics_env(
-    dir: &std::path::Path,
-    endpoint: &str,
-    declare: &[(&str, &str)],
-) -> Vec<(&'static str, String)> {
+pub fn fixture_metrics_env(dir: &std::path::Path, endpoint: &str, declare: &[(&str, &str)]) -> Vec<(&'static str, String)> {
     let mut keys = vec![("SPIRA_METRICS_ENDPOINT", endpoint)];
     keys.extend_from_slice(declare);
     let toml = fixture_toml(dir, &keys);
-    let home =
-        crate::resolve::locate_home_for_process().expect("SPIRA_HOME names the harness tree");
-    vec![
-        ("SPIRA_TOML", toml.display().to_string()),
-        ("SPIRA_HOME", home.display().to_string()),
-    ]
+    let home = crate::resolve::locate_home_for_process().expect("SPIRA_HOME names the harness tree");
+    vec![("SPIRA_TOML", toml.display().to_string()), ("SPIRA_HOME", home.display().to_string())]
 }
 
 /// The read-only database user's secret file, kept beside the service user's: `<file>-ro`.
 /// Empty when the service credential is unnamed.
 pub fn ro_credential(service_file: &str) -> String {
-    if service_file.trim().is_empty() {
-        String::new()
-    } else {
-        format!("{service_file}-ro")
-    }
+    if service_file.trim().is_empty() { String::new() } else { format!("{service_file}-ro") }
 }
 
 #[cfg(test)]

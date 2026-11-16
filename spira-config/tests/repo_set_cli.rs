@@ -5,8 +5,7 @@ use std::process::{Command, Output};
 
 fn run(map: &Path, args: &[&str]) -> Output {
     let dir = map.parent().unwrap();
-    let toml =
-        spira_config::process::fixture_toml(dir, &[("SPIRA_REPO_MAP", map.to_str().unwrap())]);
+    let toml = spira_config::process::fixture_toml(dir, &[("SPIRA_REPO_MAP", map.to_str().unwrap())]);
     let home = spira_config::resolve::locate_home_for_process().unwrap();
     Command::new(testkit::bin_exe("spira-config"))
         .env_clear()

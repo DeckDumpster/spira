@@ -50,10 +50,7 @@ pub struct Lease {
 
 impl std::fmt::Debug for Lease {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Lease")
-            .field("dir", &self.dir)
-            .field("reused", &self.reused)
-            .finish()
+        f.debug_struct("Lease").field("dir", &self.dir).field("reused", &self.reused).finish()
     }
 }
 
@@ -84,9 +81,7 @@ pub fn parse_bases(value: &str) -> Vec<PathBuf> {
 
 /// The configured bases; empty when [`BASE_ENV`] is unset or blank.
 pub fn configured_bases() -> Vec<PathBuf> {
-    crate::process::cfg(BASE_ENV)
-        .map(|v| parse_bases(&v))
-        .unwrap_or_default()
+    crate::process::cfg(BASE_ENV).map(|v| parse_bases(&v)).unwrap_or_default()
 }
 
 fn lock_path(base: &Path, n: u64) -> PathBuf {
@@ -102,13 +97,7 @@ fn slots(base: &Path) -> Vec<u64> {
     let mut v: Vec<u64> = std::fs::read_dir(base)
         .map(|rd| {
             rd.flatten()
-                .filter_map(|e| {
-                    e.file_name()
-                        .to_str()
-                        .and_then(|n| n.strip_prefix("dir."))
-                        .and_then(|n| n.strip_suffix(".lock"))
-                        .and_then(|n| n.parse().ok())
-                })
+                .filter_map(|e| e.file_name().to_str().and_then(|n| n.strip_prefix("dir.")).and_then(|n| n.strip_suffix(".lock")).and_then(|n| n.parse().ok()))
                 .collect()
         })
         .unwrap_or_default();
@@ -118,19 +107,14 @@ fn slots(base: &Path) -> Vec<u64> {
 
 /// Try the slot's lock without waiting: Some(file holding it) when it was idle.
 fn try_lock(base: &Path, n: u64) -> Option<std::fs::File> {
-    let f = std::fs::OpenOptions::new()
-        .write(true)
-        .open(lock_path(base, n))
-        .ok()?;
+    let f = std::fs::OpenOptions::new().write(true).open(lock_path(base, n)).ok()?;
     // SAFETY: flock on a descriptor we own; the lock lives as long as `f`.
     (unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0).then_some(f)
 }
 
 /// When the slot last went idle: its lock file's mtime.
 fn idle_since(base: &Path, n: u64) -> SystemTime {
-    std::fs::metadata(lock_path(base, n))
-        .and_then(|m| m.modified())
-        .unwrap_or(SystemTime::UNIX_EPOCH)
+    std::fs::metadata(lock_path(base, n)).and_then(|m| m.modified()).unwrap_or(SystemTime::UNIX_EPOCH)
 }
 
 fn holds_anything(dir: &Path) -> bool {
@@ -157,22 +141,12 @@ pub fn lease(bases: &[PathBuf], who: &str) -> std::io::Result<Lease> {
     let scanned: Vec<ScannedSlot> = bases
         .iter()
         .enumerate()
-        .flat_map(|(i, b)| {
-            slots(b)
-                .into_iter()
-                .map(move |n| (holds_anything(&dir_path(b, n)), idle_since(b, n), i, n))
-        })
+        .flat_map(|(i, b)| slots(b).into_iter().map(move |n| (holds_anything(&dir_path(b, n)), idle_since(b, n), i, n)))
         .collect();
     let order = lease_order(scanned);
-    let mut won = order
-        .iter()
-        .find_map(|&(warm, _, i, n)| try_lock(&bases[i], n).map(|f| (i, n, f, warm)));
+    let mut won = order.iter().find_map(|&(warm, _, i, n)| try_lock(&bases[i], n).map(|f| (i, n, f, warm)));
     if won.is_none() {
-        let mut fewest: Vec<(usize, usize)> = bases
-            .iter()
-            .enumerate()
-            .map(|(i, b)| (slots(b).len(), i))
-            .collect();
+        let mut fewest: Vec<(usize, usize)> = bases.iter().enumerate().map(|(i, b)| (slots(b).len(), i)).collect();
         fewest.sort();
         let mut last_err = None;
         for (_, i) in fewest {
@@ -185,9 +159,7 @@ pub fn lease(bases: &[PathBuf], who: &str) -> std::io::Result<Lease> {
             }
         }
         if won.is_none() {
-            return Err(
-                last_err.unwrap_or_else(|| std::io::Error::other("no build base is configured"))
-            );
+            return Err(last_err.unwrap_or_else(|| std::io::Error::other("no build base is configured")));
         }
     }
     let (i, n, lock, reused) = won.expect("a lock was won above");
@@ -198,11 +170,7 @@ pub fn lease(bases: &[PathBuf], who: &str) -> std::io::Result<Lease> {
 fn new_slot(base: &Path) -> std::io::Result<(u64, std::fs::File)> {
     let mut n = slots(base).last().copied().unwrap_or(0) + 1;
     loop {
-        match std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(lock_path(base, n))
-        {
+        match std::fs::OpenOptions::new().write(true).create_new(true).open(lock_path(base, n)) {
             Ok(_) => {
                 if let Some(f) = try_lock(base, n) {
                     return Ok((n, f));
@@ -215,13 +183,7 @@ fn new_slot(base: &Path) -> std::io::Result<(u64, std::fs::File)> {
     }
 }
 
-fn take(
-    base: &Path,
-    n: u64,
-    mut lock: std::fs::File,
-    reused: bool,
-    who: &str,
-) -> std::io::Result<Lease> {
+fn take(base: &Path, n: u64, mut lock: std::fs::File, reused: bool, who: &str) -> std::io::Result<Lease> {
     use std::io::Write;
     let dir = dir_path(base, n);
     std::fs::create_dir_all(&dir)?;
@@ -229,12 +191,7 @@ fn take(
     // holder that dies without releasing reads as idle since it leased.
     let _ = lock.set_len(0);
     let _ = lock.write_all(who.as_bytes());
-    Ok(Lease {
-        dir,
-        lock,
-        reused,
-        started: SystemTime::now(),
-    })
+    Ok(Lease { dir, lock, reused, started: SystemTime::now() })
 }
 
 /// Empty `dir` in place: everything under it goes, the directory stays. Only for a directory
@@ -243,11 +200,7 @@ pub fn empty(dir: &Path) {
     if let Ok(rd) = std::fs::read_dir(dir) {
         for e in rd.flatten() {
             let p = e.path();
-            let _ = if e.file_type().is_ok_and(|t| t.is_dir()) {
-                std::fs::remove_dir_all(&p)
-            } else {
-                std::fs::remove_file(&p)
-            };
+            let _ = if e.file_type().is_ok_and(|t| t.is_dir()) { std::fs::remove_dir_all(&p) } else { std::fs::remove_file(&p) };
         }
     }
 }
@@ -280,30 +233,16 @@ impl std::fmt::Display for Trimmed {
 /// The newest access (unless `writes_only`) or modification time of any file under `p`.
 /// Directories' own times are ignored: listing one moves its atime, and this scan lists them.
 fn newest_touch(p: &Path, writes_only: bool) -> SystemTime {
-    let Ok(md) = std::fs::symlink_metadata(p) else {
-        return SystemTime::UNIX_EPOCH;
-    };
+    let Ok(md) = std::fs::symlink_metadata(p) else { return SystemTime::UNIX_EPOCH };
     if md.is_dir() {
-        return children(p)
-            .iter()
-            .map(|c| newest_touch(c, writes_only))
-            .max()
-            .unwrap_or(SystemTime::UNIX_EPOCH);
+        return children(p).iter().map(|c| newest_touch(c, writes_only)).max().unwrap_or(SystemTime::UNIX_EPOCH);
     }
     let w = md.modified().unwrap_or(SystemTime::UNIX_EPOCH);
-    if writes_only {
-        w
-    } else {
-        w.max(md.accessed().unwrap_or(SystemTime::UNIX_EPOCH))
-    }
+    if writes_only { w } else { w.max(md.accessed().unwrap_or(SystemTime::UNIX_EPOCH)) }
 }
 
 fn remove_any(p: &Path) {
-    let _ = if std::fs::symlink_metadata(p).is_ok_and(|m| m.is_dir()) {
-        std::fs::remove_dir_all(p)
-    } else {
-        std::fs::remove_file(p)
-    };
+    let _ = if std::fs::symlink_metadata(p).is_ok_and(|m| m.is_dir()) { std::fs::remove_dir_all(p) } else { std::fs::remove_file(p) };
 }
 
 /// Remove each of `entries` that nothing touched since `cut`; returns the bytes removed. Reads
@@ -320,16 +259,11 @@ fn remove_untouched(entries: Vec<PathBuf>, cut: SystemTime) -> u64 {
 }
 
 fn children(p: &Path) -> Vec<PathBuf> {
-    std::fs::read_dir(p)
-        .map(|rd| rd.flatten().map(|e| e.path()).collect())
-        .unwrap_or_default()
+    std::fs::read_dir(p).map(|rd| rd.flatten().map(|e| e.path()).collect()).unwrap_or_default()
 }
 
 fn dirs(p: &Path) -> Vec<PathBuf> {
-    children(p)
-        .into_iter()
-        .filter(|c| std::fs::symlink_metadata(c).is_ok_and(|m| m.is_dir()))
-        .collect()
+    children(p).into_iter().filter(|c| std::fs::symlink_metadata(c).is_ok_and(|m| m.is_dir())).collect()
 }
 
 /// Trim a released build directory of what no later build can use: a profile folder nothing
@@ -337,26 +271,16 @@ fn dirs(p: &Path) -> Vec<PathBuf> {
 /// `deps`/`.fingerprint`/`build` entries that neither the lease (from `lease_start`) nor the last
 /// [`STALE_AFTER`] read or wrote. `now` is injected.
 pub fn trim(dir: &Path, lease_start: SystemTime, now: SystemTime) -> Trimmed {
-    let mut t = Trimmed {
-        before: crate::build::size_of(dir),
-        ..Trimmed::default()
-    };
+    let mut t = Trimmed { before: crate::build::size_of(dir), ..Trimmed::default() };
     let stale_cut = lease_start.min(now - STALE_AFTER);
-    let profiles = dirs(dir).into_iter().filter(|d| {
-        ["deps", ".fingerprint", "build", "incremental"]
-            .iter()
-            .any(|s| d.join(s).is_dir())
-    });
+    let profiles = dirs(dir).into_iter().filter(|d| ["deps", ".fingerprint", "build", "incremental"].iter().any(|s| d.join(s).is_dir()));
     for profile in profiles {
         if newest_touch(&profile, true) < now - PROFILE_IDLE_AFTER {
             t.idle_profiles += crate::build::size_of(&profile);
             remove_any(&profile);
             continue;
         }
-        let sessions = dirs(&profile.join("incremental"))
-            .iter()
-            .flat_map(|c| children(c))
-            .collect();
+        let sessions = dirs(&profile.join("incremental")).iter().flat_map(|c| children(c)).collect();
         t.incremental += remove_untouched(sessions, stale_cut);
         for sub in ["deps", ".fingerprint", "build"] {
             t.stale += remove_untouched(children(&profile.join(sub)), stale_cut);
@@ -376,21 +300,12 @@ pub fn evict_idle(bases: &[PathBuf], budget_bytes: u64) -> Vec<PathBuf> {
 }
 
 /// [`evict_idle`] with the measurement injected: `size` answers the bytes one directory holds.
-pub fn evict_idle_with(
-    bases: &[PathBuf],
-    budget_bytes: u64,
-    size: &dyn Fn(&Path) -> u64,
-) -> Vec<PathBuf> {
+pub fn evict_idle_with(bases: &[PathBuf], budget_bytes: u64, size: &dyn Fn(&Path) -> u64) -> Vec<PathBuf> {
     evict_idle_in(bases, budget_bytes, size, Path::new("/proc"))
 }
 
 /// [`evict_idle_with`] with the process table's root injected.
-pub fn evict_idle_in(
-    bases: &[PathBuf],
-    budget_bytes: u64,
-    size: &dyn Fn(&Path) -> u64,
-    proc_root: &Path,
-) -> Vec<PathBuf> {
+pub fn evict_idle_in(bases: &[PathBuf], budget_bytes: u64, size: &dyn Fn(&Path) -> u64, proc_root: &Path) -> Vec<PathBuf> {
     let mut sized = Vec::new();
     for (i, b) in bases.iter().enumerate() {
         let slot_dirs: Vec<PathBuf> = slots(b).into_iter().map(|n| dir_path(b, n)).collect();
@@ -413,21 +328,14 @@ pub fn evict_idle_in(
                 Kind::Slot(i, n) => idle_since(&bases[i], n),
                 Kind::Stray => newest_touch(&path, true),
             };
-            Candidate {
-                path,
-                kind,
-                bytes,
-                age,
-            }
+            Candidate { path, kind, bytes, age }
         })
         .collect();
     evict_walk(candidates, budget_bytes, &mut |c| match c.kind {
         // Under the slot's own lock: a directory a session takes meanwhile is skipped, and one
         // evicted here is an empty directory the next lease takes last.
         Kind::Slot(i, n) => {
-            let Some(_held) = try_lock(&bases[i], n) else {
-                return false;
-            };
+            let Some(_held) = try_lock(&bases[i], n) else { return false };
             empty(&c.path);
             true
         }
@@ -470,11 +378,7 @@ fn eviction_order(candidates: &[Candidate], budget_bytes: u64) -> Vec<&Candidate
 
 /// Walk [`eviction_order`] until the total is within budget. `remove` tries one removal and says
 /// whether it happened; a refused candidate stays counted. Returns the paths removed, in order.
-fn evict_walk(
-    candidates: Vec<Candidate>,
-    budget_bytes: u64,
-    remove: &mut dyn FnMut(&Candidate) -> bool,
-) -> Vec<PathBuf> {
+fn evict_walk(candidates: Vec<Candidate>, budget_bytes: u64, remove: &mut dyn FnMut(&Candidate) -> bool) -> Vec<PathBuf> {
     let mut total: u64 = candidates.iter().map(|c| c.bytes).sum();
     let mut gone = Vec::new();
     for c in eviction_order(&candidates, budget_bytes) {
@@ -503,34 +407,17 @@ pub struct Sample {
 }
 
 fn sample(name: &'static str, value: u64, dir: Option<String>) -> Sample {
-    Sample {
-        name,
-        value: value as f64,
-        dir,
-    }
+    Sample { name, value: value as f64, dir }
 }
 
 /// What a lease or a release of `dir` reports: its own bytes, the pool the budget counts (every
 /// `dir.<n>`), the base total (everything under each base, including what no budget counts) and
 /// the budget itself. `size` answers the bytes one path holds.
-pub fn lease_samples(
-    bases: &[PathBuf],
-    dir: &Path,
-    budget_bytes: u64,
-    size: &dyn Fn(&Path) -> u64,
-) -> Vec<Sample> {
-    let pool: u64 = bases
-        .iter()
-        .flat_map(|b| slots(b).into_iter().map(move |n| dir_path(b, n)))
-        .map(|d| size(&d))
-        .sum();
+pub fn lease_samples(bases: &[PathBuf], dir: &Path, budget_bytes: u64, size: &dyn Fn(&Path) -> u64) -> Vec<Sample> {
+    let pool: u64 = bases.iter().flat_map(|b| slots(b).into_iter().map(move |n| dir_path(b, n))).map(|d| size(&d)).sum();
     let base: u64 = bases.iter().map(|b| size(b)).sum();
     vec![
-        sample(
-            "build_dir_bytes",
-            size(dir),
-            Some(dir.display().to_string()),
-        ),
+        sample("build_dir_bytes", size(dir), Some(dir.display().to_string())),
         sample("build_dir_pool_bytes", pool, None),
         sample("build_dir_base_bytes", base, None),
         sample("build_dir_budget_bytes", budget_bytes, None),
@@ -539,9 +426,7 @@ pub fn lease_samples(
 
 /// One event per directory [`evict_idle`] removed.
 pub fn eviction_samples(gone: &[PathBuf]) -> Vec<Sample> {
-    gone.iter()
-        .map(|d| sample("build_dir_evicted", 1, Some(d.display().to_string())))
-        .collect()
+    gone.iter().map(|d| sample("build_dir_evicted", 1, Some(d.display().to_string()))).collect()
 }
 
 /// Push `samples` as gauges; a failed push is counted by the sink, never returned.
@@ -549,16 +434,7 @@ pub fn push(sink: &spira_otel::metrics::MetricsSink, samples: &[Sample]) {
     let at = SystemTime::now();
     let series: Vec<spira_otel::metrics::Series> = samples
         .iter()
-        .map(|s| spira_otel::metrics::Series {
-            name: s.name.into(),
-            value: s.value,
-            labels: s
-                .dir
-                .iter()
-                .map(|d| ("dir".to_string(), d.clone()))
-                .collect(),
-            at,
-        })
+        .map(|s| spira_otel::metrics::Series { name: s.name.into(), value: s.value, labels: s.dir.iter().map(|d| ("dir".to_string(), d.clone())).collect(), at })
         .collect();
     if !series.is_empty() {
         let _ = sink.try_push_series(&series);
@@ -568,32 +444,20 @@ pub fn push(sink: &spira_otel::metrics::MetricsSink, samples: &[Sample]) {
 /// Measure the pool on disk and push it: called after a lease and after a release.
 pub fn meter(bases: &[PathBuf], dir: &Path, budget_bytes: u64) {
     let sink = crate::process::metrics_sink("build-dir");
-    push(
-        &sink,
-        &lease_samples(bases, dir, budget_bytes, &crate::build::size_of),
-    );
+    push(&sink, &lease_samples(bases, dir, budget_bytes, &crate::build::size_of));
 }
 
 /// Push one event per directory evicted.
 pub fn meter_evictions(gone: &[PathBuf]) {
-    push(
-        &crate::process::metrics_sink("build-dir"),
-        &eviction_samples(gone),
-    );
+    push(&crate::process::metrics_sink("build-dir"), &eviction_samples(gone));
 }
 
 /// Where every live process stands: its cwd and the `CARGO_TARGET_DIR` it was handed.
 fn held_by_processes(proc_root: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
-    for pid in children(proc_root).into_iter().filter(|p| {
-        p.file_name()
-            .is_some_and(|n| n.as_encoded_bytes().iter().all(u8::is_ascii_digit))
-    }) {
+    for pid in children(proc_root).into_iter().filter(|p| p.file_name().is_some_and(|n| n.as_encoded_bytes().iter().all(u8::is_ascii_digit))) {
         out.extend(std::fs::read_link(pid.join("cwd")));
-        for kv in std::fs::read(pid.join("environ"))
-            .unwrap_or_default()
-            .split(|b| *b == 0)
-        {
+        for kv in std::fs::read(pid.join("environ")).unwrap_or_default().split(|b| *b == 0) {
             if let Some(v) = kv.strip_prefix(b"CARGO_TARGET_DIR=") {
                 out.push(PathBuf::from(String::from_utf8_lossy(v).into_owned()));
             }
@@ -616,13 +480,7 @@ pub fn owned(var: Option<std::ffi::OsString>, bases: &[PathBuf]) -> Option<PathB
 /// directory was last made consistent with are cleaned, and `root`'s manifest is recorded.
 /// `record_only` records without cleaning (the release path). `path` is the PATH cargo is
 /// found on. Ok(the script's output) or Err(why).
-pub fn clean(
-    script: &Path,
-    root: &Path,
-    dir: &Path,
-    path: &str,
-    record_only: bool,
-) -> Result<String, String> {
+pub fn clean(script: &Path, root: &Path, dir: &Path, path: &str, record_only: bool) -> Result<String, String> {
     // A whole-workspace `cargo clean` of a large target is slow: bounded by a deadline of its own.
     let mut cmd = crate::bounded::bounded_for("bash", CLEAN_DEADLINE_SECS);
     cmd.arg(script);
@@ -637,20 +495,11 @@ pub fn clean(
         .stdin(std::process::Stdio::null())
         .output()
         .map_err(|e| format!("cannot run {}: {e}", script.display()))?;
-    let text = format!(
-        "{}{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
+    let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
     if out.status.success() {
         Ok(text)
     } else {
-        Err(format!(
-            "{} exited {}: {}",
-            script.display(),
-            out.status,
-            text.trim()
-        ))
+        Err(format!("{} exited {}: {}", script.display(), out.status, text.trim()))
     }
 }
 
@@ -666,15 +515,8 @@ mod tests {
     fn touch(p: &Path, accessed_ago: u64, modified_ago: u64) {
         fill(p, 1);
         let ago = |s: u64| SystemTime::now() - std::time::Duration::from_secs(s);
-        let times = std::fs::FileTimes::new()
-            .set_accessed(ago(accessed_ago))
-            .set_modified(ago(modified_ago));
-        std::fs::File::options()
-            .write(true)
-            .open(p)
-            .unwrap()
-            .set_times(times)
-            .unwrap();
+        let times = std::fs::FileTimes::new().set_accessed(ago(accessed_ago)).set_modified(ago(modified_ago));
+        std::fs::File::options().write(true).open(p).unwrap().set_times(times).unwrap();
     }
 
     const H: u64 = 3600;
@@ -692,20 +534,11 @@ mod tests {
         touch(&inc.join("s-fresh/query-cache.bin"), 30 * H, H);
         touch(&inc.join("s-read/query-cache.bin"), H, 30 * H);
         let t = trim(d.path(), lease_start, SystemTime::now());
-        assert!(
-            !inc.join("s-old").exists(),
-            "untouched in the lease and over 24 hours old goes"
-        );
+        assert!(!inc.join("s-old").exists(), "untouched in the lease and over 24 hours old goes");
         assert!(inc.join("s-fresh").exists(), "written in the lease stays");
         assert!(inc.join("s-read").exists(), "read in the lease stays");
-        assert!(
-            inc.join("s-recent").exists(),
-            "untouched but under 24 hours old stays"
-        );
-        assert!(
-            t.incremental > 0 && t.stale == 0 && t.idle_profiles == 0 && t.after < t.before,
-            "{t:?}"
-        );
+        assert!(inc.join("s-recent").exists(), "untouched but under 24 hours old stays");
+        assert!(t.incremental > 0 && t.stale == 0 && t.idle_profiles == 0 && t.after < t.before, "{t:?}");
     }
 
     #[test]
@@ -713,11 +546,7 @@ mod tests {
         let d = testkit::TempDir::new("bdir-trim-deps");
         let p = d.path().join("debug");
         touch(&p.join("anchor"), 0, 0);
-        for sub in [
-            "deps/old.rlib",
-            ".fingerprint/old-1/lib-old",
-            "build/old-1/out",
-        ] {
+        for sub in ["deps/old.rlib", ".fingerprint/old-1/lib-old", "build/old-1/out"] {
             touch(&p.join(sub), 30 * H, 30 * H);
         }
         touch(&p.join("deps/used.rlib"), H, 30 * H);
@@ -742,42 +571,18 @@ mod tests {
         touch(&d.path().join(".unit-tests-built-manifest"), 8 * H, 8 * H);
         touch(&d.path().join("scratch/note"), 8 * H, 8 * H);
         let t = trim(d.path(), SystemTime::now(), SystemTime::now());
-        assert!(
-            !d.path().join("unittest").exists(),
-            "idle over 6 hours goes"
-        );
-        assert!(
-            d.path().join("debug/deps/y").exists(),
-            "written within 6 hours stays"
-        );
-        assert!(
-            d.path().join(".unit-tests-built-manifest").exists(),
-            "files beside the profiles are not profiles"
-        );
-        assert!(
-            d.path().join("scratch/note").exists(),
-            "a directory that is no profile is not trimmed"
-        );
+        assert!(!d.path().join("unittest").exists(), "idle over 6 hours goes");
+        assert!(d.path().join("debug/deps/y").exists(), "written within 6 hours stays");
+        assert!(d.path().join(".unit-tests-built-manifest").exists(), "files beside the profiles are not profiles");
+        assert!(d.path().join("scratch/note").exists(), "a directory that is no profile is not trimmed");
         assert!(t.idle_profiles > 0, "{t:?}");
     }
 
     #[test]
     fn trimmed_display_names_bytes_before_after_and_each_step() {
-        let t = Trimmed {
-            before: 900,
-            after: 100,
-            idle_profiles: 5,
-            incremental: 7,
-            stale: 11,
-        };
+        let t = Trimmed { before: 900, after: 100, idle_profiles: 5, incremental: 7, stale: 11 };
         let line = t.to_string();
-        for want in [
-            "900 bytes before",
-            "100 after",
-            "5 in idle profiles",
-            "7 of stale incremental",
-            "11 of stale deps",
-        ] {
+        for want in ["900 bytes before", "100 after", "5 in idle profiles", "7 of stale incremental", "11 of stale deps"] {
             assert!(line.contains(want), "{line}");
         }
         assert!(!line.contains('\n'));
@@ -787,15 +592,8 @@ mod tests {
     fn trim_drops_an_idle_profile_even_if_the_lease_only_read_it() {
         let d = testkit::TempDir::new("bdir-trim-read-profile");
         touch(&d.path().join("unittest/deps/x"), 0, 8 * H);
-        trim(
-            d.path(),
-            SystemTime::now() - std::time::Duration::from_secs(H),
-            SystemTime::now(),
-        );
-        assert!(
-            !d.path().join("unittest").exists(),
-            "the idle test is on writes: a read does not keep a profile"
-        );
+        trim(d.path(), SystemTime::now() - std::time::Duration::from_secs(H), SystemTime::now());
+        assert!(!d.path().join("unittest").exists(), "the idle test is on writes: a read does not keep a profile");
     }
 
     #[test]
@@ -807,10 +605,7 @@ mod tests {
         touch(&p.join("deps/before_lease.rlib"), 60 * H, 60 * H);
         let lease_start = SystemTime::now() - std::time::Duration::from_secs(40 * H);
         trim(d.path(), lease_start, SystemTime::now());
-        assert!(
-            p.join("deps/in_lease.rlib").exists(),
-            "touched after the lease began stays, though over 24 hours old"
-        );
+        assert!(p.join("deps/in_lease.rlib").exists(), "touched after the lease began stays, though over 24 hours old");
         assert!(!p.join("deps/before_lease.rlib").exists());
     }
 
@@ -834,21 +629,11 @@ mod tests {
         let a = lease(std::slice::from_ref(&base), "sp-a").expect("first lease");
         fill(&a.dir().join("debug/deps/liba.rlib"), 64);
         let b = lease(std::slice::from_ref(&base), "sp-b").expect("second lease");
-        assert_ne!(
-            a.dir(),
-            b.dir(),
-            "a live directory is never handed out twice"
-        );
+        assert_ne!(a.dir(), b.dir(), "a live directory is never handed out twice");
         assert!(a.dir().join("debug/deps/liba.rlib").exists());
         let proc = empty_proc(d.path());
-        assert!(
-            evict_idle_in(std::slice::from_ref(&base), 0, &held, &proc).is_empty(),
-            "nothing idle: a budget of zero removes nothing live"
-        );
-        assert!(
-            a.dir().join("debug/deps/liba.rlib").exists(),
-            "the live directory is untouched under budget pressure"
-        );
+        assert!(evict_idle_in(std::slice::from_ref(&base), 0, &held, &proc).is_empty(), "nothing idle: a budget of zero removes nothing live");
+        assert!(a.dir().join("debug/deps/liba.rlib").exists(), "the live directory is untouched under budget pressure");
     }
 
     #[test]
@@ -857,40 +642,18 @@ mod tests {
         let base = d.path().join("base");
         std::fs::create_dir_all(base.join("dir.1")).unwrap();
         let some = |p: &Path| Some(p.as_os_str().to_os_string());
-        assert_eq!(
-            owned(some(&base.join("dir.1")), std::slice::from_ref(&base)),
-            Some(base.join("dir.1"))
-        );
-        assert_eq!(
-            owned(some(&base), std::slice::from_ref(&base)),
-            None,
-            "the base itself is no directory of its own"
-        );
-        assert_eq!(
-            owned(
-                some(&d.path().join("elsewhere")),
-                std::slice::from_ref(&base)
-            ),
-            None
-        );
-        assert_eq!(
-            owned(some(&base.join("dir.1")), &[]),
-            None,
-            "no base configured: nothing is owned"
-        );
-        assert_eq!(
-            owned(Some("rel/dir.1".into()), &[PathBuf::from("rel")]),
-            None
-        );
+        assert_eq!(owned(some(&base.join("dir.1")), std::slice::from_ref(&base)), Some(base.join("dir.1")));
+        assert_eq!(owned(some(&base), std::slice::from_ref(&base)), None, "the base itself is no directory of its own");
+        assert_eq!(owned(some(&d.path().join("elsewhere")), std::slice::from_ref(&base)), None);
+        assert_eq!(owned(some(&base.join("dir.1")), &[]), None, "no base configured: nothing is owned");
+        assert_eq!(owned(Some("rel/dir.1".into()), &[PathBuf::from("rel")]), None);
     }
 
     #[test]
     fn four_new_slots_over_two_bases_are_two_on_each() {
         let d = testkit::TempDir::new("bdir-two-bases");
         let bases = [d.path().join("b"), d.path().join("c")];
-        let held: Vec<Lease> = (0..4)
-            .map(|i| lease(&bases, &format!("sp-{i}")).unwrap())
-            .collect();
+        let held: Vec<Lease> = (0..4).map(|i| lease(&bases, &format!("sp-{i}")).unwrap()).collect();
         for b in &bases {
             assert_eq!(slots(b).len(), 2, "{}", b.display());
         }
@@ -901,13 +664,8 @@ mod tests {
     fn a_new_slot_goes_to_the_base_with_fewer_slots_not_the_first_listed() {
         let d = testkit::TempDir::new("bdir-uneven");
         let bases = [d.path().join("b"), d.path().join("c")];
-        let _crowded: Vec<Lease> = (0..3)
-            .map(|i| lease(&bases[..1], &format!("sp-{i}")).unwrap())
-            .collect();
-        assert_eq!(
-            lease(&bases, "sp-new").unwrap().dir().parent(),
-            Some(bases[1].as_path())
-        );
+        let _crowded: Vec<Lease> = (0..3).map(|i| lease(&bases[..1], &format!("sp-{i}")).unwrap()).collect();
+        assert_eq!(lease(&bases, "sp-new").unwrap().dir().parent(), Some(bases[1].as_path()));
     }
 
     #[test]
@@ -916,29 +674,19 @@ mod tests {
         let file = d.path().join("not-a-dir");
         std::fs::write(&file, "").unwrap();
         let bases = [file.join("b"), d.path().join("c")];
-        assert_eq!(
-            lease(&bases, "sp-a").unwrap().dir().parent(),
-            Some(bases[1].as_path())
-        );
-        assert!(
-            lease(&bases[..1], "sp-b").is_err(),
-            "positive control: with only the unusable base there is no slot"
-        );
+        assert_eq!(lease(&bases, "sp-a").unwrap().dir().parent(), Some(bases[1].as_path()));
+        assert!(lease(&bases[..1], "sp-b").is_err(), "positive control: with only the unusable base there is no slot");
     }
 
     fn value(s: &[Sample], name: &str, dir: Option<&str>) -> Option<f64> {
-        s.iter()
-            .find(|x| x.name == name && x.dir.as_deref() == dir)
-            .map(|x| x.value)
+        s.iter().find(|x| x.name == name && x.dir.as_deref() == dir).map(|x| x.value)
     }
 
     #[test]
     fn a_lease_reports_its_directory_the_pool_the_budget_counts_and_everything_under_the_base() {
         let d = testkit::TempDir::new("bdir-meter");
         let base = d.path().join("base");
-        let leases: Vec<Lease> = (0..2)
-            .map(|i| lease(std::slice::from_ref(&base), &format!("sp-{i}")).unwrap())
-            .collect();
+        let leases: Vec<Lease> = (0..2).map(|i| lease(std::slice::from_ref(&base), &format!("sp-{i}")).unwrap()).collect();
         std::fs::create_dir_all(base.join("orphan")).unwrap();
         let (a, b) = (leases[0].dir().to_path_buf(), leases[1].dir().to_path_buf());
         let (orphan, whole) = (base.join("orphan"), base.clone());
@@ -952,27 +700,15 @@ mod tests {
         let s = lease_samples(std::slice::from_ref(&base), leases[0].dir(), 777, &size);
         let n = leases[0].dir().display().to_string();
         assert_eq!(value(&s, "build_dir_bytes", Some(&n)), Some(100.0));
-        assert_eq!(
-            value(&s, "build_dir_pool_bytes", None),
-            Some(120.0),
-            "the pool is the directories the budget counts"
-        );
-        assert_eq!(
-            value(&s, "build_dir_base_bytes", None),
-            Some(3120.0),
-            "the base total includes what the budget does not count"
-        );
+        assert_eq!(value(&s, "build_dir_pool_bytes", None), Some(120.0), "the pool is the directories the budget counts");
+        assert_eq!(value(&s, "build_dir_base_bytes", None), Some(3120.0), "the base total includes what the budget does not count");
         assert_eq!(value(&s, "build_dir_budget_bytes", None), Some(777.0));
     }
 
     #[test]
     fn pushed_samples_reach_the_endpoint_with_their_names_and_the_dir_label() {
         let (addr, h) = spira_otel::metrics::run::fixture_sink();
-        let sink = spira_otel::metrics::MetricsSink::new(
-            Some(&addr),
-            "build-dir",
-            std::time::Duration::from_secs(2),
-        );
+        let sink = spira_otel::metrics::MetricsSink::new(Some(&addr), "build-dir", std::time::Duration::from_secs(2));
         push(&sink, &eviction_samples(&[PathBuf::from("/x/dir.7")]));
         let body = h.join().unwrap();
         for want in ["build_dir_evicted", "dir", "/x/dir.7", "build-dir"] {
@@ -989,11 +725,7 @@ mod tests {
     fn proc_naming(d: &Path, pid: u32, target: &Path) -> PathBuf {
         let proc = d.join("proc");
         std::fs::create_dir_all(proc.join(pid.to_string())).unwrap();
-        std::fs::write(
-            proc.join(pid.to_string()).join("environ"),
-            format!("A=b\0CARGO_TARGET_DIR={}\0", target.display()),
-        )
-        .unwrap();
+        std::fs::write(proc.join(pid.to_string()).join("environ"), format!("A=b\0CARGO_TARGET_DIR={}\0", target.display())).unwrap();
         proc
     }
 
@@ -1009,29 +741,13 @@ mod tests {
             fill(&p.join("debug/x"), 1);
             touch(&p.join("debug/x"), 4 * 86400, 4 * 86400);
         }
-        let held = |p: &Path| {
-            if p.join("debug/x").exists() || holds_anything(p) {
-                100
-            } else {
-                0
-            }
-        };
+        let held = |p: &Path| if p.join("debug/x").exists() || holds_anything(p) { 100 } else { 0 };
         let proc = proc_naming(d.path(), 4242, &named.join("debug"));
         let gone = evict_idle_in(std::slice::from_ref(&base), 250, &held, &proc);
-        assert_eq!(
-            gone,
-            vec![stale.clone()],
-            "the unreferenced non-slot directory goes, counted against the budget"
-        );
+        assert_eq!(gone, vec![stale.clone()], "the unreferenced non-slot directory goes, counted against the budget");
         assert!(!stale.exists());
-        assert!(
-            named.join("debug/x").exists(),
-            "a directory a live process's CARGO_TARGET_DIR names stays"
-        );
-        assert!(
-            live.dir().join("debug/x").exists(),
-            "a live slot is left alone"
-        );
+        assert!(named.join("debug/x").exists(), "a directory a live process's CARGO_TARGET_DIR names stays");
+        assert!(live.dir().join("debug/x").exists(), "a live slot is left alone");
     }
 
     #[test]
@@ -1041,10 +757,7 @@ mod tests {
         let stray = base.join("hand.1");
         touch(&stray.join("x"), 3 * 86400, 3 * 86400);
         let held = |p: &Path| u64::from(holds_anything(p)) * 100;
-        assert_eq!(
-            evict_idle_in(std::slice::from_ref(&base), 0, &held, &empty_proc(d.path())),
-            vec![stray]
-        );
+        assert_eq!(evict_idle_in(std::slice::from_ref(&base), 0, &held, &empty_proc(d.path())), vec![stray]);
     }
 
     #[test]
@@ -1057,15 +770,7 @@ mod tests {
         fill(&stray.join("debug/x"), 64);
         touch(&stray.join("debug/x"), 3 * 86400, 3 * 86400);
         let budget = crate::build::size_of(live.dir()) + 1024;
-        assert_eq!(
-            evict_idle_in(
-                std::slice::from_ref(&base),
-                budget,
-                &crate::build::size_of,
-                &empty_proc(d.path())
-            ),
-            vec![stray.clone()]
-        );
+        assert_eq!(evict_idle_in(std::slice::from_ref(&base), budget, &crate::build::size_of, &empty_proc(d.path())), vec![stray.clone()]);
         assert!(!stray.exists());
         assert!(live.dir().join("debug/x").exists());
     }
@@ -1077,21 +782,11 @@ mod tests {
     const DAY: u64 = 86400;
 
     fn slot(base: usize, n: u64, bytes: u64, age_days: u64) -> Candidate {
-        Candidate {
-            path: PathBuf::from(format!("/b{base}/dir.{n}")),
-            kind: Kind::Slot(base, n),
-            bytes,
-            age: at(100 * DAY - age_days * DAY),
-        }
+        Candidate { path: PathBuf::from(format!("/b{base}/dir.{n}")), kind: Kind::Slot(base, n), bytes, age: at(100 * DAY - age_days * DAY) }
     }
 
     fn stray(name: &str, bytes: u64, age_days: u64) -> Candidate {
-        Candidate {
-            path: PathBuf::from(format!("/b0/{name}")),
-            kind: Kind::Stray,
-            bytes,
-            age: at(100 * DAY - age_days * DAY),
-        }
+        Candidate { path: PathBuf::from(format!("/b0/{name}")), kind: Kind::Stray, bytes, age: at(100 * DAY - age_days * DAY) }
     }
 
     fn numbers(order: &[ScannedSlot]) -> Vec<u64> {
@@ -1100,12 +795,7 @@ mod tests {
 
     #[test]
     fn the_most_recently_idled_warm_slot_is_tried_first_then_the_rest_then_the_empty_ones() {
-        let scanned = vec![
-            (false, at(100), 0, 1),
-            (true, at(10), 0, 2),
-            (true, at(50), 1, 3),
-            (false, at(200), 0, 4),
-        ];
+        let scanned = vec![(false, at(100), 0, 1), (true, at(10), 0, 2), (true, at(50), 1, 3), (false, at(200), 0, 4)];
         assert_eq!(numbers(&lease_order(scanned)), [3, 2, 4, 1]);
     }
 
@@ -1119,49 +809,27 @@ mod tests {
     fn a_budget_of_zero_with_one_idle_directory_removes_it_and_reports_one_event_naming_it() {
         let gone = evict_walk(vec![slot(0, 1, 100, 3)], 0, &mut |_| true);
         assert_eq!(gone, [PathBuf::from("/b0/dir.1")]);
-        assert_eq!(
-            eviction_samples(&gone),
-            [Sample {
-                name: "build_dir_evicted",
-                value: 1.0,
-                dir: Some("/b0/dir.1".into())
-            }]
-        );
+        assert_eq!(eviction_samples(&gone), [Sample { name: "build_dir_evicted", value: 1.0, dir: Some("/b0/dir.1".into()) }]);
     }
 
     #[test]
     fn strays_are_ranked_with_idle_slots_oldest_first() {
         let cs = vec![slot(0, 2, 10, 1), stray("hand.1", 10, 3), slot(0, 1, 10, 5)];
         let gone = evict_walk(cs, 0, &mut |_| true);
-        assert_eq!(
-            gone,
-            [
-                PathBuf::from("/b0/dir.1"),
-                PathBuf::from("/b0/hand.1"),
-                PathBuf::from("/b0/dir.2")
-            ]
-        );
+        assert_eq!(gone, [PathBuf::from("/b0/dir.1"), PathBuf::from("/b0/hand.1"), PathBuf::from("/b0/dir.2")]);
     }
 
     #[test]
     fn a_stray_with_a_process_standing_in_it_is_spared_and_the_others_go() {
         let held = [PathBuf::from("/b0/hand.1/debug")];
         let cs = vec![slot(0, 2, 10, 1), stray("hand.1", 10, 3), slot(0, 1, 10, 5)];
-        let gone = evict_walk(cs, 0, &mut |c| {
-            !(c.kind == Kind::Stray && stood_in(&c.path, &held))
-        });
-        assert_eq!(
-            gone,
-            [PathBuf::from("/b0/dir.1"), PathBuf::from("/b0/dir.2")]
-        );
+        let gone = evict_walk(cs, 0, &mut |c| !(c.kind == Kind::Stray && stood_in(&c.path, &held)));
+        assert_eq!(gone, [PathBuf::from("/b0/dir.1"), PathBuf::from("/b0/dir.2")]);
     }
 
     #[test]
     fn a_directory_is_stood_in_by_its_own_path_and_anything_beneath_it_not_a_sibling_prefix() {
-        let held = [
-            PathBuf::from("/b0/hand.1/debug"),
-            PathBuf::from("/b0/hand.20"),
-        ];
+        let held = [PathBuf::from("/b0/hand.1/debug"), PathBuf::from("/b0/hand.20")];
         assert!(stood_in(Path::new("/b0/hand.1"), &held));
         assert!(stood_in(Path::new("/b0/hand.20"), &held));
         assert!(!stood_in(Path::new("/b0/hand.2"), &held));
@@ -1182,51 +850,25 @@ mod tests {
     }
 
     #[test]
-    fn eviction_removes_least_recently_used_first_never_a_refused_live_one_and_stops_once_under_budget(
-    ) {
-        let cs = vec![
-            slot(0, 4, 100, 1),
-            slot(0, 1, 100, 9),
-            slot(0, 2, 100, 5),
-            slot(0, 3, 100, 3),
-        ];
+    fn eviction_removes_least_recently_used_first_never_a_refused_live_one_and_stops_once_under_budget() {
+        let cs = vec![slot(0, 4, 100, 1), slot(0, 1, 100, 9), slot(0, 2, 100, 5), slot(0, 3, 100, 3)];
         let gone = evict_walk(cs, 100, &mut |c| c.path != Path::new("/b0/dir.1"));
-        assert_eq!(
-            gone,
-            [
-                PathBuf::from("/b0/dir.2"),
-                PathBuf::from("/b0/dir.3"),
-                PathBuf::from("/b0/dir.4")
-            ]
-        );
+        assert_eq!(gone, [PathBuf::from("/b0/dir.2"), PathBuf::from("/b0/dir.3"), PathBuf::from("/b0/dir.4")]);
         let cs = vec![slot(0, 1, 100, 9), slot(0, 2, 100, 5), slot(0, 3, 100, 3)];
-        assert_eq!(
-            evict_walk(cs, 150, &mut |_| true),
-            [PathBuf::from("/b0/dir.1"), PathBuf::from("/b0/dir.2")],
-            "dir.3 stays: the total is under budget"
-        );
+        assert_eq!(evict_walk(cs, 150, &mut |_| true), [PathBuf::from("/b0/dir.1"), PathBuf::from("/b0/dir.2")], "dir.3 stays: the total is under budget");
     }
 
     #[test]
     fn an_eviction_within_budget_removes_nothing_and_empty_directories_are_never_candidates() {
-        assert!(evict_walk(vec![slot(0, 1, 100, 9)], 100, &mut |_| panic!(
-            "under budget"
-        ))
-        .is_empty());
+        assert!(evict_walk(vec![slot(0, 1, 100, 9)], 100, &mut |_| panic!("under budget")).is_empty());
         let cs = vec![slot(0, 1, 0, 9), slot(0, 2, 100, 1)];
-        assert_eq!(
-            evict_walk(cs, 0, &mut |_| true),
-            [PathBuf::from("/b0/dir.2")]
-        );
+        assert_eq!(evict_walk(cs, 0, &mut |_| true), [PathBuf::from("/b0/dir.2")]);
     }
 
     #[test]
     fn eviction_counts_every_base_against_one_budget() {
         let cs = vec![slot(0, 1, 100, 2), slot(1, 1, 100, 1)];
-        assert_eq!(
-            evict_walk(cs, 100, &mut |_| true),
-            [PathBuf::from("/b0/dir.1")]
-        );
+        assert_eq!(evict_walk(cs, 100, &mut |_| true), [PathBuf::from("/b0/dir.1")]);
     }
 
     #[test]
@@ -1235,26 +877,15 @@ mod tests {
         let base = d.path().join("base");
         fill(&base.join("dir.1/debug/x"), 64);
         std::fs::write(base.join("dir.1.lock"), "").unwrap();
-        let gone = evict_idle_in(
-            std::slice::from_ref(&base),
-            0,
-            &crate::build::size_of,
-            &empty_proc(d.path()),
-        );
+        let gone = evict_idle_in(std::slice::from_ref(&base), 0, &crate::build::size_of, &empty_proc(d.path()));
         assert_eq!(gone, [base.join("dir.1")]);
-        assert!(
-            base.join("dir.1").is_dir() && !holds_anything(&base.join("dir.1")),
-            "emptied in place"
-        );
+        assert!(base.join("dir.1").is_dir() && !holds_anything(&base.join("dir.1")), "emptied in place");
         assert!(base.join("dir.1.lock").exists());
     }
 
     #[test]
     fn a_base_value_lists_directories_separated_by_whitespace() {
-        assert_eq!(
-            parse_bases(" /x/b\n/y/c "),
-            [PathBuf::from("/x/b"), PathBuf::from("/y/c")]
-        );
+        assert_eq!(parse_bases(" /x/b\n/y/c "), [PathBuf::from("/x/b"), PathBuf::from("/y/c")]);
         assert!(parse_bases("  ").is_empty());
     }
 }

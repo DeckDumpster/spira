@@ -18,22 +18,14 @@ use std::process::Stdio;
 /// formatting: no systemctl call, so this never fails and never queries anything live. An
 /// empty `instance` defaults to `"prod"`, matching bash's own `${SPIRA_INSTANCE:-prod}`.
 pub fn watch_unit_name(name: &str, instance: &str) -> String {
-    let inst = if instance.is_empty() {
-        "prod"
-    } else {
-        instance
-    };
+    let inst = if instance.is_empty() { "prod" } else { instance };
     format!("spira-watch-{name}-{inst}.service")
 }
 
 /// The installed name of a spira unit: `spira-<base>-<instance>.<kind>`, the form
 /// `install` writes. An empty `instance` defaults to `"prod"`, as [`watch_unit_name`] does.
 pub fn unit_name(base: &str, kind: &str, instance: &str) -> String {
-    let inst = if instance.is_empty() {
-        "prod"
-    } else {
-        instance
-    };
+    let inst = if instance.is_empty() { "prod" } else { instance };
     format!("spira-{base}-{inst}.{kind}")
 }
 
@@ -85,44 +77,26 @@ mod tests {
 
     #[test]
     fn watch_unit_name_formats_with_the_given_instance() {
-        assert_eq!(
-            watch_unit_name("answers", "prod"),
-            "spira-watch-answers-prod.service"
-        );
-        assert_eq!(
-            watch_unit_name("testview", "test"),
-            "spira-watch-testview-test.service"
-        );
+        assert_eq!(watch_unit_name("answers", "prod"), "spira-watch-answers-prod.service");
+        assert_eq!(watch_unit_name("testview", "test"), "spira-watch-testview-test.service");
     }
 
     #[test]
     fn unit_name_carries_the_instance_suffix() {
-        assert_eq!(
-            unit_name("submission", "service", "prod"),
-            "spira-submission-prod.service"
-        );
-        assert_eq!(
-            unit_name("submission", "service", "test"),
-            "spira-submission-test.service"
-        );
+        assert_eq!(unit_name("submission", "service", "prod"), "spira-submission-prod.service");
+        assert_eq!(unit_name("submission", "service", "test"), "spira-submission-test.service");
         assert_eq!(unit_name("loom", "service", ""), "spira-loom-prod.service");
     }
 
     #[test]
     fn watch_unit_name_defaults_empty_instance_to_prod() {
-        assert_eq!(
-            watch_unit_name("cockpit", ""),
-            "spira-watch-cockpit-prod.service"
-        );
+        assert_eq!(watch_unit_name("cockpit", ""), "spira-watch-cockpit-prod.service");
     }
 
     #[test]
     fn watch_unit_name_never_produces_the_template_form() {
         // Positive control (test-watchd-unit-name.sh's own one): the old template form
         // (spira-watch@name.service) must never come out of this function.
-        assert_ne!(
-            watch_unit_name("answers", "prod"),
-            "spira-watch@answers.service"
-        );
+        assert_ne!(watch_unit_name("answers", "prod"), "spira-watch@answers.service");
     }
 }

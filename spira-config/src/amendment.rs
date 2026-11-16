@@ -35,8 +35,7 @@ fn file(mail: &str, bead: &str, id: &str) -> PathBuf {
 }
 
 pub fn is_amend_id(s: &str) -> bool {
-    s.strip_prefix("am-")
-        .is_some_and(|r| !r.is_empty() && r.chars().all(|c| c.is_ascii_hexdigit()))
+    s.strip_prefix("am-").is_some_and(|r| !r.is_empty() && r.chars().all(|c| c.is_ascii_hexdigit()))
 }
 
 /// `10m`, `90s`, `2h`, or bare seconds.
@@ -95,20 +94,12 @@ fn write(mail: &str, r: &Record) -> Result<(), String> {
     let _ = std::fs::set_permissions(&d, std::fs::Permissions::from_mode(0o755));
     let path = file(mail, &r.bead, &r.id);
     let tmp = d.join(format!(".{}.tmp", r.id));
-    std::fs::write(&tmp, to_json(r).to_string())
-        .map_err(|e| format!("writing {}: {e}", tmp.display()))?;
+    std::fs::write(&tmp, to_json(r).to_string()).map_err(|e| format!("writing {}: {e}", tmp.display()))?;
     let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o644));
     std::fs::rename(&tmp, &path).map_err(|e| format!("renaming into {}: {e}", path.display()))
 }
 
-pub fn create(
-    mail: &str,
-    bead: &str,
-    amender: &str,
-    text: &str,
-    now: i64,
-    ack_secs: i64,
-) -> Result<Record, String> {
+pub fn create(mail: &str, bead: &str, amender: &str, text: &str, now: i64, ack_secs: i64) -> Result<Record, String> {
     let mut n = (now as u64) ^ ((std::process::id() as u64) << 20);
     let id = loop {
         let id = format!("am-{:x}", n & 0xff_ffff_ffff);
@@ -117,15 +108,7 @@ pub fn create(
         }
         n = n.wrapping_add(1);
     };
-    let r = Record {
-        id,
-        bead: bead.into(),
-        amender: amender.into(),
-        text: text.into(),
-        created: now,
-        deadline: now + ack_secs,
-        state: State::Pending,
-    };
+    let r = Record { id, bead: bead.into(), amender: amender.into(), text: text.into(), created: now, deadline: now + ack_secs, state: State::Pending };
     write(mail, &r)?;
     Ok(r)
 }
@@ -140,19 +123,14 @@ pub fn find(mail: &str, id: &str) -> Option<Record> {
     if !is_amend_id(id) {
         return None;
     }
-    std::fs::read_dir(mail)
-        .ok()?
-        .filter_map(|e| e.ok())
-        .find_map(|e| {
-            let name = e.file_name().into_string().ok()?;
-            load(mail, name.strip_prefix("dwarf-")?, id)
-        })
+    std::fs::read_dir(mail).ok()?.filter_map(|e| e.ok()).find_map(|e| {
+        let name = e.file_name().into_string().ok()?;
+        load(mail, name.strip_prefix("dwarf-")?, id)
+    })
 }
 
 pub fn all(mail: &str, bead: &str) -> Vec<Record> {
-    let Ok(rd) = std::fs::read_dir(dir(mail, bead)) else {
-        return vec![];
-    };
+    let Ok(rd) = std::fs::read_dir(dir(mail, bead)) else { return vec![] };
     let mut v: Vec<Record> = rd
         .filter_map(|e| e.ok())
         .filter_map(|e| std::fs::read_to_string(e.path()).ok())
@@ -163,20 +141,14 @@ pub fn all(mail: &str, bead: &str) -> Vec<Record> {
 }
 
 pub fn unanswered(mail: &str, bead: &str) -> Vec<Record> {
-    all(mail, bead)
-        .into_iter()
-        .filter(|r| r.state == State::Pending)
-        .collect()
+    all(mail, bead).into_iter().filter(|r| r.state == State::Pending).collect()
 }
 
 /// Sets the state of a pending record; anything already answered is refused.
 pub fn answer(mail: &str, bead: &str, id: &str, to: State) -> Result<Record, String> {
     let mut r = load(mail, bead, id).ok_or_else(|| format!("no amendment {id} on {bead}"))?;
     if r.state != State::Pending {
-        return Err(format!(
-            "amendment {id} is already {}",
-            state_json(&r.state).0
-        ));
+        return Err(format!("amendment {id} is already {}", state_json(&r.state).0));
     }
     r.state = to;
     write(mail, &r)?;
@@ -194,15 +166,8 @@ pub fn enforceable(r: &Record, now: i64) -> Result<&'static str, String> {
     match &r.state {
         State::Declined(_) => Ok("declined"),
         State::Pending if now >= r.deadline => Ok("unanswered past its deadline"),
-        State::Pending => Err(format!(
-            "amendment {} is still inside its ack window ({}s left)",
-            r.id,
-            r.deadline - now
-        )),
-        State::Accepted => Err(format!(
-            "amendment {} was accepted; there is nothing to enforce",
-            r.id
-        )),
+        State::Pending => Err(format!("amendment {} is still inside its ack window ({}s left)", r.id, r.deadline - now)),
+        State::Accepted => Err(format!("amendment {} was accepted; there is nothing to enforce", r.id)),
         State::Enforced => Err(format!("amendment {} was already enforced", r.id)),
     }
 }
@@ -213,11 +178,7 @@ pub fn submit_refusal(mail: &str, bead: &str) -> Option<String> {
     if open.is_empty() {
         return None;
     }
-    let ids = open
-        .iter()
-        .map(|r| r.id.as_str())
-        .collect::<Vec<_>>()
-        .join(", ");
+    let ids = open.iter().map(|r| r.id.as_str()).collect::<Vec<_>>().join(", ");
     Some(format!(
         "refused: {bead} has an unanswered amendment ({ids}); answer it with `work ack <id> --accept` or `work ack <id> --decline \"<why>\"` before you submit"
     ))
@@ -280,10 +241,7 @@ mod tests {
         let m = d.to_string_lossy().into_owned();
         let r = create(&m, "sp-x1", "concierge", "t", 1000, 600).unwrap();
         answer(&m, "sp-x1", &r.id, State::Declined("wrong repo".into())).unwrap();
-        assert_eq!(
-            load(&m, "sp-x1", &r.id).unwrap().state,
-            State::Declined("wrong repo".into())
-        );
+        assert_eq!(load(&m, "sp-x1", &r.id).unwrap().state, State::Declined("wrong repo".into()));
         assert!(answer(&m, "sp-x1", &r.id, State::Accepted).is_err());
         assert!(submit_refusal(&m, "sp-x1").is_none());
     }

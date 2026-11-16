@@ -27,11 +27,7 @@ mod tests {
 
     #[test]
     fn unrelated_and_empty_diffs_are_not_recipe_changes() {
-        assert!(!touches(&[
-            "spira/queue.sh",
-            "round-vm/src/pool.rs",
-            "flake.nix.bak"
-        ]));
+        assert!(!touches(&["spira/queue.sh", "round-vm/src/pool.rs", "flake.nix.bak"]));
         assert!(!touches::<&str>(&[]));
     }
 }

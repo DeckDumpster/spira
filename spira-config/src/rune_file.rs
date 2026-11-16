@@ -17,11 +17,7 @@ struct Ctx<'a> {
 
 impl Ctx<'_> {
     fn get(&self, name: &str) -> String {
-        self.vars
-            .get(name)
-            .cloned()
-            .or_else(|| (self.env)(name))
-            .unwrap_or_default()
+        self.vars.get(name).cloned().or_else(|| (self.env)(name)).unwrap_or_default()
     }
 }
 
@@ -61,13 +57,7 @@ fn dollar(c: &[char], i: &mut usize, ctx: &Ctx) -> Result<String, String> {
                         return Err("unterminated ${...}".into());
                     }
                     *i += 1;
-                    Ok(if (plus && !val.is_empty()) || (!plus && val.is_empty()) {
-                        w
-                    } else if plus {
-                        String::new()
-                    } else {
-                        val
-                    })
+                    Ok(if (plus && !val.is_empty()) || (!plus && val.is_empty()) { w } else if plus { String::new() } else { val })
                 }
                 _ => Err("unsupported parameter expansion".into()),
             }
@@ -94,9 +84,7 @@ fn arith(e: &str) -> Result<i64, String> {
             (false, "+") => (sign, want_num) = (1, true),
             (false, "-") => (sign, want_num) = (-1, true),
             (true, t) => {
-                let n: i64 = t
-                    .parse()
-                    .map_err(|_| format!("arithmetic operand {t:?} is not an integer"))?;
+                let n: i64 = t.parse().map_err(|_| format!("arithmetic operand {t:?} is not an integer"))?;
                 total += sign * n;
                 want_num = false;
             }
@@ -135,10 +123,7 @@ fn word(c: &[char], i: &mut usize, mode: Mode, ctx: &Ctx) -> Result<String, Stri
                 *i = s + len + 1;
             }
             '`' | '\\' => return Err(format!("unsupported character {ch:?}")),
-            '\'' | '"' | '*' | '?' | '[' | '~' | '!' | '(' | ')' | '<' | '>' | '|' | '&' | ';'
-            | '{' | '}'
-                if mode != Mode::Double =>
-            {
+            '\'' | '"' | '*' | '?' | '[' | '~' | '!' | '(' | ')' | '<' | '>' | '|' | '&' | ';' | '{' | '}' if mode != Mode::Double => {
                 return Err(format!("unsupported character {ch:?}"));
             }
             _ => {
@@ -154,11 +139,7 @@ fn word(c: &[char], i: &mut usize, mode: Mode, ctx: &Ctx) -> Result<String, Stri
 }
 
 /// Every assignment in `text`, later ones overriding earlier. `env` answers names the file did not assign.
-pub fn parse(
-    file: &str,
-    text: &str,
-    env: &dyn Fn(&str) -> Option<String>,
-) -> Result<HashMap<String, String>, String> {
+pub fn parse(file: &str, text: &str, env: &dyn Fn(&str) -> Option<String>) -> Result<HashMap<String, String>, String> {
     let mut vars = HashMap::new();
     for (n, line) in text.lines().enumerate() {
         let fail = |m: String| format!("{file}:{}: {m}", n + 1);
@@ -219,18 +200,7 @@ mod tests {
 
     #[test]
     fn anything_outside_the_subset_is_refused_with_file_and_line() {
-        for bad in [
-            "X=$(date)",
-            "X=`date`",
-            "export X=1",
-            "X=a;b",
-            "X=\"a",
-            "X=${A#b}",
-            "X=a\\b",
-            "X=*",
-            "X=a b",
-            "if true; then",
-        ] {
+        for bad in ["X=$(date)", "X=`date`", "export X=1", "X=a;b", "X=\"a", "X=${A#b}", "X=a\\b", "X=*", "X=a b", "if true; then"] {
             let e = one(&format!("# c\n{bad}")).unwrap_err();
             assert!(e.starts_with("f.rune:2: "), "{bad}: {e}");
         }

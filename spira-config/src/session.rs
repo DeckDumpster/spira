@@ -26,11 +26,7 @@ pub fn parse(holder: &str) -> Option<Session> {
     let (name, rest) = holder.rsplit_once('@')?;
     let (pid, start) = rest.split_once('.')?;
     (!name.is_empty()).then_some(())?;
-    Some(Session {
-        name: name.to_string(),
-        pid: pid.parse().ok()?,
-        start: start.parse().ok()?,
-    })
+    Some(Session { name: name.to_string(), pid: pid.parse().ok()?, start: start.parse().ok()? })
 }
 
 /// True only when the holder names a session and that session is provably gone. A bare-name
@@ -66,52 +62,24 @@ mod tests {
         let t = Table(HashMap::from([(7, 99)]));
         let h = holder_for("dwarf-austri", 7, &t);
         assert_eq!(h, "dwarf-austri@7.99");
-        assert_eq!(
-            parse(&h),
-            Some(Session {
-                name: "dwarf-austri".into(),
-                pid: 7,
-                start: 99
-            })
-        );
+        assert_eq!(parse(&h), Some(Session { name: "dwarf-austri".into(), pid: 7, start: 99 }));
         assert_eq!(parse("dwarf-austri"), None);
     }
 
     #[test]
     fn a_dead_session_is_gone_even_when_its_name_is_live_in_another_session() {
         let t = Table(HashMap::from([(8, 120)]));
-        assert!(
-            session_gone("dwarf-austri@7.99", &t),
-            "pid 7 does not exist"
-        );
-        assert!(
-            session_gone("dwarf-austri@8.99", &t),
-            "pid 8 was reused: a different starttime"
-        );
+        assert!(session_gone("dwarf-austri@7.99", &t), "pid 7 does not exist");
+        assert!(session_gone("dwarf-austri@8.99", &t), "pid 8 was reused: a different starttime");
         assert!(!session_gone("dwarf-austri@8.120", &t));
-        assert!(
-            !session_gone("dwarf-austri", &t),
-            "a bare name proves nothing"
-        );
+        assert!(!session_gone("dwarf-austri", &t), "a bare name proves nothing");
     }
 
     #[test]
     fn the_same_name_under_another_session_is_another_session() {
-        assert!(same_name_other_session(
-            "dwarf-austri@7.99",
-            "dwarf-austri@8.120"
-        ));
-        assert!(!same_name_other_session(
-            "dwarf-austri@7.99",
-            "dwarf-austri@7.99"
-        ));
-        assert!(!same_name_other_session(
-            "dwarf-regin@7.99",
-            "dwarf-austri@8.120"
-        ));
-        assert!(!same_name_other_session(
-            "dwarf-austri",
-            "dwarf-austri@8.120"
-        ));
+        assert!(same_name_other_session("dwarf-austri@7.99", "dwarf-austri@8.120"));
+        assert!(!same_name_other_session("dwarf-austri@7.99", "dwarf-austri@7.99"));
+        assert!(!same_name_other_session("dwarf-regin@7.99", "dwarf-austri@8.120"));
+        assert!(!same_name_other_session("dwarf-austri", "dwarf-austri@8.120"));
     }
 }

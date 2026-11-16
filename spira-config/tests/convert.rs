@@ -78,9 +78,7 @@ fn unknown_lane_mode_is_refused_not_warned() {
     let errors = convert("", "/opt/fixture-home", repo_map, &[])
         .expect_err("an unknown lane-mode word must refuse the whole convert");
     assert!(
-        errors
-            .iter()
-            .any(|e| e.contains("alpha") && e.contains("fullaccess")),
+        errors.iter().any(|e| e.contains("alpha") && e.contains("fullaccess")),
         "expected an error naming the row and the bad token, got {errors:?}"
     );
 }
@@ -125,49 +123,23 @@ fn retired_cpu_quota_keys_convert_with_a_warning() {
         .expect("a retired key must not refuse the whole convert");
     for key in ["SPIRA_DWARF_CPU_QUOTA", "SPIRA_LAND_CPU_QUOTA"] {
         assert!(
-            warnings
-                .0
-                .iter()
-                .any(|w| w.contains(key) && w.contains("sp-b4oct")),
+            warnings.0.iter().any(|w| w.contains(key) && w.contains("sp-b4oct")),
             "no warning for {key}: {:?}",
             warnings.0
         );
     }
     let sh = spira_config::export_sh(&doc);
-    assert!(
-        !sh.contains("CPU_QUOTA"),
-        "a retired key leaked into export --sh: {sh}"
-    );
+    assert!(!sh.contains("CPU_QUOTA"), "a retired key leaked into export --sh: {sh}");
 }
 
 // sp-gypjk: a legacy SPIRA_*_BIN converts with a warning, never refused; a non-batcher
 // SPIRA_BATCHER_BIN keeps the cuts off as batcher_enable = "0".
 #[test]
 fn retired_tool_path_keys_convert_with_a_warning() {
-    let (doc, warnings) = convert(
-        "SPIRA_ID_PREFIX = sp\nSPIRA_BATCHER_BIN = /bin/true\nSPIRA_LC_BIN = /x/spira-lc\n",
-        "/opt/fixture-home",
-        "",
-        &[],
-    )
-    .expect("retired keys never refuse the convert");
-    assert_eq!(
-        doc.spira
-            .as_ref()
-            .unwrap()
-            .get_str("SPIRA_BATCHER_ENABLE")
-            .unwrap()
-            .as_deref(),
-        Some("0")
-    );
-    assert!(
-        warnings
-            .0
-            .iter()
-            .any(|w| w.contains("SPIRA_LC_BIN is retired (sp-gypjk")),
-        "{:?}",
-        warnings.0
-    );
+    let (doc, warnings) = convert("SPIRA_ID_PREFIX = sp\nSPIRA_BATCHER_BIN = /bin/true\nSPIRA_LC_BIN = /x/spira-lc\n", "/opt/fixture-home", "", &[])
+        .expect("retired keys never refuse the convert");
+    assert_eq!(doc.spira.as_ref().unwrap().get_str("SPIRA_BATCHER_ENABLE").unwrap().as_deref(), Some("0"));
+    assert!(warnings.0.iter().any(|w| w.contains("SPIRA_LC_BIN is retired (sp-gypjk")), "{:?}", warnings.0);
 }
 
 // sp-9hwim: the mail-mute override becomes a typed key. A legacy SPIRA_MAIL_MUTE=1 converts
@@ -175,66 +147,27 @@ fn retired_tool_path_keys_convert_with_a_warning() {
 // unset conf carries no mail_mute at all, matching "default off, mail flows normally".
 #[test]
 fn legacy_mail_mute_converts_to_the_typed_key() {
-    let (doc, warnings) = convert(
-        "SPIRA_ID_PREFIX = sp\nSPIRA_MAIL_MUTE=1\n",
-        "/opt/fixture-home",
-        "",
-        &[],
-    )
-    .expect("a known key must not refuse the convert");
+    let (doc, warnings) = convert("SPIRA_ID_PREFIX = sp\nSPIRA_MAIL_MUTE=1\n", "/opt/fixture-home", "", &[])
+        .expect("a known key must not refuse the convert");
     assert!(warnings.0.is_empty(), "{:?}", warnings.0);
-    assert_eq!(
-        doc.spira
-            .as_ref()
-            .unwrap()
-            .get_bool("SPIRA_MAIL_MUTE")
-            .unwrap(),
-        Some(true)
-    );
+    assert_eq!(doc.spira.as_ref().unwrap().get_bool("SPIRA_MAIL_MUTE").unwrap(), Some(true));
 }
 
 #[test]
 fn mail_mute_absent_by_default() {
-    let (doc, warnings) = convert(
-        "SPIRA_ID_PREFIX = sp\nSPIRA_HOME_REPO=home\n",
-        "/opt/fixture-home",
-        "",
-        &[],
-    )
-    .expect("converts");
+    let (doc, warnings) =
+        convert("SPIRA_ID_PREFIX = sp\nSPIRA_HOME_REPO=home\n", "/opt/fixture-home", "", &[]).expect("converts");
     assert!(warnings.0.is_empty(), "{:?}", warnings.0);
-    assert_eq!(
-        doc.spira
-            .as_ref()
-            .unwrap()
-            .get_bool("SPIRA_MAIL_MUTE")
-            .unwrap(),
-        None
-    );
+    assert_eq!(doc.spira.as_ref().unwrap().get_bool("SPIRA_MAIL_MUTE").unwrap(), None);
 }
 
 #[test]
 fn mail_mute_bad_value_warns_not_a_spelling_the_key_accepts() {
-    let (doc, warnings) = convert(
-        "SPIRA_ID_PREFIX = sp\nSPIRA_MAIL_MUTE=maybe\n",
-        "/opt/fixture-home",
-        "",
-        &[],
-    )
-    .expect("a bad value warns, it does not refuse the whole convert");
-    assert_eq!(
-        doc.spira
-            .as_ref()
-            .unwrap()
-            .get_bool("SPIRA_MAIL_MUTE")
-            .unwrap(),
-        None
-    );
+    let (doc, warnings) = convert("SPIRA_ID_PREFIX = sp\nSPIRA_MAIL_MUTE=maybe\n", "/opt/fixture-home", "", &[])
+        .expect("a bad value warns, it does not refuse the whole convert");
+    assert_eq!(doc.spira.as_ref().unwrap().get_bool("SPIRA_MAIL_MUTE").unwrap(), None);
     assert!(
-        warnings
-            .0
-            .iter()
-            .any(|w| w.contains("mail_mute") && w.contains("maybe")),
+        warnings.0.iter().any(|w| w.contains("mail_mute") && w.contains("maybe")),
         "{:?}",
         warnings.0
     );
@@ -244,24 +177,13 @@ fn mail_mute_bad_value_warns_not_a_spelling_the_key_accepts() {
 // warning naming the bead, never refused, and the key does not reach the converted document.
 #[test]
 fn retired_quarantine_clean_runs_converts_with_a_warning() {
-    let (doc, warnings) = convert(
-        "SPIRA_QUARANTINE_CLEAN_RUNS=10\n",
-        "/opt/fixture-home",
-        "",
-        &[],
-    )
-    .expect("a retired key must not refuse the whole convert");
+    let (doc, warnings) = convert("SPIRA_QUARANTINE_CLEAN_RUNS=10\n", "/opt/fixture-home", "", &[])
+        .expect("a retired key must not refuse the whole convert");
     assert!(
-        warnings
-            .0
-            .iter()
-            .any(|w| w.contains("SPIRA_QUARANTINE_CLEAN_RUNS") && w.contains("sp-op2c2")),
+        warnings.0.iter().any(|w| w.contains("SPIRA_QUARANTINE_CLEAN_RUNS") && w.contains("sp-op2c2")),
         "no warning: {:?}",
         warnings.0
     );
     let sh = spira_config::export_sh(&doc);
-    assert!(
-        !sh.contains("CLEAN_RUNS"),
-        "a retired key leaked into export --sh: {sh}"
-    );
+    assert!(!sh.contains("CLEAN_RUNS"), "a retired key leaked into export --sh: {sh}");
 }

@@ -11,25 +11,16 @@ pub fn valid_target(t: &str) -> Result<(), String> {
     let words: Vec<&str> = t.split_whitespace().collect();
     match words.iter().position(|w| OPS.contains(w)) {
         Some(i) if i > 0 && i + 1 < words.len() => Ok(()),
-        _ => Err(format!(
-            "--target {t:?} is not \"<metric> <op> <value>\" (op one of {})",
-            OPS.join(" ")
-        )),
+        _ => Err(format!("--target {t:?} is not \"<metric> <op> <value>\" (op one of {})", OPS.join(" "))),
     }
 }
 
 pub fn parse_target(text: &str) -> Option<String> {
-    text.lines()
-        .find_map(|l| l.trim().strip_prefix(TARGET_PREFIX))
-        .map(|t| t.trim().to_string())
-        .filter(|t| !t.is_empty())
+    text.lines().find_map(|l| l.trim().strip_prefix(TARGET_PREFIX)).map(|t| t.trim().to_string()).filter(|t| !t.is_empty())
 }
 
 pub fn parse_verdict(text: &str) -> Option<String> {
-    text.lines()
-        .rev()
-        .find_map(|l| l.trim().strip_prefix(VERDICT_PREFIX))
-        .map(|t| t.trim().to_string())
+    text.lines().rev().find_map(|l| l.trim().strip_prefix(VERDICT_PREFIX)).map(|t| t.trim().to_string())
 }
 
 /// What the store knows about a bead named as a follow-on or an escalation.
@@ -44,41 +35,20 @@ const EXITS: &str = "the bead declares a target, so the submission must carry on
 --short \"<measured value>\" with --follow-on <bead id> (a bead you filed carrying the same target) or --escalation <id of an operator escalation ask>";
 
 fn flag(args: &[String], name: &str) -> Option<String> {
-    args.iter()
-        .position(|a| a == name)
-        .and_then(|i| args.get(i + 1))
-        .cloned()
-        .filter(|v| !v.trim().is_empty())
+    args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned().filter(|v| !v.trim().is_empty())
 }
 
 /// Err is the refusal text. Ok(None): the bead has no target. Ok(Some(line)): the verdict
 /// line to record on the bead.
-pub fn judge(
-    target: Option<&str>,
-    args: &[String],
-    lookup: &dyn Fn(&str) -> Result<Option<Named>, String>,
-    self_id: &str,
-    ask_label: &str,
-) -> Result<Option<String>, String> {
-    let Some(target) = target else {
-        return Ok(None);
-    };
-    let (met, contra, short) = (
-        flag(args, "--met"),
-        flag(args, "--contradicted"),
-        flag(args, "--short"),
-    );
-    let given = [&met, &contra, &short]
-        .iter()
-        .filter(|v| v.is_some())
-        .count();
+pub fn judge(target: Option<&str>, args: &[String], lookup: &dyn Fn(&str) -> Result<Option<Named>, String>, self_id: &str, ask_label: &str) -> Result<Option<String>, String> {
+    let Some(target) = target else { return Ok(None) };
+    let (met, contra, short) = (flag(args, "--met"), flag(args, "--contradicted"), flag(args, "--short"));
+    let given = [&met, &contra, &short].iter().filter(|v| v.is_some()).count();
     if given == 0 {
         return Err(format!("refused: {EXITS} (target: {target})"));
     }
     if given > 1 {
-        return Err(format!(
-            "refused: give exactly one of --met, --contradicted, --short ({EXITS})"
-        ));
+        return Err(format!("refused: give exactly one of --met, --contradicted, --short ({EXITS})"));
     }
     if let Some(m) = met {
         return Ok(Some(format!("{VERDICT_PREFIX}MET [{target}] {m}")));
@@ -102,19 +72,11 @@ pub fn judge(
             }
         }
         (None, Some(id)) => match lookup(&id)? {
-            None => Err(format!(
-                "refused: --escalation {id} does not exist ({EXITS})"
-            )),
-            Some(n) if !n.labels.iter().any(|l| l == ask_label) => Err(format!(
-                "refused: --escalation {id} is not labelled {ask_label} ({EXITS})"
-            )),
-            Some(_) => Ok(Some(format!(
-                "{VERDICT_PREFIX}SHORT [{target}] {measured} escalation: {id}"
-            ))),
+            None => Err(format!("refused: --escalation {id} does not exist ({EXITS})")),
+            Some(n) if !n.labels.iter().any(|l| l == ask_label) => Err(format!("refused: --escalation {id} is not labelled {ask_label} ({EXITS})")),
+            Some(_) => Ok(Some(format!("{VERDICT_PREFIX}SHORT [{target}] {measured} escalation: {id}"))),
         },
-        _ => Err(format!(
-            "refused: --short needs exactly one of --follow-on or --escalation ({EXITS})"
-        )),
+        _ => Err(format!("refused: --short needs exactly one of --follow-on or --escalation ({EXITS})")),
     }
 }
 
@@ -143,22 +105,10 @@ mod tests {
 
     fn lookup(id: &str) -> Result<Option<Named>, String> {
         Ok(match id {
-            "sp-next" => Some(Named {
-                target: Some(T.into()),
-                labels: vec![],
-            }),
-            "sp-other" => Some(Named {
-                target: Some("x < 1".into()),
-                labels: vec![],
-            }),
-            "sp-esc" => Some(Named {
-                target: None,
-                labels: vec![ASK.into()],
-            }),
-            "sp-plain" => Some(Named {
-                target: None,
-                labels: vec![],
-            }),
+            "sp-next" => Some(Named { target: Some(T.into()), labels: vec![] }),
+            "sp-other" => Some(Named { target: Some("x < 1".into()), labels: vec![] }),
+            "sp-esc" => Some(Named { target: None, labels: vec![ASK.into()] }),
+            "sp-plain" => Some(Named { target: None, labels: vec![] }),
             _ => None,
         })
     }
@@ -175,50 +125,26 @@ mod tests {
     #[test]
     fn no_verdict_is_refused_naming_all_three_exits() {
         let e = judged(&[]).unwrap_err();
-        for exit in [
-            "--met",
-            "--contradicted",
-            "--short",
-            "--follow-on",
-            "--escalation",
-        ] {
+        for exit in ["--met", "--contradicted", "--short", "--follow-on", "--escalation"] {
             assert!(e.contains(exit), "{e}");
         }
     }
 
     #[test]
     fn met_contradicted_and_short_with_a_follow_on_pass() {
-        assert!(judged(&["--met", "9.2 s on the box"])
-            .unwrap()
-            .unwrap()
-            .contains("MET"));
-        assert!(judged(&["--contradicted", "floor is 12 s"])
-            .unwrap()
-            .unwrap()
-            .contains("CONTRADICTED"));
-        assert!(judged(&["--short", "37 s", "--follow-on", "sp-next"])
-            .unwrap()
-            .unwrap()
-            .contains("follow-on: sp-next"));
-        assert!(judged(&["--short", "37 s", "--escalation", "sp-esc"])
-            .unwrap()
-            .unwrap()
-            .contains("escalation: sp-esc"));
+        assert!(judged(&["--met", "9.2 s on the box"]).unwrap().unwrap().contains("MET"));
+        assert!(judged(&["--contradicted", "floor is 12 s"]).unwrap().unwrap().contains("CONTRADICTED"));
+        assert!(judged(&["--short", "37 s", "--follow-on", "sp-next"]).unwrap().unwrap().contains("follow-on: sp-next"));
+        assert!(judged(&["--short", "37 s", "--escalation", "sp-esc"]).unwrap().unwrap().contains("escalation: sp-esc"));
     }
 
     #[test]
     fn short_is_refused_without_a_real_matching_exit() {
         assert!(judged(&["--short", "37 s"]).is_err());
-        assert!(judged(&["--short", "37 s", "--follow-on", "sp-ghost"])
-            .unwrap_err()
-            .contains("does not exist"));
-        assert!(judged(&["--short", "37 s", "--follow-on", "sp-other"])
-            .unwrap_err()
-            .contains("same --target"));
+        assert!(judged(&["--short", "37 s", "--follow-on", "sp-ghost"]).unwrap_err().contains("does not exist"));
+        assert!(judged(&["--short", "37 s", "--follow-on", "sp-other"]).unwrap_err().contains("same --target"));
         assert!(judged(&["--short", "37 s", "--follow-on", "sp-me"]).is_err());
-        assert!(judged(&["--short", "37 s", "--escalation", "sp-plain"])
-            .unwrap_err()
-            .contains(ASK));
+        assert!(judged(&["--short", "37 s", "--escalation", "sp-plain"]).unwrap_err().contains(ASK));
     }
 
     #[test]
@@ -235,9 +161,6 @@ mod tests {
         assert!(gap(&body).is_some());
         assert!(gap(&format!("{body}{VERDICT_PREFIX}MET [{T}] 9 s")).is_none());
         assert!(gap(&format!("{body}{VERDICT_PREFIX}SHORT [{T}] 37 s")).is_some());
-        assert!(gap(&format!(
-            "{body}{VERDICT_PREFIX}SHORT [{T}] 37 s follow-on: sp-n"
-        ))
-        .is_none());
+        assert!(gap(&format!("{body}{VERDICT_PREFIX}SHORT [{T}] 37 s follow-on: sp-n")).is_none());
     }
 }

@@ -41,21 +41,11 @@ pub struct RegistryKey {
 }
 
 /// Every TYPE a registry file may declare.
-pub const TYPES: &[&str] = &[
-    "string",
-    "u32",
-    "u64",
-    "bool",
-    "list",
-    "onoff",
-    "czar_stage",
-];
+pub const TYPES: &[&str] = &["string", "u32", "u64", "bool", "list", "onoff", "czar_stage"];
 
 /// The `spira.toml` field name of a registry key.
 pub fn field_of(key: &str) -> String {
-    key.strip_prefix("SPIRA_")
-        .unwrap_or(key)
-        .to_ascii_lowercase()
+    key.strip_prefix("SPIRA_").unwrap_or(key).to_ascii_lowercase()
 }
 
 impl RegistryKey {
@@ -119,16 +109,10 @@ impl Registry {
 
     /// Reads both directories of `home`; a directory that cannot be read is a named refusal.
     pub fn from_dirs(home: &Path) -> Result<Registry, String> {
-        Registry::from_keys(
-            load(&home.join(SOURCE_DIRS[0]))?,
-            load(&home.join(SOURCE_DIRS[1]))?,
-        )
+        Registry::from_keys(load(&home.join(SOURCE_DIRS[0]))?, load(&home.join(SOURCE_DIRS[1]))?)
     }
 
-    fn from_keys(
-        mut keys: BTreeMap<String, RegistryKey>,
-        toml_only: BTreeMap<String, RegistryKey>,
-    ) -> Result<Registry, String> {
+    fn from_keys(mut keys: BTreeMap<String, RegistryKey>, toml_only: BTreeMap<String, RegistryKey>) -> Result<Registry, String> {
         for (name, mut key) in toml_only {
             key.toml_only = true;
             if keys.insert(name.clone(), key).is_some() {
@@ -138,10 +122,7 @@ impl Registry {
         let mut fields = BTreeMap::new();
         for k in keys.values() {
             if let Some(other) = fields.insert(k.field.clone(), k.name.clone()) {
-                return Err(format!(
-                    "{}: field {} is declared twice in the registry ({other})",
-                    k.name, k.field
-                ));
+                return Err(format!("{}: field {} is declared twice in the registry ({other})", k.name, k.field));
             }
         }
         Ok(Registry { keys })
@@ -149,12 +130,8 @@ impl Registry {
 
     fn from_index(home: &Path, index: &Path) -> Result<Registry, String> {
         let text = read_counted(index).map_err(|e| format!("{}: {e}", index.display()))?;
-        let parsed = parse_index(&text)
-            .map_err(|e| format!("{}: unreadable registry index: {e}", index.display()))?;
-        let now = stamp(
-            home,
-            parsed.sources.iter().map(|(dir, name, _)| (*dir, *name)),
-        );
+        let parsed = parse_index(&text).map_err(|e| format!("{}: unreadable registry index: {e}", index.display()))?;
+        let now = stamp(home, parsed.sources.iter().map(|(dir, name, _)| (*dir, *name)));
         if now != parsed.stamp {
             return Err(format!(
                 "{} is stale: it was derived from sources stamped {}, and {} is now stamped {now} — a release must be rebuilt; in a tree, remove the index to read conf.d itself",
@@ -166,13 +143,10 @@ impl Registry {
         Registry::from_sources(parsed.sources.into_iter())
     }
 
-    fn from_sources<'a>(
-        sources: impl Iterator<Item = (&'a str, &'a str, &'a str)>,
-    ) -> Result<Registry, String> {
+    fn from_sources<'a>(sources: impl Iterator<Item = (&'a str, &'a str, &'a str)>) -> Result<Registry, String> {
         let mut dirs: [BTreeMap<String, RegistryKey>; 2] = Default::default();
         for (dir, name, body) in sources {
-            dirs[usize::from(dir == SOURCE_DIRS[1])]
-                .insert(name.to_string(), parse_one(name, body)?);
+            dirs[usize::from(dir == SOURCE_DIRS[1])].insert(name.to_string(), parse_one(name, body)?);
         }
         let [keys, toml_only] = dirs;
         Registry::from_keys(keys, toml_only)
@@ -233,28 +207,14 @@ fn parse_index(text: &str) -> Result<ParsedIndex<'_>, String> {
         return Err(format!("header {header:?} is not {INDEX_HEADER:?}"));
     }
     let (stamp_line, mut rest) = rest.split_once('\n').ok_or("no stamp")?;
-    let stamp = stamp_line
-        .strip_prefix("stamp ")
-        .ok_or("no stamp")?
-        .to_string();
+    let stamp = stamp_line.strip_prefix("stamp ").ok_or("no stamp")?.to_string();
     let mut sources = Vec::new();
     while !rest.is_empty() {
-        let (head, after) = rest
-            .split_once('\n')
-            .ok_or("a source record has no header line")?;
-        let (path, len) = head
-            .rsplit_once(' ')
-            .ok_or_else(|| format!("source record {head:?} has no length"))?;
-        let len: usize = len
-            .parse()
-            .map_err(|_| format!("source record {head:?} has no length"))?;
-        let (dir, name) = path
-            .split_once('/')
-            .filter(|(d, _)| SOURCE_DIRS.contains(d))
-            .ok_or_else(|| format!("source {path:?} is not under {}", SOURCE_DIRS.join(" or ")))?;
-        let body = after
-            .get(..len)
-            .ok_or_else(|| format!("source {path:?} is cut short"))?;
+        let (head, after) = rest.split_once('\n').ok_or("a source record has no header line")?;
+        let (path, len) = head.rsplit_once(' ').ok_or_else(|| format!("source record {head:?} has no length"))?;
+        let len: usize = len.parse().map_err(|_| format!("source record {head:?} has no length"))?;
+        let (dir, name) = path.split_once('/').filter(|(d, _)| SOURCE_DIRS.contains(d)).ok_or_else(|| format!("source {path:?} is not under {}", SOURCE_DIRS.join(" or ")))?;
+        let body = after.get(..len).ok_or_else(|| format!("source {path:?} is cut short"))?;
         sources.push((dir, name, body));
         rest = &after[len..];
     }
@@ -269,12 +229,7 @@ fn stamp<'a>(home: &Path, sources: impl Iterator<Item = (&'a str, &'a str)>) -> 
     let mut h = Fnv::default();
     let mut add = |rel: &str| {
         let line = match fs::metadata(home.join(rel)) {
-            Ok(m) => format!(
-                "{rel} {} {}.{}\n",
-                if m.is_dir() { 0 } else { m.len() },
-                m.mtime(),
-                m.mtime_nsec()
-            ),
+            Ok(m) => format!("{rel} {} {}.{}\n", if m.is_dir() { 0 } else { m.len() }, m.mtime(), m.mtime_nsec()),
             Err(e) => format!("{rel} {e}\n"),
         };
         h.write(line.as_bytes());
@@ -313,47 +268,32 @@ pub fn write_index(home: &Path) -> Result<PathBuf, String> {
     let read_all = || -> Result<Vec<(&'static str, String, String)>, String> {
         let mut all = Vec::new();
         for dir in SOURCE_DIRS {
-            all.extend(
-                read_sources(&home.join(dir))?
-                    .into_iter()
-                    .map(|(name, text)| (dir, name, text)),
-            );
+            all.extend(read_sources(&home.join(dir))?.into_iter().map(|(name, text)| (dir, name, text)));
         }
         Ok(all)
     };
     let sources = read_all()?;
     let stamp = stamp(home, sources.iter().map(|(d, n, _)| (*d, n.as_str())));
     if read_all()? != sources {
-        return Err(format!(
-            "{}: the registry changed while it was being indexed — run it again",
-            home.display()
-        ));
+        return Err(format!("{}: the registry changed while it was being indexed — run it again", home.display()));
     }
-    let from_dirs =
-        Registry::from_sources(sources.iter().map(|(d, n, t)| (*d, n.as_str(), t.as_str())))?;
+    let from_dirs = Registry::from_sources(sources.iter().map(|(d, n, t)| (*d, n.as_str(), t.as_str())))?;
     let mut out = format!("{INDEX_HEADER}\nstamp {stamp}\n");
     for (dir, name, text) in &sources {
         out.push_str(&format!("{dir}/{name} {}\n{text}", text.len()));
     }
     let index = home.join(INDEX_FILE);
     let tmp = home.join(format!(".{INDEX_FILE}.{}", std::process::id()));
-    fs::write(&tmp, &out)
-        .and_then(|()| fs::rename(&tmp, &index))
-        .map_err(|e| {
-            let _ = fs::remove_file(&tmp);
-            format!("{}: {e}", index.display())
-        })?;
+    fs::write(&tmp, &out).and_then(|()| fs::rename(&tmp, &index)).map_err(|e| {
+        let _ = fs::remove_file(&tmp);
+        format!("{}: {e}", index.display())
+    })?;
     match Registry::load(home) {
         Ok(r) if r == from_dirs => Ok(index),
         other => {
             let _ = fs::remove_file(&index);
-            let why = other
-                .err()
-                .unwrap_or_else(|| "it loads different keys".to_string());
-            Err(format!(
-                "{}: the index does not load the registry its directories hold ({why}) — removed",
-                index.display()
-            ))
+            let why = other.err().unwrap_or_else(|| "it loads different keys".to_string());
+            Err(format!("{}: the index does not load the registry its directories hold ({why}) — removed", index.display()))
         }
     }
 }
@@ -379,16 +319,12 @@ pub fn write_index(home: &Path) -> Result<PathBuf, String> {
 /// only a directory `read_dir` cannot open at all — missing, or something else wrong with it —
 /// is refused.
 pub fn load(dir: &Path) -> Result<BTreeMap<String, RegistryKey>, String> {
-    read_sources(dir)?
-        .into_iter()
-        .map(|(name, text)| parse_one(&name, &text).map(|k| (name, k)))
-        .collect()
+    read_sources(dir)?.into_iter().map(|(name, text)| parse_one(&name, &text).map(|k| (name, k))).collect()
 }
 
 fn read_sources(dir: &Path) -> Result<Vec<(String, String)>, String> {
     let mut out = Vec::new();
-    let entries =
-        fs::read_dir(dir).map_err(|_| format!("no config registry at {}", dir.display()))?;
+    let entries = fs::read_dir(dir).map_err(|_| format!("no config registry at {}", dir.display()))?;
     for entry in entries {
         let entry = entry.map_err(|e| format!("{}: {e}", dir.display()))?;
         let path = entry.path();
@@ -399,10 +335,7 @@ fn read_sources(dir: &Path) -> Result<Vec<(String, String)>, String> {
             Some(n) => n.to_string(),
             None => continue,
         };
-        if !name
-            .chars()
-            .all(|c| c.is_ascii_uppercase() || c == '_' || c.is_ascii_digit())
-        {
+        if !name.chars().all(|c| c.is_ascii_uppercase() || c == '_' || c.is_ascii_digit()) {
             continue;
         }
         let text = read_counted(&path).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -443,11 +376,7 @@ fn parse_one(name: &str, text: &str) -> Result<RegistryKey, String> {
             required = v.starts_with("REQUIRED:");
             schema_doc = Some(v.trim().to_string());
         } else if let Some(v) = line.strip_prefix("MAX=") {
-            max = Some(
-                v.trim()
-                    .parse::<f64>()
-                    .map_err(|e| format!("{name}: MAX={v:?}: {e}"))?,
-            );
+            max = Some(v.trim().parse::<f64>().map_err(|e| format!("{name}: MAX={v:?}: {e}"))?);
         } else if line == "DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'" {
             in_default = true;
             closed = false;
@@ -455,15 +384,10 @@ fn parse_one(name: &str, text: &str) -> Result<RegistryKey, String> {
         // An unrecognised line is ignored, same as conf-gen.sh (which only warns to stderr).
     }
     if !closed {
-        return Err(format!(
-            "{name}: DEFAULT heredoc never closed (missing SPIRA_CONF_DEFAULT_EOF)"
-        ));
+        return Err(format!("{name}: DEFAULT heredoc never closed (missing SPIRA_CONF_DEFAULT_EOF)"));
     }
     if !TYPES.contains(&ty.trim()) {
-        return Err(format!(
-            "{name}: TYPE={ty:?} is not one of {}",
-            TYPES.join(" ")
-        ));
+        return Err(format!("{name}: TYPE={ty:?} is not one of {}", TYPES.join(" ")));
     }
     Ok(RegistryKey {
         name: name.to_string(),
@@ -490,10 +414,7 @@ pub fn topo_order(registry: &BTreeMap<String, RegistryKey>) -> Result<Vec<String
     // would leave an in-degree no round could bring to zero, reading as a cycle. Every process
     // resolves config through here, so each default is parsed once and a key is only looked
     // for in a default that could name one.
-    let nodes: Vec<(&str, &str)> = registry
-        .iter()
-        .filter_map(|(n, k)| k.default_expr().map(|e| (n.as_str(), e)))
-        .collect();
+    let nodes: Vec<(&str, &str)> = registry.iter().filter_map(|(n, k)| k.default_expr().map(|e| (n.as_str(), e))).collect();
     let mut indeg = vec![0usize; nodes.len()];
     let mut dependents: Vec<Vec<usize>> = vec![Vec::new(); nodes.len()];
     for (i, (_, expr)) in nodes.iter().enumerate() {
@@ -511,18 +432,10 @@ pub fn topo_order(registry: &BTreeMap<String, RegistryKey>) -> Result<Vec<String
     let mut done = vec![false; nodes.len()];
     let mut order: Vec<String> = Vec::with_capacity(nodes.len());
     while order.len() < nodes.len() {
-        let avail: Vec<usize> = (0..nodes.len())
-            .filter(|&i| !done[i] && indeg[i] == 0)
-            .collect();
+        let avail: Vec<usize> = (0..nodes.len()).filter(|&i| !done[i] && indeg[i] == 0).collect();
         if avail.is_empty() {
-            let cyc: Vec<&str> = (0..nodes.len())
-                .filter(|&i| !done[i])
-                .map(|i| nodes[i].0)
-                .collect();
-            return Err(format!(
-                "conf.d: dependency cycle among registry defaults: {}",
-                cyc.join(", ")
-            ));
+            let cyc: Vec<&str> = (0..nodes.len()).filter(|&i| !done[i]).map(|i| nodes[i].0).collect();
+            return Err(format!("conf.d: dependency cycle among registry defaults: {}", cyc.join(", ")));
         }
         for &k in &avail {
             done[k] = true;

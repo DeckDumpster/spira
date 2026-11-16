@@ -99,26 +99,14 @@ fn parse_row(line: &str) -> Option<Row> {
         return None;
     }
     let path = fields[1].trim().to_string();
-    let land = if nf >= 3 {
-        fields[2].trim().to_string()
-    } else {
-        String::new()
-    };
+    let land = if nf >= 3 { fields[2].trim().to_string() } else { String::new() };
 
     // `_lanes_col_idx`: only a row with a genuine 7th column can carry lanes at all.
     let last = fields[nf - 1].trim();
     let has_lanes = nf >= 7 && looks_like_lanes(last);
-    let lanes = if has_lanes {
-        last.to_string()
-    } else {
-        String::new()
-    };
+    let lanes = if has_lanes { last.to_string() } else { String::new() };
 
-    let base = if nf >= 6 {
-        fields[3].trim().to_string()
-    } else {
-        String::new()
-    };
+    let base = if nf >= 6 { fields[3].trim().to_string() } else { String::new() };
     let format = if nf >= 6 {
         fields[4].trim().to_string()
     } else if nf == 5 {
@@ -130,13 +118,7 @@ fn parse_row(line: &str) -> Option<Row> {
     // The gate is every fixed column from `s` to `e` (1-based, inclusive), rejoined with
     // "|" — it is the one column that may itself contain pipes. `s` depends on how many
     // fixed columns precede it; `e` stops one short of the lanes column when one is present.
-    let s1 = if nf >= 6 {
-        6
-    } else if nf == 5 {
-        5
-    } else {
-        4
-    };
+    let s1 = if nf >= 6 { 6 } else if nf == 5 { 5 } else { 4 };
     let e1 = if has_lanes { nf - 1 } else { nf };
     let gate = if s1 >= 1 && s1 <= e1 && e1 <= nf {
         fields[(s1 - 1)..e1].join("|").trim().to_string()
@@ -144,15 +126,7 @@ fn parse_row(line: &str) -> Option<Row> {
         String::new()
     };
 
-    Some(Row {
-        name: name.to_string(),
-        path,
-        land,
-        base,
-        format,
-        gate,
-        lanes,
-    })
+    Some(Row { name: name.to_string(), path, land, base, format, gate, lanes })
 }
 
 /// `repo_field`/`repo_names`' shared row filter, over a whole map file. Order is preserved
@@ -166,7 +140,7 @@ pub fn parse(text: &str) -> Vec<Row> {
 /// no `repo-map` file is read when this applies, and a map file that exists always wins.
 /// `gate` is retired from the schema, so that column is empty.
 pub fn rows_from_toml(doc: &crate::SpiraToml) -> Vec<Row> {
-    use crate::{LandMode, Lane};
+    use crate::{Lane, LandMode};
     doc.repo
         .iter()
         .map(|(name, r)| Row {
@@ -205,10 +179,7 @@ pub fn rows_from_toml(doc: &crate::SpiraToml) -> Vec<Row> {
 /// `repo_field <name> <col>` — the first row named `name`'s column, or `""` when no row
 /// matches (matching bash: not-found and found-but-blank are the same empty answer).
 pub fn field(rows: &[Row], name: &str, col: Column) -> String {
-    rows.iter()
-        .find(|r| r.name == name)
-        .map(|r| r.field(col).to_string())
-        .unwrap_or_default()
+    rows.iter().find(|r| r.name == name).map(|r| r.field(col).to_string()).unwrap_or_default()
 }
 
 /// `repo_names` — every valid row's name, in file order (duplicates included, exactly as
@@ -221,10 +192,7 @@ pub fn names(rows: &[Row]) -> Vec<String> {
 /// same two-step lib.sh/conf.sh take rather than trusting a single call on a path that might
 /// end in `/`.
 fn basename(p: &str) -> String {
-    Path::new(p.trim_end_matches('/'))
-        .file_name()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_default()
+    Path::new(p.trim_end_matches('/')).file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default()
 }
 
 /// `spira_home_repo` — the repo name a bead means when it names none. `env` is read
@@ -254,10 +222,7 @@ pub fn home_repo(env: &BTreeMap<String, String>, home: &Path) -> String {
 /// `SPIRA_REPO_DERIVED` reads as `""`, same as bash's `${SPIRA_REPO_DERIVED:-}`.
 fn repo_override(env: &BTreeMap<String, String>) -> Option<String> {
     let r = env.get("SPIRA_REPO").filter(|v| !v.is_empty())?;
-    let derived = env
-        .get("SPIRA_REPO_DERIVED")
-        .map(String::as_str)
-        .unwrap_or("");
+    let derived = env.get("SPIRA_REPO_DERIVED").map(String::as_str).unwrap_or("");
     (r.as_str() != derived).then(|| r.clone())
 }
 
@@ -320,23 +285,12 @@ impl Registry {
     /// ONE way to get a registry — nothing outside this module calls `new` in production.
     pub fn from_env(env: BTreeMap<String, String>, home: &Path) -> Registry {
         let env = registry_env(env, home);
-        let map_text = env
-            .get("SPIRA_REPO_MAP")
-            .filter(|p| !p.is_empty())
-            .and_then(|p| std::fs::read_to_string(p).ok());
-        let doc = crate::locate::locate(None)
-            .found()
-            .and_then(|p| crate::load(&p).ok());
+        let map_text = env.get("SPIRA_REPO_MAP").filter(|p| !p.is_empty()).and_then(|p| std::fs::read_to_string(p).ok());
+        let doc = crate::locate::locate(None).found().and_then(|p| crate::load(&p).ok());
         let publish = doc.as_ref().map(|d| d.publish.clone()).unwrap_or_default();
         if map_text.is_none() {
             if let Some(rows) = doc.as_ref().map(rows_from_toml) {
-                return Registry {
-                    rows,
-                    home: home_repo(&env, home),
-                    root_override: repo_override(&env),
-                    map_present: true,
-                    publish,
-                };
+                return Registry { rows, home: home_repo(&env, home), root_override: repo_override(&env), map_present: true, publish };
             }
         }
         Registry::new(map_text.as_deref(), &env, home).with_publish(publish)
@@ -347,10 +301,7 @@ impl Registry {
     /// `.git`, the `SPIRA_REPO` is dropped so the home repo resolves to the map's own row (the
     /// harness checkout) instead of being overridden by the release.
     pub fn from_env_checkout(mut env: BTreeMap<String, String>, home: &Path) -> Registry {
-        let repo_is_checkout = env
-            .get("SPIRA_REPO")
-            .filter(|r| !r.is_empty())
-            .is_some_and(|r| Path::new(r).join(".git").exists());
+        let repo_is_checkout = env.get("SPIRA_REPO").filter(|r| !r.is_empty()).is_some_and(|r| Path::new(r).join(".git").exists());
         if !home.join(".git").exists() && !repo_is_checkout {
             env.remove("SPIRA_REPO");
         }
@@ -404,11 +355,7 @@ impl Registry {
     /// "a default of the home checkout is precisely how another repository's bead gets
     /// 'fixed' in the home repo").
     pub fn root(&self, name: &str) -> Option<String> {
-        let name = if name.is_empty() {
-            self.home.clone()
-        } else {
-            name.to_string()
-        };
+        let name = if name.is_empty() { self.home.clone() } else { name.to_string() };
         if name == self.home {
             if let Some(ov) = &self.root_override {
                 return Some(ov.clone());
@@ -423,11 +370,7 @@ impl Registry {
     /// (the `$(...)` capture is unchecked), so a missing map behaves exactly like an unmapped
     /// name rather than an error.
     pub fn land(&self, name: &str) -> String {
-        let m = if self.map_present {
-            field(&self.rows, name, Column::Land)
-        } else {
-            Default::default()
-        };
+        let m = if self.map_present { field(&self.rows, name, Column::Land) } else { Default::default() };
         match m.as_str() {
             "" => "push".to_string(),
             "queue.forge" => "queue".to_string(),
@@ -478,9 +421,7 @@ impl Registry {
                 return Some(self.home.clone());
             }
         }
-        self.names()
-            .into_iter()
-            .find(|n| field(&self.rows, n, Column::Path) == path)
+        self.names().into_iter().find(|n| field(&self.rows, n, Column::Path) == path)
     }
 }
 
@@ -509,22 +450,11 @@ impl Registry {
 // ========================================================================================
 
 fn git_status_ok(repo: &str, args: &[&str]) -> bool {
-    crate::bounded::bounded("git")
-        .arg("-C")
-        .arg(repo)
-        .args(args)
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+    crate::bounded::bounded("git").arg("-C").arg(repo).args(args).output().map(|o| o.status.success()).unwrap_or(false)
 }
 
 fn git_stdout(repo: &str, args: &[&str]) -> Option<String> {
-    let out = crate::bounded::bounded("git")
-        .arg("-C")
-        .arg(repo)
-        .args(args)
-        .output()
-        .ok()?;
+    let out = crate::bounded::bounded("git").arg("-C").arg(repo).args(args).output().ok()?;
     if !out.status.success() {
         return None;
     }
@@ -537,17 +467,10 @@ fn git_stdout(repo: &str, args: &[&str]) -> Option<String> {
 /// substitution is just an empty string, and nothing downstream distinguishes the two).
 fn git_remotes(repo: &str) -> Vec<String> {
     // batch-job: git history or network operation, as long as the repository is large
-    match Command::new("git")
-        .arg("-C")
-        .arg(repo)
-        .arg("remote")
-        .output()
-    {
-        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout)
-            .lines()
-            .map(str::to_string)
-            .filter(|l| !l.is_empty())
-            .collect(),
+    match Command::new("git").arg("-C").arg(repo).arg("remote").output() {
+        Ok(o) if o.status.success() => {
+            String::from_utf8_lossy(&o.stdout).lines().map(str::to_string).filter(|l| !l.is_empty()).collect()
+        }
         _ => Vec::new(),
     }
 }
@@ -570,11 +493,7 @@ pub fn landref(reg: &Registry, arg: &str) -> Option<String> {
     let repo = if arg.contains('/') {
         arg.to_string()
     } else {
-        name = if arg.is_empty() {
-            reg.home_repo().to_string()
-        } else {
-            arg.to_string()
-        };
+        name = if arg.is_empty() { reg.home_repo().to_string() } else { arg.to_string() };
         reg.root(&name)?
     };
     if name.is_empty() {
@@ -682,11 +601,7 @@ pub fn qualify_base_ref(ref_: &str, repo: &str) -> String {
 pub fn landrefs(reg: &Registry, repo: &str) -> Option<(String, Option<String>)> {
     let base = landref(reg, repo)?;
     let lo = ref_branch(&base);
-    let local = if lo != base && verify_ref(repo, &lo) {
-        Some(lo)
-    } else {
-        None
-    };
+    let local = if lo != base && verify_ref(repo, &lo) { Some(lo) } else { None };
     Some((base, local))
 }
 
@@ -698,11 +613,7 @@ pub fn landrefs(reg: &Registry, repo: &str) -> Option<(String, Option<String>)> 
 /// defaults to the land ref's own name with a leading `local/` stripped
 /// (`SPIRA_PUBLISH_BRANCH_<NAME>` overrides that). `<NAME>` is `name` uppercased with `-`
 /// mapped to `_` (bash: `tr 'a-z-' 'A-Z_'` — only lowercase letters and `-` are touched).
-pub fn publish_forge(
-    reg: &Registry,
-    name: &str,
-    env: &BTreeMap<String, String>,
-) -> Option<(String, String)> {
+pub fn publish_forge(reg: &Registry, name: &str, env: &BTreeMap<String, String>) -> Option<(String, String)> {
     let base = landref(reg, name)?;
     let key = publish_key(name);
     let remote = publish_remote(reg, name, env);
@@ -713,12 +624,7 @@ pub fn publish_forge(
         .get(&format!("SPIRA_PUBLISH_BRANCH_{key}"))
         .filter(|v| !v.is_empty())
         .cloned()
-        .or_else(|| {
-            reg.publish
-                .get(name)
-                .and_then(|p| p.branch.clone())
-                .filter(|v| !v.is_empty())
-        })
+        .or_else(|| reg.publish.get(name).and_then(|p| p.branch.clone()).filter(|v| !v.is_empty()))
         .unwrap_or_else(|| base.strip_prefix("local/").unwrap_or(&base).to_string());
     if branch.is_empty() {
         return None;
@@ -728,10 +634,7 @@ pub fn publish_forge(
 
 /// How `name`'s green head reaches its publish remote: a forge PR unless `[publish.<name>] mode = "push"`.
 pub fn publish_mode(reg: &Registry, name: &str) -> crate::PublishMode {
-    reg.publish
-        .get(name)
-        .and_then(|p| p.mode)
-        .unwrap_or_default()
+    reg.publish.get(name).and_then(|p| p.mode).unwrap_or_default()
 }
 
 /// The publish remote value that declares a repository publishes nowhere.
@@ -751,17 +654,8 @@ fn publish_remote(reg: &Registry, name: &str, env: &BTreeMap<String, String>) ->
     env.get(&format!("SPIRA_PUBLISH_REMOTE_{}", publish_key(name)))
         .filter(|v| !v.is_empty())
         .cloned()
-        .or_else(|| {
-            reg.publish
-                .get(name)
-                .and_then(|p| p.remote.clone())
-                .filter(|v| !v.is_empty())
-        })
-        .or_else(|| {
-            env.get("SPIRA_PUBLISH_REMOTE")
-                .filter(|v| !v.is_empty())
-                .cloned()
-        })
+        .or_else(|| reg.publish.get(name).and_then(|p| p.remote.clone()).filter(|v| !v.is_empty()))
+        .or_else(|| env.get("SPIRA_PUBLISH_REMOTE").filter(|v| !v.is_empty()).cloned())
         .unwrap_or_else(|| "origin".to_string())
 }
 
@@ -777,10 +671,7 @@ pub fn publishes_nowhere(reg: &Registry, name: &str, env: &BTreeMap<String, Stri
 /// a private git dir and a shared common one, and only the shared one identifies the
 /// repository (see [`same_repo`]'s own doc).
 fn gitstore(path: &str) -> Option<PathBuf> {
-    let out = crate::bounded::bounded("git")
-        .args(["-C", path, "rev-parse", "--git-common-dir"])
-        .output()
-        .ok()?;
+    let out = crate::bounded::bounded("git").args(["-C", path, "rev-parse", "--git-common-dir"]).output().ok()?;
     if !out.status.success() {
         return None;
     }
@@ -791,11 +682,7 @@ fn gitstore(path: &str) -> Option<PathBuf> {
     // bash: `cd "$path" && … && cd "$d" && pwd -P` — a relative git-common-dir resolves
     // against `path` (the directory bash was already in when it asked), never against the
     // process's own cwd.
-    let full = if Path::new(&d).is_absolute() {
-        PathBuf::from(&d)
-    } else {
-        Path::new(path).join(&d)
-    };
+    let full = if Path::new(&d).is_absolute() { PathBuf::from(&d) } else { Path::new(path).join(&d) };
     std::fs::canonicalize(&full).ok()
 }
 
@@ -838,10 +725,7 @@ pub fn same_repo(a: &str, b: &str) -> bool {
 /// environment. When `home` genuinely matches what forwarded it (the ordinary case: a
 /// unit's own worker, not a dispatcher's borrowed context), the freshly-derived value
 /// equals the forwarded one and nothing changes.
-pub fn registry_env(
-    mut env: std::collections::BTreeMap<String, String>,
-    home: &std::path::Path,
-) -> std::collections::BTreeMap<String, String> {
+pub fn registry_env(mut env: std::collections::BTreeMap<String, String>, home: &std::path::Path) -> std::collections::BTreeMap<String, String> {
     // The registered keys come from the one source of config, never the environment: drop
     // any inherited copy so the resolve below is what answers (per Ryan 2026-10-05).
     for k in ["SPIRA_REPO_MAP", "SPIRA_HOME_REPO"] {
@@ -857,20 +741,10 @@ pub fn registry_env(
     }
     env.insert(
         "SPIRA_REPO_DERIVED".to_string(),
-        crate::resolve::derive_repo_filesystem(home, &env)
-            .to_string_lossy()
-            .into_owned(),
+        crate::resolve::derive_repo_filesystem(home, &env).to_string_lossy().into_owned(),
     );
-    const KEYS: [&str; 4] = [
-        "SPIRA_REPO_MAP",
-        "SPIRA_HOME_REPO",
-        "SPIRA_REPO",
-        "SPIRA_REPO_DERIVED",
-    ];
-    if KEYS
-        .iter()
-        .all(|k| env.get(*k).is_some_and(|v| !v.is_empty()))
-    {
+    const KEYS: [&str; 4] = ["SPIRA_REPO_MAP", "SPIRA_HOME_REPO", "SPIRA_REPO", "SPIRA_REPO_DERIVED"];
+    if KEYS.iter().all(|k| env.get(*k).is_some_and(|v| !v.is_empty())) {
         return env;
     }
     // sp-mz7dn ("wave 4.8") gave every crate a proper, one-call way to do this —

@@ -93,35 +93,19 @@ pub fn parse(text: &str) -> Result<Manifest, String> {
             .into_iter()
             .map(|d| Dep {
                 name: d.name,
-                tier: d
-                    .tier
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or_else(|| DEFAULT_TIER.to_string()),
-                purpose: d
-                    .purpose
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or_else(|| DEFAULT_PURPOSE.to_string()),
+                tier: d.tier.filter(|s| !s.is_empty()).unwrap_or_else(|| DEFAULT_TIER.to_string()),
+                purpose: d.purpose.filter(|s| !s.is_empty()).unwrap_or_else(|| DEFAULT_PURPOSE.to_string()),
                 absent: d.absent.unwrap_or_default(),
                 provider: d.provider.unwrap_or_default(),
             })
             .collect(),
-        compat: raw
-            .compat
-            .into_iter()
-            .map(|c| Compat {
-                name: c.name,
-                alias: c.alias,
-            })
-            .collect(),
+        compat: raw.compat.into_iter().map(|c| Compat { name: c.name, alias: c.alias }).collect(),
     })
 }
 
 /// [`parse`] over a file; a missing or unparseable file answers an empty manifest.
 pub fn load_manifest(path: &Path) -> Manifest {
-    std::fs::read_to_string(path)
-        .ok()
-        .and_then(|t| parse(&t).ok())
-        .unwrap_or_default()
+    std::fs::read_to_string(path).ok().and_then(|t| parse(&t).ok()).unwrap_or_default()
 }
 
 /// `spira_deps_list [tier]` — every declared name, optionally filtered to one tier.
@@ -135,42 +119,28 @@ pub fn list(deps: &[Dep], tier: Option<&str>) -> Vec<String> {
 /// `spira_bin_tier <bin>` -> its declared tier, or [`DEFAULT_TIER`] for a name `deps.toml`
 /// never named.
 pub fn tier_of(deps: &[Dep], name: &str) -> String {
-    deps.iter()
-        .find(|d| d.name == name)
-        .map(|d| d.tier.clone())
-        .unwrap_or_else(|| DEFAULT_TIER.to_string())
+    deps.iter().find(|d| d.name == name).map(|d| d.tier.clone()).unwrap_or_else(|| DEFAULT_TIER.to_string())
 }
 
 /// `spira_bin_purpose <bin>` -> its declared purpose, or [`DEFAULT_PURPOSE`].
 pub fn purpose_of(deps: &[Dep], name: &str) -> String {
-    deps.iter()
-        .find(|d| d.name == name)
-        .map(|d| d.purpose.clone())
-        .unwrap_or_else(|| DEFAULT_PURPOSE.to_string())
+    deps.iter().find(|d| d.name == name).map(|d| d.purpose.clone()).unwrap_or_else(|| DEFAULT_PURPOSE.to_string())
 }
 
 /// `spira_bin_absent <bin>` -> what actually happens on a box without it, or `""` when
 /// `deps.toml` never said (most programs: absence just means the feature is off).
 pub fn absent_of(deps: &[Dep], name: &str) -> String {
-    deps.iter()
-        .find(|d| d.name == name)
-        .map(|d| d.absent.clone())
-        .unwrap_or_default()
+    deps.iter().find(|d| d.name == name).map(|d| d.absent.clone()).unwrap_or_default()
 }
 
 /// Every program `deps.toml` marks `provider = "<provider>"`, in file order.
 pub fn provided_by(deps: &[Dep], provider: &str) -> Vec<String> {
-    deps.iter()
-        .filter(|d| d.provider == provider)
-        .map(|d| d.name.clone())
-        .collect()
+    deps.iter().filter(|d| d.provider == provider).map(|d| d.name.clone()).collect()
 }
 
 fn is_executable_file(p: &Path) -> bool {
     use std::os::unix::fs::PermissionsExt;
-    std::fs::metadata(p)
-        .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
-        .unwrap_or(false)
+    std::fs::metadata(p).map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0).unwrap_or(false)
 }
 
 /// `command -v <name>` over `path` (a colon-separated PATH string) — the same search
@@ -199,9 +169,7 @@ pub fn require(deps: &[Dep], bins: &[&str], path: &str, conf_file: &str) -> Resu
         ));
     }
     msg.push_str(&format!("spira: PATH is {path}\n"));
-    msg.push_str(&format!(
-        "spira: if it is installed elsewhere, set SPIRA_PATH in {conf_file}\n"
-    ));
+    msg.push_str(&format!("spira: if it is installed elsewhere, set SPIRA_PATH in {conf_file}\n"));
     Err(msg)
 }
 
@@ -248,10 +216,7 @@ version_probe = ""
     fn loads_in_file_order() {
         let dir = testkit::TempDir::new("spira-config-deps-order");
         let deps = load(&write_sample(dir.path()));
-        assert_eq!(
-            deps.iter().map(|d| d.name.as_str()).collect::<Vec<_>>(),
-            ["bd", "duckdb", "bd-embedded"]
-        );
+        assert_eq!(deps.iter().map(|d| d.name.as_str()).collect::<Vec<_>>(), ["bd", "duckdb", "bd-embedded"]);
     }
 
     #[test]
@@ -302,10 +267,7 @@ version_probe = ""
         assert!(err.contains("bd — the beads issue tracker"), "{err}");
         assert!(err.contains("duckdb — tsd queries"), "{err}");
         assert!(err.contains(&format!("PATH is {path}")), "{err}");
-        assert!(
-            err.contains("set SPIRA_PATH in /etc/spira/spira.conf"),
-            "{err}"
-        );
+        assert!(err.contains("set SPIRA_PATH in /etc/spira/spira.conf"), "{err}");
     }
 
     #[test]
@@ -314,73 +276,28 @@ version_probe = ""
         let deps = load(&write_sample(dir.path()));
         let path = dir.path().to_string_lossy().into_owned();
         let err = require(&deps, &["spira-no-such-program"], &path, "spira.conf").unwrap_err();
-        assert!(
-            err.contains(&format!("spira-no-such-program — {DEFAULT_PURPOSE}")),
-            "{err}"
-        );
+        assert!(err.contains(&format!("spira-no-such-program — {DEFAULT_PURPOSE}")), "{err}");
     }
 
     // covers: UC-config-store-preflight-08
     #[test]
     fn every_program_the_shipped_manifest_declares_has_a_tier_a_purpose_and_a_version_probe() {
-        let text = std::fs::read_to_string(
-            crate::resolve::locate_home_for_process()
-                .unwrap()
-                .join("deps.toml"),
-        )
-        .unwrap();
+        let text = std::fs::read_to_string(crate::resolve::locate_home_for_process().unwrap().join("deps.toml")).unwrap();
         let manifest = parse(&text).unwrap();
-        assert!(
-            manifest.deps.len() >= 8,
-            "the manifest loaded: {} programs",
-            manifest.deps.len()
-        );
+        assert!(manifest.deps.len() >= 8, "the manifest loaded: {} programs", manifest.deps.len());
         let raw: toml::Value = text.parse().unwrap();
         let probes: std::collections::BTreeMap<&str, &str> = raw["dep"]
             .as_array()
             .unwrap()
             .iter()
-            .map(|d| {
-                (
-                    d["name"].as_str().unwrap(),
-                    d.get("version_probe")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or(""),
-                )
-            })
+            .map(|d| (d["name"].as_str().unwrap(), d.get("version_probe").and_then(|v| v.as_str()).unwrap_or("")))
             .collect();
-        let bad = |f: &dyn Fn(&Dep) -> bool| {
-            manifest
-                .deps
-                .iter()
-                .filter(|d| f(d))
-                .map(|d| d.name.as_str())
-                .collect::<Vec<_>>()
-        };
+        let bad = |f: &dyn Fn(&Dep) -> bool| manifest.deps.iter().filter(|d| f(d)).map(|d| d.name.as_str()).collect::<Vec<_>>();
         let tiers = ["runtime", "optional", "dev", "operator", "release"];
-        assert_eq!(
-            bad(&|d| !tiers.contains(&d.tier.as_str())),
-            Vec::<&str>::new(),
-            "a program with no valid tier"
-        );
-        assert_eq!(
-            bad(&|d| d.purpose == DEFAULT_PURPOSE),
-            Vec::<&str>::new(),
-            "a program stating no purpose"
-        );
-        assert_eq!(
-            bad(&|d| probes[d.name.as_str()].is_empty()),
-            Vec::<&str>::new(),
-            "a program with no version probe"
-        );
-        assert!(
-            absent_of(&manifest.deps, "bd-embedded").contains("shared Dolt server"),
-            "a silent downgrade names what it falls back to"
-        );
-        assert_eq!(
-            tier_of(&manifest.deps, "spira-no-such-program"),
-            DEFAULT_TIER,
-            "positive control: an undeclared program is untiered"
-        );
+        assert_eq!(bad(&|d| !tiers.contains(&d.tier.as_str())), Vec::<&str>::new(), "a program with no valid tier");
+        assert_eq!(bad(&|d| d.purpose == DEFAULT_PURPOSE), Vec::<&str>::new(), "a program stating no purpose");
+        assert_eq!(bad(&|d| probes[d.name.as_str()].is_empty()), Vec::<&str>::new(), "a program with no version probe");
+        assert!(absent_of(&manifest.deps, "bd-embedded").contains("shared Dolt server"), "a silent downgrade names what it falls back to");
+        assert_eq!(tier_of(&manifest.deps, "spira-no-such-program"), DEFAULT_TIER, "positive control: an undeclared program is untiered");
     }
 }

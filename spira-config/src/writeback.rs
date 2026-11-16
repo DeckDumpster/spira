@@ -74,11 +74,7 @@ fn mktemp_scratch_file() -> PathBuf {
             .unwrap_or(0);
         let n = COUNTER.fetch_add(1, Ordering::Relaxed);
         let p = base.join(format!("spira-toml-{}-{nanos}-{n}", std::process::id()));
-        match std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&p)
-        {
+        match std::fs::OpenOptions::new().write(true).create_new(true).open(&p) {
             Ok(_) => return p,
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
             // mktemp itself has no further fallback either; a base temp dir this hostile
@@ -121,7 +117,8 @@ pub fn writeback(candidate: &Path, input: &WritebackInput) -> PathBuf {
     if is_writable(input.repo) {
         return input.repo.join(basename);
     }
-    if std::fs::create_dir_all(&input.xdg_spira_dir).is_ok() && is_writable(&input.xdg_spira_dir) {
+    if std::fs::create_dir_all(&input.xdg_spira_dir).is_ok() && is_writable(&input.xdg_spira_dir)
+    {
         return input.xdg_spira_dir.join(basename);
     }
     mktemp_scratch_file()
@@ -132,19 +129,8 @@ mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
 
-    fn input<'a>(
-        home: &'a Path,
-        prod: Option<&'a Path>,
-        repo: &'a Path,
-        xdg: &'a Path,
-    ) -> WritebackInput<'a> {
-        WritebackInput {
-            config_write: false,
-            home,
-            prod,
-            repo,
-            xdg_spira_dir: xdg.to_path_buf(),
-        }
+    fn input<'a>(home: &'a Path, prod: Option<&'a Path>, repo: &'a Path, xdg: &'a Path) -> WritebackInput<'a> {
+        WritebackInput { config_write: false, home, prod, repo, xdg_spira_dir: xdg.to_path_buf() }
     }
 
     #[test]
@@ -222,10 +208,7 @@ mod tests {
         let got = writeback(&candidate, &i);
         std::fs::set_permissions(&repo, std::fs::Permissions::from_mode(0o755)).unwrap();
         std::fs::set_permissions(&xdg_parent, std::fs::Permissions::from_mode(0o755)).unwrap();
-        assert!(
-            got.exists(),
-            "the double-unwritable fallback is itself a writable, existing path: {got:?}"
-        );
+        assert!(got.exists(), "the double-unwritable fallback is itself a writable, existing path: {got:?}");
     }
 
     #[test]

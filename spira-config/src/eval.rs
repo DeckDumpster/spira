@@ -55,7 +55,9 @@ fn eval_dollar(
         }
         Some(c) if c.is_ascii_alphabetic() || *c == b'_' => {
             let mut j = after_dollar;
-            while j < bytes.len() && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_') {
+            while j < bytes.len()
+                && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_')
+            {
                 j += 1;
             }
             let name = &expr[after_dollar..j];
@@ -77,11 +79,7 @@ fn eval_brace(
         .ok_or_else(|| format!("eval_expr: unbalanced '{{' in {expr:?}"))?;
     let inner = &expr[start..end];
     let (name, default) = match inner.find(":-").or_else(|| inner.find('-')) {
-        Some(p)
-            if inner[..p]
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '_') =>
-        {
+        Some(p) if inner[..p].chars().all(|c| c.is_ascii_alphanumeric() || c == '_') => {
             let op_len = if inner[p..].starts_with(":-") { 2 } else { 1 };
             (&inner[..p], Some(&inner[p + op_len..]))
         }
@@ -134,9 +132,8 @@ fn eval_arith(
         .ok_or_else(|| format!("eval_expr: unterminated '$((' in {expr:?}"))?;
     let inner_raw = &expr[start..start + close];
     let substituted = eval_expr(inner_raw, known)?;
-    let value = arith_eval(&substituted).ok_or_else(|| {
-        format!("eval_expr: cannot evaluate arithmetic {substituted:?} (from {inner_raw:?})")
-    })?;
+    let value = arith_eval(&substituted)
+        .ok_or_else(|| format!("eval_expr: cannot evaluate arithmetic {substituted:?} (from {inner_raw:?})"))?;
     Ok((value.to_string(), start + close + 2))
 }
 
@@ -147,9 +144,7 @@ fn arith_eval(s: &str) -> Option<i64> {
     let mut tokens = s.split_whitespace();
     let mut acc: i64 = tokens.next()?.parse().ok()?;
     loop {
-        let Some(op) = tokens.next() else {
-            return Some(acc);
-        };
+        let Some(op) = tokens.next() else { return Some(acc) };
         let rhs: i64 = tokens.next()?.parse().ok()?;
         acc = match op {
             "*" => acc.checked_mul(rhs)?,
@@ -174,9 +169,7 @@ fn eval_command_sub(
         .ok_or_else(|| format!("eval_expr: unterminated '$(' in {expr:?}"))?;
     let inner = &expr[start..close];
     let words = shell_words(inner, known)?;
-    let (cmd, args) = words
-        .split_first()
-        .ok_or_else(|| format!("eval_expr: empty $() in {expr:?}"))?;
+    let (cmd, args) = words.split_first().ok_or_else(|| format!("eval_expr: empty $() in {expr:?}"))?;
     let result = match cmd.as_str() {
         "dirname" => {
             let path = args.first().map(String::as_str).unwrap_or("");
@@ -187,11 +180,7 @@ fn eval_command_sub(
             let rel = args.get(1).map(String::as_str).unwrap_or("");
             spira_join(base, rel)
         }
-        other => {
-            return Err(format!(
-                "eval_expr: unsupported command substitution $({other} ...) in {expr:?}"
-            ))
-        }
+        other => return Err(format!("eval_expr: unsupported command substitution $({other} ...) in {expr:?}")),
     };
     Ok((result, close + 1))
 }
@@ -258,11 +247,7 @@ fn shell_words(s: &str, known: &BTreeMap<String, String>) -> Result<Vec<String>,
 pub fn sh_dirname(path: &str) -> String {
     let trimmed = path.trim_end_matches('/');
     if trimmed.is_empty() {
-        return if path.is_empty() {
-            ".".to_string()
-        } else {
-            "/".to_string()
-        };
+        return if path.is_empty() { ".".to_string() } else { "/".to_string() };
     }
     match trimmed.rfind('/') {
         None => ".".to_string(),
@@ -282,27 +267,18 @@ mod tests {
     use super::*;
 
     fn known(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
-        pairs
-            .iter()
-            .map(|(k, v)| (k.to_string(), v.to_string()))
-            .collect()
+        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
     }
 
     #[test]
     fn literal_passes_through() {
         assert_eq!(eval_expr("28", &known(&[])).unwrap(), "28");
-        assert_eq!(
-            eval_expr("ops groomer qa", &known(&[])).unwrap(),
-            "ops groomer qa"
-        );
+        assert_eq!(eval_expr("ops groomer qa", &known(&[])).unwrap(), "ops groomer qa");
     }
 
     #[test]
     fn bare_variable_reference() {
-        assert_eq!(
-            eval_expr("$SPIRA_DB", &known(&[("SPIRA_DB", "/x/db")])).unwrap(),
-            "/x/db"
-        );
+        assert_eq!(eval_expr("$SPIRA_DB", &known(&[("SPIRA_DB", "/x/db")])).unwrap(), "/x/db");
     }
 
     #[test]
@@ -320,14 +296,7 @@ mod tests {
 
     #[test]
     fn fallback_default_used_when_var_is_unset_or_empty() {
-        assert_eq!(
-            eval_expr(
-                "${SPIRA_WIKI:-$SPIRA_REPO}",
-                &known(&[("SPIRA_REPO", "/r")])
-            )
-            .unwrap(),
-            "/r"
-        );
+        assert_eq!(eval_expr("${SPIRA_WIKI:-$SPIRA_REPO}", &known(&[("SPIRA_REPO", "/r")])).unwrap(), "/r");
         assert_eq!(
             eval_expr(
                 "${SPIRA_WIKI:-$SPIRA_REPO}",
@@ -338,11 +307,7 @@ mod tests {
         );
         // Empty (set-but-blank) is treated the same as unset, matching bash's `:-`.
         assert_eq!(
-            eval_expr(
-                "${SPIRA_WIKI:-$SPIRA_REPO}",
-                &known(&[("SPIRA_WIKI", ""), ("SPIRA_REPO", "/r")])
-            )
-            .unwrap(),
+            eval_expr("${SPIRA_WIKI:-$SPIRA_REPO}", &known(&[("SPIRA_WIKI", ""), ("SPIRA_REPO", "/r")])).unwrap(),
             "/r"
         );
     }
@@ -370,11 +335,7 @@ mod tests {
     #[test]
     fn dirname_command_substitution() {
         assert_eq!(
-            eval_expr(
-                "$(dirname \"$SPIRA_HOME\")/cockpit",
-                &known(&[("SPIRA_HOME", "/a/b/spira")])
-            )
-            .unwrap(),
+            eval_expr("$(dirname \"$SPIRA_HOME\")/cockpit", &known(&[("SPIRA_HOME", "/a/b/spira")])).unwrap(),
             "/a/b/cockpit"
         );
     }

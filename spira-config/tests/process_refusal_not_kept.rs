@@ -11,23 +11,14 @@ fn a_refused_resolution_is_not_kept_and_a_resolved_one_is() {
 
     let dir = testkit::TempDir::new("process-refusal-not-kept");
     let toml = spira_config::process::fixture_toml(dir.path(), &[]);
-    let home = spira_config::resolve::locate_home_for_process()
-        .unwrap()
-        .display()
-        .to_string();
+    let home = spira_config::resolve::locate_home_for_process().unwrap().display().to_string();
     {
-        let _env = testkit::env(&[
-            ("SPIRA_TOML", Some(toml.to_str().unwrap())),
-            ("SPIRA_HOME", Some(&home)),
-        ]);
+        let _env = testkit::env(&[("SPIRA_TOML", Some(toml.to_str().unwrap())), ("SPIRA_HOME", Some(&home))]);
         if let Err(e) = spira_config::process::config() {
             panic!("the door stayed shut after a refusal: {e}");
         }
     }
 
     let _env = testkit::env(&[("SPIRA_TOML", None)]);
-    assert!(
-        spira_config::process::config().is_ok(),
-        "a resolved config is pinned for the process"
-    );
+    assert!(spira_config::process::config().is_ok(), "a resolved config is pinned for the process");
 }

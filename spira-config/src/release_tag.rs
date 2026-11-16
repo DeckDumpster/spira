@@ -37,18 +37,14 @@ fn is_stamp(s: &str) -> bool {
 fn key(tag: &str) -> Option<Key> {
     if let Some(rest) = tag.strip_prefix("spira-release-") {
         let (head, tail) = rest.rsplit_once('-')?;
-        let stamp_at_end = is_stamp(tail)
-            || (tail.bytes().all(|b| b.is_ascii_digit())
-                && head.rsplit_once('-').is_some_and(|(_, s)| is_stamp(s)));
+        let stamp_at_end = is_stamp(tail) || (tail.bytes().all(|b| b.is_ascii_digit()) && head.rsplit_once('-').is_some_and(|(_, s)| is_stamp(s)));
         return stamp_at_end.then(|| Key::Stamp(tag.to_string()));
     }
     let v = tag.strip_prefix("spira-")?;
     let mut it = v.split('.');
     let mut n = || {
         let p = it.next()?;
-        (!p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
-            .then(|| p.parse::<u64>().ok())
-            .flatten()
+        (!p.is_empty() && p.bytes().all(|b| b.is_ascii_digit())).then(|| p.parse::<u64>().ok()).flatten()
     };
     let (a, b, c) = (n()?, n()?, n()?);
     it.next().is_none().then_some(Key::Versioned(a, b, c))
@@ -60,10 +56,7 @@ pub fn is_release_tag(tag: &str) -> bool {
 
 /// Release tags only, ascending, duplicates removed.
 pub fn sort_release_tags<I: IntoIterator<Item = String>>(tags: I) -> Vec<String> {
-    let mut v: Vec<(Key, String)> = tags
-        .into_iter()
-        .filter_map(|t| key(&t).map(|k| (k, t)))
-        .collect();
+    let mut v: Vec<(Key, String)> = tags.into_iter().filter_map(|t| key(&t).map(|k| (k, t))).collect();
     v.sort();
     v.dedup();
     v.into_iter().map(|(_, t)| t).collect()
@@ -79,23 +72,8 @@ mod tests {
 
     #[test]
     fn versioned_orders_numerically_after_every_stamp() {
-        let got = sort_release_tags(s(&[
-            "spira-0.1.10",
-            "spira-release-spira-20261001T000000Z",
-            "spira-0.1.9",
-            "spira-release-spira-20260901T000000Z-2",
-            "spira-0.1.104",
-        ]));
-        assert_eq!(
-            got,
-            s(&[
-                "spira-release-spira-20260901T000000Z-2",
-                "spira-release-spira-20261001T000000Z",
-                "spira-0.1.9",
-                "spira-0.1.10",
-                "spira-0.1.104"
-            ])
-        );
+        let got = sort_release_tags(s(&["spira-0.1.10", "spira-release-spira-20261001T000000Z", "spira-0.1.9", "spira-release-spira-20260901T000000Z-2", "spira-0.1.104"]));
+        assert_eq!(got, s(&["spira-release-spira-20260901T000000Z-2", "spira-release-spira-20261001T000000Z", "spira-0.1.9", "spira-0.1.10", "spira-0.1.104"]));
     }
 
     #[test]

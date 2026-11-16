@@ -16,9 +16,7 @@ pub fn is_exhaustion(text: &str) -> bool {
 
 /// True when a live process has `p` (or anything under it) as its cwd or an open file.
 pub fn held_by_process(p: &Path) -> bool {
-    let Ok(procs) = fs::read_dir("/proc") else {
-        return true;
-    };
+    let Ok(procs) = fs::read_dir("/proc") else { return true };
     for pr in procs.flatten() {
         let n = pr.file_name().to_string_lossy().into_owned();
         if !n.bytes().all(|b| b.is_ascii_digit()) {
@@ -28,11 +26,7 @@ pub fn held_by_process(p: &Path) -> bool {
         if let Ok(fds) = fs::read_dir(pr.path().join("fd")) {
             links.extend(fds.flatten().map(|f| f.path()));
         }
-        if links
-            .iter()
-            .filter_map(|l| fs::read_link(l).ok())
-            .any(|t| t.starts_with(p))
-        {
+        if links.iter().filter_map(|l| fs::read_link(l).ok()).any(|t| t.starts_with(p)) {
             return true;
         }
     }
@@ -42,16 +36,11 @@ pub fn held_by_process(p: &Path) -> bool {
 /// A fixture may leave a tree with the write bit off, which `remove_dir_all` cannot empty.
 fn make_writable(dir: &Path) {
     use std::os::unix::fs::PermissionsExt;
-    let Ok(md) = fs::symlink_metadata(dir) else {
-        return;
-    };
+    let Ok(md) = fs::symlink_metadata(dir) else { return };
     if !md.is_dir() {
         return;
     }
-    let _ = fs::set_permissions(
-        dir,
-        fs::Permissions::from_mode(md.permissions().mode() | 0o700),
-    );
+    let _ = fs::set_permissions(dir, fs::Permissions::from_mode(md.permissions().mode() | 0o700));
     if let Ok(rd) = fs::read_dir(dir) {
         for e in rd.flatten() {
             make_writable(&e.path());
@@ -61,30 +50,17 @@ fn make_writable(dir: &Path) {
 
 /// Remove entries of `root` whose name starts with one of `prefixes`, whose mtime is older
 /// than `min_age`, and that no live process holds. Returns the names removed.
-pub fn sweep(
-    root: &Path,
-    prefixes: &[&str],
-    min_age: Duration,
-    held: &dyn Fn(&Path) -> bool,
-) -> Vec<String> {
+pub fn sweep(root: &Path, prefixes: &[&str], min_age: Duration, held: &dyn Fn(&Path) -> bool) -> Vec<String> {
     let mut gone = Vec::new();
-    let Ok(rd) = fs::read_dir(root) else {
-        return gone;
-    };
+    let Ok(rd) = fs::read_dir(root) else { return gone };
     let now = SystemTime::now();
     for e in rd.flatten() {
         let name = e.file_name().to_string_lossy().into_owned();
         if !prefixes.iter().any(|p| name.starts_with(p)) {
             continue;
         }
-        let Ok(md) = fs::symlink_metadata(e.path()) else {
-            continue;
-        };
-        let old = md
-            .modified()
-            .ok()
-            .and_then(|m| now.duration_since(m).ok())
-            .is_some_and(|a| a >= min_age);
+        let Ok(md) = fs::symlink_metadata(e.path()) else { continue };
+        let old = md.modified().ok().and_then(|m| now.duration_since(m).ok()).is_some_and(|a| a >= min_age);
         if !old || held(&e.path()) {
             continue;
         }
@@ -123,10 +99,7 @@ mod tests {
             fs::create_dir_all(d.join(n)).unwrap();
         }
         let held = |p: &Path| p.ends_with("spira-held");
-        assert!(
-            sweep(&d, &["spira-"], Duration::from_secs(3600), &held).is_empty(),
-            "young entries are spared"
-        );
+        assert!(sweep(&d, &["spira-"], Duration::from_secs(3600), &held).is_empty(), "young entries are spared");
         let gone = sweep(&d, &["spira-"], Duration::ZERO, &held);
         assert_eq!(gone, vec!["spira-old".to_string()]);
         assert!(d.join("spira-held").exists() && d.join("other-old").exists());

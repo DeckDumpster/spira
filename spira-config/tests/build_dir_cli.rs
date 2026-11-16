@@ -176,10 +176,7 @@ fn an_unchanged_tree_cleans_nothing_and_a_release_records_a_change_without_clean
     std::fs::write(b.tree.join("Cargo.lock"), "# lock changed\n").unwrap();
     let _ = (p2.kill(), p2.wait());
     wait_released(&b);
-    assert!(
-        !b.log.exists(),
-        "a release records the change and never cleans"
-    );
+    assert!(!b.log.exists(), "a release records the change and never cleans");
 
     let mut p3 = sleeper();
     let (d3, err) = b.lease("hand-3", &p3);

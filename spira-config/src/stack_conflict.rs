@@ -25,11 +25,7 @@ pub const REPORT_AGE: Duration = Duration::from_secs(3600);
 
 pub fn age(run: &Path, prereq: &str) -> Option<Duration> {
     let m = std::fs::metadata(marker(run, prereq)).ok()?;
-    Some(
-        SystemTime::now()
-            .duration_since(m.modified().ok()?)
-            .unwrap_or_default(),
-    )
+    Some(SystemTime::now().duration_since(m.modified().ok()?).unwrap_or_default())
 }
 
 /// The tip a marker was recorded against, and how old it is.
@@ -40,12 +36,8 @@ pub fn recorded(run: &Path, prereq: &str) -> Option<(String, Duration)> {
 
 /// Every prerequisite with a marker.
 pub fn marked(run: &Path) -> Vec<String> {
-    let Ok(rd) = std::fs::read_dir(run.join(DIR)) else {
-        return Vec::new();
-    };
-    rd.flatten()
-        .filter_map(|e| e.file_name().into_string().ok())
-        .collect()
+    let Ok(rd) = std::fs::read_dir(run.join(DIR)) else { return Vec::new() };
+    rd.flatten().filter_map(|e| e.file_name().into_string().ok()).collect()
 }
 
 /// True only while `tip` is the tip the conflict was recorded against and the marker is
@@ -64,28 +56,18 @@ mod tests {
         assert!(!holds(d.path(), "sp-a", "t1"), "no marker, no conflict");
         record(d.path(), "sp-a", "t1");
         assert!(holds(d.path(), "sp-a", "t1"));
-        assert!(
-            !holds(d.path(), "sp-a", "t2"),
-            "a rebased prerequisite is free again"
-        );
+        assert!(!holds(d.path(), "sp-a", "t2"), "a rebased prerequisite is free again");
     }
 
     #[test]
     fn an_old_marker_lapses_though_its_tip_never_moved() {
         let d = testkit::TempDir::new("stack-conflict-old");
         record(d.path(), "sp-a", "t1");
-        let f = std::fs::File::options()
-            .write(true)
-            .open(d.path().join(DIR).join("sp-a"))
-            .unwrap();
-        f.set_modified(SystemTime::now() - MAX_AGE - Duration::from_secs(60))
-            .unwrap();
+        let f = std::fs::File::options().write(true).open(d.path().join(DIR).join("sp-a")).unwrap();
+        f.set_modified(SystemTime::now() - MAX_AGE - Duration::from_secs(60)).unwrap();
         assert!(!holds(d.path(), "sp-a", "t1"));
         assert_eq!(marked(d.path()), vec!["sp-a".to_string()]);
         record(d.path(), "sp-a", "t1");
-        assert!(
-            holds(d.path(), "sp-a", "t1"),
-            "a re-recorded conflict blocks again"
-        );
+        assert!(holds(d.path(), "sp-a", "t1"), "a re-recorded conflict blocks again");
     }
 }

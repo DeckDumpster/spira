@@ -56,9 +56,7 @@ fn process_env() -> BTreeMap<String, String> {
     #[cfg(test)]
     let _held = testkit::env_read();
     #[cfg(test)]
-    return std::env::vars()
-        .filter(|(k, _)| k != "SPIRA_TOML")
-        .collect();
+    return std::env::vars().filter(|(k, _)| k != "SPIRA_TOML").collect();
     #[cfg(not(test))]
     std::env::vars().collect()
 }
@@ -83,34 +81,15 @@ fn extract_label_overlay(resolved: &crate::resolve::Resolved) -> BTreeMap<String
 /// started with (law-long-lived-processes-pin-their-config).
 fn rune_label_overlay(home: &Path) -> BTreeMap<String, String> {
     let env = process_env();
-    memo(&OVERLAY, home, &env, || {
-        rune_label_overlay_uncached(home, &env)
-    })
+    memo(&OVERLAY, home, &env, || rune_label_overlay_uncached(home, &env))
 }
 
-type GotMap = std::sync::Mutex<
-    std::collections::HashMap<
-        (
-            PathBuf,
-            Option<std::time::SystemTime>,
-            String,
-            String,
-            BTreeMap<String, String>,
-        ),
-        String,
-    >,
->;
-type MemoMap<V> =
-    std::sync::Mutex<std::collections::HashMap<(PathBuf, BTreeMap<String, String>), V>>;
+type GotMap = std::sync::Mutex<std::collections::HashMap<(PathBuf, Option<std::time::SystemTime>, String, String, BTreeMap<String, String>), String>>;
+type MemoMap<V> = std::sync::Mutex<std::collections::HashMap<(PathBuf, BTreeMap<String, String>), V>>;
 static OVERLAY: std::sync::OnceLock<MemoMap<BTreeMap<String, String>>> = std::sync::OnceLock::new();
 static RUNES: std::sync::OnceLock<MemoMap<PathBuf>> = std::sync::OnceLock::new();
 
-fn memo<V: Clone>(
-    cell: &std::sync::OnceLock<MemoMap<V>>,
-    home: &Path,
-    env: &BTreeMap<String, String>,
-    f: impl FnOnce() -> V,
-) -> V {
+fn memo<V: Clone>(cell: &std::sync::OnceLock<MemoMap<V>>, home: &Path, env: &BTreeMap<String, String>, f: impl FnOnce() -> V) -> V {
     let m = cell.get_or_init(Default::default);
     let key = (home.to_path_buf(), env.clone());
     if let Some(v) = m.lock().ok().and_then(|g| g.get(&key).cloned()) {
@@ -123,10 +102,7 @@ fn memo<V: Clone>(
     v
 }
 
-fn rune_label_overlay_uncached(
-    home: &Path,
-    env: &BTreeMap<String, String>,
-) -> BTreeMap<String, String> {
+fn rune_label_overlay_uncached(home: &Path, env: &BTreeMap<String, String>) -> BTreeMap<String, String> {
     let repo = crate::resolve::derive_home_repo(home, env);
     crate::resolve::resolve_for_process(home, &repo, env)
         .map(|r| extract_label_overlay(&r))
@@ -193,23 +169,14 @@ pub fn rune_get(home: &Path, rune: &str, var: &str, default: &str) -> String {
     static GOT: std::sync::OnceLock<GotMap> = std::sync::OnceLock::new();
     let overlay = rune_label_overlay(home);
     let mtime = std::fs::metadata(&f).and_then(|m| m.modified()).ok();
-    let key = (
-        f.clone(),
-        mtime,
-        var.to_string(),
-        default.to_string(),
-        overlay.clone(),
-    );
+    let key = (f.clone(), mtime, var.to_string(), default.to_string(), overlay.clone());
     let got = GOT.get_or_init(Default::default);
     if let Some(v) = got.lock().ok().and_then(|g| g.get(&key).cloned()) {
         return v;
     }
     let ambient = process_env();
     let lookup = |n: &str| overlay.get(n).or_else(|| ambient.get(n)).cloned();
-    let v = match std::fs::read_to_string(&f)
-        .map_err(|e| e.to_string())
-        .and_then(|t| crate::rune_file::parse(&f.to_string_lossy(), &t, &lookup))
-    {
+    let v = match std::fs::read_to_string(&f).map_err(|e| e.to_string()).and_then(|t| crate::rune_file::parse(&f.to_string_lossy(), &t, &lookup)) {
         Ok(vars) => vars
             .get(var)
             .cloned()
@@ -235,14 +202,8 @@ pub const RESOURCE_CLASSES: &[&str] = &["build-disk", "cpu", "memory", "network"
 pub fn rune_uses(home: &Path, rune: &str) -> Result<Vec<String>, String> {
     let raw = rune_get(home, rune, "RUNE_USES", "");
     let names: Vec<String> = raw.split_whitespace().map(str::to_string).collect();
-    match names
-        .iter()
-        .find(|n| !RESOURCE_CLASSES.contains(&n.as_str()))
-    {
-        Some(bad) => Err(format!(
-            "{rune}: RUNE_USES names {bad}, not a resource class ({})",
-            RESOURCE_CLASSES.join(" ")
-        )),
+    match names.iter().find(|n| !RESOURCE_CLASSES.contains(&n.as_str())) {
+        Some(bad) => Err(format!("{rune}: RUNE_USES names {bad}, not a resource class ({})", RESOURCE_CLASSES.join(" "))),
         None => Ok(names),
     }
 }
@@ -336,10 +297,7 @@ fn referenced_names(text: &str) -> Vec<String> {
 /// resolved non-empty, in doc order.
 fn bare_references(text: &str) -> Vec<String> {
     let guarded = guarded_names(text);
-    referenced_names(text)
-        .into_iter()
-        .filter(|n| !guarded.contains(n))
-        .collect()
+    referenced_names(text).into_iter().filter(|n| !guarded.contains(n)).collect()
 }
 
 /// The RHS of the LAST `VAR=...` assignment in `text` (bash reassignment semantics: a
@@ -355,12 +313,7 @@ fn assigned_value(text: &str, var: &str) -> Option<String> {
             found = Some(rest.to_string());
         }
     }
-    found.map(|v| {
-        v.strip_prefix('"')
-            .and_then(|v| v.strip_suffix('"'))
-            .map(str::to_string)
-            .unwrap_or(v)
-    })
+    found.map(|v| v.strip_prefix('"').and_then(|v| v.strip_suffix('"')).map(str::to_string).unwrap_or(v))
 }
 
 pub const WORKING_EXITS_KEY: &str = "RUNE_WORKING_EXITS";
@@ -376,26 +329,12 @@ pub fn working_exits_in(runes: &Path, rune: &str) -> Result<Vec<String>, String>
     let path = runes.join(format!("{rune}.rune"));
     let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
     let raw = assigned_value(&text, WORKING_EXITS_KEY).unwrap_or_default();
-    let exits: Vec<String> = raw
-        .split(|c: char| c.is_whitespace() || c == ',')
-        .filter(|w| !w.is_empty())
-        .map(str::to_string)
-        .collect();
+    let exits: Vec<String> = raw.split(|c: char| c.is_whitespace() || c == ',').filter(|w| !w.is_empty()).map(str::to_string).collect();
     if exits.is_empty() {
-        return Err(format!(
-            "{}: {WORKING_EXITS_KEY} is not declared",
-            path.display()
-        ));
+        return Err(format!("{}: {WORKING_EXITS_KEY} is not declared", path.display()));
     }
-    if let Some(bad) = exits
-        .iter()
-        .find(|w| !WORKING_EXIT_VOCABULARY.contains(&w.as_str()))
-    {
-        return Err(format!(
-            "{}: {WORKING_EXITS_KEY} names {bad:?}; want any of {}",
-            path.display(),
-            WORKING_EXIT_VOCABULARY.join(" ")
-        ));
+    if let Some(bad) = exits.iter().find(|w| !WORKING_EXIT_VOCABULARY.contains(&w.as_str())) {
+        return Err(format!("{}: {WORKING_EXITS_KEY} names {bad:?}; want any of {}", path.display(), WORKING_EXIT_VOCABULARY.join(" ")));
     }
     Ok(exits)
 }
@@ -411,10 +350,7 @@ pub fn followup_persona_in(runes: &Path, rune: &str) -> Result<String, String> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(rune.to_string()),
         Err(e) => return Err(format!("{}: {e}", path.display())),
     };
-    Ok(assigned_value(&text, FOLLOWUP_AS_KEY)
-        .map(|v| v.trim().to_string())
-        .filter(|v| !v.is_empty())
-        .unwrap_or_else(|| rune.to_string()))
+    Ok(assigned_value(&text, FOLLOWUP_AS_KEY).map(|v| v.trim().to_string()).filter(|v| !v.is_empty()).unwrap_or_else(|| rune.to_string()))
 }
 
 /// `RUNE_LABELS`/`RUNE_EXCLUDE_LABELS`, fully resolved and fail-closed — THE shared
@@ -439,16 +375,10 @@ pub fn rune_predicate(home: &Path, rune: &str) -> Result<Predicate, Refusal> {
     let text = std::fs::read_to_string(&path).unwrap_or_default();
     let overlay = rune_label_overlay(home);
     for var in ["RUNE_LABELS", "RUNE_EXCLUDE_LABELS"] {
-        let Some(raw) = assigned_value(&text, var) else {
-            continue;
-        };
+        let Some(raw) = assigned_value(&text, var) else { continue };
         for name in bare_references(&raw) {
             if effective_value(&overlay, &name).is_empty() {
-                return Err(Refusal {
-                    rune: rune.to_string(),
-                    var: var.to_string(),
-                    reference: name,
-                });
+                return Err(Refusal { rune: rune.to_string(), var: var.to_string(), reference: name });
             }
         }
     }
@@ -469,10 +399,7 @@ pub fn rune_predicate(home: &Path, rune: &str) -> Result<Predicate, Refusal> {
 /// `resolve_for_process` call fails outright there — that failure must not be read as "the
 /// variable itself is unresolved" when the ambient shell plainly has it).
 fn effective_value(overlay: &BTreeMap<String, String>, name: &str) -> String {
-    overlay
-        .get(name)
-        .cloned()
-        .unwrap_or_else(|| std::env::var(name).unwrap_or_default())
+    overlay.get(name).cloned().unwrap_or_else(|| std::env::var(name).unwrap_or_default())
 }
 
 /// `spira_runes` — the personas this harness runs, space separated, IN PRIORITY ORDER.
@@ -619,23 +546,13 @@ pub struct Partition {
 
 /// Comma-separated, empty tokens dropped.
 pub fn split_csv(s: &str) -> Vec<String> {
-    s.split(',')
-        .map(str::trim)
-        .filter(|t| !t.is_empty())
-        .map(str::to_string)
-        .collect()
+    s.split(',').map(str::trim).filter(|t| !t.is_empty()).map(str::to_string).collect()
 }
 
 /// Whether a bead carrying `labels` falls in `part`: none of its labels is in `shared`, its
 /// `rune:` preferences (if any) include the partition's name, `inc` is a subset of its labels
 /// and `exc` is disjoint from them. A bead may name several runes and counts for each.
-pub fn bucket_match(
-    labels: &[&str],
-    inc: &[String],
-    exc: &[String],
-    shared: &[&str],
-    name: &str,
-) -> bool {
+pub fn bucket_match(labels: &[&str], inc: &[String], exc: &[String], shared: &[&str], name: &str) -> bool {
     if labels.iter().any(|l| shared.contains(l)) {
         return false;
     }
@@ -650,17 +567,12 @@ pub fn bucket_match(
     if has_pref && !pref_matches {
         return false;
     }
-    inc.iter().all(|want| labels.contains(&want.as_str()))
-        && !exc.iter().any(|drop| labels.contains(&drop.as_str()))
+    inc.iter().all(|want| labels.contains(&want.as_str())) && !exc.iter().any(|drop| labels.contains(&drop.as_str()))
 }
 
 /// The labels every partition excludes: the queue-wait label and the open-children label.
 pub fn shared_exclude(queue_wait: &str, open_children: &str) -> String {
-    [queue_wait, open_children]
-        .into_iter()
-        .filter(|s| !s.is_empty())
-        .collect::<Vec<_>>()
-        .join(",")
+    [queue_wait, open_children].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(",")
 }
 
 /// `me`'s own exclusions, the shared set, then every other rune's `rune:<name>` claim.
@@ -672,27 +584,14 @@ pub fn rune_exclude(me: &str, own: &str, roster: &[String], shared: &str) -> Str
     if !shared.is_empty() {
         parts.push(shared.to_string());
     }
-    parts.extend(
-        roster
-            .iter()
-            .filter(|f| *f != me)
-            .map(|f| format!("rune:{f}")),
-    );
+    parts.extend(roster.iter().filter(|f| *f != me).map(|f| format!("rune:{f}")));
     parts.join(",")
 }
 
 /// Every claim partition of the roster, in roster order. A rune with no labels has none; a
 /// rune whose predicate would widen is an error, never skipped.
-pub fn partitions(
-    home: &Path,
-    env_override: Option<&str>,
-    queue_wait: &str,
-    open_children: &str,
-) -> Result<Vec<Partition>, String> {
-    let roster: Vec<String> = spira_runes(home, env_override)
-        .split_whitespace()
-        .map(str::to_string)
-        .collect();
+pub fn partitions(home: &Path, env_override: Option<&str>, queue_wait: &str, open_children: &str) -> Result<Vec<Partition>, String> {
+    let roster: Vec<String> = spira_runes(home, env_override).split_whitespace().map(str::to_string).collect();
     let shared = shared_exclude(queue_wait, open_children);
     let mut out = Vec::new();
     for f in &roster {
@@ -701,11 +600,7 @@ pub fn partitions(
             continue;
         }
         let exc = rune_exclude(f, &p.exclude_labels, &roster, &shared);
-        out.push(Partition {
-            name: f.clone(),
-            inc: split_csv(&p.labels),
-            exc: split_csv(&exc),
-        });
+        out.push(Partition { name: f.clone(), inc: split_csv(&p.labels), exc: split_csv(&exc) });
     }
     Ok(out)
 }
@@ -714,11 +609,7 @@ pub fn partitions(
 pub fn taking(labels: &[String], parts: &[Partition], queue_wait: &str) -> Vec<String> {
     let shared: Vec<&str> = [queue_wait].into_iter().filter(|s| !s.is_empty()).collect();
     let labels: Vec<&str> = labels.iter().map(String::as_str).collect();
-    parts
-        .iter()
-        .filter(|p| bucket_match(&labels, &p.inc, &p.exc, &shared, &p.name))
-        .map(|p| p.name.clone())
-        .collect()
+    parts.iter().filter(|p| bucket_match(&labels, &p.inc, &p.exc, &shared, &p.name)).map(|p| p.name.clone()).collect()
 }
 
 #[cfg(test)]
@@ -737,45 +628,28 @@ mod tests {
         let ws = testkit::TempDir::new("spira-config-runes-names");
         write_rune(&ws, "ops", "RUNE_LABELS=ops\n");
         write_rune(&ws, "builder", "RUNE_LABELS=spira,plan\n");
-        assert_eq!(
-            rune_names(&ws),
-            vec!["builder".to_string(), "ops".to_string()]
-        );
+        assert_eq!(rune_names(&ws), vec!["builder".to_string(), "ops".to_string()]);
     }
 
     #[test]
     fn runes_dir_follows_configured_runes_outside_home() {
         let ws = testkit::TempDir::new("spira-config-runes-configured");
         let elsewhere = ws.join("elsewhere");
-        let env: BTreeMap<String, String> = [(
-            "SPIRA_RUNES_DIR".to_string(),
-            elsewhere.to_string_lossy().into_owned(),
-        )]
-        .into();
+        let env: BTreeMap<String, String> =
+            [("SPIRA_RUNES_DIR".to_string(), elsewhere.to_string_lossy().into_owned())].into();
         assert_eq!(runes_dir_with(&ws, &env), elsewhere);
     }
 
     #[test]
     fn working_exits_are_declared_never_defaulted() {
         let ws = testkit::TempDir::new("spira-config-runes-exits");
-        write_rune(
-            &ws,
-            "builder",
-            "RUNE_WORKING_EXITS=\"SUBMITTED ask park hold\"\n",
-        );
+        write_rune(&ws, "builder", "RUNE_WORKING_EXITS=\"SUBMITTED ask park hold\"\n");
         write_rune(&ws, "bare", "RUNE_NAME=bare\n");
         write_rune(&ws, "odd", "RUNE_WORKING_EXITS=\"SUBMITTED landed\"\n");
         let dir = runes_dir(&ws);
-        assert_eq!(
-            working_exits_in(&dir, "builder").unwrap(),
-            ["SUBMITTED", "ask", "park", "hold"]
-        );
-        assert!(working_exits_in(&dir, "bare")
-            .unwrap_err()
-            .contains("RUNE_WORKING_EXITS is not declared"));
-        assert!(working_exits_in(&dir, "odd")
-            .unwrap_err()
-            .contains("\"landed\""));
+        assert_eq!(working_exits_in(&dir, "builder").unwrap(), ["SUBMITTED", "ask", "park", "hold"]);
+        assert!(working_exits_in(&dir, "bare").unwrap_err().contains("RUNE_WORKING_EXITS is not declared"));
+        assert!(working_exits_in(&dir, "odd").unwrap_err().contains("\"landed\""));
         assert!(working_exits_in(&dir, "ghost").is_err());
     }
 
@@ -787,11 +661,7 @@ mod tests {
         let dir = runes_dir(&ws);
         assert_eq!(followup_persona_in(&dir, "walker").unwrap(), "fixer");
         assert_eq!(followup_persona_in(&dir, "plain").unwrap(), "plain");
-        assert_eq!(
-            followup_persona_in(&dir, "ghost").unwrap(),
-            "ghost",
-            "a persona with no rune file files as itself"
-        );
+        assert_eq!(followup_persona_in(&dir, "ghost").unwrap(), "ghost", "a persona with no rune file files as itself");
     }
 
     #[test]
@@ -805,14 +675,8 @@ mod tests {
         let ws = testkit::TempDir::new("spira-config-runes-get");
         write_rune(&ws, "builder", "RUNE_LABELS=spira,plan\n");
         assert_eq!(rune_get(&ws, "builder", "RUNE_LABELS", ""), "spira,plan");
-        assert_eq!(
-            rune_get(&ws, "builder", "RUNE_MISSING", "fallback"),
-            "fallback"
-        );
-        assert_eq!(
-            rune_get(&ws, "ghost", "RUNE_LABELS", "fallback"),
-            "fallback"
-        );
+        assert_eq!(rune_get(&ws, "builder", "RUNE_MISSING", "fallback"), "fallback");
+        assert_eq!(rune_get(&ws, "ghost", "RUNE_LABELS", "fallback"), "fallback");
     }
 
     #[test]
@@ -820,11 +684,7 @@ mod tests {
         // A rune file is a shell fragment, not a key=value format — this is exactly the
         // shape the shipped runes have (SPIRA_SCOPE_LABEL referenced from the rune).
         let ws = testkit::TempDir::new("spira-config-runes-get-expansion");
-        write_rune(
-            &ws,
-            "scoped",
-            "RUNE_LABELS=\"${SPIRA_SCOPE_LABEL:-spira},plan\"\n",
-        );
+        write_rune(&ws, "scoped", "RUNE_LABELS=\"${SPIRA_SCOPE_LABEL:-spira},plan\"\n");
         assert_eq!(rune_get(&ws, "scoped", "RUNE_LABELS", ""), "spira,plan");
     }
 
@@ -894,72 +754,48 @@ mod tests {
         write_rune(&ws, "builder", "RUNE_LABELS=spira,plan\n");
         write_rune(&ws, "shadow", "RUNE_LABELS=spira,plan\n");
         write_rune(&ws, "ops", "RUNE_LABELS=ops\n");
-        assert_eq!(
-            runes_for_labels(&ws, "spira,plan"),
-            vec!["builder".to_string(), "shadow".to_string()]
-        );
+        assert_eq!(runes_for_labels(&ws, "spira,plan"), vec!["builder".to_string(), "shadow".to_string()]);
     }
 
     #[test]
     fn persona_model_from_doc_falls_back_with_no_document() {
-        assert_eq!(
-            persona_model_from_doc(None, "builder", "claude-opus-5"),
-            "claude-opus-5"
-        );
-        assert_eq!(
-            persona_model_from_doc(None, "builder", "claude-x"),
-            "claude-x"
-        );
+        assert_eq!(persona_model_from_doc(None, "builder", "claude-opus-5"), "claude-opus-5");
+        assert_eq!(persona_model_from_doc(None, "builder", "claude-x"), "claude-x");
     }
 
     #[test]
     fn persona_model_from_doc_falls_back_with_no_persona_table_or_empty_model() {
         let mut doc = SpiraToml::default();
-        doc.persona.insert(
-            "builder".to_string(),
-            crate::PersonaSection {
-                model: "".to_string(),
-                tools: vec![],
-                labels: vec![],
-                reactive: false,
-                uses: vec![],
-                single_flight: false,
-                lease: None,
-                system_prompt: None,
-                escalation_model: None,
-            },
-        );
-        assert_eq!(
-            persona_model_from_doc(Some(&doc), "builder", "claude-opus-5"),
-            "claude-opus-5"
-        );
-        assert_eq!(
-            persona_model_from_doc(Some(&doc), "ops", "claude-opus-5"),
-            "claude-opus-5"
-        );
+        doc.persona.insert("builder".to_string(), crate::PersonaSection {
+            model: "".to_string(),
+            tools: vec![],
+            labels: vec![],
+            reactive: false,
+            uses: vec![],
+            single_flight: false,
+            lease: None,
+            system_prompt: None,
+            escalation_model: None,
+        });
+        assert_eq!(persona_model_from_doc(Some(&doc), "builder", "claude-opus-5"), "claude-opus-5");
+        assert_eq!(persona_model_from_doc(Some(&doc), "ops", "claude-opus-5"), "claude-opus-5");
     }
 
     #[test]
     fn persona_model_from_doc_reads_the_configured_model() {
         let mut doc = SpiraToml::default();
-        doc.persona.insert(
-            "builder".to_string(),
-            crate::PersonaSection {
-                model: "claude-sonnet-5".to_string(),
-                tools: vec![],
-                labels: vec![],
-                reactive: false,
-                uses: vec![],
-                single_flight: false,
-                lease: None,
-                system_prompt: None,
-                escalation_model: None,
-            },
-        );
-        assert_eq!(
-            persona_model_from_doc(Some(&doc), "builder", "claude-opus-5"),
-            "claude-sonnet-5"
-        );
+        doc.persona.insert("builder".to_string(), crate::PersonaSection {
+            model: "claude-sonnet-5".to_string(),
+            tools: vec![],
+            labels: vec![],
+            reactive: false,
+            uses: vec![],
+            single_flight: false,
+            lease: None,
+            system_prompt: None,
+            escalation_model: None,
+        });
+        assert_eq!(persona_model_from_doc(Some(&doc), "builder", "claude-opus-5"), "claude-sonnet-5");
     }
 
     /// Wave 4.9 (sp-k80sa): `extract_label_overlay` must pick every one of
@@ -973,42 +809,22 @@ mod tests {
     #[test]
     fn extract_label_overlay_picks_known_keys_and_drops_the_rest() {
         let mut resolved = crate::resolve::Resolved::default();
-        resolved
-            .values
-            .insert("SPIRA_CZAR_LABEL".to_string(), "czar-trigger".to_string());
-        resolved
-            .values
-            .insert("SPIRA_GROOMER_LABEL".to_string(), "groom".to_string());
-        resolved
-            .values
-            .insert("SPIRA_HOME_REPO".to_string(), "brain".to_string());
-        resolved
-            .values
-            .insert("SPIRA_SOME_OTHER_KEY".to_string(), "irrelevant".to_string());
+        resolved.values.insert("SPIRA_CZAR_LABEL".to_string(), "czar-trigger".to_string());
+        resolved.values.insert("SPIRA_GROOMER_LABEL".to_string(), "groom".to_string());
+        resolved.values.insert("SPIRA_HOME_REPO".to_string(), "brain".to_string());
+        resolved.values.insert("SPIRA_SOME_OTHER_KEY".to_string(), "irrelevant".to_string());
 
         let overlay = extract_label_overlay(&resolved);
 
-        assert_eq!(
-            overlay.get("SPIRA_CZAR_LABEL").map(String::as_str),
-            Some("czar-trigger")
-        );
-        assert_eq!(
-            overlay.get("SPIRA_GROOMER_LABEL").map(String::as_str),
-            Some("groom")
-        );
-        assert_eq!(
-            overlay.get("SPIRA_HOME_REPO").map(String::as_str),
-            Some("brain")
-        );
+        assert_eq!(overlay.get("SPIRA_CZAR_LABEL").map(String::as_str), Some("czar-trigger"));
+        assert_eq!(overlay.get("SPIRA_GROOMER_LABEL").map(String::as_str), Some("groom"));
+        assert_eq!(overlay.get("SPIRA_HOME_REPO").map(String::as_str), Some("brain"));
         // sp-xsnid: the overlay is now the FULL resolved map, not a five-key slice — a
         // key that slice never carried (SPIRA_SOME_OTHER_KEY, standing in for
         // SPIRA_INCIDENT_LABEL/SPIRA_SPIKE_LABEL/SPIRA_PLAN_LABEL/SPIRA_SCOPE_LABEL/
         // SPIRA_ASK_LABEL/SPIRA_CI_LABEL, every one of which this bead found missing)
         // must pass through too, or the next rune variable repeats this bug.
-        assert_eq!(
-            overlay.get("SPIRA_SOME_OTHER_KEY").map(String::as_str),
-            Some("irrelevant")
-        );
+        assert_eq!(overlay.get("SPIRA_SOME_OTHER_KEY").map(String::as_str), Some("irrelevant"));
     }
 
     #[test]
@@ -1016,8 +832,7 @@ mod tests {
         // SPIRA_SCOPE_LABEL appears TWICE — once as the `:+` condition, once bare INSIDE
         // its own body — and must be exempt both times; SPIRA_INCIDENT_LABEL is bare and
         // required. This is ops.rune's own real shape.
-        let refs =
-            bare_references(r#"${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}$SPIRA_INCIDENT_LABEL"#);
+        let refs = bare_references(r#"${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}$SPIRA_INCIDENT_LABEL"#);
         assert_eq!(refs, vec!["SPIRA_INCIDENT_LABEL".to_string()]);
     }
 
@@ -1030,10 +845,7 @@ mod tests {
     #[test]
     fn assigned_value_strips_quotes_and_takes_the_last_assignment() {
         let text = "RUNE_LABELS=\"first\"\nRUNE_LABELS=\"${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}$SPIRA_X_LABEL\"\n";
-        assert_eq!(
-            assigned_value(text, "RUNE_LABELS").unwrap(),
-            "${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}$SPIRA_X_LABEL"
-        );
+        assert_eq!(assigned_value(text, "RUNE_LABELS").unwrap(), "${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}$SPIRA_X_LABEL");
         assert_eq!(assigned_value(text, "RUNE_EXCLUDE_LABELS"), None);
     }
 
@@ -1076,19 +888,9 @@ mod tests {
     #[test]
     fn rune_predicate_accepts_a_declared_literal_empty_with_no_reference() {
         let dir = testkit::TempDir::new("rune-predicate-literal");
-        write_rune(
-            &dir,
-            "concierge",
-            "RUNE_LABELS=\"\"\nRUNE_EXCLUDE_LABELS=\"\"\n",
-        );
+        write_rune(&dir, "concierge", "RUNE_LABELS=\"\"\nRUNE_EXCLUDE_LABELS=\"\"\n");
         let p = rune_predicate(&dir, "concierge").unwrap();
-        assert_eq!(
-            p,
-            Predicate {
-                labels: String::new(),
-                exclude_labels: String::new()
-            }
-        );
+        assert_eq!(p, Predicate { labels: String::new(), exclude_labels: String::new() });
     }
 
     #[test]
@@ -1100,19 +902,12 @@ mod tests {
     }
 
     fn shipped_rune_texts() -> Vec<(String, String)> {
-        let dir = crate::resolve::locate_home_for_process()
-            .unwrap()
-            .join("runes");
+        let dir = crate::resolve::locate_home_for_process().unwrap().join("runes");
         let mut v: Vec<(String, String)> = std::fs::read_dir(dir)
             .unwrap()
             .filter_map(|e| e.ok().map(|e| e.path()))
             .filter(|p| p.extension().is_some_and(|x| x == "rune"))
-            .map(|p| {
-                (
-                    p.file_stem().unwrap().to_string_lossy().into_owned(),
-                    std::fs::read_to_string(&p).unwrap(),
-                )
-            })
+            .map(|p| (p.file_stem().unwrap().to_string_lossy().into_owned(), std::fs::read_to_string(&p).unwrap()))
             .collect();
         v.sort();
         v
@@ -1125,75 +920,30 @@ mod tests {
         write_rune(&ws, "worker", "RUNE_LABELS=a,b\n");
         write_rune(&ws, "warden", "RUNE_LABELS=a,c\nRUNE_REACTIVE=1\n");
         write_rune(&ws, "steward", "RUNE_CALL=operator\nRUNE_LABELS=\"\"\n");
-        assert_eq!(
-            spira_runes(&ws, None)
-                .split_whitespace()
-                .collect::<std::collections::BTreeSet<_>>(),
-            ["steward", "warden", "worker"].into()
-        );
+        assert_eq!(spira_runes(&ws, None).split_whitespace().collect::<std::collections::BTreeSet<_>>(), ["steward", "warden", "worker"].into());
         assert_eq!(spira_task_runes(&ws, None), "worker");
         assert_eq!(spira_reactive_runes(&ws, None), "warden");
         write_rune(&ws, "newcomer", "RUNE_LABELS=a,d\n");
-        assert!(
-            spira_runes(&ws, None).contains("newcomer"),
-            "installing a rune file is the whole registration"
-        );
+        assert!(spira_runes(&ws, None).contains("newcomer"), "installing a rune file is the whole registration");
 
         let shipped = crate::resolve::locate_home_for_process().unwrap();
-        let _env = testkit::env(&[(
-            "SPIRA_RUNES_DIR",
-            Some(shipped.join("runes").to_str().unwrap()),
-        )]);
-        let split = |s: String| {
-            s.split_whitespace()
-                .map(str::to_string)
-                .collect::<std::collections::BTreeSet<_>>()
-        };
+        let _env = testkit::env(&[("SPIRA_RUNES_DIR", Some(shipped.join("runes").to_str().unwrap()))]);
+        let split = |s: String| s.split_whitespace().map(str::to_string).collect::<std::collections::BTreeSet<_>>();
         let all = split(spira_runes(&shipped, None));
-        let (task, lane) = (
-            split(spira_task_runes(&shipped, None)),
-            split(spira_reactive_runes(&shipped, None)),
-        );
-        let operator: std::collections::BTreeSet<String> = all
-            .iter()
-            .filter(|n| rune_get(&shipped, n, "RUNE_CALL", "auto") == "operator")
-            .cloned()
-            .collect();
-        assert_eq!(
-            all.len(),
-            shipped_rune_texts().len(),
-            "the roster is every rune file"
-        );
-        assert!(
-            !task.is_empty() && !lane.is_empty() && !operator.is_empty(),
-            "positive control: every class is populated"
-        );
-        assert!(
-            task.is_disjoint(&lane) && task.is_disjoint(&operator) && lane.is_disjoint(&operator)
-        );
-        assert_eq!(
-            task.len() + lane.len() + operator.len(),
-            all.len(),
-            "every persona is one of the three"
-        );
+        let (task, lane) = (split(spira_task_runes(&shipped, None)), split(spira_reactive_runes(&shipped, None)));
+        let operator: std::collections::BTreeSet<String> = all.iter().filter(|n| rune_get(&shipped, n, "RUNE_CALL", "auto") == "operator").cloned().collect();
+        assert_eq!(all.len(), shipped_rune_texts().len(), "the roster is every rune file");
+        assert!(!task.is_empty() && !lane.is_empty() && !operator.is_empty(), "positive control: every class is populated");
+        assert!(task.is_disjoint(&lane) && task.is_disjoint(&operator) && lane.is_disjoint(&operator));
+        assert_eq!(task.len() + lane.len() + operator.len(), all.len(), "every persona is one of the three");
     }
 
     // covers: UC-dispatch-08
     #[test]
-    fn every_auto_called_predicate_is_built_from_a_label_variable_and_follows_its_configured_value()
-    {
+    fn every_auto_called_predicate_is_built_from_a_label_variable_and_follows_its_configured_value() {
         let offender = r#"RUNE_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}plan""#;
-        let built_from_variable = |text: &str| {
-            assigned_value(text, "RUNE_LABELS").is_some_and(|raw| {
-                bare_references(&raw)
-                    .iter()
-                    .any(|n| n.starts_with("SPIRA_") && n.ends_with("_LABEL"))
-            })
-        };
-        assert!(
-            !built_from_variable(offender),
-            "positive control: a bare literal is caught"
-        );
+        let built_from_variable = |text: &str| assigned_value(text, "RUNE_LABELS").is_some_and(|raw| bare_references(&raw).iter().any(|n| n.starts_with("SPIRA_") && n.ends_with("_LABEL")));
+        assert!(!built_from_variable(offender), "positive control: a bare literal is caught");
 
         let ws = testkit::TempDir::new("spira-config-runes-built-from-labels");
         let mut pins: Vec<(String, String)> = Vec::new();
@@ -1204,10 +954,7 @@ mod tests {
             if vars.get("RUNE_CALL").is_some_and(|v| v == "operator") {
                 continue;
             }
-            assert!(
-                built_from_variable(&text),
-                "{name}: RUNE_LABELS carries a literal partition"
-            );
+            assert!(built_from_variable(&text), "{name}: RUNE_LABELS carries a literal partition");
             for var in ["RUNE_LABELS", "RUNE_EXCLUDE_LABELS"] {
                 for n in bare_references(&assigned_value(&text, var).unwrap_or_default()) {
                     pins.push((n.clone(), format!("pinned-{n}")));
@@ -1215,26 +962,14 @@ mod tests {
             }
             callable.push(name);
         }
-        assert!(
-            !callable.is_empty(),
-            "positive control: some persona is auto-called"
-        );
-        let pairs: Vec<(&str, Option<&str>)> = pins
-            .iter()
-            .map(|(k, v)| (k.as_str(), Some(v.as_str())))
-            .collect();
+        assert!(!callable.is_empty(), "positive control: some persona is auto-called");
+        let pairs: Vec<(&str, Option<&str>)> = pins.iter().map(|(k, v)| (k.as_str(), Some(v.as_str()))).collect();
         let _env = testkit::env(&pairs);
         for name in callable {
-            let labels = rune_predicate(&ws, &name)
-                .unwrap_or_else(|e| panic!("{e}"))
-                .labels;
-            let text =
-                std::fs::read_to_string(runes_dir(&ws).join(format!("{name}.rune"))).unwrap();
+            let labels = rune_predicate(&ws, &name).unwrap_or_else(|e| panic!("{e}")).labels;
+            let text = std::fs::read_to_string(runes_dir(&ws).join(format!("{name}.rune"))).unwrap();
             for n in bare_references(&assigned_value(&text, "RUNE_LABELS").unwrap()) {
-                assert!(
-                    labels.contains(&format!("pinned-{n}")),
-                    "{name}: predicate {labels:?} does not follow {n}"
-                );
+                assert!(labels.contains(&format!("pinned-{n}")), "{name}: predicate {labels:?} does not follow {n}");
             }
         }
     }
@@ -1254,36 +989,15 @@ mod tests {
     #[test]
     fn the_shipped_runes_declare_build_disk_for_exactly_the_builder_mender_pilgrim_and_qa() {
         let ws = testkit::TempDir::new("spira-config-runes-shipped");
-        let src = crate::resolve::locate_home_for_process()
-            .expect("SPIRA_HOME names the harness tree")
-            .join("runes");
+        let src = crate::resolve::locate_home_for_process().expect("SPIRA_HOME names the harness tree").join("runes");
         for dir in [src.clone(), src.join("disabled")] {
-            for e in std::fs::read_dir(&dir)
-                .unwrap()
-                .flatten()
-                .filter(|e| e.path().extension().is_some_and(|x| x == "rune"))
-            {
-                write_rune(
-                    &ws,
-                    &e.path().file_stem().unwrap().to_string_lossy(),
-                    &std::fs::read_to_string(e.path()).unwrap(),
-                );
+            for e in std::fs::read_dir(&dir).unwrap().flatten().filter(|e| e.path().extension().is_some_and(|x| x == "rune")) {
+                write_rune(&ws, &e.path().file_stem().unwrap().to_string_lossy(), &std::fs::read_to_string(e.path()).unwrap());
             }
         }
         let mut uses = vec![];
-        for name in std::fs::read_dir(runes_dir(&ws))
-            .unwrap()
-            .flatten()
-            .filter_map(|e| {
-                e.path()
-                    .file_stem()
-                    .map(|s| s.to_string_lossy().into_owned())
-            })
-        {
-            if rune_uses(&ws, &name)
-                .unwrap()
-                .contains(&"build-disk".to_string())
-            {
+        for name in std::fs::read_dir(runes_dir(&ws)).unwrap().flatten().filter_map(|e| e.path().file_stem().map(|s| s.to_string_lossy().into_owned())) {
+            if rune_uses(&ws, &name).unwrap().contains(&"build-disk".to_string()) {
                 uses.push(name.clone());
             }
         }
@@ -1292,17 +1006,12 @@ mod tests {
     }
 
     #[test]
-    fn the_reactive_set_is_exactly_the_shipped_personas_that_were_lanes_and_no_rune_sets_rune_lane()
-    {
+    fn the_reactive_set_is_exactly_the_shipped_personas_that_were_lanes_and_no_rune_sets_rune_lane() {
         let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/runes");
         let ws = testkit::TempDir::new("spira-config-runes-reactive-set");
         let mut any_lane = vec![];
         for dir in [src.clone(), src.join("disabled")] {
-            for e in std::fs::read_dir(&dir)
-                .unwrap()
-                .flatten()
-                .filter(|e| e.path().extension().is_some_and(|x| x == "rune"))
-            {
+            for e in std::fs::read_dir(&dir).unwrap().flatten().filter(|e| e.path().extension().is_some_and(|x| x == "rune")) {
                 let name = e.path().file_stem().unwrap().to_string_lossy().into_owned();
                 let text = std::fs::read_to_string(e.path()).unwrap();
                 if assigned_value(&text, "RUNE_LANE").is_some() {
@@ -1311,32 +1020,15 @@ mod tests {
                 write_rune(&ws, &name, &text);
             }
         }
-        assert!(
-            any_lane.is_empty(),
-            "RUNE_LANE no longer exists: {any_lane:?}"
-        );
-        let mut reactive: Vec<String> = std::fs::read_dir(runes_dir(&ws))
-            .unwrap()
-            .flatten()
-            .filter_map(|e| {
-                e.path()
-                    .file_stem()
-                    .map(|s| s.to_string_lossy().into_owned())
-            })
-            .filter(|n| rune_get(&ws, n, "RUNE_REACTIVE", "") == "1")
-            .collect();
+        assert!(any_lane.is_empty(), "RUNE_LANE no longer exists: {any_lane:?}");
+        let mut reactive: Vec<String> = std::fs::read_dir(runes_dir(&ws)).unwrap().flatten().filter_map(|e| e.path().file_stem().map(|s| s.to_string_lossy().into_owned())).filter(|n| rune_get(&ws, n, "RUNE_REACTIVE", "") == "1").collect();
         reactive.sort();
-        assert_eq!(
-            reactive,
-            ["czar", "groomer", "mender", "mimir", "ops", "pilgrim", "qa", "skuld", "warden"]
-        );
+        assert_eq!(reactive, ["czar", "groomer", "mender", "mimir", "ops", "pilgrim", "qa", "skuld", "warden"]);
     }
 
     #[test]
     fn the_shipped_runes_declare_single_flight_for_exactly_the_sweeps_over_shared_state() {
-        let dir = crate::resolve::locate_home_for_process()
-            .expect("SPIRA_HOME names the harness tree")
-            .join("runes");
+        let dir = crate::resolve::locate_home_for_process().expect("SPIRA_HOME names the harness tree").join("runes");
         let mut single = vec![];
         let mut seen = 0;
         for d in [dir.clone(), dir.join("disabled")] {
@@ -1348,10 +1040,7 @@ mod tests {
                 seen += 1;
                 let text = std::fs::read_to_string(&path).unwrap();
                 let name = path.file_stem().unwrap().to_string_lossy().into_owned();
-                assert!(
-                    !text.contains(concat!("RUNE_MAX", "_CONCURRENT")),
-                    "{name} still sets the retired cap"
-                );
+                assert!(!text.contains(concat!("RUNE_MAX", "_CONCURRENT")), "{name} still sets the retired cap");
                 if text.lines().any(|l| l.trim() == "RUNE_SINGLE_FLIGHT=1") {
                     single.push(name);
                 }
@@ -1359,9 +1048,6 @@ mod tests {
         }
         assert!(seen > 10, "the matcher read {seen} runes");
         single.sort();
-        assert_eq!(
-            single,
-            ["batcher", "czar", "groomer", "mimir", "pilgrim", "qa", "warden"]
-        );
+        assert_eq!(single, ["batcher", "czar", "groomer", "mimir", "pilgrim", "qa", "warden"]);
     }
 }

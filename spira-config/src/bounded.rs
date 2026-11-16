@@ -9,9 +9,7 @@ use std::io;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::path::Path;
-use std::process::{
-    Child, ChildStderr, ChildStdin, ChildStdout, Command, ExitStatus, Output, Stdio,
-};
+use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, ExitStatus, Output, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -187,11 +185,7 @@ impl Bounded {
         match self.start(true) {
             Ok(child) => child.wait_with_output(),
             Err(e) => match refusal(&e, self.deadline.is_err()) {
-                Some(status) => Ok(Output {
-                    status,
-                    stdout: Vec::new(),
-                    stderr: Vec::new(),
-                }),
+                Some(status) => Ok(Output { status, stdout: Vec::new(), stderr: Vec::new() }),
                 None => Err(e),
             },
         }
@@ -262,53 +256,35 @@ fn watch(child: &Child, limit: Duration, expired: Arc<AtomicBool>, tree: bool) -
     }
     let pidfd = unsafe { OwnedFd::from_raw_fd(fd as i32) };
     let end = Instant::now() + limit;
-    std::thread::Builder::new()
-        .name("bounded-watchdog".into())
-        .spawn(move || loop {
-            let left = end.saturating_duration_since(Instant::now());
-            let ms = left
-                .as_millis()
-                .saturating_add(u128::from(!left.subsec_nanos().is_multiple_of(1_000_000)));
-            let mut p = libc::pollfd {
-                fd: pidfd.as_raw_fd(),
-                events: libc::POLLIN,
-                revents: 0,
-            };
-            let n = unsafe { libc::poll(&mut p, 1, ms.min(i32::MAX as u128) as i32) };
-            if n > 0 {
-                return;
+    std::thread::Builder::new().name("bounded-watchdog".into()).spawn(move || loop {
+        let left = end.saturating_duration_since(Instant::now());
+        let ms = left.as_millis().saturating_add(u128::from(!left.subsec_nanos().is_multiple_of(1_000_000)));
+        let mut p = libc::pollfd { fd: pidfd.as_raw_fd(), events: libc::POLLIN, revents: 0 };
+        let n = unsafe { libc::poll(&mut p, 1, ms.min(i32::MAX as u128) as i32) };
+        if n > 0 {
+            return;
+        }
+        if n < 0 && io::Error::last_os_error().kind() == io::ErrorKind::Interrupted {
+            continue;
+        }
+        if Instant::now() >= end || n < 0 {
+            expired.store(true, Ordering::SeqCst);
+            if tree {
+                kill_descendants(pid as u32);
             }
-            if n < 0 && io::Error::last_os_error().kind() == io::ErrorKind::Interrupted {
-                continue;
-            }
-            if Instant::now() >= end || n < 0 {
-                expired.store(true, Ordering::SeqCst);
-                if tree {
-                    kill_descendants(pid as u32);
-                }
-                unsafe { libc::kill(-pid, libc::SIGKILL) };
-                return;
-            }
-        })?;
+            unsafe { libc::kill(-pid, libc::SIGKILL) };
+            return;
+        }
+    })?;
     Ok(())
 }
 
 fn children(pid: u32) -> Vec<u32> {
-    let Ok(rd) = std::fs::read_dir("/proc") else {
-        return Vec::new();
-    };
+    let Ok(rd) = std::fs::read_dir("/proc") else { return Vec::new() };
     rd.flatten()
         .filter_map(|e| e.file_name().to_str().and_then(|n| n.parse::<u32>().ok()))
         .filter(|p| {
-            let ppid = std::fs::read_to_string(format!("/proc/{p}/stat"))
-                .ok()
-                .and_then(|s| {
-                    s.rsplit_once(')').and_then(|(_, r)| {
-                        r.split_whitespace()
-                            .nth(1)
-                            .and_then(|v| v.parse::<u32>().ok())
-                    })
-                });
+            let ppid = std::fs::read_to_string(format!("/proc/{p}/stat")).ok().and_then(|s| s.rsplit_once(')').and_then(|(_, r)| r.split_whitespace().nth(1).and_then(|v| v.parse::<u32>().ok())));
             ppid == Some(pid)
         })
         .collect()

@@ -110,13 +110,8 @@ fn hold(args: &[String]) -> Result<(), String> {
     let dir = lease.dir().to_path_buf();
     let trimmed = lease.release();
     eprintln!("released build directory {}: {trimmed}", dir.display());
-    if let Some(bases) = spira_config::process::cfg(bd::BASE_ENV)
-        .ok()
-        .map(|v| bd::parse_bases(&v))
-    {
-        let budget = spira_config::process::cfg_parse::<i64>(bd::BUDGET_ENV)
-            .unwrap_or(0)
-            .max(0) as u64;
+    if let Some(bases) = spira_config::process::cfg(bd::BASE_ENV).ok().map(|v| bd::parse_bases(&v)) {
+        let budget = spira_config::process::cfg_parse::<i64>(bd::BUDGET_ENV).unwrap_or(0).max(0) as u64;
         bd::meter(&bases, &dir, budget.saturating_mul(1 << 30));
     }
     Ok(())
@@ -134,8 +129,7 @@ fn take(who: &str, root: &Path, out: &mut impl Write) -> Result<bd::Lease, Strin
             bd::BASE_ENV
         ));
     }
-    let lease = bd::lease(&bases, who)
-        .map_err(|e| format!("cannot lease a build directory under {bases:?}: {e}"))?;
+    let lease = bd::lease(&bases, who).map_err(|e| format!("cannot lease a build directory under {bases:?}: {e}"))?;
     let path = std::env::var("PATH").unwrap_or_default();
     match bd::clean(&script()?, root, lease.dir(), &path, false) {
         Ok(text) => {
