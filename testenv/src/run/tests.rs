@@ -197,7 +197,6 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
         results_root: get("SPIRA_BATCH_RESULTS").map(PathBuf::from).unwrap_or_else(|| run.join("batch-results")),
         verdicts: get("SPIRA_VERDICTS").map(PathBuf::from).unwrap_or_else(|| run.join("verdicts")),
         verdict_ttl: num!("SPIRA_VERDICT_TTL").unwrap_or(86_400),
-        quarantine_max_age: num!("SPIRA_QUARANTINE_MAX_AGE").unwrap_or(604_800),
         repeat_reason: get("SPIRA_VERDICT_REPEAT_CONSIDERED"),
         suite_timeout: num!("SPIRA_SUITE_TIMEOUT").unwrap_or(600),
         suite_cap: num!("SPIRA_TESTENV_SUITE_CAP").unwrap_or(900),
@@ -224,7 +223,6 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
         tiers: get("SPIRA_BATCH_TIERS").unwrap_or_else(|| "T2,T3".into()),
         mail_cmd: get("SPIRA_BATCH_MAIL_CMD").map(PathBuf::from),
         incident_cmd: get("SPIRA_BATCH_INCIDENT_CMD").map(PathBuf::from),
-        suite_state_file: get("SPIRA_SUITE_STATE_FILE").unwrap_or_else(|| "spira/suite-state".into()),
         skip_allowlist_file: get("SPIRA_SKIP_ALLOWLIST_FILE").unwrap_or_else(|| "spira/skip-allowlist.tsv".into()),
         select_head: get("SPIRA_GATE_SELECT_HEAD"),
         round_batch_id: get("SPIRA_ROUND_BATCH_ID"),
@@ -379,13 +377,16 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
     }
 
     #[test]
-    fn a_quarantined_suite_row_runs_the_suite_and_a_deny_row_wins_over_suite_state() {
+    fn a_quarantined_deny_row_runs_the_suite_and_a_tree_suite_state_row_is_not_read() {
         let one = |deny: &str, state: Option<&str>| run_with_deny("test", "test-a.sh", Some(deny), state);
         let preempted = |lines: &[String]| lines.iter().any(|l| l.contains("test-a.sh") && l.to_lowercase().contains("disabled"));
         let (_, _, slept, lines) = one("quarantined\tsuite:test-a.sh\tsp-1\t-\n", None);
         assert!(!preempted(&lines) && slept == 1, "quarantined runs: {lines:?}");
-        let (_, _, slept, lines) = one("quarantined\tsuite:test-a.sh\tsp-1\t-\n", Some("test-a.sh | disabled | 2020-01-01T00:00:00Z | sp-9 | x\n"));
-        assert!(!preempted(&lines) && slept == 1, "the deny row beats a disabled suite-state row: {lines:?}");
+        let disabling_row = Some("test-a.sh | disabled | 2020-01-01T00:00:00Z | sp-9 | x\n");
+        let (_, _, slept, lines) = one("", disabling_row);
+        assert!(!preempted(&lines) && slept == 1, "a suite-state row in the tree decides nothing: {lines:?}");
+        let (_, _, slept, lines) = one("quarantined\tsuite:test-a.sh\tsp-1\t-\n", disabling_row);
+        assert!(!preempted(&lines) && slept == 1, "nor does it widen a quarantined deny row: {lines:?}");
         let (_, _, _, lines) = one("quarantined\tsuite:test-a.sh\tsp-1\t-\ndisabled\tsuite:test-a.sh\tsp-2\t-\n", None);
         assert!(preempted(&lines), "disabled and quarantined together disable: {lines:?}");
     }

@@ -19,7 +19,7 @@ use crate::schedule::{self, Job, MaxparInputs};
 use crate::selection;
 use crate::settings::Settings;
 use crate::skipgate::{self, SkipGate};
-use crate::suite::{SuiteHeaders, SuiteState, SuiteStates};
+use crate::suite::{SuiteHeaders, SuiteState};
 use crate::timing::{self, RoundPhaseRow, SuiteTimingRow};
 use crate::util::{self, git, iso_utc};
 use crate::verdict::{self, CacheDecision, KeyInputs, Verdict, VerdictFile};
@@ -1521,14 +1521,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
     ph.attach(&results);
     *started.borrow_mut() = Some(results.clone());
 
-    // ---- lifecycle state (from the revision, never the installed harness) -----------
-    let states = SuiteStates::parse(
-        &git(
-            &repo.path,
-            &["show", &format!("{br}:{}", s.suite_state_file)],
-        )
-        .unwrap_or_default(),
-    );
+    // ---- lifecycle state: the deny list is the only source ---------------------------
     let deny = match (deps.env)(spira_config::unit_tier::DENY_LIST_ENV).filter(|v| !v.is_empty()) {
         None => spira_config::unit_tier::DenyList::default(),
         Some(path) => match fs::read_to_string(&path).map_err(|e| e.to_string()).and_then(|t| spira_config::unit_tier::DenyList::parse(&t)) {
@@ -1549,7 +1542,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
     let mut quarantined: BTreeSet<String> = BTreeSet::new();
     let mut preempted: BTreeMap<String, ResultRecord> = BTreeMap::new();
     for n in &selected {
-        match denied(n).unwrap_or_else(|| states.state_at(n, now_epoch(), s.quarantine_max_age)) {
+        match denied(n).unwrap_or(SuiteState::Active) {
             SuiteState::Disabled => {
                 let rec = ResultRecord {
                     status: Status::Disabled,

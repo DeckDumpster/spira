@@ -40,7 +40,6 @@ pub struct Settings {
     /// The resume store spec (`none`, `dir:<path>`, `s3://<bucket>/<prefix>`); unset is none.
     pub resume: Option<String>,
     pub verdict_ttl: u64,
-    pub quarantine_max_age: u64,
     pub repeat_reason: Option<String>,
     /// 0 disables.
     pub suite_timeout: u64,
@@ -77,9 +76,8 @@ pub struct Settings {
     pub tiers: String,
     pub mail_cmd: Option<PathBuf>,
     pub incident_cmd: Option<PathBuf>,
-    pub suite_state_file: String,
     /// DESIGN.md §3.7: the checked-in skip-declaration allow list, read from the revision
-    /// under test exactly like `suite_state_file`.
+    /// under test.
     pub skip_allowlist_file: String,
     pub select_head: Option<String>,
     pub round_batch_id: Option<String>,
@@ -195,7 +193,6 @@ impl Settings {
             resume: src.get("SPIRA_TESTENV_RESUME").filter(|v| !v.trim().is_empty()),
             verdicts: path("SPIRA_VERDICTS").unwrap_or_else(|| run.join("verdicts")),
             verdict_ttl: cfg_parse("SPIRA_VERDICT_TTL")?,
-            quarantine_max_age: cfg_parse("SPIRA_QUARANTINE_MAX_AGE")?,
             repeat_reason: src.get("SPIRA_VERDICT_REPEAT_CONSIDERED"),
             suite_timeout: cfg_parse("SPIRA_SUITE_TIMEOUT")?,
             suite_cap: cfg_parse("SPIRA_TESTENV_SUITE_CAP")?,
@@ -235,7 +232,6 @@ impl Settings {
                 .unwrap_or_else(|| "T2,T3".into()),
             mail_cmd: path("SPIRA_BATCH_MAIL_CMD"),
             incident_cmd: path("SPIRA_BATCH_INCIDENT_CMD"),
-            suite_state_file: cfg("SPIRA_SUITE_STATE_FILE")?,
             skip_allowlist_file: src
                 .get("SPIRA_SKIP_ALLOWLIST_FILE")
                 .unwrap_or_else(|| "spira/skip-allowlist.tsv".into()),
