@@ -13,6 +13,7 @@ off the serving path:
 - **pass** — every database is synced into the copy; the pass records the moment it began.
 - **run** — a pass every `SPIRA_DOLT_PERSIST_INTERVAL_SECS`, through the running server.
 - **compact** — first `dolt_gc()` on each live database when the filesystem has room for a second generation; then a copy grown past `SPIRA_DOLT_PERSIST_COMPACT_PCT` of its live size is rebuilt.
+- **collect** — `run` also calls `dolt_gc()` on each live database every `SPIRA_DOLT_PERSIST_GC_INTERVAL_SECS` (0 disables), under the same free-space rule as compact, so the live journal's garbage is bounded between daily compactions rather than growing until the next one.
 - **age** — red once the newest finished pass began more than `SPIRA_DOLT_PERSIST_MAX_LAG_SECS` ago.
 
 **The loss bound.** Every write committed before the newest finished pass began is on disk. A
