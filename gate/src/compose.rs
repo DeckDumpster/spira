@@ -672,10 +672,10 @@ pub fn unit_test_commands(crates: &[String], targets: Targets, deny: &tier::Deny
 
 /// The unit phases' commands, in order: build ([`unit_build_words`]), then the tests
 /// ([`unit_test_commands`]): each runs whatever the one before it did, the exit is the first
-/// non-zero status, and a missing `cargo-nextest` is 75, could not judge, never a red branch.
+/// non-zero status, and a sandbox that cannot start `cargo nextest` is 75, could not judge, never a red branch.
 pub fn unit_commands(crates: &[String], targets: Targets, jobs: u64, deny: &tier::DenyList) -> [(&'static str, String); 2] {
-    let mut test = String::from(
-        "cargo nextest --version >/dev/null 2>&1 || { echo 'gate: cargo-nextest is not installed on this host — refusing to judge unit tests without it'; exit 75; }; _g_rc=0",
+    let mut test = format!(
+        "{AROUND} cargo nextest --version >/dev/null 2>&1 || {{ echo 'gate: the test sandbox could not start cargo nextest — refusing to judge unit tests without it'; exit 75; }}; _g_rc=0",
     );
     for c in unit_test_commands(crates, targets, deny) {
         test.push_str(&format!("; {c}; _g_r=$?; [ \"$_g_rc\" -ne 0 ] || _g_rc=$_g_r"));
@@ -1342,7 +1342,7 @@ mod tests {
 
     #[test]
     fn only_the_unit_nextest_run_goes_through_one_sandbox() {
-        let [_, t] = unit_commands(&["gate".into()], ALL, 4);
+        let [_, t] = unit_commands(&["gate".into()], ALL, 4, &Default::default());
         let cmds: Vec<&str> = t.1.split("; ").collect();
         let run = |needle: &str| *cmds.iter().find(|c| c.contains(needle)).unwrap();
         assert!(run("nextest run").contains("tools/test-sandbox/runner --around cargo nextest run"), "{}", t.1);
@@ -1409,8 +1409,16 @@ mod tests {
     #[test]
     fn a_missing_nextest_is_could_not_judge_not_a_red_branch() {
         let [_, t] = unit_commands(&["gate".into()], ALL, 4, &Default::default());
-        assert!(t.1.starts_with("cargo nextest --version >/dev/null 2>&1 || {"), "{}", t.1);
-        let out = std::process::Command::new("/bin/bash").args(["-c", &t.1]).env("PATH", "/nonexistent").output().unwrap();
+        assert!(t.1.starts_with(&format!("{AROUND} cargo nextest --version >/dev/null 2>&1 || {{")), "{}", t.1);
+        let ws = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let out = std::process::Command::new("/bin/bash")
+            .args(["-c", &t.1])
+            .current_dir(ws)
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .env("HOME", ws)
+            .output()
+            .unwrap();
         assert_eq!(out.status.code(), Some(75), "{}", String::from_utf8_lossy(&out.stdout));
     }
 

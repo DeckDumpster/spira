@@ -101,7 +101,7 @@ fn around_binds_each_target_link_destination_writable_and_keeps_the_environment(
     fs::create_dir_all(&target).unwrap();
     let _ = fs::remove_file(&link);
     std::os::unix::fs::symlink(&dest, &link).unwrap();
-    let args = print_args(&["--around", "cargo", "nextest", "run"]);
+    let args = print_args(&["--around", "/usr/bin/true", "nextest", "run"]);
     fs::remove_file(&link).unwrap();
     if made_target {
         let _ = fs::remove_dir(&target);
@@ -110,7 +110,7 @@ fn around_binds_each_target_link_destination_writable_and_keeps_the_environment(
     assert!(args.windows(3).any(|w| w[0] == "--bind" && w[1] == want && w[2] == want), "{want} bound writable: {args:?}");
     assert!(!args.iter().any(|a| a == "--clearenv"), "the caller's environment is kept: {args:?}");
     assert!(args.windows(3).any(|w| w[0] == "--setenv" && w[1] == "GIT_CONFIG_SYSTEM"), "{args:?}");
-    assert_eq!(&args[args.len() - 4..], ["--", "cargo", "nextest", "run"]);
+    assert_eq!(&args[args.len() - 4..], ["--", "/usr/bin/true", "nextest", "run"]);
 }
 
 #[test]
@@ -134,4 +134,52 @@ fn print_args_for_a_binary_is_what_the_landing_ref_printed() {
     fs::remove_file(&copy).unwrap();
     let before = String::from_utf8(before.unwrap().stdout).unwrap();
     assert_eq!(print_args(&["/usr/bin/true", "a", "b"]), before.lines().collect::<Vec<_>>());
+}
+
+fn gate_environment_runner(fixture_home: &Path, release: &Path, tail: &str, args: &[&str]) -> std::process::Output {
+    let path = spira_config::release_path_from_env_with_tail(Some(release.to_str().unwrap()), tail).unwrap();
+    std::process::Command::new(workspace().join("tools/test-sandbox/runner"))
+        .args(args)
+        .env_clear()
+        .env("PATH", path)
+        .env("HOME", fixture_home)
+        .output()
+        .expect("the runner spawns")
+}
+
+#[test]
+fn around_finds_the_cargo_the_gate_path_names_and_binds_its_toolchain_under_a_hidden_home() {
+    let real = PathBuf::from(std::env::var("CARGO").expect("cargo sets CARGO for a test"));
+    let tmp = testkit::TempDir::new("around-gate-env");
+    let home = fs::canonicalize(tmp.path()).unwrap().join("home");
+    let release = tmp.path().join("release");
+    fs::create_dir_all(home.join(".cargo/bin")).unwrap();
+    fs::create_dir_all(&release).unwrap();
+    std::os::unix::fs::symlink(&real, home.join(".cargo/bin/cargo")).unwrap();
+    let tail = format!("{}/.cargo/bin", home.display());
+    let out = gate_environment_runner(&home, &release, &tail, &["--print-args", "--around", "cargo", "--version"]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let args: Vec<String> = String::from_utf8(out.stdout).unwrap().lines().map(String::from).collect();
+    let cargo = format!("{}/.cargo/bin/cargo", home.display());
+    assert_eq!(&args[args.len() - 3..], ["--", cargo.as_str(), "--version"], "{args:?}");
+    let hidden = home.display().to_string();
+    let shadow = args.iter().position(|a| a == "--tmpfs").and_then(|_| args.windows(2).position(|w| w[0] == "--tmpfs" && w[1] == hidden)).expect("the home is shadowed");
+    let toolchain = fs::canonicalize(&real).unwrap();
+    let bound = |dir: &str| args.windows(3).enumerate().any(|(i, w)| i > shadow && w[0] == "--ro-bind" && w[1] == dir && w[2] == dir);
+    let bin = format!("{hidden}/.cargo/bin");
+    let root = toolchain.parent().unwrap().parent().unwrap().display().to_string();
+    assert!(bound(&bin) || bound(&root), "cargo's directory is bound back after the home tmpfs: {args:?}");
+}
+
+#[test]
+fn around_without_the_command_on_path_is_no_verdict_and_names_the_path() {
+    let tmp = testkit::TempDir::new("around-no-cargo");
+    let home = fs::canonicalize(tmp.path()).unwrap().join("home");
+    let release = tmp.path().join("release");
+    fs::create_dir_all(&home).unwrap();
+    fs::create_dir_all(&release).unwrap();
+    let out = gate_environment_runner(&home, &release, "", &["--around", "cargo", "--version"]);
+    assert_eq!(out.status.code(), Some(75), "{}", String::from_utf8_lossy(&out.stderr));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("cargo is not on PATH") && err.contains(&release.display().to_string()), "{err}");
 }

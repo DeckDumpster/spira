@@ -73,6 +73,15 @@ is_held=""
 [ -z "$print" ] && held && is_held=1
 [ -n "$around" ] && [ -n "$is_held" ] && exec "$@"
 
+# The command is found on the PATH it was handed, then run by that absolute path: the sandbox's
+# home is a tmpfs, and bwrap's own lookup would not see what was bound back after it.
+if [ -n "$around" ]; then
+    cmd="$(command -v -- "$1")" && [ "${cmd#/}" != "$cmd" ] && [ -x "$cmd" ] && [ ! -d "$cmd" ] ||
+        { echo "test-sandbox: --around: $1 is not on PATH (${PATH:-})" >&2; exit 75; }
+    shift
+    set -- "$cmd" "$@"
+fi
+
 path="$home/.local/lib/spira-env/bin:${CARGO_HOME:+$CARGO_HOME/bin:}/usr/local/bin:/usr/bin:/bin"
 [ -n "${CARGO:-}" ] && path="$(dirname "$CARGO"):$path"
 
@@ -128,7 +137,10 @@ fi
 # is bound in and a test that needs it fails inside.
 ro=() rw=()
 [ -n "${RUSTUP_HOME:-}" ] && ro+=("$RUSTUP_HOME")
-[ -n "${CARGO_HOME:-}" ] && ro+=("$CARGO_HOME/bin") && rw+=("$CARGO_HOME/registry" "$CARGO_HOME/git")
+# Cargo's own default home, as cargo resolves it, when the caller declared none.
+cargo_home="${CARGO_HOME:-}"
+[ -z "$cargo_home" ] && [ -n "$around" ] && cargo_home="$home/.cargo"
+[ -n "$cargo_home" ] && ro+=("$cargo_home/bin") && rw+=("$cargo_home/registry" "$cargo_home/git")
 # Without a declared RUSTUP_HOME (cargo started straight from a toolchain, not through rustup's
 # proxy, as the round VM does) the toolchain is still bound by where it really is: $CARGO, and
 # what $CARGO_HOME/bin's cargo and rustc link to. Binding bin alone leaves those links dangling
@@ -141,11 +153,14 @@ toolchain_of() {
         printf '%s\n' "${r%/bin/*}"
 }
 if [ -z "${RUSTUP_HOME:-}" ]; then
-    for b in ${CARGO:+"$CARGO"} ${CARGO_HOME:+"$CARGO_HOME/bin/cargo" "$CARGO_HOME/bin/rustc"}; do
+    for b in ${CARGO:+"$CARGO"} ${cargo_home:+"$cargo_home/bin/cargo" "$cargo_home/bin/rustc"}; do
         # Never CARGO_HOME itself (a cargo installed straight into its bin): it holds credentials.
-        t="$(toolchain_of "$b")" && [ "$t" != "${CARGO_HOME:-}" ] && ro+=("$t")
+        t="$(toolchain_of "$b")" && [ "$t" != "$cargo_home" ] && ro+=("$t")
     done
     [ -d "$home/.rustup" ] && ro+=("$home/.rustup")
+fi
+if [ -n "$around" ]; then
+    t="$(toolchain_of "$1")" && [ "$t" != "$cargo_home" ] && ro+=("$t")
 fi
 ro+=("$home/.local/lib/spira-env")
 # bwrap comes from the system directories alone, never the caller's PATH or the toolchain's.
