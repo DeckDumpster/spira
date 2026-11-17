@@ -4648,6 +4648,7 @@ fn phase_caps_sum_under_the_deadline() {
     assert!(crate::engine::phase_cap("gate").unwrap() >= budget, "the gate phase is cut before testenv's budget {budget}");
     assert_eq!(crate::engine::phase_cap("base-tools"), crate::engine::phase_cap("tools"));
     assert_eq!(crate::engine::phase_cap("reentry"), None);
+    assert_eq!(crate::engine::phase_cap("publish"), None);
 }
 
 #[test]
