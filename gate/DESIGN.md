@@ -1262,6 +1262,13 @@ under `min(SPIRA_GATE_TIMEOUT, what is left of the deadline)`, the `gate` phase 
 at either is NO_VERDICT `deadline` (or `phase-cap`) naming the test phase. `gate.log` carries `test_clock=<s>`,
 the seconds charged, beside `ran=`.
 
+A repository that declares `[tier.build]` runs three phases: `build` (`testenv --suites build --share-keep K`),
+`gate` (`--share-keep K`, under the 260 s cap, ending at testenv's verdict) and then `publish`
+(`testenv --share-publish K`), which merges the warm build cache. `publish` is uncharged and uncapped, bounded only by
+`SPIRA_GATE_TIMEOUT` and the stall watch; its rc is ignored, its output goes to the gate log, never into the verdict's
+text, and its wall shows in the meter as `publish:<s>`. testenv makes one non-blocking attempt at the cache lock and
+skips the merge when a running tier holds it. A failed `gate` phase has no `publish`: testenv already removed the share.
+
 Compilation has no clock. An uncharged phase is watched instead: no compiler output line and no growth in the
 CPU time of its process group for `SPIRA_GATE_BUILD_STALL` seconds ends it as NO_VERDICT `reason=build-stall`.
 Only an operator `SPIRA_GATE_TIMEOUT` bounds a build that keeps progressing (reason `timeout`). The watchtower pages

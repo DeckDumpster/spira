@@ -2179,7 +2179,7 @@ pub fn describe_reentry(bead: &str, r: &compose::Reentry) -> Option<String> {
 /// Whether a phase's wall counts against SPIRA_GATE_DEADLINE (`base-` prefix ignored).
 /// Compilation is never charged: a build is ended for stalling, not for taking long.
 pub fn charged(name: &str) -> bool {
-    !matches!(name.strip_prefix("base-").unwrap_or(name), "tools" | "fences" | "build" | "reentry-build" | "covered-build")
+    !matches!(name.strip_prefix("base-").unwrap_or(name), "tools" | "fences" | "build" | "reentry-build" | "covered-build" | "publish")
 }
 
 /// A re-entry or covered phase is watched for stall and charged the suites' seconds testenv reports, not its wall.
@@ -2301,8 +2301,17 @@ fn testenv_suites_cmd(list: &str) -> String {
 fn testenv_cmd(suites: Option<&str>, share: Option<(&str, bool)>) -> String {
     let suites = suites.map_or(String::new(), |l| format!("--suites {l} "));
     let share = share.map_or(String::new(), |(k, keep)| format!("{} {k} ", if keep { "--share-keep" } else { "--share" }));
+    testenv_call(&format!("{suites}{share}"))
+}
+
+/// The call that merges a kept share into the warm cache; it runs no tier and judges nothing.
+fn testenv_publish_cmd(share_key: &str) -> String {
+    testenv_call(&format!("--share-publish {share_key} "))
+}
+
+fn testenv_call(flags: &str) -> String {
     format!(
-        "_b=0; \"${{SPIRA_TESTENV_BIN:-testenv}}\" {suites}{share}\"$SPIRA_GATE_BRANCH\" \"$SPIRA_GATE_REPO\" || _b=$?; case \"$_b\" in 2|3|127) exit 75;; *) exit \"$_b\";; esac"
+        "_b=0; \"${{SPIRA_TESTENV_BIN:-testenv}}\" {flags}\"$SPIRA_GATE_BRANCH\" \"$SPIRA_GATE_REPO\" || _b=$?; case \"$_b\" in 2|3|127) exit 75;; *) exit \"$_b\";; esac"
     )
 }
 
@@ -2547,7 +2556,7 @@ pub fn run_composed<W: World>(
     let cmd = if declared {
         let repo = env.iter().find(|(k, _)| k == "SPIRA_GATE_REPO_NAME").map_or("the repository", |(_, v)| v.as_str());
         w.eprint(&format!("gate: {repo} declares [tier.build] in .spira/testenv.toml: the gate phase runs testenv's default tiers, not the repo-map gate column"));
-        testenv_cmd(None, prefix.is_empty().then_some((share_key.as_str(), false)))
+        testenv_cmd(None, prefix.is_empty().then_some((share_key.as_str(), true)))
     } else {
         cmd
     };
@@ -2570,6 +2579,14 @@ pub fn run_composed<W: World>(
             phases.push((format!("{prefix}{first}"), wall));
             if w.signalled() || rc == 124 || rc == NOVERDICT || stall::is_stall(rc, &out) || (rc != 0 && !matches!(comp, Composition::Unit { .. })) {
                 return (rc, out, phases);
+            }
+            if declared && prefix.is_empty() && rc == 0 {
+                let (_, publish_out, wall) = go("publish", env, &testenv_publish_cmd(&share_key), test_secs);
+                phases.push(("publish".to_string(), wall));
+                w.eprint(&format!("gate: warm cache publish (not a verdict) took {wall}s\n{}", parse::tail_bytes(&publish_out, 2000)));
+                if w.signalled() {
+                    return (NOVERDICT, out, phases);
+                }
             }
             fences_rc = rc;
             if let Some(k) = fences.filter(|k| fences_rc == 0 && comp.suites_off() && !k.harness.is_empty()) {

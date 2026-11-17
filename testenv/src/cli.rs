@@ -3,7 +3,7 @@
 
 use crate::record::Mode;
 
-pub const USAGE: &str = "usage: testenv [--mode parallel|serial] [--suites <list|->] [--profile <p>] [--with-bins] [--direct] [--artifacts <dir>] [--deadline <secs>] [--repeat-reason <why>] [--tests <name>[,<name>...]] [--runner container|sandbox] [--record <path>] [--share-keep <key> | --share <key>] [--report [N]] <branch> [<repo-name>]";
+pub const USAGE: &str = "usage: testenv [--mode parallel|serial] [--suites <list|->] [--profile <p>] [--with-bins] [--direct] [--artifacts <dir>] [--deadline <secs>] [--repeat-reason <why>] [--tests <name>[,<name>...]] [--runner container|sandbox] [--record <path>] [--share-keep <key> | --share <key> | --share-publish <key>] [--report [N]] <branch> [<repo-name>]";
 
 /// Where the explicit suite list comes from.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,6 +44,8 @@ pub struct RunArgs {
     /// `--share-keep K` / `--share K`: run in the named share (a foreign repository's one
     /// checkout and overlay upper), leaving it for the next call or finishing it.
     pub share: Option<crate::foreign::Share>,
+    /// `--share-publish K`: run no tier; merge the share an earlier `--share-keep` left.
+    pub share_publish: Option<String>,
     pub branch: String,
     pub repo: Option<String>,
 }
@@ -86,6 +88,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
     let mut record: Option<String> = None;
     let mut share_keep: Option<String> = None;
     let mut share_end: Option<String> = None;
+    let mut share_publish: Option<String> = None;
     let mut i = 0;
     let parse_deadline = |v: &str| -> Result<u64, UsageError> {
         v.parse::<u64>()
@@ -118,7 +121,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
         let a = args[i].as_str();
         match a {
             "--mode" | "--suites" | "--profile" | "--deadline" | "--artifacts"
-            | "--repeat-reason" | "--tests" | "--runner" | "--record" | "--share-keep" | "--share" => {
+            | "--repeat-reason" | "--tests" | "--runner" | "--record" | "--share-keep" | "--share" | "--share-publish" => {
                 let v = args
                     .get(i + 1)
                     .cloned()
@@ -131,6 +134,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
                     "--record" => record = Some(v).filter(|p| !p.is_empty()),
                     "--share-keep" => share_keep = Some(v),
                     "--share" => share_end = Some(v),
+                    "--share-publish" => share_publish = Some(v),
                     "--repeat-reason" => repeat_reason = Some(v),
                     "--tests" => tests = Some(parse_tests(&v)?),
                     "--runner" => {
@@ -236,6 +240,10 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
             ]));
         }
     }
+    if share_publish.is_some() && (share_keep.is_some() || share_end.is_some()) {
+        return Err(err(&["batch: --share-publish is exclusive with --share and --share-keep: it finishes a kept share and runs no tier"]));
+    }
+    let share_publish = share_publish.map(|k| a_key("--share-publish", &k)).transpose()?;
     let share = match (share_keep, share_end) {
         (Some(_), Some(_)) => return Err(err(&["batch: --share and --share-keep are exclusive: a call either keeps its share or finishes it"])),
         (Some(k), None) => Some((a_key("--share-keep", &k)?, true)),
@@ -280,6 +288,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
         runner,
         record,
         share,
+        share_publish,
         branch,
         repo,
     })))
@@ -306,6 +315,16 @@ mod tests {
         let e = run(&["--share", "k", "b"]).share.unwrap();
         assert_eq!((e.key.as_str(), e.keep), ("k", false));
         assert_eq!(run(&["b"]).share, None);
+    }
+
+    #[test]
+    fn share_publish_parses_and_is_refused_beside_either_share_flag() {
+        assert_eq!(run(&["--share-publish", "k", "b"]).share_publish.as_deref(), Some("k"));
+        assert_eq!(run(&["b"]).share_publish, None);
+        for other in ["--share", "--share-keep"] {
+            let UsageError(lines) = p(&["--share-publish", "k", other, "k", "b"]).unwrap_err();
+            assert!(lines[0].contains("--share-publish") && lines[0].contains(other), "{lines:?}");
+        }
     }
 
     #[test]
