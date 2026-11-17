@@ -93,6 +93,8 @@ pub struct Settings {
     pub sandbox_target_root: String,
     /// sp-7p5la8: the most branch targets the sandbox keeps (`SPIRA_TESTENV_SANDBOX_TARGET_KEEP`).
     pub sandbox_target_keep: usize,
+    /// Task limit of each container testenv starts (`SPIRA_TESTENV_PIDS_LIMIT`).
+    pub pids_limit: u64,
     /// sp-ejhs5j: a foreign repository's warm target larger than this many GiB after a merge is
     /// removed (`SPIRA_TESTENV_FOREIGN_TARGET_MAX_GIB`; 0 = no cutoff).
     pub foreign_target_max_gib: u64,
@@ -246,6 +248,7 @@ impl Settings {
                 .map_err(|e| format!("SPIRA_TESTENV_UNIT_RUNNER {e}"))?,
             sandbox_target_root: cfg("SPIRA_TESTENV_SANDBOX_TARGET_ROOT")?,
             sandbox_target_keep: cfg_parse("SPIRA_TESTENV_SANDBOX_TARGET_KEEP")?,
+            pids_limit: cfg_parse("SPIRA_TESTENV_PIDS_LIMIT")?,
             foreign_target_max_gib: cfg_parse("SPIRA_TESTENV_FOREIGN_TARGET_MAX_GIB")?,
             foreign_target_idle_hours: cfg_parse("SPIRA_TESTENV_FOREIGN_TARGET_IDLE_HOURS")?,
             scratch_root: crate::worktree::scratch_root(&cfg(crate::worktree::SCRATCH_ROOT_KEY)?)?,

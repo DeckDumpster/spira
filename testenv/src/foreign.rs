@@ -495,6 +495,7 @@ pub struct TierRun<'a> {
     /// The host's cores, split across the tiers a run starts together.
     pub cores: usize,
     pub concurrent: usize,
+    pub pids_limit: u64,
 }
 
 impl TierRun<'_> {
@@ -545,6 +546,7 @@ impl TierRun<'_> {
             deadline: self.deadline,
             output: self.results.join(format!("{name}.log")),
             cpus: Some(share.to_string()),
+            pids_limit: Some(self.pids_limit),
         };
         let rc = self.rt.run_once(&req).rc;
         self.rt.purge(&cname);
@@ -745,6 +747,36 @@ mod tests {
         assert_eq!(d.image_for("b"), "n");
         let e = Decl::parse("image = \"r\"\n[tier.a]\nargv=[\"x\"]\nimage = \" \"\n").unwrap_err();
         assert!(e.contains("tier a: image is empty"), "{e}");
+    }
+
+    #[test]
+    fn a_foreign_tier_runs_under_the_configured_pids_limit() {
+        let root = testkit::TempDir::new("foreign-pids");
+        let tree = testkit::TempDir::new("foreign-pids-tree");
+        let results = testkit::TempDir::new("foreign-pids-results");
+        let cache = Cache::new(root.path(), "r");
+        let decl = Decl::parse("image = \"i\"\n[tier.a]\nargv=[\"x\"]\n").unwrap();
+        let rt = crate::fixture::fake::FakeRuntime::new();
+        let log = |_: &str| {};
+        let run = TierRun {
+            cache: &cache,
+            rt: &rt,
+            decl: &decl,
+            tree: tree.path(),
+            results: results.path(),
+            key: "k",
+            deadline: None,
+            log: &log,
+            cores: 4,
+            concurrent: 1,
+            pids_limit: 12345,
+        };
+        run.run("a");
+        let calls = rt.once_calls.lock().unwrap();
+        assert_eq!(calls.len(), 1, "the tier ran once");
+        let args = crate::runtime::podman_run_args(&calls[0]);
+        let i = args.iter().position(|a| a == crate::runtime::PIDS_LIMIT_FLAG).unwrap_or_else(|| panic!("{args:?}"));
+        assert_eq!(args[i + 1], "12345");
     }
 
     #[test]
