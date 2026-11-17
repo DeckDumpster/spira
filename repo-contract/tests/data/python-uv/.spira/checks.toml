@@ -1,0 +1,4 @@
+[[check]]
+name = "ruff"
+run = "uv run ruff check src/"
+budget_ms = 300000

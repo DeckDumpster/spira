@@ -1,0 +1,19 @@
+# What `repo-contract scaffold` may put in a repo's flake: a program a check row invokes, and
+# the nixpkgs attribute that provides it. A program not named here is refused, never guessed.
+[tools]
+uv = "uv"
+ruff = "ruff"
+jq = "jq"
+node = "nodejs_22"
+npm = "nodejs_22"
+make = "gnumake"
+git = "git"
+bash = "bash"
+
+# Programs a pin file already provides, so a row naming one needs no row in [tools].
+[provided]
+rust = ["cargo", "rustc", "rustfmt", "cargo-fmt", "cargo-clippy", "clippy-driver", "rustdoc"]
+python = ["python", "python3"]
+
+[rust-overlay]
+rev = "2ff7d39b901d79ee26d26f9fa32f90511eecaa0e"

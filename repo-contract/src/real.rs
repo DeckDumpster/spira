@@ -16,11 +16,11 @@ impl Real {
         Ok(Real { reg: Registry::from_env_checkout(std::env::vars().collect(), &home) })
     }
 
-    fn root(&self, repo: &str) -> Result<PathBuf, String> {
+    pub fn root(&self, repo: &str) -> Result<PathBuf, String> {
         self.reg.root(repo).map(PathBuf::from).ok_or_else(|| format!("{repo} is not in the repo registry"))
     }
 
-    fn land(&self, repo: &str) -> Result<String, String> {
+    pub fn land(&self, repo: &str) -> Result<String, String> {
         repos::landref(&self.reg, repo).ok_or_else(|| format!("{repo}'s landing ref does not resolve"))
     }
 
