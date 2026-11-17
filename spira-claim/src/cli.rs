@@ -937,14 +937,17 @@ struct Viewed {
 /// nothing here judges in its place.
 fn viewed(a: &Args, env: &Env, st: &Store) -> Result<Viewed, String> {
     let view = st.claim_view()?;
-    let ids: Vec<String> = view.iter().filter(|v| v.verdict == verdicts::Kind::Claimable).map(|v| v.id.clone()).collect();
     let (scope, no_loop) = (scope_label(a, env), no_loop_label(a, env));
-    let mut rows: Vec<rank::ReadyRow> = if ids.is_empty() { Vec::new() } else { st.items_by_ids(&ids)? };
-    rows.retain(|r| ids.contains(&r.id) && ready::in_scope(r, &scope, &no_loop));
+    let mut rows: Vec<rank::ReadyRow> = Vec::new();
+    for v in view.iter().filter(|v| v.verdict == verdicts::Kind::Claimable) {
+        let content = v.content.clone().ok_or_else(|| format!("spira-lc claimable: {} carried no content: the plan row could not be read", v.id))?;
+        rows.push(content);
+    }
+    rows.retain(|r| ready::in_scope(r, &scope, &no_loop));
     retain_unstopped(&mut rows, std::path::Path::new(&env.config.run));
     retain_unoccupied(&mut rows, std::path::Path::new(system_paths::PROC), std::path::Path::new(&env.config.run));
     rows.sort_by(|x, y| x.id.cmp(&y.id));
-    let express = st.express_ids()?;
+    let express = view.iter().filter(|v| v.express).map(|v| v.id.clone()).collect();
     let runes = view.iter().map(|v| (v.id.clone(), v.runes.clone())).collect();
     let lifecycle = view.into_iter().map(|v| (v.id, v.lifecycle)).collect();
     Ok(Viewed { rows, runes, lifecycle, express })

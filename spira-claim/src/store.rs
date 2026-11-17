@@ -199,7 +199,13 @@ impl Store {
     pub fn lifecycle_of(&self, ids: &[String]) -> Result<HashMap<String, LifecycleRow>, String> {
         let mut out = HashMap::new();
         for chunk in ids.chunks(EVENT_CHUNK) {
-            out.extend(self.lc_list(&["--ids", &chunk.join(",")], false)?);
+            out.extend(self.lc_list(&["--ids", &chunk.join(",")], true)?);
+        }
+        let unheld: Vec<String> = ids.iter().filter(|i| !out.contains_key(*i)).cloned().collect();
+        if self.views.is_some() {
+            for chunk in unheld.chunks(EVENT_CHUNK) {
+                out.extend(self.lc_list(&["--ids", &chunk.join(",")], false)?);
+            }
         }
         Ok(out)
     }
@@ -220,7 +226,12 @@ impl Store {
                 let verdict = crate::verdicts::Kind::from_word(word).ok_or_else(|| format!("spira-lc claimable: {id} has the verdict {word:?}, which this build does not know"))?;
                 let runes = b["runes"].as_array().map(|r| r.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default();
                 let lifecycle = lifecycle.remove(&id).ok_or_else(|| format!("spira-lc claimable: {id} has no row"))?;
-                Ok(ViewRow { id, verdict, runes, lifecycle })
+                let content = match b.get("content").filter(|c| !c.is_null()) {
+                    Some(c) => Some(rank::parse_ready(&c.to_string()).map_err(|e| format!("spira-lc claimable: {id}: {e}"))?.remove(0)),
+                    None => None,
+                };
+                let express = rank::express_ids(&serde_json::Value::Array(vec![b["row"].clone()]).to_string())?.contains(&id);
+                Ok(ViewRow { id, verdict, runes, lifecycle, content, express })
             })
             .collect()
     }
@@ -323,6 +334,9 @@ pub struct ViewRow {
     pub verdict: crate::verdicts::Kind,
     pub runes: Vec<String>,
     pub lifecycle: LifecycleRow,
+    /// The plan row `claimable` carried: what ranking and scope read.
+    pub content: Option<ReadyRow>,
+    pub express: bool,
 }
 
 /// The condition key a refused readiness publish raises.
@@ -462,8 +476,10 @@ mod tests {
         assert_eq!(ready.keys().cloned().collect::<std::collections::BTreeSet<_>>(), ["sp-a".to_string(), "sp-c".to_string()].into());
         assert_eq!(st.express_ids().unwrap(), ["sp-a".to_string()].into());
         assert!(t.seen.lock().unwrap().is_empty(), "the held view answered: {:?}", t.seen.lock().unwrap());
-        st.lifecycle_of(&["sp-a".into()]).unwrap();
-        assert_eq!(t.seen.lock().unwrap()[0], ["list", "--ids", "sp-a"]);
+        assert!(st.lifecycle_of(&["sp-a".into()]).unwrap().contains_key("sp-a"));
+        assert!(t.seen.lock().unwrap().is_empty(), "a held row is not asked of the socket");
+        st.lifecycle_of(&["sp-a".into(), "sp-z".into()]).unwrap();
+        assert_eq!(*t.seen.lock().unwrap(), [vec!["list", "--ids", "sp-z"]], "only the id the view does not hold is asked");
     }
 
     #[test]

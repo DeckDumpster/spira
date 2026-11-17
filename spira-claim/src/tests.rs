@@ -321,8 +321,8 @@ mod claim_view_read {
                 ["claimable"] => (
                     0,
                     json!({ "rev": 1, "cannot_tell": 0, "beads": [
-                        { "bead_id": "sp-a", "verdict": "claimable", "blocker": null, "runes": ["builder"], "row": row("sp-a", "READY") },
-                        { "bead_id": "sp-b", "verdict": "blocked", "blocker": "sp-a", "runes": [], "row": row("sp-b", "READY") },
+                        { "bead_id": "sp-a", "verdict": "claimable", "blocker": null, "runes": ["builder"], "row": row("sp-a", "READY"), "content": item("sp-a") },
+                        { "bead_id": "sp-b", "verdict": "blocked", "blocker": "sp-a", "runes": [], "row": row("sp-b", "READY"), "content": item("sp-b") },
                     ] })
                     .to_string(),
                     String::new(),
@@ -365,6 +365,23 @@ mod claim_view_read {
 
     fn seen(svc: &Double) -> Vec<String> {
         svc.seen.lock().unwrap().iter().map(|a| a.join(" ")).collect()
+    }
+
+    #[test]
+    fn every_reader_of_the_view_makes_one_claimable_call_and_nothing_else() {
+        let a = Args::parse(&[]).unwrap();
+        type Read = fn(&Args, &mut Env, &Store);
+        let readers: [(&str, Read); 4] = [
+            ("ready-count", |a, env, st| drop(ready_count_over(a, env, st))),
+            ("urgent", |a, env, st| drop(urgent_over(a, env, st).unwrap())),
+            ("rune-ready", |a, env, st| drop(claimable_over(a, env, st).unwrap())),
+            ("bulk-ready-by-rune", |a, env, st| drop(viewed(a, env, st).unwrap())),
+        ];
+        for (name, read) in readers {
+            let (svc, st) = setup(0);
+            env_over(|env| read(&a, env, &st));
+            assert_eq!(seen(&svc), ["claimable"], "{name}");
+        }
     }
 
     #[test]
