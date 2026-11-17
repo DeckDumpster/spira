@@ -6,6 +6,8 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use runtime::taskrig::{assert_deterministic, effects_runnable, TaskRig};
+use runtime::event::EventKind;
+use spira_runtime::tasks::a::batcher_local;
 use spira_runtime::tasks::d::acceptance as acc;
 use spira_runtime::tasks::e::watch_transitions::*;
 use spira_runtime::watchers::INBOX_APPEND;
@@ -36,7 +38,7 @@ fn config() -> Config {
 }
 
 fn bead(id: &str, repo: &str, state: &str, since: u64) -> Bead {
-    Bead { id: id.into(), repo: repo.into(), state: state.into(), since, ask_held: false, ask_since: None, held: false, tip: None, landed: false, gate: None }
+    Bead { id: id.into(), repo: repo.into(), state: state.into(), since, ask_held: false, ask_since: None, held: false, tip: None, landed: false, gate: None, waits_on: None }
 }
 
 fn last(repo: &str, kinds: &[(&str, u64)]) -> BTreeMap<String, BTreeMap<String, u64>> {
@@ -1321,4 +1323,89 @@ fn mark_gated_sets_a_gate_on_submitted_beads_only_and_clears_a_stale_one() {
     let found = cut_stalls(&s, now);
     assert_eq!(found.len(), 1);
     assert!(found[0].evidence.contains("oldest uncovered: sp-c1 CERTIFIED") || found[0].evidence.contains("oldest uncovered: sp-gone"), "{}", found[0].evidence);
+}
+
+fn dependency_page_world(now: u64) -> Snapshot {
+    let mut s = healthy(now);
+    let mut submitted = |id: &str, mins: u64| {
+        let mut b = bead(id, "spira", "SUBMITTED", now - mins * MIN);
+        b.gate = Some(Gating::Queued);
+        b
+    };
+    s.beads = vec![submitted("sp-s1", 51), submitted("sp-s2", 36), submitted("sp-s3", 20), bead("sp-um4jw9", "spira", "CERTIFIED", now - 54 * MIN)];
+    s.last = last("spira", &[("Claim", now - 18), ("Submit", now - 12 * MIN - 51), ("Cut", now - 17), ("Delivered", now - 24 * MIN - 42)]);
+    s.open_rounds = Some(rounds_in("spira", 0));
+    s.owners.clear();
+    s
+}
+
+fn dependency_rig(make: impl Fn(u64) -> Snapshot, carry: Option<&str>) -> TaskRig {
+    let w = Arc::new(Mutex::new(make(T0)));
+    let (_, stream, kind) = WatchTransitions::boot();
+    let mut r = TaskRig::new(1, WatchTransitions::new(gate_cfg()).registration()).unwrap().double(OBSERVE, move |input| {
+        let now = serde_json::from_str::<serde_json::Value>(input).unwrap()["now"].as_u64().unwrap();
+        let mut s = w.lock().unwrap().clone();
+        let shift = |t: u64| t + now - T0;
+        s.horizon = shift(s.horizon);
+        s.beads.iter_mut().for_each(|b| b.since = shift(b.since));
+        s.last.values_mut().flat_map(|k| k.values_mut()).for_each(|t| *t = shift(*t));
+        s.activated_at = s.activated_at.map(shift);
+        Ok(serde_json::to_string(&s).unwrap())
+    })
+    .double(INBOX_APPEND, |_| Ok("appended".into()));
+    r.advance(T0 * 1000).unwrap();
+    if let Some(body) = carry {
+        r.tick(batcher_local::STREAM, EventKind::new(batcher_local::STATE, body)).unwrap();
+    }
+    r.tick(stream, kind).unwrap();
+    r
+}
+
+const BLOCKED_CARRY: &str = r#"{"repos":{"spira":{"state":"Idle","blocked":{"sp-um4jw9":"sp-f0cw5z"}}}}"#;
+
+#[test]
+fn the_2026_11_17_page_does_not_fire_for_a_certified_bead_waiting_on_an_unlanded_dependency() {
+    let r = dependency_rig(dependency_page_world, Some(BLOCKED_CARRY));
+    assert_eq!(stalls(&r), Vec::<String>::new());
+    assert!(lines(&r).iter().any(|l| l.contains("WAIT ") && l.contains("sp-um4jw9 waiting on sp-f0cw5z")), "{:?}", lines(&r));
+}
+
+#[test]
+fn a_certified_bead_the_batcher_refused_for_a_dependency_is_not_a_cut_stall_and_an_unblocked_one_still_is() {
+    let now = T0;
+    let mut s = dependency_page_world(now);
+    mark_blocked(&mut s, &BTreeMap::from([("sp-um4jw9".to_string(), "sp-f0cw5z".to_string())]));
+    assert_eq!(cut_stalls(&s, now), vec![]);
+    s.beads.push(bead("sp-c2", "spira", "CERTIFIED", now - 10 * MIN));
+    let found = cut_stalls(&s, now);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(found[0].evidence.contains("oldest uncovered: sp-c2"), "{}", found[0].evidence);
+    assert!(found[0].evidence.contains("sp-um4jw9 waiting on sp-f0cw5z"), "{}", found[0].evidence);
+    assert!(found[0].evidence.contains("oldest uncovered waited 10m") && !found[0].evidence.contains("no Cut for"), "{}", found[0].evidence);
+}
+
+#[test]
+fn a_submitted_bead_is_never_marked_as_waiting_on_a_dependency() {
+    let now = T0;
+    let mut s = dependency_page_world(now);
+    mark_blocked(&mut s, &BTreeMap::from([("sp-s1".to_string(), "sp-x".to_string())]));
+    assert!(s.beads.iter().all(|b| b.waits_on.is_none()));
+}
+
+#[test]
+fn a_real_cut_stall_still_pages_once() {
+    let mut r = dependency_rig(
+        |now| {
+            let mut s = dependency_page_world(now);
+            s.last = last("spira", &[("Claim", now - 18), ("Submit", now - 12 * MIN - 51), ("Cut", now - 6 * MIN), ("Delivered", now - 24 * MIN - 42)]);
+            s
+        },
+        None,
+    );
+    r.advance(300_000).unwrap();
+    let (_, stream, kind) = WatchTransitions::boot();
+    r.tick(stream, kind).unwrap();
+    let pages: Vec<String> = stalls(&r).into_iter().filter(|l| l.contains("P0 STALL SUBMITTED→IN_DELIVERY (spira)")).collect();
+    assert_eq!(pages.len(), 1, "{pages:?}");
+    assert!(pages[0].contains("sp-um4jw9 CERTIFIED") && pages[0].contains("(certified, not cut)"), "{}", pages[0]);
 }

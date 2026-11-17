@@ -1705,6 +1705,17 @@ fn sp_3uxw41_a_member_blocked_on_an_unlanded_dep_records_nothing_admissible() {
 }
 
 #[test]
+fn a_member_refused_for_an_unlanded_dep_is_carried_with_that_dep_and_one_whose_dep_is_not_a_blocker_is_not() {
+    let blocked = Member { deps: vec!["sp-base".into()], ..member("sp-a", "t1") };
+    let landed = Member { deps: vec!["sp-done".into()], ..member("sp-b", "t2") };
+    let s = Snapshot { repos: [("spira".to_string(), Repo { blockers: vec!["sp-base".into()], ..repo(vec![blocked, landed]) })].into(), now_ms: NOW };
+    let (carry, _) = decide(&Carry::default(), &s);
+    let json = serde_json::to_value(&carry).unwrap();
+    assert_eq!(json["repos"]["spira"]["blocked"]["sp-a"], "sp-base");
+    assert!(json["repos"]["spira"]["blocked"].get("sp-b").is_none(), "{json}");
+}
+
+#[test]
 fn sp_3uxw41_an_unblocked_sifted_member_with_no_round_open_is_admissible() {
     let s = Snapshot { repos: [("spira".to_string(), repo(vec![member("sp-a", "t1")]))].into(), now_ms: NOW };
     let (carry, _) = decide(&Carry::default(), &s);

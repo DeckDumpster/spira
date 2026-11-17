@@ -93,6 +93,18 @@ fn t5_a_certified_pool_is_fetched_then_assembled() {
     assert_eq!(carry.repos["deckdumpster"].state, State::Assembling);
 }
 
+/// A member refused for an unlanded prerequisite is carried with it, whether or not the pass cuts.
+#[test]
+fn a_member_refused_for_an_unlanded_dep_is_carried_with_that_dep() {
+    let blocked = Member { deps: vec!["dd-base".into()], ..certified("dd-a", "t1") };
+    let landed = Member { deps: vec!["dd-done".into()], ..certified("dd-b", "t2") };
+    let s = Snapshot { repos: [("deckdumpster".to_string(), Repo { blockers: vec!["dd-base".into()], ..repo(vec![blocked, landed]) })].into(), ..idle() };
+    let (carry, _) = decide(&Carry::default(), &s);
+    let json = serde_json::to_value(&carry).unwrap();
+    assert_eq!(json["repos"]["deckdumpster"]["blocked"]["dd-a"], "dd-base");
+    assert!(json["repos"]["deckdumpster"]["blocked"].get("dd-b").is_none(), "{json}");
+}
+
 /// A corpus leg's `unit.ran`, on this task's own stream, moves the repo at once; another
 /// task's run or a leg not carried changes nothing.
 #[test]

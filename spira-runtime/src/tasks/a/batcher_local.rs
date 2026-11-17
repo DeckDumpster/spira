@@ -555,6 +555,9 @@ pub struct RepoCarry {
     pub conflict_streaks: BTreeMap<String, (String, u32)>,
     #[serde(default)]
     pub held_keys: Vec<String>,
+    /// Pool members refused for an unlanded prerequisite, with the first one, as of the last pass.
+    #[serde(default)]
+    pub blocked: BTreeMap<String, String>,
     /// The round the machine is driving: its batch, members, tree and base.
     #[serde(default)]
     pub batch: Option<String>,
@@ -2255,7 +2258,14 @@ fn decide_repo(policy: &Policy, name: &str, rc: &RepoCarry, repo: &Repo, now_ms:
         live.push(m.rc.round());
     }
     let state = if live.is_empty() { m.rc.state } else { idle };
-    (RepoCarry::rebuilt(&m.rc, live, state), m.acts)
+    let mut rc = RepoCarry::rebuilt(&m.rc, live, state);
+    rc.blocked = blocked_of(repo);
+    (rc, m.acts)
+}
+
+/// Each pool member the cut refuses for an unlanded prerequisite, with the first one it names.
+pub fn blocked_of(repo: &Repo) -> BTreeMap<String, String> {
+    repo.pool.iter().filter_map(|m| m.core(&repo.blockers).blocked_by.into_iter().next().map(|dep| (m.id.clone(), dep))).collect()
 }
 
 /// Where `leg`'s round stands in `rc`: the index among its live rounds of the one the leg
