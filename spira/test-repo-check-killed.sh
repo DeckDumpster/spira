@@ -34,7 +34,7 @@ run() { env TMPDIR="$SCRATCH" SPIRA_RELEASE="$SPIRA_RELEASE" SPIRA_TOML="$CONF" 
 run "$RC" check fixture >/dev/null 2>&1 &
 pid=$!
 tree=""
-for _ in $(seq 1 600); do
+for _ in $(seq 1 300); do
     tree="$(ls -d "$RUN"/worktree/repo-check-*-* 2>/dev/null | head -1)"
     [ -n "$tree" ] && break
     sleep 0.1 # waits on the child's own marker directory appearing
