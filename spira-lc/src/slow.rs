@@ -19,24 +19,12 @@ thread_local! {
 struct Counters {
     verbs: BTreeMap<String, (u64, u64)>,
     tasks: BTreeMap<Key, (u64, u64)>,
-    past: BTreeMap<Key, Past>,
-    /// (holder, cut) -> (holds, ms), and what the last successful push carried.
-    holds: BTreeMap<(String, bool), (u64, u64)>,
-    holds_pushed: BTreeMap<(String, bool), (u64, u64)>,
-}
-
-/// What a key's reads behind the head came to since the last successful push.
-#[derive(Clone, Copy, Default, PartialEq, Debug)]
-struct Past {
-    too_old: u64,
-    max_revs: Option<u64>,
-    max_ms: Option<u64>,
 }
 
 /// (verb, caller, task): what a request is counted under.
 type Key = (String, String, String);
 
-static COUNTERS: Mutex<Counters> = Mutex::new(Counters { verbs: BTreeMap::new(), tasks: BTreeMap::new(), past: BTreeMap::new(), holds: BTreeMap::new(), holds_pushed: BTreeMap::new() });
+static COUNTERS: Mutex<Counters> = Mutex::new(Counters { verbs: BTreeMap::new(), tasks: BTreeMap::new() });
 
 /// How often the counts are pushed over OTLP.
 pub const METRICS_EVERY: Duration = Duration::from_secs(60);
@@ -134,46 +122,6 @@ pub fn request_done(verb: &str, method: &str, caller: &str, task: Option<&str>, 
     }
     if !is_batch_method(method) && !is_long_poll(method) {
         append(took, &verb, &caller, "REQUEST");
-    }
-}
-
-/// One hold of the control store's commit-order lock over its limit: a row in the slow-query
-/// log whatever `SPIRA_SLOW_QUERY_MS` says, and a count by holder.
-pub fn order_hold(h: &state_store::model::Hold) {
-    let ms = |d: Duration| d.as_millis();
-    let (holder, caller) = (clean(&h.verb), clean(&h.caller));
-    if let Ok(mut c) = COUNTERS.lock() {
-        let e = c.holds.entry((holder.clone(), h.cut)).or_default();
-        e.0 += 1;
-        e.1 += h.hold.as_millis() as u64;
-    }
-    let row = format!(
-        "{}\t{holder}\t{caller}\t{}\tORDER-HOLD\tcatch_up_ms={}\twriter_wait_ms={}\tcommit_ms={}\tcheckpointed={}\tapply_ms={}\treload_ms={}\twrites={}\tcut={}\n",
-        crate::db::now_epoch(),
-        ms(h.hold),
-        ms(h.catch_up),
-        ms(h.writer_wait),
-        ms(h.commit),
-        h.checkpointed,
-        ms(h.apply),
-        ms(h.reload),
-        h.writes,
-        h.cut,
-    );
-    write_row(&row);
-}
-
-/// Counts one request's reads behind the head under its key; a request that read none adds nothing.
-pub fn past_read_done(verb: &str, caller: &str, task: Option<&str>, lag_revs: Option<u64>, lag_ms: Option<u64>, too_old: bool) {
-    if lag_revs.is_none() && lag_ms.is_none() && !too_old {
-        return;
-    }
-    let key = (clean(verb), clean(caller), clean(task.unwrap_or("")));
-    if let Ok(mut c) = COUNTERS.lock() {
-        let p = c.past.entry(key).or_default();
-        p.too_old += u64::from(too_old);
-        p.max_revs = p.max_revs.max(lag_revs);
-        p.max_ms = p.max_ms.max(lag_ms);
     }
 }
 
@@ -275,29 +223,6 @@ fn series_since(c: &Counters, pushed: &BTreeMap<Key, (u64, u64)>, at: std::time:
         out.push(series("spira_lc_requests", (n - pn) as f64));
         out.push(series("spira_lc_request_seconds", (ms - pms) as f64 / 1000.0));
     }
-    for (key, p) in &c.past {
-        let labels = vec![("verb".to_string(), key.0.clone()), ("caller".to_string(), key.1.clone()), ("task".to_string(), key.2.clone())];
-        let series = |name: &str, value: f64| spira_otel::metrics::Series { name: name.into(), value, labels: labels.clone(), at };
-        if p.too_old > 0 {
-            out.push(series("spira_lc_store_too_old", p.too_old as f64));
-        }
-        if let Some(v) = p.max_revs {
-            out.push(series("spira_lc_store_lag_revs_max", v as f64));
-        }
-        if let Some(v) = p.max_ms {
-            out.push(series("spira_lc_store_lag_ms_max", v as f64));
-        }
-    }
-    for ((holder, cut), &(n, ms)) in &c.holds {
-        let (pn, pms) = c.holds_pushed.get(&(holder.clone(), *cut)).copied().unwrap_or_default();
-        if n == pn {
-            continue;
-        }
-        let labels = vec![("holder".to_string(), holder.clone()), ("cut".to_string(), cut.to_string())];
-        let series = |name: &str, value: f64| spira_otel::metrics::Series { name: name.into(), value, labels: labels.clone(), at };
-        out.push(series("spira_lc_order_holds", (n - pn) as f64));
-        out.push(series("spira_lc_order_hold_seconds", (ms - pms) as f64 / 1000.0));
-    }
     out
 }
 
@@ -305,31 +230,29 @@ fn series_since(c: &Counters, pushed: &BTreeMap<Key, (u64, u64)>, at: std::time:
 /// counters are not locked during the post.
 pub fn push_counts(sink: &spira_otel::metrics::MetricsSink, pushed: &mut BTreeMap<Key, (u64, u64)>) {
     let Ok(c) = COUNTERS.lock() else { return };
-    let (series, now, past, holds) = (series_since(&c, pushed, std::time::SystemTime::now()), c.tasks.clone(), c.past.clone(), c.holds.clone());
+    let (series, now) = (series_since(&c, pushed, std::time::SystemTime::now()), c.tasks.clone());
     drop(c);
     if !series.is_empty() && sink.try_push_series(&series).is_ok() {
         *pushed = now;
-        if let Ok(mut c) = COUNTERS.lock() {
-            c.holds_pushed = holds;
-            c.past = settle(std::mem::take(&mut c.past), &past);
-        }
     }
 }
 
-/// `now` less what `sent` carried: counts are subtracted and a maximum is cleared only when
-/// nothing larger arrived since, so a read made during the push is reported by the next one.
-fn settle(now: BTreeMap<Key, Past>, sent: &BTreeMap<Key, Past>) -> BTreeMap<Key, Past> {
-    now.into_iter()
-        .filter_map(|(k, p)| {
-            let s = sent.get(&k).copied().unwrap_or_default();
-            let left = Past {
-                too_old: p.too_old - s.too_old,
-                max_revs: p.max_revs.filter(|v| Some(*v) != s.max_revs),
-                max_ms: p.max_ms.filter(|v| Some(*v) != s.max_ms),
-            };
-            (left != Past::default()).then_some((k, left))
-        })
-        .collect()
+/// Resident bytes from a `/proc/<pid>/status` text: its `VmRSS` line, which the kernel reports
+/// in kB, so no page size is assumed.
+fn rss_bytes_of(status: &str) -> Option<u64> {
+    let kb = status.lines().find_map(|l| l.strip_prefix("VmRSS:"))?.trim().strip_suffix("kB")?.trim().parse::<u64>().ok()?;
+    Some(kb * 1024)
+}
+
+/// Pushes this process's resident memory as the gauge `spira_lc_rss_bytes`.
+pub fn push_rss(sink: &spira_otel::metrics::MetricsSink) {
+    let Some(bytes) = std::fs::read_to_string(format!("{}/status", system_paths::PROC_SELF)).ok().as_deref().and_then(rss_bytes_of) else { return };
+    sink.push(&[spira_otel::metrics::Point::Gauge { name: "spira_lc_rss_bytes", value: bytes as f64 }], &[]);
+}
+
+/// Pushes the start-up total, once, as the gauge `spira_lc_ready_ms`.
+pub fn push_ready(sink: &spira_otel::metrics::MetricsSink, ready_ms: u64) {
+    sink.push(&[spira_otel::metrics::Point::Gauge { name: "spira_lc_ready_ms", value: ready_ms as f64 }], &[]);
 }
 
 pub fn set_verb(verb: &str) {
@@ -404,13 +327,10 @@ fn append(took: Duration, verb: &str, caller: &str, sql: &str) {
     if took < threshold() {
         return;
     }
-    write_row(&line(crate::db::now_epoch(), verb, caller, took, sql));
-}
-
-fn write_row(row: &str) {
     let Some(path) = log_path() else { return };
+    let l = line(crate::db::now_epoch(), verb, caller, took, sql);
     if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
-        let _ = f.write_all(row.as_bytes());
+        let _ = f.write_all(l.as_bytes());
     }
 }
 
@@ -552,42 +472,6 @@ mod tests {
     }
 
     #[test]
-    fn an_order_hold_is_logged_with_its_split_whatever_the_slow_query_threshold_and_counted_by_holder() {
-        let d = testkit::TempDir::new("slow-hold");
-        let log = d.join("s.log");
-        let _env = testkit::env(&[("SPIRA_SLOW_QUERY_LOG", Some(log.to_str().unwrap())), ("SPIRA_SLOW_QUERY_MS", Some("100000"))]);
-        let ms = Duration::from_millis;
-        order_hold(&state_store::model::Hold {
-            verb: "hold-probe".into(),
-            caller: "who".into(),
-            hold: ms(620),
-            catch_up: ms(5),
-            writer_wait: ms(7),
-            commit: ms(600),
-            checkpointed: true,
-            apply: ms(8),
-            reload: ms(0),
-            writes: 3,
-            cut: true,
-        });
-        let got = std::fs::read_to_string(&log).unwrap();
-        let f: Vec<&str> = got.trim_end().split('\t').collect();
-        assert_eq!(f[1..], ["hold-probe", "who", "620", "ORDER-HOLD", "catch_up_ms=5", "writer_wait_ms=7", "commit_ms=600", "checkpointed=true", "apply_ms=8", "reload_ms=0", "writes=3", "cut=true"]);
-        let c = COUNTERS.lock().unwrap();
-        let got: Vec<(String, f64)> = series_since(&c, &BTreeMap::new(), std::time::SystemTime::now())
-            .into_iter()
-            .filter(|s| s.labels.contains(&("holder".to_string(), "hold-probe".to_string())) && s.labels.contains(&("cut".to_string(), "true".to_string())))
-            .map(|s| (s.name, s.value))
-            .collect();
-        assert_eq!(got, [("spira_lc_order_holds".to_string(), 1.0), ("spira_lc_order_hold_seconds".to_string(), 0.62)]);
-        drop(c);
-        let mut c = COUNTERS.lock().unwrap();
-        c.holds_pushed = c.holds.clone();
-        let again = series_since(&c, &BTreeMap::new(), std::time::SystemTime::now());
-        assert!(again.iter().all(|s| s.name != "spira_lc_order_holds"), "a pushed hold is not pushed twice");
-    }
-
-    #[test]
     fn series_carry_verb_caller_and_task_and_only_the_delta() {
         let mut c = Counters::default();
         let key = ("v".to_string(), "who".to_string(), "asks".to_string());
@@ -613,43 +497,11 @@ mod tests {
     }
 
     #[test]
-    fn past_reads_are_pushed_as_a_count_and_interval_maxima_and_a_quiet_key_pushes_none() {
-        let probe = |name: &str| {
-            let labels = [("verb", "watch"), ("caller", "past-probe"), ("task", "-")];
-            let c = COUNTERS.lock().unwrap();
-            series_since(&c, &BTreeMap::new(), std::time::SystemTime::now())
-                .into_iter()
-                .filter(|s| s.name == name && labels.iter().all(|(k, v)| s.labels.contains(&(k.to_string(), v.to_string()))))
-                .map(|s| s.value)
-                .collect::<Vec<_>>()
-        };
-        request_done("watch", "watch", "past-probe", None, Duration::from_millis(1));
-        past_read_done("watch", "past-probe", None, Some(9000), Some(5), true);
-        past_read_done("watch", "past-probe", None, Some(7), None, false);
-        past_read_done("watch", "past-probe", None, None, None, false);
-        assert_eq!(probe("spira_lc_store_too_old"), [1.0]);
-        assert_eq!(probe("spira_lc_store_lag_revs_max"), [9000.0]);
-        assert_eq!(probe("spira_lc_store_lag_ms_max"), [5.0]);
-        let unreachable = spira_otel::metrics::MetricsSink::new(None, "spira-lc", Duration::from_millis(1));
-        push_counts(&unreachable, &mut BTreeMap::new());
-        assert_eq!(probe("spira_lc_store_too_old"), [1.0], "a failed push keeps the interval");
-    }
-
-    #[test]
-    fn a_too_old_answer_with_no_audit_record_counts_without_a_lag_in_ms() {
-        past_read_done("watch", "no-record-probe", None, Some(3), None, true);
-        let c = COUNTERS.lock().unwrap();
-        let got = series_since(&c, &BTreeMap::new(), std::time::SystemTime::now());
-        let mine = |n: &str| got.iter().filter(|s| s.name == n && s.labels.contains(&("caller".into(), "no-record-probe".into()))).count();
-        assert_eq!((mine("spira_lc_store_too_old"), mine("spira_lc_store_lag_revs_max"), mine("spira_lc_store_lag_ms_max")), (1, 1, 0));
-    }
-
-    #[test]
-    fn a_past_read_made_during_a_push_survives_it() {
-        let key = ("v".to_string(), "c".to_string(), "-".to_string());
-        let sent = BTreeMap::from([(key.clone(), Past { too_old: 1, max_revs: Some(9), max_ms: Some(4) })]);
-        let now = BTreeMap::from([(key.clone(), Past { too_old: 2, max_revs: Some(20), max_ms: Some(4) })]);
-        assert_eq!(settle(now, &sent)[&key], Past { too_old: 1, max_revs: Some(20), max_ms: None });
+    fn resident_memory_is_read_from_the_vmrss_line_in_kb() {
+        assert_eq!(rss_bytes_of("Name:\tspira-lc\nVmRSS:\t  2048 kB\nThreads:\t4\n"), Some(2048 * 1024));
+        assert_eq!(rss_bytes_of("Name:\tx\n"), None);
+        let own = std::fs::read_to_string(format!("{}/status", system_paths::PROC_SELF)).unwrap();
+        assert!(rss_bytes_of(&own).is_some_and(|b| b > 0), "this process's own status names its resident size");
     }
 
     #[test]

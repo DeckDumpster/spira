@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use runtime::ports::Clock;
-use state_store::{Config, Contract, Modeled, MonotonicClock, Ports};
+use state_store::{Config, Contract, MonotonicClock, Ports};
 use state_store_sqlite::{Options, SqliteBackend};
 
 use super::store::Store;
@@ -55,48 +55,17 @@ impl Clock for Wall {
     }
 }
 
-/// The store as this process opens it: SQLite under an in-memory copy of everything but the
-/// keyspaces that grow without bound, kept by the store's own commits ([`Modeled`]), so an
-/// observer's read never waits on the database and a compare-and-set stays SQLite's.
-pub type Served = Modeled<SqliteBackend>;
+/// The store as this process opens it: SQLite alone, every read served from it.
+pub type Served = SqliteBackend;
 
-/// What the copy leaves to SQLite: the audit history, each record's history entries and the
-/// request keys, which grow with every write and which only `history`, `event-seq`, a watch
-/// and a retry's idempotency check read.
-pub const UNMODELED: &[&str] = &[
-    state_store::EVENTS_PREFIX,
-    state_store::REQUESTS_PREFIX,
-    super::keys::HISTORY,
-];
-
-/// Revisions behind the head the copy still answers a snapshot read at: a list paging one
-/// snapshot while this many commits land keeps reading from memory.
-pub const MODEL_WINDOW: u64 = 1_024;
-
-/// The longest the cold read-model build may read: it scans every modeled key once, which a
-/// cold page cache stretches well past the steady-state read limit.
-const BUILD_READ_MS: u64 = 120_000;
-
-/// The store's backend under a read model built within `build_ms`, then held to `opts`' own limit.
-fn modeled(path: &str, opts: Options, build_ms: u64) -> Result<Served, String> {
+fn backend_at(path: &str, opts: Options) -> Result<Served, String> {
     // Opening creates a missing file, which would answer every read as an empty store.
     if !Path::new(path).is_file() {
         return Err(format!("no control store at {path}"));
     }
-    let steady = opts.max_read_ms;
     let began = std::time::Instant::now();
-    let backend = SqliteBackend::open(Path::new(path), Options { max_read_ms: build_ms.max(steady), ..opts })
-        .map_err(|e| format!("{path}: {e}"))?;
-    eprintln!("{}", crate::serve::startup_line("read-model open-sqlite", began.elapsed(), crate::serve::wall_ms()));
-    let built = std::time::Instant::now();
-    let backend = Modeled::open(backend, UNMODELED, MODEL_WINDOW)
-        .map_err(|e| format!("{path}: the read model: {e}"))?
-        .report_holds(
-            std::time::Duration::from_millis(crate::slow::P95_LIMIT_MS),
-            Arc::new(|h: &state_store::model::Hold| crate::slow::order_hold(h)),
-        );
-    eprintln!("{}", crate::serve::startup_line("read-model build-from-rows", built.elapsed(), crate::serve::wall_ms()));
-    backend.inner().set_max_read_ms(steady);
+    let backend = SqliteBackend::open(Path::new(path), opts).map_err(|e| format!("{path}: {e}"))?;
+    eprintln!("{}", crate::serve::startup_line("open-sqlite", began.elapsed(), crate::serve::wall_ms()));
     Ok(backend)
 }
 
@@ -104,7 +73,7 @@ fn open(path: &str) -> Result<Store<Served>, String> {
     let history_bytes = spira_config::process::cfg_parse::<usize>("SPIRA_LC_HISTORY_RING_BYTES")?;
     let endpoint = spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok();
     let metrics = Some(spira_otel::metrics::MetricsSink::new(endpoint.as_deref(), "spira-lc", std::time::Duration::from_millis(250)));
-    let backend = modeled(path, Options { history_bytes, wall: Arc::new(Wall), metrics, ..Options::default() }, BUILD_READ_MS)?;
+    let backend = backend_at(path, Options { history_bytes, wall: Arc::new(Wall), metrics, ..Options::default() })?;
     let floor = lock_floor_ms()?;
     let ports = Ports {
         mono: Arc::new(MonotonicClock::new()),
@@ -142,7 +111,6 @@ fn opened(path: &str) -> Result<Arc<Store<Served>>, String> {
 /// first observer's read finds it built rather than building it inside its deadline.
 fn prime_dwell(s: Arc<Store<Served>>) {
     std::thread::spawn(move || {
-        let _holder = state_store::phases::holder_scoped("dwell-prime", "");
         for _ in 0..PRIME_CALLS {
             match s.dwell(spira_config::vtime::now_epoch() as i64, PRIME_WINDOW_S, None) {
                 Ok(d) if !d.complete => {}
@@ -348,50 +316,30 @@ fn dispatch_sections(args: &[String]) -> (i32, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use runtime::ports::VirtualClock;
 
-    fn slow_reads(steady_ms: u64) -> Options {
-        let clock = VirtualClock::new(0);
-        let tick = clock.clone();
-        Options {
-            max_read_ms: steady_ms,
-            clock: Arc::new(clock),
-            read_probe: Some(Arc::new(move || tick.advance(5 * steady_ms))),
-            ..Options::default()
-        }
-    }
-
-    fn seeded(tag: &str) -> (testkit::TempDir, String) {
+    fn steps_to_open(tag: &str, keys: usize) -> (u64, testkit::TempDir, Contract<Served>) {
         let dir = testkit::TempDir::new(tag);
         let path = dir.join("control.db");
         let seed = SqliteBackend::open(&path, Options::default()).unwrap();
-        seed.bulk_load(2, vec![("k".to_string(), b"v".to_vec())]).unwrap();
+        let rows: Vec<_> = (0..keys).map(|i| (format!("{}sp-{i:05}", crate::control::keys::LIFECYCLE), b"{}".to_vec())).collect();
+        seed.bulk_load(2, rows).unwrap();
         drop(seed);
-        let p = path.to_str().unwrap().to_string();
-        (dir, p)
+        let backend = backend_at(path.to_str().unwrap(), Options::default()).unwrap();
+        let clock = runtime::ports::VirtualClock::new(0);
+        let contract = Contract::open(backend, Ports::virtual_clock(&clock), Config { min_lock_ttl_ms: 1_000 }).unwrap();
+        (contract.backend().take_read_steps(), dir, contract)
     }
 
     #[test]
-    fn a_build_held_to_the_steady_read_limit_ends() {
-        let (_dir, p) = seeded("lc-served-steady");
-        let Err(err) = modeled(&p, slow_reads(1_000), 0) else { panic!("a build held to the steady limit must end") };
-        assert!(err.contains(state_store::READ_ENDED), "{err}");
-    }
-
-    #[test]
-    fn a_read_model_build_slower_than_the_steady_limit_opens_on_its_own_budget() {
-        let (_dir, p) = seeded("lc-served-budget");
-        let built = modeled(&p, slow_reads(1_000), BUILD_READ_MS).expect("the build has its own budget");
-        assert_eq!(built.size().0, 1);
-    }
-
-    #[test]
-    fn reads_after_the_build_are_held_to_the_steady_limit_again() {
-        let (_dir, p) = seeded("lc-served-after");
-        let built = modeled(&p, slow_reads(1_000), BUILD_READ_MS).unwrap();
-        let head = state_store::Backend::head(built.inner()).unwrap();
-        let later = state_store::Backend::get(built.inner(), "k", head).expect_err("a read after the build is held to the steady limit");
-        assert!(state_store_sqlite::is_read_ended(&later), "{later}");
+    fn opening_a_store_holding_20000_keys_reads_no_lifecycle_row() {
+        let (empty, _d, _c) = steps_to_open("lc-served-restart-empty", 0);
+        let (full, _dir, contract) = steps_to_open("lc-served-restart-full", 20_000);
+        assert_eq!(full, empty, "open reads the same few rows however many keys the file holds");
+        assert!(full < 100, "{full}");
+        let head = state_store::Backend::head(contract.backend()).unwrap();
+        let listed = state_store::Backend::range(contract.backend(), crate::control::keys::LIFECYCLE, None, 10, head).unwrap();
+        assert_eq!(listed.len(), 10);
+        assert!(contract.backend().take_read_steps() >= 10, "the counter sees a range read, so the low count above is real");
     }
 
     #[test]

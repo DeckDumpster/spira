@@ -13,11 +13,6 @@ name = "conformance_mem"
 path = "tests/conformance_mem.rs"
 required-features = ["integration"]
 
-[[test]]
-name = "conformance_model"
-path = "tests/conformance_model.rs"
-required-features = ["integration"]
-
 [features]
 integration = ["runtime/integration"]
 

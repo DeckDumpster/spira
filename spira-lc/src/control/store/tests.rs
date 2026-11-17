@@ -1302,3 +1302,58 @@ fn the_pending_verb_names_every_column_the_drain_reads() {
     assert_eq!(code, 0);
     assert_eq!(crate::control::gh_closeout::run(&s, &args(&["gh-closeout", "pending"]), "req-3").1, "[]");
 }
+
+mod on_sqlite {
+    use runtime::ports::VirtualClock;
+    use state_store::{Config, Contract, Ports};
+    use state_store_sqlite::{Options, SqliteBackend};
+
+    use super::super::Store;
+    use crate::control::state::{self, Call};
+
+    const AT: i64 = 1_767_225_600;
+
+    fn sqlite() -> (testkit::TempDir, Store<SqliteBackend>) {
+        let dir = testkit::TempDir::new("lc-sqlite-store");
+        let backend = SqliteBackend::open(&dir.join("control.db"), Options::default()).unwrap();
+        let clock = VirtualClock::new(AT as u64 * 1_000);
+        let contract = Contract::open(backend, Ports::virtual_clock(&clock), Config { min_lock_ttl_ms: super::FLOOR_MS }).unwrap();
+        (dir, Store::new(contract, super::FLOOR_MS))
+    }
+
+    fn ok(s: &Store<SqliteBackend>, argv: &[&str]) -> String {
+        let args: Vec<String> = argv.iter().map(|a| a.to_string()).collect();
+        let request = crate::control::served::request_id();
+        let (code, out) = state::run(s, &args, &Call { now: AT, request: &request, inputs: &crate::control::claimable::FIXED });
+        assert_eq!(code, 0, "{argv:?}: {out}");
+        out
+    }
+
+    fn claim(s: &Store<SqliteBackend>, id: &str) {
+        ok(s, &["event", "bead", id, "--expect", "READY", "--version", "0", "--actor", "t", "--kind", r#"{"Claim":{"holder":"dwarf-1","lease_until":1767229200}}"#]);
+    }
+
+    #[test]
+    fn a_show_and_a_list_in_the_same_thread_reflect_the_create_just_made_with_no_wait() {
+        let (_dir, s) = sqlite();
+        ok(&s, &["create-bead", "sp-a", "--repo", "spira", "--ready"]);
+        let shown: serde_json::Value = serde_json::from_str(&ok(&s, &["show", "sp-a"])).unwrap();
+        assert_eq!(shown["bead"]["state"], "READY", "{shown}");
+        let listed: Vec<serde_json::Value> = serde_json::from_str(&ok(&s, &["list", "--ids", "sp-a"])).unwrap();
+        assert_eq!(listed.iter().map(|r| r["bead_id"].as_str().unwrap()).collect::<Vec<_>>(), ["sp-a"]);
+        claim(&s, "sp-a");
+        let shown: serde_json::Value = serde_json::from_str(&ok(&s, &["show", "sp-a"])).unwrap();
+        assert_eq!(shown["bead"]["state"], "WORKING", "{shown}");
+    }
+
+    #[test]
+    fn a_list_row_and_a_show_carry_the_beads_builder_time_and_session_count() {
+        let (_dir, s) = sqlite();
+        ok(&s, &["create-bead", "sp-a", "--repo", "spira", "--ready"]);
+        claim(&s, "sp-a");
+        let listed: Vec<serde_json::Value> = serde_json::from_str(&ok(&s, &["list", "--live"])).unwrap();
+        assert_eq!((listed[0]["worked_s"].as_str(), listed[0]["sessions"].as_str()), (Some("0"), Some("1")));
+        let shown: serde_json::Value = serde_json::from_str(&ok(&s, &["show", "sp-a"])).unwrap();
+        assert_eq!(shown["bead"]["sessions"].as_str(), Some("1"), "{shown}");
+    }
+}

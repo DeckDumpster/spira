@@ -1767,37 +1767,6 @@ mod phase_tests {
     }
 
     #[test]
-    fn a_lock_taking_write_refused_at_the_order_lock_leaves_no_staged_expiry() {
-        use crate::model::Modeled;
-        use std::time::Instant;
-        let clock = VirtualClock::new(1_000_000);
-        let m = Modeled::open(Parked::new(), &[], 16).unwrap();
-        let c = Arc::new(Contract::open(m, Ports::virtual_clock(&clock), Config { min_lock_ttl_ms: 1_000 }).unwrap());
-        let (entered_tx, entered_rx) = mpsc::channel();
-        let (release_tx, release_rx) = mpsc::channel();
-        *c.backend().inner().before.lock().unwrap() = Some((entered_tx, release_rx));
-        let a = {
-            let c = c.clone();
-            std::thread::spawn(move || c.txn(&Txn::new().put("a", Object::new(serde_json::json!(1))), &Request::new("a", "t", "w")))
-        };
-        entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
-        let b = {
-            let c = c.clone();
-            std::thread::spawn(move || {
-                let _d = phases::deadline_scoped(Instant::now() + Duration::from_millis(20)); // clock-safe: monotonic deadline
-                c.txn(&Txn::new().lock_acquire("r", 5_000), &Request::new("b", "t", "w"))
-            })
-        };
-        std::thread::sleep(Duration::from_millis(50)); // clock-safe: lets the 20 ms deadline pass while B waits; the outcome is the same however late
-        release_tx.send(()).unwrap();
-        a.join().unwrap().unwrap();
-        assert_eq!(b.join().unwrap().unwrap_err(), Error::Deadline);
-        clock.advance(10_000);
-        assert!(!c.due(clock.now_ms()).contains(&format!("{LOCKS_PREFIX}r")), "the refused txn left its expiry staged");
-        assert!(c.get(&format!("{LOCKS_PREFIX}r")).unwrap().is_none());
-    }
-
-    #[test]
     fn a_plan_at_a_head_holding_a_renew_reads_the_lock_live_before_the_renew_returns() {
         let clock = VirtualClock::new(1_000_000);
         let c = Arc::new(Contract::open(Parked::new(), Ports::virtual_clock(&clock), Config { min_lock_ttl_ms: 1_000 }).unwrap());

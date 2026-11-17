@@ -1,7 +1,6 @@
 //! Where one request's time went inside the store. [`track`] installs a [`Recorder`] for the
-//! current thread, as `model::track` does for revisions; [`time`] and [`begin`] record into it
-//! and do nothing when none is installed, so the gc, the shipper and the sweep, which are never
-//! tracked, pay one thread-local read.
+//! current thread; [`time`] and [`begin`] record into it and do nothing when none is installed,
+//! so the gc, the shipper and the sweep, which are never tracked, pay one thread-local read.
 
 use std::cell::RefCell;
 use std::sync::{Arc, Mutex};
@@ -10,46 +9,31 @@ use std::time::{Duration, Instant};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Phase {
     DeadlinesWait,
-    OrderWait,
-    CatchUp,
     WriterWait,
     Commit,
     ReaderWait,
     Read,
-    MinRevWait,
-    Apply,
-    Reload,
 }
 
-const PHASES: usize = 10;
+const PHASES: usize = 5;
 
 impl Phase {
     pub fn name(self) -> &'static str {
         match self {
             Phase::DeadlinesWait => "deadlines_wait",
-            Phase::OrderWait => "order_wait",
-            Phase::CatchUp => "catch_up",
             Phase::WriterWait => "writer_wait",
             Phase::Commit => "commit",
             Phase::ReaderWait => "reader_wait",
             Phase::Read => "read",
-            Phase::MinRevWait => "min_rev_wait",
-            Phase::Apply => "apply",
-            Phase::Reload => "reload",
         }
     }
 
     const ALL: [Phase; PHASES] = [
         Phase::DeadlinesWait,
-        Phase::OrderWait,
-        Phase::CatchUp,
         Phase::WriterWait,
         Phase::Commit,
         Phase::ReaderWait,
         Phase::Read,
-        Phase::MinRevWait,
-        Phase::Apply,
-        Phase::Reload,
     ];
 }
 
