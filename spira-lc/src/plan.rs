@@ -431,8 +431,6 @@ fn lifecycle_seq(conn: &Conn) -> Result<u64, String> {
     Ok(rows.first().and_then(|r| r.get("seq")).and_then(|n| n.as_u64().or_else(|| n.as_str().and_then(|s| s.parse().ok()))).unwrap_or(0))
 }
 
-type Control = Arc<crate::control::store::Store<crate::control::served::Served>>;
-
 /// The control store's sequence and the revision it was read at. Before the key's first write
 /// it continues the lifecycle store's sequence, so moving onto the control store never moves
 /// the watermark back.
