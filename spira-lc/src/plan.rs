@@ -765,6 +765,24 @@ mod tests {
     }
 
     #[test]
+    fn plan_rows_are_held_under_the_watermark_and_an_absent_id_is_held_as_absent() {
+        let held: HeldItems = Mutex::new((None, BTreeMap::new()));
+        let asked = Mutex::new(Vec::<String>::new());
+        let fetch = |ids: &[&str]| -> Result<Vec<Value>, String> {
+            asked.lock().unwrap().push(ids.join(","));
+            Ok(ids.iter().filter(|i| **i != "sp-gone").map(|i| json!({ "id": i, "title": "t" })).collect())
+        };
+        assert_eq!(items_under(&held, Some(5), &["sp-a", "sp-gone"], &fetch).unwrap().len(), 1);
+        assert_eq!(items_under(&held, Some(5), &["sp-a", "sp-gone", "sp-b"], &fetch).unwrap().len(), 2);
+        assert_eq!(*asked.lock().unwrap(), ["sp-a,sp-gone", "sp-b"], "only the ids not yet held, the absent one among those held");
+        items_under(&held, Some(6), &["sp-a"], &fetch).unwrap();
+        assert_eq!(asked.lock().unwrap().len(), 3, "a new watermark empties the hold");
+        items_under(&held, None, &["sp-a"], &fetch).unwrap();
+        items_under(&held, None, &["sp-a"], &fetch).unwrap();
+        assert_eq!(asked.lock().unwrap().len(), 5, "no watermark holds nothing");
+    }
+
+    #[test]
     fn a_listings_titles_are_read_from_bd_once_per_planning_watermark() {
         let asked = std::cell::RefCell::new(Vec::<Vec<String>>::new());
         let bd = |ids: &[&str]| -> Result<Vec<(String, Titled)>, String> {

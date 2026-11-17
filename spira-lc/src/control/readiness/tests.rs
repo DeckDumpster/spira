@@ -507,6 +507,7 @@ struct Fixed {
     run: std::path::PathBuf,
     rowless: Vec<(String, String, String)>,
     fail: bool,
+    items_fail: bool,
 }
 
 impl crate::control::claimable::Inputs for Fixed {
@@ -529,6 +530,9 @@ impl crate::control::claimable::Inputs for Fixed {
     }
 
     fn items(&self, ids: &[String]) -> Result<Vec<Value>, String> {
+        if self.items_fail {
+            return Err("the content store is unreadable".into());
+        }
         Ok(ids
             .iter()
             .map(|id| json!({ "id": id, "title": format!("title of {id}"), "priority": 1, "issue_type": "task", "status": "open", "created_at": "2026-01-02T03:04:05Z", "defer_until": "2026-02-03T00:00:00Z", "dependencies": [{ "issue_id": id, "depends_on_id": "sp-w", "type": "blocks" }] }))
@@ -546,7 +550,7 @@ impl crate::control::claimable::Inputs for Fixed {
 
 impl Rig {
     fn claimable(&self, run: &std::path::Path, extra: &[&str]) -> Value {
-        self.claimable_with(Fixed { run: run.into(), rowless: Vec::new(), fail: false }, extra)
+        self.claimable_with(Fixed { run: run.into(), rowless: Vec::new(), fail: false, items_fail: false }, extra)
     }
 
     fn claimable_with(&self, inputs: Fixed, extra: &[&str]) -> Value {
@@ -605,6 +609,17 @@ fn claimable_carries_each_candidates_content_fields_the_ranking_reads() {
             assert!(!c[field].is_null(), "{id} lacks content field {field}: {c}");
         }
     }
+}
+
+#[test]
+fn an_unreadable_content_store_leaves_the_judgement_standing_and_says_why_in_the_reply() {
+    let r = Rig::new();
+    let run = testkit::TempDir::new("claimable-content-fail");
+    three_ready(&r);
+    let answer = r.claimable_with(Fixed { run: run.path().into(), rowless: Vec::new(), fail: false, items_fail: true }, &[]);
+    assert_eq!(answer["content_error"], "the content store is unreadable");
+    assert!(answer["beads"].as_array().unwrap().iter().all(|b| b["content"].is_null()));
+    assert_eq!(verdicts(&answer)[0], ("sp-a".to_string(), "claimable".to_string()));
 }
 
 #[test]
@@ -693,6 +708,7 @@ fn claimable_judges_a_rowless_gate_by_the_content_stores_status() {
         run: run.path().into(),
         rowless: vec![("sp-gate".into(), "gate".into(), status.into())],
         fail: false,
+        items_fail: false,
     };
     let verdict_of = |a: &Value| a["beads"][0]["verdict"].clone();
     assert_eq!(verdict_of(&r.claimable_with(with("open"), &[])), "blocked");
@@ -719,7 +735,7 @@ fn claimable_that_cannot_read_its_config_answers_cannot_tell_with_no_list() {
     let run = testkit::TempDir::new("claimable-fail");
     three_ready(&r);
     let call = Call { now: r.now(), request: "t/claimable", inputs: &crate::control::claimable::FIXED };
-    let inputs = Fixed { run: run.path().into(), rowless: Vec::new(), fail: true };
+    let inputs = Fixed { run: run.path().into(), rowless: Vec::new(), fail: true, items_fail: false };
     let (code, out) = crate::control::claimable::run(&r.store, &["claimable".to_string()], &inputs, &call);
     assert_eq!(code, crate::CANNOT_TELL);
     assert!(out.starts_with("cannot tell: claimable: ") && !out.contains("beads"), "{out}");

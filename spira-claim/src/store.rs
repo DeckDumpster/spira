@@ -228,6 +228,7 @@ impl Store {
     fn claim_view_asked(&self) -> Result<Vec<ViewRow>, String> {
         let text = self.lc_run(&["claimable"]).map_err(|e| format!("spira-lc claimable: {e}"))?;
         let v: serde_json::Value = serde_json::from_str(text.trim()).map_err(|e| format!("spira-lc claimable: not JSON: {e}"))?;
+        let content_error = v.get("content_error").and_then(serde_json::Value::as_str).map(str::to_string);
         let beads = v.get("beads").and_then(serde_json::Value::as_array).ok_or("spira-lc claimable: no beads array")?;
         let rows = serde_json::Value::Array(beads.iter().map(|b| b["row"].clone()).collect()).to_string();
         let mut lifecycle = rank::parse_lifecycle(&rows)?;
@@ -240,8 +241,8 @@ impl Store {
                 let runes = b["runes"].as_array().map(|r| r.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default();
                 let lifecycle = lifecycle.remove(&id).ok_or_else(|| format!("spira-lc claimable: {id} has no row"))?;
                 let content = match b.get("content").filter(|c| !c.is_null()) {
-                    Some(c) => Some(rank::parse_ready(&c.to_string()).map_err(|e| format!("spira-lc claimable: {id}: {e}"))?.remove(0)),
-                    None => None,
+                    Some(c) => Ok(rank::parse_ready(&c.to_string()).map_err(|e| format!("spira-lc claimable: {id}: {e}"))?.remove(0)),
+                    None => Err(content_error.clone().unwrap_or_else(|| "the content store holds no plan row".into())),
                 };
                 let express = rank::express_ids(&serde_json::Value::Array(vec![b["row"].clone()]).to_string())?.contains(&id);
                 Ok(ViewRow { id, verdict, runes, lifecycle, content, express })
@@ -379,7 +380,7 @@ pub struct ViewRow {
     pub runes: Vec<String>,
     pub lifecycle: LifecycleRow,
     /// The plan row `claimable` carried: what ranking and scope read.
-    pub content: Option<ReadyRow>,
+    pub content: Result<ReadyRow, String>,
     pub express: bool,
 }
 

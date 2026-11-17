@@ -266,10 +266,12 @@ fn answer<B: Backend>(store: &Store<B>, args: &[String], inputs: &dyn Inputs, ca
     let (rows, views) = view(store, rev, cands.into_iter().map(|r| r.value).collect(), inputs, call.now)?;
     let cannot_tell = views.values().filter(|v| v.verdict == Verdict::CannotTell).count();
     let ids: Vec<String> = views.keys().cloned().collect();
-    // An unreadable content store leaves `content` null: the lifecycle judgement stands without it, and a reader that ranks says so.
-    let mut content: BTreeMap<String, serde_json::Value> = inputs
-        .items(&ids)
-        .unwrap_or_default()
+    // An unreadable content store leaves `content` null and says why: the lifecycle judgement stands without it, and a reader that ranks names the cause.
+    let (items, content_error) = match inputs.items(&ids) {
+        Ok(items) => (items, None),
+        Err(e) => (Vec::new(), Some(e)),
+    };
+    let mut content: BTreeMap<String, serde_json::Value> = items
         .into_iter()
         .filter_map(|r| Some((r.get("id")?.as_str()?.to_string(), r)))
         .collect();
@@ -283,7 +285,7 @@ fn answer<B: Backend>(store: &Store<B>, args: &[String], inputs: &dyn Inputs, ca
             })
         })
         .collect();
-    Ok(json!({ "rev": rev, "cannot_tell": cannot_tell, "beads": beads }).to_string())
+    Ok(json!({ "rev": rev, "cannot_tell": cannot_tell, "content_error": content_error, "beads": beads }).to_string())
 }
 
 /// One candidate's answer: the judgement and the runes that would take it.

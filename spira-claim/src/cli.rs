@@ -941,7 +941,7 @@ fn viewed(a: &Args, env: &Env, st: &Store) -> Result<Viewed, String> {
     let (scope, no_loop) = (scope_label(a, env), no_loop_label(a, env));
     let mut rows: Vec<rank::ReadyRow> = Vec::new();
     for v in view.iter().filter(|v| v.verdict == verdicts::Kind::Claimable) {
-        let content = v.content.clone().ok_or_else(|| format!("spira-lc claimable: {} carried no content: the plan row could not be read", v.id))?;
+        let content = v.content.clone().map_err(|why| format!("spira-lc claimable: {} carried no content: {why}", v.id))?;
         rows.push(content);
     }
     rows.retain(|r| ready::in_scope(r, &scope, &no_loop));

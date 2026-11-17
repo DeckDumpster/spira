@@ -553,6 +553,19 @@ fn a_rounds_list_is_the_stores_answer_at_the_same_revision_held_until_a_round_ch
             deliver(&w, &["batches/spira/b-open"], 11);
             listed(&["list", "--batches", "--window", "86400"]);
             assert_eq!(asked_rounds(), before + 1, "a change to a round ends the held answer");
+            let held_at = asked_rounds();
+            w.advance(store_view::WINDOW_HOLD + Duration::from_secs(1));
+            // clock-safe: a cap on the wait for the watch to confirm the view at the new time
+            let give_up = Instant::now() + Duration::from_secs(5);
+            while Instant::now() < give_up && !matches!(w.p.list_answer(&["list", "--batches", "--window", "86400"]), Some(Ok(_))) {
+                // clock-safe: a poll interval under that cap
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            assert!(asked_rounds() > held_at, "a window answer older than the hold is read afresh: rounds leave a window by the clock");
+            let whole = asked_rounds();
+            listed(&["list", "--batches"]);
+            listed(&["list", "--batches"]);
+            assert!(asked_rounds() <= whole + 1, "an answer with no window is not aged out");
             stop.store(true, std::sync::atomic::Ordering::Relaxed);
         });
     });

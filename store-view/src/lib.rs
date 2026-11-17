@@ -140,6 +140,10 @@ pub struct RowQuery<'a> {
     pub express: bool,
 }
 
+/// The longest a `--window` answer is held: rounds leave a window by the clock alone, which no
+/// watch event reports.
+pub const WINDOW_HOLD: Duration = Duration::from_secs(60);
+
 #[derive(Default)]
 struct State {
     rev: Option<u64>,
@@ -169,7 +173,7 @@ fn classes_of(argv: &[&str]) -> Option<u8> {
 /// rises, so a read that started before a change cannot be kept after it.
 #[derive(Default)]
 struct Memo {
-    held: HashMap<String, (u8, Reply)>,
+    held: HashMap<String, (u8, Reply, Instant)>,
     generation: [u64; 2],
 }
 
@@ -182,7 +186,7 @@ impl Memo {
         for i in (0..2).filter(|i| classes & (1 << i) != 0) {
             self.generation[i] += 1;
         }
-        self.held.retain(|_, (held, _)| *held & classes == 0);
+        self.held.retain(|_, (held, ..)| *held & classes == 0);
     }
 }
 
@@ -702,7 +706,8 @@ impl Projection {
         let key = argv.join("\u{1f}");
         let before = {
             let m = self.memo.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some((_, reply)) = m.held.get(&key) {
+            let aged_out = |at: &Instant| argv.contains(&"--window") && (self.clock)().saturating_duration_since(*at) > WINDOW_HOLD;
+            if let Some((_, reply, _)) = m.held.get(&key).filter(|(_, _, at)| !aged_out(at)) {
                 return Ok(Read { rev: fresh.rev, value: reply.clone() });
             }
             m.seen(classes)
@@ -711,7 +716,7 @@ impl Projection {
         if reply.code == 0 {
             let mut m = self.memo.lock().unwrap_or_else(|e| e.into_inner());
             if m.seen(classes) == before {
-                m.held.insert(key, (classes, reply.clone()));
+                m.held.insert(key, (classes, reply.clone(), (self.clock)()));
             }
         }
         Ok(Read { rev: fresh.rev, value: reply })
