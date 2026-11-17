@@ -119,6 +119,7 @@ pub fn run(args: &[String]) -> i32 {
 
     stop_on_sigterm();
     crate::plan::serve_on(Arc::clone(&conn));
+    crate::settle::install();
     startup.mark("plan");
     match crate::plan::read_watermark(&conn) {
         Ok(w) => crate::plan::install_mirror(w),
@@ -169,6 +170,7 @@ pub fn run(args: &[String]) -> i32 {
             });
         }
         std::thread::spawn(crate::plan::run_mirror);
+        std::thread::spawn(crate::settle::run);
         std::thread::spawn(move || loop {
             std::thread::sleep(SWEEP_EVERY);
             alarm_tick();

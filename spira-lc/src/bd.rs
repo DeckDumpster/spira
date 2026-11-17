@@ -67,7 +67,7 @@ fn mark_rejudge(bead: &str, blocked_by: &[String]) {
 }
 
 /// The control store as a machine, for a write made inside the process that holds it.
-struct StoreMachine;
+pub struct StoreMachine;
 
 impl crate::callers::Machine for StoreMachine {
     fn call(&mut self, args: &[String]) -> (i32, String) {
@@ -79,6 +79,9 @@ impl crate::callers::Machine for StoreMachine {
 /// landed. A failure is reported with its repair, never raised.
 fn sync_claim_inputs(ids: &[String]) {
     if ids.is_empty() || !crate::control::served::store_configured() {
+        return;
+    }
+    if crate::settle::owe_claims(ids, false) {
         return;
     }
     let mut argv = vec![crate::claim_sync::VERB.to_string()];

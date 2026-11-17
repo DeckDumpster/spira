@@ -421,7 +421,7 @@ pub fn serve_on(conn: Arc<Conn>) {
 pub fn read_watermark(conn: &Conn) -> Result<u64, String> {
     if let Some(store) = crate::control::served::configured() {
         let store = store.map_err(|e| format!("cannot tell: the control store: {e}"))?;
-        return control_seq(&store, conn).map(|(seq, _)| seq);
+        return control_seq(&store, &|| lifecycle_seq(conn).unwrap_or(0)).map(|(seq, _)| seq);
     }
     lifecycle_seq(conn)
 }
@@ -436,12 +436,12 @@ type Control = Arc<crate::control::store::Store<crate::control::served::Served>>
 /// The control store's sequence and the revision it was read at. Before the key's first write
 /// it continues the lifecycle store's sequence, so moving onto the control store never moves
 /// the watermark back.
-fn control_seq(store: &Control, conn: &Conn) -> Result<(u64, Option<state_store::Rev>), String> {
+fn control_seq<B: state_store::Backend>(store: &crate::control::store::Store<B>, floor: &dyn Fn() -> u64) -> Result<(u64, Option<state_store::Rev>), String> {
     let key = crate::control::keys::PLANNING_WATERMARK;
     let item = store.contract().get(key).map_err(|e| format!("cannot tell: {key}: {e}"))?;
     match item {
         Some(i) => Ok((i.value.data.get("seq").and_then(Value::as_u64).unwrap_or(0), Some(i.mod_rev))),
-        None => Ok((lifecycle_seq(conn).unwrap_or(0), None)),
+        None => Ok((floor(), None)),
     }
 }
 
@@ -450,11 +450,16 @@ const STAMP_ATTEMPTS: usize = 16;
 /// Advances the watermark by one, in one transaction, and returns the value it now holds.
 pub fn stamp(conn: &Conn) -> Result<u64, String> {
     let seq = match crate::control::served::configured() {
-        Some(store) => stamp_control(&store.map_err(|e| format!("cannot tell: the control store: {e}"))?, conn)?,
+        Some(store) => stamp_control(&*store.map_err(|e| format!("cannot tell: the control store: {e}"))?, &|| lifecycle_seq(conn).unwrap_or(0))?,
         None => stamp_lifecycle(conn)?,
     };
     mirror(seq);
     Ok(seq)
+}
+
+/// The stamp lc-serve's settler thread makes, on the serving connection.
+pub fn stamp_served() -> Result<u64, String> {
+    stamp(SERVED.get().ok_or("cannot tell: not serving")?)
 }
 
 /// A commit that lost to a concurrent stamp is retried: a stamp lost is a write a poller misses.
@@ -469,11 +474,11 @@ fn stamp_lifecycle(conn: &Conn) -> Result<u64, String> {
     Err(format!("cannot tell: plan stamp: {last}"))
 }
 
-fn stamp_control(store: &Control, conn: &Conn) -> Result<u64, String> {
+pub(crate) fn stamp_control<B: state_store::Backend>(store: &crate::control::store::Store<B>, floor: &dyn Fn() -> u64) -> Result<u64, String> {
     use state_store::{Compare, Object, Request, Txn};
     let key = crate::control::keys::PLANNING_WATERMARK;
     for _ in 0..STAMP_ATTEMPTS {
-        let (seq, rev) = control_seq(store, conn)?;
+        let (seq, rev) = control_seq(store, floor)?;
         let next = seq + 1;
         let txn = Txn::new().when(Compare::ModRev(key.into(), rev)).put(key, Object::new(json!({ "seq": next })));
         let req = Request::new(&crate::control::served::request_id(), "spira-lc", "plan-stamp");
@@ -489,6 +494,9 @@ fn stamp_control(store: &Control, conn: &Conn) -> Result<u64, String> {
 /// lc-serve, else through the service, else on a direct connection. A failed stamp is
 /// reported and never fails the write, which has already happened.
 pub fn stamp_after_write() {
+    if crate::settle::owe_stamp() {
+        return;
+    }
     let done = if let Some(conn) = SERVED.get() {
         stamp(conn).map(|_| ())
     } else {
