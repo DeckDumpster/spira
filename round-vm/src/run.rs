@@ -4563,7 +4563,9 @@ mod tests {
     fn wait_until(cond: impl Fn() -> bool) {
         let t = Instant::now();
         while !cond() {
+            // clock-safe: cap on a poll for a condition the fake remote sets
             assert!(t.elapsed() < Duration::from_secs(60), "fake remote: condition never held");
+            // clock-safe: cap on a poll for a condition the fake remote sets
             std::thread::sleep(Duration::from_millis(5));
         }
     }

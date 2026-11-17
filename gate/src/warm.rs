@@ -416,7 +416,9 @@ mod tests {
         git(tree, &["commit", "-qam", "change"]);
         let n = normalize_mtimes(tree, &base).unwrap();
         assert_eq!(n, 1);
+        // clock-safe: compares file mtimes against a stamp set an hour back; no duration is measured
         assert!(mtime(&tree.join("crate/src/other.rs")) < SystemTime::now() - Duration::from_secs(3600));
+        // clock-safe: compares file mtimes against a stamp set an hour back; no duration is measured
         assert!(mtime(&tree.join("crate/src/lib.rs")) > SystemTime::now() - Duration::from_secs(3600));
     }
 
@@ -437,7 +439,9 @@ mod tests {
         git(tree, &["commit", "-qm", "add"]);
         normalize_mtimes(tree, &base).unwrap();
         let old = SystemTime::now() - Duration::from_secs(3600);
+        // clock-safe: compares file mtimes against a stamp set an hour back; no duration is measured
         assert!(mtime(&tree.join("crate/rules")) < old, "a rerun-if-changed directory must look as old as its files");
+        // clock-safe: compares file mtimes against a stamp set an hour back; no duration is measured
         assert!(mtime(&tree.join("crate/src")) > old, "a directory that gained a file changed");
     }
 

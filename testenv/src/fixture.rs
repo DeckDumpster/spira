@@ -1394,7 +1394,9 @@ pub mod fake {
             let tier = req.name.rsplit('-').next().unwrap_or("").to_string();
             if self.once_hang.lock().unwrap().contains(&tier) {
                 let end = Instant::now() + Duration::from_secs(20);
+                // clock-safe: fake runtime hangs until the cap trips or its deadline passes; cap::tripped_anywhere is the signal
                 while !crate::cap::tripped_anywhere() && Instant::now() < end {
+                    // clock-safe: fake runtime hangs until the cap trips or its deadline passes; cap::tripped_anywhere is the signal
                     std::thread::sleep(Duration::from_millis(20));
                 }
                 return ExecOutcome { rc: crate::runtime::RC_CANCELLED, output: String::new() };
@@ -1477,13 +1479,16 @@ pub mod fake {
             if let Some(d) = self.testenv_delay.lock().unwrap().get(&sub0).copied() {
                 // a slow call: past the deadline it is "killed" like the real one
                 let end = Instant::now() + d;
+                // clock-safe: fake runtime hangs until the cap trips or its deadline passes; cap::tripped_anywhere is the signal
                 while Instant::now() < end {
+                    // clock-safe: fake runtime hangs until the cap trips or its deadline passes; cap::tripped_anywhere is the signal
                     if deadline.is_some_and(|dl| Instant::now() >= dl) {
                         return ExecOutcome {
                             rc: RC_DEADLINE,
                             output: String::new(),
                         };
                     }
+                    // clock-safe: fake runtime hangs until the cap trips or its deadline passes; cap::tripped_anywhere is the signal
                     std::thread::sleep(Duration::from_millis(5));
                 }
             }

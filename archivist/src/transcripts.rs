@@ -176,7 +176,8 @@ mod tests {
         let root = testkit::TempDir::new("archivist-newest");
         let projects = root.path().join("projects");
         touch(&projects.join("p").join("old.jsonl"), "x");
-        std::thread::sleep(std::time::Duration::from_millis(20));
+        let aged = std::time::SystemTime::now() - std::time::Duration::from_secs(60);
+        std::fs::File::open(projects.join("p").join("old.jsonl")).unwrap().set_modified(aged).unwrap();
         touch(&projects.join("p").join("new.jsonl"), "y");
         let (sid, _) = newest_transcript(&projects).unwrap();
         assert_eq!(sid, "new");

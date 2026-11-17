@@ -5412,6 +5412,7 @@ mod wait_lock_tests {
         let old = std::time::SystemTime::now() - std::time::Duration::from_secs(600);
         fs::File::create(&p).unwrap().set_modified(old).unwrap();
         touch(&p);
+        // clock-safe: compares file mtimes against a stamp this test set; no duration is measured
         assert!(fs::metadata(&p).unwrap().modified().unwrap() > old);
         let b = Beat::start(p.clone(), std::time::Duration::from_secs(3600));
         assert!(p.is_file());

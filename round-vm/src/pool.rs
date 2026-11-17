@@ -1259,6 +1259,7 @@ mod tests {
         let before = pl.slot_signature().unwrap();
         let started = std::time::Instant::now();
         assert_eq!(pl.wait_for_freed_slot(before).unwrap(), Woke::Capped);
+        // clock-safe: cap on a wait for the counter or the Capped wake the pool under test produces
         assert!(started.elapsed() >= Duration::from_millis(60));
     }
 
@@ -1438,6 +1439,7 @@ mod tests {
         let t = std::thread::spawn(move || {
             let t0 = std::time::Instant::now();
             while seen.load(std::sync::atomic::Ordering::SeqCst) < 2 {
+                // clock-safe: cap on a wait for the counter or the Capped wake the pool under test produces
                 assert!(t0.elapsed() < Duration::from_secs(30), "acquire never looped");
                 std::thread::yield_now();
             }

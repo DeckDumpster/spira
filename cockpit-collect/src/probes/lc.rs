@@ -269,6 +269,7 @@ mod tests {
         let before = io::data_writes();
         last_good(&d, "k", 101, || Ok("[1]".into()));
         assert_eq!(io::data_writes(), before, "same content writes no data");
+        // clock-safe: compares file mtimes against a stamp this test set; no duration is measured
         assert!(std::fs::metadata(d.join("k.json")).unwrap().modified().unwrap() > past, "mtime still marks the last good read");
         last_good(&d, "k", 102, || Ok("[2]".into()));
         assert_eq!(io::data_writes(), before + 1, "changed content is written");

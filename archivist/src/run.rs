@@ -1025,6 +1025,7 @@ mod tests {
             if rc != 75 {
                 return rc;
             }
+            // clock-safe: paces a retry; the exit code 75 it polls is the signal
             std::thread::sleep(std::time::Duration::from_millis(25));
         }
         75

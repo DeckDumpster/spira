@@ -732,11 +732,14 @@ mod tests {
         let held2 = held.clone();
         let busy = move |p: &Path| p == held2;
         assert!(reap_stale_runs(&root, Duration::from_secs(3600), false, &none).is_empty(), "fresh dirs stay");
-        std::thread::sleep(Duration::from_millis(30));
-        let gone = reap_stale_runs(&root, Duration::from_millis(10), true, &busy);
+        let aged_at = std::time::SystemTime::now() - Duration::from_secs(2 * 3600);
+        for d in [&aged, &held, &work] {
+            std::fs::File::open(d).unwrap().set_modified(aged_at).unwrap();
+        }
+        let gone = reap_stale_runs(&root, Duration::from_secs(3600), true, &busy);
         assert_eq!(gone.len(), 2, "a dry run reports without removing");
         assert!(aged.exists());
-        let gone = reap_stale_runs(&root, Duration::from_millis(10), false, &busy);
+        let gone = reap_stale_runs(&root, Duration::from_secs(3600), false, &busy);
         assert_eq!(gone.len(), 2);
         assert!(gone.iter().all(|(_, b)| *b >= 8192), "{gone:?}");
         assert!(!aged.exists() && !work.exists(), "aged dirs, overlay workdir included, are gone");

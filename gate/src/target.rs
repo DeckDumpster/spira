@@ -460,10 +460,11 @@ mod tests {
     fn orphans_go_and_the_least_recently_used_unlocked_tree_is_evicted_over_the_cap() {
         let s = Scratch::new("cap");
         let (root, trees) = (s.1.join("root"), s.1.join("worktree"));
-        for t in ["old", "mid", "held"] {
+        for (i, t) in ["old", "mid", "held"].into_iter().enumerate() {
             fs::create_dir_all(trees.join(format!(".gate.harness.{t}"))).unwrap();
             write_mib(&root.join(format!(".gate.harness.{t}/debug/x")), 2);
-            std::thread::sleep(std::time::Duration::from_millis(20));
+            let at = std::time::SystemTime::now() - std::time::Duration::from_secs(600 - 60 * i as u64);
+            fs::File::open(root.join(format!(".gate.harness.{t}"))).unwrap().set_modified(at).unwrap();
         }
         // "held" is the oldest now, and a running trial holds its lock.
         let _ = fs::File::open(root.join(".gate.harness.held")).and_then(|d| d.set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(1)));
@@ -518,10 +519,11 @@ mod tests {
     fn the_floor_evicts_further_than_the_cap_but_never_a_held_tree() {
         let s = Scratch::new("floor");
         let (root, trees) = (s.1.join("root"), s.1.join("worktree"));
-        for t in ["old", "mid", "held"] {
+        for (i, t) in ["old", "mid", "held"].into_iter().enumerate() {
             fs::create_dir_all(trees.join(format!(".gate.harness.{t}"))).unwrap();
             write_mib(&root.join(format!(".gate.harness.{t}/debug/x")), 1);
-            std::thread::sleep(std::time::Duration::from_millis(20));
+            let at = std::time::SystemTime::now() - std::time::Duration::from_secs(600 - 60 * i as u64);
+            fs::File::open(root.join(format!(".gate.harness.{t}"))).unwrap().set_modified(at).unwrap();
         }
         // "held" is the oldest now, and a running trial holds its lock.
         let _ = fs::File::open(root.join(".gate.harness.held"))

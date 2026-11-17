@@ -1487,12 +1487,24 @@ injected clock.
 **Scope.** Every `*.rs` except `target/` and `perf-checks/`, judged in test code as `tmp-leak`
 defines it. Complements `wall-clock-budget`, which judges duration assertions.
 
-**Violation.** A `sleep(` call in test code; a line in test code that reads `Instant::now()` or
-`.elapsed()` and compares with `<`/`>`. One finding per line. A line, or the line above it,
-carrying `clock-safe: <why>` is exempt: the clock there is only a cap on a wait for a named signal.
+**Violation.** In test code: a `sleep(` call, unless its enclosing `fn` carries `start_paused = true`
+or calls `tokio::time::pause()`; a line that reads `Instant::now()`, `SystemTime::now()` or
+`.elapsed()` and compares with `<`/`>`; and a later `assert*!` in the same fn whose arguments hold a
+name bound by `let` from such a read (or `<name>.elapsed()`) together with a comparison. A read that
+only stamps fixture data and is never asserted on stays clean. One finding per line. A line, or the
+line above it, carrying `clock-safe: <why>` is exempt: the clock there is only a cap on a wait for a
+named signal.
 
-**Allow list.** `spira-lint/test-real-clock-allow`, `<count> <path>`, shrink-only; seeded with
-the counts when the rule landed. A count above what the file has is itself a finding.
+**Message.** Names the fixes in order: wait on a signal from the thing under test (channel,
+condvar, counter, marker file); inject the clock (`runtime::ports::VirtualClock`, or a test
+`FakeClock`); for scheduling, retries, timeouts or rounds across actors, write the test in `sim/`.
+Only then the `clock-safe:` marker.
+
+**Allow list.** None; a considered use carries `clock-safe:`.
+
+**Known limits.** The bound-clock check is name-based within one fn: a clock value passed through
+a helper before the assert is missed, and a generic such as `Vec<u8>` in the assert's arguments
+reads as a comparison.
 
 ## Rule `py-fstring-compat`
 
