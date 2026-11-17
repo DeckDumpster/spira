@@ -917,6 +917,9 @@ impl<'w, W: World> Trial<'w, W> {
             let first = run(first_env.clone());
             if cache_in_force(&first_env) && first.0 != 0 && parse::cache_transport_failure(&first.1) {
                 w.eprint("gate: the build's sccache server was lost mid-build — retrying the trial once without the compiler cache");
+                if let Some((dir, name)) = self.s.steps_file.as_deref().and_then(|f| Some((f.parent()?, f.file_name()?.to_str()?))) {
+                    w.write_atomic(dir, name, "");
+                }
                 let (rc, out, ph) = run(without_cache(first_env));
                 let ph = first.2.into_iter().chain(ph).collect();
                 (rc, out, ph)

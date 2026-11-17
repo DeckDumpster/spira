@@ -2744,7 +2744,8 @@ fn a_phase_cap_row_names_the_step_that_ran_long_and_keeps_the_output() {
     assert_eq!(kept.len(), 1);
     assert!(kept[0].1.contains("== suites"));
     assert!(row.contains(&format!(" out={}", kept[0].0.display())), "{row}");
-    assert!(f.tsd.borrow().last().unwrap().contains("suites:230"));
+    assert!(f.tsd.borrow().last().unwrap().contains(r#""slowest_step":"suites:230""#), "{:?}", f.tsd.borrow());
+    assert!(f.removed.borrow().contains(&PathBuf::from("tmp/steps")), "the steps file is removed with the file list");
 }
 
 #[test]
@@ -2756,6 +2757,7 @@ fn a_pass_row_carries_the_slowest_step_and_keeps_no_output() {
     assert!(row.contains(" slowest_step=run_suites:5 "), "{row}");
     assert!(!row.contains(" out="), "{row}");
     assert!(f.kept_outs.borrow().is_empty());
+    assert!(f.tsd.borrow().last().unwrap().contains(r#""slowest_step":"run_suites:5""#), "{:?}", f.tsd.borrow());
 }
 
 #[test]

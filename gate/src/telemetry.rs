@@ -221,6 +221,9 @@ pub fn keep_report<W: World>(w: &W, run: &str, ts: &str, html: &str) {
 /// How many kept gate outputs stay beside the run record.
 pub const KEEP_GATE_OUTS: usize = 50;
 
+/// A kept output is cut to its last bytes: the end of a killed run is where it stopped.
+const GATE_OUT_MAX_BYTES: usize = 1 << 20;
+
 const GATE_OUT_PREFIX: &str = "gate-out-";
 
 /// The gate phase's whole output, kept beside the run record under the run's timestamp; older
@@ -232,7 +235,7 @@ pub fn keep_gate_out<W: World>(w: &W, run: &str, ts: &str, out: &str) -> Option<
     let dir = tsd::family_path(Path::new(run), FAMILY).parent()?.to_path_buf();
     w.mkdir_p(&dir);
     let name = format!("{GATE_OUT_PREFIX}{ts}.log");
-    w.write_atomic(&dir, &name, out);
+    w.write_atomic(&dir, &name, &crate::parse::tail_bytes(out, GATE_OUT_MAX_BYTES));
     let mut names = w.list_dir(&dir);
     names.push(name.clone());
     for old in stale_outs(names, KEEP_GATE_OUTS) {
@@ -249,6 +252,22 @@ pub fn stale_outs(mut names: Vec<String>, keep: usize) -> Vec<String> {
     let excess = names.len().saturating_sub(keep);
     names.truncate(excess);
     names
+}
+
+#[cfg(test)]
+mod keep_tests {
+    use super::*;
+
+    fn names(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn the_oldest_by_timestamp_goes_and_other_files_stay() {
+        let all = names(&["gate-out-2026-02-01T00:00:00Z.log", "cargo-timing-2020-01-01T00:00:00Z.html", "gate-out-2026-01-01T00:00:00Z.log", "gate-out-2026-03-01T00:00:00Z.log"]);
+        assert_eq!(stale_outs(all.clone(), 2), names(&["gate-out-2026-01-01T00:00:00Z.log"]));
+        assert!(stale_outs(all, 3).is_empty());
+    }
 }
 
 /// Pushes the trial's run, queue and wait seconds and a run count to the metrics store; the
