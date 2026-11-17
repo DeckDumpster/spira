@@ -2679,21 +2679,21 @@ mod tests {
 
     #[test]
     fn a_green_is_a_hit_for_the_same_sha_and_judge_only() {
-        let entry = serde_json::json!({"sha": "S", "judge": "/j"});
-        assert!(matches!(cached_verdict(&entry, "lint", "S", "/j"), Some(RawStatus::Satisfied)));
-        assert!(cached_verdict(&entry, "lint", "T", "/j").is_none());
+        let entry = serde_json::json!({"sha": "S", "judge": "j"});
+        assert!(matches!(cached_verdict(&entry, "lint", "S", "j"), Some(RawStatus::Satisfied)));
+        assert!(cached_verdict(&entry, "lint", "T", "j").is_none());
     }
 
     #[test]
     fn an_entry_without_a_judge_is_a_miss() {
         let entry = serde_json::json!({"sha": "S"});
-        assert!(cached_verdict(&entry, "lint", "S", "/j").is_none());
+        assert!(cached_verdict(&entry, "lint", "S", "j").is_none());
     }
 
     #[test]
     fn fence_judge_of_a_missing_program_names_it() {
-        let e = fence_judge("/nonexistent/bin/spira-lint").unwrap_err();
-        assert!(e.contains("/nonexistent/bin/spira-lint"), "{e}");
+        let e = fence_judge("nonexistent/bin/spira-lint").unwrap_err();
+        assert!(e.contains("nonexistent/bin/spira-lint"), "{e}");
     }
 
     fn scratch_dir(name: &str) -> testkit::TempDir {
