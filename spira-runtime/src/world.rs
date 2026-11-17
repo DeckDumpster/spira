@@ -1265,7 +1265,16 @@ fn sweep_row(r: &Value) -> Option<Row> {
         held_at: None,
         claim: r["claim_view"]["verdict"].as_str().map(str::to_string),
         claim_unset: r["claim"].is_null(),
+        claim_why: claim_why(&r["claim_view"]),
     })
+}
+
+fn claim_why(view: &Value) -> Option<String> {
+    let missing = strings(&view["missing"]);
+    if missing.is_empty() {
+        return view["error"].as_str().map(str::to_string);
+    }
+    Some(missing.iter().map(|m| format!("no {m}")).collect::<Vec<_>>().join(", "))
 }
 
 fn sweep_bead(b: &Value) -> Option<Bead> {
@@ -1382,6 +1391,11 @@ mod sweep_row_tests {
         assert_eq!(bare.claim, None);
         assert!(sweep_row(&serde_json::json!({"bead_id": "sp-r", "claim": null})).unwrap().claim_unset);
         assert!(!sweep_row(&serde_json::json!({"bead_id": "sp-r", "claim": {"blocked_by": []}})).unwrap().claim_unset);
+        let why = |view: serde_json::Value| sweep_row(&serde_json::json!({"bead_id": "sp-r", "claim": {}, "claim_view": view})).unwrap().claim_why;
+        assert_eq!(why(serde_json::json!({"verdict": "cannot-tell", "missing": ["repo"]})).as_deref(), Some("no repo"));
+        assert_eq!(why(serde_json::json!({"verdict": "cannot-tell", "missing": ["claim", "repo"]})).as_deref(), Some("no claim, no repo"));
+        assert_eq!(why(serde_json::json!({"verdict": "cannot-tell", "missing": [], "error": "store down"})).as_deref(), Some("store down"));
+        assert_eq!(why(serde_json::json!({"verdict": "claimable", "missing": []})), None);
     }
 }
 

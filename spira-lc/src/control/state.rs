@@ -223,11 +223,11 @@ fn claim_views<B: Backend>(store: &Store<B>, rev: u64, recs: &[&LifecycleRecord]
     match claimable::view(store, rev, cands, call.inputs, call.now) {
         Ok((_, views)) => views
             .into_iter()
-            .map(|(id, v)| (id, serde_json::json!({ "verdict": v.verdict, "blocker": v.blocker, "runes": v.runes })))
+            .map(|(id, v)| (id, serde_json::json!({ "verdict": v.verdict, "blocker": v.blocker, "runes": v.runes, "missing": v.missing })))
             .collect(),
         Err(why) => ids
             .into_iter()
-            .map(|id| (id, serde_json::json!({ "verdict": claimable::Verdict::CannotTell, "blocker": null, "runes": [], "error": why })))
+            .map(|id| (id, serde_json::json!({ "verdict": claimable::Verdict::CannotTell, "blocker": null, "runes": [], "missing": [], "error": why })))
             .collect(),
     }
 }
