@@ -870,7 +870,7 @@ pub fn resubmit(
     if withdrew {
         w.out(format!("queue.sh resubmit: {id} red at {tip} withdrawn (row={in_row} record={in_record} gate={in_gate} as found)"));
     }
-    if !row.holds.is_empty() && row.holds.iter().all(|h| h == "manual") {
+    if !row.holds.is_empty() && !landing_pass::pass::blocks_gate(&row.holds) {
         w.out(format!("queue.sh resubmit: {id} re-tipped to {tip}, {} -> SUBMITTED; it stays held manual, so the batcher will not cut it — run queue round open --members {id}:{tip} --by concierge, or spira-lc unhold {id} manual … to return it to the batcher", row.state));
     } else if !row.holds.is_empty() {
         w.out(format!("queue.sh resubmit: {id} re-tipped to {tip}, {} -> SUBMITTED; it stays held {holds}, so it is not gated until the hold lifts — spira-lc unhold {id} <kind> … lifts it", row.state, holds = row.holds.join(",")));

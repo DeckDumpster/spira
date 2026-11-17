@@ -2219,6 +2219,14 @@ fn a_submitted_bead_held_only_manual_is_queued_for_gate_worker() {
 }
 
 #[test]
+fn a_submitted_bead_held_by_the_legacy_operator_alias_is_gated_like_manual() {
+    let h = H::new(LandMode::QueueLocal);
+    held_submitted(&h, &["operator"]);
+    h.run();
+    assert_eq!(*h.lc.certified.borrow(), vec!["sp-a t1 pass"]);
+}
+
+#[test]
 fn a_submitted_bead_held_manual_and_wait_is_not_gated() {
     let h = H::new(LandMode::QueueLocal);
     held_submitted(&h, &["manual", "wait"]);
