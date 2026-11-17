@@ -437,7 +437,7 @@ fn gc_range_skips_events_and_history_and_pages_across_them() {
 fn a_snapshot_copy_does_not_carry_the_pages_deleted_rows_left_free_in_the_live_file() {
     let dir = TempDir::new("sqlite-snapshot-vacuum");
     let path = dir.path().join("s.db");
-    let b = open(&path);
+    let b = SqliteBackend::open(&path, Options { day_receipts: false, ..Options::default() }).unwrap();
     let clock = VirtualClock::new(0);
     let c = contract(b, &clock);
     for i in 0..200 {
@@ -680,7 +680,7 @@ fn main_file_receipts_drain_five_hundred_a_commit_once_they_are_a_day_old() {
     wall.advance_to(D0 + DAY_MS - 1);
     live(&b, 1);
     live(&b, 2);
-    assert_eq!((left("latest"), left("versions")), (1200, 1200));
+    assert_eq!(left("latest"), 1200);
     wall.advance_to(D0 + DAY_MS);
     let mut seen = Vec::new();
     for i in 3..6 {
@@ -878,7 +878,7 @@ fn main_file_events_older_than_fourteen_days_drain_five_hundred_a_commit_and_the
         seen.push(events_left(&path));
     }
     assert_eq!(seen, [700, 200, 200, 200, 200]);
-    assert_eq!(count(&path, "SELECT count(*) FROM versions WHERE CAST(key AS TEXT) LIKE 'events/%'"), 200);
+    assert_eq!(count(&path, "SELECT count(*) FROM versions"), 0, "the legacy rows drain whatever their age");
 }
 
 #[test]
@@ -1202,6 +1202,7 @@ mod relayout {
 
         let report = relayout(&old, &new, &VirtualClock::new(WALL)).unwrap();
         assert_eq!(sha256_file(&old).unwrap(), sum, "the old file is never written");
+        assert_eq!(count(&new, "PRAGMA auto_vacuum"), 2, "the --to file is incremental");
         assert_eq!((report.live.read, report.live.copied), (200, 200));
 
         let b = SqliteBackend::open(&new, Options { jump_on_open: false, wall: Arc::new(VirtualClock::new(WALL)), ..Options::default() }).unwrap();
@@ -1391,4 +1392,136 @@ fn a_checkpoint_completes_after_checkpoint_every_commits() {
         assert!(std::time::Instant::now() < until, "no checkpoint completed"); // clock-safe: cap on the wait
         std::thread::sleep(std::time::Duration::from_millis(10)); // clock-safe: polls the WAL index the thread writes
     }
+}
+
+fn seed_versions(path: &Path, rows: i64, prefixes: &[&str]) {
+    let conn = rusqlite::Connection::open(path).unwrap();
+    for (p, prefix) in prefixes.iter().enumerate() {
+        let sql = format!(
+            "WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < {})
+             INSERT INTO versions (key, main, sub, value, create_main, create_sub, version)
+             SELECT CAST(printf('{prefix}old%06d', i) AS BLOB), 1, 0, zeroblob(2000), 1, 0, {p} FROM n",
+            rows / prefixes.len() as i64 - 1
+        );
+        conn.prepare(&sql).unwrap().execute([]).unwrap();
+    }
+}
+
+fn commit_live(b: &SqliteBackend, i: u64) {
+    let head = b.head().unwrap();
+    b.commit(head, &[put_write(&format!("live/{i}"), b"1", head + 1, None)]).unwrap();
+}
+
+#[test]
+fn legacy_version_rows_drain_five_hundred_a_commit_and_the_live_rows_stay() {
+    let dir = TempDir::new("sqlite-drain-versions");
+    let wall = VirtualClock::new(D0);
+    let path = dir.path().join("s.db");
+    let b = SqliteBackend::open(&path, day_opts(&wall)).unwrap();
+    b.commit(0, &[put_write("live/a", b"1", 1, None)]).unwrap();
+    drop(b);
+    seed_versions(&path, 1200, &["readiness/", "lifecycle/"]);
+    let b = SqliteBackend::open(&path, day_opts(&wall)).unwrap();
+    let latest = count(&path, "SELECT count(*) FROM latest");
+    let mut seen = Vec::new();
+    for i in 1..4 {
+        commit_live(&b, i);
+        seen.push(count(&path, "SELECT count(*) FROM versions"));
+    }
+    assert_eq!(seen, [700, 200, 0]);
+    assert_eq!(count(&path, "SELECT count(*) FROM latest"), latest + 3);
+    let head = b.head().unwrap();
+    let got = b.get("live/a", head).unwrap();
+    assert!(got.is_some());
+}
+
+#[test]
+fn a_store_opened_without_day_receipts_never_drains_its_version_rows() {
+    let dir = TempDir::new("sqlite-keep-versions");
+    let wall = VirtualClock::new(D0);
+    let path = dir.path().join("s.db");
+    let b = SqliteBackend::open(&path, day_opts(&wall)).unwrap();
+    b.commit(0, &[put_write("live/a", b"1", 1, None)]).unwrap();
+    drop(b);
+    seed_versions(&path, 1200, &["readiness/", "lifecycle/"]);
+    let b = SqliteBackend::open(&path, Options { day_receipts: false, ..day_opts(&wall) }).unwrap();
+    for i in 1..4 {
+        commit_live(&b, i);
+    }
+    assert_eq!(count(&path, "SELECT count(*) FROM versions"), 1200);
+    assert!(count(&path, "PRAGMA freelist_count") == 0 && count(&path, "PRAGMA auto_vacuum") == 2);
+}
+
+#[test]
+fn a_new_store_is_incremental_and_gives_back_at_most_the_step_a_commit() {
+    let dir = TempDir::new("sqlite-incremental");
+    let wall = VirtualClock::new(D0);
+    let path = dir.path().join("s.db");
+    let b = SqliteBackend::open(&path, day_opts(&wall)).unwrap();
+    b.commit(0, &[put_write("live/a", b"1", 1, None)]).unwrap();
+    drop(b);
+    assert_eq!(count(&path, "PRAGMA auto_vacuum"), 2);
+    let step = state_store_sqlite::VACUUM_PAGES_PER_COMMIT;
+    seed_versions(&path, 1500, &["readiness/"]);
+    rusqlite::Connection::open(&path)
+        .unwrap()
+        .prepare("UPDATE versions SET value = zeroblob(8000)")
+        .unwrap()
+        .execute([])
+        .unwrap();
+    let b = SqliteBackend::open(&path, day_opts(&wall)).unwrap();
+    let mut pages = count(&path, "PRAGMA page_count");
+    assert!(count(&path, "SELECT count(*) FROM versions") == 1500);
+    let (mut max_fall, mut max_free, mut falls) = (0, 0, 0);
+    for i in 1..30 {
+        commit_live(&b, i);
+        let now = count(&path, "PRAGMA page_count");
+        max_fall = max_fall.max(pages - now);
+        falls += i64::from(now < pages);
+        pages = now;
+        let fl = count(&path, "PRAGMA freelist_count");
+        max_free = max_free.max(fl);
+    }
+    assert_eq!(count(&path, "SELECT count(*) FROM versions"), 0);
+    assert!(falls > 3, "the file shrank in {falls} commits");
+    // a released range may also drop one pointer-map page, which is not a freelist page
+    assert!(
+        (step..=step + 1).contains(&max_fall),
+        "the busiest commit gave back {max_fall} pages"
+    );
+    assert!(
+        max_free > step,
+        "the drain freed no more than one step at a time, so the cap was never the limit"
+    );
+    assert_eq!(count(&path, "PRAGMA freelist_count"), 0);
+}
+
+#[test]
+fn an_existing_none_mode_store_keeps_its_mode_and_still_drains() {
+    let dir = TempDir::new("sqlite-none-mode");
+    let wall = VirtualClock::new(D0);
+    let path = dir.path().join("s.db");
+    let none = path;
+    {
+        let conn = rusqlite::Connection::open(&none).unwrap();
+        conn.pragma_update(None, "auto_vacuum", 0).unwrap();
+        for sql in [
+            "CREATE TABLE meta (name TEXT PRIMARY KEY, value INTEGER NOT NULL)",
+            "CREATE TABLE versions (key BLOB NOT NULL, main INTEGER NOT NULL, sub INTEGER NOT NULL, value BLOB,
+                create_main INTEGER, create_sub INTEGER, version INTEGER NOT NULL, prev_main INTEGER, prev_sub INTEGER,
+                PRIMARY KEY (key, main))",
+            "CREATE INDEX versions_by_rev ON versions (main, sub)",
+            "CREATE TABLE jumps (from_main INTEGER PRIMARY KEY, to_main INTEGER NOT NULL)",
+            "INSERT INTO meta (name, value) VALUES ('head', 0), ('compacted', 0)",
+        ] {
+            conn.prepare(sql).unwrap().execute([]).unwrap();
+        }
+    }
+    seed_versions(&none, 1200, &["readiness/"]);
+    let b = SqliteBackend::open(&none, day_opts(&wall)).unwrap();
+    for i in 1..4 {
+        commit_live(&b, i);
+    }
+    assert_eq!(count(&none, "PRAGMA auto_vacuum"), 0);
+    assert_eq!(count(&none, "SELECT count(*) FROM versions"), 0);
 }

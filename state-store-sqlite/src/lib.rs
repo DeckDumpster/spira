@@ -12,8 +12,8 @@
 //! and the watch log is the ring. A revision the ring no longer holds is `TooOld`; after a
 //! restart the ring is empty and its floor is the head the file held at open. The off-box
 //! shipper reads the [`outbox`] instead, which every commit appends to before the main commit.
-//! The `versions` table is neither written nor read; a store that predates this keeps its rows
-//! there. The `main` counter lives in `meta`, never in a rowid, which SQLite may reuse.
+//! The `versions` table is neither written nor read; a store that predates this drains those
+//! rows itself, [`DRAIN_PER_COMMIT`] a commit. The `main` counter lives in `meta`, never in a rowid, which SQLite may reuse.
 //!
 //! The schema is versioned: `PRAGMA user_version` counts the [`MIGRATIONS`] a store has applied,
 //! and every open applies the ones it lacks in place. A store that counts more migrations than
@@ -309,6 +309,9 @@ impl Checkpointer {
 /// The most `requests/` rows a commit deletes from the main file once they are all a day old.
 pub const DRAIN_PER_COMMIT: usize = 500;
 
+/// The most free pages a commit returns to the filesystem, bounding each commit's page release.
+pub const VACUUM_PAGES_PER_COMMIT: i64 = 256;
+
 use state_store::READ_ENDED;
 
 /// Whether `e` is a read the store ended for outliving `max_read_ms`.
@@ -423,6 +426,10 @@ struct Inner {
     /// The main file holds no receipt left to drain.
     drained: AtomicBool,
     events_drained: AtomicBool,
+    /// The legacy `versions` table holds no row left to drain.
+    versions_drained: AtomicBool,
+    /// The file was created `auto_vacuum=INCREMENTAL`, so freed pages can be given back.
+    incremental: bool,
     /// Wall ms before which the main file's oldest event is within the retention window.
     events_due: AtomicU64,
     /// The VM steps every range statement has taken since [`SqliteBackend::take_read_steps`].
@@ -991,6 +998,7 @@ impl SqliteBackend {
         })?;
 
         let mut conn = connect(path)?;
+        conn.pragma_update(None, "auto_vacuum", 2).map_err(db)?;
         let mode: String = conn
             .pragma_update_and_check(None, "journal_mode", "WAL", |r| r.get(0))
             .map_err(db)?;
@@ -1013,6 +1021,10 @@ impl SqliteBackend {
         }
         migrate(&tx)?;
         tx.commit().map_err(db)?;
+        let incremental = conn
+            .pragma_query_value(None, "auto_vacuum", |r| r.get::<_, i64>(0))
+            .map_err(db)?
+            == 2;
         let mut head = meta(&conn, "head")?.unwrap_or(0);
         let floor = head;
         let now = opts.wall.now_ms();
@@ -1093,6 +1105,8 @@ impl SqliteBackend {
             receipts_from_at,
             drained: AtomicBool::new(false),
             events_drained: AtomicBool::new(false),
+            versions_drained: AtomicBool::new(false),
+            incremental,
             events_due: AtomicU64::new(0),
             read_steps: AtomicU64::new(0),
             shm: File::open(format!("{}-shm", path.display())).ok(),
@@ -1159,6 +1173,42 @@ impl SqliteBackend {
         if drained == Ok(true) {
             self.0.drained.store(true, Ordering::SeqCst);
         }
+    }
+
+    /// Deletes up to [`DRAIN_PER_COMMIT`] rows of the legacy `versions` table, which nothing
+    /// reads: no log entry, the head unmoved. A failure is retried by the next commit.
+    fn drain_versions(&self, w: &mut Writer) {
+        if !self.0.day_receipts || self.0.versions_drained.load(Ordering::SeqCst) {
+            return;
+        }
+        let drained = (|| {
+            let tx = w.conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(db)?;
+            let n = i64::try_from(DRAIN_PER_COMMIT).unwrap_or(i64::MAX);
+            let gone = exec(&tx, "DELETE FROM versions WHERE rowid IN (SELECT rowid FROM versions LIMIT ?1)", params![n])?;
+            tx.commit().map_err(db)?;
+            Ok::<bool, Error>(gone < DRAIN_PER_COMMIT)
+        })();
+        if drained == Ok(true) {
+            self.0.versions_drained.store(true, Ordering::SeqCst);
+        }
+    }
+
+    /// Returns up to [`VACUUM_PAGES_PER_COMMIT`] free pages to the filesystem; a no-op on a file
+    /// created without `auto_vacuum=INCREMENTAL`. A failure is retried by the next commit.
+    fn reclaim_pages(&self, w: &mut Writer) {
+        if !self.0.day_receipts || !self.0.incremental {
+            return;
+        }
+        let _ = (|| {
+            let free: i64 = w.conn.pragma_query_value(None, "freelist_count", |r| r.get(0))?;
+            if free == 0 {
+                return Ok(());
+            }
+            let mut stmt = w.conn.prepare(&format!("PRAGMA incremental_vacuum({VACUUM_PAGES_PER_COMMIT})"))?;
+            let mut rows = stmt.query([])?;
+            while rows.next()?.is_some() {}
+            Ok::<(), rusqlite::Error>(())
+        })();
     }
 
     /// Deletes up to [`DRAIN_PER_COMMIT`] events from the main file, oldest first, while they are
@@ -1998,6 +2048,8 @@ impl Backend for SqliteBackend {
         }
         self.drain_receipts(&mut w, now);
         self.drain_events(&mut w, now);
+        self.drain_versions(&mut w);
+        self.reclaim_pages(&mut w);
         Ok(main)
     }
 
