@@ -1386,7 +1386,7 @@ impl<'a> Run<'a> {
         agent
     }
 
-    fn session(&mut self, work: &Path) -> Result<(), Abort> {
+    pub(crate) fn session(&mut self, work: &Path) -> Result<(), Abort> {
         let bead = self.s.bead.clone();
         let logf = self.s.logf.clone().expect("armed");
         self.log(&format!("{}: working {bead} on {} (log: {})", self.f(), self.s.branch, logf.display()));

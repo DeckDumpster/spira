@@ -120,12 +120,17 @@ pub(crate) mod verdict_run {
 
     #[allow(clippy::too_many_arguments)]
     fn with_run_sink<T>(vars: BTreeMap<String, String>, bd: &dyn Bd, git: Dirty, exec: &dyn Exec, clock: &(dyn Fn() -> i64 + Sync), seam: &dyn Seam, sink: &dyn Sink, claimed_raw: &str, f: impl FnOnce(&mut Run) -> T) -> T {
+        with_run_launching(vars, bd, git, exec, clock, seam, sink, &NoLaunch, claimed_raw, f)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn with_run_launching<T>(vars: BTreeMap<String, String>, bd: &dyn Bd, git: Dirty, exec: &dyn Exec, clock: &(dyn Fn() -> i64 + Sync), seam: &dyn Seam, sink: &dyn Sink, launcher: &dyn Launcher, claimed_raw: &str, f: impl FnOnce(&mut Run) -> T) -> T {
         let conf = Conf::new(&Snapshot { vars, ..Default::default() }, Path::new("h/spira"));
         let rune = Rune::from_vars("builder", &Default::default());
         let env = Env::new(Default::default(), Default::default());
         let stop = Arc::new(Stop::default());
         let mut r = Run {
-            d: Deps { bd, seam, git: &git, exec, launcher: &NoLaunch, sink, env: &env, clock, sleep: &|_| {} },
+            d: Deps { bd, seam, git: &git, exec, launcher, sink, env: &env, clock, sleep: &|_| {} },
             ledger: Ledger { path: PathBuf::from("nonexistent/ledger"), dry: true },
             conf,
             rune,
@@ -195,6 +200,37 @@ pub(crate) mod verdict_run {
         let want = Run::session_tmpdir(work.path());
         assert_eq!(got.as_deref(), Some(want.display().to_string().as_str()));
         assert!(want.is_dir() && want.starts_with(work.path()));
+    }
+
+    struct Capture(Mutex<Vec<BTreeMap<String, String>>>);
+    impl Launcher for Capture {
+        fn run(&self, spec: &SessionSpec, _: &Stop) -> i32 {
+            self.0.lock().unwrap().push(spec.env.clone());
+            0
+        }
+    }
+
+    #[test]
+    fn the_env_the_session_port_receives_carries_the_worktree_tmpdir() {
+        let work = testkit::TempDir::new("dwarf-tmpdir-spec");
+        let w = work.path().to_path_buf();
+        let cap = Capture(Default::default());
+        let mut vars = super::complete_vars();
+        vars.insert("SPIRA_REPO".into(), "shared".into());
+        let res = with_run_launching(vars, &NoBd, Dirty(vec![]), &Lc, &|| 0, &Seams(Default::default()), &Mute::default(), &cap, "", |r| {
+            r.s.logf = Some(w.join("log"));
+            let bin = w.join("model-bin");
+            std::fs::create_dir_all(&bin).unwrap();
+            let work_bin = bin.join("work");
+            testkit::write_exe(&work_bin, "#!/bin/sh\n");
+            r.d.env.set(spira_config::release_env::MODEL_BIN_OVERRIDE_ENV, &bin.display().to_string());
+            r.session(&w).map_err(|a| format!("{a:?}"))
+        });
+        res.unwrap();
+        let envs = cap.0.lock().unwrap();
+        let want = Run::session_tmpdir(work.path()).display().to_string();
+        assert_eq!(envs.len(), 1);
+        assert_eq!(envs[0].get("TMPDIR"), Some(&want));
     }
 
     const REFUSED: &str = "The work is finished and checked, but work submit refuses: spira-lc content: cannot tell\nmore";

@@ -78,7 +78,7 @@ Before you submit, your branch sits on the landing ref and your tip builds, pass
 passes the repository's lint; running the repository's checks is performed using a `work`
 command. Each test you added or changed is seen red at the base and green at the tip, run by
 name and scoped to the crates your diff touches, with `--features integration` for a test
-under `tests/`; that scoping is performed using a `work` command. A change that cannot go red, a pure refactor, keeps the tests that already cover it
+under `tests/`; that scoping is performed using a `work` command. A base copy for "seen red", and its build target, go under `$TMPDIR`, never a literal `/tmp` path. A change that cannot go red, a pure refactor, keeps the tests that already cover it
 green by name. You do not run whole unit tiers or shell suites your change does not touch: the
 round runs every suite on the merged tree, with every other change in view.
 
