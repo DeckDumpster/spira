@@ -239,6 +239,34 @@ fn a_watch_delivery_moves_the_batch_and_rereads_only_the_beads_it_names() {
 }
 
 #[test]
+fn a_blocker_that_closes_rereads_the_held_beads_waiting_on_it_however_deep() {
+    within(|| {
+        let waiting = |id: &str, on: &str| {
+            let mut b = bead(id, "READY", "[]", Some("blocked"), false);
+            b["blocked_by"] = json!([on]);
+            b["claim_view"]["blocker"] = json!(on);
+            b
+        };
+        let w = world(
+            Script { list_rev: 9, rows: vec![bead("sp-b", "READY", "[]", Some("claimable"), false), waiting("sp-a", "sp-b"), waiting("sp-top", "sp-a"), bead("sp-x", "READY", "[]", Some("claimable"), false)], ..Default::default() },
+            Duration::from_secs(10),
+        );
+        w.p.poll().unwrap();
+        assert_eq!(w.p.ready_counts().unwrap().value.judged_claimable, 2);
+
+        w.script.lock().unwrap().rows = vec![bead("sp-b", "LANDED", "[]", None, false), bead("sp-a", "READY", "[]", Some("claimable"), false), waiting("sp-top", "sp-a"), bead("sp-x", "READY", "[]", Some("claimable"), false)];
+        w.watch(json!({ "events": [{ "key": "lifecycle/sp-b", "rev": rev(10), "value": {}, "create_rev": null, "prev_mod_rev": rev(2) }], "through": 10 }));
+        w.p.poll().unwrap();
+        let last = w.script.lock().unwrap().seen.last().cloned().unwrap();
+        assert_eq!(&last, &["list", "--ids", "sp-a,sp-b,sp-top"].map(String::from), "the waiters are re-read with the blocker, an unrelated bead is not");
+        let held = w.p.list_answer(&["list", "--live"]).unwrap().unwrap();
+        let verdicts: Vec<(String, String)> = serde_json::from_str::<Vec<Value>>(&held).unwrap().iter().map(|r| (r["bead_id"].as_str().unwrap().into(), r["claim_view"]["verdict"].as_str().unwrap().into())).collect();
+        assert!(verdicts.contains(&("sp-a".into(), "claimable".into())), "{verdicts:?}");
+        assert!(!verdicts.iter().any(|(id, _)| id == "sp-b"), "{verdicts:?}");
+    });
+}
+
+#[test]
 fn a_batches_refresh_rereads_only_the_batch_records_and_the_ready_counts_refuse_until_a_full_load() {
     within(|| {
         let w = world(

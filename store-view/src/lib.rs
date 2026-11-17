@@ -363,6 +363,27 @@ fn ended_by(s: &State, events: &[Value]) -> u8 {
     })
 }
 
+/// The beads `raw` waits on as `list` printed it: its parent, declared blockers and judged blocker.
+fn waits_on(raw: &Value) -> impl Iterator<Item = &str> {
+    fn ids(v: &Value) -> impl Iterator<Item = &str> {
+        v.as_array().into_iter().flatten().filter_map(Value::as_str)
+    }
+    let claim = &raw["claim"];
+    claim["parent"].as_str().into_iter().chain(ids(&claim["blocks"])).chain(ids(&raw["blocked_by"])).chain(raw["claim_view"]["blocker"].as_str())
+}
+
+/// `changed` and every held bead that waits on one of them, however deep: a bead's verdict is
+/// judged from its blockers, so their change is its change though its own keys never move.
+fn with_waiters(beads: &BTreeMap<String, Bead>, mut changed: BTreeSet<String>) -> BTreeSet<String> {
+    loop {
+        let more: Vec<String> = beads.iter().filter(|(id, b)| !changed.contains(*id) && waits_on(&b.raw).any(|w| changed.contains(w))).map(|(id, _)| id.clone()).collect();
+        if more.is_empty() {
+            return changed;
+        }
+        changed.extend(more);
+    }
+}
+
 /// The beads `list` answered, with the claim view's verdict on each.
 fn beads_of(raw: &str) -> Result<Vec<(String, Bead)>, LcError> {
     let rows = lc_state::parse_rows(raw).map_err(fault)?;
@@ -511,6 +532,9 @@ impl Projection {
             } else if let Some(id) = key.strip_prefix(LIFECYCLE).or_else(|| key.strip_prefix(READINESS)) {
                 dirty.insert(id.to_string());
             }
+        }
+        if let Some(beads) = self.lock().beads.as_ref() {
+            dirty = with_waiters(beads, dirty);
         }
         let dirty: Vec<String> = dirty.into_iter().collect();
         let fresh: BTreeMap<String, Bead> = self.list_ids(&dirty)?.into_iter().collect();
