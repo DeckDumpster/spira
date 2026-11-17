@@ -566,7 +566,7 @@ fn holds_over(over_ms: u64, inner: &Counted) -> (Modeled<Counted>, Arc<std::sync
 }
 
 fn slow_commit(inner: &Counted, ms: u64) {
-    *inner.before_commit.lock().unwrap() = Some(Box::new(move || std::thread::sleep(Duration::from_millis(ms))));
+    *inner.before_commit.lock().unwrap() = Some(Box::new(move || std::thread::sleep(Duration::from_millis(ms)))); // clock-safe: the sleep is the hold under measurement
 }
 
 #[test]
