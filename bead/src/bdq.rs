@@ -22,26 +22,6 @@ use spira_config::repos::Registry;
 // loop has no `--labels`/`-l` case at all, unlike destructive's).
 // =========================================================================================
 
-/// `_bdq_check_repo_label`'s own loop: the LAST of `--labels <v>` / `-l <v>` / `--labels=<v>`
-/// anywhere in argv wins (no "create" skip, no title/description tracking at all).
-fn last_labels_value(args: &[String]) -> String {
-    let mut labels = String::new();
-    let mut next_is_labels = false;
-    for arg in args {
-        if next_is_labels {
-            labels = arg.clone();
-            next_is_labels = false;
-            continue;
-        }
-        if arg == "--labels" || arg == "-l" {
-            next_is_labels = true;
-        } else if let Some(v) = arg.strip_prefix("--labels=") {
-            labels = v.to_string();
-        }
-    }
-    labels
-}
-
 /// Title/description/labels extracted by the ask-shape check's loop: `--title`/
 /// `--title=`/a bare positional all set `title` (first non-flag arg after the leading
 /// `create` token is skipped; the next sets `title`, and only if nothing has set it yet);
@@ -145,20 +125,32 @@ fn schema_delete_fields(args: &[String]) -> (String, String) {
 // The three create-time fences.
 // =========================================================================================
 
-/// The `repo:<val>` token out of a comma-joined labels string, same extraction
-/// `_bdq_check_repo_label` and incident.sh's own (ported) check both need: the LAST
-/// `repo:`-prefixed token wins when more than one is present in the same labels string
-/// (matching `last_labels_value`'s "last --labels flag wins" shape one level up, for the
-/// argv-based caller; a plain already-joined labels string, as incident's caller already
-/// has one, has at most one `repo:` token in practice, so "first match" and "last match"
-/// agree there).
+/// The first `repo:<val>` token out of a comma-joined labels string.
 fn repo_label_value(labels: &str) -> Option<&str> {
-    labels.split(',').find_map(|t| t.strip_prefix("repo:"))
+    labels.split(',').find_map(|t| t.trim().strip_prefix("repo:"))
+}
+
+/// Every `-l`/`--labels`/`--labels=` value in argv, joined with commas: bd accepts the flag
+/// more than once, and a `repo:` label in any of them is the bead's.
+fn all_labels_value(args: &[String]) -> String {
+    let mut values: Vec<&str> = Vec::new();
+    let mut next_is_labels = false;
+    for arg in args {
+        if next_is_labels {
+            values.push(arg);
+            next_is_labels = false;
+        } else if arg == "--labels" || arg == "-l" {
+            next_is_labels = true;
+        } else if let Some(v) = arg.strip_prefix("--labels=") {
+            values.push(v);
+        }
+    }
+    values.join(",")
 }
 
 /// The repo a create's `--labels` name, for the lifecycle row it owes.
 pub fn created_repo(args: &[String]) -> Option<String> {
-    repo_label_value(&last_labels_value(args)).map(str::to_string)
+    repo_label_value(&all_labels_value(args)).map(str::to_string)
 }
 
 /// Whether a `repo:<val>` claim is acceptable: no claim at all (`val` empty — the same
@@ -177,10 +169,7 @@ pub fn repo_label_allowed(repo_val: &str, home_repo: &str, known: &[String]) -> 
 /// read by the caller — see `src/bin/bdq.rs::build_registry`). Returns the refusal message
 /// (already newline-terminated, ready for stderr), or `None` when the call is allowed.
 pub fn check_repo_label(args: &[String], registry: &Registry) -> Option<String> {
-    let labels = last_labels_value(args);
-    if labels.is_empty() {
-        return None;
-    }
+    let labels = all_labels_value(args);
     let repo_val = repo_label_value(&labels)?;
     let mut names = registry.names();
     if repo_label_allowed(repo_val, registry.home_repo(), &names) {
@@ -651,15 +640,19 @@ mod tests {
     }
 
     #[test]
-    fn repo_label_last_labels_flag_wins() {
-        // Two --labels occurrences: the second overwrites the first, matching bash's
-        // unconditional overwrite with no break.
+    fn repo_label_in_a_non_last_labels_flag_is_still_checked() {
         let map = "spira | /srv/spira | push | origin/main | |\n";
         let reg = Registry::new(Some(map), &env(&[("SPIRA_HOME_REPO", "homerepo")]), Path::new("x"));
-        assert_eq!(
-            check_repo_label(&s(&["create", "title", "--labels", "repo:nope", "--labels", "repo:spira"]), &reg),
-            None
-        );
+        let msg = check_repo_label(&s(&["create", "title", "-l", "repo:nope", "-l", "plan"]), &reg);
+        assert!(msg.expect("refused").contains("repo:nope"));
+        assert_eq!(check_repo_label(&s(&["create", "title", "-l", "repo:spira", "--labels=plan"]), &reg), None);
+    }
+
+    #[test]
+    fn created_repo_reads_the_repo_label_from_every_labels_flag() {
+        assert_eq!(created_repo(&s(&["create", "T", "-l", "repo:deck", "-l", "plan"])), Some("deck".into()));
+        assert_eq!(created_repo(&s(&["create", "T", "-l", "plan", "--labels=a, repo:deck"])), Some("deck".into()));
+        assert_eq!(created_repo(&s(&["create", "T", "-l", "plan"])), None);
     }
 
     // -- check_schema_delete -----------------------------------------------------------------
