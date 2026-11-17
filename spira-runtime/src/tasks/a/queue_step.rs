@@ -30,6 +30,7 @@
 //! - `open_batch`: the **batch projection (S7b)**, which `forge_batch::read` (`ops/forge_batch.rs:62`)
 //!   answers today from the store's rounds door or the `queue/<repo>/batch` file.
 //! - `publish_rec`: `queue/<repo>/publish` (`ops/verdict.rs:239`) — a file today; becomes a store record (unverified that S7 carries it).
+//! - `publish_check`: forge `check-status` of the standing publish record's PR and branch.
 //! - `pr_state`, `check`: forge `pr-state` / `check-status` (`real.rs:1367`, `:1376`; read at
 //!   `ops/verdict.rs:264`, `:226`, `:1080`, `:1099`). These are forge reads inside the probe (class `forge`).
 //! - `base_sha`: `git rev-parse <landref>` (`ops/verdict.rs:1508`).
@@ -90,11 +91,14 @@
 //! | `queue.step.cut_wanted` | — (Emit) | — | `repo/tick` | replaces the forked `batcher cut` (`real.rs:938`); wakes [[batcher-local]] / [[batcher-forge]] |
 //! | `queue.step.publish_wanted` | — (Emit) | — | `repo/base_sha` | wakes [[publish]] instead of `ops/simple.rs:522` |
 //!
+//! A `queue.local` repo whose standing publish record's check is green also emits `publish_wanted` each tick,
+//! in any batch state, until `publish` settles and deletes the record.
+//!
 //! Concierge-owned batches refuse the whole pass (`owner_refused`, `ops/verdict.rs:1052`; actor key `SPIRA_QUEUE_ACTOR`, `:1050`).
 //!
 //! ## Silence
 //!
-//! Idle tick (no open batch, no publish record, nothing new): one probe, no Emit, no Effect, no journal
+//! Idle tick (no open batch, no green publish record, nothing new): one probe, no Emit, no Effect, no journal
 //! line. Today the pass prints `step --all: stepped=…` every tick (`ops/simple.rs:495-505`); that line goes.
 //! `Waiting` with an unchanged check status emits nothing (record only on change).
 //!
@@ -219,6 +223,7 @@ pub struct OpenBatch {
 pub struct PublishRec {
     pub pr: u64,
     pub head: String,
+    pub branch: String,
 }
 
 /// `normalize_status` of the forge check.
@@ -264,6 +269,7 @@ pub struct Repo {
     pub lc_ok: bool,
     pub open_batch: Option<OpenBatch>,
     pub publish_rec: Option<PublishRec>,
+    pub publish_check: Check,
     pub pr_state: PrState,
     pub check: Check,
     pub base_sha: String,
@@ -649,6 +655,10 @@ pub fn decide_with(policy: &Policy, carry: &Carry, snap: &Snapshot, now_ms: u64)
             continue;
         }
         acts.extend(m.acts);
+        if let Some(rec) = repo.publish_rec.as_ref().filter(|_| repo.mode == "queue.local" && repo.publish_check == Check::Green) {
+            let input = serde_json::json!({ "repo": name, "mode": repo.mode }).to_string();
+            acts.push(Act::new(PUBLISH_WANTED, format!("{name}/publish/{}/{now_ms}", rec.pr)).with_input(input));
+        }
     }
     (next, acts)
 }
@@ -823,11 +833,15 @@ pub mod edge {
                     check = Check::of(&forge_call(&dir, "check-status", &[&pr, &b.branch], None)?.stdout().unwrap_or_default());
                 }
             }
-            let publish_rec = queue_kv(e, &name, "publish").and_then(|kv| Some(PublishRec { pr: kv.get("pr")?.trim_start_matches('#').parse().ok()?, head: kv.get("head").cloned().unwrap_or_default() }));
+            let publish_rec = queue_kv(e, &name, "publish").and_then(|kv| Some(PublishRec { pr: kv.get("pr")?.trim_start_matches('#').parse().ok()?, head: kv.get("head").cloned().unwrap_or_default(), branch: kv.get("branch").cloned().unwrap_or_default() }));
+            let mut publish_check = Check::None;
+            if let Some(rec) = &publish_rec {
+                publish_check = Check::of(&forge_call(&dir, "check-status", &[&rec.pr.to_string(), &rec.branch], None)?.stdout().unwrap_or_default());
+            }
             let landref = spira_config::repos::landref(&reg, &name).unwrap_or_default();
             let base_sha = git(&dir, &["rev-parse", &landref], Duration::from_secs(10)).unwrap_or_default();
             let sealed_base = open_batch.as_ref().and_then(|_| queue_kv(e, &name, "batch")).and_then(|kv| kv.get("base").cloned());
-            snap.repos.insert(name, Repo { mode, lc_ok, open_batch, publish_rec, pr_state, check, base_sha, sealed_base, ..Repo::default() });
+            snap.repos.insert(name, Repo { mode, lc_ok, open_batch, publish_rec, publish_check, pr_state, check, base_sha, sealed_base, ..Repo::default() });
         }
         json(&snap)
     }

@@ -33,6 +33,7 @@ mod task_a_czar;
 mod task_a_gate_check;
 mod task_a_gate_worker;
 mod task_a_landing;
+mod publish_green_wake;
 mod task_a_publish;
 mod task_a_queue_step;
 mod task_a_sentinel_call;
