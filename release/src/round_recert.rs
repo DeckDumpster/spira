@@ -239,7 +239,7 @@ pub fn drive(sys: &dyn Sys, batch: &str, repo: &str) -> u8 {
         (Some(0), Ok(false) | Err(_)) => println!("round-recert: {batch} landed at {}", round.head),
         (Some(LAND_DEPLOY_FAULT_EXIT), Ok(false) | Err(_)) => println!("round-recert: {batch} landed at {} but its release was not activated", round.head),
         (c, open) => {
-            println!("round-recert: LAND FAILED for {batch} (land rc={}, round {}) — see above", c.map_or("signal".into(), |c| c.to_string()), if open == Ok(false) { "gone" } else { "still open" });
+            println!("round-recert: LAND FAILED for {batch} (land rc={}, round {}) — see above", c.map_or("signal".into(), |c| c.to_string()), match open { Ok(false) => "gone", Ok(true) => "still open", Err(_) => "unknown" });
             return 1;
         }
     }
