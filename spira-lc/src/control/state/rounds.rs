@@ -567,17 +567,23 @@ pub(super) fn list_batches<B: Backend>(
         Err(e) => return (CANNOT_TELL, format!("cannot tell: list --batches: {e}")),
     };
     let read = || -> state_store::Result<Vec<Value>> {
-        let mut rounds: Vec<_> = store
-            .batches()?
-            .into_iter()
-            .map(|(_, r)| r.value)
-            .filter(|r| match (&page, &only, window) {
-                (Some((after, _)), _, _) => after.as_ref().is_none_or(|a| r.row.batch_id > *a),
-                (None, Some(id), _) => &r.row.batch_id == id,
-                (None, None, Some(w)) => r.opened_at >= call.now - w || !r.row.state.is_terminal(),
-                (None, None, None) => true,
-            })
-            .collect();
+        let mut rounds: Vec<_> = match (&page, &only, window) {
+            (Some((after, limit)), _, _) => store.batches_page(after.as_deref(), limit.unwrap_or(usize::MAX))?,
+            (None, Some(id), _) => store.batch(id)?.into_iter().collect(),
+            (None, None, Some(w)) => {
+                let mut rows = store.batches_opened_since(call.now - w, usize::MAX)?;
+                for open in store.open_batches()? {
+                    if !rows.iter().any(|(k, _)| *k == open.0) {
+                        rows.push(open);
+                    }
+                }
+                rows
+            }
+            (None, None, None) => store.newest_batches(BATCHES_SHOWN)?,
+        }
+        .into_iter()
+        .map(|(_, r)| r.value)
+        .collect();
         match &page {
             Some((_, limit)) => {
                 rounds.sort_by(|a, b| a.row.batch_id.cmp(&b.row.batch_id));

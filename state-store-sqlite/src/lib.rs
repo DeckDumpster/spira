@@ -186,6 +186,15 @@ pub const MIGRATIONS: &[&[&str]] = &[
                 OR l.key >= CAST('intents/' AS BLOB) AND l.key < CAST('intents0' AS BLOB))
            AND versions.value IS NOT l.value",
     ],
+    // 5 (sp-m342rx): a live key's `data.opened_at` as an indexed column, so the newest rounds
+    // are a range of the index read backwards.
+    &[
+        "ALTER TABLE latest ADD COLUMN opened_at INTEGER GENERATED ALWAYS AS (CASE
+            WHEN json_valid(CAST(value AS TEXT))
+             AND json_type(CAST(value AS TEXT), '$.data.opened_at') = 'integer'
+            THEN json_extract(CAST(value AS TEXT), '$.data.opened_at') END) VIRTUAL",
+        "CREATE INDEX latest_by_opened ON latest (opened_at, key) WHERE opened_at IS NOT NULL",
+    ],
 ];
 
 /// How many schema migrations this binary knows: what a store's `user_version` is checked
@@ -614,6 +623,9 @@ const USAGE_KEYS: &str =
 const VERSION_USAGE: &str = "SELECT key, main, length(CAST(coalesce(value, X'') AS BLOB)) FROM versions
      WHERE (key, main) > (?1, ?2) ORDER BY key, main LIMIT ?3";
 
+/// The head's newest version of `?1`: one read of `latest`'s primary key.
+const GET_LATEST: &str = "SELECT main, sub, value, create_main, create_sub FROM latest WHERE key = ?1";
+
 /// The head's live keys in `[?1, ?2)`: one key-ordered range over `latest`, reading its page.
 const LATEST_BOUNDED: &str = "SELECT key, main, sub, value, create_main, create_sub FROM latest
      WHERE key >= ?1 AND key < ?2 ORDER BY key LIMIT ?3";
@@ -624,6 +636,12 @@ const STATE_BOUNDED: &str = "SELECT key, main, sub, value, create_main, create_s
      WHERE state = ?1 AND key >= ?2 AND key < ?3 ORDER BY key LIMIT ?4";
 const STATE_OPEN: &str = "SELECT key, main, sub, value, create_main, create_sub FROM latest
      WHERE state = ?1 AND key >= ?2 ORDER BY key LIMIT ?3";
+
+/// The head's live keys in `[?2, ?3)` whose `opened_at` is at least `?1`, newest first: one
+/// backward range of `latest_by_opened`.
+const NEWEST_OPENED: &str = "SELECT key, main, sub, value, create_main, create_sub FROM latest
+     WHERE opened_at >= ?1 AND key >= ?2 AND (?3 IS NULL OR key < ?3)
+     ORDER BY opened_at DESC, key DESC LIMIT ?4";
 
 /// The head's live keys naming owner `?1`, after `?2`: one range of `owner_refs`.
 const OWNED_BY: &str = "SELECT key FROM owner_refs WHERE owner = ?1 AND key > ?2 ORDER BY key LIMIT ?3";
@@ -836,6 +854,78 @@ fn range_rows_at(
         }
     }
     out.truncate(limit);
+    Ok(out)
+}
+
+/// Live keys in `[lo, hi)` whose state at `at` is `state`: pages of `latest_by_state`, each with
+/// the keys the ring says were written since judged by their version at `at`, whatever `latest`
+/// says now.
+#[allow(clippy::too_many_arguments)]
+fn range_in_state_at(
+    conn: &Connection,
+    snap: &Snapshot,
+    state: &str,
+    lo: &[u8],
+    hi: Option<&[u8]>,
+    limit: usize,
+    at: u64,
+    history: &Mutex<History>,
+    deadline: &dyn Fn() -> Result<()>,
+) -> Result<Vec<(String, Version)>> {
+    let touched: Vec<(String, Option<Version>)> = lock(history)
+        .touched_after(lo, hi, at)?
+        .into_iter()
+        .map(|(k, v)| (k, v.filter(|v| state_store::backend::state_of(&v.value).as_deref() == Some(state))))
+        .collect();
+    let mut out = Vec::new();
+    let mut cursor = lo.to_vec();
+    let mut next = 0;
+    while out.len() < limit {
+        let page = range_rows(conn, snap, Source::State(state), &cursor, hi, limit, deadline)?;
+        let upto = (page.len() == limit).then(|| page.last().map(|(k, _)| k.clone())).flatten();
+        let span = touched[next..].partition_point(|(k, _)| upto.as_ref().is_none_or(|u| k <= u));
+        out.extend(overlay(page, &touched[next..next + span], None, upto.as_deref()));
+        next += span;
+        match upto {
+            Some(u) => {
+                cursor = u.into_bytes();
+                cursor.push(0);
+            }
+            None => break,
+        }
+    }
+    out.truncate(limit);
+    Ok(out)
+}
+
+/// The head's newest `limit` live keys in `[prefix, hi)` opened at or after `since`.
+fn newest_opened_at_head(
+    conn: &Connection,
+    snap: &Snapshot,
+    prefix: &[u8],
+    hi: Option<&[u8]>,
+    since: i64,
+    limit: usize,
+    deadline: &dyn Fn() -> Result<()>,
+) -> Result<Vec<(String, Version)>> {
+    deadline()?;
+    let mut stmt = conn.prepare_cached(NEWEST_OPENED).map_err(db)?;
+    stmt.reset_status(rusqlite::StatementStatus::VmStep);
+    let mut out = Vec::new();
+    {
+        let mut rows = stmt
+            .query(params![since, prefix, hi, i64::try_from(limit).unwrap_or(i64::MAX)])
+            .map_err(db)?;
+        while let Some(r) = rows.next().map_err(db)? {
+            deadline()?;
+            let key: Vec<u8> = r.get(0).map_err(db)?;
+            if let Some(v) = version_row(r, 1).map_err(db)? {
+                out.push((key_of(key)?, v));
+            }
+        }
+    }
+    let n = stmt.reset_status(rusqlite::StatementStatus::VmStep);
+    snap.steps.fetch_add(u64::try_from(n).unwrap_or(0), Ordering::Relaxed);
     Ok(out)
 }
 
@@ -1485,9 +1575,7 @@ impl Backend for SqliteBackend {
                     }
                 }
             }
-            conn.prepare_cached(
-                "SELECT main, sub, value, create_main, create_sub FROM latest WHERE key = ?1",
-            )
+            conn.prepare_cached(GET_LATEST)
             .and_then(|mut s| {
                 s.query_row(params![key.as_bytes()], |r| version_row(r, 0))
                     .optional()
@@ -1512,7 +1600,7 @@ impl Backend for SqliteBackend {
         })
     }
 
-    /// At the head, one range of `latest_by_state`; below it, the scan the default makes.
+    /// One range of `latest_by_state`; below the head, corrected by the history ring.
     fn range_in_state(
         &self,
         prefix: &str,
@@ -1521,20 +1609,56 @@ impl Backend for SqliteBackend {
         limit: usize,
         at: u64,
     ) -> Result<Vec<(String, Version)>> {
-        let indexed = self.read(|conn, snap, deadline| {
+        self.read(|conn, snap, deadline| {
             snap.readable(at)?;
-            if at != snap.head {
-                return Ok(None);
-            }
             let lo = lower_bound(prefix.as_bytes(), after);
             let hi = successor(prefix.as_bytes());
-            range_rows(conn, snap, Source::State(state), &lo, hi.as_deref(), limit, deadline)
-                .map(Some)
-        })?;
-        match indexed {
-            Some(rows) => Ok(rows),
-            None => state_store::backend::range_in_state_by_scan(self, prefix, state, after, limit, at),
-        }
+            if at == snap.head {
+                return range_rows(conn, snap, Source::State(state), &lo, hi.as_deref(), limit, deadline);
+            }
+            range_in_state_at(conn, snap, state, &lo, hi.as_deref(), limit, at, &self.0.history, deadline)
+        })
+    }
+
+    /// The newest rows by `opened_at`: a backward range of `latest_by_opened`, below the head
+    /// corrected by the history ring, a key it says was written since taking its version at `at`.
+    fn range_newest_opened(
+        &self,
+        prefix: &str,
+        since: i64,
+        limit: usize,
+        at: u64,
+    ) -> Result<Vec<(String, Version)>> {
+        self.read(|conn, snap, deadline| {
+            snap.readable(at)?;
+            let hi = successor(prefix.as_bytes());
+            if at == snap.head {
+                return newest_opened_at_head(conn, snap, prefix.as_bytes(), hi.as_deref(), since, limit, deadline);
+            }
+            let touched = lock(&self.0.history).touched_after(prefix.as_bytes(), hi.as_deref(), at)?;
+            let rows = newest_opened_at_head(
+                conn,
+                snap,
+                prefix.as_bytes(),
+                hi.as_deref(),
+                since,
+                limit.saturating_add(touched.len()),
+                deadline,
+            )?;
+            let mut merged: Vec<(i64, String, Version)> = rows
+                .into_iter()
+                .filter(|(k, _)| touched.binary_search_by(|(t, _)| t.as_str().cmp(k)).is_err())
+                .filter_map(|(k, v)| Some((state_store::backend::opened_at_of(&v.value)?, k, v)))
+                .collect();
+            merged.extend(touched.into_iter().filter_map(|(k, v)| {
+                let v = v?;
+                let opened = state_store::backend::opened_at_of(&v.value).filter(|o| *o >= since)?;
+                Some((opened, k, v))
+            }));
+            merged.sort_by(|a, b| (b.0, &b.1).cmp(&(a.0, &a.1)));
+            merged.truncate(limit);
+            Ok(merged.into_iter().map(|(_, k, v)| (k, v)).collect())
+        })
     }
 
     /// The key ranges outside `skip`, read from the key index, so no skipped key is visited.
@@ -2178,7 +2302,7 @@ mod tests {
         assert_eq!(keys[0], "p/025001");
         assert_eq!(page[0].1.mod_rev, Rev::new(VERSIONS as u64, 25_001), "the newest version");
         assert!(steps <= 20 * PAGE as u64, "{steps} VM steps for a page of {PAGE}");
-        for sql in [LATEST_BOUNDED, LATEST_OPEN, STATE_BOUNDED, STATE_OPEN] {
+        for sql in [LATEST_BOUNDED, LATEST_OPEN, STATE_BOUNDED, STATE_OPEN, GET_LATEST] {
             for step in plan(&b, sql) {
                 assert!(
                     !step.starts_with("SCAN") && !step.contains("TEMP B-TREE"),
@@ -2186,6 +2310,11 @@ mod tests {
                 );
             }
         }
+        for sql in [STATE_BOUNDED, STATE_OPEN] {
+            assert!(plan(&b, sql).iter().any(|s| s.contains("latest_by_state")), "{sql}");
+        }
+        let steps = plan(&b, GET_LATEST);
+        assert!(steps.iter().all(|s| s.contains("PRIMARY KEY") && !s.starts_with("SCAN")), "{steps:?}");
     }
 
     /// Keys under `a/` (one rewritten five times), `b/` and `events/`, one commit each.
@@ -2411,6 +2540,51 @@ mod tests {
         assert_eq!(page, scanned);
     }
 
+    /// law: a state filter is an indexed range below the head too. Over 20,000 terminal keys and
+    /// thirty live ones, a read at a revision a commit behind the head reads the page and the
+    /// ring's touched keys, and answers as the scan does: a key that left the state since is
+    /// still in it at `at`, one that entered it since is not.
+    #[test]
+    fn a_state_filtered_page_below_the_head_reads_o_page_rows_and_judges_touched_keys_at_the_revision() {
+        let dir = testkit::TempDir::new("sqlite-state-below");
+        let b = SqliteBackend::open(&dir.path().join("s.db"), Options::default()).unwrap();
+        let doc = |state: &str| serde_json::to_vec(&serde_json::json!({ "data": { "state": state } })).unwrap();
+        let put = |key: String, state: &str, prev: Option<Rev>| Write::Put {
+            key,
+            value: doc(state),
+            create_rev: Rev::new(1, 0),
+            prev,
+        };
+        let mut batch: Vec<Write> = (0..20_000).map(|i| put(format!("life/t{i:06}"), "done", None)).collect();
+        batch.extend((0..30).map(|i| put(format!("life/l{i:02}"), "live", None)));
+        let at = b.commit(b.head().unwrap(), &batch).unwrap();
+        let live_5 = b.get("life/l05", at).unwrap().unwrap();
+        let done_7 = b.get("life/t000007", at).unwrap().unwrap();
+        b.commit(
+            at,
+            &[
+                put("life/l05".into(), "done", Some(live_5.create_rev)),
+                put("life/t000007".into(), "live", Some(done_7.create_rev)),
+                put("life/l99".into(), "live", None),
+            ],
+        )
+        .unwrap();
+        b.take_read_steps();
+        let page = b.range_in_state("life/", "live", None, 100, at).unwrap();
+        let steps = b.take_read_steps();
+        assert!(steps <= 20 * 100, "{steps} VM steps for a page of 100");
+        let keys: Vec<&str> = page.iter().map(|(k, _)| k.as_str()).collect();
+        assert_eq!(keys.len(), 30);
+        assert!(keys.contains(&"life/l05"), "left the state after `at`");
+        assert!(!keys.contains(&"life/t000007") && !keys.contains(&"life/l99"));
+        for (state, limit) in [("live", 100), ("live", 7), ("done", 100)] {
+            let by_scan = state_store::backend::range_in_state_by_scan(&b, "life/", state, None, limit, at).unwrap();
+            assert_eq!(b.range_in_state("life/", state, None, limit, at).unwrap(), by_scan, "{state} {limit}");
+        }
+        let after = b.range_in_state("life/", "live", Some("life/l10"), 100, at).unwrap();
+        assert_eq!(after.len(), 19);
+    }
+
     /// Migration 2 fills each delivery's `entered` from its history once, in place: the newest
     /// applied delivery audit into each state, from imported entries and from the `events/`
     /// branch a txn's entry names, in `latest` and in the version row it mirrors.
@@ -2620,6 +2794,89 @@ mod tests {
             .and_then(|mut s| s.query_row([], |r| r.get(0)))
             .unwrap();
         assert_eq!(mirrored, 0, "versions mirror latest");
+    }
+
+    /// Migration 5 indexes `data.opened_at` for the keys a store already holds: the newest rows
+    /// under a prefix are a backward range of that index, read without the rest, and match the
+    /// scan the default makes.
+    #[test]
+    fn migration_5_indexes_opened_at_for_the_keys_a_store_already_holds() {
+        let dir = testkit::TempDir::new("sqlite-m5");
+        let path = dir.path().join("m5.db");
+        let doc = |opened: i64| serde_json::to_vec(&serde_json::json!({ "data": { "opened_at": opened } })).unwrap();
+        let mut rows: Vec<(String, Vec<u8>)> = (0..2_000).map(|i| (format!("r/{i:05}"), doc(1_000 + (i * 7) % 2_000))).collect();
+        rows.push(("other/x".into(), doc(9_999)));
+        rows.push(("r/none".into(), br#"{"data":{"opened_at":"soon"}}"#.to_vec()));
+        {
+            let conn = Connection::open(&path).unwrap();
+            for sql in SCHEMA.iter().chain(MIGRATIONS[..4].iter().flat_map(|m| m.iter())) {
+                exec(&conn, sql, []).unwrap();
+            }
+            conn.pragma_update(None, "user_version", 4).unwrap();
+            for table in ["versions", "latest"] {
+                let sql = format!(
+                    "INSERT INTO {table} (key, main, sub, value, create_main, create_sub, version)
+                     VALUES (?1, 1, 0, ?2, 1, 0, 1)"
+                );
+                for (k, v) in &rows {
+                    exec(&conn, &sql, params![k.as_bytes(), v]).unwrap();
+                }
+            }
+            exec(&conn, "UPDATE meta SET value = 1 WHERE name = 'head'", []).unwrap();
+        }
+        let b = SqliteBackend::open(&path, Options { jump_on_open: false, ..Options::default() }).unwrap();
+        assert_eq!(b.schema_migrations().unwrap(), SCHEMA_MIGRATIONS);
+        b.take_read_steps();
+        let newest = b.range_newest_opened("r/", i64::MIN, 5, 1).unwrap();
+        let steps = b.take_read_steps();
+        assert!(steps <= 200, "{steps} VM steps for 5 of 2000 rows");
+        let opened = |rows: &[(String, Version)]| -> Vec<i64> {
+            rows.iter().map(|(_, v)| state_store::backend::opened_at_of(&v.value).unwrap()).collect()
+        };
+        assert!(opened(&newest).windows(2).all(|w| w[0] >= w[1]), "{:?}", opened(&newest));
+        assert_eq!(newest, state_store::backend::range_newest_opened_by_scan(&b, "r/", i64::MIN, 5, 1).unwrap());
+        let by_scan = state_store::backend::range_newest_opened_by_scan(&b, "r/", 1_500, 100, 1).unwrap();
+        assert_eq!(b.range_newest_opened("r/", 1_500, 100, 1).unwrap(), by_scan);
+        assert!(newest.iter().all(|(k, _)| k.starts_with("r/") && k != "r/none"));
+        for step in plan(&b, NEWEST_OPENED) {
+            assert!(!step.starts_with("SCAN") && !step.contains("TEMP B-TREE"), "{step}");
+        }
+        assert!(plan(&b, NEWEST_OPENED).iter().any(|s| s.contains("latest_by_opened")));
+    }
+
+    /// Below the head the newest rows are still the index's, with the ring's keys judged by
+    /// their version at `at`: a key reopened since is not newest then, one that ended since is.
+    #[test]
+    fn the_newest_opened_below_the_head_reads_the_index_and_judges_touched_keys_at_the_revision() {
+        let dir = testkit::TempDir::new("sqlite-newest-below");
+        let b = SqliteBackend::open(&dir.path().join("n.db"), Options::default()).unwrap();
+        let doc = |opened: i64| serde_json::to_vec(&serde_json::json!({ "data": { "opened_at": opened } })).unwrap();
+        let put = |key: String, opened: i64, prev: Option<Rev>| Write::Put { key, value: doc(opened), create_rev: Rev::new(1, 0), prev };
+        let batch: Vec<Write> = (0..5_000).map(|i| put(format!("r/{i:05}"), 1_000 + i, None)).collect();
+        let at = b.commit(b.head().unwrap(), &batch).unwrap();
+        let newest = b.get("r/04999", at).unwrap().unwrap();
+        let old = b.get("r/00003", at).unwrap().unwrap();
+        let gone = b.get("r/04998", at).unwrap().unwrap();
+        b.commit(
+            at,
+            &[
+                put("r/04999".into(), 1, Some(newest.create_rev)),
+                put("r/00003".into(), 99_999, Some(old.create_rev)),
+                put("r/new".into(), 88_888, None),
+                Write::Delete { key: "r/04998".into(), prev: gone.mod_rev },
+            ],
+        )
+        .unwrap();
+        b.take_read_steps();
+        let rows = b.range_newest_opened("r/", i64::MIN, 5, at).unwrap();
+        let steps = b.take_read_steps();
+        assert!(steps <= 400, "{steps} VM steps for 5 of 5000 rows");
+        let keys: Vec<&str> = rows.iter().map(|(k, _)| k.as_str()).collect();
+        assert_eq!(keys, ["r/04999", "r/04998", "r/04997", "r/04996", "r/04995"]);
+        for (since, limit) in [(i64::MIN, 5), (5_990, 50), (1_000, 7)] {
+            let by_scan = state_store::backend::range_newest_opened_by_scan(&b, "r/", since, limit, at).unwrap();
+            assert_eq!(b.range_newest_opened("r/", since, limit, at).unwrap(), by_scan, "{since} {limit}");
+        }
     }
 
     /// The migration counts in `user_version`, and a store from a binary that knows more

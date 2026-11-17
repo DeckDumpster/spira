@@ -175,6 +175,9 @@ impl<B: Backend> Backend for Interpose<B> {
         self.record(&rows);
         Ok(rows)
     }
+    fn range_newest_opened(&self, prefix: &str, since: i64, limit: usize, at: u64) -> Result<Vec<(String, Version)>> {
+        self.inner.range_newest_opened(prefix, since, limit, at)
+    }
     fn due(&self, now: u64, limit: usize, at: u64) -> Result<Vec<String>> {
         self.inner.due(now, limit, at)
     }

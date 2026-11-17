@@ -152,6 +152,19 @@ pub trait Backend: Send + Sync {
     /// `(expiresAt, key)`, at most `limit`; `Stale` unless `at` is the head. No default: one
     /// would be the scan an expiry index replaces.
     fn due(&self, now: u64, limit: usize, at: u64) -> Result<Vec<String>>;
+    /// Keys starting with `prefix` whose value's `data.opened_at` is an integer at or above
+    /// `since`, newest first (ties by key, descending), at most `limit`. The default pages
+    /// [`Backend::range`] and sorts; a backend that indexes `opened_at` overrides it, so the
+    /// newest rows are read without the rest.
+    fn range_newest_opened(
+        &self,
+        prefix: &str,
+        since: i64,
+        limit: usize,
+        at: u64,
+    ) -> Result<Vec<(String, Version)>> {
+        range_newest_opened_by_scan(self, prefix, since, limit, at)
+    }
     /// Applies `batch` as main `expect + 1`, or `Stale` if the head is no longer `expect`. The
     /// contract never puts a key in a batch twice.
     fn commit(&self, expect: u64, batch: &[Write]) -> Result<u64>;
@@ -250,6 +263,48 @@ pub fn state_of(value: &[u8]) -> Option<String> {
         serde_json::Value::String(s) => Some(s),
         _ => None,
     }
+}
+
+/// The value's `data.opened_at`, when it is an integer.
+pub fn opened_at_of(value: &[u8]) -> Option<i64> {
+    #[derive(serde::Deserialize)]
+    struct Data {
+        opened_at: Option<serde_json::Value>,
+    }
+    #[derive(serde::Deserialize)]
+    struct Obj {
+        data: Option<Data>,
+    }
+    let o: Obj = serde_json::from_slice(value).ok()?;
+    o.data?.opened_at?.as_i64()
+}
+
+/// [`Backend::range_newest_opened`] by paging through `range` and sorting.
+pub fn range_newest_opened_by_scan<B: Backend + ?Sized>(
+    b: &B,
+    prefix: &str,
+    since: i64,
+    limit: usize,
+    at: u64,
+) -> Result<Vec<(String, Version)>> {
+    const SCAN: usize = 1_000;
+    let mut rows = Vec::new();
+    let mut cursor: Option<String> = None;
+    loop {
+        let page = b.range(prefix, cursor.as_deref(), SCAN, at)?;
+        let full = page.len() == SCAN;
+        cursor = page.last().map(|(k, _)| k.clone());
+        rows.extend(page.into_iter().filter_map(|(k, v)| {
+            let opened = opened_at_of(&v.value).filter(|o| *o >= since)?;
+            Some((opened, k, v))
+        }));
+        if !full {
+            break;
+        }
+    }
+    rows.sort_by(|a, b| (b.0, &b.1).cmp(&(a.0, &a.1)));
+    rows.truncate(limit);
+    Ok(rows.into_iter().map(|(_, k, v)| (k, v)).collect())
 }
 
 /// The value's `metadata.expiresAt`, when it is a JSON object carrying one.

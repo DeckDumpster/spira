@@ -1059,6 +1059,10 @@ impl Backend for Counting {
     fn owned_by(&self, owner: &str, after: Option<&str>, limit: usize, at: u64) -> state_store::Result<Vec<String>> {
         self.inner.owned_by(owner, after, limit, at)
     }
+    fn range_newest_opened(&self, prefix: &str, since: i64, limit: usize, at: u64) -> state_store::Result<Vec<(String, state_store::Version)>> {
+        self.note("range_newest_opened", prefix, limit);
+        self.inner.range_newest_opened(prefix, since, limit, at)
+    }
     fn get(&self, key: &str, at: u64) -> state_store::Result<Option<state_store::Version>> {
         self.note("get", key, 1);
         self.inner.get(key, at)
@@ -1112,6 +1116,111 @@ fn a_state_filtered_page_is_one_bounded_read_of_the_state_index() {
     );
     let gets = reads.len() - ranges.len();
     assert!(gets <= 3 * ids.len(), "{gets} point reads for {} rows: {reads:?}", ids.len());
+}
+
+/// `ROUNDS` rounds cut `100 * i` seconds before `AT`, all but `open` ended.
+const ROUNDS: usize = 60;
+
+fn many_rounds<B: Backend>(r: &Rig<B>, from: usize, to: usize, open: &[usize]) {
+    use lifecycle::batch::BatchState;
+    for i in from..to {
+        let (id, round) = (format!("sp-{i:03}"), format!("b-{i:03}"));
+        r.certified(&id, T1);
+        let members = vec![(id, T1.to_string())];
+        let cut = Cut { batch_id: &round, at: AT - 100 * i as i64, ..r.cut_spec(&members) };
+        let p = r.s.plan_cut(&cut).unwrap();
+        r.s.run_planned(p, &r.req(), "cut").unwrap();
+        if !open.contains(&i) {
+            let key = keys::batch("spira", &round);
+            let (_, mut rec) = r.s.batch(&round).unwrap().unwrap();
+            rec.value.row.state = BatchState::Landed;
+            let put = state_store::Txn::new().put(&key, state_store::Object::new(crate::control::records::encode(&rec.value).unwrap()));
+            r.s.contract().txn(&put, &r.req()).unwrap();
+        }
+    }
+}
+
+/// law-list-reads-paginate-in-the-database: `list --batches` reads the rounds its answer shows
+/// (the newest eight, a window's, the open ones, a page's), never the `batches/` prefix.
+#[test]
+fn list_batches_reads_only_the_rounds_it_shows() {
+    let r = Rig::on(Counting::default(), &clock());
+    many_rounds(&r, 0, ROUNDS, &[25, 33]);
+    let ids = |argv: &[&str]| -> (Vec<String>, Vec<(&'static str, String, usize)>) {
+        r.s.contract().backend().take();
+        let (rc, out) = r.lc(argv);
+        assert_eq!(rc, 0, "{argv:?}: {out}");
+        let rows: serde_json::Value = serde_json::from_str(&out).unwrap();
+        let ids = rows.as_array().unwrap().iter().map(|x| x["batch_id"].as_str().unwrap().to_string()).collect();
+        (ids, r.s.contract().backend().take())
+    };
+    let of = |ns: &[usize]| -> Vec<String> { ns.iter().map(|i| format!("b-{i:03}")).collect() };
+    let bounded = |reads: &[(&'static str, String, usize)]| {
+        assert!(
+            reads.iter().all(|(k, p, limit)| *k == "get" || !(p.starts_with(keys::BATCHES) && *k == "range" && *limit > 1_000)),
+            "an unbounded read of the rounds: {reads:?}"
+        );
+        assert!(reads.len() <= 60, "{} reads: {reads:?}", reads.len());
+    };
+
+    let (bare, reads) = ids(&["list", "--batches"]);
+    assert_eq!(bare, of(&[0, 1, 2, 3, 4, 5, 6, 7]));
+    assert!(reads.iter().any(|(k, _, limit)| *k == "range_newest_opened" && *limit == 8), "{reads:?}");
+    bounded(&reads);
+
+    let (windowed, reads) = ids(&["list", "--batches", "--window", "1000"]);
+    assert_eq!(windowed, of(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 25, 33]));
+    assert!(reads.iter().any(|(k, _, _)| *k == "range_newest_opened"), "{reads:?}");
+    bounded(&reads);
+
+    let (one, reads) = ids(&["list", "--batches", "--batch", "b-042"]);
+    assert_eq!(one, of(&[42]));
+    assert!(reads.iter().all(|(k, p, _)| *k == "get" || !p.starts_with(keys::BATCHES)), "{reads:?}");
+
+    let (page, reads) = ids(&["list", "--batches", "--limit", "3", "--after", "b-010"]);
+    assert_eq!(page, of(&[11, 12, 13]));
+    bounded(&reads);
+}
+
+/// On the real store, what `list --batches` costs does not grow with the rounds behind it: the
+/// VM steps of a bare list and of a window are the same over 40 rounds and over 240.
+#[test]
+fn list_batches_costs_the_same_over_a_larger_history_on_the_real_store() {
+    let dir = testkit::TempDir::new("lc-batches-steps");
+    let b = SqliteBackend::open(&dir.path().join("c.db"), state_store_sqlite::Options::default()).unwrap();
+    let r = Rig::on(b, &clock());
+    let steps = |argv: &[&str]| -> u64 {
+        r.s.contract().backend().take_read_steps();
+        let (rc, out) = r.lc(argv);
+        assert_eq!(rc, 0, "{argv:?}: {out}");
+        r.s.contract().backend().take_read_steps()
+    };
+    let probes = [&["list", "--batches"][..], &["list", "--batches", "--window", "300"], &["list", "--batches", "--limit", "5", "--after", "b-010"]];
+    many_rounds(&r, 0, 40, &[35]);
+    let small: Vec<u64> = probes.iter().map(|p| steps(p)).collect();
+    r.s.contract().backend().take_read_steps();
+    many_rounds(&r, 40, 240, &[]);
+    let large: Vec<u64> = probes.iter().map(|p| steps(p)).collect();
+    for ((p, s), l) in probes.iter().zip(&small).zip(&large) {
+        assert!(*l <= *s + *s / 4 + 50, "{p:?}: {s} VM steps over 40 rounds, {l} over 240");
+    }
+}
+
+/// Every state the round machine can be in is either listed as open or is terminal: a round in
+/// a state `list --batches --window` forgot would vanish from it.
+#[test]
+fn every_batch_state_is_listed_as_open_or_is_terminal() {
+    use lifecycle::batch::BatchState::*;
+    for s in [Staged, Open, CiRunning, Green, Landing, Deploying, Attributing, Rebuilding, Landed, Settled, Abandoned, Discarded] {
+        match s {
+            Staged | Open | CiRunning | Green | Landing | Deploying | Attributing | Rebuilding => {
+                assert!(super::OPEN_BATCH_STATES.contains(&s) && !s.is_terminal(), "{s:?}")
+            }
+            Landed | Settled | Abandoned | Discarded => {
+                assert!(!super::OPEN_BATCH_STATES.contains(&s) && s.is_terminal(), "{s:?}")
+            }
+        }
+    }
 }
 
 /// law-hot-reads-answer-in-500ms: an unfiltered `list` reads its rows' readiness by key range,

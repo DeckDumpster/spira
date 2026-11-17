@@ -724,6 +724,22 @@ impl<B: Backend> Contract<B> {
             .collect()
     }
 
+    /// The items under `prefix` whose `data.opened_at` is at or above `since`, newest first, at
+    /// most `limit`, read through the backend's `opened_at` index.
+    pub fn range_newest_opened(
+        &self,
+        prefix: &str,
+        since: i64,
+        limit: usize,
+        at: u64,
+    ) -> Result<Vec<Item>> {
+        self.backend
+            .range_newest_opened(prefix, since, limit, at)?
+            .into_iter()
+            .map(|(k, v)| item(k, v).map(|i| self.with_expiry(i)))
+            .collect()
+    }
+
     /// `Conflict` if the key holds a different value; an equal value is success, writing nothing.
     pub fn create(&self, key: &str, value: Object, req: &Request) -> Result<Created> {
         let t = Txn::new()
