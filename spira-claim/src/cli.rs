@@ -1101,13 +1101,16 @@ fn retain_uncarried(
 }
 
 /// Drops the beads a scoped stop keeps unclaimed: a reserved bead, and any bead of a repo
-/// whose claims lane is stopped. Returns the ids dropped.
+/// whose claims lane is stopped, except the bead labelled to fix a stop the repo-contract task
+/// owns. Returns the ids dropped.
 fn retain_unstopped(rows: &mut Vec<rank::ReadyRow>, run: &std::path::Path) -> Vec<String> {
     let reserved = spira_config::scoped_stop::reserved_ids(run);
     let mut dropped = Vec::new();
     rows.retain(|r| {
         let stopped = reserved.contains(&r.id)
-            || r.label_value("repo:").is_some_and(|repo| spira_config::scoped_stop::stop_for(run, repo, "claims").is_some());
+            || r.label_value("repo:").is_some_and(|repo| {
+                spira_config::scoped_stop::stop_for(run, repo, "claims").is_some_and(|s| !(s.owner == spira_config::scoped_stop::CONTRACT_OWNER && r.labels.iter().any(|l| l == spira_config::scoped_stop::CONTRACT_FIX_LABEL)))
+            });
         if stopped {
             dropped.push(r.id.clone());
         }

@@ -75,7 +75,7 @@ pub const JITTER_KEY: &str = "SPIRA_RUNTIME_SWEEP_REPO_CONTRACT_JITTER_SECS";
 pub const KEYS: &[&str] = &[CADENCE_KEY, JITTER_KEY, "SPIRA_HOME_REPO"];
 
 /// The owner of every stop this task writes, and the only owner whose stop it lifts.
-pub const OWNER: &str = "repo-contract";
+pub const OWNER: &str = spira_config::scoped_stop::CONTRACT_OWNER;
 const LANE: &str = "claims";
 const CHECK_DEADLINE_MS: u64 = 1_800_000;
 
