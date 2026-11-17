@@ -7,7 +7,7 @@ use crate::compose::{self, Composition, Forces};
 use crate::ports::{Ctx, World};
 use serde_json::Value;
 use spira_config::GateMode;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// The run/tsd family this crate writes.
 pub const FAMILY: &str = "gate-run";
@@ -108,6 +108,8 @@ pub struct GateRun {
     pub red_line: String,
     /// `<at>/<digest>` of the deny list the trial ran with; empty when it ended before resolving one.
     pub deny_list: String,
+    /// `<step>:<secs>`, the longest step a gate command declared in its steps file; empty when none.
+    pub slowest_step: String,
 }
 
 /// Render the row through tsd's own builder. `wall_secs` is waited + ran: the certification
@@ -146,6 +148,7 @@ pub fn render(ts: &str, host: &str, r: &GateRun) -> Result<String, String> {
         ("red_unit".into(), s(&r.red_unit)),
         ("red_line".into(), s(&r.red_line)),
         ("deny_list".into(), s(&r.deny_list)),
+        ("slowest_step".into(), s(&r.slowest_step)),
         ("covered_secs".into(), Value::from(r.covered_secs)),
         ("covered_deferred".into(), Value::from(r.covered_deferred)),
         ("covered_deferred_suites".into(), s(&r.covered_deferred_suites)),
@@ -213,6 +216,39 @@ pub fn keep_report<W: World>(w: &W, run: &str, ts: &str, html: &str) {
         w.mkdir_p(dir);
         w.write_atomic(dir, &format!("cargo-timing-{ts}.html"), html);
     }
+}
+
+/// How many kept gate outputs stay beside the run record.
+pub const KEEP_GATE_OUTS: usize = 50;
+
+const GATE_OUT_PREFIX: &str = "gate-out-";
+
+/// The gate phase's whole output, kept beside the run record under the run's timestamp; older
+/// ones past `KEEP_GATE_OUTS` are removed. Returns the path written, None when nothing was.
+pub fn keep_gate_out<W: World>(w: &W, run: &str, ts: &str, out: &str) -> Option<PathBuf> {
+    if run.is_empty() || out.is_empty() {
+        return None;
+    }
+    let dir = tsd::family_path(Path::new(run), FAMILY).parent()?.to_path_buf();
+    w.mkdir_p(&dir);
+    let name = format!("{GATE_OUT_PREFIX}{ts}.log");
+    w.write_atomic(&dir, &name, out);
+    let mut names = w.list_dir(&dir);
+    names.push(name.clone());
+    for old in stale_outs(names, KEEP_GATE_OUTS) {
+        w.remove(&dir.join(old));
+    }
+    Some(dir.join(name))
+}
+
+/// The kept gate outputs beyond the newest `keep`, oldest first (names sort by timestamp).
+pub fn stale_outs(mut names: Vec<String>, keep: usize) -> Vec<String> {
+    names.retain(|n| n.starts_with(GATE_OUT_PREFIX) && n.ends_with(".log"));
+    names.sort();
+    names.dedup();
+    let excess = names.len().saturating_sub(keep);
+    names.truncate(excess);
+    names
 }
 
 /// Pushes the trial's run, queue and wait seconds and a run count to the metrics store; the

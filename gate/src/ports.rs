@@ -79,6 +79,8 @@ pub trait World {
     fn write_atomic(&self, dir: &Path, name: &str, content: &str);
     fn append(&self, p: &Path, line: &str);
     fn remove(&self, p: &Path);
+    /// The file names directly under `dir`; empty when it cannot be read.
+    fn list_dir(&self, dir: &Path) -> Vec<String>;
     /// A fresh temporary file holding `content`.
     fn temp_file(&self, content: &str) -> Option<PathBuf>;
 
