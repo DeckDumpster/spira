@@ -117,6 +117,13 @@ pub fn usage_prefix(key: &str) -> &str {
     key.find('/').map_or(key, |i| &key[..=i])
 }
 
+/// See [`Backend::last_commit`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CommitNote {
+    pub writer_wait: std::time::Duration,
+    pub checkpointed: bool,
+}
+
 pub trait Backend: Send + Sync {
     /// The last committed main revision, kept in its own meta entry: never derived from keys.
     fn head(&self) -> Result<u64>;
@@ -176,6 +183,11 @@ pub trait Backend: Send + Sync {
     /// The history floor: the newest revision no longer held.
     fn compacted(&self) -> Result<u64> {
         Ok(0)
+    }
+    /// What the last successful commit spent waiting for the writer and whether it ran a WAL
+    /// checkpoint. Read under the caller's own commit order.
+    fn last_commit(&self) -> CommitNote {
+        CommitNote::default()
     }
     /// The live keys strictly after `after`, at most `limit`, counted by [`usage_prefix`]. The
     /// default reads `range` and knows no versions.
