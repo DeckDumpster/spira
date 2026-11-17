@@ -475,6 +475,9 @@ impl<B: Backend> Backend for Modeled<B> {
     /// outcome the inner backend could not report is read back from its log.
     fn commit(&self, expect: u64, batch: &[Write]) -> Result<u64> {
         let _order = phases::time(Phase::OrderWait, || lock(&self.order));
+        if phases::deadline_passed() {
+            return Err(Error::Deadline);
+        }
         if self.revision() != self.inner.head()? {
             let _ = phases::time(Phase::CatchUp, || self.catch_up());
         }
