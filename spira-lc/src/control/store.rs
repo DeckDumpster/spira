@@ -47,7 +47,7 @@ pub enum Outcome {
     /// A blocker's gate is no longer what the claim was judged against.
     BlockerMoved { rev: u64, blocker: String },
     /// The last readiness pass judged the record not claimable; nothing is written.
-    JudgedUnclaimable { blocked_by: Vec<String> },
+    JudgedUnclaimable { blocked_by: Vec<String>, verdict: Option<String> },
 }
 
 /// One state's run through the state index in [`Store::records_page`]'s merge.
@@ -737,8 +737,8 @@ impl<B: Backend> Store<B> {
             .as_ref()
             .filter(|j| j.judged_for_claim && !j.claimable)
         {
-            let blocked_by = j.blocked_by.clone();
-            return Ok((Outcome::JudgedUnclaimable { blocked_by }, None));
+            let (blocked_by, verdict) = (j.blocked_by.clone(), j.verdict.clone());
+            return Ok((Outcome::JudgedUnclaimable { blocked_by, verdict }, None));
         }
         let edges = claim_edges(judged.as_ref(), &next.row.stack);
         if let Some(j) = &judged {

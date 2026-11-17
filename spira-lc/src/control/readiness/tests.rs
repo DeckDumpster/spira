@@ -395,6 +395,37 @@ fn a_record_judged_not_claimable_is_refused_its_claim_and_nothing_is_written() {
 }
 
 #[test]
+fn a_refusal_with_no_blockers_names_the_verdict_the_record_was_judged_with() {
+    let r = Rig::new();
+    r.ok(&["create-bead", "sp-a", "--ready"]);
+    r.judged_at("sp-a", "7", json!({ "claimable": false, "verdict": "occupied" }));
+    let (code, out) = r.claim("sp-a");
+    assert_eq!(code, crate::REFUSED, "{out}");
+    assert!(out.contains("occupied") && !out.contains("blocked by )"), "{out}");
+}
+
+#[test]
+fn a_rejudge_mark_without_blockers_names_rejudge_in_the_refusal() {
+    let r = Rig::new();
+    r.ok(&["create-bead", "sp-a", "--ready"]);
+    r.judged_at("sp-a", "7", json!({ "claimable": true }));
+    r.ok(&["mark-rejudge", "sp-a"]);
+    let (code, out) = r.claim("sp-a");
+    assert_eq!(code, crate::REFUSED, "{out}");
+    assert!(out.contains("rejudge") && !out.contains("blocked by )"), "{out}");
+}
+
+#[test]
+fn a_record_judged_before_verdicts_were_kept_is_refused_with_no_reason_recorded() {
+    let r = Rig::new();
+    r.ok(&["create-bead", "sp-a", "--ready"]);
+    r.judged_at("sp-a", "7", json!({ "claimable": false }));
+    let (code, out) = r.claim("sp-a");
+    assert_eq!(code, crate::REFUSED, "{out}");
+    assert!(out.contains("(no reason recorded)"), "{out}");
+}
+
+#[test]
 fn a_record_with_no_gate_gets_one_on_its_next_transition() {
     let r = Rig::new();
     r.ok(&["create-bead", "sp-a", "--ready"]);

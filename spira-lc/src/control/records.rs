@@ -94,6 +94,9 @@ pub struct Readiness {
     pub claimable: bool,
     #[serde(default)]
     pub blocked_by: Vec<String>,
+    /// Why the record was judged as it was: the dispatcher's verdict, or the state it read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verdict: Option<String>,
     /// The producer's own clock, as it stamped the pass.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub judged_at: Option<String>,
