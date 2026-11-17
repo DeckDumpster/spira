@@ -59,3 +59,16 @@
     fn child_path_env_refuses_a_tail_inside_a_release() {
         assert!(child_path_env(Some("opt/rel"), Some("h"), "x/spira-releases/abc/bin").is_err());
     }
+
+    #[test]
+    fn a_pilgrim_can_run_repo_contract_because_model_bin_links_it() {
+        let t = testkit::TempDir::new("model-bin-repo-contract");
+        std::fs::create_dir_all(t.join("bin")).unwrap();
+        for n in ["work", "repo-contract", "bd"] {
+            testkit::write_exe(t.join(format!("bin/{n}")), "");
+        }
+        let linked = link_model_bin(t.path()).unwrap();
+        assert!(linked.contains(&"repo-contract".to_string()), "{linked:?}");
+        assert!(!t.join("model-bin/bd").exists(), "a store tool stays out of the model's PATH");
+        assert!(model_bin_problems(t.path()).is_empty());
+    }

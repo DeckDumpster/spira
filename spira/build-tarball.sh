@@ -283,7 +283,7 @@ _COMPAT_PY
     # (dwarf/src/restrict.rs) — only the binaries a model may run, each linked to ../bin/,
     # so no tool in bin/ that calls bd is reachable by name from inside a dwarf's session.
     # The list is spira_config::release_env::MODEL_BINS; keep the two identical.
-    for _model_bin in work testenv; do
+    for _model_bin in work testenv repo-contract; do
         [ -f "$stage/bin/$_model_bin" ] || continue
         mkdir -p "$stage/model-bin"
         ln -s "../bin/$_model_bin" "$stage/model-bin/$_model_bin"

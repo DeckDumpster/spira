@@ -14,6 +14,7 @@ use crate::conf::{self, Conf, Rune, SystemPrompt};
 use crate::direct;
 use crate::decide::{self, WorldStop};
 use crate::ledger::{self, Ledger};
+use crate::pilgrim_world;
 use crate::ports::{s, Bd, Env, Exec, Git, Seam};
 use crate::restrict;
 use crate::seam::Snapshot;
@@ -1439,6 +1440,7 @@ impl<'a> Run<'a> {
         self.s.session_started = true;
         let agent = self.agent_bin();
         let child = env.child();
+        let mut pilgrim: Option<(String, PathBuf)> = None;
         let (prog, args, spec_env) = {
             // The model runs bound to this bead under the restricted environment (design
             // §3.5; replaces the work-env.sh wrapper process, sp-zpaq0): same allow-list,
@@ -1451,14 +1453,28 @@ impl<'a> Run<'a> {
                 Ok(d) => d,
                 Err(e) => return Err(Abort::Die(format!("work-env: {e}"))),
             };
-            (agent, argv, restrict::restricted_env(&bead, &child, &model_bin))
+            let mut model_env = restrict::restricted_env(&bead, &child, &model_bin);
+            if self.rune.name == pilgrim_world::RUNE {
+                let world = pilgrim_world::world_dir(self.run_dir(), &bead);
+                let sim = spira_config::release_env::tool("sim").map_err(|e| Abort::Harness(format!("pilgrim world: {e}")))?;
+                let named = pilgrim_world::up(self.d.exec, &sim, &world).map_err(Abort::Harness)?;
+                model_env.extend(named);
+                pilgrim = Some((sim, world));
+            }
+            (agent, argv, model_env)
         };
         let spec = SessionSpec { prog, args, stdin_file: task_file, log: logf, cwd: work.to_path_buf(), env: spec_env, timeout: self.rune.timeout_seconds, halted: Some(self.run_dir().join("world.halted")) };
         if let Some(why) = brief::spent_wall(self.s.wall_deadline, self.now()) {
+            if let Some((sim, world)) = &pilgrim {
+                pilgrim_world::down(self.d.exec, sim, world);
+            }
             return Err(Abort::Die(format!("{}: {bead}: {why}", self.f())));
         }
         let launched = self.now();
         let rc = self.d.launcher.run(&spec, &self.stop);
+        if let Some((sim, world)) = &pilgrim {
+            pilgrim_world::down(self.d.exec, sim, world);
+        }
         self.s.session_wall_s = Some((self.now() - launched).max(0));
         // Interrupted: bash's trap ran before `SESSION_RC=$rc`, so SESSION_RC stays 0.
         self.check_stop()?;

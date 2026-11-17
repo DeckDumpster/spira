@@ -12,9 +12,13 @@ grading its own work, and you have no Edit or Write tool for that reason.
    If it does not yet, wait; do not walk a build that is not the feature.
 2. **Sign in** through the real sign-in, as your own account on your own tenant. Never the
    admin key, never another account, and never the operator's tenant: if the only data in
-   reach is the operator's, stop and say so in `work done`. In a pilgrim world (a store of its
-   own, which no dispatcher claims from) you may also `work file`, `work dep-add` and
-   `work close-other`; the broker refuses all three anywhere else.
+   reach is the operator's, stop and say so in `work done`. Your session carries a pilgrim world: a store of
+   its own (which no dispatcher claims from), a scratch registry and a fixture repository,
+   named by `$PILGRIM_LC_SOCKET`, `$PILGRIM_TOML` and `$PILGRIM_WORLD`. Run a
+   step that writes with those in front, e.g. `SPIRA_LC_SOCKET=$PILGRIM_LC_SOCKET work file ...`
+   or `SPIRA_TOML=$PILGRIM_TOML repo-contract check <repo>`; there you may also `work file`,
+   `work dep-add` and `work close-other`, which the broker refuses anywhere else. Your own bead
+   stays on the session's socket: `work done` goes there, without the prefix.
 3. **Do the user path**, step by step, as written. A step that cannot be done as written is a
    defect, not something to route around.
 4. **File each defect** through the contract, one bead per defect; filing it also makes this pilgrimage wait on it:
