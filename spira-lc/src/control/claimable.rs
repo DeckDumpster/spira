@@ -42,6 +42,7 @@ pub struct Ctx {
     pub now: i64,
     pub stack_max: u32,
     pub incident_label: String,
+    pub pilgrim_label: String,
     pub scope_label: String,
     pub no_loop_label: String,
     /// `(prerequisite, tip)` pairs a stack-conflict marker holds for.
@@ -121,8 +122,8 @@ pub fn judge(
         j.verdict = Verdict::OutOfScope;
         return j;
     }
-    let incident = !ctx.incident_label.is_empty() && claim.labels.contains(&ctx.incident_label);
-    let stack_max = if incident { 0 } else { ctx.stack_max };
+    let never_stacks = [&ctx.incident_label, &ctx.pilgrim_label].into_iter().any(|l| !l.is_empty() && claim.labels.contains(l));
+    let stack_max = if never_stacks { 0 } else { ctx.stack_max };
     let split = claim.labels.iter().any(|l| l == SPLIT_LABEL);
     let mut stacked_max: Option<u32> = None;
     let mut blocked = None;
@@ -201,6 +202,7 @@ pub struct Config {
     pub queue_wait: String,
     pub stack_max: u32,
     pub incident_label: String,
+    pub pilgrim_label: String,
     pub scope_label: String,
     pub no_loop_label: String,
 }
@@ -214,6 +216,7 @@ impl Inputs for Live {
             queue_wait: cfg("SPIRA_QUEUE_WAIT_LABEL")?,
             stack_max: cfg_parse::<u32>("SPIRA_STACK_MAX_DEPTH")?.min(STACK_CEILING),
             incident_label: cfg("SPIRA_INCIDENT_LABEL")?,
+            pilgrim_label: cfg("SPIRA_PILGRIM_LABEL")?,
             scope_label: cfg("SPIRA_SCOPE_LABEL")?,
             no_loop_label: cfg("SPIRA_NO_LOOP_LABEL")?,
         })
@@ -341,6 +344,7 @@ fn context(config: &Config, run: &Path, rows: &BTreeMap<String, LifecycleRecord>
         now,
         stack_max: config.stack_max,
         incident_label: config.incident_label.clone(),
+        pilgrim_label: config.pilgrim_label.clone(),
         scope_label: config.scope_label.clone(),
         no_loop_label: config.no_loop_label.clone(),
         conflicts,
@@ -363,6 +367,7 @@ impl Inputs for Fixed {
             queue_wait: "queue-wait".into(),
             stack_max: 4,
             incident_label: "incident".into(),
+            pilgrim_label: "pilgrimage".into(),
             scope_label: String::new(),
             no_loop_label: String::new(),
         })

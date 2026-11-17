@@ -1519,6 +1519,23 @@ fn list_answers_a_beads_claimability_from_its_prerequisite_when_it_is_read() {
 }
 
 #[test]
+fn list_keeps_a_pilgrimage_blocked_while_its_blocker_is_in_delivery_and_claimable_once_it_lands() {
+    let r = Rig::new();
+    open_round(&r);
+    assert_eq!(r.state("sp-a"), BeadState::InDelivery);
+    r.ok(&["create-bead", "sp-b", "--repo", "spira", "--ready"]);
+    r.ok(&["set-claim-inputs", "sp-b", "--block", "sp-a", "--label", "pilgrimage"]);
+
+    let b = claim_view_of(&r, "sp-b");
+    assert_eq!((b["verdict"].as_str(), b["blocker"].as_str()), (Some("blocked"), Some("sp-a")));
+    assert_eq!(b["runes"], serde_json::json!([]));
+
+    r.bead_event("sp-a", "IN_DELIVERY", "4", r#"{"ContentOnBase":{"proof":"p"}}"#);
+    assert_eq!(r.state("sp-a"), BeadState::Landed);
+    assert_eq!(claim_view_of(&r, "sp-b")["verdict"], "claimable");
+}
+
+#[test]
 fn list_with_unreadable_view_inputs_still_lists_and_each_ready_row_says_it_cannot_tell() {
     let r = Rig::new();
     r.ok(&["create-bead", "sp-a", "--repo", "spira", "--ready"]);
