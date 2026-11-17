@@ -2823,6 +2823,8 @@ fn a_publish_that_fails_or_runs_long_never_changes_the_verdict() {
     assert_eq!(f.run(), PASS, "{}", f.verdict_line());
     assert!(!f.verdict_line().contains("phase-cap"), "{}", f.verdict_line());
     assert!(f.cmds.borrow().iter().any(|c| c.contains("--share-publish")), "{:?}", f.cmds.borrow());
+    assert!(meter(&f).contains("gate:200,publish:300"), "{}", meter(&f));
+    assert!(meter(&f).contains("test_clock=200s"), "{}", meter(&f));
 }
 
 #[test]

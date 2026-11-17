@@ -330,15 +330,17 @@ fn publish_share(args: &RunArgs, deps: &Deps) -> i32 {
             return 0;
         }
     };
-    let s = &deps.settings;
-    foreign::Cache::new(&s.run.join("foreign-cache"), &repo.name)
-        .bounded(foreign::Bound {
-            max_bytes: s.foreign_target_max_gib << 30,
-            idle: (s.foreign_target_idle_hours > 0).then(|| Duration::from_secs(s.foreign_target_idle_hours * 3600)),
-        })
+    foreign_cache(&deps.settings, &repo.name)
         .shared(Some(foreign::Share { key, keep: false }))
         .publish_share(&|m| deps.log(m));
     0
+}
+
+fn foreign_cache(s: &Settings, repo: &str) -> foreign::Cache {
+    foreign::Cache::new(&s.run.join("foreign-cache"), repo).bounded(foreign::Bound {
+        max_bytes: s.foreign_target_max_gib << 30,
+        idle: (s.foreign_target_idle_hours > 0).then(|| Duration::from_secs(s.foreign_target_idle_hours * 3600)),
+    })
 }
 
 fn report(n: usize, deps: &Deps) -> i32 {
@@ -474,11 +476,7 @@ fn run_foreign(
         return Finish::fault(2, "results-dir", 0);
     }
     *started.borrow_mut() = Some(results.clone());
-    let cache = foreign::Cache::new(&s.run.join("foreign-cache"), repo).bounded(foreign::Bound {
-        max_bytes: s.foreign_target_max_gib << 30,
-        idle: (s.foreign_target_idle_hours > 0).then(|| std::time::Duration::from_secs(s.foreign_target_idle_hours * 3600)),
-    })
-    .shared(args.share.clone());
+    let cache = foreign_cache(s, repo).shared(args.share.clone());
     let cap = args.deadline.or(decl.cap).unwrap_or(foreign::DEFAULT_CAP);
     let t0 = Instant::now();
     let pending = std::sync::Mutex::new(Vec::<String>::new());

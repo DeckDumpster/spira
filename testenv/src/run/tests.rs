@@ -430,6 +430,10 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
         assert!(after.iter().all(|l| !l.starts_with("VERDICT")), "{after:?}");
         assert!(root.join("run/foreign-cache/repo/target/built.o").exists(), "{after:?}");
         assert!(!share.exists());
+        let seen = lines.lock().unwrap().len();
+        assert_eq!(call("--share-publish"), 0, "a share already published is not a failure");
+        let again = lines.lock().unwrap()[seen..].join("\n");
+        assert!(again.contains("not found: nothing to publish"), "{again}");
     }
 
     #[test]

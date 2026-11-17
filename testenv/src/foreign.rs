@@ -199,6 +199,12 @@ pub enum Outcome {
 const CACHE_TARGET: &str = system_paths::guest::VAR_CACHE_SPIRA_FOREIGN_TARGET;
 const CACHE_CARGO: &str = system_paths::guest::VAR_CACHE_SPIRA_FOREIGN_CARGO;
 const LOCK_POLL: Duration = Duration::from_secs(2);
+/// A publish tries the lock once; a test process also retries briefly, because another test
+/// thread's fork holds every open descriptor, and so every lock, until its exec.
+#[cfg(not(test))]
+const PUBLISH_ATTEMPTS: u32 = 1;
+#[cfg(test)]
+const PUBLISH_ATTEMPTS: u32 = 20;
 
 /// The wall a forge repository's check may take when neither the caller nor the declaration
 /// names one: the suite cap.
@@ -481,7 +487,13 @@ impl Cache {
     /// disk and never a wrong build. Either way the run's layer is gone afterwards.
     fn publish(&self, cname: &str, log: &dyn Fn(&str)) {
         let run = self.layer_dir(cname);
-        match self.flock(libc::LOCK_EX) {
+        let exclusive = (0..PUBLISH_ATTEMPTS).find_map(|n| {
+            if n > 0 {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            self.flock(libc::LOCK_EX)
+        });
+        match exclusive {
             Some(_ex) => {
                 let held = Instant::now();
                 let _ = std::fs::write(self.holder_path(), cname);

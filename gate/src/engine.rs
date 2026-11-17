@@ -2580,10 +2580,13 @@ pub fn run_composed<W: World>(
             if w.signalled() || rc == 124 || rc == NOVERDICT || stall::is_stall(rc, &out) || (rc != 0 && !matches!(comp, Composition::Unit { .. })) {
                 return (rc, out, phases);
             }
-            if declared && prefix.is_empty() {
+            if declared && prefix.is_empty() && rc == 0 {
                 let (_, publish_out, wall) = go("publish", env, &testenv_publish_cmd(&share_key), test_secs);
                 phases.push(("publish".to_string(), wall));
                 w.eprint(&format!("gate: warm cache publish (not a verdict) took {wall}s\n{}", parse::tail_bytes(&publish_out, 2000)));
+                if w.signalled() {
+                    return (NOVERDICT, out, phases);
+                }
             }
             fences_rc = rc;
             if let Some(k) = fences.filter(|k| fences_rc == 0 && comp.suites_off() && !k.harness.is_empty()) {
