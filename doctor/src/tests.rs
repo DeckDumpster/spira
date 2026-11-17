@@ -805,6 +805,13 @@ fn scan_finds_a_writer_on_the_root_device_blind_without_proc_and_skips_itself() 
     assert_eq!(w.len(), 1, "{w:?}");
     assert_eq!((w[0].pid, w[0].comm.as_str(), w[0].unit.as_str(), w[0].build), (10, "cargo", "u.service", true));
     assert_eq!(w[0].path, file);
+    let tgt = d.path().join("tgt");
+    std::fs::create_dir_all(&tgt).unwrap();
+    let p = proc.join("14");
+    std::fs::create_dir_all(p.join("fd")).unwrap();
+    std::fs::write(p.join("environ"), format!("CARGO_TARGET_DIR={}\0", tgt.display())).unwrap();
+    let RootScan::Seen(w) = crate::real::scan_root_writers(&proc, d.path(), 12) else { panic!("expected Seen") };
+    assert!(w.iter().any(|x| x.pid == 14 && x.path == tgt && x.build), "{w:?}");
     assert!(matches!(crate::real::scan_root_writers(&d.path().join("none"), d.path(), 0), RootScan::Blind(_)));
     assert!(matches!(crate::real::scan_root_writers(&proc.join("13"), d.path(), 0), RootScan::Blind(_)), "no readable fd dir is blind, not empty");
 }

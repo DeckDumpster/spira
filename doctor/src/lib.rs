@@ -674,7 +674,7 @@ pub fn check_root_writers(w: &dyn World) -> Vec<Line> {
         RootScan::Blind(why) => lines.push(warn(format!("cannot tell who writes to the root filesystem: {why}"), "an unreadable /proc is not evidence of no writers.")),
         RootScan::Seen(writers) => {
             held = writers.iter().map(|x| x.path.clone()).collect();
-            let mut groups: BTreeMap<(String, String, PathBuf), (Vec<u32>, bool)> = BTreeMap::new();
+            let mut groups: BTreeMap<(String, String, PathBuf), (Vec<u32>, bool, Vec<PathBuf>)> = BTreeMap::new();
             for x in &writers {
                 let dir = x.path.parent().map(Path::to_path_buf).unwrap_or_else(|| x.path.clone());
                 let g = groups.entry((x.unit.clone(), x.comm.clone(), dir)).or_default();
@@ -682,10 +682,12 @@ pub fn check_root_writers(w: &dyn World) -> Vec<Line> {
                     g.0.push(x.pid);
                 }
                 g.1 |= x.build;
+                g.2.push(x.path.clone());
             }
-            for ((unit, comm, dir), (pids, build)) in groups {
+            for ((unit, comm, dir), (pids, build, paths)) in groups {
+                let shown = if paths.len() == 1 { paths[0].clone() } else { dir };
                 let pid_list = pids.iter().map(u32::to_string).collect::<Vec<_>>().join(",");
-                let msg = format!("{comm} ({} pid{}: {pid_list}) in {unit} writes to the root filesystem: {}", pids.len(), if pids.len() == 1 { "" } else { "s" }, dir.display());
+                let msg = format!("{comm} ({} pid{}: {pid_list}) in {unit} writes to the root filesystem: {}", pids.len(), if pids.len() == 1 { "" } else { "s" }, shown.display());
                 lines.push(if build {
                     fail(msg, "a build or test writing to the root disk breaks the disk model; point its cargo home, target and temp dirs at their SSD per wiki disk-model.")
                 } else {
