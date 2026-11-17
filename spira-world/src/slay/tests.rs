@@ -692,7 +692,7 @@ fn a_holder_that_survives_the_stop_keeps_its_claim_and_is_named() {
     f.survives_term = true;
     let r = run(&f, &["--keep-work"]);
     assert_eq!(r.code, 1);
-    assert!(!f.called("holder_dead"), "{:?}", f.calls());
+    assert!(!f.called("holder_dead") && !f.called("note") && !f.called("clear_assignee"), "{:?}", f.calls());
     assert!(said(&r, "dwarf-x@7.99"), "{:?}", r.out);
 }
 
