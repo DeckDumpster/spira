@@ -263,6 +263,10 @@ pub fn send_mail(env: Option<&mail::env::Env>, m: &Mail) -> Result<(), String> {
 }
 
 impl Host for RuntimeHost {
+    fn unit_listing(&self) -> Result<(), String> {
+        self.units().map(|_| ())
+    }
+
     fn unit_state(&self, verb: &str, unit: &str) -> Result<String, String> {
         let units = self.units()?;
         let word = match verb {

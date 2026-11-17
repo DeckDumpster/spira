@@ -263,6 +263,10 @@ pub trait Host: Send + Sync {
     fn unit_state(&self, verb: &str, unit: &str) -> Result<String, String>;
     /// The installed names of every unit the installer enables, one per line.
     fn list_enable(&self) -> String;
+    /// The shared read every `unit_state` answer comes from; `Err` when it is unanswered.
+    fn unit_listing(&self) -> Result<(), String> {
+        Ok(())
+    }
     fn free_pct(&self, path: &str) -> Option<i64>;
     /// One spira-lc verb; `Err` on a refusal or a store that does not answer.
     fn lc(&self, argv: &[&str]) -> Result<String, String>;
@@ -437,6 +441,13 @@ impl Config {
         match &self.host {
             Some(h) => h.unit_state(verb, unit),
             None => systemctl_state(&self.seams.systemctl, verb, unit),
+        }
+    }
+
+    fn unit_listing(&self) -> Result<(), String> {
+        match &self.host {
+            Some(h) => h.unit_listing(),
+            None => Ok(()),
         }
     }
 
@@ -958,6 +969,7 @@ fn observe_units(cfg: &Config) -> Vec<Check> {
     };
     let ctrl = load_ctrl(cfg);
     let mut checks = Vec::new();
+    let mut to_read = Vec::new();
     for unit in unit_names.into_iter().filter(|u| !cfg.skip_units.iter().any(|s| s == u)) {
         if let Some((subject, reason)) = suspension_of(&ctrl, &cfg.instance, unit) {
             checks.push(Check {
@@ -967,6 +979,20 @@ fn observe_units(cfg: &Config) -> Vec<Check> {
             });
             continue;
         }
+        to_read.push(unit);
+    }
+    match cfg.unit_listing() {
+        Err(e) => {
+            checks.push(Check {
+                key: "units:listing".into(),
+                raw: RawStatus::Unobservable { reason: format!("{e}; {} units not observed", to_read.len()) },
+                remedy: Remedy::Escalate,
+            });
+            return checks;
+        }
+        Ok(()) => checks.push(Check { key: "units:listing".into(), raw: RawStatus::Satisfied, remedy: Remedy::Escalate }),
+    }
+    for unit in to_read {
         let enabled = cfg.unit_state("is-enabled", unit);
         let active = cfg.unit_state("is-active", unit);
         let (enabled, active) = match (enabled, active) {
@@ -3254,6 +3280,135 @@ mod tests {
             assert!(matches!(observe_cockpit(&down).raw, RawStatus::Gap { observed, .. } if observed == "no server"));
         }
         assert_eq!(launches(&log), "", "a server the host knows is down needs no tmux to say so");
+    }
+
+    struct Listing {
+        names: Vec<String>,
+        listing: std::sync::Mutex<Result<(), String>>,
+        disabled: Option<String>,
+    }
+
+    impl Listing {
+        fn new(n: usize) -> Listing {
+            let names = (0..n).map(|i| if i % 2 == 0 { format!("spira-u{i}.timer") } else { format!("spira-u{i}.service") }).collect();
+            Listing { names, listing: std::sync::Mutex::new(Ok(())), disabled: None }
+        }
+        fn fail(&self) {
+            *self.listing.lock().unwrap() = Err("ListUnits: no reply within 5s".into());
+        }
+        fn heal(&self) {
+            *self.listing.lock().unwrap() = Ok(());
+        }
+    }
+
+    impl Host for Listing {
+        fn unit_listing(&self) -> Result<(), String> {
+            self.listing.lock().unwrap().clone()
+        }
+        fn unit_state(&self, verb: &str, unit: &str) -> Result<String, String> {
+            self.unit_listing()?;
+            let down = self.disabled.as_deref() == Some(unit);
+            Ok(match (verb, down) {
+                ("is-enabled", true) => "disabled",
+                ("is-enabled", false) => "enabled",
+                (_, true) => "inactive",
+                (_, false) => "active",
+            }
+            .into())
+        }
+        fn list_enable(&self) -> String {
+            self.names.join("\n")
+        }
+        fn free_pct(&self, _: &str) -> Option<i64> {
+            Some(90)
+        }
+        fn lc(&self, _: &[&str]) -> Result<String, String> {
+            Err("unexpected".into())
+        }
+        fn certified_list(&self, _: &Path) -> String {
+            String::new()
+        }
+        fn config(&self, _: &[&str]) -> String {
+            String::new()
+        }
+        fn stranded_runners(&self, _: &Path) -> String {
+            String::new()
+        }
+        fn send_mail(&self, _: &Mail) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    fn listing_pass(host: &Arc<Listing>, now: u64, state: &mut StateMap, alerted: &mut AlertedSinceMap) -> (Vec<Check>, Vec<Mail>) {
+        let mut cfg = test_config();
+        cfg.host = Some(host.clone());
+        let rules = Rules { now_secs: now, grace_secs: 60, effect_passes: 2, shadow_kinds: Vec::new() };
+        let checks = observe_units(&cfg);
+        let mut mails = Vec::new();
+        for c in checks.clone() {
+            for a in decide(&rules, state, &mut PendingMap::new(), alerted, c) {
+                if let Act::Mail { mail, .. } = a {
+                    mails.push(mail);
+                }
+            }
+        }
+        (checks, mails)
+    }
+
+    #[test]
+    fn a_failed_unit_listing_raises_one_listing_mail_not_one_per_unit() {
+        let host = Arc::new(Listing::new(21));
+        host.fail();
+        let (mut state, mut alerted) = (StateMap::new(), AlertedSinceMap::new());
+        let (checks, mails) = listing_pass(&host, 1000, &mut state, &mut alerted);
+        assert_eq!(checks.len(), 1);
+        assert!(mails.is_empty(), "the first unobservable pass is held back");
+        let (_, mails) = listing_pass(&host, 1100, &mut state, &mut alerted);
+        let subjects: Vec<&str> = mails.iter().map(|m| m.subject.as_str()).collect();
+        assert_eq!(subjects, ["RECONCILER: units:listing — unobservable: ListUnits: no reply within 5s; 21 units not observed"]);
+        let (_, mails) = listing_pass(&host, 1200, &mut state, &mut alerted);
+        assert!(mails.is_empty(), "a streak pages once");
+    }
+
+    #[test]
+    fn one_diverging_timer_is_the_only_unit_gap_when_listing_answers() {
+        let mut h = Listing::new(21);
+        h.disabled = Some("spira-u4.timer".into());
+        let host = Arc::new(h);
+        let (checks, _) = listing_pass(&host, 1000, &mut StateMap::new(), &mut AlertedSinceMap::new());
+        let gaps: Vec<&str> = checks.iter().filter(|c| matches!(c.raw, RawStatus::Gap { .. })).map(|c| c.key.as_str()).collect();
+        assert_eq!(gaps, ["units-timer:spira-u4.timer"]);
+        let rest: Vec<&str> = checks.iter().filter(|c| c.key == "units:listing").map(|c| c.key.as_str()).collect();
+        assert_eq!(rest, ["units:listing"]);
+        assert!(checks.iter().any(|c| c.key == "units:listing" && matches!(c.raw, RawStatus::Satisfied)));
+    }
+
+    #[test]
+    fn a_listing_that_answers_again_clears_the_streak_and_a_later_failure_pages_again() {
+        let host = Arc::new(Listing::new(3));
+        let (mut state, mut alerted) = (StateMap::new(), AlertedSinceMap::new());
+        host.fail();
+        listing_pass(&host, 1000, &mut state, &mut alerted);
+        let (_, mails) = listing_pass(&host, 1100, &mut state, &mut alerted);
+        assert_eq!(mails.len(), 1);
+        assert!(alerted.contains_key("units:listing"));
+        host.heal();
+        let (checks, mails) = listing_pass(&host, 1200, &mut state, &mut alerted);
+        assert!(mails.is_empty());
+        assert!(checks.iter().any(|c| c.key == "units:listing" && matches!(c.raw, RawStatus::Satisfied)));
+        assert!(!alerted.contains_key("units:listing"));
+        host.fail();
+        listing_pass(&host, 1300, &mut state, &mut alerted);
+        let (_, mails) = listing_pass(&host, 1400, &mut state, &mut alerted);
+        assert_eq!(mails.len(), 1);
+    }
+
+    #[test]
+    fn one_failing_listing_pass_from_default_state_sends_no_mail() {
+        let host = Arc::new(Listing::new(21));
+        host.fail();
+        let (_, mails) = listing_pass(&host, 1000, &mut StateMap::new(), &mut AlertedSinceMap::new());
+        assert!(mails.is_empty());
     }
 
     fn escalation_acts(shadow: &[&str]) -> Vec<Act> {
