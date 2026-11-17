@@ -109,7 +109,11 @@ fn main() {
 
     if verb == "submit" {
         if let Err(e) = contract_gate() {
-            eprintln!("work submit: refused: the branch changes the repository's landing contract and leaves it unmet:\n{e}\nfix the contract files, commit, and run `work submit` again; `repo-contract check <repo> --tree .` shows every clause");
+            if e.starts_with("not met ") {
+                eprintln!("work submit: refused: the branch changes the repository's landing contract and leaves it unmet:\n{e}\nfix the contract files, commit, and run `work submit` again; `repo-contract check <repo> --tree .` shows every clause");
+            } else {
+                eprintln!("work submit: refused: the branch changes the repository's landing contract and it cannot be judged: {e}");
+            }
             { let code = REFUSED; spira_otel::run::finish(code); std::process::exit(code) };
         }
     }
