@@ -1772,7 +1772,7 @@ mod phase_tests {
                 c.txn(&Txn::new().lock_acquire("r", 5_000), &Request::new("b", "t", "w"))
             })
         };
-        std::thread::sleep(Duration::from_millis(50));
+        std::thread::sleep(Duration::from_millis(50)); // clock-safe: lets the 20 ms deadline pass while B waits; the outcome is the same however late
         release_tx.send(()).unwrap();
         a.join().unwrap().unwrap();
         assert_eq!(b.join().unwrap().unwrap_err(), Error::Deadline);

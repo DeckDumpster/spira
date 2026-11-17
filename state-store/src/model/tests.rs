@@ -546,7 +546,7 @@ fn a_write_still_waiting_for_the_order_lock_at_its_deadline_is_refused_unstarted
             m.commit(1, &[put("b", "2")])
         })
     };
-    std::thread::sleep(Duration::from_millis(50));
+    std::thread::sleep(Duration::from_millis(50)); // clock-safe: lets the 20 ms deadline pass while B waits; the outcome is the same however late
     release_tx.send(()).unwrap();
     assert_eq!(a.join().unwrap().unwrap(), 1);
     assert_eq!(b.join().unwrap().unwrap_err(), Error::Deadline);
