@@ -346,6 +346,7 @@ pub const SCOPED: &str = "t0=$EPOCHREALTIME; PERFWATCH_T0_US=${t0//[.,]/} \"$@\"
 mod tests {
     #[test]
     fn the_scope_hands_the_probe_its_start_in_digits_and_keeps_the_exit_code() {
+        // FORK-EDGE: runs the scope script itself; the script is the unit under test.
         let out = std::process::Command::new("bash").args(["-c", super::SCOPED, "probe", "sh", "-c", "echo $PERFWATCH_T0_US; exit 3"]).output().unwrap();
         let stdout = String::from_utf8(out.stdout).unwrap();
         let stderr = String::from_utf8(out.stderr).unwrap();
