@@ -285,6 +285,46 @@ pub(crate) mod verdict_run {
         }
     }
 
+    struct Row(&'static str);
+    impl Exec for Row {
+        fn exec(&self, prog: &str, args: &[String], _: Option<Vec<u8>>, _: Option<&Path>) -> Out {
+            if prog == "spira-lc" && args.first().map(String::as_str) == Some("show") {
+                return Out::ok(self.0);
+            }
+            Out::ok("")
+        }
+    }
+
+    fn at_session_boundary(row: &'static str) -> (bool, Vec<String>) {
+        let (seam, sink) = (Seams(Default::default()), Mute::default());
+        let proceeds = with_run_sink(super::complete_vars(), &NoBd, Dirty(vec![]), &Row(row), &|| 0, &seam, &sink, "", |r| {
+            r.s.holder = "fjalar-1".into();
+            r.confirm_claim_held().is_ok()
+        });
+        let lines = sink.0.lock().unwrap().clone();
+        (proceeds, lines)
+    }
+
+    #[test]
+    fn a_run_whose_row_was_released_does_not_start_its_session() {
+        let (proceeds, lines) = at_session_boundary(r#"{"bead":{"bead_id":"sp-x","state":"READY","holder":null}}"#);
+        assert!(!proceeds);
+        assert!(lines.iter().any(|l| l.contains("sp-x is no longer held by fjalar-1 (row reads state=READY holder=null) — not starting a session")), "{lines:?}");
+    }
+
+    #[test]
+    fn a_run_whose_row_names_another_holder_does_not_start_its_session() {
+        let (proceeds, _) = at_session_boundary(r#"{"bead":{"bead_id":"sp-x","state":"WORKING","holder":"other-2"}}"#);
+        assert!(!proceeds);
+    }
+
+    #[test]
+    fn a_run_still_holding_its_row_starts_its_session() {
+        let (proceeds, lines) = at_session_boundary(r#"{"bead":{"bead_id":"sp-x","state":"WORKING","holder":"fjalar-1"}}"#);
+        assert!(proceeds);
+        assert!(!lines.iter().any(|l| l.contains("no longer held")), "{lines:?}");
+    }
+
     #[test]
     fn the_claimed_bead_is_read_once_however_many_steps_ask_for_it() {
         let (seam, bd) = (Seams(Default::default()), CountingBd(Default::default()));
