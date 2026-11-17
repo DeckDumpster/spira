@@ -21,6 +21,7 @@ pub mod sweep_escape_census;
 pub mod sweep_export_beads;
 pub mod sweep_nix_gc;
 pub mod sweep_reclaim;
+pub mod sweep_repo_contract;
 pub mod sweep_tsd;
 
 use asks_moot::AsksMoot;
@@ -35,6 +36,7 @@ use sweep_escape_census::SweepEscapeCensus;
 use sweep_export_beads::SweepExportBeads;
 use sweep_nix_gc::SweepNixGc;
 use sweep_reclaim::SweepReclaim;
+use sweep_repo_contract::SweepRepoContract;
 use sweep_tsd::SweepTsd;
 
 pub static TASKS: &[Task] = &[
@@ -160,6 +162,21 @@ pub static TASKS: &[Task] = &[
         ],
         keys: &[sweep_nix_gc::KEYS],
         build: build::<SweepNixGc>,
+    },
+    Task {
+        name: sweep_repo_contract::NAME,
+        plane: runtime::Plane::Work,
+        signal: &[],
+        boot: SweepRepoContract::boot,
+        cadence_ms: cadence_ms::<SweepRepoContract>,
+        effects: sweep_repo_contract::EFFECTS,
+        runners: &[
+            (sweep_repo_contract::OBSERVE, |e, _, _| sweep_repo_contract::observe(&runtime::ports::SysProc, &e.world.run_dir, &pinned("SPIRA_HOME_REPO")?)),
+            (sweep_repo_contract::STOP, |e, _, s| sweep_repo_contract::stop(&e.world.run_dir, &s.input)),
+            (sweep_repo_contract::LIFT, |e, _, s| sweep_repo_contract::lift(&e.world.run_dir, &s.input)),
+        ],
+        keys: &[sweep_repo_contract::KEYS],
+        build: build::<SweepRepoContract>,
     },
     Task {
         name: sweep_export_beads::NAME,

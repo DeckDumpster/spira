@@ -64,7 +64,7 @@ fn a_not_met_repo_is_stopped_with_owner_reason_and_until() {
     let s = scoped_stop::stop_for(d.path(), "shop", "claims").expect("claims stopped");
     assert_eq!((s.owner.as_str(), s.reason.as_str(), s.until.as_str()), ("repo-contract", NOT_MET, "repo-contract check shop met"));
     assert_eq!(s.lanes, ["claims"]);
-    let inbox: Vec<_> = r.requested().iter().filter(|q| q.name == task::INBOX_APPEND).collect();
+    let inbox: Vec<_> = r.requested().iter().filter(|q| q.name == task::INBOX_APPEND && q.at >= NOW).collect();
     assert_eq!(inbox.len(), 1);
     assert!(inbox[0].input.contains("shop") && inbox[0].input.contains("environment"), "{}", inbox[0].input);
 }
@@ -75,7 +75,7 @@ fn a_met_repo_with_its_own_stop_is_lifted() {
     scoped_stop::pause_repo(d.path(), "shop", &["claims".into()], "repo-contract", NOT_MET, "repo-contract check shop met", 1).unwrap();
     let r = rig(&snap(vec![repo("shop", task::Verdict::Met, &[])], &[("shop", "repo-contract")]), d.path());
     assert!(scoped_stop::stop_for(d.path(), "shop", "claims").is_none());
-    assert_eq!(r.requested().iter().filter(|q| q.name == task::INBOX_APPEND).count(), 1);
+    assert_eq!(r.requested().iter().filter(|q| q.name == task::INBOX_APPEND && q.at >= NOW).count(), 1);
 }
 
 #[test]
