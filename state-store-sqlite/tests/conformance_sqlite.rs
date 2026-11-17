@@ -1462,12 +1462,18 @@ fn a_new_store_is_incremental_and_gives_back_at_most_the_step_a_commit() {
     drop(b);
     assert_eq!(count(&path, "PRAGMA auto_vacuum"), 2);
     let step = state_store_sqlite::VACUUM_PAGES_PER_COMMIT;
-    seed_versions(&path, 4000, &["readiness/"]);
+    seed_versions(&path, 1500, &["readiness/"]);
+    rusqlite::Connection::open(&path)
+        .unwrap()
+        .prepare("UPDATE versions SET value = zeroblob(8000)")
+        .unwrap()
+        .execute([])
+        .unwrap();
     let b = SqliteBackend::open(&path, day_opts(&wall)).unwrap();
     let mut pages = count(&path, "PRAGMA page_count");
-    assert!(count(&path, "SELECT count(*) FROM versions") == 4000);
+    assert!(count(&path, "SELECT count(*) FROM versions") == 1500);
     let (mut max_fall, mut max_free, mut falls) = (0, 0, 0);
-    for i in 1..12 {
+    for i in 1..30 {
         commit_live(&b, i);
         let now = count(&path, "PRAGMA page_count");
         max_fall = max_fall.max(pages - now);
@@ -1478,8 +1484,16 @@ fn a_new_store_is_incremental_and_gives_back_at_most_the_step_a_commit() {
     }
     assert_eq!(count(&path, "SELECT count(*) FROM versions"), 0);
     assert!(falls > 3, "the file shrank in {falls} commits");
-    assert!(max_fall <= step + 1, "a commit gave back {max_fall} pages");
-    assert!(max_free <= step, "{max_free} pages stayed free");
+    // a released range may also drop one pointer-map page, which is not a freelist page
+    assert!(
+        (step..=step + 1).contains(&max_fall),
+        "the busiest commit gave back {max_fall} pages"
+    );
+    assert!(
+        max_free > step,
+        "the drain freed no more than one step at a time, so the cap was never the limit"
+    );
+    assert_eq!(count(&path, "PRAGMA freelist_count"), 0);
 }
 
 #[test]
