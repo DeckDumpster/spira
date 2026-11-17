@@ -33,7 +33,7 @@ pub struct PublishBacklog {
 pub enum Read {
     Blind(String),
     /// `arrival` is when the oldest unpublished commit reached the landing ref; absent when nothing is unpublished.
-    /// `forge_tip_age_secs` is set only when the forge did not answer and the count was taken against an older tip.
+    /// `forge_tip_age_secs` is set only when `spira-lc unpublished` marked its forge tip stale; the count was taken against that older tip.
     Measured {
         count: u64,
         arrival: Option<u64>,
@@ -84,7 +84,7 @@ impl PublishBacklog {
                 let spell = c.blind_since.remove(name).map_or(String::new(), |t| format!(" after {}s blind", now.saturating_sub(t)));
                 say.push(format!("SIGHTED {name}: the backlog watcher can measure again{spell}"));
             }
-            let tip = stale.map_or(String::new(), |a| format!("; forge unreachable, measured against a tip {a}s old"));
+            let tip = stale.map_or(String::new(), |a| format!("; measured against a forge tip {a}s old"));
             let age = arrival.map_or(0, |t| now.saturating_sub(t));
             let over = count > self.max_count || age > self.max_age_secs;
             let was_over = prev == Standing::Over;
@@ -217,10 +217,10 @@ mod tests {
         let stale = Read::Measured { count: 51, arrival: Some(NOW - 5), forge_tip_age_secs: Some(777) };
         let (c, say) = w.decide(&Carry::default(), &snap(stale), NOW);
         assert_eq!(say.len(), 1);
-        assert!(say[0].ends_with("falling behind; forge unreachable, measured against a tip 777s old"), "{say:?}");
+        assert!(say[0].ends_with("falling behind; measured against a forge tip 777s old"), "{say:?}");
         let clear = Read::Measured { count: 1, arrival: Some(NOW - 5), forge_tip_age_secs: Some(900) };
         let (_, say) = w.decide(&c, &snap(clear), NOW);
-        assert_eq!(say, ["CLEAR r: back under threshold (1 unpublished, oldest 5s; forge unreachable, measured against a tip 900s old)"]);
+        assert_eq!(say, ["CLEAR r: back under threshold (1 unpublished, oldest 5s; measured against a forge tip 900s old)"]);
     }
 
     #[test]
