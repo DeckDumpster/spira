@@ -126,10 +126,9 @@ pub fn pr_snapshot_from(records: &RecordedPrs, targets: &[PrTarget], forge: &For
 
 /// Each queue.local checkout's forge tip, fetched in parallel and best-effort: the measurement
 /// that follows reads local refs and answers from the cached tip when this fails.
-fn refresh_forge_tip(r: &MapRow) {
-    use crate::tasks::a::queue_step::edge::{git, registry};
-    let Ok(reg) = registry() else { return };
-    if let Some((remote, branch)) = spira_config::repos::publish_forge(&reg, &r.name, &BTreeMap::new()) {
+fn refresh_forge_tip(reg: &spira_config::repos::Registry, r: &MapRow) {
+    use crate::tasks::a::queue_step::edge::git;
+    if let Some((remote, branch)) = spira_config::repos::publish_forge(reg, &r.name, &BTreeMap::new()) {
         let _ = git(Path::new(&r.path), &["fetch", "--quiet", &remote, &branch], REFRESH_FETCH);
     }
 }
@@ -847,7 +846,8 @@ impl World {
             Ok(t) => map_rows(&t),
             Err(e) => return serde_json::to_string(&publish_backlog::Snapshot { repos: vec![(publish_backlog::REPO_MAP_KEY.into(), Read::Blind(format!("the repo map is unreadable: {e}")))] }).map_err(|e| e.to_string()),
         };
-        publish_backlog_snapshot_from(&rows, &refresh_forge_tip, &|name| self.unpublished(name))
+        let reg = crate::tasks::a::queue_step::edge::registry().ok();
+        publish_backlog_snapshot_from(&rows, &|r| reg.iter().for_each(|reg| refresh_forge_tip(reg, r)), &|name| self.unpublished(name))
     }
 
     /// `Err` carries the verb's own refusal; `Ok(None)` is a repo declared to publish nowhere.
