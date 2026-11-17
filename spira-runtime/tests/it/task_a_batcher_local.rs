@@ -1723,7 +1723,7 @@ fn a_pass_with_an_empty_pool_clears_the_carried_dependency_refusals() {
     assert!(!carry.repos["spira"].blocked.is_empty());
     let empty = Snapshot { repos: [("spira".to_string(), repo(vec![]))].into(), now_ms: NOW };
     let (carry, _) = decide(&carry, &empty);
-    assert!(carry.repos.get("spira").map_or(true, |rc| rc.blocked.is_empty()), "{:?}", carry.repos);
+    assert!(carry.repos.get("spira").is_none_or(|rc| rc.blocked.is_empty()), "{:?}", carry.repos);
 }
 
 #[test]
