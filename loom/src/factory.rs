@@ -1419,7 +1419,7 @@ mod tests {
         let stalls: Vec<&Value> = of_kind(&f, "transitions").into_iter().filter(|s| s["status"] == "STALL").collect();
         assert_eq!(stalls.len(), 1, "{stalls:?}");
         assert_eq!((stalls[0]["repo"].as_str(), stalls[0]["at"].clone()), (Some("spira"), json!(["bead.cut"])));
-        assert!(stalls[0]["reading"].as_str().unwrap().contains("no Cut"), "{}", stalls[0]["reading"]);
+        assert!(stalls[0]["reading"].as_str().unwrap().contains("oldest uncovered waited"), "{}", stalls[0]["reading"]);
         assert_eq!(sensor(&f, "wt.SUBMITTED")["status"], "WAIT");
         assert!(sensor(&f, "wt.SUBMITTED")["reading"].as_str().unwrap().starts_with("SUBMITTED 1 oldest 2h00m"));
         assert_eq!(sensor(&f, "wt.WORKING→SUBMITTED")["status"], "WAIT");
@@ -1451,7 +1451,7 @@ mod tests {
         answers.push(ok(&dwell_key(), dwell.to_string()));
         let f = floor_with(answers, run.path().to_str().unwrap(), &sensing()).await.unwrap();
         let stalls: Vec<&Value> = of_kind(&f, "transitions").into_iter().filter(|s| s["status"] == "STALL").collect();
-        assert!(stalls.iter().any(|s| s["repo"] == "spira" && s["reading"].as_str().unwrap().contains("no Cut")), "{stalls:?}");
+        assert!(stalls.iter().any(|s| s["repo"] == "spira" && s["reading"].as_str().unwrap().contains("oldest uncovered waited")), "{stalls:?}");
     }
 
     #[tokio::test]
