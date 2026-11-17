@@ -567,6 +567,7 @@ mod tests {
         assert!(inc.join("s-fresh").exists(), "written in the lease stays");
         assert!(inc.join("s-read").exists(), "read in the lease stays");
         assert!(inc.join("s-recent").exists(), "untouched but under 24 hours old stays");
+        // clock-safe: trim ages files against the real now; fixture mtimes are set relative to it
         assert!(t.incremental > 0 && t.stale == 0 && t.idle_profiles == 0 && t.after < t.before, "{t:?}");
     }
 
@@ -589,6 +590,7 @@ mod tests {
         for kept in ["deps/used.rlib", "deps/written.rlib", "deps/newish.rlib"] {
             assert!(p.join(kept).exists(), "{kept}");
         }
+        // clock-safe: trim ages files against the real now; fixture mtimes are set relative to it
         assert!(t.stale > 0 && t.incremental == 0, "{t:?}");
     }
 
@@ -604,6 +606,7 @@ mod tests {
         assert!(d.path().join("debug/deps/y").exists(), "written within 6 hours stays");
         assert!(d.path().join(".unit-tests-built-manifest").exists(), "files beside the profiles are not profiles");
         assert!(d.path().join("scratch/note").exists(), "a directory that is no profile is not trimmed");
+        // clock-safe: trim ages files against the real now; fixture mtimes are set relative to it
         assert!(t.idle_profiles > 0, "{t:?}");
     }
 

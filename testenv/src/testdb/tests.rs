@@ -515,7 +515,9 @@ fn real_bd_embedded_up_check_reset_and_down() {
     }
     embedded_down(&paths);
     let t0 = Instant::now();
+    // clock-safe: cap on a poll for the teardown paths to disappear
     while paths.iter().any(|p| p.exists()) && t0.elapsed() < Duration::from_secs(5) {
+        // clock-safe: cap on a poll for the teardown paths to disappear
         sleep(Duration::from_millis(20));
     }
     for p in &paths {

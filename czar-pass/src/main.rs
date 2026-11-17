@@ -1450,6 +1450,7 @@ mod tests {
         fs::write(&f, "x").unwrap();
         let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
         let mtime = file_mtime(&f).expect("freshly written file must have an mtime");
+        // clock-safe: a 30s window on the mtime of a file just written; no waiting
         assert!(mtime <= now && now - mtime < 30, "mtime {} vs now {}", mtime, now);
     }
 

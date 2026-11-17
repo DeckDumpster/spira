@@ -176,9 +176,11 @@ mod tests {
             if let Some(f) = try_lock(&lock).unwrap() {
                 break Some(f);
             }
+            // clock-safe: cap on a poll for the lock a forked sibling releases at exec
             if std::time::Instant::now() > deadline {
                 break None;
             }
+            // clock-safe: cap on a poll for the lock a forked sibling releases at exec
             std::thread::sleep(std::time::Duration::from_millis(5));
         };
         assert!(reacquired.is_some(), "lock is released on drop");

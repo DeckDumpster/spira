@@ -40,10 +40,12 @@ fn start() -> Option<(Vm, String)> {
     let port = Command::new("podman").args(["port", &name, "8428"]).output().ok()?;
     let addr = format!("127.0.0.1:{}", String::from_utf8_lossy(&port.stdout).trim().rsplit(':').next()?);
     let end = Instant::now() + Duration::from_secs(30);
+    // clock-safe: cap on a poll for GET /health to answer OK
     while Instant::now() < end {
         if TcpStream::connect(&addr).is_ok() && http(&addr, "GET /health HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n").contains("OK") {
             return Some((vm, addr));
         }
+        // clock-safe: cap on a poll for GET /health to answer OK
         std::thread::sleep(Duration::from_millis(200));
     }
     None
@@ -78,11 +80,13 @@ fn scenario(addr: &str) {
     let reader = Reader::new(Some(&addr)).unwrap();
     let end = Instant::now() + Duration::from_secs(20);
     let mut got = Vec::new();
+    // clock-safe: cap on a poll for the pushed rows to be readable
     while Instant::now() < end {
         got = reader.rows_or_empty("bead-stage", now - 3600).unwrap();
         if got.len() == sent.len() {
             break;
         }
+        // clock-safe: cap on a poll for the pushed rows to be readable
         std::thread::sleep(Duration::from_millis(500));
     }
     let want: Vec<Value> = sent.iter().map(|l| serde_json::from_str(l).unwrap()).collect();
