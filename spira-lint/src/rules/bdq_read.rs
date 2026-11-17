@@ -39,7 +39,7 @@ const READ_VERBS: &[&str] = &[
 const COMPOUND: &[(&str, &str)] = &[("dep", "list"), ("label", "list"), ("kv", "get"), ("config", "get")];
 
 /// Lifecycle-client calls whose argv is the door's, not bd's.
-const CLIENT_CALLS: &[&str] = &[".call(", ".answer(", ".call_stdin(", "lc_run(", "lc_full(", "run_lc(", "lc_list("];
+const CLIENT_CALLS: &[&str] = &[".call(", ".answer(", ".call_stdin(", "lc_run(", "lc_full(", "run_lc(", "lc_list(", "call_held(", "held_read(", "lc_call("];
 
 type CrateFile<'t> = (&'t Entry, &'t [u8], String);
 
@@ -235,6 +235,15 @@ mod tests {
     fn hits(t: &TempDir, files: &[&str]) -> usize {
         let tree = Tree::from_paths(t.path(), files.iter().copied(), std::iter::empty::<&str>());
         violations(&tree).unwrap().len()
+    }
+
+    #[test]
+    fn a_read_asked_of_the_held_view_or_the_socket_is_the_doors_not_bdqs() {
+        let t = TempDir::new("br-held");
+        t.write("a/src/x.rs", &format!("{RUST}fn g() {{ call_held(&c, &[\"list\", \"--live\"]); held_read(&[\"list\"]); lc_call(&p, &[\"list\"]); }}\n"));
+        t.write("b/src/y.rs", &format!("{RUST}fn g() {{ other(&[\"list\", \"--live\"]); }}\n"));
+        assert_eq!(hits(&t, &["a/src/x.rs"]), 0);
+        assert_eq!(hits(&t, &["b/src/y.rs"]), 1, "the matcher still finds a bare read");
     }
 
     #[test]

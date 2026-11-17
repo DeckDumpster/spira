@@ -240,13 +240,14 @@ pub fn with_planning_fields(answer: (i32, String), conn: &Conn) -> (i32, String)
 /// The plan rows of `ids` as `plan items --ids` prints them, held under the planning watermark
 /// they were read at: a row moves only by a planning write, and every one moves the watermark.
 pub fn items_held(sql: &dyn Sql, ids: &[&str]) -> Result<Vec<Value>, String> {
-    static ITEMS: Mutex<(Option<u64>, BTreeMap<String, Option<Value>>)> = Mutex::new((None, BTreeMap::new()));
+    static ITEMS: HeldItems = Mutex::new((None, BTreeMap::new()));
     items_under(&ITEMS, current_watermark(), ids, &|missing| fetch_with(sql, missing, false, false))
 }
 
 type HeldItems = Mutex<(Option<u64>, BTreeMap<String, Option<Value>>)>;
+type ItemLookup<'a> = dyn Fn(&[&str]) -> Result<Vec<Value>, String> + 'a;
 
-fn items_under(held: &HeldItems, watermark: Option<u64>, ids: &[&str], fetch: &dyn Fn(&[&str]) -> Result<Vec<Value>, String>) -> Result<Vec<Value>, String> {
+fn items_under(held: &HeldItems, watermark: Option<u64>, ids: &[&str], fetch: &ItemLookup) -> Result<Vec<Value>, String> {
     let Some(w) = watermark else { return fetch(ids) };
     let lock = || held.lock().unwrap_or_else(|p| p.into_inner());
     let (mut out, missing) = {

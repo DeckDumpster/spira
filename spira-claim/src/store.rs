@@ -523,7 +523,7 @@ mod tests {
         assert!(st.lifecycle_of(&["sp-a".into()]).unwrap().contains_key("sp-a"));
         assert!(t.seen.lock().unwrap().is_empty(), "a held row is not asked of the socket");
         st.lifecycle_of(&["sp-a".into(), "sp-z".into()]).unwrap();
-        assert_eq!(*t.seen.lock().unwrap(), [vec!["list", "--ids", "sp-z"]], "only the id the view does not hold is asked");
+        assert_eq!(t.seen.lock().unwrap().iter().map(|a| a.join(" ")).collect::<Vec<_>>(), ["list --ids sp-z"], "only the id the view does not hold is asked");
     }
 
     #[test]

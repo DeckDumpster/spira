@@ -777,8 +777,8 @@ mod tests {
             std::thread::sleep(Duration::from_millis(5));
         }
         for _ in 0..2 {
-            assert!(super::lc_json(&["list", "--live"]).unwrap().is_empty());
-            assert!(super::lc_json(&["list", "--batches"]).unwrap().is_empty());
+            assert_eq!(store_view::held_read(&["list", "--live"]).unwrap().unwrap(), "[]");
+            assert_eq!(store_view::held_read(&["list", "--batches"]).unwrap().unwrap(), "[]");
         }
         let sent = store.0.lock().unwrap().clone();
         assert!(!sent.iter().any(|a| a.starts_with("list --live")), "{sent:?}");
