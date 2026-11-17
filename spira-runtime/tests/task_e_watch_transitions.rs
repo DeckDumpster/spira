@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 
 use runtime::taskrig::{assert_deterministic, effects_runnable, TaskRig};
 use runtime::event::EventKind;
-use spira_runtime::tasks::a::batcher_local;
+use spira_runtime::tasks::a::{batcher_forge, batcher_local};
 use spira_runtime::tasks::d::acceptance as acc;
 use spira_runtime::tasks::e::watch_transitions::*;
 use spira_runtime::watchers::INBOX_APPEND;
@@ -1408,4 +1408,23 @@ fn a_real_cut_stall_still_pages_once() {
     let pages: Vec<String> = stalls(&r).into_iter().filter(|l| l.contains("P0 STALL SUBMITTED→IN_DELIVERY (spira)")).collect();
     assert_eq!(pages.len(), 1, "{pages:?}");
     assert!(pages[0].contains("sp-um4jw9 CERTIFIED") && pages[0].contains("(certified, not cut)"), "{}", pages[0]);
+}
+
+#[test]
+fn the_forge_batchers_carry_is_read_too() {
+    let mut r = dependency_rig(dependency_page_world, None);
+    r.advance(300_000).unwrap();
+    r.tick(batcher_forge::STREAM, EventKind::new(batcher_forge::STATE, r#"{"repos":{"spira":{"state":"Idle","round_key":null,"held":[],"base_moved":null,"conflict_streaks":{},"blocked":{"sp-um4jw9":"sp-f0cw5z"}}}}"#)).unwrap();
+    let (_, stream, kind) = WatchTransitions::boot();
+    r.tick(stream, kind).unwrap();
+    let last_wait = lines(&r).into_iter().rev().find(|l| l.contains("WAIT ")).unwrap();
+    assert!(last_wait.contains("sp-um4jw9 waiting on sp-f0cw5z"), "{last_wait}");
+}
+
+#[test]
+fn mark_blocked_clears_a_stale_dependency_the_batcher_no_longer_carries() {
+    let mut s = dependency_page_world(T0);
+    mark_blocked(&mut s, &BTreeMap::from([("sp-um4jw9".to_string(), "sp-f0cw5z".to_string())]));
+    mark_blocked(&mut s, &BTreeMap::new());
+    assert!(s.beads.iter().all(|b| b.waits_on.is_none()));
 }
