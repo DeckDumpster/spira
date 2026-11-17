@@ -233,12 +233,13 @@ pub fn drive(sys: &dyn Sys, batch: &str, repo: &str) -> u8 {
     }
     let land = verb("land", LAND_DEADLINE_SECS);
     println!("{}", tail(&land.text, 4));
-    let gone = status(sys, repo).map(|s| !open_rounds(&s).iter().any(|r| r.batch == batch)).unwrap_or(false);
-    match land.code {
-        Some(0) if gone => println!("round-recert: {batch} landed at {}", round.head),
-        Some(LAND_DEPLOY_FAULT_EXIT) if gone => println!("round-recert: {batch} landed at {} but its release was not activated", round.head),
-        c => {
-            println!("round-recert: LAND FAILED for {batch} (land rc={}, round {}) — see above", c.map_or("signal".into(), |c| c.to_string()), if gone { "gone" } else { "still open" });
+    // An unreadable status says nothing about the round: only a listing that still names it is "still open".
+    let open = status(sys, repo).map(|s| open_rounds(&s).iter().any(|r| r.batch == batch));
+    match (land.code, open) {
+        (Some(0), Ok(false) | Err(_)) => println!("round-recert: {batch} landed at {}", round.head),
+        (Some(LAND_DEPLOY_FAULT_EXIT), Ok(false) | Err(_)) => println!("round-recert: {batch} landed at {} but its release was not activated", round.head),
+        (c, open) => {
+            println!("round-recert: LAND FAILED for {batch} (land rc={}, round {}) — see above", c.map_or("signal".into(), |c| c.to_string()), if open == Ok(false) { "gone" } else { "still open" });
             return 1;
         }
     }
@@ -474,6 +475,16 @@ mod tests {
         let twice = drive_answers(&[(VM_NO_OUTPUT, "fault=vm-no-output\n"), (VM_NO_OUTPUT, "fault=vm-no-output\n")]);
         assert_eq!(drive(&twice, "r-1", "spira"), 1);
         assert!(twice.answers.borrow().is_empty(), "never a third certify");
+    }
+
+    #[test]
+    fn a_landed_round_whose_status_read_then_fails_is_still_landed_and_a_land_that_failed_is_not() {
+        let landed = drive_answers(&[(0, ""), (0, "landed\n"), (2, "cannot tell: the lifecycle service took the request but its reply was lost (no reply)\n")]);
+        assert_eq!(drive(&landed, "r-1", "spira"), 0, "the land verb said 0; a status that cannot be read does not undo it");
+        let refused = drive_answers(&[(0, ""), (1, "refused\n"), (2, "no reply\n")]);
+        assert_eq!(drive(&refused, "r-1", "spira"), 1);
+        let open = drive_answers(&[(0, ""), (0, "landed\n"), (0, "batch_id=r-1\nphase=green\nhead=aaa\nround=open\n")]);
+        assert_eq!(drive(&open, "r-1", "spira"), 1, "a listing that still names the round is a land that did not take");
     }
 
     #[test]
