@@ -194,6 +194,7 @@ pub const CLASSES: &[(&str, EffectClass)] = &[
     ("pr-notify.observe", Forge),
     ("publish-backlog.observe", Git),
     ("publish.cancel_runs", Forge),
+    ("publish.retire", Git),
     ("publish.notify", Store),
     ("publish.observe", Store),
     ("publish.pr_close", Forge),
