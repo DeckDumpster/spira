@@ -2224,7 +2224,8 @@ fn a_submitted_bead_held_manual_and_wait_is_not_gated() {
     held_submitted(&h, &["manual", "wait"]);
     h.run();
     assert!(h.lc.certified.borrow().is_empty());
-    assert!(h.logged("is held"));
+    assert!(h.logged("not gated until the hold lifts"));
+    assert!(!h.logged("gated; the hold keeps it out of the cut"));
 }
 
 /// sp-mve9i: a bead still with its builder (READY, WORKING, REWORK) is never certified,

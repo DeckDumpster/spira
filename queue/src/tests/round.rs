@@ -5159,6 +5159,10 @@ fn resubmit_says_a_held_bead_is_not_cut_by_the_batcher() {
     assert!(waiting.out().contains("not gated until the hold lifts") && waiting.out().contains("spira-lc unhold sp-a <kind>"), "{}", waiting.out());
     assert!(!waiting.out().contains("its gate certifies it"), "{}", waiting.out());
 
+    let mixed = rework_world(&["manual", "wait"]);
+    assert_eq!(mixed.run(&a.iter().map(String::as_str).collect::<Vec<_>>()), 0, "{}", mixed.err());
+    assert!(mixed.out().contains("not gated until the hold lifts") && !mixed.out().contains("its gate certifies it"), "{}", mixed.out());
+
     let ready = rework_world(&[]);
     set_row(&ready, "sp-a", |r| r.state = "READY".into());
     assert_eq!(ready.run(&a.iter().map(String::as_str).collect::<Vec<_>>()), 0, "{}", ready.err());
