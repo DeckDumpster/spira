@@ -18,6 +18,8 @@ pub const PHASES_ENV: &str = "PERFWATCH_PHASES";
 /// Set by perf-watch on the probe: its start in epoch microseconds, so `begin` can record `start`.
 pub const T0_ENV: &str = "PERFWATCH_T0_US";
 pub const PHASES_PREFIX: &str = "PERFWATCH_PHASES=";
+/// Printed on its own stderr line after the phases: the instant the probe wrote them, epoch microseconds.
+pub const END_PREFIX: &str = "PERFWATCH_END_US=";
 
 pub struct Run {
     sink: MetricsSink,
@@ -46,7 +48,7 @@ impl Run {
             &[Point::Count { name: RUNS, value: 1 }, Point::Seconds { name: RUN_SECONDS, value: self.started.elapsed().as_secs_f64() }],
             &[("component", &self.component), ("operation", &self.operation), ("outcome", outcome), ("error_class", &class)],
         );
-        write_phases(&mut std::io::stderr(), phases_enabled(), Some(pushing.elapsed().as_millis() as u64), self.started.elapsed().as_millis() as u64);
+        write_phases(&mut std::io::stderr(), phases_enabled(), Some(pushing.elapsed().as_millis() as u64), self.started.elapsed().as_millis() as u64, epoch_micros());
     }
 
     /// One domain event of this component (a calls, a rejection, a rework), `kind` bounded by the caller.
@@ -80,8 +82,9 @@ fn record_start(now_us: u64, t0_us: u64) {
 }
 
 /// Writes the phases line a timed run prints at exit: `start` and the recorded phases, then
-/// `client` (the time since `begin` they and the push leave unaccounted), then `push` when made.
-fn write_phases(out: &mut impl std::io::Write, enabled: bool, push: Option<u64>, since_begin_ms: u64) {
+/// `client` (the time since `begin` they and the push leave unaccounted), then `push` when made;
+/// a second line stamps the end, so the caller can time the exit.
+fn write_phases(out: &mut impl std::io::Write, enabled: bool, push: Option<u64>, since_begin_ms: u64, end_us: u64) {
     if !enabled {
         return;
     }
@@ -92,6 +95,11 @@ fn write_phases(out: &mut impl std::io::Write, enabled: bool, push: Option<u64>,
         phases.push(("push".to_string(), ms));
     }
     let _ = writeln!(out, "{PHASES_PREFIX}{}", render_phases(&phases));
+    let _ = writeln!(out, "{END_PREFIX}{end_us}");
+}
+
+pub fn epoch_micros() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_micros() as u64).unwrap_or(0)
 }
 
 fn phases_enabled() -> bool {
@@ -133,9 +141,8 @@ pub fn begin(component: &str, endpoint: Option<&str>) {
     let sink = MetricsSink::new(endpoint, &format!("spira-{component}"), DEADLINE);
     if phases_enabled() {
         let t0 = std::env::var(T0_ENV).ok().and_then(|v| v.trim().parse::<u64>().ok());
-        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_micros() as u64);
-        if let (Some(t0), Ok(now)) = (t0, now) {
-            record_start(now, t0);
+        if let Some(t0) = t0 {
+            record_start(epoch_micros(), t0);
         }
     }
     if let Ok(mut g) = CURRENT.lock() {
@@ -158,13 +165,13 @@ pub fn seconds(name: &str, value: f64, labels: &[(&str, &str)]) {
 /// Ends this run without pushing anything: a read on a critical path that pays no network call
 /// when it succeeds. A failing run is still `finish`ed.
 pub fn discard() {
-    discard_to(&mut std::io::stderr(), phases_enabled());
+    discard_to(&mut std::io::stderr(), phases_enabled(), epoch_micros());
 }
 
-fn discard_to(out: &mut impl std::io::Write, phases_enabled: bool) {
+fn discard_to(out: &mut impl std::io::Write, phases_enabled: bool, end_us: u64) {
     let run = CURRENT.lock().ok().and_then(|mut g| g.take());
     let since_begin = run.map_or(0, |r| r.started.elapsed().as_millis() as u64);
-    write_phases(out, phases_enabled, None, since_begin);
+    write_phases(out, phases_enabled, None, since_begin, end_us);
 }
 
 /// Pushes the run's standard metrics; a second call, or one with no `begin`, pushes nothing.
@@ -239,11 +246,11 @@ mod tests {
         let _serial = PHASES_TESTS.lock().unwrap_or_else(|e| e.into_inner());
         let mut out = Vec::new();
         *PHASES.lock().unwrap() = vec![("store".into(), 30)];
-        discard_to(&mut out, true);
-        assert_eq!(String::from_utf8(out).unwrap(), "PERFWATCH_PHASES=store=30,client=0\n");
+        discard_to(&mut out, true, 7);
+        assert_eq!(String::from_utf8(out).unwrap(), "PERFWATCH_PHASES=store=30,client=0\nPERFWATCH_END_US=7\n");
         let mut out = Vec::new();
-        write_phases(&mut out, true, Some(7), 0);
-        assert_eq!(String::from_utf8(out).unwrap(), "PERFWATCH_PHASES=store=30,client=0,push=7\n");
+        write_phases(&mut out, true, Some(7), 0, 9);
+        assert_eq!(String::from_utf8(out).unwrap(), "PERFWATCH_PHASES=store=30,client=0,push=7\nPERFWATCH_END_US=9\n");
         PHASES.lock().unwrap().clear();
     }
 
@@ -259,30 +266,30 @@ mod tests {
             phase(n, *ms);
         }
         let mut out = Vec::new();
-        write_phases(&mut out, true, Some(push), since_begin);
+        write_phases(&mut out, true, Some(push), since_begin, 1);
         PHASES.lock().unwrap().clear();
         String::from_utf8(out).unwrap()
     }
 
     #[test]
     fn the_line_accounts_for_start_and_the_clients_own_time() {
-        assert_eq!(line(Some((1_600_000, 1_000_000)), &[("reply", 30)], 2, 50), "PERFWATCH_PHASES=start=600,reply=30,client=18,push=2\n");
+        assert_eq!(line(Some((1_600_000, 1_000_000)), &[("reply", 30)], 2, 50), "PERFWATCH_PHASES=start=600,reply=30,client=18,push=2\nPERFWATCH_END_US=1\n");
     }
 
     #[test]
     fn without_a_stamp_the_line_has_no_start_and_still_has_client() {
-        assert_eq!(line(None, &[("reply", 30)], 2, 50), "PERFWATCH_PHASES=reply=30,client=18,push=2\n");
+        assert_eq!(line(None, &[("reply", 30)], 2, 50), "PERFWATCH_PHASES=reply=30,client=18,push=2\nPERFWATCH_END_US=1\n");
     }
 
     #[test]
     fn client_saturates_at_zero_when_the_phases_exceed_the_elapsed_time() {
-        assert_eq!(line(None, &[("reply", 80)], 2, 50), "PERFWATCH_PHASES=reply=80,client=0,push=2\n");
+        assert_eq!(line(None, &[("reply", 80)], 2, 50), "PERFWATCH_PHASES=reply=80,client=0,push=2\nPERFWATCH_END_US=1\n");
     }
 
     #[test]
     fn a_discarded_run_prints_nothing_with_phases_unset() {
         let mut out = Vec::new();
-        discard_to(&mut out, false);
+        discard_to(&mut out, false, 7);
         assert!(out.is_empty());
     }
 
