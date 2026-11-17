@@ -55,6 +55,9 @@ pub struct Row {
     /// The `list` row's `claim` is null: the record's claim inputs were never written.
     #[serde(default)]
     pub claim_unset: bool,
+    /// Why the claim view cannot tell, when it said so.
+    #[serde(default)]
+    pub claim_why: Option<String>,
 }
 
 /// The call scheduler's judgement of task room: since when a slot has been open, and when it last judged.
@@ -347,7 +350,8 @@ pub fn suspects(p: &BeadSweep, snap: &Snapshot, room: Option<&Room>, claimed: &[
             None
         };
         if unjudged {
-            let line = format!("{i} {st} CLAIM UNJUDGED (claim view cannot tell)");
+            let why = r.claim_why.as_deref().map(|w| format!(": {w}")).unwrap_or_default();
+            let line = format!("{i} {st} CLAIM UNJUDGED (claim view cannot tell{why})");
             out.push((line.clone(), line));
         }
         if let Some(msg) = suspect {
@@ -759,6 +763,15 @@ mod tests {
         let snap = claim_row("READY", Some("cannot-tell"), false);
         let (carry, say) = decide(&sweep(), &Carry::default(), &snap, None, &Repaired::default(), NOW);
         assert_eq!(say, ["SUSPECT sp-r READY CLAIM UNJUDGED (claim view cannot tell)"]);
+        assert!(decide(&sweep(), &carry, &snap, None, &Repaired::default(), NOW).1.is_empty());
+    }
+
+    #[test]
+    fn an_unjudged_claim_line_names_why_the_view_cannot_tell() {
+        let mut snap = claim_row("READY", Some("cannot-tell"), false);
+        snap.rows[0].claim_why = Some("no repo".into());
+        let (carry, say) = decide(&sweep(), &Carry::default(), &snap, None, &Repaired::default(), NOW);
+        assert_eq!(say, ["SUSPECT sp-r READY CLAIM UNJUDGED (claim view cannot tell: no repo)"]);
         assert!(decide(&sweep(), &carry, &snap, None, &Repaired::default(), NOW).1.is_empty());
     }
 

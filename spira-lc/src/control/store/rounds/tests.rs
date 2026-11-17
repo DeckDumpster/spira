@@ -1519,6 +1519,16 @@ fn list_answers_a_beads_claimability_from_its_prerequisite_when_it_is_read() {
 }
 
 #[test]
+fn a_ready_record_without_a_repo_says_the_repo_is_what_its_claim_view_lacks() {
+    let r = Rig::new();
+    r.ok(&["create-bead", "sp-a", "--ready"]);
+    r.ok(&["set-claim-inputs", "sp-a"]);
+    let v = claim_view_of(&r, "sp-a");
+    assert_eq!(v["verdict"], "cannot-tell");
+    assert_eq!(v["missing"], serde_json::json!(["repo"]));
+}
+
+#[test]
 fn list_keeps_a_pilgrimage_blocked_while_its_blocker_is_in_delivery_and_claimable_once_it_lands() {
     let r = Rig::new();
     open_round(&r);
