@@ -150,7 +150,7 @@ pub struct Hold {
     pub writer_wait: Duration,
     /// The inner backend's commit, less its writer wait.
     pub commit: Duration,
-    /// The commit ran a WAL checkpoint.
+    /// A WAL checkpoint moved the backfill mark while the commit ran (the checkpointer thread runs off the commit path, so this is an overlap, not the commit's own work).
     pub checkpointed: bool,
     pub apply: Duration,
     pub reload: Duration,
