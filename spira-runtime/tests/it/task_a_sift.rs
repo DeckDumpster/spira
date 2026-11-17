@@ -130,6 +130,7 @@ fn the_sifted_machines_and_the_waiting_notes_are_kept_a_row_each() {
     let r = sent_back_twice();
     let rows = kit::assert_kept_as_rows(&r, NAME);
     assert!(rows.iter().any(|k| k == "beads/sp-a"), "{rows:?}");
+    assert!(rows.iter().any(|k| k == "sent/sp-a"), "{rows:?}");
 }
 
 #[test]
@@ -233,4 +234,13 @@ fn a_moved_base_is_attempted_again_after_a_failed_send_back() {
     world.lock().unwrap().repos.get_mut("spira").unwrap().candidates.get_mut("sp-a").unwrap().base = "b2".into();
     r.advance(CADENCE_MS).unwrap();
     assert_eq!((asked(&r, NOTE).len(), asked(&r, SEND_BACK).len()), (2, 2));
+}
+
+#[test]
+fn an_attempt_is_forgotten_once_its_bead_leaves_the_pool() {
+    let (carry, _) = decide(&Carry::default(), &certified_conflict());
+    assert!(carry.sent.contains_key("sp-a"));
+    let (carry, acts) = decide(&carry, &idle());
+    assert!(carry.sent.is_empty(), "{:?}", carry.sent);
+    assert!(acts.is_empty());
 }
