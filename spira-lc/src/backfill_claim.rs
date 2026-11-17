@@ -20,7 +20,7 @@ fn cannot(why: String) -> Answer {
 }
 
 fn rows(m: &mut dyn Machine) -> Result<Vec<Value>, String> {
-    spira_lc::list_pages(|a| m.call(a))
+    spira_lc::list_pages(&[], |a| m.call(a))
 }
 
 /// `backfill-claim-inputs [--apply | --dry-run] [<bead-id>...]`. Dry run unless `--apply`.

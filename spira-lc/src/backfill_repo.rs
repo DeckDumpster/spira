@@ -20,7 +20,7 @@ fn cannot(why: String) -> Answer {
 }
 
 fn rows(m: &mut dyn Machine) -> Result<Vec<Value>, String> {
-    spira_lc::list_pages(|a| m.call(a))
+    spira_lc::list_pages(&[], |a| m.call(a))
 }
 
 /// The repo each of `ids` names in its `repo:` label; a bead with none is absent.

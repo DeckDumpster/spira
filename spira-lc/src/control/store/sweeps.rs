@@ -79,8 +79,8 @@ impl<B: Backend> Store<B> {
         actor: &str,
         req: &Request,
     ) -> Result<OpenSweep> {
-        let records = self.in_state(BeadState::Open)?;
         let rev = self.contract().head()?;
+        let records = self.records_page(rev, Some(&[BeadState::Open]), None, None, None, |_| true)?;
         let ids: Vec<&str> = records.iter().map(|r| r.value.row.bead_id.as_str()).collect();
         let readiness = self.readiness_of(&ids, rev)?;
         let mut out = OpenSweep::default();

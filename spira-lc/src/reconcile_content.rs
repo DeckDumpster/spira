@@ -50,7 +50,7 @@ fn items_of(m: &mut dyn Machine, ids: &[String], extra: &[&str]) -> Result<Vec<V
 
 /// The lifecycle records, by bead id: `(state, reason)`.
 fn records(m: &mut dyn Machine) -> Result<BTreeMap<String, (String, String)>, String> {
-    let rows = spira_lc::list_pages(|a| m.call(a))?;
+    let rows = spira_lc::list_pages(&[], |a| m.call(a))?;
     Ok(rows.iter().map(|r| (s(r, "bead_id"), (s(r, "state"), s(r, "reason")))).collect())
 }
 

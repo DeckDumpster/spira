@@ -202,3 +202,30 @@ mod claimable_ready_tests {
         assert!(claimable_ready(&View(json!({"cannot_tell": "x"}))).is_err());
     }
 }
+
+#[cfg(test)]
+mod filed_transitions_tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    struct Pages(Mutex<Vec<Vec<String>>>);
+
+    impl Lc for Pages {
+        fn call(&self, args: &[String]) -> (i32, Value) {
+            let mut seen = self.0.lock().unwrap();
+            seen.push(args.to_vec());
+            let page: Vec<Value> = if seen.len() == 1 { (0..1000).map(|i| json!({"bead_id": format!("sp-{i:04}"), "state": "READY", "updated_at": 5})).collect() } else { vec![json!({"bead_id": "sp-z", "state": "DROPPED", "updated_at": 6})] };
+            (0, Value::Array(page))
+        }
+    }
+
+    #[test]
+    fn the_filings_are_read_as_pages_by_cursor_never_a_whole_terminal_list() {
+        let lc = Pages(Mutex::new(Vec::new()));
+        let got = filed_transitions(&lc).unwrap();
+        assert_eq!(got.len(), 1001);
+        let seen = lc.0.lock().unwrap();
+        assert_eq!(seen[0], ["list", "--state", "READY,DROPPED", "--limit", "1000"]);
+        assert_eq!(seen[1], ["list", "--state", "READY,DROPPED", "--limit", "1000", "--after", "sp-0999"]);
+    }
+}

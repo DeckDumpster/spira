@@ -17,11 +17,11 @@ pub fn flag(args: &[String], name: &str) -> Option<String> {
 /// Rows per page when an admin verb reads the whole lifecycle table.
 pub const PAGE_ROWS: usize = 1_000;
 
-/// Every lifecycle row, read as pages by cursor through `call` until a short page.
-pub fn list_pages(mut call: impl FnMut(&[String]) -> (i32, String)) -> Result<Vec<serde_json::Value>, String> {
+/// Every lifecycle row `filter` keeps, read as pages by cursor through `call` until a short page.
+pub fn list_pages(filter: &[&str], mut call: impl FnMut(&[String]) -> (i32, String)) -> Result<Vec<serde_json::Value>, String> {
     let mut all: Vec<serde_json::Value> = Vec::new();
     loop {
-        let mut args: Vec<String> = vec!["list".into()];
+        let mut args: Vec<String> = std::iter::once("list").chain(filter.iter().copied()).map(String::from).collect();
         if let Some(last) = all.last().and_then(|r| r.get("bead_id")).and_then(|i| i.as_str()) {
             args.extend(["--after".into(), last.to_string()]);
         } else if !all.is_empty() {
@@ -65,7 +65,7 @@ mod list_pages_tests {
     fn a_whole_table_read_is_pages_by_cursor_until_a_short_page() {
         let ids: Vec<String> = (0..PAGE_ROWS + 5).map(|i| format!("sp-{i:05}")).collect();
         let mut sent: Vec<Vec<String>> = Vec::new();
-        let rows = list_pages(|args| {
+        let rows = list_pages(&[], |args| {
             sent.push(args.to_vec());
             let after = flag(args, "--after");
             let page: Vec<_> = ids
@@ -81,6 +81,6 @@ mod list_pages_tests {
         assert_eq!(sent.len(), 2);
         assert_eq!(sent[0], ["list", "--limit", "1000"]);
         assert_eq!(sent[1], ["list", "--after", "sp-00999", "--limit", "1000"]);
-        assert!(list_pages(|_| (3, "refused".into())).is_err());
+        assert!(list_pages(&[], |_| (3, "refused".into())).is_err());
     }
 }
