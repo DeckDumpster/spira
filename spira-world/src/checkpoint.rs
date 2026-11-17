@@ -23,7 +23,7 @@ pub fn lift_all() -> (Vec<String>, Vec<String>) {
 
 /// [`lift_all`] reading the holds through `client` and lifting each with `unhold`.
 pub fn lift_all_over(client: &LcClient, unhold: &dyn Fn(&str) -> bool) -> (Vec<String>, Vec<String>) {
-    let list = match client.call(&["list", "--hold", "wait"]) {
+    let list = match client.call(&["list", "--hold", "wait", "--live"]) {
         Err(_) => return (Vec::new(), vec!["(spira-lc list could not run)".into()]),
         Ok(r) if r.code != 0 => return (Vec::new(), vec!["(spira-lc list refused)".into()]),
         Ok(r) => r.out,
@@ -69,7 +69,7 @@ mod tests {
         let rows = r#"[{"bead_id":"sp-a","reason":"checkpoint-until: 2026-11-04"},{"bead_id":"sp-b","reason":"waiting on ci"},{"bead_id":"sp-c","reason":"checkpoint-until: x"}]"#;
         let (t, c) = client(Ok(Reply { code: 0, out: rows.into(), err: String::new() }));
         let (lifted, failed) = lift_all_over(&c, &|b| b == "sp-a");
-        assert_eq!(*t.asked.lock().unwrap(), vec![vec!["list".to_string(), "--hold".into(), "wait".into()]]);
+        assert_eq!(*t.asked.lock().unwrap(), vec![vec!["list".to_string(), "--hold".into(), "wait".into(), "--live".into()]]);
         assert_eq!((lifted, failed), (vec!["sp-a".to_string()], vec!["sp-c".to_string()]));
     }
 

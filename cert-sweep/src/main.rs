@@ -380,7 +380,7 @@ impl Rt<'_> {
             .filter_map(|r| Some((r.get("id")?.as_str()?.to_string(), r.get("title")?.as_str()?.to_string())))
             .collect();
         // Which of them are still open is the lifecycle machine's answer (sp-mve9i).
-        let lc = spira_store::lc_state::list().map_err(|e| format!("lifecycle state unreadable: {e}"))?;
+        let lc = spira_store::lc_state::list_live().map_err(|e| format!("lifecycle state unreadable: {e}"))?;
         Ok(still_open(all, &spira_store::lc_state::index(lc)))
     }
 

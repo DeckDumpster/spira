@@ -50,20 +50,22 @@ impl Mends for Live<'_> {
     fn open_mends(&mut self, target: &str) -> Result<Vec<String>, String> {
         let needle = needle(target);
         let titled = bd::titled(&needle)?;
-        let (rc, listing) = crate::dispatch(&["list".into()], self.0);
-        if rc != 0 {
-            return Err(format!("lifecycle list exited {rc}: {listing}"));
-        }
-        let ended: std::collections::HashSet<String> = serde_json::from_str::<serde_json::Value>(listing.trim())
-            .map_err(|e| format!("lifecycle list: {e}"))?
-            .as_array()
-            .map(|a| {
-                a.iter()
+        let mut ended = std::collections::HashSet::new();
+        for chunk in titled.chunks(200) {
+            let ids: Vec<&str> = chunk.iter().map(|(id, _)| id.as_str()).collect();
+            let (rc, listing) = crate::dispatch(&["list".into(), "--ids".into(), ids.join(",")], self.0);
+            if rc != 0 {
+                return Err(format!("lifecycle list exited {rc}: {listing}"));
+            }
+            let rows = serde_json::from_str::<serde_json::Value>(listing.trim()).map_err(|e| format!("lifecycle list: {e}"))?;
+            ended.extend(
+                rows.as_array()
+                    .into_iter()
+                    .flatten()
                     .filter(|r| r.get("state").and_then(|s| s.as_str()).and_then(BeadState::from_str).is_some_and(BeadState::is_terminal))
-                    .filter_map(|r| r.get("bead_id").and_then(|i| i.as_str()).map(str::to_string))
-                    .collect()
-            })
-            .unwrap_or_default();
+                    .filter_map(|r| r.get("bead_id").and_then(|i| i.as_str()).map(str::to_string)),
+            );
+        }
         Ok(titled.into_iter().filter(|(_, t)| t.starts_with(&needle)).map(|(id, _)| id).filter(|id| !ended.contains(id)).collect())
     }
     fn retire(&mut self, mend: &str, _reason: &str) -> Result<(), String> {

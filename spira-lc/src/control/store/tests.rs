@@ -520,7 +520,7 @@ fn a_working_records_lease_until_is_its_locks_expiry_and_follows_a_renew() {
         "a renew did not move the lease a read shows"
     );
     assert_eq!(lease(&s), Some(expiry(&s).div_ceil(1_000) as i64));
-    let (listed, _) = s.records().unwrap();
+    let listed = s.in_state(BeadState::Working).unwrap();
     assert_eq!(listed[0].value.row.lease_until, lease(&s));
     clock.advance(10_000);
     assert_eq!(
@@ -942,7 +942,8 @@ fn records_are_listed_from_one_snapshot_with_its_rev_and_without_other_kinds() {
     created(&s, "sp-a");
     created(&s, "sp-b");
     seed_judged(&s, "sp-a", "p");
-    let (records, rev) = s.records().unwrap();
+    let rev = s.contract().head().unwrap();
+    let records = s.records_page(rev, None, None, None, None, |_| true).unwrap();
     assert_eq!(
         records
             .iter()

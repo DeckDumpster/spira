@@ -96,7 +96,7 @@ pub fn parse_list(text: &str) -> Option<Vec<Condition>> {
 
 impl Conditions for LcConditions {
     fn list(&self) -> R<Vec<Condition>> {
-        parse_list(&self.call(&["list"])?).ok_or(Failure::Other)
+        parse_list(&self.call(&["list"])?).ok_or(Failure::Other) // not-a-lifecycle-list: the condition machine's own verb
     }
 
     fn set(&self, key: &str, kind: &str, reason: &str, message: &str, firing: bool) -> R<()> {

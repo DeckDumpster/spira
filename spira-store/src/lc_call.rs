@@ -733,7 +733,7 @@ mod tests {
         let (path, seen) = serve(&dir, store);
         let c = LcClient::socket(&path);
         let before = launched();
-        let rows = crate::lc_state::list_on(&c).unwrap();
+        let rows = crate::lc_state::list_live_on(&c).unwrap();
         assert_eq!(rows.iter().map(|r| r.bead_id.as_str()).collect::<Vec<_>>(), ["sp-a", "sp-b"]);
         assert_eq!(crate::lc_state::row_on(&c, "sp-a").unwrap().map(|r| r.state), Some("READY".into()));
         assert_eq!(crate::lc_state::row_on(&c, "sp-zz").unwrap(), None, "exit 1 is no row");
@@ -741,7 +741,10 @@ mod tests {
         assert!(crate::lifecycle_row::set_express_on(&c, "sp-zz", true).is_err(), "no row is nothing to mark");
         crate::lifecycle_row::content_on_base_on(&c, "sp-a", "p", "x").unwrap();
         assert_eq!(launched(), before, "no program ran");
+        crate::lc_state::list_ids_on(&c, &["sp-a".to_string(), "sp-b".to_string()]).unwrap();
         let seen = seen.lock().unwrap();
+        assert!(seen.iter().any(|a| a == &["list", "--ids", "sp-a,sp-b"].map(String::from)), "named beads are read by id");
+        assert_eq!(seen[0], ["list", "--live"].map(String::from), "the live set, never the whole table");
         let event = seen.iter().find(|a| a[0] == "event").expect("express sent its event");
         assert_eq!(event[1..], ["bead", "sp-a", "--expect", "READY", "--version", "4", "--actor", "bead", "--kind", "\"Express\""].map(String::from));
         let cob = seen.iter().rev().find(|a| a[0] == "event").unwrap();

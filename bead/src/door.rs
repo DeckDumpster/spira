@@ -130,6 +130,9 @@ pub fn ideas(client: &LcClient, label: &str) -> Result<Vec<IdeaRow>, i32> {
 
 pub type LifecycleRows = Result<HashMap<String, LifecycleRow>, String>;
 
+/// The lifecycle rows of the named beads.
+type LifecycleOf<'a> = dyn Fn(&[String]) -> LifecycleRows + 'a;
+
 /// Which beads `lint` judges.
 pub enum Set {
     All,
@@ -140,7 +143,7 @@ pub enum Set {
 pub struct DoorSource<'a> {
     ids: Vec<String>,
     rows: HashMap<String, Value>,
-    lifecycle: Box<dyn Fn() -> LifecycleRows + 'a>,
+    lifecycle: Box<LifecycleOf<'a>>,
 }
 
 fn rows_of(client: &LcClient, args: &[String]) -> Result<Vec<Value>, String> {
@@ -174,7 +177,7 @@ fn targets<'v>(row: &'v Value, kinds: &'v [&str]) -> impl Iterator<Item = &'v st
 }
 
 impl<'a> DoorSource<'a> {
-    pub fn load(client: &LcClient, set: Set, lifecycle: impl Fn() -> LifecycleRows + 'a) -> Result<Self, String> {
+    pub fn load(client: &LcClient, set: Set, lifecycle: impl Fn(&[String]) -> LifecycleRows + 'a) -> Result<Self, String> {
         let (mut ids, listed) = match set {
             Set::All => {
                 let rows = rows_of(client, &["list", "--limit", "0", "--json"].map(String::from))?;
@@ -205,8 +208,8 @@ impl<'a> DoorSource<'a> {
     }
 
     /// A source that only answers `lifecycle`.
-    pub fn lifecycle_only(lifecycle: impl Fn() -> LifecycleRows + 'a) -> Self {
-        DoorSource { ids: Vec::new(), rows: HashMap::new(), lifecycle: Box::new(lifecycle) }
+    pub fn lifecycle_only(ids: Vec<String>, lifecycle: impl Fn(&[String]) -> LifecycleRows + 'a) -> Self {
+        DoorSource { ids, rows: HashMap::new(), lifecycle: Box::new(lifecycle) }
     }
 }
 
@@ -225,7 +228,10 @@ impl LintSource for DoorSource<'_> {
         Ok(targets(row, &["relates-to"]).map(String::from).collect())
     }
     fn lifecycle(&self) -> LifecycleRows {
-        (self.lifecycle)()
+        let mut named: Vec<String> = self.ids.iter().chain(self.rows.keys()).cloned().collect();
+        named.sort();
+        named.dedup();
+        (self.lifecycle)(&named)
     }
 }
 
@@ -263,7 +269,7 @@ mod tests {
         let fake = fixture();
         let client = LcClient::over(fake.clone(), true);
         let ids = ["sp-a", "sp-b", "sp-c"].map(String::from).to_vec();
-        let src = DoorSource::load(&client, Set::Ids(ids), || Ok(HashMap::new())).unwrap();
+        let src = DoorSource::load(&client, Set::Ids(ids), |_| Ok(HashMap::new())).unwrap();
         let (code, lines) = lint(&src, &cfg());
         assert_eq!(code, 1);
         assert_eq!(lines, vec!["bead: sp-a: blocks edge to ask-labelled sp-d (asks must not block each other; use bd dep relate)".to_string()]);
@@ -273,9 +279,23 @@ mod tests {
     }
 
     #[test]
+    fn the_lifecycle_read_is_of_the_ids_the_door_holds_never_the_whole_table() {
+        let client = LcClient::over(fixture(), true);
+        let asked = std::cell::RefCell::new(Vec::<Vec<String>>::new());
+        let ids = ["sp-a", "sp-b"].map(String::from).to_vec();
+        let src = DoorSource::load(&client, Set::Ids(ids), |ids| {
+            asked.borrow_mut().push(ids.to_vec());
+            Ok(HashMap::new())
+        })
+        .unwrap();
+        src.lifecycle().unwrap();
+        assert_eq!(*asked.borrow(), [["sp-a", "sp-b", "sp-d"].map(String::from).to_vec()]);
+    }
+
+    #[test]
     fn a_bead_the_store_did_not_return_is_unreadable() {
         let client = LcClient::over(fixture(), true);
-        let src = DoorSource::load(&client, Set::Ids(vec!["sp-gone".into()]), || Ok(HashMap::new())).unwrap();
+        let src = DoorSource::load(&client, Set::Ids(vec!["sp-gone".into()]), |_| Ok(HashMap::new())).unwrap();
         let (code, lines) = lint(&src, &cfg());
         assert_eq!(code, 1);
         assert_eq!(lines, vec!["bead: sp-gone: unreadable (bd show failed)".to_string()]);
@@ -288,7 +308,7 @@ mod tests {
             json!({"id": "sp-d", "status": "closed", "issue_type": "task", "labels": ["needs-op-test", "repo:r"], "dependencies": []}),
         ]));
         let client = LcClient::over(fake.clone(), true);
-        let src = DoorSource::load(&client, Set::All, || Ok(HashMap::new())).unwrap();
+        let src = DoorSource::load(&client, Set::All, |_| Ok(HashMap::new())).unwrap();
         let (_, lines) = lint(&src, &cfg());
         assert_eq!(lines.len(), 1, "{lines:?}");
         let seen = fake.requests();
@@ -306,8 +326,8 @@ mod tests {
     #[test]
     fn a_door_that_cannot_be_reached_fails_the_load_rather_than_linting_nothing() {
         let client = LcClient::over(Arc::new(Down), true);
-        assert!(DoorSource::load(&client, Set::All, || Ok(HashMap::new())).is_err());
-        assert!(DoorSource::load(&client, Set::Ids(vec!["sp-a".into()]), || Ok(HashMap::new())).is_err());
+        assert!(DoorSource::load(&client, Set::All, |_| Ok(HashMap::new())).is_err());
+        assert!(DoorSource::load(&client, Set::Ids(vec!["sp-a".into()]), |_| Ok(HashMap::new())).is_err());
     }
 
     #[test]

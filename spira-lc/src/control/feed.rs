@@ -29,10 +29,9 @@ pub enum Feed {
     Progress {
         progress_rev: u64,
     },
-    /// The asked revision was compacted away: here is the prefix at `list_rev`, to resume from.
+    /// The asked revision was compacted away: resume from `list_rev` after reloading by a filtered read.
     Relist {
         compacted: u64,
-        items: Vec<Item>,
         list_rev: u64,
     },
 }
@@ -132,16 +131,15 @@ impl<B: Backend> Store<B> {
         Ok((head, keys.into_iter().collect()))
     }
 
-    /// The contract's watch, with `TooOld` answered by the re-list a watcher resumes from.
+    /// The contract's watch; `TooOld` is answered with the revision to resume from and no rows, for the watcher to reload by its own filtered read.
     pub fn watch(&self, prefixes: &[&str], from_rev: u64, wait_ms: u64) -> Result<Feed> {
         match self.contract().watch_any(prefixes, from_rev, wait_ms) {
             Ok(Watched::Events { events, through }) => Ok(Feed::Events { events, through }),
             Ok(Watched::Progress { progress_rev }) => Ok(Feed::Progress { progress_rev }),
             Err(Error::TooOld { compacted }) => {
-                let (items, list_rev) = self.contract().list(prefixes, &Selector::Everything)?;
+                let list_rev = self.contract().head()?;
                 Ok(Feed::Relist {
                     compacted,
-                    items,
                     list_rev,
                 })
             }

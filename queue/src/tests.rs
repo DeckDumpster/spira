@@ -1613,6 +1613,10 @@ impl Lc for FLc {
                 .collect()
         })
     }
+    fn bead_rows_of(&self, ids: &[String]) -> Result<Vec<LcBeadRow>, String> {
+        self.calls.borrow_mut().push(format!("list --ids {}", ids.join(",")));
+        self.rows.borrow().clone().map(|r| r.into_iter().filter(|b| ids.contains(&b.bead_id)).collect())
+    }
     fn express_ids(&self) -> Result<Vec<String>, String> {
         self.calls.borrow_mut().push("list --express".into());
         Ok(Vec::new())

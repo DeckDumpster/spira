@@ -132,16 +132,13 @@ pub struct RowQuery<'a> {
     /// Empty: any state.
     pub states: &'a [&'a str],
     pub repo: Option<&'a str>,
-    /// `list --live`: not terminal, or terminal and updated within [`LIVE_WINDOW_SECS`].
+    /// `list --live`: the non-terminal rows, which are all the views hold.
     pub live: bool,
     pub ids: Option<&'a [String]>,
     /// A row whose holds contain this kind.
     pub hold: Option<&'a str>,
     pub express: bool,
 }
-
-/// How long a terminal row stays in `list --live`.
-pub const LIVE_WINDOW_SECS: i64 = 24 * 3600;
 
 #[derive(Default)]
 struct State {
@@ -405,10 +402,10 @@ impl Projection {
     }
 
     /// Reads every view afresh: the batch records and the revision they were listed at, then
-    /// every lifecycle row. A change after that revision is redelivered by the next watch.
+    /// the live lifecycle rows. A change after that revision is redelivered by the next watch.
     pub fn load(&self) -> Result<(), LcError> {
         let (items, rev) = self.rc_list(BATCHES)?;
-        let beads = beads_of(&self.client.answer(&["list"])?)?;
+        let beads = beads_of(&self.client.answer(&["list", "--live"])?)?;
         let batches = batches_of(items);
         let mut s = self.lock();
         self.end_held(ALL);
@@ -486,7 +483,7 @@ impl Projection {
         }
         if let Some(beads) = s.beads.as_mut() {
             for id in dirty {
-                match fresh.get(&id) {
+                match fresh.get(&id).filter(|b| !b.row.terminal()) {
                     Some(b) => beads.insert(id, b.clone()),
                     None => beads.remove(&id),
                 };
@@ -595,30 +592,31 @@ impl Projection {
         })
     }
 
-    /// The held lifecycle rows `q` keeps, in id order, as `list` printed them.
-    pub fn rows(&self, q: &RowQuery) -> Result<Read<Vec<Value>>, LcError> {
-        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
-        self.rows_at(q, now)
-    }
-
-    /// [`Self::rows`] with the epoch second `live` is measured from given, so the window is testable.
-    pub fn rows_at(&self, q: &RowQuery, now: i64) -> Result<Read<Vec<Value>>, LcError> {
-        self.read(|s| {
+    /// The held lifecycle rows `q` keeps, in id order, as `list` printed them; `None` when `q`
+    /// reaches a row the views do not hold (a terminal one), which the caller asks the store.
+    pub fn rows(&self, q: &RowQuery) -> Option<Result<Read<Vec<Value>>, LcError>> {
+        let live_only = q.live || (!q.states.is_empty() && q.states.iter().all(|s| !lc_state::is_terminal(s)));
+        if !live_only {
+            let ids = q.ids?;
+            let s = self.lock();
+            if s.beads.as_ref().is_some_and(|held| ids.iter().any(|i| !held.contains_key(i))) {
+                return None;
+            }
+        }
+        Some(self.read(|s| {
             let beads = s.beads.as_ref().ok_or_else(|| LcError::Refused("the lifecycle rows are not loaded: the views hold the batch records only".into()))?;
             let kept = |b: &&Bead| {
-                let updated = b.raw.get("updated_at").and_then(|u| u.as_i64().or_else(|| u.as_str().and_then(|t| t.parse().ok())));
                 (q.states.is_empty() || q.states.contains(&b.row.state.as_str()))
                     && q.repo.is_none_or(|r| b.raw.get("repo").and_then(Value::as_str) == Some(r))
                     && q.ids.is_none_or(|ids| ids.contains(&b.row.bead_id))
                     && q.hold.is_none_or(|h| b.row.held(h))
                     && (!q.express || b.row.express)
-                    && (!q.live || !b.row.terminal() || updated.is_some_and(|u| u >= now - LIVE_WINDOW_SECS))
             };
             Ok(beads.values().filter(kept).map(|b| b.raw.clone()).collect())
-        })
+        }))
     }
 
-    /// `argv`'s answer when it is a `list` over only the filters [`RowQuery`] holds, rendered as the
+    /// `argv`'s answer when it is a `list` wholly inside the held live rows, rendered as the
     /// store prints it; `None` for any other read, which the caller asks of the store. A stale
     /// view answers `Some(Err)`: the caller must not fall back to the store.
     pub fn list_answer(&self, argv: &[&str]) -> Option<Result<String, LcError>> {
@@ -647,7 +645,7 @@ impl Projection {
         }
         q.states = &states;
         q.ids = has_ids.then_some(ids.as_slice());
-        Some(self.rows(&q).map(|r| Value::Array(r.value).to_string()))
+        Some(self.rows(&q)?.map(|r| Value::Array(r.value).to_string()))
     }
 
     /// The store's answer to a content, planning, `show-batch` or `list --batches` read: held until
@@ -678,11 +676,11 @@ impl Projection {
     }
 
     /// `show <id>`'s answer, `{"bead": row}`, from the held row (it carries the `state`, `stack` and
-    /// `tip` a show does); `None` when the store holds no such row.
-    pub fn show(&self, id: &str) -> Result<Read<Option<Value>>, LcError> {
+    /// `tip` a show does); `None` when the row is not held, which the caller asks the store.
+    pub fn show(&self, id: &str) -> Option<Result<Read<Value>, LcError>> {
         let ids = [id.to_string()];
         let rows = self.rows(&RowQuery { ids: Some(&ids), ..Default::default() })?;
-        Ok(Read { rev: rows.rev, value: rows.value.into_iter().next().map(|row| json!({ "bead": row })) })
+        Some(rows.map(|r| Read { rev: r.rev, value: json!({ "bead": r.value.into_iter().next().unwrap_or(Value::Null) }) }))
     }
 
     /// The ids of the rows in `state` for `repo` that hold nothing.

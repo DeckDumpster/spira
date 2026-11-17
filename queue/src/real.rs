@@ -2256,9 +2256,17 @@ impl Lc for RealLc {
     fn bead_rows(&self, state: Option<&str>) -> Result<Vec<LcBeadRow>, String> {
         let out = match state {
             Some(s) => self.stdout(&["list", "--state", s])?,
-            None => self.stdout(&["list"])?,
+            None => self.stdout(&["list", "--live"])?,
         };
         serde_json::from_str(&out).map_err(|e| format!("spira-lc list: {e}"))
+    }
+    fn bead_rows_of(&self, ids: &[String]) -> Result<Vec<LcBeadRow>, String> {
+        let mut rows = Vec::new();
+        for chunk in ids.chunks(100) {
+            let out = self.stdout(&["list", "--ids", &chunk.join(",")])?;
+            rows.extend(serde_json::from_str::<Vec<LcBeadRow>>(&out).map_err(|e| format!("spira-lc list: {e}"))?);
+        }
+        Ok(rows)
     }
     fn polled_rows(&self, state: &str) -> Result<Vec<LcBeadRow>, String> {
         let out = self.stdout(&["list", "--state", state])?;
@@ -2574,6 +2582,34 @@ impl Emit for StdEmit {
 
 #[cfg(test)]
 mod tests {
+    use spira_store::lc_call::{Reply, Transport};
+
+    struct Seen(std::sync::Mutex<Vec<Vec<String>>>);
+
+    impl Transport for Seen {
+        fn exchange(&self, argv: &[String], _: Option<&str>, _: std::time::Duration) -> Result<Reply, String> {
+            self.0.lock().unwrap().push(argv.to_vec());
+            Ok(Reply { code: 0, out: "[]".into(), err: String::new() })
+        }
+    }
+
+    fn sent_by(read: impl FnOnce(&RealLc)) -> Vec<Vec<String>> {
+        let seen = std::sync::Arc::new(Seen(Default::default()));
+        let lc = RealLc { bin: None, client: Some(LcClient::over(seen.clone(), true)) };
+        read(&lc);
+        let sent = seen.0.lock().unwrap().clone();
+        sent
+    }
+
+    #[test]
+    fn the_queue_reads_the_live_set_or_named_ids_never_every_row() {
+        let sent = sent_by(|lc| {
+            lc.bead_rows(None).unwrap();
+            lc.bead_rows_of(&["sp-a".to_string(), "sp-b".to_string()]).unwrap();
+        });
+        assert_eq!(sent, [vec!["list", "--live"], vec!["list", "--ids", "sp-a,sp-b"]]);
+    }
+
     #[test]
     fn an_unregistered_key_reads_as_none_and_any_other_refusal_propagates() {
         let unregistered = "K is not a registered config key (spira/conf.d) — refusing".to_string();

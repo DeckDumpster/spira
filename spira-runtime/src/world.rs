@@ -675,7 +675,6 @@ impl World {
         let rows = list("READY,REWORK,SUBMITTED,CERTIFIED,WORKING,OPEN,IN_DELIVERY")?;
         let [flag, filter] = status_args(Kind::Ask, Which::Live);
         let content = self.lc_json(&["content", "list", &flag, &filter, "--json", "--limit", "0"])?;
-        let term = list("LANDED,DONE,DROPPED,SUPERSEDED")?;
         let beads: Vec<Bead> = content.as_array().ok_or("content list is not an array")?.iter().filter_map(sweep_bead).collect();
         let labels_of = |id: &str| beads.iter().find(|b| b.id == id).map(|b| b.labels.clone()).unwrap_or_default();
         let rows: Vec<Row> = rows.as_array().ok_or("list is not an array")?.iter().filter_map(sweep_row).map(|mut r| {
@@ -688,7 +687,15 @@ impl World {
             }
             r
         }).collect();
-        let terminal = term.as_array().ok_or("list is not an array")?.iter().filter_map(|r| Some((r["bead_id"].as_str()?.to_string(), r["state"].as_str()?.to_string()))).collect();
+        let live: BTreeSet<&str> = rows.iter().map(|r| r.id.as_str()).collect();
+        let mut asked: BTreeSet<&str> = beads.iter().map(|b| b.id.as_str()).filter(|i| !live.contains(i)).collect();
+        asked.extend(rows.iter().flat_map(|r| r.blocked_by.iter().map(String::as_str)).filter(|i| !live.contains(i)));
+        let asked: Vec<&str> = asked.into_iter().collect();
+        let mut terminal = Vec::new();
+        for chunk in asked.chunks(100) {
+            let found = self.lc_json(&["list", "--ids", &chunk.join(",")])?; // BDQ_READ_CONSIDERED="LcClient is the spira-lc door; no bdq"
+            terminal.extend(found.as_array().ok_or("list is not an array")?.iter().filter_map(|r| Some((r["bead_id"].as_str()?.to_string(), r["state"].as_str()?.to_string()))).filter(|(_, st)| spira_store::lc_state::is_terminal(st)));
+        }
         let (stops, reserved) = self.scoped_stops();
         let pr_repos = fs::read_to_string(&self.repo_map).map(|t| map_rows(&t)).unwrap_or_default().into_iter().filter(|r| r.land == "pr").map(|r| r.name).collect();
         let snap = bead_sweep::Snapshot { rows, content: beads, terminal, stops, reserved, carried: self.integrations(), pr_repos };

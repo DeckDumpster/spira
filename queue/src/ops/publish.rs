@@ -403,8 +403,12 @@ pub fn range_members(
     head: &str,
 ) -> Result<Vec<Member>, String> {
     let commits = w.git.log_range(path, &format!("{forge}..{head}"))?;
+    let ids: Vec<String> = commits
+        .iter()
+        .filter_map(|c| crate::publish_range::land_id(&c.subject).map(str::to_string))
+        .collect();
     let states: BTreeMap<_, _> =
-        w.lc.bead_rows(Some("LANDED"))
+        w.lc.bead_rows_of(&ids)
             .unwrap_or_default()
             .into_iter()
             .map(|r| (r.bead_id.clone(), r))

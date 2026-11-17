@@ -27,7 +27,7 @@ pub fn open_trigger_count_on(lc: &LcClient, labels: &str) -> Result<u64, String>
     if ids.is_empty() {
         return Ok(0);
     }
-    let rows = spira_store::lc_state::list_on(lc).map_err(|e| format!("lifecycle state unreadable ({e})"))?;
+    let rows = spira_store::lc_state::list_live_on(lc).map_err(|e| format!("lifecycle state unreadable ({e})"))?;
     Ok(unfinished_count(&ids, &spira_store::lc_state::index(rows)))
 }
 

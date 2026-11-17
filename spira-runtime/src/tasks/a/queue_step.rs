@@ -804,7 +804,7 @@ pub mod edge {
         let view = store_view::Projection::hot(lc.clone())?;
         view.batches_current().map_err(|e| e.to_string())?;
         let lc_ok = match store_view::shared() {
-            Some(held) => held.rows(&store_view::RowQuery { states: &["IN_DELIVERY"], ..Default::default() }).is_ok(),
+            Some(held) => held.rows(&store_view::RowQuery { states: &["IN_DELIVERY"], ..Default::default() }).is_some_and(|r| r.is_ok()),
             None => lc.call(&["list", "--state", "IN_DELIVERY"]).is_ok_and(|r| r.code == 0),
         };
         let mut snap = Snapshot { world_running: !e.world.run_dir.join("world.halted").exists(), ..Snapshot::default() };

@@ -67,13 +67,32 @@ pub fn beads_in(state: &str) -> Option<Vec<BeadRow>> {
     beads_in_on(&client()?, state)
 }
 
+const PAGE_ROWS: usize = 1_000;
+
+/// The rows in `state`: one read for a live state, pages by cursor for a terminal one, which the
+/// store refuses to list whole.
 pub fn beads_in_on(client: &LcClient, state: &str) -> Option<Vec<BeadRow>> {
-    Some(
-        rows_on(client, &["list", "--state", state])?
-            .iter()
-            .map(|r| BeadRow { id: text(r, "bead_id"), tip: text(r, "tip"), since: epoch(r, "since") })
-            .collect(),
-    )
+    let mut rows = Vec::new();
+    if !spira_store::lc_state::is_terminal(state) {
+        rows = rows_on(client, &["list", "--state", state])?; // BDQ_READ_CONSIDERED="LcClient is the spira-lc door; no bdq"
+    } else {
+        loop {
+            let limit = PAGE_ROWS.to_string();
+            let after = rows.last().map(|r| text(r, "bead_id"));
+            let mut argv = vec!["list", "--state", state];
+            if let Some(a) = after.as_deref() {
+                argv.extend(["--after", a]);
+            }
+            argv.extend(["--limit", &limit]);
+            let page = rows_on(client, &argv)?; // BDQ_READ_CONSIDERED="LcClient is the spira-lc door; no bdq"
+            let short = page.len() < PAGE_ROWS;
+            rows.extend(page);
+            if short {
+                break;
+            }
+        }
+    }
+    Some(rows.iter().map(|r| BeadRow { id: text(r, "bead_id"), tip: text(r, "tip"), since: epoch(r, "since") }).collect())
 }
 
 /// The newest `LANDED` bead and when it entered that state. A row with no readable `since` is

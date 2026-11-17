@@ -727,7 +727,7 @@ mod tests {
             r#"[{"bead_id":"sp-old","since":1000},{"bead_id":"sp-land","since":9400},{"bead_id":"sp-undated"},{"bead_id":"sp-badtime","since":"soon"}]"#,
         )]);
         assert_eq!(landing_field(&lc, 10_000), ("10".to_string(), Some("sp-land".to_string())));
-        assert_eq!(t.seen.lock().unwrap()[0], ["list", "--state", "LANDED"], "only LANDED rows are asked for");
+        assert_eq!(t.seen.lock().unwrap()[0], ["list", "--state", "LANDED", "--limit", "1000"], "only LANDED rows are asked for, a page at a time");
     }
 
     // covers: UC-ops-detection-remediation-26

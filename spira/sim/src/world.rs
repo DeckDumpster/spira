@@ -332,6 +332,29 @@ fn ask(socket: &Path, argv: &[&str]) -> Option<i64> {
     ask_body(socket, argv).map(|(code, _)| i64::from(code))
 }
 
+const PAGE_ROWS: usize = 1_000;
+
+/// Every lifecycle row as one JSON array, read as pages by cursor through `ask`, which answers a
+/// `list` argv with its stdout.
+pub fn list_pages(ask: &mut dyn FnMut(&[&str]) -> Result<String, String>) -> Result<String, String> {
+    let mut all: Vec<serde_json::Value> = Vec::new();
+    loop {
+        let limit = PAGE_ROWS.to_string();
+        let after = all.last().and_then(|r| r["bead_id"].as_str()).map(str::to_string);
+        let mut argv = vec!["list"];
+        if let Some(a) = after.as_deref() {
+            argv.extend(["--after", a]);
+        }
+        argv.extend(["--limit", &limit]);
+        let page: Vec<serde_json::Value> = serde_json::from_str(ask(&argv)?.trim()).map_err(|e| format!("spira-lc list: not a JSON array: {e}"))?;
+        let short = page.len() < PAGE_ROWS;
+        all.extend(page);
+        if short {
+            return Ok(serde_json::Value::Array(all).to_string());
+        }
+    }
+}
+
 /// One request to a lifecycle serve, as the CLI's own socket client makes it: `(exit code, stdout)`.
 pub fn ask_body(socket: &Path, argv: &[&str]) -> Option<(i32, String)> {
     use std::io::{BufRead, BufReader, Read, Write};
@@ -546,7 +569,7 @@ impl Steps for ProcessSteps {
         let start = Instant::now();
         loop {
             // `list` reads the bead table: an answer with exit 0 is a serve whose DB is reachable.
-            if ask(&socket, &["list"]) == Some(0) {
+            if ask(&socket, &["list", "--live"]) == Some(0) {
                 return Ok(());
             }
             if let Some(st) = child.try_wait().map_err(|e| e.to_string())? {
@@ -1286,5 +1309,23 @@ mod sparse_tests {
             .filter(|n| n.ends_with(".sh") && !n.contains('*'))
             .collect();
         assert!(named.iter().any(|n| spira.join(format!("test-{n}")).is_file()), "{named:?}");
+    }
+}
+
+#[cfg(test)]
+mod list_pages_tests {
+    #[test]
+    fn the_probe_reads_every_row_as_pages_by_cursor_never_a_bare_list() {
+        let ids: Vec<String> = (0..super::PAGE_ROWS + 3).map(|i| format!("sp-{i:05}")).collect();
+        let mut sent: Vec<Vec<String>> = Vec::new();
+        let all = super::list_pages(&mut |argv| {
+            sent.push(argv.iter().map(|a| a.to_string()).collect());
+            let after = argv.iter().position(|a| *a == "--after").map(|i| argv[i + 1]);
+            let page: Vec<_> = ids.iter().filter(|i| after.is_none_or(|a| i.as_str() > a)).take(super::PAGE_ROWS).map(|i| serde_json::json!({ "bead_id": i })).collect();
+            Ok(serde_json::Value::Array(page).to_string())
+        })
+        .unwrap();
+        assert_eq!(serde_json::from_str::<Vec<serde_json::Value>>(&all).unwrap().len(), ids.len());
+        assert_eq!(sent, [vec!["list", "--limit", "1000"], vec!["list", "--after", "sp-00999", "--limit", "1000"]]);
     }
 }

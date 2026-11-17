@@ -34,8 +34,31 @@ _bs_classify() {
     timeout 60 spira-lc list --state READY,REWORK,SUBMITTED,CERTIFIED,WORKING,OPEN,IN_DELIVERY > "$t/rows.json" 2>/dev/null || return 1
     # batch-job: whole-store listing the sweep classifies; bounded by the daemon row cadence
     timeout 90 spira-lc content list --status open,in_progress,blocked,deferred --json --limit 0 > "$t/content.json" 2>/dev/null || return 1
-    # batch-job: whole-store listing the sweep classifies; bounded by the daemon row cadence
-    timeout 60 spira-lc list --state LANDED,DONE,DROPPED,SUPERSEDED > "$t/term.json" 2>/dev/null || return 1
+    # The terminal rows the classifier looks up: content beads with no live row, and the blockers of live rows.
+    python3 -I - "$t" > "$t/lookup.txt" <<'PY' || return 1
+import json, sys
+t = sys.argv[1]
+rows = json.load(open(t + "/rows.json"))
+content = json.load(open(t + "/content.json"))
+live = {r["bead_id"] for r in rows}
+ids = {b["id"] for b in content if b.get("id")} | {x for r in rows for x in (r.get("blocked_by") or [])}
+ids = sorted(ids - live)
+for i in range(0, len(ids), 100):
+    print(",".join(ids[i:i + 100]))
+PY
+    echo "[]" > "$t/term.json"
+    local chunk
+    while read -r chunk; do
+        [ -n "$chunk" ] || continue
+        # batch-job: the sweep looks up a few hundred ids in 100-id chunks; bounded by the daemon row cadence
+        timeout 60 spira-lc list --ids "$chunk" > "$t/term.part" 2>/dev/null || return 1
+        python3 -I - "$t" <<'PY' || return 1
+import json, sys
+t = sys.argv[1]
+whole = json.load(open(t + "/term.json")) + json.load(open(t + "/term.part"))
+json.dump(whole, open(t + "/term.json", "w"))
+PY
+    done < "$t/lookup.txt"
     local pr_labels="" n
     for n in $(repo_names); do [ "$(repo_land "$n")" = pr ] && pr_labels="$pr_labels repo:$n"; done
     python3 -I - "$t" "$SPIRA_ASK_LABEL" "$HOME_LABEL" "$HOLD_MIN" "$REWORK_MIN" "$CERT_MIN" "$WAIT_MIN" "$BATCH_MIN" "$pr_labels" "$SPIRA_RUN/scoped-stops" "$SPIRA_SCOPED_STOP_REVIEW_SECS" "${SPIRA_QUEUE_DIR:-}" <<'PY'

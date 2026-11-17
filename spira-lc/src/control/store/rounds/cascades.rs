@@ -454,7 +454,7 @@ impl<B: Backend> Store<B> {
         live: &BTreeSet<String>,
         req: &Request,
     ) -> Result<Orphans> {
-        let (records, _) = self.records()?;
+        let records = self.in_state(BeadState::InDelivery)?;
         let rounds = self.batches()?;
         let named: BTreeSet<&str> = rounds
             .iter()

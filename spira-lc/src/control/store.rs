@@ -50,13 +50,6 @@ pub enum Outcome {
     JudgedUnclaimable { blocked_by: Vec<String> },
 }
 
-/// Every lifecycle record, each id's readiness, and the revision they were read at.
-pub type Snapshot = (
-    Vec<Read<LifecycleRecord>>,
-    std::collections::BTreeMap<String, Readiness>,
-    u64,
-);
-
 /// One state's run through the state index in [`Store::records_page`]'s merge.
 struct StateRun {
     name: String,
@@ -287,42 +280,10 @@ impl<B: Backend> Store<B> {
         Ok(Some(r))
     }
 
-    /// Every lifecycle record, from one snapshot, with the revision it was read at.
-    pub fn records(&self) -> Result<(Vec<Read<LifecycleRecord>>, u64)> {
-        let (records, _, rev) = self.records_with_readiness()?;
-        Ok((records, rev))
-    }
-
-    /// Every lifecycle record and every readiness, from one snapshot, with its revision.
-    pub fn records_with_readiness(&self) -> Result<Snapshot> {
-        let locks = keys::claim_locks();
-        let (items, rev) = self.contract.list(
-            &[keys::LIFECYCLE, locks.as_str(), keys::READINESS],
-            &state_store::Selector::Everything,
-        )?;
-        let readiness = items
-            .iter()
-            .filter_map(|i| Some((keys::id_of(keys::READINESS, &i.key)?, i)))
-            .map(|(id, i)| Ok((id.to_string(), decode(&i.key, &i.value)?)))
-            .collect::<Result<_>>()?;
-        let held: std::collections::BTreeMap<&str, &Item> = items
-            .iter()
-            .filter_map(|i| Some((keys::id_of(&locks, &i.key)?, i)))
-            .collect();
-        let records = items
-            .iter()
-            .filter_map(|i| Some((keys::id_of(keys::LIFECYCLE, &i.key)?, i)))
-            .map(|(id, i)| {
-                let mut value = decode(&i.key, &i.value)?;
-                project_lease(&mut value, held.get(id).copied());
-                Ok(Read {
-                    value,
-                    mod_rev: i.mod_rev,
-                    create_rev: i.create_rev,
-                })
-            })
-            .collect::<Result<Vec<_>>>()?;
-        Ok((records, readiness, rev))
+    /// Every lifecycle record in `state`, from one snapshot.
+    pub fn in_state(&self, state: BeadState) -> Result<Vec<Read<LifecycleRecord>>> {
+        let rev = self.contract.head()?;
+        self.records_page(rev, Some(&[state]), None, None, None, |_| true)
     }
 
     /// One `list` page of lifecycle records at `rev`, in id order after `after`, of at most

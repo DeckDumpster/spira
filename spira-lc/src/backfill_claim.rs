@@ -20,11 +20,7 @@ fn cannot(why: String) -> Answer {
 }
 
 fn rows(m: &mut dyn Machine) -> Result<Vec<Value>, String> {
-    let (rc, out) = m.call(&["list".into()]);
-    match serde_json::from_str::<Value>(out.trim()) {
-        Ok(Value::Array(rows)) if rc == 0 => Ok(rows),
-        _ => Err(format!("lifecycle list failed: {}", out.trim())),
-    }
+    spira_lc::list_pages(&[], |a| m.call(a))
 }
 
 /// `backfill-claim-inputs [--apply | --dry-run] [<bead-id>...]`. Dry run unless `--apply`.

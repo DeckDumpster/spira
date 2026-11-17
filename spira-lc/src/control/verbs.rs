@@ -2,7 +2,7 @@
 //! of the same names do (`dwell` has none): exit 0 with JSON, or 2 ("cannot tell") with the reason.
 
 use serde_json::{json, Map, Value};
-use state_store::{Backend, Event, Item, Rev, MAX_WATCH_WAIT_MS};
+use state_store::{Backend, Event, Rev, MAX_WATCH_WAIT_MS};
 
 use super::feed::Feed;
 use super::records::encode;
@@ -51,18 +51,9 @@ fn event(e: &Event) -> Value {
     })
 }
 
-fn item(i: &Item) -> Value {
-    json!({
-        "key": i.key,
-        "value": i.value,
-        "mod_rev": rev(i.mod_rev),
-        "create_rev": rev(i.create_rev),
-    })
-}
-
 /// `watch <prefix>... --from-rev N [--wait-ms M]`: the events under any named prefix after N,
-/// a progress revision, or, when N was compacted away, `too_old` with the prefixes re-listed at
-/// the `list_rev` to resume from. Several prefixes are one watch, not a watch of `""`.
+/// a progress revision, or, when N was compacted away, `too_old` with no rows and the
+/// `list_rev` to resume from. Several prefixes are one watch, not a watch of `""`.
 fn watch<B: Backend>(store: &Store<B>, args: &[String]) -> Result<String, String> {
     let prefixes: Vec<&str> = args
         .iter()
@@ -88,11 +79,10 @@ fn watch<B: Backend>(store: &Store<B>, args: &[String]) -> Result<String, String
         Feed::Progress { progress_rev } => json!({ "progress_rev": progress_rev }),
         Feed::Relist {
             compacted,
-            items,
             list_rev,
         } => json!({
             "too_old": { "compacted": compacted },
-            "items": items.iter().map(item).collect::<Vec<_>>(),
+            "items": [],
             "list_rev": list_rev,
         }),
     };

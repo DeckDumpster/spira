@@ -805,7 +805,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
 
         if let Some(base) = &stack_after {
             let (_, shown) = door(&s(&["show", base, "--json"]));
-            let terminal = bead::lc_done(&bead::door::DoorSource::lifecycle_only(lifecycle_rows), &mut None, base);
+            let terminal = bead::lc_done(&bead::door::DoorSource::lifecycle_only(vec![base.clone()], lifecycle_rows), &mut None, base);
             if let Some(why) = stack_after_refusal(base, parse_show_row(&shown).as_ref(), terminal, &repo) {
                 eprintln!("bead: {why}");
                 return 2;
@@ -1626,8 +1626,8 @@ fn cmd_judge_create(home: &str, args: &[String]) -> i32 {
     0
 }
 
-fn lifecycle_rows() -> bead::door::LifecycleRows {
-    spira_store::lc_state::list().map(spira_store::lc_state::index)
+fn lifecycle_rows(ids: &[String]) -> bead::door::LifecycleRows {
+    spira_store::lc_state::list_ids(ids).map(spira_store::lc_state::index)
 }
 
 fn cmd_lint(home: &str, args: &[String]) -> i32 {

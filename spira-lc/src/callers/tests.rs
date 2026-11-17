@@ -1870,3 +1870,35 @@ fn drop_row_refuses_a_work_bead() {
     assert_eq!(a.code, REFUSED, "{}", a.stderr);
     assert!(f.deleted.is_empty());
 }
+
+struct Recording<'a> {
+    inner: &'a mut Fake,
+    sent: Vec<Vec<String>>,
+}
+
+impl Machine for Recording<'_> {
+    fn call(&mut self, args: &[String]) -> (i32, String) {
+        self.sent.push(args.to_vec());
+        self.inner.call(args)
+    }
+}
+
+#[test]
+fn the_admin_verbs_that_read_the_table_ask_for_pages_or_the_one_state_they_act_on() {
+    let mut f = Fake::default();
+    f.bead("sp-1", BeadState::Ready);
+    let mut b = FakeBd::default();
+    let first = |sent: &[Vec<String>]| sent[0].clone();
+
+    let mut r = Recording { inner: &mut f, sent: Vec::new() };
+    run("list-all", &v(&[]), &mut r);
+    assert_eq!(first(&r.sent), ["list", "--limit", "1000"]);
+
+    let mut r = Recording { inner: &mut f, sent: Vec::new() };
+    reconcile_closed(&[], &mut r, &mut b);
+    assert_eq!(first(&r.sent), ["list", "--state", "READY", "--limit", "1000"]);
+
+    let mut r = Recording { inner: &mut f, sent: Vec::new() };
+    drop_orphans(&[], &mut r, &mut b);
+    assert_eq!(first(&r.sent), ["list", "--state", "READY", "--limit", "1000"]);
+}

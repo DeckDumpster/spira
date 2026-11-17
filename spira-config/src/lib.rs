@@ -512,7 +512,7 @@ impl SpiraSection {
 
     pub fn get_list(&self, key: &str) -> Result<Option<Vec<String>>, String> {
         Ok(self
-            .value(key, &["list"])?
+            .value(key, &["list"])? // not-a-lifecycle-list: the config value's type
             .and_then(|v| v.as_array())
             .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()))
     }
