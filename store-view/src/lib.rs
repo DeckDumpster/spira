@@ -248,9 +248,15 @@ pub fn call_held(client: &LcClient, argv: &[&str]) -> Result<Reply, String> {
 /// `list --ids` rows: the held ones, and the store only for ids the projection does not hold.
 pub fn rows_by_ids(client: &LcClient, ids: &[String]) -> Result<Vec<Row>, String> {
     let Some(p) = shared() else { return lc_state::list_ids_on(client, ids) };
-    let held = p.rows(&RowQuery { ids: Some(ids), ..Default::default() }).map_err(|e| e.to_string())?.value;
+    let mut held = Vec::new();
+    let mut missing = Vec::new();
+    for id in ids {
+        match p.rows(&RowQuery { ids: Some(std::slice::from_ref(id)), ..Default::default() }) {
+            Some(read) => held.extend(read.map_err(|e| e.to_string())?.value),
+            None => missing.push(id.clone()),
+        }
+    }
     let mut rows = lc_state::parse_rows(&Value::Array(held).to_string())?;
-    let missing: Vec<String> = ids.iter().filter(|i| !rows.iter().any(|r| &r.bead_id == *i)).cloned().collect();
     if !missing.is_empty() {
         rows.extend(lc_state::list_ids_on(client, &missing)?);
     }

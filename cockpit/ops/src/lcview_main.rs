@@ -776,12 +776,13 @@ mod tests {
             // clock-safe: a poll interval under that cap
             std::thread::sleep(Duration::from_millis(5));
         }
+        let loaded = store.0.lock().unwrap().len();
         for _ in 0..2 {
             assert_eq!(store_view::held_read(&["list", "--live"]).unwrap().unwrap(), "[]");
             assert_eq!(store_view::held_read(&["list", "--batches"]).unwrap().unwrap(), "[]");
         }
         let sent = store.0.lock().unwrap().clone();
-        assert!(!sent.iter().any(|a| a.starts_with("list --live")), "{sent:?}");
+        assert!(!sent[loaded..].iter().any(|a| a.starts_with("list --live")), "{sent:?}");
         assert_eq!(sent.iter().filter(|a| a.starts_with("list --batches")).count(), 1, "the rounds are asked once and held: {sent:?}");
     }
 

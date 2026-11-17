@@ -198,14 +198,21 @@ impl Store {
     /// The lifecycle rows of exactly `ids`, one `spira-lc list --ids` per [`EVENT_CHUNK`].
     pub fn lifecycle_of(&self, ids: &[String]) -> Result<HashMap<String, LifecycleRow>, String> {
         let mut out = HashMap::new();
-        for chunk in ids.chunks(EVENT_CHUNK) {
-            out.extend(self.lc_list(&["--ids", &chunk.join(",")], true)?);
-        }
-        let unheld: Vec<String> = ids.iter().filter(|i| !out.contains_key(*i)).cloned().collect();
-        if self.views.is_some() {
-            for chunk in unheld.chunks(EVENT_CHUNK) {
+        let Some(views) = self.views.as_ref() else {
+            for chunk in ids.chunks(EVENT_CHUNK) {
                 out.extend(self.lc_list(&["--ids", &chunk.join(",")], false)?);
             }
+            return Ok(out);
+        };
+        let mut unheld: Vec<String> = Vec::new();
+        for id in ids {
+            match views.list_answer(&["list", "--ids", id]) {
+                Some(answer) => out.extend(crate::rank::parse_lifecycle(&answer.map_err(|e| format!("spira-lc list: {e}"))?)?),
+                None => unheld.push(id.clone()),
+            }
+        }
+        for chunk in unheld.chunks(EVENT_CHUNK) {
+            out.extend(self.lc_list(&["--ids", &chunk.join(",")], false)?);
         }
         Ok(out)
     }
