@@ -148,6 +148,43 @@ case "$_RUN_OUT" in
     *) bad "tl_setup_done: the next case's #ms starts at the call, not at the previous case" "$_RUN_OUT" ;;
 esac
 
+_run <<'EOF4'
+tl_config SPIRA_TEST_CASE_DEADLINE=1
+sleep 3
+ok "after a long arrangement"
+tl_summary
+EOF4
+want "tl_arrange: without it a long arrangement trips the case deadline (pre-fix shape)" "exceeded its 1s deadline" "$_RUN_OUT"
+
+_run <<'EOF4'
+tl_config SPIRA_TEST_CASE_DEADLINE=1
+tl_arrange sleep 3
+ok "after a long arrangement"
+tl_summary
+EOF4
+want   "tl_arrange: a long arrangement does not count against the case deadline" "ok 1 - after a long arrangement" "$_RUN_OUT"
+wantrc "tl_arrange: the suite passes after a long arrangement" 0 "$_RUN_RC"
+nowant "tl_arrange: no deadline trips during the arrangement" "exceeded its" "$_RUN_OUT"
+
+_run <<'EOF4'
+tl_config SPIRA_TEST_CASE_DEADLINE=1
+tl_arrange true
+sleep 3
+ok "never"
+EOF4
+want "tl_arrange: the guard is armed again once the arrangement ends" "exceeded its 1s deadline" "$_RUN_OUT"
+[ "$_RUN_RC" != 0 ] && ok "tl_arrange: a hang after the arrangement still fails the suite" || bad "tl_arrange: a hang after the arrangement still fails the suite" "$_RUN_OUT"
+
+_run <<'EOF4'
+tl_arrange false; echo "rc=$?"
+EOF4
+want "tl_arrange: returns the command's exit status" "rc=1" "$_RUN_OUT"
+
+_run <<'EOF4'
+tl_arrange true
+EOF4
+want "tl_arrange: prints how long the arrangement took" "# arranged in " "$_RUN_OUT"
+
 # --- skip(): a skip is never a pass -------------------------------------------------
 _run <<'EOF'
 skip "no docker on this host"
