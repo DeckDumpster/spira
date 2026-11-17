@@ -18,13 +18,23 @@ pub fn ci_entry(tree: &Path) -> Option<String> {
     doc.get("ci_entry")?.as_str().map(str::trim).filter(|s| !s.is_empty()).map(String::from)
 }
 
+pub const BUILD_TIER: &str = "build";
+
+/// Whether the declaration has a `[tier.build]`: the repository's compile, run by the gate as an
+/// uncharged `build` phase so the capped `gate` phase times only its tests.
+pub fn build_tier(tree: &Path) -> bool {
+    let Ok(text) = std::fs::read_to_string(tree.join(DECL)) else { return false };
+    let Ok(doc) = spira_config::parse_foreign::<toml::Value>(&text) else { return false };
+    declares_own_testenv(tree) && doc.get("tier").and_then(|t| t.get(BUILD_TIER)).is_some()
+}
+
 /// The suite names testenv would accept for `tree`: a repository's declared tiers, else the
 /// files of the harness's own `spira/` directory. `Err` when the declaration cannot be read.
 pub fn known_suites(tree: &Path) -> Result<Vec<String>, String> {
     if declares_own_testenv(tree) {
         let text = std::fs::read_to_string(tree.join(DECL)).map_err(|e| format!("{DECL}: {e}"))?;
         let doc: toml::Value = spira_config::parse_foreign(&text).map_err(|e| format!("{DECL}: {e}"))?;
-        return Ok(doc.get("tier").and_then(|t| t.as_table()).map(|t| t.keys().cloned().collect()).unwrap_or_default());
+        return Ok(doc.get("tier").and_then(|t| t.as_table()).map(|t| t.keys().filter(|k| *k != BUILD_TIER).cloned().collect()).unwrap_or_default());
     }
     let mut names: Vec<String> = std::fs::read_dir(tree.join("spira"))
         .map(|d| d.flatten().filter(|e| e.path().is_file()).filter_map(|e| e.file_name().into_string().ok()).filter(|n| n.starts_with("test-") && n.ends_with(".sh")).collect())
@@ -45,6 +55,17 @@ mod tests {
             fs::write(d.join(f), "").unwrap();
         }
         d
+    }
+
+    #[test]
+    fn build_tier_is_declared_by_a_build_tier_and_is_not_a_suite() {
+        let d = testkit::TempDir::new("gate-own-build");
+        fs::create_dir_all(d.join(DECL).parent().unwrap()).unwrap();
+        fs::write(d.join(DECL), "[tier.unit]\ncmd = \"x\"\n[tier.build]\ncmd = \"y\"\n").unwrap();
+        assert!(build_tier(&d));
+        assert_eq!(known_suites(&d).unwrap(), vec!["unit".to_string()]);
+        fs::write(d.join(DECL), "[tier.unit]\ncmd = \"x\"\n").unwrap();
+        assert!(!build_tier(&d));
     }
 
     #[test]

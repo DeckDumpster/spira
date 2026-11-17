@@ -208,6 +208,11 @@ pub trait World {
         cmd: &str,
     ) -> (i32, String);
 
+    /// Whether `tree` declares its build apart from its tests (`[tier.build]`).
+    fn declares_build_tier(&self, tree: &Path) -> bool {
+        crate::own::build_tier(tree)
+    }
+
     /// `run_gate` for a phase no clock bounds: ended with [`crate::stall::RC`] when it shows no
     /// progress for `stall` seconds. The operator's `timeout` still applies.
     fn run_build(
