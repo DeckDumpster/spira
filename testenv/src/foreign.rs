@@ -498,7 +498,9 @@ impl Cache {
                 let held = Instant::now();
                 let _ = std::fs::write(self.holder_path(), cname);
                 let upper = run.join("upper");
+                // batch-job: the merge of a finished run, bounded by the host rather than a remote
                 let _ = std::process::Command::new("find").arg(&upper).args(["-type", "c", "-delete"]).status();
+                // batch-job: the merge of a finished run, bounded by the host rather than a remote
                 let merged = std::process::Command::new("cp")
                     .args(["-a", "--reflink=auto", "--no-preserve=xattr"])
                     .arg(format!("{}/.", upper.display()))
