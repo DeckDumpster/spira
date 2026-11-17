@@ -744,6 +744,47 @@ fn range_rows_at(
     Ok(out)
 }
 
+/// Live keys in `[lo, hi)` whose state at `at` is `state`: pages of `latest_by_state`, each with
+/// the keys the ring says were written since judged by their version at `at`, whatever `latest`
+/// says now.
+#[allow(clippy::too_many_arguments)]
+fn range_in_state_at(
+    conn: &Connection,
+    snap: &Snapshot,
+    state: &str,
+    lo: &[u8],
+    hi: Option<&[u8]>,
+    limit: usize,
+    at: u64,
+    history: &Mutex<History>,
+    deadline: &dyn Fn() -> Result<()>,
+) -> Result<Vec<(String, Version)>> {
+    let touched: Vec<(String, Option<Version>)> = lock(history)
+        .touched_after(lo, hi, at)?
+        .into_iter()
+        .map(|(k, v)| (k, v.filter(|v| state_store::backend::state_of(&v.value).as_deref() == Some(state))))
+        .collect();
+    let mut out = Vec::new();
+    let mut cursor = lo.to_vec();
+    let mut next = 0;
+    while out.len() < limit {
+        let page = range_rows(conn, snap, Source::State(state), &cursor, hi, limit, deadline)?;
+        let upto = (page.len() == limit).then(|| page.last().map(|(k, _)| k.clone())).flatten();
+        let span = touched[next..].partition_point(|(k, _)| upto.as_ref().is_none_or(|u| k <= u));
+        out.extend(overlay(page, &touched[next..next + span], None, upto.as_deref()));
+        next += span;
+        match upto {
+            Some(u) => {
+                cursor = u.into_bytes();
+                cursor.push(0);
+            }
+            None => break,
+        }
+    }
+    out.truncate(limit);
+    Ok(out)
+}
+
 fn rows_outside(
     conn: &Connection,
     snap: &Snapshot,
@@ -1400,7 +1441,7 @@ impl Backend for SqliteBackend {
         })
     }
 
-    /// At the head, one range of `latest_by_state`; below it, the scan the default makes.
+    /// One range of `latest_by_state`; below the head, corrected by the history ring.
     fn range_in_state(
         &self,
         prefix: &str,
@@ -1409,20 +1450,15 @@ impl Backend for SqliteBackend {
         limit: usize,
         at: u64,
     ) -> Result<Vec<(String, Version)>> {
-        let indexed = self.read(|conn, snap, deadline| {
+        self.read(|conn, snap, deadline| {
             snap.readable(at)?;
-            if at != snap.head {
-                return Ok(None);
-            }
             let lo = lower_bound(prefix.as_bytes(), after);
             let hi = successor(prefix.as_bytes());
-            range_rows(conn, snap, Source::State(state), &lo, hi.as_deref(), limit, deadline)
-                .map(Some)
-        })?;
-        match indexed {
-            Some(rows) => Ok(rows),
-            None => state_store::backend::range_in_state_by_scan(self, prefix, state, after, limit, at),
-        }
+            if at == snap.head {
+                return range_rows(conn, snap, Source::State(state), &lo, hi.as_deref(), limit, deadline);
+            }
+            range_in_state_at(conn, snap, state, &lo, hi.as_deref(), limit, at, &self.0.history, deadline)
+        })
     }
 
     /// The key ranges outside `skip`, read from the key index, so no skipped key is visited.
@@ -2279,6 +2315,51 @@ mod tests {
             state_store::backend::range_in_state_by_scan(&b, "p/", "s3", Some("p/010000"), PAGE, head)
                 .unwrap();
         assert_eq!(page, scanned);
+    }
+
+    /// law: a state filter is an indexed range below the head too. Over 20,000 terminal keys and
+    /// thirty live ones, a read at a revision a commit behind the head reads the page and the
+    /// ring's touched keys, and answers as the scan does: a key that left the state since is
+    /// still in it at `at`, one that entered it since is not.
+    #[test]
+    fn a_state_filtered_page_below_the_head_reads_o_page_rows_and_judges_touched_keys_at_the_revision() {
+        let dir = testkit::TempDir::new("sqlite-state-below");
+        let b = SqliteBackend::open(&dir.path().join("s.db"), Options::default()).unwrap();
+        let doc = |state: &str| serde_json::to_vec(&serde_json::json!({ "data": { "state": state } })).unwrap();
+        let put = |key: String, state: &str, prev: Option<Rev>| Write::Put {
+            key,
+            value: doc(state),
+            create_rev: Rev::new(1, 0),
+            prev,
+        };
+        let mut batch: Vec<Write> = (0..20_000).map(|i| put(format!("life/t{i:06}"), "done", None)).collect();
+        batch.extend((0..30).map(|i| put(format!("life/l{i:02}"), "live", None)));
+        let at = b.commit(b.head().unwrap(), &batch).unwrap();
+        let live_5 = b.get("life/l05", at).unwrap().unwrap();
+        let done_7 = b.get("life/t000007", at).unwrap().unwrap();
+        b.commit(
+            at,
+            &[
+                put("life/l05".into(), "done", Some(live_5.create_rev)),
+                put("life/t000007".into(), "live", Some(done_7.create_rev)),
+                put("life/l99".into(), "live", None),
+            ],
+        )
+        .unwrap();
+        b.take_read_steps();
+        let page = b.range_in_state("life/", "live", None, 100, at).unwrap();
+        let steps = b.take_read_steps();
+        assert!(steps <= 20 * 100, "{steps} VM steps for a page of 100");
+        let keys: Vec<&str> = page.iter().map(|(k, _)| k.as_str()).collect();
+        assert_eq!(keys.len(), 30);
+        assert!(keys.contains(&"life/l05"), "left the state after `at`");
+        assert!(!keys.contains(&"life/t000007") && !keys.contains(&"life/l99"));
+        for (state, limit) in [("live", 100), ("live", 7), ("done", 100)] {
+            let by_scan = state_store::backend::range_in_state_by_scan(&b, "life/", state, None, limit, at).unwrap();
+            assert_eq!(b.range_in_state("life/", state, None, limit, at).unwrap(), by_scan, "{state} {limit}");
+        }
+        let after = b.range_in_state("life/", "live", Some("life/l10"), 100, at).unwrap();
+        assert_eq!(after.len(), 19);
     }
 
     /// Migration 2 fills each delivery's `entered` from its history once, in place: the newest
