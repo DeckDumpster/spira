@@ -163,6 +163,13 @@ fn a_quiet_tick_of_each_task_that_read_the_store_every_tick_never_reaches_its_so
         assert_eq!(world.supersede_snapshot("{}").unwrap(), json!({ "held": [] }).to_string(), "supersede-duty lists the manual holds");
         assert_eq!(world.held_asks().unwrap(), Vec::<String>::new(), "the asks task lists the ask holds");
         assert_eq!(world.waiting_rows().unwrap().as_array().map(Vec::len), Some(1), "watch.throughput counts the waiting rows, a certified bead among them");
+        assert!(world.sweep_snapshot().is_ok(), "bead-sweep reads the live rows and the content");
+        assert!(spira_runtime::reconcile_host::lc_read(&sock, &["list", "--batches", "--window", "86400"]).is_ok(), "watch.throughput reads the day's rounds");
+        assert!(spira_runtime::reconcile_host::lc_read(&sock, &["list", "--batches", "--window", "1"]).unwrap().contains("[]"), "the reconciler reads the landed rounds");
+        assert!(spira_runtime::reconcile_host::lc_read(&sock, &["plan", "items", "--type", "epic", "--open"]).unwrap().contains("items"), "the reconciler reads the open epics");
+        assert!(store_view::call_held(&lc, &["list", "--live"]).unwrap().out.contains("sp-a"), "trigger-groom counts the live rows");
+        assert!(store_view::call_held(&lc, &["list", "--live", "--repo", "alpha"]).unwrap().out.contains("sp-a"), "watch-runtime reads its repo's live rows");
+        assert_eq!(store_view::rows_by_ids(&lc, &["sp-a".to_string(), "sp-p".to_string()]).unwrap().len(), 2, "landing reads its in-flight branches' rows");
         assert!(spira_runtime::reconcile_host::lc_read(&sock, &["list", "--state", "CERTIFIED"]).unwrap().contains("sp-a"), "the reconciler lists CERTIFIED");
         assert!(cockpit_collect::probes::lc::state_index_of(&["sp-a".to_string()]).unwrap().contains_key("sp-a"), "the cockpit reads its ids");
         assert!(cockpit_collect::probes::lc::held_rows("manual").unwrap().is_empty(), "the cockpit lists the manual holds");

@@ -233,7 +233,11 @@ impl Loom {
         }
         let mut full = vec!["list", "--batches"];
         full.extend_from_slice(args);
-        match lc_json(self, &full).await {
+        let read = match store_views(self).ok().and_then(|v| v.list_answer(&full)) {
+            Some(held) => held.map_err(|e| format!("spira-lc {}: {e}", full.join(" "))).and_then(|t| serde_json::from_str(&t).map_err(|e| format!("spira-lc {}: {e}", full.join(" ")))),
+            None => lc_json(self, &full).await,
+        };
+        match read {
             Ok(v) => {
                 held.insert(key, (std::time::Instant::now(), v.clone()));
                 Ok((v.as_array().cloned().unwrap_or_default(), None))
@@ -247,17 +251,17 @@ impl Loom {
 
     /// The factory floor: the held build, or a fresh one. A failed build is not held.
     pub async fn factory(&self) -> Result<Value, String> {
-        self.factory_via(|| spira_store::lc_call::LcClient::for_bin(&self.cfg.lc)).await
+        self.factory_via(|| spira_store::lc_call::LcClient::for_bin(&self.cfg.lc), store_views(self).ok()).await
     }
 
-    async fn factory_via(&self, client: impl FnOnce() -> Result<spira_store::lc_call::LcClient, String>) -> Result<Value, String> {
+    async fn factory_via(&self, client: impl FnOnce() -> Result<spira_store::lc_call::LcClient, String>, views: Option<&store_view::Projection>) -> Result<Value, String> {
         let mut held = self.factory_cell.lock().await;
         if let Some((_, v)) = held.as_ref().filter(|(at, _)| at.elapsed() < self.cfg.cache) {
             return Ok(v.clone());
         }
         let now = now_s();
         let sensing = factory::Sensing { victorialogs_url: self.cfg.victorialogs_url.clone(), transitions: self.cfg.transitions.clone(), tsd_endpoint: self.cfg.metrics_endpoint.clone(), now };
-        let mut reads = factory::gather(client()?, self.cfg.budget, &self.cfg.run, &sensing).await;
+        let mut reads = factory::gather(client()?, views, self.cfg.budget, &self.cfg.run, &sensing).await;
         let keys: Vec<String> = factory::LIMIT_KEYS.iter().map(|k| k.to_string()).collect();
         reads.limits = (self.limits)(&keys)?;
         let floor = factory::build(&reads, now)?;
@@ -450,6 +454,9 @@ fn store_views(loom: &Loom) -> Result<&'static store_view::Projection, String> {
     VIEWS
         .get_or_init(|| {
             let p = Arc::new(store_view::Projection::configured(spira_store::lc_call::LcClient::for_bin(&lc)?)?);
+            if let Err(e) = p.load() {
+                eprintln!("loom: store views not loaded at boot: {e}");
+            }
             let watcher = Arc::clone(&p);
             std::thread::spawn(move || watcher.run(&std::sync::atomic::AtomicBool::new(false)));
             Ok(p)
@@ -1108,17 +1115,71 @@ mod in_process_tests {
     async fn the_factory_is_held_for_the_cache_and_a_failed_build_is_not_held() {
         let loom = Loom::with_limits(test_config(), Arc::new(|_| Ok(std::collections::BTreeMap::from([("SPIRA_COLD_PAR".to_string(), "9".to_string())]))));
         let refused = Arc::new(Counted(Default::default(), vec![("ops-graph --machine ask", 3, "refused".into())]));
-        let e = loom.factory_via(|| Ok(LcClient::over(refused.clone(), true))).await.unwrap_err();
+        let e = loom.factory_via(|| Ok(LcClient::over(refused.clone(), true)), None).await.unwrap_err();
         assert!(e.contains("ops-graph --machine ask"), "{e}");
 
         let healthy = Arc::new(Counted(Default::default(), vec![]));
-        let first = loom.factory_via(|| Ok(LcClient::over(healthy.clone(), true))).await.unwrap();
+        let first = loom.factory_via(|| Ok(LcClient::over(healthy.clone(), true)), None).await.unwrap();
         let reads = healthy.0.load(Ordering::SeqCst);
         assert!(reads >= 10, "the refusal left nothing held, so the healthy build read afresh: {reads}");
         assert_eq!(first["components"].as_array().unwrap().iter().find(|c| c["id"] == "build-dir").unwrap()["queues"][0]["config"], 9, "limits come from the config");
-        let second = loom.factory_via(|| Ok(LcClient::over(healthy.clone(), true))).await.unwrap();
+        let second = loom.factory_via(|| Ok(LcClient::over(healthy.clone(), true)), None).await.unwrap();
         assert_eq!(healthy.0.load(Ordering::SeqCst), reads, "the second viewer is served from the held build");
         assert_eq!(first, second);
+    }
+
+    struct Followed(std::sync::Mutex<Vec<String>>);
+
+    impl Transport for Followed {
+        fn exchange(&self, argv: &[String], _: Option<&str>, _: Duration) -> Result<Reply, String> {
+            self.0.lock().unwrap().push(argv.join(" "));
+            let out = match argv[0].as_str() {
+                "rc" => json!({ "ok": { "items": [], "list_rev": 5 } }).to_string(),
+                "watch" => {
+                    // clock-safe: the double's long-poll, ending after a pause
+                    std::thread::sleep(Duration::from_millis(5));
+                    json!({ "progress_rev": 5 }).to_string()
+                }
+                _ => "[]".to_string(),
+            };
+            Ok(Reply { code: 0, out, err: String::new() })
+        }
+    }
+
+    #[tokio::test]
+    async fn a_second_factory_build_with_no_store_change_asks_the_store_for_no_list() {
+        let followed = Arc::new(Followed(Default::default()));
+        let views = Arc::new(store_view::Projection::new(LcClient::over(followed.clone(), true), Duration::from_secs(30), Arc::new(std::time::Instant::now)));
+        views.load().unwrap();
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let watch = { let (v, s) = (views.clone(), stop.clone()); std::thread::spawn(move || v.run(&s)) };
+        // clock-safe: a cap on the wait for the watch thread to start
+        for _ in 0..6000 {
+            if views.watching() {
+                break;
+            }
+            // clock-safe: a poll interval under that cap
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let loom = Loom::with_limits(Config { cache: Duration::ZERO, ..test_config() }, Arc::new(|_| Ok(std::collections::BTreeMap::new())));
+        struct Recording(Counted, std::sync::Mutex<Vec<String>>);
+        impl Transport for Recording {
+            fn exchange(&self, argv: &[String], stdin: Option<&str>, d: Duration) -> Result<Reply, String> {
+                self.1.lock().unwrap().push(argv.join(" "));
+                self.0.exchange(argv, stdin, d)
+            }
+        }
+        let counted = Arc::new(Recording(Counted(Default::default(), vec![]), std::sync::Mutex::new(Vec::new())));
+        loom.factory_via(|| Ok(LcClient::over(counted.clone(), true)), Some(&views)).await.unwrap();
+        let first = counted.1.lock().unwrap().len();
+        loom.factory_via(|| Ok(LcClient::over(counted.clone(), true)), Some(&views)).await.unwrap();
+        stop.store(true, Ordering::Relaxed);
+        watch.join().unwrap();
+        let sent = counted.1.lock().unwrap().clone();
+        assert!(first > 0 && sent.len() >= 2 * first - 2, "the builds did read the store for what the views do not hold: {sent:?}");
+        assert!(!sent.iter().any(|a| a.starts_with("list --live") || a.starts_with("list --batches")), "{sent:?}");
+        let asked_batches = followed.0.lock().unwrap().iter().filter(|a| a.starts_with("list --batches")).count();
+        assert_eq!(asked_batches, 1, "the store was asked for the rounds once, however many builds followed");
     }
 
     fn fleet_ceiling(floor: &Value) -> Value {
@@ -1141,9 +1202,9 @@ mod in_process_tests {
         });
         let loom = Loom::with_limits(Config { cache: Duration::ZERO, ..test_config() }, reader);
         let healthy = Arc::new(Counted(Default::default(), vec![]));
-        assert_eq!(fleet_ceiling(&loom.factory_via(|| Ok(LcClient::over(healthy.clone(), true))).await.unwrap()), 8);
-        assert_eq!(fleet_ceiling(&loom.factory_via(|| Ok(LcClient::over(healthy.clone(), true))).await.unwrap()), 9);
-        let e = loom.factory_via(|| Ok(LcClient::over(healthy.clone(), true))).await.unwrap_err();
+        assert_eq!(fleet_ceiling(&loom.factory_via(|| Ok(LcClient::over(healthy.clone(), true)), None).await.unwrap()), 8);
+        assert_eq!(fleet_ceiling(&loom.factory_via(|| Ok(LcClient::over(healthy.clone(), true)), None).await.unwrap()), 9);
+        let e = loom.factory_via(|| Ok(LcClient::over(healthy.clone(), true)), None).await.unwrap_err();
         assert_eq!(e, "config no longer resolves");
     }
 

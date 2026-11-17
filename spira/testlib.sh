@@ -1181,8 +1181,8 @@ elif verb == "claimable":
                 sys.exit(2)
             runes = t.stdout.split()
         out.append({"bead_id": r["bead_id"], "verdict": "held" if r["holds"] else "claimable",
-                    "blocker": None, "runes": runes, "row": r})
-    print(json.dumps({"rev": 0, "cannot_tell": 0, "beads": out}))
+                    "blocker": None, "runes": runes, "row": r, "content": b})
+    print(json.dumps({"rev": 0, "cannot_tell": 0, "content_error": None, "beads": out}))
 elif verb == "show":
     r = rows.get(args[1] if len(args) > 1 else "")
     if r is None:

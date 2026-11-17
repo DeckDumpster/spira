@@ -28,6 +28,11 @@ impl Transport for Double {
         let ok = |out: String| Ok(Reply { code: 0, out, err: String::new() });
         match argv[0].as_str() {
             "rc" => ok(json!({ "ok": { "items": s.batches, "list_rev": s.list_rev } }).to_string()),
+            "list" if argv.iter().any(|a| a == "--batches") => {
+                let window = argv.iter().position(|a| a == "--window").map(|i| argv[i + 1].clone()).unwrap_or_default();
+                let rounds: Vec<Value> = s.batches.iter().map(|b| b["value"]["data"].clone()).collect();
+                ok(serde_json::to_string_pretty(&json!({ "window": window, "rounds": rounds })).unwrap())
+            }
             "list" => {
                 let ids: Option<Vec<&str>> = argv.iter().position(|a| a == "--ids").map(|i| argv[i + 1].split(',').collect());
                 let states: Option<Vec<&str>> = argv.iter().position(|a| a == "--state").map(|i| argv[i + 1].split(',').collect());
@@ -230,6 +235,34 @@ fn a_watch_delivery_moves_the_batch_and_rereads_only_the_beads_it_names() {
         w.p.poll().unwrap();
         let reloaded = w.p.ready_counts().unwrap();
         assert_eq!((reloaded.rev, reloaded.value.by_state.get("WORKING")), (21, Some(&1)), "a compacted revision reloads every view, sp-c's row with it");
+    });
+}
+
+#[test]
+fn a_blocker_that_closes_rereads_the_held_beads_waiting_on_it_however_deep() {
+    within(|| {
+        let waiting = |id: &str, on: &str| {
+            let mut b = bead(id, "READY", "[]", Some("blocked"), false);
+            b["blocked_by"] = json!([on]);
+            b["claim_view"]["blocker"] = json!(on);
+            b
+        };
+        let w = world(
+            Script { list_rev: 9, rows: vec![bead("sp-b", "READY", "[]", Some("claimable"), false), waiting("sp-a", "sp-b"), waiting("sp-top", "sp-a"), bead("sp-x", "READY", "[]", Some("claimable"), false)], ..Default::default() },
+            Duration::from_secs(10),
+        );
+        w.p.poll().unwrap();
+        assert_eq!(w.p.ready_counts().unwrap().value.judged_claimable, 2);
+
+        w.script.lock().unwrap().rows = vec![bead("sp-b", "LANDED", "[]", None, false), bead("sp-a", "READY", "[]", Some("claimable"), false), waiting("sp-top", "sp-a"), bead("sp-x", "READY", "[]", Some("claimable"), false)];
+        w.watch(json!({ "events": [{ "key": "lifecycle/sp-b", "rev": rev(10), "value": {}, "create_rev": null, "prev_mod_rev": rev(2) }], "through": 10 }));
+        w.p.poll().unwrap();
+        let last = w.script.lock().unwrap().seen.last().cloned().unwrap();
+        assert_eq!(&last, &["list", "--ids", "sp-a,sp-b,sp-top"].map(String::from), "the waiters are re-read with the blocker, an unrelated bead is not");
+        let held = w.p.list_answer(&["list", "--live"]).unwrap().unwrap();
+        let verdicts: Vec<(String, String)> = serde_json::from_str::<Vec<Value>>(&held).unwrap().iter().map(|r| (r["bead_id"].as_str().unwrap().into(), r["claim_view"]["verdict"].as_str().unwrap().into())).collect();
+        assert!(verdicts.contains(&("sp-a".into(), "claimable".into())), "{verdicts:?}");
+        assert!(!verdicts.iter().any(|(id, _)| id == "sp-b"), "{verdicts:?}");
     });
 }
 
@@ -494,7 +527,7 @@ fn a_list_read_is_answered_from_the_held_rows_and_a_stale_view_refuses_it() {
         assert_eq!(ids(&["list", "--live"]), ["sp-a", "sp-b", "sp-c", "sp-d"]);
         assert_eq!(w.script.lock().unwrap().seen.len(), asked, "answering asks the store nothing");
 
-        for argv in [&["list", "--batches"][..], &["list", "--delivery"], &["list", "--live", "--window", "5"], &["list"], &["list", "--state", "LANDED"], &["list", "--state", "READY,LANDED"], &["list", "--ids", "sp-gone"], &["show", "sp-a"], &[]] {
+        for argv in [&["list", "--delivery"][..], &["list", "--live", "--window", "5"], &["list"], &["list", "--state", "LANDED"], &["list", "--state", "READY,LANDED"], &["list", "--ids", "sp-gone"], &["show", "sp-a"], &[]] {
             assert!(w.p.list_answer(argv).is_none(), "{argv:?} is the store's to answer");
         }
 
@@ -517,5 +550,50 @@ fn a_fresh_projection_reads_the_live_set_and_holds_no_terminal_row() {
         assert!(w.p.list_answer(&["list", "--state", "LANDED"]).is_none());
         assert!(w.p.show("sp-b").is_none());
         assert!(w.p.show("sp-a").is_some());
+    });
+}
+
+#[test]
+fn a_rounds_list_is_the_stores_answer_at_the_same_revision_held_until_a_round_changes() {
+    within(|| {
+        let batches = vec![round("spira", "b-open", "Open", 100, 3, &[]), round("spira", "b-done", "Landed", 90, 2, &[])];
+        let w = world(Script { batches, list_rev: 4, quiet: true, ..Default::default() }, Duration::from_secs(10));
+        w.p.poll().unwrap();
+        let stop = std::sync::atomic::AtomicBool::new(false);
+        std::thread::scope(|sc| {
+            sc.spawn(|| w.p.run(&stop));
+            // clock-safe: a cap on the wait for the watch to start
+            while !w.p.watching() {
+                // clock-safe: a poll interval under that cap
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            let listed = |argv: &[&str]| w.p.list_answer(argv).expect("a held read").expect("a fresh view");
+            let asked_rounds = || w.script.lock().unwrap().seen.iter().filter(|a| a.iter().any(|x| x == "--batches")).count();
+            for argv in [&["list", "--batches", "--window", "86400"][..], &["list", "--batches"], &["list", "--batches", "--batch", "b-open"]] {
+                let held = listed(argv);
+                let direct = LcClient::over(Arc::new(Double(w.script.clone())), true).answer(argv).unwrap();
+                assert_eq!(held, direct, "{argv:?}");
+            }
+            let before = asked_rounds();
+            listed(&["list", "--batches", "--window", "86400"]);
+            listed(&["list", "--batches", "--window", "86400"]);
+            assert_eq!(asked_rounds(), before, "a repeated read of an unchanged store is held");
+            deliver(&w, &["batches/spira/b-open"], 11);
+            listed(&["list", "--batches", "--window", "86400"]);
+            assert_eq!(asked_rounds(), before + 1, "a change to a round ends the held answer");
+            let held_at = asked_rounds();
+            w.advance(store_view::WINDOW_HOLD + Duration::from_secs(1));
+            let give_up = Instant::now() + Duration::from_secs(5); // clock-safe: a cap on the wait for the watch to confirm the view at the new time
+            while Instant::now() < give_up && !matches!(w.p.list_answer(&["list", "--batches", "--window", "86400"]), Some(Ok(_))) {
+                // clock-safe: a poll interval under that cap
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            assert!(asked_rounds() > held_at, "a window answer older than the hold is read afresh: rounds leave a window by the clock");
+            let whole = asked_rounds();
+            listed(&["list", "--batches"]);
+            listed(&["list", "--batches"]);
+            assert!(asked_rounds() <= whole + 1, "an answer with no window is not aged out");
+            stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        });
     });
 }

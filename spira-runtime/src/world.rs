@@ -206,7 +206,10 @@ fn plan_items(out: &str) -> Option<Vec<Value>> {
 
 impl World {
     fn lc(&self, argv: &[&str]) -> Option<String> {
-        lc_call(&self.lc_socket, argv).ok()
+        match store_view::held_read(argv) {
+            Some(held) => held.ok(),
+            None => lc_call(&self.lc_socket, argv).ok(),
+        }
     }
 
     /// The home repo's checkout, from the repo map.
@@ -590,7 +593,10 @@ impl World {
     }
 
     fn lc_json(&self, argv: &[&str]) -> Result<Value, String> {
-        let text = lc_call(&self.lc_socket, argv).map_err(|e| e.to_string())?;
+        let text = match store_view::held_read(argv) {
+            Some(held) => held.map_err(|e| e.to_string())?,
+            None => lc_call(&self.lc_socket, argv).map_err(|e| e.to_string())?,
+        };
         serde_json::from_str(&text).map_err(|e| format!("{} unparsed: {e}", argv[0]))
     }
 
@@ -687,19 +693,29 @@ impl World {
             }
             r
         }).collect();
-        let live: BTreeSet<&str> = rows.iter().map(|r| r.id.as_str()).collect();
-        let mut asked: BTreeSet<&str> = beads.iter().map(|b| b.id.as_str()).filter(|i| !live.contains(i)).collect();
-        asked.extend(rows.iter().flat_map(|r| r.blocked_by.iter().map(String::as_str)).filter(|i| !live.contains(i)));
-        let asked: Vec<&str> = asked.into_iter().collect();
-        let mut terminal = Vec::new();
-        for chunk in asked.chunks(100) {
-            let found = self.lc_json(&["list", "--ids", &chunk.join(",")])?; // BDQ_READ_CONSIDERED="LcClient is the spira-lc door; no bdq"
-            terminal.extend(found.as_array().ok_or("list is not an array")?.iter().filter_map(|r| Some((r["bead_id"].as_str()?.to_string(), r["state"].as_str()?.to_string()))).filter(|(_, st)| spira_store::lc_state::is_terminal(st)));
-        }
+        let terminal = self.terminal_among(beads.iter().map(|b| b.id.as_str()).chain(rows.iter().flat_map(|r| r.blocked_by.iter().map(String::as_str))), &rows)?;
         let (stops, reserved) = self.scoped_stops();
         let pr_repos = fs::read_to_string(&self.repo_map).map(|t| map_rows(&t)).unwrap_or_default().into_iter().filter(|r| r.land == "pr").map(|r| r.name).collect();
         let snap = bead_sweep::Snapshot { rows, content: beads, terminal, stops, reserved, carried: self.integrations(), pr_repos };
         serde_json::to_string(&snap).map_err(|e| e.to_string())
+    }
+
+    /// The terminal rows among the beads the sweep names that hold no live row. The projection holds
+    /// live rows only, so these ask the store, by id, once.
+    fn terminal_among<'a>(&self, named: impl Iterator<Item = &'a str>, live: &[Row]) -> Result<Vec<(String, String)>, String> {
+        let live: BTreeSet<&str> = live.iter().map(|r| r.id.as_str()).collect();
+        let ids: BTreeSet<&str> = named.filter(|i| !live.contains(i)).collect();
+        if ids.is_empty() {
+            return Ok(vec![]);
+        }
+        let ids: Vec<&str> = ids.into_iter().collect();
+        let mut terminal = Vec::new();
+        for chunk in ids.chunks(100) {
+            let out = lc_call(&self.lc_socket, &["list", "--ids", &chunk.join(",")]).map_err(|e| e.to_string())?; // BDQ_READ_CONSIDERED="LcClient is the spira-lc door; no bdq"
+            let rows: Value = serde_json::from_str(&out).map_err(|e| format!("list unparsed: {e}"))?;
+            terminal.extend(rows.as_array().ok_or("list is not an array")?.iter().filter_map(|r| Some((r["bead_id"].as_str()?.to_string(), r["state"].as_str()?.to_string()))).filter(|(_, st)| spira_store::lc_state::is_terminal(st)));
+        }
+        Ok(terminal)
     }
 
     fn scoped_stops(&self) -> (Vec<Stop>, Vec<Reservation>) {

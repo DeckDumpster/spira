@@ -193,6 +193,8 @@ pub trait Inputs {
     fn config(&self) -> Result<Config, String>;
     /// `(issue_type, status)` of each id the content store holds.
     fn statuses(&self, ids: &[String]) -> Result<BTreeMap<String, (String, String)>, String>;
+    /// The plan rows of each id the content store holds, as `plan items --ids` prints them.
+    fn items(&self, ids: &[String]) -> Result<Vec<serde_json::Value>, String>;
     fn run_dir(&self) -> Result<PathBuf, String>;
     /// The rune partitions that decide which runes would take a claimable bead.
     fn partitions(&self, config: &Config) -> Result<Vec<Partition>, String>;
@@ -227,6 +229,11 @@ impl Inputs for Live {
         Ok(beads.into_iter().map(|b| (b.id, (b.issue_type, b.status))).collect())
     }
 
+    fn items(&self, ids: &[String]) -> Result<Vec<serde_json::Value>, String> {
+        let ids: Vec<&str> = ids.iter().map(String::as_str).collect();
+        crate::bd::store(|sql, _| crate::plan::items_held(sql, &ids).map_err(crate::content_sql::Failure::Store))
+    }
+
     fn run_dir(&self) -> Result<PathBuf, String> {
         crate::lifecycle_run_dir()
     }
@@ -258,16 +265,27 @@ fn answer<B: Backend>(store: &Store<B>, args: &[String], inputs: &dyn Inputs, ca
         .map_err(|e| e.to_string())?;
     let (rows, views) = view(store, rev, cands.into_iter().map(|r| r.value).collect(), inputs, call.now)?;
     let cannot_tell = views.values().filter(|v| v.verdict == Verdict::CannotTell).count();
+    let ids: Vec<String> = views.keys().cloned().collect();
+    // An unreadable content store leaves `content` null and says why: the lifecycle judgement stands without it, and a reader that ranks names the cause.
+    let (items, content_error) = match inputs.items(&ids) {
+        Ok(items) => (items, None),
+        Err(e) => (Vec::new(), Some(e)),
+    };
+    let mut content: BTreeMap<String, serde_json::Value> = items
+        .into_iter()
+        .filter_map(|r| Some((r.get("id")?.as_str()?.to_string(), r)))
+        .collect();
     let beads: Vec<_> = views
         .iter()
         .map(|(id, v)| {
             json!({
                 "bead_id": id, "verdict": v.verdict, "blocker": v.blocker, "runes": v.runes, "missing": v.missing,
                 "depth": v.depth, "stack": v.stack, "gates": v.gates, "row": state::listed(&rows[id], None),
+                "content": content.remove(id),
             })
         })
         .collect();
-    Ok(json!({ "rev": rev, "cannot_tell": cannot_tell, "beads": beads }).to_string())
+    Ok(json!({ "rev": rev, "cannot_tell": cannot_tell, "content_error": content_error, "beads": beads }).to_string())
 }
 
 /// One candidate's answer: the judgement and the runes that would take it.
@@ -377,6 +395,10 @@ impl Inputs for Fixed {
         Ok(BTreeMap::new())
     }
 
+    fn items(&self, ids: &[String]) -> Result<Vec<serde_json::Value>, String> {
+        Ok(ids.iter().map(|id| json!({ "id": id, "title": format!("title of {id}"), "priority": 2, "issue_type": "task", "status": "open", "created_at": "2026-01-01T00:00:00Z", "defer_until": null, "dependencies": [] })).collect())
+    }
+
     fn run_dir(&self) -> Result<PathBuf, String> {
         Ok(PathBuf::from("nonexistent/run"))
     }
@@ -400,6 +422,10 @@ impl Inputs for Unreadable {
     }
 
     fn statuses(&self, _: &[String]) -> Result<BTreeMap<String, (String, String)>, String> {
+        Err("the content store is unreadable".into())
+    }
+
+    fn items(&self, _: &[String]) -> Result<Vec<serde_json::Value>, String> {
         Err("the content store is unreadable".into())
     }
 

@@ -317,12 +317,20 @@ mod claim_view_read {
             self.seen.lock().unwrap().push(argv.to_vec());
             let words: Vec<&str> = argv.iter().map(String::as_str).collect();
             let (code, out, err) = match words.as_slice() {
+                ["claimable"] if self.view_code == NO_PLAN_ROW => (
+                    0,
+                    json!({ "rev": 1, "cannot_tell": 0, "content_error": null, "beads": [
+                        { "bead_id": "sp-a", "verdict": "claimable", "blocker": null, "runes": ["builder"], "row": row("sp-a", "READY"), "content": null },
+                    ] })
+                    .to_string(),
+                    String::new(),
+                ),
                 ["claimable"] if self.view_code != 0 => (self.view_code, String::new(), "the control store is unreadable".to_string()),
                 ["claimable"] => (
                     0,
                     json!({ "rev": 1, "cannot_tell": 0, "beads": [
-                        { "bead_id": "sp-a", "verdict": "claimable", "blocker": null, "runes": ["builder"], "row": row("sp-a", "READY") },
-                        { "bead_id": "sp-b", "verdict": "blocked", "blocker": "sp-a", "runes": [], "row": row("sp-b", "READY") },
+                        { "bead_id": "sp-a", "verdict": "claimable", "blocker": null, "runes": ["builder"], "row": row("sp-a", "READY"), "content": item("sp-a") },
+                        { "bead_id": "sp-b", "verdict": "blocked", "blocker": "sp-a", "runes": [], "row": row("sp-b", "READY"), "content": item("sp-b") },
                     ] })
                     .to_string(),
                     String::new(),
@@ -346,6 +354,8 @@ mod claim_view_read {
         }
     }
 
+    const NO_PLAN_ROW: i32 = -1;
+
     fn setup(view_code: i32) -> (Arc<Double>, Store) {
         let svc = Arc::new(Double { seen: Mutex::new(Vec::new()), view_code });
         let st = Store { bdq: "nonexistent/bdq".into(), lc: LcClient::over(svc.clone(), true), lc_bin: "nonexistent/spira-lc".into(), timeout: Duration::from_secs(1), views: None };
@@ -365,6 +375,41 @@ mod claim_view_read {
 
     fn seen(svc: &Double) -> Vec<String> {
         svc.seen.lock().unwrap().iter().map(|a| a.join(" ")).collect()
+    }
+
+    #[test]
+    fn every_reader_of_the_view_makes_one_claimable_call_and_nothing_else() {
+        let a = Args::parse(&[]).unwrap();
+        type Read = fn(&Args, &mut Env, &Store);
+        let readers: [(&str, Read); 4] = [
+            ("ready-count", |a, env, st| drop(ready_count_over(a, env, st))),
+            ("urgent", |a, env, st| drop(urgent_over(a, env, st).unwrap())),
+            ("rune-ready", |a, env, st| drop(claimable_over(a, env, st).unwrap())),
+            ("bulk-ready-by-rune", |a, env, st| drop(viewed(a, env, st).unwrap())),
+        ];
+        for (name, read) in readers {
+            let (svc, st) = setup(0);
+            env_over(|env| read(&a, env, &st));
+            assert_eq!(seen(&svc), ["claimable"], "{name}");
+        }
+    }
+
+    #[test]
+    fn the_verbs_of_one_tick_share_one_claimable_call_and_the_next_tick_asks_again() {
+        let (svc, st) = setup(0);
+        let a = Args::parse(&[]).unwrap();
+        {
+            let _tick = TickView::begin();
+            env_over(|env| {
+                viewed(&a, env, &st).unwrap();
+                claimable_over(&a, env, &st).unwrap();
+                urgent_over(&a, env, &st).unwrap();
+                drop(ready_count_over(&a, env, &st));
+            });
+            assert_eq!(seen(&svc), ["claimable"]);
+        }
+        env_over(|env| viewed(&a, env, &st).unwrap());
+        assert_eq!(seen(&svc), ["claimable", "claimable"], "a view is not kept past its tick");
     }
 
     #[test]
@@ -420,6 +465,14 @@ mod claim_view_read {
         assert_eq!((n.code, n.out.as_str()), (0, "0"), "{n:?}");
         let n = env_over(|env| ready_count_over(&Args::parse(&["".into()]).unwrap(), env, &st));
         assert_eq!((n.code, n.out.as_str()), (0, "1"), "{n:?}");
+    }
+
+    #[test]
+    fn a_claimable_bead_with_no_plan_row_is_not_ranked_and_does_not_fail_the_read() {
+        let (_, st) = setup(NO_PLAN_ROW);
+        let v = env_over(|env| viewed(&Args::parse(&[]).unwrap(), env, &st).unwrap());
+        assert!(v.rows.is_empty(), "{:?}", ids(&v.rows));
+        assert!(v.lifecycle.contains_key("sp-a"));
     }
 
     #[test]

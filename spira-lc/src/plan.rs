@@ -9,6 +9,7 @@ use std::sync::{Arc, Condvar, Mutex, OnceLock};
 
 use serde_json::{json, Value};
 
+use crate::content_sql::Sql;
 use crate::db::Conn;
 use crate::rows;
 
@@ -165,10 +166,10 @@ fn id_list(ids: &[&str]) -> String {
     ids.iter().map(|x| format!("'{}'", rows::escape(x))).collect::<Vec<_>>().join(",")
 }
 
-fn edges_where(conn: &Conn, ids: &[&str], into: bool) -> Result<Vec<Value>, String> {
+fn edges_where(conn: &dyn Sql, ids: &[&str], into: bool) -> Result<Vec<Value>, String> {
     let cdb = content_db()?;
     let list = id_list(ids);
-    let q = |sql: String| conn.query(&sql).map_err(|e| format!("cannot tell: {e:?}"));
+    let q = |sql: String| conn.rows(&sql).map_err(|f| format!("cannot tell: {}", f.text()));
     // bd's column is depends_on_issue_id (beside depends_on_wisp_id / depends_on_external);
     // only issue-to-issue edges are planning edges between beads.
     let bd_side = if into { "depends_on_issue_id" } else { "issue_id" };
@@ -234,6 +235,49 @@ pub fn joins_planning(args: &[String]) -> bool {
 
 pub fn with_planning_fields(answer: (i32, String), conn: &Conn) -> (i32, String) {
     join_planning(answer, &|ids| TITLES.titles(ids, current_watermark(), &|missing| titles(conn, missing)))
+}
+
+/// The plan rows of `ids` as `plan items --ids` prints them, held under the planning watermark
+/// they were read at: a row moves only by a planning write, and every one moves the watermark.
+pub fn items_held(sql: &dyn Sql, ids: &[&str]) -> Result<Vec<Value>, String> {
+    static ITEMS: HeldItems = Mutex::new((None, BTreeMap::new()));
+    items_under(&ITEMS, current_watermark(), ids, &|missing| fetch_with(sql, missing, false, false))
+}
+
+type HeldItems = Mutex<(Option<u64>, BTreeMap<String, Option<Value>>)>;
+type ItemLookup<'a> = dyn Fn(&[&str]) -> Result<Vec<Value>, String> + 'a;
+
+fn items_under(held: &HeldItems, watermark: Option<u64>, ids: &[&str], fetch: &ItemLookup) -> Result<Vec<Value>, String> {
+    let Some(w) = watermark else { return fetch(ids) };
+    let lock = || held.lock().unwrap_or_else(|p| p.into_inner());
+    let (mut out, missing) = {
+        let mut g = lock();
+        if g.0 != Some(w) {
+            *g = (Some(w), BTreeMap::new());
+        }
+        let mut out = Vec::new();
+        let mut missing = Vec::new();
+        for id in ids {
+            match g.1.get(*id) {
+                Some(Some(row)) => out.push(row.clone()),
+                Some(None) => {}
+                None => missing.push(*id),
+            }
+        }
+        (out, missing)
+    };
+    if missing.is_empty() {
+        return Ok(out);
+    }
+    let found = fetch(&missing)?;
+    let mut g = lock();
+    if g.0 == Some(w) {
+        for id in &missing {
+            g.1.insert(id.to_string(), found.iter().find(|r| r["id"] == *id).cloned());
+        }
+    }
+    out.extend(found);
+    Ok(out)
 }
 
 /// The planning watermark as the control store's read model holds it, or `None` without one.
@@ -618,7 +662,7 @@ fn by_type(conn: &Conn, kind: &str, full: bool, open: bool) -> Result<Vec<Value>
     fetch_with(conn, &ids, full, open)
 }
 
-fn fetch_with(conn: &Conn, ids: &[&str], full: bool, open: bool) -> Result<Vec<Value>, String> {
+fn fetch_with(conn: &dyn Sql, ids: &[&str], full: bool, open: bool) -> Result<Vec<Value>, String> {
     // An empty id list is an empty answer: it needs no store, so it is decided before the
     // content database is resolved (r-auto-148: an unconfigured test process was refused here).
     if ids.is_empty() {
@@ -626,7 +670,7 @@ fn fetch_with(conn: &Conn, ids: &[&str], full: bool, open: bool) -> Result<Vec<V
     }
     let cdb = content_db()?;
     let list = ids.iter().map(|x| format!("'{}'", rows::escape(x))).collect::<Vec<_>>().join(",");
-    let q = |sql: String| conn.query(&sql).map_err(|e| format!("cannot tell: {e:?}"));
+    let q = |sql: String| conn.rows(&sql).map_err(|f| format!("cannot tell: {}", f.text()));
     let text = if full { TEXT_COLUMNS } else { "" };
     let live = if open { " AND status <> 'closed'" } else { "" };
     let issues = q(format!(
@@ -718,6 +762,24 @@ mod tests {
 
     fn v(x: &str) -> Vec<Value> {
         serde_json::from_str(x).unwrap()
+    }
+
+    #[test]
+    fn plan_rows_are_held_under_the_watermark_and_an_absent_id_is_held_as_absent() {
+        let held: HeldItems = Mutex::new((None, BTreeMap::new()));
+        let asked = Mutex::new(Vec::<String>::new());
+        let fetch = |ids: &[&str]| -> Result<Vec<Value>, String> {
+            asked.lock().unwrap().push(ids.join(","));
+            Ok(ids.iter().filter(|i| **i != "sp-gone").map(|i| json!({ "id": i, "title": "t" })).collect())
+        };
+        assert_eq!(items_under(&held, Some(5), &["sp-a", "sp-gone"], &fetch).unwrap().len(), 1);
+        assert_eq!(items_under(&held, Some(5), &["sp-a", "sp-gone", "sp-b"], &fetch).unwrap().len(), 2);
+        assert_eq!(*asked.lock().unwrap(), ["sp-a,sp-gone", "sp-b"], "only the ids not yet held, the absent one among those held");
+        items_under(&held, Some(6), &["sp-a"], &fetch).unwrap();
+        assert_eq!(asked.lock().unwrap().len(), 3, "a new watermark empties the hold");
+        items_under(&held, None, &["sp-a"], &fetch).unwrap();
+        items_under(&held, None, &["sp-a"], &fetch).unwrap();
+        assert_eq!(asked.lock().unwrap().len(), 5, "no watermark holds nothing");
     }
 
     #[test]

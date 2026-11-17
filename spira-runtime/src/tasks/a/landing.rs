@@ -570,7 +570,7 @@ pub fn observe(e: &crate::Effects) -> Result<String, String> {
             continue;
         }
         let ids: Vec<String> = refs.iter().map(|(b, _)| b.trim_start_matches("spira/").to_string()).collect();
-        let rows = spira_store::lc_state::index(spira_store::lc_state::list_ids_on(&lc, &ids)?);
+        let rows = spira_store::lc_state::index(store_view::rows_by_ids(&lc, &ids)?);
         let mut argv = vec!["content".to_string(), "show".to_string()];
         argv.extend(ids.iter().cloned());
         argv.push("--json".into());

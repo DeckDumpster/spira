@@ -663,6 +663,7 @@ pub fn observe(e: &Effects, input: &str) -> Result<String, String> {
     let rune_name = |f: &str| get(f, "RUNE_NAME", f);
     let fleet = fleet(unitp, &roster, &rune_name)?;
     (snap.live_by_rune, snap.other_live, snap.live_units) = (fleet.live_by_rune, fleet.other_live, fleet.live_units);
+    let _one_view = sentinel::claim::TickView::begin();
     let bulk = claim(pinned, &["bulk-ready-by-rune".into()]);
     let counts: BTreeMap<String, usize> = if bulk.code == 0 { plan::parse_cache(&bulk.out).into_iter().collect() } else { BTreeMap::new() };
     for f in &roster {

@@ -164,7 +164,7 @@ impl Store {
     pub fn plan(&self, args: &[&str]) -> Result<String, String> {
         let what = format!("spira-lc plan {}", args.first().unwrap_or(&""));
         let argv: Vec<String> = std::iter::once("plan").chain(args.iter().copied()).map(str::to_string).collect();
-        let text = self.lc_run(&argv).map_err(|e| format!("{what}: {e}"))?;
+        let text = self.read_held(&argv).map_err(|e| format!("{what}: {e}"))?;
         let v: serde_json::Value = serde_json::from_str(text.trim()).map_err(|e| format!("{what}: not JSON: {e}"))?;
         match v.get("items") {
             Some(items @ serde_json::Value::Array(_)) => Ok(items.to_string()),
@@ -198,7 +198,20 @@ impl Store {
     /// The lifecycle rows of exactly `ids`, one `spira-lc list --ids` per [`EVENT_CHUNK`].
     pub fn lifecycle_of(&self, ids: &[String]) -> Result<HashMap<String, LifecycleRow>, String> {
         let mut out = HashMap::new();
-        for chunk in ids.chunks(EVENT_CHUNK) {
+        let Some(views) = self.views.as_ref() else {
+            for chunk in ids.chunks(EVENT_CHUNK) {
+                out.extend(self.lc_list(&["--ids", &chunk.join(",")], false)?);
+            }
+            return Ok(out);
+        };
+        let mut unheld: Vec<String> = Vec::new();
+        for id in ids {
+            match views.list_answer(&["list", "--ids", id]) { // BDQ_READ_CONSIDERED="the held-view door: a projection answer, no bdq"
+                Some(answer) => out.extend(crate::rank::parse_lifecycle(&answer.map_err(|e| format!("spira-lc list: {e}"))?)?),
+                None => unheld.push(id.clone()),
+            }
+        }
+        for chunk in unheld.chunks(EVENT_CHUNK) {
             out.extend(self.lc_list(&["--ids", &chunk.join(",")], false)?);
         }
         Ok(out)
@@ -207,8 +220,22 @@ impl Store {
     /// The claim view of every READY and REWORK bead, answered by the control store from the
     /// lifecycle rows when it is asked.
     pub fn claim_view(&self) -> Result<Vec<ViewRow>, String> {
+        if let Some(held) = TICK.with(|t| t.borrow().as_ref().and_then(Clone::clone)) {
+            return Ok(held);
+        }
+        let view = self.claim_view_asked()?;
+        TICK.with(|t| {
+            if let Some(held) = t.borrow_mut().as_mut() {
+                *held = Some(view.clone());
+            }
+        });
+        Ok(view)
+    }
+
+    fn claim_view_asked(&self) -> Result<Vec<ViewRow>, String> {
         let text = self.lc_run(&["claimable"]).map_err(|e| format!("spira-lc claimable: {e}"))?;
         let v: serde_json::Value = serde_json::from_str(text.trim()).map_err(|e| format!("spira-lc claimable: not JSON: {e}"))?;
+        let content_error = v.get("content_error").and_then(serde_json::Value::as_str).map(str::to_string);
         let beads = v.get("beads").and_then(serde_json::Value::as_array).ok_or("spira-lc claimable: no beads array")?;
         let rows = serde_json::Value::Array(beads.iter().map(|b| b["row"].clone()).collect()).to_string();
         let mut lifecycle = rank::parse_lifecycle(&rows)?;
@@ -220,7 +247,12 @@ impl Store {
                 let verdict = crate::verdicts::Kind::from_word(word).ok_or_else(|| format!("spira-lc claimable: {id} has the verdict {word:?}, which this build does not know"))?;
                 let runes = b["runes"].as_array().map(|r| r.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default();
                 let lifecycle = lifecycle.remove(&id).ok_or_else(|| format!("spira-lc claimable: {id} has no row"))?;
-                Ok(ViewRow { id, verdict, runes, lifecycle })
+                let content = match b.get("content").filter(|c| !c.is_null()) {
+                    Some(c) => Ok(Some(rank::parse_ready(&c.to_string()).map_err(|e| format!("spira-lc claimable: {id}: {e}"))?.remove(0))),
+                    None => content_error.clone().map_or(Ok(None), Err),
+                };
+                let express = rank::express_ids(&serde_json::Value::Array(vec![b["row"].clone()]).to_string())?.contains(&id);
+                Ok(ViewRow { id, verdict, runes, lifecycle, content, express })
             })
             .collect()
     }
@@ -240,9 +272,19 @@ impl Store {
         crate::rank::parse_lifecycle(&text)
     }
 
+    /// A planning read from the held view when this process keeps one (a stale view refuses),
+    /// else from the store.
+    fn read_held(&self, argv: &[String]) -> Result<String, String> {
+        let words: Vec<&str> = argv.iter().map(String::as_str).collect();
+        match self.views.as_ref().filter(|v| v.watching()).and_then(|_| store_view::held_read(&words)) {
+            Some(held) => held.map_err(|e| e.to_string()),
+            None => self.lc_run(argv),
+        }
+    }
+
     /// The planning plane's watermark, read before the rows it orders.
     pub fn planning_watermark(&self) -> Result<u64, String> {
-        let text = self.lc_run(&["plan", "watermark"]).map_err(|e| format!("spira-lc plan watermark: {e}"))?;
+        let text = self.read_held(&["plan".to_string(), "watermark".into()]).map_err(|e| format!("spira-lc plan watermark: {e}"))?;
         let v: serde_json::Value = serde_json::from_str(text.trim()).map_err(|e| format!("spira-lc plan watermark: not JSON: {e}"))?;
         v["watermark"].as_u64().ok_or_else(|| "spira-lc plan watermark: no watermark".to_string())
     }
@@ -315,14 +357,38 @@ fn first_reason(r: &Ran) -> &str {
     r.stderr.lines().chain(r.stdout.lines()).find(|l| !l.trim().is_empty()).unwrap_or("no output")
 }
 
+thread_local! {
+    static TICK: std::cell::RefCell<Option<Option<Vec<ViewRow>>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Holds the first claim view this thread reads until it is dropped: every verb of one tick
+/// answers from one `claimable` call. Not nestable; a tick is one thread's work.
+pub struct TickView;
+
+impl TickView {
+    pub fn begin() -> TickView {
+        TICK.with(|t| *t.borrow_mut() = Some(None));
+        TickView
+    }
+}
+
+impl Drop for TickView {
+    fn drop(&mut self) {
+        TICK.with(|t| *t.borrow_mut() = None);
+    }
+}
+
 /// One bead of the claim view: its verdict, the runes that would take it, and
 /// the lifecycle row the view judged it from.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ViewRow {
     pub id: String,
     pub verdict: crate::verdicts::Kind,
     pub runes: Vec<String>,
     pub lifecycle: LifecycleRow,
+    /// The plan row `claimable` carried: what ranking and scope read. `None` is a bead the content store holds no plan row for; an `Err` is a content store that could not be read.
+    pub content: Result<Option<ReadyRow>, String>,
+    pub express: bool,
 }
 
 /// The condition key a refused readiness publish raises.
@@ -462,8 +528,10 @@ mod tests {
         assert_eq!(ready.keys().cloned().collect::<std::collections::BTreeSet<_>>(), ["sp-a".to_string(), "sp-c".to_string()].into());
         assert_eq!(st.express_ids().unwrap(), ["sp-a".to_string()].into());
         assert!(t.seen.lock().unwrap().is_empty(), "the held view answered: {:?}", t.seen.lock().unwrap());
-        st.lifecycle_of(&["sp-a".into()]).unwrap();
-        assert_eq!(t.seen.lock().unwrap()[0], ["list", "--ids", "sp-a"]);
+        assert!(st.lifecycle_of(&["sp-a".into()]).unwrap().contains_key("sp-a"));
+        assert!(t.seen.lock().unwrap().is_empty(), "a held row is not asked of the socket");
+        st.lifecycle_of(&["sp-a".into(), "sp-z".into()]).unwrap();
+        assert_eq!(t.seen.lock().unwrap().iter().map(|a| a.join(" ")).collect::<Vec<_>>(), ["list --ids sp-z"], "only the id the view does not hold is asked");
     }
 
     #[test]

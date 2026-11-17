@@ -140,6 +140,10 @@ pub struct RowQuery<'a> {
     pub express: bool,
 }
 
+/// The longest a `--window` answer is held: rounds leave a window by the clock alone, which no
+/// watch event reports.
+pub const WINDOW_HOLD: Duration = Duration::from_secs(60);
+
 #[derive(Default)]
 struct State {
     rev: Option<u64>,
@@ -158,7 +162,7 @@ const ALL: u8 = CONTENT | ROUNDS;
 /// The reads [`Projection::answer`] holds, with the changes that end each; `None` for any other.
 fn classes_of(argv: &[&str]) -> Option<u8> {
     match argv {
-        ["content", "list" | "show", ..] | ["plan", "items" | "edges" | "children", ..] => Some(CONTENT),
+        ["content", "list" | "show", ..] | ["plan", "items" | "edges" | "children" | "watermark", ..] => Some(CONTENT),
         ["show-batch", _] => Some(ROUNDS),
         ["list", rest @ ..] if rest.contains(&"--batches") => Some(ROUNDS | CONTENT),
         _ => None,
@@ -169,7 +173,7 @@ fn classes_of(argv: &[&str]) -> Option<u8> {
 /// rises, so a read that started before a change cannot be kept after it.
 #[derive(Default)]
 struct Memo {
-    held: HashMap<String, (u8, Reply)>,
+    held: HashMap<String, (u8, Reply, Instant)>,
     generation: [u64; 2],
 }
 
@@ -182,7 +186,7 @@ impl Memo {
         for i in (0..2).filter(|i| classes & (1 << i) != 0) {
             self.generation[i] += 1;
         }
-        self.held.retain(|_, (held, _)| *held & classes == 0);
+        self.held.retain(|_, (held, ..)| *held & classes == 0);
     }
 }
 
@@ -215,6 +219,48 @@ pub fn shared() -> Option<Arc<Projection>> {
 /// [`Projection::list_answer`] on this process's projection; `None` when it keeps none.
 pub fn held_list(argv: &[&str]) -> Option<Result<String, LcError>> {
     shared()?.list_answer(argv)
+}
+
+/// Any read this process's projection holds (a `list` or a memoised content, planning or round
+/// read), as the store prints it; `None` for any other read or when it keeps no projection. A
+/// stale view answers `Some(Err)`: the caller must not fall back to the store.
+pub fn held_read(argv: &[&str]) -> Option<Result<String, LcError>> {
+    let p = shared()?;
+    if argv.first() == Some(&"list") {
+        return p.list_answer(argv);
+    }
+    classes_of(argv)?;
+    Some(p.answer(argv).and_then(|r| match r.value.code {
+        0 => Ok(r.value.out),
+        _ => Err(LcError::Fault(r.value.why())),
+    }))
+}
+
+/// `argv` answered by this process's projection when it holds the read, else by `client`. A stale
+/// view is an error, never a fall back to the store.
+pub fn call_held(client: &LcClient, argv: &[&str]) -> Result<Reply, String> {
+    match held_read(argv) {
+        Some(held) => held.map(|out| Reply { code: 0, out, err: String::new() }).map_err(|e| e.to_string()),
+        None => client.call(argv).map_err(String::from),
+    }
+}
+
+/// `list --ids` rows: the held ones, and the store only for ids the projection does not hold.
+pub fn rows_by_ids(client: &LcClient, ids: &[String]) -> Result<Vec<Row>, String> {
+    let Some(p) = shared() else { return lc_state::list_ids_on(client, ids) };
+    let mut held = Vec::new();
+    let mut missing = Vec::new();
+    for id in ids {
+        match p.rows(&RowQuery { ids: Some(std::slice::from_ref(id)), ..Default::default() }) {
+            Some(read) => held.extend(read.map_err(|e| e.to_string())?.value),
+            None => missing.push(id.clone()),
+        }
+    }
+    let mut rows = lc_state::parse_rows(&Value::Array(held).to_string())?;
+    if !missing.is_empty() {
+        rows.extend(lc_state::list_ids_on(client, &missing)?);
+    }
+    Ok(rows)
 }
 
 fn fault(e: impl std::fmt::Display) -> LcError {
@@ -315,6 +361,27 @@ fn ended_by(s: &State, events: &[Value]) -> u8 {
                 0
             }
     })
+}
+
+/// The beads `raw` waits on as `list` printed it: its parent, declared blockers and judged blocker.
+fn waits_on(raw: &Value) -> impl Iterator<Item = &str> {
+    fn ids(v: &Value) -> impl Iterator<Item = &str> {
+        v.as_array().into_iter().flatten().filter_map(Value::as_str)
+    }
+    let claim = &raw["claim"];
+    claim["parent"].as_str().into_iter().chain(ids(&claim["blocks"])).chain(ids(&raw["blocked_by"])).chain(raw["claim_view"]["blocker"].as_str())
+}
+
+/// `changed` and every held bead that waits on one of them, however deep: a bead's verdict is
+/// judged from its blockers, so their change is its change though its own keys never move.
+fn with_waiters(beads: &BTreeMap<String, Bead>, mut changed: BTreeSet<String>) -> BTreeSet<String> {
+    loop {
+        let more: Vec<String> = beads.iter().filter(|(id, b)| !changed.contains(*id) && waits_on(&b.raw).any(|w| changed.contains(w))).map(|(id, _)| id.clone()).collect();
+        if more.is_empty() {
+            return changed;
+        }
+        changed.extend(more);
+    }
 }
 
 /// The beads `list` answered, with the claim view's verdict on each.
@@ -465,6 +532,9 @@ impl Projection {
             } else if let Some(id) = key.strip_prefix(LIFECYCLE).or_else(|| key.strip_prefix(READINESS)) {
                 dirty.insert(id.to_string());
             }
+        }
+        if let Some(beads) = self.lock().beads.as_ref() {
+            dirty = with_waiters(beads, dirty);
         }
         let dirty: Vec<String> = dirty.into_iter().collect();
         let fresh: BTreeMap<String, Bead> = self.list_ids(&dirty)?.into_iter().collect();
@@ -624,6 +694,12 @@ impl Projection {
         if *verb != "list" {
             return None;
         }
+        if rest.contains(&"--batches") {
+            return Some(self.answer(argv).and_then(|r| match r.value.code {
+                0 => Ok(r.value.out),
+                _ => Err(LcError::Fault(r.value.why())),
+            }));
+        }
         let mut q = RowQuery::default();
         let mut states: Vec<&str> = Vec::new();
         let mut ids: Vec<String> = Vec::new();
@@ -660,7 +736,8 @@ impl Projection {
         let key = argv.join("\u{1f}");
         let before = {
             let m = self.memo.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some((_, reply)) = m.held.get(&key) {
+            let aged_out = |at: &Instant| argv.contains(&"--window") && (self.clock)().saturating_duration_since(*at) > WINDOW_HOLD;
+            if let Some((_, reply, _)) = m.held.get(&key).filter(|(_, _, at)| !aged_out(at)) {
                 return Ok(Read { rev: fresh.rev, value: reply.clone() });
             }
             m.seen(classes)
@@ -669,7 +746,7 @@ impl Projection {
         if reply.code == 0 {
             let mut m = self.memo.lock().unwrap_or_else(|e| e.into_inner());
             if m.seen(classes) == before {
-                m.held.insert(key, (classes, reply.clone()));
+                m.held.insert(key, (classes, reply.clone(), (self.clock)()));
             }
         }
         Ok(Read { rev: fresh.rev, value: reply })
