@@ -56,6 +56,8 @@ pub struct Fake {
     pub sccache_dav_addr: RefCell<Option<String>>,
     pub build_base: RefCell<Vec<PathBuf>>,
     pub tmpfs: RefCell<Vec<PathBuf>>,
+    pub unnamed_roots: RefCell<Vec<String>>,
+    pub placements: RefCell<Vec<(String, PathBuf, crate::ports::Placement)>>,
     pub daemon_bases: RefCell<Vec<String>>,
     pub hooks_path: RefCell<Option<String>>,
     pub env_provided: RefCell<Vec<String>>,
@@ -111,6 +113,8 @@ impl Default for Fake {
             sccache_dav_addr: RefCell::new(None),
             build_base: RefCell::new(Vec::new()),
             tmpfs: RefCell::new(Vec::new()),
+            placements: RefCell::new(Vec::new()),
+            unnamed_roots: RefCell::new(Vec::new()),
             daemon_bases: RefCell::new(Vec::new()),
             hooks_path: RefCell::new(None),
             env_provided: RefCell::new(Vec::new()),
@@ -252,6 +256,12 @@ impl World for Fake {
     }
     fn dwarf_build_bases(&self) -> Vec<PathBuf> {
         self.build_base.borrow().clone()
+    }
+    fn placement_roots(&self) -> Vec<(String, Option<PathBuf>)> {
+        self.placements.borrow().iter().map(|(k, p, _)| (k.clone(), Some(p.clone()))).chain(self.unnamed_roots.borrow().iter().map(|k| (k.clone(), None))).collect()
+    }
+    fn placement_of(&self, p: &Path) -> crate::ports::Placement {
+        self.placements.borrow().iter().find(|(_, q, _)| q == p).map(|(_, _, v)| v.clone()).unwrap_or_else(|| crate::ports::Placement::Unresolved("no fixture".into()))
     }
     fn on_tmpfs(&self, p: &Path) -> bool {
         self.tmpfs.borrow().iter().any(|t| p.starts_with(t))
@@ -673,6 +683,67 @@ fn build_base_check_names_an_unset_key_a_base_in_ram_and_a_good_one() {
     f.tmpfs.borrow_mut().clear();
     f.tmpfs.borrow_mut().push("srv/ssd-c".into());
     assert_eq!(levels(&check_dwarf_build(&f)), vec![Level::Ok, Level::Warn], "each listed base is judged on its own");
+}
+
+// -------------------------------------------------------- disk placement (sp-hpaak4)
+
+#[test]
+fn disk_placement_fails_a_root_on_the_root_fs_and_reports_every_root() {
+    use crate::ports::Placement::*;
+    let f = Fake::default();
+    assert!(check_disk_placement(&f).is_empty());
+    *f.placements.borrow_mut() = vec![
+        ("podman graphroot".into(), "srv/ssd-c/containers".into(), OnRoot { canonical: "home/x/boot/storage".into(), source: "mapper-root".into() }),
+        ("SPIRA_GATE_TARGET_ROOT".into(), "srv/ssd-b/gate".into(), Elsewhere),
+        ("SPIRA_DOLT_DATA".into(), "srv/gone".into(), Unresolved("no such file".into())),
+    ];
+    f.unnamed_roots.borrow_mut().push("SPIRA_GATE_TARGET_ROOT".into());
+    let lines = check_disk_placement(&f);
+    assert_eq!(levels(&lines), vec![Level::Fail, Level::Ok, Level::Warn, Level::Warn]);
+    assert!(lines[3].msg.contains("cannot tell"), "{:?}", lines[3].msg);
+    assert!(lines[0].msg.contains("podman graphroot") && lines[0].msg.contains("home/x/boot/storage") && lines[0].msg.contains("mapper-root"), "{:?}", lines[0].msg);
+    assert!(lines[0].detail.as_deref().unwrap_or("").contains("disk-model"));
+    assert!(lines[2].msg.contains("cannot tell"), "{:?}", lines[2].msg);
+}
+
+#[test]
+fn placement_roots_name_every_key_and_the_store_directory_and_keep_unset_ones() {
+    let cfg = |k: &str| match k {
+        "SPIRA_LC_STORE_PATH" => Some("vol/store/lc.db".to_string()),
+        "SPIRA_DOLT_DATA" => Some("vol/dolt".to_string()),
+        "SPIRA_GATE_TARGET_ROOT" => Some(String::new()),
+        _ => None,
+    };
+    let roots = crate::real::placement_roots_from(cfg, vec!["vol/b1".into(), "vol/b2".into()]);
+    let get = |k: &str| roots.iter().find(|(n, _)| n.starts_with(k)).map(|(_, p)| p.clone());
+    assert_eq!(get("SPIRA_DOLT_DATA"), Some(Some("vol/dolt".into())));
+    assert_eq!(get("SPIRA_LC_STORE_PATH"), Some(Some("vol/store".into())));
+    for unset in ["SPIRA_GATE_TARGET_ROOT", "SPIRA_TESTENV_SCRATCH_ROOT", "SPIRA_TESTENV_SANDBOX_TARGET_ROOT", "SPIRA_SCCACHE_DAV_ROOT"] {
+        assert_eq!(get(unset), Some(None), "{unset} must be a line even when unset");
+    }
+    assert_eq!(roots.iter().filter(|(n, _)| n.starts_with("SPIRA_DWARF_BUILD_BASE")).count(), 2);
+}
+
+#[test]
+fn judge_placement_follows_a_symlink_to_where_it_lands() {
+    use crate::ports::Placement::*;
+    let d = testkit::TempDir::new("doctor-placement");
+    let root = d.path().join("rootfs");
+    let target = d.path().join("real");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::create_dir_all(&target).unwrap();
+    let link = d.path().join("link");
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+    let mounts = format!("fakedev {} ext4 rw 0 0\notherdev nowhere ext4 rw 0 0\n", d.path().display());
+    match crate::real::judge_placement(&link, &root, &mounts) {
+        OnRoot { canonical, source } => {
+            assert_eq!(canonical, target.canonicalize().unwrap());
+            assert_eq!(source, "fakedev");
+        }
+        other => panic!("same device as the passed root must be on root: {other:?}"),
+    }
+    assert_eq!(crate::real::judge_placement(&link, Path::new(system_paths::PROC), ""), Elsewhere);
+    assert!(matches!(crate::real::judge_placement(&d.path().join("missing"), &root, ""), Unresolved(_)));
 }
 
 // -------------------------------------------------------- compilation cache backend (sp-xtdqi)
