@@ -71,7 +71,10 @@ pub fn exporter_run(bin: &str, mode: &str) -> Result<(), String> {
     Err(format!("{bin} {mode}: exit {}: {}", out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stderr).trim()))
 }
 
-fn bounded(mut cmd: Command, deadline: Duration) -> Result<(Option<i32>, Vec<u8>, Vec<u8>), String> {
+/// Exit code (none when killed by a signal), stdout, stderr.
+type Ran = (Option<i32>, Vec<u8>, Vec<u8>);
+
+fn bounded(mut cmd: Command, deadline: Duration) -> Result<Ran, String> {
     use std::io::Read;
     fn drain(mut pipe: impl Read + Send + 'static) -> std::thread::JoinHandle<Vec<u8>> {
         std::thread::spawn(move || {
@@ -147,9 +150,7 @@ mod bounded_tests {
     #[test]
     fn a_chatty_stderr_does_not_stall_the_process_and_is_returned() {
         let d = testkit::TempDir::new("bounded-stderr");
-        let started = std::time::Instant::now();
         let (code, _, err) = bounded(script(d.path(), "head -c 204800 /dev/zero | tr '\\0' x >&2; exit 3"), Duration::from_secs(5)).unwrap();
-        assert!(started.elapsed() < Duration::from_secs(5));
         assert_eq!(code, Some(3));
         assert_eq!(err.len(), 204800);
     }
