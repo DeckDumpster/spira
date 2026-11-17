@@ -1,8 +1,9 @@
 # The test registry's flip path as an operator meets it: a round finds two tests red on its
-# combined tree and green on every member alone, disables each in the registry for its hold (seven
-# days) with a follow-on bead, and lands without them; the ops pane lists both with their beads and
-# expiry; the first follow-on lands and its landing clears its row; the second never lands, its row
-# expires, the pane empties, and a later round finds the test red again. Run it with
+# combined tree and green on every member alone, disables each in the registry for its hold with a
+# follow-on bead, and lands without them; the ops pane lists both with their beads and expiry; the
+# first follow-on lands and its landing clears its row; the second never lands, its row expires,
+# the pane empties, and a later round finds the test red again. The hold is set to a day, not the
+# registry's seven, so the walk costs seconds of real time. Run it with
 # `sim run test-registry-flip`.
 #
 # A loop world: the registry is the real file and verbs, the disabling is batcher-cut's own
@@ -11,7 +12,8 @@
 # the attribution itself is the batcher's tests (spira/sim/src/loopworld.rs).
 driver = "loop"
 goal = "sp-tr02:LANDED"
-until = 700000000
+until = 120000000
+settings = { SPIRA_TEST_REGISTRY_HOLD_SECS = "86400" }
 
 [[bead]]
 id = "sp-tr01"
@@ -20,7 +22,7 @@ at = 30000
 # Past the second row's expiry: its test is out of the deny list and blocks its round again.
 [[bead]]
 id = "sp-tr04"
-at = 650000000
+at = 95000000
 
 [[flip]]
 test = "unit:loom factory::tests::cleared_by_landing"
@@ -32,7 +34,7 @@ test = "unit:loom factory::tests::left_to_expire"
 members = ["sp-tr01", "sp-tr04"]
 follow_on = "sp-tr03"
 follow_on_lands = false
-blocks_again_after = 650000000
+blocks_again_after = 95000000
 
 # The round has landed and neither follow-on has: both rows are held.
 [[look]]
@@ -47,6 +49,6 @@ rows = [
 at = 10000000
 rows = [{ test = "unit:loom factory::tests::left_to_expire", bead = "sp-tr03" }]
 
-# Seven days and a little on: nothing is held.
+# A day and a little on: nothing is held.
 [[look]]
-at = 640000000
+at = 90000000
