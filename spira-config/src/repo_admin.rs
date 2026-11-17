@@ -588,10 +588,10 @@ fn worktree_root_under(run: &Path) -> PathBuf {
     run.join("worktree")
 }
 
-fn pid_alive_proc(pid: u32) -> bool {
+fn pid_alive(pid: u32) -> bool {
     // SAFETY: signal 0 only probes for the pid; nothing is delivered.
-    unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
-        || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+    let rc = unsafe { libc::kill(pid as libc::pid_t, 0) };
+    rc == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
 }
 
 /// Remove every `repo-check-<pid>-*` entry under `root` whose pid is gone; a name whose pid
@@ -620,7 +620,7 @@ pub fn cut_worktree(repo: &Path, land: &str) -> Result<Worktree, String> {
 
 pub fn cut_worktree_in(root: &Path, repo: &Path, land: &str) -> Result<Worktree, String> {
     std::fs::create_dir_all(root).map_err(|e| format!("{}: {e}", root.display()))?;
-    reap_dead_checks(root, &pid_alive_proc);
+    reap_dead_checks(root, &pid_alive);
     let _ = git(repo, &["worktree", "prune"]);
     let dir = root.join(format!(
         "{CHECK_PREFIX}{}-{}",
