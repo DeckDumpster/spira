@@ -326,7 +326,7 @@ mod tests {
 
     #[test]
     fn repository_names_that_could_alias_or_escape_get_pools_of_their_own() {
-        let root = Path::new("/r");
+        let root = Path::new("r");
         let pools: std::collections::HashSet<PathBuf> = ["a/b", "a_b", "..", ".", "", "a"].iter().map(|n| repo_pool(root, n)).collect();
         assert_eq!(pools.len(), 6);
         assert!(pools.iter().all(|p| p.parent() == Some(&root.join(POOL))));
