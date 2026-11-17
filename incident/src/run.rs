@@ -811,6 +811,11 @@ mod tests {
         let body = &mailer.bodies.borrow()[0];
         assert!(body.contains("Filed by spira-run-sentinel_2dpass-landing.service on agent-swarm-test\n"), "{body}");
         assert!(body.contains("Last run: recurrence 5 at "), "{body}");
+        let default = mailer.defaults.borrow()[0].clone();
+        let (args, wire) = crate::real::question(s, &default, body);
+        let kinds = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/mail/kinds");
+        let input = mail::lint::LintInput { from: "Incident <incident@spira>", subject: s, kind: "question", default: args.default, urgent: false, body: &wire, digest: false };
+        assert_eq!(mail::lint::lint_check(&input, &kinds, "sp"), Ok(()));
     }
 
     #[test]
