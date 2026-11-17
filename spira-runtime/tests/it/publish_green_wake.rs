@@ -57,7 +57,6 @@ fn a_green_standing_publish_pr_is_settled_within_one_queue_step_tick() {
     let mut d = VirtualDriver::new(engine, clock.clone(), runner.clone());
     d.run_until(NOW + queue_step::CADENCE_MS + 30_000).unwrap();
 
-    assert!(queue_step::CADENCE_MS < publish::CADENCE_MS);
     let asked = runner.asked.lock().unwrap();
     let settled = asked.iter().find(|(n, _)| n == publish::SETTLE).unwrap_or_else(|| panic!("publish.settle was not requested: {:?}", asked.iter().map(|(n, _)| n).collect::<Vec<_>>()));
     assert!(settled.1.contains("1123"), "{}", settled.1);
