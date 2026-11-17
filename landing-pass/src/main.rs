@@ -147,7 +147,7 @@ fn pr() -> i32 {
     let tools = RealPrTools { s: &s, out: &out, lc: None };
     let procs = RealProcs { run: s.run.clone() };
     let files = Files::new(&s.run);
-    let lib = RealLib { seam: SeamRunner { home: s.home.clone(), out: &out }, incident: s.incident.clone(), s: s.clone(), beads: beads.clone() };
+    let lib = RealLib { seam: SeamRunner { home: s.home.clone(), out: &out }, s: s.clone(), beads: beads.clone() };
     let land_tools = RealTools::new(s.home.clone(), s.queue_bin.clone(), None, None);
     let p = PrPass {
         s: &s,
@@ -226,7 +226,7 @@ fn land() -> i32 {
         lc_bin: s.lc_bin.clone(),
         client: None,
     };
-    let lib = RealLib { seam: SeamRunner { home: s.home.clone(), out: &out }, incident: s.incident.clone(), s: s.clone(), beads: beads.clone() };
+    let lib = RealLib { seam: SeamRunner { home: s.home.clone(), out: &out }, s: s.clone(), beads: beads.clone() };
     let tools = RealTools::new(s.home.clone(), s.queue_bin.clone(), Some(files.containers()), Some(s.run.join("gate-admission")));
     let procs = RealProcs { run: s.run.clone() };
     let lc = RealLc { bin: s.lc_bin.clone(), client: None };
@@ -363,7 +363,7 @@ fn noverdict_cmd(id: &str, branch: &str, repo: &str, reason: &str, outcome: &str
         lc_bin: s.lc_bin.clone(),
         client: None,
     };
-    let lib = RealLib { seam: SeamRunner { home: s.home.clone(), out: &out }, incident: s.incident.clone(), s: s.clone(), beads };
+    let lib = RealLib { seam: SeamRunner { home: s.home.clone(), out: &out }, s: s.clone(), beads };
     let mut gate_out = String::new();
     let _ = std::io::stdin().read_to_string(&mut gate_out);
     lib.noverdict(id, branch, repo, reason, outcome, &gate_out);
@@ -402,7 +402,7 @@ fn ask_rebase_loop_cmd(args: &[String]) -> i32 {
         lc_bin: s.lc_bin.clone(),
         client: None,
     };
-    let lib = RealLib { seam: SeamRunner { home: s.home.clone(), out: &out }, incident: s.incident.clone(), s: s.clone(), beads };
+    let lib = RealLib { seam: SeamRunner { home: s.home.clone(), out: &out }, s: s.clone(), beads };
     let refs: Vec<&str> = args.iter().map(String::as_str).collect();
     lib.ask_rebase_loop(&refs);
     0

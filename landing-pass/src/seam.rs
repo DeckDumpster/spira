@@ -26,7 +26,6 @@ pub enum Op {
     Context,
     Reopen,
     Event,
-    Incident,
     Rebase,
     Recut,
     BumpRequeue,
@@ -41,7 +40,6 @@ pub const ALL: &[Op] = &[
     Op::Context,
     Op::Reopen,
     Op::Event,
-    Op::Incident,
     Op::Rebase,
     Op::Recut,
     Op::BumpRequeue,
@@ -84,7 +82,6 @@ __kv home "${SPIRA_HOME:-$HERE}"
 __kv run "${SPIRA_RUN:-}"
 __kv repo "${SPIRA_REPO:-}"
 __kv bd_timeout "${BD_TIMEOUT:-180}"
-__kv id_prefix "${SPIRA_ID_PREFIX:-sp}"
 __kv land_maxsec "${SPIRA_LAND_MAXSEC:-3600}"
 __kv gate_reserve "${SPIRA_LAND_GATE_RESERVE:-1200}"
 __kv gate_timeout "${SPIRA_GATE_TIMEOUT:-2700}"
@@ -99,8 +96,6 @@ __kv submitted_label "${SPIRA_SUBMITTED_LABEL:-spira-submitted}"
 __kv rebase_escalate_at "${SPIRA_REBASE_ESCALATE_AT:-3}"
 __kv git_name "${SPIRA_GIT_NAME:-spira}"
 __kv git_email "${SPIRA_GIT_EMAIL:-spira@spira.invalid}"
-__kv incident "${SPIRA_INCIDENT:-incident.sh}"
-__kv scope_label "${SPIRA_SCOPE_LABEL:-}"
 __kv queue_dir "${SPIRA_QUEUE_DIR:-${SPIRA_RUN:-}/queue}"
 __kv halt_grace "${SPIRA_HALT_GRACE:-30}"
 __kv path "${PATH:-}"
@@ -120,24 +115,11 @@ __kv repo_map_ok "$([ -r "${SPIRA_REPO_MAP:-}" ] && printf 1 || printf 0)"
 exit 0
 "#;
 
-const INCIDENT: &str = r#"case "$1" in
-    */*) [ -r "$1" ] || exit 2; __p="$1" ;;
-    *) __p="$(command -v "$1")" || exit 2 ;;
-esac
-if [ -n "$2" ]; then export SPIRA_INCIDENT_LABELS="$2"; else unset SPIRA_INCIDENT_LABELS; fi
-__id="$(SPIRA_INCIDENT_TYPE=bug SPIRA_INCIDENT_PRIORITY=1 SPIRA_INCIDENT_ACTOR=landing \
-    SPIRA_INCIDENT_REPO="$3" SPIRA_INCIDENT_REF="$4" \
-    SPIRA_INCIDENT_CAUSE=base-suite-red bash "$__p" file "$5" - <<< "$6")" || exit 1
-printf '\036%s' "$__id"
-exit 0
-"#;
-
 fn body(op: Op) -> &'static str {
     match op {
         Op::Context => CONTEXT,
         Op::Reopen => "bead_reopen \"$1\" \"$2\" \"$3\" || true\nexit 0\n",
         Op::Event => "spira_event \"$1\" \"$2\" \"$3\" \"$4\" || true\nexit 0\n",
-        Op::Incident => INCIDENT,
         Op::Rebase => "rebase_branch \"$1\" \"$2\" \"$3\" \"$4\"; __rc=$?\nprintf '\\036%s\\035%s\\035%s' \"${REBASE_FAILURE:-}\" \"${REBASE_CONFLICTS:-}\" \"${REBASE_REFUSED_REASON:-}\"\nexit $__rc\n",
         Op::Recut => "recut_onto \"$1\" \"$2\" \"$3\" \"$4\"; __rc=$?\nprintf '\\036%s\\035%s' \"${RECUT_APPLIED_COUNT:-0}\" \"${RECUT_CONFLICTS:-}\"\nexit $__rc\n",
         Op::BumpRequeue => "bump_requeue \"$1\" \"$2\" >/dev/null 2>&1\nexit 0\n",

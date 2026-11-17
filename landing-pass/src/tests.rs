@@ -211,10 +211,6 @@ impl Lib for FakeLib {
     fn noverdict(&self, id: &str, _: &str, repo: &str, reason: &str, outcome: &str, _: &str) {
         self.rec(format!("noverdict {id} {repo} {reason} {outcome}"));
     }
-    fn incident(&self, labels: &str, repo: &str, ext: &str, title: &str, payload: &str) -> Result<String, i32> {
-        self.rec(format!("incident {labels} {repo} {ext} {title}\n{payload}"));
-        self.incident_out.borrow().clone().unwrap_or(Ok("filing…\nsp-inc1\n".into()))
-    }
     fn file_incident(&self, f: &crate::model::IncidentFiling) -> Result<String, String> {
         self.rec(format!("incident {} {} {} {}\n{}", f.cause, f.repo, f.reference, f.title, f.body));
         match self.incident_out.borrow().clone() {
@@ -678,17 +674,15 @@ fn a_bead_reopened_while_its_gate_ran_is_not_reopened_or_certified() {
 }
 
 #[test]
-fn the_base_red_id_is_found_among_the_intakes_trailing_lines() {
+fn a_base_red_incident_that_cannot_be_filed_is_logged_and_the_pass_goes_on() {
     let h = H::new(LandMode::QueueLocal);
     h.closed("sp-a", "t1");
     let out = "gate: VERDICT=BASE_FAIL reason=base-red branch=b repo=spira suite=test-x.sh\n".to_string();
     h.tools.gates.borrow_mut().insert("spira/sp-a".into(), (76, out));
-    *h.lib.incident_out.borrow_mut() = Some(Ok("filing…\nsp-inc9\ndelivers: sp-inc9: delivers:action written\n".into()));
-    fs::create_dir_all(h.s.incident.parent().unwrap()).unwrap();
-    fs::write(&h.s.incident, "").unwrap();
+    *h.lib.incident_out.borrow_mut() = Some(Err(1));
     h.run();
-    assert!(h.logged("CHECK6 spira: the base's own red is sp-inc9 (suite test-x.sh)"));
-    assert!(!h.logged("the intake returned no bead id"));
+    assert!(h.logged("CHECK6 spira: the base's own red was not filed: exit 1"));
+    assert!(!h.lib.has("reopen"));
 }
 
 #[test]
@@ -697,11 +691,9 @@ fn a_base_red_with_no_suite_name_is_keyed_by_the_base_sha() {
     h.closed("sp-a", "t1");
     let out = "gate: VERDICT=BASE_FAIL reason=base-red branch=b repo=spira suite=-\n".to_string();
     h.tools.gates.borrow_mut().insert("spira/sp-a".into(), (76, out));
-    fs::create_dir_all(h.s.incident.parent().unwrap()).unwrap();
-    fs::write(&h.s.incident, "").unwrap();
     h.run();
     let inc = h.lib.find("incident ");
-    assert!(inc.starts_with("incident  spira basefail:spira:-@"), "{inc}");
+    assert!(inc.starts_with("incident base-suite-red spira basefail:spira:-@"), "{inc}");
     assert!(!inc.split_whitespace().nth(1).is_some_and(|l| l.split(',').any(|x| x == "plan")), "a base-red incident is never claimable plan work: {inc}");
     assert!(!inc.contains("basefail:spira:- "), "{inc}");
 }
@@ -715,12 +707,10 @@ fn a_red_base_files_one_incident_per_repository_per_pass_and_charges_nobody() {
     let out = "--- base\ntest-x.sh RED\ngate: VERDICT=BASE_FAIL reason=base-red branch=b repo=spira suite=test-x.sh\n".to_string();
     h.tools.gates.borrow_mut().insert("spira/sp-a".into(), (76, out.clone()));
     h.tools.gates.borrow_mut().insert("spira/sp-b".into(), (76, out));
-    fs::create_dir_all(h.s.incident.parent().unwrap()).unwrap();
-    fs::write(&h.s.incident, "").unwrap();
     h.run();
     assert_eq!(h.lib.count("incident "), 1);
     let inc = h.lib.find("incident ");
-    assert!(inc.starts_with("incident  spira basefail:spira:test-x.sh spira's own gate fails against local/main — nothing can land"), "{inc}");
+    assert!(inc.starts_with("incident base-suite-red spira basefail:spira:test-x.sh spira's own gate fails against local/main — nothing can land"), "{inc}");
     assert!(inc.contains("  failing suite    test-x.sh\n  gate verdict     BASE_FAIL (base-red)"), "{inc}");
     assert!(h.logged("CHECK6 spira: the base's own red is sp-inc1 (suite test-x.sh)"));
     assert!(!h.lib.has("reopen"));
@@ -734,8 +724,6 @@ fn a_branch_held_behind_a_red_base_is_certified_on_the_pass_after_the_base_is_gr
     h.closed("sp-a", "t1");
     let red = "--- base\ntest-x.sh RED\ngate: VERDICT=BASE_FAIL reason=base-red branch=b repo=spira suite=test-x.sh\n";
     h.tools.gates.borrow_mut().insert("spira/sp-a".into(), (76, red.into()));
-    fs::create_dir_all(h.s.incident.parent().unwrap()).unwrap();
-    fs::write(&h.s.incident, "").unwrap();
     h.run();
     assert!(!h.mailbox().contains("certified spira/sp-a"), "held, not certified");
     assert!(!h.lib.has("reopen"));
@@ -2518,8 +2506,6 @@ fn a_filed_no_verdict_is_nobodys_and_charges_nothing() {
 fn a_filed_base_fail_holds_the_branch_and_files_the_bases_own_red() {
     let h = h_worker(LandMode::Queue);
     h.closed("sp-a", "t1");
-    fs::create_dir_all(h.s.incident.parent().unwrap()).unwrap();
-    fs::write(&h.s.incident, "").unwrap();
     file_verdict(&h, "sp-a", "t1", 76, "--- base\ntest-x.sh RED\ngate: VERDICT=BASE_FAIL reason=base-red branch=b repo=spira suite=test-x.sh\n");
     h.run();
     assert_eq!(h.lib.count("incident "), 1);
@@ -2659,8 +2645,6 @@ fn a_verdict_in_another_repo_leaves_the_incident_open() {
 #[test]
 fn a_base_fail_verdict_closes_the_repos_gate_unjudged_incident_once() {
     let h = h_with_unjudged_incident();
-    fs::create_dir_all(h.s.incident.parent().unwrap()).unwrap();
-    fs::write(&h.s.incident, "").unwrap();
     verdict_on_sp_b(&h, 76, "--- base\ntest-x.sh RED\ngate: VERDICT=BASE_FAIL reason=base-red branch=b repo=spira suite=test-x.sh\n");
     assert_eq!(h.lib.count("close_incident"), 1, "{:?}", h.lib.calls.borrow());
     let c = h.lib.find("close_incident sp-inc1 ");
