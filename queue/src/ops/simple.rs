@@ -873,7 +873,7 @@ pub fn resubmit(
     if row.holds.iter().any(|h| h == "manual") {
         w.out(format!("queue.sh resubmit: {id} re-tipped to {tip}, {} -> SUBMITTED; it stays held manual, so the batcher will not cut it — run queue round open --members {id}:{tip} --by concierge, or spira-lc unhold {id} manual … to return it to the batcher", row.state));
     } else if !row.holds.is_empty() {
-        w.out(format!("queue.sh resubmit: {id} re-tipped to {tip}, {} -> SUBMITTED; it stays held {}, so the batcher will not cut it — spira-lc unhold {id} <kind> … returns it to the batcher", row.state, row.holds.join(",")));
+        w.out(format!("queue.sh resubmit: {id} re-tipped to {tip}, {} -> SUBMITTED; it stays held {holds}, so it is not gated until the hold lifts — spira-lc unhold {id} <kind> … lifts it", row.state, holds = row.holds.join(",")));
     } else {
         w.out(format!("queue.sh resubmit: {id} re-tipped to {tip}, {} -> SUBMITTED; the batcher cuts it as a provisional member until its gate passes", row.state));
     }

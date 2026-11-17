@@ -608,9 +608,12 @@ impl<'a> Pass<'a> {
             Ok(tip) => tip,
             Err(f) => return f,
         };
-        if !bead.holds.is_empty() {
+        if bead.holds.iter().any(|h| h != "manual") {
             self.log(&format!("CHECK6 {id}: {br} is held ({}) — not gated until the hold lifts", bead.holds.join(", ")));
             return Flow::Next;
+        }
+        if !bead.holds.is_empty() {
+            self.log(&format!("CHECK6 {id}: {br} is held (manual) — gated; the hold keeps it out of the cut"));
         }
         if self.beads.in_round(id) {
             self.files.clear_unrounded(br);
