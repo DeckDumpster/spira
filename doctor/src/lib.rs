@@ -669,9 +669,11 @@ pub fn check_root_writers(w: &dyn World) -> Vec<Line> {
     use ports::RootScan;
     use std::collections::BTreeMap;
     let mut lines = Vec::new();
+    let mut held: Vec<PathBuf> = Vec::new();
     match w.root_writers() {
         RootScan::Blind(why) => lines.push(warn(format!("cannot tell who writes to the root filesystem: {why}"), "an unreadable /proc is not evidence of no writers.")),
         RootScan::Seen(writers) => {
+            held = writers.iter().map(|x| x.path.clone()).collect();
             let mut groups: BTreeMap<(String, String, PathBuf), (Vec<u32>, bool)> = BTreeMap::new();
             for x in &writers {
                 let dir = x.path.parent().map(Path::to_path_buf).unwrap_or_else(|| x.path.clone());
@@ -692,7 +694,7 @@ pub fn check_root_writers(w: &dyn World) -> Vec<Line> {
             }
         }
     }
-    for t in w.root_targets() {
+    for t in w.root_targets().into_iter().filter(|t| !held.iter().any(|h| h.starts_with(t))) {
         lines.push(warn(
             format!("cargo target on the root filesystem: {} — no live process holds it; reclaim it (lossless) and point whatever made it at its SSD per wiki disk-model", t.display()),
             "",

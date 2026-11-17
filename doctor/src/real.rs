@@ -755,7 +755,7 @@ pub fn cgroup_unit(cgroup: &str) -> String {
     cgroup_path(cgroup).rsplit('/').next().unwrap_or("").to_string()
 }
 
-fn scan_root_writers(proc: &Path, root: &Path, own: u32) -> RootScan {
+pub fn scan_root_writers(proc: &Path, root: &Path, own: u32) -> RootScan {
     let Ok(rd) = std::fs::read_dir(proc) else { return RootScan::Blind(format!("cannot read {}", proc.display())) };
     let (mut readable, mut out) = (0usize, Vec::new());
     for e in rd.flatten() {
@@ -789,7 +789,7 @@ fn scan_root_writers(proc: &Path, root: &Path, own: u32) -> RootScan {
     RootScan::Seen(out)
 }
 
-fn target_roots_in(parent: &Path, root: &Path) -> Vec<PathBuf> {
+pub fn target_roots_in(parent: &Path, root: &Path) -> Vec<PathBuf> {
     let Ok(rd) = std::fs::read_dir(parent) else { return Vec::new() };
     let mut v: Vec<PathBuf> = rd.flatten().map(|e| e.path()).filter(|p| p.join("CACHEDIR.TAG").is_file() && same_device(p, root) == Some(true)).collect();
     v.sort();

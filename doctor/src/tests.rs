@@ -769,7 +769,54 @@ fn root_writers_fails_a_build_writer_and_warns_for_any_other() {
     *f.root_scan.borrow_mut() = Seen(vec![writer(1, "cargo", "home/x/.cargo/.package-cache", true), writer(2, "syslogd", "var/log/syslog", false)]);
     let lines = check_root_writers(&f);
     assert_eq!(levels(&lines), vec![Level::Fail, Level::Warn]);
-    assert!(lines[0].msg.contains("cargo") && lines[0].msg.contains("home/x/.cargo"), "{:?}", lines[0].msg);
+    assert!(lines[0].msg.contains("cargo") && lines[0].msg.contains("home/x/.cargo") && lines[0].msg.contains("app.slice") && lines[0].msg.contains(": 1)"), "{:?}", lines[0].msg);
+    assert!(lines[0].detail.as_deref().unwrap_or("").contains("disk-model"));
+}
+
+#[test]
+fn a_target_a_live_writer_holds_is_not_reported_as_unheld() {
+    let f = Fake::default();
+    *f.root_scan.borrow_mut() = crate::ports::RootScan::Seen(vec![writer(1, "rustc", "var/tmp/a-target/debug/x", true)]);
+    *f.root_targets.borrow_mut() = vec!["var/tmp/a-target".into()];
+    assert_eq!(levels(&check_root_writers(&f)), vec![Level::Fail]);
+}
+
+#[test]
+fn scan_finds_a_writer_on_the_root_device_blind_without_proc_and_skips_itself() {
+    use crate::ports::RootScan;
+    let d = testkit::TempDir::new("doctor-scan");
+    let proc = d.path().join("proc");
+    let data = d.path().join("data");
+    std::fs::create_dir_all(&data).unwrap();
+    let file = data.join("out");
+    std::fs::write(&file, b"x").unwrap();
+    for (pid, flags) in [("10", "0100002"), ("11", "0100000"), ("12", "0100002")] {
+        let p = proc.join(pid);
+        std::fs::create_dir_all(p.join("fd")).unwrap();
+        std::fs::create_dir_all(p.join("fdinfo")).unwrap();
+        std::os::unix::fs::symlink(&file, p.join("fd/3")).unwrap();
+        std::fs::write(p.join("fdinfo/3"), format!("flags:\t{flags}\n")).unwrap();
+        std::fs::write(p.join("comm"), "cargo\n").unwrap();
+        std::fs::write(p.join("environ"), b"RUSTC_WRAPPER=/w\0").unwrap();
+        std::fs::write(p.join("cgroup"), "0::/app.slice/u.service\n").unwrap();
+    }
+    std::fs::create_dir_all(proc.join("13")).unwrap();
+    let RootScan::Seen(w) = crate::real::scan_root_writers(&proc, d.path(), 12) else { panic!("expected Seen") };
+    assert_eq!(w.len(), 1, "{w:?}");
+    assert_eq!((w[0].pid, w[0].comm.as_str(), w[0].unit.as_str(), w[0].build), (10, "cargo", "u.service", true));
+    assert_eq!(w[0].path, file);
+    assert!(matches!(crate::real::scan_root_writers(&d.path().join("none"), d.path(), 0), RootScan::Blind(_)));
+    assert!(matches!(crate::real::scan_root_writers(&proc.join("13"), d.path(), 0), RootScan::Blind(_)), "no readable fd dir is blind, not empty");
+}
+
+#[test]
+fn target_roots_are_the_tagged_children_only() {
+    let d = testkit::TempDir::new("doctor-targets");
+    std::fs::create_dir_all(d.path().join("a-target")).unwrap();
+    std::fs::write(d.path().join("a-target/CACHEDIR.TAG"), b"").unwrap();
+    std::fs::create_dir_all(d.path().join("plain")).unwrap();
+    assert_eq!(crate::real::target_roots_in(d.path(), d.path()), vec![d.path().join("a-target")]);
+    assert!(crate::real::target_roots_in(d.path(), Path::new(system_paths::PROC)).is_empty());
 }
 
 #[test]
