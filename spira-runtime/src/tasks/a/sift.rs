@@ -194,6 +194,27 @@ pub static MOVES: &[(Sifted, Sifted)] = &[
 pub struct Carry {
     pub beads: BTreeMap<String, (Sifted, String)>,
     pub pending: BTreeMap<String, Act>,
+    /// The send-back last attempted for each bead, by `(tip, base)`: an attempt is made once.
+    pub sent: BTreeMap<String, Attempt>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Outcome {
+    #[default]
+    Pending,
+    Applied,
+    Failed(String),
+}
+
+/// One send-back of `tip` judged against `base` in `repo`.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Attempt {
+    pub repo: String,
+    pub tip: String,
+    pub base: String,
+    pub outcome: Outcome,
 }
 
 /// `sift::machine::Sifted` standing at `s`: the events that lead there.
@@ -362,6 +383,8 @@ pub struct Write {
     pub keeper: String,
     /// The note the send-back stands on, recorded as its `send-back` fact once it is sent.
     pub brief: String,
+    /// The inbox line to write once the store has applied the send-back.
+    pub told: String,
 }
 
 impl Recorded<'_> {
@@ -405,6 +428,15 @@ impl sift::Acts for Recorded<'_> {
 
     fn tell(&mut self, msg: &str) {
         let line = format!("{} [watch:sift] {msg}", self.stamp);
+        if let Some(act) = self.acts.last_mut().filter(|a| a.effect == SEND_BACK) {
+            if let Ok(mut w) = serde_json::from_str::<Write>(&act.input) {
+                if msg.starts_with(&format!("SIFT sent {} ", w.id)) {
+                    w.told = line;
+                    act.input = serde_json::to_string(&w).unwrap_or_default();
+                    return;
+                }
+            }
+        }
         self.acts.push(Act::new(INBOX_APPEND, &line).with_input(line));
     }
 }
@@ -438,9 +470,36 @@ pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Act>) {
         let probe = SnapProbe { repo, by_tip };
         let sifted = repo.rows.iter().filter_map(|r| r.sifted_tip.clone().map(|t| (r.id.clone(), t))).collect();
         let mut rec = Recorded { acts: vec![], tips: pool.iter().map(|c| (c.id.clone(), c.tip.clone())).collect(), sifted, stamp: &stamp };
+        let refused: BTreeMap<String, Option<(Sifted, String)>> = pool
+            .iter()
+            .filter(|c| repo.candidates.get(&c.id).is_some_and(|f| store.carry.borrow().sent.get(&c.id).is_some_and(|a| a.tip == c.tip && a.base == f.base)))
+            .map(|c| (c.id.clone(), store.carry.borrow().beads.get(&c.id).cloned()))
+            .collect();
         sift::screen(&probe, &store, &mut rec, &pool, &open);
-        acts.extend(rec.acts);
+        let mut attempts = vec![];
+        for a in rec.acts {
+            let Some(w) = serde_json::from_str::<Write>(&a.input).ok().filter(|_| a.effect == NOTE || a.effect == SEND_BACK) else {
+                acts.push(a);
+                continue;
+            };
+            if let Some(before) = refused.get(&w.id) {
+                let mut carry = store.carry.borrow_mut();
+                match before {
+                    Some(b) => carry.beads.insert(w.id.clone(), b.clone()),
+                    None => carry.beads.remove(&w.id),
+                };
+                continue;
+            }
+            if a.effect == SEND_BACK {
+                let base = repo.candidates.get(&w.id).map(|f| f.base.clone()).unwrap_or_default();
+                attempts.push((w.id.clone(), Attempt { repo: name.clone(), tip: w.tip.clone(), base, outcome: Outcome::Pending }));
+            }
+            acts.push(a);
+        }
+        store.carry.borrow_mut().sent.extend(attempts);
     }
+    let live: BTreeMap<&str, &str> = snap.repos.iter().flat_map(|(n, r)| r.rows.iter().map(move |row| (row.id.as_str(), n.as_str()))).collect();
+    store.carry.borrow_mut().sent.retain(|id, a| live.get(id.as_str()).is_some_and(|n| *n == a.repo) || !snap.repos.contains_key(&a.repo));
     (store.carry.into_inner(), acts)
 }
 
@@ -482,7 +541,7 @@ fn note_key(send_back_key: &str) -> String {
     format!("{}:note", send_back_key.strip_suffix(":GateRed").unwrap_or(send_back_key))
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Map { name: "beads", drop: &[] }, runtime::rows::Part::Map { name: "pending", drop: &[] }];
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Map { name: "beads", drop: &[] }, runtime::rows::Part::Map { name: "pending", drop: &[] }, runtime::rows::Part::Map { name: "sent", drop: &[] }];
 
 impl Handler for Sift {
     fn interests(&self) -> &[EventKindTag] {
@@ -504,11 +563,35 @@ impl Handler for Sift {
             let handoff = Act::new(kit::WORK_SUBMITTED, format!("{}:{}", w.id, w.tip)).with_input(serde_json::json!({ "id": w.id, "tip": w.tip }).to_string());
             return kit::commands(&SHAPE, ACTS, EMITS, &carry, &carry, vec![handoff]);
         }
-        if let Some(spec) = crate::watchers::answered_spec(view, ev).filter(|s| s.name == NOTE) {
+        let answered = crate::watchers::answered_spec(view, ev).filter(|s| s.name == NOTE || s.name == SEND_BACK);
+        if let Some(spec) = answered {
             let Ok(w) = serde_json::from_str::<Write>(&spec.input) else { return vec![] };
+            let ok = ev.kind.tag == EFFECT_SUCCEEDED;
+            let why = if ev.kind.body.is_empty() { format!("timed out after {} ms", spec.deadline_ms) } else { ev.kind.body.clone() };
+            let line = |msg: String| Act::new(INBOX_APPEND, format!("{} {}", w.id, msg)).with_input(format!("{} [watch:sift] {msg}", stamp(ev.at)));
             let mut next = carry.clone();
-            let held = next.pending.remove(&format!("{}:{}:note", w.id, w.tip));
-            let acts = held.filter(|_| ev.kind.tag == EFFECT_SUCCEEDED).into_iter().collect();
+            let settle = |next: &mut Carry, outcome: Outcome| {
+                if let Some(a) = next.sent.get_mut(&w.id).filter(|a| a.tip == w.tip) {
+                    a.outcome = outcome;
+                }
+            };
+            let acts = if spec.name == NOTE {
+                let held = next.pending.remove(&format!("{}:{}:note", w.id, w.tip));
+                match (held, ok) {
+                    (Some(act), true) => vec![act],
+                    (Some(_), false) => {
+                        settle(&mut next, Outcome::Failed(why.clone()));
+                        vec![line(format!("SIFT held {} at {}: evidence note failed: {why}", w.id, w.tip))]
+                    }
+                    (None, _) => vec![],
+                }
+            } else if ok {
+                settle(&mut next, Outcome::Applied);
+                Some(w.told.clone()).filter(|t| !t.is_empty()).map(|t| Act::new(INBOX_APPEND, &t).with_input(t)).into_iter().collect()
+            } else {
+                settle(&mut next, Outcome::Failed(why.clone()));
+                vec![line(format!("SIFT could not send {} to REWORK at {}: {why}", w.id, w.tip))]
+            };
             return kit::commands(&SHAPE, ACTS, EMITS, &carry, &next, acts);
         }
         let Some(snap) = kit::observed::<Snapshot>(&SHAPE, view, ev) else { return vec![] };
