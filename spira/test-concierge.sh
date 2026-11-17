@@ -24,6 +24,12 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 HARNESS="$(cd "$HERE/.." && pwd)"
 . "$HERE/testlib.sh"
+
+tmux_kill_pane_dead() {
+    tmux -L "$1" set-hook -t "$2" pane-died "wait-for -S $2-died" || return 1
+    kill "$(tmux -L "$1" list-panes -t "$2" -F '#{pane_pid}')" || return 1
+    timeout 60 tmux -L "$1" wait-for "$2-died"
+}
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 
 # EVERY `concierge.sh start` BELOW MUST NEVER TOUCH THE OPERATOR'S REAL CLIENT SETTINGS.
@@ -499,15 +505,13 @@ dp_env() { env -u SPIRA_ADOPT_CONFIGURE_DEFAULT SPIRA_TOML="$DP_TOML" PATH="$DP/
 dp_pane_dead() { tmux -L "$DP_SOCK" list-panes -t "$DP_SOCK" -F '#{pane_dead}' 2>/dev/null | head -1; }
 tmux -L "$DP_SOCK" kill-server 2>/dev/null || true
 tmux -L "$DP_SOCK" new-session -d -s "$DP_SOCK" "sleep 600" \; set-option -t "$DP_SOCK" remain-on-exit on
-dp_pid="$(tmux -L "$DP_SOCK" list-panes -t "$DP_SOCK" -F '#{pane_pid}')"
 is "the live fixture pane reads live (positive control)" 0 "$(dp_pane_dead)"
 dp_live_out="$(dp_env bash "$HARNESS/concierge.sh" status 2>&1)"
 want   "status reports a live pane as running" "concierge: running" "$dp_live_out"
 dp_live_start="$(dp_env bash "$HARNESS/concierge.sh" start 2>&1 </dev/null)"
 want   "start leaves a live pane alone (positive control)" "already running" "$dp_live_start"
 
-kill "$dp_pid"
-for _i in 1 2 3 4 5 6 7 8 9 10; do [ "$(dp_pane_dead)" = 1 ] && break; sleep 0.2; done
+tmux_kill_pane_dead "$DP_SOCK" "$DP_SOCK"
 is "the fixture pane is dead (positive control)" 1 "$(dp_pane_dead)"
 dp_status="$(dp_env bash "$HARNESS/concierge.sh" status 2>&1)"; dp_status_rc=$?
 want   "status says the pane is dead" "dead" "$dp_status"
@@ -808,10 +812,9 @@ echo "wake — refuses rather than typing into a dead pane (sp-rig42)"
 # tearing the whole session down with it, which is what lets this be tested directly.
 WK_SOCK="test-wake-dead-$$"
 tmux -L "$WK_SOCK" kill-server 2>/dev/null || true
-tmux -L "$WK_SOCK" new-session -d -s "$WK_SOCK" -x 80 -y 24
-tmux -L "$WK_SOCK" set-option -t "$WK_SOCK" remain-on-exit on
-tmux -L "$WK_SOCK" send-keys -t "$WK_SOCK" -l -- "exit" && tmux -L "$WK_SOCK" send-keys -t "$WK_SOCK" Enter
-sleep 0.5
+tmux -L "$WK_SOCK" new-session -d -s "$WK_SOCK" -x 80 -y 24 "exec sleep 600" \; set-option -t "$WK_SOCK" remain-on-exit on
+tmux_kill_pane_dead "$WK_SOCK" "$WK_SOCK"
+is "the wake fixture pane is dead (positive control)" 1 "$(tmux -L "$WK_SOCK" list-panes -t "$WK_SOCK" -F '#{pane_dead}' | head -1)"
 
 out_wake="$(CONCIERGE_SOCKET="$WK_SOCK" CONCIERGE_SESSION="$WK_SOCK" \
     bash "$HARNESS/concierge.sh" wake "hi" 2>&1)"; rc_wake=$?
