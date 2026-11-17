@@ -1355,7 +1355,8 @@ fn a_checkpoint_completes_after_checkpoint_every_commits() {
     }
     // clock-safe: a cap on the wait for the checkpointer thread's completion, which has no signal to block on
     let until = std::time::Instant::now() + std::time::Duration::from_secs(10); // clock-safe: cap on the wait
-    while state_store_sqlite::bench::wal_backfill(&path).unwrap() == 0 {
+    let wal = format!("{}-wal", path.display());
+    while std::fs::metadata(&wal).unwrap().len() != 0 {
         assert!(std::time::Instant::now() < until, "no checkpoint completed"); // clock-safe: cap on the wait
         std::thread::sleep(std::time::Duration::from_millis(10)); // clock-safe: polls the WAL index the thread writes
     }
