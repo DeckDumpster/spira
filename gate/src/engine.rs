@@ -37,6 +37,12 @@ pub struct Verdict {
     pub msg: String,
 }
 
+/// A build directory is sound to reuse when the gate judged the tree or was cut at a cap; a
+/// refusal means the target itself is suspect.
+pub(crate) fn hands_on_build(vd: &Verdict) -> bool {
+    vd.status != NOVERDICT || matches!(vd.reason.as_str(), "phase-cap" | "budget" | "deadline" | "timeout")
+}
+
 fn v(status: i32, reason: &str, msg: impl Into<String>) -> Verdict {
     Verdict {
         status,
@@ -1926,7 +1932,7 @@ impl<'w, W: World> Trial<'w, W> {
             w.remove(&f);
         }
         if let Some(t) = &self.s.tree {
-            w.release_target(t, vd.status == PASS && self.a.release_bins, vd.status != NOVERDICT, self.s.target_cap_mib, &self.s.repo_name);
+            w.release_target(t, vd.status == PASS && self.a.release_bins, hands_on_build(&vd), self.s.target_cap_mib, &self.s.repo_name);
             w.remove(&PathBuf::from(format!("{}.lock.holder", t.display())));
             if self.s.held_lock && vd.status != PASS && w.exists(&t.join(".git")) {
                 w.remove_worktree(&self.s.repo, t);

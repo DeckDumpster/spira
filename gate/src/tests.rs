@@ -1,7 +1,7 @@
 //! The decision logic driven through a recording fake of every boundary (DESIGN.md "Boundaries").
 
 use crate::compose::Changed;
-use crate::engine::{Args, Trial, BASEFAIL, BASE_RERUN_MARK, FAIL, NOVERDICT, PASS};
+use crate::engine::{hands_on_build, Args, Trial, Verdict, BASEFAIL, BASE_RERUN_MARK, FAIL, NOVERDICT, PASS};
 use crate::fencecache;
 use crate::key;
 use crate::ports::{Ctx, Merge, World};
@@ -150,7 +150,7 @@ struct Fake {
     target_repos: RefCell<Vec<String>>,
     target_roots: RefCell<Vec<String>>,
     released: RefCell<Vec<(PathBuf, bool)>>,
-    judged: RefCell<Vec<bool>>,
+    hand_on: RefCell<Vec<bool>>,
     release_caps: RefCell<Vec<u64>>,
     // ---- the base-suite cache (sp-kqger)
     /// What `testenv container tag` answers; a real image tag by default so every test not
@@ -327,7 +327,7 @@ impl Fake {
             target_repos: RefCell::new(Vec::new()),
             target_roots: RefCell::new(Vec::new()),
             released: RefCell::new(Vec::new()),
-            judged: RefCell::new(Vec::new()),
+            hand_on: RefCell::new(Vec::new()),
             release_caps: RefCell::new(Vec::new()),
             image_tag: RefCell::new((0, "tag1".into())),
             base_tree_override: RefCell::new(None),
@@ -774,8 +774,8 @@ impl World for Fake {
     fn target_intact(&self, _: &Path) -> bool {
         !self.target_swept.get()
     }
-    fn release_target(&self, tree: &Path, keep_release: bool, judged: bool, cap_mib: u64, _: &str) {
-        self.judged.borrow_mut().push(judged);
+    fn release_target(&self, tree: &Path, keep_release: bool, hand_on: bool, cap_mib: u64, _: &str) {
+        self.hand_on.borrow_mut().push(hand_on);
         self.release_caps.borrow_mut().push(cap_mib);
         self.released.borrow_mut().push((tree.to_path_buf(), keep_release));
     }
@@ -4127,17 +4127,42 @@ fn a_scratch_short_verdict_names_the_configured_root_and_what_the_targets_held()
     assert!(e.contains("the user's quota"), "{e}");
 }
 
-/// Only a tree the gate judged hands its build directory on; a cut or refused one does not.
+/// A judged tree and one cut at a cap hand their build directory on; a refused one does not.
 #[test]
-fn a_build_directory_is_handed_on_only_when_the_gate_judged_the_tree() {
+fn a_build_directory_is_handed_on_when_judged_or_cut_and_not_when_refused() {
     let f = tree_owned(Some(STEPS), Some(STEPS));
     assert_eq!(f.run(), PASS, "{}", f.stderr());
-    assert_eq!(f.judged.borrow().as_slice(), &[true]);
+    assert_eq!(f.hand_on.borrow().as_slice(), &[true]);
+
+    let f = capped_with_steps();
+    assert_eq!(f.run(), NOVERDICT, "{}", f.stderr());
+    assert!(f.verdict_line().contains("reason=phase-cap"), "{}", f.verdict_line());
+    assert!(f.hand_on.borrow().contains(&true), "{:?}", f.hand_on.borrow());
 
     let f = Fake::new();
     f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, "test-a.sh RED\nNo space left on device".into()));
     assert_eq!(f.run(), NOVERDICT, "{}", f.stderr());
-    assert!(!f.judged.borrow().contains(&true), "{:?}", f.judged.borrow());
+    assert!(!f.hand_on.borrow().contains(&true), "{:?}", f.hand_on.borrow());
+}
+
+#[test]
+fn only_the_cap_reasons_and_judged_statuses_hand_a_build_directory_on() {
+    let vd = |status, reason: &str| Verdict { status, reason: reason.into(), msg: String::new() };
+    for r in ["phase-cap", "budget", "deadline", "timeout"] {
+        assert!(hands_on_build(&vd(NOVERDICT, r)), "{r}");
+    }
+    let src: String = include_str!("engine.rs").chars().filter(|c| !c.is_whitespace()).collect();
+    let mut seen = 0;
+    for part in src.split("v(NOVERDICT,\"").skip(1) {
+        let r = &part[..part.find('"').unwrap()];
+        seen += 1;
+        let cap = matches!(r, "phase-cap" | "budget" | "deadline" | "timeout");
+        assert_eq!(hands_on_build(&vd(NOVERDICT, r)), cap, "{r}");
+    }
+    assert!(seen >= 45, "the scan must find the reasons: {seen}");
+    for s in [PASS, 1, 76] {
+        assert!(hands_on_build(&vd(s, "branch-red")), "{s}");
+    }
 }
 
 /// A build that dies on the exhausted scratch filesystem is infrastructure — never the
