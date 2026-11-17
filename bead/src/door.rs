@@ -130,6 +130,9 @@ pub fn ideas(client: &LcClient, label: &str) -> Result<Vec<IdeaRow>, i32> {
 
 pub type LifecycleRows = Result<HashMap<String, LifecycleRow>, String>;
 
+/// The lifecycle rows of the named beads.
+type LifecycleOf<'a> = dyn Fn(&[String]) -> LifecycleRows + 'a;
+
 /// Which beads `lint` judges.
 pub enum Set {
     All,
@@ -140,7 +143,7 @@ pub enum Set {
 pub struct DoorSource<'a> {
     ids: Vec<String>,
     rows: HashMap<String, Value>,
-    lifecycle: Box<dyn Fn(&[String]) -> LifecycleRows + 'a>,
+    lifecycle: Box<LifecycleOf<'a>>,
 }
 
 fn rows_of(client: &LcClient, args: &[String]) -> Result<Vec<Value>, String> {
