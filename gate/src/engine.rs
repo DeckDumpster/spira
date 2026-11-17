@@ -2275,13 +2275,15 @@ pub fn base_rerun_cmd(suites: &[String]) -> String {
     // test-persona-model.sh) and sp-ooh1k (red on test-install-dolt-*), both after sp-e5v53
     // had already fixed the bare-`testenv`-name defect — a second, independent omission in
     // the same pre-existing call.
+    format!("{BASE_RERUN_MARK}{}", testenv_suites_cmd(&list.join(",")))
+}
+
+fn testenv_suites_cmd(list: &str) -> String {
     format!(
-        "{BASE_RERUN_MARK}_b=0; \"${{SPIRA_TESTENV_BIN:-testenv}}\" --suites {} \"$SPIRA_GATE_BRANCH\" \"$SPIRA_GATE_REPO\" || _b=$?; case \"$_b\" in 2|3|127) exit 75;; *) exit \"$_b\";; esac",
-        list.join(",")
+        "_b=0; \"${{SPIRA_TESTENV_BIN:-testenv}}\" --suites {list} \"$SPIRA_GATE_BRANCH\" \"$SPIRA_GATE_REPO\" || _b=$?; case \"$_b\" in 2|3|127) exit 75;; *) exit \"$_b\";; esac"
     )
 }
 
-const REPO_BUILD_CMD: &str = "_b=0; \"${SPIRA_TESTENV_BIN:-testenv}\" --suites build \"$SPIRA_GATE_BRANCH\" \"$SPIRA_GATE_REPO\" || _b=$?; case \"$_b\" in 2|3|127) exit 75;; *) exit \"$_b\";; esac";
 
 fn short(rev: &str) -> &str {
     rev.get(..12).unwrap_or(rev)
@@ -2517,10 +2519,11 @@ pub fn run_composed<W: World>(
         .filter(|_| comp.suites_off())
         .and_then(|k| w.read(&k.path).and_then(|e| crate::fencecache::fresh(&e, &k.harness, &cmd)));
     if prefix.is_empty() && !comp.suites_off() && w.declares_build_tier(tree) {
-        let (rc, out, wall) = go("build", env, REPO_BUILD_CMD, test_secs);
+        let build_cmd = testenv_suites_cmd("build");
+        let (rc, out, wall) = go("build", env, &build_cmd, test_secs);
         phases.push(("build".to_string(), wall));
         if rc != 0 || w.signalled() {
-            return (rc, out, phases);
+            return (rc, format!("{out}\ngate: phase 'build' failed (exit {rc}): {build_cmd}"), phases);
         }
     }
     let mut out = match proved {

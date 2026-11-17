@@ -90,6 +90,7 @@ struct Fake {
     /// Seconds each run_gate advances the clock by, per command kind.
     phase_secs: Cell<u64>,
     repo_build_secs: Cell<Option<u64>>,
+    repo_build_result: RefCell<Option<(i32, String)>>,
     /// What the gate command writes to `SPIRA_GATE_STEPS`, as (offset from the phase's start, name) lines.
     steps_written: RefCell<Vec<(u64, String)>>,
     /// Every file `remove` was handed.
@@ -300,6 +301,7 @@ impl Fake {
             cmds: RefCell::new(Vec::new()),
             phase_secs: Cell::new(7),
             repo_build_secs: Cell::new(None),
+            repo_build_result: RefCell::new(None),
             steps_written: RefCell::new(Vec::new()),
             removed: RefCell::new(Vec::new()),
             kept_outs: RefCell::new(Vec::new()),
@@ -372,6 +374,9 @@ impl Fake {
         if cmd.starts_with("{ ") && cmd.contains("SPIRA_SELECT_BIN") && !cmd.contains("SPIRA_LINT_BIN") {
             let at = self.checkouts.borrow().last().cloned().unwrap_or_default();
             return self.covered_runs.borrow().get(&at).cloned().unwrap_or((0, String::new()));
+        }
+        if let Some(r) = self.repo_build_result.borrow().clone().filter(|_| cmd.contains("--suites build")) {
+            return r;
         }
         if let Some(list) = cmd
             .split_once("--suites ")
@@ -2747,6 +2752,26 @@ fn a_repo_declaring_a_build_tier_builds_outside_the_cap_and_the_deadline() {
     assert!(!t[0].1.is_empty() && t[0].1.parse::<u64>().unwrap() > 260, "the build is under no phase cap: {t:?}");
     assert!(meter(&f).contains(" phases=build:400,gate:200"), "{}", meter(&f));
     assert!(meter(&f).contains("test_clock=200s"), "{}", meter(&f));
+}
+
+#[test]
+fn a_repo_build_that_stalls_is_a_build_stall_and_the_gate_phase_never_runs() {
+    let f = Fake::new();
+    f.repo_build_secs.set(Some(30));
+    *f.repo_build_result.borrow_mut() = Some((crate::stall::RC, crate::stall::Watch::new(5, 0).message(5)));
+    assert_eq!(f.run(), NOVERDICT);
+    assert!(f.verdict_line().contains("reason=build-stall"), "{}", f.verdict_line());
+    assert!(f.cmds.borrow().iter().all(|c| c.contains("--suites build")), "{:?}", f.cmds.borrow());
+}
+
+#[test]
+fn a_repo_build_that_fails_is_the_branchs_red_and_the_gate_phase_never_runs() {
+    let f = Fake::new();
+    f.repo_build_secs.set(Some(30));
+    *f.repo_build_result.borrow_mut() = Some((1, "error[E0308]".into()));
+    assert_eq!(f.run(), 1, "{}", f.verdict_line());
+    assert!(meter(&f).contains("phases=build:30,"), "{}", meter(&f));
+    assert!(!meter(&f).contains("build:30,gate"), "{}", meter(&f));
 }
 
 #[test]
