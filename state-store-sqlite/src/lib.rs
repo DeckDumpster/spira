@@ -1188,7 +1188,7 @@ impl SqliteBackend {
             return;
         }
         let _ = (|| {
-            let free: i64 = w.conn.query_row("PRAGMA freelist_count", [], |r| r.get(0))?;
+            let free: i64 = w.conn.pragma_query_value(None, "freelist_count", |r| r.get(0))?;
             if free == 0 {
                 return Ok(());
             }
