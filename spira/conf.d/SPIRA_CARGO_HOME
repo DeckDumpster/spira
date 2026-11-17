@@ -1,0 +1,9 @@
+TYPE=string
+GROUP=build
+DOC=WHERE CARGO KEEPS ITS STATE: the cargo home (registry, git checkouts, .global-cache and package-cache locks) every cargo the harness starts on this host runs under. Empty sets no CARGO_HOME, so cargo falls back to $HOME/.cargo; set it to a directory on a fast disk, the same value for every build, because sccache keys a dependency on its registry path.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # WHERE CARGO KEEPS ITS STATE: one cargo home for the gate, a dwarf's session, testenv,
+    # release builds, the queue's release leg and a host round. Empty sets none (cargo uses
+    # $HOME/.cargo). The value must be identical across them: sccache hashes it into a key.
+    : "${SPIRA_CARGO_HOME:=}"
+SPIRA_CONF_DEFAULT_EOF

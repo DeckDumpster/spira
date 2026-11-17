@@ -254,6 +254,7 @@ reconciler_pass_timeout_secs = 50
 testenv_unit_runner = "container"
 testenv_sandbox_target_root = ""
 gate_target_root = ""
+cargo_home = ""
 lc_backup_part_bytes = 268435456
 lc_history_ring_bytes = 67108864
 reconciler_deadman_secs = 180

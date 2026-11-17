@@ -4176,6 +4176,27 @@ fn every_run_compiles_through_the_wrapper_resolved_on_the_commands_path() {
     }
 }
 
+/// The configured cargo home reaches the gate command and the release-bins build alike; an
+/// empty key sets neither.
+#[test]
+fn the_configured_cargo_home_reaches_the_gate_command_and_the_release_bins_build() {
+    let f = Fake::new();
+    f.put_var("SPIRA_CARGO_HOME", "vol/cargo");
+    assert_eq!(f.run_with(true), PASS, "{}", f.stderr());
+    let ran = f.ran.borrow().clone();
+    assert_eq!(f.env_of(0, "CARGO_HOME"), "vol/cargo");
+    assert!(ran.last().unwrap().contains(&("CARGO_HOME".to_string(), "vol/cargo".to_string())), "release-bins: {:?}", ran.last());
+    let g = Fake::new();
+    g.put_var("SPIRA_CARGO_HOME", "");
+    assert_eq!(g.run_with(true), PASS, "{}", g.stderr());
+    assert!(g.ran.borrow().iter().all(|e| e.iter().all(|(k, _)| k != "CARGO_HOME")));
+    let h = Fake::new();
+    h.put_var("SPIRA_CARGO_HOME", "vol/cargo");
+    *h.wrapper.borrow_mut() = Err("sccache is not on the build's PATH (/x)".into());
+    assert_eq!(h.run(), PASS, "{}", h.stderr());
+    assert_eq!(h.env_of(0, "CARGO_HOME"), "vol/cargo", "a refused wrapper still gets the cargo home");
+}
+
 /// Without `SPIRA_SCCACHE_DAV_ADDR` set, no webdav var reaches the build at all — the
 /// no-store case stays exactly as it was before sp-xtdqi.
 #[test]

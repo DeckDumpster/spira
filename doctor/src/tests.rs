@@ -718,7 +718,7 @@ fn placement_roots_name_every_key_and_the_store_directory_and_keep_unset_ones() 
     let get = |k: &str| roots.iter().find(|(n, _)| n.starts_with(k)).map(|(_, p)| p.clone());
     assert_eq!(get("SPIRA_DOLT_DATA"), Some(Some("vol/dolt".into())));
     assert_eq!(get("SPIRA_LC_STORE_PATH"), Some(Some("vol/store".into())));
-    for unset in ["SPIRA_GATE_TARGET_ROOT", "SPIRA_TESTENV_SCRATCH_ROOT", "SPIRA_TESTENV_SANDBOX_TARGET_ROOT", "SPIRA_SCCACHE_DAV_ROOT"] {
+    for unset in ["SPIRA_GATE_TARGET_ROOT", "SPIRA_CARGO_HOME", "SPIRA_TESTENV_SCRATCH_ROOT", "SPIRA_TESTENV_SANDBOX_TARGET_ROOT", "SPIRA_SCCACHE_DAV_ROOT"] {
         assert_eq!(get(unset), Some(None), "{unset} must be a line even when unset");
     }
     assert_eq!(roots.iter().filter(|(n, _)| n.starts_with("SPIRA_DWARF_BUILD_BASE")).count(), 2);

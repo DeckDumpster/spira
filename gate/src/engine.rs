@@ -1567,6 +1567,10 @@ impl<'w, W: World> Trial<'w, W> {
         // required where the trial builds in the tree (below: absent is a refusal, never a cold
         // build of every dependency); a definition that builds nothing never needs it.
         // SPIRA_BUILD_CACHE=off opts out, loudly.
+        self.s.build_env = spira_config::build::cargo_home_env(|k| {
+            let v = ctx.var(k);
+            (!v.is_empty()).then(|| v.to_string())
+        });
         match w.build_wrapper(&self.s.path, ctx.var(spira_config::build::CACHE_ENV)) {
             Ok(wr) => {
                 if wr == spira_config::build::Wrapper::Off {
@@ -1580,7 +1584,7 @@ impl<'w, W: World> Trial<'w, W> {
                     let v = ctx.var(k);
                     (!v.is_empty()).then(|| v.to_string())
                 });
-                self.s.build_env = wr.env(store.as_ref());
+                self.s.build_env.extend(wr.env(store.as_ref()));
                 self.s.build_env.push((spira_config::admission::INHERIT_ENV.to_string(), "gate".to_string()));
             }
             Err(e) => self.s.cache_refusal = Some(e),

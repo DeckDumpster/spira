@@ -35,6 +35,9 @@ pub struct Config {
     /// `spira/conf.d`), so it does not go through `cfg`/`cfg_parse`; see
     /// `cache_home_from_env_or_toml`.
     pub cache_home: Option<String>,
+    /// `cargo_home`: the one cargo home every host cargo runs under; a host round uses it in
+    /// place of `cache_home`. None when unset.
+    pub cargo_home: Option<String>,
     /// `s3://<bucket>/<prefix>` every round VM records passed suites to (`round_vm_resume_url`).
     /// Unset: a round has no resume, and says so.
     pub resume_url: Option<String>,
@@ -93,6 +96,7 @@ pub(crate) struct Fields {
     pub host_pubkey: String,
     pub host_addr: Option<String>,
     pub cache_home: Option<String>,
+    pub cargo_home: Option<String>,
     pub resume_url: Option<String>,
     pub resume_credentials: Option<String>,
     pub testenv_registry: Option<String>,
@@ -252,6 +256,7 @@ impl Config {
             // straight from the environment; defaults unchanged by this migration.
             spira_home: std::env::var("SPIRA_HOME").ok().filter(|v| !v.trim().is_empty()),
             cache_home: cache_home_from_env_or_toml(),
+            cargo_home: declared("SPIRA_CARGO_HOME"),
             resume_url: toml_only("SPIRA_ROUND_VM_RESUME_URL"),
             resume_credentials: toml_only("SPIRA_ROUND_VM_RESUME_CREDENTIALS"),
             setup_alarm_secs: num_env("SPIRA_ROUND_VM_SETUP_ALARM_SECS", 180)?,
@@ -286,6 +291,7 @@ impl Config {
             host_pubkey: PathBuf::from(f.host_pubkey),
             host_addr: f.host_addr,
             cache_home: f.cache_home,
+            cargo_home: f.cargo_home,
             resume_url: f.resume_url,
             resume_credentials: f.resume_credentials.map(PathBuf::from),
             testenv_registry: f.testenv_registry,
@@ -414,6 +420,7 @@ mod tests {
             host_pubkey: "r/round-vm/host_key.pub".into(),
             host_addr: None,
             cache_home: None,
+            cargo_home: None,
             resume_url: None,
             resume_credentials: None,
             testenv_registry: None,

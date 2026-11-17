@@ -122,6 +122,7 @@ pub const RETIRED_VARS: &[&str] = &[
     // (no default) must reach the gate's build the same way `SPIRA_RUN` etc. do, never only
     // when an operator's shell happened to export it first.
     "SPIRA_SCCACHE_DAV_ADDR",
+    "SPIRA_CARGO_HOME",
 ];
 
 /// ONE SOURCE (per Ryan 2026-10-05): `spira_config::process::cfg` — the same per-process

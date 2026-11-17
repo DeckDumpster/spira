@@ -38,6 +38,7 @@ impl Cargo for RealCargo {
             .arg(target)
             .args(spira_config::build::one_shot("release"))
             .envs(wrapper.env(store.as_ref()))
+            .envs(spira_config::build::cargo_home_env_from_process())
             .env_remove("CARGO_TARGET_DIR")
             .env_remove("CARGO_INCREMENTAL")
             .current_dir(tree)

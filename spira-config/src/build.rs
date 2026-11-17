@@ -26,6 +26,25 @@ use std::path::{Path, PathBuf};
 /// explicit, loud opt-out (a host or container without sccache).
 pub const CACHE_ENV: &str = "SPIRA_BUILD_CACHE";
 
+/// The conf.d key naming the one cargo home every host cargo runs under.
+pub const CARGO_HOME_KEY: &str = "SPIRA_CARGO_HOME";
+
+/// `CARGO_HOME=<value>` for a configured cargo home, nothing when the key is empty. Every site
+/// that starts a cargo appends this, so sccache sees one registry path whichever site built.
+pub fn cargo_home_env(get: impl Fn(&str) -> Option<String>) -> Vec<(String, String)> {
+    get(CARGO_HOME_KEY)
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .map(|v| vec![("CARGO_HOME".to_string(), v)])
+        .unwrap_or_default()
+}
+
+/// [`cargo_home_env`] for a binary that builds no config snapshot of its own (`testenv`,
+/// `release`, `queue`): resolved in-process through [`crate::process::cfg`].
+pub fn cargo_home_env_from_process() -> Vec<(String, String)> {
+    cargo_home_env(|k| crate::process::cfg(k).ok())
+}
+
 /// The compiler wrapper every build path uses, resolved on the build's own PATH.
 pub const WRAPPER: &str = "sccache";
 
@@ -348,6 +367,14 @@ fn entries_size(p: &Path) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cargo_home_env_carries_a_set_key_and_nothing_for_an_empty_one() {
+        let set = cargo_home_env(|k| (k == "SPIRA_CARGO_HOME").then(|| "vol/cargo".to_string()));
+        assert_eq!(set, vec![("CARGO_HOME".to_string(), "vol/cargo".to_string())]);
+        assert!(cargo_home_env(|_| Some(String::new())).is_empty());
+        assert!(cargo_home_env(|_| None).is_empty());
+    }
 
     fn fill(p: &Path, kib: usize) {
         std::fs::create_dir_all(p.parent().unwrap()).unwrap();

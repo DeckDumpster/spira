@@ -665,6 +665,7 @@ pub fn placement_roots_from(cfg: impl Fn(&str) -> Option<String>, dwarf_bases: V
         "SPIRA_TESTENV_SCRATCH_ROOT",
         "SPIRA_TESTENV_SANDBOX_TARGET_ROOT",
         "SPIRA_GATE_TARGET_ROOT",
+        "SPIRA_CARGO_HOME",
         "SPIRA_SCCACHE_DAV_ROOT",
         "SPIRA_DOLT_DATA",
     ]
