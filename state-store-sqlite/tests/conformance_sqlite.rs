@@ -480,8 +480,9 @@ const DAY_MS: u64 = 86_400_000;
 /// 2024-10-04T00:00:00Z, the first of the days these tests name.
 const D0: u64 = 20_000 * DAY_MS;
 
+/// Reads in day-file tests are never ended by time: the read clock is separate from `wall` and never advances.
 fn day_opts(wall: &VirtualClock) -> Options {
-    Options { wall: Arc::new(wall.clone()), ..Options::default() }
+    Options { wall: Arc::new(wall.clone()), clock: Arc::new(VirtualClock::new(0)), ..Options::default() }
 }
 
 fn receipt_files(dir: &Path) -> Vec<String> {
