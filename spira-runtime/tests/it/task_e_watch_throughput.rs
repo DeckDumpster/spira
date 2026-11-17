@@ -79,7 +79,7 @@ fn rig_unticked(world: Arc<Mutex<Host>>) -> TaskRig {
         });
         Ok(serde_json::to_string(&snap).unwrap())
     };
-    let mut r = TaskRig::new(1, WatchThroughput::new(config()).registration()).unwrap().double(OBSERVE, observe).double(FILE, |_| Ok("filed".into())).double(CLEAR, |_| Ok("cleared".into())).double(INBOX_APPEND, |_| Ok("appended".into()));
+    let r = TaskRig::new(1, WatchThroughput::new(config()).registration()).unwrap().double(OBSERVE, observe).double(FILE, |_| Ok("filed".into())).double(CLEAR, |_| Ok("cleared".into())).double(INBOX_APPEND, |_| Ok("appended".into()));
     r.clock.advance_to(3 * DAY_MS);
     r
 }
