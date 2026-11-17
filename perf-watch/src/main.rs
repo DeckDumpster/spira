@@ -2,7 +2,7 @@
 //! Budget, interval and reminder come from config. Alarm lines go to stdout; a quiet pass
 //! prints nothing. `--health` is rewritten each pass that probes.
 
-use perf_watch::{parse_probes, run_pass, Clock, Health, Runner, Settings};
+use perf_watch::{parse_probes, SCOPED, run_pass, Clock, Health, Runner, Settings};
 use std::io::Read;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -20,11 +20,6 @@ impl Clock for Wall {
 }
 
 const TIMER_PREFIX: &str = "PERFWATCH_US=";
-
-// The probe runs in its own transient scope, outside this unit's CPU quota, and times itself
-// there: wall time across the throttled parent would read the throttle, not the store.
-// bash's own clock, so no process start of a clock is charged to the probe.
-const SCOPED: &str = "t0=$EPOCHREALTIME; \"$@\"; rc=$?; t1=$EPOCHREALTIME; echo \"PERFWATCH_US=$(( ${t1//[.,]/} - ${t0//[.,]/} ))\" >&2; exit $rc";
 
 struct Spawn {
     scoped: bool,
