@@ -75,7 +75,7 @@ pub fn shell_env(tree: &Path, nix_bin: &Path, cache: &Path) -> Result<Option<She
     let flake_lock = std::fs::read(tree.join("flake.lock")).unwrap_or_default();
     let key = cache_key(&flake_nix, &flake_lock);
     let cached = cache.join(format!("{key}.json"));
-    if let Some(env) = std::fs::read_to_string(&cached).ok().and_then(|j| parse_dev_env(&j).ok()) {
+    if let Some(env) = std::fs::read_to_string(&cached).ok().and_then(|j| parse_dev_env(&j).ok()).filter(|e| e.path_dirs().iter().all(|d| d.is_dir())) {
         return Ok(Some(ShellEnv { key, ..env }));
     }
     let out = spira_config::bounded::bounded_for(nix_bin, "600").args(["print-dev-env", "--json"]).arg(tree).output().map_err(|e| format!("cannot run {}: {e}", nix_bin.display()))?;
@@ -144,6 +144,18 @@ mod tests {
     }
 
     #[test]
+    fn a_cached_shell_whose_store_paths_are_gone_is_realised_again_not_trusted() {
+        let dir = testkit::TempDir::new("repo-contract-gc");
+        std::fs::write(dir.join("flake.nix"), "{ outputs = _: { devShells = {}; }; }").unwrap();
+        let cache = dir.join("cache");
+        std::fs::create_dir_all(&cache).unwrap();
+        let key = cache_key(&std::fs::read(dir.join("flake.nix")).unwrap(), b"");
+        std::fs::write(cache.join(format!("{key}.json")), FIXTURE).unwrap();
+        let r = shell_env(&dir, &dir.join("no-nix"), &cache);
+        assert!(r.is_err());
+    }
+
+    #[test]
     fn a_flake_with_no_dev_shell_has_no_shell_and_spawns_nothing() {
         let dir = testkit::TempDir::new("repo-contract-nodevshell");
         std::fs::write(dir.join("flake.nix"), "{ outputs = _: { packages = {}; }; }").unwrap();
@@ -157,7 +169,8 @@ mod tests {
         let cache = dir.join("cache");
         std::fs::create_dir_all(&cache).unwrap();
         std::fs::write(dir.join("flake.nix"), "devShells").unwrap();
-        std::fs::write(cache.join(format!("{}.json", cache_key(b"devShells", b""))), FIXTURE).unwrap();
+        let live = format!(r#"{{"variables":{{"PATH":{{"type":"exported","value":"{}"}}}}}}"#, dir.display());
+        std::fs::write(cache.join(format!("{}.json", cache_key(b"devShells", b""))), live).unwrap();
         let r = shell_env(&dir, &dir.join("no-nix"), &cache);
         assert!(r.unwrap().unwrap().vars.contains_key("PATH"));
     }
