@@ -767,3 +767,5 @@ limit_network
 heimdall_red_streak
 gate_builder_dir_wait_secs
 dolt_persist_gc_interval_secs
+runtime_sweep_repo_contract_calendar
+runtime_sweep_repo_contract_jitter_secs

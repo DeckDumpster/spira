@@ -62,6 +62,7 @@ mod task_c_sweep_escape_census;
 mod task_c_sweep_export_beads;
 mod task_c_sweep_nix_gc;
 mod task_c_sweep_reclaim;
+mod task_c_sweep_repo_contract;
 mod task_c_sweep_tsd;
 mod task_d_cert_full;
 mod task_d_cert_sample;
