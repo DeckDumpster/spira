@@ -337,8 +337,19 @@ pub fn settle(cfg: &Settings, prior: &Health, now: u64, timings: Vec<Timing>, cu
     Pass { lines, slow, timings, health }
 }
 
+// The probe runs in its own transient scope, outside this unit's CPU quota, and times itself
+// there: wall time across the throttled parent would read the throttle, not the store.
+// bash's own clock, so no process start of a clock is charged to the probe.
+pub const SCOPED: &str = "t0=$EPOCHREALTIME; PERFWATCH_T0_US=${t0//[.,]/} \"$@\"; rc=$?; t1=$EPOCHREALTIME; echo \"PERFWATCH_US=$(( ${t1//[.,]/} - ${t0//[.,]/} ))\" >&2; exit $rc";
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_scope_stamps_the_probe_with_its_start_on_the_probe_command() {
+        assert!(super::SCOPED.contains("PERFWATCH_T0_US=${t0//[.,]/} \"$@\""));
+        assert!(super::SCOPED.contains("PERFWATCH_US="));
+    }
+
     use super::*;
     use std::cell::Cell;
 
