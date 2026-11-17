@@ -1,0 +1,7 @@
+TYPE=u32
+GROUP=disk
+DOC=Percent of MemTotal that the tmpfs at SPIRA_TMP_PROBE_PATH may hold before watchtower pages tmp-held, naming what holds it by owner.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # A tmpfs is RAM: past this share of MemTotal the host swaps while the tmpfs still shows free space.
+    : "${SPIRA_TMPFS_HELD_MAX_PCT:=20}"
+SPIRA_CONF_DEFAULT_EOF
