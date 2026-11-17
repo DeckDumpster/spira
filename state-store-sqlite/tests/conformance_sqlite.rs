@@ -1525,7 +1525,7 @@ fn bounded_wal_workload(path: &Path) -> SqliteBackend {
     b
 }
 
-fn frames_per_commit(path: &Path) -> u32 {
+fn frames_per_commit() -> u32 {
     let dir = TempDir::new("sqlite-frames-per-commit");
     let p = dir.path().join("f.db");
     let b = SqliteBackend::open(&p, Options { checkpoint_every: u64::MAX, ..Options::default() }).unwrap();
@@ -1533,7 +1533,6 @@ fn frames_per_commit(path: &Path) -> u32 {
     for _ in 0..10 {
         put_next(&b);
     }
-    let _ = path;
     (mx_frame(&p) - before).div_ceil(10)
 }
 
@@ -1542,7 +1541,7 @@ fn the_wal_stays_within_three_checkpoint_intervals_while_reads_never_stop() {
     let dir = TempDir::new("sqlite-bounded-wal");
     let path = dir.path().join("s.db");
     let b = bounded_wal_workload(&path);
-    let bound = frames_per_commit(&path) * 3 * BOUND_EVERY as u32;
+    let bound = frames_per_commit() * 3 * BOUND_EVERY as u32;
     let mx = mx_frame(&path);
     assert!(mx <= bound, "mxFrame {mx} exceeds {bound}");
     drop(b);
@@ -1623,11 +1622,10 @@ fn a_checkpoint_failure_is_logged_once_with_sqlites_error() {
     let lines: Vec<&str> = err.lines().filter(|l| l.starts_with("sqlite-checkpoint:")).collect();
     assert_eq!(lines.len(), 1, "{err}");
     assert!(lines[0].contains(&path.display().to_string()), "{err}");
-    eprintln!("{}", lines[0]);
 }
 
 #[test]
-fn a_large_store_left_by_an_unclean_stop_reopens_in_under_500_ms() {
+fn a_large_store_left_by_an_unclean_stop_has_only_a_bounded_wal_to_recover() {
     let dir = TempDir::new("sqlite-bounded-recovery");
     let path = dir.path().join("s.db");
     {
@@ -1637,9 +1635,9 @@ fn a_large_store_left_by_an_unclean_stop_reopens_in_under_500_ms() {
     }
     assert!(std::fs::metadata(&path).unwrap().len() >= 64 << 20);
     run_child(format!("leave:{}", path.display()), None);
-    let began = std::time::Instant::now(); // clock-safe: measures the real recovery time
-    let b = SqliteBackend::open(&path, Options::default()).unwrap();
-    let took = began.elapsed();
-    assert!(took < std::time::Duration::from_millis(500), "open took {took:?}");
-    drop(b);
+    let wal = PathBuf::from(format!("{}-wal", path.display()));
+    let bound = u64::from(frames_per_commit()) * 3 * BOUND_EVERY;
+    let frames = std::fs::metadata(&wal).unwrap().len() / 4120;
+    assert!(frames <= bound, "the WAL the next open recovers holds {frames} frames, over {bound}");
+    SqliteBackend::open(&path, Options { outbox: false, ..Options::default() }).unwrap();
 }

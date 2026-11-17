@@ -2121,6 +2121,17 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_failure_is_reported_first_when_its_text_changes_and_an_hour_on() {
+        let t0 = std::time::Instant::now();
+        let mut last = None;
+        assert!(report_due(&mut last, "disk I/O error", t0));
+        assert!(!report_due(&mut last, "disk I/O error", t0 + Duration::from_secs(1)));
+        assert!(report_due(&mut last, "database is locked", t0 + Duration::from_secs(2)));
+        assert!(!report_due(&mut last, "database is locked", t0 + Duration::from_secs(3599)));
+        assert!(report_due(&mut last, "database is locked", t0 + Duration::from_secs(3602)));
+    }
+
+    #[test]
     fn a_passive_checkpoint_a_reader_holds_back_is_not_complete() {
         let dir = testkit::TempDir::new("sqlite-passive-partial");
         let path = dir.path().join("s.db");
@@ -2132,9 +2143,9 @@ mod tests {
         reader.prepare("SELECT count(*) FROM latest").unwrap().query_row([], |r| r.get::<_, i64>(0)).unwrap();
         b.commit(1, &[put(Some(Rev::new(1, 0)), 1)]).unwrap();
         let ck = connect(&path).unwrap();
-        assert!(!passive_complete(&ck), "frames past the reader's snapshot were counted as copied");
+        assert!(!passive_complete(&ck).unwrap(), "frames past the reader's snapshot were counted as copied");
         exec(&reader, "COMMIT", []).unwrap();
-        assert!(passive_complete(&ck));
+        assert!(passive_complete(&ck).unwrap());
     }
 
     #[test]
@@ -2159,7 +2170,7 @@ mod tests {
             Arc::new(move || {
                 if during.load(Ordering::SeqCst) {
                     let other = Connection::open(&path).map_err(db)?;
-                    assert!(passive_complete(&other));
+                    assert!(passive_complete(&other).unwrap());
                 }
                 Ok(())
             })
