@@ -206,7 +206,7 @@ impl Store {
         };
         let mut unheld: Vec<String> = Vec::new();
         for id in ids {
-            match views.list_answer(&["list", "--ids", id]) {
+            match views.list_answer(&["list", "--ids", id]) { // BDQ_READ_CONSIDERED="the held-view door: a projection answer, no bdq"
                 Some(answer) => out.extend(crate::rank::parse_lifecycle(&answer.map_err(|e| format!("spira-lc list: {e}"))?)?),
                 None => unheld.push(id.clone()),
             }
