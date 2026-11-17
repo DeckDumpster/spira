@@ -599,9 +599,22 @@ fn create<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, S
         store.create_open(id, repo.as_deref(), call.now, &req)
     };
     match made {
-        Ok(_) | Err(Error::Conflict { .. }) => (0, String::new()),
+        Ok(_) => (0, String::new()),
+        Err(Error::Conflict { .. }) => match fill_missing_repo(store, id, repo.as_deref(), &req) {
+            Ok(()) => (0, String::new()),
+            Err(e) => cannot_tell(e),
+        },
         Err(e) => cannot_tell(e),
     }
+}
+
+/// A record born without a repo takes the one a later `create-bead` names; one that has a repo keeps it.
+fn fill_missing_repo<B: Backend>(store: &Store<B>, id: &str, repo: Option<&str>, req: &Request) -> state_store::Result<()> {
+    let Some(repo) = repo else { return Ok(()) };
+    if store.record(id)?.is_some_and(|rec| rec.value.repo.is_none()) {
+        store.set_repo(id, Some(repo), None, req)?;
+    }
+    Ok(())
 }
 
 mod asks;
