@@ -44,7 +44,7 @@ fn seeded(t: &testkit::TempDir, change: &str, contents: &str) -> Vec<String> {
         compiled(&o)
     };
     assert_eq!(build(&a).len(), 2);
-    assert!(gate::warm::donate_tree(&a, 1 << 20).is_some());
+    assert!(gate::warm::donate_tree(&a, "r", 1 << 20).is_some());
 
     run(t.path(), "git", &["clone", "-q", a.to_str().unwrap(), b.to_str().unwrap()]);
     std::fs::write(b.join(change), contents).unwrap();
@@ -53,7 +53,7 @@ fn seeded(t: &testkit::TempDir, change: &str, contents: &str) -> Vec<String> {
     std::fs::create_dir_all(&bdest).unwrap();
     std::fs::create_dir_all(b.join("target")).unwrap();
     std::os::unix::fs::symlink(&bdest, b.join("target/debug")).unwrap();
-    let line = gate::warm::warm_start(&root, &bdest, &b).unwrap();
+    let line = gate::warm::warm_start(&root, "r", &bdest, &b).unwrap();
     assert!(line.contains("warm from"), "{line}");
 
     build(&b)
@@ -93,11 +93,11 @@ fn an_adopted_build_directory_never_serves_a_binary_with_the_donors_path_baked_i
     link(&a, "tree-a");
     run(&a, "cargo", &["build", "--color", "never"]);
     assert_eq!(run(&a, a.join("target/debug/pin").to_str().unwrap(), &[]), a.join("pin").to_str().unwrap());
-    assert!(gate::warm::donate_tree(&a, 1 << 20).is_some());
+    assert!(gate::warm::donate_tree(&a, "r", 1 << 20).is_some());
 
     run(t.path(), "git", &["clone", "-q", a.to_str().unwrap(), b.to_str().unwrap()]);
     let bdest = link(&b, "tree-b");
-    gate::warm::warm_start(&root, &bdest, &b).unwrap();
+    gate::warm::warm_start(&root, "r", &bdest, &b).unwrap();
     run(&b, "cargo", &["build", "--color", "never"]);
     assert_eq!(run(&b, b.join("target/debug/pin").to_str().unwrap(), &[]), b.join("pin").to_str().unwrap());
 }
