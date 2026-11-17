@@ -333,7 +333,7 @@ pub fn observe(input: &str) -> Result<String, String> {
             let hits = git(&path, &["grep", "-l", "-F", "-e", &p.needle, &ref_]).unwrap_or_default().lines().map(|l| l.strip_prefix(&prefix).unwrap_or(l).to_string()).collect();
             repo.naming.insert(p.needle, hits);
         }
-        let live: Vec<serde_json::Value> = match lc.call(&["list", "--live", "--repo", &name]) {
+        let live: Vec<serde_json::Value> = match store_view::call_held(&lc, &["list", "--live", "--repo", &name]) {
             Ok(r) if r.code == 0 => serde_json::from_str(&r.out).unwrap_or_default(),
             _ => vec![],
         };

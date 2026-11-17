@@ -58,10 +58,10 @@ fn read_units(bus: Option<&str>) -> Result<Units, String> {
     Ok(Units { active, files })
 }
 
-/// One lifecycle request for the reconciler: a `list` the view holds is answered from it (a stale
+/// One lifecycle request for the reconciler: a read the view holds is answered from it (a stale
 /// view refuses, it never reaches the store); anything else goes to the store's socket.
 pub fn lc_read(socket: &Path, argv: &[&str]) -> Result<String, String> {
-    match store_view::held_list(argv) {
+    match store_view::held_read(argv) {
         Some(held) => held.map_err(|e| e.to_string()),
         None => lc_call(socket, argv).map_err(|e| e.to_string()),
     }

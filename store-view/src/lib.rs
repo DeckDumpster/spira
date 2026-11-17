@@ -217,6 +217,42 @@ pub fn held_list(argv: &[&str]) -> Option<Result<String, LcError>> {
     shared()?.list_answer(argv)
 }
 
+/// Any read this process's projection holds (a `list` or a memoised content, planning or round
+/// read), as the store prints it; `None` for any other read or when it keeps no projection. A
+/// stale view answers `Some(Err)`: the caller must not fall back to the store.
+pub fn held_read(argv: &[&str]) -> Option<Result<String, LcError>> {
+    let p = shared()?;
+    if argv.first() == Some(&"list") {
+        return p.list_answer(argv);
+    }
+    classes_of(argv)?;
+    Some(p.answer(argv).and_then(|r| match r.value.code {
+        0 => Ok(r.value.out),
+        _ => Err(LcError::Fault(r.value.why())),
+    }))
+}
+
+/// `argv` answered by this process's projection when it holds the read, else by `client`. A stale
+/// view is an error, never a fall back to the store.
+pub fn call_held(client: &LcClient, argv: &[&str]) -> Result<Reply, String> {
+    match held_read(argv) {
+        Some(held) => held.map(|out| Reply { code: 0, out, err: String::new() }).map_err(|e| e.to_string()),
+        None => client.call(argv).map_err(String::from),
+    }
+}
+
+/// `list --ids` rows: the held ones, and the store only for ids the projection does not hold.
+pub fn rows_by_ids(client: &LcClient, ids: &[String]) -> Result<Vec<Row>, String> {
+    let Some(p) = shared() else { return lc_state::list_ids_on(client, ids) };
+    let held = p.rows(&RowQuery { ids: Some(ids), ..Default::default() }).map_err(|e| e.to_string())?.value;
+    let mut rows = lc_state::parse_rows(&Value::Array(held).to_string())?;
+    let missing: Vec<String> = ids.iter().filter(|i| !rows.iter().any(|r| &r.bead_id == *i)).cloned().collect();
+    if !missing.is_empty() {
+        rows.extend(lc_state::list_ids_on(client, &missing)?);
+    }
+    Ok(rows)
+}
+
 fn fault(e: impl std::fmt::Display) -> LcError {
     LcError::Fault(format!("cannot tell: {e}"))
 }
@@ -623,6 +659,12 @@ impl Projection {
         let [verb, rest @ ..] = argv else { return None };
         if *verb != "list" {
             return None;
+        }
+        if rest.contains(&"--batches") {
+            return Some(self.answer(argv).and_then(|r| match r.value.code {
+                0 => Ok(r.value.out),
+                _ => Err(LcError::Fault(r.value.why())),
+            }));
         }
         let mut q = RowQuery::default();
         let mut states: Vec<&str> = Vec::new();

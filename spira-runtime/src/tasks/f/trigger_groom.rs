@@ -208,9 +208,7 @@ pub fn run_observe(e: &crate::Effects, _key: &str, s: &EffectSpec) -> Result<Str
     let lane = obs::pinned(&config, "SPIRA_GROOMER_LABEL")?;
     let run = std::path::PathBuf::from(obs::pinned(&config, "SPIRA_RUN")?);
     let lastpass = obs::read_epoch(&run.join("groom.lastpass"));
-    let live_owing = lc
-        .call(&["list", "--live"])
-        .map_err(String::from)
+    let live_owing = store_view::call_held(&lc, &["list", "--live"])
         .and_then(|r| if r.code == 0 { spira_store::lc_state::parse_rows(&r.out) } else { Err(r.why()) })
         .map(|rows| rows.iter().filter(|r| matches!(r.state.as_str(), "READY" | "WORKING" | "REWORK")).count() as u64);
     let home_repo = reg.home_repo().to_string();
