@@ -217,6 +217,7 @@ pub(crate) mod verdict_run {
         let cap = Capture(Default::default());
         let mut vars = super::complete_vars();
         vars.insert("SPIRA_REPO".into(), "shared".into());
+        let cwd = std::env::current_dir().unwrap();
         let res = with_run_launching(vars, &NoBd, Dirty(vec![]), &Lc, &|| 0, &Seams(Default::default()), &Mute::default(), &cap, "", |r| {
             r.s.logf = Some(w.join("log"));
             let bin = w.join("model-bin");
@@ -226,6 +227,7 @@ pub(crate) mod verdict_run {
             r.d.env.set(spira_config::release_env::MODEL_BIN_OVERRIDE_ENV, &bin.display().to_string());
             r.session(&w).map_err(|a| format!("{a:?}"))
         });
+        std::env::set_current_dir(cwd).unwrap();
         res.unwrap();
         let envs = cap.0.lock().unwrap();
         let want = Run::session_tmpdir(work.path()).display().to_string();

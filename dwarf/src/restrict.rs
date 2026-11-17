@@ -274,9 +274,9 @@ mod tests {
 
     #[test]
     fn the_session_tmpdir_reaches_the_model() {
-        let b = base(&[("TMPDIR", "/w/.runtime/session-tmp-1")]);
+        let b = base(&[("TMPDIR", "w/.runtime/session-tmp-1")]);
         let e = restricted_env("sp-x", &b, "rel/bin");
-        assert_eq!(e.get("TMPDIR").map(String::as_str), Some("/w/.runtime/session-tmp-1"));
+        assert_eq!(e.get("TMPDIR").map(String::as_str), Some("w/.runtime/session-tmp-1"));
     }
 
     #[test]
