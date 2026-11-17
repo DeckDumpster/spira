@@ -180,3 +180,39 @@ fn t3_a_judgement_whose_unit_ran_was_lost_is_read_through_unit_facts() {
     assert!(asked.contains(&UNIT_FACTS), "the tick reads the in-flight leg: {asked:?}");
     assert!(asked.contains(&RECORD), "the exit read from facts judged the leg: {asked:?}");
 }
+
+fn green_publish() -> Repo {
+    Repo { publish_rec: Some(PublishRec { pr: 1123, head: "f89d".into(), branch: "spira/publish/1".into() }), publish_check: Check::Green, ..local() }
+}
+
+fn wakes(snap: Snapshot) -> usize {
+    let (_, acts) = decide_with(&Policy::default(), &Carry::default(), &snap, 5);
+    acts.iter().filter(|a| a.effect == PUBLISH_WANTED).count()
+}
+
+#[test]
+fn a_green_standing_publish_record_wakes_publish_once() {
+    assert_eq!(wakes(with(green_publish())), 1);
+}
+
+#[test]
+fn a_publish_record_that_is_not_green_wakes_nothing() {
+    for check in [Check::Pending, Check::None, Check::Red] {
+        assert_eq!(wakes(with(Repo { publish_check: check, ..green_publish() })), 0, "{check:?}");
+    }
+}
+
+#[test]
+fn no_publish_record_a_queue_mode_repo_or_a_dead_lc_wakes_nothing() {
+    assert_eq!(wakes(with(Repo { publish_rec: None, ..green_publish() })), 0);
+    assert_eq!(wakes(with(Repo { mode: "queue".into(), ..green_publish() })), 0);
+    assert_eq!(wakes(with(Repo { lc_ok: false, ..green_publish() })), 0);
+}
+
+#[test]
+fn a_repo_judging_a_batch_still_wakes_publish_on_a_green_record() {
+    let rc = RepoCarry { state: State::Judging, leg: Some("spira.j1".into()), base: "b2".into(), mode: "queue.local".into(), batch: Some("b-1:3".into()), leg_at_ms: 5, ..RepoCarry::default() };
+    let carry = Carry { repos: [("spira".to_string(), rc)].into() };
+    let (_, acts) = decide_with(&Policy::default(), &carry, &with(green_publish()), 5);
+    assert_eq!(acts.iter().filter(|a| a.effect == PUBLISH_WANTED).count(), 1);
+}
