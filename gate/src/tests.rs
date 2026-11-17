@@ -3743,6 +3743,14 @@ fn a_repo_tier_run_red_names_its_tier_as_the_red_unit() {
 }
 
 #[test]
+fn two_tier_rows_and_a_harness_row_each_count_toward_ran() {
+    let f = Fake::new();
+    f.repo_build_secs.set(Some(30));
+    branch_trial_prints(&f, "  build                            ok      45s\n  gate                             ok      235s\n  test-a.sh   ok 1s\nVERDICT GREEN ran=3");
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+}
+
+#[test]
 fn a_summary_naming_every_suite_the_runner_ran_still_passes() {
     let f = Fake::new();
     branch_trial_prints(&f, "  test-a.sh   ok 1s\n  test-b.sh   ok 1s\n  test-c.sh   SKIPPED\nVERDICT GREEN ran=2 skipped=1");
