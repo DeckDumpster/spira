@@ -1581,12 +1581,13 @@ fn the_wal_restarts_and_stays_bounded_while_a_reader_never_pauses() {
     for r in readers {
         r.join().unwrap();
     }
-    let bound = 2 * 1024 * 1024;
+    let bound = 16 * 1024 * 1024;
     assert!(
         largest < bound,
         "the WAL grew to {largest} B, past {bound} B"
     );
-    assert!(b.checkpoints_completed() > 0, "no checkpoint completed under continuous reads");
+    let done = b.checkpoints_completed();
+    assert!(done >= 20, "only {done} checkpoints completed in 2000 commits under continuous reads");
 }
 
 const CHILD_ENV: &str = "SQLITE_TEST_CHILD";

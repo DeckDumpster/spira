@@ -382,10 +382,13 @@ impl Checkpointer {
             };
             wait = GAUGE_EVERY;
             if seen >= self.every || owed {
+                let mut drained = false;
                 let step = if seen >= self.every {
                     passive_complete(&conn).inspect(|done| {
                         if *done {
                             counts.passive_complete += 1;
+                            lock(&self.state).pending -= seen;
+                            drained = true;
                         } else {
                             counts.passive_incomplete += 1;
                         }
@@ -401,7 +404,7 @@ impl Checkpointer {
                             counts.restart_busy += 1;
                         } else {
                             counts.restart_done += 1;
-                            if seen >= self.every {
+                            if seen >= self.every && !drained {
                                 let mut s = lock(&self.state);
                                 s.pending = s.pending.saturating_sub(seen);
                             }
