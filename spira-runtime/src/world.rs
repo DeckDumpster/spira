@@ -16,7 +16,7 @@ use crate::watchers::asks;
 use crate::watchers::design_asks::{self, Page};
 use crate::hunk;
 use crate::watchers::view;
-use crate::wiki_git::{git, exporter_run, overrides_apply, tmux};
+use crate::wiki_git::{git, git_ok, exporter_run, overrides_apply, tmux};
 use crate::watchers::brain_dirty;
 use crate::watchers::supersede_duty::{self, Act, Held, Reading, Verb};
 use crate::watchers::bead_sweep::{self, Bead, Repair, Repaired, Reservation, Row, Stop};
@@ -925,7 +925,7 @@ impl World {
         let mut out = vec![];
         for row in map_rows(&map) {
             let land = spira_config::repos::landref(&reg, &row.name).ok_or_else(|| format!("{}: no landing ref resolves", row.name))?;
-            let Ok((Some(0), log)) = git(Path::new(&row.path), &["log", &land, &since, "--format=%ct %s"]) else { return Err(format!("{}: git log {land} failed", row.name)) };
+            let log = git_ok(Path::new(&row.path), &["log", &land, &since, "--format=%ct %s"]).map_err(|e| format!("{}: git log {land} in {}: {e}", row.name, row.path))?;
             let mut landed: BTreeMap<String, u64> = BTreeMap::new();
             for line in String::from_utf8_lossy(&log).lines() {
                 let Some((at, subject)) = line.split_once(' ') else { continue };

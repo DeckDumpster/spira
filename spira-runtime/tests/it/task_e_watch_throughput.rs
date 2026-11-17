@@ -381,6 +381,26 @@ fn a_repo_whose_landing_ref_cannot_be_resolved_is_unreadable() {
     assert!(w.landed_on_refs(1_000_000, "sp").is_err(), "no landing ref is a blind count, not zero");
 }
 
+#[test]
+fn an_unreadable_landing_ref_names_gits_own_exit_and_stderr() {
+    use spira_runtime::world::World;
+    let dir = testkit::TempDir::new("throughput-gitwords");
+    let repo = dir.join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    testkit::git(&repo, &["init", "-q", "-b", "other"]);
+    testkit::git(&repo, &["commit", "-q", "--allow-empty", "-m", "one"]);
+    testkit::git(&repo, &["commit", "-q", "--allow-empty", "-m", "two"]);
+    testkit::git(&repo, &["branch", "local/main"]);
+    // landref only checks that the tip resolves, so a missing parent passes it and fails the log walk
+    let parent = testkit::git(&repo, &["rev-parse", "HEAD~1"]);
+    std::fs::remove_file(repo.join(format!(".git/objects/{}/{}", &parent[..2], &parent[2..]))).unwrap();
+    let map = dir.join("repos");
+    std::fs::write(&map, format!("spira|{}|queue.local|local/main\n", repo.display())).unwrap();
+    let w = World { repo_map: map, home_repo: "spira".into(), ..World::default() };
+    let e = w.landed_on_refs(1_000_000, "sp").unwrap_err();
+    assert!(e.contains("git log other") && e.contains("exit 128") && e.contains("fatal: Failed to traverse") && e.contains(&repo.display().to_string()), "{e}");
+}
+
 fn registration() -> runtime::event::Registration {
     WatchThroughput::new(config()).registration()
 }
