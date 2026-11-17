@@ -28,8 +28,8 @@ use crate::watchers::round_duty::{RoundState, Snapshot};
 const STORE_ATTEMPTS: u32 = 3;
 /// Ids per `plan items` call when the flow pass reads the live beads' type and labels.
 const FLOW_CONTENT_CHUNK: usize = 200;
-// batch-job: the call deadline; the verb answers inside 4s on its own
 const REFRESH_FETCH: std::time::Duration = std::time::Duration::from_secs(20);
+// batch-job: the call deadline; the verb answers inside 4s on its own
 const UNPUBLISHED_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 const TMUX_DEADLINE: std::time::Duration = std::time::Duration::from_secs(3);
 const STORE_BACKOFF: std::time::Duration = std::time::Duration::from_millis(250);
