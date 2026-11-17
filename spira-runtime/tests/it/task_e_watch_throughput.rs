@@ -677,15 +677,14 @@ fn stamp_waiting_counts_all_three_states_and_picks_the_oldest_dated_with_a_null_
 }
 
 fn printed_row(bead: &str, since: u64) -> serde_json::Value {
-    serde_json::json!({ "bead_id": bead, "repo": "alpha", "state": "SUBMITTED", "since": since.to_string(), "updated_at": since.to_string(), "lease_until": null })
+    serde_json::json!({ "bead_id": bead, "repo": "alpha", "state": "SUBMITTED", "since": since.to_string(), "updated_at": (since + 77).to_string(), "lease_until": null })
 }
 
 #[test]
 fn rows_as_spira_lc_prints_them_read_their_since_from_the_digit_string() {
     use spira_runtime::world::stamp_waiting;
     let mut landings = vec![RepoLanding { repo: "alpha".into(), ..Default::default() }];
-    let mut rows = vec![printed_row("sp-1", 900), printed_row("sp-2", 400), printed_row("sp-3", 700)];
-    rows[1]["since"] = "400".into();
+    let rows = vec![printed_row("sp-1", 900), printed_row("sp-2", 400), printed_row("sp-3", 700)];
     stamp_waiting(&mut landings, &rows);
     assert_eq!(landings[0].oldest, Some(Waiting { bead: "sp-2".into(), since: Some(400) }));
     assert_eq!(landings[0].undated, None);
@@ -709,4 +708,18 @@ fn a_string_since_older_than_the_stall_threshold_files_exactly_one_stall() {
     stamp_waiting(&mut landings, &[printed_row("sp-old", now / 1000 - 7_200)]);
     let v = decide(&Carry::default(), &Snapshot { readable: true, landings, ..Default::default() }, now, &config());
     assert_eq!(v.acts.iter().filter(|a| a.name == FILE).count(), 1, "{:?}", v.acts);
+}
+
+#[test]
+fn a_null_since_beside_a_stalled_dated_row_pages_p2_naming_it_and_still_files_the_stall() {
+    use spira_runtime::world::stamp_waiting;
+    let now = 3 * DAY_MS;
+    let mut landings = vec![RepoLanding { repo: "alpha".into(), hourly: vec![0; 24], last_landing: now / 1000 - 14 * 3600, ..Default::default() }];
+    let mut null_row = printed_row("sp-null", 0);
+    null_row["since"] = serde_json::Value::Null;
+    stamp_waiting(&mut landings, &[printed_row("sp-old", now / 1000 - 7_200), null_row]);
+    let v = decide(&Carry::default(), &Snapshot { readable: true, landings, ..Default::default() }, now, &config());
+    assert_eq!(v.acts.iter().filter(|a| a.name == FILE).count(), 1, "{:?}", v.acts);
+    let pages: Vec<_> = v.acts.iter().filter(|a| a.name == INBOX_APPEND && a.input.contains("] P2 ") && a.input.contains("sp-null")).collect();
+    assert_eq!(pages.len(), 1, "{:?}", v.acts);
 }
