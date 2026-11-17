@@ -1963,9 +1963,6 @@ struct ListAsk<'a> {
     limit: Option<usize>,
 }
 
-/// `work list`: lifecycle state decides which beads, the SQL reader supplies what they say. A state
-/// filter is the machine's; `--label`/`--title-contains` narrow by content in the reader, and the
-/// two are intersected here so neither side's idea of "open" is consulted.
 fn lifecycle_list_args(states: &[String], all: bool) -> Vec<String> {
     let narrowing = if !states.is_empty() {
         vec![s("--state"), states.join(","), s("--cached")]
@@ -1977,6 +1974,9 @@ fn lifecycle_list_args(states: &[String], all: bool) -> Vec<String> {
     std::iter::once(s("list")).chain(narrowing).chain(std::iter::once(s("--bare"))).collect()
 }
 
+/// `work list`: lifecycle state decides which beads, the SQL reader supplies what they say. A state
+/// filter is the machine's; `--label`/`--title-contains` narrow by content in the reader, and the
+/// two are intersected here so neither side's idea of "open" is consulted.
 fn list_with_content(conn: &Conn, reader: &ReadFn, ask: ListAsk) -> (i32, String) {
     let ListAsk { states, all, filters, json, full, limit } = ask;
     let narrowing = lifecycle_list_args(states, all);
