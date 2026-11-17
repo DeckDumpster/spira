@@ -146,7 +146,7 @@ pub fn judge(path: &str, text: &str, bins: &BTreeSet<String>) -> Vec<Finding> {
 fn bin_crates(tree: &Tree) -> BTreeSet<String> {
     tree.entries
         .iter()
-        .filter_map(|e| e.path.strip_suffix("/src/main.rs"))
+        .filter_map(|e| e.path.strip_suffix("src/main.rs")?.strip_suffix('/'))
         .filter(|c| !c.contains('/'))
         .map(str::to_string)
         .collect()

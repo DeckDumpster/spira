@@ -412,7 +412,7 @@ mod tests {
     }
 
     fn cfg(dir: &Path) -> Config {
-        let m: HashMap<&str, String> = [(KEY_BOUND, "90".to_string()), (KEY_SOCKET, "/nonexistent/control.sock".into()), (KEY_UNIT, UNIT.into()), (KEY_RUN, dir.display().to_string()), (KEY_UNIT_LOG, dir.join("spira-runtime.log").display().to_string())].into();
+        let m: HashMap<&str, String> = [(KEY_BOUND, "90".to_string()), (KEY_SOCKET, "nonexistent/control.sock".into()), (KEY_UNIT, UNIT.into()), (KEY_RUN, dir.display().to_string()), (KEY_UNIT_LOG, dir.join("spira-runtime.log").display().to_string())].into();
         Config::from_lookup(|k| m.get(k).cloned().ok_or_else(|| format!("{k} unset"))).unwrap()
     }
 
@@ -442,7 +442,7 @@ mod tests {
 
     #[test]
     fn every_key_is_required_and_the_bound_must_be_positive() {
-        let full: HashMap<&str, &str> = [(KEY_BOUND, "90"), (KEY_SOCKET, "/s"), (KEY_UNIT, "u"), (KEY_RUN, "/r"), (KEY_UNIT_LOG, "/r/u.log")].into();
+        let full: HashMap<&str, &str> = [(KEY_BOUND, "90"), (KEY_SOCKET, "s"), (KEY_UNIT, "u"), (KEY_RUN, "r"), (KEY_UNIT_LOG, "r/u.log")].into();
         for missing in KEYS {
             let err = Config::from_lookup(|k| if k == missing { Err(format!("{k} unset")) } else { Ok(full[k].to_string()) }).unwrap_err();
             assert!(err.contains(missing), "{err}");
@@ -453,7 +453,7 @@ mod tests {
             assert!(Config::from_lookup(|k| Ok(if k == KEY_BOUND { bad.to_string() } else { full[k].to_string() })).is_err(), "{bad}");
         }
         let c = Config::from_lookup(|k| Ok(full[k].to_string())).unwrap();
-        assert_eq!((c.bound_ms, c.marker.clone()), (90_000, PathBuf::from("/r/runtime-inflight.json")));
+        assert_eq!((c.bound_ms, c.marker.clone()), (90_000, PathBuf::from("r/runtime-inflight.json")));
     }
 
     fn started(o: &Outcome) -> Option<Result<(), String>> {
@@ -710,6 +710,6 @@ mod tests {
 
     #[test]
     fn an_unanswering_socket_reads_unreachable() {
-        assert!(matches!(SocketStatus(PathBuf::from("/nonexistent/control.sock")).read(), Reading::Unreachable(_)));
+        assert!(matches!(SocketStatus(PathBuf::from("nonexistent/control.sock")).read(), Reading::Unreachable(_)));
     }
 }

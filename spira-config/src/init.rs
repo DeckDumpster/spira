@@ -355,15 +355,15 @@ mod tests {
 
     /// The real registry this tree ships, defaults written against a fake home.
     fn reg() -> Registry<'static> {
-        let env: &'static BTreeMap<String, String> = Box::leak(Box::new([("HOME".to_string(), "/b/home".to_string())].into_iter().collect()));
+        let env: &'static BTreeMap<String, String> = Box::leak(Box::new([("HOME".to_string(), "b/home".to_string())].into_iter().collect()));
         Registry { conf_d: Box::leak(Box::new(crate::resolve::locate_home_for_process().unwrap().join("conf.d"))), env }
     }
 
     fn full() -> BTreeMap<String, String> {
         parse_answers(
             concat!(
-                "# a box\ninstance = acc\nid_prefix = sp\nhome_repo = scratch\ndb = /b/db\nrun = /b/run\nreleases = \"/b/rel\"\nspira.dolt_data = /b/dolt\noperated = 0\n",
-                "bd = /b/bin/bd\n",
+                "# a box\ninstance = acc\nid_prefix = sp\nhome_repo = scratch\ndb = b/db\nrun = b/run\nreleases = \"b/rel\"\nspira.dolt_data = b/dolt\noperated = 0\n",
+                "bd = b/bin/bd\n",
             ),
         )
         .unwrap()
@@ -372,8 +372,8 @@ mod tests {
     #[test]
     fn answers_parse_bare_quoted_and_prefixed_keys() {
         let a = full();
-        assert_eq!(a["releases"], "/b/rel");
-        assert_eq!(a["dolt_data"], "/b/dolt");
+        assert_eq!(a["releases"], "b/rel");
+        assert_eq!(a["dolt_data"], "b/dolt");
         assert!(parse_answers("no equals here").is_err());
     }
 
@@ -425,29 +425,29 @@ mod tests {
 
     #[test]
     fn a_fresh_config_declares_a_control_store_under_the_run_directory_unless_answered() {
-        let text = render(&full(), Path::new("/x/spira.toml"), &reg()).unwrap();
-        assert!(text.contains("lc_store_path = \"/b/run/lc-control.db\""), "{text}");
+        let text = render(&full(), Path::new("x/spira.toml"), &reg()).unwrap();
+        assert!(text.contains("lc_store_path = \"b/run/lc-control.db\""), "{text}");
         let mut a = full();
-        a.insert("lc_store_path".into(), "/b/run/elsewhere.db".into());
-        let text = render(&a, Path::new("/x/spira.toml"), &reg()).unwrap();
-        assert!(text.contains("lc_store_path = \"/b/run/elsewhere.db\""), "{text}");
+        a.insert("lc_store_path".into(), "b/run/elsewhere.db".into());
+        let text = render(&a, Path::new("x/spira.toml"), &reg()).unwrap();
+        assert!(text.contains("lc_store_path = \"b/run/elsewhere.db\""), "{text}");
     }
 
     #[test]
     fn an_unknown_answer_is_refused_by_name() {
         let mut a = full();
         a.insert("no_such_key".into(), "1".into());
-        let e = render(&a, Path::new("/x/spira.toml"), &reg()).unwrap_err();
+        let e = render(&a, Path::new("x/spira.toml"), &reg()).unwrap_err();
         assert!(e.contains("no_such_key"), "{e}");
     }
 
     #[test]
     fn default_out_prefers_spira_toml_then_xdg_then_home() {
         let m = |p: &[(&str, &str)]| p.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect::<BTreeMap<_, _>>();
-        assert_eq!(default_out(&m(&[("SPIRA_TOML", "/a/s.toml"), ("HOME", "/h")])).unwrap(), PathBuf::from("/a/s.toml"));
-        assert_eq!(default_out(&m(&[("XDG_CONFIG_HOME", "/x"), ("HOME", "/h")])).unwrap(), PathBuf::from("/x/spira/spira.toml"));
-        assert_eq!(default_out(&m(&[("HOME", "/h")])).unwrap(), PathBuf::from("/h/.config/spira/spira.toml"));
-        assert_eq!(default_out(&m(&[("SPIRA_TOML", "/a:/b")])).unwrap(), PathBuf::from("/a:/b"));
+        assert_eq!(default_out(&m(&[("SPIRA_TOML", "a/s.toml"), ("HOME", "h")])).unwrap(), PathBuf::from("a/s.toml"));
+        assert_eq!(default_out(&m(&[("XDG_CONFIG_HOME", "x"), ("HOME", "h")])).unwrap(), PathBuf::from("x/spira/spira.toml"));
+        assert_eq!(default_out(&m(&[("HOME", "h")])).unwrap(), PathBuf::from("h/.config/spira/spira.toml"));
+        assert_eq!(default_out(&m(&[("SPIRA_TOML", "a:/b")])).unwrap(), PathBuf::from("a:/b"));
     }
 
     // covers: UC-config-store-preflight-07
@@ -457,7 +457,7 @@ mod tests {
         let out = d.path().join("cfg/spira.toml");
         assert_eq!(ensure(&out, full(), None, &reg()).unwrap(), Outcome::Written(out.clone()));
         let (doc, _) = crate::load_strict(&out).expect("what init writes the reader accepts");
-        assert_eq!(crate::get_path(&doc, "spira.db").as_deref(), Some("/b/db"));
+        assert_eq!(crate::get_path(&doc, "spira.db").as_deref(), Some("b/db"));
         assert_eq!(crate::get_path(&doc, "spira.instance").as_deref(), Some("acc"));
 
         let first = std::fs::read(&out).unwrap();

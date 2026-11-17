@@ -330,7 +330,7 @@ pub fn evict_idle(bases: &[PathBuf], budget_bytes: u64) -> Vec<PathBuf> {
 
 /// [`evict_idle`] with the measurement injected: `size` answers the bytes one directory holds.
 pub fn evict_idle_with(bases: &[PathBuf], budget_bytes: u64, size: &dyn Fn(&Path) -> u64) -> Vec<PathBuf> {
-    evict_idle_in(bases, budget_bytes, size, Path::new("/proc"))
+    evict_idle_in(bases, budget_bytes, size, Path::new(system_paths::PROC))
 }
 
 /// [`evict_idle_with`] with the process table's root injected.
@@ -788,9 +788,9 @@ mod tests {
     fn pushed_samples_reach_the_endpoint_with_their_names_and_the_dir_label() {
         let (addr, h) = spira_otel::metrics::run::fixture_sink();
         let sink = spira_otel::metrics::MetricsSink::new(Some(&addr), "build-dir", std::time::Duration::from_secs(2));
-        push(&sink, &eviction_samples(&[PathBuf::from("/x/dir.7")]));
+        push(&sink, &eviction_samples(&[PathBuf::from("x/dir.7")]));
         let body = h.join().unwrap();
-        for want in ["build_dir_evicted", "dir", "/x/dir.7", "build-dir"] {
+        for want in ["build_dir_evicted", "dir", "x/dir.7", "build-dir"] {
             assert!(body.contains(want), "{want} missing from the push");
         }
     }
@@ -861,11 +861,11 @@ mod tests {
     const DAY: u64 = 86400;
 
     fn slot(base: usize, n: u64, bytes: u64, age_days: u64) -> Candidate {
-        Candidate { path: PathBuf::from(format!("/b{base}/dir.{n}")), kind: Kind::Slot(base, n), bytes, age: at(100 * DAY - age_days * DAY) }
+        Candidate { path: PathBuf::from(format!("b{base}/dir.{n}")), kind: Kind::Slot(base, n), bytes, age: at(100 * DAY - age_days * DAY) }
     }
 
     fn stray(name: &str, bytes: u64, age_days: u64) -> Candidate {
-        Candidate { path: PathBuf::from(format!("/b0/{name}")), kind: Kind::Stray, bytes, age: at(100 * DAY - age_days * DAY) }
+        Candidate { path: PathBuf::from(format!("b0/{name}")), kind: Kind::Stray, bytes, age: at(100 * DAY - age_days * DAY) }
     }
 
     fn numbers(order: &[ScannedSlot]) -> Vec<u64> {
@@ -887,32 +887,32 @@ mod tests {
     #[test]
     fn a_budget_of_zero_with_one_idle_directory_removes_it_and_reports_one_event_naming_it() {
         let gone = evict_walk(vec![slot(0, 1, 100, 3)], 0, &mut |_| true);
-        assert_eq!(gone, [PathBuf::from("/b0/dir.1")]);
-        assert_eq!(eviction_samples(&gone), [Sample { name: "build_dir_evicted", value: 1.0, dir: Some("/b0/dir.1".into()) }]);
+        assert_eq!(gone, [PathBuf::from("b0/dir.1")]);
+        assert_eq!(eviction_samples(&gone), [Sample { name: "build_dir_evicted", value: 1.0, dir: Some("b0/dir.1".into()) }]);
     }
 
     #[test]
     fn strays_are_ranked_with_idle_slots_oldest_first() {
         let cs = vec![slot(0, 2, 10, 1), stray("hand.1", 10, 3), slot(0, 1, 10, 5)];
         let gone = evict_walk(cs, 0, &mut |_| true);
-        assert_eq!(gone, [PathBuf::from("/b0/dir.1"), PathBuf::from("/b0/hand.1"), PathBuf::from("/b0/dir.2")]);
+        assert_eq!(gone, [PathBuf::from("b0/dir.1"), PathBuf::from("b0/hand.1"), PathBuf::from("b0/dir.2")]);
     }
 
     #[test]
     fn a_stray_with_a_process_standing_in_it_is_spared_and_the_others_go() {
-        let held = [PathBuf::from("/b0/hand.1/debug")];
+        let held = [PathBuf::from("b0/hand.1/debug")];
         let cs = vec![slot(0, 2, 10, 1), stray("hand.1", 10, 3), slot(0, 1, 10, 5)];
         let gone = evict_walk(cs, 0, &mut |c| !(c.kind == Kind::Stray && stood_in(&c.path, &held)));
-        assert_eq!(gone, [PathBuf::from("/b0/dir.1"), PathBuf::from("/b0/dir.2")]);
+        assert_eq!(gone, [PathBuf::from("b0/dir.1"), PathBuf::from("b0/dir.2")]);
     }
 
     #[test]
     fn a_directory_is_stood_in_by_its_own_path_and_anything_beneath_it_not_a_sibling_prefix() {
-        let held = [PathBuf::from("/b0/hand.1/debug"), PathBuf::from("/b0/hand.20")];
-        assert!(stood_in(Path::new("/b0/hand.1"), &held));
-        assert!(stood_in(Path::new("/b0/hand.20"), &held));
-        assert!(!stood_in(Path::new("/b0/hand.2"), &held));
-        assert!(!stood_in(Path::new("/b0/hand.1"), &[]));
+        let held = [PathBuf::from("b0/hand.1/debug"), PathBuf::from("b0/hand.20")];
+        assert!(stood_in(Path::new("b0/hand.1"), &held));
+        assert!(stood_in(Path::new("b0/hand.20"), &held));
+        assert!(!stood_in(Path::new("b0/hand.2"), &held));
+        assert!(!stood_in(Path::new("b0/hand.1"), &[]));
     }
 
     #[test]
@@ -921,33 +921,33 @@ mod tests {
         let proc = d.path().join("proc");
         std::fs::create_dir_all(proc.join("77")).unwrap();
         std::fs::create_dir_all(proc.join("self-ish")).unwrap();
-        std::os::unix::fs::symlink("/b0/hand.1/debug", proc.join("77/cwd")).unwrap();
+        std::os::unix::fs::symlink("b0/hand.1/debug", proc.join("77/cwd")).unwrap();
         let held = held_by_processes(&proc);
-        assert_eq!(held, [PathBuf::from("/b0/hand.1/debug")]);
-        assert!(stood_in(Path::new("/b0/hand.1"), &held));
-        assert!(!stood_in(Path::new("/b0/hand.2"), &held));
+        assert_eq!(held, [PathBuf::from("b0/hand.1/debug")]);
+        assert!(stood_in(Path::new("b0/hand.1"), &held));
+        assert!(!stood_in(Path::new("b0/hand.2"), &held));
     }
 
     #[test]
     fn eviction_removes_least_recently_used_first_never_a_refused_live_one_and_stops_once_under_budget() {
         let cs = vec![slot(0, 4, 100, 1), slot(0, 1, 100, 9), slot(0, 2, 100, 5), slot(0, 3, 100, 3)];
-        let gone = evict_walk(cs, 100, &mut |c| c.path != Path::new("/b0/dir.1"));
-        assert_eq!(gone, [PathBuf::from("/b0/dir.2"), PathBuf::from("/b0/dir.3"), PathBuf::from("/b0/dir.4")]);
+        let gone = evict_walk(cs, 100, &mut |c| c.path != Path::new("b0/dir.1"));
+        assert_eq!(gone, [PathBuf::from("b0/dir.2"), PathBuf::from("b0/dir.3"), PathBuf::from("b0/dir.4")]);
         let cs = vec![slot(0, 1, 100, 9), slot(0, 2, 100, 5), slot(0, 3, 100, 3)];
-        assert_eq!(evict_walk(cs, 150, &mut |_| true), [PathBuf::from("/b0/dir.1"), PathBuf::from("/b0/dir.2")], "dir.3 stays: the total is under budget");
+        assert_eq!(evict_walk(cs, 150, &mut |_| true), [PathBuf::from("b0/dir.1"), PathBuf::from("b0/dir.2")], "dir.3 stays: the total is under budget");
     }
 
     #[test]
     fn an_eviction_within_budget_removes_nothing_and_empty_directories_are_never_candidates() {
         assert!(evict_walk(vec![slot(0, 1, 100, 9)], 100, &mut |_| panic!("under budget")).is_empty());
         let cs = vec![slot(0, 1, 0, 9), slot(0, 2, 100, 1)];
-        assert_eq!(evict_walk(cs, 0, &mut |_| true), [PathBuf::from("/b0/dir.2")]);
+        assert_eq!(evict_walk(cs, 0, &mut |_| true), [PathBuf::from("b0/dir.2")]);
     }
 
     #[test]
     fn eviction_counts_every_base_against_one_budget() {
         let cs = vec![slot(0, 1, 100, 2), slot(1, 1, 100, 1)];
-        assert_eq!(evict_walk(cs, 100, &mut |_| true), [PathBuf::from("/b0/dir.1")]);
+        assert_eq!(evict_walk(cs, 100, &mut |_| true), [PathBuf::from("b0/dir.1")]);
     }
 
     #[test]
@@ -964,7 +964,7 @@ mod tests {
 
     #[test]
     fn a_base_value_lists_directories_separated_by_whitespace() {
-        assert_eq!(parse_bases(" /x/b\n/y/c "), [PathBuf::from("/x/b"), PathBuf::from("/y/c")]);
+        assert_eq!(parse_bases(" x/b\ny/c "), [PathBuf::from("x/b"), PathBuf::from("y/c")]);
         assert!(parse_bases("  ").is_empty());
     }
 }

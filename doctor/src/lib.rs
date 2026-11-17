@@ -783,8 +783,12 @@ pub fn check_prod_checkout(w: &dyn World) -> Vec<Line> {
     out
 }
 
-const DOVECOT_UNIT_DIRS: [&str; 3] = ["/lib/systemd/system", "/usr/lib/systemd/system", "/etc/systemd/system"];
-const DOVECOT_DROPIN: &str = "/etc/systemd/system/dovecot.service.d/spira-tailnet.conf";
+const DOVECOT_UNIT_DIRS: [&str; 3] = [
+    system_paths::LIB_SYSTEMD_SYSTEM,
+    system_paths::USR_LIB_SYSTEMD_SYSTEM,
+    system_paths::ETC_SYSTEMD_SYSTEM,
+];
+const DOVECOT_DROPIN: &str = system_paths::DOVECOT_DROPIN;
 
 /// Release promotion runs unprivileged, so the drop-in is written only by the root installer phase.
 pub fn check_dovecot_dropin(w: &dyn World) -> Vec<Line> {

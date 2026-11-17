@@ -101,7 +101,7 @@ fn launchd(t: &TimerSpec, prog: &str) -> String {
 }
 
 fn sh_quote(s: &str) -> String {
-    if !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric() || b"/._-=:,@+".contains(&b)) {
+    if !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric() || b"/._-=:,@+".contains(&b)) { // not a path: shell-safe character set
         s.to_string()
     } else {
         format!("'{}'", s.replace('\'', "'\\''"))
@@ -117,7 +117,7 @@ fn cron(t: &TimerSpec, prog: &str) -> Result<String, String> {
     let minute = if n == 1 { "*".to_string() } else { format!("*/{n}") };
     let env: String = t.env.iter().map(|(k, v)| format!("{}=", k) + &sh_quote(v) + " ").collect();
     let cmd: Vec<String> = std::iter::once(prog).chain(t.args.iter().map(String::as_str)).map(sh_quote).collect();
-    let run = if env.is_empty() { cmd.join(" ") } else { format!("/usr/bin/env {env}{}", cmd.join(" ")) };
+    let run = if env.is_empty() { cmd.join(" ") } else { format!("{} {env}{}", system_paths::USR_BIN_ENV, cmd.join(" ")) };
     // cron turns a bare `%` into a newline.
     Ok(format!("{minute} * * * * {} # {}\n", run.replace('%', "\\%"), t.label))
 }
@@ -127,7 +127,7 @@ mod tests {
     use super::*;
 
     fn spec() -> TimerSpec {
-        TimerSpec::watchdog(PathBuf::from("/opt/spira/bin/spira-watchdog"), 120, vec![("SPIRA_SITE".into(), "/etc/spira dir/site.conf".into())])
+        TimerSpec::watchdog(PathBuf::from("opt/spira/bin/spira-watchdog"), 120, vec![("SPIRA_SITE".into(), "etc/spira dir/site.conf".into())])
     }
 
     fn file(files: &[(String, String)], name: &str) -> String {
@@ -140,7 +140,7 @@ mod tests {
         assert_eq!(files.len(), 2);
         assert_eq!(
             file(&files, "spira-watchdog.service"),
-            "[Unit]\nDescription=spira-watchdog — one pass: restart and page when the scheduler is wedged or absent\n\n[Service]\nType=oneshot\nEnvironment=\"SPIRA_SITE=/etc/spira dir/site.conf\"\nExecStart=/opt/spira/bin/spira-watchdog pass\nTimeoutStartSec=120\n"
+            "[Unit]\nDescription=spira-watchdog — one pass: restart and page when the scheduler is wedged or absent\n\n[Service]\nType=oneshot\nEnvironment=\"SPIRA_SITE=etc/spira dir/site.conf\"\nExecStart=opt/spira/bin/spira-watchdog pass\nTimeoutStartSec=120\n"
         );
         assert_eq!(
             file(&files, "spira-watchdog.timer"),
@@ -153,18 +153,18 @@ mod tests {
         let files = render(Platform::for_os("macos"), &spec()).unwrap();
         assert_eq!(
             file(&files, "spira-watchdog.plist"),
-            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n  <key>Label</key>\n  <string>spira-watchdog</string>\n  <key>ProgramArguments</key>\n  <array>\n    <string>/opt/spira/bin/spira-watchdog</string>\n    <string>pass</string>\n  </array>\n  <key>EnvironmentVariables</key>\n  <dict>\n    <key>SPIRA_SITE</key>\n    <string>/etc/spira dir/site.conf</string>\n  </dict>\n  <key>StartInterval</key>\n  <integer>120</integer>\n  <key>RunAtLoad</key>\n  <true/>\n</dict>\n</plist>\n"
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n  <key>Label</key>\n  <string>spira-watchdog</string>\n  <key>ProgramArguments</key>\n  <array>\n    <string>opt/spira/bin/spira-watchdog</string>\n    <string>pass</string>\n  </array>\n  <key>EnvironmentVariables</key>\n  <dict>\n    <key>SPIRA_SITE</key>\n    <string>etc/spira dir/site.conf</string>\n  </dict>\n  <key>StartInterval</key>\n  <integer>120</integer>\n  <key>RunAtLoad</key>\n  <true/>\n</dict>\n</plist>\n"
         );
     }
 
     #[test]
     fn anywhere_else_gets_one_crontab_line() {
         let files = render(Platform::for_os("freebsd"), &spec()).unwrap();
-        assert_eq!(file(&files, "spira-watchdog.crontab"), "*/2 * * * * /usr/bin/env SPIRA_SITE='/etc/spira dir/site.conf' /opt/spira/bin/spira-watchdog pass # spira-watchdog\n");
+        assert_eq!(file(&files, "spira-watchdog.crontab"), "*/2 * * * * /usr/bin/env SPIRA_SITE='etc/spira dir/site.conf' opt/spira/bin/spira-watchdog pass # spira-watchdog\n");
         let mut every_minute = spec();
         every_minute.every_s = 60;
         every_minute.env.clear();
-        assert_eq!(file(&render(Platform::Cron, &every_minute).unwrap(), "spira-watchdog.crontab"), "* * * * * /opt/spira/bin/spira-watchdog pass # spira-watchdog\n");
+        assert_eq!(file(&render(Platform::Cron, &every_minute).unwrap(), "spira-watchdog.crontab"), "* * * * * opt/spira/bin/spira-watchdog pass # spira-watchdog\n");
     }
 
     #[test]
@@ -181,9 +181,9 @@ mod tests {
 
     #[test]
     fn values_are_quoted_for_each_format() {
-        let t = TimerSpec { label: "w".into(), program: PathBuf::from("/b/w"), args: vec!["50%".into(), "a&b".into(), "it's".into()], env: vec![], every_s: 60 };
-        assert!(file(&render(Platform::Systemd, &t).unwrap(), "w.service").contains("ExecStart=/b/w \"50%%\" a&b \"it's\"\n"));
+        let t = TimerSpec { label: "w".into(), program: PathBuf::from("b/w"), args: vec!["50%".into(), "a&b".into(), "it's".into()], env: vec![], every_s: 60 };
+        assert!(file(&render(Platform::Systemd, &t).unwrap(), "w.service").contains("ExecStart=b/w \"50%%\" a&b \"it's\"\n"));
         assert!(file(&render(Platform::Launchd, &t).unwrap(), "w.plist").contains("<string>a&amp;b</string>\n    <string>it&apos;s</string>"));
-        assert!(file(&render(Platform::Cron, &t).unwrap(), "w.crontab").contains("/b/w '50\\%' 'a&b' 'it'\\''s' # w"));
+        assert!(file(&render(Platform::Cron, &t).unwrap(), "w.crontab").contains("b/w '50\\%' 'a&b' 'it'\\''s' # w"));
     }
 }

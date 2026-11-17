@@ -140,18 +140,18 @@ mod spira_section {
         assert!(w.iter().any(|w| w.contains("goal is retired (sp-k6m1m)")), "{w:?}");
         assert!(!spira_config::export_sh(&doc).contains("GOAL"));
         // Production's shape before the migration: goal set, id_prefix absent — refused.
-        let err = spira_config::validate_strict("[spira]\ngoal = \"sp-spira\"\ndb = \"/db\"\n").unwrap_err();
+        let err = spira_config::validate_strict("[spira]\ngoal = \"sp-spira\"\ndb = \"db\"\n").unwrap_err();
         assert!(err.starts_with("spira.id_prefix: required"), "{err}");
     }
 
     #[test]
     fn the_migration_is_one_set() {
-        let text = "[spira]\ngoal = \"sp-spira\"\ndb = \"/db\"\n";
+        let text = "[spira]\ngoal = \"sp-spira\"\ndb = \"db\"\n";
         let doc = validate(text).expect("the unmigrated file still opens for writing");
         let fixed = spira_config::set_path(&doc, "spira.id_prefix", "sp").unwrap();
         let out = toml::to_string_pretty(&fixed).unwrap();
         let (back, _) = spira_config::validate_strict(&out).expect("repaired");
-        assert_eq!(back.spira.unwrap().get_str("SPIRA_DB").unwrap().as_deref(), Some("/db"), "the rest of [spira] survives");
+        assert_eq!(back.spira.unwrap().get_str("SPIRA_DB").unwrap().as_deref(), Some("db"), "the rest of [spira] survives");
         assert!(!out.contains("goal"), "and the retired key is gone from the rewrite: {out}");
     }
 

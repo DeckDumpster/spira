@@ -61,7 +61,7 @@ pub struct Roots {
 
 impl Roots {
     pub fn live(run_dir: &Path) -> Roots {
-        Roots { cgroup: "/sys/fs/cgroup".into(), proc_dir: "/proc".into(), sys: "/sys".into(), run_dir: run_dir.to_path_buf() }
+        Roots { cgroup: system_paths::SYS_FS_CGROUP.into(), proc_dir: system_paths::PROC.into(), sys: system_paths::SYS.into(), run_dir: run_dir.to_path_buf() }
     }
 }
 

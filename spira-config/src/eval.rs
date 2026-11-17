@@ -278,7 +278,7 @@ mod tests {
 
     #[test]
     fn bare_variable_reference() {
-        assert_eq!(eval_expr("$SPIRA_DB", &known(&[("SPIRA_DB", "/x/db")])).unwrap(), "/x/db");
+        assert_eq!(eval_expr("$SPIRA_DB", &known(&[("SPIRA_DB", "x/db")])).unwrap(), "x/db");
     }
 
     #[test]
@@ -289,26 +289,26 @@ mod tests {
     #[test]
     fn braced_variable_with_literal_suffix() {
         assert_eq!(
-            eval_expr("${SPIRA_HOME}/runes", &known(&[("SPIRA_HOME", "/h")])).unwrap(),
-            "/h/runes"
+            eval_expr("${SPIRA_HOME}/runes", &known(&[("SPIRA_HOME", "h")])).unwrap(),
+            "h/runes"
         );
     }
 
     #[test]
     fn fallback_default_used_when_var_is_unset_or_empty() {
-        assert_eq!(eval_expr("${SPIRA_WIKI:-$SPIRA_REPO}", &known(&[("SPIRA_REPO", "/r")])).unwrap(), "/r");
+        assert_eq!(eval_expr("${SPIRA_WIKI:-$SPIRA_REPO}", &known(&[("SPIRA_REPO", "r")])).unwrap(), "r");
         assert_eq!(
             eval_expr(
                 "${SPIRA_WIKI:-$SPIRA_REPO}",
-                &known(&[("SPIRA_WIKI", "/w"), ("SPIRA_REPO", "/r")])
+                &known(&[("SPIRA_WIKI", "w"), ("SPIRA_REPO", "r")])
             )
             .unwrap(),
-            "/w"
+            "w"
         );
         // Empty (set-but-blank) is treated the same as unset, matching bash's `:-`.
         assert_eq!(
-            eval_expr("${SPIRA_WIKI:-$SPIRA_REPO}", &known(&[("SPIRA_WIKI", ""), ("SPIRA_REPO", "/r")])).unwrap(),
-            "/r"
+            eval_expr("${SPIRA_WIKI:-$SPIRA_REPO}", &known(&[("SPIRA_WIKI", ""), ("SPIRA_REPO", "r")])).unwrap(),
+            "r"
         );
     }
 
@@ -317,26 +317,26 @@ mod tests {
         assert_eq!(
             eval_expr(
                 "${XDG_CONFIG_HOME:-$HOME/.config}/spira/overrides",
-                &known(&[("HOME", "/h")])
+                &known(&[("HOME", "h")])
             )
             .unwrap(),
-            "/h/.config/spira/overrides"
+            "h/.config/spira/overrides"
         );
         assert_eq!(
             eval_expr(
                 "${XDG_CONFIG_HOME:-$HOME/.config}/spira/overrides",
-                &known(&[("XDG_CONFIG_HOME", "/xdg"), ("HOME", "/h")])
+                &known(&[("XDG_CONFIG_HOME", "xdg"), ("HOME", "h")])
             )
             .unwrap(),
-            "/xdg/spira/overrides"
+            "xdg/spira/overrides"
         );
     }
 
     #[test]
     fn dirname_command_substitution() {
         assert_eq!(
-            eval_expr("$(dirname \"$SPIRA_HOME\")/cockpit", &known(&[("SPIRA_HOME", "/a/b/spira")])).unwrap(),
-            "/a/b/cockpit"
+            eval_expr("$(dirname \"$SPIRA_HOME\")/cockpit", &known(&[("SPIRA_HOME", "a/b/spira")])).unwrap(),
+            "a/b/cockpit"
         );
     }
 
@@ -345,10 +345,10 @@ mod tests {
         assert_eq!(
             eval_expr(
                 "$(_spira_join \"$SPIRA_WORKSPACES\" beads-test)",
-                &known(&[("SPIRA_WORKSPACES", "/ws/")])
+                &known(&[("SPIRA_WORKSPACES", "ws/")])
             )
             .unwrap(),
-            "/ws/beads-test"
+            "ws/beads-test"
         );
     }
 
@@ -376,8 +376,9 @@ mod tests {
 
     #[test]
     fn dirname_matches_coreutils_on_edge_cases() {
-        assert_eq!(sh_dirname("/a/b"), "/a");
-        assert_eq!(sh_dirname("/a"), "/");
+        let sep = std::path::MAIN_SEPARATOR;
+        assert_eq!(sh_dirname("a/b"), "a");
+        assert_eq!(sh_dirname(&format!("{sep}a")), sep.to_string());
         assert_eq!(sh_dirname("a"), ".");
         assert_eq!(sh_dirname(""), ".");
         assert_eq!(sh_dirname("/"), "/");

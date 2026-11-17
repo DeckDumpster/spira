@@ -533,7 +533,7 @@ impl Exec for ProcessExec {
 /// CPU (user and system) of every process this one has run and reaped, from `/proc/self/stat`:
 /// the part of a world's cost that does not depend on how loaded the box was.
 pub fn children_cpu_ms() -> u64 {
-    let stat = std::fs::read_to_string("/proc/self/stat").unwrap_or_default();
+    let stat = std::fs::read_to_string(format!("{}/stat", system_paths::PROC_SELF)).unwrap_or_default();
     let fields: Vec<u64> = stat.rsplit_once(')').map(|(_, rest)| rest.split_whitespace().skip(13).take(2).filter_map(|f| f.parse().ok()).collect()).unwrap_or_default();
     fields.iter().sum::<u64>() * 10
 }

@@ -202,7 +202,7 @@ mod tests {
         let env: &'static Env = Box::leak(Box::new(Env::new(Default::default(), Default::default())));
         let fake = std::sync::Arc::new(spira_store::lc_call::fake::Content::new(rows));
         let lc = spira_store::lc_call::LcClient::over(fake.clone(), true);
-        (BdCli { bdq: "/nonexistent/bdq".into(), timeout_s: 5, conn_retries: 1, fixture: None, env, lc }, fake)
+        (BdCli { bdq: "nonexistent/bdq".into(), timeout_s: 5, conn_retries: 1, fixture: None, env, lc }, fake)
     }
 
     #[test]

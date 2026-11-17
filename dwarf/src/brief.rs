@@ -816,7 +816,7 @@ mod tests {
             id: "sp-a",
             title: "Do the thing",
             repo: "spira",
-            worktree: "/w/sp-a",
+            worktree: "w/sp-a",
             branch: "spira/sp-a",
             landing_ref: "local/main",
             deadline: "**This session has no wall-clock deadline.**",
@@ -829,9 +829,9 @@ mod tests {
     #[test]
     fn the_builder_system_prompt_is_its_rune_with_three_substitutions() {
         let rune = include_str!("../../spira/runes/builder.md");
-        let sys = static_system(rune, "sp-a", "/w/sp-a", "/r");
-        assert_eq!(sys, rune.replace("{{ID}}", "sp-a").replace("{{WORKTREE}}", "/w/sp-a"));
-        assert!(!sys.contains("{{") && sys.contains("`/w/sp-a`") && sys.contains("work item `sp-a`"));
+        let sys = static_system(rune, "sp-a", "w/sp-a", "r");
+        assert_eq!(sys, rune.replace("{{ID}}", "sp-a").replace("{{WORKTREE}}", "w/sp-a"));
+        assert!(!sys.contains("{{") && sys.contains("`w/sp-a`") && sys.contains("work item `sp-a`"));
         assert!(sys.starts_with("You are a builder:") && !sys.contains("Warden"));
         assert!(rune.contains("{{ID}}"), "positive control: the template carries its tokens");
     }
@@ -905,7 +905,7 @@ mod tests {
     fn fixture_brief_is_truthful_about_what_exists() {
         let none = fixture_brief(None, "spira/testdb.sh", 0);
         assert!(none.starts_with("This repository has no shared test fixture"));
-        let f = FixtureInfo { name: "dwarvespa".into(), dir: "/d".into(), baseline: "b".into(), bin: String::new(), started_service: "0".into(), mode: "embedded".into(), server_init_hash: String::new() };
+        let f = FixtureInfo { name: "dwarvespa".into(), dir: "d".into(), baseline: "b".into(), bin: String::new(), started_service: "0".into(), mode: "embedded".into(), server_init_hash: String::new() };
         let e = fixture_brief(Some(&f), "spira/testdb.sh", 1234);
         assert!(e.contains("`TESTDB_NAME=dwarvespa`"));
         assert!(e.contains("spending the 1234ms"));
@@ -920,16 +920,16 @@ mod tests {
     // covers: UC-dwarf-execution-07
     #[test]
     fn resume_slain_deadline_renderers() {
-        assert_eq!(resume_brief("b", "/w", "0", "x"), "");
-        assert_eq!(resume_brief("b", "/w", "?", "x"), "");
-        let r = resume_brief("spira/sp-a", "/w", "2", "  abc one\n  def two");
+        assert_eq!(resume_brief("b", "w", "0", "x"), "");
+        assert_eq!(resume_brief("b", "w", "?", "x"), "");
+        let r = resume_brief("spira/sp-a", "w", "2", "  abc one\n  def two");
         assert!(r.starts_with("## Prior work on this branch\n\n`spira/sp-a` carries **2** commit(s)"));
         assert!(r.contains("```\n  abc one\n  def two\n```"));
-        assert_eq!(slain_brief("sp-a — the work", "1", "origin/main", "", "", "/l"), "");
-        let s = slain_brief("sp-a: wip — salvaged at slay (operator stop)", "3", "origin/main", "2026-09-28 10:00:00 +0000", "", "/run/sp-a.log");
+        assert_eq!(slain_brief("sp-a — the work", "1", "origin/main", "", "", "l"), "");
+        let s = slain_brief("sp-a: wip — salvaged at slay (operator stop)", "3", "origin/main", "2026-09-28 10:00:00 +0000", "", "run/sp-a.log");
         assert!(s.contains("slain at 2026-09-28 10:00:00 +0000 (operator stop)"));
         assert!(s.contains("beyond `origin/main`; the last"), "an empty diffstat adds no stray parentheses");
-        let s2 = slain_brief("sp-a: wip — salvaged at slay (x)", "3", "o/m", "", " 2 files changed", "/l");
+        let s2 = slain_brief("sp-a: wip — salvaged at slay (x)", "3", "o/m", "", " 2 files changed", "l");
         assert!(s2.contains("slain at unknown time (x)") && s2.contains("`o/m` ( 2 files changed);"));
         let dl = deadline_brief(Some(1_000_600), 1_000_000, Some("10:00:00 UTC".into()));
         assert!(dl.starts_with("**This session is killed at 10:00:00 UTC — 600 seconds from now.**"));
@@ -949,9 +949,9 @@ mod tests {
             deadline: deadline_brief(Some(1_000_600), 1_000_000, None),
             finish: format!(
                 "{}\n{}\n{}",
-                resume_brief("spira/sp-a", "/w", "2", "abc one"),
-                slain_brief("sp-a: wip — salvaged at slay (stop)", "3", "origin/main", "", "", "/l"),
-                already_done_brief("origin/main", "sp-a", "/w")
+                resume_brief("spira/sp-a", "w", "2", "abc one"),
+                slain_brief("sp-a: wip — salvaged at slay (stop)", "3", "origin/main", "", "", "l"),
+                already_done_brief("origin/main", "sp-a", "w")
             ),
         };
         let p = render_prompt("work {{BEAD_ID}} on {{BRANCH}}\n{{BEAD}}\n{{PARK}}\n{{FIXTURE}}{{DEADLINE}}\n{{FINISH}}", &t, None);
@@ -1097,7 +1097,7 @@ mod tests {
     #[test]
     fn substitution_is_literal_and_ordered() {
         let t = Tokens {
-            single: vec![("BEAD_ID", "sp-a".into()), ("DB", "/d&b|x\\y".into())],
+            single: vec![("BEAD_ID", "sp-a".into()), ("DB", "d&b|x\\y".into())],
             bead: "body with {{PARK}} & more".into(),
             park: "PARK!".into(),
             fixture: "FX".into(),
@@ -1106,7 +1106,7 @@ mod tests {
         };
         let p = render_prompt("id {{BEAD_ID}} db {{DB}}\n{{BEAD}}\n{{PARK}}\n{{FIXTURE}}{{FIXTURE}}\n{{DEADLINE}}{{FINISH}}{{UNKNOWN}}", &t, None);
         // BEAD first, so a {{PARK}} inside the bead body is the first occurrence (as before).
-        assert_eq!(p, "id sp-a db /d&b|x\\y\nbody with PARK! & more\n{{PARK}}\nFX{{FIXTURE}}\nDLFIN{{UNKNOWN}}");
+        assert_eq!(p, "id sp-a db d&b|x\\y\nbody with PARK! & more\n{{PARK}}\nFX{{FIXTURE}}\nDLFIN{{UNKNOWN}}");
     }
 
     #[test]
@@ -1142,14 +1142,14 @@ mod tests {
     #[test]
     fn memories_core_and_index() {
         let j = r#"{"law-b":" B text ","law-a":"A text","sop-x":"X","other":"no","law-c":7}"#;
-        let m = render_memories(j, "law-,sop-", 120000, "law-a", "/h");
+        let m = render_memories(j, "law-,sop-", 120000, "law-a", "h");
         assert!(m.starts_with("## law-a\n\nA text\n\n\n## Statutes in force"), "{m}");
-        assert!(m.contains("    /h/rule.sh show <slug-without-law-prefix>\nlaw-b"));
+        assert!(m.contains("    h/rule.sh show <slug-without-law-prefix>\nlaw-b"));
         assert!(m.ends_with("    sop show <slug-without-sop-prefix>\nsop-x"));
         assert!(!m.contains("other"));
-        let tight = render_memories(j, "law-", 5, "law-a", "/h");
+        let tight = render_memories(j, "law-", 5, "law-a", "h");
         assert!(tight.starts_with("## Statutes in force") && tight.contains("law-a\nlaw-b"), "over budget falls back to the index");
-        assert_eq!(render_memories("garbage", "law-", 1, "", "/h"), "");
+        assert_eq!(render_memories("garbage", "law-", 1, "", "h"), "");
     }
 
     #[test]
@@ -1177,7 +1177,7 @@ mod tests {
         let j = r#"{"law-a":"A text","law-local":"Local text"}"#;
         let merged = with_local_core("law-a", "law-local");
         assert!(missing_core(j, "law-", &merged).is_empty(), "both slugs resolve");
-        let rendered = render_memories(j, "law-", 120000, &merged, "/h");
+        let rendered = render_memories(j, "law-", 120000, &merged, "h");
         assert!(rendered.contains("## law-local\n\nLocal text"), "{rendered}");
 
         let merged_missing = with_local_core("law-a", "law-gone-local");
@@ -1191,12 +1191,12 @@ mod tests {
     // covers: UC-dwarf-execution-07
     #[test]
     fn close_and_already_done_blocks() {
-        let composed = format!("{}{}", already_done_brief("origin/main", "sp-a", "/w"), rebase_brief("b", "o/m", "/w", ""));
+        let composed = format!("{}{}", already_done_brief("origin/main", "sp-a", "w"), rebase_brief("b", "o/m", "w", ""));
         assert!(!composed.contains("Before you close: rebase"), "{composed}");
-        let on = already_done_brief("origin/main", "sp-a", "/w");
+        let on = already_done_brief("origin/main", "sp-a", "w");
         assert!(on.contains("-n ${SPIRA_VERDICT_WINDOW:-400} origin/main | grep"));
         assert!(on.contains("work superseded-by <successor-id>") && !on.contains("bd "), "{on}");
-        assert!(rebase_brief("b", "o/m", "/w", "").contains("conflicts in: unknown"));
+        assert!(rebase_brief("b", "o/m", "w", "").contains("conflicts in: unknown"));
         assert!(dirty_brief(&["a".into(), "b c".into()]).contains("```\n  a\n  b c\n```"));
         assert_eq!(dirty_brief(&[]), "");
     }

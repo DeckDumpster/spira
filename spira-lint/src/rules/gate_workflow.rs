@@ -396,7 +396,7 @@ pub fn judge(w: &Workflows) -> Vec<(&'static str, String)> {
     // nothing of this commit's.
     let stage = step(g, "Stage the build as a release", true);
     j.located(GATE, "the Stage the build as a release step", &stage);
-    j.want(GATE, "the staging step lays out a release from the tested build", "/release\" build", &stage);
+    j.want(GATE, "the staging step lays out a release from the tested build", "/release\" build", &stage); // not a path: substring of a workflow text
     j.want(GATE, "the staging step takes the downloaded binaries, running no cargo", "--bin-dir", &stage);
     j.want(GATE, "the staging step sets SPIRA_RELEASE for every later step", "SPIRA_RELEASE=%s", &stage);
     j.want(GATE, "the staging step sets PATH for every later step", "PATH=%s", &stage);

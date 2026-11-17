@@ -348,14 +348,14 @@ mod tests {
         // scope/ask/no_loop/db/run are registered keys now: a literal `Declared`, not a
         // Context fixture — Cfg::from_context never reads them off Context any more.
         let d = Declared {
-            run: std::path::PathBuf::from("/r"),
+            run: std::path::PathBuf::from("r"),
             scope: scope.into(),
             ask: "ask".into(),
             no_loop: "no-loop".into(), // literal-ok: test fixture
-            db: "/db".into(),
+            db: "db".into(),
             ..Declared::test_default()
         };
-        Cfg::from_context(&Context::parse(&b).unwrap(), std::path::Path::new("/h"), d)
+        Cfg::from_context(&Context::parse(&b).unwrap(), std::path::Path::new("h"), d)
     }
 
     fn snap() -> Snapshot {

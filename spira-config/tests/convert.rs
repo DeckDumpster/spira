@@ -13,7 +13,7 @@ fn queue_forge_and_queue_local_land_modes_convert() {
     let repo_map = "alpha | /tmp/alpha | queue.forge | origin/main | | |\n\
                      beta  | /tmp/beta  | queue.local | local/main  | | |\n";
     let (doc, warnings) =
-        convert("", "/opt/fixture-home", repo_map, &[]).expect("both land modes must convert");
+        convert("", "opt/fixture-home", repo_map, &[]).expect("both land modes must convert");
     assert!(
         warnings.0.is_empty(),
         "unexpected warnings: {:?}",
@@ -39,7 +39,7 @@ fn valid_lane_mode_and_label_convert() {
     let repo_map = "alpha | /tmp/alpha | push | origin/main | | true | develop\n\
                      beta  | /tmp/beta  | push | origin/main | | true | plan,groom\n";
     let (doc, _warnings) =
-        convert("", "/opt/fixture-home", repo_map, &[]).expect("valid lanes must convert");
+        convert("", "opt/fixture-home", repo_map, &[]).expect("valid lanes must convert");
     assert_eq!(
         doc.repo.get("alpha").unwrap().lanes,
         vec![Lane::Plan, Lane::Incident, Lane::Groom, Lane::Spike]
@@ -54,7 +54,7 @@ fn valid_lane_mode_and_label_convert() {
 fn an_empty_lanes_column_admits_every_lane() {
     let repo_map = "blank | /tmp/blank | push | origin/main | | true |\n\
                      short | /tmp/short | push | origin/main | | true\n";
-    let (doc, _warnings) = convert("", "/opt/fixture-home", repo_map, &[]).expect("converts");
+    let (doc, _warnings) = convert("", "opt/fixture-home", repo_map, &[]).expect("converts");
     let every = vec![
         Lane::Plan,
         Lane::Incident,
@@ -75,7 +75,7 @@ fn an_empty_lanes_column_admits_every_lane() {
 #[test]
 fn unknown_lane_mode_is_refused_not_warned() {
     let repo_map = "alpha | /tmp/alpha | push | origin/main | | true | fullaccess\n";
-    let errors = convert("", "/opt/fixture-home", repo_map, &[])
+    let errors = convert("", "opt/fixture-home", repo_map, &[])
         .expect_err("an unknown lane-mode word must refuse the whole convert");
     assert!(
         errors.iter().any(|e| e.contains("alpha") && e.contains("fullaccess")),
@@ -86,7 +86,7 @@ fn unknown_lane_mode_is_refused_not_warned() {
 #[test]
 fn unknown_lane_label_is_refused_not_warned() {
     let repo_map = "alpha | /tmp/alpha | push | origin/main | | true | plan,bogus-lane\n";
-    let errors = convert("", "/opt/fixture-home", repo_map, &[])
+    let errors = convert("", "opt/fixture-home", repo_map, &[])
         .expect_err("an unknown lane label must refuse the whole convert");
     assert!(
         errors
@@ -119,7 +119,7 @@ fn unknown_lane_label_is_refused_not_warned() {
 #[test]
 fn retired_cpu_quota_keys_convert_with_a_warning() {
     let conf = "SPIRA_DWARF_CPU_QUOTA=400\nSPIRA_LAND_CPU_QUOTA=70\n";
-    let (doc, warnings) = convert(conf, "/opt/fixture-home", "", &[])
+    let (doc, warnings) = convert(conf, "opt/fixture-home", "", &[])
         .expect("a retired key must not refuse the whole convert");
     for key in ["SPIRA_DWARF_CPU_QUOTA", "SPIRA_LAND_CPU_QUOTA"] {
         assert!(
@@ -136,7 +136,7 @@ fn retired_cpu_quota_keys_convert_with_a_warning() {
 // SPIRA_BATCHER_BIN keeps the cuts off as batcher_enable = "0".
 #[test]
 fn retired_tool_path_keys_convert_with_a_warning() {
-    let (doc, warnings) = convert("SPIRA_ID_PREFIX = sp\nSPIRA_BATCHER_BIN = /bin/true\nSPIRA_LC_BIN = /x/spira-lc\n", "/opt/fixture-home", "", &[])
+    let (doc, warnings) = convert("SPIRA_ID_PREFIX = sp\nSPIRA_BATCHER_BIN = /bin/true\nSPIRA_LC_BIN = /x/spira-lc\n", "opt/fixture-home", "", &[])
         .expect("retired keys never refuse the convert");
     assert_eq!(doc.spira.as_ref().unwrap().get_str("SPIRA_BATCHER_ENABLE").unwrap().as_deref(), Some("0"));
     assert!(warnings.0.iter().any(|w| w.contains("SPIRA_LC_BIN is retired (sp-gypjk")), "{:?}", warnings.0);
@@ -147,7 +147,7 @@ fn retired_tool_path_keys_convert_with_a_warning() {
 // unset conf carries no mail_mute at all, matching "default off, mail flows normally".
 #[test]
 fn legacy_mail_mute_converts_to_the_typed_key() {
-    let (doc, warnings) = convert("SPIRA_ID_PREFIX = sp\nSPIRA_MAIL_MUTE=1\n", "/opt/fixture-home", "", &[])
+    let (doc, warnings) = convert("SPIRA_ID_PREFIX = sp\nSPIRA_MAIL_MUTE=1\n", "opt/fixture-home", "", &[])
         .expect("a known key must not refuse the convert");
     assert!(warnings.0.is_empty(), "{:?}", warnings.0);
     assert_eq!(doc.spira.as_ref().unwrap().get_bool("SPIRA_MAIL_MUTE").unwrap(), Some(true));
@@ -156,14 +156,14 @@ fn legacy_mail_mute_converts_to_the_typed_key() {
 #[test]
 fn mail_mute_absent_by_default() {
     let (doc, warnings) =
-        convert("SPIRA_ID_PREFIX = sp\nSPIRA_HOME_REPO=home\n", "/opt/fixture-home", "", &[]).expect("converts");
+        convert("SPIRA_ID_PREFIX = sp\nSPIRA_HOME_REPO=home\n", "opt/fixture-home", "", &[]).expect("converts");
     assert!(warnings.0.is_empty(), "{:?}", warnings.0);
     assert_eq!(doc.spira.as_ref().unwrap().get_bool("SPIRA_MAIL_MUTE").unwrap(), None);
 }
 
 #[test]
 fn mail_mute_bad_value_warns_not_a_spelling_the_key_accepts() {
-    let (doc, warnings) = convert("SPIRA_ID_PREFIX = sp\nSPIRA_MAIL_MUTE=maybe\n", "/opt/fixture-home", "", &[])
+    let (doc, warnings) = convert("SPIRA_ID_PREFIX = sp\nSPIRA_MAIL_MUTE=maybe\n", "opt/fixture-home", "", &[])
         .expect("a bad value warns, it does not refuse the whole convert");
     assert_eq!(doc.spira.as_ref().unwrap().get_bool("SPIRA_MAIL_MUTE").unwrap(), None);
     assert!(
@@ -177,7 +177,7 @@ fn mail_mute_bad_value_warns_not_a_spelling_the_key_accepts() {
 // warning naming the bead, never refused, and the key does not reach the converted document.
 #[test]
 fn retired_quarantine_clean_runs_converts_with_a_warning() {
-    let (doc, warnings) = convert("SPIRA_QUARANTINE_CLEAN_RUNS=10\n", "/opt/fixture-home", "", &[])
+    let (doc, warnings) = convert("SPIRA_QUARANTINE_CLEAN_RUNS=10\n", "opt/fixture-home", "", &[])
         .expect("a retired key must not refuse the whole convert");
     assert!(
         warnings.0.iter().any(|w| w.contains("SPIRA_QUARANTINE_CLEAN_RUNS") && w.contains("sp-op2c2")),

@@ -78,10 +78,10 @@ fn a_positive_key_wins_anything_else_derives() {
 
 #[test]
 fn pools_have_their_own_directories_and_keys() {
-    let r = Path::new("/run/spira");
-    assert_eq!(Pool::Gate.dir(r), Path::new("/run/spira/gate-admission"), "the gate's pool stays where landing-pass probes it");
-    assert_eq!(Pool::Test.dir(r), Path::new("/run/spira/test-admission"));
-    assert_eq!(Pool::Cold.dir(r), Path::new("/run/spira/cold-admission"));
+    let r = Path::new("run/spira");
+    assert_eq!(Pool::Gate.dir(r), Path::new("run/spira/gate-admission"), "the gate's pool stays where landing-pass probes it");
+    assert_eq!(Pool::Test.dir(r), Path::new("run/spira/test-admission"));
+    assert_eq!(Pool::Cold.dir(r), Path::new("run/spira/cold-admission"));
     assert_eq!(Pool::Gate.size_env(), "SPIRA_CERTIFY_PAR");
     assert_eq!(Pool::parse("test"), Some(Pool::Test));
     assert_eq!(Pool::parse("tests"), None);
@@ -437,8 +437,8 @@ fn a_run_slot_waiter_says_what_it_waits_for() {
 fn the_retired_wrapper_names_the_inner_compiler_with_every_argument() {
     let os = |a: &[&str]| a.iter().map(std::ffi::OsString::from).collect::<Vec<_>>();
     let args = os(&["rustc", "--crate-name", "x"]);
-    let (prog, argv) = passthrough(Some("/box/sccache"), &args);
-    assert_eq!((prog, argv), ("/box/sccache".into(), args.clone()), "the inner compiler gets every argument, rustc included");
+    let (prog, argv) = passthrough(Some("box/sccache"), &args);
+    assert_eq!((prog, argv), ("box/sccache".into(), args.clone()), "the inner compiler gets every argument, rustc included");
     for none in [None, Some(" ")] {
         let (prog, argv) = passthrough(none, &args);
         assert_eq!((prog, argv), ("rustc".into(), os(&["--crate-name", "x"])), "no inner: the compiler it was handed");

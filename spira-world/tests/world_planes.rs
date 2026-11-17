@@ -36,7 +36,7 @@ fn halt_guard_lines(unit: &str) -> Vec<String> {
         .unwrap()
         .lines()
         .filter_map(|l| l.strip_prefix("ExecStartPre="))
-        .filter(|l| l.contains("/bin/world "))
+        .filter(|l| l.contains("bin/world "))
         .map(str::to_string)
         .collect()
 }

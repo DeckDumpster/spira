@@ -75,7 +75,7 @@ pub fn is_uuid(s: &str) -> bool {
 pub fn new_session_id() -> String {
     use std::io::Read;
     let mut b = [0u8; 16];
-    let read = std::fs::File::open("/dev/urandom").and_then(|mut f| f.read_exact(&mut b));
+    let read = std::fs::File::open(system_paths::DEV_URANDOM).and_then(|mut f| f.read_exact(&mut b));
     if read.is_err() {
         let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
         b = (t ^ ((std::process::id() as u128) << 64)).to_le_bytes();
@@ -208,7 +208,7 @@ mod tests {
     const ID: &str = "0b9d6f3a-1c2e-4f5a-8b7c-9d0e1f2a3b4c";
 
     fn session(rune: &str, persona: &str) -> Fact {
-        Fact { kind: SESSION.into(), cause: SessionFact { id: ID.into(), rune: rune.into(), persona: persona.into(), worktree: "/w/sp-a".into() }.cause(), ..Fact::default() }
+        Fact { kind: SESSION.into(), cause: SessionFact { id: ID.into(), rune: rune.into(), persona: persona.into(), worktree: "w/sp-a".into() }.cause(), ..Fact::default() }
     }
 
     fn ck(at: i64) -> Fact {
@@ -223,7 +223,7 @@ mod tests {
 
     #[test]
     fn the_session_fact_round_trips_and_keeps_a_worktree_with_spaces() {
-        let f = SessionFact { id: ID.into(), rune: "builder".into(), persona: "abc123".into(), worktree: "/a b/c".into() };
+        let f = SessionFact { id: ID.into(), rune: "builder".into(), persona: "abc123".into(), worktree: "a b/c".into() };
         assert_eq!(SessionFact::parse(&f.cause()), Some(f));
         assert_eq!(SessionFact::parse("not-a-uuid builder x /w"), None);
     }

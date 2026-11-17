@@ -19,6 +19,6 @@
 
     #[test]
     fn with_no_credential_anywhere_it_is_empty_and_an_explicit_value_wins() {
-        assert_eq!(lc_password_file(&env(&[("XDG_CONFIG_HOME", "/nonexistent-lcpw")])), "");
-        assert_eq!(lc_password_file(&env(&[("SPIRA_LC_PASSWORD_FILE", "/x")])), "/x");
+        assert_eq!(lc_password_file(&env(&[("XDG_CONFIG_HOME", "nonexistent-lcpw")])), "");
+        assert_eq!(lc_password_file(&env(&[("SPIRA_LC_PASSWORD_FILE", "x")])), "x");
     }

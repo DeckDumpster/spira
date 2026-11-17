@@ -344,7 +344,7 @@ mod diagnostics_tests {
             true
         }
         fn step_summary_path(&self) -> Option<PathBuf> {
-            Some(PathBuf::from("/x/step-summary.md"))
+            Some(PathBuf::from("x/step-summary.md"))
         }
         fn batch_tail_lines(&self) -> usize {
             2
@@ -358,7 +358,7 @@ mod diagnostics_tests {
     }
 
     fn diagnose(w: &Fake) -> i32 {
-        run(w, Path::new("/home"), Path::new("/root"), &mut Tally::default())
+        run(w, Path::new("home"), Path::new("root"), &mut Tally::default())
     }
 
     // covers: UC-test-infrastructure-36

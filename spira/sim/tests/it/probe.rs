@@ -53,8 +53,8 @@ fn a_worlds_landing_lineage_is_its_origin_trunk_unless_its_own_repository_is_que
     let w = t.join("world");
     std::fs::create_dir_all(w.join("home")).unwrap();
     assert!(!spira_sim::probe::lands_on_origin(&w), "no registry yet reads as the default, queue.local");
-    for (row, on_origin) in [("sim|/w/work|queue.local|local/main|||plan", false), ("sim|/w/work|push|origin/main|||plan", true), ("sim|/w/work|hold|origin/main|||plan", true)] {
-        std::fs::write(w.join("home/registry-rows"), format!("{row}\nother|/w/repos/o/work|queue.local|local/main|||plan\n")).unwrap();
+    for (row, on_origin) in [("sim|w/work|queue.local|local/main|||plan", false), ("sim|w/work|push|origin/main|||plan", true), ("sim|w/work|hold|origin/main|||plan", true)] {
+        std::fs::write(w.join("home/registry-rows"), format!("{row}\nother|w/repos/o/work|queue.local|local/main|||plan\n")).unwrap();
         assert_eq!(spira_sim::probe::lands_on_origin(&w), on_origin, "{row}");
     }
 }
@@ -99,9 +99,9 @@ fn mail_rows_name_each_message_by_mailbox_kind_bead_read_state_and_subject() {
 
 #[test]
 fn a_worlds_mail_is_unmuted_and_rooted_inside_it() {
-    let s = spira_sim::world::config_settings(Path::new("/w"), &[], Path::new("/w/bin/gh"));
+    let s = spira_sim::world::config_settings(Path::new("w"), &[], Path::new("w/bin/gh"));
     assert!(s.contains(&("spira.mail_mute".to_string(), "false".to_string())));
-    assert_eq!(spira_sim::world::mail_root(Path::new("/w")), Path::new("/w").join("home").join("spira").join("run").join("mail"));
+    assert_eq!(spira_sim::world::mail_root(Path::new("w")), Path::new("w").join("home").join("spira").join("run").join("mail"));
 }
 
 #[test]

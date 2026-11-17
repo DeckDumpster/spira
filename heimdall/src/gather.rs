@@ -258,19 +258,19 @@ mod tests {
         units.install("spira-sentinel-prod.timer", facts(UnitState::Active));
         units.install("spira-groom.service", facts(UnitState::Failed));
         let units: std::sync::Arc<dyn Units> = std::sync::Arc::new(units);
-        let sc = RealSystemctl { bin: "/nonexistent/systemctl".into(), timeout: Duration::from_secs(1), units: Some(units) };
+        let sc = RealSystemctl { bin: "nonexistent/systemctl".into(), timeout: Duration::from_secs(1), units: Some(units) };
         assert_eq!(sc.active_text("spira-sentinel-prod.timer"), "active");
         assert!(sc.is_active("spira-sentinel-prod.timer"));
         assert_eq!(sc.active_text("spira-groom.service"), "failed");
         assert!(!sc.is_active("spira-groom.service"));
         assert_eq!(sc.active_text("spira-none.timer"), "inactive");
-        let blind = RealSystemctl { bin: "/nonexistent/systemctl".into(), timeout: Duration::from_secs(1), units: None };
+        let blind = RealSystemctl { bin: "nonexistent/systemctl".into(), timeout: Duration::from_secs(1), units: None };
         assert_eq!(blind.active_text("spira-sentinel-prod.timer"), "");
     }
 
     #[test]
     fn log_tail_missing_file_is_unreadable_not_empty_text() {
-        let t = read_log_tail(Path::new("/no/such/path/ever"), 1000);
+        let t = read_log_tail(Path::new("no/such/path/ever"), 1000);
         assert!(!t.readable);
         assert_eq!(t.error, "no such file");
     }
@@ -296,14 +296,14 @@ mod tests {
 
     #[test]
     fn mirror_unconfigured_when_no_exporter() {
-        let m = check_mirror("", Path::new("/does/not/matter"));
+        let m = check_mirror("", Path::new("does/not/matter"));
         assert!(!m.configured);
         assert!(!m.exists);
     }
 
     #[test]
     fn mirror_configured_but_missing() {
-        let m = check_mirror("dolt", Path::new("/no/such/mirror/ever.jsonl"));
+        let m = check_mirror("dolt", Path::new("no/such/mirror/ever.jsonl"));
         assert!(m.configured);
         assert!(!m.exists);
     }

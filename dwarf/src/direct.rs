@@ -226,12 +226,12 @@ mod tests {
 
     #[test]
     fn the_unit_tail_round_trips_what_the_caller_built() {
-        let argv = build_argv(&req(), Some("dwarf-old"), Path::new("/h"), "/rel/bin/dwarf", &a(&["--setenv=HOME=/h"]), 1000);
+        let argv = build_argv(&req(), Some("dwarf-old"), Path::new("h"), "rel/bin/dwarf", &a(&["--setenv=HOME=/h"]), 1000);
         assert_eq!(&argv[..4], &a(&["--user", "--collect", "--quiet", "--unit=spira-dwarf-builder-directed-1000"]));
         let tail = &argv[argv.iter().position(|x| x == "--directed").unwrap()..];
         assert_eq!(parse_directed(tail), Ok(Direct { bead: "sp-x".into(), by: "concierge".into(), reason: "loop fix".into(), replaced: Some("dwarf-old".into()) }));
-        let at = argv.iter().position(|x| x == "/rel/bin/dwarf").unwrap();
-        assert_eq!(argv[at..at + 4], a(&["/rel/bin/dwarf", "--home", "/h", "builder"])[..]);
+        let at = argv.iter().position(|x| x == "rel/bin/dwarf").unwrap();
+        assert_eq!(argv[at..at + 4], a(&["rel/bin/dwarf", "--home", "h", "builder"])[..]);
         assert!(runtime::units::is_directed(&format!("{}.service", &argv[3]["--unit=".len()..])));
     }
 
@@ -284,7 +284,7 @@ mod tests {
         }
     }
     fn fake(show: Out, slay_rc: i32) -> Fake {
-        Fake { show, slay_rc, calls: Mutex::default(), teardown_reads: Mutex::new(0), after_launch: None, refusal: None, run_dir: PathBuf::from("/nonexistent") }
+        Fake { show, slay_rc, calls: Mutex::default(), teardown_reads: Mutex::new(0), after_launch: None, refusal: None, run_dir: PathBuf::from("nonexistent") }
     }
     fn row(state: &str, holder: Option<&str>) -> Out {
         let h = holder.map_or("null".to_string(), |h| format!("\"{h}\""));
@@ -292,7 +292,7 @@ mod tests {
     }
     fn go(f: &Fake) -> (i32, MemSink) {
         let sink = MemSink::default();
-        let rc = run(f, &sink, &|_| {}, &f.run_dir, &req(), Path::new("/h"), Some("/rel/bin/dwarf"), "systemd-run", &[], 1000);
+        let rc = run(f, &sink, &|_| {}, &f.run_dir, &req(), Path::new("h"), Some("rel/bin/dwarf"), "systemd-run", &[], 1000);
         (rc, sink)
     }
     fn progs(f: &Fake) -> Vec<String> {

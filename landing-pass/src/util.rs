@@ -296,8 +296,8 @@ mod runnable_tests {
     fn a_bare_name_is_looked_up_on_path_and_a_path_is_statted() {
         assert!(runnable(Path::new("sh")), "sh is on every PATH");
         assert!(!runnable(Path::new("no-such-spira-tool-sp-gypjk")));
-        assert!(runnable(Path::new("/bin/sh")));
-        assert!(!runnable(Path::new("/nonexistent/incident.sh")));
+        assert!(runnable(Path::new(system_paths::BIN_SH)));
+        assert!(!runnable(Path::new(&format!("{}/incident.sh", system_paths::NONEXISTENT))));
         assert!(!runnable(Path::new("")));
     }
 }

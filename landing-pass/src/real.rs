@@ -1296,7 +1296,7 @@ pub struct RealProcs {
 
 pub fn pid_alive(pid: &str) -> bool {
     let pid = pid.trim();
-    !pid.is_empty() && pid.chars().all(|c| c.is_ascii_digit()) && Path::new(&format!("/proc/{pid}")).is_dir()
+    !pid.is_empty() && pid.chars().all(|c| c.is_ascii_digit()) && Path::new(&format!("{}/{pid}", system_paths::PROC)).is_dir()
 }
 
 impl Procs for RealProcs {
@@ -1402,7 +1402,7 @@ mod store_tests {
     }
 
     fn beads(c: &LcClient) -> RealBeads {
-        RealBeads { home: PathBuf::from("/nonexistent"), bdq: String::new(), timeout: 5, home_repo: "spira".into(), fixture: None, lc_bin: None, client: Some(c.clone()) }
+        RealBeads { home: PathBuf::from(system_paths::NONEXISTENT), bdq: String::new(), timeout: 5, home_repo: "spira".into(), fixture: None, lc_bin: None, client: Some(c.clone()) }
     }
 
     #[test]
@@ -1476,9 +1476,9 @@ mod store_tests {
         let st = Settings::for_run(t.path().to_path_buf());
         let lib = RealLib { seam: SeamRunner { home: t.path().to_path_buf(), out: &out }, incident: PathBuf::new(), s: st, beads: beads(&c) };
         lib.deliver_delivered("sp-a", "abc");
-        assert!(!lib.deliver_pr_merged(Path::new("/r"), "sp-b", "spira/sp-b", "def"));
+        assert!(!lib.deliver_pr_merged(Path::new("r"), "sp-b", "spira/sp-b", "def"));
         lib.note("sp-a", "a note");
-        assert_eq!(*s.seen.lock().unwrap(), vec!["deliver push-delivered sp-a abc", "deliver pr-merged /r sp-b spira/sp-b def", "bd-note sp-a a note"]);
+        assert_eq!(*s.seen.lock().unwrap(), vec!["deliver push-delivered sp-a abc", "deliver pr-merged r sp-b spira/sp-b def", "bd-note sp-a a note"]);
         assert!(out.lines().iter().any(|l| l.contains("sp-b: LIFECYCLE: spira-lc deliver pr-merged did not happen (exit 3)")), "{:?}", out.lines());
     }
 
@@ -1604,7 +1604,7 @@ mod ensure_tests {
     }
 
     fn which_echo() -> PathBuf {
-        ["/bin/echo", "/usr/bin/echo"].iter().map(PathBuf::from).find(|p| p.exists()).unwrap()
+        [system_paths::BIN_ECHO.to_string(), format!("{}/echo", system_paths::USR_BIN)].iter().map(PathBuf::from).find(|p| p.exists()).unwrap()
     }
 
     #[test]

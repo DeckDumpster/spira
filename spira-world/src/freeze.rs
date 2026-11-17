@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 pub const SERVICE: &str = "lc-serve.service";
 pub const DROPIN_NAME: &str = "zz-spira-freeze.conf";
-pub const FROZEN_CONDITION: &str = "/nonexistent/spira-store-frozen-thaw-with-world-thaw-store";
+pub const FROZEN_CONDITION: &str = system_paths::FROZEN_CONDITION;
 
 /// The drop-in written beside the frozen unit.
 pub fn dropin() -> String {
@@ -20,7 +20,7 @@ pub fn dropin() -> String {
 /// The user manager's runtime unit directory, `/run/user/<uid>/systemd/user`, derived from the
 /// uid as the socket path is, so every caller of one operator names the same directory.
 pub fn runtime_unit_dir(uid: u32) -> PathBuf {
-    PathBuf::from(format!("/run/user/{uid}/systemd/user"))
+    PathBuf::from(format!("{}/{uid}/systemd/user", system_paths::RUN_USER))
 }
 
 /// What a freeze acts on: the frozen service, and the runtime that wants it.
@@ -212,7 +212,7 @@ mod tests {
         assert_eq!(s.frozen(), ["lc-serve.service"]);
         assert_eq!(s.stopped(), ["spira-runtime-test.service", "lc-serve.service"]);
         assert_eq!(s.dropin_path(SERVICE), d.path().join("systemd/user/lc-serve.service.d/zz-spira-freeze.conf"));
-        assert_eq!(runtime_unit_dir(1000), PathBuf::from("/run/user/1000/systemd/user"));
+        assert_eq!(runtime_unit_dir(1000), PathBuf::from(format!("{}/1000/systemd/user", system_paths::RUN_USER)));
     }
 
     #[test]

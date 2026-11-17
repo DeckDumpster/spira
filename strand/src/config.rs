@@ -271,10 +271,10 @@ mod tests {
                 self.0.iter().find(|(n, _)| *n == k).map(|(_, v)| v.to_string())
             }
         }
-        let rel = UnitEnv(vec![("SPIRA_RELEASE", "/rel/abc")]);
-        assert_eq!(home_of(&rel), Some(PathBuf::from("/rel/abc/spira")));
-        let both = UnitEnv(vec![("SPIRA_HOME", "/h"), ("SPIRA_RELEASE", "/rel/abc")]);
-        assert_eq!(home_of(&both), Some(PathBuf::from("/h")));
+        let rel = UnitEnv(vec![("SPIRA_RELEASE", "rel/abc")]);
+        assert_eq!(home_of(&rel), Some(PathBuf::from("rel/abc/spira")));
+        let both = UnitEnv(vec![("SPIRA_HOME", "h"), ("SPIRA_RELEASE", "rel/abc")]);
+        assert_eq!(home_of(&both), Some(PathBuf::from("h")));
         assert_eq!(home_of(&NoEnv), None);
     }
 }

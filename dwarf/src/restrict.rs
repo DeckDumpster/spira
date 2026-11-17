@@ -127,8 +127,8 @@ pub fn restricted_env(bead_id: &str, base: &BTreeMap<String, String>, work_dir: 
     // (sp-tx6ot): without it the model cannot build with the cache or run testenv/gate
     // (no-build-cache), and submits unverified work. ~/.local/bin stays out: it holds bd.
     let path = match cargo_bin(base) {
-        Some(c) => format!("/usr/bin:/bin:{work_dir}:{c}"),
-        None => format!("/usr/bin:/bin:{work_dir}"),
+        Some(c) => format!("{}:{work_dir}:{c}", system_paths::SYSTEM_PATH_MIN),
+        None => format!("{}:{work_dir}", system_paths::SYSTEM_PATH_MIN),
     };
     env.insert("PATH".to_string(), path);
     env.insert("SPIRA_WORK_BEAD_ID".to_string(), bead_id.to_string());
@@ -150,19 +150,19 @@ mod tests {
 
     #[test]
     fn work_bin_dir_finds_the_first_hit() {
-        let found = |p: &Path| p == Path::new("/rel/bin/work");
-        assert_eq!(work_bin_dir("/usr/bin:/rel/bin:/rel/spira", found), Some("/rel/bin".to_string()));
+        let found = |p: &Path| p == Path::new("rel/bin/work");
+        assert_eq!(work_bin_dir("usr/bin:rel/bin:rel/spira", found), Some("rel/bin".to_string()));
     }
 
     #[test]
     fn work_bin_dir_none_when_not_on_path() {
-        assert_eq!(work_bin_dir("/usr/bin:/bin", |_| false), None);
+        assert_eq!(work_bin_dir("usr/bin:bin", |_| false), None);
     }
 
     #[test]
     fn work_bin_dir_skips_empty_path_segments() {
-        let found = |p: &Path| p == Path::new("/bin/work");
-        assert_eq!(work_bin_dir("::/bin:", found), Some("/bin".to_string()));
+        let found = |p: &Path| p == Path::new("bin/work");
+        assert_eq!(work_bin_dir("::bin:", found), Some("bin".to_string()));
     }
 
     /// Every variable that locates bd, its database, or dolt — none may reach the model.
@@ -183,11 +183,11 @@ mod tests {
 
     #[test]
     fn bd_and_db_never_appear() {
-        let mut b = base(&[("HOME", "/home/dwarf")]);
+        let mut b = base(&[("HOME", "home/dwarf")]);
         for k in DB_LOCATORS {
-            b.insert(k.to_string(), "/somewhere/db".to_string());
+            b.insert(k.to_string(), "somewhere/db".to_string());
         }
-        let e = restricted_env("sp-x", &b, "/rel/model-bin");
+        let e = restricted_env("sp-x", &b, "rel/model-bin");
         for k in DB_LOCATORS {
             assert!(!e.contains_key(*k), "{k} must never leak into the restricted env");
         }
@@ -202,77 +202,77 @@ mod tests {
 
     #[test]
     fn model_bin_is_the_release_sibling_of_bin_never_bin_itself() {
-        let is = exe_at(&["/rel/bin/work", "/rel/model-bin/work"]);
-        let d = model_bin_dir(&BTreeMap::new(), "/usr/bin:/rel/bin", is).unwrap();
-        assert_eq!(d, "/rel/model-bin");
+        let is = exe_at(&["rel/bin/work", "rel/model-bin/work"]);
+        let d = model_bin_dir(&BTreeMap::new(), "usr/bin:rel/bin", is).unwrap();
+        assert_eq!(d, "rel/model-bin");
         let e = restricted_env("sp-x", &BTreeMap::new(), &d);
         let path = e.get("PATH").unwrap();
-        assert!(path.split(':').any(|x| x == "/rel/model-bin"), "{path}");
-        assert!(!path.split(':').any(|x| x == "/rel/bin"), "the full bin dir must never be on the model's PATH: {path}");
+        assert!(path.split(':').any(|x| x == "rel/model-bin"), "{path}");
+        assert!(!path.split(':').any(|x| x == "rel/bin"), "the full bin dir must never be on the model's PATH: {path}");
     }
 
     #[test]
     fn model_bin_prefers_spira_release() {
-        let is = exe_at(&["/other/bin/work", "/rel/model-bin/work"]);
-        let b = base(&[("SPIRA_RELEASE", "/rel/")]);
-        assert_eq!(model_bin_dir(&b, "/other/bin", is).unwrap(), "/rel/model-bin");
+        let is = exe_at(&["other/bin/work", "rel/model-bin/work"]);
+        let b = base(&[("SPIRA_RELEASE", "rel/")]);
+        assert_eq!(model_bin_dir(&b, "other/bin", is).unwrap(), "rel/model-bin");
     }
 
     #[test]
     fn a_missing_model_bin_refuses_and_names_the_override() {
-        let is = exe_at(&["/rel/bin/work"]);
-        let err = model_bin_dir(&BTreeMap::new(), "/rel/bin", is).unwrap_err();
+        let is = exe_at(&["rel/bin/work"]);
+        let err = model_bin_dir(&BTreeMap::new(), "rel/bin", is).unwrap_err();
         assert!(err.contains("SPIRA_MODEL_BIN_CONSIDERED"), "{err}");
-        let err = model_bin_dir(&BTreeMap::new(), "/usr/bin", exe_at(&[])).unwrap_err();
+        let err = model_bin_dir(&BTreeMap::new(), "usr/bin", exe_at(&[])).unwrap_err();
         assert!(err.contains("SPIRA_MODEL_BIN_CONSIDERED"), "{err}");
     }
 
     #[test]
     fn the_override_is_used_as_given_and_still_needs_work() {
-        let b = base(&[("SPIRA_MODEL_BIN_CONSIDERED", "/opt/model")]);
-        assert_eq!(model_bin_dir(&b, "/rel/bin", exe_at(&["/opt/model/work"])).unwrap(), "/opt/model");
-        let err = model_bin_dir(&b, "/rel/bin", exe_at(&["/rel/model-bin/work"])).unwrap_err();
+        let b = base(&[("SPIRA_MODEL_BIN_CONSIDERED", "opt/model")]);
+        assert_eq!(model_bin_dir(&b, "rel/bin", exe_at(&["opt/model/work"])).unwrap(), "opt/model");
+        let err = model_bin_dir(&b, "rel/bin", exe_at(&["rel/model-bin/work"])).unwrap_err();
         assert!(err.contains("no executable work"), "{err}");
     }
 
     #[test]
     fn path_is_exactly_the_two_system_dirs_plus_work() {
-        let e = restricted_env("sp-x", &BTreeMap::new(), "/rel/bin");
-        assert_eq!(e.get("PATH").unwrap(), "/usr/bin:/bin:/rel/bin");
+        let e = restricted_env("sp-x", &BTreeMap::new(), "rel/bin");
+        assert_eq!(e.get("PATH").unwrap(), &format!("{}:rel/bin", system_paths::SYSTEM_PATH_MIN));
     }
 
     #[test]
     fn path_adds_the_cargo_toolchain_and_never_the_inherited_path() {
-        let b = base(&[("HOME", "/h"), ("PATH", "/h/.local/bin:/elsewhere")]);
-        let e = restricted_env("sp-x", &b, "/rel/bin");
-        assert_eq!(e.get("PATH").unwrap(), "/usr/bin:/bin:/rel/bin:/h/.cargo/bin");
-        let c = base(&[("HOME", "/h"), ("CARGO_HOME", "/opt/cargo")]);
-        assert_eq!(restricted_env("sp-x", &c, "/rel/bin").get("PATH").unwrap(), "/usr/bin:/bin:/rel/bin:/opt/cargo/bin");
+        let b = base(&[("HOME", "h"), ("PATH", "h/.local/bin:elsewhere")]);
+        let e = restricted_env("sp-x", &b, "rel/bin");
+        assert_eq!(e.get("PATH").unwrap(), &format!("{}:rel/bin:h/.cargo/bin", system_paths::SYSTEM_PATH_MIN));
+        let c = base(&[("HOME", "h"), ("CARGO_HOME", "opt/cargo")]);
+        assert_eq!(restricted_env("sp-x", &c, "rel/bin").get("PATH").unwrap(), &format!("{}:rel/bin:opt/cargo/bin", system_paths::SYSTEM_PATH_MIN));
         assert!(!e.get("PATH").unwrap().contains(".local/bin"), "bd lives in ~/.local/bin; it must stay out");
     }
 
     #[test]
     fn bead_id_is_always_the_bound_one() {
-        let e = restricted_env("sp-bound1", &BTreeMap::new(), "/rel/bin");
+        let e = restricted_env("sp-bound1", &BTreeMap::new(), "rel/bin");
         assert_eq!(e.get("SPIRA_WORK_BEAD_ID").unwrap(), "sp-bound1");
     }
 
     #[test]
     fn the_retired_lifecycle_switch_never_reaches_the_model() {
         let b = base(&[("SPIRA_LIFECYCLE_ENFORCE", "1")]);
-        let e = restricted_env("sp-x", &b, "/rel/bin");
+        let e = restricted_env("sp-x", &b, "rel/bin");
         assert!(!e.contains_key("SPIRA_LIFECYCLE_ENFORCE"));
     }
 
     #[test]
     fn home_is_unconditional_even_when_absent() {
-        let e = restricted_env("sp-x", &BTreeMap::new(), "/rel/bin");
+        let e = restricted_env("sp-x", &BTreeMap::new(), "rel/bin");
         assert_eq!(e.get("HOME").unwrap(), "");
     }
 
     #[test]
     fn conditional_vars_are_absent_when_unset() {
-        let e = restricted_env("sp-x", &BTreeMap::new(), "/rel/bin");
+        let e = restricted_env("sp-x", &BTreeMap::new(), "rel/bin");
         for k in CONDITIONAL {
             assert!(!e.contains_key(*k), "{k} must be absent when unset, not present-and-empty");
         }
@@ -281,7 +281,7 @@ mod tests {
     #[test]
     fn conditional_vars_are_absent_when_set_but_empty() {
         let b = base(&[("TERM", ""), ("SPIRA_MAIL", "")]);
-        let e = restricted_env("sp-x", &b, "/rel/bin");
+        let e = restricted_env("sp-x", &b, "rel/bin");
         assert!(!e.contains_key("TERM"));
         assert!(!e.contains_key("SPIRA_MAIL"));
     }
@@ -300,14 +300,14 @@ mod tests {
             ("SPIRA_DWARF_OVERRIDE", "andvari"),
             ("BEAD_ID", "sp-x"),
             ("BEADS_ACTOR", "dwarf-eitri"),
-            ("SPIRA_MAIL", "/run/spira/mail"),
-            ("CARGO_TARGET_DIR", "/srv/ssd-b/dwarf-build/dir.1"),
-            ("RUSTC_WRAPPER", "/usr/bin/sccache"),
+            ("SPIRA_MAIL", "run/spira/mail"),
+            ("CARGO_TARGET_DIR", "srv/ssd-b/dwarf-build/dir.1"),
+            ("RUSTC_WRAPPER", "usr/bin/sccache"),
             ("SCCACHE_IGNORE_SERVER_IO_ERROR", "1"),
             ("SCCACHE_WEBDAV_ENDPOINT", "http://box:9431"),
             ("SCCACHE_WEBDAV_KEY_PREFIX", "/"),
         ]);
-        let e = restricted_env("sp-x", &b, "/rel/bin");
+        let e = restricted_env("sp-x", &b, "rel/bin");
         for k in CONDITIONAL {
             assert_eq!(e.get(*k), b.get(*k), "{k} did not carry through unchanged");
         }
@@ -315,8 +315,8 @@ mod tests {
 
     #[test]
     fn prod_and_run_roots_never_reach_the_model() {
-        let b = base(&[("HOME", "/h"), ("SPIRA_PROD", "/prod/spira"), ("SPIRA_RUN", "/run/spira")]);
-        let e = restricted_env("sp-x", &b, "/rel/model-bin");
+        let b = base(&[("HOME", "h"), ("SPIRA_PROD", "prod/spira"), ("SPIRA_RUN", "run/spira")]);
+        let e = restricted_env("sp-x", &b, "rel/model-bin");
         for k in ["SPIRA_PROD", "SPIRA_RUN"] {
             assert!(!e.contains_key(k), "{k} locates the release bin/ and must not reach the model");
         }
@@ -325,8 +325,8 @@ mod tests {
 
     #[test]
     fn nothing_outside_the_allowlist_survives() {
-        let b = base(&[("HOME", "/h"), ("PATH", "/whatever"), ("SHELL", "/bin/zsh"), ("SSH_AUTH_SOCK", "/tmp/sock"), ("AWS_SECRET_ACCESS_KEY", "leak")]);
-        let e = restricted_env("sp-x", &b, "/rel/bin");
+        let b = base(&[("HOME", "h"), ("PATH", "whatever"), ("SHELL", "bin/zsh"), ("SSH_AUTH_SOCK", "tmp/sock"), ("AWS_SECRET_ACCESS_KEY", "leak")]);
+        let e = restricted_env("sp-x", &b, "rel/bin");
         let mut allowed: Vec<&str> = UNCONDITIONAL.to_vec();
         allowed.extend(["PATH", "SPIRA_WORK_BEAD_ID"]);
         allowed.extend(CONDITIONAL);

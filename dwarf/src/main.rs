@@ -314,7 +314,7 @@ fn operation_of(args: &[String]) -> String {
 /// (`runtime::units::is_dwarf_unit`): `spira-dwarf-*` or the scheduler's
 /// `spira-run-sentinel_2dcall-*` (sp-li4zys).
 fn own_unit_from_cgroup() -> String {
-    own_unit_in(&std::fs::read_to_string("/proc/self/cgroup").unwrap_or_default())
+    own_unit_in(&std::fs::read_to_string(format!("{}/cgroup", system_paths::PROC_SELF)).unwrap_or_default())
 }
 
 fn own_unit_in(t: &str) -> String {
@@ -345,8 +345,8 @@ mod tests {
         let c = parse(&a(&["builder"])).unwrap();
         assert_eq!((c.rune.as_str(), c.mode), ("builder", Mode::Claim));
         assert_eq!(parse(&a(&["builder", "--dry-run"])).unwrap().mode, Mode::DryRun);
-        let c = parse(&a(&["--home", "/h/spira", "ops", "--sweep", "--prompt", "-"])).unwrap();
-        assert_eq!(c.home.as_deref(), Some("/h/spira"));
+        let c = parse(&a(&["--home", "h/spira", "ops", "--sweep", "--prompt", "-"])).unwrap();
+        assert_eq!(c.home.as_deref(), Some("h/spira"));
         assert!(c.prompt_from_stdin);
         assert_eq!(parse(&a(&["ops", "--sweep", "--prompt", "look"])).unwrap().mode, Mode::Sweep { prompt: Some("look".into()) });
         assert!(parse(&a(&["ops", "--sweep", "-"])).unwrap().prompt_from_stdin);
@@ -355,8 +355,8 @@ mod tests {
 
     #[test]
     fn direct_grammar() {
-        let c = parse(&a(&["--home", "/h", "direct", "builder", "sp-x", "--by", "concierge", "--reason", "loop fix"])).unwrap();
-        assert_eq!((c.rune.as_str(), c.home.as_deref(), c.escape), ("builder", Some("/h"), false));
+        let c = parse(&a(&["--home", "h", "direct", "builder", "sp-x", "--by", "concierge", "--reason", "loop fix"])).unwrap();
+        assert_eq!((c.rune.as_str(), c.home.as_deref(), c.escape), ("builder", Some("h"), false));
         assert_eq!(c.direct.map(|r| r.bead), Some("sp-x".to_string()));
         assert!(parse(&a(&["direct", "builder", "sp-x"])).is_err(), "a directs without its requester and reason is refused");
         let c = parse(&a(&["builder", "--directed", "sp-x", "--by", "concierge", "--reason", "r", "--replaced", "dwarf-old"])).unwrap();
@@ -372,8 +372,8 @@ mod tests {
         assert!(!c.escape_dry_run);
         let c = parse(&a(&["--escape", "stretchy", "--dry-run"])).unwrap();
         assert!(c.escape_dry_run);
-        let c = parse(&a(&["--home", "/h", "--escape", "stretchy"])).unwrap();
-        assert_eq!(c.home.as_deref(), Some("/h"));
+        let c = parse(&a(&["--home", "h", "--escape", "stretchy"])).unwrap();
+        assert_eq!(c.home.as_deref(), Some("h"));
         assert!(c.escape);
         assert!(parse(&a(&["--escape"])).is_err());
     }

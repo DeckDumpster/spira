@@ -22,7 +22,7 @@ fn env(root: &std::path::Path, allow_blocking: bool) -> Env {
         tidy_fresh_s: 0,
         id_prefix: "sp".into(),
         ask_label: "needs-ops".into(),
-        db: "/db".into(),
+        db: "db".into(),
         bd_conn_retries: 0,
         operator_actor: "op".into(),
         run_dir: root.join("run"),

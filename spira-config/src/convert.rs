@@ -654,7 +654,7 @@ alpha | /srv/alpha | push | origin/main | | true | consume
 beta  | /srv/beta  | queue | origin/dev | | bash a.sh || bash b.sh | develop
 gamma | /srv/gamma | pr | origin/main | | true | plan,spike
 delta | /srv/delta | push | origin/main | | true |
-eps   | /srv/eps   | queue | origin/main | | bash a.sh || bash b.sh
+eps   | srv/eps   | queue | origin/main | | bash a.sh || bash b.sh
 ";
         let got = sections(map).unwrap();
         assert_eq!(got["alpha"].lanes, vec![Lane::Plan]);
@@ -663,7 +663,7 @@ eps   | /srv/eps   | queue | origin/main | | bash a.sh || bash b.sh
         assert_eq!(got["gamma"].lanes, vec![Lane::Plan, Lane::Spike]);
         assert_eq!(got["delta"].lanes.len(), 6, "an empty lanes column admits every lane");
         assert_eq!(got["eps"].lanes.len(), 6, "a gate with pipes is not mistaken for a lanes column");
-        assert_eq!(got["eps"].path, "/srv/eps");
+        assert_eq!(got["eps"].path, "srv/eps");
     }
 
     // covers: UC-config-store-preflight-12

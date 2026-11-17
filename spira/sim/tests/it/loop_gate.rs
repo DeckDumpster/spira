@@ -105,7 +105,7 @@ fn observe(w: &World, s: &Shared, input: &str) -> Result<String, String> {
     let carry: Carry = serde_json::from_str(input).unwrap_or_default();
     let g = gate(s);
     let claimed = g.claimed.values().map(Vec::len).sum::<usize>() as u32;
-    let mut snap = Snapshot { inbox: g.inbox.clone(), claimed: g.claimed.clone(), free_slots: ADMISSION.saturating_sub(claimed), gate_timeout: 300, lock_wait: 600, run_dir: "/sim/run".into(), now_ms: w.now(), ..Snapshot::default() };
+    let mut snap = Snapshot { inbox: g.inbox.clone(), claimed: g.claimed.clone(), free_slots: ADMISSION.saturating_sub(claimed), gate_timeout: 300, lock_wait: 600, run_dir: "sim/run".into(), now_ms: w.now(), ..Snapshot::default() };
     for jobs in g.claimed.values() {
         for j in jobs {
             *snap.running_by_repo.entry(j.repo.clone()).or_default() += 1;
@@ -182,7 +182,7 @@ fn retain_output(s: &Shared, input: &str) -> Result<String, String> {
     let mut g = gate(s);
     let run = verdict_of(&g, &f);
     g.retained.push((f.job.bead.clone(), run.verdict));
-    Ok(format!("/sim/run/gate-worker/out/{}.out", f.job.key()))
+    Ok(format!("sim/run/gate-worker/out/{}.out", f.job.key()))
 }
 
 fn complete(s: &Shared, input: &str) -> Result<String, String> {

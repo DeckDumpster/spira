@@ -61,7 +61,7 @@ fn downloaded_file(line: &str) -> Option<String> {
     }
     if let Some(c) = re(&OUT, r#"(?:\s-o|\s-O|\s--output|\s--output-document|\s>)\s*["']?([^\s"'|;&]+)"#).captures(line) {
         let f = c[1].to_string();
-        if f != "-" && f != "/dev/null" && !f.starts_with('-') {
+        if f != "-" && f != system_paths::DEV_NULL && !f.starts_with('-') {
             return Some(f);
         }
     }

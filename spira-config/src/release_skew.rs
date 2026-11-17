@@ -51,7 +51,7 @@ mod tests {
         let s = skew(&d.join("aaa")).expect("aaa is not current");
         assert!(s.own.ends_with("aaa") && s.current.ends_with("bbb"));
         let p = repoint_path(&format!("{}/aaa/bin:/usr/bin", fs::canonicalize(&d).unwrap().display()), &s);
-        assert!(p.contains("/bbb/bin") && !p.contains("/aaa/"));
+        assert!(p.contains("bbb/bin") && !p.contains("aaa/"));
     }
 
     #[test]

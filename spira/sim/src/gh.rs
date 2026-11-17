@@ -426,7 +426,7 @@ extern "C" {
 fn crash_ancestor(comm: &str) -> R<()> {
     let mut pid = std::process::id();
     while pid > 1 {
-        let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).map_err(|e| format!("crash_after_create: {e}"))?;
+        let stat = std::fs::read_to_string(format!("{}/{pid}/stat", system_paths::PROC)).map_err(|e| format!("crash_after_create: {e}"))?;
         let (head, rest) = stat.rsplit_once(") ").ok_or("crash_after_create: unreadable stat")?;
         let name = head.split_once(" (").map(|(_, n)| n).unwrap_or("");
         if pid != std::process::id() && name == comm {

@@ -10,7 +10,7 @@
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect();
         let toml = crate::fixture_toml_file(dir.path(), &declare);
-        let env: BTreeMap<String, String> = [("HOME", "/h"), ("SPIRA_TOML", toml.to_str().unwrap())].iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+        let env: BTreeMap<String, String> = [("HOME", "h"), ("SPIRA_TOML", toml.to_str().unwrap())].iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
         let full = crate::resolve::resolve_for_process(&tree, &tree, &env).expect("the fixture resolves");
         let merged = crate::merge_layers(toml.to_str().unwrap()).unwrap();
 

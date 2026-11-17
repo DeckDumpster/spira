@@ -36,7 +36,7 @@ impl Steps for Fake {
         Ok(())
     }
     fn bd(&self) -> Result<PathBuf, String> {
-        Ok(PathBuf::from("/fake/bin/bd"))
+        Ok(PathBuf::from("fake/bin/bd"))
     }
     fn db_down(&self, _: &str) -> Result<(), String> {
         self.downs.fetch_add(1, Ordering::SeqCst);
@@ -79,14 +79,14 @@ fn clean(_: &str) -> Option<String> {
 
 #[test]
 fn only_this_worlds_serve_command_line_matches() {
-    let w = Path::new("/tmp/w1");
+    let w = Path::new("tmp/w1");
     let line = |args: &[&str]| args.iter().flat_map(|a| a.bytes().chain([0])).collect::<Vec<u8>>();
-    assert!(is_world_serve(&line(&["/tmp/w1/release/bin/spira-lc", "serve", "/tmp/w1/lc.sock"]), w));
-    assert_eq!(serve_argv(w), vec!["/tmp/w1/release/bin/spira-lc", "serve", "/tmp/w1/lc.sock"]);
+    assert!(is_world_serve(&line(&["tmp/w1/release/bin/spira-lc", "serve", "tmp/w1/lc.sock"]), w));
+    assert_eq!(serve_argv(w), vec!["tmp/w1/release/bin/spira-lc", "serve", "tmp/w1/lc.sock"]);
     for other in [
-        line(&["/tmp/w2/release/bin/spira-lc", "serve", "/tmp/w2/lc.sock"]), // another world
-        line(&["/opt/release/bin/spira-lc", "serve"]),                      // an installed release
-        line(&["/tmp/w1/release/bin/spira-lc", "serve", "/tmp/w1/lc.sock", "x"]),
+        line(&["tmp/w2/release/bin/spira-lc", "serve", "tmp/w2/lc.sock"]), // another world
+        line(&["opt/release/bin/spira-lc", "serve"]),                      // an installed release
+        line(&["tmp/w1/release/bin/spira-lc", "serve", "tmp/w1/lc.sock", "x"]),
         line(&["sleep", "30"]),
         Vec::new(), // a zombie's cmdline
     ] {
@@ -151,10 +151,10 @@ fn inside_testenv_an_unset_release_is_refused_and_names_the_variable() {
 
 #[test]
 fn the_db_root_is_testenvs_tmpfs_root_when_nested_and_the_worlds_own_otherwise() {
-    let w = Path::new("/w");
-    assert_eq!(db_root(w, &clean), PathBuf::from("/w/db"));
-    assert_eq!(db_root(w, &env_of(vec![("TESTDB_ROOT", String::new())])), PathBuf::from("/w/db"));
-    assert_eq!(db_root(w, &env_of(vec![("TESTDB_ROOT", "/tmp/spira-testdb".into())])), PathBuf::from("/tmp/spira-testdb"));
+    let w = Path::new("w");
+    assert_eq!(db_root(w, &clean), PathBuf::from("w/db"));
+    assert_eq!(db_root(w, &env_of(vec![("TESTDB_ROOT", String::new())])), PathBuf::from("w/db"));
+    assert_eq!(db_root(w, &env_of(vec![("TESTDB_ROOT", "tmp/spira-testdb".into())])), PathBuf::from("tmp/spira-testdb"));
 }
 
 #[test]

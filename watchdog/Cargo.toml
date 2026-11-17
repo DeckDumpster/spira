@@ -14,9 +14,10 @@ path = "src/main.rs"
 test = false
 
 [features]
-integration = ["inbox-rules/integration", "runtime/integration", "spira-config/integration", "spira-otel/integration", "testkit/integration", "tsd/integration"]
+integration = ["inbox-rules/integration", "runtime/integration", "spira-config/integration", "spira-otel/integration", "testkit/integration", "tsd/integration", "system-paths/integration"]
 
 [dependencies]
+system-paths = { path = "../system-paths" }
 inbox-rules = { path = "../inbox-rules" }
 runtime = { path = "../runtime" }
 serde = { version = "1", features = ["derive"] }

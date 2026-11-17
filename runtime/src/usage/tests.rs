@@ -7,10 +7,10 @@ const SCOPE: &str = "tmux-spawn-abc.scope";
 
 const MOUNTINFO: &str = "\
 25 1 252:0 / / rw,relatime shared:1 - ext4 /dev/mapper/vg-lv rw
-30 25 8:17 / /srv/ssd-a rw,relatime shared:5 - ext4 /dev/sdb1 rw
-31 25 8:33 / /srv/ssd-b rw,relatime shared:6 - ext4 /dev/sdc1 rw
-32 25 8:33 /worktree /h/x/run/worktree rw,relatime shared:6 - ext4 /dev/sdc1 rw
-33 25 8:17 /run /h/x/run rw,relatime shared:5 - ext4 /dev/sdb1 rw
+30 25 8:17 / srv/ssd-a rw,relatime shared:5 - ext4 /dev/sdb1 rw
+31 25 8:33 / srv/ssd-b rw,relatime shared:6 - ext4 /dev/sdc1 rw
+32 25 8:33 /worktree h/x/run/worktree rw,relatime shared:6 - ext4 /dev/sdc1 rw
+33 25 8:17 /run h/x/run rw,relatime shared:5 - ext4 /dev/sdb1 rw
 34 25 0:27 / /proc rw - proc proc rw
 ";
 
@@ -80,7 +80,7 @@ fn fixture() -> Fixture {
     let hand = roots.run_dir.join("worktree/sp-xyz-hand");
     write(&worktree.join("src/lib.rs"), &"x".repeat(10_000));
     // What the dwarf leaves on disk: its worktree's link into the checkout, and its name.
-    write(&worktree.join(".git"), "gitdir: /h/x/spira/.git/worktrees/sp-abc\n");
+    write(&worktree.join(".git"), "gitdir: h/x/spira/.git/worktrees/sp-abc\n");
     write(&roots.run_dir.join("dwarf-builder-sp-abc.name"), "fjalar");
     write(&roots.run_dir.join("dwarf-builder-sp-abd.name"), "other");
     write(&build.join("debug/libfoo.rlib"), &"y".repeat(20_000));
@@ -91,7 +91,7 @@ fn fixture() -> Fixture {
     write(&p.join("self/cgroup"), &format!("0::/{MANAGER}/app.slice/spira-runtime-prod.service\n"));
     write(&p.join("self/mountinfo"), MOUNTINFO);
     // The dwarf process itself carries no identity; its child does, beside a secret.
-    write(&p.join("101/environ"), &environ(&[("HOME", "/h/x"), ("LC_PASSWORD", "hunter2")]));
+    write(&p.join("101/environ"), &environ(&[("HOME", "h/x"), ("LC_PASSWORD", "hunter2")]));
     write(&p.join("101/cgroup"), &format!("0::/{MANAGER}/app.slice/{DWARF_UNIT}\n"));
     write(
         &p.join("102/environ"),
@@ -106,7 +106,7 @@ fn fixture() -> Fixture {
     symlink(&hand, p.join("201/cwd")).unwrap();
     write(&p.join("202/environ"), "");
     write(&p.join("202/cgroup"), &format!("0::/{MANAGER}/app.slice/{SCOPE}\n"));
-    symlink("/h/x", p.join("202/cwd")).unwrap();
+    symlink("h/x", p.join("202/cwd")).unwrap();
     // A process outside every cgroup the sampler reads.
     write(&p.join("50/cgroup"), &format!("0::/{MANAGER}/app.slice/lc-serve.service\n"));
     symlink("/", p.join("50/cwd")).unwrap();
@@ -149,13 +149,13 @@ fn a_disk_is_named_by_the_mount_of_its_filesystem_root() {
     assert_eq!(whole_disk(&f.roots.sys, "9:9"), None);
     let d = disks(MOUNTINFO, |mm| whole_disk(&f.roots.sys, mm));
     let got: Vec<(&str, &str, &str, &str)> = d.iter().map(|(k, d)| (k.as_str(), d.device.as_str(), d.mount.as_str(), d.role.as_str())).collect();
-    assert_eq!(got, [("252:0", "dm-0", "/", "root"), ("8:16", "sdb", "/srv/ssd-a", "ssd-a"), ("8:32", "sdc", "/srv/ssd-b", "ssd-b")], "bind mounts of a subtree do not name the disk");
+    assert_eq!(got, [("252:0", "dm-0", std::path::MAIN_SEPARATOR_STR, "root"), ("8:16", "sdb", "srv/ssd-a", "ssd-a"), ("8:32", "sdc", "srv/ssd-b", "ssd-b")], "bind mounts of a subtree do not name the disk");
 }
 
 #[test]
 fn only_the_identity_keys_leave_an_environ() {
-    let e = env_of(environ(&[("LC_PASSWORD", "hunter2"), ("BEAD_ID", "sp-1"), ("CARGO_TARGET_DIR", "/t"), ("GH_TOKEN", "x"), ("NOEQUALS", "")]).as_bytes());
-    assert_eq!(e, BTreeMap::from([("BEAD_ID".to_string(), "sp-1".to_string()), ("CARGO_TARGET_DIR".to_string(), "/t".to_string())]));
+    let e = env_of(environ(&[("LC_PASSWORD", "hunter2"), ("BEAD_ID", "sp-1"), ("CARGO_TARGET_DIR", "t"), ("GH_TOKEN", "x"), ("NOEQUALS", "")]).as_bytes());
+    assert_eq!(e, BTreeMap::from([("BEAD_ID".to_string(), "sp-1".to_string()), ("CARGO_TARGET_DIR".to_string(), "t".to_string())]));
     assert!(env_of(b"").is_empty());
 }
 
@@ -184,8 +184,8 @@ fn each_live_dwarf_and_each_hand_scope_is_one_sample() {
         d.io,
         [
             DeviceIo { device: "7:0".into(), mount: String::new(), role: "7:0".into(), read_bytes: 512, write_bytes: 0 },
-            DeviceIo { device: "sdb".into(), mount: "/srv/ssd-a".into(), role: "ssd-a".into(), read_bytes: 8192, write_bytes: 1000 },
-            DeviceIo { device: "sdc".into(), mount: "/srv/ssd-b".into(), role: "ssd-b".into(), read_bytes: 4096, write_bytes: 3_000_000_000 },
+            DeviceIo { device: "sdb".into(), mount: "srv/ssd-a".into(), role: "ssd-a".into(), read_bytes: 8192, write_bytes: 1000 },
+            DeviceIo { device: "sdc".into(), mount: "srv/ssd-b".into(), role: "ssd-b".into(), read_bytes: 4096, write_bytes: 3_000_000_000 },
         ],
         "each disk by its kernel name and its mount; one sysfs cannot name keeps its MAJ:MIN"
     );
@@ -195,7 +195,7 @@ fn each_live_dwarf_and_each_hand_scope_is_one_sample() {
     let h = &got[1];
     assert_eq!((h.rune.as_str(), h.name.as_str(), h.bead.as_str()), ("hand", "hand", "sp-xyz"));
     assert_eq!((h.cpu_usec, h.memory_current, h.memory_peak), (7_000_000, 1000, 2000));
-    assert_eq!(h.io, vec![DeviceIo { device: "sdb".into(), mount: "/srv/ssd-a".into(), role: "ssd-a".into(), read_bytes: 0, write_bytes: 6_700_000_000 }]);
+    assert_eq!(h.io, vec![DeviceIo { device: "sdb".into(), mount: "srv/ssd-a".into(), role: "ssd-a".into(), read_bytes: 0, write_bytes: 6_700_000_000 }]);
     assert_eq!((h.worktree.as_str(), h.worktree_bytes), (f.hand.to_str().unwrap(), Some(allocated(&[&f.hand]))));
     assert_eq!(h.build_dir, f.hand.join("target").display().to_string());
     assert_eq!(h.started_ms, None);

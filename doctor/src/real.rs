@@ -498,7 +498,7 @@ impl World for Real {
     }
 
     fn git_daemon_base_paths(&self, port: u16) -> Vec<String> {
-        let Ok(rd) = std::fs::read_dir("/proc") else { return Vec::new() };
+        let Ok(rd) = std::fs::read_dir(system_paths::PROC) else { return Vec::new() };
         rd.flatten()
             .filter_map(|e| std::fs::read(e.path().join("cmdline")).ok())
             .filter_map(|raw| daemon_base_path(&String::from_utf8_lossy(&raw).split('\0').map(String::from).collect::<Vec<_>>(), port))

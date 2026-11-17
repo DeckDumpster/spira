@@ -226,7 +226,7 @@ fn trusted_author_creates_a_work_bead() {
     );
     let bd = FakeBd::default();
     bd.seed("some-other-ref", "sp-existing", &["spira"]); // non-empty store, unrelated
-    let repo = FakeRepo { root: Some("/repos/widgets".to_string()), registered: vec![] };
+    let repo = FakeRepo { root: Some("repos/widgets".to_string()), registered: vec![] };
     let mail = FakeMail::default();
 
     let report = run(&http, &bd, &repo, &mail, &stamp(), &seen_of(&cfg), &cfg);
@@ -249,7 +249,7 @@ fn rerun_is_idempotent_and_notes_the_existing_bead() {
     );
     let bd = FakeBd::default();
     bd.seed("github:acme/widgets#1", "sp-abc12", &["spira", "plan"]);
-    let repo = FakeRepo { root: Some("/repos/widgets".to_string()), registered: vec![] };
+    let repo = FakeRepo { root: Some("repos/widgets".to_string()), registered: vec![] };
     let mail = FakeMail::default();
 
     let report = run(&http, &bd, &repo, &mail, &stamp(), &seen_of(&cfg), &cfg);
@@ -273,7 +273,7 @@ fn untrusted_author_gets_an_untrusted_record_and_a_digest() {
     );
     let bd = FakeBd::default();
     bd.seed("seed", "sp-seed", &["spira"]);
-    let repo = FakeRepo { root: Some("/repos/widgets".to_string()), registered: vec![] };
+    let repo = FakeRepo { root: Some("repos/widgets".to_string()), registered: vec![] };
     let mail = FakeMail::default();
 
     let report = run(&http, &bd, &repo, &mail, &stamp(), &seen_of(&cfg), &cfg);
@@ -299,7 +299,7 @@ fn pull_requests_are_excluded() {
     );
     let bd = FakeBd::default();
     bd.seed("seed", "sp-seed", &["spira"]);
-    let repo = FakeRepo { root: Some("/repos/widgets".to_string()), registered: vec![] };
+    let repo = FakeRepo { root: Some("repos/widgets".to_string()), registered: vec![] };
     let mail = FakeMail::default();
 
     let report = run(&http, &bd, &repo, &mail, &stamp(), &seen_of(&cfg), &cfg);
@@ -326,7 +326,7 @@ fn spira_accept_promotes_when_the_actor_has_access() {
 
     let bd = FakeBd::default();
     bd.seed("github-untrusted:acme/widgets#5", "sp-untr5", &[]);
-    let repo = FakeRepo { root: Some("/repos/widgets".to_string()), registered: vec![] };
+    let repo = FakeRepo { root: Some("repos/widgets".to_string()), registered: vec![] };
     let mail = FakeMail::default();
 
     let report = run(&http, &bd, &repo, &mail, &stamp(), &seen_of(&cfg), &cfg);
@@ -356,7 +356,7 @@ fn spira_accept_does_not_promote_without_access() {
 
     let bd = FakeBd::default();
     bd.seed("seed", "sp-seed", &["spira"]);
-    let repo = FakeRepo { root: Some("/repos/widgets".to_string()), registered: vec![] };
+    let repo = FakeRepo { root: Some("repos/widgets".to_string()), registered: vec![] };
     let mail = FakeMail::default();
 
     let report = run(&http, &bd, &repo, &mail, &stamp(), &seen_of(&cfg), &cfg);
@@ -379,7 +379,7 @@ fn dry_run_makes_no_bd_writes() {
     );
     let bd = FakeBd::default();
     bd.seed("seed", "sp-seed", &["spira"]);
-    let repo = FakeRepo { root: Some("/repos/widgets".to_string()), registered: vec![] };
+    let repo = FakeRepo { root: Some("repos/widgets".to_string()), registered: vec![] };
     let mail = FakeMail::default();
 
     let report = run(&http, &bd, &repo, &mail, &stamp(), &seen_of(&cfg), &cfg);
@@ -404,7 +404,7 @@ fn pagination_follows_a_full_first_page() {
 
     let bd = FakeBd::default();
     bd.seed("seed", "sp-seed", &["spira"]);
-    let repo = FakeRepo { root: Some("/repos/widgets".to_string()), registered: vec![] };
+    let repo = FakeRepo { root: Some("repos/widgets".to_string()), registered: vec![] };
     let mail = FakeMail::default();
 
     let report = run(&http, &bd, &repo, &mail, &stamp(), &seen_of(&cfg), &cfg);
@@ -433,7 +433,7 @@ fn no_configured_repo_and_none_registered_is_a_real_no_op() {
     let cfg = Config { repo: String::new(), ..base_cfg() };
     let http = FakeHttp::default();
     let bd = FakeBd::default();
-    let repo = FakeRepo { root: Some("/repos/widgets".to_string()), registered: vec![] };
+    let repo = FakeRepo { root: Some("repos/widgets".to_string()), registered: vec![] };
     let mail = FakeMail::default();
 
     let report = run(&http, &bd, &repo, &mail, &stamp(), &seen_of(&cfg), &cfg);
@@ -450,7 +450,7 @@ fn the_api_refusing_a_page_is_named_not_swallowed() {
     http.set(&issues_url(&cfg, 1), 404, r#"{"message":"Not Found"}"#);
     let bd = FakeBd::default();
     bd.seed("seed", "sp-seed", &["spira"]);
-    let repo = FakeRepo { root: Some("/repos/widgets".to_string()), registered: vec![] };
+    let repo = FakeRepo { root: Some("repos/widgets".to_string()), registered: vec![] };
     let mail = FakeMail::default();
 
     let report = run(&http, &bd, &repo, &mail, &stamp(), &seen_of(&cfg), &cfg);
@@ -475,7 +475,7 @@ fn a_bead_the_store_silently_dropped_the_scope_label_from_is_caught_by_the_post_
     bd.seed("seed", "sp-seed", &["spira"]);
     *bd.force_labels.borrow_mut() = Some(vec!["plan".to_string(), "repo:widgets".to_string()]); // no "spira"
 
-    let repo = FakeRepo { root: Some("/repos/widgets".to_string()), registered: vec![] };
+    let repo = FakeRepo { root: Some("repos/widgets".to_string()), registered: vec![] };
     let mail = FakeMail::default();
 
     let report = run(&http, &bd, &repo, &mail, &stamp(), &seen_of(&cfg), &cfg);
@@ -544,7 +544,7 @@ fn rate_limited_world(status: u16) -> (Config, FakeHttp, FakeBd, FakeRepo, FakeM
     http.set(&format!("{}/rate_limit", cfg.api), 200, r#"{"resources":{"core":{"limit":60,"remaining":0,"reset":1792773140}}}"#);
     let bd = FakeBd::default();
     bd.seed("some-other-ref", "sp-existing", &["spira"]);
-    (cfg, http, bd, FakeRepo { root: Some("/repos/widgets".to_string()), registered: vec![] }, FakeMail::default())
+    (cfg, http, bd, FakeRepo { root: Some("repos/widgets".to_string()), registered: vec![] }, FakeMail::default())
 }
 
 #[test]
@@ -590,7 +590,7 @@ fn a_completed_poll_marks_success() {
     let bd = FakeBd::default();
     bd.seed("some-other-ref", "sp-existing", &["spira"]);
     let st = stamp();
-    run(&http, &bd, &FakeRepo { root: Some("/r".to_string()), registered: vec![] }, &FakeMail::default(), &st, &seen_of(&cfg), &cfg);
+    run(&http, &bd, &FakeRepo { root: Some("r".to_string()), registered: vec![] }, &FakeMail::default(), &st, &seen_of(&cfg), &cfg);
     assert_eq!(*st.last.borrow(), Some(st.now));
 }
 
@@ -672,7 +672,7 @@ fn github_slug_reads_every_remote_shape() {
     for u in ["git@github.com:acme/widgets.git", "https://github.com/acme/widgets", "ssh://git@github.com/acme/widgets.git", "https://github.com/acme/widgets/\n"] {
         assert_eq!(github_slug(u).as_deref(), Some("acme/widgets"), "{u}");
     }
-    for u in ["/srv/git/widgets.git", "git@gitlab.com:acme/widgets.git", "https://github.com/acme", "https://github.com/a/b/c"] {
+    for u in ["srv/git/widgets.git", "git@gitlab.com:acme/widgets.git", "https://github.com/acme", "https://github.com/a/b/c"] {
         assert_eq!(github_slug(u), None, "{u}");
     }
 }
@@ -690,7 +690,7 @@ fn contributor_with_hidden_org_membership_is_named_unverifiable() {
     http.set(&format!("{}/orgs/acme/members/hidden1", cfg.api), 404, "");
     let bd = FakeBd::default();
     bd.seed("seed", "sp-seed", &["spira"]);
-    let repo = FakeRepo { root: Some("/repos/widgets".to_string()), registered: vec![] };
+    let repo = FakeRepo { root: Some("repos/widgets".to_string()), registered: vec![] };
     let mail = FakeMail::default();
 
     let report = run(&http, &bd, &repo, &mail, &stamp(), &seen_of(&cfg), &cfg);
@@ -712,7 +712,7 @@ fn run_bot_issue(login: &str, ty: &str, labels: &str) -> FakeBd {
     http.set(&issues_url(&cfg, 1), 200, &bot_issue(login, ty, labels));
     let bd = FakeBd::default();
     bd.seed("some-other-ref", "sp-existing", &["spira"]);
-    let repo = FakeRepo { root: Some("/repos/widgets".to_string()), registered: vec![] };
+    let repo = FakeRepo { root: Some("repos/widgets".to_string()), registered: vec![] };
     let report = run(&http, &bd, &repo, &FakeMail::default(), &stamp(), &seen_of(&cfg), &cfg);
     assert_eq!(report.code, 0, "{:?}", report.err);
     bd
@@ -761,7 +761,7 @@ fn a_write_access_author_shown_as_contributor_still_becomes_work() {
     http.set(&format!("{}/repos/acme/widgets/collaborators/rgantt/permission", cfg.api), 200, r#"{"permission":"admin"}"#);
     let bd = FakeBd::default();
     bd.seed("seed", "sp-seed", &["spira"]);
-    let repo = FakeRepo { root: Some("/repos/widgets".to_string()), registered: vec![] };
+    let repo = FakeRepo { root: Some("repos/widgets".to_string()), registered: vec![] };
 
     let report = run(&http, &bd, &repo, &FakeMail::default(), &stamp(), &seen_of(&cfg), &cfg);
 
@@ -780,7 +780,7 @@ fn a_member_author_becomes_work_without_any_permission_call() {
     http.set(&issues_url(&cfg, 1), 200, &format!("[{}]", issue_json(7, "MEMBER")));
     let bd = FakeBd::default();
     bd.seed("seed", "sp-seed", &["spira"]);
-    let repo = FakeRepo { root: Some("/repos/widgets".to_string()), registered: vec![] };
+    let repo = FakeRepo { root: Some("repos/widgets".to_string()), registered: vec![] };
 
     let report = run(&http, &bd, &repo, &FakeMail::default(), &stamp(), &seen_of(&cfg), &cfg);
 
@@ -797,7 +797,7 @@ fn three_issue_world() -> (Config, FakeHttp, FakeBd, FakeRepo) {
     let bd = FakeBd::default();
     bd.seed("github:acme/widgets#1", "sp-tracked", &["spira", "plan"]);
     bd.seed("github-untrusted:acme/widgets#2", "sp-untrusted", &["gh-untrusted"]);
-    let repo = FakeRepo { root: Some("/repos/widgets".to_string()), registered: vec![] };
+    let repo = FakeRepo { root: Some("repos/widgets".to_string()), registered: vec![] };
     (cfg, http, bd, repo)
 }
 

@@ -15,7 +15,7 @@ impl Drop for Up<'_> {
 
 #[test]
 fn the_gates_socket_is_the_socket_the_marker_sits_beside_and_the_serve_listens_on() {
-    let w = Path::new("/tmp/pw");
+    let w = Path::new("tmp/pw");
     let socket = lc_socket(w).display().to_string();
     let settings = world::lc_settings(w);
     assert_eq!(
@@ -85,7 +85,7 @@ fn a_pilgrim_files_links_and_closes_in_a_world_of_its_own_and_both_views_follow(
         .trim()
         .parse()
         .unwrap();
-    let cmdline = std::fs::read(format!("/proc/{pid}/cmdline")).unwrap();
+    let cmdline = std::fs::read(format!("{}/{pid}/cmdline", system_paths::PROC)).unwrap();
     assert!(
         world::is_world_serve(&cmdline, &dir),
         "the serving process listens on the socket the marker will sit beside"
@@ -163,7 +163,7 @@ fn a_pilgrim_session_with_no_bd_on_path_builds_a_pilgrim_world() {
         .arg(&dir)
         .arg("--pilgrim")
         .env_clear()
-        .env("PATH", "/usr/bin:/bin")
+        .env("PATH", system_paths::SYSTEM_PATH_MIN)
         .env("HOME", std::env::var("HOME").unwrap_or_default())
         .env("SPIRA_RELEASE", &release)
         .env(world::RELEASE_ENV, &release)

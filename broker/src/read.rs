@@ -258,10 +258,10 @@ mod tests {
     // covers: UC-landing-merge-queue-55
     #[test]
     fn artifact_download_names_the_artifact_and_output_dir() {
-        let args = artifact_download_args("12345", "batch-results", "/tmp/out");
+        let args = artifact_download_args("12345", "batch-results", "tmp/out");
         assert_eq!(
             args,
-            vec!["run", "download", "12345", "-n", "batch-results", "-D", "/tmp/out"]
+            vec!["run", "download", "12345", "-n", "batch-results", "-D", "tmp/out"]
         );
     }
 }

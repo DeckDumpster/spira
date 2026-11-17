@@ -454,7 +454,7 @@ fn gate_run_dirs(gate_run: &Path, bead: &str) -> Vec<std::path::PathBuf> {
 }
 
 fn pid_cmdline_names_gate(pid: &str) -> bool {
-    let raw = std::fs::read(format!("/proc/{pid}/cmdline")).unwrap_or_default();
+    let raw = std::fs::read(format!("{}/{pid}/cmdline", system_paths::PROC)).unwrap_or_default();
     cmdline_names_gate(&raw)
 }
 
@@ -952,7 +952,7 @@ mod tests {
             }
         }
         let fields = SessionFields { wall_s: Some(12), api_s: Some(9), turns: Some(3), cost_usd: Some(0.12345), ..Default::default() };
-        tsd_dwarf_session(&NoExec, "/run", "sp-a", "builder", 0, "closed", &fields);
+        tsd_dwarf_session(&NoExec, "run", "sp-a", "builder", 0, "closed", &fields);
         // reaching here without panicking is the whole assertion: best-effort, exit status ignored.
     }
 }

@@ -2,10 +2,10 @@
 
     #[test]
     fn registry_reads_repo_tables_from_spira_toml_when_no_map_file_exists() {
-        let doc = crate::validate("[repo.alpha]\npath = \"/tmp/alpha\"\nmode = \"queue.local\"\nbase = \"local/main\"\nlanes = [\"plan\", \"spike\"]\n").unwrap();
+        let doc = crate::validate("[repo.alpha]\npath = \"tmp/alpha\"\nmode = \"queue.local\"\nbase = \"local/main\"\nlanes = [\"plan\", \"spike\"]\n").unwrap();
         let rows = rows_from_toml(&doc);
         assert_eq!(names(&rows), vec!["alpha".to_string()]);
-        assert_eq!(field(&rows, "alpha", Column::Path), "/tmp/alpha");
+        assert_eq!(field(&rows, "alpha", Column::Path), "tmp/alpha");
         assert_eq!(field(&rows, "alpha", Column::Land), "queue.local");
         assert_eq!(field(&rows, "alpha", Column::Base), "local/main");
         assert_eq!(field(&rows, "alpha", Column::Lanes), "plan,spike");
@@ -40,15 +40,15 @@
     #[test]
     fn registry_env_ignores_the_environments_copy_of_a_registered_key() {
         let mut env = std::collections::BTreeMap::new();
-        for (k, v) in [("SPIRA_REPO_MAP", "/a"), ("SPIRA_HOME_REPO", "h"), ("SPIRA_REPO", "/r"), ("SPIRA_REPO_DERIVED", "0"), ("SPIRA_TOML", "/nonexistent/spira.toml")] {
+        for (k, v) in [("SPIRA_REPO_MAP", "a"), ("SPIRA_HOME_REPO", "h"), ("SPIRA_REPO", "r"), ("SPIRA_REPO_DERIVED", "0"), ("SPIRA_TOML", "nonexistent/spira.toml")] {
             env.insert(k.to_string(), v.to_string());
         }
-        let home = std::path::Path::new("/nonexistent/spira");
+        let home = std::path::Path::new("nonexistent/spira");
         let out = registry_env(env.clone(), home);
         assert_eq!(out.get("SPIRA_REPO_MAP"), None, "{out:?}");
         assert_eq!(out.get("SPIRA_HOME_REPO"), None, "{out:?}");
-        assert_eq!(out.get("SPIRA_REPO").map(String::as_str), Some("/r"));
-        assert_eq!(out.get("SPIRA_REPO_DERIVED").map(String::as_str), Some("/nonexistent/spira"));
+        assert_eq!(out.get("SPIRA_REPO").map(String::as_str), Some("r"));
+        assert_eq!(out.get("SPIRA_REPO_DERIVED").map(String::as_str), Some("nonexistent/spira"));
     }
 
     /// sp-8bhnr (P0, LOOP-STOPPING): CHECK6's own dispatch forwards its OWN resolved
@@ -111,12 +111,12 @@
 
     const MAP: &str = "\
 # a comment line, skipped
-home | /h/home | push | origin/main |  | .claude/gate-home.sh
-narrow | /h/narrow
-service | /h/service | pr | origin/master | cargo fmt --all | cargo fmt --all -- --check
-lanes-on | /h/lanes | push | origin/main | | bash x.sh | plan,incident
-lanes-empty | /h/lanesempty | push | origin/main | | bash x.sh |
-oldshape | /h/old | pr | fmt-tool | gate --flag
+home | h/home | push | origin/main |  | .claude/gate-home.sh
+narrow | h/narrow
+service | h/service | pr | origin/master | cargo fmt --all | cargo fmt --all -- --check
+lanes-on | h/lanes | push | origin/main | | bash x.sh | plan,incident
+lanes-empty | h/lanesempty | push | origin/main | | bash x.sh |
+oldshape | h/old | pr | fmt-tool | gate --flag
 ";
 
     #[test]
@@ -125,7 +125,7 @@ oldshape | /h/old | pr | fmt-tool | gate --flag
         let names: Vec<&str> = rows.iter().map(|r| r.name.as_str()).collect();
         assert_eq!(names, vec!["home", "narrow", "service", "lanes-on", "lanes-empty", "oldshape"]);
         let narrow = rows.iter().find(|r| r.name == "narrow").unwrap();
-        assert_eq!(narrow.path, "/h/narrow");
+        assert_eq!(narrow.path, "h/narrow");
         assert_eq!(narrow.land, "");
         assert_eq!(narrow.base, "");
         assert_eq!(narrow.format, "");
@@ -136,7 +136,7 @@ oldshape | /h/old | pr | fmt-tool | gate --flag
     fn six_field_row_reads_base_format_and_gate_by_name_not_position() {
         let rows = parse(MAP);
         let home = rows.iter().find(|r| r.name == "home").unwrap();
-        assert_eq!(home.path, "/h/home");
+        assert_eq!(home.path, "h/home");
         assert_eq!(home.land, "push");
         assert_eq!(home.base, "origin/main");
         assert_eq!(home.format, "");
@@ -189,52 +189,52 @@ oldshape | /h/old | pr | fmt-tool | gate --flag
 
     #[test]
     fn home_repo_prefers_the_explicit_key_then_falls_back_to_a_basename() {
-        assert_eq!(home_repo(&env(&[("SPIRA_HOME_REPO", "brain")]), Path::new("/x/y")), "brain");
-        assert_eq!(home_repo(&env(&[("SPIRA_REPO", "/w/harness")]), Path::new("/x/y")), "harness");
-        assert_eq!(home_repo(&env(&[]), Path::new("/x/spira")), "spira");
-        assert_eq!(home_repo(&env(&[("SPIRA_HOME_REPO", "")]), Path::new("/x/spira/")), "spira");
+        assert_eq!(home_repo(&env(&[("SPIRA_HOME_REPO", "brain")]), Path::new("x/y")), "brain");
+        assert_eq!(home_repo(&env(&[("SPIRA_REPO", "w/harness")]), Path::new("x/y")), "harness");
+        assert_eq!(home_repo(&env(&[]), Path::new("x/spira")), "spira");
+        assert_eq!(home_repo(&env(&[("SPIRA_HOME_REPO", "")]), Path::new("x/spira/")), "spira");
     }
 
     #[test]
     fn registry_root_prefers_the_map_and_refuses_an_unmapped_name() {
         let env = env(&[("SPIRA_HOME_REPO", "home")]);
-        let reg = Registry::new(Some(MAP), &env, Path::new("/h/home"));
-        assert_eq!(reg.root("home"), Some("/h/home".to_string()));
+        let reg = Registry::new(Some(MAP), &env, Path::new("h/home"));
+        assert_eq!(reg.root("home"), Some("h/home".to_string()));
         assert_eq!(reg.root("ghost"), None);
-        assert_eq!(reg.root(""), Some("/h/home".to_string()), "empty name defaults to the home repo");
+        assert_eq!(reg.root(""), Some("h/home".to_string()), "empty name defaults to the home repo");
     }
 
     #[test]
     fn registry_root_takes_an_explicit_spira_repo_override_for_the_home_repo_only() {
-        let env = env(&[("SPIRA_HOME_REPO", "home"), ("SPIRA_REPO", "/override/path"), ("SPIRA_REPO_DERIVED", "/derived")]);
-        let reg = Registry::new(Some(MAP), &env, Path::new("/h/home"));
-        assert_eq!(reg.root("home"), Some("/override/path".to_string()));
+        let env = env(&[("SPIRA_HOME_REPO", "home"), ("SPIRA_REPO", "override/path"), ("SPIRA_REPO_DERIVED", "derived")]);
+        let reg = Registry::new(Some(MAP), &env, Path::new("h/home"));
+        assert_eq!(reg.root("home"), Some("override/path".to_string()));
         // a non-home name is never overridden, even though SPIRA_REPO is set
-        assert_eq!(reg.root("service"), Some("/h/service".to_string()));
+        assert_eq!(reg.root("service"), Some("h/service".to_string()));
     }
 
     #[test]
     fn registry_root_treats_spira_repo_equal_to_derived_as_no_override() {
-        let env = env(&[("SPIRA_HOME_REPO", "home"), ("SPIRA_REPO", "/derived"), ("SPIRA_REPO_DERIVED", "/derived")]);
-        let reg = Registry::new(Some(MAP), &env, Path::new("/h/home"));
-        // falls through to the map, which has home at /h/home, not /derived
-        assert_eq!(reg.root("home"), Some("/h/home".to_string()));
+        let env = env(&[("SPIRA_HOME_REPO", "home"), ("SPIRA_REPO", "derived"), ("SPIRA_REPO_DERIVED", "derived")]);
+        let reg = Registry::new(Some(MAP), &env, Path::new("h/home"));
+        // falls through to the map, which has home at h/home, not derived
+        assert_eq!(reg.root("home"), Some("h/home".to_string()));
     }
 
     #[test]
     fn registry_land_defaults_to_push_and_normalizes_queue_forge() {
         let env = env(&[]);
-        let reg = Registry::new(Some(MAP), &env, Path::new("/h/home"));
+        let reg = Registry::new(Some(MAP), &env, Path::new("h/home"));
         assert_eq!(reg.land("home"), "push");
         assert_eq!(reg.land("ghost"), "push");
         let qf = "q | /q | queue.forge | origin/main | |\n";
-        let reg2 = Registry::new(Some(qf), &env, Path::new("/h/home"));
+        let reg2 = Registry::new(Some(qf), &env, Path::new("h/home"));
         assert_eq!(reg2.land("q"), "queue");
         assert!(reg2.land_queued("q"));
         assert!(!reg2.land_queued("ghost"));
         assert!(reg2.land_forge_queued("q"));
         let ql = "l | /l | queue.local | main | |\n";
-        let reg3 = Registry::new(Some(ql), &env, Path::new("/h/home"));
+        let reg3 = Registry::new(Some(ql), &env, Path::new("h/home"));
         assert!(reg3.land_queued("l") && !reg3.land_forge_queued("l"));
         assert!(!reg3.land_forge_queued("ghost"));
     }
@@ -242,7 +242,7 @@ oldshape | /h/old | pr | fmt-tool | gate --flag
     #[test]
     fn registry_land_ignores_a_missing_map_rather_than_refusing() {
         let env = env(&[]);
-        let reg = Registry::new(None, &env, Path::new("/h/home"));
+        let reg = Registry::new(None, &env, Path::new("h/home"));
         assert_eq!(reg.land("anything"), "push");
         assert!(!reg.map_present());
     }
@@ -250,15 +250,15 @@ oldshape | /h/old | pr | fmt-tool | gate --flag
     #[test]
     fn registry_field_lookups_refuse_outright_when_the_map_is_absent() {
         let base_env = env(&[("SPIRA_HOME_REPO", "home")]);
-        let reg = Registry::new(None, &base_env, Path::new("/h/home"));
+        let reg = Registry::new(None, &base_env, Path::new("h/home"));
         assert_eq!(reg.field("home", Column::Path), None);
         assert_eq!(reg.gate("home"), None);
         assert_eq!(reg.format("home"), None);
         assert_eq!(reg.base("home"), None);
         // root is unaffected when the override already answers it...
-        let env_ov = env(&[("SPIRA_HOME_REPO", "home"), ("SPIRA_REPO", "/ov"), ("SPIRA_REPO_DERIVED", "/d")]);
-        let reg_ov = Registry::new(None, &env_ov, Path::new("/h/home"));
-        assert_eq!(reg_ov.root("home"), Some("/ov".to_string()));
+        let env_ov = env(&[("SPIRA_HOME_REPO", "home"), ("SPIRA_REPO", "ov"), ("SPIRA_REPO_DERIVED", "d")]);
+        let reg_ov = Registry::new(None, &env_ov, Path::new("h/home"));
+        assert_eq!(reg_ov.root("home"), Some("ov".to_string()));
         // ...but refuses otherwise, same as any other repo_field-based lookup.
         assert_eq!(reg.root("home"), None);
     }
@@ -266,7 +266,7 @@ oldshape | /h/old | pr | fmt-tool | gate --flag
     #[test]
     fn registry_all_lists_the_home_repo_first_and_excludes_it_from_the_rest() {
         let env = env(&[("SPIRA_HOME_REPO", "home")]);
-        let reg = Registry::new(Some(MAP), &env, Path::new("/h/home"));
+        let reg = Registry::new(Some(MAP), &env, Path::new("h/home"));
         let all = reg.all();
         assert_eq!(all[0], "home");
         assert_eq!(all.iter().filter(|n| n.as_str() == "home").count(), 1);
@@ -276,24 +276,24 @@ oldshape | /h/old | pr | fmt-tool | gate --flag
     #[test]
     fn registry_all_always_lists_the_home_repo_even_with_no_map_at_all() {
         let env = env(&[("SPIRA_HOME_REPO", "home")]);
-        let reg = Registry::new(None, &env, Path::new("/h/home"));
+        let reg = Registry::new(None, &env, Path::new("h/home"));
         assert_eq!(reg.all(), vec!["home".to_string()]);
     }
 
     #[test]
     fn registry_name_at_matches_literally_and_the_override_maps_to_home() {
-        let env = env(&[("SPIRA_HOME_REPO", "home"), ("SPIRA_REPO", "/ov"), ("SPIRA_REPO_DERIVED", "/d")]);
-        let reg = Registry::new(Some(MAP), &env, Path::new("/h/home"));
-        assert_eq!(reg.name_at("/ov"), Some("home".to_string()));
-        assert_eq!(reg.name_at("/h/service"), Some("service".to_string()));
-        assert_eq!(reg.name_at("/nowhere"), None);
+        let env = env(&[("SPIRA_HOME_REPO", "home"), ("SPIRA_REPO", "ov"), ("SPIRA_REPO_DERIVED", "d")]);
+        let reg = Registry::new(Some(MAP), &env, Path::new("h/home"));
+        assert_eq!(reg.name_at("ov"), Some("home".to_string()));
+        assert_eq!(reg.name_at("h/service"), Some("service".to_string()));
+        assert_eq!(reg.name_at("nowhere"), None);
         assert_eq!(reg.name_at(""), None);
     }
 
     // ---- base refs (family W, sp-o88bx) ---------------------------------------------------
 
     fn registry_for(map: &str, home_name: &str) -> Registry {
-        Registry::new(Some(map), &env(&[("SPIRA_HOME_REPO", home_name)]), Path::new("/nonexistent"))
+        Registry::new(Some(map), &env(&[("SPIRA_HOME_REPO", home_name)]), Path::new("nonexistent"))
     }
 
     #[test]

@@ -232,11 +232,11 @@ mod tests {
 
     #[test]
     fn parses_porcelain_worktree_list() {
-        let s = "worktree /r\nHEAD abc\nbranch refs/heads/main\n\nworktree /w/x\nHEAD def\ndetached\n\nworktree /w/y\nHEAD 123\nbranch refs/heads/spira/sp-1\n";
+        let s = "worktree r\nHEAD abc\nbranch refs/heads/main\n\nworktree w/x\nHEAD def\ndetached\n\nworktree w/y\nHEAD 123\nbranch refs/heads/spira/sp-1\n";
         let v = parse_worktree_list(s);
         assert_eq!(v.len(), 3);
         assert_eq!(v[1].branch, None);
         assert_eq!(v[2].branch.as_deref(), Some("refs/heads/spira/sp-1"));
-        assert_eq!(v[2].path, PathBuf::from("/w/y"));
+        assert_eq!(v[2].path, PathBuf::from("w/y"));
     }
 }

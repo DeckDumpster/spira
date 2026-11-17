@@ -162,6 +162,6 @@ mod tests {
 
     #[test]
     fn no_stamp_is_not_draining() {
-        assert_eq!(check(Path::new("/nonexistent/world.draining"), 5, |_| None, &[], |_, _| true), Outcome::NotDraining);
+        assert_eq!(check(Path::new("nonexistent/world.draining"), 5, |_| None, &[], |_, _| true), Outcome::NotDraining);
     }
 }

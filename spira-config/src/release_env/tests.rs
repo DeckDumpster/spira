@@ -30,32 +30,32 @@
 
     #[test]
     fn launcher_path_without_spira_release_refuses_naming_the_key() {
-        let e = launcher_path(None, Some("/h"), "").unwrap_err();
+        let e = launcher_path(None, Some("h"), "").unwrap_err();
         assert!(e.contains("SPIRA_RELEASE is not set"), "{e}");
     }
 
     #[test]
     fn launcher_path_without_home_refuses_naming_the_key() {
-        let e = launcher_path(Some("/r"), None, "").unwrap_err();
+        let e = launcher_path(Some("r"), None, "").unwrap_err();
         assert!(e.contains("HOME is not set"), "{e}");
     }
 
     #[test]
     fn child_path_env_never_carries_the_inherited_path() {
-        let got = child_path_env(Some("/opt/rel"), Some("/h"), "/box/bin").unwrap();
+        let got = child_path_env(Some("opt/rel"), Some("h"), "box/bin").unwrap();
         let path = got.iter().find(|(k, _)| k == "PATH").map(|(_, v)| v.as_str());
-        assert_eq!(path, Some("/opt/rel/bin:/opt/rel/spira:/h/.local/lib/spira-env/bin:/usr/local/bin:/usr/bin:/bin:/box/bin"));
+        assert_eq!(path, Some("opt/rel/bin:opt/rel/spira:h/.local/lib/spira-env/bin:/usr/local/bin:/usr/bin:/bin:box/bin"));
         let rel = got.iter().find(|(k, _)| k == crate::RELEASE_ENV).map(|(_, v)| v.as_str());
-        assert_eq!(rel, Some("/opt/rel"));
+        assert_eq!(rel, Some("opt/rel"));
     }
 
     #[test]
     fn a_build_child_runs_from_the_stage_it_builds() {
-        let got = stage_child_path_env(Path::new("/w/stage"));
-        assert_eq!(got, vec![(crate::RELEASE_ENV.to_string(), "/w/stage".to_string()), ("PATH".to_string(), "/w/stage/bin:/w/stage/spira:/usr/local/bin:/usr/bin:/bin".to_string())]);
+        let got = stage_child_path_env(Path::new("w/stage"));
+        assert_eq!(got, vec![(crate::RELEASE_ENV.to_string(), "w/stage".to_string()), ("PATH".to_string(), "w/stage/bin:w/stage/spira:/usr/local/bin:/usr/bin:/bin".to_string())]);
     }
 
     #[test]
     fn child_path_env_refuses_a_tail_inside_a_release() {
-        assert!(child_path_env(Some("/opt/rel"), Some("/h"), "/x/spira-releases/abc/bin").is_err());
+        assert!(child_path_env(Some("opt/rel"), Some("h"), "x/spira-releases/abc/bin").is_err());
     }

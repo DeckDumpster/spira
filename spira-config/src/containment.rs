@@ -173,8 +173,10 @@ mod tests {
 
     #[test]
     fn prod_or_unset_instance_is_always_allowed() {
-        assert_eq!(check("prod", "/ws", Some("x|/outside\n")), Ok(()));
-        assert_eq!(check("", "/ws", Some("x|/outside\n")), Ok(()));
+        let r = testkit::TempDir::new("spira-config-containment-prod").display().to_string();
+        let map = format!("x|{r}/outside\n");
+        assert_eq!(check("prod", &format!("{r}/ws"), Some(&map)), Ok(()));
+        assert_eq!(check("", &format!("{r}/ws"), Some(&map)), Ok(()));
     }
 
     fn no_remotes(_: &str) -> Vec<String> {
@@ -184,21 +186,32 @@ mod tests {
     // covers: UC-config-store-preflight-16
     #[test]
     fn a_confined_instance_refuses_a_repo_outside_its_workspace_and_names_it() {
-        let map = "inside|/ws/inside\noutside|/elsewhere/outside\n";
-        let err = check_with("test", "/ws", Some(map), &no_remotes).unwrap_err();
+        let root = testkit::TempDir::new("spira-config-containment-outside");
+        let r = root.display().to_string();
+        let ws = format!("{r}/ws");
+        let map = format!("inside|{r}/ws/inside\noutside|{r}/elsewhere/outside\n");
+        let err = check_with("test", &ws, Some(&map), &no_remotes).unwrap_err();
         assert_eq!(err.len(), 1, "{err:?}");
-        assert!(err[0].contains("outside") && err[0].contains("/elsewhere/outside"), "{err:?}");
-        assert_eq!(check_with("test", "/ws", Some("inside|/ws/inside\n"), &no_remotes), Ok(()), "positive control");
+        assert!(err[0].contains("outside") && err[0].contains(&format!("{r}/elsewhere/outside")), "{err:?}");
+        assert_eq!(check_with("test", &ws, Some(&format!("inside|{r}/ws/inside\n")), &no_remotes), Ok(()), "positive control");
     }
 
     // covers: UC-config-store-preflight-16
     #[test]
     fn a_confined_instance_refuses_a_repo_with_a_network_remote_but_not_a_local_one() {
-        let remotes = |path: &str| match path {
-            "/ws/net" => vec!["https://example.invalid/x.git".to_string()],
-            _ => vec!["/ws/local-origin".to_string()],
+        let root = testkit::TempDir::new("spira-config-containment-remotes");
+        let r = root.display().to_string();
+        let net = format!("{r}/ws/net");
+        let local_origin = format!("{r}/ws/local-origin");
+        let remotes = |path: &str| {
+            if path == net {
+                vec!["https://example.invalid/x.git".to_string()]
+            } else {
+                vec![local_origin.clone()]
+            }
         };
-        let err = check_with("test", "/ws", Some("net|/ws/net\nlocal|/ws/local\n"), &remotes).unwrap_err();
+        let map = format!("net|{r}/ws/net\nlocal|{r}/ws/local\n");
+        let err = check_with("test", &format!("{r}/ws"), Some(&map), &remotes).unwrap_err();
         assert_eq!(err.len(), 1, "{err:?}");
         assert!(err[0].contains("net") && err[0].contains("example.invalid"), "{err:?}");
     }
@@ -223,28 +236,31 @@ mod tests {
     // covers: UC-config-store-preflight-16
     #[test]
     fn a_workspace_of_slash_confines_nothing_and_a_sibling_prefix_is_not_inside() {
-        assert!(is_under("/anywhere/at/all", "/"));
-        assert!(is_under("/ws/a", "/ws/"));
-        assert!(!is_under("/ws-other/a", "/ws"), "a shared name prefix is not containment");
+        let r = testkit::TempDir::new("spira-config-containment-under").display().to_string();
+        assert!(is_under(&format!("{r}/anywhere/at/all"), "/"));
+        assert!(is_under(&format!("{r}/ws/a"), &format!("{r}/ws/")));
+        assert!(!is_under(&format!("{r}/ws-other/a"), &format!("{r}/ws")), "a shared name prefix is not containment");
     }
 
     // covers: UC-config-store-preflight-16
     #[test]
     fn prod_is_not_confined_even_with_an_outside_path_and_a_network_remote() {
         let remotes = |_: &str| vec!["https://example.invalid/x.git".to_string()];
-        assert_eq!(check_with("prod", "/ws", Some("x|/elsewhere\n"), &remotes), Ok(()));
+        let r = testkit::TempDir::new("spira-config-containment-prod-remote").display().to_string();
+        assert_eq!(check_with("prod", &format!("{r}/ws"), Some(&format!("x|{r}/elsewhere\n")), &remotes), Ok(()));
     }
 
     #[test]
     fn no_map_is_not_a_violation() {
-        assert_eq!(check("test", "/ws", None), Ok(()));
+        assert_eq!(check("test", "ws", None), Ok(()));
     }
 
     #[test]
     fn remote_is_real_matches_lib_sh() {
         assert!(!remote_is_real(""));
-        assert!(!remote_is_real("/abs/path"));
-        assert!(!remote_is_real("file:///abs/path"));
+        let r = testkit::TempDir::new("spira-config-containment-remote").display().to_string();
+        assert!(!remote_is_real(&format!("{r}/abs/path")));
+        assert!(!remote_is_real(&format!("file://{r}/abs/path")));
         assert!(remote_is_real("https://example.invalid/x.git"));
         assert!(remote_is_real("git@example.invalid:x/y.git"));
         assert!(remote_is_real("ssh://example.invalid/x.git"));

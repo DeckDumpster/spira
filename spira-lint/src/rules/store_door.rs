@@ -266,7 +266,7 @@ fn scan(path: &str, src: &[u8], hits: Vec<(usize, &'static str)>) -> Vec<Finding
 /// The crate a Rust file belongs to: the path before its `src/`, `tests/`, `benches/` or
 /// `examples/`; names flow between a crate's files, so taint is collected per crate.
 pub(crate) fn crate_of(path: &str) -> &str {
-    ["/src/", "/tests/", "/benches/", "/examples/"].iter().filter_map(|d| path.find(d)).min().map_or_else(|| path.rsplit_once('/').map_or("", |(d, _)| d), |i| &path[..i])
+    ["src/", "tests/", "benches/", "examples/"].iter().filter_map(|d| path.find(&format!("/{d}"))).min().map_or_else(|| path.rsplit_once('/').map_or("", |(d, _)| d), |i| &path[..i])
 }
 
 /// A Rust file's path, source, and source with comments blanked.

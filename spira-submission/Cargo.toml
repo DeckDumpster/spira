@@ -24,9 +24,10 @@ path = "tests/submission.rs"
 required-features = ["integration"]
 
 [features]
-integration = ["spira-config/integration", "spira-otel/integration", "testkit/integration"]
+integration = ["spira-config/integration", "spira-otel/integration", "testkit/integration", "system-paths/integration"]
 
 [dependencies]
+system-paths = { path = "../system-paths" }
 spira-otel = { path = "../spira-otel" }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 rustls-pemfile = "2"

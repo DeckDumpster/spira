@@ -325,7 +325,7 @@ mod tests {
 
     fn registry() -> Registry {
         let map = "# name|root|base|gate\nspira|/r/spira|main|gate.sh\ndeck|/r/deck|main|gate.sh\n";
-        Registry::new(Some(map), &BTreeMap::new(), std::path::Path::new("/r/spira"))
+        Registry::new(Some(map), &BTreeMap::new(), std::path::Path::new("r/spira"))
     }
 
     fn ctx<'a>(vars: &'a Vars<'a>, ask: &'a dyn Fn() -> Result<String, String>) -> Ctx<'a> {

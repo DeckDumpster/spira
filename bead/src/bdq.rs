@@ -541,16 +541,16 @@ mod tests {
         let seen = std::sync::Mutex::new(None);
         let resolved = |h: &Path, r: &Path| {
             *seen.lock().unwrap() = Some((h.to_path_buf(), r.to_path_buf()));
-            Ok(("brain".to_string(), "/m/repos".to_string()))
+            Ok(("brain".to_string(), "m/repos".to_string()))
         };
         let got: BTreeMap<String, String> = fence_env(&home, &env(&[]), &resolved).unwrap().into_iter().collect();
         assert_eq!(got["SPIRA_HOME"], home.to_string_lossy());
         assert_eq!(got["SPIRA_REPO_DERIVED"], top.to_string_lossy());
         assert_eq!(got["SPIRA_REPO"], top.to_string_lossy());
-        assert_eq!((got["SPIRA_HOME_REPO"].as_str(), got["SPIRA_REPO_MAP"].as_str()), ("brain", "/m/repos"));
+        assert_eq!((got["SPIRA_HOME_REPO"].as_str(), got["SPIRA_REPO_MAP"].as_str()), ("brain", "m/repos"));
         assert_eq!(seen.lock().unwrap().clone(), Some((home.clone(), top.clone())));
-        let got: BTreeMap<String, String> = fence_env(&home, &env(&[("SPIRA_REPO", "/elsewhere"), ("SPIRA_HOME", "/h")]), &resolved).unwrap().into_iter().collect();
-        assert_eq!((got["SPIRA_REPO"].as_str(), got["SPIRA_HOME"].as_str()), ("/elsewhere", "/h"));
+        let got: BTreeMap<String, String> = fence_env(&home, &env(&[("SPIRA_REPO", "elsewhere"), ("SPIRA_HOME", "h")]), &resolved).unwrap().into_iter().collect();
+        assert_eq!((got["SPIRA_REPO"].as_str(), got["SPIRA_HOME"].as_str()), ("elsewhere", "h"));
         assert!(fence_env(&home, &env(&[]), &|_, _| Err("no toml".into())).is_err());
     }
 
@@ -593,7 +593,7 @@ mod tests {
     #[test]
     fn repo_label_allows_home_repo_and_known_repos() {
         let e = env(&[("SPIRA_HOME_REPO", "spira")]);
-        let reg = registry_from_env(&e, Path::new("/x"));
+        let reg = registry_from_env(&e, Path::new("x"));
         assert_eq!(check_repo_label(&s(&["create", "title", "--labels", "plan,repo:spira"]), &reg), None);
     }
 
@@ -601,7 +601,7 @@ mod tests {
     #[test]
     fn repo_label_refuses_unknown_repo_and_names_valid_keys() {
         let map = "spira | /srv/spira | push | origin/main | |\nwidget | /srv/widget | pr | origin/main | |\n";
-        let reg = Registry::new(Some(map), &env(&[("SPIRA_HOME_REPO", "homerepo")]), Path::new("/x"));
+        let reg = Registry::new(Some(map), &env(&[("SPIRA_HOME_REPO", "homerepo")]), Path::new("x"));
         let msg = check_repo_label(&s(&["create", "title", "--labels", "plan,repo:nope"]), &reg);
         let msg = msg.expect("refused");
         assert!(msg.contains("repo:nope"), "{msg}");
@@ -646,7 +646,7 @@ mod tests {
 
     #[test]
     fn repo_label_no_repo_label_at_all_is_allowed() {
-        let reg = registry_from_env(&env(&[]), Path::new("/x"));
+        let reg = registry_from_env(&env(&[]), Path::new("x"));
         assert_eq!(check_repo_label(&s(&["create", "title", "--labels", "plan"]), &reg), None);
     }
 
@@ -655,7 +655,7 @@ mod tests {
         // Two --labels occurrences: the second overwrites the first, matching bash's
         // unconditional overwrite with no break.
         let map = "spira | /srv/spira | push | origin/main | |\n";
-        let reg = Registry::new(Some(map), &env(&[("SPIRA_HOME_REPO", "homerepo")]), Path::new("/x"));
+        let reg = Registry::new(Some(map), &env(&[("SPIRA_HOME_REPO", "homerepo")]), Path::new("x"));
         assert_eq!(
             check_repo_label(&s(&["create", "title", "--labels", "repo:nope", "--labels", "repo:spira"]), &reg),
             None

@@ -30,7 +30,7 @@ use sha2::{Digest, Sha256};
 /// "unknown" rather than failing the send.
 pub fn caller_name() -> String {
     let ppid = unsafe { libc::getppid() };
-    let path = format!("/proc/{ppid}/cmdline");
+    let path = format!("{}/{ppid}/cmdline", system_paths::PROC);
     let mut buf = Vec::new();
     if File::open(&path).and_then(|mut f| f.read_to_end(&mut buf)).is_err() {
         return "unknown".to_string();

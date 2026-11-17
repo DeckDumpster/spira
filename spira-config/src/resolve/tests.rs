@@ -23,28 +23,28 @@
         let ws = testkit::TempDir::new("spira-config-resolve-undeclared");
         let (home, repo) = fixture_home_repo(&ws);
         let doc = crate::unset_path(&crate::fixture_doc(&BTreeMap::new()), "spira.run").unwrap();
-        let e = env(&[("HOME", "/h"), ("SPIRA_RUN", "/from/the/environment")]);
+        let e = env(&[("HOME", "h"), ("SPIRA_RUN", "from/the/environment")]);
         let err = resolve(ResolveInput { env: &e, home: &home, repo: &repo, toml: Some(&doc), conf_d: &home.join("conf.d") })
             .expect_err("an undeclared spira.run must refuse");
         let msg = err.to_string();
         assert!(msg.contains("SPIRA_RUN") && msg.contains("spira.run"), "{msg}");
-        assert!(!msg.contains("/from/the/environment"), "the environment must not be read: {msg}");
+        assert!(!msg.contains("from/the/environment"), "the environment must not be read: {msg}");
     }
 
     #[test]
     fn an_empty_runes_dir_resolves_to_the_homes_runes_and_reaches_sh_all() {
         let ws = testkit::TempDir::new("spira-config-resolve-runes-dir");
         let (home, repo) = fixture_home_repo(&ws);
-        let e = env(&[("HOME", "/h")]);
+        let e = env(&[("HOME", "h")]);
         let doc = crate::fixture_doc(&env(&[("SPIRA_RUNES_DIR", "")]));
         let r = resolve(ResolveInput { env: &e, home: &home, repo: &repo, toml: Some(&doc), conf_d: &home.join("conf.d") }).unwrap();
         let want = format!("{}/runes", home.display());
         assert_eq!(r.get("SPIRA_RUNES_DIR"), want);
         assert!(r.to_sh_all().contains(&format!("SPIRA_RUNES_DIR='{want}'")), "{}", r.to_sh_all());
 
-        let declared = crate::fixture_doc(&env(&[("SPIRA_RUNES_DIR", "/elsewhere/runes")]));
+        let declared = crate::fixture_doc(&env(&[("SPIRA_RUNES_DIR", "elsewhere/runes")]));
         let r = resolve(ResolveInput { env: &e, home: &home, repo: &repo, toml: Some(&declared), conf_d: &home.join("conf.d") }).unwrap();
-        assert_eq!(r.get("SPIRA_RUNES_DIR"), "/elsewhere/runes");
+        assert_eq!(r.get("SPIRA_RUNES_DIR"), "elsewhere/runes");
     }
 
     #[test]
@@ -52,10 +52,10 @@
         let ws = testkit::TempDir::new("spira-config-resolve-release");
         let (home, repo) = fixture_home_repo(&ws);
         std::fs::write(home.join("conf.d/SPIRA_RELEASE"), "TYPE=string\nGROUP=runtime\nDOC=the release a task resolves tools from\n").unwrap();
-        let e = env(&[("HOME", "/h"), ("SPIRA_RELEASE", "/staged/release")]);
-        let doc = crate::fixture_doc(&env(&[("SPIRA_RELEASE", "/installed/current")]));
+        let e = env(&[("HOME", "h"), ("SPIRA_RELEASE", "staged/release")]);
+        let doc = crate::fixture_doc(&env(&[("SPIRA_RELEASE", "installed/current")]));
         let r = resolve(ResolveInput { env: &e, home: &home, repo: &repo, toml: Some(&doc), conf_d: &home.join("conf.d") }).unwrap();
-        assert_eq!(r.get("SPIRA_RELEASE"), "/installed/current", "the in-process reader still sees the declared key");
+        assert_eq!(r.get("SPIRA_RELEASE"), "installed/current", "the in-process reader still sees the declared key");
         let sh = r.to_sh_all();
         assert!(sh.contains("SPIRA_RUN="), "positive control: sh-all carries the other keys: {sh}");
         assert!(!sh.lines().any(|l| l.starts_with("SPIRA_RELEASE=")), "{sh}");
@@ -84,8 +84,8 @@
     fn derive_home_repo_env_override_wins() {
         let ws = testkit::TempDir::new("spira-config-derive-repo-env");
         let (home, _repo) = fixture_home_repo(&ws);
-        let e = env(&[("SPIRA_REPO", "/explicit/override")]);
-        assert_eq!(derive_home_repo(&home, &e), Path::new("/explicit/override"));
+        let e = env(&[("SPIRA_REPO", "explicit/override")]);
+        assert_eq!(derive_home_repo(&home, &e), Path::new("explicit/override"));
     }
 
     // The tests' own `git init` needs PATH; derive_repo_filesystem itself reads only the
@@ -114,7 +114,7 @@
         let home = crate::resolve::locate_home_for_process().unwrap();
         let repo = home.parent().unwrap().to_path_buf();
         let toml = crate::fixture_toml_file(ws.path(), &env(&[("SPIRA_MAIL_READERS", "concierge=echo wake")]));
-        let e = env(&[("HOME", "/h"), ("SPIRA_TOML", toml.to_str().unwrap())]);
+        let e = env(&[("HOME", "h"), ("SPIRA_TOML", toml.to_str().unwrap())]);
         let resolved = resolve_for_process(&home, &repo, &e).unwrap();
         assert_eq!(resolved.values.get("SPIRA_MAIL_READERS").map(String::as_str), Some("concierge=echo wake"));
     }
@@ -127,7 +127,7 @@
         // The REAL registry, where SPIRA_ASK_LABEL is a key.
         let home = crate::resolve::locate_home_for_process().unwrap();
         let toml = crate::fixture_toml_file(ws.path(), &env(&[("SPIRA_ASK_LABEL", "declared-ask")]));
-        let e = env(&[("HOME", "/h"), ("SPIRA_TOML", toml.to_str().unwrap()), ("SPIRA_ASK_LABEL", "from-the-environment")]);
+        let e = env(&[("HOME", "h"), ("SPIRA_TOML", toml.to_str().unwrap()), ("SPIRA_ASK_LABEL", "from-the-environment")]);
         assert_eq!(resolve_ask_label(&e, &home).unwrap(), "declared-ask");
     }
 
@@ -136,7 +136,7 @@
     }
 
     fn declared(pairs: &[(&str, &str)]) -> crate::SpiraToml {
-        [("spira.home_repo", "h"), ("spira.repo_map", "/nowhere/repo-map")]
+        [("spira.home_repo", "h"), ("spira.repo_map", "nowhere/repo-map")]
             .iter()
             .chain(pairs)
             .fold(crate::SpiraToml::default(), |d, (k, v)| crate::set_path(&d, k, v).unwrap())
@@ -152,7 +152,7 @@
     fn a_declared_key_beats_its_derived_default_and_the_environment_never_speaks() {
         let ws = testkit::TempDir::new("spira-config-precedence");
         let (home, repo) = fixture_home_repo(&ws);
-        let e = env(&[("HOME", "/h"), ("SPIRA_INSTANCE", "from-the-environment")]);
+        let e = env(&[("HOME", "h"), ("SPIRA_INSTANCE", "from-the-environment")]);
 
         let derived = with_defaults(&repo, &declared(&[]), &e);
         assert_eq!(derived.get("SPIRA_INSTANCE"), "prod", "nothing declared: the derived default");
@@ -168,18 +168,18 @@
     fn spira_claude_is_a_deprecated_alias_that_only_an_undeclared_agent_falls_back_to() {
         let ws = testkit::TempDir::new("spira-config-claude-alias");
         let (_, repo) = fixture_home_repo(&ws);
-        let e = env(&[("HOME", "/h"), ("SPIRA_CLAUDE", "/opt/old-agent")]);
+        let e = env(&[("HOME", "h"), ("SPIRA_CLAUDE", "opt/old-agent")]);
 
         let aliased = with_defaults(&repo, &declared(&[]), &e);
-        assert_eq!(aliased.get("SPIRA_AGENT"), "/opt/old-agent");
+        assert_eq!(aliased.get("SPIRA_AGENT"), "opt/old-agent");
         assert_eq!(aliased.warnings, vec!["spira: SPIRA_CLAUDE is deprecated; rename it to SPIRA_AGENT in spira.conf".to_string()]);
 
-        let doc = declared(&[("spira.agent", "/opt/new-agent")]);
+        let doc = declared(&[("spira.agent", "opt/new-agent")]);
         let declared_wins = with_defaults(&repo, &doc, &e);
-        assert_eq!(declared_wins.get("SPIRA_AGENT"), "/opt/new-agent");
+        assert_eq!(declared_wins.get("SPIRA_AGENT"), "opt/new-agent");
         assert!(declared_wins.warnings.is_empty(), "{:?}", declared_wins.warnings);
 
-        let neither = with_defaults(&repo, &declared(&[]), &env(&[("HOME", "/h")]));
+        let neither = with_defaults(&repo, &declared(&[]), &env(&[("HOME", "h")]));
         assert_eq!(neither.get("SPIRA_AGENT"), "claude");
         assert!(neither.warnings.is_empty());
     }
@@ -190,7 +190,7 @@
         let ws = testkit::TempDir::new("spira-config-derived-location");
         let (_home, repo) = fixture_home_repo(&ws);
         std::fs::create_dir_all(repo.join(".git")).unwrap();
-        let e = env(&[("HOME", "/h")]);
+        let e = env(&[("HOME", "h")]);
         let doc = declared(&[]);
         let r = with_defaults(&repo, &doc, &e);
         assert_eq!(r.get("SPIRA_WORKSPACES"), ws.path().to_str().unwrap(), "a git checkout's workspaces root is its parent directory");
@@ -208,21 +208,21 @@
     fn prod_keeps_unqualified_paths_and_a_non_prod_instance_gets_its_own_database_and_runtime_directory() {
         let ws = testkit::TempDir::new("spira-config-instance-paths");
         let (_home, repo) = fixture_home_repo(&ws);
-        let e = env(&[("HOME", "/h")]);
+        let e = env(&[("HOME", "h")]);
         let prod = with_defaults(&repo, &declared(&[]), &e);
-        assert_eq!(prod.get("SPIRA_DB"), "/h/.local/share/spira/db");
-        assert_eq!(prod.get("SPIRA_RUN"), "/h/.local/share/spira/run");
+        assert_eq!(prod.get("SPIRA_DB"), "h/.local/share/spira/db");
+        assert_eq!(prod.get("SPIRA_RUN"), "h/.local/share/spira/run");
 
         let acc = with_defaults(&repo, &declared(&[("spira.instance", "acc")]), &e);
-        assert_eq!(acc.get("SPIRA_DB"), "/h/.local/share/spira-acc/db");
-        assert_eq!(acc.get("SPIRA_RUN"), "/h/.local/share/spira-acc/run");
+        assert_eq!(acc.get("SPIRA_DB"), "h/.local/share/spira-acc/db");
+        assert_eq!(acc.get("SPIRA_RUN"), "h/.local/share/spira-acc/run");
     }
 
 #[test]
 fn checkout_root_is_the_parent_of_the_home() {
     let env = |k: &str, v: &str| BTreeMap::from([(k.to_string(), v.to_string())]);
-    assert_eq!(checkout_root(&env("SPIRA_HOME", "/w/spira")), Ok(PathBuf::from("/w")));
-    assert_eq!(checkout_root(&env("SPIRA_RELEASE", "/r")), Ok(PathBuf::from("/r")));
+    assert_eq!(checkout_root(&env("SPIRA_HOME", "w/spira")), Ok(PathBuf::from("w")));
+    assert_eq!(checkout_root(&env("SPIRA_RELEASE", "r")), Ok(PathBuf::from("r")));
     assert!(checkout_root(&BTreeMap::new()).unwrap_err().contains("refusing to search"));
     assert!(checkout_root(&env("SPIRA_HOME", "spira")).unwrap_err().contains("has no parent"));
 }
@@ -235,6 +235,6 @@ fn checkout_root_refuses_a_home_with_no_parent() {
 
 #[test]
 fn checkout_root_for_process_reads_the_process_environment() {
-    let _g = testkit::env(&[("SPIRA_HOME", Some("/w/spira"))]);
-    assert_eq!(checkout_root_for_process(), Ok(PathBuf::from("/w")));
+    let _g = testkit::env(&[("SPIRA_HOME", Some("w/spira"))]);
+    assert_eq!(checkout_root_for_process(), Ok(PathBuf::from("w")));
 }

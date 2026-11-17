@@ -111,7 +111,7 @@ fn the_certificate_expiry_is_read_from_the_der() {
     seed_cert(&b, FIXTURE_CERT);
     assert_eq!(cert_days(Path::new(&b.plan.cert), NOT_AFTER - 10 * DAY), Some(10));
     assert_eq!(cert_days(Path::new(&b.plan.cert), NOT_AFTER + DAY), Some(-1));
-    assert_eq!(cert_days(Path::new("/nonexistent"), 0), None);
+    assert_eq!(cert_days(Path::new(system_paths::NONEXISTENT), 0), None);
     assert_eq!(clock::iso(NOT_AFTER), "2126-09-20T02:58:40Z");
 }
 

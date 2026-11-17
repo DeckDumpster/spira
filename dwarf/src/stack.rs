@@ -127,7 +127,7 @@ mod tests {
     #[test]
     fn empty_stack_is_the_base_unchanged() {
         let git = fg(vec![]);
-        assert_eq!(build_stacked_base(&git, &PathBuf::from("/r"), "origin/main", &BTreeMap::new()), Ok("origin/main".into()));
+        assert_eq!(build_stacked_base(&git, &PathBuf::from("r"), "origin/main", &BTreeMap::new()), Ok("origin/main".into()));
         assert!(git.calls.lock().unwrap().is_empty());
     }
 
@@ -136,7 +136,7 @@ mod tests {
         let git = fg(vec![Out::ok("treeoid\n"), Out::ok("mergesha\n")]);
         let mut stack = BTreeMap::new();
         stack.insert("sp-a".to_string(), "tipA".to_string());
-        assert_eq!(build_stacked_base(&git, &PathBuf::from("/r"), "origin/main", &stack), Ok("mergesha".into()));
+        assert_eq!(build_stacked_base(&git, &PathBuf::from("r"), "origin/main", &stack), Ok("mergesha".into()));
         let calls = git.calls.lock().unwrap();
         assert_eq!(calls[0], vec!["-c", "attr.tree=origin/main", "merge-tree", "--write-tree", "origin/main", "tipA"]);
         assert_eq!(calls[1], vec!["commit-tree", "treeoid", "-p", "origin/main", "-p", "tipA", "-m", "stacked base: merge sp-a (tipA) onto origin/main"]);
@@ -148,7 +148,7 @@ mod tests {
         let mut stack = BTreeMap::new();
         stack.insert("sp-a".to_string(), "tipA".to_string());
         stack.insert("sp-b".to_string(), "tipB".to_string());
-        let err = build_stacked_base(&git, &PathBuf::from("/r"), "origin/main", &stack).unwrap_err();
+        let err = build_stacked_base(&git, &PathBuf::from("r"), "origin/main", &stack).unwrap_err();
         assert_eq!(err, Conflict { a: "sp-a".into(), b: "sp-b".into() });
         assert_eq!(err.note(), "stack conflict: sp-a x sp-b");
     }
@@ -158,7 +158,7 @@ mod tests {
         let git = fg(vec![Out::fail(1, "CONFLICT")]);
         let mut stack = BTreeMap::new();
         stack.insert("sp-a".to_string(), "tipA".to_string());
-        let err = build_stacked_base(&git, &PathBuf::from("/r"), "origin/main", &stack).unwrap_err();
+        let err = build_stacked_base(&git, &PathBuf::from("r"), "origin/main", &stack).unwrap_err();
         assert_eq!(err.note(), "stack conflict: the landing ref x sp-a");
     }
 }

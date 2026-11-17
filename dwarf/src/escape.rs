@@ -184,7 +184,7 @@ mod tests {
     use super::*;
 
     fn ok() -> Facts {
-        Facts { world_gate_ok: true, capacity_left: None, ready: Ok(3), dwarf_path: Some("/rel/bin/dwarf".into()) }
+        Facts { world_gate_ok: true, capacity_left: None, ready: Ok(3), dwarf_path: Some("rel/bin/dwarf".into()) }
     }
 
     #[test]
@@ -224,27 +224,27 @@ mod tests {
 
     #[test]
     fn find_on_path_returns_first_hit() {
-        let hit = |p: &Path| p == Path::new("/b/dwarf");
-        assert_eq!(find_on_path("/a:/b:/c", "dwarf", hit), Some("/b/dwarf".to_string()));
+        let hit = |p: &Path| p == Path::new("b/dwarf");
+        assert_eq!(find_on_path("a:b:c", "dwarf", hit), Some("b/dwarf".to_string()));
     }
 
     #[test]
     fn find_on_path_none_when_absent() {
-        assert_eq!(find_on_path("/a:/b", "dwarf", |_| false), None);
+        assert_eq!(find_on_path("a:b", "dwarf", |_| false), None);
     }
 
     #[test]
     fn build_argv_shape_matches_escape_sh() {
-        let a = build_argv("stretchy", Path::new("/h/spira"), "/rel/bin/dwarf", &["--setenv=HOME=/h".to_string()], 1000, false);
+        let a = build_argv("stretchy", Path::new("h/spira"), "rel/bin/dwarf", &["--setenv=HOME=/h".to_string()], 1000, false);
         assert_eq!(
             a,
-            vec!["--user", "--collect", "--quiet", "--unit=spira-dwarf-stretchy-escape-1000", "--setenv=HOME=/h", "/rel/bin/dwarf", "--home", "/h/spira", "stretchy"]
+            vec!["--user", "--collect", "--quiet", "--unit=spira-dwarf-stretchy-escape-1000", "--setenv=HOME=/h", "rel/bin/dwarf", "--home", "h/spira", "stretchy"]
         );
     }
 
     #[test]
     fn build_argv_appends_dry_run_last() {
-        let a = build_argv("f", Path::new("/h"), "/bin/dwarf", &[], 1, true);
+        let a = build_argv("f", Path::new("h"), "bin/dwarf", &[], 1, true);
         assert_eq!(a.last().unwrap(), "--dry-run");
     }
 
@@ -279,7 +279,7 @@ mod tests {
         let mut vars = crate::tests::complete_vars();
         vars.insert("SPIRA_RUN".to_string(), run.display().to_string());
         let snap = crate::seam::Snapshot { vars, ..Default::default() };
-        Conf::new(&snap, Path::new("/h/spira"))
+        Conf::new(&snap, Path::new("h/spira"))
     }
     struct FakeExec(std::sync::Mutex<Option<(String, Vec<String>)>>);
     impl Exec for FakeExec {
@@ -303,7 +303,7 @@ mod tests {
         let exec = FakeExec(std::sync::Mutex::new(None));
         let sink = util::MemSink::default();
         let conf = conf_at(&dir);
-        let rc = run(&seam, &exec, &env, &sink, &conf, "systemd-run", Path::new("/h/spira"), "stretchy", false, 1000);
+        let rc = run(&seam, &exec, &env, &sink, &conf, "systemd-run", Path::new("h/spira"), "stretchy", false, 1000);
         assert_eq!(rc, 1);
         assert!(exec.0.lock().unwrap().is_none());
     }
@@ -318,7 +318,7 @@ mod tests {
         let conf = conf_at(&dir);
         // In-process now (wave 4.26): a real pause file replaces the old FakeSeam stub.
         std::fs::write(dir.join("capacity-pause"), "1120 iso why\n").unwrap();
-        let rc = run(&seam, &exec, &env, &sink, &conf, "systemd-run", Path::new("/h/spira"), "stretchy", false, 1000);
+        let rc = run(&seam, &exec, &env, &sink, &conf, "systemd-run", Path::new("h/spira"), "stretchy", false, 1000);
         assert_eq!(rc, 1);
         assert!(exec.0.lock().unwrap().is_none());
         assert!(sink.all().contains("account out of capacity for another 120s"));

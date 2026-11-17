@@ -872,11 +872,11 @@ mod tests {
         let (sink, clock) = (FakeSink::default(), FakeClock(std::cell::Cell::new(0)));
         let rec = RunnerServices(&r);
         let h = crate::host::Host::new(&r, &clock, &sink, &rec);
-        let cfg = SpiraConfig { h: &h, bin: "spira-config".into(), file: "/etc/layer.toml".into() };
+        let cfg = SpiraConfig { h: &h, bin: "spira-config".into(), file: "etc/layer.toml".into() };
         assert_eq!(cfg.get("spira.max_live_dwarves"), Ok(4));
         assert_eq!(cfg.set("spira.max_live_dwarves", 5), Ok(()));
         assert!(cfg.set("spira.max_live_dwarves", 7).unwrap_err().contains("exited 1"));
-        assert_eq!(r.lines(), ["spira-config get spira.max_live_dwarves /etc/layer.toml", "spira-config set spira.max_live_dwarves 5 /etc/layer.toml", "spira-config set spira.max_live_dwarves 7 /etc/layer.toml"]);
+        assert_eq!(r.lines(), ["spira-config get spira.max_live_dwarves etc/layer.toml", "spira-config set spira.max_live_dwarves 5 etc/layer.toml", "spira-config set spira.max_live_dwarves 7 etc/layer.toml"]);
 
         r.on(|s: &Spec| (s.prog == "spira-config").then(|| Out { rc: 0, stdout: "four".into(), stderr: String::new() }));
         assert!(cfg.get("spira.max_live_dwarves").unwrap_err().contains("not a whole number"));

@@ -26,7 +26,7 @@ impl Handler for Machine {
     fn handle(&self, ctx: &Ctx, _: &Projection, ev: &Event) -> Vec<Command> {
         match ev.kind.tag.as_str() {
             "go" if ev.kind.body == self.task => {
-                let spec = UnitSpec { task: self.task.into(), key: self.key.into(), argv: vec![format!("/bin/{}", self.task)], env: vec![], cwd: None };
+                let spec = UnitSpec { task: self.task.into(), key: self.key.into(), argv: vec![format!("bin/{}", self.task)], env: vec![], cwd: None };
                 vec![Command::Effect(EffectSpec { name: UNIT_START.into(), input: serde_json::to_string(&spec).unwrap(), deadline_ms: 5_000, key: UNIT_START.into() })]
             }
             UNIT_RAN => match UnitRan::from_event_kind(&ev.kind).and_then(|r| r.key_for(self.task).map(|k| (k, r.exit))) {
@@ -117,7 +117,7 @@ fn a_scope_runs_tails_ride_its_unit_ran_through_the_source() {
     scripted.script("build", 40, Exit::Code(1));
     scripted.script_output("build", b"compiling", b"error[E0308]");
     scripted.script("plain", 40, Exit::Code(0));
-    let mut sp = units::ScopeSpec::new(UnitSpec { task: "build".into(), key: "k".into(), argv: vec!["/bin/cargo".into()], env: vec![], cwd: None });
+    let mut sp = units::ScopeSpec::new(UnitSpec { task: "build".into(), key: "k".into(), argv: vec!["bin/cargo".into()], env: vec![], cwd: None });
     sp.cpu_quota_pct = Some(200);
     units::effect(&*scripted, units::UNIT_RUN_SCOPE, &serde_json::to_string(&sp).unwrap()).unwrap();
     units::effect(&*scripted, UNIT_START, r#"{"task":"plain","key":"k","argv":["/bin/p"],"env":[],"cwd":null}"#).unwrap();
@@ -152,7 +152,7 @@ impl Handler for Owned {
         }
         match ev.kind.tag.as_str() {
             "go" => {
-                let spec = UnitSpec { task: self.task.into(), key: "k".into(), argv: vec![format!("/bin/{}", self.task)], env: vec![], cwd: None };
+                let spec = UnitSpec { task: self.task.into(), key: "k".into(), argv: vec![format!("bin/{}", self.task)], env: vec![], cwd: None };
                 vec![Command::Effect(EffectSpec { name: UNIT_START.into(), input: serde_json::to_string(&spec).unwrap(), deadline_ms: 5_000, key: UNIT_START.into() })]
             }
             UNIT_RAN => match UnitRan::from_event_kind(&ev.kind).and_then(|r| r.key_for(self.task)) {

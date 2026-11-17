@@ -49,7 +49,7 @@ impl Tracer {
 }
 
 fn stat(pid: u32) -> Option<(u32, u64, u64)> {
-    let s = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let s = std::fs::read_to_string(format!("{}/{pid}/stat", system_paths::PROC)).ok()?;
     let rest: Vec<&str> = s.rsplit_once(')')?.1.split_whitespace().collect();
     let ppid = rest.get(1)?.parse().ok()?;
     let own = rest.get(11)?.parse::<u64>().ok()? + rest.get(12)?.parse::<u64>().ok()?;
@@ -58,14 +58,14 @@ fn stat(pid: u32) -> Option<(u32, u64, u64)> {
 }
 
 fn argv(pid: u32) -> String {
-    let raw = std::fs::read(format!("/proc/{pid}/cmdline")).unwrap_or_default();
+    let raw = std::fs::read(format!("{}/{pid}/cmdline", system_paths::PROC)).unwrap_or_default();
     String::from_utf8_lossy(&raw).split('\0').filter(|a| !a.is_empty()).collect::<Vec<_>>().join(" ")
 }
 
 fn scan(root: u32, seen: &mut BTreeMap<u32, Seen>, t0: Instant) {
     let now = t0.elapsed().as_millis();
     let mut all: Vec<(u32, u32, u64, u64)> = Vec::new();
-    if let Ok(rd) = std::fs::read_dir("/proc") {
+    if let Ok(rd) = std::fs::read_dir(system_paths::PROC) {
         for e in rd.flatten() {
             if let Some(pid) = e.file_name().to_str().and_then(|n| n.parse::<u32>().ok()) {
                 if let Some((ppid, cpu, kids)) = stat(pid) {

@@ -28,7 +28,7 @@ fn epoch() -> u64 {
 }
 
 fn proc_dir(pid: &str) -> bool {
-    Path::new(&format!("/proc/{pid}")).is_dir()
+    Path::new(&format!("{}/{pid}", system_paths::PROC)).is_dir()
 }
 
 fn read_trim(p: &Path) -> String {

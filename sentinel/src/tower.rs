@@ -60,14 +60,14 @@ pub fn run(check: &str) -> Result<String, String> {
         }
         "sccache-wedge-check" => {
             let cfg = sccache_wedge::Cfg { sccache: getenv("SPIRA_SCCACHE_BIN").unwrap_or_else(|| "sccache".into()), stale_secs: getenv_i64("SPIRA_SCCACHE_WEDGE_MINS", 10) * 60, cmd_timeout_secs: getenv_i64("SPIRA_SCCACHE_CMD_TIMEOUT", 30).max(1) as u64 };
-            sccache_wedge::run(n, Path::new("/proc"), &reg("SPIRA_DB")?, &reg("SPIRA_HOME_REPO")?, &resolved_incident_sh(), &cfg);
+            sccache_wedge::run(n, Path::new(system_paths::PROC), &reg("SPIRA_DB")?, &reg("SPIRA_HOME_REPO")?, &resolved_incident_sh(), &cfg);
         }
         "load-fence-check" => {
             let cfg = load_fence::Cfg {
                 comms: getenv("SPIRA_LOAD_FENCE_COMMS").unwrap_or_else(|| load_fence::DEFAULT_COMMS.to_string()).split_whitespace().map(String::from).collect(),
                 owner_mark: getenv("SPIRA_LOAD_FENCE_OWNER_MARK").unwrap_or_else(|| load_fence::DEFAULT_OWNER_MARK.to_string()),
             };
-            load_fence::run(Path::new("/proc"), &cfg);
+            load_fence::run(Path::new(system_paths::PROC), &cfg);
         }
         "conditions-check" => conditions_check(n, &run)?,
         "slow-query-check" => {
@@ -113,7 +113,7 @@ fn lock_holders_check(n: i64, run: &Path) -> Result<String, String> {
     }
     let queue_dir = PathBuf::from(reg("SPIRA_QUEUE_DIR")?);
     let (db, home_repo) = (reg("SPIRA_DB")?, reg("SPIRA_HOME_REPO")?);
-    let ctx = lock_holders::Ctx { run, queue_dir: &queue_dir, proc_root: Path::new("/proc"), db: &db, home_repo: &home_repo, incident_sh: &resolved_incident_sh() };
+    let ctx = lock_holders::Ctx { run, queue_dir: &queue_dir, proc_root: Path::new(system_paths::PROC), db: &db, home_repo: &home_repo, incident_sh: &resolved_incident_sh() };
     lock_holders::run(n, &format!("depth {depth}, no landing for {}m", throttle::disp(since)), &ctx);
     Ok("watchtower: lock-holders-check ran".into())
 }
@@ -130,13 +130,13 @@ fn conditions_check(n: i64, run: &Path) -> Result<(), String> {
         failed_runs: reg_i64("SPIRA_FAILED_UNIT_RUNS")?,
         oom_glob: getenv("SPIRA_OOM_UNITS").unwrap_or_else(|| "spira-*".into()),
         oom_hold_secs: getenv_i64("SPIRA_OOM_HOLD_SECS", 21600),
-        tmp_path: getenv("SPIRA_TMP_PROBE_PATH").unwrap_or_else(|| "/tmp".into()),
+        tmp_path: getenv("SPIRA_TMP_PROBE_PATH").unwrap_or_else(|| system_paths::TMP.into()),
         tmp_floor_mib: getenv_i64("SPIRA_TMPFS_SHED_FREE_MIB", 6144),
         disk_floor_pct: reg_i64("SPIRA_DISK_FLOOR_PCT")?,
         disk_fill_hours: reg_i64("SPIRA_DISK_FILL_HOURS")?,
         disk_watch_paths: probes::watch_paths(run, &reg("SPIRA_DISK_WATCH_PATHS")?, &reg("SPIRA_DWARF_BUILD_BASE")?, &reg("SPIRA_HAND_TARGET_ROOTS")?),
         disk_state: run.join("conditions").join("disk-fill.state"),
-        psi_dir: getenv("SPIRA_PSI_DIR").unwrap_or_else(|| "/proc/pressure".into()),
+        psi_dir: getenv("SPIRA_PSI_DIR").unwrap_or_else(|| system_paths::PROC_PRESSURE.into()),
         psi_full_avg60: spira_config::process::cfg_parse::<f64>("SPIRA_PSI_FULL_AVG60")?,
         psi_sustain_secs: reg_i64("SPIRA_PSI_SUSTAIN_SECS")?,
     };

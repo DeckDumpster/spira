@@ -2000,7 +2000,7 @@ mod systemd {
                 find(&props, "ControlGroup").and_then(Val::as_str).filter(|g| !g.is_empty()).map(String::from)
             };
             let Some(group) = group else { return Ok(vec![]) };
-            let dir = std::path::Path::new("/sys/fs/cgroup").join(group.trim_start_matches('/'));
+            let dir = std::path::Path::new(system_paths::SYS_FS_CGROUP).join(group.trim_start_matches('/'));
             let text = match std::fs::read_to_string(dir.join("cgroup.procs")) {
                 Ok(t) => t,
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
@@ -2010,7 +2010,7 @@ mod systemd {
                 .lines()
                 .filter_map(|l| l.trim().parse::<u32>().ok())
                 .filter_map(|pid| {
-                    let comm = std::fs::read_to_string(format!("/proc/{pid}/comm")).ok()?;
+                    let comm = std::fs::read_to_string(format!("{}/{pid}/comm", system_paths::PROC)).ok()?;
                     Some(UnitProcess { pid, comm: comm.trim().to_string() })
                 })
                 .collect())
@@ -2264,9 +2264,9 @@ mod tests {
     fn a_systemctl_override_outranks_the_default_backend_but_not_a_deliberate_one() {
         let clock = || -> Arc<dyn Clock> { Arc::new(VirtualClock::new(0)) };
         let kind = |units, sysctl| for_host(clock(), units, sysctl).map(|b| b.kind());
-        assert_eq!(kind(Some("systemd"), Some("/stub/units-cli")), Ok("cli"));
-        assert_eq!(kind(None, Some("/stub/units-cli")), Ok("cli"));
-        assert_eq!(kind(Some("scripted"), Some("/stub/units-cli")), Ok("scripted"));
+        assert_eq!(kind(Some("systemd"), Some("stub/units-cli")), Ok("cli"));
+        assert_eq!(kind(None, Some("stub/units-cli")), Ok("cli"));
+        assert_eq!(kind(Some("scripted"), Some("stub/units-cli")), Ok("scripted"));
         assert_eq!(kind(Some("process"), Some("")), Ok("process"));
         assert_eq!(kind(Some("cli"), None), Ok("cli"));
     }
@@ -2824,7 +2824,7 @@ mod tests {
 
         #[test]
         fn start_transient_unit_encodes_name_mode_and_exec_start() {
-            let mut sp = spec("czar-pass", "r7", &["/bin/czar-pass", "--pass"]);
+            let mut sp = spec("czar-pass", "r7", &["bin/czar-pass", "--pass"]);
             sp.env = vec![("A".into(), "1".into())];
             let raw = encode_call_body(9, "org.freedesktop.systemd1", "/org/freedesktop/systemd1", "org.freedesktop.systemd1.Manager", "StartTransientUnit", &start_transient_args(&sp).unwrap());
             let m = decode(&raw).unwrap();
@@ -2839,8 +2839,8 @@ mod tests {
             let Val::Var(exec) = get("ExecStart") else { panic!("ExecStart not a variant") };
             let Val::Arr(cmds) = *exec else { panic!("ExecStart not an array") };
             let Val::Struct(f) = &cmds[0] else { panic!("ExecStart entry not a struct") };
-            assert_eq!(f[0].as_str(), Some("/bin/czar-pass"));
-            assert_eq!(f[1], Val::Arr(vec![Val::S("/bin/czar-pass".into()), Val::S("--pass".into())]));
+            assert_eq!(f[0].as_str(), Some("bin/czar-pass"));
+            assert_eq!(f[1], Val::Arr(vec![Val::S("bin/czar-pass".into()), Val::S("--pass".into())]));
             assert_eq!(f[2], Val::B(false));
             assert_eq!(get("Environment"), Val::Var(Box::new(Val::Arr(vec![Val::S("A=1".into())]))));
             for p in ["CPUAccounting", "IOAccounting", "MemoryAccounting"] {
@@ -2853,7 +2853,7 @@ mod tests {
         /// transient unit's own: each set when given, and none when not.
         #[test]
         fn start_props_encode_as_transient_unit_properties() {
-            let sp = spec("sentinel-call", "k", &["/bin/dwarf"]);
+            let sp = spec("sentinel-call", "k", &["bin/dwarf"]);
             let props = UnitProps {
                 start_timeout_ms: Some(3_600_000),
                 runtime_max_ms: Some(900_000),
@@ -2862,10 +2862,10 @@ mod tests {
                 nice: Some(5),
                 cpu_quota_pct: Some(200),
                 memory_max_bytes: Some(1 << 30),
-                exec_stop_post: vec![vec!["/bin/true".into(), "x".into()]],
-                output_append: Some("/run/landing.log".into()),
+                exec_stop_post: vec![vec!["bin/true".into(), "x".into()]],
+                output_append: Some("run/landing.log".into()),
             };
-            let raw = encode_call_body(3, "d", "/p", "i", "StartTransientUnit", &start_transient_args_with(&sp, &props).unwrap());
+            let raw = encode_call_body(3, "d", "/p", "i", "StartTransientUnit", &start_transient_args_with(&sp, &props).unwrap()); // not a path: a D-Bus object path
             let m = decode(&raw).unwrap();
             let got = m.body[2].dict();
             let get = |k: &str| got.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone()).unwrap_or_else(|| panic!("{k} not set"));
@@ -2877,8 +2877,8 @@ mod tests {
             assert_eq!(get("Nice"), var(Val::I(5)));
             assert_eq!(get("CPUQuotaPerSecUSec"), var(Val::U(2_000_000)));
             assert_eq!(get("MemoryMax"), var(Val::U(1 << 30)));
-            assert_eq!(get("StandardOutputFileToAppend"), var(Val::S("/run/landing.log".into())));
-            assert_eq!(get("StandardErrorFileToAppend"), var(Val::S("/run/landing.log".into())));
+            assert_eq!(get("StandardOutputFileToAppend"), var(Val::S("run/landing.log".into())));
+            assert_eq!(get("StandardErrorFileToAppend"), var(Val::S("run/landing.log".into())));
             let Val::Var(post) = get("ExecStopPost") else { panic!("ExecStopPost not a variant") };
             let Val::Arr(cmds) = *post else { panic!("ExecStopPost not an array") };
             assert_eq!(cmds.len(), 1);
@@ -2962,7 +2962,7 @@ mod tests {
             let h = UnitHandle::named("spira-runtime.service");
             u.restart(&h).unwrap();
             u.stop(&h).unwrap();
-            u.start(&spec("t", "k", &["/bin/true"])).unwrap();
+            u.start(&spec("t", "k", &["bin/true"])).unwrap();
             let c = f.calls();
             assert_eq!(c.iter().filter(|l| l.starts_with("AddMatch")).count(), 3, "unit properties, the manager's owner, and JobRemoved");
             assert!(c.iter().any(|l| l.starts_with("AddMatch") && l.contains("member='JobRemoved'")));
@@ -3049,8 +3049,8 @@ mod tests {
             let (a, t) = ("/org/freedesktop/systemd1/unit/a", "/org/freedesktop/systemd1/unit/t");
             f.answer("ListUnitsByPatterns /org/freedesktop/systemd1 ", vec![Val::Arr(vec![listed("spira-a.service", "active", a), listed("spira-t.timer", "active", t)])]);
             f.answer("ListUnitFilesByPatterns /org/freedesktop/systemd1 ", vec![Val::Arr(vec![
-                Val::Struct(vec![Val::S("/etc/systemd/user/spira-a.service".into()), Val::S("enabled".into())]),
-                Val::Struct(vec![Val::S("/etc/systemd/user/spira-off.service".into()), Val::S("disabled".into())]),
+                Val::Struct(vec![Val::S("etc/systemd/user/spira-a.service".into()), Val::S("enabled".into())]),
+                Val::Struct(vec![Val::S("etc/systemd/user/spira-off.service".into()), Val::S("disabled".into())]),
             ])]);
             f.answer(&format!("GetAll {a} {UNIT}"), vec![dict(&[("LoadState", Val::S("loaded".into())), ("ActiveState", Val::S("active".into())), ("UnitFileState", Val::S("enabled".into()))])]);
             f.answer(&format!("GetAll {t} {UNIT}"), vec![dict(&[("LoadState", Val::S("loaded".into())), ("ActiveState", Val::S("active".into()))])]);
@@ -3068,20 +3068,20 @@ mod tests {
 
         #[test]
         fn scope_args_carry_limits_and_the_capture_files() {
-            let mut sp = ScopeSpec::new(spec("build", "k", &["/bin/cargo", "build"]));
-            sp.unit.cwd = Some("/src".into());
+            let mut sp = ScopeSpec::new(spec("build", "k", &["bin/cargo", "build"]));
+            sp.unit.cwd = Some("src".into());
             sp.unit.env = vec![("A".into(), "1".into())];
             sp.cpu_quota_pct = Some(250);
             sp.memory_max_bytes = Some(2 << 30);
-            let raw = encode_call_body(1, "d", "/p", "i", "StartTransientUnit", &scope_args(&sp, std::path::Path::new("/run/o"), std::path::Path::new("/run/e")).unwrap());
+            let raw = encode_call_body(1, "d", "/p", "i", "StartTransientUnit", &scope_args(&sp, std::path::Path::new("run/o"), std::path::Path::new("run/e")).unwrap()); // not a path: a D-Bus object path
             let m = decode(&raw).unwrap();
             let props = m.body[2].dict();
             let get = |k: &str| props.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone()).unwrap_or_else(|| panic!("no {k}"));
             assert_eq!(get("CPUQuotaPerSecUSec").as_u64(), Some(2_500_000));
             assert_eq!(get("MemoryMax").as_u64(), Some(2 << 30));
-            assert_eq!(get("StandardOutputFile").as_str(), Some("/run/o"));
-            assert_eq!(get("StandardErrorFile").as_str(), Some("/run/e"));
-            assert_eq!(get("WorkingDirectory").as_str(), Some("/src"));
+            assert_eq!(get("StandardOutputFile").as_str(), Some("run/o"));
+            assert_eq!(get("StandardErrorFile").as_str(), Some("run/e"));
+            assert_eq!(get("WorkingDirectory").as_str(), Some("src"));
             assert_eq!(get("Environment"), Val::Var(Box::new(Val::Arr(vec![Val::S("A=1".into())]))));
         }
 
@@ -3095,7 +3095,7 @@ mod tests {
             let dir = testkit::TempDir::new("units-scope");
             let f = Fake::default();
             let u = f.units().with_capture_dir(Some(dir.path().to_path_buf()));
-            let s = u.run_scope(&ScopeSpec::new(spec("build", "k", &["/bin/cargo"]))).unwrap();
+            let s = u.run_scope(&ScopeSpec::new(spec("build", "k", &["bin/cargo"]))).unwrap();
             let sent = f.sent.lock().unwrap().clone();
             let (_, args) = sent.iter().find(|(m, _)| m == "StartTransientUnit").unwrap();
             let Arg::Arr(_, props) = &args[2] else { panic!("no properties") };
@@ -3114,7 +3114,7 @@ mod tests {
             assert_eq!(ended[0].1.stderr_tail.as_deref(), Some("oops"));
             assert!(!out.exists() && !err.exists(), "the capture files go once read");
             let no_dir = Fake::default().units().with_capture_dir(None);
-            assert!(no_dir.run_scope(&ScopeSpec::new(spec("b", "k", &["/bin/x"]))).unwrap_err().is_refused());
+            assert!(no_dir.run_scope(&ScopeSpec::new(spec("b", "k", &["bin/x"]))).unwrap_err().is_refused());
         }
 
         #[test]
@@ -3208,7 +3208,7 @@ mod tests {
         fn the_connection_carries_start_transient_units_four_arguments_to_the_bus() {
             let (_dir, path, peer) = fake_bus(2);
             let mut c = unit_run::dbus::Conn::connect(&path).unwrap();
-            let args = start_transient_args(&spec("czar-pass", "r7", &["/bin/czar-pass", "--pass"])).unwrap();
+            let args = start_transient_args(&spec("czar-pass", "r7", &["bin/czar-pass", "--pass"])).unwrap();
             Bus::call(&mut c, "org.freedesktop.systemd1", "/org/freedesktop/systemd1", "org.freedesktop.systemd1.Manager", "StartTransientUnit", &args).unwrap();
             let seen = peer.join().unwrap();
             assert_eq!(seen[0].member.as_deref(), Some("Hello"));

@@ -1050,7 +1050,7 @@ mod probe_tests {
     fn a_duplicate_ask_is_refused_naming_the_open_one() {
         let t = testkit::TempDir::new("mail-dup");
         let mut e = env(t.path());
-        e.db = "/db".into();
+        e.db = "db".into();
         let open = r#"[{"id":"sp-open1","title":"Rotate the key 12?","labels":["needs-x","work-bead:sp-w1"]}]"#;
         let body = "## Class basis\nit is policy\n";
         let same_subject = send(&FakeBd::new(vec![BdOut::ok(open)]), &e, &args("Rotate the key 99?", false), body.into());
@@ -1101,10 +1101,10 @@ mod probe_tests {
     fn every_send_is_one_attempt_a_failure_keeps_its_message_and_a_dry_run_is_none() {
         use tsd::alarm::Outcome;
         let args = SendArgs { mailbox: "operator", from: None, subject: "Mute it?", kind: "question", default: "mute", class: "policy", bead: "", urgent: false, digest: false, dry_run: false, requested_by: "" };
-        let ok = Ok(SendOutcome { delivered_path: PathBuf::from("/m/operator/new/1.2.3"), x_bead: Some("sp-ask1".into()), steps: vec![] });
+        let ok = Ok(SendOutcome { delivered_path: PathBuf::from("m/operator/new/1.2.3"), x_bead: Some("sp-ask1".into()), steps: vec![] });
         let a = attempt_of_send(&args, "body", &ok, 7).unwrap();
         assert_eq!((a.at, a.reference.as_str(), &a.outcome, a.message.is_none()), (7, "mail:operator:Mute it?", &Outcome::Delivered { id: "sp-ask1".into() }, true));
-        let plain = Ok(SendOutcome { delivered_path: PathBuf::from("/m/concierge/new/1.2.3"), x_bead: None, steps: vec![] });
+        let plain = Ok(SendOutcome { delivered_path: PathBuf::from("m/concierge/new/1.2.3"), x_bead: None, steps: vec![] });
         assert_eq!(attempt_of_send(&args, "body", &plain, 7).unwrap().outcome, Outcome::Delivered { id: "1.2.3".into() });
         let none = Ok(SendOutcome { delivered_path: PathBuf::new(), x_bead: None, steps: vec![] });
         assert!(matches!(attempt_of_send(&args, "body", &none, 7).unwrap().outcome, Outcome::Failed { .. }), "a send with no id failed");

@@ -66,9 +66,9 @@ mod tests {
     fn argv_has_matches_exact_element_only() {
         let c = cmdline(&["bash", "-c", "echo /opt/x/spira/dwarf.sh"]);
         // The path only appears inside a -c STRING, never as its own argv element.
-        assert!(!argv_has(&c, &["/opt/x/spira/dwarf.sh"]));
-        let c2 = cmdline(&["/opt/x/spira/dwarf.sh", "--bead", "sp-1"]);
-        assert!(argv_has(&c2, &["/opt/x/spira/dwarf.sh"]));
+        assert!(!argv_has(&c, &["opt/x/spira/dwarf.sh"]));
+        let c2 = cmdline(&["opt/x/spira/dwarf.sh", "--bead", "sp-1"]);
+        assert!(argv_has(&c2, &["opt/x/spira/dwarf.sh"]));
     }
 
     #[test]
@@ -76,7 +76,7 @@ mod tests {
         // The scar world.sh's own comment names: a shell whose -c text merely mentions the
         // path must not be nominated.
         let c = cmdline(&["bash", "-c", "cat $SPIRA_PROD/dwarf.sh"]);
-        assert!(!argv_has(&c, &["/prod/dwarf.sh"]));
+        assert!(!argv_has(&c, &["prod/dwarf.sh"]));
     }
 
     #[test]
@@ -84,8 +84,8 @@ mod tests {
         let d = testkit::TempDir::new("proc-live-workers");
         let pid_dir = d.join("55");
         std::fs::create_dir_all(&pid_dir).unwrap();
-        std::fs::write(pid_dir.join("cmdline"), cmdline(&["/opt/x/spira/gate.sh", "concierge/sp-1", "spira"])).unwrap();
-        let found = live_workers(&d, &["/opt/x/spira/gate.sh"]);
+        std::fs::write(pid_dir.join("cmdline"), cmdline(&["opt/x/spira/gate.sh", "concierge/sp-1", "spira"])).unwrap();
+        let found = live_workers(&d, &["opt/x/spira/gate.sh"]);
         assert_eq!(found, vec!["55".to_string()]);
     }
 

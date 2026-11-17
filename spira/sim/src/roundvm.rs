@@ -312,9 +312,9 @@ mod tests {
 
     #[test]
     fn a_certify_that_hands_the_vm_a_deny_list_is_answered_not_refused() {
-        let args: Vec<String> = ["run", "/t", "--results-dir", "/r", "--deny-list", "/r/deny-list"].map(String::from).to_vec();
+        let args: Vec<String> = ["run", "t", "--results-dir", "r", "--deny-list", "r/deny-list"].map(String::from).to_vec();
         assert!(parse_args(&args).is_ok(), "{:?}", parse_args(&args).err());
-        let eq: Vec<String> = ["run", "/t", "--results-dir=/r", "--deny-list=/r/deny-list"].map(String::from).to_vec();
+        let eq: Vec<String> = ["run", "t", "--results-dir=r", "--deny-list=r/deny-list"].map(String::from).to_vec();
         assert!(parse_args(&eq).is_ok());
     }
 }

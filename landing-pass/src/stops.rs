@@ -27,7 +27,7 @@ mod tests {
     use crate::model::LandMode;
 
     fn row(name: &str) -> RepoRow {
-        RepoRow { name: name.into(), path: "/r".into(), mode: LandMode::QueueLocal, landref: None, base_fq: None, base_remote: None, base_branch: "main".into(), forge_ref: None }
+        RepoRow { name: name.into(), path: "r".into(), mode: LandMode::QueueLocal, landref: None, base_fq: None, base_remote: None, base_branch: "main".into(), forge_ref: None }
     }
 
     #[test]

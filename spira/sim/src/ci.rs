@@ -9,7 +9,7 @@ use std::process::Command;
 use std::time::Duration;
 
 const STEP_DEADLINE: Duration = Duration::from_secs(120); // batch-job: one workflow step against a world
-const SYSTEM_PATH: &str = "/usr/bin:/bin";
+const SYSTEM_PATH: &str = system_paths::SYSTEM_PATH_MIN;
 pub const CARGO_FROM_ENV: &str = "SIM_CARGO_FROM";
 const UNZIP: &str = "#!/bin/sh\nexec python3 -m zipfile -e \"$2\" \"$4\"\n";
 
@@ -162,7 +162,7 @@ impl HostLock {
 
     fn abandoned(lock: &Path) -> bool {
         match std::fs::read_to_string(lock.join("pid")).ok().and_then(|p| p.trim().parse::<u32>().ok()) {
-            Some(pid) => !Path::new(&format!("/proc/{pid}")).exists(),
+            Some(pid) => !Path::new(&format!("{}/{pid}", system_paths::PROC)).exists(),
             // No pid yet: its taker is between create and write, unless it died there.
             None => std::fs::metadata(lock).and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|age| age > Duration::from_secs(10)),
         }
@@ -202,7 +202,7 @@ pub fn run_job(job: &Job, sim: &Path, mut log: impl FnMut(&str)) -> Result<i32, 
         let script_file = job.scratch.join("step.sh");
         std::fs::write(&script_file, expand(run, &job.cx)?).map_err(|e| e.to_string())?;
         let path = path_front.iter().map(String::as_str).chain([shim.to_str().ok_or("shim path")?, SYSTEM_PATH]).collect::<Vec<_>>().join(":");
-        let mut cmd = Command::new("/bin/bash");
+        let mut cmd = Command::new(system_paths::BIN_BASH);
         cmd.arg("-e").arg(&script_file).current_dir(job.cx.workspace).env_clear().env("PATH", path).env("HOME", &home);
         cmd.env("CI", "true").env("GITHUB_ACTIONS", "true").env("GITHUB_WORKSPACE", job.cx.workspace).env("GITHUB_SHA", job.cx.sha);
         cmd.env("GITHUB_REPOSITORY", "sim/sim").env("GITHUB_PATH", &gh_path).env("GITHUB_ENV", &gh_env).env("GITHUB_OUTPUT", &gh_out);
@@ -220,7 +220,7 @@ pub fn run_job(job: &Job, sim: &Path, mut log: impl FnMut(&str)) -> Result<i32, 
         log(&format!("--- step: {}\n", step.name));
         // Only a step that names the host's /tmp needs its turn; the rest run beside another world's.
         let _turn = match run.contains("/tmp/") {
-            true => Some(HostLock::acquire(Path::new("/tmp"))?),
+            true => Some(HostLock::acquire(Path::new(system_paths::TMP))?),
             false => None,
         };
         let started = std::time::Instant::now();

@@ -88,8 +88,8 @@ fn czar_runs_its_fence_and_diagnostics_and_nothing_that_mutates_and_has_no_bare_
         &[
             "bash spira/czar-fence.sh deadlock",
             "czar-pass --lint-default",
-            "/srv/bin/queue eject sp-xyz",
-            "/srv/bin/landing-pass halt --reason-file -",
+            "srv/bin/queue eject sp-xyz",
+            "srv/bin/landing-pass halt --reason-file -",
             "git log --oneline -10",
             "cat /var/log/czar.log",
             "ls -la /srv/run",

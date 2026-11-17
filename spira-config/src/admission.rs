@@ -99,7 +99,7 @@ pub struct Host {
 impl Host {
     pub fn read() -> Host {
         let cores = std::thread::available_parallelism().map(|n| n.get() as u64).unwrap_or(4);
-        let mem_avail_mib = fs::read_to_string("/proc/meminfo")
+        let mem_avail_mib = fs::read_to_string(format!("{}/meminfo", system_paths::PROC))
             .ok()
             .and_then(|m| {
                 m.lines()
@@ -259,7 +259,7 @@ pub trait Procs {
 pub struct RealProcs;
 
 fn stat_fields(pid: u32) -> Option<Vec<String>> {
-    let s = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let s = fs::read_to_string(format!("{}/{pid}/stat", system_paths::PROC)).ok()?;
     // comm may contain spaces and parens: the fields after it start past the LAST ')'.
     let rest = &s[s.rfind(')')? + 1..];
     Some(rest.split_whitespace().map(str::to_string).collect())
@@ -550,7 +550,7 @@ pub fn now_epoch() -> u64 {
 }
 
 fn host_name() -> String {
-    fs::read_to_string("/proc/sys/kernel/hostname")
+    fs::read_to_string(format!("{}/kernel/hostname", system_paths::PROC_SYS))
         .ok()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
