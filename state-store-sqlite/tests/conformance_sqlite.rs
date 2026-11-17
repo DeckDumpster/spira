@@ -1552,6 +1552,44 @@ fn the_wal_stays_within_three_checkpoint_intervals_while_reads_never_stop() {
     drop(b);
 }
 
+#[test]
+fn the_wal_restarts_and_stays_bounded_while_a_reader_never_pauses() {
+    let dir = TempDir::new("sqlite-wal-restarts-under-readers");
+    let path = dir.path().join("s.db");
+    let probe: Arc<dyn Fn() + Send + Sync> =
+        Arc::new(|| std::thread::sleep(std::time::Duration::from_millis(1))); // clock-safe: the probe holds a read open a moment; no verdict depends on its length
+    let opts = Options { checkpoint_every: 20, readers: 2, read_probe: Some(probe), ..Options::default() };
+    let b = SqliteBackend::open(&path, opts).unwrap();
+    let stop = Arc::new(AtomicBool::new(false));
+    let readers: Vec<_> = (0..2)
+        .map(|_| {
+            let (b, stop) = (b.clone(), stop.clone());
+            std::thread::spawn(move || {
+                while !stop.load(Ordering::SeqCst) {
+                    let _ = b.range("", None, 10, b.head().unwrap());
+                }
+            })
+        })
+        .collect();
+    let wal = format!("{}-wal", path.display());
+    let mut largest = 0;
+    for _ in 0..2000 {
+        put_next(&b);
+        largest = largest.max(std::fs::metadata(&wal).map(|m| m.len()).unwrap_or(0));
+    }
+    stop.store(true, Ordering::SeqCst);
+    for r in readers {
+        r.join().unwrap();
+    }
+    let bound = 16 * 1024 * 1024;
+    assert!(
+        largest < bound,
+        "the WAL grew to {largest} B, past {bound} B"
+    );
+    let done = b.checkpoints_completed();
+    assert!(done >= 20, "only {done} checkpoints completed in 2000 commits under continuous reads");
+}
+
 const CHILD_ENV: &str = "SQLITE_TEST_CHILD";
 
 /// Distinct 4 KiB keys, `n` of them in batches, so the main file grows to about `n` * 4 KiB.
