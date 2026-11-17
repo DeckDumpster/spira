@@ -28,6 +28,11 @@ impl Transport for Double {
         let ok = |out: String| Ok(Reply { code: 0, out, err: String::new() });
         match argv[0].as_str() {
             "rc" => ok(json!({ "ok": { "items": s.batches, "list_rev": s.list_rev } }).to_string()),
+            "list" if argv.iter().any(|a| a == "--batches") => {
+                let window = argv.iter().position(|a| a == "--window").map(|i| argv[i + 1].clone()).unwrap_or_default();
+                let rounds: Vec<Value> = s.batches.iter().map(|b| b["value"]["data"].clone()).collect();
+                ok(serde_json::to_string_pretty(&json!({ "window": window, "rounds": rounds })).unwrap())
+            }
             "list" => {
                 let ids: Option<Vec<&str>> = argv.iter().position(|a| a == "--ids").map(|i| argv[i + 1].split(',').collect());
                 let states: Option<Vec<&str>> = argv.iter().position(|a| a == "--state").map(|i| argv[i + 1].split(',').collect());
@@ -494,7 +499,7 @@ fn a_list_read_is_answered_from_the_held_rows_and_a_stale_view_refuses_it() {
         assert_eq!(ids(&["list", "--live"]), ["sp-a", "sp-b", "sp-c", "sp-d"]);
         assert_eq!(w.script.lock().unwrap().seen.len(), asked, "answering asks the store nothing");
 
-        for argv in [&["list", "--batches"][..], &["list", "--delivery"], &["list", "--live", "--window", "5"], &["list"], &["list", "--state", "LANDED"], &["list", "--state", "READY,LANDED"], &["list", "--ids", "sp-gone"], &["show", "sp-a"], &[]] {
+        for argv in [&["list", "--delivery"][..], &["list", "--live", "--window", "5"], &["list"], &["list", "--state", "LANDED"], &["list", "--state", "READY,LANDED"], &["list", "--ids", "sp-gone"], &["show", "sp-a"], &[]] {
             assert!(w.p.list_answer(argv).is_none(), "{argv:?} is the store's to answer");
         }
 
@@ -517,5 +522,38 @@ fn a_fresh_projection_reads_the_live_set_and_holds_no_terminal_row() {
         assert!(w.p.list_answer(&["list", "--state", "LANDED"]).is_none());
         assert!(w.p.show("sp-b").is_none());
         assert!(w.p.show("sp-a").is_some());
+    });
+}
+
+#[test]
+fn a_rounds_list_is_the_stores_answer_at_the_same_revision_held_until_a_round_changes() {
+    within(|| {
+        let batches = vec![round("spira", "b-open", "Open", 100, 3, &[]), round("spira", "b-done", "Landed", 90, 2, &[])];
+        let w = world(Script { batches, list_rev: 4, quiet: true, ..Default::default() }, Duration::from_secs(10));
+        w.p.poll().unwrap();
+        let stop = std::sync::atomic::AtomicBool::new(false);
+        std::thread::scope(|sc| {
+            sc.spawn(|| w.p.run(&stop));
+            // clock-safe: a cap on the wait for the watch to start
+            while !w.p.watching() {
+                // clock-safe: a poll interval under that cap
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            let listed = |argv: &[&str]| w.p.list_answer(argv).expect("a held read").expect("a fresh view");
+            let asked_rounds = || w.script.lock().unwrap().seen.iter().filter(|a| a.iter().any(|x| x == "--batches")).count();
+            for argv in [&["list", "--batches", "--window", "86400"][..], &["list", "--batches"], &["list", "--batches", "--batch", "b-open"]] {
+                let held = listed(argv);
+                let direct = LcClient::over(Arc::new(Double(w.script.clone())), true).answer(argv).unwrap();
+                assert_eq!(held, direct, "{argv:?}");
+            }
+            let before = asked_rounds();
+            listed(&["list", "--batches", "--window", "86400"]);
+            listed(&["list", "--batches", "--window", "86400"]);
+            assert_eq!(asked_rounds(), before, "a repeated read of an unchanged store is held");
+            deliver(&w, &["batches/spira/b-open"], 11);
+            listed(&["list", "--batches", "--window", "86400"]);
+            assert_eq!(asked_rounds(), before + 1, "a change to a round ends the held answer");
+            stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        });
     });
 }
