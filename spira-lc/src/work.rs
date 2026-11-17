@@ -1966,8 +1966,7 @@ struct ListAsk<'a> {
 /// `work list`: lifecycle state decides which beads, the SQL reader supplies what they say. A state
 /// filter is the machine's; `--label`/`--title-contains` narrow by content in the reader, and the
 /// two are intersected here so neither side's idea of "open" is consulted.
-fn list_with_content(conn: &Conn, reader: &ReadFn, ask: ListAsk) -> (i32, String) {
-    let ListAsk { states, all, filters, json, full, limit } = ask;
+fn lifecycle_list_args(states: &[String], all: bool) -> Vec<String> {
     let narrowing = if !states.is_empty() {
         vec![s("--state"), states.join(","), s("--cached")]
     } else if all {
@@ -1975,7 +1974,12 @@ fn list_with_content(conn: &Conn, reader: &ReadFn, ask: ListAsk) -> (i32, String
     } else {
         vec![s("--live")]
     };
-    let narrowing: Vec<String> = std::iter::once(s("list")).chain(narrowing).collect();
+    std::iter::once(s("list")).chain(narrowing).chain(std::iter::once(s("--bare"))).collect()
+}
+
+fn list_with_content(conn: &Conn, reader: &ReadFn, ask: ListAsk) -> (i32, String) {
+    let ListAsk { states, all, filters, json, full, limit } = ask;
+    let narrowing = lifecycle_list_args(&states, all);
     let (rc, rows) = crate::plane::read(&narrowing);
     if rc != 0 {
         return (rc, rows);
@@ -2929,6 +2933,13 @@ mod tests {
         assert_eq!(plan("read", "sp-me", &call(&["sp-x1"], "spike")).unwrap(), vec![Step::Read { id: s("sp-x1"), json: false }]);
         assert!(plan("read", "sp-me", &call(&["not-an-id"], "spike")).is_err());
         assert!(plan("read", "sp-me", &call(&["sp-x1", "-C", "elsewhere"], "spike")).is_err());
+    }
+
+    #[test]
+    fn a_work_list_asks_the_store_for_bare_lifecycle_rows() {
+        assert_eq!(lifecycle_list_args(&[], false), ["list", "--live", "--bare"]);
+        assert_eq!(lifecycle_list_args(&["READY".into()], false), ["list", "--state", "READY", "--cached", "--bare"]);
+        assert_eq!(lifecycle_list_args(&[], true), ["list", "--cached", "--bare"]);
     }
 
     #[test]

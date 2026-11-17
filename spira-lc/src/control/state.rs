@@ -286,7 +286,7 @@ fn csv(v: Option<String>) -> Option<Vec<String>> {
     })
 }
 
-/// `list [--live] [--state S,...] [--ids a,...] [--hold K] [--express] [--repo R] [--after ID]
+/// `list [--live] [--bare] [--state S,...] [--ids a,...] [--hold K] [--express] [--repo R] [--after ID]
 /// [--limit N]`, in id order.
 fn list<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, String) {
     if args.iter().any(|a| a == "--delivery") {
@@ -301,6 +301,7 @@ fn list<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, Str
     let repo = flag(args, "--repo");
     let express = args.iter().any(|a| a == "--express");
     let live = args.iter().any(|a| a == "--live");
+    let bare = args.iter().any(|a| a == "--bare");
     let (after, limit) = match spira_lc::page(args) {
         Ok(p) => p.unwrap_or_default(),
         Err(e) => return (CANNOT_TELL, format!("cannot tell: list: {e}")),
@@ -347,6 +348,9 @@ fn list<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, Str
             .records_page(rev, indexed.as_deref(), ids.as_deref(), after.as_deref(), limit, kept)
             .map_err(e)?;
         let recs: Vec<&LifecycleRecord> = records.iter().map(|r| &r.value).collect();
+        if bare {
+            return Ok(recs.iter().map(|r| row(r, None, &Value::Null, LISTED)).collect());
+        }
         let mut views = claim_views(store, rev, &recs, call);
         let ids: Vec<&str> = recs.iter().map(|r| r.row.bead_id.as_str()).collect();
         let mut readiness = store.readiness_of(&ids, rev).map_err(e)?;
