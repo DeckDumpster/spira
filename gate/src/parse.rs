@@ -3,11 +3,37 @@
 //! (`red_suites`, `ran_suites`, `timed_out_suites`, `gate_attribute`, `gate_tree_key`) and
 //! gate.sh (the preflight's word scan, the harness-fault line).
 
+fn is_secs(w: &str) -> bool {
+    w.strip_suffix('s').is_some_and(|d| !d.is_empty() && d.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// A repo tier's summary row exactly as testenv's `tier_line` prints it: `ok <n>s`,
+/// `RED after <n>s` or `FAULT <reason> after <n>s`, the whole line, name not a `.sh` token.
+pub fn tier_row(line: &str) -> Option<(&str, &str)> {
+    let rest = line.strip_prefix("  ")?;
+    let (name, tail) = rest.split_once(char::is_whitespace)?;
+    if name.is_empty() || name.ends_with(".sh") {
+        return None;
+    }
+    let w: Vec<&str> = tail.split_whitespace().collect();
+    match w.as_slice() {
+        ["ok", secs] if is_secs(secs) => Some((name, "ok")),
+        ["RED", "after", secs] if is_secs(secs) => Some((name, "RED")),
+        ["FAULT", reason @ .., "after", secs] if !reason.is_empty() && is_secs(secs) => Some((name, "FAULT")),
+        _ => None,
+    }
+}
+
 /// Suites named on a line as `<x>.sh <STATUS>` (or `<x>.sh was killed`), first-seen order,
 /// each once. `statuses` is the set of status words that count.
 fn suites_where(out: &str, statuses: &[&str], killed: bool) -> Vec<String> {
     let mut seen: Vec<String> = Vec::new();
     for line in out.lines() {
+        if let Some((name, status)) = tier_row(line) {
+            if statuses.contains(&status) && !seen.iter().any(|s| s == name) {
+                seen.push(name.to_string());
+            }
+        }
         let w: Vec<&str> = line.split_whitespace().collect();
         for i in 0..w.len().saturating_sub(1) {
             if !w[i].ends_with(".sh") {
@@ -398,6 +424,29 @@ pub fn tail_bytes(s: &str, n: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_tier_row_is_a_ran_suite_and_a_red_one_when_red() {
+        let red = "  gate                             RED     after 12s\nVERDICT RED ran=1 red=1";
+        assert_eq!(super::ran_suites(red), ["gate"]);
+        assert_eq!(super::red_suites(red), ["gate"]);
+        let ok = "  gate                             ok      235s";
+        assert_eq!(super::ran_suites(ok), ["gate"]);
+        assert!(super::red_suites(ok).is_empty());
+    }
+
+    #[test]
+    fn a_tier_fault_row_is_a_ran_suite() {
+        let o = "  build                            FAULT   spawn failed after 3s";
+        assert_eq!(super::ran_suites(o), ["build"]);
+    }
+
+    #[test]
+    fn lines_that_only_resemble_a_tier_row_name_nothing() {
+        for l in ["  log (gate): /x/gate.log", "  gate ok", "  gate ok 235", "the gate ok 3s and more", "  gate ok 3s extra"] {
+            assert!(super::ran_suites(l).is_empty(), "{l}");
+        }
+    }
+
     #[test]
     fn cargo_reruns_returns_each_distinct_argument_once() {
         let o = "error: test failed, to rerun pass `-p a --lib`\nnoise\nerror: test failed, to rerun pass `-p b --test t`\nerror: test failed, to rerun pass `-p a --lib`\n";
