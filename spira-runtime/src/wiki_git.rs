@@ -15,7 +15,19 @@ const GIT_DEADLINE: Duration = Duration::from_secs(4);
 pub fn git(dir: &Path, args: &[&str]) -> Result<(Option<i32>, Vec<u8>), String> {
     let mut cmd = Command::new("git");
     cmd.arg("-C").arg(dir).args(args);
-    bounded(cmd, GIT_DEADLINE)
+    bounded(cmd, GIT_DEADLINE).map(|(code, out, _)| (code, out))
+}
+
+/// Runs git in `dir` and returns stdout on exit 0; otherwise the cause in git's own words: the
+/// exit code with its stderr, death by signal with its stderr, or the spawn or timeout error.
+pub fn git_ok(dir: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
+    let mut cmd = Command::new("git");
+    cmd.arg("-C").arg(dir).args(args);
+    match bounded(cmd, GIT_DEADLINE)? {
+        (Some(0), out, _) => Ok(out),
+        (Some(code), _, err) => Err(format!("exit {code}: {}", String::from_utf8_lossy(&err).trim())),
+        (None, _, err) => Err(format!("killed by signal: {}", String::from_utf8_lossy(&err).trim())),
+    }
 }
 
 /// Runs tmux under `deadline` and returns its stdout. `TMUX` is cleared: it names whatever server
@@ -24,8 +36,8 @@ pub fn tmux(program: &Path, args: &[&str], deadline: Duration) -> Result<String,
     let mut cmd = Command::new(program);
     cmd.args(args).env_remove("TMUX");
     match bounded(cmd, deadline)? {
-        (Some(0), out) => Ok(String::from_utf8_lossy(&out).into_owned()),
-        (code, _) => Err(format!("tmux {} exited {code:?}", args.first().unwrap_or(&""))),
+        (Some(0), out, _) => Ok(String::from_utf8_lossy(&out).into_owned()),
+        (code, _, _) => Err(format!("tmux {} exited {code:?}", args.first().unwrap_or(&""))),
     }
 }
 
@@ -36,7 +48,7 @@ pub fn gh_auth_token(gh: &str, config_dir: &str, deadline: Duration) -> Result<(
     if !config_dir.is_empty() {
         cmd.env("GH_CONFIG_DIR", config_dir);
     }
-    bounded(cmd, deadline)
+    bounded(cmd, deadline).map(|(code, out, _)| (code, out))
 }
 
 /// One `overrides.sh apply` pass under `timeout`; a failed override fails the pass, and its
@@ -59,15 +71,18 @@ pub fn exporter_run(bin: &str, mode: &str) -> Result<(), String> {
     Err(format!("{bin} {mode}: exit {}: {}", out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stderr).trim()))
 }
 
-fn bounded(mut cmd: Command, deadline: Duration) -> Result<(Option<i32>, Vec<u8>), String> {
+fn bounded(mut cmd: Command, deadline: Duration) -> Result<(Option<i32>, Vec<u8>, Vec<u8>), String> {
     use std::io::Read;
-    let mut child = cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().map_err(|e| format!("spawn: {e}"))?;
-    let mut out = child.stdout.take().ok_or("no stdout pipe")?;
-    let reader = std::thread::spawn(move || {
-        let mut buf = vec![];
-        let _ = out.read_to_end(&mut buf);
-        buf
-    });
+    fn drain(mut pipe: impl Read + Send + 'static) -> std::thread::JoinHandle<Vec<u8>> {
+        std::thread::spawn(move || {
+            let mut buf = vec![];
+            let _ = pipe.read_to_end(&mut buf);
+            buf
+        })
+    }
+    let mut child = cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|e| format!("spawn: {e}"))?;
+    let out = drain(child.stdout.take().ok_or("no stdout pipe")?);
+    let err = drain(child.stderr.take().ok_or("no stderr pipe")?);
     let started = Instant::now();
     let code = loop {
         match child.try_wait().map_err(|e| e.to_string())? {
@@ -75,12 +90,12 @@ fn bounded(mut cmd: Command, deadline: Duration) -> Result<(Option<i32>, Vec<u8>
             None if started.elapsed() >= deadline => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return Err(format!("process exceeded its {deadline:?} deadline"));
+                return Err(format!("timed out after {} ms (deadline {deadline:?})", started.elapsed().as_millis()));
             }
             None => std::thread::sleep(Duration::from_millis(5)),
         }
     };
-    Ok((code, reader.join().map_err(|_| "git reader panicked")?))
+    Ok((code, out.join().map_err(|_| "stdout reader panicked")?, err.join().map_err(|_| "stderr reader panicked")?))
 }
 
 #[cfg(test)]
@@ -100,5 +115,42 @@ mod exporter_tests {
         assert!(exporter_run(&bin, "lifecycle").is_ok());
         let e = exporter_run(&bin, "check").unwrap_err();
         assert!(e.contains("check: exit 1") && e.contains("trails the log"), "{e}");
+    }
+}
+
+#[cfg(test)]
+mod bounded_tests {
+    use super::bounded;
+    use std::process::Command;
+    use std::time::Duration;
+
+    fn script(dir: &std::path::Path, body: &str) -> Command {
+        let p = dir.join("fake");
+        testkit::write_exe(&p, &format!("#!/bin/sh\n{body}\n"));
+        Command::new(p)
+    }
+
+    #[test]
+    fn a_process_past_its_deadline_is_reported_with_the_elapsed_milliseconds() {
+        let d = testkit::TempDir::new("bounded-timeout");
+        let e = bounded(script(d.path(), "sleep 1"), Duration::from_millis(50)).unwrap_err();
+        assert!(e.starts_with("timed out after ") && e.contains(" ms (deadline 50ms)"), "{e}");
+        assert!(e.trim_start_matches("timed out after ").chars().next().unwrap().is_ascii_digit(), "{e}");
+    }
+
+    #[test]
+    fn a_program_that_cannot_start_is_reported_as_a_spawn_error() {
+        let e = bounded(Command::new("/nonexistent/spira-no-such-program"), Duration::from_secs(1)).unwrap_err();
+        assert!(e.starts_with("spawn:"), "{e}");
+    }
+
+    #[test]
+    fn a_chatty_stderr_does_not_stall_the_process_and_is_returned() {
+        let d = testkit::TempDir::new("bounded-stderr");
+        let started = std::time::Instant::now();
+        let (code, _, err) = bounded(script(d.path(), "head -c 204800 /dev/zero | tr '\\0' x >&2; exit 3"), Duration::from_secs(5)).unwrap();
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert_eq!(code, Some(3));
+        assert_eq!(err.len(), 204800);
     }
 }
