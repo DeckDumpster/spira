@@ -644,13 +644,18 @@ pub fn check_disk_placement(w: &dyn World) -> Vec<Line> {
     use ports::Placement;
     w.placement_roots()
         .iter()
-        .map(|(key, path)| match w.placement_of(path) {
+        .map(|(key, path)| {
+            let Some(path) = path else {
+                return warn(format!("{key}: cannot tell where it lands"), "no path is configured or the owning tool did not answer; a root nobody can name may sit on the root filesystem.");
+            };
+            match w.placement_of(path) {
             Placement::OnRoot { canonical, source } => fail(
                 format!("{key} resolves onto the root filesystem: {} (on {source})", canonical.display()),
                 format!("the disk model gives Root no heavy writes; point {key} at its SSD per wiki disk-model — a symlink counts as where it lands (configured: {}).", path.display()),
             ),
             Placement::Elsewhere => ok(format!("{key} {} is off the root filesystem", path.display())),
             Placement::Unresolved(why) => warn(format!("{key}: cannot tell where {} lands", path.display()), why),
+            }
         })
         .collect()
 }

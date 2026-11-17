@@ -146,8 +146,9 @@ pub trait World {
     fn on_tmpfs(&self, p: &Path) -> bool;
 
     /// Every heavy-write root as (config key or name, configured path): the ones whose disk
-    /// the disk model fixes. Unset keys are absent.
-    fn placement_roots(&self) -> Vec<(String, PathBuf)>;
+    /// the disk model fixes. The path is `None` when the root cannot be named (key unset, podman
+    /// unanswering).
+    fn placement_roots(&self) -> Vec<(String, Option<PathBuf>)>;
     /// Where `p` lands once symlinks are followed, against the root filesystem.
     fn placement_of(&self, p: &Path) -> Placement;
 
