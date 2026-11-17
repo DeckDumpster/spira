@@ -74,7 +74,7 @@ const PAGE_ROWS: usize = 1_000;
 pub fn beads_in_on(client: &LcClient, state: &str) -> Option<Vec<BeadRow>> {
     let mut rows = Vec::new();
     if !spira_store::lc_state::is_terminal(state) {
-        rows = rows_on(client, &["list", "--state", state])?;
+        rows = rows_on(client, &["list", "--state", state])?; // BDQ_READ_CONSIDERED="LcClient is the spira-lc door; no bdq"
     } else {
         loop {
             let limit = PAGE_ROWS.to_string();
@@ -84,7 +84,7 @@ pub fn beads_in_on(client: &LcClient, state: &str) -> Option<Vec<BeadRow>> {
                 argv.extend(["--after", a]);
             }
             argv.extend(["--limit", &limit]);
-            let page = rows_on(client, &argv)?;
+            let page = rows_on(client, &argv)?; // BDQ_READ_CONSIDERED="LcClient is the spira-lc door; no bdq"
             let short = page.len() < PAGE_ROWS;
             rows.extend(page);
             if short {

@@ -50,6 +50,7 @@ PY
     local chunk
     while read -r chunk; do
         [ -n "$chunk" ] || continue
+        # batch-job: the sweep looks up a few hundred ids in 100-id chunks; bounded by the daemon row cadence
         timeout 60 spira-lc list --ids "$chunk" > "$t/term.part" 2>/dev/null || return 1
         python3 -I - "$t" <<'PY' || return 1
 import json, sys

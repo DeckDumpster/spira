@@ -693,7 +693,7 @@ impl World {
         let asked: Vec<&str> = asked.into_iter().collect();
         let mut terminal = Vec::new();
         for chunk in asked.chunks(100) {
-            let found = self.lc_json(&["list", "--ids", &chunk.join(",")])?;
+            let found = self.lc_json(&["list", "--ids", &chunk.join(",")])?; // BDQ_READ_CONSIDERED="LcClient is the spira-lc door; no bdq"
             terminal.extend(found.as_array().ok_or("list is not an array")?.iter().filter_map(|r| Some((r["bead_id"].as_str()?.to_string(), r["state"].as_str()?.to_string()))).filter(|(_, st)| spira_store::lc_state::is_terminal(st)));
         }
         let (stops, reserved) = self.scoped_stops();
