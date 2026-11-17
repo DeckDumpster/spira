@@ -393,7 +393,7 @@ pub fn render_tmp_classes(path: &str, classes: &[TmpClass]) -> String {
     if classes.len() > 10 {
         out.push_str(&format!("- ... and {} smaller classes\n", classes.len() - 10));
     }
-    out.push_str(&format!("\nThe RAM is held by dead tools' leavings, not by a live job: fix the tool that wrote the largest class. Re-measure with `du -xsh {path}/* | sort -h | tail`.\n"));
+    out.push_str(&format!("\nFix the tool that wrote the largest class; a class whose owning pids are all dead is a leftover. Re-measure with `du -xsh {path}/* | sort -h | tail`.\n"));
     out
 }
 
@@ -1052,7 +1052,9 @@ mod tests {
         assert!(at(150).is_empty());
         assert!(at(200).is_empty(), "exactly the share is not over it");
         assert_eq!(at(250), vec!["tmp-held"]);
+        std::fs::create_dir_all(Path::new(&c.tmp_path).join("repo-check-4242-1")).unwrap();
         let s = standing(pressure_with(&c, &usage_held(250), &none));
+        assert!(s[0].body.contains("- repo-check:") && s[0].body.contains("0 live / 1 dead"), "{}", s[0].body);
         assert!(s[0].title.starts_with("TMPFS HOLDS RAM:") && s[0].title.contains("250 MiB, 25% of 1000 MiB"), "{}", s[0].title);
     }
 
