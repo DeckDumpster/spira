@@ -19,6 +19,7 @@ pub struct Judged {
     pub id: String,
     pub claimable: bool,
     pub blocked_by: Vec<String>,
+    pub verdict: Option<String>,
     pub gates: BTreeMap<String, Option<Gate>>,
 }
 
@@ -65,6 +66,7 @@ impl<B: Backend> Store<B> {
             |r, j, head| {
                 r.claimable = j.claimable;
                 r.blocked_by = j.blocked_by.clone();
+                r.verdict = j.verdict.clone();
                 r.gates = j.gates.clone();
                 r.judged_for_claim = true;
                 r.judged_at = Some(pass.judged_at.clone());
@@ -85,6 +87,7 @@ impl<B: Backend> Store<B> {
             r.claimable = false;
             r.judged_for_claim = true;
             r.blocked_by = blocked_by.to_vec();
+            r.verdict = Some("rejudge".into());
         })
     }
 

@@ -72,6 +72,8 @@ struct Entry {
     #[serde(default)]
     blocked_by: Vec<String>,
     #[serde(default)]
+    verdict: Option<String>,
+    #[serde(default)]
     gates: BTreeMap<String, Option<Gate>>,
 }
 
@@ -94,6 +96,7 @@ fn publish<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> Answer
             id: e.id,
             claimable: e.claimable,
             blocked_by: e.blocked_by,
+            verdict: e.verdict,
             gates: e.gates,
         })
         .collect();

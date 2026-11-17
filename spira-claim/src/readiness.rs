@@ -29,14 +29,14 @@ pub fn payload(live: &[&LifecycleRow], lc: &HashMap<String, LifecycleRow>, bd: &
         .map(|rec| {
             let blockers = bd.get(&rec.bead_id).map(rank::blockers).unwrap_or_default();
             let gates: BTreeMap<String, Option<edges::Gate>> = blockers.iter().map(|b| (b.clone(), lc.get(b).map(|r| edges::gate(r.state, r.tip.as_deref())))).collect();
-            let (claimable, blocked_by) = match verdicts.get(rec.bead_id.as_str()) {
-                Some(e) => (claimable(e.verdict), e.blocker.iter().cloned().collect()),
+            let (claimable, blocked_by, verdict) = match verdicts.get(rec.bead_id.as_str()) {
+                Some(e) => (claimable(e.verdict), e.blocker.iter().cloned().collect(), serde_json::to_value(e.verdict).unwrap_or(Value::Null)),
                 None => {
                     let waiting: Vec<String> = gates.iter().filter(|(_, g)| g.as_ref().is_some_and(|g| g.class != GateClass::Finished)).map(|(b, _)| b.clone()).collect();
-                    (false, waiting)
+                    (false, waiting, json!(format!("state:{}", rec.state.as_str())))
                 }
             };
-            json!({ "id": rec.bead_id, "claimable": claimable, "blocked_by": blocked_by, "gates": gates })
+            json!({ "id": rec.bead_id, "claimable": claimable, "blocked_by": blocked_by, "verdict": verdict, "gates": gates })
         })
         .collect();
     json!({ "computed_at": computed_at, "planning_watermark": planning_watermark, "entries": judged }).to_string()
@@ -44,6 +44,31 @@ pub fn payload(live: &[&LifecycleRow], lc: &HashMap<String, LifecycleRow>, bd: &
 
 #[cfg(test)]
 mod occupied_tests {
+    use std::collections::{BTreeSet, HashMap};
+
+    use lifecycle::bead::{BeadState, Stack};
+
+    use crate::rank::LifecycleRow;
+    use crate::verdicts::{Entry, Kind};
+
+    fn row(id: &str, state: BeadState) -> LifecycleRow {
+        LifecycleRow { bead_id: id.into(), state, holds: BTreeSet::new(), stack_depth: 0, tip: None, snoozed_until: None, stack_conflict: false, stack: Stack::new(), reason: None }
+    }
+
+    fn entries_of(live: &[&LifecycleRow], entries: &[Entry]) -> serde_json::Value {
+        let lc: HashMap<String, LifecycleRow> = live.iter().map(|r| (r.bead_id.clone(), (*r).clone())).collect();
+        serde_json::from_str(&super::payload(live, &lc, &HashMap::new(), entries, "t", None)).unwrap()
+    }
+
+    #[test]
+    fn an_occupied_entry_publishes_its_verdict_and_an_unjudged_record_its_state() {
+        let (a, b) = (row("sp-a", BeadState::Ready), row("sp-b", BeadState::Working));
+        let entry = Entry { id: "sp-a".into(), verdict: Kind::Occupied, blocker: None };
+        let out = entries_of(&[&a, &b], &[entry]);
+        assert_eq!(out["entries"][0]["verdict"], "occupied");
+        assert_eq!(out["entries"][1]["verdict"], "state:WORKING");
+    }
+
     #[test]
     fn an_occupied_verdict_is_not_claimable() {
         assert!(!super::claimable(super::Kind::Occupied));
