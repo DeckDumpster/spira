@@ -1889,11 +1889,12 @@ mod tests {
         let put = |prev: Option<Rev>, n: u64| Write::Put { key: "k".into(), value: vec![1; 4096], create_rev: Rev::new(1, 0), prev: prev.map(|_| Rev::new(n, 0)) };
         b.commit(0, &[put(None, 0)]).unwrap();
         let reader = connect(&path).unwrap();
-        reader.execute_batch("BEGIN; SELECT count(*) FROM latest;").unwrap();
+        exec(&reader, "BEGIN", []).unwrap();
+        reader.prepare("SELECT count(*) FROM latest").unwrap().query_row([], |r| r.get::<_, i64>(0)).unwrap();
         b.commit(1, &[put(Some(Rev::new(1, 0)), 1)]).unwrap();
         let ck = connect(&path).unwrap();
         assert!(!passive_complete(&ck), "frames past the reader's snapshot were counted as copied");
-        reader.execute_batch("COMMIT").unwrap();
+        exec(&reader, "COMMIT", []).unwrap();
         assert!(passive_complete(&ck));
     }
 
