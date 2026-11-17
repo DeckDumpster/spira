@@ -1353,13 +1353,8 @@ fn a_checkpoint_completes_after_checkpoint_every_commits() {
     for _ in 0..state_store_sqlite::CHECKPOINT_EVERY + 1 {
         put_next(&b);
     }
-    // clock-safe: a cap on the wait for the checkpointer thread's completion, which has no signal to block on
-    let until = std::time::Instant::now() + std::time::Duration::from_secs(10); // clock-safe: cap on the wait
-    let wal = format!("{}-wal", path.display());
-    while std::fs::metadata(&wal).unwrap().len() != 0 {
-        assert!(std::time::Instant::now() < until, "no checkpoint completed"); // clock-safe: cap on the wait
-        std::thread::sleep(std::time::Duration::from_millis(10)); // clock-safe: polls the WAL index the thread writes
-    }
+    assert!(state_store_sqlite::bench::await_checkpoint(&b, 0, CHECKPOINT_CAP).is_some(), "no checkpoint completed");
+    assert_eq!(std::fs::metadata(format!("{}-wal", path.display())).unwrap().len(), 0);
 }
 
 fn seed_versions(path: &Path, rows: i64, prefixes: &[&str]) {
@@ -1503,6 +1498,8 @@ fn mx_frame(path: &Path) -> u32 {
 }
 
 const BOUND_EVERY: u64 = 8;
+/// A hang guard on waiting for a checkpoint, sized for a loaded round; never the verdict.
+const CHECKPOINT_CAP: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// 400 commits of 4 KiB values under a reader that never stops; returns the open handle.
 fn bounded_wal_workload(path: &Path) -> SqliteBackend {
@@ -1518,8 +1515,15 @@ fn bounded_wal_workload(path: &Path) -> SqliteBackend {
             }
         })
     };
-    for _ in 0..400 {
-        put_next(&b);
+    for interval in 0..400 / BOUND_EVERY {
+        let before = b.checkpoints_completed();
+        for _ in 0..BOUND_EVERY {
+            put_next(&b);
+        }
+        if interval + 1 < 400 / BOUND_EVERY {
+            let done = state_store_sqlite::bench::await_checkpoint(&b, before, CHECKPOINT_CAP);
+            assert!(done.is_some(), "no checkpoint completed after interval {interval} with a reader running");
+        }
     }
     stop.store(true, Ordering::SeqCst);
     reader.join().unwrap();

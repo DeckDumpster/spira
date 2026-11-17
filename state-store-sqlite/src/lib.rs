@@ -242,6 +242,7 @@ const RETRY_AFTER: Duration = Duration::from_secs(1);
 #[derive(Default)]
 struct CheckpointState {
     pending: u64,
+    completed: u64,
     stop: bool,
 }
 
@@ -282,6 +283,7 @@ fn restart_wal(writer: &Mutex<Writer>) -> std::result::Result<bool, String> {
 struct Checkpointer {
     state: Mutex<CheckpointState>,
     wake: Condvar,
+    done: Condvar,
     every: u64,
 }
 
@@ -340,7 +342,10 @@ impl Checkpointer {
                     other => other,
                 };
                 match step {
-                    Ok(true) => {}
+                    Ok(true) => {
+                        lock(&self.state).completed += 1;
+                        self.done.notify_all();
+                    }
                     Ok(false) => wait = RETRY_AFTER,
                     Err(e) => {
                         wait = RETRY_AFTER;
@@ -501,6 +506,7 @@ impl Drop for Inner {
     fn drop(&mut self) {
         lock(&self.checkpointer.state).stop = true;
         self.checkpointer.wake.notify_one();
+        self.checkpointer.done.notify_all();
         if let Some(t) = lock(&self.checkpoint_thread).take() {
             let _ = t.join();
         }
@@ -1029,6 +1035,12 @@ fn rows_outside(
 }
 
 impl SqliteBackend {
+    /// The checkpointer's completion signal: checkpoints that copied every frame and restarted
+    /// the WAL so far. Production commits never wait on it.
+    pub fn checkpoints_completed(&self) -> u64 {
+        lock(&self.0.checkpointer.state).completed
+    }
+
     /// Opens (creating if absent) the store at `path`. A second opener, in this process or
     /// another, is refused while this handle or any clone of it lives. The lock is advisory:
     /// it stops another `SqliteBackend`, not a client that opens the file directly.
@@ -1123,6 +1135,7 @@ impl SqliteBackend {
         let checkpointer = Arc::new(Checkpointer {
             state: Mutex::new(CheckpointState::default()),
             wake: Condvar::new(),
+            done: Condvar::new(),
             every: opts.checkpoint_every.max(1),
         });
         let checkpoint_conn = connect(path)?;
@@ -2198,6 +2211,29 @@ mod tests {
         during.store(false, Ordering::SeqCst);
         b.commit(head, &[put("c")]).unwrap();
         assert!(!b.last_commit().checkpointed);
+    }
+
+    #[test]
+    fn a_checkpoint_completion_is_signalled_once_checkpoint_every_commits_have_landed() {
+        let dir = testkit::TempDir::new("sqlite-signal");
+        let path = dir.path().join("s.db");
+        let b = SqliteBackend::open(&path, Options { checkpoint_every: 4, ..Options::default() }).unwrap();
+        let put = |key: &str| Write::Put { key: key.into(), value: vec![7u8; 1 << 10], create_rev: Rev::new(1, 0), prev: None };
+        let mut head = b.head().unwrap();
+        for k in ["a", "b", "c", "d"] {
+            head = b.commit(head, &[put(k)]).unwrap();
+        }
+        assert_eq!(bench::await_checkpoint(&b, 0, Duration::from_secs(60)), Some(1));
+        assert_eq!(std::fs::metadata(format!("{}-wal", path.display())).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn no_checkpoint_is_signalled_below_checkpoint_every() {
+        let dir = testkit::TempDir::new("sqlite-no-signal");
+        let b = SqliteBackend::open(&dir.path().join("s.db"), Options { checkpoint_every: u64::MAX, ..Options::default() }).unwrap();
+        let put = Write::Put { key: "a".into(), value: vec![7u8; 1 << 10], create_rev: Rev::new(1, 0), prev: None };
+        b.commit(b.head().unwrap(), &[put]).unwrap();
+        assert_eq!(bench::await_checkpoint(&b, 0, Duration::from_millis(200)), None);
     }
 
     #[test]
