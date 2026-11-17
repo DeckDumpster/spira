@@ -28,6 +28,7 @@ HARNESS="$(cd "$HERE/.." && pwd)"
 tmux_kill_pane_dead() {
     tmux -L "$1" set-hook -t "$2" pane-died "wait-for -S $2-died" || return 1
     kill "$(tmux -L "$1" list-panes -t "$2" -F '#{pane_pid}')" || return 1
+    # batch-job: blocks on tmux's own pane-died signal; the timeout only guards a hang
     timeout 60 tmux -L "$1" wait-for "$2-died"
 }
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
