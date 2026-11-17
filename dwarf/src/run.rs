@@ -361,6 +361,27 @@ impl<'a> Run<'a> {
         }
     }
 
+    /// `phase` swallows the machine's refusal, so read the row once at the session boundary:
+    /// a claim taken away is not spent on a model session. An unreadable row proceeds.
+    pub(crate) fn confirm_claim_held(&self) -> Result<(), Abort> {
+        let Some(row) = self.lc_bead(&self.s.bead) else {
+            return Ok(());
+        };
+        if row.working() && row.holder.as_deref() == Some(self.s.holder.as_str()) {
+            return Ok(());
+        }
+        self.log(&format!(
+            "{}: {} is no longer held by {} (row reads state={} holder={}) — not starting a session",
+            self.f(),
+            self.s.bead,
+            self.s.holder,
+            row.state,
+            row.holder.as_deref().unwrap_or("null")
+        ));
+        self.ledger_done(0, "claim-lost");
+        Err(Abort::Exit(0))
+    }
+
     fn check_stop(&self) -> Result<(), Abort> {
         match self.stop.signalled() {
             Some(sig) => Err(Abort::Signal(sig)),
@@ -1067,6 +1088,7 @@ impl<'a> Run<'a> {
 
         // ---- work ----
         self.phase("session");
+        self.confirm_claim_held()?;
         self.session(&work)?;
         self.wiki_commit();
         self.verdict();
