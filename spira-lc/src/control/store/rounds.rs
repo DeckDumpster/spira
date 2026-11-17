@@ -442,6 +442,73 @@ impl<B: Backend> Store<B> {
             .collect()
     }
 
+    /// The round `id` and its key, as [`Store::batch`], for each id under `batch-ids/` after
+    /// `after`, in id order, at most `limit`: a page by the id index, never the rounds' prefix.
+    pub fn batches_page(&self, after: Option<&str>, limit: usize) -> Result<Vec<(String, Read<BatchRecord>)>> {
+        const CHUNK: usize = 500;
+        let rev = self.contract().head()?;
+        let mut cursor = after.map(keys::batch_index);
+        let mut out = Vec::new();
+        while out.len() < limit {
+            let want = CHUNK.min(limit - out.len());
+            let page = self.contract().range_at(keys::BATCH_IDS, cursor.as_deref(), want, rev)?;
+            for i in &page {
+                let id = i.key.strip_prefix(keys::BATCH_IDS).unwrap_or(&i.key);
+                out.extend(self.batch(id)?);
+            }
+            if page.len() < want {
+                break;
+            }
+            cursor = page.last().map(|i| i.key.clone());
+        }
+        Ok(out)
+    }
+
+    /// Every round not in a terminal state: one `data.state` range per open state.
+    pub fn open_batches(&self) -> Result<Vec<(String, Read<BatchRecord>)>> {
+        const CHUNK: usize = 500;
+        let rev = self.contract().head()?;
+        let mut out = Vec::new();
+        for state in OPEN_BATCH_STATES {
+            let name = serde_json::to_value(state)
+                .ok()
+                .and_then(|v| v.as_str().map(String::from))
+                .ok_or_else(|| Error::Backend(format!("{state:?}: no state name")))?;
+            let mut cursor: Option<String> = None;
+            loop {
+                let page = self.contract().range_in_state(keys::BATCHES, &name, cursor.as_deref(), CHUNK, rev)?;
+                out.extend(page.iter().filter(|i| batch_key(&i.key).is_some()).map(round_of).collect::<Result<Vec<_>>>()?);
+                if page.len() < CHUNK {
+                    break;
+                }
+                cursor = page.last().map(|i| i.key.clone());
+            }
+        }
+        Ok(out)
+    }
+
+    /// The rounds opened at or after `since`, newest first, at most `limit`: one backward range
+    /// of the `opened_at` index.
+    pub fn batches_opened_since(&self, since: i64, limit: usize) -> Result<Vec<(String, Read<BatchRecord>)>> {
+        let rev = self.contract().head()?;
+        self.contract()
+            .range_newest_opened(keys::BATCHES, since, limit, rev)?
+            .iter()
+            .filter(|i| batch_key(&i.key).is_some())
+            .map(round_of)
+            .collect()
+    }
+
+    /// The `n` newest rounds, and any that share the oldest's `opened_at`.
+    pub fn newest_batches(&self, n: usize) -> Result<Vec<(String, Read<BatchRecord>)>> {
+        const TIES: usize = 256;
+        let first = self.batches_opened_since(i64::MIN, n)?;
+        match first.last() {
+            Some((_, last)) if first.len() == n => self.batches_opened_since(last.value.opened_at, n + TIES),
+            _ => Ok(first),
+        }
+    }
+
     /// The running pass's counts on `id`, if any were recorded.
     pub fn progress(&self, repo: &str, id: &str) -> Result<Option<Value>> {
         Ok(self
@@ -1021,6 +1088,23 @@ struct Run {
     buf: std::collections::VecDeque<Item>,
     done: bool,
 }
+
+fn round_of(i: &Item) -> Result<(String, Read<BatchRecord>)> {
+    Ok((i.key.clone(), read_of(i)?))
+}
+
+/// The states a round is read in until it ends; the test beside the machine's `is_terminal`
+/// holds the two to each other.
+const OPEN_BATCH_STATES: [lifecycle::batch::BatchState; 8] = [
+    lifecycle::batch::BatchState::Staged,
+    lifecycle::batch::BatchState::Open,
+    lifecycle::batch::BatchState::CiRunning,
+    lifecycle::batch::BatchState::Green,
+    lifecycle::batch::BatchState::Landing,
+    lifecycle::batch::BatchState::Deploying,
+    lifecycle::batch::BatchState::Attributing,
+    lifecycle::batch::BatchState::Rebuilding,
+];
 
 fn read_of<T: for<'de> Deserialize<'de>>(i: &Item) -> Result<Read<T>> {
     Ok(Read {

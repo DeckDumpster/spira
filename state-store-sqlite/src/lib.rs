@@ -186,6 +186,15 @@ pub const MIGRATIONS: &[&[&str]] = &[
                 OR l.key >= CAST('intents/' AS BLOB) AND l.key < CAST('intents0' AS BLOB))
            AND versions.value IS NOT l.value",
     ],
+    // 5 (sp-m342rx): a live key's `data.opened_at` as an indexed column, so the newest rounds
+    // are a range of the index read backwards.
+    &[
+        "ALTER TABLE latest ADD COLUMN opened_at INTEGER GENERATED ALWAYS AS (CASE
+            WHEN json_valid(CAST(value AS TEXT))
+             AND json_type(CAST(value AS TEXT), '$.data.opened_at') = 'integer'
+            THEN json_extract(CAST(value AS TEXT), '$.data.opened_at') END) VIRTUAL",
+        "CREATE INDEX latest_by_opened ON latest (opened_at, key) WHERE opened_at IS NOT NULL",
+    ],
 ];
 
 /// How many schema migrations this binary knows: what a store's `user_version` is checked
@@ -529,6 +538,12 @@ const STATE_BOUNDED: &str = "SELECT key, main, sub, value, create_main, create_s
      WHERE state = ?1 AND key >= ?2 AND key < ?3 ORDER BY key LIMIT ?4";
 const STATE_OPEN: &str = "SELECT key, main, sub, value, create_main, create_sub FROM latest
      WHERE state = ?1 AND key >= ?2 ORDER BY key LIMIT ?3";
+
+/// The head's live keys in `[?2, ?3)` whose `opened_at` is at least `?1`, newest first: one
+/// backward range of `latest_by_opened`.
+const NEWEST_OPENED: &str = "SELECT key, main, sub, value, create_main, create_sub FROM latest
+     WHERE opened_at >= ?1 AND key >= ?2 AND (?3 IS NULL OR key < ?3)
+     ORDER BY opened_at DESC, key DESC LIMIT ?4";
 
 /// The head's live keys naming owner `?1`, after `?2`: one range of `owner_refs`.
 const OWNED_BY: &str = "SELECT key FROM owner_refs WHERE owner = ?1 AND key > ?2 ORDER BY key LIMIT ?3";
@@ -1461,6 +1476,47 @@ impl Backend for SqliteBackend {
         })
     }
 
+    /// The newest rows by `opened_at` from `latest_by_opened`; below the head, the scan the
+    /// default makes.
+    fn range_newest_opened(
+        &self,
+        prefix: &str,
+        since: i64,
+        limit: usize,
+        at: u64,
+    ) -> Result<Vec<(String, Version)>> {
+        let indexed = self.read(|conn, snap, deadline| {
+            snap.readable(at)?;
+            if at != snap.head {
+                return Ok(None);
+            }
+            deadline()?;
+            let hi = successor(prefix.as_bytes());
+            let mut stmt = conn.prepare_cached(NEWEST_OPENED).map_err(db)?;
+            stmt.reset_status(rusqlite::StatementStatus::VmStep);
+            let mut out = Vec::new();
+            {
+                let mut rows = stmt
+                    .query(params![since, prefix.as_bytes(), hi, i64::try_from(limit).unwrap_or(i64::MAX)])
+                    .map_err(db)?;
+                while let Some(r) = rows.next().map_err(db)? {
+                    deadline()?;
+                    let key: Vec<u8> = r.get(0).map_err(db)?;
+                    if let Some(v) = version_row(r, 1).map_err(db)? {
+                        out.push((key_of(key)?, v));
+                    }
+                }
+            }
+            let n = stmt.reset_status(rusqlite::StatementStatus::VmStep);
+            snap.steps.fetch_add(u64::try_from(n).unwrap_or(0), Ordering::Relaxed);
+            Ok(Some(out))
+        })?;
+        match indexed {
+            Some(rows) => Ok(rows),
+            None => state_store::backend::range_newest_opened_by_scan(self, prefix, since, limit, at),
+        }
+    }
+
     /// The key ranges outside `skip`, read from the key index, so no skipped key is visited.
     fn range_outside(
         &self,
@@ -2092,6 +2148,12 @@ mod tests {
                 );
             }
         }
+        for sql in [STATE_BOUNDED, STATE_OPEN] {
+            assert!(plan(&b, sql).iter().any(|s| s.contains("latest_by_state")), "{sql}");
+        }
+        let get = "SELECT main, sub, value, create_main, create_sub FROM latest WHERE key = ?1";
+        let steps = plan(&b, get);
+        assert!(steps.iter().all(|s| s.contains("PRIMARY KEY") && !s.starts_with("SCAN")), "{steps:?}");
     }
 
     /// Keys under `a/` (one rewritten five times), `b/` and `events/`, one commit each.
@@ -2571,6 +2633,54 @@ mod tests {
             .and_then(|mut s| s.query_row([], |r| r.get(0)))
             .unwrap();
         assert_eq!(mirrored, 0, "versions mirror latest");
+    }
+
+    /// Migration 5 indexes `data.opened_at` for the keys a store already holds: the newest rows
+    /// under a prefix are a backward range of that index, read without the rest, and match the
+    /// scan the default makes.
+    #[test]
+    fn migration_5_indexes_opened_at_for_the_keys_a_store_already_holds() {
+        let dir = testkit::TempDir::new("sqlite-m5");
+        let path = dir.path().join("m5.db");
+        let doc = |opened: i64| serde_json::to_vec(&serde_json::json!({ "data": { "opened_at": opened } })).unwrap();
+        let mut rows: Vec<(String, Vec<u8>)> = (0..2_000).map(|i| (format!("r/{i:05}"), doc(1_000 + (i * 7) % 2_000))).collect();
+        rows.push(("other/x".into(), doc(9_999)));
+        rows.push(("r/none".into(), br#"{"data":{"opened_at":"soon"}}"#.to_vec()));
+        {
+            let conn = Connection::open(&path).unwrap();
+            for sql in SCHEMA.iter().chain(MIGRATIONS[..4].iter().flat_map(|m| m.iter())) {
+                exec(&conn, sql, []).unwrap();
+            }
+            conn.pragma_update(None, "user_version", 4).unwrap();
+            for table in ["versions", "latest"] {
+                let sql = format!(
+                    "INSERT INTO {table} (key, main, sub, value, create_main, create_sub, version)
+                     VALUES (?1, 1, 0, ?2, 1, 0, 1)"
+                );
+                for (k, v) in &rows {
+                    exec(&conn, &sql, params![k.as_bytes(), v]).unwrap();
+                }
+            }
+            exec(&conn, "UPDATE meta SET value = 1 WHERE name = 'head'", []).unwrap();
+        }
+        let b = SqliteBackend::open(&path, Options { jump_on_open: false, ..Options::default() }).unwrap();
+        assert_eq!(b.schema_migrations().unwrap(), SCHEMA_MIGRATIONS);
+        b.take_read_steps();
+        let newest = b.range_newest_opened("r/", i64::MIN, 5, 1).unwrap();
+        let steps = b.take_read_steps();
+        assert!(steps <= 200, "{steps} VM steps for 5 of 2000 rows");
+        let opened = |rows: &[(String, Version)]| -> Vec<i64> {
+            rows.iter().map(|(_, v)| state_store::backend::opened_at_of(&v.value).unwrap()).collect()
+        };
+        assert!(opened(&newest).windows(2).all(|w| w[0] >= w[1]), "{:?}", opened(&newest));
+        assert_eq!(newest, state_store::backend::range_newest_opened_by_scan(&b, "r/", i64::MIN, 5, 1).unwrap());
+        let by_scan = state_store::backend::range_newest_opened_by_scan(&b, "r/", 1_500, 100, 1).unwrap();
+        assert_eq!(b.range_newest_opened("r/", 1_500, 100, 1).unwrap(), by_scan);
+        assert!(newest.iter().all(|(k, _)| k.starts_with("r/") && k != "r/none"));
+        for step in plan(&b, NEWEST_OPENED) {
+            assert!(!step.starts_with("SCAN") && !step.contains("TEMP B-TREE"), "{step}");
+        }
+        assert!(plan(&b, NEWEST_OPENED).iter().any(|s| s.contains("latest_by_opened")));
     }
 
     /// The migration counts in `user_version`, and a store from a binary that knows more
