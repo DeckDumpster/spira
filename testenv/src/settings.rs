@@ -93,9 +93,10 @@ pub struct Settings {
     pub sandbox_target_root: String,
     /// sp-7p5la8: the most branch targets the sandbox keeps (`SPIRA_TESTENV_SANDBOX_TARGET_KEEP`).
     pub sandbox_target_keep: usize,
+    /// Task limit of each container testenv starts (`SPIRA_TESTENV_PIDS_LIMIT`).
+    pub pids_limit: u64,
     /// sp-ejhs5j: a foreign repository's warm target larger than this many GiB after a merge is
     /// removed (`SPIRA_TESTENV_FOREIGN_TARGET_MAX_GIB`; 0 = no cutoff).
-    pub pids_limit: u64,
     pub foreign_target_max_gib: u64,
     /// sp-ejhs5j: another repository's warm target unused this many hours is removed
     /// (`SPIRA_TESTENV_FOREIGN_TARGET_IDLE_HOURS`; 0 = never).

@@ -775,7 +775,7 @@ mod tests {
         let calls = rt.once_calls.lock().unwrap();
         assert_eq!(calls.len(), 1, "the tier ran once");
         let args = crate::runtime::podman_run_args(&calls[0]);
-        let i = args.iter().position(|a| a == "--pids-limit").unwrap_or_else(|| panic!("{args:?}"));
+        let i = args.iter().position(|a| a == crate::runtime::PIDS_LIMIT_FLAG).unwrap_or_else(|| panic!("{args:?}"));
         assert_eq!(args[i + 1], "12345");
     }
 
