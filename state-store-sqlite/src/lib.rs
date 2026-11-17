@@ -1188,6 +1188,10 @@ impl SqliteBackend {
             return;
         }
         let _ = (|| {
+            let free: i64 = w.conn.query_row("PRAGMA freelist_count", [], |r| r.get(0))?;
+            if free == 0 {
+                return Ok(());
+            }
             let mut stmt = w.conn.prepare(&format!("PRAGMA incremental_vacuum({VACUUM_PAGES_PER_COMMIT})"))?;
             let mut rows = stmt.query([])?;
             while rows.next()?.is_some() {}
