@@ -1426,8 +1426,8 @@ mod tests {
         };
         let t = testkit::TempDir::new("gate-world-warm");
         let (root, trees) = (t.path().join("root"), t.path().join("worktree"));
-        let (a, b) = (trees.join(".gate.h.a"), trees.join(".gate.h.b"));
-        for tree in [&a, &b] {
+        let (a, b, c) = (trees.join(".gate.h.a"), trees.join(".gate.h.b"), trees.join(".gate.h.c"));
+        for tree in [&a, &b, &c] {
             fs::create_dir_all(tree).unwrap();
             git(tree, &["init", "-q"]);
             fs::write(tree.join("f"), "1").unwrap();
@@ -1441,6 +1441,8 @@ mod tests {
         fs::create_dir_all(a.join("target/debug/deps")).unwrap();
         fs::write(a.join("target/debug/deps/libx.rlib"), "x").unwrap();
         r.release_target(&a, false, true, 1 << 20, "r");
+        let other = r.target_on_tmpfs(&c, root.to_str().unwrap(), run, &lim, None, "other").unwrap();
+        assert!(!other.contains("warm from"), "{other}");
         let line = r.target_on_tmpfs(&b, root.to_str().unwrap(), run, &lim, None, "r").unwrap();
         assert!(line.contains("warm from"), "{line}");
         assert!(b.join("target/debug/deps/libx.rlib").is_file());

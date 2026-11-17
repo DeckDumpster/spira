@@ -18,7 +18,8 @@ const BUILD_DIR: &str = "debug";
 const AGED: Duration = Duration::from_secs(1_000_000_000);
 
 fn repo_pool(root: &Path, repo: &str) -> PathBuf {
-    root.join(POOL).join(repo.replace(['/', '\\'], "_").trim_start_matches('.'))
+    let name: String = repo.bytes().map(|b| if b.is_ascii_alphanumeric() || b == b'-' { (b as char).to_string() } else { format!("_{b:02x}") }).collect();
+    root.join(POOL).join(if name.is_empty() { "_".into() } else { name })
 }
 
 fn entries(root: &Path, repo: &str) -> Vec<PathBuf> {
@@ -225,6 +226,7 @@ pub fn bound(root: &Path, repo: &str, cap_bytes: u64) -> String {
             .unwrap_or_default()
             .into_iter()
             .flat_map(|d| fs::read_dir(d).map(|rd| rd.flatten().map(|e| e.path()).collect::<Vec<_>>()).unwrap_or_default())
+            .filter(|p| !p.to_string_lossy().contains(".claimed"))
             .map(|p| (fs::metadata(&p).and_then(|m| m.modified()).unwrap_or(UNIX_EPOCH), p))
             .collect();
         v.sort();
@@ -320,6 +322,31 @@ mod tests {
         assert!(size(root) <= 3 << 20, "the cap held across repositories");
         assert_eq!(entries(root, "b").len(), 1, "the donating repository's entry is the one kept");
         assert!(entries(root, "a").is_empty());
+    }
+
+    #[test]
+    fn repository_names_that_could_alias_or_escape_get_pools_of_their_own() {
+        let root = Path::new("/r");
+        let pools: std::collections::HashSet<PathBuf> = ["a/b", "a_b", "..", ".", "", "a"].iter().map(|n| repo_pool(root, n)).collect();
+        assert_eq!(pools.len(), 6);
+        assert!(pools.iter().all(|p| p.parent() == Some(&root.join(POOL))));
+    }
+
+    #[test]
+    fn bounding_never_removes_an_entry_another_gate_has_claimed() {
+        let t = testkit::TempDir::new("gate-warm-claimed");
+        let root = t.path();
+        for i in 0..2 {
+            let d = root.join(format!("t{i}/debug"));
+            fill(&d, 2);
+            assert!(donate(root, "a", &d, "c", Path::new("t")));
+        }
+        let entry = entries(root, "a").pop().unwrap();
+        let claimed = PathBuf::from(format!("{}.claimed-1", entry.display()));
+        fs::rename(&entry, &claimed).unwrap();
+        bound(root, "b", 3 << 20);
+        assert!(claimed.is_dir());
+        assert!(entries(root, "a").is_empty(), "the unclaimed entry made way");
     }
 
     #[test]
