@@ -917,7 +917,7 @@ impl<B: Backend> Store<B> {
         &self,
         ev: &BeadEvent,
         cur: &Read<LifecycleRecord>,
-        row: lifecycle::bead::BeadRow,
+        row: lifecycle::bead::LifecycleRow,
     ) -> LifecycleRecord {
         LifecycleRecord {
             row,
@@ -950,7 +950,7 @@ impl<B: Backend> Store<B> {
         ev: &BeadEvent,
         cur: &Read<LifecycleRecord>,
         item: &Item,
-        row: lifecycle::bead::BeadRow,
+        row: lifecycle::bead::LifecycleRow,
         fence: Option<&Fence>,
         renew_ttl_ms: Option<u64>,
         req: &Request,

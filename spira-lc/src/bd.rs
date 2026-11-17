@@ -177,11 +177,6 @@ pub fn kv_get(key: &str) -> Result<Option<String>, String> {
     store(|sql, db| content_sql::kv(sql, db, key))
 }
 
-/// `(id, title)` of the open beads whose title contains `needle`.
-pub fn titled(needle: &str) -> Result<Vec<(String, String)>, String> {
-    Ok(store(|sql, db| content_sql::titled(sql, db, needle))?.into_iter().map(|b| (b.id, b.title)).collect())
-}
-
 const NO_SUCH: &str = "no issue found matching";
 
 pub fn show(bead_id: &str) -> Result<String, String> {

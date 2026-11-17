@@ -7,7 +7,7 @@
 
 use std::collections::BTreeMap;
 
-use lifecycle::bead::{BeadEvent, BeadRow, BeadState, HoldKind};
+use lifecycle::bead::{BeadEvent, LifecycleRow, BeadState, HoldKind};
 use lifecycle::delivery::{DeliveryEvent, DeliveryRow, DeliveryState};
 use serde_json::{json, Value};
 
@@ -15,7 +15,7 @@ use super::*;
 
 #[derive(Default)]
 struct Fake {
-    beads: BTreeMap<String, BeadRow>,
+    beads: BTreeMap<String, LifecycleRow>,
     deliveries: BTreeMap<String, DeliveryRow>,
     /// Every `event` call, as `(machine, key, expect, version, actor, kind-json)`.
     events: Vec<(String, String, String, String, String, String)>,
@@ -54,13 +54,13 @@ fn opt(v: &Option<String>) -> Value {
 }
 
 impl Fake {
-    fn bead(&mut self, id: &str, state: BeadState) -> &mut BeadRow {
-        let mut r = BeadRow::filed(id);
+    fn bead(&mut self, id: &str, state: BeadState) -> &mut LifecycleRow {
+        let mut r = LifecycleRow::filed(id);
         r.state = state;
         self.beads.insert(id.into(), r);
         self.beads.get_mut(id).unwrap()
     }
-    fn row_json(r: &BeadRow) -> Value {
+    fn row_json(r: &LifecycleRow) -> Value {
         let holds: Vec<&str> = r.holds.iter().map(|h| h.as_str()).collect();
         json!({
             "bead_id": r.bead_id, "state": r.state.as_str(), "tip": opt(&r.tip), "gate_key": opt(&r.gate_key),

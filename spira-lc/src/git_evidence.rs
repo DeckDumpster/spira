@@ -6,7 +6,6 @@
 //! form): a subject that never matched `"spira: land <id>"` or `"<id>:..."`, on work that
 //! was demonstrably on base by ancestry or by merge-tree content.
 
-use std::collections::HashMap;
 use std::path::Path;
 
 pub(crate) fn git_output(repo: &Path, args: &[&str]) -> Option<String> {
@@ -154,24 +153,4 @@ fn fork_of_merged(repo: &Path, branch: &str, base: &str) -> Option<String> {
         }
     }
     git_output(repo, &["rev-parse", &format!("{branch}^")]).map(|s| s.trim().to_string())
-}
-
-/// Every bead a commit on `base` lands by a `spira: land <id>` line in its message, mapped to
-/// the first such commit (the one nearest base's tip). One log walk for the whole repository,
-/// not one per bead. A batch landing names its members this way after their branches are gone.
-pub fn landing_lines(repo: &Path, base: &str) -> HashMap<String, String> {
-    let mut out = HashMap::new();
-    let Some(log) = git_output(repo, &["log", base, "--format=%x01%H%n%B"]) else { return out };
-    for chunk in log.split('\u{1}').skip(1) {
-        let mut lines = chunk.lines();
-        let Some(sha) = lines.next() else { continue };
-        for line in lines {
-            if let Some(rest) = line.strip_prefix("spira: land ") {
-                for id in rest.split(|c: char| c.is_whitespace() || c == ',').filter(|t| !t.is_empty()) {
-                    out.entry(id.to_string()).or_insert_with(|| sha.to_string());
-                }
-            }
-        }
-    }
-    out
 }

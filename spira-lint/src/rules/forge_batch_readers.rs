@@ -28,10 +28,8 @@ impl Default for ForgeBatchReaders {
 const NAME: &str = "forge-batch-readers";
 const ALLOW_FILE: &str = "spira-lint/forge-batch-readers-allow";
 
-/// The queue reads and writes the files until the store holds the batch; install removes them,
-/// and the migration classifier imports the open one from whichever queue directory install
-/// names, which no queue verb can be pointed at.
-const OWNERS: [&str; 3] = ["queue/", "install/src/round_records.rs", "spira-lc/src/legacy_files.rs"];
+/// The queue reads and writes the files until the store holds the batch; install removes them.
+const OWNERS: [&str; 2] = ["queue/", "install/src/round_records.rs"];
 
 fn owns(path: &str) -> bool {
     OWNERS.iter().any(|o| path.starts_with(o))

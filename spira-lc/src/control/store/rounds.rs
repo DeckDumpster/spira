@@ -329,7 +329,7 @@ fn still_in_batch(row: &DeliveryRow, batch_id: &str) -> bool {
     row.state == DeliveryState::Batched && row.batch_id.as_deref() == Some(batch_id)
 }
 
-fn next_record(cur: &LifecycleRecord, row: bead::BeadRow, at: i64) -> LifecycleRecord {
+fn next_record(cur: &LifecycleRecord, row: bead::LifecycleRow, at: i64) -> LifecycleRecord {
     LifecycleRecord {
         row,
         updated_at: at,

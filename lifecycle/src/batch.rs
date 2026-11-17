@@ -109,7 +109,7 @@ pub struct BatchRow {
 
 impl BatchRow {
     /// `cut` creates the batch; there is no prior row to compare-and-swap against, so this
-    /// is a constructor rather than a transition, exactly as `BeadRow::filed` is.
+    /// is a constructor rather than a transition, exactly as `LifecycleRow::filed` is.
     pub fn cut(batch_id: impl Into<String>, repo: impl Into<String>, head: impl Into<String>, base: impl Into<String>) -> Self {
         BatchRow {
             batch_id: batch_id.into(),

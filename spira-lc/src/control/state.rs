@@ -537,7 +537,7 @@ fn event<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, St
 /// A base_withdrawn that leaves the record WORKING does not itself unblock its holder: the
 /// eventual submit is refused until it rebases. Nothing else surfaces that mid-session, so the
 /// holder is told once. Best-effort: a note that fails to post does not undo an applied move.
-fn tell_holder_of_withdrawn_base(key: &str, row: &lifecycle::bead::BeadRow, prereq: &str, tip: &str) {
+fn tell_holder_of_withdrawn_base(key: &str, row: &lifecycle::bead::LifecycleRow, prereq: &str, tip: &str) {
     if row.state != BeadState::Working {
         return;
     }

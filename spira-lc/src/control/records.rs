@@ -5,7 +5,7 @@
 use std::collections::BTreeMap;
 
 use lifecycle::batch::BatchRow;
-use lifecycle::bead::{BeadRow, BeadState};
+use lifecycle::bead::{LifecycleRow, BeadState};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use spira_config::edges::Gate;
@@ -14,7 +14,7 @@ use state_store::{Error, Object, Result};
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct LifecycleRecord {
     #[serde(flatten)]
-    pub row: BeadRow,
+    pub row: LifecycleRow,
     /// Fixed at create: the lane's identity and the routing key for rounds and batches.
     #[serde(default)]
     pub repo: Option<String>,
@@ -42,7 +42,7 @@ pub struct ClaimInputs {
 impl LifecycleRecord {
     /// A record as `create-bead` writes it: READY, or born SUBMITTED at `submitted_tip`.
     pub fn born(id: &str, repo: Option<&str>, submitted_tip: Option<&str>, at: i64) -> Self {
-        let mut row = BeadRow::filed(id);
+        let mut row = LifecycleRow::filed(id);
         row.since = Some(at);
         if let Some(tip) = submitted_tip {
             row.state = lifecycle::bead::BeadState::Submitted;
@@ -73,7 +73,7 @@ impl LifecycleRecord {
     /// Whether `self` is the record `other` was born as, whenever each was stamped.
     pub fn same_birth(&self, other: &LifecycleRecord) -> bool {
         let unstamped = |r: &LifecycleRecord| LifecycleRecord {
-            row: BeadRow {
+            row: LifecycleRow {
                 since: None,
                 ..r.row.clone()
             },

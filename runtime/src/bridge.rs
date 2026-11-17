@@ -1,7 +1,7 @@
 //! A handler's `Emit` against a bead is a lifecycle event: the journal carries the library's
 //! own `BeadEvent`, and a stream folds back to a row with the library's own fold.
 
-use lifecycle::bead::{BeadEvent, BeadRow};
+use lifecycle::bead::{BeadEvent, LifecycleRow};
 
 use crate::event::{Event, EventKind};
 use crate::{Result, RuntimeError};
@@ -21,7 +21,7 @@ pub fn bead_event_from(kind: &EventKind) -> Result<BeadEvent> {
 }
 
 /// The row a bead stream's events fold to; events of other kinds are skipped.
-pub fn fold_bead_stream(bead_id: &str, events: &[Event]) -> Result<BeadRow> {
+pub fn fold_bead_stream(bead_id: &str, events: &[Event]) -> Result<LifecycleRow> {
     let evs: Vec<BeadEvent> = events.iter().filter(|e| e.kind.tag == BEAD_EVENT).map(|e| bead_event_from(&e.kind)).collect::<Result<_>>()?;
     Ok(lifecycle::replay::fold_bead(bead_id, &evs))
 }

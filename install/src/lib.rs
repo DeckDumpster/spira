@@ -21,7 +21,6 @@ pub mod kit_bump;
 pub use release::lifecycle_store;
 pub mod manifest;
 pub mod orchestrate;
-pub mod populate;
 pub mod round_records;
 pub mod seed_instance;
 pub mod systemctl;

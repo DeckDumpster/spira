@@ -1,118 +1,78 @@
-//! Which plane a semantic verb reads a bead's lifecycle row from and writes its events to.
-//!
-//! The primitive verbs (`show`, `list`, `event`) reach the control store through
-//! `control::served::dispatch`. The semantic verbs —
-//! `work <id> submit|done|blocked|…`, the ask close's hold lift, the classifier and the mend
-//! retirement — are handed the dolt connection instead, and read the row with
-//! `rows::fetch_bead` and wrote with `run_bead_event` against it: with lifecycle on the store,
-//! a bead born there had "no bead row", and one that predates the cutover had its event written
-//! to the retired dolt row while the store's record stayed where it was (sp-cxfgj5).
-//!
-//! Every such read and write goes through here. With lifecycle on the store it is the store's
-//! record and the store's own `event` verb; the dolt row only while the store does not serve
-//! lifecycle (pre-cutover or direct mode). A store that is declared but cannot be opened is
-//! "cannot tell", never a fall-back to dolt.
+//! Where a semantic verb reads a bead's lifecycle row from and writes its events to: the control
+//! store, through its own `show`, `list` and `event` verbs. A store that is not configured or
+//! cannot be opened is "cannot tell", never a fall-back to anything else.
 
-use std::sync::Arc;
-
-use lifecycle::bead::{BeadEventKind, BeadRow};
+use lifecycle::bead::{BeadEventKind, LifecycleRow};
 use state_store::Backend;
 
 use crate::control::state;
 use crate::control::store::Store;
-use crate::db::{Conn, DbError};
+use crate::db::DbError;
 use crate::CANNOT_TELL;
 
-/// Where the bead-state verbs answer from.
-pub(crate) enum Plane<'a, B: Backend> {
-    /// The control store, lifecycle on it.
-    Store(&'a Store<B>),
-    /// The dolt lifecycle tables.
-    Dolt(&'a Conn),
-}
+/// The control store the bead-state verbs answer from.
+pub(crate) struct Plane<'a, B: Backend>(pub(crate) &'a Store<B>);
 
 impl<B: Backend> Plane<'_, B> {
     /// The bead's lifecycle row.
-    pub(crate) fn bead(&self, id: &str) -> Result<Option<BeadRow>, DbError> {
-        match self {
-            Plane::Store(s) => s.record(id).map(|r| r.map(|r| r.value.row)).map_err(|e| DbError::CannotTell(format!("the control store: {e}"))),
-            Plane::Dolt(conn) => crate::rows::fetch_bead(conn, id),
-        }
+    pub(crate) fn bead(&self, id: &str) -> Result<Option<LifecycleRow>, DbError> {
+        self.0.record(id).map(|r| r.map(|r| r.value.row)).map_err(|e| DbError::CannotTell(format!("the control store: {e}")))
     }
 
     /// The repository the bead's lifecycle row names.
     pub(crate) fn repo(&self, id: &str) -> Result<Option<String>, DbError> {
-        match self {
-            Plane::Store(s) => s.record(id).map(|r| r.and_then(|r| r.value.repo)).map_err(|e| DbError::CannotTell(format!("the control store: {e}"))),
-            Plane::Dolt(conn) => crate::rows::bead_repo(conn, id),
-        }
+        self.0.record(id).map(|r| r.and_then(|r| r.value.repo)).map_err(|e| DbError::CannotTell(format!("the control store: {e}")))
     }
 
-    /// A primitive read (`show`, `list`) as `spira-lc` itself answers it on this plane.
+    /// A primitive read (`show`, `list`) as `spira-lc` itself answers it.
     pub(crate) fn read(&self, args: &[String]) -> (i32, String) {
-        match self {
-            Plane::Store(s) => {
-                let request = crate::control::served::request_id();
-                state::run(s, args, &state::Call { now: crate::db::now_epoch(), request: &request, inputs: &crate::control::claimable::Live })
-            }
-            Plane::Dolt(conn) => crate::dispatch(args, conn),
-        }
+        let request = crate::control::served::request_id();
+        state::run(self.0, args, &state::Call { now: crate::db::now_epoch(), request: &request, inputs: &crate::control::claimable::Live })
     }
 
     /// One bead event from wherever the row is now, under its CAS.
     pub(crate) fn apply(&self, id: &str, actor: &str, kind: &BeadEventKind) -> (i32, String) {
-        match self {
-            Plane::Store(s) => {
-                let row = match self.bead(id) {
-                    Ok(Some(r)) => r,
-                    Ok(None) => return (CANNOT_TELL, format!("work: no bead row for {id}")),
-                    Err(e) => return (CANNOT_TELL, format!("cannot tell: {e:?}")),
-                };
-                let kind_json = serde_json::to_string(kind).unwrap_or_default();
-                let argv: Vec<String> = ["event", "bead", id, "--expect", row.state.as_str(), "--version", &row.version.to_string(), "--actor", actor, "--kind", &kind_json]
-                    .iter()
-                    .map(|s| s.to_string())
-                    .collect();
-                let request = crate::control::served::request_id();
-                state::run(s, &argv, &state::Call { now: crate::db::now_epoch(), request: &request, inputs: &crate::control::claimable::Live })
-            }
-            Plane::Dolt(conn) => crate::dolt_apply_bead_event(conn, id, actor, kind.clone()),
-        }
+        let row = match self.bead(id) {
+            Ok(Some(r)) => r,
+            Ok(None) => return (CANNOT_TELL, format!("work: no bead row for {id}")),
+            Err(e) => return (CANNOT_TELL, format!("cannot tell: {e:?}")),
+        };
+        let kind_json = serde_json::to_string(kind).unwrap_or_default();
+        let argv: Vec<String> = ["event", "bead", id, "--expect", row.state.as_str(), "--version", &row.version.to_string(), "--actor", actor, "--kind", &kind_json]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        self.read(&argv)
     }
 }
 
-/// The plane the configuration declares: the control store while lifecycle is on it.
-fn configured() -> Option<Result<Arc<Store<crate::control::served::Served>>, String>> {
-    crate::control::served::configured()
-}
-
-/// Run `f` on the declared plane; a declared store that cannot be opened is cannot tell.
-fn with<T>(conn: &Conn, f: impl FnOnce(&Plane<'_, crate::control::served::Served>) -> T, cannot: impl FnOnce(String) -> T) -> T {
-    match configured() {
-        Some(Ok(store)) => f(&Plane::Store(&store)),
+/// Run `f` on the configured store; one that is unset or cannot be opened is cannot tell.
+fn with<T>(f: impl FnOnce(&Plane<'_, crate::control::served::Served>) -> T, cannot: impl FnOnce(String) -> T) -> T {
+    match crate::control::served::configured() {
+        Some(Ok(store)) => f(&Plane(&store)),
         Some(Err(e)) => cannot(format!("the control store: {e}")),
-        None => f(&Plane::Dolt(conn)),
+        None => cannot("SPIRA_LC_STORE_PATH is unset: lifecycle is served by the control store alone".into()),
     }
 }
 
-/// The bead's lifecycle row, from the declared plane.
-pub(crate) fn bead(conn: &Conn, id: &str) -> Result<Option<BeadRow>, DbError> {
-    with(conn, |p| p.bead(id), |e| Err(DbError::CannotTell(e)))
+/// The bead's lifecycle row.
+pub(crate) fn bead(id: &str) -> Result<Option<LifecycleRow>, DbError> {
+    with(|p| p.bead(id), |e| Err(DbError::CannotTell(e)))
 }
 
-/// The repository the bead's row names, from the declared plane.
-pub(crate) fn repo(conn: &Conn, id: &str) -> Result<Option<String>, DbError> {
-    with(conn, |p| p.repo(id), |e| Err(DbError::CannotTell(e)))
+/// The repository the bead's row names.
+pub(crate) fn repo(id: &str) -> Result<Option<String>, DbError> {
+    with(|p| p.repo(id), |e| Err(DbError::CannotTell(e)))
 }
 
-/// `show <id>` or `list …`, on the declared plane.
-pub(crate) fn read(conn: &Conn, args: &[String]) -> (i32, String) {
-    with(conn, |p| p.read(args), |e| (CANNOT_TELL, format!("cannot tell: {e}")))
+/// `show <id>` or `list …`.
+pub(crate) fn read(args: &[String]) -> (i32, String) {
+    with(|p| p.read(args), |e| (CANNOT_TELL, format!("cannot tell: {e}")))
 }
 
-/// One bead event, on the declared plane.
-pub(crate) fn apply(conn: &Conn, id: &str, actor: &str, kind: BeadEventKind) -> (i32, String) {
-    with(conn, |p| p.apply(id, actor, &kind), |e| (CANNOT_TELL, format!("cannot tell: {e}")))
+/// One bead event.
+pub(crate) fn apply(id: &str, actor: &str, kind: BeadEventKind) -> (i32, String) {
+    with(|p| p.apply(id, actor, &kind), |e| (CANNOT_TELL, format!("cannot tell: {e}")))
 }
 
 #[cfg(test)]
@@ -128,12 +88,12 @@ mod tests {
     }
 
     /// The scar: a bead that exists only on the control store (born after the cutover) is found
-    /// and moved there; the dolt connection — unreachable here — is never asked.
+    /// and moved there.
     #[test]
-    fn a_bead_only_on_the_control_store_is_read_and_moved_there_never_on_dolt() {
+    fn a_bead_only_on_the_control_store_is_read_and_moved_there() {
         let s = store();
         assert!(!s.create("sp-a453hs", Some("harness"), None, 100, &Request::new("c1", "test", "t")).unwrap());
-        let p: Plane<'_, MemBackend> = Plane::Store(&s);
+        let p: Plane<'_, MemBackend> = Plane(&s);
         let row = p.bead("sp-a453hs").unwrap().expect("the store's record is the row");
         assert_eq!(row.state, BeadState::Ready);
         assert_eq!(p.repo("sp-a453hs").unwrap().as_deref(), Some("harness"));
@@ -149,16 +109,24 @@ mod tests {
         let (rc, listed) = p.read(&["list".to_string(), "--live".to_string()]);
         assert_eq!(rc, 0, "{listed}");
         assert!(listed.contains("SUBMITTED") && listed.contains("sp-a453hs"), "`work list` reads it too: {listed}");
-        let dolt = Conn::unreachable();
-        assert!(Plane::<MemBackend>::Dolt(&dolt).bead("sp-a453hs").is_err(), "the dolt plane is a different store");
     }
 
     #[test]
     fn no_record_on_the_store_is_no_row_and_an_event_on_it_is_not_applied() {
         let s = store();
-        let p: Plane<'_, MemBackend> = Plane::Store(&s);
+        let p: Plane<'_, MemBackend> = Plane(&s);
         assert!(p.bead("sp-none").unwrap().is_none());
         assert_eq!(p.apply("sp-none", "a", &BeadEventKind::Release).0, CANNOT_TELL);
+    }
+
+    #[test]
+    fn with_no_control_store_configured_every_verb_is_cannot_tell() {
+        let dir = testkit::TempDir::new("spira-lc-plane-no-store");
+        let toml = spira_config::process::fixture_toml(&dir, &[("SPIRA_LC_STORE_PATH", "")]);
+        let _env = testkit::env(&[("SPIRA_TOML", Some(toml.to_str().unwrap()))]);
+        assert!(matches!(bead("sp-a"), Err(DbError::CannotTell(m)) if m.contains("SPIRA_LC_STORE_PATH")));
+        assert_eq!(apply("sp-a", "a", BeadEventKind::Release).0, CANNOT_TELL);
+        assert_eq!(read(&["show".to_string(), "sp-a".to_string()]).0, CANNOT_TELL);
     }
 
     /// The semantic verbs read and write the bead through this module, never the dolt row
@@ -167,7 +135,7 @@ mod tests {
     #[test]
     fn the_semantic_verbs_never_read_the_dolt_row_directly() {
         let code = |src: &'static str| src.split("#[cfg(test)]").next().unwrap_or(src);
-        for (name, src) in [("work.rs", include_str!("work.rs")), ("classify_cmd.rs", include_str!("classify_cmd.rs"))] {
+        for (name, src) in [("work.rs", include_str!("work.rs"))] {
             for direct in [concat!("rows::", "fetch_bead("), concat!("rows::", "bead_repo("), concat!("crate::", "cmd_show("), concat!("crate::", "cmd_list(")] {
                 assert!(!code(src).contains(direct), "{name} reads {direct} — the dolt row — instead of plane::");
             }

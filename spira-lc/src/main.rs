@@ -15,12 +15,10 @@
 mod backfill_claim;
 mod backfill_repo;
 mod bd;
-mod bd_facts;
 mod callers;
 mod churn;
 mod cite_check;
 mod claim_sync;
-mod classify_cmd;
 mod composed;
 mod content;
 mod content_sql;
@@ -39,8 +37,6 @@ mod facts;
 mod git_evidence;
 mod group;
 mod journal;
-mod legacy_files;
-mod mend_retire;
 mod mend_watch;
 mod mending;
 mod migrate;
@@ -62,7 +58,6 @@ mod unpublished;
 mod work;
 
 use db::Conn;
-use lifecycle::bead;
 use serde_json::Value;
 
 use spira_lc::{flag, goodput, CANNOT_TELL, REFUSED};
@@ -347,12 +342,9 @@ pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
         Some("ops-snapshot") => ops::cmd_ops_snapshot(&args[1..], conn),
         Some("ops-bead") => ops::cmd_ops_bead(&args[1..], conn),
         Some("ops-graph") => ops::cmd_ops_graph(&args[1..], conn),
-        // The one-time migration classifier (design §4). Deploys inert like the rest of
-        // this binary: nothing calls it until the cutover deploy step (a later bead).
-        Some("classify") => classify_cmd::run(&args[1..], conn),
         _ => (
             CANNOT_TELL,
-            format!("usage: spira-lc show <bead-id> | show-batch <batch-id> | batch-progress <batch-id> (JSON on stdin) | ready-set | list (--live | --state S[,S...] of live states | --ids a,b | --after ID --limit N; a bare list is refused) [--delivery] [--state S[,S...]] [--repo NAME] [--ids a,b] [--hold poison|ask|wait|manual] | history <key> [--machine bead|delivery|batch] | event <machine> <key> --expect S --version N --actor A --kind <json> | journal <append|read|applied|mark-applied|cursor|set-cursor|schedule|due|mark-fired|poison|poisoned> ... | fact <bead-id> --kind K --actor A [--cause C] | facts [--ids a,b] [--kinds x,y] [--since EPOCH] | facts-query <select over the fact table> | create-bead <id> [--repo NAME] [--ready] | promote-filed <id> | pane-facets inflow --window-secs N | pane-facets repo-labels --valid a,b | set-repo <id> <repo>|--clear [--only-if R] | create-ask <id> [--work-bead W] | show-ask <id> | list-asks [--state S] | close-ask <id> --exit answered|default|withdrawn --quote Q --actor A [--channel C] | reconcile-asks [--apply] [id...] | ops-view <ops_live|ops_round|ops_recent|ops_edges|ops_dwell|ops_dwell_p95> | ops-refusals <window-secs> | ops-gantt [--machine bead|batch] [--print-sql] | ops-bead <bead-id> | ops-graph [--machine bead|batch|ask|mending] | ops-snapshot | dep-add <id> <depends-on-id> [--type T] | dep-remove <id> <depends-on-id> | cut <batch-id> --repo R --head H --base B --members id:tip,... --actor A [--parent P] | stack <batch-id> --members id:tip,... --actor A | stage <batch-id> --repo R --head H --base B --members id:tip,... --actor A --parent P | promote <batch-id> --head H --base B --actor A | land <batch-id> --expect S --version N --actor A --sha SHA | settle <batch-id> --expect S --version N --actor A [--eject id,...] [--requeue id,...] | abandon-batch <batch-id> --expect S --version N --actor A --reason R | eject-member <batch-id> --bead-id ID --expect S --version N --actor A --reason R | batches-of <bead-id> | drop-bead <bead-id> --reason R [--actor A] | drop-row <bead-id> | event-continuity [--acknowledge --through SEQ --reason R] | mend-watch [--seen FILE] | pause-sweep | mending pickup|event|sweep|list ... | requeue-orphans --actor A [--apply] [--stale-secs N] | reconcile-landed <bead-id> --sha SHA --ref REF (--repo-path P | --repo NAME) --actor A | reconcile-epics [--apply] [id...] | reconcile-content [--apply | --dry-run] [--since-seq N] [id...] | backfill-repo [--apply | --dry-run] [id...] | backfill-claim-inputs [--apply | --dry-run] [id...] | admin-restore --snapshot F --revlog D --out P | admin-drill --scratch D [--ship-dir D] | admin-store-relayout --from F --to F | admin-dolt-ship --url U --db D --sync D --state D --stamp S --head H | admin-dolt-assemble (--state D | --manifest F) --files D --out D | admin-archive-put --file F --key K | planning-watermark | skew-check | event-seq [--since N | --head] | watch <prefix> --from-rev N [--wait-ms M] | admin-grants | admin-create-store (an empty control store at SPIRA_LC_STORE_PATH) | {} | classify (--repo NAME... | --every-bead) [--home DIR] [--bd-db PATH] [--bd-bin BIN] [--queue-dir DIR] [--base REF] [--dry-run] | work <bead-id> <verb> ... | stats | serve | unclaim <bead-id> <actor> | close <bead-id> (--reason R | --reason-file F|-) [--superseded-by ID] [--actor A] | close-epic <bead-id> <reason> | content <list|show|comments|gate list|memories|state|update --add-label/--remove-label|comments add> … | bd-supersede <bead-id> <successor-id> | bd-note <bead-id> <text> | drop-orphans [--apply | --dry-run] [id...] | caller verbs: hold|unhold|reply|withdraw-ask|release|holder-dead|drop|returned|content-on-base|state|holds|held|list-held|list-state|list-all|deliver|certify|resubmit|retip|absolve|renew", spira_lc::rc::USAGE),
+            format!("usage: spira-lc show <bead-id> | show-batch <batch-id> | batch-progress <batch-id> (JSON on stdin) | ready-set | list (--live | --state S[,S...] of live states | --ids a,b | --after ID --limit N; a bare list is refused) [--delivery] [--state S[,S...]] [--repo NAME] [--ids a,b] [--hold poison|ask|wait|manual] | history <key> [--machine bead|delivery|batch] | event <machine> <key> --expect S --version N --actor A --kind <json> | journal <append|read|applied|mark-applied|cursor|set-cursor|schedule|due|mark-fired|poison|poisoned> ... | fact <bead-id> --kind K --actor A [--cause C] | facts [--ids a,b] [--kinds x,y] [--since EPOCH] | facts-query <select over the fact table> | create-bead <id> [--repo NAME] [--ready] | promote-filed <id> | pane-facets inflow --window-secs N | pane-facets repo-labels --valid a,b | set-repo <id> <repo>|--clear [--only-if R] | create-ask <id> [--work-bead W] | show-ask <id> | list-asks [--state S] | close-ask <id> --exit answered|default|withdrawn --quote Q --actor A [--channel C] | reconcile-asks [--apply] [id...] | ops-view <ops_live|ops_round|ops_recent|ops_edges|ops_dwell|ops_dwell_p95> | ops-refusals <window-secs> | ops-gantt [--machine bead|batch] [--print-sql] | ops-bead <bead-id> | ops-graph [--machine bead|batch|ask|mending] | ops-snapshot | dep-add <id> <depends-on-id> [--type T] | dep-remove <id> <depends-on-id> | cut <batch-id> --repo R --head H --base B --members id:tip,... --actor A [--parent P] | stack <batch-id> --members id:tip,... --actor A | stage <batch-id> --repo R --head H --base B --members id:tip,... --actor A --parent P | promote <batch-id> --head H --base B --actor A | land <batch-id> --expect S --version N --actor A --sha SHA | settle <batch-id> --expect S --version N --actor A [--eject id,...] [--requeue id,...] | abandon-batch <batch-id> --expect S --version N --actor A --reason R | eject-member <batch-id> --bead-id ID --expect S --version N --actor A --reason R | batches-of <bead-id> | drop-bead <bead-id> --reason R [--actor A] | drop-row <bead-id> | event-continuity [--acknowledge --through SEQ --reason R] | mend-watch [--seen FILE] | pause-sweep | mending pickup|event|sweep|list ... | requeue-orphans --actor A [--apply] [--stale-secs N] | reconcile-landed <bead-id> --sha SHA --ref REF (--repo-path P | --repo NAME) --actor A | reconcile-epics [--apply] [id...] | reconcile-content [--apply | --dry-run] [--since-seq N] [id...] | backfill-repo [--apply | --dry-run] [id...] | backfill-claim-inputs [--apply | --dry-run] [id...] | admin-restore --snapshot F --revlog D --out P | admin-drill --scratch D [--ship-dir D] | admin-store-relayout --from F --to F | admin-dolt-ship --url U --db D --sync D --state D --stamp S --head H | admin-dolt-assemble (--state D | --manifest F) --files D --out D | admin-archive-put --file F --key K | planning-watermark | skew-check | event-seq [--since N | --head] | watch <prefix> --from-rev N [--wait-ms M] | admin-grants | admin-create-store (an empty control store at SPIRA_LC_STORE_PATH) | {} | work <bead-id> <verb> ... | stats | serve | unclaim <bead-id> <actor> | close <bead-id> (--reason R | --reason-file F|-) [--superseded-by ID] [--actor A] | close-epic <bead-id> <reason> | content <list|show|comments|gate list|memories|state|update --add-label/--remove-label|comments add> … | bd-supersede <bead-id> <successor-id> | bd-note <bead-id> <text> | drop-orphans [--apply | --dry-run] [id...] | caller verbs: hold|unhold|reply|withdraw-ask|release|holder-dead|drop|returned|content-on-base|state|holds|held|list-held|list-state|list-all|deliver|certify|resubmit|retip|absolve|renew", spira_lc::rc::USAGE),
         ),
     }
 }
@@ -405,120 +397,6 @@ fn cmd_verify_login(args: &[String], conn: &Conn) -> (i32, String) {
         Ok(_) => (0, format!("{user} logged in")),
         Err(e) => (1, format!("{user} could not log in: {e:?}")),
     }
-}
-
-/// An ask hold waits on an OPEN ask. A bead whose every ask is closed has been answered,
-/// defaulted or withdrawn, so a replayed hold has nothing left to wait for; a bead that
-/// never had an ask row is held by a writer that sends no mail first, and is let through.
-fn closed_asks_only(conn: &Conn, work_bead: &str) -> Option<String> {
-    let rows = conn.query(&format!("SELECT ask_id, state FROM ask WHERE work_bead = {}", cutover::q(work_bead))).ok()?;
-    let open = rows.iter().any(|r| r.get("state").and_then(Value::as_str) == Some("OPEN"));
-    if rows.is_empty() || open {
-        return None;
-    }
-    let ids: Vec<&str> = rows.iter().filter_map(|r| r.get("ask_id").and_then(Value::as_str)).collect();
-    let why = format!("every ask on it is closed ({}) and none is open, so there is nothing to wait for", ids.join(", "));
-    eprintln!("spira-lc: refused ask hold on {work_bead}: {why}");
-    Some(why)
-}
-
-fn run_bead_event(conn: &Conn, key: &str, expect: &str, version: u64, actor: &str, kind_json: &str, at: i64) -> (i32, String) {
-    let Some(expect_state) = bead::BeadState::from_str(expect) else {
-        return (CANNOT_TELL, format!("event: unknown bead state {expect:?}"));
-    };
-    let kind: bead::BeadEventKind = match serde_json::from_str(kind_json) {
-        Ok(k) => k,
-        Err(e) => return (CANNOT_TELL, format!("event: --kind did not parse as a bead event: {e}")),
-    };
-    let row = match rows::fetch_bead(conn, key) {
-        Ok(Some(r)) => r,
-        Ok(None) => return (CANNOT_TELL, format!("event: no bead row for {key}")),
-        Err(e) => return (CANNOT_TELL, format!("cannot tell: {e:?}")),
-    };
-    let ev = bead::BeadEvent { expect: expect_state, version, kind: kind.clone(), actor: actor.to_string(), at: Some(at) };
-    if matches!(kind, bead::BeadEventKind::Hold { kind: bead::HoldKind::Ask, .. }) {
-        if let Some(why) = closed_asks_only(conn, key) {
-            return (REFUSED, format!("refused: ask hold on {key}: {why}"));
-        }
-    }
-    // The tip invariant, extended (design stacked-dependents-2026-09-28 §1): a claim whose
-    // proposed stack names a prerequisite tip that is no longer that prerequisite's current
-    // certified tip is refused the same way a stale-tip submit is — checked here, against
-    // live prerequisite rows, because `bead::apply` sees only the one row being claimed.
-    let outcome = match &kind {
-        bead::BeadEventKind::Claim { stack, .. } if !stack.is_empty() => {
-            let prereqs = match stack.keys().map(|id| rows::fetch_bead(conn, id)).collect::<Result<Vec<_>, _>>() {
-                Ok(rs) => rs.into_iter().flatten().collect::<Vec<_>>(),
-                Err(e) => return (CANNOT_TELL, format!("cannot tell: {e:?}")),
-            };
-            match bead::claim_refusal_for_stale_stack(stack, &prereqs) {
-                Some(refusal) => lifecycle::Outcome::refuse(row.clone(), refusal),
-                None => bead::apply(&row, &ev),
-            }
-        }
-        _ => bead::apply(&row, &ev),
-    };
-    let evidence = serde_json::to_value(&kind).unwrap_or(Value::Null);
-    let rec = db::EventRecord::of_apply("bead", key, kind_name(&evidence), expect, row.state.as_str(), outcome.refusal.as_ref().map(refusal_name), evidence, actor, at);
-    if !outcome.applied {
-        if let Err(e) = conn.insert_refusal_event(&rec) {
-            return (CANNOT_TELL, format!("cannot tell: {e:?}"));
-        }
-        return match &outcome.refusal {
-            Some(lifecycle::Refusal::BreakGlassIncomplete { missing }) => (REFUSED, format!("refused: BreakGlassIncomplete: missing {missing}")),
-            other => (REFUSED, format!("refused: {other:?}")),
-        };
-    }
-    let set = rows::bead_set_clause(&outcome.row);
-    let result = conn.cas_update_and_log("bead", "bead_id", key, version, &set, &rec, outcome.row.state.as_str());
-    // A base_withdrawn that leaves the row WORKING does not itself unblock the holder — its
-    // eventual submit is refused (work.rs's own stale-stack check) until it rebases. Nothing
-    // else surfaces that mid-session, so the holder is told here, once, on the same
-    // transaction that recorded the cascade (design §1: "WORKING stays WORKING, holder
-    // told"). Best-effort: a note that fails to post is not a reason to undo an applied
-    // machine transition.
-    if matches!(result, Ok(true)) && outcome.row.state != row.state {
-        mend_retire::retire_for(key, outcome.row.state, &mut mend_retire::Live(conn));
-    }
-    if matches!(result, Ok(true)) && matches!(kind, bead::BeadEventKind::BaseWithdrawn { .. }) && outcome.row.state == bead::BeadState::Working {
-        if let bead::BeadEventKind::BaseWithdrawn { prereq, tip } = &kind {
-            let holder = outcome.row.holder.as_deref().unwrap_or("its holder");
-            let _ = crate::bd::note(
-                key,
-                &format!(
-                    "Base withdrawn: {prereq}'s certified tip {tip} — the one this claim's stack was built on — no longer stands. {holder} is still WORKING, but its eventual submit is refused until it rebases onto the current stack."
-                ),
-            );
-        }
-    }
-    match result {
-        Ok(true) => (0, String::new()),
-        Ok(false) => (REFUSED, "refused: lost the race to another writer".into()),
-        Err(e) => (CANNOT_TELL, format!("cannot tell: {e:?}")),
-    }
-}
-
-/// Applies a bead event against whatever the row's current state and version are, rather
-/// than a caller-supplied `expect`/`version` — the CAS still protects the write, but the
-/// semantic layer (work.rs) always means "from wherever the bead is now", never a stale
-/// view it captured earlier. `run_bead_event` above stays the CLI/testable primitive that
-/// takes `expect`/`version` explicitly, because the (state, event) transition table and
-/// stale-version refusal need a caller who can name a wrong one on purpose.
-/// On the declared plane (plane.rs): the control store's own `event` verb while lifecycle is on
-/// it, the dolt row otherwise (sp-cxfgj5).
-pub(crate) fn apply_bead_event(conn: &Conn, key: &str, actor: &str, kind: bead::BeadEventKind) -> (i32, String) {
-    plane::apply(conn, key, actor, kind)
-}
-
-/// [`apply_bead_event`] against the dolt lifecycle tables: pre-cutover and direct mode only.
-pub(crate) fn dolt_apply_bead_event(conn: &Conn, key: &str, actor: &str, kind: bead::BeadEventKind) -> (i32, String) {
-    let row = match rows::fetch_bead(conn, key) {
-        Ok(Some(r)) => r,
-        Ok(None) => return (CANNOT_TELL, format!("work: no bead row for {key}")),
-        Err(e) => return (CANNOT_TELL, format!("cannot tell: {e:?}")),
-    };
-    let kind_json = serde_json::to_string(&kind).unwrap_or_default();
-    run_bead_event(conn, key, row.state.as_str(), row.version, actor, &kind_json, db::now_epoch())
 }
 
 /// Externally-tagged serde writes a struct variant as `{"Variant": {...}}` and a unit variant as

@@ -695,9 +695,9 @@ mod tests {
         // The cross-machine property the acceptance criteria names: landed_local closes the
         // bead (via the ordinary Delivered cascade every mode already uses); published is
         // then recorded on the delivery row alone, with no further bead event at all.
-        use crate::bead::{self, BeadEvent, BeadEventKind, BeadRow, BeadState};
+        use crate::bead::{self, BeadEvent, BeadEventKind, LifecycleRow, BeadState};
 
-        let mut bead_row = BeadRow::filed("sp-x");
+        let mut bead_row = LifecycleRow::filed("sp-x");
         bead_row.tip = Some("localsha1".into());
         bead_row.state = BeadState::InDelivery;
 

@@ -190,8 +190,6 @@ struct Fake {
     no_unit_files: bool,
     history_late: Cell<u32>,
     rows: RefCell<Vec<String>>,
-    no_cutover_script: bool,
-    cutover_rc: i32,
     land_modes: Vec<(&'static str, &'static str)>,
     fast_tier_rc: i32,
     bare_lint_rc: i32,
@@ -223,8 +221,6 @@ impl Fake {
             no_unit_files: false,
             history_late: Cell::new(0),
             rows: RefCell::new(Vec::new()),
-            no_cutover_script: false,
-            cutover_rc: 0,
             land_modes: vec![("scratch-repo", "push"), ("scratch-q", "queue.local"), ("scratch-pr", "pr")],
             fast_tier_rc: 0,
             bare_lint_rc: 3,
@@ -246,9 +242,6 @@ impl Fake {
             testkit::write_exe(&p, "#!/bin/sh\n");
         }
         fs::write(d.join("spira/conf.sh"), "").unwrap();
-        if !self.no_cutover_script {
-            testkit::write_exe(d.join("spira/cutover-deploy.sh"), "#!/bin/sh\n");
-        }
         let cur = self.releases.join("current");
         let _ = fs::remove_file(&cur);
         std::os::unix::fs::symlink(name, &cur).unwrap();
@@ -334,7 +327,6 @@ impl Fake {
                 let ev: Vec<String> = states.iter().map(|s| format!(r#"{{"to_state":"{s}","applied":1}}"#)).collect();
                 ok(&format!("[{}]", ev.join(",")))
             }
-            ("cutover-deploy.sh", _) => Out { rc: self.cutover_rc, text: if self.cutover_rc == 0 { "cutover-deploy: done\n".into() } else { "cutover-deploy: refusing\n".into() }, out: String::new() },
             ("world.sh", ["status"]) => ok("world: RUNNING\n"),
             ("world", ["scheduler-status", "--json"]) => {
                 self.fired.set(self.fired.get() + 1);

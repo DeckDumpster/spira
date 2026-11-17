@@ -365,15 +365,6 @@ fn blockers_are_the_blocks_edges_onto_the_bead() {
 }
 
 #[test]
-fn a_title_search_reads_open_beads_unlimited() {
-    let f = Fake { issues: vec![issue("sp-m", "mend sp-t: does not merge onto main")], ..Fake::default() };
-    let found = titled(&f, DB, "mend sp-t: does not merge onto").unwrap();
-    assert_eq!(found[0].id, "sp-m");
-    let sql = first_sql(&f);
-    assert!(sql.contains("LOCATE(LOWER('mend sp-t: does not merge onto'), LOWER(title))") && sql.contains("status <> 'closed'") && !sql.contains("LIMIT"), "{sql}");
-}
-
-#[test]
 fn show_text_leads_with_the_head_line_work_show_rewrites_and_carries_the_description() {
     let f = Fake {
         issues: vec![issue("sp-a", "A title")],

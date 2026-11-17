@@ -158,7 +158,7 @@ Tests (retired or repointed in §7): `test-queue-submit`, `test-withdrawn-suites
 
 **Readers of what queue writes** (the formats are unchanged, §3): the `open` record is read
 by queue verdict, lib.sh `queue_batch_owner`, landing.sh, cockpit.sh, batcher-cut,
-queue-watch, czar-pass, spira-lc `legacy_files`, and the operator's round/watch scripts; the
+queue-watch, czar-pass, and the operator's round/watch scripts; the
 `publish` record by queue verdict and queue-watch; the lock by queue verdict,
 batcher-cut and the reconciler's stale-lock probe. `round-seq`, `refs/archive/rounds/*`,
 the `$SPIRA_QUEUE_DIR/<id>` entry and `queue-protected-<repo>` have no reader
