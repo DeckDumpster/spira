@@ -20,7 +20,7 @@
 //! ```
 //!
 //! A repo is `NotMet` when any of its lines is `not met`, else `CannotTell` when any line is
-//! `cannot tell` or it printed none, else `Met`. The home repo is dropped if it ever appears.
+//! neither met nor not met, or it printed none, else `Met`. The home repo is dropped if it ever appears.
 //!
 //! ## Decide
 //!
@@ -226,10 +226,10 @@ pub fn judge(output: &str, home: &str) -> Vec<RepoState> {
         } else if let Some(c) = current.as_mut() {
             if line.starts_with("not met ") {
                 c.2.push(line.to_string());
-            } else if line.starts_with("cannot tell ") {
-                c.3.push(line.to_string());
             } else if line.starts_with("met ") {
                 c.1 += 1;
+            } else if !line.trim().is_empty() {
+                c.3.push(line.to_string());
             }
         }
     }
