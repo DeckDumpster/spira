@@ -194,7 +194,7 @@ mod tests {
         let w = World::new();
         w.file("sp-new", "task", Some("sp-e"), &["incident"]);
         let settler = installed();
-        let req = crate::serve::Request { argv: ["create-bead", "sp-new", "--repo", "spira", "--ready"].map(String::from).to_vec(), stdin: None, caller: Default::default(), min_rev: None, task: None };
+        let req = crate::serve::Request { argv: ["create-bead", "sp-new", "--repo", "spira", "--ready"].map(String::from).to_vec(), stdin: None, caller: Default::default(), task: None };
         let (mut m, mut b) = (Expires(&w, Vec::new()), &w);
         let ans = crate::serve::answer(req, &mut m, &mut b, &NoContent, &|| Err("no run dir here".to_string()));
         assert_eq!((ans.code, ans.stderr.as_str()), (0, ""), "{ans:?}");

@@ -11,7 +11,6 @@ pub mod gc;
 pub mod history;
 pub mod limits;
 pub mod mem;
-pub mod model;
 pub mod phases;
 pub mod wire;
 
@@ -25,7 +24,6 @@ pub use contract::{
 };
 pub use history::History;
 pub use mem::MemBackend;
-pub use model::{Hold, Modeled};
 
 /// The prefix of the message a backend ends a read with once it outlives its limit.
 pub const READ_ENDED: &str = "read ended: held past max_read_ms";

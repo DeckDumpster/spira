@@ -13,5 +13,3 @@ pub mod state;
 pub mod store;
 pub mod verbs;
 
-#[cfg(test)]
-mod model_tests;

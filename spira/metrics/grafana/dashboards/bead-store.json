@@ -361,7 +361,7 @@
     {
       "id": 10,
       "type": "timeseries",
-      "title": "store reads from the past: largest lag (revisions) by caller",
+      "title": "lc-serve restart to ready (bound: 2 s)",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_VM}"
@@ -374,7 +374,25 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "short"
+          "unit": "ms",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 2000
+              }
+            ]
+          },
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          }
         },
         "overrides": []
       },
@@ -384,8 +402,8 @@
             "type": "prometheus",
             "uid": "${DS_VM}"
           },
-          "expr": "max by (caller) (max_over_time(spira_lc_store_lag_revs_max[$__interval]))",
-          "legendFormat": "{{caller}}",
+          "expr": "max_over_time(spira_lc_ready_ms[$__interval])",
+          "legendFormat": "ready after",
           "refId": "A"
         }
       ]
@@ -393,7 +411,7 @@
     {
       "id": 11,
       "type": "timeseries",
-      "title": "store reads from the past: largest lag (ms) by caller",
+      "title": "lc-serve resident memory (bound: 200 MB)",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_VM}"
@@ -406,7 +424,25 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "ms"
+          "unit": "bytes",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 209715200
+              }
+            ]
+          },
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          }
         },
         "overrides": []
       },
@@ -416,40 +452,8 @@
             "type": "prometheus",
             "uid": "${DS_VM}"
           },
-          "expr": "max by (caller) (max_over_time(spira_lc_store_lag_ms_max[$__interval]))",
-          "legendFormat": "{{caller}}",
-          "refId": "A"
-        }
-      ]
-    },
-    {
-      "id": 12,
-      "type": "timeseries",
-      "title": "store reads from the past: too-old answers by caller",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_VM}"
-      },
-      "gridPos": {
-        "x": 0,
-        "y": 56,
-        "w": 12,
-        "h": 8
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_VM}"
-          },
-          "expr": "sum by (caller) (increase(spira_lc_store_too_old[$__interval]))",
-          "legendFormat": "{{caller}}",
+          "expr": "max_over_time(spira_lc_rss_bytes[$__interval])",
+          "legendFormat": "rss",
           "refId": "A"
         }
       ]
@@ -463,7 +467,7 @@
         "uid": "${DS_VM}"
       },
       "gridPos": {
-        "x": 12,
+        "x": 0,
         "y": 56,
         "w": 12,
         "h": 8
@@ -483,47 +487,6 @@
           "expr": "max_over_time(spira_state_store_uncheckpointed_commits[$__interval])",
           "legendFormat": "uncheckpointed commits",
           "refId": "A"
-        }
-      ]
-    },
-    {
-      "id": 14,
-      "type": "timeseries",
-      "title": "order-lock holds over 500 ms by holder",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_VM}"
-      },
-      "gridPos": {
-        "x": 0,
-        "y": 64,
-        "w": 12,
-        "h": 8
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "s"
-        },
-        "overrides": []
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_VM}"
-          },
-          "expr": "sum by (holder) (increase(spira_lc_order_hold_seconds[$__interval]))",
-          "legendFormat": "{{holder}} seconds held",
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_VM}"
-          },
-          "expr": "sum by (holder) (increase(spira_lc_order_holds[$__interval]))",
-          "legendFormat": "{{holder}} holds",
-          "refId": "B"
         }
       ]
     }

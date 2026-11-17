@@ -68,26 +68,20 @@ pub fn run(args: &[String]) -> i32 {
         }
     };
 
-    if let Some(store) = &control {
-        let model = store.contract().backend();
-        let (keys, bytes) = model.size();
-        eprintln!("spira-lc serve: read model: {keys} keys, {} KiB, at revision {}", bytes / 1024, model.revision());
-    }
-
-    startup.mark("read-model");
+    startup.mark("control-store");
 
     // lc-serve is the store's only opener, so it is the one process that can ship it off-box.
     let shipping = match &control {
         None => None,
         Some(store) => {
-            let shipper = crate::lifecycle_run_dir().and_then(|run| match crate::durability::configured(store.contract().backend().inner().clone(), &run) {
+            let shipper = crate::lifecycle_run_dir().and_then(|run| match crate::durability::configured(store.contract().backend().clone(), &run) {
                 None => Ok(None),
                 Some(s) => s.map(Some),
             });
             match shipper {
                 Ok(None) => {
                     eprintln!("spira-lc serve: SPIRA_LC_BACKUP_URL is empty: the control store is not shipped off-box");
-                    if let Err(e) = store.contract().backend().inner().drop_outbox() {
+                    if let Err(e) = store.contract().backend().drop_outbox() {
                         eprintln!("spira-lc serve: the control store's outbox: {e}");
                         return 2;
                     }
@@ -158,6 +152,7 @@ pub fn run(args: &[String]) -> i32 {
             loop {
                 std::thread::sleep(crate::slow::METRICS_EVERY);
                 crate::slow::push_counts(&metrics, &mut pushed);
+                crate::slow::push_rss(&metrics);
             }
         });
         if let Some(store) = control {
@@ -258,6 +253,9 @@ impl Startup {
 
     fn ready(&self, spans: Option<&spira_otel::Sink>) {
         eprintln!("{}", ready_line(&self.phases, wall_ms()));
+        let endpoint = spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok();
+        let metrics = spira_otel::metrics::MetricsSink::new(endpoint.as_deref(), "spira-lc", Duration::from_millis(250));
+        crate::slow::push_ready(&metrics, self.phases.iter().map(|(_, d)| *d).sum::<Duration>().as_millis() as u64);
         let Some(spans) = spans else { return };
         let us: Vec<(&str, u64)> = self.phases.iter().map(|(p, d)| (*p, d.as_micros() as u64)).collect();
         spans.emit(&spira_otel::Call {
@@ -273,9 +271,6 @@ impl Startup {
             commits_us: &[],
             reads: 0,
             open_phase: None,
-            lag_revs: None,
-            lag_ms: None,
-            too_old: false,
         });
     }
 }
@@ -336,7 +331,7 @@ impl Flights {
             let mut answered = slot.answered.lock().unwrap();
             if !*answered {
                 let _ = slot.stream.set_write_timeout(Some(Duration::from_secs(5)));
-                let _ = write_raw(&slot.stream, 2, &stopped_for_restart(), "", None);
+                let _ = write_raw(&slot.stream, 2, &stopped_for_restart(), "");
                 *answered = true;
                 refused += 1;
             }
@@ -535,9 +530,6 @@ fn serve_one(stream: UnixStream, conn: &Arc<Conn>, spans: Option<&spira_otel::Si
                 commits_us: &none.commits_us,
                 reads: none.reads,
                 open_phase: none.open,
-                lag_revs: None,
-                lag_ms: None,
-                too_old: false,
             };
             record_span(spans, &call);
             return;
@@ -556,8 +548,7 @@ fn serve_one(stream: UnixStream, conn: &Arc<Conn>, spans: Option<&spira_otel::Si
             let holder_verb = verb.clone();
             let began = Arc::clone(&started_work);
             let limit = request_deadline(&argv);
-            let min_rev = req.min_rev;
-            let req = Request { argv, stdin: req.stdin, caller: req.caller, min_rev, task: None };
+            let req = Request { argv, stdin: req.stdin, caller: req.caller, task: None };
             let worker_rec = Arc::clone(&recorder);
             within(limit.saturating_sub(received.elapsed()), move || {
                 let _tracking = state_store::phases::track_scoped(worker_rec);
@@ -565,22 +556,17 @@ fn serve_one(stream: UnixStream, conn: &Arc<Conn>, spans: Option<&spira_otel::Si
                 *began.lock().unwrap_or_else(|e| e.into_inner()) = Some(Instant::now());
                 crate::slow::set_caller(&who);
                 let _deadline = bind_deadline(received, limit);
-                state_store::model::track(!min_rev.is_none_or(model_reached));
                 let mut local = Local(&worker);
-                let ans = answer(req, &mut local, &mut crate::bd::LiveBd, &crate::composed::LiveContent, &crate::lifecycle_run_dir);
-                let stamp = state_store::model::stamp();
-                (ans, stamp.rev, past_of(&stamp))
+                answer(req, &mut local, &mut crate::bd::LiveBd, &crate::composed::LiveContent, &crate::lifecycle_run_dir)
             })
-            .unwrap_or_else(|| (Answer::out(2, format!("cannot tell: {}", crate::db::DEADLINE_MESSAGE)), None, Past::default()))
+            .unwrap_or_else(|| Answer::out(2, format!("cannot tell: {}", crate::db::DEADLINE_MESSAGE)))
         }
-        Err((code, out)) => (Answer::out(code, out), None, Past::default()),
+        Err((code, out)) => Answer::out(code, out),
     };
-    let (ans, rev, past) = ans;
     let method = crate::slow::method_of(&argv_seen);
     crate::slow::request_done(&verb, &method, &caller, task.as_deref(), received.elapsed());
-    crate::slow::past_read_done(&verb, &caller, task.as_deref(), past.lag_revs, past.lag_ms, past.too_old);
     crate::slow::sample(&method, received.elapsed());
-    reply_then_settle(&stream, &ans, rev, &mut |id, reason| crate::reconcile_content::settle_owed(&mut crate::bd::LiveBd, id, reason));
+    reply_then_settle(&stream, &ans, &mut |id, reason| crate::reconcile_content::settle_owed(&mut crate::bd::LiveBd, id, reason));
     let began = *started_work.lock().unwrap_or_else(|e| e.into_inner());
     let waited = began.unwrap_or_else(Instant::now).saturating_duration_since(accepted);
     let store = recorder.snapshot();
@@ -597,9 +583,6 @@ fn serve_one(stream: UnixStream, conn: &Arc<Conn>, spans: Option<&spira_otel::Si
         commits_us: &store.commits_us,
         reads: store.reads,
         open_phase: store.open,
-        lag_revs: past.lag_revs,
-        lag_ms: past.lag_ms,
-        too_old: past.too_old,
     };
     record_span(spans, &call);
 }
@@ -613,34 +596,16 @@ pub(crate) struct Request {
     /// The caller's guard variables (`spira_store::lc_call::GUARD_VARS`), which a content
     /// write is judged on as bdq judged it in the caller's own process.
     pub caller: std::collections::BTreeMap<String, String>,
-    /// The store revision the caller's answer must reflect (`{"min_rev": N}`): a caller that
-    /// read its own write's revision off that write's reply. Its reads wait for the read model
-    /// to reach it, briefly, and otherwise go to the database.
-    pub min_rev: Option<u64>,
     /// The scheduler task whose effect made the call (`{"task": ...}`); what the store counts it under.
     pub task: Option<String>,
-}
-
-/// How long a request naming a `min_rev` waits for the read model before reading the database.
-/// The model applies every commit before the commit returns, so a revision this service
-/// answered is reached at once; the wait covers a model catching up after a failed commit.
-const MIN_REV_WAIT: Duration = Duration::from_millis(250);
-
-/// Whether the read model holds `rev`, waiting [`MIN_REV_WAIT`] for it; true with no control
-/// store, whose dolt reads have no model to lag.
-fn model_reached(rev: u64) -> bool {
-    match crate::control::served::configured() {
-        Some(Ok(store)) => state_store::phases::time(state_store::phases::Phase::MinRevWait, || store.contract().backend().wait_for(rev, MIN_REV_WAIT)),
-        _ => true,
-    }
 }
 
 /// Longest request body read: a readiness publication or a section spec, never a file transfer.
 const MAX_BODY: u64 = 16 << 20;
 
 /// The request on `reader`: a JSON argv array on one line, or `{"argv": [...], "len": N}` on
-/// one line followed by exactly `N` bytes of stdin; the object may also carry `caller`,
-/// `min_rev` and `task`. `Ok(None)` when the client sent nothing;
+/// one line followed by exactly `N` bytes of stdin; the object may also carry `caller`
+/// and `task`. `Ok(None)` when the client sent nothing;
 /// `Err((bytes read, refusal))` for a request that cannot be read.
 fn read_request(reader: &mut impl BufRead) -> Result<Option<(Request, usize)>, (usize, String)> {
     let mut line = String::new();
@@ -649,11 +614,11 @@ fn read_request(reader: &mut impl BufRead) -> Result<Option<(Request, usize)>, (
     }
     let bad = |e: &dyn std::fmt::Display| (line.len(), format!("bad request: {e}"));
     let head: serde_json::Value = serde_json::from_str(line.trim()).map_err(|e| bad(&e))?;
-    let (argv, len, caller, min_rev, task) = match head {
-        serde_json::Value::Array(_) => (head, None, Default::default(), None, None),
+    let (argv, len, caller, task) = match head {
+        serde_json::Value::Array(_) => (head, None, Default::default(), None),
         serde_json::Value::Object(mut o) => {
             let len = match o.get("len") {
-                None if o.contains_key("caller") || o.contains_key("min_rev") || o.contains_key("task") => None,
+                None if o.contains_key("caller") || o.contains_key("task") => None,
                 l => Some(l.and_then(serde_json::Value::as_u64).ok_or_else(|| bad(&"a request object needs a numeric len"))?),
             };
             if let Some(len) = len.filter(|&l| l > MAX_BODY) {
@@ -663,15 +628,11 @@ fn read_request(reader: &mut impl BufRead) -> Result<Option<(Request, usize)>, (
                 None => Default::default(),
                 Some(c) => serde_json::from_value(c).map_err(|e| bad(&format!("caller: {e}")))?,
             };
-            let min_rev = match o.remove("min_rev") {
-                None => None,
-                Some(r) => Some(r.as_u64().ok_or_else(|| bad(&"min_rev is a revision number"))?),
-            };
             let task = match o.remove("task") {
                 None => None,
                 Some(t) => Some(t.as_str().ok_or_else(|| bad(&"task is a name"))?.to_string()),
             };
-            (o.remove("argv").unwrap_or_default(), len, caller, min_rev, task)
+            (o.remove("argv").unwrap_or_default(), len, caller, task)
         }
         _ => return Err(bad(&"a request is an argv array or an {argv, len} object")),
     };
@@ -685,7 +646,7 @@ fn read_request(reader: &mut impl BufRead) -> Result<Option<(Request, usize)>, (
         }
     };
     let size = line.len() + stdin.as_ref().map_or(0, String::len);
-    Ok(Some((Request { argv, stdin, caller, min_rev, task }, size)))
+    Ok(Some((Request { argv, stdin, caller, task }, size)))
 }
 
 /// The primitives, in this process against its own connection: a composed verb's reads and
@@ -730,8 +691,8 @@ pub(crate) fn answer(
 }
 
 /// The reply goes out first: an owed store write is bounded by bd's own cap, not the request's.
-fn reply_then_settle(stream: &UnixStream, ans: &Answer, rev: Option<u64>, settle: &mut dyn FnMut(&str, &str) -> Result<(), String>) {
-    let _ = write_response_at(stream, ans.code, &ans.stdout, &ans.stderr, rev);
+fn reply_then_settle(stream: &UnixStream, ans: &Answer, settle: &mut dyn FnMut(&str, &str) -> Result<(), String>) {
+    let _ = write_response(stream, ans.code, &ans.stdout, &ans.stderr);
     crate::callers::settle_owed_with(&ans.owed, settle);
 }
 
@@ -739,25 +700,6 @@ fn record_span(spans: Option<&spira_otel::Sink>, call: &spira_otel::Call) {
     if let Some(sink) = spans {
         sink.emit(call);
     }
-}
-
-/// What a request's reads behind the head cost it, for its span and the counters.
-#[derive(Clone, Copy, Default)]
-struct Past {
-    lag_revs: Option<u64>,
-    lag_ms: Option<u64>,
-    too_old: bool,
-}
-
-/// `stamp`'s lag with the wall time since the first audited commit at or after the oldest
-/// revision read; the lookup is made only for a read behind the head.
-fn past_of(stamp: &state_store::model::Stamp) -> Past {
-    let lag_ms = stamp.oldest.filter(|_| stamp.lag_revs.is_some()).and_then(|oldest| {
-        let store = crate::control::served::configured()?.ok()?;
-        let at = store.contract().committed_at(oldest).ok()??;
-        (spira_config::vtime::now_epoch().saturating_mul(1_000)).checked_sub(at)
-    });
-    Past { lag_revs: stamp.lag_revs, lag_ms, too_old: stamp.too_old }
 }
 
 /// How long after receiving a store request this service stops working on it
@@ -836,35 +778,24 @@ fn peer_pid(stream: &UnixStream) -> Option<i32> {
 /// A header line, then the stdout bytes; a non-empty stderr follows them, its length in the
 /// header's `err_len` (a client that predates it reads `len` bytes and stops).
 fn write_response(stream: &UnixStream, exit_code: i32, stdout: &str, stderr: &str) -> std::io::Result<()> {
-    write_response_at(stream, exit_code, stdout, stderr, None)
-}
-
-/// [`write_response`] with the store revision the answer reflects as the header's `rev`: every
-/// read it made was at that revision or later, and every write it made is at or below it, so a
-/// caller that needs its own write passes it back as `min_rev`. A client that predates it
-/// ignores the key.
-fn write_response_at(stream: &UnixStream, exit_code: i32, stdout: &str, stderr: &str, rev: Option<u64>) -> std::io::Result<()> {
     match CURRENT.with(|c| c.borrow().clone()) {
-        None => write_raw(stream, exit_code, stdout, stderr, rev),
+        None => write_raw(stream, exit_code, stdout, stderr),
         Some(slot) => {
             let mut answered = slot.answered.lock().unwrap();
             if *answered {
                 return Ok(());
             }
             *answered = true;
-            write_raw(stream, exit_code, stdout, stderr, rev)
+            write_raw(stream, exit_code, stdout, stderr)
         }
     }
 }
 
-fn write_raw(mut stream: &UnixStream, exit_code: i32, stdout: &str, stderr: &str, rev: Option<u64>) -> std::io::Result<()> {
+fn write_raw(mut stream: &UnixStream, exit_code: i32, stdout: &str, stderr: &str) -> std::io::Result<()> {
     let mut buf = Vec::with_capacity(stdout.len() + stderr.len() + 64);
     let mut head = serde_json::json!({"exit_code": exit_code, "len": stdout.len()});
     if !stderr.is_empty() {
         head["err_len"] = stderr.len().into();
-    }
-    if let Some(rev) = rev {
-        head["rev"] = rev.into();
     }
     writeln!(buf, "{head}")?;
     buf.extend_from_slice(stdout.as_bytes());
@@ -914,13 +845,13 @@ mod tests {
     #[test]
     fn start_up_logs_one_line_per_phase_in_order_and_ready_after_their_sum() {
         use std::time::Duration;
-        let phases = [("config", Duration::from_millis(3)), ("read-model", Duration::from_millis(52_000)), ("bind", Duration::from_millis(5))];
+        let phases = [("config", Duration::from_millis(3)), ("open-sqlite", Duration::from_millis(52)), ("bind", Duration::from_millis(5))];
         let lines = super::startup_lines(&phases, 0);
         assert_eq!(lines.len(), 4, "{lines:?}");
         assert!(lines[0].ends_with("start-up config 3 ms"), "{}", lines[0]);
-        assert!(lines[1].ends_with("start-up read-model 52000 ms"), "{}", lines[1]);
+        assert!(lines[1].ends_with("start-up open-sqlite 52 ms"), "{}", lines[1]);
         assert!(lines[2].ends_with("start-up bind 5 ms"), "{}", lines[2]);
-        assert!(lines[3].ends_with("ready after 52008 ms"), "{}", lines[3]);
+        assert!(lines[3].ends_with("ready after 60 ms"), "{}", lines[3]);
         assert!(lines[3].starts_with("spira-lc serve: 1970-01-01T00:00:00"), "{}", lines[3]);
     }
 
@@ -1008,9 +939,6 @@ mod tests {
             commits_us: &snapshot.commits_us,
             reads: snapshot.reads,
             open_phase: snapshot.open,
-            lag_revs: None,
-            lag_ms: None,
-            too_old: false,
         };
         super::record_span(Some(&sink), &call);
         let file = std::fs::read_dir(&dir).unwrap().flatten().next().unwrap();
@@ -1092,7 +1020,7 @@ mod tests {
         let (started, started_rx) = std::sync::mpsc::channel::<()>();
         let settler = std::thread::spawn(move || {
             let ans = super::Answer { owed: vec![("sp-d".into(), "why".into())].into(), ..Default::default() };
-            super::reply_then_settle(&server, &ans, None, &mut |id, reason| {
+            super::reply_then_settle(&server, &ans, &mut |id, reason| {
                 assert_eq!((id, reason), ("sp-d", "why"));
                 let _ = started.send(());
                 let _ = release_rx.recv();
@@ -1221,7 +1149,7 @@ mod tests {
                 let (mut m, mut b) = (w, w);
                 let ans = super::answer(req, &mut m, &mut b, &content, &|| Err("no run dir here".to_string()));
                 flights.serve(stream.try_clone().unwrap(), |_| {
-                    super::reply_then_settle(&stream, &ans, None, &mut |id, reason| crate::reconcile_content::settle_owed(&mut b, id, reason));
+                    super::reply_then_settle(&stream, &ans, &mut |id, reason| crate::reconcile_content::settle_owed(&mut b, id, reason));
                 });
             });
         });
@@ -1369,7 +1297,7 @@ mod tests {
         let (req, _) = super::read_request(&mut reader).unwrap().unwrap();
         let (mut m, mut b) = (w, w);
         let ans = super::answer(req, &mut m, &mut b, content, &|| Err("no run dir here".to_string()));
-        super::reply_then_settle(&server, &ans, None, &mut |id, reason| crate::reconcile_content::settle_owed(&mut b, id, reason));
+        super::reply_then_settle(&server, &ans, &mut |id, reason| crate::reconcile_content::settle_owed(&mut b, id, reason));
         drop(server);
         asked.join().unwrap()
     }
@@ -1396,7 +1324,7 @@ mod tests {
         let (req, _) = super::read_request(&mut reader).unwrap().unwrap();
         let (mut m, mut b) = (&w, &w);
         let ans = super::answer(req, &mut m, &mut b, &c, &|| Err("no run dir here".to_string()));
-        super::reply_then_settle(&server, &ans, None, &mut |id, reason| crate::reconcile_content::settle_owed(&mut b, id, reason));
+        super::reply_then_settle(&server, &ans, &mut |id, reason| crate::reconcile_content::settle_owed(&mut b, id, reason));
         drop(server);
         let (code, _, err) = asked.join().unwrap();
         assert_eq!(code, 0, "{err}");
@@ -1490,7 +1418,7 @@ mod tests {
 
         let mut acting = caller.clone();
         acting.insert("SPIRA_CZAR_STAGE_DEADLOCK".into(), "act".into());
-        let req = super::Request { argv: argv.clone(), stdin: None, caller: acting, min_rev: None, task: None };
+        let req = super::Request { argv: argv.clone(), stdin: None, caller: acting, task: None };
         let ans = super::answer(req, &mut m, &mut b, &c, &|| Err("no run dir here".to_string()));
         assert_eq!(ans.code, 0, "{ans:?}");
         assert_eq!(*c.0.borrow(), ["update sp-a --add-label x"]);
@@ -1521,24 +1449,23 @@ mod tests {
     }
 
     #[test]
-    fn a_request_may_name_the_revision_its_answer_must_reflect_and_the_answer_names_the_one_it_does() {
+    fn a_min_rev_key_is_ignored_and_the_reply_header_names_no_revision() {
         use std::io::Read;
-        let mut wire = std::io::Cursor::new(b"{\"argv\":[\"show\",\"sp-a\"],\"min_rev\":42}\n".to_vec());
-        let (req, _) = super::read_request(&mut wire).unwrap().unwrap();
-        assert_eq!((req.argv.as_slice(), req.min_rev, req.stdin), (&["show".to_string(), "sp-a".to_string()][..], Some(42), None));
-        let mut wire = std::io::Cursor::new(b"{\"argv\":[\"show\"],\"min_rev\":\"x\"}\n".to_vec());
-        assert!(super::read_request(&mut wire).is_err(), "a min_rev that is not a revision is refused");
-        assert_eq!(super::read_request(&mut std::io::Cursor::new(b"[\"show\"]\n".to_vec())).unwrap().unwrap().0.min_rev, None);
+        let read = |wire: &[u8]| super::read_request(&mut std::io::Cursor::new(wire.to_vec()));
+        let shown = |wire: &[u8]| read(wire).map(|r| r.map(|r| r.0.argv)).map_err(|e| e.1);
+        let (with, _) = read(b"{\"argv\":[\"show\",\"sp-a\"],\"len\":0,\"min_rev\":42}\n").unwrap().unwrap();
+        let (without, _) = read(b"{\"argv\":[\"show\",\"sp-a\"],\"len\":0}\n").unwrap().unwrap();
+        assert_eq!(format!("{with:?}"), format!("{without:?}"), "a min_rev is a key read_request does not know");
+        assert_eq!(shown(b"{\"argv\":[\"show\"],\"min_rev\":42}\n"), shown(b"{\"argv\":[\"show\"]}\n"));
+        assert_eq!(shown(b"{\"argv\":[\"show\"],\"min_rev\":\"x\"}\n"), shown(b"{\"argv\":[\"show\"]}\n"));
 
         let (a, mut b) = std::os::unix::net::UnixStream::pair().unwrap();
-        super::write_response_at(&a, 0, "{}\n", "", Some(43)).unwrap();
         super::write_response(&a, 0, "{}\n", "").unwrap();
         drop(a);
         let mut got = String::new();
         b.read_to_string(&mut got).unwrap();
-        let heads: Vec<serde_json::Value> = got.lines().filter(|l| l.starts_with("{\"")).map(|l| serde_json::from_str(l).unwrap()).collect();
-        assert_eq!(heads[0]["rev"], 43, "{got}");
-        assert!(heads[1].get("rev").is_none(), "an answer that touched no store names no revision: {got}");
+        let head: serde_json::Value = serde_json::from_str(got.lines().next().unwrap()).unwrap();
+        assert!(head.get("rev").is_none(), "{got}");
     }
 
     // ---- content writes over the socket: one test per sub-verb ------------------------------
@@ -1608,7 +1535,7 @@ mod tests {
     }
 
     fn served_with(w: &World, c: &dyn crate::composed::Content, argv: &[&str], stdin: &str) -> super::Answer {
-        let req = super::Request { argv: argv.iter().map(|a| a.to_string()).collect(), stdin: Some(stdin.to_string()), caller: Default::default(), min_rev: None, task: None };
+        let req = super::Request { argv: argv.iter().map(|a| a.to_string()).collect(), stdin: Some(stdin.to_string()), caller: Default::default(), task: None };
         let (mut m, mut b) = (w, w);
         super::answer(req, &mut m, &mut b, c, &|| Err("no run dir here".to_string()))
     }
@@ -1636,7 +1563,6 @@ mod tests {
             argv: std::iter::once("content").chain(argv.iter().copied()).map(str::to_string).collect(),
             stdin: None,
             caller: caller.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
-            min_rev: None,
             task: None,
         };
         let (mut m, mut b) = (w, w);
@@ -1814,7 +1740,7 @@ mod tests {
     }
 
     fn create_bead_served(w: &World) -> super::Answer {
-        let req = super::Request { argv: ["create-bead", "sp-new", "--repo", "spira", "--ready"].map(String::from).to_vec(), stdin: None, caller: Default::default(), min_rev: None, task: None };
+        let req = super::Request { argv: ["create-bead", "sp-new", "--repo", "spira", "--ready"].map(String::from).to_vec(), stdin: None, caller: Default::default(), task: None };
         let (mut m, mut b) = (w, w);
         super::answer(req, &mut m, &mut b, &Content::default(), &|| Err("no run dir here".to_string()))
     }
@@ -1896,7 +1822,6 @@ mod tests {
             argv: ["backfill-claim-inputs", "--apply", "sp-new", "sp-set"].iter().map(|a| a.to_string()).collect(),
             stdin: None,
             caller: Default::default(),
-            min_rev: None,
             task: None,
         };
         let ans = super::answer(req, &mut Primitives { world: &w, stale: &["sp-set"] }, &mut &w, &Content::default(), &|| Err("no run dir here".to_string()));
@@ -2002,7 +1927,7 @@ mod tests {
         }
         let w = World::new();
         let (mut rec, mut bd) = (Rec(Vec::new()), &w);
-        let req = super::Request { argv: vec!["batch-progress".into()], stdin: Some("[{\"bead_id\":\"sp-a\"}]".into()), caller: Default::default(), min_rev: None, task: None };
+        let req = super::Request { argv: vec!["batch-progress".into()], stdin: Some("[{\"bead_id\":\"sp-a\"}]".into()), caller: Default::default(), task: None };
         super::answer(req, &mut rec, &mut bd, &Content::default(), &|| Err(String::new()));
         assert_eq!(rec.0, vec![vec!["batch-progress".to_string(), "--json".into(), "[{\"bead_id\":\"sp-a\"}]".into()]]);
     }
