@@ -138,7 +138,7 @@ fn a_row_that_is_not_a_repo_is_named_with_gits_stderr() {
 
 #[test]
 fn every_row_of_the_map_is_a_maintain_of_its_own_so_one_failure_stops_no_other() {
-    let world = json(&Snapshot { repos: vec![task::Repo { name: "ghost".into(), path: "/nowhere".into(), ..Default::default() }, task::Repo { name: "alpha".into(), path: "/a".into(), ..Default::default() }], ..idle() });
+    let world = json(&Snapshot { repos: vec![task::Repo { name: "ghost".into(), path: "nowhere".into(), ..Default::default() }, task::Repo { name: "alpha".into(), path: "a".into(), ..Default::default() }], ..idle() });
     let mut r = TaskRig::new(1, t::handler::<H>(SET).registration()).unwrap().double(task::OBSERVE, move |_| Ok(world.clone())).double(task::MAINTAIN, |i| if i.contains("ghost") { Err("ghost: not a repo".into()) } else { Ok("alpha: ok".into()) });
     let (_, stream, kind) = H::boot();
     r.tick(stream, kind).unwrap();
@@ -152,9 +152,9 @@ fn every_row_of_the_map_is_a_maintain_of_its_own_so_one_failure_stops_no_other()
 fn the_world_reads_its_repos_from_the_map_and_the_leg_is_registered_on_the_task() {
     let d = testkit::TempDir::new("reclaim-maintain");
     let map = d.path().join("repos");
-    std::fs::write(&map, "# name|path|land\nalpha|/a|main\nbeta|/b|main\n").unwrap();
+    std::fs::write(&map, "# name|path|land\nalpha|a|main\nbeta|b|main\n").unwrap();
     let w = spira_runtime::world::World { repo_map: map, ..Default::default() };
-    assert_eq!(w.repos().iter().map(|r| (r.name.as_str(), r.path.as_str())).collect::<Vec<_>>(), [("alpha", "/a"), ("beta", "/b")]);
+    assert_eq!(w.repos().iter().map(|r| (r.name.as_str(), r.path.as_str())).collect::<Vec<_>>(), [("alpha", "a"), ("beta", "b")]);
     let lost = spira_runtime::world::World { repo_map: d.path().join("missing"), ..Default::default() }.repos();
     let err = task::maintain(&runtime::ports::SysProc, &serde_json::to_string(&lost[0]).unwrap()).unwrap_err();
     assert!(err.starts_with("repo map") && err.contains("missing"), "an unreadable map is one reported row, not a dead observe: {err}");
