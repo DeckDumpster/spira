@@ -588,7 +588,7 @@ fn a_commit_that_holds_the_order_over_the_limit_is_reported_with_its_holder_and_
 #[test]
 fn a_commit_under_the_limit_reports_no_hold() {
     let inner = Counted::default();
-    let (m, seen) = holds_over(10, &inner);
+    let (m, seen) = holds_over(5_000, &inner);
     m.commit(0, &[put("a", "1")]).unwrap();
     assert!(seen.lock().unwrap().is_empty());
 }
