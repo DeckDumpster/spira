@@ -335,14 +335,15 @@ pub fn question<'a>(subject: &'a str, default: &'a str, body: &str) -> (mail::cm
         subject,
         kind: "question",
         default,
-        class: "",
+        class: "policy",
         bead: "",
         urgent: false,
         digest: false,
         dry_run: false,
         requested_by: "",
     };
-    (args, format!("## Question\n{subject}\n\n## Default\n{default}\n\n{body}\n"))
+    let basis = "Whether a recurring alert keeps paging is a choice about which alarms exist, so it is policy.";
+    (args, format!("## Question\n{subject}\n\n## Default\n{default}\n\n## Class basis\n{basis}\n\n{body}\n"))
 }
 
 impl Mailer for RealMailer {
@@ -417,7 +418,10 @@ mod tests {
     fn an_operator_question_keeps_the_cli_sends_fields() {
         let (a, body) = question("disk full", "prune", "detail");
         assert_eq!((a.mailbox, a.from, a.kind, a.default, a.subject), ("operator", Some("Incident <incident@spira>"), "question", "prune", "disk full"));
-        assert_eq!(body, "## Question\ndisk full\n\n## Default\nprune\n\ndetail\n");
+        assert_eq!(a.class, "policy");
+        assert_eq!(mail::cmds::class_refusal(a.class, a.default, &body), None);
+        assert!(body.starts_with("## Question\ndisk full\n\n## Default\nprune\n\n## Class basis\n"), "{body}");
+        assert!(body.ends_with("detail\n"), "{body}");
     }
 
     /// sp-7crdc8: the payload-hash label survives the read through the door, and no program is spawned.

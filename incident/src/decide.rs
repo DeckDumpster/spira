@@ -230,9 +230,11 @@ pub fn repo_names(repo_map_text: &str) -> Vec<String> {
     out
 }
 
-/// `_provenance`: `"<unit> on <host>: <path>"`.
+/// `_provenance`: `"<unit> on <host>: <path>"`, each part dropped when it is the `?` placeholder.
 pub fn provenance(unit: &str, host: &str, path: &str) -> String {
-    format!("{unit} on {host}: {path}")
+    let who = if unit == "?" || unit.is_empty() { String::new() } else { format!("{unit} ") };
+    let place = if path == "?" || path.is_empty() { String::new() } else { format!(": {path}") };
+    format!("{who}on {host}{place}")
 }
 
 /// `_unit_from_cgroup`'s string half: the last path component of a cgroup line, kept only
@@ -529,6 +531,9 @@ mod tests {
     #[test]
     fn provenance_format() {
         assert_eq!(provenance("spira-groom.service", "box1", "some/path"), "spira-groom.service on box1: some/path");
+        assert_eq!(provenance("u.service", "h", "?"), "u.service on h");
+        assert_eq!(provenance("u.service", "h", ""), "u.service on h");
+        assert_eq!(provenance("?", "h", "?"), "on h");
     }
 
     #[test]

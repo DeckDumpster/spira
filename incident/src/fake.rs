@@ -130,12 +130,17 @@ impl Bd for FakeBd {
     }
 }
 
+#[derive(Default)]
 pub(crate) struct FakeMailer {
     pub(crate) sent: RefCell<Vec<String>>,
+    pub(crate) defaults: RefCell<Vec<String>>,
+    pub(crate) bodies: RefCell<Vec<String>>,
 }
 impl Mailer for FakeMailer {
-    fn send_operator_question(&self, subject: &str, _default: &str, _body: &str) -> bool {
+    fn send_operator_question(&self, subject: &str, default: &str, body: &str) -> bool {
         self.sent.borrow_mut().push(subject.to_string());
+        self.defaults.borrow_mut().push(default.to_string());
+        self.bodies.borrow_mut().push(body.to_string());
         true
     }
 }

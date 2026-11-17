@@ -256,11 +256,16 @@ fn bump_and_note(
             .filter(|secs| *secs > 0)
             .map(|secs| format!(" over {}h {}m", secs / 3600, (secs % 3600) / 60))
             .unwrap_or_default();
-        let subject = format!("{} — recurred {n} times{age} with no fix holding. Mute it, or keep paging?", cfg.provenance);
+        let subject = format!(
+            "{id} \"{title}\" ({}, {reference}) — recurred {n} times{age} with no fix holding. Mute it, or keep paging?",
+            cfg.cause
+        );
+        let filed_by = if cfg.provenance.is_empty() || cfg.provenance.starts_with("on ") { String::new() } else { format!("Filed by {}\n", cfg.provenance) };
         let default = format!("mute this alert and leave {id} open for Ops to work unpaged; keep paging only if you want a decision on every recurrence");
         let evidence: Vec<u8> = payload.iter().take(2000).copied().collect();
         let body = format!(
-            "{id} is \"{title}\". It has fired {n} times{age} and each recurrence pages you while filing nothing new. Its current vital signs are below — if they show nothing you must act on, muting is the right answer.\n\n{}",
+            "{id} is \"{title}\". It has fired {n} times{age} and each recurrence pages you while filing nothing new. Its current vital signs are below — if they show nothing you must act on, muting is the right answer.\n{filed_by}Last run: recurrence {n} at {}\n\n{}",
+            iso_now_public(now),
             String::from_utf8_lossy(&evidence)
         );
         mailer.send_operator_question(&subject, &default, &body);
@@ -393,9 +398,8 @@ fn file_new(
     FileOutcome::Filed(id)
 }
 
-/// `_provenance`: "<unit> on <host>: <path>".
 pub fn provenance(unit: &str, host: &str, path: &str) -> String {
-    format!("{unit} on {host}: {path}")
+    decide::provenance(unit, host, path)
 }
 
 /// A minimal, dependency-free RFC3339/ISO-8601 UTC parser for the subset bd actually
@@ -478,7 +482,7 @@ mod tests {
     #[test]
     fn first_filing_creates_a_bead() {
         let bd = FakeBd::new();
-        let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+        let mailer = FakeMailer::default();
         let clock = FixedClock(1_000_000);
         let known = vec!["spira".to_string()];
         let mut log = vec![];
@@ -493,7 +497,7 @@ mod tests {
     #[test]
     fn a_not_declared_red_for_a_retired_key_files_no_bead() {
         let bd = FakeBd::new();
-        let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+        let mailer = FakeMailer::default();
         let clock = FixedClock(1_000_000);
         let known = vec!["spira".to_string()];
         let retired = vec!["spira.cert_prices".to_string()];
@@ -515,7 +519,7 @@ mod tests {
     #[test]
     fn second_filing_is_a_recurrence_not_a_new_bead() {
         let bd = FakeBd::new();
-        let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+        let mailer = FakeMailer::default();
         let clock = FixedClock(1_000_000);
         let known = vec!["spira".to_string()];
         let mut log = vec![];
@@ -537,7 +541,7 @@ mod tests {
     #[test]
     fn a_second_filing_from_a_different_repo_is_a_recurrence_not_a_new_bead() {
         let bd = FakeBd::new();
-        let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+        let mailer = FakeMailer::default();
         let clock = FixedClock(1_000_000);
         let known = vec!["spira".to_string(), "dumpstar".to_string()];
         let mut log = vec![];
@@ -556,7 +560,7 @@ mod tests {
     #[test]
     fn ten_unchanged_recurrences_leave_one_counter_line_and_no_per_tick_notes() {
         let bd = FakeBd::new();
-        let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+        let mailer = FakeMailer::default();
         let clock = FixedClock(1_000_000);
         let known = vec!["spira".to_string()];
         let mut log = vec![];
@@ -577,7 +581,7 @@ mod tests {
     #[test]
     fn five_payloads_under_one_reference_make_one_bead_and_four_notes() {
         let bd = FakeBd::new();
-        let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+        let mailer = FakeMailer::default();
         let clock = FixedClock(1_000_000);
         let known = vec!["spira".to_string()];
         let mut log = vec![];
@@ -600,7 +604,7 @@ mod tests {
     #[test]
     fn three_identical_filings_write_the_payload_note_exactly_once() {
         let bd = FakeBd::new();
-        let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+        let mailer = FakeMailer::default();
         let clock = FixedClock(1_000_000);
         let known = vec!["spira".to_string()];
         let mut log = vec![];
@@ -624,7 +628,7 @@ mod tests {
     #[test]
     fn unreachable_database_stays_spooled() {
         let bd = FakeBd { reachable: false, next_id: RefCell::new(1), ..Default::default() };
-        let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+        let mailer = FakeMailer::default();
         let clock = FixedClock(1_000_000);
         let known = vec!["spira".to_string()];
         let mut log = vec![];
@@ -639,7 +643,7 @@ mod tests {
     #[test]
     fn an_unanswering_lifecycle_machine_stays_spooled() {
         let bd = FakeBd { reachable: true, lc_down: true, next_id: RefCell::new(1), ..Default::default() };
-        let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+        let mailer = FakeMailer::default();
         let clock = FixedClock(1_000_000);
         let known = vec!["spira".to_string()];
         let mut log = vec![];
@@ -657,7 +661,7 @@ mod tests {
     #[test]
     fn a_recurrence_of_a_landed_incident_files_a_fresh_bead_citing_its_predecessor() {
         let bd = FakeBd::new();
-        let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+        let mailer = FakeMailer::default();
         let clock = FixedClock(1_790_812_800); // 2026-10-01T00:00:00Z
         let known = vec!["spira".to_string()];
         let c = cfg(&known);
@@ -697,7 +701,7 @@ mod tests {
     #[test]
     fn an_alarm_whose_reference_resolves_to_a_closed_bead_files_a_fresh_owner_with_the_evidence() {
         let bd = FakeBd::new();
-        let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+        let mailer = FakeMailer::default();
         let clock = FixedClock(1_792_800_000); // 2026-10-23, well past the 7-day filing window
         let known = vec!["spira".to_string()];
         let c = cfg(&known);
@@ -722,7 +726,7 @@ mod tests {
     #[test]
     fn an_alarm_with_no_bead_history_stays_an_inbox_note() {
         let bd = FakeBd::new();
-        let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+        let mailer = FakeMailer::default();
         let clock = FixedClock(1_792_800_000);
         let known = vec!["spira".to_string()];
         let mut log = vec![];
@@ -736,7 +740,7 @@ mod tests {
     #[test]
     fn a_recurrence_across_a_supersede_to_a_live_bead_files_nothing() {
         let bd = FakeBd::new();
-        let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+        let mailer = FakeMailer::default();
         let clock = FixedClock(1_790_812_800);
         let known = vec!["spira".to_string()];
         let c = cfg(&known);
@@ -768,7 +772,7 @@ mod tests {
     #[test]
     fn a_recurrence_of_a_submitted_incident_still_reopens_it() {
         let bd = FakeBd::new();
-        let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+        let mailer = FakeMailer::default();
         let clock = FixedClock(1_790_812_800);
         let known = vec!["spira".to_string()];
         let c = cfg(&known);
@@ -786,11 +790,56 @@ mod tests {
         assert_eq!(*bd.reopened.borrow(), vec!["sp-submitted".to_string()]);
     }
 
+    #[test]
+    fn a_fenrir_page_names_the_incident_not_the_filing_process() {
+        let bd = FakeBd::new();
+        let mailer = FakeMailer::default();
+        let known = vec!["spira".to_string()];
+        let mut c = cfg(&known);
+        let prov = decide::provenance("spira-run-sentinel_2dpass-landing.service", "agent-swarm-test", "?");
+        c.provenance = &prov;
+        c.cause = "gate-unjudged";
+        c.fenrir_at = 5;
+        let mut log = vec![];
+        let mut id = String::new();
+        for _ in 0..6 {
+            let FileOutcome::Filed(i) = file_one(&bd, &mailer, &FixedClock(1_000_000), &c, "gate-unjudged:remarkable-pipeline:phase-cap", "remarkable-pipeline's gate cannot judge: phase-cap", b"p", "spira,incident", &mut log) else { panic!() };
+            id = i;
+        }
+        let sent = mailer.sent.borrow();
+        assert_eq!(sent.len(), 1);
+        let s = &sent[0];
+        assert!(s.contains(&id) && s.contains("phase-cap") && s.contains("gate-unjudged"), "{s}");
+        assert!(!s.contains("spira-run-sentinel") && !s.contains(": ?"), "{s}");
+        let body = &mailer.bodies.borrow()[0];
+        assert!(body.contains("Filed by spira-run-sentinel_2dpass-landing.service on agent-swarm-test\n"), "{body}");
+        assert!(body.contains("Last run: recurrence 5 at "), "{body}");
+    }
+
+    #[test]
+    fn a_failed_unit_fenrir_carries_its_run_and_exit_status() {
+        let bd = FakeBd::new();
+        let mailer = FakeMailer::default();
+        let known = vec!["spira".to_string()];
+        let mut c = cfg(&known);
+        c.fenrir_at = 1;
+        let payload = crate::intake::systemd_payload("x.service", "h", "2026-11-17T00:00:00Z", "Result=exit-code\nExecMainStatus=3\nInvocationID=abc\n");
+        let mut log = vec![];
+        for _ in 0..2 {
+            file_one(&bd, &mailer, &FixedClock(1_000_000), &c, "incident:x.service", "incident: x.service failed", payload.as_bytes(), "spira,incident", &mut log);
+        }
+        let sent = mailer.sent.borrow();
+        assert_eq!(sent.len(), 1);
+        assert!(sent[0].contains("x.service"), "{}", sent[0]);
+        let body = &mailer.bodies.borrow()[0];
+        assert!(body.contains("ExecMainStatus=3") && body.contains("InvocationID=abc"), "{body}");
+    }
+
     // covers: UC-ops-detection-remediation-07
     #[test]
     fn fenrir_threshold_escalates_exactly_once() {
         let bd = FakeBd::new();
-        let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+        let mailer = FakeMailer::default();
         let clock = FixedClock(1_000_000);
         let known = vec!["spira".to_string()];
         let mut c = cfg(&known);
@@ -816,7 +865,7 @@ mod tests {
     #[test]
     fn declared_repo_is_written_to_the_lifecycle_row() {
         let bd = FakeBd::new();
-        let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+        let mailer = FakeMailer::default();
         let clock = FixedClock(1_000_000);
         let known = vec!["spira".to_string(), "dumpstar".to_string()];
         let mut c = cfg(&known);
@@ -831,7 +880,7 @@ mod tests {
     #[test]
     fn undeclared_repo_gets_needs_repo_triage() {
         let bd = FakeBd::new();
-        let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+        let mailer = FakeMailer::default();
         let clock = FixedClock(1_000_000);
         let known = vec!["spira".to_string()];
         let mut c = cfg(&known);
@@ -849,7 +898,7 @@ mod tests {
     #[test]
     fn delivers_default_is_action() {
         let bd = FakeBd::new();
-        let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+        let mailer = FakeMailer::default();
         let clock = FixedClock(1_000_000);
         let known = vec!["spira".to_string()];
         let mut log = vec![];
@@ -869,7 +918,7 @@ mod tests {
         let run_dir = testkit::TempDir::new("sp-0ekp7-run-rs-note-in");
         let ledger = run_dir.join("sop/applied.jsonl");
         let bd = FakeBd::new();
-        let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+        let mailer = FakeMailer::default();
         let clock = FixedClock(1_000_000);
         let known = vec!["spira".to_string()];
         let mut c = cfg(&known);
@@ -895,7 +944,7 @@ mod tests {
     fn delivers_note_outside_run_falls_back_to_action_and_logs_outside() {
         let run_dir = testkit::TempDir::new("sp-0ekp7-run-rs-note-out");
         let bd = FakeBd::new();
-        let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+        let mailer = FakeMailer::default();
         let clock = FixedClock(1_000_000);
         let known = vec!["spira".to_string()];
         let mut c = cfg(&known);
@@ -919,7 +968,7 @@ mod tests {
     #[test]
     fn delivers_action_mode_writes_that_label_verbatim() {
         let bd = FakeBd::new();
-        let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+        let mailer = FakeMailer::default();
         let clock = FixedClock(1_000_000);
         let known = vec!["spira".to_string()];
         let mut c = cfg(&known);
@@ -938,7 +987,7 @@ mod tests {
     #[test]
     fn delivers_unrecognised_value_writes_no_label_and_logs_it() {
         let bd = FakeBd::new();
-        let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+        let mailer = FakeMailer::default();
         let clock = FixedClock(1_000_000);
         let known = vec!["spira".to_string()];
         let mut c = cfg(&known);
@@ -981,7 +1030,7 @@ mod tests {
     #[test]
     fn n_filings_of_one_ref_leave_one_bead_and_log_n_minus_one_recurrences_whatever_the_labels_or_repo() {
         let bd = FakeBd::new();
-        let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+        let mailer = FakeMailer::default();
         let clock = FixedClock(1_000_000);
         let known = vec!["spira".to_string(), "dumpstar".to_string()];
         let mut log = vec![];
@@ -1003,7 +1052,7 @@ mod tests {
         let clock = FixedClock(1_790_812_800); // 2026-10-01
         for (closed_at, reopened) in [("2026-09-28T00:00:00Z", true), ("2026-09-01T00:00:00Z", false)] {
             let bd = FakeBd::new();
-            let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+            let mailer = FakeMailer::default();
             bd.rows.borrow_mut().push(row("sp-closed", BeadStatus::Closed, "incident:lb", vec![], Some(closed_at)));
             let mut log = vec![];
             let out = file_one(&bd, &mailer, &clock, &c, "incident:lb", "t", b"p", "spira,incident", &mut log);
@@ -1018,7 +1067,7 @@ mod tests {
     #[test]
     fn the_dedup_lookup_is_label_keyed_makes_no_bd_show_and_still_finds_a_legacy_bead() {
         let bd = FakeBd::new();
-        let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+        let mailer = FakeMailer::default();
         let clock = FixedClock(1_000_000);
         let known = vec!["spira".to_string()];
         let c = cfg(&known);
@@ -1037,7 +1086,7 @@ mod tests {
     #[test]
     fn an_undeclared_repo_leaves_a_note_naming_the_missing_declaration() {
         let bd = FakeBd::new();
-        let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+        let mailer = FakeMailer::default();
         let known = vec!["spira".to_string()];
         let mut c = cfg(&known);
         c.repo_declared = None;
@@ -1054,7 +1103,7 @@ mod tests {
         let known = vec!["spira".to_string()];
         for exempt in [false, true] {
             let bd = FakeBd::new();
-            let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+            let mailer = FakeMailer::default();
             let mut c = cfg(&known);
             c.fenrir_at = 3;
             c.fenrir_exempt = exempt;
