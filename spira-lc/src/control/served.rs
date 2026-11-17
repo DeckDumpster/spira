@@ -98,8 +98,9 @@ fn modeled(path: &str, opts: Options, build_ms: u64) -> Result<Served, String> {
 
 fn open(path: &str) -> Result<Store<Served>, String> {
     let history_bytes = spira_config::process::cfg_parse::<usize>("SPIRA_LC_HISTORY_RING_BYTES")?;
-    let metrics_endpoint = spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok();
-    let backend = modeled(path, Options { history_bytes, wall: Arc::new(Wall), metrics_endpoint, ..Options::default() }, BUILD_READ_MS)?;
+    let endpoint = spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok();
+    let metrics = Some(spira_otel::metrics::MetricsSink::new(endpoint.as_deref(), "spira-lc", std::time::Duration::from_millis(250)));
+    let backend = modeled(path, Options { history_bytes, wall: Arc::new(Wall), metrics, ..Options::default() }, BUILD_READ_MS)?;
     let floor = lock_floor_ms()?;
     let ports = Ports {
         mono: Arc::new(MonotonicClock::new()),

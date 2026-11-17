@@ -236,6 +236,14 @@ struct CheckpointState {
     stop: bool,
 }
 
+/// One PASSIVE checkpoint, and whether it copied every frame the WAL held: PASSIVE reports no
+/// `busy` for frames a reader's snapshot kept it from copying.
+fn passive_complete(conn: &Connection) -> bool {
+    conn.prepare_cached("PRAGMA wal_checkpoint(PASSIVE)")
+        .and_then(|mut s| s.query_row([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?))))
+        .is_ok_and(|(busy, log, done)| busy == 0 && done >= log)
+}
+
 /// What a commit hands the checkpointer thread: a count and a wake-up, no I/O.
 struct Checkpointer {
     state: Mutex<CheckpointState>,
@@ -275,15 +283,12 @@ impl Checkpointer {
             };
             wait = GAUGE_EVERY;
             if seen >= self.every {
-                let done = conn
-                    .prepare_cached("PRAGMA wal_checkpoint(PASSIVE)")
-                    .and_then(|mut s| s.query_row([], |r| r.get::<_, i64>(0)))
-                    .is_ok_and(|busy| busy == 0);
-                if done {
+                if passive_complete(&conn) {
                     lock(&self.state).pending -= seen;
                 } else {
                     wait = RETRY_AFTER;
                 }
+                last_pushed = None;
             }
             if last_pushed.is_none_or(|t: std::time::Instant| t.elapsed() >= GAUGE_EVERY) {
                 push(lock(&self.state).pending, &mut last_pushed);
@@ -335,7 +340,7 @@ pub struct Options {
     /// Commits between background PASSIVE checkpoints.
     pub checkpoint_every: u64,
     /// Where the checkpointer reports its gauge; `None` reports nowhere.
-    pub metrics_endpoint: Option<String>,
+    pub metrics: Option<spira_otel::metrics::MetricsSink>,
 }
 
 /// See [`Options::commit_probe`].
@@ -356,7 +361,7 @@ impl Default for Options {
             commit_probe: None,
             day_receipts: true,
             checkpoint_every: CHECKPOINT_EVERY,
-            metrics_endpoint: None,
+            metrics: None,
         }
     }
 }
@@ -964,10 +969,7 @@ impl SqliteBackend {
         });
         let checkpoint_conn = connect(path)?;
         checkpoint_conn.busy_timeout(Duration::ZERO).map_err(db)?;
-        let metrics = opts
-            .metrics_endpoint
-            .as_deref()
-            .map(|e| spira_otel::metrics::MetricsSink::new(Some(e), "spira-lc", Duration::from_millis(250)));
+        let metrics = opts.metrics;
         let thread = {
             let c = checkpointer.clone();
             std::thread::Builder::new()
@@ -1878,6 +1880,22 @@ impl Backend for SqliteBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_passive_checkpoint_a_reader_holds_back_is_not_complete() {
+        let dir = testkit::TempDir::new("sqlite-passive-partial");
+        let path = dir.path().join("s.db");
+        let b = SqliteBackend::open(&path, Options { checkpoint_every: u64::MAX, ..Options::default() }).unwrap();
+        let put = |prev: Option<Rev>, n: u64| Write::Put { key: "k".into(), value: vec![1; 4096], create_rev: Rev::new(1, 0), prev: prev.map(|_| Rev::new(n, 0)) };
+        b.commit(0, &[put(None, 0)]).unwrap();
+        let reader = connect(&path).unwrap();
+        reader.execute_batch("BEGIN; SELECT count(*) FROM latest;").unwrap();
+        b.commit(1, &[put(Some(Rev::new(1, 0)), 1)]).unwrap();
+        let ck = connect(&path).unwrap();
+        assert!(!passive_complete(&ck), "frames past the reader's snapshot were counted as copied");
+        reader.execute_batch("COMMIT").unwrap();
+        assert!(passive_complete(&ck));
+    }
 
     #[test]
     fn a_path_reopens_after_its_handle_drops_though_a_forked_child_holds_the_lock_descriptor() {
