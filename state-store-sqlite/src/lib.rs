@@ -528,6 +528,9 @@ const USAGE_KEYS: &str =
 const VERSION_USAGE: &str = "SELECT key, main, length(CAST(coalesce(value, X'') AS BLOB)) FROM versions
      WHERE (key, main) > (?1, ?2) ORDER BY key, main LIMIT ?3";
 
+/// The head's newest version of `?1`: one read of `latest`'s primary key.
+const GET_LATEST: &str = "SELECT main, sub, value, create_main, create_sub FROM latest WHERE key = ?1";
+
 /// The head's live keys in `[?1, ?2)`: one key-ordered range over `latest`, reading its page.
 const LATEST_BOUNDED: &str = "SELECT key, main, sub, value, create_main, create_sub FROM latest
      WHERE key >= ?1 AND key < ?2 ORDER BY key LIMIT ?3";
@@ -797,6 +800,37 @@ fn range_in_state_at(
         }
     }
     out.truncate(limit);
+    Ok(out)
+}
+
+/// The head's newest `limit` live keys in `[prefix, hi)` opened at or after `since`.
+fn newest_opened_at_head(
+    conn: &Connection,
+    snap: &Snapshot,
+    prefix: &[u8],
+    hi: Option<&[u8]>,
+    since: i64,
+    limit: usize,
+    deadline: &dyn Fn() -> Result<()>,
+) -> Result<Vec<(String, Version)>> {
+    deadline()?;
+    let mut stmt = conn.prepare_cached(NEWEST_OPENED).map_err(db)?;
+    stmt.reset_status(rusqlite::StatementStatus::VmStep);
+    let mut out = Vec::new();
+    {
+        let mut rows = stmt
+            .query(params![since, prefix, hi, i64::try_from(limit).unwrap_or(i64::MAX)])
+            .map_err(db)?;
+        while let Some(r) = rows.next().map_err(db)? {
+            deadline()?;
+            let key: Vec<u8> = r.get(0).map_err(db)?;
+            if let Some(v) = version_row(r, 1).map_err(db)? {
+                out.push((key_of(key)?, v));
+            }
+        }
+    }
+    let n = stmt.reset_status(rusqlite::StatementStatus::VmStep);
+    snap.steps.fetch_add(u64::try_from(n).unwrap_or(0), Ordering::Relaxed);
     Ok(out)
 }
 
@@ -1429,9 +1463,7 @@ impl Backend for SqliteBackend {
                     }
                 }
             }
-            conn.prepare_cached(
-                "SELECT main, sub, value, create_main, create_sub FROM latest WHERE key = ?1",
-            )
+            conn.prepare_cached(GET_LATEST)
             .and_then(|mut s| {
                 s.query_row(params![key.as_bytes()], |r| version_row(r, 0))
                     .optional()
@@ -1476,8 +1508,8 @@ impl Backend for SqliteBackend {
         })
     }
 
-    /// The newest rows by `opened_at` from `latest_by_opened`; below the head, the scan the
-    /// default makes.
+    /// The newest rows by `opened_at`: a backward range of `latest_by_opened`, below the head
+    /// corrected by the history ring, a key it says was written since taking its version at `at`.
     fn range_newest_opened(
         &self,
         prefix: &str,
@@ -1485,36 +1517,36 @@ impl Backend for SqliteBackend {
         limit: usize,
         at: u64,
     ) -> Result<Vec<(String, Version)>> {
-        let indexed = self.read(|conn, snap, deadline| {
+        self.read(|conn, snap, deadline| {
             snap.readable(at)?;
-            if at != snap.head {
-                return Ok(None);
-            }
-            deadline()?;
             let hi = successor(prefix.as_bytes());
-            let mut stmt = conn.prepare_cached(NEWEST_OPENED).map_err(db)?;
-            stmt.reset_status(rusqlite::StatementStatus::VmStep);
-            let mut out = Vec::new();
-            {
-                let mut rows = stmt
-                    .query(params![since, prefix.as_bytes(), hi, i64::try_from(limit).unwrap_or(i64::MAX)])
-                    .map_err(db)?;
-                while let Some(r) = rows.next().map_err(db)? {
-                    deadline()?;
-                    let key: Vec<u8> = r.get(0).map_err(db)?;
-                    if let Some(v) = version_row(r, 1).map_err(db)? {
-                        out.push((key_of(key)?, v));
-                    }
-                }
+            if at == snap.head {
+                return newest_opened_at_head(conn, snap, prefix.as_bytes(), hi.as_deref(), since, limit, deadline);
             }
-            let n = stmt.reset_status(rusqlite::StatementStatus::VmStep);
-            snap.steps.fetch_add(u64::try_from(n).unwrap_or(0), Ordering::Relaxed);
-            Ok(Some(out))
-        })?;
-        match indexed {
-            Some(rows) => Ok(rows),
-            None => state_store::backend::range_newest_opened_by_scan(self, prefix, since, limit, at),
-        }
+            let touched = lock(&self.0.history).touched_after(prefix.as_bytes(), hi.as_deref(), at)?;
+            let rows = newest_opened_at_head(
+                conn,
+                snap,
+                prefix.as_bytes(),
+                hi.as_deref(),
+                since,
+                limit.saturating_add(touched.len()),
+                deadline,
+            )?;
+            let mut merged: Vec<(i64, String, Version)> = rows
+                .into_iter()
+                .filter(|(k, _)| touched.binary_search_by(|(t, _)| t.as_str().cmp(k)).is_err())
+                .filter_map(|(k, v)| Some((state_store::backend::opened_at_of(&v.value)?, k, v)))
+                .collect();
+            merged.extend(touched.into_iter().filter_map(|(k, v)| {
+                let v = v?;
+                let opened = state_store::backend::opened_at_of(&v.value).filter(|o| *o >= since)?;
+                Some((opened, k, v))
+            }));
+            merged.sort_by(|a, b| (b.0, &b.1).cmp(&(a.0, &a.1)));
+            merged.truncate(limit);
+            Ok(merged.into_iter().map(|(_, k, v)| (k, v)).collect())
+        })
     }
 
     /// The key ranges outside `skip`, read from the key index, so no skipped key is visited.
@@ -2140,7 +2172,7 @@ mod tests {
         assert_eq!(keys[0], "p/025001");
         assert_eq!(page[0].1.mod_rev, Rev::new(VERSIONS as u64, 25_001), "the newest version");
         assert!(steps <= 20 * PAGE as u64, "{steps} VM steps for a page of {PAGE}");
-        for sql in [LATEST_BOUNDED, LATEST_OPEN, STATE_BOUNDED, STATE_OPEN] {
+        for sql in [LATEST_BOUNDED, LATEST_OPEN, STATE_BOUNDED, STATE_OPEN, GET_LATEST] {
             for step in plan(&b, sql) {
                 assert!(
                     !step.starts_with("SCAN") && !step.contains("TEMP B-TREE"),
@@ -2151,8 +2183,7 @@ mod tests {
         for sql in [STATE_BOUNDED, STATE_OPEN] {
             assert!(plan(&b, sql).iter().any(|s| s.contains("latest_by_state")), "{sql}");
         }
-        let get = "SELECT main, sub, value, create_main, create_sub FROM latest WHERE key = ?1";
-        let steps = plan(&b, get);
+        let steps = plan(&b, GET_LATEST);
         assert!(steps.iter().all(|s| s.contains("PRIMARY KEY") && !s.starts_with("SCAN")), "{steps:?}");
     }
 
@@ -2681,6 +2712,41 @@ mod tests {
             assert!(!step.starts_with("SCAN") && !step.contains("TEMP B-TREE"), "{step}");
         }
         assert!(plan(&b, NEWEST_OPENED).iter().any(|s| s.contains("latest_by_opened")));
+    }
+
+    /// Below the head the newest rows are still the index's, with the ring's keys judged by
+    /// their version at `at`: a key reopened since is not newest then, one that ended since is.
+    #[test]
+    fn the_newest_opened_below_the_head_reads_the_index_and_judges_touched_keys_at_the_revision() {
+        let dir = testkit::TempDir::new("sqlite-newest-below");
+        let b = SqliteBackend::open(&dir.path().join("n.db"), Options::default()).unwrap();
+        let doc = |opened: i64| serde_json::to_vec(&serde_json::json!({ "data": { "opened_at": opened } })).unwrap();
+        let put = |key: String, opened: i64, prev: Option<Rev>| Write::Put { key, value: doc(opened), create_rev: Rev::new(1, 0), prev };
+        let batch: Vec<Write> = (0..5_000).map(|i| put(format!("r/{i:05}"), 1_000 + i, None)).collect();
+        let at = b.commit(b.head().unwrap(), &batch).unwrap();
+        let newest = b.get("r/04999", at).unwrap().unwrap();
+        let old = b.get("r/00003", at).unwrap().unwrap();
+        let gone = b.get("r/04998", at).unwrap().unwrap();
+        b.commit(
+            at,
+            &[
+                put("r/04999".into(), 1, Some(newest.create_rev)),
+                put("r/00003".into(), 99_999, Some(old.create_rev)),
+                put("r/new".into(), 88_888, None),
+                Write::Delete { key: "r/04998".into(), prev: gone.mod_rev },
+            ],
+        )
+        .unwrap();
+        b.take_read_steps();
+        let rows = b.range_newest_opened("r/", i64::MIN, 5, at).unwrap();
+        let steps = b.take_read_steps();
+        assert!(steps <= 400, "{steps} VM steps for 5 of 5000 rows");
+        let keys: Vec<&str> = rows.iter().map(|(k, _)| k.as_str()).collect();
+        assert_eq!(keys, ["r/04999", "r/04998", "r/04997", "r/04996", "r/04995"]);
+        for (since, limit) in [(i64::MIN, 5), (5_990, 50), (1_000, 7)] {
+            let by_scan = state_store::backend::range_newest_opened_by_scan(&b, "r/", since, limit, at).unwrap();
+            assert_eq!(b.range_newest_opened("r/", since, limit, at).unwrap(), by_scan, "{since} {limit}");
+        }
     }
 
     /// The migration counts in `user_version`, and a store from a binary that knows more

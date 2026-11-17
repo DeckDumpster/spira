@@ -1121,9 +1121,9 @@ fn a_state_filtered_page_is_one_bounded_read_of_the_state_index() {
 /// `ROUNDS` rounds cut `100 * i` seconds before `AT`, all but `open` ended.
 const ROUNDS: usize = 60;
 
-fn many_rounds(r: &Rig<Counting>, open: &[usize]) {
+fn many_rounds<B: Backend>(r: &Rig<B>, from: usize, to: usize, open: &[usize]) {
     use lifecycle::batch::BatchState;
-    for i in 0..ROUNDS {
+    for i in from..to {
         let (id, round) = (format!("sp-{i:03}"), format!("b-{i:03}"));
         r.certified(&id, T1);
         let members = vec![(id, T1.to_string())];
@@ -1145,7 +1145,7 @@ fn many_rounds(r: &Rig<Counting>, open: &[usize]) {
 #[test]
 fn list_batches_reads_only_the_rounds_it_shows() {
     let r = Rig::on(Counting::default(), &clock());
-    many_rounds(&r, &[25, 33]);
+    many_rounds(&r, 0, ROUNDS, &[25, 33]);
     let ids = |argv: &[&str]| -> (Vec<String>, Vec<(&'static str, String, usize)>) {
         r.s.contract().backend().take();
         let (rc, out) = r.lc(argv);
@@ -1180,6 +1180,30 @@ fn list_batches_reads_only_the_rounds_it_shows() {
     let (page, reads) = ids(&["list", "--batches", "--limit", "3", "--after", "b-010"]);
     assert_eq!(page, of(&[11, 12, 13]));
     bounded(&reads);
+}
+
+/// On the real store, what `list --batches` costs does not grow with the rounds behind it: the
+/// VM steps of a bare list and of a window are the same over 40 rounds and over 240.
+#[test]
+fn list_batches_costs_the_same_over_a_larger_history_on_the_real_store() {
+    let dir = testkit::TempDir::new("lc-batches-steps");
+    let b = SqliteBackend::open(&dir.path().join("c.db"), state_store_sqlite::Options::default()).unwrap();
+    let r = Rig::on(b, &clock());
+    let steps = |argv: &[&str]| -> u64 {
+        r.s.contract().backend().take_read_steps();
+        let (rc, out) = r.lc(argv);
+        assert_eq!(rc, 0, "{argv:?}: {out}");
+        r.s.contract().backend().take_read_steps()
+    };
+    let probes = [&["list", "--batches"][..], &["list", "--batches", "--window", "300"], &["list", "--batches", "--limit", "5", "--after", "b-010"]];
+    many_rounds(&r, 0, 40, &[35]);
+    let small: Vec<u64> = probes.iter().map(|p| steps(p)).collect();
+    r.s.contract().backend().take_read_steps();
+    many_rounds(&r, 40, 240, &[]);
+    let large: Vec<u64> = probes.iter().map(|p| steps(p)).collect();
+    for ((p, s), l) in probes.iter().zip(&small).zip(&large) {
+        assert!(*l <= *s + *s / 4 + 50, "{p:?}: {s} VM steps over 40 rounds, {l} over 240");
+    }
 }
 
 /// Every state the round machine can be in is either listed as open or is terminal: a round in
