@@ -248,8 +248,8 @@ impl Store {
                 let runes = b["runes"].as_array().map(|r| r.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default();
                 let lifecycle = lifecycle.remove(&id).ok_or_else(|| format!("spira-lc claimable: {id} has no row"))?;
                 let content = match b.get("content").filter(|c| !c.is_null()) {
-                    Some(c) => Ok(rank::parse_ready(&c.to_string()).map_err(|e| format!("spira-lc claimable: {id}: {e}"))?.remove(0)),
-                    None => Err(content_error.clone().unwrap_or_else(|| "the content store holds no plan row".into())),
+                    Some(c) => Ok(Some(rank::parse_ready(&c.to_string()).map_err(|e| format!("spira-lc claimable: {id}: {e}"))?.remove(0))),
+                    None => content_error.clone().map_or(Ok(None), Err),
                 };
                 let express = rank::express_ids(&serde_json::Value::Array(vec![b["row"].clone()]).to_string())?.contains(&id);
                 Ok(ViewRow { id, verdict, runes, lifecycle, content, express })
@@ -386,8 +386,8 @@ pub struct ViewRow {
     pub verdict: crate::verdicts::Kind,
     pub runes: Vec<String>,
     pub lifecycle: LifecycleRow,
-    /// The plan row `claimable` carried: what ranking and scope read.
-    pub content: Result<ReadyRow, String>,
+    /// The plan row `claimable` carried: what ranking and scope read. `None` is a bead the content store holds no plan row for; an `Err` is a content store that could not be read.
+    pub content: Result<Option<ReadyRow>, String>,
     pub express: bool,
 }
 

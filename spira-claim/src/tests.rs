@@ -317,6 +317,14 @@ mod claim_view_read {
             self.seen.lock().unwrap().push(argv.to_vec());
             let words: Vec<&str> = argv.iter().map(String::as_str).collect();
             let (code, out, err) = match words.as_slice() {
+                ["claimable"] if self.view_code == NO_PLAN_ROW => (
+                    0,
+                    json!({ "rev": 1, "cannot_tell": 0, "content_error": null, "beads": [
+                        { "bead_id": "sp-a", "verdict": "claimable", "blocker": null, "runes": ["builder"], "row": row("sp-a", "READY"), "content": null },
+                    ] })
+                    .to_string(),
+                    String::new(),
+                ),
                 ["claimable"] if self.view_code != 0 => (self.view_code, String::new(), "the control store is unreadable".to_string()),
                 ["claimable"] => (
                     0,
@@ -345,6 +353,8 @@ mod claim_view_read {
             Ok(Reply { code, out, err })
         }
     }
+
+    const NO_PLAN_ROW: i32 = -1;
 
     fn setup(view_code: i32) -> (Arc<Double>, Store) {
         let svc = Arc::new(Double { seen: Mutex::new(Vec::new()), view_code });
@@ -455,6 +465,14 @@ mod claim_view_read {
         assert_eq!((n.code, n.out.as_str()), (0, "0"), "{n:?}");
         let n = env_over(|env| ready_count_over(&Args::parse(&["".into()]).unwrap(), env, &st));
         assert_eq!((n.code, n.out.as_str()), (0, "1"), "{n:?}");
+    }
+
+    #[test]
+    fn a_claimable_bead_with_no_plan_row_is_not_ranked_and_does_not_fail_the_read() {
+        let (_, st) = setup(NO_PLAN_ROW);
+        let v = env_over(|env| viewed(&Args::parse(&[]).unwrap(), env, &st).unwrap());
+        assert!(v.rows.is_empty(), "{:?}", ids(&v.rows));
+        assert!(v.lifecycle.contains_key("sp-a"));
     }
 
     #[test]
