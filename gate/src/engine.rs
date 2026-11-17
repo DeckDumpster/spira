@@ -1849,6 +1849,9 @@ impl<'w, W: World> Trial<'w, W> {
             e("HOME", &self.s.home_dir),
             e("TERM", "dumb"),
         ];
+        if let Some(t) = &self.s.tmpdir {
+            env.push(e("TMPDIR", &t.to_string_lossy()));
+        }
         env.extend(self.s.build_env.iter().cloned());
         let cmd = release_bins_command();
         let t0 = w.now();

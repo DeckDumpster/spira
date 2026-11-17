@@ -5063,7 +5063,8 @@ fn a_tmpdir_that_cannot_be_reset_is_a_noverdict_naming_the_path_and_runs_nothing
     assert!(f.ran.borrow().is_empty(), "no gate command may run");
     let err = f.err.borrow().join("\n");
     assert!(err.contains(".tmp") && err.contains("read-only"), "{err}");
-    assert!(err.contains("NOVERDICT") || err.contains("tmpdir-unusable"), "{err}");
+    assert!(err.contains("VERDICT=NO_VERDICT reason=tmpdir-unusable"), "{err}");
+    assert!(f.live_dirs.borrow().is_empty(), "nothing left behind: {err}");
 }
 
 #[test]
