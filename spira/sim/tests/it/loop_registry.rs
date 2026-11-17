@@ -14,7 +14,7 @@ fn walk(script: Script) -> Run {
     loopworld::run(7, script).unwrap_or_else(|e| panic!("the loop ran: {e}"))
 }
 
-/// The shipped scenario's run, walked once: it spans a day and a half of virtual time.
+/// The shipped scenario's run, walked once: it spans under three hours of virtual time.
 fn shipped_run() -> &'static Run {
     static RUN: std::sync::OnceLock<Run> = std::sync::OnceLock::new();
     RUN.get_or_init(|| walk(shipped_script()))
@@ -40,7 +40,7 @@ fn a_round_that_finds_a_flip_disables_it_for_its_hold_and_files_its_follow_on() 
     let r = shipped_run();
     let mut disabled: Vec<(&str, &str, i64)> = r.disabled.iter().map(|d| (d.test.as_str(), d.bead.as_str(), d.until - d.since)).collect();
     disabled.sort();
-    assert_eq!(disabled, [(CLEARED, "sp-tr02", 86_400), (EXPIRING, "sp-tr03", 86_400)], "{}", r.dump());
+    assert_eq!(disabled, [(CLEARED, "sp-tr02", 7_200), (EXPIRING, "sp-tr03", 7_200)], "{}", r.dump());
     assert_eq!(r.opened[0], r.lands[0], "the round that found the flip landed its own members, re-certified without the tests");
     assert_eq!(r.lifecycle_of("sp-tr01").last().map(String::as_str), Some("LANDED"), "{}", r.dump());
 }
@@ -69,7 +69,7 @@ fn an_unattended_row_expires_and_its_test_blocks_the_next_round() {
     let r = shipped_run();
     let (_, after) = r.looks.iter().find(|(i, _)| *i == 2).expect("the look after the expiry");
     assert!(after.held.is_empty(), "{}", after.pane);
-    assert!(r.reds.iter().any(|(at, _, t)| t == EXPIRING && *at >= 95_000_000), "{:?}", r.reds);
+    assert!(r.reds.iter().any(|(at, _, t)| t == EXPIRING && *at >= 8_500_000), "{:?}", r.reds);
     assert!(r.reds.iter().filter(|(_, _, t)| t == CLEARED).count() == 1, "the cleared test went red once, in the flip's own round: {:?}", r.reds);
 }
 
@@ -124,7 +124,7 @@ fn sim_run_walks_test_registry_flip_and_fails_when_no_flip_is_scripted() {
     let miss = dir.join("miss.toml");
     let text = shipped();
     let flips = text.find("[[flip]]").unwrap()..text.find("# The round has landed").unwrap();
-    let bare = text.replace(&text[flips], "").replace("until = 120000000", "until = 3000000").replace("goal = \"sp-tr02:LANDED\"\n", "");
+    let bare = text.replace(&text[flips], "").replace("until = 10000000", "until = 3000000").replace("goal = \"sp-tr02:LANDED\"\n", "");
     let bare = bare[..bare.find("# sp-tr02 has landed").unwrap()].to_string();
     std::fs::write(&miss, bare).unwrap();
     let bad = sim_run(&miss);
