@@ -1327,7 +1327,7 @@ fn mark_gated_sets_a_gate_on_submitted_beads_only_and_clears_a_stale_one() {
 
 fn dependency_page_world(now: u64) -> Snapshot {
     let mut s = healthy(now);
-    let mut submitted = |id: &str, mins: u64| {
+    let submitted = |id: &str, mins: u64| {
         let mut b = bead(id, "spira", "SUBMITTED", now - mins * MIN);
         b.gate = Some(Gating::Queued);
         b
