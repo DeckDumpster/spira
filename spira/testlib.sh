@@ -328,8 +328,28 @@ _tl_case_ms() {
 }
 
 # tl_setup_done — the work since the last case was arranging, not testing: the next case's
-# #ms starts here.
-tl_setup_done() { _TL_LAST_US="${EPOCHREALTIME/./}"; }
+# #ms and its deadline both start here.
+tl_setup_done() {
+    _TL_LAST_US="${EPOCHREALTIME/./}"
+    _tl_counts_load
+    _tl_where
+    _tl_touch "$_TL_NUM" "$_TL_LOC"
+}
+
+# tl_arrange <cmd> [args...] — run one arranging command with the case watcher paused, then
+# tl_setup_done; prints its duration to stderr and returns its status.
+tl_arrange() {
+    local saved="" t0="${EPOCHREALTIME/./}" rc
+    if [ -n "$_TL_WATCH_DIR" ]; then
+        read -r saved < "$_TL_WATCH_DIR/deadline" 2>/dev/null
+        printf '0\n' > "$_TL_WATCH_DIR/deadline"
+    fi
+    "$@"; rc=$?
+    tl_setup_done
+    [ -z "$_TL_WATCH_DIR" ] || printf '%s\n' "$saved" > "$_TL_WATCH_DIR/deadline"
+    printf '# arranged in %sms: %s\n' "$(( (${EPOCHREALTIME/./} - t0) / 1000 ))" "$*" >&2
+    return "$rc"
+}
 
 # _tl_jsonl <case> <status> [detail] -> append one row, or do nothing when no sink is set.
 _tl_jsonl() {
