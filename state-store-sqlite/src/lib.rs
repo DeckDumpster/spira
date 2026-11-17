@@ -276,7 +276,8 @@ impl Checkpointer {
             wait = GAUGE_EVERY;
             if seen >= self.every {
                 let done = conn
-                    .query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |r| r.get::<_, i64>(0))
+                    .prepare_cached("PRAGMA wal_checkpoint(PASSIVE)")
+                    .and_then(|mut s| s.query_row([], |r| r.get::<_, i64>(0)))
                     .is_ok_and(|busy| busy == 0);
                 if done {
                     lock(&self.state).pending -= seen;
