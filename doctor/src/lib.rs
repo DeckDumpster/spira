@@ -674,7 +674,8 @@ pub fn check_root_writers(w: &dyn World) -> Vec<Line> {
         RootScan::Blind(why) => lines.push(warn(format!("cannot tell who writes to the root filesystem: {why}"), "an unreadable /proc is not evidence of no writers.")),
         RootScan::Seen(writers) => {
             held = writers.iter().map(|x| x.path.clone()).collect();
-            let mut groups: BTreeMap<(String, String, PathBuf), (Vec<u32>, bool, Vec<PathBuf>)> = BTreeMap::new();
+            type Group = (Vec<u32>, bool, Vec<PathBuf>);
+            let mut groups: BTreeMap<(String, String, PathBuf), Group> = BTreeMap::new();
             for x in &writers {
                 let dir = x.path.parent().map(Path::to_path_buf).unwrap_or_else(|| x.path.clone());
                 let g = groups.entry((x.unit.clone(), x.comm.clone(), dir)).or_default();
