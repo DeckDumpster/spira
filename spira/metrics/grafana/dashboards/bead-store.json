@@ -453,6 +453,38 @@
           "refId": "A"
         }
       ]
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "control store: commits since the last completed WAL checkpoint (crash-loss bound is the JUMP in state-store-sqlite)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 56,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "max_over_time(spira_state_store_uncheckpointed_commits[$__interval])",
+          "legendFormat": "uncheckpointed commits",
+          "refId": "A"
+        }
+      ]
     }
   ]
 }

@@ -29,7 +29,7 @@ pub mod relayout;
 use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::Duration;
 
 use runtime::ports::Clock;
@@ -213,12 +213,89 @@ fn migrate(conn: &Connection) -> Result<()> {
         .map_err(db)
 }
 
-/// How far the head jumps each time an existing store is opened, and the WAL frames between
-/// automatic checkpoints. Commits run at `synchronous=NORMAL` (sp-r3yb7x): the WAL is synced at
-/// each checkpoint, so a host crash loses at most the commits since the last one, fewer than
-/// `JUMP` since each commit writes at least one frame. Opening past that many unused revisions
-/// means a rewound store never reissues a revision a client was already handed.
+/// How far the head jumps each time an existing store is opened. Commits run at
+/// `synchronous=NORMAL` (sp-r3yb7x): the WAL is synced at each checkpoint, so a host crash loses
+/// at most the commits since the last one. Checkpoints run on the store's own thread
+/// ([`CHECKPOINT_EVERY`]), never inside a commit, and the thread keeps the loss under `JUMP`
+/// commits. Opening past that many unused revisions means a rewound store never reissues a
+/// revision a client was already handed.
 pub const JUMP: u64 = 1_000;
+
+/// Commits between the background checkpointer's PASSIVE checkpoints: a quarter of [`JUMP`], so
+/// the thread has three more such intervals of commits to finish one before the bound is crossed.
+pub const CHECKPOINT_EVERY: u64 = JUMP / 4;
+
+/// The checkpointer's own gauge, commits since its last completed checkpoint.
+pub const UNCHECKPOINTED_GAUGE: &str = "spira_state_store_uncheckpointed_commits";
+const GAUGE_EVERY: Duration = Duration::from_secs(60);
+const RETRY_AFTER: Duration = Duration::from_secs(1);
+
+#[derive(Default)]
+struct CheckpointState {
+    pending: u64,
+    stop: bool,
+}
+
+/// One PASSIVE checkpoint, and whether it copied every frame the WAL held: PASSIVE reports no
+/// `busy` for frames a reader's snapshot kept it from copying.
+fn passive_complete(conn: &Connection) -> bool {
+    conn.prepare_cached("PRAGMA wal_checkpoint(PASSIVE)")
+        .and_then(|mut s| s.query_row([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?))))
+        .is_ok_and(|(busy, log, done)| busy == 0 && done >= log)
+}
+
+/// What a commit hands the checkpointer thread: a count and a wake-up, no I/O.
+struct Checkpointer {
+    state: Mutex<CheckpointState>,
+    wake: Condvar,
+    every: u64,
+}
+
+impl Checkpointer {
+    fn committed(&self) {
+        let mut s = lock(&self.state);
+        s.pending += 1;
+        if s.pending >= self.every {
+            self.wake.notify_one();
+        }
+    }
+
+    /// Runs on the checkpointer's thread until `stop`.
+    fn run(&self, conn: Connection, metrics: Option<spira_otel::metrics::MetricsSink>) {
+        let mut last_pushed = None;
+        let push = |pending: u64, last: &mut Option<std::time::Instant>| {
+            if let Some(m) = &metrics {
+                m.push(&[spira_otel::metrics::Point::Gauge { name: UNCHECKPOINTED_GAUGE, value: pending as f64 }], &[]);
+                *last = Some(std::time::Instant::now());
+            }
+        };
+        let mut wait = GAUGE_EVERY;
+        loop {
+            let seen = {
+                let mut s = lock(&self.state);
+                if !s.stop && s.pending < self.every {
+                    s = self.wake.wait_timeout(s, wait).unwrap_or_else(|p| p.into_inner()).0;
+                }
+                if s.stop {
+                    return;
+                }
+                s.pending
+            };
+            wait = GAUGE_EVERY;
+            if seen >= self.every {
+                if passive_complete(&conn) {
+                    lock(&self.state).pending -= seen;
+                } else {
+                    wait = RETRY_AFTER;
+                }
+                last_pushed = None;
+            }
+            if last_pushed.is_none_or(|t: std::time::Instant| t.elapsed() >= GAUGE_EVERY) {
+                push(lock(&self.state).pending, &mut last_pushed);
+            }
+        }
+    }
+}
 
 /// The most `requests/` rows a commit deletes from the main file once they are all a day old.
 pub const DRAIN_PER_COMMIT: usize = 500;
@@ -260,6 +337,10 @@ pub struct Options {
     /// File receipts and events in day files. Off for a store being restored or verified, whose
     /// receipts and events stay in its one file, where reads find them and no drain removes them.
     pub day_receipts: bool,
+    /// Commits between background PASSIVE checkpoints.
+    pub checkpoint_every: u64,
+    /// Where the checkpointer reports its gauge; `None` reports nowhere.
+    pub metrics: Option<spira_otel::metrics::MetricsSink>,
 }
 
 /// See [`Options::commit_probe`].
@@ -279,6 +360,8 @@ impl Default for Options {
             wall: Arc::new(runtime::ports::WallClock),
             commit_probe: None,
             day_receipts: true,
+            checkpoint_every: CHECKPOINT_EVERY,
+            metrics: None,
         }
     }
 }
@@ -335,9 +418,21 @@ struct Inner {
     events_due: AtomicU64,
     /// The VM steps every range statement has taken since [`SqliteBackend::take_read_steps`].
     read_steps: AtomicU64,
+    checkpointer: Arc<Checkpointer>,
+    checkpoint_thread: Mutex<Option<std::thread::JoinHandle<()>>>,
     /// Held for the life of the handle: the exclusive opener. Last, so it outlives the
     /// connections.
     _lock: OpenerLock,
+}
+
+impl Drop for Inner {
+    fn drop(&mut self) {
+        lock(&self.checkpointer.state).stop = true;
+        self.checkpointer.wake.notify_one();
+        if let Some(t) = lock(&self.checkpoint_thread).take() {
+            let _ = t.join();
+        }
+    }
 }
 
 /// Unlocks on drop: a child forked while the store was open holds a duplicate of the
@@ -813,7 +908,7 @@ impl SqliteBackend {
         }
         conn.pragma_update(None, "synchronous", "NORMAL")
             .map_err(db)?;
-        conn.pragma_update(None, "wal_autocheckpoint", JUMP as i64)
+        conn.pragma_update(None, "wal_autocheckpoint", 0)
             .map_err(db)?;
         conn.busy_timeout(Duration::ZERO).map_err(db)?;
         let tx = conn
@@ -867,7 +962,24 @@ impl SqliteBackend {
                 deadline,
             });
         }
+        let checkpointer = Arc::new(Checkpointer {
+            state: Mutex::new(CheckpointState::default()),
+            wake: Condvar::new(),
+            every: opts.checkpoint_every.max(1),
+        });
+        let checkpoint_conn = connect(path)?;
+        checkpoint_conn.busy_timeout(Duration::ZERO).map_err(db)?;
+        let metrics = opts.metrics;
+        let thread = {
+            let c = checkpointer.clone();
+            std::thread::Builder::new()
+                .name("sqlite-checkpoint".into())
+                .spawn(move || c.run(checkpoint_conn, metrics))
+                .map_err(|e| Error::Backend(format!("{}: the checkpointer: {e}", path.display())))?
+        };
         Ok(SqliteBackend(Arc::new(Inner {
+            checkpointer,
+            checkpoint_thread: Mutex::new(Some(thread)),
             path: path.to_path_buf(),
             writer: Mutex::new(Writer { conn }),
             readers,
@@ -1736,6 +1848,7 @@ impl Backend for SqliteBackend {
         }
         committing.confirm();
         self.0.head.store(main, Ordering::SeqCst);
+        self.0.checkpointer.committed();
         for (fam, keys) in unfiled.iter().enumerate() {
             if !keys.is_empty() {
                 for f in &files[fam] {
@@ -1767,6 +1880,23 @@ impl Backend for SqliteBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_passive_checkpoint_a_reader_holds_back_is_not_complete() {
+        let dir = testkit::TempDir::new("sqlite-passive-partial");
+        let path = dir.path().join("s.db");
+        let b = SqliteBackend::open(&path, Options { checkpoint_every: u64::MAX, ..Options::default() }).unwrap();
+        let put = |prev: Option<Rev>, n: u64| Write::Put { key: "k".into(), value: vec![1; 4096], create_rev: Rev::new(1, 0), prev: prev.map(|_| Rev::new(n, 0)) };
+        b.commit(0, &[put(None, 0)]).unwrap();
+        let reader = connect(&path).unwrap();
+        exec(&reader, "BEGIN", []).unwrap();
+        reader.prepare("SELECT count(*) FROM latest").unwrap().query_row([], |r| r.get::<_, i64>(0)).unwrap();
+        b.commit(1, &[put(Some(Rev::new(1, 0)), 1)]).unwrap();
+        let ck = connect(&path).unwrap();
+        assert!(!passive_complete(&ck), "frames past the reader's snapshot were counted as copied");
+        exec(&reader, "COMMIT", []).unwrap();
+        assert!(passive_complete(&ck));
+    }
 
     #[test]
     fn a_path_reopens_after_its_handle_drops_though_a_forked_child_holds_the_lock_descriptor() {

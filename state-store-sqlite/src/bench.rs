@@ -77,6 +77,13 @@ fn read_backfill(shm: &File, path: &str) -> std::result::Result<u32, String> {
     backfill(&buf).ok_or_else(|| format!("the WAL index {path} is too short"))
 }
 
+/// `nBackfill` of the open store at `db`: the WAL frames a checkpoint has copied home.
+pub fn wal_backfill(db: &std::path::Path) -> std::result::Result<u32, String> {
+    let shm_path = format!("{}-shm", db.display());
+    let shm = File::open(&shm_path).map_err(|e| format!("cannot open the WAL index {shm_path}: {e}"))?;
+    read_backfill(&shm, &shm_path)
+}
+
 impl Stall {
     /// Why this commit was slow: it was only queued behind an earlier stall, it ran a
     /// checkpoint or WAL restart, the load generator's own sync was slow in the same window
