@@ -47,7 +47,7 @@ impl<B: Backend> Store<B> {
         at: i64,
         req: &Request,
     ) -> Result<Vec<String>> {
-        let (records, _) = self.records()?;
+        let records = self.in_state(BeadState::Working)?;
         let mut returned = Vec::new();
         for r in records {
             let rec = &r.value;
@@ -79,7 +79,10 @@ impl<B: Backend> Store<B> {
         actor: &str,
         req: &Request,
     ) -> Result<OpenSweep> {
-        let (records, readiness, _) = self.records_with_readiness()?;
+        let records = self.in_state(BeadState::Open)?;
+        let rev = self.contract().head()?;
+        let ids: Vec<&str> = records.iter().map(|r| r.value.row.bead_id.as_str()).collect();
+        let readiness = self.readiness_of(&ids, rev)?;
         let mut out = OpenSweep::default();
         for r in records {
             let rec = &r.value;

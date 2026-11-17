@@ -305,6 +305,11 @@ fn list<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, Str
         Ok(p) => p.unwrap_or_default(),
         Err(e) => return (CANNOT_TELL, format!("cannot tell: list: {e}")),
     };
+    if ids.is_none() && limit.is_none() {
+        if let Some(refusal) = whole_read_refusal(states.as_deref(), live, args) {
+            return (REFUSED, refusal);
+        }
+    }
     let kept = |rec: &LifecycleRecord| {
         let row = &rec.row;
         let state = row.state.as_str();
@@ -357,6 +362,29 @@ fn list<B: Backend>(store: &Store<B>, args: &[String], call: &Call) -> (i32, Str
         Ok(rows) => (0, Value::Array(rows).to_string()),
         Err(e) => cannot_tell(e),
     }
+}
+
+/// Why an unpaged, unnamed list is refused, or `None` when it reads only live states.
+fn whole_read_refusal(states: Option<&[String]>, live: bool, args: &[String]) -> Option<String> {
+    let terminal: Vec<&str> = match states {
+        Some(named) => BEAD_STATES
+            .iter()
+            .filter(|s| s.is_terminal() && named.iter().any(|n| n == s.as_str()))
+            .map(|s| s.as_str())
+            .collect(),
+        None => Vec::new(),
+    };
+    if live || (states.is_some() && terminal.is_empty()) {
+        return None;
+    }
+    let would = match (states, terminal.is_empty()) {
+        (Some(_), false) => format!("every {} row", terminal.join("/")),
+        _ => "every lifecycle row".to_string(),
+    };
+    Some(format!(
+        "refused: `list {}` would read {would}; read the live set with `list --live` (or `--state <live states>`), named beads with `list --ids a,b`, or history by cursor with `list --after ID --limit N`",
+        args.join(" ")
+    ))
 }
 
 /// Every bead state, for the state index's reads.

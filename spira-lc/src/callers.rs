@@ -261,7 +261,10 @@ pub fn run(verb: &str, args: &[String], m: &mut dyn Machine) -> Answer {
                 format!("{}\t{}\t{}", s(r, "bead_id"), s(r, "lease_until"), holds_of(r.get("holds")).join(","))
             })
         }
-        "list-all" => list(m, &["list".into()], |r| format!("{}\t{}\t{}", s(r, "bead_id"), s(r, "state"), s(r, "holder"))),
+        "list-all" => match spira_lc::list_pages(|a| m.call(a)) {
+            Ok(rows) => Answer::out(0, rows.iter().map(|r| format!("{}\t{}\t{}", s(r, "bead_id"), s(r, "state"), s(r, "holder"))).collect::<Vec<_>>().join("\n")),
+            Err(e) => Answer { code: CANNOT_TELL, stderr: format!("cannot tell: lc: list-all: {e} — nothing listed\n"), ..Default::default() },
+        },
         "deliver" => deliver(args, m),
         "certify" => {
             if !need(3) {
@@ -1268,7 +1271,7 @@ pub fn reconcile_closed(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) -
         return usage(&format!("reconcile-closed [--apply] [<bead-id>...] (unknown flag {bad})"));
     }
     let only: Vec<&String> = args.iter().filter(|a| !a.starts_with('-')).collect();
-    let (rc, out) = m.call(&["list".into()]);
+    let (rc, out) = m.call(&["list".into(), "--state".into(), "READY".into()]);
     if rc != 0 {
         return Answer { code: rc.max(CANNOT_TELL), stderr: format!("spira-lc reconcile-closed: lifecycle list failed: {}\n", out.trim()), ..Default::default() };
     }
@@ -1343,7 +1346,7 @@ pub fn drop_orphans(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) -> An
     }
     let only: Vec<&String> = args.iter().filter(|a| !a.starts_with('-')).collect();
     let cannot = |why: String| Answer { code: CANNOT_TELL, stderr: format!("spira-lc drop-orphans: {why}\n"), ..Default::default() };
-    let (rc, out) = m.call(&["list".into()]);
+    let (rc, out) = m.call(&["list".into(), "--state".into(), "READY".into()]);
     if rc != 0 {
         return cannot(format!("lifecycle list failed: {}", out.trim()));
     }

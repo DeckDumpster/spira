@@ -88,11 +88,10 @@ fn watch<B: Backend>(store: &Store<B>, args: &[String]) -> Result<String, String
         Feed::Progress { progress_rev } => json!({ "progress_rev": progress_rev }),
         Feed::Relist {
             compacted,
-            items,
             list_rev,
         } => json!({
             "too_old": { "compacted": compacted },
-            "items": items.iter().map(item).collect::<Vec<_>>(),
+            "items": [],
             "list_rev": list_rev,
         }),
     };

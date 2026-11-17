@@ -1137,7 +1137,7 @@ fn a_whole_table_list_reads_readiness_by_range_not_once_per_row() {
     r.s.contract().txn(&seed, &r.req()).unwrap();
 
     r.s.contract().backend().take();
-    let (rc, out) = r.lc(&["list"]);
+    let (rc, out) = r.lc(&["list", "--live"]);
     assert_eq!(rc, 0, "{out}");
     let reads = r.s.contract().backend().take();
     let rows: serde_json::Value = serde_json::from_str(&out).unwrap();
@@ -1145,7 +1145,7 @@ fn a_whole_table_list_reads_readiness_by_range_not_once_per_row() {
     assert_eq!(rows.len(), BEADS);
     let readiness_gets = reads.iter().filter(|(k, key, _)| *k == "get" && key.starts_with(keys::READINESS)).count();
     assert!(readiness_gets <= 1, "{readiness_gets} readiness point reads for {BEADS} rows");
-    assert!(reads.len() <= 12, "{} reads for {BEADS} rows: {reads:?}", reads.len());
+    assert!(reads.len() <= 14, "{} reads for {BEADS} rows: {reads:?}", reads.len());
 
     let probe = ["sp-0000", "sp-0002", "sp-0007", "sp-0014", "sp-0500", "sp-0599"];
     let (rc, by_key) = r.lc(&["list", "--ids", &probe.join(",")]);
@@ -1414,7 +1414,7 @@ fn list_with_unreadable_view_inputs_still_lists_and_each_ready_row_says_it_canno
     let r = Rig::new();
     r.ok(&["create-bead", "sp-a", "--repo", "spira", "--ready"]);
     r.ok(&["create-bead", "sp-w", "--repo", "spira"]);
-    let args: Vec<String> = ["list"].iter().map(|s| s.to_string()).collect();
+    let args: Vec<String> = ["list", "--live"].iter().map(|s| s.to_string()).collect();
     let req = r.req();
     let (rc, out) = state::run(&r.s, &args, &Call { now: AT, request: &req.id, inputs: &crate::control::claimable::UNREADABLE });
     assert_eq!(rc, 0, "{out}");
@@ -1448,4 +1448,38 @@ fn a_content_on_base_landing_enqueues_one_closeout() {
     r.bead_event("sp-a", "READY", "0", r#"{"ContentOnBase":{"proof":"p"}}"#);
     assert_eq!(r.state("sp-a"), BeadState::Landed);
     assert_eq!(r.s.gh_closeouts().unwrap().len(), 1);
+}
+
+#[test]
+fn a_list_that_would_read_every_row_is_refused_naming_the_filters_that_do_not() {
+    let r = Rig::new();
+    r.ok(&["create-bead", "sp-a", "--repo", "spira", "--ready"]);
+    r.bead_event("sp-a", "READY", "0", r#"{"ContentOnBase":{"proof":"p"}}"#);
+    r.ok(&["create-bead", "sp-b", "--repo", "spira", "--ready"]);
+    for argv in [
+        &["list"][..],
+        &["list", "--hold", "wait"],
+        &["list", "--repo", "spira"],
+        &["list", "--express"],
+        &["list", "--since", "x"],
+        &["list", "--state", "LANDED"],
+        &["list", "--state", "READY,LANDED"],
+    ] {
+        let (rc, out) = r.lc(argv);
+        assert_eq!(rc, crate::REFUSED, "{argv:?}: {out}");
+        for exit in ["--live", "--ids", "--after", "--limit"] {
+            assert!(out.contains(exit), "{argv:?} names {exit}: {out}");
+        }
+    }
+    let ids = |argv: &[&str]| -> Vec<String> {
+        let (rc, out) = r.lc(argv);
+        assert_eq!(rc, 0, "{argv:?}: {out}");
+        let rows: serde_json::Value = serde_json::from_str(&out).unwrap();
+        rows.as_array().unwrap().iter().map(|x| x["bead_id"].as_str().unwrap().to_string()).collect()
+    };
+    assert_eq!(ids(&["list", "--live"]), ["sp-b"]);
+    assert_eq!(ids(&["list", "--state", "READY"]), ["sp-b"]);
+    assert_eq!(ids(&["list", "--ids", "sp-a"]), ["sp-a"]);
+    assert_eq!(ids(&["list", "--after", "sp-a", "--limit", "2"]), ["sp-b"]);
+    assert_eq!(ids(&["list", "--hold", "wait", "--live"]), Vec::<String>::new());
 }

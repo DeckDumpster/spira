@@ -80,7 +80,7 @@ macro_rules! on_each_backend {
 
 on_each_backend!(
     a_watch_resumed_from_a_revision_sees_every_later_change_exactly_once,
-    after_history_is_forgotten_a_watch_answers_too_old_with_the_prefix_relisted_to_resume_from,
+    after_history_is_forgotten_a_watch_answers_too_old_with_no_rows_and_the_revision_to_resume_from,
     history_lists_a_beads_changes_in_order_with_its_refusals_and_lost_races,
     history_outlives_forgetting_revisions,
     event_seq_names_only_the_beads_with_an_applied_event_after_the_revision,
@@ -89,8 +89,8 @@ on_each_backend!(
     store_usage_answers_one_bounded_page_with_a_cursor_and_refuses_a_page_above_the_cap,
 );
 
-/// A watch from a revision the history ring has turned past is `too_old`, and relists.
-fn once_the_ring_has_turned_a_watch_answers_too_old_with_the_prefix_relisted<B: Backend>(
+/// A watch from a revision the history ring has turned past is `too_old`, and resumes from the head.
+fn once_the_ring_has_turned_a_watch_answers_too_old_with_no_rows_listed<B: Backend>(
     s: &Store<B>,
 ) {
     create(s, "sp-a");
@@ -100,14 +100,14 @@ fn once_the_ring_has_turned_a_watch_answers_too_old_with_the_prefix_relisted<B: 
     }
     let w = watch(s, keys::LIFECYCLE, old);
     assert!(w["too_old"]["compacted"].as_u64().unwrap() > old, "{w}");
-    assert_eq!(w["items"].as_array().unwrap().len(), 1, "{w}");
+    assert_eq!(w["items"], serde_json::json!([]), "{w}");
     assert_eq!(w["list_rev"].as_u64().unwrap(), s.contract().head().unwrap());
 }
 
 #[test]
 fn a_mem_ring_that_has_turned_relists_a_feed() {
     let clock = VirtualClock::new(0);
-    once_the_ring_has_turned_a_watch_answers_too_old_with_the_prefix_relisted(&store(
+    once_the_ring_has_turned_a_watch_answers_too_old_with_no_rows_listed(&store(
         MemBackend::with_history_bytes(6_000),
         &clock,
     ));
@@ -123,7 +123,7 @@ fn a_sqlite_ring_that_has_turned_relists_a_feed() {
         ..Options::default()
     };
     let b = SqliteBackend::open(&dir.path().join("control.db"), opts).unwrap();
-    once_the_ring_has_turned_a_watch_answers_too_old_with_the_prefix_relisted(&store(b, &clock));
+    once_the_ring_has_turned_a_watch_answers_too_old_with_no_rows_listed(&store(b, &clock));
 }
 
 fn req(id: &str) -> Request {
@@ -233,7 +233,7 @@ fn a_watch_resumed_from_a_revision_sees_every_later_change_exactly_once<B: Backe
     assert_eq!(code, crate::CANNOT_TELL, "{out}");
 }
 
-fn after_history_is_forgotten_a_watch_answers_too_old_with_the_prefix_relisted_to_resume_from<B: Backend>(
+fn after_history_is_forgotten_a_watch_answers_too_old_with_no_rows_and_the_revision_to_resume_from<B: Backend>(
     s: &Store<B>,
 ) {
     create(s, "sp-a");
@@ -243,13 +243,7 @@ fn after_history_is_forgotten_a_watch_answers_too_old_with_the_prefix_relisted_t
     s.contract().compact(compacted).unwrap();
     let w = watch(s, keys::LIFECYCLE, old);
     assert_eq!(w["too_old"]["compacted"], compacted, "{w}");
-    let listed: Vec<&str> = w["items"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|i| i["key"].as_str().unwrap())
-        .collect();
-    assert_eq!(listed, [keys::lifecycle("sp-a"), keys::lifecycle("sp-b")]);
+    assert_eq!(w["items"], serde_json::json!([]), "a too_old answer reads no rows: {w}");
     let list_rev = w["list_rev"].as_u64().unwrap();
     assert_eq!(list_rev, s.contract().head().unwrap());
     let later = toggle(s, "sp-a", 3);

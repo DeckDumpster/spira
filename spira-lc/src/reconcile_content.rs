@@ -50,13 +50,7 @@ fn items_of(m: &mut dyn Machine, ids: &[String], extra: &[&str]) -> Result<Vec<V
 
 /// The lifecycle records, by bead id: `(state, reason)`.
 fn records(m: &mut dyn Machine) -> Result<BTreeMap<String, (String, String)>, String> {
-    let (rc, out) = m.call(&["list".into()]);
-    if rc != 0 {
-        return Err(format!("lifecycle list failed: {}", out.trim()));
-    }
-    let Ok(Value::Array(rows)) = serde_json::from_str::<Value>(out.trim()) else {
-        return Err("lifecycle list is not a JSON array".into());
-    };
+    let rows = spira_lc::list_pages(|a| m.call(a))?;
     Ok(rows.iter().map(|r| (s(r, "bead_id"), (s(r, "state"), s(r, "reason")))).collect())
 }
 
