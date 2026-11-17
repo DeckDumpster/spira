@@ -1,0 +1,21 @@
+[package]
+name = "repo-contract"
+version = "1.0.0"
+edition = "2021"
+description = "repo-contract — what a repository declares about the environment its check rows run in. Library only: the flake dev shell, entered by `nix print-dev-env --json`."
+
+[features]
+integration = ["spira-config/integration", "testkit/integration"]
+
+[dependencies]
+serde_json = "1"
+spira-config = { path = "../spira-config" }
+
+[dev-dependencies]
+testkit = { path = "../testkit" }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true

@@ -201,8 +201,14 @@ pub fn bounded_deadline(budget_ms: u64) -> String {
 }
 
 /// Runs a non-cargo row's program, cutting its whole process tree at `budget_ms`.
-pub fn run_row(exe: &Path, args: &[String], dir: &Path, path_env: &OsStr, budget_ms: u64) -> io::Result<Output> {
-    spira_config::bounded::bounded_for(exe, &bounded_deadline(budget_ms)).kill_tree().args(args).env("PATH", path_env).current_dir(dir).output()
+pub fn run_row(exe: &Path, args: &[String], dir: &Path, path_env: &OsStr, shell_vars: &[(String, String)], budget_ms: u64) -> io::Result<Output> {
+    spira_config::bounded::bounded_for(exe, &bounded_deadline(budget_ms)).kill_tree().args(args).envs(shell_vars.iter().map(|(k, v)| (k, v))).env("PATH", path_env).current_dir(dir).output()
+}
+
+/// The directories a row's program resolves against: the flake shell's PATH alone when the
+/// repository has a dev shell, otherwise the release dirs.
+pub fn row_dirs(shell: Option<&repo_contract::shell::ShellEnv>, dirs: Vec<std::path::PathBuf>) -> Vec<std::path::PathBuf> {
+    shell.map_or(dirs, |s| s.path_dirs())
 }
 
 /// One row's facts, as `<run>/checks.log` states them.
@@ -1046,5 +1052,28 @@ mod law_tests {
     fn a_missing_tree_is_an_error_not_an_empty_list() {
         let d = testkit::TempDir::new("work-law-none");
         assert!(law_view(&d, None).unwrap_err().1.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod row_dirs_tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn shell() -> repo_contract::shell::ShellEnv {
+        let json = r#"{"variables":{"PATH":{"type":"exported","value":"/nix/store/a/bin:/nix/store/b/bin"}}}"#;
+        repo_contract::shell::parse_dev_env(json).unwrap()
+    }
+
+    #[test]
+    fn a_flake_shell_replaces_the_release_dirs_with_its_own_path() {
+        let release = vec![PathBuf::from("/r/bin"), PathBuf::from("/usr/bin")];
+        assert_eq!(row_dirs(Some(&shell()), release), vec![PathBuf::from("/nix/store/a/bin"), PathBuf::from("/nix/store/b/bin")]);
+    }
+
+    #[test]
+    fn without_a_flake_shell_the_dirs_are_unchanged() {
+        let release = vec![PathBuf::from("/r/bin"), PathBuf::from("/usr/bin")];
+        assert_eq!(row_dirs(None, release.clone()), release);
     }
 }

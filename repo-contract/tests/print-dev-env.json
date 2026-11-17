@@ -1,0 +1,14 @@
+{
+  "bashFunctions": {
+    "runHook": "\n    local hookName=\"$1\"\n    shift\n"
+  },
+  "variables": {
+    "HOME": {"type": "exported", "value": "/homeless-shelter"},
+    "NIX_BUILD_TOP": {"type": "exported", "value": "/tmp"},
+    "PATH": {"type": "exported", "value": "/nix/store/aaa-jq-1.7.1-bin/bin:/nix/store/bbb-coreutils-9.5/bin:/nix/store/ccc-bash-5.2/bin"},
+    "name": {"type": "var", "value": "nix-shell-env"},
+    "buildInputs": {"type": "array", "value": ["/nix/store/aaa-jq-1.7.1-bin"]},
+    "shellHook": {"type": "unset"},
+    "out": {"type": "exported", "value": "/tmp/outputs/out"}
+  }
+}
