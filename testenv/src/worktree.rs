@@ -115,6 +115,8 @@ pub enum Kind {
         _lock: File,
     },
     Ephemeral,
+    /// A share's own checkout, left for the next call; the run's end removes it.
+    Share,
 }
 
 #[derive(Debug)]
@@ -131,6 +133,7 @@ impl Worktree {
             Kind::Slot { .. } => "scratch slot",
             Kind::Warm { .. } => "warm slot",
             Kind::Ephemeral => "throwaway worktree",
+            Kind::Share => "share checkout",
         }
     }
 }
@@ -279,6 +282,12 @@ pub fn acquire_warm(req: &Request, slots: usize, log: &dyn Fn(&str)) -> Option<W
         }
     }
     None
+}
+
+/// The checkout a share keeps at `tree`, at `commit`: later calls rewrite only what differs.
+pub fn acquire_share(repo: &Path, tree: &Path, commit: &str) -> Result<Worktree, String> {
+    prepare_slot(repo, tree, commit)?;
+    Ok(Worktree { path: tree.to_path_buf(), kind: Kind::Share, repo: repo.to_path_buf() })
 }
 
 pub fn acquire(req: &Request, log: &dyn Fn(&str)) -> Result<Worktree, String> {
