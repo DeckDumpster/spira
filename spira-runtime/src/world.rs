@@ -28,6 +28,7 @@ use crate::watchers::round_duty::{RoundState, Snapshot};
 const STORE_ATTEMPTS: u32 = 3;
 /// Ids per `plan items` call when the flow pass reads the live beads' type and labels.
 const FLOW_CONTENT_CHUNK: usize = 200;
+const REFRESH_FETCH: std::time::Duration = std::time::Duration::from_secs(20);
 // batch-job: the call deadline; the verb answers inside 4s on its own
 const UNPUBLISHED_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 const TMUX_DEADLINE: std::time::Duration = std::time::Duration::from_secs(3);
@@ -121,6 +122,43 @@ pub fn pr_snapshot_from(records: &RecordedPrs, targets: &[PrTarget], forge: &For
     }
     forge.report_spend();
     serde_json::to_string(&pr_notify::Snapshot { repos }).map_err(|e| e.to_string())
+}
+
+/// Each queue.local checkout's forge tip, fetched in parallel and best-effort: the measurement
+/// that follows reads local refs and answers from the cached tip when this fails.
+fn refresh_forge_tip(reg: &spira_config::repos::Registry, r: &MapRow) {
+    use crate::tasks::a::queue_step::edge::git;
+    if let Some((remote, branch)) = spira_config::repos::publish_forge(reg, &r.name, &BTreeMap::new()) {
+        let _ = git(Path::new(&r.path), &["fetch", "--quiet", &remote, &branch], REFRESH_FETCH);
+    }
+}
+
+/// Refreshes every queue.local checkout at once, waits for all of them, then measures each.
+/// Nothing here reads the refresh outcome.
+fn publish_backlog_snapshot_from(rows: &[MapRow], refresh: &(dyn Fn(&MapRow) + Sync), measure: &dyn Fn(&str) -> Result<Option<Read>, String>) -> Result<String, String> {
+    let local = |r: &MapRow| !r.path.is_empty() && Path::new(&r.path).join(".git").is_dir() && r.land == "queue.local";
+    std::thread::scope(|s| {
+        let handles: Vec<_> = rows.iter().filter(|r| local(r)).map(|r| s.spawn(move || refresh(r))).collect();
+        for h in handles {
+            let _ = h.join();
+        }
+    });
+    let mut repos = vec![];
+    for r in rows {
+        if r.path.is_empty() {
+            repos.push((r.name.clone(), Read::Blind("the repo map has no checkout for it".into())));
+            continue;
+        }
+        if !local(r) {
+            continue;
+        }
+        match measure(&r.name) {
+            Ok(None) => {}
+            Ok(Some(read)) => repos.push((r.name.clone(), read)),
+            Err(why) => repos.push((r.name.clone(), Read::Blind(format!("the unpublished range could not be computed: {why}")))),
+        }
+    }
+    serde_json::to_string(&publish_backlog::Snapshot { repos }).map_err(|e| e.to_string())
 }
 
 struct MapRow {
@@ -808,23 +846,8 @@ impl World {
             Ok(t) => map_rows(&t),
             Err(e) => return serde_json::to_string(&publish_backlog::Snapshot { repos: vec![(publish_backlog::REPO_MAP_KEY.into(), Read::Blind(format!("the repo map is unreadable: {e}")))] }).map_err(|e| e.to_string()),
         };
-        let mut repos = vec![];
-        for r in &rows {
-            if r.path.is_empty() {
-                repos.push((r.name.clone(), Read::Blind("the repo map has no checkout for it".into())));
-                continue;
-            }
-            let git = Path::new(&r.path).join(".git");
-            if !git.is_dir() || r.land != "queue.local" {
-                continue;
-            }
-            match self.unpublished(&r.name) {
-                Ok(None) => {}
-                Ok(Some(read)) => repos.push((r.name.clone(), read)),
-                Err(why) => repos.push((r.name.clone(), Read::Blind(format!("the unpublished range could not be computed: {why}")))),
-            }
-        }
-        serde_json::to_string(&publish_backlog::Snapshot { repos }).map_err(|e| e.to_string())
+        let reg = crate::tasks::a::queue_step::edge::registry().ok();
+        publish_backlog_snapshot_from(&rows, &|r| reg.iter().for_each(|reg| refresh_forge_tip(reg, r)), &|name| self.unpublished(name))
     }
 
     /// `Err` carries the verb's own refusal; `Ok(None)` is a repo declared to publish nowhere.
@@ -1415,5 +1438,51 @@ mod last_hold_tests {
     #[test]
     fn a_history_with_no_hold_has_no_last_hold() {
         assert_eq!(last_hold(r#"[{"seq":1,"event":"Claim","evidence":{}}]"#), None);
+    }
+}
+
+#[cfg(test)]
+mod publish_backlog_tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    fn row(dir: &Path, name: &str, land: &str) -> MapRow {
+        let path = dir.join(name);
+        fs::create_dir_all(path.join(".git")).unwrap();
+        MapRow { name: name.into(), path: path.to_string_lossy().into(), land: land.into(), base: String::new() }
+    }
+
+    fn measured(count: u64) -> Read {
+        Read::Measured { count, arrival: None, forge_tip_age_secs: None }
+    }
+
+    #[test]
+    fn the_backlog_snapshot_refreshes_every_queue_local_repo_before_measuring_it() {
+        let tmp = testkit::TempDir::new("backlog");
+        let rows = vec![row(tmp.path(), "a", "queue.local"), row(tmp.path(), "b", "queue.local"), row(tmp.path(), "q", "queue")];
+        let calls = Mutex::new(vec![]);
+        publish_backlog_snapshot_from(
+            &rows,
+            &|r| calls.lock().unwrap().push(format!("refresh {}", r.name)),
+            &|n| {
+                calls.lock().unwrap().push(format!("measure {n}"));
+                Ok(Some(measured(1)))
+            },
+        )
+        .unwrap();
+        let mut calls = calls.into_inner().unwrap();
+        let measures = calls.split_off(2);
+        calls.sort();
+        assert_eq!(calls, ["refresh a", "refresh b"]);
+        assert_eq!(measures, ["measure a", "measure b"]);
+    }
+
+    #[test]
+    fn a_refresh_that_hangs_or_fails_still_yields_a_measurement() {
+        let tmp = testkit::TempDir::new("backlog");
+        let rows = vec![row(tmp.path(), "a", "queue.local"), row(tmp.path(), "b", "queue.local")];
+        let out = publish_backlog_snapshot_from(&rows, &|r| assert_ne!(r.name, "a", "refresh failed"), &|_| Ok(Some(measured(3)))).unwrap();
+        let snap: publish_backlog::Snapshot = serde_json::from_str(&out).unwrap();
+        assert_eq!(snap.repos, vec![("a".to_string(), measured(3)), ("b".to_string(), measured(3))]);
     }
 }
