@@ -376,9 +376,13 @@ mod tests {
     fn a_tip_with_no_fetch_head_is_aged_from_its_reflog() {
         let scratch = testkit::TempDir::new("unpublished-nohead");
         let (_forge, clone) = forge_and_clone(scratch.path());
+        let fetched = scratch.path().join("fetched");
+        git(&clone, &["config", "remote.origin.uploadpack", &format!("touch {}; sleep 30", fetched.display())]);
         std::fs::remove_file(clone.join(".git/FETCH_HEAD")).unwrap();
+        assert!(claim_refresh(&clone));
         let answer = measure_repo(&clone, "main", "origin", "main").unwrap();
         assert!(answer.get("stale").is_none(), "{answer}");
+        assert!(!fetched.exists(), "a tip with a reflog was fetched inline");
     }
 
     #[test]
