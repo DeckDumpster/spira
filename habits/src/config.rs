@@ -96,12 +96,16 @@ pub fn load(root: &Path) -> Result<Option<Config>, String> {
 
 pub fn load_checks(root: &Path) -> Result<Vec<Check>, String> {
     let path = root.join(".spira").join("checks.toml");
-    let text = match std::fs::read_to_string(&path) {
-        Ok(t) => t,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(e) => return Err(e.to_string()),
-    };
-    let rows = spira_config::parse_foreign::<Checks>(&text).map(|c| c.check)?;
+    match std::fs::read_to_string(&path) {
+        Ok(t) => parse_checks(&t),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// The rows of a `.spira/checks.toml`'s text.
+pub fn parse_checks(text: &str) -> Result<Vec<Check>, String> {
+    let rows = spira_config::parse_foreign::<Checks>(text).map(|c| c.check)?;
     for row in &rows {
         let Some(pkg) = &row.build else { continue };
         let prog = argv(&row.run, &[]).into_iter().next().unwrap_or_default();

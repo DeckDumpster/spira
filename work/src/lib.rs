@@ -3,6 +3,7 @@
 //! I/O here — `main.rs` is the only thing that touches git, the environment or a socket —
 //! so every rule below is covered without a fixture.
 
+pub mod contract;
 pub mod help;
 pub mod image;
 pub mod review;

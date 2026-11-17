@@ -1645,9 +1645,13 @@ dependencies = [
 name = "repo-contract"
 version = "1.0.0"
 dependencies = [
+ "forge",
+ "habits",
  "serde_json",
  "spira-config",
+ "spira-otel",
  "testkit",
+ "toml",
 ]
 
 [[package]]

@@ -107,6 +107,17 @@ fn main() {
         }
     }
 
+    if verb == "submit" {
+        if let Err(e) = contract_gate() {
+            if e.starts_with("not met ") {
+                eprintln!("work submit: refused: the branch changes the repository's landing contract and leaves it unmet:\n{e}\nfix the contract files, commit, and run `work submit` again; `repo-contract check <repo> --tree .` shows every clause");
+            } else {
+                eprintln!("work submit: refused: the branch changes the repository's landing contract and it cannot be judged: {e}");
+            }
+            { let code = REFUSED; spira_otel::run::finish(code); std::process::exit(code) };
+        }
+    }
+
     let tip = if verb == "submit" { read_tip(&bound) } else { None };
 
     let read_stdin = || {
@@ -599,6 +610,40 @@ fn image_gate(bead: &str) -> Result<(), String> {
         work::image::Verdict::Built(run) => println!("work submit: the round image recipe builds (run {run})"),
     }
     Ok(())
+}
+
+/// Refuses a submit to a non-home repository whose diff against its landing ref edits a contract
+/// file and leaves the environment or deploy clause not met on this worktree.
+fn contract_gate() -> Result<(), String> {
+    let root = git_line(&["rev-parse", "--show-toplevel"]).ok_or("not inside a git worktree")?;
+    let common = git_line(&["rev-parse", "--path-format=absolute", "--git-common-dir"]).ok_or("cannot read the git dir")?;
+    let Some(checkout) = std::path::Path::new(&common).parent() else { return Ok(()) };
+    let reg = spira_config::repos::Registry::from_env_checkout(std::env::vars().collect(), checkout);
+    let checkout = checkout.to_string_lossy();
+    let (Some(name), Some(land)) = (reg.name_at(&checkout), spira_config::repos::landref(&reg, &checkout)) else { return Ok(()) };
+    if name == reg.home_repo() {
+        return Ok(());
+    }
+    let changed: Vec<String> = git_line(&["diff", "--name-only", "--no-renames", &format!("{land}...HEAD")]).map(|o| o.lines().map(String::from).collect()).unwrap_or_default();
+    if !work::contract::touches_contract(&changed) {
+        return Ok(());
+    }
+    let dirs = work::trusted::process_dirs(false);
+    let exe = work::trusted::resolve("repo-contract", &dirs).ok_or("repo-contract is not on the release's bin/; cannot judge the contract")?;
+    let out = spira_config::bounded::bounded_for(exe, "3600")
+        .args(["check", &name, "--tree", &root, "--clauses", work::contract::FENCE_CLAUSES])
+        .output()
+        .map_err(|e| format!("cannot run repo-contract: {e}"))?;
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    match work::contract::refusal(out.status.code(), &stdout) {
+        Some(e) => Err(e),
+        None => {
+            if out.status.code() != Some(0) {
+                eprintln!("work submit: warning: repo-contract could not tell: {}{}", stdout.trim(), String::from_utf8_lossy(&out.stderr).trim());
+            }
+            Ok(())
+        }
+    }
 }
 
 /// `work checks [--list]`: the repository's `[[check]]` rows from `.spira/checks.toml`, run in
