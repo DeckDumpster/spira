@@ -1079,15 +1079,10 @@ impl<'a> Pass<'a> {
         }
     }
 
-    /// File the base's own red through incident.sh (deduped on repository + suite).
+    /// File the base's own red through the in-process intake (deduped on repository + suite).
     #[allow(clippy::too_many_arguments)]
     fn base_incident(&self, name: &str, suite: &str, reason: &str, br: &str, base: &str, sha: &str, out: &str) {
-        if !crate::util::runnable(&self.s.incident) {
-            self.log(&format!("CHECK6 {name}: no intake at {} — the base's own red reaches nobody", self.s.incident.display()));
-            return;
-        }
         let named = if suite == "-" { "- (the gate named none; read its output below)".to_string() } else { suite.to_string() };
-        let labels = self.s.scope_label.clone();
         let title = format!("{name}'s own gate fails against {base} — nothing can land");
         let payload = [
             format!("{name}'s landing gate was run against {base} itself and failed there, so every branch of"),
@@ -1109,24 +1104,9 @@ impl<'a> Pass<'a> {
         ]
         .join("\n");
         let key = if suite == "-" { format!("basefail:{name}:-@{}", if sha.is_empty() { "unknown" } else { sha }) } else { format!("basefail:{name}:{suite}") };
-        match self.lib.incident(&labels, name, &key, &title, &payload) {
-            Err(_) => self.log(&format!("CHECK6 {name}: the intake could not file the base's red — it stays spooled and drain will retry")),
-            Ok(printed) => {
-                let id: String = printed
-                    .lines()
-                    .map(str::trim)
-                    .find(|l| !self.s.id_prefix.is_empty() && l.starts_with(&self.s.id_prefix) && !l.contains(char::is_whitespace))
-                    .unwrap_or("")
-                    .to_string();
-                if !id.is_empty() {
-                    self.log(&format!("CHECK6 {name}: the base's own red is {id} (suite {suite})"));
-                } else {
-                    self.log(&format!(
-                        "CHECK6 {name}: the intake returned no bead id for the base's red — check {}",
-                        self.s.incident.display()
-                    ));
-                }
-            }
+        match self.lib.file_incident(&base_red_filing(name, &key, &title, &payload)) {
+            Ok(id) => self.log(&format!("CHECK6 {name}: the base's own red is {id} (suite {suite})")),
+            Err(e) => self.log(&format!("CHECK6 {name}: the base's own red was not filed: {e}")),
         }
     }
 
@@ -1228,4 +1208,8 @@ fn names_bead(subject: &str, id: &str) -> bool {
     subject
         .match_indices(id)
         .any(|(i, _)| !subject[i + id.len()..].starts_with(|c: char| c.is_alphanumeric() || c == '.' || c == '-'))
+}
+
+pub(crate) fn base_red_filing(name: &str, key: &str, title: &str, payload: &str) -> crate::model::IncidentFiling {
+    crate::model::IncidentFiling { cause: "base-suite-red".into(), repo: name.into(), reference: key.into(), title: title.into(), body: payload.into() }
 }

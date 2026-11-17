@@ -37,3 +37,4 @@ system-paths = { path = "../system-paths" }
 
 [dev-dependencies]
 testkit = { path = "../testkit" }
+bead = { path = "../bead" }

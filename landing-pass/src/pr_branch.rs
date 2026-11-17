@@ -258,9 +258,6 @@ mod tests {
             self.rec(format!("event {kind} {id}"));
         }
         fn noverdict(&self, _: &str, _: &str, _: &str, _: &str, _: &str, _: &str) {}
-        fn incident(&self, _: &str, _: &str, _: &str, _: &str, _: &str) -> Result<String, i32> {
-            Ok(String::new())
-        }
         fn file_incident(&self, _: &crate::model::IncidentFiling) -> Result<String, String> {
             Ok(String::new())
         }

@@ -34,7 +34,6 @@ impl<'a> SeamRunner<'a> {
         // (SPIRA_REPO_DERIVED, spira_toml_file, the unregistered keys), rebase_branch/recut_onto
         // (a rebase-stale library), spira_git_push (a queue-helpers library), bead_reopen/
         // bump_requeue/requeues_of (spira-claim's library), spira_event (bead's library) and
-        // incident.sh file (the incident library).
         let mut c = command("bash");
         c.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::inherit());
         match spira_config::release_env::child_path_env_for_process() {
@@ -166,7 +165,6 @@ pub fn parse_context(answer: &str, home: &Path) -> Result<(Settings, Vec<RepoRow
         rebase_escalate_at: num("rebase_escalate_at", 3).max(0) as u32,
         git_name: g("git_name"),
         git_email: g("git_email"),
-        incident: PathBuf::from(g("incident")),
         scope_label: g("scope_label"),
         // Every harness tool from the declared release.
         queue_bin: Some(PathBuf::from(spira_config::release_env::tool("queue")?)),
@@ -204,8 +202,6 @@ pub fn certify_par(v: Option<&str>) -> usize {
 
 pub struct RealLib<'a> {
     pub seam: SeamRunner<'a>,
-    /// incident.sh — the intake the base's own red is filed through.
-    pub incident: PathBuf,
     /// sp-31hjr (family C, asks/escalation): the settings and bead reads the native
     /// `ask_*`/`noverdict` methods need, that the seam used to resolve inside lib.sh.
     pub s: Settings,
@@ -395,11 +391,6 @@ impl<'a> Lib for RealLib<'a> {
                 Err(why) => self.seam.out.progress(&format!("escalation refused, will retry — {id} {outcome} x{n} on {branch}: {why}")),
             }
         }
-    }
-    fn incident(&self, labels: &str, repo: &str, ext_ref: &str, title: &str, payload: &str) -> Result<String, i32> {
-        let intake = p(&self.incident);
-        let (rc, ans) = self.seam.call(Op::Incident, &[&intake, labels, repo, ext_ref, title, payload]);
-        if rc == 0 { Ok(ans) } else { Err(rc) }
     }
     fn file_incident(&self, f: &IncidentFiling) -> Result<String, String> {
         match incident::intake::file_payload_with_id(&f.title, f.body.as_bytes(), |e| incident_tune(f, e))? {
@@ -1474,7 +1465,7 @@ mod store_tests {
         let t = testkit::TempDir::new("landing-pass-deliver");
         let out = Reporter::capture(None);
         let st = Settings::for_run(t.path().to_path_buf());
-        let lib = RealLib { seam: SeamRunner { home: t.path().to_path_buf(), out: &out }, incident: PathBuf::new(), s: st, beads: beads(&c) };
+        let lib = RealLib { seam: SeamRunner { home: t.path().to_path_buf(), out: &out }, s: st, beads: beads(&c) };
         lib.deliver_delivered("sp-a", "abc");
         assert!(!lib.deliver_pr_merged(Path::new("r"), "sp-b", "spira/sp-b", "def"));
         lib.note("sp-a", "a note");
@@ -1493,7 +1484,7 @@ mod store_tests {
         });
         let t = testkit::TempDir::new("landing-pass-cob");
         let out = Reporter::capture(None);
-        let lib = RealLib { seam: SeamRunner { home: t.path().to_path_buf(), out: &out }, incident: PathBuf::new(), s: Settings::for_run(t.path().to_path_buf()), beads: beads(&c) };
+        let lib = RealLib { seam: SeamRunner { home: t.path().to_path_buf(), out: &out }, s: Settings::for_run(t.path().to_path_buf()), beads: beads(&c) };
         assert!(lib.content_on_base("sp-a", proof));
         let seen = s.seen.lock().unwrap();
         let want = format!("event bead sp-a --expect SUBMITTED --version 7 --actor landing-pass --kind {{\"ContentOnBase\":{{\"proof\":\"{proof}\"}}}}");
@@ -1506,7 +1497,7 @@ mod store_tests {
         let (_s, c) = store(|_| (1, String::new()));
         let t = testkit::TempDir::new("landing-pass-cob-norow");
         let out = Reporter::capture(None);
-        let lib = RealLib { seam: SeamRunner { home: t.path().to_path_buf(), out: &out }, incident: PathBuf::new(), s: Settings::for_run(t.path().to_path_buf()), beads: beads(&c) };
+        let lib = RealLib { seam: SeamRunner { home: t.path().to_path_buf(), out: &out }, s: Settings::for_run(t.path().to_path_buf()), beads: beads(&c) };
         assert!(!lib.content_on_base("sp-a", "p"));
         let lines = out.lines();
         assert_eq!(lines.iter().filter(|l| l.contains("content-on-base did not happen")).count(), 1, "{lines:?}");
@@ -1520,7 +1511,7 @@ mod store_tests {
         });
         let t = testkit::TempDir::new("landing-pass-cob-refused");
         let out = Reporter::capture(None);
-        let lib = RealLib { seam: SeamRunner { home: t.path().to_path_buf(), out: &out }, incident: PathBuf::new(), s: Settings::for_run(t.path().to_path_buf()), beads: beads(&c) };
+        let lib = RealLib { seam: SeamRunner { home: t.path().to_path_buf(), out: &out }, s: Settings::for_run(t.path().to_path_buf()), beads: beads(&c) };
         assert!(!lib.content_on_base("sp-a", "p"));
         assert!(out.lines().iter().any(|l| l.contains("did not happen") && l.contains("version conflict")), "{:?}", out.lines());
     }
@@ -1571,6 +1562,37 @@ mod incident_tests {
         let have = split_csv(labels);
         let have: Vec<&str> = have.iter().map(String::as_str).collect();
         bucket_match(&have, &split_csv(&p.labels), &split_csv(&p.exclude_labels), &[], "ops")
+    }
+
+    #[test]
+    fn the_base_red_incident_carries_the_labels_the_ops_predicate_matches() {
+        let home = spira_config::resolve::locate_home_for_process().unwrap();
+        let dir = testkit::TempDir::new("landing-pass-basered-labels");
+        let runes = home.join("runes");
+        let toml = spira_config::process::fixture_toml(dir.path(), &[("SPIRA_RUNES_DIR", runes.to_str().unwrap())]);
+        let _g = testkit::env(&[
+            ("SPIRA_HOME", home.to_str()),
+            ("SPIRA_TOML", toml.to_str()),
+            ("SPIRA_INCIDENT_LABELS", None),
+            ("SPIRA_INCIDENT_LABEL", None),
+            ("SPIRA_SCOPE_LABEL", None),
+        ]);
+        let f = crate::pass::base_red_filing("spira", "basefail:spira:test-x.sh", "t", "b");
+        let mut env = incident::intake::Env::load();
+        incident_tune(&f, &mut env);
+        assert!(ops_matches(&env.labels, &home), "ops cannot claim labels {:?}", env.labels);
+        assert_eq!(env.cause, "base-suite-red");
+        let personas: Vec<(String, String)> = spira_config::runes::rune_names(&home)
+            .into_iter()
+            .map(|n| {
+                let l = spira_config::runes::rune_get(&home, &n, "RUNE_LABELS", "");
+                (n, l)
+            })
+            .collect();
+        let parts = bead::runes_partitions(&personas, "").join(" ");
+        let labels = format!("{} repo:spira", env.labels.replace(',', " "));
+        let (n, defects) = bead::lint_judge(&labels, true, "bug", &parts, "no-loop");
+        assert_eq!(n, 0, "{labels}: {defects:?}");
     }
 
     #[test]
