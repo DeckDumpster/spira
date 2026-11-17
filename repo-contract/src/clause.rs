@@ -111,11 +111,13 @@ fn submit_checks(p: &dyn Ports, repo: &str, tree: Option<&Path>) -> Judged {
     let Some(text) = p.read(repo, tree, CHECKS)? else {
         return Ok(Outcome::NotMet(format!("{CHECKS} does not exist")));
     };
-    if let Err(e) = habits::config::parse_checks(&text) {
-        return Ok(Outcome::NotMet(format!("{CHECKS} does not parse: {e}")));
+    match habits::config::parse_checks(&text) {
+        Err(e) => return Ok(Outcome::NotMet(format!("{CHECKS} does not parse: {e}"))),
+        Ok(rows) if rows.is_empty() => return Ok(Outcome::NotMet(format!("{CHECKS} declares no [[check]] rows"))),
+        Ok(_) => {}
     }
     let run = p.run_checks(repo, tree)?;
-    let rows = run.lines.join("; ");
+    let rows = if run.lines.is_empty() { "work checks ran no rows".to_string() } else { run.lines.join("; ") };
     Ok(if run.ok { Outcome::Met(rows) } else { Outcome::NotMet(format!("work checks fails: {rows}")) })
 }
 
@@ -204,6 +206,7 @@ mod tests {
         shell: Option<Vec<&'static str>>,
         shell_err: Option<String>,
         checks_ok: bool,
+        no_lines: bool,
         tiers_ok: bool,
         bad_piece: Option<(&'static str, &'static str)>,
         mode: &'static str,
@@ -226,7 +229,7 @@ mod tests {
             env.vars.contains_key(&format!("has:{program}"))
         }
         fn run_checks(&self, _: &str, _: Option<&Path>) -> Result<Rows, String> {
-            Ok(Rows { ok: self.checks_ok, lines: vec!["-- lint: ok".into(), "-- unit: ok".into()] })
+            Ok(Rows { ok: self.checks_ok, lines: if self.no_lines { Vec::new() } else { vec!["-- lint: ok".into(), "-- unit: ok".into()] } })
         }
         fn run_tiers(&self, _: &str, suites: &[String]) -> Result<Vec<Tier>, String> {
             Ok(suites.iter().map(|s| Tier { name: s.clone(), ok: self.tiers_ok }).collect())
@@ -323,6 +326,20 @@ mod tests {
         let mut f = green();
         f.checks_ok = false;
         assert!(line(&f, Clause::SubmitChecks).starts_with("not met submit-checks: work checks fails: -- lint: ok"));
+    }
+
+    #[test]
+    fn submit_checks_not_met_when_the_file_declares_no_rows() {
+        let mut f = green();
+        f.files.insert(CHECKS.into(), "# Rows `work checks` runs before a branch is submitted.\n".into());
+        assert_eq!(line(&f, Clause::SubmitChecks), "not met submit-checks: .spira/checks.toml declares no [[check]] rows");
+    }
+
+    #[test]
+    fn submit_checks_met_never_has_an_empty_reason() {
+        let mut f = green();
+        f.no_lines = true;
+        assert_eq!(line(&f, Clause::SubmitChecks), "met submit-checks: work checks ran no rows");
     }
 
     #[test]
