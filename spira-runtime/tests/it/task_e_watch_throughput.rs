@@ -519,10 +519,43 @@ fn one_unreadable_landings_tick_after_the_store_server_restarted_pages_nothing_a
 }
 
 #[test]
-fn an_unreadable_landings_tick_with_the_store_server_up_more_than_two_minutes_pages_at_once() {
+fn an_unreadable_landings_tick_with_the_store_server_up_more_than_two_minutes_pages_only_when_the_next_is_unreadable_too() {
     let host = Arc::new(Mutex::new(Host { snap: Snapshot::default(), ..landed(24) }));
-    let r = blind_with_server_up(host, 121);
+    let mut r = blind_with_server_up(host, 121);
+    assert_eq!(named(&r, INBOX_APPEND), Vec::<String>::new(), "the first unreadable tick is read again");
+    r.advance(60_000).unwrap();
+    let pages = named(&r, INBOX_APPEND);
+    assert_eq!(pages.len(), 1, "{pages:?}");
+    assert!(pages[0].contains("P0 BLIND"), "{pages:?}");
+}
+
+#[test]
+fn unreadable_ticks_that_are_never_consecutive_page_nothing_and_two_in_a_row_page_once() {
+    let host = Arc::new(Mutex::new(Host { snap: Snapshot::default(), ..landed(24) }));
+    let h = host.clone();
+    let (_, stream, kind) = WatchThroughput::boot();
+    let observe = move |_: &str| {
+        let mut snap = h.lock().unwrap().snap.clone();
+        snap.store_up_s = Some(10_000);
+        Ok(serde_json::to_string(&snap).unwrap())
+    };
+    let mut r = TaskRig::new(1, WatchThroughput::new(config()).registration()).unwrap().double(OBSERVE, observe).double(FILE, |_| Ok("filed".into())).double(CLEAR, |_| Ok("cleared".into())).double(INBOX_APPEND, |_| Ok("appended".into()));
+    r.clock.advance_to(3 * DAY_MS);
+    r.tick(stream, kind).unwrap();
+    let set = |readable: bool| host.lock().unwrap().snap.readable = readable;
+    for readable in [true, false, true] {
+        set(readable);
+        r.advance(60_000).unwrap();
+    }
+    assert_eq!(named(&r, INBOX_APPEND), Vec::<String>::new(), "alternating ticks page nothing");
+    set(false);
+    r.advance(60_000).unwrap();
+    assert_eq!(named(&r, INBOX_APPEND), Vec::<String>::new(), "the first of the pair");
+    r.advance(60_000).unwrap();
     assert_eq!(named(&r, INBOX_APPEND).len(), 1, "{:?}", named(&r, INBOX_APPEND));
+    r.advance(60_000).unwrap();
+    assert_eq!(named(&r, INBOX_APPEND).len(), 1, "a third unreadable tick pages nothing more");
+    assert!(named(&r, INBOX_APPEND)[0].contains("P0 BLIND"));
 }
 
 const REFUSAL: &str = "cannot tell: list --state SUBMITTED,IN_DELIVERY: timed out";
@@ -531,9 +564,10 @@ const NOW_MS: u64 = (RESTART_AT + 600) * 1000;
 
 fn blind_page(readable_at: u64, store_restart: Option<(u64, String)>) -> String {
     let snap = Snapshot { why: REFUSAL.into(), store_restart, activated_at: Some(RESTART_AT), ..Default::default() };
-    let v = decide(&Carry { readable_at, ..Default::default() }, &snap, NOW_MS, &config());
+    let v = decide(&Carry { readable_at, retried: true, ..Default::default() }, &snap, NOW_MS, &config());
     let lines: Vec<String> = v.acts.iter().filter(|a| a.name == INBOX_APPEND).map(|a| a.input.clone()).collect();
     assert_eq!(lines.len(), 1, "{lines:?}");
+    assert!(!lines[0].contains("after the activation"), "{}", lines[0]);
     lines[0].clone()
 }
 
