@@ -198,7 +198,17 @@ refused the filing, or (for `drain`) at least one entry is still stuck.
   notes "fix landed but the alarm persists" and labels `settle-fired:<hash of fixes>` so a
   later pass records nothing more, and Ops claims it as the unblocked bead it already is.
   The only detector today is `systemctl --user is-failed` for a `incident:<unit>` ref; any
-  other incident has no probe and is never closed on a guess. While a fix is unlanded the
+  other incident has no probe (see the reversal below). While a fix is unlanded the
   `blocks` edge keeps the incident unclaimable, and `spira-claim` no longer lets an
   incident-labelled bead stack on a merely certified fix (`rank::stack_cap`). Run by
   `spira-incident-settle.timer`.
+
+  **Reversal (sp-qob968): an incident with no probe closes on the landing.** This reverses
+  "never closed on a guess". A test-red incident has no unit to re-run, and every commit on
+  the landing ref passed its round's full suite, so a LANDED fix whose commit is on the
+  landing ref is the reading; the active release need not carry it. The evidence ends "no
+  detector to re-run: the landing passed its round on the landing ref at <time>". A fix
+  retired SUPERSEDED is followed to its successor (at most three hops; a longer chain or a
+  cycle is skipped) and the successor's landing counts: "fix <fix> superseded by <by>, landed
+  at <sha>". An ejected or reopened fix is not landed, so the incident stays open. A unit ref
+  keeps its rule: the release carries the fix and the unit is not failed.

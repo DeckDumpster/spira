@@ -1335,6 +1335,7 @@ mod tests {
                         disposition: None,
                         disposition_note: None,
                         version: None,
+                        reason: None,
                     };
                     (id.clone(), row)
                 })

@@ -1,11 +1,13 @@
 //! An incident closes itself once its fix has landed and its detector is quiet; if the
-//! detector still fires it stays with Ops, once per set of fixes. An unlanded fix is a
+//! detector still fires it stays with Ops, once per set of fixes. One with no probe to re-run
+//! closes on the landing alone. An unlanded fix is a
 //! `blocks` edge, which the claim already refuses, so nothing here touches those beads.
 //! Every effect is a [`Settler`] method, so the decisions are unit-tested with no database.
 
 use crate::decide::ref_hash;
 
 const DROPPED: &str = "DROPPED";
+const MAX_SUPERSEDE_HOPS: usize = 3;
 
 pub const FIRED_LABEL_PREFIX: &str = "settle-fired:";
 
@@ -21,13 +23,15 @@ pub struct Candidate {
 pub enum FixState {
     Landed,
     Unlanded(String),
+    /// Retired because `by` took over its work; `by`'s landing is the fix's.
+    Superseded { by: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Detector {
     Quiet,
     Firing(String),
-    /// No probe can be re-run for this incident; it is left alone, never closed on a guess.
+    /// No probe can be re-run: the fix's landing on the landing ref, which passed its round, is the reading.
     NoProbe,
 }
 
@@ -40,6 +44,8 @@ pub struct Landing {
 pub trait Settler {
     fn candidates(&self) -> Result<Vec<Candidate>, String>;
     fn fix_state(&self, fix: &str) -> Result<FixState, String>;
+    /// The commit on the repo's landing ref that names the fix.
+    fn landing_on_base(&self, fix: &str) -> Result<Landing, String>;
     /// `Ok(None)`: the fix landed but the active release does not carry it yet.
     fn landing_in_force(&self, fix: &str) -> Result<Option<Landing>, String>;
     fn detect(&self, c: &Candidate) -> Result<Detector, String>;
@@ -70,41 +76,75 @@ pub fn settle_one(s: &dyn Settler, c: &Candidate) -> Outcome {
         return skip("no fix dependency".into());
     }
     fixes.sort();
-    let mut landings = Vec::new();
+    // (the fix named by the edge, the bead whose landing counts: itself, or its landed successor)
+    let mut landed: Vec<(String, String)> = Vec::new();
     let mut dropped: Vec<String> = Vec::new();
     for fix in &fixes {
-        match s.fix_state(fix) {
-            Ok(FixState::Landed) => {}
-            Ok(FixState::Unlanded(st)) if st == DROPPED => {
-                dropped.push(fix.clone());
-                continue;
+        let mut target = fix.clone();
+        let mut hops = 0;
+        let state = loop {
+            match s.fix_state(&target) {
+                Ok(FixState::Superseded { by }) => {
+                    hops += 1;
+                    if hops > MAX_SUPERSEDE_HOPS {
+                        return skip(format!("supersede chain of {fix} is too long"));
+                    }
+                    target = by;
+                }
+                other => break other,
             }
+        };
+        match state {
+            Ok(FixState::Landed) => landed.push((fix.clone(), target)),
+            Ok(FixState::Unlanded(st)) if st == DROPPED && target == *fix => dropped.push(fix.clone()),
             // The fix's own state is left out of the reason, so a standing wait reads the same while
             // the fix moves between unlanded states and is said once.
-            Ok(FixState::Unlanded(_)) => return wait(format!("fix {fix} not landed")),
-            Err(e) => return skip(format!("cannot read {fix}: {e}")),
+            Ok(_) => return wait(format!("fix {fix} not landed")),
+            Err(e) => return skip(format!("cannot read {target}: {e}")),
         }
-        match s.landing_in_force(fix) {
-            Ok(Some(l)) => landings.push((fix.clone(), l.sha)),
-            Ok(None) => return wait(format!("{fix} landed but the active release does not carry it")),
-            Err(e) => return skip(format!("cannot tell whether {fix} is in force: {e}")),
+    }
+    let detector = match s.detect(c) {
+        Ok(d) => d,
+        Err(e) => return skip(format!("detector could not run: {e}")),
+    };
+    let on_base = matches!(detector, Detector::NoProbe);
+    let mut landings = Vec::new();
+    for (fix, target) in &landed {
+        let l = if on_base {
+            s.landing_on_base(target).map_err(|e| format!("cannot find the landing of {target}: {e}"))
+        } else {
+            match s.landing_in_force(target) {
+                Ok(Some(l)) => Ok(l),
+                Ok(None) => return wait(format!("{target} landed but the active release does not carry it")),
+                Err(e) => Err(format!("cannot tell whether {target} is in force: {e}")),
+            }
+        };
+        match l {
+            Ok(l) => landings.push(if fix == target { format!("fix landed: {fix} at {}", l.sha) } else { format!("fix {fix} superseded by {target}, landed at {}", l.sha) }),
+            Err(e) => return skip(e),
         }
     }
     let fired = fired_label(&fixes);
-    match s.detect(c) {
-        Ok(Detector::NoProbe) => skip("no detector to re-run".into()),
-        Ok(Detector::Quiet) => {
-            let mut landed = landings.iter().map(|(f, sha)| format!("fix landed: {f} at {sha}")).collect::<Vec<_>>();
-            if !dropped.is_empty() {
-                landed.push(format!("fix dropped: {}", dropped.join(", ")));
-            }
-            let evidence = format!("{}; detector quiet at {}", landed.join("; "), s.now_iso());
-            match s.close(&c.id, &evidence) {
-                Ok(()) => Outcome::Closed { id: c.id.clone(), evidence },
-                Err(e) => skip(format!("close refused: {e}")),
-            }
+    let mut report = landings;
+    if !dropped.is_empty() {
+        report.push(format!("fix dropped: {}", dropped.join(", ")));
+    }
+    let closed = |tail: String| {
+        let evidence = format!("{}; {tail}", report.join("; "));
+        match s.close(&c.id, &evidence) {
+            Ok(()) => Outcome::Closed { id: c.id.clone(), evidence },
+            Err(e) => skip(format!("close refused: {e}")),
         }
-        Ok(Detector::Firing(detail)) => {
+    };
+    match detector {
+        Detector::NoProbe => {
+            if landed.is_empty() {
+                return skip("no detector to re-run and no fix landed".into());
+            }
+            closed(format!("no detector to re-run: the landing passed its round on the landing ref at {}", s.now_iso()))
+        }
+        Detector::Quiet => closed(format!("detector quiet at {}", s.now_iso())),
+        Detector::Firing(detail) => {
             if c.labels.contains(&fired) {
                 return wait("fix landed but the alarm persists; already with Ops".into());
             }
@@ -114,7 +154,6 @@ pub fn settle_one(s: &dyn Settler, c: &Candidate) -> Outcome {
                 Err(e) => skip(format!("cannot record the persisting alarm: {e}")),
             }
         }
-        Err(e) => skip(format!("detector could not run: {e}")),
     }
 }
 
@@ -178,6 +217,9 @@ mod tests {
         }
         fn fix_state(&self, fix: &str) -> Result<FixState, String> {
             self.states.get(fix).cloned().ok_or_else(|| "no row".into())
+        }
+        fn landing_on_base(&self, _: &str) -> Result<Landing, String> {
+            Ok(Landing { sha: "abc123".into() })
         }
         fn landing_in_force(&self, _: &str) -> Result<Option<Landing>, String> {
             Ok(self.in_force.then(|| Landing { sha: "abc123".into() }))
@@ -265,13 +307,67 @@ mod tests {
     }
 
     #[test]
-    fn an_incident_with_no_probe_or_no_fix_is_never_closed() {
-        let f = Fake::new(FixState::Landed, Detector::NoProbe);
-        assert!(matches!(settle_one(&f, &cand(&[])), Outcome::Skipped { .. }));
+    fn a_landed_fix_closes_an_incident_with_no_probe() {
+        let mut f = Fake::new(FixState::Landed, Detector::NoProbe);
+        f.in_force = false;
+        assert!(matches!(settle_one(&f, &cand(&[])), Outcome::Closed { .. }));
+        let closed = f.closed.borrow();
+        for want in ["fix landed: sp-fix at abc123", "no detector to re-run", "2026-10-07T00:00:00Z"] {
+            assert!(closed[0].1.contains(want), "{want} missing from {:?}", closed[0].1);
+        }
+    }
+
+    #[test]
+    fn an_incident_with_no_fix_is_never_closed() {
         let g = Fake::new(FixState::Landed, Detector::Quiet);
         let none = Candidate { fixes: vec![], ..cand(&[]) };
         assert!(matches!(settle_one(&g, &none), Outcome::Skipped { .. }));
-        assert!(f.closed.borrow().is_empty() && g.closed.borrow().is_empty());
+        assert!(g.closed.borrow().is_empty());
+    }
+
+    fn chain(links: &[(&str, FixState)]) -> Fake {
+        let mut f = Fake::new(FixState::Landed, Detector::Quiet);
+        f.states = links.iter().map(|(k, v)| (k.to_string(), v.clone())).collect();
+        f
+    }
+
+    fn sup(by: &str) -> FixState {
+        FixState::Superseded { by: by.into() }
+    }
+
+    #[test]
+    fn a_superseded_fix_closes_through_its_landed_successor() {
+        let f = chain(&[("sp-fix", sup("sp-succ")), ("sp-succ", FixState::Landed)]);
+        assert!(matches!(settle_one(&f, &cand(&[])), Outcome::Closed { .. }));
+        assert!(f.closed.borrow()[0].1.contains("sp-fix superseded by sp-succ"), "{:?}", f.closed);
+    }
+
+    #[test]
+    fn a_superseded_fix_whose_successor_is_unlanded_waits() {
+        let f = chain(&[("sp-fix", sup("sp-succ")), ("sp-succ", FixState::Unlanded("REWORK".into()))]);
+        assert_eq!(settle_one(&f, &cand(&[])), Outcome::Waiting { id: "sp-inc".into(), why: "fix sp-fix not landed".into() });
+        assert!(f.closed.borrow().is_empty());
+    }
+
+    #[test]
+    fn a_supersede_chain_longer_than_three_hops_is_skipped_though_it_ends_landed() {
+        let f = chain(&[("sp-fix", sup("sp-b")), ("sp-b", sup("sp-c")), ("sp-c", sup("sp-d")), ("sp-d", sup("sp-e")), ("sp-e", FixState::Landed)]);
+        assert!(matches!(settle_one(&f, &cand(&[])), Outcome::Skipped { why, .. } if why == "supersede chain of sp-fix is too long"));
+        let three = chain(&[("sp-fix", sup("sp-b")), ("sp-b", sup("sp-c")), ("sp-c", sup("sp-d")), ("sp-d", FixState::Landed)]);
+        assert!(matches!(settle_one(&three, &cand(&[])), Outcome::Closed { .. }));
+    }
+
+    #[test]
+    fn a_no_probe_incident_whose_only_fix_was_dropped_is_never_closed() {
+        let f = Fake::new(FixState::Unlanded("DROPPED".into()), Detector::NoProbe);
+        assert!(matches!(settle_one(&f, &cand(&[])), Outcome::Skipped { .. }));
+        assert!(f.closed.borrow().is_empty());
+    }
+
+    #[test]
+    fn a_supersede_cycle_is_skipped() {
+        let f = chain(&[("sp-fix", sup("sp-b")), ("sp-b", sup("sp-fix"))]);
+        assert_eq!(settle_one(&f, &cand(&[])), Outcome::Skipped { id: "sp-inc".into(), why: "supersede chain of sp-fix is too long".into() });
     }
 
     #[test]

@@ -66,6 +66,8 @@ pub struct Row {
     pub disposition: Option<String>,
     pub disposition_note: Option<String>,
     pub version: Option<String>,
+    /// Why the row is in its state; a SUPERSEDED bead's is its successor's id.
+    pub reason: Option<String>,
 }
 
 impl Row {
@@ -181,6 +183,7 @@ pub fn row_of(r: &Value) -> Result<Row, String> {
         disposition: scalar(r.get("disposition")).filter(|x| !x.is_empty()),
         disposition_note: scalar(r.get("disposition_note")),
         version: scalar(r.get("version")).filter(|v| !v.is_empty()),
+        reason: scalar(r.get("reason")).filter(|x| !x.is_empty()),
         bead_id: id,
     })
 }
@@ -511,6 +514,13 @@ mod tests {
         assert_eq!(snooze_until("snooze-until:7 because the upstream lands"), Some(7));
         assert_eq!(snooze_until("snooze-until:soon"), None);
         assert!(names_directive("see snooze-until:7") && !names_directive("blocker unlanded"));
+    }
+
+    #[test]
+    fn a_superseded_row_carries_its_successor_as_the_reason() {
+        let r = row_of(&serde_json::json!({"bead_id": "sp-a", "state": "SUPERSEDED", "reason": "sp-x"})).unwrap();
+        assert_eq!(r.reason.as_deref(), Some("sp-x"));
+        assert_eq!(row_of(&serde_json::json!({"bead_id": "sp-a", "state": "READY"})).unwrap().reason, None);
     }
 
     #[test]

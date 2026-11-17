@@ -23,7 +23,7 @@
 //! ```text
 //! Snapshot { incidents: Vec<Inc> }
 //! Inc { id, external_ref, labels, fixes: Vec<Fix>, detector: Quiet | Firing(String) | NoProbe | Err(String) }
-//! Fix { id, state: String /* lifecycle state */, landing: InForce(sha) | NotInRelease | Err(String) }
+//! Fix { id, state: String /* lifecycle state */, landing: InForce(sha) | OnBase(sha) | NotInRelease | Err(String), by: Option<String> /* successor; state and landing are its */ }
 //! ```
 //!
 //! - Candidates: content `list --all --json` by label `SPIRA_INCIDENT_LABEL` (default `incident`),
@@ -37,18 +37,24 @@
 //!   (`settle_real.rs:87,95`); repo from the fix's `repo:` label and the registry. Git stays a child
 //!   (class B, allowed). Release sha from `$SPIRA_RELEASE` (`settle_real.rs:135`) → pinned at boot.
 //! - Detector: `systemctl --user is-failed <unit>` for `incident:<unit>` refs (`settle_real.rs:102-112`)
-//!   → `unit.facts` (S6) read in-process. Non-unit refs are `NoProbe`.
+//!   → `unit.facts` (S6) read in-process. Non-unit refs are `NoProbe`, and close on the landing alone
+//!   (see Decide).
 //!
-//! The probe stops reading an incident at its first unlanded fix, as today (`settle.rs:85`), so the
-//! detector is never run for one.
+//! A fix retired as SUPERSEDED is followed to its successor (at most 3 hops), whose state and landing
+//! the `Fix` carries. The probe stops reading an incident at its first fix that is neither dropped nor
+//! landed on the landing ref (`InForce` or `OnBase`), so the detector is never run for one.
 //!
 //! ## Decide
 //!
 //! `decide(carry, snap) -> (Carry, Vec<Act>)`: `settle_one` with the port's read methods answered
 //! from `Inc`. Outcomes `Closed | Persists | Waiting | Skipped` (`settle.rs:52`).
 //!
-//! - Close when every fix is landed-in-force or dropped and the detector is `Quiet`; evidence names
-//!   each fix, its sha, and "detector quiet at <now>" (`settle.rs:98-102`).
+//! - Close when every fix is landed or dropped and the detector is `Quiet` (each landing in force in
+//!   the active release); evidence names each fix, its sha, and "detector quiet at <now>". With
+//!   `NoProbe` the landing on the landing ref (`OnBase` or `InForce`) is the reading: evidence ends
+//!   "no detector to re-run: the landing passed its round on the landing ref at <now>", and a
+//!   superseded fix reads "fix <fix> superseded by <by>, landed at <sha>". This reverses sp-8acg4g's
+//!   "never closed on a guess" for incidents with no unit probe: every landing passed its round's suite.
 //! - Persist (note + label `settle-fired:<hash of sorted fixes>`, `settle.rs:59,112`) once per fix set;
 //!   an incident already carrying the label waits (`settle.rs:109`).
 //! - Carry: the `Waiting` set as `id\twhy` lines (`settle.rs:124`), today the file
@@ -125,6 +131,8 @@ pub const SPEC: Spec = Spec { name: NAME, stream: STREAM, tick: TICK, state: STA
 #[serde(rename_all = "snake_case")]
 pub enum Landing {
     InForce(String),
+    /// On the landing ref, which the active release does not carry.
+    OnBase(String),
     #[default]
     NotInRelease,
     Err(String),
@@ -137,6 +145,8 @@ pub struct Fix {
     /// The lifecycle state: `LANDED`/`DONE` is landed, `DROPPED` does not block.
     pub state: String,
     pub landing: Landing,
+    /// The successor this fix was superseded by; `state` and `landing` then describe it.
+    pub by: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -222,15 +232,27 @@ impl incident::settle::Settler for Observed<'_> {
         Ok(vec![candidate(self.inc)])
     }
     fn fix_state(&self, fix: &str) -> Result<incident::settle::FixState, String> {
-        let f = self.inc.fixes.iter().find(|f| f.id == fix).ok_or_else(|| format!("{fix} was not observed"))?;
+        let find = |id: &str| self.inc.fixes.iter().find(|f| f.id == id || f.by.as_deref() == Some(id));
+        let f = find(fix).ok_or_else(|| format!("{fix} was not observed"))?;
+        match &f.by {
+            Some(by) if f.id == fix => return Ok(incident::settle::FixState::Superseded { by: by.clone() }),
+            _ if f.state == "SUPERSEDED" => return Ok(incident::settle::FixState::Superseded { by: fix.to_string() }),
+            _ => {}
+        }
         Ok(if matches!(f.state.as_str(), "LANDED" | "DONE") { incident::settle::FixState::Landed } else { incident::settle::FixState::Unlanded(f.state.clone()) })
     }
+    fn landing_on_base(&self, fix: &str) -> Result<incident::settle::Landing, String> {
+        match self.landing_of(fix)? {
+            Landing::InForce(sha) | Landing::OnBase(sha) => Ok(incident::settle::Landing { sha }),
+            Landing::NotInRelease => Err(format!("no commit on the landing ref names {fix}")),
+            Landing::Err(e) => Err(e),
+        }
+    }
     fn landing_in_force(&self, fix: &str) -> Result<Option<incident::settle::Landing>, String> {
-        match self.inc.fixes.iter().find(|f| f.id == fix).map(|f| &f.landing) {
-            Some(Landing::InForce(sha)) => Ok(Some(incident::settle::Landing { sha: sha.clone() })),
-            Some(Landing::NotInRelease) => Ok(None),
-            Some(Landing::Err(e)) => Err(e.clone()),
-            None => Err(format!("{fix} was not observed")),
+        match self.landing_of(fix)? {
+            Landing::InForce(sha) => Ok(Some(incident::settle::Landing { sha })),
+            Landing::OnBase(_) | Landing::NotInRelease => Ok(None),
+            Landing::Err(e) => Err(e),
         }
     }
     fn detect(&self, _: &incident::settle::Candidate) -> Result<incident::settle::Detector, String> {
@@ -251,6 +273,12 @@ impl incident::settle::Settler for Observed<'_> {
     }
     fn now_iso(&self) -> String {
         self.now_iso.clone()
+    }
+}
+
+impl Observed<'_> {
+    fn landing_of(&self, fix: &str) -> Result<Landing, String> {
+        self.inc.fixes.iter().find(|f| f.id == fix || f.by.as_deref() == Some(fix)).map(|f| f.landing.clone()).ok_or_else(|| format!("{fix} was not observed"))
     }
 }
 
@@ -421,23 +449,31 @@ pub fn observe(e: &crate::Effects) -> Result<String, String> {
         let mut inc = Inc { id: c.id.clone(), external_ref: c.external_ref.clone().unwrap_or_default(), labels: c.labels.clone(), fixes: vec![], detector: Detector::NoProbe };
         let mut all_landed = true;
         for fix in c.fixes.clone() {
-            let state = match settler.fix_state(&fix) {
-                Ok(incident::settle::FixState::Landed) => "LANDED".to_string(),
-                Ok(incident::settle::FixState::Unlanded(s)) => s,
-                Err(e) => format!("unknown: {e}"),
-            };
-            let landed = state == "LANDED";
-            let landing = if !landed {
-                Landing::NotInRelease
-            } else {
-                match settler.landing_in_force(&fix) {
-                    Ok(Some(l)) => Landing::InForce(l.sha),
-                    Ok(None) => Landing::NotInRelease,
-                    Err(e) => Landing::Err(e),
+            let (mut target, mut by, mut hops) = (fix.clone(), None, 0);
+            let state = loop {
+                match settler.fix_state(&target) {
+                    Ok(incident::settle::FixState::Superseded { by: next }) if hops < 3 => {
+                        hops += 1;
+                        by = Some(next.clone());
+                        target = next;
+                    }
+                    Ok(incident::settle::FixState::Superseded { .. }) => break "SUPERSEDED".to_string(),
+                    Ok(incident::settle::FixState::Landed) => break "LANDED".to_string(),
+                    Ok(incident::settle::FixState::Unlanded(s)) => break s,
+                    Err(e) => break format!("unknown: {e}"),
                 }
             };
-            let stop = state != "DROPPED" && !matches!(landing, Landing::InForce(_));
-            inc.fixes.push(Fix { id: fix, state, landing });
+            let landing = if state != "LANDED" {
+                Landing::NotInRelease
+            } else {
+                match settler.landing_in_force(&target) {
+                    Ok(Some(l)) => Landing::InForce(l.sha),
+                    Ok(None) => settler.landing_on_base(&target).map_or_else(Landing::Err, |l| Landing::OnBase(l.sha)),
+                    Err(e) => settler.landing_on_base(&target).map_or(Landing::Err(e), |l| Landing::OnBase(l.sha)),
+                }
+            };
+            let stop = state != "DROPPED" && !matches!(landing, Landing::InForce(_) | Landing::OnBase(_));
+            inc.fixes.push(Fix { id: fix, state, landing, by });
             if stop {
                 all_landed = false;
                 break;
