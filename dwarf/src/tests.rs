@@ -326,6 +326,12 @@ pub(crate) mod verdict_run {
     }
 
     #[test]
+    fn a_row_the_store_cannot_read_does_not_stop_a_session() {
+        let (proceeds, _) = at_session_boundary("");
+        assert!(proceeds, "an unreadable row is not evidence the claim was lost");
+    }
+
+    #[test]
     fn the_claimed_bead_is_read_once_however_many_steps_ask_for_it() {
         let (seam, bd) = (Seams(Default::default()), CountingBd(Default::default()));
         with_run(&bd, &seam, Dirty(vec![]), r#"[{"id":"sp-x"}]"#, |r| {
