@@ -521,3 +521,37 @@ fn a_commit_whose_reply_was_lost_records_the_catch_up() {
     let names: Vec<_> = rec.snapshot().phases.iter().map(|p| p.0).collect();
     assert!(names.contains(&"catch_up"), "{names:?}");
 }
+
+#[test]
+fn a_write_still_waiting_for_the_order_lock_at_its_deadline_is_refused_unstarted() {
+    use std::sync::mpsc;
+    use std::time::Instant;
+    let inner = Counted::default();
+    let m = Arc::new(Modeled::open(inner.clone(), SKIP, 16).unwrap());
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel::<()>();
+    *inner.before_commit.lock().unwrap() = Some(Box::new(move || {
+        entered_tx.send(()).unwrap();
+        release_rx.recv().unwrap();
+    }));
+    let a = {
+        let m = m.clone();
+        std::thread::spawn(move || m.commit(0, &[put("a", "1")]))
+    };
+    entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    let b = {
+        let m = m.clone();
+        std::thread::spawn(move || {
+            let _d = crate::phases::deadline_scoped(Instant::now() + Duration::from_millis(20)); // clock-safe: monotonic deadline
+            m.commit(1, &[put("b", "2")])
+        })
+    };
+    std::thread::sleep(Duration::from_millis(50));
+    release_tx.send(()).unwrap();
+    assert_eq!(a.join().unwrap().unwrap(), 1);
+    assert_eq!(b.join().unwrap().unwrap_err(), Error::Deadline);
+    assert_eq!(inner.head().unwrap(), 1, "only A's commit reached the inner backend");
+    assert!(m.get("a", 1).unwrap().is_some());
+    assert!(m.get("b", 1).unwrap().is_none(), "the refused write is not in the copy");
+    assert_eq!(m.revision(), 1);
+}
