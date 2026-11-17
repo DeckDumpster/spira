@@ -269,12 +269,13 @@ fn report_due(last: &mut Option<(String, std::time::Instant)>, text: &str, now: 
 
 /// A TRUNCATE checkpoint under the writer mutex, so no commit races it and the WAL restarts.
 /// `false` when a reader's snapshot kept it from finishing, or another checkpoint holds the lock.
-fn restart_wal(writer: &Mutex<Writer>) -> bool {
+fn restart_wal(writer: &Mutex<Writer>) -> std::result::Result<bool, String> {
     let w = lock(writer);
     w.conn
         .prepare_cached("PRAGMA wal_checkpoint(TRUNCATE)")
         .and_then(|mut s| s.query_row([], |r| r.get::<_, i64>(0)))
-        .is_ok_and(|busy| busy == 0)
+        .map(|busy| busy == 0)
+        .map_err(|e| e.to_string())
 }
 
 /// What a commit hands the checkpointer thread: a count and a wake-up, no I/O.
@@ -303,6 +304,7 @@ impl Checkpointer {
     ) {
         let mut last_pushed = None;
         let mut last_failure = None;
+        let mut owed = false;
         let push = |pending: u64, last: &mut Option<std::time::Instant>| {
             if let Some(m) = &metrics {
                 m.push(&[spira_otel::metrics::Point::Gauge { name: UNCHECKPOINTED_GAUGE, value: pending as f64 }], &[]);
@@ -313,7 +315,7 @@ impl Checkpointer {
         loop {
             let seen = {
                 let mut s = lock(&self.state);
-                if !s.stop && s.pending < self.every {
+                if !s.stop && (s.pending < self.every || wait == RETRY_AFTER) {
                     s = self.wake.wait_timeout(s, wait).unwrap_or_else(|p| p.into_inner()).0;
                 }
                 if s.stop {
@@ -322,14 +324,23 @@ impl Checkpointer {
                 s.pending
             };
             wait = GAUGE_EVERY;
-            if seen >= self.every {
-                match passive_complete(&conn) {
-                    Ok(true) => {
-                        lock(&self.state).pending -= seen;
-                        if !restart_wal(&writer) {
-                            wait = RETRY_AFTER;
+            if seen >= self.every || owed {
+                let step = if seen >= self.every {
+                    passive_complete(&conn).inspect(|done| {
+                        if *done {
+                            lock(&self.state).pending -= seen;
+                            owed = true;
                         }
-                    }
+                    })
+                } else {
+                    Ok(true)
+                };
+                let step = match step {
+                    Ok(true) => restart_wal(&writer).inspect(|restarted| owed = !restarted),
+                    other => other,
+                };
+                match step {
+                    Ok(true) => {}
                     Ok(false) => wait = RETRY_AFTER,
                     Err(e) => {
                         wait = RETRY_AFTER;
