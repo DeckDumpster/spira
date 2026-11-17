@@ -672,12 +672,6 @@ pub fn kv(sql: &dyn Sql, db: &str, key: &str) -> Res<Option<String>> {
     Ok(rows.first().and_then(|r| cell(r, "value")).map(str::to_string))
 }
 
-/// The open beads whose title contains `needle`.
-pub fn titled(sql: &dyn Sql, db: &str, needle: &str) -> Res<Vec<Bead>> {
-    let l = List { brief: true, limit: None, title_contains: Some(needle.to_string()), ..List::default() };
-    Ok(sql.rows(&l.issues_sql(db))?.iter().filter_map(|r| bead_of(r, true)).collect())
-}
-
 /// `work show`'s text for `id`: the head line `work show` rewrites the status word of, the
 /// fields, then the comments. `None` when the store holds no such bead.
 pub fn show_text(sql: &dyn Sql, db: &str, id: &str) -> Res<Option<String>> {
