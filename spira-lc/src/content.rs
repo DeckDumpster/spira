@@ -193,7 +193,7 @@ const ROW_ATTEMPTS: u32 = 3;
 pub fn after(args: &[String], stdout: &str, m: &mut dyn crate::callers::Machine, bd: &mut dyn crate::callers::Bd, backoff_ms: u64) -> String {
     let (mut report, rowed) = rows_after(args, stdout, m, bd, backoff_ms);
     let ids: Vec<String> = spira_store::planning::claim_inputs_changed(args, stdout).into_iter().filter(|i| rowed.as_ref().is_none_or(|ok| ok.contains(i))).collect();
-    if !ids.is_empty() {
+    if !ids.is_empty() && !crate::settle::owe_claims(&ids, false) {
         let ans = crate::claim_sync::run(&ids, m, bd);
         if ans.code != 0 {
             report.push_str(&format!("spira-lc content: LIFECYCLE: {}; claim inputs not written; repair: spira-lc sync-claim-inputs {}\n", ans.stderr.trim(), ids.join(" ")));

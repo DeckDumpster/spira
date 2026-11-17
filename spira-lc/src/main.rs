@@ -54,6 +54,7 @@ mod repo_config;
 mod ready_set;
 mod rows;
 mod serve;
+mod settle;
 mod skew;
 mod slow;
 mod store_write;
