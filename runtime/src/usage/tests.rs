@@ -218,7 +218,7 @@ fn plant_container(f: &Fixture, parent: &str, conmon: Option<&str>) -> String {
     write(&dir.join("io.stat"), "8:32 rbytes=11 wbytes=339600000 rios=1 wios=9 dbytes=0 dios=0\n");
     write(&dir.join("container/cgroup.procs"), "301\n");
     if let Some(name) = conmon {
-        let args = ["/usr/bin/conmon", "--api-version", "1", "-c", CONTAINER_ID, "-u", CONTAINER_ID, "-n", name, "-r", "/usr/bin/crun"];
+        let args = ["conmon", "--api-version", "1", "-c", CONTAINER_ID, "-u", CONTAINER_ID, "-n", name, "-r", "crun"];
         write(&f.roots.proc_dir.join("301/cmdline"), &args.iter().map(|a| format!("{a}\0")).collect::<String>());
     }
     format!("{MANAGER}/{parent}/{scope}")

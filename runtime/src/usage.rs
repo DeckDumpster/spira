@@ -302,9 +302,10 @@ fn sized(paths: &str) -> Option<u64> {
     (!there.is_empty()).then(|| there.iter().map(|p| dir_bytes(p)).sum())
 }
 
-/// The id a `libpod-<id>.scope` directory name carries.
-fn libpod_id(name: &str) -> Option<&str> {
-    name.strip_prefix("libpod-")?.strip_suffix(".scope").filter(|id| !id.is_empty())
+const LIBPOD_PREFIX: &str = "libpod-";
+
+fn is_libpod_scope(name: &str) -> bool {
+    name.starts_with(LIBPOD_PREFIX) && name.ends_with(".scope")
 }
 
 /// Every `libpod-<id>.scope` directory below `dir`, not descending into one.
@@ -313,7 +314,7 @@ fn libpod_scopes(dir: &Path, out: &mut Vec<PathBuf>) {
     let mut subs: Vec<PathBuf> = rd.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect();
     subs.sort();
     for p in subs {
-        if libpod_id(&basename(&p)).is_some() {
+        if is_libpod_scope(&basename(&p)) {
             out.push(p);
         } else {
             libpod_scopes(&p, out);
@@ -462,8 +463,10 @@ pub fn sample(roots: &Roots) -> Vec<Sample> {
                 continue;
             }
             let unit = basename(&dir);
-            let id = libpod_id(&unit).unwrap_or_default();
-            let name = names.get(id).cloned().unwrap_or_else(|| id.chars().take(12).collect());
+            let name = names
+                .iter()
+                .find(|(id, _)| unit == format!("{LIBPOD_PREFIX}{id}.scope"))
+                .map_or_else(|| unit.chars().skip(LIBPOD_PREFIX.len()).take(12).collect(), |(_, n)| n.clone());
             let mut s = Sample { kind: Kind::Container, cgroup: cg, rune: "container".into(), name, unit, ..Sample::default() };
             counters(&dir, &named, &mut s);
             out.push(s);
