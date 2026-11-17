@@ -760,8 +760,8 @@ fn held_answer(lc: &LcClient, args: &[&str]) -> Result<String, String> {
 
 /// `list <query>`'s answer: the held rows when the process keeps the store's watch, else the store's.
 pub fn rows_answer(lc: &LcClient, q: &store_view::RowQuery, args: &[&str]) -> Result<String, String> {
-    match store_view::shared() {
-        Some(held) => held.rows(q).map(|r| serde_json::Value::Array(r.value).to_string()).map_err(|e| e.to_string()),
+    match store_view::shared().and_then(|held| held.rows(q)) {
+        Some(rows) => rows.map(|r| serde_json::Value::Array(r.value).to_string()).map_err(|e| e.to_string()),
         None => answer(lc, args),
     }
 }

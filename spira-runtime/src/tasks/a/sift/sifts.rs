@@ -91,20 +91,18 @@ fn lcq_held_with(lc: &LcClient, args: &[&str]) -> Result<String, String> {
     }
 }
 
-/// The held lifecycle rows `q` keeps, as `list` printed them, when the process keeps the store's
-/// watch; `None` when it does not.
+/// The held lifecycle rows `q` keeps, as `list` printed them; `None` when the process keeps no
+/// watch or `q` reaches rows it does not hold.
 fn held_rows(q: &store_view::RowQuery) -> Option<Result<Vec<Value>, String>> {
-    store_view::shared().map(|views| views.rows(q).map(|r| r.value).map_err(|e| format!("could not say: {e}")))
+    let rows = store_view::shared()?.rows(q)?;
+    Some(rows.map(|r| r.value).map_err(|e| format!("could not say: {e}")))
 }
 
 /// `show <id>`'s answer, from the held row when the process keeps the store's watch.
 fn show_text(lc: &LcClient, id: &str) -> Result<String, String> {
-    let Some(views) = store_view::shared() else {
-        return lcq_with(lc, &["show", id]); // BDQ_READ_CONSIDERED="LcClient is the spira-lc door; no bdq"
-    };
-    match views.show(id).map_err(|e| format!("could not say: {e}"))?.value {
-        Some(shown) => Ok(shown.to_string()),
-        None => Err(format!("spira-lc exited 1: no row for {id}")),
+    match store_view::shared().and_then(|views| views.show(id)) {
+        Some(shown) => Ok(shown.map_err(|e| format!("could not say: {e}"))?.value.to_string()),
+        None => lcq_with(lc, &["show", id]), // BDQ_READ_CONSIDERED="LcClient is the spira-lc door; no bdq"
     }
 }
 

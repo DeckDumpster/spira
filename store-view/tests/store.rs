@@ -30,7 +30,16 @@ impl Transport for Double {
             "rc" => ok(json!({ "ok": { "items": s.batches, "list_rev": s.list_rev } }).to_string()),
             "list" => {
                 let ids: Option<Vec<&str>> = argv.iter().position(|a| a == "--ids").map(|i| argv[i + 1].split(',').collect());
-                let rows: Vec<&Value> = s.rows.iter().filter(|r| ids.as_ref().is_none_or(|ids| ids.contains(&r["bead_id"].as_str().unwrap()))).collect();
+                let states: Option<Vec<&str>> = argv.iter().position(|a| a == "--state").map(|i| argv[i + 1].split(',').collect());
+                let live = argv.iter().any(|a| a == "--live");
+                let terminal = |r: &Value| matches!(r["state"].as_str(), Some("LANDED" | "SUPERSEDED" | "DROPPED" | "DONE"));
+                let rows: Vec<&Value> = s
+                    .rows
+                    .iter()
+                    .filter(|r| ids.as_ref().is_none_or(|ids| ids.contains(&r["bead_id"].as_str().unwrap())))
+                    .filter(|r| states.as_ref().is_none_or(|st| st.contains(&r["state"].as_str().unwrap())))
+                    .filter(|r| !live || !terminal(r))
+                    .collect();
                 ok(serde_json::to_string(&rows).unwrap())
             }
             "watch" => match s.watches.pop_front() {
@@ -313,7 +322,7 @@ fn a_state_change_the_watch_delivers_is_served_as_a_row_and_a_pool_with_no_furth
         w.p.poll().unwrap();
         assert_eq!(w.p.unheld("CERTIFIED", "spira").unwrap().value, ["sp-b"], "a held row is not pool");
         assert!(w.p.unheld("CERTIFIED", "other").unwrap().value.is_empty(), "another repo's pool is not this one's");
-        let by = |states: &[&str]| w.p.rows(&RowQuery { states, ..Default::default() }).unwrap().value.iter().map(|r| r["bead_id"].as_str().unwrap().to_string()).collect::<Vec<_>>();
+        let by = |states: &[&str]| w.p.rows(&RowQuery { states, ..Default::default() }).unwrap().unwrap().value.iter().map(|r| r["bead_id"].as_str().unwrap().to_string()).collect::<Vec<_>>();
         assert_eq!(by(&["SUBMITTED", "CERTIFIED"]), ["sp-a", "sp-b", "sp-c"]);
 
         w.script.lock().unwrap().rows = vec![bead("sp-a", "CERTIFIED", "[]", None, false), bead("sp-b", "LANDED", "[]", None, false), bead("sp-c", "CERTIFIED", "[\"wait\"]", None, false)];
@@ -325,11 +334,9 @@ fn a_state_change_the_watch_delivers_is_served_as_a_row_and_a_pool_with_no_furth
         let asked = w.script.lock().unwrap().seen.len();
         assert_eq!(w.p.unheld("CERTIFIED", "spira").unwrap().value, ["sp-a"], "visible after one watch round-trip");
         assert_eq!(by(&["CERTIFIED"]), ["sp-a", "sp-c"]);
-        let live = w.p.rows(&RowQuery { live: true, ..Default::default() }).unwrap().value;
-        assert_eq!(live.len(), 3, "a terminal row updated within the window is live");
-        let later = 4_000_000_000 + store_view::LIVE_WINDOW_SECS + 1;
-        let aged: Vec<_> = w.p.rows_at(&RowQuery { live: true, ..Default::default() }, later).unwrap().value.iter().map(|r| r["bead_id"].as_str().unwrap().to_string()).collect();
-        assert_eq!(aged, ["sp-a", "sp-c"], "a terminal row older than the window is dropped from live");
+        let live = w.p.rows(&RowQuery { live: true, ..Default::default() }).unwrap().unwrap().value;
+        assert_eq!(live.len(), 2, "a bead the watch moved to LANDED is no longer held");
+        assert!(w.p.rows(&RowQuery { ids: Some(&["sp-b".to_string()]), ..Default::default() }).is_none(), "a terminal bead is the store's to answer");
         assert_eq!(w.script.lock().unwrap().seen.len(), asked, "serving rows asks the store nothing");
     });
 }
@@ -342,7 +349,7 @@ fn a_cut_watch_makes_every_reader_refuse_and_says_the_watch_is_lost() {
         assert!(w.p.unheld("READY", "spira").is_ok());
         assert!(w.p.poll().is_err(), "the watch was cut");
         w.advance(Duration::from_secs(2));
-        for refusal in [w.p.rows(&RowQuery::default()).err(), w.p.unheld("READY", "spira").err(), w.p.batch_view("spira").err()] {
+        for refusal in [w.p.rows(&RowQuery { live: true, ..Default::default() }).unwrap().err(), w.p.unheld("READY", "spira").err(), w.p.batch_view("spira").err()] {
             assert!(matches!(&refusal, Some(LcError::Refused(m)) if m.starts_with("stale past 1500ms") && m.contains("the watch is lost")), "{refusal:?}");
         }
         w.watch(json!({ "progress_rev": 6 }));
@@ -484,14 +491,31 @@ fn a_list_read_is_answered_from_the_held_rows_and_a_stale_view_refuses_it() {
         assert_eq!(ids(&["list", "--express", "--live"]), ["sp-a"]);
         assert_eq!(ids(&["list", "--state", "CERTIFIED", "--repo", "alpha"]), ["sp-c"]);
         assert_eq!(ids(&["list", "--ids", "sp-a,sp-b"]), ["sp-a", "sp-b"]);
-        assert_eq!(ids(&["list"]), ["sp-a", "sp-b", "sp-c", "sp-d"]);
+        assert_eq!(ids(&["list", "--live"]), ["sp-a", "sp-b", "sp-c", "sp-d"]);
         assert_eq!(w.script.lock().unwrap().seen.len(), asked, "answering asks the store nothing");
 
-        for argv in [&["list", "--batches"][..], &["list", "--delivery"], &["list", "--live", "--window", "5"], &["show", "sp-a"], &[]] {
+        for argv in [&["list", "--batches"][..], &["list", "--delivery"], &["list", "--live", "--window", "5"], &["list"], &["list", "--state", "LANDED"], &["list", "--state", "READY,LANDED"], &["list", "--ids", "sp-gone"], &["show", "sp-a"], &[]] {
             assert!(w.p.list_answer(argv).is_none(), "{argv:?} is the store's to answer");
         }
 
         w.advance(Duration::from_secs(11));
         assert!(matches!(w.p.list_answer(&["list", "--live"]), Some(Err(_))), "a stale view refuses");
+    });
+}
+
+#[test]
+fn a_fresh_projection_reads_the_live_set_and_holds_no_terminal_row() {
+    within(|| {
+        let rows = vec![bead("sp-a", "READY", "[]", None, false), bead("sp-b", "LANDED", "[]", None, false), bead("sp-c", "DROPPED", "[]", None, false)];
+        let w = world(Script { list_rev: 3, rows, ..Default::default() }, Duration::from_secs(10));
+        w.p.load().unwrap();
+        let lists: Vec<Vec<String>> = w.script.lock().unwrap().seen.iter().filter(|a| a[0] == "list").cloned().collect();
+        assert_eq!(lists, [["list", "--live"]], "the only lifecycle read is the live set");
+        let held = w.p.list_answer(&["list", "--ids", "sp-a"]).unwrap().unwrap();
+        assert!(held.contains("sp-a"));
+        assert!(w.p.list_answer(&["list", "--ids", "sp-b"]).is_none(), "a terminal bead is not held, so the store is asked");
+        assert!(w.p.list_answer(&["list", "--state", "LANDED"]).is_none());
+        assert!(w.p.show("sp-b").is_none());
+        assert!(w.p.show("sp-a").is_some());
     });
 }

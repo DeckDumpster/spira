@@ -242,12 +242,9 @@ pub fn lcq_held(env: &Env, args: &[&str]) -> Result<String, String> {
 /// `spira-lc show <id>`, from the held lifecycle rows when the process keeps the store's watch: a
 /// row carries the `state` and `stack` that `show` does.
 fn show_bead(env: &Env, id: &str) -> Result<String, String> {
-    let Some(views) = store_view::shared() else {
-        return lcq(env, &["show", id]);
-    };
-    match views.show(id).map_err(|e| format!("could not say: {e}"))?.value {
-        Some(shown) => Ok(shown.to_string()),
-        None => Err(format!("spira-lc exited 1: no row for {id}")),
+    match store_view::shared().and_then(|views| views.show(id)) {
+        Some(shown) => Ok(shown.map_err(|e| format!("could not say: {e}"))?.value.to_string()),
+        None => lcq(env, &["show", id]),
     }
 }
 
@@ -283,7 +280,9 @@ fn lc_answer(
 pub fn lc_rows(env: &Env) -> Result<Vec<serde_json::Value>, String> {
     if let Some(views) = store_view::shared() {
         let q = store_view::RowQuery { states: &["SUBMITTED", "CERTIFIED"], ..Default::default() };
-        return views.rows(&q).map(|r| r.value).map_err(|e| format!("could not say: {e}"));
+        if let Some(rows) = views.rows(&q) {
+            return rows.map(|r| r.value).map_err(|e| format!("could not say: {e}"));
+        }
     }
     let mut held = env.lc_rows.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(rows) = held.as_ref() {
@@ -304,7 +303,9 @@ pub fn lc_rows_of(env: &Env, ids: &[String]) -> Result<Vec<serde_json::Value>, S
     }
     if let Some(views) = store_view::shared() {
         let q = store_view::RowQuery { ids: Some(ids), ..Default::default() };
-        return views.rows(&q).map(|r| r.value).map_err(|e| format!("could not say: {e}"));
+        if let Some(rows) = views.rows(&q) {
+            return rows.map(|r| r.value).map_err(|e| format!("could not say: {e}"));
+        }
     }
     serde_json::from_str(&lcq(env, &["list", "--ids", &ids.join(",")])?)
         .map_err(|e| format!("spira-lc list --ids: unparsed reply: {e}"))
