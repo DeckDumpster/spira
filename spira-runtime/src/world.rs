@@ -948,7 +948,7 @@ impl World {
                     hourly[(23 - age / 3600) as usize] += 1;
                 }
             }
-            out.push(RepoLanding { repo: row.name, hourly, last_landing: landed.values().copied().max().unwrap_or(0), waiting: 0, oldest: None });
+            out.push(RepoLanding { repo: row.name, hourly, last_landing: landed.values().copied().max().unwrap_or(0), waiting: 0, oldest: None, undated: None });
         }
         Ok(out)
     }
@@ -1185,13 +1185,13 @@ pub fn stamp_landings(landings: &mut [RepoLanding], batches: &[Value]) {
     }
 }
 
-/// Each repo's waiting count and its oldest waiting bead. A row with no `since` ages from 0, so
-/// it can only make the repo look older.
+/// Each repo's waiting count, its oldest dated waiting bead, and the first with a null `since`.
 pub fn stamp_waiting(landings: &mut [RepoLanding], rows: &[Value]) {
     for l in landings {
-        let mine = rows.iter().filter(|r| r["repo"].as_str() == Some(l.repo.as_str()));
-        l.waiting = mine.clone().count() as u64;
-        l.oldest = mine.map(|r| Waiting { bead: r["bead_id"].as_str().unwrap_or_default().to_string(), since: r["since"].as_u64().unwrap_or(0) }).min_by_key(|w| w.since);
+        let mine: Vec<Waiting> = rows.iter().filter(|r| r["repo"].as_str() == Some(l.repo.as_str())).map(|r| Waiting { bead: r["bead_id"].as_str().unwrap_or_default().to_string(), since: as_u64(&r["since"]) }).collect();
+        l.waiting = mine.len() as u64;
+        l.undated = mine.iter().find(|w| w.since.is_none()).map(|w| w.bead.clone());
+        l.oldest = mine.into_iter().filter(|w| w.since.is_some()).min_by_key(|w| w.since);
     }
 }
 
@@ -1205,6 +1205,10 @@ pub fn unlanded_rounds(batches: &[Value], now: u64) -> Vec<Unlanded> {
             Some(Unlanded { repo: b["repo"].as_str()?.to_string(), batch: b["batch_id"].as_str()?.to_string(), state: state.to_string(), age_s: now.saturating_sub(last) })
         })
         .collect()
+}
+
+fn as_u64(v: &Value) -> Option<u64> {
+    v.as_u64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
 }
 
 /// A JSON number, or a string of digits, as a float; anything else is zero.

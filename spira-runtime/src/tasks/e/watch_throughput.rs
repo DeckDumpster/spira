@@ -19,6 +19,10 @@
 //! `forge-state` file (`pending`, naming no round) is live while the store holds an open batch for
 //! its repo, and refused and paged by name when it holds none or cannot say.
 //!
+//! A waiting bead's entry time is the `since` column of its lifecycle row, as `spira-lc list
+//! --state SUBMITTED,CERTIFIED,IN_DELIVERY` prints it (a string of digits); the bead machine stamps
+//! it on every state change. A null `since` is a P2 data defect, paged once per repo per episode.
+//!
 //! A landing is a commit naming a bead on a repo's landing ref (resolved as `spira_landref` does,
 //! never the lane name): the ref is the authority on what landed. A count that cannot be read
 //! pages BLIND once, after two consecutive unreadable ticks, and files nothing.
@@ -105,21 +109,25 @@ pub struct RepoLanding {
     /// The waiting bead that entered its state first.
     #[serde(default)]
     pub oldest: Option<Waiting>,
+    /// A waiting bead whose lifecycle row has a null `since`.
+    #[serde(default)]
+    pub undated: Option<String>,
 }
 
 /// A bead waiting to land, and the epoch second it entered its current state.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Waiting {
     pub bead: String,
-    pub since: u64,
+    #[serde(default)]
+    pub since: Option<u64>,
 }
 
 fn waited_s(l: &RepoLanding, now_ms: u64) -> Option<u64> {
-    l.oldest.as_ref().filter(|o| o.since != 0).map(|o| (now_ms / 1000).saturating_sub(o.since.max(l.last_landing)))
+    l.oldest.as_ref().and_then(|o| o.since).map(|since| (now_ms / 1000).saturating_sub(since.max(l.last_landing)))
 }
 
 fn undated(l: &RepoLanding) -> bool {
-    l.oldest.as_ref().is_some_and(|o| o.since == 0)
+    l.undated.is_some()
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -257,8 +265,8 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> Verd
 
     for l in snap.landings.iter().filter(|l| undated(l)) {
         if !carry.undated.contains(&l.repo) {
-            let bead = l.oldest.as_ref().map_or("", |o| o.bead.as_str());
-            acts.push(say(now_ms, &format!("P0 {}: data defect — oldest waiting bead {bead} has no entry time, so its wait is unknown and no stall is judged", l.repo)));
+            let bead = l.undated.as_deref().unwrap_or_default();
+            acts.push(say(now_ms, &format!("P2 {}: data defect — waiting bead {bead} has a null `since` in its lifecycle row (spira-lc list --state SUBMITTED,CERTIFIED,IN_DELIVERY), so its wait is unknown and no stall is judged for it", l.repo)));
         }
     }
     next.undated = snap.landings.iter().filter(|l| undated(l)).map(|l| l.repo.clone()).collect();
