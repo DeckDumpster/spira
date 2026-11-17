@@ -260,7 +260,7 @@ fn bump_and_note(
             "{id} \"{title}\" ({}, {reference}) — recurred {n} times{age} with no fix holding. Mute it, or keep paging?",
             cfg.cause
         );
-        let filed_by = if cfg.provenance.is_empty() || cfg.provenance.starts_with("on ") { String::new() } else { format!("Filed by {}\n", cfg.provenance) };
+        let filed_by = if !decide::provenance_names_unit(cfg.provenance) { String::new() } else { format!("Filed by {}\n", cfg.provenance) };
         let default = format!("mute this alert and leave {id} open for Ops to work unpaged; keep paging only if you want a decision on every recurrence");
         let evidence: Vec<u8> = payload.iter().take(2000).copied().collect();
         let body = format!(
@@ -396,10 +396,6 @@ fn file_new(
         log.push(format!("{reference} labelled needs-repo-triage — repo undeclared"));
     }
     FileOutcome::Filed(id)
-}
-
-pub fn provenance(unit: &str, host: &str, path: &str) -> String {
-    decide::provenance(unit, host, path)
 }
 
 /// A minimal, dependency-free RFC3339/ISO-8601 UTC parser for the subset bd actually
@@ -817,6 +813,24 @@ mod tests {
     }
 
     #[test]
+    fn a_fenrir_body_omits_filed_by_when_no_unit_is_known() {
+        let bd = FakeBd::new();
+        let mailer = FakeMailer::default();
+        let known = vec!["spira".to_string()];
+        let mut c = cfg(&known);
+        let prov = decide::provenance("?", "h", "?");
+        c.provenance = &prov;
+        c.fenrir_at = 1;
+        let mut log = vec![];
+        for _ in 0..2 {
+            file_one(&bd, &mailer, &FixedClock(1_000_000), &c, "incident:z", "z", b"p", "spira,incident", &mut log);
+        }
+        let body = &mailer.bodies.borrow()[0];
+        assert!(!body.contains("Filed by"), "{body}");
+        assert!(body.contains("Last run: recurrence 1 at "), "{body}");
+    }
+
+    #[test]
     fn a_failed_unit_fenrir_carries_its_run_and_exit_status() {
         let bd = FakeBd::new();
         let mailer = FakeMailer::default();
@@ -1019,7 +1033,7 @@ mod tests {
 
     #[test]
     fn provenance_format() {
-        assert_eq!(provenance("foo.service", "host1", "tmp/x"), "foo.service on host1: tmp/x");
+        assert_eq!(decide::provenance("foo.service", "host1", "tmp/x"), "foo.service on host1: tmp/x");
     }
 
     fn row(id: &str, status: BeadStatus, reference: &str, labels: Vec<String>, closed_at: Option<&str>) -> BeadRow {

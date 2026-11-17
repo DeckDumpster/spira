@@ -237,6 +237,11 @@ pub fn provenance(unit: &str, host: &str, path: &str) -> String {
     format!("{who}on {host}{place}")
 }
 
+/// Whether a provenance from `provenance` names a unit, not just a host.
+pub fn provenance_names_unit(provenance: &str) -> bool {
+    !provenance.is_empty() && !provenance.starts_with("on ")
+}
+
 /// `_unit_from_cgroup`'s string half: the last path component of a cgroup line, kept only
 /// when it looks like a systemd unit. `?` (never a guess) otherwise — the cgroup line
 /// itself is read in `real.rs`.

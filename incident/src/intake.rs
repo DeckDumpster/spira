@@ -174,7 +174,7 @@ impl Env {
     }
 
     pub fn provenance(&self) -> String {
-        run::provenance(&self.unit, &hostname(), &self.path)
+        decide::provenance(&self.unit, &hostname(), &self.path)
     }
 
     pub fn file_config<'a>(&'a self, provenance: &'a str) -> FileConfig<'a> {
@@ -318,7 +318,7 @@ pub fn drain_one(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock,
         )
         .into_bytes();
     }
-    let provenance = run::provenance(&entry.unit, &hostname(), &entry.incident_path);
+    let provenance = decide::provenance(&entry.unit, &hostname(), &entry.incident_path);
     let cause = decide::sanitize_cause(&entry.cause);
     let mut cfg = env.file_config(&provenance);
     cfg.cause = &cause;
