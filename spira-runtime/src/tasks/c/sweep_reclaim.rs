@@ -437,6 +437,7 @@ pub fn trim_cache(p: &Pinned, input: &str) -> Result<String, String> {
 
 /// `count:` of `git count-objects -v`: the loose objects.
 fn loose_count(proc: &dyn runtime::ports::Proc, path: &str) -> Result<u64, String> {
+    // batch-job: counting loose objects walks the whole object store, cold
     let spec = runtime::ports::ProcSpec { prog: "git".into(), args: ["-C", path, "count-objects", "-v"].map(String::from).to_vec(), stdin: vec![], deadline: std::time::Duration::from_secs(120) };
     let out = proc.run(&spec)?;
     if out.code != Some(0) {
@@ -448,7 +449,7 @@ fn loose_count(proc: &dyn runtime::ports::Proc, path: &str) -> Result<u64, Strin
 /// A held `objects/maintenance.lock` makes `git maintenance run` exit 0 having done nothing. One older
 /// than twice the effect's deadline has no live holder and is removed; a younger one is an error.
 fn clear_stale_lock(proc: &dyn runtime::ports::Proc, path: &str) -> Result<bool, String> {
-    let spec = runtime::ports::ProcSpec { prog: "git".into(), args: ["-C", path, "rev-parse", "--git-path", "objects/maintenance.lock"].map(String::from).to_vec(), stdin: vec![], deadline: std::time::Duration::from_secs(30) };
+    let spec = runtime::ports::ProcSpec { prog: "git".into(), args: ["-C", path, "rev-parse", "--git-path", "objects/maintenance.lock"].map(String::from).to_vec(), stdin: vec![], deadline: std::time::Duration::from_secs(5) };
     let out = proc.run(&spec)?;
     if out.code != Some(0) {
         return Err(format!("git rev-parse exit {:?}: {}", out.code, String::from_utf8_lossy(&out.stderr).trim()));
