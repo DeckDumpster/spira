@@ -674,6 +674,18 @@ fn a_bead_reopened_while_its_gate_ran_is_not_reopened_or_certified() {
 }
 
 #[test]
+fn a_base_red_incident_that_cannot_be_filed_is_logged_and_the_pass_goes_on() {
+    let h = H::new(LandMode::QueueLocal);
+    h.closed("sp-a", "t1");
+    let out = "gate: VERDICT=BASE_FAIL reason=base-red branch=b repo=spira suite=test-x.sh\n".to_string();
+    h.tools.gates.borrow_mut().insert("spira/sp-a".into(), (76, out));
+    *h.lib.incident_out.borrow_mut() = Some(Err(1));
+    h.run();
+    assert!(h.logged("CHECK6 spira: the base's own red was not filed: exit 1"));
+    assert!(!h.lib.has("reopen"));
+}
+
+#[test]
 fn a_base_red_with_no_suite_name_is_keyed_by_the_base_sha() {
     let h = H::new(LandMode::QueueLocal);
     h.closed("sp-a", "t1");

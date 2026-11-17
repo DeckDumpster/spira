@@ -33,7 +33,7 @@ impl<'a> SeamRunner<'a> {
         // FORK-EDGE: needs Rust ports of what the remaining seam ops run — the conf.sh context
         // (SPIRA_REPO_DERIVED, spira_toml_file, the unregistered keys), rebase_branch/recut_onto
         // (a rebase-stale library), spira_git_push (a queue-helpers library), bead_reopen/
-        // bump_requeue/requeues_of (spira-claim's library), spira_event (bead's library) and
+        // bump_requeue/requeues_of (spira-claim's library), spira_event (bead's library).
         let mut c = command("bash");
         c.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::inherit());
         match spira_config::release_env::child_path_env_for_process() {
@@ -150,7 +150,6 @@ pub fn parse_context(answer: &str, home: &Path) -> Result<(Settings, Vec<RepoRow
         repo: PathBuf::from(g("repo")),
         bd_timeout: num("bd_timeout", 180).max(1) as u64,
         home_repo: reg.home_repo().to_string(),
-        id_prefix: g("id_prefix"),
         land_maxsec: num("land_maxsec", 3600),
         gate_reserve: num("gate_reserve", 1200),
         gate_timeout: num("gate_timeout", 2700),
@@ -165,7 +164,6 @@ pub fn parse_context(answer: &str, home: &Path) -> Result<(Settings, Vec<RepoRow
         rebase_escalate_at: num("rebase_escalate_at", 3).max(0) as u32,
         git_name: g("git_name"),
         git_email: g("git_email"),
-        scope_label: g("scope_label"),
         // Every harness tool from the declared release.
         queue_bin: Some(PathBuf::from(spira_config::release_env::tool("queue")?)),
         queue_dir: path_opt("queue_dir").unwrap_or_else(|| PathBuf::from(&run).join("queue")),
@@ -1591,6 +1589,7 @@ mod incident_tests {
             .collect();
         let parts = bead::runes_partitions(&personas, "").join(" ");
         let labels = format!("{} repo:spira", env.labels.replace(',', " "));
+        // literal-ok: the shipped no-loop label, as bead lint takes it
         let (n, defects) = bead::lint_judge(&labels, true, "bug", &parts, "no-loop");
         assert_eq!(n, 0, "{labels}: {defects:?}");
     }
