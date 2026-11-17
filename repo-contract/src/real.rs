@@ -112,6 +112,9 @@ impl Ports for Real {
     fn workflow_files(&self, repo: &str) -> Result<Vec<String>, String> {
         let spec = format!("{}:{}/", self.land(repo)?, crate::clause::WORKFLOWS);
         let out = self.git(repo, &["ls-tree", "--name-only", &spec])?;
+        if !out.status.success() {
+            return Err(format!("git ls-tree {spec}: {}", String::from_utf8_lossy(&out.stderr).trim()));
+        }
         Ok(String::from_utf8_lossy(&out.stdout).lines().map(|l| l.rsplit('/').next().unwrap_or(l).to_string()).collect())
     }
 
