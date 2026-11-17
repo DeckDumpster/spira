@@ -1,6 +1,7 @@
-//! `unpublished <repo>` — a queue.local repo's unpublished range, measured against the cached forge tip
-//! (a repo never fetched fetches once, inline); a tip older than a few seconds is refreshed in the background,
-//! never waited on, and one older than a minute is marked `stale` with its age. Prints `{"forge_tip","landing_tip","count","oldest_arrival"}`; `oldest_arrival` is
+//! `unpublished <repo>` — a queue.local repo's unpublished range, measured against the forge tip: a tip fetched
+//! under a minute ago is answered from (refreshed in the background once past a few seconds); a repo never
+//! fetched, or one whose tip is a minute old or more, fetches inline. `stale` with the tip's age appears only
+//! when that inline fetch timed out or failed, the forge not answering. Prints `{"forge_tip","landing_tip","count","oldest_arrival"}`; `oldest_arrival` is
 //! when the oldest unpublished commit reached the landing ref (its reflog), null at count 0.
 //! A repo declared to publish nowhere answers `{"declared_unpublished":true}`: nothing to measure, not a blindness.
 //! Exit 2, naming why, for anything it cannot measure — never a zero it did not read.
@@ -19,7 +20,7 @@ const CALL_BUDGET: Duration = Duration::from_secs(4);
 const FETCH_SECS: &str = "2";
 /// A cached forge tip fetched within this long is answered from as it stands; older, a background fetch refreshes it for the next call.
 const REFRESH_AFTER_SECS: u64 = 15;
-/// A cached forge tip older than this is named stale with its age: the background refreshes have not been landing.
+/// A cached forge tip this old is fetched inline before measuring; stale is named only if that fetch gets no answer.
 const STALE_AFTER_SECS: u64 = 60;
 /// A refresh started within this long is still in flight (its fetch is bounded by `FETCH_SECS`); no second one starts.
 const REFRESH_MARK: &str = "spira-unpublished-refresh";
@@ -60,23 +61,31 @@ fn measure(name: &str) -> Result<serde_json::Value, String> {
         return Ok(serde_json::json!({ "declared_unpublished": true }));
     }
     let (remote, branch) = repos::publish_forge(&reg, name, &env).ok_or("it has no resolvable publish target")?;
+    measure_repo(repo, &base, &remote, &branch)
+}
+
+fn measure_repo(repo: &Path, base: &str, remote: &str, branch: &str) -> Result<serde_json::Value, String> {
     let tracking = format!("refs/remotes/{remote}/{branch}");
     let stale = match plan(last_fetch_age(repo), rev(repo, &tracking).is_ok()) {
-        Plan::Cached { refresh, stale } => {
+        Plan::Cached { refresh } => {
             if refresh {
-                refresh_in_background(repo, &remote, &branch);
+                refresh_in_background(repo, remote, branch);
             }
-            stale
+            None
         }
-        Plan::FetchNow => match fetch(repo, &remote, &branch) {
+        Plan::FetchFirst { age } => match fetch(repo, remote, branch) {
+            Ok(()) => None,
+            Err(Fetch::TimedOut | Fetch::Failed(_)) => Some(last_fetch_age(repo).map_or(age, |now| now.max(age))),
+        },
+        Plan::FetchNow => match fetch(repo, remote, branch) {
             Ok(()) => None,
             Err(Fetch::TimedOut) => Some(tip_age(repo, &tracking)?),
             Err(Fetch::Failed(why)) => return Err(why),
         },
     };
     let forge_tip = rev(repo, &tracking)?;
-    let landing_tip = rev(repo, &base)?;
-    let (count, oldest_arrival) = range_facts(repo, &base, &forge_tip, &landing_tip)?;
+    let landing_tip = rev(repo, base)?;
+    let (count, oldest_arrival) = range_facts(repo, base, &forge_tip, &landing_tip)?;
     let mut answer = serde_json::json!({ "forge_tip": forge_tip, "landing_tip": landing_tip, "count": count, "oldest_arrival": oldest_arrival });
     if let Some(age) = stale {
         answer["stale"] = true.into();
@@ -88,12 +97,14 @@ fn measure(name: &str) -> Result<serde_json::Value, String> {
 #[derive(Debug, PartialEq)]
 enum Plan {
     FetchNow,
-    Cached { refresh: bool, stale: Option<u64> },
+    FetchFirst { age: u64 },
+    Cached { refresh: bool },
 }
 
 fn plan(fetch_age: Option<u64>, have_tip: bool) -> Plan {
     match fetch_age {
-        Some(age) if have_tip => Plan::Cached { refresh: age >= REFRESH_AFTER_SECS, stale: (age >= STALE_AFTER_SECS).then_some(age) },
+        Some(age) if have_tip && age >= STALE_AFTER_SECS => Plan::FetchFirst { age },
+        Some(age) if have_tip => Plan::Cached { refresh: age >= REFRESH_AFTER_SECS },
         _ => Plan::FetchNow,
     }
 }
@@ -257,10 +268,11 @@ mod tests {
     }
 
     #[test]
-    fn a_cached_forge_tip_is_answered_from_and_only_refreshed_or_named_stale_by_its_age() {
-        assert_eq!(plan(Some(1), true), Plan::Cached { refresh: false, stale: None });
-        assert_eq!(plan(Some(30), true), Plan::Cached { refresh: true, stale: None });
-        assert_eq!(plan(Some(900), true), Plan::Cached { refresh: true, stale: Some(900) });
+    fn a_cached_forge_tip_is_answered_from_while_young_and_fetched_first_once_a_minute_old() {
+        assert_eq!(plan(Some(1), true), Plan::Cached { refresh: false });
+        assert_eq!(plan(Some(30), true), Plan::Cached { refresh: true });
+        assert_eq!(plan(Some(60), true), Plan::FetchFirst { age: 60 });
+        assert_eq!(plan(Some(900), true), Plan::FetchFirst { age: 900 });
         assert_eq!(plan(None, true), Plan::FetchNow);
         assert_eq!(plan(Some(1), false), Plan::FetchNow);
     }
@@ -309,6 +321,57 @@ mod tests {
         drop(hold);
         assert_eq!(code, 2);
         assert!(out.contains("not measured within"), "{out}");
+    }
+
+    // law-a-unit-test-calls-no-binary: the freshness under test is git's own FETCH_HEAD write.
+    fn forge_and_clone(scratch: &Path) -> (std::path::PathBuf, std::path::PathBuf) {
+        let (forge, clone) = (scratch.join("forge.git"), scratch.join("clone"));
+        std::fs::create_dir_all(&forge).unwrap();
+        git(&forge, &["init", "-q", "--bare", "-b", "main"]);
+        let seed = scratch.join("seed");
+        std::fs::create_dir_all(&seed).unwrap();
+        git(&seed, &["init", "-q", "-b", "main"]);
+        git(&seed, &["commit", "-q", "--allow-empty", "-m", "first"]);
+        git(&seed, &["push", "-q", forge.to_str().unwrap(), "main"]);
+        git(scratch, &["clone", "-q", forge.to_str().unwrap(), clone.to_str().unwrap()]);
+        git(&clone, &["fetch", "-q", "origin", "main"]);
+        (forge, clone)
+    }
+
+    fn age_fetch_head(clone: &Path, secs: u64) {
+        let f = std::fs::OpenOptions::new().write(true).open(clone.join(".git/FETCH_HEAD")).unwrap();
+        f.set_modified(std::time::SystemTime::now() - Duration::from_secs(secs)).unwrap();
+    }
+
+    #[test]
+    fn a_reachable_forge_keeps_the_measured_tip_fresh_across_repeated_calls() {
+        let scratch = testkit::TempDir::new("unpublished-fresh");
+        let (forge, clone) = forge_and_clone(scratch.path());
+        let seed = scratch.path().join("seed");
+        age_fetch_head(&clone, 120);
+        for i in 0..3 {
+            git(&seed, &["commit", "-q", "--allow-empty", "-m", &format!("n{i}")]);
+            git(&seed, &["push", "-q", forge.to_str().unwrap(), "main"]);
+            let pushed = git(&seed, &["rev-parse", "HEAD"]);
+            age_fetch_head(&clone, 120);
+            let answer = measure_repo(&clone, "main", "origin", "main").unwrap();
+            assert!(answer.get("stale").is_none(), "{answer}");
+            assert_eq!(answer["forge_tip"], pushed.as_str());
+            assert!(last_fetch_age(&clone) < Some(STALE_AFTER_SECS));
+        }
+    }
+
+    #[test]
+    fn an_unreachable_forge_answers_from_the_cached_tip_named_stale() {
+        let scratch = testkit::TempDir::new("unpublished-unreachable");
+        let (_forge, clone) = forge_and_clone(scratch.path());
+        let cached = git(&clone, &["rev-parse", "refs/remotes/origin/main"]);
+        git(&clone, &["remote", "set-url", "origin", scratch.path().join("nonexistent").to_str().unwrap()]);
+        age_fetch_head(&clone, 120);
+        let answer = measure_repo(&clone, "main", "origin", "main").unwrap();
+        assert_eq!(answer["stale"], true);
+        assert!(answer["forge_tip_age_secs"].as_u64().unwrap() >= 120, "{answer}");
+        assert_eq!(answer["forge_tip"], cached.as_str());
     }
 
     #[test]
