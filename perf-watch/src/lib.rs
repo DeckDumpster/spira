@@ -345,6 +345,16 @@ pub const SCOPED: &str = "t0=$EPOCHREALTIME; PERFWATCH_T0_US=${t0//[.,]/} \"$@\"
 #[cfg(test)]
 mod tests {
     #[test]
+    fn the_scope_hands_the_probe_its_start_in_digits_and_keeps_the_exit_code() {
+        let out = std::process::Command::new("bash").args(["-c", super::SCOPED, "probe", "sh", "-c", "echo $PERFWATCH_T0_US; exit 3"]).output().unwrap();
+        let stdout = String::from_utf8(out.stdout).unwrap();
+        let stderr = String::from_utf8(out.stderr).unwrap();
+        assert!(!stdout.trim().is_empty() && stdout.trim().chars().all(|c| c.is_ascii_digit()), "{stdout}");
+        assert!(stderr.contains("PERFWATCH_US="), "{stderr}");
+        assert_eq!(out.status.code(), Some(3));
+    }
+
+    #[test]
     fn the_scope_stamps_the_probe_with_its_start_on_the_probe_command() {
         assert!(super::SCOPED.contains("PERFWATCH_T0_US=${t0//[.,]/} \"$@\""));
         assert!(super::SCOPED.contains("PERFWATCH_US="));
