@@ -246,11 +246,35 @@ struct CheckpointState {
 }
 
 /// One PASSIVE checkpoint, and whether it copied every frame the WAL held: PASSIVE reports no
-/// `busy` for frames a reader's snapshot kept it from copying.
-fn passive_complete(conn: &Connection) -> bool {
+/// `busy` for frames a reader's snapshot kept it from copying. `Err` is SQLite's own text.
+fn passive_complete(conn: &Connection) -> std::result::Result<bool, String> {
     conn.prepare_cached("PRAGMA wal_checkpoint(PASSIVE)")
         .and_then(|mut s| s.query_row([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?))))
-        .is_ok_and(|(busy, log, done)| busy == 0 && done >= log)
+        .map(|(busy, log, done)| busy == 0 && done >= log)
+        .map_err(|e| e.to_string())
+}
+
+const REPEAT_REPORT_AFTER: Duration = Duration::from_secs(3600);
+
+/// Whether a failure is worth a line: the first, a new text, or the same text an hour on.
+fn report_due(last: &mut Option<(String, std::time::Instant)>, text: &str, now: std::time::Instant) -> bool {
+    let due = last
+        .as_ref()
+        .is_none_or(|(t, at)| t != text || now.duration_since(*at) >= REPEAT_REPORT_AFTER);
+    if due {
+        *last = Some((text.to_string(), now));
+    }
+    due
+}
+
+/// A TRUNCATE checkpoint under the writer mutex, so no commit races it and the WAL restarts.
+/// `false` when a reader's snapshot kept it from finishing, or another checkpoint holds the lock.
+fn restart_wal(writer: &Mutex<Writer>) -> bool {
+    let w = lock(writer);
+    w.conn
+        .prepare_cached("PRAGMA wal_checkpoint(TRUNCATE)")
+        .and_then(|mut s| s.query_row([], |r| r.get::<_, i64>(0)))
+        .is_ok_and(|busy| busy == 0)
 }
 
 /// What a commit hands the checkpointer thread: a count and a wake-up, no I/O.
@@ -270,8 +294,15 @@ impl Checkpointer {
     }
 
     /// Runs on the checkpointer's thread until `stop`.
-    fn run(&self, conn: Connection, metrics: Option<spira_otel::metrics::MetricsSink>) {
+    fn run(
+        &self,
+        conn: Connection,
+        writer: Arc<Mutex<Writer>>,
+        path: &Path,
+        metrics: Option<spira_otel::metrics::MetricsSink>,
+    ) {
         let mut last_pushed = None;
+        let mut last_failure = None;
         let push = |pending: u64, last: &mut Option<std::time::Instant>| {
             if let Some(m) = &metrics {
                 m.push(&[spira_otel::metrics::Point::Gauge { name: UNCHECKPOINTED_GAUGE, value: pending as f64 }], &[]);
@@ -292,10 +323,20 @@ impl Checkpointer {
             };
             wait = GAUGE_EVERY;
             if seen >= self.every {
-                if passive_complete(&conn) {
-                    lock(&self.state).pending -= seen;
-                } else {
-                    wait = RETRY_AFTER;
+                match passive_complete(&conn) {
+                    Ok(true) => {
+                        lock(&self.state).pending -= seen;
+                        if !restart_wal(&writer) {
+                            wait = RETRY_AFTER;
+                        }
+                    }
+                    Ok(false) => wait = RETRY_AFTER,
+                    Err(e) => {
+                        wait = RETRY_AFTER;
+                        if report_due(&mut last_failure, &e, std::time::Instant::now()) {
+                            eprintln!("sqlite-checkpoint: {}: {e}", path.display());
+                        }
+                    }
                 }
                 last_pushed = None;
             }
@@ -404,7 +445,7 @@ pub struct SqliteBackend(Arc<Inner>);
 
 struct Inner {
     path: PathBuf,
-    writer: Mutex<Writer>,
+    writer: Arc<Mutex<Writer>>,
     readers: Vec<Reader>,
     next_reader: AtomicUsize,
     head: AtomicU64,
@@ -1076,18 +1117,20 @@ impl SqliteBackend {
         let checkpoint_conn = connect(path)?;
         checkpoint_conn.busy_timeout(Duration::ZERO).map_err(db)?;
         let metrics = opts.metrics;
+        let writer = Arc::new(Mutex::new(Writer { conn }));
         let thread = {
             let c = checkpointer.clone();
+            let (w, p) = (writer.clone(), path.to_path_buf());
             std::thread::Builder::new()
                 .name("sqlite-checkpoint".into())
-                .spawn(move || c.run(checkpoint_conn, metrics))
+                .spawn(move || c.run(checkpoint_conn, w, &p, metrics))
                 .map_err(|e| Error::Backend(format!("{}: the checkpointer: {e}", path.display())))?
         };
         Ok(SqliteBackend(Arc::new(Inner {
             checkpointer,
             checkpoint_thread: Mutex::new(Some(thread)),
             path: path.to_path_buf(),
-            writer: Mutex::new(Writer { conn }),
+            writer,
             readers,
             next_reader: AtomicUsize::new(0),
             head: AtomicU64::new(head),

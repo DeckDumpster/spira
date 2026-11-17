@@ -1492,3 +1492,154 @@ fn an_existing_none_mode_store_keeps_its_mode_and_still_drains() {
     assert_eq!(count(&none, "PRAGMA auto_vacuum"), 0);
     assert_eq!(count(&none, "SELECT count(*) FROM versions"), 0);
 }
+
+fn mx_frame(path: &Path) -> u32 {
+    use std::os::unix::fs::FileExt;
+    let shm = std::fs::File::open(format!("{}-shm", path.display())).unwrap();
+    let mut b = [0u8; 4];
+    shm.read_exact_at(&mut b, 16).unwrap();
+    u32::from_ne_bytes(b)
+}
+
+const BOUND_EVERY: u64 = 8;
+
+/// 400 commits of 4 KiB values under a reader that never stops; returns the open handle.
+fn bounded_wal_workload(path: &Path) -> SqliteBackend {
+    let opts = Options { checkpoint_every: BOUND_EVERY, readers: 4, ..Options::default() };
+    let b = SqliteBackend::open(path, opts).unwrap();
+    let stop = Arc::new(AtomicBool::new(false));
+    let reader = {
+        let (b, stop) = (b.clone(), stop.clone());
+        std::thread::spawn(move || {
+            while !stop.load(Ordering::SeqCst) {
+                let head = b.head().unwrap();
+                let _ = b.range("", None, 10, head);
+            }
+        })
+    };
+    for _ in 0..400 {
+        put_next(&b);
+    }
+    stop.store(true, Ordering::SeqCst);
+    reader.join().unwrap();
+    b
+}
+
+fn frames_per_commit(path: &Path) -> u32 {
+    let dir = TempDir::new("sqlite-frames-per-commit");
+    let p = dir.path().join("f.db");
+    let b = SqliteBackend::open(&p, Options { checkpoint_every: u64::MAX, ..Options::default() }).unwrap();
+    let before = mx_frame(&p);
+    for _ in 0..10 {
+        put_next(&b);
+    }
+    let _ = path;
+    (mx_frame(&p) - before).div_ceil(10)
+}
+
+#[test]
+fn the_wal_stays_within_three_checkpoint_intervals_while_reads_never_stop() {
+    let dir = TempDir::new("sqlite-bounded-wal");
+    let path = dir.path().join("s.db");
+    let b = bounded_wal_workload(&path);
+    let bound = frames_per_commit(&path) * 3 * BOUND_EVERY as u32;
+    let mx = mx_frame(&path);
+    assert!(mx <= bound, "mxFrame {mx} exceeds {bound}");
+    drop(b);
+}
+
+const CHILD_ENV: &str = "SQLITE_TEST_CHILD";
+
+/// Distinct 4 KiB keys, `n` of them in batches, so the main file grows to about `n` * 4 KiB.
+fn fill_main_file(b: &SqliteBackend, n: u64) {
+    for batch in 0..n / 50 {
+        let head = b.head().unwrap();
+        let writes: Vec<Write> =
+            (0..50).map(|i| put_write(&format!("bulk/{batch:06}/{i:02}"), &[3; 4096], head + 1, None)).collect();
+        b.commit(head, &writes).unwrap();
+    }
+}
+
+/// The work a re-executed copy of this binary does for [`run_child`]: `leave:<path>` is an
+/// unclean stop (a backlog of the bounded-WAL workload, handle leaked, exit with no drop);
+/// `fail:<path>` commits under a file-size limit the main file is already past.
+#[test]
+fn child_work_when_asked() {
+    let Ok(spec) = std::env::var(CHILD_ENV) else { return };
+    let (mode, path) = spec.split_once(':').unwrap();
+    let path = Path::new(path);
+    match mode {
+        "leave" => {
+            let b = bounded_wal_workload(path);
+            std::mem::forget(b);
+            std::process::exit(0);
+        }
+        "fail" => {
+            let b = SqliteBackend::open(path, Options { checkpoint_every: 4, ..Options::default() }).unwrap();
+            for _ in 0..8 {
+                put_next(&b);
+            }
+            // clock-safe: lets the checkpointer's 1 s retries run, to count the lines they write
+            std::thread::sleep(std::time::Duration::from_millis(3500));
+            std::process::exit(0);
+        }
+        other => panic!("{other}"),
+    }
+}
+
+fn run_child(spec: String, file_limit_blocks: Option<u64>) -> std::process::Output {
+    let exe = std::env::current_exe().unwrap();
+    let mut c = match file_limit_blocks {
+        None => std::process::Command::new(exe),
+        Some(n) => {
+            let mut c = std::process::Command::new("sh");
+            c.arg("-c")
+                .arg(format!("trap '' XFSZ; ulimit -f {n}; exec \"$0\" \"$@\""))
+                .arg(exe);
+            c
+        }
+    };
+    let out = c
+        .args(["--exact", "child_work_when_asked", "--test-threads=1", "--nocapture"])
+        .env(CHILD_ENV, spec)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    out
+}
+
+#[test]
+fn a_checkpoint_failure_is_logged_once_with_sqlites_error() {
+    let dir = TempDir::new("sqlite-checkpoint-failure");
+    let path = dir.path().join("s.db");
+    {
+        let b = SqliteBackend::open(&path, Options::default()).unwrap();
+        fill_main_file(&b, 2_400);
+        b.checkpoint().unwrap();
+    }
+    assert!(std::fs::metadata(&path).unwrap().len() > 8 << 20);
+    let out = run_child(format!("fail:{}", path.display()), Some(1_000));
+    let err = String::from_utf8_lossy(&out.stderr);
+    let lines: Vec<&str> = err.lines().filter(|l| l.starts_with("sqlite-checkpoint:")).collect();
+    assert_eq!(lines.len(), 1, "{err}");
+    assert!(lines[0].contains(&path.display().to_string()), "{err}");
+    eprintln!("{}", lines[0]);
+}
+
+#[test]
+fn a_large_store_left_by_an_unclean_stop_reopens_in_under_500_ms() {
+    let dir = TempDir::new("sqlite-bounded-recovery");
+    let path = dir.path().join("s.db");
+    {
+        let b = SqliteBackend::open(&path, Options::default()).unwrap();
+        fill_main_file(&b, 17_000);
+        b.checkpoint().unwrap();
+    }
+    assert!(std::fs::metadata(&path).unwrap().len() >= 64 << 20);
+    run_child(format!("leave:{}", path.display()), None);
+    let began = std::time::Instant::now(); // clock-safe: measures the real recovery time
+    let b = SqliteBackend::open(&path, Options::default()).unwrap();
+    let took = began.elapsed();
+    assert!(took < std::time::Duration::from_millis(500), "open took {took:?}");
+    drop(b);
+}
