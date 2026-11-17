@@ -178,7 +178,7 @@ fn told(r: &TaskRig, what: &str) -> Vec<String> {
 #[test]
 fn a_certified_conflict_is_sent_back_once_and_told_after_the_store_applied_it() {
     let mut r = sending(certified_conflict(), Ok("sent sp-a back".into()));
-    let sends: Vec<_> = r.requested().into_iter().filter(|q| q.name == SEND_BACK).collect();
+    let sends: Vec<_> = r.requested().iter().filter(|q| q.name == SEND_BACK).collect();
     assert_eq!(sends.len(), 1);
     assert_eq!(sends[0].key, "sp-a:t1:GateRed");
     assert!(sends[0].input.contains("no-rebase"), "{}", sends[0].input);
