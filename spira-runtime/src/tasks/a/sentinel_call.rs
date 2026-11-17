@@ -311,6 +311,8 @@ pub struct Carry {
     pub room_at_ms: Option<u64>,
     /// Each bound class as the last pass left it, for `scheduler bound`; `None` before the first pass.
     pub bound: Option<Vec<plan::Bound>>,
+    /// The limit that bound task work on the last pass.
+    pub task_limit: Option<plan::TaskLimit>,
 }
 
 fn moved<S: Copy + PartialEq + std::fmt::Debug, E: Copy + PartialEq + std::fmt::Debug>(table: &[(S, E, S)], state: S, event: E) -> Result<S, String> {
@@ -398,6 +400,7 @@ pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Act>) {
     next.room_since_ms = if p.task_room == Some(0) { None } else { carry.room_since_ms.or(Some(snap.now_ms)) };
     next.room_at_ms = Some(snap.now_ms);
     next.bound = Some(p.bound.clone());
+    next.task_limit = p.task_limit.clone();
     let mut acts = vec![];
     if let Some(x) = &p.preempt {
         let key = format!("{}:{}", x.bead, x.express);
@@ -454,7 +457,7 @@ impl SentinelCall {
     }
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("state"), runtime::rows::Part::Field("refusal"), runtime::rows::Part::Field("room_since_ms"), runtime::rows::Part::Field("room_at_ms"), runtime::rows::Part::Field("bound"), runtime::rows::Part::Map { name: "in_flight", drop: &[] }];
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("state"), runtime::rows::Part::Field("refusal"), runtime::rows::Part::Field("room_since_ms"), runtime::rows::Part::Field("room_at_ms"), runtime::rows::Part::Field("bound"), runtime::rows::Part::Field("task_limit"), runtime::rows::Part::Map { name: "in_flight", drop: &[] }];
 
 impl Handler for SentinelCall {
     fn interests(&self) -> &[EventKindTag] {

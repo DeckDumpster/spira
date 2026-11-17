@@ -25,7 +25,7 @@ use reconciler_engine::core::{step, HysteresisState, RawStatus, Verdict};
 use reconciler_engine::io::{append_status, load_alerted, load_state, save_alerted, save_state, AlertedSinceMap, StateMap};
 
 use reconciler_flow::core::{
-    backlog_trend_raw, dwell_raw, dwell_regression_raw, idle_capacity_raw, round_health_raw,
+    backlog_trend_raw, dwell_raw, dwell_regression_raw, round_health_raw,
     rework_raw, sentinel_overrun_raw, velocity_raw, BacklogObserved, DwellObserved,
     DwellRegressionObserved, ReworkObserved, RoundHealthObserved, VelocityObserved,
     DWELL_REGRESSION_STATES,
@@ -33,7 +33,7 @@ use reconciler_flow::core::{
 use reconciler_flow::io::{
     append_backlog_sample, backlog_baseline, backlog_count, dwell_metrics,
     dwell_regression_metrics, flow_floors, rework_metrics, round_health_metrics,
-    sentinel_pass_wall_seconds, slots_samples, stage_rows, velocity_metrics, waiting_to_land,
+    sentinel_pass_wall_seconds, stage_rows, velocity_metrics, waiting_to_land,
 };
 
 extern "C" {
@@ -323,10 +323,7 @@ fn run_pass() -> Result<(), String> {
     log_print(&cfg, &format!("reconciler-flow: flow:round-health → {}", status_word(&v)));
 
     // ── idle capacity ────────────────────────────────────────────────────────────────────
-    let idle_raw_status = match slots_samples(&cfg.duckdb_bin, &cfg.spira_run) {
-        Ok((prev, cur)) => idle_capacity_raw(&prev, &cur),
-        Err(e) => unobservable(e),
-    };
+    let idle_raw_status = unobservable("the scheduler's task limit is read in spira-runtime only".to_string());
     let v = evaluate(&cfg, &mut state, "flow:idle-capacity", idle_raw_status);
     maybe_alert(&cfg, &mut alerted, "flow:idle-capacity", &v);
     log_print(&cfg, &format!("reconciler-flow: flow:idle-capacity → {}", status_word(&v)));

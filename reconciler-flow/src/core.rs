@@ -189,22 +189,26 @@ pub struct SlotsSample {
     pub capacity_paused: bool,
 }
 
-fn slot_is_idle(s: &SlotsSample) -> bool {
-    !s.capacity_paused && s.ready > 0 && s.live < s.ceiling
+/// The limit the scheduler says binds task work, and how much of it is held.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BindingLimit {
+    pub name: String,
+    pub limit: u64,
+    pub held: u64,
 }
 
-/// "A free slot while ready work exists, across two `slots` samples a pass apart" (design
-/// §3): a single blip must not fire this — a fleet in the middle of turning a slot over can
-/// show one idle sample and be fine a moment later, so only two consecutive idle readings are
-/// a gap.
-pub fn idle_capacity_raw(prev: &SlotsSample, current: &SlotsSample) -> RawStatus {
-    if slot_is_idle(prev) && slot_is_idle(current) {
+fn slot_has_waiting_work(s: &SlotsSample) -> bool {
+    !s.capacity_paused && s.ready > 0
+}
+
+/// "Room under the binding limit while ready work exists, across two `slots` samples a pass
+/// apart" (design §3): a single blip must not fire this. The limit is the scheduler's own; a
+/// full pool under a roomy ceiling, a throttle or a closed gate is not a gap.
+pub fn idle_capacity_raw(prev: &SlotsSample, current: &SlotsSample, limit: &BindingLimit) -> RawStatus {
+    if slot_has_waiting_work(prev) && slot_has_waiting_work(current) && limit.held < limit.limit {
         RawStatus::Gap {
-            desired: format!("live == ceiling ({}) while ready work waits, or ready == 0", current.ceiling),
-            observed: format!(
-                "live {} < ceiling {} with {} ready, on two consecutive samples",
-                current.live, current.ceiling, current.ready
-            ),
+            desired: format!("live == {} ({}) while ready work waits, or ready == 0", limit.name, limit.limit),
+            observed: format!("live {} < {} {} with {} ready, on two consecutive samples", limit.held, limit.name, limit.limit, current.ready),
             since_hint: None,
         }
     } else {
@@ -442,6 +446,10 @@ mod tests {
 
     // ── idle capacity ───────────────────────────────────────────────────────────────────
 
+    fn room(held: u64) -> BindingLimit {
+        BindingLimit { name: "pool".into(), limit: 8, held }
+    }
+
     fn busy() -> SlotsSample {
         SlotsSample { live: 8, ceiling: 8, ready: 12, capacity_paused: false }
     }
@@ -452,35 +460,36 @@ mod tests {
 
     #[test]
     fn idle_capacity_satisfied_when_full() {
-        let s = idle_capacity_raw(&busy(), &busy());
+        let s = idle_capacity_raw(&busy(), &busy(), &room(8));
         assert_eq!(s, RawStatus::Satisfied);
     }
 
     #[test]
     fn idle_capacity_satisfied_on_a_single_idle_sample() {
-        // A blip: idle on the most recent sample only must not fire.
-        let s = idle_capacity_raw(&busy(), &idle());
+        // A blip: work waiting on the most recent sample only must not fire.
+        let drained = SlotsSample { ready: 0, ..busy() };
+        let s = idle_capacity_raw(&drained, &idle(), &room(3));
         assert_eq!(s, RawStatus::Satisfied);
     }
 
     #[test]
     fn idle_capacity_gap_when_idle_across_two_samples() {
         // Positive control: the literal case the invariant exists to catch.
-        let s = idle_capacity_raw(&idle(), &idle());
+        let s = idle_capacity_raw(&idle(), &idle(), &room(3));
         assert!(matches!(s, RawStatus::Gap { .. }), "expected a gap, got {s:?}");
     }
 
     #[test]
     fn idle_capacity_satisfied_with_nothing_ready() {
         let empty_queue = SlotsSample { ready: 0, ..idle() };
-        let s = idle_capacity_raw(&empty_queue, &empty_queue);
+        let s = idle_capacity_raw(&empty_queue, &empty_queue, &room(3));
         assert_eq!(s, RawStatus::Satisfied);
     }
 
     #[test]
     fn idle_capacity_satisfied_while_capacity_is_deliberately_paused() {
         let paused = SlotsSample { capacity_paused: true, ..idle() };
-        let s = idle_capacity_raw(&paused, &paused);
+        let s = idle_capacity_raw(&paused, &paused, &room(3));
         assert_eq!(s, RawStatus::Satisfied);
     }
 

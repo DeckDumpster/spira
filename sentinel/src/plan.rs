@@ -159,6 +159,20 @@ pub struct Bound {
     pub over: bool,
 }
 
+/// The limit that bound task work this pass: `pool`, `ceiling`, `throttle` or `closed`.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskLimit {
+    pub name: String,
+    pub limit: i64,
+    pub held: i64,
+}
+
+impl TaskLimit {
+    fn room(&self) -> i64 {
+        (self.limit - self.held).max(0)
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CallPlan {
     pub calls: Vec<Call>,
@@ -167,6 +181,8 @@ pub struct CallPlan {
     pub refusal: Option<String>,
     /// The task slots this pass found open before its own calls; `None` when no ceiling is configured.
     pub task_room: Option<i64>,
+    /// The limit with the least room behind `task_room`; `None` when none is configured.
+    pub task_limit: Option<TaskLimit>,
     /// Each class with a limit: its declarers' live count after this pass's calls, and their ready beads left uncalled.
     pub bound: Vec<Bound>,
     /// The pass log, one line per refusal or call, as the binary printed them.
@@ -239,6 +255,11 @@ impl Planner<'_> {
                 Bound { class: c.clone(), limit: *limit, held, waiting, over: held > *limit }
             })
             .collect()
+    }
+
+    fn set_task_limit(&mut self, limit: Option<TaskLimit>) {
+        self.plan.task_room = limit.as_ref().map(TaskLimit::room);
+        self.plan.task_limit = limit;
     }
 
     fn log(&mut self, line: String) {
@@ -342,16 +363,19 @@ pub fn plan(w: &CallWorld) -> CallPlan {
     if let Some(why) = gate {
         p.log(format!("CHECK7: {why}"));
         p.plan.refusal = Some(why);
-        p.plan.task_room = Some(0);
+        p.set_task_limit(Some(TaskLimit { name: "closed".into(), limit: 0, held: p.live_total() }));
         p.plan.bound = p.bound();
         return p.plan;
     }
     let mut pool: Option<i64> = None;
-    p.plan.task_room = if w.throttled {
-        Some(0)
+    let limit = if w.throttled {
+        Some(TaskLimit { name: "throttle".into(), limit: 0, held: p.live_total() })
     } else {
-        [p.class_room(BUILD_DISK), w.max_live_dwarves.map(|m| m - p.live_total())].into_iter().flatten().min().map(|n| n.max(0))
+        let pool = w.limits.get(BUILD_DISK).map(|l| TaskLimit { name: "pool".into(), limit: *l, held: p.held(BUILD_DISK) });
+        let ceiling = w.max_live_dwarves.map(|m| TaskLimit { name: "ceiling".into(), limit: m, held: p.live_total() });
+        [pool, ceiling].into_iter().flatten().min_by_key(TaskLimit::room)
     };
+    p.set_task_limit(limit);
     let mut yielded = false;
     if !w.reactive.is_empty() {
         match &w.urgent {
@@ -537,6 +561,42 @@ mod tests {
     #[test]
     fn task_room_is_unknown_when_no_ceiling_is_configured() {
         assert_eq!(room(&CallWorld { max_live_dwarves: None, ..world() }), None);
+    }
+
+    fn binding(w: &CallWorld) -> Option<(String, i64, i64)> {
+        plan(w).task_limit.map(|t| (t.name, t.limit, t.held))
+    }
+
+    #[test]
+    fn a_full_pool_under_a_roomy_ceiling_is_bound_by_the_pool() {
+        let mut w = world();
+        w.limits.insert("build-disk".into(), 7);
+        w.task[0].uses = vec!["build-disk".into()];
+        w.task[0].live = 7;
+        w.max_live_dwarves = Some(9);
+        assert_eq!(binding(&w), Some(("pool".into(), 7, 7)));
+    }
+
+    #[test]
+    fn a_full_fleet_with_pool_room_is_bound_by_the_ceiling() {
+        let mut w = world();
+        w.limits.insert("build-disk".into(), 7);
+        w.task[0].uses = vec!["build-disk".into()];
+        w.task[0].live = 3;
+        w.other_live = 6;
+        w.max_live_dwarves = Some(9);
+        assert_eq!(binding(&w), Some(("ceiling".into(), 9, 9)));
+    }
+
+    #[test]
+    fn a_throttle_or_a_closed_gate_names_itself_as_the_limit() {
+        assert_eq!(binding(&CallWorld { throttled: true, ..world() }).map(|b| b.0), Some("throttle".into()));
+        assert_eq!(binding(&CallWorld { world: World::Halted, ..world() }).map(|b| b.0), Some("closed".into()));
+    }
+
+    #[test]
+    fn no_ceiling_and_no_pool_names_no_limit() {
+        assert_eq!(binding(&CallWorld { max_live_dwarves: None, ..world() }), None);
     }
 
     fn using(name: &str, ready: i64, live: i64, classes: &[&str], reactive: bool) -> Rune {
