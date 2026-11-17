@@ -23,7 +23,11 @@ pub fn git(dir: &Path, args: &[&str]) -> Result<(Option<i32>, Vec<u8>), String> 
 pub fn git_ok(dir: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
     let mut cmd = Command::new("git");
     cmd.arg("-C").arg(dir).args(args);
-    match bounded(cmd, GIT_DEADLINE)? {
+    ok_or_cause(cmd, GIT_DEADLINE)
+}
+
+fn ok_or_cause(cmd: Command, deadline: Duration) -> Result<Vec<u8>, String> {
+    match bounded(cmd, deadline)? {
         (Some(0), out, _) => Ok(out),
         (Some(code), _, err) => Err(format!("exit {code}: {}", String::from_utf8_lossy(&err).trim())),
         (None, _, err) => Err(format!("killed by signal: {}", String::from_utf8_lossy(&err).trim())),
@@ -151,7 +155,7 @@ mod bounded_tests {
     #[test]
     fn a_chatty_stderr_does_not_stall_the_process_and_is_returned() {
         let d = testkit::TempDir::new("bounded-stderr");
-        let (code, _, err) = bounded(script(d.path(), "head -c 204800 /dev/zero | tr '\\0' x >&2; exit 3"), Duration::from_secs(5)).unwrap();
+        let (code, _, err) = bounded(script(d.path(), "yes x | head -c 204800 >&2; exit 3"), Duration::from_secs(5)).unwrap();
         assert_eq!(code, Some(3));
         assert_eq!(err.len(), 204800);
     }
@@ -165,16 +169,9 @@ mod bounded_tests {
     }
 
     #[test]
-    fn git_ok_names_a_process_killed_by_a_signal() {
+    fn a_process_killed_by_a_signal_is_named_with_its_stderr_by_git_ok_s_cause_by_a_signal() {
         let d = testkit::TempDir::new("git-ok-signal");
-        let bin = d.path().join("bin");
-        std::fs::create_dir(&bin).unwrap();
-        testkit::write_exe(bin.join("git"), "#!/bin/sh\necho cut short >&2\nkill -9 $$\n");
-        let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap_or_default());
-        let mut cmd = Command::new("git");
-        cmd.env("PATH", path);
-        let (code, _, err) = bounded(cmd, Duration::from_secs(5)).unwrap();
-        assert_eq!(code, None);
-        assert_eq!(String::from_utf8_lossy(&err).trim(), "cut short");
+        let e = super::ok_or_cause(script(d.path(), "echo cut short >&2; kill -9 $$"), Duration::from_secs(5)).unwrap_err();
+        assert_eq!(e, "killed by signal: cut short");
     }
 }
