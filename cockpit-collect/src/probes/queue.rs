@@ -204,7 +204,7 @@ const TESTREG_ROWS: usize = 10;
 
 /// The tests the registry holds out of runs and has not expired, soonest-expiring first;
 /// a call that fails or prints what is not the registry's list is `SP_TESTREG=unread`.
-fn testreg_keys(call: &dyn Fn(&[&str]) -> Option<String>, now: i64) -> Kv {
+pub fn testreg_keys(call: &dyn Fn(&[&str]) -> Option<String>, now: i64) -> Kv {
     let mut out = Kv::new();
     let argv = ["list", "--json", "--at", &now.to_string()];
     let rows = call(&argv)

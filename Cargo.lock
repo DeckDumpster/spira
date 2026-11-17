@@ -2306,6 +2306,9 @@ dependencies = [
 name = "spira-sim"
 version = "0.1.0"
 dependencies = [
+ "batcher-cut",
+ "cockpit-collect",
+ "cockpit-ops",
  "lifecycle",
  "queue",
  "runtime",
@@ -2317,6 +2320,7 @@ dependencies = [
  "spira-runtime",
  "spira-store",
  "system-paths",
+ "test-registry",
  "testkit",
  "toml",
 ]

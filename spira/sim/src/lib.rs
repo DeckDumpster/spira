@@ -8,6 +8,7 @@ pub mod loopworld;
 pub mod pilgrim;
 pub mod probe;
 pub mod proctrace;
+pub mod registryworld;
 pub mod roundvm;
 pub mod runstate;
 pub mod call;

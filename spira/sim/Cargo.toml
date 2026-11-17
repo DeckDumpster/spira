@@ -26,7 +26,7 @@ path = "tests/it/main.rs"
 required-features = ["integration"]
 
 [features]
-integration = ["lifecycle/integration", "queue/integration", "runtime/integration", "sim/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "spira-runtime/integration", "testkit/integration", "system-paths/integration"]
+integration = ["lifecycle/integration", "queue/integration", "runtime/integration", "sim/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "spira-runtime/integration", "testkit/integration", "batcher-cut/integration", "cockpit-collect/integration", "cockpit-ops/integration", "test-registry/integration", "system-paths/integration"]
 
 [dependencies]
 spira-otel = { path = "../../spira-otel" }
@@ -40,6 +40,10 @@ lifecycle = { path = "../../lifecycle" }
 spira-config = { path = "../../spira-config" }
 spira-store = { path = "../../spira-store" }
 system-paths = { path = "../../system-paths" }
+batcher-cut = { path = "../../batcher-cut" }
+test-registry = { path = "../../test-registry" }
+cockpit-collect = { path = "../../cockpit-collect" }
+cockpit-ops = { path = "../../cockpit/ops" }
 
 [dev-dependencies]
 testkit = { path = "../../testkit" }

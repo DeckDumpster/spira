@@ -7,6 +7,7 @@ mod ci;
 mod jq;
 mod loop_gate;
 mod loop_ports;
+mod loop_registry;
 mod loop_rounds;
 mod loop_supersede;
 mod pilgrim;

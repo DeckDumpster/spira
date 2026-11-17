@@ -1,0 +1,45 @@
+# The registry's flip path as an operator meets it; `sim run test-registry-flip`. The world scripts
+# the attribution's verdict and the pane is drawn by the cockpit collector, not `lc-view`. The hold
+# is two hours, not the registry's seven days, so the walk costs seconds.
+driver = "loop"
+goal = "sp-tr02:LANDED"
+until = 10000000
+settings = { SPIRA_TEST_REGISTRY_HOLD_SECS = "7200" }
+
+[[bead]]
+id = "sp-tr01"
+at = 30000
+
+# Past the second row's expiry: its test is out of the deny list and blocks its round again.
+[[bead]]
+id = "sp-tr04"
+at = 8500000
+
+[[flip]]
+test = "unit:loom factory::tests::cleared_by_landing"
+members = ["sp-tr01"]
+follow_on = "sp-tr02"
+
+[[flip]]
+test = "unit:loom factory::tests::left_to_expire"
+members = ["sp-tr01", "sp-tr04"]
+follow_on = "sp-tr03"
+follow_on_lands = false
+blocks_again_after = 8500000
+
+# The round has landed and neither follow-on has: both rows are held.
+[[look]]
+at = 1500000
+rows = [
+  { test = "unit:loom factory::tests::cleared_by_landing", bead = "sp-tr02" },
+  { test = "unit:loom factory::tests::left_to_expire", bead = "sp-tr03" },
+]
+
+# sp-tr02 has landed: its row is gone, the other stays.
+[[look]]
+at = 3000000
+rows = [{ test = "unit:loom factory::tests::left_to_expire", bead = "sp-tr03" }]
+
+# Two hours and a little on: nothing is held.
+[[look]]
+at = 8200000

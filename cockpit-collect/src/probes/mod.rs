@@ -10,7 +10,7 @@ mod core_detail;
 mod goodput;
 mod inflight;
 pub mod lc;
-mod queue;
+pub mod queue;
 mod ratelim;
 mod reachable;
 pub mod round;
