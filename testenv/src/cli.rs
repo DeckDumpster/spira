@@ -240,10 +240,8 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
             ]));
         }
     }
-    if share_publish.is_some() {
-        if share_keep.is_some() || share_end.is_some() {
-            return Err(err(&["batch: --share-publish is exclusive with --share and --share-keep: it finishes a kept share and runs no tier"]));
-        }
+    if share_publish.is_some() && (share_keep.is_some() || share_end.is_some()) {
+        return Err(err(&["batch: --share-publish is exclusive with --share and --share-keep: it finishes a kept share and runs no tier"]));
     }
     let share_publish = share_publish.map(|k| a_key("--share-publish", &k)).transpose()?;
     let share = match (share_keep, share_end) {

@@ -899,11 +899,9 @@ mod tests {
         assert_eq!(unsafe { libc::flock(holder.as_raw_fd(), libc::LOCK_SH) }, 0);
         let lines = std::sync::Mutex::new(Vec::<String>::new());
         let log = |m: &str| lines.lock().unwrap().push(m.to_string());
-        let began = Instant::now();
         cache.publish("g", &log);
-        assert!(began.elapsed() < Duration::from_millis(500), "{:?}", began.elapsed());
         let text = lines.lock().unwrap().join("\n");
-        assert!(text.contains("warm cache publish skipped") && text.contains("not a verdict"), "{text}");
+        assert!(text.contains("warm cache publish skipped") && text.contains("not a verdict") && !text.contains("waiting"), "{text}");
         assert!(!cache.dir.join("target/built.o").exists());
         assert!(!cache.share_dir("g").exists());
     }
