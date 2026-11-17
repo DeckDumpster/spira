@@ -55,12 +55,14 @@ through lib.sh's one-line shim until sp-du6dl), in place of the landing pass's o
 non-id; `bd-note <id> <text>` runs `bd note <id> <text>`, refusing an empty note. 0 done · 1 bd failed ·
 2 usage · 3 refused before bd ran. Neither reads or writes `spira_lifecycle`.
 
-**One verb reads a repo's publish backlog.** `unpublished <repo>` fetches the repo's publish
-target (its per-repo `[publish.<name>]`, else the default remote and the land ref's branch) under a 2 s bound, then
-prints `{"forge_tip","landing_tip","count","oldest_arrival"}`: `count` is `rev-list --count`
-of forge..landing, `oldest_arrival` the unix time of the first landing-ref reflog entry that
-contains the oldest unpublished commit (null at 0). A fetch that times out is answered from the last fetched tip, marked
-`"stale":true` with `forge_tip_age_secs`; the whole call owns a 4 s budget, under the client's 5 s. A repo that is not queue.local, publishes
+**One verb reads a repo's publish backlog.** `unpublished <repo>` measures from the remote-tracking
+ref already in the checkout (the repo's per-repo `[publish.<name>]`, else the default remote and the land ref's branch) and
+never waits on the network for it: it prints `{"forge_tip","landing_tip","count","oldest_arrival"}`, where `count` is `rev-list --count`
+of forge..landing and `oldest_arrival` the unix time of the first landing-ref reflog entry that
+contains the oldest unpublished commit (null at 0). A tip 15 s old or more is refreshed by a detached background fetch
+(one at a time, bounded at 20 s, off the call's budget); a tip 60 s old or more is answered
+`"stale":true` with `forge_tip_age_secs`. Only a repo with no tip at all fetches inline, under a 2 s bound: a timeout there is
+answered stale from the tip's reflog, a refusal is an error. The whole call owns a 4 s budget, under the client's 5 s. A repo that is not queue.local, publishes
 nowhere, whose forge refuses the fetch or whose reflog cannot place the oldest commit is
 refused (2), never answered with a zero. The publish-backlog watcher calls it over the socket.
 
