@@ -169,7 +169,7 @@ mod bounded_tests {
         let d = testkit::TempDir::new("git-ok-signal");
         let bin = d.path().join("bin");
         std::fs::create_dir(&bin).unwrap();
-        testkit::write_exe(&bin.join("git"), "#!/bin/sh\necho cut short >&2\nkill -9 $$\n");
+        testkit::write_exe(bin.join("git"), "#!/bin/sh\necho cut short >&2\nkill -9 $$\n");
         let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap_or_default());
         let mut cmd = Command::new("git");
         cmd.env("PATH", path);
