@@ -132,5 +132,5 @@ fn the_throughput_snapshot_names_the_oldest_waiting_bead_certified_ones_included
     let a = &t.landings[0];
     assert_eq!(a.waiting, 2);
     let oldest = a.oldest.as_ref().expect("the snapshot stamps the oldest waiting bead");
-    assert_eq!((oldest.bead.as_str(), oldest.since), ("a-old", 1699990000));
+    assert_eq!((oldest.bead.as_str(), oldest.since), ("a-old", Some(1699990000)));
 }
