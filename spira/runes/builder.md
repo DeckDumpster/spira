@@ -33,7 +33,12 @@ holds at your tip, the work is done.
    default you will take, and continue on that default. This is performed using a `work` command.
 5. **Write the test first and see it fail.** Test through the same entry point a real caller
    uses. Name each test for the behaviour it protects. Keep unit tests under a second by
-   injecting clocks and processes. Plain `cargo test` runs unit tests only; a test under a
+   injecting clocks and processes. Behaviour over time or across actors (scheduling,
+   retries, timeouts, rounds) is tested in `sim/`, which runs on
+   `runtime::ports::VirtualClock` with no real clock; see `sim/tests/it/` for the pattern. A
+   test of a real system at its boundary (SQLite, git, a subprocess) waits on a signal from
+   that system, such as a completion counter, a condvar or a marker file, never on a sleep
+   or an elapsed duration. Plain `cargo test` runs unit tests only; a test under a
    crate's `tests/` is an integration test, declared `[[test]]` with
    `required-features = ["integration"]` and run with `--features integration`.
 6. **Make the smallest change that makes it pass, then refactor.** Change what the work item
