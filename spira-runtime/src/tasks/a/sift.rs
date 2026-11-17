@@ -65,7 +65,7 @@
 //! | Effect | Class | Deadline | Idempotency key | Refuses |
 //! |---|---|---|---|---|
 //! | `sift.fetch_base` | git | 60 s | `<repo>:<tick at>` | a `queue.local` repo (no remote, `rs:558`) |
-//! | `sift.note` | store | 10 s | `<id>:<tip>:note` | nothing new; today `bash bead.sh amend --note` (`rs:664-671`), after the move LcClient `content` amend. Precedes `sift.send_back`; if it fails the bead is held, not sent back (`sl:242-246`) |
+//! | `sift.note` | store | 10 s | `<id>:<tip>:note` | nothing new; the store's `work <id> note -` door. Precedes `sift.send_back`; if it fails the bead is held, not sent back (`sl:242-246`) |
 //! | `sift.send_back` | store | 10 s | `<id>:<tip>:GateRed` | a bead no longer SUBMITTED/CERTIFIED or whose tip moved (`rs:626-639`); a stale `--version` (store CAS) |
 //! | `sift.record_pass` | store | 10 s | `<id>:<tip>:Sifted` | skipped when `sifted_tip == tip` (`rs:189-193`); a bead out of the pool states records none (`rs:643-652`); a moved tip (store) |
 //! | `sift.supersede` | store | 10 s | `<id>:superseded-by:<keeper>` | the store's close refusals; today `spira-lc close --superseded-by` via `spira-store/src/lifecycle_row.rs:293-318` |

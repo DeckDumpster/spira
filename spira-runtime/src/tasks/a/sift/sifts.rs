@@ -626,6 +626,9 @@ pub fn lc_supersede(lc: &LcClient, id: &str, keeper: &str) -> Result<(), String>
 /// The evidence a send-back stands on, written on the bead's notes through the store's `work`
 /// door (`work <id> note -`, the text on stdin).
 pub fn lc_note(lc: &LcClient, id: &str, text: &str) -> Result<(), String> {
+    if text.trim().is_empty() {
+        return Err(format!("sift: {id} has no evidence to write; not sent back"));
+    }
     let r = lc.call_stdin(&["work", id, "note", "-"], text).map_err(|e| format!("spira-lc work {id} note: {e}"))?;
     match r.code {
         0 => Ok(()),
@@ -636,6 +639,21 @@ pub fn lc_note(lc: &LcClient, id: &str, text: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct NeverCalled;
+
+    impl spira_store::lc_call::Transport for NeverCalled {
+        fn exchange(&self, argv: &[String], _stdin: Option<&str>, _d: std::time::Duration) -> Result<spira_store::lc_call::Reply, String> {
+            panic!("the store was called with {argv:?}");
+        }
+    }
+
+    #[test]
+    fn an_empty_evidence_text_is_refused_before_any_store_call() {
+        let lc = spira_store::lc_call::LcClient::over(std::sync::Arc::new(NeverCalled), true);
+        let e = lc_note(&lc, "sp-a", "  \n").unwrap_err();
+        assert!(e.contains("sp-a") && e.contains("no evidence"), "{e}");
+    }
 
     #[test]
     fn the_open_round_is_the_store_record_the_queue_shows() {

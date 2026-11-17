@@ -659,6 +659,17 @@ impl crate::callers::Machine for Local<'_> {
     }
 }
 
+/// `work` reads its text from a trailing `--stdin <body>` pair that sits before `--actor`
+/// (`work::split_reserved`); a request already carrying one is left alone.
+fn with_stdin_trailer(mut argv: Vec<String>, body: String) -> Vec<String> {
+    let at = if argv.len() >= 2 && argv[argv.len() - 2] == "--actor" { argv.len() - 2 } else { argv.len() };
+    if at >= 2 && argv[at - 2] == "--stdin" {
+        return argv;
+    }
+    argv.splice(at..at, ["--stdin".to_string(), body]);
+    argv
+}
+
 /// The answer to one request. A composed verb (composed.rs) runs here with its bd half; any
 /// other verb is a primitive, its stdin body carried inline exactly as the CLI carries it. A
 /// verb neither serves is the primitives' own refusal — nothing falls through to a CLI.
@@ -672,6 +683,7 @@ pub(crate) fn answer(
     let Request { argv, stdin, caller, .. } = req;
     if !argv.first().is_some_and(|v| crate::composed::is_served(v)) {
         let argv = match stdin {
+            Some(body) if argv.first().is_some_and(|v| v == "work") => with_stdin_trailer(argv, body),
             Some(body) => crate::cutover::inline_payload_from(argv, &mut body.as_bytes()),
             None => argv,
         };
@@ -1930,6 +1942,41 @@ mod tests {
         let req = super::Request { argv: vec!["batch-progress".into()], stdin: Some("[{\"bead_id\":\"sp-a\"}]".into()), caller: Default::default(), task: None };
         super::answer(req, &mut rec, &mut bd, &Content::default(), &|| Err(String::new()));
         assert_eq!(rec.0, vec![vec!["batch-progress".to_string(), "--json".into(), "[{\"bead_id\":\"sp-a\"}]".into()]]);
+    }
+
+    #[test]
+    fn a_work_requests_body_becomes_its_stdin_trailer_before_actor() {
+        struct Rec(Vec<Vec<String>>);
+        impl Machine for Rec {
+            fn call(&mut self, args: &[String]) -> (i32, String) {
+                self.0.push(args.to_vec());
+                (0, String::new())
+            }
+        }
+        let w = World::new();
+        let (mut rec, mut bd) = (Rec(Vec::new()), &w);
+        let a = |v: &[&str], body: Option<&str>| super::Request {
+            argv: v.iter().map(|s| s.to_string()).collect(),
+            stdin: body.map(String::from),
+            caller: Default::default(),
+            task: None,
+        };
+        let mut run = |req| {
+            super::answer(req, &mut rec, &mut bd, &Content::default(), &|| Err(String::new()));
+        };
+        run(a(&["work", "sp-a", "note", "-", "--actor", "sift"], Some("evidence\nline two")));
+        run(a(&["work", "sp-a", "note", "-"], Some("evidence\nline two")));
+        run(a(&["work", "sp-a", "note", "-"], None));
+        run(a(&["work", "-", "file", "t", "--body-file", "-", "--actor", "ops"], Some("b")));
+        run(a(&["work", "sp-a", "note", "-", "--stdin", "x"], Some("y")));
+        let sv = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(rec.0[0], sv(&["work", "sp-a", "note", "-", "--stdin", "evidence\nline two", "--actor", "sift"]));
+        let c = crate::work::split_reserved(&rec.0[0][2..]);
+        assert_eq!((c.stdin.as_deref(), c.actor.as_deref()), (Some("evidence\nline two"), Some("sift")));
+        assert_eq!(rec.0[1], sv(&["work", "sp-a", "note", "-", "--stdin", "evidence\nline two"]));
+        assert_eq!(rec.0[2], sv(&["work", "sp-a", "note", "-"]));
+        assert_eq!(rec.0[3], sv(&["work", "-", "file", "t", "--body-file", "-", "--stdin", "b", "--actor", "ops"]));
+        assert_eq!(rec.0[4], sv(&["work", "sp-a", "note", "-", "--stdin", "x"]));
     }
 
     /// sp-6n7nuv: a verb the socket does not serve is refused by the server itself — the
