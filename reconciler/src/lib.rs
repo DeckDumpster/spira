@@ -1927,6 +1927,24 @@ fn base_fences(cfg: &Config, tree: &str, sha: &str) -> Vec<Fence> {
     ]
 }
 
+fn fence_judge(program: &str) -> Result<String, String> {
+    fs::canonicalize(program).map(|p| p.to_string_lossy().into_owned()).map_err(|e| format!("cannot resolve the fence program {program}: {e}"))
+}
+
+fn cached_verdict(entry: &serde_json::Value, class: &str, sha: &str, judge: &str) -> Option<RawStatus> {
+    if entry.get("sha")?.as_str()? != sha || entry.get("judge")?.as_str()? != judge {
+        return None;
+    }
+    match entry.get("observed").and_then(|o| o.as_str()) {
+        None => Some(RawStatus::Satisfied),
+        Some(observed) => Some(RawStatus::Gap {
+            desired: format!("{} passes on {}", class, MAIN_REF),
+            observed: observed.to_string(),
+            since_hint: None,
+        }),
+    }
+}
+
 fn active_release(cfg: &Config) -> String {
     if cfg.releases_dir.as_os_str().is_empty() {
         return cfg.release.clone();
@@ -1990,25 +2008,16 @@ fn observe_main_health(cfg: &Config) -> Vec<Check> {
         .ok()
         .and_then(|t| serde_json::from_str(&t).ok())
         .unwrap_or_default();
-    let cached = |cache: &serde_json::Map<String, serde_json::Value>, class: &str| -> Option<RawStatus> {
-        let e = cache.get(class)?;
-        if e.get("sha")?.as_str()? != sha {
-            return None;
-        }
-        match e.get("observed").and_then(|o| o.as_str()) {
-            None => Some(RawStatus::Satisfied),
-            Some(observed) => Some(RawStatus::Gap {
-                desired: format!("{} passes on {}", class, MAIN_REF),
-                observed: observed.to_string(),
-                since_hint: None,
-            }),
-        }
-    };
     let lint_pending = lint_awaiting_activation(cfg, &repo_str, &sha);
     let pending_check = lint_pending.map(|raw| Check { key: "main-health:lint".into(), raw, remedy: Remedy::Escalate });
     let lint_is_pending = pending_check.is_some();
     let judged = move |f: &Fence| !(lint_is_pending && f.class == "lint");
     let fences: Vec<Fence> = base_fences(cfg, "", &sha).into_iter().filter(judged).collect();
+    let judges: std::collections::HashMap<&'static str, Result<String, String>> = fences.iter().map(|f| (f.class, fence_judge(&f.program))).collect();
+    let cached = |cache: &serde_json::Map<String, serde_json::Value>, class: &str| -> Option<RawStatus> {
+        let judge = judges.get(class)?.as_ref().ok()?;
+        cached_verdict(cache.get(class)?, class, &sha, judge)
+    };
     if fences.iter().all(|f| cached(&cache, f.class).is_some()) {
         let mut checks: Vec<Check> = pending_check.into_iter().collect();
         checks.extend(fences.iter().map(|f| Check {
@@ -2027,13 +2036,21 @@ fn observe_main_health(cfg: &Config) -> Vec<Check> {
     }
     let mut checks: Vec<Check> = pending_check.into_iter().collect();
     for fence in base_fences(cfg, &tree_str, &sha).into_iter().filter(judged) {
+        let judge = match &judges[fence.class] {
+            Ok(j) => j.clone(),
+            Err(reason) => {
+                cache.remove(fence.class);
+                checks.push(Check { key: format!("main-health:{}", fence.class), raw: RawStatus::Unobservable { reason: reason.clone() }, remedy: Remedy::Escalate });
+                continue;
+            }
+        };
         if let Some(raw) = cached(&cache, fence.class) {
             checks.push(Check { key: format!("main-health:{}", fence.class), raw, remedy: Remedy::Escalate });
             continue;
         }
         let started = std::time::Instant::now();
         // batch-job: a fence over a whole checkout runs to SPIRA_MAIN_HEALTH_FENCE_DEADLINE_SECS (a hang guard), not the 5 s call deadline
-        let out = spira_config::bounded::bounded_for(&fence.program, &cfg.fence_deadline_secs.to_string())
+        let out = spira_config::bounded::bounded_for(&judge, &cfg.fence_deadline_secs.to_string())
             .args(&fence.args)
             .current_dir(&tree)
             .stdin(Stdio::null())
@@ -2041,7 +2058,7 @@ fn observe_main_health(cfg: &Config) -> Vec<Check> {
         let elapsed = started.elapsed().as_secs_f64();
         let log = paths::main_health_log(&cfg.spira_run, fence.class);
         let raw = match &out {
-            Err(e) => RawStatus::Unobservable { reason: format!("{}: {}", fence.program, e) },
+            Err(e) => RawStatus::Unobservable { reason: format!("{}: {}", judge, e) },
             Ok(o) if o.status.success() => RawStatus::Satisfied,
             Ok(o) => {
                 let text = format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
@@ -2049,7 +2066,7 @@ fn observe_main_health(cfg: &Config) -> Vec<Check> {
                 match o.status.code() {
                     Some(1) => RawStatus::Gap {
                         desired: format!("{} passes on {}", fence.class, MAIN_REF),
-                        observed: format!("{} red at {} (output in {})", fence.class, sha, log.display()),
+                        observed: format!("{} red at {} by {} (output in {})", fence.class, sha, judge, log.display()),
                         since_hint: None,
                     },
                     Some(124) => RawStatus::Unobservable {
@@ -2073,10 +2090,10 @@ fn observe_main_health(cfg: &Config) -> Vec<Check> {
         };
         match &raw {
             RawStatus::Satisfied => {
-                cache.insert(fence.class.to_string(), serde_json::json!({ "sha": sha }));
+                cache.insert(fence.class.to_string(), serde_json::json!({ "sha": sha, "judge": judge }));
             }
             RawStatus::Gap { observed, .. } => {
-                cache.insert(fence.class.to_string(), serde_json::json!({ "sha": sha, "observed": observed }));
+                cache.insert(fence.class.to_string(), serde_json::json!({ "sha": sha, "judge": judge, "observed": observed }));
             }
             _ => {
                 cache.remove(fence.class);
@@ -2627,6 +2644,57 @@ mod tests {
         assert!(e.contains("forge is not in SPIRA_RELEASE"), "{e}");
     }
     use std::time::SystemTime;
+
+    fn two_builds() -> testkit::TempDir {
+        let d = testkit::TempDir::new("judge-builds");
+        for b in ["A", "B"] {
+            fs::create_dir_all(d.path().join("releases").join(b).join("bin")).unwrap();
+            fs::write(d.path().join("releases").join(b).join("bin/spira-lint"), "x").unwrap();
+        }
+        d
+    }
+
+    fn point_current(d: &testkit::TempDir, build: &str) {
+        let link = d.path().join("releases/current");
+        let _ = fs::remove_file(&link);
+        std::os::unix::fs::symlink(d.path().join("releases").join(build), link).unwrap();
+    }
+
+    fn current_lint(d: &testkit::TempDir) -> String {
+        d.path().join("releases/current/bin/spira-lint").to_string_lossy().into_owned()
+    }
+
+    #[test]
+    fn a_red_from_one_build_is_rejudged_once_another_build_is_live() {
+        let d = two_builds();
+        point_current(&d, "A");
+        let judge_a = fence_judge(&current_lint(&d)).unwrap();
+        let entry = serde_json::json!({"sha": "S", "judge": judge_a, "observed": "lint red at S"});
+        assert!(matches!(cached_verdict(&entry, "lint", "S", &judge_a), Some(RawStatus::Gap { .. })));
+        point_current(&d, "B");
+        let judge_b = fence_judge(&current_lint(&d)).unwrap();
+        assert_ne!(judge_a, judge_b);
+        assert!(cached_verdict(&entry, "lint", "S", &judge_b).is_none());
+    }
+
+    #[test]
+    fn a_green_is_a_hit_for_the_same_sha_and_judge_only() {
+        let entry = serde_json::json!({"sha": "S", "judge": "/j"});
+        assert!(matches!(cached_verdict(&entry, "lint", "S", "/j"), Some(RawStatus::Satisfied)));
+        assert!(cached_verdict(&entry, "lint", "T", "/j").is_none());
+    }
+
+    #[test]
+    fn an_entry_without_a_judge_is_a_miss() {
+        let entry = serde_json::json!({"sha": "S"});
+        assert!(cached_verdict(&entry, "lint", "S", "/j").is_none());
+    }
+
+    #[test]
+    fn fence_judge_of_a_missing_program_names_it() {
+        let e = fence_judge("/nonexistent/bin/spira-lint").unwrap_err();
+        assert!(e.contains("/nonexistent/bin/spira-lint"), "{e}");
+    }
 
     fn scratch_dir(name: &str) -> testkit::TempDir {
         testkit::TempDir::new(&format!("reconciler-test-{}-{}", name, SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()))
