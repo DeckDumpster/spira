@@ -174,7 +174,7 @@ impl Env {
     }
 
     pub fn provenance(&self) -> String {
-        run::provenance(&self.unit, &hostname(), &self.path)
+        decide::provenance(&self.unit, &hostname(), &self.path)
     }
 
     pub fn file_config<'a>(&'a self, provenance: &'a str) -> FileConfig<'a> {
@@ -318,7 +318,7 @@ pub fn drain_one(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock,
         )
         .into_bytes();
     }
-    let provenance = run::provenance(&entry.unit, &hostname(), &entry.incident_path);
+    let provenance = decide::provenance(&entry.unit, &hostname(), &entry.incident_path);
     let cause = decide::sanitize_cause(&entry.cause);
     let mut cfg = env.file_config(&provenance);
     cfg.cause = &cause;
@@ -638,7 +638,7 @@ mod tests {
         let env = env_in(&dir);
         let p = spool(&env, "20260101T000000Z-a", &entry("incident:held"));
         let bd = FakeBd::new();
-        let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+        let mailer = FakeMailer::default();
         let held = with_incident_lock(&env.lock_path, 0, || drain_spool(&env, &bd, &mailer, &FixedClock(1_000_000)));
         assert_eq!(held, Some((0, 1)));
         assert!(p.exists(), "the entry stays spooled for the next drain");
@@ -651,7 +651,7 @@ mod tests {
         let dir = testkit::TempDir::new("incident-drain-unreachable");
         let env = env_in(&dir);
         let p = spool(&env, "20260101T000000Z-a", &entry("incident:later"));
-        let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+        let mailer = FakeMailer::default();
         let down = FakeBd { reachable: false, next_id: RefCell::new(1), ..Default::default() };
         let (n, stuck) = drain_spool(&env, &down, &mailer, &FixedClock(1_000_000));
         assert_eq!((n, stuck), (0, 1));
@@ -672,7 +672,7 @@ mod tests {
         let env = env_in(&dir);
         let p = spool(&env, "20260101T000000Z-a", "TITLE: orphan\n--\nbody");
         let bd = FakeBd::new();
-        let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+        let mailer = FakeMailer::default();
         assert_eq!(drain_spool(&env, &bd, &mailer, &FixedClock(1_000_000)), (1, 0));
         assert!(!p.exists() && p.with_extension("bad").exists());
         assert!(bd.created.borrow().is_empty());
@@ -688,7 +688,7 @@ mod tests {
         spool(&env, "20260101T000000Z-a", old);
         spool(&env, "20260101T000001Z-b", old);
         let bd = FakeBd::new();
-        let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+        let mailer = FakeMailer::default();
         assert_eq!(drain_spool(&env, &bd, &mailer, &FixedClock(1_000_000)), (2, 0));
         let facts = bd.facts.borrow();
         assert_eq!(facts.len(), 1, "the second entry recurs the first");

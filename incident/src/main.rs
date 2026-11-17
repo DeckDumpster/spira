@@ -73,7 +73,7 @@ fn cmd_alarm(env: &Env, bd: Option<&dyn Bd>, mailer: &dyn Mailer, clock: &dyn Cl
 fn own_alarm(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock, title: &str, reference: &str) {
     let mut body = Vec::new();
     let _ = std::io::stdin().read_to_end(&mut body);
-    let provenance = run::provenance(&env.unit, &hostname(), &env.path);
+    let provenance = decide::provenance(&env.unit, &hostname(), &env.path);
     let cause = decide::sanitize_cause(&env.cause);
     let mut cfg = env.file_config(&provenance);
     cfg.cause = &cause;
