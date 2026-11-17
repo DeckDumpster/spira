@@ -654,6 +654,9 @@ impl Machine<'_> {
             (State::Opening, PUSH_FORGE, true) => {
                 self.go(Trigger::EffectSucceeded);
             }
+            (_, RETIRE, false) => {
+                self.notify(p.pr, format!("publish PR {} for {} not retired", p.pr, self.repo), body.trim().to_string());
+            }
             (State::Opening, PUSH_BRANCH | PUSH_FORGE | PR_CREATE, false) => {
                 self.go(Trigger::EffectFailed);
                 self.notify(p.pr, format!("publish {} failed for {}", effect.trim_start_matches("publish."), self.repo), body.trim().to_string());
