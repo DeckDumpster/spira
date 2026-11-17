@@ -155,4 +155,26 @@ mod bounded_tests {
         assert_eq!(code, Some(3));
         assert_eq!(err.len(), 204800);
     }
+
+    #[test]
+    fn git_ok_carries_gits_stderr_in_its_exit_message() {
+        let d = testkit::TempDir::new("git-ok-exit");
+        testkit::git(d.path(), &["init", "-q"]);
+        let e = super::git_ok(d.path(), &["log", "no-such-ref"]).unwrap_err();
+        assert!(e.starts_with("exit 128: ") && e.contains("unknown revision"), "{e}");
+    }
+
+    #[test]
+    fn git_ok_names_a_process_killed_by_a_signal() {
+        let d = testkit::TempDir::new("git-ok-signal");
+        let bin = d.path().join("bin");
+        std::fs::create_dir(&bin).unwrap();
+        testkit::write_exe(&bin.join("git"), "#!/bin/sh\necho cut short >&2\nkill -9 $$\n");
+        let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap_or_default());
+        let mut cmd = Command::new("git");
+        cmd.env("PATH", path);
+        let (code, _, err) = bounded(cmd, Duration::from_secs(5)).unwrap();
+        assert_eq!(code, None);
+        assert_eq!(String::from_utf8_lossy(&err).trim(), "cut short");
+    }
 }
