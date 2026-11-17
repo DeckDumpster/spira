@@ -71,6 +71,7 @@ pub enum Kind {
     #[default]
     Dwarf,
     Hand,
+    Container,
 }
 
 impl Kind {
@@ -78,6 +79,7 @@ impl Kind {
         match self {
             Kind::Dwarf => "dwarf",
             Kind::Hand => "hand",
+            Kind::Container => "container",
         }
     }
 }
@@ -300,10 +302,48 @@ fn sized(paths: &str) -> Option<u64> {
     (!there.is_empty()).then(|| there.iter().map(|p| dir_bytes(p)).sum())
 }
 
+const LIBPOD_PREFIX: &str = "libpod-";
+
+fn is_libpod_scope(name: &str) -> bool {
+    name.starts_with(LIBPOD_PREFIX) && name.ends_with(".scope")
+}
+
+/// Every `libpod-<id>.scope` directory below `dir`, not descending into one.
+fn libpod_scopes(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let mut subs: Vec<PathBuf> = rd.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect();
+    subs.sort();
+    for p in subs {
+        if is_libpod_scope(&basename(&p)) {
+            out.push(p);
+        } else {
+            libpod_scopes(&p, out);
+        }
+    }
+}
+
+/// Container id to name, from the `-c <id> -n <name>` of each conmon command line.
+fn conmon_names(proc_dir: &Path) -> BTreeMap<String, String> {
+    let mut out = BTreeMap::new();
+    let Ok(rd) = std::fs::read_dir(proc_dir) else { return out };
+    for e in rd.flatten() {
+        let raw = std::fs::read(e.path().join("cmdline")).unwrap_or_default();
+        let args: Vec<String> = raw.split(|b| *b == 0).map(|a| String::from_utf8_lossy(a).into_owned()).collect();
+        if !args.first().is_some_and(|a| a.rsplit('/').next() == Some("conmon")) {
+            continue;
+        }
+        let after = |flag: &str| args.iter().position(|a| a == flag).and_then(|i| args.get(i + 1)).cloned();
+        if let (Some(id), Some(name)) = (after("-c"), after("-n")) {
+            out.insert(id, name);
+        }
+    }
+    out
+}
+
 /// A hand scope's beads, worktrees and build directories, as its processes name them.
 type HandRow = (BTreeSet<String>, BTreeSet<String>, BTreeSet<String>);
 
-/// Every live dwarf and every hand scope, sampled now.
+/// Every live dwarf, hand scope and podman container scope, sampled now.
 pub fn sample(roots: &Roots) -> Vec<Sample> {
     let Some(manager) = manager(roots) else { return vec![] };
     let mounted = disks(&read(&roots.proc_dir.join("self/mountinfo")), |mm| whole_disk(&roots.sys, mm));
@@ -321,8 +361,8 @@ pub fn sample(roots: &Roots) -> Vec<Sample> {
     let mut dwarves = vec![];
     let mut slices: Vec<PathBuf> = std::fs::read_dir(&manager).map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.is_dir() && basename(p).ends_with(".slice")).collect()).unwrap_or_default();
     slices.sort();
-    for slice in slices {
-        let Ok(rd) = std::fs::read_dir(&slice) else { continue };
+    for slice in &slices {
+        let Ok(rd) = std::fs::read_dir(slice) else { continue };
         let mut found: Vec<PathBuf> = rd.flatten().map(|e| e.path()).filter(|p| p.is_dir() && units::is_dwarf_unit(&basename(p))).collect();
         found.sort();
         for dir in found {
@@ -409,6 +449,28 @@ pub fn sample(roots: &Roots) -> Vec<Sample> {
         };
         counters(&dir, &named, &mut s);
         out.push(s);
+    }
+    let owned: Vec<String> = out.iter().map(|s| s.cgroup.clone()).collect();
+    let mut scopes = vec![];
+    for slice in &slices {
+        libpod_scopes(slice, &mut scopes);
+    }
+    if !scopes.is_empty() {
+        let names = conmon_names(&roots.proc_dir);
+        for dir in scopes {
+            let cg = rel(&dir);
+            if owned.iter().any(|o| cg == *o || cg.starts_with(&format!("{o}/"))) {
+                continue;
+            }
+            let unit = basename(&dir);
+            let name = names
+                .iter()
+                .find(|(id, _)| unit == format!("{LIBPOD_PREFIX}{id}.scope"))
+                .map_or_else(|| unit.chars().skip(LIBPOD_PREFIX.len()).take(12).collect(), |(_, n)| n.clone());
+            let mut s = Sample { kind: Kind::Container, cgroup: cg, rune: "container".into(), name, unit, ..Sample::default() };
+            counters(&dir, &named, &mut s);
+            out.push(s);
+        }
     }
     out
 }

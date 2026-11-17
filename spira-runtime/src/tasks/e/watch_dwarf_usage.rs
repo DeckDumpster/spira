@@ -17,7 +17,7 @@
 //! rows it pushed. It is a probe, so a tick journals nothing: the store is the record. The
 //! push is telemetry, as the runtime's own OTLP logs are, so it runs in Observe mode too.
 //!
-//! Series, each labelled `kind` (`dwarf` or `hand`), `rune`, `name`, `bead`, `repo`, `unit`:
+//! Series, each labelled `kind` (`dwarf`, `hand` or `container`), `rune`, `name`, `bead`, `repo`, `unit`:
 //!
 //! | Series | Value |
 //! |---|---|
@@ -29,6 +29,9 @@
 //! | `spira_dwarf_worktree_bytes` | bytes allocated under the worktree |
 //! | `spira_dwarf_build_dir_bytes` | bytes allocated under the build directory (`CARGO_TARGET_DIR`) |
 //! | `spira_dwarf_wall_seconds` | seconds since the unit started (a `sentinel-call` unit only) |
+//!
+//! A `container` row is one podman `libpod-<id>.scope` outside every dwarf and hand cgroup, its
+//! `name` the container's (from its conmon), carrying only the cpu, io and memory series.
 //!
 //! A session is one `unit`; a bead's total is the sum over its units of each counter's last
 //! value (`dwarves.sh usage bead <id>`, or `sum by (bead) (max_over_time(...[30d]))`).
@@ -114,8 +117,10 @@ pub fn push(samples: &[Sample], exporter: &dyn Exporter, at: SystemTime) -> Resu
     }
     let s = series(samples, at);
     exporter.export(&s)?;
-    let hands = samples.iter().filter(|s| s.kind == usage::Kind::Hand).count();
-    Ok(format!("{} dwarf(s) and {hands} hand scope(s): {} series pushed", samples.len() - hands, s.len()))
+    let count = |k| samples.iter().filter(|s| s.kind == k).count();
+    let (hands, containers) = (count(usage::Kind::Hand), count(usage::Kind::Container));
+    let more = if containers > 0 { format!(" and {containers} container(s)") } else { String::new() };
+    Ok(format!("{} dwarf(s) and {hands} hand scope(s){more}: {} series pushed", samples.len() - hands - containers, s.len()))
 }
 
 /// `watch.dwarf_usage.sample`: the live host, pushed to the configured store.

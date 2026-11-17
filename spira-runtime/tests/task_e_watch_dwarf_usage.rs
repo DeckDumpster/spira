@@ -169,3 +169,21 @@ fn a_sampler_that_carries_nothing_keeps_no_row_after_running() {
 fn a_boot_repeats_no_side_effect_and_misses_none() {
     spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(|| rig(1), || WatchDwarfUsage { interval_ms: 60_000 }.registration(), STREAM, runtime::event::EventKind::new(TICK, ""));
 }
+
+#[test]
+fn a_container_sample_is_pushed_with_its_name_on_the_io_series() {
+    let mut c = dwarf();
+    c.kind = Kind::Container;
+    c.name = "testenv-x-unit".into();
+    c.bead = String::new();
+    c.repo = String::new();
+    c.started_ms = None;
+    c.worktree_bytes = None;
+    c.build_dir_bytes = None;
+    let rec = Recorder::default();
+    let said = push(&[c], &rec, SystemTime::now()).unwrap();
+    assert_eq!(said, "0 dwarf(s) and 0 hand scope(s) and 1 container(s): 5 series pushed");
+    let pushed = rec.pushed.borrow();
+    let w = pushed[0].iter().find(|s| s.name == IO_WRITE_BYTES).unwrap();
+    assert_eq!((label(w, "kind"), label(w, "name"), label(w, "role"), w.value), ("container", "testenv-x-unit", "ssd-b", 3e9));
+}
