@@ -143,7 +143,8 @@ mod bounded_tests {
 
     #[test]
     fn a_program_that_cannot_start_is_reported_as_a_spawn_error() {
-        let e = bounded(Command::new("/nonexistent/spira-no-such-program"), Duration::from_secs(1)).unwrap_err();
+        let d = testkit::TempDir::new("bounded-spawn");
+        let e = bounded(Command::new(d.path().join("spira-no-such-program")), Duration::from_secs(1)).unwrap_err();
         assert!(e.starts_with("spawn:"), "{e}");
     }
 
