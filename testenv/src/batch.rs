@@ -840,7 +840,7 @@ mod tests {
                 if r.argv[1].ends_with("test-x.sh") {
                     e2.store(now, Ordering::SeqCst);
                 }
-                // clock-safe: fake runner holds the call for a fixed span; the deadline it honours is the signal under test
+                // clock-safe: the fake runner simulates a call of fixed length; the RC_DEADLINE it returns past r.deadline is what the test asserts
                 std::thread::sleep(Duration::from_millis(20));
                 l2.fetch_sub(1, Ordering::SeqCst);
                 ExecOutcome {
@@ -977,14 +977,14 @@ mod tests {
                     .unwrap_or_default();
                 let end = Instant::now() + Duration::from_millis(ms);
                 loop {
-                    // clock-safe: fake runner holds the call for a fixed span; the deadline it honours is the signal under test
+                    // clock-safe: the fake runner simulates a call of fixed length; the RC_DEADLINE it returns past r.deadline is what the test asserts
                     if r.deadline.is_some_and(|d| Instant::now() >= d) {
                         return ExecOutcome {
                             rc: crate::runtime::RC_DEADLINE,
                             output: "partial\n".into(),
                         };
                     }
-                    // clock-safe: fake runner holds the call for a fixed span; the deadline it honours is the signal under test
+                    // clock-safe: the fake runner simulates a call of fixed length; the RC_DEADLINE it returns past r.deadline is what the test asserts
                     if Instant::now() >= end {
                         return ExecOutcome {
                             rc,
@@ -995,7 +995,7 @@ mod tests {
                             },
                         };
                     }
-                    // clock-safe: fake runner holds the call for a fixed span; the deadline it honours is the signal under test
+                    // clock-safe: the fake runner simulates a call of fixed length; the RC_DEADLINE it returns past r.deadline is what the test asserts
                     std::thread::sleep(Duration::from_millis(5));
                 }
             },

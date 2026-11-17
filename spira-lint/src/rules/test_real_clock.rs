@@ -145,12 +145,13 @@ impl Rule for TestRealClock {
 
     fn check(&self, tree: &Tree) -> Result<Vec<Finding>, LintError> {
         let files = crate::scope(tree, self)?;
+        let shapes: Vec<(&Entry, crate::rust_test::Shape)> =
+            files.iter().filter_map(|e| tree.content(e).map(|c| (*e, shape(c)))).collect();
+        let whole = whole_test_files(tree, &shapes);
         let mut out = Vec::new();
-        for e in &files {
+        for (e, s) in &shapes {
             let Some(src) = tree.content(e) else { continue };
-            let s = shape(src);
-            let whole = whole_test_files(tree, &[(*e, shape(src))]).contains(&e.path);
-            for (line, msg) in hits(src, &s.regions, whole) {
+            for (line, msg) in hits(src, &s.regions, whole.contains(&e.path)) {
                 out.push(Finding { rule: NAME, path: e.path.clone(), line: Some(line), message: msg.to_string() });
             }
         }
@@ -260,6 +261,20 @@ mod tests {
         for m in [SLEEP, COMPARE, TestRealClock.hint()] {
             assert!(m.contains("sim/") && m.contains("VirtualClock"), "{m}");
         }
+    }
+
+    #[test]
+    fn an_out_of_line_test_module_is_judged_as_test_code() {
+        let t = TempDir::new("trc-mod");
+        t.write("a/src/lib.rs", "#[cfg(test)]\nmod t;\n");
+        t.write("a/src/t.rs", "fn f() {\n    std::thread::sleep(D);\n}\n");
+        assert_eq!(run(&t, &["a/src/lib.rs", "a/src/t.rs"]).unwrap(), vec![format!("test-real-clock: a/src/t.rs:2: {SLEEP}")]);
+    }
+
+    #[test]
+    fn a_marked_bound_assert_passes_and_an_assert_in_another_fn_is_not_judged() {
+        let got = one("#[test]\nfn t() {\n    let took = Instant::now().elapsed();\n    // clock-safe: cap on the wait for the marker\n    assert!(took < CAP);\n}\n#[test]\nfn u() {\n    let took = 3;\n    assert!(took < 5);\n}");
+        assert_eq!(got, Vec::<String>::new());
     }
 
     #[test]

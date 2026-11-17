@@ -1503,7 +1503,7 @@ Only then the `clock-safe:` marker.
 **Allow list.** None; a considered use carries `clock-safe:`.
 
 **Known limits.** The bound-clock check is name-based within one fn: a clock value passed through
-a helper before the assert is missed, and a generic such as `Vec<u8>` in the assert's arguments
+a helper before the assert is missed, an initializer that holds a `;` (a closure body) is cut at it, and a generic such as `Vec<u8>` in the assert's arguments
 reads as a comparison.
 
 ## Rule `py-fstring-compat`
