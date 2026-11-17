@@ -206,6 +206,7 @@ mod tests {
         shell: Option<Vec<&'static str>>,
         shell_err: Option<String>,
         checks_ok: bool,
+        no_lines: bool,
         tiers_ok: bool,
         bad_piece: Option<(&'static str, &'static str)>,
         mode: &'static str,
@@ -228,7 +229,7 @@ mod tests {
             env.vars.contains_key(&format!("has:{program}"))
         }
         fn run_checks(&self, _: &str, _: Option<&Path>) -> Result<Rows, String> {
-            Ok(Rows { ok: self.checks_ok, lines: vec!["-- lint: ok".into(), "-- unit: ok".into()] })
+            Ok(Rows { ok: self.checks_ok, lines: if self.no_lines { Vec::new() } else { vec!["-- lint: ok".into(), "-- unit: ok".into()] } })
         }
         fn run_tiers(&self, _: &str, suites: &[String]) -> Result<Vec<Tier>, String> {
             Ok(suites.iter().map(|s| Tier { name: s.clone(), ok: self.tiers_ok }).collect())
@@ -332,6 +333,13 @@ mod tests {
         let mut f = green();
         f.files.insert(CHECKS.into(), "# Rows `work checks` runs before a branch is submitted.\n".into());
         assert_eq!(line(&f, Clause::SubmitChecks), "not met submit-checks: .spira/checks.toml declares no [[check]] rows");
+    }
+
+    #[test]
+    fn submit_checks_met_never_has_an_empty_reason() {
+        let mut f = green();
+        f.no_lines = true;
+        assert_eq!(line(&f, Clause::SubmitChecks), "met submit-checks: work checks ran no rows");
     }
 
     #[test]
