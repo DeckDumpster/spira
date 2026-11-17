@@ -164,7 +164,7 @@ impl Store {
     pub fn plan(&self, args: &[&str]) -> Result<String, String> {
         let what = format!("spira-lc plan {}", args.first().unwrap_or(&""));
         let argv: Vec<String> = std::iter::once("plan").chain(args.iter().copied()).map(str::to_string).collect();
-        let text = self.lc_run(&argv).map_err(|e| format!("{what}: {e}"))?;
+        let text = self.read_held(&argv).map_err(|e| format!("{what}: {e}"))?;
         let v: serde_json::Value = serde_json::from_str(text.trim()).map_err(|e| format!("{what}: not JSON: {e}"))?;
         match v.get("items") {
             Some(items @ serde_json::Value::Array(_)) => Ok(items.to_string()),
@@ -213,6 +213,19 @@ impl Store {
     /// The claim view of every READY and REWORK bead, answered by the control store from the
     /// lifecycle rows when it is asked.
     pub fn claim_view(&self) -> Result<Vec<ViewRow>, String> {
+        if let Some(held) = TICK.with(|t| t.borrow().as_ref().and_then(Clone::clone)) {
+            return Ok(held);
+        }
+        let view = self.claim_view_asked()?;
+        TICK.with(|t| {
+            if let Some(held) = t.borrow_mut().as_mut() {
+                *held = Some(view.clone());
+            }
+        });
+        Ok(view)
+    }
+
+    fn claim_view_asked(&self) -> Result<Vec<ViewRow>, String> {
         let text = self.lc_run(&["claimable"]).map_err(|e| format!("spira-lc claimable: {e}"))?;
         let v: serde_json::Value = serde_json::from_str(text.trim()).map_err(|e| format!("spira-lc claimable: not JSON: {e}"))?;
         let beads = v.get("beads").and_then(serde_json::Value::as_array).ok_or("spira-lc claimable: no beads array")?;
@@ -251,9 +264,19 @@ impl Store {
         crate::rank::parse_lifecycle(&text)
     }
 
+    /// A planning read from the held view when this process keeps one (a stale view refuses),
+    /// else from the store.
+    fn read_held(&self, argv: &[String]) -> Result<String, String> {
+        let words: Vec<&str> = argv.iter().map(String::as_str).collect();
+        match self.views.as_ref().filter(|v| v.watching()).and_then(|_| store_view::held_read(&words)) {
+            Some(held) => held.map_err(|e| e.to_string()),
+            None => self.lc_run(argv),
+        }
+    }
+
     /// The planning plane's watermark, read before the rows it orders.
     pub fn planning_watermark(&self) -> Result<u64, String> {
-        let text = self.lc_run(&["plan", "watermark"]).map_err(|e| format!("spira-lc plan watermark: {e}"))?;
+        let text = self.read_held(&["plan".to_string(), "watermark".into()]).map_err(|e| format!("spira-lc plan watermark: {e}"))?;
         let v: serde_json::Value = serde_json::from_str(text.trim()).map_err(|e| format!("spira-lc plan watermark: not JSON: {e}"))?;
         v["watermark"].as_u64().ok_or_else(|| "spira-lc plan watermark: no watermark".to_string())
     }
@@ -326,9 +349,30 @@ fn first_reason(r: &Ran) -> &str {
     r.stderr.lines().chain(r.stdout.lines()).find(|l| !l.trim().is_empty()).unwrap_or("no output")
 }
 
+thread_local! {
+    static TICK: std::cell::RefCell<Option<Option<Vec<ViewRow>>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Holds the first claim view this thread reads until it is dropped: every verb of one tick
+/// answers from one `claimable` call. Not nestable; a tick is one thread's work.
+pub struct TickView;
+
+impl TickView {
+    pub fn begin() -> TickView {
+        TICK.with(|t| *t.borrow_mut() = Some(None));
+        TickView
+    }
+}
+
+impl Drop for TickView {
+    fn drop(&mut self) {
+        TICK.with(|t| *t.borrow_mut() = None);
+    }
+}
+
 /// One bead of the claim view: its verdict, the runes that would take it, and
 /// the lifecycle row the view judged it from.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ViewRow {
     pub id: String,
     pub verdict: crate::verdicts::Kind,

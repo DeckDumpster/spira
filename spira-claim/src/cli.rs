@@ -12,6 +12,7 @@ use crate::decide::{AskedStamp, Inputs, Thresholds};
 use events::EventRow;
 use rank::{EpicLookup, LifecycleRow, ReadyRow, Verdict};
 use crate::verdicts;
+pub use store::TickView;
 use store::{Config, Store};
 
 pub const USAGE: i32 = 1;

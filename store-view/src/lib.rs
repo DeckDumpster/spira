@@ -158,7 +158,7 @@ const ALL: u8 = CONTENT | ROUNDS;
 /// The reads [`Projection::answer`] holds, with the changes that end each; `None` for any other.
 fn classes_of(argv: &[&str]) -> Option<u8> {
     match argv {
-        ["content", "list" | "show", ..] | ["plan", "items" | "edges" | "children", ..] => Some(CONTENT),
+        ["content", "list" | "show", ..] | ["plan", "items" | "edges" | "children" | "watermark", ..] => Some(CONTENT),
         ["show-batch", _] => Some(ROUNDS),
         ["list", rest @ ..] if rest.contains(&"--batches") => Some(ROUNDS | CONTENT),
         _ => None,

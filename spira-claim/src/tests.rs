@@ -385,6 +385,24 @@ mod claim_view_read {
     }
 
     #[test]
+    fn the_verbs_of_one_tick_share_one_claimable_call_and_the_next_tick_asks_again() {
+        let (svc, st) = setup(0);
+        let a = Args::parse(&[]).unwrap();
+        {
+            let _tick = TickView::begin();
+            env_over(|env| {
+                viewed(&a, env, &st).unwrap();
+                claimable_over(&a, env, &st).unwrap();
+                urgent_over(&a, env, &st).unwrap();
+                drop(ready_count_over(&a, env, &st));
+            });
+            assert_eq!(seen(&svc), ["claimable"]);
+        }
+        env_over(|env| viewed(&a, env, &st).unwrap());
+        assert_eq!(seen(&svc), ["claimable", "claimable"], "a view is not kept past its tick");
+    }
+
+    #[test]
     fn rune_ready_lists_the_beads_the_view_says_the_rune_would_take() {
         let (svc, st) = setup(0);
         let view = env_over(|env| claimable_over(&Args::parse(&[]).unwrap(), env, &st).unwrap());
