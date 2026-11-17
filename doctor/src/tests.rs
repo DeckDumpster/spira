@@ -65,6 +65,8 @@ pub struct Fake {
     pub env_locked: RefCell<Result<String, String>>,
     pub tool_versions: RefCell<BTreeMap<PathBuf, String>>,
     pub submission: RefCell<Option<String>>,
+    pub root_scan: RefCell<crate::ports::RootScan>,
+    pub root_targets: RefCell<Vec<PathBuf>>,
 }
 
 impl Default for Fake {
@@ -122,6 +124,8 @@ impl Default for Fake {
             env_locked: RefCell::new(Err(String::new())),
             tool_versions: RefCell::new(BTreeMap::new()),
             submission: RefCell::new(None),
+            root_scan: RefCell::new(crate::ports::RootScan::Seen(Vec::new())),
+            root_targets: RefCell::new(Vec::new()),
         }
     }
 }
@@ -259,6 +263,12 @@ impl World for Fake {
     }
     fn placement_roots(&self) -> Vec<(String, Option<PathBuf>)> {
         self.placements.borrow().iter().map(|(k, p, _)| (k.clone(), Some(p.clone()))).chain(self.unnamed_roots.borrow().iter().map(|k| (k.clone(), None))).collect()
+    }
+    fn root_writers(&self) -> crate::ports::RootScan {
+        self.root_scan.borrow().clone()
+    }
+    fn root_targets(&self) -> Vec<PathBuf> {
+        self.root_targets.borrow().clone()
     }
     fn placement_of(&self, p: &Path) -> crate::ports::Placement {
         self.placements.borrow().iter().find(|(_, q, _)| q == p).map(|(_, _, v)| v.clone()).unwrap_or_else(|| crate::ports::Placement::Unresolved("no fixture".into()))
@@ -744,6 +754,80 @@ fn judge_placement_follows_a_symlink_to_where_it_lands() {
     }
     assert_eq!(crate::real::judge_placement(&link, Path::new(system_paths::PROC), ""), Elsewhere);
     assert!(matches!(crate::real::judge_placement(&d.path().join("missing"), &root, ""), Unresolved(_)));
+}
+
+// -------------------------------------------------------- root-disk writers (sp-ohlz3o)
+
+fn writer(pid: u32, comm: &str, path: &str, build: bool) -> crate::ports::RootWriter {
+    crate::ports::RootWriter { pid, comm: comm.into(), unit: "app.slice".into(), path: path.into(), build }
+}
+
+#[test]
+fn root_writers_fails_a_build_writer_and_warns_for_any_other() {
+    use crate::ports::RootScan::Seen;
+    let f = Fake::default();
+    *f.root_scan.borrow_mut() = Seen(vec![writer(1, "cargo", "home/x/.cargo/.package-cache", true), writer(2, "syslogd", "var/log/syslog", false)]);
+    let lines = check_root_writers(&f);
+    assert_eq!(levels(&lines), vec![Level::Fail, Level::Warn]);
+    assert!(lines[0].msg.contains("cargo") && lines[0].msg.contains("home/x/.cargo"), "{:?}", lines[0].msg);
+}
+
+#[test]
+fn root_writers_warns_per_root_target_blind_and_says_ok_when_empty() {
+    use crate::ports::RootScan::Blind;
+    let f = Fake::default();
+    assert_eq!(levels(&check_root_writers(&f)), vec![Level::Ok]);
+    *f.root_targets.borrow_mut() = vec!["var/tmp/a-target".into(), "var/tmp/b-target".into()];
+    let lines = check_root_writers(&f);
+    assert_eq!(levels(&lines), vec![Level::Warn, Level::Warn]);
+    assert!(lines[0].msg.contains("var/tmp/a-target"), "{:?}", lines[0].msg);
+    *f.root_scan.borrow_mut() = Blind("no /proc".into());
+    let lines = check_root_writers(&f);
+    assert_eq!(levels(&lines), vec![Level::Warn, Level::Warn, Level::Warn]);
+    assert!(lines[0].msg.contains("cannot tell who writes") && lines[0].msg.contains("no /proc"));
+}
+
+#[test]
+fn root_writers_folds_twenty_writers_of_one_unit_comm_and_directory_to_one_line() {
+    let f = Fake::default();
+    *f.root_scan.borrow_mut() = crate::ports::RootScan::Seen((0..20).map(|i| writer(100 + i, "conmon", &format!("home/x/storage/f{i}"), false)).collect());
+    let lines = check_root_writers(&f);
+    assert_eq!(lines.len(), 1);
+    assert!(lines[0].msg.contains("20 pids"), "{:?}", lines[0].msg);
+}
+
+#[test]
+fn fdinfo_flags_are_writable_only_for_wronly_or_rdwr() {
+    use crate::real::fdinfo_writable;
+    assert!(fdinfo_writable("pos:\t0\nflags:\t0100002\nmnt_id:\t1\n"));
+    assert!(fdinfo_writable("flags:\t01\n"));
+    assert!(!fdinfo_writable("pos:\t0\nflags:\t0100000\n"));
+    assert!(!fdinfo_writable("no flags here"));
+}
+
+#[test]
+fn build_is_a_harness_env_key_or_a_container_scope() {
+    use crate::real::{cgroup_unit, is_build};
+    assert!(is_build(b"PATH=/bin\0RUSTC_WRAPPER=/x/sccache\0", "0::/app.slice/a.service\n"));
+    assert!(is_build(b"CARGO_TARGET_DIR=/srv/t\0", ""));
+    assert!(is_build(b"", "0::/user.slice/libpod-abc.scope/container\n"));
+    assert!(is_build(b"PATH=/bin\0RUSTC_WRAPPER=\0", "0::/app.slice/a.service\n"));
+    assert!(!is_build(b"PATH=/bin\0", "0::/app.slice/a.service\n"));
+    assert_eq!(cgroup_unit("0::/user.slice/libpod-abc.scope/container\n"), "container");
+}
+
+#[test]
+fn same_device_follows_a_symlink_and_reports_unstatable_as_none() {
+    use crate::real::same_device;
+    let d = testkit::TempDir::new("doctor-samedev");
+    let file = d.path().join("f");
+    std::fs::write(&file, b"x").unwrap();
+    let link = d.path().join("l");
+    std::os::unix::fs::symlink(&file, &link).unwrap();
+    assert_eq!(same_device(&file, d.path()), Some(true));
+    assert_eq!(same_device(&link, d.path()), Some(true));
+    assert_eq!(same_device(&file, Path::new(system_paths::PROC)), Some(false));
+    assert_eq!(same_device(&d.path().join("missing"), d.path()), None);
 }
 
 // -------------------------------------------------------- compilation cache backend (sp-xtdqi)
