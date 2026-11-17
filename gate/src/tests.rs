@@ -4151,15 +4151,15 @@ fn only_the_cap_reasons_and_judged_statuses_hand_a_build_directory_on() {
     for r in ["phase-cap", "budget", "deadline", "timeout"] {
         assert!(hands_on_build(&vd(NOVERDICT, r)), "{r}");
     }
-    let src = include_str!("engine.rs");
+    let src: String = include_str!("engine.rs").chars().filter(|c| !c.is_whitespace()).collect();
     let mut seen = 0;
-    for part in src.split("v(NOVERDICT, \"").skip(1) {
+    for part in src.split("v(NOVERDICT,\"").skip(1) {
         let r = &part[..part.find('"').unwrap()];
         seen += 1;
         let cap = matches!(r, "phase-cap" | "budget" | "deadline" | "timeout");
         assert_eq!(hands_on_build(&vd(NOVERDICT, r)), cap, "{r}");
     }
-    assert!(seen > 30, "the scan must find the reasons: {seen}");
+    assert!(seen >= 45, "the scan must find the reasons: {seen}");
     for s in [PASS, 1, 76] {
         assert!(hands_on_build(&vd(s, "branch-red")), "{s}");
     }
