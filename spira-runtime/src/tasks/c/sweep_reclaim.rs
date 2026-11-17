@@ -66,9 +66,19 @@
 //! The class cap for `container` is ≤2 (S3). `podman_prune` shares that cap with gate and cert
 //! runs, and must not starve them. That is a deferral, not a drop.
 //!
+//! ## Git maintenance
+//!
+//! The snapshot's `repos` is every row of the repo map. Each gets one `sweep.reclaim.maintain` (class git, 600 s) per pass,
+//! keyed `maintain:<name>`: `git maintenance run --task=loose-objects --task=incremental-repack`, then `--task=loose-objects`
+//! again, because that task packs on one run and deletes the packed copies on the next. Each run packs at most 50 000 loose
+//! objects (git's default batch), so a large backlog drains over several passes. No `gc`, `prune` or `--aggressive`.
+//! The outcome reports `count` from `git count-objects -v` before and after; a failure names the repo with git's stderr, and
+//! never stops the other rows. A `objects/maintenance.lock` makes git exit 0 having done nothing: older than 1200 s it is
+//! removed and said so, younger is an error.
+//!
 //! ## Silence
 //!
-//! An idle tick does three things: it issues the observe probe; it finds free space at or above
+//! Apart from the maintenance leg, an idle tick does three things: it issues the observe probe; it finds free space at or above
 //! 70 GiB, podman under its cap and the cache under its cap; and it emits nothing. Today the unit
 //! always prints `freed 0 MiB` and the cache line (`main.rs:82`, `lib.rs:243`). These become
 //! wide-event fields.
@@ -110,7 +120,11 @@ pub const OBSERVE: &str = "sweep.reclaim.observe";
 pub const REMOVE_TARGET: &str = "sweep.reclaim.remove_target";
 pub const PODMAN_PRUNE: &str = "sweep.reclaim.podman_prune";
 pub const TRIM_CACHE: &str = "sweep.reclaim.trim_cache";
-pub const EFFECTS: &[&str] = &[OBSERVE, REMOVE_TARGET, PODMAN_PRUNE, TRIM_CACHE];
+pub const MAINTAIN: &str = "sweep.reclaim.maintain";
+pub const EFFECTS: &[&str] = &[OBSERVE, REMOVE_TARGET, PODMAN_PRUNE, TRIM_CACHE, MAINTAIN];
+/// The only git maintenance tasks ever run: both lossless, neither prunes reachable history.
+pub const MAINTAIN_ARGS: &[&str] = &["maintenance", "run", "--task=loose-objects", "--task=incremental-repack"];
+const MAINTAIN_DEADLINE_MS: u64 = 600_000;
 
 pub const CADENCE_KEY: &str = "SPIRA_RUNTIME_SWEEP_RECLAIM_SECS";
 pub const MIN_FREE_KEY: &str = "SPIRA_RECLAIM_MIN_FREE_GIB";
@@ -168,9 +182,19 @@ pub struct CacheFile {
     pub path: String,
 }
 
+/// One row of the repo map.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Repo {
+    pub name: String,
+    pub path: String,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Snapshot {
+    /// Every registered checkout; each gets one [`MAINTAIN`] per pass.
+    pub repos: Vec<Repo>,
     /// Each `--require` pattern and whether it matched: the positive control.
     pub require_ok: Vec<(String, bool)>,
     pub free_mib: u64,
@@ -247,6 +271,9 @@ pub fn plan(cfg: &Cfg, snap: &Snapshot) -> Result<Vec<Act>, String> {
     } else if snap.podman_bytes > podman_cap {
         acts.push(act(PODMAN_PRUNE, "prune".into(), format!("storage {} MiB over cap {} MiB", snap.podman_bytes >> 20, podman_cap >> 20), 600_000));
     }
+    for r in &snap.repos {
+        acts.push(act(MAINTAIN, format!("maintain:{}", r.name), serde_json::to_string(r).map_err(|e| e.to_string())?, MAINTAIN_DEADLINE_MS));
+    }
     let files: Vec<(u64, u64, String)> = snap.cache.iter().map(|f| (f.mtime, f.bytes, f.path.clone())).collect();
     let trim = reclaim::trim_selection(&files, cache_cap);
     if !trim.is_empty() {
@@ -273,7 +300,7 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, _now_ms: u64) -
             }
             Ok((Carry { phase: Phase::Reclaiming, refused_cause: None, pending: acts.len() as u32 }, acts))
         }
-        Input::Outcome { effect, .. } if carry.phase == Phase::Reclaiming && [REMOVE_TARGET, PODMAN_PRUNE, TRIM_CACHE].contains(&effect.as_str()) => {
+        Input::Outcome { effect, .. } if carry.phase == Phase::Reclaiming && [REMOVE_TARGET, PODMAN_PRUNE, TRIM_CACHE, MAINTAIN].contains(&effect.as_str()) => {
             let pending = carry.pending.saturating_sub(1);
             Ok((if pending == 0 { Carry::default() } else { Carry { pending, ..carry.clone() } }, vec![]))
         }
@@ -330,7 +357,7 @@ fn epoch_now() -> u64 {
 }
 
 /// The runner of [`OBSERVE`]: the host's facts, read in this process.
-pub fn observe(p: &Pinned, proc_root: &std::path::Path) -> Result<String, String> {
+pub fn observe(p: &Pinned, proc_root: &std::path::Path, repos: Vec<Repo>) -> Result<String, String> {
     if p.globs.is_empty() {
         return Err("SPIRA_RECLAIM_GLOBS names no pattern — refusing".into());
     }
@@ -355,7 +382,7 @@ pub fn observe(p: &Pinned, proc_root: &std::path::Path) -> Result<String, String
         .collect();
     let podman_bytes = p.podman_dir.as_deref().map_or(0, |d| reclaim::usage(d).bytes);
     let cache = p.cache_dir.as_deref().map(|d| reclaim::cache_files(d, now)).unwrap_or_default().into_iter().map(|(mtime, bytes, path)| CacheFile { mtime, bytes, path: path.display().to_string() }).collect();
-    serde_json::to_string(&Snapshot { require_ok, free_mib, candidates, podman_bytes, cache }).map_err(|e| e.to_string())
+    serde_json::to_string(&Snapshot { repos, require_ok, free_mib, candidates, podman_bytes, cache }).map_err(|e| e.to_string())
 }
 
 /// The runner of [`REMOVE_TARGET`]: re-judges `path` at act time and removes it only when it
@@ -406,6 +433,54 @@ pub fn trim_cache(p: &Pinned, input: &str) -> Result<String, String> {
         }
     }
     Ok(format!("cache {}: trimmed {n} file(s), {} MiB", dir.display(), freed >> 20))
+}
+
+/// `count:` of `git count-objects -v`: the loose objects.
+fn loose_count(proc: &dyn runtime::ports::Proc, path: &str) -> Result<u64, String> {
+    let spec = runtime::ports::ProcSpec { prog: "git".into(), args: ["-C", path, "count-objects", "-v"].map(String::from).to_vec(), stdin: vec![], deadline: std::time::Duration::from_secs(120) };
+    let out = proc.run(&spec)?;
+    if out.code != Some(0) {
+        return Err(format!("git count-objects -v exit {:?}: {}", out.code, String::from_utf8_lossy(&out.stderr).trim()));
+    }
+    String::from_utf8_lossy(&out.stdout).lines().find_map(|l| l.strip_prefix("count: ")?.trim().parse().ok()).ok_or_else(|| "git count-objects -v printed no count".into())
+}
+
+/// A held `objects/maintenance.lock` makes `git maintenance run` exit 0 having done nothing. One older
+/// than twice the effect's deadline has no live holder and is removed; a younger one is an error.
+fn clear_stale_lock(proc: &dyn runtime::ports::Proc, path: &str) -> Result<bool, String> {
+    let spec = runtime::ports::ProcSpec { prog: "git".into(), args: ["-C", path, "rev-parse", "--git-path", "objects/maintenance.lock"].map(String::from).to_vec(), stdin: vec![], deadline: std::time::Duration::from_secs(30) };
+    let out = proc.run(&spec)?;
+    if out.code != Some(0) {
+        return Err(format!("git rev-parse exit {:?}: {}", out.code, String::from_utf8_lossy(&out.stderr).trim()));
+    }
+    let lock = std::path::Path::new(path).join(String::from_utf8_lossy(&out.stdout).trim());
+    let Ok(meta) = std::fs::metadata(&lock) else { return Ok(false) };
+    let age = meta.modified().ok().and_then(|m| m.elapsed().ok()).map_or(0, |a| a.as_secs());
+    if age <= 2 * MAINTAIN_DEADLINE_MS / 1000 {
+        return Err(format!("{} is held (age {age}s), so maintenance would do nothing", lock.display()));
+    }
+    std::fs::remove_file(&lock).map_err(|e| format!("{}: {e}", lock.display()))?;
+    Ok(true)
+}
+
+/// The runner of [`MAINTAIN`]: the two lossless maintenance tasks on one checkout, reporting its
+/// loose objects before and after. A failure names the repo and carries git's own stderr.
+pub fn maintain(proc: &dyn runtime::ports::Proc, input: &str) -> Result<String, String> {
+    let repo: Repo = serde_json::from_str(input).map_err(|e| e.to_string())?;
+    let fail = |e: String| format!("{} ({}): {e}", repo.name, repo.path);
+    let before = loose_count(proc, &repo.path).map_err(fail)?;
+    let cleared = clear_stale_lock(proc, &repo.path).map_err(fail)?;
+    // `loose-objects` packs on one run and deletes the packed copies on the next, so a pass runs it twice.
+    for tasks in [MAINTAIN_ARGS, &MAINTAIN_ARGS[..3]] {
+        let mut args = vec!["-C".to_string(), repo.path.clone()];
+        args.extend(tasks.iter().map(|a| a.to_string()));
+        let out = proc.run(&runtime::ports::ProcSpec { prog: "git".into(), args, stdin: vec![], deadline: std::time::Duration::from_millis(MAINTAIN_DEADLINE_MS) }).map_err(fail)?;
+        if out.code != Some(0) {
+            return Err(fail(format!("git maintenance exit {:?}: {}", out.code, String::from_utf8_lossy(&out.stderr).trim())));
+        }
+    }
+    let after = loose_count(proc, &repo.path).map_err(fail)?;
+    Ok(format!("{}: loose objects {before} before, {after} after{}", repo.name, if cleared { " (removed a stale maintenance.lock)" } else { "" }))
 }
 
 const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("phase"), runtime::rows::Part::Field("refused_cause"), runtime::rows::Part::Field("pending")];

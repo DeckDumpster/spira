@@ -899,6 +899,12 @@ impl World {
         to_json(&ThroughputSnapshot { readable: true, landings, repos, unlanded, records, halt, activated_at, store_up_s: None, store_restart, ..Default::default() })
     }
 
+    /// Every row of the repo map: its name and checkout path.
+    pub fn repos(&self) -> Result<Vec<crate::tasks::c::sweep_reclaim::Repo>, String> {
+        let map = fs::read_to_string(&self.repo_map).map_err(|e| format!("{}: {e}", self.repo_map.display()))?;
+        Ok(map_rows(&map).into_iter().map(|r| crate::tasks::c::sweep_reclaim::Repo { name: r.name, path: r.path }).collect())
+    }
+
     /// The beads landed over the 24 h ending `now`, per registered repo, read from its landing ref
     /// as `spira_landref` resolves it (the map row's `base`, else the remote's default; never the
     /// lane name): by hour of the last commit naming each bead, the oldest hour first, and the
