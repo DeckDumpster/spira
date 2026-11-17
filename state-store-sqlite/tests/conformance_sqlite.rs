@@ -1353,3 +1353,41 @@ fn the_first_commit_after_a_restart_applies_to_the_copy_without_catch_up_or_relo
     assert!(names.contains(&"apply"), "phases {names:?}");
     assert_eq!(c.backend().revision(), rev, "the copy holds the commit's revision");
 }
+
+fn put_next(b: &SqliteBackend) {
+    let head = b.head().unwrap();
+    let prev = (head > 0).then(|| Rev::new(head, 0));
+    b.commit(head, &[put_write("k", &[7; 4096], head + 1, prev)]).unwrap();
+}
+
+#[test]
+fn no_commit_runs_a_wal_checkpoint() {
+    let dir = TempDir::new("sqlite-no-commit-checkpoint");
+    let path = dir.path().join("s.db");
+    let opts = Options { checkpoint_every: u64::MAX, ..Options::default() };
+    let b = SqliteBackend::open(&path, opts).unwrap();
+    let mut moved = Vec::new();
+    for i in 0..state_store_sqlite::JUMP + 10 {
+        let before = state_store_sqlite::bench::wal_backfill(&path).unwrap();
+        put_next(&b);
+        if state_store_sqlite::bench::wal_backfill(&path).unwrap() != before {
+            moved.push(i);
+        }
+    }
+    assert!(moved.is_empty(), "commits {moved:?} moved the WAL backfill mark");
+}
+
+#[test]
+fn a_checkpoint_completes_after_checkpoint_every_commits() {
+    let dir = TempDir::new("sqlite-background-checkpoint");
+    let path = dir.path().join("s.db");
+    let b = SqliteBackend::open(&path, Options::default()).unwrap();
+    for _ in 0..state_store_sqlite::CHECKPOINT_EVERY + 1 {
+        put_next(&b);
+    }
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while state_store_sqlite::bench::wal_backfill(&path).unwrap() == 0 {
+        assert!(std::time::Instant::now() < until, "no checkpoint completed");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
