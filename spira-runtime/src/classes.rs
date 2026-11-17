@@ -300,6 +300,7 @@ pub const CLASSES: &[(&str, EffectClass)] = &[
     ("sweep.export_beads.write", Host),
     ("sweep.nix_gc.collect", Unit),
     ("sweep.nix_gc.observe", Host),
+    ("sweep.reclaim.maintain", Git),
     ("sweep.reclaim.observe", Store),
     ("sweep.reclaim.podman_prune", Container),
     ("sweep.reclaim.remove_target", Host),
