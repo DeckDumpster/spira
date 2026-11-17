@@ -77,6 +77,17 @@ pub(crate) fn read_backfill(shm: &File, path: &str) -> std::result::Result<u32, 
     backfill(&buf).ok_or_else(|| format!("the WAL index {path} is too short"))
 }
 
+/// The checkpointer's completion signal: blocks until more than `after` checkpoints have
+/// completed and returns the count, or `None` when `cap` runs out. `cap` is a hang guard, never a verdict.
+pub fn await_checkpoint(b: &SqliteBackend, after: u64, cap: Duration) -> Option<u64> {
+    let c = &b.0.checkpointer;
+    let (s, _) = c
+        .done
+        .wait_timeout_while(crate::lock(&c.state), cap, |s| s.completed <= after)
+        .unwrap_or_else(|p| p.into_inner());
+    (s.completed > after).then_some(s.completed)
+}
+
 /// `nBackfill` of the open store at `db`: the WAL frames a checkpoint has copied home.
 pub fn wal_backfill(db: &std::path::Path) -> std::result::Result<u32, String> {
     let shm_path = format!("{}-shm", db.display());
