@@ -209,3 +209,45 @@ fn no_dwarf_and_no_hand_build_is_no_sample() {
     symlink("/", f.roots.proc_dir.join("201/cwd")).unwrap();
     assert_eq!(sample(&f.roots), vec![]);
 }
+
+const CONTAINER_ID: &str = "fa3f63aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+fn plant_container(f: &Fixture, parent: &str, conmon: Option<&str>) -> String {
+    let scope = format!("libpod-{CONTAINER_ID}.scope");
+    let dir = f.roots.cgroup.join(MANAGER).join(parent).join(&scope);
+    write(&dir.join("io.stat"), "8:32 rbytes=11 wbytes=339600000 rios=1 wios=9 dbytes=0 dios=0\n");
+    write(&dir.join("container/cgroup.procs"), "301\n");
+    if let Some(name) = conmon {
+        let args = ["/usr/bin/conmon", "--api-version", "1", "-c", CONTAINER_ID, "-u", CONTAINER_ID, "-n", name, "-r", "/usr/bin/crun"];
+        write(&f.roots.proc_dir.join("301/cmdline"), &args.iter().map(|a| format!("{a}\0")).collect::<String>());
+    }
+    format!("{MANAGER}/{parent}/{scope}")
+}
+
+#[test]
+fn a_libpod_scope_is_one_container_sample_named_by_its_conmon() {
+    let f = fixture();
+    let cg = plant_container(&f, "user.slice", Some("testenv-x-unit"));
+    let got = sample(&f.roots);
+    let c: Vec<&Sample> = got.iter().filter(|s| s.kind == Kind::Container).collect();
+    assert_eq!(c.len(), 1, "{got:#?}");
+    assert_eq!((c[0].name.as_str(), c[0].rune.as_str(), c[0].cgroup.as_str()), ("testenv-x-unit", "container", cg.as_str()));
+    assert_eq!(c[0].io, vec![DeviceIo { device: "sdc".into(), mount: "srv/ssd-b".into(), role: "ssd-b".into(), read_bytes: 11, write_bytes: 339_600_000 }]);
+    assert_eq!((c[0].worktree_bytes, c[0].build_dir_bytes), (None, None));
+}
+
+#[test]
+fn a_libpod_scope_with_no_conmon_is_named_by_its_id_prefix() {
+    let f = fixture();
+    plant_container(&f, "user.slice", None);
+    let got = sample(&f.roots);
+    let c: Vec<&Sample> = got.iter().filter(|s| s.kind == Kind::Container).collect();
+    assert_eq!(c.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), ["fa3f63aaaaaa"]);
+}
+
+#[test]
+fn a_libpod_scope_under_a_dwarf_is_not_sampled_twice() {
+    let f = fixture();
+    plant_container(&f, &format!("app.slice/{DWARF_UNIT}"), Some("testenv-x-unit"));
+    assert!(sample(&f.roots).iter().all(|s| s.kind != Kind::Container));
+}
