@@ -294,8 +294,10 @@ mod tests {
         let d = rust_a();
         let p = plan(&d, &table(), REV, "local/main").unwrap();
         let get = |n: &str| p.files.iter().find(|(r, _)| r == n).map(|(_, c)| c.clone());
-        assert!(!get(".spira/checks.toml").unwrap().contains("[[check]]\n"));
-        assert!(get(".spira/deploy.toml").unwrap().contains("the deploy.yml run for the landed commit on local/main succeeds"));
+        let checks: toml::Table = get(".spira/checks.toml").unwrap().parse().unwrap();
+        assert!(checks.get("check").is_none());
+        let deploy: toml::Table = get(".spira/deploy.toml").unwrap().parse().unwrap();
+        assert_eq!(deploy["after_landing"].as_str(), Some("the deploy.yml run for the landed commit on local/main succeeds"));
         let d = rust_b();
         let p = plan(&d, &table(), REV, "local/main").unwrap();
         assert!(p.files.iter().all(|(r, _)| r != ".spira/deploy.toml"));
