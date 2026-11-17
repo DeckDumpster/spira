@@ -952,7 +952,8 @@ pub mod edge {
         let range = if base.is_empty() { head.to_string() } else { format!("{base}..{head}") };
         let commits = queue::publish_range::parse_log(&git(dir, &["log", "-z", "--format=%H%x1f%P%x1f%s", &range], Duration::from_secs(10))?);
         let lc = queue::real::RealLc { bin: None, client: Some(super::super::queue_step::edge::lc(e)) };
-        let rows = lc.bead_rows(Some("LANDED"))?.into_iter().map(|r| (r.bead_id.clone(), r)).collect();
+        let ids: Vec<String> = commits.iter().filter_map(|c| queue::publish_range::land_id(&c.subject).map(str::to_string)).collect();
+        let rows = lc.bead_rows_of(&ids)?.into_iter().map(|r| (r.bead_id.clone(), r)).collect();
         let ok = |args: &[&str]| git(dir, args, Duration::from_secs(10)).is_ok();
         let in_range = |t: &str| queue::ident::check("tip", t).is_ok() && ok(&["cat-file", "-e", &format!("{t}^{{commit}}")]) && ok(&["merge-base", "--is-ancestor", t, head]) && (base.is_empty() || !ok(&["merge-base", "--is-ancestor", t, base]));
         Ok(queue::publish_range::members(&commits, &rows, &in_range))

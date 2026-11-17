@@ -119,7 +119,22 @@ pub fn claimable_ready(lc: &dyn Lc) -> Result<u64, String> {
 
 /// The rows that entered READY or DROPPED, as transitions.
 pub fn filed_transitions(lc: &dyn Lc) -> Result<Vec<Transition>, String> {
-    Ok(transitions_of_rows(&lc_ok(lc, "list", &argv(&["list", "--state", "READY,DROPPED"]))?))
+    const PAGE: usize = 1_000;
+    let mut out: Vec<Transition> = Vec::new();
+    let mut after: Option<String> = None;
+    loop {
+        let mut args = argv(&["list", "--state", "READY,DROPPED", "--limit", "1000"]);
+        if let Some(a) = &after {
+            args.extend(argv(&["--after", a]));
+        }
+        let page = lc_ok(lc, "list", &args)?;
+        let rows = page.as_array().map_or(0, Vec::len);
+        after = page.as_array().and_then(|a| a.last()).and_then(|r| r["bead_id"].as_str()).map(str::to_string);
+        out.extend(transitions_of_rows(&page));
+        if rows < PAGE || after.is_none() {
+            return Ok(out);
+        }
+    }
 }
 
 /// Publishes the section for this reading, compared on the revision the store holds. A section
