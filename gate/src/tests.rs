@@ -89,6 +89,12 @@ struct Fake {
     cmds: RefCell<Vec<String>>,
     /// Seconds each run_gate advances the clock by, per command kind.
     phase_secs: Cell<u64>,
+    /// What the gate command writes to `SPIRA_GATE_STEPS`, as (offset from the phase's start, name) lines.
+    steps_written: RefCell<Vec<(u64, String)>>,
+    /// Every file `remove` was handed.
+    removed: RefCell<Vec<PathBuf>>,
+    /// The gate outputs kept beside the run record.
+    kept_outs: RefCell<Vec<(PathBuf, String)>>,
     /// (seconds, a compiler line every n seconds, until this second; 0 = silent) a build phase takes.
     build_script: Cell<Option<(u64, u64, u64)>>,
     // ---- per-suite base judgement (sp-hh5h0)
@@ -291,6 +297,9 @@ impl Fake {
             timing_report: RefCell::new(None),
             cmds: RefCell::new(Vec::new()),
             phase_secs: Cell::new(7),
+            steps_written: RefCell::new(Vec::new()),
+            removed: RefCell::new(Vec::new()),
+            kept_outs: RefCell::new(Vec::new()),
             build_script: Cell::new(None),
             landref_tips: RefCell::new(Vec::new()),
             reruns: RefCell::new(HashMap::new()),
@@ -333,7 +342,14 @@ impl Fake {
         self.timeouts.borrow_mut().push((cmd.to_string(), timeout.to_string()));
         self.ran.borrow_mut().push(env.to_vec());
         self.cmds.borrow_mut().push(cmd.to_string());
-        self.clock.set(self.clock.get() + self.phase_secs.get());
+        let t0 = self.clock.get();
+        self.clock.set(t0 + self.phase_secs.get());
+        if let Some((_, path)) = env.iter().find(|(k, v)| k == "SPIRA_GATE_STEPS" && !v.is_empty()) {
+            let text: String = self.steps_written.borrow().iter().map(|(at, n)| format!("{n}\t{}\n", t0 + at)).collect();
+            if !text.is_empty() {
+                self.files.borrow_mut().insert(PathBuf::from(path), text);
+            }
+        }
         // sp-kqger: the base-suite cache's fourth key component, queried once per base trial
         // that has an uncached red suite to ask about. Kept apart from the `--suites`/`cargo`
         // branches below so it is never mistaken for a rerun or a unit phase.
@@ -522,6 +538,10 @@ impl World for Fake {
             self.unit_config.borrow_mut().push((dir.join(name), content.to_string()));
             return;
         }
+        if name.starts_with("gate-out-") {
+            self.kept_outs.borrow_mut().push((dir.join(name), content.to_string()));
+            return;
+        }
         self.written
             .borrow_mut()
             .push((dir.join(name), content.to_string()));
@@ -533,9 +553,19 @@ impl World for Fake {
         }
         self.appended.borrow_mut().push(line.to_string());
     }
-    fn remove(&self, _: &Path) {}
-    fn temp_file(&self, _: &str) -> Option<PathBuf> {
-        Some(PathBuf::from("tmp/files"))
+    fn remove(&self, p: &Path) {
+        self.removed.borrow_mut().push(p.to_path_buf());
+    }
+    fn list_dir(&self, dir: &Path) -> Vec<String> {
+        self.files
+            .borrow()
+            .keys()
+            .filter(|p| p.parent() == Some(dir))
+            .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+            .collect()
+    }
+    fn temp_file(&self, content: &str) -> Option<PathBuf> {
+        Some(PathBuf::from(if content.is_empty() { "tmp/steps" } else { "tmp/files" }))
     }
     fn rev_parse(&self, _: &Path, rev: &str) -> Option<String> {
         if let Some(id) = self.objects.borrow().get(rev) {
@@ -2693,6 +2723,65 @@ fn suites_mode_is_todays_gate_exactly() {
     );
 }
 
+/// A fake whose gate command declares three steps and is killed at the gate phase's cap.
+fn capped_with_steps() -> Fake {
+    let f = Fake::new();
+    f.phase_secs.set(260);
+    *f.steps_written.borrow_mut() = vec![(0, "build tree".into()), (20, "fences".into()), (30, "suites".into())];
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (124, "== suites\n".into()));
+    f
+}
+
+#[test]
+fn a_phase_cap_row_names_the_step_that_ran_long_and_keeps_the_output() {
+    let f = capped_with_steps();
+    assert_eq!(f.run(), NOVERDICT);
+    let row = meter(&f);
+    assert!(row.contains(" phase-cap "), "{row}");
+    assert!(row.contains(" slowest_step=suites:230 "), "{row}");
+    assert!(row.contains(" out="), "{row}");
+    let kept = f.kept_outs.borrow().clone();
+    assert_eq!(kept.len(), 1);
+    assert!(kept[0].1.contains("== suites"));
+    assert!(row.contains(&format!(" out={}", kept[0].0.display())), "{row}");
+    assert!(f.tsd.borrow().last().unwrap().contains(r#""slowest_step":"suites:230""#), "{:?}", f.tsd.borrow());
+    assert!(f.removed.borrow().contains(&PathBuf::from("tmp/steps")), "the steps file is removed with the file list");
+}
+
+#[test]
+fn a_pass_row_carries_the_slowest_step_and_keeps_no_output() {
+    let f = Fake::new();
+    *f.steps_written.borrow_mut() = vec![(0, "fences".into()), (2, "run suites".into())];
+    assert_eq!(f.run(), PASS);
+    let row = meter(&f);
+    assert!(row.contains(" slowest_step=run_suites:5 "), "{row}");
+    assert!(!row.contains(" out="), "{row}");
+    assert!(f.kept_outs.borrow().is_empty());
+    assert!(f.tsd.borrow().last().unwrap().contains(r#""slowest_step":"run_suites:5""#), "{:?}", f.tsd.borrow());
+}
+
+#[test]
+fn a_command_that_writes_no_steps_gives_a_row_with_neither_field() {
+    let f = Fake::new();
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (124, "slow".into()));
+    f.phase_secs.set(260);
+    assert_eq!(f.run(), NOVERDICT);
+    assert!(!meter(&f).contains("slowest_step"), "{}", meter(&f));
+}
+
+#[test]
+fn the_fifty_first_kept_output_removes_the_oldest() {
+    let f = capped_with_steps();
+    for i in 0..50 {
+        f.files.borrow_mut().insert(PathBuf::from(format!("run/tsd/gate-out-2020-01-01T00:00:{i:02}Z.log")), String::new());
+    }
+    assert_eq!(f.run(), NOVERDICT);
+    let removed: Vec<String> = f.removed.borrow().iter().map(|p| p.to_string_lossy().into_owned()).collect();
+    let old: Vec<&String> = removed.iter().filter(|p| p.contains("gate-out-")).collect();
+    assert_eq!(old.len(), 1, "{removed:?}");
+    assert!(old[0].ends_with("gate-out-2020-01-01T00:00:00Z.log"), "{old:?}");
+}
+
 #[test]
 fn an_unreadable_config_composes_as_suites() {
     let f = unit_fake(&["gate/src/x.rs"]);
@@ -3059,8 +3148,7 @@ fn a_red_unit_test_on_a_green_base_is_the_branchs() {
     assert_eq!(f.deny_calls.get(), 1, "the branch trial and the base trial share one snapshot");
     assert_eq!(f.checkouts.borrow()[1], BASE);
     assert!(meter(&f).contains(
-        "compose=unit phases=fences:7,build:7,test:7,base-fences:7 unit_build_secs=7 unit_run_secs=7 unit_tests=1 unit_slowest=- deny_list=1000000/e3b0c44298fc build_dir=cold test_clock=7s
-"
+        "compose=unit phases=fences:7,build:7,test:7,base-fences:7 unit_build_secs=7 unit_run_secs=7 unit_tests=1 unit_slowest=- deny_list=1000000/e3b0c44298fc build_dir=cold test_clock=7s"
     ));
     assert!(f.stderr().contains("phase 'test' failed (exit 101)"));
     assert!(!f.stderr().contains("the same command passes against"));

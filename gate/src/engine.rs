@@ -97,6 +97,12 @@ struct State {
     held_lock: bool,
     tree: Option<PathBuf>,
     filelist: Option<PathBuf>,
+    /// The file the gate command writes its steps to (`SPIRA_GATE_STEPS`).
+    steps_file: Option<PathBuf>,
+    /// The longest declared step of the branch trial's gate command and its seconds.
+    slowest_step: Option<(String, u64)>,
+    /// The branch trial's whole output, kept as a file when the verdict is not a PASS.
+    gate_out: String,
     changed: Vec<String>,
     bead: String,
     /// The composition's label once one was chosen (DESIGN.md "Composition"); empty before.
@@ -676,6 +682,7 @@ impl<'w, W: World> Trial<'w, W> {
         };
         self.s.changed = list.lines().map(str::trim).filter(|l| !l.is_empty()).map(String::from).collect();
         self.s.filelist = w.temp_file(&format!("{list}\n"));
+        self.s.steps_file = w.temp_file("");
 
         // THE COMPOSITION: what the branch touches decides what runs.
         let comp = self.composition(mode, &ctx, &repo, &base_rev, &rev, &tree);
@@ -773,6 +780,10 @@ impl<'w, W: World> Trial<'w, W> {
                         .as_ref()
                         .map(|p| p.to_string_lossy().into_owned())
                         .unwrap_or_default(),
+                ),
+                e(
+                    "SPIRA_GATE_STEPS",
+                    &self.s.steps_file.as_ref().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default(),
                 ),
                 e("SPIRA_GATE_EJECTED_SUITES", &ejected),
                 e("SPIRA_GATE_ALL", ctx.var_or("SPIRA_GATE_ALL", "0")),
@@ -906,6 +917,9 @@ impl<'w, W: World> Trial<'w, W> {
             let first = run(first_env.clone());
             if cache_in_force(&first_env) && first.0 != 0 && parse::cache_transport_failure(&first.1) {
                 w.eprint("gate: the build's sccache server was lost mid-build — retrying the trial once without the compiler cache");
+                if let Some((dir, name)) = self.s.steps_file.as_deref().and_then(|f| Some((f.parent()?, f.file_name()?.to_str()?))) {
+                    w.write_atomic(dir, name, "");
+                }
                 let (rc, out, ph) = run(without_cache(first_env));
                 let ph = first.2.into_iter().chain(ph).collect();
                 (rc, out, ph)
@@ -913,6 +927,15 @@ impl<'w, W: World> Trial<'w, W> {
                 first
             }
         };
+        let phase_end = w.now();
+        if let Some(text) = self.s.steps_file.as_ref().and_then(|f| w.read(f)) {
+            let (steps, skipped) = parse::step_secs(&text, phase_end);
+            if skipped > 0 {
+                w.eprint(&format!("gate: {skipped} unreadable line(s) in SPIRA_GATE_STEPS skipped"));
+            }
+            self.s.slowest_step = parse::longest(steps);
+        }
+        self.s.gate_out = out.clone();
         self.s.tools_from = match tools.as_ref() {
             Some(t) if t.release => "release",
             Some(_) => "tree",
@@ -1898,6 +1921,9 @@ impl<'w, W: World> Trial<'w, W> {
         if let Some(f) = self.s.filelist.take() {
             w.remove(&f);
         }
+        if let Some(f) = self.s.steps_file.take() {
+            w.remove(&f);
+        }
         if let Some(t) = &self.s.tree {
             w.release_target(t, vd.status == PASS && self.a.release_bins, vd.status != NOVERDICT, self.s.target_cap_mib);
             w.remove(&PathBuf::from(format!("{}.lock.holder", t.display())));
@@ -1907,10 +1933,17 @@ impl<'w, W: World> Trial<'w, W> {
         }
         if self.s.armed {
             let ran = w.now().saturating_sub(self.s.start);
+            let ts = w.utc();
+            let kept = if vd.status == PASS {
+                None
+            } else {
+                crate::telemetry::keep_gate_out(w, &self.s.run, &ts, &self.s.gate_out)
+            };
+            let slowest_step = self.s.slowest_step.as_ref().map_or(String::new(), |(n, s)| format!("{}:{s}", n.replace(' ', "_")));
             w.append(
                 &self.s.gate_log,
                 &format!(
-                    "{} {} {} waited={}s ran={}s rc={} {}{}{}{}{}{}{}{}{} test_clock={}s\n",
+                    "{} {} {} waited={}s ran={}s rc={} {}{}{}{}{}{}{}{}{}{} test_clock={}s{}\n",
                     w.utc(),
                     self.s.repo_name,
                     self.a.branch,
@@ -1923,10 +1956,12 @@ impl<'w, W: World> Trial<'w, W> {
                     self.unit_suffix(),
                     self.deny_suffix(),
                     tools_field(&self.s.tools_from, &self.s.phases),
+                    if slowest_step.is_empty() { String::new() } else { format!(" slowest_step={slowest_step}") },
                     self.s.replay_note,
                     if self.s.waited_ms > 0 { format!(" waited_ms={}", self.s.waited_ms) } else { String::new() },
                     if self.s.build_dir.is_empty() { String::new() } else { format!(" build_dir={}", crate::telemetry::build_dir_kind(&self.s.build_dir)) },
-                    self.s.test_secs
+                    self.s.test_secs,
+                    kept.as_ref().map_or(String::new(), |p| format!(" out={}", p.display())),
                 ),
             );
             let (red_unit, red_line) = if outcome(vd.status) == "FAIL" && vd.reason == "branch-red" {
@@ -1967,8 +2002,8 @@ impl<'w, W: World> Trial<'w, W> {
                 red_unit,
                 red_line,
                 deny_list: self.s.deny_label.clone(),
+                slowest_step,
             };
-            let ts = w.utc();
             if let Some((_, html)) = self.s.build_timing.as_ref().filter(|(_, h)| !h.is_empty()) {
                 crate::telemetry::keep_report(w, &self.s.run, &ts, html);
             }

@@ -275,6 +275,7 @@ SPIRA_GATE_REPO_NAME gate/src/engine.rs
 SPIRA_GATE_SELECT_HEAD gate/src/engine.rs
 SPIRA_GATE_SELECT_HEAD spira/round-image-preflight.sh
 SPIRA_GATE_SELECT_HEAD testenv/src/settings.rs
+SPIRA_GATE_STEPS gate/src/engine.rs
 SPIRA_GATE_SWEEP_AGE spira/gate-sweep.sh
 SPIRA_GATE_TARGET_CAP_MIB gate/src/engine.rs
 SPIRA_GATE_TARGET_CAP_MIB gate/src/real.rs

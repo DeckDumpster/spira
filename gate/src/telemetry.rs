@@ -7,7 +7,7 @@ use crate::compose::{self, Composition, Forces};
 use crate::ports::{Ctx, World};
 use serde_json::Value;
 use spira_config::GateMode;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// The run/tsd family this crate writes.
 pub const FAMILY: &str = "gate-run";
@@ -108,6 +108,8 @@ pub struct GateRun {
     pub red_line: String,
     /// `<at>/<digest>` of the deny list the trial ran with; empty when it ended before resolving one.
     pub deny_list: String,
+    /// `<step>:<secs>`, the longest step a gate command declared in its steps file; empty when none.
+    pub slowest_step: String,
 }
 
 /// Render the row through tsd's own builder. `wall_secs` is waited + ran: the certification
@@ -146,6 +148,7 @@ pub fn render(ts: &str, host: &str, r: &GateRun) -> Result<String, String> {
         ("red_unit".into(), s(&r.red_unit)),
         ("red_line".into(), s(&r.red_line)),
         ("deny_list".into(), s(&r.deny_list)),
+        ("slowest_step".into(), s(&r.slowest_step)),
         ("covered_secs".into(), Value::from(r.covered_secs)),
         ("covered_deferred".into(), Value::from(r.covered_deferred)),
         ("covered_deferred_suites".into(), s(&r.covered_deferred_suites)),
@@ -212,6 +215,58 @@ pub fn keep_report<W: World>(w: &W, run: &str, ts: &str, html: &str) {
     if let Some(dir) = tsd::family_path(Path::new(run), FAMILY).parent() {
         w.mkdir_p(dir);
         w.write_atomic(dir, &format!("cargo-timing-{ts}.html"), html);
+    }
+}
+
+/// How many kept gate outputs stay beside the run record.
+pub const KEEP_GATE_OUTS: usize = 50;
+
+/// A kept output is cut to its last bytes: the end of a killed run is where it stopped.
+const GATE_OUT_MAX_BYTES: usize = 1 << 20;
+
+const GATE_OUT_PREFIX: &str = "gate-out-";
+
+/// The gate phase's whole output, kept beside the run record under the run's timestamp; older
+/// ones past `KEEP_GATE_OUTS` are removed. Returns the path written, None when nothing was.
+pub fn keep_gate_out<W: World>(w: &W, run: &str, ts: &str, out: &str) -> Option<PathBuf> {
+    if run.is_empty() || out.is_empty() {
+        return None;
+    }
+    let dir = tsd::family_path(Path::new(run), FAMILY).parent()?.to_path_buf();
+    w.mkdir_p(&dir);
+    let name = format!("{GATE_OUT_PREFIX}{ts}.log");
+    w.write_atomic(&dir, &name, &crate::parse::tail_bytes(out, GATE_OUT_MAX_BYTES));
+    let mut names = w.list_dir(&dir);
+    names.push(name.clone());
+    for old in stale_outs(names, KEEP_GATE_OUTS) {
+        w.remove(&dir.join(old));
+    }
+    Some(dir.join(name))
+}
+
+/// The kept gate outputs beyond the newest `keep`, oldest first (names sort by timestamp).
+pub fn stale_outs(mut names: Vec<String>, keep: usize) -> Vec<String> {
+    names.retain(|n| n.starts_with(GATE_OUT_PREFIX) && n.ends_with(".log"));
+    names.sort();
+    names.dedup();
+    let excess = names.len().saturating_sub(keep);
+    names.truncate(excess);
+    names
+}
+
+#[cfg(test)]
+mod keep_tests {
+    use super::*;
+
+    fn names(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn the_oldest_by_timestamp_goes_and_other_files_stay() {
+        let all = names(&["gate-out-2026-02-01T00:00:00Z.log", "cargo-timing-2020-01-01T00:00:00Z.html", "gate-out-2026-01-01T00:00:00Z.log", "gate-out-2026-03-01T00:00:00Z.log"]);
+        assert_eq!(stale_outs(all.clone(), 2), names(&["gate-out-2026-01-01T00:00:00Z.log"]));
+        assert!(stale_outs(all, 3).is_empty());
     }
 }
 

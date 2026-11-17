@@ -499,6 +499,11 @@ impl World for Real {
     fn remove(&self, p: &Path) {
         let _ = fs::remove_file(p);
     }
+    fn list_dir(&self, dir: &Path) -> Vec<String> {
+        fs::read_dir(dir)
+            .map(|d| d.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect())
+            .unwrap_or_default()
+    }
     fn temp_file(&self, content: &str) -> Option<PathBuf> {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)

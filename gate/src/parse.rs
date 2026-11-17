@@ -688,3 +688,56 @@ mod tests {
         assert_eq!(tail_bytes("a—b", 3), "b");
     }
 }
+
+/// The steps file a gate command writes (`SPIRA_GATE_STEPS`): `<name>\t<epoch secs>` per step as
+/// it starts. Each step lasts until the next line's epoch; the last until `phase_end`. Lines
+/// that do not read are skipped and counted, never guessed at.
+pub fn step_secs(steps: &str, phase_end: u64) -> (Vec<(String, u64)>, usize) {
+    let mut starts: Vec<(String, u64)> = Vec::new();
+    let mut skipped = 0;
+    for line in steps.lines().filter(|l| !l.trim().is_empty()) {
+        match line.split_once('\t').map(|(n, e)| (n.trim(), e.trim().parse::<u64>())) {
+            Some((n, Ok(e))) if !n.is_empty() => starts.push((n.to_string(), e)),
+            _ => skipped += 1,
+        }
+    }
+    let ends: Vec<u64> = starts.iter().skip(1).map(|s| s.1).chain([phase_end]).collect();
+    let secs = starts.into_iter().zip(ends).map(|((n, e), end)| (n, end.saturating_sub(e))).collect();
+    (secs, skipped)
+}
+
+/// The longest step; the first of equals. None when the file names no step.
+pub fn slowest_step(steps: &str, phase_end: u64) -> Option<(String, u64)> {
+    longest(step_secs(steps, phase_end).0)
+}
+
+pub fn longest(steps: Vec<(String, u64)>) -> Option<(String, u64)> {
+    steps.into_iter().reduce(|best, s| if s.1 > best.1 { s } else { best })
+}
+
+#[cfg(test)]
+mod step_tests {
+    use super::*;
+
+    #[test]
+    fn an_empty_steps_file_names_no_step() {
+        assert_eq!(slowest_step("", 100), None);
+    }
+
+    #[test]
+    fn a_malformed_line_is_skipped_and_counted() {
+        let (steps, skipped) = step_secs("fences\t10\nno tab here\nsuites\tsoon\n\tbare\nsuites\t14\n", 20);
+        assert_eq!(steps, vec![("fences".to_string(), 4), ("suites".to_string(), 6)]);
+        assert_eq!(skipped, 3);
+    }
+
+    #[test]
+    fn a_single_step_lasts_until_the_phase_end() {
+        assert_eq!(slowest_step("build\t10\n", 25), Some(("build".to_string(), 15)));
+    }
+
+    #[test]
+    fn the_longest_step_wins_and_a_tie_keeps_the_first() {
+        assert_eq!(slowest_step("a\t0\nb\t5\nc\t10\n", 15), Some(("a".to_string(), 5)));
+    }
+}
