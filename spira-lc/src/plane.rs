@@ -119,6 +119,16 @@ mod tests {
         assert_eq!(p.apply("sp-none", "a", &BeadEventKind::Release).0, CANNOT_TELL);
     }
 
+    #[test]
+    fn with_no_control_store_configured_every_verb_is_cannot_tell() {
+        let dir = testkit::TempDir::new("spira-lc-plane-no-store");
+        let toml = spira_config::process::fixture_toml(&dir, &[("SPIRA_LC_STORE_PATH", "")]);
+        let _env = testkit::env(&[("SPIRA_TOML", Some(toml.to_str().unwrap()))]);
+        assert!(matches!(bead("sp-a"), Err(DbError::CannotTell(m)) if m.contains("SPIRA_LC_STORE_PATH")));
+        assert_eq!(apply("sp-a", "a", BeadEventKind::Release).0, CANNOT_TELL);
+        assert_eq!(read(&["show".to_string(), "sp-a".to_string()]).0, CANNOT_TELL);
+    }
+
     /// The semantic verbs read and write the bead through this module, never the dolt row
     /// directly: on fc5a88428 `work submit` read `rows::fetch_bead` and answered "no bead row"
     /// for a bead that lived only on the control store.
