@@ -1940,7 +1940,7 @@ mod tests {
             Arc::new(move || {
                 if during.load(Ordering::SeqCst) {
                     let other = Connection::open(&path).map_err(db)?;
-                    other.query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |_| Ok(())).map_err(db)?;
+                    assert!(passive_complete(&other));
                 }
                 Ok(())
             })
