@@ -78,13 +78,12 @@ pub(crate) fn read_backfill(shm: &File, path: &str) -> std::result::Result<u32, 
 }
 
 /// The checkpointer's completion signal: blocks until more than `after` checkpoints have
-/// completed and returns the count, or `None` when `cap` runs out or the checkpointer has
-/// stopped. `cap` is a hang guard, never a verdict.
+/// completed and returns the count, or `None` when `cap` runs out. `cap` is a hang guard, never a verdict.
 pub fn await_checkpoint(b: &SqliteBackend, after: u64, cap: Duration) -> Option<u64> {
     let c = &b.0.checkpointer;
     let (s, _) = c
         .done
-        .wait_timeout_while(crate::lock(&c.state), cap, |s| s.completed <= after && !s.stop)
+        .wait_timeout_while(crate::lock(&c.state), cap, |s| s.completed <= after)
         .unwrap_or_else(|p| p.into_inner());
     (s.completed > after).then_some(s.completed)
 }

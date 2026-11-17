@@ -1350,7 +1350,7 @@ fn a_checkpoint_completes_after_checkpoint_every_commits() {
     let dir = TempDir::new("sqlite-background-checkpoint");
     let path = dir.path().join("s.db");
     let b = SqliteBackend::open(&path, Options::default()).unwrap();
-    for _ in 0..state_store_sqlite::CHECKPOINT_EVERY + 1 {
+    for _ in 0..state_store_sqlite::CHECKPOINT_EVERY {
         put_next(&b);
     }
     assert!(state_store_sqlite::bench::await_checkpoint(&b, 0, CHECKPOINT_CAP).is_some(), "no checkpoint completed");

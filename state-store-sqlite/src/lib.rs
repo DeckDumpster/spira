@@ -506,7 +506,6 @@ impl Drop for Inner {
     fn drop(&mut self) {
         lock(&self.checkpointer.state).stop = true;
         self.checkpointer.wake.notify_one();
-        self.checkpointer.done.notify_all();
         if let Some(t) = lock(&self.checkpoint_thread).take() {
             let _ = t.join();
         }
