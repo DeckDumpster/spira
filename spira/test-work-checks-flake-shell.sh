@@ -51,7 +51,7 @@ TOML
 done
 
 realise_shell() {
-    env -i PATH=/usr/bin:/bin HOME="$HOME" NIX_CONFIG="$NC" timeout 600 "$NIX_DIR/nix" print-dev-env --json "$REPO" >/dev/null 2>&1
+    env -i PATH=/usr/bin:/bin HOME="$HOME" NIX_CONFIG="$NC" timeout 600 "$NIX_DIR/nix" print-dev-env --json "$REPO" >/dev/null 2>&1 # batch-job: realises a dev shell on a cold store; same bound as work checks's own
 }
 if ! tl_arrange realise_shell; then
     skip "the fixture's dev shell cannot be realised here (no store path or no network)"
