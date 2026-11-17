@@ -64,3 +64,16 @@ fn a_boot_alerts_a_gap_whose_grace_began_before_it() {
 fn a_boot_does_not_alert_a_gap_that_was_already_alerted() {
     kit::assert_boot_matches_an_unstopped_run(gap_already_alerted, registration, STREAM, EventKind::new(TICK, ""));
 }
+
+#[test]
+fn a_full_pool_under_a_roomy_ceiling_is_satisfied_through_handle() {
+    use spira_runtime::tasks::a::sentinel_call;
+    let slots = Slots { live: 6, ceiling: 40, ready: 2, capacity_paused: false };
+    let world = FlowSnapshot { slots: Ok((slots, slots)), ..backlog_grown_at(1000) };
+    let mut r = TaskRig::new(1, registration()).unwrap().double(OBSERVE, move |_| Ok(serde_json::to_string(&world).unwrap())).double(MAIL, |m| Ok(m.into())).double(STATUS, |s| Ok(s.into()));
+    let called = sentinel_call::Carry { task_limit: Some(sentinel::plan::TaskLimit { name: "pool".into(), limit: 6, held: 6 }), ..Default::default() };
+    r.tick(sentinel_call::STREAM, EventKind::new(sentinel_call::STATE, &serde_json::to_string(&called).unwrap())).unwrap();
+    r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
+    let carry: Carry = serde_json::from_str(&r.engine().carry_body(NAME, STATE).expect("the watcher carried its verdicts")).unwrap();
+    assert_eq!(carry.words["flow:idle-capacity"], "satisfied");
+}
