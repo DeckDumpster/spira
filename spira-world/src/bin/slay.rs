@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
 use hel::ports::World;
+use spira_config::admission::RealProcs;
 use spira_store::lc_call::LcClient;
 use spira_world::slay::gitops;
 use spira_world::slay::{self, BeadView, Beads, Ctx, Dwarf, Git, Lifecycle, Parsed, Ports, SalvageFailed, Stopped};
@@ -62,6 +63,10 @@ impl RealLc {
 impl Lifecycle for RealLc {
     fn state(&self, id: &str) -> Option<String> {
         hel::reap::lc_state_on(self.0.as_ref().ok()?, id)
+    }
+    fn holder(&self, id: &str) -> Option<String> {
+        let shown = self.0.as_ref().ok()?.call(&["show", id]).ok()?;
+        spira_store::lc_state::parse_show(&shown.out).ok()??.holder
     }
     fn disposition(&self, id: &str, why: &str) {
         self.call(&["disposition", id, "slain", why, "slay"]);
@@ -191,7 +196,7 @@ impl Dwarf for RealDwarf {
         find_dwarf_pidfile(&self.run, id).is_some()
     }
 
-    fn stop(&self, id: &str, say: &mut Vec<String>) -> Stopped {
+    fn stop(&self, id: &str, holder: Option<&str>, say: &mut Vec<String>) -> Stopped {
         let run = &self.run;
         let mut s = Stopped::default();
         let hold_pid_file = run.join(format!("hold-{id}.pid"));
@@ -238,6 +243,12 @@ impl Dwarf for RealDwarf {
                 let _ = std::fs::remove_file(pf.with_extension("name"));
             }
         };
+        if s.pid.is_empty() || !proc_dir(&s.pid) {
+            if let Some(pid) = holder.and_then(|h| slay::live_holder_pid(h, &RealProcs)) {
+                s.pid = pid.to_string();
+                forget(&pf);
+            }
+        }
         if s.pid.is_empty() || !proc_dir(&s.pid) {
             say.push(format!("dwarf: none running for {id} (no live pid file) — setting the bead and the work only"));
             forget(&pf);
@@ -305,7 +316,7 @@ fn main() {
     let beads = RealBeads { bdq, lc: LcClient::configured(), registry };
     let lc = RealLc(LcClient::configured());
     let dwarf = RealDwarf { run: run.clone(), lc: RealLc(LcClient::configured()) };
-    let ports = Ports { git: &git, beads: &beads, lc: &lc, dwarf: &dwarf };
+    let ports = Ports { git: &git, beads: &beads, lc: &lc, dwarf: &dwarf, procs: &RealProcs };
     let ctx = Ctx { run: &run, submitted_label: &submitted_label, store: &store };
 
     let report = slay::slay(&ctx, &ports, &args);

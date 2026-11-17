@@ -1,4 +1,5 @@
 use super::*;
+use spira_config::admission::Procs;
 use std::cell::RefCell;
 
 fn argv(a: &[&str]) -> Vec<String> {
@@ -110,6 +111,9 @@ struct Fake {
     stopped: Stopped,
     pid_alive: bool,
     pidfile: bool,
+    holder: Option<String>,
+    procs: RefCell<Vec<(u32, u64)>>,
+    survives_term: bool,
     calls: RefCell<Vec<String>>,
 }
 
@@ -136,6 +140,9 @@ impl Fake {
             stopped: Stopped { name: "dwarf-test".into(), pid: "4242".into(), unit: "spira-dwarf.service".into(), fail: false },
             pid_alive: false,
             pidfile: false,
+            holder: None,
+            procs: RefCell::new(vec![]),
+            survives_term: false,
             calls: RefCell::new(vec![]),
         }
     }
@@ -184,6 +191,9 @@ impl Beads for Fake {
 impl Lifecycle for Fake {
     fn state(&self, _id: &str) -> Option<String> {
         Some(self.state.borrow().clone())
+    }
+    fn holder(&self, _id: &str) -> Option<String> {
+        self.holder.clone()
     }
     fn disposition(&self, id: &str, why: &str) {
         self.log(format!("disposition {id} slain {why}"));
@@ -249,8 +259,19 @@ impl Git for Fake {
 }
 
 impl Dwarf for Fake {
-    fn stop(&self, id: &str, say: &mut Vec<String>) -> Stopped {
+    fn stop(&self, id: &str, holder: Option<&str>, say: &mut Vec<String>) -> Stopped {
         self.log(format!("stop {id}"));
+        if self.stopped.pid.is_empty() {
+            if let Some(pid) = holder.and_then(|h| live_holder_pid(h, self)) {
+                self.log(format!("term {pid}"));
+                if !self.survives_term {
+                    self.procs.borrow_mut().retain(|(p, _)| *p != pid);
+                }
+            } else {
+                say.push(format!("dwarf: none running for {id} (no live pid file)"));
+                return self.stopped.clone();
+            }
+        }
         say.push("dwarf: stopped (1s)".into());
         self.stopped.clone()
     }
@@ -262,8 +283,26 @@ impl Dwarf for Fake {
     }
 }
 
+impl Procs for Fake {
+    fn start_of(&self, pid: u32) -> Option<u64> {
+        self.procs.borrow().iter().find(|(p, _)| *p == pid).map(|(_, s)| *s)
+    }
+    fn ppid_of(&self, _pid: u32) -> Option<u32> {
+        None
+    }
+}
+
+/// No pid file; the row's holder is `dwarf-x@7.99` and pid 7 runs with that start time.
+fn holder_only(procs: &[(u32, u64)]) -> Fake {
+    let mut f = Fake::new();
+    f.stopped = Stopped::default();
+    f.holder = Some("dwarf-x@7.99".into());
+    f.procs = RefCell::new(procs.to_vec());
+    f
+}
+
 fn run(f: &Fake, a: &[&str]) -> Report {
-    let ports = Ports { git: f, beads: f, lc: f, dwarf: f };
+    let ports = Ports { git: f, beads: f, lc: f, dwarf: f, procs: f };
     let ctx = Ctx { run: Path::new("run"), submitted_label: "custom-submitted", store: "the-store" };
     let mut v = vec!["--bead", "sp-s1"];
     v.extend_from_slice(a);
@@ -634,4 +673,35 @@ fn a_remaining_pidfile_is_reported_and_fails() {
     let r = run(&f, &[]);
     assert_eq!(r.code, 1);
     assert!(said(&r, "verify: a pid file for sp-s1 remains"));
+}
+
+// covers: UC-dwarf-execution-26
+#[test]
+fn a_holder_with_no_pid_file_is_stopped_by_its_session_before_the_claim_is_released() {
+    let f = holder_only(&[(7, 99)]);
+    let r = run(&f, &["--keep-work"]);
+    assert_eq!(r.code, 0, "{:?}", r.out);
+    assert!(f.called("term 7") && f.called("holder_dead sp-s1"), "{:?}", f.calls());
+    assert!(said(&r, "slain: sp-s1"));
+}
+
+// covers: UC-dwarf-execution-26
+#[test]
+fn a_holder_that_survives_the_stop_keeps_its_claim_and_is_named() {
+    let mut f = holder_only(&[(7, 99)]);
+    f.survives_term = true;
+    let r = run(&f, &["--keep-work"]);
+    assert_eq!(r.code, 1);
+    assert!(!f.called("holder_dead") && !f.called("note") && !f.called("clear_assignee"), "{:?}", f.calls());
+    assert!(said(&r, "dwarf-x@7.99"), "{:?}", r.out);
+}
+
+// covers: UC-dwarf-execution-26
+#[test]
+fn a_reused_pid_with_another_start_time_is_not_signalled() {
+    let f = holder_only(&[(7, 12345)]);
+    let r = run(&f, &["--keep-work"]);
+    assert!(!f.called("term"), "{:?}", f.calls());
+    assert_eq!(r.code, 0, "{:?}", r.out);
+    assert!(f.called("holder_dead sp-s1"));
 }

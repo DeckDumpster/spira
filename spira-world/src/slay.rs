@@ -4,6 +4,9 @@
 
 use std::path::{Path, PathBuf};
 
+use spira_config::admission::Procs;
+use spira_config::session;
+
 pub const DEFAULT_WHY: &str = "slain by the operator";
 
 pub fn usage_text() -> &'static str {
@@ -141,6 +144,8 @@ pub trait Beads {
 pub trait Lifecycle {
     /// The lifecycle row's state (`WORKING`, `READY`, ...), `None` when it has no answer.
     fn state(&self, id: &str) -> Option<String>;
+    /// The row's holder session (`dwarf-<name>@<pid>.<starttime>`), `None` when it has none.
+    fn holder(&self, id: &str) -> Option<String>;
     fn disposition(&self, id: &str, why: &str);
     fn holder_dead(&self, id: &str);
     fn drop_bead(&self, id: &str, text: &str);
@@ -177,7 +182,7 @@ pub struct Stopped {
 }
 
 pub trait Dwarf {
-    fn stop(&self, id: &str, say: &mut Vec<String>) -> Stopped;
+    fn stop(&self, id: &str, holder: Option<&str>, say: &mut Vec<String>) -> Stopped;
     fn alive(&self, pid: &str) -> bool;
     fn pidfile_remains(&self, id: &str) -> bool;
 }
@@ -187,6 +192,14 @@ pub struct Ports<'a> {
     pub beads: &'a dyn Beads,
     pub lc: &'a dyn Lifecycle,
     pub dwarf: &'a dyn Dwarf,
+    pub procs: &'a dyn Procs,
+}
+
+/// The holder's pid, only while that pid is still the session the row names: a reused pid
+/// carries another start time and is not the holder.
+pub fn live_holder_pid(holder: &str, procs: &dyn Procs) -> Option<u32> {
+    let s = session::parse(holder)?;
+    (procs.start_of(s.pid) == Some(s.start)).then_some(s.pid)
 }
 
 pub struct Ctx<'a> {
@@ -218,9 +231,10 @@ pub fn slay(ctx: &Ctx, p: &Ports, a: &Args) -> Report {
 
     p.lc.disposition(id, &a.why);
 
-    let stopped = p.dwarf.stop(id, &mut r.out);
+    let holder = p.lc.holder(id);
+    let stopped = p.dwarf.stop(id, holder.as_deref(), &mut r.out);
     let mut fail = stopped.fail;
-    fail |= finish(ctx, p, a, &stopped, &mut r.out);
+    fail |= finish(ctx, p, a, &stopped, holder.as_deref(), &mut r.out);
 
     if !stopped.pid.is_empty() && p.dwarf.alive(&stopped.pid) {
         fail = true;
@@ -240,11 +254,16 @@ pub fn slay(ctx: &Ctx, p: &Ports, a: &Args) -> Report {
 }
 
 /// Release the claim, retire the work, write the note. Returns whether anything failed.
-fn finish(ctx: &Ctx, p: &Ports, a: &Args, s: &Stopped, out: &mut Vec<String>) -> bool {
+fn finish(ctx: &Ctx, p: &Ports, a: &Args, s: &Stopped, holder: Option<&str>, out: &mut Vec<String>) -> bool {
     let id = a.id.as_str();
     let reopen = matches!(a.mode, Mode::Reopen);
     let mut fail = false;
     let mut say = |m: String| out.push(m);
+
+    if let Some(h) = holder.filter(|h| session::parse(h).is_some() && !session::session_gone(h, p.procs)) {
+        say(format!("dwarf: holder {h} still running — claim left in place"));
+        return true;
+    }
 
     let repo = p.beads.repo_root_of(id);
     let br = format!("spira/{id}");
