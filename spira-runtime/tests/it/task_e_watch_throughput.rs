@@ -324,23 +324,26 @@ fn round_counts_split_a_repos_rounds_by_how_they_ended_and_how_recently() {
     assert_eq!(got[1], RepoRounds { repo: "b".into(), cut: 1, abandoned: 0, landed: 1, abandoned_recent: 0, landed_recent: 0, green_runs: 0 });
 }
 
+/// An empty commit whose author and committer dates are `at`, whatever the ambient dates are.
+fn commit_at(p: &std::path::Path, msg: &str, at: u64) {
+    let date = format!("@{at} +0000");
+    let o = std::process::Command::new("git")
+        .arg("-C")
+        .arg(p)
+        .args(["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", msg])
+        .env("GIT_AUTHOR_DATE", &date)
+        .env("GIT_COMMITTER_DATE", &date)
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+}
+
 /// A repository whose landing ref is `local/main` (the map row's `base`), with `n` landings
 /// inside the day, one landing older than the day and one commit on another branch.
 fn landing_repo(n: usize, now: u64) -> testkit::TempDir {
     let d = testkit::TempDir::new("throughput-landref");
     let p = d.path();
-    let commit = |msg: &str, at: u64| {
-        let date = format!("@{at} +0000");
-        let o = std::process::Command::new("git")
-            .arg("-C")
-            .arg(p)
-            .args(["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", msg])
-            .env("GIT_AUTHOR_DATE", &date)
-            .env("GIT_COMMITTER_DATE", &date)
-            .output()
-            .unwrap();
-        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
-    };
+    let commit = |msg: &str, at: u64| commit_at(p, msg, at);
     testkit::git(p, &["init", "-q", "-b", "local/main"]);
     commit("spira: land sp-old — before the day", now - 2 * 86_400);
     for i in 0..n {
@@ -388,8 +391,9 @@ fn an_unreadable_landing_ref_names_gits_own_exit_and_stderr() {
     let repo = dir.join("repo");
     std::fs::create_dir(&repo).unwrap();
     testkit::git(&repo, &["init", "-q", "-b", "other"]);
-    testkit::git(&repo, &["commit", "-q", "--allow-empty", "-m", "one"]);
-    testkit::git(&repo, &["commit", "-q", "--allow-empty", "-m", "two"]);
+    let now = 1_700_000_000u64;
+    commit_at(&repo, "one", now - 120);
+    commit_at(&repo, "two", now - 60);
     testkit::git(&repo, &["branch", "local/main"]);
     // landref only checks that the tip resolves, so a missing parent passes it and fails the log walk
     let parent = testkit::git(&repo, &["rev-parse", "HEAD~1"]);
@@ -397,7 +401,7 @@ fn an_unreadable_landing_ref_names_gits_own_exit_and_stderr() {
     let map = dir.join("repos");
     std::fs::write(&map, format!("spira|{}|queue.local|local/main\n", repo.display())).unwrap();
     let w = World { repo_map: map, home_repo: "spira".into(), ..World::default() };
-    let e = w.landed_on_refs(1_000_000, "sp").unwrap_err();
+    let e = w.landed_on_refs(now, "sp").unwrap_err();
     assert!(e.contains("git log other") && e.contains("exit 128") && e.contains("fatal: Failed to traverse") && e.contains(&repo.display().to_string()), "{e}");
 }
 
