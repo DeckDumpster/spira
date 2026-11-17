@@ -1931,17 +1931,32 @@ mod tests {
     }
 
     #[test]
-    fn only_the_commit_that_crosses_the_auto_checkpoint_threshold_reports_a_checkpoint() {
+    fn only_a_commit_a_checkpoint_ran_during_reports_a_checkpoint() {
         let dir = testkit::TempDir::new("sqlite-checkpointed");
-        let b = SqliteBackend::open(&dir.path().join("s.db"), Options::default()).unwrap();
-        let big = |key: &str, n: usize| Write::Put { key: key.into(), value: vec![7u8; n], create_rev: Rev::new(1, 0), prev: None };
+        let path = dir.path().join("s.db");
+        let during = Arc::new(AtomicBool::new(false));
+        let probe: CommitProbe = {
+            let (during, path) = (during.clone(), path.clone());
+            Arc::new(move || {
+                if during.load(Ordering::SeqCst) {
+                    let other = Connection::open(&path).map_err(db)?;
+                    other.query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |_| Ok(())).map_err(db)?;
+                }
+                Ok(())
+            })
+        };
+        let b = SqliteBackend::open(&path, Options { commit_probe: Some(probe), ..Options::default() }).unwrap();
+        let put = |key: &str| Write::Put { key: key.into(), value: vec![7u8; 1 << 10], create_rev: Rev::new(1, 0), prev: None };
         assert!(b.backfill().is_some(), "the WAL index must be readable or no commit can report a checkpoint");
         let mut head = b.head().unwrap();
-        head = b.commit(head, &[big("a", 1 << 10)]).unwrap();
+        head = b.commit(head, &[put("a")]).unwrap();
         assert!(!b.last_commit().checkpointed);
-        // JUMP pages of WAL: 4 KiB pages, so a few MiB in one transaction crosses it.
-        b.commit(head, &[big("b", (JUMP as usize + 100) * 4096)]).unwrap();
+        during.store(true, Ordering::SeqCst);
+        head = b.commit(head, &[put("b")]).unwrap();
         assert!(b.last_commit().checkpointed);
+        during.store(false, Ordering::SeqCst);
+        b.commit(head, &[put("c")]).unwrap();
+        assert!(!b.last_commit().checkpointed);
     }
 
     #[test]
