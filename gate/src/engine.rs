@@ -2566,17 +2566,17 @@ pub fn run_composed<W: World>(
             o
         }
         None => {
-            let (rc, out, wall) = go(first, env, &cmd, test_secs);
+            let (rc, out, wall) = go(first, env, cmd, test_secs);
             phases.push((format!("{prefix}{first}"), wall));
             if w.signalled() || rc == 124 || rc == NOVERDICT || stall::is_stall(rc, &out) || (rc != 0 && !matches!(comp, Composition::Unit { .. })) {
                 return (rc, out, phases);
             }
             fences_rc = rc;
             if let Some(k) = fences.filter(|k| fences_rc == 0 && comp.suites_off() && !k.harness.is_empty()) {
-                if fence::silent(&fence::expected(&cmd), &out).is_empty() {
+                if fence::silent(&fence::expected(cmd), &out).is_empty() {
                     if let (Some(dir), Some(name)) = (k.path.parent(), k.path.file_name().and_then(|n| n.to_str())) {
                         w.mkdir_p(dir);
-                        w.write_atomic(dir, name, &crate::fencecache::render(&k.harness, &cmd, &out));
+                        w.write_atomic(dir, name, &crate::fencecache::render(&k.harness, cmd, &out));
                     }
                 }
             }

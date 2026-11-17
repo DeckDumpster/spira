@@ -902,9 +902,10 @@ mod tests {
 
     #[test]
     fn a_share_checks_out_in_its_own_tree_and_no_share_in_a_slot() {
-        let root = Path::new("/c");
+        let tmp = testkit::TempDir::new("foreign-share-path");
+        let root = tmp.path();
         let got = share_tree(root, "r p", share("g", true).as_ref()).unwrap();
-        assert_eq!(got, Path::new("/c/r_p/runs/share-g/tree"));
+        assert_eq!(got, root.join("r_p/runs/share-g/tree"));
         assert_eq!(share_tree(root, "r", None), None);
     }
 
