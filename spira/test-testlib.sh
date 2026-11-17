@@ -171,6 +171,7 @@ tl_config SPIRA_TEST_CASE_DEADLINE=1
 tl_arrange true
 sleep 3
 ok "never"
+tl_summary
 EOF4
 want "tl_arrange: the guard is armed again once the arrangement ends" "exceeded its 1s deadline" "$_RUN_OUT"
 [ "$_RUN_RC" != 0 ] && ok "tl_arrange: a hang after the arrangement still fails the suite" || bad "tl_arrange: a hang after the arrangement still fails the suite" "$_RUN_OUT"
