@@ -376,6 +376,9 @@ mod tests {
     fn a_tip_with_no_fetch_head_is_aged_from_its_reflog() {
         let scratch = testkit::TempDir::new("unpublished-nohead");
         let (_forge, clone) = forge_and_clone(scratch.path());
+        let cached = git(&clone, &["rev-parse", "refs/remotes/origin/main"]);
+        git(&clone, &["update-ref", "-d", "refs/remotes/origin/main"]);
+        git(&clone, &["update-ref", "--create-reflog", "-m", "fetch", "refs/remotes/origin/main", &cached]);
         let fetched = scratch.path().join("fetched");
         git(&clone, &["config", "remote.origin.uploadpack", &format!("touch {}; sleep 30", fetched.display())]);
         std::fs::remove_file(clone.join(".git/FETCH_HEAD")).unwrap();
