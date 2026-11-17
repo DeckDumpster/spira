@@ -44,9 +44,7 @@ impl Run {
             &[Point::Count { name: RUNS, value: 1 }, Point::Seconds { name: RUN_SECONDS, value: self.started.elapsed().as_secs_f64() }],
             &[("component", &self.component), ("operation", &self.operation), ("outcome", outcome), ("error_class", &class)],
         );
-        if let Some(line) = phases_line(std::env::var_os(PHASES_ENV).is_some(), Some(pushing.elapsed().as_millis() as u64)) {
-            eprintln!("{line}");
-        }
+        write_phases(&mut std::io::stderr(), phases_enabled(), Some(pushing.elapsed().as_millis() as u64));
     }
 
     /// One domain event of this component (a calls, a rejection, a rework), `kind` bounded by the caller.
@@ -74,16 +72,20 @@ pub fn phase(name: &str, millis: u64) {
     }
 }
 
-/// The line a timed run prints at exit: the recorded phases, plus `push` when a push was made.
-fn phases_line(enabled: bool, push: Option<u64>) -> Option<String> {
+/// Writes the phases line a timed run prints at exit: the recorded phases, plus `push` when a push was made.
+fn write_phases(out: &mut impl std::io::Write, enabled: bool, push: Option<u64>) {
     if !enabled {
-        return None;
+        return;
     }
     let mut phases = PHASES.lock().map(|p| p.clone()).unwrap_or_default();
     if let Some(ms) = push {
         phases.push(("push".to_string(), ms));
     }
-    Some(format!("{PHASES_PREFIX}{}", render_phases(&phases)))
+    let _ = writeln!(out, "{PHASES_PREFIX}{}", render_phases(&phases));
+}
+
+fn phases_enabled() -> bool {
+    std::env::var_os(PHASES_ENV).is_some()
 }
 
 pub fn render_phases(phases: &[(String, u64)]) -> String {
@@ -139,10 +141,12 @@ pub fn seconds(name: &str, value: f64, labels: &[(&str, &str)]) {
 /// Ends this run without pushing anything: a read on a critical path that pays no network call
 /// when it succeeds. A failing run is still `finish`ed.
 pub fn discard() {
+    discard_to(&mut std::io::stderr(), phases_enabled());
+}
+
+fn discard_to(out: &mut impl std::io::Write, phases_enabled: bool) {
     drop(CURRENT.lock().ok().and_then(|mut g| g.take()));
-    if let Some(line) = phases_line(std::env::var_os(PHASES_ENV).is_some(), None) {
-        eprintln!("{line}");
-    }
+    write_phases(out, phases_enabled, None);
 }
 
 /// Pushes the run's standard metrics; a second call, or one with no `begin`, pushes nothing.
@@ -214,14 +218,21 @@ mod tests {
 
     #[test]
     fn a_discarded_run_still_reports_its_recorded_phases_without_a_push_entry() {
-        phase("store", 30);
-        assert_eq!(phases_line(true, None).as_deref(), Some("PERFWATCH_PHASES=store=30"));
-        assert_eq!(phases_line(true, Some(7)).as_deref(), Some("PERFWATCH_PHASES=store=30,push=7"));
+        let mut out = Vec::new();
+        *PHASES.lock().unwrap() = vec![("store".into(), 30)];
+        discard_to(&mut out, true);
+        assert_eq!(String::from_utf8(out).unwrap(), "PERFWATCH_PHASES=store=30\n");
+        let mut out = Vec::new();
+        write_phases(&mut out, true, Some(7));
+        assert_eq!(String::from_utf8(out).unwrap(), "PERFWATCH_PHASES=store=30,push=7\n");
+        PHASES.lock().unwrap().clear();
     }
 
     #[test]
-    fn with_phases_unset_nothing_is_printed() {
-        assert_eq!(phases_line(false, None), None);
+    fn a_discarded_run_prints_nothing_with_phases_unset() {
+        let mut out = Vec::new();
+        discard_to(&mut out, false);
+        assert!(out.is_empty());
     }
 
     #[test]
