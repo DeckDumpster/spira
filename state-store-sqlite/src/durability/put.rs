@@ -429,6 +429,8 @@ mod tests {
             }
         );
         assert_eq!(Dest::parse("file://x").unwrap(), Dest::File("x".into()));
+        let root = testkit::TempDir::new("put-dest-abs");
+        assert_eq!(Dest::parse(&format!("file://{}/x", root.display())).unwrap(), Dest::File(format!("{}/x", root.display()).into()));
         assert!(Dest::parse("gs://b").is_err());
         assert!(Dest::parse("s3:///p").is_err());
     }
