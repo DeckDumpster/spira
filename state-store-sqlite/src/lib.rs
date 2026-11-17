@@ -236,6 +236,8 @@ pub const CHECKPOINT_EVERY: u64 = JUMP / 4;
 
 /// The checkpointer's own gauge, commits since its last completed checkpoint.
 pub const UNCHECKPOINTED_GAUGE: &str = "spira_state_store_uncheckpointed_commits";
+/// The control store's WAL file size in bytes, pushed beside [`UNCHECKPOINTED_GAUGE`].
+pub const WAL_BYTES_GAUGE: &str = "spira_state_store_wal_bytes";
 const GAUGE_EVERY: Duration = Duration::from_secs(60);
 const RETRY_AFTER: Duration = Duration::from_secs(1);
 
@@ -268,15 +270,57 @@ fn report_due(last: &mut Option<(String, std::time::Instant)>, text: &str, now: 
     due
 }
 
-/// A TRUNCATE checkpoint under the writer mutex, so no commit races it and the WAL restarts.
-/// `false` when a reader's snapshot kept it from finishing, or another checkpoint holds the lock.
-fn restart_wal(writer: &Mutex<Writer>) -> std::result::Result<bool, String> {
+/// A TRUNCATE checkpoint under the writer mutex, so no commit races it and the WAL restarts. It
+/// waits up to `max_read_ms` for reads already in flight, which the store ends by then; commits
+/// keep a zero timeout. `busy` when another checkpoint holds the lock.
+fn restart_wal(writer: &Mutex<Writer>, max_read_ms: u64) -> std::result::Result<Checkpoint, String> {
     let w = lock(writer);
-    w.conn
+    w.conn.busy_timeout(Duration::from_millis(max_read_ms)).map_err(|e| e.to_string())?;
+    let pass = w
+        .conn
         .prepare_cached("PRAGMA wal_checkpoint(TRUNCATE)")
-        .and_then(|mut s| s.query_row([], |r| r.get::<_, i64>(0)))
-        .map(|busy| busy == 0)
-        .map_err(|e| e.to_string())
+        .and_then(|mut s| s.query_row([], checkpoint_row))
+        .map_err(|e| e.to_string());
+    let reset = w.conn.busy_timeout(Duration::ZERO).map_err(|e| e.to_string());
+    let pass = pass?;
+    reset?;
+    Ok(pass)
+}
+
+fn checkpoint_row(r: &rusqlite::Row) -> rusqlite::Result<Checkpoint> {
+    Ok(Checkpoint { busy: r.get::<_, i64>(0)? != 0, wal_frames: r.get(1)?, checkpointed: r.get(2)? })
+}
+
+/// Checkpoint passes since the last summary line.
+#[derive(Default, Clone, Debug, PartialEq, Eq)]
+struct PassCounts {
+    passive_complete: u64,
+    passive_incomplete: u64,
+    restart_done: u64,
+    restart_busy: u64,
+    errors: u64,
+    wal_frames: i64,
+}
+
+impl PassCounts {
+    fn passes(&self) -> u64 {
+        self.passive_complete + self.passive_incomplete + self.restart_done + self.restart_busy + self.errors
+    }
+}
+
+fn pass_summary(path: &Path, c: &PassCounts, wal_bytes: u64) -> String {
+    format!(
+        "sqlite-checkpoint: {}: {} passes: passive complete {}, incomplete {}; restart done {}, busy {}; errors {}; wal {} frames {} B",
+        path.display(),
+        c.passes(),
+        c.passive_complete,
+        c.passive_incomplete,
+        c.restart_done,
+        c.restart_busy,
+        c.errors,
+        c.wal_frames,
+        wal_bytes
+    )
 }
 
 /// What a commit hands the checkpointer thread: a count and a wake-up, no I/O.
@@ -303,13 +347,24 @@ impl Checkpointer {
         writer: Arc<Mutex<Writer>>,
         path: &Path,
         metrics: Option<spira_otel::metrics::MetricsSink>,
+        max_read_ms: Arc<AtomicU64>,
     ) {
+        let wal_path = format!("{}-wal", path.display());
+        let wal_bytes = || std::fs::metadata(&wal_path).map(|m| m.len()).unwrap_or(0);
+        let mut counts = PassCounts::default();
+        let mut last_summary = std::time::Instant::now();
         let mut last_pushed = None;
         let mut last_failure = None;
         let mut owed = false;
         let push = |pending: u64, last: &mut Option<std::time::Instant>| {
             if let Some(m) = &metrics {
-                m.push(&[spira_otel::metrics::Point::Gauge { name: UNCHECKPOINTED_GAUGE, value: pending as f64 }], &[]);
+                m.push(
+                    &[
+                        spira_otel::metrics::Point::Gauge { name: UNCHECKPOINTED_GAUGE, value: pending as f64 },
+                        spira_otel::metrics::Point::Gauge { name: WAL_BYTES_GAUGE, value: wal_bytes() as f64 },
+                    ],
+                    &[],
+                );
                 *last = Some(std::time::Instant::now());
             }
         };
@@ -330,17 +385,30 @@ impl Checkpointer {
                 let step = if seen >= self.every {
                     passive_complete(&conn).inspect(|done| {
                         if *done {
-                            lock(&self.state).pending -= seen;
-                            owed = true;
+                            counts.passive_complete += 1;
+                        } else {
+                            counts.passive_incomplete += 1;
                         }
                     })
                 } else {
                     Ok(true)
                 };
-                let step = match step {
-                    Ok(true) => restart_wal(&writer).inspect(|restarted| owed = !restarted),
-                    other => other,
-                };
+                let step = step.and_then(|_| {
+                    restart_wal(&writer, max_read_ms.load(Ordering::SeqCst)).map(|p| {
+                        counts.wal_frames = p.wal_frames;
+                        owed = p.busy;
+                        if p.busy {
+                            counts.restart_busy += 1;
+                        } else {
+                            counts.restart_done += 1;
+                            if seen >= self.every {
+                                let mut s = lock(&self.state);
+                                s.pending = s.pending.saturating_sub(seen);
+                            }
+                        }
+                        !p.busy
+                    })
+                });
                 match step {
                     Ok(true) => {
                         lock(&self.state).completed += 1;
@@ -348,6 +416,7 @@ impl Checkpointer {
                     }
                     Ok(false) => wait = RETRY_AFTER,
                     Err(e) => {
+                        counts.errors += 1;
                         wait = RETRY_AFTER;
                         if report_due(&mut last_failure, &e, std::time::Instant::now()) {
                             eprintln!("sqlite-checkpoint: {}: {e}", path.display());
@@ -355,6 +424,11 @@ impl Checkpointer {
                     }
                 }
                 last_pushed = None;
+            }
+            if last_summary.elapsed() >= GAUGE_EVERY && counts.passes() > 0 {
+                eprintln!("{}", pass_summary(path, &counts, wal_bytes()));
+                counts = PassCounts::default();
+                last_summary = std::time::Instant::now();
             }
             if last_pushed.is_none_or(|t: std::time::Instant| t.elapsed() >= GAUGE_EVERY) {
                 push(lock(&self.state).pending, &mut last_pushed);
@@ -468,7 +542,7 @@ struct Inner {
     history: Mutex<History>,
     history_bytes: usize,
     outbox: Mutex<Option<Outbox>>,
-    max_read_ms: AtomicU64,
+    max_read_ms: Arc<AtomicU64>,
     clock: Arc<dyn Clock>,
     probe: Option<Arc<dyn Fn() + Send + Sync>>,
     dated: Vec<Files>,
@@ -1140,13 +1214,14 @@ impl SqliteBackend {
         let checkpoint_conn = connect(path)?;
         checkpoint_conn.busy_timeout(Duration::ZERO).map_err(db)?;
         let metrics = opts.metrics;
+        let max_read_ms = Arc::new(AtomicU64::new(opts.max_read_ms));
         let writer = Arc::new(Mutex::new(Writer { conn }));
         let thread = {
             let c = checkpointer.clone();
-            let (w, p) = (writer.clone(), path.to_path_buf());
+            let (w, p, mr) = (writer.clone(), path.to_path_buf(), max_read_ms.clone());
             std::thread::Builder::new()
                 .name("sqlite-checkpoint".into())
-                .spawn(move || c.run(checkpoint_conn, w, &p, metrics))
+                .spawn(move || c.run(checkpoint_conn, w, &p, metrics, mr))
                 .map_err(|e| Error::Backend(format!("{}: the checkpointer: {e}", path.display())))?
         };
         Ok(SqliteBackend(Arc::new(Inner {
@@ -1160,7 +1235,7 @@ impl SqliteBackend {
             history: Mutex::new(History::new(floor, opts.history_bytes)),
             history_bytes: opts.history_bytes,
             outbox: Mutex::new(outbox),
-            max_read_ms: AtomicU64::new(opts.max_read_ms),
+            max_read_ms,
             clock: opts.clock,
             probe: opts.read_probe,
             dated,
@@ -1444,13 +1519,7 @@ impl SqliteBackend {
         w.conn
             .prepare_cached("PRAGMA wal_checkpoint(TRUNCATE)")
             .and_then(|mut s| {
-                s.query_row([], |r| {
-                    Ok(Checkpoint {
-                        busy: r.get::<_, i64>(0)? != 0,
-                        wal_frames: r.get(1)?,
-                        checkpointed: r.get(2)?,
-                    })
-                })
+                s.query_row([], checkpoint_row)
             })
             .map_err(db)
     }
@@ -2297,6 +2366,22 @@ mod tests {
                 3_600_000
             }
         }
+    }
+
+    #[test]
+    fn a_pass_summary_names_every_count_and_the_wal_size() {
+        let c = PassCounts {
+            passive_complete: 3,
+            passive_incomplete: 1,
+            restart_done: 2,
+            restart_busy: 4,
+            errors: 5,
+            wal_frames: 77,
+        };
+        assert_eq!(
+            pass_summary(Path::new("/d/c.db"), &c, 4096),
+            "sqlite-checkpoint: /d/c.db: 15 passes: passive complete 3, incomplete 1; restart done 2, busy 4; errors 5; wal 77 frames 4096 B"
+        );
     }
 
     #[test]

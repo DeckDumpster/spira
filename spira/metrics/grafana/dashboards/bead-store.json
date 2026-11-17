@@ -489,6 +489,50 @@
           "refId": "A"
         }
       ]
+    },
+    {
+      "id": 14,
+      "type": "timeseries",
+      "title": "control store WAL size",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 56,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 67108864 }
+            ]
+          },
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "max_over_time(spira_state_store_wal_bytes[$__interval])",
+          "legendFormat": "wal bytes",
+          "refId": "A"
+        }
+      ]
     }
   ]
 }
