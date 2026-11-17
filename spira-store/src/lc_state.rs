@@ -224,17 +224,6 @@ fn client(bin: &str, secs: u32) -> Result<LcClient, String> {
     Ok(LcClient::for_bin(bin)?.within(Duration::from_secs(u64::from(secs))))
 }
 
-/// Every lifecycle row (`spira-lc list`). Err when the machine cannot answer: a caller that
-/// cannot read the state must not decide as if it had (law-a-control-that-cannot-check-must-refuse).
-pub fn list_with(bin: &str) -> Result<Vec<Row>, String> {
-    list_within(bin, 5)
-}
-
-/// [`list_with`] through `c`.
-pub fn list_on(c: &LcClient) -> Result<Vec<Row>, String> {
-    parse_rows(&list_raw_on(c)?)
-}
-
 /// The rows in one state (`spira-lc list --state <STATE>`): what a reader that wants only
 /// the WORKING dwarves asks, instead of every row.
 pub fn list_state_with(bin: &str, state: &str) -> Result<Vec<Row>, String> {
@@ -248,9 +237,8 @@ pub fn list_state_on(c: &LcClient, state: &str) -> Result<Vec<Row>, String> {
     }
 }
 
-/// The rows a tick acts on (`spira-lc list --live`): every non-terminal row and the terminal
-/// ones from the last day. A terminal row older than that is absent, so a caller that needs a
-/// named bead's terminal state asks [`list_ids_on`].
+/// The rows a tick acts on (`spira-lc list --live`): every non-terminal row. A caller that
+/// needs a named bead's terminal state asks [`list_ids_on`].
 pub fn list_live_on(c: &LcClient) -> Result<Vec<Row>, String> {
     match run_on(c, &["list", "--live"])? {
         (0, out) => parse_rows(&out),
@@ -284,29 +272,14 @@ pub fn list_ids_with(bin: &str, ids: &[String]) -> Result<Vec<Row>, String> {
     list_ids_on(&client(bin, 5)?, ids)
 }
 
-/// `list_with` for a batch caller that can wait out a loaded store: `secs` bounds the read.
-pub fn list_within(bin: &str, secs: u32) -> Result<Vec<Row>, String> {
-    list_on(&client(bin, secs)?)
+/// [`list_ids_on`] over the configured `spira-lc`, each call bounded at `secs`.
+pub fn list_ids_within(ids: &[String], secs: u32) -> Result<Vec<Row>, String> {
+    list_ids_on(&client(&lc_bin()?, secs)?, ids)
 }
 
-/// `spira-lc list`'s stdout, unparsed, for a caller that keeps the last good answer.
-pub fn list_raw_with(bin: &str) -> Result<String, String> {
-    list_raw_on(&client(bin, 5)?)
-}
-
-pub fn list_raw_on(c: &LcClient) -> Result<String, String> {
-    match run_on(c, &["list"])? {
-        (0, out) => Ok(out),
-        (rc, _) => Err(format!("spira-lc list exited {rc}")),
-    }
-}
-
-pub fn list_raw() -> Result<String, String> {
-    list_raw_with(&lc_bin()?)
-}
-
-pub fn list() -> Result<Vec<Row>, String> {
-    list_with(&lc_bin()?)
+/// [`list_ids_on`] over the configured `spira-lc`.
+pub fn list_ids(ids: &[String]) -> Result<Vec<Row>, String> {
+    list_ids_within(ids, 5)
 }
 
 /// One bead's row (`spira-lc show <id>`): Ok(None) when the machine has no row for it.
@@ -477,13 +450,10 @@ pub fn beads_of(text: &str) -> Result<Vec<Bead>, String> {
     a.iter().map(bead_of).collect::<Result<Vec<_>, _>>().map_err(|e| format!("spira-lc list: {e}"))
 }
 
-/// Every row (or those in `state`), typed, through `c`. Err is "cannot tell": a caller that
-/// cannot read the state must not decide as if it had.
-pub fn beads_on(c: &LcClient, state: Option<BeadState>) -> Result<Vec<Bead>, String> {
-    let argv: Vec<&str> = match state {
-        Some(s) => vec!["list", "--state", s.as_str()],
-        None => vec!["list"],
-    };
+/// The rows in `state`, typed, through `c`. Err is "cannot tell": a caller that cannot read
+/// the state must not decide as if it had.
+pub fn beads_on(c: &LcClient, state: BeadState) -> Result<Vec<Bead>, String> {
+    let argv = ["list", "--state", state.as_str()];
     let r = c.call(&argv)?;
     if r.code != 0 {
         return Err(format!("spira-lc {} exited {}: {}", argv.join(" "), r.code, r.why()));

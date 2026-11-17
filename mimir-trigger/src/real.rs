@@ -97,7 +97,7 @@ impl World for Real {
         }
         let ids = json_ids(&String::from_utf8_lossy(&out.stdout))
             .ok_or_else(|| "bd list output is not a JSON array".to_string())?;
-        let rows = spira_store::lc_state::list().map_err(|e| format!("lifecycle state unreadable ({e})"))?;
+        let rows = spira_store::lc_state::list_live().map_err(|e| format!("lifecycle state unreadable ({e})"))?;
         Ok(unfinished_count(&ids, &spira_store::lc_state::index(rows)))
     }
 

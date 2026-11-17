@@ -71,7 +71,7 @@ pub fn backlog_count(bdq: &str, scope_label: &str) -> Result<u64, String> {
     let rows: Vec<Value> = serde_json::from_str(text.trim())
         .map_err(|e| format!("{bdq} list: unparsable json: {e}"))?;
     let ids: Vec<String> = rows.iter().filter_map(|r| r.get("id").and_then(Value::as_str).map(str::to_string)).collect();
-    let lc = spira_store::lc_state::list().map_err(|e| format!("lifecycle state unreadable: {e}"))?;
+    let lc = spira_store::lc_state::list_live().map_err(|e| format!("lifecycle state unreadable: {e}"))?;
     Ok(backlog_of(&ids, &spira_store::lc_state::index(lc)))
 }
 

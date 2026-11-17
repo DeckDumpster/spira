@@ -132,13 +132,20 @@ pub struct EntryScan {
     pub held: Option<&'static str>,
 }
 
-/// Every entry under `w.worktrees()`, sorted by name, with what [`decide`] needs; `Err` when
-/// the root cannot be read.
-pub fn entries(w: &dyn World) -> Result<Vec<EntryScan>, String> {
+/// The names of the entries under `w.worktrees()`, sorted; `Err` when the root cannot be read.
+pub fn names(w: &dyn World) -> Result<Vec<String>, String> {
     let root = w.worktrees();
     let rd = std::fs::read_dir(&root).map_err(|e| format!("cannot read {}: {e}", root.display()))?;
     let mut names: Vec<String> = rd.filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().into_owned()).collect();
     names.sort();
+    Ok(names)
+}
+
+/// Every entry under `w.worktrees()`, sorted by name, with what [`decide`] needs; `Err` when
+/// the root cannot be read.
+pub fn entries(w: &dyn World) -> Result<Vec<EntryScan>, String> {
+    let root = w.worktrees();
+    let names = names(w)?;
     Ok(names
         .into_iter()
         .map(|name| {
