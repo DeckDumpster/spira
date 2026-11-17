@@ -3946,6 +3946,13 @@ mod tests {
     fn a_host_round_gets_the_configured_cargo_home() {
         assert_eq!(job_cache_home(false, true, Some("tmpl/.cargo"), Some("vol/cargo")), Some("vol/cargo".to_string()));
         assert_eq!(job_cache_home(false, true, None, Some("vol/cargo")), Some("vol/cargo".to_string()));
+        let export = REMOTE_SCRIPT.find("export CARGO_HOME=\"$cache_home\"").unwrap();
+        let mkdir = REMOTE_SCRIPT.find("mkdir -p \"$CARGO_HOME/bin\"").expect("a fresh cargo home needs its bin before the toolchain links into it");
+        assert!(export < mkdir);
+    }
+
+    #[test]
+    fn an_ec2_round_reads_its_cache_home_from_the_image_before_building() {
         let at = REMOTE_SCRIPT.find(&format!("{}/spira-round-ami.env", system_paths::ETC)).expect("the script reads the image's own record");
         let build = REMOTE_SCRIPT.find("cargo build -q --profile release --workspace").unwrap();
         let guard = REMOTE_SCRIPT.find("sccache is missing on this VM").expect("a missing sccache is named before the build");

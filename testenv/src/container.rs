@@ -1406,6 +1406,7 @@ impl Host for RealHost {
         // batch-job: cargo runs for as long as its work does
         let ok = std::process::Command::new("cargo")
             .args(["build", "--release", "-p", "spira-config"])
+            .envs(spira_config::build::cargo_home_env_from_process())
             .current_dir(repo_root)
             .stdin(std::process::Stdio::null())
             .status()

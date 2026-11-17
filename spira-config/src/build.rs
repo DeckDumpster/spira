@@ -42,7 +42,11 @@ pub fn cargo_home_env(get: impl Fn(&str) -> Option<String>) -> Vec<(String, Stri
 /// [`cargo_home_env`] for a binary that builds no config snapshot of its own (`testenv`,
 /// `release`, `queue`): resolved in-process through [`crate::process::cfg`].
 pub fn cargo_home_env_from_process() -> Vec<(String, String)> {
-    cargo_home_env(|k| crate::process::cfg(k).ok())
+    cargo_home_env(|k| {
+        crate::process::cfg(k)
+            .map_err(|e| eprintln!("spira_config::build: {k}: {e} — cargo runs under its default home"))
+            .ok()
+    })
 }
 
 /// The compiler wrapper every build path uses, resolved on the build's own PATH.
