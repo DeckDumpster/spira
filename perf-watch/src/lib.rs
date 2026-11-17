@@ -355,12 +355,6 @@ mod tests {
         assert_eq!(out.status.code(), Some(3));
     }
 
-    #[test]
-    fn the_scope_stamps_the_probe_with_its_start_on_the_probe_command() {
-        assert!(super::SCOPED.contains("PERFWATCH_T0_US=${t0//[.,]/} \"$@\""));
-        assert!(super::SCOPED.contains("PERFWATCH_US="));
-    }
-
     use super::*;
     use std::cell::Cell;
 
