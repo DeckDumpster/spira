@@ -3719,6 +3719,37 @@ fn a_summary_naming_fewer_suites_than_the_runner_ran_is_no_verdict() {
     assert!(f.stderr().contains("ran=3 but only 2"), "{}", f.stderr());
 }
 
+const TIER_GREEN: &str = "  gate                             ok      235s\n  log (gate): /x/batch-results/14e5433d/gate.log\nVERDICT GREEN ran=1 slot_wait=0s suite=236s";
+
+#[test]
+fn a_repo_tier_run_green_is_pass_naming_its_tier() {
+    let f = Fake::new();
+    f.repo_build_secs.set(Some(30));
+    branch_trial_prints(&f, TIER_GREEN);
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    assert!(f.stderr().contains("gate PASS covered suites: gate"), "{}", f.stderr());
+}
+
+#[test]
+fn a_repo_tier_run_red_names_its_tier_as_the_red_unit() {
+    let f = Fake::new();
+    f.repo_build_secs.set(Some(30));
+    f.runs.borrow_mut().insert(
+        MERGE_SHA.to_string(),
+        (1, "  gate                             RED     after 12s\nVERDICT RED ran=1 red=1".to_string()),
+    );
+    f.run();
+    assert!(f.verdict_line().contains("suite=gate"), "{}", f.verdict_line());
+}
+
+#[test]
+fn two_tier_rows_and_a_harness_row_each_count_toward_ran() {
+    let f = Fake::new();
+    f.repo_build_secs.set(Some(30));
+    branch_trial_prints(&f, "  build                            ok      45s\n  gate                             ok      235s\n  test-a.sh   ok 1s\nVERDICT GREEN ran=3");
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+}
+
 #[test]
 fn a_summary_naming_every_suite_the_runner_ran_still_passes() {
     let f = Fake::new();
