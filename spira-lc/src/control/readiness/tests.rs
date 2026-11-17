@@ -528,6 +528,13 @@ impl crate::control::claimable::Inputs for Fixed {
         Ok(self.rowless.iter().filter(|(id, ..)| ids.contains(id)).map(|(i, t, s)| (i.clone(), (t.clone(), s.clone()))).collect())
     }
 
+    fn items(&self, ids: &[String]) -> Result<Vec<Value>, String> {
+        Ok(ids
+            .iter()
+            .map(|id| json!({ "id": id, "title": format!("title of {id}"), "priority": 1, "issue_type": "task", "status": "open", "created_at": "2026-01-02T03:04:05Z", "defer_until": "2026-02-03T00:00:00Z", "dependencies": [{ "issue_id": id, "depends_on_id": "sp-w", "type": "blocks" }] }))
+            .collect())
+    }
+
     fn run_dir(&self) -> Result<std::path::PathBuf, String> {
         Ok(self.run.clone())
     }
@@ -579,6 +586,25 @@ fn three_ready(r: &Rig) {
     assert_eq!(r.claim("sp-w").0, 0);
     r.inputs("sp-a", &[]);
     r.inputs("sp-b", &["sp-w"]);
+}
+
+#[test]
+fn claimable_carries_each_candidates_content_fields_the_ranking_reads() {
+    let r = Rig::new();
+    let run = testkit::TempDir::new("claimable-content");
+    three_ready(&r);
+    let answer = r.claimable(run.path(), &[]);
+    let beads = answer["beads"].as_array().unwrap();
+    assert_eq!(beads.len(), 3);
+    for b in beads {
+        let id = b["bead_id"].as_str().unwrap();
+        let c = &b["content"];
+        assert_eq!(c["id"], id);
+        assert_eq!(c["title"], format!("title of {id}"));
+        for field in ["priority", "issue_type", "status", "created_at", "defer_until", "dependencies"] {
+            assert!(!c[field].is_null(), "{id} lacks content field {field}: {c}");
+        }
+    }
 }
 
 #[test]
