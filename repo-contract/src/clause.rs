@@ -356,6 +356,10 @@ mod tests {
         f.workflow = "CI";
         f.workflow_files = vec!["ci.yml".into()];
         assert!(line(&f, Clause::Landing).starts_with("met landing"));
+        f.workflow_files = vec!["ci.yaml".into()];
+        assert!(line(&f, Clause::Landing).starts_with("met landing"));
+        f.workflow_files = vec!["other.yml".into()];
+        assert!(line(&f, Clause::Landing).starts_with("not met landing"));
     }
 
     #[test]
