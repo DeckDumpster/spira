@@ -276,6 +276,9 @@ pub struct RepoCarry {
     /// Round keys whose cut assembled nothing: not re-cut until the pool changes.
     #[serde(default)]
     pub held_keys: Vec<String>,
+    /// Pool members refused for an unlanded prerequisite, with the first one, as of the last pass.
+    #[serde(default)]
+    pub blocked: BTreeMap<String, String>,
     #[serde(default)]
     pub members: Vec<(String, String)>,
     #[serde(default)]
@@ -528,6 +531,7 @@ pub fn decide_with(policy: &Policy, carry: &Carry, snap: &Snapshot) -> (Carry, V
     for (name, repo) in &snap.repos {
         let mut m = Machine { repo: name, rc: carry.repos.get(name).cloned().unwrap_or_default(), acts: vec![], now_ms: snap.now_ms };
         m.observe(policy, snap.enabled, repo);
+        m.rc.blocked = super::batcher_local::blocked_of(&repo.local());
         store(&mut next, name, m.rc);
         acts.extend(m.acts);
     }
