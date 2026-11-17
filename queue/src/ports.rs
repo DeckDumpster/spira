@@ -647,8 +647,10 @@ pub trait Lc {
     ) -> Result<(), (i32, String)>;
     /// A reachability probe (one read against the lifecycle database). Err names why.
     fn probe(&self) -> Result<(), String>;
-    /// `list [--state S]`: every bead row (with `since`). Err = cannot tell.
+    /// `list --state S`, or `list --live` for no state: the bead rows (with `since`). Err = cannot tell.
     fn bead_rows(&self, state: Option<&str>) -> Result<Vec<LcBeadRow>, String>;
+    /// `list --ids`: the rows of the named beads; an id with no row is absent. Err = cannot tell.
+    fn bead_rows_of(&self, ids: &[String]) -> Result<Vec<LcBeadRow>, String>;
     /// `list --state S`: the same rows, for a poller that
     /// never reads back its own write. Defaults to the store read.
     fn polled_rows(&self, state: &str) -> Result<Vec<LcBeadRow>, String> {

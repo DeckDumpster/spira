@@ -161,7 +161,8 @@ pub fn split_remedies(w: &dyn World, bd_json: &str) -> (String, String) {
         Ok(one @ serde_json::Value::Object(_)) => vec![one],
         _ => Vec::new(),
     };
-    let lc = match w.lc_rows() {
+    let ids: Vec<String> = rows.iter().filter_map(|r| r.get("id").and_then(|i| i.as_str())).filter(|i| !i.is_empty()).map(str::to_string).collect();
+    let lc = match w.lc_rows(&ids) {
         Ok(r) => spira_store::lc_state::index(r),
         Err(e) => {
             if !rows.is_empty() {

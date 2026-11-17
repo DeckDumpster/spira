@@ -1299,7 +1299,7 @@ def answer(args, body=None):
     if args[:1] == ["show"] and len(args) > 1:
         hit = [b for b in shown(args[1]) if b.get("issue_type") not in NO_ROW]
         return (0, json.dumps({"bead": row(hit[0]), "delivery": None})) if hit else (1, "{}")
-    if args[:1] == ["list"]:
+    if args[:1] == ["list"]:  # not-a-lifecycle-list: the stub store answers the verb
         return 0, json.dumps([row(b) for b in bd(["list", "--all", "--limit", "0"], strict=True) if isinstance(b, dict) and b.get("id") and b.get("issue_type") not in NO_ROW])
     if args[:1] == ["create-ask"] and len(args) > 1:
         asks.setdefault(args[1], {"ask_id": args[1], "state": "OPEN", "work_bead": flag(args, "--work-bead") or None, "quote": None})

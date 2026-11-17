@@ -50,8 +50,8 @@ pub trait World {
     fn bd_list_all_json(&self, label_pattern: &str) -> String;
 
     // ---- the lifecycle machine ----
-    /// `spira-lc list`: every bead's lifecycle row. Err when the machine cannot answer.
-    fn lc_rows(&self) -> Result<Vec<spira_store::lc_state::Row>, String>;
+    /// `spira-lc list --ids`: the lifecycle rows of `ids`. Err when the machine cannot answer.
+    fn lc_rows(&self, ids: &[String]) -> Result<Vec<spira_store::lc_state::Row>, String>;
 
     // ---- git ----
     fn git_branch_exists_matching(&self, repo: &str, pattern: &str) -> bool;

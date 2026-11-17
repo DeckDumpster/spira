@@ -263,21 +263,25 @@ impl World for Real {
             .unwrap_or_default()
     }
 
-    fn lc_rows(&self) -> Result<Vec<spira_store::lc_state::Row>, String> {
+    fn lc_rows(&self, ids: &[String]) -> Result<Vec<spira_store::lc_state::Row>, String> {
         let bin = &self.lc;
-        // call-deadline: 5 s, like every other caller of the machine.
-        let o = Command::new("timeout")
-            .args(["5", bin, "list"])
-            .envs(self.child_env.iter().cloned())
-            .stdin(Stdio::null())
-            .output()
-            .map_err(|e| format!("cannot run {bin}: {e}"))?;
-        if !o.status.success() {
-            let why = String::from_utf8_lossy(&o.stderr);
-            let why = why.lines().find(|l| !l.trim().is_empty()).unwrap_or("no message").to_string();
-            return Err(format!("{bin} list exited {}: {why}", o.status.code().unwrap_or(-1)));
+        let mut rows = Vec::new();
+        for chunk in ids.chunks(100) {
+            // call-deadline: 5 s, like every other caller of the machine.
+            let o = Command::new("timeout")
+                .args(["5", bin, "list", "--ids", &chunk.join(",")])
+                .envs(self.child_env.iter().cloned())
+                .stdin(Stdio::null())
+                .output()
+                .map_err(|e| format!("cannot run {bin}: {e}"))?;
+            if !o.status.success() {
+                let why = String::from_utf8_lossy(&o.stderr);
+                let why = why.lines().find(|l| !l.trim().is_empty()).unwrap_or("no message").to_string();
+                return Err(format!("{bin} list exited {}: {why}", o.status.code().unwrap_or(-1)));
+            }
+            rows.extend(spira_store::lc_state::parse_rows(&String::from_utf8_lossy(&o.stdout))?);
         }
-        spira_store::lc_state::parse_rows(&String::from_utf8_lossy(&o.stdout))
+        Ok(rows)
     }
 
     fn git_branch_exists_matching(&self, repo: &str, pattern: &str) -> bool {

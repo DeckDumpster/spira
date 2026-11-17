@@ -34,6 +34,7 @@ pub struct Fake {
     pub covers_closed_in: RefCell<String>,
     /// `spira-lc list`'s rows.
     pub lc: RefCell<Result<Vec<spira_store::lc_state::Row>, String>>,
+    pub lc_asked: RefCell<Vec<Vec<String>>>,
     /// Classification and remedy readers run the real [`crate::pipeline`] instead of the canned outputs.
     pub real_pipeline: std::cell::Cell<bool>,
 }
@@ -63,6 +64,7 @@ impl Default for Fake {
             covers_in: RefCell::new(String::new()),
             covers_closed_in: RefCell::new(String::new()),
             lc: RefCell::new(Ok(Vec::new())),
+            lc_asked: RefCell::default(),
             real_pipeline: std::cell::Cell::new(false),
         }
     }
@@ -160,7 +162,8 @@ impl World for Fake {
     fn bd_list_all_json(&self, _label_pattern: &str) -> String {
         self.remedies.borrow().clone()
     }
-    fn lc_rows(&self) -> Result<Vec<spira_store::lc_state::Row>, String> {
+    fn lc_rows(&self, ids: &[String]) -> Result<Vec<spira_store::lc_state::Row>, String> {
+        self.lc_asked.borrow_mut().push(ids.to_vec());
         self.lc.borrow().clone()
     }
     fn git_branch_exists_matching(&self, _repo: &str, pattern: &str) -> bool {
@@ -441,6 +444,19 @@ fn remedies_are_split_by_the_lifecycle_row_not_bd_status() {
     assert_eq!(ids(&f.covers_in.borrow()), vec!["sp-w"], "open remedies");
     assert_eq!(ids(&f.covers_closed_in.borrow()), vec!["sp-s"], "closed remedies");
     assert!(f.stderr.borrow().iter().any(|l| l.contains("sp-n") && l.contains("no lifecycle row")), "{:?}", f.stderr.borrow());
+}
+
+/// A remedy's row is asked for by id: a closed remedy's row is terminal, which no live read holds.
+#[test]
+fn the_lifecycle_rows_asked_for_are_the_remedies_named_not_every_row() {
+    let f = Fake::default();
+    f.clean_clock();
+    f.set_events(None, "rows");
+    f.set_count("rows", "4 6 sp-recur-suite-red\n");
+    *f.remedies.borrow_mut() = r#"[{"id":"sp-w","status":"open","labels":["covers:a"]},{"id":"sp-s","labels":["covers:b"]}]"#.into();
+    f.set_lc(&[("sp-w", "WORKING"), ("sp-s", "LANDED")]);
+    run(&f, false);
+    assert_eq!(*f.lc_asked.borrow(), [["sp-w", "sp-s"].map(String::from).to_vec()]);
 }
 
 /// A lifecycle machine that cannot answer suppresses nothing and says why: no remedy is

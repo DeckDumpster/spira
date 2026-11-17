@@ -359,10 +359,11 @@ pub fn probe(world: &Path, env: &dyn Fn(&str) -> Option<String>) -> Result<Strin
     let world = refuse_foreign(world, env)?;
     let port = lc_port(&world)?;
     // The store has one opener: the world's serve while it runs, else this process.
-    let list = match ask_body(&lc_socket(&world), &["list"]) {
-        Some((0, body)) => body,
-        _ => run(lc_command(&world.join("release"), &world.join("config"), &port).arg("list"), CALL_DEADLINE).map_err(|e| format!("spira-lc list: {e}"))?,
-    };
+    let socket = lc_socket(&world);
+    let list = crate::world::list_pages(&mut |argv| match ask_body(&socket, argv) {
+        Some((0, body)) => Ok(body),
+        _ => run(lc_command(&world.join("release"), &world.join("config"), &port).args(argv), CALL_DEADLINE).map_err(|e| format!("spira-lc list: {e}")),
+    })?;
     let rows = rows(&list, &landstate_of(&world), &git_facts(&world)?)?;
     let mut out = String::new();
     for r in rows {
@@ -457,10 +458,13 @@ impl Observer {
         let landing = if self.on_origin { self.lineage(&home_origin, origin.get("refs/heads/main"))? } else { self.lineage(&home_work, work.get(&format!("refs/heads/{LANDING_BASE}")))? };
         let git = GitFacts { branches, others, local_main: landing, origin_main: self.lineage(&home_origin, origin.get("refs/heads/main"))? };
         let socket = crate::world::lc_socket(&self.world);
-        let (code, list) = crate::world::ask_body(&socket, &["list"]).ok_or_else(|| format!("spira-lc list: no answer on {}", socket.display()))?;
-        if code != 0 {
-            return Err(format!("spira-lc list: exit {code}: {}", list.trim()));
-        }
+        let list = crate::world::list_pages(&mut |argv| {
+            let (code, body) = crate::world::ask_body(&socket, argv).ok_or_else(|| format!("spira-lc list: no answer on {}", socket.display()))?;
+            if code != 0 {
+                return Err(format!("spira-lc list: exit {code}: {}", body.trim()));
+            }
+            Ok(body)
+        })?;
         let tags = |refs: &BTreeMap<String, String>| refs.keys().filter_map(|r| r.strip_prefix("refs/tags/").map(str::to_string)).collect::<Vec<_>>();
         let mut all_tags = tags(&work);
         all_tags.extend(tags(&origin));
