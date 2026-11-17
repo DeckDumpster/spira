@@ -33,7 +33,7 @@ use reconciler_flow::core::{
 use reconciler_flow::io::{
     append_backlog_sample, backlog_baseline, backlog_count, dwell_metrics,
     dwell_regression_metrics, flow_floors, rework_metrics, round_health_metrics,
-    sentinel_pass_wall_seconds, slots_samples, stage_rows, velocity_metrics, waiting_to_land,
+    sentinel_pass_wall_seconds, stage_rows, velocity_metrics, waiting_to_land,
 };
 
 extern "C" {

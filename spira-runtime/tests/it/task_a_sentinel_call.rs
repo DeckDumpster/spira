@@ -309,5 +309,8 @@ fn a_decided_pass_carries_each_bound_class_as_it_left_it_and_the_carry_round_tri
     assert_eq!(bound.iter().map(|b| (b.class.as_str(), b.limit)).collect::<Vec<_>>(), [("build-disk", 7), ("memory", 3)]);
     let back: Carry = serde_json::from_str(&serde_json::to_string(&carry).unwrap()).unwrap();
     assert_eq!(back.bound, carry.bound);
+    let limit = carry.task_limit.clone().expect("a decided pass carries the limit that bound task work");
+    assert_eq!((limit.name.as_str(), limit.limit), ("ceiling", 4));
+    assert_eq!(back.task_limit, carry.task_limit);
     assert_eq!(Carry::default().bound, None, "no pass yet is not an empty array");
 }

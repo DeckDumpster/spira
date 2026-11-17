@@ -77,3 +77,25 @@ fn a_full_pool_under_a_roomy_ceiling_is_satisfied_through_handle() {
     let carry: Carry = serde_json::from_str(&r.engine().carry_body(NAME, STATE).expect("the watcher carried its verdicts")).unwrap();
     assert_eq!(carry.words["flow:idle-capacity"], "satisfied");
 }
+
+#[test]
+fn room_under_the_pool_mails_through_handle_and_no_carry_is_unobservable() {
+    use spira_runtime::tasks::a::sentinel_call;
+    let slots = Slots { live: 4, ceiling: 40, ready: 2, capacity_paused: false };
+    let world = FlowSnapshot { slots: Ok((slots, slots)), ..backlog_grown_at(1000) };
+    let rig = |limit: Option<i64>| {
+        let world = world.clone();
+        let mut r = TaskRig::new(1, ReconcilerFlow { grace_secs: 0, ..ReconcilerFlow { interval_ms: 1_800_000, window_hours: 0.5, baseline_hours: 24.0, grace_secs: 0, unobservable_grace_secs: 3600, rework_window_hours: 6.0, sentinel_timer_secs: 900, shadow_kinds: vec![] } }.registration()).unwrap().double(OBSERVE, move |_| Ok(serde_json::to_string(&world).unwrap())).double(MAIL, |m| Ok(m.into())).double(STATUS, |s| Ok(s.into()));
+        if let Some(held) = limit {
+            let called = sentinel_call::Carry { task_limit: Some(sentinel::plan::TaskLimit { name: "pool".into(), limit: 6, held }), ..Default::default() };
+            r.tick(sentinel_call::STREAM, EventKind::new(sentinel_call::STATE, &serde_json::to_string(&called).unwrap())).unwrap();
+        }
+        r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
+        r
+    };
+    let word = |r: &TaskRig| serde_json::from_str::<Carry>(&r.engine().carry_body(NAME, STATE).unwrap()).unwrap().words["flow:idle-capacity"].clone();
+    let with_room = rig(Some(4));
+    assert_eq!(word(&with_room), "gap");
+    assert!(with_room.requested().iter().any(|q| q.input.contains("pool 6") && q.input.contains("live 4")), "{:?}", with_room.requested());
+    assert_eq!(word(&rig(None)), "unobservable");
+}
