@@ -1056,8 +1056,8 @@ impl World for Real {
     fn target_intact(&self, tree: &Path) -> bool {
         crate::target::intact(tree)
     }
-    fn release_target(&self, tree: &Path, keep_release: bool, judged: bool, cap_mib: u64, repo: &str) {
-        if judged {
+    fn release_target(&self, tree: &Path, keep_release: bool, hand_on: bool, cap_mib: u64, repo: &str) {
+        if hand_on {
             if let Some(line) = crate::warm::donate_tree(tree, repo, cap_mib) {
                 self.eprint(&line);
             }
