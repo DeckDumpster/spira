@@ -145,7 +145,7 @@ fn landing(p: &dyn Ports, repo: &str) -> Judged {
     if mode == "queue" || mode == "queue.forge" {
         let name = p.workflow(repo)?;
         let files = p.workflow_files(repo)?;
-        let found = files.iter().any(|f| *f == name || f.strip_suffix(".yml").or_else(|| f.strip_suffix(".yaml")) == Some(name.as_str()));
+        let found = files.iter().any(|f| f.eq_ignore_ascii_case(&name) || f.strip_suffix(".yml").or_else(|| f.strip_suffix(".yaml")).is_some_and(|stem| stem.eq_ignore_ascii_case(&name)));
         if !found {
             return Ok(Outcome::NotMet(format!("the forge workflow {name:?} is not a file under {WORKFLOWS}/ on the landing ref")));
         }
@@ -348,6 +348,18 @@ mod tests {
         assert!(line(&f, Clause::Landing).starts_with("not met landing: the forge workflow \"Gate\" is not a file"));
         f.mode = "queue.local";
         assert!(line(&f, Clause::Landing).starts_with("met landing"));
+    }
+
+    #[test]
+    fn landing_matches_the_workflow_name_to_the_file_stem_ignoring_case() {
+        let mut f = green();
+        f.workflow = "CI";
+        f.workflow_files = vec!["ci.yml".into()];
+        assert!(line(&f, Clause::Landing).starts_with("met landing"));
+        f.workflow_files = vec!["ci.yaml".into()];
+        assert!(line(&f, Clause::Landing).starts_with("met landing"));
+        f.workflow_files = vec!["other.yml".into()];
+        assert!(line(&f, Clause::Landing).starts_with("not met landing"));
     }
 
     #[test]
