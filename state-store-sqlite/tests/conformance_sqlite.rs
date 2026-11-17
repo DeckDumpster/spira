@@ -1202,6 +1202,7 @@ mod relayout {
 
         let report = relayout(&old, &new, &VirtualClock::new(WALL)).unwrap();
         assert_eq!(sha256_file(&old).unwrap(), sum, "the old file is never written");
+        assert_eq!(count(&new, "PRAGMA auto_vacuum"), 2, "the --to file is incremental");
         assert_eq!((report.live.read, report.live.copied), (200, 200));
 
         let b = SqliteBackend::open(&new, Options { jump_on_open: false, wall: Arc::new(VirtualClock::new(WALL)), ..Options::default() }).unwrap();
@@ -1448,6 +1449,7 @@ fn a_store_opened_without_day_receipts_never_drains_its_version_rows() {
         commit_live(&b, i);
     }
     assert_eq!(count(&path, "SELECT count(*) FROM versions"), 1200);
+    assert!(count(&path, "PRAGMA freelist_count") == 0 && count(&path, "PRAGMA auto_vacuum") == 2);
 }
 
 #[test]
