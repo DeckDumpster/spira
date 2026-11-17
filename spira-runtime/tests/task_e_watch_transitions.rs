@@ -1326,13 +1326,17 @@ fn mark_gated_sets_a_gate_on_submitted_beads_only_and_clears_a_stale_one() {
 }
 
 fn dependency_page_world(now: u64) -> Snapshot {
+    dependency_world_with(now, "WORKING")
+}
+
+fn dependency_world_with(now: u64, blocker_state: &str) -> Snapshot {
     let mut s = healthy(now);
     let submitted = |id: &str, mins: u64| {
         let mut b = bead(id, "spira", "SUBMITTED", now - mins * MIN);
         b.gate = Some(Gating::Queued);
         b
     };
-    s.beads = vec![submitted("sp-s1", 51), submitted("sp-s2", 36), submitted("sp-s3", 20), bead("sp-um4jw9", "spira", "CERTIFIED", now - 54 * MIN)];
+    s.beads = vec![submitted("sp-s1", 51), submitted("sp-s2", 36), submitted("sp-s3", 20), bead("sp-um4jw9", "spira", "CERTIFIED", now - 54 * MIN), bead("sp-f0cw5z", "spira", blocker_state, now - 5 * MIN)];
     s.last = last("spira", &[("Claim", now - 18), ("Submit", now - 12 * MIN - 51), ("Cut", now - 17), ("Delivered", now - 24 * MIN - 42)]);
     s.open_rounds = Some(rounds_in("spira", 0));
     s.owners.clear();
@@ -1426,5 +1430,31 @@ fn mark_blocked_clears_a_stale_dependency_the_batcher_no_longer_carries() {
     let mut s = dependency_page_world(T0);
     mark_blocked(&mut s, &BTreeMap::from([("sp-um4jw9".to_string(), "sp-f0cw5z".to_string())]));
     mark_blocked(&mut s, &BTreeMap::new());
+    assert!(s.beads.iter().all(|b| b.waits_on.is_none()));
+}
+
+#[test]
+fn a_certified_bead_blocked_by_an_idle_ready_bead_still_pages_the_cut_edge() {
+    let mut r = dependency_rig(
+        |now| {
+            let mut s = dependency_world_with(now, "READY");
+            s.last = last("spira", &[("Claim", now - 18), ("Submit", now - 12 * MIN - 51), ("Cut", now - 6 * MIN), ("Delivered", now - 24 * MIN - 42)]);
+            s
+        },
+        Some(BLOCKED_CARRY),
+    );
+    r.advance(300_000).unwrap();
+    let (_, stream, kind) = WatchTransitions::boot();
+    r.tick(stream, kind).unwrap();
+    let pages: Vec<String> = stalls(&r).into_iter().filter(|l| l.contains("P0 STALL SUBMITTED→IN_DELIVERY (spira)")).collect();
+    assert_eq!(pages.len(), 1, "{pages:?}");
+    assert!(pages[0].contains("sp-um4jw9"), "{}", pages[0]);
+}
+
+#[test]
+fn a_prerequisite_absent_from_the_dwell_rows_is_not_live() {
+    let mut s = dependency_page_world(T0);
+    s.beads.retain(|b| b.id != "sp-f0cw5z");
+    mark_blocked(&mut s, &BTreeMap::from([("sp-um4jw9".to_string(), "sp-f0cw5z".to_string())]));
     assert!(s.beads.iter().all(|b| b.waits_on.is_none()));
 }
