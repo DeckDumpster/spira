@@ -1847,6 +1847,7 @@ fn key_for(f: &Fake, ejected: &str, bead: &str) -> String {
         suites: "on",
         bead,
         ejected,
+        deny: "",
     })
 }
 
@@ -1956,6 +1957,38 @@ fn a_red_recorded_before_the_base_moved_is_not_replayed_after() {
     g.run();
     assert!(!g.ran.borrow().is_empty(), "the moved base is judged again");
     assert!(!g.appended.borrow()[0].contains("replayed"), "{}", g.appended.borrow()[0]);
+}
+
+#[test]
+fn a_red_recorded_before_the_deny_list_changed_is_not_replayed_after() {
+    let f = Fake::new();
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, "test-b.sh RED".into()));
+    f.run();
+    let (p, entry) = f.written.borrow().iter().find(|(p, _)| p.to_string_lossy().contains("verdicts/red/")).cloned().expect("a red record");
+    let g = Fake::new();
+    g.put_var("SPIRA_VERDICT_TTL", "86400");
+    *g.deny.borrow_mut() = Ok("disabled\tintegration:p a::b\tsp-x\t9999999999\n".into());
+    let entry = entry.lines().map(|l| if l.starts_with("at=") { "at=999999".to_string() } else { l.to_string() }).collect::<Vec<_>>().join("\n") + "\n";
+    g.files.borrow_mut().insert(p, entry);
+    g.run();
+    assert!(!g.ran.borrow().is_empty(), "a changed deny list is judged again");
+    assert!(!g.appended.borrow()[0].contains("replayed"), "{}", g.appended.borrow()[0]);
+}
+
+#[test]
+fn a_red_recorded_under_the_same_denied_tests_is_replayed_whatever_the_header_bead_or_expiry() {
+    let f = Fake::new();
+    *f.deny.borrow_mut() = Ok("# test-registry deny-list at=1 rows=1\ndisabled\tintegration:p a::b\tsp-x\t9999999999\n".into());
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, "test-b.sh RED".into()));
+    f.run();
+    let (p, entry) = f.written.borrow().iter().find(|(p, _)| p.to_string_lossy().contains("verdicts/red/")).cloned().expect("a red record");
+    let g = Fake::new();
+    g.put_var("SPIRA_VERDICT_TTL", "86400");
+    *g.deny.borrow_mut() = Ok("# test-registry deny-list at=2 rows=1\ndisabled\tintegration:p a::b\tsp-y\t8888888888\n".into());
+    let entry = entry.lines().map(|l| if l.starts_with("at=") { "at=999999".to_string() } else { l.to_string() }).collect::<Vec<_>>().join("\n") + "\n";
+    g.files.borrow_mut().insert(p, entry);
+    g.run();
+    assert!(g.appended.borrow()[0].contains("replayed=key:"), "{}", g.appended.borrow()[0]);
 }
 
 #[test]
@@ -3509,6 +3542,7 @@ fn a_cached_pass_and_a_syntax_only_pass_certify_too() {
         suites: "on",
         bead: "none",
         ejected: "",
+        deny: "",
     });
     f.files.borrow_mut().insert(
         PathBuf::from(format!("{RUN}/verdicts/{k}")),

@@ -22,16 +22,18 @@ pub struct KeyInputs<'a> {
     pub suites: &'a str,
     pub bead: &'a str,
     pub ejected: &'a str,
+    pub deny: &'a str,
 }
 
 /// `gate_key_hash` over the hashed inputs, byte-compatible with the bash.
 pub fn gate_key(k: &KeyInputs) -> String {
     let files_h = sha256_hex(k.files.as_bytes());
     let cmd_h = sha256_hex(k.cmd.as_bytes());
+    let deny_h = sha256_hex(k.deny.as_bytes());
     sha256_hex(
         format!(
-            "{} {} {} {} {} suites={} bead={} ejected={}\n",
-            k.repo, k.tree, files_h, cmd_h, k.harness_h, k.suites, k.bead, k.ejected
+            "{} {} {} {} {} suites={} bead={} ejected={} deny={}\n",
+            k.repo, k.tree, files_h, cmd_h, k.harness_h, k.suites, k.bead, k.ejected, deny_h
         )
         .as_bytes(),
     )
@@ -105,6 +107,7 @@ mod tests {
             suites: "on",
             bead: "sp-a",
             ejected: "",
+            deny: "",
         }
     }
 
@@ -114,7 +117,7 @@ mod tests {
         let files_h = sha256_hex(b"a\nb");
         let cmd_h = sha256_hex(b"bash x");
         let want = sha256_hex(
-            format!("spira t1 {files_h} {cmd_h} h suites=on bead=sp-a ejected=\n").as_bytes(),
+            format!("spira t1 {files_h} {cmd_h} h suites=on bead=sp-a ejected= deny={}\n", sha256_hex(b"")).as_bytes(),
         );
         assert_eq!(gate_key(&base()), want);
         assert_eq!(
@@ -149,6 +152,10 @@ mod tests {
             },
             KeyInputs {
                 suites: "off",
+                ..base()
+            },
+            KeyInputs {
+                deny: "disabled\tp a::b\t-\t-\n",
                 ..base()
             },
             KeyInputs {

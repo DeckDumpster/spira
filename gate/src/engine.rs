@@ -483,6 +483,16 @@ impl<'w, W: World> Trial<'w, W> {
             GateMode::Suites => cmd_text,
         };
 
+        let at = w.now();
+        let deny_text = match w.deny_list(at) {
+            Ok(t) => t,
+            Err(e) => return v(NOVERDICT, "deny-list", format!("gate: cannot resolve the deny list: {e}\ngate: no trial of {br} ran — refusing to judge as if no test were denied.")),
+        };
+        let deny = match spira_config::unit_tier::DenyList::parse(&deny_text) {
+            Ok(d) => d,
+            Err(e) => return v(NOVERDICT, "deny-list", format!("gate: the deny list does not parse: {e}\ngate: no trial of {br} ran — refusing to judge as if no test were denied.")),
+        };
+
         // THE VERDICT CACHE.
         let key_suites = if covered { "off+covered" } else { &suites_mode };
         let verdict_dir = self.s.verdict_dir.clone();
@@ -501,6 +511,7 @@ impl<'w, W: World> Trial<'w, W> {
                     &self.s.bead
                 },
                 ejected: &ejected,
+                deny: &deny.render(),
             });
         }
         let mut cached: Option<Verdict> = None;
@@ -869,15 +880,6 @@ impl<'w, W: World> Trial<'w, W> {
             key::digits(ctx.var("SPIRA_UNIT_TEST_DEADLINE_PERIODS")).filter(|n| *n > 0),
         ) else {
             return v(NOVERDICT, "config", "gate: SPIRA_UNIT_TEST_DEADLINE_SECS and SPIRA_UNIT_TEST_DEADLINE_PERIODS must be positive numbers — refusing to run unit tests with no per-test deadline.");
-        };
-        let at = w.now();
-        let deny_text = match w.deny_list(at) {
-            Ok(t) => t,
-            Err(e) => return v(NOVERDICT, "deny-list", format!("gate: cannot resolve the deny list: {e}\ngate: no trial of {br} ran — refusing to judge as if no test were denied.")),
-        };
-        let deny = match spira_config::unit_tier::DenyList::parse(&deny_text) {
-            Ok(d) => d,
-            Err(e) => return v(NOVERDICT, "deny-list", format!("gate: the deny list does not parse: {e}\ngate: no trial of {br} ran — refusing to judge as if no test were denied.")),
         };
         self.s.deny_label = format!("{at}/{}", &key::sha256_hex(deny_text.as_bytes())[..12]);
         w.eprint(&format!("gate: deny list {} ({} rows)", self.s.deny_label, deny.render().lines().count()));
