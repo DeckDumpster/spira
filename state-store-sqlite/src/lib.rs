@@ -1935,6 +1935,7 @@ mod tests {
         let dir = testkit::TempDir::new("sqlite-checkpointed");
         let b = SqliteBackend::open(&dir.path().join("s.db"), Options::default()).unwrap();
         let big = |key: &str, n: usize| Write::Put { key: key.into(), value: vec![7u8; n], create_rev: Rev::new(1, 0), prev: None };
+        assert!(b.backfill().is_some(), "the WAL index must be readable or no commit can report a checkpoint");
         let mut head = b.head().unwrap();
         head = b.commit(head, &[big("a", 1 << 10)]).unwrap();
         assert!(!b.last_commit().checkpointed);

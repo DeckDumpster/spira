@@ -147,7 +147,6 @@ pub fn order_hold(h: &state_store::model::Hold) {
         e.0 += 1;
         e.1 += h.hold.as_millis() as u64;
     }
-    let Some(path) = log_path() else { return };
     let row = format!(
         "{}\t{holder}\t{caller}\t{}\tORDER-HOLD\tcatch_up_ms={}\twriter_wait_ms={}\tcommit_ms={}\tcheckpointed={}\tapply_ms={}\treload_ms={}\twrites={}\tcut={}\n",
         crate::db::now_epoch(),
@@ -161,9 +160,7 @@ pub fn order_hold(h: &state_store::model::Hold) {
         h.writes,
         h.cut,
     );
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
-        let _ = f.write_all(row.as_bytes());
-    }
+    write_row(&row);
 }
 
 /// Counts one request's reads behind the head under its key; a request that read none adds nothing.
@@ -407,10 +404,13 @@ fn append(took: Duration, verb: &str, caller: &str, sql: &str) {
     if took < threshold() {
         return;
     }
+    write_row(&line(crate::db::now_epoch(), verb, caller, took, sql));
+}
+
+fn write_row(row: &str) {
     let Some(path) = log_path() else { return };
-    let l = line(crate::db::now_epoch(), verb, caller, took, sql);
     if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
-        let _ = f.write_all(l.as_bytes());
+        let _ = f.write_all(row.as_bytes());
     }
 }
 
@@ -580,6 +580,11 @@ mod tests {
             .map(|s| (s.name, s.value))
             .collect();
         assert_eq!(got, [("spira_lc_order_holds".to_string(), 1.0), ("spira_lc_order_hold_seconds".to_string(), 0.62)]);
+        drop(c);
+        let mut c = COUNTERS.lock().unwrap();
+        c.holds_pushed = c.holds.clone();
+        let again = series_since(&c, &BTreeMap::new(), std::time::SystemTime::now());
+        assert!(again.iter().all(|s| s.name != "spira_lc_order_holds"), "a pushed hold is not pushed twice");
     }
 
     #[test]
