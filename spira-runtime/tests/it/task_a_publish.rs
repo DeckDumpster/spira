@@ -128,12 +128,85 @@ fn t5_no_run_with_an_unresolved_bound_waits_and_names_the_key() {
     assert_eq!(carry.repos["spira"].no_run_key_noted, Some(31));
 }
 
-/// `tests.rs:3808-3888`: a gone PR is retired, then the next one opens.
+/// A gone PR's record is retired and the next PR opens on the same tick, without closing it again.
 #[test]
-fn t5_gone_retires_then_opens() {
-    let (carry, acts) = decide(&Carry::default(), &busy());
-    assert!(effects(&acts).contains(&CANCEL_RUNS) || effects(&acts).contains(&PR_CLOSE), "{acts:?}");
-    assert_eq!(carry.repos["spira"].state, State::Superseding);
+fn t5_gone_retires_and_opens_on_one_tick() {
+    let (_, acts) = decide(&Carry::default(), &busy());
+    assert_eq!(effects(&acts), [RETIRE, PUSH_BRANCH], "{acts:?}");
+    let retire: Pub = serde_json::from_str(&acts[0].input).expect("a Pub");
+    let push: Pub = serde_json::from_str(&acts[1].input).expect("a Pub");
+    assert_eq!((retire.pr, retire.subject.as_str(), push.head.as_str()), (31, "Retire", "h1"));
+}
+
+#[test]
+fn a_gone_publish_pr_is_retired_and_pushed_by_the_engine_in_one_tick() {
+    let mut r = rig(1, busy());
+    r.advance(CADENCE_MS).unwrap();
+    let names: Vec<String> = r.requested().iter().map(|q| q.name.clone()).collect();
+    assert!(names.iter().any(|n| n == "publish.retire") && names.iter().any(|n| n == "publish.push_branch"), "{names:?}");
+    assert!(!names.iter().any(|n| n == "publish.pr_close"), "{names:?}");
+}
+
+/// A close that succeeded and an open step that failed must not leave the stale record in charge.
+#[test]
+fn a_failed_open_after_a_close_does_not_wedge_the_stale_record() {
+    let superseding = Carry { repos: [("spira".to_string(), RepoCarry { state: State::Superseding, ..RepoCarry::default() })].into() };
+    let p = Pub { repo: "spira".into(), pr: 31, head: "h1".into(), base: "f0".into(), branch: "publish/h1".into(), ..Pub::default() };
+    let (opening, _) = on_outcome(&superseding, PR_CLOSE, true, "{}", &p);
+    let (refused, _) = on_outcome(&opening, PR_CREATE, false, "boom", &p);
+    assert_eq!(refused.repos["spira"].state, State::Refused);
+    let (_, acts) = decide(&refused, &busy());
+    assert_eq!(effects(&acts), [RETIRE, PUSH_BRANCH], "{acts:?}");
+}
+
+#[test]
+fn a_closed_supersede_retires_its_record_before_pushing() {
+    let superseding = Carry { repos: [("spira".to_string(), RepoCarry { state: State::Superseding, ..RepoCarry::default() })].into() };
+    let p = Pub { repo: "spira".into(), pr: 31, head: "h1".into(), base: "f0".into(), branch: "publish/h1".into(), ..Pub::default() };
+    let (_, acts) = on_outcome(&superseding, PR_CLOSE, true, "{}", &p);
+    assert_eq!(effects(&acts), [RETIRE, PUSH_BRANCH], "{acts:?}");
+    let retire: Pub = serde_json::from_str(&acts[0].input).expect("a Pub");
+    assert_eq!((retire.pr, retire.subject.as_str()), (31, "Supersede"));
+}
+
+#[test]
+fn a_saved_repo_carry_with_the_retired_pr_field_still_loads() {
+    let rc: RepoCarry = serde_json::from_str(r#"{"state":"Idle","deferred_ticks":0,"retired":1125}"#).expect("an old carry loads");
+    assert_eq!(rc.state, State::Idle);
+}
+
+fn retire_world(dir: &testkit::TempDir, recorded: Option<u64>, retiring: u64) -> (bool, Result<String, String>) {
+    if let Some(pr) = recorded {
+        let p = Pub { repo: "spira".into(), pr, head: "h1".into(), base: "f0".into(), branch: "publish/h1".into(), ..Pub::default() };
+        let fresh = edge::Fresh { remote: "origin".into(), forge_branch: "main".into(), members: vec![] };
+        edge::write_record(dir.path(), &p, Some(&fresh), 1).expect("the record is written");
+    }
+    let run = testkit::TempDir::new("publish-retire-run");
+    let e = spira_runtime::Effects { world: spira_runtime::world::World { queue_dir: dir.path().to_path_buf(), run_dir: run.path().to_path_buf(), ..Default::default() }, ..Default::default() };
+    let spec = runtime::event::EffectSpec::keyed(RETIRE, "k", serde_json::to_string(&Pub { repo: "spira".into(), pr: retiring, subject: "Retire".into(), ..Pub::default() }).unwrap(), 30_000);
+    let out = edge::retire(&e, "k", &spec);
+    (dir.path().join("spira").join("publish").exists(), out)
+}
+
+#[test]
+fn retire_removes_the_record_naming_its_pr() {
+    let dir = testkit::TempDir::new("publish-retire");
+    let (left, out) = retire_world(&dir, Some(42), 42);
+    assert!(out.is_ok() && !left, "{out:?} {left}");
+}
+
+#[test]
+fn retire_leaves_a_record_naming_another_pr() {
+    let dir = testkit::TempDir::new("publish-retire");
+    let (left, out) = retire_world(&dir, Some(43), 42);
+    assert!(out.is_ok() && left, "{out:?} {left}");
+}
+
+#[test]
+fn retire_with_no_record_is_ok() {
+    let dir = testkit::TempDir::new("publish-retire");
+    let (left, out) = retire_world(&dir, None, 42);
+    assert!(out.is_ok() && !left, "{out:?} {left}");
 }
 
 /// Red and behind supersedes: cancel the runs, close the PR.
@@ -252,7 +325,7 @@ fn the_carry_stays_under_the_journal_column_for_the_longest_repo_names_and_the_r
 }
 
 fn at_work() -> TaskRig {
-    let mut r = rig(1, busy());
+    let mut r = rig(1, with(Repo { round_holds_hypervisor: true, ..busy().repos["spira"].clone() }));
     r.advance(CADENCE_MS).unwrap();
     r
 }

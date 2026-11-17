@@ -62,8 +62,9 @@
 //! | Observing | `Settle::Wait`, CI green | Merging | `publish.settle` (sp-hw3qio) |
 //! | Observing | `Settle::Rerun` | Rerun | `publish.rerun` (`:666`) |
 //! | Observing | `Settle::Alarm` | Alarmed | `publish.notify` + `publish.record` (`alarmed=`, `:675-695`) |
-//! | Observing | `Settle::Retire` / `Supersede` | Superseding | `publish.cancel_runs`, `publish.pr_close` (`:544-549`) |
-//! | Superseding | `effect.succeeded` | Opening | `publish.push_branch` |
+//! | Observing | `Settle::Retire` (PR gone) | Observing, then as `Settle::Open` | `publish.retire`, then the open's acts |
+//! | Observing | `Settle::Supersede` | Superseding | `publish.cancel_runs`, `publish.pr_close` (`:544-549`) |
+//! | Superseding | `effect.succeeded` | Opening | `publish.retire`, `publish.push_branch` |
 //! | Opening | push `effect.succeeded` | Opening | `publish.pr_create` |
 //! | Opening | `pr_create` succeeded | Open | `publish.record` (`:305`) |
 //! | Opening | any `effect.failed` | Refused | — (next tick re-observes) |
@@ -145,6 +146,8 @@ pub const PUSH_FORGE: &str = "publish.push_forge";
 pub const PR_CREATE: &str = "publish.pr_create";
 pub const PR_CLOSE: &str = "publish.pr_close";
 pub const CANCEL_RUNS: &str = "publish.cancel_runs";
+/// The record naming a closed or merged publish PR removed, so the next publish is not mistaken for it.
+pub const RETIRE: &str = "publish.retire";
 pub const RERUN: &str = "publish.rerun";
 pub const RECORD: &str = "publish.record";
 pub const NOTIFY: &str = "publish.notify";
@@ -156,11 +159,11 @@ pub const START_CI: &str = "publish.start_ci";
 pub const CADENCE_MS: u64 = 1_800_000;
 pub const OBSERVE_DEADLINE_MS: u64 = 60_000;
 
-pub const ACTS: &[(&str, u64)] = &[(PUSH_BRANCH, 60_000), (PUSH_FORGE, 60_000), (PR_CREATE, 60_000), (PR_CLOSE, 30_000), (CANCEL_RUNS, 30_000), (RERUN, 30_000), (RECORD, 60_000), (NOTIFY, 5_000), (SETTLE, 60_000), (START_CI, 30_000)];
+pub const ACTS: &[(&str, u64)] = &[(PUSH_BRANCH, 60_000), (PUSH_FORGE, 60_000), (PR_CREATE, 60_000), (PR_CLOSE, 30_000), (CANCEL_RUNS, 30_000), (RETIRE, 30_000), (RERUN, 30_000), (RECORD, 60_000), (NOTIFY, 5_000), (SETTLE, 60_000), (START_CI, 30_000)];
 pub const EMITS: &[EventKindTag] = &[];
 /// Hand-offs that wake it at once, besides its tick: queue.step wants a publish.
 pub const WAKES: &[EventKindTag] = &[PUBLISH_WANTED];
-pub const EFFECTS: &[&str] = &[OBSERVE, PUSH_BRANCH, PUSH_FORGE, PR_CREATE, PR_CLOSE, CANCEL_RUNS, RERUN, RECORD, NOTIFY, SETTLE, START_CI];
+pub const EFFECTS: &[&str] = &[OBSERVE, PUSH_BRANCH, PUSH_FORGE, PR_CREATE, PR_CLOSE, CANCEL_RUNS, RETIRE, RERUN, RECORD, NOTIFY, SETTLE, START_CI];
 pub const KEYS: &[&str] = &["SPIRA_PUBLISH_SETTLE_DEFER_MAX", "SPIRA_PUBLISH_NO_RUN_SECS", "SPIRA_FORGE", "SPIRA_QUEUE_DIR", "SPIRA_RUN", "SPIRA_MAIL_SESSION_MAILBOX", "SPIRA_QUEUE_LOCK_WAIT", "SPIRA_REPO_MAP"];
 pub const UNREGISTERED: &[&str] = &[];
 
@@ -295,7 +298,8 @@ pub enum Trigger {
     SettleRerun,
     SettleAlarm,
     SettleStartCi,
-    SettleRetireOrSupersede,
+    SettleRetire,
+    SettleSupersede,
     EffectSucceeded,
     PushSucceeded,
     PrCreated,
@@ -320,7 +324,8 @@ pub static TABLE: &[(State, Trigger, State)] = &[
     (State::Observing, Trigger::SettleRerun, State::Rerun),
     (State::Observing, Trigger::SettleAlarm, State::Alarmed),
     (State::Observing, Trigger::SettleStartCi, State::Open),
-    (State::Observing, Trigger::SettleRetireOrSupersede, State::Superseding),
+    (State::Observing, Trigger::SettleRetire, State::Observing),
+    (State::Observing, Trigger::SettleSupersede, State::Superseding),
     (State::Superseding, Trigger::EffectSucceeded, State::Opening),
     (State::Opening, Trigger::PushSucceeded, State::Opening),
     (State::Opening, Trigger::PrCreated, State::Open),
@@ -353,9 +358,6 @@ pub struct RepoCarry {
     pub state: State,
     /// Today `queue/<repo>/publish-deferred`.
     pub deferred_ticks: u32,
-    /// The PR this machine retired: a record still naming it is stale, not acted on twice.
-    #[serde(default)]
-    pub retired: Option<u64>,
     /// The head a refusal was last told about: one note per head.
     #[serde(default)]
     pub refused_head: Option<String>,
@@ -486,14 +488,9 @@ impl Machine<'_> {
             return;
         }
         self.go(Trigger::Tick);
-        let rec = r.publish_rec.as_ref().filter(|rec| Some(rec.pr) != self.rc.retired);
+        let rec = r.publish_rec.as_ref();
         // `:39-50`, `:54`: a repo that does not publish, or whose publish lane is stopped.
         if r.mode != "queue.local" || r.unpublished || r.stopped {
-            self.go(Trigger::NothingToDo);
-            return;
-        }
-        if r.publish_rec.is_some() && rec.is_none() {
-            // The record still names the PR this machine retired: the next one is in flight.
             self.go(Trigger::NothingToDo);
             return;
         }
@@ -562,19 +559,28 @@ impl Machine<'_> {
                 let idle = r.observed_at.saturating_sub(rec.opened);
                 self.page_no_run(&rec, idle, "CI started by dispatch");
             }
-            Settle::Retire | Settle::Supersede => {
-                self.go(Trigger::SettleRetireOrSupersede);
+            Settle::Retire => {
+                self.go(Trigger::SettleRetire);
+                self.retire(pr, "Retire");
+                self.open(r);
+            }
+            Settle::Supersede => {
+                self.go(Trigger::SettleSupersede);
                 if let (Some(rec), Pr::Open { ci, .. }) = (rec, &r.pr) {
                     if ci == "no_run" {
                         self.page_no_run(rec, r.observed_at.saturating_sub(rec.opened), &format!("superseded for {}", r.head_sha));
                     }
                 }
                 let branch = rec.map(|r| r.branch.clone()).unwrap_or_default();
-                self.rc.retired = Some(pr);
                 self.acts.push(Pub { pr, branch: branch.clone(), key: format!("{}/{branch}", self.repo), ..Pub::on(self.repo) }.act(CANCEL_RUNS));
                 self.acts.push(Pub { pr, branch, head: r.head_sha.clone(), base: r.forge_sha.clone().unwrap_or_default(), key: format!("{}/{pr}", self.repo), ..Pub::on(self.repo) }.act(PR_CLOSE));
             }
         }
+    }
+
+    /// `publish.retire` for PR `pr`; `action` is the word the landing log carries.
+    fn retire(&mut self, pr: u64, action: &str) {
+        self.acts.push(Pub { pr, subject: action.into(), key: format!("{}/{pr}/retire", self.repo), ..Pub::on(self.repo) }.act(RETIRE));
     }
 
     /// `publish.settle` for PR `pr` at `head`: the act reads the PR's state and CI again, so it
@@ -627,11 +633,11 @@ impl Machine<'_> {
             }
             (State::Superseding, PR_CLOSE, true) => {
                 self.go(Trigger::EffectSucceeded);
+                self.retire(p.pr, "Supersede");
                 self.acts.push(Pub { key: format!("{}/branch/{}", self.repo, p.head), ..p.clone() }.act(PUSH_BRANCH));
             }
             (State::Superseding, PR_CLOSE, false) => {
                 self.go(Trigger::EffectFailed);
-                self.rc.retired = None;
             }
             (State::Opening, PUSH_BRANCH, true) => {
                 self.go(Trigger::PushSucceeded);
@@ -879,6 +885,26 @@ pub mod edge {
         let p = input(spec)?;
         let r = forge_call(&root(&registry()?, &p.repo)?, "pr-close", &[&p.pr.to_string()], None)?;
         r.ok().then(|| "{}".to_string()).ok_or_else(|| format!("pr-close {}: {}", p.pr, r.err.trim()))
+    }
+
+    /// Removes the record only while it still names `p.pr`, under the queue lock: a missing record
+    /// or one naming another PR is left alone, so a retry never deletes the next PR's record.
+    pub fn retire(e: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
+        use queue::lock::Acquire;
+        let p = input(spec)?;
+        let _held = match queue::lock::try_lock_as(&e.world.queue_dir, &p.repo, "publish.retire") {
+            Acquire::Held(g) => g,
+            Acquire::Busy => return Err(format!("{}: another queue operation holds the lock", p.repo)),
+            Acquire::Unopenable => return Err(format!("{}: cannot open the queue lock", p.repo)),
+        };
+        let path = e.world.queue_dir.join(&p.repo).join("publish");
+        let Some(kv) = queue::records::read_kv(&path)? else { return Ok("{}".into()) };
+        if kv.get("pr").map(|v| v.trim_start_matches('#')) != Some(p.pr.to_string().as_str()) {
+            return Ok("{}".into());
+        }
+        std::fs::remove_file(&path).map_err(|e| format!("{}: cannot remove the publish record: {e}", p.repo))?;
+        queue::ops::landing_log(&e.world.run_dir, &format!("QUEUE PUBLISH_SUPERSEDED {} repo={} pr={} action={}", spira_config::vtime::now_epoch(), p.repo, p.pr, p.subject));
+        Ok("{}".into())
     }
 
     pub fn cancel_runs(_: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
