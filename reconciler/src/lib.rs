@@ -3363,11 +3363,25 @@ mod tests {
         let (checks, mails) = listing_pass(&host, 1000, &mut state, &mut alerted);
         assert_eq!(checks.len(), 1);
         assert!(mails.is_empty(), "the first unobservable pass is held back");
-        let (_, mails) = listing_pass(&host, 1100, &mut state, &mut alerted);
+        let (checks, mails) = listing_pass(&host, 1100, &mut state, &mut alerted);
+        assert_eq!(checks.iter().map(|c| c.key.as_str()).collect::<Vec<_>>(), ["units:listing"]);
         let subjects: Vec<&str> = mails.iter().map(|m| m.subject.as_str()).collect();
         assert_eq!(subjects, ["RECONCILER: units:listing — unobservable: ListUnits: no reply within 5s; 21 units not observed"]);
-        let (_, mails) = listing_pass(&host, 1200, &mut state, &mut alerted);
+        let (checks, mails) = listing_pass(&host, 1200, &mut state, &mut alerted);
+        assert_eq!(checks.iter().map(|c| c.key.as_str()).collect::<Vec<_>>(), ["units:listing"]);
         assert!(mails.is_empty(), "a streak pages once");
+    }
+
+    #[test]
+    fn the_unobserved_count_leaves_out_skipped_units() {
+        let host = Arc::new(Listing::new(21));
+        host.fail();
+        let mut cfg = test_config();
+        cfg.host = Some(host.clone());
+        cfg.skip_units = vec!["spira-u0.timer".into(), "spira-u1.service".into()];
+        let checks = observe_units(&cfg);
+        assert_eq!(checks.len(), 1);
+        assert!(matches!(&checks[0].raw, RawStatus::Unobservable { reason } if reason.ends_with("; 19 units not observed")));
     }
 
     #[test]

@@ -401,6 +401,15 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_unit_listing_that_cannot_reach_the_bus_is_an_error_from_the_one_cached_read() {
+        let d = testkit::TempDir::new("host-listing");
+        let mut host = RuntimeHost::new(World::default(), Forge::default(), None, d.path().to_path_buf(), String::new(), 0, 0, String::new(), Default::default());
+        host.bus = Some(d.join("no-such-bus").display().to_string());
+        let listing = host.unit_listing().unwrap_err();
+        assert_eq!(host.unit_state("is-enabled", "spira-x.timer").unwrap_err(), listing);
+    }
+
+    #[test]
     fn spira_branches_are_read_from_loose_and_packed_refs_and_through_a_worktrees_gitdir() {
         let d = testkit::TempDir::new("host-branches");
         let common = d.join("main/.git");
