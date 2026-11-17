@@ -121,7 +121,7 @@ mod tests {
     #[test]
     fn clients_are_told_from_the_server_and_flag_calls() {
         let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        assert!(is_client(&v(&["/usr/bin/sccache", "rustc", "--crate-name", "x"])));
+        assert!(is_client(&v(&["usr/bin/sccache", "rustc", "--crate-name", "x"])));
         assert!(!is_client(&v(&["sccache"])));
         assert!(!is_client(&v(&["sccache", "--show-stats"])));
         assert!(!is_client(&v(&["rustc", "x"])));
@@ -138,7 +138,7 @@ mod tests {
         assert_eq!(s.rustc, 0);
         assert!(wedged(&s, 600));
         assert!(!wedged(&scan(&procr, 0), 600), "a fresh client is not stuck");
-        fake(&procr, 12, &["/x/rustc", "--crate-name", "a"]);
+        fake(&procr, 12, &["x/rustc", "--crate-name", "a"]);
         assert!(!wedged(&scan(&procr, i64::MAX / 4), 600), "a running rustc means work is progressing");
     }
 }

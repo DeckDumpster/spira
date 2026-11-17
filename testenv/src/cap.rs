@@ -306,10 +306,10 @@ pub fn arm(cap: Cap, ledger: Option<PathBuf>) -> Armed {
 
 fn children(pid: u32) -> Vec<u32> {
     let mut out = Vec::new();
-    let Ok(rd) = std::fs::read_dir("/proc") else { return out };
+    let Ok(rd) = std::fs::read_dir(system_paths::PROC) else { return out };
     for e in rd.flatten() {
         let Some(p) = e.file_name().to_str().and_then(|n| n.parse::<u32>().ok()) else { continue };
-        let Ok(stat) = std::fs::read_to_string(format!("/proc/{p}/stat")) else { continue };
+        let Ok(stat) = std::fs::read_to_string(format!("{}/{p}/stat", system_paths::PROC)) else { continue };
         let ppid = stat.rsplit_once(')').and_then(|(_, r)| r.split_whitespace().nth(1)).and_then(|v| v.parse::<u32>().ok());
         if ppid == Some(pid) {
             out.push(p);
@@ -379,22 +379,22 @@ pub fn breaches(
 }
 
 fn start_ticks(pid: u32) -> Option<u64> {
-    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let stat = std::fs::read_to_string(format!("{}/{pid}/stat", system_paths::PROC)).ok()?;
     stat.rsplit_once(')')?.1.split_whitespace().nth(19)?.parse().ok()
 }
 
 fn argv_of(pid: u32) -> Option<Vec<String>> {
-    let raw = std::fs::read(format!("/proc/{pid}/cmdline")).ok()?;
+    let raw = std::fs::read(format!("{}/{pid}/cmdline", system_paths::PROC)).ok()?;
     Some(raw.split(|b| *b == 0).filter(|s| !s.is_empty()).map(|s| String::from_utf8_lossy(s).into_owned()).collect())
 }
 
 pub fn live() -> Vec<Proc> {
     let hz = unsafe { libc::sysconf(libc::_SC_CLK_TCK) }.max(1) as u64;
-    let up = std::fs::read_to_string("/proc/uptime")
+    let up = std::fs::read_to_string(format!("{}/uptime", system_paths::PROC))
         .ok()
         .and_then(|s| s.split_whitespace().next().and_then(|v| v.parse::<f64>().ok()))
         .unwrap_or(0.0);
-    let Ok(rd) = std::fs::read_dir("/proc") else { return Vec::new() };
+    let Ok(rd) = std::fs::read_dir(system_paths::PROC) else { return Vec::new() };
     rd.flatten()
         .filter_map(|e| e.file_name().to_str().and_then(|n| n.parse::<u32>().ok()))
         .filter_map(|pid| {
@@ -460,13 +460,13 @@ mod tests {
     #[test]
     fn only_runs_past_cap_plus_grace_are_breaches() {
         let procs = [
-            p(1, 900 + GRACE, &["/bin/testenv", "b", "r"]),
-            p(2, 900 + GRACE + 1, &["/bin/testenv", "b", "r"]),
+            p(1, 900 + GRACE, &["bin/testenv", "b", "r"]),
+            p(2, 900 + GRACE + 1, &["bin/testenv", "b", "r"]),
             p(3, 350, &["testenv", "--deadline", "300", "--suites", "x", "b"]),
             p(4, 300 + SETTLE + GRACE + 1, &["testenv", "--deadline=300", "b"]),
             p(5, 99_999, &["testenv", "wait", "out"]),
             p(6, 99_999, &["sleep", "9999"]),
-            p(7, 99_999, &["/bin/testenv-cap", "watch"]),
+            p(7, 99_999, &["bin/testenv-cap", "watch"]),
         ];
         let got: Vec<(u32, &str)> = breaches(&procs, 900, 300, 0, 0, GRACE, None).iter().map(|b| (b.proc.pid, b.tier)).collect();
         assert_eq!(got, vec![(2, "suite"), (4, "gate")]);

@@ -49,6 +49,6 @@ mod tests {
     fn the_root_filesystem_reads_and_a_missing_path_does_not() {
         let u = usage("/").expect("statvfs /");
         assert!(u.size_mib > 0 && (0..=100).contains(&u.used_pct));
-        assert!(usage("/does/not/exist").is_none());
+        assert!(usage("does/not/exist").is_none());
     }
 }

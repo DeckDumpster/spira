@@ -426,7 +426,7 @@ fn extract_kv(line: &str, key: &str) -> Option<String> {
 
 /// `/tmp`'s Use% as `df /tmp` printed it (`83%`), `?` when it cannot be read.
 fn tmp_pct() -> String {
-    crate::fsstat::usage("/tmp").map_or_else(|| "?".to_string(), |u| format!("{}%", u.used_pct))
+    crate::fsstat::usage(system_paths::TMP).map_or_else(|| "?".to_string(), |u| format!("{}%", u.used_pct))
 }
 
 fn czar_row(env: &Env, label: &str, tag: &str) -> String {

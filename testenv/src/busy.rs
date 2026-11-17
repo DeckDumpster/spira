@@ -18,10 +18,10 @@ fn resolves_under(link: &Path, dir: &Path) -> bool {
 /// landed-ness check already decided.
 pub fn worktree_busy(dir: &Path) -> bool {
     let Ok(dir) = dir.canonicalize() else { return false };
-    let Ok(procs) = fs::read_dir("/proc") else { return false };
+    let Ok(procs) = fs::read_dir(system_paths::PROC) else { return false };
     for e in procs.flatten() {
         let Some(pid) = e.file_name().to_str().and_then(|s| s.parse::<u32>().ok()) else { continue };
-        let base = Path::new("/proc").join(pid.to_string());
+        let base = Path::new(system_paths::PROC).join(pid.to_string());
         if resolves_under(&base.join("cwd"), &dir) {
             return true;
         }

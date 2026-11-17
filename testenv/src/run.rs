@@ -722,7 +722,7 @@ impl Drop for ContainerGuard<'_> {
 fn pid_alive(pid: &str) -> bool {
     !pid.is_empty()
         && pid.chars().all(|c| c.is_ascii_digit())
-        && Path::new("/proc").join(pid).exists()
+        && Path::new(system_paths::PROC).join(pid).exists()
 }
 
 #[derive(Debug, PartialEq)]
@@ -2198,7 +2198,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
     let setup_secs = t_batch.elapsed().as_secs();
 
     // ---- schedule ------------------------------------------------------------------
-    let meminfo = util::read("/proc/meminfo");
+    let meminfo = util::read(&format!("{}/meminfo", system_paths::PROC));
     let mx = schedule::maxpar(&MaxparInputs {
         nproc: util::nproc(),
         ceiling: s.maxpar_ceiling,
@@ -2302,7 +2302,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
     let psi_threshold = s.psi_threshold;
     let psi = move || {
         psi_threshold > 0.0
-            && util::psi_some_avg10(&util::read("/proc/pressure/memory"))
+            && util::psi_some_avg10(&util::read(&format!("{}/memory", system_paths::PROC_PRESSURE)))
                 .is_some_and(|v| v > psi_threshold)
     };
     let out_fn = deps.out;
@@ -2341,7 +2341,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
             left.as_secs()
         ));
     }
-    let cpu0 = util::cpu_jiffies(&util::read("/proc/stat"));
+    let cpu0 = util::cpu_jiffies(&util::read(&format!("{}/stat", system_paths::PROC)));
     let t_suites = Instant::now();
     let outcome = match (&sim_session, &sim_fixtures) {
         (Some(ss), Some(sf)) => {
@@ -2371,7 +2371,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
     }
     let suites_wall = t_suites.elapsed().as_secs();
     ph.mark("suites");
-    let cpu1 = util::cpu_jiffies(&util::read("/proc/stat"));
+    let cpu1 = util::cpu_jiffies(&util::read(&format!("{}/stat", system_paths::PROC)));
 
     if args.mode == Mode::Parallel {
         if let Some(peak) = session.cgroup_peak_mib() {
@@ -2926,7 +2926,7 @@ fn sweep_scratch(deps: &Deps) {
     let hours = var("SPIRA_SCRATCH_SWEEP_MIN_AGE_HOURS").and_then(|v| v.parse::<u64>().ok()).unwrap_or(24);
     let prefixes: Vec<&str> = prefixes.split_whitespace().collect();
     let gone = spira_config::scratch::sweep(
-        Path::new("/tmp"),
+        Path::new(system_paths::TMP),
         &prefixes,
         std::time::Duration::from_secs(hours * 3600),
         &spira_config::scratch::held_by_process,

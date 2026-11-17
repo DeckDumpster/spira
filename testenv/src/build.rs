@@ -90,10 +90,11 @@ pub fn is_enospc(stderr_tail: &str) -> bool {
 
 /// `oom_kill` from this process's cgroup `memory.events`.
 pub fn cgroup_oom_kills() -> Option<u64> {
-    let cg = std::fs::read_to_string("/proc/self/cgroup").ok()?;
+    let cg = std::fs::read_to_string(format!("{}/cgroup", system_paths::PROC_SELF)).ok()?;
     let rel = cg.lines().find_map(|l| l.strip_prefix("0::"))?.trim();
     let ev = std::fs::read_to_string(format!(
-        "/sys/fs/cgroup/{}/memory.events",
+        "{}/{}/memory.events",
+        system_paths::SYS_FS_CGROUP,
         rel.trim_start_matches('/')
     ))
     .ok()?;
@@ -299,10 +300,10 @@ mod tests {
     #[test]
     fn a_warm_slot_is_passed_as_target_dir_never_as_an_environment_variable() {
         let args = |c: &Command| c.get_args().map(|a| a.to_string_lossy().into_owned()).collect::<Vec<_>>();
-        let cmd = cargo_build_command(Path::new("/w"), "dev", Some(Path::new("/warm/slot.3")));
-        assert!(args(&cmd).windows(2).any(|w| w == ["--target-dir", "/warm/slot.3"]), "{:?}", args(&cmd));
+        let cmd = cargo_build_command(Path::new("w"), "dev", Some(Path::new("warm/slot.3")));
+        assert!(args(&cmd).windows(2).any(|w| w == ["--target-dir", "warm/slot.3"]), "{:?}", args(&cmd));
         assert!(cmd.get_envs().all(|(k, v)| k != "CARGO_TARGET_DIR" || v.is_none()), "an env CARGO_TARGET_DIR splits the cache per slot");
-        let cold = cargo_build_command(Path::new("/w"), "dev", None);
+        let cold = cargo_build_command(Path::new("w"), "dev", None);
         assert!(!args(&cold).iter().any(|a| a == "--target-dir"));
     }
 
@@ -373,8 +374,8 @@ mod tests {
         assert_eq!(profile_dir("dev"), "debug");
         assert_eq!(profile_dir("test"), "debug");
         assert_eq!(
-            artifacts_dir(Path::new("/wt"), "dev"),
-            PathBuf::from("/wt/target/debug")
+            artifacts_dir(Path::new("wt"), "dev"),
+            PathBuf::from("wt/target/debug")
         );
     }
 }

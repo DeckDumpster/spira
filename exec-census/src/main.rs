@@ -29,7 +29,7 @@ fn run() -> Result<(), String> {
         }
     }
     let sink = spira_config::process::metrics_sink("exec-census");
-    let fs = ProcFs::new("/proc");
+    let fs = ProcFs::new(system_paths::PROC);
     let mut sampler = Sampler::new();
     let mut window = Window::default();
     let mut started = Instant::now();

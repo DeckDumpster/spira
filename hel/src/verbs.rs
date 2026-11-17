@@ -21,7 +21,7 @@ pub fn holder_alive(id: &str) -> Result<bool, String> {
 /// worktree, through `units`, then wait for them to leave (20 polls, 500 ms apart).
 pub fn stop_holder(id: &str, units: &dyn Units) -> Result<(), String> {
     let run = real::run_dir()?;
-    stop_holder_in(Path::new("/proc"), &run, id, units, 20, &|| std::thread::sleep(std::time::Duration::from_millis(500)) /* waits-on: worktree occupants exiting; cap 20 polls */)
+    stop_holder_in(Path::new(system_paths::PROC), &run, id, units, 20, &|| std::thread::sleep(std::time::Duration::from_millis(500)) /* waits-on: worktree occupants exiting; cap 20 polls */)
 }
 
 /// [`stop_holder`] over a given `/proc` and run directory, for tests.

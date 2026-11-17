@@ -195,19 +195,19 @@ mod lib_seam_tests {
     use std::rc::Rc;
 
     fn seam(log: Rc<RefCell<Vec<Vec<String>>>>) -> LibSeam {
-        seam_in(log, PathBuf::from("/nonexistent/run"))
+        seam_in(log, PathBuf::from("nonexistent/run"))
     }
 
     fn seam_in(log: Rc<RefCell<Vec<Vec<String>>>>, run: PathBuf) -> LibSeam {
         let cfg: CfgFn = Box::new(move |k: &str| match k {
             "SPIRA_GROOM_GATE_LABEL" => Ok("gate".into()),
-            "SPIRA_DB" => Ok("/fixture/db".into()),
+            "SPIRA_DB" => Ok("fixture/db".into()),
             "SPIRA_RUN" => Ok(run.to_string_lossy().into_owned()),
             other => Err(format!("{other} is not declared")),
         });
         let claim: ClaimFn = Box::new(move |argv: &[String]| log.borrow_mut().push(argv.to_vec()));
         // A lib.sh that does not exist: nothing below may source it.
-        LibSeam::with(PathBuf::from("/nonexistent/lib.sh"), cfg, claim)
+        LibSeam::with(PathBuf::from("nonexistent/lib.sh"), cfg, claim)
     }
 
     #[test]
@@ -222,7 +222,7 @@ mod lib_seam_tests {
         let log: Rc<RefCell<Vec<Vec<String>>>> = Rc::default();
         let s = seam(Rc::clone(&log));
         s.bump_poison_cleared("sp-1", "work-fault-triage").unwrap();
-        let want: Vec<Vec<String>> = vec![["write-event", "sp-1", "poison.cleared", "work-fault-triage", "--db", "/fixture/db"].map(String::from).to_vec()];
+        let want: Vec<Vec<String>> = vec![["write-event", "sp-1", "poison.cleared", "work-fault-triage", "--db", "fixture/db"].map(String::from).to_vec()];
         assert_eq!(*log.borrow(), want);
     }
 

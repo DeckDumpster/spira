@@ -50,7 +50,7 @@ impl Default for Fake {
             handwritten_out: RefCell::new(String::new()),
             deliberate_out: RefCell::new(String::new()),
             fold_map: RefCell::new(String::new()),
-            repo_root: RefCell::new(Some("/repo".into())),
+            repo_root: RefCell::new(Some("repo".into())),
             landed: RefCell::new(Default::default()),
             branches: RefCell::new(Vec::new()),
             host_epoch: RefCell::new(1_000_000),
@@ -262,8 +262,8 @@ fn no_watermark_file_falls_back_to_all_time_format() {
 fn unreadable_watermark_warns_and_falls_back() {
     let f = Fake::default();
     f.clean_clock();
-    f.set("SPIRA_RUN", "/run");
-    f.files.borrow_mut().insert(PathBuf::from("/run/mimir.watermark"), "not-a-number".into());
+    f.set("SPIRA_RUN", "run");
+    f.files.borrow_mut().insert(PathBuf::from("run/mimir.watermark"), "not-a-number".into());
     f.set_events(None, "raw-rows");
     f.set_count("raw-rows", "1 1 2 sp-reclaim\n");
     run(&f, false);
@@ -275,8 +275,8 @@ fn unreadable_watermark_warns_and_falls_back() {
 fn valid_watermark_uses_cluster_merge() {
     let f = Fake::default();
     f.clean_clock();
-    f.set("SPIRA_RUN", "/run");
-    f.files.borrow_mut().insert(PathBuf::from("/run/mimir.watermark"), "1700000000".into());
+    f.set("SPIRA_RUN", "run");
+    f.files.borrow_mut().insert(PathBuf::from("run/mimir.watermark"), "1700000000".into());
     f.set_events(None, "all-rows");
     f.set_events(Some(1_700_000_000), "since-rows");
     f.set_count("all-rows", "5 5 9 sp-recur-suite-red\n");
@@ -512,8 +512,8 @@ fn with_a_watermark_a_stale_class_ranks_last_with_zero_since_and_its_all_time_co
     let f = Fake::default();
     f.real_pipeline.set(true);
     f.clean_clock();
-    f.set("SPIRA_RUN", "/run");
-    f.files.borrow_mut().insert(PathBuf::from("/run/mimir.watermark"), "5000".into());
+    f.set("SPIRA_RUN", "run");
+    f.files.borrow_mut().insert(PathBuf::from("run/mimir.watermark"), "5000".into());
     let old = "| recurred | old | a | 1000 |\n| recurred | old | b | 2000 |\n| recurred | old | c | 3000 |\n";
     f.set_events(None, &format!("{old}| recurred | live | d | 6000 |\n"));
     f.set_events(Some(5000), "| recurred | live | d | 6000 |\n");

@@ -595,20 +595,20 @@ mod tests {
 
     #[test]
     fn no_flags_resolve_every_path_from_the_config() {
-        let cfg = cfg_of(&[("SPIRA_DB", "/cfg/db"), ("SPIRA_QUEUE_DIR", "/cfg/q"), ("SPIRA_BD", "/cfg/bd")]);
+        let cfg = cfg_of(&[("SPIRA_DB", "cfg/db"), ("SPIRA_QUEUE_DIR", "cfg/q"), ("SPIRA_BD", "cfg/bd")]);
         let a = parse_args_with(&argv("--repo demo --dry-run"), &cfg).unwrap();
-        assert_eq!(a.bd_db, "/cfg/db");
-        assert_eq!(a.bd_bin, "/cfg/bd");
-        assert_eq!(a.queue_dir, PathBuf::from("/cfg/q"));
+        assert_eq!(a.bd_db, "cfg/db");
+        assert_eq!(a.bd_bin, "cfg/bd");
+        assert_eq!(a.queue_dir, PathBuf::from("cfg/q"));
         assert!(a.home.is_none());
     }
 
     #[test]
     fn a_flag_overrides_the_config() {
-        let cfg = cfg_of(&[("SPIRA_DB", "/cfg/db"), ("SPIRA_QUEUE_DIR", "/cfg/q")]);
-        let a = parse_args_with(&argv("--bd-db /flag/db --queue-dir /flag/q --bd-bin /flag/bd"), &cfg).unwrap();
-        assert_eq!((a.bd_db.as_str(), a.bd_bin.as_str()), ("/flag/db", "/flag/bd"));
-        assert_eq!(a.queue_dir, PathBuf::from("/flag/q"));
+        let cfg = cfg_of(&[("SPIRA_DB", "cfg/db"), ("SPIRA_QUEUE_DIR", "cfg/q")]);
+        let a = parse_args_with(&argv("--bd-db flag/db --queue-dir flag/q --bd-bin flag/bd"), &cfg).unwrap();
+        assert_eq!((a.bd_db.as_str(), a.bd_bin.as_str()), ("flag/db", "flag/bd"));
+        assert_eq!(a.queue_dir, PathBuf::from("flag/q"));
     }
 
     #[test]
@@ -621,7 +621,7 @@ mod tests {
 
     #[test]
     fn every_bead_needs_no_home() {
-        let a = parse_args_with(&argv("--every-bead"), &cfg_of(&[("SPIRA_DB", "/d"), ("SPIRA_QUEUE_DIR", "/q")])).unwrap();
+        let a = parse_args_with(&argv("--every-bead"), &cfg_of(&[("SPIRA_DB", "d"), ("SPIRA_QUEUE_DIR", "q")])).unwrap();
         assert!(a.every_bead && a.home.is_none());
     }
 

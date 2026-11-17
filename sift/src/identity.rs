@@ -94,7 +94,7 @@ pub fn gap(own: &str, pages: &BTreeMap<String, Page>, dir: &Path, diff: &str) ->
     for l in diff.lines() {
         if let Some(p) = l.strip_prefix("+++ ") {
             path = p.strip_prefix("b/").unwrap_or(p).to_string();
-            skip = p == "/dev/null" || exempt.iter().any(|v| path.starts_with(v.as_str()));
+            skip = p == system_paths::DEV_NULL || exempt.iter().any(|v| path.starts_with(v.as_str()));
             if !skip {
                 if let Some((repo, term)) = owner(own, pages, &path) {
                     hits.push(format!("{path}: path: '{term}' belongs to {repo}"));
@@ -139,31 +139,31 @@ mod tests {
 
     #[test]
     fn a_term_another_repo_owns_fails_naming_it_and_the_override() {
-        let g = gap("alpha", &pages(), Path::new("/brain/projects"), ADD).expect("a hit");
+        let g = gap("alpha", &pages(), Path::new("brain/projects"), ADD).expect("a hit");
         assert!(g.contains("web/app.ts:5: 'Wibblet' belongs to beta"), "{g}");
-        assert!(g.contains("/brain/projects/alpha/identity.md"), "{g}");
+        assert!(g.contains("brain/projects/alpha/identity.md"), "{g}");
     }
 
     #[test]
     fn the_owning_repo_and_one_that_allows_the_term_pass() {
-        assert_eq!(gap("beta", &pages(), Path::new("/brain/projects"), ADD), None);
+        assert_eq!(gap("beta", &pages(), Path::new("brain/projects"), ADD), None);
         let zorb = ADD.replace("wibblet", "ZORBLAX");
-        assert_eq!(gap("beta", &pages(), Path::new("/brain/projects"), &zorb), None);
-        assert!(gap("alpha", &pages(), Path::new("/brain/projects"), &zorb).is_none(), "alpha owns Zorblax");
+        assert_eq!(gap("beta", &pages(), Path::new("brain/projects"), &zorb), None);
+        assert!(gap("alpha", &pages(), Path::new("brain/projects"), &zorb).is_none(), "alpha owns Zorblax");
     }
 
     #[test]
     fn a_vendored_path_is_exempt_and_an_added_path_is_scanned() {
         let kit = ADD.replace("web/app.ts", "kit/app.ts");
-        assert_eq!(gap("alpha", &pages(), Path::new("/brain/projects"), &kit), None);
+        assert_eq!(gap("alpha", &pages(), Path::new("brain/projects"), &kit), None);
         let named = "--- /dev/null\n+++ b/web/wibblet.ts\n@@ -0,0 +1 @@\n+ok\n";
-        assert!(gap("alpha", &pages(), Path::new("/brain/projects"), named).unwrap().contains("web/wibblet.ts: path: 'Wibblet' belongs to beta"));
+        assert!(gap("alpha", &pages(), Path::new("brain/projects"), named).unwrap().contains("web/wibblet.ts: path: 'Wibblet' belongs to beta"));
     }
 
     #[test]
     fn removed_lines_and_clean_additions_pass() {
         let d = "--- a/f\n+++ b/f\n@@ -1 +1 @@\n-wibblet\n+fine\n";
-        assert_eq!(gap("alpha", &pages(), Path::new("/brain/projects"), d), None);
+        assert_eq!(gap("alpha", &pages(), Path::new("brain/projects"), d), None);
     }
 
     #[test]

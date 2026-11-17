@@ -368,7 +368,7 @@ mod tests {
     #[test]
     fn target_volumes_are_measured_only_when_their_filesystem_could_exceed_the_cap() {
         let listing = format!(
-            "[{{\"Name\":\"{UNIT_TARGET_VOLUME}-a\",\"Mountpoint\":\"/v/a\",\"MountCount\":1}},{{\"Name\":\"{UNIT_TARGET_VOLUME}-b\",\"Mountpoint\":\"/v/b\",\"MountCount\":1}},{{\"Name\":\"other\",\"Mountpoint\":\"/v/o\"}}]"
+            "[{{\"Name\":\"{UNIT_TARGET_VOLUME}-a\",\"Mountpoint\":\"v/a\",\"MountCount\":1}},{{\"Name\":\"{UNIT_TARGET_VOLUME}-b\",\"Mountpoint\":\"v/b\",\"MountCount\":1}},{{\"Name\":\"other\",\"Mountpoint\":\"v/o\"}}]"
         );
         let podman = |a: &[String]| if a[0] == "volume" && a[1] == "ls" { (0, listing.clone()) } else { (0, String::new()) };
         let log = |_: &str| {};
@@ -383,9 +383,9 @@ mod tests {
         st.sweep_target_volumes_with(0, &|_| None, &walk);
         assert!(walked.borrow().is_empty(), "the cap is off");
         st.sweep_target_volumes_with(100, &|_| Some((1, 500)), &walk);
-        assert_eq!(*walked.borrow(), ["/v/a", "/v/b"], "over the bound: each unit volume is measured");
+        assert_eq!(*walked.borrow(), ["v/a", "v/b"], "over the bound: each unit volume is measured");
         walked.borrow_mut().clear();
-        st.sweep_target_volumes_with(100, &|p| (p != Path::new("/v/b")).then_some((1, 5)), &walk);
+        st.sweep_target_volumes_with(100, &|p| (p != Path::new("v/b")).then_some((1, 5)), &walk);
         assert_eq!(walked.borrow().len(), 2, "an unprobed filesystem leaves no bound");
     }
 

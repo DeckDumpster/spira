@@ -189,21 +189,21 @@ mod tests {
         std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o444);
         std::fs::set_permissions(&target, perms).unwrap();
 
-        let found = which_in("lib.sh", &format!("/does/not/exist:{}", d.display()));
+        let found = which_in("lib.sh", &format!("does/not/exist:{}", d.display()));
         assert_eq!(found, Some(target.to_string_lossy().into_owned()));
     }
 
     #[test]
     fn which_returns_none_when_not_on_any_path_entry() {
-        let found = which_in("definitely-not-a-real-tool-name.sh", "/does/not/exist:/also/not/here");
+        let found = which_in("definitely-not-a-real-tool-name.sh", "does/not/exist:/also/not/here");
         assert_eq!(found, None);
     }
 
     #[test]
     fn resolve_prefers_the_override() {
         assert_eq!(
-            resolve(Some("/x/incident.sh".to_string())),
-            Some("/x/incident.sh".to_string())
+            resolve(Some("x/incident.sh".to_string())),
+            Some("x/incident.sh".to_string())
         );
     }
 
@@ -224,6 +224,6 @@ mod tests {
 
     #[test]
     fn is_usable_false_for_a_missing_path() {
-        assert!(!is_usable("/does/not/exist/incident.sh"));
+        assert!(!is_usable("does/not/exist/incident.sh"));
     }
 }

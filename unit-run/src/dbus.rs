@@ -364,7 +364,8 @@ pub fn bus_path() -> Result<String, String> {
 }
 
 fn uid() -> Result<u32, String> {
-    let s = std::fs::read_to_string("/proc/self/status").map_err(|e| format!("/proc/self/status: {e}"))?;
+    let status = format!("{}/status", system_paths::PROC_SELF);
+    let s = std::fs::read_to_string(&status).map_err(|e| format!("{status}: {e}"))?;
     s.lines()
         .find_map(|l| l.strip_prefix("Uid:"))
         .and_then(|l| l.split_whitespace().next())
@@ -525,7 +526,7 @@ mod tests {
     fn a_truncated_message_is_an_error_not_a_panic() {
         let mut b = Vec::new();
         put_str(&mut b, "org.freedesktop.systemd1.Unit");
-        let raw = signal("/p", "sa{sv}as", &b);
+        let raw = signal("/p", "sa{sv}as", &b); // not a path: a D-Bus object path
         assert!(decode(&raw).is_err());
         assert!(decode(&raw[..raw.len() - 3]).is_err());
         assert!(decode(&raw[..10]).is_err());
@@ -544,8 +545,8 @@ mod tests {
     fn a_one_string_call_is_the_general_encoder_with_signature_s() {
         let mut body = Vec::new();
         put_str(&mut body, "x");
-        assert_eq!(encode_call(4, "d", "/p", "i", "M", Some("x")), encode_call_with(4, "d", "/p", "i", "M", "s", &body));
-        assert_eq!(encode_call(4, "d", "/p", "i", "M", None), encode_call_with(4, "d", "/p", "i", "M", "", &[]));
+        assert_eq!(encode_call(4, "d", "/p", "i", "M", Some("x")), encode_call_with(4, "d", "/p", "i", "M", "s", &body)); // not a path: a D-Bus object path
+        assert_eq!(encode_call(4, "d", "/p", "i", "M", None), encode_call_with(4, "d", "/p", "i", "M", "", &[])); // not a path: a D-Bus object path
     }
 
     #[test]
@@ -596,7 +597,7 @@ mod tests {
             b.read_exact(&mut rest).unwrap();
             let m = decode(&[head.to_vec(), rest].concat()).unwrap();
             let mut reply_body = Vec::new();
-            put_str(&mut reply_body, "/job/1");
+            put_str(&mut reply_body, "/job/1"); // not a path: a D-Bus object path
             let mut fields = Vec::new();
             align(&mut fields, 8);
             fields.extend_from_slice(&[5, 1, b'u', 0]);
@@ -616,9 +617,9 @@ mod tests {
         let mut body = Vec::new();
         put_str(&mut body, "a");
         put_str(&mut body, "b");
-        assert_eq!(c.call_body("d", "/p", "i", "Two", "ss", &body).unwrap(), vec![Val::S("/job/1".into())]);
+        assert_eq!(c.call_body("d", "/p", "i", "Two", "ss", &body).unwrap(), vec![Val::S("/job/1".into())]); // not a path: a D-Bus object path
         let sent = peer.join().unwrap();
         assert_eq!((sent.member.as_deref(), sent.body.clone()), (Some("Two"), vec![Val::S("a".into()), Val::S("b".into())]));
-        assert!(c.call_body("d", "/p", "i", "Long", &"s".repeat(256), &[]).unwrap_err().contains("255"), "refused before anything is sent");
+        assert!(c.call_body("d", "/p", "i", "Long", &"s".repeat(256), &[]).unwrap_err().contains("255"), "refused before anything is sent"); // not a path: a D-Bus object path
     }
 }

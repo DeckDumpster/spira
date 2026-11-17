@@ -153,8 +153,8 @@ mod tests {
 
     #[test]
     fn a_current_symlink_and_its_sha_path_are_one_release() {
-        let show = "Id=a\nEnvironment=SPIRA_RELEASE=/r/current\n\nId=b\nEnvironment=SPIRA_RELEASE=/r/abc123\n";
-        let resolve = |p: &str| (p == "/r/current").then(|| "/r/abc123".to_string());
+        let show = "Id=a\nEnvironment=SPIRA_RELEASE=r/current\n\nId=b\nEnvironment=SPIRA_RELEASE=r/abc123\n";
+        let resolve = |p: &str| (p == "r/current").then(|| "r/abc123".to_string());
         let c = count_by_release(show, resolve, &NO_GRACE);
         assert_eq!((c.get("abc123"), c.len()), (Some(&2), 1));
         assert_eq!(count_by_release(show, |_| None, &NO_GRACE).len(), 2);

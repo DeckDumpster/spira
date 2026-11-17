@@ -279,6 +279,11 @@ mod tests {
         MapResolver(Box::leak(Box::new(m)))
     }
 
+    fn shipped_resolver(root: &testkit::TempDir) -> MapResolver<'static> {
+        let at = |rel: &str| root.join(rel).display().to_string();
+        resolver(&[("SPIRA_HOME", &at("h")), ("SPIRA_RUN", &at("run")), ("SPIRA_DB", &at("db")), ("SPIRA_CONCIERGE_INBOX", &at("run/inbox")), ("SPIRA_COCKPIT", &at("c"))])
+    }
+
     fn parse(text: &str, r: &dyn Resolver) -> (Vec<Row>, Vec<String>) {
         let mut rows = Vec::new();
         let mut seen = HashSet::new();
@@ -291,7 +296,8 @@ mod tests {
     fn the_shipped_manifest_alone_parses_and_names_no_inbox_keeper_row() {
         let path = spira_config::resolve::locate_home_for_process().unwrap().join("watchers");
         let text = std::fs::read_to_string(&path).unwrap();
-        let r = resolver(&[("SPIRA_HOME", "/h"), ("SPIRA_RUN", "/run"), ("SPIRA_DB", "/db"), ("SPIRA_CONCIERGE_INBOX", "/run/inbox"), ("SPIRA_COCKPIT", "/c")]);
+        let root = testkit::TempDir::new("watchd-manifest");
+        let r = shipped_resolver(&root);
         let (rows, faults) = parse(&text, &r);
         assert!(faults.is_empty(), "{faults:?}");
         assert!(rows.iter().any(|r| r.name == "concierge-inbox"), "positive control: rows were parsed");
@@ -305,7 +311,8 @@ mod tests {
     fn the_shipped_manifest_has_no_daemon_rows() {
         let path = spira_config::resolve::locate_home_for_process().unwrap().join("watchers");
         let text = std::fs::read_to_string(&path).unwrap();
-        let r = resolver(&[("SPIRA_HOME", "/h"), ("SPIRA_RUN", "/run"), ("SPIRA_DB", "/db"), ("SPIRA_CONCIERGE_INBOX", "/run/inbox"), ("SPIRA_COCKPIT", "/c")]);
+        let root = testkit::TempDir::new("watchd-manifest");
+        let r = shipped_resolver(&root);
         let (rows, faults) = parse(&text, &r);
         assert!(faults.is_empty(), "{faults:?}");
         let daemons: Vec<&str> = rows.iter().filter(|r| r.kind == Kind::Daemon).map(|r| r.name.as_str()).collect();
@@ -436,7 +443,9 @@ mod tests {
 
     #[test]
     fn an_optional_row_whose_health_key_is_unset_becomes_off() {
-        let r = resolver(&[("SPIRA_VIEW", "/usr/bin/view")]);
+        let root = testkit::TempDir::new("watchd-view");
+        let view = root.join("usr/bin/view").display().to_string();
+        let r = resolver(&[("SPIRA_VIEW", &view)]);
         let (rows, faults) = parse("?view|daemon|@SPIRA_VIEW@ watch|watchd health-ids @SPIRA_VIEW@ @SPIRA_VIEW_SESSION@\n", &r);
         assert!(faults.is_empty());
         assert_eq!(rows[0].kind, Kind::Off);
@@ -445,12 +454,14 @@ mod tests {
 
     #[test]
     fn placeholders_expand_when_set() {
-        let r = resolver(&[("SPIRA_VIEW", "/usr/bin/view"), ("SPIRA_VIEW_SESSION", "ops")]);
+        let root = testkit::TempDir::new("watchd-view");
+        let view = root.join("usr/bin/view").display().to_string();
+        let r = resolver(&[("SPIRA_VIEW", &view), ("SPIRA_VIEW_SESSION", "ops")]);
         let (rows, faults) = parse("?view|daemon|@SPIRA_VIEW@ watch|watchd health-ids @SPIRA_VIEW@ @SPIRA_VIEW_SESSION@\n", &r);
         assert!(faults.is_empty());
         assert_eq!(rows[0].kind, Kind::Daemon);
-        assert_eq!(rows[0].target, "/usr/bin/view watch");
-        assert_eq!(rows[0].health, "watchd health-ids /usr/bin/view ops");
+        assert_eq!(rows[0].target, format!("{view} watch"));
+        assert_eq!(rows[0].health, format!("watchd health-ids {view} ops"));
     }
 
     #[test]

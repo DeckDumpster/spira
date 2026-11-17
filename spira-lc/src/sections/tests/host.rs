@@ -74,7 +74,7 @@ fn secs(r: &Rig<MemBackend>) -> u64 {
 }
 
 fn cfg() -> Cfg {
-    Cfg { scratch: "/scratch".into(), worktrees: "/worktrees".into(), root: "/".into(), psi_dir: "/psi".into() }
+    Cfg { scratch: "scratch".into(), worktrees: "worktrees".into(), root: "/".into(), psi_dir: "psi".into() }
 }
 
 /// The 2026-10-31 host samples: scratch 15% free, the worktree disk 94% full, root 40% free, and
@@ -82,14 +82,14 @@ fn cfg() -> Cfg {
 fn day_1031() -> Sample {
     let usage = |p: &str| {
         let (avail_mib, size_mib) = match p {
-            "/scratch" => (1500, 10_000),
-            "/worktrees" => (600, 10_000),
+            "scratch" => (1500, 10_000),
+            "worktrees" => (600, 10_000),
             "/" => (4_000, 10_000),
             _ => return None,
         };
         Some(Usage { avail_mib, size_mib, used_pct: 100 - avail_mib * 100 / size_mib })
     };
-    let read = |p: &str| (p == "/psi/io").then(|| "some avg10=60.00 avg60=70.00 avg300=55.00 total=1\nfull avg10=70.00 avg60=77.00 avg300=52.00 total=2\n".to_string());
+    let read = |p: &str| (p == "psi/io").then(|| "some avg10=60.00 avg60=70.00 avg300=55.00 total=1\nfull avg10=70.00 avg60=77.00 avg300=52.00 total=2\n".to_string());
     hs::sample(&cfg(), &usage, &read)
 }
 

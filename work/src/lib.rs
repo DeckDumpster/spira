@@ -265,7 +265,7 @@ pub fn checks_log_line(l: &CheckLine) -> String {
 
 /// The 1-minute load average, as the kernel reports it.
 pub fn load1_now() -> Option<f64> {
-    std::fs::read_to_string("/proc/loadavg").ok()?.split_whitespace().next()?.parse().ok()
+    std::fs::read_to_string(format!("{}/loadavg", system_paths::PROC)).ok()?.split_whitespace().next()?.parse().ok()
 }
 
 /// What a pass of `work checks` is recorded against: the tip, the base the crates were selected
@@ -529,7 +529,7 @@ mod tests {
 
     use std::path::Path;
     fn rec_path() -> &'static Path {
-        Path::new("/g/rec.json")
+        Path::new("g/rec.json")
     }
 
     fn line<'a>(rc: Option<i32>, staged: bool, record: Option<&'a gate::unitrecord::UnitRecord>) -> CheckLine<'a> {
@@ -627,13 +627,13 @@ mod tests {
     #[test]
     fn the_record_token_becomes_the_runs_record_path() {
         let scope = Affected::Crates(vec!["a".into()]);
-        assert_eq!(check_argv("testenv --record {record} {affected}", &scope, "spira/sp-x", rec_path()).unwrap(), v(&["testenv", "--record", "/g/rec.json", "-p", "a"]));
+        assert_eq!(check_argv("testenv --record {record} {affected}", &scope, "spira/sp-x", rec_path()).unwrap(), v(&["testenv", "--record", "g/rec.json", "-p", "a"]));
     }
 
     #[test]
     fn a_checks_build_resolves_to_the_sessions_owned_build_directory() {
-        let root = std::path::Path::new("/w/sp-x");
-        let owned = std::path::Path::new("/srv/ssd-b/dwarf-build/dir.3");
+        let root = std::path::Path::new("w/sp-x");
+        let owned = std::path::Path::new("srv/ssd-b/dwarf-build/dir.3");
         assert_eq!(check_target(Some(owned.as_os_str().to_os_string()), root), owned, "the owned directory itself, never a second tree beneath it");
         assert_eq!(check_target(None, root), root.join("target"), "no session target: the worktree's own");
     }
@@ -693,10 +693,10 @@ mod tests {
 
     #[test]
     fn submit_carries_the_clients_build_dir_and_refuses_a_typed_one() {
-        let req = build_request_in("sp-3m1p9", "submit", &[], Some("deadbeef"), "a", None, Some("/b/dir.2")).unwrap();
-        assert_eq!(req, vec!["work", "sp-3m1p9", "submit", "--tip", "deadbeef", "--build-dir", "/b/dir.2", "--actor", "a"]);
-        let typed = vec!["--build-dir".to_string(), "/elsewhere".to_string()];
-        assert!(build_request_in("sp-3m1p9", "submit", &typed, Some("deadbeef"), "a", None, Some("/b/dir.2")).is_err());
+        let req = build_request_in("sp-3m1p9", "submit", &[], Some("deadbeef"), "a", None, Some("b/dir.2")).unwrap();
+        assert_eq!(req, vec!["work", "sp-3m1p9", "submit", "--tip", "deadbeef", "--build-dir", "b/dir.2", "--actor", "a"]);
+        let typed = vec!["--build-dir".to_string(), "elsewhere".to_string()];
+        assert!(build_request_in("sp-3m1p9", "submit", &typed, Some("deadbeef"), "a", None, Some("b/dir.2")).is_err());
         assert!(build_request_in("sp-3m1p9", "submit", &[], Some("deadbeef"), "a", None, None).unwrap().iter().all(|a| a != "--build-dir"));
     }
 
@@ -790,16 +790,16 @@ mod tests {
 
     #[test]
     fn mender_diagnose_and_outcome_read_stdin_with_or_without_a_dash() {
-        for args in [v(&["outcome", "/s", "return"]), v(&["outcome", "/s", "return", "-"])] {
+        for args in [v(&["outcome", "s", "return"]), v(&["outcome", "s", "return", "-"])] {
             let (a, b) = collect_mender_body(&args, || Ok("why".to_string())).unwrap();
-            assert_eq!((a.clone(), b.as_deref()), (v(&["outcome", "/s", "return"]), Some("why")));
+            assert_eq!((a.clone(), b.as_deref()), (v(&["outcome", "s", "return"]), Some("why")));
             let req = build_request_with_body("-", "mender", &a, None, "mender", b.as_deref()).unwrap();
-            assert_eq!(req, v(&["work", "-", "mender", "outcome", "/s", "return", "--stdin", "why", "--actor", "mender"]));
+            assert_eq!(req, v(&["work", "-", "mender", "outcome", "s", "return", "--stdin", "why", "--actor", "mender"]));
         }
-        let (a, b) = collect_mender_body(&v(&["diagnose", "/s"]), || Ok("d".to_string())).unwrap();
-        assert_eq!((a, b.as_deref()), (v(&["diagnose", "/s"]), Some("d")));
-        let (a, b) = collect_mender_body(&v(&["pack", "/s"]), || panic!("stdin not wanted")).unwrap();
-        assert_eq!((a, b), (v(&["pack", "/s"]), None));
+        let (a, b) = collect_mender_body(&v(&["diagnose", "s"]), || Ok("d".to_string())).unwrap();
+        assert_eq!((a, b.as_deref()), (v(&["diagnose", "s"]), Some("d")));
+        let (a, b) = collect_mender_body(&v(&["pack", "s"]), || panic!("stdin not wanted")).unwrap();
+        assert_eq!((a, b), (v(&["pack", "s"]), None));
     }
 
     #[test]
@@ -1062,19 +1062,19 @@ mod row_dirs_tests {
     use std::path::PathBuf;
 
     fn shell() -> repo_contract::shell::ShellEnv {
-        let json = r#"{"variables":{"PATH":{"type":"exported","value":"/nix/store/a/bin:/nix/store/b/bin"}}}"#;
+        let json = r#"{"variables":{"PATH":{"type":"exported","value":"nix/store/a/bin:nix/store/b/bin"}}}"#;
         repo_contract::shell::parse_dev_env(json).unwrap()
     }
 
     #[test]
     fn a_flake_shell_replaces_the_release_dirs_with_its_own_path() {
-        let release = vec![PathBuf::from("/r/bin"), PathBuf::from("/usr/bin")];
-        assert_eq!(row_dirs(Some(&shell()), release), vec![PathBuf::from("/nix/store/a/bin"), PathBuf::from("/nix/store/b/bin")]);
+        let release = vec![PathBuf::from("r/bin"), PathBuf::from("usr/bin")];
+        assert_eq!(row_dirs(Some(&shell()), release), vec![PathBuf::from("nix/store/a/bin"), PathBuf::from("nix/store/b/bin")]);
     }
 
     #[test]
     fn without_a_flake_shell_the_dirs_are_unchanged() {
-        let release = vec![PathBuf::from("/r/bin"), PathBuf::from("/usr/bin")];
+        let release = vec![PathBuf::from("r/bin"), PathBuf::from("usr/bin")];
         assert_eq!(row_dirs(None, release.clone()), release);
     }
 }

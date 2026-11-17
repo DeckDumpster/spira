@@ -179,7 +179,7 @@ mod lc_tests {
     }
 
     fn repo() -> Repo {
-        Repo { name: "deck".into(), path: "/r".into(), git_ref: "main".into() }
+        Repo { name: "deck".into(), path: "r".into(), git_ref: "main".into() }
     }
 
     #[test]

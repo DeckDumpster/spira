@@ -216,7 +216,7 @@ mod tests {
     }
 
     fn base_of(row: &str, name: &str) -> Option<String> {
-        spira_config::repos::Registry::new(Some(row), &std::collections::BTreeMap::new(), std::path::Path::new("/x")).base(name)
+        spira_config::repos::Registry::new(Some(row), &std::collections::BTreeMap::new(), std::path::Path::new("x")).base(name)
     }
 
     fn paths(p: &[&str]) -> Vec<String> {

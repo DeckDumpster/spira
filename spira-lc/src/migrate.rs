@@ -1099,7 +1099,7 @@ mod tests {
 
     #[test]
     fn a_missing_argument_is_refused_not_skipped() {
-        assert!(ordered_files(&["/nonexistent/lc-migrations".into()]).is_err());
+        assert!(ordered_files(&["nonexistent/lc-migrations".into()]).is_err());
     }
 
     #[test]

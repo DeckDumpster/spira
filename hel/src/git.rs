@@ -331,7 +331,7 @@ pub enum LockVerdict {
 fn holder_confirmed(lock: &Path) -> Option<u32> {
     let mut holder = None;
     for _ in 0..5 {
-        holder = holder_of(Path::new("/proc"), lock);
+        holder = holder_of(Path::new(system_paths::PROC), lock);
         holder?;
         std::thread::sleep(std::time::Duration::from_millis(40));
     }
@@ -384,7 +384,7 @@ mod tests {
                 std::os::unix::fs::symlink(t, d.join("fd/3")).unwrap();
             }
         };
-        mk("10", "sleep\n", "sleep", Some(Path::new("/elsewhere")));
+        mk("10", "sleep\n", "sleep", Some(Path::new("elsewhere")));
         assert_eq!(holder_of(&proc, &lock), None);
         mk("11", "sleep\n", "sleep", Some(&lock));
         assert_eq!(holder_of(&proc, &lock), Some(11));

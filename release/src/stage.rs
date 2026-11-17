@@ -292,7 +292,7 @@ pub fn up(o: &StageOpts) -> Result<Stage, String> {
         ("SPIRA_REPO_MAP".to_string(), stage_repomap_path.display().to_string()),
         ("SPIRA_RUNES".to_string(), "canary".to_string()),
         ("SPIRA_MAX_DWARVES".to_string(), "1".to_string()),
-        ("SPIRA_NOTIFY".to_string(), "/bin/true".to_string()),
+        ("SPIRA_NOTIFY".to_string(), system_paths::BIN_TRUE.to_string()),
         ("SPIRA_BATCHER_ENABLE".to_string(), "1".to_string()),
         ("SPIRA_CALL".to_string(), sh.join("fake-call.sh").display().to_string()),
         ("SPIRA_LAUNCH".to_string(), sh.join("fake-launch.sh").display().to_string()),

@@ -33,7 +33,7 @@ pub mod workspace;
 
 /// The directories every launcher's PATH ends with (DESIGN.md "Name clashes"). A release
 /// executable with the same name as a command in one of these would shadow it.
-pub const SYSTEM_DIRS: &[&str] = &["/usr/local/bin", "/usr/bin", "/bin"];
+pub const SYSTEM_DIRS: &[&str] = &[system_paths::USR_LOCAL_BIN, system_paths::USR_BIN, system_paths::BIN];
 
 /// A full commit sha: 40 lowercase hex digits. Release directories are named by exactly this.
 pub fn is_sha(s: &str) -> bool {

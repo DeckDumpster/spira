@@ -41,9 +41,10 @@ fn the_image_is_pinned_to_the_version_unless_declared() {
 
 #[test]
 fn a_declared_argv_replaces_the_default() {
-    let a = argv_for(None, Path::new("/nonexistent"), "tests/visual");
+    let gone = dir("argv").join("nonexistent");
+    let a = argv_for(None, &gone, "tests/visual");
     assert!(a[2].starts_with("cd tests/visual && npm ci") && a[2].contains("$UI_SPECS"), "{a:?}");
-    assert_eq!(argv_for(Some(&ui(&["serve"], None)), Path::new("/nonexistent"), "d"), vec!["serve".to_string()]);
+    assert_eq!(argv_for(Some(&ui(&["serve"], None)), &gone, "d"), vec!["serve".to_string()]);
 }
 
 #[test]

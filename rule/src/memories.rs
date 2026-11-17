@@ -90,7 +90,7 @@ mod tests {
 
     #[test]
     fn core_slug_renders_in_full_others_as_index_slugs() {
-        let out = render(FIX3, "law-rm-", 120_000, "law-rm-alpha", "/h");
+        let out = render(FIX3, "law-rm-", 120_000, "law-rm-alpha", "h");
         assert!(out.contains("## law-rm-alpha"));
         assert!(out.contains("Alpha statute body"));
         assert!(out.contains("law-rm-beta"));
@@ -99,7 +99,7 @@ mod tests {
 
     #[test]
     fn budget_fallback_demotes_to_index_rather_than_vanishing() {
-        let out = render(FIX3, "law-rm-", 40, "law-rm-alpha,law-rm-beta", "/h");
+        let out = render(FIX3, "law-rm-", 40, "law-rm-alpha,law-rm-beta", "h");
         assert!(out.contains("law-rm-alpha"));
         assert!(!out.contains("Alpha statute body"));
     }
@@ -107,7 +107,7 @@ mod tests {
     #[test]
     fn mixed_namespaces_each_get_their_own_retrieval_command() {
         let fix = r#"{"law-rm-alpha":"Alpha statute body.","sop-rm-widget":"Widget runbook body."}"#;
-        let out = render(fix, "law-rm-,sop-rm-", 0, "", "/h");
+        let out = render(fix, "law-rm-,sop-rm-", 0, "", "h");
         assert!(out.contains("sop-rm-widget") && out.contains("sop show"));
         assert!(out.contains("law-rm-alpha") && out.contains("rule.sh show"));
         let law_section = out.split("## Runbooks").next().unwrap_or("");
@@ -116,7 +116,7 @@ mod tests {
 
     #[test]
     fn garbage_json_renders_empty() {
-        assert_eq!(render("garbage", "law-", 1, "", "/h"), "");
+        assert_eq!(render("garbage", "law-", 1, "", "h"), "");
     }
 
     #[test]

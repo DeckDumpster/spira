@@ -143,9 +143,9 @@ mod tests {
     fn only_watched_comms_are_found_with_their_nice_and_owner() {
         let dir = testkit::TempDir::new("wt-load-fence-scan");
         let r = dir.join("proc");
-        fake(&r, 10, "rustc", 0, 5, "/user.slice/session-3.scope");
-        fake(&r, 11, "bash", 0, 1, "/user.slice/session-3.scope");
-        fake(&r, 12, "cargo", 19, 1, "/spira.slice/spira-dwarf-x.scope");
+        fake(&r, 10, "rustc", 0, 5, "user.slice/session-3.scope");
+        fake(&r, 11, "bash", 0, 1, "user.slice/session-3.scope");
+        fake(&r, 12, "cargo", 19, 1, "spira.slice/spira-dwarf-x.scope");
         let c = cfg("rustc cargo");
         let found = scan(&r, &c);
         assert_eq!(found.iter().map(|p| p.pid).collect::<Vec<_>>(), vec![10, 12]);
@@ -158,9 +158,9 @@ mod tests {
     fn ancestry_follows_parents_nearest_first() {
         let dir = testkit::TempDir::new("wt-load-fence-anc");
         let r = dir.join("proc");
-        fake(&r, 10, "rustc", 0, 9, "/x");
-        fake(&r, 9, "cargo", 0, 8, "/x");
-        fake(&r, 8, "tmux", 0, 1, "/x");
+        fake(&r, 10, "rustc", 0, 9, "x");
+        fake(&r, 9, "cargo", 0, 8, "x");
+        fake(&r, 8, "tmux", 0, 1, "x");
         assert_eq!(ancestry(&r, 10, 6), vec!["rustc", "cargo", "tmux"]);
         assert_eq!(ancestry(&r, 10, 2), vec!["rustc", "cargo"]);
     }

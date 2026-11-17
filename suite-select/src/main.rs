@@ -384,7 +384,7 @@ fn read_header(path: &str) -> String {
 /// (podman writes `/run/.containerenv`, docker `/.dockerenv`) — never from a variable alone,
 /// which is forgeable by exactly the actor the guard exists to bind (law-guard-binds-the-caller).
 fn in_container() -> bool {
-    Path::new("/run/.containerenv").exists() || Path::new("/.dockerenv").exists()
+    Path::new(system_paths::RUN_CONTAINERENV).exists() || Path::new(system_paths::DOCKERENV).exists()
 }
 
 fn cmd_header(args: &[String]) -> i32 {

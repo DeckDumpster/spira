@@ -167,8 +167,8 @@ pub fn run(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> u8 {
     let landed_ok = report(out, "", reap::reap(&dir, dry, &landed_fn, &busy_fn), dry);
     let idle_ok = report(out, "idle: ", reap::reap_idle(&dir, dry, idle_secs, &reap::idle_age_secs, &busy_fn, None, None), dry);
     let state_fn = |id: &str| landed::lc_state(&lc_bin, &path_env, id);
-    let tmp_ok = report(out, "tmp: ", reap::reap_tmp_targets(Path::new("/tmp"), dry, &state_fn, &busy_fn), dry);
-    let _ = reap_scratch_report(&dir, None, dry, gate::target::on_tmpfs(Path::new("/tmp")), &busy_fn, out);
+    let tmp_ok = report(out, "tmp: ", reap::reap_tmp_targets(Path::new(system_paths::TMP), dry, &state_fn, &busy_fn), dry);
+    let _ = reap_scratch_report(&dir, None, dry, gate::target::on_tmpfs(Path::new(system_paths::TMP)), &busy_fn, out);
     if landed_ok && idle_ok && tmp_ok {
         0
     } else {
@@ -181,7 +181,7 @@ fn reap_scratch(dir: &Path, fraction: f64, dry: bool, busy_fn: &dyn Fn(&Path) ->
         let _ = writeln!(err, "target-reap: no SPIRA_RUN and no SPIRA_GATE_TARGET_ROOT — no gate scratch to find");
         return false;
     }
-    if !reap_scratch_report(dir, Some(fraction), dry, gate::target::on_tmpfs(Path::new("/tmp")), busy_fn, out) {
+    if !reap_scratch_report(dir, Some(fraction), dry, gate::target::on_tmpfs(Path::new(system_paths::TMP)), busy_fn, out) {
         let _ = writeln!(out, "target-reap: {} 0 stale gate target dir(s): this box keeps no gate scratch", if dry { "would remove" } else { "removed" });
     }
     true

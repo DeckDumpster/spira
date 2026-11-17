@@ -675,7 +675,7 @@ mod tests {
 
     #[test]
     fn a_run_whose_store_cannot_be_opened_is_refused_naming_the_path() {
-        let path = std::path::PathBuf::from("/nonexistent-bench-dir/b.db");
+        let path = std::path::PathBuf::from("nonexistent-bench-dir/b.db");
         let e = run_cas(&cas_args(path)).unwrap_err();
         assert!(e.contains("nonexistent-bench-dir"), "{e}");
     }

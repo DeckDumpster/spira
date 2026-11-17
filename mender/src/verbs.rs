@@ -324,11 +324,11 @@ mod tests {
 
     impl Fake {
         fn new() -> Fake {
-            let spec = r#"{"batch":"r-9","pass":3,"suite":"test-x.sh","repo":"/repo","base":"main","output":"ok 1\nfork: retry: Resource temporarily unavailable\n",
+            let spec = r#"{"batch":"r-9","pass":3,"suite":"test-x.sh","repo":"repo","base":"main","output":"ok 1\nfork: retry: Resource temporarily unavailable\n",
                 "members":[{"bead":"sp-a","tip":"aaa"},{"bead":"sp-b","tip":"bbb"}]}"#;
             let mut f = Fake { files: HashMap::new(), git_out: HashMap::new(), lc_answers: HashMap::new(), calls: RefCell::new(vec![]), deadline: Ok(417) };
-            f.files.insert("/spec".into(), spec.into());
-            f.files.insert("/repo/spira/test-x.sh".into(), "#!/bin/bash\n# covers: spira/*.sh\nset -u\n".into());
+            f.files.insert("spec".into(), spec.into());
+            f.files.insert("repo/spira/test-x.sh".into(), "#!/bin/bash\n# covers: spira/*.sh\nset -u\n".into());
             f.git_out.insert("diff --name-only main...aaa".into(), "spira/lib.sh\n".into());
             f.git_out.insert("diff main...aaa".into(), "+changed lib".into());
             f.git_out.insert("diff --name-only main...bbb".into(), "docs/a.md\n".into());
@@ -356,7 +356,7 @@ mod tests {
             self.deadline.clone()
         }
         fn wiki(&self) -> Result<String, String> {
-            Ok("/wiki".into())
+            Ok("wiki".into())
         }
     }
 
@@ -364,8 +364,8 @@ mod tests {
     fn the_pack_points_at_the_touching_member_and_gives_its_whole_bead() {
         let mut w = Fake::new();
         w.lc_answers.insert("content show sp-a".into(), (0, r#"[{"id":"sp-a","title":"T","description":"DESC see brain\nwiki/projects/x/design.md for it","labels":[]}]"#.into()));
-        w.files.insert("/wiki/projects/x/design.md".into(), "THE DESIGN".into());
-        let text = pack(&w, "/spec").unwrap();
+        w.files.insert("wiki/projects/x/design.md".into(), "THE DESIGN".into());
+        let text = pack(&w, "spec").unwrap();
         assert!(text.contains("EAGAIN at output line 2"), "{text}");
         assert!(text.contains("- sp-a @ aaa: spira/lib.sh"), "{text}");
         assert!(text.contains("## Bead sp-a") && text.contains("DESC see brain"), "{text}");
@@ -378,7 +378,7 @@ mod tests {
     fn an_unreadable_design_says_so() {
         let mut w = Fake::new();
         w.lc_answers.insert("content show sp-a".into(), (0, r#"[{"id":"sp-a","description":"see wiki/gone.md"}]"#.into()));
-        assert!(pack(&w, "/spec").unwrap().contains("(unreadable: no file /wiki/gone.md)"));
+        assert!(pack(&w, "spec").unwrap().contains("(unreadable: no file wiki/gone.md)"));
     }
 
     #[test]
@@ -390,22 +390,22 @@ mod tests {
     fn a_bead_that_cannot_be_read_fails_the_pack_rather_than_hiding() {
         let mut w = Fake::new();
         w.lc_answers.insert("content show sp-a".into(), (2, "cannot tell".into()));
-        assert!(pack(&w, "/spec").unwrap_err().contains("refused"));
+        assert!(pack(&w, "spec").unwrap_err().contains("refused"));
     }
 
     #[test]
     fn start_sends_the_configured_deadline_and_a_missing_one_refuses() {
         let mut w = Fake::new();
-        start(&w, "/spec").unwrap();
+        start(&w, "spec").unwrap();
         assert_eq!(w.lc_calls(), vec!["lc mending pickup r-9 --pass 3 --suite test-x.sh --deadline-secs 417 --actor mender"]);
         w.deadline = Err("SPIRA_MENDER_DEADLINE_SECS is not a registered config key".into());
-        assert!(start(&w, "/spec").is_err());
+        assert!(start(&w, "spec").is_err());
     }
 
     #[test]
     fn an_outcome_stamps_triage_then_the_diagnosis_then_the_terminal_event() {
         let w = Fake::new();
-        finish(&w, "/spec", "return", "wrong approach at spira/lib.sh:12", None, None, &["sp-b"]).unwrap();
+        finish(&w, "spec", "return", "wrong approach at spira/lib.sh:12", None, None, &["sp-b"]).unwrap();
         let calls: Vec<String> = w.lc_calls().into_iter().filter(|c| c.contains("mending event")).collect();
         assert_eq!(calls.len(), 3);
         assert!(calls[0].contains("TriageEnded") && calls[1].contains("Diagnosis") && calls[2].contains("\"Return\"") && calls[2].contains("\"members\":[\"sp-b\"]"), "{calls:?}");
@@ -416,7 +416,7 @@ mod tests {
     fn a_return_naming_no_member_or_a_non_member_is_refused_naming_the_specs_members() {
         let w = Fake::new();
         for members in [&[][..], &["sp-z"][..]] {
-            let err = finish(&w, "/spec", "return", "wrong approach at spira/lib.sh:12", None, None, members).unwrap_err();
+            let err = finish(&w, "spec", "return", "wrong approach at spira/lib.sh:12", None, None, members).unwrap_err();
             assert!(err.contains("sp-a, sp-b"), "{err}");
         }
         assert!(w.lc_calls().iter().all(|c| !c.contains("mending event")));
@@ -439,7 +439,7 @@ mod tests {
     #[test]
     fn a_mended_outcome_goes_through_mending_mend_with_the_branch_head_as_the_tip() {
         let w = mend_world();
-        finish(&w, "/spec", "mended", "fixed", Some("crate:mender"), None, &[]).unwrap();
+        finish(&w, "spec", "mended", "fixed", Some("crate:mender"), None, &[]).unwrap();
         let calls = w.lc_calls();
         assert!(!calls.iter().any(|c| c.contains("Mended")), "{calls:?}");
         let mend = calls.iter().find(|c| c.starts_with("lc mending mend ")).expect("mending mend was called");
@@ -451,7 +451,7 @@ mod tests {
     #[test]
     fn a_kept_mend_carries_its_ask_to_the_machine_so_a_mend_needing_one_is_taken() {
         let w = mend_world();
-        finish(&w, "/spec", "mended", "fixed", Some("crate:mender"), Some("sp-ask1"), &[]).unwrap();
+        finish(&w, "spec", "mended", "fixed", Some("crate:mender"), Some("sp-ask1"), &[]).unwrap();
         let calls = w.lc_calls();
         let mend = calls.iter().find(|c| c.starts_with("lc mending mend ")).expect("mending mend was called");
         assert!(mend.contains(r#""ask":"sp-ask1""#), "{mend}");
@@ -461,7 +461,7 @@ mod tests {
     fn a_mended_outcome_with_no_moved_branch_sends_no_mend() {
         let mut w = mend_world();
         w.git_out.insert("rev-parse --verify refs/heads/spira/sp-a^{commit}".into(), "aaa".into());
-        assert!(finish(&w, "/spec", "mended", "fixed", Some("crate:mender"), None, &[]).unwrap_err().contains("no member branch has moved"));
+        assert!(finish(&w, "spec", "mended", "fixed", Some("crate:mender"), None, &[]).unwrap_err().contains("no member branch has moved"));
         assert!(!w.lc_calls().iter().any(|c| c.starts_with("lc mending mend ")));
     }
 
@@ -472,7 +472,7 @@ mod tests {
             "mending list --batch r-9".into(),
             (0, r#"[{"pass":3,"suite":"test-x.sh","triage_ended_at":1700000000}]"#.into()),
         );
-        finish(&w, "/spec", "flaky", "passes on its own rerun in the history", None, None, &[]).unwrap();
+        finish(&w, "spec", "flaky", "passes on its own rerun in the history", None, None, &[]).unwrap();
         let events: Vec<String> = w.lc_calls().into_iter().filter(|c| c.contains("mending event")).collect();
         assert_eq!(events.len(), 2);
         assert!(!events.iter().any(|c| c.contains("TriageEnded")), "{events:?}");
@@ -485,7 +485,7 @@ mod tests {
             "mending list --batch r-9".into(),
             (0, r#"[{"pass":3,"suite":"test-x.sh","state":"RETURNED","triage_ended_at":1}]"#.into()),
         );
-        let out = finish(&w, "/spec", "environment", "EAGAIN at output line 2", None, None, &[]).unwrap();
+        let out = finish(&w, "spec", "environment", "EAGAIN at output line 2", None, None, &[]).unwrap();
         assert!(out.contains("no-op") && out.contains("RETURNED"), "{out}");
         assert!(!w.lc_calls().iter().any(|c| c.contains("mending event")), "{:?}", w.lc_calls());
     }
@@ -493,9 +493,9 @@ mod tests {
     #[test]
     fn a_refused_outcome_sends_nothing() {
         let w = Fake::new();
-        assert!(finish(&w, "/spec", "return", "no location given", None, None, &[]).is_err());
-        assert!(finish(&w, "/spec", "mended", "fixed", None, None, &[]).is_err());
-        assert!(finish(&w, "/spec", "fixed", "x", None, None, &[]).is_err());
+        assert!(finish(&w, "spec", "return", "no location given", None, None, &[]).is_err());
+        assert!(finish(&w, "spec", "mended", "fixed", None, None, &[]).is_err());
+        assert!(finish(&w, "spec", "fixed", "x", None, None, &[]).is_err());
         assert!(w.lc_calls().is_empty());
     }
 
@@ -504,16 +504,16 @@ mod tests {
         let mut w = Fake::new();
         let kind = r#"{"Environment":{"at":0}}"#;
         w.lc_answers.insert(format!("mending event r-9 --pass 3 --suite test-x.sh --kind {kind} --actor mender"), (3, "refused: DeadlinePassed".into()));
-        let err = finish(&w, "/spec", "environment", "EAGAIN at output line 2", None, None, &[]).unwrap_err();
+        let err = finish(&w, "spec", "environment", "EAGAIN at output line 2", None, None, &[]).unwrap_err();
         assert!(err.contains("DeadlinePassed"), "{err}");
     }
 
     #[test]
     fn the_read_verbs_ask_the_machine_for_the_rounds_own_facts() {
         let w = Fake::new();
-        failures(&w, "/spec").unwrap();
-        passes(&w, "/spec").unwrap();
-        verdicts(&w, "/spec").unwrap();
+        failures(&w, "spec").unwrap();
+        passes(&w, "spec").unwrap();
+        verdicts(&w, "spec").unwrap();
         assert_eq!(
             w.lc_calls(),
             vec!["lc mending list --batch r-9", "lc history r-9 --machine batch", "lc facts --ids sp-a,sp-b"]
@@ -523,14 +523,14 @@ mod tests {
     #[test]
     fn diff_gives_one_members_whole_diff_and_refuses_a_stranger() {
         let w = Fake::new();
-        assert_eq!(diff(&w, "/spec", "sp-b").unwrap(), "+changed doc");
-        assert!(diff(&w, "/spec", "sp-zz").is_err());
+        assert_eq!(diff(&w, "spec", "sp-b").unwrap(), "+changed doc");
+        assert!(diff(&w, "spec", "sp-zz").is_err());
     }
 
     #[test]
     fn a_malformed_spec_is_refused() {
         let mut w = Fake::new();
-        w.files.insert("/spec".into(), "{}".into());
-        assert!(pack(&w, "/spec").unwrap_err().contains("not a failure spec"));
+        w.files.insert("spec".into(), "{}".into());
+        assert!(pack(&w, "spec").unwrap_err().contains("not a failure spec"));
     }
 }

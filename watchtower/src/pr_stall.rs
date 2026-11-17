@@ -472,7 +472,7 @@ mod tests {
         let read = gh_pr_facts(&cfg, d.to_str().unwrap(), "sp-x");
         assert_eq!((read.mergeable.as_str(), read.concls.as_str(), read.allow_auto_merge), ("MERGEABLE", "SUCCESS", None));
         assert_eq!(decide(is_red(&read.concls), read.allow_auto_merge == Some(false), false), Action::ArmAutoMerge);
-        cfg.gh_bin = "/does/not/exist/gh".into();
+        cfg.gh_bin = "does/not/exist/gh".into();
         let none = gh_pr_facts(&cfg, d.to_str().unwrap(), "sp-x");
         assert_eq!((none.mergeable.as_str(), none.allow_auto_merge), ("", None));
     }

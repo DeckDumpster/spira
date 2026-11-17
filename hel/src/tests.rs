@@ -161,7 +161,7 @@ impl World for Fake {
         self.out.borrow_mut().push(format!("LOG {msg}"));
     }
     fn reaplog(&self) -> String {
-        "/run/reap.log".into()
+        "run/reap.log".into()
     }
     fn worktrees(&self) -> PathBuf {
         self.wts.clone()
@@ -171,8 +171,8 @@ impl World for Fake {
 #[test]
 fn flags_parse_as_the_shells_did() {
     let a = |xs: &[&str]| crate::parse(&xs.iter().map(|s| s.to_string()).collect::<Vec<_>>());
-    let (o, st) = a(&["--dry-run", "--no-fetch", "--status-from", "/f", "sp-x"]).unwrap();
-    assert!(o.dry && !o.fetch && o.only.as_deref() == Some("sp-x") && st.as_deref() == Some("/f"));
+    let (o, st) = a(&["--dry-run", "--no-fetch", "--status-from", "f", "sp-x"]).unwrap();
+    assert!(o.dry && !o.fetch && o.only.as_deref() == Some("sp-x") && st.as_deref() == Some("f"));
     assert_eq!(a(&["--skip-queue"]).unwrap().0.scope, Scope::SkipQueue);
     assert_eq!(a(&["--queue-only"]).unwrap().0.scope, Scope::QueueOnly);
     assert!(a(&["--skip-queue", "--queue-only"]).is_err());
@@ -182,8 +182,8 @@ fn flags_parse_as_the_shells_did() {
 
 #[test]
 fn harness_home_is_spira_home_then_the_declared_release_never_the_executable() {
-    assert_eq!(crate::locate_home(Some("/h"), Some("/r")), Some(PathBuf::from("/h")));
-    assert_eq!(crate::locate_home(None, Some("/r")), Some(PathBuf::from("/r/spira")));
+    assert_eq!(crate::locate_home(Some("h"), Some("r")), Some(PathBuf::from("h")));
+    assert_eq!(crate::locate_home(None, Some("r")), Some(PathBuf::from("r/spira")));
     assert_eq!(crate::locate_home(None, None), None);
 }
 

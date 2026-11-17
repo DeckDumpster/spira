@@ -8,7 +8,7 @@ fn dir(n: &str) -> testkit::TempDir {
 }
 
 fn pages() -> Vec<String> {
-    vec!["/".into(), "/cards/1".into()]
+    vec!["/".into(), "/cards/1".into()] // not a path: a page URL
 }
 
 fn writes_all(out: &Path) -> (i32, String) {
@@ -41,7 +41,7 @@ fn a_page_that_fails_to_capture_is_named_and_leaves_nothing() {
     };
     let (rc, msg) = capture(tmp.path(), "sp-b", TIP, &pages(), &[390, 1280], &half);
     assert_eq!(rc, 1);
-    assert!(msg.contains("/cards/1 at 390px") && msg.contains("Protocol error"), "{msg}");
+    assert!(msg.contains("/cards/1 at 390px") && msg.contains("Protocol error"), "{msg}"); // not a path: a page URL
     assert!(!shot_dir(tmp.path(), "sp-b", TIP).exists());
 }
 
@@ -76,7 +76,7 @@ fn a_prior_image_is_cleared_and_never_stands_in_for_a_capture() {
 
 #[test]
 fn a_changed_page_is_named_by_its_url_and_assets_fall_back_to_the_index() {
-    assert_eq!(pages_for("README.md\nfrontend/cards/index.html\nfrontend/about.html\nfrontend/index.html\nfrontend/a.css\n"), ["/", "/about.html", "/cards/"]);
+    assert_eq!(pages_for("README.md\nfrontend/cards/index.html\nfrontend/about.html\nfrontend/index.html\nfrontend/a.css\n"), ["/", "/about.html", "/cards/"]); // not a path: a page URL
     assert_eq!(pages_for("frontend/a.css\nsrc/x.rs\n"), ["/"]);
 }
 
@@ -100,6 +100,6 @@ fn nothing_in_the_tool_opens_an_image() {
 #[test]
 fn slugs_are_plain_filenames() {
     assert_eq!(slug("/"), "index");
-    assert_eq!(slug("/a/b?x=1"), "a_b_x_1");
-    assert_eq!(slug("/../../etc"), "etc");
+    assert_eq!(slug("/a/b?x=1"), "a_b_x_1"); // not a path: a page URL
+    assert_eq!(slug("/../../etc"), "etc"); // not a path: a page URL
 }

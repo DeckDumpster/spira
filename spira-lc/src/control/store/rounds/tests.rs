@@ -918,7 +918,7 @@ fn the_queues_fields_of_a_round_survive_every_machine_step_and_the_landing() {
     let members = two();
     let p = r.s.plan_cut(&r.cut_spec(&members)).unwrap();
     r.s.run_planned(p, &r.req(), "cut").unwrap();
-    set_round_fields(&r, serde_json::json!({ "worktree": "/wt/b-1", "red": "test-a.sh" }));
+    set_round_fields(&r, serde_json::json!({ "worktree": "wt/b-1", "red": "test-a.sh" }));
     batch_event(
         &r,
         BatchState::Open,
@@ -932,7 +932,7 @@ fn the_queues_fields_of_a_round_survive_every_machine_step_and_the_landing() {
     assert_eq!(round.value.row.state, BatchState::Landed);
     assert_eq!(
         round.value.round,
-        [("red", "test-a.sh"), ("worktree", "/wt/b-1")]
+        [("red", "test-a.sh"), ("worktree", "wt/b-1")]
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .into()
     );
@@ -951,17 +951,17 @@ fn the_queues_fields_given_to_a_cut_or_a_batch_event_commit_in_that_steps_own_tx
     let before = r.s.contract().head().unwrap();
     r.ok(&[
         "cut", "b-1", "--repo", "spira", "--head", "H", "--base", "B", "--members",
-        &format!("sp-a:{T1}"), "--actor", "test", "--round", r#"{"worktree":"/wt/b-1","actor":"q"}"#,
+        &format!("sp-a:{T1}"), "--actor", "test", "--round", r#"{"worktree":"wt/b-1","actor":"q"}"#,
     ]);
     assert_eq!(r.s.contract().head().unwrap(), before + 1, "the cut and its fields are one txn");
-    assert_eq!(at_head(&r), (true, serde_json::json!({"actor": "q", "worktree": "/wt/b-1"})));
+    assert_eq!(at_head(&r), (true, serde_json::json!({"actor": "q", "worktree": "wt/b-1"})));
     let before = r.s.contract().head().unwrap();
     r.ok(&[
         "event", "batch", "b-1", "--expect", "OPEN", "--version", "1", "--actor", "test",
-        "--kind", r#"{"CiStarted":{"run":"r1"}}"#, "--round", r#"{"worktree":"/wt/b-1","red":"x"}"#,
+        "--kind", r#"{"CiStarted":{"run":"r1"}}"#, "--round", r#"{"worktree":"wt/b-1","red":"x"}"#,
     ]);
     assert_eq!(r.s.contract().head().unwrap(), before + 1, "the event and its fields are one txn");
-    assert_eq!(at_head(&r), (true, serde_json::json!({"red": "x", "worktree": "/wt/b-1"})));
+    assert_eq!(at_head(&r), (true, serde_json::json!({"red": "x", "worktree": "wt/b-1"})));
     let (rc, out) = r.lc(&[
         "event", "batch", "b-1", "--expect", "CI_RUNNING", "--version", "2", "--actor", "test",
         "--kind", r#""Green""#, "--round", "[1]",
@@ -976,7 +976,7 @@ fn fields_with_no_write_of_their_round_to_ride_in_are_an_error_not_dropped() {
     r.certified("sp-a", T1);
     let members = vec![("sp-a".to_string(), T1.to_string())];
     let p = r.s.plan_cut(&r.cut_spec(&members)).unwrap();
-    let fields = [("worktree".to_string(), "/wt".to_string())].into();
+    let fields = [("worktree".to_string(), "wt".to_string())].into();
     let e = p.with_round("b-9", Some(&fields)).err().expect("no write of b-9");
     assert!(e.to_string().contains("b-9"), "{e}");
 }

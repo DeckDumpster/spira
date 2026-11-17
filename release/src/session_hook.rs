@@ -368,26 +368,26 @@ mod tests {
     use super::*;
 
     fn p(current: &str) -> Paths {
-        Paths { settings: PathBuf::from("/x/settings.json"), release: current.into(), path: "/bin:/usr/bin".into(), toml: "/c/one-source.toml".into(), hook: PathBuf::from(format!("{current}/spira/hooks/session.sh")), meter: PathBuf::from(format!("{current}/spira/ctx-meter.sh")) }
+        Paths { settings: PathBuf::from("x/settings.json"), release: current.into(), path: "bin:usr/bin".into(), toml: "c/one-source.toml".into(), hook: PathBuf::from(format!("{current}/spira/hooks/session.sh")), meter: PathBuf::from(format!("{current}/spira/ctx-meter.sh")) }
     }
 
     #[test]
     fn hook_command_embeds_release_and_path() {
-        let p = p("/r/spira-releases/current");
-        assert_eq!(p.hook_command(), "env SPIRA_RELEASE=/r/spira-releases/current SPIRA_TOML=/c/one-source.toml PATH=/bin:/usr/bin /r/spira-releases/current/spira/hooks/session.sh");
+        let p = p("r/spira-releases/current");
+        assert_eq!(p.hook_command(), "env SPIRA_RELEASE=r/spira-releases/current SPIRA_TOML=c/one-source.toml PATH=bin:usr/bin r/spira-releases/current/spira/hooks/session.sh");
     }
 
     #[test]
     fn is_ours_matches_every_earlier_form() {
         // The bare sha-pinned path, with no env wrapper at all — the exact leftover shape
         // sp-7jr34's own hand-fix found still present in the operator's real settings.json.
-        assert!(is_ours("/r/spira-releases/08a2decd.../spira/hooks/session.sh", HOOK_SUFFIX));
+        assert!(is_ours("r/spira-releases/08a2decd.../spira/hooks/session.sh", HOOK_SUFFIX));
         // The bare "current" path.
-        assert!(is_ours("/r/spira-releases/current/spira/hooks/session.sh", HOOK_SUFFIX));
+        assert!(is_ours("r/spira-releases/current/spira/hooks/session.sh", HOOK_SUFFIX));
         // Wrapped in env/PATH, any release.
         assert!(is_ours("env SPIRA_RELEASE=/r/spira-releases/current PATH=/x /r/spira-releases/current/spira/hooks/session.sh", HOOK_SUFFIX));
-        assert!(!is_ours("/some/other/hook.sh", HOOK_SUFFIX));
-        assert!(!is_ours("/r/spira-releases/current/spira/ctx-meter.sh", HOOK_SUFFIX));
+        assert!(!is_ours("some/other/hook.sh", HOOK_SUFFIX));
+        assert!(!is_ours("r/spira-releases/current/spira/ctx-meter.sh", HOOK_SUFFIX));
     }
 
     #[test]
@@ -398,14 +398,14 @@ mod tests {
         let mut doc = json!({
             "hooks": {
                 "SessionStart": [
-                    {"hooks": [{"type": "command", "command": "/r/spira-releases/aaa.../spira/hooks/session.sh", "timeout": 10}]},
-                    {"hooks": [{"type": "command", "command": "/r/spira-releases/bbb.../spira/hooks/session.sh", "timeout": 10}]},
-                    {"hooks": [{"type": "command", "command": "/r/spira-releases/ccc.../spira/hooks/session.sh", "timeout": 10}]},
-                    {"hooks": [{"type": "command", "command": "/r/spira-releases/current/spira/hooks/session.sh"}]},
+                    {"hooks": [{"type": "command", "command": "r/spira-releases/aaa.../spira/hooks/session.sh", "timeout": 10}]},
+                    {"hooks": [{"type": "command", "command": "r/spira-releases/bbb.../spira/hooks/session.sh", "timeout": 10}]},
+                    {"hooks": [{"type": "command", "command": "r/spira-releases/ccc.../spira/hooks/session.sh", "timeout": 10}]},
+                    {"hooks": [{"type": "command", "command": "r/spira-releases/current/spira/hooks/session.sh"}]},
                 ]
             }
         });
-        let paths = p("/r/spira-releases/current");
+        let paths = p("r/spira-releases/current");
         crate::fsutil::is_executable(&paths.hook); // not asserted; install() below is exercised directly
         install_bypassing_exec_check(&mut doc, &paths);
         let entries = doc["hooks"]["SessionStart"].as_array().unwrap();
@@ -417,7 +417,7 @@ mod tests {
     #[test]
     fn install_is_idempotent() {
         let mut doc = json!({});
-        let paths = p("/r/spira-releases/current");
+        let paths = p("r/spira-releases/current");
         install_bypassing_exec_check(&mut doc, &paths);
         let first = doc.clone();
         install_bypassing_exec_check(&mut doc, &paths);
@@ -426,8 +426,8 @@ mod tests {
 
     #[test]
     fn install_writes_no_matcher_and_retires_post_compact() {
-        let mut doc = json!({"hooks": {"PostCompact": [{"hooks": [{"type": "command", "command": "/r/spira-releases/current/spira/hooks/session.sh", "timeout": 10}]}]}});
-        let paths = p("/r/spira-releases/current");
+        let mut doc = json!({"hooks": {"PostCompact": [{"hooks": [{"type": "command", "command": "r/spira-releases/current/spira/hooks/session.sh", "timeout": 10}]}]}});
+        let paths = p("r/spira-releases/current");
         install_bypassing_exec_check(&mut doc, &paths);
         let entry = &doc["hooks"]["SessionStart"][0];
         assert!(entry.get("matcher").is_none(), "no matcher must ever be written");
@@ -436,19 +436,19 @@ mod tests {
 
     #[test]
     fn install_leaves_a_foreign_hook_alone() {
-        let mut doc = json!({"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": "/somebody/elses/hook.sh"}]}]}});
-        let paths = p("/r/spira-releases/current");
+        let mut doc = json!({"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": "somebody/elses/hook.sh"}]}]}});
+        let paths = p("r/spira-releases/current");
         install_bypassing_exec_check(&mut doc, &paths);
         let entries = doc["hooks"]["SessionStart"].as_array().unwrap();
         let commands: Vec<_> = entries.iter().flat_map(commands_in).collect();
-        assert!(commands.contains(&"/somebody/elses/hook.sh".to_string()));
+        assert!(commands.contains(&"somebody/elses/hook.sh".to_string()));
         assert!(commands.contains(&paths.hook_command()));
     }
 
     #[test]
     fn install_sets_one_status_line_through_current() {
         let mut doc = json!({});
-        let paths = p("/r/spira-releases/current");
+        let paths = p("r/spira-releases/current");
         install_bypassing_exec_check(&mut doc, &paths);
         assert_eq!(doc["statusLine"]["command"], Value::String(paths.meter_command()));
         assert_eq!(doc["statusLine"]["refreshInterval"], json!(METER_REFRESH_SECS));
@@ -458,8 +458,8 @@ mod tests {
     fn uninstall_leaves_no_husk_and_keeps_unrelated_settings() {
         let mut doc = json!({
             "otherSetting": "keep-me",
-            "hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": "/r/spira-releases/current/spira/hooks/session.sh", "timeout": 10}]}]},
-            "statusLine": {"command": "/r/spira-releases/current/spira/ctx-meter.sh", "refreshInterval": 5},
+            "hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": "r/spira-releases/current/spira/hooks/session.sh", "timeout": 10}]}]},
+            "statusLine": {"command": "r/spira-releases/current/spira/ctx-meter.sh", "refreshInterval": 5},
         });
         let changed = uninstall(&mut doc);
         assert!(!changed.is_empty());
@@ -470,18 +470,18 @@ mod tests {
 
     #[test]
     fn uninstall_never_touches_a_foreign_status_line() {
-        let mut doc = json!({"statusLine": {"command": "/some/other/meter.sh", "refreshInterval": 5}});
+        let mut doc = json!({"statusLine": {"command": "some/other/meter.sh", "refreshInterval": 5}});
         uninstall(&mut doc);
-        assert_eq!(doc["statusLine"]["command"], "/some/other/meter.sh");
+        assert_eq!(doc["statusLine"]["command"], "some/other/meter.sh");
     }
 
     #[test]
     fn prune_removes_by_substring_from_hooks_and_status_line() {
         let mut doc = json!({
-            "hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": "/gone/hooks/old-session.sh"}]}]},
-            "statusLine": {"command": "/gone/meter.sh", "refreshInterval": 5},
+            "hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": "gone/hooks/old-session.sh"}]}]},
+            "statusLine": {"command": "gone/meter.sh", "refreshInterval": 5},
         });
-        let changed = prune(&mut doc, "/gone");
+        let changed = prune(&mut doc, "gone");
         assert_eq!(changed.len(), 2);
         assert!(doc.get("hooks").is_none());
         assert!(doc.get("statusLine").is_none());
@@ -489,7 +489,7 @@ mod tests {
 
     #[test]
     fn status_reports_missing_then_ok_then_dup() {
-        let paths = p("/r/spira-releases/current");
+        let paths = p("r/spira-releases/current");
         let mut doc = json!({});
         let (lines, ok) = status(&doc, &paths);
         assert!(!ok);
@@ -504,7 +504,7 @@ mod tests {
 
         // A second, un-converged sha-pinned entry alongside the canonical one is the exact
         // shape sp-7jr34 found live: DUP, not silently "ok".
-        doc["hooks"]["SessionStart"].as_array_mut().unwrap().push(hook_entry("/r/spira-releases/deadbeef/spira/hooks/session.sh"));
+        doc["hooks"]["SessionStart"].as_array_mut().unwrap().push(hook_entry("r/spira-releases/deadbeef/spira/hooks/session.sh"));
         let (lines, ok) = status(&doc, &paths);
         assert!(!ok);
         assert!(lines.iter().any(|l| l.contains("DUP")));
@@ -512,11 +512,11 @@ mod tests {
 
     #[test]
     fn status_reports_a_foreign_hook_but_never_its_removal() {
-        let paths = p("/r/spira-releases/current");
-        let doc = json!({"hooks": {"SessionStart": [{"matcher": "clear|startup|resume", "hooks": [{"type": "command", "command": "/gone/hooks/old-session.sh"}]}]}});
+        let paths = p("r/spira-releases/current");
+        let doc = json!({"hooks": {"SessionStart": [{"matcher": "clear|startup|resume", "hooks": [{"type": "command", "command": "gone/hooks/old-session.sh"}]}]}});
         let (lines, ok) = status(&doc, &paths);
         assert!(!ok);
-        assert!(lines.iter().any(|l| l.contains("other") && l.contains("/gone/hooks/old-session.sh")));
+        assert!(lines.iter().any(|l| l.contains("other") && l.contains("gone/hooks/old-session.sh")));
     }
 
     #[test]
@@ -565,7 +565,7 @@ mod tests {
     fn install_refuses_when_the_hook_is_missing() {
         let tmp = testkit::TempDir::new("session-hook-missing");
         let mut doc = json!({});
-        let paths = Paths { settings: tmp.path().join("settings.json"), release: "/r/spira-releases/current".into(), path: "/bin".into(), toml: "/c/one-source.toml".into(), hook: tmp.path().join("no-such-hook.sh"), meter: tmp.path().join("no-such-meter.sh") };
+        let paths = Paths { settings: tmp.path().join("settings.json"), release: "r/spira-releases/current".into(), path: "bin".into(), toml: "c/one-source.toml".into(), hook: tmp.path().join("no-such-hook.sh"), meter: tmp.path().join("no-such-meter.sh") };
         let e = install(&mut doc, &paths).unwrap_err();
         assert!(e.contains("not executable"), "{e}");
         assert_eq!(doc, json!({}), "a refusal must change nothing");

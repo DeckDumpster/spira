@@ -184,7 +184,7 @@ impl Uploader {
             .to_vec();
         match body {
             Some((path, _)) if xml => args.extend(["--data-binary".into(), format!("@{}", path.display()), "-H".into(), "Content-Type: application/xml".into()]),
-            Some((path, _)) => args.extend(["-T".into(), path.display().to_string(), "-D".into(), "-".into(), "-o".into(), "/dev/null".into()]),
+            Some((path, _)) => args.extend(["-T".into(), path.display().to_string(), "-D".into(), "-".into(), "-o".into(), system_paths::DEV_NULL.into()]),
             None => args.extend(["--data-binary".into(), String::new()]),
         }
         args.extend(["--aws-sigv4".into(), format!("aws:amz:{}:s3", c.region), "-K".into(), "-".into()]);
@@ -347,7 +347,7 @@ impl Uploader {
             "-H",
             "x-amz-server-side-encryption: AES256",
             "-o",
-            "/dev/null",
+            system_paths::DEV_NULL,
         ]
         .map(String::from)
         .to_vec();
@@ -428,7 +428,9 @@ mod tests {
                 prefix: String::new()
             }
         );
-        assert_eq!(Dest::parse("file:///x").unwrap(), Dest::File("/x".into()));
+        assert_eq!(Dest::parse("file://x").unwrap(), Dest::File("x".into()));
+        let root = testkit::TempDir::new("put-dest-abs");
+        assert_eq!(Dest::parse(&format!("file://{}/x", root.display())).unwrap(), Dest::File(format!("{}/x", root.display()).into()));
         assert!(Dest::parse("gs://b").is_err());
         assert!(Dest::parse("s3:///p").is_err());
     }

@@ -121,7 +121,7 @@ pub fn admin_env(admin: &Admin, password_file: &Path) -> Vec<(String, String)> {
         ("SPIRA_LC_PASSWORD_FILE".to_string(), password_file.to_string_lossy().to_string()),
         ("SPIRA_LC_PASSWORD".to_string(), String::new()),
         ("SPIRA_LC_PORT".to_string(), admin.port.to_string()),
-        ("SPIRA_LC_SOCKET".to_string(), "/nonexistent/spira-install-admin-never-forwards".to_string()),
+        ("SPIRA_LC_SOCKET".to_string(), format!("{}/spira-install-admin-never-forwards", system_paths::NONEXISTENT)),
         // admin-migrate applies a pending migration only as the admin these name (sp-p1z81);
         // the password stays in the file, out of every environment.
         ("SPIRA_LC_ADMIN_USER".to_string(), admin.user.clone()),
@@ -165,7 +165,7 @@ pub fn steps(lifecycle_dir: &Path) -> Result<Vec<Step>, String> {
 /// alphabet cannot break out of a single-quoted SQL literal.
 pub fn random_secret() -> Result<String, String> {
     let mut buf = [0u8; 32];
-    std::fs::File::open("/dev/urandom").and_then(|mut f| std::io::Read::read_exact(&mut f, &mut buf)).map_err(|e| format!("cannot read /dev/urandom: {e}"))?;
+    std::fs::File::open(system_paths::DEV_URANDOM).and_then(|mut f| std::io::Read::read_exact(&mut f, &mut buf)).map_err(|e| format!("cannot read /dev/urandom: {e}"))?;
     const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
     Ok(buf.chunks(3).flat_map(|c| {
         let n = c.iter().enumerate().fold(0u32, |a, (i, b)| a | (*b as u32) << (16 - 8 * i));
@@ -1045,14 +1045,14 @@ mod tests {
 
     #[test]
     fn the_admin_env_carries_a_path_and_never_forwards_to_a_service() {
-        let e = admin_env(&Admin { user: "root".into(), password: "pw".into(), host: Some("10.0.0.1".into()), port: 3310 }, Path::new("/p/admin"));
+        let e = admin_env(&Admin { user: "root".into(), password: "pw".into(), host: Some("10.0.0.1".into()), port: 3310 }, Path::new("p/admin"));
         let get = |k: &str| e.iter().find(|(x, _)| x == k).map(|(_, v)| v.clone());
         assert_eq!(get("SPIRA_LC_USER").as_deref(), Some("root"));
-        assert_eq!(get("SPIRA_LC_PASSWORD_FILE").as_deref(), Some("/p/admin"));
+        assert_eq!(get("SPIRA_LC_PASSWORD_FILE").as_deref(), Some("p/admin"));
         assert_eq!(get("SPIRA_LC_PASSWORD").as_deref(), Some(""));
         // admin-migrate applies a pending migration as the admin these name (sp-p1z81).
         assert_eq!(get("SPIRA_LC_ADMIN_USER").as_deref(), Some("root"));
-        assert_eq!(get("SPIRA_LC_ADMIN_PASSWORD_FILE").as_deref(), Some("/p/admin"));
+        assert_eq!(get("SPIRA_LC_ADMIN_PASSWORD_FILE").as_deref(), Some("p/admin"));
         assert_eq!(get("SPIRA_LC_ADMIN_PASSWORD").as_deref(), Some(""));
         assert_eq!(get("SPIRA_LC_PORT").as_deref(), Some("3310"));
         assert_eq!(get("SPIRA_LC_HOST").as_deref(), Some("10.0.0.1"));

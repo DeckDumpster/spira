@@ -561,15 +561,15 @@ mod tests {
     #[test]
     fn the_unit_runs_the_round_recert_subcommand_of_the_release_binary() {
         let rec = Recorder(RefCell::new(vec![]));
-        let l = Launch { exe: Path::new("/rel/bin/release"), toml: "t.toml" };
+        let l = Launch { exe: Path::new("rel/bin/release"), toml: "t.toml" };
         assert!(matches!(start(&rec, &l, "b", "r"), Ok(Started::Started(_))));
         let calls = rec.0.borrow();
         let run = calls.iter().find(|(p, _)| p == "systemd-run").expect("systemd-run was called");
-        assert!(run.1.join(" ").ends_with("/rel/bin/release round-recert --drive --batch b --repo r"), "{:?}", run.1);
+        assert!(run.1.join(" ").ends_with("rel/bin/release round-recert --drive --batch b --repo r"), "{:?}", run.1);
     }
 
     fn started_argv(rec: &Recorder) -> Vec<String> {
-        let l = Launch { exe: Path::new("/rel/bin/release"), toml: "t.toml" };
+        let l = Launch { exe: Path::new("rel/bin/release"), toml: "t.toml" };
         assert!(matches!(start(rec, &l, "b", "r"), Ok(Started::Started(_))));
         let calls = rec.0.borrow();
         calls.iter().find(|(p, _)| p == "systemd-run").expect("systemd-run was called").1.clone()
@@ -583,7 +583,7 @@ mod tests {
             ("GIT_COMMITTER_DATE", Some("1700000001 +0000")),
         ]);
         let argv = started_argv(&Recorder(RefCell::new(vec![])));
-        let exe = argv.iter().position(|a| a == "/rel/bin/release").unwrap();
+        let exe = argv.iter().position(|a| a == "rel/bin/release").unwrap();
         for want in ["SPIRA_NOW=1700000000", "GIT_AUTHOR_DATE=1700000000 +0000", "GIT_COMMITTER_DATE=1700000001 +0000"] {
             let at = argv.iter().position(|a| *a == format!("--setenv={want}")).unwrap_or_else(|| panic!("{want} is passed to the unit: {argv:?}"));
             assert!(at < exe, "{argv:?}");
@@ -594,7 +594,7 @@ mod tests {
     fn the_unit_carries_no_virtual_clock_when_none_is_set() {
         let _env = testkit::env(&[("SPIRA_NOW", None), ("GIT_AUTHOR_DATE", None), ("GIT_COMMITTER_DATE", None)]);
         let argv = started_argv(&Recorder(RefCell::new(vec![])));
-        let want = ["--user", "--unit=round-recert-b", "--collect", "--quiet", "--setenv=SPIRA_TOML=t.toml", "/rel/bin/release", "round-recert", "--drive", "--batch", "b", "--repo", "r"];
+        let want = ["--user", "--unit=round-recert-b", "--collect", "--quiet", "--setenv=SPIRA_TOML=t.toml", "rel/bin/release", "round-recert", "--drive", "--batch", "b", "--repo", "r"];
         assert_eq!(argv, want);
     }
 
@@ -616,7 +616,7 @@ mod tests {
     #[test]
     fn a_driver_unit_systemd_cannot_answer_for_is_never_started_again() {
         let sys = Manager(RefCell::new(vec![]), Err("Failed to connect to bus: No medium found".into()));
-        let l = Launch { exe: Path::new("/rel/bin/release"), toml: "t.toml" };
+        let l = Launch { exe: Path::new("rel/bin/release"), toml: "t.toml" };
         let e = start(&sys, &l, "b", "r").unwrap_err();
         assert!(e.contains("cannot tell whether round-recert-b is running"), "{e}");
         assert!(!sys.0.borrow().iter().any(|p| p == "systemd-run"), "nothing is started: {:?}", sys.0.borrow());

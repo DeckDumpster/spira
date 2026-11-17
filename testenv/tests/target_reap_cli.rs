@@ -94,8 +94,9 @@ fn bounded_scratch_reap_takes_the_oldest_tenth_of_stale_gate_trees() {
 
 #[test]
 fn a_box_with_no_gate_scratch_reaps_none_and_says_so() {
-    let _env = testkit::env(&[("SPIRA_GATE_TARGET_ROOT", None), ("SPIRA_TOML", Some("/no/such/spira-toml-for-this-test"))]);
     let dir = testkit::TempDir::new("reap-fraction-none");
+    let missing_toml = dir.join("nonexistent/conf.toml").display().to_string();
+    let _env = testkit::env(&[("SPIRA_GATE_TARGET_ROOT", None), ("SPIRA_TOML", Some(missing_toml.as_str()))]);
     let mut out = Vec::new();
     assert!(!testenv::target_reap::reap_scratch_report(dir.path(), Some(0.1), false, false, &|_| false, &mut out));
     assert!(out.is_empty());
@@ -107,9 +108,9 @@ fn a_box_with_no_gate_scratch_reaps_none_and_says_so() {
 #[test]
 fn every_flag_parses_and_an_unknown_one_is_usage() {
     let args = |a: &[&str]| parse(&a.iter().map(|s| s.to_string()).collect::<Vec<_>>());
-    let a = args(&["--dry-run", "--if-below-floor", "--worktrees", "/w", "--fraction", "0.5", "--scratch"]).unwrap();
+    let a = args(&["--dry-run", "--if-below-floor", "--worktrees", "w", "--fraction", "0.5", "--scratch"]).unwrap();
     assert_eq!((a.dry, a.if_below_floor, a.scratch, a.fraction), (true, true, true, Some(0.5)));
-    assert_eq!(a.dir.as_deref(), Some(Path::new("/w")));
+    assert_eq!(a.dir.as_deref(), Some(Path::new("w")));
     assert!(args(&["--bogus"]).unwrap_err().starts_with("usage:"));
     assert!(args(&["--worktrees"]).is_err());
     assert_eq!(args(&[]).unwrap(), testenv::target_reap::Args::default());
@@ -117,5 +118,5 @@ fn every_flag_parses_and_an_unknown_one_is_usage() {
 
 #[test]
 fn the_default_worktrees_directory_is_the_configured_subdir_of_the_run_directory() {
-    assert_eq!(testenv::target_reap::worktrees_under("/r", "trees"), Path::new("/r/trees"));
+    assert_eq!(testenv::target_reap::worktrees_under("r", "trees"), Path::new("r/trees"));
 }

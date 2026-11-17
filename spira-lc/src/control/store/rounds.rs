@@ -1008,7 +1008,7 @@ pub(crate) fn batch_key(key: &str) -> Option<(&str, &str)> {
 }
 
 /// What `keys::batch_progress` adds to a round's own key.
-const PROGRESS_SUFFIX: &str = "/progress";
+const PROGRESS_SUFFIX: &str = "/progress"; // not a path: a store-key suffix
 
 /// A listed delivery and when it entered its state, from its record: `None` when the record
 /// keeps no `entered`, `Some(None)` when no applied event entered that state.

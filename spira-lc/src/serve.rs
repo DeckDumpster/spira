@@ -1312,7 +1312,7 @@ mod tests {
     #[test]
     fn peer_uid_reads_the_connecting_process() {
         let (a, _b) = std::os::unix::net::UnixStream::pair().unwrap();
-        let me = std::fs::metadata("/proc/self").unwrap();
+        let me = std::fs::metadata(system_paths::PROC_SELF).unwrap();
         assert_eq!(super::peer_uid(&a), Some(std::os::unix::fs::MetadataExt::uid(&me)));
     }
 
@@ -1346,7 +1346,7 @@ mod tests {
             Ok("needs-ryan".into())
         }
         fn registry(&self) -> spira_config::repos::Registry {
-            spira_config::repos::Registry::new(Some("spira|/r/spira|main|gate.sh\n"), &Default::default(), std::path::Path::new("/r/spira"))
+            spira_config::repos::Registry::new(Some("spira|r/spira|main|gate.sh\n"), &Default::default(), std::path::Path::new("r/spira"))
         }
     }
 
@@ -1591,7 +1591,7 @@ mod tests {
             Ok("needs-ryan".into())
         }
         fn registry(&self) -> spira_config::repos::Registry {
-            spira_config::repos::Registry::new(Some("spira|/r/spira|main|gate.sh\n"), &Default::default(), std::path::Path::new("/r/spira"))
+            spira_config::repos::Registry::new(Some("spira|r/spira|main|gate.sh\n"), &Default::default(), std::path::Path::new("r/spira"))
         }
         fn policy(&self) -> Result<bead::filing::Policy, String> {
             let builder = bead::filing::Persona { name: "builder".into(), labels: vec!["builder-lane".into()], requires_build_spec: true, unresolved: None };
@@ -1750,7 +1750,7 @@ mod tests {
                 Ok(String::new())
             }
             fn registry(&self) -> spira_config::repos::Registry {
-                spira_config::repos::Registry::new(Some("spira|/r/spira|main|gate.sh\n"), &Default::default(), std::path::Path::new("/r/spira"))
+                spira_config::repos::Registry::new(Some("spira|r/spira|main|gate.sh\n"), &Default::default(), std::path::Path::new("r/spira"))
             }
         }
         let w = World::new();
@@ -1965,7 +1965,7 @@ mod tests {
             (&["dep", "add", "sp-a", "sp-b"], "`dep add sp-a sp-b` is not a content verb"),
             (&["close", "sp-a", "--reason", "r", "--force"], "`close sp-a --reason r --force` is not a content verb"),
             (&["update", "sp-a", "--status", "open"], "update takes only --add-label/--remove-label <label> and --set-metadata <key=value>, not `--status`"),
-            (&["create", "T", "--body-file", "/etc/passwd"], "create takes its body only as --body-file - (the request body)"),
+            (&["create", "T", "--body-file", system_paths::ETC_PASSWD], "create takes its body only as --body-file - (the request body)"),
         ] {
             let ((code, out, err), wrote) = content_write(argv, None);
             assert_eq!((code, out.as_str(), err), (3, "", format!("spira-lc content: {why}\n")), "{argv:?}");

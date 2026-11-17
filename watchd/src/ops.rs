@@ -189,8 +189,8 @@ impl Ops for Real {
             return None;
         }
         std::path::Path::new(prog).file_name()?.to_str()?;
-        for pid in pids_with_arg(std::path::Path::new("/proc"), prog, std::process::id() as i32) {
-            let fd_dir = format!("/proc/{pid}/fd");
+        for pid in pids_with_arg(std::path::Path::new(system_paths::PROC), prog, std::process::id() as i32) {
+            let fd_dir = format!("{}/{pid}/fd", system_paths::PROC);
             let Ok(entries) = std::fs::read_dir(&fd_dir) else { continue };
             for entry in entries.flatten() {
                 let Ok(link) = std::fs::read_link(entry.path()) else { continue };
@@ -519,11 +519,11 @@ mod real_tests {
     fn pids_with_arg_reads_proc_argv_exactly_and_skips_the_excluded_pid() {
         let tmp = testkit::TempDir::new("watchd-proc");
         let root = tmp.path().to_path_buf();
-        for (pid, argv) in [("10", &b"/usr/bin/foo\0--x\0"[..]), ("11", b"bash\0/usr/bin/foo\0"), ("12", b"/usr/bin/foobar\0"), ("13", b"/usr/bin/foo\0"), ("self", b"/usr/bin/foo\0")] {
+        for (pid, argv) in [("10", &b"usr/bin/foo\0--x\0"[..]), ("11", b"bash\0usr/bin/foo\0"), ("12", b"usr/bin/foobar\0"), ("13", b"usr/bin/foo\0"), ("self", b"usr/bin/foo\0")] {
             std::fs::create_dir_all(root.join(pid)).unwrap();
             std::fs::write(root.join(pid).join("cmdline"), argv).unwrap();
         }
-        assert_eq!(pids_with_arg(&root, "/usr/bin/foo", 13), vec![10, 11]);
+        assert_eq!(pids_with_arg(&root, "usr/bin/foo", 13), vec![10, 11]);
     }
 
     #[test]
@@ -548,7 +548,7 @@ mod real_tests {
     }
 
     fn real_over(u: runtime::units::ScriptedUnits) -> Real {
-        Real { systemctl: "/nonexistent/systemctl".into(), units: Arc::new(u), systemd_run: "systemd-run".into() }
+        Real { systemctl: "nonexistent/systemctl".into(), units: Arc::new(u), systemd_run: "systemd-run".into() }
     }
 
     fn scripted() -> runtime::units::ScriptedUnits {

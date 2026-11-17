@@ -430,26 +430,26 @@ mod tests {
     use super::*;
 
     fn opts() -> Opts {
-        Opts { bead: "sp-x".into(), suites: None, repo: "/r".into(), run: "/run".into(), release: "/rel/abc".into(), home: "/h".into(), toml: "/t.toml".into(), path_tail: String::new(), dav_addr: String::new(), deadline: 600, was: None }
+        Opts { bead: "sp-x".into(), suites: None, repo: "r".into(), run: "run".into(), release: "rel/abc".into(), home: "h".into(), toml: "t.toml".into(), path_tail: String::new(), dav_addr: String::new(), deadline: 600, was: None }
     }
 
     #[test]
     fn the_suite_run_names_the_branch_and_repo_explicitly() {
         let mut o = opts();
         o.suites = Some("a.sh,b.sh".into());
-        assert_eq!(testenv_args(&o, Path::new("/t")).join(" "), "--mode parallel --artifacts /t/target/release --suites a.sh,b.sh --deadline 600 spira/sp-x /r");
+        assert_eq!(testenv_args(&o, Path::new("t")).join(" "), "--mode parallel --artifacts t/target/release --suites a.sh,b.sh --deadline 600 spira/sp-x r");
     }
 
     #[test]
     fn the_path_puts_the_release_first_and_adds_cargo() {
         let p = path_for(&opts()).unwrap();
-        assert!(p.starts_with("/rel/abc/bin:/rel/abc/spira:"), "{p}");
-        assert!(p.ends_with(":/h/.cargo/bin"), "{p}");
+        assert!(p.starts_with("rel/abc/bin:rel/abc/spira:"), "{p}");
+        assert!(p.ends_with(":h/.cargo/bin"), "{p}");
     }
 
     #[test]
     fn the_environment_is_built_from_nothing_but_what_the_verb_names() {
-        let env = base_env(&opts(), &|k| (k == "XDG_RUNTIME_DIR").then(|| "/run/user/1".to_string()).or_else(|| (k == "SECRET").then(|| "s".to_string()))).unwrap();
+        let env = base_env(&opts(), &|k| (k == "XDG_RUNTIME_DIR").then(|| "run/user/1".to_string()).or_else(|| (k == "SECRET").then(|| "s".to_string()))).unwrap();
         let keys: Vec<&str> = env.iter().map(|(k, _)| k.as_str()).collect();
         assert!(keys.contains(&"SPIRA_RELEASE") && keys.contains(&"SPIRA_TOML") && keys.contains(&"PATH") && keys.contains(&"XDG_RUNTIME_DIR"));
         assert!(!keys.contains(&"SECRET"));

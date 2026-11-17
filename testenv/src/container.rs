@@ -12,10 +12,10 @@ use std::time::Duration;
 /// Baked into the image; must agree with the Containerfile (useradd's uid, the volume paths).
 pub const SPIRA_USER: &str = "spirauser";
 pub const SPIRA_UID: u32 = 1001;
-pub const CONTAINER_CHECKOUT: &str = "/workspace";
-pub const CONTAINER_CARGO: &str = "/var/spira/cargo";
+pub const CONTAINER_CHECKOUT: &str = system_paths::guest::WORKSPACE;
+pub const CONTAINER_CARGO: &str = system_paths::guest::VAR_SPIRA_CARGO;
 /// Cargo's build output lives on the named volume, never in the host-owned bind mount.
-pub const CONTAINER_CARGO_TARGET: &str = "/var/spira/cargo/target";
+pub const CONTAINER_CARGO_TARGET: &str = system_paths::guest::VAR_SPIRA_CARGO_TARGET;
 /// The stem of the named volume a unit-tests batch mounts as its cargo target; each branch
 /// mounts its own, [`unit_target_volume`]. The sweep (prune.rs) bounds them all together.
 pub const UNIT_TARGET_VOLUME: &str = "spira-unit-cargo-target";
@@ -44,7 +44,7 @@ pub const TESTENV_LABEL: &str = "spira.testenv=1";
 pub const RC_IMAGE_NOT_READY: i32 = 66;
 
 fn user_runtime() -> String {
-    format!("/run/user/{SPIRA_UID}")
+    format!("{}/{SPIRA_UID}", system_paths::RUN_USER)
 }
 
 /// How a podman call's streams are wired.
@@ -729,12 +729,12 @@ impl Driver<'_> {
 
     fn kernel_task_ceiling_below(&self, limit: u64) -> Option<(&'static str, u64)> {
         [
-            ("kernel.pid_max", "/proc/sys/kernel/pid_max"),
-            ("kernel.threads-max", "/proc/sys/kernel/threads-max"),
+            ("kernel.pid_max", format!("{}/kernel/pid_max", system_paths::PROC_SYS)),
+            ("kernel.threads-max", format!("{}/kernel/threads-max", system_paths::PROC_SYS)),
         ]
         .into_iter()
         .find_map(|(key, path)| {
-            let v = self.host.sysctl(path)?.trim().parse::<u64>().ok()?;
+            let v = self.host.sysctl(&path)?.trim().parse::<u64>().ok()?;
             (v < limit).then_some((key, v))
         })
     }
@@ -743,11 +743,11 @@ impl Driver<'_> {
         let used = self.host.inotify_used();
         let a = self
             .host
-            .sysctl("/proc/sys/fs/inotify/max_user_instances")
+            .sysctl(&format!("{}/fs/inotify/max_user_instances", system_paths::PROC_SYS))
             .and_then(|v| v.trim().parse::<u64>().ok());
         let b = self
             .host
-            .sysctl("/proc/sys/user/max_inotify_instances")
+            .sysctl(&format!("{}/user/max_inotify_instances", system_paths::PROC_SYS))
             .and_then(|v| v.trim().parse::<u64>().ok());
         let max = match (a, b) {
             (Some(a), Some(b)) => a.min(b),
@@ -770,8 +770,8 @@ impl Driver<'_> {
             name,
             &[
                 "cat",
-                "/sys/fs/cgroup/pids.current",
-                "/sys/fs/cgroup/pids.max",
+                &format!("{}/pids.current", system_paths::SYS_FS_CGROUP),
+                &format!("{}/pids.max", system_paths::SYS_FS_CGROUP),
             ],
         );
         let Some(out) = out else {
@@ -811,10 +811,10 @@ impl Driver<'_> {
 
     fn keyring_pressure(&self, name: &str) -> (String, String) {
         let cur = self
-            .exec_out(name, &["sh", "-c", "wc -l < /proc/keys"])
+            .exec_out(name, &["sh", "-c", &format!("wc -l < {}/keys", system_paths::PROC)])
             .map(|v| v.trim().to_string());
         let max = self
-            .exec_out(name, &["cat", "/proc/sys/kernel/keys/maxkeys"])
+            .exec_out(name, &["cat", &format!("{}/kernel/keys/maxkeys", system_paths::PROC_SYS)])
             .map(|v| v.trim().to_string());
         Self::pair(cur, max, "\u{0}")
     }
@@ -1463,17 +1463,17 @@ impl Host for RealHost {
         std::os::unix::process::parent_id()
     }
     fn pid_live(&self, pid: u32) -> bool {
-        Path::new(&format!("/proc/{pid}")).is_dir()
+        Path::new(&format!("{}/{pid}", system_paths::PROC)).is_dir()
     }
     fn ppid_of(&self, pid: u32) -> Option<u32> {
-        let t = std::fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
+        let t = std::fs::read_to_string(format!("{}/{pid}/status", system_paths::PROC)).ok()?;
         t.lines()
             .find_map(|l| l.strip_prefix("PPid:"))
             .and_then(|v| v.trim().parse().ok())
     }
     fn inotify_used(&self) -> u64 {
         let mut n = 0;
-        let Ok(procs) = std::fs::read_dir("/proc") else {
+        let Ok(procs) = std::fs::read_dir(system_paths::PROC) else {
             return 0;
         };
         for p in procs.flatten() {
@@ -1514,14 +1514,14 @@ impl Host for RealHost {
         human(st.f_bavail.saturating_mul(st.f_frsize))
     }
     fn free_mem(&self) -> String {
-        std::fs::read_to_string("/proc/meminfo")
+        std::fs::read_to_string(format!("{}/meminfo", system_paths::PROC))
             .ok()
             .and_then(|t| crate::util::meminfo_kb(&t, "MemAvailable"))
             .map(|kb| human(kb * 1024))
             .unwrap_or_else(|| "?".into())
     }
     fn owner_dir(&self) -> PathBuf {
-        PathBuf::from("/tmp")
+        PathBuf::from(system_paths::TMP)
     }
     fn linked_git_common_dir(&self, checkout: &Path) -> Option<PathBuf> {
         let dot_git = std::fs::read_to_string(checkout.join(".git")).ok()?;

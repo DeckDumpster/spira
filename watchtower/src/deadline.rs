@@ -106,7 +106,7 @@ mod tests {
         assert_eq!(r.unwrap_err().kind(), io::ErrorKind::TimedOut);
         let pid = std::fs::read_to_string(&pidfile).unwrap().trim().to_string();
         let gone = (0..1500).any(|_| {
-            let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap_or_default();
+            let stat = std::fs::read_to_string(format!("{}/{pid}/stat", system_paths::PROC)).unwrap_or_default();
             let dead = stat.is_empty() || stat.rsplit(')').next().is_some_and(|r| r.trim_start().starts_with('Z'));
             if !dead {
                 // clock-safe: a 30 s cap (1500 x 20 ms) on the wait for the named signal, the grandchild's exit

@@ -833,7 +833,7 @@ mod tests {
             |r| {
                 r.argv
                     .get(1)
-                    .is_some_and(|a| a.starts_with("/workspace/spira/test-"))
+                    .is_some_and(|a| a.starts_with(&format!("{}/spira/test-", crate::fixture::WORKSPACE)))
             },
             move |r| {
                 let now = l2.fetch_add(1, Ordering::SeqCst) + 1;
@@ -939,7 +939,7 @@ mod tests {
             vec!["test-a.sh"]
         );
         let e = rt.suite_execs();
-        assert_eq!(e[0].env_value("SPIRA_RUN"), Some("/tmp/spira-batch-i1"));
+        assert_eq!(e[0].env_value("SPIRA_RUN"), Some(format!("{}/spira-batch-i1", system_paths::TMP).as_str()));
     }
 
     #[test]
@@ -960,13 +960,13 @@ mod tests {
     fn timed_suites(rt: &FakeRuntime, times: &[(&str, u64, i32)]) {
         let table: Vec<(String, u64, i32)> = times
             .iter()
-            .map(|(n, ms, rc)| (format!("/workspace/spira/{n}"), *ms, *rc))
+            .map(|(n, ms, rc)| (format!("{}/spira/{n}", crate::fixture::WORKSPACE), *ms, *rc))
             .collect();
         rt.on(
             |r| {
                 r.argv
                     .get(1)
-                    .is_some_and(|a| a.starts_with("/workspace/spira/test-"))
+                    .is_some_and(|a| a.starts_with(&format!("{}/spira/test-", crate::fixture::WORKSPACE)))
             },
             move |r| {
                 let (_, ms, rc) = table

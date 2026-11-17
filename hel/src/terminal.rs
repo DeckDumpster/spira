@@ -102,7 +102,7 @@ fn age_of(p: &Path) -> Duration {
 /// A process whose working directory is `p` or inside it.
 fn has_live_cwd(p: &Path) -> bool {
     let Ok(real) = std::fs::canonicalize(p) else { return false };
-    let Ok(rd) = std::fs::read_dir("/proc") else { return false };
+    let Ok(rd) = std::fs::read_dir(system_paths::PROC) else { return false };
     rd.filter_map(|e| e.ok())
         .filter(|e| e.file_name().to_string_lossy().bytes().all(|b| b.is_ascii_digit()))
         .any(|e| std::fs::read_link(e.path().join("cwd")).is_ok_and(|c| c.starts_with(&real)))

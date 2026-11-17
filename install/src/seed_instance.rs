@@ -112,10 +112,10 @@ mod tests {
 
     #[test]
     fn skips_when_instance_is_prod_or_not_split() {
-        assert!(seed_prod_instance_if_split("prod", "/p/spira", "/h/spira").is_none());
-        assert!(seed_prod_instance_if_split("test", "", "/h/spira").is_none());
+        assert!(seed_prod_instance_if_split("prod", "p/spira", "h/spira").is_none());
+        assert!(seed_prod_instance_if_split("test", "", "h/spira").is_none());
         // Same parent (no real split) is skipped too.
-        assert!(seed_prod_instance_if_split("test", "/h/prod-spira", "/h/spira").is_none());
+        assert!(seed_prod_instance_if_split("test", "h/prod-spira", "h/spira").is_none());
     }
 
     #[test]

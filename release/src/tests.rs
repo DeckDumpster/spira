@@ -360,17 +360,17 @@ fn manifest_without_a_commit_or_with_garbage_does_not_parse() {
 #[test]
 fn pre_activate_env_builds_the_release_own_path_and_release_var() {
     let mut env = Env::new();
-    env.insert("SPIRA_UNIT_DIR".into(), "/units".into());
-    let reg = Registered { releases: "/e".into(), releases_keep: "10".into(), path: "/h/.local/bin:/h/.cargo/bin".into(), ..Default::default() };
+    env.insert("SPIRA_UNIT_DIR".into(), "units".into());
+    let reg = Registered { releases: "e".into(), releases_keep: "10".into(), path: "h/.local/bin:h/.cargo/bin".into(), ..Default::default() };
     let cfg = Config::resolve_with(&Flags::default(), &env, None, &reg).unwrap();
-    let rel = PathBuf::from("/e").join(A);
+    let rel = PathBuf::from("e").join(A);
     let envs = verify::pre_activate_env(&cfg, &rel).unwrap();
     assert_eq!(envs[0], (spira_config::RELEASE_ENV.to_string(), rel.display().to_string()));
     assert_eq!(envs[1], ("SPIRA_HOME".to_string(), format!("{}/spira", rel.display())));
-    assert_eq!(envs[2], ("PATH".to_string(), format!("{}/bin:{}/spira:/usr/local/bin:/usr/bin:/bin:/h/.local/bin:/h/.cargo/bin", rel.display(), rel.display())));
+    assert_eq!(envs[2], ("PATH".to_string(), format!("{}/bin:{}/spira:/usr/local/bin:/usr/bin:/bin:h/.local/bin:h/.cargo/bin", rel.display(), rel.display())));
 
     // No tail configured: PATH ends at the system directories, same as `release_path`.
-    let reg = Registered { releases: "/e".into(), releases_keep: "10".into(), ..Default::default() };
+    let reg = Registered { releases: "e".into(), releases_keep: "10".into(), ..Default::default() };
     let cfg = Config::resolve_with(&Flags::default(), &env, None, &reg).unwrap();
     let envs = verify::pre_activate_env(&cfg, &rel).unwrap();
     assert_eq!(envs[2].1, format!("{}/bin:{}/spira:/usr/local/bin:/usr/bin:/bin", rel.display(), rel.display()));
@@ -382,10 +382,10 @@ fn pre_activate_env_builds_the_release_own_path_and_release_var() {
 #[test]
 fn pre_activate_env_refuses_a_tail_inside_a_release_or_checkout() {
     let mut env = Env::new();
-    env.insert("SPIRA_UNIT_DIR".into(), "/units".into());
-    let reg = Registered { releases: "/e".into(), releases_keep: "10".into(), path: "/x/spira-releases/def/bin".into(), ..Default::default() };
+    env.insert("SPIRA_UNIT_DIR".into(), "units".into());
+    let reg = Registered { releases: "e".into(), releases_keep: "10".into(), path: "x/spira-releases/def/bin".into(), ..Default::default() };
     let cfg = Config::resolve_with(&Flags::default(), &env, None, &reg).unwrap();
-    let rel = PathBuf::from("/e").join(A);
+    let rel = PathBuf::from("e").join(A);
     let e = verify::pre_activate_env(&cfg, &rel).unwrap_err();
     assert!(e.contains("spira-releases"), "{e}");
 }
@@ -415,21 +415,21 @@ fn installed_units_map_back_to_their_templates() {
 
 #[test]
 fn render_names_the_release_and_refuses_what_it_cannot_fill() {
-    let rel = Path::new("/r/spira-releases").join(A);
+    let rel = Path::new("r/spira-releases").join(A);
     let mut host = BTreeMap::new();
-    host.insert("SPIRA_RUN".to_string(), "/run/x".to_string());
+    host.insert("SPIRA_RUN".to_string(), "run/x".to_string());
     host.insert("SPIRA_DB".to_string(), String::new());
     let out = units::render("spira-tool.service", SVC, &rel, &host, None, "prod").unwrap();
-    assert!(out.contains(&format!("ExecStart=/r/spira-releases/{A}/bin/tool --serve")), "{out}");
-    assert!(out.contains("append:/run/x/tool.log"));
-    assert!(out.ends_with("--serve\nStandardOutput=append:/run/x/tool.log\n"));
+    assert!(out.contains(&format!("ExecStart=r/spira-releases/{A}/bin/tool --serve")), "{out}");
+    assert!(out.contains("append:run/x/tool.log"));
+    assert!(out.ends_with("--serve\nStandardOutput=append:run/x/tool.log\n"));
     let t = units::render("spira-job.timer", JOB_TIMER, &rel, &host, None, "prod").unwrap();
     assert!(t.contains("Unit=spira-job-prod.service"), "{t}");
     let wt = units::render("spira-watch@.service", WATCH, &rel, &host, Some("pool"), "prod").unwrap();
     assert!(wt.contains("watchd.sh exec pool"));
     let sup = units::render("x.service", "ExecStart=@SPIRA_SUPERVISE_BIN@ @SPIRA_HOME@/c.sh\n", &rel, &host, None, "prod").unwrap();
     // path-ok: a unit rendered against a release names that release's own binary.
-    assert!(sup.contains(&format!("{A}/bin/spira-supervise {}/{A}/spira/c.sh", "/r/spira-releases")), "{sup}");
+    assert!(sup.contains(&format!("{A}/bin/spira-supervise {}/{A}/spira/c.sh", "r/spira-releases")), "{sup}");
     let e = units::render("y.service", "ExecStart=@NOPE@\n", &rel, &host, None, "prod").unwrap_err();
     assert!(e.contains("nothing fills: NOPE"), "{e}");
     let e = units::render("z.service", "Environment=SPIRA_DB=@SPIRA_DB@\n", &rel, &host, None, "prod").unwrap_err();
@@ -462,34 +462,34 @@ fn gate_open_is_true_without_a_gate_and_checks_the_host_key_when_there_is_one() 
 #[test]
 fn config_resolves_roots_from_flags_then_config_and_refuses_when_nothing_does() {
     let mut env = Env::new();
-    env.insert("HOME".into(), "/h".into());
+    env.insert("HOME".into(), "h".into());
     assert!(Config::resolve_with(&Flags::default(), &env, None, &Registered::default()).unwrap_err().contains("no releases directory"));
     // `reg.releases` is already fully resolved here (as `cfg("SPIRA_RELEASES")` would hand
     // it — the `workspaces`-derived default is `spira_config`'s own job, not this crate's).
-    let reg = Registered { releases: "/w/spira-releases".into(), run: "/r".into(), releases_keep: "7".into(), ..Default::default() };
+    let reg = Registered { releases: "w/spira-releases".into(), run: "r".into(), releases_keep: "7".into(), ..Default::default() };
     let c = Config::resolve_with(&Flags::default(), &env, None, &reg).unwrap();
-    assert_eq!((c.releases.clone(), c.run.clone(), c.keep), (PathBuf::from("/w/spira-releases"), Some(PathBuf::from("/r")), 7));
-    assert_eq!(c.unit_dir, PathBuf::from("/h/.config/systemd/user"));
-    let reg2 = Registered { releases: "/e".into(), ..reg.clone() };
-    assert_eq!(Config::resolve_with(&Flags::default(), &env, None, &reg2).unwrap().releases, PathBuf::from("/e"));
-    let f = Flags { releases: Some("/f".into()), ..Default::default() };
-    assert_eq!(Config::resolve_with(&f, &env, None, &reg2).unwrap().releases, PathBuf::from("/f"));
+    assert_eq!((c.releases.clone(), c.run.clone(), c.keep), (PathBuf::from("w/spira-releases"), Some(PathBuf::from("r")), 7));
+    assert_eq!(c.unit_dir, PathBuf::from("h/.config/systemd/user"));
+    let reg2 = Registered { releases: "e".into(), ..reg.clone() };
+    assert_eq!(Config::resolve_with(&Flags::default(), &env, None, &reg2).unwrap().releases, PathBuf::from("e"));
+    let f = Flags { releases: Some("f".into()), ..Default::default() };
+    assert_eq!(Config::resolve_with(&f, &env, None, &reg2).unwrap().releases, PathBuf::from("f"));
 }
 
 #[test]
 fn host_values_carries_the_configured_path_tail_and_refuses_a_bad_one() {
     let mut env = Env::new();
-    env.insert("HOME".into(), "/h".into());
+    env.insert("HOME".into(), "h".into());
     // Nothing configured: the tail is empty, not an error.
-    let reg = Registered { releases: "/e".into(), releases_keep: "10".into(), ..Default::default() };
+    let reg = Registered { releases: "e".into(), releases_keep: "10".into(), ..Default::default() };
     let c = Config::resolve_with(&Flags::default(), &env, None, &reg).unwrap();
     assert_eq!(c.host_values().unwrap().get("SPIRA_PATH_TAIL").map(String::as_str), Some(""));
     // The configured key.
-    let reg = Registered { releases: "/e".into(), releases_keep: "10".into(), path: "/h/.local/bin:/h/.cargo/bin".into(), ..Default::default() };
+    let reg = Registered { releases: "e".into(), releases_keep: "10".into(), path: "h/.local/bin:h/.cargo/bin".into(), ..Default::default() };
     let c = Config::resolve_with(&Flags::default(), &env, None, &reg).unwrap();
-    assert_eq!(c.host_values().unwrap().get("SPIRA_PATH_TAIL").map(String::as_str), Some(":/h/.local/bin:/h/.cargo/bin"));
+    assert_eq!(c.host_values().unwrap().get("SPIRA_PATH_TAIL").map(String::as_str), Some(":h/.local/bin:h/.cargo/bin"));
     // A tail entry inside a release is refused, naming it.
-    let bad = Registered { releases: "/e".into(), releases_keep: "10".into(), path: "/x/spira-releases/def/bin".into(), ..Default::default() };
+    let bad = Registered { releases: "e".into(), releases_keep: "10".into(), path: "x/spira-releases/def/bin".into(), ..Default::default() };
     let c = Config::resolve_with(&Flags::default(), &env, None, &bad).unwrap();
     let e = c.host_values().unwrap_err();
     assert!(e.contains("spira-releases"), "{e}");
@@ -500,15 +500,15 @@ fn host_values_carries_the_cache_store_root_the_sccache_dav_unit_renders() {
     // The unit template reads @SPIRA_SCCACHE_DAV_ROOT@; activation refused every release
     // ("placeholders nothing fills") while this map lacked it.
     let mut env = Env::new();
-    env.insert("HOME".into(), "/h".into());
-    let reg = Registered { releases: "/e".into(), run: "/h/run".into(), releases_keep: "10".into(), ..Default::default() };
+    env.insert("HOME".into(), "h".into());
+    let reg = Registered { releases: "e".into(), run: "h/run".into(), releases_keep: "10".into(), ..Default::default() };
     let c = Config::resolve_with(&Flags::default(), &env, None, &reg).unwrap();
-    assert_eq!(c.host_values().unwrap().get("SPIRA_SCCACHE_DAV_ROOT").map(String::as_str), Some("/h/run/sccache-dav"), "empty means the run directory's store");
-    let reg = Registered { releases: "/e".into(), run: "/h/run".into(), releases_keep: "10".into(), sccache_dav_root: "/mnt/other/store".into(), ..Default::default() };
+    assert_eq!(c.host_values().unwrap().get("SPIRA_SCCACHE_DAV_ROOT").map(String::as_str), Some("h/run/sccache-dav"), "empty means the run directory's store");
+    let reg = Registered { releases: "e".into(), run: "h/run".into(), releases_keep: "10".into(), sccache_dav_root: "mnt/other/store".into(), ..Default::default() };
     let c = Config::resolve_with(&Flags::default(), &env, None, &reg).unwrap();
-    assert_eq!(c.host_values().unwrap().get("SPIRA_SCCACHE_DAV_ROOT").map(String::as_str), Some("/mnt/other/store"));
+    assert_eq!(c.host_values().unwrap().get("SPIRA_SCCACHE_DAV_ROOT").map(String::as_str), Some("mnt/other/store"));
     let unit = std::fs::read_to_string(spira_config::resolve::checkout_root_for_process().unwrap().join("systemd/sccache-dav.service")).unwrap();
-    let rendered = units::render("sccache-dav.service", &unit, std::path::Path::new("/e/0123"), &c.host_values().unwrap(), None, "");
+    let rendered = units::render("sccache-dav.service", &unit, std::path::Path::new("e/0123"), &c.host_values().unwrap(), None, "");
     assert!(!rendered.as_ref().err().is_some_and(|e| e.contains("SPIRA_SCCACHE_DAV_ROOT")), "{rendered:?}");
 }
 
@@ -589,7 +589,7 @@ fn touch_tarball(sb: &Sandbox, name: &str) -> PathBuf {
 #[test]
 fn release_name_from_tarball_accepts_the_naming_convention_and_refuses_the_rest() {
     assert_eq!(install::release_name_from_tarball(Path::new("spira-20260101T000000Z.tar.gz")).unwrap(), "spira-20260101T000000Z");
-    assert_eq!(install::release_name_from_tarball(Path::new("/tmp/x/spira-1.tgz")).unwrap(), "spira-1");
+    assert_eq!(install::release_name_from_tarball(Path::new("tmp/x/spira-1.tgz")).unwrap(), "spira-1");
     assert!(install::release_name_from_tarball(Path::new("spira-1.zip")).is_err());
     assert!(install::release_name_from_tarball(Path::new("release.tar.gz")).is_err());
     assert!(install::release_name_from_tarball(Path::new("spira-.tar.gz")).is_err());
@@ -688,11 +688,11 @@ fn stage_rune_names_the_canary_persona_with_one_concurrent_slot() {
 
 #[test]
 fn stage_repo_map_line_has_six_columns_named_for_the_repo_and_an_empty_gate() {
-    let line = crate::stage::repo_map_line(Path::new("/tmp/x/repo"));
+    let line = crate::stage::repo_map_line(Path::new("tmp/x/repo"));
     let cols: Vec<&str> = line.trim_end().split('|').map(str::trim).collect();
     assert_eq!(cols.len(), 6, "{line:?}");
     assert_eq!(cols[0], "repo");
-    assert_eq!(cols[1], "/tmp/x/repo");
+    assert_eq!(cols[1], "tmp/x/repo");
     assert_eq!(cols[2], "push");
     assert_eq!(cols[3], "origin/main");
     assert_eq!(cols[4], "");
@@ -807,10 +807,10 @@ fn systemd_timespans_parse_into_a_start_budget() {
 fn a_documentation_line_names_current_so_two_releases_render_one_unit() {
     let text = "[Unit]\nDocumentation=file://@SPIRA_HOME@/README.md\n[Service]\nExecStart=@SPIRA_RELEASE@/bin/x\n";
     let host = BTreeMap::new();
-    let a = units::render("x.service", text, Path::new("/r/spira-releases/aaa"), &host, None, "prod").unwrap();
-    let b = units::render("x.service", text, Path::new("/r/spira-releases/bbb"), &host, None, "prod").unwrap();
-    assert!(a.contains("Documentation=file:///r/spira-releases/current/spira/README.md\n"), "{a}");
-    assert!(a.contains("ExecStart=/r/spira-releases/aaa/bin/x"), "Exec lines still name the sha: {a}");
+    let a = units::render("x.service", text, Path::new("r/spira-releases/aaa"), &host, None, "prod").unwrap();
+    let b = units::render("x.service", text, Path::new("r/spira-releases/bbb"), &host, None, "prod").unwrap();
+    assert!(a.contains("Documentation=file://r/spira-releases/current/spira/README.md\n"), "{a}");
+    assert!(a.contains("ExecStart=r/spira-releases/aaa/bin/x"), "Exec lines still name the sha: {a}");
     assert_eq!(units::without_documentation(&a).replace("aaa", "R"), units::without_documentation(&b).replace("bbb", "R"));
     let stale = a.replace("current", "0ldsha");
     assert_eq!(units::without_documentation(&stale), units::without_documentation(&a), "a Documentation-only difference is not a change");

@@ -59,7 +59,7 @@ impl World for Quiet {
         String::new()
     }
     fn worktrees(&self) -> PathBuf {
-        PathBuf::from("/nonexistent-run/worktree")
+        PathBuf::from("nonexistent-run/worktree")
     }
 }
 

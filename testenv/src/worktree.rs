@@ -27,7 +27,7 @@ pub(crate) fn free_mib(p: &Path) -> Option<u64> {
 /// The mount point holding `p`: the longest `/proc/self/mountinfo` mount that prefixes it.
 pub(crate) fn mount_point(p: &Path) -> PathBuf {
     let real = std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
-    let info = std::fs::read_to_string("/proc/self/mountinfo").unwrap_or_default();
+    let info = std::fs::read_to_string(format!("{}/mountinfo", system_paths::PROC_SELF)).unwrap_or_default();
     info.lines()
         .filter_map(|l| l.split(' ').nth(4))
         .map(|m| PathBuf::from(m.replace("\\040", " ")))
@@ -230,7 +230,7 @@ pub(crate) fn prepare_slot(repo: &Path, slot: &Path, commit: &str) -> Result<(),
         return Ok(());
     }
     git(slot, &["checkout", "-q", "--detach", "--force", commit])?;
-    git(slot, &["clean", "-ffdxq", "-e", "/target"])?;
+    git(slot, &["clean", "-ffdxq", "-e", "/target"])?; // not a path: gitignore pattern
     match head_of(slot) {
         Some(h) if h == commit => Ok(()),
         other => Err(format!(
@@ -302,7 +302,7 @@ pub fn acquire(req: &Request, log: &dyn Fn(&str)) -> Result<Worktree, String> {
     let base = req.scratch;
     fs::create_dir_all(base)
         .map_err(|e| format!("cannot create worktree directory {}: {e}", base.display()))?;
-    reap_stale_test_scratch(&std::env::temp_dir(), STALE_SCRATCH_AGE, &|pid| Path::new(&format!("/proc/{pid}")).exists(), log);
+    reap_stale_test_scratch(&std::env::temp_dir(), STALE_SCRATCH_AGE, &|pid| Path::new(&format!("{}/{pid}", system_paths::PROC)).exists(), log);
     for i in 0..req.slots {
         let slot = base.join(format!(".testenv-slot-{i}"));
         let Some(lock) = try_lock(&base.join(format!(".testenv-slot-{i}.lock"))) else {
@@ -348,7 +348,7 @@ mod tests {
     use super::*;
 
 
-    const LIST: &str = "worktree /srv/harness\nHEAD aaa\nbranch refs/heads/main\n\nworktree /run/worktree/sp-x\nHEAD bbb\nbranch refs/heads/spira/sp-x\n\nworktree /run/worktree/round-5\nHEAD ccc\ndetached\n";
+    const LIST: &str = "worktree srv/harness\nHEAD aaa\nbranch refs/heads/main\n\nworktree run/worktree/sp-x\nHEAD bbb\nbranch refs/heads/spira/sp-x\n\nworktree run/worktree/round-5\nHEAD ccc\ndetached\n";
 
     #[test]
     fn stale_unheld_test_scratch_is_reaped_and_the_rest_is_kept() {
@@ -377,8 +377,10 @@ mod tests {
 
     #[test]
     fn the_declared_scratch_root_is_used_whatever_tmp_is() {
-        for declared in ["/srv/test-disk/testenv-scratch", "/tmp/declared", " /srv/padded "] {
-            assert_eq!(scratch_root(declared), Ok(PathBuf::from(declared.trim())));
+        let root = testkit::TempDir::new("scratch-root");
+        let r = root.display();
+        for declared in [format!("{r}/srv/test-disk/testenv-scratch"), format!("{r}/declared"), format!(" {r}/padded ")] {
+            assert_eq!(scratch_root(&declared), Ok(PathBuf::from(declared.trim())));
         }
     }
 
@@ -405,19 +407,19 @@ mod tests {
     fn cwd_worktree_wins_when_its_head_is_the_commit() {
         let e = parse_list(LIST);
         assert_eq!(
-            in_place_candidates(&e, Path::new("/run/worktree/round-5/spira"), "HEAD", "ccc"),
-            vec![PathBuf::from("/run/worktree/round-5")]
+            in_place_candidates(&e, Path::new("run/worktree/round-5/spira"), "HEAD", "ccc"),
+            vec![PathBuf::from("run/worktree/round-5")]
         );
         assert_eq!(
-            in_place_candidates(&e, Path::new("/elsewhere"), "spira/sp-x", "bbb"),
-            vec![PathBuf::from("/run/worktree/sp-x")]
+            in_place_candidates(&e, Path::new("elsewhere"), "spira/sp-x", "bbb"),
+            vec![PathBuf::from("run/worktree/sp-x")]
         );
         // the branch's worktree has moved on: nothing in place
-        assert!(in_place_candidates(&e, Path::new("/elsewhere"), "spira/sp-x", "zzz").is_empty());
+        assert!(in_place_candidates(&e, Path::new("elsewhere"), "spira/sp-x", "zzz").is_empty());
         // nested cwd picks the deepest worktree, not the outer checkout
         assert_eq!(
-            in_place_candidates(&e, Path::new("/srv/harness"), "main", "aaa"),
-            vec![PathBuf::from("/srv/harness")]
+            in_place_candidates(&e, Path::new("srv/harness"), "main", "aaa"),
+            vec![PathBuf::from("srv/harness")]
         );
     }
 }

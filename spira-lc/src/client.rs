@@ -122,7 +122,7 @@ mod tests {
     #[test]
     fn admin_verbs_never_go_through_the_socket() {
         for verb in ["admin-apply-ddl", "admin-create-store", "admin-migrate", "admin-grants", "admin-accounts", "verify-login", "serve", "classify"] {
-            assert!(super::try_socket(&[verb.to_string(), "/x".to_string()]).is_none(), "{verb}");
+            assert!(super::try_socket(&[verb.to_string(), "x".to_string()]).is_none(), "{verb}");
         }
     }
 
@@ -142,7 +142,7 @@ mod tests {
         use super::{route_of, Route};
         assert_eq!(route_of(Ok(String::new())), Ok(Route::Direct));
         assert_eq!(route_of(Ok("  ".into())), Ok(Route::Direct));
-        assert_eq!(route_of(Ok("/run/user/1000/spira-lc/sock".into())), Ok(Route::Service("/run/user/1000/spira-lc/sock".into())));
+        assert_eq!(route_of(Ok("run/user/1000/spira-lc/sock".into())), Ok(Route::Service("run/user/1000/spira-lc/sock".into())));
         let refused = route_of(Err("SPIRA_TOML is not set".into())).unwrap_err();
         assert!(refused.starts_with("cannot tell") && refused.contains("spira.lc_socket"), "{refused}");
     }

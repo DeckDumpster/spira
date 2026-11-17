@@ -17,7 +17,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread::sleep;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-pub const DEFAULT_ROOT: &str = "/var/tmp/spira-testdb";
+pub const DEFAULT_ROOT: &str = system_paths::guest::VAR_TMP_SPIRA_TESTDB;
 /// The database every template (and so every fixture) holds; unique per server, so fixed.
 pub const DATABASE: &str = "sptest";
 // batch-job: waiting for a throwaway dolt server to come up
@@ -234,7 +234,7 @@ fn free_port() -> io::Result<u16> {
 }
 
 fn pid_alive(pid: u32) -> bool {
-    match fs::read_to_string(format!("/proc/{pid}/status")) {
+    match fs::read_to_string(format!("{}/{pid}/status", system_paths::PROC)) {
         Ok(s) => !status_is_dead(&s),
         Err(_) => false,
     }
@@ -243,7 +243,7 @@ fn pid_alive(pid: u32) -> bool {
 /// Ours = alive and still the sql-server for `config` (never signal a recycled pid).
 fn pid_is_our_server(pid: u32, config: &Path) -> bool {
     pid_alive(pid)
-        && fs::read(format!("/proc/{pid}/cmdline"))
+        && fs::read(format!("{}/{pid}/cmdline", system_paths::PROC))
             .map(|c| cmdline_is_server(&c, config))
             .unwrap_or(false)
 }
@@ -425,7 +425,7 @@ fn clk_tck() -> u64 {
 }
 
 fn server_cpu_ms(pid: u32) -> Option<u64> {
-    let s = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let s = fs::read_to_string(format!("{}/{pid}/stat", system_paths::PROC)).ok()?;
     Some(stat_cpu_ticks(&s)? * 1000 / clk_tck())
 }
 

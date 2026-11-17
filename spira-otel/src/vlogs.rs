@@ -12,8 +12,8 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
-const INSERT_PATH: &str = "/insert/jsonline?_stream_fields=stream,kind_tag&_time_field=at&_msg_field=kind_tag";
-const QUERY_PATH: &str = "/select/logsql/query";
+const INSERT_PATH: &str = "/insert/jsonline?_stream_fields=stream,kind_tag&_time_field=at&_msg_field=kind_tag"; // not a path: VictoriaLogs insert URL path
+const QUERY_PATH: &str = "/select/logsql/query"; // not a path: VictoriaLogs query URL path
 const DEADLINE: Duration = Duration::from_secs(3);
 
 /// Records the shipper queues before it drops.
@@ -317,7 +317,7 @@ pub mod fake {
                     c.set_nonblocking(false).unwrap();
                     c.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
                     let Some((target, body)) = read_request(&mut c) else { continue };
-                    let script = if target.starts_with("/insert") {
+                    let script = if target.starts_with("/insert") { // not a path: VictoriaLogs URL path
                         ins.lock().unwrap().push((target, body));
                         Script { status: 200, ..Script::default() }
                     } else {

@@ -177,14 +177,14 @@ impl Host for Fake {
     }
     fn make_context(&self, src: &Path) -> Result<PathBuf, String> {
         self.contexts.borrow_mut().push(src.to_path_buf());
-        Ok(PathBuf::from("/t/ctx"))
+        Ok(PathBuf::from("t/ctx"))
     }
     fn remove_tree(&self, p: &Path) {
         self.removed_trees.borrow_mut().push(p.to_path_buf());
         self.files.borrow_mut().retain(|k, _| !k.starts_with(p));
     }
     fn temp_log(&self) -> PathBuf {
-        PathBuf::from("/t/build.log")
+        PathBuf::from("t/build.log")
     }
     fn sleep(&self, d: Duration) {
         self.slept.set(self.slept.get() + d.as_millis() as u64);
@@ -218,7 +218,7 @@ impl Host for Fake {
         "7.5Gi".into()
     }
     fn owner_dir(&self) -> PathBuf {
-        PathBuf::from("/tmp")
+        PathBuf::from("tmp")
     }
     fn linked_git_common_dir(&self, checkout: &Path) -> Option<PathBuf> {
         self.common_dirs.borrow().get(checkout).cloned()
@@ -241,7 +241,7 @@ impl Host for Fake {
 fn conf(root: &str) -> Conf {
     Conf {
         harness: Some(PathBuf::from(root)),
-        bd_pin: PathBuf::from("/run/bd-pin"),
+        bd_pin: PathBuf::from("run/bd-pin"),
         registry: String::new(),
         max_concurrent: 8,
         cpus: None,
@@ -284,9 +284,9 @@ fn tag_of(f: &Fake, c: &Conf) -> Option<String> {
 #[test]
 fn the_tag_is_the_scripts_hash_of_the_closure_by_content() {
     let f = Fake::new();
-    harness(&f, "/h");
-    f.file("/run/bd-pin", "migrations=12\n");
-    let c = conf("/h");
+    harness(&f, "h");
+    f.file("run/bd-pin", "migrations=12\n");
+    let c = conf("h");
     // Containerfile and the bd pin hash in full; deps.toml hashes only the (name, tier)
     // rows doctor-check.sh's FATAL/WARN case arms actually consult — here just "bd
     // runtime" (sp-ehj2t: the raw file used to hash whole, so every release-tier addition
@@ -306,25 +306,25 @@ fn the_tag_is_the_scripts_hash_of_the_closure_by_content() {
 #[test]
 fn every_closure_input_moves_the_tag_and_nothing_else_does() {
     let f = Fake::new();
-    harness(&f, "/h");
-    let c = conf("/h");
+    harness(&f, "h");
+    let c = conf("h");
     let base = tag_of(&f, &c).unwrap();
     assert_eq!(base.len(), 12);
-    f.file("/h/spira/unrelated.sh", "echo hi");
+    f.file("h/spira/unrelated.sh", "echo hi");
     assert_eq!(tag_of(&f, &c).unwrap(), base, "a file outside the closure");
     f.file(
-        "/h/spira/deps.toml",
+        "h/spira/deps.toml",
         "[[dep]]\nname = \"bd\"\ntier = \"optional\"\n",
     );
     let deps = tag_of(&f, &c).unwrap();
     assert_ne!(deps, base, "a checked-tier deps.toml change");
-    f.file("/run/bd-pin", "migrations=13\n");
+    f.file("run/bd-pin", "migrations=13\n");
     let pin = tag_of(&f, &c).unwrap();
     assert_ne!(pin, deps, "the bd pin");
-    f.file("/h/spira/testenv/Containerfile", "FROM ubuntu:26.04\n");
+    f.file("h/spira/testenv/Containerfile", "FROM ubuntu:26.04\n");
     let cf = tag_of(&f, &c).unwrap();
     assert_ne!(cf, pin, "the Containerfile");
-    f.file("/h/rust-toolchain.toml", "[toolchain]\nchannel = \"7.6.6\"\n");
+    f.file("h/rust-toolchain.toml", "[toolchain]\nchannel = \"7.6.6\"\n");
     assert_ne!(tag_of(&f, &c).unwrap(), cf, "the rust-toolchain.toml channel");
 }
 
@@ -338,11 +338,11 @@ fn adding_a_release_tier_entry_leaves_the_tag_unchanged() {
     // image). doctor-check.sh's case statement has no arm for "release", so it can never
     // change whether the image build passes — the tag must not move either.
     let f = Fake::new();
-    harness(&f, "/h");
-    let c = conf("/h");
+    harness(&f, "h");
+    let c = conf("h");
     let base = tag_of(&f, &c).unwrap();
     f.file(
-        "/h/spira/deps.toml",
+        "h/spira/deps.toml",
         "[[dep]]\nname = \"bd\"\ntier = \"runtime\"\n\n[[dep]]\nname = \"dwarf\"\ntier = \"release\"\n",
     );
     assert_eq!(tag_of(&f, &c).unwrap(), base, "a release-tier addition");
@@ -351,19 +351,19 @@ fn adding_a_release_tier_entry_leaves_the_tag_unchanged() {
 #[test]
 fn two_manifests_differing_only_in_release_entries_share_one_tag() {
     let f = Fake::new();
-    harness(&f, "/a");
+    harness(&f, "a");
     f.file(
-        "/a/spira/deps.toml",
+        "a/spira/deps.toml",
         "[[dep]]\nname = \"bd\"\ntier = \"runtime\"\n\n[[dep]]\nname = \"dwarf\"\ntier = \"release\"\n",
     );
-    harness(&f, "/b");
+    harness(&f, "b");
     f.file(
-        "/b/spira/deps.toml",
+        "b/spira/deps.toml",
         "[[dep]]\nname = \"bd\"\ntier = \"runtime\"\n\n[[dep]]\nname = \"batcher\"\ntier = \"release\"\n\n[[dep]]\nname = \"gate\"\ntier = \"release\"\n",
     );
     assert_eq!(
-        tag_of(&f, &conf("/a")),
-        tag_of(&f, &conf("/b")),
+        tag_of(&f, &conf("a")),
+        tag_of(&f, &conf("b")),
         "two branches differing only in which release-tier binaries they declare"
     );
 }
@@ -371,11 +371,11 @@ fn two_manifests_differing_only_in_release_entries_share_one_tag() {
 #[test]
 fn changing_a_runtime_tier_entry_changes_the_tag() {
     let f = Fake::new();
-    harness(&f, "/h");
-    let c = conf("/h");
+    harness(&f, "h");
+    let c = conf("h");
     let base = tag_of(&f, &c).unwrap();
     f.file(
-        "/h/spira/deps.toml",
+        "h/spira/deps.toml",
         "[[dep]]\nname = \"bd\"\ntier = \"optional\"\n",
     );
     assert_ne!(
@@ -392,11 +392,11 @@ fn an_operator_tier_entry_moves_the_tag_like_optional_does() {
     // addition can change whether the build needs a waiver, so it must move the tag —
     // unlike a release-tier addition, which never can.
     let f = Fake::new();
-    harness(&f, "/h");
-    let c = conf("/h");
+    harness(&f, "h");
+    let c = conf("h");
     let base = tag_of(&f, &c).unwrap();
     f.file(
-        "/h/spira/deps.toml",
+        "h/spira/deps.toml",
         "[[dep]]\nname = \"bd\"\ntier = \"runtime\"\n\n[[dep]]\nname = \"go\"\ntier = \"operator\"\n",
     );
     assert_ne!(tag_of(&f, &c).unwrap(), base, "an operator-tier addition");
@@ -408,11 +408,11 @@ fn a_dev_tier_entry_never_moves_the_tag() {
     // what the image build verifies; doctor-check.sh's own "dev" arm is a deliberate
     // no-op, so the tag must not move either.
     let f = Fake::new();
-    harness(&f, "/h");
-    let c = conf("/h");
+    harness(&f, "h");
+    let c = conf("h");
     let base = tag_of(&f, &c).unwrap();
     f.file(
-        "/h/spira/deps.toml",
+        "h/spira/deps.toml",
         "[[dep]]\nname = \"bd\"\ntier = \"runtime\"\n\n[[dep]]\nname = \"podman\"\ntier = \"dev\"\n",
     );
     assert_eq!(tag_of(&f, &c).unwrap(), base, "a dev-tier addition");
@@ -421,9 +421,9 @@ fn a_dev_tier_entry_never_moves_the_tag() {
 #[test]
 fn an_unparseable_manifest_refuses_instead_of_naming_an_image() {
     let f = Fake::new();
-    f.file("/h/spira/testenv/Containerfile", "FROM ubuntu:24.04\n");
-    f.file("/h/spira/deps.toml", "not valid toml === [[[");
-    let c = conf("/h");
+    f.file("h/spira/testenv/Containerfile", "FROM ubuntu:24.04\n");
+    f.file("h/spira/deps.toml", "not valid toml === [[[");
+    let c = conf("h");
     assert_eq!(tag_of(&f, &c), None, "an unparseable deps.toml");
     assert!(f.errs().contains("deps.toml"));
 }
@@ -431,27 +431,27 @@ fn an_unparseable_manifest_refuses_instead_of_naming_an_image() {
 #[test]
 fn two_checkouts_of_one_commit_compute_one_tag() {
     let f = Fake::new();
-    harness(&f, "/a");
-    harness(&f, "/b/deeper");
-    assert_eq!(tag_of(&f, &conf("/a")), tag_of(&f, &conf("/b/deeper")));
+    harness(&f, "a");
+    harness(&f, "b/deeper");
+    assert_eq!(tag_of(&f, &conf("a")), tag_of(&f, &conf("b/deeper")));
 }
 
 #[test]
 fn an_unreadable_closure_refuses_instead_of_naming_an_image() {
     let f = Fake::new();
-    f.file("/h/spira/deps.toml", "x");
-    let c = conf("/h");
+    f.file("h/spira/deps.toml", "x");
+    let c = conf("h");
     let d = Driver { host: &f, conf: &c };
     assert_eq!(d.cmd_tag(), 1);
     assert!(f.out.borrow().is_empty());
     assert!(f.errs().contains("Containerfile"));
     let f = Fake::new();
-    f.file("/h/spira/testenv/Containerfile", "x");
+    f.file("h/spira/testenv/Containerfile", "x");
     assert_eq!(tag_of(&f, &c), None);
     assert!(f.errs().contains("deps.toml"));
     let none = Conf {
         harness: None,
-        ..conf("/h")
+        ..conf("h")
     };
     let f = Fake::new();
     assert_eq!(
@@ -470,8 +470,8 @@ fn an_unreadable_closure_refuses_instead_of_naming_an_image() {
 #[test]
 fn a_local_image_is_used_as_is() {
     let f = Fake::new();
-    harness(&f, "/h");
-    let c = conf("/h");
+    harness(&f, "h");
+    let c = conf("h");
     let d = Driver { host: &f, conf: &c };
     assert_eq!(d.cmd_image(), 0);
     let img = f.out.borrow()[0].clone();
@@ -482,9 +482,9 @@ fn a_local_image_is_used_as_is() {
 #[test]
 fn no_registry_means_nothing_is_pulled() {
     let f = Fake::new();
-    harness(&f, "/h");
+    harness(&f, "h");
     f.when(&["image", "exists"], 1, "");
-    let c = conf("/h");
+    let c = conf("h");
     assert_eq!(Driver { host: &f, conf: &c }.cmd_image(), 0);
     assert!(f.calls_with("pull").is_empty());
     let b = f.calls_with("build");
@@ -497,8 +497,8 @@ fn no_registry_means_nothing_is_pulled() {
             "-t",
             &f.out.borrow()[0],
             "-f",
-            "/t/ctx/testenv/Containerfile",
-            "/t/ctx"
+            "t/ctx/testenv/Containerfile",
+            "t/ctx"
         ])[..]
     );
 }
@@ -506,11 +506,11 @@ fn no_registry_means_nothing_is_pulled() {
 #[test]
 fn a_registry_hit_pulls_the_closure_tag_retags_it_and_builds_nothing() {
     let f = Fake::new();
-    harness(&f, "/h");
+    harness(&f, "h");
     f.when(&["image", "exists"], 1, "");
     let c = Conf {
         registry: "ghcr.io/org/".into(),
-        ..conf("/h")
+        ..conf("h")
     };
     let tag = tag_of(&f, &c).unwrap();
     assert_eq!(Driver { host: &f, conf: &c }.cmd_image(), 0);
@@ -529,12 +529,12 @@ fn a_registry_hit_pulls_the_closure_tag_retags_it_and_builds_nothing() {
 #[test]
 fn a_registry_miss_is_slow_never_fatal() {
     let f = Fake::new();
-    harness(&f, "/h");
+    harness(&f, "h");
     f.when(&["image", "exists"], 1, "");
     f.when(&["pull"], 125, "");
     let c = Conf {
         registry: "ghcr.io/org".into(),
-        ..conf("/h")
+        ..conf("h")
     };
     assert_eq!(Driver { host: &f, conf: &c }.cmd_image(), 0);
     assert_eq!(f.calls_with("build").len(), 1);
@@ -544,10 +544,10 @@ fn a_registry_miss_is_slow_never_fatal() {
 #[test]
 fn publish_pushes_the_closure_tag_and_nothing_floating() {
     let f = Fake::new();
-    harness(&f, "/h");
+    harness(&f, "h");
     let c = Conf {
         registry: "ghcr.io/org".into(),
-        ..conf("/h")
+        ..conf("h")
     };
     let tag = tag_of(&f, &c).unwrap();
     assert_eq!(Driver { host: &f, conf: &c }.cmd_publish(), 0);
@@ -566,16 +566,16 @@ fn publish_pushes_the_closure_tag_and_nothing_floating() {
 #[test]
 fn publish_without_a_registry_or_after_a_failed_push_fails() {
     let f = Fake::new();
-    harness(&f, "/h");
-    let c = conf("/h");
+    harness(&f, "h");
+    let c = conf("h");
     assert_eq!(Driver { host: &f, conf: &c }.cmd_publish(), 1);
     assert!(f.errs().contains("SPIRA_TESTENV_REGISTRY is unset"));
     let f = Fake::new();
-    harness(&f, "/h");
+    harness(&f, "h");
     f.when(&["push"], 1, "");
     let c = Conf {
         registry: "r".into(),
-        ..conf("/h")
+        ..conf("h")
     };
     assert_eq!(Driver { host: &f, conf: &c }.cmd_publish(), 1);
     assert!(f.errs().contains("push failed"));
@@ -603,11 +603,11 @@ fn store_with_superseded(f: &Fake, current: &str, stale: &str) {
 #[test]
 fn a_green_build_or_a_pull_removes_the_images_it_supersedes_and_a_red_build_removes_nothing() {
     let f = Fake::new();
-    harness(&f, "/h");
+    harness(&f, "h");
     f.when(&["image", "exists"], 1, "");
-    f.with_spira_config_sibling("/build/target/release/testenv");
+    f.with_spira_config_sibling("build/target/release/testenv");
     f.clock.set(1000);
-    let c = conf("/h");
+    let c = conf("h");
     let img = format!("localhost/spira-testenv:{}", tag_of(&f, &c).unwrap());
     store_with_superseded(&f, &img, "old0");
     assert_eq!(Driver { host: &f, conf: &c }.cmd_image(), 0);
@@ -619,18 +619,18 @@ fn a_green_build_or_a_pull_removes_the_images_it_supersedes_and_a_red_build_remo
     assert!(!f.called(&["rmi", "before"]), "a dangling image from before the build is not the build's");
 
     let f = Fake::new();
-    harness(&f, "/h");
+    harness(&f, "h");
     f.when(&["image", "exists"], 1, "");
-    f.with_spira_config_sibling("/build/target/release/testenv");
+    f.with_spira_config_sibling("build/target/release/testenv");
     f.build_rc.set(1);
     store_with_superseded(&f, &img, "old0");
     assert_eq!(Driver { host: &f, conf: &c }.cmd_image(), 1);
     assert!(f.calls_with("rmi").is_empty(), "a red build removes nothing");
 
     let f = Fake::new();
-    harness(&f, "/h");
+    harness(&f, "h");
     f.when(&["image", "exists"], 1, "");
-    let c = Conf { registry: "ghcr.io/org".into(), ..conf("/h") };
+    let c = Conf { registry: "ghcr.io/org".into(), ..conf("h") };
     store_with_superseded(&f, &img, "old1");
     assert_eq!(Driver { host: &f, conf: &c }.cmd_image(), 0);
     assert!(f.calls_with("build").is_empty());
@@ -643,14 +643,14 @@ fn a_green_build_or_a_pull_removes_the_images_it_supersedes_and_a_red_build_remo
 #[test]
 fn a_slow_build_beats_every_interval_naming_its_multistage_step() {
     let f = Fake::new();
-    harness(&f, "/h");
+    harness(&f, "h");
     f.when(&["image", "exists"], 1, "");
     f.build_waits.set(3);
     *f.build_log.borrow_mut() =
         "[1/3] STEP 1/4: FROM golang AS bd\n[2/3] STEP 3/4: RUN go build ./cmd/bd\ncompiling dolt\n\n".into();
     let c = Conf {
         heartbeat: 7,
-        ..conf("/h")
+        ..conf("h")
     };
     assert_eq!(Driver { host: &f, conf: &c }.cmd_image(), 0);
     let beats: Vec<String> = f
@@ -671,7 +671,7 @@ fn a_slow_build_beats_every_interval_naming_its_multistage_step() {
     assert!(f.errs().contains("testenv:   last output: compiling dolt"));
     assert!(f.errs().contains("at least every 7s"));
     assert!(
-        !f.is_file(Path::new("/t/build.log")),
+        !f.is_file(Path::new("t/build.log")),
         "the build log is removed"
     );
 }
@@ -679,10 +679,10 @@ fn a_slow_build_beats_every_interval_naming_its_multistage_step() {
 #[test]
 fn a_silent_build_says_so_rather_than_naming_no_step() {
     let f = Fake::new();
-    harness(&f, "/h");
+    harness(&f, "h");
     f.when(&["image", "exists"], 1, "");
     f.build_waits.set(1);
-    let c = conf("/h");
+    let c = conf("h");
     Driver { host: &f, conf: &c }.cmd_image();
     assert!(f.errs().contains("building — (no build output yet) —"));
 }
@@ -690,18 +690,18 @@ fn a_silent_build_says_so_rather_than_naming_no_step() {
 #[test]
 fn a_failed_build_names_disk_exhaustion_or_shows_its_tail() {
     let f = Fake::new();
-    harness(&f, "/h");
+    harness(&f, "h");
     f.when(&["image", "exists"], 1, "");
     f.build_rc.set(1);
     *f.build_log.borrow_mut() =
         "STEP 2/9: COPY . .\nError: write /var/tmp/x: no space left on device\n".into();
-    let c = conf("/h");
+    let c = conf("h");
     assert_eq!(Driver { host: &f, conf: &c }.cmd_image(), 1);
     assert!(f.errs().contains("disk exhausted on this VM (3.1G free)"));
     assert!(f.out.borrow().is_empty());
 
     let f = Fake::new();
-    harness(&f, "/h");
+    harness(&f, "h");
     f.when(&["image", "exists"], 1, "");
     f.build_rc.set(2);
     *f.build_log.borrow_mut() = (0..50)
@@ -710,7 +710,7 @@ fn a_failed_build_names_disk_exhaustion_or_shows_its_tail() {
         .join("\n");
     assert_eq!(Driver { host: &f, conf: &c }.cmd_image(), 1);
     let e = f.errs();
-    assert!(e.contains("check Containerfile in /h/spira/testenv"));
+    assert!(e.contains("check Containerfile in h/spira/testenv"));
     assert!(e.contains("line 49") && e.contains("line 10") && !e.contains("line 9\n"));
 }
 
@@ -718,20 +718,20 @@ fn a_failed_build_names_disk_exhaustion_or_shows_its_tail() {
 
 #[test]
 fn a_cold_build_stages_its_sibling_spira_config_and_removes_it_either_way() {
-    let dest = PathBuf::from("/t/ctx/testenv/.doctor-check-spira-config");
+    let dest = PathBuf::from("t/ctx/testenv/.doctor-check-spira-config");
 
     // Present: staged for the build, then cleaned up on a GREEN build.
     let f = Fake::new();
-    harness(&f, "/h");
+    harness(&f, "h");
     f.when(&["image", "exists"], 1, "");
-    f.with_spira_config_sibling("/build/target/release/testenv");
-    let c = conf("/h");
+    f.with_spira_config_sibling("build/target/release/testenv");
+    let c = conf("h");
     assert_eq!(Driver { host: &f, conf: &c }.cmd_image(), 0);
     assert_eq!(
         *f.copies.borrow(),
         vec![
-            (PathBuf::from("/build/target/release/testenv").parent().unwrap().join("spira-config"), dest.clone()),
-            (PathBuf::from("/h/spira/testlib/complete.toml"), PathBuf::from("/t/ctx/testenv/.doctor-check.toml")),
+            (PathBuf::from("build/target/release/testenv").parent().unwrap().join("spira-config"), dest.clone()),
+            (PathBuf::from("h/spira/testlib/complete.toml"), PathBuf::from("t/ctx/testenv/.doctor-check.toml")),
         ]
     );
     assert!(!f.is_file(&dest), "left behind in the checkout after a green build");
@@ -739,9 +739,9 @@ fn a_cold_build_stages_its_sibling_spira_config_and_removes_it_either_way() {
 
     // Present: also cleaned up on a RED build — staging must not leak on the failure path.
     let f = Fake::new();
-    harness(&f, "/h");
+    harness(&f, "h");
     f.when(&["image", "exists"], 1, "");
-    f.with_spira_config_sibling("/build/target/release/testenv");
+    f.with_spira_config_sibling("build/target/release/testenv");
     f.build_rc.set(1);
     assert_eq!(Driver { host: &f, conf: &c }.cmd_image(), 1);
     assert_eq!(f.copies.borrow().len(), 2);
@@ -751,30 +751,30 @@ fn a_cold_build_stages_its_sibling_spira_config_and_removes_it_either_way() {
 #[test]
 fn a_cold_build_with_no_sibling_builds_spira_config_on_demand() {
     let f = Fake::new();
-    harness(&f, "/h");
+    harness(&f, "h");
     f.when(&["image", "exists"], 1, "");
     // No with_spira_config_sibling: current_exe() answers None, as it would for a test
     // binary or any process that cannot resolve its own path. The gate's own host-side
     // container step builds only `-p testenv`, so this is the common case there, not a
     // corner case — stage_spira_config must not depend on the caller having remembered to
     // pre-build it.
-    f.with_spira_config_buildable("/h");
-    let c = conf("/h");
+    f.with_spira_config_buildable("h");
+    let c = conf("h");
     assert_eq!(Driver { host: &f, conf: &c }.cmd_image(), 0);
-    assert_eq!(*f.build_spira_config_calls.borrow(), vec![PathBuf::from("/h")]);
+    assert_eq!(*f.build_spira_config_calls.borrow(), vec![PathBuf::from("h")]);
     assert_eq!(f.copies.borrow().len(), 2, "the on-demand build still gets staged into the build context");
-    assert!(!f.is_file(&PathBuf::from("/t/ctx/testenv/.doctor-check-spira-config")), "cleaned up after the build");
+    assert!(!f.is_file(&PathBuf::from("t/ctx/testenv/.doctor-check-spira-config")), "cleaned up after the build");
 }
 
 #[test]
 fn a_cold_build_refuses_rather_than_run_podman_when_spira_config_cannot_be_had_at_all() {
     let f = Fake::new();
-    harness(&f, "/h");
+    harness(&f, "h");
     f.when(&["image", "exists"], 1, "");
     // No sibling AND the on-demand build fails too — undo harness()'s own default fixture,
     // which assumes the ordinary case: every avenue is exhausted here on purpose.
     *f.build_spira_config_result.borrow_mut() = None;
-    let c = conf("/h");
+    let c = conf("h");
     assert_eq!(Driver { host: &f, conf: &c }.cmd_image(), 1, "a doomed podman build is never attempted");
     assert!(f.copies.borrow().is_empty());
     assert!(f.calls_with("build").is_empty(), "podman build must not even be invoked");
@@ -785,7 +785,7 @@ fn a_cold_build_refuses_rather_than_run_podman_when_spira_config_cannot_be_had_a
 // ---- boot failure diagnosis and admission (was test-testenv-resource-diagnosis.sh) -------
 
 fn booting(f: &Fake) {
-    harness(f, "/h");
+    harness(f, "h");
     f.when(&["info", "--format"], 0, "true\n");
     f.when(&["container", "exists"], 1, "");
 }
@@ -794,7 +794,7 @@ fn booting(f: &Fake) {
 fn up_passes_the_configured_cpu_cap_to_podman_run() {
     let f = Fake::new();
     booting(&f);
-    let c = Conf { cpus: Some("12.5".into()), ..conf("/h") };
+    let c = Conf { cpus: Some("12.5".into()), ..conf("h") };
     assert_eq!(Driver { host: &f, conf: &c }.cmd_up(&args(&["--name", "n1"])), 0);
     let run = &f.calls_with("run")[0];
     let i = run.iter().position(|a| a == "--cpus").expect("--cpus passed");
@@ -805,7 +805,7 @@ fn up_passes_the_configured_cpu_cap_to_podman_run() {
 fn up_passes_the_configured_pids_limit_to_podman_run() {
     let f = Fake::new();
     booting(&f);
-    let c = Conf { pids_limit: 12345, ..conf("/h") };
+    let c = Conf { pids_limit: 12345, ..conf("h") };
     assert_eq!(Driver { host: &f, conf: &c }.cmd_up(&args(&["--name", "n1"])), 0);
     let run = &f.calls_with("run")[0];
     let i = run.iter().position(|a| a == "--pids-limit").expect("--pids-limit passed");
@@ -815,22 +815,22 @@ fn up_passes_the_configured_pids_limit_to_podman_run() {
 #[test]
 fn up_refuses_when_a_kernel_task_ceiling_is_below_the_pids_limit() {
     for (path, key) in [
-        ("/proc/sys/kernel/pid_max", "kernel.pid_max"),
-        ("/proc/sys/kernel/threads-max", "kernel.threads-max"),
+        ("kernel/pid_max", "kernel.pid_max"),
+        ("kernel/threads-max", "kernel.threads-max"),
     ] {
         let f = Fake::new();
         booting(&f);
-        f.sysctls.borrow_mut().insert(path.into(), "30000\n".into());
-        let c = conf("/h");
+        f.sysctls.borrow_mut().insert(format!("{}/{path}", system_paths::PROC_SYS), "30000\n".into());
+        let c = conf("h");
         assert_eq!(Driver { host: &f, conf: &c }.cmd_up(&args(&["--name", "n1"])), 1, "{key}");
         assert!(f.calls_with("run").is_empty(), "{key}: nothing started");
         assert!(f.errs().contains(key) && f.errs().contains("30000"), "{key}: {}", f.errs());
     }
     let f = Fake::new();
     booting(&f);
-    f.sysctls.borrow_mut().insert("/proc/sys/kernel/pid_max".into(), "4194304\n".into());
-    f.sysctls.borrow_mut().insert("/proc/sys/kernel/threads-max".into(), "32768".into());
-    let c = conf("/h");
+    f.sysctls.borrow_mut().insert(format!("{}/kernel/pid_max", system_paths::PROC_SYS), "4194304\n".into());
+    f.sysctls.borrow_mut().insert(format!("{}/kernel/threads-max", system_paths::PROC_SYS), "32768".into());
+    let c = conf("h");
     assert_eq!(Driver { host: &f, conf: &c }.cmd_up(&args(&["--name", "n1"])), 0);
 }
 
@@ -838,7 +838,7 @@ fn up_refuses_when_a_kernel_task_ceiling_is_below_the_pids_limit() {
 fn up_gives_a_container_its_own_pids_limit_and_memory() {
     let f = Fake::new();
     booting(&f);
-    let c = conf("/h");
+    let c = conf("h");
     let a = args(&["--name", "n1", "--pids-limit", "3333", "--memory", "7g"]);
     assert_eq!(Driver { host: &f, conf: &c }.cmd_up(&a), 0);
     let run = &f.calls_with("run")[0];
@@ -851,11 +851,11 @@ fn up_gives_a_container_its_own_pids_limit_and_memory() {
 fn up_binds_the_testdb_template_cache_read_only_and_only_when_given() {
     let f = Fake::new();
     booting(&f);
-    let c = conf("/h");
-    let a = args(&["--name", "n1", "--testdb-cache", "/run/tpl-cache"]);
+    let c = conf("h");
+    let a = args(&["--name", "n1", "--testdb-cache", "run/tpl-cache"]);
     assert_eq!(Driver { host: &f, conf: &c }.cmd_up(&a), 0);
     let run = &f.calls_with("run")[0];
-    let want = format!("/run/tpl-cache:{}:ro", crate::fixture::CONTAINER_TESTDB_CACHE);
+    let want = format!("run/tpl-cache:{}:ro", crate::fixture::CONTAINER_TESTDB_CACHE);
     assert!(run.windows(2).any(|w| w[0] == "--volume" && w[1] == want), "{run:?}");
 
     let f = Fake::new();
@@ -872,7 +872,7 @@ fn up_binds_the_testdb_template_cache_read_only_and_only_when_given() {
 fn up_refuses_a_non_numeric_pids_limit() {
     let f = Fake::new();
     booting(&f);
-    let c = conf("/h");
+    let c = conf("h");
     assert_ne!(Driver { host: &f, conf: &c }.cmd_up(&args(&["--pids-limit", "lots"])), 0);
 }
 
@@ -888,10 +888,10 @@ fn cpu_cap_is_unset_unless_a_positive_number_is_configured() {
 fn up_boots_with_the_label_limit_and_volumes_and_records_its_caller() {
     let f = Fake::new();
     booting(&f);
-    let c = conf("/h");
+    let c = conf("h");
     let tag = tag_of(&f, &c).unwrap();
     assert_eq!(
-        Driver { host: &f, conf: &c }.cmd_up(&args(&["--name", "n1", "--checkout", "/wt"])),
+        Driver { host: &f, conf: &c }.cmd_up(&args(&["--name", "n1", "--checkout", "wt"])),
         0
     );
     let run = f.calls_with("run");
@@ -912,7 +912,7 @@ fn up_boots_with_the_label_limit_and_volumes_and_records_its_caller() {
             "--label",
             "spira.testenv=1",
             "--volume",
-            "/wt:/workspace:z",
+            "wt:/workspace:z",
             "--security-opt",
             "unmask=/proc/*",
             "--security-opt",
@@ -924,7 +924,7 @@ fn up_boots_with_the_label_limit_and_volumes_and_records_its_caller() {
             &format!("localhost/spira-testenv:{tag}"),
         ])
     );
-    assert_eq!(f.read(Path::new("/tmp/n1.owner")), Some(b"400\n".to_vec()));
+    assert_eq!(f.read(Path::new("tmp/n1.owner")), Some(b"400\n".to_vec()));
     assert!(f.called(&["exec", "n1", "loginctl", "enable-linger", "spirauser"]));
     assert!(f.called(&[
         "exec",
@@ -934,15 +934,15 @@ fn up_boots_with_the_label_limit_and_volumes_and_records_its_caller() {
         "--system",
         "--add",
         "safe.directory",
-        "/workspace"
+        system_paths::guest::WORKSPACE
     ]));
     assert!(f.errs().contains("user@1001.service active"));
 }
 
 fn network_of_run(f: &Fake) -> String {
-    let c = conf("/h");
+    let c = conf("h");
     assert_eq!(
-        Driver { host: f, conf: &c }.cmd_up(&args(&["--name", "n1", "--checkout", "/wt"])),
+        Driver { host: f, conf: &c }.cmd_up(&args(&["--name", "n1", "--checkout", "wt"])),
         0
     );
     let run = &f.calls_with("run")[0];
@@ -978,9 +978,9 @@ fn up_refuses_to_start_when_the_podman_mode_is_unknown() {
     let f = Fake::new();
     booting(&f);
     f.when(&["info", "--format"], 1, "");
-    let c = conf("/h");
+    let c = conf("h");
     assert_eq!(
-        Driver { host: &f, conf: &c }.cmd_up(&args(&["--name", "n1", "--checkout", "/wt"])),
+        Driver { host: &f, conf: &c }.cmd_up(&args(&["--name", "n1", "--checkout", "wt"])),
         1
     );
     assert!(f.calls_with("run").is_empty());
@@ -1002,12 +1002,12 @@ fn up_also_mounts_a_checkouts_symlinked_target_directories() {
     let f = Fake::new();
     booting(&f);
     f.symlink_target(
-        "/wt/target",
-        &["/tmp/spira-gate-target-abc123/.gate.harness.concierge-sp-8itaf"],
+        "wt/target",
+        &["tmp/spira-gate-target-abc123/.gate.harness.concierge-sp-8itaf"],
     );
-    let c = conf("/h");
+    let c = conf("h");
     assert_eq!(
-        Driver { host: &f, conf: &c }.cmd_up(&args(&["--name", "n1", "--checkout", "/wt"])),
+        Driver { host: &f, conf: &c }.cmd_up(&args(&["--name", "n1", "--checkout", "wt"])),
         0
     );
     let run = f.calls_with("run");
@@ -1015,38 +1015,38 @@ fn up_also_mounts_a_checkouts_symlinked_target_directories() {
         run[0].windows(2).any(|w| w
             == [
                 "--volume".to_string(),
-                "/tmp/spira-gate-target-abc123/.gate.harness.concierge-sp-8itaf:/tmp/spira-gate-target-abc123/.gate.harness.concierge-sp-8itaf:z".to_string()
+                "tmp/spira-gate-target-abc123/.gate.harness.concierge-sp-8itaf:tmp/spira-gate-target-abc123/.gate.harness.concierge-sp-8itaf:z".to_string()
             ]),
         "{:?}",
         run[0]
     );
     // Still named, same as always — the extra mount is additive, not a replacement.
-    assert!(run[0].windows(2).any(|w| w == ["--volume".to_string(), "/wt:/workspace:z".to_string()]));
+    assert!(run[0].windows(2).any(|w| w == ["--volume".to_string(), "wt:/workspace:z".to_string()]));
 }
 
 #[test]
 fn up_mounts_a_linked_worktrees_git_common_dir_at_its_host_path() {
     let f = Fake::new();
     booting(&f);
-    f.common_dirs.borrow_mut().insert("/wt".into(), "/repo/.git".into());
-    let c = conf("/h");
+    f.common_dirs.borrow_mut().insert("wt".into(), "repo/.git".into());
+    let c = conf("h");
     assert_eq!(
-        Driver { host: &f, conf: &c }.cmd_up(&args(&["--name", "n1", "--checkout", "/wt"])),
+        Driver { host: &f, conf: &c }.cmd_up(&args(&["--name", "n1", "--checkout", "wt"])),
         0
     );
     let run = f.calls_with("run");
     assert!(run[0]
         .windows(2)
-        .any(|w| w == ["--volume".to_string(), "/repo/.git:/repo/.git:ro".to_string()]));
+        .any(|w| w == ["--volume".to_string(), "repo/.git:repo/.git:ro".to_string()]));
 }
 
 #[test]
 fn up_adds_no_git_mount_for_an_ordinary_clone() {
     let f = Fake::new();
     booting(&f);
-    let c = conf("/h");
+    let c = conf("h");
     assert_eq!(
-        Driver { host: &f, conf: &c }.cmd_up(&args(&["--name", "n1", "--checkout", "/wt"])),
+        Driver { host: &f, conf: &c }.cmd_up(&args(&["--name", "n1", "--checkout", "wt"])),
         0
     );
     assert!(!f.calls_with("run")[0].iter().any(|a| a.ends_with(":ro")));
@@ -1071,12 +1071,12 @@ fn linked_git_common_dir_follows_the_dot_git_file_to_the_common_dir() {
 fn up_defaults_to_the_harness_checkout_and_keeps_an_existing_owner() {
     let f = Fake::new();
     booting(&f);
-    f.file("/tmp/spira-testenv.owner", "77\n");
-    let c = conf("/h");
+    f.file("tmp/spira-testenv.owner", "77\n");
+    let c = conf("h");
     assert_eq!(Driver { host: &f, conf: &c }.cmd_up(&[]), 0);
-    assert!(f.calls_with("run")[0].contains(&"/h:/workspace:z".to_string()));
+    assert!(f.calls_with("run")[0].contains(&"h:/workspace:z".to_string()));
     assert_eq!(
-        f.read(Path::new("/tmp/spira-testenv.owner")),
+        f.read(Path::new("tmp/spira-testenv.owner")),
         Some(b"77\n".to_vec())
     );
 }
@@ -1084,8 +1084,8 @@ fn up_defaults_to_the_harness_checkout_and_keeps_an_existing_owner() {
 #[test]
 fn up_on_an_existing_container_does_nothing() {
     let f = Fake::new();
-    harness(&f, "/h");
-    let c = conf("/h");
+    harness(&f, "h");
+    let c = conf("h");
     assert_eq!(
         Driver { host: &f, conf: &c }.cmd_up(&args(&["--name", "x"])),
         0
@@ -1099,12 +1099,12 @@ fn a_failed_podman_run_refuses_at_once() {
     let f = Fake::new();
     booting(&f);
     f.when(&["run"], 125, "");
-    let c = conf("/h");
+    let c = conf("h");
     assert_eq!(
         Driver { host: &f, conf: &c }.cmd_up(&args(&["--name", "n"])),
         1
     );
-    assert!(!f.is_file(Path::new("/tmp/n.owner")));
+    assert!(!f.is_file(Path::new("tmp/n.owner")));
     assert!(
         f.calls_with("exec").is_empty(),
         "no basic.target wait on a container never created"
@@ -1126,10 +1126,10 @@ fn an_unreachable_container_reads_question_marks_and_inotify_still_runs() {
     f.when(&["exec"], 125, "");
     f.inotify.set(10);
     f.sysctls.borrow_mut().insert(
-        "/proc/sys/fs/inotify/max_user_instances".into(),
+        format!("{}/fs/inotify/max_user_instances", system_paths::PROC_SYS),
         "128".into(),
     );
-    let c = conf("/h");
+    let c = conf("h");
     Driver { host: &f, conf: &c }.diagnose_boot_failure("gone");
     let e = f.errs();
     assert!(
@@ -1159,7 +1159,7 @@ fn up_queues_while_the_host_is_full_and_starts_when_a_slot_frees() {
     });
     let c = Conf {
         max_concurrent: 2,
-        ..conf("/h")
+        ..conf("h")
     };
     assert_eq!(
         Driver { host: &f, conf: &c }.cmd_up(&args(&["--name", "q"])),
@@ -1185,7 +1185,7 @@ fn a_full_host_gives_up_after_the_queue_timeout_and_zero_disables_the_gate() {
         max_concurrent: 2,
         queue_timeout: 12,
         queue_poll: 5,
-        ..conf("/h")
+        ..conf("h")
     };
     assert_eq!(
         Driver { host: &f, conf: &c }.cmd_up(&args(&["--name", "q"])),
@@ -1212,7 +1212,7 @@ fn a_full_host_gives_up_after_the_queue_timeout_and_zero_disables_the_gate() {
     f.when(&["ps"], 0, "a\nb\nc\n");
     let c = Conf {
         max_concurrent: 0,
-        ..conf("/h")
+        ..conf("h")
     };
     assert_eq!(
         Driver { host: &f, conf: &c }.cmd_up(&args(&["--name", "q"])),
@@ -1224,7 +1224,7 @@ fn a_full_host_gives_up_after_the_queue_timeout_and_zero_disables_the_gate() {
 // ---- the owner-file guard (was test-testenv-owner-guard.sh) ------------------------------
 
 fn down(f: &Fake, a: &[&str]) -> i32 {
-    let c = conf("/h");
+    let c = conf("h");
     Driver { host: f, conf: &c }.cmd_down(&args(a))
 }
 
@@ -1232,35 +1232,35 @@ fn down(f: &Fake, a: &[&str]) -> i32 {
 fn a_live_foreign_owner_blocks_down() {
     let f = Fake::new();
     f.procs.borrow_mut().insert(900, 1);
-    f.file("/tmp/c.owner", "900\n");
+    f.file("tmp/c.owner", "900\n");
     assert_eq!(down(&f, &["--name", "c"]), 1);
     assert!(f.calls_with("stop").is_empty() && f.calls_with("rm").is_empty());
     assert!(f
         .errs()
         .contains("c is owned by pid 900 (not this process or an ancestor of it)"));
-    assert!(f.is_file(Path::new("/tmp/c.owner")));
+    assert!(f.is_file(Path::new("tmp/c.owner")));
 }
 
 #[test]
 fn the_owner_or_its_descendant_tears_down_and_releases_the_owner_file() {
     for owner in ["500", "400", "1"] {
         let f = Fake::new();
-        f.file("/tmp/c.owner", owner);
+        f.file("tmp/c.owner", owner);
         f.when(&["container", "exists"], 1, "");
         assert_eq!(down(&f, &["--name", "c"]), 0, "owner {owner}");
         assert!(f.called(&["stop", "c"]) && f.called(&["rm", "c"]));
-        assert!(!f.is_file(Path::new("/tmp/c.owner")));
+        assert!(!f.is_file(Path::new("tmp/c.owner")));
     }
 }
 
 #[test]
 fn a_dead_owner_force_foreign_and_no_owner_file_do_not_block() {
     let f = Fake::new();
-    f.file("/tmp/c.owner", "31337\n");
+    f.file("tmp/c.owner", "31337\n");
     assert_eq!(down(&f, &["--name", "c"]), 0);
     let f = Fake::new();
     f.procs.borrow_mut().insert(900, 1);
-    f.file("/tmp/c.owner", "900\n");
+    f.file("tmp/c.owner", "900\n");
     assert_eq!(down(&f, &["--name", "c", "--force-foreign"]), 0);
     assert!(f.called(&["stop", "c"]));
     let f = Fake::new();
@@ -1271,10 +1271,10 @@ fn a_dead_owner_force_foreign_and_no_owner_file_do_not_block() {
 #[test]
 fn a_failed_teardown_keeps_the_owner_file_and_volumes_go_only_when_asked() {
     let f = Fake::new();
-    f.file("/tmp/c.owner", "500");
+    f.file("tmp/c.owner", "500");
     assert_eq!(down(&f, &["--name", "c"]), 0);
     assert!(
-        f.is_file(Path::new("/tmp/c.owner")),
+        f.is_file(Path::new("tmp/c.owner")),
         "container still exists"
     );
     assert!(f.calls_with("volume").is_empty());
@@ -1312,9 +1312,9 @@ fn a_no_grace_down_force_removes_with_no_stop_and_drops_the_original_names_volum
 fn a_detached_teardown_leaves_the_testdb_template_cache_alone() {
     let f = Fake::new();
     booting(&f);
-    let c = conf("/h");
+    let c = conf("h");
     let d = Driver { host: &f, conf: &c };
-    assert_eq!(d.cmd_up(&args(&["--name", "c", "--testdb-cache", "/run/tpl-cache"])), 0);
+    assert_eq!(d.cmd_up(&args(&["--name", "c", "--testdb-cache", "run/tpl-cache"])), 0);
     let before = f.calls.borrow().len();
     f.when(&["container", "exists"], 1, "");
     assert_eq!(down(&f, &["--name", "c-reap-7", "--volumes-of", "c", "--no-grace"]), 0);
@@ -1332,7 +1332,7 @@ fn a_detached_teardown_leaves_the_testdb_template_cache_alone() {
 #[test]
 fn exec_as_spirauser_carries_the_session_and_cargo_environment() {
     let f = Fake::new();
-    let c = conf("/h");
+    let c = conf("h");
     let d = Driver { host: &f, conf: &c };
     assert_eq!(
         d.cmd_exec(&args(&[
@@ -1379,7 +1379,7 @@ fn exec_as_spirauser_carries_the_session_and_cargo_environment() {
 #[test]
 fn probe_needs_the_user_manager_and_its_bus() {
     let f = Fake::new();
-    let c = conf("/h");
+    let c = conf("h");
     let d = Driver { host: &f, conf: &c };
     assert_eq!(d.cmd_probe(&args(&["--name", "p"])), 0);
     assert!(f.called(&[
@@ -1403,7 +1403,7 @@ fn probe_needs_the_user_manager_and_its_bus() {
 #[test]
 fn an_unknown_subcommand_prints_usage_and_fails() {
     let f = Fake::new();
-    let c = conf("/h");
+    let c = conf("h");
     let d = Driver { host: &f, conf: &c };
     assert_eq!(d.dispatch(&args(&["scratch"])), 1);
     assert_eq!(d.dispatch(&[]), 1);
@@ -1462,7 +1462,7 @@ fn symlinked_targets_is_empty_for_an_ordinary_non_symlinked_target_dir() {
 #[test]
 fn symlinked_targets_is_empty_for_a_target_dir_that_does_not_exist() {
     assert_eq!(
-        RealHost.symlinked_targets(Path::new("/nonexistent/target")),
+        RealHost.symlinked_targets(Path::new("nonexistent/target")),
         Vec::<PathBuf>::new()
     );
 }
@@ -1491,9 +1491,9 @@ fn up_no_build_with_an_absent_image_is_image_not_ready_and_never_builds() {
     let f = Fake::new();
     booting(&f);
     f.when(&["image", "exists"], 1, "");
-    let c = conf("/h");
+    let c = conf("h");
     assert_eq!(
-        Driver { host: &f, conf: &c }.cmd_up(&args(&["--name", "n", "--checkout", "/wt", "--no-build"])),
+        Driver { host: &f, conf: &c }.cmd_up(&args(&["--name", "n", "--checkout", "wt", "--no-build"])),
         RC_IMAGE_NOT_READY
     );
     assert!(f.calls_with("build").is_empty(), "a bounded trial never builds");
@@ -1504,9 +1504,9 @@ fn up_no_build_with_an_absent_image_is_image_not_ready_and_never_builds() {
 fn up_no_build_with_the_image_present_boots() {
     let f = Fake::new();
     booting(&f);
-    let c = conf("/h");
+    let c = conf("h");
     assert_eq!(
-        Driver { host: &f, conf: &c }.cmd_up(&args(&["--name", "n", "--checkout", "/wt", "--no-build"])),
+        Driver { host: &f, conf: &c }.cmd_up(&args(&["--name", "n", "--checkout", "wt", "--no-build"])),
         0
     );
 }
@@ -1517,24 +1517,24 @@ fn up_no_build_with_the_image_present_boots() {
 fn a_cold_build_runs_in_a_temp_copy_of_the_harness_and_removes_it_either_way() {
     for rc in [0, 1] {
         let f = Fake::new();
-        harness(&f, "/h");
+        harness(&f, "h");
         f.when(&["image", "exists"], 1, "");
-        f.with_spira_config_sibling("/build/target/release/testenv");
+        f.with_spira_config_sibling("build/target/release/testenv");
         f.build_rc.set(rc);
-        let c = conf("/h");
+        let c = conf("h");
         Driver { host: &f, conf: &c }.cmd_image();
-        assert_eq!(*f.contexts.borrow(), vec![PathBuf::from("/h/spira")]);
-        assert_eq!(*f.removed_trees.borrow(), vec![PathBuf::from("/t/ctx")], "rc {rc}");
-        assert!(f.copies.borrow().iter().all(|(_, to)| to.starts_with("/t/ctx")), "nothing is written into the harness");
+        assert_eq!(*f.contexts.borrow(), vec![PathBuf::from("h/spira")]);
+        assert_eq!(*f.removed_trees.borrow(), vec![PathBuf::from("t/ctx")], "rc {rc}");
+        assert!(f.copies.borrow().iter().all(|(_, to)| to.starts_with("t/ctx")), "nothing is written into the harness");
     }
 }
 
 #[test]
 fn an_absent_image_in_a_bounded_trial_names_itself_and_the_build_command() {
     let f = Fake::new();
-    harness(&f, "/h");
+    harness(&f, "h");
     f.when(&["image", "exists"], 1, "");
-    let c = conf("/h");
+    let c = conf("h");
     assert_eq!(Driver { host: &f, conf: &c }.acquire_image(false), None);
     let e = f.errs();
     assert!(e.contains("IMAGE-ABSENT localhost/spira-testenv:"), "{e}");
@@ -1552,12 +1552,12 @@ fn tree_tag(f: &Fake, c: &Conf, tree: &str) -> String {
 #[test]
 fn two_trees_with_different_containerfiles_yield_different_image_tags() {
     let f = Fake::new();
-    harness(&f, "/h");
-    harness(&f, "/a");
-    harness(&f, "/b");
-    f.file("/b/spira/testenv/Containerfile", "FROM ubuntu:24.04\nRUN apt-get install bubblewrap\n");
-    let c = conf("/h");
-    let (a, b) = (tree_tag(&f, &c, "/a"), tree_tag(&f, &c, "/b"));
+    harness(&f, "h");
+    harness(&f, "a");
+    harness(&f, "b");
+    f.file("b/spira/testenv/Containerfile", "FROM ubuntu:24.04\nRUN apt-get install bubblewrap\n");
+    let c = conf("h");
+    let (a, b) = (tree_tag(&f, &c, "a"), tree_tag(&f, &c, "b"));
     assert_ne!(a, b);
     assert_eq!(a, tag_of(&f, &c).unwrap(), "an identical Containerfile is the installed tag");
 }
@@ -1565,22 +1565,22 @@ fn two_trees_with_different_containerfiles_yield_different_image_tags() {
 #[test]
 fn a_tree_without_a_containerfile_falls_back_to_the_installed_harness() {
     let f = Fake::new();
-    harness(&f, "/h");
-    let c = conf("/h");
-    assert_eq!(tree_tag(&f, &c, "/other-repo"), tag_of(&f, &c).unwrap());
+    harness(&f, "h");
+    let c = conf("h");
+    assert_eq!(tree_tag(&f, &c, "other-repo"), tag_of(&f, &c).unwrap());
 }
 
 #[test]
 fn up_runs_the_image_of_the_checkouts_own_containerfile() {
     let f = Fake::new();
     booting(&f);
-    harness(&f, "/wt");
-    f.file("/wt/spira/testenv/Containerfile", "FROM ubuntu:24.04\nRUN apt-get install bubblewrap\n");
-    let c = conf("/h");
-    let want = tree_tag(&f, &c, "/wt");
+    harness(&f, "wt");
+    f.file("wt/spira/testenv/Containerfile", "FROM ubuntu:24.04\nRUN apt-get install bubblewrap\n");
+    let c = conf("h");
+    let want = tree_tag(&f, &c, "wt");
     assert_ne!(want, tag_of(&f, &c).unwrap());
     assert_eq!(
-        Driver { host: &f, conf: &c }.cmd_up(&args(&["--name", "n1", "--checkout", "/wt"])),
+        Driver { host: &f, conf: &c }.cmd_up(&args(&["--name", "n1", "--checkout", "wt"])),
         0
     );
     let run = &f.calls_with("run")[0];
@@ -1593,14 +1593,14 @@ fn up_runs_the_image_of_the_checkouts_own_containerfile() {
 #[test]
 fn image_builds_the_trees_own_tag_and_a_malformed_tree_flag_is_usage() {
     let f = Fake::new();
-    harness(&f, "/h");
-    harness(&f, "/t");
-    f.file("/t/spira/testenv/Containerfile", "FROM ubuntu:24.04\nRUN apt-get install bubblewrap\n");
+    harness(&f, "h");
+    harness(&f, "t");
+    f.file("t/spira/testenv/Containerfile", "FROM ubuntu:24.04\nRUN apt-get install bubblewrap\n");
     f.when(&["image", "exists"], 1, "");
-    let c = conf("/h");
+    let c = conf("h");
     let d = Driver { host: &f, conf: &c };
-    let want = tree_tag(&f, &c, "/t");
-    assert_eq!(d.dispatch(&args(&["image", "--tree", "/t"])), 0);
+    let want = tree_tag(&f, &c, "t");
+    assert_eq!(d.dispatch(&args(&["image", "--tree", "t"])), 0);
     assert_eq!(f.out.borrow().last().cloned(), Some(format!("localhost/spira-testenv:{want}")));
     assert_eq!(d.dispatch(&args(&["tag", "--tree"])), 1);
     assert_eq!(d.dispatch(&args(&["tag", "--tree", ""])), 1);

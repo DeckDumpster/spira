@@ -101,7 +101,7 @@ fn around_binds_each_target_link_destination_writable_and_keeps_the_environment(
     fs::create_dir_all(&target).unwrap();
     let _ = fs::remove_file(&link);
     std::os::unix::fs::symlink(&dest, &link).unwrap();
-    let args = print_args(&["--around", "/usr/bin/true", "nextest", "run"]);
+    let args = print_args(&["--around", system_paths::USR_BIN_TRUE, "nextest", "run"]);
     fs::remove_file(&link).unwrap();
     if made_target {
         let _ = fs::remove_dir(&target);
@@ -110,14 +110,14 @@ fn around_binds_each_target_link_destination_writable_and_keeps_the_environment(
     assert!(args.windows(3).any(|w| w[0] == "--bind" && w[1] == want && w[2] == want), "{want} bound writable: {args:?}");
     assert!(!args.iter().any(|a| a == "--clearenv"), "the caller's environment is kept: {args:?}");
     assert!(args.windows(3).any(|w| w[0] == "--setenv" && w[1] == "GIT_CONFIG_SYSTEM"), "{args:?}");
-    assert_eq!(&args[args.len() - 4..], ["--", "/usr/bin/true", "nextest", "run"]);
+    assert_eq!(&args[args.len() - 4..], ["--", system_paths::USR_BIN_TRUE, "nextest", "run"]);
 }
 
 #[test]
 fn the_held_decision_comes_before_any_work_a_held_call_does_not_need() {
     let text = fs::read_to_string(workspace().join("tools/test-sandbox/runner")).unwrap();
     let held = text.find("[ -z \"$print\" ] && held").expect("the runner decides held");
-    for later in ["readlink -f", "sed -n", "/bwrap"] {
+    for later in ["readlink -f", "sed -n", "/bwrap"] { // not a path: a substring searched for in the runner script
         let first_use = text.find(later).unwrap();
         assert!(held < first_use, "`{later}` runs at byte {first_use}, before the held decision at {held}");
     }
@@ -130,10 +130,10 @@ fn print_args_for_a_binary_is_what_the_landing_ref_printed() {
     let Some(old) = old.ok().filter(|o| o.status.success()) else { return };
     let copy = ws.join("tools/test-sandbox/runner.landing-ref");
     testkit::write_exe(&copy, &String::from_utf8(old.stdout).unwrap());
-    let before = std::process::Command::new(&copy).args(["--print-args", "/usr/bin/true", "a", "b"]).output();
+    let before = std::process::Command::new(&copy).args(["--print-args", system_paths::USR_BIN_TRUE, "a", "b"]).output();
     fs::remove_file(&copy).unwrap();
     let before = String::from_utf8(before.unwrap().stdout).unwrap();
-    assert_eq!(print_args(&["/usr/bin/true", "a", "b"]), before.lines().collect::<Vec<_>>());
+    assert_eq!(print_args(&[system_paths::USR_BIN_TRUE, "a", "b"]), before.lines().collect::<Vec<_>>());
 }
 
 fn gate_environment_runner(fixture_home: &Path, release: &Path, tail: &str, args: &[&str]) -> std::process::Output {

@@ -17,8 +17,8 @@ pub const AFTER: &str = "batch-after";
 const RC_RED: i32 = 1;
 const RC_FAULT: i32 = 2;
 const FRONTEND: &str = "frontend/";
-const SHOTS_MOUNT: &str = "/shots";
-const SCRIPTS_MOUNT: &str = "/spira-shots";
+const SHOTS_MOUNT: &str = system_paths::guest::SHOTS;
+const SCRIPTS_MOUNT: &str = system_paths::guest::SPIRA_SHOTS;
 
 pub fn shot_dir(run: &Path, bead: &str, tip: &str) -> PathBuf {
     run.join("shots").join(bead).join(tip)

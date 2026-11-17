@@ -204,7 +204,7 @@ pub fn sweep(
             .ok()
             .map(|s| s.trim().to_string());
         let orphan = match owner.as_deref() {
-            Some(pid) if !pid.is_empty() => !Path::new("/proc").join(pid).exists(),
+            Some(pid) if !pid.is_empty() => !Path::new(system_paths::PROC).join(pid).exists(),
             _ => started_at(&name).is_some_and(|t| now_epoch().saturating_sub(t) >= min_age),
         };
         if orphan {

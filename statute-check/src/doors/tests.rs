@@ -21,10 +21,10 @@ fn every_usage_in_the_registry_is_verbatim_in_the_tool_that_prints_it() {
 
 #[test]
 fn glob_stops_a_star_at_a_path_part_and_lets_a_leading_star_slash_cross() {
-    assert!(glob("*/rounds-pace/*/pause", "/r/x/run/rounds-pace/spira/pause"));
+    assert!(glob("*/rounds-pace/*/pause", "r/x/run/rounds-pace/spira/pause"));
     assert!(glob("*/rounds-pace/*/pause", "run/rounds-pace/spira/pause"));
-    assert!(glob("*/worktree/sp-*", "/r/worktree/sp-1"));
-    assert!(!glob("*/worktree/sp-*", "/r/worktree/sp-1/src/main.rs"));
+    assert!(glob("*/worktree/sp-*", "r/worktree/sp-1"));
+    assert!(!glob("*/worktree/sp-*", "r/worktree/sp-1/src/main.rs"));
     assert!(glob("refs/heads/spira/*", "refs/heads/spira/sp-1"));
     assert!(!glob("refs/heads/spira/*", "refs/heads/spiral"));
 }

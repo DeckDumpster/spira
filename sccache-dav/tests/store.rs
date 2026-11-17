@@ -74,7 +74,7 @@ async fn put_then_get_round_trips_the_sharded_key_sccache_actually_uses() {
     // walk expects a real store to.
     let dir = scratch();
     let addr = spawn(dir.path().to_path_buf(), None).await;
-    let key = "/a/b/c/abcdef0123456789";
+    let key = "/a/b/c/abcdef0123456789"; // not a path: WebDAV request target
     let put = req(addr, "PUT", key, None, b"compiled-object-bytes").await;
     assert_eq!(put.code, 201, "{}", put.headers);
     let get = req(addr, "GET", key, None, b"").await;
@@ -90,18 +90,18 @@ async fn propfind_depth0_reports_a_file_with_its_size_and_a_directory_as_a_colle
     std::fs::write(dir.path().join("a/b/file"), b"12345").expect("the file");
     let addr = spawn(dir.path().to_path_buf(), None).await;
 
-    let on_dir = req(addr, "PROPFIND", "/a/b", None, b"").await;
+    let on_dir = req(addr, "PROPFIND", "/a/b", None, b"").await; // not a path: WebDAV request target
     assert_eq!(on_dir.code, 207, "{}", on_dir.headers);
     let dir_body = String::from_utf8_lossy(&on_dir.body).into_owned();
     assert!(dir_body.contains("<D:collection/>"), "{dir_body}");
 
-    let on_file = req(addr, "PROPFIND", "/a/b/file", None, b"").await;
+    let on_file = req(addr, "PROPFIND", "/a/b/file", None, b"").await; // not a path: WebDAV request target
     assert_eq!(on_file.code, 207, "{}", on_file.headers);
     let file_body = String::from_utf8_lossy(&on_file.body).into_owned();
     assert!(file_body.contains("<D:getcontentlength>5</D:getcontentlength>"), "{file_body}");
     assert!(!file_body.contains("<D:collection/>"), "{file_body}");
 
-    let missing = req(addr, "PROPFIND", "/nope", None, b"").await;
+    let missing = req(addr, "PROPFIND", "/nope", None, b"").await; // not a path: WebDAV request target
     assert_eq!(missing.code, 404, "{}", missing.headers);
 }
 
@@ -109,12 +109,12 @@ async fn propfind_depth0_reports_a_file_with_its_size_and_a_directory_as_a_colle
 async fn mkcol_is_idempotent_and_makes_every_missing_ancestor() {
     let dir = scratch();
     let addr = spawn(dir.path().to_path_buf(), None).await;
-    let first = req(addr, "MKCOL", "/x/y/z", None, b"").await;
+    let first = req(addr, "MKCOL", "/x/y/z", None, b"").await; // not a path: WebDAV request target
     assert_eq!(first.code, 201, "{}", first.headers);
     assert!(dir.path().join("x/y/z").is_dir());
     // A second MKCOL on the same collection must not be refused (opendal's own client
     // accepts 405 here too, but this store always succeeds — see mkcol()'s doc comment).
-    let second = req(addr, "MKCOL", "/x/y/z", None, b"").await;
+    let second = req(addr, "MKCOL", "/x/y/z", None, b"").await; // not a path: WebDAV request target
     assert_eq!(second.code, 201, "{}", second.headers);
 }
 
@@ -127,7 +127,7 @@ async fn path_traversal_is_refused_not_resolved() {
     std::fs::create_dir_all(&root).expect("the store root");
     let addr = spawn(root, None).await;
 
-    let escape = req(addr, "GET", "/../secret", None, b"").await;
+    let escape = req(addr, "GET", "/../secret", None, b"").await; // not a path: WebDAV request target
     assert_eq!(escape.code, 400, "{}", escape.headers);
 }
 
@@ -180,9 +180,9 @@ async fn served_requests_are_tallied_and_flushed_as_hits_and_misses() {
     let t = scratch();
     let tally = Arc::new(sccache_dav::telemetry::Tally::default());
     let addr = spawn_tallied(t.path().to_path_buf(), None, tally.clone()).await;
-    assert_eq!(req(addr, "PUT", "/k", None, b"v").await.code, 201);
-    assert_eq!(req(addr, "GET", "/k", None, b"").await.code, 200);
-    assert_eq!(req(addr, "GET", "/absent", None, b"").await.code, 404);
+    assert_eq!(req(addr, "PUT", "/k", None, b"v").await.code, 201); // not a path: WebDAV request target
+    assert_eq!(req(addr, "GET", "/k", None, b"").await.code, 200); // not a path: WebDAV request target
+    assert_eq!(req(addr, "GET", "/absent", None, b"").await.code, 404); // not a path: WebDAV request target
     let (sink_addr, h) = spira_otel::metrics::run::fixture_sink();
     let sink = spira_otel::metrics::MetricsSink::new(Some(&sink_addr), "spira-sccache-dav", std::time::Duration::from_secs(2));
     let flushed = tokio::task::spawn_blocking(move || {

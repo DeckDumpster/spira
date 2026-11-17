@@ -31,10 +31,12 @@ fn exe_identity_names_path_size_and_mtime() {
 
 #[test]
 fn config_carries_port_and_absolute_data_dir() {
-    let c = render_config(4242, Path::new("/var/tmp/fx/data"));
+    let root = testkit::TempDir::new("testdb-config");
+    let data = root.join("fx/data");
+    let c = render_config(4242, &data);
     assert!(c.contains("  port: 4242\n"));
     assert!(c.contains("  host: 127.0.0.1\n"));
-    assert!(c.contains("data_dir: \"/var/tmp/fx/data\"\n"));
+    assert!(c.contains(&format!("data_dir: \"{}\"\n", data.display())));
     assert!(c.contains("dolt_transaction_commit: false"));
 }
 
@@ -67,20 +69,21 @@ fn beads_pointed_at_new_port_in_both_files() {
 
 #[test]
 fn cmdline_identity_is_sql_server_for_this_config() {
-    let cfg = Path::new("/var/tmp/fx-a/data/config.yaml");
-    assert!(cmdline_is_server(
-        b"/usr/local/bin/dolt\0sql-server\0--config\0/var/tmp/fx-a/data/config.yaml\0",
-        cfg
-    ));
+    let root = testkit::TempDir::new("testdb-cmdline");
+    let cfg_a = root.join("fx-a/data/config.yaml");
+    let cfg_b = root.join("fx-b/data/config.yaml");
+    let cfg = cfg_a.as_path();
+    let line = |exe: &str, c: &Path| format!("{exe}\0sql-server\0--config\0{}\0", c.display()).into_bytes();
+    assert!(cmdline_is_server(&line(&format!("{}/dolt", system_paths::USR_LOCAL_BIN), cfg), cfg));
     assert!(
         !cmdline_is_server(
-            b"dolt\0sql-server\0--config\0/var/tmp/fx-b/data/config.yaml\0",
+            &line("dolt", &cfg_b),
             cfg
         ),
         "another fixture's server"
     );
     assert!(
-        !cmdline_is_server(b"vim\0/var/tmp/fx-a/data/config.yaml\0", cfg),
+        !cmdline_is_server(format!("vim\0{}\0", cfg.display()).as_bytes(), cfg),
         "not a server"
     );
     assert!(!cmdline_is_server(b"", cfg), "gone");
@@ -138,9 +141,9 @@ fn parse_requires_what_each_command_needs() {
         "template needs --dolt"
     );
     assert!(parse(&s(&["reset"])).is_err());
-    assert!(parse(&s(&["down", "--fixture", "/x"])).is_ok());
+    assert!(parse(&s(&["down", "--fixture", "x"])).is_ok());
     assert!(
-        parse(&s(&["reap", "--fixture", "/x"])).is_err(),
+        parse(&s(&["reap", "--fixture", "x"])).is_err(),
         "reap needs --owner"
     );
     assert!(parse(&s(&["up", "--owner", "me"])).is_err());
@@ -160,9 +163,9 @@ fn the_template_command_takes_its_cache_from_the_flag_or_else_the_batch_variable
     let bare = parsed(&["template", "--bd", "bd", "--dolt", "dolt"]);
     assert_eq!(cache_of(&bare, None), None);
     assert_eq!(cache_of(&bare, Some(String::new())), None, "empty is no cache");
-    assert_eq!(cache_of(&bare, Some("/c/env".into())), Some(PathBuf::from("/c/env")));
-    let flagged = parsed(&["template", "--bd", "bd", "--dolt", "dolt", "--cache", "/c/flag"]);
-    assert_eq!(cache_of(&flagged, Some("/c/env".into())), Some(PathBuf::from("/c/flag")));
+    assert_eq!(cache_of(&bare, Some("c/env".into())), Some(PathBuf::from("c/env")));
+    let flagged = parsed(&["template", "--bd", "bd", "--dolt", "dolt", "--cache", "c/flag"]);
+    assert_eq!(cache_of(&flagged, Some("c/env".into())), Some(PathBuf::from("c/flag")));
 }
 
 fn fake_template(dst: &Path) -> Result<(), String> {
@@ -249,14 +252,14 @@ fn a_failed_fetch_stores_nothing() {
 #[test]
 fn the_template_report_round_trips() {
     let out = report(&[
-        ("TESTDB_TEMPLATE", "/tmp/spira-testdb/template-ab".into()),
+        ("TESTDB_TEMPLATE", format!("{}/template-ab", system_paths::guest::TMP_SPIRA_TESTDB)),
         ("TESTDB_TEMPLATE_KEY", "ab".into()),
         ("TESTDB_TEMPLATE_ORIGIN", Origin::Built.word().into()),
     ]);
     assert_eq!(
         TemplateReport::parse(&format!("noise\n{out}")),
         Some(TemplateReport {
-            path: "/tmp/spira-testdb/template-ab".into(),
+            path: format!("{}/template-ab", system_paths::guest::TMP_SPIRA_TESTDB),
             key: "ab".into(),
             origin: Origin::Built
         })
@@ -359,8 +362,8 @@ fn nothing_listening_is_not_ready() {
 
 #[test]
 fn tmpfs_is_read_from_the_nearest_existing_ancestor() {
-    assert!(!on_tmpfs(Path::new("/proc")), "procfs is not a tmpfs");
-    let shm = Path::new("/dev/shm");
+    assert!(!on_tmpfs(Path::new(system_paths::PROC)), "procfs is not a tmpfs");
+    let shm = &Path::new(system_paths::DEV).join("shm");
     if on_tmpfs(shm) {
         assert!(on_tmpfs(&shm.join("sp-t26yx-absent/deeper")));
     } else {
@@ -474,7 +477,7 @@ fn embedded_borrow_refuses_a_baseline_with_no_beads() {
 fn embedded_down_tolerates_empty_and_missing_paths() {
     // Server mode zeroes these vars before calling drop's shared cleanup path; embedded-down
     // must be a no-op, not a failure, on an empty string or a path that is already gone.
-    embedded_down(&[PathBuf::new(), PathBuf::from("/does/not/exist")]);
+    embedded_down(&[PathBuf::new(), testkit::TempDir::new("testdb-gone").join("nonexistent")]);
 }
 
 #[test]
