@@ -1348,6 +1348,28 @@ mod on_sqlite {
     }
 
     #[test]
+    fn a_bare_list_returns_the_lifecycle_rows_without_consulting_the_claim_view_inputs() {
+        let (_dir, s) = sqlite();
+        ok(&s, &["create-bead", "sp-a", "--repo", "spira", "--ready"]);
+        let args: Vec<String> = ["list", "--live", "--bare"].map(String::from).to_vec();
+        let request = crate::control::served::request_id();
+        let (code, out) = state::run(&s, &args, &Call { now: AT, request: &request, inputs: &crate::control::claimable::UNREADABLE });
+        assert_eq!(code, 0, "{out}");
+        let rows: Vec<serde_json::Value> = serde_json::from_str(&out).unwrap();
+        assert_eq!(rows.len(), 1, "{out}");
+        assert_eq!((rows[0]["bead_id"].as_str(), rows[0]["state"].as_str()), (Some("sp-a"), Some("READY")), "{out}");
+        assert!(rows[0]["claim_view"].is_null(), "{out}");
+    }
+
+    #[test]
+    fn a_list_without_bare_still_carries_the_claim_view() {
+        let (_dir, s) = sqlite();
+        ok(&s, &["create-bead", "sp-a", "--repo", "spira", "--ready"]);
+        let rows: Vec<serde_json::Value> = serde_json::from_str(&ok(&s, &["list", "--live"])).unwrap();
+        assert!(!rows[0]["claim_view"].is_null(), "{rows:?}");
+    }
+
+    #[test]
     fn a_list_row_and_a_show_carry_the_beads_builder_time_and_session_count() {
         let (_dir, s) = sqlite();
         ok(&s, &["create-bead", "sp-a", "--repo", "spira", "--ready"]);
