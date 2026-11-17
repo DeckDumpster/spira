@@ -257,7 +257,7 @@ fn bump_and_note(
             .map(|secs| format!(" over {}h {}m", secs / 3600, (secs % 3600) / 60))
             .unwrap_or_default();
         let subject = format!(
-            "{id} \"{title}\" ({}, {reference}) — recurred {n} times{age} with no fix holding. Mute it, or keep paging?",
+            "\"{title}\" ({id}, {}, {reference}) — recurred {n} times{age} with no fix holding. Mute it, or keep paging?",
             cfg.cause
         );
         let filed_by = if !decide::provenance_names_unit(cfg.provenance) { String::new() } else { format!("Filed by {}\n", cfg.provenance) };
@@ -807,6 +807,7 @@ mod tests {
         let s = &sent[0];
         assert!(s.contains(&id) && s.contains("phase-cap") && s.contains("gate-unjudged"), "{s}");
         assert!(!s.contains("spira-run-sentinel") && !s.contains(": ?"), "{s}");
+        assert!(!s.starts_with(&id), "mail lint refuses a subject that leads with a bead id: {s}");
         let body = &mailer.bodies.borrow()[0];
         assert!(body.contains("Filed by spira-run-sentinel_2dpass-landing.service on agent-swarm-test\n"), "{body}");
         assert!(body.contains("Last run: recurrence 5 at "), "{body}");
