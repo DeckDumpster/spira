@@ -7,6 +7,12 @@
 //! repair, and appends one inbox line once the filing succeeded. The episode is cleared by the
 //! next landing; a stall older than the 24 h landing window is one episode. A low trailing-day rate alone triggers nothing, and nothing here halts the world.
 //!
+//! A stall whose every waiting bead is held back by a prerequisite the batcher named and that is
+//! itself WORKING, SUBMITTED, CERTIFIED or IN_DELIVERY is a dependency wait: no incident, one
+//! un-prioritised inbox line per episode, and the row's `waiting_on`. The rule is
+//! `watchers::dependency`, shared with `watch.transitions`; a waiting bead with no live blocker
+//! (an idle prerequisite, or none) files as any stall.
+//!
 //! A second condition, per repo, pages (and stops nothing) when `SPIRA_THROUGHPUT_ABANDON_COUNT`
 //! rounds were abandoned inside `SPIRA_THROUGHPUT_ABANDON_WINDOW` seconds with no landing.
 //!
@@ -20,7 +26,7 @@
 //! its repo, and refused and paged by name when it holds none or cannot say.
 //!
 //! A waiting bead's entry time is the `since` column of its lifecycle row, as `spira-lc list
-//! --state SUBMITTED,CERTIFIED,IN_DELIVERY` prints it (a string of digits); the bead machine stamps
+//! --state WORKING,SUBMITTED,CERTIFIED,IN_DELIVERY` (its WORKING rows are only blockers' states) prints it (a string of digits); the bead machine stamps
 //! it on every state change. A null `since` is a P2 data defect, paged once per repo per episode.
 //!
 //! A landing is a commit naming a bead on a repo's landing ref (resolved as `spira_landref` does,
@@ -33,6 +39,7 @@ use std::collections::BTreeMap;
 use spira_config::process::cfg_parse;
 
 use crate::tasks::d::pattern;
+use crate::watchers::dependency;
 use crate::watchers::halt::Halt;
 use crate::watchers::{carried, iso8601, just_activated, INBOX_APPEND};
 
@@ -112,6 +119,9 @@ pub struct RepoLanding {
     /// A waiting bead whose lifecycle row has a null `since`.
     #[serde(default)]
     pub undated: Option<String>,
+    /// The waiting bead ids.
+    #[serde(default)]
+    pub beads: Vec<String>,
 }
 
 /// A bead waiting to land, and the epoch second it entered its current state.
@@ -151,6 +161,12 @@ pub struct Snapshot {
     /// The newest activation whose record says it restarted the store server: epoch seconds, sha.
     #[serde(default)]
     pub store_restart: Option<(u64, String)>,
+    /// Lifecycle state of every bead in a live state (`dependency::LIVE`), in any repo.
+    #[serde(default)]
+    pub states: BTreeMap<String, String>,
+    /// The batchers' refusals: pool member → its first unlanded prerequisite.
+    #[serde(default)]
+    pub blocked: BTreeMap<String, String>,
 }
 
 /// What `watch.throughput.file` is handed: one stall episode and the incident that names it.
@@ -191,6 +207,8 @@ pub struct Carry {
     pub retried: bool,
     /// When the landings were last readable after a recorded store restart, epoch seconds; 0 before.
     pub readable_at: u64,
+    /// Repo → the clause of the dependency wait its stall is excused by.
+    pub waiting_on: BTreeMap<String, String>,
 }
 
 pub struct Verdict {
@@ -215,6 +233,13 @@ fn stall_filing(l: &RepoLanding, rounds: Option<&RepoRounds>, now_ms: u64, cfg: 
 
 fn is_stalled(l: &RepoLanding, now_ms: u64, cfg: &Config) -> bool {
     waited_s(l, now_ms).is_some_and(|w| w >= cfg.stall_s)
+}
+
+/// The wait clause when every bead waiting on `l` is held by a live prerequisite.
+fn dependency_wait(l: &RepoLanding, snap: &Snapshot) -> Option<String> {
+    let state_of = |id: &str| snap.states.get(id).cloned();
+    let waits: Option<Vec<(String, String, String)>> = l.beads.iter().map(|b| dependency::live_blocker(b, &snap.blocked, &state_of).map(|(dep, state)| (b.clone(), dep, state))).collect();
+    dependency::clause(&waits?)
 }
 
 fn past_halt(carry: &Carry, now_ms: u64, bound_s: u64) -> bool {
@@ -254,9 +279,20 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> Verd
         next.readable_at = now_ms / 1000;
     }
 
+    next.waiting_on.clear();
     next.stalled.retain(|repo, _| snap.landings.iter().any(|l| l.repo == *repo && is_stalled(l, now_ms, cfg)));
     for l in snap.landings.iter().filter(|l| is_stalled(l, now_ms, cfg)) {
-        if next.stalled.get(&l.repo) == Some(&l.last_landing) || !past_halt(carry, now_ms, cfg.stall_s) {
+        if next.stalled.get(&l.repo) == Some(&l.last_landing) {
+            continue;
+        }
+        if !past_halt(carry, now_ms, cfg.stall_s) {
+            continue;
+        }
+        if let Some(clause) = dependency_wait(l, snap) {
+            if carry.waiting_on.get(&l.repo) != Some(&clause) {
+                acts.push(say(now_ms, &format!("{}: landing waits on a dependency — {clause}; no incident filed", l.repo)));
+            }
+            next.waiting_on.insert(l.repo.clone(), clause);
             continue;
         }
         let f = stall_filing(l, snap.repos.iter().find(|r| r.repo == l.repo), now_ms, cfg);
@@ -329,7 +365,7 @@ impl WatchThroughput {
     }
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("blind"), runtime::rows::Part::Map { name: "stalled", drop: &[] }, runtime::rows::Part::Field("starved"), runtime::rows::Part::Field("diluted"), runtime::rows::Part::Field("unlanded"), runtime::rows::Part::Field("held"), runtime::rows::Part::Field("undated"), runtime::rows::Part::Field("halted"), runtime::rows::Part::Field("resumed_at"), runtime::rows::Part::Field("retried"), runtime::rows::Part::Field("readable_at")];
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("blind"), runtime::rows::Part::Map { name: "stalled", drop: &[] }, runtime::rows::Part::Field("starved"), runtime::rows::Part::Field("diluted"), runtime::rows::Part::Field("unlanded"), runtime::rows::Part::Field("held"), runtime::rows::Part::Field("undated"), runtime::rows::Part::Field("halted"), runtime::rows::Part::Field("resumed_at"), runtime::rows::Part::Field("retried"), runtime::rows::Part::Field("readable_at"), runtime::rows::Part::Map { name: "waiting_on", drop: &[] }];
 
 impl Handler for WatchThroughput {
     fn interests(&self) -> &[EventKindTag] {
@@ -353,7 +389,8 @@ impl Handler for WatchThroughput {
             next.stalled.insert(f.repo.clone(), f.last_landing);
             return pattern::commands(STATE, &carry, &next, vec![say(ev.at, &f.line)]);
         }
-        let Some(snap) = pattern::answer::<Snapshot>(view, ev, OBSERVE) else { return vec![] };
+        let Some(mut snap) = pattern::answer::<Snapshot>(view, ev, OBSERVE) else { return vec![] };
+        snap.blocked = dependency::batcher_blocks(view);
         let cfg = match &self.config {
             Ok(c) => c,
             Err(e) => {

@@ -119,7 +119,7 @@ fn the_throughput_snapshot_names_the_oldest_waiting_bead_certified_ones_included
     let listener = UnixListener::bind(&sock).unwrap();
     std::thread::spawn(move || {
         runtime::socket::answer(&listener, &|argv| match argv.iter().map(String::as_str).collect::<Vec<_>>()[..] {
-            ["list", "--state", "SUBMITTED,CERTIFIED,IN_DELIVERY"] => Ok(r#"[{"bead_id":"a-new","repo":"alpha","state":"SUBMITTED","since":1699999000},{"bead_id":"a-old","repo":"alpha","state":"CERTIFIED","since":1699990000}]"#.into()),
+            ["list", "--state", "WORKING,SUBMITTED,CERTIFIED,IN_DELIVERY"] => Ok(r#"[{"bead_id":"a-dep","repo":"alpha","state":"WORKING","since":1699999500},{"bead_id":"a-new","repo":"alpha","state":"SUBMITTED","since":1699999000},{"bead_id":"a-old","repo":"alpha","state":"CERTIFIED","since":1699990000}]"#.into()),
             ["list", "--batches", "--window", "86400"] => Ok("[]".into()),
             _ => Err(RuntimeError::new("the double has no such verb")),
         })
@@ -130,7 +130,10 @@ fn the_throughput_snapshot_names_the_oldest_waiting_bead_certified_ones_included
     let t: spira_runtime::tasks::e::watch_throughput::Snapshot = serde_json::from_str(&w.throughput_snapshot(r#"{"now":1700000000,"abandon_window_s":3600}"#).unwrap()).unwrap();
     assert!(t.readable, "{}", t.why);
     let a = &t.landings[0];
-    assert_eq!(a.waiting, 2);
+    assert_eq!(a.waiting, 2, "a WORKING row is not a waiting bead");
+    assert_eq!(a.beads, ["a-new", "a-old"]);
+    assert_eq!(t.states.get("a-dep").map(String::as_str), Some("WORKING"));
+    assert_eq!(t.states.get("a-old").map(String::as_str), Some("CERTIFIED"));
     let oldest = a.oldest.as_ref().expect("the snapshot stamps the oldest waiting bead");
     assert_eq!((oldest.bead.as_str(), oldest.since), ("a-old", Some(1699990000)));
 }

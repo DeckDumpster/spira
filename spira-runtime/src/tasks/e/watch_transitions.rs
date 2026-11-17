@@ -14,7 +14,7 @@
 //!
 //! - WORKING→SUBMITTED: WORKING ≥ `SPIRA_TRANSITIONS_WORKING_MIN` and no Submit inside
 //!   `SPIRA_TRANSITIONS_SUBMIT_BOUND` seconds.
-//! - SUBMITTED→IN_DELIVERY: the oldest SUBMITTED or CERTIFIED bead waiting for a cut has itself waited `SPIRA_TRANSITIONS_CUT_BOUND` (a SUBMITTED bead whose gate is queued, or running inside `SPIRA_GATE_TIMEOUT`, is not waiting, and a CERTIFIED bead the batcher refused for an unlanded `blocked_by` is waiting on it, not uncovered), fewer rounds are open on the repo than `SPIRA_ROUND_MAX_OPEN`, and no Delivered inside the bound. A bead waiting behind a full set of open rounds is queued, not stalled, and the round that just closed has not been closed that long. A held bead, and one whose tip is already on the landing ref, is not waiting and is left out of the SUBMITTED and CERTIFIED rows.
+//! - SUBMITTED→IN_DELIVERY: the oldest SUBMITTED or CERTIFIED bead waiting for a cut has itself waited `SPIRA_TRANSITIONS_CUT_BOUND` (a SUBMITTED bead whose gate is queued, or running inside `SPIRA_GATE_TIMEOUT`, is not waiting, and a CERTIFIED bead the batcher refused for an unlanded `blocked_by` that is itself WORKING, SUBMITTED, CERTIFIED or IN_DELIVERY is waiting on it, not uncovered (the rule is `watchers::dependency`, shared with `watch.throughput`; an idle prerequisite does not excuse the wait)), fewer rounds are open on the repo than `SPIRA_ROUND_MAX_OPEN`, and no Delivered inside the bound. A bead waiting behind a full set of open rounds is queued, not stalled, and the round that just closed has not been closed that long. A held bead, and one whose tip is already on the landing ref, is not waiting and is left out of the SUBMITTED and CERTIFIED rows.
 //! - IN_DELIVERY→LANDED: the oldest IN_DELIVERY work older than `SPIRA_TRANSITIONS_DELIVER_BOUND` and no Delivered inside it;
 //!   a bead seen to leave IN_DELIVERY for good counts as Delivered.
 //! - LANDED→ACTIVATED: the release repo (`SPIRA_TRANSITIONS_RELEASE_REPO`) landed a commit the
@@ -39,8 +39,8 @@ use runtime::event::*;
 use serde::{Deserialize, Serialize};
 use spira_config::process::{cfg, cfg_parse};
 
-use crate::tasks::a::{batcher_forge, batcher_local, kit};
 use crate::tasks::d::pattern;
+use crate::watchers::dependency;
 use crate::watchers::halt::Halt;
 use crate::watchers::{answers_observe, carried, iso8601, restart_excuses_read, INBOX_APPEND};
 
@@ -450,10 +450,18 @@ fn last_at(snap: &Snapshot, scope: &str, kind: &str) -> String {
     newest.map_or_else(|| format!("none since {}", iso8601(snap.horizon)), iso8601)
 }
 
-/// `waiting on a dependency: <id> waiting on <dep>, …` for the beads in `scope` the batcher refused for a prerequisite.
 fn dependency_clause(snap: &Snapshot, scope: &str) -> Option<String> {
-    let waits: Vec<String> = snap.beads.iter().filter(|b| scope == ALL || b.repo == scope).filter_map(|b| b.waits_on.as_ref().map(|d| format!("{} waiting on {d}", b.id))).collect();
-    (!waits.is_empty()).then(|| format!("waiting on a dependency: {}", waits.join(", ")))
+    let waits: Vec<(String, String, String)> = snap
+        .beads
+        .iter()
+        .filter(|b| scope == ALL || b.repo == scope)
+        .filter_map(|b| {
+            let dep = b.waits_on.as_ref()?;
+            let state = snap.beads.iter().find(|d| d.id == *dep).map_or_else(String::new, |d| d.state.clone());
+            Some((b.id.clone(), dep.clone(), state))
+        })
+        .collect();
+    dependency::clause(&waits)
 }
 
 fn evidence(snap: &Snapshot, scope: &str, now: u64, held: &[&str], exit: &str, bound: u64) -> String {
@@ -671,8 +679,10 @@ pub fn mark_gated(snap: &mut Snapshot, gates: &BTreeMap<String, Gating>) {
 /// Sets `waits_on` on each CERTIFIED bead the batcher refused for an unlanded prerequisite;
 /// SUBMITTED beads stay judged by their gate.
 pub fn mark_blocked(snap: &mut Snapshot, blocked: &BTreeMap<String, String>) {
+    let states: BTreeMap<String, String> = snap.beads.iter().map(|b| (b.id.clone(), b.state.clone())).collect();
+    let state_of = |id: &str| states.get(id).cloned();
     for b in snap.beads.iter_mut().filter(|b| b.state == "CERTIFIED") {
-        b.waits_on = blocked.get(&b.id).cloned();
+        b.waits_on = dependency::live_blocker(&b.id, blocked, &state_of).map(|(dep, _)| dep);
     }
 }
 
@@ -926,9 +936,7 @@ impl Handler for WatchTransitions {
             EFFECT_TIMED_OUT => blind("the observe timed out"),
             _ => return vec![],
         };
-        let mut blocked: BTreeMap<String, String> = kit::carry::<batcher_local::Carry>(&batcher_local::SHAPE, view).repos.into_values().flat_map(|rc| rc.blocked).collect();
-        blocked.extend(kit::carry::<batcher_forge::Carry>(&batcher_forge::SHAPE, view).repos.into_values().flat_map(|rc| rc.blocked));
-        mark_blocked(&mut snap, &blocked);
+        mark_blocked(&mut snap, &dependency::batcher_blocks(view));
         let carry = carried::<Carry>(view, &ev.stream, STATE);
         let (next, acts) = decide(&carry, &snap, ev.at, cfg);
         pattern::commands(STATE, &carry, &next, acts)

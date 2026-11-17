@@ -883,7 +883,13 @@ impl World {
 
     /// The rows waiting to land: SUBMITTED, CERTIFIED and IN_DELIVERY.
     pub fn waiting_rows(&self) -> Result<Value, String> {
-        serde_json::from_str(&self.lc_listed(&["list", "--state", "SUBMITTED,CERTIFIED,IN_DELIVERY"])?).map_err(|e| e.to_string())
+        Ok(Value::Array(self.live_rows()?.into_iter().filter(|r| r["state"] != "WORKING").collect()))
+    }
+
+    /// The rows in a live state (`dependency::LIVE`): one read for the waiting beads and the blockers' states.
+    fn live_rows(&self) -> Result<Vec<Value>, String> {
+        let rows: Value = serde_json::from_str(&self.lc_listed(&["list", "--state", &crate::watchers::dependency::LIVE.join(",")])?).map_err(|e| e.to_string())?;
+        Ok(rows.as_array().cloned().unwrap_or_default())
     }
 
     /// The day's landings and rounds for `watch.throughput`: per repo, the beads landed on its
@@ -903,23 +909,25 @@ impl World {
             Ok(l) => l,
             Err(e) => return to_json(&blind(format!("landings: {e}"))),
         };
-        let waiting = match self.waiting_rows() {
+        let live = match self.live_rows() {
             Ok(w) => w,
             Err(e) => return to_json(&blind(format!("waiting rows: {e}"))),
         };
+        let states: BTreeMap<String, String> = live.iter().filter_map(|r| Some((r["bead_id"].as_str()?.to_string(), r["state"].as_str()?.to_string()))).collect();
+        let waiting: Vec<Value> = live.into_iter().filter(|r| r["state"] != "WORKING").collect();
         let batches = match self.lc_json(&["list", "--batches", "--window", &day.to_string()]) {
             Ok(b) => b,
             Err(e) => return to_json(&blind(format!("batches: {e}"))),
         };
         let Some(rows) = batches.as_array() else { return to_json(&blind("batches: not a list".into())) };
         stamp_landings(&mut landings, rows);
-        stamp_waiting(&mut landings, waiting.as_array().map(Vec::as_slice).unwrap_or_default());
+        stamp_waiting(&mut landings, &waiting);
         let batches = batches.as_array().map(Vec::as_slice).unwrap_or_default();
         let repos = round_counts(batches, p.now, p.abandon_window_s);
         let unlanded = unlanded_rounds(batches, p.now);
         let parts = self.round_record_partition();
         let records = Records { clear: parts.clear.iter().map(|f| f.display().to_string()).collect(), held: parts.held };
-        to_json(&ThroughputSnapshot { readable: true, landings, repos, unlanded, records, halt, activated_at, store_up_s: None, store_restart, ..Default::default() })
+        to_json(&ThroughputSnapshot { readable: true, landings, repos, unlanded, records, halt, activated_at, store_up_s: None, store_restart, states, ..Default::default() })
     }
 
     /// Every checkout of the repo map, as the registry resolves it. An unreadable map is one
@@ -964,7 +972,7 @@ impl World {
                     hourly[(23 - age / 3600) as usize] += 1;
                 }
             }
-            out.push(RepoLanding { repo: row.name, hourly, last_landing: landed.values().copied().max().unwrap_or(0), waiting: 0, oldest: None, undated: None });
+            out.push(RepoLanding { repo: row.name, hourly, last_landing: landed.values().copied().max().unwrap_or(0), waiting: 0, oldest: None, undated: None, beads: vec![] });
         }
         Ok(out)
     }
@@ -1206,6 +1214,7 @@ pub fn stamp_waiting(landings: &mut [RepoLanding], rows: &[Value]) {
     for l in landings {
         let mine: Vec<Waiting> = rows.iter().filter(|r| r["repo"].as_str() == Some(l.repo.as_str())).map(|r| Waiting { bead: r["bead_id"].as_str().unwrap_or_default().to_string(), since: as_u64(&r["since"]) }).collect();
         l.waiting = mine.len() as u64;
+        l.beads = mine.iter().map(|w| w.bead.clone()).collect();
         l.undated = mine.iter().find(|w| w.since.is_none()).map(|w| w.bead.clone());
         l.oldest = mine.into_iter().filter(|w| w.since.is_some()).min_by_key(|w| w.since);
     }

@@ -6,6 +6,7 @@ pub mod asks;
 pub mod design_asks;
 pub mod halt;
 pub mod brain_dirty;
+pub mod dependency;
 pub mod bead_sweep;
 pub mod inbox_keeper;
 pub mod overrides;

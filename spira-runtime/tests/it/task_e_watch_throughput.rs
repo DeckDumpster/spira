@@ -32,7 +32,7 @@ struct Host {
 fn landed(n: u64) -> Host {
     let mut hourly = vec![n / 24; 24];
     hourly[23] += n % 24;
-    Host { snap: Snapshot { readable: true, landings: vec![RepoLanding { repo: "alpha".into(), hourly, last_landing: 0, waiting: 0, oldest: None, undated: None }], ..Default::default() }, last: Last::Ago(60), first_seen: None }
+    Host { snap: Snapshot { readable: true, landings: vec![RepoLanding { repo: "alpha".into(), hourly, last_landing: 0, waiting: 0, oldest: None, undated: None, beads: vec![] }], ..Default::default() }, last: Last::Ago(60), first_seen: None }
 }
 
 fn waiting(mut h: Host, n: u64, last: Last) -> Host {
@@ -48,6 +48,13 @@ fn starved(repo: &str, abandoned: u64, landed_recent: u64) -> RepoRounds {
 
 fn rig(world: Arc<Mutex<Host>>) -> TaskRig {
     let (_, stream, kind) = WatchThroughput::boot();
+    let mut r = rig_unticked(world);
+    r.tick(stream, kind).unwrap();
+    acc::assert_healthy(&r, STREAM);
+    r
+}
+
+fn rig_unticked(world: Arc<Mutex<Host>>) -> TaskRig {
     let observe = move |input: &str| {
         let now = serde_json::from_str::<serde_json::Value>(input).unwrap()["now"].as_u64().unwrap();
         let mut h = world.lock().unwrap();
@@ -72,10 +79,8 @@ fn rig(world: Arc<Mutex<Host>>) -> TaskRig {
         });
         Ok(serde_json::to_string(&snap).unwrap())
     };
-    let mut r = TaskRig::new(1, WatchThroughput::new(config()).registration()).unwrap().double(OBSERVE, observe).double(FILE, |_| Ok("filed".into())).double(CLEAR, |_| Ok("cleared".into())).double(INBOX_APPEND, |_| Ok("appended".into()));
+    let r = TaskRig::new(1, WatchThroughput::new(config()).registration()).unwrap().double(OBSERVE, observe).double(FILE, |_| Ok("filed".into())).double(CLEAR, |_| Ok("cleared".into())).double(INBOX_APPEND, |_| Ok("appended".into()));
     r.clock.advance_to(3 * DAY_MS);
-    r.tick(stream, kind).unwrap();
-    acc::assert_healthy(&r, STREAM);
     r
 }
 
@@ -451,7 +456,7 @@ fn the_last_landing_is_when_the_round_landed_not_when_it_was_cut() {
 }
 
 fn stalled_snapshot(now_s: u64) -> Snapshot {
-    Snapshot { readable: true, landings: vec![RepoLanding { repo: "alpha".into(), hourly: vec![0; 24], last_landing: now_s - 10_000, waiting: 3, oldest: Some(Waiting { bead: "sp-x".into(), since: Some(now_s - 10_000) }), undated: None }], ..Default::default() }
+    Snapshot { readable: true, landings: vec![RepoLanding { repo: "alpha".into(), hourly: vec![0; 24], last_landing: now_s - 10_000, waiting: 3, oldest: Some(Waiting { bead: "sp-x".into(), since: Some(now_s - 10_000) }), undated: None, beads: vec![] }], ..Default::default() }
 }
 
 fn halt(since: u64) -> Option<spira_runtime::watchers::halt::Halt> {
@@ -634,7 +639,7 @@ fn a_readable_tick_after_a_recorded_store_restart_stops_the_next_blind_page_nami
 
 fn one_waiting(now_s: u64, last_landing_ago: u64, bead: &str, waited: u64) -> Snapshot {
     let oldest = Some(Waiting { bead: bead.into(), since: Some(now_s - waited) });
-    Snapshot { readable: true, landings: vec![RepoLanding { repo: "alpha".into(), hourly: vec![0; 24], last_landing: now_s - last_landing_ago, waiting: 1, oldest, undated: None }], ..Default::default() }
+    Snapshot { readable: true, landings: vec![RepoLanding { repo: "alpha".into(), hourly: vec![0; 24], last_landing: now_s - last_landing_ago, waiting: 1, oldest, undated: None, beads: vec![] }], ..Default::default() }
 }
 
 #[test]
@@ -726,4 +731,95 @@ fn a_null_since_beside_a_stalled_dated_row_pages_p2_naming_it_and_still_files_th
     assert_eq!(v.acts.iter().filter(|a| a.name == FILE).count(), 1, "{:?}", v.acts);
     let pages: Vec<_> = v.acts.iter().filter(|a| a.name == INBOX_APPEND && a.input.contains("] P2 ") && a.input.contains("sp-null")).collect();
     assert_eq!(pages.len(), 1, "{:?}", v.acts);
+}
+
+const REPO: &str = "remarkable-pipeline";
+const CARRY: &str = r#"{"repos":{"remarkable-pipeline":{"state":"Idle","blocked":{"sp-j9ci07":"sp-tec2pp"}}}}"#;
+const FORGE_CARRY: &str = r#"{"repos":{"remarkable-pipeline":{"state":"Idle","round_key":null,"held":[],"base_moved":null,"conflict_streaks":{},"blocked":{"sp-j9ci07":"sp-tec2pp"}}}}"#;
+
+fn dependency_world(beads: &[&str], states: &[(&str, &str)]) -> Host {
+    let mut h = waiting(landed(5), beads.len() as u64, Last::Ago(7_234));
+    h.snap.landings[0].repo = REPO.into();
+    h.snap.landings[0].beads = beads.iter().map(|b| b.to_string()).collect();
+    h.snap.landings[0].oldest = Some(Waiting { bead: beads[0].into(), since: Some(1) });
+    h.snap.states = states.iter().map(|(b, s)| (b.to_string(), s.to_string())).collect();
+    h
+}
+
+fn dependency_run(h: Host, stream: &'static str, tag: runtime::event::EventKindTag, carry: &str) -> TaskRig {
+    let (_, s, kind) = WatchThroughput::boot();
+    let mut r = rig_unticked(Arc::new(Mutex::new(h)));
+    r.tick(stream, runtime::event::EventKind::new(tag, carry)).unwrap();
+    r.tick(s, kind).unwrap();
+    r
+}
+
+fn inbox(r: &TaskRig) -> Vec<String> {
+    named(r, INBOX_APPEND)
+}
+
+#[test]
+fn a_stall_whose_only_waiting_bead_has_a_working_blocker_files_nothing_and_says_so_once() {
+    let h = dependency_world(&["sp-j9ci07"], &[("sp-tec2pp", "WORKING"), ("sp-j9ci07", "CERTIFIED")]);
+    let mut r = dependency_run(h, spira_runtime::tasks::a::batcher_local::STREAM, spira_runtime::tasks::a::batcher_local::STATE, CARRY);
+    r.advance(3 * CADENCE_MS).unwrap();
+    assert!(named(&r, FILE).is_empty(), "{:?}", named(&r, FILE));
+    let lines = inbox(&r);
+    assert!(lines.iter().all(|l| !l.contains("P0")), "{lines:?}");
+    let waits: Vec<&String> = lines.iter().filter(|l| l.contains("sp-j9ci07 waiting on sp-tec2pp (WORKING)")).collect();
+    assert_eq!(waits.len(), 1, "one line per episode: {lines:?}");
+    let carry: Carry = serde_json::from_str(&r.journaled().iter().rev().find(|e| e.kind.tag == STATE).unwrap().kind.body).unwrap();
+    assert!(carry.waiting_on.contains_key(REPO), "{carry:?}");
+}
+
+#[test]
+fn a_stall_whose_blocker_is_idle_files_and_pages_as_before() {
+    let h = dependency_world(&["sp-j9ci07"], &[("sp-j9ci07", "CERTIFIED")]);
+    let r = dependency_run(h, spira_runtime::tasks::a::batcher_local::STREAM, spira_runtime::tasks::a::batcher_local::STATE, CARRY);
+    assert_eq!(named(&r, FILE).len(), 1);
+    assert!(inbox(&r).iter().any(|l| l.contains("P0 remarkable-pipeline: landing stalled")), "{:?}", inbox(&r));
+}
+
+#[test]
+fn a_repo_with_one_blocked_and_one_unblocked_waiting_bead_still_files() {
+    let h = dependency_world(&["sp-j9ci07", "sp-other"], &[("sp-tec2pp", "WORKING")]);
+    let r = dependency_run(h, spira_runtime::tasks::a::batcher_local::STREAM, spira_runtime::tasks::a::batcher_local::STATE, CARRY);
+    assert_eq!(named(&r, FILE).len(), 1);
+}
+
+#[test]
+fn the_forge_batchers_blocked_map_excuses_the_stall_too() {
+    let h = dependency_world(&["sp-j9ci07"], &[("sp-tec2pp", "WORKING")]);
+    let r = dependency_run(h, spira_runtime::tasks::a::batcher_forge::STREAM, spira_runtime::tasks::a::batcher_forge::STATE, FORGE_CARRY);
+    assert!(named(&r, FILE).is_empty());
+    assert!(inbox(&r).iter().any(|l| l.contains("sp-j9ci07 waiting on sp-tec2pp (WORKING)")), "{:?}", inbox(&r));
+}
+
+#[test]
+fn the_row_names_the_repo_a_dependency_wait_excuses() {
+    let h = dependency_world(&["sp-j9ci07"], &[("sp-tec2pp", "WORKING")]);
+    let r = dependency_run(h, spira_runtime::tasks::a::batcher_local::STREAM, spira_runtime::tasks::a::batcher_local::STATE, CARRY);
+    let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&r, NAME);
+    assert!(rows.contains(&format!("waiting_on/{REPO}")), "{rows:?}");
+}
+
+#[test]
+fn a_blocker_that_goes_idle_inside_one_episode_files_that_episode_then() {
+    let now = 3 * DAY_MS;
+    let mut snap = Snapshot { states: [("sp-tec2pp".to_string(), "WORKING".to_string())].into(), blocked: [("sp-x".to_string(), "sp-tec2pp".to_string())].into(), ..stalled_snapshot(now / 1000) };
+    snap.landings[0].beads = vec!["sp-x".into()];
+    let first = decide(&Carry::default(), &snap, now, &config());
+    assert!(first.acts.iter().all(|a| a.name != FILE) && first.carry.waiting_on.contains_key("alpha"));
+    snap.states.clear();
+    let second = decide(&first.carry, &snap, now + CADENCE_MS, &config());
+    assert_eq!(second.acts.iter().filter(|a| a.name == FILE).count(), 1);
+    assert!(second.carry.waiting_on.is_empty());
+}
+
+#[test]
+fn one_bead_held_by_a_live_blocker_and_one_by_an_idle_one_files() {
+    let now = 3 * DAY_MS;
+    let mut snap = Snapshot { states: [("sp-live".to_string(), "WORKING".to_string())].into(), blocked: [("sp-a".to_string(), "sp-live".to_string()), ("sp-b".to_string(), "sp-idle".to_string())].into(), ..stalled_snapshot(now / 1000) };
+    snap.landings[0].beads = vec!["sp-a".into(), "sp-b".into()];
+    assert_eq!(decide(&Carry::default(), &snap, now, &config()).acts.iter().filter(|a| a.name == FILE).count(), 1);
 }
