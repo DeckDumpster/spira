@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::ports::{Exec, s};
-use crate::util::{self, Sink};
+use crate::util::{self, Out, Sink};
 
 /// Who directed a dwarf, why, and which dwarf held the bead before.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -139,6 +139,16 @@ pub fn refusal_reason(bead: &str, by: &str, row: &Result<Option<spira_store::lc_
     format!("{bead} was not claimable for {by} — {seen}{said}")
 }
 
+/// slay's own reason: its stderr, else its stdout lines (slay reports a failed stop there).
+fn slay_reason(o: &Out) -> String {
+    let err = o.first_err_line();
+    if !err.trim().is_empty() {
+        return err;
+    }
+    let said: Vec<&str> = o.stdout.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+    if said.is_empty() { "slay gave no reason".to_string() } else { said.join("; ") }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn run(exec: &dyn Exec, sink: &dyn Sink, sleep: &dyn Fn(Duration), run_dir: &Path, req: &Request, home: &Path, dwarf_path: Option<&str>, call_bin: &str, call_argv: &[String], now: i64) -> i32 {
     let fatal = |m: String| {
@@ -155,7 +165,7 @@ pub fn run(exec: &dyn Exec, sink: &dyn Sink, sleep: &dyn Fn(Duration), run_dir: 
         if state == HELD {
             let o = exec.exec("slay", &s(&["--bead", &req.bead, "--keep-work", "--why", &takeover_why(req)]), None, None);
             if !o.success() {
-                return fatal(format!("could not stop the dwarf holding it (slay rc={}): {} — nothing directed", o.code, o.first_err_line()));
+                return fatal(format!("could not stop the dwarf holding it (slay rc={}): {} — nothing directed", o.code, slay_reason(&o)));
             }
             let _ = exec.exec("spira-lc", &s(&["unhold", &req.bead, "wait", "dwarf"]), None, None);
             let mut seen = String::new();
@@ -204,7 +214,7 @@ pub fn run(exec: &dyn Exec, sink: &dyn Sink, sleep: &dyn Fn(Duration), run_dir: 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::util::{MemSink, Out};
+    use crate::util::MemSink;
     use std::path::PathBuf;
     use std::sync::Mutex;
 
@@ -248,6 +258,7 @@ mod tests {
     struct Fake {
         show: Out,
         slay_rc: i32,
+        slay_out: (String, String),
         calls: Mutex<Vec<(String, Vec<String>)>>,
         /// Reads of the row that still see the stopped dwarf holding it, after `slay`.
         teardown_reads: Mutex<u32>,
@@ -272,7 +283,7 @@ mod tests {
                     row("READY", None)
                 }
                 "spira-lc" => self.show.clone(),
-                "slay" => Out { code: self.slay_rc, stdout: String::new(), stderr: "slay said no".into() },
+                "slay" => Out { code: self.slay_rc, stdout: self.slay_out.0.clone(), stderr: self.slay_out.1.clone() },
                 "systemd-run" => {
                     if let Some(why) = &self.refusal {
                         write_refusal(&self.run_dir, "sp-x", why);
@@ -284,7 +295,7 @@ mod tests {
         }
     }
     fn fake(show: Out, slay_rc: i32) -> Fake {
-        Fake { show, slay_rc, calls: Mutex::default(), teardown_reads: Mutex::new(0), after_launch: None, refusal: None, run_dir: PathBuf::from("nonexistent") }
+        Fake { show, slay_rc, slay_out: (String::new(), "slay said no".into()), calls: Mutex::default(), teardown_reads: Mutex::new(0), after_launch: None, refusal: None, run_dir: PathBuf::from("nonexistent") }
     }
     fn row(state: &str, holder: Option<&str>) -> Out {
         let h = holder.map_or("null".to_string(), |h| format!("\"{h}\""));
@@ -320,6 +331,15 @@ mod tests {
         assert_eq!(at("slay"), a(&["--bead", "sp-x", "--keep-work", "--why", "directed by concierge: loop fix"]));
         assert!(at("systemd-run").windows(2).any(|w| w == ["--replaced", "dwarf-old"]), "{:?}", at("systemd-run"));
         assert!(sink.all().contains("stopped dwarf-old"));
+    }
+
+    #[test]
+    fn a_slay_that_fails_on_stdout_alone_still_gives_its_reason() {
+        let mut f = fake(row("WORKING", Some("dwarf-old")), 1);
+        f.slay_out = ("verify: a pid file for sp-x remains\nslay: INCOMPLETE for sp-x — see above\n".into(), String::new());
+        let (rc, sink) = go(&f);
+        assert_eq!((rc, progs(&f)), (1, a(&["spira-lc", "slay"])));
+        assert!(sink.all().contains("a pid file for sp-x remains"), "{}", sink.all());
     }
 
     #[test]
