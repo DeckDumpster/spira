@@ -139,6 +139,8 @@ pub struct RunRequest {
     pub output: PathBuf,
     /// `podman run --cpus`: the container's share of the host's cores.
     pub cpus: Option<String>,
+    /// `podman run --pids-limit`: the container's task limit; None leaves podman's default.
+    pub pids_limit: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -148,6 +150,8 @@ pub struct Overlay {
     pub work: PathBuf,
     pub ctr: String,
 }
+
+pub const PIDS_LIMIT_FLAG: &str = "--pids-limit";
 
 pub fn podman_run_args(req: &RunRequest) -> Vec<String> {
     let mut a: Vec<String> = ["run", "--rm", "--name", &req.name, "-v"]
@@ -166,6 +170,10 @@ pub fn podman_run_args(req: &RunRequest) -> Vec<String> {
     if let Some(c) = &req.cpus {
         a.push("--cpus".into());
         a.push(c.clone());
+    }
+    if let Some(n) = req.pids_limit {
+        a.push(PIDS_LIMIT_FLAG.into());
+        a.push(n.to_string());
     }
     a.push("-w".into());
     a.push(req.workdir.clone());
@@ -559,11 +567,16 @@ mod tests {
             deadline: None,
             output: "o".into(),
             cpus: Some("1.5".into()),
+            pids_limit: Some(12345),
         };
         assert!(podman_run_args(&req).contains(&"l:c:O,upperdir=u,workdir=k".to_string()));
         let a = podman_run_args(&req);
         let i = a.iter().position(|x| x == "--cpus").expect("--cpus passed");
         assert_eq!(a[i + 1], "1.5");
+        let i = a.iter().position(|x| x == PIDS_LIMIT_FLAG).expect("--pids-limit passed");
+        assert_eq!(a[i + 1], "12345");
+        let none = RunRequest { pids_limit: None, ..req };
+        assert!(!podman_run_args(&none).iter().any(|x| x == PIDS_LIMIT_FLAG));
     }
 
     use super::*;

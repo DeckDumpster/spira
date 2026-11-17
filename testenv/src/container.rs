@@ -966,7 +966,7 @@ impl Driver<'_> {
             // started from a service (loginuid unset) or with this capability came up.
             s("--cap-add"),
             s("AUDIT_CONTROL"),
-            s("--pids-limit"),
+            s(crate::runtime::PIDS_LIMIT_FLAG),
             pids_limit.to_string(),
             s("--network"),
             s(network),

@@ -470,6 +470,7 @@ fn run_foreign(
         log: &|m| pending.lock().unwrap().push(m.to_string()),
         cores: std::thread::available_parallelism().map_or(1, |n| n.get()),
         concurrent: tiers.len(),
+        pids_limit: s.pids_limit,
     };
     let outcomes = runner.run_all(&tiers);
     for m in pending.lock().unwrap().drain(..) {
