@@ -6,7 +6,7 @@
 //! derives is captured ONCE at startup, under `SPIRA_DOCTOR=1` exactly as doctor.sh itself
 //! sourced it, so every check reads a consistent snapshot rather than re-sourcing per call.
 
-use crate::ports::{StoreMeta, World};
+use crate::ports::{Placement, StoreMeta, World};
 use std::collections::BTreeMap;
 use std::net::{TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
@@ -497,6 +497,31 @@ impl World for Real {
         spira_config::build::on_tmpfs(p)
     }
 
+    fn placement_roots(&self) -> Vec<(String, PathBuf)> {
+        let cfg_path = |key: &str| spira_config::process::cfg(key).ok().filter(|v| !v.is_empty()).map(PathBuf::from);
+        let mut roots: Vec<(String, PathBuf)> = Vec::new();
+        if let Some(g) = self.podman_graphroot() {
+            roots.push(("podman graphroot".into(), g));
+        }
+        for key in ["SPIRA_TESTENV_SCRATCH_ROOT", "SPIRA_TESTENV_SANDBOX_TARGET_ROOT", "SPIRA_GATE_TARGET_ROOT", "SPIRA_SCCACHE_DAV_ROOT", "SPIRA_DOLT_DATA"] {
+            if let Some(p) = cfg_path(key) {
+                roots.push((key.into(), p));
+            }
+        }
+        if let Some(parent) = cfg_path("SPIRA_LC_STORE_PATH").and_then(|p| p.parent().map(Path::to_path_buf)) {
+            roots.push(("SPIRA_LC_STORE_PATH (directory)".into(), parent));
+        }
+        for base in spira_config::build_dir::configured_bases() {
+            roots.push(("SPIRA_DWARF_BUILD_BASE".into(), base));
+        }
+        roots
+    }
+
+    fn placement_of(&self, p: &Path) -> Placement {
+        let mounts = std::fs::read_to_string(Path::new(system_paths::PROC_SELF).join("mounts")).unwrap_or_default();
+        judge_placement(p, Path::new(system_paths::ROOT), &mounts)
+    }
+
     fn git_daemon_base_paths(&self, port: u16) -> Vec<String> {
         let Ok(rd) = std::fs::read_dir(system_paths::PROC) else { return Vec::new() };
         rd.flatten()
@@ -634,4 +659,42 @@ fn extract_semver(text: &str) -> Option<String> {
         }
     }
     None
+}
+
+impl Real {
+    fn podman_graphroot(&self) -> Option<PathBuf> {
+        let bin = self.which("podman")?;
+        let mut cmd = spira_config::bounded::bounded(bin);
+        cmd.args(["info", "--format", "{{.Store.GraphRoot}}"]).stdin(Stdio::null()).stderr(Stdio::null());
+        let o = cmd.output().ok().filter(|o| o.status.success())?;
+        let v = String::from_utf8_lossy(&o.stdout).trim().to_string();
+        (!v.is_empty()).then(|| PathBuf::from(v))
+    }
+}
+
+/// Follows `p`'s symlinks and compares its device with `root`'s. `mounts` is `/proc/self/mounts`
+/// text, used only to name the filesystem of a path that is on root.
+pub fn judge_placement(p: &Path, root: &Path, mounts: &str) -> Placement {
+    use std::os::unix::fs::MetadataExt;
+    let canonical = match p.canonicalize() {
+        Ok(c) => c,
+        Err(e) => return Placement::Unresolved(format!("{}: {e}", p.display())),
+    };
+    let (Ok(have), Ok(want)) = (std::fs::metadata(&canonical), std::fs::metadata(root)) else {
+        return Placement::Unresolved(format!("cannot stat {} or {}", canonical.display(), root.display()));
+    };
+    if have.dev() != want.dev() {
+        return Placement::Elsewhere;
+    }
+    let source = mounts
+        .lines()
+        .filter_map(|l| {
+            let mut f = l.split_whitespace();
+            Some((f.next()?, f.next()?))
+        })
+        .filter(|(_, mp)| canonical.starts_with(mp))
+        .max_by_key(|(_, mp)| mp.len())
+        .map(|(src, _)| src.to_string())
+        .unwrap_or_else(|| "unknown".into());
+    Placement::OnRoot { canonical, source }
 }

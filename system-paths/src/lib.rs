@@ -1,5 +1,7 @@
 //! Every real absolute system path the code names. Contract: DESIGN.md.
 
+/// The root directory.
+pub const ROOT: &str = "/";
 /// The proc filesystem root.
 pub const PROC: &str = "/proc";
 /// The calling process's proc directory.

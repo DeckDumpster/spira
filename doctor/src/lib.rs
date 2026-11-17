@@ -79,6 +79,7 @@ pub fn run(w: &dyn World) -> i32 {
         Section { title: "compilation cache", lines: check_sccache(w) },
         Section { title: "compilation cache backend", lines: check_sccache_backend(w) },
         Section { title: "dwarf build directories", lines: check_dwarf_build(w) },
+        Section { title: "disk placement", lines: check_disk_placement(w) },
         Section { title: "round-vm mirror", lines: check_round_vm_mirror(w) },
         Section { title: "events substrate", lines: check_events_probe(w) },
         Section {
@@ -631,6 +632,25 @@ pub fn check_dwarf_build(w: &dyn World) -> Vec<Line> {
             } else {
                 ok(format!("dwarf build base {}", base.display()))
             }
+        })
+        .collect()
+}
+
+// ============================================================================ disk placement
+
+/// Detects drift, never repairs it: a heavy-write root whose canonical path (symlinks followed)
+/// is on the root filesystem breaks the disk model, whatever its configured value says.
+pub fn check_disk_placement(w: &dyn World) -> Vec<Line> {
+    use ports::Placement;
+    w.placement_roots()
+        .iter()
+        .map(|(key, path)| match w.placement_of(path) {
+            Placement::OnRoot { canonical, source } => fail(
+                format!("{key} resolves onto the root filesystem: {} (on {source})", canonical.display()),
+                format!("the disk model gives Root no heavy writes; point {key} at its SSD per wiki disk-model — a symlink counts as where it lands (configured: {}).", path.display()),
+            ),
+            Placement::Elsewhere => ok(format!("{key} {} is off the root filesystem", path.display())),
+            Placement::Unresolved(why) => warn(format!("{key}: cannot tell where {} lands", path.display()), why),
         })
         .collect()
 }

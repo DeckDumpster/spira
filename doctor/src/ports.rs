@@ -145,6 +145,12 @@ pub trait World {
     /// Whether `p` is on a tmpfs.
     fn on_tmpfs(&self, p: &Path) -> bool;
 
+    /// Every heavy-write root as (config key or name, configured path): the ones whose disk
+    /// the disk model fixes. Unset keys are absent.
+    fn placement_roots(&self) -> Vec<(String, PathBuf)>;
+    /// Where `p` lands once symlinks are followed, against the root filesystem.
+    fn placement_of(&self, p: &Path) -> Placement;
+
     /// The `--base-path` of every `git daemon` process serving `port`, read from the process
     /// table. Empty when none is.
     fn git_daemon_base_paths(&self, port: u16) -> Vec<String>;
@@ -167,4 +173,12 @@ pub trait World {
     fn submission_status(&self) -> Option<String>;
 
     fn out(&self, s: &str);
+}
+
+/// Where a path's canonical form lives, relative to the root filesystem.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Placement {
+    OnRoot { canonical: PathBuf, source: String },
+    Elsewhere,
+    Unresolved(String),
 }
