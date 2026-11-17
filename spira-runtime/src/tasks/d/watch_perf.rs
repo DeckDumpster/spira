@@ -13,7 +13,7 @@
 //! `watch.perf.observe` returns `Snapshot { timings: [{name, micros, millis, phases?, error?}], callers: {caller → count} }`.
 //!
 //! - Probe list: `spira/perf-probes` (seven named read paths: `lc-list`, `lc-show`, `lc-ops-view`, `work-list`, `claim-check`, `lc-ready`, `content-read`), parsed by `parse_probes` (`perf-watch/src/lib.rs:32`), loaded once at boot (`perf-watch/src/main.rs:126-129`).
-//! - Each probe today is a **forked CLI** timed inside `systemd-run --user --scope bash -c` (`perf-watch/src/main.rs:27,55-56`), 5 s deadline (`main.rs:10,74-77`).
+//! - Each probe today is a **forked CLI** timed inside `systemd-run --user --scope bash -c` (`perf-watch/src/main.rs:27,55-56`), 5 s deadline (`main.rs:10,74-77`). `time_one` stamps `PERFWATCH_T0_US` before the fork so the probe's phases open with `start` (fork, exec, load until `begin`), and appends `exit` (the probe's `PERFWATCH_END_US` stamp to the reap), so the phases add up to the wall time.
 //! - Caller counts come from `spira-lc stats` (`main.rs:112`, parsed by `caller_counts`, `lib.rs:55`).
 //! - **Open point.** The thing measured is the fork-and-socket path that S7 removes. After S7 the probe should time the in-process `LcClient` / projection read for the same six names, and `stats` becomes the store's `stats` socket method. The probe file's names are kept, so the metric series and alarm keys do not change. Until then the observe needs the `host` class to fork the probe argv, the one place a P1 task keeps a Spira child (unverified that W1 can allow-list it).
 //!
@@ -204,6 +204,16 @@ fn phases_of(stderr: &[u8]) -> Option<String> {
     String::from_utf8_lossy(stderr).lines().rev().find_map(|l| l.strip_prefix(spira_otel::run::PHASES_PREFIX)).map(str::to_string)
 }
 
+/// The probe's phases with `exit` appended: the time from the probe stamping its end until
+/// `reaped_us`. No end stamp leaves them as they were.
+fn account(phases: Option<String>, stderr: &str, reaped_us: u64) -> Option<String> {
+    let end_us = stderr.lines().rev().find_map(|l| l.strip_prefix(spira_otel::run::END_PREFIX)).and_then(|v| v.trim().parse::<u64>().ok());
+    match (phases, end_us) {
+        (Some(p), Some(end)) => Some(format!("{p},exit={}", reaped_us.saturating_sub(end) / 1000)),
+        (p, _) => p,
+    }
+}
+
 /// One probe timed end to end: a `spira-lc` read goes over the in-process client (the path
 /// S7 left), any other probe is its program run through `proc` and cut at `deadline`. A call
 /// that failed after at least its deadline was cut, not refused; the clock says so.
@@ -219,9 +229,10 @@ fn time_one(lc: &Result<spira_store::lc_call::LcClient, String>, argv: &[String]
         ("spira-lc", Err(e)) => Err(format!("{}: {e}", argv[0])),
         _ => {
             let phases_on = format!("{}=1", spira_otel::run::PHASES_ENV);
-            let args = [phases_on, argv[0].clone()].into_iter().chain(argv[1..].iter().cloned()).collect();
+            let t0_us = format!("{}={}", spira_otel::run::T0_ENV, spira_otel::run::epoch_micros());
+            let args = [phases_on, t0_us, argv[0].clone()].into_iter().chain(argv[1..].iter().cloned()).collect();
             let spec = runtime::ports::ProcSpec { prog: "env".into(), args, stdin: vec![], deadline };
-            proc.run(&spec).map_err(|e| format!("{}: {e}", argv[0])).map(|o| phases = phases_of(&o.stderr))
+            proc.run(&spec).map_err(|e| format!("{}: {e}", argv[0])).map(|o| phases = account(phases_of(&o.stderr), &String::from_utf8_lossy(&o.stderr), spira_otel::run::epoch_micros()))
         }
     };
     let elapsed = t0.elapsed();
@@ -320,6 +331,34 @@ mod tests {
         fn run(&self, _: &runtime::ports::ProcSpec) -> Result<runtime::ports::ProcOutput, String> {
             Err("env exceeded its deadline".to_string())
         }
+    }
+
+    struct Records(std::sync::Mutex<Vec<runtime::ports::ProcSpec>>);
+    impl runtime::ports::Proc for Records {
+        fn run(&self, spec: &runtime::ports::ProcSpec) -> Result<runtime::ports::ProcOutput, String> {
+            self.0.lock().unwrap().push(spec.clone());
+            Err("recorded".to_string())
+        }
+    }
+
+    #[test]
+    fn a_forked_probe_is_given_its_start_stamp() {
+        let proc = Records(Default::default());
+        time_one(&Err("no store".to_string()), &["work", "list", "--json"].map(String::from), &proc, std::time::Duration::from_secs(1));
+        let spec = proc.0.lock().unwrap().remove(0);
+        let stamp = spec.args.iter().find_map(|a| a.strip_prefix("PERFWATCH_T0_US=")).expect("a T0 assignment");
+        assert!(!stamp.is_empty() && stamp.bytes().all(|b| b.is_ascii_digit()), "{stamp}");
+        assert!(spec.args.contains(&"PERFWATCH_PHASES=1".to_string()));
+    }
+
+    #[test]
+    fn exit_is_the_time_from_the_probes_end_stamp_to_the_reap() {
+        let phases = Some("start=600,reply=30,client=18,push=2".to_string());
+        let got = account(phases.clone(), "PERFWATCH_PHASES=x\nPERFWATCH_END_US=1650000\n", 1_700_000).unwrap();
+        assert_eq!(got, "start=600,reply=30,client=18,push=2,exit=50");
+        let t = perf_watch::Timing { name: "work-list".into(), millis: 700, micros: 700_000, phases: Some(got), error: None, timed_out_ms: None };
+        assert!(perf_watch::alarms(&[t], 500, &[])[0].contains("rest=0ms"));
+        assert_eq!(account(phases.clone(), "no stamp\n", 1_700_000), phases);
     }
 
     fn probe(deadline: std::time::Duration) -> Timing {

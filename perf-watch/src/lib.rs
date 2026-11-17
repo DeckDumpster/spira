@@ -122,8 +122,8 @@ pub fn alarms(timings: &[Timing], limit_ms: u64, callers: &[String]) -> Vec<Stri
         .collect()
 }
 
-/// Where a probe's time went, for the page: the phases the probe reported plus `rest`, the time
-/// none of them claims (process start, exit, the wait for a loaded host).
+/// Where a probe's time went, for the page: the phases the probe reported (`start` before `begin`,
+/// its own phases, `exit` until the reap) plus `rest`, the time none of them claims.
 fn breakdown(t: &Timing) -> String {
     match t.phases.as_deref() {
         Some(p) => format!("phases {p} rest={}ms", t.millis.saturating_sub(phase_sum(p))),
