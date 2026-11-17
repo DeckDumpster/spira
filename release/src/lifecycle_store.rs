@@ -6,7 +6,7 @@
 //! the operator's Dolt, and `release stage up` (sp-880u4) against the stage's own private
 //! sql-server, so a stage's store is built exactly the way a real one is.
 //!
-//! THE MECHANISM IS spira-lc's OWN, the one `spira/cutover-deploy.sh` steps 1–2 use:
+//! THE MECHANISM IS spira-lc's OWN:
 //! `spira-lc admin-apply-ddl <file>` as the database admin, plus `spira-lc admin-migrate
 //! <dir>` (spira-lc/src/migrate.rs), which applies the migrations in filename order and
 //! skips an `ADD COLUMN` whose column is already there — schema.sql already carries every

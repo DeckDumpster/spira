@@ -4,7 +4,7 @@
 //! members' delivery exits"). `show`/`list`/`history`/`event` (main.rs) are unchanged; this
 //! module is additive.
 //!
-//! Row creation is a constructor, not a transition — `BeadRow::filed`/`BatchRow::cut`/
+//! Row creation is a constructor, not a transition — `LifecycleRow::filed`/`BatchRow::cut`/
 //! `DeliveryRow::start_queue` already say so in `lifecycle` — so `create-bead` and the batch
 //! row inserted by `cut` log no event of their own, exactly as replay never needs one to
 //! reach the same initial row. The `Deliver`/`MemberAdded`/`Cut` transitions inside `cut`,
@@ -14,17 +14,12 @@
 use lifecycle::{batch, bead};
 
 use crate::db::Conn;
-use crate::rows;
 
 const CANNOT_TELL: i32 = 2;
 pub(crate) const REFUSED: i32 = 3;
 
 pub fn flag(args: &[String], name: &str) -> Option<String> {
     args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned()
-}
-
-pub fn q(s: &str) -> String {
-    format!("'{}'", rows::escape(s))
 }
 
 /// A lifecycle key: `sp-` then a non-empty tail of alphanumerics, `.`, `-` or `_` — prose and bare prefixes are not.
@@ -119,7 +114,7 @@ fn containment_in_repo(repo: &std::path::Path, base: &str, members: &[(String, S
 
 /// The pure frontier walk, split out so the closure is unit-testable without a live `dolt`.
 pub(crate) fn stacked_dependents_from(
-    member_stacks: &[(String, bead::BeadRow)],
+    member_stacks: &[(String, bead::LifecycleRow)],
     tips: &std::collections::BTreeMap<String, String>,
     contained: &std::collections::BTreeSet<(String, String)>,
     roots: &[String],

@@ -19,7 +19,7 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use lifecycle::bead::{BeadEvent, BeadEventKind, BeadRow, BeadState, HoldKind};
+use lifecycle::bead::{BeadEvent, BeadEventKind, LifecycleRow, BeadState, HoldKind};
 use lifecycle::reason::{GateRedReason, HoldCause};
 use runtime::host::{EffectRunner, VirtualDriver};
 use runtime::journal::Journal;
@@ -264,7 +264,7 @@ pub struct Outside {
 }
 #[derive(Default)]
 pub struct Lc {
-    pub rows: BTreeMap<String, BeadRow>,
+    pub rows: BTreeMap<String, LifecycleRow>,
     pub due: Vec<(u64, Due)>,
     pub history: Vec<(u64, String, String, String)>,
     pub refused: Vec<String>,
@@ -316,7 +316,7 @@ impl Lc {
 impl Lc {
     /// A bead filed READY at `now`, with no session of its own until a dwarf claims it.
     pub fn file(&mut self, now: u64, id: &str) {
-        self.rows.insert(id.into(), BeadRow::filed(id));
+        self.rows.insert(id.into(), LifecycleRow::filed(id));
         self.items.insert(id.into(), format!("{id}: the scenario's work\n"));
         self.history.push((now, id.into(), "-".into(), BeadState::Ready.as_str().into()));
     }
@@ -388,13 +388,13 @@ impl Lc {
     }
 
     /// The rows `spira-claim` would offer a dwarf: READY or REWORK and under no hold.
-    fn open_rows(&self) -> impl Iterator<Item = &BeadRow> {
+    fn open_rows(&self) -> impl Iterator<Item = &LifecycleRow> {
         self.rows.values().filter(|r| r.holds.is_empty() && matches!(r.state, BeadState::Ready | BeadState::Rework))
     }
 
     fn claimable(&self, script: &Script) -> Option<String> {
         let prio = |id: &str| script.beads.iter().find(|b| b.id == id).map_or(u8::MAX, |b| b.priority);
-        let mut open: Vec<&BeadRow> = self.open_rows().collect();
+        let mut open: Vec<&LifecycleRow> = self.open_rows().collect();
         open.sort_by_key(|r| (prio(&r.bead_id), r.bead_id.clone()));
         open.first().map(|r| r.bead_id.clone())
     }
@@ -486,7 +486,7 @@ fn sentinel_unit_start(w: &World, input: &str) -> Result<String, String> {
 
 // --- sift ---------------------------------------------------------------------------------------
 
-fn pool_row(r: &BeadRow) -> sift::PoolRow {
+fn pool_row(r: &LifecycleRow) -> sift::PoolRow {
     sift::PoolRow { id: r.bead_id.clone(), state: r.state.as_str().into(), version: r.version, tip: r.tip.clone().unwrap_or_default(), holds: vec![], ejected_red_tip: r.ejected_red_tip.clone(), sifted_tip: r.sifted_tip.clone() }
 }
 
@@ -495,7 +495,7 @@ fn pool_row(r: &BeadRow) -> sift::PoolRow {
 fn sift_observe(w: &World) -> Result<String, String> {
     let now = w.now();
     let lc = w.lc();
-    let rows: Vec<&BeadRow> = lc.rows.values().filter(|r| matches!(r.state, BeadState::Submitted | BeadState::Certified)).collect();
+    let rows: Vec<&LifecycleRow> = lc.rows.values().filter(|r| matches!(r.state, BeadState::Submitted | BeadState::Certified)).collect();
     let mut repo = sift::Repo { rows: rows.iter().map(|r| pool_row(r)).collect(), fetched: true, read_at_ms: now, identity_pages: Some(vec![]), ..sift::Repo::default() };
     for r in &rows {
         let tip = r.tip.clone().unwrap_or_default();
@@ -859,7 +859,7 @@ pub struct Run {
     pub history: Vec<(u64, String, String, String)>,
     pub refused: Vec<String>,
     pub outside: Vec<Outside>,
-    pub rows: BTreeMap<String, BeadRow>,
+    pub rows: BTreeMap<String, LifecycleRow>,
     pub submitted: BTreeMap<String, Vec<String>>,
     pub opened: Vec<Vec<(String, String)>>,
     pub lands: Vec<Vec<(String, String)>>,

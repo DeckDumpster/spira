@@ -8,11 +8,11 @@
 //! to special-case; that is the property this module exists to demonstrate.
 
 use crate::batch::{self, BatchEvent, BatchRow};
-use crate::bead::{self, BeadEvent, BeadRow};
+use crate::bead::{self, BeadEvent, LifecycleRow};
 use crate::delivery::{self, DeliveryEvent, DeliveryRow};
 
-pub fn fold_bead(bead_id: &str, events: &[BeadEvent]) -> BeadRow {
-    let mut row = BeadRow::filed(bead_id);
+pub fn fold_bead(bead_id: &str, events: &[BeadEvent]) -> LifecycleRow {
+    let mut row = LifecycleRow::filed(bead_id);
     for ev in events {
         row = bead::apply(&row, ev).row;
     }
@@ -62,7 +62,7 @@ mod tests {
         ];
 
         // Incremental: apply one at a time, as a live system would, keeping the running row.
-        let mut incremental = BeadRow::filed("sp-replay");
+        let mut incremental = LifecycleRow::filed("sp-replay");
         for ev in &log {
             incremental = bead::apply(&incremental, ev).row;
         }

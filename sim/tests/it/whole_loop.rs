@@ -24,7 +24,7 @@ use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use lifecycle::bead::{BeadEvent, BeadEventKind, BeadRow, BeadState};
+use lifecycle::bead::{BeadEvent, BeadEventKind, LifecycleRow, BeadState};
 use lifecycle::reason::GateRedReason;
 use runtime::host::{EffectRunner, Submit, VirtualDriver};
 use runtime::EventKind;
@@ -74,7 +74,7 @@ struct OpenRound {
 /// ends), the round the batcher has open, and each row's history.
 #[derive(Default)]
 struct Lc {
-    rows: BTreeMap<String, BeadRow>,
+    rows: BTreeMap<String, LifecycleRow>,
     due: Vec<(u64, Due)>,
     history: Vec<(u64, String, String, String)>,
     refused: Vec<String>,
@@ -88,7 +88,7 @@ struct Lc {
 
 impl Lc {
     fn file(&mut self, now: u64, id: &str) {
-        self.rows.insert(id.into(), BeadRow::filed(id));
+        self.rows.insert(id.into(), LifecycleRow::filed(id));
         self.items.insert(id.into(), format!("{id}: the scenario's work\n"));
         self.history.push((now, id.into(), "-".into(), BeadState::Ready.as_str().into()));
     }
@@ -124,7 +124,7 @@ impl Lc {
         }
     }
 
-    fn in_state(&self, s: BeadState) -> Vec<&BeadRow> {
+    fn in_state(&self, s: BeadState) -> Vec<&LifecycleRow> {
         self.rows.values().filter(|r| r.state == s).collect()
     }
 }
@@ -263,14 +263,14 @@ fn sentinel_unit_start(w: &World, input: &str) -> Result<String, String> {
 
 // --- sift ---------------------------------------------------------------------------------------
 
-fn pool_row(r: &BeadRow) -> sift::PoolRow {
+fn pool_row(r: &LifecycleRow) -> sift::PoolRow {
     sift::PoolRow { id: r.bead_id.clone(), state: r.state.as_str().into(), version: r.version, tip: r.tip.clone().unwrap_or_default(), holds: vec![], ejected_red_tip: r.ejected_red_tip.clone(), sifted_tip: r.sifted_tip.clone() }
 }
 
 fn sift_observe(w: &World) -> Result<String, String> {
     let now = w.now();
     let lc = w.lc();
-    let rows: Vec<&BeadRow> = lc.rows.values().filter(|r| matches!(r.state, BeadState::Submitted | BeadState::Certified)).collect();
+    let rows: Vec<&LifecycleRow> = lc.rows.values().filter(|r| matches!(r.state, BeadState::Submitted | BeadState::Certified)).collect();
     let mut repo = sift::Repo { rows: rows.iter().map(|r| pool_row(r)).collect(), fetched: true, read_at_ms: now, identity_pages: Some(vec![]), ..sift::Repo::default() };
     for r in &rows {
         let tip = r.tip.clone().unwrap_or_default();

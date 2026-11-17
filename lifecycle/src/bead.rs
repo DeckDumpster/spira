@@ -160,7 +160,7 @@ impl HoldKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct BeadRow {
+pub struct LifecycleRow {
     pub bead_id: String,
     pub state: BeadState,
     pub tip: Option<String>,
@@ -214,11 +214,11 @@ pub struct BeadRow {
     pub sessions: u32,
 }
 
-impl BeadRow {
+impl LifecycleRow {
     /// The row a bead starts in when it is filed. Not itself a transition — there is no
     /// prior row to compare-and-swap against.
     pub fn filed(bead_id: impl Into<String>) -> Self {
-        BeadRow {
+        LifecycleRow {
             bead_id: bead_id.into(),
             state: BeadState::Ready,
             tip: None,
@@ -404,14 +404,14 @@ pub struct BeadEvent {
     pub at: Option<i64>,
 }
 
-fn illegal(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
+fn illegal(row: &LifecycleRow, kind: &BeadEventKind) -> Outcome<LifecycleRow> {
     Outcome::refuse(
         row.clone(),
         Refusal::IllegalTransition { state: row.state.as_str().to_string(), event: format!("{kind:?}") },
     )
 }
 
-fn illegal_in_phase(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
+fn illegal_in_phase(row: &LifecycleRow, kind: &BeadEventKind) -> Outcome<LifecycleRow> {
     let state = match row.phase {
         Some(p) => format!("{}/{}", row.state.as_str(), p.as_str()),
         None => row.state.as_str().to_string(),
@@ -419,7 +419,7 @@ fn illegal_in_phase(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
     Outcome::refuse(row.clone(), Refusal::IllegalTransition { state, event: format!("{kind:?}") })
 }
 
-fn awaiting_reply(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
+fn awaiting_reply(row: &LifecycleRow, kind: &BeadEventKind) -> Outcome<LifecycleRow> {
     Outcome::refuse(
         row.clone(),
         Refusal::AwaitingReply {
@@ -451,26 +451,26 @@ fn is_snooze_reason(reason: &str) -> bool {
     reason.starts_with("snooze-until:")
 }
 
-fn holds_ask(row: &BeadRow) -> bool {
+fn holds_ask(row: &LifecycleRow) -> bool {
     row.holds.contains(&HoldKind::Ask)
 }
 
-fn terminal(row: &BeadRow) -> Outcome<BeadRow> {
+fn terminal(row: &LifecycleRow) -> Outcome<LifecycleRow> {
     Outcome::refuse(row.clone(), Refusal::Terminal { state: row.state.as_str().to_string() })
 }
 
-fn tip_mismatch(row: &BeadRow, event_tip: &str) -> Outcome<BeadRow> {
+fn tip_mismatch(row: &LifecycleRow, event_tip: &str) -> Outcome<LifecycleRow> {
     Outcome::refuse(
         row.clone(),
         Refusal::TipMismatch { event_tip: event_tip.to_string(), row_tip: row.tip.clone().unwrap_or_default() },
     )
 }
 
-fn depth_exceeded(row: &BeadRow, depth: u32, max: u32) -> Outcome<BeadRow> {
+fn depth_exceeded(row: &LifecycleRow, depth: u32, max: u32) -> Outcome<LifecycleRow> {
     Outcome::refuse(row.clone(), Refusal::DepthExceeded { depth, max })
 }
 
-fn not_in_stack(row: &BeadRow, prereq: &str, tip: &str) -> Outcome<BeadRow> {
+fn not_in_stack(row: &LifecycleRow, prereq: &str, tip: &str) -> Outcome<LifecycleRow> {
     Outcome::refuse(row.clone(), Refusal::NotInStack { prereq: prereq.to_string(), tip: tip.to_string() })
 }
 
@@ -478,7 +478,7 @@ fn not_in_stack(row: &BeadRow, prereq: &str, tip: &str) -> Outcome<BeadRow> {
 /// exactly that tip for that prerequisite — otherwise it is a cascade aimed at a stale or
 /// unrelated view of this row, refused the same way a tip mismatch is (design §1: "the tip
 /// invariant, extended").
-fn base_withdrawn_applies(row: &BeadRow, prereq: &str, tip: &str) -> bool {
+fn base_withdrawn_applies(row: &LifecycleRow, prereq: &str, tip: &str) -> bool {
     row.stack.get(prereq).map(String::as_str) == Some(tip)
 }
 
@@ -493,7 +493,7 @@ fn gate_red_bars_tip(reason: GateRedReason) -> bool {
 /// match check on both `BeadState` and `BeadEventKind` — a new variant on either enum fails
 /// to compile here until this function accounts for it, which is the property the design
 /// calls "a test that fails when a state or event variant is added without an entry."
-pub fn apply(row: &BeadRow, ev: &BeadEvent) -> Outcome<BeadRow> {
+pub fn apply(row: &LifecycleRow, ev: &BeadEvent) -> Outcome<LifecycleRow> {
     let mut out = apply_transition(row, ev);
     let entered = out.row.state != row.state;
     if out.applied && entered {
@@ -533,7 +533,7 @@ pub fn is_full_sha(tip: &str) -> bool {
     tip.len() == 40 && tip.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
-fn apply_transition(row: &BeadRow, ev: &BeadEvent) -> Outcome<BeadRow> {
+fn apply_transition(row: &LifecycleRow, ev: &BeadEvent) -> Outcome<LifecycleRow> {
     if ev.version != row.version {
         return Outcome::refuse(row.clone(), Refusal::StaleVersion { given: ev.version, current: row.version });
     }
@@ -828,7 +828,7 @@ fn apply_transition(row: &BeadRow, ev: &BeadEvent) -> Outcome<BeadRow> {
 
 /// The state-specific half of the table: the 12 events above, crossed with all 10 states.
 /// Every arm is named explicitly; no `_` pattern appears anywhere in this function.
-fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
+fn primary_transition(row: &LifecycleRow, kind: &BeadEventKind) -> Outcome<LifecycleRow> {
     // Deliberately not `use BeadState::*`: `BeadState::Done` and `BeadEventKind::Done`
     // share a name, and importing both makes a bare `Done` pattern an ambiguous binding
     // instead of a match on the event variant. States are qualified below instead.
@@ -1266,7 +1266,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
 
 /// A round delivered a bead a dwarf holds or has been handed back for rework: the landed
 /// content decides, the row closes LANDED and the holder finds a terminal row.
-fn landed_under_holder(row: &BeadRow, merge_sha: &str) -> Outcome<BeadRow> {
+fn landed_under_holder(row: &LifecycleRow, merge_sha: &str) -> Outcome<LifecycleRow> {
     let mut new = row.clone();
     new.state = BeadState::Landed;
     new.reason = Some(merge_sha.to_string());
@@ -1290,7 +1290,7 @@ pub struct StaleStackEntry {
 /// which sees only the one row being transitioned): the caller already read every
 /// prerequisite's row to build `stack` in the first place, so passing them back in adds no
 /// I/O this crate would otherwise have to perform itself.
-pub fn stale_stack_entries(stack: &Stack, prereqs: &[BeadRow]) -> Vec<StaleStackEntry> {
+pub fn stale_stack_entries(stack: &Stack, prereqs: &[LifecycleRow]) -> Vec<StaleStackEntry> {
     stack
         .iter()
         .filter_map(|(prereq, given_tip)| {
@@ -1310,7 +1310,7 @@ pub fn stale_stack_entries(stack: &Stack, prereqs: &[BeadRow]) -> Vec<StaleStack
 /// itself, since it sees only the one row being transitioned; the caller makes it against the
 /// same live prerequisite rows it already read to build `stack` in the first place, right
 /// before proposing `submit` or `claim`.
-pub fn stale_stack_refusal(stack: &Stack, prereqs: &[BeadRow]) -> Option<Refusal> {
+pub fn stale_stack_refusal(stack: &Stack, prereqs: &[LifecycleRow]) -> Option<Refusal> {
     let stale = stale_stack_entries(stack, prereqs);
     if stale.is_empty() {
         None
@@ -1321,7 +1321,7 @@ pub fn stale_stack_refusal(stack: &Stack, prereqs: &[BeadRow]) -> Option<Refusal
 
 /// `submit`'s stale-stack check (design §1: "its eventual submit is refused while the stack
 /// names a withdrawn tip") — [`stale_stack_refusal`] against the row's own recorded `stack`.
-pub fn submit_refusal_for_stale_stack(row: &BeadRow, prereqs: &[BeadRow]) -> Option<Refusal> {
+pub fn submit_refusal_for_stale_stack(row: &LifecycleRow, prereqs: &[LifecycleRow]) -> Option<Refusal> {
     stale_stack_refusal(&row.stack, prereqs)
 }
 
@@ -1330,7 +1330,7 @@ pub fn submit_refusal_for_stale_stack(row: &BeadRow, prereqs: &[BeadRow]) -> Opt
 /// computed against a prerequisite's tip that has since moved (e.g. a resubmit after
 /// CERTIFIED) would be accepted by the `Claim` arm, which validates only `stack_depth`
 /// against `stack_max_depth` and has no way to see the prerequisite's row.
-pub fn claim_refusal_for_stale_stack(stack: &Stack, prereqs: &[BeadRow]) -> Option<Refusal> {
+pub fn claim_refusal_for_stale_stack(stack: &Stack, prereqs: &[LifecycleRow]) -> Option<Refusal> {
     stale_stack_refusal(stack, prereqs)
 }
 
@@ -1479,7 +1479,7 @@ pub fn legal_edges() -> Vec<LegalEdge> {
     let mut edges = BTreeSet::new();
     for state in states {
         for from_submitted in [false, true] {
-            let mut row = BeadRow::filed("sp-edge");
+            let mut row = LifecycleRow::filed("sp-edge");
             row.state = state;
             row.tip = Some(TIP.into());
             row.gate_key = Some("k".into());
@@ -1503,8 +1503,8 @@ pub fn legal_edges() -> Vec<LegalEdge> {
 mod tests {
     use super::*;
 
-    fn row(state: BeadState) -> BeadRow {
-        let mut r = BeadRow::filed("sp-test");
+    fn row(state: BeadState) -> LifecycleRow {
+        let mut r = LifecycleRow::filed("sp-test");
         r.state = state;
         r
     }
@@ -1566,7 +1566,7 @@ mod tests {
     fn builder_time_and_sessions_accumulate_over_entries_to_and_exits_from_working() {
         let tip = "1111111111111111111111111111111111111111";
         let claim = BeadEventKind::Claim { holder: "h".into(), lease_until: 1, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None, directed: None };
-        let step = |r: &BeadRow, kind: BeadEventKind, at: i64| {
+        let step = |r: &LifecycleRow, kind: BeadEventKind, at: i64| {
             let mut e = ev(r.state, r.version, kind);
             e.at = Some(at);
             e.actor = "h".into();
@@ -1588,7 +1588,7 @@ mod tests {
 
     #[test]
     fn a_session_with_no_recorded_start_or_a_backwards_clock_adds_no_builder_time() {
-        let submit = |r: &BeadRow, at: Option<i64>| {
+        let submit = |r: &LifecycleRow, at: Option<i64>| {
             let mut e = ev(BeadState::Working, r.version, BeadEventKind::Submit { tip: "1111111111111111111111111111111111111111".into() });
             e.actor = "h".into();
             e.at = at;
@@ -2001,7 +2001,7 @@ mod tests {
         let wire = serde_json::to_value(&k).unwrap();
         assert_eq!(wire["Claim"]["directed"], serde_json::json!({"by": "concierge", "reason": "loop fix", "previous_holder": "dwarf-old"}));
         assert_eq!(serde_json::from_value::<BeadEventKind>(wire).unwrap(), k);
-        let out = apply(&BeadRow::filed("sp-x"), &ev(BeadState::Ready, 0, k));
+        let out = apply(&LifecycleRow::filed("sp-x"), &ev(BeadState::Ready, 0, k));
         assert!(out.applied && out.row.holder.as_deref() == Some("dwarf-new"));
         let legacy: BeadEventKind = serde_json::from_str(r#"{"Claim":{"holder":"h","lease_until":1}}"#).unwrap();
         assert!(matches!(legacy, BeadEventKind::Claim { directed: None, .. }));
@@ -2011,7 +2011,7 @@ mod tests {
     fn a_claim_records_its_persona_beside_the_holder_and_a_legacy_claim_has_none() {
         let claim = |persona: Option<&str>| {
             let k = BeadEventKind::Claim { holder: "dwarf-austri".into(), lease_until: 100, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: persona.map(String::from), directed: None };
-            apply(&BeadRow::filed("sp-x"), &ev(BeadState::Ready, 0, k)).row
+            apply(&LifecycleRow::filed("sp-x"), &ev(BeadState::Ready, 0, k)).row
         };
         let (builder, ops) = (claim(Some("builder")), claim(Some("ops")));
         assert_eq!((builder.holder.as_deref(), builder.persona.as_deref()), (Some("dwarf-austri"), Some("builder")));
@@ -2199,7 +2199,7 @@ mod tests {
             assert!(out.applied && out.row.holds.contains(&HoldKind::Wait));
             out.row
         };
-        let go = |r: &BeadRow, k| apply(r, &ev(BeadState::Submitted, r.version, k));
+        let go = |r: &LifecycleRow, k| apply(r, &ev(BeadState::Submitted, r.version, k));
 
         let pass = go(&held(), BeadEventKind::GatePass { tip: TIP.into(), gate_key: "k".into() });
         assert!(pass.applied);
@@ -2224,7 +2224,7 @@ mod tests {
         assert!(pass.row.holds.contains(&HoldKind::Ask) && !pass.row.holds.contains(&HoldKind::Wait));
     }
 
-    fn gate_row() -> BeadRow {
+    fn gate_row() -> LifecycleRow {
         let mut r = row(BeadState::Working);
         r.holds.insert(HoldKind::Ask);
         r
@@ -2527,7 +2527,7 @@ mod tests {
     fn absolving_a_red_tip_needs_evidence_and_readmits_the_tip() {
         let t = "1111111111111111111111111111111111111111";
         let glass = |evidence: &str, tip: &str| BreakGlass { reason: "infra red".into(), evidence: evidence.into(), evidence_tip: tip.into() };
-        let go = |r: &BeadRow, g: BreakGlass| {
+        let go = |r: &LifecycleRow, g: BreakGlass| {
             let mut e = ev(r.state, r.version, BeadEventKind::Absolve { tip: t.into(), break_glass: g });
             e.actor = "concierge".into();
             apply(r, &e)
@@ -2708,7 +2708,7 @@ mod tests {
         stack
     }
 
-    fn stacked_red_row() -> BeadRow {
+    fn stacked_red_row() -> LifecycleRow {
         let claimed = apply(&row(BeadState::Ready), &claim_ev(BeadState::Ready, 0, stack_of("8888888888888888888888888888888888888888"), 1, 4)).row;
         let submitted = apply(&claimed, &ev(BeadState::Working, claimed.version, BeadEventKind::Submit { tip: "1111111111111111111111111111111111111111".into() })).row;
         let red = apply(&submitted, &ev(BeadState::Submitted, submitted.version, BeadEventKind::GateRed { tip: "1111111111111111111111111111111111111111".into(), reason: GateRedReason::SuitesFailed, step: None, message: None }));
@@ -2830,7 +2830,7 @@ mod tests {
         assert_eq!(stale[0].current_tip, None);
     }
 
-    fn claimed_row(state: BeadState, prereq: &str, tip: &str) -> BeadRow {
+    fn claimed_row(state: BeadState, prereq: &str, tip: &str) -> LifecycleRow {
         let mut r = row(state);
         r.stack.insert(prereq.into(), tip.into());
         r.stack_depth = 1;
@@ -2994,7 +2994,7 @@ mod tests {
             ev(BeadState::Working, 2, BeadEventKind::PrereqLanded { prereq: "sp-a".into() }),
         ];
 
-        let mut incremental = BeadRow::filed("sp-replay-stack");
+        let mut incremental = LifecycleRow::filed("sp-replay-stack");
         for e in &log {
             incremental = apply(&incremental, e).row;
         }
@@ -3010,14 +3010,14 @@ mod tests {
     // Before renewal, the Claim's lease_until was set once and never renewed, so
     // the stale-lease reaper cleared every session longer than lease + reclaim_grace.
 
-    fn held(holder: &str, lease_until: i64) -> BeadRow {
+    fn held(holder: &str, lease_until: i64) -> LifecycleRow {
         let mut r = row(BeadState::Working);
         r.holder = Some(holder.into());
         r.lease_until = Some(lease_until);
         r
     }
 
-    fn renew_by(actor: &str, r: &BeadRow, lease_until: i64) -> BeadEvent {
+    fn renew_by(actor: &str, r: &LifecycleRow, lease_until: i64) -> BeadEvent {
         BeadEvent { actor: actor.into(), ..ev(r.state, r.version, BeadEventKind::Renew { lease_until }) }
     }
 
@@ -3094,8 +3094,8 @@ mod tests {
         assert_eq!(out.row.lease_until, Some(900));
     }
 
-    fn rework_claimed(holder: &str) -> BeadRow {
-        let mut r = BeadRow::filed("sp-test");
+    fn rework_claimed(holder: &str) -> LifecycleRow {
+        let mut r = LifecycleRow::filed("sp-test");
         r.state = BeadState::InDelivery;
         let back = apply(&r, &ev(BeadState::InDelivery, r.version, BeadEventKind::Returned { reason: ReturnedReason::BatchEjectedRed }));
         assert_eq!(back.row.state, BeadState::Rework);
@@ -3134,12 +3134,12 @@ mod tests {
         assert_eq!((out.row.state, out.row.claimed_from), (BeadState::Submitted, None));
     }
 
-    fn claimed(holder: &str) -> BeadRow {
+    fn claimed(holder: &str) -> LifecycleRow {
         let ev = BeadEvent { actor: holder.into(), ..ev(BeadState::Ready, 0, BeadEventKind::Claim { holder: holder.into(), lease_until: 600, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None, directed: None }) };
-        apply(&BeadRow::filed("sp-test"), &ev).row
+        apply(&LifecycleRow::filed("sp-test"), &ev).row
     }
 
-    fn phase_ev(actor: &str, r: &BeadRow, phase: DwarfPhase) -> BeadEvent {
+    fn phase_ev(actor: &str, r: &LifecycleRow, phase: DwarfPhase) -> BeadEvent {
         BeadEvent { actor: actor.into(), ..ev(r.state, r.version, BeadEventKind::Phase { phase }) }
     }
 
@@ -3147,7 +3147,7 @@ mod tests {
     fn a_claim_starts_the_row_in_the_claimed_phase() {
         let r = claimed("dwarf-a");
         assert_eq!(r.phase, Some(DwarfPhase::Claimed));
-        assert_eq!(BeadRow::filed("sp-x").phase, None);
+        assert_eq!(LifecycleRow::filed("sp-x").phase, None);
     }
 
     #[test]
@@ -3310,7 +3310,7 @@ mod tests {
 
     #[test]
     fn a_replay_of_the_log_reproduces_the_phase_and_disposition() {
-        let r0 = BeadRow::filed("sp-replay");
+        let r0 = LifecycleRow::filed("sp-replay");
         let log = vec![
             BeadEvent { actor: "dwarf-a".into(), ..ev(BeadState::Ready, 0, BeadEventKind::Claim { holder: "dwarf-a".into(), lease_until: 9, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None, directed: None }) },
             BeadEvent { actor: "dwarf-a".into(), ..ev(BeadState::Working, 1, BeadEventKind::Phase { phase: DwarfPhase::Session }) },

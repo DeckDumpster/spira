@@ -47,15 +47,6 @@ pub fn detect(home: &Path) -> Result<RepoConfig, String> {
     Ok(RepoConfig { source: "spira.conf+repo-map", repos })
 }
 
-/// The repository table of the config in force for this process — the document `$SPIRA_TOML`
-/// names, layers and all (the one source of config). For a caller with no separate config
-/// home to point `--home` at: install's one-time population (sp-k62xz8).
-pub fn from_process() -> Result<RepoConfig, String> {
-    let spec = spira_config::process::spec()?;
-    let doc = spira_config::load(Path::new(&spec))?;
-    Ok(RepoConfig { source: "spira.toml", repos: doc.repo })
-}
-
 /// The checkout of a registered repository, through the registry every other reader of a bead's
 /// repository uses. A name it does not hold is refused, never defaulted to the home checkout.
 pub fn registered_root(name: &str) -> Result<std::path::PathBuf, String> {

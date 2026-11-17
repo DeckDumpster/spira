@@ -10,15 +10,14 @@
 #
 # Seeded at authorship (sp-k2cghb) from the tree. spira-lc's dolt reads and the copied columns
 # go with spira-lc on the state-store contract (sp-s6o3wx); the dolt lifecycle schema, its
-# migrations, admin-migrate and the BeadRow rename go with retiring the dolt control path
-# (sp-kqsj13).
-lifecycle/migrations/0007-ops-read-model.sql:bead.title sp-kqsj13
-lifecycle/migrations/0007-ops-read-model.sql:bead.priority sp-kqsj13
-lifecycle/migrations/0011-bead-dep.sql:bead_dep sp-kqsj13
-lifecycle/schema.sql:bead.title sp-kqsj13
-lifecycle/schema.sql:bead.priority sp-kqsj13
-lifecycle/schema.sql:batch.parent sp-kqsj13
-lifecycle/schema.sql:bead_dep sp-kqsj13
+# migrations and admin-migrate go with retiring the dolt control path
+# (sp-kqsj13.2).
+lifecycle/migrations/0007-ops-read-model.sql:bead.title sp-kqsj13.2
+lifecycle/migrations/0007-ops-read-model.sql:bead.priority sp-kqsj13.2
+lifecycle/migrations/0011-bead-dep.sql:bead_dep sp-kqsj13.2
+lifecycle/schema.sql:bead.title sp-kqsj13.2
+lifecycle/schema.sql:bead.priority sp-kqsj13.2
+lifecycle/schema.sql:batch.parent sp-kqsj13.2
+lifecycle/schema.sql:bead_dep sp-kqsj13.2
 lifecycle/src/batch.rs:BatchRow.parent kept a round's parent round, not a bead's parent edge
-lifecycle/src/bead.rs:BeadRow sp-kqsj13
-spira-lc/src/migrate.rs:bead_dep sp-kqsj13
+spira-lc/src/migrate.rs:bead_dep sp-kqsj13.2

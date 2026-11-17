@@ -1082,20 +1082,6 @@ fn phase_d(r: &mut Run, tag: &str, pt: &str, prev_tb: Option<PathBuf>, prev_dir:
         r.fast_tier_handoff("phase D");
     }
 
-    if drc == 0 {
-        let script = r.o.releases().join("current/spira/cutover-deploy.sh");
-        r.check("phase D: upgraded release carries cutover-deploy.sh", script.is_file(), || format!("missing: {}", script.display()));
-        if script.is_file() {
-            // The caller drains before the script; the socket is stopped here as a drain would.
-            r.systemctl(&["stop", "spira-lc.service"]);
-            let repo = r.o.scratch_name();
-            let c = r.tool("cutover-deploy.sh").args(["--repo", repo.as_str(), "--dry-run"]).env("SPIRA_LC_PASSWORD", "acceptance-dry-run").env("SPIRA_LC_RO_PASSWORD", "acceptance-dry-run-ro");
-            let out = h.run(&c);
-            r.check("phase D: cutover-deploy.sh --dry-run runs on the aged install", out.rc == 0 && out.text.contains("cutover-deploy: done"), || format!("exit {}\n{}", out.rc, tail(&out.text, 8)));
-            r.systemctl(&["start", "spira-lc.service"]);
-        }
-    }
-
     // A migration that prevents downgrade must make deploy REFUSE and name it
     // (law-pin-by-migration-count).
     println!("\nphase D — aged rollback: deploy {pt} (refuse-or-succeed)");

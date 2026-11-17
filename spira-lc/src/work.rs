@@ -13,7 +13,7 @@ use lifecycle::reason::HoldCause;
 
 use crate::content_sql;
 use crate::db::Conn;
-use crate::{apply_bead_event, flag, rows, CANNOT_TELL, REFUSED};
+use crate::{flag, rows, CANNOT_TELL, REFUSED};
 
 pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
     let Some(bead_id) = args.first() else {
@@ -32,10 +32,10 @@ pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
         "note" => cmd_note(bead_id, rest),
         "submit" => cmd_submit(bead_id, rest, conn),
         "done" => cmd_done(bead_id, rest, conn),
-        "blocked" => cmd_blocked(bead_id, rest, conn),
+        "blocked" => cmd_blocked(bead_id, rest),
         "file-followup" => cmd_file(bead_id, rest, "file-followup", conn),
         "split" => cmd_file(bead_id, rest, "split", conn),
-        "superseded-by" => cmd_superseded_by(bead_id, rest, conn),
+        "superseded-by" => cmd_superseded_by(bead_id, rest),
         "ack" => cmd_ack(bead_id, rest),
         "logs" => cmd_logs(bead_id, rest, conn),
         "cite-check" => cmd_cite_check(bead_id, rest, &mut |ids| crate::callers::Bd::known(&mut crate::bd::LiveBd, ids)),
@@ -66,7 +66,7 @@ fn cmd_show(bead_id: &str, conn: &Conn) -> (i32, String) {
         Ok(text) => text,
         Err(e) => return (CANNOT_TELL, format!("cannot tell: {e}")),
     };
-    match crate::plane::read(conn, &[s("show"), bead_id.to_string()]) {
+    match crate::plane::read(&[s("show"), bead_id.to_string()]) {
         (0, row) => {
             let facts = conn
                 .query(&crate::facts::select_sql(&[bead_id.to_string()], &[spira_config::ejection::KIND.to_string()], None))
@@ -261,7 +261,7 @@ fn cmd_submit(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
     let Some(tip) = flag(args, "--tip") else {
         return (CANNOT_TELL, "work submit: --tip is required (the client reads it from the worktree; the verb itself never takes one)".into());
     };
-    let row = match crate::plane::bead(conn, bead_id) {
+    let row = match crate::plane::bead(bead_id) {
         Ok(Some(r)) => r,
         Ok(None) => return (CANNOT_TELL, format!("work submit: no bead row for {bead_id}")),
         Err(e) => return (CANNOT_TELL, format!("cannot tell: {e:?}")),
@@ -278,7 +278,7 @@ fn cmd_submit(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
     let mut stack_tips: Vec<String> = Vec::new();
     if !row.stack.is_empty() {
         let ids: Vec<&String> = row.stack.keys().collect();
-        let prereqs = match ids.iter().map(|id| crate::plane::bead(conn, id)).collect::<Result<Vec<_>, _>>() {
+        let prereqs = match ids.iter().map(|id| crate::plane::bead(id)).collect::<Result<Vec<_>, _>>() {
             Ok(rs) => rs.into_iter().flatten().collect::<Vec<_>>(),
             Err(e) => return (CANNOT_TELL, format!("cannot tell: {e:?}")),
         };
@@ -299,15 +299,15 @@ fn cmd_submit(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
         let gate = if round.is_none() { gate_red_at(conn, bead_id, &tip) } else { None };
         return (REFUSED, red_tip_refusal(bead_id, &tip, round.as_deref(), gate.as_ref()));
     }
-    if let Some(refusal) = branch_refusal(conn, bead_id, &tip, &stack_tips) {
+    if let Some(refusal) = branch_refusal(bead_id, &tip, &stack_tips) {
         return refusal;
     }
-    if let Some(refusal) = lint_refusal(conn, bead_id, &tip, &actor) {
+    if let Some(refusal) = lint_refusal(bead_id, &tip, &actor) {
         return refusal;
     }
     let run = spira_config::process::cfg("SPIRA_RUN").ok().filter(|r| !r.is_empty()).map(std::path::PathBuf::from);
     if let Some(run) = &run {
-        let repo = match submit_repo(conn, bead_id) {
+        let repo = match submit_repo(bead_id) {
             Ok(r) => r,
             Err(refusal) => return refusal,
         };
@@ -340,7 +340,7 @@ fn cmd_submit(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
         return refusal;
     }
     let build_dir = flag(args, "--build-dir").filter(|d| !d.is_empty());
-    let done = apply_bead_event(conn, bead_id, &actor, BeadEventKind::Submit { tip: tip.clone() });
+    let done = crate::plane::apply(bead_id, &actor, BeadEventKind::Submit { tip: tip.clone() });
     if let (0, Some(dir)) = (done.0, build_dir) {
         let fact = crate::facts::build_dir_sql(bead_id, &tip, &dir, &actor, crate::db::now_epoch());
         if let Err(e) = conn.append_event(&fact) {
@@ -458,8 +458,8 @@ fn owed_tiers(tip: &str, repo: &str, actor: &str) -> Result<Vec<String>, (i32, S
     }
 }
 
-fn submit_repo(conn: &Conn, bead_id: &str) -> Result<String, (i32, String)> {
-    match crate::plane::repo(conn, bead_id) {
+fn submit_repo(bead_id: &str) -> Result<String, (i32, String)> {
+    match crate::plane::repo(bead_id) {
         Ok(Some(r)) => Ok(r),
         Ok(None) => match crate::bd::repo_label(bead_id) {
             Ok(Some(r)) => Ok(r),
@@ -472,14 +472,14 @@ fn submit_repo(conn: &Conn, bead_id: &str) -> Result<String, (i32, String)> {
 
 /// The repository checkout and landing ref the submit's branch rules read; `None` when the
 /// registry names no checkout for the repository (a world or fixture with no content behind it).
-fn branch_refusal(conn: &Conn, bead_id: &str, tip: &str, stack_tips: &[String]) -> Option<(i32, String)> {
-    let repo = submit_repo(conn, bead_id).ok()?;
+fn branch_refusal(bead_id: &str, tip: &str, stack_tips: &[String]) -> Option<(i32, String)> {
+    let repo = submit_repo(bead_id).ok()?;
     let home = spira_config::resolve::locate_home_for_process().ok()?;
     let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
     let reg = spira_config::repos::Registry::from_env(env, std::path::Path::new(&home));
     let root = reg.root(&repo)?;
     let landref = spira_config::repos::landref(&reg, &root)?;
-    let in_flight = |id: &str| sibling_in_flight(conn, id, &repo);
+    let in_flight = |id: &str| sibling_in_flight(id, &repo);
     let (fork, commits) = branch_evidence(std::path::Path::new(&root), &landref, tip, stack_tips);
     if let Some(m) = finishing_refusal(&landref, tip, bead_id, fork.as_deref(), commits.as_deref(), &in_flight) {
         return Some((REFUSED, m));
@@ -537,10 +537,10 @@ pub(crate) fn phantom_refusal(
 
 /// A sibling's commits may ride under this bead's (law-a-rebase-loop-is-sequenced-not-split): the
 /// sibling is in flight — submitted, certified, in a round, or landed — in the same repository.
-fn sibling_in_flight(conn: &Conn, id: &str, repo: &str) -> bool {
+fn sibling_in_flight(id: &str, repo: &str) -> bool {
     use bead::BeadState::{Certified, InDelivery, Landed, Submitted};
-    crate::plane::repo(conn, id).ok().flatten().as_deref() == Some(repo)
-        && crate::plane::bead(conn, id)
+    crate::plane::repo(id).ok().flatten().as_deref() == Some(repo)
+        && crate::plane::bead(id)
             .ok()
             .flatten()
             .is_some_and(|r| matches!(r.state, Submitted | Certified | InDelivery | Landed))
@@ -622,8 +622,8 @@ fn named_beads(message: &str, bead_id: &str) -> Vec<String> {
 /// The repository comes from the bead's lifecycle row: a world or a fixture holds lifecycle rows
 /// with no content behind them. Only a row that names none (one created at the claim, before the repo was recorded
 /// at filing) falls back to the content store's repo: label.
-fn lint_refusal(conn: &Conn, bead_id: &str, tip: &str, actor: &str) -> Option<(i32, String)> {
-    let repo = match submit_repo(conn, bead_id) {
+fn lint_refusal(bead_id: &str, tip: &str, actor: &str) -> Option<(i32, String)> {
+    let repo = match submit_repo(bead_id) {
         Ok(r) => r,
         Err(refusal) => return Some(refusal),
     };
@@ -748,11 +748,11 @@ fn ejected_reasons(conn: &Conn, bead_id: &str, tip: &str) -> Option<String> {
 }
 
 /// A mender's calls the queue already dropped ends without an event the machine would refuse.
-fn mender_calls_closed(conn: &Conn, bead_id: &str, actor: &str, verb: &str) -> Option<(i32, String)> {
+fn mender_calls_closed(bead_id: &str, actor: &str, verb: &str) -> Option<(i32, String)> {
     if actor != "mender" {
         return None;
     }
-    match crate::plane::bead(conn, bead_id) {
+    match crate::plane::bead(bead_id) {
         Ok(Some(row)) if row.state.is_terminal() => Some((0, format!("{bead_id} is already {}; work {verb} has nothing to do", row.state.as_str()))),
         _ => None,
     }
@@ -799,7 +799,7 @@ fn cmd_done(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
         Ok(a) => a,
         Err(e) => return e,
     };
-    if let Some(quiet) = mender_calls_closed(conn, bead_id, &actor, "done") {
+    if let Some(quiet) = mender_calls_closed(bead_id, &actor, "done") {
         return quiet;
     }
     if let Some(refusal) = unrecorded_outcome_refusal(conn, bead_id, &actor, "done") {
@@ -808,7 +808,7 @@ fn cmd_done(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
     let Some(delivers) = flag(args, "--delivers") else {
         return (CANNOT_TELL, "work done: --delivers <path> is required".into());
     };
-    match crate::plane::bead(conn, bead_id) {
+    match crate::plane::bead(bead_id) {
         Ok(Some(row)) => {
             if let Some(noop) = already_finished_noop(bead_id, row.state) {
                 return noop;
@@ -820,11 +820,11 @@ fn cmd_done(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
     if actor == "groomer" {
         match crate::bd::labels(bead_id) {
             Ok(labels) if labels.iter().any(|l| l == GROOM_TRIGGER_MARKER) => {}
-            Ok(_) => return release_untriggered_groom(bead_id, &actor, conn),
+            Ok(_) => return release_untriggered_groom(bead_id, &actor),
             Err(e) => return (CANNOT_TELL, format!("cannot tell: {e}")),
         }
     }
-    match crate::plane::bead(conn, bead_id) {
+    match crate::plane::bead(bead_id) {
         Ok(Some(row)) => {
             if let Some(refusal) = working_exit_refusal("done", "DONE", &row, &actor) {
                 return refusal;
@@ -854,14 +854,14 @@ fn cmd_done(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
         Some(settled) => format!("{delivers} (after ask: {settled})"),
         None => delivers,
     };
-    apply_bead_event(conn, bead_id, &actor, BeadEventKind::Done { delivers })
+    crate::plane::apply(bead_id, &actor, BeadEventKind::Done { delivers })
 }
 
 /// A bead leaves WORKING only by an exit its claiming rune declares (`RUNE_WORKING_EXITS`);
 /// the refusal names the rune, the attempted state and the exits it may take.
 /// Asks the bead machine itself whether this row's state takes a submit, before any check
 /// spends time on a tip that could never be recorded.
-fn submit_state_refusal(row: &bead::BeadRow, tip: &str) -> Option<(i32, String)> {
+fn submit_state_refusal(row: &bead::LifecycleRow, tip: &str) -> Option<(i32, String)> {
     let ev = bead::BeadEvent { expect: row.state, version: row.version, kind: BeadEventKind::Submit { tip: tip.to_string() }, actor: String::new(), at: None };
     let Some(lifecycle::Refusal::IllegalTransition { .. } | lifecycle::Refusal::Terminal { .. }) = bead::apply(row, &ev).refusal else {
         return None;
@@ -875,7 +875,7 @@ fn submit_state_refusal(row: &bead::BeadRow, tip: &str) -> Option<(i32, String)>
     Some((REFUSED, format!("refused: {id} is {state}, not WORKING — {way_out}")))
 }
 
-fn working_exit_refusal(verb: &str, exit: &str, row: &bead::BeadRow, actor: &str) -> Option<(i32, String)> {
+fn working_exit_refusal(verb: &str, exit: &str, row: &bead::LifecycleRow, actor: &str) -> Option<(i32, String)> {
     if row.state != bead::BeadState::Working {
         return None;
     }
@@ -885,7 +885,7 @@ fn working_exit_refusal(verb: &str, exit: &str, row: &bead::BeadRow, actor: &str
     }
 }
 
-fn working_exit_refusal_in(runes: &std::path::Path, verb: &str, exit: &str, row: &bead::BeadRow, actor: &str) -> Option<(i32, String)> {
+fn working_exit_refusal_in(runes: &std::path::Path, verb: &str, exit: &str, row: &bead::LifecycleRow, actor: &str) -> Option<(i32, String)> {
     if row.state != bead::BeadState::Working {
         return None;
     }
@@ -955,8 +955,8 @@ fn released_on_ask(history: &[(String, String)]) -> bool {
 /// selects work beads, which a groom pass must never close.
 const GROOM_TRIGGER_MARKER: &str = "groom-trigger";
 
-fn release_untriggered_groom(bead_id: &str, actor: &str, conn: &Conn) -> (i32, String) {
-    let (code, out) = apply_bead_event(conn, bead_id, actor, BeadEventKind::Release);
+fn release_untriggered_groom(bead_id: &str, actor: &str) -> (i32, String) {
+    let (code, out) = crate::plane::apply(bead_id, actor, BeadEventKind::Release);
     if code != 0 {
         return (code, out);
     }
@@ -974,12 +974,12 @@ fn not_a_question(text: &str) -> Option<String> {
     (text.trim().is_empty() || text.starts_with("--")).then(|| format!("{text:?} is not a question"))
 }
 
-fn cmd_blocked(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
+fn cmd_blocked(bead_id: &str, args: &[String]) -> (i32, String) {
     let actor = match require_actor(args) {
         Ok(a) => a,
         Err(e) => return e,
     };
-    if let Some(quiet) = mender_calls_closed(conn, bead_id, &actor, "blocked") {
+    if let Some(quiet) = mender_calls_closed(bead_id, &actor, "blocked") {
         return quiet;
     }
     let Some(question) = args.first() else {
@@ -999,7 +999,7 @@ fn cmd_blocked(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
         return (REFUSED, format!("refused: work blocked: the question could not be delivered, so no hold was applied: {e}"));
     }
     let hold = BeadEventKind::Hold { kind: HoldKind::Ask, cause: HoldCause::OperatorQuestion, detail: Some(question.clone()) };
-    match apply_ask_hold(conn, bead_id, &actor, hold) {
+    match apply_ask_hold(bead_id, &actor, hold) {
         (0, _) => (0, format!("ask filed; hold applied for {bead_id}")),
         (code, e) => (code, format!("the question WAS delivered (do not ask again), but the ask hold on {bead_id} was not applied: {e}")),
     }
@@ -1007,9 +1007,9 @@ fn cmd_blocked(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
 
 /// A hold write whose reply was lost may still have applied: read the row back before
 /// reporting it failed, so a timed-out write never reads as an absent hold.
-fn apply_ask_hold(conn: &Conn, bead_id: &str, actor: &str, hold: BeadEventKind) -> (i32, String) {
-    let out = apply_bead_event(conn, bead_id, actor, hold);
-    if out.0 != 0 && matches!(crate::plane::bead(conn, bead_id), Ok(Some(r)) if r.holds.contains(&HoldKind::Ask)) {
+fn apply_ask_hold(bead_id: &str, actor: &str, hold: BeadEventKind) -> (i32, String) {
+    let out = crate::plane::apply(bead_id, actor, hold);
+    if out.0 != 0 && matches!(crate::plane::bead(bead_id), Ok(Some(r)) if r.holds.contains(&HoldKind::Ask)) {
         return (0, String::new());
     }
     out
@@ -1105,7 +1105,7 @@ fn filed_as(verb: &str, filer: &str) -> Result<String, String> {
     spira_config::runes::followup_persona_in(&spira_config::runes::runes_dir(&home), filer)
 }
 
-fn cmd_superseded_by(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
+fn cmd_superseded_by(bead_id: &str, args: &[String]) -> (i32, String) {
     let actor = match require_actor(args) {
         Ok(a) => a,
         Err(e) => return e,
@@ -1121,7 +1121,7 @@ fn cmd_superseded_by(bead_id: &str, args: &[String], conn: &Conn) -> (i32, Strin
         Err(e) => return (CANNOT_TELL, format!("cannot tell: {e}")),
     };
     let own_title = crate::bd::title(bead_id).ok().flatten().unwrap_or_default();
-    let landing = landing_commit(conn, &successor);
+    let landing = landing_commit(&successor);
     let subject = format!("Retire as superseded by {successor}?");
     let default = format!("supersede {bead_id} by {successor}");
     let body = supersede_ask_body(bead_id, &own_title, &successor, &successor_title, landing.as_deref());
@@ -1131,8 +1131,8 @@ fn cmd_superseded_by(bead_id: &str, args: &[String], conn: &Conn) -> (i32, Strin
     // Not BeadEventKind::Supersede: that terminal transition is the groomer's or operator's
     // confirmation; the dwarf's request is a hold plus the ask.
     let hold = BeadEventKind::Hold { kind: HoldKind::Manual, cause: HoldCause::SupersedeRequest, detail: Some(successor.clone()) };
-    let (code, out) = apply_bead_event(conn, bead_id, &actor, hold);
-    let recorded = matches!(crate::plane::bead(conn, bead_id), Ok(Some(r)) if r.holds.contains(&HoldKind::Manual) && r.reason.as_deref() == Some(successor.as_str()));
+    let (code, out) = crate::plane::apply(bead_id, &actor, hold);
+    let recorded = matches!(crate::plane::bead(bead_id), Ok(Some(r)) if r.holds.contains(&HoldKind::Manual) && r.reason.as_deref() == Some(successor.as_str()));
     match (code, recorded) {
         (0, true) => (0, format!("supersede ask filed; hold applied for {bead_id}")),
         (0, false) => (CANNOT_TELL, format!("the supersede ask WAS delivered (do not ask again), but no hold was applied to {bead_id}: the store does not list it")),
@@ -1161,8 +1161,8 @@ fn supersede_ask_body(bead_id: &str, own_title: &str, successor: &str, successor
 }
 
 /// `<short sha> <subject>` of the newest commit on the successor's landing ref naming it.
-fn landing_commit(conn: &Conn, id: &str) -> Option<String> {
-    let repo = submit_repo(conn, id).ok()?;
+fn landing_commit(id: &str) -> Option<String> {
+    let repo = submit_repo(id).ok()?;
     let home = spira_config::resolve::locate_home_for_process().ok()?;
     let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
     let reg = spira_config::repos::Registry::from_env(env, std::path::Path::new(&home));
@@ -1976,7 +1976,7 @@ fn list_with_content(conn: &Conn, reader: &ReadFn, ask: ListAsk) -> (i32, String
         vec![s("--live")]
     };
     let narrowing: Vec<String> = std::iter::once(s("list")).chain(narrowing).collect();
-    let (rc, rows) = crate::plane::read(conn, &narrowing);
+    let (rc, rows) = crate::plane::read(&narrowing);
     if rc != 0 {
         return (rc, rows);
     }
@@ -2092,13 +2092,13 @@ const LIST_ID_CHUNK: usize = 400;
 const MAIL_KINDS: &[&str] = &["alert", "decision", "event", "note", "question", "suit"];
 
 /// An ask citing a bead no lifecycle row names is refused by name, never delivered.
-fn uncited_bead(args: &[String], conn: &Conn) -> Option<(i32, String)> {
+fn uncited_bead(args: &[String]) -> Option<(i32, String)> {
     if args.iter().any(|a| a == "--dry-run") {
         return None;
     }
     let at = args.iter().position(|a| a == "--bead")?;
     let bead = args.get(at + 1)?;
-    match crate::plane::bead(conn, bead) {
+    match crate::plane::bead(bead) {
         Ok(Some(_)) => None,
         Ok(None) => Some((REFUSED, format!("refused: work ask --bead {bead}: no such bead; nothing was sent"))),
         Err(e) => Some((CANNOT_TELL, format!("cannot tell: whether {bead} exists ({e:?}); nothing was sent"))),
@@ -2149,7 +2149,7 @@ fn cmd_lane(bound: &str, verb: &str, rest: &[String], conn: &Conn) -> (i32, Stri
                 crate::bd::tool(&prog, &args, stdin.as_deref(), actor, TOOL_SECS)
             }
             Step::Ask { args, stdin, classify_as } => {
-                if let Some(refusal) = uncited_bead(&args, conn) {
+                if let Some(refusal) = uncited_bead(&args) {
                     return (refusal.0, out + &refusal.1);
                 }
                 let prog = std::env::var("SPIRA_MAIL_SH").unwrap_or_else(|_| s("mail"));
@@ -2157,7 +2157,7 @@ fn cmd_lane(bound: &str, verb: &str, rest: &[String], conn: &Conn) -> (i32, Stri
             }
             Step::AskHold { bead, question } => {
                 let hold = BeadEventKind::Hold { kind: HoldKind::Ask, cause: HoldCause::OperatorQuestion, detail: Some(question) };
-                match apply_ask_hold(conn, &bead, actor, hold) {
+                match apply_ask_hold(&bead, actor, hold) {
                     (0, _) => (0, format!("question delivered; {bead} is held (ask) until the operator answers\n")),
                     (code, e) => (
                         code,
@@ -2585,7 +2585,7 @@ mod tests {
     #[test]
     fn submit_from_ready_is_refused_naming_the_state_and_the_way_out() {
         let tip = "a".repeat(40);
-        let mut row = bead::BeadRow::filed("sp-x");
+        let mut row = bead::LifecycleRow::filed("sp-x");
         row.state = bead::BeadState::Ready;
         let (code, msg) = submit_state_refusal(&row, &tip).expect("a READY submit is refused");
         assert_eq!(code, REFUSED);
@@ -2602,8 +2602,8 @@ mod tests {
         }
     }
 
-    fn working_row(persona: &str) -> bead::BeadRow {
-        let mut row = bead::BeadRow::filed("sp-x");
+    fn working_row(persona: &str) -> bead::LifecycleRow {
+        let mut row = bead::LifecycleRow::filed("sp-x");
         row.state = bead::BeadState::Working;
         row.persona = Some(persona.to_string());
         row
