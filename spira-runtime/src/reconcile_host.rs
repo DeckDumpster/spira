@@ -232,7 +232,7 @@ fn live_dwarves(active: &BTreeMap<String, String>, rune: &str) -> i64 {
 /// socket is no harm: it is only an identity to hold a healthy answer under, and a held answer is
 /// only ever one tmux gave.
 fn tmux_server_identity() -> Option<String> {
-    let dir = std::env::var_os("TMUX_TMPDIR").filter(|d| !d.is_empty()).map_or_else(|| PathBuf::from("/tmp"), PathBuf::from);
+    let dir = std::env::var_os("TMUX_TMPDIR").filter(|d| !d.is_empty()).map_or_else(|| PathBuf::from(system_paths::TMP), PathBuf::from);
     tmux_socket_identity(&dir.join(format!("tmux-{}", unsafe { libc::getuid() })))
 }
 

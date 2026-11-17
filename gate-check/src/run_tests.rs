@@ -105,11 +105,12 @@ const TWO_GATES_SAME_BRANCH: &str = r#"[
 // covers: UC-landing-merge-queue-52
 #[test]
 fn an_unbound_gate_branch_is_discovered_once_in_pr_repos_only_and_a_stuck_gate_is_reported() {
+    let root = testkit::TempDir::new("gate-check-run");
     let w = Fake::new(
         TWO_GATES_SAME_BRANCH,
         "gate x-1: no run ID specified\n⚠ zq-9k2: ESCALATE red\n",
     );
-    run(&w, Path::new("/nonexistent"));
+    run(&w, &root.join("nonexistent"));
 
     let found = w.discovered.borrow();
     assert_eq!(found.len(), 1, "one discover per distinct branch, pr repos only: {found:?}");
@@ -123,8 +124,9 @@ fn an_unbound_gate_branch_is_discovered_once_in_pr_repos_only_and_a_stuck_gate_i
 // covers: UC-landing-merge-queue-52
 #[test]
 fn with_no_unbound_gate_nothing_is_discovered() {
+    let root = testkit::TempDir::new("gate-check-run");
     let w = Fake::new("[]", "");
-    run(&w, Path::new("/nonexistent"));
+    run(&w, &root.join("nonexistent"));
     assert!(w.discovered.borrow().is_empty());
     assert!(!w.printed.borrow().contains("stuck"));
 }

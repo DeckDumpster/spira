@@ -8,7 +8,7 @@ const GUEST: &str = include_str!("../../spira/round-image-preflight-guest.sh");
 #[test]
 fn the_preflight_runs_no_foreign_repo_check_the_real_build_does_not() {
     for (name, text) in [("round-image-preflight.sh", HOST), ("round-image-preflight-guest.sh", GUEST)] {
-        for gone in ["/foreign", "runner-deps", "SPIRA_PREFLIGHT_FOREIGN", "foreign_checkouts"] {
+        for gone in ["/foreign", "runner-deps", "SPIRA_PREFLIGHT_FOREIGN", "foreign_checkouts"] { // not a path: script text the preflight must not name
             assert!(!text.contains(gone), "{name} still names {gone:?}");
         }
     }

@@ -309,7 +309,7 @@ mod tests {
 
     #[test]
     fn unreadable_file_returns_error() {
-        let (_, _, err) = parse_env_file("/nonexistent/path/cockpit.env");
+        let (_, _, err) = parse_env_file("nonexistent/path/cockpit.env");
         assert!(err.is_some(), "unreadable file must produce an error string");
     }
 

@@ -36,7 +36,7 @@ fn filing(name: &str) -> Outboxed {
 
 fn snap(outbox: Vec<Outboxed>, open: &[(&str, bool)]) -> Snapshot {
     Snapshot {
-        hosts: vec![Host { name: "h".into(), ssh: "u@h".into(), home: "/home/u".into() }],
+        hosts: vec![Host { name: "h".into(), ssh: "u@h".into(), home: "home/u".into() }],
         outbox: [("h".to_string(), Ok(outbox))].into(),
         open: open.iter().map(|(id, o)| (id.to_string(), Ok(*o))).collect(),
     }

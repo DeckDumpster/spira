@@ -8,7 +8,7 @@ use testkit::{git, TempDir};
 fn env(wiki: &Path) -> Env {
     Env {
         db: ".".into(),
-        run: "/tmp".into(),
+        run: "tmp".into(),
         runes: String::new(),
         token_projects: String::new(),
         wiki: Some(wiki.display().to_string()),

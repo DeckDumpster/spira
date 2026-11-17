@@ -127,8 +127,8 @@ fn the_context_reads_every_key_from_the_config_and_a_repos_own_ci_limits() {
             _ => None,
         }
     };
-    let kv = real::context_kv(std::path::Path::new("/h"), "my-repo", &values).unwrap();
-    assert_eq!(kv["home"], "/h");
+    let kv = real::context_kv(std::path::Path::new("h"), "my-repo", &values).unwrap();
+    assert_eq!(kv["home"], "h");
     assert_eq!(kv["run"], "v:SPIRA_RUN");
     assert_eq!(kv["ci_maxsec"], "99");
     assert_eq!(
@@ -142,7 +142,7 @@ fn the_context_reads_every_key_from_the_config_and_a_repos_own_ci_limits() {
 #[test]
 fn a_context_key_the_config_does_not_declare_is_refused_by_name() {
     let values = |k: &str| (k != "SPIRA_QUEUE_LOCK_WAIT").then(|| "1".to_string());
-    let err = real::context_kv(std::path::Path::new("/h"), "r", &values).unwrap_err();
+    let err = real::context_kv(std::path::Path::new("h"), "r", &values).unwrap_err();
     assert!(err.contains("SPIRA_QUEUE_LOCK_WAIT"), "{err}");
 }
 

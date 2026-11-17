@@ -8,11 +8,11 @@ const SET: &[(&str, &str)] = &[(task::CADENCE_KEY, "3600"), (task::IDLE_HOURS_KE
 const HOUR: u64 = 3_600_000;
 
 fn tree(id: &str, state: Option<&str>, merged: bool, idle_secs: u64, live_pid: Option<u32>) -> Worktree {
-    Worktree { id: id.into(), path: format!("/r/worktree/{id}"), branch: format!("spira/{id}"), live_pid, bead_state: state.map(str::to_string), merged_into: merged.then(|| "local/main".to_string()), idle_secs }
+    Worktree { id: id.into(), path: format!("r/worktree/{id}"), branch: format!("spira/{id}"), live_pid, bead_state: state.map(str::to_string), merged_into: merged.then(|| "local/main".to_string()), idle_secs }
 }
 
 fn repo(trees: Vec<Worktree>) -> Snapshot {
-    Snapshot { halted: false, repos: vec![Repo { name: "spira".into(), root: "/r/spira".into(), landrefs: vec!["local/main".into()], worktrees: trees }] }
+    Snapshot { halted: false, repos: vec![Repo { name: "spira".into(), root: "r/spira".into(), landrefs: vec!["local/main".into()], worktrees: trees }] }
 }
 
 fn json(s: &Snapshot) -> String {

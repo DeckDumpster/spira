@@ -2528,7 +2528,7 @@ fn an_ungated_landing_walks_a_submitted_member_to_landed_with_the_override_on_th
         by: "operator".into(),
         evidence: "e1".into(),
     };
-    let ok = t.with_world(|w| lc_deliver(w, Path::new("/repo"), "h1", &m, Some(&g)));
+    let ok = t.with_world(|w| lc_deliver(w, Path::new("repo"), "h1", &m, Some(&g)));
     assert!(ok, "{}", t.err());
     let calls = t.lc.calls.borrow().clone();
     let ev = calls
@@ -2557,7 +2557,7 @@ fn a_gated_landing_still_refuses_a_submitted_member() {
         id: "sp-a".into(),
         tip: "m1".into(),
     };
-    assert!(!t.with_world(|w| lc_deliver(w, Path::new("/repo"), "h1", &m, None)));
+    assert!(!t.with_world(|w| lc_deliver(w, Path::new("repo"), "h1", &m, None)));
 }
 
 #[test]
@@ -2571,6 +2571,6 @@ fn an_ungated_landing_of_an_already_landed_member_is_not_a_fault() {
         .insert("sp-a".into(), ("LANDED".into(), "5".into()));
     let m = Member { id: "sp-a".into(), tip: "m1".into() };
     let g = BreakGlass { reason: "r".into(), by: "operator".into(), evidence: "e1".into() };
-    assert!(t.with_world(|w| lc_deliver(w, Path::new("/repo"), "h1", &m, Some(&g))));
+    assert!(t.with_world(|w| lc_deliver(w, Path::new("repo"), "h1", &m, Some(&g))));
     assert!(!t.lc.has("event bead"));
 }

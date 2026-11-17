@@ -2558,7 +2558,7 @@ pub mod edge {
     /// runtime's environment, so without `SPIRA_TOML` round-vm refuses at once (exit 2) and the
     /// round is abandoned before it runs. A variable the leg already set is kept.
     pub fn leg_env(vars: Vec<(String, String)>, release: &str, home: &str, toml: &str, runtime_path: &str) -> Vec<(String, String)> {
-        let tail = if runtime_path.is_empty() { "/usr/local/bin:/usr/bin:/bin" } else { runtime_path };
+        let tail = if runtime_path.is_empty() { system_paths::SYSTEM_PATH } else { runtime_path };
         let base = [
             ("SPIRA_RELEASE", release.to_string()),
             ("PATH", format!("{release}/bin:{release}/spira:{tail}")),
@@ -3078,25 +3078,25 @@ pub mod edge {
         use super::*;
 
         fn after_pass(leg: &Leg) -> Option<String> {
-            let argv = attribute_argv("batcher".into(), Path::new("/rv"), Path::new("/var/spira-run"), leg);
+            let argv = attribute_argv("batcher".into(), Path::new("rv"), Path::new("var/spira-run"), leg);
             argv.iter().position(|a| a == "--after-pass").map(|i| argv[i + 1].clone())
         }
 
         #[test]
         fn an_attribution_after_a_certify_reads_the_batchs_kept_results_under_the_run_dir() {
             let leg = Leg { batch: "r9".into(), after_certify: true, ..Leg::on("spira") };
-            assert_eq!(after_pass(&leg).as_deref(), Some("/var/spira-run/rounds/r9.results"));
+            assert_eq!(after_pass(&leg).as_deref(), Some("var/spira-run/rounds/r9.results"));
         }
 
         #[test]
         fn an_attribution_after_a_relative_pass_reads_it_under_the_runs_parent() {
             let leg = Leg { batch: "r9".into(), after_pass: super::super::kept_results_file("r9"), ..Leg::on("spira") };
-            assert_eq!(after_pass(&leg).as_deref(), Some("/var/run/rounds/r9.results"));
+            assert_eq!(after_pass(&leg).as_deref(), Some("var/run/rounds/r9.results"));
         }
 
         #[test]
         fn a_confirmed_attribution_passes_confirmed_and_an_ordinary_one_does_not() {
-            let argv = |confirmed| attribute_argv("batcher".into(), Path::new("/rv"), Path::new("/r"), &Leg { confirmed, ..Leg::on("spira") });
+            let argv = |confirmed| attribute_argv("batcher".into(), Path::new("rv"), Path::new("r"), &Leg { confirmed, ..Leg::on("spira") });
             assert!(argv(true).contains(&"--confirmed".to_string()));
             assert!(!argv(false).contains(&"--confirmed".to_string()));
         }
@@ -3109,8 +3109,10 @@ pub mod edge {
 
         #[test]
         fn an_attribution_after_a_corpus_pass_reads_that_passs_dir_and_a_fresh_one_reads_none() {
-            let leg = Leg { batch: "r9".into(), after_pass: "/w/.round-results-u".into(), ..Leg::on("spira") };
-            assert_eq!(after_pass(&leg).as_deref(), Some("/w/.round-results-u"));
+            let root = testkit::TempDir::new("attribute-argv-corpus-pass");
+            let pass = format!("{}/w/.round-results-u", root.display());
+            let leg = Leg { batch: "r9".into(), after_pass: pass.clone(), ..Leg::on("spira") };
+            assert_eq!(after_pass(&leg).as_deref(), Some(pass.as_str()));
             assert_eq!(after_pass(&Leg::on("spira")), None);
         }
     }

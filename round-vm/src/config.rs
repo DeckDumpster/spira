@@ -368,7 +368,7 @@ impl PveEnv {
         let need = |k: &str| {
             get(k).ok_or_else(|| format!("round-vm: {k} not set — is {} present and readable?", path.display()))
         };
-        let cacert = PathBuf::from(get("PVE_CACERT").unwrap_or_else(|| "/etc/pve/pve-root-ca.pem".into()));
+        let cacert = PathBuf::from(get("PVE_CACERT").unwrap_or_else(|| format!("{}/pve-root-ca.pem", system_paths::guest::ETC_PVE)));
         let token_id = need("PVE_TOKEN_ID")?;
         let token_secret = need("PVE_TOKEN_SECRET")?;
         let node = need("PVE_NODE")?;
@@ -404,14 +404,14 @@ mod tests {
 
     fn base_fields() -> Fields {
         Fields {
-            run: "/r".into(),
+            run: "r".into(),
             spira_home: None,
-            pve_env: "/r/pve.env".into(),
+            pve_env: "r/pve.env".into(),
             ssh_user: "root".into(),
             ssh_port: 22,
-            state_dir: "/r/round-vm".into(),
-            host_key: "/r/round-vm/host_key".into(),
-            host_pubkey: "/r/round-vm/host_key.pub".into(),
+            state_dir: "r/round-vm".into(),
+            host_key: "r/round-vm/host_key".into(),
+            host_pubkey: "r/round-vm/host_key.pub".into(),
             host_addr: None,
             cache_home: None,
             resume_url: None,
@@ -452,10 +452,10 @@ mod tests {
     #[test]
     fn build_converts_every_field_without_inventing_a_value() {
         let c = Config::build(base_fields());
-        assert_eq!(c.run_dir, PathBuf::from("/r"));
-        assert_eq!(c.state_dir, PathBuf::from("/r/round-vm"));
-        assert_eq!(c.host_key, PathBuf::from("/r/round-vm/host_key"));
-        assert_eq!(c.host_pubkey, PathBuf::from("/r/round-vm/host_key.pub"));
+        assert_eq!(c.run_dir, PathBuf::from("r"));
+        assert_eq!(c.state_dir, PathBuf::from("r/round-vm"));
+        assert_eq!(c.host_key, PathBuf::from("r/round-vm/host_key"));
+        assert_eq!(c.host_pubkey, PathBuf::from("r/round-vm/host_key.pub"));
         assert_eq!(c.ssh_user, "root");
         assert_eq!((c.vcpus, c.maxpar, c.mirror_port, c.max_retries), (16, 16, 9430, 0));
         assert_eq!(c.retry_interval, Duration::from_secs(60));
@@ -509,9 +509,9 @@ mod tests {
     fn missing_cacert_is_refused_not_skipped() {
         let d = TempDir::new();
         let p = d.path().join("pve.env");
-        std::fs::write(&p, "PVE_NODE=pve\nPVE_TOKEN_ID=id\nPVE_TOKEN_SECRET=s\nPVE_TEMPLATE_VMID=9000\nPVE_CACERT=/no/such/ca.pem\n").unwrap();
+        std::fs::write(&p, "PVE_NODE=pve\nPVE_TOKEN_ID=id\nPVE_TOKEN_SECRET=s\nPVE_TEMPLATE_VMID=9000\nPVE_CACERT=no/such/ca.pem\n").unwrap();
         let e = PveEnv::load(&p, &|_| None).unwrap_err();
-        assert!(e.contains("/no/such/ca.pem"), "{e}");
+        assert!(e.contains("no/such/ca.pem"), "{e}");
     }
 
     #[test]

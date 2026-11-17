@@ -187,13 +187,13 @@ fn a_key_the_batcher_pins_changed_while_a_round_is_driven_waits_for_the_round_an
     w.driving_a_round();
     w.turn();
     w.change(BATCHER_KEY, "13");
-    w.change("SPIRA_RUN", "/elsewhere");
+    w.change("SPIRA_RUN", "elsewhere");
     w.ask(&["scheduler", "repin", BATCHER_KEY]).unwrap();
     w.ask(&["scheduler", "repin", "SPIRA_RUN"]).unwrap();
     w.turn();
     assert_eq!(w.running(BATCHER_KEY), old, "a round is being driven");
     assert_eq!(w.running("SPIRA_RUN"), w.repin.held("SPIRA_RUN").unwrap(), "SPIRA_RUN is pinned by both and waits");
-    assert_ne!(w.running("SPIRA_RUN"), "/elsewhere");
+    assert_ne!(w.running("SPIRA_RUN"), "elsewhere");
     let status: serde_json::Value = serde_json::from_str(&w.ask(&["scheduler", "status"]).unwrap()).unwrap();
     assert_eq!(status["repin"]["pending"][BATCHER_KEY], serde_json::json!({ "held": old, "wanted": "13" }));
     assert!(status["repin"]["pending"]["SPIRA_RUN"].is_object(), "{status}");

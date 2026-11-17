@@ -60,7 +60,7 @@ fn t3_the_recorded_carry_is_the_carry_read() {
 #[test]
 fn t2_a_held_repo_and_a_driven_round_are_silent() {
     let held = Snapshot { repos: [("spira".to_string(), Repo { stopped: true, ..busy().repos["spira"].clone() })].into(), now_ms: NOW };
-    let driven = Snapshot { repos: [("spira".to_string(), Repo { open_round: Some(Round { id: "r1".into(), members: vec!["sp-a".into()], head: "h".into(), worktree: "/w".into(), driven: true, ..Round::default() }), ..busy().repos["spira"].clone() })].into(), now_ms: NOW };
+    let driven = Snapshot { repos: [("spira".to_string(), Repo { open_round: Some(Round { id: "r1".into(), members: vec!["sp-a".into()], head: "h".into(), worktree: "w".into(), driven: true, ..Round::default() }), ..busy().repos["spira"].clone() })].into(), now_ms: NOW };
     for snap in [held, driven] {
         let mut r = rig(1, snap);
         kit::assert_unpoisoned(&r, STREAM);
@@ -119,7 +119,7 @@ fn t5_the_assemble_leg_lists_its_members_in_merge_order_priority_first() {
 fn t3_a_green_certify_unit_ran_on_its_own_stream_certifies_and_lands_with_no_corpus() {
     use runtime::units::{Exit, UnitHandle, UnitRan};
     let snaps = std::sync::Mutex::new(vec![busy()]);
-    let assembled = Assembled { merged: vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into())], wt: "/w".into(), base: "b1".into(), suites: true, ..Assembled::default() };
+    let assembled = Assembled { merged: vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into())], wt: "w".into(), base: "b1".into(), suites: true, ..Assembled::default() };
     let mut r = TaskRig::new(1, registration())
         .unwrap()
         .double(OBSERVE, move |_| Ok(serde_json::to_string(&snaps.lock().unwrap().pop().unwrap_or_else(idle)).unwrap()))
@@ -165,7 +165,7 @@ fn carried(carry: &Carry) -> TaskRig {
 
 /// The repo `spira` in `state`, driving round `r9` on `/w` from base `b1`, its leg `leg`.
 fn driving(state: State, leg: &str) -> Carry {
-    let rc = RepoCarry { state, round_key: Some("k".into()), batch: Some("r9".into()), members: vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into())], wt: "/w".into(), base: "b1".into(), leg: Some(leg.into()), leg_at_ms: 0, run: 1, ..RepoCarry::default() };
+    let rc = RepoCarry { state, round_key: Some("k".into()), batch: Some("r9".into()), members: vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into())], wt: "w".into(), base: "b1".into(), leg: Some(leg.into()), leg_at_ms: 0, run: 1, ..RepoCarry::default() };
     Carry { repos: [("spira".to_string(), rc)].into() }
 }
 
@@ -191,7 +191,7 @@ fn t3_a_red_corpus_enters_attribution() {
     let after = asked_after(&r, n);
     assert_eq!(after.iter().map(|(e, l)| (e.as_str(), l.why.as_str())).collect::<Vec<_>>(), [(CORPUS, "attribute")], "{after:?}");
     assert_eq!(after[0].1.members.len(), 2, "every member is attributed");
-    assert_eq!(after[0].1.after_pass, "/w/.round-results-spira.c1", "the attribution reads the red pass's results");
+    assert_eq!(after[0].1.after_pass, "w/.round-results-spira.c1", "the attribution reads the red pass's results");
 }
 
 /// Attributing × `unit.ran`: the attribution's own line decides. Survivors go on to certify
@@ -264,13 +264,13 @@ fn sp_xslgtq_a_faulted_attribution_leaves_the_round_open_and_pages_attribution_f
 fn t3_a_red_certify_ejects_the_guilty_then_abandons() {
     let mut r = carried(&driving(State::Certifying, "spira.c3"));
     let n = r.requested().len();
-    r.tick(STREAM, ended("spira.c3", runtime::units::Exit::Code(1), "verdict=red\nred-output=/run/certify-r9.out\n")).unwrap();
+    r.tick(STREAM, ended("spira.c3", runtime::units::Exit::Code(1), "verdict=red\nred-output=run/certify-r9.out\n")).unwrap();
     kit::assert_unpoisoned(&r, STREAM);
     let after = asked_after(&r, n);
     let names: Vec<&str> = after.iter().map(|(e, _)| e.as_str()).collect();
     let eject = names.iter().position(|e| *e == EJECT).unwrap_or_else(|| panic!("no eject: {names:?}"));
     assert!(names[eject..].contains(&ABANDON), "{names:?}");
-    assert_eq!((after[eject].1.why.as_str(), after[eject].1.bead.as_str()), ("/run/certify-r9.out", ""), "the guilty are read from the output");
+    assert_eq!((after[eject].1.why.as_str(), after[eject].1.bead.as_str()), ("run/certify-r9.out", ""), "the guilty are read from the output");
 }
 
 fn attributed(mut c: Carry) -> Carry {
@@ -292,7 +292,7 @@ fn sole_member(mut c: Carry) -> Carry {
 /// its evidence and writes no pause, whether or not the output names the member's files.
 #[test]
 fn sp_z43b7y_a_red_certify_of_a_one_member_round_ejects_the_member_and_writes_no_pause() {
-    for out in ["verdict=red\nred-output=/run/rounds/r9.results/testenv.out\n", "queue.sh round certify: round r9 is RED at abc: test-a.sh\nred=test-a.sh\n", ""] {
+    for out in ["verdict=red\nred-output=run/rounds/r9.results/testenv.out\n", "queue.sh round certify: round r9 is RED at abc: test-a.sh\nred=test-a.sh\n", ""] {
         let mut r = carried(&{
             let mut c = sole_member(driving(State::Certifying, "spira.c3"));
             c.repos.get_mut("spira").unwrap().attributed = true;
@@ -307,7 +307,7 @@ fn sp_z43b7y_a_red_certify_of_a_one_member_round_ejects_the_member_and_writes_no
         let eject = after.iter().find(|(e, _)| e == EJECT).unwrap_or_else(|| panic!("{out:?}: no eject: {names:?}")).1.clone();
         assert_eq!((eject.bead.as_str(), eject.head.as_str()), ("sp-a", "t1"), "{out:?}");
         if out.contains("red-output=") {
-            assert!(eject.why.contains("/run/rounds/r9.results/testenv.out"), "{}", eject.why);
+            assert!(eject.why.contains("run/rounds/r9.results/testenv.out"), "{}", eject.why);
         }
         assert!(names.contains(&ABANDON), "{names:?}");
     }
@@ -980,7 +980,7 @@ fn sp_8nlvra_a_changed_skip_reason_is_logged_once() {
 // --- sp-822b8l: a refused open re-cuts without the members it named, never abandons ---
 
 fn opening() -> Carry {
-    let rc = RepoCarry { state: State::Opened, round_key: Some("k".into()), members: vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into()), ("sp-c".into(), "t3".into())], wt: "/w".into(), base: "b1".into(), ..RepoCarry::default() };
+    let rc = RepoCarry { state: State::Opened, round_key: Some("k".into()), members: vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into()), ("sp-c".into(), "t3".into())], wt: "w".into(), base: "b1".into(), ..RepoCarry::default() };
     Carry { repos: [("spira".to_string(), rc)].into() }
 }
 
@@ -1195,31 +1195,31 @@ fn sp_tjrjca_base_moved_twice_on_one_base_is_red() {
 #[test]
 fn a_leg_unit_carries_the_release_path_home_and_config_spec() {
     use spira_runtime::tasks::a::batcher_local::edge::leg_env;
-    let env = leg_env(vec![("ROUND_BATCH".into(), "b1".into())], "/r", "/h", "/c/cfg", "/x/bin:/usr/bin");
+    let env = leg_env(vec![("ROUND_BATCH".into(), "b1".into())], "r", "h", "c/cfg", "x/bin:usr/bin");
     let get = |k: &str| env.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
-    assert_eq!(get("SPIRA_TOML").as_deref(), Some("/c/cfg"));
-    assert_eq!(get("SPIRA_RELEASE").as_deref(), Some("/r"));
-    assert_eq!(get("HOME").as_deref(), Some("/h"));
-    assert!(get("PATH").is_some_and(|p| p.starts_with("/r/bin:")));
+    assert_eq!(get("SPIRA_TOML").as_deref(), Some("c/cfg"));
+    assert_eq!(get("SPIRA_RELEASE").as_deref(), Some("r"));
+    assert_eq!(get("HOME").as_deref(), Some("h"));
+    assert!(get("PATH").is_some_and(|p| p.starts_with("r/bin:")));
     assert_eq!(get("ROUND_BATCH").as_deref(), Some("b1"), "the leg's own variables are kept");
-    let kept = leg_env(vec![("SPIRA_TOML".into(), "/own.toml".into())], "/r", "/h", "/c/cfg", "/x/bin");
+    let kept = leg_env(vec![("SPIRA_TOML".into(), "own.toml".into())], "r", "h", "c/cfg", "x/bin");
     assert_eq!(kept.iter().filter(|(n, _)| n == "SPIRA_TOML").count(), 1);
-    assert_eq!(kept.iter().find(|(n, _)| n == "SPIRA_TOML").map(|(_, v)| v.as_str()), Some("/own.toml"));
+    assert_eq!(kept.iter().find(|(n, _)| n == "SPIRA_TOML").map(|(_, v)| v.as_str()), Some("own.toml"));
 }
 
 #[test]
 fn a_leg_unit_path_keeps_the_release_first_then_the_runtime_path_so_aws_is_found() {
     use spira_runtime::tasks::a::batcher_local::edge::leg_env;
-    let path_of = |runtime: &str| leg_env(vec![], "/r", "/h", "/c/cfg", runtime).into_iter().find(|(n, _)| n == "PATH").map(|(_, v)| v).unwrap();
-    assert_eq!(path_of("/opt/tools/bin:/usr/bin"), "/r/bin:/r/spira:/opt/tools/bin:/usr/bin");
-    assert_eq!(path_of(""), "/r/bin:/r/spira:/usr/local/bin:/usr/bin:/bin", "no runtime PATH falls back to the system dirs");
+    let path_of = |runtime: &str| leg_env(vec![], "r", "h", "c/cfg", runtime).into_iter().find(|(n, _)| n == "PATH").map(|(_, v)| v).unwrap();
+    assert_eq!(path_of("opt/tools/bin:usr/bin"), "r/bin:r/spira:opt/tools/bin:usr/bin");
+    assert_eq!(path_of(""), format!("r/bin:r/spira:{}", system_paths::SYSTEM_PATH), "no runtime PATH falls back to the system dirs");
 }
 
 #[test]
 fn the_unit_environment_built_for_a_leg_ends_in_the_runtimes_own_path() {
     use spira_runtime::tasks::a::batcher_local::edge::base_env;
     let own = std::env::var("PATH").expect("test process has a PATH");
-    let env = base_env(vec![], "/c/cfg");
+    let env = base_env(vec![], "c/cfg");
     let path = env.into_iter().find(|(n, _)| n == "PATH").map(|(_, v)| v).unwrap();
     assert!(path.ends_with(&format!(":{own}")), "{path} should end with the runtime PATH {own}");
 }
@@ -1289,7 +1289,7 @@ fn sp_lkm2fv_a_green_certify_of_a_wide_round_is_requested_not_refused_by_the_sto
     let members: Vec<Member> = (0..9).map(|i| Member { state: "CERTIFIED".into(), ..member(&format!("sp-wide{i:02}"), &format!("{:040x}", i + 1)) }).collect();
     let world = Snapshot { repos: [("spira".to_string(), repo(members.clone()))].into(), now_ms: NOW };
     let snaps = std::sync::Mutex::new(vec![world]);
-    let assembled = Assembled { merged: members.iter().map(|m| (m.id.clone(), m.tip.clone())).collect(), wt: "/w".into(), base: "b1".into(), suites: true, ..Assembled::default() };
+    let assembled = Assembled { merged: members.iter().map(|m| (m.id.clone(), m.tip.clone())).collect(), wt: "w".into(), base: "b1".into(), suites: true, ..Assembled::default() };
     let mut r = TaskRig::new(1, registration())
         .unwrap()
         .double(OBSERVE, move |_| Ok(serde_json::to_string(&snaps.lock().unwrap().pop().unwrap_or_else(idle)).unwrap()))
@@ -1311,12 +1311,12 @@ fn sp_lkm2fv_a_green_certify_of_a_wide_round_is_requested_not_refused_by_the_sto
 // --- sp-pi2ojm: an opened round is driven on the next tick, not after its outcome's 20-minute wait ---
 
 fn opened_unadvanced() -> Carry {
-    let rc = RepoCarry { state: State::Opened, round_key: Some("k".into()), members: vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into())], wt: "/w".into(), base: "b1".into(), waiting: Some(Waiting { state: State::Opened, since_ms: NOW - 40_000 }), ..RepoCarry::default() };
+    let rc = RepoCarry { state: State::Opened, round_key: Some("k".into()), members: vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into())], wt: "w".into(), base: "b1".into(), waiting: Some(Waiting { state: State::Opened, since_ms: NOW - 40_000 }), ..RepoCarry::default() };
     Carry { repos: [("spira".to_string(), rc)].into() }
 }
 
 fn queue_holds(id: &str, members: &[&str]) -> Snapshot {
-    let round = Round { id: id.into(), members: members.iter().map(|m| m.to_string()).collect(), head: "h1".into(), worktree: "/w".into(), ..Round::default() };
+    let round = Round { id: id.into(), members: members.iter().map(|m| m.to_string()).collect(), head: "h1".into(), worktree: "w".into(), ..Round::default() };
     Snapshot { repos: [("spira".to_string(), Repo { open_round: Some(round), ..repo(vec![]) })].into(), now_ms: NOW }
 }
 
@@ -1355,7 +1355,7 @@ fn sp_pi2ojm_the_late_round_open_outcome_after_the_adoption_launches_no_second_l
 #[test]
 fn sp_pi2ojm_an_opened_round_in_another_tree_is_not_ours_to_adopt() {
     let mut snap = queue_holds("r9", &["sp-a", "sp-b"]);
-    snap.repos.get_mut("spira").unwrap().open_round.as_mut().unwrap().worktree = "/elsewhere".into();
+    snap.repos.get_mut("spira").unwrap().open_round.as_mut().unwrap().worktree = "elsewhere".into();
     let (carry, acts) = decide(&opened_unadvanced(), &snap);
     assert!(acts.is_empty(), "{acts:?}");
     assert_eq!(carry.repos["spira"].state, State::Opened);
@@ -1426,7 +1426,7 @@ fn an_assemble_that_succeeds_after_failures_clears_the_failure_and_its_skip_why(
     let (carry, acts) = decide(&failed, &busy());
     let assemble = acts.iter().find(|a| a.effect == ASSEMBLE).unwrap();
     let leg: Leg = serde_json::from_str(&assemble.input).unwrap();
-    let ok = Assembled { merged: vec![("sp-a".into(), "t1".into())], wt: "/w".into(), base: "b1".into(), ..Assembled::default() };
+    let ok = Assembled { merged: vec![("sp-a".into(), "t1".into())], wt: "w".into(), base: "b1".into(), ..Assembled::default() };
     let (carry, _) = on_outcome(&carry, ASSEMBLE, true, &serde_json::to_string(&ok).unwrap(), &leg, NOW);
     assert_eq!(carry.repos["spira"].assemble_failed, None);
     assert_eq!(carry.repos["spira"].skip_why, None);
@@ -1472,7 +1472,7 @@ fn an_assemble_in_flight_is_left_alone() {
 /// A scheduler restart while the assemble is open ends it lost; a round is cut within a minute.
 #[test]
 fn a_round_is_cut_within_a_minute_of_a_restart_that_interrupted_the_assemble() {
-    let assembled = Assembled { merged: vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into())], wt: "/w".into(), base: "b1".into(), suites: true, ..Assembled::default() };
+    let assembled = Assembled { merged: vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into())], wt: "w".into(), base: "b1".into(), suites: true, ..Assembled::default() };
     let mut r = TaskRig::new(1, registration())
         .unwrap()
         .hanging(ASSEMBLE)
@@ -1496,7 +1496,7 @@ fn a_round_is_cut_within_a_minute_of_a_restart_that_interrupted_the_assemble() {
 /// The engine's own lost-at-restart outcome for an open round open is asked for again.
 #[test]
 fn a_round_open_interrupted_by_a_restart_is_asked_again() {
-    let assembled = Assembled { merged: vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into())], wt: "/w".into(), base: "b1".into(), suites: true, ..Assembled::default() };
+    let assembled = Assembled { merged: vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into())], wt: "w".into(), base: "b1".into(), suites: true, ..Assembled::default() };
     let mut r = TaskRig::new(1, registration())
         .unwrap()
         .hanging(ROUND_OPEN)
@@ -1523,7 +1523,7 @@ fn a_round_open_interrupted_by_a_restart_is_asked_again() {
 #[test]
 fn a_round_open_lost_at_restart_is_asked_again() {
     let mut carry = Carry::default();
-    carry.repos.insert("spira".into(), RepoCarry { state: State::Opened, round_key: Some("k".into()), members: vec![("sp-a".into(), "t1".into())], wt: "/w".into(), base: "b1".into(), suites: Some(true), ..RepoCarry::default() });
+    carry.repos.insert("spira".into(), RepoCarry { state: State::Opened, round_key: Some("k".into()), members: vec![("sp-a".into(), "t1".into())], wt: "w".into(), base: "b1".into(), suites: Some(true), ..RepoCarry::default() });
     let mut world = Snapshot { now_ms: NOW, ..idle() };
     world.repos.get_mut("spira").unwrap().in_flight = Some(vec![]);
     let (carry, acts) = decide(&carry, &world);
@@ -1569,7 +1569,7 @@ fn effects(acts: &[Act]) -> Vec<&str> {
 
 #[test]
 fn sp_5u1oru_an_open_round_whose_open_answer_is_lost_is_adopted_at_the_next_tick() {
-    let (carry, acts) = decide(&opened_unanswered(), &open_with("opened", &["sp-a", "sp-b"], "/w"));
+    let (carry, acts) = decide(&opened_unanswered(), &open_with("opened", &["sp-a", "sp-b"], "w"));
     assert!(effects(&acts).contains(&CERTIFY), "the first pass starts on this tick: {acts:?}");
     let rc = &carry.repos["spira"];
     assert_eq!((rc.state, rc.batch.as_deref()), (State::Certifying, Some("r9")));
@@ -1577,20 +1577,20 @@ fn sp_5u1oru_an_open_round_whose_open_answer_is_lost_is_adopted_at_the_next_tick
 
 #[test]
 fn sp_5u1oru_an_open_round_of_other_members_is_not_adopted() {
-    let (carry, acts) = decide(&opened_unanswered(), &open_with("opened", &["sp-x"], "/w"));
+    let (carry, acts) = decide(&opened_unanswered(), &open_with("opened", &["sp-x"], "w"));
     assert!(!effects(&acts).contains(&CORPUS), "{acts:?}");
     assert_eq!(carry.repos["spira"].state, State::Opened);
 }
 
 #[test]
 fn sp_5u1oru_a_round_opened_seconds_ago_is_left_to_its_opener() {
-    let (_, acts) = decide(&Carry::default(), &open_with("opened", &["sp-a"], "/w"));
+    let (_, acts) = decide(&Carry::default(), &open_with("opened", &["sp-a"], "w"));
     assert!(!effects(&acts).contains(&REDRIVE), "{acts:?}");
 }
 
 #[test]
 fn sp_5u1oru_an_open_round_with_no_pass_and_no_driver_is_redriven_at_once_and_only_once() {
-    let mut snap = open_with("opened", &["sp-a"], "/w");
+    let mut snap = open_with("opened", &["sp-a"], "w");
     snap.repos.get_mut("spira").unwrap().open_round.as_mut().unwrap().age_secs = 60;
     let (carry, acts) = decide(&Carry::default(), &snap);
     assert!(effects(&acts).contains(&REDRIVE), "no orphan wait for a round that never began: {acts:?}");
@@ -1601,7 +1601,7 @@ fn sp_5u1oru_an_open_round_with_no_pass_and_no_driver_is_redriven_at_once_and_on
 // --- sp-4odl0h: an undriven round whose last pass ended red is attributed, not abandoned ---
 
 fn red_orphan() -> (Carry, Snapshot) {
-    let mut snap = open_with("attributing", &["sp-a", "sp-b"], "/w");
+    let mut snap = open_with("attributing", &["sp-a", "sp-b"], "w");
     let round = snap.repos.get_mut("spira").unwrap().open_round.as_mut().unwrap();
     round.tips = vec!["t1".into(), "t2".into()];
     round.red = true;
@@ -1651,7 +1651,7 @@ fn sp_4odl0h_an_undriven_round_with_no_red_pass_is_still_redriven() {
 // --- sp-k7ltss: a green round no pass drives is landed, not abandoned ---
 
 fn green_orphan() -> (Carry, Snapshot) {
-    let mut snap = open_with("green", &["sp-a", "sp-b"], "/w");
+    let mut snap = open_with("green", &["sp-a", "sp-b"], "w");
     let round = snap.repos.get_mut("spira").unwrap().open_round.as_mut().unwrap();
     round.tips = vec!["t1".into(), "t2".into()];
     round.age_secs = 1_400;
@@ -1667,7 +1667,7 @@ fn sp_k7ltss_a_green_round_with_no_driver_is_landed_not_abandoned() {
     assert_eq!(effects(&acts), [LAND], "{acts:?}");
     let rc = &carry.repos["spira"];
     assert_eq!((rc.state, rc.batch.as_deref(), rc.members.clone()), (State::Landing, Some("r9"), vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into())]));
-    assert_eq!((rc.wt.as_str(), rc.head.as_str()), ("/w", "h"));
+    assert_eq!((rc.wt.as_str(), rc.head.as_str()), ("w", "h"));
     assert_eq!((rc.pace.orphan.len(), rc.pace.redriven.as_str()), (0, ""), "the orphan clock is cleared");
 }
 
@@ -1685,7 +1685,7 @@ fn sp_k7ltss_a_green_round_above_another_open_round_waits() {
     let (_, mut snap) = green_orphan();
     let repo = snap.repos.get_mut("spira").unwrap();
     let green = Round { id: "r10".into(), ..repo.open_round.take().unwrap() };
-    repo.open_round = Some(Round { id: "r9".into(), members: vec!["sp-a".into(), "sp-b".into()], head: "h0".into(), worktree: "/w".into(), driven: true, phase: "certifying".into(), ..Round::default() });
+    repo.open_round = Some(Round { id: "r9".into(), members: vec!["sp-a".into(), "sp-b".into()], head: "h0".into(), worktree: "w".into(), driven: true, phase: "certifying".into(), ..Round::default() });
     repo.open_above = vec![green];
     let mut carry = driving(State::Certifying, "spira.c3");
     carry.repos.get_mut("spira").unwrap().pace = Pace { orphan: vec!["r10".into()], orphan_since_ms: NOW - 700_000, redriven: "r10".into(), ..Pace::default() };
@@ -1714,7 +1714,7 @@ fn sp_3uxw41_an_unblocked_sifted_member_with_no_round_open_is_admissible() {
 #[test]
 fn sp_3uxw41_a_repo_with_its_rounds_at_max_open_records_nothing_admissible() {
     let mut s = Snapshot { repos: [("spira".to_string(), repo(vec![member("sp-c", "t3")]))].into(), now_ms: NOW };
-    s.repos.get_mut("spira").unwrap().open_round = Some(Round { id: "r9".into(), members: vec!["sp-a".into()], head: "h0".into(), worktree: "/w".into(), driven: true, phase: "certifying".into(), ..Round::default() });
+    s.repos.get_mut("spira").unwrap().open_round = Some(Round { id: "r9".into(), members: vec!["sp-a".into()], head: "h0".into(), worktree: "w".into(), driven: true, phase: "certifying".into(), ..Round::default() });
     let mut before = driving(State::Certifying, "spira.c3");
     before.repos.get_mut("spira").unwrap().admissible = vec!["sp-c".into()];
     let (carry, _) = decide(&before, &s);
@@ -1734,7 +1734,7 @@ fn driverless_carry() -> Carry {
 }
 
 fn driverless_snap(driven: bool) -> Snapshot {
-    let round = Round { id: "r9".into(), members: vec!["sp-a".into(), "sp-b".into()], head: "new".into(), worktree: "/w".into(), phase: "attributing".into(), driven, ..Round::default() };
+    let round = Round { id: "r9".into(), members: vec!["sp-a".into(), "sp-b".into()], head: "new".into(), worktree: "w".into(), phase: "attributing".into(), driven, ..Round::default() };
     Snapshot { repos: [("spira".to_string(), Repo { open_round: Some(round), live_legs: Some(vec![]), ..busy().repos["spira"].clone() })].into(), now_ms: NOW }
 }
 

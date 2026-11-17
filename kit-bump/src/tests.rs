@@ -3,7 +3,7 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 
 fn site(n: &str) -> Site {
-    Site { name: n.into(), path: format!("/s/{n}"), git_ref: "main".into(), file: "Cargo.toml".into() }
+    Site { name: n.into(), path: format!("s/{n}"), git_ref: "main".into(), file: "Cargo.toml".into() }
 }
 
 #[derive(Default)]

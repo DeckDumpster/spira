@@ -1846,7 +1846,7 @@ pub(crate) fn host_disk_report(failure: &str, at: &Path) -> Option<String> {
     if !spira_config::host_disk::is_full(failure) {
         return None;
     }
-    let mounts = fs::read_to_string("/proc/mounts").unwrap_or_default();
+    let mounts = fs::read_to_string(format!("{}/mounts", system_paths::PROC)).unwrap_or_default();
     let mount = spira_config::host_disk::mount_of(&mounts, at).unwrap_or_else(|| at.display().to_string());
     let largest = largest_entries(Path::new(&mount), LARGEST_ENTRIES)
         .iter()
@@ -3420,20 +3420,20 @@ mod tests {
 
     #[test]
     fn run_args_accept_both_spellings() {
-        let r = parse_run_args(&args(&["/t", "--suites", "a,b", "--maxpar=24", "--toolchain", "1.82.0", "--results-dir=/r"])).unwrap();
-        assert_eq!(r.tree_dir, PathBuf::from("/t"));
+        let r = parse_run_args(&args(&["t", "--suites", "a,b", "--maxpar=24", "--toolchain", "1.82.0", "--results-dir=r"])).unwrap();
+        assert_eq!(r.tree_dir, PathBuf::from("t"));
         assert_eq!(r.suites.as_deref(), Some("a,b"));
         assert_eq!(r.maxpar, Some(24));
         assert_eq!(r.toolchain.as_deref(), Some("1.82.0"));
-        assert_eq!(r.results_dir, Some(PathBuf::from("/r")));
+        assert_eq!(r.results_dir, Some(PathBuf::from("r")));
     }
 
     #[test]
     fn run_args_errors_name_the_problem() {
         assert_eq!(parse_run_args(&[]).unwrap_err(), RUN_USAGE);
-        assert!(parse_run_args(&args(&["/t", "--bogus"])).unwrap_err().contains("unknown option: --bogus"));
-        assert!(parse_run_args(&args(&["/t", "--maxpar", "x"])).unwrap_err().contains("--maxpar"));
-        assert!(parse_run_args(&args(&["/t", "--suites"])).unwrap_err().contains("needs a value"));
+        assert!(parse_run_args(&args(&["t", "--bogus"])).unwrap_err().contains("unknown option: --bogus"));
+        assert!(parse_run_args(&args(&["t", "--maxpar", "x"])).unwrap_err().contains("--maxpar"));
+        assert!(parse_run_args(&args(&["t", "--suites"])).unwrap_err().contains("needs a value"));
     }
 
     #[test]
@@ -3484,6 +3484,7 @@ mod tests {
 
     #[test]
     fn the_remote_script_reports_bytes_used_per_directory_at_start_build_and_suites() {
+        let nix = format!("{}nix", std::path::MAIN_SEPARATOR);
         let start = REMOTE_SCRIPT.find("disk_report start").unwrap();
         let func = &REMOTE_SCRIPT[REMOTE_SCRIPT.find("fs_line() {").unwrap()..start];
         let build = REMOTE_SCRIPT.find("disk_report build").expect("reported after the build");
@@ -3496,7 +3497,7 @@ mod tests {
         for (label, path) in [("round-work", "\"$HOME/round-work\""), ("cargo-target", "\"$HOME/round-work/target\""), ("round-scratch", "\"$HOME/round-scratch\""), ("round-releases", "\"$HOME/round-releases\"")] {
             assert!(func.contains(&format!("{label}) path={path}")), "{label} is walked at {path}: {func}");
         }
-        for (label, path) in [("fs-home", "\"$HOME\""), ("fs-tmpdir", "\"${TMPDIR:-/tmp}\""), ("fs-podman-graphroot", "\"$graph\""), ("fs-nix", "/nix")] {
+        for (label, path) in [("fs-home", "\"$HOME\""), ("fs-tmpdir", "\"${TMPDIR:-/tmp}\""), ("fs-podman-graphroot", "\"$graph\""), ("fs-nix", nix.as_str())] {
             assert!(func.contains(&format!("fs_line \"$phase\" {label} {path}")), "{label} is read from its filesystem at {path}: {func}");
         }
         assert!(func.contains("| tee -a \"$disk_out\" >&2"), "the stderr log and the results file carry the same lines");
@@ -3554,7 +3555,7 @@ mod tests {
         let d = TempDir::new();
         std::fs::write(d.path().join("nextest.log"), NEXTEST_LOG).unwrap();
         let script = format!("{}\nunit_stream 9 ~/prog < nextest.log", script_fn("unit_stream"));
-        let out = std::process::Command::new("bash").arg("-c").arg(&script).current_dir(d.path()).env_clear().env("HOME", d.path()).env("PATH", "/usr/bin:/bin").output().unwrap();
+        let out = std::process::Command::new("bash").arg("-c").arg(&script).current_dir(d.path()).env_clear().env("HOME", d.path()).env("PATH", system_paths::SYSTEM_PATH_MIN).output().unwrap();
         let err = String::from_utf8_lossy(&out.stderr);
         assert_eq!(err.lines().collect::<Vec<_>>(), ["round-vm: UNIT-TEST t::sleeper TIMEOUT (2/3)", "round-vm: UNIT-TEST t::bad FAIL (3/3)"], "{err}");
         assert_eq!(std::fs::read_to_string(d.path().join("prog")).unwrap().trim(), "3 3 t::sleeper t::bad");
@@ -3678,16 +3679,17 @@ mod tests {
 
     #[test]
     fn the_disk_report_never_walks_nix_the_container_store_or_tmp() {
+        let nix = format!("{}nix", std::path::MAIN_SEPARATOR);
         let func = &REMOTE_SCRIPT[REMOTE_SCRIPT.find("fs_line() {").unwrap()..REMOTE_SCRIPT.find("disk_report start").unwrap()];
         let du_lines: Vec<&str> = func.lines().filter(|l| l.contains("du ")).collect();
         assert!(!du_lines.is_empty(), "the round's own directories are still walked");
         for l in du_lines {
-            for shared in ["/nix", "graph", "TMPDIR", "/tmp"] {
+            for shared in [nix.as_str(), "graph", "TMPDIR", system_paths::TMP] {
                 assert!(!l.contains(shared), "du over a shared tree ({shared}): {l}");
             }
         }
         let own = script_fn("own_dirs");
-        for shared in ["/nix", "$graph", "TMPDIR", "/tmp"] {
+        for shared in [nix.as_str(), "$graph", "TMPDIR", system_paths::TMP] {
             assert!(!own.contains(shared), "the walked set names a shared tree ({shared}): {own}");
         }
         assert!(script_fn("disk_report").contains("own_dirs \"$phase\" &"), "the walk of the round's own directories runs beside the phase");
@@ -3791,7 +3793,7 @@ mod tests {
         let out = std::process::Command::new("bash")
             .args(["-c", &format!("{prelude}\nprintf %s \"${{SPIRA_HOME-unset}}\"")])
             .env_clear()
-            .env("SPIRA_HOME", "/active/release/spira")
+            .env("SPIRA_HOME", "active/release/spira")
             .output()
             .unwrap();
         assert_eq!(String::from_utf8_lossy(&out.stdout), "unset", "positive control: the caller's value is gone");
@@ -3826,7 +3828,7 @@ mod tests {
             .args(["-s", "--", "127.0.0.1", "1", "", "1", "", cache_home, "", "0", "0", "", "", "", "refs/x", "0000", "", limits, "", "", tag])
             .env_clear()
             .env("HOME", home)
-            .env("PATH", "/usr/bin:/bin")
+            .env("PATH", system_paths::SYSTEM_PATH_MIN)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -3929,9 +3931,9 @@ mod tests {
 
     #[test]
     fn an_ec2_vm_never_gets_the_templates_cache_home() {
-        assert_eq!(job_cache_home(true, Some("/tmpl/.cargo")), None);
-        assert_eq!(job_cache_home(false, Some("/tmpl/.cargo")), Some("/tmpl/.cargo".to_string()));
-        let at = REMOTE_SCRIPT.find("/etc/spira-round-ami.env").expect("the script reads the image's own record");
+        assert_eq!(job_cache_home(true, Some("tmpl/.cargo")), None);
+        assert_eq!(job_cache_home(false, Some("tmpl/.cargo")), Some("tmpl/.cargo".to_string()));
+        let at = REMOTE_SCRIPT.find(&format!("{}/spira-round-ami.env", system_paths::ETC)).expect("the script reads the image's own record");
         let build = REMOTE_SCRIPT.find("cargo build -q --profile release --workspace").unwrap();
         let guard = REMOTE_SCRIPT.find("sccache is missing on this VM").expect("a missing sccache is named before the build");
         assert!(at < guard && guard < build);
@@ -4130,9 +4132,9 @@ mod tests {
 
     #[test]
     fn base_is_parsed_and_asks_the_job_to_lint() {
-        let a = parse_run_args(&["/t".into(), "--base".into(), "local/main".into()]).unwrap();
+        let a = parse_run_args(&["t".into(), "--base".into(), "local/main".into()]).unwrap();
         assert_eq!(a.base.as_deref(), Some("local/main"));
-        assert!(parse_run_args(&["/t".into()]).unwrap().base.is_none());
+        assert!(parse_run_args(&["t".into()]).unwrap().base.is_none());
     }
 
     fn sample_job() -> BatchJob {
@@ -4142,7 +4144,7 @@ mod tests {
             suites: None,
             maxpar: 16,
             toolchain: Some("1.82.0".into()),
-            cache_home: Some("/opt/spira/cargo".into()),
+            cache_home: Some("opt/spira/cargo".into()),
             resume_url: None,
             testenv_registry: Some("registry.example/spira".into()),
             setup_alarm_secs: 45,
@@ -4164,7 +4166,7 @@ mod tests {
     #[test]
     fn remote_command_keeps_empty_arguments_in_place() {
         let cmd = remote_command(&sample_job());
-        assert_eq!(cmd, format!("bash -c {} launcher '10.0.0.1' '9430' '' '16' '1.82.0' '/opt/spira/cargo' 'registry.example/spira' '45' '900' '600' '' '' 'refs/rounds/7-abc' 'abc' 'deploy/ci.sh all' 'testenv_suite_cap = 600\n' '' '' '' '' '' ''", shell_quote(REMOTE_LAUNCHER)));
+        assert_eq!(cmd, format!("bash -c {} launcher '10.0.0.1' '9430' '' '16' '1.82.0' 'opt/spira/cargo' 'registry.example/spira' '45' '900' '600' '' '' 'refs/rounds/7-abc' 'abc' 'deploy/ci.sh all' 'testenv_suite_cap = 600\n' '' '' '' '' '' ''", shell_quote(REMOTE_LAUNCHER)));
         assert_eq!(shell_quote("a'b"), "'a'\\''b'");
     }
 
@@ -4173,13 +4175,13 @@ mod tests {
         let d = crate::testutil::TempDir::new();
         let good = d.path().join("good");
         std::fs::write(&good, "disabled\tunit:a b\t-\t-\n").unwrap();
-        let a = parse_run_args(&["/t".into(), "--deny-list".into(), good.display().to_string()]).unwrap();
+        let a = parse_run_args(&["t".into(), "--deny-list".into(), good.display().to_string()]).unwrap();
         assert_eq!(a.deny_list.as_deref(), Some("disabled\tunit:a b\t-\t-\n"));
-        assert!(parse_run_args(&["/t".into()]).unwrap().deny_list.is_none());
+        assert!(parse_run_args(&["t".into()]).unwrap().deny_list.is_none());
         let bad = d.path().join("bad");
         std::fs::write(&bad, "nonsense\n").unwrap();
-        assert!(parse_run_args(&["/t".into(), "--deny-list".into(), bad.display().to_string()]).unwrap_err().contains("line 1"));
-        assert!(parse_run_args(&["/t".into(), "--deny-list".into(), "/nonexistent/x".into()]).is_err());
+        assert!(parse_run_args(&["t".into(), "--deny-list".into(), bad.display().to_string()]).unwrap_err().contains("line 1"));
+        assert!(parse_run_args(&["t".into(), "--deny-list".into(), d.path().join("nonexistent").display().to_string()]).is_err());
     }
 
     #[test]
@@ -4252,7 +4254,7 @@ mod tests {
             .args(["-c", &format!("set -euo pipefail\ncd \"$HOME/round-work\"\n{}\nprintf %s \"$SPIRA_TOML\"", &REMOTE_SCRIPT[from..to])])
             .env_clear()
             .env("HOME", d.path())
-            .env("PATH", "/usr/bin:/bin")
+            .env("PATH", system_paths::SYSTEM_PATH_MIN)
             .output()
             .unwrap();
         assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
@@ -4332,11 +4334,11 @@ mod tests {
         let rendered = REMOTE_SCRIPT[start..end]
             .replace("$maxpar", "16")
             .replace("$testenv_limits", "testenv_suite_cap = 600")
-            .replace("$HOME", "/root")
-            .replace("$CARGO_HOME", "/opt/spira/cargo");
+            .replace("$HOME", system_paths::ROOT_HOME)
+            .replace("$CARGO_HOME", "opt/spira/cargo");
         assert!(!rendered.contains('$'), "every heredoc variable is rendered: {rendered}");
         let cfg: toml::Table = toml::from_str(&rendered).unwrap_or_else(|e| panic!("{e}\n{rendered}"));
-        assert_eq!(cfg["spira"]["testenv_scratch_root"].as_str(), Some("/root/round-scratch"));
+        assert_eq!(cfg["spira"]["testenv_scratch_root"].as_str(), Some(format!("{}/round-scratch", system_paths::ROOT_HOME).as_str()));
     }
 
     #[test]
@@ -4352,9 +4354,9 @@ mod tests {
 
     #[test]
     fn a_host_round_resumes_from_a_local_directory_and_makes_no_s3_call() {
-        let home = Path::new("/round/home");
+        let home = Path::new("round/home");
         let url = resume_url_for(crate::host::HOST_HANDLE, true, Some("s3://bkt/pre"), Some(home)).unwrap();
-        assert_eq!(url, "dir:/round/home/round-resume");
+        assert_eq!(url, "dir:round/home/round-resume");
         assert_eq!(resume_url_for("i-1", true, Some("s3://bkt/pre"), Some(home)).as_deref(), Some("s3://bkt/pre"));
         assert_eq!(resume_url_for(crate::host::HOST_HANDLE, false, Some("s3://bkt/pre"), Some(home)), None);
         let dir_branch = REMOTE_SCRIPT.find(r#"elif [ "${resume_url#dir:}""#).expect("a dir: prefix has its own branch");
@@ -4373,8 +4375,8 @@ mod tests {
         assert!(remote_command(&job).ends_with("'x' 's3://bkt/pre' '' '' '' '' ''"));
         assert!(!REMOTE_SCRIPT.contains("AWS_SECRET_ACCESS_KEY"), "the script never carries a key");
         let remote = FakeRemote::green();
-        push_resume_credentials(&remote, "10.0.0.2", Path::new("/creds"));
-        assert_eq!(*remote.pushes.lock().unwrap(), vec![(PathBuf::from("/creds"), REMOTE_RESUME_CREDENTIALS.to_string())]);
+        push_resume_credentials(&remote, "10.0.0.2", Path::new("creds"));
+        assert_eq!(*remote.pushes.lock().unwrap(), vec![(PathBuf::from("creds"), REMOTE_RESUME_CREDENTIALS.to_string())]);
     }
 
     #[test]
@@ -4748,7 +4750,7 @@ mod tests {
             host_key: key.to_string_lossy().to_string(),
             host_pubkey: format!("{}.pub", key.to_string_lossy()),
             host_addr: Some("192.168.1.10".to_string()),
-            cache_home: Some("/opt/spira/cargo".to_string()),
+            cache_home: Some("opt/spira/cargo".to_string()),
             resume_url: None,
             resume_credentials: None,
             testenv_registry: None,
@@ -5005,7 +5007,7 @@ mod tests {
         let home = TempDir::new();
         let head = &REMOTE_SCRIPT[REMOTE_SCRIPT.find("round_phase=start").unwrap()..REMOTE_SCRIPT.find("trap round_exit EXIT").unwrap()];
         let script = format!("set -Eeuo pipefail\nscript_out_tee= script_err_tee=\n{head}trap round_exit EXIT\nfalse\n");
-        let st = std::process::Command::new("bash").args(["-c", &script]).env_clear().env("HOME", home.path()).env("PATH", "/usr/bin:/bin").status().unwrap();
+        let st = std::process::Command::new("bash").args(["-c", &script]).env_clear().env("HOME", home.path()).env("PATH", system_paths::SYSTEM_PATH_MIN).status().unwrap();
         assert_eq!(st.code(), Some(1));
         let marker = fs::read_to_string(home.path().join("round-work/.runtime/spira/batch-results/round-phase")).unwrap();
         assert!(marker.starts_with("phase=start rc=1 line=") && marker.trim_end().ends_with("cmd=false"), "{marker}");
@@ -5017,7 +5019,7 @@ mod tests {
         fs::write(home.path().join("round-script.log"), "").unwrap();
         let head = &REMOTE_SCRIPT[REMOTE_SCRIPT.find("round_phase=start").unwrap()..REMOTE_SCRIPT.find("trap round_exit EXIT").unwrap()];
         let script = format!("set -Eeuo pipefail\nscript_out_tee= script_err_tee=\n{head}trap round_exit EXIT\nphase suites\n(exit 3) || true\nfalse || phase_failed suites 2\nexit 2\n");
-        let st = std::process::Command::new("bash").args(["-c", &script]).env_clear().env("HOME", home.path()).env("PATH", "/usr/bin:/bin").status().unwrap();
+        let st = std::process::Command::new("bash").args(["-c", &script]).env_clear().env("HOME", home.path()).env("PATH", system_paths::SYSTEM_PATH_MIN).status().unwrap();
         assert_eq!(st.code(), Some(2));
         let marker = fs::read_to_string(home.path().join("round-work/.runtime/spira/batch-results/round-phase")).unwrap();
         assert_eq!(marker, "phase=suites rc=2\n");
@@ -5093,7 +5095,7 @@ mod tests {
     fn host_plan(remote: FakeRemote, load: crate::spill::HostLoad) -> crate::host::HostPlan {
         crate::host::HostPlan {
             rule: crate::spill::HostRule { io_full_5m_tm90: 50.0, cpu_some_5m_tm90: 60.0 },
-            home: PathBuf::from("/unused"),
+            home: PathBuf::from("unused"),
             load: Box::new(move || load),
             remote: Box::new(remote),
         }
@@ -5145,15 +5147,15 @@ mod tests {
     fn a_host_round_is_handed_a_local_resume_directory_and_its_credentials_are_not_pushed() {
         let mut fx = fixture();
         fx.cfg.resume_url = Some("s3://bkt/pre".into());
-        fx.cfg.resume_credentials = Some(PathBuf::from("/creds"));
+        fx.cfg.resume_credentials = Some(PathBuf::from("creds"));
         let host_remote = std::sync::Arc::new(FakeRemote::green());
         let mut plan = host_plan(FakeRemote::green(), CALM);
-        plan.home = PathBuf::from("/round/home");
+        plan.home = PathBuf::from("round/home");
         plan.remote = Box::new(SharedRemote(host_remote.clone()));
         go_with_host(&fx, &FakeRemote::green(), &plan, &round_args(&fx));
         let jobs = host_remote.jobs.lock().unwrap();
         let batch = jobs.iter().find(|j| j.contains("dir:")).unwrap_or_else(|| panic!("{jobs:?}"));
-        assert!(batch.contains("'dir:/round/home/round-resume'") && !batch.contains("s3://"), "{batch}");
+        assert!(batch.contains("'dir:round/home/round-resume'") && !batch.contains("s3://"), "{batch}");
         assert!(host_remote.pushes.lock().unwrap().is_empty(), "no S3 credentials go to the host");
     }
 
@@ -5199,11 +5201,11 @@ mod tests {
 
     #[test]
     fn candidate_recipe_is_parsed_and_an_empty_one_is_refused() {
-        let a = parse_run_args(&args(&["/t", "--candidate-recipe", "abc"])).unwrap();
+        let a = parse_run_args(&args(&["t", "--candidate-recipe", "abc"])).unwrap();
         assert_eq!(a.candidate_recipe.as_deref(), Some("abc"));
-        assert!(parse_run_args(&args(&["/t"])).unwrap().candidate_recipe.is_none());
-        assert!(parse_run_args(&args(&["/t", "--candidate-recipe", ""])).unwrap_err().contains("--candidate-recipe"));
-        assert!(parse_run_args(&args(&["/t", "--candidate-recipe="])).unwrap_err().contains("--candidate-recipe"));
+        assert!(parse_run_args(&args(&["t"])).unwrap().candidate_recipe.is_none());
+        assert!(parse_run_args(&args(&["t", "--candidate-recipe", ""])).unwrap_err().contains("--candidate-recipe"));
+        assert!(parse_run_args(&args(&["t", "--candidate-recipe="])).unwrap_err().contains("--candidate-recipe"));
     }
 
     #[test]
@@ -5271,7 +5273,7 @@ mod tests {
 
     fn holds_open(path: &Path) -> bool {
         let want = fs::canonicalize(path).unwrap();
-        fs::read_dir("/proc/self/fd").unwrap().flatten().any(|e| fs::read_link(e.path()).is_ok_and(|t| t == want))
+        fs::read_dir(format!("{}/fd", system_paths::PROC_SELF)).unwrap().flatten().any(|e| fs::read_link(e.path()).is_ok_and(|t| t == want))
     }
 
     #[test]

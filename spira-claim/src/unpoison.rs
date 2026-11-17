@@ -645,7 +645,7 @@ pub fn live_stop_holder(run: &std::path::Path, id: &str, why: &str, own_dwarf: b
     if own_dwarf {
         return Ok(());
     }
-    stop_occupants_via(std::path::Path::new("/proc"), &run.join("worktree").join(id), units, &|| {
+    stop_occupants_via(std::path::Path::new(system_paths::PROC), &run.join("worktree").join(id), units, &|| {
         // waits-on: worktree occupants exiting; cap 20 polls
         std::thread::sleep(std::time::Duration::from_millis(500))
     })

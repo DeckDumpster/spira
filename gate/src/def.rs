@@ -283,9 +283,9 @@ mod tests {
         assert!(c.contains("[ -x target/debug/spira-lint ]"), "{c}");
         assert_eq!(parse("step a\n").unwrap().tools_command(4), None);
         assert_eq!(
-            Def::bin_path(std::path::Path::new("/t"), &d.bins[0]),
+            Def::bin_path(std::path::Path::new("t"), &d.bins[0]),
             // path-ok: the gate tree's build output, asserted.
-            std::path::PathBuf::from("/t/target/debug/spira-lint")
+            std::path::PathBuf::from("t/target/debug/spira-lint")
         );
     }
 

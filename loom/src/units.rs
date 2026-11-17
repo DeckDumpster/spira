@@ -227,7 +227,10 @@ fn names_spira(s: &str) -> bool {
 }
 
 fn os_owned(name: &str, l: &Live) -> bool {
-    !names_spira(name) && !names_spira(&l.description) && ["/usr/", "/lib/"].iter().any(|p| l.fragment.starts_with(p))
+    !names_spira(name) && !names_spira(&l.description) && {
+        let frag = std::path::Path::new(&l.fragment);
+        frag.is_absolute() && frag.components().nth(1).is_some_and(|c| ["usr", "lib"].iter().any(|d| c.as_os_str() == *d)) && frag.components().count() > 2
+    }
 }
 
 fn off(file: &str) -> bool {
@@ -915,8 +918,8 @@ mod tests {
         let rs = rows(
             &["spira-a.service", "snapd.service", "vendor.service", "old-script.service", "loop.service", "flappy.service", "off.service", "masked.service", "spira-vendor.service"],
             &[
-                ("vendor.service", lv("inactive", "dead", |l| l.fragment = "/usr/lib/systemd/user/vendor.service".into())),
-                ("spira-vendor.service", lv("inactive", "dead", |l| l.fragment = "/usr/lib/systemd/user/x.service".into())),
+                ("vendor.service", lv("inactive", "dead", |l| l.fragment = format!("{}/vendor.service", system_paths::USR_LIB_SYSTEMD_SYSTEM))),
+                ("spira-vendor.service", lv("inactive", "dead", |l| l.fragment = format!("{}/x.service", system_paths::USR_LIB_SYSTEMD_SYSTEM))),
                 ("old-script.service", lv("failed", "failed", |l| l.fixed_at = Some(NOW - DAY))),
                 ("loop.service", lv("active", "running", |_| {})),
                 ("flappy.service", lv("active", "running", |l| l.restarts = RESTART_FLAP)),
@@ -949,10 +952,12 @@ mod tests {
 
     #[test]
     fn show_parses_description_restarts_and_script_paths() {
-        let m = parse_show("Id=a.service\nDescription=Spira thing\nNRestarts=4\nFragmentPath=/h/a.service\nExecStart={ path=/bin/bash ; argv[]=/bin/bash /h/run.sh -x ; ignore_errors=no }\n");
+        let root = testkit::TempDir::new("units-show");
+        let (frag, script) = (root.join("h/a.service"), root.join("h/run.sh"));
+        let m = parse_show(&format!("Id=a.service\nDescription=Spira thing\nNRestarts=4\nFragmentPath={}\nExecStart={{ path={bash} ; argv[]={bash} {} -x ; ignore_errors=no }}\n", frag.display(), script.display(), bash = system_paths::BIN_BASH));
         let l = &m["a.service"];
-        assert_eq!((l.description.as_str(), l.restarts, l.fragment.as_str()), ("Spira thing", 4, "/h/a.service"));
-        assert_eq!(l.exec_paths, vec!["/bin/bash", "/h/run.sh"]);
+        assert_eq!((l.description.as_str(), l.restarts, l.fragment.as_str()), ("Spira thing", 4, frag.to_str().unwrap()));
+        assert_eq!(l.exec_paths, vec![system_paths::BIN_BASH.to_string(), script.display().to_string()]);
     }
 
     #[test]

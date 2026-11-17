@@ -254,7 +254,7 @@ impl Settings {
         let world = World {
             cockpit_session: view_session,
             tmux: PathBuf::from("tmux"),
-            proc_dir: PathBuf::from("/proc"),
+            proc_dir: PathBuf::from(system_paths::PROC),
             queue_dir: PathBuf::from(get("SPIRA_QUEUE_DIR")?),
             repo_map: PathBuf::from(get("SPIRA_REPO_MAP")?),
             home_repo,
@@ -388,15 +388,15 @@ mod tests {
     #[test]
     fn the_gh_binary_key_reaches_the_forge() {
         let base = lookup("7");
-        let gh = move |k: &str| if k == "SPIRA_GH" { Ok("/opt/gh".to_string()) } else { base(k) };
-        assert_eq!(Settings::from_lookup(&gh).unwrap().forge.gh, "/opt/gh");
+        let gh = move |k: &str| if k == "SPIRA_GH" { Ok("opt/gh".to_string()) } else { base(k) };
+        assert_eq!(Settings::from_lookup(&gh).unwrap().forge.gh, "opt/gh");
     }
 
     #[test]
     fn the_gh_config_dir_key_reaches_the_forge() {
         let base = lookup("7");
-        let dir = move |k: &str| if k == "SPIRA_BROKER_GH_CONFIG_DIR" { Ok("/gh/conf".to_string()) } else { base(k) };
-        assert_eq!(Settings::from_lookup(&dir).unwrap().forge.gh_config_dir, "/gh/conf");
+        let dir = move |k: &str| if k == "SPIRA_BROKER_GH_CONFIG_DIR" { Ok("gh/conf".to_string()) } else { base(k) };
+        assert_eq!(Settings::from_lookup(&dir).unwrap().forge.gh_config_dir, "gh/conf");
     }
 
     #[test]
@@ -408,7 +408,7 @@ mod tests {
         };
         let b = Settings::from_lookup(&distinct).unwrap().bead_sweep;
         assert_eq!((b.interval_ms, b.hold_min, b.rework_min, b.cert_min, b.wait_min, b.batch_min, b.stop_review_secs), (11_000, 12, 13, 14, 15, 16, 17));
-        assert_eq!((b.ask_label.as_str(), b.home_repo.as_str()), ("/q", "spira"));
+        assert_eq!((b.ask_label.as_str(), b.home_repo.as_str()), ("q", "spira"));
     }
 
     #[test]
@@ -416,10 +416,10 @@ mod tests {
         let s = Settings::from_lookup(&lookup("7")).unwrap();
         assert_eq!((s.view.enabled, s.view.interval_ms, s.view.forget_secs, s.world.cockpit_session.as_str()), (true, 5000, 86_400, "pit"));
         let env = |pairs: &'static [(&'static str, &'static str)]| move |k: &str| pairs.iter().find(|(n, _)| *n == k).map(|(_, v)| v.to_string());
-        let full = s.clone().with_environment(&env(&[("XDG_RUNTIME_DIR", "/run/u1"), ("COCKPIT_STATE", "/st"), ("HOME", "/h"), ("COCKPIT_FORGET_SECS", "77")])).unwrap();
-        assert_eq!((full.world.hunk_dir.as_path(), full.world.cockpit_state.as_path(), full.view.forget_secs), (std::path::Path::new("/run/u1/hunk-mcp"), std::path::Path::new("/st"), 77));
-        let home = s.clone().with_environment(&env(&[("HOME", "/h")])).unwrap();
-        assert_eq!(home.world.cockpit_state, PathBuf::from("/h/.local/state/cockpit"));
+        let full = s.clone().with_environment(&env(&[("XDG_RUNTIME_DIR", "run/u1"), ("COCKPIT_STATE", "st"), ("HOME", "h"), ("COCKPIT_FORGET_SECS", "77")])).unwrap();
+        assert_eq!((full.world.hunk_dir.as_path(), full.world.cockpit_state.as_path(), full.view.forget_secs), (std::path::Path::new("run/u1/hunk-mcp"), std::path::Path::new("st"), 77));
+        let home = s.clone().with_environment(&env(&[("HOME", "h")])).unwrap();
+        assert_eq!(home.world.cockpit_state, PathBuf::from("h/.local/state/cockpit"));
         assert!(home.world.hunk_dir.as_os_str().is_empty(), "no runtime dir is no daemon, not a guessed one");
         assert!(s.with_environment(&env(&[("COCKPIT_FORGET_SECS", "0")])).unwrap_err().contains("positive"));
     }
@@ -451,11 +451,11 @@ mod tests {
     fn each_reconciler_flow_key_reaches_its_own_field() {
         let base = lookup("7");
         let keys = ["SPIRA_RUNTIME_RECONCILER_FLOW_SECS", "SPIRA_FLOW_WINDOW_HOURS", "SPIRA_FLOW_BASELINE_HOURS", "SPIRA_FLOW_GRACE_SECS", "SPIRA_FLOW_UNOBSERVABLE_GRACE_SECS", "SPIRA_FLOW_REWORK_WINDOW_HOURS", "SPIRA_FLOW_SENTINEL_PERIOD_SECS", "SPIRA_SCOPE_LABEL", "SPIRA_DESIRED_DIR"];
-        let distinct = move |k: &str| keys.iter().position(|x| *x == k).map_or_else(|| base(k), |i| Ok(if i >= 7 { format!("/v{i}") } else { (31 + i).to_string() }));
+        let distinct = move |k: &str| keys.iter().position(|x| *x == k).map_or_else(|| base(k), |i| Ok(if i >= 7 { format!("v{i}") } else { (31 + i).to_string() }));
         let s = Settings::from_lookup(&distinct).unwrap();
         let f = &s.reconciler_flow;
         assert_eq!((f.interval_ms, f.window_hours, f.baseline_hours, f.grace_secs, f.unobservable_grace_secs, f.rework_window_hours, f.sentinel_timer_secs), (31_000, 32.0, 33.0, 34, 35, 36.0, 37));
-        assert_eq!((s.world.scope_label.as_str(), s.world.desired_dir.to_str(), s.world.export_bin.as_str()), ("/v7", Some("/v8"), "tsd-lifecycle-export"));
+        assert_eq!((s.world.scope_label.as_str(), s.world.desired_dir.to_str(), s.world.export_bin.as_str()), ("v7", Some("v8"), "tsd-lifecycle-export"));
     }
 
     #[test]
@@ -470,7 +470,7 @@ mod tests {
         let s = Settings::from_lookup(&lookup("7")).unwrap();
         let modes: Vec<(String, runtime::Mode)> = crate::registrations(&s).into_iter().map(|r| (r.name, r.mode)).filter(|(_, m)| *m == runtime::Mode::Observe).collect();
         assert_eq!(modes, [("asks".to_string(), runtime::Mode::Observe), ("view".to_string(), runtime::Mode::Observe)]);
-        assert_eq!(s.control_socket, PathBuf::from("/d/control.sock"));
+        assert_eq!(s.control_socket, PathBuf::from("d/control.sock"));
         let base = lookup("7");
         let short = move |k: &str| if k == crate::modes::KEY { Ok("heartbeat=act".to_string()) } else { base(k) };
         let e = Settings::from_lookup(&short).unwrap_err();
@@ -514,7 +514,7 @@ mod tests {
     fn every_value_comes_from_the_lookup_and_a_bad_number_is_refused() {
         let s = Settings::from_lookup(&lookup("7")).unwrap();
         assert_eq!((s.heartbeat_secs, s.stall_limit, s.heartbeat_url.as_str()), (7, 3, "http://127.0.0.1:9/ping"));
-        assert_eq!(s.lc_socket, PathBuf::from("/d/sock"));
+        assert_eq!(s.lc_socket, PathBuf::from("d/sock"));
         assert_eq!(s.metrics_endpoint.as_deref(), Some("127.0.0.1:9"));
         let unset = |k: &str| if k == "SPIRA_METRICS_ENDPOINT" { Ok("  ".to_string()) } else { lookup("7")(k) };
         assert_eq!(Settings::from_lookup(&unset).unwrap().metrics_endpoint, None, "a blank endpoint disables the push");

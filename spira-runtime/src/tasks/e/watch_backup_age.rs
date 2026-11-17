@@ -252,7 +252,7 @@ mod tests {
     #[test]
     fn a_stale_drill_turns_the_aggregate_red() {
         let snap = Snapshot::Dbs(vec![("a".into(), Db::Ok { age: 1 }), ("drill:a".into(), Db::Stale { age: 50 * H })]);
-        let cfg = Config { url: "u".into(), db: "a".into(), max_age_s: 1, run: "/r".into() };
+        let cfg = Config { url: "u".into(), db: "a".into(), max_age_s: 1, run: "r".into() };
         let (carry, fx) = decide(&Carry::Ok, &snap, 0, &cfg);
         assert_eq!((carry, fx.len()), (Carry::Red, 1));
     }

@@ -19,7 +19,7 @@ const MIN: u64 = 60_000;
 const C1: &str = "1111111111111111111111111111111111111111";
 
 fn config() -> Config {
-    Config { run: "/r".into() }
+    Config { run: "r".into() }
 }
 
 fn suites(n: usize) -> Vec<String> {

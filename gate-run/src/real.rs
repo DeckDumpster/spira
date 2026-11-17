@@ -113,11 +113,11 @@ impl World for Real {
     }
 
     fn proc_exists(&self, pid: i64) -> bool {
-        Path::new(&format!("/proc/{pid}")).exists()
+        Path::new(&format!("{}/{pid}", system_paths::PROC)).exists()
     }
 
     fn proc_cmdline(&self, pid: i64) -> Option<String> {
-        let raw = fs::read(format!("/proc/{pid}/cmdline")).ok()?;
+        let raw = fs::read(format!("{}/{pid}/cmdline", system_paths::PROC)).ok()?;
         Some(
             raw.split(|&b| b == 0)
                 .filter(|s| !s.is_empty())
@@ -128,7 +128,7 @@ impl World for Real {
     }
 
     fn proc_pgid(&self, pid: i64) -> Option<i64> {
-        let stat = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+        let stat = fs::read_to_string(format!("{}/{pid}/stat", system_paths::PROC)).ok()?;
         // Field 2 (comm) can contain spaces/parens, so split after its closing ')'.
         let after = stat.rsplit_once(')')?.1;
         after.split_whitespace().nth(2)?.parse().ok()
@@ -136,7 +136,7 @@ impl World for Real {
 
     fn list_other_procs(&self, exclude: i64) -> Vec<(i64, String)> {
         let mut out = Vec::new();
-        let Ok(entries) = fs::read_dir("/proc") else { return out };
+        let Ok(entries) = fs::read_dir(system_paths::PROC) else { return out };
         for e in entries.flatten() {
             let name = e.file_name();
             let Some(pid_str) = name.to_str() else { continue };
@@ -222,7 +222,7 @@ mod vtime_tests {
 
     #[test]
     fn world_now_honours_spira_now() {
-        let got = spira_config::vtime::with_now_for_test(1_900_000_000, || Real::new(std::path::PathBuf::from("/nonexistent")).now());
+        let got = spira_config::vtime::with_now_for_test(1_900_000_000, || Real::new(testkit::TempDir::new("gate-run-vtime").join("nonexistent")).now());
         assert_eq!(got, 1_900_000_000);
     }
 }

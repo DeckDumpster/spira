@@ -303,7 +303,7 @@ mod tests {
     fn cfg() -> MailWake {
         MailWake {
             readers: readers("# comment\nconcierge=concierge.sh wake\nops = ops-wake --quiet\n\nbad\nconcierge=second\n"),
-            mail_root: PathBuf::from("/m"),
+            mail_root: PathBuf::from("m"),
             settle_ms: 2_000,
             settle_event_ms: 0,
             backoff_ms: vec![15_000, 60_000, 300_000, 900_000],
@@ -326,7 +326,7 @@ mod tests {
 
     #[test]
     fn unread_mail_is_one_wake_with_the_scripts_line_and_nothing_unread_is_silence() {
-        let look = Look { mailbox: "concierge".into(), attempt: 2, new_dir: "/m/concierge/new".into() };
+        let look = Look { mailbox: "concierge".into(), attempt: 2, new_dir: "m/concierge/new".into() };
         let w = decide(&cfg(), &look, Unread { count: 3, oldest_age_s: 42 }).unwrap();
         assert_eq!(w.argv, vec!["concierge.sh", "wake", "You have 3 unread messages in concierge, oldest 42s old — mail list concierge --unread"]);
         assert_eq!(w.attempt, 2);
@@ -364,7 +364,7 @@ mod tests {
         let [Command::Probe(spec)] = &cmds[..] else { panic!("one look") };
         assert_eq!(spec.name, OBSERVE);
         let look: Look = serde_json::from_str(&spec.input).unwrap();
-        assert_eq!(look.new_dir, PathBuf::from("/m/concierge/new"));
+        assert_eq!(look.new_dir, PathBuf::from("m/concierge/new"));
 
         let req = event(&s, "r1", 3_000, EventKind::new(EFFECT_REQUESTED, &serde_json::json!({ "spec": spec, "deadline_at": 8_000 }).to_string()), Some("d1"));
         view.push(&req);

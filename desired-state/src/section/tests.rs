@@ -73,63 +73,63 @@ fn unknown_fields_kinds_and_api_versions_are_refused_naming_the_field() {
     v["spec"] = json!({ "depth_max": { "value": 4.0, "statute": "law-x", "x": 1 } });
     assert!(refused(v).field.starts_with("spec."));
 
-    assert_eq!(refused(with(good(), "/kind", json!("Warp"))).field, "kind");
-    assert_eq!(refused(with(good(), "/apiVersion", json!("spira/v2"))).field, "apiVersion");
+    assert_eq!(refused(with(good(), "/kind", json!("Warp"))).field, "kind"); // not a path: JSON pointer
+    assert_eq!(refused(with(good(), "/apiVersion", json!("spira/v2"))).field, "apiVersion"); // not a path: JSON pointer
 }
 
 #[test]
 fn andon_is_refused_by_name_until_its_design_registers_it() {
-    let r = refused(with(good(), "/kind", json!("Andon")));
+    let r = refused(with(good(), "/kind", json!("Andon"))); // not a path: JSON pointer
     assert_eq!(r.field, "kind");
     assert!(r.rule.contains("Andon"), "{r}");
 }
 
 #[test]
 fn a_horizon_shorter_than_the_moved_fields_window_plus_target_latency_is_refused() {
-    let v = with(good(), "/actions/0/moves", json!("wedged"));
-    let r = refused(with(v.clone(), "/actions/0/horizon", json!("5m")));
+    let v = with(good(), "/actions/0/moves", json!("wedged")); // not a path: JSON pointer
+    let r = refused(with(v.clone(), "/actions/0/horizon", json!("5m"))); // not a path: JSON pointer
     assert_eq!((r.field.as_str(), r.code), ("actions[0].horizon", "horizon"), "{r}");
-    let ok = with(v, "/actions/0/horizon", json!("65m"));
+    let ok = with(v, "/actions/0/horizon", json!("65m")); // not a path: JSON pointer
     admit(&parse_section(&ok).unwrap()).expect("1h window + 5m latency = 65m");
 }
 
 #[test]
 fn only_bounded_steps_are_admitted() {
     for bad in ["set to 4", "rebuild", "+30", "+N", "26% fewer", "0% more", "one", "+1 SLOT", "−0", "one rebuild"] {
-        let r = refused(with(good(), "/actions/0/step", json!(bad)));
+        let r = refused(with(good(), "/actions/0/step", json!(bad))); // not a path: JSON pointer
         assert_eq!(r.code, "step", "{bad}: {r}");
     }
     for ok in ["+1", "-2", "−25", "+1 slot", "10% fewer", "25% more", "one member-at-tip"] {
-        admit(&parse_section(&with(good(), "/actions/0/step", json!(ok))).unwrap())
+        admit(&parse_section(&with(good(), "/actions/0/step", json!(ok))).unwrap()) // not a path: JSON pointer
             .unwrap_or_else(|r| panic!("{ok}: {r}"));
     }
 }
 
 #[test]
 fn stopping_an_undeclared_condition_and_a_non_numeric_moves_are_refused() {
-    let r = refused(with(good(), "/actions/0/stopping", json!(true)));
+    let r = refused(with(good(), "/actions/0/stopping", json!(true))); // not a path: JSON pointer
     assert_eq!(r.code, "stopping");
-    admit(&parse_section(&with(good(), "/actions/0/stopping", json!(false))).unwrap()).unwrap();
+    admit(&parse_section(&with(good(), "/actions/0/stopping", json!(false))).unwrap()).unwrap(); // not a path: JSON pointer
 
-    assert_eq!(refused(with(good(), "/status/conditions/0/type", json!("Lost"))).code, "condition");
-    assert_eq!(refused(with(good(), "/actions/0/addresses/0", json!("Lost"))).code, "addresses");
-    assert_eq!(refused(with(good(), "/actions/0/moves", json!("stuck"))).code, "moves");
+    assert_eq!(refused(with(good(), "/status/conditions/0/type", json!("Lost"))).code, "condition"); // not a path: JSON pointer
+    assert_eq!(refused(with(good(), "/actions/0/addresses/0", json!("Lost"))).code, "addresses"); // not a path: JSON pointer
+    assert_eq!(refused(with(good(), "/actions/0/moves", json!("stuck"))).code, "moves"); // not a path: JSON pointer
 
-    let mut v = with(good(), "/status/conditions/0/status", json!("Unknown"));
-    v = with(v, "/status/conditions/0/reason", json!(" "));
+    let mut v = with(good(), "/status/conditions/0/status", json!("Unknown")); // not a path: JSON pointer
+    v = with(v, "/status/conditions/0/reason", json!(" ")); // not a path: JSON pointer
     assert_eq!(refused(v).field, "status.conditions[0].reason");
 }
 
 #[test]
 fn ownership_revision_name_flow_and_time_fields_are_checked() {
-    assert_eq!(refused(with(good(), "/metadata/owner", json!("intruder"))).code, "owner");
-    let v = with(good(), "/metadata/resourceVersion", json!("7"));
+    assert_eq!(refused(with(good(), "/metadata/owner", json!("intruder"))).code, "owner"); // not a path: JSON pointer
+    let v = with(good(), "/metadata/resourceVersion", json!("7")); // not a path: JSON pointer
     assert_eq!(refused(v).code, "resource-version");
-    assert_eq!(refused(with(good(), "/metadata/name", json!("a/b"))).code, "name");
-    assert_eq!(refused(with(good(), "/flow/consumes/0", json!("slots"))).code, "flow");
-    assert_eq!(refused(with(good(), "/metadata/observedAt", json!("yesterday"))).code, "time");
-    assert_eq!(refused(with(good(), "/metadata/max_age", json!("15 min"))).code, "duration");
-    assert_eq!(refused(with(good(), "/status/depth_24h/window", json!("banana"))).code, "window", "an unreferenced field's window is checked too");
+    assert_eq!(refused(with(good(), "/metadata/name", json!("a/b"))).code, "name"); // not a path: JSON pointer
+    assert_eq!(refused(with(good(), "/flow/consumes/0", json!("slots"))).code, "flow"); // not a path: JSON pointer
+    assert_eq!(refused(with(good(), "/metadata/observedAt", json!("yesterday"))).code, "time"); // not a path: JSON pointer
+    assert_eq!(refused(with(good(), "/metadata/max_age", json!("15 min"))).code, "duration"); // not a path: JSON pointer
+    assert_eq!(refused(with(good(), "/status/depth_24h/window", json!("banana"))).code, "window", "an unreferenced field's window is checked too"); // not a path: JSON pointer
     let mut v = good();
     let first = v["actions"][0].clone();
     v["actions"].as_array_mut().unwrap().push(first);
@@ -190,7 +190,7 @@ fn times_and_durations_parse_in_the_one_form_this_harness_writes() {
 fn keys_and_refs_name_one_section() {
     assert_eq!(section_key("Probe", "a"), "telemetry/sections/Probe/a");
     assert_eq!(parse_ref("Probe/a"), Some(("Probe", "a")));
-    for bad in ["Probe", "Probe/", "/a", "Probe/a/b"] {
+    for bad in ["Probe", "Probe/", "/a", "Probe/a/b"] { // not a path: JSON pointer
         assert_eq!(parse_ref(bad), None, "{bad}");
     }
 }

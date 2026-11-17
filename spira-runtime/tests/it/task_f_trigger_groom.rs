@@ -23,7 +23,7 @@ fn launcher(code: &str) -> Option<&'static str> {
 }
 
 fn config() -> BTreeMap<String, String> {
-    [("SPIRA_SCOPE_LABEL", "spira"), ("SPIRA_GROOMER_LABEL", "groom"), (THRESHOLD_KEY, "5"), ("SPIRA_RUN", "/run"), ("SPIRA_HOME_REPO", "spira")].into_iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+    [("SPIRA_SCOPE_LABEL", "spira"), ("SPIRA_GROOMER_LABEL", "groom"), (THRESHOLD_KEY, "5"), ("SPIRA_RUN", "run"), ("SPIRA_HOME_REPO", "spira")].into_iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
 }
 
 fn handler() -> TriggerGroom {
@@ -119,7 +119,7 @@ fn t5_parity_a_first_run_at_threshold_files_the_groomer_bead() {
     assert_eq!(bead.priority, 3);
     assert_eq!(bead.persona.as_deref(), Some("groomer"));
     assert_eq!(bead.repo.as_deref(), Some("spira"));
-    assert!(bead.labels.contains(&"groom-trigger".to_string()) && bead.labels.contains(&"delivers:note:/run/groom.log".to_string()), "{:?}", bead.labels);
+    assert!(bead.labels.contains(&"groom-trigger".to_string()) && bead.labels.contains(&"delivers:note:run/groom.log".to_string()), "{:?}", bead.labels);
 }
 
 fn filed() -> TaskRig {

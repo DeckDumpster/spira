@@ -9,12 +9,12 @@ const NOW: u64 = 1_793_000_000_000;
 const TICK: u64 = CADENCE_MS;
 
 fn corpus(leg: &str, at: u64) -> Carry {
-    let rc = RepoCarry { state: State::Corpus, round_key: Some("k".into()), batch: Some("r9".into()), members: vec![("sp-a".into(), "t1".into())], wt: "/w".into(), base: "b1".into(), leg: Some(leg.into()), leg_at_ms: at, run: 1, ..RepoCarry::default() };
+    let rc = RepoCarry { state: State::Corpus, round_key: Some("k".into()), batch: Some("r9".into()), members: vec![("sp-a".into(), "t1".into())], wt: "w".into(), base: "b1".into(), leg: Some(leg.into()), leg_at_ms: at, run: 1, ..RepoCarry::default() };
     Carry { repos: [("spira".to_string(), rc)].into() }
 }
 
 fn snap(now_ms: u64, live: Option<Vec<String>>) -> Snapshot {
-    let repo = Repo { open_round: Some(Round { id: "r9".into(), worktree: "/w".into(), ..Round::default() }), live_legs: live, ..Repo::default() };
+    let repo = Repo { open_round: Some(Round { id: "r9".into(), worktree: "w".into(), ..Round::default() }), live_legs: live, ..Repo::default() };
     Snapshot { repos: [("spira".to_string(), repo)].into(), now_ms }
 }
 
@@ -132,7 +132,7 @@ fn each_leg_gets_its_own_restart_a_corpus_restart_does_not_spend_the_certify_leg
 
 #[test]
 fn a_round_certify_would_refuse_is_abandoned_after_the_wait_not_left_open() {
-    let mut repo = Repo { open_round: Some(Round { id: "r9".into(), worktree: "/w".into(), ..Round::default() }), unfit: Some("the round worktree is moved".into()), ..Repo::default() };
+    let mut repo = Repo { open_round: Some(Round { id: "r9".into(), worktree: "w".into(), ..Round::default() }), unfit: Some("the round worktree is moved".into()), ..Repo::default() };
     let mut acts = vec![];
     let (mut carry, mut t) = (Carry::default(), NOW);
     while t <= NOW + (Policy::default().orphan_wait_s + 60) * 1000 {
@@ -152,7 +152,7 @@ fn a_round_certify_would_refuse_is_abandoned_after_the_wait_not_left_open() {
 /// Observes `id` open, undriven and unfit from `from` until it is abandoned, as the existing
 /// abandon test does; the open round is gone once an ABANDON is asked.
 fn abandon_undriven(mut carry: Carry, id: &str, from: u64) -> (Carry, Vec<Act>, u64) {
-    let repo = Repo { open_round: Some(Round { id: id.into(), worktree: "/w".into(), ..Round::default() }), unfit: Some("the round worktree is moved".into()), ..Repo::default() };
+    let repo = Repo { open_round: Some(Round { id: id.into(), worktree: "w".into(), ..Round::default() }), unfit: Some("the round worktree is moved".into()), ..Repo::default() };
     let (mut acts, mut t) = (vec![], from);
     while t <= from + (Policy::default().orphan_wait_s + 60) * 1000 {
         let (c, a) = decide(&carry, &Snapshot { repos: [("spira".to_string(), repo.clone())].into(), now_ms: t });
@@ -180,7 +180,7 @@ fn a_second_undriven_round_abandoned_in_a_row_writes_the_stop_before_it_pages() 
 
 #[test]
 fn one_round_that_faulted_then_was_abandoned_undriven_counts_once() {
-    let mut rc = RepoCarry { state: State::Certifying, round_key: Some("k".into()), batch: Some("r9".into()), members: vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into())], wt: "/w".into(), base: "b1".into(), leg: Some("spira.c3".into()), run: 1, attributed: true, ..RepoCarry::default() };
+    let mut rc = RepoCarry { state: State::Certifying, round_key: Some("k".into()), batch: Some("r9".into()), members: vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into())], wt: "w".into(), base: "b1".into(), leg: Some("spira.c3".into()), run: 1, attributed: true, ..RepoCarry::default() };
     rc.leg_at_ms = NOW;
     let carry = Carry { repos: [("spira".to_string(), rc)].into() };
     let ran = runtime::units::UnitRan { handle: runtime::units::UnitHandle::of(NAME, "spira.c3").unwrap(), exit: runtime::units::Exit::Code(1), duration_ms: 1 };
@@ -196,7 +196,7 @@ fn one_round_that_faulted_then_was_abandoned_undriven_counts_once() {
 /// Round `id` certifying after its attribution, its certify leg ending with no verdict.
 fn certify_faults(mut carry: Carry, id: &str, at: u64) -> (Carry, Vec<Act>) {
     let leg = format!("spira.{id}.c");
-    let rc = RepoCarry { state: State::Certifying, round_key: Some("k".into()), batch: Some(id.into()), members: vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into())], wt: "/w".into(), base: "b1".into(), leg: Some(leg.clone()), run: 1, attributed: true, leg_at_ms: at, pace: carry.repos.get("spira").map(|r| r.pace.clone()).unwrap_or_default(), ..RepoCarry::default() };
+    let rc = RepoCarry { state: State::Certifying, round_key: Some("k".into()), batch: Some(id.into()), members: vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into())], wt: "w".into(), base: "b1".into(), leg: Some(leg.clone()), run: 1, attributed: true, leg_at_ms: at, pace: carry.repos.get("spira").map(|r| r.pace.clone()).unwrap_or_default(), ..RepoCarry::default() };
     carry.repos.insert("spira".into(), rc);
     let ran = runtime::units::UnitRan { handle: runtime::units::UnitHandle::of(NAME, &leg).unwrap(), exit: runtime::units::Exit::Code(1), duration_ms: 1 };
     on_ran_with(&carry, &ran, &runtime::units::RanOutput::captured(b"queue.sh round certify: refused, nothing ran\n", b""), at + TICK).unwrap()

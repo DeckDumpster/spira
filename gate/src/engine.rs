@@ -1675,7 +1675,7 @@ impl<'w, W: World> Trial<'w, W> {
             return String::new();
         }
         let run = ctx.var("SPIRA_RUN");
-        let run = if run.is_empty() { "/nonexistent" } else { run };
+        let run = if run.is_empty() { system_paths::NONEXISTENT } else { run };
         let ej = PathBuf::from(format!("{run}/ejected/{}", self.s.bead));
         self.w
             .read(&ej)

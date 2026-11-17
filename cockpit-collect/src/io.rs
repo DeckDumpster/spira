@@ -618,12 +618,12 @@ pub fn mtime_age_secs(path: &Path) -> Option<i64> {
 
 /// `/proc/<pid>` exists.
 pub fn proc_exists(pid: i64) -> bool {
-    Path::new(&format!("/proc/{pid}")).exists()
+    Path::new(&format!("{}/{pid}", system_paths::PROC)).exists()
 }
 
 /// `/proc/<pid>/cmdline`, NUL-joined bytes turned into a space-joined string.
 pub fn proc_cmdline(pid: i64) -> Option<String> {
-    let raw = std::fs::read(format!("/proc/{pid}/cmdline")).ok()?;
+    let raw = std::fs::read(format!("{}/{pid}/cmdline", system_paths::PROC)).ok()?;
     let parts: Vec<String> = raw
         .split(|b| *b == 0)
         .filter(|p| !p.is_empty())
@@ -635,8 +635,8 @@ pub fn proc_cmdline(pid: i64) -> Option<String> {
 /// Elapsed seconds since `pid` started, from procfs (`ps -o etimes=` without the `ps`). `None`
 /// when the pid is gone or procfs cannot be read.
 pub fn proc_etimes(pid: i64) -> Option<i64> {
-    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
-    let uptime = std::fs::read_to_string("/proc/uptime").ok()?;
+    let stat = std::fs::read_to_string(format!("{}/{pid}/stat", system_paths::PROC)).ok()?;
+    let uptime = std::fs::read_to_string(format!("{}/uptime", system_paths::PROC)).ok()?;
     etimes_from(&stat, &uptime, clock_ticks()?)
 }
 
@@ -709,8 +709,8 @@ mod tests {
         let pid = dir.path().join("dwarf-builder-1.pid");
         std::fs::write(dir.path().join("dwarf-builder-1.name"), "Brokk").unwrap();
         assert_eq!(lib_inproc(dir.path(), "dwarf_named", &[pid.to_str().unwrap()]), Some(Some("Brokk".to_string())));
-        assert_eq!(lib_inproc(dir.path(), "dwarf_named", &["/nonexistent/x.pid"]), Some(Some("?".to_string())));
-        assert_eq!(lib_inproc(dir.path(), "queue_certified_list", &["/r"]), None);
+        assert_eq!(lib_inproc(dir.path(), "dwarf_named", &["nonexistent/x.pid"]), Some(Some("?".to_string())));
+        assert_eq!(lib_inproc(dir.path(), "queue_certified_list", &["r"]), None);
     }
 
     #[test]
@@ -738,19 +738,19 @@ mod tests {
     #[test]
     fn importable_never_exports_the_forbidden_keys_even_when_resolved() {
         let r = resolved_with(&[
-            ("SPIRA_HOME", "/should-never-leak"),
-            ("SPIRA_REPO", "/should-never-leak"),
-            ("SPIRA_REPO_DERIVED", "/should-never-leak"),
-            ("SPIRA_REPO_MAP", "/should-never-leak"),
+            ("SPIRA_HOME", "should-never-leak"),
+            ("SPIRA_REPO", "should-never-leak"),
+            ("SPIRA_REPO_DERIVED", "should-never-leak"),
+            ("SPIRA_REPO_MAP", "should-never-leak"),
             ("SPIRA_RUNES", "builder groomer"),
             ("SPIRA_MAX_DWARVES", "12"),
-            ("SPIRA_WIKI", "/var/spira/wiki"),
+            ("SPIRA_WIKI", "var/spira/wiki"),
         ]);
         let got = importable(&r, &BTreeMap::new());
         for forbidden in NEVER_EXPORTED {
             assert!(!got.contains_key(*forbidden), "{forbidden} leaked: {got:?}");
         }
-        assert_eq!(got.get("SPIRA_WIKI"), Some(&"/var/spira/wiki".to_string()));
+        assert_eq!(got.get("SPIRA_WIKI"), Some(&"var/spira/wiki".to_string()));
     }
 
     #[test]

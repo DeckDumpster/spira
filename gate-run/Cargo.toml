@@ -9,12 +9,16 @@ name = "gate-run"
 path = "src/main.rs"
 
 [features]
-integration = ["spira-config/integration", "spira-otel/integration"]
+integration = ["spira-config/integration", "spira-otel/integration", "system-paths/integration", "testkit/integration"]
 
 [dependencies]
 spira-otel = { path = "../spira-otel" }
 libc = "0.2"
 spira-config = { path = "../spira-config" }
+system-paths = { path = "../system-paths" }
+
+[dev-dependencies]
+testkit = { path = "../testkit" }
 
 [profile.release]
 opt-level = "z"

@@ -362,7 +362,7 @@ fn the_verbs_own_flags_win_over_a_conflicting_ungated_environment() {
 #[test]
 fn a_landing_refused_after_the_round_was_voided_says_so_and_what_state_the_bead_is_in() {
     let t = uncertified_world();
-    assert_eq!(hand_land(&t, &["--round", "subvert", "--worktree", "/no such;dir"]), 1);
+    assert_eq!(hand_land(&t, &["--round", "subvert", "--worktree", "no such;dir"]), 1);
     assert!(
         t.err().contains("round hand-1 was voided and nothing landed; sp-z is "),
         "{}",
@@ -423,7 +423,7 @@ fn a_refused_landing_step_exits_non_zero_and_says_the_bead_did_not_land() {
 #[test]
 fn a_landing_the_gate_refuses_exits_non_zero_and_says_the_bead_did_not_land() {
     let (t, _keep) = certified_harness_world();
-    let rc = hand_land(&t, &["--round", "wait", "--worktree", "/no such;dir"]);
+    let rc = hand_land(&t, &["--round", "wait", "--worktree", "no such;dir"]);
     assert_ne!(rc, 0);
     assert!(t.err().contains("sp-z did not land"), "{}", t.err());
 }

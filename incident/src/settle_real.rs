@@ -179,7 +179,7 @@ mod tests {
             db: String::new(),
             incident_label: "incident".into(),
             home_repo: "home".into(),
-            registry: spira_config::repos::Registry::from_env(Default::default(), std::path::Path::new("/nonexistent")),
+            registry: spira_config::repos::Registry::from_env(Default::default(), std::path::Path::new("nonexistent")),
             release_sha: None,
             units: Err("none".into()),
             fixes: Default::default(),
@@ -199,7 +199,7 @@ mod tests {
         let fake = std::sync::Arc::new(
             spira_store::lc_call::fake::Content::new(rows).with_live(vec![live("sp-i1", "READY"), live("sp-i2", "REWORK"), live("sp-f1", "LANDED")]),
         );
-        let bd = RealBd { bdq: "/nonexistent".into(), timeout_secs: 1, retries: 1, lc: Some(spira_store::lc_call::LcClient::over(fake.clone(), true)) };
+        let bd = RealBd { bdq: "nonexistent".into(), timeout_secs: 1, retries: 1, lc: Some(spira_store::lc_call::LcClient::over(fake.clone(), true)) };
         let s = settler(&bd);
         let cands = s.candidates().unwrap();
         assert_eq!(cands.iter().map(|c| c.fixes.clone()).collect::<Vec<_>>(), vec![vec!["sp-f1".to_string()]; 2]);
@@ -233,8 +233,8 @@ mod tests {
     #[test]
     fn release_sha_is_the_forty_hex_directory_name() {
         let sha = "9f6f7e976db26649b7e4b753de0a992b1fc2f75b";
-        assert_eq!(release_sha_of(&format!("/r/spira-releases/{sha}/")), Some(sha.to_string()));
-        assert_eq!(release_sha_of("/r/checkout"), None);
+        assert_eq!(release_sha_of(&format!("r/spira-releases/{sha}/")), Some(sha.to_string()));
+        assert_eq!(release_sha_of("r/checkout"), None);
     }
 
     #[test]

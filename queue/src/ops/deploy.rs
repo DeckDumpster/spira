@@ -289,12 +289,14 @@ mod release_bin_tests {
 
     #[test]
     fn a_bin_dir_without_a_release_binary_refuses_naming_it() {
-        let e = release_bin(Some(Path::new("/nonexistent/bins")), || {
-            Ok(PathBuf::from("/unused"))
+        let root = testkit::TempDir::new("deploy-release-bin");
+        let bins = root.join("nonexistent");
+        let e = release_bin(Some(bins.as_path()), || {
+            Ok(PathBuf::from("unused"))
         })
         .unwrap_err();
         assert!(
-            e.contains("no release binary at /nonexistent/bins/release"),
+            e.contains(&format!("no release binary at {}/release", bins.display())),
             "{e}"
         );
     }
@@ -302,8 +304,8 @@ mod release_bin_tests {
     #[test]
     fn no_bin_dir_runs_the_declared_releases_own_binary() {
         assert_eq!(
-            release_bin(None, || Ok(PathBuf::from("/r/bin/release"))).unwrap(),
-            PathBuf::from("/r/bin/release")
+            release_bin(None, || Ok(PathBuf::from("r/bin/release"))).unwrap(),
+            PathBuf::from("r/bin/release")
         );
         assert!(release_bin(None, || Err("SPIRA_RELEASE is not set".into()))
             .unwrap_err()

@@ -24,7 +24,7 @@ fn launcher(code: &str) -> Option<&'static str> {
 }
 
 fn config() -> BTreeMap<String, String> {
-    [("SPIRA_SCOPE_LABEL", "spira"), ("SPIRA_WARDEN_LABEL", "warden-sweep"), ("SPIRA_RUN", "/run")].into_iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+    [("SPIRA_SCOPE_LABEL", "spira"), ("SPIRA_WARDEN_LABEL", "warden-sweep"), ("SPIRA_RUN", "run")].into_iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
 }
 
 fn handler() -> TriggerWarden {
@@ -117,7 +117,7 @@ fn t5_parity_the_filed_sweep_is_byte_equal() {
     assert_eq!(bead.title, TITLE);
     assert_eq!(bead.body, DESCRIPTION);
     assert_eq!((bead.kind.as_str(), bead.priority), ("task", 3));
-    assert_eq!(bead.labels, ["spira", "warden-sweep", "delivers:note:/run/warden.log"]);
+    assert_eq!(bead.labels, ["spira", "warden-sweep", "delivers:note:run/warden.log"]);
 }
 
 fn filed() -> TaskRig {

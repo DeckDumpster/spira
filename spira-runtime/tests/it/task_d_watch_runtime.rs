@@ -10,7 +10,7 @@ use spira_runtime::tasks::d::acceptance as acc;
 use spira_runtime::tasks::d::watch_runtime::*;
 
 fn config() -> Config {
-    Config { metrics_endpoint: "127.0.0.1:9".into(), run: "/r".into(), persona: PERSONA.into(), max_files: MAX_FILES }
+    Config { metrics_endpoint: "127.0.0.1:9".into(), run: "r".into(), persona: PERSONA.into(), max_files: MAX_FILES }
 }
 
 /// One repo pinning rust `pin`, with upstream stable `stable`; no node or python pin.
@@ -18,7 +18,7 @@ fn pinned(pin: &str, stable: &str) -> Snapshot {
     let files: BTreeMap<String, Option<String>> = [("rust-toolchain.toml".to_string(), Some(format!("[toolchain]\nchannel = \"{pin}\"\n"))), ("package.json".to_string(), None), (".python-version".to_string(), None)].into();
     Snapshot {
         today: "2026-11-03".into(),
-        repos: vec![Repo { name: "spira".into(), path: "/h/spira".into(), ref_: "local/main".into(), files, naming: BTreeMap::new() }],
+        repos: vec![Repo { name: "spira".into(), path: "h/spira".into(), ref_: "local/main".into(), files, naming: BTreeMap::new() }],
         rust: Ok(format!("[pkg.rust]\nversion = \"{stable} (abc 2026-10-30)\"\n")),
         node: Ok("[]".into()),
         python: Ok("[]".into()),

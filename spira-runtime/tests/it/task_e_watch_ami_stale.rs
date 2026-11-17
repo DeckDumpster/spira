@@ -13,7 +13,7 @@ use spira_runtime::watchers::INBOX_APPEND;
 const STALE: &str = "round AMI ami-0abc is stale: recipe 1234abcd is not the one it was built from";
 
 fn config() -> Config {
-    Config { spill: "ec2".into(), inbox: "/q/inbox".into() }
+    Config { spill: "ec2".into(), inbox: "q/inbox".into() }
 }
 
 fn seen(verdict: Verdict) -> Snapshot {

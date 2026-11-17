@@ -16,7 +16,7 @@ path = "tests/no_fork_edges.rs"
 required-features = ["integration"]
 
 [features]
-integration = ["cockpit-ops/integration", "lifecycle/integration", "release/integration", "runtime/integration", "spira-claim/integration", "spira-config/integration", "spira-store/integration", "spira-desired-state/integration", "spira-otel/integration", "spira-runtime/integration", "store-view/integration", "testkit/integration", "tsd/integration"]
+integration = ["cockpit-ops/integration", "lifecycle/integration", "release/integration", "runtime/integration", "spira-claim/integration", "spira-config/integration", "spira-store/integration", "spira-desired-state/integration", "spira-otel/integration", "spira-runtime/integration", "store-view/integration", "testkit/integration", "tsd/integration", "system-paths/integration"]
 
 [dependencies]
 spira-config = { path = "../spira-config" }
@@ -37,6 +37,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "ti
 serde_json = "1"
 
 [dev-dependencies]
+system-paths = { path = "../system-paths" }
 testkit = { path = "../testkit" }
 spira-claim = { path = "../spira-claim" }
 lifecycle = { path = "../lifecycle" }

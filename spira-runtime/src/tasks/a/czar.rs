@@ -960,7 +960,7 @@ mod tests {
     }
 
     fn row(name: &str, land: &str) -> RepoRow {
-        RepoRow { name: name.into(), land: land.into(), root: format!("/r/{name}"), landref: Some("origin/main".into()) }
+        RepoRow { name: name.into(), land: land.into(), root: format!("r/{name}"), landref: Some("origin/main".into()) }
     }
 
     fn open(pr: Option<u64>, branch: &str) -> Read<Option<Batch>> {
@@ -994,7 +994,7 @@ mod tests {
         let batches: BTreeMap<_, _> = [("fa".to_string(), open(Some(12), "spira/batch/x")), ("fb".to_string(), Read::Observed(None)), ("lo".to_string(), open(Some(3), "spira/round/1"))].into();
         let calls = RefCell::new(vec![]);
         let (ci, base_ci) = forge_reads(&rows, &batches, &Carry::default(), &counted(&calls));
-        assert_eq!(*calls.borrow(), vec![("/r/fa".to_string(), "spira/batch/x".to_string()), ("/r/fa".to_string(), "main".to_string())]);
+        assert_eq!(*calls.borrow(), vec![("r/fa".to_string(), "spira/batch/x".to_string()), ("r/fa".to_string(), "main".to_string())]);
         assert_eq!(ci.keys().collect::<Vec<_>>(), ["fa"]);
         assert_eq!(base_ci.keys().collect::<Vec<_>>(), ["fa"]);
     }
@@ -1006,7 +1006,7 @@ mod tests {
         let carry = Carry { base_pending: [("fa".to_string(), NOW)].into(), ..Carry::default() };
         let calls = RefCell::new(vec![]);
         let (_, base_ci) = forge_reads(&rows, &batches, &carry, &counted(&calls));
-        assert_eq!(*calls.borrow(), vec![("/r/fa".to_string(), "main".to_string())]);
+        assert_eq!(*calls.borrow(), vec![("r/fa".to_string(), "main".to_string())]);
 
         let snap = Snapshot { now_ms: NOW + 60_000, open_batch: batches.clone(), base_ci, ..Snapshot::default() };
         let older = Snapshot { base_ci: [("fa".to_string(), forge_reads(&rows, &batches, &carry, &|_, _| base_run(NOW / 1000 - 5)).1.remove("fa").unwrap())].into(), ..snap.clone() };

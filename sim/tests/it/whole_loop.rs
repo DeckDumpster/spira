@@ -255,7 +255,7 @@ fn sentinel_unit_start(w: &World, input: &str) -> Result<String, String> {
     lc.dwarves.insert(unit, now + DWARF_MS);
     drop(lc);
     w.units.script(sc::NAME, DWARF_MS, Exit::Code(0));
-    let spec = UnitSpec { task: sc::NAME.into(), key: start.key, argv: vec!["dwarf".into(), "--home".into(), "/sim/home".into(), start.rune], env: vec![], cwd: None };
+    let spec = UnitSpec { task: sc::NAME.into(), key: start.key, argv: vec!["dwarf".into(), "--home".into(), "sim/home".into(), start.rune], env: vec![], cwd: None };
     let started = units::effect(&*w.units, UNIT_START, &json(&StartSpec { unit: spec, props: sc::dwarf_props("3600")? })?)?;
     w.gate("sentinel_unit_start")?;
     Ok(started)
@@ -313,7 +313,7 @@ fn batcher_observe(w: &World, input: &str) -> Result<String, String> {
 /// The merge of every member on the base: clean, in the order given, with suites.
 fn batcher_assemble(input: &str) -> Result<String, String> {
     let leg: bl::Leg = parse(bl::ASSEMBLE, input)?;
-    json(&bl::Assembled { merged: leg.members.clone(), wt: format!("/sim/wt/{}", bl::digest(&leg.round_key)), base: leg.base, suites: true, ..bl::Assembled::default() })
+    json(&bl::Assembled { merged: leg.members.clone(), wt: format!("sim/wt/{}", bl::digest(&leg.round_key)), base: leg.base, suites: true, ..bl::Assembled::default() })
 }
 
 fn batcher_round_open(w: &World, input: &str) -> Result<String, String> {

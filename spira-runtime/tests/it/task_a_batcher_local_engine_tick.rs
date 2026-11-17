@@ -32,7 +32,7 @@ impl EffectRunner for Runner {
             return Ok("{}".into());
         }
         if spec.name == ASSEMBLE {
-            let merged = Assembled { merged: vec![("sp-olw42f".into(), "t1".into())], wt: "/w".into(), base: "b2".into(), ..Assembled::default() };
+            let merged = Assembled { merged: vec![("sp-olw42f".into(), "t1".into())], wt: "w".into(), base: "b2".into(), ..Assembled::default() };
             return Ok(serde_json::to_string(&merged).unwrap());
         }
         Err(format!("no double for {}", spec.name))

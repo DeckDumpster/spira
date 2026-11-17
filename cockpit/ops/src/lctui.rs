@@ -1592,14 +1592,14 @@ mod tests {
         assert!(h.contains("<span class=red><a href=/beads/sp-ab1c>sp-ab1c</a> red</span>"), "{h}");
         assert!(h.contains("&lt;x&gt;"), "text is escaped: {h}");
         assert!(h.contains("<a href=/beads/sp-q2.3>sp-q2.3</a>."), "a trailing dot is not part of the id: {h}");
-        assert!(!h.contains("/beads/sp-zz"), "only a bead id at a word boundary is linked: {h}");
+        assert!(!h.contains("/beads/sp-zz"), "only a bead id at a word boundary is linked: {h}"); // not a path: a URL route
     }
 
     #[test]
     fn an_osc8_hyperlink_becomes_an_escaped_anchor_and_a_foreign_scheme_does_not() {
         let h = ansi_html(&crate::lcview::osc8("https://x.test/p?a=1&b=\"2\""));
         assert_eq!(h, "<a href=\"https://x.test/p?a=1&amp;b=&quot;2&quot;\">https://x.test/p?a=1&amp;b=&quot;2&quot;</a>");
-        assert_eq!(ansi_html(&crate::lcview::osc8("/rounds/r-1")), "<a href=\"/rounds/r-1\">/rounds/r-1</a>");
+        assert_eq!(ansi_html(&crate::lcview::osc8("/rounds/r-1")), "<a href=\"/rounds/r-1\">/rounds/r-1</a>"); // not a path: a URL route
         let bad = ansi_html(&crate::lcview::osc8("javascript:alert(1)"));
         assert!(!bad.contains("<a "), "{bad}");
     }

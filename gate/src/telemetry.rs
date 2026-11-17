@@ -181,7 +181,7 @@ pub fn build_dir_field(line: &str) -> String {
 
 /// This machine's id for the envelope (law-producers-stamp-their-own-clock).
 pub fn host() -> String {
-    std::fs::read_to_string("/proc/sys/kernel/hostname")
+    std::fs::read_to_string(format!("{}/kernel/hostname", system_paths::PROC_SYS))
         .ok()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())

@@ -12,7 +12,7 @@ const SET: &[(&str, &str)] = &[(task::CADENCE_KEY, SPEC), (task::JITTER_KEY, "36
 const FIRST_MONDAY: u64 = 4 * DAY_MS;
 
 fn ok() -> Snapshot {
-    Snapshot { env_ok: true, prev: Prev::Ok, gc_bin: Some("/nix/var/nix/profiles/default/bin/nix-collect-garbage".into()) }
+    Snapshot { env_ok: true, prev: Prev::Ok, gc_bin: Some("nix/var/nix/profiles/default/bin/nix-collect-garbage".into()) }
 }
 
 fn json(s: &Snapshot) -> String {

@@ -582,7 +582,7 @@ fn machine_filter(a: &Args, env: &mut Env, st: &Store, rows: &mut Vec<rank::Read
     };
     rows.retain(|r| matches!(rank::claimable(r, &lc, &bd, rank::stack_cap(r, &env.config.incident_label, &env.config.pilgrim_label, stack_max)), Verdict::Claimable { .. }));
     retain_unstopped(rows, std::path::Path::new(&env.config.run));
-    retain_unoccupied(rows, std::path::Path::new("/proc"), std::path::Path::new(&env.config.run));
+    retain_unoccupied(rows, std::path::Path::new(system_paths::PROC), std::path::Path::new(&env.config.run));
     let fixture = a.get("--lifecycle").is_some();
     if let Err(e) = retain_uncarried(rows, &mut lc, (!fixture).then_some(st), &env.config.queue_dir) {
         return Err(Outcome::cannot_tell(format!("{rune}: integrations: {e}")));
@@ -942,7 +942,7 @@ fn viewed(a: &Args, env: &Env, st: &Store) -> Result<Viewed, String> {
     let mut rows: Vec<rank::ReadyRow> = if ids.is_empty() { Vec::new() } else { st.items_by_ids(&ids)? };
     rows.retain(|r| ids.contains(&r.id) && ready::in_scope(r, &scope, &no_loop));
     retain_unstopped(&mut rows, std::path::Path::new(&env.config.run));
-    retain_unoccupied(&mut rows, std::path::Path::new("/proc"), std::path::Path::new(&env.config.run));
+    retain_unoccupied(&mut rows, std::path::Path::new(system_paths::PROC), std::path::Path::new(&env.config.run));
     rows.sort_by(|x, y| x.id.cmp(&y.id));
     let express = st.express_ids()?;
     let runes = view.iter().map(|v| (v.id.clone(), v.runes.clone())).collect();
@@ -1029,7 +1029,7 @@ fn judge_rows(a: &Args, env: &Env, st: &Store, only: Option<&BTreeSet<String>>, 
         entries.push(entry(&r.id, kind, blocker));
     }
     entries.extend(retain_unstopped(&mut claimable, std::path::Path::new(&env.config.run)).iter().map(|id| entry(id, Kind::Stopped, None)));
-    entries.extend(retain_unoccupied(&mut claimable, std::path::Path::new("/proc"), std::path::Path::new(&env.config.run)).iter().map(|id| entry(id, Kind::Occupied, None)));
+    entries.extend(retain_unoccupied(&mut claimable, std::path::Path::new(system_paths::PROC), std::path::Path::new(&env.config.run)).iter().map(|id| entry(id, Kind::Occupied, None)));
     let carried = retain_uncarried(&mut claimable, &mut lc, Some(st), &env.config.queue_dir)?;
     entries.extend(carried.into_iter().map(|(id, carrier)| entry(&id, Kind::Carried, Some(carrier))));
     entries.extend(claimable.iter().map(|r| entry(&r.id, Kind::Claimable, None)));
@@ -1650,7 +1650,7 @@ fn trace_reopen(run_dir: &std::path::Path, id: &str, cause: &str, actor: &str) {
     if run_dir.as_os_str().is_empty() {
         return;
     }
-    let caller = std::fs::read(format!("/proc/{}/cmdline", std::os::unix::process::parent_id()))
+    let caller = std::fs::read(format!("{}/{}/cmdline", system_paths::PROC, std::os::unix::process::parent_id()))
         .ok()
         .and_then(|b| b.split(|&c| c == 0).next().map(|a| String::from_utf8_lossy(a).into_owned()))
         .and_then(|a| a.rsplit('/').next().map(str::to_string))

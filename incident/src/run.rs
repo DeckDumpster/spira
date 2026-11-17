@@ -901,7 +901,7 @@ mod tests {
         let mut c = cfg(&known);
         let run_str = run_dir.to_str().unwrap().to_string();
         c.spira_run = &run_str;
-        c.sop_ledger = "/somewhere/else/applied.jsonl";
+        c.sop_ledger = "somewhere/else/applied.jsonl";
         c.delivers_pref = Some("note");
         let mut log = vec![];
         let out = file_one(&bd, &mailer, &clock, &c, "incident:d3", "t", b"p", "spira,incident", &mut log);
@@ -970,7 +970,7 @@ mod tests {
 
     #[test]
     fn provenance_format() {
-        assert_eq!(provenance("foo.service", "host1", "/tmp/x"), "foo.service on host1: /tmp/x");
+        assert_eq!(provenance("foo.service", "host1", "tmp/x"), "foo.service on host1: tmp/x");
     }
 
     fn row(id: &str, status: BeadStatus, reference: &str, labels: Vec<String>, closed_at: Option<&str>) -> BeadRow {

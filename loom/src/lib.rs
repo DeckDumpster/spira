@@ -540,7 +540,7 @@ async fn stuck_bead_redirect(axum::extract::Path(id): axum::extract::Path<String
     }
     Response::builder()
         .status(StatusCode::MOVED_PERMANENTLY)
-        .header(header::LOCATION, format!("/beads/{id}"))
+        .header(header::LOCATION, format!("/beads/{id}")) // not a path: URL path
         .header(header::CACHE_CONTROL, "no-store")
         .body(axum::body::Body::empty())
         .expect("a redirect with a valid status and headers")
@@ -983,10 +983,10 @@ mod shot_path_tests {
 
     #[test]
     fn only_a_bead_a_full_tip_and_a_plain_png_name_resolve() {
-        let ok = shot_path("/r", "sp-ab.1", TIP, "index-390.png").expect("a valid shot");
-        assert_eq!(ok, std::path::Path::new("/r/shots/sp-ab.1").join(TIP).join("index-390.png"));
+        let ok = shot_path("r", "sp-ab.1", TIP, "index-390.png").expect("a valid shot");
+        assert_eq!(ok, std::path::Path::new("r/shots/sp-ab.1").join(TIP).join("index-390.png"));
         for (b, t, f) in [("..", TIP, "a.png"), ("sp-a", "abc", "a.png"), ("sp-a", TIP, "../a.png"), ("sp-a", TIP, "a.txt"), ("sp-a/b", TIP, "a.png"), ("sp-a", TIP, ".png")] {
-            assert!(shot_path("/r", b, t, f).is_none(), "{b} {t} {f}");
+            assert!(shot_path("r", b, t, f).is_none(), "{b} {t} {f}");
         }
         assert!(shot_path("", "sp-a", TIP, "a.png").is_none());
     }
@@ -1031,7 +1031,7 @@ mod in_process_tests {
             budget: Duration::from_secs(2),
             cache: Duration::from_secs(60),
             addr: String::new(),
-            run: "/nonexistent-run".into(),
+            run: "nonexistent-run".into(),
             instance: "test".into(),
             systemctl: "systemctl".into(),
             metrics_endpoint: None,

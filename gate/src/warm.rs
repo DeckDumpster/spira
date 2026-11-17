@@ -251,10 +251,10 @@ mod tests {
         let root = t.path();
         let (a, b, c) = (root.join("tree-a/debug"), root.join("tree-b/debug"), root.join("tree-c/debug"));
         built(&a);
-        assert!(donate(root, &a, "abc123", Path::new("/t")));
+        assert!(donate(root, &a, "abc123", Path::new("t")));
         assert!(!a.exists());
         fs::create_dir_all(&b).unwrap();
-        assert_eq!(adopt(root, &b), Some(("abc123".to_string(), PathBuf::from("/t"))));
+        assert_eq!(adopt(root, &b), Some(("abc123".to_string(), PathBuf::from("t"))));
         assert!(b.join("deps/libx.rlib").is_file());
         fs::create_dir_all(&c).unwrap();
         assert_eq!(adopt(root, &c), None, "the entry was taken");
@@ -266,7 +266,7 @@ mod tests {
         let root = t.path();
         let (a, b) = (root.join("tree-a/debug"), root.join("tree-b/debug"));
         built(&a);
-        assert!(donate(root, &a, "abc123", Path::new("/t")));
+        assert!(donate(root, &a, "abc123", Path::new("t")));
         let entry = entries(root).pop().unwrap();
         fs::remove_file(entry.join(BUILT_AT)).unwrap();
         fs::create_dir_all(&b).unwrap();
@@ -280,7 +280,7 @@ mod tests {
         let root = t.path();
         let (a, b) = (root.join("a/debug"), root.join("b/debug"));
         built(&a);
-        donate(root, &a, "c1", Path::new("/t"));
+        donate(root, &a, "c1", Path::new("t"));
         built(&b);
         assert_eq!(adopt(root, &b), None);
         assert_eq!(entries(root).len(), 1);
@@ -292,9 +292,9 @@ mod tests {
         let root = t.path();
         let a = root.join("a/debug");
         fs::create_dir_all(&a).unwrap();
-        assert!(!donate(root, &a, "c1", Path::new("/t")));
+        assert!(!donate(root, &a, "c1", Path::new("t")));
         built(&a);
-        assert!(!donate(root, &a, "", Path::new("/t")));
+        assert!(!donate(root, &a, "", Path::new("t")));
         assert!(a.join("deps").is_dir());
     }
 
@@ -305,7 +305,7 @@ mod tests {
         for i in 0..KEEP + 2 {
             let d = root.join(format!("t{i}/debug"));
             built(&d);
-            assert!(donate(root, &d, &format!("c{i}"), Path::new("/t")));
+            assert!(donate(root, &d, &format!("c{i}"), Path::new("t")));
             let e = entries(root).pop().unwrap();
             fs::File::open(&e).unwrap().set_modified(UNIX_EPOCH + Duration::from_secs(1000 + i as u64)).unwrap();
         }
@@ -364,7 +364,7 @@ mod tests {
         git(&tree, &["commit", "-qm", "base"]);
         let (a, b) = (root.join("a/debug"), root.join("b/debug"));
         built(&a);
-        donate(&root, &a, "0123456789012345678901234567890123456789", Path::new("/t"));
+        donate(&root, &a, "0123456789012345678901234567890123456789", Path::new("t"));
         fs::create_dir_all(&b).unwrap();
         let line = warm_start(&root, &b, &tree).unwrap();
         assert!(line.contains("discarded"), "{line}");
@@ -382,7 +382,7 @@ mod tests {
             fs::write(d.join(format!("deps/{}.d", unit)), format!("deps/x: src/lib.rs\n\n# env-dep:{env}\n")).unwrap();
             fs::write(d.join(format!("deps/lib{}-{h}.rlib", unit.split('-').next().unwrap())), "x").unwrap();
         }
-        assert_eq!(purge_path_bound_units(&d, Path::new("/w/.gate.h.a")), 2);
+        assert_eq!(purge_path_bound_units(&d, Path::new("w/.gate.h.a")), 2);
         assert!(!d.join(".fingerprint/bound-aaaa").exists() && !d.join("deps/libbound-aaaa.rlib").exists());
         assert!(d.join(".fingerprint/plain-bbbb").is_dir() && d.join("deps/libplain-bbbb.rlib").is_file());
     }
@@ -399,7 +399,7 @@ mod tests {
         for i in 0..2 {
             let d = root.join(format!("t{i}/debug"));
             fill(&d, 2);
-            assert!(donate(root, &d, &format!("c{i}"), Path::new("/t")));
+            assert!(donate(root, &d, &format!("c{i}"), Path::new("t")));
             let e = entries(root).pop().unwrap();
             fs::File::open(&e).unwrap().set_modified(UNIX_EPOCH + Duration::from_secs(1000 + i as u64)).unwrap();
         }
@@ -424,7 +424,7 @@ mod tests {
         let f = fs::File::options().write(true).open(&stale).unwrap();
         f.set_modified(old).unwrap();
         f.set_times(fs::FileTimes::new().set_accessed(old).set_modified(old)).unwrap();
-        assert!(donate(root, &d, "c", Path::new("/t")));
+        assert!(donate(root, &d, "c", Path::new("t")));
         bound(root, 1 << 30);
         let kept = entries(root).pop().unwrap().join("debug/deps");
         assert!(kept.join("libbig.rlib").is_file());

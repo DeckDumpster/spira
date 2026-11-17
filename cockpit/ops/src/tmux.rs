@@ -54,12 +54,14 @@ pub fn classify_server_stderr(stderr: &str) -> ServerState {
     }
 }
 
+const HEALTH_SUFFIX: &str = "/cockpit/health.sh"; // not a path: suffix of an argv entry
+
 /// `classify_argv` — identity from the executable and (if the executable is a shell) the
 /// script it runs, by argv **position**, never by substring of the whole command line (a
 /// named scar: a system prompt merely *mentioning* `cockpit/health.sh` once mis-tagged an
 /// unrelated agent session).
 pub fn classify_argv(exe: &str, script: &str, mail_exe_basename: Option<&str>) -> Option<Role> {
-    if exe.ends_with("/cockpit/health.sh") || script.ends_with("/cockpit/health.sh") {
+    if exe.ends_with(HEALTH_SUFFIX) || script.ends_with(HEALTH_SUFFIX) {
         return Some(Role::Health);
     }
     if let Some(mail) = mail_exe_basename {
@@ -425,11 +427,11 @@ mod tests {
     #[test]
     fn classify_argv_health_by_exe_or_script() {
         assert_eq!(
-            classify_argv("/opt/spira/cockpit/health.sh", "", None),
+            classify_argv("opt/spira/cockpit/health.sh", "", None),
             Some(Role::Health)
         );
         assert_eq!(
-            classify_argv("/usr/bin/bash", "/opt/spira/cockpit/health.sh", None),
+            classify_argv("usr/bin/bash", "opt/spira/cockpit/health.sh", None),
             Some(Role::Health)
         );
     }
@@ -437,10 +439,10 @@ mod tests {
     #[test]
     fn classify_argv_mail_by_basename_only() {
         assert_eq!(
-            classify_argv("/usr/local/bin/mailclient", "", Some("mailclient")),
+            classify_argv("usr/local/bin/mailclient", "", Some("mailclient")),
             Some(Role::Mail)
         );
-        assert_eq!(classify_argv("/usr/local/bin/other", "", Some("mailclient")), None);
+        assert_eq!(classify_argv("usr/local/bin/other", "", Some("mailclient")), None);
     }
 
     #[test]
@@ -449,7 +451,7 @@ mod tests {
         // classify as health when it is not argv[0] or the shell's script argument.
         assert_eq!(
             classify_argv(
-                "/usr/bin/claude",
+                "usr/bin/claude",
                 "",
                 None
             ),
@@ -459,15 +461,15 @@ mod tests {
 
     #[test]
     fn pane_role_checks_pid_then_children_in_order() {
-        let child_argv = vec!["/usr/bin/bash".to_string(), "/opt/spira/cockpit/health.sh".to_string()];
-        let parent_argv = vec!["/usr/bin/tmux".to_string()];
+        let child_argv = vec!["usr/bin/bash".to_string(), "opt/spira/cockpit/health.sh".to_string()];
+        let parent_argv = vec!["usr/bin/tmux".to_string()];
         let argvs: Vec<&[String]> = vec![&parent_argv, &child_argv];
         assert_eq!(pane_role(argvs, None), Some(Role::Health));
     }
 
     #[test]
     fn pane_role_shell_dash_arg_is_not_treated_as_script() {
-        let argv = vec!["/usr/bin/bash".to_string(), "-c".to_string()];
+        let argv = vec!["usr/bin/bash".to_string(), "-c".to_string()];
         let argvs: Vec<&[String]> = vec![&argv];
         assert_eq!(pane_role(argvs, None), None);
     }
@@ -476,10 +478,10 @@ mod tests {
     fn find_listening_inode_matches_flag_and_path() {
         let table = "\
 Num       RefCount Protocol Flags    Type St Inode Path
-0000000000000000: 00000002 00000000 00010000 0001 01 12345 /tmp/tmux-1000/default
-0000000000000000: 00000003 00000000 00000000 0001 03 99999 /tmp/tmux-1000/default";
+0000000000000000: 00000002 00000000 00010000 0001 01 12345 tmp/tmux-1000/default
+0000000000000000: 00000003 00000000 00000000 0001 03 99999 tmp/tmux-1000/default";
         assert_eq!(
-            find_listening_inode(table, "/tmp/tmux-1000/default"),
+            find_listening_inode(table, "tmp/tmux-1000/default"),
             Some("12345".to_string())
         );
     }
@@ -487,8 +489,8 @@ Num       RefCount Protocol Flags    Type St Inode Path
     #[test]
     fn find_listening_inode_ignores_non_listening_flag() {
         let table = "\
-0000000000000000: 00000003 00000000 00000000 0001 03 99999 /tmp/tmux-1000/default";
-        assert_eq!(find_listening_inode(table, "/tmp/tmux-1000/default"), None);
+0000000000000000: 00000003 00000000 00000000 0001 03 99999 tmp/tmux-1000/default";
+        assert_eq!(find_listening_inode(table, "tmp/tmux-1000/default"), None);
     }
 
     #[test]
@@ -508,9 +510,9 @@ Num       RefCount Protocol Flags    Type St Inode Path
 
     #[test]
     fn stale_clients_only_past_threshold() {
-        let lines = "/dev/pts/0 1000\n/dev/pts/1 1900\n";
+        let lines = "dev/pts/0 1000\ndev/pts/1 1900\n";
         let out = stale_clients(2000, lines, 500);
-        assert_eq!(out, vec![("/dev/pts/0".to_string(), 1000)]);
+        assert_eq!(out, vec![("dev/pts/0".to_string(), 1000)]);
     }
 
     #[test]

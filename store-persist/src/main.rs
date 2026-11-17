@@ -92,7 +92,7 @@ impl Dolt for RealDolt {
     }
 
     fn alive(&self, pid: u32) -> bool {
-        std::fs::read_to_string(format!("/proc/{pid}/comm")).map(|c| c.trim() == "dolt").unwrap_or(false)
+        std::fs::read_to_string(format!("{}/{pid}/comm", system_paths::PROC)).map(|c| c.trim() == "dolt").unwrap_or(false)
     }
 }
 

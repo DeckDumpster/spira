@@ -44,7 +44,7 @@ path = "tests/no_fork_edges.rs"
 required-features = ["integration"]
 
 [features]
-integration = ["bead/integration", "hel/integration", "mail/integration", "runtime/integration", "spira-claim/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "spira-world/integration", "testkit/integration", "tsd/integration"]
+integration = ["bead/integration", "hel/integration", "mail/integration", "runtime/integration", "spira-claim/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "spira-world/integration", "testkit/integration", "tsd/integration", "system-paths/integration"]
 
 [dependencies]
 crossterm = "0.28"
@@ -62,6 +62,7 @@ spira-world = { path = "../../spira-world" }
 runtime = { path = "../../runtime" }
 spira-otel = { path = "../../spira-otel" }
 tsd = { path = "../../tsd" }
+system-paths = { path = "../../system-paths" }
 
 [dev-dependencies]
 testkit = { path = "../../testkit" }

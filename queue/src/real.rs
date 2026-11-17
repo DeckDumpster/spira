@@ -1190,12 +1190,12 @@ impl Scripts for RealScripts {
         let units =
             runtime::units::SystemdUnits::connect(std::sync::Arc::new(runtime::ports::WallClock))
                 .map_err(|e| e.0)?;
-        let cgroup = std::fs::read_to_string("/proc/self/cgroup").unwrap_or_default();
+        let cgroup = std::fs::read_to_string(format!("{}/cgroup", system_paths::PROC_SELF)).unwrap_or_default();
         runtime::units::stop_round_legs(&units, repo, batch, &|name| cgroup.contains(name))
     }
     fn stop_tree_holders(&self, tree: &Path) -> Result<Vec<String>, String> {
         runtime::holders::stop_holders(
-            Path::new("/proc"),
+            Path::new(system_paths::PROC),
             tree,
             &[std::process::id()],
             std::time::Duration::from_secs(5),
@@ -2628,14 +2628,14 @@ mod tests {
     #[test]
     fn the_on_red_hook_survives_a_replaced_binary_and_refuses_a_spaced_path() {
         assert_eq!(
-            on_red_cmd("/r/queue (deleted)", "b1", "repo").as_deref(),
-            Some("/r/queue round failed b1 repo --suite")
+            on_red_cmd("r/queue (deleted)", "b1", "repo").as_deref(),
+            Some("r/queue round failed b1 repo --suite")
         );
         assert_eq!(
-            on_red_cmd("/r/queue", "b1", "repo").as_deref(),
-            Some("/r/queue round failed b1 repo --suite")
+            on_red_cmd("r/queue", "b1", "repo").as_deref(),
+            Some("r/queue round failed b1 repo --suite")
         );
-        assert_eq!(on_red_cmd("/my dir/queue", "b1", "repo"), None);
+        assert_eq!(on_red_cmd("my dir/queue", "b1", "repo"), None);
     }
     use super::*;
 
@@ -2667,7 +2667,7 @@ mod tests {
     fn push_adds_app_credentials_only_when_configured() {
         let args = ["-q".to_string(), "origin".to_string(), "main".to_string()];
         let argv = |app| {
-            crate::ops::helpers::push_command(Path::new("/repo"), &args, app)
+            crate::ops::helpers::push_command(Path::new("repo"), &args, app)
                 .get_args()
                 .map(|a| a.to_string_lossy().into_owned())
                 .collect::<Vec<_>>()

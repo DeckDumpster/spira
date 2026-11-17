@@ -125,7 +125,7 @@ fn t3_its_own_leg_unit_ran_is_heard() {
 /// `gate.sh` is not found and every bead gets NO_VERDICT.
 #[test]
 fn a_gate_leg_carries_the_release_on_path() {
-    let base_env = spira_runtime::tasks::a::batcher_local::edge::leg_env(vec![], "/rel", "/home/x", "/rel/conf", "/usr/bin");
+    let base_env = spira_runtime::tasks::a::batcher_local::edge::leg_env(vec![], "rel", "home/x", "rel/conf", "usr/bin");
     let snap = Snapshot { base_env, ..idle() };
     let j = job("spira", "a", false, 2, 10);
     let slot = Slot { state: State::Claimed, job: Some(j.clone()), ..Slot::default() };
@@ -135,24 +135,24 @@ fn a_gate_leg_carries_the_release_on_path() {
     let leg = acts.iter().find(|a| a.effect == UNIT_START).expect("the gate leg starts");
     let spec: runtime::units::UnitSpec = serde_json::from_str(&leg.input).unwrap();
     let get = |k: &str| spec.env.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
-    assert!(get("PATH").unwrap_or_default().starts_with("/rel/bin:/rel/spira:"), "PATH {:?}", get("PATH"));
-    assert_eq!(get("SPIRA_RELEASE").as_deref(), Some("/rel"));
-    assert_eq!(get("SPIRA_TOML").as_deref(), Some("/rel/conf"));
+    assert!(get("PATH").unwrap_or_default().starts_with("rel/bin:rel/spira:"), "PATH {:?}", get("PATH"));
+    assert_eq!(get("SPIRA_RELEASE").as_deref(), Some("rel"));
+    assert_eq!(get("SPIRA_TOML").as_deref(), Some("rel/conf"));
     assert!(get("SPIRA_GATE_BEAD").is_some(), "the gate's own variables stay");
 }
 
 #[test]
 fn a_leg_carries_the_release_on_path_and_a_leg_variable_wins() {
-    let base_env = spira_runtime::tasks::a::batcher_local::edge::leg_env(vec![], "/rel", "/home/x", "/rel/conf", "/usr/bin");
+    let base_env = spira_runtime::tasks::a::batcher_local::edge::leg_env(vec![], "rel", "home/x", "rel/conf", "usr/bin");
     let snap = Snapshot { base_env, ..idle() };
     let j = job("spira", "a", false, 2, 10);
     let slot = Slot { state: State::Claimed, job: Some(j.clone()), ..Slot::default() };
     let input = serde_json::to_string(&SlotJob { slot: 0, job: j.clone() }).unwrap();
     let (_, acts) = on_outcome(&Carry { slots: vec![slot] }, TIP, &input, true, &j.tip, &snap);
     let spec: runtime::units::UnitSpec = serde_json::from_str(&acts.iter().find(|a| a.effect == UNIT_START).expect("tip answered starts the gate leg").input).unwrap();
-    assert!(spec.env.iter().any(|(k, v)| k == "PATH" && v.starts_with("/rel/bin:/rel/spira:")), "{:?}", spec.env);
-    let kept = spira_runtime::tasks::a::batcher_local::edge::with_defaults(vec![("PATH".into(), "/mine".into())], &snap.base_env);
-    assert_eq!(kept.iter().filter(|(k, _)| k == "PATH").map(|(_, v)| v.as_str()).collect::<Vec<_>>(), ["/mine"]);
+    assert!(spec.env.iter().any(|(k, v)| k == "PATH" && v.starts_with("rel/bin:rel/spira:")), "{:?}", spec.env);
+    let kept = spira_runtime::tasks::a::batcher_local::edge::with_defaults(vec![("PATH".into(), "mine".into())], &snap.base_env);
+    assert_eq!(kept.iter().filter(|(k, _)| k == "PATH").map(|(_, v)| v.as_str()).collect::<Vec<_>>(), ["mine"]);
 }
 
 fn held(state: State, leg_started: bool, since_ms: Option<u64>) -> Slot {

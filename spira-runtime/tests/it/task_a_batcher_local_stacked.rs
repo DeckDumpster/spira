@@ -32,7 +32,7 @@ fn snap(open: Vec<Round>, now_ms: u64) -> Snapshot {
 }
 
 fn round(id: &str, members: &[&str], head: &str, age_secs: u64) -> Round {
-    Round { id: id.into(), members: members.iter().map(|m| m.to_string()).collect(), tips: vec![], head: head.into(), worktree: format!("/w/{id}"), driven: true, red: false, age_secs, unfit: None, phase: String::new() }
+    Round { id: id.into(), members: members.iter().map(|m| m.to_string()).collect(), tips: vec![], head: head.into(), worktree: format!("w/{id}"), driven: true, red: false, age_secs, unfit: None, phase: String::new() }
 }
 
 fn names(acts: &[Act]) -> Vec<&str> {
@@ -55,7 +55,7 @@ fn small(max_open: usize) -> Policy {
 fn cut_and_open(p: &Policy, carry: &Carry, snapshot: &Snapshot, batch: &str) -> (Carry, Vec<Act>) {
     let (carry, acts) = decide_with(p, carry, snapshot);
     let cut = leg_of(&acts, ASSEMBLE);
-    let assembled = Assembled { merged: cut.members.clone(), wt: format!("/w/{batch}"), base: "b1".into(), suites: true, ..Assembled::default() };
+    let assembled = Assembled { merged: cut.members.clone(), wt: format!("w/{batch}"), base: "b1".into(), suites: true, ..Assembled::default() };
     let (carry, acts) = on_outcome(&carry, ASSEMBLE, true, &serde_json::to_string(&assembled).unwrap(), &cut, snapshot.now_ms);
     let open = leg_of(&acts, ROUND_OPEN);
     let opened = Opened { batch: batch.into(), ..Opened::default() };
@@ -258,7 +258,7 @@ fn the_real_task_cuts_the_second_round_on_the_first_ones_head() {
     use runtime::taskrig::TaskRig;
     let p = BTreeMap::from([("SPIRA_ROUND_MAX_OPEN".to_string(), "2".to_string())]);
     let mut carry = Carry::default();
-    carry.repos.insert("spira".into(), RepoCarry { state: State::Corpus, round_key: Some("k".into()), batch: Some("r1".into()), members: vec![("sp-a".into(), "ta".into()), ("sp-b".into(), "tb".into())], wt: "/w/r1".into(), base: "b1".into(), leg: Some("spira.r1.corpus1".into()), leg_at_ms: NOW, run: 1, ..RepoCarry::default() });
+    carry.repos.insert("spira".into(), RepoCarry { state: State::Corpus, round_key: Some("k".into()), batch: Some("r1".into()), members: vec![("sp-a".into(), "ta".into()), ("sp-b".into(), "tb".into())], wt: "w/r1".into(), base: "b1".into(), leg: Some("spira.r1.corpus1".into()), leg_at_ms: NOW, run: 1, ..RepoCarry::default() });
     let world = snap(vec![round("r1", &["sp-a", "sp-b"], "h1", 60)], NOW + 30_000);
     let mut r = TaskRig::new(1, BatcherLocal::new(p).registration()).unwrap().double(OBSERVE, move |_| Ok(serde_json::to_string(&world).unwrap()));
     for e in EFFECTS.iter().filter(|e| **e != OBSERVE) {

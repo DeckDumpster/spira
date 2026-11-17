@@ -145,5 +145,6 @@ fn the_cache_is_trimmed_oldest_first_to_its_cap_and_fresh_tmp_survives() {
 #[test]
 fn glob_matches_wildcards_and_finds_nothing_for_a_missing_directory() {
     assert!(wild(".tgt-*", ".tgt-final") && !wild(".tgt-*", "tgt-final") && wild("a*c*e", "abcde"));
-    assert!(glob("/nonexistent-reclaim/*/target").is_empty());
+    let root = testkit::TempDir::new("reclaim-glob-missing");
+    assert!(glob(&format!("{}/nonexistent-reclaim/*/target", root.display())).is_empty());
 }

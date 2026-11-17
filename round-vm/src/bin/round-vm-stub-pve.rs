@@ -94,11 +94,11 @@ fn podman_write_file(container: &str, path: &str, content: &str) -> i64 {
 impl Stub {
     fn route(&mut self, method: &str, path: &str, params: &Params) -> Result<(u16, Value), String> {
         let ok = |v: Value| Ok((200, v));
-        if method == "GET" && path == "/api2/json/cluster/nextid" {
+        if method == "GET" && path == "/api2/json/cluster/nextid" { // not a path: Proxmox API route
             self.nextid += 1;
             return ok(json!(self.nextid.to_string()));
         }
-        let Some(rest) = path.strip_prefix("/api2/json/nodes/") else { return ok(Value::Null) };
+        let Some(rest) = path.strip_prefix("/api2/json/nodes/") else { return ok(Value::Null) }; // not a path: Proxmox API route
         let (_, sub) = rest.split_once('/').ok_or("bad node path")?;
         if method == "GET" && sub == "qemu" {
             let list: Vec<Value> = self

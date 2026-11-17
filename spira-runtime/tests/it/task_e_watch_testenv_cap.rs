@@ -11,15 +11,15 @@ use spira_runtime::tasks::e::watch_testenv_cap::*;
 use spira_runtime::watchers::INBOX_APPEND;
 
 fn config() -> Config {
-    Config { suite_cap_s: 600, gate_cap_s: 300, load_wait_s: 60, slot_wait_s: 30, inbox: "/q/inbox".into() }
+    Config { suite_cap_s: 600, gate_cap_s: 300, load_wait_s: 60, slot_wait_s: 30, inbox: "q/inbox".into() }
 }
 
 fn run(pid: u32, age: u64, argv: &[&str]) -> Proc {
     Proc { pid, start_ticks: 1000 + u64::from(pid), argv: argv.iter().map(|s| s.to_string()).collect(), age_secs: age }
 }
 
-const SUITE: &[&str] = &["/r/bin/testenv", "--suites", "test-a.sh", "spira"];
-const GATE: &[&str] = &["/r/bin/testenv", "--deadline", "300", "spira"];
+const SUITE: &[&str] = &["r/bin/testenv", "--suites", "test-a.sh", "spira"];
+const GATE: &[&str] = &["r/bin/testenv", "--deadline", "300", "spira"];
 
 fn world(procs: Vec<Proc>) -> Arc<Mutex<Snapshot>> {
     Arc::new(Mutex::new(Snapshot { procs }))
@@ -65,7 +65,7 @@ fn t2_no_run_and_runs_under_cap_journal_nothing() {
     let mut r = rig(1, world(vec![]), killed);
     assert_silent_tick(&mut r, STREAM);
     acc::assert_healthy(&r, STREAM);
-    let mut r = rig(1, world(vec![run(10, 100, SUITE), run(11, 100, GATE), run(12, 9999, &["/r/bin/testenv", "suites", "status"])]), killed);
+    let mut r = rig(1, world(vec![run(10, 100, SUITE), run(11, 100, GATE), run(12, 9999, &["r/bin/testenv", "suites", "status"])]), killed);
     assert_silent_tick(&mut r, STREAM);
     acc::assert_healthy(&r, STREAM);
 }
@@ -102,7 +102,7 @@ fn t5_the_breaches_and_the_line_are_the_ones_testenv_cap_made() {
     let kills = asked(&r, KILL);
     assert_eq!(kills.len(), 2, "only past cap + waits + grace: {kills:?}");
     let r = rig(1, world(vec![run(4242, 800, SUITE)]), killed);
-    assert_eq!(asked(&r, INBOX_APPEND), ["1970-01-01T00:00:00Z testenv over-cap killed: pid 4242 tier=suite wall=800s cap=600s cmd=/r/bin/testenv --suites test-a.sh spira"]);
+    assert_eq!(asked(&r, INBOX_APPEND), ["1970-01-01T00:00:00Z testenv over-cap killed: pid 4242 tier=suite wall=800s cap=600s cmd=r/bin/testenv --suites test-a.sh spira"]);
 }
 
 fn registration() -> runtime::event::Registration {

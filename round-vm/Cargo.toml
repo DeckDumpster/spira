@@ -43,7 +43,7 @@ path = "tests/deny_list_real.rs"
 required-features = ["integration"]
 
 [features]
-integration = ["spira-config/integration", "spira-store/integration", "spira-otel/integration", "testkit/integration", "tsd/integration", "spira-desired-state/integration", "reconciler-engine/integration", "test-registry/integration", "gate/integration", "batcher/integration", "batcher-cut/integration"]
+integration = ["spira-config/integration", "spira-store/integration", "spira-otel/integration", "testkit/integration", "tsd/integration", "spira-desired-state/integration", "reconciler-engine/integration", "test-registry/integration", "gate/integration", "batcher/integration", "batcher-cut/integration", "system-paths/integration"]
 
 [dependencies]
 spira-config = { path = "../spira-config" }
@@ -59,6 +59,7 @@ ureq = { version = "2", default-features = false, features = ["tls"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 rustls-pemfile = "2"
 sha2 = "0.10"
+system-paths = { path = "../system-paths" }
 
 
 [dev-dependencies]

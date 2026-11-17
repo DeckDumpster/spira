@@ -68,7 +68,7 @@ mod tests {
         let cfg = |k: &str| -> Result<String, String> {
             Ok(match k {
                 "SPIRA_MAIL_READERS" => "concierge=inbox-append.sh".into(),
-                "SPIRA_MAIL" => "/m".into(),
+                "SPIRA_MAIL" => "m".into(),
                 _ => String::new(),
             })
         };

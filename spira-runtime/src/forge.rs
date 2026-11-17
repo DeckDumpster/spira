@@ -115,11 +115,11 @@ fn vmid_of(name: &str) -> String {
 /// workflow on `branch`, and a check no workflow run owns (an app's own check) always counts.
 pub fn current_checks(check_runs: &[Value], runs: &[Value], branch: &str) -> Vec<(String, String, String)> {
     let suite = |v: &Value, key: &str| v.pointer(key).and_then(Value::as_u64);
-    let owned: BTreeSet<u64> = runs.iter().filter_map(|r| suite(r, "/check_suite_id")).collect();
+    let owned: BTreeSet<u64> = runs.iter().filter_map(|r| suite(r, "/check_suite_id")).collect(); // not a path: GitHub API route or JSON pointer
     let workflow_of = |r: &Value| r["workflow_id"].as_u64().map_or_else(|| text(r, "name"), |w| w.to_string());
     let mut latest: BTreeMap<String, (u64, u64)> = BTreeMap::new();
     for r in runs.iter().filter(|r| r["head_branch"].as_str() == Some(branch)) {
-        let (Some(id), Some(s)) = (r["id"].as_u64(), suite(r, "/check_suite_id")) else { continue };
+        let (Some(id), Some(s)) = (r["id"].as_u64(), suite(r, "/check_suite_id")) else { continue }; // not a path: GitHub API route or JSON pointer
         let workflow = workflow_of(r);
         if latest.get(&workflow).is_none_or(|(newest, _)| id > *newest) {
             latest.insert(workflow, (id, s));
@@ -129,7 +129,7 @@ pub fn current_checks(check_runs: &[Value], runs: &[Value], branch: &str) -> Vec
     // Cancelled checks of a run a newer run of the same workflow replaced, by that run's state.
     let mut replaced: BTreeMap<u64, bool> = BTreeMap::new();
     for r in runs.iter().filter(|r| r["conclusion"].as_str() == Some("cancelled")) {
-        let (Some(id), Some(s)) = (r["id"].as_u64(), suite(r, "/check_suite_id")) else { continue };
+        let (Some(id), Some(s)) = (r["id"].as_u64(), suite(r, "/check_suite_id")) else { continue }; // not a path: GitHub API route or JSON pointer
         let newer = runs.iter().filter(|n| n["id"].as_u64() > Some(id) && workflow_of(n) == workflow_of(r));
         let pending = newer.clone().any(|n| n["status"].as_str() != Some("completed"));
         if pending || newer.clone().any(|n| n["conclusion"].as_str() == Some("success")) {
@@ -138,10 +138,10 @@ pub fn current_checks(check_runs: &[Value], runs: &[Value], branch: &str) -> Vec
     }
     check_runs
         .iter()
-        .filter(|c| suite(c, "/check_suite/id").is_none_or(|s| !owned.contains(&s) || current.contains(&s)))
+        .filter(|c| suite(c, "/check_suite/id").is_none_or(|s| !owned.contains(&s) || current.contains(&s))) // not a path: GitHub API route or JSON pointer
         .filter_map(|c| {
             let (name, status, conclusion) = (text(c, "name"), text(c, "status").to_uppercase(), text(c, "conclusion").to_uppercase());
-            match (conclusion == "CANCELLED").then(|| suite(c, "/check_suite/id").and_then(|s| replaced.get(&s))).flatten() {
+            match (conclusion == "CANCELLED").then(|| suite(c, "/check_suite/id").and_then(|s| replaced.get(&s))).flatten() { // not a path: GitHub API route or JSON pointer
                 Some(true) => Some((name, "IN_PROGRESS".into(), String::new())),
                 Some(false) => None,
                 None => Some((name, status, conclusion)),
@@ -266,13 +266,13 @@ impl Forge {
     /// One PR by number with its checks classified: `Some(None)` once it is no longer open, `None`
     /// when the forge could not say. Its checks are read only while it is open.
     pub fn open_pr(&self, slug: &str, n: u64) -> Option<Option<(OpenPr, String)>> {
-        let p = self.get("open_prs", &format!("/repos/{slug}/pulls/{n}"))?;
+        let p = self.get("open_prs", &format!("/repos/{slug}/pulls/{n}"))?; // not a path: GitHub API route or JSON pointer
         if p["state"].as_str()? != "open" {
             return Some(None);
         }
         let sha = p["head"]["sha"].as_str()?;
-        let checks = self.get("open_prs", &format!("/repos/{slug}/commits/{sha}/check-runs?{PAGE}"))?;
-        let runs = self.get("open_prs", &format!("/repos/{slug}/actions/runs?head_sha={sha}&{PAGE}"))?;
+        let checks = self.get("open_prs", &format!("/repos/{slug}/commits/{sha}/check-runs?{PAGE}"))?; // not a path: GitHub API route or JSON pointer
+        let runs = self.get("open_prs", &format!("/repos/{slug}/actions/runs?head_sha={sha}&{PAGE}"))?; // not a path: GitHub API route or JSON pointer
         let runs = runs["workflow_runs"].as_array().filter(|a| a.len() < PAGE_SIZE)?;
         let checks = current_checks(checks["check_runs"].as_array()?, runs, &text(&p["head"], "ref"));
         let (status, fail) = classify(&checks);
@@ -282,7 +282,7 @@ impl Forge {
 
     /// How a PR that left the open list ended; `None` when the forge could not say.
     pub fn final_state(&self, slug: &str, n: u64) -> Option<Final> {
-        let p = self.get("final_state", &format!("/repos/{slug}/pulls/{n}"))?;
+        let p = self.get("final_state", &format!("/repos/{slug}/pulls/{n}"))?; // not a path: GitHub API route or JSON pointer
         let state = match (p["state"].as_str()?, p["merged"].as_bool().unwrap_or(false)) {
             (_, true) => "MERGED",
             ("closed", false) => "CLOSED",
@@ -294,7 +294,7 @@ impl Forge {
 
     /// The first completed deploy run for a merge commit; `None` while there is none.
     pub fn deploy_run(&self, slug: &str, sha: &str) -> Option<Run> {
-        let runs = self.get("deploy_run", &format!("/repos/{slug}/actions/workflows/deploy.yml/runs?head_sha={sha}&{PAGE}"))?;
+        let runs = self.get("deploy_run", &format!("/repos/{slug}/actions/workflows/deploy.yml/runs?head_sha={sha}&{PAGE}"))?; // not a path: GitHub API route or JSON pointer
         let r = runs["workflow_runs"].as_array()?.iter().find(|r| r["status"] == "completed")?;
         let secs = epoch(r["updated_at"].as_str()?).zip(epoch(r["created_at"].as_str()?)).map_or(0, |(u, c)| u.saturating_sub(c));
         Some(Run { conclusion: r["conclusion"].as_str().unwrap_or("unknown").to_string(), secs, url: text(r, "html_url") })
@@ -305,15 +305,15 @@ impl Forge {
     /// `forge stranded-runners` prints. A call that fails reads as nothing stranded, as it does there.
     pub fn stranded_runners(&self, slug: &str, now: u64, min_age: u64) -> Vec<String> {
         const GENERIC: [&str; 9] = ["self-hosted", "linux", "macos", "windows", "x64", "arm64", "x86_64", "arm", "ubuntu-latest"];
-        let Some(runs) = self.get("stranded_runners", &format!("/repos/{slug}/actions/runs?per_page=50")) else { return vec![] };
+        let Some(runs) = self.get("stranded_runners", &format!("/repos/{slug}/actions/runs?per_page=50")) else { return vec![] }; // not a path: GitHub API route or JSON pointer
         let ids: Vec<String> = runs["workflow_runs"].as_array().map(|a| a.iter().filter(|r| r["status"] != "completed").filter_map(|r| r.get("id").map(|i| i.to_string())).collect()).unwrap_or_default();
         if ids.is_empty() {
             return vec![];
         }
-        let runners: Vec<Value> = self.get("stranded_runners", &format!("/repos/{slug}/actions/runners?per_page=100")).and_then(|v| v["runners"].as_array().cloned()).unwrap_or_default();
+        let runners: Vec<Value> = self.get("stranded_runners", &format!("/repos/{slug}/actions/runners?per_page=100")).and_then(|v| v["runners"].as_array().cloned()).unwrap_or_default(); // not a path: GitHub API route or JSON pointer
         let mut lines = vec![];
         for id in ids {
-            let Some(jobs) = self.get("stranded_runners", &format!("/repos/{slug}/actions/runs/{id}/jobs")) else { continue };
+            let Some(jobs) = self.get("stranded_runners", &format!("/repos/{slug}/actions/runs/{id}/jobs")) else { continue }; // not a path: GitHub API route or JSON pointer
             for j in jobs["jobs"].as_array().cloned().unwrap_or_default() {
                 if j["status"] != "queued" {
                     continue;
@@ -344,10 +344,10 @@ impl Forge {
 
     /// `spira/*` branches ahead of `base` that none of `open_heads` is the head of.
     pub fn stray_branches(&self, slug: &str, base: &str, open_heads: &[String]) -> Option<Vec<String>> {
-        let branches = self.listed("stray_branches", &format!("/repos/{slug}/branches?{PAGE}"))?;
+        let branches = self.listed("stray_branches", &format!("/repos/{slug}/branches?{PAGE}"))?; // not a path: GitHub API route or JSON pointer
         let mut out = vec![];
         for b in branches.iter().filter_map(|b| b["name"].as_str()).filter(|b| b.starts_with("spira/")) {
-            let ahead = self.get("stray_branches", &format!("/repos/{slug}/compare/{base}...{b}"))?["ahead_by"].as_u64()?;
+            let ahead = self.get("stray_branches", &format!("/repos/{slug}/compare/{base}...{b}"))?["ahead_by"].as_u64()?; // not a path: GitHub API route or JSON pointer
             if ahead > 0 && !open_heads.iter().any(|h| h == b) {
                 out.push(b.to_string());
             }
@@ -372,7 +372,8 @@ pub(crate) mod tests {
         for url in ["https://github.com/acme/widgets.git", "git@github.com:acme/widgets.git", "ssh://git@host:22/acme/widgets", "file:///x/acme/widgets/"] {
             assert_eq!(slug(checkout(url).path()).as_deref(), Some("acme/widgets"), "{url}");
         }
-        assert_eq!(slug(Path::new("/nonexistent")), None);
+        let root = testkit::TempDir::new("forge-slug-none");
+        assert_eq!(slug(&root.join("nonexistent")), None);
     }
 
     #[test]
@@ -526,7 +527,7 @@ pub(crate) mod tests {
     fn an_unchanged_poll_is_revalidated_by_etag_and_answered_from_the_kept_body() {
         let sent = std::cell::RefCell::new(vec![]);
         let get = |kept, answer: Result<Reply, String>| {
-            conditional_get("etag-api", "http://etag-api/p", "/p", "etag-caller", 1_000, kept, |tag| {
+            conditional_get("etag-api", "http://etag-api/p", "/p", "etag-caller", 1_000, kept, |tag| { // not a path: API route
                 sent.borrow_mut().push(tag.map(str::to_string));
                 answer
             })
@@ -546,7 +547,7 @@ pub(crate) mod tests {
         let spent = api_budget::Rate { limit: 5000, remaining: 0, reset };
         let calls = std::cell::Cell::new(0);
         let get = |answer: Result<Reply, String>| {
-            conditional_get(api, "http://spend-api/p", "/p", "spend-caller", 1_000, None, |_| {
+            conditional_get(api, "http://spend-api/p", "/p", "spend-caller", 1_000, None, |_| { // not a path: API route
                 calls.set(calls.get() + 1);
                 answer
             })

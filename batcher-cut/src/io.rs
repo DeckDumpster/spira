@@ -1226,7 +1226,7 @@ fn clear_unregistered(repo: &Repo, wt: &Path) -> Result<Option<String>, String> 
     if registered {
         return Ok(None);
     }
-    let holders = runtime::holders::holders(Path::new("/proc"), &here, &[std::process::id()]);
+    let holders = runtime::holders::holders(Path::new(system_paths::PROC), &here, &[std::process::id()]);
     if !holders.is_empty() {
         return Err(format!(
             "{} is not a worktree of {} and is in use by {}; not clearing it",
@@ -2797,7 +2797,7 @@ pub fn shots_section(run: &Path, loom_addr: Option<&str>, members: &[(String, St
             .collect();
         names.sort();
         for n in names {
-            let path = format!("/shots/{bead}/{tip}/{n}");
+            let path = format!("{}/{bead}/{tip}/{n}", system_paths::guest::SHOTS);
             lines.push(match loom_addr {
                 Some(a) => format!("- {bead} {n}: http://{a}{path}"),
                 None => format!("- {bead} {n}: {path}"),
@@ -5333,12 +5333,12 @@ mod land_exit_tests {
         let record = store_view::Record {
             id: "r2".into(),
             state: "CI_RUNNING".into(),
-            fields: [("head", "bbb"), ("members", "sp-c:tc sp-d:td"), ("worktree", "/w2"), ("opened", "1000"), ("red", "test-x.sh")].map(|(k, v)| (k.to_string(), v.to_string())).to_vec(),
+            fields: [("head", "bbb"), ("members", "sp-c:tc sp-d:td"), ("worktree", "w2"), ("opened", "1000"), ("red", "test-x.sh")].map(|(k, v)| (k.to_string(), v.to_string())).to_vec(),
         };
         let round = store_view::Round { phase: "certifying".into(), record };
         assert_eq!(
             open_round_of(&round, 1090),
-            OpenRound { id: "r2".into(), members: vec!["sp-c".into(), "sp-d".into()], tips: vec!["tc".into(), "td".into()], head: "bbb".into(), worktree: "/w2".into(), phase: "certifying".into(), red: true, age_secs: 90 }
+            OpenRound { id: "r2".into(), members: vec!["sp-c".into(), "sp-d".into()], tips: vec!["tc".into(), "td".into()], head: "bbb".into(), worktree: "w2".into(), phase: "certifying".into(), red: true, age_secs: 90 }
         );
     }
 
@@ -5540,13 +5540,13 @@ mod forge_release_tests {
         std::fs::write(&script, "echo \"$1 $2 $3\"\nexit 0\n").unwrap();
         let repo = Repo {
             name: "r".into(),
-            path: PathBuf::from("/tmp/r"),
+            path: PathBuf::from("tmp/r"),
             base: "local/main".into(),
             forge: script,
             land: Land::Forge,
         };
         let r = forge_run(&repo, "pr-arm-queue", &["merge"]).unwrap();
-        assert_eq!((r.code, r.out.as_str()), (0, "pr-arm-queue /tmp/r merge\n"));
+        assert_eq!((r.code, r.out.as_str()), (0, "pr-arm-queue tmp/r merge\n"));
         assert_eq!(
             forge::client::route_of(Path::new("forge")),
             forge::client::Route::InProcess

@@ -480,9 +480,9 @@ fn live_over(content: spira_store::lc_call::Reply, show: spira_store::lc_call::R
         }
     }
     let store = crate::store::Store {
-        bdq: "/nonexistent/bdq".into(),
+        bdq: "nonexistent/bdq".into(),
         lc: LcClient::over(Arc::new(Two(content, show)), true),
-        lc_bin: "/nonexistent/spira-lc".into(),
+        lc_bin: "nonexistent/spira-lc".into(),
         timeout: std::time::Duration::from_secs(1),
         views: None,
     };

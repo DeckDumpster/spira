@@ -9,7 +9,7 @@ use spira_runtime::tasks::d::acceptance as acc;
 use spira_runtime::tasks::e::watch_backup_age::*;
 
 fn config() -> Config {
-    Config { url: "s3://b/lc".into(), db: "spira_lifecycle".into(), max_age_s: 25_200, run: "/r".into() }
+    Config { url: "s3://b/lc".into(), db: "spira_lifecycle".into(), max_age_s: 25_200, run: "r".into() }
 }
 
 fn dbs(state: Db) -> Snapshot {

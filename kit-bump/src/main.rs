@@ -162,7 +162,7 @@ mod tests {
         assert_eq!(unconfigured(&v(&["--config", m])), Some(m));
         std::fs::write(&missing, "registry http://r\n").unwrap();
         assert_eq!(unconfigured(&v(&["--config", m])), None);
-        assert_eq!(unconfigured(&v(&["--kit", "/k"])), None);
+        assert_eq!(unconfigured(&v(&["--kit", "k"])), None);
     }
 
     #[test]

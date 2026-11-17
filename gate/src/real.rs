@@ -871,7 +871,7 @@ impl World for Real {
         }
     }
     fn mem_avail_mib(&self) -> u64 {
-        fs::read_to_string("/proc/meminfo")
+        fs::read_to_string(format!("{}/meminfo", system_paths::PROC))
             .ok()
             .and_then(|m| {
                 m.lines()
@@ -1008,7 +1008,7 @@ impl World for Real {
     }
     fn target_on_tmpfs(&self, tree: &Path, explicit_root: &str, run: &str, lim: &crate::target::Limits, builder: Option<&crate::ports::Builder>) -> Result<String, String> {
         use crate::target;
-        let Some(root) = target::root(explicit_root, run, target::on_tmpfs(Path::new("/tmp"))) else {
+        let Some(root) = target::root(explicit_root, run, target::on_tmpfs(Path::new(system_paths::TMP))) else {
             return Ok(format!("gate: no tmpfs for the build (/tmp is not one and SPIRA_GATE_TARGET_ROOT is unset) — {} builds in the tree", tree.display()));
         };
         let trees = tree.parent().unwrap_or(Path::new("/"));
@@ -1037,7 +1037,7 @@ impl World for Real {
     }
     fn target_room(&self, explicit_root: &str, run: &str) -> String {
         use crate::target;
-        let Some(root) = target::root(explicit_root, run, target::on_tmpfs(Path::new("/tmp"))) else {
+        let Some(root) = target::root(explicit_root, run, target::on_tmpfs(Path::new(system_paths::TMP))) else {
             return "gate: the build ran in its tree (no target root)".into();
         };
         let held = target::size_of(&root) / (1024 * 1024);
@@ -1227,7 +1227,7 @@ const SAMPLE_MS: u64 = 2000;
 /// Cumulative user+system CPU ticks of every process in group `root` or descended from it
 /// (a nested `timeout` or `setsid` leaves the group), reaped children included.
 fn group_cpu_ticks(root: i32) -> u64 {
-    let Ok(dir) = std::fs::read_dir("/proc") else { return 0 };
+    let Ok(dir) = std::fs::read_dir(system_paths::PROC) else { return 0 };
     let mut procs: Vec<(i32, i32, i32, u64)> = Vec::new();
     for e in dir.flatten() {
         let Some(pid) = e.file_name().to_str().and_then(|n| n.parse::<i32>().ok()) else { continue };
@@ -1355,8 +1355,8 @@ mod tests {
 
     #[test]
     fn the_newest_build_dir_fact_names_the_tip_and_directory_of_the_last_submit() {
-        let json = r#"[{"event_type":"build-dir","new_value":"aaa\t/pool/dir.1"},{"event_type":"build-dir","new_value":"bbb\t/pool/dir.2"}]"#;
-        assert_eq!(super::newest_build_dir(json), Some(("bbb".into(), "/pool/dir.2".into())));
+        let json = r#"[{"event_type":"build-dir","new_value":"aaa\tpool/dir.1"},{"event_type":"build-dir","new_value":"bbb\tpool/dir.2"}]"#;
+        assert_eq!(super::newest_build_dir(json), Some(("bbb".into(), "pool/dir.2".into())));
         assert_eq!(super::newest_build_dir("[]"), None);
         assert_eq!(super::newest_build_dir(r#"[{"new_value":"no-tab"}]"#), None);
     }
@@ -1389,7 +1389,7 @@ mod tests {
     fn watched(stall_ms: u64, cmd: &str) -> (i32, String) {
         let t = testkit::TempDir::new("gate-watch");
         let tmp = t.path().to_path_buf();
-        super::Real::new(tmp.clone()).run_watched(&tmp, &[("PATH".into(), "/usr/bin:/bin".into())], "60", Some(stall_ms), 20, cmd)
+        super::Real::new(tmp.clone()).run_watched(&tmp, &[("PATH".into(), system_paths::SYSTEM_PATH_MIN.into())], "60", Some(stall_ms), 20, cmd)
     }
 
     #[test]
@@ -1471,7 +1471,7 @@ mod tests {
     #[test]
     fn a_recorded_stamp_is_on_the_virtual_clock_and_a_wait_is_not() {
         use crate::ports::World;
-        let r = super::Real::new(std::path::PathBuf::from("/nonexistent"));
+        let r = super::Real::new(testkit::TempDir::new("gate-real-stamp").join("nonexistent"));
         let (stamp, now) = spira_config::vtime::with_now_for_test(1_900_000_000, || (r.stamp(), r.now()));
         assert_eq!(stamp, 1_900_000_000);
         assert_ne!(now, 1_900_000_000, "now times waits and deadlines; a frozen virtual clock would hang them");

@@ -167,11 +167,11 @@ mod tests {
 
     #[test]
     fn hostile_names_never_become_paths() {
-        let v = Path::new("/v");
+        let v = Path::new("v");
         assert!(path(v, "../x", T).is_none());
         assert!(path(v, "spira", "../../etc").is_none());
         assert!(path(v, "spira", "HEAD").is_none());
-        assert_eq!(path(v, "spira", T), Some(PathBuf::from(format!("/v/trees/spira/{T}"))));
+        assert_eq!(path(v, "spira", T), Some(PathBuf::from(format!("v/trees/spira/{T}"))));
     }
 
     #[test]
@@ -196,8 +196,8 @@ mod tests {
 
     #[test]
     fn the_verdicts_dir_follows_the_gate() {
-        assert_eq!(verdicts_dir(None, Path::new("/r")), PathBuf::from("/r/verdicts"));
-        assert_eq!(verdicts_dir(Some(""), Path::new("/r")), PathBuf::from("/r/verdicts"));
-        assert_eq!(verdicts_dir(Some("/v"), Path::new("/r")), PathBuf::from("/v"));
+        assert_eq!(verdicts_dir(None, Path::new("r")), PathBuf::from("r/verdicts"));
+        assert_eq!(verdicts_dir(Some(""), Path::new("r")), PathBuf::from("r/verdicts"));
+        assert_eq!(verdicts_dir(Some("v"), Path::new("r")), PathBuf::from("v"));
     }
 }

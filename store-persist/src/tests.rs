@@ -116,14 +116,14 @@ fn live_server(w: &World, pid: u32) {
     w.dolt.live.borrow_mut().push(pid);
 }
 
-fn values(drop: Option<&str>) -> BTreeMap<String, String> {
+fn values(root: &Path, drop: Option<&str>) -> BTreeMap<String, String> {
     let mut m: BTreeMap<String, String> = [
-        (KEY_DATA, "/ram/dolt"),
-        (KEY_DURABLE, "/disk/dolt-durable"),
-        (KEY_INTERVAL, "7"),
-        (KEY_MAX_LAG, "40"),
-        (KEY_COMPACT_PCT, "150"),
-        (KEY_GC_INTERVAL, "100"),
+        (KEY_DATA, root.join("ram/dolt").display().to_string()),
+        (KEY_DURABLE, root.join("disk/dolt-durable").display().to_string()),
+        (KEY_INTERVAL, "7".to_string()),
+        (KEY_MAX_LAG, "40".to_string()),
+        (KEY_COMPACT_PCT, "150".to_string()),
+        (KEY_GC_INTERVAL, "100".to_string()),
     ]
     .into_iter()
     .map(|(k, v)| (k.to_string(), v.to_string()))
@@ -136,22 +136,25 @@ fn values(drop: Option<&str>) -> BTreeMap<String, String> {
 
 #[test]
 fn config_reads_every_key_and_refuses_a_missing_one_by_name() {
-    let c = Config::from_values(|k| values(None).get(k).cloned()).unwrap();
-    assert_eq!(c.durable, Some(PathBuf::from("/disk/dolt-durable")));
+    let root = TempDir::new("store-persist-config");
+    let c = Config::from_values(|k| values(&root, None).get(k).cloned()).unwrap();
+    assert_eq!(c.durable, Some(root.join("disk/dolt-durable")));
     assert_eq!((c.interval_secs, c.max_lag_secs, c.compact_pct, c.gc_interval_secs), (7, 40, 150, 100));
     for k in KEYS {
-        let e = Config::from_values(|q| values(Some(k)).get(q).cloned()).unwrap_err();
+        let e = Config::from_values(|q| values(&root, Some(k)).get(q).cloned()).unwrap_err();
         assert!(e.contains(k), "{k}: {e}");
     }
 }
 
 #[test]
 fn config_declared_empty_durable_means_no_copy_and_bad_values_are_refused() {
-    let mut v = values(None);
+    let root = TempDir::new("store-persist-config-bad");
+    let mut v = values(&root, None);
     v.insert(KEY_DURABLE.into(), String::new());
     assert_eq!(Config::from_values(|k| v.get(k).cloned()).unwrap().durable, None);
-    for (k, bad) in [(KEY_MAX_LAG, "7"), (KEY_COMPACT_PCT, "90"), (KEY_DURABLE, "/ram/dolt/copy"), (KEY_DURABLE, "rel"), (KEY_INTERVAL, "x")] {
-        let mut v = values(None);
+    let nested = root.join("ram/dolt/copy").display().to_string();
+    for (k, bad) in [(KEY_MAX_LAG, "7"), (KEY_COMPACT_PCT, "90"), (KEY_DURABLE, nested.as_str()), (KEY_DURABLE, "rel"), (KEY_INTERVAL, "x")] {
+        let mut v = values(&root, None);
         v.insert(k.into(), bad.into());
         assert!(Config::from_values(|q| v.get(q).cloned()).is_err(), "{k}={bad} accepted");
     }
@@ -235,10 +238,11 @@ fn without_a_durable_copy_a_ram_backed_directory_is_refused() {
 
 #[test]
 fn is_tmpfs_tells_a_ram_filesystem_from_a_disk_one() {
-    let proc_is_tmpfs = is_tmpfs(Path::new("/proc")).unwrap();
+    let proc_is_tmpfs = is_tmpfs(Path::new(system_paths::PROC)).unwrap();
     assert!(!proc_is_tmpfs, "procfs is not tmpfs — a matcher that says yes to everything is caught here");
-    if Path::new("/dev/shm").is_dir() {
-        assert!(is_tmpfs(Path::new("/dev/shm/not-yet-created")).unwrap(), "/dev/shm is tmpfs on every Linux this runs on");
+    let shm = format!("{}/shm", system_paths::DEV);
+    if Path::new(&shm).is_dir() {
+        assert!(is_tmpfs(&Path::new(&shm).join("not-yet-created")).unwrap(), "{shm} is tmpfs on every Linux this runs on");
     }
 }
 

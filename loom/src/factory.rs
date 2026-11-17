@@ -1090,8 +1090,8 @@ mod tests {
             heartbeat_bound_s: 300,
             task_bound_s: 600,
             round_max_open: 1,
-            releases: "/nonexistent-releases".into(),
-            repo_map: "/nonexistent-map".into(),
+            releases: "nonexistent-releases".into(),
+            repo_map: "nonexistent-map".into(),
         }
     }
 
@@ -1114,7 +1114,7 @@ mod tests {
     }
 
     async fn floor(answers: Vec<(String, i32, String)>) -> Result<Value, String> {
-        floor_with(answers, "/nonexistent-run", &sensing()).await
+        floor_with(answers, "nonexistent-run", &sensing()).await
     }
 
     async fn floor_with(answers: Vec<(String, i32, String)>, run: &str, sensing: &Sensing) -> Result<Value, String> {
@@ -1227,7 +1227,7 @@ mod tests {
         let row = |seq: i64, event: &str, at: i64| json!({"seq": seq, "bead_id": "sp-a", "event": event, "from_state": "WORKING", "to_state": "READY", "at": at});
         let gantt = json!({"now": NOW, "events": [row(1, "Release", NOW - 60), row(2, "Release", NOW - 600), row(3, "HolderDead", NOW - 6000)]});
         let (_logs, s) = counted(&[("bead", "Release", "WORKING", "READY", 2), ("bead", "HolderDead", "WORKING", "READY", 1), ("bead", "Submit", "WORKING", "SUBMITTED", 1)]);
-        let f = floor_with(script(batch_graph(), &gantt, json!([])), "/nonexistent-run", &s).await.unwrap();
+        let f = floor_with(script(batch_graph(), &gantt, json!([])), "nonexistent-run", &s).await.unwrap();
         let st = by_id(&f, "stations", "bead.unclaim");
         assert_eq!((st["per24h"].as_i64(), st["last_s"].as_i64()), (Some(3), Some(60)));
         let edge = f["edges"].as_array().unwrap().iter().find(|e| e["from"] == "bead.WORKING" && e["to"] == "bead.unclaim").unwrap();
@@ -1238,14 +1238,14 @@ mod tests {
     #[tokio::test]
     async fn a_sinks_in24h_is_the_logsql_count_into_it_and_an_unreadable_store_is_null_with_an_error() {
         let (logs, s) = counted(&[("bead", "Drop", "READY", "DROPPED", 2), ("bead", "Drop", "SUBMITTED", "DROPPED", 3)]);
-        let f = floor_with(script(batch_graph(), &quiet(), json!([])), "/nonexistent-run", &s).await.unwrap();
+        let f = floor_with(script(batch_graph(), &quiet(), json!([])), "nonexistent-run", &s).await.unwrap();
         assert_eq!(by_id(&f, "belts", "bead.DROPPED")["in24h"], 5);
         assert!(logs.queries().iter().any(|q| q.starts_with(&spira_otel::vlogs::transitions_window(86_400))), "{:?}", logs.queries());
 
         let down = FakeLogs::start();
         down.answer("stats by", Script { status: 503, body: "busy".into(), hang: false });
         let s = Sensing { victorialogs_url: down.url(), ..sensing() };
-        let f = floor_with(script(batch_graph(), &quiet(), json!([])), "/nonexistent-run", &s).await.unwrap();
+        let f = floor_with(script(batch_graph(), &quiet(), json!([])), "nonexistent-run", &s).await.unwrap();
         assert!(by_id(&f, "belts", "bead.DROPPED")["in24h"].is_null());
         assert!(by_id(&f, "stations", "bead.build")["per24h"].is_null());
         let errors = f["meta"]["errors"].as_array().unwrap();
@@ -1386,7 +1386,7 @@ mod tests {
     #[tokio::test]
     async fn a_queue_reads_the_limit_its_registered_key_carries() {
         let client = LcClient::over(Arc::new(Answers(script(batch_graph(), &quiet(), json!([])))), true);
-        let mut reads = gather(client, Duration::from_secs(2), "/nonexistent-run", &sensing()).await;
+        let mut reads = gather(client, Duration::from_secs(2), "nonexistent-run", &sensing()).await;
         reads.limits.insert("SPIRA_COLD_PAR".into(), "7".into());
         let f = build(&reads, NOW).unwrap();
         let build_dir = by_id(&f, "components", "build-dir");
@@ -1471,7 +1471,7 @@ mod tests {
     #[tokio::test]
     async fn pinned_bounds_that_are_refused_make_every_transitions_sensor_blind_and_name_the_key() {
         let refused = Sensing { transitions: Err("SPIRA_TRANSITIONS_CUT_BOUND: unset".into()), ..sensing() };
-        let f = floor_with(script(batch_graph(), &quiet(), json!([])), "/nonexistent-run", &refused).await.unwrap();
+        let f = floor_with(script(batch_graph(), &quiet(), json!([])), "nonexistent-run", &refused).await.unwrap();
         let all = of_kind(&f, "transitions");
         assert!(!all.is_empty());
         assert!(all.iter().all(|s| s["status"] == "BLIND" && s["reading"].as_str().unwrap().contains("SPIRA_TRANSITIONS_CUT_BOUND")), "{all:?}");

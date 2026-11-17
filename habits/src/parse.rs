@@ -124,16 +124,16 @@ mod tests {
 
     #[test]
     fn rustfmt_diff_anchors_on_old_lines() {
-        let out = "Diff in /r/src/a.rs:10:\n fn ok() {}\n-let x=1;\n+let x = 1;\n fn next() {}\n";
-        let f = rustfmt(out, Path::new("/r/src/a.rs"));
+        let out = "Diff in r/src/a.rs:10:\n fn ok() {}\n-let x=1;\n+let x = 1;\n fn next() {}\n";
+        let f = rustfmt(out, Path::new("r/src/a.rs"));
         assert_eq!((f.len(), f[0].start, f[0].end), (1, 11, 11));
         assert!(f[0].text.contains("let x=1;") && f[0].text.contains("let x = 1;"));
-        assert!(rustfmt(out, Path::new("/r/src/b.rs")).is_empty(), "another file's diff is not this file's");
+        assert!(rustfmt(out, Path::new("r/src/b.rs")).is_empty(), "another file's diff is not this file's");
     }
 
     #[test]
     fn gcc_lines() {
-        let f = gcc_findings("/r/a.sh:4:9: note: Double quote to prevent globbing. [SC2086]\nnoise\n", Path::new("/r/a.sh"));
+        let f = gcc_findings("r/a.sh:4:9: note: Double quote to prevent globbing. [SC2086]\nnoise\n", Path::new("r/a.sh"));
         assert_eq!((f.len(), f[0].start), (1, 4));
     }
 }

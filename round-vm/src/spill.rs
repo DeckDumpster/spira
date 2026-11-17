@@ -5,7 +5,7 @@
 
 use std::time::Duration;
 
-pub const PSI_IO: &str = "/proc/pressure/io";
+pub const PSI_IO: &str = system_paths::PSI_IO;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Rule {
@@ -159,7 +159,7 @@ pub fn decide(
     }
 }
 
-pub const PSI_CPU: &str = "/proc/pressure/cpu";
+pub const PSI_CPU: &str = system_paths::PSI_CPU;
 
 /// The host's own limits on taking a round: past either pressure the round goes to EC2.
 #[derive(Debug, Clone, Copy, PartialEq)]

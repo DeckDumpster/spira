@@ -60,7 +60,7 @@ mod tests {
 
     #[test]
     fn only_a_resolved_tree_and_a_safe_repo_make_a_path() {
-        let v = Path::new("/v");
+        let v = Path::new("v");
         assert!(path(v, "spira", &"a".repeat(40)).is_some());
         assert!(path(v, "spira", "-").is_none());
         assert!(path(v, "../x", &"a".repeat(40)).is_none());

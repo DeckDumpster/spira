@@ -86,7 +86,7 @@ pub fn socket_path(tmux: &Tmux) -> String {
             return p;
         }
     }
-    let base = std::env::var("TMUX_TMPDIR").unwrap_or_else(|_| "/tmp".to_string());
+    let base = std::env::var("TMUX_TMPDIR").unwrap_or_else(|_| system_paths::TMP.to_string());
     let uid = unsafe { libc_getuid() };
     format!("{base}/tmux-{uid}/default")
 }
@@ -116,7 +116,7 @@ pub fn probe_report(tmux: &Tmux, sessions: &[String]) -> Vec<String> {
         match procfs::listening_socket_holder(&sock) {
             Some(pid) => {
                 let n = procfs::descendant_count(pid);
-                let comm = std::fs::read_to_string(format!("/proc/{pid}/comm"))
+                let comm = std::fs::read_to_string(format!("{}/{pid}/comm", system_paths::PROC))
                     .unwrap_or_else(|_| "?".to_string())
                     .trim()
                     .to_string();
@@ -194,7 +194,7 @@ pub fn clear_wedged_server(tmux: &Tmux, force: bool, log: &mut dyn FnMut(&str)) 
             }
             unsafe { kill_pid(pid, 15) }; // SIGTERM
             for _ in 0..6 {
-                if !Path::new(&format!("/proc/{pid}")).exists() {
+                if !Path::new(&format!("{}/{pid}", system_paths::PROC)).exists() {
                     log("  cleared");
                     return ClearOutcome::Killed { pid };
                 }
@@ -203,7 +203,7 @@ pub fn clear_wedged_server(tmux: &Tmux, force: bool, log: &mut dyn FnMut(&str)) 
             log("  did not exit on TERM — sending KILL");
             unsafe { kill_pid(pid, 9) }; // SIGKILL
             for _ in 0..4 {
-                if !Path::new(&format!("/proc/{pid}")).exists() {
+                if !Path::new(&format!("{}/{pid}", system_paths::PROC)).exists() {
                     log("  cleared");
                     return ClearOutcome::Killed { pid };
                 }

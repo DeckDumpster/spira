@@ -149,7 +149,7 @@ mod tests {
             trace_lines: 2,
             halt: HaltState { stamp_exists: false, since: String::new(), why: String::new(), sentinel_active: Some(true) },
             drain: DrainState { stamp_mtime: None },
-            run_dir: "/run".to_string(),
+            run_dir: "run".to_string(),
             mismatch_alt: None,
             renderer_rev: String::new(),
             collector_rev: String::new(),

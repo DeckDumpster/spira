@@ -35,7 +35,7 @@ pub const AMI_OWNER_TAG: (&str, &str) = ("spill:owner", "round");
 pub const AMI_RECIPE_TAG: &str = "recipe-sha";
 /// The round image's root device: the build workflow maps its volume as `/dev/sda1`
 /// (.github/workflows/round-ami-build.yml), the Ubuntu base image's own root name.
-pub const ROOT_DEVICE: &str = "/dev/sda1";
+pub const ROOT_DEVICE: &str = system_paths::guest::ROOT_DEVICE;
 
 /// A round image as the CI build tagged it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1190,7 +1190,7 @@ mod tests {
         assert!(is_ec2_handle(&vm.handle) && vm.addr.starts_with("100.64.0."), "{vm:?}");
         assert_eq!(p.name_of(&vm.handle).unwrap(), Some(vm_name(&vm.handle)));
         let scripts = fake.scripts().join("\n");
-        assert!(scripts.contains("/root/.ssh/authorized_keys") && scripts.contains("ssh-ed25519 AAAA host"), "{scripts}");
+        assert!(scripts.contains(&format!("{}/.ssh/authorized_keys", system_paths::ROOT_HOME)) && scripts.contains("ssh-ed25519 AAAA host"), "{scripts}");
         assert!(fake.user_data()[0].contains("--auth-key='tskey-auth-abc'"), "the tailscale key reaches the instance in user-data");
         destroy_verified(&p, &vm.handle, T).unwrap();
         assert!(fake.ids().is_empty(), "terminated: {:?}", fake.ids());

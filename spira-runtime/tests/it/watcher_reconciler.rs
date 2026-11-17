@@ -8,7 +8,7 @@ use spira_runtime::tasks::a::kit;
 use spira_runtime::watchers::reconciler::*;
 
 fn registration() -> runtime::Registration {
-    Reconciler { interval_ms: 300_000, rules: Rules { now_secs: 0, grace_secs: 1800, effect_passes: 3, shadow_kinds: vec![] }, values: Default::default(), home: "/h".into() }.registration()
+    Reconciler { interval_ms: 300_000, rules: Rules { now_secs: 0, grace_secs: 1800, effect_passes: 3, shadow_kinds: vec![] }, values: Default::default(), home: "h".into() }.registration()
 }
 
 fn gap(key: &str, remedy: Remedy) -> Group {

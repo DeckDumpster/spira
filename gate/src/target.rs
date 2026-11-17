@@ -88,7 +88,7 @@ pub fn root(explicit: &str, run: &str, tmp_is_tmpfs: bool) -> Option<PathBuf> {
     use sha2::{Digest, Sha256};
     let h = Sha256::digest(run.as_bytes());
     let hex: String = h.iter().take(3).map(|b| format!("{b:02x}")).collect();
-    Some(PathBuf::from(format!("/tmp/spira-gate-target-{hex}")))
+    Some(PathBuf::from(format!("{}/spira-gate-target-{hex}", system_paths::TMP)))
 }
 
 /// Bytes under `p`, not following symlinks.
@@ -449,7 +449,7 @@ mod tests {
         let (root, trees) = (s.1.join("root"), s.1.join("worktree"));
         let tree = trees.join(".gate.harness.b");
         fs::create_dir_all(&tree).unwrap();
-        std::os::unix::fs::symlink("/nonexistent", tree.join("target")).unwrap();
+        std::os::unix::fs::symlink(system_paths::NONEXISTENT, tree.join("target")).unwrap();
         prepare(&root, &trees, &tree, &lim(100), &roomy, &|_| false).unwrap();
         fs::remove_dir_all(root.join(".gate.harness.b")).unwrap(); // evicted by another trial
         prepare(&root, &trees, &tree, &lim(100), &roomy, &|_| false).unwrap();
@@ -497,11 +497,11 @@ mod tests {
 
     #[test]
     fn the_root_is_explicit_else_a_run_keyed_tmp_dir_else_none() {
-        assert_eq!(root("/x/y", "/run", false), Some(PathBuf::from("/x/y")));
-        let a = root("", "/srv/a/run", true).unwrap();
-        assert!(a.to_string_lossy().starts_with("/tmp/spira-gate-target-"));
-        assert_ne!(a, root("", "/srv/b/run", true).unwrap(), "two installs never share a root");
-        assert_eq!(root("", "/run", false), None);
+        assert_eq!(root("x/y", "run", false), Some(PathBuf::from("x/y")));
+        let a = root("", "srv/a/run", true).unwrap();
+        assert!(a.to_string_lossy().starts_with(&format!("{}/spira-gate-target-", system_paths::TMP)));
+        assert_ne!(a, root("", "srv/b/run", true).unwrap(), "two installs never share a root");
+        assert_eq!(root("", "run", false), None);
         assert_eq!(
             Limits::from_vars("", "x"),
             Limits { cap_mib: 12288, shed_free_mib: 6144 }

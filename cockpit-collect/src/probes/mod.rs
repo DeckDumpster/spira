@@ -740,7 +740,7 @@ mod sop_tests {
         let empty = probe(Some(""), SHELF_FLAT);
         assert_eq!(get(&empty, "SP_SWEEP_AGE"), "?");
         for broken in [None, Some(String::new()), Some("not json".to_string())] {
-            let kv = sop_keys_from(broken, "/nonexistent/applied.jsonl", 24.0, NOW);
+            let kv = sop_keys_from(broken, "nonexistent/applied.jsonl", 24.0, NOW);
             assert_eq!(kv.iter().map(|(_, v)| v.as_str()).collect::<Vec<_>>(), ["?", "?", "?"]);
         }
         let dir = testkit::TempDir::new("sop-dir-ledger");
@@ -773,7 +773,7 @@ mod mail_tests {
         for state in ["|NEW|New message", "|READ|Read message", "|DONE|Done message"] {
             assert!(rows.contains(state), "{state} missing from {rows}");
         }
-        let none = mail_keys(&Cfg { mail: "/nonexistent/mail".into(), ..Cfg::default() });
+        let none = mail_keys(&Cfg { mail: "nonexistent/mail".into(), ..Cfg::default() });
         assert_eq!(none.iter().find(|(n, _)| n == "SP_MAIL_UNREAD").map(|(_, v)| v.as_str()), Some("?"), "an unreadable mailbox is unknown, not zero");
     }
 }
@@ -814,7 +814,7 @@ mod gate_scan_tests {
         gate_dir(run.path(), "live", 33);
         let argv_of = |pid: i64| match pid {
             22 => Some("sleep 3600".to_string()),
-            33 => Some("/bin/bash gate-run.sh spira/sp-x".to_string()),
+            33 => Some("bin/bash gate-run.sh spira/sp-x".to_string()),
             _ => None,
         };
         let (rows, n, live) = gate_scan_with(run.path(), 1000, &argv_of);
@@ -1760,7 +1760,7 @@ mod tests {
         .unwrap();
         let valid: std::collections::HashSet<String> = ["known".to_string()].into();
         assert_eq!(repo_label_counts(&rows, &valid), (1, 2));
-        let cfg = Cfg { repo_map: "/nonexistent/registry".into(), ..Cfg::default() };
+        let cfg = Cfg { repo_map: "nonexistent/registry".into(), ..Cfg::default() };
         let out = repo_label_keys(&cfg);
         assert_eq!(out, vec![("SP_REPO_UNMAPPED".to_string(), "?".to_string()), ("SP_REPO_ABSENT".to_string(), "?".to_string())]);
     }

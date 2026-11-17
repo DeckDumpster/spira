@@ -70,7 +70,8 @@ mod tests {
 
     #[test]
     fn a_tree_missing_a_recipe_input_is_refused_naming_it() {
-        let e = super::sha_of_tree(std::path::Path::new("/nonexistent-recipe-tree")).unwrap_err();
+        let root = testkit::TempDir::new("recipe-missing-tree");
+        let e = super::sha_of_tree(&root.join("nonexistent-recipe-tree")).unwrap_err();
         assert!(e.contains("template.sh"), "{e}");
     }
 

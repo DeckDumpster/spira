@@ -2813,7 +2813,7 @@ fn the_blocking_only_reader_passed_what_unjudgeable_now_refuses() {
         old_reds.is_empty(),
         "control: the old reader found nothing wrong"
     );
-    assert!(super::super::ops::round::unjudgeable(Path::new("/nonexistent"), &found).is_some());
+    assert!(super::super::ops::round::unjudgeable(&testkit::TempDir::new("round-unjudgeable").join("nonexistent"), &found).is_some());
 }
 
 #[test]
@@ -4980,7 +4980,7 @@ fn an_unreadable_statute_registry_refuses_a_round_eject() {
     t.env
         .vars
         .borrow_mut()
-        .insert("SPIRA_STATUTE_GUARDS".into(), "/nonexistent/guards".into());
+        .insert("SPIRA_STATUTE_GUARDS".into(), testkit::TempDir::new("round-guards").join("nonexistent/guards").to_string_lossy().into_owned());
     assert_eq!(
         t.run(&["round", "eject", &batch, "sp-a", "--reason", "red"]),
         1

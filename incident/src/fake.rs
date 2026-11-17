@@ -160,8 +160,8 @@ pub(crate) fn cfg<'a>(known: &'a [String]) -> FileConfig<'a> {
         dedup_lookback_days: 7,
         repo_declared: Some("spira"),
         delivers_pref: None,
-        sop_ledger: "/run/sop/applied.jsonl",
-        spira_run: "/run",
+        sop_ledger: "run/sop/applied.jsonl",
+        spira_run: "run",
         home_repo: "spira",
         known_repos: known,
         ask_label: "needs-ryan", // literal-ok: test fixture value, not a config default read at runtime.

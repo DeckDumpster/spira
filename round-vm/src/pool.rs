@@ -1132,7 +1132,7 @@ impl Pool {
 }
 
 fn owner_cmd(pid: u32) -> Vec<String> {
-    let raw = std::fs::read(format!("/proc/{pid}/cmdline")).unwrap_or_default();
+    let raw = std::fs::read(format!("{}/{pid}/cmdline", system_paths::PROC)).unwrap_or_default();
     raw.split(|b| *b == 0)
         .filter(|a| !a.is_empty())
         .map(|a| String::from_utf8_lossy(a).into_owned())

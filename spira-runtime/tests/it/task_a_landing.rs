@@ -23,7 +23,7 @@ fn branch(id: &str, handed_on: bool) -> Branch {
 }
 
 fn with(branches: Vec<Branch>) -> Snapshot {
-    Snapshot { forge_enabled: true, repos: vec![Repo { name: "pokedumpster".into(), path: "/r/poke".into(), landref: "main".into(), base_fq: "origin/main".into(), base_sha: "b1".into(), branches }] }
+    Snapshot { forge_enabled: true, repos: vec![Repo { name: "pokedumpster".into(), path: "r/poke".into(), landref: "main".into(), base_fq: "origin/main".into(), base_sha: "b1".into(), branches }] }
 }
 
 /// The contract's idle fixture: forge enabled, one pr repo, two branches, neither handed on.
@@ -107,7 +107,7 @@ fn t5_forge_disabled_does_nothing() {
 /// exit 2, a tool that never ran) is no verdict on the branch: it ends the pass without sending
 /// the bead back to rework. Only a reported conflict reopens it.
 fn rebasing(id: &str) -> (Carry, String) {
-    let leg = serde_json::json!({"repo": "pokedumpster", "path": "/r/poke", "landref": "main", "base_fq": "origin/main", "base_sha": "b1", "br": format!("spira/{id}"), "id": id, "tip": format!("{id}-tip"), "pr_state": "none", "version": 4});
+    let leg = serde_json::json!({"repo": "pokedumpster", "path": "r/poke", "landref": "main", "base_fq": "origin/main", "base_sha": "b1", "br": format!("spira/{id}"), "id": id, "tip": format!("{id}-tip"), "pr_state": "none", "version": 4});
     let mut carry = Carry::default();
     carry.branches.insert(format!("spira/{id}"), BranchCarry { state: State::Rebasing, ..BranchCarry::default() });
     (carry, leg.to_string())
