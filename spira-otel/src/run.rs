@@ -44,10 +44,8 @@ impl Run {
             &[Point::Count { name: RUNS, value: 1 }, Point::Seconds { name: RUN_SECONDS, value: self.started.elapsed().as_secs_f64() }],
             &[("component", &self.component), ("operation", &self.operation), ("outcome", outcome), ("error_class", &class)],
         );
-        if std::env::var_os(PHASES_ENV).is_some() {
-            let mut phases = PHASES.lock().map(|p| p.clone()).unwrap_or_default();
-            phases.push(("push".to_string(), pushing.elapsed().as_millis() as u64));
-            eprintln!("{PHASES_PREFIX}{}", render_phases(&phases));
+        if let Some(line) = phases_line(std::env::var_os(PHASES_ENV).is_some(), Some(pushing.elapsed().as_millis() as u64)) {
+            eprintln!("{line}");
         }
     }
 
@@ -74,6 +72,18 @@ pub fn phase(name: &str, millis: u64) {
     if let Ok(mut p) = PHASES.lock() {
         p.push((name.to_string(), millis));
     }
+}
+
+/// The line a timed run prints at exit: the recorded phases, plus `push` when a push was made.
+fn phases_line(enabled: bool, push: Option<u64>) -> Option<String> {
+    if !enabled {
+        return None;
+    }
+    let mut phases = PHASES.lock().map(|p| p.clone()).unwrap_or_default();
+    if let Some(ms) = push {
+        phases.push(("push".to_string(), ms));
+    }
+    Some(format!("{PHASES_PREFIX}{}", render_phases(&phases)))
 }
 
 pub fn render_phases(phases: &[(String, u64)]) -> String {
@@ -130,6 +140,9 @@ pub fn seconds(name: &str, value: f64, labels: &[(&str, &str)]) {
 /// when it succeeds. A failing run is still `finish`ed.
 pub fn discard() {
     drop(CURRENT.lock().ok().and_then(|mut g| g.take()));
+    if let Some(line) = phases_line(std::env::var_os(PHASES_ENV).is_some(), None) {
+        eprintln!("{line}");
+    }
 }
 
 /// Pushes the run's standard metrics; a second call, or one with no `begin`, pushes nothing.
@@ -197,6 +210,18 @@ mod tests {
     #[test]
     fn phases_render_in_the_order_they_were_recorded() {
         assert_eq!(render_phases(&[("reply".into(), 12), ("push".into(), 250)]), "reply=12,push=250");
+    }
+
+    #[test]
+    fn a_discarded_run_still_reports_its_recorded_phases_without_a_push_entry() {
+        phase("store", 30);
+        assert_eq!(phases_line(true, None).as_deref(), Some("PERFWATCH_PHASES=store=30"));
+        assert_eq!(phases_line(true, Some(7)).as_deref(), Some("PERFWATCH_PHASES=store=30,push=7"));
+    }
+
+    #[test]
+    fn with_phases_unset_nothing_is_printed() {
+        assert_eq!(phases_line(false, None), None);
     }
 
     #[test]
