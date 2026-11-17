@@ -147,5 +147,7 @@ fn the_scenario_fails_when_a_landing_does_not_clear_its_row_or_a_test_does_not_b
 
 #[test]
 fn the_registrys_default_hold_is_seven_days() {
+    let shipped = std::fs::read_to_string(testkit::manifest_dir().join("../conf.d/SPIRA_TEST_REGISTRY_HOLD_SECS")).expect("the key's shipped default");
+    assert!(shipped.contains(&format!(":={}}}", spira_sim::registryworld::DEFAULT_HOLD_SECS)), "{shipped}");
     assert_eq!(spira_sim::registryworld::DEFAULT_HOLD_SECS, 604_800);
 }

@@ -907,7 +907,7 @@ pub fn run_with(seed: u64, script: Script, extra: impl FnOnce(Doubles, &Arc<Worl
         lc.due.push((l.at, Due::Look(i)));
     }
     if !script.flips.is_empty() || !script.looks.is_empty() {
-        let hold = script.settings.get("SPIRA_TEST_REGISTRY_HOLD_SECS").cloned().unwrap_or_else(|| registryworld::DEFAULT_HOLD_SECS.to_string());
+        let hold = script.settings.get(test_registry::cli::HOLD_KEY).cloned().unwrap_or_else(|| registryworld::DEFAULT_HOLD_SECS.to_string());
         lc.reg = Some(Arc::new(Registry::new(&hold)?));
     }
     let settings = settings_for(&script)?;
@@ -941,7 +941,7 @@ pub fn run_with(seed: u64, script: Script, extra: impl FnOnce(Doubles, &Arc<Worl
         looks: lc.looks.clone(),
         reds: lc.reds.clone(),
         cleared: lc.cleared.clone(),
-        hold_secs: world.script.settings.get("SPIRA_TEST_REGISTRY_HOLD_SECS").and_then(|v| v.parse().ok()).unwrap_or(registryworld::DEFAULT_HOLD_SECS),
+        hold_secs: world.script.settings.get(test_registry::cli::HOLD_KEY).and_then(|v| v.parse().ok()).unwrap_or(registryworld::DEFAULT_HOLD_SECS),
         asked: inner.asked(),
         exec_log,
         spawned: world.proc.spawned(),
