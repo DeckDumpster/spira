@@ -1061,19 +1061,19 @@ mod row_dirs_tests {
     use std::path::PathBuf;
 
     fn shell() -> repo_contract::shell::ShellEnv {
-        let json = r#"{"variables":{"PATH":{"type":"exported","value":"/nix/store/a/bin:/nix/store/b/bin"}}}"#;
+        let json = r#"{"variables":{"PATH":{"type":"exported","value":"nix/store/a/bin:nix/store/b/bin"}}}"#;
         repo_contract::shell::parse_dev_env(json).unwrap()
     }
 
     #[test]
     fn a_flake_shell_replaces_the_release_dirs_with_its_own_path() {
-        let release = vec![PathBuf::from("/r/bin"), PathBuf::from("/usr/bin")];
-        assert_eq!(row_dirs(Some(&shell()), release), vec![PathBuf::from("/nix/store/a/bin"), PathBuf::from("/nix/store/b/bin")]);
+        let release = vec![PathBuf::from("r/bin"), PathBuf::from("usr/bin")];
+        assert_eq!(row_dirs(Some(&shell()), release), vec![PathBuf::from("nix/store/a/bin"), PathBuf::from("nix/store/b/bin")]);
     }
 
     #[test]
     fn without_a_flake_shell_the_dirs_are_unchanged() {
-        let release = vec![PathBuf::from("/r/bin"), PathBuf::from("/usr/bin")];
+        let release = vec![PathBuf::from("r/bin"), PathBuf::from("usr/bin")];
         assert_eq!(row_dirs(None, release.clone()), release);
     }
 }
