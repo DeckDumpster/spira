@@ -110,8 +110,17 @@ fn without_a_target() -> Snapshot {
     s
 }
 
+/// The same submission, rebuilt at a new tip at every read: a send-back is made once per tip.
 fn sent_back_twice() -> TaskRig {
-    let mut r = rig(1, without_a_target());
+    let reads = std::sync::atomic::AtomicUsize::new(0);
+    let mut r = rig_with(1, move |_| {
+        let tip = format!("t{}", reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst));
+        let mut s = without_a_target();
+        let repo = s.repos.get_mut("spira").unwrap();
+        repo.rows[0].tip = tip.clone();
+        repo.branch_tips.insert("sp-a".into(), tip);
+        Ok(serde_json::to_string(&s).unwrap())
+    });
     r.advance(CADENCE_MS).unwrap();
     r
 }
