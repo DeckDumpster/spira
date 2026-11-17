@@ -222,6 +222,27 @@ fn retire_leaves_a_record_naming_another_pr() {
 }
 
 #[test]
+fn retire_with_the_queue_lock_held_is_an_error_and_keeps_the_record() {
+    let dir = testkit::TempDir::new("publish-retire");
+    let _held = match queue::lock::try_lock_as(dir.path(), "spira", "other") { queue::lock::Acquire::Held(g) => g, _ => panic!("lock is free") };
+    let (left, out) = retire_world(&dir, Some(42), 42);
+    assert!(left && out.is_err(), "{left} {out:?}");
+}
+
+#[test]
+fn retire_logs_the_action_word_it_was_given() {
+    let dir = testkit::TempDir::new("publish-retire");
+    let p = Pub { repo: "spira".into(), pr: 42, head: "h1".into(), base: "f0".into(), branch: "publish/h1".into(), ..Pub::default() };
+    edge::write_record(dir.path(), &p, Some(&edge::Fresh { remote: "origin".into(), forge_branch: "main".into(), members: vec![] }), 1).unwrap();
+    let run = testkit::TempDir::new("publish-retire-run");
+    let e = spira_runtime::Effects { world: spira_runtime::world::World { queue_dir: dir.path().to_path_buf(), run_dir: run.path().to_path_buf(), ..Default::default() }, ..Default::default() };
+    let spec = runtime::event::EffectSpec::keyed(RETIRE, "k", serde_json::to_string(&Pub { repo: "spira".into(), pr: 42, subject: "Supersede".into(), ..Pub::default() }).unwrap(), 30_000);
+    edge::retire(&e, "k", &spec).expect("ok");
+    let log = std::fs::read_to_string(run.path().join("landing.log")).unwrap();
+    assert!(log.contains("repo=spira pr=42 action=Supersede"), "{log}");
+}
+
+#[test]
 fn retire_with_no_record_is_ok() {
     let dir = testkit::TempDir::new("publish-retire");
     let (left, out) = retire_world(&dir, None, 42);
