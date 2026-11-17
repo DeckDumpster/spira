@@ -899,6 +899,19 @@ impl World {
         to_json(&ThroughputSnapshot { readable: true, landings, repos, unlanded, records, halt, activated_at, store_up_s: None, store_restart, ..Default::default() })
     }
 
+    /// Every checkout of the repo map, as the registry resolves it. An unreadable map is one
+    /// row carrying the error, so a caller's other work goes on and the failure is still reported.
+    pub fn repos(&self) -> Vec<crate::tasks::c::sweep_reclaim::Repo> {
+        use crate::tasks::c::sweep_reclaim::Repo;
+        let map = match fs::read_to_string(&self.repo_map) {
+            Ok(m) => m,
+            Err(e) => return vec![Repo { name: "repo map".into(), error: format!("{}: {e}", self.repo_map.display()), ..Repo::default() }],
+        };
+        let env = BTreeMap::from([("SPIRA_HOME_REPO".to_string(), self.home_repo.clone())]);
+        let reg = spira_config::repos::Registry::new(Some(&map), &env, Path::new(""));
+        reg.names().into_iter().map(|name| Repo { path: reg.root(&name).unwrap_or_default(), name, error: String::new() }).collect()
+    }
+
     /// The beads landed over the 24 h ending `now`, per registered repo, read from its landing ref
     /// as `spira_landref` resolves it (the map row's `base`, else the remote's default; never the
     /// lane name): by hour of the last commit naming each bead, the oldest hour first, and the

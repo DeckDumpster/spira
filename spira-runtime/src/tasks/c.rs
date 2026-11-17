@@ -110,10 +110,11 @@ pub static TASKS: &[Task] = &[
         cadence_ms: cadence_ms::<SweepReclaim>,
         effects: sweep_reclaim::EFFECTS,
         runners: &[
-            (sweep_reclaim::OBSERVE, |e, _, _| sweep_reclaim::observe(&sweep_reclaim::Pinned::read(&pinned)?, &e.world.proc_dir)),
+            (sweep_reclaim::OBSERVE, |e, _, _| sweep_reclaim::observe(&sweep_reclaim::Pinned::read(&pinned)?, &e.world.proc_dir, e.world.repos())),
             (sweep_reclaim::REMOVE_TARGET, |e, _, s| sweep_reclaim::remove_target(&sweep_reclaim::Pinned::read(&pinned)?, &e.world.proc_dir, &s.input)),
             (sweep_reclaim::PODMAN_PRUNE, |_, _, s| sweep_reclaim::podman_prune(&sweep_reclaim::Pinned::read(&pinned)?, &runtime::ports::SysProc, &s.input)),
             (sweep_reclaim::TRIM_CACHE, |_, _, s| sweep_reclaim::trim_cache(&sweep_reclaim::Pinned::read(&pinned)?, &s.input)),
+            (sweep_reclaim::MAINTAIN, |_, _, s| sweep_reclaim::maintain(&runtime::ports::SysProc, &s.input)),
         ],
         keys: &[sweep_reclaim::KEYS],
         build: build::<SweepReclaim>,
