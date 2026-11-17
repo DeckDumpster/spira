@@ -21,7 +21,7 @@
 //!
 //! A landing is a commit naming a bead on a repo's landing ref (resolved as `spira_landref` does,
 //! never the lane name): the ref is the authority on what landed. A count that cannot be read
-//! pages BLIND once and files nothing.
+//! pages BLIND once, after two consecutive unreadable ticks, and files nothing.
 
 use runtime::event::*;
 use serde::{Deserialize, Serialize};
@@ -30,7 +30,7 @@ use spira_config::process::cfg_parse;
 
 use crate::tasks::d::pattern;
 use crate::watchers::halt::Halt;
-use crate::watchers::{carried, iso8601, restart_excuses_read, INBOX_APPEND};
+use crate::watchers::{carried, iso8601, just_activated, INBOX_APPEND};
 
 pub const NAME: &str = "watch.throughput";
 pub const STREAM: &str = "watch.throughput";
@@ -223,12 +223,12 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> Verd
     }
     next.halted.clear();
     if !snap.readable {
-        if !carry.blind && !carry.retried && restart_excuses_read(snap.activated_at, snap.store_up_s, now_ms / 1000) {
+        if !carry.blind && !carry.retried {
             next.retried = true;
             return Verdict { carry: next, acts };
         }
         if !carry.blind {
-            let after = if carry.retried { snap.activated_at.map_or(String::new(), |at| format!(" (still unreadable on the retry after the activation at {})", iso8601(at))) } else { String::new() };
+            let after = if just_activated(snap.activated_at, now_ms / 1000) { snap.activated_at.map_or(String::new(), |at| format!(" (still unreadable on the retry after the activation at {})", iso8601(at))) } else { String::new() };
             let refusal = if snap.why.is_empty() { String::new() } else { format!(" ({})", snap.why) };
             let restarted = match &snap.store_restart {
                 Some((at, sha)) if *at >= carry.readable_at => format!(": the store server was restarted by the activation of {} at {}, and the store has not answered since", &sha[..sha.len().min(12)], iso8601(*at)),
