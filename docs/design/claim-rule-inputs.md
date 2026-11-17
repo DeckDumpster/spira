@@ -74,7 +74,7 @@ Read only for a blocker with no lifecycle record, or a CERTIFIED / IN_DELIVERY o
 |---|---|---|---|
 | `stack_max_depth` (clamped to `spira-claim/src/rank.rs` `STACK_CEILING`; 0 turns stacking off) | `spira-claim/src/cli.rs` `judge_rows`; `spira-claim/src/rank.rs` `stack_cap`, `stack_plan` | config `spira.stack_max_depth` | `spira-config set spira.stack_max_depth`; default in `spira/conf.d/SPIRA_STACK_MAX_DEPTH` |
 | `incident_label` | `spira-claim/src/rank.rs` `stack_cap` | config `spira.incident_label` | `spira-config set spira.incident_label`; default in `spira/conf.d/SPIRA_INCIDENT_LABEL` |
-| `pilgrim_label` | `spira-claim/src/rank.rs` `stack_cap` | config `spira.pilgrim_label` | `spira-config set spira.pilgrim_label`; default in `spira/conf.d/SPIRA_PILGRIM_LABEL` |
+| `pilgrim_label` | `spira-claim/src/rank.rs` `stack_cap`, `spira-lc/src/control/claimable.rs` `judge` | config `spira.pilgrim_label` | `spira-config set spira.pilgrim_label`; default in `spira/conf.d/SPIRA_PILGRIM_LABEL` |
 | `scope_label` | `spira-claim/src/cli.rs` `scope_label` → `spira-claim/src/ready.rs` `in_scope` | config `spira.scope_label` | `spira-config set spira.scope_label`; default in `spira/conf.d/SPIRA_SCOPE_LABEL` |
 | `no_loop_label` | `spira-claim/src/cli.rs` `no_loop_label` → `spira-claim/src/ready.rs` `in_scope` | config `spira.no_loop_label` | `spira-config set spira.no_loop_label`; default in `spira/conf.d/SPIRA_NO_LOOP_LABEL` |
 | `run` (where the stack-conflict and scoped-stop files are) | `spira-claim/src/cli.rs` `judge_rows` | config `spira.run` | `spira-config set spira.run`; default in `spira/conf.d/SPIRA_RUN` |
