@@ -229,7 +229,9 @@ and the branch tip resolved: `pass <key>` on 0, `infra <reason>` on 75/76, `red 
 
 ### The verdict key
 
-`sha256("<repo> <T> <files_h> <cmd_h> <harness_h> suites=<S> bead=<B> ejected=<E>\n")`, where
+`sha256("<repo> <T> <files_h> <cmd_h> <harness_h> suites=<S> bead=<B> ejected=<E> deny=<D>\n")`, where `D` is the sha256 of
+the deny list's canonical text (`DenyList::render`: no header, bead or expiry), so a changed
+deny list retires a verdict like a moved landing ref, and where
 `T` is **the merged tree** (was: the branch's tree), `files_h`/`cmd_h` are sha256 of the
 changed-file list and of the gate string (under `gate_mode = "unit"`, of the gate string plus
 `\n# gate_mode=unit`, so a unit-mode PASS never answers for a suites-mode trial; under
