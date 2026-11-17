@@ -20,7 +20,7 @@ fn repo(name: &str, verdict: task::Verdict, lines: &[&str]) -> task::RepoState {
 }
 
 fn snap(repos: Vec<task::RepoState>, stops: &[(&str, &str)]) -> Snapshot {
-    Snapshot { repos, stops: stops.iter().map(|(r, o)| task::StopView { repo: r.to_string(), owner: o.to_string() }).collect() }
+    Snapshot { repos, stops: stops.iter().map(|(r, o)| task::StopView { repo: r.to_string(), owner: o.to_string(), reason: NOT_MET.into() }).collect() }
 }
 
 fn json(s: &Snapshot) -> String {
@@ -109,6 +109,25 @@ fn a_not_met_repo_that_is_already_stopped_by_this_task_is_kept() {
     let s = snap(vec![repo("shop", task::Verdict::NotMet, &[NOT_MET])], &[("shop", "repo-contract")]);
     let (_, acts) = task::decide(&h.cfg, &Carry::default(), &Input::Observed(s), NOW).unwrap();
     assert!(acts.is_empty(), "{acts:?}");
+}
+
+#[test]
+fn an_own_stop_naming_other_lines_is_refreshed_without_a_second_inbox_line() {
+    let h = t::handler::<H>(SET);
+    let s = snap(vec![repo("shop", task::Verdict::NotMet, &["not met deploy: gone"])], &[("shop", "repo-contract")]);
+    let (_, acts) = task::decide(&h.cfg, &Carry::default(), &Input::Observed(s), NOW).unwrap();
+    assert_eq!(names(&acts), [task::STOP]);
+}
+
+#[test]
+fn an_unreadable_stop_file_stops_the_pass_instead_of_hiding_a_stop_that_would_be_overwritten() {
+    let d = testkit::TempDir::new("repo-contract-unreadable");
+    std::fs::create_dir_all(scoped_stop::dir(d.path())).unwrap();
+    std::fs::write(scoped_stop::dir(d.path()).join("repo-shop.json"), "{not json").unwrap();
+    let p = Fake { out: "== shop\nnot met deploy: x\n", code: 1, seen: Default::default() };
+    assert!(task::observe(&p, d.path(), "home").is_err());
+    let input = serde_json::to_string(&task::Stop { repo: "shop".into(), reason: "r".into(), until: "u".into(), now_secs: 1 }).unwrap();
+    assert!(task::stop(d.path(), &input).is_err());
 }
 
 struct Fake {

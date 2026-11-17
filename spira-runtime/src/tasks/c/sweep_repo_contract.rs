@@ -24,7 +24,7 @@
 //!
 //! ## Decide
 //!
-//! Pure, per repo: `Stop(lines)` when `NotMet` and the repo has no stop at all; `Lift` when `Met`
+//! Pure, per repo: `Stop(lines)` when `NotMet` and the repo has no stop at all, or its own stop names other lines; `Lift` when `Met`
 //! and the repo's stop is this task's; `Keep` otherwise. A repo holds one stop record, so a stop
 //! owned by anyone else is left alone and nothing is written over it. `CannotTell` decides nothing
 //! for the repo and writes one inbox line until the repo is told again.
@@ -104,6 +104,7 @@ pub struct RepoState {
 pub struct StopView {
     pub repo: String,
     pub owner: String,
+    pub reason: String,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -161,16 +162,18 @@ pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -
             let mut acts = vec![];
             let mut unsure = vec![];
             for r in &snap.repos {
-                let own = snap.stops.iter().any(|s| s.repo == r.repo && s.owner == OWNER);
+                let own = snap.stops.iter().find(|s| s.repo == r.repo && s.owner == OWNER);
                 let other = snap.stops.iter().any(|s| s.repo == r.repo && s.owner != OWNER);
                 let lines = r.lines.join("; ");
                 match r.verdict {
-                    Verdict::NotMet if !own && !other => {
+                    Verdict::NotMet if (own.is_none() && !other) || own.is_some_and(|s| s.reason != lines) => {
                         let body = Stop { repo: r.repo.clone(), reason: lines.clone(), until: until(&r.repo), now_secs: secs };
                         acts.push(act(STOP, format!("repo-contract/stop/{}/{secs}", r.repo), serde_json::to_string(&body).map_err(|e| e.to_string())?));
-                        acts.push(inbox(now_ms, format!("repo-contract/stopped/{}/{secs}", r.repo), format!("{} does not meet the landing contract; claims stopped: {lines}", r.repo)));
+                        if own.is_none() {
+                            acts.push(inbox(now_ms, format!("repo-contract/stopped/{}/{secs}", r.repo), format!("{} does not meet the landing contract; claims stopped: {lines}", r.repo)));
+                        }
                     }
-                    Verdict::Met if own => {
+                    Verdict::Met if own.is_some() => {
                         acts.push(act(LIFT, format!("repo-contract/lift/{}/{secs}", r.repo), serde_json::to_string(&Lift { repo: r.repo.clone() }).map_err(|e| e.to_string())?));
                         acts.push(inbox(now_ms, format!("repo-contract/lifted/{}/{secs}", r.repo), format!("{} meets the landing contract again; claims stop lifted", r.repo)));
                     }
@@ -251,19 +254,19 @@ pub fn observe(proc: &dyn Proc, run: &std::path::Path, home: &str) -> Result<Str
     if repos.is_empty() {
         return Err(format!("repo-contract check --all named no repo ({:?}): {}", out.code, String::from_utf8_lossy(&out.stderr).trim()));
     }
-    let stops = scoped_stop::repo_stops(run).into_iter().map(|s| StopView { repo: s.repo, owner: s.owner }).collect();
+    let stops = scoped_stop::repo_stops_strict(run)?.into_iter().map(|s| StopView { repo: s.repo, owner: s.owner, reason: s.reason }).collect();
     serde_json::to_string(&Snapshot { repos, stops }).map_err(|e| e.to_string())
 }
 
-fn stop_of(run: &std::path::Path, repo: &str) -> Option<scoped_stop::RepoStop> {
-    scoped_stop::repo_stops(run).into_iter().find(|s| s.repo == repo)
+fn stop_of(run: &std::path::Path, repo: &str) -> Result<Option<scoped_stop::RepoStop>, String> {
+    Ok(scoped_stop::repo_stops_strict(run)?.into_iter().find(|s| s.repo == repo))
 }
 
 /// The runner of [`STOP`]: re-checked here, because a stop another owner wrote since the probe is
 /// not this task's to overwrite.
 pub fn stop(run: &std::path::Path, input: &str) -> Result<String, String> {
     let s: Stop = serde_json::from_str(input).map_err(|e| e.to_string())?;
-    if let Some(other) = stop_of(run, &s.repo).filter(|o| o.owner != OWNER) {
+    if let Some(other) = stop_of(run, &s.repo)?.filter(|o| o.owner != OWNER) {
         return Err(format!("{} is stopped by {}; left alone", s.repo, other.owner));
     }
     scoped_stop::pause_repo_typed(run, &s.repo, &[LANE.to_string()], OWNER, &s.reason, &s.until, s.now_secs, tsd::stop::Reason::Landing, None)?;
@@ -273,7 +276,7 @@ pub fn stop(run: &std::path::Path, input: &str) -> Result<String, String> {
 /// The runner of [`LIFT`]: only a stop this task owns.
 pub fn lift(run: &std::path::Path, input: &str) -> Result<String, String> {
     let l: Lift = serde_json::from_str(input).map_err(|e| e.to_string())?;
-    match stop_of(run, &l.repo) {
+    match stop_of(run, &l.repo)? {
         Some(s) if s.owner == OWNER => {
             scoped_stop::unpause_repo(run, &l.repo, &[LANE.to_string()])?;
             Ok(format!("{}: {LANE} stop lifted", l.repo))
