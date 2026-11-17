@@ -273,6 +273,7 @@ dependencies = [
  "spira-otel",
  "spira-store",
  "spira-world",
+ "store-view",
  "system-paths",
  "testkit",
  "tsd",

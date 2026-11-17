@@ -12,6 +12,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// The store's served reads, in process: no `spira-lc` per call.
 fn lc(args: &[&str]) -> Result<String, LcError> {
+    if let Some(held) = store_view::held_read(args) {
+        return held;
+    }
     cockpit_ops::lcio::answer(&cockpit_ops::lcio::client().map_err(LcError::Fault)?, args)
 }
 
@@ -671,8 +674,23 @@ fn interactive(secs: u64) -> std::io::Result<()> {
     res
 }
 
+/// The lifecycle and round reads of a refreshing pane, kept current by the store's watch: each
+/// refresh then reads only what changed. Without one (no config, no store) reads go to the store.
+fn keep_views() {
+    let Ok(client) = cockpit_ops::lcio::client() else { return };
+    let Ok(views) = store_view::Projection::configured(client) else { return };
+    let views = store_view::install(std::sync::Arc::new(views));
+    if let Err(e) = views.load() {
+        eprintln!("lc-view: store views not loaded at start: {e}");
+    }
+    std::thread::spawn(move || views.run(&std::sync::atomic::AtomicBool::new(false)));
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    if matches!(args.get(1).map(String::as_str), Some("tui" | "loop")) {
+        keep_views();
+    }
     match args.get(1).map(String::as_str) {
         Some("tui") => {
             let secs: u64 = args.get(2).and_then(|a| a.parse().ok()).unwrap_or(15);
@@ -721,6 +739,52 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
+    use spira_store::lc_call::{LcClient, Reply, Transport};
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    struct Counting(Mutex<Vec<String>>);
+
+    impl Transport for Counting {
+        fn exchange(&self, argv: &[String], _: Option<&str>, _: Duration) -> Result<Reply, String> {
+            self.0.lock().unwrap().push(argv.join(" "));
+            let out = match argv[0].as_str() {
+                "rc" => r#"{"ok":{"items":[],"list_rev":5}}"#.to_string(),
+                "watch" => {
+                    // clock-safe: the double's long-poll, ending after a pause
+                    std::thread::sleep(Duration::from_millis(5));
+                    r#"{"progress_rev":5}"#.to_string()
+                }
+                _ => "[]".to_string(),
+            };
+            Ok(Reply { code: 0, out, err: String::new() })
+        }
+    }
+
+    #[test]
+    fn a_second_refresh_with_no_store_change_sends_no_live_or_round_list() {
+        let store = Arc::new(Counting(Mutex::new(Vec::new())));
+        let views = store_view::install(Arc::new(store_view::Projection::new(LcClient::over(store.clone(), true), Duration::from_secs(30), Arc::new(std::time::Instant::now))));
+        views.load().unwrap();
+        let watcher = views.clone();
+        std::thread::spawn(move || watcher.run(&std::sync::atomic::AtomicBool::new(false)));
+        // clock-safe: a cap on the wait for the watch thread to start
+        for _ in 0..6000 {
+            if views.watching() {
+                break;
+            }
+            // clock-safe: a poll interval under that cap
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        for _ in 0..2 {
+            assert!(super::lc_json(&["list", "--live"]).unwrap().is_empty());
+            assert!(super::lc_json(&["list", "--batches"]).unwrap().is_empty());
+        }
+        let sent = store.0.lock().unwrap().clone();
+        assert!(!sent.iter().any(|a| a.starts_with("list --live")), "{sent:?}");
+        assert_eq!(sent.iter().filter(|a| a.starts_with("list --batches")).count(), 1, "the rounds are asked once and held: {sent:?}");
+    }
+
     #[test]
     fn a_store_read_that_found_no_store_running_marks_the_snapshot_and_a_fault_does_not() {
         let mut s = super::Snapshot::default();
