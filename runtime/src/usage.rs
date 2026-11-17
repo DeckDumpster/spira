@@ -343,7 +343,7 @@ fn conmon_names(proc_dir: &Path) -> BTreeMap<String, String> {
 /// A hand scope's beads, worktrees and build directories, as its processes name them.
 type HandRow = (BTreeSet<String>, BTreeSet<String>, BTreeSet<String>);
 
-/// Every live dwarf and every hand scope, sampled now.
+/// Every live dwarf, hand scope and podman container scope, sampled now.
 pub fn sample(roots: &Roots) -> Vec<Sample> {
     let Some(manager) = manager(roots) else { return vec![] };
     let mounted = disks(&read(&roots.proc_dir.join("self/mountinfo")), |mm| whole_disk(&roots.sys, mm));

@@ -251,3 +251,19 @@ fn a_libpod_scope_under_a_dwarf_is_not_sampled_twice() {
     plant_container(&f, &format!("app.slice/{DWARF_UNIT}"), Some("testenv-x-unit"));
     assert!(sample(&f.roots).iter().all(|s| s.kind != Kind::Container));
 }
+
+#[test]
+fn nested_scopes_each_take_their_own_conmons_name_and_hand_scopes_own_theirs() {
+    let f = fixture();
+    plant_container(&f, "user.slice/nested.slice", Some("testenv-x-unit"));
+    let other = "bb".repeat(32);
+    let dir = f.roots.cgroup.join(MANAGER).join("user.slice").join(format!("libpod-{other}.scope"));
+    write(&dir.join("io.stat"), "8:16 rbytes=1 wbytes=2 rios=0 wios=0 dbytes=0 dios=0\n");
+    let args = ["conmon", "-c", other.as_str(), "-n", "testenv-y-unit"];
+    write(&f.roots.proc_dir.join("302/cmdline"), &args.iter().map(|a| format!("{a}\0")).collect::<String>());
+    write(&f.roots.proc_dir.join("303/cmdline"), "conmon\0-c\0cc\0");
+    plant_container(&f, &format!("app.slice/{SCOPE}"), None);
+    let mut names: Vec<String> = sample(&f.roots).into_iter().filter(|s| s.kind == Kind::Container).map(|s| s.name).collect();
+    names.sort();
+    assert_eq!(names, ["testenv-x-unit", "testenv-y-unit"]);
+}
