@@ -89,6 +89,7 @@ struct Fake {
     cmds: RefCell<Vec<String>>,
     /// Seconds each run_gate advances the clock by, per command kind.
     phase_secs: Cell<u64>,
+    repo_build_secs: Cell<Option<u64>>,
     /// What the gate command writes to `SPIRA_GATE_STEPS`, as (offset from the phase's start, name) lines.
     steps_written: RefCell<Vec<(u64, String)>>,
     /// Every file `remove` was handed.
@@ -298,6 +299,7 @@ impl Fake {
             timing_report: RefCell::new(None),
             cmds: RefCell::new(Vec::new()),
             phase_secs: Cell::new(7),
+            repo_build_secs: Cell::new(None),
             steps_written: RefCell::new(Vec::new()),
             removed: RefCell::new(Vec::new()),
             kept_outs: RefCell::new(Vec::new()),
@@ -345,7 +347,11 @@ impl Fake {
         self.ran.borrow_mut().push(env.to_vec());
         self.cmds.borrow_mut().push(cmd.to_string());
         let t0 = self.clock.get();
-        self.clock.set(t0 + self.phase_secs.get());
+        let secs = match self.repo_build_secs.get() {
+            Some(b) if cmd.contains("--suites build") => b,
+            _ => self.phase_secs.get(),
+        };
+        self.clock.set(t0 + secs);
         if let Some((_, path)) = env.iter().find(|(k, v)| k == "SPIRA_GATE_STEPS" && !v.is_empty()) {
             let text: String = self.steps_written.borrow().iter().map(|(at, n)| format!("{n}\t{}\n", t0 + at)).collect();
             if !text.is_empty() {
@@ -794,6 +800,9 @@ impl World for Fake {
     }
     fn remove_worktree(&self, _: &Path, _: &Path) {
         self.removed_trees.set(self.removed_trees.get() + 1);
+    }
+    fn declares_build_tier(&self, _: &Path) -> bool {
+        self.repo_build_secs.get().is_some()
     }
     fn run_build(&self, tree: &Path, env: &[(String, String)], timeout: &str, stall: u64, cmd: &str) -> (i32, String) {
         self.scripted_build(tree, env, timeout, Some(stall), cmd)
@@ -2724,6 +2733,27 @@ fn suites_mode_is_todays_gate_exactly() {
         unit.written.borrow()[0].0,
         "a unit-mode PASS is cached under its own key"
     );
+}
+
+#[test]
+fn a_repo_declaring_a_build_tier_builds_outside_the_cap_and_the_deadline() {
+    let f = Fake::new();
+    f.repo_build_secs.set(Some(400));
+    f.phase_secs.set(200);
+    assert_eq!(f.run(), PASS, "{}", f.verdict_line());
+    let cmds = f.cmds.borrow().clone();
+    assert!(cmds[0].contains("--suites build"), "{cmds:?}");
+    let t = f.timeouts.borrow().clone();
+    assert!(!t[0].1.is_empty() && t[0].1.parse::<u64>().unwrap() > 260, "the build is under no phase cap: {t:?}");
+    assert!(meter(&f).contains(" phases=build:400,gate:200"), "{}", meter(&f));
+    assert!(meter(&f).contains("test_clock=200s"), "{}", meter(&f));
+}
+
+#[test]
+fn a_tree_with_no_build_tier_runs_no_build_phase() {
+    let f = Fake::new();
+    assert_eq!(f.run(), PASS);
+    assert!(meter(&f).contains(" phases=gate:7"), "{}", meter(&f));
 }
 
 /// A fake whose gate command declares three steps and is killed at the gate phase's cap.

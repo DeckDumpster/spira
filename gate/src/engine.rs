@@ -2281,6 +2281,8 @@ pub fn base_rerun_cmd(suites: &[String]) -> String {
     )
 }
 
+const REPO_BUILD_CMD: &str = "_b=0; \"${SPIRA_TESTENV_BIN:-testenv}\" --suites build \"$SPIRA_GATE_BRANCH\" \"$SPIRA_GATE_REPO\" || _b=$?; case \"$_b\" in 2|3|127) exit 75;; *) exit \"$_b\";; esac";
+
 fn short(rev: &str) -> &str {
     rev.get(..12).unwrap_or(rev)
 }
@@ -2514,6 +2516,13 @@ pub fn run_composed<W: World>(
     let proved = fences
         .filter(|_| comp.suites_off())
         .and_then(|k| w.read(&k.path).and_then(|e| crate::fencecache::fresh(&e, &k.harness, &cmd)));
+    if prefix.is_empty() && !comp.suites_off() && w.declares_build_tier(tree) {
+        let (rc, out, wall) = go("build", env, REPO_BUILD_CMD, test_secs);
+        phases.push(("build".to_string(), wall));
+        if rc != 0 || w.signalled() {
+            return (rc, out, phases);
+        }
+    }
     let mut out = match proved {
         Some(o) => {
             w.eprint(&format!("gate: fences reused from a proved run of this tree ({})", fences.map_or(String::new(), |k| k.path.display().to_string())));
