@@ -188,6 +188,8 @@ pub struct CacheFile {
 pub struct Repo {
     pub name: String,
     pub path: String,
+    /// Set when the row could not be read; the effect reports it instead of maintaining.
+    pub error: String,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -469,6 +471,9 @@ fn clear_stale_lock(proc: &dyn runtime::ports::Proc, path: &str) -> Result<bool,
 pub fn maintain(proc: &dyn runtime::ports::Proc, input: &str) -> Result<String, String> {
     let repo: Repo = serde_json::from_str(input).map_err(|e| e.to_string())?;
     let fail = |e: String| format!("{} ({}): {e}", repo.name, repo.path);
+    if !repo.error.is_empty() {
+        return Err(fail(repo.error.clone()));
+    }
     let before = loose_count(proc, &repo.path).map_err(fail)?;
     let cleared = clear_stale_lock(proc, &repo.path).map_err(fail)?;
     // `loose-objects` packs on one run and deletes the packed copies on the next, so a pass runs it twice.

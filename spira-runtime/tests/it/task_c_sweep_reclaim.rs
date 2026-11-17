@@ -114,7 +114,7 @@ fn repo_with_loose_blobs(dir: &std::path::Path, n: usize) {
 }
 
 fn input(name: &str, path: &std::path::Path) -> String {
-    serde_json::to_string(&task::Repo { name: name.into(), path: path.display().to_string() }).unwrap()
+    serde_json::to_string(&task::Repo { name: name.into(), path: path.display().to_string(), ..Default::default() }).unwrap()
 }
 
 #[test]
@@ -138,13 +138,14 @@ fn a_row_that_is_not_a_repo_is_named_with_gits_stderr() {
 
 #[test]
 fn every_row_of_the_map_is_a_maintain_of_its_own_so_one_failure_stops_no_other() {
-    let world = json(&Snapshot { repos: vec![task::Repo { name: "ghost".into(), path: "/nowhere".into() }, task::Repo { name: "alpha".into(), path: "/a".into() }], ..idle() });
+    let world = json(&Snapshot { repos: vec![task::Repo { name: "ghost".into(), path: "/nowhere".into(), ..Default::default() }, task::Repo { name: "alpha".into(), path: "/a".into(), ..Default::default() }], ..idle() });
     let mut r = TaskRig::new(1, t::handler::<H>(SET).registration()).unwrap().double(task::OBSERVE, move |_| Ok(world.clone())).double(task::MAINTAIN, |i| if i.contains("ghost") { Err("ghost: not a repo".into()) } else { Ok("alpha: ok".into()) });
     let (_, stream, kind) = H::boot();
     r.tick(stream, kind).unwrap();
     r.run_until_idle().unwrap();
     let asked: Vec<&str> = r.requested().iter().filter(|q| q.name == task::MAINTAIN).map(|q| q.key.as_str()).collect();
     assert_eq!(asked, ["maintain:ghost", "maintain:alpha"], "{:?}", r.requested());
+    r.tick(stream, runtime::event::EventKind::new(task::TICK, FIRE)).expect("a failed row leaves the pass settled, so the next tick is not refused");
 }
 
 #[test]
@@ -153,7 +154,10 @@ fn the_world_reads_its_repos_from_the_map_and_the_leg_is_registered_on_the_task(
     let map = d.path().join("repos");
     std::fs::write(&map, "# name|path|land\nalpha|/a|main\nbeta|/b|main\n").unwrap();
     let w = spira_runtime::world::World { repo_map: map, ..Default::default() };
-    assert_eq!(w.repos().unwrap().iter().map(|r| r.name.as_str()).collect::<Vec<_>>(), ["alpha", "beta"]);
+    assert_eq!(w.repos().iter().map(|r| (r.name.as_str(), r.path.as_str())).collect::<Vec<_>>(), [("alpha", "/a"), ("beta", "/b")]);
+    let lost = spira_runtime::world::World { repo_map: d.path().join("missing"), ..Default::default() }.repos();
+    let err = task::maintain(&runtime::ports::SysProc, &serde_json::to_string(&lost[0]).unwrap()).unwrap_err();
+    assert!(err.starts_with("repo map") && err.contains("missing"), "an unreadable map is one reported row, not a dead observe: {err}");
     assert!(spira_runtime::tasks::routes().contains_key(task::MAINTAIN));
     assert!(task::EFFECTS.contains(&task::MAINTAIN));
 }
