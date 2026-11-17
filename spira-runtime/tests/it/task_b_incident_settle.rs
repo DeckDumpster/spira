@@ -11,7 +11,7 @@ const SET: &[(&str, &str)] = &[(task::CADENCE_KEY, "300"), ("SPIRA_INCIDENT_LABE
 const TICK: u64 = 300_000;
 
 fn fix(id: &str, state: &str, landing: Landing) -> Fix {
-    Fix { id: id.into(), state: state.into(), landing }
+    Fix { id: id.into(), state: state.into(), landing, by: None }
 }
 
 fn inc(id: &str, fixes: Vec<Fix>, detector: Detector) -> Inc {
@@ -97,4 +97,45 @@ fn a_boot_repeats_no_waiting_line_and_misses_none() {
     let (snap, _) = idle();
     let changed = Snapshot { incidents: vec![inc("sp-i1", vec![fix("sp-f1", "SUBMITTED", Landing::NotInRelease)], Detector::NoProbe), inc("sp-i2", vec![fix("sp-f2", "SUBMITTED", Landing::NotInRelease)], Detector::NoProbe)] };
     t::assert_boot_matches_an_unstopped_run::<H>(SET, vec![json(&snap), json(&changed)], |_| {});
+}
+
+fn no_probe(fixes: Vec<Fix>) -> Inc {
+    Inc { external_ref: "incident:base-red:spira".into(), ..inc("sp-i1", fixes, Detector::NoProbe) }
+}
+
+fn close_input(i: Inc) -> String {
+    let h = t::handler::<H>(SET);
+    let (_, acts) = task::decide(&h.cfg, &Carry::default(), &Input::Observed(Snapshot { incidents: vec![i] }), TICK).unwrap();
+    assert_eq!(names(&acts), [task::CLOSE], "{acts:?}");
+    acts[0].input.clone()
+}
+
+#[test]
+fn an_incident_with_no_probe_closes_when_its_fix_lands() {
+    let input = close_input(no_probe(vec![fix("sp-f1", "LANDED", Landing::InForce("abc123".into()))]));
+    for want in ["sp-f1", "abc123", "no detector to re-run"] {
+        assert!(input.contains(want), "{want} missing from {input}");
+    }
+}
+
+#[test]
+fn a_no_probe_incident_closes_on_a_landing_the_release_lacks() {
+    let input = close_input(no_probe(vec![fix("sp-f1", "LANDED", Landing::OnBase("abc123".into()))]));
+    assert!(input.contains("abc123"), "{input}");
+}
+
+#[test]
+fn an_incident_on_a_superseded_fix_closes_when_the_successor_landed() {
+    let f = Fix { by: Some("sp-l9i5io".into()), ..fix("sp-qj6zsu", "LANDED", Landing::InForce("abc123".into())) };
+    let input = close_input(no_probe(vec![f]));
+    assert!(input.contains("sp-qj6zsu") && input.contains("sp-l9i5io"), "{input}");
+}
+
+#[test]
+fn a_no_probe_incident_whose_fix_was_ejected_stays_open() {
+    let h = t::handler::<H>(SET);
+    let snap = Snapshot { incidents: vec![no_probe(vec![fix("sp-f1", "REWORK", Landing::NotInRelease)])] };
+    let (c, acts) = task::decide(&h.cfg, &Carry::default(), &Input::Observed(snap), TICK).unwrap();
+    assert_eq!(c.incidents.get("sp-i1"), Some(&Phase::Waiting));
+    assert!(acts.iter().all(|a| a.name == task::LOG), "{acts:?}");
 }

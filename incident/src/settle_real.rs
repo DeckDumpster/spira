@@ -69,6 +69,31 @@ fn git(root: &str, args: &[&str]) -> Result<(i32, String), String> {
     Ok((out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stdout).trim().to_string()))
 }
 
+pub fn is_bead_id(s: &str) -> bool {
+    !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'.')
+}
+
+impl RealSettler<'_> {
+    /// The fix's repo, checkout and landing ref. A successor's bead is read on first need: only
+    /// a superseded fix reaches one.
+    fn where_landed(&self, fix: &str) -> Result<(String, String, String), String> {
+        if !self.fixes.borrow().contains_key(fix) {
+            let read = self.bd.list_ids_json(&[fix.to_string()], None)?;
+            self.fixes.borrow_mut().extend(read.into_iter().filter_map(|b| Some((b.get("id")?.as_str()?.to_string(), b))));
+        }
+        let bead = self.fixes.borrow().get(fix).cloned().ok_or_else(|| format!("{fix} not found"))?;
+        let repo = bead
+            .get("labels")
+            .and_then(|l| l.as_array())
+            .and_then(|a| a.iter().filter_map(|l| l.as_str()).find_map(|l| l.strip_prefix("repo:")))
+            .unwrap_or(&self.home_repo)
+            .to_string();
+        let root = self.registry.root(&repo).ok_or_else(|| format!("repo {repo} has no checkout"))?;
+        let base = self.registry.base(&repo).filter(|b| !b.is_empty()).ok_or_else(|| format!("repo {repo} has no landing ref"))?;
+        Ok((repo, root, base))
+    }
+}
+
 impl Settler for RealSettler<'_> {
     fn candidates(&self) -> Result<Vec<Candidate>, String> {
         let open: Vec<_> = self
@@ -89,25 +114,27 @@ impl Settler for RealSettler<'_> {
     fn fix_state(&self, fix: &str) -> Result<FixState, String> {
         match spira_store::lc_state::row(fix)? {
             Some(r) if matches!(r.state.as_str(), "LANDED" | "DONE") => Ok(FixState::Landed),
+            Some(r) if r.state == "SUPERSEDED" => match r.reason.filter(|b| is_bead_id(b)) {
+                Some(by) => Ok(FixState::Superseded { by }),
+                None => Err("superseded with no successor recorded".into()),
+            },
             Some(r) => Ok(FixState::Unlanded(r.state)),
             None => Err("no lifecycle row".into()),
         }
     }
 
-    fn landing_in_force(&self, fix: &str) -> Result<Option<Landing>, String> {
-        let bead = self.fixes.borrow().get(fix).cloned().ok_or_else(|| format!("{fix} not found"))?;
-        let repo = bead
-            .get("labels")
-            .and_then(|l| l.as_array())
-            .and_then(|a| a.iter().filter_map(|l| l.as_str()).find_map(|l| l.strip_prefix("repo:")))
-            .unwrap_or(&self.home_repo)
-            .to_string();
-        let root = self.registry.root(&repo).ok_or_else(|| format!("repo {repo} has no checkout"))?;
-        let base = self.registry.base(&repo).filter(|b| !b.is_empty()).ok_or_else(|| format!("repo {repo} has no landing ref"))?;
+    fn landing_on_base(&self, fix: &str) -> Result<Landing, String> {
+        let (_, root, base) = self.where_landed(fix)?;
         let (rc, sha) = git(&root, &["log", &base, "--format=%H", "-E", "--grep", &id_pattern(fix), "-n", "1"])?;
         if rc != 0 || sha.is_empty() {
             return Err(format!("no commit on {base} names {fix}"));
         }
+        Ok(Landing { sha })
+    }
+
+    fn landing_in_force(&self, fix: &str) -> Result<Option<Landing>, String> {
+        let (repo, root, _) = self.where_landed(fix)?;
+        let Landing { sha } = self.landing_on_base(fix)?;
         if repo != self.home_repo {
             return Ok(Some(Landing { sha }));
         }
@@ -204,8 +231,8 @@ mod tests {
         let cands = s.candidates().unwrap();
         assert_eq!(cands.iter().map(|c| c.fixes.clone()).collect::<Vec<_>>(), vec![vec!["sp-f1".to_string()]; 2]);
         assert_eq!(s.landing_in_force("sp-f1").unwrap_err(), "repo other has no checkout", "the repo: label of the cached fix drives the lookup");
-        assert!(s.landing_in_force("sp-unread").unwrap_err().contains("not found"));
         let seen = fake.requests();
+        assert!(s.landing_in_force("sp-unread").unwrap_err().contains("not found"));
         assert_eq!(seen.len(), 3, "{seen:?}");
         assert_eq!(seen[0], ["list", "--live"]);
         for r in &seen[1..] {
