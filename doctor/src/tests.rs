@@ -691,13 +691,13 @@ fn disk_placement_fails_a_root_on_the_root_fs_and_reports_every_root() {
     let f = Fake::default();
     assert!(check_disk_placement(&f).is_empty());
     *f.placements.borrow_mut() = vec![
-        ("podman graphroot".into(), "srv/ssd-c/containers".into(), OnRoot { canonical: "home/x/boot/storage".into(), source: "/dev/mapper/root".into() }),
+        ("podman graphroot".into(), "srv/ssd-c/containers".into(), OnRoot { canonical: "home/x/boot/storage".into(), source: "mapper-root".into() }),
         ("SPIRA_GATE_TARGET_ROOT".into(), "srv/ssd-b/gate".into(), Elsewhere),
         ("SPIRA_DOLT_DATA".into(), "srv/gone".into(), Unresolved("no such file".into())),
     ];
     let lines = check_disk_placement(&f);
     assert_eq!(levels(&lines), vec![Level::Fail, Level::Ok, Level::Warn]);
-    assert!(lines[0].msg.contains("podman graphroot") && lines[0].msg.contains("home/x/boot/storage") && lines[0].msg.contains("/dev/mapper/root"), "{:?}", lines[0].msg);
+    assert!(lines[0].msg.contains("podman graphroot") && lines[0].msg.contains("home/x/boot/storage") && lines[0].msg.contains("mapper-root"), "{:?}", lines[0].msg);
     assert!(lines[0].detail.as_deref().unwrap_or("").contains("disk-model"));
     assert!(lines[2].msg.contains("cannot tell"), "{:?}", lines[2].msg);
 }
@@ -712,11 +712,11 @@ fn judge_placement_follows_a_symlink_to_where_it_lands() {
     std::fs::create_dir_all(&target).unwrap();
     let link = d.path().join("link");
     std::os::unix::fs::symlink(&target, &link).unwrap();
-    let mounts = format!("/dev/fake {} ext4 rw 0 0\n/dev/other /nowhere ext4 rw 0 0\n", d.path().display());
+    let mounts = format!("fakedev {} ext4 rw 0 0\notherdev nowhere ext4 rw 0 0\n", d.path().display());
     match crate::real::judge_placement(&link, &root, &mounts) {
         OnRoot { canonical, source } => {
             assert_eq!(canonical, target.canonicalize().unwrap());
-            assert_eq!(source, "/dev/fake");
+            assert_eq!(source, "fakedev");
         }
         other => panic!("same device as the passed root must be on root: {other:?}"),
     }
