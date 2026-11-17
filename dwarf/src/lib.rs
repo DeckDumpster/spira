@@ -17,6 +17,7 @@ pub mod ledger;
 pub mod mailbox;
 pub mod naming;
 pub mod ops_sweep;
+pub mod pilgrim_world;
 pub mod ports;
 pub mod restrict;
 pub mod run;
