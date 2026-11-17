@@ -369,6 +369,70 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
     }
 
     #[test]
+    fn a_share_publish_call_merges_the_kept_share_and_runs_no_container_and_no_verdict() {
+        let root = testkit::TempDir::new("testenv-share-publish");
+        let (repo, harness, owner) = (root.join("repo"), root.join("harness"), root.join("owner"));
+        for d in [&repo.join(".spira"), &harness.join("spira"), &owner] {
+            fs::create_dir_all(d).unwrap();
+        }
+        fs::write(repo.join(".spira/testenv.toml"), "image = \"i\"\n[tier.gate]\nargv = [\"x\"]\n").unwrap();
+        fs::write(repo.join("f"), "1").unwrap();
+        git(&repo, "git init -q -b main && git add . && git commit -qm base && git checkout -qb topic && echo 2 > f && git add . && git commit -qm topic && git checkout -q main");
+        let env: HashMap<String, String> = [
+            ("SPIRA_RUN", root.join("run").display().to_string()),
+            ("SPIRA_TESTENV_WARM_SLOTS", "0".into()),
+            ("SPIRA_TESTENV_SCRATCH_MIN_FREE_MIB", "0".into()),
+            ("SPIRA_TESTENV_SCRATCH_MIN_MEM_MIB", "0".into()),
+            ("SPIRA_TESTENV_MAX_RUNS", "99".into()),
+            ("HOME", root.display().to_string()),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v))
+        .collect();
+        let lines = std::sync::Mutex::new(vec![]);
+        let envf = |k: &str| env.get(k).cloned();
+        let out = |l: &str| lines.lock().unwrap().push(l.to_string());
+        let sleep = |_: Duration| {};
+        let rt = FakeRuntime::new();
+        let exe = root.join("runner-exe");
+        fs::write(&exe, b"runner").unwrap();
+        let deps = Deps {
+            rt: &rt,
+            builder: &NoBuild,
+            harness: Harness { root: harness.clone() },
+            env: &envf,
+            config: None,
+            repo_root: &|_| None,
+            settings: test_settings(&env),
+            stdin: &String::new,
+            out: &out,
+            owner_dir: owner.clone(),
+            cwd: root.to_path_buf(),
+            runner_identity: b"runner-v1".to_vec(),
+            warm_refill: &|_, _, _| {},
+            spawn_sweep: &|_| {},
+            runner_exe: exe,
+            load1: &|| Some(0.0),
+            sleep: &sleep,
+        };
+        let call = |flag: &str| {
+            let argv: Vec<String> = [flag, "g", "topic"].iter().map(|s| s.to_string()).chain([repo.display().to_string()]).collect();
+            execute(parse(&argv).unwrap(), &deps)
+        };
+        assert_eq!(call("--share-keep"), 0, "{:?}", lines.lock().unwrap());
+        let share = root.join("run/foreign-cache/repo/runs/share-g");
+        assert!(share.join("upper").is_dir(), "{:?}", lines.lock().unwrap());
+        fs::write(share.join("upper/built.o"), "x").unwrap();
+        let (calls, seen) = (rt.once_calls.lock().unwrap().len(), lines.lock().unwrap().len());
+        assert_eq!(call("--share-publish"), 0);
+        assert_eq!(rt.once_calls.lock().unwrap().len(), calls, "no container ran");
+        let after = lines.lock().unwrap()[seen..].to_vec();
+        assert!(after.iter().all(|l| !l.starts_with("VERDICT")), "{after:?}");
+        assert!(root.join("run/foreign-cache/repo/target/built.o").exists(), "{after:?}");
+        assert!(!share.exists());
+    }
+
+    #[test]
     fn a_suite_the_deny_list_disables_is_preempted_and_the_others_still_run() {
         let list = "disabled\tsuite:test-a.sh\tsp-1\t-\nquarantined\tunit:x y\tsp-2\t-\n";
         let (last, _, slept, lines) = run_with_deny("test", "test-a.sh,test-b.sh", Some(list), None);

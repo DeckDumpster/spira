@@ -199,10 +199,6 @@ pub enum Outcome {
 const CACHE_TARGET: &str = system_paths::guest::VAR_CACHE_SPIRA_FOREIGN_TARGET;
 const CACHE_CARGO: &str = system_paths::guest::VAR_CACHE_SPIRA_FOREIGN_CARGO;
 const LOCK_POLL: Duration = Duration::from_secs(2);
-#[cfg(not(test))]
-const PUBLISH_WAIT: Duration = Duration::from_secs(120);
-#[cfg(test)]
-const PUBLISH_WAIT: Duration = Duration::from_secs(1);
 
 /// The wall a forge repository's check may take when neither the caller nor the declaration
 /// names one: the suite cap.
@@ -470,16 +466,24 @@ impl Cache {
         Ok(Attached { _shared: shared, overlay: Overlay { lower: self.dir.join("target"), upper, work, ctr: CACHE_TARGET.into() } })
     }
 
+    /// Finish a share an earlier `--share-keep` call left: merge it if the lock is free.
+    pub fn publish_share(&self, log: &dyn Fn(&str)) {
+        let Some(sh) = &self.share else { return };
+        if !self.share_dir(&sh.key).join("upper").is_dir() {
+            log(&format!("share {} not found: nothing to publish", sh.key));
+            return;
+        }
+        self.publish(&sh.key, log);
+    }
+
     /// Merge a passing run's upper layer into the warm target once no other run reads it.
     /// Whiteouts are not merged: a file the run deleted stays in the warm target, which costs
     /// disk and never a wrong build. Either way the run's layer is gone afterwards.
-    fn publish(&self, cname: &str, deadline: Option<Instant>, log: &dyn Fn(&str)) {
+    fn publish(&self, cname: &str, log: &dyn Fn(&str)) {
         let run = self.layer_dir(cname);
-        let began = Instant::now();
-        let give_up = began + PUBLISH_WAIT;
-        loop {
-            if let Some(_ex) = self.flock(libc::LOCK_EX) {
-                let (waited, held) = (began.elapsed().as_secs(), Instant::now());
+        match self.flock(libc::LOCK_EX) {
+            Some(_ex) => {
+                let held = Instant::now();
                 let _ = std::fs::write(self.holder_path(), cname);
                 let upper = run.join("upper");
                 let _ = std::process::Command::new("find").arg(&upper).args(["-type", "c", "-delete"]).status();
@@ -506,14 +510,9 @@ impl Cache {
                     )),
                     Err(e) => log(&format!("{cname}: warm cache publish failed (not a verdict; the warm target is stale): {e}")),
                 }
-                log(&format!("{cname}: warm cache merge waited {waited}s, held the lock {}s", held.elapsed().as_secs()));
-                break;
+                log(&format!("{cname}: warm cache merge held the lock {}s", held.elapsed().as_secs()));
             }
-            if crate::runtime::cancelled() || Instant::now() >= give_up || deadline.is_some_and(|d| Instant::now() >= d) {
-                log(&format!("{cname}: warm cache publish skipped after {}s waiting for the lock (not a verdict)", began.elapsed().as_secs()));
-                break;
-            }
-            std::thread::sleep(LOCK_POLL);
+            None => log(&format!("{cname}: warm cache publish skipped: the lock is held by a running tier (not a verdict)")),
         }
         remove_run_dir(&run);
     }
@@ -557,7 +556,7 @@ impl TierRun<'_> {
         let dir = self.cache.share_dir(&sh.key);
         match (passed, sh.keep) {
             (true, true) => {}
-            (true, false) => self.cache.publish(&sh.key, self.deadline, self.log),
+            (true, false) => self.cache.publish(&sh.key, self.log),
             (false, _) => {
                 remove_run_dir(&dir);
             }
@@ -618,7 +617,7 @@ impl TierRun<'_> {
         drop(attached);
         if self.cache.share.is_none() {
             if rc == 0 {
-                self.cache.publish(&cname, self.deadline, self.log);
+                self.cache.publish(&cname, self.log);
             } else {
                 remove_run_dir(&self.cache.run_dir(&cname));
             }
@@ -884,6 +883,29 @@ mod tests {
         assert_eq!(calls[1].overlays[0].upper, upper);
         assert!(last_cache.dir.join("target/built.o").exists(), "the finishing call publishes the first call's build");
         assert!(!last_cache.share_dir("g").exists(), "the finished share is gone");
+    }
+
+    #[test]
+    fn a_publish_never_waits_for_a_held_lock() {
+        use std::os::fd::AsRawFd;
+        let root = testkit::TempDir::new("foreign-publish-held");
+        let cache = Cache::new(root.path(), "r").shared(share("g", false));
+        cache.prepare().unwrap();
+        let upper = cache.share_dir("g").join("upper");
+        std::fs::create_dir_all(&upper).unwrap();
+        std::fs::write(upper.join("built.o"), "x").unwrap();
+        let holder = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(cache.dir.join("lock")).unwrap();
+        // SAFETY: flock on a descriptor we own.
+        assert_eq!(unsafe { libc::flock(holder.as_raw_fd(), libc::LOCK_SH) }, 0);
+        let lines = std::sync::Mutex::new(Vec::<String>::new());
+        let log = |m: &str| lines.lock().unwrap().push(m.to_string());
+        let began = Instant::now();
+        cache.publish("g", &log);
+        assert!(began.elapsed() < Duration::from_millis(500), "{:?}", began.elapsed());
+        let text = lines.lock().unwrap().join("\n");
+        assert!(text.contains("warm cache publish skipped") && text.contains("not a verdict"), "{text}");
+        assert!(!cache.dir.join("target/built.o").exists());
+        assert!(!cache.share_dir("g").exists());
     }
 
     #[test]

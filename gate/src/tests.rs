@@ -90,6 +90,7 @@ struct Fake {
     /// Seconds each run_gate advances the clock by, per command kind.
     phase_secs: Cell<u64>,
     repo_build_secs: Cell<Option<u64>>,
+    publish_run: Cell<(i32, u64)>,
     repo_build_result: RefCell<Option<(i32, String)>>,
     /// What the gate command writes to `SPIRA_GATE_STEPS`, as (offset from the phase's start, name) lines.
     steps_written: RefCell<Vec<(u64, String)>>,
@@ -301,6 +302,7 @@ impl Fake {
             cmds: RefCell::new(Vec::new()),
             phase_secs: Cell::new(7),
             repo_build_secs: Cell::new(None),
+            publish_run: Cell::new((0, 0)),
             repo_build_result: RefCell::new(None),
             steps_written: RefCell::new(Vec::new()),
             removed: RefCell::new(Vec::new()),
@@ -349,6 +351,11 @@ impl Fake {
         self.ran.borrow_mut().push(env.to_vec());
         self.cmds.borrow_mut().push(cmd.to_string());
         let t0 = self.clock.get();
+        if cmd.contains("--share-publish") {
+            let (rc, secs) = self.publish_run.get();
+            self.clock.set(t0 + secs);
+            return (rc, String::new());
+        }
         let secs = match self.repo_build_secs.get() {
             Some(b) if cmd.contains("--suites build") => b,
             _ => self.phase_secs.get(),
@@ -2782,12 +2789,40 @@ fn a_repo_declaring_a_build_tier_builds_outside_the_cap_and_the_deadline() {
     let cmds = f.cmds.borrow().clone();
     assert!(cmds[0].contains("--suites build"), "{cmds:?}");
     let key = cmds[0].split("--share-keep ").nth(1).and_then(|r| r.split(' ').next()).expect("the build keeps a share").to_string();
-    assert!(cmds[1].contains(&format!("--share {key} ")), "{cmds:?}");
+    assert!(cmds[1].contains(&format!("--share-keep {key} ")), "{cmds:?}");
     assert!(!cmds[1].contains("bash gate.sh") && !cmds[1].contains("--suites build"), "{cmds:?}");
     let t = f.timeouts.borrow().clone();
     assert!(!t[0].1.is_empty() && t[0].1.parse::<u64>().unwrap() > 260, "the build is under no phase cap: {t:?}");
     assert!(meter(&f).contains(" phases=build:400,gate:200"), "{}", meter(&f));
     assert!(meter(&f).contains("test_clock=200s"), "{}", meter(&f));
+}
+
+#[test]
+fn a_repo_gate_phase_stops_at_its_verdict_and_the_publish_runs_after_it_uncapped_and_uncharged() {
+    let f = Fake::new();
+    f.repo_build_secs.set(Some(400));
+    f.phase_secs.set(200);
+    f.publish_run.set((0, 120));
+    assert_eq!(f.run(), PASS, "{}", f.verdict_line());
+    let cmds = f.cmds.borrow().clone();
+    let key = cmds[0].split("--share-keep ").nth(1).and_then(|r| r.split(' ').next()).expect("the build keeps a share").to_string();
+    assert!(cmds[1].contains(&format!("--share-keep {key} ")), "{cmds:?}");
+    assert!(cmds[2].contains(&format!("--share-publish {key} ")), "{cmds:?}");
+    assert!(meter(&f).contains("phases=build:400,gate:200,publish:120"), "{}", meter(&f));
+    assert!(meter(&f).contains("test_clock=200s"), "{}", meter(&f));
+    let t = f.timeouts.borrow().clone();
+    assert!(t[2].1.parse::<u64>().unwrap() > 260, "the publish is under no phase cap: {t:?}");
+}
+
+#[test]
+fn a_publish_that_fails_or_runs_long_never_changes_the_verdict() {
+    let f = Fake::new();
+    f.repo_build_secs.set(Some(30));
+    f.phase_secs.set(200);
+    f.publish_run.set((75, 300));
+    assert_eq!(f.run(), PASS, "{}", f.verdict_line());
+    assert!(!f.verdict_line().contains("phase-cap"), "{}", f.verdict_line());
+    assert!(f.cmds.borrow().iter().any(|c| c.contains("--share-publish")), "{:?}", f.cmds.borrow());
 }
 
 #[test]
