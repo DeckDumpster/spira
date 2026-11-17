@@ -1557,7 +1557,7 @@ fn the_wal_restarts_and_stays_bounded_while_a_reader_never_pauses() {
     let dir = TempDir::new("sqlite-wal-restarts-under-readers");
     let path = dir.path().join("s.db");
     let probe: Arc<dyn Fn() + Send + Sync> =
-        Arc::new(|| std::thread::sleep(std::time::Duration::from_millis(1)));
+        Arc::new(|| std::thread::sleep(std::time::Duration::from_millis(1))); // clock-safe: the probe holds a read open a moment; no verdict depends on its length
     let opts = Options { checkpoint_every: 20, readers: 2, read_probe: Some(probe), ..Options::default() };
     let b = SqliteBackend::open(&path, opts).unwrap();
     let stop = Arc::new(AtomicBool::new(false));

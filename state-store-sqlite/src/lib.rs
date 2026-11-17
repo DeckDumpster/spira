@@ -2379,8 +2379,8 @@ mod tests {
             wal_frames: 77,
         };
         assert_eq!(
-            pass_summary(Path::new("/d/c.db"), &c, 4096),
-            "sqlite-checkpoint: /d/c.db: 15 passes: passive complete 3, incomplete 1; restart done 2, busy 4; errors 5; wal 77 frames 4096 B"
+            pass_summary(Path::new("d/c.db"), &c, 4096),
+            "sqlite-checkpoint: d/c.db: 15 passes: passive complete 3, incomplete 1; restart done 2, busy 4; errors 5; wal 77 frames 4096 B"
         );
     }
 
