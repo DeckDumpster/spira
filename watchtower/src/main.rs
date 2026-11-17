@@ -310,7 +310,7 @@ fn main() {
                 tmp_path: getenv("SPIRA_TMP_PROBE_PATH").unwrap_or_else(|| system_paths::TMP.to_string()),
                 tmp_floor_mib: getenv_i64("SPIRA_TMPFS_SHED_FREE_MIB", 6144),
                 tmp_held_max_pct: reg_i64("SPIRA_TMPFS_HELD_MAX_PCT"),
-                meminfo_path: getenv("SPIRA_MEMINFO_PATH").unwrap_or_else(|| format!("{}/meminfo", system_paths::PROC)),
+                meminfo_path: process::meminfo_path().to_string_lossy().into_owned(),
                 disk_floor_pct: reg_i64("SPIRA_DISK_FLOOR_PCT"),
                 disk_fill_hours: reg_i64("SPIRA_DISK_FILL_HOURS"),
                 disk_watch_paths: probes::watch_paths(&run, &reg("SPIRA_DISK_WATCH_PATHS"), &reg("SPIRA_DWARF_BUILD_BASE"), &reg("SPIRA_HAND_TARGET_ROOTS")),

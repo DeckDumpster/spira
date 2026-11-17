@@ -5,6 +5,11 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
+/// The meminfo file every memory reading shares; `SPIRA_MEMINFO_PATH` points tests at a fixture.
+pub fn meminfo_path() -> PathBuf {
+    getenv("SPIRA_MEMINFO_PATH").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(format!("{}/meminfo", system_paths::PROC)))
+}
+
 use crate::{cpu_throttle, deadline, incident, sweep};
 
 /// `std::env::var`, trimmed to "set and non-empty" — no `spira_config` fallback. Used only
@@ -113,7 +118,7 @@ pub fn sweep_cfg() -> Result<sweep::Cfg, String> {
         yield_sh: getenv("SPIRA_YIELD_SH"),
         disk_warn_pct: getenv_i64("SPIRA_DISK_WARN_PCT", 90),
         mem_warn_mb: getenv_i64("SPIRA_MEM_WARN_MB", 1500),
-        meminfo_path: getenv("SPIRA_MEMINFO_PATH").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(format!("{}/meminfo", system_paths::PROC))),
+        meminfo_path: meminfo_path(),
         failed_units_warn_mins: getenv_i64("SPIRA_FAILED_UNITS_WARN_MINS", 15),
         cpu_throttle_units: getenv("SPIRA_CPU_THROTTLE_UNITS").unwrap_or_else(|| cpu_throttle::DEFAULT_UNITS.to_string()).split_whitespace().map(String::from).collect(),
         cpu_throttle_warn_pct: getenv_i64("SPIRA_CPU_THROTTLE_WARN_PCT", 5),
