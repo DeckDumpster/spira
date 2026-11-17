@@ -331,6 +331,7 @@ _tl_case_ms() {
 # #ms and its deadline both start here.
 tl_setup_done() {
     _TL_LAST_US="${EPOCHREALTIME/./}"
+    _tl_counts_load
     _tl_where
     _tl_touch "$_TL_NUM" "$_TL_LOC"
 }
@@ -344,8 +345,8 @@ tl_arrange() {
         printf '0\n' > "$_TL_WATCH_DIR/deadline"
     fi
     "$@"; rc=$?
-    [ -z "$_TL_WATCH_DIR" ] || printf '%s\n' "$saved" > "$_TL_WATCH_DIR/deadline"
     tl_setup_done
+    [ -z "$_TL_WATCH_DIR" ] || printf '%s\n' "$saved" > "$_TL_WATCH_DIR/deadline"
     printf '# arranged in %sms: %s\n' "$(( (${EPOCHREALTIME/./} - t0) / 1000 ))" "$*" >&2
     return "$rc"
 }
