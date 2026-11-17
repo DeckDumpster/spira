@@ -9,6 +9,7 @@ use std::time::Duration;
 use cockpit_ops::lcview::{self, ClaimView, Kind};
 use serde_json::{json, Value};
 use spira_store::lc_call::LcClient;
+use store_view::Projection;
 
 use spira_runtime::tasks::e::watch_transitions as wt;
 
@@ -264,8 +265,18 @@ async fn read(client: &LcClient, args: &[&str], budget: Duration) -> Read {
     crate::lc_answer_json(client.clone(), args, budget).await
 }
 
-/// Every read the floor is built from, all at once.
-pub async fn gather(client: LcClient, budget: Duration, run: &str, sensing: &Sensing) -> Reads {
+/// `args` from the held views when they answer it (a stale view is the read's error, never a
+/// fall back to the store), else from the store.
+async fn read_held(views: Option<&Projection>, client: &LcClient, args: &[&str], budget: Duration) -> Read {
+    match views.and_then(|v| v.list_answer(args)) {
+        Some(held) => held.map_err(|e| format!("spira-lc {}: {e}", args.join(" "))).and_then(|t| serde_json::from_str(&t).map_err(|e| format!("spira-lc {}: {e}", args.join(" ")))),
+        None => read(client, args, budget).await,
+    }
+}
+
+/// Every read the floor is built from, all at once; the lifecycle and round lists come from
+/// `views` when the process keeps them.
+pub async fn gather(client: LcClient, views: Option<&Projection>, budget: Duration, run: &str, sensing: &Sensing) -> Reads {
     let c = &client;
     let release_dir = std::path::Path::new(run).join("release");
     let releases = async move { tokio::task::spawn_blocking(move || release::machine::all(&release_dir)).await.map_err(|e| format!("release records: {e}"))? };
@@ -319,8 +330,8 @@ pub async fn gather(client: LcClient, budget: Duration, run: &str, sensing: &Sen
         read(c, &["ops-graph", "--machine", "mending"], budget),
         read(c, &["ops-gantt", "--machine", "bead"], budget),
         read(c, &["ops-gantt", "--machine", "batch"], budget),
-        read(c, &["list", "--live"], budget),
-        read(c, &["list", "--batches"], budget),
+        read_held(views, c, &["list", "--live"], budget),
+        read_held(views, c, &["list", "--batches"], budget),
         read(c, &["list-asks"], budget),
         read(c, &["mending", "list", "--live"], budget),
         releases,
@@ -1119,7 +1130,7 @@ mod tests {
 
     async fn floor_with(answers: Vec<(String, i32, String)>, run: &str, sensing: &Sensing) -> Result<Value, String> {
         let client = LcClient::over(Arc::new(Answers(answers)), true);
-        let reads = gather(client, Duration::from_secs(2), run, sensing).await;
+        let reads = gather(client, None, Duration::from_secs(2), run, sensing).await;
         build(&reads, NOW)
     }
 
@@ -1386,7 +1397,7 @@ mod tests {
     #[tokio::test]
     async fn a_queue_reads_the_limit_its_registered_key_carries() {
         let client = LcClient::over(Arc::new(Answers(script(batch_graph(), &quiet(), json!([])))), true);
-        let mut reads = gather(client, Duration::from_secs(2), "nonexistent-run", &sensing()).await;
+        let mut reads = gather(client, None, Duration::from_secs(2), "nonexistent-run", &sensing()).await;
         reads.limits.insert("SPIRA_COLD_PAR".into(), "7".into());
         let f = build(&reads, NOW).unwrap();
         let build_dir = by_id(&f, "components", "build-dir");
@@ -1403,7 +1414,7 @@ mod tests {
         }
         release::machine::save(&t.path().join("release"), &r).unwrap();
         let client = LcClient::over(Arc::new(Answers(script(batch_graph(), &quiet(), json!([])))), true);
-        let reads = gather(client, Duration::from_secs(2), t.path().to_str().unwrap(), &sensing()).await;
+        let reads = gather(client, None, Duration::from_secs(2), t.path().to_str().unwrap(), &sensing()).await;
         let f = build(&reads, NOW).unwrap();
         assert_eq!(by_id(&f, "belts", "rel.ACTIVATED")["in24h"], 1);
         assert!(by_id(&f, "belts", "pub.MERGED")["in24h"].is_null());
