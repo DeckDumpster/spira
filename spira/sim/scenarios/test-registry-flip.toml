@@ -1,15 +1,6 @@
-# The test registry's flip path as an operator meets it: a round finds two tests red on its
-# combined tree and green on every member alone, disables each in the registry for its hold with a
-# follow-on bead, and lands without them; the ops pane lists both with their beads and expiry; the
-# first follow-on lands and its landing clears its row; the second never lands, its row expires,
-# the pane empties, and a later round finds the test red again. The hold is set to a day, not the
-# registry's seven, so the walk costs seconds of real time. Run it with
-# `sim run test-registry-flip`.
-#
-# A loop world: the registry is the real file and verbs, the disabling is batcher-cut's own
-# `disable_flips_with`, and the pane is drawn by the cockpit's own collector and renderer. The
-# world scripts the attribution's verdict (red together, green alone) instead of rerunning trees;
-# the attribution itself is the batcher's tests (spira/sim/src/loopworld.rs).
+# The registry's flip path as an operator meets it; `sim run test-registry-flip`. The world scripts
+# the attribution's verdict and the pane is drawn by the cockpit collector, not `lc-view`. The hold
+# is a day, not the registry's seven, so the walk costs seconds.
 driver = "loop"
 goal = "sp-tr02:LANDED"
 until = 120000000

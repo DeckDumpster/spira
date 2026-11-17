@@ -144,3 +144,8 @@ fn the_scenario_fails_when_a_landing_does_not_clear_its_row_or_a_test_does_not_b
     never_red.flips[1].blocks_again_after = Some(r.reds.iter().map(|(at, ..)| *at).max().unwrap() + 1);
     assert!(r.missed(&never_red).is_some_and(|why| why.contains("block a round again")), "{:?}", r.missed(&never_red));
 }
+
+#[test]
+fn the_registrys_default_hold_is_seven_days() {
+    assert_eq!(spira_sim::registryworld::DEFAULT_HOLD_SECS, 604_800);
+}
