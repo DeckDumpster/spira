@@ -12,6 +12,11 @@ use std::path::{Path, PathBuf};
 /// detectors that page (heimdall, watchtower), `remedies` the reconciler.
 pub const LANES: [&str; 8] = ["claims", "rounds", "publish", "land", "dwarves", "czar", "heimdall", "remedies"];
 
+/// The owner of the stop that `sweep.repo_contract` writes, and the label of the bead that brings
+/// the repo in line: the one bead of a stopped repo the `claims` lane still admits.
+pub const CONTRACT_OWNER: &str = "repo-contract";
+pub const CONTRACT_FIX_LABEL: &str = "repo-contract-fix";
+
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 pub struct RepoStop {
     pub repo: String,

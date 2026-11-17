@@ -481,3 +481,29 @@ fn a_worktree_sharing_only_a_name_prefix_does_not_occupy_the_bead() {
     assert!(retain_unoccupied(&mut rows, &proc, &run).is_empty());
     assert_eq!(rows.len(), 1);
 }
+
+fn stopped_repo_rows(t: &testkit::TempDir, owner: &str) -> (std::path::PathBuf, Vec<rank::ReadyRow>) {
+    let run = t.join("run");
+    spira_config::scoped_stop::pause_repo(&run, "shop", &["claims".to_string()], owner, "broken", "free text", 1).unwrap();
+    let mut fix = ready("sp-fix");
+    fix.labels = vec!["repo:shop".into(), spira_config::scoped_stop::CONTRACT_FIX_LABEL.into()];
+    let mut other = ready("sp-other");
+    other.labels = vec!["repo:shop".into()];
+    (run, vec![fix, other])
+}
+
+#[test]
+fn the_bead_that_fixes_a_repo_contract_stop_survives_it_and_its_siblings_do_not() {
+    let t = testkit::TempDir::new("claim-contract-fix");
+    let (run, mut rows) = stopped_repo_rows(&t, spira_config::scoped_stop::CONTRACT_OWNER);
+    assert_eq!(retain_unstopped(&mut rows, &run), vec!["sp-other".to_string()]);
+    assert_eq!(rows.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), ["sp-fix"]);
+}
+
+#[test]
+fn the_contract_fix_label_does_not_pass_a_stop_another_owner_holds() {
+    let t = testkit::TempDir::new("claim-contract-fix-other-owner");
+    let (run, mut rows) = stopped_repo_rows(&t, "operator");
+    assert_eq!(retain_unstopped(&mut rows, &run).len(), 2);
+    assert!(rows.is_empty());
+}

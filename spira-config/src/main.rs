@@ -771,7 +771,7 @@ fn contract_hint(name: &str, check_output: &str) -> Option<String> {
     check_output
         .lines()
         .any(|l| l.starts_with("not met "))
-        .then(|| format!("bring it in line: file a bead for {name} that runs repo-contract scaffold"))
+        .then(|| format!("bring it in line: file a bead for {name} that runs repo-contract scaffold, labelled {}", spira_config::scoped_stop::CONTRACT_FIX_LABEL))
 }
 
 fn repo_targets() -> spira_config::repo_admin::Targets {
@@ -1924,7 +1924,7 @@ mod contract_tests {
     #[test]
     fn a_clause_not_met_prints_the_scaffold_hint_and_all_met_prints_none() {
         let red = "met landing: ok\nnot met deploy: no deploy.toml\n";
-        assert_eq!(contract_hint("probe", red).unwrap(), "bring it in line: file a bead for probe that runs repo-contract scaffold");
+        assert_eq!(contract_hint("probe", red).unwrap(), "bring it in line: file a bead for probe that runs repo-contract scaffold, labelled repo-contract-fix");
         assert_eq!(contract_hint("probe", "met deploy: x\n"), None);
         assert_eq!(contract_hint("probe", ""), None);
     }
