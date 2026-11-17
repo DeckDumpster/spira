@@ -391,7 +391,7 @@ fn an_unreadable_landing_ref_names_gits_own_exit_and_stderr() {
     let repo = dir.join("repo");
     std::fs::create_dir(&repo).unwrap();
     testkit::git(&repo, &["init", "-q", "-b", "other"]);
-    let now = 1_000_000u64;
+    let now = 1_700_000_000u64;
     commit_at(&repo, "one", now - 120);
     commit_at(&repo, "two", now - 60);
     testkit::git(&repo, &["branch", "local/main"]);
