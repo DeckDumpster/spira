@@ -794,3 +794,32 @@ fn the_forge_batchers_blocked_map_excuses_the_stall_too() {
     assert!(named(&r, FILE).is_empty());
     assert!(inbox(&r).iter().any(|l| l.contains("sp-j9ci07 waiting on sp-tec2pp (WORKING)")), "{:?}", inbox(&r));
 }
+
+#[test]
+fn the_row_names_the_repo_a_dependency_wait_excuses() {
+    let h = dependency_world(&["sp-j9ci07"], &[("sp-tec2pp", "WORKING")]);
+    let r = dependency_run(h, spira_runtime::tasks::a::batcher_local::STREAM, spira_runtime::tasks::a::batcher_local::STATE, CARRY);
+    let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&r, NAME);
+    assert!(rows.contains(&format!("waiting_on/{REPO}")), "{rows:?}");
+}
+
+#[test]
+fn a_blocker_that_goes_idle_inside_one_episode_files_that_episode_then() {
+    let now = 3 * DAY_MS;
+    let mut snap = Snapshot { states: [("sp-tec2pp".to_string(), "WORKING".to_string())].into(), blocked: [("sp-x".to_string(), "sp-tec2pp".to_string())].into(), ..stalled_snapshot(now / 1000) };
+    snap.landings[0].beads = vec!["sp-x".into()];
+    let first = decide(&Carry::default(), &snap, now, &config());
+    assert!(first.acts.iter().all(|a| a.name != FILE) && first.carry.waiting_on.contains_key("alpha"));
+    snap.states.clear();
+    let second = decide(&first.carry, &snap, now + CADENCE_MS, &config());
+    assert_eq!(second.acts.iter().filter(|a| a.name == FILE).count(), 1);
+    assert!(second.carry.waiting_on.is_empty());
+}
+
+#[test]
+fn one_bead_held_by_a_live_blocker_and_one_by_an_idle_one_files() {
+    let now = 3 * DAY_MS;
+    let mut snap = Snapshot { states: [("sp-live".to_string(), "WORKING".to_string())].into(), blocked: [("sp-a".to_string(), "sp-live".to_string()), ("sp-b".to_string(), "sp-idle".to_string())].into(), ..stalled_snapshot(now / 1000) };
+    snap.landings[0].beads = vec!["sp-a".into(), "sp-b".into()];
+    assert_eq!(decide(&Carry::default(), &snap, now, &config()).acts.iter().filter(|a| a.name == FILE).count(), 1);
+}

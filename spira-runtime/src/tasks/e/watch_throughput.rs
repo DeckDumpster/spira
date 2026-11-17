@@ -26,7 +26,7 @@
 //! its repo, and refused and paged by name when it holds none or cannot say.
 //!
 //! A waiting bead's entry time is the `since` column of its lifecycle row, as `spira-lc list
-//! --state SUBMITTED,CERTIFIED,IN_DELIVERY` prints it (a string of digits); the bead machine stamps
+//! --state WORKING,SUBMITTED,CERTIFIED,IN_DELIVERY` (its WORKING rows are only blockers' states) prints it (a string of digits); the bead machine stamps
 //! it on every state change. A null `since` is a P2 data defect, paged once per repo per episode.
 //!
 //! A landing is a commit naming a bead on a repo's landing ref (resolved as `spira_landref` does,
@@ -285,14 +285,14 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> Verd
         if next.stalled.get(&l.repo) == Some(&l.last_landing) {
             continue;
         }
+        if !past_halt(carry, now_ms, cfg.stall_s) {
+            continue;
+        }
         if let Some(clause) = dependency_wait(l, snap) {
             if carry.waiting_on.get(&l.repo) != Some(&clause) {
                 acts.push(say(now_ms, &format!("{}: landing waits on a dependency — {clause}; no incident filed", l.repo)));
             }
             next.waiting_on.insert(l.repo.clone(), clause);
-            continue;
-        }
-        if !past_halt(carry, now_ms, cfg.stall_s) {
             continue;
         }
         let f = stall_filing(l, snap.repos.iter().find(|r| r.repo == l.repo), now_ms, cfg);
