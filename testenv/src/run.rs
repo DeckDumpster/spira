@@ -455,7 +455,8 @@ fn run_foreign(
     let cache = foreign::Cache::new(&s.run.join("foreign-cache"), repo).bounded(foreign::Bound {
         max_bytes: s.foreign_target_max_gib << 30,
         idle: (s.foreign_target_idle_hours > 0).then(|| std::time::Duration::from_secs(s.foreign_target_idle_hours * 3600)),
-    });
+    })
+    .shared(args.share.clone());
     let cap = args.deadline.or(decl.cap).unwrap_or(foreign::DEFAULT_CAP);
     let t0 = Instant::now();
     let pending = std::sync::Mutex::new(Vec::<String>::new());
@@ -469,7 +470,7 @@ fn run_foreign(
         deadline: Some(t0 + Duration::from_secs(cap)),
         log: &|m| pending.lock().unwrap().push(m.to_string()),
         cores: std::thread::available_parallelism().map_or(1, |n| n.get()),
-        concurrent: tiers.len(),
+        concurrent: if args.share.is_some() { 1 } else { tiers.len() },
         pids_limit: s.pids_limit,
     };
     let outcomes = runner.run_all(&tiers);
@@ -480,6 +481,7 @@ fn run_foreign(
     let mut fault = None;
     for (t, (o, secs)) in tiers.iter().zip(outcomes) {
         (deps.out)(&foreign::tier_line(t, o, secs));
+        (deps.out)(&format!("  log ({t}): {}", results.join(format!("{t}.log")).display()));
         if o == foreign::Outcome::Red {
             (deps.out)(&format!("  command ({t}): {}", decl.tier[t].argv.join(" ")));
             let log = fs::read_to_string(results.join(format!("{t}.log"))).unwrap_or_default();
@@ -1188,15 +1190,25 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         scratch: &s.scratch_root,
         slots: s.scratch_slots,
     };
-    let warm_wanted = args.deadline.is_some() && args.artifacts.is_none() && s.warm_slots > 0;
+    let decl_text = git(&repo.path, &["show", &format!("{br}:{}", foreign::DECL)]).ok();
+    let share_tree = decl_text
+        .as_ref()
+        .and_then(|_| foreign::share_tree(&s.run.join("foreign-cache"), &repo.name, args.share.as_ref()));
+    let warm_wanted = share_tree.is_none() && args.deadline.is_some() && args.artifacts.is_none() && s.warm_slots > 0;
     let warm_wt = if warm_wanted {
         worktree::acquire_warm(&wreq, s.warm_slots, &|m| deps.log(m))
     } else {
         None
     };
-    let wt = match warm_wt {
-        Some(w) => w,
-        None => match worktree::acquire(&wreq, &|m| deps.log(m)) {
+    let shared_wt = share_tree.as_ref().map(|t| worktree::acquire_share(&repo.path, t, &commit));
+    let wt = match (shared_wt, warm_wt) {
+        (Some(Ok(w)), _) => w,
+        (Some(Err(e)), _) => {
+            stderr(&format!("batch: {e}"));
+            return Finish::fault(2, "worktree", 0);
+        }
+        (None, Some(w)) => w,
+        (None, None) => match worktree::acquire(&wreq, &|m| deps.log(m)) {
             Ok(w) => w,
             Err(e) => {
                 stderr(&format!("batch: {e}"));
@@ -1218,7 +1230,6 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
     ));
 
     // ---- a registered repository other than the harness: its own declared tiers ------
-    let decl_text = git(&repo.path, &["show", &format!("{br}:{}", foreign::DECL)]).ok();
     let has_suite_dir = git(&repo.path, &["cat-file", "-e", &format!("{br}:spira")]).is_ok();
     match decl_text {
         Some(text) => {

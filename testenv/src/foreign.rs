@@ -216,6 +216,28 @@ pub const DEFAULT_CAP: u64 = 900;
 pub struct Cache {
     dir: PathBuf,
     bound: Bound,
+    share: Option<Share>,
+}
+
+/// A named run directory that two testenv calls take turns in: one checkout and one overlay
+/// upper, so the second call builds on what the first compiled.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Share {
+    pub key: String,
+    /// Leave the share for the next call when this one passes (`--share-keep`); else this
+    /// call is the last and publishes it.
+    pub keep: bool,
+}
+
+/// The character set a repository or share name keeps in a path.
+pub fn sanitise(name: &str) -> String {
+    name.chars().map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') { c } else { '_' }).collect()
+}
+
+/// Where a share's checkout lives, or None when the call has no share: the choice between a
+/// share's own tree and a warm or scratch slot.
+pub fn share_tree(cache_root: &Path, repo: &str, share: Option<&Share>) -> Option<PathBuf> {
+    share.map(|s| Cache::new(cache_root, repo).share_dir(&s.key).join("tree"))
 }
 
 /// How large a warm target may grow and how long a repository's target may sit unused
@@ -310,11 +332,15 @@ pub struct Attached {
 
 impl Cache {
     pub fn new(root: &Path, repo: &str) -> Cache {
-        let name: String = repo
-            .chars()
-            .map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') { c } else { '_' })
-            .collect();
-        Cache { dir: root.join(name), bound: Bound::default() }
+        Cache { dir: root.join(sanitise(repo)), bound: Bound::default(), share: None }
+    }
+
+    pub fn shared(self, share: Option<Share>) -> Cache {
+        Cache { share, ..self }
+    }
+
+    fn share_dir(&self, key: &str) -> PathBuf {
+        self.run_dir(&format!("share-{}", sanitise(key)))
     }
 
     pub fn bounded(self, bound: Bound) -> Cache {
@@ -344,7 +370,7 @@ impl Cache {
             if age.is_none_or(|a| a < idle) {
                 continue;
             }
-            let other = Cache { dir: dir.clone(), bound: self.bound };
+            let other = Cache { dir: dir.clone(), bound: self.bound, share: None };
             let Some(_ex) = other.flock(libc::LOCK_EX) else { continue };
             if std::fs::remove_dir_all(&target).is_ok() {
                 gone.push(target);
@@ -370,6 +396,14 @@ impl Cache {
 
     fn run_dir(&self, cname: &str) -> PathBuf {
         self.dir.join("runs").join(cname)
+    }
+
+    /// The directory holding a run's upper and work layers: the share's, or the run's own.
+    fn layer_dir(&self, cname: &str) -> PathBuf {
+        match &self.share {
+            Some(sh) => self.share_dir(&sh.key),
+            None => self.run_dir(cname),
+        }
     }
 
     fn mounts(&self) -> Vec<(PathBuf, String)> {
@@ -416,9 +450,19 @@ impl Cache {
         if told {
             log(&format!("{cname}: warm cache free after {}s", since.elapsed().as_secs()));
         }
-        let run = self.run_dir(cname);
-        remove_run_dir(&run);
+        let run = self.layer_dir(cname);
         let (upper, work) = (run.join("upper"), run.join("work"));
+        match &self.share {
+            Some(sh) if upper.is_dir() && work.is_dir() => log(&format!("{cname}: continuing share {}", sh.key)),
+            Some(sh) => {
+                if !sh.keep {
+                    log(&format!("share {} not found: building cold", sh.key));
+                }
+            }
+            None => {
+                remove_run_dir(&run);
+            }
+        }
         if std::fs::create_dir_all(&upper).is_err() || std::fs::create_dir_all(&work).is_err() {
             remove_run_dir(&run);
             return Err("cache-dir");
@@ -430,7 +474,7 @@ impl Cache {
     /// Whiteouts are not merged: a file the run deleted stays in the warm target, which costs
     /// disk and never a wrong build. Either way the run's layer is gone afterwards.
     fn publish(&self, cname: &str, deadline: Option<Instant>, log: &dyn Fn(&str)) {
-        let run = self.run_dir(cname);
+        let run = self.layer_dir(cname);
         let began = Instant::now();
         let give_up = began + PUBLISH_WAIT;
         loop {
@@ -499,7 +543,28 @@ pub struct TierRun<'a> {
 }
 
 impl TierRun<'_> {
+    /// One tier, and then the end of the run's layers: for a share, the end of the share.
     pub fn run(&self, name: &str) -> (Outcome, u64) {
+        let r = self.run_tier(name);
+        self.settle_share(r.0 == Outcome::Pass);
+        r
+    }
+
+    /// A share that passed and is not kept is published and removed; one that did not pass,
+    /// or that is kept past a pass, is removed or left alone respectively.
+    fn settle_share(&self, passed: bool) {
+        let Some(sh) = &self.cache.share else { return };
+        let dir = self.cache.share_dir(&sh.key);
+        match (passed, sh.keep) {
+            (true, true) => {}
+            (true, false) => self.cache.publish(&sh.key, self.deadline, self.log),
+            (false, _) => {
+                remove_run_dir(&dir);
+            }
+        }
+    }
+
+    fn run_tier(&self, name: &str) -> (Outcome, u64) {
         let _running = crate::cap::running(name);
         let tier = &self.decl.tier[name];
         let t0 = Instant::now();
@@ -520,7 +585,7 @@ impl TierRun<'_> {
             Ok(a) => a,
             Err(reason) => return (Outcome::Fault(reason), t0.elapsed().as_secs()),
         };
-        let _run_dir = RunDirGuard(self.cache.run_dir(&cname));
+        let _run_dir = self.cache.share.is_none().then(|| RunDirGuard(self.cache.run_dir(&cname)));
         let mut env: Vec<(String, String)> = tier.env.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
         for (k, v) in self.cache.env() {
             if !tier.env.contains_key(k) {
@@ -551,10 +616,12 @@ impl TierRun<'_> {
         let rc = self.rt.run_once(&req).rc;
         self.rt.purge(&cname);
         drop(attached);
-        if rc == 0 {
-            self.cache.publish(&cname, self.deadline, self.log);
-        } else {
-            remove_run_dir(&self.cache.run_dir(&cname));
+        if self.cache.share.is_none() {
+            if rc == 0 {
+                self.cache.publish(&cname, self.deadline, self.log);
+            } else {
+                remove_run_dir(&self.cache.run_dir(&cname));
+            }
         }
         let outcome = match rc {
             0 => Outcome::Pass,
@@ -566,8 +633,14 @@ impl TierRun<'_> {
         (outcome, t0.elapsed().as_secs())
     }
 
-    /// Every tier at once, each in its own container; results come back in `tiers` order.
+    /// Every tier at once, each in its own container, or one after another under a share, which
+    /// has one upper to write; results come back in `tiers` order.
     pub fn run_all(&self, tiers: &[String]) -> Vec<(Outcome, u64)> {
+        if self.cache.share.is_some() {
+            let out: Vec<_> = tiers.iter().map(|t| self.run_tier(t)).collect();
+            self.settle_share(out.iter().all(|(o, _)| *o == Outcome::Pass));
+            return out;
+        }
         std::thread::scope(|sc| {
             let hs: Vec<_> = tiers.iter().map(|t| sc.spawn(move || self.run(t))).collect();
             hs.into_iter().map(|h| h.join().unwrap_or((Outcome::Fault("container-run"), 0))).collect()
@@ -777,6 +850,63 @@ mod tests {
         let args = crate::runtime::podman_run_args(&calls[0]);
         let i = args.iter().position(|a| a == crate::runtime::PIDS_LIMIT_FLAG).unwrap_or_else(|| panic!("{args:?}"));
         assert_eq!(args[i + 1], "12345");
+    }
+
+    fn shared_run<'a>(cache: &'a Cache, rt: &'a crate::fixture::fake::FakeRuntime, decl: &'a Decl, tree: &'a Path, results: &'a Path, log: &'a (dyn Fn(&str) + Sync)) -> TierRun<'a> {
+        TierRun { cache, rt, decl, tree, results, key: "k", deadline: None, log, cores: 4, concurrent: 1, pids_limit: 1 }
+    }
+
+    fn share(key: &str, keep: bool) -> Option<Share> {
+        Some(Share { key: key.into(), keep })
+    }
+
+    #[test]
+    fn two_calls_in_one_share_use_one_upper_and_only_the_last_publishes_it() {
+        let root = testkit::TempDir::new("foreign-share");
+        let tree = testkit::TempDir::new("foreign-share-tree");
+        let results = testkit::TempDir::new("foreign-share-results");
+        let decl = Decl::parse("image = \"i\"\n[tier.a]\nargv=[\"x\"]\n").unwrap();
+        let rt = crate::fixture::fake::FakeRuntime::new();
+        let log = |_: &str| {};
+        let first_cache = Cache::new(root.path(), "r").shared(share("g", true));
+        shared_run(&first_cache, &rt, &decl, tree.path(), results.path(), &log).run("a");
+        let upper = first_cache.share_dir("g").join("upper");
+        assert!(upper.is_dir(), "a kept share survives its pass");
+        std::fs::write(upper.join("built.o"), "x").unwrap();
+        assert!(!first_cache.dir.join("target/built.o").exists(), "a kept share publishes nothing");
+        let last_cache = Cache::new(root.path(), "r").shared(share("g", false));
+        shared_run(&last_cache, &rt, &decl, tree.path(), results.path(), &log).run("a");
+        let calls = rt.once_calls.lock().unwrap();
+        assert_eq!((calls[0].mount.clone(), calls[0].overlays[0].upper.clone()), (calls[1].mount.clone(), calls[1].overlays[0].upper.clone()));
+        assert_eq!(calls[1].overlays[0].upper, upper);
+        assert!(last_cache.dir.join("target/built.o").exists(), "the finishing call publishes the first call's build");
+        assert!(!last_cache.share_dir("g").exists(), "the finished share is gone");
+    }
+
+    #[test]
+    fn a_share_whose_run_is_red_leaves_no_directory_whether_kept_or_finished() {
+        for keep in [true, false] {
+            let root = testkit::TempDir::new("foreign-share-red");
+            let tree = testkit::TempDir::new("foreign-share-red-tree");
+            let results = testkit::TempDir::new("foreign-share-red-results");
+            let decl = Decl::parse("image = \"i\"\n[tier.a]\nargv=[\"x\"]\n").unwrap();
+            let rt = crate::fixture::fake::FakeRuntime::new();
+            rt.once_rc.lock().unwrap().insert("a".into(), 1);
+            let log = |_: &str| {};
+            let cache = Cache::new(root.path(), "r").shared(share("g", keep));
+            let (o, _) = shared_run(&cache, &rt, &decl, tree.path(), results.path(), &log).run("a");
+            assert_eq!(o, Outcome::Red);
+            assert!(!cache.share_dir("g").exists(), "keep={keep}");
+        }
+    }
+
+    #[test]
+    fn a_share_checks_out_in_its_own_tree_and_no_share_in_a_slot() {
+        let tmp = testkit::TempDir::new("foreign-share-path");
+        let root = tmp.path();
+        let got = share_tree(root, "r p", share("g", true).as_ref()).unwrap();
+        assert_eq!(got, root.join("r_p/runs/share-g/tree"));
+        assert_eq!(share_tree(root, "r", None), None);
     }
 
     #[test]

@@ -3,7 +3,7 @@
 
 use crate::record::Mode;
 
-pub const USAGE: &str = "usage: testenv [--mode parallel|serial] [--suites <list|->] [--profile <p>] [--with-bins] [--direct] [--artifacts <dir>] [--deadline <secs>] [--repeat-reason <why>] [--tests <name>[,<name>...]] [--runner container|sandbox] [--record <path>] [--report [N]] <branch> [<repo-name>]";
+pub const USAGE: &str = "usage: testenv [--mode parallel|serial] [--suites <list|->] [--profile <p>] [--with-bins] [--direct] [--artifacts <dir>] [--deadline <secs>] [--repeat-reason <why>] [--tests <name>[,<name>...]] [--runner container|sandbox] [--record <path>] [--share-keep <key> | --share <key>] [--report [N]] <branch> [<repo-name>]";
 
 /// Where the explicit suite list comes from.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,6 +41,9 @@ pub struct RunArgs {
     pub direct: bool,
     /// `--record PATH`: where a unit run leaves its [`gate::unitrecord::UnitRecord`] as JSON.
     pub record: Option<String>,
+    /// `--share-keep K` / `--share K`: run in the named share (a foreign repository's one
+    /// checkout and overlay upper), leaving it for the next call or finishing it.
+    pub share: Option<crate::foreign::Share>,
     pub branch: String,
     pub repo: Option<String>,
 }
@@ -59,6 +62,14 @@ fn err(lines: &[&str]) -> UsageError {
     UsageError(lines.iter().map(|s| s.to_string()).collect())
 }
 
+fn a_key(flag: &str, v: &str) -> Result<String, UsageError> {
+    let key = crate::foreign::sanitise(v);
+    if v.is_empty() {
+        return Err(UsageError(vec![format!("batch: {flag} needs a non-empty key")]));
+    }
+    Ok(key)
+}
+
 pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
     let mut mode = "parallel".to_string();
     let mut suites: Option<String> = None;
@@ -73,6 +84,8 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
     let mut tests: Option<Vec<String>> = None;
     let mut runner: Option<crate::sandbox::Runner> = None;
     let mut record: Option<String> = None;
+    let mut share_keep: Option<String> = None;
+    let mut share_end: Option<String> = None;
     let mut i = 0;
     let parse_deadline = |v: &str| -> Result<u64, UsageError> {
         v.parse::<u64>()
@@ -105,7 +118,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
         let a = args[i].as_str();
         match a {
             "--mode" | "--suites" | "--profile" | "--deadline" | "--artifacts"
-            | "--repeat-reason" | "--tests" | "--runner" | "--record" => {
+            | "--repeat-reason" | "--tests" | "--runner" | "--record" | "--share-keep" | "--share" => {
                 let v = args
                     .get(i + 1)
                     .cloned()
@@ -116,6 +129,8 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
                     "--deadline" => deadline = Some(parse_deadline(&v)?),
                     "--artifacts" => artifacts = Some(v),
                     "--record" => record = Some(v).filter(|p| !p.is_empty()),
+                    "--share-keep" => share_keep = Some(v),
+                    "--share" => share_end = Some(v),
                     "--repeat-reason" => repeat_reason = Some(v),
                     "--tests" => tests = Some(parse_tests(&v)?),
                     "--runner" => {
@@ -221,6 +236,13 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
             ]));
         }
     }
+    let share = match (share_keep, share_end) {
+        (Some(_), Some(_)) => return Err(err(&["batch: --share and --share-keep are exclusive: a call either keeps its share or finishes it"])),
+        (Some(k), None) => Some((a_key("--share-keep", &k)?, true)),
+        (None, Some(k)) => Some((a_key("--share", &k)?, false)),
+        (None, None) => None,
+    }
+    .map(|(key, keep)| crate::foreign::Share { key, keep });
     let profile = profile.unwrap_or_else(|| {
         if with_bins {
             "release".into()
@@ -257,6 +279,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
         tests,
         runner,
         record,
+        share,
         branch,
         repo,
     })))
@@ -274,6 +297,21 @@ mod tests {
             Invocation::Run(r) => *r,
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn a_share_flag_names_the_share_and_whether_it_is_kept() {
+        let k = run(&["--share-keep", "a/b", "b"]).share.unwrap();
+        assert_eq!((k.key.as_str(), k.keep), ("a_b", true));
+        let e = run(&["--share", "k", "b"]).share.unwrap();
+        assert_eq!((e.key.as_str(), e.keep), ("k", false));
+        assert_eq!(run(&["b"]).share, None);
+    }
+
+    #[test]
+    fn share_with_share_keep_is_refused_naming_both() {
+        let UsageError(lines) = p(&["--share", "k", "--share-keep", "k", "b"]).unwrap_err();
+        assert!(lines[0].contains("--share") && lines[0].contains("--share-keep"), "{lines:?}");
     }
 
     #[test]

@@ -2781,6 +2781,9 @@ fn a_repo_declaring_a_build_tier_builds_outside_the_cap_and_the_deadline() {
     assert_eq!(f.run(), PASS, "{}", f.verdict_line());
     let cmds = f.cmds.borrow().clone();
     assert!(cmds[0].contains("--suites build"), "{cmds:?}");
+    let key = cmds[0].split("--share-keep ").nth(1).and_then(|r| r.split(' ').next()).expect("the build keeps a share").to_string();
+    assert!(cmds[1].contains(&format!("--share {key} ")), "{cmds:?}");
+    assert!(!cmds[1].contains("bash gate.sh") && !cmds[1].contains("--suites build"), "{cmds:?}");
     let t = f.timeouts.borrow().clone();
     assert!(!t[0].1.is_empty() && t[0].1.parse::<u64>().unwrap() > 260, "the build is under no phase cap: {t:?}");
     assert!(meter(&f).contains(" phases=build:400,gate:200"), "{}", meter(&f));

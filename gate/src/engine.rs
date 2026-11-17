@@ -850,7 +850,7 @@ impl<'w, W: World> Trial<'w, W> {
         // on tmpfs.
         let builds = tree_def.as_ref().is_some_and(|d| !d.bins.is_empty())
             || matches!(comp, Composition::Unit { .. })
-            || matches!(comp, Composition::Suites { ref why } if why == "mode") && w.exists(&tree.join("Cargo.toml"))
+            || matches!(comp, Composition::Suites { ref why } if why == "mode") && w.exists(&tree.join("Cargo.toml")) && !w.declares_build_tier(&tree)
             || self.a.release_bins;
         if builds {
             match self.prepare_build_tree(&ctx, &tree, matches!(comp, Composition::Unit { .. })) {
@@ -974,7 +974,13 @@ impl<'w, W: World> Trial<'w, W> {
         // each have printed `fence: <name> checked <n> <unit>` with n > 0; a fence that exited
         // 0 without it (skipped, a precondition unmet, empty input) judged nothing, and a
         // trial that judged nothing is never a PASS.
-        let fences = fence::expected(&compose::gate_string(&comp, &cmd).0);
+        // A tree declaring [tier.build] runs its gate in testenv: the fences print into the
+        // tier's log, and testenv's rc is their verdict.
+        let fences = if !comp.suites_off() && w.declares_build_tier(&tree) {
+            Vec::new()
+        } else {
+            fence::expected(&compose::gate_string(&comp, &cmd).0)
+        };
         if rc == 0 {
             let quiet = fence::silent(&fences, &out);
             if !quiet.is_empty() {
@@ -2287,8 +2293,16 @@ pub fn base_rerun_cmd(suites: &[String]) -> String {
 }
 
 fn testenv_suites_cmd(list: &str) -> String {
+    testenv_cmd(Some(list), None)
+}
+
+/// The testenv call a gate phase makes: the named suites or the declaration's default
+/// tiers, in a share (`(key, keep)`) that a later call continues or finishes.
+fn testenv_cmd(suites: Option<&str>, share: Option<(&str, bool)>) -> String {
+    let suites = suites.map_or(String::new(), |l| format!("--suites {l} "));
+    let share = share.map_or(String::new(), |(k, keep)| format!("{} {k} ", if keep { "--share-keep" } else { "--share" }));
     format!(
-        "_b=0; \"${{SPIRA_TESTENV_BIN:-testenv}}\" --suites {list} \"$SPIRA_GATE_BRANCH\" \"$SPIRA_GATE_REPO\" || _b=$?; case \"$_b\" in 2|3|127) exit 75;; *) exit \"$_b\";; esac"
+        "_b=0; \"${{SPIRA_TESTENV_BIN:-testenv}}\" {suites}{share}\"$SPIRA_GATE_BRANCH\" \"$SPIRA_GATE_REPO\" || _b=$?; case \"$_b\" in 2|3|127) exit 75;; *) exit \"$_b\";; esac"
     )
 }
 
@@ -2526,8 +2540,20 @@ pub fn run_composed<W: World>(
     let proved = fences
         .filter(|_| comp.suites_off())
         .and_then(|k| w.read(&k.path).and_then(|e| crate::fencecache::fresh(&e, &k.harness, &cmd)));
-    if prefix.is_empty() && !comp.suites_off() && w.declares_build_tier(tree) {
-        let build_cmd = testenv_suites_cmd("build");
+    let declared = !comp.suites_off() && w.declares_build_tier(tree);
+    let share_key: String = tree
+        .file_name()
+        .map_or("gate".into(), |n| n.to_string_lossy().chars().map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') { c } else { '_' }).collect());
+    let cmd = if declared {
+        let repo = env.iter().find(|(k, _)| k == "SPIRA_GATE_REPO_NAME").map_or("the repository", |(_, v)| v.as_str());
+        w.eprint(&format!("gate: {repo} declares [tier.build] in .spira/testenv.toml: the gate phase runs testenv's default tiers, not the repo-map gate column"));
+        testenv_cmd(None, prefix.is_empty().then_some((share_key.as_str(), false)))
+    } else {
+        cmd
+    };
+    let cmd = cmd.as_str();
+    if prefix.is_empty() && declared {
+        let build_cmd = testenv_cmd(Some("build"), Some((&share_key, true)));
         let (rc, out, wall) = go("build", env, &build_cmd, test_secs);
         phases.push(("build".to_string(), wall));
         if rc != 0 || w.signalled() {
@@ -2540,17 +2566,17 @@ pub fn run_composed<W: World>(
             o
         }
         None => {
-            let (rc, out, wall) = go(first, env, &cmd, test_secs);
+            let (rc, out, wall) = go(first, env, cmd, test_secs);
             phases.push((format!("{prefix}{first}"), wall));
             if w.signalled() || rc == 124 || rc == NOVERDICT || stall::is_stall(rc, &out) || (rc != 0 && !matches!(comp, Composition::Unit { .. })) {
                 return (rc, out, phases);
             }
             fences_rc = rc;
             if let Some(k) = fences.filter(|k| fences_rc == 0 && comp.suites_off() && !k.harness.is_empty()) {
-                if fence::silent(&fence::expected(&cmd), &out).is_empty() {
+                if fence::silent(&fence::expected(cmd), &out).is_empty() {
                     if let (Some(dir), Some(name)) = (k.path.parent(), k.path.file_name().and_then(|n| n.to_str())) {
                         w.mkdir_p(dir);
-                        w.write_atomic(dir, name, &crate::fencecache::render(&k.harness, &cmd, &out));
+                        w.write_atomic(dir, name, &crate::fencecache::render(&k.harness, cmd, &out));
                     }
                 }
             }
