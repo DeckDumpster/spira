@@ -132,6 +132,8 @@ fn conditions_check(n: i64, run: &Path) -> Result<(), String> {
         oom_hold_secs: getenv_i64("SPIRA_OOM_HOLD_SECS", 21600),
         tmp_path: getenv("SPIRA_TMP_PROBE_PATH").unwrap_or_else(|| system_paths::TMP.into()),
         tmp_floor_mib: getenv_i64("SPIRA_TMPFS_SHED_FREE_MIB", 6144),
+        tmp_held_max_pct: reg_i64("SPIRA_TMPFS_HELD_MAX_PCT")?,
+        meminfo_path: getenv("SPIRA_MEMINFO_PATH").unwrap_or_else(|| format!("{}/meminfo", system_paths::PROC)),
         disk_floor_pct: reg_i64("SPIRA_DISK_FLOOR_PCT")?,
         disk_fill_hours: reg_i64("SPIRA_DISK_FILL_HOURS")?,
         disk_watch_paths: probes::watch_paths(run, &reg("SPIRA_DISK_WATCH_PATHS")?, &reg("SPIRA_DWARF_BUILD_BASE")?, &reg("SPIRA_HAND_TARGET_ROOTS")?),
