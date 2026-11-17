@@ -141,6 +141,7 @@ struct Fake {
     /// Another process removed the tree's build output after it was built.
     target_swept: Cell<bool>,
     targets: RefCell<Vec<PathBuf>>,
+    target_repos: RefCell<Vec<String>>,
     target_roots: RefCell<Vec<String>>,
     released: RefCell<Vec<(PathBuf, bool)>>,
     judged: RefCell<Vec<bool>>,
@@ -314,6 +315,7 @@ impl Fake {
             target_swept: Cell::new(false),
             target_clears_tools: Cell::new(false),
             targets: RefCell::new(Vec::new()),
+            target_repos: RefCell::new(Vec::new()),
             target_roots: RefCell::new(Vec::new()),
             released: RefCell::new(Vec::new()),
             judged: RefCell::new(Vec::new()),
@@ -706,7 +708,8 @@ impl World for Fake {
     fn lc_build_dir(&self, _: &str) -> Option<(String, PathBuf)> {
         self.build_dir_fact.borrow().clone()
     }
-    fn target_on_tmpfs(&self, tree: &Path, root: &str, _: &str, _: &crate::target::Limits, builder: Option<&crate::ports::Builder>) -> Result<String, String> {
+    fn target_on_tmpfs(&self, tree: &Path, root: &str, _: &str, _: &crate::target::Limits, builder: Option<&crate::ports::Builder>, repo: &str) -> Result<String, String> {
+        self.target_repos.borrow_mut().push(repo.to_string());
         self.builders.borrow_mut().push(builder.cloned());
         self.targets.borrow_mut().push(tree.to_path_buf());
         self.target_roots.borrow_mut().push(root.to_string());
@@ -741,7 +744,7 @@ impl World for Fake {
     fn target_intact(&self, _: &Path) -> bool {
         !self.target_swept.get()
     }
-    fn release_target(&self, tree: &Path, keep_release: bool, judged: bool, cap_mib: u64) {
+    fn release_target(&self, tree: &Path, keep_release: bool, judged: bool, cap_mib: u64, _: &str) {
         self.judged.borrow_mut().push(judged);
         self.release_caps.borrow_mut().push(cap_mib);
         self.released.borrow_mut().push((tree.to_path_buf(), keep_release));
@@ -2691,6 +2694,17 @@ fn suites_mode_is_todays_gate_exactly() {
         unit.written.borrow()[0].0,
         "a unit-mode PASS is cached under its own key"
     );
+}
+
+#[test]
+fn a_suites_mode_gate_with_a_root_cargo_toml_builds_on_the_warm_target_of_its_repository() {
+    let f = Fake::new();
+    f.files.borrow_mut().insert(PathBuf::from(format!("{GATE_TREE}/Cargo.toml")), "[workspace]".into());
+    assert_eq!(f.run(), PASS);
+    assert_eq!(f.targets.borrow().len(), 1);
+    assert_eq!(f.target_repos.borrow()[..], ["spira".to_string()]);
+    assert!(meter(&f).contains(" build_dir="), "{}", meter(&f));
+    assert!(meter(&f).contains("compose=suites(mode)"));
 }
 
 #[test]

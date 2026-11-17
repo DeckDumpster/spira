@@ -1006,7 +1006,7 @@ impl World for Real {
     fn build_wrapper(&self, path: &str, setting: &str) -> Result<spira_config::build::Wrapper, String> {
         spira_config::build::wrapper(path, Some(setting))
     }
-    fn target_on_tmpfs(&self, tree: &Path, explicit_root: &str, run: &str, lim: &crate::target::Limits, builder: Option<&crate::ports::Builder>) -> Result<String, String> {
+    fn target_on_tmpfs(&self, tree: &Path, explicit_root: &str, run: &str, lim: &crate::target::Limits, builder: Option<&crate::ports::Builder>, repo: &str) -> Result<String, String> {
         use crate::target;
         let Some(root) = target::root(explicit_root, run, target::on_tmpfs(Path::new(system_paths::TMP))) else {
             return Ok(format!("gate: no tmpfs for the build (/tmp is not one and SPIRA_GATE_TARGET_ROOT is unset) — {} builds in the tree", tree.display()));
@@ -1022,7 +1022,7 @@ impl World for Real {
                 if let (Some(Err(why)), Some(b)) = (other, builder) {
                     line.push_str(&format!("\ngate: builder directory {} not used ({why}) — building as without one", b.dir.display()));
                 }
-                if let Some(warm) = crate::warm::warm_start(&root, &p.dir.join("debug"), tree) {
+                if let Some(warm) = crate::warm::warm_start(&root, repo, &p.dir.join("debug"), tree) {
                     line.push_str(&format!("\n{warm}"));
                 }
             }
@@ -1051,9 +1051,9 @@ impl World for Real {
     fn target_intact(&self, tree: &Path) -> bool {
         crate::target::intact(tree)
     }
-    fn release_target(&self, tree: &Path, keep_release: bool, judged: bool, cap_mib: u64) {
+    fn release_target(&self, tree: &Path, keep_release: bool, judged: bool, cap_mib: u64, repo: &str) {
         if judged {
-            if let Some(line) = crate::warm::donate_tree(tree, cap_mib) {
+            if let Some(line) = crate::warm::donate_tree(tree, repo, cap_mib) {
                 self.eprint(&line);
             }
         }
@@ -1326,7 +1326,7 @@ mod tests {
         assert!(!p.own.exists(), "the gate's own directory is dropped");
         assert!(!lockable(&p), "the lease is held for the gate");
         std::fs::write(p.slot.join("debug/built"), "x").unwrap();
-        p.real.release_target(&p.tree, false, true, 1 << 10);
+        p.real.release_target(&p.tree, false, true, 1 << 10, "r");
         assert!(p.slot.join("debug/built").is_file(), "release leaves the builder's output");
         assert!(std::fs::symlink_metadata(p.tree.join("target/debug")).is_err());
         assert!(lockable(&p), "the lease is released");
@@ -1369,7 +1369,7 @@ mod tests {
         std::fs::create_dir_all(&tree).unwrap();
         let lim = crate::target::Limits { cap_mib: 1024, shed_free_mib: 0 };
         let line = super::Real::new(t.path().to_path_buf())
-            .target_on_tmpfs(&tree, root.to_str().unwrap(), t.path().to_str().unwrap(), &lim, None)
+            .target_on_tmpfs(&tree, root.to_str().unwrap(), t.path().to_str().unwrap(), &lim, None, "r")
             .unwrap();
         assert!(line.starts_with(&format!("gate: build on {}", root.display())), "{line}");
         assert!(root.join(".gate.r.b").is_dir());
@@ -1437,11 +1437,11 @@ mod tests {
         let lim = crate::target::Limits { cap_mib: 1 << 20, shed_free_mib: 0 };
         let r = super::Real::new(t.path().to_path_buf());
         let run = t.path().to_str().unwrap();
-        r.target_on_tmpfs(&a, root.to_str().unwrap(), run, &lim, None).unwrap();
+        r.target_on_tmpfs(&a, root.to_str().unwrap(), run, &lim, None, "r").unwrap();
         fs::create_dir_all(a.join("target/debug/deps")).unwrap();
         fs::write(a.join("target/debug/deps/libx.rlib"), "x").unwrap();
-        r.release_target(&a, false, true, 1 << 20);
-        let line = r.target_on_tmpfs(&b, root.to_str().unwrap(), run, &lim, None).unwrap();
+        r.release_target(&a, false, true, 1 << 20, "r");
+        let line = r.target_on_tmpfs(&b, root.to_str().unwrap(), run, &lim, None, "r").unwrap();
         assert!(line.contains("warm from"), "{line}");
         assert!(b.join("target/debug/deps/libx.rlib").is_file());
     }
@@ -1460,10 +1460,10 @@ mod tests {
         }
         let lim = crate::target::Limits { cap_mib: 3, shed_free_mib: 0 };
         let r = super::Real::new(t.path().to_path_buf());
-        r.target_on_tmpfs(&a, root.to_str().unwrap(), t.path().to_str().unwrap(), &lim, None).unwrap();
+        r.target_on_tmpfs(&a, root.to_str().unwrap(), t.path().to_str().unwrap(), &lim, None, "r").unwrap();
         fs::create_dir_all(a.join("target/debug/deps")).unwrap();
         fs::write(a.join("target/debug/deps/libbig.rlib"), vec![7u8; 5 << 20]).unwrap();
-        r.release_target(&a, false, true, lim.cap_mib);
+        r.release_target(&a, false, true, lim.cap_mib, "r");
         let held = crate::warm::size(&root);
         assert!(held <= lim.cap_mib << 20, "the warm directory holds {held} bytes over a {} MiB cap", lim.cap_mib);
     }

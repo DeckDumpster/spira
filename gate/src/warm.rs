@@ -17,8 +17,12 @@ const BUILT_AT: &str = "built-at";
 const BUILD_DIR: &str = "debug";
 const AGED: Duration = Duration::from_secs(1_000_000_000);
 
-fn entries(root: &Path) -> Vec<PathBuf> {
-    let mut v: Vec<(SystemTime, PathBuf)> = fs::read_dir(root.join(POOL))
+fn repo_pool(root: &Path, repo: &str) -> PathBuf {
+    root.join(POOL).join(repo.replace(['/', '\\'], "_").trim_start_matches('.'))
+}
+
+fn entries(root: &Path, repo: &str) -> Vec<PathBuf> {
+    let mut v: Vec<(SystemTime, PathBuf)> = fs::read_dir(repo_pool(root, repo))
         .map(|rd| {
             rd.flatten()
                 .filter(|e| !e.file_name().to_string_lossy().contains(".claimed"))
@@ -30,7 +34,7 @@ fn entries(root: &Path) -> Vec<PathBuf> {
     v.into_iter().map(|(_, p)| p).collect()
 }
 
-/// Bytes held by the pool, for the target root's cap.
+/// Bytes held by the pool (every repository's), for the target root's cap.
 pub fn size(root: &Path) -> u64 {
     crate::target::size_of(&root.join(POOL))
 }
@@ -42,11 +46,11 @@ pub fn shed(root: &Path) {
 
 /// Move `dest` (a gate tree's finished `debug` directory) into the pool, recorded as built from
 /// `commit` in `tree`. A directory with no compiled dependencies, or no commit, is not worth keeping.
-pub fn donate(root: &Path, dest: &Path, commit: &str, tree: &Path) -> bool {
+pub fn donate(root: &Path, repo: &str, dest: &Path, commit: &str, tree: &Path) -> bool {
     if commit.is_empty() || !dest.join("deps").is_dir() {
         return false;
     }
-    let pool = root.join(POOL);
+    let pool = repo_pool(root, repo);
     if fs::create_dir_all(&pool).is_err() {
         return false;
     }
@@ -60,7 +64,7 @@ pub fn donate(root: &Path, dest: &Path, commit: &str, tree: &Path) -> bool {
         let _ = fs::remove_dir_all(&entry);
         return false;
     }
-    let all = entries(root);
+    let all = entries(root, repo);
     for old in all.iter().take(all.len().saturating_sub(KEEP)) {
         let _ = fs::remove_dir_all(old);
     }
@@ -70,11 +74,11 @@ pub fn donate(root: &Path, dest: &Path, commit: &str, tree: &Path) -> bool {
 /// Fill the empty directory `dest` from the newest pooled one; the commit it was built from.
 /// None when `dest` holds anything already or the pool has nothing to give. Claiming renames the
 /// entry first, so two gates never take the same one. The commit and the tree path it was built in.
-pub fn adopt(root: &Path, dest: &Path) -> Option<(String, PathBuf)> {
+pub fn adopt(root: &Path, repo: &str, dest: &Path) -> Option<(String, PathBuf)> {
     if fs::read_dir(dest).ok()?.next().is_some() {
         return None;
     }
-    for entry in entries(root).into_iter().rev() {
+    for entry in entries(root, repo).into_iter().rev() {
         let claimed = PathBuf::from(format!("{}.claimed-{}", entry.display(), std::process::id()));
         if fs::rename(&entry, &claimed).is_err() {
             continue;
@@ -178,8 +182,8 @@ pub const BUILDER_IN: &str = "gate: build in ";
 
 /// The gate's side of adoption: fill `dest`, then age `tree`'s files. A failure empties `dest`.
 /// The line for the trial's log.
-pub fn warm_start(root: &Path, dest: &Path, tree: &Path) -> Option<String> {
-    let (commit, built_in) = adopt(root, dest)?;
+pub fn warm_start(root: &Path, repo: &str, dest: &Path, tree: &Path) -> Option<String> {
+    let (commit, built_in) = adopt(root, repo, dest)?;
     match normalize_mtimes(tree, &commit) {
         Ok(n) => {
             let bound = if built_in == tree { 0 } else { purge_path_bound_units(dest, &built_in) };
@@ -193,16 +197,42 @@ pub fn warm_start(root: &Path, dest: &Path, tree: &Path) -> Option<String> {
     }
 }
 
-/// Hold the pool at or under `cap_bytes`: trim the newest entry of what no build can reuse, drop
-/// older entries while over, and empty the pool when the newest alone is still over. The line for
-/// the gate's log, with the pool's size before and after.
-pub fn bound(root: &Path, cap_bytes: u64) -> String {
+/// Entries the previous release left directly under the pool, before it was per repository.
+fn remove_unscoped(root: &Path) {
+    let Ok(rd) = fs::read_dir(root.join(POOL)) else { return };
+    for e in rd.flatten() {
+        if e.path().join(BUILT_FROM).exists() || e.file_name().to_string_lossy().contains(".claimed") {
+            let _ = fs::remove_dir_all(e.path());
+        }
+    }
+}
+
+/// Hold the whole pool at or under `cap_bytes`: trim `repo`'s newest entry of what no build can
+/// reuse, drop `repo`'s older entries while over, then the other repositories' oldest, and empty
+/// the pool when `repo`'s newest alone is still over. The line for the gate's log, with the
+/// pool's size before and after.
+pub fn bound(root: &Path, repo: &str, cap_bytes: u64) -> String {
+    remove_unscoped(root);
     let before = size(root);
     let now = SystemTime::now();
-    if let Some(newest) = entries(root).pop() {
+    if let Some(newest) = entries(root, repo).pop() {
         spira_config::build_dir::trim(&newest, now, now);
     }
-    for old in entries(root).iter().rev().skip(1) {
+    let others = || {
+        let mine = repo_pool(root, repo);
+        let mut v: Vec<(SystemTime, PathBuf)> = fs::read_dir(root.join(POOL))
+            .map(|rd| rd.flatten().map(|e| e.path()).filter(|p| *p != mine && p.is_dir()).collect::<Vec<_>>())
+            .unwrap_or_default()
+            .into_iter()
+            .flat_map(|d| fs::read_dir(d).map(|rd| rd.flatten().map(|e| e.path()).collect::<Vec<_>>()).unwrap_or_default())
+            .map(|p| (fs::metadata(&p).and_then(|m| m.modified()).unwrap_or(UNIX_EPOCH), p))
+            .collect();
+        v.sort();
+        v.into_iter().map(|(_, p)| p).collect::<Vec<_>>()
+    };
+    let mut older: Vec<PathBuf> = entries(root, repo).into_iter().rev().skip(1).collect();
+    older.extend(others());
+    for old in older {
         if size(root) <= cap_bytes {
             break;
         }
@@ -218,12 +248,12 @@ pub fn bound(root: &Path, cap_bytes: u64) -> String {
 
 /// The gate's side of donation, for a finished `tree` whose `target/debug` links to the tmpfs;
 /// the pool is then held under `cap_mib`. The line for the gate's log when something was donated.
-pub fn donate_tree(tree: &Path, cap_mib: u64) -> Option<String> {
+pub fn donate_tree(tree: &Path, repo: &str, cap_mib: u64) -> Option<String> {
     let dest = fs::read_link(tree.join("target").join(BUILD_DIR)).ok()?;
     let root = dest.parent().and_then(Path::parent).filter(|_| !crate::target::is_warm(&dest) && !crate::target::is_pooled(&dest))?;
     let out = Command::new("git").arg("-C").arg(tree).args(["rev-parse", "HEAD"]).output(); // batch-job: local rev-parse in the gate tree
     let commit = out.ok().filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
-    donate(root, &dest, &commit, tree).then(|| bound(root, cap_mib << 20))
+    donate(root, repo, &dest, &commit, tree).then(|| bound(root, repo, cap_mib << 20))
 }
 
 
@@ -251,13 +281,45 @@ mod tests {
         let root = t.path();
         let (a, b, c) = (root.join("tree-a/debug"), root.join("tree-b/debug"), root.join("tree-c/debug"));
         built(&a);
-        assert!(donate(root, &a, "abc123", Path::new("t")));
+        assert!(donate(root, "r", &a, "abc123", Path::new("t")));
         assert!(!a.exists());
         fs::create_dir_all(&b).unwrap();
-        assert_eq!(adopt(root, &b), Some(("abc123".to_string(), PathBuf::from("t"))));
+        assert_eq!(adopt(root, "r", &b), Some(("abc123".to_string(), PathBuf::from("t"))));
         assert!(b.join("deps/libx.rlib").is_file());
         fs::create_dir_all(&c).unwrap();
-        assert_eq!(adopt(root, &c), None, "the entry was taken");
+        assert_eq!(adopt(root, "r", &c), None, "the entry was taken");
+    }
+
+    #[test]
+    fn a_directory_donated_under_one_repository_is_adopted_only_under_that_one() {
+        let t = testkit::TempDir::new("gate-warm-repos");
+        let root = t.path();
+        let (d, b, a) = (root.join("t/debug"), root.join("b/debug"), root.join("a/debug"));
+        built(&d);
+        assert!(donate(root, "a", &d, "c1", Path::new("t")));
+        fs::create_dir_all(&b).unwrap();
+        assert_eq!(adopt(root, "b", &b), None);
+        fs::create_dir_all(&a).unwrap();
+        assert_eq!(adopt(root, "a", &a), Some(("c1".to_string(), PathBuf::from("t"))));
+    }
+
+    #[test]
+    fn the_cap_covers_every_repositorys_entries_and_the_previous_layout_is_removed() {
+        let t = testkit::TempDir::new("gate-warm-cap-repos");
+        let root = t.path();
+        for (i, repo) in ["a", "b"].into_iter().enumerate() {
+            let d = root.join(format!("t{i}/debug"));
+            fill(&d, 2);
+            assert!(donate(root, repo, &d, "c", Path::new("t")));
+        }
+        let old = root.join(POOL).join("1-2");
+        fill(&old.join(BUILD_DIR), 1);
+        fs::write(old.join(BUILT_FROM), "c").unwrap();
+        bound(root, "b", 3 << 20);
+        assert!(!old.exists(), "an entry directly under the pool is the previous layout");
+        assert!(size(root) <= 3 << 20, "the cap held across repositories");
+        assert_eq!(entries(root, "b").len(), 1, "the donating repository's entry is the one kept");
+        assert!(entries(root, "a").is_empty());
     }
 
     #[test]
@@ -266,11 +328,11 @@ mod tests {
         let root = t.path();
         let (a, b) = (root.join("tree-a/debug"), root.join("tree-b/debug"));
         built(&a);
-        assert!(donate(root, &a, "abc123", Path::new("t")));
-        let entry = entries(root).pop().unwrap();
+        assert!(donate(root, "r", &a, "abc123", Path::new("t")));
+        let entry = entries(root, "r").pop().unwrap();
         fs::remove_file(entry.join(BUILT_AT)).unwrap();
         fs::create_dir_all(&b).unwrap();
-        assert_eq!(adopt(root, &b), None);
+        assert_eq!(adopt(root, "r", &b), None);
         assert!(!b.join("deps/libx.rlib").exists());
     }
 
@@ -280,10 +342,10 @@ mod tests {
         let root = t.path();
         let (a, b) = (root.join("a/debug"), root.join("b/debug"));
         built(&a);
-        donate(root, &a, "c1", Path::new("t"));
+        donate(root, "r", &a, "c1", Path::new("t"));
         built(&b);
-        assert_eq!(adopt(root, &b), None);
-        assert_eq!(entries(root).len(), 1);
+        assert_eq!(adopt(root, "r", &b), None);
+        assert_eq!(entries(root, "r").len(), 1);
     }
 
     #[test]
@@ -292,9 +354,9 @@ mod tests {
         let root = t.path();
         let a = root.join("a/debug");
         fs::create_dir_all(&a).unwrap();
-        assert!(!donate(root, &a, "c1", Path::new("t")));
+        assert!(!donate(root, "r", &a, "c1", Path::new("t")));
         built(&a);
-        assert!(!donate(root, &a, "", Path::new("t")));
+        assert!(!donate(root, "r", &a, "", Path::new("t")));
         assert!(a.join("deps").is_dir());
     }
 
@@ -305,11 +367,11 @@ mod tests {
         for i in 0..KEEP + 2 {
             let d = root.join(format!("t{i}/debug"));
             built(&d);
-            assert!(donate(root, &d, &format!("c{i}"), Path::new("t")));
-            let e = entries(root).pop().unwrap();
+            assert!(donate(root, "r", &d, &format!("c{i}"), Path::new("t")));
+            let e = entries(root, "r").pop().unwrap();
             fs::File::open(&e).unwrap().set_modified(UNIX_EPOCH + Duration::from_secs(1000 + i as u64)).unwrap();
         }
-        assert_eq!(entries(root).len(), KEEP);
+        assert_eq!(entries(root, "r").len(), KEEP);
     }
 
     #[test]
@@ -364,9 +426,9 @@ mod tests {
         git(&tree, &["commit", "-qm", "base"]);
         let (a, b) = (root.join("a/debug"), root.join("b/debug"));
         built(&a);
-        donate(&root, &a, "0123456789012345678901234567890123456789", Path::new("t"));
+        donate(&root, "r", &a, "0123456789012345678901234567890123456789", Path::new("t"));
         fs::create_dir_all(&b).unwrap();
-        let line = warm_start(&root, &b, &tree).unwrap();
+        let line = warm_start(&root, "r", &b, &tree).unwrap();
         assert!(line.contains("discarded"), "{line}");
         assert!(b.is_dir() && fs::read_dir(&b).unwrap().next().is_none());
     }
@@ -399,15 +461,15 @@ mod tests {
         for i in 0..2 {
             let d = root.join(format!("t{i}/debug"));
             fill(&d, 2);
-            assert!(donate(root, &d, &format!("c{i}"), Path::new("t")));
-            let e = entries(root).pop().unwrap();
+            assert!(donate(root, "r", &d, &format!("c{i}"), Path::new("t")));
+            let e = entries(root, "r").pop().unwrap();
             fs::File::open(&e).unwrap().set_modified(UNIX_EPOCH + Duration::from_secs(1000 + i as u64)).unwrap();
         }
-        let newest = entries(root).pop().unwrap();
-        let line = bound(root, 3 << 20);
-        assert_eq!(entries(root), vec![newest], "{line}");
+        let newest = entries(root, "r").pop().unwrap();
+        let line = bound(root, "r", 3 << 20);
+        assert_eq!(entries(root, "r"), vec![newest], "{line}");
         assert!(size(root) <= 3 << 20 && size(root) > 0, "{line}");
-        let line = bound(root, 1 << 20);
+        let line = bound(root, "r", 1 << 20);
         assert_eq!(size(root), 0, "{line}");
         assert!(line.contains("emptied"), "{line}");
     }
@@ -424,9 +486,9 @@ mod tests {
         let f = fs::File::options().write(true).open(&stale).unwrap();
         f.set_modified(old).unwrap();
         f.set_times(fs::FileTimes::new().set_accessed(old).set_modified(old)).unwrap();
-        assert!(donate(root, &d, "c", Path::new("t")));
-        bound(root, 1 << 30);
-        let kept = entries(root).pop().unwrap().join("debug/deps");
+        assert!(donate(root, "r", &d, "c", Path::new("t")));
+        bound(root, "r", 1 << 30);
+        let kept = entries(root, "r").pop().unwrap().join("debug/deps");
         assert!(kept.join("libbig.rlib").is_file());
         assert!(!kept.join("libstale.rlib").exists());
     }
@@ -444,8 +506,8 @@ mod tests {
         let dest = root.join("name/debug");
         built(&dest);
         std::os::unix::fs::symlink(&dest, tree.join("target/debug")).unwrap();
-        assert!(donate_tree(&tree, 1 << 20).is_some());
-        assert_eq!(entries(&root).len(), 1);
+        assert!(donate_tree(&tree, "r", 1 << 20).is_some());
+        assert_eq!(entries(&root, "r").len(), 1);
         assert!(!dest.exists());
     }
 

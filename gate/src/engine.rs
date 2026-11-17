@@ -822,6 +822,7 @@ impl<'w, W: World> Trial<'w, W> {
         // on tmpfs.
         let builds = tree_def.as_ref().is_some_and(|d| !d.bins.is_empty())
             || matches!(comp, Composition::Unit { .. })
+            || matches!(comp, Composition::Suites { ref why } if why == "mode") && w.exists(&tree.join("Cargo.toml"))
             || self.a.release_bins;
         if builds {
             match self.prepare_build_tree(&ctx, &tree, matches!(comp, Composition::Unit { .. })) {
@@ -1774,7 +1775,7 @@ impl<'w, W: World> Trial<'w, W> {
         let lim = Self::target_limits(ctx);
         let short = |e: String| Err(v(NOVERDICT, "scratch-short", format!("{e}\ngate: the scratch target could not be prepared on the host, not a fault in the branch.")));
         let builder = if in_builders_dir { self.builders_dir(ctx) } else { None };
-        match w.target_on_tmpfs(tree, ctx.var("SPIRA_GATE_TARGET_ROOT"), &self.s.run, &lim, builder.as_ref()) {
+        match w.target_on_tmpfs(tree, ctx.var("SPIRA_GATE_TARGET_ROOT"), &self.s.run, &lim, builder.as_ref(), &self.s.repo_name) {
             Ok(line) => {
                 w.eprint(&line);
                 Ok(crate::telemetry::build_dir_field(&line))
@@ -1899,7 +1900,7 @@ impl<'w, W: World> Trial<'w, W> {
             w.remove(&f);
         }
         if let Some(t) = &self.s.tree {
-            w.release_target(t, vd.status == PASS && self.a.release_bins, vd.status != NOVERDICT, self.s.target_cap_mib);
+            w.release_target(t, vd.status == PASS && self.a.release_bins, vd.status != NOVERDICT, self.s.target_cap_mib, &self.s.repo_name);
             w.remove(&PathBuf::from(format!("{}.lock.holder", t.display())));
             if self.s.held_lock && vd.status != PASS && w.exists(&t.join(".git")) {
                 w.remove_worktree(&self.s.repo, t);

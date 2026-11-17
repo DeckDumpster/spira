@@ -183,7 +183,7 @@ pub trait World {
     fn target_room(&self, explicit_root: &str, run: &str) -> String;
     /// With a `builder`, the tree's `debug` links into that leased directory (the line says
     /// `warm::BUILDER_IN`); any step that fails leaves the gate's own directory, warm or cold.
-    fn target_on_tmpfs(&self, tree: &Path, explicit_root: &str, run: &str, lim: &crate::target::Limits, builder: Option<&Builder>) -> Result<String, String>;
+    fn target_on_tmpfs(&self, tree: &Path, explicit_root: &str, run: &str, lim: &crate::target::Limits, builder: Option<&Builder>, repo: &str) -> Result<String, String>;
     /// The newest `build-dir` fact of `bead` (its last `work submit`): the tip and the directory.
     fn lc_build_dir(&self, _bead: &str) -> Option<(String, PathBuf)> {
         None
@@ -194,7 +194,7 @@ pub trait World {
     /// Drop the tmpfs build output of a finished trial (target::release_tree); `keep_release`
     /// spares `release` for a caller that still has to stage it; a judged trial's `debug` joins
     /// the warm pool, which is held under `cap_mib`.
-    fn release_target(&self, tree: &Path, keep_release: bool, judged: bool, cap_mib: u64);
+    fn release_target(&self, tree: &Path, keep_release: bool, judged: bool, cap_mib: u64, repo: &str);
 
     /// `timeout <secs> bash -c <cmd>` in `tree` under exactly `env` → (status, combined output
     /// with trailing newlines stripped).

@@ -700,7 +700,7 @@ mod tests {
         std::os::unix::fs::symlink(&pooled, tree.join("target/debug")).unwrap();
         assert!(is_pooled(&pooled));
         assert!(!is_pooled(&s.1.join("root/.gate.harness.p/debug")));
-        assert!(crate::warm::donate_tree(&tree, 1 << 20).is_none(), "a pool directory is never donated");
+        assert!(crate::warm::donate_tree(&tree, "r", 1 << 20).is_none(), "a pool directory is never donated");
         assert!(pooled.join("deps/libz.rlib").is_file());
         release_tree(&tree, false);
         assert!(pooled.join("deps/libz.rlib").is_file(), "release_tree cleared the builders' directory through the link");
