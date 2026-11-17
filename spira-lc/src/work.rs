@@ -1979,7 +1979,7 @@ fn lifecycle_list_args(states: &[String], all: bool) -> Vec<String> {
 
 fn list_with_content(conn: &Conn, reader: &ReadFn, ask: ListAsk) -> (i32, String) {
     let ListAsk { states, all, filters, json, full, limit } = ask;
-    let narrowing = lifecycle_list_args(&states, all);
+    let narrowing = lifecycle_list_args(states, all);
     let (rc, rows) = crate::plane::read(&narrowing);
     if rc != 0 {
         return (rc, rows);
