@@ -20,6 +20,9 @@ struct Counters {
     verbs: BTreeMap<String, (u64, u64)>,
     tasks: BTreeMap<Key, (u64, u64)>,
     past: BTreeMap<Key, Past>,
+    /// (holder, cut) -> (holds, ms), and what the last successful push carried.
+    holds: BTreeMap<(String, bool), (u64, u64)>,
+    holds_pushed: BTreeMap<(String, bool), (u64, u64)>,
 }
 
 /// What a key's reads behind the head came to since the last successful push.
@@ -33,7 +36,7 @@ struct Past {
 /// (verb, caller, task): what a request is counted under.
 type Key = (String, String, String);
 
-static COUNTERS: Mutex<Counters> = Mutex::new(Counters { verbs: BTreeMap::new(), tasks: BTreeMap::new(), past: BTreeMap::new() });
+static COUNTERS: Mutex<Counters> = Mutex::new(Counters { verbs: BTreeMap::new(), tasks: BTreeMap::new(), past: BTreeMap::new(), holds: BTreeMap::new(), holds_pushed: BTreeMap::new() });
 
 /// How often the counts are pushed over OTLP.
 pub const METRICS_EVERY: Duration = Duration::from_secs(60);
@@ -131,6 +134,35 @@ pub fn request_done(verb: &str, method: &str, caller: &str, task: Option<&str>, 
     }
     if !is_batch_method(method) && !is_long_poll(method) {
         append(took, &verb, &caller, "REQUEST");
+    }
+}
+
+/// One hold of the control store's commit-order lock over its limit: a row in the slow-query
+/// log whatever `SPIRA_SLOW_QUERY_MS` says, and a count by holder.
+pub fn order_hold(h: &state_store::model::Hold) {
+    let ms = |d: Duration| d.as_millis();
+    let (holder, caller) = (clean(&h.verb), clean(&h.caller));
+    if let Ok(mut c) = COUNTERS.lock() {
+        let e = c.holds.entry((holder.clone(), h.cut)).or_default();
+        e.0 += 1;
+        e.1 += h.hold.as_millis() as u64;
+    }
+    let Some(path) = log_path() else { return };
+    let row = format!(
+        "{}\t{holder}\t{caller}\t{}\tORDER-HOLD\tcatch_up_ms={}\twriter_wait_ms={}\tcommit_ms={}\tcheckpointed={}\tapply_ms={}\treload_ms={}\twrites={}\tcut={}\n",
+        crate::db::now_epoch(),
+        ms(h.hold),
+        ms(h.catch_up),
+        ms(h.writer_wait),
+        ms(h.commit),
+        h.checkpointed,
+        ms(h.apply),
+        ms(h.reload),
+        h.writes,
+        h.cut,
+    );
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        let _ = f.write_all(row.as_bytes());
     }
 }
 
@@ -259,6 +291,16 @@ fn series_since(c: &Counters, pushed: &BTreeMap<Key, (u64, u64)>, at: std::time:
             out.push(series("spira_lc_store_lag_ms_max", v as f64));
         }
     }
+    for ((holder, cut), &(n, ms)) in &c.holds {
+        let (pn, pms) = c.holds_pushed.get(&(holder.clone(), *cut)).copied().unwrap_or_default();
+        if n == pn {
+            continue;
+        }
+        let labels = vec![("holder".to_string(), holder.clone()), ("cut".to_string(), cut.to_string())];
+        let series = |name: &str, value: f64| spira_otel::metrics::Series { name: name.into(), value, labels: labels.clone(), at };
+        out.push(series("spira_lc_order_holds", (n - pn) as f64));
+        out.push(series("spira_lc_order_hold_seconds", (ms - pms) as f64 / 1000.0));
+    }
     out
 }
 
@@ -266,11 +308,12 @@ fn series_since(c: &Counters, pushed: &BTreeMap<Key, (u64, u64)>, at: std::time:
 /// counters are not locked during the post.
 pub fn push_counts(sink: &spira_otel::metrics::MetricsSink, pushed: &mut BTreeMap<Key, (u64, u64)>) {
     let Ok(c) = COUNTERS.lock() else { return };
-    let (series, now, past) = (series_since(&c, pushed, std::time::SystemTime::now()), c.tasks.clone(), c.past.clone());
+    let (series, now, past, holds) = (series_since(&c, pushed, std::time::SystemTime::now()), c.tasks.clone(), c.past.clone(), c.holds.clone());
     drop(c);
     if !series.is_empty() && sink.try_push_series(&series).is_ok() {
         *pushed = now;
         if let Ok(mut c) = COUNTERS.lock() {
+            c.holds_pushed = holds;
             c.past = settle(std::mem::take(&mut c.past), &past);
         }
     }
@@ -506,6 +549,37 @@ mod tests {
         let s: serde_json::Value = serde_json::from_str(&stats_json()).unwrap();
         assert_eq!(s["verbs"]["probe-verb"], serde_json::json!({"count": 2, "total_ms": 100}));
         assert!(s["callers"].as_array().unwrap().iter().any(|c| c["verb"] == "probe-verb" && c["caller"] == "probe_caller" && c["task"] == "-" && c["count"] == 2 && c["total_ms"] == 100));
+    }
+
+    #[test]
+    fn an_order_hold_is_logged_with_its_split_whatever_the_slow_query_threshold_and_counted_by_holder() {
+        let d = testkit::TempDir::new("slow-hold");
+        let log = d.join("s.log");
+        let _env = testkit::env(&[("SPIRA_SLOW_QUERY_LOG", Some(log.to_str().unwrap())), ("SPIRA_SLOW_QUERY_MS", Some("100000"))]);
+        let ms = Duration::from_millis;
+        order_hold(&state_store::model::Hold {
+            verb: "hold-probe".into(),
+            caller: "who".into(),
+            hold: ms(620),
+            catch_up: ms(5),
+            writer_wait: ms(7),
+            commit: ms(600),
+            checkpointed: true,
+            apply: ms(8),
+            reload: ms(0),
+            writes: 3,
+            cut: true,
+        });
+        let got = std::fs::read_to_string(&log).unwrap();
+        let f: Vec<&str> = got.trim_end().split('\t').collect();
+        assert_eq!(f[1..], ["hold-probe", "who", "620", "ORDER-HOLD", "catch_up_ms=5", "writer_wait_ms=7", "commit_ms=600", "checkpointed=true", "apply_ms=8", "reload_ms=0", "writes=3", "cut=true"]);
+        let c = COUNTERS.lock().unwrap();
+        let got: Vec<(String, f64)> = series_since(&c, &BTreeMap::new(), std::time::SystemTime::now())
+            .into_iter()
+            .filter(|s| s.labels.contains(&("holder".to_string(), "hold-probe".to_string())) && s.labels.contains(&("cut".to_string(), "true".to_string())))
+            .map(|s| (s.name, s.value))
+            .collect();
+        assert_eq!(got, [("spira_lc_order_holds".to_string(), 1.0), ("spira_lc_order_hold_seconds".to_string(), 0.62)]);
     }
 
     #[test]

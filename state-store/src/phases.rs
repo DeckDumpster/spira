@@ -157,6 +157,30 @@ pub fn deadline_passed() -> bool {
     DEADLINE.with(|d| d.get()).is_some_and(|at| Instant::now() >= at) // clock-safe: the deadline is a monotonic instant the server sets
 }
 
+thread_local! {
+    static HOLDER: RefCell<Option<(String, String)>> = const { RefCell::new(None) };
+}
+
+/// Clears the thread's holder label when dropped.
+pub struct HolderScope;
+
+impl Drop for HolderScope {
+    fn drop(&mut self) {
+        HOLDER.with(|h| *h.borrow_mut() = None);
+    }
+}
+
+/// Names this thread, to whoever reports a lock it holds, as `verb` called by `caller`.
+pub fn holder_scoped(verb: &str, caller: &str) -> HolderScope {
+    HOLDER.with(|h| *h.borrow_mut() = Some((verb.to_string(), caller.to_string())));
+    HolderScope
+}
+
+/// The thread's `(verb, caller)`; `unlabelled` when nothing named it.
+pub fn holder() -> (String, String) {
+    HOLDER.with(|h| h.borrow().clone()).unwrap_or_else(|| ("unlabelled".into(), String::new()))
+}
+
 fn current() -> Option<Arc<Recorder>> {
     CURRENT.with(|c| c.borrow().clone())
 }

@@ -162,6 +162,7 @@ pub fn run(args: &[String]) -> i32 {
         });
         if let Some(store) = control {
             std::thread::spawn(move || {
+                let _holder = state_store::phases::holder_scoped("gc", "");
                 let gc = state_store::gc::Controller::new(store.contract());
                 loop {
                     std::thread::sleep(SWEEP_EVERY);
@@ -171,7 +172,9 @@ pub fn run(args: &[String]) -> i32 {
         }
         std::thread::spawn(crate::plan::run_mirror);
         std::thread::spawn(crate::settle::run);
-        std::thread::spawn(move || loop {
+        std::thread::spawn(move || {
+            let _holder = state_store::phases::holder_scoped("mending-sweep", "");
+            loop {
             std::thread::sleep(SWEEP_EVERY);
             alarm_tick();
             match crate::control::served::configured() {
@@ -182,6 +185,7 @@ pub fn run(args: &[String]) -> i32 {
                 },
                 Some(Err(e)) => eprintln!("spira-lc serve: mending sweep: the control store: {e}"),
                 None => {}
+            }
             }
         });
     }
@@ -549,6 +553,7 @@ fn serve_one(stream: UnixStream, conn: &Arc<Conn>, spans: Option<&spira_otel::Si
         Ok(argv) => {
             let worker = Arc::clone(conn);
             let who = caller.clone();
+            let holder_verb = verb.clone();
             let began = Arc::clone(&started_work);
             let limit = request_deadline(&argv);
             let min_rev = req.min_rev;
@@ -556,6 +561,7 @@ fn serve_one(stream: UnixStream, conn: &Arc<Conn>, spans: Option<&spira_otel::Si
             let worker_rec = Arc::clone(&recorder);
             within(limit.saturating_sub(received.elapsed()), move || {
                 let _tracking = state_store::phases::track_scoped(worker_rec);
+                let _holder = state_store::phases::holder_scoped(&holder_verb, &who);
                 *began.lock().unwrap_or_else(|e| e.into_inner()) = Some(Instant::now());
                 crate::slow::set_caller(&who);
                 let _deadline = bind_deadline(received, limit);

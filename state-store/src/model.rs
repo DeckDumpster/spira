@@ -140,6 +140,27 @@ const LOAD_PAGE: usize = 1_000;
 /// Watch-log mains per page while the copy catches up with commits it did not make.
 const CATCH_UP_MAINS: usize = 256;
 
+/// One hold of the commit-order lock that outlasted the limit set by [`Modeled::report_holds`].
+#[derive(Clone, Debug, Default)]
+pub struct Hold {
+    pub verb: String,
+    pub caller: String,
+    pub hold: Duration,
+    pub catch_up: Duration,
+    pub writer_wait: Duration,
+    /// The inner backend's commit, less its writer wait.
+    pub commit: Duration,
+    /// The commit ran a WAL checkpoint.
+    pub checkpointed: bool,
+    pub apply: Duration,
+    pub reload: Duration,
+    pub writes: usize,
+    /// The holder's request deadline had passed when the lock was released.
+    pub cut: bool,
+}
+
+type HoldSink = std::sync::Arc<dyn Fn(&Hold) + Send + Sync>;
+
 pub struct Modeled<B: Backend> {
     inner: B,
     skip: Vec<String>,
@@ -152,6 +173,9 @@ pub struct Modeled<B: Backend> {
     moved: Condvar,
     from_memory: AtomicU64,
     from_inner: AtomicU64,
+    holds: Option<(Duration, HoldSink)>,
+    /// Microseconds spent in full reloads since the current hold began.
+    reloading_us: AtomicU64,
 }
 
 fn visible(versions: &Versions, at: u64) -> Option<&Slot> {
@@ -227,11 +251,41 @@ impl<B: Backend> Modeled<B> {
             moved: Condvar::new(),
             from_memory: AtomicU64::new(0),
             from_inner: AtomicU64::new(0),
+            holds: None,
+            reloading_us: AtomicU64::new(0),
         };
         let _order = lock(&m.order);
         m.reload()?;
         drop(_order);
         Ok(m)
+    }
+
+    /// Calls `sink` with every hold of the commit-order lock longer than `over`, measured to
+    /// the lock's release.
+    pub fn report_holds(mut self, over: Duration, sink: HoldSink) -> Self {
+        self.holds = Some((over, sink));
+        self
+    }
+
+    /// Takes the order lock, runs `f` under it, and reports the hold if it was long.
+    fn held<T>(&self, writes: usize, f: impl FnOnce(&mut Hold) -> T) -> T {
+        let order = phases::time(Phase::OrderWait, || lock(&self.order));
+        let at = Instant::now();
+        self.reloading_us.store(0, Ordering::Relaxed);
+        let mut hold = Hold { writes, ..Hold::default() };
+        let out = f(&mut hold);
+        hold.hold = at.elapsed();
+        hold.cut = phases::deadline_passed();
+        drop(order);
+        if let Some((over, sink)) = &self.holds {
+            if hold.hold > *over {
+                (hold.verb, hold.caller) = phases::holder();
+                hold.reload = Duration::from_micros(self.reloading_us.load(Ordering::Relaxed));
+                hold.catch_up = hold.catch_up.saturating_sub(hold.reload);
+                sink(&hold);
+            }
+        }
+        out
     }
 
     pub fn inner(&self) -> &B {
@@ -322,6 +376,7 @@ impl<B: Backend> Modeled<B> {
     fn reloaded_for_catch_up(&self) -> Result<()> {
         let (was, started) = (self.revision(), Instant::now());
         let r = phases::time(Phase::Reload, || self.reload());
+        self.reloading_us.fetch_add(started.elapsed().as_micros() as u64, Ordering::Relaxed);
         eprintln!(
             "state-store: the copy reloaded under a commit: copy at {was}, head {:?}, ring floor {}, took {} ms: {}",
             self.inner.head().ok(),
@@ -474,42 +529,56 @@ impl<B: Backend> Backend for Modeled<B> {
     /// The inner backend's commit, applied to the copy before it returns. A commit whose
     /// outcome the inner backend could not report is read back from its log.
     fn commit(&self, expect: u64, batch: &[Write]) -> Result<u64> {
-        let _order = phases::time(Phase::OrderWait, || lock(&self.order));
-        if phases::deadline_passed() {
-            return Err(Error::Deadline);
-        }
-        if self.revision() != self.inner.head()? {
-            let _ = phases::time(Phase::CatchUp, || self.catch_up());
-        }
-        let res = phases::commit(|| self.inner.commit(expect, batch));
-        match &res {
-            Ok(rev) if self.revision() == expect => {
-                let rev = *rev;
-                phases::time(Phase::Apply, || {
-                    self.advance(rev, |m| {
-                        for (i, w) in batch.iter().enumerate().filter(|(_, w)| !self.skipped(w.key())) {
-                            let mod_rev = Rev::new(rev, i as u32);
-                            let s = match w {
-                                Write::Put { value, create_rev, .. } => Some(slot(value, mod_rev, *create_rev)),
-                                Write::Delete { .. } => None,
-                            };
-                            m.put(w.key(), rev, s);
-                        }
-                    })
-                });
-                seen(|s| s.wrote = Some(s.wrote.map_or(rev, |w| w.max(rev))));
+        self.held(batch.len(), |hold| {
+            if phases::deadline_passed() {
+                return Err(Error::Deadline);
             }
-            Ok(rev) => {
-                let rev = *rev;
+            let catch_up = |hold: &mut Hold| {
+                let at = Instant::now();
                 let _ = phases::time(Phase::CatchUp, || self.catch_up());
-                seen(|s| s.wrote = Some(s.wrote.map_or(rev, |w| w.max(rev))));
+                hold.catch_up += at.elapsed();
+            };
+            if self.revision() != self.inner.head()? {
+                catch_up(hold);
             }
-            Err(Error::Stale { .. }) => {}
-            Err(_) => {
-                let _ = phases::time(Phase::CatchUp, || self.catch_up());
+            let at = Instant::now();
+            let res = phases::commit(|| self.inner.commit(expect, batch));
+            let took = at.elapsed();
+            if res.is_ok() {
+                let note = self.inner.last_commit();
+                hold.writer_wait = note.writer_wait;
+                hold.checkpointed = note.checkpointed;
             }
-        }
-        res
+            hold.commit = took.saturating_sub(hold.writer_wait);
+            match &res {
+                Ok(rev) if self.revision() == expect => {
+                    let rev = *rev;
+                    let at = Instant::now();
+                    phases::time(Phase::Apply, || {
+                        self.advance(rev, |m| {
+                            for (i, w) in batch.iter().enumerate().filter(|(_, w)| !self.skipped(w.key())) {
+                                let mod_rev = Rev::new(rev, i as u32);
+                                let s = match w {
+                                    Write::Put { value, create_rev, .. } => Some(slot(value, mod_rev, *create_rev)),
+                                    Write::Delete { .. } => None,
+                                };
+                                m.put(w.key(), rev, s);
+                            }
+                        })
+                    });
+                    hold.apply = at.elapsed();
+                    seen(|s| s.wrote = Some(s.wrote.map_or(rev, |w| w.max(rev))));
+                }
+                Ok(rev) => {
+                    let rev = *rev;
+                    catch_up(hold);
+                    seen(|s| s.wrote = Some(s.wrote.map_or(rev, |w| w.max(rev))));
+                }
+                Err(Error::Stale { .. }) => {}
+                Err(_) => catch_up(hold),
+            }
+            res
+        })
     }
 
     fn log(&self, from: u64, max_mains: usize) -> Result<Vec<LogEntry>> {
@@ -522,11 +591,13 @@ impl<B: Backend> Backend for Modeled<B> {
 
     /// The inner backend's compaction; the copy stops answering below it.
     fn compact(&self, rev: u64) -> Result<()> {
-        let _order = lock(&self.order);
-        self.inner.compact(rev)?;
-        let reached = self.inner.compacted()?;
-        self.write_model().raise_floor(reached);
-        Ok(())
+        self.held(0, |hold| {
+            let at = Instant::now();
+            let done = self.inner.compact(rev).and_then(|()| self.inner.compacted());
+            hold.commit = at.elapsed();
+            self.write_model().raise_floor(done?);
+            Ok(())
+        })
     }
 
     fn gc_range(&self, after: Option<&str>, limit: usize, at: u64) -> Result<Vec<(String, Version)>> {

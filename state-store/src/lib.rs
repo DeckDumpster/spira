@@ -17,7 +17,7 @@ pub mod wire;
 
 use serde::{Deserialize, Serialize};
 
-pub use backend::{Backend, FamilyFile, FamilyFiles, LogEntry, Usage, UsagePage, Version, VersionUsage, VersionUsagePage, Write};
+pub use backend::{Backend, CommitNote, FamilyFile, FamilyFiles, LogEntry, Usage, UsagePage, Version, VersionUsage, VersionUsagePage, Write};
 pub use clock::MonotonicClock;
 pub use contract::{
     carries_ttl, Compare, Config, Contract, Created, Deleted, Event, Fence, ListPage, Op, Ports,
@@ -25,7 +25,7 @@ pub use contract::{
 };
 pub use history::History;
 pub use mem::MemBackend;
-pub use model::Modeled;
+pub use model::{Hold, Modeled};
 
 /// The prefix of the message a backend ends a read with once it outlives its limit.
 pub const READ_ENDED: &str = "read ended: held past max_read_ms";

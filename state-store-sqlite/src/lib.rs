@@ -30,13 +30,13 @@ use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use runtime::ports::Clock;
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension, TransactionBehavior};
 use state_store::history::{overlay, AsOf, Written};
 use state_store::phases::{self, Phase};
-use state_store::{Backend, Error, History, LogEntry, Result, Rev, UsagePage, Version, VersionUsagePage, Write};
+use state_store::{Backend, CommitNote, Error, History, LogEntry, Result, Rev, UsagePage, Version, VersionUsagePage, Write};
 
 use dated::{DatedFile, Family, Files, SideRow, EVENTS, FAMILIES};
 use outbox::Outbox;
@@ -420,6 +420,10 @@ struct Inner {
     read_steps: AtomicU64,
     checkpointer: Arc<Checkpointer>,
     checkpoint_thread: Mutex<Option<std::thread::JoinHandle<()>>>,
+    /// The WAL index (`<db>-shm`), whose backfill mark moves when a commit checkpoints.
+    shm: Option<File>,
+    /// What the last successful commit reported through [`Backend::last_commit`].
+    last_commit: Mutex<CommitNote>,
     /// Held for the life of the handle: the exclusive opener. Last, so it outlives the
     /// connections.
     _lock: OpenerLock,
@@ -1001,8 +1005,16 @@ impl SqliteBackend {
             events_drained: AtomicBool::new(false),
             events_due: AtomicU64::new(0),
             read_steps: AtomicU64::new(0),
+            shm: File::open(format!("{}-shm", path.display())).ok(),
+            last_commit: Mutex::new(CommitNote::default()),
             _lock: OpenerLock(lock_file),
         })))
+    }
+
+    /// The WAL's backfill mark, `None` when the index cannot be read.
+    fn backfill(&self) -> Option<u32> {
+        let shm = self.0.shm.as_ref()?;
+        bench::read_backfill(shm, "").ok()
     }
 
     /// The index in `dated` of the family that files `key`.
@@ -1687,7 +1699,9 @@ impl Backend for SqliteBackend {
     }
 
     fn commit(&self, expect: u64, batch: &[Write]) -> Result<u64> {
+        let waiting = Instant::now();
         let mut w = phases::time(Phase::WriterWait, || lock(&self.0.writer));
+        let writer_wait = waiting.elapsed();
         let head = self.0.head.load(Ordering::SeqCst);
         if head != expect {
             return Err(Error::Stale {
@@ -1709,6 +1723,7 @@ impl Backend for SqliteBackend {
         let main = expect + 1;
         let m = main_i64(main)?;
         let committing = phases::begin_unconfirmed(Phase::Commit);
+        let backfilled = self.backfill();
         let tx = w
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -1847,6 +1862,7 @@ impl Backend for SqliteBackend {
             return Err(e);
         }
         committing.confirm();
+        *lock(&self.0.last_commit) = CommitNote { writer_wait, checkpointed: backfilled != self.backfill() };
         self.0.head.store(main, Ordering::SeqCst);
         self.0.checkpointer.committed();
         for (fam, keys) in unfiled.iter().enumerate() {
@@ -1859,6 +1875,10 @@ impl Backend for SqliteBackend {
         self.drain_receipts(&mut w, now);
         self.drain_events(&mut w, now);
         Ok(main)
+    }
+
+    fn last_commit(&self) -> CommitNote {
+        *lock(&self.0.last_commit)
     }
 
     fn log(&self, from: u64, max_mains: usize) -> Result<Vec<LogEntry>> {
@@ -1908,6 +1928,19 @@ mod tests {
             forked.push(b.0._lock.0.try_clone().unwrap());
             drop(b);
         }
+    }
+
+    #[test]
+    fn only_the_commit_that_crosses_the_auto_checkpoint_threshold_reports_a_checkpoint() {
+        let dir = testkit::TempDir::new("sqlite-checkpointed");
+        let b = SqliteBackend::open(&dir.path().join("s.db"), Options::default()).unwrap();
+        let big = |key: &str, n: usize| Write::Put { key: key.into(), value: vec![7u8; n], create_rev: Rev::new(1, 0), prev: None };
+        let mut head = b.head().unwrap();
+        head = b.commit(head, &[big("a", 1 << 10)]).unwrap();
+        assert!(!b.last_commit().checkpointed);
+        // JUMP pages of WAL: 4 KiB pages, so a few MiB in one transaction crosses it.
+        b.commit(head, &[big("b", (JUMP as usize + 100) * 4096)]).unwrap();
+        assert!(b.last_commit().checkpointed);
     }
 
     #[test]

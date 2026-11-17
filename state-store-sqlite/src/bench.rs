@@ -70,7 +70,7 @@ fn backfill(shm: &[u8]) -> Option<u32> {
     Some(u32::from_ne_bytes(b.try_into().ok()?))
 }
 
-fn read_backfill(shm: &File, path: &str) -> std::result::Result<u32, String> {
+pub(crate) fn read_backfill(shm: &File, path: &str) -> std::result::Result<u32, String> {
     let mut buf = [0u8; SHM_PREFIX];
     shm.read_exact_at(&mut buf, 0)
         .map_err(|e| format!("cannot read the WAL index {path}: {e}"))?;

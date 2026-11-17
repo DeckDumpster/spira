@@ -90,7 +90,11 @@ fn modeled(path: &str, opts: Options, build_ms: u64) -> Result<Served, String> {
     eprintln!("{}", crate::serve::startup_line("read-model open-sqlite", began.elapsed(), crate::serve::wall_ms()));
     let built = std::time::Instant::now();
     let backend = Modeled::open(backend, UNMODELED, MODEL_WINDOW)
-        .map_err(|e| format!("{path}: the read model: {e}"))?;
+        .map_err(|e| format!("{path}: the read model: {e}"))?
+        .report_holds(
+            std::time::Duration::from_millis(crate::slow::P95_LIMIT_MS),
+            Arc::new(|h: &state_store::model::Hold| crate::slow::order_hold(h)),
+        );
     eprintln!("{}", crate::serve::startup_line("read-model build-from-rows", built.elapsed(), crate::serve::wall_ms()));
     backend.inner().set_max_read_ms(steady);
     Ok(backend)
@@ -138,6 +142,7 @@ fn opened(path: &str) -> Result<Arc<Store<Served>>, String> {
 /// first observer's read finds it built rather than building it inside its deadline.
 fn prime_dwell(s: Arc<Store<Served>>) {
     std::thread::spawn(move || {
+        let _holder = state_store::phases::holder_scoped("dwell-prime", "");
         for _ in 0..PRIME_CALLS {
             match s.dwell(spira_config::vtime::now_epoch() as i64, PRIME_WINDOW_S, None) {
                 Ok(d) if !d.complete => {}

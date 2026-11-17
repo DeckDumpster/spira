@@ -555,3 +555,59 @@ fn a_write_still_waiting_for_the_order_lock_at_its_deadline_is_refused_unstarted
     assert!(m.get("b", 1).unwrap().is_none(), "the refused write is not in the copy");
     assert_eq!(m.revision(), 1);
 }
+
+fn holds_over(over_ms: u64, inner: &Counted) -> (Modeled<Counted>, Arc<std::sync::Mutex<Vec<Hold>>>) {
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = seen.clone();
+    let m = Modeled::open(inner.clone(), SKIP, 16)
+        .unwrap()
+        .report_holds(Duration::from_millis(over_ms), Arc::new(move |h: &Hold| sink.lock().unwrap().push(h.clone())));
+    (m, seen)
+}
+
+fn slow_commit(inner: &Counted, ms: u64) {
+    *inner.before_commit.lock().unwrap() = Some(Box::new(move || std::thread::sleep(Duration::from_millis(ms))));
+}
+
+#[test]
+fn a_commit_that_holds_the_order_over_the_limit_is_reported_with_its_holder_and_split() {
+    let inner = Counted::default();
+    let (m, seen) = holds_over(10, &inner);
+    slow_commit(&inner, 30);
+    let _h = phases::holder_scoped("renew", "probe");
+    m.commit(0, &[put("a", "1"), put("b", "2")]).unwrap();
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 1);
+    let h = &seen[0];
+    assert_eq!((h.verb.as_str(), h.caller.as_str()), ("renew", "probe"));
+    assert!(h.hold >= Duration::from_millis(30) && h.commit >= Duration::from_millis(30), "{h:?}");
+    assert_eq!(h.writes, 2);
+    assert!(!h.cut && !h.checkpointed);
+}
+
+#[test]
+fn a_commit_under_the_limit_reports_no_hold() {
+    let inner = Counted::default();
+    let (m, seen) = holds_over(10, &inner);
+    m.commit(0, &[put("a", "1")]).unwrap();
+    assert!(seen.lock().unwrap().is_empty());
+}
+
+#[test]
+fn a_thread_nobody_labelled_is_reported_as_unlabelled() {
+    let inner = Counted::default();
+    let (m, seen) = holds_over(10, &inner);
+    slow_commit(&inner, 30);
+    m.commit(0, &[put("a", "1")]).unwrap();
+    assert_eq!(seen.lock().unwrap()[0].verb, "unlabelled");
+}
+
+#[test]
+fn a_holder_whose_deadline_passes_during_the_hold_is_reported_cut() {
+    let inner = Counted::default();
+    let (m, seen) = holds_over(10, &inner);
+    slow_commit(&inner, 30);
+    let _d = phases::deadline_scoped(Instant::now() + Duration::from_millis(15)); // clock-safe: a deadline that passes inside the sleep
+    let _ = m.commit(0, &[put("a", "1")]);
+    assert!(seen.lock().unwrap()[0].cut);
+}

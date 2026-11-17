@@ -485,6 +485,47 @@
           "refId": "A"
         }
       ]
+    },
+    {
+      "id": 14,
+      "type": "timeseries",
+      "title": "order-lock holds over 500 ms by holder",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 64,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "sum by (holder) (increase(spira_lc_order_hold_seconds[$__interval]))",
+          "legendFormat": "{{holder}} seconds held",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "sum by (holder) (increase(spira_lc_order_holds[$__interval]))",
+          "legendFormat": "{{holder}} holds",
+          "refId": "B"
+        }
+      ]
     }
   ]
 }
