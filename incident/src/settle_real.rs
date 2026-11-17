@@ -70,7 +70,7 @@ fn git(root: &str, args: &[&str]) -> Result<(i32, String), String> {
 }
 
 pub fn is_bead_id(s: &str) -> bool {
-    !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'.')
+    s.len() > 3 && s.starts_with("sp-") && s[3..].bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.')
 }
 
 impl RealSettler<'_> {
@@ -237,6 +237,14 @@ mod tests {
         assert_eq!(seen[0], ["list", "--live"]);
         for r in &seen[1..] {
             assert!(r.iter().any(|a| a == "--id"), "{r:?}");
+        }
+    }
+
+    #[test]
+    fn only_a_bead_id_is_followed_as_a_successor() {
+        assert!(is_bead_id("sp-l9i5io") && is_bead_id("sp-ab.1"));
+        for no in ["", "sp-", "duplicate of sp-x", "sp-x y", "other"] {
+            assert!(!is_bead_id(no), "{no}");
         }
     }
 

@@ -350,6 +350,21 @@ mod tests {
     }
 
     #[test]
+    fn a_supersede_chain_longer_than_three_hops_is_skipped_though_it_ends_landed() {
+        let f = chain(&[("sp-fix", sup("sp-b")), ("sp-b", sup("sp-c")), ("sp-c", sup("sp-d")), ("sp-d", sup("sp-e")), ("sp-e", FixState::Landed)]);
+        assert!(matches!(settle_one(&f, &cand(&[])), Outcome::Skipped { why, .. } if why == "supersede chain of sp-fix is too long"));
+        let three = chain(&[("sp-fix", sup("sp-b")), ("sp-b", sup("sp-c")), ("sp-c", sup("sp-d")), ("sp-d", FixState::Landed)]);
+        assert!(matches!(settle_one(&three, &cand(&[])), Outcome::Closed { .. }));
+    }
+
+    #[test]
+    fn a_no_probe_incident_whose_only_fix_was_dropped_is_never_closed() {
+        let f = Fake::new(FixState::Unlanded("DROPPED".into()), Detector::NoProbe);
+        assert!(matches!(settle_one(&f, &cand(&[])), Outcome::Skipped { .. }));
+        assert!(f.closed.borrow().is_empty());
+    }
+
+    #[test]
     fn a_supersede_cycle_is_skipped() {
         let f = chain(&[("sp-fix", sup("sp-b")), ("sp-b", sup("sp-fix"))]);
         assert_eq!(settle_one(&f, &cand(&[])), Outcome::Skipped { id: "sp-inc".into(), why: "supersede chain of sp-fix is too long".into() });

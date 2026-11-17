@@ -236,7 +236,7 @@ impl incident::settle::Settler for Observed<'_> {
         let f = find(fix).ok_or_else(|| format!("{fix} was not observed"))?;
         match &f.by {
             Some(by) if f.id == fix => return Ok(incident::settle::FixState::Superseded { by: by.clone() }),
-            _ if f.state == "SUPERSEDED" => return Err(format!("supersede chain of {} is too long", f.id)),
+            _ if f.state == "SUPERSEDED" => return Ok(incident::settle::FixState::Superseded { by: fix.to_string() }),
             _ => {}
         }
         Ok(if matches!(f.state.as_str(), "LANDED" | "DONE") { incident::settle::FixState::Landed } else { incident::settle::FixState::Unlanded(f.state.clone()) })
