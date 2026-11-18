@@ -1168,7 +1168,7 @@ fn observe_fleet(cfg: &Config) -> Vec<Check> {
         // A reactive partition draws outside the pool.
         let free = if is_task { sentinel::plan::ck7_pool(pool, live_total - live_reactive) } else { None };
         let desired_live = ready.min(headroom).min(free.map_or(i64::MAX, |f| live + f));
-        let slot_free = live_total < max_live && free.map_or(true, |f| f > 0);
+        let slot_free = live_total < max_live && free.is_none_or(|f| f > 0);
         let raw = if live >= desired_live || !slot_free {
             RawStatus::Satisfied
         } else {
