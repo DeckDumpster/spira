@@ -1,5 +1,5 @@
 //! Every path that creates a bead creates its lifecycle row too: a bead with no
-//! `spira_lifecycle` row can never be claimed.
+//! lifecycle row can never be claimed.
 
 use lifecycle::bead::BeadEventKind;
 

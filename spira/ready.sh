@@ -203,7 +203,7 @@ if _cr="$(timeout 5 spira-lc plan items --ids sp-ready-probe 2>&1)"; then
     PASS "spira_lc can read bead content (plan items, database ${_cdb:-unnamed})"
 elif printf '%s' "$_cr" | grep -qi 'denied'; then
     FAIL "spira_lc cannot read bead content — the sentinel can never see ready work" \
-         "grant SELECT on the content database (${_cdb:-unnamed})'s issues, labels, dependencies: re-run spira-lc admin-migrate as the Dolt admin ($(printf '%s' "$_cr" | head -1))"
+         "grant SELECT on the content database (${_cdb:-unnamed})'s issues, labels, dependencies to the spira-lc user as the Dolt admin ($(printf '%s' "$_cr" | head -1))"
 else
     UNKN "bead content read — spira-lc plan items failed" "$(printf '%s' "$_cr" | head -2)"
 fi

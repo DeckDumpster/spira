@@ -457,7 +457,7 @@ runes rune left out of SPIRA_RUNES, deduplicated by the stamp. `--report` then p
 - A WORKING row with no holder prints `INCONSISTENT\t<id>\tWORKING with no holder`.
 - A non-WORKING row with a holder prints `INCONSISTENT\t<id>\t<state> with a holder still set`.
 - If any printed, log
-  `CHECK2c: <n> spira-lc row(s) with holder/state out of sync — a bug reached spira_lifecycle outside its own CAS`
+  `CHECK2c: <n> spira-lc row(s) with holder/state out of sync — a bug reached the lifecycle store outside its own CAS`
   and act `surfaced <n> inconsistent spira-lc row(s)`.
 
 **CHECK 2d** (`holds.rs`; skipped under SKIP_RECLAIM). Withdraws an `ask` hold whose cause is gone:

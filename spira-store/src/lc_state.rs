@@ -51,7 +51,7 @@ pub fn names_directive(reason: &str) -> bool {
     reason.contains(SNOOZE_PREFIX) || reason.contains(CHECKPOINT_PREFIX)
 }
 
-/// One `spira_lifecycle.bead` row, as `spira-lc list` / `show` print it.
+/// One lifecycle bead row, as `spira-lc list` / `show` print it.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Row {
     pub bead_id: String,
@@ -349,7 +349,7 @@ pub fn hold_kind(name: &str) -> Option<HoldKind> {
     HoldKind::from_str(name).or((name == "operator").then_some(HoldKind::Manual))
 }
 
-/// One `spira_lifecycle.bead` row, typed: every column a decision reads is the machine's enum.
+/// One lifecycle bead row, typed: every column a decision reads is the machine's enum.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Bead {
     pub bead_id: String,

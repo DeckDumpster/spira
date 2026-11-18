@@ -5,7 +5,6 @@
 # credential is unreadable to every other process on the box. Nothing calls this service's
 # socket yet: the dwarf-facing semantic layer (a separate bead) is its first real client.
 Description=spira-lc — the lifecycle machine's system service (bead/delivery/batch state)
-Documentation=file://@SPIRA_HOME@/lifecycle/schema.sql
 After=dolt-beads.service
 StartLimitIntervalSec=30
 StartLimitBurst=5

@@ -42,7 +42,6 @@ const DOORS: &[(&str, &str)] = &[
     ("concierge.sh", "legacy: bd ping liveness probe; shrink-only"),
     ("rule/src/main.rs", "legacy: statute reads through bd; shrink-only"),
     ("docs/spikes/", "recorded measurement reruns of bd, never run by the loop"),
-    ("tsd-lifecycle-export/", "legacy: exports lifecycle rows by dolt CLI; shrink-only"),
 ];
 
 fn door(path: &str) -> bool {

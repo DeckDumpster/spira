@@ -1,5 +1,5 @@
 //! The journal through spira-lc's socket: one request per call to the one door onto
-//! `spira_lifecycle`. No process is launched; an idle runtime holds no database connection.
+//! the lifecycle store. No process is launched; an idle runtime holds no database connection.
 //!
 //! Events are shipped to VictoriaLogs, best effort, before the turn that made them commits:
 //! [`SocketJournal::record`] queues one for the shipper thread and returns. The store sees one

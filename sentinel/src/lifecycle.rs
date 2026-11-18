@@ -1,4 +1,4 @@
-//! Everything the sentinel reads from or writes to `spira_lifecycle` (DESIGN.md §1, "The
+//! Everything the sentinel reads from or writes to the lifecycle store (DESIGN.md §1, "The
 //! lifecycle machine"): CHECK 2's wait hold and stale-lease reap, CHECK 2c's consistency
 //! sweep, and CHECK 4's poison hold. sp-i2m7y moved these onto spira-lc unconditionally;
 //! there is no bd-label mode to fall back to, and no off mode (sp-v62vn).
@@ -433,7 +433,7 @@ impl<'a> Sentinel<'a> {
         }
         self.h.print(&lines.join("\n"));
         self.log(&format!(
-            "CHECK2c: {} spira-lc row(s) with holder/state out of sync — a bug reached spira_lifecycle outside its own CAS",
+            "CHECK2c: {} spira-lc row(s) with holder/state out of sync — a bug reached the lifecycle store outside its own CAS",
             lines.len()
         ));
         self.act(&format!(

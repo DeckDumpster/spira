@@ -629,7 +629,7 @@ pub fn rowless_cond(missing: &[String], cap: usize, sustain_secs: i64) -> Option
         reference: ROWLESS_REFERENCE.into(),
         title: "LIFECYCLE: open beads have no lifecycle row and can never be claimed".into(),
         body: format!(
-            "{} open bead(s) have no spira_lifecycle row so no builder can claim them: {}{}.\n\nA creation path did not run `spira-lc create-bead`. Create the rows (`spira-lc create-bead <id>`) and find the path that filed them.\n",
+            "{} open bead(s) have no lifecycle record so no builder can claim them: {}{}.\n\nA creation path did not run `spira-lc create-bead`. Create the rows (`spira-lc create-bead <id>`) and find the path that filed them.\n",
             missing.len(),
             shown.join(", "),
             if more > 0 { format!(" (+{more} more)") } else { String::new() }

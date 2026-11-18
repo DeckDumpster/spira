@@ -10,7 +10,6 @@
 # per-instance (no `spira-` prefix, so no instance suffix): the store it serves lives on the
 # one shared dolt-beads.service, and two instances' copies would fight over one socket.
 Description=spira-lc — the lifecycle store's same-user service (bead/delivery/batch state)
-Documentation=file://@SPIRA_HOME@/lifecycle/schema.sql
 After=dolt-beads.service
 StartLimitIntervalSec=60
 StartLimitBurst=5

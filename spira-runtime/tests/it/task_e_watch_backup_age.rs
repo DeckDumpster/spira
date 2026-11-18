@@ -9,11 +9,11 @@ use spira_runtime::tasks::d::acceptance as acc;
 use spira_runtime::tasks::e::watch_backup_age::*;
 
 fn config() -> Config {
-    Config { url: "s3://b/lc".into(), db: "spira_lifecycle".into(), max_age_s: 25_200, run: "r".into() }
+    Config { url: "s3://b/lc".into(), db: "spira_aux".into(), max_age_s: 25_200, run: "r".into() }
 }
 
 fn dbs(state: Db) -> Snapshot {
-    Snapshot::Dbs(vec![("spira_lifecycle".into(), state)])
+    Snapshot::Dbs(vec![("spira_aux".into(), state)])
 }
 
 fn rig(seed: u64, world: Arc<Mutex<Snapshot>>) -> TaskRig {
@@ -92,9 +92,9 @@ fn t5_the_alerts_are_the_ones_lc_backup_mailed() {
     acc::assert_healthy(&r, STREAM);
     let m = mails(&r);
     assert_eq!(m.len(), 2);
-    let red = "RED: a store has no good backup within 25200s (spira_lifecycle: stale 30000) — losing its disk now loses its data and history";
+    let red = "RED: a store has no good backup within 25200s (spira_aux: stale 30000) — losing its disk now loses its data and history";
     assert!(m[0].contains(&format!("lc-backup: {red}")) && m[0].contains("## Alert") && m[0].matches(red).count() >= 2 && m[0].contains(FROM), "{m:?}");
-    assert!(m[1].contains("CLEAR: every store has a fresh backup again (spira_lifecycle: ok 60)"), "{m:?}");
+    assert!(m[1].contains("CLEAR: every store has a fresh backup again (spira_aux: ok 60)"), "{m:?}");
 }
 
 fn registration() -> runtime::event::Registration {

@@ -616,8 +616,7 @@ pub fn lc_command(release: &Path, config: &Path, port: &str) -> Command {
         .env("HOME", config.join("..").join(HOME))
         .env("SPIRA_LC_HOST", "127.0.0.1")
         .env("SPIRA_LC_PORT", port.trim())
-        .env("SPIRA_LC_USER", "root")
-        .env("SPIRA_LC_ADMIN_USER", "root");
+        .env("SPIRA_LC_USER", "root");
     cmd
 }
 
