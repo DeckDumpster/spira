@@ -133,7 +133,12 @@ fn print_args_for_a_binary_is_what_the_landing_ref_printed() {
     let before = std::process::Command::new(&copy).args(["--print-args", system_paths::USR_BIN_TRUE, "a", "b"]).output();
     fs::remove_file(&copy).unwrap();
     let before = String::from_utf8(before.unwrap().stdout).unwrap();
-    assert_eq!(print_args(&[system_paths::USR_BIN_TRUE, "a", "b"]), before.lines().collect::<Vec<_>>());
+    let mut now = print_args(&[system_paths::USR_BIN_TRUE, "a", "b"]);
+    // The one bind added since: the cargo config, so a cargo inside resolves the box's profile.
+    if let Some(i) = now.windows(3).position(|w| w[0] == "--ro-bind" && w[1].ends_with("/.cargo/config.toml") && w[1] == w[2]) {
+        now.drain(i..i + 3);
+    }
+    assert_eq!(now, before.lines().collect::<Vec<_>>());
 }
 
 fn gate_environment_runner(fixture_home: &Path, release: &Path, tail: &str, args: &[&str]) -> std::process::Output {
@@ -172,6 +177,58 @@ fn around_finds_the_cargo_the_gate_path_names_and_binds_its_toolchain_under_a_hi
     if toolchain.file_name().is_some_and(|n| n == "cargo") {
         assert!(bound(&root), "the toolchain cargo links to is bound back: {args:?}");
     }
+}
+
+fn cargo_config_fixture(name: &str) -> (testkit::TempDir, PathBuf) {
+    let tmp = testkit::TempDir::new(name);
+    let home = fs::canonicalize(tmp.path()).unwrap().join("home");
+    fs::create_dir_all(home.join(".cargo/bin")).unwrap();
+    for f in ["config.toml", "credentials.toml"] {
+        fs::write(home.join(".cargo").join(f), "").unwrap();
+    }
+    (tmp, home)
+}
+
+fn assert_config_bound_after_shadow_and_credentials_not(args: &[String], home: &Path) {
+    let h = home.display().to_string();
+    let shadow = args.windows(2).position(|w| w[0] == "--tmpfs" && w[1] == h).expect("the home is shadowed");
+    let config = format!("{h}/.cargo/config.toml");
+    let at = args.windows(3).position(|w| w[0] == "--ro-bind" && w[1] == config && w[2] == config).expect("config.toml is bound");
+    assert!(at > shadow, "{args:?}");
+    assert!(args.iter().all(|a| !a.contains("credentials")), "{args:?}");
+    let home_cargo = format!("{h}/.cargo");
+    assert!(args.windows(2).all(|w| !(w[0].ends_with("bind") && w[1] == home_cargo)), "{args:?}");
+}
+
+#[test]
+fn around_binds_the_cargo_config_back_read_only_and_never_the_credentials() {
+    let (tmp, home) = cargo_config_fixture("around-cargo-config");
+    let release = tmp.path().join("release");
+    fs::create_dir_all(&release).unwrap();
+    std::os::unix::fs::symlink(std::env::var("CARGO").unwrap(), home.join(".cargo/bin/cargo")).unwrap();
+    let tail = format!("{}/.cargo/bin", home.display());
+    let out = gate_environment_runner(&home, &release, &tail, &["--print-args", "--around", "cargo", "--version"]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let args: Vec<String> = String::from_utf8(out.stdout).unwrap().lines().map(String::from).collect();
+    assert_config_bound_after_shadow_and_credentials_not(&args, &home);
+    assert!(args.windows(3).any(|w| w[0] == "--setenv" && w[1] == "RUSTC_WRAPPER" && w[2].is_empty()), "an empty wrapper overrides the config's: {args:?}");
+    assert!(!args.iter().any(|a| a == "--unsetenv"), "{args:?}");
+}
+
+#[test]
+fn a_binary_run_binds_the_declared_cargo_homes_config_back_read_only_and_never_the_credentials() {
+    let (_tmp, home) = cargo_config_fixture("binary-cargo-config");
+    let out = std::process::Command::new(workspace().join("tools/test-sandbox/runner"))
+        .args(["--print-args", system_paths::USR_BIN_TRUE])
+        .env_clear()
+        .env("PATH", "/usr/bin:/bin")
+        .env("HOME", &home)
+        .env("CARGO_HOME", home.join(".cargo"))
+        .output()
+        .expect("the runner spawns");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let args: Vec<String> = String::from_utf8(out.stdout).unwrap().lines().map(String::from).collect();
+    assert_config_bound_after_shadow_and_credentials_not(&args, &home);
 }
 
 #[test]
