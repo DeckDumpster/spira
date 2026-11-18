@@ -141,6 +141,8 @@ ro=() rw=()
 cargo_home="${CARGO_HOME:-}"
 [ -z "$cargo_home" ] && [ -n "$around" ] && cargo_home="$home/.cargo"
 [ -n "$cargo_home" ] && ro+=("$cargo_home/bin") && rw+=("$cargo_home/registry" "$cargo_home/git")
+# The config (profiles, incremental) decides every unit's fingerprint, so a cargo inside must read the box's.
+[ -n "$cargo_home" ] && ro+=("$cargo_home/config.toml" "$cargo_home/config")
 # Without a declared RUSTUP_HOME (cargo started straight from a toolchain, not through rustup's
 # proxy, as the round VM does) the toolchain is still bound by where it really is: $CARGO, and
 # what $CARGO_HOME/bin's cargo and rustc link to. Binding bin alone leaves those links dangling
@@ -219,12 +221,13 @@ fi
 a+=(--chdir "$PWD")
 
 
+# With no network sccache cannot start, which fails every rustc probe. Empty, not unset: unset
+# lets the bound cargo config name a wrapper the sandbox hides.
 if [ -n "$around" ]; then
-    # With no network sccache cannot start, which fails every rustc probe; a rebuild here is local.
-    a+=(--unsetenv RUSTC_WRAPPER)
+    a+=(--setenv RUSTC_WRAPPER "")
     env=(GIT_CONFIG_SYSTEM="$gitconfig")
 else
-    a+=(--clearenv)
+    a+=(--clearenv --setenv RUSTC_WRAPPER "")
 fi
 if [ -n "$print" ]; then
     printf '%s\n' bwrap "${a[@]}"
