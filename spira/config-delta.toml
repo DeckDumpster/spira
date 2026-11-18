@@ -391,6 +391,13 @@ limit_network = ""
 heimdall_red_streak = 4
 gate_builder_dir_wait_secs = 120
 dolt_persist_gc_interval_secs = 3600
+reclaim_tmp_idle_hours = 6
+tmp_probe_path = "/tmp"
+runtime_sweep_repo_contract_calendar = "*-*-* 05:10:00"
+runtime_sweep_repo_contract_jitter_secs = 600
+testenv_tier_events = ""
+gate_unit_max_crates = 20
+tmpfs_held_max_pct = 20
 
 [renamed]
 "persona.maechen" = "persona.mimir" # ffx-ok

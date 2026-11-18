@@ -1,3 +1,0 @@
-[spira]
-runtime_sweep_repo_contract_calendar = "*-*-* 05:10:00"
-runtime_sweep_repo_contract_jitter_secs = 600

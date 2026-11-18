@@ -1,3 +1,0 @@
-[spira]
-reclaim_tmp_idle_hours = 6
-tmp_probe_path = "/tmp"
