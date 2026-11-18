@@ -104,20 +104,31 @@ fn run(args: &[String]) -> Result<(), String> {
             let [dir] = pos.as_slice() else { return Err(USAGE.to_string()) };
             let repos = repos.iter().map(|r| world::RepoSpec::parse(r)).collect::<Result<Vec<_>, _>>()?;
             let tree = set.get("--tree").map_or("HEAD", String::as_str);
-            if set.contains_key("--pilgrim") {
-                let pinned = spira_config::process::cfg("SPIRA_BD").ok();
-                let (sets, removes) = world::pilgrim_session_env(&env, pinned);
-                for (k, v) in sets {
-                    std::env::set_var(k, v);
-                }
-                for k in removes {
-                    std::env::remove_var(k);
-                }
+            if !set.contains_key("--pilgrim") {
+                return world::up_repos(&cwd, &PathBuf::from(dir), tree, &env, &ProcessSteps, &repos, &|_| Ok(()));
             }
-            world::up_repos(&cwd, &PathBuf::from(dir), tree, &env, &ProcessSteps, &repos, &|_| Ok(()))?;
-            if set.contains_key("--pilgrim") {
-                spira_sim::pilgrim::up(&PathBuf::from(dir).canonicalize().map_err(|e| e.to_string())?, spira_sim::pilgrim::FIXTURE, &ProcessSteps)?;
+            if set.contains_key("--tree") {
+                return Err(format!("usage: --tree cannot be combined with --pilgrim: a pilgrim world's tree is the active release's\n{USAGE}"));
             }
+            let release = env("SPIRA_RELEASE").filter(|v| !v.is_empty()).ok_or("SPIRA_RELEASE is not set: a pilgrim world is built from the active release")?;
+            let release = world::prebuilt_release(std::path::Path::new(&release))?;
+            let pinned = spira_config::process::cfg("SPIRA_BD").ok();
+            let release_str = release.display().to_string();
+            let seen = |k: &str| if k == "SPIRA_RELEASE" { Some(release_str.clone()) } else { env(k) };
+            let (sets, removes) = world::pilgrim_session_env(&seen, pinned);
+            for (k, v) in sets {
+                std::env::set_var(k, v);
+            }
+            for k in removes {
+                std::env::remove_var(k);
+            }
+            let tmp = std::env::temp_dir().join(format!("sim-pilgrim-repo-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&tmp);
+            let built = world::release_repo(&release, &tmp)
+                .and_then(|()| world::up_repos(&tmp, &PathBuf::from(dir), "HEAD", &env, &ProcessSteps, &repos, &|_| Ok(())));
+            let _ = std::fs::remove_dir_all(&tmp);
+            built?;
+            spira_sim::pilgrim::up(&PathBuf::from(dir).canonicalize().map_err(|e| e.to_string())?, spira_sim::pilgrim::FIXTURE, &ProcessSteps)?;
             Ok(())
         }
         ["world", "fixture", root, dir] => world::fixture_repo(&PathBuf::from(root), &PathBuf::from(dir)),
