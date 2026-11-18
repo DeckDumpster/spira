@@ -194,7 +194,7 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
         crate::settings::resolve_maxpar(&get("SPIRA_BATCH_MAXPAR").unwrap_or_default());
     Settings {
         resume: get("SPIRA_TESTENV_RESUME"),
-        tier_events: get("SPIRA_TESTENV_TIER_EVENTS").map(PathBuf::from),
+        tier_events: get(gate::tier::EVENTS_ENV).map(PathBuf::from),
         results_root: get("SPIRA_BATCH_RESULTS").map(PathBuf::from).unwrap_or_else(|| run.join("batch-results")),
         verdicts: get("SPIRA_VERDICTS").map(PathBuf::from).unwrap_or_else(|| run.join("verdicts")),
         verdict_ttl: num!("SPIRA_VERDICT_TTL").unwrap_or(86_400),
@@ -453,7 +453,7 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
             ("SPIRA_TESTENV_SCRATCH_MIN_FREE_MIB", "0".into()),
             ("SPIRA_TESTENV_SCRATCH_MIN_MEM_MIB", "0".into()),
             ("SPIRA_TESTENV_MAX_RUNS", "99".into()),
-            ("SPIRA_TESTENV_TIER_EVENTS", root.join("handed.events").display().to_string()),
+            (gate::tier::EVENTS_ENV, root.join("handed.events").display().to_string()),
             ("HOME", root.display().to_string()),
         ]
         .into_iter()
@@ -489,8 +489,7 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
         execute(parse(&argv).unwrap(), &deps);
         let seen = lines.lock().unwrap().join("\n");
         let handed = fs::read_to_string(root.join("handed.events")).unwrap_or_default();
-        let handed = crate::phase::Run { events: handed.lines().filter_map(crate::phase::parse_line).collect() };
-        assert_eq!(handed.suites().get("gate").map(String::as_str), Some("ok"), "{seen}");
+        assert_eq!(gate::tier::read(&handed), [gate::tier::Tier { name: "gate".into(), status: gate::tier::Status::Ok }], "{seen}");
         let results = fs::read_dir(root.join("run/batch-results")).unwrap().flatten().next().expect("a results dir").path();
         let kept = crate::phase::RunLog::in_dir(&results).load().unwrap();
         assert_eq!(kept.suites().get("gate").map(String::as_str), Some("ok"), "{seen}");

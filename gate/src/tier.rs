@@ -1,6 +1,10 @@
 //! A repo tier's status as testenv records it in `run.events`: `<at> suite <tier> <word>`.
 //! The gate reads the typed record, never the summary row testenv prints for people.
 
+/// The file the gate names in a run's environment for testenv to append each tier's record to.
+/// A per-run hand-off the config file cannot carry, so testenv reads it from the environment.
+pub const EVENTS_ENV: &str = "SPIRA_TESTENV_TIER_EVENTS";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Status {
     Ok,

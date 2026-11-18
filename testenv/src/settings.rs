@@ -195,7 +195,7 @@ impl Settings {
             results_root: path("SPIRA_BATCH_RESULTS").unwrap_or_else(|| run.join("batch-results")),
             results_retention: spira_config::results_retention::Retention::from_config()?,
             resume: src.get("SPIRA_TESTENV_RESUME").filter(|v| !v.trim().is_empty()),
-            tier_events: Some(cfg("SPIRA_TESTENV_TIER_EVENTS")?).filter(|v| !v.trim().is_empty()).map(PathBuf::from),
+            tier_events: src.get(gate::tier::EVENTS_ENV).map(PathBuf::from),
             verdicts: path("SPIRA_VERDICTS").unwrap_or_else(|| run.join("verdicts")),
             verdict_ttl: cfg_parse("SPIRA_VERDICT_TTL")?,
             repeat_reason: src.get("SPIRA_VERDICT_REPEAT_CONSIDERED"),

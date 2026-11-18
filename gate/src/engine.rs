@@ -807,7 +807,7 @@ impl<'w, W: World> Trial<'w, W> {
                     &self.s.steps_file.as_ref().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default(),
                 ),
                 e(
-                    TIER_EVENTS_ENV,
+                    tier::EVENTS_ENV,
                     &self.s.tiers_file.as_ref().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default(),
                 ),
                 e("SPIRA_GATE_EJECTED_SUITES", &ejected),
@@ -2428,8 +2428,6 @@ pub fn release_bins_command() -> String {
     )
 }
 
-const TIER_EVENTS_ENV: &str = "SPIRA_TESTENV_TIER_EVENTS";
-
 /// The tier statuses testenv recorded since the last call, which empties the file so the
 /// next run's record is its own.
 fn take_tiers<W: World>(w: &W, file: Option<&Path>) -> Vec<Tier> {
@@ -2437,6 +2435,9 @@ fn take_tiers<W: World>(w: &W, file: Option<&Path>) -> Vec<Tier> {
     let text = w.read(file).unwrap_or_default();
     if !text.is_empty() {
         w.write_atomic(dir, name, "");
+        if w.read(file).is_some_and(|t| !t.is_empty()) {
+            w.eprint("gate: the tier record could not be cleared; the next run's tiers may include this one's");
+        }
     }
     tier::read(&text)
 }
@@ -2446,7 +2447,7 @@ fn run_gate_uncached_once<W: World>(w: &W, tree: &Path, env: &[(String, String)]
     let first = w.run_gate(tree, env, timeout, cmd);
     if cache_in_force(env) && first.0 != 0 && parse::cache_transport_failure(&first.1) {
         w.eprint("gate: the base trial's sccache server was lost mid-build — retrying it once without the compiler cache");
-        let file = env.iter().find(|(k, _)| k == TIER_EVENTS_ENV).map(|(_, v)| PathBuf::from(v));
+        let file = env.iter().find(|(k, _)| k == tier::EVENTS_ENV).map(|(_, v)| PathBuf::from(v));
         take_tiers(w, file.as_deref());
         return w.run_gate(tree, &without_cache(env.to_vec()), timeout, cmd);
     }

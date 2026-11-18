@@ -446,7 +446,7 @@ impl Fake {
         } else {
             br.clone()
         };
-        if let Some((_, path)) = env.iter().find(|(k, v)| k == "SPIRA_TESTENV_TIER_EVENTS" && !v.is_empty()) {
+        if let Some((_, path)) = env.iter().find(|(k, v)| k == crate::tier::EVENTS_ENV && !v.is_empty()) {
             if let Some(text) = self.tier_events.borrow().get(&key) {
                 self.files.borrow_mut().insert(PathBuf::from(path), text.clone());
             }

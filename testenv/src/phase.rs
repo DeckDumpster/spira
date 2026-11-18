@@ -141,7 +141,7 @@ fn render(r: &Recorded) -> String {
     }
 }
 
-pub(crate) fn parse_line(line: &str) -> Option<Recorded> {
+fn parse_line(line: &str) -> Option<Recorded> {
     let f: Vec<&str> = line.split_whitespace().collect();
     let at = f.first()?.parse().ok()?;
     let event = match (*f.get(1)?, f.get(2), f.get(3)) {
