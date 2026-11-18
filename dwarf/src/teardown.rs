@@ -640,8 +640,6 @@ impl Run<'_> {
         }
     }
 
-    /// The disposition branches that `exit $rc` inside the case: identity removed LAST, then
-    /// the ledger line.
     fn harness_red_streak_now(&self, id: &str) -> i64 {
         let threshold = self.conf.i("SPIRA_RAPID_RECUR_THRESHOLD").max(0) as usize;
         let Ok(text) = std::fs::read_to_string(self.conf.ledger()) else { return 0 };
@@ -650,6 +648,8 @@ impl Run<'_> {
         decide::harness_red_streak(&matches[matches.len().saturating_sub(threshold)..])
     }
 
+    /// The disposition branches that `exit $rc` inside the case: identity removed LAST, then
+    /// the ledger line.
     fn finish(&self, rc: i32, status: &str) -> i32 {
         // dwarf.sh exited inside the case without removing the pidfile or the mailbox; the
         // pidfile is removed here after every bead operation (DESIGN.md §2.10.7).
