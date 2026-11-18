@@ -57,7 +57,33 @@ pub fn merge_delta_texts(parts: &[(String, String)]) -> Result<Option<String>, S
         };
         merge_table(&mut merged, &mut owner, t, "", name)?;
     }
+    drop_retired_values(&mut merged);
     toml::to_string_pretty(&Value::Table(merged)).map(Some).map_err(|e| e.to_string())
+}
+
+fn drop_retired_values(merged: &mut Map<String, Value>) {
+    let removed: Vec<String> = match merged.get("removed") {
+        Some(Value::Array(a)) => a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect(),
+        _ => return,
+    };
+    for path in removed {
+        let parts: Vec<&str> = path.split('.').collect();
+        remove_value(merged, &parts);
+    }
+}
+
+fn remove_value(t: &mut Map<String, Value>, path: &[&str]) {
+    match path {
+        [] => {}
+        [leaf] => {
+            t.remove(*leaf);
+        }
+        [head, rest @ ..] => {
+            if let Some(Value::Table(next)) = t.get_mut(*head) {
+                remove_value(next, rest);
+            }
+        }
+    }
 }
 
 fn merge_table(into: &mut Map<String, Value>, owner: &mut Map<String, Value>, from: Map<String, Value>, prefix: &str, name: &str) -> Result<(), String> {
