@@ -833,7 +833,7 @@ fn a_delta_naming_a_placeholder_path_is_refused_and_the_shipped_one_is_clean() {
 fn the_shipped_delta_declares_the_deleted_watch_tasks_removed() {
     let shipped = std::fs::read_to_string(spira_config::resolve::locate_home_for_process().unwrap().join("config-delta.toml")).unwrap();
     let d = config_delta::Delta::parse(&shipped).unwrap();
-    for t in ["watch.perf_happy", "watch.spill_key", "watch.statute_audit"] {
+    for t in ["watch.perf_happy", "watch.spill_key", "watch.statute_audit", "sweep.repo_contract"] {
         assert!(d.removed_tasks.iter().any(|r| r == t), "{t} missing from removed_tasks");
     }
 }

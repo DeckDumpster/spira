@@ -15,3 +15,8 @@ fn every_declared_effect_has_a_real_runner_and_a_sim_double() {
     assert!(!sim.contains(&PLANTED_UNKNOWN), "the planted name must stay unknown to the sim");
     assert_eq!(effects_runnable(&declared, &real, &sim), Ok(()));
 }
+
+#[test]
+fn no_task_named_sweep_repo_contract_is_registered() {
+    assert!(!tasks::all().any(|t| t.name == "sweep.repo_contract"));
+}
