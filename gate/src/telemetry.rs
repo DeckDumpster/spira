@@ -392,7 +392,7 @@ mod tests {
         push_metrics(&sink, &r);
         done.store(true, std::sync::atomic::Ordering::SeqCst);
         let body = h.join().unwrap();
-        assert!(body.contains("spira_gate_unit_test_part_seconds") && body.contains("test-build"), "{body}");
+        assert!(body.contains("spira_gate_unit_test_part_seconds") && body.contains("part") && body.contains("test-build"), "{body}");
         assert!(body.contains("spira_gate_unit_test_recompiled_total"), "{body}");
     }
 

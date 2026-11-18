@@ -871,6 +871,13 @@ pub fn recompiled_secs<'a>(phases: impl IntoIterator<Item = (&'a str, u64)>) -> 
 mod test_split_tests {
     use super::*;
 
+    #[test]
+    fn a_short_compile_or_a_gate_that_never_built_is_not_a_recompile() {
+        assert_eq!(recompiled_secs([("build", 1), ("test-build", 30)]), None);
+        assert_eq!(recompiled_secs([("test-build", 207)]), None);
+        assert_eq!(recompiled_secs([("build", 1), ("test-build", 207)]), Some(207));
+    }
+
     const FIN: &str = "    Finished `test` profile [unoptimized + debuginfo] target(s) in";
 
     fn sum(p: &[(String, u64)]) -> u64 {

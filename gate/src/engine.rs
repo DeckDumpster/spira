@@ -2719,13 +2719,13 @@ pub fn run_composed<W: World>(
         }
         let (r, o, wall) = go(name, step_env, &c, test_secs);
         let split = if name == "test" && prefix.is_empty() && matches!(comp, Composition::Unit { .. }) { parse::test_split(&o, wall) } else { None };
-        match parse::testenv_suites_secs(&o).filter(|_| reports_its_own_time(name)) {
-            _ if split.is_some() => phases.extend(split.unwrap_or_default()),
-            Some(suites) => {
+        match (split, parse::testenv_suites_secs(&o).filter(|_| reports_its_own_time(name))) {
+            (Some(parts), _) => phases.extend(parts),
+            (None, Some(suites)) => {
                 phases.push((format!("{prefix}{name}-build"), wall.saturating_sub(suites)));
                 phases.push((format!("{prefix}{name}"), suites));
             }
-            None => phases.push((format!("{prefix}{name}"), wall)),
+            (None, None) => phases.push((format!("{prefix}{name}"), wall)),
         }
         if name == "test" && prefix.is_empty() && matches!(comp, Composition::Unit { .. }) {
             let t = spira_config::unit_tier::timings(&o);
