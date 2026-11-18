@@ -428,7 +428,7 @@ mod tests {
     fn a_free_query_over_another_table_is_refused_before_it_touches_the_store() {
         let (code, msg) = cmd_facts_query(&["SELECT a FROM events WHERE 1=0 UNION ALL SELECT lc_key FROM bead".to_string()]);
         assert_eq!(code, REFUSED, "{msg}");
-        assert!(msg.contains("facts [--ids"), "{msg}");
+        assert!(msg.contains("fact list [--ids"), "{msg}");
     }
 
     #[test]
@@ -462,7 +462,7 @@ mod tests {
         ];
         for q in bad {
             let why = check(q).expect_err(q);
-            assert!(why.contains("facts [--ids"), "{q}: {why}");
+            assert!(why.contains("fact list [--ids"), "{q}: {why}");
         }
     }
 
