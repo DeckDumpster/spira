@@ -26,6 +26,8 @@ pub struct Member {
     /// Blocks-type prerequisites of this bead that have not landed (`spira-lc list`'s
     /// `blocked_by`): admitted only with each of them merged ahead of it in the same round.
     pub blocked_by: Vec<Id>,
+    /// Cut while SUBMITTED: its own gate has not passed, so it ranks after every certified member and is the first the cap drops.
+    pub provisional: bool,
 }
 
 /// Lowest number is most urgent; an unknown priority sorts last so it never manufactures an
@@ -34,9 +36,10 @@ pub struct Member {
 /// Public so the IO seam can sort the pool into the same order *before* attempting git
 /// merges — combine() only sorts what already merged, but merge order decides who wins a
 /// batch-accumulation conflict, and that has to be the same express/priority/arrival order.
-pub fn order_key(m: &Member) -> (u8, u8, u64) {
+pub fn order_key(m: &Member) -> (u8, bool, u8, u64) {
     (
         if m.express { 0 } else { 1 },
+        m.provisional,
         m.priority.unwrap_or(u8::MAX),
         m.certified_at,
     )
@@ -182,21 +185,26 @@ pub fn should_cut(t: &TriggerInputs) -> Option<TriggerReason> {
     Some(TriggerReason::PoolFull(t.pool.len() as u32))
 }
 
-/// Drops every member with an unlanded `blocked_by` prerequisite. A blocker in the same round
-/// does not count: its fix acts only once released.
+/// Drops every member with an unlanded `blocked_by` prerequisite that is not itself a member of
+/// `pool`. A blocker in the same pool is cut ahead of its dependant (`topo_order`); one the pool
+/// drops takes its dependant with it, so apply this again after any step that cuts the pool.
 pub fn refuse_blocked(pool: Vec<Member>) -> (Vec<Member>, Vec<String>) {
-    let (ok, blocked): (Vec<Member>, Vec<Member>) =
-        pool.into_iter().partition(|m| m.blocked_by.is_empty());
-    let refusals = blocked
-        .iter()
-        .map(|m| {
-            format!(
-                "{}: depends on {} (unlanded) — not cut",
-                m.id, m.blocked_by[0]
-            )
-        })
-        .collect();
-    (ok, refusals)
+    let mut kept = pool;
+    let mut refusals = Vec::new();
+    loop {
+        let ids: std::collections::BTreeSet<Id> = kept.iter().map(|m| m.id.clone()).collect();
+        let (ok, blocked): (Vec<Member>, Vec<Member>) = kept
+            .into_iter()
+            .partition(|m| m.blocked_by.iter().all(|b| ids.contains(b)));
+        refusals.extend(blocked.iter().map(|m| {
+            let dep = m.blocked_by.iter().find(|b| !ids.contains(*b)).unwrap_or(&m.blocked_by[0]);
+            format!("{}: depends on {dep} (unlanded) — not cut", m.id)
+        }));
+        kept = ok;
+        if blocked.is_empty() {
+            return (kept, refusals);
+        }
+    }
 }
 
 /// Keeps the first `cap` members, the most one cut can write within the store's limits, and

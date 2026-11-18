@@ -119,7 +119,7 @@ fn stale_round(seed: u64, until: u64, redrive_ends_it: bool) -> (Run, Vec<String
 /// while an abandoned round's record is stale. On the service's tasks the stale record is an
 /// open round with no driver: `batcher.local` waits out the orphan wait, re-drives it once (the
 /// `redrive` leg, `round-recert`), and once the ended record is reconciled away it cuts the pool
-/// into a round of its own, certifies it and lands it. The pool was CERTIFIED by its own gate before the
+/// into a round of its own, certifies it and lands it. The pool was SUBMITTED before the
 /// re-drive, so the stale record held it, and nothing landed under the stale round's id. The
 /// queue's half (land acts on the open round, never on an ended record) is
 /// `queue::tests::round::land_acts_on_the_open_round_and_promotes_no_ended_record`.
@@ -134,8 +134,6 @@ fn stale_round_pointer_a_redriven_stale_record_ends_and_the_next_round_certifies
     let opens = times(&r, bl::ROUND_OPEN);
     assert_eq!(opens.len(), 1, "one round opened: {}", r.dump());
     assert!(opens[0] > redrive, "no round was cut over the stale record: opened {opens:?}, re-driven {redrive}");
-    let certified = entered(&r, "sp-rp02", "CERTIFIED").unwrap_or_else(|| panic!("the bead was certified: {}", r.dump()));
-    assert!(certified <= opens[0], "its own gate certified it before the cut: certified {certified}, opened {:?}", opens[0]);
     assert_eq!(r.lifecycle_of("sp-rp02"), ["READY", "WORKING", "SUBMITTED", "CERTIFIED", "IN_DELIVERY", "LANDED"], "{}", r.dump());
     let tip = r.submitted["sp-rp02"][0].clone();
     assert_eq!(r.lands, [vec![("sp-rp02".to_string(), tip)]], "the new round landed its member");
@@ -182,7 +180,7 @@ fn a_corpus_leg_that_never_runs_is_started_again_once_then_the_round_is_abandone
     let abandons = times(&r, bl::ABANDON);
     assert!(abandons.len() >= 2, "abandoned, then re-cut with no backoff and abandoned again: {}", r.dump());
     assert!(abandons[1] - abandons[0] < 5 * 60_000, "the re-cut did not wait: {abandons:?}");
-    assert_eq!(batcher_states(&r)[..5], ["Assembling", "Opened", "Certifying", "Idle", "Assembling"], "{}", r.dump());
+    assert_eq!(batcher_states(&r)[..5], ["Idle", "Assembling", "Opened", "Certifying", "Idle"], "{}", r.dump());
     assert_no_process(&r);
 }
 
@@ -256,7 +254,7 @@ fn attributing_redrive_a_red_early_round_is_redriven_on_its_own_batch_and_lands_
         })
     });
     show("rc-attributing-redrive", &r);
-    assert_eq!(batcher_states(&r), ["Assembling", "Opened", "Certifying", "Attributing", "Certifying", "Landing", "Idle"], "{}", r.dump());
+    assert_eq!(batcher_states(&r), ["Idle", "Assembling", "Opened", "Certifying", "Attributing", "Certifying", "Landing", "Idle"], "{}", r.dump());
     let legs = legs.lock().unwrap_or_else(|e| e.into_inner()).clone();
     assert_eq!(legs.iter().map(|l| l.why.as_str()).collect::<Vec<_>>(), [bl::ATTRIBUTE], "one attribution leg after the red certify: {legs:?}");
     assert!(legs.iter().all(|l| l.batch == "round-1"), "the attribution re-drives the open round's own batch: {legs:?}");
@@ -361,11 +359,60 @@ fn run_state_trail_the_landing_names_its_member_after_its_certificate_and_the_pu
     assert_eq!(r.missed(&script), None, "{}", r.dump());
     let tip = r.submitted["sp-rs01"][0].clone();
     assert_eq!(r.lands, [vec![("sp-rs01".to_string(), tip)]], "the landing names its member at its tip: {}", r.dump());
-    let (certify, land) = (times(&r, bl::CERTIFY), times(&r, bl::LAND));
-    assert_eq!((certify.len(), land.len()), (1, 1), "{:?}", r.exec_log);
+    let (certify, lc_certify, land) = (times(&r, bl::CERTIFY), times(&r, bl::LC_CERTIFY), times(&r, bl::LAND));
+    assert_eq!((certify.len(), lc_certify.len(), land.len()), (1, 1, 1), "{:?}", r.exec_log);
     assert!(land[0] >= certify[0] + loopworld::CERTIFY_MS, "certify ran to its end before land: certify {certify:?}, land {land:?}");
-    assert!(entered(&r, "sp-rs01", "CERTIFIED").is_some_and(|c| c <= land[0]), "the member was certified before land: {}", r.dump());
+    assert!(lc_certify[0] <= land[0] && entered(&r, "sp-rs01", "CERTIFIED").is_some_and(|c| c <= land[0]), "the member was certified before land: {}", r.dump());
     assert_eq!(r.published, [(100, loopworld::main_after(1))], "the publish record is at the head the member landed at: {}", r.dump());
     assert!(r.refused.is_empty(), "{:?}", r.refused);
+    assert_no_process(&r);
+}
+
+/// A provisional member (cut while SUBMITTED, its gate still running) whose own gate goes red
+/// minutes into a pass does not stop it: the pass runs to its end without a restart, the round is
+/// not abandoned, and a green pass lands the round with that member in it.
+#[test]
+fn a_gate_red_recorded_for_a_provisional_member_mid_pass_leaves_the_pass_running_and_a_green_round_lands_it() {
+    let script = Script {
+        beads: vec![early("sp-gr01"), early("sp-gr02")],
+        max_concurrent: 2,
+        verdicts: vec![loopworld::VerdictAt { at: 3 * MIN, bead: "sp-gr01".into(), verdict: loopworld::Verdict::Red }],
+        until: 40 * MIN,
+        ..Script::default()
+    };
+    let (r, _) = run_keeping(36, script, |d, _| d);
+    show("provisional-gate-red-mid-pass", &r);
+    assert_eq!(times(&r, bl::CERTIFY).len(), 1, "the pass ran once, never restarted: {:?}", r.exec_log);
+    assert!(times(&r, bl::EJECT_GATE_RED).is_empty() && times(&r, bl::ABANDON).is_empty(), "{:?}", r.exec_log);
+    assert_eq!(r.lands[0].iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(), ["sp-gr01", "sp-gr02"], "the round landed with the red member in it: {}", r.dump());
+    assert!(r.refused.is_empty(), "{:?}", r.refused);
+    assert_no_process(&r);
+}
+
+/// The same red, but the pass ends red: the recorded member is ejected first, with the gate's
+/// mark, before any attribution, and the other member lands from the round cut again.
+#[test]
+fn a_red_pass_ejects_the_provisional_member_whose_gate_went_red_first_and_the_other_lands() {
+    let red = loopworld::VerdictAt { at: 3 * MIN, bead: "sp-gr03".into(), verdict: loopworld::Verdict::Red };
+    let script = Script { beads: vec![early("sp-gr03"), early("sp-gr04")], max_concurrent: 2, verdicts: vec![red], until: 40 * MIN, ..Script::default() };
+    let first = Arc::new(Mutex::new(true));
+    let (r, _) = run_keeping(37, script, move |d, w| {
+        let wc = w.clone();
+        d.double(bl::CERTIFY, move |input| {
+            let l = leg(input)?;
+            let spec = UnitSpec { task: bl::NAME.into(), key: l.unit.clone(), argv: vec!["queue".into(), "round".into(), "certify".into(), l.batch, REPO.into()], env: vec![], cwd: None };
+            let red = std::mem::take(&mut *first.lock().unwrap_or_else(|e| e.into_inner()));
+            wc.units.script(bl::NAME, 2 * MIN, Exit::Code(i32::from(red)));
+            wc.units.script_output(bl::NAME, if red { b"red=test-x.sh\n" } else { b"certified\n" }, b"");
+            units::effect(&*wc.units, UNIT_RUN_SCOPE, &serde_json::to_string(&ScopeSpec { unit: spec, cpu_quota_pct: None, memory_max_bytes: None }).map_err(|e| e.to_string())?)
+        })
+    });
+    show("provisional-gate-red-red-pass", &r);
+    let (eject, attribute) = (times(&r, bl::EJECT_GATE_RED), times(&r, bl::CORPUS));
+    assert_eq!(eject.len(), 1, "{:?}", r.exec_log);
+    assert!(attribute.iter().all(|t| *t > eject[0]), "ejected before any attribution: eject {eject:?}, corpus {attribute:?}");
+    assert!(entered(&r, "sp-gr03", "REWORK").is_some(), "the red member went back to its dwarf: {}", r.dump());
+    let tip = r.submitted["sp-gr04"][0].clone();
+    assert_eq!(r.lands[0], [("sp-gr04".to_string(), tip)], "the other member landed alone from the round cut again: {}", r.dump());
     assert_no_process(&r);
 }

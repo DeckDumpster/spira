@@ -52,10 +52,19 @@ pub(super) fn refuse_over_cap<T>(
     }
 }
 
-fn admit(
-    w: &World,
-    wanted: Vec<Member>,
-) -> (Vec<Member>, BTreeMap<String, Vec<String>>, Vec<String>) {
+type Admitted = (Vec<Member>, BTreeMap<String, Vec<String>>, Vec<String>, Vec<String>);
+
+/// The members a stage or promote may take: the admitted ones blocker-first, each one's unlanded
+/// blockers, the skips, and the admitted members still SUBMITTED (provisional).
+fn push_provisional(kv: &mut Kv, members: &[Member], provisional: &[String]) {
+    let ids: Vec<&str> = members.iter().map(|m| m.id.as_str()).filter(|id| provisional.iter().any(|p| p == id)).collect();
+    if !ids.is_empty() {
+        kv.push("provisional", &ids.join(" "));
+    }
+}
+
+fn admit(w: &World, by: &str, wanted: Vec<Member>) -> Admitted {
+    let mut provisional = Vec::new();
     let mut skips = Vec::new();
     let mut admitted = Vec::new();
     let mut blocked_by = BTreeMap::new();
@@ -65,17 +74,18 @@ fn admit(
                 "{}: no lifecycle row (spira-lc could not say) — not admitted",
                 m.id
             )),
-            Some(r) if r.state == "SUBMITTED" => skips.push(format!(
-                "{}: SUBMITTED — its gate has not passed at {}; not admitted",
-                m.id,
-                r.tip.as_deref().unwrap_or_default()
-            )),
-            Some(r) if r.state != "CERTIFIED" => skips.push(format!(
-                "{}: lifecycle state={} (not CERTIFIED) — not admitted",
+            Some(r) if r.state != "CERTIFIED" && r.state != "SUBMITTED" => skips.push(format!(
+                "{}: lifecycle state={} (not SUBMITTED or CERTIFIED) — not admitted",
                 m.id, r.state
             )),
+            Some(r) if r.state == "SUBMITTED" && super::round::submitted_hold(&r, &m.id, by).is_some() => {
+                skips.push(super::round::submitted_hold(&r, &m.id, by).unwrap_or_default())
+            }
             Some(r) => match r.tip.filter(|t| !t.is_empty()) {
                 Some(tip) if tip.starts_with(&m.tip) => {
+                    if r.state == "SUBMITTED" {
+                        provisional.push(m.id.clone());
+                    }
                     blocked_by.insert(m.id.clone(), r.blocked_by);
                     admitted.push(Member { id: m.id, tip })
                 }
@@ -89,7 +99,8 @@ fn admit(
     }
     refuse_over_cap(&mut admitted, &mut skips, |m| &m.id);
     blocked_by.retain(|id, _| admitted.iter().any(|m| &m.id == id));
-    (admitted, blocked_by, skips)
+    provisional.retain(|id| admitted.iter().any(|m| &m.id == id));
+    (super::round::blocker_first(admitted, &blocked_by), blocked_by, skips, provisional)
 }
 
 pub fn stage(
@@ -187,7 +198,7 @@ pub fn stage(
             m.id
         ));
     }
-    let (admitted, blocked_by, more) = admit(w, wanted);
+    let (admitted, blocked_by, more, provisional) = admit(w, by, wanted);
     skips.extend(more);
 
     let batch = name
@@ -317,6 +328,7 @@ pub fn stage(
     kv.push("head", &head);
     kv.push("base", &parent_head);
     kv.push("members", &render_members(&merged));
+    push_provisional(&mut kv, &merged, &provisional);
     kv.push("worktree", &wt.display().to_string());
     kv.push("actor", &actor(w));
     kv.push("opened", &now);
@@ -714,12 +726,11 @@ pub fn promote(w: &World, by: &str, repo: Option<&str>) -> i32 {
         };
 
         let staged_members = kv.members();
-        let (admitted, blocked_by, skips) = admit(w, staged_members.clone());
+        let (admitted, blocked_by, skips, provisional) = admit(w, by, staged_members.clone());
         let tips_kept = admitted.len() == staged_members.len()
             && admitted
                 .iter()
-                .zip(&staged_members)
-                .all(|(a, s)| a.tip == s.tip);
+                .all(|a| staged_members.iter().any(|s| s.id == a.id && s.tip == a.tip));
         if !tips_kept {
             return discarded(
                 w,
@@ -778,6 +789,7 @@ pub fn promote(w: &World, by: &str, repo: Option<&str>) -> i32 {
         round.push("head", &head);
         round.push("base", &base_sha);
         round.push("members", &render_members(&admitted));
+        push_provisional(&mut round, &admitted, &provisional);
         round.push("worktree", &wt.display().to_string());
         round.push("actor", &actor(w));
         round.push("opened", &now);

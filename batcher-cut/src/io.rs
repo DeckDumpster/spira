@@ -275,7 +275,7 @@ fn lc_answer(
 }
 
 /// The SUBMITTED and CERTIFIED lifecycle rows, from one `spira-lc list --state` per repo step: the
-/// sifted tips need both states; the pool takes only the CERTIFIED ones. A row outside those states is read by id through
+/// pool and the sifted tips are filters of it. A row outside those states is read by id through
 /// `lc_rows_of`, never by listing the store.
 pub fn lc_rows(env: &Env) -> Result<Vec<serde_json::Value>, String> {
     if let Some(views) = store_view::shared() {
@@ -313,10 +313,6 @@ pub fn lc_rows_of(env: &Env, ids: &[String]) -> Result<Vec<serde_json::Value>, S
 
 pub fn lc_forget(env: &Env) {
     *env.lc_rows.lock().unwrap_or_else(|e| e.into_inner()) = None;
-}
-
-fn in_pool_state(r: &serde_json::Value) -> bool {
-    r.get("state").and_then(|s| s.as_str()) == Some("CERTIFIED")
 }
 
 fn in_pool_states(r: &serde_json::Value) -> bool {
@@ -385,7 +381,7 @@ fn prereq_is_finished(env: &Env, id: &str) -> bool {
 }
 
 // ---------------------------------------------------------------------------------------
-// The round pool: the lifecycle machine's unheld CERTIFIED beads, narrowed to this repo, with
+// The round pool: the lifecycle machine's unheld SUBMITTED and CERTIFIED beads, narrowed to this repo, with
 // title/priority from the bead store and express from the lifecycle row.
 // ---------------------------------------------------------------------------------------
 
@@ -400,7 +396,8 @@ fn holds_empty(r: &serde_json::Value) -> bool {
     }
 }
 
-type PoolRow = (String, String, u64, bool, Vec<String>);
+/// A pool row: id, tip, certified-at epoch, express, unlanded blockers, and whether it is provisional (SUBMITTED).
+type PoolRow = (String, String, u64, bool, Vec<String>, bool);
 
 /// Why a CERTIFIED bead is not in the pool.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -531,7 +528,7 @@ fn pool_rows(rows: &[serde_json::Value]) -> (Vec<PoolRow>, Vec<LeftOut>) {
     let mut left = Vec::new();
     let mut pool: Vec<PoolRow> = rows
         .iter()
-        .filter(|r| in_pool_state(r))
+        .filter(|r| in_pool_states(r))
         .filter_map(|r| {
             let id = r.get("bead_id")?.as_str()?.to_string();
             let tip = r
@@ -571,7 +568,8 @@ fn pool_rows(rows: &[serde_json::Value]) -> (Vec<PoolRow>, Vec<LeftOut>) {
                         .collect()
                 })
                 .unwrap_or_default();
-            Some((id, tip, epoch, express, blocked_by))
+            let provisional = r.get("state").and_then(|s| s.as_str()) == Some("SUBMITTED");
+            Some((id, tip, epoch, express, blocked_by, provisional))
         })
         .collect();
     pool.sort();
@@ -704,12 +702,12 @@ fn tip_current(tip: &str, id: &str, branches: &BTreeMap<String, String>) -> bool
     branches.get(id).map(String::as_str) == Some(tip)
 }
 
-/// The round pool for `repo`: every unheld CERTIFIED bead whose tip is still the
+/// The round pool for `repo`: every unheld SUBMITTED or CERTIFIED bead whose tip is still the
 /// live tip of `refs/heads/spira/<id>` in this repo's own checkout, with title/priority/
 /// with express read from the lifecycle row and the rest from one bulk `bd show`.
 ///
-/// Membership is the lifecycle machine's CERTIFIED state with no hold: the bead's own gate has
-/// passed before it joins a round. bd's status and the retired submitted label
+/// Membership is the lifecycle machine's SUBMITTED/CERTIFIED state with no hold, and no gate
+/// verdict: the round's full suite is the trial. bd's status and the retired submitted label
 /// decide nothing. The sp-1346p shape — a stale
 /// record of an incident, an ask, a test bead or work already landed — is a row the machine
 /// must not hold CERTIFIED (drop it there), not one this reader second-guesses from bd.
@@ -771,7 +769,7 @@ pub fn certified_pool(env: &Env, repo: &Repo) -> Result<Vec<Member>, String> {
     }
     let fixes = base_fix_ids(env, repo, &texts);
     let mut out = Vec::new();
-    for (id, tip, epoch, express, mut blocked_by) in certified {
+    for (id, tip, epoch, express, mut blocked_by, provisional) in certified {
         let Some((priority, title)) = by_id.get(&id) else {
             continue;
         };
@@ -793,6 +791,7 @@ pub fn certified_pool(env: &Env, repo: &Repo) -> Result<Vec<Member>, String> {
             certified_at: epoch,
             stack,
             blocked_by,
+            provisional,
         });
     }
     let stacked_on: Vec<String> = out
@@ -1416,6 +1415,50 @@ pub fn withdraw_for_conflict(env: &Env, repo: &Repo, id: &str, rounds: u32, file
     conflict_streak_clear(env, id);
 }
 
+/// A SUBMITTED member the round carried to a green corpus has earned CERTIFIED, so `land-local`
+/// can walk it Deliver -> Delivered: the round's full suite is its trial, recorded as the gate
+/// key. A refusal (tip moved, already certified) is said on stderr and never blocks the round.
+pub fn lc_certify_round(env: &Env, members: &[(String, String)], round_key: &str) {
+    for (id, tip) in members {
+        let Ok(Ok(row)) =
+            lcq(env, &["show", id]).map(|o| serde_json::from_str::<serde_json::Value>(&o))
+        else {
+            continue;
+        };
+        let bead = row.get("bead").cloned().unwrap_or_default();
+        if bead.get("state").and_then(|s| s.as_str()) != Some("SUBMITTED") {
+            continue;
+        }
+        let Some(version) = bead.get("version").and_then(|v| {
+            v.as_u64()
+                .or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
+        }) else {
+            continue;
+        };
+        let kind =
+            serde_json::json!({"GatePass": {"tip": tip, "gate_key": format!("round:{round_key}")}})
+                .to_string();
+        if let Err(e) = lcq(
+            env,
+            &[
+                "event",
+                "bead",
+                id,
+                "--expect",
+                "SUBMITTED",
+                "--version",
+                &version.to_string(),
+                "--actor",
+                "batcher",
+                "--kind",
+                &kind,
+            ],
+        ) {
+            eprintln!("batcher: LIFECYCLE: {id} not certified by its round on spira-lc: {e}");
+        }
+    }
+}
+
 /// A CERTIFIED member whose tip is already an ancestor of the landing ref is recorded LANDED
 /// there, so no later cut sets it aside again. Anything else is left as it stands.
 pub fn lc_land_on_base(env: &Env, repo: &Repo, id: &str, tip: &str, base_sha: &str) {
@@ -1478,6 +1521,30 @@ pub fn lc_withdraw(env: &Env, id: &str) {
     }) else {
         return fail("show: no version".into());
     };
+    if state == "SUBMITTED" {
+        let tip = bead.get("tip").and_then(|t| t.as_str()).unwrap_or("");
+        let kind =
+            serde_json::json!({"GateRed": {"tip": tip, "reason": "suites-failed"}}).to_string();
+        if let Err(e) = lcq(
+            env,
+            &[
+                "event",
+                "bead",
+                id,
+                "--expect",
+                "SUBMITTED",
+                "--version",
+                &version.to_string(),
+                "--actor",
+                "batcher",
+                "--kind",
+                &kind,
+            ],
+        ) {
+            fail(format!("GateRed: {e}"));
+        }
+        return;
+    }
     if state == "CERTIFIED" {
         let v = version.to_string();
         if let Err(e) = lcq(
@@ -3245,7 +3312,59 @@ pub fn added_lines(repo: &Repo, base_sha: &str, tip: &str) -> String {
     .collect()
 }
 
-/// The arguments after `queue round` for an eject; the reason comes on stdin. No csv names no suite.
+/// Members of `ids` whose lifecycle row carries a red gate verdict that bars its tip and whose gate has not passed, as `(id, tip, the row's mark)`.
+pub fn gate_red_rows(env: &Env, ids: &[String]) -> Vec<(String, String, String)> {
+    ids.iter()
+        .filter_map(|id| {
+            let row =
+                serde_json::from_str::<serde_json::Value>(&lcq(env, &["show", id]).ok()?).ok()?;
+            gate_red_of(id, row.get("bead")?)
+        })
+        .collect()
+}
+
+/// Whether the gate's mark (its reason, then any failing lines) names a red that bars the tip: a timeout or a no-rebase ejects nobody.
+pub fn mark_bars_tip(mark: &str) -> bool {
+    lifecycle::bead::mark_bars_tip(mark.split(|c: char| c.is_whitespace() || c == ';').next().unwrap_or(""))
+}
+
+/// The ejectable red mark on one lifecycle row: IN_DELIVERY, its own gate not passed (no gate key), and a reason that bars the tip, so a timeout, a no-rebase or a passed gate preempts nothing.
+fn gate_red_of(id: &str, bead: &serde_json::Value) -> Option<(String, String, String)> {
+    let field = |k: &str| bead.get(k).and_then(|v| v.as_str()).unwrap_or("");
+    let mark = field("reason").strip_prefix(lifecycle::bead::GATE_RED_MARK)?;
+    let gate_passed = bead.get("gate_key").is_some_and(|k| !k.is_null());
+    (field("state") == "IN_DELIVERY" && !gate_passed && lifecycle::bead::mark_bars_tip(mark))
+        .then(|| (id.to_string(), field("tip").to_string(), mark.to_string()))
+}
+
+/// Members of an open round whose lifecycle row carries a red gate verdict at the very tip the
+/// round holds, as `(id, the row's mark)`: the gate already judged this tree red, so the round's
+/// corpus need not rediscover it.
+pub fn gate_red_marks(env: &Env, members: &[(String, String)]) -> Vec<(String, String)> {
+    let ids: Vec<String> = members.iter().map(|(id, _)| id.clone()).collect();
+    gate_red_rows(env, &ids)
+        .into_iter()
+        .filter(|(id, tip, _)| members.iter().any(|(m, t)| m == id && t == tip))
+        .map(|(id, _, mark)| (id, mark))
+        .collect()
+}
+
+/// `queue round eject` for a member the gate had already marked red while it sat in the round.
+pub fn round_eject_gate_red(
+    env: &Env,
+    repo: &Repo,
+    batch: &str,
+    id: &str,
+    mark: &str,
+) -> Result<(), String> {
+    let reason = format!(
+        "Ejected from the round before its corpus ran: spira/{id}'s own gate went red at the tip the round holds ({mark}). The gate's whole output is kept under the gate-worker's output directory."
+    );
+    round_eject_with(env, repo, batch, id, &reason, "")
+}
+
+/// The arguments after `queue round` for an eject; the reason comes on stdin. No csv names no
+/// suite.
 pub fn eject_args(batch: &str, repo: &str, id: &str, csv: &str) -> Vec<String> {
     let mut args: Vec<String> = [
         "eject",
@@ -4613,11 +4732,39 @@ mod pool_parity_tests {
     }
 
     #[test]
-    fn the_pool_leaves_out_a_submitted_unheld_bead_whose_gate_has_not_passed() {
+    fn the_pool_takes_a_submitted_unheld_bead_as_provisional_and_a_certified_one_as_not() {
         let rows = vec![
             serde_json::json!({"bead_id": "sp-s", "state": "SUBMITTED", "tip": "ts", "holds": []}),
+            serde_json::json!({"bead_id": "sp-c", "state": "CERTIFIED", "tip": "tc", "holds": []}),
         ];
-        assert!(pool_rows(&rows).0.is_empty());
+        let pool = pool_rows(&rows).0;
+        let flags: Vec<(&str, bool)> = pool.iter().map(|p| (p.0.as_str(), p.5)).collect();
+        assert_eq!(flags, [("sp-c", false), ("sp-s", true)]);
+    }
+
+    #[test]
+    fn a_submitted_bead_held_or_at_its_ejected_red_tip_is_left_out_naming_its_cause() {
+        let held = |kind: &str| serde_json::json!({"bead_id": "sp-h", "state": "SUBMITTED", "tip": "th", "holds": [kind]});
+        for kind in ["manual", "wait", "ask", "poison"] {
+            let (pool, left) = pool_rows(&[held(kind)]);
+            assert!(pool.is_empty(), "{kind}");
+            assert_eq!(left[0].cause, Cause::Held(vec![kind.into()]));
+        }
+        let red = serde_json::json!({"bead_id": "sp-e", "state": "SUBMITTED", "tip": "te", "holds": [], "ejected_red_tip": "te"});
+        let (pool, left) = pool_rows(&[red]);
+        assert!(pool.is_empty());
+        assert_eq!(left[0].cause, Cause::EjectedRed);
+    }
+
+    #[test]
+    fn only_an_in_delivery_red_mark_that_bars_the_tip_and_follows_no_gate_pass_is_ejectable() {
+        let row = |reason: &str, gate_key: serde_json::Value| serde_json::json!({"state": "IN_DELIVERY", "tip": "t", "reason": reason, "gate_key": gate_key});
+        let null = serde_json::Value::Null;
+        assert_eq!(gate_red_of("sp-a", &row("gate-red: suites-failed", null.clone())), Some(("sp-a".into(), "t".into(), "suites-failed".into())));
+        assert_eq!(gate_red_of("sp-a", &row("gate-red: timeout", null.clone())), None, "a killed run says nothing about the tree");
+        assert_eq!(gate_red_of("sp-a", &row("gate-red: no-rebase", null.clone())), None);
+        assert_eq!(gate_red_of("sp-a", &row("gate-red: suites-failed", "round:k".into())), None, "a member whose gate passed is never preempted on a later mark");
+        assert_eq!(gate_red_of("sp-a", &row("delivered-from-submitted", null)), None);
     }
 
     #[test]
@@ -4673,7 +4820,7 @@ mod pool_parity_tests {
 
     #[test]
     fn a_certified_tip_the_branch_moved_past_is_left_out_naming_the_branch_tip() {
-        let row = |id: &str, tip: &str| (id.to_string(), tip.to_string(), 0, false, vec![]);
+        let row = |id: &str, tip: &str| (id.to_string(), tip.to_string(), 0, false, vec![], false);
         let branches = BTreeMap::from([("sp-m".to_string(), "new".to_string()), ("sp-s".to_string(), "same".to_string())]);
         let pool = [row("sp-m", "old"), row("sp-s", "same"), row("sp-x", "gone")];
         let left = moved_tips(&pool, &branches);
@@ -4721,6 +4868,7 @@ mod pool_parity_tests {
                 .into_iter()
                 .collect(),
             blocked_by: vec![],
+        provisional: false,
         };
         let pool = || {
             vec![

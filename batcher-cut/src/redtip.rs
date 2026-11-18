@@ -76,6 +76,7 @@ mod tests {
             certified_at: 0,
             stack: Default::default(),
             blocked_by: vec![],
+        provisional: false,
         }
     }
 

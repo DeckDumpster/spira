@@ -209,6 +209,7 @@ mod tests {
             certified_at: 0,
             stack: BTreeMap::new(),
             blocked_by: vec![],
+        provisional: false,
         }
     }
     fn round() -> Vec<Member> {

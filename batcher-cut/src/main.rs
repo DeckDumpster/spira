@@ -244,8 +244,10 @@ fn cut(o: &Opts) -> Result<(), pace::CutError> {
     }
     let (pool, kind) = batcher::core::select_round(batcher::core::base_fix_lane(screened));
     let (pool, mut refused) = batcher::core::refuse_blocked(pool);
-    let (pool, full) = batcher::core::cap_round(pool, state_store::limits::MAX_CUT_MEMBERS);
+    let (pool, full) = batcher::core::cap_round(batcher::core::topo_order(&pool), state_store::limits::MAX_CUT_MEMBERS);
     refused.extend(full);
+    let (pool, blocked) = batcher::core::refuse_blocked(pool);
+    refused.extend(blocked);
     for r in &refused {
         println!("batcher {}: {r}", repo.name);
     }
@@ -941,7 +943,24 @@ fn stabilize_round(
     stage: &[Member],
     deny: &vm::DenySnapshot,
 ) -> Result<Stabilized, pace::CutError> {
-    let members = merge_round(env_, repo, wt, start_sha, starting)?;
+    let mut members = merge_round(env_, repo, wt, start_sha, starting)?;
+    if let Some(batch) = batch {
+        let held: Vec<(String, String)> = members
+            .iter()
+            .map(|m| (m.id.clone(), m.tip.clone()))
+            .collect();
+        let marked = io::gate_red_marks(env_, &held);
+        if !marked.is_empty() {
+            for (id, mark) in &marked {
+                match io::round_eject_gate_red(env_, repo, batch, id, mark) {
+                    Ok(()) => println!("batcher {}: ejected {id} from round {batch} — its own gate was red at this tip ({mark})", repo.name),
+                    Err(e) => println!("batcher {}: could not eject gate-red {id} from round {batch}: {e}", repo.name),
+                }
+            }
+            members.retain(|m| !marked.iter().any(|(id, _)| *id == m.id));
+            members = merge_round(env_, repo, wt, start_sha, members)?;
+        }
+    }
     if members.is_empty() {
         println!(
             "{}",
@@ -1337,6 +1356,13 @@ fn finish_local_round(
                     None
                 }
             });
+
+    let certified: Vec<(String, String)> = stable
+        .members
+        .iter()
+        .map(|m| (m.id.clone(), m.tip.clone()))
+        .collect();
+    io::lc_certify_round(env_, &certified, batch);
 
     let run = io::round_land(env_, repo, batch);
     let run = match run {
@@ -2287,6 +2313,7 @@ fn attribute_in(
                     certified_at: 0,
                     stack: BTreeMap::new(),
                     blocked_by: vec![],
+                provisional: false,
                 })
             }
         })
@@ -2775,7 +2802,7 @@ mod tests {
             g(&["checkout", "-q", "-b", id, &base]);
             std::fs::create_dir_all(d.join("spira/config-delta.d")).unwrap();
             std::fs::write(d.join(format!("spira/config-delta.d/{id}.toml")), format!("removed = [\"{key}\"]\n")).unwrap();
-            members.push(Member { id: id.into(), tip: commit(id), title: String::new(), priority: None, express: false, base_fix: false, certified_at: 0, stack: BTreeMap::new(), blocked_by: vec![] });
+            members.push(Member { id: id.into(), tip: commit(id), title: String::new(), priority: None, express: false, base_fix: false, certified_at: 0, stack: BTreeMap::new(), blocked_by: vec![], provisional: false });
         }
         g(&["checkout", "-q", "main"]);
         let env = io::lifecycle_tests_env(root.path());

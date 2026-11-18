@@ -706,7 +706,7 @@ pub(super) fn is_full_sha(s: &str) -> bool {
 }
 
 /// The concierge's door for a hand-built fix: record the new tip and move a manually held REWORK
-/// row, or an unclaimed READY one, to SUBMITTED, where its own gate certifies it before it joins a round.
+/// row, or an unclaimed READY one, to SUBMITTED, so the round's full suite certifies it where the host gate cannot.
 #[allow(clippy::too_many_arguments)]
 pub fn resubmit(
     w: &World,
@@ -871,11 +871,11 @@ pub fn resubmit(
         w.out(format!("queue.sh resubmit: {id} red at {tip} withdrawn (row={in_row} record={in_record} gate={in_gate} as found)"));
     }
     if row.holds.iter().any(|h| h == "manual") {
-        w.out(format!("queue.sh resubmit: {id} re-tipped to {tip}, {} -> SUBMITTED; its gate certifies it; it stays held manual, so the batcher will not cut it — once CERTIFIED, run queue round open --members {id}:{tip} --by concierge, or spira-lc unhold {id} manual … to return it to the batcher", row.state));
+        w.out(format!("queue.sh resubmit: {id} re-tipped to {tip}, {} -> SUBMITTED; it stays held manual, so the batcher will not cut it — run queue round open --members {id}:{tip} --by concierge, or spira-lc unhold {id} manual … to return it to the batcher", row.state));
     } else if !row.holds.is_empty() {
-        w.out(format!("queue.sh resubmit: {id} re-tipped to {tip}, {} -> SUBMITTED; its gate certifies it; it stays held {}, so the batcher will not cut it — spira-lc unhold {id} <kind> … returns it to the batcher", row.state, row.holds.join(",")));
+        w.out(format!("queue.sh resubmit: {id} re-tipped to {tip}, {} -> SUBMITTED; it stays held {}, so the batcher will not cut it — spira-lc unhold {id} <kind> … returns it to the batcher", row.state, row.holds.join(",")));
     } else {
-        w.out(format!("queue.sh resubmit: {id} re-tipped to {tip}, {} -> SUBMITTED; its gate certifies it, and the batcher cuts it once CERTIFIED", row.state));
+        w.out(format!("queue.sh resubmit: {id} re-tipped to {tip}, {} -> SUBMITTED; the batcher cuts it as a provisional member until its gate passes", row.state));
     }
     OK
 }

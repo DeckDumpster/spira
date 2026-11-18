@@ -530,7 +530,7 @@ impl<'a> Pass<'a> {
             return Screen::Done(Flow::Next);
         }
         if repo.mode.queued() && bead.state == "IN_DELIVERY" && self.beads.in_round(id) {
-            self.log(&format!("CHECK6 {id}: {br} is in a round — the round judges it, no per-bead gate"));
+            self.gate_provisional(w, br, id, bead);
             return Screen::Done(Flow::Next);
         }
         // A queued repository only certifies: a SUBMITTED row is the hand-over, and a later
@@ -614,7 +614,7 @@ impl<'a> Pass<'a> {
         }
         if self.beads.in_round(id) {
             self.files.clear_unrounded(br);
-            self.log(&format!("CHECK6 {id}: {br} is in a round — the round judges it, no per-bead gate"));
+            self.gate_provisional(w, br, id, bead);
             return Flow::Next;
         }
         if self.s.gate_worker {
@@ -626,6 +626,44 @@ impl<'a> Pass<'a> {
         }
         let g = self.run_gate(&w.repo.name, br, id);
         self.certify_judge(w, br, id, bead, &tip, g, &Cell::new(false))
+    }
+
+    /// A member cut into a round before its gate ran: queue the gate beside the round. A red
+    /// verdict is taken once and recorded on the member's row (a mark the batcher preempts on);
+    /// a green one stays on file.
+    fn gate_provisional(&self, w: &Walk, br: &str, id: &str, bead: &BeadRow) {
+        let name = &w.repo.name;
+        let tip = self.git.rev_parse(&w.repo.path, br).unwrap_or_default();
+        if tip.is_empty() || self.files.gated(br, &tip) {
+            return;
+        }
+        if !self.s.gate_worker {
+            self.log(&format!("CHECK6 {id}: {br} is in a round — the round judges it, no per-bead gate"));
+            return;
+        }
+        let q = GateQueue::new(&self.s.run);
+        if q.peek_done(name, br, &tip).is_some_and(|d| d.run.unjudged()) {
+            q.forget_done(name, br, &tip);
+        }
+        if let Some(d) = q.peek_done(name, br, &tip).filter(|d| d.run.outcome == GateOutcome::Fail) {
+            drop(q.take_done(name, br, &tip));
+            self.files.note_gated(br, &tip);
+            let reason = d.run.reason_or("unspecified");
+            self.log(&format!("CHECK6 {id}: provisional {br} failed its gate at {tip} ({reason}) — marked red for the round"));
+            let _ = self.lc_certify_red(id, &tip, &reason, &d.run);
+            return;
+        }
+        if q.find(name, br, &tip).is_some() {
+            return;
+        }
+        if self.files.backing_off(br, &tip, self.clock.now()) {
+            return;
+        }
+        let fix = is_base_fix(bead.external_ref.as_deref(), name);
+        match q.enqueue(&GateJob::new(name, br, id, &tip, fix).with_priority(bead.priority)) {
+            Ok(_) => self.log(&format!("CHECK6 {id}: {br} is a provisional member of a round — gate queued at {tip}")),
+            Err(e) => self.log(&format!("CHECK6 {id}: could not queue the gate for provisional {br} ({e})")),
+        }
     }
 
     /// Hand the gate to `gate-worker`: apply the verdict it filed for this tip, or queue the

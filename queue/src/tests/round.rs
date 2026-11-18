@@ -1822,20 +1822,13 @@ fn open_skips_a_member_whose_blocker_has_not_landed_and_names_it() {
 }
 
 #[test]
-fn open_skips_a_member_whose_blocker_is_only_a_co_member_of_the_round() {
+fn open_admits_a_member_with_its_blocker_in_the_same_round_blocker_first() {
     let t = round_world();
     block(&t, "sp-b", &["sp-a"]);
-    assert_eq!(
-        t.run(&["round", "open", "--members", "sp-a,sp-b"]),
-        1,
-        "{}",
-        t.err()
-    );
-    let o = t.err();
-    assert!(
-        o.contains("sp-b: depends on sp-a (") && !t.qfile("round").exists(),
-        "{o}"
-    );
+    assert_eq!(t.run(&["round", "open", "--members", "sp-b,sp-a"]), 0, "{}", t.err());
+    let o = t.out();
+    let members = o.lines().find_map(|l| l.strip_prefix("members=")).unwrap_or_else(|| panic!("{o}"));
+    assert!(members.find("sp-a:").unwrap() < members.find("sp-b:").unwrap(), "blocker merges first: {members}");
 }
 
 #[test]
@@ -1999,53 +1992,123 @@ fn the_orphan_sweep_is_told_which_rounds_have_a_live_leg() {
 }
 
 #[test]
-fn open_refuses_a_round_naming_a_submitted_member_whose_gate_has_not_passed() {
+fn open_admits_a_submitted_member_its_full_suite_certifies() {
+    // law-a-round-is-feature-first-then-catch-all: a round takes SUBMITTED beads directly.
     let t = round_world();
     t.lc_row("sp-s", "SUBMITTED", "ts", 100);
     assert_eq!(
         t.run(&["round", "open", "--members", "sp-a,sp-s"]),
-        1,
-        "{}",
-        t.err()
-    );
-    let e = t.err();
-    assert!(
-        e.contains("sp-s: SUBMITTED — its gate has not passed at ts; not admitted"),
-        "{e}"
-    );
-    assert!(!t.lc.has("cut") && !t.qfile("round").exists());
-}
-
-#[test]
-fn open_admits_a_certified_member() {
-    let t = round_world();
-    t.lc_row("sp-c", "CERTIFIED", "tc", 100);
-    assert_eq!(
-        t.run(&["round", "open", "--members", "sp-a,sp-c"]),
         0,
         "{}",
         t.err()
     );
-    assert!(t.out().contains("sp-c:tc"), "{}", t.out());
+    let o = t.out();
+    assert!(
+        o.contains("sp-s:ts") && !o.contains("sp-s: lifecycle state"),
+        "{o}"
+    );
     assert!(t.lc.has("cut"), "the round is recorded as a batch");
 }
 
 #[test]
-fn open_cuts_no_batch_for_a_lone_submitted_member() {
+fn open_admits_a_certified_and_an_unheld_submitted_member_recording_the_second_provisional() {
     let t = round_world();
     t.lc_row("sp-s", "SUBMITTED", "ts", 100);
-    assert_eq!(
-        t.run(&["round", "open", "--members", "sp-s"]),
-        1,
-        "{}",
-        t.err()
-    );
-    let e = t.err();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a,sp-s"]), 0, "{}", t.err());
+    let rec = kv_of(&t, "round");
+    assert_eq!(rec["provisional"], "sp-s", "{rec:?}");
+    let _ = t.out();
+    assert_eq!(t.run(&["round", "status"]), 0, "{}", t.err());
+    assert!(t.out().lines().any(|l| l == "provisional=sp-s"), "{}", t.out());
+}
+
+#[test]
+fn open_cuts_a_round_for_a_lone_submitted_member() {
+    let t = round_world();
+    t.lc_row("sp-s", "SUBMITTED", "ts", 100);
+    assert_eq!(t.run(&["round", "open", "--members", "sp-s"]), 0, "{}", t.err());
+    assert!(t.lc.has("cut"), "{:?}", t.lc.calls.borrow());
+    assert_eq!(kv_of(&t, "round")["provisional"], "sp-s");
+}
+
+#[test]
+fn stage_admits_a_submitted_member_recording_it_provisional() {
+    let t = round_world();
+    t.lc_row("sp-s", "SUBMITTED", "ts", 100);
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta"]), 0, "{}", t.err());
+    t.git.ancestor("ta", "merged-ta");
+    t.git.ancestor("merged-ta", "merged-ts");
+    t.git.trees.borrow_mut().insert("merged-ts".into(), T_ROUND.into());
+    assert_eq!(t.run(&["round", "stage", "--members", "sp-s:ts"]), 0, "{}", t.err());
+    assert_eq!(kv_of(&t, "round-staged")["provisional"], "sp-s");
+}
+
+#[test]
+fn open_and_stage_refuse_a_held_submitted_member_naming_the_hold_but_let_a_person_past_a_manual_one() {
+    for kind in ["manual", "wait", "ask", "poison"] {
+        let t = round_world();
+        t.lc_row("sp-s", "SUBMITTED", "ts", 100);
+        set_row(&t, "sp-s", |r| r.holds = vec![kind.to_string()]);
+        assert_eq!(t.run(&["round", "open", "--members", "sp-s:ts", "--by", "batcher"]), 1, "{kind}");
+        assert!(t.err().contains(&format!("sp-s: SUBMITTED and held {kind}")), "{kind}: {}", t.err());
+        assert!(!t.lc.has("cut"));
+        assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta"]), 0, "{}", t.err());
+        assert_eq!(t.run(&["round", "stage", "--members", "sp-s:ts", "--by", "batcher"]), 1, "{kind}");
+        assert!(t.out().contains(&format!("sp-s: SUBMITTED and held {kind}")), "{kind}: {}", t.out());
+    }
+    let t = round_world();
+    t.lc_row("sp-s", "SUBMITTED", "ts", 100);
+    set_row(&t, "sp-s", |r| r.holds = vec!["manual".to_string()]);
+    assert_eq!(t.run(&["round", "open", "--members", "sp-s:ts", "--by", "concierge"]), 0, "{}", t.err());
+    let t = round_world();
+    t.lc_row("sp-s", "SUBMITTED", "ts", 100);
+    set_row(&t, "sp-s", |r| r.holds = vec!["wait".to_string()]);
+    assert_eq!(t.run(&["round", "open", "--members", "sp-s:ts", "--by", "concierge"]), 1, "a wait hold binds a person too");
+}
+
+#[test]
+fn stage_refuses_a_submitted_member_at_a_stale_tip() {
+    let t = round_world();
+    t.lc_row("sp-s", "SUBMITTED", "ts", 100);
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta"]), 0, "{}", t.err());
+    assert_eq!(t.run(&["round", "stage", "--members", "sp-s:other"]), 1);
+    assert!(t.out().contains("sp-s: other is not its row's tip ts"), "{}", t.out());
+}
+
+#[test]
+fn open_still_refuses_a_submitted_member_at_its_ejected_red_tip() {
+    let t = round_world();
+    t.lc_row("sp-s", "SUBMITTED", "ts", 100);
+    set_row(&t, "sp-s", |r| r.ejected_red_tip = Some("ts".into()));
+    assert_eq!(t.run(&["round", "open", "--members", "sp-s:ts"]), 1);
+    assert!(t.err().contains("sp-s: ts is a recorded ejected-red tip"), "{}", t.err());
+    assert!(!t.lc.has("cut"));
+}
+
+#[test]
+fn stage_merges_a_blocker_named_after_its_dependant_ahead_of_it() {
+    let t = round_world();
+    block(&t, "sp-b", &["sp-a"]);
+    assert_eq!(t.run(&["round", "open", "--members", "sp-c:tc"]), 0, "{}", t.err());
+    assert_eq!(t.run(&["round", "stage", "--members", "sp-b:tb,sp-a:ta"]), 0, "{}\n{}", t.out(), t.err());
+    let members = kv_of(&t, "round-staged")["members"].clone();
+    assert!(members.find("sp-a:").unwrap() < members.find("sp-b:").unwrap(), "blocker first: {members}");
+}
+
+#[test]
+fn eject_of_a_blocker_takes_its_same_round_dependant_with_it_naming_the_blocker() {
+    let t = round_world();
+    block(&t, "sp-b", &["sp-a"]);
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb,sp-c:tc"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    assert_eq!(t.run(&["round", "eject", &batch, "sp-a", "--reason", "red on lint"]), 0, "{}", t.err());
+    assert!(t.out().contains("ejected sp-b from round") && t.out().contains("blocked on sp-a"), "{}", t.out());
     assert!(
-        e.contains("sp-s: SUBMITTED — its gate has not passed at ts"),
-        "{e}"
+        t.lc.calls.borrow().iter().any(|c| c.starts_with(&format!("eject-member {batch} sp-b ")) && c.ends_with("blocked on sp-a")),
+        "{:?}",
+        t.lc.calls.borrow()
     );
-    assert!(!t.lc.has("cut") && !t.qfile("round").exists());
+    assert_eq!(kv_of(&t, "round")["members"], "sp-c:tc");
 }
 
 pub(super) fn file_gate_verdict(t: &T, id: &str, tip: &str, rc: i32) {
@@ -3811,25 +3874,6 @@ fn stage_refuses_without_an_open_round_and_skips_the_open_rounds_own_members() {
 }
 
 #[test]
-fn stage_skips_a_submitted_member_whose_gate_has_not_passed() {
-    let t = round_world();
-    t.lc_row("sp-s", "SUBMITTED", "ts", 100);
-    assert_eq!(
-        t.run(&["round", "open", "--members", "sp-a:ta"]),
-        0,
-        "{}",
-        t.err()
-    );
-    assert_eq!(t.run(&["round", "stage", "--members", "sp-s:ts"]), 1);
-    let o = format!("{}{}", t.out(), t.err());
-    assert!(
-        o.contains("sp-s: SUBMITTED — its gate has not passed at ts; not admitted"),
-        "{o}"
-    );
-    assert!(!t.qfile("round-staged").exists());
-}
-
-#[test]
 fn fences_red_on_the_staged_head_stage_nothing() {
     let t = round_world();
     assert_eq!(
@@ -5054,24 +5098,8 @@ fn a_rework_bead_held_manual_is_retipped_and_admitted_to_a_round() {
         t.lc.calls.borrow()
     );
 
-    t.run(&["round", "open", "--members", &format!("sp-a:{T_FIX}")]);
-    assert!(
-        t.err().contains("SUBMITTED — its gate has not passed"),
-        "{}",
-        t.err()
-    );
-    for r in
-        t.lc.rows
-            .borrow_mut()
-            .as_mut()
-            .unwrap()
-            .iter_mut()
-            .filter(|r| r.bead_id == "sp-a")
-    {
-        r.state = "CERTIFIED".into();
-    }
     assert_eq!(
-        t.run(&["round", "open", "--members", &format!("sp-a:{T_FIX}")]),
+        t.run(&["round", "open", "--members", &format!("sp-a:{T_FIX}"), "--by", "concierge"]),
         0,
         "{}",
         t.err()
@@ -5128,7 +5156,7 @@ fn resubmit_says_a_held_bead_is_not_cut_by_the_batcher() {
     let ready = rework_world(&[]);
     set_row(&ready, "sp-a", |r| r.state = "READY".into());
     assert_eq!(ready.run(&a.iter().map(String::as_str).collect::<Vec<_>>()), 0, "{}", ready.err());
-    assert!(ready.out().contains("the batcher cuts it once CERTIFIED"), "{}", ready.out());
+    assert!(ready.out().contains("the batcher cuts it as a provisional member"), "{}", ready.out());
 }
 
 #[test]

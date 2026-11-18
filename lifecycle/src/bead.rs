@@ -336,7 +336,7 @@ pub enum BeadEventKind {
     /// at least one prerequisite and no bead twice over itself; `stack_depth` is the caller's.
     Restack { tip: String, stack: Stack, stack_depth: u32 },
     /// A REWORK bead held manual is re-tipped and put back to SUBMITTED, with no gate verdict:
-    /// its own gate certifies it before a round admits it. Refused without a manual hold. A break-glass
+    /// the round it is admitted to certifies it, or its own gate does first. Refused without a manual hold. A break-glass
     /// move: refused unless `break_glass` is complete. A resubmit at the tip recorded as
     /// `ejected_red_tip` withdraws that red, as `Absolve` does; at any other tip the red stays.
     Resubmit { tip: String, #[serde(default)] break_glass: BreakGlass },
@@ -486,6 +486,11 @@ fn base_withdrawn_applies(row: &LifecycleRow, prereq: &str, tip: &str) -> bool {
 /// killed run says nothing about the tree.
 fn gate_red_bars_tip(reason: GateRedReason) -> bool {
     !matches!(reason, GateRedReason::NoRebase | GateRedReason::Timeout)
+}
+
+/// Whether the reason a `GATE_RED_MARK` carries bars its tip; a reason this build does not know bars it.
+pub fn mark_bars_tip(mark: &str) -> bool {
+    GateRedReason::from_str(mark).is_none_or(gate_red_bars_tip)
 }
 
 /// Apply one event to one row. Pure: the only inputs are the row and the event, and the

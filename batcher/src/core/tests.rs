@@ -26,6 +26,7 @@ fn m(id: &str, rank: u8, express: bool, at: u64) -> Member {
         certified_at: at,
         stack: BTreeMap::new(),
         blocked_by: Vec::new(),
+    provisional: false,
     }
 }
 
@@ -419,13 +420,34 @@ fn a_member_whose_blocker_has_not_landed_is_not_cut_and_the_refusal_names_it() {
 }
 
 #[test]
-fn a_member_whose_blocker_is_only_in_the_same_round_is_not_cut() {
+fn a_member_whose_blocker_is_only_in_the_same_round_is_cut_after_its_blocker() {
     let (kept, refused) = refuse_blocked(vec![blocked("sp-b", &["sp-a"]), m("sp-a", 3, false, 0)]);
-    assert_eq!(
-        kept.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
-        vec!["sp-a"]
-    );
+    assert_eq!(kept.len(), 2, "{refused:?}");
+    assert!(refused.is_empty(), "{refused:?}");
+    let order: Vec<String> = topo_order(&kept).into_iter().map(|m| m.id).collect();
+    assert_eq!(order, ["sp-a", "sp-b"]);
+}
+
+#[test]
+fn a_cap_that_drops_the_blocker_refuses_its_dependant() {
+    let (capped, full) = cap_round(topo_order(&[m("sp-x", 1, false, 0), m("sp-a", 3, false, 0), blocked("sp-b", &["sp-a"])]), 1);
+    assert_eq!(capped.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["sp-x"]);
+    assert_eq!(full.len(), 2);
+    let (capped, _) = cap_round(vec![blocked("sp-b", &["sp-a"]), m("sp-a", 3, false, 0)], 1);
+    let (kept, refused) = refuse_blocked(capped);
+    assert!(kept.is_empty(), "the blocker the cap cut takes its dependant: {kept:?}");
     assert!(refused[0].contains("sp-b: depends on sp-a"), "{refused:?}");
+}
+
+#[test]
+fn a_provisional_member_ranks_after_a_certified_one_of_equal_priority_and_the_cap_drops_it_first() {
+    let provisional = |id: &str| Member { provisional: true, ..m(id, 1, false, 0) };
+    let pool = vec![provisional("sp-a"), m("sp-b", 1, false, 99)];
+    assert!(order_key(&pool[1]) < order_key(&pool[0]));
+    let (kept, _) = cap_round(topo_order(&pool), 1);
+    assert_eq!(kept[0].id, "sp-b");
+    let express = Member { express: true, provisional: true, ..m("sp-e", 1, true, 0) };
+    assert!(order_key(&express) < order_key(&pool[1]), "express still outranks a certified member");
 }
 
 #[test]
@@ -860,6 +882,7 @@ fn pr_record_lists_full_titles_with_foreign_prefixes_dropped_and_express_first()
             certified_at: 0,
             stack: BTreeMap::new(),
             blocked_by: Vec::new(),
+        provisional: false,
         },
         Member {
             id: "sp-x".into(),
@@ -871,6 +894,7 @@ fn pr_record_lists_full_titles_with_foreign_prefixes_dropped_and_express_first()
             certified_at: 0,
             stack: BTreeMap::new(),
             blocked_by: Vec::new(),
+        provisional: false,
         },
     ];
     let pr = pr_record(&members);
