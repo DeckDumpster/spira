@@ -53,7 +53,7 @@ through lib.sh's one-line shim until sp-du6dl), in place of the landing pass's o
 **Two verbs write only bd** (the supersede-duty handler's store half, after the row has moved):
 `bd-supersede <id> <succ>` runs `bd supersede <id> --with <succ>`, refusing (3) a self-supersede or a
 non-id; `bd-note <id> <text>` runs `bd note <id> <text>`, refusing an empty note. 0 done · 1 bd failed ·
-2 usage · 3 refused before bd ran. Neither reads or writes `spira_lifecycle`.
+2 usage · 3 refused before bd ran. Neither touches the control store.
 
 **One verb reads a repo's publish backlog.** `unpublished <repo>` measures from the remote-tracking
 ref already in the checkout (the repo's per-repo `[publish.<name>]`, else the default remote and the land ref's branch) and

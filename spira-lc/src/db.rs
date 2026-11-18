@@ -199,9 +199,8 @@ pub(crate) enum ScriptFailure {
     CannotTell(String),
 }
 
-/// The password a connection logs in with: the contents of `SPIRA_LC_PASSWORD_FILE` when that names a file
-/// AND non-empty, else SPIRA_LC_PASSWORD. conf.sh exports SPIRA_LC_PASSWORD_FILE empty when no
-/// credential file exists, and reading a file named "" must not shadow the password.
+/// The password a connection logs in with: the contents of `file` when that names a file and is
+/// non-empty, else `password`. A credential file exported empty must not shadow the password.
 pub(crate) fn password_from(
     file: Option<String>,
     password: Option<String>,

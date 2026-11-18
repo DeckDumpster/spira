@@ -55,6 +55,8 @@ mod skew;
 mod slow;
 mod store_write;
 mod unpublished;
+#[cfg(test)]
+mod verbs_on_store;
 mod work;
 
 use serde_json::Value;

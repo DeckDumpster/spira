@@ -295,7 +295,8 @@ fn gantt(logged: &[Logged], machine: &str, now: i64) -> Vec<Value> {
 /// Refused bead events inside the window, one row per (actor, event, from_state, refusal) with
 /// the count, the span and the newest five `bead@epoch` examples.
 fn refusals(logged: &[Logged], now: i64, window_secs: u64) -> Vec<Value> {
-    let mut groups: BTreeMap<(String, String, String, String), Vec<(i64, &str)>> = BTreeMap::new();
+    type Class = (String, String, String, String);
+    let mut groups: BTreeMap<Class, Vec<(i64, &str)>> = BTreeMap::new();
     for l in logged.iter().filter(|l| l.audit.machine == "bead" && !l.audit.applied && l.audit.at >= now - window_secs as i64) {
         let a = &l.audit;
         groups.entry((a.actor.clone(), a.event.clone(), a.from_state.clone(), a.refusal.clone().unwrap_or_default())).or_default().push((a.at, a.lc_key.as_str()));

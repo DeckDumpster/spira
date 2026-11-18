@@ -121,7 +121,10 @@ static KEPT: std::sync::Mutex<Option<Tracker>> = std::sync::Mutex::new(None);
 /// reads only the revisions past the last it saw, so a call never pays for the whole log twice.
 pub fn scan<B: state_store::Backend>(store: &crate::control::store::Store<B>) -> Result<Vec<Break>, String> {
     let mut kept = KEPT.lock().unwrap_or_else(|e| e.into_inner());
-    let tracker = kept.get_or_insert_with(Tracker::default);
+    advance(kept.get_or_insert_with(Tracker::default), store)
+}
+
+fn advance<B: state_store::Backend>(tracker: &mut Tracker, store: &crate::control::store::Store<B>) -> Result<Vec<Break>, String> {
     let read = store.audits_after(tracker.upto.max(0) as u64).map_err(|e| e.to_string())?;
     tracker.absorb(&rows_of(&read.audits));
     tracker.built = Some(Instant::now());
@@ -131,6 +134,27 @@ pub fn scan<B: state_store::Backend>(store: &crate::control::store::Store<B>) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn store() -> crate::control::store::Store<state_store::MemBackend> {
+        let clock = runtime::ports::VirtualClock::new(0);
+        let c = state_store::Contract::open(state_store::MemBackend::new(), state_store::Ports::virtual_clock(&clock), state_store::Config { min_lock_ttl_ms: 1_000 }).unwrap();
+        crate::control::store::Store::new(c, 1_000)
+    }
+
+    #[test]
+    fn the_store_log_chains_and_a_later_call_reads_only_what_came_after() {
+        use lifecycle::bead::{BeadEvent, BeadEventKind, BeadState};
+        let s = store();
+        let mut t = Tracker::default();
+        s.create("sp-a", None, Some("0123456789abcdef0123456789abcdef01234567"), 100, &state_store::Request::new("c1", "t", "t")).unwrap();
+        assert!(advance(&mut t, &s).unwrap().is_empty());
+        let first = t.upto;
+        let hold = |n: u64| BeadEvent { expect: BeadState::Working, version: n, kind: BeadEventKind::Release, actor: "d".into(), at: Some(110) };
+        s.apply("sp-a", &hold(0), &state_store::Request::new("e1", "t", "t")).unwrap();
+        assert!(advance(&mut t, &s).unwrap().is_empty(), "a refused event is no applied one, so it breaks nothing");
+        assert_eq!(t.upto, first, "and moves nothing the tracker has seen");
+        assert_eq!(t.last.get(&("bead".to_string(), "sp-a".to_string())).map(String::as_str), Some("SUBMITTED"));
+    }
 
     fn ev(seq: i64, key: &str, from: &str, to: &str) -> Value {
         serde_json::json!({"seq": seq.to_string(), "machine": "bead", "lc_key": key, "event": "E", "from_state": from, "to_state": to})

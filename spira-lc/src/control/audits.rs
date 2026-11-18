@@ -98,3 +98,42 @@ impl<B: Backend> Store<B> {
         Ok(Scanned { audits, complete: true })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use runtime::ports::VirtualClock;
+    use state_store::{Config, Contract, MemBackend, Ports, Request};
+
+    use super::*;
+
+    fn store() -> Store<MemBackend> {
+        let c = Contract::open(MemBackend::new(), Ports::virtual_clock(&VirtualClock::new(0)), Config { min_lock_ttl_ms: 1_000 }).unwrap();
+        Store::new(c, 1_000)
+    }
+
+    #[test]
+    fn the_scan_returns_the_audits_at_or_after_the_floor_and_says_it_reached_it() {
+        let s = store();
+        s.create("sp-a", None, Some("0123456789abcdef0123456789abcdef01234567"), 100, &Request::new("c1", "t", "t")).unwrap();
+        s.create("sp-b", None, Some("0123456789abcdef0123456789abcdef01234567"), 200, &Request::new("c2", "t", "t")).unwrap();
+        let all = s.audits_since(0).unwrap();
+        assert!(all.complete);
+        let keys: Vec<&str> = all.audits.iter().filter(|l| l.audit.applied).map(|l| l.audit.lc_key.as_str()).collect();
+        assert!(keys.contains(&"sp-a") && keys.contains(&"sp-b"), "{keys:?}");
+        let later = s.audits_since(150).unwrap();
+        assert!(later.complete);
+        assert!(later.audits.iter().all(|l| l.audit.at >= 150), "{:?}", later.audits);
+        assert!(later.audits.iter().all(|l| l.audit.lc_key != "sp-a"));
+    }
+
+    #[test]
+    fn audits_after_a_revision_skip_it_and_everything_before() {
+        let s = store();
+        s.create("sp-a", None, Some("0123456789abcdef0123456789abcdef01234567"), 100, &Request::new("c1", "t", "t")).unwrap();
+        let first = s.audits_after(0).unwrap().audits.iter().map(|l| l.rev).max().unwrap();
+        s.create("sp-b", None, Some("0123456789abcdef0123456789abcdef01234567"), 200, &Request::new("c2", "t", "t")).unwrap();
+        let rest = s.audits_after(first).unwrap();
+        assert!(rest.audits.iter().all(|l| l.rev > first && l.audit.lc_key == "sp-b"), "{:?}", rest.audits);
+        assert!(!rest.audits.is_empty());
+    }
+}

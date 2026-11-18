@@ -111,13 +111,48 @@ fn facts<B: Backend>(store: &Store<B>, since: i64) -> Result<Value, String> {
         .collect();
     let rows = |event: &Logged| json!({ "batch_id": event.audit.lc_key, "evidence": text(&event.audit.evidence), "at": text(event.audit.at) });
     let pass_ends: Vec<Value> = scan.audits.iter().filter(|l| applied(l, "batch") && ["PassRed", "PassPreempted"].contains(&l.audit.event.as_str())).map(rows).collect();
-    let ejects: Vec<Value> = ejects.into_iter().map(|l| rows(l)).collect();
+    let ejects: Vec<Value> = ejects.into_iter().map(rows).collect();
     Ok(json!({ "ejects": ejects, "members": members, "landed_at": landed_at, "landed_tip": landed_tip, "mendings": fold_outcomes(mendings, &outcomes), "mends": mends, "pass_ends": pass_ends }))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::control::keys;
+    use crate::control::records::encode;
+    use crate::control::store::{MendRecord, MendingRecord};
+    use state_store::{Config, Contract, MemBackend, Object, Ports, Request, Txn};
+
+    fn store() -> Store<MemBackend> {
+        let clock = runtime::ports::VirtualClock::new(0);
+        let c = Contract::open(MemBackend::new(), Ports::virtual_clock(&clock), Config { min_lock_ttl_ms: 1_000 }).unwrap();
+        Store::new(c, 1_000)
+    }
+
+    fn put(s: &Store<MemBackend>, key: &str, v: Value) {
+        s.contract().txn(&Txn::new().put(key, Object::new(v)), &Request::new(&format!("put-{key}"), "t", "t")).unwrap();
+    }
+
+    #[test]
+    fn the_facts_are_each_failure_and_mend_of_the_window_and_none_before_it() {
+        let s = store();
+        let failure = MendingRecord::failed("batch-1", 1, "test-a.sh", 500);
+        put(&s, &keys::mending(&failure.row.key()), encode(&failure).unwrap());
+        let old = MendingRecord::failed("batch-0", 1, "test-old.sh", 5);
+        put(&s, &keys::mending(&old.row.key()), encode(&old).unwrap());
+        let mend = MendRecord { batch_id: "batch-1".into(), pass: 1, suite: "test-a.sh".into(), bead_id: "sp-a".into(), from_tip: "f".into(), tip: "t".into(), ask_id: None, checked: vec![], diagnosis: None, at: 600 };
+        put(&s, &keys::mend("sp-a", 600, 0), encode(&mend).unwrap());
+        let out = facts(&s, 100).unwrap();
+        let got = |k: &str| out[k].as_array().unwrap().clone();
+        assert_eq!(got("mendings").len(), 1);
+        assert_eq!(got("mendings")[0]["suite"], "test-a.sh");
+        assert_eq!(got("mendings")[0]["failed_at"], "500");
+        assert_eq!(got("mendings")[0]["outcome_at"], Value::Null, "no event has taken it out of WAITING");
+        assert_eq!(got("mends")[0]["bead_id"], "sp-a");
+        for empty in ["ejects", "members", "landed_at", "landed_tip", "pass_ends"] {
+            assert!(got(empty).is_empty(), "{empty}");
+        }
+    }
 
     fn failure(suite: &str, state: &str) -> Value {
         json!({"batch_id": "batch-mend", "pass": "1", "suite": suite, "state": state})

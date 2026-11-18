@@ -51,7 +51,8 @@ impl<B: Backend> Store<B> {
                 t = t.put(&key(n, f), Object::new(f.stored()));
             }
             let req = Request::new(&format!("{carry}/{c:010}"), actor, "carry-facts");
-            if self.contract().txn(&t, &req)?.succeeded {
+            let done = self.contract().txn(&t, &req)?;
+            if done.succeeded && !done.already_applied {
                 written += chunk.len();
             }
         }
