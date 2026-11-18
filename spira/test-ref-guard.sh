@@ -41,7 +41,7 @@ cd "$TR" || exit 1
 
 # commit-msg asks spira-lc whether cited beads exist; this fixture has no store, so a stub
 # answers: a message citing sp-phantom is refused (3), anything else passes.
-unset SPIRA_WORK_BEAD_ID
+unset SPIRA_WORK_BEAD_ID SPIRA_DWARF BEAD_ID SPIRA_REF_SANCTIONED
 STUBBIN="$TR/stubbin"; mkdir -p "$STUBBIN"
 cat > "$STUBBIN/spira-lc" <<'STUB'
 #!/usr/bin/env bash
