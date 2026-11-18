@@ -1370,9 +1370,7 @@ mod tests {
         let cmds: Vec<&str> = t.1.split("; ").collect();
         let run = |needle: &str| *cmds.iter().find(|c| c.contains(needle)).unwrap();
         assert!(run("nextest run").contains("tools/test-sandbox/runner --around cargo nextest run"), "{}", t.1);
-        for other in ["--test '*'"] {
-            assert!(!run(other).contains("test-sandbox/runner"), "{}", t.1);
-        }
+        assert!(!run("--test '*'").contains("test-sandbox/runner"), "{}", t.1);
     }
 
     #[test]
