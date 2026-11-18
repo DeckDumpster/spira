@@ -170,3 +170,8 @@ bead = "sp-zxj2fq"
 id = "UC-safety-fences-34"
 tier = "T0"
 statement = "shipped-tree readiness: every shipped shell script parses, `conf.sh` resolves `SPIRA_HOME` without operator config, and the ask-label default names no operator"
+
+[[use_case]]
+id = "UC-safety-fences-35"
+tier = "T2"
+statement = "the `reference-transaction` hook refuses a dwarf (`SPIRA_DWARF` set) any checkout of the registered landing ref or write to it, from its worktree or by `git -C` at the armed main checkout, naming the merge/rebase exit and failing closed when the landing ref cannot be resolved; `SPIRA_REF_SANCTIONED=1`, an operator without `SPIRA_DWARF`, and the dwarf's own branch work still pass"

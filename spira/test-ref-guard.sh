@@ -27,7 +27,7 @@
 # deletion in a real checkout would be the very thing the hook exists to prevent.
 #
 # tier: T2
-# covers: spira/hooks/reference-transaction spira/worktree-hooks.sh spira/hooks/pre-commit spira/hooks/commit-msg spira/pre-commit-guard.sh UC-safety-fences-20 UC-safety-fences-21
+# covers: spira/hooks/reference-transaction spira/worktree-hooks.sh spira/hooks/pre-commit spira/hooks/commit-msg spira/pre-commit-guard.sh UC-safety-fences-20 UC-safety-fences-21 UC-safety-fences-35
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$HERE/testlib.sh"
@@ -41,7 +41,7 @@ cd "$TR" || exit 1
 
 # commit-msg asks spira-lc whether cited beads exist; this fixture has no store, so a stub
 # answers: a message citing sp-phantom is refused (3), anything else passes.
-unset SPIRA_WORK_BEAD_ID
+unset SPIRA_WORK_BEAD_ID SPIRA_DWARF BEAD_ID SPIRA_REF_SANCTIONED
 STUBBIN="$TR/stubbin"; mkdir -p "$STUBBIN"
 cat > "$STUBBIN/spira-lc" <<'STUB'
 #!/usr/bin/env bash
@@ -267,5 +267,115 @@ echo x > "$TR/wt18/f18"
 git -C "$TR/wt18" add f18 seed.rs >/dev/null 2>&1
 git -C "$TR/wt18" commit -qm "sp-test: after release A is gone" >/dev/null 2>&1
 is "case 18: commit succeeds after the release it was armed under is deleted" "0" "$?"
+
+# ---------------------------------------------------------------------------------------
+# CASES 19-25: a dwarf (SPIRA_DWARF set) may not put the landing ref under HEAD or move it.
+# The fixture's landing ref is the LOCAL branch local/main, registered through the real
+# spira-config, so the resolution the hook performs is what runs. The main checkout is armed
+# by exclude.sh install, the worktree by worktree-hooks.sh install.
+# ---------------------------------------------------------------------------------------
+LR="$TR/landrepo"
+git init -q "$LR" && git -C "$LR" config user.email guard-suite@example.invalid \
+    && git -C "$LR" config user.name "ref guard suite"
+mkdir -p "$LR/hooks"
+cp "$HERE/boundary" "$HERE/gate.sh" "$HERE/lib.sh" "$LR/"
+cp "$HERE/hooks/pre-commit" "$LR/hooks/pre-commit"
+printf '#!/usr/bin/env bash\nexec "%s" "$@"\n' "$HOOK" > "$LR/hooks/reference-transaction"
+chmod +x "$LR/hooks/reference-transaction" "$LR/hooks/pre-commit"
+echo seed > "$LR/seed.txt"
+git -C "$LR" add -A >/dev/null 2>&1
+git -C "$LR" commit -qm seed >/dev/null 2>&1
+git -C "$LR" branch local/main
+git -C "$LR" commit -q --allow-empty -m "second" >/dev/null 2>&1
+LR_OLD="$(git -C "$LR" rev-parse local/main)"
+LR_NEW="$(git -C "$LR" rev-parse HEAD)"
+printf '%s | %s | local | local/main | |\n' "landfix" "$LR" > "$TR/landmap"
+tl_config SPIRA_REPO_MAP="$TR/landmap" SPIRA_HOME_REPO="landfix"
+exclude.sh install "$LR" >/dev/null 2>&1
+git -C "$LR" worktree add -q "$TR/landwt" -b spira/sp-mine 2>/dev/null
+SPIRA_HOME="$HERE" worktree-hooks.sh install "$TR/landwt" >/dev/null 2>&1
+landref_at() { git -C "$LR" rev-parse refs/heads/local/main; }
+export SPIRA_DWARF=fixture BEAD_ID=sp-mine
+
+# git before 2.46 does not run the prepared phase for a HEAD symref move (checkout, switch),
+# so the hook cannot see a checkout there; the suite asserts it where git reports it.
+PROBE="$TR/headprobe"; git init -q "$PROBE"; mkdir "$PROBE/h"
+printf '#!/usr/bin/env bash\n[ "$1" = prepared ] && cat | grep -q " HEAD$" && touch "%s/saw-head"\nexit 0\n' "$TR" > "$PROBE/h/reference-transaction"
+chmod +x "$PROBE/h/reference-transaction"
+git -C "$PROBE" config core.hooksPath h
+git -C "$PROBE" config user.email p@example.invalid; git -C "$PROBE" config user.name p
+git -C "$PROBE" commit -q --allow-empty -m p >/dev/null 2>&1
+git -C "$PROBE" branch probe-b
+rm -f "$TR/saw-head"
+git -C "$PROBE" checkout -q probe-b >/dev/null 2>&1
+if [ -e "$TR/saw-head" ]; then HEAD_SEEN=1; else HEAD_SEEN=0; echo "note: $(git --version) reports no HEAD update to the hook; the checkout cases 19 and 21 are not asserted"; fi
+
+echo
+echo "CASE 19: a dwarf's checkout of the landing ref is refused, and HEAD stays on its branch:"
+if [ "$HEAD_SEEN" = 1 ]; then
+out="$(git -C "$TR/landwt" checkout local/main 2>&1)"; rc=$?
+is   "case 19: checkout is refused" "1" "$([ $rc -ne 0 ] && echo 1 || echo 0)"
+is   "case 19: HEAD is still the dwarf's branch" "spira/sp-mine" "$(git -C "$TR/landwt" symbolic-ref --short HEAD)"
+want "case 19: refusal names the landing ref" "local/main" "$out"
+want "case 19: refusal names the exit" "git merge local/main" "$out"
+want "case 19: refusal names SPIRA_DWARF" "SPIRA_DWARF" "$out"
+want "case 19: refusal names the bead branch" "git switch spira/sp-mine" "$out"
+nowant "case 19: refusal does not advertise the override" "SPIRA_REF_SANCTIONED" "$out"
+fi
+
+echo
+echo "CASE 20: update-ref and branch -f on the landing ref are refused:"
+out="$(git -C "$TR/landwt" update-ref refs/heads/local/main "$LR_NEW" "$LR_OLD" 2>&1)"; rc=$?
+is   "case 20: update-ref is refused" "1" "$([ $rc -ne 0 ] && echo 1 || echo 0)"
+want "case 20: refusal names the landing ref" "local/main" "$out"
+want "case 20: refusal names the exit" "git merge local/main" "$out"
+is "case 20: update-ref leaves local/main" "$LR_OLD" "$(landref_at)"
+git -C "$TR/landwt" branch -f local/main HEAD >/dev/null 2>&1
+is "case 20: branch -f leaves local/main" "$LR_OLD" "$(landref_at)"
+
+echo
+echo "CASE 21: a git -C aimed at the armed main checkout cannot check out and commit on the landing ref:"
+out="$(git -C "$LR" checkout local/main 2>&1)"; rc=$?
+if [ "$HEAD_SEEN" = 1 ]; then
+    is   "case 21: the checkout in the main checkout is refused" "1" "$([ $rc -ne 0 ] && echo 1 || echo 0)"
+    want "case 21: refusal names the exit" "git merge local/main" "$out"
+    is   "case 21: the main checkout is still on its own branch" "main" "$(git -C "$LR" symbolic-ref --short HEAD)"
+fi
+git -C "$LR" commit -q --allow-empty -m x >/dev/null 2>&1
+git -C "$LR" checkout -q main >/dev/null 2>&1
+is "case 21: local/main is unchanged" "$LR_OLD" "$(landref_at)"
+
+echo
+echo "CASE 22: positive controls — a dwarf's own work still passes:"
+echo "fn main() {}" > "$TR/landwt/mine.rs"
+git -C "$TR/landwt" add mine.rs >/dev/null 2>&1
+git -C "$TR/landwt" commit -qm "sp-test: own work" >/dev/null 2>&1
+is "case 22: commit on the bead branch succeeds" "0" "$?"
+git -C "$TR/landwt" merge -q local/main >/dev/null 2>&1
+is "case 22: merging the landing ref into the bead branch succeeds" "0" "$?"
+timeout 5 git -C "$TR/landwt" fetch -q "$LR" >/dev/null 2>&1
+is "case 22: fetch succeeds" "0" "$?"
+
+echo
+echo "CASE 23: without SPIRA_DWARF an operator may move the landing ref:"
+env -u SPIRA_DWARF git -C "$LR" update-ref refs/heads/local/main "$LR_NEW" "$LR_OLD" >/dev/null 2>&1
+is "case 23: operator update-ref succeeds" "$LR_NEW" "$(landref_at)"
+env -u SPIRA_DWARF git -C "$LR" update-ref refs/heads/local/main "$LR_OLD" "$LR_NEW" >/dev/null 2>&1
+
+echo
+echo "CASE 24: the sanctioned writer moves it even with SPIRA_DWARF set (what RealGit::update_ref runs):"
+SPIRA_REF_SANCTIONED=1 git -C "$LR" update-ref refs/heads/local/main "$LR_NEW" "$LR_OLD" >/dev/null 2>&1
+is "case 24: sanctioned update-ref succeeds" "$LR_NEW" "$(landref_at)"
+SPIRA_REF_SANCTIONED=1 git -C "$LR" update-ref refs/heads/local/main "$LR_OLD" "$LR_NEW" >/dev/null 2>&1
+
+echo
+echo "CASE 25: an unresolvable landing ref fails closed for a dwarf, naming the root:"
+printf '%s | %s | local | gone/nowhere | |\n' "landfix" "$LR" > "$TR/landmap"
+out="$(git -C "$TR/landwt" update-ref refs/heads/local/main "$LR_NEW" "$LR_OLD" 2>&1)"; rc=$?
+is   "case 25: the write is refused" "1" "$([ $rc -ne 0 ] && echo 1 || echo 0)"
+want "case 25: refusal names the root" "$LR" "$out"
+want "case 25: refusal names the failing command" "spira-config repo landref" "$out"
+unset SPIRA_DWARF BEAD_ID
+
 
 tl_summary

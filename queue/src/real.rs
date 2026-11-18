@@ -108,6 +108,18 @@ fn git(repo: &Path) -> Command {
     c
 }
 
+/// The queue's ref writes are the sanctioned ones: they pass the reference-transaction hook's
+/// landing-ref refusal from any environment.
+fn update_ref_cmd(repo: &Path, refname: &str, new: &str, old: Option<&str>) -> Command {
+    let mut c = git(repo);
+    c.args(["update-ref", refname, new]);
+    if let Some(o) = old {
+        c.arg(o);
+    }
+    c.env("SPIRA_REF_SANCTIONED", "1");
+    c
+}
+
 impl Git for RealGit {
     fn rev_parse(&self, repo: &Path, rev: &str) -> Option<String> {
         stdout_of(git(repo).args(["rev-parse", "--verify", "-q", rev]))
@@ -154,12 +166,7 @@ impl Git for RealGit {
         Some(paths)
     }
     fn update_ref(&self, repo: &Path, refname: &str, new: &str, old: Option<&str>) -> bool {
-        let mut c = git(repo);
-        c.args(["update-ref", refname, new]);
-        if let Some(o) = old {
-            c.arg(o);
-        }
-        ok(c.stderr(Stdio::null()))
+        ok(update_ref_cmd(repo, refname, new, old).stderr(Stdio::null()))
     }
     fn ref_exists(&self, repo: &Path, refname: &str) -> bool {
         ok(git(repo)
@@ -2579,6 +2586,13 @@ impl Emit for StdEmit {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn update_ref_is_the_sanctioned_writer() {
+        let c = super::update_ref_cmd(std::path::Path::new("r"), "refs/heads/x", "new", Some("old"));
+        let env = c.get_envs().find(|(k, _)| *k == "SPIRA_REF_SANCTIONED");
+        assert_eq!(env.and_then(|(_, v)| v), Some(std::ffi::OsStr::new("1")));
+    }
+
     use spira_store::lc_call::{Reply, Transport};
 
     struct Seen(std::sync::Mutex<Vec<Vec<String>>>);

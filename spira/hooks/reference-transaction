@@ -29,10 +29,12 @@
 # guard can bind that no `cd` and no new caller can route around
 # (law-guard-binds-the-caller: the actor here is any writer at all).
 #
-# WHAT IT REFUSES, AND ONLY THAT. Deletion of refs/heads/spira/**. Nothing else:
-# creating a branch, committing, fetching, merging, checking out, tagging and
-# deleting any ref outside that namespace are all untouched. A guard that refuses
-# more than its scar is a tax on every future session.
+# WHAT IT REFUSES, AND ONLY THAT. Two things. Deletion of refs/heads/spira/**; and, for a
+# session carrying SPIRA_DWARF, any update of the registered repository's landing branch or
+# any HEAD move onto it (checkout, switch, commit, merge, update-ref, branch -f). Everything
+# else is untouched: creating a branch, committing on one's own branch, fetching, merging
+# the landing ref into it, tagging. A guard that refuses more than its scar is a tax on
+# every future session.
 #
 # PACK-REFS IS NOT A DELETION. `git gc`/`git pack-refs --all --prune` moves a loose ref
 # into packed-refs and then removes the now-redundant loose file — a representation
@@ -59,6 +61,7 @@ phase="${1:-}"
 # Drain stdin before exiting: leaving data unread sends SIGPIPE to the caller's
 # pipeline (law-no-grep-q-under-pipefail).
 [ "$phase" = "prepared" ] || { cat >/dev/null; exit 0; }
+input="$(cat)"
 
 # The sanctioned path. Set by lib.sh's spira_destroy_branch and by batch.sh when it
 # removes a queue branch it just created.
@@ -80,7 +83,52 @@ while read -r old new ref; do
     # A non-zero old-oid means a verified compare-and-delete: pack-refs --prune, not a
     # real loss. Only an unconditional delete (old-oid also zero) is refused.
     is_zero "$old" && blocked="$blocked $ref"
-done
+done <<<"$input"
+
+dwarf_refusal() {   # dwarf_refusal <ref-or-HEAD-description>
+    {
+        printf 'reference-transaction: REFUSING %s\n' "$1"
+        cat <<MSG
+
+This session is a dwarf (SPIRA_DWARF=${SPIRA_DWARF}, BEAD_ID=${BEAD_ID:-unset}). Only the landing
+verbs move the landing ref; a dwarf works on its own branch and the round lands it.
+
+    git switch spira/${BEAD_ID:-<bead>}; git merge ${landref:-<landref>}     # or: git rebase ${landref:-<landref>}
+MSG
+    } >&2
+    exit 1
+}
+
+if [ -n "${SPIRA_DWARF:-}" ] && printf '%s\n' "$input" | grep -qE ' (refs/heads/|HEAD$)'; then
+    _hook_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+    for _d in "$_hook_dir/../../bin" "$_hook_dir/.."; do
+        [ -d "$_d" ] && PATH="$(cd "$_d" && pwd -P):$PATH"
+    done
+    export PATH
+    _clean=(env -u GIT_DIR -u GIT_INDEX_FILE -u GIT_WORK_TREE)
+    common="$("${_clean[@]}" git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || common=""
+    root="$(dirname "$common")"
+    landref="";     protected=""
+    if [ -n "$common" ] && landref="$("${_clean[@]}" spira-config repo landref "$root" 2>/dev/null)" && [ -n "$landref" ]; then
+        if "${_clean[@]}" spira-config repo ref-remote "$landref" "$root" >/dev/null 2>&1; then
+            protected="refs/heads/$("${_clean[@]}" spira-config repo ref-branch "$landref")"
+        else
+            protected="refs/heads/$landref"
+        fi
+    else
+        landref=""
+        dwarf_refusal "a ref change: the landing ref of $root could not be resolved by \`spira-config repo landref $root\`, so nothing under refs/heads or HEAD may move."
+    fi
+    while read -r old new ref; do
+        [ -n "${ref:-}" ] || continue
+        if [ "$ref" = "$protected" ]; then
+            dwarf_refusal "to move $protected (the landing ref)."
+        fi
+        if [ "$ref" = HEAD ] && [ "$new" = "ref:$protected" ]; then
+            dwarf_refusal "to put $protected (the landing ref) under HEAD."
+        fi
+    done <<<"$input"
+fi
 
 [ -n "$blocked" ] || exit 0
 
