@@ -38,7 +38,6 @@ struct FGit {
     merge_fail: RefCell<BTreeSet<String>>,
     /// Runs on every merge with its tip: the world moving while git works.
     on_merge: RefCell<Option<MergeHook>>,
-    settle_fails: Cell<bool>,
     /// Tips whose rebase onto the round's head conflicts, with the paths it names.
     rebase_fail: RefCell<BTreeMap<String, Vec<String>>>,
     /// Tips that conflict with the base, with the paths the merge names.
@@ -236,10 +235,6 @@ impl Git for FGit {
         self.refs.borrow_mut().insert("HEAD".into(), head);
         let _ = wt;
         true
-    }
-    fn settle_migrations(&self, _: &Path) -> bool {
-        self.calls.borrow_mut().push("settle_migrations".into());
-        !self.settle_fails.get()
     }
     fn merge_abort(&self, _: &Path) {}
     fn rebase_onto(

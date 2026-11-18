@@ -6,13 +6,11 @@
 //! repository. Replaces `spira/stage.sh`; `crate::canary` is the caller that most needs it.
 //!
 //! ISOLATION IS ASSERTED AT BUILD TIME: [`up`] refuses to return an env block where any of
-//! `SPIRA_DB`, `SPIRA_RUN` or `SPIRA_HOME` — or the lifecycle credential, data dir or socket —
-//! resolves outside the stage root, so a misconfiguration fails closed rather than silently
+//! `SPIRA_DB`, `SPIRA_RUN` or `SPIRA_HOME` — or the control store's path — resolves outside the stage root, so a misconfiguration fails closed rather than silently
 //! contaminating a real instance.
 //!
-//! THE LIFECYCLE MACHINE IS THE STAGE'S OWN (sp-880u4): a private Dolt sql-server under
-//! `<root>/lc` holding `spira_lifecycle`, built by [`crate::stage_lc`] with the code
-//! `spira-install` uses, and the `SPIRA_LC_*` env that sends every `spira-lc` call there.
+//! THE LIFECYCLE MACHINE IS THE STAGE'S OWN: a control store under `<root>/lc`, created by
+//! `spira-lc admin-create-store`, and the `SPIRA_LC_*` env that sends every `spira-lc` call there.
 //!
 //! THE TWO HARNESS SEAMS:
 //!
@@ -30,6 +28,9 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+
+/// The stage's control store directory, relative to the stage root.
+const LC_DIR: &str = "lc";
 
 /// The stage's own repo map file's basename. Deliberately not spelled the same as the real
 /// config file `spira-config` owns (config-fence, DESIGN.md "stage") — `SPIRA_REPO_MAP` is
@@ -75,7 +76,7 @@ fn write_exec(path: &Path, body: &str) -> Result<(), String> {
     fs::set_permissions(path, fs::Permissions::from_mode(0o755)).map_err(|e| format!("cannot chmod {}: {e}", path.display()))
 }
 
-/// The stage's content store is an embedded bd, not a database on its lifecycle server, so
+/// The stage's content store is an embedded bd, so
 /// `spira-lc plan items --ids` is answered from bd here; every other verb goes to the next
 /// `spira-lc` on PATH.
 fn lc_content_shim(db: &Path) -> String {
@@ -254,29 +255,20 @@ pub fn up(o: &StageOpts) -> Result<Stage, String> {
     let stage_repomap_path = sh.join(STAGE_REPO_MAP_FILENAME);
     fs::write(&stage_repomap_path, repo_map_line(&repo)).map_err(|e| format!("cannot write the stage's repo map: {e}"))?;
 
-    // ---- lifecycle store (sp-880u4): every claim goes through the lifecycle machine, so the
-    // stage gets a machine of its own, built from the release's lifecycle/ the way install
-    // builds one. The release root is the parent of its spira/ directory.
     write_exec(&bin.join("spira-lc"), &lc_content_shim(&db))?;
     let path_env = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap_or_default());
-    let lifecycle_dir = o.harness_spira.parent().map(|r| r.join("lifecycle")).unwrap_or_default();
-    let store = match crate::stage_lc::up(&root, &lifecycle_dir, &path_env) {
-        Ok(s) => s,
-        Err(e) => {
-            let _ = fsutil::remove_tree(&root);
-            return Err(format!("stage: lifecycle store: {e}"));
-        }
-    };
-    let lc_env = store.env();
+    let lc_dir = root.join(LC_DIR);
+    fs::create_dir_all(&lc_dir).map_err(|e| format!("cannot create {}: {e}", lc_dir.display()))?;
+    let lc_env = vec![
+        ("SPIRA_LC_STORE_PATH".to_string(), lc_dir.join("control.db").display().to_string()),
+        // Declared direct mode: never the operator's service.
+        ("SPIRA_LC_SOCKET".to_string(), String::new()),
+    ];
 
-    // ---- isolation check: the stores, the run dir, the harness, and the lifecycle
-    // credential and socket every spira-lc call in the stage resolves.
-    let lc_paths: Vec<PathBuf> =
-        // An empty socket is declared direct mode: it names no path, so nothing to confine.
-        lc_env.iter().filter(|(k, v)| matches!(k.as_str(), "SPIRA_LC_PASSWORD_FILE" | "SPIRA_LC_SOCKET" | "SPIRA_LC_DATA_DIR") && !(k == "SPIRA_LC_SOCKET" && v.is_empty())).map(|(_, v)| PathBuf::from(v)).collect();
+    // ---- isolation check: the stores, the run dir, the harness and the control store.
+    let lc_paths: Vec<PathBuf> = lc_env.iter().filter(|(k, _)| k == "SPIRA_LC_STORE_PATH").map(|(_, v)| PathBuf::from(v)).collect();
     for p in [&db, &root.join("run"), &sh].into_iter().chain(lc_paths.iter()) {
         if !p.starts_with(&root) {
-            crate::stage_lc::stop(&root);
             let _ = fsutil::remove_tree(&root);
             return Err(format!("isolation violated: {} is outside {}", p.display(), root.display()));
         }
@@ -324,23 +316,42 @@ pub fn up(o: &StageOpts) -> Result<Stage, String> {
     match write() {
         Ok(spec) => env.push(("SPIRA_TOML".to_string(), spec)),
         Err(e) => {
-            crate::stage_lc::stop(&root);
             let _ = fsutil::remove_tree(&root);
             return Err(format!("stage: cannot declare the stage's own config: {e}"));
         }
     }
+    if let Err(e) = create_control_store(&env) {
+        let _ = fsutil::remove_tree(&root);
+        return Err(format!("stage: control store: {e}"));
+    }
     Ok(Stage { root, env })
+}
+
+/// The stage's empty control store, made by `spira-lc admin-create-store` under the stage's own env.
+fn create_control_store(env: &[(String, String)]) -> Result<(), String> {
+    let lc = spira_store::lifecycle_row::lc_bin()?;
+    // batch-job: one store creation, bounded at 60 s by timeout(1).
+    let mut c = Command::new("timeout");
+    c.arg("60").arg(lc).arg("admin-create-store").stdin(Stdio::null());
+    for (k, v) in env {
+        c.env(k, v);
+    }
+    let o = c.output().map_err(|e| format!("cannot run spira-lc: {e}"))?;
+    if o.status.success() {
+        Ok(())
+    } else {
+        Err(format!("spira-lc admin-create-store exited {:?}: {}{}", o.status.code(), String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr)))
+    }
 }
 
 /// `release stage down <root>`. Refuses a path that does not look like a stage (no
 /// `spira/runes/canary.rune`) — the same safety check `stage.sh down` makes before an
-/// `rm -rf`. Stops the stage's lifecycle server first.
+/// `rm -rf`.
 pub fn down(root: &Path) -> Result<(), String> {
     let canon = fs::canonicalize(root).map_err(|_| format!("down: {} does not exist", root.display()))?;
     if !canon.join("spira/runes/canary.rune").is_file() {
         return Err(format!("down: {} does not look like a stage (no canary.rune) — refusing rm -rf", canon.display()));
     }
-    crate::stage_lc::stop(&canon);
     fsutil::remove_tree(&canon)
 }
 

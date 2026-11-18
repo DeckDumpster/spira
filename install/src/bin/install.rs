@@ -1206,61 +1206,41 @@ fn run_main() -> ExitCode {
         }
     }
 
-    // ---- phase 4.5: lifecycle store -------------------------------------------------------
-    // sp-xfqnr: a fresh same-user install never built spira_lifecycle, so a dwarf was
-    // called but could not claim or submit, and `spira-lc history` exited 2. The lifecycle
-    // machine is the only mode (sp-v62vn): there is no switch to turn on afterwards. Here,
-    // after phase 4 has dolt-beads.service listening: schema, migrations, grants —
-    // idempotent, and fatal when it cannot be done (no silent skip).
-    phase("phase 4.5: lifecycle store");
+    // ---- phase 4.5: control store ---------------------------------------------------------
+    phase("phase 4.5: control store");
     if spira_config::resolve::lc_system_mode() {
         skip("spira-lc runs as a system service (--system-user) — its credentials are under /etc/spira-lc");
     } else if nonempty_env("SPIRA_INSTALL_LC_STORE_CONSIDERED").is_some() {
-        info("lifecycle store NOT built — SPIRA_INSTALL_LC_STORE_CONSIDERED is set (a fixture with no real Dolt server); spira-lc will not answer until install runs without it");
+        info("control store NOT built — SPIRA_INSTALL_LC_STORE_CONSIDERED is set; spira-lc will not answer until install runs without it");
     } else if opts.dry {
-        would("apply lifecycle/schema.sql, lifecycle/migrations/*.sql (spira-lc admin-migrate) and lifecycle/grants.sql as the Dolt admin");
         would("create the control store at SPIRA_LC_STORE_PATH if absent (spira-lc admin-create-store)");
     } else {
-        let port = lc_port(dolt_data.as_deref());
-        match lifecycle_store_phase(port) {
-            Ok(lines) => {
-                for l in lines {
-                    info(&l);
-                }
-                changes += 1;
-                phase("phase 4.5b: control store");
-                if let Err(e) = control_store_phase() {
-                    eprintln!("install: phase control store failed — {e}");
-                    return ExitCode::from(2);
-                }
-                // lc-serve.service was enabled in phase 4, before this store existed, and may
-                // have given up (StartLimitBurst): restart it now and require it to be active —
-                // fail closed, since a dwarf cannot claim without it (sp-xfqnr).
-                // batch-job: one restart of a service during install; bounded by timeout 30.
-                let _ = Command::new("timeout").args(["30", "systemctl", "--user", "restart", "lc-serve.service"]).status();
-                let mut active = false;
-                for _ in 0..20 {
-                    active = Command::new("timeout")
-                        .args(["5", "systemctl", "--user", "is-active", "--quiet", "lc-serve.service"])
-                        .status()
-                        .map(|s| s.success())
-                        .unwrap_or(false);
-                    if active {
-                        break;
-                    }
-                    std::thread::sleep(std::time::Duration::from_secs(1));
-                }
-                if !active {
-                    eprintln!("install: phase lifecycle store failed — lc-serve.service is not active after the store was built (journalctl --user -u lc-serve.service)");
-                    return ExitCode::from(2);
-                }
-                info("lc-serve.service active on the lifecycle store");
-            }
-            Err(e) => {
-                eprintln!("install: phase lifecycle store failed — {e}");
-                return ExitCode::from(2);
-            }
+        if let Err(e) = control_store_phase() {
+            eprintln!("install: phase control store failed — {e}");
+            return ExitCode::from(2);
         }
+        changes += 1;
+        // lc-serve.service was enabled in phase 4, before this store existed, and may have
+        // given up (StartLimitBurst): restart it now and require it to be active.
+        // batch-job: one restart of a service during install; bounded by timeout 30.
+        let _ = Command::new("timeout").args(["30", "systemctl", "--user", "restart", "lc-serve.service"]).status();
+        let mut active = false;
+        for _ in 0..20 {
+            active = Command::new("timeout")
+                .args(["5", "systemctl", "--user", "is-active", "--quiet", "lc-serve.service"])
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            if active {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        }
+        if !active {
+            eprintln!("install: phase control store failed — lc-serve.service is not active after the store was built (journalctl --user -u lc-serve.service)");
+            return ExitCode::from(2);
+        }
+        info("lc-serve.service active on the control store");
     }
 
     // Certify locks of rounds that ended while nothing removed them: swept once per registered
@@ -1764,7 +1744,7 @@ fn dolt_servers() -> Vec<(String, String)> {
 }
 
 /// Phase 6.5 (design §3.6.4): the one root-requiring step — a Unix user of its own for the
-/// spira_lifecycle credential. Refuses rather than half-installing.
+/// spira-lc credential. Refuses rather than half-installing.
 fn system_user_phase(host: &install::values::HostValues) -> Result<(), String> {
     let user = nonempty_env("SPIRA_LC_UNIX_USER").unwrap_or_else(|| "spira-lc".into());
     let group = nonempty_env("SPIRA_LC_UNIX_GROUP").unwrap_or_else(|| "spira".into());
@@ -1883,12 +1863,6 @@ fn same_user_credential_path() -> String {
     })
 }
 
-/// The port the lifecycle store's Dolt listens on: `SPIRA_LC_PORT`, else the beads Dolt's own
-/// `dolt-server.yaml` (the store shares that server), else 3307.
-fn lc_port(dolt_data: Option<&str>) -> u16 {
-    nonempty_env("SPIRA_LC_PORT").and_then(|p| p.parse().ok()).or_else(|| dolt_data.and_then(|dd| read_yaml_port(&format!("{dd}/dolt-server.yaml")))).unwrap_or(3307)
-}
-
 /// Phase 4.8: once spira-lc serves the batch machine from the control store, the queue reads
 /// rounds from there and its round files are removed; refused while one names an open round.
 fn round_records_phase(dry: bool) -> Result<(), String> {
@@ -1947,54 +1921,6 @@ fn control_store_phase() -> Result<(), String> {
     }
     info(&format!("created the control store at {path}"));
     Ok(())
-}
-
-/// Phase 4.5 (sp-xfqnr): build spira_lifecycle through `spira-lc`'s admin verbs, as the Dolt
-/// admin: `SPIRA_LC_ADMIN_USER`/`SPIRA_LC_ADMIN_PASSWORD` when set, else root with the
-/// password this phase provisions on first run (a fresh Dolt's root has none, and is never
-/// left that way), against the SQL this release ships beside its unit templates.
-fn lifecycle_store_phase(port: u16) -> Result<Vec<String>, String> {
-    use install::lifecycle_store::{self, Admin};
-    let host = nonempty_env("SPIRA_LC_HOST");
-    if host.is_none() && !tcp_up(port) {
-        return Err(format!("no Dolt server is listening on 127.0.0.1:{port} for the lifecycle store (SPIRA_LC_PORT / dolt-server.yaml)"));
-    }
-    let lifecycle_dir = bootstrap::templates_dir().parent().map(|r| r.join("lifecycle")).ok_or("cannot locate this release's lifecycle/ directory")?;
-    let cred = same_user_credential_path();
-    let rw = lifecycle_store::read_credential(Path::new(&cred))?;
-    let ro = lifecycle_store::read_credential(Path::new(&format!("{cred}-ro")))?;
-    let lc = spira_store::lifecycle_row::lc_bin()?;
-    let run = |args: &[String], env: &[(String, String)]| {
-        // batch-job: one-time install DDL against the local Dolt server; bounded at 120 s by timeout(1).
-        let mut c = Command::new("timeout");
-        c.arg("120").arg(&lc).args(args).stdin(Stdio::null());
-        for (k, v) in env {
-            c.env(k, v);
-        }
-        match c.output() {
-            Ok(o) => (o.status.code().unwrap_or(1), format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr))),
-            Err(e) => (127, format!("cannot run spira-lc: {e}")),
-        }
-    };
-    let mut lines = Vec::new();
-    let admin = if let Some(user) = nonempty_env("SPIRA_LC_ADMIN_USER") {
-        Admin { user, password: std::env::var("SPIRA_LC_ADMIN_PASSWORD").unwrap_or_default(), host, port }
-    } else {
-        let env_map: std::collections::BTreeMap<String, String> = std::env::vars().collect();
-        let admin_cred = nonempty_env("SPIRA_LC_ADMIN_PASSWORD_FILE").unwrap_or_else(|| spira_config::resolve::lc_admin_credential_default(&env_map));
-        let (admin, msg) = lifecycle_store::ensure_admin(Path::new(&admin_cred), &std::env::temp_dir(), host, port, run)?;
-        lines.push(msg);
-        let beads_cred = nonempty_env("BEADS_CREDENTIALS_FILE").unwrap_or_else(|| format!("{}/.config/beads/credentials", bootstrap::env_var("HOME")));
-        let beads_dir = bootstrap::declared("SPIRA_DB").ok_or("SPIRA_DB is declared empty — cannot locate the beads database bd must connect to")?;
-        let metadata = Path::new(&beads_dir).join(".beads/metadata.json");
-        let meta_text = std::fs::read_to_string(&metadata).map_err(|e| format!("cannot read {}: {e}", metadata.display()))?;
-        let db = serde_json::from_str::<serde_json::Value>(&meta_text).ok().and_then(|v| v.get("dolt_database").and_then(|d| d.as_str().map(String::from)))
-            .ok_or_else(|| format!("{} names no dolt_database", metadata.display()))?;
-        lines.extend(lifecycle_store::ensure_beads_user(Path::new(&beads_cred), &metadata, &db, &admin, &std::env::temp_dir(), run)?);
-        admin
-    };
-    lines.extend(lifecycle_store::apply(&lifecycle_dir, &std::env::temp_dir(), &admin, &rw, &ro, run)?);
-    Ok(lines)
 }
 
 fn create_same_user_credential(path: &str) -> Result<(), String> {

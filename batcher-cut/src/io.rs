@@ -1284,10 +1284,6 @@ pub fn merge_member(env: &Env, wt: &Path, id: &str, tip: &str) -> MergeResult {
             .arg(tip),
     );
     if ok {
-        if let Err(e) = migration_numbers::settle(wt) {
-            eprintln!("batcher: refusing {id}: migrations after its merge: {e}");
-            return MergeResult::Conflict;
-        }
         MergeResult::Ok
     } else {
         let _ = run(

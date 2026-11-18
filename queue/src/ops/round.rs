@@ -1489,8 +1489,6 @@ fn remove_unheld_tree(w: &World, c: &Ctx, path: &Path, wt: &Path, ending: &str) 
 
 /// The round's tree rebuilt from `base_sha` with `members` merged in order, in `wt`. A
 /// member that no longer merges leaves `wt` as it was (at `fallback`) and is the Err.
-/// Merges a member and renumbers any migration whose number the round already holds; a merge
-/// that leaves the numbering broken is undone and reported as not merging.
 pub(super) fn merge_member(w: &World, c: &Ctx, wt: &Path, id: &str, tip: &str) -> bool {
     w.git.merge_no_ff(
         wt,
@@ -1498,7 +1496,7 @@ pub(super) fn merge_member(w: &World, c: &Ctx, wt: &Path, id: &str, tip: &str) -
         tip,
         &c.s.git_name,
         &c.s.git_email,
-    ) && w.git.settle_migrations(wt)
+    )
 }
 
 pub(super) fn assemble(
