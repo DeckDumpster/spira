@@ -78,9 +78,8 @@ fn the_ported_verbs_answer_from_the_control_store() {
     assert_eq!(json(&["journal", "state"])[0]["value"], "v");
     assert_eq!(json(&["journal", "due", "10"])[0]["id"], "r1");
 
-    let snapshot = json(&["ops-snapshot"]);
-    assert_eq!(snapshot["live"][0]["bead_id"], "sp-a");
-    assert_eq!(snapshot["live"][0]["claimable"], "1");
+    assert_eq!(json(&["ops-view", "ops_live"])[0]["bead_id"], "sp-a");
+    assert_eq!(json(&["ops-view", "ops_live"])[0]["claimable"], "1");
     assert_eq!(json(&["ops-view", "ops_live"])[0]["repo"], "harness");
     assert!(json(&["ops-gantt"])["events"].is_array());
     assert!(json(&["ops-refusals", "3600"])["classes"].is_array());
@@ -90,6 +89,5 @@ fn the_ported_verbs_answer_from_the_control_store() {
 
     assert!(json(&["churn-facts", "--since", "0"])["mendings"].is_array());
     ok(&["mend-watch"]);
-    assert_eq!(w.run(&["pause-sweep"]).0, 0);
     assert_eq!(w.run(&["event-continuity"]).0, 0);
 }

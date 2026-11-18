@@ -1,8 +1,8 @@
 //! # watch.mend — contract
 //!
-//! Replaces `spira-mend-watch-prod`: `spira-lc mend-watch --seen run/mend-watch.seen`, then `ExecStartPost=spira-lc pause-sweep`, both appending stdout to `run/mend-watch.log`. Pattern P1. Part of [[scheduler-consolidation-2026-11-03]].
+//! Replaces `spira-mend-watch-prod`: `spira-lc mend-watch --seen run/mend-watch.seen`, with an `ExecStartPost` stop-lifting job, both appending stdout to `run/mend-watch.log`. Pattern P1. Part of [[scheduler-consolidation-2026-11-03]].
 //!
-//! Catalogue differs: the row lists one job with no children. The unit actually runs two jobs: the mender-bounds alarm, and then `pause-sweep` (`spira-lc/src/main.rs:362-363`), which lifts scoped stops. Both are `spira-lc` processes, and both write the same log. This contract carries both, as two effects.
+//! Catalogue differs: the row lists one job with no children. The unit actually ran two jobs: the mender-bounds alarm, and then a stop-lifting job that lifted scoped stops. Both wrote the same log. This contract carries both, as two effects.
 //!
 //! ## Tick
 //!
@@ -17,7 +17,7 @@
 //! - **Overdue mends.** The store's `mending` rows that are `MENDING`, have `awaiting_ask IS NULL` and have `deadline <= now`. Today this is SQL over the store connection (`spira-lc/src/mend_watch.rs:65`). The target is the store's `mending list` verb (it is in the usage at `spira-lc/src/main.rs:438`) through `LcClient` (S7a).
 //! - **Mends in the last 24 h, per bead.** `mend` rows with `at >= now-86400`, grouped by `bead_id` (`mend_watch.rs:66`). No store verb returns this count yet, so S7a has to add one read method (unverified whether `mending list` can carry it).
 //! - **Read retries.** Each read is tried 4 times, 3 s apart (`mend_watch.rs:46-61`). Under the scheduler, the effect deadline and the retry policy on the observe replace that loop.
-//! - **Scoped stops.** The `repo-*.json` records under `<SPIRA_RUN>/scoped-stops/` (`spira-config/src/scoped_stop.rs:32`, `:58-69`; the run dir comes from `spira-lc/src/pause_sweep.rs:10`). For each stop whose condition is `bead:ID=STATE`, the observe checks whether the bead's applied lifecycle events show it entering STATE since the stop was set (`pause_sweep.rs:14-21`). Today that is the `event` table. The target is the store's `history <key> --machine bead` verb.
+//! - **Scoped stops.** The `repo-*.json` records under `<SPIRA_RUN>/scoped-stops/` (`spira-config/src/scoped_stop.rs:32`, `:58-69`). For each stop whose condition is `bead:ID=STATE`, the observe checks whether the bead's applied lifecycle events show it entering STATE since the stop was set. Today that is the `event` table. The target is the store's `history <key> --machine bead` verb.
 //!
 //! ## Decide
 //!
@@ -39,13 +39,13 @@
 //! |---|---|---|---|---|
 //! | `watch.mend.observe` (probe) | store | 15 s (12 s of retries today, under TimeoutStartSec=60) | none (probe) | — |
 //! | `watch.mend.log_append` | host | 5 s | `watch.mend:<breach key>:<tick at>` | an empty line; a key already in `carry.seen` |
-//! | `watch.mend.lift_stop` | host (rewrites `run/scoped-stops/repo-<repo>.json` via `scoped_stop::unpause_repo`) | 5 s | `watch.mend:lift:<repo>:<stop since>` | a free-text or unparsable condition (`scoped_stop.rs:42-45`); a stop whose condition read failed. That stop is kept and logged, which is the same result as `CANNOT_TELL` at `pause_sweep.rs:25` |
+//! | `watch.mend.lift_stop` | host (rewrites `run/scoped-stops/repo-<repo>.json` via `scoped_stop::unpause_repo`) | 5 s | `watch.mend:lift:<repo>:<stop since>` | a free-text or unparsable condition (`scoped_stop.rs:42-45`); a stop whose condition read failed. That stop is kept and logged |
 //!
-//! **Lines written to `run/mend-watch.log`**, which is the `mend-watch|log` read contract at `spira/watchers:166`. The task appends each one exactly as today, with no timestamp prefix:
+//! **Lines written to `run/mend-watch.log`**, which is the `mend-watch|log` read contract at `spira/watchers:166`. The task appends each one exactly as before, with no timestamp prefix:
 //!
 //! - `MEND-WATCH OVERDUE {batch}#{pass}#{suite} is MENDING {now-deadline}s past its deadline; the sweep did not return it` (`mend_watch.rs:22`)
 //! - `MEND-WATCH MENDS {bead} was mended {n} times in 24h (limit 2)` (`mend_watch.rs:29`)
-//! - `pause-sweep: lifted the stop on {repo}: its bead condition was met` and `pause-sweep: kept {repo}: {why}` (`pause_sweep.rs:23-24`). These lines reach the same log today because ExecStartPost shares the unit's StandardOutput.
+//! - `pause-sweep: lifted the stop on {repo}: its bead condition was met` and `pause-sweep: kept {repo}: {why}`. The replaced unit's stop-lifting job wrote these lines to the same log.
 //!
 //! No `inbox.append` exists today. Escalation is `inbox.notify`'s job (see [[inbox-notify]]): it reads this log through its cursor.
 //!
@@ -60,7 +60,7 @@
 //!
 //! - **Units:** `spira-mend-watch-prod.service` and `spira-mend-watch-prod.timer`.
 //! - **The `mend-watch|log` row stays.** It is a read contract (`spira/watchers:166`); its writer becomes this task.
-//! - **Children forked:** `spira-lc mend-watch` and `spira-lc pause-sweep`, as process starts by systemd. Neither forks further.
+//! - **Children forked:** `spira-lc mend-watch` and the stop-lifting job, as process starts by systemd. Neither forked further.
 //! - **Config pinned (S10):** `SPIRA_RUN`, for the scoped-stops directory (`spira-lc/src/lib.rs`'s `lifecycle_run_dir`, unverified key path). The log path and the `--seen` path become task settings.
 //!
 //! ## Reverse

@@ -335,11 +335,6 @@ mod claim_view_read {
                     .to_string(),
                     String::new(),
                 ),
-                ["ready-set"] => (
-                    0,
-                    json!({ "planning_watermark": "7", "judged_at": verdicts::stamp(ready::now_epoch()), "unjudged": 0, "lifecycle": [row("sp-a", "READY"), row("sp-b", "READY")], "items": [item("sp-a"), item("sp-b")] }).to_string(),
-                    String::new(),
-                ),
                 ["list", "--express", ..] => (0, "[]".into(), String::new()),
                 ["list", "--state", ..] => (0, json!([row("sp-a", "READY"), row("sp-b", "READY")]).to_string(), String::new()),
                 ["plan", "items", "--ids", ids] => {
@@ -414,11 +409,10 @@ mod claim_view_read {
 
     #[test]
     fn rune_ready_lists_the_beads_the_view_says_the_rune_would_take() {
-        let (svc, st) = setup(0);
+        let (_, st) = setup(0);
         let view = env_over(|env| claimable_over(&Args::parse(&[]).unwrap(), env, &st).unwrap());
         assert_eq!(ids(&taken_by(&view, "builder").into_iter().cloned().collect::<Vec<_>>()), ["sp-a"]);
         assert!(taken_by(&view, "ops").is_empty(), "a rune the view does not name takes nothing");
-        assert!(!seen(&svc).iter().any(|c| c == "ready-set"), "{:?}", seen(&svc));
     }
 
     #[test]
@@ -430,7 +424,6 @@ mod claim_view_read {
         let lc = env_over(|env| machine_filter(&a, env, &st, &mut rows).unwrap_or_else(|o| panic!("{o:?}")));
         assert_eq!(ids(&rows), ["sp-a"]);
         assert!(lc.contains_key("sp-a"));
-        assert!(!seen(&svc).iter().any(|c| c == "ready-set"), "{:?}", seen(&svc));
     }
 
     #[test]
@@ -455,7 +448,6 @@ mod claim_view_read {
         assert_eq!(out, "", "sp-a is READY at priority 2, so nothing outranks the lanes");
         let calls = seen(&svc);
         assert_eq!(calls.iter().filter(|c| *c == "claimable").count(), 1, "{calls:?}");
-        assert!(!calls.iter().any(|c| c == "ready-set"), "{calls:?}");
     }
 
     #[test]
