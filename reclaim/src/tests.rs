@@ -231,7 +231,7 @@ fn an_unreadable_subdirectory_keeps_its_tmp_dir() {
     let sub = d.join("sub");
     fs::create_dir(&sub).unwrap();
     let orig = fs::metadata(&sub).unwrap().permissions();
-    fs::set_permissions(&sub, fs::Permissions::from_mode(0)).unwrap();
+    fs::set_permissions(&sub, fs::Permissions::from_mode(0o000)).unwrap();
     age(&d, 9 * HOUR);
     let plan = tmp_plan(t.path(), own_uid(), now(), 6 * HOUR, &[]);
     fs::set_permissions(&sub, orig).unwrap();
