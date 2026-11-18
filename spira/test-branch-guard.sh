@@ -405,4 +405,29 @@ git -C "$HREPO" add gate.sh
 out="$(commit_through_hook op@example.com op "chore: ordinary operator commit")"; rc=$?
 is "hook run: an ordinary operator commit is not refused" "0" "$rc"
 
+echo ""
+echo "LOCAL LANDREF: a dwarf on a local-branch landref (local/main) is refused from a worktree:"
+LREPO="$TMP/lrepo"; LWT="$TMP/run/worktree/sp-local"
+git init -q -b local/main "$LREPO"
+printf 'x\n' > "$LREPO/f.txt"
+GIT_AUTHOR_NAME=op GIT_AUTHOR_EMAIL="op@example.com" GIT_COMMITTER_NAME=op GIT_COMMITTER_EMAIL="op@example.com" \
+git -C "$LREPO" add -A
+GIT_AUTHOR_NAME=op GIT_AUTHOR_EMAIL="op@example.com" GIT_COMMITTER_NAME=op GIT_COMMITTER_EMAIL="op@example.com" \
+git -C "$LREPO" commit -q -m initial
+git -C "$LREPO" checkout -q -b elsewhere
+git -C "$LREPO" worktree add -q "$LWT" local/main
+printf 'y\n' >> "$LWT/f.txt"; git -C "$LWT" add -A
+printf '%s | %s | push | local/main | |\n' "lfix" "$LREPO" > "$TMP/lrepomap"
+LTOML="$(tl_layer SPIRA_REPO_MAP="$TMP/lrepomap" SPIRA_HOME_REPO="lfix")"
+local_guard() {   # local_guard <email> -> output
+    env -i SPIRA_RELEASE="$(tl_release)" HOME="$TMP" PATH="$GIT_BIN:$SPIRA_CONFIG_BIN:/usr/bin:/bin" \
+        GIT_COMMITTER_NAME="t" GIT_COMMITTER_EMAIL="$1" SPIRA_CONF="$TMP/none.conf" \
+        SPIRA_TOML="$LTOML" bash "$SH/branch-guard.sh" staged "$LWT" 2>&1
+}
+out="$(local_guard dwarf-andvari@spira.local)"; rc=$?
+is   "dwarf on local/main: guard exits 1" 1 "$rc"
+want "dwarf on local/main: refusal names local/main" "local/main" "$out"
+out="$(local_guard op@example.com)"; rc=$?
+is   "operator on local/main: guard exits 0" 0 "$rc"
+
 tl_summary

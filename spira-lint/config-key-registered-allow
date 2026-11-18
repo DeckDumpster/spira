@@ -870,6 +870,7 @@ SPIRA_WATCH_GATE_SILENCE_WINDOW watchtower/src/process.rs
 SPIRA_WATCH_GATE_WINDOW watchtower/src/process.rs
 SPIRA_WATCH_PROMPT_FILE watchtower/src/process.rs
 SPIRA_WIKI_BOUNDARY_REL spira/boundary.sh
+SPIRA_WORK dwarf/src/restrict.rs
 SPIRA_WORK dwarf/src/run.rs
 SPIRA_WORK spira/branch-guard.sh
 SPIRA_WORKFLOW_RUN_CONSIDERED dwarf/src/seam.rs

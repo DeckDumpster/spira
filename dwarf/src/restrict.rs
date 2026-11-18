@@ -91,6 +91,8 @@ const CONDITIONAL: &[&str] = &[
     "SPIRA_DWARF",
     // Names only the session's own worktree scratch directory, which the model can already write.
     "TMPDIR",
+    // Names only the session's own worktree, which the model already writes (as TMPDIR).
+    "SPIRA_WORK",
     FENCE_OVERRIDE,
     // `work` (the one tool on the model's PATH) resolves its lifecycle socket from the one
     // source of config: it needs the spec and the release that locates its key registry.
@@ -299,6 +301,19 @@ mod tests {
         let b = base(&[("TMPDIR", "w/.runtime/session-tmp-1")]);
         let e = restricted_env("sp-x", &b, "rel/bin");
         assert_eq!(e.get("TMPDIR").map(String::as_str), Some("w/.runtime/session-tmp-1"));
+    }
+
+    #[test]
+    fn the_session_worktree_reaches_the_model_only_when_set() {
+        let b = base(&[("SPIRA_WORK", "run/worktree/sp-x")]);
+        let e = restricted_env("sp-x", &b, "rel/bin");
+        assert_eq!(
+            e.get("SPIRA_WORK").map(String::as_str),
+            Some("run/worktree/sp-x")
+        );
+        for b in [base(&[]), base(&[("SPIRA_WORK", "")])] {
+            assert!(!restricted_env("sp-x", &b, "rel/bin").contains_key("SPIRA_WORK"));
+        }
     }
 
     #[test]
