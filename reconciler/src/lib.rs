@@ -3546,6 +3546,15 @@ mod tests {
     }
 
     #[test]
+    fn reactive_dwarves_do_not_spend_the_task_pool() {
+        let mut cfg = test_config();
+        cfg.max_live_dwarves = "9".into();
+        cfg.max_dwarves = "3".into();
+        cfg.host = Some(Arc::new(Fleet { planned_live: 2, reactive_live: 4, partition_rune: "builder", ready: 10 }));
+        assert_eq!(observe_fleet(&cfg)[0].raw, RawStatus::Gap { desired: "3".into(), observed: "2".into(), since_hint: None });
+    }
+
+    #[test]
     fn a_paused_task_pool_is_satisfied() {
         assert_eq!(task_check("0", 0), RawStatus::Satisfied);
     }

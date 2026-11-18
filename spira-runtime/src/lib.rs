@@ -187,12 +187,13 @@ impl Effects {
         let _passing = Passing(&self.reconciling);
         let at = input.at / 1000;
         let run = self.world.run_dir.clone();
-        let instance = input.values.get("SPIRA_INSTANCE").cloned().unwrap_or_default();
+        let pinned = |k: &str| input.values.get(k).cloned().ok_or_else(|| format!("{k} unknown"));
+        let instance = pinned("SPIRA_INSTANCE")?;
         let enabled = self.enabled.get_or_init(|| install::bootstrap::manifest_from_env(&instance).map(|m| m.enable(&instance).join("\n")).unwrap_or_default()).clone();
-        let min_age = input.values.get("SPIRA_STRANDED_RUNNER_MIN_AGE").and_then(|v| v.trim().parse().ok()).unwrap_or(0);
-        let mut host = reconcile_host::RuntimeHost::new(self.world.clone(), self.forge.clone(), self.mail.clone(), r.home.clone().into(), input.values.get("SPIRA_RUNES").cloned().unwrap_or_default(), min_age, at, enabled, self.landrefs.clone());
+        let min_age = pinned("SPIRA_STRANDED_RUNNER_MIN_AGE")?.trim().parse().unwrap_or(0);
+        let mut host = reconcile_host::RuntimeHost::new(self.world.clone(), self.forge.clone(), self.mail.clone(), r.home.clone().into(), pinned("SPIRA_RUNES")?, min_age, at, enabled, self.landrefs.clone());
         host.bus = self.bus.clone();
-        let mut cfg = reconciler::Config::from_lookup(&|k| input.values.get(k).cloned().ok_or_else(|| format!("{k} unknown")), match self.seams.clone() {
+        let mut cfg = reconciler::Config::from_lookup(&pinned, match self.seams.clone() {
             Some(s) => s,
             None => reconciler::Seams::production()?,
         }, run, r.home.clone(), at, reconciler_engine::clock::iso_of(at))?.with_desired_state().with_host(Arc::new(host));
