@@ -41,3 +41,11 @@ fn facts_is_no_longer_a_verb_and_gets_the_general_usage() {
     assert_eq!(rc, 2);
     assert!(out.starts_with("usage: spira-lc"), "{out}");
 }
+
+#[test]
+fn the_renamed_ops_gantt_answers_usage_and_the_usage_names_ops_transitions() {
+    let (_dir, _env) = world();
+    let (_, out) = run(&["ops-gantt"]);
+    assert!(out.starts_with("usage: spira-lc"), "{out}");
+    assert!(out.contains("ops-transitions"), "{out}");
+}

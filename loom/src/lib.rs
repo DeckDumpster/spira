@@ -489,11 +489,11 @@ fn unavailable(what: &str, e: &str) -> Response {
 }
 
 async fn stuck_rows(loom: &Loom) -> Result<(i64, Vec<stuck::Row>), String> {
-    let (gantt, dwell, p95) = tokio::join!(lc_json(loom, &["ops-gantt"]), lc_json(loom, &["ops-view", "ops_dwell"]), lc_json(loom, &["ops-view", "ops_dwell_p95"]));
-    let (gantt, dwell, p95) = (gantt?, dwell?, p95?);
+    let (transitions, dwell, p95) = tokio::join!(lc_json(loom, &["ops-transitions"]), lc_json(loom, &["ops-view", "ops_dwell"]), lc_json(loom, &["ops-view", "ops_dwell_p95"]));
+    let (transitions, dwell, p95) = (transitions?, dwell?, p95?);
     let rows = |v: &Value| v.as_array().cloned().unwrap_or_default();
-    let now = stuck::num(&gantt["now"]).unwrap_or_else(now_s);
-    Ok((now, stuck::build(now, &rows(&gantt["events"]), &rows(&dwell), &stuck::p95_map(&rows(&p95)))))
+    let now = stuck::num(&transitions["now"]).unwrap_or_else(now_s);
+    Ok((now, stuck::build(now, &rows(&transitions["events"]), &rows(&dwell), &stuck::p95_map(&rows(&p95)))))
 }
 
 fn page_bar(loom: &Loom) -> shell::Bar {
@@ -1025,8 +1025,8 @@ mod in_process_tests {
 
     #[tokio::test]
     async fn a_served_read_is_answered_over_the_socket_and_a_refusal_is_an_error() {
-        let c = client(vec![("ops-gantt", 0, "{\"edges\":[]}".into()), ("show-ask", 3, "no such ask".into())]);
-        assert_eq!(lc_answer_json(c.clone(), &["ops-gantt"], Duration::from_secs(2)).await.unwrap(), json!({"edges": []}));
+        let c = client(vec![("ops-transitions", 0, "{\"edges\":[]}".into()), ("show-ask", 3, "no such ask".into())]);
+        assert_eq!(lc_answer_json(c.clone(), &["ops-transitions"], Duration::from_secs(2)).await.unwrap(), json!({"edges": []}));
         let e = lc_answer_json(c, &["show-ask", "sp-x"], Duration::from_secs(2)).await.unwrap_err();
         assert!(e.contains("exited 3") && e.contains("no such ask"), "{e}");
     }
@@ -1102,7 +1102,7 @@ mod in_process_tests {
                 "ops-graph --machine batch" => (0, edge("OPEN", "Abandon", "ABANDONED")),
                 "ops-graph --machine ask" => (0, edge("OPEN", "Answer", "ANSWERED")),
                 "ops-graph --machine mending" => (0, edge("WAITING", "Pickup", "MENDING")),
-                "ops-gantt --machine bead" | "ops-gantt --machine batch" => (0, json!({"now": 1, "events": []}).to_string()),
+                "ops-transitions --machine bead" | "ops-transitions --machine batch" => (0, json!({"now": 1, "events": []}).to_string()),
                 "list --live" | "list --batches" | "list-asks" | "mending list --live" => (0, "[]".to_string()),
                 other => return Err(format!("unscripted {other}")),
             };
