@@ -763,6 +763,32 @@ fn call_only_respects_a_capacity_pause_without_probing_or_mutating_the_file() {
     assert!(w.run.join("capacity-pause").is_file(), "sentinel must not mutate the pause file dwarf owns");
 }
 
+/// A pause whose `until` has passed is open to the sentinel without anyone clearing the file.
+#[test]
+fn call_only_calls_through_a_capacity_pause_whose_time_has_passed() {
+    let (w, r, sink, clock) = setup("call-cap-expired");
+    r.on(|s| {
+        if s.prog == "spira-claim" && s.args.first().map(String::as_str) == Some("bulk-ready-by-rune") {
+            return ok("builder 1\nops 0\n");
+        }
+        None
+    });
+    r.on(|s| if s.args.iter().any(|a| a == "list-units") { ok("spira-dwarf-builder-1.service loaded active\nspira-dwarf-ops-2.service loaded active\nspira-dwarf-opsx-3.service x\n") } else { None });
+    r.on(|s| {
+        if s.prog == "spira-claim" && s.args.first().map(String::as_str) == Some("rune-ready") {
+            ok(if s.args.get(1).map(String::as_str) == Some("builder") { "1" } else { "0" })
+        } else {
+            None
+        }
+    });
+    std::fs::write(w.run.join("capacity-pause"), format!("{} iso why\n", NOW - 60)).unwrap();
+    run_mode(&w, &r, &sink, &clock, Mode::CallOnly, &[], None);
+    assert!(!sink.has("out of capacity"), "{}", sink.text());
+    assert!(sink.has("call-only: live="), "{}", sink.text());
+    assert!(sink.has("CHECK7 builder: 1 ready, at concurrency cap"), "{}", sink.text());
+    assert!(w.run.join("capacity-pause").is_file(), "sentinel must not mutate the pause file dwarf owns");
+}
+
 /// Fail closed (wave4-decomposition.md (c)3): an unreadable/corrupt pause file must gate
 /// calling, never be read as "open" the way the bash `capacity_pause_until`'s `0` once
 /// did for both "no file" and "cannot parse it".

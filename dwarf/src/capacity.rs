@@ -9,7 +9,8 @@
 //! [`check_and_probe`] is now the only function that ever calls [`probe`] or clears a
 //! stale pause file, and only dwarf's own call sites (`run.rs`, `sweep.rs`, `escape.rs`)
 //! pass it a real [`ProbeCfg`]. Every other reader — sentinel's call gate, cockpit-
-//! collect's probe, archivist's sweep, `capacity.sh` — calls [`pause_state`] directly: a
+//! collect's probe, archivist's sweep, `capacity.sh` — calls [`pause_state`] directly, which
+//! decides expiry against `now`: a
 //! plain read that never mutates the file and never spends a probe.
 //!
 //! FAIL CLOSED, NEVER OPEN. The bash original's `capacity_pause_until` printed "0" (the
@@ -67,10 +68,19 @@ impl PauseState {
     }
 }
 
-/// `capacity_pause_until`/`capacity_pause_why`, as one read. The file is one line:
-/// `<epoch> <iso-stamp> <why...>`; `why` may itself contain spaces, so only the first two
-/// fields are stripped (bash's own `awk '{$1="";$2="";...}'`).
-pub fn pause_state(pause_file: &Path) -> PauseState {
+/// Whether a pause is in force at `now`, decided here for every reader: a parsed
+/// `until <= now` is `Open`; `Unknown` stays `Unknown` (fail closed).
+pub fn pause_state(pause_file: &Path, now: i64) -> PauseState {
+    match read_pause(pause_file) {
+        PauseState::Paused { until, .. } if until <= now => PauseState::Open,
+        s => s,
+    }
+}
+
+/// `capacity_pause_until`/`capacity_pause_why`, as one read, expiry not applied. The file
+/// is one line: `<epoch> <iso-stamp> <why...>`; `why` may itself contain spaces, so only
+/// the first two fields are stripped (bash's own `awk '{$1="";$2="";...}'`).
+pub(crate) fn read_pause(pause_file: &Path) -> PauseState {
     let text = match std::fs::read_to_string(pause_file) {
         Ok(t) => t,
         Err(e) if e.kind() == ErrorKind::NotFound => return PauseState::Open,
@@ -87,7 +97,7 @@ pub fn pause_state(pause_file: &Path) -> PauseState {
 /// `capacity_pause_why` alone (capacity.sh's `status`): `None` when there is no pause or
 /// no recorded reason.
 pub fn pause_why(pause_file: &Path) -> Option<String> {
-    match pause_state(pause_file) {
+    match read_pause(pause_file) {
         PauseState::Paused { why, .. } if !why.is_empty() => Some(why),
         _ => None,
     }
@@ -106,7 +116,7 @@ pub fn pause_why(pause_file: &Path) -> Option<String> {
 /// left the file untouched (bash's own early `return 0`, silent).
 pub fn pause_set(pause_file: &Path, ledger_file: &Path, now: i64, backoff: i64, at: i64, why: &str) -> Option<String> {
     let at = if at > now { at } else { now + backoff };
-    let cur = match pause_state(pause_file) {
+    let cur = match read_pause(pause_file) {
         PauseState::Paused { until, .. } => until,
         // Open, or Unknown — a pause this process cannot verify is written over in good
         // faith; the alternative (refusing to write because the old one cannot be read)
@@ -156,8 +166,8 @@ pub struct Verdict {
     /// crate).
     pub log: Vec<String>,
     /// The pause file should be removed: the window reopened on its own, or a probe
-    /// lifted it early. Harmless to skip (every reader already compares `until > now`
-    /// itself — see [`PauseState::left`]); kept for the same tidiness bash's version had.
+    /// lifted it early. Harmless to skip ([`pause_state`] already reads an
+    /// expired file as open); kept for the same tidiness bash's version had.
     pub clear_file: bool,
 }
 
@@ -177,7 +187,7 @@ pub struct ProbeCfg<'a> {
 /// `Some` on every real dwarf call site; a caller that passes `None` gets the file's plain
 /// answer with no probing at all — never wrong, just never early.
 pub fn paused(pause_file: &Path, now: i64, probe_window: i64, probe: Option<&ProbeCfg>) -> Verdict {
-    match pause_state(pause_file) {
+    match read_pause(pause_file) {
         PauseState::Unknown => Verdict {
             state: Paused::Unknown,
             log: vec!["CAPACITY: the pause file could not be read or parsed — treating the account as paused (failing closed, never as open)".into()],
@@ -352,7 +362,7 @@ mod tests {
     #[test]
     fn no_file_is_open() {
         let d = dir();
-        assert_eq!(pause_state(&d.join("capacity-pause")), PauseState::Open);
+        assert_eq!(pause_state(&d.join("capacity-pause"), 1_000), PauseState::Open);
     }
 
     #[test]
@@ -360,7 +370,7 @@ mod tests {
         let d = dir();
         let p = d.join("capacity-pause");
         std::fs::write(&p, "1750000000 2025-06-15T16:40:00Z archivist/sess-1 with spaces\n").unwrap();
-        assert_eq!(pause_state(&p), PauseState::Paused { until: 1_750_000_000, why: "archivist/sess-1 with spaces".into() });
+        assert_eq!(pause_state(&p, 1_749_999_999), PauseState::Paused { until: 1_750_000_000, why: "archivist/sess-1 with spaces".into() });
         assert_eq!(pause_why(&p), Some("archivist/sess-1 with spaces".into()));
     }
 
@@ -369,13 +379,13 @@ mod tests {
         let d = dir();
         let p = d.join("capacity-pause");
         std::fs::write(&p, "not-a-number why\n").unwrap();
-        assert_eq!(pause_state(&p), PauseState::Unknown, "corrupt content must not read as 0/open");
+        assert_eq!(pause_state(&p, 1_000), PauseState::Unknown, "corrupt content must not read as 0/open");
 
         // A directory where a file was expected: read_to_string fails with something other
         // than NotFound.
         let as_dir = d.join("is-a-dir");
         std::fs::create_dir_all(&as_dir).unwrap();
-        assert_eq!(pause_state(&as_dir), PauseState::Unknown);
+        assert_eq!(pause_state(&as_dir, 1_000), PauseState::Unknown);
     }
 
     #[test]
@@ -383,7 +393,25 @@ mod tests {
         let d = dir();
         let p = d.join("capacity-pause");
         std::fs::write(&p, "").unwrap();
-        assert_eq!(pause_state(&p), PauseState::Unknown);
+        assert_eq!(pause_state(&p, 1_000), PauseState::Unknown);
+    }
+
+    #[test]
+    fn a_pause_whose_time_has_passed_reads_open_from_pause_state() {
+        let d = dir();
+        let p = d.join("capacity-pause");
+        let now = 1_000_000i64;
+        for (until, open) in [(now - 1, true), (now, true), (now + 1, false)] {
+            std::fs::write(&p, format!("{until} stamp why\n")).unwrap();
+            let got = pause_state(&p, now);
+            if open {
+                assert_eq!(got, PauseState::Open, "until={until}");
+            } else {
+                assert_eq!(got, PauseState::Paused { until, why: "why".into() });
+            }
+        }
+        std::fs::write(&p, "").unwrap();
+        assert_eq!(pause_state(&p, now), PauseState::Unknown);
     }
 
     // ---- pause_set: extend-only, backoff on an unparseable/missing reset ------------------
@@ -396,16 +424,16 @@ mod tests {
         let now = 1_000_000i64;
         let line = pause_set(&pause, &ledger, now, 900, now + 1000, "first").unwrap();
         assert!(line.contains("1000s"), "{line}");
-        assert_eq!(pause_state(&pause), PauseState::Paused { until: now + 1000, why: "first".into() });
+        assert_eq!(pause_state(&pause, now), PauseState::Paused { until: now + 1000, why: "first".into() });
 
         // A SHORTER reopening is refused — the existing, later epoch wins.
         assert!(pause_set(&pause, &ledger, now, 900, now + 500, "second").is_none());
-        assert_eq!(pause_state(&pause), PauseState::Paused { until: now + 1000, why: "first".into() });
+        assert_eq!(pause_state(&pause, now), PauseState::Paused { until: now + 1000, why: "first".into() });
 
         // A LATER one extends.
         let line2 = pause_set(&pause, &ledger, now, 900, now + 2000, "third").unwrap();
         assert!(line2.contains("2000s"));
-        assert_eq!(pause_state(&pause), PauseState::Paused { until: now + 2000, why: "third".into() });
+        assert_eq!(pause_state(&pause, now), PauseState::Paused { until: now + 2000, why: "third".into() });
 
         let ledger_text = std::fs::read_to_string(&ledger).unwrap();
         assert_eq!(ledger_text.lines().count(), 2, "the refused write appends nothing: {ledger_text}");
@@ -422,7 +450,7 @@ mod tests {
         let now = 1_000_000i64;
         let line = pause_set(&pause, &ledger, now, 900, 0, "unparseable reset").unwrap();
         assert!(line.contains("900s"), "falls back to the backoff, never 'no limit': {line}");
-        assert_eq!(pause_state(&pause), PauseState::Paused { until: now + 900, why: "unparseable reset".into() });
+        assert_eq!(pause_state(&pause, now), PauseState::Paused { until: now + 900, why: "unparseable reset".into() });
     }
 
     // ---- reset_at: the LAST attempt only, and "hit but no resetsAt" is Some(0) -----------

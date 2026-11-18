@@ -550,8 +550,8 @@ fn skew() -> Option<String> {
     spira_config::release_skew::skew(Path::new(&own)).map(|s| s.describe())
 }
 
-fn capacity_of(run: &Path) -> Capacity {
-    match sentinel::capacity::pause_state(&run.join("capacity-pause")) {
+fn capacity_of(run: &Path, now_s: i64) -> Capacity {
+    match sentinel::capacity::pause_state(&run.join("capacity-pause"), now_s) {
         sentinel::capacity::PauseState::Open => Capacity::Clear,
         sentinel::capacity::PauseState::Paused { .. } => Capacity::Paused,
         sentinel::capacity::PauseState::Unknown => Capacity::Unknown,
@@ -655,7 +655,8 @@ pub fn observe(e: &Effects, input: &str) -> Result<String, String> {
             (f.clone(), cfg)
         })
         .collect();
-    let mut snap = Snapshot { world: world_of(&run), skew: skew(), capacity: capacity_of(&run), roster: roster.clone(), runes, now_ms: now_ms(), ..Snapshot::default() };
+    let snap_ms = now_ms();
+    let mut snap = Snapshot { world: world_of(&run), skew: skew(), capacity: capacity_of(&run, (snap_ms / 1000) as i64), roster: roster.clone(), runes, now_ms: snap_ms, ..Snapshot::default() };
     snap.max_dwarves = pinned_num(pinned, "SPIRA_MAX_DWARVES");
     snap.max_live = pinned_num(pinned, "SPIRA_MAX_LIVE_DWARVES");
     for (class, key) in [("cpu", "SPIRA_LIMIT_CPU"), ("memory", "SPIRA_LIMIT_MEMORY"), ("network", "SPIRA_LIMIT_NETWORK")] {
@@ -738,7 +739,7 @@ pub fn unit_start(e: &Effects, spec: &EffectSpec) -> Result<String, String> {
     if let Some(s) = skew() {
         return Err(format!("{UNIT_START} {}: RELEASE SKEW — {s}", start.rune));
     }
-    if capacity_of(&run) != Capacity::Clear {
+    if capacity_of(&run, (now_ms() / 1000) as i64) != Capacity::Clear {
         return Err(format!("{UNIT_START} {}: the account's capacity is paused or unreadable — not calling", start.rune));
     }
     let home = spira_config::resolve::locate_home_for_process()?;
