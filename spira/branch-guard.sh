@@ -93,8 +93,9 @@ staged)
     # Resolve the base branch for this repository. If it cannot be determined, fail closed:
     # a dwarf commit whose target branch cannot be verified is the same risk as one we can
     # confirm is the base, and the cost of one refused commit is lower than one wrong merge.
-    repo_root="$(dirname "$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)")"
-    landref="$(spira_landref "$repo_root" 2>/dev/null)" || {
+    common_dir="$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
+    repo_root="${common_dir:+$(dirname "$common_dir")}"
+    landref="$(spira_landref "${repo_root:?}" 2>/dev/null)" || {
         {
             printf '\n'
             printf 'REFUSED by branch-guard.sh — committer is a dwarf identity and the base branch\n'
