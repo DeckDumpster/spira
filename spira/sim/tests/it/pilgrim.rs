@@ -216,16 +216,15 @@ fn pilgrim_up_from_non_spira_worktree(sim_release: bool, in_testenv: bool) {
     }
     let out = cmd.output().unwrap();
     let canonical = dir.canonicalize();
+    let err = String::from_utf8_lossy(&out.stderr).into_owned();
+    let seen = std::fs::read_to_string(dir.join("config/sim.env"));
+    let built = dir.join("cache").exists();
     if let Ok(d) = &canonical {
         let _ = world::down(d, &ProcessSteps);
     }
-    let err = String::from_utf8_lossy(&out.stderr);
     assert!(out.status.success(), "{err}");
-    assert!(!dir.join("cache").exists(), "a pilgrim world builds nothing");
-    if sim_release {
-        let env = std::fs::read_to_string(dir.join("config/sim.env")).unwrap();
-        assert!(env.contains("SPIRA_LC_SOCKET"), "{env}");
-    }
+    assert!(seen.is_ok_and(|e| e.contains("SPIRA_LC_SOCKET")), "{err}");
+    assert!(!built, "a pilgrim world builds nothing");
 }
 
 #[test]
@@ -238,4 +237,28 @@ fn a_pilgrim_world_for_a_non_spira_worktree_is_built_from_the_release_not_the_wo
 #[ignore = "needs a release, SPIRA_TOML naming spira.bd, and a Dolt fixture: run with --ignored"]
 fn a_pilgrim_world_in_testenv_needs_no_sim_release_of_its_own() {
     pilgrim_up_from_non_spira_worktree(false, true);
+}
+
+fn refused_pilgrim_up(extra: &[&str], release: Option<&str>) -> (Option<i32>, String) {
+    let t = testkit::TempDir::new("pw-refused");
+    let mut cmd = std::process::Command::new(testkit::bin_exe("sim"));
+    cmd.args(["world", "up"]).arg(t.join("w")).arg("--pilgrim").args(extra).env_clear().env("PATH", system_paths::SYSTEM_PATH_MIN);
+    if let Some(r) = release {
+        cmd.env("SPIRA_RELEASE", r);
+    }
+    let out = cmd.output().unwrap();
+    (out.status.code(), String::from_utf8_lossy(&out.stderr).into_owned())
+}
+
+#[test]
+fn a_pilgrim_world_with_no_active_release_is_refused_naming_the_key() {
+    let (code, err) = refused_pilgrim_up(&[], None);
+    assert_eq!(code, Some(1), "{err}");
+    assert!(err.contains("SPIRA_RELEASE is not set"), "{err}");
+}
+
+#[test]
+fn a_pilgrim_world_takes_its_tree_from_the_release_so_tree_is_a_usage_error() {
+    let (code, err) = refused_pilgrim_up(&["--tree", "HEAD"], Some("release"));
+    assert_eq!(code, Some(2), "{err}");
 }

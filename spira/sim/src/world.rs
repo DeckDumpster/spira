@@ -1327,11 +1327,14 @@ mod locator_tests {
             std::fs::write(rel.join(f), "x").unwrap();
         }
         std::os::unix::fs::symlink("../bin/x", rel.join("spira/tool")).unwrap();
+        std::os::unix::fs::symlink("a.sql", rel.join("lifecycle/keep")).unwrap();
+        std::fs::create_dir_all(rel.join("spira/deep")).unwrap();
+        std::os::unix::fs::symlink("../bin/x", rel.join("spira/deep/tool")).unwrap();
         let dst = t.join("repo");
         release_repo(&rel, &dst).unwrap();
         let tree = git(&dst, &["ls-tree", "-r", "--name-only", "HEAD"]).unwrap();
         let files: Vec<&str> = tree.lines().collect();
-        assert_eq!(files, vec!["lifecycle/a.sql", "spira/testlib/complete.toml"]);
+        assert_eq!(files, vec!["lifecycle/a.sql", "lifecycle/keep", "spira/testlib/complete.toml"]);
     }
 
     #[test]

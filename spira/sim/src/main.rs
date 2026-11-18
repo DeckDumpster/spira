@@ -108,7 +108,7 @@ fn run(args: &[String]) -> Result<(), String> {
                 return world::up_repos(&cwd, &PathBuf::from(dir), tree, &env, &ProcessSteps, &repos, &|_| Ok(()));
             }
             if set.contains_key("--tree") {
-                return Err(format!("--tree cannot be combined with --pilgrim: a pilgrim world's tree is the active release's\n{USAGE}"));
+                return Err(format!("usage: --tree cannot be combined with --pilgrim: a pilgrim world's tree is the active release's\n{USAGE}"));
             }
             let release = env("SPIRA_RELEASE").filter(|v| !v.is_empty()).ok_or("SPIRA_RELEASE is not set: a pilgrim world is built from the active release")?;
             let release = world::prebuilt_release(std::path::Path::new(&release))?;
