@@ -104,7 +104,7 @@ pub const EFFECTS: &[&str] = &[OBSERVE, WRITE, COMMIT, PUBLISH, TOUCH];
 pub const CADENCE_KEY: &str = "SPIRA_RUNTIME_SWEEP_EXPORT_BEADS_SECS";
 pub const KEYS: &[&str] = &[CADENCE_KEY, "SPIRA_WIKI", "SPIRA_EXPORT_GIT_RETRY_WAIT"];
 
-pub const SPEC: Spec = Spec { name: NAME, stream: STREAM, tick: TICK, state: STATE, probe: OBSERVE, probe_deadline_ms: 300_000, cadence_key: CADENCE_KEY, calendar: false, effects: EFFECTS, keys: KEYS, probe_input_key: None };
+pub const SPEC: Spec = Spec { name: NAME, stream: STREAM, tick: TICK, state: STATE, probe: OBSERVE, probe_deadline_ms: 300_000, cadence_key: CADENCE_KEY, calendar: false, effects: EFFECTS, keys: KEYS, probe_input_key: None, jitter_key: None };
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]

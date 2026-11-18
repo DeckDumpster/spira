@@ -117,7 +117,7 @@ pub const CADENCE_KEY: &str = "SPIRA_RUNTIME_RECONCILE_CONTENT_SECS";
 pub const FULL_PASS_KEY: &str = "SPIRA_RUNTIME_RECONCILE_CONTENT_FULL_SECS";
 pub const KEYS: &[&str] = &[CADENCE_KEY, FULL_PASS_KEY, "SPIRA_BD", "SPIRA_DB", "SPIRA_RUN"];
 
-pub const SPEC: Spec = Spec { name: NAME, stream: STREAM, tick: TICK, state: STATE, probe: OBSERVE, probe_deadline_ms: 30_000, cadence_key: CADENCE_KEY, calendar: false, effects: EFFECTS, keys: KEYS, probe_input_key: None };
+pub const SPEC: Spec = Spec { name: NAME, stream: STREAM, tick: TICK, state: STATE, probe: OBSERVE, probe_deadline_ms: 30_000, cadence_key: CADENCE_KEY, calendar: false, effects: EFFECTS, keys: KEYS, probe_input_key: None, jitter_key: None };
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]

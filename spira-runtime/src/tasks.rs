@@ -489,15 +489,25 @@ mod tests {
     #[test]
     fn every_row_boots_arms_its_cadence_and_asks_only_for_declared_effects() {
         let s = crate::settings::fixture();
+        let mut jittered = Vec::new();
         for t in all() {
             let mut rig = TaskRig::new(1, (t.build)(&s)).unwrap();
             let (_, stream, kind) = (t.boot)();
             rig.tick(stream, kind).unwrap();
             let next = rig.engine().next_timer_at();
-            assert_eq!(next, Some((t.cadence_ms)(&s)), "{}: the boot tick must arm the next one a cadence later", t.name);
+            let first = (t.cadence_ms)(&s);
+            let jitter_ms = t.keys.iter().flat_map(|ks| ks.iter()).filter(|k| k.ends_with("_JITTER_SECS")).filter_map(|k| s.task_config.get(*k)).filter_map(|v| v.trim().parse::<u64>().ok()).max().unwrap_or(0) * 1000;
+            let armed = next.unwrap_or_else(|| panic!("{}: the boot tick armed no next tick", t.name));
+            assert!((first..first + jitter_ms.max(1)).contains(&armed), "{}: the boot tick must arm the next one in [{first}, {first} + {jitter_ms} ms), got {armed}", t.name);
+            if armed != first {
+                jittered.push(t.name);
+            }
             for q in rig.requested() {
                 assert!(t.effects.contains(&q.name.as_str()), "{} asked for {} which its row does not declare", t.name, q.name);
             }
+        }
+        for name in ["hel.sweep", "hel.reap_terminal", "roundvm.ami_prune", "sweep.nix_gc", "sweep.repo_contract"] {
+            assert!(jittered.contains(&name), "{name}: a task declaring a jitter key must fire off its slot at a non-zero jitter; jittered: {jittered:?}");
         }
     }
 

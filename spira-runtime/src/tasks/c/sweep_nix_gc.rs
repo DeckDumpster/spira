@@ -92,7 +92,7 @@ pub const CADENCE_KEY: &str = "SPIRA_RUNTIME_SWEEP_NIX_GC_CALENDAR";
 pub const JITTER_KEY: &str = "SPIRA_RUNTIME_SWEEP_NIX_GC_JITTER_SECS";
 pub const KEYS: &[&str] = &[CADENCE_KEY, JITTER_KEY, "SPIRA_NIX_ENV_LINK", "SPIRA_NIX_PROFILE_BIN"];
 
-pub const SPEC: Spec = Spec { name: NAME, stream: STREAM, tick: TICK, state: STATE, probe: OBSERVE, probe_deadline_ms: 5_000, cadence_key: CADENCE_KEY, calendar: true, effects: EFFECTS, keys: KEYS, probe_input_key: None };
+pub const SPEC: Spec = Spec { name: NAME, stream: STREAM, tick: TICK, state: STATE, probe: OBSERVE, probe_deadline_ms: 5_000, cadence_key: CADENCE_KEY, calendar: true, effects: EFFECTS, keys: KEYS, probe_input_key: None, jitter_key: Some(JITTER_KEY) };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

@@ -193,10 +193,11 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
 }
 
 const SLOT_MS: u64 = 5 * 3_600_000 + 10 * 60_000;
+const ON_SLOT: &[(&str, &str)] = &[(task::CADENCE_KEY, "*-*-* 05:10:00"), (task::JITTER_KEY, "0")];
 
 fn fresh(hang: bool) -> TaskRig {
     let world = json(&snap(vec![repo("shop", task::Verdict::Met, &[])], &[]));
-    let mut r = TaskRig::new(1, t::handler::<H>(SET).registration())
+    let mut r = TaskRig::new(1, t::handler::<H>(ON_SLOT).registration())
         .unwrap()
         .double(task::OBSERVE, move |_| Ok(world.clone()))
         .double(task::INBOX_APPEND, |_| Ok("appended".into()));
@@ -214,7 +215,7 @@ fn observes(r: &TaskRig) -> usize {
 }
 
 fn restart(r: &mut TaskRig) {
-    r.reopen(t::handler::<H>(SET).registration()).unwrap();
+    r.reopen(t::handler::<H>(ON_SLOT).registration()).unwrap();
     let (_, stream, kind) = H::boot();
     r.tick(stream, kind).unwrap();
 }
@@ -269,7 +270,7 @@ fn the_stamp_is_the_start_of_the_pass_and_survives_a_restart() {
 
 #[test]
 fn a_pass_that_timed_out_is_not_restarted_by_a_restart() {
-    let mut r = TaskRig::new(1, t::handler::<H>(SET).registration()).unwrap().timing_out();
+    let mut r = TaskRig::new(1, t::handler::<H>(ON_SLOT).registration()).unwrap().timing_out();
     r.clock.advance_to(NOW);
     let (_, stream, kind) = H::boot();
     r.tick(stream, kind).unwrap();
@@ -287,4 +288,72 @@ fn fire_stamps_the_start_and_a_completed_observe_keeps_it() {
     assert_eq!(started.last_fired, Some(7_000));
     let done = task::decide(&Default::default(), &started, &Input::Observed(Snapshot::default()), 9_000).unwrap().0;
     assert_eq!(done.last_fired, Some(7_000));
+}
+
+fn first_fire(set: &[(&str, &str)], seed: u64) -> u64 {
+    let mut r = TaskRig::new(seed, t::handler::<H>(set).registration()).unwrap();
+    let (_, stream, kind) = H::boot();
+    r.tick(stream, kind).unwrap();
+    r.engine().next_timer_at().expect("the boot tick arms the first tick")
+}
+
+#[test]
+fn a_calendar_tick_fires_at_its_slot_plus_a_seeded_offset_below_the_jitter() {
+    let (a, b) = (first_fire(SET, 1), first_fire(SET, 2));
+    for at in [a, b] {
+        assert!((SLOT_MS..SLOT_MS + 600_000).contains(&at), "{at} outside the jitter window");
+    }
+    assert_ne!(a, b, "two seeds draw two offsets");
+    assert_eq!(first_fire(SET, 1), a, "one seed draws the same offset");
+}
+
+#[test]
+fn a_jitter_of_zero_fires_exactly_on_the_slot() {
+    let zero = [(task::CADENCE_KEY, "*-*-* 05:10:00"), (task::JITTER_KEY, "0")];
+    assert_eq!(first_fire(&zero, 1), SLOT_MS);
+    assert_eq!(first_fire(&zero, 2), SLOT_MS);
+}
+
+#[test]
+fn a_fired_tick_rearms_the_next_slot_plus_a_seeded_offset() {
+    let d = testkit::TempDir::new("repo-contract-rearm");
+    let r = rig(&snap(vec![], &[]), d.path());
+    let next = r.engine().next_timer_at().expect("the fire re-arms");
+    let slot = NOW + SLOT_MS;
+    assert!((slot..slot + 600_000).contains(&next), "{next} outside [{slot}, +600 s)");
+}
+
+#[test]
+fn a_jitter_that_overflows_milliseconds_refuses_the_build() {
+    let big = [(task::CADENCE_KEY, "*-*-* 05:10:00"), (task::JITTER_KEY, "18446744073709551615")];
+    assert!(<H as Stub>::from_cfg(&t::lookup::<H>(&big)).is_err());
+}
+
+#[test]
+fn every_calendar_task_wires_the_jitter_key_it_declares() {
+    use spira_runtime::tasks::c::{hel_reap_terminal, hel_sweep, roundvm_ami_prune, sweep_escape_census, sweep_nix_gc, sweep_tsd};
+    assert!(task::SPEC.jitter_key == Some(task::JITTER_KEY));
+    assert!(hel_reap_terminal::SPEC.jitter_key == Some(hel_reap_terminal::JITTER_KEY));
+    assert!(hel_sweep::SPEC.jitter_key == Some(hel_sweep::JITTER_KEY));
+    assert!(roundvm_ami_prune::SPEC.jitter_key == Some(roundvm_ami_prune::JITTER_KEY));
+    assert!(sweep_nix_gc::SPEC.jitter_key == Some(sweep_nix_gc::JITTER_KEY));
+    assert!(sweep_escape_census::SPEC.jitter_key.is_none() && sweep_tsd::SPEC.jitter_key.is_none());
+}
+
+#[test]
+fn a_jittered_fire_is_not_read_as_a_missed_slot_by_a_restart() {
+    let world = json(&snap(vec![repo("shop", task::Verdict::Met, &[])], &[]));
+    let mut r = TaskRig::new(1, t::handler::<H>(SET).registration())
+        .unwrap()
+        .double(task::OBSERVE, move |_| Ok(world.clone()))
+        .double(task::INBOX_APPEND, |_| Ok("appended".into()));
+    r.clock.advance_to(NOW);
+    let (_, stream, kind) = H::boot();
+    r.tick(stream, kind).unwrap();
+    r.advance(SLOT_MS + 600_000).unwrap();
+    assert_eq!(observes(&r), 1);
+    r.reopen(t::handler::<H>(SET).registration()).unwrap();
+    let (_, stream, kind) = H::boot();
+    r.tick(stream, kind).unwrap();
+    assert_eq!(observes(&r), 1, "a restart after a jittered fire caught up a slot already served");
 }

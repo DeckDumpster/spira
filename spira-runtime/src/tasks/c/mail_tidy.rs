@@ -102,7 +102,7 @@ pub const MAILBOX_KEY: &str = "SPIRA_RUNTIME_MAIL_TIDY_MAILBOX";
 pub const FRESH_KEY: &str = "SPIRA_MAIL_TIDY_FRESH";
 pub const KEYS: &[&str] = &[CADENCE_KEY, MAILBOX_KEY, "SPIRA_MAIL", FRESH_KEY, "SPIRA_ID_PREFIX", "SPIRA_ASK_LABEL", "SPIRA_DB", "SPIRA_BDQ_CONN_RETRIES"];
 
-pub const SPEC: Spec = Spec { name: NAME, stream: STREAM, tick: TICK, state: STATE, probe: OBSERVE, probe_deadline_ms: 10_000, cadence_key: CADENCE_KEY, calendar: false, effects: EFFECTS, keys: KEYS, probe_input_key: Some(MAILBOX_KEY) };
+pub const SPEC: Spec = Spec { name: NAME, stream: STREAM, tick: TICK, state: STATE, probe: OBSERVE, probe_deadline_ms: 10_000, cadence_key: CADENCE_KEY, calendar: false, effects: EFFECTS, keys: KEYS, probe_input_key: Some(MAILBOX_KEY), jitter_key: None };
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]

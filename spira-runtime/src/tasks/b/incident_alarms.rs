@@ -139,7 +139,7 @@ pub const HEARTBEAT_URL_KEY: &str = "SPIRA_RECONCILER_HEARTBEAT_URL";
 pub const CONTROL_SOCKET_KEY: &str = "SPIRA_RUNTIME_SOCKET";
 pub const KEYS: &[&str] = &[CADENCE_KEY, DEADMAN_KEY, HEARTBEAT_URL_KEY, "SPIRA_RUN", "SPIRA_MAIL", CONTROL_SOCKET_KEY];
 
-pub const SPEC: Spec = Spec { name: NAME, stream: STREAM, tick: TICK, state: STATE, probe: OBSERVE, probe_deadline_ms: 5_000, cadence_key: CADENCE_KEY, calendar: false, effects: EFFECTS, keys: KEYS, probe_input_key: Some(CONTROL_SOCKET_KEY) };
+pub const SPEC: Spec = Spec { name: NAME, stream: STREAM, tick: TICK, state: STATE, probe: OBSERVE, probe_deadline_ms: 5_000, cadence_key: CADENCE_KEY, calendar: false, effects: EFFECTS, keys: KEYS, probe_input_key: Some(CONTROL_SOCKET_KEY), jitter_key: None };
 
 /// The goodput task as `scheduler status` (S13) reports it.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

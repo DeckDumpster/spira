@@ -97,7 +97,7 @@ pub const CADENCE_KEY: &str = "SPIRA_RUNTIME_ROUNDVM_AMI_PRUNE_CALENDAR";
 pub const JITTER_KEY: &str = "SPIRA_RUNTIME_ROUNDVM_AMI_PRUNE_JITTER_SECS";
 pub const KEYS: &[&str] = &[CADENCE_KEY, JITTER_KEY, "SPIRA_ROUND_VM_STATE_DIR", "SPIRA_ROUND_VM_EC2_REGION", "SPIRA_ROUND_VM_EC2_PROFILE"];
 
-pub const SPEC: Spec = Spec { name: NAME, stream: STREAM, tick: TICK, state: STATE, probe: OBSERVE, probe_deadline_ms: 120_000, cadence_key: CADENCE_KEY, calendar: true, effects: EFFECTS, keys: KEYS, probe_input_key: None };
+pub const SPEC: Spec = Spec { name: NAME, stream: STREAM, tick: TICK, state: STATE, probe: OBSERVE, probe_deadline_ms: 120_000, cadence_key: CADENCE_KEY, calendar: true, effects: EFFECTS, keys: KEYS, probe_input_key: None, jitter_key: Some(JITTER_KEY) };
 
 /// `ec2::ImageStore`.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

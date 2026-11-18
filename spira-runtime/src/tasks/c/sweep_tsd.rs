@@ -104,7 +104,7 @@ pub const KEEP_DAYS_KEY: &str = "SPIRA_TSD_KEEP_DAYS";
 pub const BY_FAMILY_KEY: &str = "SPIRA_TSD_KEEP_DAYS_BY_FAMILY";
 pub const KEYS: &[&str] = &[CADENCE_KEY, "SPIRA_RUN", KEEP_DAYS_KEY, BY_FAMILY_KEY];
 
-pub const SPEC: Spec = Spec { name: NAME, stream: STREAM, tick: TICK, state: STATE, probe: OBSERVE, probe_deadline_ms: 10_000, cadence_key: CADENCE_KEY, calendar: true, effects: EFFECTS, keys: KEYS, probe_input_key: None };
+pub const SPEC: Spec = Spec { name: NAME, stream: STREAM, tick: TICK, state: STATE, probe: OBSERVE, probe_deadline_ms: 10_000, cadence_key: CADENCE_KEY, calendar: true, effects: EFFECTS, keys: KEYS, probe_input_key: None, jitter_key: None };
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
