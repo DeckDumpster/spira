@@ -115,7 +115,7 @@ pub const CADENCE_KEY: &str = "SPIRA_RUNTIME_HEL_REAP_STALE_SECS";
 pub const IDLE_HOURS_KEY: &str = "SPIRA_RUNTIME_HEL_REAP_STALE_IDLE_HOURS";
 pub const KEYS: &[&str] = &[CADENCE_KEY, IDLE_HOURS_KEY, "SPIRA_RUN", "SPIRA_REAPLOG", "SPIRA_RELEASE"];
 
-pub const SPEC: Spec = Spec { name: NAME, stream: STREAM, tick: TICK, state: STATE, probe: OBSERVE, probe_deadline_ms: 120_000, cadence_key: CADENCE_KEY, calendar: false, effects: EFFECTS, keys: KEYS, probe_input_key: None };
+pub const SPEC: Spec = Spec { name: NAME, stream: STREAM, tick: TICK, state: STATE, probe: OBSERVE, probe_deadline_ms: 120_000, cadence_key: CADENCE_KEY, calendar: false, effects: EFFECTS, keys: KEYS, probe_input_key: None, jitter_key: None };
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]

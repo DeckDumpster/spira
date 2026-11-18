@@ -86,7 +86,7 @@ pub const CLASSES: [&str; 4] = ["mapping_gap", "gate_gap", "environment_gap", "f
 pub const CADENCE_KEY: &str = "SPIRA_RUNTIME_SWEEP_ESCAPE_CENSUS_CALENDAR";
 pub const KEYS: &[&str] = &[CADENCE_KEY, "SPIRA_RUN"];
 
-pub const SPEC: Spec = Spec { name: NAME, stream: STREAM, tick: TICK, state: STATE, probe: OBSERVE, probe_deadline_ms: 30_000, cadence_key: CADENCE_KEY, calendar: true, effects: EFFECTS, keys: KEYS, probe_input_key: None };
+pub const SPEC: Spec = Spec { name: NAME, stream: STREAM, tick: TICK, state: STATE, probe: OBSERVE, probe_deadline_ms: 30_000, cadence_key: CADENCE_KEY, calendar: true, effects: EFFECTS, keys: KEYS, probe_input_key: None, jitter_key: None };
 
 /// `tsd::query::count_by(src, "escape", "class", now, Some(168))`.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

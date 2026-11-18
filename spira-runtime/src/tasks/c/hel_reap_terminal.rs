@@ -105,7 +105,7 @@ pub const CADENCE_KEY: &str = "SPIRA_RUNTIME_HEL_REAP_TERMINAL_CALENDAR";
 pub const JITTER_KEY: &str = "SPIRA_RUNTIME_HEL_REAP_TERMINAL_JITTER_SECS";
 pub const KEYS: &[&str] = &[CADENCE_KEY, JITTER_KEY, "SPIRA_SCRATCH_MAX_AGE_HOURS", "SPIRA_RUN", "SPIRA_REAPLOG", "SPIRA_RELEASE"];
 
-pub const SPEC: Spec = Spec { name: NAME, stream: STREAM, tick: TICK, state: STATE, probe: OBSERVE, probe_deadline_ms: 120_000, cadence_key: CADENCE_KEY, calendar: true, effects: EFFECTS, keys: KEYS, probe_input_key: None };
+pub const SPEC: Spec = Spec { name: NAME, stream: STREAM, tick: TICK, state: STATE, probe: OBSERVE, probe_deadline_ms: 120_000, cadence_key: CADENCE_KEY, calendar: true, effects: EFFECTS, keys: KEYS, probe_input_key: None, jitter_key: Some(JITTER_KEY) };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

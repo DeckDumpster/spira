@@ -126,7 +126,7 @@ fn a_slot_missed_across_a_restart_runs_when_the_scheduler_comes_back() {
 
 #[test]
 fn a_restart_that_lost_the_probe_of_a_pass_between_repositories_observes_that_repository_again() {
-    let cadence = runtime::calendar::Calendar::parse(SPEC).map(spira_runtime::tasks::b::kit::Cadence::Calendar).unwrap();
+    let cadence = runtime::calendar::Calendar::parse(SPEC).map(|c| spira_runtime::tasks::b::kit::Cadence::Calendar(c, 0)).unwrap();
     let between = Carry { phase: Phase::Observing, pass: Some(Pass { started: AT_35, repos_left: vec![], cursor: 1, observing: "second".into() }), ..Carry::default() };
     assert_eq!(task::catch_up(&between, AT_35 + 60_000, &cadence), Some("second".to_string()));
     let idle_and_current = Carry { last_fired: Some(AT_35), ..Carry::default() };

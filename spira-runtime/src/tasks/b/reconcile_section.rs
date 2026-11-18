@@ -92,7 +92,7 @@ pub const EFFECTS: &[&str] = &[PUBLISH];
 pub const CADENCE_KEY: &str = "SPIRA_RUNTIME_RECONCILE_SECTION_SECS";
 pub const KEYS: &[&str] = &[CADENCE_KEY];
 
-pub const SPEC: Spec = Spec { name: NAME, stream: STREAM, tick: TICK, state: STATE, probe: PUBLISH, probe_deadline_ms: 5_000, cadence_key: CADENCE_KEY, calendar: false, effects: EFFECTS, keys: KEYS, probe_input_key: None };
+pub const SPEC: Spec = Spec { name: NAME, stream: STREAM, tick: TICK, state: STATE, probe: PUBLISH, probe_deadline_ms: 5_000, cadence_key: CADENCE_KEY, calendar: false, effects: EFFECTS, keys: KEYS, probe_input_key: None, jitter_key: None };
 
 /// The store's answer to `publish-section lifecycle`.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

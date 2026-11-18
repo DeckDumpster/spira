@@ -119,7 +119,7 @@ pub const SHADOW_KINDS_KEY: &str = "SPIRA_RECONCILER_SHADOW_KINDS";
 pub const DEADMAN_KEY: &str = "SPIRA_RECONCILER_DEADMAN_SECS";
 pub const KEYS: &[&str] = &[CADENCE_KEY, PASS_TIMEOUT_KEY, SHADOW_KINDS_KEY, DEADMAN_KEY, "SPIRA_LC_PASSWORD_FILE"];
 
-pub const SPEC: Spec = Spec { name: NAME, stream: STREAM, tick: TICK, state: STATE, probe: OBSERVE, probe_deadline_ms: 5_000, cadence_key: CADENCE_KEY, calendar: false, effects: EFFECTS, keys: KEYS, probe_input_key: None };
+pub const SPEC: Spec = Spec { name: NAME, stream: STREAM, tick: TICK, state: STATE, probe: OBSERVE, probe_deadline_ms: 5_000, cadence_key: CADENCE_KEY, calendar: false, effects: EFFECTS, keys: KEYS, probe_input_key: None, jitter_key: None };
 
 /// The store's lock answer as the probe read it; the probe never takes the lock.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

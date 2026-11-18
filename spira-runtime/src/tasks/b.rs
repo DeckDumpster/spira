@@ -31,7 +31,7 @@ macro_rules! hosted {
 
             fn from_cfg(get: &dyn Fn(&str) -> Result<String, String>) -> Result<Self, String> {
                 let cfg = $crate::tasks::b::kit::configure(KEYS, get)?;
-                Ok($ty { cadence: $crate::tasks::b::kit::cadence(&cfg, CADENCE_KEY, SPEC.calendar)?, cfg })
+                Ok($ty { cadence: $crate::tasks::b::kit::cadence(&cfg, CADENCE_KEY, SPEC.calendar, SPEC.jitter_key)?, cfg })
             }
 
             fn cadence(&self) -> &$crate::tasks::b::kit::Cadence {
@@ -273,14 +273,15 @@ pub mod kit {
         /// A monotonic interval: the next tick is a period after this one.
         Every(u64),
         /// An `OnCalendar` spec (S8): the next tick is the next elapse.
-        Calendar(Calendar),
+        /// The jitter bound in ms: each fire lands in `[elapse, elapse + bound)`; 0 is exact.
+        Calendar(Calendar, u64),
     }
 
     impl Cadence {
         pub fn next(&self, now_ms: u64) -> u64 {
             match self {
                 Cadence::Every(ms) => now_ms + ms,
-                Cadence::Calendar(c) => c.next_after(now_ms),
+                Cadence::Calendar(c, _) => c.next_after(now_ms),
             }
         }
 
@@ -291,7 +292,22 @@ pub mod kit {
         }
 
         pub fn is_calendar(&self) -> bool {
-            matches!(self, Cadence::Calendar(_))
+            matches!(self, Cadence::Calendar(..))
+        }
+
+        pub fn jitter_ms(&self) -> u64 {
+            match self {
+                Cadence::Calendar(_, bound) => *bound,
+                Cadence::Every(_) => 0,
+            }
+        }
+
+        /// When a tick armed after `now_ms` fires: [`Cadence::next`] plus a seeded draw below the jitter bound.
+        pub fn fire_at(&self, now_ms: u64, ctx: &Ctx) -> u64 {
+            match self {
+                Cadence::Calendar(_, bound) if *bound > 0 => self.next(now_ms) + ctx.rand_u64() % bound,
+                _ => self.next(now_ms),
+            }
         }
     }
 
@@ -315,6 +331,8 @@ pub mod kit {
         pub keys: &'static [&'static str],
         /// The key whose value is the observe probe's input, for a task with one; most send none.
         pub probe_input_key: Option<&'static str>,
+        /// The key holding a calendar task's jitter in seconds; `None` fires exactly on the slot.
+        pub jitter_key: Option<&'static str>,
     }
 
     /// What `decide` is handed.
@@ -371,10 +389,17 @@ pub mod kit {
     }
 
     /// The cadence from `cfg[key]`: positive seconds, or an `OnCalendar` spec.
-    pub fn cadence(cfg: &Cfg, key: &str, calendar: bool) -> Result<Cadence, String> {
+    pub fn cadence(cfg: &Cfg, key: &str, calendar: bool, jitter_key: Option<&str>) -> Result<Cadence, String> {
         let raw = cfg.get(key).ok_or_else(|| format!("{key} is read but not declared"))?;
         if calendar {
-            return Calendar::parse(raw).map(Cadence::Calendar).map_err(|e| format!("{key}: {e}"));
+            let jitter_ms = match jitter_key {
+                None => 0,
+                Some(j) => {
+                    let v = cfg.get(j).ok_or_else(|| format!("{j} is read but not declared"))?;
+                    v.trim().parse::<u64>().map_err(|_| format!("{j} must be a non-negative integer, got {v:?}"))? * 1000
+                }
+            };
+            return Calendar::parse(raw).map(|c| Cadence::Calendar(c, jitter_ms)).map_err(|e| format!("{key}: {e}"));
         }
         raw.trim().parse::<u64>().ok().filter(|s| *s > 0).map(|s| Cadence::Every(s * 1000)).ok_or_else(|| format!("{key} must be a positive integer, got {raw:?}"))
     }
@@ -435,7 +460,7 @@ pub mod kit {
             } else if let Some(input) = resumed {
                 cmds.push(Command::Probe(EffectSpec::probe(spec.probe, input, spec.probe_deadline_ms)));
             }
-            cmds.push(Command::Timer { at: t.cadence().next(ev.at), kind: EventKind::new(spec.tick, FIRE) });
+            cmds.push(Command::Timer { at: t.cadence().fire_at(ev.at, ctx), kind: EventKind::new(spec.tick, FIRE) });
             return cmds;
         }
         let Some(asked) = answered_effect(view, ev) else { return vec![] };
@@ -538,11 +563,13 @@ pub mod kit {
         pub fn t1_registered_and_boots<T: Stub>(set: &[(&str, &str)], first_ms: u64) {
             let h = handler::<T>(set);
             assert_eq!(h.cadence().first_ms(), first_ms, "{}: cadence", T::SPEC.name);
+            let h_jitter_ms = h.cadence().jitter_ms();
             let mut rig = TaskRig::new(1, h.registration()).unwrap();
             let (_, stream, kind) = boot::<T>();
             assert_eq!(stream, T::SPEC.stream);
             rig.tick(stream, kind).unwrap();
-            assert_eq!(rig.engine().next_timer_at(), Some(first_ms), "{}: the boot tick must arm the first tick", T::SPEC.name);
+            let armed = rig.engine().next_timer_at().unwrap_or_else(|| panic!("{}: the boot tick must arm the first tick", T::SPEC.name));
+            assert!((first_ms..=first_ms + h_jitter_ms.saturating_sub(1)).contains(&armed), "{}: the boot tick must arm the first tick in [{first_ms}, {first_ms} + {h_jitter_ms} ms), got {armed}", T::SPEC.name);
             for q in rig.requested() {
                 assert!(T::SPEC.effects.contains(&q.name.as_str()), "{} asked for undeclared {}", T::SPEC.name, q.name);
             }

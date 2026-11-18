@@ -125,7 +125,7 @@ pub const FIRED_PREFIX: &str = "settle-fired:";
 pub const CADENCE_KEY: &str = "SPIRA_RUNTIME_INCIDENT_SETTLE_SECS";
 pub const KEYS: &[&str] = &[CADENCE_KEY, "SPIRA_DB", "SPIRA_INCIDENT_LABEL", "SPIRA_HOME_REPO", "SPIRA_INCIDENT_LOG", "SPIRA_RELEASE"];
 
-pub const SPEC: Spec = Spec { name: NAME, stream: STREAM, tick: TICK, state: STATE, probe: OBSERVE, probe_deadline_ms: 10_000, cadence_key: CADENCE_KEY, calendar: false, effects: EFFECTS, keys: KEYS, probe_input_key: None };
+pub const SPEC: Spec = Spec { name: NAME, stream: STREAM, tick: TICK, state: STATE, probe: OBSERVE, probe_deadline_ms: 10_000, cadence_key: CADENCE_KEY, calendar: false, effects: EFFECTS, keys: KEYS, probe_input_key: None, jitter_key: None };
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

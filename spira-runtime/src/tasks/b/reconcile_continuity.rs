@@ -99,7 +99,7 @@ pub const EFFECTS: &[&str] = &[OBSERVE, INBOX_APPEND];
 pub const CADENCE_KEY: &str = "SPIRA_RUNTIME_RECONCILE_CONTINUITY_SECS";
 pub const KEYS: &[&str] = &[CADENCE_KEY];
 
-pub const SPEC: Spec = Spec { name: NAME, stream: STREAM, tick: TICK, state: STATE, probe: OBSERVE, probe_deadline_ms: 5_000, cadence_key: CADENCE_KEY, calendar: false, effects: EFFECTS, keys: KEYS, probe_input_key: None };
+pub const SPEC: Spec = Spec { name: NAME, stream: STREAM, tick: TICK, state: STATE, probe: OBSERVE, probe_deadline_ms: 5_000, cadence_key: CADENCE_KEY, calendar: false, effects: EFFECTS, keys: KEYS, probe_input_key: None, jitter_key: None };
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]

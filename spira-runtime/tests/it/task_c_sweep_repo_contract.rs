@@ -288,3 +288,27 @@ fn fire_stamps_the_start_and_a_completed_observe_keeps_it() {
     let done = task::decide(&Default::default(), &started, &Input::Observed(Snapshot::default()), 9_000).unwrap().0;
     assert_eq!(done.last_fired, Some(7_000));
 }
+
+fn first_fire(set: &[(&str, &str)], seed: u64) -> u64 {
+    let mut r = TaskRig::new(seed, t::handler::<H>(set).registration()).unwrap();
+    let (_, stream, kind) = H::boot();
+    r.tick(stream, kind).unwrap();
+    r.engine().next_timer_at().expect("the boot tick arms the first tick")
+}
+
+#[test]
+fn a_calendar_tick_fires_at_its_slot_plus_a_seeded_offset_below_the_jitter() {
+    let (a, b) = (first_fire(SET, 1), first_fire(SET, 2));
+    for at in [a, b] {
+        assert!((SLOT_MS..SLOT_MS + 600_000).contains(&at), "{at} outside the jitter window");
+    }
+    assert_ne!(a, b, "two seeds draw two offsets");
+    assert_eq!(first_fire(SET, 1), a, "one seed draws the same offset");
+}
+
+#[test]
+fn a_jitter_of_zero_fires_exactly_on_the_slot() {
+    let zero = [(task::CADENCE_KEY, "*-*-* 05:10:00"), (task::JITTER_KEY, "0")];
+    assert_eq!(first_fire(&zero, 1), SLOT_MS);
+    assert_eq!(first_fire(&zero, 2), SLOT_MS);
+}

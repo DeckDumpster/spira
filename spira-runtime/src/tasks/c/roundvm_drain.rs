@@ -95,7 +95,7 @@ pub const EFFECTS: &[&str] = &[OBSERVE, RELEASE];
 pub const CADENCE_KEY: &str = "SPIRA_RUNTIME_ROUNDVM_DRAIN_SECS";
 pub const KEYS: &[&str] = &[CADENCE_KEY, "SPIRA_ROUND_VM_STATE_DIR", "SPIRA_ROUND_VM_WARM_IDLE_SECS", "SPIRA_ROUND_VM_SPILL"];
 
-pub const SPEC: Spec = Spec { name: NAME, stream: STREAM, tick: TICK, state: STATE, probe: OBSERVE, probe_deadline_ms: 10_000, cadence_key: CADENCE_KEY, calendar: false, effects: EFFECTS, keys: KEYS, probe_input_key: None };
+pub const SPEC: Spec = Spec { name: NAME, stream: STREAM, tick: TICK, state: STATE, probe: OBSERVE, probe_deadline_ms: 10_000, cadence_key: CADENCE_KEY, calendar: false, effects: EFFECTS, keys: KEYS, probe_input_key: None, jitter_key: None };
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
