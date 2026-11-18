@@ -165,6 +165,23 @@ fn judged_evidence(r: &Readiness) -> Result<Value> {
     }))
 }
 
+/// Every applied audit on a `(machine, key)` continues from the previous one's `to_state`.
+fn refuse_discontinuity(then: &[Audit]) -> Result<()> {
+    let mut last: std::collections::BTreeMap<(&str, &str), &str> = Default::default();
+    for a in then.iter().filter(|a| a.applied) {
+        let key = (a.machine.as_str(), a.lc_key.as_str());
+        if let Some(prev) = last.insert(key, a.to_state.as_str()) {
+            if prev != a.from_state {
+                return Err(Error::Backend(format!(
+                    "discontinuous event: {} {} {} from {} but the previous applied event left it {prev}",
+                    a.machine, a.lc_key, a.event, a.from_state
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn audited_ids(audits: &[Audit]) -> std::collections::BTreeSet<&str> {
     audits.iter().map(|a| a.lc_key.as_str()).collect()
 }
@@ -568,6 +585,7 @@ impl<B: Backend> Store<B> {
         req: &Request,
         part: &str,
     ) -> Result<state_store::TxnResult> {
+        refuse_discontinuity(then)?;
         let sub = sub_request(req, part, evidence(then, els));
         t = self.enqueue_closeouts(t, then)?;
         let planned_at = self.contract.head()?;

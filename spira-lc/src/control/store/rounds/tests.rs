@@ -1675,3 +1675,27 @@ fn a_watch_past_compacted_history_answers_with_the_resume_revision_and_reads_no_
     let reads = r.s.contract().backend().take();
     assert!(reads.iter().all(|(k, ..)| *k != "range" && *k != "range_in_state"), "no row is read: {reads:?}");
 }
+
+#[test]
+fn a_round_cut_with_one_member_twice_writes_no_discontinuous_delivery_event() {
+    let r = Rig::new();
+    r.certified("sp-a", T1);
+    let members = vec![("sp-a".to_string(), T1.to_string()); 2];
+    let planned = r.s.plan_cut(&r.cut_spec(&members)).unwrap();
+    let Planned::Cascade(_) = &planned else {
+        return;
+    };
+    let head = r.s.contract().head().unwrap();
+    if r.s.run_planned(planned, &r.req(), "cut").is_err() {
+        assert_eq!(r.s.contract().head().unwrap(), head);
+        return;
+    }
+    let (_, audits) = r.audits_at(head + 1);
+    let mut prev: Option<String> = None;
+    for a in audits.iter().filter(|a| a.applied && a.machine == "delivery" && a.lc_key == "sp-a") {
+        if let Some(p) = &prev {
+            assert_eq!(&a.from_state, p, "{} from {} after {p}", a.event, a.from_state);
+        }
+        prev = Some(a.to_state.clone());
+    }
+}
