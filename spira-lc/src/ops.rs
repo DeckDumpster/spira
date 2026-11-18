@@ -3,13 +3,13 @@
 //! control store (the records, the rounds, the audit log) and printed as the strings the panes
 //! have always read; a bead's title and priority come from the planning plane, where they live.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use lifecycle::bead::BeadState;
 use serde_json::{json, Map, Value};
 use state_store::Backend;
 
-use crate::control::audits::Logged;
+use crate::control::audits::{Logged, Move};
 use crate::control::store::Store;
 
 /// The only views `ops-view` will name; the argument is matched, never interpolated.
@@ -177,77 +177,115 @@ fn applied_moves<'a>(logged: &'a [Logged], machine: &'a str) -> impl Iterator<It
     logged.iter().filter(move |l| l.audit.machine == machine && l.audit.applied && l.audit.from_state != l.audit.to_state)
 }
 
-/// `ops_edges`: how often each transition applied and each refusal happened, in the last hour and day.
-fn ops_edges(logged: &[Logged], now: i64) -> Vec<Value> {
-    let in_day = |l: &&Logged| l.audit.at >= now - DAY_S;
-    let mut applied: BTreeMap<(String, String, String), (u64, u64, i64)> = BTreeMap::new();
-    for l in applied_moves(logged, "bead").filter(in_day) {
-        let a = &l.audit;
-        let e = applied.entry((a.from_state.clone(), a.to_state.clone(), a.event.clone())).or_insert((0, 0, i64::MIN));
-        e.0 += u64::from(a.at >= now - HOUR_S);
-        e.1 += 1;
-        e.2 = e.2.max(a.at);
-    }
-    let mut refused: BTreeMap<(String, String, String), (u64, u64, i64)> = BTreeMap::new();
-    for l in logged.iter().filter(|l| l.audit.machine == "bead" && !l.audit.applied).filter(in_day) {
-        let a = &l.audit;
-        let e = refused.entry((a.from_state.clone(), a.event.clone(), a.refusal.clone().unwrap_or_default())).or_insert((0, 0, i64::MIN));
-        e.0 += u64::from(a.at >= now - HOUR_S);
-        e.1 += 1;
-        e.2 = e.2.max(a.at);
-    }
-    let mut out: Vec<Value> = applied
-        .into_iter()
-        .map(|((from, to, event), (h, d, last))| object(vec![("kind", text("applied")), ("from_state", text(from)), ("to_state", text(to)), ("event", text(event)), ("refusal", Value::Null), ("n_1h", text(h)), ("n_24h", text(d)), ("last_at", text(last))]))
-        .collect();
-    out.extend(refused.into_iter().map(|((from, event, refusal), (h, d, last))| {
-        object(vec![("kind", text("refused")), ("from_state", text(from)), ("to_state", Value::Null), ("event", text(event)), ("refusal", text(refusal)), ("n_1h", text(h)), ("n_24h", text(d)), ("last_at", text(last))])
-    }));
-    out
+type Tally = (u64, u64, i64);
+
+fn tally(map: &mut BTreeMap<(String, String, String), Tally>, key: (&str, &str, &str), at: i64, now: i64) {
+    let e = map.entry((key.0.to_string(), key.1.to_string(), key.2.to_string())).or_insert((0, 0, i64::MIN));
+    e.0 += u64::from(at >= now - HOUR_S);
+    e.1 += 1;
+    e.2 = e.2.max(at);
 }
 
-/// Per from-state, the 95th-percentile time a bead spent there over the window, and how many stays it rests on.
-fn dwell_p95(logged: &[Logged], now: i64) -> BTreeMap<String, (i64, usize)> {
-    let mut by_bead: BTreeMap<&str, Vec<&Logged>> = BTreeMap::new();
-    for l in applied_moves(logged, "bead").filter(|l| l.audit.at >= now - DWELL_WINDOW_S) {
-        by_bead.entry(l.audit.lc_key.as_str()).or_default().push(l);
+/// How often each transition applied and each refusal happened in the last hour and day, folded
+/// one audit at a time.
+struct Edges {
+    now: i64,
+    applied: BTreeMap<(String, String, String), Tally>,
+    refused: BTreeMap<(String, String, String), Tally>,
+}
+
+impl Edges {
+    fn new(now: i64) -> Self {
+        Edges { now, applied: BTreeMap::new(), refused: BTreeMap::new() }
     }
-    let mut stays: BTreeMap<String, Vec<i64>> = BTreeMap::new();
-    for moves in by_bead.values_mut() {
-        moves.sort_by_key(|l| l.rev);
-        for pair in moves.windows(2) {
-            stays.entry(pair[1].audit.from_state.clone()).or_default().push(pair[1].audit.at - pair[0].audit.at);
+
+    fn take(&mut self, m: &Move) {
+        if m.machine != "bead" || m.at < self.now - DAY_S {
+            return;
+        }
+        if !m.applied {
+            tally(&mut self.refused, (m.from_state, m.event, m.refusal.unwrap_or_default()), m.at, self.now);
+        } else if m.from_state != m.to_state {
+            tally(&mut self.applied, (m.from_state, m.to_state, m.event), m.at, self.now);
         }
     }
-    stays
-        .into_iter()
-        .map(|(state, mut secs)| {
-            secs.sort_unstable();
-            let n = secs.len();
-            let rank = (n * 95).div_ceil(100).max(1);
-            (state, (secs[rank - 1], n))
-        })
-        .collect()
+
+    /// `ops_edges` rows.
+    fn rows(self) -> Vec<Value> {
+        let mut out: Vec<Value> = self
+            .applied
+            .into_iter()
+            .map(|((from, to, event), (h, d, last))| object(vec![("kind", text("applied")), ("from_state", text(from)), ("to_state", text(to)), ("event", text(event)), ("refusal", Value::Null), ("n_1h", text(h)), ("n_24h", text(d)), ("last_at", text(last))]))
+            .collect();
+        out.extend(self.refused.into_iter().map(|((from, event, refusal), (h, d, last))| {
+            object(vec![("kind", text("refused")), ("from_state", text(from)), ("to_state", Value::Null), ("event", text(event)), ("refusal", text(refusal)), ("n_1h", text(h)), ("n_24h", text(d)), ("last_at", text(last))])
+        }));
+        out
+    }
 }
 
-fn ops_dwell_p95_rows(logged: &[Logged], now: i64) -> Vec<Value> {
-    dwell_p95(logged, now).into_iter().map(|(state, (p95, n))| object(vec![("state", text(state)), ("p95_s", text(p95)), ("samples", text(n))])).collect()
+/// Per from-state, the stays that ended in it over the window, folded newest audit first: a
+/// bead holds one pending move, never its history.
+struct Stays {
+    now: i64,
+    later: BTreeMap<String, (i64, String)>,
+    secs: BTreeMap<String, Vec<i64>>,
+}
+
+impl Stays {
+    fn new(now: i64) -> Self {
+        Stays { now, later: BTreeMap::new(), secs: BTreeMap::new() }
+    }
+
+    fn take(&mut self, m: &Move) {
+        if m.machine != "bead" || !m.applied || m.from_state == m.to_state || m.at < self.now - DWELL_WINDOW_S {
+            return;
+        }
+        if let Some((at, from)) = self.later.get_mut(m.lc_key) {
+            self.secs.entry(from.clone()).or_default().push(*at - m.at);
+            (*at, *from) = (m.at, m.from_state.to_string());
+        } else {
+            self.later.insert(m.lc_key.to_string(), (m.at, m.from_state.to_string()));
+        }
+    }
+
+    /// The 95th-percentile stay and how many stays it rests on, per state.
+    fn p95(self) -> BTreeMap<String, (i64, usize)> {
+        self.secs
+            .into_iter()
+            .map(|(state, mut secs)| {
+                secs.sort_unstable();
+                let n = secs.len();
+                let rank = (n * 95).div_ceil(100).max(1);
+                (state, (secs[rank - 1], n))
+            })
+            .collect()
+    }
+}
+
+fn ops_dwell_p95_rows(p95: BTreeMap<String, (i64, usize)>) -> Vec<Value> {
+    p95.into_iter().map(|(state, (p95, n))| object(vec![("state", text(state)), ("p95_s", text(p95)), ("samples", text(n))])).collect()
 }
 
 /// `ops_dwell`: each live bead with when it entered its state and what is usual for that state.
-fn ops_dwell<B: Backend>(store: &Store<B>, logged: &[Logged], now: i64) -> Result<Vec<Value>, String> {
+fn ops_dwell<B: Backend>(store: &Store<B>, now: i64) -> Result<Vec<Value>, String> {
     let live = live(store)?;
-    let p95 = dwell_p95(logged, now);
+    let ids: BTreeSet<&str> = live.rows.iter().map(|r| r.row.bead_id.as_str()).collect();
+    let mut stays = Stays::new(now);
+    let mut newest: BTreeMap<(String, String), i64> = BTreeMap::new();
+    folded(store, now, DWELL_WINDOW_S, |m| {
+        stays.take(&m);
+        if m.machine == "bead" && m.applied && m.from_state != m.to_state && ids.contains(m.lc_key) {
+            let e = newest.entry((m.lc_key.to_string(), m.to_state.to_string())).or_insert(i64::MIN);
+            *e = (*e).max(m.at);
+        }
+    })?;
+    let p95 = stays.p95();
     let plan = planned(&live.rows.iter().map(|r| r.row.bead_id.clone()).collect::<Vec<_>>());
-    let mut newest: BTreeMap<(&str, &str), i64> = BTreeMap::new();
-    for l in applied_moves(logged, "bead") {
-        let e = newest.entry((l.audit.lc_key.as_str(), l.audit.to_state.as_str())).or_insert(i64::MIN);
-        *e = (*e).max(l.audit.at);
-    }
     let mut out = Vec::new();
     for r in &live.rows {
         let row = &r.row;
-        let entered = match newest.get(&(row.bead_id.as_str(), row.state.as_str())) {
+        let entered = match newest.get(&(row.bead_id.clone(), row.state.as_str().to_string())) {
             Some(at) => *at,
             None => store
                 .history(&row.bead_id, Some("bead"))
@@ -332,6 +370,15 @@ fn logged<B: Backend>(store: &Store<B>, now: i64, span: i64) -> Result<Vec<Logge
     Ok(scan.audits)
 }
 
+/// Folds the audits of the last `span` seconds into `visit`, newest first, holding none of them.
+fn folded<B: Backend>(store: &Store<B>, now: i64, span: i64, visit: impl FnMut(Move)) -> Result<(), String> {
+    match store.fold_audits_since(now - span, visit) {
+        Ok(true) => Ok(()),
+        Ok(false) => Err(format!("the audit log is too long to read back {span}s in one call")),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
 fn view_arg(args: &[String]) -> Result<&'static str, (i32, String)> {
     args.first().and_then(|a| VIEWS.iter().find(|v| **v == a.as_str())).copied().ok_or_else(|| (2, format!("ops-view: takes one of {}", VIEWS.join(" | "))))
 }
@@ -350,9 +397,15 @@ fn view_rows<B: Backend>(store: &Store<B>, view: &str, now: i64) -> (i32, String
         "ops_live" => ops_live(store),
         "ops_round" => ops_round(store),
         "ops_recent" => ops_recent(store, now),
-        "ops_edges" => logged(store, now, DAY_S).map(|a| ops_edges(&a, now)),
-        "ops_dwell_p95" => logged(store, now, DWELL_WINDOW_S).map(|a| ops_dwell_p95_rows(&a, now)),
-        _ => logged(store, now, DWELL_WINDOW_S).and_then(|a| ops_dwell(store, &a, now)),
+        "ops_edges" => {
+            let mut edges = Edges::new(now);
+            folded(store, now, DAY_S, |m| edges.take(&m)).map(|()| edges.rows())
+        }
+        "ops_dwell_p95" => {
+            let mut stays = Stays::new(now);
+            folded(store, now, DWELL_WINDOW_S, |m| stays.take(&m)).map(|()| ops_dwell_p95_rows(stays.p95()))
+        }
+        _ => ops_dwell(store, now),
     };
     match rows {
         Ok(rows) => (0, Value::Array(rows).to_string()),
@@ -483,6 +536,11 @@ mod tests {
         }
     }
 
+    fn move_of(l: &Logged) -> Move<'_> {
+        let a = &l.audit;
+        Move { machine: &a.machine, lc_key: &a.lc_key, event: &a.event, from_state: &a.from_state, to_state: &a.to_state, applied: a.applied, refusal: a.refusal.as_deref(), at: a.at }
+    }
+
     #[test]
     fn the_graph_is_json_edges_with_state_names_and_events() {
         let out = graph_json("bead");
@@ -565,7 +623,9 @@ mod tests {
             audit("sp-b", "Claim", "READY", "WORKING", true, "d", now - 2 * HOUR_S),
             audit("sp-c", "Submit", "READY", "READY", false, "d", now - 30),
         ];
-        let rows = ops_edges(&log, now);
+        let mut edges = Edges::new(now);
+        log.iter().rev().for_each(|l| edges.take(&move_of(l)));
+        let rows = edges.rows();
         let applied = rows.iter().find(|r| r["kind"] == "applied").unwrap();
         assert_eq!((applied["n_1h"].as_str(), applied["n_24h"].as_str(), applied["last_at"].as_str()), (Some("1"), Some("2"), Some((now - 60).to_string().as_str())));
         let refused = rows.iter().find(|r| r["kind"] == "refused").unwrap();
@@ -581,7 +641,9 @@ mod tests {
             log.push(audit(&bead, "Claim", "READY", "WORKING", true, "d", now - 5_000 + n));
             log.push(audit(&bead, "Submit", "WORKING", "SUBMITTED", true, "d", now - 5_000 + n + 10 * (n + 1)));
         }
-        let p = dwell_p95(&log, now);
+        let mut stays = Stays::new(now);
+        log.iter().rev().for_each(|l| stays.take(&move_of(l)));
+        let p = stays.p95();
         assert_eq!(p["WORKING"], (190, 20), "stays are 10, 20 .. 200 s; rank ceil(0.95 * 20) = 19");
     }
 
@@ -614,5 +676,42 @@ mod tests {
         assert_eq!(rows[0]["repo"], "harness");
         assert_eq!(rows[0]["holder"], Value::Null);
         assert_eq!(rows[0]["holds"], "[]");
+    }
+
+    /// A store shaped like production: many terminal beads with bulky audits across a fortnight,
+    /// a few live ones.
+    fn fortnight(audits: u64) -> (Store<state_store_sqlite::SqliteBackend>, i64, testkit::TempDir) {
+        use state_store::{events_key, Backend, Object, Rev, Write};
+        use state_store_sqlite::{Options, SqliteBackend};
+        let dir = testkit::TempDir::new("spira-lc-ops-memory");
+        let b = SqliteBackend::open(&dir.path().join("control.db"), Options::default()).unwrap();
+        let now: i64 = 2_000_000_000;
+        let bulk = "x".repeat(2_000);
+        let states = ["READY", "WORKING", "SUBMITTED", "CERTIFIED"];
+        let mut head = b.head().unwrap();
+        for n in 0..audits {
+            let (from, to) = (states[(n % 4) as usize], states[((n + 1) % 4) as usize]);
+            let at = now - 13 * DAY_S + (n as i64) * (12 * DAY_S) / audits as i64;
+            let a = json!({ "machine": "bead", "lc_key": format!("sp-{:04}", n % 300), "event": "Claim", "expect": from, "from_state": from, "to_state": to, "applied": true, "refusal": null, "evidence": { "bulk": bulk }, "actor": "a", "at": at });
+            let events = json!({ "refused": false, "evidence": { "then": [a] } });
+            let write = Write::Put { key: events_key(head + 1), value: Object::new(events).encode(), create_rev: Rev::new(head + 1, 0), prev: None };
+            head = b.commit(head, &[write]).unwrap();
+        }
+        let c = Contract::open(b, Ports::virtual_clock(&VirtualClock::new(0)), Config { min_lock_ttl_ms: 1_000 }).unwrap();
+        (Store::new(c, 1_000), now, dir)
+    }
+
+    #[test]
+    fn the_dwell_views_hold_no_more_memory_for_a_longer_history() {
+        for view in ["ops_dwell_p95", "ops_edges", "ops_dwell"] {
+            let held = |audits| {
+                let (store, now, _dir) = fortnight(audits);
+                let ((rc, out), peak) = crate::peak_alloc::peak_of(|| view_rows(&store, view, now));
+                assert_eq!(rc, 0, "{view}: {out}");
+                peak
+            };
+            let (short, long) = (held(2_000), held(8_000));
+            assert!(long < short * 3 / 2, "{view} held {short} B for 2000 audits and {long} B for 8000: the window is held, not folded");
+        }
     }
 }
