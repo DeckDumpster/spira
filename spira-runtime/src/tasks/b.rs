@@ -81,7 +81,6 @@ pub mod incident_alarms;
 pub mod incident_settle;
 pub mod mail_reconcile;
 pub mod reconcile_content;
-pub mod reconcile_continuity;
 pub mod reconcile_goodput;
 pub mod reconcile_heimdall;
 pub mod reconcile_section;
@@ -92,14 +91,12 @@ use incident_settle::IncidentSettle;
 use kit::{build, cadence_ms};
 use mail_reconcile::MailReconcile;
 use reconcile_content::ReconcileContent;
-use reconcile_continuity::ReconcileContinuity;
 use reconcile_goodput::ReconcileGoodput;
 use reconcile_heimdall::ReconcileHeimdall;
 use reconcile_section::ReconcileSection;
 
 pub static TASKS: &[Task] = &[
     Task { name: reconcile_section::NAME, plane: runtime::Plane::Work, signal: &[], boot: ReconcileSection::boot, cadence_ms: cadence_ms::<ReconcileSection>, effects: reconcile_section::EFFECTS, runners: &[(reconcile_section::PUBLISH, |e, _, _| reconcile_section::publish(&lc(e)))], keys: &[reconcile_section::KEYS], build: build::<ReconcileSection> },
-    Task { name: reconcile_continuity::NAME, plane: runtime::Plane::Work, signal: &[], boot: ReconcileContinuity::boot, cadence_ms: cadence_ms::<ReconcileContinuity>, effects: reconcile_continuity::EFFECTS, runners: &[(reconcile_continuity::OBSERVE, |e, _, _| reconcile_continuity::observe(&lc(e)))], keys: &[reconcile_continuity::KEYS], build: build::<ReconcileContinuity> },
     Task {
         name: reconcile_content::NAME,
         plane: runtime::Plane::Work,

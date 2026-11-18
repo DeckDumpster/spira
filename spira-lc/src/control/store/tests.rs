@@ -1380,3 +1380,36 @@ mod on_sqlite {
         assert_eq!(shown["bead"]["sessions"].as_str(), Some("1"), "{shown}");
     }
 }
+
+#[test]
+fn a_txn_whose_audits_on_one_key_do_not_chain_is_refused_and_writes_nothing() {
+    let (s, _b, _c) = fresh();
+    let audit = |from: &str, to: &str| Audit {
+        machine: "delivery".into(),
+        lc_key: "sp-x".into(),
+        event: "Cut".into(),
+        expect: from.into(),
+        from_state: from.into(),
+        to_state: to.into(),
+        applied: true,
+        refusal: None,
+        evidence: serde_json::Value::Null,
+        actor: "test".into(),
+        at: 0,
+    };
+    let head = s.contract().head().unwrap();
+    let err = s
+        .audited_txn(
+            state_store::Txn::new(),
+            &[audit("A", "B"), audit("C", "D")],
+            &[],
+            &req("r-1"),
+            "t",
+        )
+        .unwrap_err();
+    let text = err.to_string();
+    for want in ["delivery", "sp-x", "C", "B"] {
+        assert!(text.contains(want), "{want} missing from {text}");
+    }
+    assert_eq!(s.contract().head().unwrap(), head);
+}

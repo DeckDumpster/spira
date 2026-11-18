@@ -1,0 +1,2 @@
+removed = ["spira.runtime_reconcile_continuity_secs"]
+removed_tasks = ["reconcile.continuity"]

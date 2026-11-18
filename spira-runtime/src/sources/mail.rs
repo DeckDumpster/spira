@@ -141,7 +141,9 @@ mod tests {
         let watch = Waiting { inner: super::super::watch::ListingWatch::default(), first_wait: Some(waiting_tx) };
         let h = std::thread::spawn(move || run(&boxes, Box::new(watch), tx));
         waiting.recv().expect("the source caught up and waits");
-        std::fs::write(new.join("m1"), "X-Spira-Kind: event\n\nhi\n").unwrap();
+        let staged = dir.path().join("m1.staged");
+        std::fs::write(&staged, "X-Spira-Kind: event\n\nhi\n").unwrap();
+        std::fs::rename(&staged, new.join("m1")).unwrap();
         let got = rx.blocking_recv().expect("the arrival");
         drop(rx);
         h.join().unwrap();

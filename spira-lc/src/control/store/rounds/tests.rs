@@ -7,7 +7,7 @@ use runtime::ports::VirtualClock;
 use state_store::{Backend, Config, Contract, MemBackend, Ports, Request};
 use state_store_sqlite::SqliteBackend;
 
-use super::{Cut, Planned, Ran, Store};
+use super::{Cut, Planned, Ran, Store, Turned};
 use crate::control::keys;
 use crate::control::records::Audit;
 use crate::control::state::{self, Call};
@@ -1674,4 +1674,19 @@ fn a_watch_past_compacted_history_answers_with_the_resume_revision_and_reads_no_
     assert!(matches!(fed, crate::control::feed::Feed::Relist { list_rev, .. } if list_rev == head), "too old resumes from the head");
     let reads = r.s.contract().backend().take();
     assert!(reads.iter().all(|(k, ..)| *k != "range" && *k != "range_in_state"), "no row is read: {reads:?}");
+}
+
+#[test]
+fn a_round_cut_with_one_member_twice_writes_no_discontinuous_delivery_event() {
+    let r = Rig::new();
+    r.certified("sp-a", T1);
+    let members = vec![("sp-a".to_string(), T1.to_string()); 2];
+    let head = r.s.contract().head().unwrap();
+    let planned = r.s.plan_cut(&r.cut_spec(&members)).unwrap();
+    let Planned::Ran(Ran::Turned(Turned::CannotTell(why))) = &planned else {
+        panic!("a cut naming a member twice must be refused whole");
+    };
+    assert!(why.contains("sp-a is named twice"), "{why}");
+    assert_eq!(r.s.contract().head().unwrap(), head, "a refused cut writes nothing");
+    assert!(r.s.delivery("sp-a").unwrap().is_none());
 }
