@@ -306,11 +306,11 @@ impl Bd for RealBd {
         self.run_lc(&["content", "list", "--limit", "1", "--json"]).map(|(rc, ..)| rc == 0).unwrap_or(false)
     }
     fn fact(&self, id: &str, kind: &str, cause: &str) -> bool {
-        let args = ["fact", id, "--kind", kind, "--actor", "incident", "--cause", cause];
+        let args = ["fact", "add", id, "--kind", kind, "--actor", "incident", "--cause", cause];
         self.run_lc(&args).map(|(rc, ..)| rc == 0).unwrap_or(false)
     }
     fn fact_count(&self, id: &str, kind: &str) -> Option<usize> {
-        let (rc, out, _) = self.run_lc(&["facts", "--ids", id, "--kinds", kind]).ok()?;
+        let (rc, out, _) = self.run_lc(&["fact", "list", "--ids", id, "--kinds", kind]).ok()?;
         if rc != 0 {
             return None;
         }
@@ -402,8 +402,8 @@ mod tests {
         let bd = RealBd { bdq: "nonexistent/bdq".into(), timeout_secs: 1, retries: 1, lc: Some(spira_store::lc_call::LcClient::over(t.clone(), true)) };
         assert!(bd.fact("sp-1", "k", "why"));
         assert_eq!(bd.fact_count("sp-1", "k"), Some(2));
-        let verbs: Vec<String> = t.0.lock().unwrap().iter().map(|a| a[0].clone()).collect();
-        assert_eq!(verbs, vec!["fact", "facts"]);
+        let verbs: Vec<String> = t.0.lock().unwrap().iter().map(|a| a[..2].join(" ")).collect();
+        assert_eq!(verbs, vec!["fact add", "fact list"]);
     }
 
     /// The question carries what the `mail send` argv did: operator, the incident sender, a

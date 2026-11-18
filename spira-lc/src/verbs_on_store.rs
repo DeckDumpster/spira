@@ -15,7 +15,7 @@ fn world() -> (testkit::TempDir, testkit::EnvGuard) {
 #[test]
 fn with_no_control_store_configured_every_ported_verb_is_cannot_tell_and_never_a_dolt_read() {
     let (_dir, _env) = world();
-    for verb in [&["fact", "sp-a", "--kind", "claimed", "--actor", "a"][..], &["facts"], &["facts-query", "SELECT 1 FROM events"], &["journal", "state"], &["ops-view", "ops_live"], &["ops-bead", "sp-a"], &["churn-facts", "--since", "0"], &["mend-watch"], &["event-continuity"]] {
+    for verb in [&["fact", "add", "sp-a", "--kind", "claimed", "--actor", "a"][..], &["fact", "list"], &["facts-query", "SELECT 1 FROM events"], &["journal", "state"], &["ops-view", "ops_live"], &["ops-bead", "sp-a"], &["churn-facts", "--since", "0"], &["mend-watch"], &["event-continuity"]] {
         let (rc, out) = run(verb);
         assert_eq!(rc, 2, "{verb:?}: {out}");
         assert!(out.contains("cannot tell") && out.contains("SPIRA_LC_STORE_PATH"), "{verb:?}: {out}");
@@ -32,4 +32,12 @@ fn the_deleted_verbs_answer_usage() {
             assert!(!out.contains(name), "{verb:?}: usage names {name}");
         }
     }
+}
+
+#[test]
+fn facts_is_no_longer_a_verb_and_gets_the_general_usage() {
+    let (_dir, _env) = world();
+    let (rc, out) = run(&["facts"]);
+    assert_eq!(rc, 2);
+    assert!(out.starts_with("usage: spira-lc"), "{out}");
 }

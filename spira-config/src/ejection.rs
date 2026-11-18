@@ -314,7 +314,7 @@ pub fn record(lc: &dyn Fn(&[String]) -> Result<String, String>, bead: &str, tip:
     let d = digest_steps(tip, files, why, steps);
     let prior = prior(lc, now() - LOOKBACK_SECS).unwrap_or_default();
     let d = with_shared(&d, &shared_reds(bead, &d, &prior));
-    lc(&["fact".into(), bead.into(), "--kind".into(), KIND.into(), "--actor".into(), actor.into(), "--cause".into(), d]).map(|_| ())
+    lc(&["fact".into(), "add".into(), bead.into(), "--kind".into(), KIND.into(), "--actor".into(), actor.into(), "--cause".into(), d]).map(|_| ())
 }
 
 pub const LOGS_KIND: &str = "send-back-logs";
@@ -336,14 +336,14 @@ pub fn keep_sift(lc: &dyn Fn(&[String]) -> Result<String, String>, run: &std::pa
 /// Writes the `send-back-logs` fact naming `id` on each bead.
 pub fn reference(lc: &dyn Fn(&[String]) -> Result<String, String>, beads: &[&str], actor: &str, id: &str) -> Result<(), String> {
     for b in beads {
-        lc(&["fact".into(), (*b).into(), "--kind".into(), LOGS_KIND.into(), "--actor".into(), actor.into(), "--cause".into(), id.into()])?;
+        lc(&["fact".into(), "add".into(), (*b).into(), "--kind".into(), LOGS_KIND.into(), "--actor".into(), actor.into(), "--cause".into(), id.into()])?;
     }
     Ok(())
 }
 
 /// The `eject-failure` digests recorded since `since`, as (bead, digest).
 pub fn prior(lc: &dyn Fn(&[String]) -> Result<String, String>, since: i64) -> Result<Vec<(String, String)>, String> {
-    lc(&["facts".into(), "--kinds".into(), KIND.into(), "--since".into(), since.to_string()]).map(|o| prior_digests(&o))
+    lc(&["fact".into(), "list".into(), "--kinds".into(), KIND.into(), "--since".into(), since.to_string()]).map(|o| prior_digests(&o))
 }
 
 fn prior_digests(facts_json: &str) -> Vec<(String, String)> {
@@ -463,12 +463,12 @@ mod tests {
     fn a_failed_prior_read_is_an_error_and_record_still_writes_the_fact() {
         let calls: RefCell<Vec<String>> = RefCell::new(Vec::new());
         let lc = |a: &[String]| {
-            calls.borrow_mut().push(a[0].clone());
-            if a[0] == "facts" { Err("down".to_string()) } else { Ok(String::new()) }
+            calls.borrow_mut().push(a[..2].join(" "));
+            if a[..2] == ["fact", "list"] { Err("down".to_string()) } else { Ok(String::new()) }
         };
         assert!(prior(&lc, 0).is_err());
         record(&lc, "sp-b", "t2", &["y.rs".into()], &[], &red_steps(OUT), "gate").unwrap();
-        assert!(calls.borrow().iter().any(|c| c == "fact"));
+        assert!(calls.borrow().iter().any(|c| c == "fact add"));
     }
 
     #[test]
@@ -478,11 +478,11 @@ mod tests {
         let calls: RefCell<Vec<Vec<String>>> = RefCell::new(Vec::new());
         let lc = |a: &[String]| {
             calls.borrow_mut().push(a.to_vec());
-            Ok(if a[0] == "facts" { facts.clone() } else { String::new() })
+            Ok(if a[..2] == ["fact", "list"] { facts.clone() } else { String::new() })
         };
         record(&lc, "sp-b", "t2", &["y.rs".into()], &[], &red_steps(OUT), "gate").unwrap();
         let calls = calls.borrow();
-        let fact = calls.iter().find(|c| c[0] == "fact").unwrap();
+        let fact = calls.iter().find(|c| c[..2] == ["fact", "add"]).unwrap();
         let cause = &fact[fact.iter().position(|a| a == "--cause").unwrap() + 1];
         assert!(cause.contains("FAIL ci_cut::finds_config at spira/sim/tests/ci_cut.rs:70") && cause.contains("ALSO sp-a"), "{cause}");
     }
@@ -604,7 +604,7 @@ mod tests {
         };
         record(&lc, "sp-b", "t", &[], &["spira-lint: red".into()], &steps, "batcher").unwrap();
         let calls = calls.borrow();
-        let fact = calls.iter().find(|c| c[0] == "fact").unwrap();
+        let fact = calls.iter().find(|c| c[..2] == ["fact", "add"]).unwrap();
         let cause = &fact[fact.iter().position(|a| a == "--cause").unwrap() + 1];
         assert!(cause.contains("why spira-lint: red\nSTEP b\n  two"), "{cause}");
     }
@@ -621,8 +621,8 @@ mod tests {
         let calls = calls.borrow();
         assert_eq!(calls.len(), 2);
         for (c, b) in calls.iter().zip(["sp-a", "sp-b"]) {
-            assert_eq!(c[..6], ["fact", b, "--kind", LOGS_KIND, "--actor", "round"].map(String::from));
-            assert_eq!(c[7], id);
+            assert_eq!(c[..7], ["fact", "add", b, "--kind", LOGS_KIND, "--actor", "round"].map(String::from));
+            assert_eq!(c[8], id);
         }
         assert!(crate::sendback::read(run.path(), &id, "pass_x.out").is_ok());
     }

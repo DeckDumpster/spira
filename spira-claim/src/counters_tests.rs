@@ -9,7 +9,7 @@ use super::*;
 #[test]
 fn fact_args_name_the_kind_actor_and_cause() {
     let a = fact_args("harness", "sp-a", "requeued", "merge-conflict");
-    assert_eq!(a, ["fact", "sp-a", "--kind", "requeued", "--actor", "harness", "--cause", "merge-conflict"]);
+    assert_eq!(a, ["fact", "add", "sp-a", "--kind", "requeued", "--actor", "harness", "--cause", "merge-conflict"]);
 }
 
 #[test]

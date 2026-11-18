@@ -133,7 +133,7 @@ pub fn passes(w: &dyn World, spec_path: &str) -> Reply {
 pub fn verdicts(w: &dyn World, spec_path: &str) -> Reply {
     let spec = load_spec(w, spec_path)?;
     let ids: Vec<&str> = spec.members.iter().map(|m| m.bead.as_str()).collect();
-    lc_ok(w, &["facts", "--ids", &ids.join(",")])
+    lc_ok(w, &["fact", "list", "--ids", &ids.join(",")])
 }
 
 pub fn landing(w: &dyn World, spec_path: &str) -> Reply {
@@ -516,7 +516,7 @@ mod tests {
         verdicts(&w, "spec").unwrap();
         assert_eq!(
             w.lc_calls(),
-            vec!["lc mending list --batch r-9", "lc history r-9 --machine batch", "lc facts --ids sp-a,sp-b"]
+            vec!["lc mending list --batch r-9", "lc history r-9 --machine batch", "lc fact list --ids sp-a,sp-b"]
         );
     }
 

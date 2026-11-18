@@ -23,13 +23,13 @@ use crate::unpoison::bounded_cause;
 // =========================================================================================
 // write-event: lib.sh's `_bump_write_event_try`, the one write every `bump_requeue`/
 // `bump_lapsed`/`bump_poison_cleared` shim reaches through. The fact lands in the lifecycle
-// event log (`spira-lc fact`), never in bd's events table.
+// event log (`spira-lc fact add`), never in bd's events table.
 // =========================================================================================
 
 /// The `spira-lc` argv that appends one fact. Actor and cause are bounded the way the bd
 /// INSERT bounded them, so a hostile cause cannot reshape the argv or the stored record.
 pub fn fact_args(actor: &str, id: &str, etype: &str, cause: &str) -> Vec<String> {
-    ["fact", id, "--kind", etype, "--actor", &bounded_cause(actor), "--cause", &bounded_cause(cause)]
+    ["fact", "add", id, "--kind", etype, "--actor", &bounded_cause(actor), "--cause", &bounded_cause(cause)]
         .iter()
         .map(|s| s.to_string())
         .collect()
@@ -49,7 +49,7 @@ pub fn write_event(store: &Store, actor: &str, id: &str, etype: &str, cause: &st
 // =========================================================================================
 
 pub fn count_events(store: &Store, id: &str, etype: &str) -> Result<u64, String> {
-    let args = ["facts".to_string(), "--ids".into(), id.to_string(), "--kinds".into(), etype.to_string()];
+    let args = ["fact".to_string(), "list".to_string(), "--ids".into(), id.to_string(), "--kinds".into(), etype.to_string()];
     let out = store.lc_run(&args)?;
     Ok(crate::events::parse_rows(&out)?.len() as u64)
 }
@@ -167,7 +167,7 @@ pub fn thrash_streak_bump(store: &Store, id: &str, tip: &str, note: &str) -> u32
 const NO_PROGRESS_KIND: &str = "no-progress";
 
 fn count_events_at(store: &Store, id: &str, etype: &str, cause: &str) -> Result<u32, String> {
-    let args = ["facts".to_string(), "--ids".into(), id.to_string(), "--kinds".into(), etype.to_string()];
+    let args = ["fact".to_string(), "list".to_string(), "--ids".into(), id.to_string(), "--kinds".into(), etype.to_string()];
     let out = store.lc_run(&args)?;
     let rows = crate::events::parse_rows(&out)?;
     Ok(rows.iter().filter(|r| r.new_value.as_deref() == Some(bounded_cause(cause).as_str())).count() as u32)

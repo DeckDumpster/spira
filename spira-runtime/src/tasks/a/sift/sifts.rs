@@ -372,7 +372,7 @@ pub fn lc_gate_red(lc: &LcClient, id: &str, tip: &str, reason: &str) -> Result<(
 /// The `send-back` fact of a sift send-back: the note it stands on, at the tip it judged.
 pub fn lc_send_back_fact(lc: &LcClient, id: &str, tip: &str, text: &str) -> Result<(), String> {
     let cause = spira_config::send_back::encode(tip, text);
-    lcq_with(lc, &["fact", id, "--kind", spira_config::send_back::KIND, "--actor", "sift", "--cause", &cause]).map(|_| ())
+    lcq_with(lc, &["fact", "add", id, "--kind", spira_config::send_back::KIND, "--actor", "sift", "--cause", &cause]).map(|_| ())
 }
 
 /// Records the pass for `tip`. A bead no longer SUBMITTED or CERTIFIED records none, said on
