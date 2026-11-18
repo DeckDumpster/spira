@@ -705,6 +705,7 @@ fn build_template(tmp: &Path, tools: &Tools) -> Result<(), String> {
         ))
         .arg("TERM=dumb")
         .arg("BD_NON_INTERACTIVE=1")
+        .arg(format!("BEADS_DIR={}", ws.join(".beads").display()))
         .arg(&tools.bd)
         .args(BD_INIT_HEAD)
         .arg(port.to_string())
@@ -932,6 +933,7 @@ fn embedded_bd_init(bd: &str, cwd: &Path) -> Result<(), String> {
         .arg(format!("HOME={home}"))
         .arg("TERM=dumb")
         .arg("BD_NON_INTERACTIVE=1")
+        .arg(format!("BEADS_DIR={}", cwd.join(".beads").display()))
         .arg(bd)
         .args([
             "init",

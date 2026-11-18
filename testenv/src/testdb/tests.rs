@@ -332,6 +332,34 @@ fn real_bd_and_dolt_isolated_fixtures() {
     let _ = fs::remove_dir_all(&d);
 }
 
+fn plant_foreign_workspace(d: &Path) {
+    fs::create_dir_all(d.join(".beads")).unwrap();
+    fs::write(
+        d.join(".beads/metadata.json"),
+        r#"{"database":"dolt","backend":"dolt","dolt_mode":"server","dolt_database":"sptest","dolt_server_port":42025}"#,
+    )
+    .unwrap();
+}
+
+#[test]
+#[ignore = "needs real bd + dolt on PATH; ~6 s (template build)"]
+fn a_template_builds_below_a_foreign_beads_workspace() {
+    let tools = Tools::resolve("bd", "dolt").expect("bd and dolt on PATH");
+    let d = tmpdir("foreign");
+    plant_foreign_workspace(&d);
+    let planted = fs::read(d.join(".beads/metadata.json")).unwrap();
+    let root = d.join("x/root");
+    let tpl = ensure_template(&root, &tools).unwrap();
+    let a = up(&root, &tpl, &tools, "fa", 0, None).unwrap();
+    let (ok, out) = bd_in(&a.ws, &tools.bd, &["create", "below foreign", "-q"]);
+    assert!(ok, "{out}");
+    let (_, l) = bd_in(&a.ws, &tools.bd, &["list"]);
+    assert!(l.contains("below foreign"), "{l}");
+    assert_eq!(planted, fs::read(d.join(".beads/metadata.json")).unwrap(), "foreign workspace untouched");
+    down(&a.fixture).unwrap();
+    let _ = fs::remove_dir_all(&d);
+}
+
 // ---- readiness and the tmpfs root (sp-t26yx) -----------------------------------------------
 
 #[test]
