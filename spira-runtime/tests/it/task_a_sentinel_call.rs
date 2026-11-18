@@ -293,6 +293,27 @@ fn skuld_starts_while_the_build_disk_class_is_full() {
 }
 
 #[test]
+fn sp_lhumql_a_p0_behind_a_full_pool_does_not_hold_skuld() {
+    let roster = ["builder", "mender", "ops", "skuld"];
+    let snap = Snapshot {
+        roster: roster.iter().map(|n| n.to_string()).collect(),
+        runes: shipped_runes(&roster),
+        live_by_rune: [("builder".to_string(), 5)].into(),
+        ready_by_rune: [("builder".to_string(), Some(2)), ("mender".to_string(), Some(1)), ("ops".to_string(), Some(0)), ("skuld".to_string(), Some(2))].into(),
+        max_dwarves: Some(5),
+        max_live: Some(40),
+        urgent: Some(vec![UrgentBead { id: "sp-7nj5be".into(), p0: true, express: false }]),
+        express_ready: Some(0),
+        ..Snapshot::default()
+    };
+    let mut r = rig(1, snap);
+    r.advance(60_000).unwrap();
+    let started: Vec<String> = r.requested().iter().filter(|q| q.name == UNIT_START).map(|q| q.input.clone()).collect();
+    assert_eq!(started.len(), 2, "{started:?}");
+    assert!(started.iter().all(|s| s.contains("\"rune\":\"skuld\"")), "{started:?}");
+}
+
+#[test]
 fn call_world_binds_only_the_classes_that_have_a_limit() {
     let snap = Snapshot { max_dwarves: Some(7), class_limits: [("memory".to_string(), 3)].into(), ..idle() };
     let w = call_world(&snap);

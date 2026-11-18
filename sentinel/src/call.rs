@@ -11,7 +11,7 @@ use crate::pass::{self, Sentinel};
 
 pub use sentinel::plan::{check7_pool_decision, ck7_fill_cap, ck7_pool, ck7_throttled, parse_cache, render_cache};
 
-/// One row of `spira-claim urgent`: a P0 or REWORK bead. Only `p0` or `express` hold the reactive runes.
+/// One row of `spira-claim urgent`: a P0 or REWORK bead. Only `p0` or `express` hold the reactive runes that use a bound class.
 struct Urgent {
     id: String,
     p0: bool,
@@ -312,6 +312,17 @@ impl<'a> Sentinel<'a> {
             }
         }
         (task, reactive)
+    }
+
+    /// Drops from `reactive` the runes that use a bound class (only `build-disk`, and only
+    /// while a pool is set) and returns them; an unreadable declaration counts as bound.
+    fn hold_bound_reactive(&self, reactive: &mut Vec<String>) -> Vec<String> {
+        let pooled = self.cfg.max_dwarves.is_some();
+        let (held, kept) = std::mem::take(reactive).into_iter().partition(|f| {
+            pooled && spira_config::runes::rune_uses(&self.cfg.home, f).map_or(true, |u| u.iter().any(|c| c == "build-disk"))
+        });
+        *reactive = kept;
+        held
     }
 
     /// rune_ready <rune> -> spira-claim's own answer, in-process via the binary on PATH
@@ -681,17 +692,22 @@ impl<'a> Sentinel<'a> {
                         u.iter().filter(|b| (b.p0 || b.express) == blocking).map(|b| b.id.as_str()).collect::<Vec<_>>().join(" ")
                     };
                     if u.iter().any(|b| b.p0 || b.express) {
-                        self.log(&format!("CHECK7 reactive: yielding — urgent bead(s) unclaimed: {}", ids(true)));
+                        let held = self.hold_bound_reactive(&mut reactive_now);
+                        if !held.is_empty() {
+                            self.log(&format!("CHECK7 reactive: yielding {} — urgent bead(s) unclaimed: {}", held.join(" "), ids(true)));
+                        }
                         if let Some(x) = u.iter().find(|b| b.express && b.p0) {
                             self.preempt_reactive_for(&x.id, &task_runes, &reactive_runes);
                         }
-                        reactive_now.clear();
                     } else {
                         self.log(&format!("CHECK7 reactive: rework bead(s) waiting do not hold the reactive runes: {}", ids(false)));
                     }
                 }
                 None => {
-                    reactive_now.clear();
+                    let held = self.hold_bound_reactive(&mut reactive_now);
+                    if !held.is_empty() {
+                        self.log(&format!("CHECK7 reactive: yielding {} — the urgent read did not answer", held.join(" ")));
+                    }
                 }
             }
         }
