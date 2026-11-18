@@ -187,7 +187,8 @@ for it; a new commit changes the tip and readmits it. Tests: `redtip::tests`.
 
 ## Left-out beads
 
-`io::certified_pool` names each SUBMITTED or CERTIFIED bead the pool leaves out: held (`Held`), tip recorded
+`io::certified_pool` considers only this repository's rows (the row's `repo`): the pool and its
+left-out list never hold another repository's bead. It names each SUBMITTED or CERTIFIED bead the pool leaves out: held (`Held`), tip recorded
 ejected-red (`EjectedRed`), or certified tip no longer the branch tip (`TipMoved`). The first time an
 (id, cause, tip) is seen, one stderr line `batcher <repo>: <id> left out of the cut: <why> — <exit>`
 and one bead note say why and the way back in; the record `<run>/batcher-left-out/<repo>/<id>` holds
