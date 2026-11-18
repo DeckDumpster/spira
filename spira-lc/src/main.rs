@@ -1,4 +1,4 @@
-//! spira-lc — show/list/history/event against spira_lifecycle, and the `serve` entry point
+//! spira-lc — show/list/history/event against the control store, and the `serve` entry point
 //! for the system service. Deploys inert: nothing in this repository invokes this binary
 //! yet (that is the cutover round, sp-o7nbr/sp-vd9dn/sp-n1ilm/sp-xethq).
 //!
@@ -7,10 +7,10 @@
 //! retries a "cannot tell" is safe, and one that retries a real refusal is not).
 //!
 //! Every verb below is `dispatch(args, conn) -> (exit_code, stdout_text)`, not a function
-//! that prints and exits directly: `main` runs it once against a fresh, one-shot `Conn`,
-//! and `serve` runs the identical code in-process against its own long-lived `Conn` for
-//! every request the socket receives, printing nothing of its own. One implementation, two
-//! callers, and the service path and the same-user fallback can never drift apart.
+//! that prints and exits directly: `main` runs it once in the calling process, and `serve`
+//! runs the identical code for every request the socket receives, printing nothing of its own.
+//! One implementation, two callers, and the service path and the same-user fallback can never
+//! drift apart.
 
 mod backfill_claim;
 mod backfill_repo;
@@ -32,14 +32,14 @@ mod client;
 mod close_on_land;
 mod cutover;
 mod db;
+mod admin_drop;
 mod durability;
+mod fact_sql;
 mod facts;
 mod git_evidence;
-mod group;
 mod journal;
 mod mend_watch;
 mod mending;
-mod migrate;
 mod ops;
 mod passes;
 mod plane;
@@ -57,7 +57,6 @@ mod store_write;
 mod unpublished;
 mod work;
 
-use db::Conn;
 use serde_json::Value;
 
 use spira_lc::{flag, goodput, CANNOT_TELL, REFUSED};
@@ -87,7 +86,7 @@ fn main() {
             // switch and the machine are read exactly as that verb reads them.
             let mut record = |id: &str, proof: &str| {
                 let a = vec![id.to_string(), proof.to_string(), "hel".to_string()];
-                let ans = callers::run("content-on-base", &a, &mut Live { conn: None });
+                let ans = callers::run("content-on-base", &a, &mut Live);
                 if !ans.stderr.is_empty() {
                     eprint!("{}", ans.stderr);
                 }
@@ -95,7 +94,7 @@ fn main() {
             };
             // Whether to close is the machine's state (sp-mve9i), read through the primitive
             // `show`, whatever the switch says — never bd's status.
-            let mut lc = Live { conn: None };
+            let mut lc = Live;
             let mut state = |id: &str| {
                 let (rc, out) = callers::Machine::call(&mut lc, &["show".to_string(), id.to_string()]);
                 if rc != 0 {
@@ -165,7 +164,7 @@ fn main() {
             }
             Ok(client::Route::Direct) => {
                 let ports = composed::Ports {
-                    m: &mut Live { conn: None },
+                    m: &mut Live,
                     bd: &mut bd::LiveBd,
                     content: &composed::LiveContent,
                     stdin: &mut stdin,
@@ -194,7 +193,7 @@ fn main() {
 
     // The caller verbs proved from the caller's own git checkout (callers.rs; DESIGN.md §2).
     if let Some(verb) = args.first().filter(|v| callers::is_verb(v)) {
-        let ans = callers::run(verb, &args[1..], &mut Live { conn: None });
+        let ans = callers::run(verb, &args[1..], &mut Live);
         std::process::exit(emit(&args[1..], ans));
     }
 
@@ -207,17 +206,7 @@ fn main() {
         std::process::exit(code);
     }
 
-    let conn = match Conn::from_env() {
-        Ok(mut c) => {
-            c.io_timeout = db::io_timeout_for(args.first().map(String::as_str).unwrap_or(""));
-            c
-        }
-        Err(e) => {
-            eprintln!("cannot tell: {e:?}");
-            std::process::exit(CANNOT_TELL);
-        }
-    };
-    let (code, out) = dispatch(&args, &conn);
+    let (code, out) = dispatch(&args);
     if !out.is_empty() {
         println!("{out}");
     }
@@ -225,20 +214,12 @@ fn main() {
 }
 
 /// The primitives as a caller verb reaches them: the service socket, or — only in declared
-/// direct mode — a same-user connection opened once, on first use.
-struct Live {
-    conn: Option<Result<Conn, String>>,
-}
+/// direct mode — this process.
+struct Live;
 
 impl callers::Machine for Live {
     fn call(&mut self, args: &[String]) -> (i32, String) {
-        if let Some(r) = client::try_socket(args) {
-            return r;
-        }
-        match self.conn.get_or_insert_with(|| Conn::from_env().map_err(|e| format!("cannot tell: {e:?}"))) {
-            Ok(c) => dispatch(args, c),
-            Err(e) => (CANNOT_TELL, e.clone()),
-        }
+        client::try_socket(args).unwrap_or_else(|| dispatch(args))
     }
 }
 
@@ -281,37 +262,37 @@ pub(crate) fn lifecycle_run_dir() -> Result<std::path::PathBuf, String> {
 
 /// Every verb but `serve` (which never reaches here — see `main`, and `serve::run`'s own
 /// direct dispatch to this same function per request).
-pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
+pub fn dispatch(args: &[String]) -> (i32, String) {
     slow::set_verb(args.first().map(|s| s.as_str()).unwrap_or("-"));
     if args.first().map(String::as_str) == Some("create-bead") {
-        if let Some(refused) = cutover::refuse_no_record_type(&args[1..], &mut |ids| plan::fetch(conn, ids)) {
+        if let Some(refused) = cutover::refuse_no_record_type(&args[1..], &mut |ids| plan::fetch(ids)) {
             return refused;
         }
     }
     if let Some(answer) = control::served::dispatch(args) {
         return match args.first().map(String::as_str) {
-            Some("list") if plan::joins_planning(args) => plan::with_planning_fields(answer, conn),
-            Some("list-asks") => plan::with_ask_titles(answer, conn),
+            Some("list") if plan::joins_planning(args) => plan::with_planning_fields(answer),
+            Some("list-asks") => plan::with_ask_titles(answer),
             _ => answer,
         };
     }
     match args.first().map(|s| s.as_str()) {
         Some("stats") => (0, slow::stats_json()),
-        Some("churn-facts") => churn::cmd_churn_facts(&args[1..], conn),
-        Some("mend-watch") => mend_watch::run(&args[1..], conn),
-        Some("pause-sweep") => pause_sweep::run(conn),
+        Some("churn-facts") => churn::cmd_churn_facts(&args[1..]),
+        Some("mend-watch") => mend_watch::run(&args[1..]),
+        Some("pause-sweep") => pause_sweep::run(),
         Some("unpublished") => unpublished::run(&args[1..]),
         // The attempt and poison history (facts.rs): appended facts, never a transition.
-        Some("journal") => journal::dispatch(&args[1..], conn),
-        Some("fact") => facts::cmd_fact(&args[1..], conn),
-        Some("facts") => facts::cmd_facts(&args[1..], conn),
-        Some("plan") => plan::cmd_plan(&args[1..], conn),
-        Some("ready-set") => ready_set::run(conn),
-        Some("pane-facets") => plan::cmd_pane_facets(&args[1..], conn),
-        Some("facts-query") => facts::cmd_facts_query(&args[1..], conn),
+        Some("journal") => journal::dispatch(&args[1..]),
+        Some("fact") => facts::cmd_fact(&args[1..]),
+        Some("facts") => facts::cmd_facts(&args[1..]),
+        Some("plan") => plan::cmd_plan(&args[1..]),
+        Some("ready-set") => ready_set::run(),
+        Some("pane-facets") => plan::cmd_pane_facets(&args[1..]),
+        Some("facts-query") => facts::cmd_facts_query(&args[1..]),
         // The dwarf semantic layer (design §3.5): a `work` client binds one bead id and
         // forwards here over this same socket — see work.rs's module doc.
-        Some("work") => work::dispatch(&args[1..], conn),
+        Some("work") => work::dispatch(&args[1..]),
         // The cutover round's own verbs (sp-o7nbr): batch creation and the cross-machine
         // cascades a batch's own transition emits to its members (cutover.rs's own doc).
         // The dolt path births every record READY, so filing has nothing to promote.
@@ -319,88 +300,24 @@ pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
         // batcher-cut's own pipelining onto an already-OPEN batch (sp-o7nbr.4): the same
         // MemberAdded/Deliver/Cut cascade `cut` performs, minus the batch row's own INSERT.
         // A round assembled behind a running one, and its promotion (queue round stage/promote).
-        Some("event-continuity") => cutover::cmd_event_continuity(&args[1..], conn),
-        // Not part of the show/list/history/event surface: a plumbing verb the install
-        // step and the test fixture use to apply schema.sql/grants.sql through the same
-        // connection code the rest of this binary uses, instead of a second copy in shell.
-        Some("admin-apply-ddl") => cmd_admin_apply_ddl(&args[1..], conn),
+        Some("event-continuity") => cutover::cmd_event_continuity(&args[1..]),
         Some("admin-create-store") => control::served::create_store(),
-        Some("admin-accounts") => cmd_admin_accounts(conn),
-        Some("verify-login") => cmd_verify_login(&args[1..], conn),
-        // lifecycle/migrations/*.sql in filename order, each ADD COLUMN applied only when
-        // the column is absent (migrate.rs) — what spira-install's lifecycle-store phase runs
-        // after schema.sql, so a fresh database and an old one converge (sp-xfqnr), and
-        // what release pre-activate runs (`--if-enforced`) before every flip (sp-vf9iu).
-        Some("admin-migrate") => migrate::run(&args[1..], conn),
-        Some("admin-grants") => migrate::run_grants(conn),
-        // The stopped-world cutover: the dolt store into a new control store at one revision.
-        // The ops read model (lifecycle/migrations/0007): a view as JSON, and the one-time title backfill.
-        Some("ops-view") => ops::cmd_ops_view(&args[1..], conn),
-        Some("ops-refusals") => ops::cmd_ops_refusals(&args[1..], conn),
-        // The where-stuck read model (0006): the machine's legal edges, from its transition table.
-        Some("ops-gantt") => ops::cmd_ops_gantt(&args[1..], conn),
-        Some("ops-snapshot") => ops::cmd_ops_snapshot(&args[1..], conn),
-        Some("ops-bead") => ops::cmd_ops_bead(&args[1..], conn),
-        Some("ops-graph") => ops::cmd_ops_graph(&args[1..], conn),
+        Some("admin-drop-lifecycle") => admin_drop::run(&args[1..]),
+        // The ops read model: a view as JSON.
+        Some("ops-view") => ops::cmd_ops_view(&args[1..]),
+        Some("ops-refusals") => ops::cmd_ops_refusals(&args[1..]),
+        // The where-stuck read model: the machine's legal edges, from its transition table.
+        Some("ops-gantt") => ops::cmd_ops_gantt(&args[1..]),
+        Some("ops-snapshot") => ops::cmd_ops_snapshot(&args[1..]),
+        Some("ops-bead") => ops::cmd_ops_bead(&args[1..]),
+        Some("ops-graph") => ops::cmd_ops_graph(&args[1..]),
         _ => (
             CANNOT_TELL,
-            format!("usage: spira-lc show <bead-id> | show-batch <batch-id> | batch-progress <batch-id> (JSON on stdin) | ready-set | list (--live | --state S[,S...] of live states [--bare: lifecycle rows only] | --ids a,b | --after ID --limit N; a bare list is refused) [--delivery] [--state S[,S...]] [--repo NAME] [--ids a,b] [--hold poison|ask|wait|manual] | history <key> [--machine bead|delivery|batch] | event <machine> <key> --expect S --version N --actor A --kind <json> | journal <append|read|applied|mark-applied|cursor|set-cursor|schedule|due|mark-fired|poison|poisoned> ... | fact <bead-id> --kind K --actor A [--cause C] | facts [--ids a,b] [--kinds x,y] [--since EPOCH] | facts-query <select over the fact table> | create-bead <id> [--repo NAME] [--ready] | promote-filed <id> | pane-facets inflow --window-secs N | pane-facets repo-labels --valid a,b | set-repo <id> <repo>|--clear [--only-if R] | create-ask <id> [--work-bead W] | show-ask <id> | list-asks [--state S] | close-ask <id> --exit answered|default|withdrawn --quote Q --actor A [--channel C] | reconcile-asks [--apply] [id...] | ops-view <ops_live|ops_round|ops_recent|ops_edges|ops_dwell|ops_dwell_p95> | ops-refusals <window-secs> | ops-gantt [--machine bead|batch] [--print-sql] | ops-bead <bead-id> | ops-graph [--machine bead|batch|ask|mending] | ops-snapshot | dep-add <id> <depends-on-id> [--type T] | dep-remove <id> <depends-on-id> | cut <batch-id> --repo R --head H --base B --members id:tip,... --actor A [--parent P] | stack <batch-id> --members id:tip,... --actor A | stage <batch-id> --repo R --head H --base B --members id:tip,... --actor A --parent P | promote <batch-id> --head H --base B --actor A | land <batch-id> --expect S --version N --actor A --sha SHA | settle <batch-id> --expect S --version N --actor A [--eject id,...] [--requeue id,...] | abandon-batch <batch-id> --expect S --version N --actor A --reason R | eject-member <batch-id> --bead-id ID --expect S --version N --actor A --reason R | batches-of <bead-id> | drop-bead <bead-id> --reason R [--actor A] | drop-row <bead-id> | event-continuity [--acknowledge --through SEQ --reason R] | mend-watch [--seen FILE] | pause-sweep | mending pickup|event|sweep|list ... | requeue-orphans --actor A [--apply] [--stale-secs N] | reconcile-landed <bead-id> --sha SHA --ref REF (--repo-path P | --repo NAME) --actor A | reconcile-epics [--apply] [id...] | reconcile-content [--apply | --dry-run] [--since-seq N] [id...] | backfill-repo [--apply | --dry-run] [id...] | backfill-claim-inputs [--apply | --dry-run] [id...] | admin-restore --snapshot F --revlog D --out P | admin-drill --scratch D [--ship-dir D] | admin-store-relayout --from F --to F | admin-dolt-ship --url U --db D --sync D --state D --stamp S --head H | admin-dolt-assemble (--state D | --manifest F) --files D --out D | admin-archive-put --file F --key K | planning-watermark | skew-check | event-seq [--since N | --head] | watch <prefix> --from-rev N [--wait-ms M] | admin-grants | admin-create-store (an empty control store at SPIRA_LC_STORE_PATH) | {} | work <bead-id> <verb> ... | stats | serve | unclaim <bead-id> <actor> | close <bead-id> (--reason R | --reason-file F|-) [--superseded-by ID] [--actor A] | close-epic <bead-id> <reason> | content <list|show|comments|gate list|memories|state|update --add-label/--remove-label|comments add> … | bd-supersede <bead-id> <successor-id> | bd-note <bead-id> <text> | drop-orphans [--apply | --dry-run] [id...] | caller verbs: hold|unhold|reply|withdraw-ask|release|holder-dead|drop|returned|content-on-base|state|holds|held|list-held|list-state|list-all|deliver|certify|resubmit|retip|absolve|renew", spira_lc::rc::USAGE),
+            format!("usage: spira-lc show <bead-id> | show-batch <batch-id> | batch-progress <batch-id> (JSON on stdin) | ready-set | list (--live | --state S[,S...] of live states [--bare: lifecycle rows only] | --ids a,b | --after ID --limit N; a bare list is refused) [--delivery] [--state S[,S...]] [--repo NAME] [--ids a,b] [--hold poison|ask|wait|manual] | history <key> [--machine bead|delivery|batch] | event <machine> <key> --expect S --version N --actor A --kind <json> | journal <turn|state|open-effects|due|poison|poisoned> ... | fact <bead-id> --kind K --actor A [--cause C] | facts [--ids a,b] [--kinds x,y] [--since EPOCH] | facts-query <select over the fact table> | create-bead <id> [--repo NAME] [--ready] | promote-filed <id> | pane-facets inflow --window-secs N | pane-facets repo-labels --valid a,b | set-repo <id> <repo>|--clear [--only-if R] | create-ask <id> [--work-bead W] | show-ask <id> | list-asks [--state S] | close-ask <id> --exit answered|default|withdrawn --quote Q --actor A [--channel C] | reconcile-asks [--apply] [id...] | ops-view <ops_live|ops_round|ops_recent|ops_edges|ops_dwell|ops_dwell_p95> | ops-refusals <window-secs> | ops-gantt [--machine bead|batch] | ops-bead <bead-id> | ops-graph [--machine bead|batch|ask|mending] | ops-snapshot | dep-add <id> <depends-on-id> [--type T] | dep-remove <id> <depends-on-id> | cut <batch-id> --repo R --head H --base B --members id:tip,... --actor A [--parent P] | stack <batch-id> --members id:tip,... --actor A | stage <batch-id> --repo R --head H --base B --members id:tip,... --actor A --parent P | promote <batch-id> --head H --base B --actor A | land <batch-id> --expect S --version N --actor A --sha SHA | settle <batch-id> --expect S --version N --actor A [--eject id,...] [--requeue id,...] | abandon-batch <batch-id> --expect S --version N --actor A --reason R | eject-member <batch-id> --bead-id ID --expect S --version N --actor A --reason R | batches-of <bead-id> | drop-bead <bead-id> --reason R [--actor A] | drop-row <bead-id> | event-continuity [--acknowledge --through SEQ --reason R] | mend-watch [--seen FILE] | pause-sweep | mending pickup|event|sweep|list ... | requeue-orphans --actor A [--apply] [--stale-secs N] | reconcile-landed <bead-id> --sha SHA --ref REF (--repo-path P | --repo NAME) --actor A | reconcile-epics [--apply] [id...] | reconcile-content [--apply | --dry-run] [--since-seq N] [id...] | backfill-repo [--apply | --dry-run] [id...] | backfill-claim-inputs [--apply | --dry-run] [id...] | admin-restore --snapshot F --revlog D --out P | admin-drill --scratch D [--ship-dir D] | admin-store-relayout --from F --to F | admin-dolt-ship --url U --db D --sync D --state D --stamp S --head H | admin-dolt-assemble (--state D | --manifest F) --files D --out D | admin-archive-put --file F --key K | planning-watermark | skew-check | event-seq [--since N | --head] | watch <prefix> --from-rev N [--wait-ms M] | admin-create-store (an empty control store at SPIRA_LC_STORE_PATH) | admin-drop-lifecycle --archive FILE | {} | work <bead-id> <verb> ... | stats | serve | unclaim <bead-id> <actor> | close <bead-id> (--reason R | --reason-file F|-) [--superseded-by ID] [--actor A] | close-epic <bead-id> <reason> | content <list|show|comments|gate list|memories|state|update --add-label/--remove-label|comments add> … | bd-supersede <bead-id> <successor-id> | bd-note <bead-id> <text> | drop-orphans [--apply | --dry-run] [id...] | caller verbs: hold|unhold|reply|withdraw-ask|release|holder-dead|drop|returned|content-on-base|state|holds|held|list-held|list-state|list-all|deliver|certify|resubmit|retip|absolve|renew", spira_lc::rc::USAGE),
         ),
     }
 }
 
-fn cmd_admin_apply_ddl(args: &[String], conn: &Conn) -> (i32, String) {
-    let Some(path) = args.first() else {
-        return (CANNOT_TELL, "admin-apply-ddl: missing <path-to-sql-file>".into());
-    };
-    let sql_text = match std::fs::read_to_string(path) {
-        Ok(s) => s,
-        Err(e) => return (CANNOT_TELL, format!("admin-apply-ddl: reading {path}: {e}")),
-    };
-    let admin = match migrate::admin_conn(conn) {
-        Ok(a) => a,
-        Err(e) => return (CANNOT_TELL, format!("admin-apply-ddl: the admin password file (SPIRA_LC_ADMIN_PASSWORD_FILE): {e}")),
-    };
-    match admin.as_ref().unwrap_or(conn).apply_ddl(&sql_text) {
-        Ok(()) => (0, String::new()),
-        Err(e) => (CANNOT_TELL, format!("cannot tell: {e:?}")),
-    }
-}
-
-/// Every `user<TAB>host` of the two lifecycle accounts in `mysql.user`, as the admin sees it.
-fn cmd_admin_accounts(conn: &Conn) -> (i32, String) {
-    let admin = match migrate::admin_conn(conn) {
-        Ok(Some(a)) => a,
-        Ok(None) => return (CANNOT_TELL, "admin-accounts: no admin credential (SPIRA_LC_ADMIN_USER)".into()),
-        Err(e) => return (CANNOT_TELL, format!("admin-accounts: the admin password file (SPIRA_LC_ADMIN_PASSWORD_FILE): {e}")),
-    };
-    match admin.query("SELECT user, host FROM mysql.user WHERE user IN ('spira_lc', 'spira_lc_ro') ORDER BY user, host") {
-        Ok(rows) => {
-            let field = |r: &Value, k: &str| r.get(k).and_then(Value::as_str).unwrap_or_default().to_string();
-            (0, rows.iter().map(|r| format!("{}\t{}", field(r, "user"), field(r, "host"))).collect::<Vec<_>>().join("\n"))
-        }
-        Err(e) => (CANNOT_TELL, format!("cannot tell: {e:?}")),
-    }
-}
-
-/// A fresh login as `<user>` with the password in `<password-file>`, through the same
-/// connection code every client uses: exit 0 only when the server accepts it and answers.
-fn cmd_verify_login(args: &[String], conn: &Conn) -> (i32, String) {
-    let (Some(user), Some(file)) = (args.first(), args.get(1)) else {
-        return (CANNOT_TELL, "verify-login: usage verify-login <user> <password-file>".into());
-    };
-    let password = match std::fs::read_to_string(file) {
-        Ok(p) => p.trim().to_string(),
-        Err(e) => return (CANNOT_TELL, format!("verify-login: reading {file}: {e}")),
-    };
-    match conn.as_user(user.clone(), password).query("SELECT 1 AS ok") {
-        Ok(_) => (0, format!("{user} logged in")),
-        Err(e) => (1, format!("{user} could not log in: {e:?}")),
-    }
-}
-
-/// Externally-tagged serde writes a struct variant as `{"Variant": {...}}` and a unit variant as
-/// the bare string `"Variant"`; either way the tag is the event's name.
 pub(crate) fn kind_name(evidence: &Value) -> String {
     match evidence {
         Value::String(s) => s.clone(),
@@ -441,14 +358,13 @@ mod tests {
 
     #[test]
     fn the_deleted_dolt_verbs_are_unknown_and_a_kept_one_still_answers() {
-        let conn = Conn::unreachable();
         let argv = |v: &str| vec![v.to_string()];
         for gone in ["live-check", "backfill-titles", "backfill-repos", "backfill-deps"] {
-            let (rc, out) = dispatch(&argv(gone), &conn);
+            let (rc, out) = dispatch(&argv(gone));
             assert_eq!(rc, CANNOT_TELL, "{gone}");
             assert!(out.starts_with("usage:"), "{gone}: {out}");
         }
-        let (rc, out) = dispatch(&argv("ops-graph"), &conn);
+        let (rc, out) = dispatch(&argv("ops-graph"));
         assert_eq!(rc, 0, "the control: a kept verb is not refused as unknown: {out}");
     }
 

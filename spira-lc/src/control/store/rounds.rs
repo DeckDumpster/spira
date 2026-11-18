@@ -1041,6 +1041,13 @@ impl<B: Backend> Store<B> {
         Ok(Planned::Cascade(c))
     }
 
+    /// Every round, finished or not, that names `bead` as a member, by id.
+    pub fn round_ids_of(&self, bead: &str) -> Result<Vec<String>> {
+        let prefix = keys::batch_members_of(bead);
+        let (entries, _) = self.contract().list(&[&prefix], &Selector::Everything)?;
+        Ok(entries.iter().filter_map(|e| e.key.strip_prefix(&prefix).map(str::to_string)).collect())
+    }
+
     /// The rounds not yet finished that name `bead` as a member, by id.
     pub fn batches_of(&self, bead: &str) -> Result<Vec<BatchRow>> {
         let (entries, _) = self

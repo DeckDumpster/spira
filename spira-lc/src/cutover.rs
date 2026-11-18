@@ -13,7 +13,6 @@
 
 use lifecycle::{batch, bead};
 
-use crate::db::Conn;
 
 const CANNOT_TELL: i32 = 2;
 pub(crate) const REFUSED: i32 = 3;
@@ -143,7 +142,7 @@ pub(crate) fn stacked_dependents_from(
 /// A break listed in `event-continuity.acknowledged` (seq, machine, key, reason; tab-separated,
 /// under the run directory) is printed with its reason and passes; any other exits 3.
 /// `--acknowledge --through SEQ --reason R` records every unacknowledged break at or below SEQ.
-pub fn cmd_event_continuity(args: &[String], conn: &Conn) -> (i32, String) {
+pub fn cmd_event_continuity(args: &[String]) -> (i32, String) {
     let ack_path = match crate::lifecycle_run_dir() {
         Ok(d) => d.join("event-continuity.acknowledged"),
         Err(e) => return (CANNOT_TELL, format!("cannot tell: {e}")),
@@ -156,7 +155,11 @@ pub fn cmd_event_continuity(args: &[String], conn: &Conn) -> (i32, String) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Default::default(),
         Err(e) => return (CANNOT_TELL, format!("cannot tell: {}: {e}", ack_path.display())),
     };
-    let found = crate::continuity::scan(conn).map(|t| t.breaks());
+    let found = match crate::control::served::configured() {
+        Some(Ok(store)) => crate::continuity::scan(&*store),
+        Some(Err(e)) => Err(format!("the control store: {e}")),
+        None => Err("event-continuity is served by the control store, and SPIRA_LC_STORE_PATH is unset or unreadable".to_string()),
+    };
     let breaks = match found {
         Ok(b) => b,
         Err(e) => return (CANNOT_TELL, format!("cannot tell: {e}")),

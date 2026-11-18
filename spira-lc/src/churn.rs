@@ -2,22 +2,24 @@
 //! ejected, when each landed and at which tip, and every mender failure with its stamps.
 
 use serde_json::{json, Value};
+use state_store::Backend;
 
-use crate::db::Conn;
+use crate::control::audits::Logged;
+use crate::control::store::Store;
 use crate::flag;
-use crate::rows::escape;
 
-const EJECTS: &str = "SELECT e.lc_key AS batch_id, e.evidence AS evidence, e.at AS at FROM event e \
-     WHERE e.machine = 'batch' AND e.event = 'Eject' AND e.applied = 1 AND e.at >= ";
-
-pub fn cmd_churn_facts(args: &[String], conn: &Conn) -> (i32, String) {
+pub fn cmd_churn_facts(args: &[String]) -> (i32, String) {
     let since = match since_of(args) {
         Ok(s) => s,
         Err(e) => return e,
     };
-    match facts(conn, since) {
+    let store = match crate::control::served::store() {
+        Ok(s) => s,
+        Err(e) => return (2, format!("cannot tell: {e}")),
+    };
+    match facts(&store, since) {
         Ok(v) => (0, v.to_string()),
-        Err(e) => (2, format!("cannot tell: {e:?}")),
+        Err(e) => (2, format!("cannot tell: {e}")),
     }
 }
 
@@ -44,34 +46,73 @@ pub(crate) fn fold_outcomes(mut mendings: Vec<Value>, events: &[Value]) -> Vec<V
     mendings
 }
 
-fn facts(conn: &Conn, since: i64) -> Result<Value, crate::db::DbError> {
-    let ejects = conn.query(&format!("{EJECTS}{since}"))?;
-    let batches: Vec<String> = ejects.iter().filter_map(|r| r.get("batch_id").and_then(Value::as_str)).map(escape).collect();
-    let (members, landed_at, landed_tip) = if batches.is_empty() {
-        (vec![], vec![], vec![])
-    } else {
-        let scope = format!("'{}'", batches.join("','"));
-        let members = conn.query(&format!("SELECT batch_id, bead_id, tip FROM batch_member WHERE batch_id IN ({scope})"))?;
-        let beads = format!("SELECT bead_id FROM batch_member WHERE batch_id IN ({scope})");
-        let at = conn.query(&format!("SELECT lc_key AS bead, at FROM event WHERE machine = 'bead' AND to_state = 'LANDED' AND from_state <> 'LANDED' AND applied = 1 AND lc_key IN ({beads})"))?;
-        let tip = conn.query(&format!("SELECT bead_id, tip FROM bead WHERE state = 'LANDED' AND bead_id IN ({beads})"))?;
-        (members, at, tip)
-    };
-    let mendings = conn.query(&format!(
-        "SELECT m.batch_id AS batch_id, m.pass AS pass, m.suite AS suite, m.state AS state, m.failed_at AS failed_at, m.picked_at AS picked_at, \
-         m.triage_ended_at AS triage_ended_at FROM mending m WHERE m.failed_at >= {since}"
-    ))?;
-    let outcomes = conn.query(&format!(
-        "SELECT m.batch_id AS batch_id, m.pass AS pass, m.suite AS suite, e.at AS at FROM mending m JOIN event e ON e.machine = 'mending' \
-         AND e.lc_key = CONCAT(m.batch_id, '#', m.pass, '#', m.suite) AND e.applied = 1 AND e.to_state NOT IN ('WAITING', 'MENDING') WHERE m.failed_at >= {since}"
-    ))?;
-    let mendings = fold_outcomes(mendings, &outcomes);
-    let has_mend = !conn.query("SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'mend'")?.is_empty();
-    let mends = if has_mend { conn.query(&format!("SELECT batch_id, pass, suite, bead_id, from_tip, tip, at FROM mend WHERE at >= {since}"))? } else { vec![] };
-    let pass_ends = conn.query(&format!(
-        "SELECT lc_key AS batch_id, evidence, at FROM event WHERE machine = 'batch' AND event IN ('PassRed', 'PassPreempted') AND applied = 1 AND at >= {since}"
-    ))?;
-    Ok(json!({ "ejects": ejects, "members": members, "landed_at": landed_at, "landed_tip": landed_tip, "mendings": mendings, "mends": mends, "pass_ends": pass_ends }))
+fn text(v: impl ToString) -> Value {
+    Value::String(v.to_string())
+}
+
+fn opt(v: Option<impl ToString>) -> Value {
+    v.map_or(Value::Null, text)
+}
+
+fn facts<B: Backend>(store: &Store<B>, since: i64) -> Result<Value, String> {
+    let e = |e: state_store::Error| e.to_string();
+    let scan = store.audits_since(since).map_err(e)?;
+    if !scan.complete {
+        return Err("the audit log is too long to read back to --since in one call".into());
+    }
+    let applied = |l: &&Logged, machine: &str| l.audit.applied && l.audit.machine == machine;
+    let ejects: Vec<&Logged> = scan.audits.iter().filter(|l| applied(l, "batch") && l.audit.event == "Eject").collect();
+    let mut members = Vec::new();
+    let mut beads = std::collections::BTreeSet::new();
+    let mut seen = std::collections::BTreeSet::new();
+    for l in &ejects {
+        if !seen.insert(l.audit.lc_key.as_str()) {
+            continue;
+        }
+        if let Some((_, round)) = store.batch(&l.audit.lc_key).map_err(e)? {
+            for m in &round.value.members {
+                beads.insert(m.bead_id.clone());
+                members.push(json!({ "batch_id": l.audit.lc_key, "bead_id": m.bead_id, "tip": m.tip }));
+            }
+        }
+    }
+    let landed_at: Vec<Value> = scan
+        .audits
+        .iter()
+        .filter(|l| applied(l, "bead") && l.audit.to_state == "LANDED" && l.audit.from_state != "LANDED" && beads.contains(&l.audit.lc_key))
+        .map(|l| json!({ "bead": l.audit.lc_key, "at": text(l.audit.at) }))
+        .collect();
+    let mut landed_tip = Vec::new();
+    for bead in &beads {
+        if let Some(r) = store.record(bead).map_err(e)?.filter(|r| r.value.row.state == lifecycle::bead::BeadState::Landed) {
+            landed_tip.push(json!({ "bead_id": bead, "tip": opt(r.value.row.tip.as_ref()) }));
+        }
+    }
+    let failures: Vec<_> = store.mendings().map_err(e)?.into_iter().filter(|m| m.failed_at >= since).collect();
+    let mendings: Vec<Value> = failures
+        .iter()
+        .map(|m| {
+            let r = &m.row;
+            json!({ "batch_id": r.batch_id, "pass": text(r.pass), "suite": r.suite, "state": r.state.as_str(), "failed_at": text(m.failed_at), "picked_at": opt(r.picked_at), "triage_ended_at": opt(r.triage_ended_at) })
+        })
+        .collect();
+    let outcomes: Vec<Value> = failures
+        .iter()
+        .flat_map(|m| {
+            let key = m.row.key();
+            scan.audits.iter().filter(move |l| applied(l, "mending") && l.audit.lc_key == key && !["WAITING", "MENDING"].contains(&l.audit.to_state.as_str())).map(|l| json!({ "batch_id": m.row.batch_id, "pass": text(m.row.pass), "suite": m.row.suite, "at": text(l.audit.at) }))
+        })
+        .collect();
+    let mends: Vec<Value> = store
+        .mends_since(since)
+        .map_err(e)?
+        .iter()
+        .map(|m| json!({ "batch_id": m.batch_id, "pass": text(m.pass), "suite": m.suite, "bead_id": m.bead_id, "from_tip": m.from_tip, "tip": m.tip, "at": text(m.at) }))
+        .collect();
+    let rows = |event: &Logged| json!({ "batch_id": event.audit.lc_key, "evidence": text(&event.audit.evidence), "at": text(event.audit.at) });
+    let pass_ends: Vec<Value> = scan.audits.iter().filter(|l| applied(l, "batch") && ["PassRed", "PassPreempted"].contains(&l.audit.event.as_str())).map(rows).collect();
+    let ejects: Vec<Value> = ejects.into_iter().map(|l| rows(l)).collect();
+    Ok(json!({ "ejects": ejects, "members": members, "landed_at": landed_at, "landed_tip": landed_tip, "mendings": fold_outcomes(mendings, &outcomes), "mends": mends, "pass_ends": pass_ends }))
 }
 
 #[cfg(test)]

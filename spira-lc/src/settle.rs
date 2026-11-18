@@ -277,11 +277,11 @@ mod tests {
         let settler = installed();
         let expired = state_store::phases::deadline_scoped(Instant::now());
         crate::plan::stamp_after_write();
-        assert!(crate::plan::stamp_control(&store, &|| 0).is_err(), "inline, the stamp is refused past the deadline");
+        assert!(crate::plan::stamp_control(&store).is_err(), "inline, the stamp is refused past the deadline");
         drop(expired);
         assert_eq!(seq(), 7);
         let w = World::new();
-        settler.pass(&mut &w, &mut &w, &mut || crate::plan::stamp_control(&store, &|| 0));
+        settler.pass(&mut &w, &mut &w, &mut || crate::plan::stamp_control(&store));
         assert_eq!(seq(), 8);
     }
 }

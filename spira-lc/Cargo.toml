@@ -3,7 +3,7 @@ name = "spira-lc"
 version = "1.0.0"
 edition = "2021"
 autotests = false
-description = "spira-lc — the lifecycle CLI and system service: show/list/history/event against spira_lifecycle, over a local socket when the system-user service is installed, or a direct connection in same-user fallback. Deploys inert."
+description = "spira-lc — the lifecycle CLI and system service: show/list/history/event over the control store, over a local socket when the system-user service is installed, or in-process in same-user fallback. Deploys inert."
 
 [[test]]
 name = "e2e_goodput_20d"
@@ -30,6 +30,7 @@ state-store = { path = "../state-store" }
 state-store-sqlite = { path = "../state-store-sqlite" }
 runtime = { path = "../runtime" }
 tsd = { path = "../tsd" }
+rusqlite = { version = "0.37", features = ["bundled", "functions", "hooks"] }
 
 [[bin]]
 name = "spira-lc"

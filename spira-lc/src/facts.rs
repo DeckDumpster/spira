@@ -1,11 +1,10 @@
 //! The attempt and poison history: facts that change no bead's state but that the attempt
-//! count and the poison decision fold. Appended to the lifecycle event log under machine
-//! `fact`, so the history shares the log's append-only guarantee and no bd write.
+//! count and the poison decision fold, kept on the control store (`control::facts`).
 
 use serde_json::Value;
 
-use crate::db::{self, Conn};
-use crate::rows;
+use crate::control::facts::Fact;
+use crate::db;
 
 const CANNOT_TELL: i32 = 2;
 const REFUSED: i32 = 3;
@@ -13,7 +12,6 @@ const REFUSED: i32 = 3;
 /// Closed: a kind outside this list is refused, so a typo cannot start a new history.
 pub const KINDS: &[&str] = &["claimed", "requeued", "reopen", "reclaimed", "poison.cleared", "recurred", "lapsed", "session", "checkpointed", "fast-tier-red", "eject-failure", "send-back", "send-back-logs", "blind-rework", "rejection", "escalated", "no-progress", "gate-start", "build-dir", "suite-dropped", "__doctor_probe__"];
 
-pub const MACHINE: &str = "fact";
 pub const CAUSE_MAX: usize = 200;
 pub const READ_MAX: usize = 120;
 /// Kinds whose cause is a multi-line digest rather than a one-line token.
@@ -36,20 +34,26 @@ fn bounded_long(s: &str) -> String {
     s.chars().filter(|c| *c == '\n' || !c.is_control()).take(LONG_MAX).collect()
 }
 
-pub fn insert_sql(key: &str, kind: &str, cause: &str, actor: &str, at: i64) -> String {
-    let evidence = serde_json::json!({ "cause": cause }).to_string();
-    format!(
-        "INSERT INTO event (machine, lc_key, event, expect, from_state, to_state, applied, refusal, evidence, actor, at) VALUES ('{}', '{}', '{}', '', '', '', 1, NULL, '{}', '{}', {at})",
-        MACHINE,
-        rows::escape(key),
-        rows::escape(kind),
-        rows::escape(&evidence),
-        rows::escape(actor),
-    )
+pub fn fact_of(key: &str, kind: &str, cause: &str, actor: &str, at: i64) -> Fact {
+    Fact { bead: key.to_string(), kind: kind.to_string(), cause: cause.to_string(), actor: actor.to_string(), at }
+}
+
+fn store() -> Result<std::sync::Arc<crate::control::store::Store<crate::control::served::Served>>, String> {
+    crate::control::served::store()
+}
+
+/// Appends `facts` in one txn.
+pub fn append(facts: &[Fact]) -> Result<(), String> {
+    append_on(&*store()?, facts)
+}
+
+pub(crate) fn append_on<B: state_store::Backend>(store: &crate::control::store::Store<B>, facts: &[Fact]) -> Result<(), String> {
+    let req = state_store::Request::new(&crate::control::served::request_id(), "spira-lc", "fact");
+    store.append_facts(facts, &req).map_err(|e| e.to_string())
 }
 
 /// `fact <bead-id> --kind K --actor A [--cause C]`.
-pub fn cmd_fact(args: &[String], conn: &Conn) -> (i32, String) {
+pub fn cmd_fact(args: &[String]) -> (i32, String) {
     let Some(key) = args.first().filter(|a| !a.starts_with("--")) else {
         return (CANNOT_TELL, "fact: missing <bead-id>".into());
     };
@@ -68,34 +72,34 @@ pub fn cmd_fact(args: &[String], conn: &Conn) -> (i32, String) {
         "build-dir" => bounded_tabbed(&raw),
         _ => bounded(&raw),
     };
-    match conn.append_event(&insert_sql(key, &kind, &cause, &bounded(&actor), db::now_epoch())) {
+    match append(&[fact_of(key, &kind, &cause, &bounded(&actor), db::now_epoch())]) {
         Ok(()) => (0, String::new()),
-        Err(e) => (CANNOT_TELL, format!("cannot tell: {e:?}")),
+        Err(e) => (CANNOT_TELL, format!("cannot tell: {e}")),
     }
 }
 
-/// The insert for a submit's `build-dir` fact: the tip submitted and the directory it was built in.
-pub fn build_dir_sql(bead: &str, tip: &str, dir: &str, actor: &str, at: i64) -> String {
-    insert_sql(bead, "build-dir", &format!("{tip}\t{dir}"), &bounded(actor), at)
+/// The fact of a submit's `build-dir`: the tip submitted and the directory it was built in.
+pub fn build_dir(bead: &str, tip: &str, dir: &str, actor: &str, at: i64) -> Fact {
+    fact_of(bead, "build-dir", &format!("{tip}\t{dir}"), &bounded(actor), at)
 }
 
-pub fn select_sql(ids: &[String], kinds: &[String], since: Option<i64>) -> String {
-    let list = |v: &[String]| v.iter().map(|i| format!("'{}'", rows::escape(i))).collect::<Vec<_>>().join(",");
-    let long = LONG_KINDS.iter().map(|k| format!("event = '{k}'")).collect::<Vec<_>>().join(" OR ");
-    let mut sql = format!(
-        "SELECT lc_key AS issue_id, event AS event_type, CASE WHEN ({long}) THEN SUBSTRING(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(evidence, '$.cause')), ''), 1, {LONG_MAX}) ELSE SUBSTRING(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(evidence, '$.cause')), ''), 1, {READ_MAX}) END AS new_value, actor, `at` FROM event WHERE machine = '{MACHINE}'"
-    );
-    if !ids.is_empty() {
-        sql.push_str(&format!(" AND lc_key IN ({})", list(ids)));
-    }
-    if !kinds.is_empty() {
-        sql.push_str(&format!(" AND event IN ({})", list(kinds)));
-    }
-    if let Some(t) = since {
-        sql.push_str(&format!(" AND `at` > {t}"));
-    }
-    sql.push_str(" ORDER BY lc_key, seq");
-    sql
+/// The facts of `ids` of `kinds` after `since`, each bead's oldest first, as rows of
+/// `issue_id`, `event_type`, `new_value` (clipped as a read clips), `actor` and `at`.
+pub fn read(ids: &[String], kinds: &[String], since: Option<i64>) -> Result<Vec<Value>, String> {
+    read_on(&*store()?, ids, kinds, since)
+}
+
+pub(crate) fn read_on<B: state_store::Backend>(store: &crate::control::store::Store<B>, ids: &[String], kinds: &[String], since: Option<i64>) -> Result<Vec<Value>, String> {
+    let facts = store.facts(ids).map_err(|e| e.to_string())?;
+    Ok(facts
+        .into_iter()
+        .filter(|f| kinds.is_empty() || kinds.contains(&f.kind))
+        .filter(|f| since.is_none_or(|t| f.at > t))
+        .map(|f| {
+            let max = if LONG_KINDS.contains(&f.kind.as_str()) { LONG_MAX } else { READ_MAX };
+            serde_json::json!({ "issue_id": f.bead, "event_type": f.kind, "new_value": f.cause.chars().take(max).collect::<String>(), "actor": f.actor, "at": f.at.to_string() })
+        })
+        .collect())
 }
 
 fn csv(args: &[String], name: &str) -> Vec<String> {
@@ -120,24 +124,16 @@ pub fn shape(rows: Vec<Value>) -> Vec<Value> {
 }
 
 /// `facts [--ids a,b] [--kinds x,y] [--since EPOCH]`: the facts, oldest first per bead.
-pub fn cmd_facts(args: &[String], conn: &Conn) -> (i32, String) {
+pub fn cmd_facts(args: &[String]) -> (i32, String) {
     let since = match flag(args, "--since").map(|v| v.parse::<i64>()) {
         Some(Err(_)) => return (CANNOT_TELL, "facts: --since must be an epoch second".into()),
         Some(Ok(t)) => Some(t),
         None => None,
     };
-    match conn.query(&select_sql(&csv(args, "--ids"), &csv(args, "--kinds"), since)) {
+    match read(&csv(args, "--ids"), &csv(args, "--kinds"), since) {
         Ok(r) => (0, serde_json::to_string_pretty(&Value::Array(shape(r))).unwrap()),
-        Err(e) => (CANNOT_TELL, format!("cannot tell: {e:?}")),
+        Err(e) => (CANNOT_TELL, format!("cannot tell: {e}")),
     }
-}
-
-/// The facts as a table named `events` with bd's column names, for a query written against
-/// bd's own `events` table (census): `FROM events` becomes `FROM <this> events`.
-pub fn events_table() -> String {
-    format!(
-        "(SELECT lc_key AS issue_id, event AS event_type, JSON_UNQUOTE(JSON_EXTRACT(evidence, '$.cause')) AS new_value, actor, DATE_ADD(TIMESTAMP('1970-01-01 00:00:00'), INTERVAL `at` SECOND) AS created_at FROM event WHERE machine = '{MACHINE}')"
-    )
 }
 
 const FROM_EVENTS_ONLY: &str = "the only table it may read is `events`; for anything else use the typed form `facts [--ids a,b] [--kinds x,y] [--since EPOCH]`";
@@ -187,11 +183,10 @@ fn scan(sql: &str) -> Result<Vec<(usize, usize, Tok<'_>)>, &'static str> {
     Ok(out)
 }
 
-/// One SELECT written against bd's `events` table, with every `FROM events` pointed at the facts.
-/// Every table reference must be `events` (a UNION of such SELECTs and a subquery over it are
-/// fine); any other table, join, comma list, table function or INTO is refused, so the
-/// fact view is the only thing a caller can read.
-pub fn retarget(sql: &str) -> Result<String, String> {
+/// One SELECT written against bd's `events` table. Every table reference must be `events` (a
+/// UNION of such SELECTs and a subquery over it are fine); any other table, join, comma list,
+/// table function or INTO is refused, so the facts are the only thing a caller can read.
+pub fn check(sql: &str) -> Result<(), String> {
     let toks = scan(sql).map_err(|why| format!("{why}; {FROM_EVENTS_ONLY}"))?;
     let word = |i: usize| match toks.get(i) {
         Some((_, _, Tok::Word(w))) => Some(*w),
@@ -200,11 +195,9 @@ pub fn retarget(sql: &str) -> Result<String, String> {
     if !word(0).is_some_and(|w| w.eq_ignore_ascii_case("SELECT")) {
         return Err("not a SELECT".into());
     }
-    let mut out = String::new();
-    let mut last = 0;
     let mut reads_events = false;
     let mut in_from = vec![false];
-    for (i, (start, _, tok)) in toks.iter().enumerate() {
+    for (i, (_, _, tok)) in toks.iter().enumerate() {
         match tok {
             Tok::Punct('(') => in_from.push(false),
             Tok::Punct(')') => {
@@ -241,9 +234,6 @@ pub fn retarget(sql: &str) -> Result<String, String> {
                 if list_or_qualified(i + 2) || list_or_qualified(after) || (aliased && list_or_qualified(after + 1)) {
                     return Err(FROM_EVENTS_ONLY.into());
                 }
-                out.push_str(&sql[last..*start]);
-                out.push_str(&format!("FROM {} events", events_table()));
-                last = toks[i + 1].1;
                 reads_events = true;
             }
             _ => {}
@@ -252,8 +242,7 @@ pub fn retarget(sql: &str) -> Result<String, String> {
     if !reads_events {
         return Err("does not read the events table".into());
     }
-    out.push_str(&sql[last..]);
-    Ok(out)
+    Ok(())
 }
 
 fn is_clause_word(w: &str) -> bool {
@@ -282,23 +271,37 @@ pub fn render_table(rows: &[Value]) -> String {
 }
 
 /// `facts-query <sql>`: census's aggregate over the facts, answered as bd's `sql` table.
-pub fn cmd_facts_query(args: &[String], conn: &Conn) -> (i32, String) {
+pub fn cmd_facts_query(args: &[String]) -> (i32, String) {
     let Some(sql) = args.first() else {
         return (CANNOT_TELL, "facts-query: missing <sql>".into());
     };
-    let sql = match retarget(sql) {
-        Ok(q) => q,
-        Err(why) => return (REFUSED, format!("facts-query: refused: {why}")),
+    if let Err(why) = check(sql) {
+        return (REFUSED, format!("facts-query: refused: {why}"));
+    }
+    let facts = match store().and_then(|s| s.facts(&[]).map_err(|e| e.to_string())) {
+        Ok(f) => f,
+        Err(e) => return (CANNOT_TELL, format!("cannot tell: {e}")),
     };
-    match conn.query(&sql) {
+    match crate::fact_sql::run(&facts, sql) {
         Ok(r) => (0, render_table(&r)),
-        Err(e) => (CANNOT_TELL, format!("cannot tell: {e:?}")),
+        Err(e) => (CANNOT_TELL, format!("cannot tell: {e}")),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use runtime::ports::VirtualClock;
+    use state_store::{Config, Contract, MemBackend, Ports};
+
+    fn store() -> crate::control::store::Store<MemBackend> {
+        let c = Contract::open(MemBackend::new(), Ports::virtual_clock(&VirtualClock::new(1_000)), Config { min_lock_ttl_ms: 1_000 }).unwrap();
+        crate::control::store::Store::new(c, 1_000)
+    }
+
+    fn put(s: &crate::control::store::Store<MemBackend>, bead: &str, kind: &str, cause: &str, at: i64) {
+        append_on(s, &[fact_of(bead, kind, cause, "harness", at)]).unwrap();
+    }
 
     #[test]
     fn the_send_back_kind_is_accepted_and_is_a_long_kind() {
@@ -309,7 +312,6 @@ mod tests {
     #[test]
     fn the_gate_start_kind_the_gate_sends_is_one_the_fact_verb_accepts() {
         assert!(KINDS.contains(&"gate-start"));
-        assert!(insert_sql("sp-a", "gate-start", "", "gate", 5).contains("'fact', 'sp-a', 'gate-start'"));
     }
 
     #[test]
@@ -317,43 +319,7 @@ mod tests {
         assert!(KINDS.contains(&"build-dir"));
         assert_eq!(bounded_tabbed("abc\tb/dir.1\n"), "abc\tb/dir.1");
         assert_eq!(bounded("abc\tdef"), "abcdef", "no other kind keeps a tab");
-    }
-
-    #[test]
-    fn a_submits_build_dir_fact_is_an_applied_row_whose_cause_is_the_tip_tab_directory() {
-        let q = build_dir_sql("sp-a", "abc", "b/dir.3", "builder", 7);
-        assert!(q.contains("'fact', 'sp-a', 'build-dir'"), "{q}");
-        assert!(q.contains(r#"{"cause":"abc\\tb/dir.3"}"#), "the tab survives the SQL literal as a JSON escape: {q}");
-    }
-
-    #[test]
-    fn the_insert_is_an_applied_fact_with_the_cause_as_evidence() {
-        let q = insert_sql("sp-a", "requeued", "gate-red", "harness", 1_000_000_000);
-        assert!(q.contains("'fact', 'sp-a', 'requeued'"), "{q}");
-        assert!(q.contains(r#"{"cause":"gate-red"}"#), "{q}");
-        assert!(q.contains(", 1, NULL,"), "{q}");
-    }
-
-    #[test]
-    fn quotes_in_a_cause_do_not_escape_the_literal() {
-        let q = insert_sql("sp-a", "requeued", "it's", "h", 1);
-        assert!(q.contains(r"it\\'s") || q.contains(r"it\'s"), "{q}");
-    }
-
-    #[test]
-    fn the_select_scopes_to_the_fact_machine_and_the_asked_ids() {
-        let q = select_sql(&["sp-a".into(), "o'x".into()], &["claimed".into()], None);
-        assert!(q.contains("machine = 'fact'") && q.contains("'sp-a','o\\'x'") && q.contains("event IN ('claimed')"), "{q}");
-        let all = select_sql(&[], &[], None);
-        assert!(!all.contains("lc_key IN") && !all.contains("event IN") && !all.contains("`at` >"), "{all}");
-        assert!(select_sql(&[], &[], Some(1_700_000_000)).contains("AND `at` > 1700000000"));
-    }
-
-    #[test]
-    fn rows_come_back_in_the_shape_of_bd_events() {
-        let out = shape(vec![serde_json::json!({"issue_id": "sp-a", "event_type": "claimed", "new_value": "dwarf", "actor": "h", "at": "1000000000"})]);
-        assert_eq!(out[0]["created_at"], "2001-09-09T01:46:40Z");
-        assert_eq!(out[0]["event_type"], "claimed");
+        assert_eq!(build_dir("sp-a", "abc", "b/dir.3", "builder", 7).cause, "abc\tb/dir.3");
     }
 
     #[test]
@@ -367,18 +333,57 @@ mod tests {
         assert!(KINDS.contains(&"fast-tier-red"));
         assert!(bounded_long("a\nb").contains('\n'));
         assert_eq!(bounded_long(&"x".repeat(LONG_MAX + 50)).len(), LONG_MAX);
-        let q = select_sql(&["sp-a".into()], &["fast-tier-red".into()], None);
-        assert!(q.contains(&format!("1, {LONG_MAX}")), "{q}");
+        let s = store();
+        let long = "x\n".repeat(LONG_MAX / 2);
+        put(&s, "sp-a", "fast-tier-red", &long, 5);
+        put(&s, "sp-a", "requeued", &"y".repeat(300), 6);
+        let rows = read_on(&s, &["sp-a".into()], &[], None).unwrap();
+        assert_eq!(rows[0]["new_value"].as_str().unwrap().len(), LONG_MAX);
+        assert_eq!(rows[1]["new_value"].as_str().unwrap().len(), READ_MAX);
     }
 
     #[test]
-    fn a_census_query_is_retargeted_from_bd_events_to_the_facts() {
-        let q = retarget("SELECT a FROM events WHERE x IN (SELECT i FROM events WHERE y)").unwrap();
-        assert_eq!(q.matches("machine = 'fact'").count(), 2, "{q}");
-        assert!(!q.contains("FROM events WHERE"), "{q}");
-        assert!(retarget("DELETE FROM events").is_err());
-        assert!(retarget("SELECT 1 FROM events; DROP TABLE event").is_err());
-        assert!(retarget("SELECT * FROM bead").is_err(), "a SELECT that never reads events is refused");
+    fn facts_read_back_per_bead_in_the_order_they_were_written_and_scope_to_ids_kinds_and_since() {
+        let s = store();
+        put(&s, "sp-b", "claimed", "w1", 10);
+        put(&s, "sp-a", "claimed", "w2", 20);
+        put(&s, "sp-a", "requeued", "gate-red", 30);
+        put(&s, "sp-b", "requeued", "it's", 40);
+        let all = read_on(&s, &[], &[], None).unwrap();
+        let order: Vec<(&str, &str)> = all.iter().map(|r| (r["issue_id"].as_str().unwrap(), r["event_type"].as_str().unwrap())).collect();
+        assert_eq!(order, [("sp-a", "claimed"), ("sp-a", "requeued"), ("sp-b", "claimed"), ("sp-b", "requeued")]);
+        assert_eq!(read_on(&s, &["sp-a".into()], &["requeued".into()], None).unwrap().len(), 1);
+        let since = read_on(&s, &[], &[], Some(30)).unwrap();
+        assert_eq!(since.len(), 1, "a fact at the watermark itself is excluded: {since:?}");
+        assert_eq!(since[0]["new_value"], "it's");
+        assert_eq!(shape(all)[0]["created_at"], "1970-01-01T00:00:20Z");
+    }
+
+    #[test]
+    fn a_census_query_runs_over_the_facts_and_answers_as_bd_sql_does() {
+        let s = store();
+        put(&s, "sp-a", "reopen", "eject", 1_700_000_000);
+        put(&s, "sp-b", "reopen", "eject", 1_700_000_100);
+        put(&s, "sp-b", "claimed", "w", 1_700_000_200);
+        let facts = s.facts(&[]).unwrap();
+        let rows = crate::fact_sql::run(&facts, "SELECT event_type, COUNT(DISTINCT issue_id) AS beads, COUNT(*) AS events FROM events WHERE event_type = 'reopen' GROUP BY event_type").unwrap();
+        assert_eq!(render_table(&rows), "+---+---+---+\n| event_type | beads | events |\n+---+---+---+\n| reopen | 2 | 2 |\n+---+---+---+\n");
+    }
+
+    #[test]
+    fn a_free_query_over_another_table_is_refused_before_it_touches_the_store() {
+        let (code, msg) = cmd_facts_query(&["SELECT a FROM events WHERE 1=0 UNION ALL SELECT lc_key FROM bead".to_string()]);
+        assert_eq!(code, REFUSED, "{msg}");
+        assert!(msg.contains("facts [--ids"), "{msg}");
+    }
+
+    #[test]
+    fn a_query_that_names_only_events_passes_the_check() {
+        assert!(check("SELECT x FROM (SELECT a AS x FROM events WHERE y) b UNION ALL SELECT a FROM events e WHERE z ORDER BY 1").is_ok());
+        assert!(check("SELECT a FROM events WHERE new_value = 'FROM bead' AND x = 'it''s FROM events'").is_ok());
+        assert!(check("DELETE FROM events").is_err());
+        assert!(check("SELECT 1 FROM events; DROP TABLE event").is_err());
+        assert!(check("SELECT * FROM bead").is_err(), "a SELECT that never reads events is refused");
     }
 
     #[test]
@@ -402,31 +407,9 @@ mod tests {
             "select a from events where 1=0 union all select id from bead",
         ];
         for q in bad {
-            let why = retarget(q).expect_err(q);
+            let why = check(q).expect_err(q);
             assert!(why.contains("facts [--ids"), "{q}: {why}");
         }
-    }
-
-    #[test]
-    fn the_verb_refuses_a_free_query_over_another_table_before_it_touches_the_store() {
-        let conn = Conn::unreachable();
-        let q = "SELECT a FROM events WHERE 1=0 UNION ALL SELECT lc_key FROM bead".to_string();
-        let (code, msg) = cmd_facts_query(&[q], &conn);
-        assert_eq!(code, REFUSED, "{msg}");
-        assert!(msg.contains("facts [--ids"), "{msg}");
-    }
-
-    #[test]
-    fn a_string_literal_that_says_from_bead_is_data_not_a_table() {
-        let q = retarget("SELECT a FROM events WHERE new_value = 'FROM bead' AND x = 'it''s FROM events'").unwrap();
-        assert!(q.contains("'FROM bead'") && q.contains("'it''s FROM events'"), "{q}");
-        assert_eq!(q.matches("machine = 'fact'").count(), 1, "{q}");
-    }
-
-    #[test]
-    fn a_union_of_fact_selects_and_an_aliased_derived_table_over_events_still_run() {
-        let q = retarget("SELECT x FROM (SELECT a AS x FROM events WHERE y) b UNION ALL SELECT a FROM events e WHERE z ORDER BY 1").unwrap();
-        assert_eq!(q.matches("machine = 'fact'").count(), 2, "{q}");
     }
 
     #[test]
@@ -438,46 +421,5 @@ mod tests {
         let t = render_table(&[Value::Object(m)]);
         assert_eq!(t, "+---+---+---+\n| event_type | beads | note |\n+---+---+---+\n| requeued | 2 |  |\n+---+---+---+\n");
         assert_eq!(render_table(&[]), "");
-    }
-
-    #[test]
-    fn every_kind_fits_the_event_column() {
-        assert!(KINDS.iter().all(|k| k.len() <= 32));
-    }
-
-    // covers: UC-ops-detection-remediation-12
-    #[test]
-    fn a_fact_is_written_with_the_caller_epoch_and_no_server_clock() {
-        let q = insert_sql("sp-a", "reopen", "rebase-conflict", "harness", 1_750_000_000);
-        assert!(q.ends_with(", 1750000000)"), "{q}");
-        for clock in ["NOW(", "FROM_UNIXTIME", "CURRENT_TIMESTAMP", "UNIX_TIMESTAMP"] {
-            assert!(!q.to_uppercase().contains(clock), "{clock}: {q}");
-        }
-    }
-
-    // covers: UC-ops-detection-remediation-12
-    #[test]
-    fn the_census_view_dates_each_fact_from_its_epoch_in_no_server_timezone() {
-        let t = events_table();
-        assert!(t.contains("DATE_ADD(TIMESTAMP('1970-01-01 00:00:00'), INTERVAL `at` SECOND) AS created_at"), "{t}");
-        assert!(t.contains("event AS event_type") && t.contains("lc_key AS issue_id") && t.contains("AS new_value"), "{t}");
-        for clock in ["NOW(", "FROM_UNIXTIME", "CONVERT_TZ", "@@"] {
-            assert!(!t.to_uppercase().contains(clock), "{clock}: {t}");
-        }
-    }
-
-    // covers: UC-ops-detection-remediation-12
-    #[test]
-    fn a_census_since_bound_survives_retargeting_onto_the_fact_view() {
-        let q = retarget("SELECT event_type FROM events WHERE created_at > '2025-06-16 09:06:40'").unwrap();
-        assert!(q.contains("AS created_at") && q.ends_with("WHERE created_at > '2025-06-16 09:06:40'"), "{q}");
-    }
-
-    // covers: UC-ops-detection-remediation-12
-    #[test]
-    fn the_typed_since_bound_excludes_a_fact_at_the_watermark_itself() {
-        let sql = select_sql(&[], &["requeued".into()], Some(1_750_000_000));
-        assert!(sql.contains("AND `at` > 1750000000 ORDER BY"), "{sql}");
-        assert!(!sql.contains(">="), "{sql}");
     }
 }

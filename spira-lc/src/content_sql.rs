@@ -741,6 +741,11 @@ impl Reader {
         Reader { sql, db, verdict: Mutex::new(None), recheck: LAYOUT_RECHECK }
     }
 
+    /// The reader's held connection, for the reads that name the beads database themselves.
+    pub fn sql(&self) -> &dyn Sql {
+        self.sql.as_ref()
+    }
+
     #[cfg(test)]
     fn rechecking_at(mut self, every: std::time::Duration) -> Self {
         self.recheck = every;

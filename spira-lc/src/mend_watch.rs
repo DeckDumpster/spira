@@ -5,7 +5,7 @@
 
 use std::collections::BTreeSet;
 
-use crate::db::{now_epoch, Conn};
+use crate::db::now_epoch;
 use crate::{flag, CANNOT_TELL};
 
 pub const MAX_MENDS_PER_DAY: i64 = 2;
@@ -60,6 +60,27 @@ pub fn with_retries<T, E>(attempts: u32, pause: std::time::Duration, mut read: i
     last
 }
 
+/// The rows still MENDING past their deadline, soonest first, with no ask holding them.
+fn overdue_rows<B: state_store::Backend>(store: &crate::control::store::Store<B>, now: i64) -> Result<Vec<serde_json::Value>, state_store::Error> {
+    let mut rows: Vec<_> = store
+        .mendings()?
+        .into_iter()
+        .filter(|m| m.row.state == lifecycle::mending::MendingState::Mending && m.row.awaiting_ask.is_none())
+        .filter_map(|m| m.row.deadline.filter(|d| *d <= now).map(|d| (d, m)))
+        .collect();
+    rows.sort_by_key(|(d, _)| *d);
+    Ok(rows.into_iter().map(|(d, m)| serde_json::json!({ "batch_id": m.row.batch_id, "pass": m.row.pass.to_string(), "suite": m.row.suite, "deadline": d.to_string() })).collect())
+}
+
+/// Per bead, the mends recorded in the last day.
+fn mend_counts<B: state_store::Backend>(store: &crate::control::store::Store<B>, now: i64) -> Result<Vec<serde_json::Value>, state_store::Error> {
+    let mut counts: std::collections::BTreeMap<String, u64> = Default::default();
+    for m in store.mends_since(now - DAY_S)? {
+        *counts.entry(m.bead_id).or_default() += 1;
+    }
+    Ok(counts.into_iter().map(|(bead, n)| serde_json::json!({ "bead": bead, "n": n.to_string() })).collect())
+}
+
 /// Overdue rows (deadline at or before `now`) then beads over the daily cap, as breaches.
 pub(crate) fn collect(overdue: &[serde_json::Value], mends: &[serde_json::Value], now: i64) -> Vec<Breach> {
     let mut breaches: Vec<Breach> = overdue
@@ -74,15 +95,17 @@ pub(crate) fn collect(overdue: &[serde_json::Value], mends: &[serde_json::Value]
     breaches
 }
 
-pub fn run(args: &[String], conn: &Conn) -> (i32, String) {
+pub fn run(args: &[String]) -> (i32, String) {
+    let store = match crate::control::served::store() {
+        Ok(s) => s,
+        Err(e) => return (CANNOT_TELL, format!("cannot tell: {e}")),
+    };
     let now = now_epoch();
-    let overdue_sql = format!("SELECT batch_id, pass, suite, deadline FROM mending WHERE state = 'MENDING' AND awaiting_ask IS NULL AND deadline <= {now} ORDER BY deadline");
-    let mends_sql = format!("SELECT bead_id AS bead, COUNT(*) AS n FROM mend WHERE at >= {} GROUP BY bead_id", now - DAY_S);
-    let overdue = with_retries(READ_ATTEMPTS, READ_PAUSE, || conn.query(&overdue_sql));
-    let mends = with_retries(READ_ATTEMPTS, READ_PAUSE, || conn.query(&mends_sql));
+    let overdue = with_retries(READ_ATTEMPTS, READ_PAUSE, || overdue_rows(&store, now));
+    let mends = with_retries(READ_ATTEMPTS, READ_PAUSE, || mend_counts(&store, now));
     let (overdue, mends) = match (overdue, mends) {
         (Ok(o), Ok(m)) => (o, m),
-        (Err(e), _) | (_, Err(e)) => return (CANNOT_TELL, format!("cannot tell: {e:?}")),
+        (Err(e), _) | (_, Err(e)) => return (CANNOT_TELL, format!("cannot tell: {e}")),
     };
     let breaches = collect(&overdue, &mends, now);
     let Some(path) = flag(args, "--seen") else {

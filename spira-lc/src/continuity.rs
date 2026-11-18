@@ -7,7 +7,7 @@ use std::time::Instant;
 
 use serde_json::Value;
 
-use crate::db::Conn;
+use crate::control::audits::Logged;
 
 pub type Break = (String, String, String, Value);
 
@@ -104,17 +104,28 @@ pub fn render(report: &Value) -> String {
     report.as_array().map(|a| a.iter().map(|j| j.to_string()).collect::<Vec<_>>().join("\n")).unwrap_or_default()
 }
 
-fn read_after(conn: &Conn, after: i64) -> Result<Vec<Value>, String> {
-    conn.query(&format!("SELECT seq, machine, lc_key, event, from_state, to_state FROM event WHERE applied = 1 AND seq > {after} ORDER BY seq"))
-        .map_err(|e| format!("{e:?}"))
+fn rows_of(logged: &[Logged]) -> Vec<Value> {
+    logged
+        .iter()
+        .filter(|l| l.audit.applied)
+        .map(|l| {
+            let a = &l.audit;
+            serde_json::json!({ "seq": l.rev.to_string(), "machine": a.machine, "lc_key": a.lc_key, "event": a.event, "from_state": a.from_state, "to_state": a.to_state })
+        })
+        .collect()
 }
 
-/// Everything, from scratch: what a one-shot CLI call (no serving process) does.
-pub fn scan(conn: &Conn) -> Result<Tracker, String> {
-    let mut t = Tracker::default();
-    t.absorb(&read_after(conn, 0)?);
-    t.built = Some(Instant::now());
-    Ok(t)
+static KEPT: std::sync::Mutex<Option<Tracker>> = std::sync::Mutex::new(None);
+
+/// The breaks in the whole applied log: the serving process remembers each key's last state and
+/// reads only the revisions past the last it saw, so a call never pays for the whole log twice.
+pub fn scan<B: state_store::Backend>(store: &crate::control::store::Store<B>) -> Result<Vec<Break>, String> {
+    let mut kept = KEPT.lock().unwrap_or_else(|e| e.into_inner());
+    let tracker = kept.get_or_insert_with(Tracker::default);
+    let read = store.audits_after(tracker.upto.max(0) as u64).map_err(|e| e.to_string())?;
+    tracker.absorb(&rows_of(&read.audits));
+    tracker.built = Some(Instant::now());
+    Ok(tracker.breaks())
 }
 
 #[cfg(test)]

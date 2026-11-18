@@ -55,10 +55,8 @@ fn down(socket_path: &str, e: &std::io::Error) -> (i32, String) {
 /// `None`: run this verb in-process (it is never forwarded, or direct mode is declared).
 /// Otherwise the service's answer, or exit 2 naming the service when it does not answer.
 pub fn try_socket(args: &[String]) -> Option<(i32, String)> {
-    // `classify` reads bd, git and the ledger files from the CALLER's environment and runs far
-    // past this client's timeout on a real store: forwarded, the service would read its own
-    // environment and the timed-out caller would fall back and run it a second time.
-    if matches!(args.first().map(|s| s.as_str()), Some("serve") | Some("admin-apply-ddl") | Some("admin-create-store") | Some("admin-migrate") | Some("admin-grants") | Some("admin-accounts") | Some("verify-login")) {
+    // The admin verbs run with the caller's own credentials and environment, never the service's.
+    if matches!(args.first().map(|s| s.as_str()), Some("serve") | Some("admin-create-store") | Some("admin-drop-lifecycle")) {
         return None;
     }
     // One source of config (per Ryan 2026-10-05): $SPIRA_TOML's declared socket path, never
@@ -116,12 +114,11 @@ pub(crate) fn exchange(stream: std::os::unix::net::UnixStream, args: &[String], 
 
 #[cfg(test)]
 mod tests {
-    /// The admin verbs carry their own (superuser) credentials: forwarding one to the
-    /// service would run it as spira_lc instead, which cannot create tables or users. classify
-    /// reads the caller's own bd, git and ledger files (see try_socket).
+    /// The admin verbs carry their own (superuser) credentials: forwarding one to the service
+    /// would run it as the service user instead (see try_socket).
     #[test]
     fn admin_verbs_never_go_through_the_socket() {
-        for verb in ["admin-apply-ddl", "admin-create-store", "admin-migrate", "admin-grants", "admin-accounts", "verify-login", "serve"] {
+        for verb in ["admin-create-store", "admin-drop-lifecycle", "serve"] {
             assert!(super::try_socket(&[verb.to_string(), "x".to_string()]).is_none(), "{verb}");
         }
     }

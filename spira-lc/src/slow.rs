@@ -206,7 +206,7 @@ pub fn stats_json() -> String {
         c.verbs.iter().map(|(v, (n, ms))| (v.clone(), serde_json::json!({"count": n, "total_ms": ms}))).collect();
     let callers: Vec<serde_json::Value> =
         c.tasks.iter().map(|((v, who, task), (n, ms))| serde_json::json!({"verb": v, "caller": who, "task": task, "count": n, "total_ms": ms})).collect();
-    serde_json::json!({"verbs": verbs, "callers": callers, "writes": crate::db::write_stats()}).to_string()
+    serde_json::json!({"verbs": verbs, "callers": callers}).to_string()
 }
 
 /// The counts that moved since `pushed`, as one request series and one store-time series per

@@ -5,12 +5,11 @@
 //! own kv. Read-only on bd: spira_lc holds SELECT on bd's issues, labels and dependencies.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::{Arc, Condvar, Mutex, OnceLock};
+use std::sync::{Condvar, Mutex, OnceLock};
 
 use serde_json::{json, Value};
 
 use crate::content_sql::Sql;
-use crate::db::Conn;
 use crate::rows;
 
 /// Every bd column the reader names, by table: the conformance gate checks each exists in the
@@ -112,15 +111,15 @@ pub fn assemble(issues: &[Value], labels: &[Value], deps: &[Value]) -> Vec<Value
 }
 
 /// `plan items|edges|children|watermark|stamp|schema …`: JSON with the watermark on every read.
-pub fn cmd_plan(args: &[String], conn: &Conn) -> (i32, String) {
+pub fn cmd_plan(args: &[String]) -> (i32, String) {
     let rest = args.get(1..).unwrap_or_default();
     let answer = match args.first().map(String::as_str) {
-        Some("items") => read_watermark(conn).and_then(|w| items(rest, conn).map(|v| json!({ "watermark": w, "items": v }))),
-        Some("edges") => read_watermark(conn).and_then(|w| edges(rest, conn).map(|v| json!({ "watermark": w, "edges": v }))),
-        Some("children") => read_watermark(conn).and_then(|w| children(rest, conn).map(|v| json!({ "watermark": w, "items": v }))),
-        Some("watermark") => read_watermark(conn).map(|w| json!({ "watermark": w })),
-        Some("stamp") => stamp(conn).map(|w| json!({ "watermark": w })),
-        Some("schema") => return schema(conn),
+        Some("items") => read_watermark().and_then(|w| items(rest, bd()?).map(|v| json!({ "watermark": w, "items": v }))),
+        Some("edges") => read_watermark().and_then(|w| edges(rest, bd()?).map(|v| json!({ "watermark": w, "edges": v }))),
+        Some("children") => read_watermark().and_then(|w| children(rest, bd()?).map(|v| json!({ "watermark": w, "items": v }))),
+        Some("watermark") => read_watermark().map(|w| json!({ "watermark": w })),
+        Some("stamp") => stamp().map(|w| json!({ "watermark": w })),
+        Some("schema") => return schema(),
         _ => Err(USAGE.into()),
     };
     match answer {
@@ -140,7 +139,7 @@ fn ids_of(args: &[String]) -> Result<Vec<&str>, String> {
     Ok(ids.split(',').map(str::trim).filter(|x| !x.is_empty()).collect())
 }
 
-fn items(args: &[String], conn: &Conn) -> Result<Vec<Value>, String> {
+fn items(args: &[String], conn: &dyn Sql) -> Result<Vec<Value>, String> {
     let full = args.iter().any(|a| a == "--full");
     let open = args.iter().any(|a| a == "--open");
     match (flag(args, "--ids"), flag(args, "--external-contains"), flag(args, "--label"), flag(args, "--type")) {
@@ -154,7 +153,7 @@ fn items(args: &[String], conn: &Conn) -> Result<Vec<Value>, String> {
 
 /// Raw edges with their types, out of `ids` (or, with `--dependents`, into them). Whether an
 /// edge blocks is the readiness rule's to decide, not this reader's.
-fn edges(args: &[String], conn: &Conn) -> Result<Vec<Value>, String> {
+fn edges(args: &[String], conn: &dyn Sql) -> Result<Vec<Value>, String> {
     let ids = ids_of(args)?;
     if ids.is_empty() {
         return Ok(Vec::new());
@@ -183,7 +182,7 @@ fn edges_where(conn: &dyn Sql, ids: &[&str], into: bool) -> Result<Vec<Value>, S
 }
 
 /// The beads whose parent is one of `ids`, as item rows.
-fn children(args: &[String], conn: &Conn) -> Result<Vec<Value>, String> {
+fn children(args: &[String], conn: &dyn Sql) -> Result<Vec<Value>, String> {
     let ids = ids_of(args)?;
     if ids.is_empty() {
         return Ok(Vec::new());
@@ -197,17 +196,26 @@ fn children(args: &[String], conn: &Conn) -> Result<Vec<Value>, String> {
     fetch_with(conn, &kids, args.iter().any(|a| a == "--full"), args.iter().any(|a| a == "--open"))
 }
 
+/// The beads database's reader: one held connection, read-only.
+pub(crate) fn bd() -> Result<&'static dyn Sql, String> {
+    crate::content_sql::served().map(|r| r.sql()).map_err(|e| format!("cannot tell: the beads database: {e}"))
+}
+
 /// `plan schema`: every column [`READER_COLUMNS`] names that bd's database lacks. Exit 0 when
 /// none is missing; otherwise 2, naming each as `table.column`.
-fn schema(conn: &Conn) -> (i32, String) {
+fn schema() -> (i32, String) {
     let cdb = match content_db() {
         Ok(c) => c,
         Err(e) => return (CANNOT_TELL, e),
     };
+    let conn = match bd() {
+        Ok(c) => c,
+        Err(e) => return (CANNOT_TELL, e),
+    };
     let sql = format!("SELECT table_name AS t, column_name AS c FROM information_schema.columns WHERE table_schema = '{}'", rows::escape(cdb.trim_matches('`')));
-    let have: BTreeSet<(String, String)> = match conn.query(&sql) {
+    let have: BTreeSet<(String, String)> = match conn.rows(&sql) {
         Ok(rows) => rows.iter().filter_map(|r| Some((s(r, "t")?.to_lowercase(), s(r, "c")?.to_lowercase()))).collect(),
-        Err(e) => return (CANNOT_TELL, format!("cannot tell: {e:?}")),
+        Err(e) => return (CANNOT_TELL, format!("cannot tell: {}", e.text())),
     };
     let missing = missing_columns(&have);
     let code = if missing.is_empty() { 0 } else { CANNOT_TELL };
@@ -233,8 +241,17 @@ pub fn joins_planning(args: &[String]) -> bool {
     args.first().is_some_and(|v| v == "list") && !args.iter().any(|a| a == "--delivery")
 }
 
-pub fn with_planning_fields(answer: (i32, String), conn: &Conn) -> (i32, String) {
-    join_planning(answer, &|ids| TITLES.titles(ids, current_watermark(), &|missing| titles(conn, missing)))
+pub fn with_planning_fields(answer: (i32, String)) -> (i32, String) {
+    join_planning(answer, &|ids| titled(ids).map(|t| t.into_iter().collect()))
+}
+
+/// The titles and priorities of `ids` bd has, held under the planning watermark.
+pub fn titled(ids: &[&str]) -> Result<BTreeMap<String, Titled>, String> {
+    let mut out = BTreeMap::new();
+    for chunk in ids.chunks(500) {
+        out.extend(TITLES.titles(chunk, current_watermark(), &|missing| titles(bd()?, missing))?);
+    }
+    Ok(out)
 }
 
 /// The plan rows of `ids` as `plan items --ids` prints them, held under the planning watermark
@@ -384,13 +401,13 @@ fn join_rows(rows: &mut [Value], lookup: &TitleLookup) {
 
 /// A `list-asks` answer with each ask's title read from its decision bead, where it lives. A bd
 /// that cannot be read leaves the titles as they were.
-pub fn with_ask_titles(answer: (i32, String), conn: &Conn) -> (i32, String) {
+pub fn with_ask_titles(answer: (i32, String)) -> (i32, String) {
     let (0, text) = &answer else { return answer };
     let Ok(Value::Array(mut rows)) = serde_json::from_str::<Value>(text) else { return answer };
     let ids: Vec<&str> = rows.iter().filter_map(|r| s(r, "ask_id")).collect();
     let mut planned: BTreeMap<String, Titled> = BTreeMap::new();
     for chunk in ids.chunks(500) {
-        match TITLES.titles(chunk, current_watermark(), &|missing| titles(conn, missing)) {
+        match TITLES.titles(chunk, current_watermark(), &|missing| titles(bd()?, missing)) {
             Ok(t) => planned.extend(t),
             Err(e) => {
                 eprintln!("spira-lc list-asks: titles unread from bd: {e}");
@@ -410,12 +427,12 @@ pub fn with_ask_titles(answer: (i32, String), conn: &Conn) -> (i32, String) {
 pub type Titled = (Value, Value);
 
 /// Title and priority of `ids`, the two fields a listing joins: one query, no labels or edges.
-fn titles(conn: &Conn, ids: &[&str]) -> Result<Vec<(String, Titled)>, String> {
+fn titles(conn: &dyn Sql, ids: &[&str]) -> Result<Vec<(String, Titled)>, String> {
     if ids.is_empty() {
         return Ok(Vec::new());
     }
     let cdb = content_db()?;
-    let rows = conn.query(&format!("SELECT id, title, priority FROM {cdb}.issues WHERE id IN ({})", id_list(ids))).map_err(|e| format!("cannot tell: {e:?}"))?;
+    let rows = rows_of(conn, &format!("SELECT id, title, priority FROM {cdb}.issues WHERE id IN ({})", id_list(ids)))?;
     Ok(rows
         .iter()
         .filter_map(|r| {
@@ -447,80 +464,49 @@ fn merge_planning(rows: &mut [Value], planned: &BTreeMap<String, Titled>) {
 
 // ---- the watermark ------------------------------------------------------------------------
 
-/// The serving process's own connection, so a planning write made inside lc-serve stamps on it
-/// instead of calling back into the socket it is serving.
-static SERVED: OnceLock<Arc<Conn>> = OnceLock::new();
+static SERVING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// Whether this process is lc-serve, whose own planning writes stamp in-process.
 pub fn serving() -> bool {
-    SERVED.get().is_some()
+    SERVING.load(std::sync::atomic::Ordering::Relaxed)
 }
 
-pub fn serve_on(conn: Arc<Conn>) {
-    let _ = SERVED.set(conn);
+pub fn serve_here() {
+    SERVING.store(true, std::sync::atomic::Ordering::Relaxed);
 }
 
-/// The control plane's watermark: the state store's `planning/watermark` when one is
-/// configured, else the lifecycle store's `planning_watermark` row. Never bd's kv, which is
-/// the planning plane's copy for a restore.
-pub fn read_watermark(conn: &Conn) -> Result<u64, String> {
-    if let Some(store) = crate::control::served::configured() {
-        let store = store.map_err(|e| format!("cannot tell: the control store: {e}"))?;
-        return control_seq(&store, &|| lifecycle_seq(conn).unwrap_or(0)).map(|(seq, _)| seq);
-    }
-    lifecycle_seq(conn)
+/// The control plane's watermark, the state store's `planning/watermark`. Never bd's kv, which
+/// is the planning plane's copy for a restore.
+pub fn read_watermark() -> Result<u64, String> {
+    let store = crate::control::served::store().map_err(|e| format!("cannot tell: {e}"))?;
+    control_seq(&store).map(|(seq, _)| seq)
 }
 
-fn lifecycle_seq(conn: &Conn) -> Result<u64, String> {
-    let rows = conn.query("SELECT seq FROM planning_watermark WHERE id = 1").map_err(|e| format!("cannot tell: the planning watermark: {e:?}"))?;
-    Ok(rows.first().and_then(|r| r.get("seq")).and_then(|n| n.as_u64().or_else(|| n.as_str().and_then(|s| s.parse().ok()))).unwrap_or(0))
-}
-
-/// The control store's sequence and the revision it was read at. Before the key's first write
-/// it continues the lifecycle store's sequence, so moving onto the control store never moves
-/// the watermark back.
-fn control_seq<B: state_store::Backend>(store: &crate::control::store::Store<B>, floor: &dyn Fn() -> u64) -> Result<(u64, Option<state_store::Rev>), String> {
+/// The control store's sequence and the revision it was read at; `0` before the key's first write.
+fn control_seq<B: state_store::Backend>(store: &crate::control::store::Store<B>) -> Result<(u64, Option<state_store::Rev>), String> {
     let key = crate::control::keys::PLANNING_WATERMARK;
     let item = store.contract().get(key).map_err(|e| format!("cannot tell: {key}: {e}"))?;
     match item {
         Some(i) => Ok((i.value.data.get("seq").and_then(Value::as_u64).unwrap_or(0), Some(i.mod_rev))),
-        None => Ok((floor(), None)),
+        None => Ok((0, None)),
     }
 }
 
 const STAMP_ATTEMPTS: usize = 16;
 
 /// Advances the watermark by one, in one transaction, and returns the value it now holds.
-pub fn stamp(conn: &Conn) -> Result<u64, String> {
-    let seq = match crate::control::served::configured() {
-        Some(store) => stamp_control(&*store.map_err(|e| format!("cannot tell: the control store: {e}"))?, &|| lifecycle_seq(conn).unwrap_or(0))?,
-        None => stamp_lifecycle(conn)?,
-    };
+pub fn stamp() -> Result<u64, String> {
+    let store = crate::control::served::store().map_err(|e| format!("cannot tell: {e}"))?;
+    let seq = stamp_control(&store)?;
     mirror(seq);
     Ok(seq)
 }
 
-/// The stamp lc-serve's settler thread makes, on the serving connection.
-pub fn stamp_served() -> Result<u64, String> {
-    stamp(SERVED.get().ok_or("cannot tell: not serving")?)
-}
-
-/// A commit that lost to a concurrent stamp is retried: a stamp lost is a write a poller misses.
-fn stamp_lifecycle(conn: &Conn) -> Result<u64, String> {
-    let mut last = String::new();
-    for _ in 0..STAMP_ATTEMPTS {
-        match conn.append_event("INSERT INTO planning_watermark (id, seq) VALUES (1, 1) ON DUPLICATE KEY UPDATE seq = seq + 1") {
-            Ok(()) => return lifecycle_seq(conn),
-            Err(e) => last = format!("{e:?}"),
-        }
-    }
-    Err(format!("cannot tell: plan stamp: {last}"))
-}
-
-pub(crate) fn stamp_control<B: state_store::Backend>(store: &crate::control::store::Store<B>, floor: &dyn Fn() -> u64) -> Result<u64, String> {
+pub(crate) fn stamp_control<B: state_store::Backend>(store: &crate::control::store::Store<B>) -> Result<u64, String> {
     use state_store::{Compare, Object, Request, Txn};
     let key = crate::control::keys::PLANNING_WATERMARK;
     for _ in 0..STAMP_ATTEMPTS {
-        let (seq, rev) = control_seq(store, floor)?;
+        let (seq, rev) = control_seq(store)?;
         let next = seq + 1;
         let txn = Txn::new().when(Compare::ModRev(key.into(), rev)).put(key, Object::new(json!({ "seq": next })));
         let req = Request::new(&crate::control::served::request_id(), "spira-lc", "plan-stamp");
@@ -532,25 +518,30 @@ pub(crate) fn stamp_control<B: state_store::Backend>(store: &crate::control::sto
     Err(format!("cannot tell: plan stamp: {key} kept moving under {STAMP_ATTEMPTS} attempts"))
 }
 
-/// Stamps after a planning write this process made itself: on the serving connection inside
-/// lc-serve, else through the service, else on a direct connection. A failed stamp is
-/// reported and never fails the write, which has already happened.
+/// Stamps after a planning write this process made itself: in-process inside lc-serve, else
+/// through the service, else against the store directly. A failed stamp is reported and never
+/// fails the write, which has already happened.
 pub fn stamp_after_write() {
     if crate::settle::owe_stamp() {
         return;
     }
-    let done = if let Some(conn) = SERVED.get() {
-        stamp(conn).map(|_| ())
+    let done = if serving() {
+        stamp().map(|_| ())
     } else {
         match crate::client::try_socket(&["plan".to_string(), "stamp".to_string()]) {
             Some((0, _)) => Ok(()),
             Some((code, out)) => Err(format!("exit {code}: {out}")),
-            None => Conn::from_env().map_err(|e| format!("{e:?}")).and_then(|c| stamp(&c).map(|_| ())),
+            None => stamp().map(|_| ()),
         }
     };
     if let Err(e) = done {
         eprintln!("spira-lc: the planning write landed but the watermark did not advance: {e}");
     }
+}
+
+/// The stamp lc-serve's settler thread makes.
+pub fn stamp_served() -> Result<u64, String> {
+    stamp()
 }
 
 /// The value bd's kv must come to hold, and the last one written there.
@@ -617,25 +608,32 @@ pub fn install_mirror(start: u64) {
 }
 
 /// The item rows of `ids`.
-pub fn fetch(conn: &Conn, ids: &[&str]) -> Result<Vec<Value>, String> {
-    fetch_with(conn, ids, false, false)
+pub fn fetch(ids: &[&str]) -> Result<Vec<Value>, String> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    fetch_with(bd()?, ids, false, false)
+}
+
+fn rows_of(conn: &dyn Sql, sql: &str) -> Result<Vec<Value>, String> {
+    conn.rows(sql).map_err(|f| format!("cannot tell: {}", f.text()))
 }
 
 const TEXT_COLUMNS: &str = ", description, notes, external_ref, close_reason, DATE_FORMAT(closed_at, '%Y-%m-%dT%H:%i:%sZ') AS closed_at";
 
-fn by_external_ref(conn: &Conn, needle: &str, full: bool, open: bool) -> Result<Vec<Value>, String> {
+fn by_external_ref(conn: &dyn Sql, needle: &str, full: bool, open: bool) -> Result<Vec<Value>, String> {
     let cdb = content_db()?;
     if needle.is_empty() {
         return Err("plan items: --external-contains needs a non-empty text".into());
     }
     let sql = format!("SELECT id FROM {cdb}.issues WHERE LOCATE('{}', external_ref) > 0 ORDER BY id", rows::escape(needle));
-    let found = conn.query(&sql).map_err(|e| format!("cannot tell: {e:?}"))?;
+    let found = rows_of(conn, &sql)?;
     let ids: Vec<&str> = found.iter().filter_map(|r| s(r, "id")).collect();
     fetch_with(conn, &ids, full, open)
 }
 
 /// The beads carrying `label`, narrowed to the comma-separated `statuses` when given.
-fn by_label(conn: &Conn, label: &str, statuses: Option<&str>, full: bool) -> Result<Vec<Value>, String> {
+fn by_label(conn: &dyn Sql, label: &str, statuses: Option<&str>, full: bool) -> Result<Vec<Value>, String> {
     let cdb = content_db()?;
     if label.is_empty() {
         return Err("plan items: --label needs a non-empty label".into());
@@ -645,19 +643,19 @@ fn by_label(conn: &Conn, label: &str, statuses: Option<&str>, full: bool) -> Res
         Some(list) => format!(" AND status IN ({})", list.split(',').filter(|x| !x.is_empty()).map(|x| format!("'{}'", rows::escape(x))).collect::<Vec<_>>().join(",")),
     };
     let sql = format!("SELECT id FROM {cdb}.issues WHERE id IN (SELECT issue_id FROM {cdb}.labels WHERE label = '{}'){status} ORDER BY id", rows::escape(label));
-    let found = conn.query(&sql).map_err(|e| format!("cannot tell: {e:?}"))?;
+    let found = rows_of(conn, &sql)?;
     let ids: Vec<&str> = found.iter().filter_map(|r| s(r, "id")).collect();
     fetch_with(conn, &ids, full, false)
 }
 
 /// The beads of bd issue type `kind`.
-fn by_type(conn: &Conn, kind: &str, full: bool, open: bool) -> Result<Vec<Value>, String> {
+fn by_type(conn: &dyn Sql, kind: &str, full: bool, open: bool) -> Result<Vec<Value>, String> {
     let cdb = content_db()?;
     if kind.is_empty() {
         return Err("plan items: --type needs a non-empty type".into());
     }
     let live = if open { " AND status <> 'closed'" } else { "" };
-    let found = conn.query(&format!("SELECT id FROM {cdb}.issues WHERE issue_type = '{}'{live} ORDER BY id", rows::escape(kind))).map_err(|e| format!("cannot tell: {e:?}"))?;
+    let found = rows_of(conn, &format!("SELECT id FROM {cdb}.issues WHERE issue_type = '{}'{live} ORDER BY id", rows::escape(kind)))?;
     let ids: Vec<&str> = found.iter().filter_map(|r| s(r, "id")).collect();
     fetch_with(conn, &ids, full, open)
 }
@@ -694,8 +692,8 @@ fn fetch_with(conn: &dyn Sql, ids: &[&str], full: bool, open: bool) -> Result<Ve
 const PANE_SCOPE: &str = "(status <> 'closed' OR closed_at >= UTC_TIMESTAMP() - INTERVAL 1 DAY)";
 const INFLOW_ROWS: usize = 40;
 
-fn count(conn: &Conn, sql: String) -> Result<i64, String> {
-    let rows = conn.query(&sql).map_err(|e| format!("cannot tell: {e:?}"))?;
+fn count(conn: &dyn Sql, sql: String) -> Result<i64, String> {
+    let rows = rows_of(conn, &sql)?;
     Ok(rows.first().and_then(|r| r.get("n")).and_then(|n| n.as_i64().or_else(|| n.as_str().and_then(|s| s.parse().ok()))).unwrap_or(0))
 }
 
@@ -703,7 +701,11 @@ fn count(conn: &Conn, sql: String) -> Result<i64, String> {
 /// here so the reply is the newest rows plus counts, never the table.
 /// `pane-facets repo-labels --valid a,b`: live beads with no `repo:` label, and with only
 /// `repo:` labels outside the valid set.
-pub fn cmd_pane_facets(args: &[String], conn: &Conn) -> (i32, String) {
+pub fn cmd_pane_facets(args: &[String]) -> (i32, String) {
+    let conn = match bd() {
+        Ok(c) => c,
+        Err(e) => return (CANNOT_TELL, e),
+    };
     let flag = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1));
     let out = match args.first().map(String::as_str) {
         Some("inflow") => flag("--window-secs").and_then(|w| w.parse::<u32>().ok()).ok_or_else(|| "pane-facets inflow: --window-secs <n> is required".to_string()).and_then(|w| inflow(conn, w)),
@@ -716,9 +718,9 @@ pub fn cmd_pane_facets(args: &[String], conn: &Conn) -> (i32, String) {
     }
 }
 
-fn inflow(conn: &Conn, window_secs: u32) -> Result<Value, String> {
+fn inflow(conn: &dyn Sql, window_secs: u32) -> Result<Value, String> {
     let cdb = content_db()?;
-    let q = |sql: String| conn.query(&sql).map_err(|e| format!("cannot tell: {e:?}"));
+    let q = |sql: String| rows_of(conn, &sql);
     let work = "COALESCE(issue_type, 'task') <> 'event'";
     let fresh = format!("{work} AND {PANE_SCOPE} AND created_at >= UTC_TIMESTAMP() - INTERVAL {window_secs} SECOND");
     let issues = q(format!(
@@ -741,7 +743,7 @@ fn inflow(conn: &Conn, window_secs: u32) -> Result<Value, String> {
     Ok(json!({ "n": n, "defect": defect, "kinds": kinds, "rows": assemble(&issues, &labels, &[]) }))
 }
 
-fn repo_labels(conn: &Conn, valid: &str) -> Result<Value, String> {
+fn repo_labels(conn: &dyn Sql, valid: &str) -> Result<Value, String> {
     let cdb = content_db()?;
     let live = format!("{cdb}.issues WHERE status <> 'closed'");
     let with_repo = format!("{live} AND id IN (SELECT issue_id FROM {cdb}.labels WHERE label LIKE 'repo:%')");
@@ -845,13 +847,13 @@ mod tests {
 
     #[test]
     fn no_ids_is_an_empty_answer_and_a_missing_selector_is_refused() {
-        let c = Conn::unreachable();
+        let c = crate::db::Conn::unreachable();
         assert_eq!(items(&a(&["--ids", ""]), &c), Ok(vec![]));
         assert_eq!(children(&a(&["--ids", ","]), &c), Ok(vec![]));
         assert_eq!(edges(&a(&["--ids", ""]), &c), Ok(vec![]));
         assert!(items(&[], &c).is_err());
         assert!(edges(&[], &c).unwrap_err().contains("--ids"));
-        assert_eq!(cmd_plan(&a(&["nope"]), &c).0, CANNOT_TELL);
+        assert_eq!(cmd_plan(&a(&["nope"])).0, CANNOT_TELL);
     }
 
     #[test]
