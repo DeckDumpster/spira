@@ -770,3 +770,5 @@ dolt_persist_gc_interval_secs
 runtime_sweep_repo_contract_calendar
 runtime_sweep_repo_contract_jitter_secs
 tmpfs_held_max_pct
+reclaim_tmp_idle_hours
+tmp_probe_path

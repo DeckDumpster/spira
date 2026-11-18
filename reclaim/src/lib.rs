@@ -128,6 +128,52 @@ pub fn plan(patterns: &[String], now: u64, idle_secs: u64, held: &[PathBuf], lea
     v
 }
 
+/// The uid this process runs as: the owner of its own `/proc` entry.
+pub fn own_uid() -> u32 {
+    fs::metadata(Path::new(system_paths::PROC).join("self")).map_or(u32::MAX, |m| m.uid())
+}
+
+fn holds_socket_or_fifo(p: &Path) -> bool {
+    use std::os::unix::fs::FileTypeExt;
+    let mut stack = vec![p.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        let Ok(md) = fs::symlink_metadata(&d) else { continue };
+        let ft = md.file_type();
+        if ft.is_socket() || ft.is_fifo() {
+            return true;
+        }
+        if ft.is_dir() {
+            if let Ok(rd) = fs::read_dir(&d) {
+                stack.extend(rd.flatten().map(|e| e.path()));
+            }
+        }
+    }
+    false
+}
+
+/// The top-level directories of `root` owned by `uid`, oldest first. A socket or fifo inside keeps
+/// a directory: `/proc/<pid>/fd` names a unix socket by inode, so its holder cannot be seen.
+pub fn tmp_plan(root: &Path, uid: u32, now: u64, idle_secs: u64, held: &[PathBuf]) -> Vec<Candidate> {
+    let Ok(rd) = fs::read_dir(root) else { return vec![] };
+    let mut v: Vec<Candidate> = rd
+        .flatten()
+        .filter_map(|e| {
+            let md = fs::symlink_metadata(e.path()).ok()?;
+            (md.uid() == uid && (md.is_dir() || md.file_type().is_symlink())).then(|| e.path())
+        })
+        .map(|p| {
+            let mut c = judge(&p, now, idle_secs, held, None);
+            let unjudged_by_age = matches!(&c.verdict, Verdict::Reclaim) || matches!(&c.verdict, Verdict::Skip(w) if w.starts_with("touched"));
+            if unjudged_by_age && holds_socket_or_fifo(&p) {
+                c.verdict = Verdict::Skip("holds a socket or fifo".into());
+            }
+            c
+        })
+        .collect();
+    v.sort_by_key(|c| std::cmp::Reverse(c.age));
+    v
+}
+
 /// Every file under `root` as `(mtime, bytes, path)`, oldest first, leaving out a `.tmp` file
 /// younger than an hour (a write still in progress).
 pub fn cache_files(root: &Path, now: u64) -> Vec<(u64, u64, PathBuf)> {
@@ -211,6 +257,8 @@ pub struct Config {
     pub podman: Option<PathBuf>,
     pub podman_dir: Option<PathBuf>,
     pub podman_cap_bytes: u64,
+    pub tmp_root: Option<PathBuf>,
+    pub tmp_idle_secs: u64,
     pub dry: bool,
 }
 
@@ -238,6 +286,18 @@ pub fn run(cfg: &Config, now: u64, held: &[PathBuf], free_mib: &dyn Fn() -> Opti
         return Err(format!("positive control failed: {r} matches nothing, so an empty sweep proves nothing"));
     }
     let mut freed = 0u64;
+    if let Some(root) = &cfg.tmp_root {
+        for c in tmp_plan(root, own_uid(), now, cfg.tmp_idle_secs, held) {
+            if let Verdict::Skip(why) = &c.verdict {
+                say(format!("kept {} ({why})", c.path.display()));
+            } else if cfg.dry || fs::remove_dir_all(&c.path).is_ok() {
+                freed += c.bytes;
+                say(format!("reclaimed {} {} MiB age {}s{}", c.path.display(), c.bytes >> 20, c.age, if cfg.dry { " (dry)" } else { "" }));
+            } else {
+                say(format!("failed to remove {}", c.path.display()));
+            }
+        }
+    }
     let free = free_mib().ok_or("cannot read free space")?;
     if free >= cfg.min_free_mib {
         say(format!("free {free} MiB >= trigger {} MiB: no target directory is touched", cfg.min_free_mib));

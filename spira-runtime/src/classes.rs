@@ -305,6 +305,7 @@ pub const CLASSES: &[(&str, EffectClass)] = &[
     ("sweep.reclaim.observe", Store),
     ("sweep.reclaim.podman_prune", Container),
     ("sweep.reclaim.remove_target", Host),
+    ("sweep.reclaim.remove_tmp", Host),
     ("sweep.reclaim.trim_cache", Host),
     ("sweep.repo_contract.lift", Host),
     ("sweep.repo_contract.observe", Host),

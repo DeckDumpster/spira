@@ -4,13 +4,13 @@
 use spira_runtime::tasks::b::kit::{names, testing as t, Input};
 use spira_runtime::tasks::c::sweep_reclaim::{self as task, CacheFile, Candidate, Carry, Phase, Snapshot, SweepReclaim as H, Verdict};
 
-const SET: &[(&str, &str)] = &[(task::CADENCE_KEY, "3600"), (task::MIN_FREE_KEY, "70"), (task::TARGET_FREE_KEY, "100"), (task::PODMAN_CAP_KEY, "40"), (task::CACHE_CAP_KEY, "40"), ("SPIRA_RECLAIM_IDLE_DAYS", "2")];
+const SET: &[(&str, &str)] = &[(task::CADENCE_KEY, "3600"), (task::MIN_FREE_KEY, "70"), (task::TARGET_FREE_KEY, "100"), (task::PODMAN_CAP_KEY, "40"), (task::CACHE_CAP_KEY, "40"), ("SPIRA_RECLAIM_IDLE_DAYS", "2"), (task::TMP_ROOT_KEY, "/tmp"), (task::TMP_IDLE_KEY, "6")];
 const HOUR: u64 = 3_600_000;
 const GIB: u64 = 1 << 30;
 
 /// 90 GiB free, podman at 10 GiB, the cache at 1 GiB.
 fn idle() -> Snapshot {
-    Snapshot { repos: vec![], require_ok: vec![("r/worktree".into(), true)], free_mib: 90 * 1024, candidates: vec![], podman_bytes: 10 * GIB, cache: vec![CacheFile { mtime: 1, bytes: GIB, path: "r/sccache-dav/a".into() }] }
+    Snapshot { repos: vec![], require_ok: vec![("r/worktree".into(), true)], free_mib: 90 * 1024, candidates: vec![], podman_bytes: 10 * GIB, cache: vec![CacheFile { mtime: 1, bytes: GIB, path: "r/sccache-dav/a".into() }], tmp: vec![] }
 }
 
 fn json(s: &Snapshot) -> String {
@@ -57,6 +57,17 @@ fn t5_low_space_prunes_podman_then_the_oldest_targets_and_a_fat_podman_alone_pru
     assert_eq!(names(&acts), [task::PODMAN_PRUNE, task::REMOVE_TARGET, task::REMOVE_TARGET], "reclaimed old, newer (dry); kept held; target 100 GiB reached");
     let (_, acts) = task::decide(&h.cfg, &observing, &Input::Observed(Snapshot { podman_bytes: 50 * GIB, ..idle() }), HOUR).unwrap();
     assert_eq!(names(&acts), [task::PODMAN_PRUNE], "podman: system prune -f would run");
+}
+
+#[test]
+fn t5b_an_idle_tmp_directory_is_removed_at_any_free_space_and_a_held_one_is_not() {
+    let h = t::handler::<H>(SET);
+    let observing = Carry { phase: Phase::Observing, ..Carry::default() };
+    let cand = |p: &str, v| Candidate { path: p.into(), bytes: GIB, age: 9, verdict: v };
+    let snap = Snapshot { tmp: vec![cand("/tmp/tmp.a", Verdict::Reclaim), cand("/tmp/tmp.b", Verdict::Held), cand("/tmp/tmp-1000", Verdict::Special)], ..idle() };
+    let (c, acts) = task::decide(&h.cfg, &observing, &Input::Observed(snap), HOUR).unwrap();
+    assert_eq!(names(&acts), [task::REMOVE_TMP]);
+    assert_eq!((acts[0].input.as_str(), c.pending), ("/tmp/tmp.a", 1));
 }
 
 use runtime::taskrig::TaskRig;
