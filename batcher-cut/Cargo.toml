@@ -20,6 +20,7 @@ spira-config = { path = "../spira-config" }
 spira-store = { path = "../spira-store" }
 spira-otel = { path = "../spira-otel" }
 suite-select = { path = "../suite-select" }
+testenv = { path = "../testenv" }
 gate = { path = "../gate" }
 lifecycle = { path = "../lifecycle" }
 state-store = { path = "../state-store" }

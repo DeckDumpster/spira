@@ -92,6 +92,11 @@ pub trait RoundRunner {
     fn prior_red_suites(&mut self) -> Vec<String> {
         vec![]
     }
+    /// The case-deadline red of `suite`'s latest run: `None` when its first failing case was
+    /// not a deadline red, or the runner cannot say.
+    fn deadline_red(&mut self, _suite: &str) -> Option<DeadlineRed> {
+        None
+    }
     /// The red this attribution follows survived one attribution already: the members are named
     /// as suspects by what the red suites cover, not mended.
     fn confirmed(&self) -> bool {
@@ -1004,6 +1009,46 @@ fn noted_tests(failed: &[String]) -> String {
     }
 }
 
+/// A suite's first failing case passed `spira.test_case_deadline`: a hang guard, not a verdict
+/// on the diff, so it ejects no one whose diff does not reach the suite.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeadlineRed {
+    pub case: u64,
+    pub secs: u64,
+    pub load: Option<String>,
+}
+
+/// Splits a sole member's `reds` into the suites still to eject on and the harness-fault
+/// descriptions of the deadline reds the member's diff does not reach.
+fn deadline_faults<R: RoundRunner, O: RoundOps>(
+    runner: &mut R,
+    ops: &O,
+    only: &Member,
+    reds: &[String],
+) -> (Vec<String>, Vec<String>) {
+    let mut eject = vec![];
+    let mut faults = vec![];
+    for suite in reds {
+        match runner.deadline_red(suite) {
+            Some(d) if ops.touching(suite, &[only.id.clone()]).is_empty() => {
+                let load = d.load.as_deref().unwrap_or("load unknown");
+                faults.push(format!(
+                    "{suite} case {} exceeded its {}s deadline ({load}); {}'s diff does not reach {suite}",
+                    d.case, d.secs, only.id
+                ));
+            }
+            _ => eject.push(suite.clone()),
+        }
+    }
+    (eject, faults)
+}
+
+fn harness_fault(faults: &[String]) -> RoundEnd {
+    let why = faults.join("; ");
+    println!("batcher: harness fault — {why}; no member charged");
+    RoundEnd::Faulted(format!("harness fault: {why}; no member charged"))
+}
+
 /// A round of one member has no one else to blame: a red nothing else names is that member's.
 fn sole_member_culprit(red: &str, members: &[Member]) -> Vec<Action> {
     match members {
@@ -1603,9 +1648,13 @@ fn attribute_members<R: RoundRunner, O: RoundOps>(
             "batcher: {} suite(s) red in the corpus pass — attributing them alone, without the corpus again",
             prior_reds.len()
         );
-        if let [_] = members[..] {
-            let red = format!("{} red in the corpus pass", prior_reds.join(","));
-            return eject_sole_member_on_suites(ops, &members, &red, &prior_reds);
+        if let [only] = &members[..] {
+            let (eject, faults) = deadline_faults(runner, &*ops, only, &prior_reds);
+            if eject.is_empty() {
+                return Ok(harness_fault(&faults));
+            }
+            let red = format!("{} red in the corpus pass", eject.join(","));
+            return eject_sole_member_on_suites(ops, &members, &red, &eject);
         }
         if runner.confirmed() {
             return confirmed_attribution(runner, ops, &members, &prior_reds);
@@ -1896,14 +1945,21 @@ fn attribute_members<R: RoundRunner, O: RoundOps>(
                     continue;
                 }
             }
-            let red = format!("unattributed red {}", d.unattributed.join(","));
+            let mut unattributed = d.unattributed.clone();
+            if let [only] = &members[..] {
+                let (eject, faults) = deadline_faults(runner, &*ops, only, &unattributed);
+                if eject.is_empty() {
+                    return Ok(harness_fault(&faults));
+                }
+                unattributed = eject;
+            }
+            let red = format!("unattributed red {}", unattributed.join(","));
             let alone = sole_member_culprit(&red, &members);
             if !alone.is_empty() {
-                let named = d.unattributed.join(",");
+                let named = unattributed.join(",");
                 println!(
                     "batcher: {named} red names no member; the round's only member is the culprit"
                 );
-                let unattributed = d.unattributed.clone();
                 eject_sole_member_on_suites(ops, &members, &red, &unattributed)?;
                 return Ok(RoundEnd::Emptied(format!(
                     "{named} red ejected the only member"
@@ -2157,6 +2213,7 @@ pub(crate) mod tests {
         pub prior: Option<FilterRed>,
         /// The suites the corpus pass this attribution follows ran red.
         pub prior_suites: Vec<String>,
+        pub deadlines: BTreeMap<String, DeadlineRed>,
         pub confirmed: bool,
         /// The compiler output of the corpus pass this attribution follows, red in workspace-build.
         pub prior_build: Option<String>,
@@ -2223,6 +2280,7 @@ pub(crate) mod tests {
                 scoped: vec![],
                 prior: None,
                 prior_suites: vec![],
+                deadlines: BTreeMap::new(),
                 confirmed: false,
                 prior_build: None,
                 needs_runner: false,
@@ -2355,6 +2413,9 @@ pub(crate) mod tests {
         }
         fn prior_red_suites(&mut self) -> Vec<String> {
             std::mem::take(&mut self.prior_suites)
+        }
+        fn deadline_red(&mut self, suite: &str) -> Option<DeadlineRed> {
+            self.deadlines.get(suite).cloned()
         }
         fn prior_build_output(&mut self) -> Option<String> {
             self.prior_build.take()
@@ -3817,6 +3878,65 @@ pub(crate) mod tests {
                 vec!["test-01.sh".to_string(), "test-03.sh".to_string()]
             )]
         );
+    }
+
+    fn spike_deadline() -> DeadlineRed {
+        DeadlineRed { case: 1, secs: 45, load: Some("load1 75.2 on 32 cores".into()) }
+    }
+
+    fn deadline_corpus() -> Vec<String> {
+        vec!["test-01.sh".into(), "test-spike.sh".into()]
+    }
+
+    fn run_sole(f: &mut Fake, ops: &mut Ops) -> RoundEnd {
+        attribute_round(f, ops, &deadline_corpus(), vec![member("m1")], Budget { slots: 6, maxpar: 2 }).unwrap()
+    }
+
+    #[test]
+    fn a_sole_member_deadline_red_its_diff_does_not_reach_faults_the_round_and_ejects_no_one() {
+        let mut f = Fake::new(|_, _| false);
+        f.prior_suites = vec!["test-spike.sh".into()];
+        f.deadlines.insert("test-spike.sh".into(), spike_deadline());
+        let mut ops = touching_ops(&[]);
+        let end = run_sole(&mut f, &mut ops);
+        assert!(
+            matches!(&end, RoundEnd::Faulted(why) if why.contains("test-spike.sh")
+                && why.contains("45s deadline") && why.contains("load1 75.2 on 32 cores")),
+            "{end:?}"
+        );
+        assert!(ops.ejected.is_empty());
+    }
+
+    #[test]
+    fn a_sole_member_deadline_red_its_diff_reaches_still_ejects_it() {
+        let mut f = Fake::new(|_, _| false);
+        f.prior_suites = vec!["test-spike.sh".into()];
+        f.deadlines.insert("test-spike.sh".into(), spike_deadline());
+        let mut ops = touching_ops(&[("test-spike.sh", &["m1"])]);
+        let end = run_sole(&mut f, &mut ops);
+        assert!(matches!(end, RoundEnd::Emptied(_)), "{end:?}");
+        assert_eq!(ops.ejected, vec![("m1".to_string(), vec!["test-spike.sh".to_string()])]);
+    }
+
+    #[test]
+    fn a_sole_member_with_an_untouched_deadline_red_and_an_ordinary_red_is_ejected_on_the_ordinary_one_only() {
+        let mut f = Fake::new(|_, _| false);
+        f.prior_suites = vec!["test-01.sh".into(), "test-spike.sh".into()];
+        f.deadlines.insert("test-spike.sh".into(), spike_deadline());
+        let mut ops = touching_ops(&[]);
+        let end = run_sole(&mut f, &mut ops);
+        assert!(matches!(end, RoundEnd::Emptied(_)), "{end:?}");
+        assert_eq!(ops.ejected, vec![("m1".to_string(), vec!["test-01.sh".to_string()])]);
+    }
+
+    #[test]
+    fn a_sole_member_non_deadline_red_on_an_untouched_suite_is_still_ejected() {
+        let mut f = Fake::new(|_, _| false);
+        f.prior_suites = vec!["test-01.sh".into()];
+        let mut ops = touching_ops(&[]);
+        let end = run_sole(&mut f, &mut ops);
+        assert!(matches!(end, RoundEnd::Emptied(_)), "{end:?}");
+        assert_eq!(ops.ejected, vec![("m1".to_string(), vec!["test-01.sh".to_string()])]);
     }
 
     #[test]

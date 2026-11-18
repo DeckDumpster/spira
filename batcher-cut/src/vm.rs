@@ -16,7 +16,7 @@ use batcher::core::{Id, Member, MergeResult};
 
 use crate::io::{self, Env, Repo};
 use crate::order;
-use batcher::drive::{FilterRed, MainEnd, MainKind, MainPoll, RoundRunner};
+use batcher::drive::{DeadlineRed, FilterRed, MainEnd, MainKind, MainPoll, RoundRunner};
 use batcher::pathattr::{attribute, MemberPaths, Red, Verdict};
 
 /// Only these extensions may differ for a rerun to reuse the round's release binaries.
@@ -1090,6 +1090,16 @@ impl RoundRunner for VmRunner<'_> {
         reds
     }
 
+    fn deadline_red(&mut self, suite: &str) -> Option<DeadlineRed> {
+        let name = format!("{suite}.tap.json");
+        let here = self.results.join(&name);
+        let path = if here.exists() { here } else { self.prior.as_deref()?.join(&name) };
+        let summary: testenv::tap::TapSummary = serde_json::from_str(&fs::read_to_string(path).ok()?).ok()?;
+        let case = summary.cases.into_iter().find(|c| c.status == "not ok")?;
+        let d = case.deadline?;
+        Some(DeadlineRed { case: case.n, secs: d.secs, load: d.load })
+    }
+
     fn prior_build_output(&mut self) -> Option<String> {
         fs::read_to_string(self.prior.as_deref()?.join("workspace-build.out")).ok()
     }
@@ -2056,6 +2066,21 @@ mod abandon_tests {
         assert!(r.prior_red_suites().is_empty(), "no prior pass: the corpus runs");
         let mut r = r.after_pass(Some(d.path().to_path_buf()));
         assert_eq!(r.prior_red_suites(), vec!["b.sh".to_string(), "c.sh".to_string()]);
+    }
+
+    #[test]
+    fn a_suites_tap_json_names_the_deadline_its_first_failing_case_passed() {
+        let d = testkit::TempDir::new("vm-deadline-red");
+        let tap = |case: &str| format!(r#"{{"passed":0,"failed":1,"skipped":0,"todo":0,"not_ok":[],"cases":[{{"n":1,"name":"x","status":"ok"}},{case}]}}"#);
+        fs::write(d.path().join("a.sh.tap.json"), tap(r#"{"n":2,"name":"y","status":"not ok","deadline":{"secs":45,"load":"load1 75"}}"#)).unwrap();
+        fs::write(d.path().join("b.sh.tap.json"), tap(r#"{"n":2,"name":"y","status":"not ok"}"#)).unwrap();
+        let env = lifecycle_tests_env(d.path());
+        let repo = repo(d.path());
+        let r = VmRunner::new(&env, &repo, d.path(), "base", "r1", BTreeMap::new()).unwrap();
+        let mut r = r.after_pass(Some(d.path().to_path_buf()));
+        assert_eq!(r.deadline_red("a.sh"), Some(DeadlineRed { case: 2, secs: 45, load: Some("load1 75".into()) }));
+        assert_eq!(r.deadline_red("b.sh"), None, "a failing case without a deadline");
+        assert_eq!(r.deadline_red("c.sh"), None, "no file");
     }
 
     #[test]
