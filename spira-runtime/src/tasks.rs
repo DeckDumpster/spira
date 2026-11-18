@@ -494,7 +494,10 @@ mod tests {
             let (_, stream, kind) = (t.boot)();
             rig.tick(stream, kind).unwrap();
             let next = rig.engine().next_timer_at();
-            assert_eq!(next, Some((t.cadence_ms)(&s)), "{}: the boot tick must arm the next one a cadence later", t.name);
+            let first = (t.cadence_ms)(&s);
+            let jitter_ms = t.keys.iter().flat_map(|ks| ks.iter()).filter(|k| k.ends_with("_JITTER_SECS")).filter_map(|k| s.task_config.get(*k)).filter_map(|v| v.trim().parse::<u64>().ok()).max().unwrap_or(0) * 1000;
+            let armed = next.unwrap_or_else(|| panic!("{}: the boot tick armed no next tick", t.name));
+            assert!((first..first + jitter_ms.max(1)).contains(&armed), "{}: the boot tick must arm the next one in [{first}, {first} + {jitter_ms} ms), got {armed}", t.name);
             for q in rig.requested() {
                 assert!(t.effects.contains(&q.name.as_str()), "{} asked for {} which its row does not declare", t.name, q.name);
             }
