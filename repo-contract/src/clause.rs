@@ -57,7 +57,7 @@ pub fn judge(p: &dyn Ports, clause: Clause, repo: &str, tree: Option<&Path>) -> 
     let r = match clause {
         Clause::Environment => environment(p, repo, tree),
         Clause::SubmitChecks => submit_checks(p, repo, tree),
-        Clause::TestTiers => test_tiers(p, repo),
+        Clause::TestTiers => test_tiers(p, repo, tree),
         Clause::Landing => landing(p, repo),
         Clause::Deploy => deploy(p, repo, tree),
     };
@@ -121,8 +121,8 @@ fn submit_checks(p: &dyn Ports, repo: &str, tree: Option<&Path>) -> Judged {
     Ok(Outcome::Met(format!("{CHECKS} declares {} row(s): {}", names.len(), names.join(", "))))
 }
 
-fn test_tiers(p: &dyn Ports, repo: &str) -> Judged {
-    let Some(text) = p.read(repo, None, TESTENV)? else {
+fn test_tiers(p: &dyn Ports, repo: &str, tree: Option<&Path>) -> Judged {
+    let Some(text) = p.read(repo, tree, TESTENV)? else {
         return Ok(Outcome::NotMet(format!("{TESTENV} does not exist")));
     };
     let table = match text.parse::<toml::Table>() {
@@ -209,11 +209,16 @@ mod tests {
         workflow: &'static str,
         workflow_files: Vec<String>,
         repos: Vec<String>,
+        tree_files: Option<BTreeMap<String, String>>,
     }
 
     impl Ports for Fake {
-        fn read(&self, _: &str, _: Option<&Path>, rel: &str) -> Result<Option<String>, String> {
-            Ok(self.files.get(rel).cloned())
+        fn read(&self, _: &str, tree: Option<&Path>, rel: &str) -> Result<Option<String>, String> {
+            let files = match (&self.tree_files, tree) {
+                (Some(t), Some(_)) => t,
+                _ => &self.files,
+            };
+            Ok(files.get(rel).cloned())
         }
         fn shell_env(&self, _: &str, _: Option<&Path>) -> Result<Option<ShellEnv>, String> {
             if let Some(e) = &self.shell_err {
@@ -330,6 +335,17 @@ mod tests {
         assert_eq!(line(&f, Clause::TestTiers), "not met test-tiers: .spira/testenv.toml declares no `default` tiers");
         f.files.remove(TESTENV);
         assert_eq!(line(&f, Clause::TestTiers), "not met test-tiers: .spira/testenv.toml does not exist");
+    }
+
+    #[test]
+    fn test_tiers_reads_the_tree_when_given_one() {
+        let mut f = green();
+        f.files.insert(TESTENV.into(), "default = [\"unit\"]\n".into());
+        f.tree_files = Some(BTreeMap::new());
+        let mut out = Vec::new();
+        let tree = PathBuf::from("/t");
+        run(&f, "r", Some(&tree), &[Clause::TestTiers], &mut |l| out.push(l.to_string()));
+        assert_eq!(out, ["not met test-tiers: .spira/testenv.toml does not exist"]);
     }
 
     #[test]
