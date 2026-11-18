@@ -18,7 +18,7 @@ use crate::{flag, CANNOT_TELL, REFUSED};
 
 /// The administrator: `SPIRA_LC_ADMIN_USER` with the password in `SPIRA_LC_ADMIN_PASSWORD_FILE` (or
 /// `SPIRA_LC_ADMIN_PASSWORD`), else the user install provisioned.
-fn administrator(get: impl Fn(&str) -> Option<String>, provisioned: impl Fn() -> Result<Option<(String, String)>, String>) -> Result<(String, String), String> {
+pub(crate) fn administrator(get: impl Fn(&str) -> Option<String>, provisioned: impl Fn() -> Result<Option<(String, String)>, String>) -> Result<(String, String), String> {
     if let Some(user) = get("SPIRA_LC_ADMIN_USER").filter(|u| !u.is_empty()) {
         let password = crate::db::password_from(get("SPIRA_LC_ADMIN_PASSWORD_FILE"), get("SPIRA_LC_ADMIN_PASSWORD"), |p| std::fs::read_to_string(p))?;
         return Ok((user, password));
@@ -55,7 +55,7 @@ fn flagged(r: &Value, k: &str) -> bool {
 }
 
 /// The server as the drop sees it.
-trait Dolt {
+pub(crate) trait Dolt {
     fn rows(&self, sql: &str) -> Result<Vec<Value>, String>;
     fn execute(&self, sql: &str) -> Result<(), String>;
 }
