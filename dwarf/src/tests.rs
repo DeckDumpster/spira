@@ -127,6 +127,7 @@ pub(crate) mod verdict_run {
     fn with_run_launching<T>(vars: BTreeMap<String, String>, bd: &dyn Bd, git: Dirty, exec: &dyn Exec, clock: &(dyn Fn() -> i64 + Sync), seam: &dyn Seam, sink: &dyn Sink, launcher: &dyn Launcher, claimed_raw: &str, f: impl FnOnce(&mut Run) -> T) -> T {
         let conf = Conf::new(&Snapshot { vars, ..Default::default() }, Path::new("h/spira"));
         let rune = Rune::from_vars("builder", &Default::default());
+        let env = Env::new(Default::default(), Default::default());
         let stop = Arc::new(Stop::default());
         let mut r = Run {
             d: Deps { bd, seam, git: &git, exec, launcher, sink, env: &env, clock, sleep: &|_| {} },
