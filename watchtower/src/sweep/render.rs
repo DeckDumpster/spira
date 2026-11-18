@@ -186,7 +186,7 @@ before anything else, because each answers a question the numbers above cannot.
 ### Can this snapshot be believed?
 
   collector snapshot age              {snap_age_disp}
-  sentinel timer                      {sp_sentinel_timer}   last pass {sp_sentinel_age}s ago
+  scheduler (spira-runtime)           {sp_sentinel_timer}   sentinel pass {sp_sentinel_age}s ago
 
 ## Your task
 
@@ -300,6 +300,14 @@ fn failed_units_disp(d: &SweepData) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_sweep_names_the_scheduler_not_a_sentinel_timer() {
+        let out = render(&SweepData::fixture_nominal(1_700_000_000));
+        assert!(!out.contains("sentinel timer"));
+        let line = out.lines().find(|l| l.contains("scheduler (spira-runtime)")).expect("scheduler line");
+        assert!(line.contains("sentinel pass") && !line.contains('{'), "{line}");
+    }
 
     #[test]
     fn the_green_fixture_is_nominal() {

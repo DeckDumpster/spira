@@ -120,7 +120,10 @@ pub fn sweep_cfg() -> Result<sweep::Cfg, String> {
         mem_warn_mb: getenv_i64("SPIRA_MEM_WARN_MB", 1500),
         meminfo_path: meminfo_path(),
         failed_units_warn_mins: getenv_i64("SPIRA_FAILED_UNITS_WARN_MINS", 15),
-        cpu_throttle_units: getenv("SPIRA_CPU_THROTTLE_UNITS").unwrap_or_else(|| cpu_throttle::DEFAULT_UNITS.to_string()).split_whitespace().map(String::from).collect(),
+        cpu_throttle_units: match getenv("SPIRA_CPU_THROTTLE_UNITS") {
+            Some(v) => v.split_whitespace().map(String::from).collect(),
+            None => cpu_throttle::default_units(&reg("SPIRA_INSTANCE")?),
+        },
         cpu_throttle_warn_pct: getenv_i64("SPIRA_CPU_THROTTLE_WARN_PCT", 5),
         cpu_throttle_min_periods: getenv_i64("SPIRA_CPU_THROTTLE_MIN_PERIODS", 100),
         cgroup_root: getenv("SPIRA_CGROUP_ROOT").unwrap_or_else(|| system_paths::SYS_FS_CGROUP.to_string()),
