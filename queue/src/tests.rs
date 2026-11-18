@@ -4236,7 +4236,6 @@ fn stats_reads_the_landing_log() {
     assert!(t.out().starts_with("caught:          1\n"));
 }
 
-
 #[test]
 fn usage_errors_exit_two() {
     let t = T::new(LandMode::Queue);
