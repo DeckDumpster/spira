@@ -205,7 +205,7 @@ struct Inflow {
     rows: Vec<Value>,
 }
 
-/// From a full row set, the shape the server's `pane-facets inflow` answers directly.
+/// From a full row set, the shape the server's `plan inflow` answers directly.
 fn inflow_from_rows(rows: &[Value], cut: i64) -> Inflow {
     let mut aged: Vec<(i64, &Value)> = rows
         .iter()
@@ -239,13 +239,18 @@ fn inflow_from_server(raw: &str) -> Option<Inflow> {
     })
 }
 
+fn inflow_argv(win_min: i64) -> Vec<String> {
+    ["plan", "inflow", "--window-secs", &(win_min * 60).to_string()].map(String::from).to_vec()
+}
+
 fn inflow_section(out: &mut Kv, _run: &std::path::Path) {
     let win: i64 = std::env::var("SPIRA_INFLOW_WINDOW_MIN").ok().and_then(|v| v.parse().ok()).filter(|w| *w > 0).unwrap_or(60);
     let now = io::now();
     let found = if io::fixture_mode() {
         io::json_rows(io::live_beads("")).map(|rows| inflow_from_rows(&rows, now - win * 60))
     } else {
-        super::lc::verb(&["pane-facets", "inflow", "--window-secs", &(win * 60).to_string()]).and_then(|raw| inflow_from_server(&raw))
+        let argv = inflow_argv(win);
+        super::lc::verb(&argv.iter().map(String::as_str).collect::<Vec<_>>()).and_then(|raw| inflow_from_server(&raw))
     };
     let Some(flow) = found else {
         push(out, "SP_INFLOW_WIN", "?");
@@ -408,6 +413,13 @@ mod tests {
         let rows: Vec<Value> = serde_json::from_str(r#"[{"id":"a","issue_type":"bug","created_at":"2026-01-01T00:10:00Z"},{"id":"b","issue_type":"event","created_at":"2026-01-01T00:11:00Z"},{"id":"c","created_at":"2026-01-01T00:00:00Z"}]"#).unwrap();
         let f = inflow_from_rows(&rows, parse_iso8601("2026-01-01T00:05:00Z").unwrap());
         assert_eq!((f.n, f.defect, f.rows.len()), (1, 1, 2));
+    }
+
+    #[test]
+    fn the_inflow_probe_asks_plan_for_the_window_in_seconds() {
+        assert_eq!(inflow_argv(60), ["plan", "inflow", "--window-secs", "3600"]);
+        let f = inflow_from_server(r#"{"n":3,"defect":1,"kinds":[["task",2],["bug",1]],"rows":[]}"#).unwrap();
+        assert_eq!((f.n, f.defect, f.kinds), (3, 1, vec![("task".to_string(), 2), ("bug".to_string(), 1)]));
     }
 
     #[test]

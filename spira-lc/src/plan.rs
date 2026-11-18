@@ -110,7 +110,7 @@ pub fn assemble(issues: &[Value], labels: &[Value], deps: &[Value]) -> Vec<Value
         .collect()
 }
 
-/// `plan items|edges|children|watermark|stamp|schema …`: JSON with the watermark on every read.
+/// `plan items|edges|children|inflow|repo-labels|watermark|stamp|schema …`: JSON with the watermark on every read.
 pub fn cmd_plan(args: &[String]) -> (i32, String) {
     let rest = args.get(1..).unwrap_or_default();
     let answer = match args.first().map(String::as_str) {
@@ -119,6 +119,8 @@ pub fn cmd_plan(args: &[String]) -> (i32, String) {
         Some("children") => read_watermark().and_then(|w| children(rest, bd()?).map(|v| json!({ "watermark": w, "items": v }))),
         Some("watermark") => read_watermark().map(|w| json!({ "watermark": w })),
         Some("stamp") => stamp().map(|w| json!({ "watermark": w })),
+        Some("inflow") => inflow_args(rest).and_then(|w| inflow(bd()?, w)),
+        Some("repo-labels") => bd().and_then(|c| repo_labels(c, flag(rest, "--valid").unwrap_or(""))),
         Some("schema") => return schema(),
         _ => Err(USAGE.into()),
     };
@@ -128,7 +130,11 @@ pub fn cmd_plan(args: &[String]) -> (i32, String) {
     }
 }
 
-const USAGE: &str = "usage: plan items (--ids a,b|- | --label L [--status a,b] | --external-contains S | --type T) [--full] [--open] | plan edges --ids a,b|- [--dependents] | plan children --ids a,b|- [--full] [--open] | plan watermark | plan stamp | plan schema";
+fn inflow_args(args: &[String]) -> Result<u32, String> {
+    flag(args, "--window-secs").and_then(|w| w.parse().ok()).ok_or_else(|| "plan inflow: --window-secs <n> is required".to_string())
+}
+
+const USAGE: &str = "usage: plan items (--ids a,b|- | --label L [--status a,b] | --external-contains S | --type T) [--full] [--open] | plan edges --ids a,b|- [--dependents] | plan children --ids a,b|- [--full] [--open] | plan inflow --window-secs N | plan repo-labels --valid a,b | plan watermark | plan stamp | plan schema";
 
 fn flag<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
     args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).map(String::as_str)
@@ -697,27 +703,6 @@ fn count(conn: &dyn Sql, sql: String) -> Result<i64, String> {
     Ok(rows.first().and_then(|r| r.get("n")).and_then(|n| n.as_i64().or_else(|| n.as_str().and_then(|s| s.parse().ok()))).unwrap_or(0))
 }
 
-/// `pane-facets inflow --window-secs N`: what the ops pane's inflow section draws, aggregated
-/// here so the reply is the newest rows plus counts, never the table.
-/// `pane-facets repo-labels --valid a,b`: live beads with no `repo:` label, and with only
-/// `repo:` labels outside the valid set.
-pub fn cmd_pane_facets(args: &[String]) -> (i32, String) {
-    let conn = match bd() {
-        Ok(c) => c,
-        Err(e) => return (CANNOT_TELL, e),
-    };
-    let flag = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1));
-    let out = match args.first().map(String::as_str) {
-        Some("inflow") => flag("--window-secs").and_then(|w| w.parse::<u32>().ok()).ok_or_else(|| "pane-facets inflow: --window-secs <n> is required".to_string()).and_then(|w| inflow(conn, w)),
-        Some("repo-labels") => repo_labels(conn, flag("--valid").map_or("", String::as_str)),
-        _ => Err("usage: pane-facets inflow --window-secs N | repo-labels --valid a,b".to_string()),
-    };
-    match out {
-        Ok(v) => (0, v.to_string()),
-        Err(e) => (CANNOT_TELL, e),
-    }
-}
-
 fn inflow(conn: &dyn Sql, window_secs: u32) -> Result<Value, String> {
     let cdb = content_db()?;
     let q = |sql: String| rows_of(conn, &sql);
@@ -843,6 +828,13 @@ mod tests {
 
     fn a(x: &[&str]) -> Vec<String> {
         x.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn plan_inflow_without_a_window_is_cannot_tell_naming_the_flag() {
+        let (code, text) = cmd_plan(&a(&["inflow"]));
+        assert_eq!(code, CANNOT_TELL);
+        assert!(text.contains("plan inflow: --window-secs"), "{text}");
     }
 
     #[test]

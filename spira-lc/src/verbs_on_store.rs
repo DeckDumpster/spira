@@ -25,10 +25,10 @@ fn with_no_control_store_configured_every_ported_verb_is_cannot_tell_and_never_a
 #[test]
 fn the_deleted_verbs_answer_usage() {
     let (_dir, _env) = world();
-    for verb in [&["ops-snapshot"][..], &["pause-sweep"], &["ready-set"]] {
+    for verb in [&["ops-snapshot"][..], &["pause-sweep"], &["ready-set"], &["pane-facets", "inflow"]] {
         let (_, out) = run(verb);
         assert!(out.starts_with("usage: spira-lc"), "{verb:?}: {out}");
-        for name in ["ops-snapshot", "pause-sweep", "ready-set"] {
+        for name in ["ops-snapshot", "pause-sweep", "ready-set", "pane-facets"] {
             assert!(!out.contains(name), "{verb:?}: usage names {name}");
         }
     }
