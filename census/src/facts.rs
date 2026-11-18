@@ -129,7 +129,7 @@ fn main_class(r: &FactRow, causes: &[String], desc_folded: bool) -> bool {
         && harness_actor(r)
 }
 
-fn after<'a>(rows: &'a [FactRow], since: Option<i64>) -> impl Iterator<Item = &'a FactRow> {
+fn after(rows: &[FactRow], since: Option<i64>) -> impl Iterator<Item = &FactRow> {
     rows.iter().filter(move |r| since.is_none_or(|t| r.at > t))
 }
 
