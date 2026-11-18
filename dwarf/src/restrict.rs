@@ -103,6 +103,7 @@ const CONDITIONAL: &[&str] = &[
     "BEADS_ACTOR",
     "SPIRA_MAIL",
     "CARGO_TARGET_DIR",
+    "CARGO_HOME",
     "TF_PLUGIN_CACHE_DIR",
     "RUSTC_WRAPPER",
     "SCCACHE_IGNORE_SERVER_IO_ERROR",
@@ -116,9 +117,11 @@ const CONDITIONAL: &[&str] = &[
 ];
 
 /// The cargo toolchain directory: `$CARGO_HOME/bin`, else `$HOME/.cargo/bin`, from the dwarf's
-/// own environment. None when neither is set.
+/// own environment. None when neither is set. A `CARGO_HOME` that is the configured cargo
+/// home (`SPIRA_CARGO_HOME`) moves cargo's state, not the rustup proxies, so it is skipped.
 fn cargo_bin(base: &BTreeMap<String, String>) -> Option<String> {
-    if let Some(c) = base.get("CARGO_HOME").filter(|v| !v.is_empty()) {
+    let configured = base.get(spira_config::build::CARGO_HOME_KEY);
+    if let Some(c) = base.get("CARGO_HOME").filter(|v| !v.is_empty() && Some(*v) != configured) {
         return Some(format!("{c}/bin"));
     }
     base.get("HOME").filter(|v| !v.is_empty()).map(|h| format!("{h}/.cargo/bin"))
@@ -275,6 +278,15 @@ mod tests {
         let c = base(&[("HOME", "h"), ("CARGO_HOME", "opt/cargo")]);
         assert_eq!(restricted_env("sp-x", &c, "rel/bin").get("PATH").unwrap(), &format!("{}:rel/bin:opt/cargo/bin", system_paths::SYSTEM_PATH_MIN));
         assert!(!e.get("PATH").unwrap().contains(".local/bin"), "bd lives in ~/.local/bin; it must stay out");
+    }
+
+    #[test]
+    fn a_configured_cargo_home_reaches_the_model_and_leaves_path_on_the_rustup_proxies() {
+        let b = base(&[("HOME", "h"), ("CARGO_HOME", "vol/cargo"), ("SPIRA_CARGO_HOME", "vol/cargo")]);
+        let e = restricted_env("sp-x", &b, "rel/bin");
+        assert_eq!(e.get("CARGO_HOME").unwrap(), "vol/cargo");
+        assert_eq!(e.get("PATH").unwrap(), &format!("{}:rel/bin:h/.cargo/bin", system_paths::SYSTEM_PATH_MIN));
+        assert!(!e.contains_key("SPIRA_CARGO_HOME"));
     }
 
     #[test]

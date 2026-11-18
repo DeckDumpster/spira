@@ -1157,6 +1157,7 @@ impl Scripts for RealScripts {
             Command::new("cargo")
                 .args(["build", "-q", "--profile", "release", "--workspace"])
                 .args(spira_config::build::one_shot("release"))
+                .envs(spira_config::build::cargo_home_env_from_process())
                 .current_dir(wt)
                 .env("CARGO_TARGET_DIR", &dir),
         );

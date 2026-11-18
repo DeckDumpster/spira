@@ -643,6 +643,7 @@ testenv_tier_events = ""
 testenv_unit_runner = "container"
 testenv_sandbox_target_root = ""
 gate_target_root = ""
+cargo_home = ""
 lc_backup_part_bytes = 134217728
 lc_history_ring_bytes = 33554432
 testenv_sandbox_target_keep = 24

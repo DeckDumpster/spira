@@ -1417,6 +1417,13 @@ impl<'a> Run<'a> {
             let v = self.conf.s(k);
             (!v.is_empty()).then_some(v)
         });
+        for (k, v) in spira_config::build::cargo_home_env(|k| {
+            let v = self.conf.s(k);
+            (!v.is_empty()).then_some(v)
+        }) {
+            env.set(spira_config::build::CARGO_HOME_KEY, &v);
+            env.set(&k, &v);
+        }
         match spira_config::build::wrapper(&path, setting.as_deref()) {
             Ok(w) => {
                 for (k, v) in w.env(store.as_ref()) {

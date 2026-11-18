@@ -188,6 +188,7 @@ fn build_in(
     let mut cargo_cmd = cargo_build_command(worktree, profile, warm.as_deref());
     cargo_cmd
         .envs(wrapper.env(store.as_ref()))
+        .envs(spira_config::build::cargo_home_env_from_process())
         .stdin(Stdio::null())
         .stdout(stdout_to_stderr);
     // rustc's RUSTC_WRAPPER=sccache auto-starts sccache's own server on first use, a

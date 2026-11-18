@@ -490,6 +490,7 @@ if [ -z "$cache_home" ]; then
     fi
 fi
 export CARGO_HOME="$cache_home"
+mkdir -p "$CARGO_HOME/bin"
 # The image links $CARGO_HOME/bin straight to ITS toolchain (template.sh runs only at image
 # build), so RUSTUP_TOOLCHAIN alone changes nothing: a round whose tree pins another release
 # installs it here and relinks, or a toolchain upgrade can never certify.
@@ -1206,8 +1207,13 @@ fn keep_fault_evidence(remote: &dyn Remote, cfg: &Config, addr: &str, scratch: &
 
 /// The Proxmox template's cache home is `SPIRA_ROUND_VM_CACHE_HOME`; an EC2 image records its
 /// own, which the VM reads, so the template's path is never sent to it.
-pub(crate) fn job_cache_home(ec2: bool, configured: Option<&str>) -> Option<String> {
-    if ec2 { None } else { configured.map(str::to_string) }
+/// A host round runs on this box's own disk, so the configured `cargo_home` replaces the
+/// template's path there; a Proxmox VM keeps the template's.
+pub(crate) fn job_cache_home(ec2: bool, host: bool, configured: Option<&str>, cargo_home: Option<&str>) -> Option<String> {
+    if ec2 {
+        return None;
+    }
+    cargo_home.filter(|_| host).or(configured).map(str::to_string)
 }
 
 /// The ssh session's side of a batch: it stages the script on the VM, starts it detached in its
@@ -2693,7 +2699,7 @@ fn on_vm_run(
         suites: args.suites.clone(),
         maxpar,
         toolchain: args.toolchain.clone().or_else(|| crate::recipe::tree_channel(&args.tree_dir)),
-        cache_home: job_cache_home(crate::ec2::is_ec2_handle(&vm.handle), cfg.cache_home.as_deref()),
+        cache_home: job_cache_home(crate::ec2::is_ec2_handle(&vm.handle), vm.handle == crate::host::HOST_HANDLE, cfg.cache_home.as_deref(), cfg.cargo_home.as_deref()),
         testenv_registry: cfg.testenv_registry.clone(),
         setup_alarm_secs: cfg.setup_alarm_secs,
         cap_secs: cfg.cap_secs,
@@ -3928,8 +3934,22 @@ mod tests {
 
     #[test]
     fn an_ec2_vm_never_gets_the_templates_cache_home() {
-        assert_eq!(job_cache_home(true, Some("tmpl/.cargo")), None);
-        assert_eq!(job_cache_home(false, Some("tmpl/.cargo")), Some("tmpl/.cargo".to_string()));
+        assert_eq!(job_cache_home(true, false, Some("tmpl/.cargo"), Some("vol/cargo")), None);
+        assert_eq!(job_cache_home(false, false, Some("tmpl/.cargo"), Some("vol/cargo")), Some("tmpl/.cargo".to_string()));
+        assert_eq!(job_cache_home(false, true, Some("tmpl/.cargo"), None), Some("tmpl/.cargo".to_string()));
+    }
+
+    #[test]
+    fn a_host_round_gets_the_configured_cargo_home() {
+        assert_eq!(job_cache_home(false, true, Some("tmpl/.cargo"), Some("vol/cargo")), Some("vol/cargo".to_string()));
+        assert_eq!(job_cache_home(false, true, None, Some("vol/cargo")), Some("vol/cargo".to_string()));
+        let export = REMOTE_SCRIPT.find("export CARGO_HOME=\"$cache_home\"").unwrap();
+        let mkdir = REMOTE_SCRIPT.find("mkdir -p \"$CARGO_HOME/bin\"").expect("a fresh cargo home needs its bin before the toolchain links into it");
+        assert!(export < mkdir);
+    }
+
+    #[test]
+    fn an_ec2_round_reads_its_cache_home_from_the_image_before_building() {
         let at = REMOTE_SCRIPT.find(&format!("{}/spira-round-ami.env", system_paths::ETC)).expect("the script reads the image's own record");
         let build = REMOTE_SCRIPT.find("cargo build -q --profile release --workspace").unwrap();
         let guard = REMOTE_SCRIPT.find("sccache is missing on this VM").expect("a missing sccache is named before the build");
@@ -4750,6 +4770,7 @@ mod tests {
             host_pubkey: format!("{}.pub", key.to_string_lossy()),
             host_addr: Some("192.168.1.10".to_string()),
             cache_home: Some("opt/spira/cargo".to_string()),
+            cargo_home: None,
             resume_url: None,
             resume_credentials: None,
             testenv_registry: None,
