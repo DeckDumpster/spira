@@ -227,7 +227,10 @@ fn cut(o: &Opts) -> Result<(), pace::CutError> {
     };
     let _parked = io::park_queue_lock(lock);
 
-    let screened = screen::cut_pool(io::certified_pool(&env_, &repo)?, &io::sifted_tips(&env_)?);
+    let (certified, pool_left) = io::certified_pool_left_out(&env_, &repo)?;
+    let screened = screen::cut_pool(certified, &io::sifted_tips(&env_)?);
+    let tips: std::collections::BTreeMap<String, String> =
+        screened.iter().map(|m| (m.id.clone(), m.tip.clone())).collect();
     let (screened, withheld) = redtip::withhold(&env_.run, &repo.name, screened);
     for (id, tip, first) in &withheld {
         println!(
@@ -243,14 +246,17 @@ fn cut(o: &Opts) -> Result<(), pace::CutError> {
         }
     }
     let (pool, kind) = batcher::core::select_round(batcher::core::base_fix_lane(screened));
-    let (pool, mut refused) = batcher::core::refuse_blocked(pool);
+    let (pool, first_blocked) = batcher::core::refuse_blocked(pool);
+    let mut refused: Vec<String> = first_blocked.iter().map(|r| r.to_string()).collect();
     let (pool, full) = batcher::core::cap_round(batcher::core::topo_order(&pool), state_store::limits::MAX_CUT_MEMBERS);
     refused.extend(full);
     let (pool, blocked) = batcher::core::refuse_blocked(pool);
-    refused.extend(blocked);
+    let blocked_all: Vec<_> = first_blocked.into_iter().chain(blocked.iter().cloned()).collect();
+    refused.extend(blocked.iter().map(|r| r.to_string()));
     for r in &refused {
         println!("batcher {}: {r}", repo.name);
     }
+    io::announce_left_out(&env_, &repo, &io::cut_left_out(pool_left, &tips, &blocked_all));
     if let batcher::core::RoundKind::Feature(root) = &kind {
         println!(
             "batcher {}: feature round {root} ({} members)",

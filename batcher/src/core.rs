@@ -185,10 +185,23 @@ pub fn should_cut(t: &TriggerInputs) -> Option<TriggerReason> {
     Some(TriggerReason::PoolFull(t.pool.len() as u32))
 }
 
+/// A member `refuse_blocked` left out, and the prerequisite that is not in the pool.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BlockedRefusal {
+    pub id: Id,
+    pub blocker: Id,
+}
+
+impl std::fmt::Display for BlockedRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: depends on {} (unlanded) — not cut", self.id, self.blocker)
+    }
+}
+
 /// Drops every member with an unlanded `blocked_by` prerequisite that is not itself a member of
 /// `pool`. A blocker in the same pool is cut ahead of its dependant (`topo_order`); one the pool
 /// drops takes its dependant with it, so apply this again after any step that cuts the pool.
-pub fn refuse_blocked(pool: Vec<Member>) -> (Vec<Member>, Vec<String>) {
+pub fn refuse_blocked(pool: Vec<Member>) -> (Vec<Member>, Vec<BlockedRefusal>) {
     let mut kept = pool;
     let mut refusals = Vec::new();
     loop {
@@ -196,9 +209,9 @@ pub fn refuse_blocked(pool: Vec<Member>) -> (Vec<Member>, Vec<String>) {
         let (ok, blocked): (Vec<Member>, Vec<Member>) = kept
             .into_iter()
             .partition(|m| m.blocked_by.iter().all(|b| ids.contains(b)));
-        refusals.extend(blocked.iter().map(|m| {
-            let dep = m.blocked_by.iter().find(|b| !ids.contains(*b)).unwrap_or(&m.blocked_by[0]);
-            format!("{}: depends on {dep} (unlanded) — not cut", m.id)
+        refusals.extend(blocked.iter().map(|m| BlockedRefusal {
+            id: m.id.clone(),
+            blocker: m.blocked_by.iter().find(|b| !ids.contains(*b)).unwrap_or(&m.blocked_by[0]).clone(),
         }));
         kept = ok;
         if blocked.is_empty() {
