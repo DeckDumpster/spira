@@ -4,8 +4,9 @@
 /// `work submit`, so this is where an edit to one is judged.
 pub const CONTRACT_PATHS: [&str; 5] = ["flake.nix", "flake.lock", ".spira/checks.toml", ".spira/testenv.toml", ".spira/deploy.toml"];
 
-/// The clauses judged at submit; submit-checks has just run in the shell above the fence.
-pub const FENCE_CLAUSES: &str = "environment,deploy";
+/// The clauses that read the branch's own tree; only landing, which reads registry config and
+/// the landing ref, is not judged at submit.
+pub const FENCE_CLAUSES: &str = "environment,submit-checks,test-tiers,deploy";
 
 pub fn touches_contract(changed: &[String]) -> bool {
     changed.iter().any(|p| CONTRACT_PATHS.contains(&p.as_str()))
@@ -27,6 +28,13 @@ mod tests {
 
     fn paths(p: &[&str]) -> Vec<String> {
         p.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn the_fence_judges_the_four_clauses_that_read_the_tree() {
+        use repo_contract::clause::Clause;
+        let got: Vec<Clause> = FENCE_CLAUSES.split(',').map(|c| Clause::parse(c).unwrap()).collect();
+        assert_eq!(got, [Clause::Environment, Clause::SubmitChecks, Clause::TestTiers, Clause::Deploy]);
     }
 
     #[test]
