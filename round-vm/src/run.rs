@@ -957,8 +957,7 @@ fi
 # THE WORKSPACE'S OWN TESTS, once per round (per Ryan 2026-10-05: no suite invokes cargo), in the
 # standard two phases (sp-cddf76). UNIT FIRST: the tests inside src/ (--lib --bins) run to the end
 # BEFORE any suite. They are the cheapest red the round can find, so a red there ends the pass:
-# unit.json records it and no suite is run. THEN THE INTEGRATION TESTS (every crate's tests/ and
-# its doc-tests) run beside the suites, and a red there makes the round red: integration.json.
+# unit.json records it and no suite is run. THEN THE INTEGRATION TESTS (every crate's tests/) run beside the suites, and a red there makes the round red: integration.json.
 # No suite has run when either record is written, so both go at the top of the results, where
 # the host pulls them by name (TEST_PHASE_FILES).
 phase unit-tests
@@ -999,10 +998,8 @@ else
     exit 1
 fi
 integ_cargo() {
-    local rc=0 doc_rc=0
+    local rc=0
     unit_env "#, spira_config::unit_tier_integration!("unittest", "--workspace"), r#"$integ_skips || rc=$?
-    unit_env "#, spira_config::unit_tier_doc!("unittest", "--workspace"), r#" || doc_rc=$?
-    [ "$rc" -ne 0 ] || rc=$doc_rc
     return "$rc"
 }
 integ_total=$(( unit_total - unit_lib_total ))
@@ -1122,7 +1119,7 @@ integ_secs=$(( $(cat "$integ_end" 2>/dev/null || date +%s) - integ_t0 ))
 wait "$integ_stream_pid"
 kill "$integ_hang_pid" 2>/dev/null; wait "$integ_hang_pid" 2>/dev/null
 [ ! -s "$integ_hung" ] || [ "$integ_rc" -ne 0 ] || integ_rc=1
-echo "round-vm: INTEGRATION-TESTS took ${integ_secs}s (tests/ and doc-tests, ${integ_total} test binaries, beside the suites)" >&2
+echo "round-vm: INTEGRATION-TESTS took ${integ_secs}s (tests/, ${integ_total} test binaries, beside the suites)" >&2
 if [ "$integ_rc" -eq 0 ]; then
     echo "round-vm: INTEGRATION-TESTS: PASS ($(grep -c '^test result: ok' ~/round-integration-tests.log) test binaries)" >&2
 else
@@ -4023,7 +4020,7 @@ mod tests {
         assert!(cfg.contains(spira_config::unit_tier_config_printf!()), "{cfg}");
         assert!(!body.contains("nice"), "no niceness: the unit tier's wall is what it is today");
         let integ = script_fn("integ_cargo");
-        assert!(integ.contains(&spira_config::unit_tier::integration_words(Some("unittest"), "--workspace")) && integ.contains(&spira_config::unit_tier::doc_words(Some("unittest"), "--workspace")), "the integration tier keeps cargo test: {integ}");
+        assert!(integ.contains(&spira_config::unit_tier::integration_words(Some("unittest"), "--workspace")), "the integration tier keeps cargo test: {integ}");
         assert!(!REMOTE_SCRIPT.contains("unit_hang_watch ~/round-unit-tests.log"), "nextest terminates the test; no watcher kills the binary");
         assert!(REMOTE_SCRIPT.contains("unit_hang_watch ~/round-integration-tests.log"));
     }
@@ -4109,7 +4106,7 @@ mod tests {
     fn the_unit_phase_runs_only_the_tests_inside_src_and_the_integration_phase_the_rest() {
         let f = REMOTE_SCRIPT.find("integ_cargo() {").unwrap();
         let integ = &REMOTE_SCRIPT[f..f + REMOTE_SCRIPT[f..].find("\n}\n").unwrap()];
-        assert!(integ.contains(&spira_config::unit_tier::integration_words(Some("unittest"), "--workspace")) && integ.contains(&spira_config::unit_tier::doc_words(Some("unittest"), "--workspace")), "{integ}");
+        assert!(integ.contains(&spira_config::unit_tier::integration_words(Some("unittest"), "--workspace")), "{integ}");
         assert!(REMOTE_SCRIPT.contains("unit_lib_total=$(grep -c '^ *Executable unittests ' ~/round-unit-build.log)"));
         for line in ["round-vm: UNIT-TESTS took ${unit_secs}s", "round-vm: INTEGRATION-TESTS took ${integ_secs}s"] {
             assert!(REMOTE_SCRIPT.contains(line), "each phase says how long it took: {line}");

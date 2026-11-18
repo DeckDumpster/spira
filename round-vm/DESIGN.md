@@ -122,7 +122,7 @@ suite. The seconds reach the pass record as `fence_s` and the
 
 **The test tiers' words** come from `spira_config::unit_tier`, the one definition the gate's test
 phase shares: the unit tier (`cargo nextest run`, one process per test, `--lib --bins`), the
-integration tier (`cargo test --test '*'`, then `--doc`) and the nextest config. The round gives
+integration tier (`cargo test --test '*'`) and the nextest config. The round gives
 them `--workspace` and its `unittest` profile, the gate `-p <crate>…` and `dev`; the attribution
 reruns (`spool.rs`) use the same words.
 

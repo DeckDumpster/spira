@@ -59,7 +59,7 @@ pub(super) const UNIT_RED: &str = "unit-tests";
 pub(super) const CONFIG_DELTA_RED: &str = "config-delta";
 
 /// The round VM's two test phases (sp-cddf76), each leaving its red as a record: the unit phase
-/// (tests inside src/) before any suite, the integration phase (tests/ and doc-tests) beside them.
+/// (tests inside src/) before any suite, the integration phase (tests/) beside them.
 /// Either is red on the `unit-tests` step, the testenv suite that runs both for a tip.
 pub(super) const TEST_PHASES: [(&str, &str); 2] = [
     ("unit.json", "unit-tests"),
