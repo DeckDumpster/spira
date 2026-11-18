@@ -520,6 +520,16 @@ mod tests {
     }
 
     #[test]
+    fn an_unanswered_urgent_read_holds_only_the_reactive_runes_that_use_a_bound_class() {
+        let mut w = limited(vec![builder(0, 0)], &[("build-disk", 5)]);
+        w.reactive = vec![using("skuld", 1, 0, &[], true), mender(1, 0)];
+        w.urgent = None;
+        let p = plan(&w);
+        assert_eq!(called(&p), ["skuld"], "{:?}", p.log);
+        assert!(p.log.iter().any(|l| l == "CHECK7 mender: yielding — the urgent read did not answer"), "{:?}", p.log);
+    }
+
+    #[test]
     fn urgent_work_logs_no_preemption_when_no_reactive_rune_is_rostered() {
         let mut w = world();
         w.task[0].live = 4;
