@@ -354,11 +354,22 @@ mod tests {
     fn a_unit_trial_pushes_each_test_part_and_a_recompile() {
         let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = l.local_addr().unwrap().to_string();
+        l.set_nonblocking(true).unwrap();
+        let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stop = done.clone();
         let h = std::thread::spawn(move || {
             use std::io::{Read, Write};
             let mut all = String::new();
-            for _ in 0..7 {
-                let (mut c, _) = l.accept().unwrap();
+            loop {
+                let mut c = match l.accept() {
+                    Ok((c, _)) => c,
+                    Err(_) if stop.load(std::sync::atomic::Ordering::SeqCst) => break,
+                    Err(_) => {
+                        std::thread::yield_now();
+                        continue;
+                    }
+                };
+                c.set_nonblocking(false).unwrap();
                 let mut buf = Vec::new();
                 let mut chunk = [0u8; 4096];
                 loop {
@@ -379,6 +390,7 @@ mod tests {
         let sink = spira_otel::metrics::MetricsSink::new(Some(&addr), "spira-gate", std::time::Duration::from_secs(2));
         let r = GateRun { repo: "r".into(), status: "PASS".into(), phases: "build:1,test-build:207,test-list:2,test:5,test-integration:0,test-other:1".into(), ..Default::default() };
         push_metrics(&sink, &r);
+        done.store(true, std::sync::atomic::Ordering::SeqCst);
         let body = h.join().unwrap();
         assert!(body.contains("spira_gate_unit_test_part_seconds") && body.contains("test-build"), "{body}");
         assert!(body.contains("spira_gate_unit_test_recompiled_total"), "{body}");
