@@ -121,6 +121,16 @@ pub fn work_labels(rune_labels: &str, repo: &str) -> String {
     format!("{rune_labels},repo:{repo}")
 }
 
+/// `labels` for a filing that repairs its repo's landing contract: the one label that admits a
+/// work filing for a repo that breaks it.
+pub fn with_contract_fix(labels: String, contract_fix: bool) -> String {
+    if contract_fix {
+        format!("{labels},{}", spira_config::scoped_stop::CONTRACT_FIX_LABEL)
+    } else {
+        labels
+    }
+}
+
 /// Why `base` cannot be stacked under a new bead of `repo`, or `None` when it can: only a
 /// live work bead of the same repo carries commits the new branch can be cut from.
 pub fn stack_after_refusal(base: &str, row: Option<&ShowRow>, terminal: bool, repo: &str) -> Option<String> {
@@ -970,6 +980,13 @@ mod tests {
     #[test]
     fn work_labels_appends_repo_and_never_express() {
         assert_eq!(work_labels("testscope,plan", "testrepo"), "testscope,plan,repo:testrepo");
+    }
+
+    #[test]
+    fn the_contract_fix_flag_adds_its_label_and_its_absence_changes_nothing() {
+        let base = work_labels("testscope,plan", "testrepo");
+        assert_eq!(with_contract_fix(base.clone(), false), base);
+        assert_eq!(with_contract_fix(base, true), "testscope,plan,repo:testrepo,repo-contract-fix");
     }
 
     #[test]

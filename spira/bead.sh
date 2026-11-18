@@ -8,6 +8,9 @@
 #                                     stack the new bead on <id> (same repo, live work): a blocks
 #                                     edge, so the claim cuts its branch from <id>'s tip and a
 #                                     stack lands bottom first
+#   bead.sh file ... --for <persona> --repo <name> --contract-fix
+#                                     file the repair of a repo that breaks its landing contract
+#                                     (`repo-contract check`); without it that filing is refused
 #   bead.sh lint [--all|<id>...]     check that beads in the store satisfy the contract
 #   bead.sh contract                 legal personas, repos and kinds, read from source
 #   bead.sh amend <id> [--note "<text>"] [--body-file F --replace | --append-body F] [--express] [--priority N]

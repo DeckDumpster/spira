@@ -64,7 +64,7 @@ fn main() {
         },
         _ => {
             eprintln!(
-                "usage: bead.sh file \"<title>\" --for <persona> --repo <name> [--priority N] [--body-file F] [--express] [--submitted] [--json]\n       bead.sh file \"<title>\" --kind <kind> [--repo <name>] [--part N (proposal)] [--priority N] [--body-file F] [--express] [--submitted] [--json]\n       bead.sh pilgrimage <design-file> --repo <name> --after <build-id>... [--priority N]\n       bead.sh amend <id> [--note \"<text>\"] [--body-file F --replace | --append-body F] [--express]\n       bead.sh amend <id> --live --note \"<text>\" | --append-body F [--ack-within <dur>]\n       bead.sh amend <id> --ack <amend-id> --accept | --decline \"<why>\"\n       bead.sh amend --enforce <amend-id>\n       bead.sh label add|remove <id> <label>\n       bead.sh drop <id> --reason <text>\n       bead.sh dep add <id> <depends-on-id> [--type <type>]\n       bead.sh dep remove <id> <depends-on-id>\n       bead.sh lint [--all|<id>...]\n       bead.sh ideas [--json]\n       bead.sh contract\n       bead event <kind> <target|-> <title> [detail]"
+                "usage: bead.sh file \"<title>\" --for <persona> --repo <name> [--priority N] [--body-file F] [--express] [--submitted] [--contract-fix] [--json]\n       bead.sh file \"<title>\" --kind <kind> [--repo <name>] [--part N (proposal)] [--priority N] [--body-file F] [--express] [--submitted] [--json]\n       bead.sh pilgrimage <design-file> --repo <name> --after <build-id>... [--priority N]\n       bead.sh amend <id> [--note \"<text>\"] [--body-file F --replace | --append-body F] [--express]\n       bead.sh amend <id> --live --note \"<text>\" | --append-body F [--ack-within <dur>]\n       bead.sh amend <id> --ack <amend-id> --accept | --decline \"<why>\"\n       bead.sh amend --enforce <amend-id>\n       bead.sh label add|remove <id> <label>\n       bead.sh drop <id> --reason <text>\n       bead.sh dep add <id> <depends-on-id> [--type <type>]\n       bead.sh dep remove <id> <depends-on-id>\n       bead.sh lint [--all|<id>...]\n       bead.sh ideas [--json]\n       bead.sh contract\n       bead event <kind> <target|-> <title> [detail]"
             );
             2
         }
@@ -535,6 +535,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
     let mut kind: Option<String> = None;
     let mut express = false;
     let mut submitted = false;
+    let mut contract_fix = false;
     let mut tip: Option<String> = None;
     let mut json = false;
     let mut parent: Option<String> = None;
@@ -588,6 +589,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             }
             "--express" => express = true,
             "--submitted" => submitted = true,
+            "--contract-fix" => contract_fix = true,
             "--tip" => {
                 i += 1;
                 tip = args.get(i).cloned();
@@ -744,6 +746,11 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
         return 2;
     }
 
+    if contract_fix && (kind != "work" || for_rune.is_none()) {
+        eprintln!("bead: --contract-fix applies only with --for <persona>");
+        return 2;
+    }
+
     if submitted && tip.as_deref().is_none_or(str::is_empty) {
         eprintln!("bead: --submitted requires --tip <sha>: the lifecycle row is created SUBMITTED at that tip, so no claimable READY window exists");
         return 2;
@@ -803,6 +810,22 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             return refused(r);
         }
 
+        let mut labels = bead::with_contract_fix(work_labels(&rune_labels, &repo), contract_fix);
+        let contract = bead::filing::Contract::real(cfg_label("SPIRA_HOME_REPO"));
+        let filed_labels: Vec<String> = labels.split(',').map(str::to_string).collect();
+        match bead::filing::contract_guard(&repo, &filed_labels, &contract, &|k| env::var(k).ok()) {
+            Ok(Some(line)) => {
+                let path = env::temp_dir().join(format!("bead-contract-{}-{}.md", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos())));
+                if let Err(e) = std::fs::write(&path, format!("{line}\n\n{body}")) {
+                    eprintln!("bead: writing {}: {e}", path.display());
+                    return 1;
+                }
+                body_file = Some(path.to_string_lossy().into_owned());
+            }
+            Ok(None) => {}
+            Err(r) => return refused(r),
+        }
+
         if let Some(base) = &stack_after {
             let (_, shown) = door(&s(&["show", base, "--json"]));
             let terminal = bead::lc_done(&bead::door::DoorSource::lifecycle_only(vec![base.clone()], lifecycle_rows), &mut None, base);
@@ -812,7 +835,6 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             }
         }
 
-        let mut labels = work_labels(&rune_labels, &repo);
         if submitted {
             labels.push(',');
             labels.push_str(&cfg_label("SPIRA_SUBMITTED_LABEL"));

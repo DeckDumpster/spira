@@ -10,7 +10,6 @@ not repeated here unless they have no other home.
 | `sweep.archive` | `archive.sh sweep` | boot+5 min, every 20 min | index session transcripts |
 | `sweep.escape_census` | `escape-classify.sh census` | weekly | escape-by-class census |
 | `sweep.export_beads` | `export-beads.sh` | every 6 h | regenerate the bead mirror |
-| `sweep.repo_contract` | (none) | daily | stop claims on a repo that breaks the landing contract; lift it when met |
 | `sweep.nix_gc` | `nix-gc.sh` | weekly | collect Nix garbage keeping the current and previous environment |
 | `watch.sop_lint` | `sop-lint-watch.sh` | every 1 h | lint the SOP shelf |
 | `incident.settle` | `incident settle` | every 5 min | close incidents whose fix landed and detector is quiet |

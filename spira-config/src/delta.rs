@@ -57,7 +57,33 @@ pub fn merge_delta_texts(parts: &[(String, String)]) -> Result<Option<String>, S
         };
         merge_table(&mut merged, &mut owner, t, "", name)?;
     }
+    drop_retired_values(&mut merged);
     toml::to_string_pretty(&Value::Table(merged)).map(Some).map_err(|e| e.to_string())
+}
+
+fn drop_retired_values(merged: &mut Map<String, Value>) {
+    let removed: Vec<String> = match merged.get("removed") {
+        Some(Value::Array(a)) => a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect(),
+        _ => return,
+    };
+    for path in removed {
+        let parts: Vec<&str> = path.split('.').collect();
+        remove_value(merged, &parts);
+    }
+}
+
+fn remove_value(t: &mut Map<String, Value>, path: &[&str]) {
+    match path {
+        [] => {}
+        [leaf] => {
+            t.remove(*leaf);
+        }
+        [head, rest @ ..] => {
+            if let Some(Value::Table(next)) = t.get_mut(*head) {
+                remove_value(next, rest);
+            }
+        }
+    }
 }
 
 fn merge_table(into: &mut Map<String, Value>, owner: &mut Map<String, Value>, from: Map<String, Value>, prefix: &str, name: &str) -> Result<(), String> {
@@ -118,12 +144,37 @@ pub fn fold_fragments(spira_dir: &Path) -> Result<Vec<String>, String> {
         let frag: toml_edit::DocumentMut = text.parse().map_err(|e| format!("{name}: {e}"))?;
         fold_table(doc.as_table_mut(), frag.as_table(), true);
     }
+    drop_retired_additions(&mut doc);
     let tmp = base.with_extension("toml.tmp");
     std::fs::write(&tmp, doc.to_string()).and_then(|()| std::fs::rename(&tmp, &base)).map_err(|e| format!("cannot write {}: {e}", base.display()))?;
     for p in &frags {
         std::fs::remove_file(p).map_err(|e| format!("cannot remove {}: {e}", p.display()))?;
     }
     Ok(parts.into_iter().skip(1).map(|(n, _)| n).collect())
+}
+
+/// A key the folded delta both sets and removes is dropped from its table: a fragment cannot
+/// delete a line of the base, and the delta refuses a key that is both added and removed.
+fn drop_retired_additions(doc: &mut toml_edit::DocumentMut) {
+    let removed: Vec<String> = doc.get("removed").and_then(|r| r.as_array()).into_iter().flatten().filter_map(|v| v.as_str().map(str::to_string)).collect();
+    for path in removed {
+        let parts: Vec<&str> = path.split('.').collect();
+        let Some((leaf, tables)) = parts.split_last() else { continue };
+        remove_at(doc.as_table_mut(), tables, leaf);
+    }
+}
+
+fn remove_at(table: &mut toml_edit::Table, tables: &[&str], leaf: &str) {
+    match tables.split_first() {
+        None => {
+            table.remove(leaf);
+        }
+        Some((head, rest)) => {
+            if let Some(next) = table.get_mut(head).and_then(|i| i.as_table_mut()) {
+                remove_at(next, rest, leaf);
+            }
+        }
+    }
 }
 
 fn fold_table(into: &mut toml_edit::Table, from: &toml_edit::Table, top: bool) {
@@ -206,6 +257,29 @@ mod tests {
         std::fs::write(s.join(DELTA_FILE), "removed = [\"spira.w\"]\n").unwrap();
         let v: Value = delta_text(s).unwrap().unwrap().parse().unwrap();
         assert_eq!(v["removed"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn folding_drops_a_pinned_key_a_fragment_retires() {
+        let d = testkit::TempDir::new("delta-fold-retired");
+        let s = d.path();
+        std::fs::create_dir_all(s.join(DELTA_DIR)).unwrap();
+        std::fs::write(s.join(DELTA_FILE), "[spira]\nkeep = 1\ngone = 2\n").unwrap();
+        std::fs::write(s.join(DELTA_DIR).join("a.toml"), "removed = [\"spira.gone\"]\n").unwrap();
+        fold_fragments(s).unwrap();
+        let text = std::fs::read_to_string(s.join(DELTA_FILE)).unwrap();
+        assert!(text.contains("keep = 1") && !text.contains("gone = 2") && text.contains("spira.gone"), "{text}");
+    }
+
+    #[test]
+    fn the_loaded_delta_drops_a_pinned_key_a_fragment_retires() {
+        let d = testkit::TempDir::new("delta-load-retired");
+        let s = d.path();
+        std::fs::create_dir_all(s.join(DELTA_DIR)).unwrap();
+        std::fs::write(s.join(DELTA_FILE), "[spira]\nkeep = 1\ngone = 2\n").unwrap();
+        std::fs::write(s.join(DELTA_DIR).join("a.toml"), "removed = [\"spira.gone\"]\n").unwrap();
+        let text = delta_text(s).unwrap().unwrap();
+        assert!(text.contains("keep = 1") && !text.contains("gone = 2") && text.contains("spira.gone"), "{text}");
     }
 
     #[test]

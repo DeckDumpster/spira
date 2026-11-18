@@ -565,7 +565,7 @@ mod tests {
     }
 
     fn registry() -> spira_config::repos::Registry {
-        let map = "# name|root|base|gate\nspira|r/spira|main|gate.sh\ndeck|r/deck|main|gate.sh\n";
+        let map = "# name|root|base|gate\nspira|r/spira|main|gate.sh\ndeck|r/deck|main|gate.sh\nkiln|r/kiln|main|gate.sh\nmist|r/mist|main|gate.sh\n";
         spira_config::repos::Registry::new(Some(map), &BTreeMap::new(), std::path::Path::new("r/spira"))
     }
 
@@ -689,7 +689,7 @@ mod tests {
         assert_eq!(through_content(&v(&["update", "sp-t", "--add-label", "x"]), None, &czar(None), None), Ok(()), "the trigger bead itself passes");
     }
 
-    use bead::filing::{Persona, Policy, Statutes};
+    use bead::filing::{CheckRun, Contract, Persona, Policy, Statutes};
 
     // literal-ok: test fixture vocabulary, not the configured names
     const MIMIR: &str = "mimir-sweep";
@@ -707,9 +707,14 @@ mod tests {
                 persona("scout", &["scout-lane", MIMIR], false, None),
                 persona("broken", &["broken-lane"], false, Some("broken.rune: RUNE_LABELS references $X unguarded, and it resolved empty — refusing")),
             ],
-            repos: bead::repos_by_name("spira | /r/spira | push | origin/main | | true | self\ndeck | /r/deck | push | origin/main | | true | develop\n"),
+            repos: bead::repos_by_name("spira | /r/spira | push | origin/main | | true | self\ndeck | /r/deck | push | origin/main | | true | develop\nkiln | /r/kiln | push | origin/main | | true | develop\nmist | /r/mist | push | origin/main | | true | develop\n"),
             identity: bead::identity::parse("spira | spira-only\ndeck | pokedex\n"),
             statutes: Statutes::Registry { path: "statutes".into(), text: "law-x | refuse | forbidden plan\nlaw-y | show | allocator\n".into() },
+            contract: Contract::new("spira", |repo| match repo {
+                "kiln" => Ok(CheckRun { code: Some(1), stdout: "met environment: ok\nnot met submit-checks: .spira/checks.toml does not exist\n".into(), stderr: String::new() }),
+                "mist" => Ok(CheckRun { code: Some(2), stdout: String::new(), stderr: "no such repo\n".into() }),
+                _ => Ok(CheckRun { code: Some(0), ..Default::default() }),
+            }),
         }
     }
 
@@ -724,7 +729,7 @@ mod tests {
 
     /// A filing as `bead.sh file --for <persona> --repo <repo>` judges it, in `cmd_file`'s order:
     /// identity, statute, the repo it requires, then the persona's build spec and lane.
-    fn through_beadsh(persona: &str, repo: Option<&str>, title: &str, body: &str, env: &BTreeMap<String, String>) -> Verdict {
+    fn through_beadsh(persona: &str, repo: Option<&str>, title: &str, body: &str, env: &BTreeMap<String, String>, fix: bool) -> Verdict {
         let policy = filing_policy();
         let vars = |k: &str| env.get(k).cloned();
         let err = |r: bead::guard::Refusal| (r.code, r.text);
@@ -737,13 +742,17 @@ mod tests {
             return Err((2, format!("bead: {why}\n")));
         }
         let Some(repo) = repo else { return Err((2, "bead: --repo <name> required\n".into())) };
-        bead::filing::persona_guards(persona, repo, body, &policy.repos, false).map_err(err)
+        bead::filing::persona_guards(persona, repo, body, &policy.repos, false).map_err(err)?;
+        let labels = bead::with_contract_fix(format!("repo:{repo}"), fix).split(',').map(str::to_string).collect::<Vec<_>>();
+        bead::filing::contract_guard(repo, &labels, &policy.contract, &vars).map_err(err)?;
+        Ok(())
     }
 
-    fn through_the_door(persona: &str, repo: Option<&str>, title: &str, body: &str, env: &BTreeMap<String, String>) -> Verdict {
+    fn through_the_door(persona: &str, repo: Option<&str>, title: &str, body: &str, env: &BTreeMap<String, String>, fix: bool) -> Verdict {
         let policy = filing_policy();
         let mut labels = policy.personas.iter().find(|p| p.name == persona).unwrap().labels.clone();
         labels.extend(repo.map(|r| format!("repo:{r}")));
+        labels.extend(fix.then(|| spira_config::scoped_stop::CONTRACT_FIX_LABEL.to_string()));
         filing_guard(&v(&["create", title, "--labels", &labels.join(","), "--body-file", "-"]), Some(body), env).0
     }
 
@@ -771,21 +780,27 @@ mod tests {
             ("identity before statute", "builder", Some("spira"), format!("{SPEC}pokedex forbidden plan"), caller(&[])),
             ("statute before build spec", "builder", Some("deck"), "forbidden plan".into(), caller(&[])),
             ("unresolved persona", "broken", Some("deck"), "x".into(), caller(&[])),
+            ("contract not met", "builder", Some("kiln"), SPEC.into(), caller(&[])),
+            ("contract not met, contract-fix", "builder", Some("kiln"), SPEC.into(), caller(&[])),
+            ("contract cannot tell", "builder", Some("mist"), SPEC.into(), caller(&[])),
         ];
         let mut refused = 0;
         for (name, persona, repo, body, env) in &cases {
-            let (beadsh, door) = (through_beadsh(persona, *repo, "T", body, env), through_the_door(persona, *repo, "T", body, env));
+            let fix = name.ends_with("contract-fix");
+            let (beadsh, door) = (through_beadsh(persona, *repo, "T", body, env, fix), through_the_door(persona, *repo, "T", body, env, fix));
             assert_eq!(door, beadsh, "{name}");
             refused += usize::from(beadsh.is_err());
         }
-        assert_eq!(refused, 10, "the table refuses where it should: an unrefused filing proves nothing");
-        let refusal = |name: &str| through_the_door(cases.iter().find(|c| c.0 == name).unwrap().1, cases.iter().find(|c| c.0 == name).unwrap().2, "T", &cases.iter().find(|c| c.0 == name).unwrap().3, &cases.iter().find(|c| c.0 == name).unwrap().4).unwrap_err();
+        assert_eq!(refused, 12, "the table refuses where it should: an unrefused filing proves nothing");
+        let refusal = |name: &str| through_the_door(cases.iter().find(|c| c.0 == name).unwrap().1, cases.iter().find(|c| c.0 == name).unwrap().2, "T", &cases.iter().find(|c| c.0 == name).unwrap().3, &cases.iter().find(|c| c.0 == name).unwrap().4, false).unwrap_err();
         assert_eq!(refusal("no repo"), (2, "bead: --repo <name> required\n".to_string()));
         assert!(refusal("no build spec").1.starts_with("bead: refusing: a bead for builder must name what to build under a `## Build` heading"));
         // literal-ok: the override's name is bead.sh's refusal text
         assert!(refusal("lane not admitted").1.contains("bead: repo:deck does not admit lane mimir-sweep — refused by its admitted lanes (plan,incident,groom,spike)\nbead: override: SPIRA_BEAD_LANE_OVERRIDE=1"));
         assert!(refusal("foreign identity").1.contains("\"pokedex\" belongs to deck"));
         assert!(refusal("contradicted statute").1.contains("law-x"));
+        assert!(refusal("contract not met").1.contains("not met submit-checks: .spira/checks.toml does not exist"));
+        assert!(refusal("contract cannot tell").1.contains("cannot tell"));
     }
 
     #[test]

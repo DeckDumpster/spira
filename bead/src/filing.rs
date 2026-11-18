@@ -5,6 +5,7 @@
 
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::sync::Arc;
 
 use spira_config::RepoSection;
 
@@ -15,7 +16,10 @@ pub type Vars<'a> = dyn Fn(&str) -> Option<String> + 'a;
 
 /// The caller variables the contract reads, which a content request must carry. The lane
 /// override is `bead.sh`'s alone: the door has none, so a lane the repo does not admit stays refused.
-pub const VARS: &[&str] = &[identity::OVERRIDE_ENV, statute::OVERRIDE_ENV];
+pub const VARS: &[&str] = &[identity::OVERRIDE_ENV, statute::OVERRIDE_ENV, CONTRACT_OVERRIDE_ENV];
+
+/// Admits a filing for a repo that breaks the landing contract, and records why on the bead.
+pub const CONTRACT_OVERRIDE_ENV: &str = "BEAD_CONTRACT_CONSIDERED";
 
 /// Exit code `bead.sh` refuses a filing with.
 const REFUSED: i32 = 2;
@@ -53,18 +57,62 @@ impl Statutes {
     }
 }
 
+/// What `repo-contract check <repo>` answered: its exit (`None` when it was killed) and output.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct CheckRun {
+    pub code: Option<i32>,
+    pub stdout: String,
+    pub stderr: String,
+}
+
+type Checker = Arc<dyn Fn(&str) -> Result<CheckRun, String> + Send + Sync>;
+
+/// The home repo, which is never checked, and the check run on any other.
+#[derive(Clone)]
+pub struct Contract {
+    pub home_repo: String,
+    check: Checker,
+}
+
+impl std::fmt::Debug for Contract {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Contract").field("home_repo", &self.home_repo).finish_non_exhaustive()
+    }
+}
+
+impl Contract {
+    pub fn new(home_repo: impl Into<String>, check: impl Fn(&str) -> Result<CheckRun, String> + Send + Sync + 'static) -> Contract {
+        Contract { home_repo: home_repo.into(), check: Arc::new(check) }
+    }
+
+    /// The installation's: the release's `repo-contract`, every clause, bounded.
+    pub fn real(home_repo: impl Into<String>) -> Contract {
+        Contract::new(home_repo, |repo| {
+            let exe = spira_config::release_env::tool("repo-contract")?;
+            let out = spira_config::bounded::bounded_for(exe, "300").args(["check", repo]).output().map_err(|e| format!("cannot run repo-contract: {e}"))?;
+            Ok(CheckRun { code: out.status.code(), stdout: String::from_utf8_lossy(&out.stdout).into_owned(), stderr: String::from_utf8_lossy(&out.stderr).into_owned() })
+        })
+    }
+
+    /// Admits everything.
+    pub fn none() -> Contract {
+        Contract::new("", |_| Ok(CheckRun { code: Some(0), ..Default::default() }))
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Policy {
     pub personas: Vec<Persona>,
     pub repos: BTreeMap<String, RepoSection>,
     pub identity: BTreeMap<String, Vec<String>>,
     pub statutes: Statutes,
+    pub contract: Contract,
 }
 
 impl Policy {
     /// No persona, so nothing is a filing.
     pub fn none() -> Policy {
-        Policy { personas: vec![], repos: BTreeMap::new(), identity: BTreeMap::new(), statutes: Statutes::Off }
+        Policy { personas: vec![], repos: BTreeMap::new(), identity: BTreeMap::new(), statutes: Statutes::Off, contract: Contract::none() }
     }
 
     /// The installation's policy: the personas under `home`'s runes, and the files the
@@ -74,7 +122,7 @@ impl Policy {
         let repos = path("SPIRA_REPO_MAP")?.and_then(|p| std::fs::read_to_string(p).ok()).map(|t| repos_by_name(&t)).unwrap_or_default();
         let identity = path("SPIRA_REPO_IDENTITY")?.and_then(|p| std::fs::read_to_string(p).ok()).map(|t| identity::parse(&t)).unwrap_or_default();
         let statutes = Statutes::at(&cfg("SPIRA_STATUTE_GUARDS")?);
-        Ok(Policy { personas: personas(home), repos, identity, statutes })
+        Ok(Policy { personas: personas(home), repos, identity, statutes, contract: Contract::real(cfg("SPIRA_HOME_REPO")?) })
     }
 
     /// The persona a create is filed for: the most specific one whose whole predicate the
@@ -141,6 +189,39 @@ pub fn identity_guard(registry: &BTreeMap<String, Vec<String>>, repo: &str, text
     match identity::override_reason(vars(identity::OVERRIDE_ENV)) {
         Some(why) => Ok(Some(identity::recorded_line(&why))),
         None => Err(refuse(REFUSED, identity::refusal(repo, &hits))),
+    }
+}
+
+/// The contract guard on a filing for `repo` carrying `labels`: `Ok(Some(line))` is the line to
+/// record on the bead when the named override admitted a repo that breaks the contract.
+pub fn contract_guard(repo: &str, labels: &[String], contract: &Contract, vars: &Vars) -> Result<Option<String>, Refusal> {
+    if repo == contract.home_repo || labels.iter().any(|l| l == spira_config::scoped_stop::CONTRACT_FIX_LABEL) {
+        return Ok(None);
+    }
+    let exits = format!(
+        "bring it in line with `repo-contract scaffold {repo}` filed as `bead.sh file ... --contract-fix`, or set {CONTRACT_OVERRIDE_ENV}=\"<why>\" to file anyway"
+    );
+    let (headline, detail) = match (contract.check)(repo) {
+        Err(e) => (format!("cannot tell whether {repo} meets the landing contract: {e}"), String::new()),
+        Ok(run) => {
+            let not_met: Vec<&str> = run.stdout.lines().filter(|l| l.starts_with("not met ")).collect();
+            match run.code {
+                Some(0) => return Ok(None),
+                Some(1) if !not_met.is_empty() => (format!("{repo} does not meet the landing contract"), format!("{}\n", not_met.join("\n"))),
+                other => {
+                    let code = match other {
+                        None => "no exit code".to_string(),
+                        Some(1) => "exit 1 naming no clause".to_string(),
+                        Some(c) => format!("exit {c}"),
+                    };
+                    (format!("cannot tell whether {repo} meets the landing contract: repo-contract check gave {code}"), format!("{}{}", run.stdout, run.stderr))
+                }
+            }
+        }
+    };
+    match identity::override_reason(vars(CONTRACT_OVERRIDE_ENV)) {
+        Some(why) => Ok(Some(format!("Contract considered: {why}\n{headline}\n{detail}").trim_end().to_string())),
+        None => Err(refuse(REFUSED, format!("bead: refusing: {headline}\n{detail}bead: {exits}"))),
     }
 }
 
@@ -283,6 +364,9 @@ pub fn create(args: &mut [String], body: &mut Option<String>, policy: &Policy, v
     }
     let Some(repo) = repo else { return Err(refuse(REFUSED, "bead: --repo <name> required")) };
     persona_guards(persona, &repo, &text, &policy.repos, false)?;
+    if let Some(line) = contract_guard(&repo, &labels, &policy.contract, vars)? {
+        recorded.insert(0, line);
+    }
     if !recorded.is_empty() {
         put_text(args, body, prefixed(&recorded, &text));
     }
@@ -351,5 +435,81 @@ mod tests {
         assert!(partition_label("add", "builder-lane", &parts).unwrap_err().text.starts_with("bead: label add: refusing — builder-lane is a partition label"));
         assert!(partition_label("remove", "rune:x", &parts).is_err());
         assert_eq!(partition_label("add", "kit-bump", &parts), Ok(()));
+    }
+
+    const NOT_MET: &str = "met environment: ok\nnot met submit-checks: .spira/checks.toml does not exist\n";
+
+    fn checker(code: Option<i32>, stdout: &str, stderr: &str) -> Contract {
+        let run = CheckRun { code, stdout: stdout.into(), stderr: stderr.into() };
+        Contract::new("spira", move |_| Ok(run.clone()))
+    }
+
+    fn deck_policy(contract: Contract) -> Policy {
+        Policy { personas: vec![persona("builder", &["builder-lane"], false)], contract, ..Policy::none() }
+    }
+
+    fn file(policy: &Policy, labels: &str, env: &[(&str, &str)]) -> Result<String, Refusal> {
+        let env: BTreeMap<String, String> = env.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+        let mut args = a(&["create", "T", "--labels", labels]);
+        create(&mut args, &mut Some("body".into()), policy, &|k| env.get(k).cloned())
+    }
+
+    #[test]
+    fn a_work_filing_for_a_repo_missing_a_contract_file_is_refused_naming_the_clause() {
+        let r = file(&deck_policy(checker(Some(1), NOT_MET, "")), "builder-lane,repo:deck", &[]).expect_err("filing admitted");
+        assert_eq!(r.code, 2);
+        assert!(r.text.contains("not met submit-checks: .spira/checks.toml does not exist"), "{}", r.text);
+        assert!(!r.text.contains("met environment"), "{}", r.text);
+        assert!(r.text.contains("--contract-fix") && r.text.contains(CONTRACT_OVERRIDE_ENV), "{}", r.text);
+    }
+
+    #[test]
+    fn a_contract_fix_filing_for_that_repo_is_admitted() {
+        let p = deck_policy(checker(Some(1), NOT_MET, ""));
+        assert!(file(&p, "builder-lane,repo:deck,repo-contract-fix", &[]).is_ok());
+    }
+
+    #[test]
+    fn the_home_repo_is_admitted_without_running_the_check() {
+        let p = deck_policy(Contract::new("spira", |_| panic!("the home repo is not checked")));
+        assert!(file(&p, "builder-lane,repo:spira", &[]).is_ok());
+    }
+
+    #[test]
+    fn a_check_that_cannot_tell_refuses_with_what_it_said() {
+        for run in [checker(Some(2), "out-text", "err-text"), checker(None, "out-text", "err-text")] {
+            let r = file(&deck_policy(run), "builder-lane,repo:deck", &[]).expect_err("filing admitted");
+            assert!(r.text.contains("cannot tell") && r.text.contains("out-text") && r.text.contains("err-text") && r.text.contains("--contract-fix"), "{}", r.text);
+        }
+        let spawn = Contract::new("spira", |_| Err("no such tool".into()));
+        let r = file(&deck_policy(spawn), "builder-lane,repo:deck", &[]).expect_err("filing admitted");
+        assert!(r.text.contains("cannot tell") && r.text.contains("no such tool"), "{}", r.text);
+    }
+
+    #[test]
+    fn a_met_contract_admits_and_records_nothing() {
+        let p = deck_policy(checker(Some(0), "met environment: ok\n", ""));
+        let mut args = a(&["create", "T", "--labels", "builder-lane,repo:deck", "--description", "d"]);
+        create(&mut args, &mut None, &p, &|_| None).unwrap();
+        assert_eq!(args.last().unwrap(), "d");
+    }
+
+    #[test]
+    fn a_named_override_admits_a_broken_repo_and_records_why_and_what_was_not_met() {
+        let p = deck_policy(checker(Some(1), NOT_MET, ""));
+        let mut args = a(&["create", "T", "--labels", "builder-lane,repo:deck", "--description", "d"]);
+        create(&mut args, &mut None, &p, &|k| (k == CONTRACT_OVERRIDE_ENV).then(|| "bootstrapping".to_string())).unwrap();
+        let text = args.last().unwrap();
+        assert!(text.starts_with("Contract considered: bootstrapping") && text.contains("not met submit-checks") && text.ends_with("\n\nd"), "{text}");
+        assert!(file(&p, "builder-lane,repo:deck", &[(CONTRACT_OVERRIDE_ENV, "  ")]).is_err());
+    }
+
+    #[test]
+    fn a_named_override_admits_a_check_that_cannot_tell_and_records_that_it_could_not() {
+        let p = deck_policy(checker(Some(2), "out-text", "err-text"));
+        let mut args = a(&["create", "T", "--labels", "builder-lane,repo:deck", "--description", "d"]);
+        create(&mut args, &mut None, &p, &|k| (k == CONTRACT_OVERRIDE_ENV).then(|| "bootstrapping".to_string())).unwrap();
+        let text = args.last().unwrap();
+        assert!(text.starts_with("Contract considered: bootstrapping") && text.contains("cannot tell") && text.ends_with("\n\nd"), "{text}");
     }
 }

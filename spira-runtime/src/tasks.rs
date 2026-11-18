@@ -506,7 +506,7 @@ mod tests {
                 assert!(t.effects.contains(&q.name.as_str()), "{} asked for {} which its row does not declare", t.name, q.name);
             }
         }
-        for name in ["hel.sweep", "hel.reap_terminal", "roundvm.ami_prune", "sweep.nix_gc", "sweep.repo_contract"] {
+        for name in ["hel.sweep", "hel.reap_terminal", "roundvm.ami_prune", "sweep.nix_gc"] {
             assert!(jittered.contains(&name), "{name}: a task declaring a jitter key must fire off its slot at a non-zero jitter; jittered: {jittered:?}");
         }
     }

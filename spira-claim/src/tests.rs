@@ -546,17 +546,9 @@ fn stopped_repo_rows(t: &testkit::TempDir, owner: &str) -> (std::path::PathBuf, 
 }
 
 #[test]
-fn the_bead_that_fixes_a_repo_contract_stop_survives_it_and_its_siblings_do_not() {
-    let t = testkit::TempDir::new("claim-contract-fix");
-    let (run, mut rows) = stopped_repo_rows(&t, spira_config::scoped_stop::CONTRACT_OWNER);
-    assert_eq!(retain_unstopped(&mut rows, &run), vec!["sp-other".to_string()]);
-    assert_eq!(rows.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), ["sp-fix"]);
-}
-
-#[test]
-fn the_contract_fix_label_does_not_pass_a_stop_another_owner_holds() {
-    let t = testkit::TempDir::new("claim-contract-fix-other-owner");
-    let (run, mut rows) = stopped_repo_rows(&t, "operator");
+fn the_contract_fix_label_passes_no_claims_stop() {
+    let t = testkit::TempDir::new("claim-contract-fix-passes-nothing");
+    let (run, mut rows) = stopped_repo_rows(&t, "repo-contract");
     assert_eq!(retain_unstopped(&mut rows, &run).len(), 2);
     assert!(rows.is_empty());
 }

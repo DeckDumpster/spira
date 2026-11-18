@@ -643,7 +643,7 @@ version_probe = "readlink -f \"$(command -v testenv)\""
 [[dep]]
 name = "repo-contract"
 tier = "release"
-purpose = "Spira's repo-contract binary, from the release's bin/: the landing-contract checker `work submit` and `spira-config repo add` run"
+purpose = "Spira's repo-contract binary, from the release's bin/: the landing-contract checker `work submit`, `spira-config repo add` and `bead.sh file` run"
 version_min = ""
 version_probe = "readlink -f \"$(command -v repo-contract)\""
 
