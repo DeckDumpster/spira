@@ -823,6 +823,22 @@ fn world_gate_refuses_while_the_claims_lane_is_stopped_on_every_repo() {
     assert!(sink.has("CHECK7 builder: skipped — the claims lane of spira is stopped on purpose by cutover-mode"), "{}", sink.text());
 }
 
+/// sp-d2v9q4: a waiting P0 holds only the reactive runes that use a bound class; one that
+/// declares none is still called.
+#[test]
+fn call_only_a_p0_does_not_hold_a_reactive_rune_that_declares_no_bound_class() {
+    let (w, r, sink, clock) = setup("p0-reactive");
+    let runes = w.home.join("runes");
+    std::fs::create_dir_all(&runes).unwrap();
+    std::fs::write(runes.join("builder.rune"), "RUNE_LABELS=spira,plan\n").unwrap();
+    std::fs::write(runes.join("ops.rune"), "RUNE_REACTIVE=1\nRUNE_LABELS=spira,incident\n").unwrap();
+    r.on(|s| (s.prog == "spira-claim" && s.args.first().map(String::as_str) == Some("urgent")).then(|| ok("sp-7nj5be\t0\t0\t0\n").unwrap()));
+    r.on(|s| (s.prog == "spira-claim" && s.args.first().map(String::as_str) == Some("rune-ready")).then(|| ok("1").unwrap()));
+    run_mode(&w, &r, &sink, &clock, Mode::CallOnly, &[("SPIRA_MAX_DWARVES", "5")], None);
+    assert!(sink.has("CHECK7 ops: 1 ready, 1 free — calling"), "{}", sink.text());
+    assert!(!sink.has("yielding"), "{}", sink.text());
+}
+
 // ---------------------------------------------------------------------------------------
 // call_rune's refusal ladder (rows once proved in a shell suite).
 // The roster is `builder`, `ops`; each rule binds to a declaration (RUNE_ELASTIC,

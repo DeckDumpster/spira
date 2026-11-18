@@ -97,7 +97,7 @@ pub struct Rune {
     pub reactive: bool,
 }
 
-/// One row of `spira-claim urgent`: a P0 or REWORK bead. Only `p0` or `express` hold the reactive runes.
+/// One row of `spira-claim urgent`: a P0 or REWORK bead. Only `p0` or `express` hold the reactive runes that use a bound class.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Urgent {
     pub id: String,
@@ -376,22 +376,26 @@ pub fn plan(w: &CallWorld) -> CallPlan {
         [pool, ceiling].into_iter().flatten().min_by_key(TaskLimit::room)
     };
     p.set_task_limit(limit);
-    let mut yielded = false;
+    let mut hold: Option<String> = None;
     if !w.reactive.is_empty() {
         match &w.urgent {
             Some(u) if u.iter().any(|b| b.p0 || b.express) => {
                 if let Some(x) = u.iter().find(|b| b.express && b.p0) {
                     p.preempt_for(&x.id);
                 }
-                yielded = true;
+                let ids: Vec<&str> = u.iter().filter(|b| b.p0 || b.express).map(|b| b.id.as_str()).collect();
+                hold = Some(format!("urgent bead(s) unclaimed: {}", ids.join(" ")));
             }
             Some(_) => {}
-            None => yielded = true,
+            None => hold = Some("the urgent read did not answer".into()),
         }
     }
-    if !yielded {
-        for r in &w.reactive {
-            p.call(&r.name, None, false);
+    for r in &w.reactive {
+        match &hold {
+            Some(why) if r.uses.iter().any(|c| w.limits.contains_key(c)) => p.log(format!("CHECK7 {}: yielding — {why}", r.name)),
+            _ => {
+                p.call(&r.name, None, false);
+            }
         }
     }
     let mut require_express = false;
@@ -492,7 +496,8 @@ mod tests {
     fn urgent_work_yields_the_reactive_runes_and_a_full_fleet_preempts_the_youngest_reactive_dwarf() {
         let mut w = world();
         w.task[0].live = 1;
-        w.reactive = vec![Rune { reactive: true, live: 3, ..rune("triage", 1) }];
+        w.limits.insert("build-disk".into(), 9);
+        w.reactive = vec![Rune { reactive: true, live: 3, uses: vec!["build-disk".into()], ..rune("triage", 1) }];
         w.reactive_dwarves = vec![ReactiveDwarf { rune: "triage".into(), bead: "sp-old".into(), started_ms: 1 }, ReactiveDwarf { rune: "triage".into(), bead: "sp-new".into(), started_ms: 9 }];
         w.urgent = Some(vec![Urgent { id: "sp-x".into(), p0: true, express: true }]);
         let p = plan(&w);
@@ -501,6 +506,17 @@ mod tests {
         w.urgent = None;
         let p = plan(&w);
         assert!(p.preempt.is_none() && !called(&p).contains(&"triage"), "an unanswered urgent read yields the reactive runes");
+    }
+
+    #[test]
+    fn a_p0_behind_a_full_pool_holds_only_the_reactive_runes_that_use_a_bound_class() {
+        let mut w = limited(vec![builder(2, 5)], &[("build-disk", 5)]);
+        w.max_live_dwarves = Some(40);
+        w.reactive = vec![using("skuld", 2, 0, &[], true), mender(1, 0)];
+        w.urgent = Some(vec![Urgent { id: "sp-7nj5be".into(), p0: true, express: false }]);
+        let p = plan(&w);
+        assert_eq!(called(&p), ["skuld"], "{:?}", p.log);
+        assert!(p.log.iter().any(|l| l == "CHECK7 mender: yielding — urgent bead(s) unclaimed: sp-7nj5be"), "{:?}", p.log);
     }
 
     #[test]
