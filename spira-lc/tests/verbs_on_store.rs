@@ -89,5 +89,4 @@ fn the_ported_verbs_answer_from_the_control_store() {
 
     assert!(json(&["churn-facts", "--since", "0"])["mendings"].is_array());
     ok(&["mend-watch"]);
-    assert_eq!(w.run(&["event-continuity"]).0, 0);
 }

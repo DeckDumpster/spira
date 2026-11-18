@@ -95,8 +95,7 @@
 #
 # Retired (P5): queue-watch (sp-kq4cll), stranded-runner (sp-eb13o2), dwarf-watch (sp-k4y7ax),
 # concierge-guard and its log row (it re-armed the inbox waiter
-# that is abolished), and the event-continuity log row (reconcile.continuity raises its
-# breaks as inbox lines, so nothing writes event-continuity.log).
+# that is abolished).
 
 # PERF-WATCH is the alarm log of the hot read paths (spira/perf-probes): the watch.perf task
 # appends one line per path over the limit, with the top callers lc-serve counted. A quiet log

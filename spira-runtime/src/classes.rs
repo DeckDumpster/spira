@@ -225,7 +225,6 @@ pub const CLASSES: &[(&str, EffectClass)] = &[
     ("reconcile.content.close", Store),
     ("reconcile.content.observe", Store),
     ("reconcile.content.skew_check", Store),
-    ("reconcile.continuity.observe", Store),
     ("reconcile.goodput.judge", Store),
     ("reconcile.goodput.lock", Store),
     ("reconcile.goodput.observe", Store),

@@ -15,7 +15,7 @@ fn world() -> (testkit::TempDir, testkit::EnvGuard) {
 #[test]
 fn with_no_control_store_configured_every_ported_verb_is_cannot_tell_and_never_a_dolt_read() {
     let (_dir, _env) = world();
-    for verb in [&["fact", "add", "sp-a", "--kind", "claimed", "--actor", "a"][..], &["fact", "list"], &["facts-query", "SELECT 1 FROM events"], &["journal", "state"], &["ops-view", "ops_live"], &["ops-bead", "sp-a"], &["churn-facts", "--since", "0"], &["mend-watch"], &["event-continuity"]] {
+    for verb in [&["fact", "add", "sp-a", "--kind", "claimed", "--actor", "a"][..], &["fact", "list"], &["facts-query", "SELECT 1 FROM events"], &["journal", "state"], &["ops-view", "ops_live"], &["ops-bead", "sp-a"], &["churn-facts", "--since", "0"], &["mend-watch"]] {
         let (rc, out) = run(verb);
         assert_eq!(rc, 2, "{verb:?}: {out}");
         assert!(out.contains("cannot tell") && out.contains("SPIRA_LC_STORE_PATH"), "{verb:?}: {out}");

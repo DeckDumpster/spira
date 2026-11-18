@@ -343,7 +343,6 @@ runtime_persona_archivist_secs = 300
 runtime_persona_ops_secs = 300
 runtime_reconcile_content_full_secs = 21600
 runtime_reconcile_content_secs = 600
-runtime_reconcile_continuity_secs = 900
 runtime_reconcile_goodput_secs = 60
 runtime_reconcile_heimdall_secs = 120
 runtime_reconcile_section_secs = 60

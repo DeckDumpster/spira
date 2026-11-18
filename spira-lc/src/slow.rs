@@ -349,12 +349,12 @@ mod tests {
 
     #[test]
     fn a_slow_method_alarms_once_and_a_fast_one_never() {
-        let (mut l, t0) = fed("event-continuity", &[2400; 12]);
+        let (mut l, t0) = fed("ops-snapshot", &[2400; 12]);
         for _ in 0..12 {
             l.record("show", t0, 3);
         }
         let got = l.breaches(t0, 7);
-        assert_eq!(got, ["7\tLC-LATENCY\tevent-continuity\tp95=2400ms\tn=12\tlimit=500ms"]);
+        assert_eq!(got, ["7\tLC-LATENCY\tops-snapshot\tp95=2400ms\tn=12\tlimit=500ms"]);
         assert!(l.breaches(t0, 8).is_empty(), "re-alarm waits out the interval");
         assert_eq!(l.breaches(t0 + LATENCY_REALARM + Duration::from_secs(1), 9).len(), 0, "the window has emptied by then");
     }

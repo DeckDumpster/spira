@@ -137,50 +137,6 @@ pub(crate) fn stacked_dependents_from(
     dependents
 }
 
-/// `event-continuity`: for each (machine, lc_key), every applied event's from_state must equal
-/// the previous applied event's to_state. Prints the first break per key as one JSON line.
-/// A break listed in `event-continuity.acknowledged` (seq, machine, key, reason; tab-separated,
-/// under the run directory) is printed with its reason and passes; any other exits 3.
-/// `--acknowledge --through SEQ --reason R` records every unacknowledged break at or below SEQ.
-pub fn cmd_event_continuity(args: &[String]) -> (i32, String) {
-    let ack_path = match crate::lifecycle_run_dir() {
-        Ok(d) => d.join("event-continuity.acknowledged"),
-        Err(e) => return (CANNOT_TELL, format!("cannot tell: {e}")),
-    };
-    let acked = match std::fs::read_to_string(&ack_path) {
-        Ok(t) => match crate::continuity::parse_acked(&t) {
-            Ok(a) => a,
-            Err(l) => return (CANNOT_TELL, format!("cannot tell: {} has a malformed row: {l}", ack_path.display())),
-        },
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Default::default(),
-        Err(e) => return (CANNOT_TELL, format!("cannot tell: {}: {e}", ack_path.display())),
-    };
-    let found = match crate::control::served::configured() {
-        Some(Ok(store)) => crate::continuity::scan(&*store),
-        Some(Err(e)) => Err(format!("the control store: {e}")),
-        None => Err("event-continuity is served by the control store, and SPIRA_LC_STORE_PATH is unset or unreadable".to_string()),
-    };
-    let breaks = match found {
-        Ok(b) => b,
-        Err(e) => return (CANNOT_TELL, format!("cannot tell: {e}")),
-    };
-    if args.iter().any(|a| a == "--acknowledge") {
-        let rows = match crate::continuity::ack_rows(&breaks, &acked, flag(args, "--reason"), flag(args, "--through")) {
-            Ok(r) => r,
-            Err(m) => return (REFUSED, m),
-        };
-        use std::io::Write;
-        let wrote = std::fs::OpenOptions::new().create(true).append(true).open(&ack_path).and_then(|mut f| f.write_all(rows.as_bytes()));
-        return match wrote {
-            Ok(()) => (0, format!("acknowledged {} break(s)", rows.lines().count())),
-            Err(e) => (CANNOT_TELL, format!("cannot tell: {}: {e}", ack_path.display())),
-        };
-    }
-    let (code, report) = crate::continuity::judge(&breaks, &acked);
-    (code, crate::continuity::render(&report))
-}
-
-
 #[cfg(test)]
 mod inline_tests {
     use super::inline_payload_from;

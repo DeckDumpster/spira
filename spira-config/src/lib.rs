@@ -783,6 +783,7 @@ pub const RETIRED_SPIRA_KEYS: &[RetiredKey] = &[
     // Spira works the whole backlog continuously; there is no single goal bead (per Ryan,
     // 2026-09-30, sp-2f9sa). The id prefix it used to imply is its own key now: id_prefix.
     RetiredKey { key: "goal", bead: "sp-k6m1m" },
+    RetiredKey { key: "runtime_reconcile_continuity_secs", bead: "sp-1ljag4" },
     RetiredKey { key: "maechen_label", bead: "sp-vt8lbr" }, // ffx-ok
     RetiredKey { key: "maechen_landing_interval", bead: "sp-vt8lbr" }, // ffx-ok
     RetiredKey { key: "maechen_max_beads", bead: "sp-vt8lbr" }, // ffx-ok
