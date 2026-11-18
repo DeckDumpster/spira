@@ -313,6 +313,8 @@ pub struct Carry {
     pub bound: Option<Vec<plan::Bound>>,
     /// The limit that bound task work on the last pass.
     pub task_limit: Option<plan::TaskLimit>,
+    /// Each rune that ended the last pass with ready work and no call, with why; `None` before the first pass.
+    pub uncalled: Option<BTreeMap<String, String>>,
 }
 
 fn moved<S: Copy + PartialEq + std::fmt::Debug, E: Copy + PartialEq + std::fmt::Debug>(table: &[(S, E, S)], state: S, event: E) -> Result<S, String> {
@@ -401,6 +403,7 @@ pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Act>) {
     next.room_at_ms = Some(snap.now_ms);
     next.bound = Some(p.bound.clone());
     next.task_limit = p.task_limit.clone();
+    next.uncalled = Some(p.uncalled.clone());
     let mut acts = vec![];
     if let Some(x) = &p.preempt {
         let key = format!("{}:{}", x.bead, x.express);
@@ -457,7 +460,7 @@ impl SentinelCall {
     }
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("state"), runtime::rows::Part::Field("refusal"), runtime::rows::Part::Field("room_since_ms"), runtime::rows::Part::Field("room_at_ms"), runtime::rows::Part::Field("bound"), runtime::rows::Part::Field("task_limit"), runtime::rows::Part::Map { name: "in_flight", drop: &[] }];
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("state"), runtime::rows::Part::Field("refusal"), runtime::rows::Part::Field("room_since_ms"), runtime::rows::Part::Field("room_at_ms"), runtime::rows::Part::Field("bound"), runtime::rows::Part::Field("task_limit"), runtime::rows::Part::Map { name: "in_flight", drop: &[] }, runtime::rows::Part::Map { name: "uncalled", drop: &[] }];
 
 impl Handler for SentinelCall {
     fn interests(&self) -> &[EventKindTag] {

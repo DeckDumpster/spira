@@ -147,3 +147,15 @@ fn scheduler_bound_refuses_when_the_carry_holds_no_pass() {
     let err = lc_call(&path, &["scheduler", "bound"]).unwrap_err();
     assert!(err.0.contains("no call pass has run yet"), "{err}");
 }
+
+#[test]
+fn scheduler_uncalled_refuses_before_the_first_pass_and_answers_the_carried_map() {
+    let (mut e, path, _dir, clock) = bound_rig(r#"{"uncalled":{"skuld":"yielding — urgent bead(s) unclaimed: sp-x"}}"#);
+    let early = lc_call(&path, &["scheduler", "uncalled"]).unwrap_err();
+    assert!(early.0.contains("no call pass has run yet"), "{early}");
+    e.submit("t1", "t", EventKind::new("tick", "")).unwrap();
+    clock.advance_to(10);
+    e.run_until_idle().unwrap();
+    let got: serde_json::Value = serde_json::from_str(&lc_call(&path, &["scheduler", "uncalled"]).unwrap()).unwrap();
+    assert_eq!(got, serde_json::json!({"skuld": "yielding — urgent bead(s) unclaimed: sp-x"}));
+}

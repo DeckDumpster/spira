@@ -157,6 +157,7 @@ pub fn classify_live(cfg: &Config) -> Result<Classified, String> {
     let total_live = live.len() as u32;
     let capacity = probe::capacity(cfg, now);
     let throttle = probe::throttle(cfg);
+    let uncalled = probe::scheduler_uncalled();
 
     let lc_rows = match spira_store::lc_state::list_live() {
         Ok(rows) => rows,
@@ -193,6 +194,7 @@ pub fn classify_live(cfg: &Config) -> Result<Classified, String> {
             world: world_state(&run_dir),
             pass_truncated: probe::pass_truncated(&log_text, &runes),
             throttle: throttle.clone(),
+            scheduler_reason: Some(probe::scheduler_reason(&uncalled, &runes)),
         };
         let p = Partition {
             store: &store,

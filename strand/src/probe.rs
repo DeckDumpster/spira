@@ -393,6 +393,23 @@ pub fn throttle(cfg: &Config) -> Throttle {
     }
 }
 
+/// The scheduler's last-pass refusals, by rune.
+pub fn scheduler_uncalled() -> Result<std::collections::BTreeMap<String, String>, String> {
+    let sock = spira_config::process::cfg("SPIRA_RUNTIME_SOCKET")?;
+    let body = spira_config::scheduler_link::call(std::path::Path::new(sock.trim()), &["scheduler", "uncalled"])?;
+    serde_json::from_str(&body).map_err(|e| format!("the scheduler's uncalled answer does not decode: {e}"))
+}
+
+/// `rune: reason` for each of `runes` the scheduler refused, joined by `; `; the scheduler's error when it did not answer.
+pub fn scheduler_reason(uncalled: &Result<std::collections::BTreeMap<String, String>, String>, runes: &[String]) -> Result<String, String> {
+    let map = uncalled.as_ref().map_err(|e| e.clone())?;
+    let said: Vec<String> = runes.iter().filter_map(|r| map.get(r).map(|why| format!("{r}: {why}"))).collect();
+    if said.is_empty() {
+        return Ok(format!("no refusal recorded for {}", runes.join(", ")));
+    }
+    Ok(said.join("; "))
+}
+
 pub fn throttle_line(t: &Throttle) -> String {
     match t {
         Throttle::Open => "open\t".into(),
@@ -428,6 +445,15 @@ pub fn last_pass_age(cfg: &Config) -> i64 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn scheduler_reason_names_the_partitions_runes_the_scheduler_refused() {
+        let map: Result<std::collections::BTreeMap<String, String>, String> = Ok([("skuld".to_string(), "at concurrency cap".to_string()), ("other".to_string(), "x".to_string())].into());
+        let runes = vec!["skuld".to_string(), "mender".to_string()];
+        assert_eq!(scheduler_reason(&map, &runes), Ok("skuld: at concurrency cap".into()));
+        assert_eq!(scheduler_reason(&map, &["mender".to_string()]), Ok("no refusal recorded for mender".into()));
+        assert_eq!(scheduler_reason(&Err("down".into()), &runes), Err("down".into()));
+    }
+
     use super::*;
 
     fn now_secs() -> i64 {

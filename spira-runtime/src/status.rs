@@ -90,22 +90,29 @@ impl Control {
                 r.held(key).ok_or_else(|| RuntimeError::refused(format!("{key} is not a key the scheduler pins per task")))
             }
             ["scheduler", "bound"] => {
-                let s = self.board.get().ok_or_else(|| RuntimeError::new(NO_PASS))?;
-                let carried = s.tasks.iter().find(|t| t.name == crate::tasks::a::sentinel_call::NAME).and_then(|t| t.state.as_ref());
-                let carry: crate::tasks::a::sentinel_call::Carry = match carried {
-                    Some(c) => serde_json::from_str(&c.body).map_err(|e| RuntimeError::new(format!("the carried call state does not decode: {e}")))?,
-                    None => Default::default(),
-                };
-                let bound = carry.bound.ok_or_else(|| RuntimeError::new(NO_PASS))?;
+                let bound = self.call_carry()?.bound.ok_or_else(|| RuntimeError::new(NO_PASS))?;
                 serde_json::to_string(&bound).map_err(|e| RuntimeError::new(e.to_string()))
+            }
+            ["scheduler", "uncalled"] => {
+                let uncalled = self.call_carry()?.uncalled.ok_or_else(|| RuntimeError::new(NO_PASS))?;
+                serde_json::to_string(&uncalled).map_err(|e| RuntimeError::new(e.to_string()))
             }
             ["scheduler", "halt", reason @ ..] => self.gate(SCHEDULER_HALTED, &reason.join(" ")),
             ["scheduler", "resume"] => self.gate(SCHEDULER_RESUMED, ""),
-            _ => Err(RuntimeError::refused(format!("unknown request {argv:?} (scheduler status|halt [reason]|resume|repin <key>|running <key>|bound)"))),
+            _ => Err(RuntimeError::refused(format!("unknown request {argv:?} (scheduler status|halt [reason]|resume|repin <key>|running <key>|bound|uncalled)"))),
         }
     }
 
     /// The reply says the request is journaled; the engine acts on it when it reads it.
+    fn call_carry(&self) -> runtime::Result<crate::tasks::a::sentinel_call::Carry> {
+        let s = self.board.get().ok_or_else(|| RuntimeError::new(NO_PASS))?;
+        let carried = s.tasks.iter().find(|t| t.name == crate::tasks::a::sentinel_call::NAME).and_then(|t| t.state.as_ref());
+        match carried {
+            Some(c) => serde_json::from_str(&c.body).map_err(|e| RuntimeError::new(format!("the carried call state does not decode: {e}"))),
+            None => Ok(Default::default()),
+        }
+    }
+
     fn gate(&self, tag: &str, reason: &str) -> runtime::Result<String> {
         let id = format!("{tag}/{}/{}", self.clock.now_ms(), self.seq.fetch_add(1, Ordering::SeqCst));
         (self.submit)(&id, HALT_STREAM, EventKind::new(tag, reason)).map_err(RuntimeError::new)?;

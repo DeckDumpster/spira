@@ -83,6 +83,8 @@ pub struct Facts {
     pub world: Option<&'static str>,
     pub pass_truncated: bool,
     pub throttle: Throttle,
+    /// The scheduler's reason for this partition's runes (or why it could not say); `None` when not asked.
+    pub scheduler_reason: Option<Result<String, String>>,
 }
 
 impl Default for Facts {
@@ -97,6 +99,7 @@ impl Default for Facts {
             world: None,
             pass_truncated: false,
             throttle: Throttle::Open,
+            scheduler_reason: None,
         }
     }
 }
@@ -323,11 +326,16 @@ impl<'a> Partition<'a> {
             } else {
                 String::new()
             };
+            let scheduler = match &f.scheduler_reason {
+                None => String::new(),
+                Some(Ok(why)) => format!("; scheduler's last pass: {why}"),
+                Some(Err(e)) => format!("; scheduler's last pass: unknown ({e})"),
+            };
             Row::new(
                 "starved",
                 "-",
                 Disposition::Escalate,
-                format!("{n} bead(s) ready and no live dwarf{slot}: {head}"),
+                format!("{n} bead(s) ready and no live dwarf{slot}: {head}{scheduler}"),
                 "check the runtime: its sentinel-call and sentinel-pass tasks".into(),
             )
         };
@@ -969,6 +977,18 @@ mod tests {
         assert_eq!(r[0].detail, "1 bead(s) ready and no live dwarf; 0 of 2 dwarf slot(s) are serving this partition (1 live across fleet): r");
         f.live = 1;
         assert!(run_with(&s, &["r"], &f).is_empty());
+    }
+
+    #[test]
+    fn starved_appends_the_schedulers_last_pass_or_says_it_is_unknown() {
+        let s = store(vec![bead("r", "open", PLAN, None, &[])]);
+        let detail = |reason| run_with(&s, &["r"], &Facts { scheduler_reason: Some(reason), ..Facts::default() })[0].detail.clone();
+        assert_eq!(
+            detail(Ok("skuld: yielding — urgent bead(s) unclaimed: sp-x".into())),
+            "1 bead(s) ready and no live dwarf: r; scheduler's last pass: skuld: yielding — urgent bead(s) unclaimed: sp-x"
+        );
+        assert_eq!(detail(Err("socket gone".into())), "1 bead(s) ready and no live dwarf: r; scheduler's last pass: unknown (socket gone)");
+        assert!(detail(Ok("no refusal recorded for skuld".into())).ends_with("; scheduler's last pass: no refusal recorded for skuld"));
     }
 
     #[test]
