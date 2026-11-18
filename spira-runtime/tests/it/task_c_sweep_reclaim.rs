@@ -4,7 +4,7 @@
 use spira_runtime::tasks::b::kit::{names, testing as t, Input};
 use spira_runtime::tasks::c::sweep_reclaim::{self as task, CacheFile, Candidate, Carry, Phase, Snapshot, SweepReclaim as H, Verdict};
 
-const SET: &[(&str, &str)] = &[(task::CADENCE_KEY, "3600"), (task::MIN_FREE_KEY, "70"), (task::TARGET_FREE_KEY, "100"), (task::PODMAN_CAP_KEY, "40"), (task::CACHE_CAP_KEY, "40"), ("SPIRA_RECLAIM_IDLE_DAYS", "2"), (task::TMP_ROOT_KEY, "/tmp"), (task::TMP_IDLE_KEY, "6")];
+const SET: &[(&str, &str)] = &[(task::CADENCE_KEY, "3600"), (task::MIN_FREE_KEY, "70"), (task::TARGET_FREE_KEY, "100"), (task::PODMAN_CAP_KEY, "40"), (task::CACHE_CAP_KEY, "40"), ("SPIRA_RECLAIM_IDLE_DAYS", "2"), (task::TMP_ROOT_KEY, "tmp"), (task::TMP_IDLE_KEY, "6")];
 const HOUR: u64 = 3_600_000;
 const GIB: u64 = 1 << 30;
 
@@ -64,10 +64,10 @@ fn t5b_an_idle_tmp_directory_is_removed_at_any_free_space_and_a_held_one_is_not(
     let h = t::handler::<H>(SET);
     let observing = Carry { phase: Phase::Observing, ..Carry::default() };
     let cand = |p: &str, v| Candidate { path: p.into(), bytes: GIB, age: 9, verdict: v };
-    let snap = Snapshot { tmp: vec![cand("/tmp/tmp.a", Verdict::Reclaim), cand("/tmp/tmp.b", Verdict::Held), cand("/tmp/tmp-1000", Verdict::Special)], ..idle() };
+    let snap = Snapshot { tmp: vec![cand("tmp/tmp.a", Verdict::Reclaim), cand("tmp/tmp.b", Verdict::Held), cand("tmp/tmp-1000", Verdict::Special)], ..idle() };
     let (c, acts) = task::decide(&h.cfg, &observing, &Input::Observed(snap), HOUR).unwrap();
     assert_eq!(names(&acts), [task::REMOVE_TMP]);
-    assert_eq!((acts[0].input.as_str(), c.pending), ("/tmp/tmp.a", 1));
+    assert_eq!((acts[0].input.as_str(), c.pending), ("tmp/tmp.a", 1));
 }
 
 use runtime::taskrig::TaskRig;
