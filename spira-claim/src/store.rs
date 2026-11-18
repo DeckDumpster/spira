@@ -154,8 +154,8 @@ impl Store {
     }
 
     pub fn facts(&self, ids: &[String]) -> Result<Vec<EventRow>, String> {
-        let args = ["facts".to_string(), "--ids".into(), ids.join(",")];
-        let text = self.lc_run(&args).map_err(|e| format!("spira-lc facts: {e}"))?;
+        let args = ["fact".to_string(), "list".into(), "--ids".into(), ids.join(",")];
+        let text = self.lc_run(&args).map_err(|e| format!("spira-lc fact list: {e}"))?;
         events::parse_rows(&text)
     }
 
@@ -498,7 +498,7 @@ mod tests {
     fn lifecycle_reads_and_writes_go_through_the_service_not_a_program() {
         let (st, t) = store_over(|argv| match argv[0].as_str() {
             "list" => Reply { code: 0, out: r#"[{"bead_id":"sp-a","state":"WORKING","version":1,"holds":[]}]"#.into(), err: String::new() },
-            "facts" | "list-asks" => Reply { code: 0, out: "[]".into(), err: String::new() },
+            "fact" | "list-asks" => Reply { code: 0, out: "[]".into(), err: String::new() },
             _ => Reply { code: 0, out: String::new(), err: String::new() },
         });
         assert!(st.lifecycle_of(&["sp-a".into()]).unwrap().contains_key("sp-a"));
@@ -507,7 +507,7 @@ mod tests {
         st.release_claim("sp-a", "dwarf-x").unwrap();
         let seen = t.seen.lock().unwrap().clone();
         assert_eq!(seen[0], ["list", "--ids", "sp-a"]);
-        assert_eq!(seen[1], ["facts", "--ids", "sp-a"]);
+        assert_eq!(seen[1], ["fact", "list", "--ids", "sp-a"]);
         assert_eq!(seen[2], ["list-asks"]);
         assert_eq!(seen.last().unwrap(), &["release", "sp-a", "dwarf-x"]);
     }
@@ -564,17 +564,17 @@ mod tests {
                 out: r#"[{"issue_id":"sp-a","event_type":"claimed","new_value":"d1","created_at":"2026-01-01 00:00:00"},{"issue_id":"sp-a","event_type":"closed","new_value":"","created_at":"2026-01-02 00:00:00"}]"#.into(),
                 err: String::new(),
             },
-            ("facts", _) => Reply { code: 0, out: r#"[{"issue_id":"sp-a","event_type":"requeued","new_value":"x","created_at":"2026-01-03 00:00:00"}]"#.into(), err: String::new() },
+            ("fact", Some("list")) => Reply { code: 0, out: r#"[{"issue_id":"sp-a","event_type":"requeued","new_value":"x","created_at":"2026-01-03 00:00:00"}]"#.into(), err: String::new() },
             _ => Reply { code: 0, out: "[]".into(), err: String::new() },
         });
         assert_eq!(st.events(&["sp-a".into()]).unwrap().len(), 3);
-        assert_eq!(*t.seen.lock().unwrap(), vec![vec!["content", "events", "--id", "sp-a"], vec!["facts", "--ids", "sp-a"]]);
+        assert_eq!(*t.seen.lock().unwrap(), vec![vec!["content", "events", "--id", "sp-a"], vec!["fact", "list", "--ids", "sp-a"]]);
         t.seen.lock().unwrap().clear();
         let ids: Vec<String> = (0..EVENT_CHUNK + 1).map(|i| format!("sp-{i}")).collect();
         st.events(&ids).unwrap();
         let seen = t.seen.lock().unwrap();
         let shape: Vec<(&str, usize)> = seen.iter().map(|a| (a[0].as_str(), a[a.len() - 1].split(',').count())).collect();
-        assert_eq!(shape, vec![("content", 200), ("facts", 200), ("content", 1), ("facts", 1)]);
+        assert_eq!(shape, vec![("content", 200), ("fact", 200), ("content", 1), ("fact", 1)]);
     }
 
     #[test]

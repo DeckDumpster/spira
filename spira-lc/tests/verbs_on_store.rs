@@ -63,12 +63,12 @@ fn the_ported_verbs_answer_from_the_control_store() {
     ok(&["admin-create-store"]);
 
     ok(&["create-bead", "sp-a", "--ready", "--repo", "harness"]);
-    ok(&["fact", "sp-a", "--kind", "claimed", "--actor", "dwarf-1", "--cause", "first"]);
-    ok(&["fact", "sp-a", "--kind", "requeued", "--actor", "harness", "--cause", "gate-red"]);
-    let facts = json(&["facts", "--ids", "sp-a"]);
+    ok(&["fact", "add", "sp-a", "--kind", "claimed", "--actor", "dwarf-1", "--cause", "first"]);
+    ok(&["fact", "add", "sp-a", "--kind", "requeued", "--actor", "harness", "--cause", "gate-red"]);
+    let facts = json(&["fact", "list", "--ids", "sp-a"]);
     assert_eq!(facts.as_array().unwrap().iter().map(|f| f["event_type"].as_str().unwrap()).collect::<Vec<_>>(), ["claimed", "requeued"]);
     assert_eq!(facts[1]["new_value"], "gate-red");
-    assert_eq!(json(&["facts", "--kinds", "claimed"]).as_array().unwrap().len(), 1);
+    assert_eq!(json(&["fact", "list", "--kinds", "claimed"]).as_array().unwrap().len(), 1);
     let table = ok(&["facts-query", "SELECT event_type, COUNT(*) AS n FROM events GROUP BY event_type ORDER BY event_type"]);
     assert!(table.contains("| claimed | 1 |") && table.contains("| requeued | 1 |"), "{table}");
     assert_eq!(w.run(&["facts-query", "SELECT 1 FROM bead"]).0, 3);

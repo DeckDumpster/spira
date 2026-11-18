@@ -211,7 +211,7 @@ impl<'a> Run<'a> {
 
     /// The digest of the bead's latest `fast-tier-red` fact; empty when it has none.
     pub fn last_fast_tier_red(&self) -> String {
-        let o = self.d.exec.exec("spira-lc", &s(&["facts", "--ids", &self.s.bead, "--kinds", crate::fast_tier::KIND]), None, None);
+        let o = self.d.exec.exec("spira-lc", &s(&["fact", "list", "--ids", &self.s.bead, "--kinds", crate::fast_tier::KIND]), None, None);
         if !o.success() {
             return String::new();
         }
@@ -221,7 +221,7 @@ impl<'a> Run<'a> {
     /// Every send-back of the bead, newest first: a gate or round `eject-failure`, or a `send-back`.
     pub fn send_backs(&self) -> Vec<brief::SendBack> {
         let kinds = format!("{},{}", spira_config::ejection::KIND, spira_config::send_back::KIND);
-        let o = self.d.exec.exec("spira-lc", &s(&["facts", "--ids", &self.s.bead, "--kinds", &kinds]), None, None);
+        let o = self.d.exec.exec("spira-lc", &s(&["fact", "list", "--ids", &self.s.bead, "--kinds", &kinds]), None, None);
         if !o.success() {
             return Vec::new();
         }
@@ -239,7 +239,7 @@ impl<'a> Run<'a> {
     }
 
     pub fn record_fact(&self, kind: &str, cause: &str) {
-        let o = self.d.exec.exec("spira-lc", &s(&["fact", &self.s.bead, "--kind", kind, "--actor", &self.s.dwarf, "--cause", cause]), None, None);
+        let o = self.d.exec.exec("spira-lc", &s(&["fact", "add", &self.s.bead, "--kind", kind, "--actor", &self.s.dwarf, "--cause", cause]), None, None);
         if !o.success() {
             self.log(&format!("{}: {} could not record {kind} fact (rc={})", self.f(), self.s.bead, o.code));
         }
@@ -1587,7 +1587,7 @@ impl<'a> Run<'a> {
     fn checkpoint_args(&mut self, work: &Path, task_file: &Path) -> Vec<String> {
         let bead = self.s.bead.clone();
         let who = self.s.dwarf.clone();
-        let facts = self.d.exec.exec("spira-lc", &s(&["facts", "--ids", &bead, "--kinds", &format!("{},{}", checkpoint::SESSION, checkpoint::CHECKPOINTED)]), None, None);
+        let facts = self.d.exec.exec("spira-lc", &s(&["fact", "list", "--ids", &bead, "--kinds", &format!("{},{}", checkpoint::SESSION, checkpoint::CHECKPOINTED)]), None, None);
         let facts = if facts.success() { checkpoint::parse_facts(&facts.stdout) } else { Vec::new() };
         let persona = checkpoint::persona_hash(&std::fs::read(self.home().join("runes").join(format!("{}.md", self.f()))).unwrap_or_default());
         let cfg = checkpoint::config_dir(&self.d.env.child());
@@ -1611,7 +1611,7 @@ impl<'a> Run<'a> {
             }
         };
         let fact = checkpoint::SessionFact { id: id.clone(), rune: self.f().to_string(), persona, worktree: work.display().to_string() };
-        let wrote = self.d.exec.exec("spira-lc", &s(&["fact", &bead, "--kind", checkpoint::SESSION, "--actor", &who, "--cause", &fact.cause()]), None, None);
+        let wrote = self.d.exec.exec("spira-lc", &s(&["fact", "add", &bead, "--kind", checkpoint::SESSION, "--actor", &who, "--cause", &fact.cause()]), None, None);
         if !wrote.success() {
             self.log(&format!("{}: {bead} could not record session {id} (rc={}): a stop will not be checkpointed", self.f(), wrote.code));
             self.s.session_id.clear();
@@ -1640,7 +1640,7 @@ impl<'a> Run<'a> {
             self.log(&format!("{}: {id} checkpoint hold refused (rc={}): {}", self.f(), held.code, held.stdout.trim()));
             return false;
         }
-        let wrote = self.d.exec.exec("spira-lc", &s(&["fact", id, "--kind", checkpoint::CHECKPOINTED, "--actor", &self.s.dwarf, "--cause", &now.to_string()]), None, None);
+        let wrote = self.d.exec.exec("spira-lc", &s(&["fact", "add", id, "--kind", checkpoint::CHECKPOINTED, "--actor", &self.s.dwarf, "--cause", &now.to_string()]), None, None);
         if !wrote.success() {
             let _ = self.d.exec.exec("spira-lc", &s(&["unhold", id, "wait", "dwarf"]), None, None);
             self.log(&format!("{}: {id} checkpoint fact refused (rc={}): hold withdrawn", self.f(), wrote.code));

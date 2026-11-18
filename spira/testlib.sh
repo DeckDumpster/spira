@@ -712,7 +712,7 @@ lc_path_stub() {   # lc_path_stub <bindir> <fixdir>
 #!/usr/bin/env bash
 LC_FIX="$fix"
 printf '%s\\n' "\$*" >> "\$LC_FIX/calls.log"
-case "\$1" in fact|facts|facts-query) exec "$fix/facts-lc" "\$@" ;; esac
+case "\$1" in fact|facts-query) exec "$fix/facts-lc" "\$@" ;; esac
 case "\$1" in close-on-land|content-landed|content) [ -n "$real" ] && exec "$real" "\$@" ;; esac
 # reopen (sp-swh8b8): the door reopens the store after the row; here the row is the fixture's,
 # so only the store half runs.
@@ -753,12 +753,12 @@ lc_delivery() {  # lc_delivery <STATE> <id> <mode> <entered_at> <version>
     [ -f "$LC_FIX/show/$2" ] || printf '{"bead":{"tip":"deadbeef"}}' > "$LC_FIX/show/$2"
 }
 
-# The attempt-history facts a spira-lc stand-in keeps (`fact` appends, `facts` reads) in
+# The attempt-history facts a spira-lc stand-in keeps (`fact add` appends, `fact list` reads) in
 # <dir>/facts.tsv, answering in the shape the real binary does: bd-events rows.
 _LC_FACTS_BODY='
-case "${1:-}" in
-    fact)
-        id="${2:-}"; shift 2; kind=""; actor=""; cause=""
+case "${1:-} ${2:-}" in
+    "fact add")
+        id="${3:-}"; shift 3; kind=""; actor=""; cause=""
         while [ $# -gt 0 ]; do
             case "$1" in
                 --kind) kind="$2"; shift 2 ;;
@@ -769,9 +769,9 @@ case "${1:-}" in
         done
         printf "%s\t%s\t%s\t%s\t%s\n" "$id" "$kind" "$actor" "$cause" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$(dirname "$0")/facts.tsv"
         exit 0 ;;
-    facts-query) exit 0 ;;
-    facts)
-        shift
+    facts-query*) exit 0 ;;
+    "fact list")
+        shift 2
         ids=""; kinds=""
         while [ $# -gt 0 ]; do
             case "$1" in
@@ -793,7 +793,7 @@ case "${1:-}" in
 esac
 '
 
-# lc_facts_stub <dir> — a spira-lc that keeps the attempt-history facts itself (`fact`, `facts`;
+# lc_facts_stub <dir> — a spira-lc that keeps the attempt-history facts itself (`fact add`, `fact list`;
 # `facts-query` answers an empty table) and hands every other verb to the spira-lc that was on PATH,
 # or answers "cannot tell" when there was none. Prepends <dir> to PATH. For a suite whose fold
 # reads bd events it seeded itself.

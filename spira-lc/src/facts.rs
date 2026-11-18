@@ -52,19 +52,37 @@ pub(crate) fn append_on<B: state_store::Backend>(store: &crate::control::store::
     store.append_facts(facts, &req).map_err(|e| e.to_string())
 }
 
-/// `fact <bead-id> --kind K --actor A [--cause C]`.
-pub fn cmd_fact(args: &[String]) -> (i32, String) {
+const USAGE: &str = "usage: spira-lc fact add <bead-id> --kind K --actor A [--cause C] | list [--ids a,b] [--kinds x,y] [--since EPOCH]";
+
+/// `fact add …` appends a fact; `fact list …` reads them.
+pub fn cmd(args: &[String]) -> (i32, String) {
+    cmd_with(args, &append, &read)
+}
+
+type Put<'a> = &'a dyn Fn(&[Fact]) -> Result<(), String>;
+type Get<'a> = &'a dyn Fn(&[String], &[String], Option<i64>) -> Result<Vec<Value>, String>;
+
+fn cmd_with(args: &[String], put: Put, get: Get) -> (i32, String) {
+    match args.first().map(String::as_str) {
+        Some("add") => cmd_fact(&args[1..], put),
+        Some("list") => cmd_facts(&args[1..], get),
+        _ => (CANNOT_TELL, USAGE.into()),
+    }
+}
+
+/// `fact add <bead-id> --kind K --actor A [--cause C]`.
+fn cmd_fact(args: &[String], put: Put) -> (i32, String) {
     let Some(key) = args.first().filter(|a| !a.starts_with("--")) else {
-        return (CANNOT_TELL, "fact: missing <bead-id>".into());
+        return (CANNOT_TELL, "fact add: missing <bead-id>".into());
     };
     let (Some(kind), Some(actor)) = (flag(args, "--kind"), flag(args, "--actor")) else {
-        return (CANNOT_TELL, "fact: --kind and --actor are required".into());
+        return (CANNOT_TELL, "fact add: --kind and --actor are required".into());
     };
     if !KINDS.contains(&kind.as_str()) {
-        return (REFUSED, format!("fact: unknown kind {kind:?} (want one of {})", KINDS.join(", ")));
+        return (REFUSED, format!("fact add: unknown kind {kind:?} (want one of {})", KINDS.join(", ")));
     }
     if key.is_empty() || actor.is_empty() {
-        return (CANNOT_TELL, "fact: empty <bead-id> or --actor".into());
+        return (CANNOT_TELL, "fact add: empty <bead-id> or --actor".into());
     }
     let raw = flag(args, "--cause").unwrap_or_default();
     let cause = match kind.as_str() {
@@ -72,7 +90,7 @@ pub fn cmd_fact(args: &[String]) -> (i32, String) {
         "build-dir" => bounded_tabbed(&raw),
         _ => bounded(&raw),
     };
-    match append(&[fact_of(key, &kind, &cause, &bounded(&actor), db::now_epoch())]) {
+    match put(&[fact_of(key, &kind, &cause, &bounded(&actor), db::now_epoch())]) {
         Ok(()) => (0, String::new()),
         Err(e) => (CANNOT_TELL, format!("cannot tell: {e}")),
     }
@@ -123,20 +141,20 @@ pub fn shape(rows: Vec<Value>) -> Vec<Value> {
         .collect()
 }
 
-/// `facts [--ids a,b] [--kinds x,y] [--since EPOCH]`: the facts, oldest first per bead.
-pub fn cmd_facts(args: &[String]) -> (i32, String) {
+/// `fact list [--ids a,b] [--kinds x,y] [--since EPOCH]`: the facts, oldest first per bead.
+fn cmd_facts(args: &[String], get: Get) -> (i32, String) {
     let since = match flag(args, "--since").map(|v| v.parse::<i64>()) {
-        Some(Err(_)) => return (CANNOT_TELL, "facts: --since must be an epoch second".into()),
+        Some(Err(_)) => return (CANNOT_TELL, "fact list: --since must be an epoch second".into()),
         Some(Ok(t)) => Some(t),
         None => None,
     };
-    match read(&csv(args, "--ids"), &csv(args, "--kinds"), since) {
+    match get(&csv(args, "--ids"), &csv(args, "--kinds"), since) {
         Ok(r) => (0, serde_json::to_string_pretty(&Value::Array(shape(r))).unwrap()),
         Err(e) => (CANNOT_TELL, format!("cannot tell: {e}")),
     }
 }
 
-const FROM_EVENTS_ONLY: &str = "the only table it may read is `events`; for anything else use the typed form `facts [--ids a,b] [--kinds x,y] [--since EPOCH]`";
+const FROM_EVENTS_ONLY: &str = "the only table it may read is `events`; for anything else use the typed form `fact list [--ids a,b] [--kinds x,y] [--since EPOCH]`";
 
 #[derive(PartialEq)]
 enum Tok<'a> {
@@ -303,6 +321,31 @@ mod tests {
         append_on(s, &[fact_of(bead, kind, cause, "harness", at)]).unwrap();
     }
 
+    fn argv(a: &[&str]) -> Vec<String> {
+        a.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn fact_add_then_fact_list_round_trips_one_row() {
+        let s = store();
+        let (put, get): (Put, Get) = (&|f| append_on(&s, f), &|i, k, t| read_on(&s, i, k, t));
+        assert_eq!(cmd_with(&argv(&["add", "sp-a", "--kind", "claimed", "--actor", "dwarf-1", "--cause", "first"]), put, get), (0, String::new()));
+        let (rc, out) = cmd_with(&argv(&["list", "--ids", "sp-a"]), put, get);
+        assert_eq!(rc, 0, "{out}");
+        let rows: Vec<Value> = serde_json::from_str(&out).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!((rows[0]["event_type"].as_str(), rows[0]["new_value"].as_str(), rows[0]["actor"].as_str()), (Some("claimed"), Some("first"), Some("dwarf-1")));
+    }
+
+    #[test]
+    fn fact_without_a_known_sub_verb_answers_the_usage() {
+        for a in [&["frobnicate"][..], &[]] {
+            let (rc, out) = cmd(&argv(a));
+            assert_eq!(rc, CANNOT_TELL);
+            assert!(out.starts_with("usage: spira-lc fact add"), "{out}");
+        }
+    }
+
     #[test]
     fn the_send_back_kind_is_accepted_and_is_a_long_kind() {
         assert!(KINDS.contains(&spira_config::send_back::KIND));
@@ -385,7 +428,7 @@ mod tests {
     fn a_free_query_over_another_table_is_refused_before_it_touches_the_store() {
         let (code, msg) = cmd_facts_query(&["SELECT a FROM events WHERE 1=0 UNION ALL SELECT lc_key FROM bead".to_string()]);
         assert_eq!(code, REFUSED, "{msg}");
-        assert!(msg.contains("facts [--ids"), "{msg}");
+        assert!(msg.contains("fact list [--ids"), "{msg}");
     }
 
     #[test]
@@ -419,7 +462,7 @@ mod tests {
         ];
         for q in bad {
             let why = check(q).expect_err(q);
-            assert!(why.contains("facts [--ids"), "{q}: {why}");
+            assert!(why.contains("fact list [--ids"), "{q}: {why}");
         }
     }
 

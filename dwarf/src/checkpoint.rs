@@ -27,7 +27,7 @@ pub struct Fact {
     pub at_epoch: i64,
 }
 
-/// `spira-lc facts` output (an array of `{event_type, new_value}`, oldest first).
+/// `spira-lc fact list` output (an array of `{event_type, new_value}`, oldest first).
 pub fn parse_facts(json: &str) -> Vec<Fact> {
     let Ok(Value::Array(rows)) = serde_json::from_str::<Value>(json.trim()) else { return Vec::new() };
     rows.iter()

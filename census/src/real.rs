@@ -130,7 +130,7 @@ impl Real {
     // batch-job: census report, bounded at 30 s.
     fn recorded_cause_ids(&self, since: Option<i64>) -> Result<Vec<String>, String> {
         let mut cmd = Command::new("timeout");
-        cmd.arg("30").arg(&self.lc).args(["facts", "--kinds", "reopen,requeued"]);
+        cmd.arg("30").arg(&self.lc).args(["fact", "list", "--kinds", "reopen,requeued"]);
         if let Some(t) = since.filter(|&t| t > 0) {
             cmd.args(["--since", &t.to_string()]);
         }

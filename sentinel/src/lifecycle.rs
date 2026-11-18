@@ -421,7 +421,7 @@ impl<'a> Sentinel<'a> {
             .filter(|s| !s.is_empty())
             .unwrap_or("harness")
             .to_string();
-        let args = ["fact", id, "--kind", etype, "--actor", &actor, "--cause", cause].map(String::from).to_vec();
+        let args = ["fact", "add", id, "--kind", etype, "--actor", &actor, "--cause", cause].map(String::from).to_vec();
         let _ = self.h.lc(&self.cfg.lc_bin, &args);
     }
 

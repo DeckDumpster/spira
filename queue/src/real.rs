@@ -1965,7 +1965,7 @@ impl Lc for RealLc {
         let _ = self.run(&["create-bead", id, "--repo", repo, "--ready"]);
     }
     fn fact(&self, bead: &str, kind: &str, actor: &str, cause: &str) -> Result<(), (i32, String)> {
-        let (rc, out) = self.run(&["fact", bead, "--kind", kind, "--actor", actor, "--cause", cause]);
+        let (rc, out) = self.run(&["fact", "add", bead, "--kind", kind, "--actor", actor, "--cause", cause]);
         if rc == 0 {
             Ok(())
         } else {

@@ -31,7 +31,7 @@ impl Acts for Live<'_> {
     }
     fn send_back(&mut self, id: &str, tip: &str, text: &str) -> Result<(), String> {
         let cause = spira_config::send_back::encode(tip, text);
-        io::lcq(self.env, &["fact", id, "--kind", spira_config::send_back::KIND, "--actor", "sift", "--cause", &cause]).map(|_| ())
+        io::lcq(self.env, &["fact", "add", id, "--kind", spira_config::send_back::KIND, "--actor", "sift", "--cause", &cause]).map(|_| ())
     }
     fn supersede(&mut self, id: &str, keeper: &str) -> Result<(), String> {
         io::lc_supersede(self.env, id, keeper)

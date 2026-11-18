@@ -1064,7 +1064,7 @@ fn on_check2_reaps_stale_leases_and_2c_reports_desync() {
     );
     assert!(r
         .find(|s| s.prog == "spira-lc"
-            && s.args == ["fact", "sp-b", "--kind", "reclaimed", "--actor", "harness", "--cause", "stale-lease"])
+            && s.args == ["fact", "add", "sp-b", "--kind", "reclaimed", "--actor", "harness", "--cause", "stale-lease"])
         .is_some());
     assert!(r.find(|s| is_bd(s, "sql") && !s.args.iter().any(|a| a.contains("dolt_hashof_db"))).is_none(), "a fact is never a bd write");
     let note = r.find(|s| is_bd(s, "note")).unwrap();

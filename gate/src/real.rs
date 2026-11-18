@@ -151,7 +151,7 @@ __kv host_cores "$(host_cores)"
 exit 0
 "#;
 
-/// The `(tip, dir)` of the last `build-dir` fact in `spira-lc facts` output (oldest first).
+/// The `(tip, dir)` of the last `build-dir` fact in `spira-lc fact list` output (oldest first).
 fn newest_build_dir(json: &str) -> Option<(String, PathBuf)> {
     let rows: Vec<serde_json::Value> = serde_json::from_str(json.trim()).ok()?;
     let (tip, dir) = rows.last()?.get("new_value")?.as_str()?.split_once('\t')?;
@@ -849,7 +849,7 @@ impl World for Real {
     }
     fn lc_gate_start(&self, bead: &str) {
         let _ = spira_config::bounded::bounded("spira-lc")
-            .args(["fact", bead, "--kind", "gate-start", "--actor", "gate"])
+            .args(["fact", "add", bead, "--kind", "gate-start", "--actor", "gate"])
             .stdin(Stdio::null())
             .stderr(Stdio::null())
             .stdout(Stdio::null())
@@ -1085,7 +1085,7 @@ impl World for Real {
     }
     fn lc_build_dir(&self, bead: &str) -> Option<(String, PathBuf)> {
         let out = spira_config::bounded::bounded("spira-lc")
-            .args(["facts", "--ids", bead, "--kinds", "build-dir"])
+            .args(["fact", "list", "--ids", bead, "--kinds", "build-dir"])
             .stdin(Stdio::null())
             .stderr(Stdio::null())
             .output()

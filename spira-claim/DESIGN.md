@@ -64,9 +64,9 @@ Diagnostics go to stderr, one line, prefixed `spira-claim:`.
 - **Events** — bd's `events` table (its own claim/close/reopen rows and the history written
   before the move), read with ONE `bd -C <db> sql --json` per ≤200 ids (chunked so the query
   argv is bounded no matter how many beads are asked about; bd sql takes its query only as
-  argv), plus the **facts** the harness appends to the lifecycle event log — `spira-lc fact`
+  argv), plus the **facts** the harness appends to the lifecycle event log — `spira-lc fact add`
   writes `requeued`, `reopen`, `reclaimed`, `poison.cleared`, `claimed`, `recurred`, `lapsed`
-  as machine `fact` rows, `spira-lc facts --ids` reads them back in bd's row shape — fetched
+  as machine `fact` rows, `spira-lc fact list --ids` reads them back in bd's row shape — fetched
   per the same chunk. A fact read that cannot tell is exit 2, never zero facts. Only the
   columns and event types this program folds are selected, and `new_value` is truncated to 120
   chars (a close reason can be kilobytes). `--events FILE|-` replaces both fetches with rows

@@ -141,7 +141,7 @@ pub trait World {
     fn lc_prior_failures(&self, _since: i64) -> Result<Vec<(String, String)>, String> {
         Err("no lifecycle store".into())
     }
-    /// `spira-lc fact <bead> --kind gate-start`: the gate holds its tree and begins running.
+    /// `spira-lc fact add <bead> --kind gate-start`: the gate holds its tree and begins running.
     fn lc_gate_start(&self, bead: &str);
     /// Files the Ops incident asking for the flipping `test` of `repo` to be deleted. Dedups on the test.
     fn file_flip(&self, _repo: &str, _test: &str, _title: &str, _body: &str) -> Result<(), String> {

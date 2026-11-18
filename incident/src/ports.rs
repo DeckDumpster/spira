@@ -52,7 +52,7 @@ pub trait Bd {
     /// A cheap reachability probe (`bd list --limit 1`) — used to distinguish "no open
     /// incident" from "the database could not be reached" when the dedup scan is empty.
     fn reachable(&self, db: &str) -> bool;
-    /// One attempt-history fact in the lifecycle event log (`spira-lc fact`), true when written.
+    /// One attempt-history fact in the lifecycle event log (`spira-lc fact add`), true when written.
     fn fact(&self, id: &str, kind: &str, cause: &str) -> bool;
     /// How many facts of `kind` the log holds for `id`; None when it could not be read.
     fn fact_count(&self, id: &str, kind: &str) -> Option<usize>;

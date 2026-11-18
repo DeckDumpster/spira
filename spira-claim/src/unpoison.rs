@@ -576,7 +576,7 @@ impl crate::reopen::World for Live {
         if r.tip.is_empty() {
             r.tip = self.store.lifecycle_of(&[id.to_string()]).ok().and_then(|m| m.get(id).and_then(|row| row.tip.clone())).unwrap_or_default();
         }
-        let _ = self.lc(&["fact", id, "--kind", spira_config::escalation::REJECTION, "--actor", &self.beads_actor, "--cause", &r.encode()]);
+        let _ = self.lc(&["fact", "add", id, "--kind", spira_config::escalation::REJECTION, "--actor", &self.beads_actor, "--cause", &r.encode()]);
     }
 
     fn lc_reopen(&mut self, id: &str, cause: &str) -> Result<(), String> {

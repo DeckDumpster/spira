@@ -43,7 +43,7 @@ pub fn check(args: &[String]) -> Result<Kind, String> {
         ["create", rest @ ..] if !rest.is_empty() => create_flags(rest),
         ["ready", ..] => Err(unserved("ready", "`spira-lc list --state READY,REWORK` or `spira-lc claimable` (the claim view) or `spira-claim rune-ready`")),
         ["blocked", ..] => Err(unserved("blocked", "`spira-lc list` (the published blocked_by)")),
-        ["history", ..] => Err(unserved("history", "`spira-lc facts --ids` or `content list --updated-after`")),
+        ["history", ..] => Err(unserved("history", "`spira-lc fact list --ids` or `content list --updated-after`")),
         ["children", ..] => Err(unserved("children", "`content list --all --limit 0 --parent <id>`")),
         ["sql", ..] => Err(unserved("sql", "a typed read: add the read this query stands for to the door (content_sql) rather than sending SQL")),
         _ => Err(format!("`{}` is not a content verb", a.join(" "))),
@@ -495,7 +495,7 @@ mod tests {
         for (args, exit) in [
             (&["ready"][..], "spira-lc claimable"),
             (&["blocked"], "blocked_by"),
-            (&["history", "sp-a"], "facts"),
+            (&["history", "sp-a"], "fact list"),
             (&["children", "sp-a"], "--parent"),
             (&["sql", "select 1"], "typed read"),
         ] {

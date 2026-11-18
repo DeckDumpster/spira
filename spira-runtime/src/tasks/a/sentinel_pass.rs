@@ -55,7 +55,7 @@
 //! |---|---|---|---|---|
 //! | `sentinel-pass.lc_event` (`spira-lc event bead <id> --expect <state> --version <v>`, `lifecycle.rs:238-285`): HolderDead, Hold/Unhold wait, AskWithdrawn | store | 5 s | `(id, version, kind)` | CAS mismatch (rc 3, normal race); row moved since snapshot (`lifecycle.rs:327`) |
 //! | `sentinel-pass.lc_hold` / `.lc_unhold` (`waiters.rs:88-118`) | store | 5 s | `(id, kind)` | — (fire-and-forget today) |
-//! | `sentinel-pass.lc_fact` (`spira-lc fact … reclaimed`, `lifecycle.rs:368-383`) | store | 5 s | `(id, kind, cause, pass)` | — |
+//! | `sentinel-pass.lc_fact` (`spira-lc fact add … reclaimed`, `lifecycle.rs:368-383`) | store | 5 s | `(id, kind, cause, pass)` | — |
 //! | `sentinel-pass.lc_close` (`lifecycle_row::close_with`, `red_trackers.rs:46`) | store | 5 s | id | non-terminal fixes |
 //! | `sentinel-pass.content_label` / `.content_note` / `.content_close` (bd `label add/remove`, `note`, `close`: `holds.rs:137`, `open_children.rs:161-172`, `waiters.rs:153-215`, `lifecycle.rs:355`) | store | 5 s | `(id, label, op)` / `(id, note-hash)` | — |
 //! | `sentinel-pass.recompute_blocked` (`bd recompute-blocked`, `pass.rs:600`) | store | 30 s (unverified) | pass id | not starved |
@@ -915,7 +915,7 @@ pub fn lc_unhold(e: &Effects, spec: &EffectSpec) -> Result<String, String> {
 
 pub fn lc_fact(e: &Effects, spec: &EffectSpec) -> Result<String, String> {
     let w = write_of(&spec.input, LC_FACT)?;
-    answer(&client(e, spec.deadline_ms), &["fact", &w.id, "--kind", &w.kind, "--actor", "harness", "--cause", &w.cause])
+    answer(&client(e, spec.deadline_ms), &["fact", "add", &w.id, "--kind", &w.kind, "--actor", "harness", "--cause", &w.cause])
 }
 
 pub fn lc_close(e: &Effects, spec: &EffectSpec) -> Result<String, String> {
