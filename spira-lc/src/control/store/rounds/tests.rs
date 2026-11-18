@@ -7,7 +7,7 @@ use runtime::ports::VirtualClock;
 use state_store::{Backend, Config, Contract, MemBackend, Ports, Request};
 use state_store_sqlite::SqliteBackend;
 
-use super::{Cut, Planned, Ran, Store};
+use super::{Cut, Planned, Ran, Store, Turned};
 use crate::control::keys;
 use crate::control::records::Audit;
 use crate::control::state::{self, Call};
@@ -1681,23 +1681,12 @@ fn a_round_cut_with_one_member_twice_writes_no_discontinuous_delivery_event() {
     let r = Rig::new();
     r.certified("sp-a", T1);
     let members = vec![("sp-a".to_string(), T1.to_string()); 2];
-    let planned = r.s.plan_cut(&r.cut_spec(&members)).unwrap();
     let head = r.s.contract().head().unwrap();
-    let Planned::Cascade(_) = &planned else {
-        assert_eq!(r.s.contract().head().unwrap(), head, "a refused cut writes nothing");
-        assert!(r.s.delivery("sp-a").unwrap().is_none());
-        return;
+    let planned = r.s.plan_cut(&r.cut_spec(&members)).unwrap();
+    let Planned::Ran(Ran::Turned(Turned::CannotTell(why))) = &planned else {
+        panic!("a cut naming a member twice must be refused whole");
     };
-    let Ok(Ran::Done { rev, .. }) = r.s.run_planned(planned, &r.req(), "cut") else {
-        assert_eq!(r.s.contract().head().unwrap(), head, "a refused cut writes nothing");
-        return;
-    };
-    let (_, audits) = r.audits_at(rev);
-    let mut prev: Option<String> = None;
-    for a in audits.iter().filter(|a| a.applied && a.machine == "delivery" && a.lc_key == "sp-a") {
-        if let Some(p) = &prev {
-            assert_eq!(&a.from_state, p, "{} from {} after {p}", a.event, a.from_state);
-        }
-        prev = Some(a.to_state.clone());
-    }
+    assert!(why.contains("sp-a is named twice"), "{why}");
+    assert_eq!(r.s.contract().head().unwrap(), head, "a refused cut writes nothing");
+    assert!(r.s.delivery("sp-a").unwrap().is_none());
 }
