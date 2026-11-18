@@ -513,10 +513,31 @@ impl Run<'_> {
                     rc = 1;
                 }
                 self.bump_requeue(&cause);
-                self.note(&format!("Harness red (rc={rc}): the dwarf could not start its session — {why}. NO attempt was charged and nothing about the work is implied; this repeats until the harness config is fixed."));
-                self.log(&format!("{f}: {id} harness red (rc={rc}): {why} — no attempt charged"));
                 self.release();
-                return self.finish(rc, &status);
+                let rc = self.finish(rc, &status);
+                let streak = self.harness_red_streak_now(&id);
+                let threshold = self.conf.i("SPIRA_RAPID_RECUR_THRESHOLD");
+                if threshold <= 0 || streak < threshold {
+                    self.note(&format!("Harness red (rc={rc}): the dwarf could not start its session — {why}. NO attempt was charged and nothing about the work is implied; this repeats until the harness config is fixed."));
+                    self.log(&format!("{f}: {id} harness red (rc={rc}): {why} — no attempt charged"));
+                    return rc;
+                }
+                let first: String = why.lines().next().unwrap_or("").trim().chars().take(200).collect();
+                let subj = format!("harness red: {f} cannot start {id}: {first}");
+                let body = format!("## Note\n{id} failed to start its session {streak} times in a row with a harness red; the last failure was:\n\n{why}\n\nNo attempt was charged for any of them. The bead is held and is not claimable again until the hold is lifted.\n");
+                let _ = self.d.exec.exec(
+                    "env",
+                    &s(&["SPIRA_MAIL_ALLOW_BLOCKING=1", "mail", "send", "concierge", "--from", "Dwarf <dwarf@spira>", "--subject", &subj, "--kind", "question", "--default", "fix the harness fault named above, then lift the hold", "--bead", &id]),
+                    Some(body.into_bytes()),
+                    None,
+                );
+                let held = self.hold_unless_terminal(&id, "manual", &format!("harness-red streak {streak}: {first}"), "dwarf");
+                if let Some(held) = held.filter(|h| h.code != 0) {
+                    self.log(&format!("{f}: {id} manual hold refused (rc={}): {}", held.code, held.stdout.trim()));
+                }
+                self.note(&format!("Harness red (rc={rc}): the dwarf could not start its session — {why}. After {streak} consecutive harness reds the bead is held and the Concierge asked; it is not claimable again until the hold is lifted. NO attempt was charged."));
+                self.log(&format!("{f}: {id} harness red streak {streak}/{threshold}: {first} — held, Concierge asked, no attempt charged"));
+                return rc;
             }
             NoteKey::PreSession => {
                 if rc == 0 {
@@ -621,6 +642,14 @@ impl Run<'_> {
 
     /// The disposition branches that `exit $rc` inside the case: identity removed LAST, then
     /// the ledger line.
+    fn harness_red_streak_now(&self, id: &str) -> i64 {
+        let threshold = self.conf.i("SPIRA_RAPID_RECUR_THRESHOLD").max(0) as usize;
+        let Ok(text) = std::fs::read_to_string(self.conf.ledger()) else { return 0 };
+        let needle = regex::Regex::new(&format!(r" done \S+ {} ", regex::escape(id))).unwrap();
+        let matches: Vec<&str> = text.lines().filter(|l| needle.is_match(l) && !l.contains(" status=worktree-held ")).collect();
+        decide::harness_red_streak(&matches[matches.len().saturating_sub(threshold)..])
+    }
+
     fn finish(&self, rc: i32, status: &str) -> i32 {
         // dwarf.sh exited inside the case without removing the pidfile or the mailbox; the
         // pidfile is removed here after every bead operation (DESIGN.md §2.10.7).

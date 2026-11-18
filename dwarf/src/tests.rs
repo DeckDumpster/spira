@@ -352,6 +352,61 @@ pub(crate) mod verdict_run {
         }
     }
 
+    struct Calls(Mutex<Vec<(String, Vec<String>, String)>>);
+    impl Exec for Calls {
+        fn exec(&self, prog: &str, args: &[String], stdin: Option<Vec<u8>>, _: Option<&Path>) -> Out {
+            self.0.lock().unwrap().push((prog.into(), args.to_vec(), String::from_utf8_lossy(&stdin.unwrap_or_default()).into_owned()));
+            if prog == "spira-lc" && args.first().map(String::as_str) == Some("show") {
+                return Out::ok(r#"{"bead":{"bead_id":"sp-a","state":"WORKING"}}"#);
+            }
+            Out::ok("")
+        }
+    }
+
+    const RED_WHY: &str = "pilgrim world did not come up (rc 1): sim world up failed: bd init (server) failed: connection refused";
+
+    fn red_start_after(prior: usize) -> (Vec<String>, Vec<Vec<String>>, String) {
+        let dir = testkit::TempDir::new("dwarf-harness-red");
+        let mut vars = super::complete_vars();
+        vars.insert("SPIRA_RUN".into(), dir.path().display().to_string());
+        vars.insert("SPIRA_RAPID_RECUR_THRESHOLD".into(), "3".into());
+        let ledger = dir.path().join("dwarf-ledger.log");
+        let line = "2026-11-18T09:38:46Z done pilgrim sp-a rc=1 status=harness-red wall_s=342 api_s=? turns=? in_tok=? cache_read_tok=? out_tok=? think_tok=? cost_usd=?\n";
+        std::fs::write(&ledger, line.repeat(prior)).unwrap();
+        let (seam, exec) = (Seams(Default::default()), Calls(Default::default()));
+        let notes = Notes(Default::default());
+        with_run_over(vars, &notes, Dirty(vec![]), &exec, &|| 0, &seam, "", |r| {
+            r.ledger = Ledger { path: ledger.clone(), dry: false };
+            r.s.bead = "sp-a".into();
+            r.s.harness_red = Some(RED_WHY.into());
+            r.teardown(0);
+        });
+        let calls = exec.0.lock().unwrap();
+        let mails = calls.iter().filter(|(p, a, _)| p == "env" && a.contains(&"mail".to_string())).map(|(_, a, body)| format!("{} || {body}", a.join(" "))).collect();
+        let holds = calls.iter().filter(|(p, a, _)| p == "spira-lc" && a.first().map(String::as_str) == Some("hold")).map(|(_, a, _)| a.clone()).collect();
+        let notes = notes.0.lock().unwrap().iter().filter(|a| a[0] == "note").map(|a| a[2].clone()).collect::<Vec<_>>().join("\n");
+        (mails, holds, notes)
+    }
+
+    #[test]
+    fn a_third_harness_red_start_in_a_row_asks_the_concierge_once_and_holds_the_bead() {
+        let (mails, holds, note) = red_start_after(2);
+        assert_eq!(mails.len(), 1, "{mails:?}");
+        assert!(mails[0].contains("--kind question") && mails[0].contains("--bead sp-a") && mails[0].contains("concierge"), "{mails:?}");
+        let subject = mails[0].split("--subject ").nth(1).unwrap();
+        assert!(subject.split(" --kind").next().unwrap().contains("bd init (server) failed"), "{mails:?}");
+        assert_eq!(holds.len(), 1, "{holds:?}");
+        assert_eq!(&holds[0][..3], ["hold", "sp-a", "manual"]);
+        assert!(note.contains("held"), "{note}");
+    }
+
+    #[test]
+    fn a_second_harness_red_start_only_releases() {
+        let (mails, holds, note) = red_start_after(1);
+        assert!(mails.is_empty() && holds.is_empty(), "{mails:?} {holds:?}");
+        assert!(note.contains("this repeats until the harness config is fixed"), "{note}");
+    }
+
     struct Row(&'static str);
     impl Exec for Row {
         fn exec(&self, prog: &str, args: &[String], _: Option<Vec<u8>>, _: Option<&Path>) -> Out {
