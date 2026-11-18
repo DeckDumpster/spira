@@ -156,7 +156,7 @@ fn bead_states(a: &Value) -> Option<(&str, &str)> {
 }
 
 /// The audits of the branch an `events/<rev>` key says ran, as stored.
-fn branch(events: &Item) -> &[Value] {
+pub(super) fn branch(events: &Item) -> &[Value] {
     let data = &events.value.data;
     let side = if data["refused"].as_bool() == Some(true) { "else" } else { "then" };
     data["evidence"][side].as_array().map_or(&[], Vec::as_slice)

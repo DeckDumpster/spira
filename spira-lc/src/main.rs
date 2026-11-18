@@ -43,6 +43,8 @@ mod mend_watch;
 mod mending;
 mod ops;
 mod passes;
+#[cfg(test)]
+mod peak_alloc;
 mod plane;
 mod reconcile_content;
 mod wire;
