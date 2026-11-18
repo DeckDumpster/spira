@@ -193,10 +193,11 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
 }
 
 const SLOT_MS: u64 = 5 * 3_600_000 + 10 * 60_000;
+const ON_SLOT: &[(&str, &str)] = &[(task::CADENCE_KEY, "*-*-* 05:10:00"), (task::JITTER_KEY, "0")];
 
 fn fresh(hang: bool) -> TaskRig {
     let world = json(&snap(vec![repo("shop", task::Verdict::Met, &[])], &[]));
-    let mut r = TaskRig::new(1, t::handler::<H>(SET).registration())
+    let mut r = TaskRig::new(1, t::handler::<H>(ON_SLOT).registration())
         .unwrap()
         .double(task::OBSERVE, move |_| Ok(world.clone()))
         .double(task::INBOX_APPEND, |_| Ok("appended".into()));
@@ -214,7 +215,7 @@ fn observes(r: &TaskRig) -> usize {
 }
 
 fn restart(r: &mut TaskRig) {
-    r.reopen(t::handler::<H>(SET).registration()).unwrap();
+    r.reopen(t::handler::<H>(ON_SLOT).registration()).unwrap();
     let (_, stream, kind) = H::boot();
     r.tick(stream, kind).unwrap();
 }
@@ -269,7 +270,7 @@ fn the_stamp_is_the_start_of_the_pass_and_survives_a_restart() {
 
 #[test]
 fn a_pass_that_timed_out_is_not_restarted_by_a_restart() {
-    let mut r = TaskRig::new(1, t::handler::<H>(SET).registration()).unwrap().timing_out();
+    let mut r = TaskRig::new(1, t::handler::<H>(ON_SLOT).registration()).unwrap().timing_out();
     r.clock.advance_to(NOW);
     let (_, stream, kind) = H::boot();
     r.tick(stream, kind).unwrap();
@@ -318,7 +319,7 @@ fn a_fired_tick_rearms_the_next_slot_plus_a_seeded_offset() {
     let d = testkit::TempDir::new("repo-contract-rearm");
     let r = rig(&snap(vec![], &[]), d.path());
     let next = r.engine().next_timer_at().expect("the fire re-arms");
-    let slot = NOW + SLOT;
+    let slot = NOW + SLOT_MS;
     assert!((slot..slot + 600_000).contains(&next), "{next} outside [{slot}, +600 s)");
 }
 
