@@ -1,10 +1,12 @@
 # What holds the spira store's space — 2026-11-18
 
 Measurement for sp-ko4ecn. Subject: the `spira` Dolt database, restored from the durable copy
-(`persist.state` finish 2026-11-18 14:03 PST; newest commit `knshbg4o…` "bd: update sp-dx5vkx",
-2026-11-18 22:34Z) with `dolt clone` into a scratch directory, Dolt 2.4.2. The live server was
+(`persist.state` finish 2026-11-18 14:03 PST; newest commit 2026-11-18 22:34Z) with `dolt clone` into a scratch directory, Dolt 2.4.2. The live server was
 never queried. (`dolt backup restore` of the same copy copied every table file in 3 minutes and
 then never wrote its refs in 30; `dolt clone` completed in about 12.)
+
+The brain's store notes (`the-bead-store-filled-its-tmpfs-and-latched-failed`) record a 6.5 GB
+uncompacted store and no breakdown of its contents; this is the first one.
 
 ## Result
 
@@ -13,12 +15,12 @@ then never wrote its refs in 30; `dolt clone` completed in about 12.)
 | part | bytes | share |
 |---|---:|---:|
 | rows at HEAD, all tables (fresh repo, one commit, `dolt gc --full`) | 48,750,619 | 0.6% |
-| history: 215,525 earlier commits (remainder) | 8,504,357,097 | 99.4% |
+| history: 215,525 earlier commits (derived: copy size minus HEAD) | 8,504,357,097 | 99.4% |
 | **durable copy on disk** (`du -sb`, clone of the copy) | **8,553,107,716** | 100% |
 
 Live was 6,068,805,760 B after the 2026-11-18 online collection; the durable copy is 8.5 GB
-because it has not been compacted since. The split is the same shape: the 49 MB of current rows
-cannot account for more than 1% of either.
+because it has not been compacted since. Inference, not measured on a collected copy: the 49 MB
+of current rows cannot account for more than 1% of either size.
 
 ## History by depth
 
@@ -35,11 +37,13 @@ cannot account for more than 1% of either.
 
 Extrapolating the 10,000→50,000 slope (40.1 KB/commit) to 215,526 commits predicts 8.57 GB
 against 8.55 GB measured (0.3% off), so the depth curve is linear at about **40 KB per commit**
-and the history term is independent of the HEAD measurement above. Both decompositions sum to
-the copy's size within 1%.
+and the history term is independent of the HEAD measurement above. The history row in the first
+table is derived, so it sums to the copy by construction; the extrapolation (0.3% off) is the
+only independent check on it.
 
-The history is 215,526 commits in 64 days (2026-09-15 to 2026-11-18), 25 committers, now
-3,600–4,500 a day. One commit is made per `bd` write:
+The history is 215,526 commits in 64 days (2026-09-15 to 2026-11-18), now
+3,370 a day on average. The last seven days, from `dolt_log` grouped by date: 4,202 (11-18, partial),
+3,598, 4,506, 1,724, 1,061, 1,035, 1,418. One commit is made per `bd` write:
 
 | message prefix | commits |
 |---|---:|
@@ -52,8 +56,8 @@ The history is 215,526 commits in 64 days (2026-09-15 to 2026-11-18), 25 committ
 | `dependency: add` | 2,512 |
 | `bd: comment` | 2,265 |
 
-Eight commits per issue (26,532), and each rewrites the path of the prolly tree to the changed
-`issues` row, which is wide.
+About eight commits per issue (26,532). Hypothesis, not measured: each commit rewrites the prolly
+tree path to a changed `issues` row, and `issues` rows are wide (about 1.5 KB each at HEAD).
 
 ## Rows at HEAD, by table
 
@@ -82,10 +86,15 @@ comes close; shrinking `issues` by half would save 20 MB of 8,550.
 The cut is to bound history: keep the newest N commits, squash the older ones into a base
 commit, and `dolt_gc` fully. At the measured slope, keeping 10,000 commits holds the store near
 335 MB and 1,000 near 94 MB, against 8.55 GB. Garbage collection alone cannot do it, because
-every commit is reachable from `main`; that is why 9.3 GB only fell to 6.1 GB.
+every commit is reachable from `main`. Inference: that is why the collection took 9.3 GB only to
+6.1 GB.
 
-Rewriting ancestry on a live RAM-backed store with a durable backup that shares chunks with the
-old history is a design of its own, not an edit to this item. It is filed as **sp-ko4ecn.2**.
+The collector (`store-persist`) is in this repo, but the cut is not a collector change: Dolt 2.4.2
+has no truncate-history operation among `dolt gc` flags or `dolt_gc` options, so it needs an ancestry rewrite proven on a scratch clone. It
+must run under the persist lock on a live RAM-backed store, and it invalidates every chunk the
+durable backup shares with the old history, so the backup must be re-seeded. It also needs the
+operator's decision on whether anything audits old log entries. That is a design, not an edit to
+this item, and it is filed with the build and acceptance as **sp-ko4ecn.2**.
 
 ## Method notes
 
