@@ -156,6 +156,9 @@ tl_summary
 EOF4
 want "tl_arrange: without it a long arrangement trips the case deadline (pre-fix shape)" "exceeded its 1s deadline" "$_RUN_OUT"
 
+want "tl_arrange: the deadline red carries the box's load" "# deadline secs=1 load1=" "$_RUN_OUT"
+want "tl_arrange: the deadline red carries the cpu count" "cpus=" "$_RUN_OUT"
+
 _run <<'EOF4'
 tl_config SPIRA_TEST_CASE_DEADLINE=1
 tl_arrange sleep 3

@@ -427,10 +427,24 @@ _tl_watch() {   # _tl_watch <suite-pid> <dir>
     done
 }
 
+_tl_psi() {     # _tl_psi <file>: the "some" avg10 value, or - when the kernel has no such file
+    local kind rest f
+    [ -r "$1" ] || { echo -; return; }
+    while read -r kind rest; do
+        [ "$kind" = some ] || continue
+        for f in $rest; do case "$f" in avg10=*) echo "${f#avg10=}"; return ;; esac; done
+    done < "$1"
+    echo -
+}
+
 _tl_hung() {    # _tl_hung <suite-pid> <deadline> <case-number> <last-assertion-where> <case-start-us>
-    local top="$1" dl="$2" n="$3" loc="$4" start_us="$5" name
+    local top="$1" dl="$2" n="$3" loc="$4" start_us="$5" name load1 cpus cpu io
+    read -r load1 _ < /proc/loadavg 2>/dev/null
+    cpus="$(getconf _NPROCESSORS_ONLN 2>/dev/null)"
+    cpu="$(_tl_psi /proc/pressure/cpu)"
+    io="$(_tl_psi /proc/pressure/io)"
     name="case $n exceeded its ${dl}s deadline"
-    printf 'not ok %s - %s\n# at %s\n#ms=%s\nBail out! %s\n' "$n" "$name" "$loc" "$(( (${EPOCHREALTIME/./} - start_us) / 1000 ))" "$name" > "/proc/$top/fd/1" 2>/dev/null
+    printf 'not ok %s - %s\n# at %s\n# deadline secs=%s load1=%s cpus=%s cpu_some_avg10=%s io_some_avg10=%s\n#ms=%s\nBail out! %s\n' "$n" "$name" "$loc" "$dl" "${load1:--}" "${cpus:--}" "$cpu" "$io" "$(( (${EPOCHREALTIME/./} - start_us) / 1000 ))" "$name" > "/proc/$top/fd/1" 2>/dev/null
     _tl_jsonl "$name" fail "last assertion at $loc"
     # Gathered before the suite's shell is signalled: once it is gone its children are
     # reparented and no longer found by their parent.
