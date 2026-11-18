@@ -143,8 +143,9 @@ fn holds_socket_or_fifo(p: &Path) -> bool {
             return true;
         }
         if ft.is_dir() {
-            if let Ok(rd) = fs::read_dir(&d) {
-                stack.extend(rd.flatten().map(|e| e.path()));
+            match fs::read_dir(&d) {
+                Ok(rd) => stack.extend(rd.flatten().map(|e| e.path())),
+                Err(_) => return true,
             }
         }
     }
@@ -282,9 +283,6 @@ fn prune_podman(bin: &Path, why: &str, dry: bool, say: &mut dyn FnMut(String)) {
 
 /// Err is the failed positive control: nothing has been removed.
 pub fn run(cfg: &Config, now: u64, held: &[PathBuf], free_mib: &dyn Fn() -> Option<u64>, say: &mut dyn FnMut(String)) -> Result<u64, String> {
-    if let Some(r) = unmatched_require(&cfg.require) {
-        return Err(format!("positive control failed: {r} matches nothing, so an empty sweep proves nothing"));
-    }
     let mut freed = 0u64;
     if let Some(root) = &cfg.tmp_root {
         for c in tmp_plan(root, own_uid(), now, cfg.tmp_idle_secs, held) {
@@ -297,6 +295,9 @@ pub fn run(cfg: &Config, now: u64, held: &[PathBuf], free_mib: &dyn Fn() -> Opti
                 say(format!("failed to remove {}", c.path.display()));
             }
         }
+    }
+    if let Some(r) = unmatched_require(&cfg.require) {
+        return Err(format!("positive control failed: {r} matches nothing, so an empty sweep proves nothing"));
     }
     let free = free_mib().ok_or("cannot read free space")?;
     if free >= cfg.min_free_mib {

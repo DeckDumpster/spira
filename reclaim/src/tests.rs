@@ -222,3 +222,32 @@ fn a_dry_tmp_pass_removes_nothing() {
     let (_, log) = go(&c, &[], 5000);
     assert!(idle.exists() && log.iter().any(|l| l.contains("(dry)")), "{log:?}");
 }
+
+#[test]
+fn an_unreadable_subdirectory_keeps_its_tmp_dir() {
+    use std::os::unix::fs::PermissionsExt;
+    let t = testkit::TempDir::new("reclaim-tmp-unreadable");
+    let d = tmp_dir(t.path(), "tmp.opaque", 9 * HOUR);
+    let sub = d.join("sub");
+    fs::create_dir(&sub).unwrap();
+    let orig = fs::metadata(&sub).unwrap().permissions();
+    fs::set_permissions(&sub, fs::Permissions::from_mode(0)).unwrap();
+    age(&d, 9 * HOUR);
+    let plan = tmp_plan(t.path(), own_uid(), now(), 6 * HOUR, &[]);
+    fs::set_permissions(&sub, orig).unwrap();
+    assert_eq!(verdict_of(&plan, &d), r#"Skip("holds a socket or fifo")"#);
+}
+
+#[test]
+fn an_unmatched_require_does_not_stop_the_tmp_pass() {
+    let t = testkit::TempDir::new("reclaim-tmp-require");
+    let root = t.path().join("tmp");
+    fs::create_dir_all(&root).unwrap();
+    let idle = tmp_dir(&root, "tmp.idle", 9 * HOUR);
+    let mut c = cfg(t.path());
+    c.require = vec![format!("{}/worktree/sp-*", t.path().display())];
+    c.tmp_root = Some(root);
+    let (r, _) = go(&c, &[], 10);
+    assert!(r.unwrap_err().contains("positive control"));
+    assert!(!idle.exists());
+}

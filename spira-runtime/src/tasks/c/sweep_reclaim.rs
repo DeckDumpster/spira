@@ -587,4 +587,41 @@ mod tests {
     fn no_root_and_no_run_dir_trims_nothing() {
         assert_eq!(read(&[]).cache_dir, None);
     }
+
+    fn tmp_pinned(root: &std::path::Path) -> Pinned {
+        Pinned { globs: vec![format!("{}/none-*", root.display())], require: vec![], lease_dir: None, idle_secs: 86_400, target_free_mib: 0, cache_dir: None, podman: String::new(), podman_dir: None, tmp_root: Some(root.join("tmp")), tmp_idle_secs: 3_600 }
+    }
+
+    fn aged_dir(root: &std::path::Path, name: &str, secs: u64) -> std::path::PathBuf {
+        let d = root.join("tmp").join(name);
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("f"), vec![1u8; 8192]).unwrap();
+        let t = std::time::SystemTime::now() - std::time::Duration::from_secs(secs);
+        for p in [d.join("f"), d.clone()] {
+            std::fs::File::open(p).unwrap().set_modified(t).unwrap();
+        }
+        d
+    }
+
+    #[test]
+    fn observe_reports_tmp_dirs_with_a_socket_dir_as_special_and_remove_tmp_refuses_what_is_not_reclaimable() {
+        let t = testkit::TempDir::new("sweep-reclaim-tmp");
+        let (idle, sock) = (aged_dir(t.path(), "tmp.idle", 86_400), aged_dir(t.path(), "tmp-1000", 86_400));
+        let _l = std::os::unix::net::UnixListener::bind(sock.join("default")).unwrap();
+        let young = aged_dir(t.path(), "tmp.young", 5);
+        let outside = t.path().join("outside");
+        std::fs::create_dir(&outside).unwrap();
+        let p = tmp_pinned(t.path());
+        let proc_root = t.path().join("proc");
+        std::fs::create_dir(&proc_root).unwrap();
+        let snap: Snapshot = serde_json::from_str(&observe(&p, &proc_root, vec![]).unwrap()).unwrap();
+        let verdict = |d: &std::path::Path| snap.tmp.iter().find(|c| c.path == d.display().to_string()).map(|c| c.verdict);
+        assert_eq!((verdict(&idle), verdict(&sock), verdict(&young)), (Some(Verdict::Reclaim), Some(Verdict::Special), Some(Verdict::Fresh)));
+        for refused in [&sock, &young, &outside] {
+            assert!(remove_tmp(&p, &proc_root, &refused.display().to_string()).is_err(), "{refused:?}");
+            assert!(refused.exists());
+        }
+        assert!(remove_tmp(&p, &proc_root, &idle.display().to_string()).unwrap().starts_with("reclaimed"));
+        assert!(!idle.exists());
+    }
 }
