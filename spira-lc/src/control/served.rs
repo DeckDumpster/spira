@@ -169,6 +169,36 @@ pub fn create_store() -> (i32, String) {
     }
 }
 
+thread_local! {
+    static CLIENT_REQUEST: std::cell::RefCell<Option<(String, u32)>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Binds the id the client sent to this thread's calls until dropped.
+pub(crate) struct ClientRequest(Option<(String, u32)>);
+
+pub(crate) fn client_request_scoped(id: Option<String>) -> ClientRequest {
+    ClientRequest(CLIENT_REQUEST.with(|c| c.replace(id.map(|i| (i, 0)))))
+}
+
+impl Drop for ClientRequest {
+    fn drop(&mut self) {
+        CLIENT_REQUEST.with(|c| *c.borrow_mut() = self.0.take());
+    }
+}
+
+/// The id for the next store txn of this call: the client's own for the first, `<id>#<n>` for
+/// each further one (a composed verb makes several, and the store dedupes on the id alone),
+/// else a minted one.
+pub(crate) fn call_request_id() -> String {
+    let sent = CLIENT_REQUEST.with(|c| {
+        c.borrow_mut().as_mut().map(|(id, n)| {
+            *n += 1;
+            if *n == 1 { id.clone() } else { format!("{id}#{n}") }
+        })
+    });
+    sent.unwrap_or_else(request_id)
+}
+
 /// A request id no other call in any process mints: each call, a retry included, is its own
 /// request, so a request that lost its race is never answered again as if it had not.
 pub(crate) fn request_id() -> String {
@@ -253,7 +283,7 @@ pub fn dispatch(args: &[String]) -> Option<(i32, String)> {
     };
     Some(match opened(&path) {
         Ok(store) if lifecycle => {
-            let request = request_id();
+            let request = call_request_id();
             let call = state::Call {
                 now: crate::db::now_epoch(),
                 request: &request, inputs: &crate::control::claimable::Live,
@@ -266,7 +296,7 @@ pub fn dispatch(args: &[String]) -> Option<(i32, String)> {
                 state::run(&store, args, &call)
             }
         }
-        Ok(store) if closeout => super::gh_closeout::run(&store, args, &request_id()),
+        Ok(store) if closeout => super::gh_closeout::run(&store, args, &call_request_id()),
         Ok(store) => verbs::run(&store, args),
         Err(e) => (CANNOT_TELL, format!("cannot tell: the control store: {e}")),
     })
@@ -297,7 +327,7 @@ fn dispatch_sections(args: &[String]) -> (i32, String) {
     match opened(&path) {
         Ok(store) if args[0] == spira_lc::rc::VERB => spira_lc::rc::run(store.contract(), args),
         Ok(store) => {
-            let request = request_id();
+            let request = call_request_id();
             let endpoint = spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok();
             let metrics = spira_otel::metrics::MetricsSink::new(
                 endpoint.as_deref(),

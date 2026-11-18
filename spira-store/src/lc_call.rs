@@ -259,9 +259,9 @@ pub fn current_task() -> Option<String> {
 }
 
 /// A request's first line: the argv as a JSON array, or, with a body, caller variables or a
-/// task, an `{"argv"[, "len"][, "caller"][, "task"]}` object (`len` only when a body follows).
-pub fn request_head(argv: &[String], body_len: Option<usize>, caller: &BTreeMap<String, String>, task: Option<&str>) -> Result<String, serde_json::Error> {
-    if body_len.is_none() && caller.is_empty() && task.is_none() {
+/// task or request id, an `{"argv"[, "len"][, "caller"][, "task"][, "request_id"]}` object (`len` only when a body follows).
+pub fn request_head(argv: &[String], body_len: Option<usize>, caller: &BTreeMap<String, String>, task: Option<&str>, request_id: Option<&str>) -> Result<String, serde_json::Error> {
+    if body_len.is_none() && caller.is_empty() && task.is_none() && request_id.is_none() {
         return serde_json::to_string(argv);
     }
     let mut o = serde_json::Map::new();
@@ -275,6 +275,9 @@ pub fn request_head(argv: &[String], body_len: Option<usize>, caller: &BTreeMap<
     if let Some(t) = task {
         o.insert("task".into(), t.into());
     }
+    if let Some(r) = request_id {
+        o.insert("request_id".into(), r.into());
+    }
     serde_json::to_string(&o)
 }
 
@@ -287,7 +290,7 @@ pub fn request_head(argv: &[String], body_len: Option<usize>, caller: &BTreeMap<
 pub fn exchange_once(stream: UnixStream, argv: &[String], stdin: Option<&str>) -> Result<Reply, Fail> {
     let dropped = |why: &str| Fail::Dropped(format!("cannot tell: the lifecycle service took the request but its reply was lost ({why})"));
     let lost = |why: &str| Fail::Final(format!("cannot tell: the lifecycle service took the request but its reply was lost ({why})"));
-    let request = request_head(argv, stdin.map(str::len), &caller_of(argv), current_task().as_deref()).map_err(|_| lost("unserialisable request"))?;
+    let request = request_head(argv, stdin.map(str::len), &caller_of(argv), current_task().as_deref(), None).map_err(|_| lost("unserialisable request"))?;
     let mut bytes = format!("{request}\n").into_bytes();
     bytes.extend_from_slice(stdin.unwrap_or_default().as_bytes());
     (&stream).write_all(&bytes).map_err(|_| dropped("write"))?;
@@ -802,18 +805,26 @@ mod tests {
     /// A content write carries the caller's guard variables — the rune, the czar context and
     /// every stage — and nothing else of its environment; any other request is unchanged.
     #[test]
+    fn a_request_id_rides_the_object_head_and_a_plain_request_stays_an_array() {
+        let argv = vec!["content".to_string(), "note".to_string(), "sp-a".to_string()];
+        let head: serde_json::Value = serde_json::from_str(&request_head(&argv, None, &BTreeMap::new(), None, Some("r-1")).unwrap()).unwrap();
+        assert_eq!((head["request_id"].as_str(), head["argv"].clone()), (Some("r-1"), serde_json::json!(argv)));
+        assert!(request_head(&argv, None, &BTreeMap::new(), None, None).unwrap().starts_with('['));
+    }
+
+    #[test]
     fn a_content_request_carries_the_guard_variables_and_nothing_else() {
         let env = [("SPIRA_RUNE", "czar"), ("SPIRA_CZAR_CLASS", "deadlock"), ("SPIRA_CZAR_TRIGGER_BEAD", "sp-t"), ("SPIRA_CZAR_STAGE_DEADLOCK", "act"), ("SPIRA_DB", "db"), ("HOME", "h")];
         let vars = guard_vars(env.iter().map(|(k, v)| (k.to_string(), v.to_string())));
         assert_eq!(vars.keys().map(String::as_str).collect::<Vec<_>>(), ["SPIRA_CZAR_CLASS", "SPIRA_CZAR_STAGE_DEADLOCK", "SPIRA_CZAR_TRIGGER_BEAD", "SPIRA_RUNE"]);
         let argv: Vec<String> = ["content", "close", "sp-a"].iter().map(|s| s.to_string()).collect();
-        let head: serde_json::Value = serde_json::from_str(&request_head(&argv, None, &vars, None).unwrap()).unwrap();
+        let head: serde_json::Value = serde_json::from_str(&request_head(&argv, None, &vars, None, None).unwrap()).unwrap();
         assert_eq!(head["argv"], serde_json::json!(argv));
         assert_eq!(head["caller"]["SPIRA_CZAR_STAGE_DEADLOCK"], "act");
         assert!(head.get("len").is_none(), "no body, no len");
-        let head: serde_json::Value = serde_json::from_str(&request_head(&argv, Some(4), &vars, None).unwrap()).unwrap();
+        let head: serde_json::Value = serde_json::from_str(&request_head(&argv, Some(4), &vars, None, None).unwrap()).unwrap();
         assert_eq!(head["len"], 4);
-        assert_eq!(request_head(&argv, None, &BTreeMap::new(), None).unwrap(), r#"["content","close","sp-a"]"#, "no caller variables: the plain array");
+        assert_eq!(request_head(&argv, None, &BTreeMap::new(), None, None).unwrap(), r#"["content","close","sp-a"]"#, "no caller variables: the plain array");
         assert!(caller_of(&["list".to_string()]).is_empty(), "only a content call carries them");
     }
 
