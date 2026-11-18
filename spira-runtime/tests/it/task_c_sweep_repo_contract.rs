@@ -266,3 +266,25 @@ fn the_stamp_is_the_start_of_the_pass_and_survives_a_restart() {
     restart(&mut r);
     assert_eq!(t::recorded::<H>(&r).unwrap().last_fired, Some(slot));
 }
+
+#[test]
+fn a_pass_that_timed_out_is_not_restarted_by_a_restart() {
+    let mut r = TaskRig::new(1, t::handler::<H>(SET).registration()).unwrap().timing_out();
+    r.clock.advance_to(NOW);
+    let (_, stream, kind) = H::boot();
+    r.tick(stream, kind).unwrap();
+    r.advance(SLOT_MS).unwrap();
+    assert_eq!(observes(&r), 1);
+    for _ in 0..3 {
+        restart(&mut r);
+    }
+    assert_eq!(observes(&r), 1);
+}
+
+#[test]
+fn fire_stamps_the_start_and_a_completed_observe_keeps_it() {
+    let started = task::decide(&Default::default(), &Carry::default(), &Input::Fire, 7_000).unwrap().0;
+    assert_eq!(started.last_fired, Some(7_000));
+    let done = task::decide(&Default::default(), &started, &Input::Observed(Snapshot::default()), 9_000).unwrap().0;
+    assert_eq!(done.last_fired, Some(7_000));
+}
