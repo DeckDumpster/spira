@@ -105,7 +105,7 @@ fn fetch_bd_events(since: &str) -> Result<Vec<BdAuditEvent>, String> {
          WHERE created_at >= {} ORDER BY created_at, id",
         sql_str(since)
     );
-    let out = spira_config::bounded::bounded(&bd)
+    let out = spira_config::bounded::bounded(&bd) // STORE_DOOR_CONSIDERED="legacy bd-events export for the legacy and backfill modes; shrink-only until it is ported onto spira-lc"
         .args(["-C", &db, "sql", "--json", &query])
         .output()
         .map_err(|e| format!("running {bd}: {e}"))?;
