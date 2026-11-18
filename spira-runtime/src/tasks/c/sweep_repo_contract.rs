@@ -14,7 +14,7 @@
 //! ## Observe
 //!
 //! `sweep.repo_contract.observe` runs `repo-contract check --all` (which names every registered
-//! repo but the home repo) and reads every scoped stop on `<run>`:
+//! repo but the home repo). The pass reads files and refs only and runs no suite. It also reads every scoped stop on `<run>`:
 //!
 //! ```text
 //! Snapshot { repos: [RepoState{ repo, verdict: Met|NotMet|CannotTell, lines }], stops: [StopView{ repo, owner }] }
@@ -78,7 +78,7 @@ pub const KEYS: &[&str] = &[CADENCE_KEY, JITTER_KEY, "SPIRA_HOME_REPO"];
 /// The owner of every stop this task writes, and the only owner whose stop it lifts.
 pub const OWNER: &str = spira_config::scoped_stop::CONTRACT_OWNER;
 const LANE: &str = "claims";
-const CHECK_DEADLINE_MS: u64 = 1_800_000;
+const CHECK_DEADLINE_MS: u64 = 120_000;
 
 pub const SPEC: Spec = Spec { name: NAME, stream: STREAM, tick: TICK, state: STATE, probe: OBSERVE, probe_deadline_ms: CHECK_DEADLINE_MS, cadence_key: CADENCE_KEY, calendar: true, effects: EFFECTS, keys: KEYS, probe_input_key: None };
 
@@ -246,7 +246,7 @@ pub fn observe(proc: &dyn Proc, run: &std::path::Path, home: &str) -> Result<Str
     if run.as_os_str().is_empty() {
         return Err("SPIRA_RUN is empty — refusing".into());
     }
-    let spec = ProcSpec { prog: "repo-contract".into(), args: vec!["check".into(), "--all".into()], stdin: vec![], deadline: std::time::Duration::from_millis(CHECK_DEADLINE_MS - 100_000) };
+    let spec = ProcSpec { prog: "repo-contract".into(), args: vec!["check".into(), "--all".into()], stdin: vec![], deadline: std::time::Duration::from_millis(CHECK_DEADLINE_MS - 20_000) };
     let out = proc.run(&spec)?;
     if !matches!(out.code, Some(0..=2)) {
         return Err(format!("repo-contract check --all exited {:?}: {}", out.code, String::from_utf8_lossy(&out.stderr).trim()));

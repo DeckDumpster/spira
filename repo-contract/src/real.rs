@@ -1,6 +1,6 @@
-//! The ports over git, nix, `work`, `testenv` and the repo registry.
+//! The ports over git, nix and the repo registry.
 
-use crate::ports::{Piece, Ports, Rows, Tier};
+use crate::ports::{Piece, Ports};
 use crate::shell::{self, ShellEnv};
 use spira_config::repo_admin::cut_worktree;
 use spira_config::repos::{self, Registry};
@@ -39,10 +39,6 @@ impl Real {
     }
 }
 
-fn tool(name: &str) -> PathBuf {
-    PathBuf::from(spira_config::release_env::tool(name).unwrap_or_else(|_| name.to_string()))
-}
-
 impl Ports for Real {
     fn read(&self, repo: &str, tree: Option<&Path>, rel: &str) -> Result<Option<String>, String> {
         if let Some(t) = tree {
@@ -71,28 +67,6 @@ impl Ports for Real {
     fn on_path(&self, env: &ShellEnv, program: &str) -> bool {
         use std::os::unix::fs::PermissionsExt;
         env.path_dirs().iter().any(|d| d.join(program).metadata().is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0))
-    }
-
-    fn run_checks(&self, repo: &str, tree: Option<&Path>) -> Result<Rows, String> {
-        self.in_tree(repo, tree, |t| {
-            let out = spira_config::bounded::bounded_for(tool("work"), "3600").arg("checks").current_dir(t).output().map_err(|e| format!("cannot run work checks: {e}"))?;
-            let lines: Vec<String> = String::from_utf8_lossy(&out.stdout).lines().filter(|l| l.get(..3) == Some("-- ")).map(String::from).collect();
-            if lines.is_empty() && !out.status.success() {
-                return Err(format!("work checks: {}", String::from_utf8_lossy(&out.stderr).trim()));
-            }
-            Ok(Rows { ok: out.status.success(), lines })
-        })
-    }
-
-    fn run_tiers(&self, repo: &str, suites: &[String]) -> Result<Vec<Tier>, String> {
-        let out = spira_config::bounded::bounded_for(tool("testenv"), "3600")
-            .args(["--suites", &suites.join(","), &self.land(repo)?, repo])
-            .output()
-            .map_err(|e| format!("cannot run testenv: {e}"))?;
-        match out.status.code() {
-            Some(0) | Some(1) => Ok(vec![Tier { name: suites.join(","), ok: out.status.success() }]),
-            c => Err(format!("testenv exited {c:?}: {}", String::from_utf8_lossy(&out.stderr).trim())),
-        }
     }
 
     fn landing_pieces(&self, repo: &str) -> Vec<Piece> {

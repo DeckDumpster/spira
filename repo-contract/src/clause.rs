@@ -1,4 +1,5 @@
 //! The five clauses of a repository's landing contract, each a pure function of the ports.
+//! The check is read-only: it judges files and refs and runs no suite.
 
 use crate::ports::Ports;
 use std::path::Path;
@@ -111,14 +112,13 @@ fn submit_checks(p: &dyn Ports, repo: &str, tree: Option<&Path>) -> Judged {
     let Some(text) = p.read(repo, tree, CHECKS)? else {
         return Ok(Outcome::NotMet(format!("{CHECKS} does not exist")));
     };
-    match habits::config::parse_checks(&text) {
+    let rows = match habits::config::parse_checks(&text) {
         Err(e) => return Ok(Outcome::NotMet(format!("{CHECKS} does not parse: {e}"))),
         Ok(rows) if rows.is_empty() => return Ok(Outcome::NotMet(format!("{CHECKS} declares no [[check]] rows"))),
-        Ok(_) => {}
-    }
-    let run = p.run_checks(repo, tree)?;
-    let rows = if run.lines.is_empty() { "work checks ran no rows".to_string() } else { run.lines.join("; ") };
-    Ok(if run.ok { Outcome::Met(rows) } else { Outcome::NotMet(format!("work checks fails: {rows}")) })
+        Ok(rows) => rows,
+    };
+    let names: Vec<&str> = rows.iter().map(|r| r.name.as_str()).collect();
+    Ok(Outcome::Met(format!("{CHECKS} declares {} row(s): {}", names.len(), names.join(", "))))
 }
 
 fn test_tiers(p: &dyn Ports, repo: &str) -> Judged {
@@ -133,9 +133,7 @@ fn test_tiers(p: &dyn Ports, repo: &str) -> Judged {
     if default.is_empty() {
         return Ok(Outcome::NotMet(format!("{TESTENV} declares no `default` tiers")));
     }
-    let tiers = p.run_tiers(repo, &default)?;
-    let verdicts = tiers.iter().map(|t| format!("{} {}", t.name, if t.ok { "ok" } else { "FAIL" })).collect::<Vec<_>>().join(", ");
-    Ok(if tiers.iter().all(|t| t.ok) { Outcome::Met(verdicts) } else { Outcome::NotMet(format!("tiers: {verdicts}")) })
+    Ok(Outcome::Met(format!("{TESTENV} declares default tiers: {}", default.join(","))))
 }
 
 fn landing(p: &dyn Ports, repo: &str) -> Judged {
@@ -170,6 +168,7 @@ fn deploy(p: &dyn Ports, repo: &str, tree: Option<&Path>) -> Judged {
     })
 }
 
+/// Read-only: runs no suite.
 /// Judges each clause in order, emitting its line as it settles; a red clause never stops the
 /// next. 0 when all are met, 1 when any is not met, else 2 when any could not be told.
 pub fn run(p: &dyn Ports, repo: &str, tree: Option<&Path>, clauses: &[Clause], emit: &mut dyn FnMut(&str)) -> i32 {
@@ -195,7 +194,7 @@ pub fn without_home(all: Vec<String>, home: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ports::{Piece, Rows, Tier};
+    use crate::ports::Piece;
     use crate::shell::ShellEnv;
     use std::collections::BTreeMap;
     use std::path::PathBuf;
@@ -205,9 +204,6 @@ mod tests {
         files: BTreeMap<String, String>,
         shell: Option<Vec<&'static str>>,
         shell_err: Option<String>,
-        checks_ok: bool,
-        no_lines: bool,
-        tiers_ok: bool,
         bad_piece: Option<(&'static str, &'static str)>,
         mode: &'static str,
         workflow: &'static str,
@@ -227,12 +223,6 @@ mod tests {
         }
         fn on_path(&self, env: &ShellEnv, program: &str) -> bool {
             env.vars.contains_key(&format!("has:{program}"))
-        }
-        fn run_checks(&self, _: &str, _: Option<&Path>) -> Result<Rows, String> {
-            Ok(Rows { ok: self.checks_ok, lines: if self.no_lines { Vec::new() } else { vec!["-- lint: ok".into(), "-- unit: ok".into()] } })
-        }
-        fn run_tiers(&self, _: &str, suites: &[String]) -> Result<Vec<Tier>, String> {
-            Ok(suites.iter().map(|s| Tier { name: s.clone(), ok: self.tiers_ok }).collect())
         }
         fn landing_pieces(&self, _: &str) -> Vec<Piece> {
             let mut v = vec![Piece { name: "registered".into(), detail: "in the repo registry".into(), ok: true }];
@@ -259,7 +249,7 @@ mod tests {
     }
 
     fn green() -> Fake {
-        let mut f = Fake { shell: Some(vec!["cargo", "bash"]), checks_ok: true, tiers_ok: true, mode: "queue", workflow: "Gate", workflow_files: vec!["Gate.yml".into()], ..Fake::default() };
+        let mut f = Fake { shell: Some(vec!["cargo", "bash"]), mode: "queue", workflow: "Gate", workflow_files: vec!["Gate.yml".into()], ..Fake::default() };
         for (k, v) in [
             ("flake.nix", "devShells"),
             ("flake.lock", "{}"),
@@ -316,16 +306,13 @@ mod tests {
     }
 
     #[test]
-    fn submit_checks_met_carries_each_rows_line_and_not_met_when_absent_unparsable_or_red() {
-        assert_eq!(line(&green(), Clause::SubmitChecks), "met submit-checks: -- lint: ok; -- unit: ok");
+    fn submit_checks_met_carries_each_rows_line_and_not_met_when_absent_or_unparsable() {
+        assert_eq!(line(&green(), Clause::SubmitChecks), "met submit-checks: .spira/checks.toml declares 1 row(s): lint");
         let mut f = green();
         f.files.remove(CHECKS);
         assert_eq!(line(&f, Clause::SubmitChecks), "not met submit-checks: .spira/checks.toml does not exist");
         f.files.insert(CHECKS.into(), "not [ toml".into());
         assert!(line(&f, Clause::SubmitChecks).starts_with("not met submit-checks: .spira/checks.toml does not parse"));
-        let mut f = green();
-        f.checks_ok = false;
-        assert!(line(&f, Clause::SubmitChecks).starts_with("not met submit-checks: work checks fails: -- lint: ok"));
     }
 
     #[test]
@@ -336,18 +323,9 @@ mod tests {
     }
 
     #[test]
-    fn submit_checks_met_never_has_an_empty_reason() {
+    fn test_tiers_name_the_declared_default_and_need_one() {
+        assert_eq!(line(&green(), Clause::TestTiers), "met test-tiers: .spira/testenv.toml declares default tiers: unit,lint");
         let mut f = green();
-        f.no_lines = true;
-        assert_eq!(line(&f, Clause::SubmitChecks), "met submit-checks: work checks ran no rows");
-    }
-
-    #[test]
-    fn test_tiers_report_each_tier_and_need_a_default() {
-        assert_eq!(line(&green(), Clause::TestTiers), "met test-tiers: unit ok, lint ok");
-        let mut f = green();
-        f.tiers_ok = false;
-        assert_eq!(line(&f, Clause::TestTiers), "not met test-tiers: tiers: unit FAIL, lint FAIL");
         f.files.insert(TESTENV.into(), "image = \"x\"\n".into());
         assert_eq!(line(&f, Clause::TestTiers), "not met test-tiers: .spira/testenv.toml declares no `default` tiers");
         f.files.remove(TESTENV);
@@ -390,6 +368,14 @@ mod tests {
     }
 
     #[test]
+    fn all_clauses_judge_tiers_and_rows_from_the_files_alone() {
+        let mut lines = Vec::new();
+        run(&green(), "r", None, &ALL, &mut |l| lines.push(l.to_string()));
+        assert!(lines.contains(&"met test-tiers: .spira/testenv.toml declares default tiers: unit,lint".to_string()));
+        assert!(lines.contains(&"met submit-checks: .spira/checks.toml declares 1 row(s): lint".to_string()));
+    }
+
+    #[test]
     fn a_red_clause_does_not_stop_the_later_ones_and_the_exit_is_one() {
         let mut f = green();
         f.files.clear();
@@ -413,8 +399,6 @@ mod tests {
             }
             fn shell_env(&self, r: &str, t: Option<&Path>) -> Result<Option<ShellEnv>, String> { self.0.shell_env(r, t) }
             fn on_path(&self, e: &ShellEnv, p: &str) -> bool { self.0.on_path(e, p) }
-            fn run_checks(&self, r: &str, t: Option<&Path>) -> Result<Rows, String> { self.0.run_checks(r, t) }
-            fn run_tiers(&self, r: &str, s: &[String]) -> Result<Vec<Tier>, String> { self.0.run_tiers(r, s) }
             fn landing_pieces(&self, r: &str) -> Vec<Piece> { self.0.landing_pieces(r) }
             fn land_mode(&self, r: &str) -> String { self.0.land_mode(r) }
             fn workflow(&self, r: &str) -> Result<String, String> { self.0.workflow(r) }
