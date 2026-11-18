@@ -200,7 +200,7 @@ pub struct BeadRow {
     /// Express, from the lifecycle row — never a bd label.
     #[serde(default)]
     pub express: bool,
-    /// The lifecycle row's holds; a held bead is not gated.
+    /// The lifecycle row's holds; any kind but manual stops its gate.
     #[serde(default)]
     pub holds: Vec<String>,
 }

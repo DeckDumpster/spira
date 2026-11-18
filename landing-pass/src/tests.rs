@@ -2190,6 +2190,52 @@ fn a_submitted_bead_is_certified_only_at_its_live_tip() {
     assert_eq!(*h.lc.certified.borrow(), vec!["sp-a t2 pass"]);
 }
 
+fn held_submitted(h: &H, holds: &[&str]) {
+    h.bead("sp-a", "SUBMITTED", &[]);
+    let mut row = h.beads.rows.borrow().get("sp-a").unwrap().clone();
+    row.holds = holds.iter().map(|s| s.to_string()).collect();
+    h.beads.rows.borrow_mut().insert("sp-a".into(), row);
+    h.git.add("spira/sp-a", "t1");
+}
+
+#[test]
+fn a_submitted_bead_held_only_manual_is_gated_inline() {
+    let h = H::new(LandMode::QueueLocal);
+    held_submitted(&h, &["manual"]);
+    h.run();
+    assert_eq!(*h.lc.certified.borrow(), vec!["sp-a t1 pass"]);
+    assert!(h.logged("gated; the hold keeps it out of the cut"));
+}
+
+#[test]
+fn a_submitted_bead_held_only_manual_is_queued_for_gate_worker() {
+    let h = h_worker(LandMode::QueueLocal);
+    held_submitted(&h, &["manual"]);
+    h.run();
+    assert_eq!(crate::gateq::GateQueue::new(&h.s.run).queued().len(), 1);
+    file_verdict(&h, "sp-a", "t1", 0, "");
+    h.run();
+    assert_eq!(*h.lc.certified.borrow(), vec!["sp-a t1 pass"]);
+}
+
+#[test]
+fn a_submitted_bead_held_by_the_legacy_operator_alias_is_gated_like_manual() {
+    let h = H::new(LandMode::QueueLocal);
+    held_submitted(&h, &["operator"]);
+    h.run();
+    assert_eq!(*h.lc.certified.borrow(), vec!["sp-a t1 pass"]);
+}
+
+#[test]
+fn a_submitted_bead_held_manual_and_wait_is_not_gated() {
+    let h = H::new(LandMode::QueueLocal);
+    held_submitted(&h, &["manual", "wait"]);
+    h.run();
+    assert!(h.lc.certified.borrow().is_empty());
+    assert!(h.logged("not gated until the hold lifts"));
+    assert!(!h.logged("gated; the hold keeps it out of the cut"));
+}
+
 /// sp-mve9i: a bead still with its builder (READY, WORKING, REWORK) is never certified,
 /// whatever bd or a label says.
 #[test]

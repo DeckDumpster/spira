@@ -10,6 +10,11 @@ use crate::records::Files;
 use crate::report::Reporter;
 use crate::util::{first_line, tail_bytes, tail_lines};
 use std::cell::{Cell, RefCell};
+
+/// A hold other than manual stops the gate; unknown kinds fail closed.
+pub fn blocks_gate(holds: &[String]) -> bool {
+    holds.iter().any(|h| spira_store::lc_state::hold_kind(h).map(|k| k.as_str()) != Some("manual"))
+}
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
@@ -608,9 +613,12 @@ impl<'a> Pass<'a> {
             Ok(tip) => tip,
             Err(f) => return f,
         };
-        if !bead.holds.is_empty() {
+        if blocks_gate(&bead.holds) {
             self.log(&format!("CHECK6 {id}: {br} is held ({}) — not gated until the hold lifts", bead.holds.join(", ")));
             return Flow::Next;
+        }
+        if !bead.holds.is_empty() {
+            self.log(&format!("CHECK6 {id}: {br} is held (manual) — gated; the hold keeps it out of the cut"));
         }
         if self.beads.in_round(id) {
             self.files.clear_unrounded(br);

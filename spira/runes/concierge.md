@@ -162,7 +162,8 @@ break-glass move and is refused without every field; the event records actor, re
 tip. A SUBMITTED bead is admitted to a round as a provisional member, ranked after the certified ones; its gate keeps running, and a red at the tip the round holds ejects it with the gate's lines. A bead a live dwarf holds is refused.
 A resubmit at the tip a round ejected as red withdraws that red with the evidence it carries, so no
 `queue absolve` is needed; `queue absolve` stays the verb for a red at a tip that is not being resubmitted.
-A REWORK resubmit keeps the manual hold, so the batcher will not cut the bead: cut it by hand with
+A REWORK resubmit keeps the manual hold. The hold keeps the bead out of the batcher's cuts but does not stop
+its gate, so it reaches CERTIFIED with the hold in place; do not lift the hold to certify it. Land it with
 `queue round open --members <id>:<tip> --by concierge`. The batcher notes on a bead why it leaves a
 bead out of a cut (held, ejected-red, or its branch moved), once per cause.
 
