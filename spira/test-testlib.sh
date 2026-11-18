@@ -158,6 +158,16 @@ want "tl_arrange: without it a long arrangement trips the case deadline (pre-fix
 
 want "tl_arrange: the deadline red carries the box's load" "# deadline secs=1 load1=" "$_RUN_OUT"
 want "tl_arrange: the deadline red carries the cpu count" "cpus=" "$_RUN_OUT"
+want "tl_arrange: the deadline red carries cpu and io pressure" "cpu_some_avg10=" "$_RUN_OUT"
+
+_psi_fix="$SCRATCH/psi-$$"
+mkdir -p "$_psi_fix"
+printf 'some avg10=4.50 avg60=1.00 avg300=0.50 total=9\nfull avg10=9.99 avg60=0 avg300=0 total=1\n' > "$_psi_fix/psi"
+_run <<EOF5
+echo "psi=\$(_tl_psi "$_psi_fix/psi") absent=\$(_tl_psi "$_psi_fix/absent")"
+tl_summary
+EOF5
+want "_tl_psi reads the some line's avg10 and prints - for an absent file" "psi=4.50 absent=-" "$_RUN_OUT"
 
 _run <<'EOF4'
 tl_config SPIRA_TEST_CASE_DEADLINE=1
