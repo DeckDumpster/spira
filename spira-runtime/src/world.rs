@@ -1490,4 +1490,16 @@ mod bounded_store_tests {
         assert!(why.contains("store unavailable") && why.contains("25 s"), "{why}");
         assert!(double.0.lock().unwrap().is_empty());
     }
+
+    #[test]
+    fn an_observe_with_the_store_absent_past_its_bound_answers_unreadable_with_the_store_unavailable() {
+        let t = testkit::TempDir::new("observe-bound");
+        let rel = t.path().join("releases");
+        std::fs::create_dir_all(&rel).unwrap();
+        release::machine::enter(&t.path().join("release"), &"a".repeat(40), release::machine::ReleaseState::Activated, "current switched").unwrap();
+        let world = super::World { run_dir: t.path().into(), repo_map: t.path().join("map"), lc_socket: t.path().join("absent.sock"), observe_bound: Some((std::time::Instant::now(), Duration::from_millis(200))), ..Default::default() };
+        let input = serde_json::json!({ "window_s": 3600, "releases": rel, "release_repo": "spira" }).to_string();
+        let snap: crate::tasks::e::watch_transitions::Snapshot = serde_json::from_str(&world.transitions_observed(&input).unwrap()).unwrap();
+        assert!(!snap.readable && snap.why.contains("store unavailable"), "{}", snap.why);
+    }
 }

@@ -1065,6 +1065,17 @@ fn a_second_unreadable_tick_does_not_page_again_and_a_readable_one_clears_blind(
     assert_eq!(lines(&r).iter().filter(|l| l.contains("P0 BLIND")).count(), 2, "a read in between re-arms the page: {:?}", lines(&r));
 }
 
+#[test]
+fn a_timed_out_observe_pages_blind_once_and_the_next_timed_out_one_does_not() {
+    let (_, stream, kind) = WatchTransitions::boot();
+    let mut r = TaskRig::new(1, WatchTransitions::new(config()).registration()).unwrap().timing_out().double(INBOX_APPEND, |_| Ok("appended".into()));
+    r.advance(T0 * 1000).unwrap();
+    r.tick(stream, kind).unwrap();
+    r.advance(300_000).unwrap();
+    let pages = lines(&r).into_iter().filter(|l| l.contains("P0 BLIND") && l.contains("the observe timed out")).count();
+    assert_eq!(pages, 1, "{:?}", lines(&r));
+}
+
 fn ask_stall(now: u64) -> Snapshot {
     let mut s = healthy(now);
     let mut asked = bead("sp-q1", "spira", "READY", now - 3 * HOUR);
