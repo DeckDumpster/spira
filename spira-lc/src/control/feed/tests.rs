@@ -380,6 +380,9 @@ fn audits_answers_the_applied_and_refused_events_after_a_revision_in_pages<B: Ba
     assert_eq!(page["rows"].as_array().unwrap().len(), 1);
     let head = last.to_string();
     assert_eq!(call(s, &["audits", "--after", &head])["rows"], serde_json::json!([]));
+    assert_eq!(call(s, &["audits", "--newest"]), serde_json::json!({ "newest_at": null }), "audits stamped long ago are outside the window");
+    let zero: Vec<String> = ["audits", "--limit", "0"].map(String::from).to_vec();
+    assert_ne!(verbs::run(s, &zero).0, 0);
 }
 
 fn event_seq_names_only_the_beads_with_an_applied_event_after_the_revision<B: Backend>(

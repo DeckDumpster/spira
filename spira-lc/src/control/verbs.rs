@@ -144,11 +144,17 @@ fn audits<B: Backend>(store: &Store<B>, args: &[String]) -> Result<String, Strin
     if args.iter().any(|a| a == "--newest") {
         let floor = crate::db::now_epoch() - NEWEST_WINDOW_SECS;
         let read = store.audits_since(floor).map_err(|e| format!("audits: {e}"))?;
+        if !read.complete {
+            return Err("audits: the scan for the newest audit was cut short".into());
+        }
         let newest = read.audits.iter().map(|l| l.audit.at).max();
         return Ok(json!({ "newest_at": newest }).to_string());
     }
     let after = number(args, "--after", 0).map_err(|e| format!("audits: {e}"))?;
     let limit = number(args, "--limit", AUDITS_PAGE).map_err(|e| format!("audits: {e}"))?;
+    if limit == 0 {
+        return Err("audits: --limit must be at least 1".into());
+    }
     let read = store.audits_after(after).map_err(|e| format!("audits: {e}"))?;
     let mut rows = Vec::new();
     for l in read.audits.iter().take(limit as usize) {
