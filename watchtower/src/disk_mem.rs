@@ -38,6 +38,13 @@ pub fn mem_available_mb(meminfo_path: &Path) -> Option<i64> {
     None
 }
 
+/// `MemTotal` from `/proc/meminfo`, in whole MB.
+pub fn mem_total_mb(meminfo_path: &Path) -> Option<i64> {
+    let text = std::fs::read_to_string(meminfo_path).ok()?;
+    let rest = text.lines().find_map(|l| l.strip_prefix("MemTotal:"))?;
+    Some(rest.split_whitespace().next()?.parse::<i64>().ok()? / 1024)
+}
+
 /// The root filesystem's Use%, as `df --output=pcent /` printed it.
 pub fn disk_root_pct() -> Option<i64> {
     crate::fsstat::usage("/").map(|u| u.used_pct)

@@ -22,6 +22,8 @@ pub struct Cfg {
     pub oom_hold_secs: i64,
     pub tmp_path: String,
     pub tmp_floor_mib: i64,
+    pub tmp_held_max_pct: i64,
+    pub meminfo_path: String,
     pub disk_floor_pct: i64,
     pub disk_fill_hours: i64,
     pub disk_watch_paths: Vec<String>,
@@ -239,11 +241,6 @@ pub fn oom_restarts(cfg: &Cfg, now: i64, run_dir: &Path) -> Reading {
 
 // ---- (c) room and pressure ----------------------------------------------------------
 
-/// `(available MiB, Use%, size MiB)` of the filesystem holding `path`.
-fn df(path: &str) -> Option<(i64, i64, Option<i64>)> {
-    crate::fsstat::usage(path).map(|u| (u.avail_mib, u.used_pct, Some(u.size_mib)))
-}
-
 /// The `full avg60` of a `/proc/pressure/<resource>` file.
 pub fn psi_full_avg60(text: &str) -> Option<f64> {
     let line = text.lines().find(|l| l.starts_with("full "))?;
@@ -261,10 +258,162 @@ fn cond(key: &str, title: String, body: String, sustain: i64) -> Cond {
 }
 
 pub fn pressure(cfg: &Cfg) -> Reading {
+    pressure_with(cfg, &crate::fsstat::usage, &pid_alive)
+}
+
+fn wall_now() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64)
+}
+
+fn pid_alive(pid: u32) -> bool {
+    Path::new(system_paths::PROC).join(pid.to_string()).exists()
+}
+
+/// One top-level entry of the tmpfs, sized by allocated blocks.
+pub struct TmpEntry {
+    pub name: String,
+    pub mib: u64,
+    pub age_secs: u64,
+    pub unreadable: u64,
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct TmpClass {
+    pub name: String,
+    pub count: usize,
+    pub mib: u64,
+    pub oldest_secs: u64,
+    pub live: usize,
+    pub dead: usize,
+    pub unreadable: u64,
+}
+
+fn random_suffix(s: &str) -> bool {
+    !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric())
+}
+
+/// The class an entry name belongs to, and the owning pid when the name carries one.
+fn class_of(name: &str) -> (String, Option<u32>) {
+    if name.strip_prefix("tmp.").is_some_and(random_suffix) {
+        return ("tmp.*".into(), None);
+    }
+    if name.strip_prefix(".tmp").is_some_and(random_suffix) {
+        return (".tmp*".into(), None);
+    }
+    let parts: Vec<&str> = name.split('-').collect();
+    for i in 1..parts.len().saturating_sub(1) {
+        if let Ok(pid) = parts[i].parse::<u32>() {
+            return (parts[..i].join("-"), Some(pid));
+        }
+    }
+    (name.to_string(), None)
+}
+
+pub fn group_tmp(entries: &[TmpEntry], alive: &dyn Fn(u32) -> bool) -> Vec<TmpClass> {
+    let mut by: BTreeMap<String, TmpClass> = BTreeMap::new();
+    for e in entries {
+        let (name, pid) = class_of(&e.name);
+        let c = by.entry(name.clone()).or_insert_with(|| TmpClass { name, ..Default::default() });
+        c.count += 1;
+        c.mib += e.mib;
+        c.oldest_secs = c.oldest_secs.max(e.age_secs);
+        c.unreadable += e.unreadable;
+        match pid.map(alive) {
+            Some(true) => c.live += 1,
+            Some(false) => c.dead += 1,
+            None => {}
+        }
+    }
+    let mut out: Vec<TmpClass> = by.into_values().collect();
+    out.sort_by(|a, b| b.mib.cmp(&a.mib).then_with(|| a.name.cmp(&b.name)));
+    out
+}
+
+/// Allocated MiB under `path` (lstat; links are not followed) and the count of entries that could not be read.
+fn tree_size(path: &Path) -> (u64, u64) {
+    use std::os::unix::fs::MetadataExt;
+    let Ok(md) = std::fs::symlink_metadata(path) else { return (0, 1) };
+    let mut bytes = md.blocks() * 512;
+    let mut bad = 0;
+    if md.is_dir() {
+        match std::fs::read_dir(path) {
+            Ok(rd) => {
+                for child in rd {
+                    match child {
+                        Ok(c) => {
+                            let (b, u) = tree_size(&c.path());
+                            bytes += b;
+                            bad += u;
+                        }
+                        Err(_) => bad += 1,
+                    }
+                }
+            }
+            Err(_) => bad += 1,
+        }
+    }
+    (bytes, bad)
+}
+
+pub fn scan_tmp(root: &str, now: i64) -> Vec<TmpEntry> {
+    let Ok(rd) = std::fs::read_dir(root) else { return Vec::new() };
+    let mut out = Vec::new();
+    for ent in rd {
+        let Ok(ent) = ent else { continue };
+        let name = ent.file_name().to_string_lossy().into_owned();
+        let md = std::fs::symlink_metadata(ent.path());
+        let age_secs = md
+            .as_ref()
+            .ok()
+            .and_then(|m| m.modified().ok())
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map_or(0, |d| (now - d.as_secs() as i64).max(0) as u64);
+        let is_link = md.as_ref().is_ok_and(|m| m.file_type().is_symlink());
+        let (bytes, unreadable) = if is_link { (0, 1) } else { tree_size(&ent.path()) };
+        out.push(TmpEntry { name, mib: bytes >> 20, age_secs, unreadable });
+    }
+    out
+}
+
+fn age(secs: u64) -> String {
+    match secs {
+        s if s >= 86_400 => format!("{}d", s / 86_400),
+        s if s >= 3_600 => format!("{}h", s / 3_600),
+        s => format!("{}m", s / 60),
+    }
+}
+
+pub fn render_tmp_classes(path: &str, classes: &[TmpClass]) -> String {
+    let mut out = format!("Top-level entries of {path} by owner class (largest first):\n\n");
+    for c in classes.iter().take(10) {
+        let pids = if c.live + c.dead > 0 { format!(", owning pids {} live / {} dead", c.live, c.dead) } else { String::new() };
+        let bad = if c.unreadable > 0 { format!(", {} unreadable", c.unreadable) } else { String::new() };
+        out.push_str(&format!("- {}: {} MiB in {}, oldest {}{pids}{bad}\n", c.name, c.mib, c.count, age(c.oldest_secs)));
+    }
+    if classes.len() > 10 {
+        out.push_str(&format!("- ... and {} smaller classes\n", classes.len() - 10));
+    }
+    out.push_str(&format!("\nFix the tool that wrote the largest class; a class whose owning pids are all dead is a leftover. Re-measure with `du -xsh {path}/* | sort -h | tail`.\n"));
+    out
+}
+
+pub fn pressure_with(cfg: &Cfg, usage: &dyn Fn(&str) -> Option<crate::fsstat::Usage>, alive: &dyn Fn(u32) -> bool) -> Reading {
     let mut standing = Vec::new();
     let mut readable = false;
-    if let Some((avail, _, size)) = df(&cfg.tmp_path) {
+    if let Some(u) = usage(&cfg.tmp_path) {
+        let (avail, size) = (u.avail_mib, Some(u.size_mib));
         readable = true;
+        let total = crate::disk_mem::mem_total_mb(Path::new(&cfg.meminfo_path));
+        let held = u.size_mib - u.avail_mib;
+        if let Some(total) = total.filter(|t| held > t * cfg.tmp_held_max_pct / 100) {
+            let classes = group_tmp(&scan_tmp(&cfg.tmp_path, wall_now()), alive);
+            standing.push(cond(
+                "tmp-held",
+                format!("TMPFS HOLDS RAM: {} holds {held} MiB, {}% of {total} MiB memory", cfg.tmp_path, held * 100 / total),
+                render_tmp_classes(&cfg.tmp_path, &classes),
+                0,
+            ));
+        }
         // A filesystem smaller than the floor can never satisfy it: that is a prerequisite
         // for install-time checking, not a condition a tick can clear.
         let unsatisfiable = size.is_some_and(|sz| sz < cfg.tmp_floor_mib);
@@ -870,6 +1019,8 @@ mod tests {
             oom_hold_secs: 21600,
             tmp_path: system_paths::TMP.into(),
             tmp_floor_mib: 100,
+            tmp_held_max_pct: 20,
+            meminfo_path: dir.join("meminfo").to_string_lossy().into_owned(),
             disk_floor_pct: 15,
             disk_fill_hours: 6,
             disk_watch_paths: vec!["run-dir".into(), "nix-store".into(), "build-pool".into()],
@@ -878,6 +1029,71 @@ mod tests {
             psi_full_avg60: 10.0,
             psi_sustain_secs: 300,
         }
+    }
+
+    fn usage_held(held_mib: i64) -> impl Fn(&str) -> Option<crate::fsstat::Usage> {
+        move |_| Some(crate::fsstat::Usage { avail_mib: 4096 - held_mib, size_mib: 4096, used_pct: 0 })
+    }
+
+    fn tmp_cfg(d: &Path) -> Cfg {
+        let mut c = cfg(d);
+        c.tmp_path = d.join("tmp").to_string_lossy().into_owned();
+        std::fs::create_dir_all(&c.tmp_path).unwrap();
+        std::fs::write(&c.meminfo_path, "MemTotal:  1024000 kB\nMemAvailable: 512000 kB\n").unwrap();
+        c
+    }
+
+    #[test]
+    fn tmp_held_pages_above_the_share_of_memory_and_not_below() {
+        let d = testkit::TempDir::new("wt-tmp-held");
+        let c = tmp_cfg(&d);
+        let none = |_: u32| false;
+        let at = |mib| keys(pressure_with(&c, &usage_held(mib), &none));
+        assert!(at(150).is_empty());
+        assert!(at(200).is_empty(), "exactly the share is not over it");
+        assert_eq!(at(250), vec!["tmp-held"]);
+        std::fs::create_dir_all(Path::new(&c.tmp_path).join("repo-check-4242-1")).unwrap();
+        let s = standing(pressure_with(&c, &usage_held(250), &none));
+        assert!(s[0].body.contains("- repo-check:") && s[0].body.contains("0 live / 1 dead"), "{}", s[0].body);
+        assert!(s[0].title.starts_with("TMPFS HOLDS RAM:") && s[0].title.contains("250 MiB, 25% of 1000 MiB"), "{}", s[0].title);
+    }
+
+    #[test]
+    fn tmp_held_stays_silent_when_memory_cannot_be_read() {
+        let d = testkit::TempDir::new("wt-tmp-held-nomem");
+        let mut c = tmp_cfg(&d);
+        c.meminfo_path = d.join("absent").to_string_lossy().into_owned();
+        assert!(keys(pressure_with(&c, &usage_held(3000), &|_| false)).is_empty());
+    }
+
+    #[test]
+    fn tmp_entries_group_by_owner_class_and_mark_pid_state() {
+        let e = |n: &str| TmpEntry { name: n.into(), mib: 10, age_secs: 5, unreadable: 0 };
+        let entries = [e("tmp.aaaaaaaaaa"), e("tmp.bbbbbbbbbb"), e(".tmpXyZ123"), e("repo-check-4242-1"), e("base-dk-target")];
+        let classes = group_tmp(&entries, &|_| false);
+        assert_eq!(classes.len(), 4);
+        let by = |n: &str| classes.iter().find(|c| c.name == n).unwrap_or_else(|| panic!("no class {n}"));
+        assert_eq!(by("tmp.*").count, 2);
+        assert_eq!((by("repo-check").dead, by("repo-check").live), (1, 0));
+        assert_eq!(by("base-dk-target").count, 1);
+        let live = group_tmp(&entries, &|p| p == 4242);
+        assert_eq!(live.iter().find(|c| c.name == "repo-check").unwrap().live, 1);
+    }
+
+    #[test]
+    fn tmp_scan_counts_a_symlink_as_unreadable_and_sizes_a_directory() {
+        let d = testkit::TempDir::new("wt-tmp-scan");
+        let c = tmp_cfg(&d);
+        let root = Path::new(&c.tmp_path);
+        std::fs::create_dir_all(root.join("tmp.abcdefghij")).unwrap();
+        std::fs::write(root.join("tmp.abcdefghij/f"), vec![1u8; 3 << 20]).unwrap();
+        std::os::unix::fs::symlink("/", root.join("link")).unwrap();
+        let got = scan_tmp(&c.tmp_path, wall_now());
+        let dir = got.iter().find(|e| e.name == "tmp.abcdefghij").unwrap();
+        assert!(dir.mib >= 3);
+        assert_eq!(got.iter().find(|e| e.name == "link").unwrap().unreadable, 1);
+        let body = render_tmp_classes(&c.tmp_path, &group_tmp(&got, &|_| false));
+        assert!(body.contains("- tmp.*:") && body.contains("1 unreadable"), "{body}");
     }
 
     fn standing(r: Reading) -> Vec<Cond> {
