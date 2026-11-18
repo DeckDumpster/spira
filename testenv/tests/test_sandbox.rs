@@ -133,17 +133,20 @@ fn print_args_for_a_binary_is_what_the_landing_ref_printed() {
     let before = std::process::Command::new(&copy).args(["--print-args", system_paths::USR_BIN_TRUE, "a", "b"]).output();
     fs::remove_file(&copy).unwrap();
     let before = String::from_utf8(before.unwrap().stdout).unwrap();
-    let mut now = print_args(&[system_paths::USR_BIN_TRUE, "a", "b"]);
-    // The binds added since: the cargo config files, with an empty wrapper, so a cargo inside resolves the box's profile.
-    for name in [".cargo/config.toml", ".cargo/config"] {
-        if let Some(i) = now.windows(3).position(|w| w[0] == "--ro-bind" && w[1].ends_with(name) && w[1] == w[2]) {
-            now.drain(i..i + 3);
+    let strip = |mut args: Vec<String>| {
+        for name in [".cargo/config.toml", ".cargo/config"] {
+            if let Some(i) = args.windows(3).position(|w| w[0] == "--ro-bind" && w[1].ends_with(name) && w[1] == w[2]) {
+                args.drain(i..i + 3);
+            }
         }
-    }
-    if let Some(i) = now.windows(3).position(|w| w[0] == "--setenv" && w[1] == "RUSTC_WRAPPER" && w[2].is_empty()) {
-        now.drain(i..i + 3);
-    }
-    assert_eq!(now, before.lines().collect::<Vec<_>>());
+        if let Some(i) = args.windows(3).position(|w| w[0] == "--setenv" && w[1] == "RUSTC_WRAPPER" && w[2].is_empty()) {
+            args.drain(i..i + 3);
+        }
+        args
+    };
+    let now = strip(print_args(&[system_paths::USR_BIN_TRUE, "a", "b"]));
+    let before = strip(before.lines().map(String::from).collect());
+    assert_eq!(now, before);
 }
 
 fn gate_environment_runner(fixture_home: &Path, release: &Path, tail: &str, args: &[&str]) -> std::process::Output {
