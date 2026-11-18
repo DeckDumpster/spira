@@ -174,6 +174,8 @@ fn a_quiet_tick_of_each_task_that_read_the_store_every_tick_never_reaches_its_so
         assert!(cockpit_collect::probes::lc::state_index_of(&["sp-a".to_string()]).unwrap().contains_key("sp-a"), "the cockpit reads its ids");
         assert!(cockpit_collect::probes::lc::held_rows("manual").unwrap().is_empty(), "the cockpit lists the manual holds");
         assert_eq!(cockpit_collect::probes::round::list_batches_live().as_deref(), Some("[]"), "the cockpit reads the round history");
+        let real = hel::real::Real::minimal(dir.path().to_path_buf(), dir.path().join("run"), None);
+        spira_runtime::tasks::c::hel_reap_stale::observe(&real, &lc, dir.path()).expect("hel.reap_stale observes from the held rows");
     };
     tick();
     let first = store.asked.lock().unwrap().clone();
