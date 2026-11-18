@@ -42,7 +42,7 @@ use spira_config::process::{cfg, cfg_parse};
 use crate::tasks::d::pattern;
 use crate::watchers::dependency;
 use crate::watchers::halt::Halt;
-use crate::watchers::{answers_observe, carried, iso8601, restart_excuses_read, INBOX_APPEND};
+use crate::watchers::{answers_observe, carried, iso8601, INBOX_APPEND};
 
 pub const NAME: &str = "watch.transitions";
 pub const STREAM: &str = "watch.transitions";
@@ -70,6 +70,9 @@ pub const KEYS: &[&str] = &[
 /// row's declared cadence.
 pub const DEFAULT_PERIOD_MS: u64 = 300_000;
 const DEADLINE_MS: u64 = 30_000;
+
+/// What an observe's store calls share: the deadline less a margin for the rest of the observe.
+pub const STORE_BOUND: std::time::Duration = std::time::Duration::from_millis(DEADLINE_MS - 5_000);
 const TAG: &str = "transitions";
 /// The states tabled, in flow order; `ASK` is the ask-held row, orthogonal to state.
 pub const ROWS: [&str; 7] = ["READY", "WORKING", "SUBMITTED", "CERTIFIED", "IN_DELIVERY", "REWORK", "ASK"];
@@ -247,9 +250,6 @@ pub struct Snapshot {
     pub owners: BTreeMap<String, Owner>,
     #[serde(default)]
     pub halt: Option<Halt>,
-    /// Seconds the store server had been up when this was read; `None` when systemd could not say.
-    #[serde(default)]
-    pub store_up_s: Option<u64>,
 }
 
 /// An edge owner's last sign of life, epoch seconds, and the action of its that failed, if one did.
@@ -332,8 +332,6 @@ pub struct Carry {
     pub halted: String,
     /// The last time a halt was seen: no edge's wait counts from before it.
     pub resumed_at: u64,
-    /// The read just after an activation that was let go unreported; the next unreadable one pages.
-    pub retried: bool,
 }
 
 /// One state's waiting work: count and ages, seconds.
@@ -592,7 +590,6 @@ pub fn snapshot_of(
         open_rounds: None,
         owners: BTreeMap::new(),
         halt: None,
-        store_up_s: None,
     })
 }
 
@@ -755,7 +752,7 @@ pub fn observe(
         .map(|(_, e)| e.at)
         .max();
     let activated = crate::watchers::last_activation(run_dir);
-    let blind = |why: &str| Snapshot { activated_at: activated, store_up_s: crate::world::store_up_s(), ..blind(why) };
+    let blind = |why: &str| Snapshot { activated_at: activated, ..blind(why) };
     let in_effect = releases_in_effect(&releases, releases_dir);
     let window = window_s.to_string();
     let after = if current.is_some() {
@@ -840,21 +837,14 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> (Car
     }
     next.halted.clear();
     if !snap.readable {
-        if !carry.blind && !carry.retried && restart_excuses_read(snap.activated_at, snap.store_up_s, now) {
-            next.retried = true;
-            return (next, acts);
-        }
-        let after = if carry.retried { snap.activated_at.map_or(String::new(), |at| format!(", still unreadable on the retry after the activation at {}", iso8601(at))) } else { String::new() };
         if !carry.blind {
-            acts.push(say(now_ms, &format!("P0 BLIND: the lifecycle control store cannot be read ({}{after}), so no state's wait is being watched — this is not an all-clear", snap.why)));
+            acts.push(say(now_ms, &format!("P0 BLIND: the lifecycle control store cannot be read ({}), so no state's wait is being watched — this is not an all-clear", snap.why)));
         }
         acts.push(say(now_ms, &format!("WAIT BLIND: {}", snap.why)));
         next.blind = true;
-        next.retried = false;
         return (next, acts);
     }
     next.blind = false;
-    next.retried = false;
     next.delivered = carry.delivered.iter().filter(|(_, at)| **at >= snap.horizon).map(|(r, at)| (r.clone(), *at)).collect();
     for (id, repo) in &carry.in_delivery {
         if !snap.beads.iter().any(|b| &b.id == id) {
@@ -902,7 +892,7 @@ impl WatchTransitions {
     }
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("blind"), runtime::rows::Part::Field("stalled"), runtime::rows::Part::Map { name: "in_delivery", drop: &[] }, runtime::rows::Part::Map { name: "delivered", drop: &[] }, runtime::rows::Part::Field("halted"), runtime::rows::Part::Field("resumed_at"), runtime::rows::Part::Field("retried")];
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("blind"), runtime::rows::Part::Field("stalled"), runtime::rows::Part::Map { name: "in_delivery", drop: &[] }, runtime::rows::Part::Map { name: "delivered", drop: &[] }, runtime::rows::Part::Field("halted"), runtime::rows::Part::Field("resumed_at")];
 
 impl Handler for WatchTransitions {
     fn interests(&self) -> &[EventKindTag] {

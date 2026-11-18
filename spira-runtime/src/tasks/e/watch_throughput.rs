@@ -41,7 +41,7 @@ use spira_config::process::cfg_parse;
 use crate::tasks::d::pattern;
 use crate::watchers::dependency;
 use crate::watchers::halt::Halt;
-use crate::watchers::{carried, iso8601, just_activated, INBOX_APPEND};
+use crate::watchers::{carried, INBOX_APPEND};
 
 pub const NAME: &str = "watch.throughput";
 pub const STREAM: &str = "watch.throughput";
@@ -54,6 +54,9 @@ pub const EFFECTS: &[&str] = &[OBSERVE, FILE, CLEAR, INBOX_APPEND];
 pub const KEYS: &[&str] = &["SPIRA_THROUGHPUT_STALL_SECS", "SPIRA_THROUGHPUT_ABANDON_COUNT", "SPIRA_THROUGHPUT_ABANDON_WINDOW", "SPIRA_THROUGHPUT_RATIO_MIN_PCT", "SPIRA_THROUGHPUT_RATIO_MIN_RUNS", "SPIRA_THROUGHPUT_PASSED_GRACE", "SPIRA_ID_PREFIX"];
 pub const CADENCE_MS: u64 = 60_000;
 const DEADLINE_MS: u64 = 60_000;
+
+/// What an observe's store calls share: the deadline less a margin for the rest of the observe.
+pub const STORE_BOUND: std::time::Duration = std::time::Duration::from_millis(DEADLINE_MS - 10_000);
 const FILE_DEADLINE_MS: u64 = 120_000;
 const TAG: &str = "throughput";
 
@@ -152,15 +155,9 @@ pub struct Snapshot {
     /// The newest release activation, epoch seconds.
     #[serde(default)]
     pub activated_at: Option<u64>,
-    /// Seconds the store server had been up when this was read; `None` when systemd could not say.
-    #[serde(default)]
-    pub store_up_s: Option<u64>,
     /// The refusal the failing read returned; empty when the snapshot is readable.
     #[serde(default)]
     pub why: String,
-    /// The newest activation whose record says it restarted the store server: epoch seconds, sha.
-    #[serde(default)]
-    pub store_restart: Option<(u64, String)>,
     /// Lifecycle state of every bead in a live state (`dependency::LIVE`), in any repo.
     #[serde(default)]
     pub states: BTreeMap<String, String>,
@@ -203,10 +200,6 @@ pub struct Carry {
     pub halted: String,
     /// The last time a halt was seen: no wait counts from before it.
     pub resumed_at: u64,
-    /// The read just after an activation that was let go unreported; the next unreadable one pages.
-    pub retried: bool,
-    /// When the landings were last readable after a recorded store restart, epoch seconds; 0 before.
-    pub readable_at: u64,
     /// Repo → the clause of the dependency wait its stall is excused by.
     pub waiting_on: BTreeMap<String, String>,
 }
@@ -256,28 +249,14 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> Verd
     }
     next.halted.clear();
     if !snap.readable {
-        if !carry.blind && !carry.retried {
-            next.retried = true;
-            return Verdict { carry: next, acts };
-        }
         if !carry.blind {
-            let after = if just_activated(snap.activated_at, now_ms / 1000) { snap.activated_at.map_or(String::new(), |at| format!(" (still unreadable on the retry after the activation at {})", iso8601(at))) } else { String::new() };
             let refusal = if snap.why.is_empty() { String::new() } else { format!(" ({})", snap.why) };
-            let restarted = match &snap.store_restart {
-                Some((at, sha)) if *at >= carry.readable_at => format!(": the store server was restarted by the activation of {} at {}, and the store has not answered since", &sha[..sha.len().min(12)], iso8601(*at)),
-                _ => String::new(),
-            };
-            acts.push(say(now_ms, &format!("P0 BLIND: the landings cannot be read{refusal}{after}{restarted}, so landing stalls are not being checked")));
+            acts.push(say(now_ms, &format!("P0 BLIND: the landings cannot be read{refusal}, so landing stalls are not being checked")));
         }
         next.blind = true;
-        next.retried = false;
         return Verdict { carry: next, acts };
     }
     next.blind = false;
-    next.retried = false;
-    if snap.store_restart.as_ref().is_some_and(|(at, _)| *at >= carry.readable_at) {
-        next.readable_at = now_ms / 1000;
-    }
 
     next.waiting_on.clear();
     next.stalled.retain(|repo, _| snap.landings.iter().any(|l| l.repo == *repo && is_stalled(l, now_ms, cfg)));
@@ -365,7 +344,7 @@ impl WatchThroughput {
     }
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("blind"), runtime::rows::Part::Map { name: "stalled", drop: &[] }, runtime::rows::Part::Field("starved"), runtime::rows::Part::Field("diluted"), runtime::rows::Part::Field("unlanded"), runtime::rows::Part::Field("held"), runtime::rows::Part::Field("undated"), runtime::rows::Part::Field("halted"), runtime::rows::Part::Field("resumed_at"), runtime::rows::Part::Field("retried"), runtime::rows::Part::Field("readable_at"), runtime::rows::Part::Map { name: "waiting_on", drop: &[] }];
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("blind"), runtime::rows::Part::Map { name: "stalled", drop: &[] }, runtime::rows::Part::Field("starved"), runtime::rows::Part::Field("diluted"), runtime::rows::Part::Field("unlanded"), runtime::rows::Part::Field("held"), runtime::rows::Part::Field("undated"), runtime::rows::Part::Field("halted"), runtime::rows::Part::Field("resumed_at"), runtime::rows::Part::Map { name: "waiting_on", drop: &[] }];
 
 impl Handler for WatchThroughput {
     fn interests(&self) -> &[EventKindTag] {

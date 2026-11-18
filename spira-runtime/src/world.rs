@@ -62,6 +62,8 @@ pub struct World {
     pub export_bin: String,
     /// The batch machine is served from the control store, so a round the store does not hold is stale.
     pub batches_on_store: bool,
+    /// When set, every store call of an observe shares this bound: (started, total).
+    pub observe_bound: Option<(std::time::Instant, std::time::Duration)>,
 }
 
 pub struct PrTarget {
@@ -427,6 +429,9 @@ impl World {
     /// One spira-lc call, retried so a store restart inside the tick is not an outage; an error
     /// names the command and what the store said.
     fn lc_named(&self, argv: &[&str]) -> Result<String, String> {
+        if let Some((began, total)) = self.observe_bound {
+            return lc_bounded(&spira_store::lc_call::LcClient::socket(&self.lc_socket), total, began.elapsed(), argv);
+        }
         let mut last = String::new();
         for attempt in 0..STORE_ATTEMPTS {
             if attempt > 0 {
@@ -633,6 +638,7 @@ impl World {
     fn lc_json(&self, argv: &[&str]) -> Result<Value, String> {
         let text = match store_view::held_read(argv) {
             Some(held) => held.map_err(|e| e.to_string())?,
+            None if self.observe_bound.is_some() => self.lc_named(argv)?,
             None => lc_call(&self.lc_socket, argv).map_err(|e| e.to_string())?,
         };
         serde_json::from_str(&text).map_err(|e| format!("{} unparsed: {e}", argv[0]))
@@ -918,12 +924,16 @@ impl World {
     /// The day's landings and rounds for `watch.throughput`: per repo, the beads landed on its
     /// landing ref by hour and the beads waiting to land, and every repo's rounds from the batch rows.
     pub fn throughput_snapshot(&self, input: &str) -> Result<String, String> {
+        let bounded = World { observe_bound: Some((std::time::Instant::now(), crate::tasks::e::watch_throughput::STORE_BOUND)), ..self.clone() };
+        bounded.throughput_observed(input)
+    }
+
+    fn throughput_observed(&self, input: &str) -> Result<String, String> {
         let p: ThroughputParams = serde_json::from_str(input).map_err(|e| format!("throughput params unparsed: {e}"))?;
         let day = 24 * 3600;
         let halt = read_halt(&self.run_dir);
         let activated_at = crate::watchers::last_activation(&self.run_dir);
-        let store_restart = crate::watchers::last_store_restart(&self.run_dir);
-        let blind = |why: String| ThroughputSnapshot { readable: false, halt: halt.clone(), activated_at, store_up_s: store_up_s(), why, store_restart: store_restart.clone(), ..Default::default() };
+        let blind = |why: String| ThroughputSnapshot { readable: false, halt: halt.clone(), activated_at, why, ..Default::default() };
         let prefix = match spira_config::process::cfg("SPIRA_ID_PREFIX") {
             Ok(p) => p,
             Err(e) => return to_json(&blind(format!("SPIRA_ID_PREFIX: {e}"))),
@@ -950,7 +960,7 @@ impl World {
         let unlanded = unlanded_rounds(batches, p.now);
         let parts = self.round_record_partition();
         let records = Records { clear: parts.clear.iter().map(|f| f.display().to_string()).collect(), held: parts.held };
-        to_json(&ThroughputSnapshot { readable: true, landings, repos, unlanded, records, halt, activated_at, store_up_s: None, store_restart, states, ..Default::default() })
+        to_json(&ThroughputSnapshot { readable: true, landings, repos, unlanded, records, halt, activated_at, states, ..Default::default() })
     }
 
     /// Every checkout of the repo map, as the registry resolves it. An unreadable map is one
@@ -1004,6 +1014,11 @@ impl World {
     /// control store, and the newest activation among the release machine records. Anything
     /// unreadable, or no release ever recorded, answers BLIND rather than an empty table.
     pub fn transitions_snapshot(&self, input: &str) -> Result<String, String> {
+        let bounded = World { observe_bound: Some((std::time::Instant::now(), crate::tasks::e::watch_transitions::STORE_BOUND)), ..self.clone() };
+        bounded.transitions_observed(input)
+    }
+
+    fn transitions_observed(&self, input: &str) -> Result<String, String> {
         use crate::tasks::e::watch_transitions as wt;
         #[derive(serde::Deserialize)]
         struct P {
@@ -1102,66 +1117,18 @@ struct ThroughputParams {
     abandon_window_s: u64,
 }
 
-/// Seconds the oldest `spira-lc serve` process has been running, read from `/proc`; `None` when none runs or `/proc` cannot say.
-// loop-safe: runs inside an observe effect, never in a handler or on the loop
-pub fn store_up_s() -> Option<u64> {
-    let uptime = fs::read_to_string(format!("{}/uptime", system_paths::PROC)).ok()?;
-    // SAFETY: sysconf reads a constant and touches no memory.
-    let hz = u64::try_from(unsafe { libc::sysconf(libc::_SC_CLK_TCK) }).ok().filter(|h| *h > 0)?;
-    fs::read_dir(system_paths::PROC)
-        .ok()?
-        .flatten()
-        .filter(|e| e.file_name().to_string_lossy().bytes().all(|b| b.is_ascii_digit()))
-        .filter_map(|e| {
-            let argv = fs::read(e.path().join("cmdline")).ok()?;
-            let stat = fs::read_to_string(e.path().join("stat")).ok()?;
-            serves_the_store(&argv).then(|| process_age_s(&stat, &uptime, hz)).flatten()
-        })
-        .max()
-}
-
-/// Whether a `/proc/<pid>/cmdline` is `spira-lc serve ...`.
-fn serves_the_store(cmdline: &[u8]) -> bool {
-    let mut args = cmdline.split(|b| *b == 0);
-    let prog = args.next().unwrap_or_default();
-    prog.rsplit(|b| *b == b'/').next() == Some(b"spira-lc".as_slice()) && args.next() == Some(b"serve".as_slice())
-}
-
-/// A process's age from its `/proc/<pid>/stat` start time (clock ticks since boot, field 22) and `/proc/uptime`.
-fn process_age_s(stat: &str, proc_uptime: &str, hz: u64) -> Option<u64> {
-    // The command name is parenthesised and may hold spaces; fields count from after the last ')'.
-    let after = &stat[stat.rfind(')')? + 1..];
-    let started: u64 = after.split_whitespace().nth(19)?.parse().ok()?;
-    let uptime_s: f64 = proc_uptime.split_whitespace().next()?.parse().ok()?;
-    Some((uptime_s as u64).saturating_sub(started / hz))
-}
-
-#[cfg(test)]
-mod server_age_tests {
-    use super::{process_age_s, serves_the_store};
-
-    fn stat(start_ticks: u64) -> String {
-        format!("77 (spira lc) S 1 77 77 0 -1 4194560 100 0 0 0 1 1 0 0 20 0 3 0 {start_ticks} 1000 100")
+/// One store call held to what is left of its observe's bound; an absent store, or no time left,
+/// answers `store unavailable`, which an observe's snapshot carries as its `why`.
+fn lc_bounded(client: &spira_store::lc_call::LcClient, total: std::time::Duration, spent: std::time::Duration, argv: &[&str]) -> Result<String, String> {
+    use spira_store::lc_call::LcError;
+    let left = total.saturating_sub(spent);
+    if left.is_zero() {
+        return Err(format!("store unavailable: tried for {} s, the observe's bound, before spira-lc {}", total.as_secs(), argv.join(" ")));
     }
-
-    #[test]
-    fn a_process_started_fifty_seconds_before_now_is_fifty_seconds_old() {
-        assert_eq!(process_age_s(&stat(95_000), "1000.25 4000.00\n", 100), Some(50));
-    }
-
-    #[test]
-    fn an_unparsed_stat_or_uptime_gives_no_age() {
-        assert_eq!(process_age_s("", "1000.25", 100), None);
-        assert_eq!(process_age_s(&stat(95_000), "", 100), None);
-    }
-
-    #[test]
-    fn only_a_spira_lc_serve_command_line_is_the_store_server() {
-        assert!(serves_the_store(b"opt/current/bin/spira-lc\0serve\0run/sock\0"));
-        assert!(!serves_the_store(b"opt/current/bin/spira-lc\0list\0"));
-        assert!(!serves_the_store(b"vim\0serve\0"));
-        assert!(!serves_the_store(b""));
-    }
+    client.within(left).answer(argv).map_err(|e| match e {
+        LcError::NotRunning(m) => format!("store unavailable: {m}"),
+        e => e.to_string(),
+    })
 }
 
 use crate::tasks::e::watch_throughput::{RepoLanding, RepoRounds, Records, Snapshot as ThroughputSnapshot, Unlanded, Waiting};
@@ -1484,5 +1451,55 @@ mod publish_backlog_tests {
         let out = publish_backlog_snapshot_from(&rows, &|r| assert_ne!(r.name, "a", "refresh failed"), &|_| Ok(Some(measured(3)))).unwrap();
         let snap: publish_backlog::Snapshot = serde_json::from_str(&out).unwrap();
         assert_eq!(snap.repos, vec![("a".to_string(), measured(3)), ("b".to_string(), measured(3))]);
+    }
+}
+
+#[cfg(test)]
+mod bounded_store_tests {
+    use super::lc_bounded;
+    use spira_store::lc_call::{LcClient, LcError, Reply, Transport};
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    struct Absent(Mutex<Vec<Duration>>);
+
+    impl Transport for Absent {
+        fn exchange(&self, _: &[String], _: Option<&str>, _: Duration) -> Result<Reply, String> {
+            unreachable!("a socket client asks exchange_kind")
+        }
+        fn exchange_kind(&self, _: &[String], _: Option<&str>, _: Duration, wait: Duration) -> Result<Reply, LcError> {
+            self.0.lock().unwrap().push(wait);
+            Err(LcError::NotRunning(format!("store not running: nothing was sent; waited {} s", wait.as_secs())))
+        }
+    }
+
+    #[test]
+    fn a_store_absent_past_the_bound_is_unavailable_within_what_was_left_of_the_observe() {
+        let double = Arc::new(Absent(Mutex::default()));
+        let client = LcClient::over(double.clone(), true);
+        let why = lc_bounded(&client, Duration::from_secs(25), Duration::from_secs(10), &["dwell"]).unwrap_err();
+        assert!(why.starts_with("store unavailable:") && why.contains("waited 15 s"), "{why}");
+        assert_eq!(*double.0.lock().unwrap(), [Duration::from_secs(15)], "the client was bounded by the time left");
+    }
+
+    #[test]
+    fn an_observe_with_no_time_left_is_unavailable_without_asking_the_store() {
+        let double = Arc::new(Absent(Mutex::default()));
+        let client = LcClient::over(double.clone(), true);
+        let why = lc_bounded(&client, Duration::from_secs(25), Duration::from_secs(26), &["dwell"]).unwrap_err();
+        assert!(why.contains("store unavailable") && why.contains("25 s"), "{why}");
+        assert!(double.0.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn an_observe_with_the_store_absent_past_its_bound_answers_unreadable_with_the_store_unavailable() {
+        let t = testkit::TempDir::new("observe-bound");
+        let rel = t.path().join("releases");
+        std::fs::create_dir_all(&rel).unwrap();
+        release::machine::enter(&t.path().join("release"), &"a".repeat(40), release::machine::ReleaseState::Activated, "current switched").unwrap();
+        let world = super::World { run_dir: t.path().into(), repo_map: t.path().join("map"), lc_socket: t.path().join("absent.sock"), observe_bound: Some((std::time::Instant::now(), Duration::from_millis(200))), ..Default::default() };
+        let input = serde_json::json!({ "window_s": 3600, "releases": rel, "release_repo": "spira" }).to_string();
+        let snap: crate::tasks::e::watch_transitions::Snapshot = serde_json::from_str(&world.transitions_observed(&input).unwrap()).unwrap();
+        assert!(!snap.readable && snap.why.contains("store unavailable"), "{}", snap.why);
     }
 }

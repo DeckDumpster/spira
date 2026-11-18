@@ -58,7 +58,6 @@ fn healthy(now: u64) -> Snapshot {
         open_rounds: Some(BTreeMap::new()),
         owners: BTreeMap::new(),
         halt: None,
-        store_up_s: None,
     }
 }
 
@@ -1041,54 +1040,40 @@ fn a_cut_stall_is_excused_per_repo_and_never_by_another_repos_batcher() {
 
 /// A store that cannot be read `ago` seconds after an activation, as `observe` answers it.
 fn blind_after_activation(now: u64, ago: u64) -> Snapshot {
-    Snapshot { activated_at: Some(now - ago), ..blind("spira-lc dwell: cannot tell: deadline") }
+    Snapshot { activated_at: Some(now - ago), ..blind("store unavailable: tried for 25 s") }
 }
 
 #[test]
-fn a_read_that_fails_just_after_an_activation_is_retried_on_the_next_tick_and_pages_nothing() {
-    let (mut r, w) = rig_at(|now| blind_after_activation(now, 5));
-    assert_eq!(lines(&r), Vec::<String>::new(), "the first unreadable tick after an activation says nothing: {:?}", lines(&r));
-    *w.lock().unwrap() = healthy(T0);
-    r.advance(300_000).unwrap();
-    let all = lines(&r);
-    assert!(all.iter().all(|l| !l.contains("BLIND")), "{all:?}");
-    assert!(all.iter().any(|l| l.contains("[watch:transitions] WAIT ") && l.contains("WORKING 3")), "the next tick reads: {all:?}");
-}
-
-#[test]
-fn a_store_that_stays_unreadable_for_two_ticks_after_an_activation_still_pages_blind_naming_it() {
-    let (mut r, _) = rig_at(|now| blind_after_activation(now, 5));
-    r.advance(300_000).unwrap();
+fn the_first_unreadable_tick_just_after_an_activation_pages_blind_with_the_stores_reason() {
+    let (r, _) = rig_at(|now| blind_after_activation(now, 5));
     let all = lines(&r);
     let pages: Vec<&String> = all.iter().filter(|l| l.contains("P0 BLIND")).collect();
     assert_eq!(pages.len(), 1, "{all:?}");
-    assert!(pages[0].contains("after the activation"), "the page names the activation: {pages:?}");
+    assert!(pages[0].contains("store unavailable: tried for 25 s"), "{pages:?}");
+    assert!(!pages[0].contains("activation"), "the page does not reason about releases: {pages:?}");
 }
 
 #[test]
-fn an_unreadable_store_long_after_an_activation_pages_at_once() {
-    let (r, _) = rig_at(|now| blind_after_activation(now, 10 * MIN));
-    assert_eq!(lines(&r).iter().filter(|l| l.contains("P0 BLIND")).count(), 1, "{:?}", lines(&r));
-}
-
-/// A store that cannot be read when the server has been up `up_s` seconds, no activation in sight.
-fn blind_with_server_up(up_s: u64) -> Snapshot {
-    Snapshot { activated_at: None, store_up_s: Some(up_s), ..blind("spira-lc dwell: cannot tell: deadline") }
-}
-
-#[test]
-fn one_unreadable_tick_after_the_store_server_restarted_pages_nothing_and_two_in_a_row_page() {
-    let (mut r, _) = rig_at(|_| blind_with_server_up(50));
-    assert!(lines(&r).iter().all(|l| !l.contains("BLIND")), "the first read after a restart is retried: {:?}", lines(&r));
+fn a_second_unreadable_tick_does_not_page_again_and_a_readable_one_clears_blind() {
+    let (mut r, w) = rig_at(|now| blind_after_activation(now, 5));
     r.advance(300_000).unwrap();
-    let pages = lines(&r).into_iter().filter(|l| l.contains("P0 BLIND")).count();
-    assert_eq!(pages, 1, "the second unreadable tick pages: {:?}", lines(&r));
+    assert_eq!(lines(&r).iter().filter(|l| l.contains("P0 BLIND")).count(), 1, "{:?}", lines(&r));
+    *w.lock().unwrap() = healthy(T0);
+    r.advance(300_000).unwrap();
+    *w.lock().unwrap() = blind_after_activation(T0, 5);
+    r.advance(300_000).unwrap();
+    assert_eq!(lines(&r).iter().filter(|l| l.contains("P0 BLIND")).count(), 2, "a read in between re-arms the page: {:?}", lines(&r));
 }
 
 #[test]
-fn an_unreadable_tick_with_the_store_server_up_more_than_two_minutes_pages_at_once() {
-    let (r, _) = rig_at(|_| blind_with_server_up(121));
-    assert_eq!(lines(&r).iter().filter(|l| l.contains("P0 BLIND")).count(), 1, "{:?}", lines(&r));
+fn a_timed_out_observe_pages_blind_once_and_the_next_timed_out_one_does_not() {
+    let (_, stream, kind) = WatchTransitions::boot();
+    let mut r = TaskRig::new(1, WatchTransitions::new(config()).registration()).unwrap().timing_out().double(INBOX_APPEND, |_| Ok("appended".into()));
+    r.advance(T0 * 1000).unwrap();
+    r.tick(stream, kind).unwrap();
+    r.advance(300_000).unwrap();
+    let pages = lines(&r).into_iter().filter(|l| l.contains("P0 BLIND") && l.contains("the observe timed out")).count();
+    assert_eq!(pages, 1, "{:?}", lines(&r));
 }
 
 fn ask_stall(now: u64) -> Snapshot {
