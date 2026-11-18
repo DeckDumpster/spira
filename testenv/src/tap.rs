@@ -109,6 +109,16 @@ pub fn parse(output: &str) -> TapSummary {
             if let Some(c) = t.cases.last_mut() {
                 c.at = Some(at.trim().to_string());
             }
+        } else if let Some(d) = line.strip_prefix("# deadline ") {
+            if let Some(c) = t.cases.last_mut() {
+                let d = d.trim_start().strip_prefix("secs=").unwrap_or("");
+                let end = d.find(char::is_whitespace).unwrap_or(d.len());
+                if let Ok(secs) = d[..end].parse() {
+                    let load = d[end..].trim();
+                    let load = (!load.is_empty()).then(|| load.to_string());
+                    c.deadline = Some(CaseDeadline { secs, load });
+                }
+            }
         } else if let Some(rest) = line.strip_prefix("1..") {
             if let Ok(n) = rest.split_whitespace().next().unwrap_or("").parse() {
                 t.plan = Some(n);
@@ -410,6 +420,19 @@ mod tests {
     fn an_old_tap_json_without_cases_still_reads() {
         let t: TapSummary = serde_json::from_str(r#"{"plan":1,"passed":1,"failed":0,"skipped":0,"todo":0,"bail_out":null,"not_ok":[]}"#).unwrap();
         assert!(t.cases.is_empty());
+        let t: TapSummary = serde_json::from_str(r#"{"plan":1,"passed":0,"failed":1,"skipped":0,"todo":0,"bail_out":null,"not_ok":[],"cases":[{"n":1,"name":"a","status":"not ok","ms":1,"at":null}]}"#).unwrap();
+        assert_eq!(t.cases[0].deadline, None);
+    }
+
+    #[test]
+    fn a_deadline_line_attaches_its_load_to_the_case() {
+        let t = parse("not ok 1 - case 1 exceeded its 45s deadline\n# at s.sh:9\n# deadline secs=45 load1=80.10 cpus=32 cpu_some_avg10=41.20 io_some_avg10=60.00\n#ms=45012\nBail out! case 1 exceeded its 45s deadline\n");
+        assert_eq!(
+            t.cases[0].deadline,
+            Some(CaseDeadline { secs: 45, load: Some("load1=80.10 cpus=32 cpu_some_avg10=41.20 io_some_avg10=60.00".into()) })
+        );
+        assert_eq!(parse("not ok 1 - a\n# deadline secs=7\n").cases[0].deadline, Some(CaseDeadline { secs: 7, load: None }));
+        assert_eq!(parse("not ok 1 - a\n# at s.sh:1\n").cases[0].deadline, None);
     }
 
     // --------------------------------------------------------------- jsonl_rows
