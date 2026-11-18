@@ -179,3 +179,63 @@ fn a_pilgrim_session_with_no_bd_on_path_builds_a_pilgrim_world() {
     assert!(out.status.success(), "{err}");
     assert!(!err.contains("bd not found"), "{err}");
 }
+
+fn non_spira_worktree(t: &testkit::TempDir) -> std::path::PathBuf {
+    let repo = t.join("other-repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    std::fs::write(repo.join("Cargo.toml"), "[workspace]\n").unwrap();
+    std::fs::write(repo.join("README.md"), "x\n").unwrap();
+    for args in [&["init", "-q", "-b", "main"][..], &["add", "."], &["-c", "user.name=t", "-c", "user.email=t@t.invalid", "commit", "-q", "-m", "one"]] {
+        assert!(std::process::Command::new("git").arg("-C").arg(&repo).args(args).status().unwrap().success());
+    }
+    repo
+}
+
+fn pilgrim_up_from_non_spira_worktree(sim_release: bool, in_testenv: bool) {
+    let release = std::env::var(world::RELEASE_ENV).or_else(|_| std::env::var("SPIRA_RELEASE")).expect("SPIRA_SIM_RELEASE or SPIRA_RELEASE names a release");
+    let toml = std::env::var("SPIRA_TOML").unwrap_or_else(|_| panic!("SPIRA_TOML is unset"));
+    let t = testkit::TempDir::new("pw-nonspira");
+    let repo = non_spira_worktree(&t);
+    let dir = t.join("w");
+    let mut cmd = std::process::Command::new(testkit::bin_exe("sim"));
+    cmd.args(["world", "up"])
+        .arg(&dir)
+        .args(["--pilgrim", "--repo", "fixture:push"])
+        .current_dir(&repo)
+        .env_clear()
+        .env("PATH", system_paths::SYSTEM_PATH_MIN)
+        .env("HOME", std::env::var("HOME").unwrap_or_default())
+        .env("SPIRA_RELEASE", &release)
+        .env("SPIRA_TOML", toml)
+        .env("SPIRA_LC_SOCKET", t.join("production.sock"));
+    if sim_release {
+        cmd.env(world::RELEASE_ENV, &release);
+    }
+    if in_testenv {
+        cmd.env("SPIRA_IN_TESTENV", "1");
+    }
+    let out = cmd.output().unwrap();
+    let canonical = dir.canonicalize();
+    if let Ok(d) = &canonical {
+        let _ = world::down(d, &ProcessSteps);
+    }
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{err}");
+    assert!(!dir.join("cache").exists(), "a pilgrim world builds nothing");
+    if sim_release {
+        let env = std::fs::read_to_string(dir.join("config/sim.env")).unwrap();
+        assert!(env.contains("SPIRA_LC_SOCKET"), "{env}");
+    }
+}
+
+#[test]
+#[ignore = "needs a release, SPIRA_TOML naming spira.bd, and a Dolt fixture: run with --ignored"]
+fn a_pilgrim_world_for_a_non_spira_worktree_is_built_from_the_release_not_the_worktree() {
+    pilgrim_up_from_non_spira_worktree(true, false);
+}
+
+#[test]
+#[ignore = "needs a release, SPIRA_TOML naming spira.bd, and a Dolt fixture: run with --ignored"]
+fn a_pilgrim_world_in_testenv_needs_no_sim_release_of_its_own() {
+    pilgrim_up_from_non_spira_worktree(false, true);
+}

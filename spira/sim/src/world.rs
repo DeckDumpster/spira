@@ -223,7 +223,8 @@ pub fn pilgrim_session_env(env: &dyn Fn(&str) -> Option<String>, pinned_bd: Opti
     let set = |k: &str| env(k).filter(|v| !v.is_empty());
     let path = env("PATH").unwrap_or_default();
     let bd = set(BD_ENV).or(pinned_bd.filter(|v| !v.is_empty())).or_else(|| on_path("bd", &path).map(|p| p.display().to_string()));
-    let sets = bd.map(|b| (BD_ENV, b)).into_iter().collect();
+    let mut sets: Vec<(&'static str, String)> = bd.map(|b| (BD_ENV, b)).into_iter().collect();
+    sets.extend(set("SPIRA_RELEASE").map(|r| (RELEASE_ENV, r)));
     let removes = PRODUCTION_LOCATORS.iter().copied().filter(|k| set(k).is_some()).collect();
     (sets, removes)
 }
@@ -942,6 +943,40 @@ pub fn fixture_repo(root: &Path, dst: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// The release's own tree as one commit of a new repository at `dst`, less what a release build
+/// adds and git never tracks: `bin/`, `model-bin/`, `MANIFEST` and the links into `../bin/`.
+pub fn release_repo(release: &Path, dst: &Path) -> Result<(), String> {
+    fn copy(from: &Path, to: &Path, top: bool) -> Result<(), String> {
+        let io = |p: &Path, e: std::io::Error| format!("{}: {e}", p.display());
+        std::fs::create_dir_all(to).map_err(|e| io(to, e))?;
+        for entry in std::fs::read_dir(from).map_err(|e| io(from, e))? {
+            let entry = entry.map_err(|e| io(from, e))?;
+            let name = entry.file_name();
+            if top && matches!(name.to_str(), Some("bin" | "model-bin" | "MANIFEST")) {
+                continue;
+            }
+            let (src, out) = (entry.path(), to.join(&name));
+            let kind = entry.file_type().map_err(|e| io(&src, e))?;
+            if kind.is_symlink() {
+                let target = std::fs::read_link(&src).map_err(|e| io(&src, e))?;
+                if !target.starts_with("../bin/") {
+                    std::os::unix::fs::symlink(&target, &out).map_err(|e| io(&out, e))?;
+                }
+            } else if kind.is_dir() {
+                copy(&src, &out, false)?;
+            } else {
+                std::fs::copy(&src, &out).map_err(|e| io(&src, e))?;
+            }
+        }
+        Ok(())
+    }
+    copy(release, dst, true)?;
+    git(dst, &["init", "-q", "--initial-branch=main"])?;
+    git(dst, &["add", "-A", "-f"])?;
+    git(dst, &["commit", "-q", "-m", "release"])?;
+    Ok(())
+}
+
 /// What a world's checkouts hold: the root files and the directories a world path reads from a
 /// worktree (workflows, lifecycle schema, the agent's `out/`, the sim's tables, timer units,
 /// harness scripts, and the fence scripts and allow list the commit hook's fence-scripts rule reads),
@@ -1274,6 +1309,29 @@ mod locator_tests {
         assert_eq!(sets, vec![(BD_ENV, bd.clone())]);
         assert_eq!(dolt_for(Path::new(&bd), system_paths::NONEXISTENT).unwrap(), d.join("dolt"));
         assert_eq!(removes, vec!["SPIRA_LC_SOCKET", "SPIRA_TOML"]);
+    }
+
+    #[test]
+    fn a_pilgrim_session_builds_its_world_from_the_active_release() {
+        let env = |k: &str| (k == "SPIRA_RELEASE").then(|| "/rel".to_string());
+        let (sets, _) = pilgrim_session_env(&env, None);
+        assert!(sets.contains(&(RELEASE_ENV, "/rel".to_string())), "{sets:?}");
+    }
+
+    #[test]
+    fn a_release_repo_holds_the_releases_tree_and_none_of_its_build_output() {
+        let t = testkit::TempDir::new("release-repo");
+        let rel = t.join("rel");
+        for f in ["bin/x", "model-bin/work", "MANIFEST", "spira/testlib/complete.toml", "lifecycle/a.sql"] {
+            std::fs::create_dir_all(rel.join(f).parent().unwrap()).unwrap();
+            std::fs::write(rel.join(f), "x").unwrap();
+        }
+        std::os::unix::fs::symlink("../bin/x", rel.join("spira/tool")).unwrap();
+        let dst = t.join("repo");
+        release_repo(&rel, &dst).unwrap();
+        let tree = git(&dst, &["ls-tree", "-r", "--name-only", "HEAD"]).unwrap();
+        let files: Vec<&str> = tree.lines().collect();
+        assert_eq!(files, vec!["lifecycle/a.sql", "spira/testlib/complete.toml"]);
     }
 
     #[test]
