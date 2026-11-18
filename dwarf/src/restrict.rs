@@ -131,6 +131,14 @@ fn cargo_bin(base: &BTreeMap<String, String>) -> Option<String> {
 /// dwarf's own (unrestricted) child environment, and the model's release PATH entry
 /// ([`model_bin_dir`] — never the release `bin/`).
 pub fn restricted_env(bead_id: &str, base: &BTreeMap<String, String>, work_dir: &str) -> BTreeMap<String, String> {
+    let mut env = unbound_env(base, work_dir);
+    env.insert("SPIRA_WORK_BEAD_ID".to_string(), bead_id.to_string());
+    env
+}
+
+/// [`restricted_env`] for a session with no bead (an ops sweep): `SPIRA_WORK_BEAD_ID` is absent,
+/// so `work`'s bound verbs refuse with `NotBound`.
+pub fn unbound_env(base: &BTreeMap<String, String>, work_dir: &str) -> BTreeMap<String, String> {
     let mut env = BTreeMap::new();
     for k in UNCONDITIONAL {
         env.insert(k.to_string(), base.get(*k).cloned().unwrap_or_default());
@@ -143,7 +151,6 @@ pub fn restricted_env(bead_id: &str, base: &BTreeMap<String, String>, work_dir: 
         None => format!("{}:{work_dir}", system_paths::SYSTEM_PATH_MIN),
     };
     env.insert("PATH".to_string(), path);
-    env.insert("SPIRA_WORK_BEAD_ID".to_string(), bead_id.to_string());
     for k in CONDITIONAL {
         if let Some(v) = base.get(*k).filter(|v| !v.is_empty()) {
             env.insert(k.to_string(), v.clone());
