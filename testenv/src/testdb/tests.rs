@@ -347,6 +347,7 @@ fn a_template_builds_below_a_foreign_beads_workspace() {
     let tools = Tools::resolve("bd", "dolt").expect("bd and dolt on PATH");
     let d = tmpdir("foreign");
     plant_foreign_workspace(&d);
+    let planted = fs::read(d.join(".beads/metadata.json")).unwrap();
     let root = d.join("x/root");
     let tpl = ensure_template(&root, &tools).unwrap();
     let a = up(&root, &tpl, &tools, "fa", 0, None).unwrap();
@@ -354,6 +355,7 @@ fn a_template_builds_below_a_foreign_beads_workspace() {
     assert!(ok, "{out}");
     let (_, l) = bd_in(&a.ws, &tools.bd, &["list"]);
     assert!(l.contains("below foreign"), "{l}");
+    assert_eq!(planted, fs::read(d.join(".beads/metadata.json")).unwrap(), "foreign workspace untouched");
     down(&a.fixture).unwrap();
     let _ = fs::remove_dir_all(&d);
 }
