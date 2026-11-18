@@ -562,7 +562,7 @@ pub struct Worktree {
 
 impl Worktree {
     pub fn path(&self) -> PathBuf {
-        self.dir.join("wt")
+        self.dir.clone()
     }
 }
 
@@ -570,30 +570,73 @@ impl Drop for Worktree {
     fn drop(&mut self) {
         let _ = git(
             &self.repo,
-            &["worktree", "remove", "--force", &self.path().display().to_string()],
+            &["worktree", "remove", "--force", &self.dir.display().to_string()],
         );
         let _ = git(&self.repo, &["worktree", "prune"]);
         let _ = std::fs::remove_dir_all(&self.dir);
     }
 }
 
+const CHECK_PREFIX: &str = "repo-check-";
+
+/// Where repo-check trees are cut: on the run disk, inside `hel reap-terminal`'s reach.
+pub fn worktree_root() -> Result<PathBuf, String> {
+    Ok(worktree_root_under(&crate::resolve::run_dir_for_process()?))
+}
+
+fn worktree_root_under(run: &Path) -> PathBuf {
+    run.join("worktree")
+}
+
+fn pid_alive(pid: u32) -> bool {
+    // SAFETY: signal 0 only probes for the pid; nothing is delivered.
+    let rc = unsafe { libc::kill(pid as libc::pid_t, 0) };
+    rc == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+/// Remove every `repo-check-<pid>-*` entry under `root` whose pid is gone; a name whose pid
+/// does not parse is kept. Returns the number removed.
+pub fn reap_dead_checks(root: &Path, pid_alive: &dyn Fn(u32) -> bool) -> usize {
+    let Ok(rd) = std::fs::read_dir(root) else { return 0 };
+    let mut n = 0;
+    for e in rd.flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        let Some(rest) = name.strip_prefix(CHECK_PREFIX) else { continue };
+        let Some(pid) = rest.split('-').next().and_then(|p| p.parse::<u32>().ok()) else { continue };
+        if pid_alive(pid) {
+            continue;
+        }
+        if std::fs::remove_dir_all(e.path()).is_ok() {
+            eprintln!("repo-check: reaped {} (pid {pid} gone)", e.path().display());
+            n += 1;
+        }
+    }
+    n
+}
+
 pub fn cut_worktree(repo: &Path, land: &str) -> Result<Worktree, String> {
-    let dir = std::env::temp_dir().join(format!(
-        "spira-repo-check-{}-{}",
+    cut_worktree_in(&worktree_root()?, repo, land)
+}
+
+pub fn cut_worktree_in(root: &Path, repo: &Path, land: &str) -> Result<Worktree, String> {
+    std::fs::create_dir_all(root).map_err(|e| format!("{}: {e}", root.display()))?;
+    reap_dead_checks(root, &pid_alive);
+    let _ = git(repo, &["worktree", "prune"]);
+    let dir = root.join(format!(
+        "{CHECK_PREFIX}{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos())
             .unwrap_or(0)
     ));
-    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let guard = Worktree {
         repo: repo.to_path_buf(),
         dir,
     };
     git(
         repo,
-        &["worktree", "add", "-q", "--detach", &guard.path().display().to_string(), land],
+        &["worktree", "add", "-q", "--detach", &guard.dir.display().to_string(), land],
     )
     .map_err(|e| format!("cannot cut a worktree from {land}: {e}"))?;
     Ok(guard)
@@ -700,5 +743,27 @@ mod tests {
         rm("fixture", &t).unwrap();
         assert_eq!(reg(&f).names(), vec!["other".to_string()]);
         assert!(rm("fixture", &t).is_err());
+    }
+
+    #[test]
+    fn reap_dead_checks_removes_only_the_dead_pids_tree() {
+        let d = testkit::TempDir::new("repo-check-reap");
+        for n in ["repo-check-111-1", "repo-check-222-2", "repo-check-x-3", "other"] {
+            std::fs::create_dir(d.path().join(n)).unwrap();
+        }
+        let n = reap_dead_checks(d.path(), &|p| p == 222);
+        assert_eq!(n, 1);
+        assert!(!d.path().join("repo-check-111-1").exists());
+        for kept in ["repo-check-222-2", "repo-check-x-3", "other"] {
+            assert!(d.path().join(kept).exists(), "{kept}");
+        }
+    }
+
+    #[test]
+    fn worktree_root_is_under_the_run_dir_not_temp() {
+        let d = testkit::TempDir::new("repo-check-root");
+        let root = worktree_root_under(d.path());
+        assert_eq!(root, d.path().join("worktree"));
+        assert!(root.starts_with(d.path()));
     }
 }
