@@ -1313,9 +1313,9 @@ mod locator_tests {
 
     #[test]
     fn a_pilgrim_session_builds_its_world_from_the_active_release() {
-        let env = |k: &str| (k == "SPIRA_RELEASE").then(|| "/rel".to_string());
+        let env = |k: &str| (k == "SPIRA_RELEASE").then(|| "rel".to_string());
         let (sets, _) = pilgrim_session_env(&env, None);
-        assert!(sets.contains(&(RELEASE_ENV, "/rel".to_string())), "{sets:?}");
+        assert!(sets.contains(&(RELEASE_ENV, "rel".to_string())), "{sets:?}");
     }
 
     #[test]
