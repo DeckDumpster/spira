@@ -22,7 +22,7 @@
 //!
 //! ## Observe
 //!
-//! `queue.step.observe{repo}` → `Snapshot{mode, lc_ok, open_batch?, publish_rec?, pr_state, check, base_sha, lock_skips}`:
+//! `queue.step.observe{repo}` → `Snapshot{mode, lc_ok, open_batch?, publish_rec?, pr_state, check, base_sha, lock_skips, provisional_reds}`:
 //!
 //! - repo list and per-repo settings: `Settings` (S10) replacing `Lib::repos` (`real.rs:614`) and the
 //!   `bash lib.sh` `Op::Context` fork (`real.rs:515`, keys in `seam.rs:54-80`).
@@ -34,6 +34,7 @@
 //! - `pr_state`, `check`: forge `pr-state` / `check-status` (`real.rs:1367`, `:1376`; read at
 //!   `ops/verdict.rs:264`, `:226`, `:1080`, `:1099`). These are forge reads inside the probe (class `forge`).
 //! - `base_sha`: `git rev-parse <landref>` (`ops/verdict.rs:1508`).
+//! - `provisional_reds`: `round::gate_red_at` per provisional member (`ops/verdict.rs:827-862`).
 //!
 //! ## Decide
 //!
@@ -276,6 +277,7 @@ pub struct Repo {
     /// The base the batch was sealed on; differing from `base_sha` is a moved base.
     pub sealed_base: Option<String>,
     pub lock_skips: u32,
+    pub provisional_reds: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

@@ -678,7 +678,7 @@ pub fn lc_deliver(
         };
     }
     let who = actor(w);
-    if state == "CERTIFIED" {
+    if state == "CERTIFIED" || state == "SUBMITTED" {
         if let Err((rc, e)) =
             w.lc.bead_event(&m.id, &state, &v.to_string(), &who, "\"Deliver\"")
         {
@@ -688,7 +688,7 @@ pub fn lc_deliver(
         v += 1;
     }
     if state != "IN_DELIVERY" {
-        return fail(format!("in state {state}, not CERTIFIED or IN_DELIVERY"));
+        return fail(format!("in state {state}, not SUBMITTED, CERTIFIED or IN_DELIVERY"));
     }
     let kind = format!(
         "{{\"Delivered\":{{\"merge_sha\":\"{}\",\"proof\":\"ancestry\"}}}}",

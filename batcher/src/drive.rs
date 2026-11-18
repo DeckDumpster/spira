@@ -2102,6 +2102,7 @@ pub(crate) mod tests {
             certified_at: 0,
             stack: BTreeMap::new(),
             blocked_by: Vec::new(),
+            provisional: false,
         }
     }
 

@@ -75,7 +75,7 @@ fn a_head_that_moved_while_its_pass_runs_orphans_the_step_without_ending_the_rou
 #[test]
 fn a_green_pass_on_the_current_head_lands_the_round_whatever_the_older_step_then_returns() {
     let (landing, acts) = decide(&carried("A", "A"), &snapshot("B", "green"));
-    assert_eq!(effects(&acts), [LAND], "{acts:?}");
+    assert_eq!(effects(&acts), [LC_CERTIFY, LAND], "{acts:?}");
     assert_eq!(landing.repos["spira"].state, State::Landing);
     assert!(on_ran_with(&landing, &ran(), &fault(), NOW).is_none());
 }
@@ -127,7 +127,7 @@ fn a_round_that_went_green_on_the_new_head_lands_at_it_when_the_old_step_faults(
     let (carry, acts) = decide(&carry, &snapshot("B", "certifying"));
     assert!(acts.is_empty(), "{acts:?}");
     let (carry, acts) = decide(&carry, &snapshot("B", "green"));
-    assert_eq!(effects(&acts), [LAND], "{acts:?}");
+    assert_eq!(effects(&acts), [LC_CERTIFY, LAND], "{acts:?}");
     assert!(on_ran_with(&carry, &ran(), &fault(), NOW).is_none(), "the late fault changes nothing");
     assert_eq!(carry.repos["spira"].state, State::Landing);
 }
@@ -157,6 +157,6 @@ fn a_superseded_steps_fault_delivered_before_the_next_observation_does_not_aband
     assert!(acts.is_empty(), "{acts:?}");
     assert_eq!(carry.repos["spira"].state, State::Attributing);
     let (carry, acts) = decide(&carry, &snapshot("B", "green"));
-    assert_eq!(effects(&acts), [LAND], "the next pass decides the round: {acts:?}");
+    assert_eq!(effects(&acts), [LC_CERTIFY, LAND], "the next pass decides the round: {acts:?}");
     assert_eq!(carry.repos["spira"].state, State::Landing);
 }

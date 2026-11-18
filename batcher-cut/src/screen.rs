@@ -70,7 +70,7 @@ pub fn cut_pool(pool: Vec<Member>, sifted: &BTreeMap<String, String>) -> Vec<Mem
         .collect()
 }
 
-/// Screens every CERTIFIED bead of the round pool of `repo` (what will be cut), recording a pass or sending the bead back.
+/// Screens every SUBMITTED and CERTIFIED bead of `repo`, recording a pass or sending the bead back.
 pub fn sift_repo(
     env: &Env,
     repo: &Repo,
@@ -148,6 +148,7 @@ mod tests {
             certified_at: 0,
             stack: Default::default(),
             blocked_by: vec![],
+        provisional: false,
         }
     }
 

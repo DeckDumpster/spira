@@ -16,7 +16,7 @@ fn gate_bin() -> PathBuf {
 }
 
 fn member(id: &str, tip: &str) -> Member {
-    Member { id: id.into(), tip: tip.into(), title: String::new(), priority: None, express: false, base_fix: false, certified_at: 0, stack: Default::default(), blocked_by: vec![] }
+    Member { id: id.into(), tip: tip.into(), title: String::new(), priority: None, express: false, base_fix: false, certified_at: 0, stack: Default::default(), blocked_by: vec![], provisional: false }
 }
 
 #[test]

@@ -2545,7 +2545,7 @@ fn an_ungated_landing_walks_a_submitted_member_to_landed_with_the_override_on_th
 }
 
 #[test]
-fn a_gated_landing_still_refuses_a_submitted_member() {
+fn lc_deliver_takes_a_submitted_member_at_its_tip_to_landed() {
     use crate::model::Member;
     use crate::ops::land::lc_deliver;
     let t = T::new(LandMode::Queue);
@@ -2553,11 +2553,12 @@ fn a_gated_landing_still_refuses_a_submitted_member() {
     t.lc.bead_rows
         .borrow_mut()
         .insert("sp-a".into(), ("SUBMITTED".into(), "2".into()));
-    let m = Member {
-        id: "sp-a".into(),
-        tip: "m1".into(),
-    };
-    assert!(!t.with_world(|w| lc_deliver(w, Path::new("repo"), "h1", &m, None)));
+    let m = Member { id: "sp-a".into(), tip: "m1".into() };
+    assert!(t.with_world(|w| lc_deliver(w, Path::new("repo"), "h1", &m, None)), "{}", t.err());
+    let calls = t.lc.calls.borrow().clone();
+    let deliver = calls.iter().position(|c| c == "event bead sp-a SUBMITTED 2 \"Deliver\"").unwrap_or_else(|| panic!("no Deliver: {calls:?}"));
+    let delivered = calls.iter().position(|c| c.starts_with("event bead sp-a IN_DELIVERY 3 ") && c.contains("Delivered")).unwrap_or_else(|| panic!("no Delivered: {calls:?}"));
+    assert!(deliver < delivered);
 }
 
 #[test]

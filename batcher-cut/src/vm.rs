@@ -1427,6 +1427,7 @@ mod tests {
                 certified_at: 0,
                 stack: BTreeMap::new(),
                 blocked_by: Vec::new(),
+            provisional: false,
             })
             .collect();
         assert_eq!(
@@ -1478,6 +1479,7 @@ mod tests {
             certified_at: 0,
             stack: BTreeMap::new(),
             blocked_by: Vec::new(),
+        provisional: false,
         }
     }
 
@@ -1581,6 +1583,7 @@ mod tests {
             certified_at: 0,
             stack: BTreeMap::new(),
             blocked_by: Vec::new(),
+        provisional: false,
         };
         let ms = vec![mk("sp-a"), mk("sp-b")];
         let mut changed = BTreeMap::new();
@@ -1687,6 +1690,7 @@ mod tests {
             certified_at: 0,
             stack: BTreeMap::new(),
             blocked_by: Vec::new(),
+        provisional: false,
         };
         let ms = vec![mk("sp-a"), mk("sp-b")];
         let changed = BTreeMap::from([
@@ -1726,6 +1730,7 @@ mod tests {
                 certified_at: 0,
                 stack: BTreeMap::new(),
                 blocked_by: Vec::new(),
+            provisional: false,
             })
             .collect();
         let l = "member=commit 26d967089685 spira: land sp-8mbnup — Wire it ffx-vocabulary: dwarf/src/lib.rs:26: the term \"banned\"";
@@ -1971,7 +1976,7 @@ mod abandon_tests {
         write("", "removed = [\"y\"]");
         let b = commit("b");
         testkit::git(r, &["checkout", "-q", "main"]);
-        let member = |id: &str, tip: &str| Member { id: id.into(), tip: tip.into(), title: String::new(), priority: None, express: false, base_fix: false, certified_at: 0, stack: Default::default(), blocked_by: vec![] };
+        let member = |id: &str, tip: &str| Member { id: id.into(), tip: tip.into(), title: String::new(), priority: None, express: false, base_fix: false, certified_at: 0, stack: Default::default(), blocked_by: vec![], provisional: false };
         let (ma, mb) = (member("sp-a", &a), member("sp-b", &b));
         let mut run = VmRunner::new(&env, &repo, &repo.path, &base, "r1", BTreeMap::new()).unwrap();
         run.set_members(&[ma.clone(), mb.clone()]);
@@ -2003,7 +2008,7 @@ mod abandon_tests {
         };
         let (a, b) = (branch("sp-a", "spira.x"), branch("sp-b", "spira.y"));
         testkit::git(r, &["checkout", "-q", "main"]);
-        let member = |id: &str, tip: &str| Member { id: id.into(), tip: tip.into(), title: String::new(), priority: None, express: false, base_fix: false, certified_at: 0, stack: Default::default(), blocked_by: vec![] };
+        let member = |id: &str, tip: &str| Member { id: id.into(), tip: tip.into(), title: String::new(), priority: None, express: false, base_fix: false, certified_at: 0, stack: Default::default(), blocked_by: vec![], provisional: false };
         let (ma, mb) = (member("sp-a", &a), member("sp-b", &b));
         let mut run = VmRunner::new(&env, &repo, &repo.path, &base, "r1", BTreeMap::new()).unwrap();
         run.set_members(&[ma.clone(), mb.clone()]);

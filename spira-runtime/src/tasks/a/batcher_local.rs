@@ -43,7 +43,7 @@
 //! | Corpus | `unit.ran` green | Mending if menders open, else Certifying |
 //! | Attributing | `unit.ran` (re-run) | Corpus-judged: Mending / Certifying / Done(blocked) |
 //! | Mending | `mending.settled` or timer 900 s (`main.rs:368`) | Certifying |
-//! | Certifying | `unit.ran` green | Landing (`land`) |
+//! | Certifying | `unit.ran` green | Landing (`lc_certify`, `land`) |
 //! | Certifying | `unit.ran` red with no `red-output=`, first time (VM lost, no output and refused eject excepted) | Attributing, `after_certify` (the certify pass's own results are the prior) |
 //! | Certifying | `unit.ran` red after the attribution, two or more members, no `red-output=`, reds named, first time | Attributing, `after_certify` and `confirmed` (suspects named from the red suites' `# covers:` and the diffs) |
 //! | Certifying | `unit.ran` red / failed | Done (eject guilty, `abandon`, verdict red) |
@@ -52,7 +52,7 @@
 //! | Attributing | `unit.ran` land | Certifying, certify held until no pass of the round is running (a scope its pass has left is stopped, not waited on) |
 //! | Certifying | `unit.ran` exit 75, the VM lost under the pass | Certifying (`certify` again: same head, a new VM), at most [`LOST_VM_RECERTIFIES`] times; then Done (pace Infra, the round left open, never abandoned) (sp-e30jhh) |
 //! | Certifying | `unit.ran` exit 77, the VM produced no output | Certifying (`certify` again, a fresh VM), at most [`NO_OUTPUT_RECERTIFIES`] times; then Done (pace Infra, the round parked open, never abandoned) |
-//! | Landing | observe: no `land` in flight (a restart) | Landing (`land` again; each walks the store's own state) |
+//! | Landing | observe: no `land` in flight (a restart) | Landing (`lc_certify`, `land` again; each walks the store's own state) |
 //! | Landing | land exit 0 / 3 | Promoting if staged else Done (verdict green) |
 //! | Landing | land refused (lock busy ×N, or any other refusal) | Done (output kept, round left open, page with the refusing line, no pause) |
 //! | Promoting | promotion named | Certifying for the staged round (`main.rs:1069`) |
@@ -74,9 +74,11 @@
 //! | `batcher.local.corpus` | unit (`unit.start`) | `SPIRA_BATCHER_WALL_SECS` | batch + run n | 2nd run while one live (`vm.rs:370`) |
 //! | `batcher.local.stage` / `.stage_test` | unit | wall secs | staged batch | hypervisor full (`io.rs:1881`, `:1906`) |
 //! | `batcher.local.eject` | store | 30 s | batch + bead | not in round (`io.rs:1600`, `:1628`) |
+//! | `batcher.local.eject_red` | store | 30 s | batch + members | not in round |
 //! | `batcher.local.withdraw` | store | 10 s | bead + version | state ≠ CERTIFIED (`io.rs:851-887`) |
 //! | `batcher.local.rebase_stale` | unit | 600 s (unverified) | bead + base sha | not due (`io.rs:178`) |
 //! | `batcher.local.certify` | unit | wall secs | batch | head ≠ worktree (`io.rs:1662`) |
+//! | `batcher.local.lc_certify` | store | 10 s | bead + `round:<key>` | state ≠ SUBMITTED (`io.rs:830-849`) |
 //! | `batcher.local.land` | host | 900 s (unverified) | batch | not certified; lock busy retried ×`LAND_LOCK_ATTEMPTS` (`io.rs:2002`) |
 //! | `batcher.local.abandon` / `.promote` | store | 30 s | batch | already closed (`io.rs:1823`, `:1945`) |
 //! | `batcher.local.redrive` | unit | 60 s | batch | once per orphan (`io.rs:1772`) |
@@ -124,9 +126,11 @@ pub const CORPUS: &str = "batcher.local.corpus";
 pub const STAGE: &str = "batcher.local.stage";
 pub const STAGE_TEST: &str = "batcher.local.stage_test";
 pub const EJECT: &str = "batcher.local.eject";
+pub const EJECT_GATE_RED: &str = "batcher.local.eject_red";
 pub const WITHDRAW: &str = "batcher.local.withdraw";
 pub const REBASE_STALE: &str = "batcher.local.rebase_stale";
 pub const CERTIFY: &str = "batcher.local.certify";
+pub const LC_CERTIFY: &str = "batcher.local.lc_certify";
 pub const LAND: &str = "batcher.local.land";
 pub const ABANDON: &str = "batcher.local.abandon";
 pub const PROMOTE: &str = "batcher.local.promote";
@@ -156,10 +160,12 @@ pub const ACTS: &[(&str, u64)] = &[
     (STAGE, UNIT_START_DEADLINE_MS),
     (STAGE_TEST, UNIT_START_DEADLINE_MS),
     (EJECT, 30_000),
+    (EJECT_GATE_RED, 30_000),
     (WITHDRAW, 10_000),
     (REBASE_STALE, UNIT_START_DEADLINE_MS),
     (CERTIFY, UNIT_START_DEADLINE_MS),
     (runtime::units::UNIT_STOP, UNIT_START_DEADLINE_MS),
+    (LC_CERTIFY, 10_000),
     (LAND, 900_000),
     (ABANDON, 30_000),
     (PROMOTE, 30_000),
@@ -173,7 +179,7 @@ pub const ACTS: &[(&str, u64)] = &[
 pub const EMITS: &[EventKindTag] = &[];
 /// Hand-offs that wake it at once, besides its tick: a submission sifted, a batch settled.
 pub const WAKES: &[EventKindTag] = &[kit::WORK_SUBMITTED, super::queue_step::CUT_WANTED];
-pub const EFFECTS: &[&str] = &[runtime::units::UNIT_FACTS, runtime::units::UNIT_STOP, OBSERVE, FETCH, ASSEMBLE, ROUND_OPEN, CORPUS, STAGE, STAGE_TEST, EJECT, WITHDRAW, REBASE_STALE, CERTIFY, LAND, ABANDON, PROMOTE, REDRIVE, FILE, SUPERSEDE_REDS, PAUSE, KEEP_CERTIFY_OUTPUT, INBOX_APPEND];
+pub const EFFECTS: &[&str] = &[runtime::units::UNIT_FACTS, runtime::units::UNIT_STOP, OBSERVE, FETCH, ASSEMBLE, ROUND_OPEN, CORPUS, STAGE, STAGE_TEST, EJECT, EJECT_GATE_RED, WITHDRAW, REBASE_STALE, CERTIFY, LC_CERTIFY, LAND, ABANDON, PROMOTE, REDRIVE, FILE, SUPERSEDE_REDS, PAUSE, KEEP_CERTIFY_OUTPUT, INBOX_APPEND];
 pub const KEYS: &[&str] = &[
     "SPIRA_RUN",
     "SPIRA_DB",
@@ -230,7 +236,7 @@ impl Member {
     pub fn core(&self, blockers: &[String]) -> core::Member {
         let stack = self.stack.iter().map(|s| s.split_once(':').map_or((s.clone(), String::new()), |(i, t)| (i.to_string(), t.to_string()))).collect();
         let blocked_by = self.deps.iter().filter(|d| blockers.contains(d)).cloned().collect();
-        core::Member { id: self.id.clone(), tip: self.tip.clone(), title: self.title.clone(), priority: Some(self.priority), express: self.express, base_fix: self.base_fix, certified_at: self.certified_at, stack, blocked_by }
+        core::Member { id: self.id.clone(), tip: self.tip.clone(), title: self.title.clone(), priority: Some(self.priority), express: self.express, base_fix: self.base_fix, certified_at: self.certified_at, stack, blocked_by, provisional: self.state == "SUBMITTED" }
     }
 }
 
@@ -258,6 +264,9 @@ pub struct Round {
     /// The round's phase as `queue round status` names it; `green` once a pass on its head passed.
     #[serde(default)]
     pub phase: String,
+    /// Members whose own gate went red while the round holds them, as `(id, tip, the gate's mark)`.
+    #[serde(default)]
+    pub gate_red: Vec<(String, String, String)>,
 }
 
 /// One admitted `queue.local` repository.
@@ -652,6 +661,9 @@ pub struct RepoCarry {
     /// Since when the round has waited, unmoved, on the outcome of an effect it issued.
     #[serde(default)]
     pub waiting: Option<Waiting>,
+    /// The gate reds recorded against the round's members, `(id, tip, the gate's mark)`: evidence a pass ends on, never a reason to stop one.
+    #[serde(default)]
+    pub gate_red: Vec<(String, String, String)>,
     /// The batch the last reconcile dropped because the lifecycle had already settled it.
     #[serde(default)]
     pub reconciled: Option<String>,
@@ -706,6 +718,7 @@ impl RepoCarry {
             stacked: self.stacked,
             landing_base: self.landing_base.clone(),
             waiting: self.waiting,
+            gate_red: self.gate_red.clone(),
             ..RepoCarry::default()
         }
     }
@@ -744,6 +757,7 @@ impl RepoCarry {
             stacked: round.stacked,
             landing_base: round.landing_base.clone(),
             waiting: round.waiting,
+            gate_red: round.gate_red.clone(),
             ..self
         }
     }
@@ -1080,7 +1094,9 @@ pub fn select_why(repo: &Repo, max_members: usize) -> Result<(Vec<core::Member>,
     let (pool, blocked) = core::refuse_blocked(screened);
     why.extend(blocked);
     let (pool, _) = core::select_round(core::base_fix_lane(pool));
-    let (pool, _) = core::cap_round(pool, max_members);
+    let (pool, _) = core::cap_round(core::topo_order(&pool), max_members);
+    let (pool, blocked) = core::refuse_blocked(pool);
+    why.extend(blocked);
     if core::should_cut(&core::TriggerInputs { pool: &pool, main_red: false, batch_open: false }).is_none() {
         return Err(why);
     }
@@ -1244,6 +1260,9 @@ impl Machine<'_> {
     }
 
     fn certify(&mut self) {
+        if self.eject_recorded_gate_reds() {
+            return;
+        }
         self.start(CERTIFY, "certify");
     }
 
@@ -1424,6 +1443,7 @@ impl Machine<'_> {
             return;
         }
         let passing = matches!(self.rc.state, State::Corpus | State::Attributing | State::Certifying) && !self.rc.certify_held;
+        self.record_gate_reds(repo);
         if passing && self.pass_ended_without_verdict(repo) {
             return;
         }
@@ -1449,7 +1469,33 @@ impl Machine<'_> {
         }
     }
 
-    /// The pass the queue started is no leg of this task and reports to nobody: with
+    /// The gate reds the queue's open round records against this round's members. A running pass
+    /// is never stopped for one: they are read where a pass ends, or before the next one starts.
+    fn record_gate_reds(&mut self, repo: &Repo) {
+        let Some(open) = self.rc.batch.as_deref().and_then(|b| repo.open_rounds().find(|r| r.id == b)) else { return };
+        self.rc.gate_red = open.gate_red.iter().filter(|(_, _, mark)| batcher_cut::io::mark_bars_tip(mark)).cloned().collect();
+    }
+
+    /// Ejects, ahead of any attribution and before another pass starts, each member whose own gate
+    /// went red at the tip the round holds, carrying the gate's lines. True when it asked.
+    fn eject_recorded_gate_reds(&mut self) -> bool {
+        let Some(batch) = self.rc.batch.clone() else { return false };
+        let mut seen = std::collections::BTreeSet::new();
+        let red: Vec<&(String, String, String)> = self.rc.gate_red.iter().filter(|(id, tip, _)| self.rc.members.iter().any(|(m, t)| m == id && t == tip) && seen.insert(id.as_str())).collect();
+        if red.is_empty() {
+            return false;
+        }
+        let ids: Vec<String> = red.iter().map(|(id, ..)| id.clone()).collect();
+        let marks: Vec<String> = red.iter().map(|(.., mark)| mark.clone()).collect();
+        let why = red.iter().map(|(id, tip, mark)| format!("{id}: its own gate went red at {tip} ({mark})")).collect::<Vec<_>>().join("; ");
+        let key = format!("{}:{batch}:eject-gate-red:{}:{}", self.repo, ids.join(","), self.rc.head);
+        self.acts.push(Leg { bead: ids.join(","), why, reds: marks, key, ..self.leg() }.act(EJECT_GATE_RED));
+        self.rc.leg = None;
+        self.rc.gate_red.clear();
+        true
+    }
+
+    /// A pass the queue started that is no leg of this task and reports to nobody: with
     /// no leg, no certify lock held and no verdict, the round is ended as a fault and its members re-cut.
     fn pass_ended_without_verdict(&mut self, repo: &Repo) -> bool {
         let Some(open) = self.rc.batch.as_deref().and_then(|b| repo.open_rounds().find(|r| r.id == b)) else { return false };
@@ -1614,6 +1660,8 @@ impl Machine<'_> {
     }
 
     fn land_now(&mut self) {
+        let key = self.rc.round_key.clone().unwrap_or_default();
+        self.acts.push(Leg { key: format!("round:{key}"), ..self.leg() }.act(LC_CERTIFY));
         self.acts.push(Leg { key: self.rc.batch.clone().unwrap_or_default(), ..self.leg() }.act(LAND));
     }
 
@@ -1827,6 +1875,9 @@ impl Machine<'_> {
         if !ok && self.rc.members.is_empty() && self.end_emptied_round("its leg ended red with no member left") {
             return;
         }
+        if !ok && matches!(self.rc.state, State::Corpus | State::Certifying) && self.eject_recorded_gate_reds() {
+            return;
+        }
         match (self.rc.state, ok) {
             (State::Corpus, true) => {
                 self.go(Trigger::LegGreen);
@@ -2035,6 +2086,21 @@ impl Machine<'_> {
                 self.rc.eject_held = None;
                 self.go(Trigger::LegLost);
                 self.red_naming(&format!("eject of {} refused: {}", leg.bead, body.trim()), leg.reds.clone());
+            }
+            (State::Corpus | State::Attributing | State::Certifying, EJECT_GATE_RED) if ok => {
+                let gone = leg.bead.split(',').count();
+                self.rc.members.retain(|(id, _)| !leg.bead.split(',').any(|b| b == id));
+                self.rc.round_key = Some(core::round_key(&self.rc.members));
+                let why = format!("{} left: its own gate went red ({}); the round is abandoned and its survivors cut again", leg.bead, leg.reds.join(" "));
+                self.go(Trigger::LegLost);
+                self.abandon_ejecting(&why, vec![], Some(gone));
+                self.finish(pace::Outcome::Quiet, "");
+            }
+            (State::Corpus | State::Attributing | State::Certifying, EJECT_GATE_RED) => {
+                let why = format!("{} went red on its own gate ({}) and its eject was refused ({})", leg.bead, leg.reds.join(" "), body.trim());
+                self.go(Trigger::LegLost);
+                self.abandon_naming(&why, vec![]);
+                self.finish(pace::Outcome::Quiet, "");
             }
             (State::Landing, LAND) if ok => {
                 let l: Landed = serde_json::from_str(body).unwrap_or_default();
@@ -2540,6 +2606,16 @@ pub mod edge {
 
     use super::{Assembled, Landed, Leg, Member, Opened, Promoted, Repo, Round, Snapshot};
 
+    /// Each gate-red row's mark, followed by where the gate recorded the failure when it did.
+    pub(super) fn with_failing(rows: Vec<(String, String, String)>, failing: impl Fn(&str, &str) -> Option<String>) -> Vec<(String, String, String)> {
+        rows.into_iter()
+            .map(|(id, tip, mark)| match failing(&id, &tip) {
+                Some(at) => (id, tip, format!("{mark}; {at}")),
+                None => (id, tip, mark),
+            })
+            .collect()
+    }
+
     use crate::{Effects, EffectSpec};
 
     /// The seam's environment from the pinned config, as the `batcher` binary builds it.
@@ -2558,7 +2634,7 @@ pub mod edge {
     }
 
     fn core_members(members: &[(String, String)]) -> Vec<batcher::core::Member> {
-        members.iter().map(|(id, tip)| batcher::core::Member { id: id.clone(), tip: tip.clone(), title: String::new(), priority: None, express: false, base_fix: false, certified_at: 0, stack: BTreeMap::new(), blocked_by: vec![] }).collect()
+        members.iter().map(|(id, tip)| batcher::core::Member { id: id.clone(), tip: tip.clone(), title: String::new(), priority: None, express: false, base_fix: false, certified_at: 0, stack: BTreeMap::new(), blocked_by: vec![], provisional: false }).collect()
     }
 
     /// One unit leg under the naming rule: a scope with the round's CPU quota when the backend
@@ -2747,7 +2823,7 @@ pub mod edge {
         let pool: Vec<Member> = io::certified_pool(env, repo)?
             .into_iter()
             .map(|m| Member {
-                state: "CERTIFIED".into(),
+                state: if m.provisional { "SUBMITTED" } else { "CERTIFIED" }.into(),
                 sifted_tip: sifted.get(&m.id).cloned(),
                 title: m.title.clone(),
                 priority: m.priority.unwrap_or(u8::MAX),
@@ -2766,7 +2842,9 @@ pub mod edge {
         let mut open = io::open_rounds(env, repo)?.into_iter().map(|r| {
             let driven = io::certify_driven(env, &repo.name, &r.id) || recert_driven(units, &r.id);
             let unfit = io::round_certifiable(env, repo, &r.id).err();
-            Round { id: r.id, members: r.members, tips: r.tips, head: r.head, worktree: r.worktree, driven, red: r.red, age_secs: r.age_secs, unfit, phase: r.phase }
+            let queue = landing_pass::gateq::GateQueue::new(&env.run);
+            let gate_red = with_failing(io::gate_red_rows(env, &r.members), |id, tip| queue.failing_at(&repo.name, &format!("spira/{id}"), tip));
+            Round { id: r.id, members: r.members, tips: r.tips, head: r.head, worktree: r.worktree, driven, red: r.red, age_secs: r.age_secs, unfit, phase: r.phase, gate_red }
         });
         let open_round = open.next();
         let open_above: Vec<Round> = open.collect();
@@ -2927,6 +3005,15 @@ pub mod edge {
         Ok("{}".into())
     }
 
+    pub fn eject_gate_red(_: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
+        let (env, leg) = (env()?, leg(spec)?);
+        let repo = repo_of(&env, &leg)?;
+        for (i, id) in leg.bead.split(',').filter(|s| !s.is_empty()).enumerate() {
+            io::round_eject_gate_red(&env, &repo, &leg.batch, id, leg.reds.get(i).map_or("", String::as_str))?;
+        }
+        Ok("{}".into())
+    }
+
     pub fn withdraw(_: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
         let (env, leg) = (env()?, leg(spec)?);
         io::lc_withdraw(&env, &leg.bead);
@@ -2945,6 +3032,12 @@ pub mod edge {
         let (env, leg) = (env()?, leg(spec)?);
         let argv = super::certify_argv(&env.queue_bin.display().to_string(), &leg);
         start_scope(e, super::NAME, &leg.unit, argv, home_vars(&env), None)
+    }
+
+    pub fn lc_certify(_: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
+        let (env, leg) = (env()?, leg(spec)?);
+        io::lc_certify_round(&env, &leg.members, &leg.round_key);
+        Ok("{}".into())
     }
 
     /// `queue round land`, retried while another operation holds the lock; a refusal is an `Err`.
@@ -3191,11 +3284,24 @@ pub mod edge {
             assert!(lands(false));
         }
     }
+
+    #[cfg(test)]
+    mod failing_tests {
+        use super::with_failing;
+
+        #[test]
+        fn a_gate_red_mark_gains_the_failing_step_and_line_only_where_the_gate_recorded_one() {
+            let rows = vec![("a".to_string(), "t1".to_string(), "suites-failed".to_string()), ("b".to_string(), "t2".to_string(), "no-rebase".to_string())];
+            let got = with_failing(rows, |id, _| (id == "a").then(|| "failing step: s; failing line: error: x".to_string()));
+            assert_eq!(got[0].2, "suites-failed; failing step: s; failing line: error: x");
+            assert_eq!(got[1].2, "no-rebase");
+        }
+    }
 }
 
 #[cfg(test)]
 mod saved_state_tests {
-    use super::{Member, RepoCarry, Round};
+    use super::{Member, RepoCarry};
     use serde::de::DeserializeOwned;
 
     fn with_old_field<T: DeserializeOwned + serde::Serialize + Default>(field: &str, value: serde_json::Value) -> T {
@@ -3203,11 +3309,6 @@ mod saved_state_tests {
         assert!(saved.get(field).is_none(), "{field} is no longer written");
         saved.as_object_mut().unwrap().insert(field.into(), value);
         serde_json::from_value(saved).unwrap_or_else(|e| panic!("a saved record carrying {field} must still load: {e}"))
-    }
-
-    #[test]
-    fn a_saved_round_record_carrying_the_retired_gate_red_field_still_loads() {
-        let _: Round = with_old_field("gate_red", serde_json::json!([["sp-a", "t1", "suites-failed"]]));
     }
 
     #[test]

@@ -1870,6 +1870,9 @@ fn open_timed(
     let named_count = wanted.len();
     let mut skips: Vec<Skip> = Vec::new();
     let mut admitted: Vec<Member> = Vec::new();
+    let named: Vec<String> = wanted.iter().map(|m| m.id.clone()).collect();
+    let mut blockers: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut provisional: Vec<String> = Vec::new();
     for m in wanted {
         if let Some(by) = super::integrate::carried_by(w, &c, &m.id) {
             skips.push(skip(
@@ -1884,12 +1887,13 @@ fn open_timed(
         }
         match w.lc.bead_row(&m.id) {
             None => skips.push(skip(&m.id, "no-row", format!("{}: no lifecycle row (spira-lc could not say) — not admitted", m.id))),
-            Some(r) if r.state == "SUBMITTED" => {
-                let tip = r.tip.clone().unwrap_or_default();
-                skips.push(skip(&m.id, "submitted", format!("{}: SUBMITTED — its gate has not passed at {tip}; not admitted", m.id)))
+            // SUBMITTED or CERTIFIED (law-a-round-is-feature-first-then-catch-all): the round's own
+            // full suite is the certification, so a submitted tip need not pass a per-bead gate first.
+            Some(r) if r.state != "CERTIFIED" && r.state != "SUBMITTED" => {
+                skips.push(skip(&m.id, "state", format!("{}: lifecycle state={} (not SUBMITTED or CERTIFIED) — not admitted", m.id, r.state)))
             }
-            Some(r) if r.state != "CERTIFIED" => {
-                skips.push(skip(&m.id, "state", format!("{}: lifecycle state={} (not CERTIFIED) — not admitted", m.id, r.state)))
+            Some(r) if r.state == "SUBMITTED" && submitted_hold(&r, &m.id, by).is_some() => {
+                skips.push(skip(&m.id, "held", submitted_hold(&r, &m.id, by).unwrap_or_default()))
             }
             Some(r) => match r.tip.clone().filter(|t| !t.is_empty()) {
                 Some(tip) if r.ejected_red_tip.as_deref() == Some(tip.as_str()) => {
@@ -1898,7 +1902,7 @@ fn open_timed(
                 Some(tip) if tip.starts_with(&m.tip) && batch_red_at(&c, &m.id, &tip) => {
                     skips.push(skip(&m.id, "batch-red", format!("{}: {tip} already went red in a batch — not admitted until the tip changes", m.id)))
                 }
-                Some(tip) if tip.starts_with(&m.tip) => match r.blocked_by.first() {
+                Some(tip) if tip.starts_with(&m.tip) => match r.blocked_by.iter().find(|d| !named.contains(d)) {
                     Some(dep) => {
                         let state = w.lc.bead_row(dep).map(|d| d.state).unwrap_or_else(|| "unknown".into());
                         skips.push(skip(&m.id, "blocked", format!("{}: depends on {dep} ({state}) — not admitted until it lands", m.id)))
@@ -1906,7 +1910,13 @@ fn open_timed(
                     None if super::simple::lands_by_lint(w, &c.s, &path, &base, &tip) => {
                         skips.push(skip(&m.id, "text-only", crate::text_only::skip_line(&m.id)))
                     }
-                    None => admitted.push(Member { id: m.id, tip }),
+                    None => {
+                        if r.state == "SUBMITTED" {
+                            provisional.push(m.id.clone());
+                        }
+                        blockers.insert(m.id.clone(), r.blocked_by.clone());
+                        admitted.push(Member { id: m.id, tip })
+                    }
                 },
                 Some(tip) => skips.push(skip(&m.id, "tip-moved", format!("{}: {} is not its row's tip {tip} — not admitted", m.id, m.tip))),
                 None => skips.push(skip(&m.id, "no-tip", format!("{}: no submitted tip — not admitted", m.id))),
@@ -1918,6 +1928,7 @@ fn open_timed(
     if !skips.is_empty() {
         return refuse_open(w, label, &repo_name, named_count, &skips);
     }
+    admitted = blocker_first(admitted, &blockers);
 
     let batch = name
         .map(str::to_string)
@@ -2065,6 +2076,10 @@ fn open_timed(
             kv.push("parent", p);
         }
         kv.push("members", &render_members(merged));
+        let provisional: Vec<&str> = merged.iter().map(|m| m.id.as_str()).filter(|id| provisional.iter().any(|p| p == id)).collect();
+        if !provisional.is_empty() {
+            kv.push("provisional", &provisional.join(" "));
+        }
         kv.push("worktree", &wt.display().to_string());
         kv.push("actor", &actor(w));
         kv.push("opened", &now);
@@ -2307,6 +2322,32 @@ fn start(w: &World, repo: Option<&str>, by: &str, reason: &Text) -> i32 {
     }
 }
 
+/// Why a SUBMITTED member with a hold is not admitted: held ask, wait or poison always, and held
+/// manual when the batcher names it; a person's hand cut is the way past a manual hold.
+pub(super) fn submitted_hold(r: &crate::model::LcBeadRow, id: &str, by: &str) -> Option<String> {
+    let kind = r.holds.iter().find(|h| h.as_str() != "manual" || by == "batcher")?;
+    Some(format!("{id}: SUBMITTED and held {kind} — not admitted until it is unheld"))
+}
+
+/// `admitted` with each member after the members of the same list that block it, the rest in
+/// the order given.
+pub(super) fn blocker_first(admitted: Vec<Member>, blockers: &BTreeMap<String, Vec<String>>) -> Vec<Member> {
+    let mut rest = admitted;
+    let mut out: Vec<Member> = Vec::with_capacity(rest.len());
+    while !rest.is_empty() {
+        let ready = rest
+            .iter()
+            .position(|m| {
+                blockers.get(&m.id).into_iter().flatten().all(|b| {
+                    !rest.iter().any(|r| &r.id == b) || out.iter().any(|o| &o.id == b)
+                })
+            })
+            .unwrap_or(0);
+        out.push(rest.remove(ready));
+    }
+    out
+}
+
 fn status(w: &World, repo: Option<&str>) -> i32 {
     let label = "round status";
     let Ok(c) = resolve(w, label, repo) else {
@@ -2357,6 +2398,9 @@ fn status(w: &World, repo: Option<&str>) -> i32 {
     for k in ["batch_id", "repo", "head", "base", "members", "worktree"] {
         w.out(format!("{k}={}", kv.get(k).unwrap_or("")));
     }
+    if let Some(p) = kv.get("provisional").filter(|p| !p.is_empty()) {
+        w.out(format!("provisional={p}"));
+    }
     if let Some(red) = kv.get("red").filter(|r| !r.is_empty()) {
         w.out(format!("red={red}"));
     }
@@ -2369,6 +2413,9 @@ fn status(w: &World, repo: Option<&str>) -> i32 {
         ));
         for k in ["batch_id", "repo", "head", "base", "members", "worktree"] {
             w.out(format!("round{n}_{k}={}", kv.get(k).unwrap_or("")));
+        }
+        if let Some(p) = kv.get("provisional").filter(|p| !p.is_empty()) {
+            w.out(format!("round{n}_provisional={p}"));
         }
         if let Some(red) = kv.get("red").filter(|r| !r.is_empty()) {
             w.out(format!("round{n}_red={red}"));
@@ -4567,11 +4614,19 @@ fn eject(
         ));
         return FAIL;
     }
+    let mut dependants: Vec<String> = vec![id.to_string()];
+    while let Some(m) = members.iter().find(|m| {
+        !dependants.contains(&m.id) && w.lc.bead_row(&m.id).is_some_and(|r| r.blocked_by.iter().any(|b| dependants.contains(b)))
+    }) {
+        dependants.push(m.id.clone());
+    }
+    dependants.remove(0);
     let stacked: Vec<Member> = members
         .iter()
         .filter(|m| {
             m.id != id
                 && (withs.contains(&m.id.as_str())
+                    || dependants.contains(&m.id)
                     || w.git
                         .merge_base(&path, &ejected_tip, &m.tip)
                         .is_some_and(|mb| !w.git.is_ancestor(&path, &mb, &base_sha)))
@@ -4625,6 +4680,8 @@ fn eject(
         std::iter::once((id, reason.clone(), cause)).chain(stacked.iter().map(|m| {
             let why = if withs.contains(&m.id.as_str()) {
                 format!("red only in combination with {id}; integrated with it")
+            } else if dependants.contains(&m.id) {
+                format!("blocked on {id}")
             } else {
                 format!("stacked on {id}")
             };
@@ -4670,7 +4727,8 @@ fn eject(
         );
         if bead != id {
             w.out(format!(
-                "queue.sh {label}: ejected {bead} from round {batch} (stacked on {id})"
+                "queue.sh {label}: ejected {bead} from round {batch} ({})",
+                if dependants.contains(&bead.to_string()) { format!("blocked on {id}") } else { format!("stacked on {id}") }
             ));
         }
     }
@@ -4728,6 +4786,12 @@ fn eject(
     }
 
     set(&mut kv, "members", &render_members(&survivors));
+    let provisional: Vec<String> = kv.get("provisional").unwrap_or("").split_whitespace().map(str::to_string).filter(|p| survivors.iter().any(|m| &m.id == p)).collect();
+    if provisional.is_empty() {
+        kv.remove("provisional");
+    } else {
+        set(&mut kv, "provisional", &provisional.join(" "));
+    }
     set(&mut kv, "head", &new_head);
     kv.remove("red");
     let ejected = stacked.iter().fold(

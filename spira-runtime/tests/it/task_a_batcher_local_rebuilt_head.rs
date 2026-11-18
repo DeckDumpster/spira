@@ -74,7 +74,7 @@ fn a_round_the_attribution_rebuilt_is_certified_for_the_rebuilt_head_and_its_gre
     for (carry, seen) in [(&before_write, OPENED), (&after_write, REBUILT)] {
         let head_of = move |_: &str, _: &str| Some(seen.to_string());
         let (landing, acts) = on_ran_seeing(carry, &ran(&leg.unit, Exit::Code(0)), &RanOutput::captured(b"", b""), NOW, &head_of).unwrap_or_else(|| panic!("a green certify seen at {seen} was discarded"));
-        assert_eq!(effects(&acts), [LAND], "{acts:?}");
+        assert_eq!(effects(&acts), [LC_CERTIFY, LAND], "{acts:?}");
         assert_eq!(landing.repos["spira"].state, State::Landing);
     }
 }

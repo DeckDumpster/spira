@@ -31,8 +31,8 @@ Carrying it out means merges, the round's suites, the PR, the open-batch record 
 
 ## 2a. Rounds are the batcher's (sp-1oiokx)
 
-The pool is every unheld CERTIFIED lifecycle row whose tip is its branch's live tip: a bead
-joins a round only after its own gate has passed. A
+The pool is every unheld SUBMITTED or CERTIFIED lifecycle row whose tip is its branch's live
+tip: no gate verdict is required, because the round's full suite is the stronger trial. A
 non-empty pool cuts at once (`should_cut`: no count, no idle wait; an open batch prepares the
 next round). `select_round` is feature-first: the epic root (the id before its first `.`)
 shared by the most members, at least two, with the members they stack on or that stack on
@@ -40,6 +40,17 @@ them and every express member; else a catch-all of the whole pool. A member that
 on merge waits for the next round. Reds are attributed by §4 and ejected with quoted lines;
 a SUBMITTED survivor is certified (`GatePass`, gate key `round:<key>`) just before
 `land-local`, and a SUBMITTED owner is returned to REWORK by `GateRed`.
+
+A SUBMITTED member is **provisional** (law-a-provisional-member-leaves-on-its-gate-red): it
+ranks after every certified member of its express class, so `cap_round` drops it first, and its
+own gate keeps running. That gate's red never stops, restarts or preempts a running pass: it is
+recorded on the member's row (`gate-red: <reason>`, landing-pass) and on the carried round
+(`gate_red`) as evidence. A pass that ends green lands the round with the member in it. A pass
+that ends red, and a round between passes, eject first each member whose recorded red bars its
+tip (`mark_bars_tip`: not a timeout, no-rebase or NO_VERDICT) and whose gate had not passed,
+carrying the gate's step and lines, before any attribution; the survivors are cut again. A member
+whose unlanded blockers are all in the same pool is cut after them (`refuse_blocked`, applied
+again after the cap); the blocker's ejection takes it along.
 
 ## 3. Lifecycle machine
 
@@ -176,7 +187,7 @@ for it; a new commit changes the tip and readmits it. Tests: `redtip::tests`.
 
 ## Left-out beads
 
-`io::certified_pool` names each CERTIFIED bead the pool leaves out: held (`Held`), tip recorded
+`io::certified_pool` names each SUBMITTED or CERTIFIED bead the pool leaves out: held (`Held`), tip recorded
 ejected-red (`EjectedRed`), or certified tip no longer the branch tip (`TipMoved`). The first time an
 (id, cause, tip) is seen, one stderr line `batcher <repo>: <id> left out of the cut: <why> — <exit>`
 and one bead note say why and the way back in; the record `<run>/batcher-left-out/<repo>/<id>` holds

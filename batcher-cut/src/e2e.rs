@@ -220,6 +220,7 @@ fn e2e_three_members_one_breaks_a_fast_suite() {
             certified_at: 0,
             stack: BTreeMap::new(),
             blocked_by: Vec::new(),
+        provisional: false,
         });
     }
     git(&repo_dir, &["checkout", "-q", "main"]);

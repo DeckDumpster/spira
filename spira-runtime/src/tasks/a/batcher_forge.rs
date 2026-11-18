@@ -680,7 +680,7 @@ pub mod edge {
     pub fn batch_open(_: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
         let (env, leg) = (env()?, leg(spec)?);
         let repo = batcher_cut::find_repo(&env, &leg.repo)?;
-        let members: Vec<batcher::core::Member> = leg.members.iter().map(|(id, tip)| batcher::core::Member { id: id.clone(), tip: tip.clone(), title: String::new(), priority: None, express: false, base_fix: false, certified_at: 0, stack: Default::default(), blocked_by: vec![] }).collect();
+        let members: Vec<batcher::core::Member> = leg.members.iter().map(|(id, tip)| batcher::core::Member { id: id.clone(), tip: tip.clone(), title: String::new(), priority: None, express: false, base_fix: false, certified_at: 0, stack: Default::default(), blocked_by: vec![], provisional: false }).collect();
         let moved = io::moved_members(&repo, &leg.base, &members);
         if !moved.is_empty() {
             return Err(format!("refused to open — {} changed since the round was built (new patches); rebuild and retest", moved.join(", ")));
