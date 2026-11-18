@@ -36,6 +36,11 @@ struct Fake {
     admission_free: Cell<bool>,
     admission_who: RefCell<Vec<String>>,
     lock_free: Cell<bool>,
+    reset_fails: Cell<bool>,
+    reset_cleared: Cell<usize>,
+    live_dirs: RefCell<HashSet<PathBuf>>,
+    reset_log: RefCell<Vec<PathBuf>>,
+    removed_dirs: RefCell<Vec<PathBuf>>,
     /// The lock is held for this many `tree_lock_try` calls, then free.
     lock_busy_tries: Cell<u32>,
     lock_open: Cell<bool>,
@@ -260,6 +265,11 @@ impl Fake {
             admission_free: Cell::new(true),
             admission_who: RefCell::new(Vec::new()),
             lock_free: Cell::new(true),
+            reset_fails: Cell::new(false),
+            reset_cleared: Cell::new(0),
+            reset_log: RefCell::new(Vec::new()),
+            live_dirs: RefCell::new(HashSet::new()),
+            removed_dirs: RefCell::new(Vec::new()),
             lock_busy_tries: Cell::new(0),
             lock_open: Cell::new(true),
             locks_opened: RefCell::new(Vec::new()),
@@ -553,6 +563,22 @@ impl World for Fake {
         self.files.borrow().get(p).cloned()
     }
     fn mkdir_p(&self, _: &Path) {}
+    fn reset_dir(&self, p: &Path) -> Result<(), String> {
+        if self.reset_fails.get() {
+            return Err("read-only file system".into());
+        }
+        self.reset_log.borrow_mut().push(p.to_path_buf());
+        let before = self.files.borrow().len();
+        self.files.borrow_mut().retain(|k, _| !k.starts_with(p));
+        self.reset_cleared.set(before - self.files.borrow().len());
+        self.live_dirs.borrow_mut().insert(p.to_path_buf());
+        Ok(())
+    }
+    fn remove_dir_all(&self, p: &Path) {
+        self.files.borrow_mut().retain(|k, _| !k.starts_with(p));
+        self.live_dirs.borrow_mut().remove(p);
+        self.removed_dirs.borrow_mut().push(p.to_path_buf());
+    }
     fn write_atomic(&self, dir: &Path, name: &str, content: &str) {
         if name == "gate-unit-nextest.toml" {
             self.unit_config.borrow_mut().push((dir.join(name), content.to_string()));
@@ -4981,6 +5007,64 @@ fn both_trials_see_the_same_env_contract() {
             "trial {i}: the retired host-cores export is back"
         );
     }
+}
+
+fn tmp_for(f: &Fake) -> String {
+    let t = f.env_of(0, "TMPDIR");
+    assert!(
+        t.starts_with(&format!("{RUN}/worktree/.gate.")) && t.ends_with(".tmp"),
+        "TMPDIR is <RUN>/worktree/.gate.<repo>.<key>.tmp, got {t:?}"
+    );
+    t
+}
+
+#[test]
+fn every_trial_gets_a_per_tree_tmpdir_on_the_run_disk() {
+    let f = Fake::new();
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, "lint said no".into()));
+    f.runs.borrow_mut().insert(BASE.into(), (1, "lint said no".into()));
+    f.run();
+    assert_eq!(f.ran.borrow().len(), 2);
+    let t = tmp_for(&f);
+    assert_eq!(f.env_of(1, "TMPDIR"), t);
+}
+
+#[test]
+fn a_finished_trial_leaves_no_tmpdir_pass_or_red() {
+    for red in [false, true] {
+        let f = Fake::new();
+        if red {
+            f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, "lint said no".into()));
+        }
+        f.run();
+        let t = PathBuf::from(tmp_for(&f));
+        assert!(!f.live_dirs.borrow().contains(&t), "red={red}: {t:?} left behind");
+        assert!(f.removed_dirs.borrow().contains(&t), "red={red}: never removed");
+    }
+}
+
+#[test]
+fn a_stale_tmpdir_is_emptied_before_the_gate_command_runs() {
+    let learn = Fake::new();
+    learn.run();
+    let t = PathBuf::from(tmp_for(&learn));
+    let f = Fake::new();
+    f.files.borrow_mut().insert(t.join("libduckdb/duckdb.h"), "stale".into());
+    f.run();
+    assert_eq!(f.reset_cleared.get(), 1, "the stale file was emptied at trial start");
+    assert_eq!(f.reset_log.borrow().first(), Some(&t), "reset before any command ran");
+}
+
+#[test]
+fn a_tmpdir_that_cannot_be_reset_is_a_noverdict_naming_the_path_and_runs_nothing() {
+    let f = Fake::new();
+    f.reset_fails.set(true);
+    f.run();
+    assert!(f.ran.borrow().is_empty(), "no gate command may run");
+    let err = f.err.borrow().join("\n");
+    assert!(err.contains(".tmp") && err.contains("read-only"), "{err}");
+    assert!(err.contains("VERDICT=NO_VERDICT reason=tmpdir-unusable"), "{err}");
+    assert!(f.live_dirs.borrow().is_empty(), "nothing left behind: {err}");
 }
 
 #[test]

@@ -485,6 +485,17 @@ impl World for Real {
     fn mkdir_p(&self, p: &Path) {
         let _ = fs::create_dir_all(p);
     }
+    fn reset_dir(&self, p: &Path) -> Result<(), String> {
+        match fs::remove_dir_all(p) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.to_string()),
+        }
+        fs::create_dir_all(p).map_err(|e| e.to_string())
+    }
+    fn remove_dir_all(&self, p: &Path) {
+        let _ = fs::remove_dir_all(p);
+    }
     fn write_atomic(&self, dir: &Path, name: &str, content: &str) {
         let tmp = dir.join(format!(".{name}.{}", std::process::id()));
         if fs::write(&tmp, content).is_ok() && fs::rename(&tmp, dir.join(name)).is_err() {

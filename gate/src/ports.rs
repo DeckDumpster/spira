@@ -75,6 +75,10 @@ pub trait World {
     fn exists(&self, p: &Path) -> bool;
     fn read(&self, p: &Path) -> Option<String>;
     fn mkdir_p(&self, p: &Path);
+    /// Empty `p` and leave it an existing, empty directory.
+    fn reset_dir(&self, p: &Path) -> Result<(), String>;
+    /// Remove `p` and everything under it; absent is fine.
+    fn remove_dir_all(&self, p: &Path);
     /// Write via `.<name>.<pid>` and rename.
     fn write_atomic(&self, dir: &Path, name: &str, content: &str);
     fn append(&self, p: &Path, line: &str);

@@ -102,6 +102,7 @@ struct State {
     key: String,
     held_lock: bool,
     tree: Option<PathBuf>,
+    tmpdir: Option<PathBuf>,
     filelist: Option<PathBuf>,
     /// The file the gate command writes its steps to (`SPIRA_GATE_STEPS`).
     steps_file: Option<PathBuf>,
@@ -662,6 +663,15 @@ impl<'w, W: World> Trial<'w, W> {
         }
         self.s.held_lock = true;
         self.s.tree = Some(tree.clone());
+        let tmpdir = PathBuf::from(format!("{}.tmp", tree.display()));
+        self.s.tmpdir = Some(tmpdir.clone());
+        if let Err(why) = w.reset_dir(&tmpdir) {
+            return v(
+                NOVERDICT,
+                "tmpdir-unusable",
+                format!("gate: cannot reset the trial's TMPDIR at {}: {why}", tmpdir.display()),
+            );
+        }
         let tree_waited = w.now() - t0;
         self.s.waited_ms = w.now_ms().saturating_sub(t0_ms);
         self.s.waited = admission_waited + tree_waited;
@@ -783,6 +793,7 @@ impl<'w, W: World> Trial<'w, W> {
                 // cargo take no compile or test slot of their own (no hold-and-wait, no deadlock).
                 e(spira_config::admission::INHERIT_ENV, "gate"),
                 e("HOME", ctx.var("HOME")),
+                e("TMPDIR", &tmpdir.to_string_lossy()),
                 e("TERM", "dumb"),
                 e("SPIRA_GATE_REPO", &repo.to_string_lossy()),
                 e("SPIRA_GATE_REPO_NAME", &name),
@@ -1838,6 +1849,9 @@ impl<'w, W: World> Trial<'w, W> {
             e("HOME", &self.s.home_dir),
             e("TERM", "dumb"),
         ];
+        if let Some(t) = &self.s.tmpdir {
+            env.push(e("TMPDIR", &t.to_string_lossy()));
+        }
         env.extend(self.s.build_env.iter().cloned());
         let cmd = release_bins_command();
         let t0 = w.now();
@@ -1908,6 +1922,9 @@ impl<'w, W: World> Trial<'w, W> {
         }
         vd = settle(vd);
         self.conclude(&vd);
+        if let Some(t) = self.s.tmpdir.take() {
+            w.remove_dir_all(&t);
+        }
         if !vd.msg.is_empty() {
             w.eprint(&vd.msg);
         }
