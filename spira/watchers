@@ -114,7 +114,7 @@ concierge-inbox|log|@SPIRA_CONCIERGE_INBOX@
 
 # LC-LATENCY is the alarm for a spira-lc method whose p95 over five minutes is past the 500 ms
 # ceiling: lc-serve appends one line per breach (re-alarmed every 15 minutes) and nothing else
-# writes the log. Brokered tool verbs (groom, queue, ...) and facts-query are batch jobs and exempt.
+# writes the log. Brokered tool verbs (groom, queue, ...) are batch jobs and exempt.
 lc-latency|log|@SPIRA_RUN@/lc-latency.log
 
 # LC-SHIP is the control store's off-box age alarm: lc-serve appends a RED line when the oldest

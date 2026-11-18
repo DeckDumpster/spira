@@ -86,51 +86,11 @@ impl Real {
         }
     }
 
-    /// The same query over the attempt-history facts in the lifecycle event log, answered as
-    /// bd's `sql` table so the one parser reads both.
+    /// The attempt-history facts the folds read, since `since`, from the lifecycle log.
     // batch-job: census report, bounded at 30 s.
-    fn run_fact_sql(&self, query: &str) -> (bool, String, String) {
-        let out = Command::new("timeout")
-            .arg("30")
-            .arg(&self.lc)
-            .arg("facts-query")
-            .arg(query)
-            .stdin(Stdio::null())
-            .output();
-        match out {
-            Ok(o) => (
-                o.status.success(),
-                String::from_utf8_lossy(&o.stdout).trim_end_matches('\n').to_string(),
-                String::from_utf8_lossy(&o.stderr).trim_end_matches('\n').to_string(),
-            ),
-            Err(e) => (false, String::new(), e.to_string()),
-        }
-    }
-
-    /// bd's events and the lifecycle facts, one table: the history written before the move
-    /// lives in bd, everything since in the lifecycle log. Either leg failing fails the query.
-    fn run_events_sql(&self, query: &str) -> (bool, String, String) {
-        self.run_both_sql(query, query)
-    }
-
-    fn run_both_sql(&self, bd_query: &str, fact_query: &str) -> (bool, String, String) {
-        let (bd_ok, bd_out, bd_err) = self.run_bd_sql(bd_query);
-        if !bd_ok {
-            return (false, bd_out, bd_err);
-        }
-        let (lc_ok, lc_out, lc_err) = self.run_fact_sql(fact_query);
-        if !lc_ok {
-            return (false, lc_out, format!("lifecycle facts: {lc_err}"));
-        }
-        (true, format!("{bd_out}\n{lc_out}"), String::new())
-    }
-
-    /// Beads whose reopen cause (a `reopen` fact, or a merge-conflict requeue) is in the
-    /// lifecycle log since `since`: what bd's own `reopened` rows cannot see for themselves.
-    // batch-job: census report, bounded at 30 s.
-    fn recorded_cause_ids(&self, since: Option<i64>) -> Result<Vec<String>, String> {
+    fn fact_rows(&self, since: Option<i64>) -> Result<Vec<crate::facts::FactRow>, String> {
         let mut cmd = Command::new("timeout");
-        cmd.arg("30").arg(&self.lc).args(["fact", "list", "--kinds", "reopen,requeued"]);
+        cmd.arg("30").arg(&self.lc).args(["fact", "list", "--kinds", crate::facts::KINDS]);
         if let Some(t) = since.filter(|&t| t > 0) {
             cmd.args(["--since", &t.to_string()]);
         }
@@ -138,18 +98,25 @@ impl Real {
         if !out.status.success() {
             return Err(format!("lifecycle facts: {}", String::from_utf8_lossy(&out.stderr).trim()));
         }
-        let rows: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout).map_err(|e| format!("lifecycle facts: {e}"))?;
-        let mut ids: Vec<String> = rows
-            .iter()
-            .filter(|r| {
-                let kind = r.get("event_type").and_then(|v| v.as_str()).unwrap_or("");
-                let cause = r.get("new_value").and_then(|v| v.as_str()).unwrap_or("");
-                kind == "reopen" || (kind == "requeued" && cause == "merge-conflict")
-            })
-            .filter_map(|r| r.get("issue_id").and_then(|v| v.as_str()).map(str::to_string))
-            .collect();
-        ids.sort();
-        ids.dedup();
+        crate::facts::parse(&String::from_utf8_lossy(&out.stdout)).map_err(|e| format!("lifecycle facts: {e}"))
+    }
+
+    /// bd's table and the lifecycle facts' table, one text: the history written before the move
+    /// lives in bd, everything since in the lifecycle log. Either leg failing fails the query.
+    fn run_both_sql(&self, bd_query: &str, facts: impl Fn() -> Result<String, String>) -> (bool, String, String) {
+        let (bd_ok, bd_out, bd_err) = self.run_bd_sql(bd_query);
+        if !bd_ok {
+            return (false, bd_out, bd_err);
+        }
+        match facts() {
+            Ok(lc_out) => (true, format!("{bd_out}\n{lc_out}"), String::new()),
+            Err(e) => (false, String::new(), e),
+        }
+    }
+
+    /// The reopen causes the facts record, for bd's `reopened` rows that cannot see them.
+    fn recorded_cause_ids(rows: &[crate::facts::FactRow]) -> Result<Vec<String>, String> {
+        let ids = crate::facts::recorded_cause_ids(rows);
         if ids.len() > MAX_RECORDED_IDS {
             return Err(format!("lifecycle facts: {} beads with a recorded cause is more than one query can carry", ids.len()));
         }
@@ -177,29 +144,32 @@ impl World for Real {
     /// each retry, default 2s) — the one piece of row M that was never pure SQL text, so it
     /// moves here rather than into `crate::sql`.
     fn census_events_run_sql(&self, since: Option<i64>) -> Result<String, String> {
-        let since_formatted = since.filter(|&s| s > 0).map(|s| self.format_epoch_utc(s));
+        let since = since.filter(|&s| s > 0);
+        let since_formatted = since.map(|s| self.format_epoch_utc(s));
         let causes = self.deliberate_cause_names();
-        let fact_query = crate::sql::events_sql(since_formatted.as_deref(), &causes);
-        let recorded = self.recorded_cause_ids(since.filter(|&s| s > 0))?;
-        let bd_query = crate::sql::events_sql_with(since_formatted.as_deref(), &causes, &recorded);
+        let rows = self.fact_rows(since)?;
+        let bd_query = crate::sql::events_sql_with(since_formatted.as_deref(), &causes, &Self::recorded_cause_ids(&rows)?);
         let delay = self.env("CENSUS_RETRY_DELAY_S").and_then(|v| v.parse().ok()).unwrap_or(2);
-        retry_sql("census_events_run_sql", delay, || self.run_both_sql(&bd_query, &fact_query))
+        retry_sql("census_events_run_sql", delay, || self.run_both_sql(&bd_query, || Ok(crate::facts::events(&rows, since, &causes))))
     }
     fn census_event_rows_run_sql(&self, since: Option<i64>) -> Result<String, String> {
-        let since_formatted = since.filter(|&s| s > 0).map(|s| self.format_epoch_utc(s));
+        let since = since.filter(|&s| s > 0);
+        let since_formatted = since.map(|s| self.format_epoch_utc(s));
         let causes = self.deliberate_cause_names();
-        let fact_query = crate::sql::event_rows_sql(since_formatted.as_deref(), &causes, &[]);
-        let recorded = self.recorded_cause_ids(since.filter(|&s| s > 0))?;
-        let bd_query = crate::sql::event_rows_sql(since_formatted.as_deref(), &causes, &recorded);
+        let rows = self.fact_rows(since)?;
+        let bd_query = crate::sql::event_rows_sql(since_formatted.as_deref(), &causes, &Self::recorded_cause_ids(&rows)?);
         let delay = self.env("CENSUS_RETRY_DELAY_S").and_then(|v| v.parse().ok()).unwrap_or(2);
-        retry_sql("census_event_rows_run_sql", delay, || self.run_both_sql(&bd_query, &fact_query))
+        retry_sql("census_event_rows_run_sql", delay, || self.run_both_sql(&bd_query, || Ok(crate::facts::event_rows(&rows, since, &causes))))
     }
     fn census_handwritten_run_sql(&self) -> String {
-        self.run_events_sql(&crate::sql::handwritten_sql()).1
+        self.run_both_sql(&crate::sql::handwritten_sql(), || self.fact_rows(None).map(|rows| crate::facts::handwritten(&rows))).1
     }
     fn census_deliberate_run_sql(&self, since: Option<i64>) -> String {
-        let since_formatted = since.filter(|&s| s > 0).map(|s| self.format_epoch_utc(s));
-        self.run_events_sql(&crate::sql::deliberate_sql(since_formatted.as_deref(), &self.deliberate_cause_names())).1
+        let since = since.filter(|&s| s > 0);
+        let since_formatted = since.map(|s| self.format_epoch_utc(s));
+        let causes = self.deliberate_cause_names();
+        let bd_query = crate::sql::deliberate_sql(since_formatted.as_deref(), &causes);
+        self.run_both_sql(&bd_query, || self.fact_rows(since).map(|rows| crate::facts::deliberate(&rows, since, &causes))).1
     }
     fn census_class_fold_map(&self) -> String {
         crate::sql::class_fold_map().trim_end_matches('\n').to_string()
@@ -356,7 +326,8 @@ impl World for Real {
 
 #[cfg(test)]
 mod tests {
-    use super::retry_sql;
+    use super::{retry_sql, Real};
+    use crate::ports::World;
 
     fn failing_then_ok(fail_first: usize, calls: &std::cell::Cell<usize>) -> (bool, String, String) {
         calls.set(calls.get() + 1);
@@ -390,5 +361,41 @@ mod tests {
         let calls = std::cell::Cell::new(0);
         assert!(retry_sql("c", 0, || failing_then_ok(0, &calls)).is_ok());
         assert_eq!(calls.get(), 1);
+    }
+
+    fn script(dir: &std::path::Path, name: &str, body: &str) -> String {
+        let p = dir.join(name);
+        testkit::write_exe(&p, &format!("#!/bin/sh\n{body}\n"));
+        p.to_string_lossy().into_owned()
+    }
+
+    fn real_over(dir: &std::path::Path, fact_list_out: &str) -> (Real, std::path::PathBuf) {
+        let calls = dir.join("lc-calls");
+        let lc = script(dir, "lc", &format!("echo \"$*\" >> '{}'\ncat <<'EOF'\n{fact_list_out}\nEOF", calls.display()));
+        let bd = script(dir, "bd-stand-in", "echo '| bd | row |'");
+        (Real { home: dir.to_path_buf(), bdq: bd, lc, child_env: Vec::new() }, calls)
+    }
+
+    #[test]
+    fn the_fact_leg_reads_fact_list_since_the_watermark_and_never_facts_query() {
+        let tmp = testkit::TempDir::new("census-argv");
+        let dir = tmp.path().to_path_buf();
+        let row = r#"[{"issue_id":"sp-a","event_type":"requeued","new_value":"gate-red","actor":"harness","created_at":"2023-11-14T22:13:30Z"}]"#;
+        let (real, calls) = real_over(&dir, row);
+        let out = real.census_events_run_sql(Some(1_700_000_000)).unwrap();
+        let argv = std::fs::read_to_string(&calls).unwrap();
+        assert_eq!(argv.trim(), "fact list --kinds requeued,reclaimed,recurred,lapsed,reopen --since 1700000000");
+        assert!(out.contains("| bd | row |") && out.contains("| requeued | gate-red | 1 | 1 | 1 |"), "{out}");
+    }
+
+    #[test]
+    fn a_report_with_no_watermark_reads_the_whole_history_in_one_fetch() {
+        let tmp = testkit::TempDir::new("census-whole");
+        let dir = tmp.path().to_path_buf();
+        let (real, calls) = real_over(&dir, "[]");
+        real.census_event_rows_run_sql(None).unwrap();
+        real.census_handwritten_run_sql();
+        let argv = std::fs::read_to_string(&calls).unwrap();
+        assert_eq!(argv.lines().collect::<Vec<_>>(), ["fact list --kinds requeued,reclaimed,recurred,lapsed,reopen"; 2]);
     }
 }

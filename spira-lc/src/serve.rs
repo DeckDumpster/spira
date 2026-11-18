@@ -844,16 +844,14 @@ pub const REQUEST_DEADLINE: Duration = Duration::from_secs(3);
 // batch-job: just under the 310 s the `work` client waits for a tool-running verb.
 pub const TOOL_DEADLINE: Duration = Duration::from_secs(305);
 
-/// The request's deadline: [`REQUEST_DEADLINE`] for every store call. Two verbs are batch
-/// jobs this service brokers, not calls, and keep the bound they had: `work`'s lane verbs run a
-/// harness tool (groomer sweep, bead filing, mail) for the dwarf, and `facts-query` is census's
-/// aggregate over the whole fact history.
+/// The request's deadline: [`REQUEST_DEADLINE`] for every store call. `work`'s lane verbs are
+/// batch jobs this service brokers, not calls: they run a harness tool (groomer sweep, bead
+/// filing, mail) for the dwarf, and keep the bound they had.
 fn request_deadline(argv: &[String]) -> Duration {
     match argv.first().map(String::as_str) {
         // batch-job: a work verb that runs a brokered tool waits the client's tool bound less a margin.
         Some("work") if argv.get(2).is_some_and(|v| crate::work::brokers_tool(v)) => TOOL_DEADLINE,
-        // batch-job: census's aggregate, bounded at the query deadline.
-        Some("work") | Some("facts-query") => crate::db::QUERY_DEADLINE,
+        Some("work") => crate::db::QUERY_DEADLINE,
         // batch-job: bounded under the client's 5 s wait; the verb owns its own shorter budget.
         Some("unpublished") => crate::unpublished::DEADLINE,
         // batch-job: a repair sweep over every row, bounded at the query deadline like census's.
@@ -1193,7 +1191,6 @@ mod tests {
         for verb in ["submit", "file-followup", "split"] {
             assert_eq!(w(verb), super::TOOL_DEADLINE, "{verb}");
         }
-        assert_eq!(d("facts-query"), crate::db::QUERY_DEADLINE);
     }
 
     #[test]

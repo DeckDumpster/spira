@@ -14,9 +14,8 @@ use std::time::Duration;
 
 /// law-calls-have-deadlines: a client waits at most 5 s; the service stops at 3 s.
 pub(crate) const TIMEOUT: Duration = Duration::from_secs(5);
-/// census's aggregate over the whole fact history (`facts-query`), which the service bounds
-/// at the query deadline, not 3 s.
-// batch-job: census report, bounded by the service's query deadline plus the reply.
+/// The repair sweeps, which the service bounds at the query deadline, not 3 s.
+// batch-job: a sweep, bounded by the service's query deadline plus the reply.
 const BATCH_TIMEOUT: Duration = Duration::from_secs(12);
 
 /// Where a store call goes, from the one declared `spira.lc_socket`.
@@ -82,7 +81,7 @@ pub(crate) fn forward(socket_path: &str, args: &[String]) -> (i32, String) {
 /// One request with `stdin` as its body; the answer's stdout and stderr apart. A refused or
 /// absent socket is waited for as long as the call's own limit.
 pub(crate) fn forward_with(socket_path: &str, args: &[String], stdin: Option<&str>) -> (i32, String, String) {
-    let batch = args.first().is_some_and(|v| v == "facts-query" || crate::composed::SWEEPS.contains(&v.as_str()));
+    let batch = args.first().is_some_and(|v| crate::composed::SWEEPS.contains(&v.as_str()));
     let limit = if batch { BATCH_TIMEOUT } else { TIMEOUT };
     forward_within(socket_path, args, stdin, limit, limit)
 }

@@ -149,10 +149,10 @@ pub fn method_of(argv: &[String]) -> String {
     }
 }
 
-/// Brokered batch jobs run a harness tool or aggregate the whole fact history; they are bounded
-/// by their own deadline, not the store-call ceiling.
+/// Brokered batch jobs run a harness tool; they are bounded by their own deadline, not the
+/// store-call ceiling.
 fn is_batch_method(method: &str) -> bool {
-    method == "facts-query" || method.strip_prefix("work:").is_some_and(crate::work::brokers_tool)
+    method.strip_prefix("work:").is_some_and(crate::work::brokers_tool)
 }
 
 fn is_long_poll(method: &str) -> bool {

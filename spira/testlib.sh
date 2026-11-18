@@ -712,7 +712,7 @@ lc_path_stub() {   # lc_path_stub <bindir> <fixdir>
 #!/usr/bin/env bash
 LC_FIX="$fix"
 printf '%s\\n' "\$*" >> "\$LC_FIX/calls.log"
-case "\$1" in fact|facts-query) exec "$fix/facts-lc" "\$@" ;; esac
+case "\$1" in fact) exec "$fix/facts-lc" "\$@" ;; esac
 case "\$1" in close-on-land|content-landed|content) [ -n "$real" ] && exec "$real" "\$@" ;; esac
 # reopen (sp-swh8b8): the door reopens the store after the row; here the row is the fixture's,
 # so only the store half runs.
@@ -769,7 +769,6 @@ case "${1:-} ${2:-}" in
         done
         printf "%s\t%s\t%s\t%s\t%s\n" "$id" "$kind" "$actor" "$cause" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$(dirname "$0")/facts.tsv"
         exit 0 ;;
-    facts-query*) exit 0 ;;
     "fact list")
         shift 2
         ids=""; kinds=""
@@ -793,8 +792,8 @@ case "${1:-} ${2:-}" in
 esac
 '
 
-# lc_facts_stub <dir> — a spira-lc that keeps the attempt-history facts itself (`fact add`, `fact list`;
-# `facts-query` answers an empty table) and hands every other verb to the spira-lc that was on PATH,
+# lc_facts_stub <dir> — a spira-lc that keeps the attempt-history facts itself (`fact add`, `fact list`)
+# and hands every other verb to the spira-lc that was on PATH,
 # or answers "cannot tell" when there was none. Prepends <dir> to PATH. For a suite whose fold
 # reads bd events it seeded itself.
 lc_facts_stub() {
