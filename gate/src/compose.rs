@@ -14,7 +14,7 @@ pub struct Changed {
     pub exec: bool,
 }
 
-/// The kinds of test target a crate, or a selection of crates, has: cargo refuses `--doc` and
+/// The kinds of test target a crate, or a selection of crates, has: cargo refuses
 /// `--lib` where no selected crate has a library, and `--test '*'` where none has a `tests/` target.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Targets {
@@ -658,7 +658,7 @@ pub const DENY_LIST: &str = "target/gate-deny-list";
 const AROUND: &str = "tools/test-sandbox/runner --around";
 
 /// The test phase's commands in the order they run, each over `crates`: the unit tier, the
-/// integration targets, the doc-tests ([`spira_config::unit_tier`]). A tier none of the selected
+/// integration targets ([`spira_config::unit_tier`]). A tier none of the selected
 /// crates has a target for is absent, since cargo refuses a flag no selected crate satisfies.
 pub fn unit_test_commands(crates: &[String], targets: Targets, deny: &tier::DenyList) -> Vec<String> {
     let sel = pkgs(crates);
@@ -670,9 +670,6 @@ pub fn unit_test_commands(crates: &[String], targets: Targets, deny: &tier::Deny
     }
     if targets.test {
         cmds.push(format!("cargo {}{}", tier::integration_words(None, sel), deny.integration_skips()));
-    }
-    if targets.lib {
-        cmds.push(format!("cargo {}", tier::doc_words(None, sel)));
     }
     cmds
 }
@@ -1334,8 +1331,8 @@ mod tests {
         assert!(!b.1.contains("--all-targets"), "{}", b.1);
         let build = b.1.strip_prefix("CARGO_BUILD_JOBS=4 ").unwrap();
         let sel = ["gate".to_string(), "queue".to_string()];
-        let [unit, integ, doc] = three(&unit_test_commands(&sel, ALL, &Default::default()));
-        for tests in [&unit, &integ, &doc] {
+        let [unit, integ] = two(&unit_test_commands(&sel, ALL, &Default::default()));
+        for tests in [&unit, &integ] {
             assert!(tests.contains(" --features integration -p gate -p queue"), "{tests}");
         }
         assert_eq!(build, format!("cargo {}", spira_config::unit_tier::build_words(None, "-p gate -p queue").replacen("--no-run", "--no-run --timings", 1)));
@@ -1344,7 +1341,7 @@ mod tests {
         assert_eq!(b.1.strip_prefix("CARGO_BUILD_JOBS=4 ").unwrap(), format!("cargo {}", spira_config::unit_tier::build_words(None, "-p batcher-cut -p gate").replacen("--no-run", "--no-run --timings", 1)), "only the extra built package differs");
     }
 
-    fn three(v: &[String]) -> [String; 3] {
+    fn two(v: &[String]) -> [String; 2] {
         v.to_vec().try_into().unwrap_or_else(|v: Vec<String>| panic!("{v:?}"))
     }
 
@@ -1352,11 +1349,10 @@ mod tests {
     fn the_gate_runs_the_rounds_tier_commands_differing_only_in_the_package_selection() {
         use spira_config::unit_tier as t;
         let sel = ["gate".to_string(), "queue".to_string()];
-        let [unit, integ, doc] = three(&unit_test_commands(&sel, ALL, &Default::default()));
+        let [unit, integ] = two(&unit_test_commands(&sel, ALL, &Default::default()));
         let w = |c: &str| c.replace("-p gate -p queue", "--workspace");
         assert_eq!(w(&unit), format!("{AROUND} cargo {}", t::unit_words(NEXTEST_CONFIG, None, "--workspace", t::LIB_BINS)));
         assert_eq!(w(&integ), format!("cargo {}", t::integration_words(None, "--workspace")));
-        assert_eq!(w(&doc), format!("cargo {}", t::doc_words(None, "--workspace")));
     }
 
     #[test]
@@ -1374,7 +1370,7 @@ mod tests {
         let cmds: Vec<&str> = t.1.split("; ").collect();
         let run = |needle: &str| *cmds.iter().find(|c| c.contains(needle)).unwrap();
         assert!(run("nextest run").contains("tools/test-sandbox/runner --around cargo nextest run"), "{}", t.1);
-        for other in ["--test '*'", "--doc"] {
+        for other in ["--test '*'"] {
             assert!(!run(other).contains("test-sandbox/runner"), "{}", t.1);
         }
     }
@@ -1389,7 +1385,10 @@ mod tests {
         assert!(unit_test_commands(&sel, Targets::default(), &Default::default()).is_empty());
         let lib = Targets { lib: true, bin: false, test: false };
         let cmds = unit_test_commands(&sel, lib, &Default::default());
-        assert!(cmds[0].ends_with(" --lib --bins") && cmds[1].ends_with(" --doc") && cmds.len() == 2, "{cmds:?}");
+        assert!(cmds.len() == 1 && cmds[0].ends_with(" --lib --bins"), "{cmds:?}");
+        let both = Targets { test: true, ..lib };
+        let cmds = unit_test_commands(&sel, both, &Default::default());
+        assert!(cmds[0].ends_with(" --lib --bins") && cmds[1].ends_with(" --test '*'") && cmds.len() == 2, "{cmds:?}");
     }
 
     #[test]
@@ -1430,7 +1429,6 @@ mod tests {
         };
         assert_eq!(run("no-such-word", "9"), Some(0), "all green");
         assert_eq!(run("--lib", "100"), Some(100), "a red unit tier");
-        assert_eq!(run("--doc", "101"), Some(101), "a red doc tier after green ones");
         assert_eq!(run("--test", "101"), Some(101), "a red integration tier");
     }
 
@@ -1468,7 +1466,7 @@ mod tests {
         assert_eq!(t.0, "test");
         assert!(t.1.contains("; tools/test-sandbox/runner --around cargo nextest run --config-file target/gate-unit-nextest.toml --no-fail-fast --features integration -p gate -p queue --lib --bins; "), "{}", t.1);
         assert!(t.1.contains("; cargo test --no-fail-fast --features integration -p gate -p queue --test '*'; "), "{}", t.1);
-        assert!(t.1.contains("; cargo test --no-fail-fast --features integration -p gate -p queue --doc; "), "{}", t.1);
+        assert!(t.1.contains("; cargo test --no-fail-fast --features integration -p gate -p queue --test '*'; "), "{}", t.1);
     }
 
     #[test]

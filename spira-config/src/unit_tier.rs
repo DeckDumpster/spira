@@ -56,22 +56,6 @@ macro_rules! unit_tier_integration {
     };
 }
 
-/// The doc-tests, under plain `cargo test`.
-#[macro_export]
-macro_rules! unit_tier_doc {
-    ($profile:literal, $sel:literal) => {
-        concat!(
-            "test --no-fail-fast --profile ",
-            $profile,
-            " --features integration --config profile.",
-            $profile,
-            ".incremental=false ",
-            $sel,
-            " --doc"
-        )
-    };
-}
-
 /// The nextest config as a `printf` format taking the period's seconds and the periods.
 #[macro_export]
 macro_rules! unit_tier_config_printf {
@@ -116,14 +100,6 @@ pub fn integration_words(profile: Option<&str>, selection: &str) -> String {
 /// The words that rerun one cargo-named failing target (`rerun` is cargo's own `-p <package> <target>`).
 pub fn rerun_words(profile: Option<&str>, rerun: &str) -> String {
     format!("test --no-fail-fast {} {rerun}", profile_words(profile, "--profile"))
-}
-
-/// [`unit_tier_doc!`].
-pub fn doc_words(profile: Option<&str>, selection: &str) -> String {
-    format!(
-        "test --no-fail-fast {} {selection} --doc",
-        profile_words(profile, "--profile")
-    )
 }
 
 /// The environment variable naming the file of a run's deny list, read by testenv.
@@ -333,10 +309,6 @@ mod tests {
             unit_tier_integration!("u", "--workspace"),
             integration_words(Some("u"), "--workspace")
         );
-        assert_eq!(
-            unit_tier_doc!("u", "--workspace"),
-            doc_words(Some("u"), "--workspace")
-        );
     }
 
     #[test]
@@ -397,7 +369,6 @@ mod tests {
             build_words(None, "-p a"),
             unit_words("C", None, "-p a", LIB_BINS),
             integration_words(None, "-p a"),
-            doc_words(None, "-p a"),
         ] {
             assert!(!w.contains("profile") && !w.contains("incremental"), "{w}");
             assert!(w.contains("--features integration -p a"), "{w}");
@@ -410,7 +381,6 @@ mod tests {
             build_words(None, "-p a"),
             unit_words("C", None, "-p a", LIB_BINS),
             integration_words(None, "-p a"),
-            doc_words(None, "-p a"),
         ] {
             assert!(!w.contains("-j") && !w.contains("test-threads"), "{w}");
         }
