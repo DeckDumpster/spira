@@ -287,8 +287,7 @@ fn file_new(
 ) -> FileOutcome {
     if let Some(bad_repo) = cfg.repo_declared.and_then(|r| decide::invalid_repo_label(&format!("repo:{r}"), cfg.home_repo, cfg.known_repos)) {
         log.push(format!("spira: repo:{bad_repo} is not in the repo map"));
-        // Same fallback the bash's set-state guard takes: file under the home repo rather
-        // than refuse the whole event.
+        // An unmapped repo files under the home repo rather than refusing the event.
     }
     if decide::contains_schema_delete(title, "") {
         log.push(format!("create FAILED for {reference} — contains a schema_migrations DELETE — stays spooled"));
