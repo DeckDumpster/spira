@@ -16,8 +16,6 @@ use crate::control::journal::{Carried, EffectRow, PoisonRow, ScheduleRow, StateR
 use crate::db::Conn;
 use crate::{flag, CANNOT_TELL, REFUSED};
 
-const CARRY: &str = "carried-from-lifecycle";
-
 /// The administrator: `SPIRA_LC_ADMIN_USER` with the password in `SPIRA_LC_ADMIN_PASSWORD_FILE` (or
 /// `SPIRA_LC_ADMIN_PASSWORD`), else the user install provisioned.
 fn administrator(get: impl Fn(&str) -> Option<String>, provisioned: impl Fn() -> Result<Option<(String, String)>, String>) -> Result<(String, String), String> {
@@ -56,14 +54,30 @@ fn flagged(r: &Value, k: &str) -> bool {
     num(r, k) != 0
 }
 
+/// The server as the drop sees it.
+trait Dolt {
+    fn rows(&self, sql: &str) -> Result<Vec<Value>, String>;
+    fn execute(&self, sql: &str) -> Result<(), String>;
+}
+
+impl Dolt for Conn {
+    fn rows(&self, sql: &str) -> Result<Vec<Value>, String> {
+        self.query(sql).map_err(|e| format!("{e:?}"))
+    }
+
+    fn execute(&self, sql: &str) -> Result<(), String> {
+        Conn::execute(self, sql).map_err(|e| format!("{e:?}"))
+    }
+}
+
 /// Everything the database holds that the control store does not keep elsewhere.
 struct Held {
     facts: Vec<Fact>,
     journal: Carried,
 }
 
-fn read_held(admin: &Conn, db: &str) -> Result<Held, String> {
-    let q = |sql: String| admin.query(&sql).map_err(|e| format!("{e:?}"));
+fn read_held(admin: &dyn Dolt, db: &str) -> Result<Held, String> {
+    let q = |sql: String| admin.rows(&sql);
     let facts = q(format!("SELECT lc_key, event, JSON_UNQUOTE(JSON_EXTRACT(evidence, '$.cause')) AS cause, actor, `at` FROM `{db}`.`event` WHERE machine = 'fact' ORDER BY seq"))?
         .iter()
         .map(|r| Fact { bead: text(r, "lc_key"), kind: text(r, "event"), cause: text(r, "cause"), actor: text(r, "actor"), at: num(r, "at") as i64 })
@@ -92,7 +106,7 @@ fn read_held(admin: &Conn, db: &str) -> Result<Held, String> {
 
 fn carry<B: state_store::Backend>(store: &crate::control::store::Store<B>, held: &Held) -> Result<(usize, usize), String> {
     let e = |e: state_store::Error| e.to_string();
-    let facts = store.carry_facts(CARRY, &held.facts, "admin-drop-lifecycle").map_err(e)?;
+    let facts = store.carry_facts(crate::control::facts::CARRIED, &held.facts, "admin-drop-lifecycle").map_err(e)?;
     let rows = store.journal_carry(&held.journal, "admin-drop-lifecycle").map_err(e)?;
     Ok((facts, rows))
 }
@@ -171,15 +185,20 @@ pub fn run(args: &[String]) -> (i32, String) {
         Ok(s) => s,
         Err(e) => return cannot(e),
     };
-    let admin = Conn::administrator(&host, port, &user, password);
-    let present = match admin.query(&format!("SELECT SCHEMA_NAME AS name FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = '{db}'")) {
+    drop_on(&Conn::administrator(&host, port, &user, password), &db, &store, dry)
+}
+
+/// The carry and the drop of `db` on `admin`, into `store`.
+fn drop_on<B: state_store::Backend>(admin: &dyn Dolt, db: &str, store: &crate::control::store::Store<B>, dry: bool) -> (i32, String) {
+    let cannot = |why: String| (CANNOT_TELL, format!("admin-drop-lifecycle: {why}"));
+    let present = match admin.rows(&format!("SELECT SCHEMA_NAME AS name FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = '{db}'")) {
         Ok(rows) => !rows.is_empty(),
-        Err(e) => return cannot(format!("{e:?}")),
+        Err(e) => return cannot(e),
     };
     if !present {
         return (0, format!("admin-drop-lifecycle: {db} is not on the server; nothing to drop"));
     }
-    let held = match read_held(&admin, &db) {
+    let held = match read_held(admin, db) {
         Ok(h) => h,
         Err(e) => return cannot(e),
     };
@@ -194,18 +213,18 @@ pub fn run(args: &[String]) -> (i32, String) {
     if dry {
         return (0, format!("admin-drop-lifecycle: would carry {summary} into the control store, then drop {db}"));
     }
-    let (facts, rows) = match carry(&store, &held) {
+    let (facts, rows) = match carry(store, &held) {
         Ok(c) => c,
         Err(e) => return cannot(e),
     };
-    match missing(&store, &held) {
+    match missing(store, &held) {
         Ok(gaps) if gaps.is_empty() => {}
         Ok(gaps) => return (REFUSED, format!("admin-drop-lifecycle: {db} is kept: the control store lacks {}", gaps.join("; "))),
         Err(e) => return cannot(e),
     }
     match admin.execute(&format!("DROP DATABASE `{db}`")) {
         Ok(()) => (0, format!("admin-drop-lifecycle: carried {facts} facts and {rows} journal rows ({summary} held); dropped {db}\nadmin-drop-lifecycle: spira.lc_backup_db must no longer name {db}: set it to the databases still kept")),
-        Err(e) => cannot(format!("dropping {db}: {e:?}")),
+        Err(e) => cannot(format!("dropping {db}: {e}")),
     }
 }
 
@@ -254,6 +273,94 @@ mod tests {
         s.journal_turn(&crate::control::journal::Turn { state: vec![StateRow { task: "t".into(), skey: "k".into(), value: "newer".into(), at: 9 }], ..Default::default() }, "runtime").unwrap();
         carry(&s, &held()).unwrap();
         assert_eq!(s.journal_state().unwrap()[0].value, "newer");
+    }
+
+    /// A server that answers each read from a script keyed by the table it names, and records every statement.
+    struct Scripted {
+        present: bool,
+        tables: Vec<(&'static str, Vec<Value>)>,
+        seen: std::cell::RefCell<Vec<String>>,
+        drop_fails: bool,
+    }
+
+    impl Scripted {
+        fn new() -> Scripted {
+            let row = |pairs: &[(&str, &str)]| Value::Object(pairs.iter().map(|(k, v)| (k.to_string(), Value::String(v.to_string()))).collect());
+            Scripted {
+                present: true,
+                tables: vec![
+                    ("`event`", vec![row(&[("lc_key", "sp-a"), ("event", "claimed"), ("cause", "x"), ("actor", "a"), ("at", "10")]), row(&[("lc_key", "sp-a"), ("event", "requeued"), ("cause", "y"), ("actor", "a"), ("at", "20")])]),
+                    ("runtime_task_state", vec![row(&[("task", "t"), ("skey", "k"), ("value", "v"), ("at", "1")])]),
+                    ("runtime_effect", vec![row(&[("task", "t"), ("ekey", "e"), ("request_id", "r1"), ("stream", "s"), ("spec", "{\"n\":1}"), ("requested_at", "1"), ("deadline_at", "2"), ("resolved", "0")])]),
+                    ("runtime_schedule", vec![row(&[("row_id", "s1"), ("at", "5"), ("stream", "s"), ("kind_tag", "tick"), ("kind_body", ""), ("correlation", "c"), ("fired", "0")])]),
+                    ("runtime_poison", vec![row(&[("stream", "st"), ("event_id", "e"), ("handler", "h"), ("message", "m")])]),
+                ],
+                seen: Default::default(),
+                drop_fails: false,
+            }
+        }
+    }
+
+    impl Dolt for Scripted {
+        fn rows(&self, sql: &str) -> Result<Vec<Value>, String> {
+            self.seen.borrow_mut().push(sql.to_string());
+            if sql.contains("information_schema.SCHEMATA") {
+                return Ok(if self.present { vec![serde_json::json!({"name": "lifedb"})] } else { vec![] });
+            }
+            self.tables.iter().find(|(t, _)| sql.contains(&format!("`lifedb`.{t}")) || sql.contains(&format!("`lifedb`.`{}`", t.trim_matches('`')))).map(|(_, r)| r.clone()).ok_or_else(|| format!("no such table in: {sql}"))
+        }
+
+        fn execute(&self, sql: &str) -> Result<(), String> {
+            self.seen.borrow_mut().push(sql.to_string());
+            if self.drop_fails { Err("refused".into()) } else { Ok(()) }
+        }
+    }
+
+    #[test]
+    fn the_database_is_read_whole_carried_and_dropped_in_that_order() {
+        let (s, server) = (store(), Scripted::new());
+        let (rc, out) = drop_on(&server, "lifedb", &s, false);
+        assert_eq!(rc, 0, "{out}");
+        assert!(out.contains("2 facts") && out.contains("1 task state") && out.contains("dropped lifedb") && out.contains("spira.lc_backup_db"), "{out}");
+        assert_eq!(server.seen.borrow().last().map(String::as_str), Some("DROP DATABASE `lifedb`"));
+        assert_eq!(server.seen.borrow().iter().filter(|q| q.starts_with("DROP")).count(), 1);
+        assert_eq!(s.facts(&[]).unwrap().len(), 2);
+        assert_eq!(s.journal_open_effects().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_dry_run_reads_and_reports_and_changes_nothing() {
+        let (s, server) = (store(), Scripted::new());
+        let (rc, out) = drop_on(&server, "lifedb", &s, true);
+        assert_eq!(rc, 0, "{out}");
+        assert!(out.contains("would carry 2 facts"), "{out}");
+        assert!(s.facts(&[]).unwrap().is_empty() && !server.seen.borrow().iter().any(|q| q.starts_with("DROP")));
+    }
+
+    #[test]
+    fn a_database_already_gone_is_nothing_to_do_and_a_server_that_fails_the_drop_says_so() {
+        let s = store();
+        let mut gone = Scripted::new();
+        gone.present = false;
+        let (rc, out) = drop_on(&gone, "lifedb", &s, false);
+        assert_eq!((rc, out.contains("nothing to drop")), (0, true), "{out}");
+        let mut stuck = Scripted::new();
+        stuck.drop_fails = true;
+        let (rc, out) = drop_on(&stuck, "lifedb", &s, false);
+        assert_eq!(rc, CANNOT_TELL, "{out}");
+        assert!(!s.facts(&[]).unwrap().is_empty(), "the carry stands though the drop was refused, and a second run carries nothing twice");
+        assert_eq!(drop_on(&Scripted::new(), "lifedb", &s, false).0, 0);
+        assert_eq!(s.facts(&[]).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn an_unreadable_table_keeps_the_database() {
+        let (s, mut server) = (store(), Scripted::new());
+        server.tables.retain(|(t, _)| *t != "runtime_poison");
+        let (rc, out) = drop_on(&server, "lifedb", &s, false);
+        assert_eq!(rc, CANNOT_TELL, "{out}");
+        assert!(!server.seen.borrow().iter().any(|q| q.starts_with("DROP")), "{:?}", server.seen.borrow());
+        assert!(s.facts(&[]).unwrap().is_empty(), "nothing is carried from a database that could not be read whole");
     }
 
     #[test]

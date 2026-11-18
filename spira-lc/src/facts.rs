@@ -360,6 +360,15 @@ mod tests {
         assert_eq!(shape(all)[0]["created_at"], "1970-01-01T00:00:20Z");
     }
 
+    #[test]
+    fn a_later_fact_with_an_earlier_time_still_reads_after_the_earlier_write() {
+        let s = store();
+        put(&s, "sp-a", "claimed", "first", 100);
+        put(&s, "sp-a", "requeued", "second", 50);
+        let kinds: Vec<String> = read_on(&s, &[], &[], None).unwrap().iter().map(|r| r["event_type"].as_str().unwrap().to_string()).collect();
+        assert_eq!(kinds, ["claimed", "requeued"], "the order is the order they were written in, whatever their clocks said");
+    }
+
     // covers: UC-ops-detection-remediation-12
     #[test]
     fn a_census_query_runs_over_the_facts_and_answers_as_bd_sql_does() {

@@ -1,6 +1,6 @@
 //! Facts: events that move no bead's state but that the attempt count and the poison decision
-//! fold. One key per fact, `facts/<bead>/<request id>`; a read orders each bead's by the fact's
-//! own time, then by the revision it committed at.
+//! fold. One key per fact, `facts/<bead>/<request id>`; a read orders each bead's by the revision
+//! each committed at, after the facts carried over from the dolt database, which keep their order.
 
 use serde_json::{json, Value};
 use state_store::{Backend, Object, Request, Result, Selector, Txn};
@@ -8,6 +8,9 @@ use state_store::{Backend, Object, Request, Result, Selector, Txn};
 use super::keys;
 
 const CARRY_CHUNK: usize = 100;
+
+/// The key component of facts carried over from the dolt database.
+pub const CARRIED: &str = "carried-from-lifecycle";
 use super::store::Store;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -63,7 +66,8 @@ impl<B: Backend> Store<B> {
     pub fn facts(&self, ids: &[String]) -> Result<Vec<Fact>> {
         let prefixes: Vec<String> = if ids.is_empty() { vec![keys::FACTS.to_string()] } else { ids.iter().map(|i| keys::facts_of(i)).collect() };
         let (mut items, _) = self.contract().list(&prefixes.iter().map(String::as_str).collect::<Vec<_>>(), &Selector::Everything)?;
-        items.sort_by_key(|i| (bead_of(&i.key).to_string(), i.value.data["at"].as_i64().unwrap_or(0), i.mod_rev));
+        let carried = |k: &str| k.contains(&format!("/{CARRIED}/"));
+        items.sort_by_key(|i| (bead_of(&i.key).to_string(), !carried(&i.key), if carried(&i.key) { Default::default() } else { i.mod_rev }, i.key.clone()));
         Ok(items.iter().map(|i| Fact::read(bead_of(&i.key), &i.value.data)).collect())
     }
 }
