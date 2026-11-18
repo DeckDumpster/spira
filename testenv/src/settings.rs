@@ -39,6 +39,8 @@ pub struct Settings {
     pub verdicts: PathBuf,
     /// The resume store spec (`none`, `dir:<path>`, `s3://<bucket>/<prefix>`); unset is none.
     pub resume: Option<String>,
+    /// A file each repo tier's status is also appended to, for the process that started the run.
+    pub tier_events: Option<PathBuf>,
     pub verdict_ttl: u64,
     pub repeat_reason: Option<String>,
     /// 0 disables.
@@ -193,6 +195,7 @@ impl Settings {
             results_root: path("SPIRA_BATCH_RESULTS").unwrap_or_else(|| run.join("batch-results")),
             results_retention: spira_config::results_retention::Retention::from_config()?,
             resume: src.get("SPIRA_TESTENV_RESUME").filter(|v| !v.trim().is_empty()),
+            tier_events: src.get(gate::tier::EVENTS_ENV).map(PathBuf::from),
             verdicts: path("SPIRA_VERDICTS").unwrap_or_else(|| run.join("verdicts")),
             verdict_ttl: cfg_parse("SPIRA_VERDICT_TTL")?,
             repeat_reason: src.get("SPIRA_VERDICT_REPEAT_CONSIDERED"),

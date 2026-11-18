@@ -499,6 +499,15 @@ fn run_foreign(
     }
     let (mut ran, mut red) = (0, 0);
     let mut fault = None;
+    let record = RunLog::begin(&results);
+    let handed = s.tier_events.as_deref().map(RunLog::at_file);
+    for (t, (o, _)) in tiers.iter().zip(&outcomes) {
+        let event = || RunEvent::Suite { name: t.clone(), status: foreign::tier_status(o).word().into() };
+        let handed_on = handed.as_ref().map_or(Ok(()), |h| h.append(event(), now_epoch()));
+        for e in [record.record(event(), now_epoch()), handed_on].into_iter().filter_map(Result::err) {
+            stderr(&format!("batch: tier event not recorded: {e}"));
+        }
+    }
     for (t, (o, secs)) in tiers.iter().zip(outcomes) {
         (deps.out)(&foreign::tier_line(t, o, secs));
         (deps.out)(&format!("  log ({t}): {}", results.join(format!("{t}.log")).display()));

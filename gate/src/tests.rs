@@ -99,6 +99,9 @@ struct Fake {
     repo_build_result: RefCell<Option<(i32, String)>>,
     /// What the gate command writes to `SPIRA_GATE_STEPS`, as (offset from the phase's start, name) lines.
     steps_written: RefCell<Vec<(u64, String)>>,
+    /// What testenv records to `SPIRA_TESTENV_TIER_EVENTS` for the trial of a branch key, as run.events text.
+    tier_events: RefCell<HashMap<String, String>>,
+    empty_temp_files: Cell<usize>,
     /// Every file `remove` was handed.
     removed: RefCell<Vec<PathBuf>>,
     /// The gate outputs kept beside the run record.
@@ -315,6 +318,8 @@ impl Fake {
             publish_run: Cell::new((0, 0)),
             repo_build_result: RefCell::new(None),
             steps_written: RefCell::new(Vec::new()),
+            tier_events: RefCell::default(),
+            empty_temp_files: Cell::new(0),
             removed: RefCell::new(Vec::new()),
             kept_outs: RefCell::new(Vec::new()),
             build_script: Cell::new(None),
@@ -451,6 +456,11 @@ impl Fake {
         } else {
             br.clone()
         };
+        if let Some((_, path)) = env.iter().find(|(k, v)| k == crate::tier::EVENTS_ENV && !v.is_empty()) {
+            if let Some(text) = self.tier_events.borrow().get(&key) {
+                self.files.borrow_mut().insert(PathBuf::from(path), text.clone());
+            }
+        }
         let (rc, out) = self
             .runs
             .borrow()
@@ -588,6 +598,9 @@ impl World for Fake {
             self.kept_outs.borrow_mut().push((dir.join(name), content.to_string()));
             return;
         }
+        if let Some(held) = self.files.borrow_mut().get_mut(&dir.join(name)) {
+            *held = content.to_string();
+        }
         self.written
             .borrow_mut()
             .push((dir.join(name), content.to_string()));
@@ -611,7 +624,15 @@ impl World for Fake {
             .collect()
     }
     fn temp_file(&self, content: &str) -> Option<PathBuf> {
-        Some(PathBuf::from(if content.is_empty() { "tmp/steps" } else { "tmp/files" }))
+        let n = self.empty_temp_files.get();
+        if content.is_empty() {
+            self.empty_temp_files.set(n + 1);
+        }
+        Some(PathBuf::from(match (content.is_empty(), n) {
+            (true, 0) => "tmp/steps".to_string(),
+            (true, n) => format!("tmp/empty-{n}"),
+            (false, _) => "tmp/files".to_string(),
+        }))
     }
     fn rev_parse(&self, _: &Path, rev: &str) -> Option<String> {
         if let Some(id) = self.objects.borrow().get(rev) {
@@ -3747,11 +3768,16 @@ fn a_summary_naming_fewer_suites_than_the_runner_ran_is_no_verdict() {
 
 const TIER_GREEN: &str = "  gate                             ok      235s\n  log (gate): /x/batch-results/14e5433d/gate.log\nVERDICT GREEN ran=1 slot_wait=0s suite=236s";
 
+fn branch_trial_records(f: &Fake, events: &str) {
+    f.tier_events.borrow_mut().insert(MERGE_SHA.to_string(), events.to_string());
+}
+
 #[test]
 fn a_repo_tier_run_green_is_pass_naming_its_tier() {
     let f = Fake::new();
     f.repo_build_secs.set(Some(30));
     branch_trial_prints(&f, TIER_GREEN);
+    branch_trial_records(&f, "1 suite gate ok");
     assert_eq!(f.run(), PASS, "{}", f.stderr());
     assert!(f.stderr().contains("gate PASS covered suites: gate"), "{}", f.stderr());
 }
@@ -3764,6 +3790,7 @@ fn a_repo_tier_run_red_names_its_tier_as_the_red_unit() {
         MERGE_SHA.to_string(),
         (1, "  gate                             RED     after 12s\nVERDICT RED ran=1 red=1".to_string()),
     );
+    branch_trial_records(&f, "1 suite gate RED");
     f.run();
     assert!(f.verdict_line().contains("suite=gate"), "{}", f.verdict_line());
 }
@@ -3773,7 +3800,17 @@ fn two_tier_rows_and_a_harness_row_each_count_toward_ran() {
     let f = Fake::new();
     f.repo_build_secs.set(Some(30));
     branch_trial_prints(&f, "  build                            ok      45s\n  gate                             ok      235s\n  test-a.sh   ok 1s\nVERDICT GREEN ran=3");
+    branch_trial_records(&f, "1 suite build ok\n2 suite gate ok");
     assert_eq!(f.run(), PASS, "{}", f.stderr());
+}
+
+#[test]
+fn a_printed_tier_row_without_the_typed_record_is_not_a_ran_suite() {
+    let f = Fake::new();
+    f.repo_build_secs.set(Some(30));
+    branch_trial_prints(&f, TIER_GREEN);
+    assert_eq!(f.run(), NOVERDICT, "{}", f.stderr());
+    assert!(f.verdict_line().contains("reason=summary-mismatch"), "{}", f.verdict_line());
 }
 
 #[test]

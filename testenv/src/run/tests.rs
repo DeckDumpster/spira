@@ -194,6 +194,7 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
         crate::settings::resolve_maxpar(&get("SPIRA_BATCH_MAXPAR").unwrap_or_default());
     Settings {
         resume: get("SPIRA_TESTENV_RESUME"),
+        tier_events: get(gate::tier::EVENTS_ENV).map(PathBuf::from),
         results_root: get("SPIRA_BATCH_RESULTS").map(PathBuf::from).unwrap_or_else(|| run.join("batch-results")),
         verdicts: get("SPIRA_VERDICTS").map(PathBuf::from).unwrap_or_else(|| run.join("verdicts")),
         verdict_ttl: num!("SPIRA_VERDICT_TTL").unwrap_or(86_400),
@@ -434,6 +435,64 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
         assert_eq!(call("--share-publish"), 0, "a share already published is not a failure");
         let again = lines.lock().unwrap()[seen..].join("\n");
         assert!(again.contains("not found: nothing to publish"), "{again}");
+    }
+
+    #[test]
+    fn a_foreign_tier_run_records_each_tier_status_beside_its_results_and_in_the_file_the_caller_named() {
+        let root = testkit::TempDir::new("testenv-tier-events");
+        let (repo, harness, owner) = (root.join("repo"), root.join("harness"), root.join("owner"));
+        for d in [&repo.join(".spira"), &harness.join("spira"), &owner] {
+            fs::create_dir_all(d).unwrap();
+        }
+        fs::write(repo.join(".spira/testenv.toml"), "image = \"i\"\n[tier.gate]\nargv = [\"x\"]\n").unwrap();
+        fs::write(repo.join("f"), "1").unwrap();
+        git(&repo, "git init -q -b main && git add . && git commit -qm base && git checkout -qb topic && echo 2 > f && git add . && git commit -qm topic && git checkout -q main");
+        let env: HashMap<String, String> = [
+            ("SPIRA_RUN", root.join("run").display().to_string()),
+            ("SPIRA_TESTENV_WARM_SLOTS", "0".into()),
+            ("SPIRA_TESTENV_SCRATCH_MIN_FREE_MIB", "0".into()),
+            ("SPIRA_TESTENV_SCRATCH_MIN_MEM_MIB", "0".into()),
+            ("SPIRA_TESTENV_MAX_RUNS", "99".into()),
+            (gate::tier::EVENTS_ENV, root.join("handed.events").display().to_string()),
+            ("HOME", root.display().to_string()),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v))
+        .collect();
+        let lines = std::sync::Mutex::new(vec![]);
+        let envf = |k: &str| env.get(k).cloned();
+        let out = |l: &str| lines.lock().unwrap().push(l.to_string());
+        let sleep = |_: Duration| {};
+        let rt = FakeRuntime::new();
+        let exe = root.join("runner-exe");
+        fs::write(&exe, b"runner").unwrap();
+        let deps = Deps {
+            rt: &rt,
+            builder: &NoBuild,
+            harness: Harness { root: harness.clone() },
+            env: &envf,
+            config: None,
+            repo_root: &|_| None,
+            settings: test_settings(&env),
+            stdin: &String::new,
+            out: &out,
+            owner_dir: owner.clone(),
+            cwd: root.to_path_buf(),
+            runner_identity: b"runner-v1".to_vec(),
+            warm_refill: &|_, _, _| {},
+            spawn_sweep: &|_| {},
+            runner_exe: exe,
+            load1: &|| Some(0.0),
+            sleep: &sleep,
+        };
+        let argv: Vec<String> = ["--suites", "gate", "topic"].iter().map(|s| s.to_string()).chain([repo.display().to_string()]).collect();
+        execute(parse(&argv).unwrap(), &deps);
+        let seen = lines.lock().unwrap().join("\n");
+        let handed = fs::read_to_string(root.join("handed.events")).unwrap_or_default();
+        assert_eq!(gate::tier::read(&handed), [gate::tier::Tier { name: "gate".into(), status: gate::tier::Status::Ok }], "{seen}");
+        let results = fs::read_dir(root.join("run/batch-results")).unwrap().flatten().next().expect("a results dir").path();
+        let kept = crate::phase::RunLog::in_dir(&results).load().unwrap();
+        assert_eq!(kept.suites().get("gate").map(String::as_str), Some("ok"), "{seen}");
     }
 
     #[test]

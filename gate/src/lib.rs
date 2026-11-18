@@ -22,6 +22,7 @@ pub mod section;
 pub mod ports;
 pub mod real;
 pub mod target;
+pub mod tier;
 pub mod unitrecord;
 pub mod telemetry;
 pub mod toolkey;
