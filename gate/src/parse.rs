@@ -3,37 +3,13 @@
 //! (`red_suites`, `ran_suites`, `timed_out_suites`, `gate_attribute`, `gate_tree_key`) and
 //! gate.sh (the preflight's word scan, the harness-fault line).
 
-fn is_secs(w: &str) -> bool {
-    w.strip_suffix('s').is_some_and(|d| !d.is_empty() && d.bytes().all(|b| b.is_ascii_digit()))
-}
-
-/// A repo tier's summary row exactly as testenv's `tier_line` prints it: `ok <n>s`,
-/// `RED after <n>s` or `FAULT <reason> after <n>s`, the whole line, name not a `.sh` token.
-pub fn tier_row(line: &str) -> Option<(&str, &str)> {
-    let rest = line.strip_prefix("  ")?;
-    let (name, tail) = rest.split_once(char::is_whitespace)?;
-    if name.is_empty() || name.ends_with(".sh") {
-        return None;
-    }
-    let w: Vec<&str> = tail.split_whitespace().collect();
-    match w.as_slice() {
-        ["ok", secs] if is_secs(secs) => Some((name, "ok")),
-        ["RED", "after", secs] if is_secs(secs) => Some((name, "RED")),
-        ["FAULT", reason @ .., "after", secs] if !reason.is_empty() && is_secs(secs) => Some((name, "FAULT")),
-        _ => None,
-    }
-}
+use crate::tier::{Status, Tier};
 
 /// Suites named on a line as `<x>.sh <STATUS>` (or `<x>.sh was killed`), first-seen order,
 /// each once. `statuses` is the set of status words that count.
 fn suites_where(out: &str, statuses: &[&str], killed: bool) -> Vec<String> {
     let mut seen: Vec<String> = Vec::new();
     for line in out.lines() {
-        if let Some((name, status)) = tier_row(line) {
-            if statuses.contains(&status) && !seen.iter().any(|s| s == name) {
-                seen.push(name.to_string());
-            }
-        }
         let w: Vec<&str> = line.split_whitespace().collect();
         for i in 0..w.len().saturating_sub(1) {
             if !w[i].ends_with(".sh") {
@@ -49,9 +25,18 @@ fn suites_where(out: &str, statuses: &[&str], killed: bool) -> Vec<String> {
     seen
 }
 
-/// `red_suites`: RED, TIMEOUT, FAILED, or killed.
-pub fn red_suites(out: &str) -> Vec<String> {
-    suites_where(out, &["RED", "TIMEOUT", "FAILED"], true)
+fn with_tiers(mut seen: Vec<String>, tiers: &[Tier], counts: impl Fn(Status) -> bool) -> Vec<String> {
+    for t in tiers.iter().filter(|t| counts(t.status)) {
+        if !seen.contains(&t.name) {
+            seen.push(t.name.clone());
+        }
+    }
+    seen
+}
+
+/// `red_suites`: RED, TIMEOUT, FAILED, or killed; and each tier recorded red.
+pub fn red_suites(out: &str, tiers: &[Tier]) -> Vec<String> {
+    with_tiers(suites_where(out, &["RED", "TIMEOUT", "FAILED"], true), tiers, |s| s == Status::Red)
 }
 
 /// The backticked argument of each `error: test failed, to rerun pass `…`` line, once each.
@@ -125,9 +110,9 @@ pub fn fence_refusal(out: &str) -> Option<String> {
         })
 }
 
-/// `ran_suites`: every suite the runner reported any status for.
-pub fn ran_suites(out: &str) -> Vec<String> {
-    suites_where(
+/// `ran_suites`: every suite the runner reported any status for, and every recorded tier.
+pub fn ran_suites(out: &str, tiers: &[Tier]) -> Vec<String> {
+    with_tiers(suites_where(
         out,
         &[
             "ok",
@@ -142,7 +127,7 @@ pub fn ran_suites(out: &str) -> Vec<String> {
             "FAULT",
         ],
         true,
-    )
+    ), tiers, |_| true)
 }
 
 /// The `ran=<n>` of the runner's last `VERDICT` line, if it printed one.
@@ -278,14 +263,14 @@ pub fn queue_secs(out: &str) -> u64 {
 /// DESIGN.md §2.3). A trial red before it (a fence, the selector) never reached the suites.
 /// A per-suite line (a red, a ran suite) counts too: a runner that died before its VERDICT
 /// line still ran suites, and their base must be run.
-pub fn suites_step_ran(out: &str) -> bool {
+pub fn suites_step_ran(out: &str, tiers: &[Tier]) -> bool {
     out.lines().any(|l| {
         l.starts_with("VERDICT GREEN")
             || l.starts_with("VERDICT RED")
             || l.starts_with("VERDICT FAULT")
             || l.starts_with("VERDICT EMPTY")
-    }) || !red_suites(out).is_empty()
-        || !ran_suites(out).is_empty()
+    }) || !red_suites(out, tiers).is_empty()
+        || !ran_suites(out, tiers).is_empty()
 }
 
 /// The `gate-step <ok|RED> rc=<n> :: <unit>` lines [`compose::run_all`](crate::compose::run_all)
@@ -304,8 +289,8 @@ pub fn step_units(out: &str) -> Vec<(String, bool)> {
 /// Every independent unit that is red in `out`: red suites, red fence steps (the suites step
 /// only when it named no suite), and unit phases that failed (the covered phase only when it
 /// named no suite: its reds are the suites).
-pub fn red_units(out: &str) -> Vec<String> {
-    let mut units = red_suites(out);
+pub fn red_units(out: &str, tiers: &[Tier]) -> Vec<String> {
+    let mut units = red_suites(out, tiers);
     let named = !units.is_empty();
     for (u, red) in step_units(out) {
         if red && !(named && u == "suites") && !units.contains(&u) {
@@ -359,24 +344,24 @@ pub enum Attribution {
 /// branch red is red on the base too does the base's own rule apply (all timeouts →
 /// base-timeout, else base-red: the caller subtracts those units rather than holding the branch).
 pub fn attribute(
-    branch_out: &str,
+    (branch_out, branch_tiers): (&str, &[Tier]),
     base_ran: bool,
     base_rc: i32,
-    base_out: &str,
+    (base_out, base_tiers): (&str, &[Tier]),
     absent_on_base: &[String],
 ) -> Attribution {
     if !base_ran {
         return Attribution::BaseUntestable;
     }
-    let branch_reds = red_units(branch_out);
-    let base_reds = red_units(base_out);
+    let branch_reds = red_units(branch_out, branch_tiers);
+    let base_reds = red_units(base_out, base_tiers);
     if branch_reds.is_empty() {
         // A red that names no unit (a legacy string, an unnamed phase): judged on the command whole.
         if base_rc == 0 {
             return Attribution::BranchRed("-".into());
         }
     } else {
-        let base_ran_set = ran_suites(base_out);
+        let base_ran_set = ran_suites(base_out, base_tiers);
         let base_steps = step_units(base_out);
         let own = |u: &String| {
             if absent_on_base.contains(u) {
@@ -424,26 +409,30 @@ pub fn tail_bytes(s: &str, n: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn a_tier_row_is_a_ran_suite_and_a_red_one_when_red() {
-        let red = "  gate                             RED     after 12s\nVERDICT RED ran=1 red=1";
-        assert_eq!(super::ran_suites(red), ["gate"]);
-        assert_eq!(super::red_suites(red), ["gate"]);
-        let ok = "  gate                             ok      235s";
-        assert_eq!(super::ran_suites(ok), ["gate"]);
-        assert!(super::red_suites(ok).is_empty());
+    fn attribute(branch: &str, base_ran: bool, base_rc: i32, base: &str, absent: &[String]) -> Attribution {
+        super::attribute((branch, &[]), base_ran, base_rc, (base, &[]), absent)
+    }
+
+    fn tier(name: &str, status: crate::tier::Status) -> crate::tier::Tier {
+        crate::tier::Tier { name: name.into(), status }
     }
 
     #[test]
-    fn a_tier_fault_row_is_a_ran_suite() {
-        let o = "  build                            FAULT   spawn failed after 3s";
-        assert_eq!(super::ran_suites(o), ["build"]);
+    fn a_recorded_tier_is_a_ran_suite_and_a_red_one_when_red() {
+        use crate::tier::Status;
+        let red = [tier("gate", Status::Red)];
+        assert_eq!(super::ran_suites("", &red), ["gate"]);
+        assert_eq!(super::red_suites("", &red), ["gate"]);
+        let ok = [tier("gate", Status::Ok), tier("build", Status::Fault)];
+        assert_eq!(super::ran_suites("", &ok), ["gate", "build"]);
+        assert!(super::red_suites("", &ok).is_empty());
     }
 
     #[test]
-    fn lines_that_only_resemble_a_tier_row_name_nothing() {
-        for l in ["  log (gate): /x/gate.log", "  gate ok", "  gate ok 235", "the gate ok 3s and more", "  gate ok 3s extra"] {
-            assert!(super::ran_suites(l).is_empty(), "{l}");
+    fn a_printed_tier_row_names_nothing_without_the_record() {
+        for l in ["  gate                             RED     after 12s", "  gate ok 3s", "  build FAULT x after 3s"] {
+            assert!(super::ran_suites(l, &[]).is_empty(), "{l}");
+            assert!(super::red_suites(l, &[]).is_empty(), "{l}");
         }
     }
 
@@ -462,8 +451,8 @@ mod tests {
 
     #[test]
     fn the_covered_phase_is_a_red_unit_only_when_it_named_no_suite() {
-        assert_eq!(super::red_units("  test-b.sh   RED     rc=1 after 4s\ngate: phase 'covered' failed (exit 1): x"), ["test-b.sh"]);
-        assert_eq!(super::red_units("gate: phase 'covered' failed (exit 1): x"), ["phase:covered"]);
+        assert_eq!(super::red_units("  test-b.sh   RED     rc=1 after 4s\ngate: phase 'covered' failed (exit 1): x", &[]), ["test-b.sh"]);
+        assert_eq!(super::red_units("gate: phase 'covered' failed (exit 1): x", &[]), ["phase:covered"]);
     }
 
     const NONE: &[String] = &[];
@@ -473,7 +462,7 @@ mod tests {
     fn a_unit_red_on_both_is_inherited_and_the_branchs_own_is_named() {
         let branch = "gate-step RED rc=1 :: spira-lint\ngate-step RED rc=1 :: lifecycle-guard\n  test-s1.sh RED rc=1\n  test-s2.sh RED rc=1";
         assert_eq!(attribute(branch, true, 1, STEPS_BASE, NONE), Attribution::BranchRed("lifecycle-guard".into()));
-        assert_eq!(red_units(branch), vec!["test-s1.sh", "test-s2.sh", "spira-lint", "lifecycle-guard"]);
+        assert_eq!(red_units(branch, &[]), vec!["test-s1.sh", "test-s2.sh", "spira-lint", "lifecycle-guard"]);
         let inherited = "gate-step RED rc=1 :: spira-lint\n  test-s1.sh RED rc=1";
         assert_eq!(attribute(inherited, true, 1, STEPS_BASE, NONE), Attribution::BaseRed("test-s1.sh".into()));
     }
@@ -481,7 +470,7 @@ mod tests {
     #[test]
     fn a_fence_red_does_not_hide_the_suites_that_ran() {
         let out = "gate-step RED rc=1 :: lifecycle-guard\n  test-s2.sh RED rc=1\ngate-step RED rc=1 :: suites";
-        assert_eq!(red_units(out), vec!["test-s2.sh", "lifecycle-guard"]);
+        assert_eq!(red_units(out, &[]), vec!["test-s2.sh", "lifecycle-guard"]);
     }
 
     use super::*;
@@ -520,7 +509,7 @@ mod tests {
     fn red_suites_reads_every_red_form_once_in_order() {
         let out = "test-a.sh ok\ntest-b.sh RED\n  test-c.sh TIMEOUT\ntest-d.sh was killed\ntest-b.sh RED\nx test-e.sh FAILED";
         assert_eq!(
-            red_suites(out),
+            red_suites(out, &[]),
             ["test-b.sh", "test-c.sh", "test-d.sh", "test-e.sh"]
         );
     }
@@ -529,7 +518,7 @@ mod tests {
     fn ran_suites_includes_passes_and_skips() {
         let out = "test-a.sh ok\ntest-b.sh SKIPPED\ntest-c.sh QUARANTINED-RED\ntest-d.sh RED\nnoise.sh words";
         assert_eq!(
-            ran_suites(out),
+            ran_suites(out, &[]),
             ["test-a.sh", "test-b.sh", "test-c.sh", "test-d.sh"]
         );
     }
@@ -538,13 +527,13 @@ mod tests {
     fn verdict_ran_reads_the_runners_count() {
         assert_eq!(verdict_ran("  a.sh ok\nVERDICT GREEN ran=66 skipped=2"), Some(66));
         assert_eq!(verdict_ran("VERDICT RED ran=3 red=1"), Some(3));
-        assert!(suites_step_ran("VERDICT EMPTY rc=5 ran=0 skipped=2 — all 2 selected suites skipped"));
+        assert!(suites_step_ran("VERDICT EMPTY rc=5 ran=0 skipped=2 — all 2 selected suites skipped", &[]));
         assert_eq!(verdict_ran("a.sh ok\nran=5 but no verdict"), None);
     }
 
     #[test]
     fn a_fault_line_counts_as_ran() {
-        assert_eq!(ran_suites("  test-f.sh   FAULT   podman lost the exit status"), ["test-f.sh"]);
+        assert_eq!(ran_suites("  test-f.sh   FAULT   podman lost the exit status", &[]), ["test-f.sh"]);
     }
 
     #[test]
@@ -561,15 +550,15 @@ mod tests {
     #[test]
     fn an_undeclared_skip_reclassified_by_testenv_still_reads_as_a_red_suite() {
         let out = "  test-f.sh                        RED     undeclared skip — skip:server testdb not available\nVERDICT RED ran=1 red=1";
-        assert_eq!(red_suites(out), ["test-f.sh"]);
-        assert_eq!(ran_suites(out), ["test-f.sh"]);
+        assert_eq!(red_suites(out, &[]), ["test-f.sh"]);
+        assert_eq!(ran_suites(out, &[]), ["test-f.sh"]);
         let out_req = "  test-e.sh                        RED     undeclared skip — requires:claude\nVERDICT RED ran=0 red=1";
-        assert_eq!(red_suites(out_req), ["test-e.sh"]);
+        assert_eq!(red_suites(out_req, &[]), ["test-e.sh"]);
     }
 
     #[test]
     fn a_word_not_ending_in_sh_is_not_a_suite() {
-        assert!(red_suites("cargo RED\nfoo.shx RED").is_empty());
+        assert!(red_suites("cargo RED\nfoo.shx RED", &[]).is_empty());
     }
 
     #[test]

@@ -716,6 +716,14 @@ fn is_yaml_fragment(t: &str) -> bool {
     matches!(rest, "" | "|" | "|-" | "|+" | ">" | ">-" | ">+")
 }
 
+pub fn tier_status(o: &Outcome) -> gate::tier::Status {
+    match o {
+        Outcome::Pass => gate::tier::Status::Ok,
+        Outcome::Red => gate::tier::Status::Red,
+        Outcome::Fault(_) => gate::tier::Status::Fault,
+    }
+}
+
 pub fn tier_line(name: &str, o: Outcome, secs: u64) -> String {
     match o {
         Outcome::Pass => format!("  {name:<32} ok      {secs}s"),

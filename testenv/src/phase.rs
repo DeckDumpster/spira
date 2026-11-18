@@ -141,7 +141,7 @@ fn render(r: &Recorded) -> String {
     }
 }
 
-fn parse_line(line: &str) -> Option<Recorded> {
+pub(crate) fn parse_line(line: &str) -> Option<Recorded> {
     let f: Vec<&str> = line.split_whitespace().collect();
     let at = f.first()?.parse().ok()?;
     let event = match (*f.get(1)?, f.get(2), f.get(3)) {
@@ -160,6 +160,18 @@ pub struct RunLog {
 }
 
 impl RunLog {
+    /// A log kept in a file of the caller's naming. It is shared by every run the caller
+    /// starts, so it takes `append`, which refuses nothing: a tier that runs twice is two records.
+    pub fn at_file(path: &Path) -> RunLog {
+        RunLog { path: path.to_path_buf() }
+    }
+
+    pub fn append(&self, event: RunEvent, at: u64) -> Result<(), String> {
+        let line = render(&Recorded { event, at });
+        let mut f = fs::OpenOptions::new().create(true).append(true).open(&self.path).map_err(|e| format!("{}: {e}", self.path.display()))?;
+        writeln!(f, "{line}").map_err(|e| e.to_string())
+    }
+
     pub fn in_dir(results: &Path) -> RunLog {
         RunLog { path: results.join(EVENTS_FILE) }
     }

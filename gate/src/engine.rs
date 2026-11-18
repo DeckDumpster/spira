@@ -11,6 +11,7 @@ use crate::machine::{self, GateState, Run};
 use crate::parse::{self, Attribution};
 use crate::ports::{Ctx, Merge, World};
 use crate::stall;
+use crate::tier::{self, Tier};
 use crate::toolkey;
 use spira_config::GateMode;
 use std::path::{Path, PathBuf};
@@ -105,6 +106,8 @@ struct State {
     filelist: Option<PathBuf>,
     /// The file the gate command writes its steps to (`SPIRA_GATE_STEPS`).
     steps_file: Option<PathBuf>,
+    /// The file testenv appends each repo tier's status to (`SPIRA_TESTENV_TIER_EVENTS`).
+    tiers_file: Option<PathBuf>,
     /// The longest declared step of the branch trial's gate command and its seconds.
     slowest_step: Option<(String, u64)>,
     /// The branch trial's whole output, kept as a file when the verdict is not a PASS.
@@ -700,6 +703,7 @@ impl<'w, W: World> Trial<'w, W> {
         self.s.changed = list.lines().map(str::trim).filter(|l| !l.is_empty()).map(String::from).collect();
         self.s.filelist = w.temp_file(&format!("{list}\n"));
         self.s.steps_file = w.temp_file("");
+        self.s.tiers_file = w.temp_file("");
 
         // THE COMPOSITION: what the branch touches decides what runs.
         let comp = self.composition(mode, &ctx, &repo, &base_rev, &rev, &tree);
@@ -802,6 +806,10 @@ impl<'w, W: World> Trial<'w, W> {
                     "SPIRA_GATE_STEPS",
                     &self.s.steps_file.as_ref().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default(),
                 ),
+                e(
+                    TIER_EVENTS_ENV,
+                    &self.s.tiers_file.as_ref().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default(),
+                ),
                 e("SPIRA_GATE_EJECTED_SUITES", &ejected),
                 e("SPIRA_GATE_ALL", ctx.var_or("SPIRA_GATE_ALL", "0")),
                 // Suites off for a unit or fences composition: the gate string runs its
@@ -891,7 +899,8 @@ impl<'w, W: World> Trial<'w, W> {
         };
         let fkey = self.fences_key(&want_tree);
         let mut mark_err: Option<String> = None;
-        let (rc, out, ph) = {
+        let tiers_file = self.s.tiers_file.clone();
+        let (rc, out, ph, tiers) = {
             let (run_dir, machine) = (Path::new(&self.s.run), &mut self.s.machine);
             let mut mark = |to: GateState, why: &str| {
                 let Some(r) = machine.as_mut() else { return };
@@ -924,6 +933,7 @@ impl<'w, W: World> Trial<'w, W> {
             };
             let first_env = env(&label, ctx.var("SPIRA_VERDICT_REPEAT_CONSIDERED"), &comp);
             let first = run(first_env.clone());
+            let first_tiers = take_tiers(w, tiers_file.as_deref());
             if cache_in_force(&first_env) && first.0 != 0 && parse::cache_transport_failure(&first.1) {
                 w.eprint("gate: the build's sccache server was lost mid-build — retrying the trial once without the compiler cache");
                 if let Some((dir, name)) = self.s.steps_file.as_deref().and_then(|f| Some((f.parent()?, f.file_name()?.to_str()?))) {
@@ -931,9 +941,9 @@ impl<'w, W: World> Trial<'w, W> {
                 }
                 let (rc, out, ph) = run(without_cache(first_env));
                 let ph = first.2.into_iter().chain(ph).collect();
-                (rc, out, ph)
+                (rc, out, ph, take_tiers(w, tiers_file.as_deref()))
             } else {
-                first
+                (first.0, first.1, first.2, first_tiers)
             }
         };
         let phase_end = w.now();
@@ -999,7 +1009,7 @@ impl<'w, W: World> Trial<'w, W> {
                     missing.join(" "),
                     parse::tail_bytes(&out, 4000)));
             }
-            let ran = parse::ran_suites(&out);
+            let ran = parse::ran_suites(&out, &tiers);
             if let Some(mismatch) = summary_mismatch(ran.len(), parse::verdict_ran(&out)) {
                 return v(NOVERDICT, "summary-mismatch", format!(
                     "gate: summary-mismatch — {mismatch}\ngate: a summary that names fewer suites than the runner executed does not record what was certified.\n{}",
@@ -1037,7 +1047,7 @@ impl<'w, W: World> Trial<'w, W> {
         } else {
             out
         };
-        self.s.suite = parse::red_units(&out)
+        self.s.suite = parse::red_units(&out, &tiers)
             .into_iter()
             .next()
             .unwrap_or_else(|| "-".into());
@@ -1102,6 +1112,7 @@ impl<'w, W: World> Trial<'w, W> {
         // merge was cut from, never the ref re-read by name (sp-hh5h0).
         let mut base_ran = false;
         let (mut base_rc, mut base_out) = (1, String::new());
+        let mut base_tiers: Vec<Tier> = Vec::new();
         // THE BASE TRIAL RUNS THE BASE'S OWN DEFINITION (sp-quu2w): the landing ref's
         // gate.steps, or its column when it never adopted one. A base definition that does
         // not read leaves the base untested — whose fault the red is stays unestablished.
@@ -1188,6 +1199,7 @@ impl<'w, W: World> Trial<'w, W> {
                 &mut None,
                 &mut false,
             );
+            base_tiers = take_tiers(w, tiers_file.as_deref());
             let before_tests = r != 0 && ph.last().is_some_and(|(n, _)| n == "base-tools" || n == "base-build");
             self.s.phases.extend(ph);
             if stall::is_stall(r, &o) {
@@ -1229,12 +1241,12 @@ impl<'w, W: World> Trial<'w, W> {
         // flip-suspect (green in the cache, red on the branch) re-runs nothing extra.
         let mut absent: Vec<String> = Vec::new();
         if base_ran {
-            let base_ran_set = parse::ran_suites(&base_out);
+            let base_ran_set = parse::ran_suites(&base_out, &base_tiers);
             let cacheable = matches!(comp, Composition::Suites { .. });
             let mut image_tag: Option<String> = None;
             let mut image_tag_tried = false;
             let mut unrun: Vec<String> = Vec::new();
-            for s in parse::red_suites(&out) {
+            for s in parse::red_suites(&out, &tiers) {
                 if base_ran_set.contains(&s) {
                     continue;
                 }
@@ -1324,6 +1336,8 @@ impl<'w, W: World> Trial<'w, W> {
                         format!("gate: signalled during the base trial for {br}"),
                     );
                 }
+                let rerun_tiers = take_tiers(w, tiers_file.as_deref());
+                base_tiers.extend(rerun_tiers.iter().cloned());
                 if !o.is_empty() {
                     base_out.push_str(&format!(
                         "\ngate: re-ran on {base} ({}): {}\n{o}",
@@ -1338,8 +1352,8 @@ impl<'w, W: World> Trial<'w, W> {
                 // it never reported on (a fault, an unexpected timeout) is left uncached —
                 // the next gate asks again rather than trusting a run that did not answer.
                 if let Some(tag) = &image_tag {
-                    let ran = parse::ran_suites(&o);
-                    let fresh_reds = parse::red_suites(&o);
+                    let ran = parse::ran_suites(&o, &rerun_tiers);
+                    let fresh_reds = parse::red_suites(&o, &rerun_tiers);
                     let when = w.utc();
                     let at = w.stamp();
                     for s in &unrun {
@@ -1380,9 +1394,9 @@ impl<'w, W: World> Trial<'w, W> {
                 parse::tail_bytes(&base_out, 4000)));
         }
         let spaced = |v: &[String]| v.join(" ");
-        let attribution = parse::attribute(&out, base_ran, base_rc, &base_out, &absent);
+        let attribution = parse::attribute((&out, &tiers), base_ran, base_rc, (&base_out, &base_tiers), &absent);
         if matches!(attribution, Attribution::BaseRed(_)) {
-            let reds = parse::red_suites(&base_out);
+            let reds = parse::red_suites(&base_out, &base_tiers);
             let timeouts = parse::timed_out_suites(&base_out);
             let retryable = !reds.is_empty()
                 && reds.iter().all(|s| {
@@ -1421,8 +1435,10 @@ impl<'w, W: World> Trial<'w, W> {
                         format!("gate: signalled during the base trial for {br}"),
                     );
                 }
-                let ran = parse::ran_suites(&o);
-                let again = parse::red_suites(&o);
+                let rerun_tiers = take_tiers(w, tiers_file.as_deref());
+                base_tiers.extend(rerun_tiers.iter().cloned());
+                let ran = parse::ran_suites(&o, &rerun_tiers);
+                let again = parse::red_suites(&o, &rerun_tiers);
                 if reds.iter().all(|s| ran.contains(s) && !again.contains(s)) {
                     self.s.suite = reds[0].clone();
                     return v(NOVERDICT, "base-flake", format!(
@@ -1435,13 +1451,13 @@ impl<'w, W: World> Trial<'w, W> {
             Attribution::BranchRed(s) => {
                 self.s.suite = s;
                 if base_ran && base_rc != 0 {
-                    let base_reds = parse::red_units(&base_out);
-                    let (own, inherited): (Vec<String>, Vec<String>) = parse::red_units(&out).into_iter().partition(|x| !base_reds.contains(x));
+                    let base_reds = parse::red_units(&base_out, &base_tiers);
+                    let (own, inherited): (Vec<String>, Vec<String>) = parse::red_units(&out, &tiers).into_iter().partition(|x| !base_reds.contains(x));
                     return v(FAIL, "branch-red", format!(
                         "gate: {name}'s own gate failed: {cmd}\n{out}\ngate: red on this branch and not on {base}: {}\ngate: inherited, not judged (red on {base} too): {}\ngate: {base} is red on: {}",
                         spaced(&own), spaced(&inherited), spaced(&base_reds)));
                 }
-                if let Some(flips) = self.shared_unit_red(&out) {
+                if let Some(flips) = self.shared_unit_red(&out, &tiers) {
                     let notes: String = flips.iter().map(|(t, beads)| format!(
                         "gate: not judged — {t} also failed on {} with disjoint diffs in the last 7d: a red on the base or in the gate, not this branch's\n",
                         beads.join(", "))).collect();
@@ -1464,15 +1480,15 @@ impl<'w, W: World> Trial<'w, W> {
                 v(NOVERDICT, "base-timeout", format!(
                     "gate: {name}'s base trial timed out on {t}— no verdict for {br}.\ngate: a killed suite cannot prove the base is broken; retry when the box is quieter."))
             }
-            Attribution::BaseRed(_) if !parse::red_units(&out).is_empty() => {
-                let reds = parse::red_units(&out);
-                let green: Vec<String> = parse::ran_suites(&out).into_iter().filter(|x| !reds.contains(x)).collect();
+            Attribution::BaseRed(_) if !parse::red_units(&out, &tiers).is_empty() => {
+                let reds = parse::red_units(&out, &tiers);
+                let green: Vec<String> = parse::ran_suites(&out, &tiers).into_iter().filter(|x| !reds.contains(x)).collect();
                 self.s.pass_suites = if green.is_empty() { "-".into() } else { green.join(",") };
                 let checked = fence::summary(&fences, &out);
                 v(PASS, "pass", format!(
                     "{}gate: gate PASS covered suites: {}\ngate: inherited, not judged (red on {base} too, so not this branch's): {}\ngate: {base} is red on: {}\n--- {base}'s own output ---\n{}",
                     if checked.is_empty() { String::new() } else { format!("gate: fences checked: {checked}\n") },
-                    self.s.pass_suites, spaced(&reds), spaced(&parse::red_units(&base_out)), parse::tail_bytes(&base_out, 8000)))
+                    self.s.pass_suites, spaced(&reds), spaced(&parse::red_units(&base_out, &base_tiers)), parse::tail_bytes(&base_out, 8000)))
             }
             Attribution::BaseRed(s) => {
                 let s = if s == "-" && matches!(comp, Composition::Unit { .. }) {
@@ -1485,7 +1501,7 @@ impl<'w, W: World> Trial<'w, W> {
                     s
                 };
                 self.s.suite = s;
-                let reds = parse::red_units(&base_out).join("\n");
+                let reds = parse::red_units(&base_out, &base_tiers).join("\n");
                 let reds = if reds.is_empty() { "(no suite named; read the output)".to_string() } else { reds };
                 v(BASEFAIL, "base-red", format!(
                     "gate: {name}'s own gate fails against {base} — this branch did not cause it.\ngate: command: {cmd}\ngate: red on {base}: {reds}\n--- {base}'s own output ---\n{}\n--- this branch's output ---\n{}\ngate: fix the repository, or clear that command from {map}.",
@@ -1652,9 +1668,9 @@ impl<'w, W: World> Trial<'w, W> {
 
     /// The failing tests of `out` when the unit test phase is its only red and every failing test
     /// also failed on other beads with disjoint diffs; `None` on any doubt, leaving the red the branch's.
-    fn shared_unit_red(&self, out: &str) -> Option<Vec<(String, Vec<String>)>> {
+    fn shared_unit_red(&self, out: &str, tiers: &[Tier]) -> Option<Vec<(String, Vec<String>)>> {
         let tip = self.s.branch_tip.as_str();
-        if self.s.bead.is_empty() || tip.is_empty() || tip == "-" || parse::red_units(out) != ["phase:test"] || parse::failed_tests(out).is_empty() || parse::fence_refusal(out).is_some() {
+        if self.s.bead.is_empty() || tip.is_empty() || tip == "-" || parse::red_units(out, tiers) != ["phase:test"] || parse::failed_tests(out).is_empty() || parse::fence_refusal(out).is_some() {
             return None;
         }
         let digest = ejection::digest(tip, &self.changed_paths(), out);
@@ -1937,6 +1953,9 @@ impl<'w, W: World> Trial<'w, W> {
             w.remove(&f);
         }
         if let Some(f) = self.s.steps_file.take() {
+            w.remove(&f);
+        }
+        if let Some(f) = self.s.tiers_file.take() {
             w.remove(&f);
         }
         if let Some(t) = &self.s.tree {
@@ -2409,11 +2428,26 @@ pub fn release_bins_command() -> String {
     )
 }
 
+const TIER_EVENTS_ENV: &str = "SPIRA_TESTENV_TIER_EVENTS";
+
+/// The tier statuses testenv recorded since the last call, which empties the file so the
+/// next run's record is its own.
+fn take_tiers<W: World>(w: &W, file: Option<&Path>) -> Vec<Tier> {
+    let Some((file, dir, name)) = file.and_then(|f| Some((f, f.parent()?, f.file_name()?.to_str()?))) else { return Vec::new() };
+    let text = w.read(file).unwrap_or_default();
+    if !text.is_empty() {
+        w.write_atomic(dir, name, "");
+    }
+    tier::read(&text)
+}
+
 /// `run_gate`, run once more without the compiler cache when it lost its sccache server.
 fn run_gate_uncached_once<W: World>(w: &W, tree: &Path, env: &[(String, String)], timeout: &str, cmd: &str) -> (i32, String) {
     let first = w.run_gate(tree, env, timeout, cmd);
     if cache_in_force(env) && first.0 != 0 && parse::cache_transport_failure(&first.1) {
         w.eprint("gate: the base trial's sccache server was lost mid-build — retrying it once without the compiler cache");
+        let file = env.iter().find(|(k, _)| k == TIER_EVENTS_ENV).map(|(_, v)| PathBuf::from(v));
+        take_tiers(w, file.as_deref());
         return w.run_gate(tree, &without_cache(env.to_vec()), timeout, cmd);
     }
     first

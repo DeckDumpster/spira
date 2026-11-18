@@ -1196,7 +1196,9 @@ the results (`phase.rs`). The state is the last event: `started`, `setup(<phase>
 `verdict(<word>)`. Each phase and suite is recorded once; nothing is accepted after a verdict;
 a refusal names the state and writes nothing. `testenv status [--json] <results-dir>` reads
 those events and nothing else. The `testenv-result-readers` lint keeps operator-facing tooling
-off the `.result` files and `batch.meta`. Moving the record into the lifecycle store waits on
+off the `.result` files and `batch.meta`. A repo's tiers are recorded the same way, one `suite <tier> ok|RED|FAULT`
+event each; when `SPIRA_TESTENV_TIER_EVENTS` names a file the events are also appended there, which is how the
+gate that started the run reads tier statuses (`gate::tier`) instead of the printed summary rows. Moving the record into the lifecycle store waits on
 the write-path measurement.
 
 ## Build IO (sp-z61hj)

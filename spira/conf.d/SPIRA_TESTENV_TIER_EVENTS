@@ -1,0 +1,9 @@
+TYPE=string
+GROUP=testenv
+DOC=File a repo's tier statuses are also appended to, as typed run.events lines
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # A file testenv appends each repo tier's status to, as `suite <tier> <ok|RED|FAULT>`
+    # run.events lines, for the process that started the run (the gate) to read back.
+    # Empty records only beside the results.
+    : "${SPIRA_TESTENV_TIER_EVENTS:=}"
+SPIRA_CONF_DEFAULT_EOF
