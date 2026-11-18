@@ -272,6 +272,17 @@ mod tests {
     }
 
     #[test]
+    fn the_loaded_delta_drops_a_pinned_key_a_fragment_retires() {
+        let d = testkit::TempDir::new("delta-load-retired");
+        let s = d.path();
+        std::fs::create_dir_all(s.join(DELTA_DIR)).unwrap();
+        std::fs::write(s.join(DELTA_FILE), "[spira]\nkeep = 1\ngone = 2\n").unwrap();
+        std::fs::write(s.join(DELTA_DIR).join("a.toml"), "removed = [\"spira.gone\"]\n").unwrap();
+        let text = delta_text(s).unwrap().unwrap();
+        assert!(text.contains("keep = 1") && !text.contains("gone = 2") && text.contains("spira.gone"), "{text}");
+    }
+
+    #[test]
     fn folding_moves_fragments_into_the_base_keeping_its_comments_and_removes_them() {
         let d = testkit::TempDir::new("delta-fold");
         let s = d.path();

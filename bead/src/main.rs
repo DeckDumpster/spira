@@ -697,7 +697,8 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             Err(rc) => return rc,
             Ok(Some(line)) => {
                 let path = env::temp_dir().join(format!("bead-statute-{}.md", std::process::id()));
-                if let Err(e) = std::fs::write(&path, format!("{line}\n\n{body}")) {
+                let written = std::fs::OpenOptions::new().write(true).create_new(true).open(&path).and_then(|mut f| std::io::Write::write_all(&mut f, format!("{line}\n\n{body}").as_bytes()));
+                if let Err(e) = written {
                     eprintln!("bead: writing {}: {e}", path.display());
                     return 1;
                 }
@@ -815,7 +816,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
         let filed_labels: Vec<String> = labels.split(',').map(str::to_string).collect();
         match bead::filing::contract_guard(&repo, &filed_labels, &contract, &|k| env::var(k).ok()) {
             Ok(Some(line)) => {
-                let path = env::temp_dir().join(format!("bead-contract-{}.md", std::process::id()));
+                let path = env::temp_dir().join(format!("bead-contract-{}-{}.md", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos())));
                 if let Err(e) = std::fs::write(&path, format!("{line}\n\n{body}")) {
                     eprintln!("bead: writing {}: {e}", path.display());
                     return 1;

@@ -208,9 +208,13 @@ pub fn contract_guard(repo: &str, labels: &[String], contract: &Contract, vars: 
     let not_met: Vec<&str> = run.stdout.lines().filter(|l| l.starts_with("not met ")).collect();
     match run.code {
         Some(0) => return Ok(None),
-        Some(1) => {}
+        Some(1) if !not_met.is_empty() => {}
         other => {
-            let code = other.map_or("no exit code".to_string(), |c| format!("exit {c}"));
+            let code = match other {
+                None => "no exit code".to_string(),
+                Some(1) => "exit 1 naming no clause".to_string(),
+                Some(c) => format!("exit {c}"),
+            };
             return Err(refuse(
                 REFUSED,
                 format!("bead: refusing: cannot tell whether {repo} meets the landing contract: repo-contract check gave {code}\n{}{}bead: {exits}", run.stdout, run.stderr),
