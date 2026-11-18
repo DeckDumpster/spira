@@ -15,13 +15,11 @@ RC="$(command -v repo-contract)" || bail "repo-contract not on PATH"
 SC="$(command -v spira-config)" || bail "spira-config not on PATH"
 
 REPO="$TMPDIR/fixture"; RUN="$TMPDIR/run"; SCRATCH="$TMPDIR/scratch"
-mkdir -p "$REPO/.spira" "$RUN" "$SCRATCH"
-cat > "$REPO/.spira/checks.toml" <<'TOML'
-[[check]]
-name = "sleeps"
-run = "sleep 600"
-budget_ms = 900000
-TOML
+BIN="$TMPDIR/bin"
+mkdir -p "$REPO" "$RUN" "$SCRATCH" "$BIN"
+printf '#!/bin/sh\nexec sleep 30\n' > "$BIN/nix"; chmod +x "$BIN/nix"
+echo '{ outputs = { ... }: { devShells = { }; }; }' > "$REPO/flake.nix"
+echo '{}' > "$REPO/flake.lock"
 git -C "$REPO" init -q
 git -C "$REPO" add -A
 git -C "$REPO" -c user.email=t@t -c user.name=t commit -qm init
@@ -29,7 +27,7 @@ git -C "$REPO" branch -f local/main HEAD
 
 tl_repo_map "fixture | $REPO | local | local/main | |"
 CONF="$(tl_layer SPIRA_RUN="$RUN")"
-run() { env TMPDIR="$SCRATCH" SPIRA_RELEASE="$SPIRA_RELEASE" SPIRA_TOML="$CONF" PATH="$PATH" HOME="$HOME" "$@"; }
+run() { env TMPDIR="$SCRATCH" SPIRA_RELEASE="$SPIRA_RELEASE" SPIRA_TOML="$CONF" SPIRA_NIX_PROFILE_BIN="$BIN" PATH="$PATH" HOME="$HOME" "$@"; }
 
 run "$RC" check fixture >/dev/null 2>&1 &
 pid=$!
