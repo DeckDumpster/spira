@@ -191,3 +191,100 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
         assert!(rows.iter().any(|k| k == key), "{key} in {rows:?}");
     }
 }
+
+const SLOT_MS: u64 = 5 * 3_600_000 + 10 * 60_000;
+
+fn fresh(hang: bool) -> TaskRig {
+    let world = json(&snap(vec![repo("shop", task::Verdict::Met, &[])], &[]));
+    let mut r = TaskRig::new(1, t::handler::<H>(SET).registration())
+        .unwrap()
+        .double(task::OBSERVE, move |_| Ok(world.clone()))
+        .double(task::INBOX_APPEND, |_| Ok("appended".into()));
+    if hang {
+        r = r.hanging(task::OBSERVE);
+    }
+    r.clock.advance_to(NOW);
+    let (_, stream, kind) = H::boot();
+    r.tick(stream, kind).unwrap();
+    r
+}
+
+fn observes(r: &TaskRig) -> usize {
+    r.requested().iter().filter(|q| q.name == task::OBSERVE).count()
+}
+
+fn restart(r: &mut TaskRig) {
+    r.reopen(t::handler::<H>(SET).registration()).unwrap();
+    let (_, stream, kind) = H::boot();
+    r.tick(stream, kind).unwrap();
+}
+
+#[test]
+fn a_pass_lost_to_a_restart_is_not_restarted() {
+    let mut r = fresh(true);
+    r.advance(SLOT_MS).unwrap();
+    assert_eq!(observes(&r), 1);
+    for _ in 0..3 {
+        r.advance(60_000).unwrap();
+        restart(&mut r);
+    }
+    assert_eq!(observes(&r), 1, "a restart restarted the lost pass");
+    r.advance(DAY_MS).unwrap();
+    assert_eq!(observes(&r), 2);
+}
+
+#[test]
+fn a_task_that_never_fired_runs_nothing_at_boot() {
+    let mut r = fresh(false);
+    for _ in 0..3 {
+        restart(&mut r);
+    }
+    assert_eq!(observes(&r), 0);
+    r.advance(SLOT_MS).unwrap();
+    assert_eq!(observes(&r), 1);
+}
+
+#[test]
+fn a_completed_pass_is_not_repeated_by_a_restart() {
+    let mut r = fresh(false);
+    r.advance(SLOT_MS).unwrap();
+    assert_eq!(observes(&r), 1);
+    for _ in 0..3 {
+        restart(&mut r);
+    }
+    assert_eq!(observes(&r), 1);
+    r.advance(DAY_MS).unwrap();
+    assert_eq!(observes(&r), 2);
+}
+
+#[test]
+fn the_stamp_is_the_start_of_the_pass_and_survives_a_restart() {
+    let mut r = fresh(false);
+    r.advance(SLOT_MS).unwrap();
+    let slot = r.now();
+    r.advance(60_000).unwrap();
+    restart(&mut r);
+    assert_eq!(t::recorded::<H>(&r).unwrap().last_fired, Some(slot));
+}
+
+#[test]
+fn a_pass_that_timed_out_is_not_restarted_by_a_restart() {
+    let mut r = TaskRig::new(1, t::handler::<H>(SET).registration()).unwrap().timing_out();
+    r.clock.advance_to(NOW);
+    let (_, stream, kind) = H::boot();
+    r.tick(stream, kind).unwrap();
+    r.advance(SLOT_MS).unwrap();
+    assert_eq!(observes(&r), 1);
+    for _ in 0..3 {
+        restart(&mut r);
+    }
+    assert_eq!(observes(&r), 1);
+}
+
+#[test]
+fn fire_stamps_the_start_and_a_completed_observe_keeps_it() {
+    let started = task::decide(&Default::default(), &Carry::default(), &Input::Fire, 7_000).unwrap().0;
+    assert_eq!(started.last_fired, Some(7_000));
+    let done = task::decide(&Default::default(), &started, &Input::Observed(Snapshot::default()), 9_000).unwrap().0;
+    assert_eq!(done.last_fired, Some(7_000));
+}

@@ -257,7 +257,8 @@ pub mod kit {
     pub type Cfg = BTreeMap<String, String>;
 
     /// The body of a boot tick. A calendar task's boot tick arms its first elapse and runs
-    /// nothing; every other tick (body [`FIRE`]) runs the pass.
+    /// nothing unless `catch_up` resumes a pass; every other tick (body [`FIRE`]) runs the
+    /// pass. A calendar pass is stamped by `Input::Fire` when it starts.
     pub const BOOT: &str = "boot";
     pub const FIRE: &str = "";
 
@@ -356,6 +357,7 @@ pub mod kit {
         fn decide(cfg: &Cfg, carry: &Self::Carry, input: &Input<Self::Snapshot>, now_ms: u64) -> Decision<Self::Carry>;
         /// A calendar task's boot tick: the probe input to observe at once because a restart
         /// lost a slot or a pass, or `None`. The timer that held the slot lives in memory only.
+        /// A resumed pass is stamped by `Input::Fire`, as a slot's is.
         fn catch_up(carry: &Self::Carry, now_ms: u64, cadence: &Cadence) -> Option<String>;
 
         fn registration(self) -> Registration {
@@ -424,6 +426,9 @@ pub mod kit {
             let mut cmds = vec![];
             let booting = t.cadence().is_calendar() && ev.kind.body == BOOT;
             let resumed = if booting { T::catch_up(&carried::<T::Carry>(view, &stream, spec.state), ev.at, t.cadence()) } else { None };
+            if t.cadence().is_calendar() && (!booting || resumed.is_some()) {
+                cmds.extend(run(t, ctx, view, &stream, Input::Fire, ev.at));
+            }
             if !booting {
                 let input = spec.probe_input_key.and_then(|k| t.cfg().get(k)).cloned().unwrap_or_default();
                 cmds.push(Command::Probe(EffectSpec::probe(spec.probe, input, spec.probe_deadline_ms)));
