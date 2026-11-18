@@ -2616,6 +2616,35 @@ fn a_unit_gate_records_the_test_phases_count_seconds_and_slowest_tests_beside_th
     }
 }
 
+const SPLIT_FIN: &str = "    Finished `test` profile [unoptimized + debuginfo] target(s) in";
+
+#[test]
+fn a_unit_gate_splits_its_test_phase_into_compile_list_run_integration_and_other_seconds() {
+    let f = unit_fake(&["spira-config/src/lib.rs"]);
+    f.phase_secs.set(7);
+    let out = format!(
+        "{SPLIT_FIN} 3.00s\n     Summary [   1.000s] 2 tests run: 2 passed, 0 skipped\ngate-substep unit secs=5\n{SPLIT_FIN} 3.00s\ngate-substep integration secs=1\n"
+    );
+    f.unit_runs.borrow_mut().insert((MERGE_SHA.into(), "test"), (0, out));
+    assert_eq!(f.run(), PASS);
+    let m = meter(&f);
+    assert!(m.contains(" phases=fences:7,build:7,test-build:4,test-list:1,test:1,test-integration:0,test-other:1 "), "{m}");
+    assert!(m.contains(" unit_run_secs=7 "), "{m}");
+    assert!(!m.contains("test_recompiled"), "{m}");
+}
+
+#[test]
+fn a_test_phase_that_compiles_for_over_thirty_seconds_after_its_build_phase_is_marked_recompiled() {
+    for (fin, want) in [("3m 27s", true), ("0.50s", false)] {
+        let f = unit_fake(&["spira-config/src/lib.rs"]);
+        f.phase_secs.set(300);
+        let out = format!("{SPLIT_FIN} {fin}\n     Summary [   1.000s] 2 tests run: 2 passed, 0 skipped\ngate-substep unit secs=250\n");
+        f.unit_runs.borrow_mut().insert((MERGE_SHA.into(), "test"), (0, out));
+        assert_eq!(f.run(), PASS);
+        assert_eq!(meter(&f).contains(" test_recompiled=1"), want, "{fin}: {}", meter(&f));
+    }
+}
+
 #[test]
 fn a_gate_whose_test_phase_did_not_run_records_no_unit_timings() {
     let f = unit_fake(&["docs/x.md"]);

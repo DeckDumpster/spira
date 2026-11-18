@@ -672,18 +672,26 @@ const AROUND: &str = "tools/test-sandbox/runner --around";
 /// integration targets ([`spira_config::unit_tier`]). A tier none of the selected
 /// crates has a target for is absent, since cargo refuses a flag no selected crate satisfies.
 pub fn unit_test_commands(crates: &[String], targets: Targets, deny: &tier::DenyList) -> Vec<String> {
+    labelled_test_commands(crates, targets, deny).into_iter().map(|(_, c)| c).collect()
+}
+
+/// [`unit_test_commands`], each with the `gate-substep` name its seconds are reported under.
+fn labelled_test_commands(crates: &[String], targets: Targets, deny: &tier::DenyList) -> Vec<(&'static str, String)> {
     let sel = pkgs(crates);
     let sel = sel.trim();
     let mut cmds = Vec::new();
     if targets.lib || targets.bin {
         let filter = if targets.lib { tier::LIB_BINS } else { "--bins" };
-        cmds.push(format!("{AROUND} cargo {}", tier::unit_words(NEXTEST_CONFIG, None, sel, filter)));
+        cmds.push(("unit", format!("{AROUND} cargo {}", tier::unit_words(NEXTEST_CONFIG, None, sel, filter))));
     }
     if targets.test {
-        cmds.push(format!("cargo {}{}", tier::integration_words(None, sel), deny.integration_skips()));
+        cmds.push(("integration", format!("cargo {}{}", tier::integration_words(None, sel), deny.integration_skips())));
     }
     cmds
 }
+
+/// The line a bracketed test command prints with its own wall seconds ([`crate::parse::test_split`]).
+pub const SUBSTEP_MARK: &str = "gate-substep";
 
 /// The unit phases' commands, in order: build ([`unit_build_words`]), then the tests
 /// ([`unit_test_commands`]): each runs whatever the one before it did, the exit is the first
@@ -692,8 +700,10 @@ pub fn unit_commands(crates: &[String], targets: Targets, jobs: u64, deny: &tier
     let mut test = format!(
         "{AROUND} cargo nextest --version >/dev/null 2>&1 || {{ echo 'gate: the test sandbox could not start cargo nextest — refusing to judge unit tests without it'; exit 75; }}; _g_rc=0",
     );
-    for c in unit_test_commands(crates, targets, deny) {
-        test.push_str(&format!("; {c}; _g_r=$?; [ \"$_g_rc\" -ne 0 ] || _g_rc=$_g_r"));
+    for (label, c) in labelled_test_commands(crates, targets, deny) {
+        test.push_str(&format!(
+            "; _g_t=$SECONDS; {c}; _g_r=$?; echo \"{SUBSTEP_MARK} {label} secs=$((SECONDS-_g_t))\"; [ \"$_g_rc\" -ne 0 ] || _g_rc=$_g_r"
+        ));
     }
     test.push_str("; exit $_g_rc");
     [
@@ -1399,7 +1409,7 @@ mod tests {
     fn only_the_unit_nextest_run_goes_through_one_sandbox() {
         let [_, t] = unit_commands(&["gate".into()], ALL, 4, &Default::default());
         let cmds: Vec<&str> = t.1.split("; ").collect();
-        let run = |needle: &str| *cmds.iter().find(|c| c.contains(needle)).unwrap();
+        let run = |needle: &str| *cmds.iter().find(|c| c.contains(needle) && !c.contains(SUBSTEP_MARK)).unwrap();
         assert!(run("nextest run").contains("tools/test-sandbox/runner --around cargo nextest run"), "{}", t.1);
         assert!(!run("--test '*'").contains("test-sandbox/runner"), "{}", t.1);
     }
@@ -1493,8 +1503,8 @@ mod tests {
         assert_eq!(b.0, "build");
         assert_eq!(b.1, "CARGO_BUILD_JOBS=4 cargo test --no-run --timings --features integration -p gate -p queue");
         assert_eq!(t.0, "test");
-        assert!(t.1.contains("; tools/test-sandbox/runner --around cargo nextest run --config-file target/gate-unit-nextest.toml --no-fail-fast --features integration -p gate -p queue --lib --bins; "), "{}", t.1);
-        assert!(t.1.contains("; cargo test --no-fail-fast --features integration -p gate -p queue --test '*'; _g_r=$?; [ \"$_g_rc\" -ne 0 ] || _g_rc=$_g_r; exit $_g_rc"), "{}", t.1);
+        assert!(t.1.contains("; _g_t=$SECONDS; tools/test-sandbox/runner --around cargo nextest run --config-file target/gate-unit-nextest.toml --no-fail-fast --features integration -p gate -p queue --lib --bins; _g_r=$?; echo \"gate-substep unit secs=$((SECONDS-_g_t))\"; "), "{}", t.1);
+        assert!(t.1.contains("; _g_t=$SECONDS; cargo test --no-fail-fast --features integration -p gate -p queue --test '*'; _g_r=$?; echo \"gate-substep integration secs=$((SECONDS-_g_t))\"; [ \"$_g_rc\" -ne 0 ] || _g_rc=$_g_r; exit $_g_rc"), "{}", t.1);
     }
 
     #[test]

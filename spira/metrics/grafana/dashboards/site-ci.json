@@ -234,6 +234,45 @@
           "refId": "A"
         }
       ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "unit test phase by part",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 24,
+        "w": 24,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "fillOpacity": 40
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "sum by (part) (avg_over_time(spira_gate_unit_test_part_seconds{repo=~\"$repo\"}[$__interval]))",
+          "legendFormat": "{{part}}",
+          "refId": "A"
+        }
+      ]
     }
   ]
 }

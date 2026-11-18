@@ -513,6 +513,13 @@ and its absence is not a red. With none left the base runs its fences only.
 * gate.log: ` compose=<label> phases=<phase>:<secs>,…` after the reason, e.g.
   `rc=0 pass compose=unit phases=fences:41,build:63,test:4`; base-trial phases carry `base-`,
   and the per-suite re-run is `base-rerun`.
+  A unit gate's test phase is split by the `gate-substep <unit|integration> secs=<n>` lines
+  the phase prints, into `test-build` (compiling inside the phase), `test-list` (nextest
+  listing and sandbox start), `test` (nextest's `Summary [ <secs>s]`), `test-integration` and
+  `test-other`; they sum to the phase's wall, and `unit_run_secs` stays that wall. A gate
+  whose `test-build` exceeds 30 s after its build phase ran carries `test_recompiled=1`
+  and pushes `spira_gate_unit_test_recompiled_total`. The parts are pushed as
+  `spira_gate_unit_test_part_seconds{part=…}`; a phase with no marker stays one `test:<secs>`.
   `yield.sh` takes the note's first word as the reason, so the trailing fields are compatible.
 * the verdict file: a `compose=<label>` line.
 * stderr, before the trial: `gate: composition=<…>` naming the crates and the touched ones.
