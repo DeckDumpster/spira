@@ -1650,6 +1650,7 @@ mod tests {
             Ok(())
         }
         fn ask_label(&self) -> Result<String, String> {
+            // literal-ok: test fixture label
             Ok("needs-ryan".into())
         }
         fn registry(&self) -> spira_config::repos::Registry {
@@ -1784,7 +1785,6 @@ mod tests {
         assert_eq!(first, (2, "cannot tell: deadline".to_string()), "the worker is parked past the deadline");
         let door = Arc::clone(&r.door);
         let retry = std::thread::spawn(move || send(&door, &argv, Some("req-1")));
-        std::thread::sleep(Duration::from_millis(10));
         r.notes.release();
         let second = retry.join().unwrap();
         assert_eq!(second.0, 0, "{second:?}");
