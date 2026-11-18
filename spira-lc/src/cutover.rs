@@ -14,12 +14,7 @@
 use lifecycle::{batch, bead};
 
 
-const CANNOT_TELL: i32 = 2;
 pub(crate) const REFUSED: i32 = 3;
-
-pub fn flag(args: &[String], name: &str) -> Option<String> {
-    args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned()
-}
 
 /// A lifecycle key: `sp-` then a non-empty tail of alphanumerics, `.`, `-` or `_` — prose and bare prefixes are not.
 pub fn is_row_key(x: &str) -> bool {
