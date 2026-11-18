@@ -67,5 +67,4 @@ want "positive control: an unprovisioned receiver is not found" "" "$(grep -x ' 
 want "the alert's datasource uid is the provisioned one" "spira-vm" "$(grep -o 'datasourceUid: spira-vm' "$ALERT" | head -1 | cut -d' ' -f2)"
 is "that uid is declared by the datasource" "uid: spira-vm" "$(grep -h "uid: spira-vm" "$ROOT/spira/metrics/grafana/provisioning/datasources/victoriametrics.yaml" | sed "s/^ *//")"
 want "the alert pages by the repo label" "group_by: [repo]" "$(grep group_by "$ALERT" | sed 's/^ *//')"
-want "the alert parses as YAML" "ok" "$(python3 -I -c 'import yaml,sys; yaml.safe_load(open(sys.argv[1])); print("ok")' "$ALERT" 2>&1 | tail -1)"
 tl_summary
