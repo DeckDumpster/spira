@@ -162,7 +162,7 @@ fn branch(events: &Item) -> &[Value] {
     data["evidence"][side].as_array().map_or(&[], Vec::as_slice)
 }
 
-/// The newest time of each [`KINDS`] event per repo, and every Delivered time, over the revisions
+/// The newest time of each [`KINDS`] event per repo (Delivered also from any arrival in LANDED), and every Delivered time, over the revisions
 /// `(low_rev, high_rev]` of the audit log. Folding is idempotent, so a chunk read twice after a
 /// failure leaves it as it was.
 #[derive(Debug)]

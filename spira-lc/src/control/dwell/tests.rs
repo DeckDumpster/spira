@@ -483,8 +483,9 @@ fn the_newest_arrival_in_landed_wins_across_round_and_hand_landings() {
 fn a_correction_or_a_non_landing_is_not_a_delivery() {
     let mut idx = super::LastIndex::default();
     let mut repo = |_: &str| Ok(Some("harness".to_string()));
+    idx.fold_states("sp-z", 50, ("SUBMITTED", "LANDED"), &mut repo).unwrap();
     idx.fold_states("sp-a", 100, ("DROPPED", "LANDED"), &mut repo).unwrap();
     idx.fold_states("sp-a", 200, ("LANDED", "LANDED"), &mut repo).unwrap();
     idx.fold_states("sp-b", 300, ("READY", "WORKING"), &mut repo).unwrap();
-    assert!(idx.last.is_empty(), "{:?}", idx.last);
+    assert_eq!(idx.last["harness"]["Delivered"], 50, "only the real arrival counts: {:?}", idx.last);
 }
