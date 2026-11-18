@@ -33,7 +33,7 @@ pub trait Machine {
 }
 
 /// What a caller verb answers.
-#[derive(Debug, Default, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Answer {
     pub code: i32,
     pub stdout: String,

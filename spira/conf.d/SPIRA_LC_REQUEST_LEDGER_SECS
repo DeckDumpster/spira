@@ -1,0 +1,6 @@
+TYPE=u32
+GROUP=lifecycle
+DOC=Seconds the lifecycle service remembers the answer to a write that carried a request id, so a retry under that id gets the first answer instead of running again.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_LC_REQUEST_LEDGER_SECS:=120}"
+SPIRA_CONF_DEFAULT_EOF

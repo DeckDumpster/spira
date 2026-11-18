@@ -25,6 +25,120 @@ use crate::callers::Answer;
 const SWEEP_EVERY: Duration = Duration::from_secs(5);
 
 static SPANS: std::sync::OnceLock<spira_otel::Sink> = std::sync::OnceLock::new();
+static LEDGER: std::sync::OnceLock<Ledger> = std::sync::OnceLock::new();
+
+const LEDGER_KEY: &str = "SPIRA_LC_REQUEST_LEDGER_SECS";
+
+fn ledger_ttl() -> Result<Duration, String> {
+    ledger_ttl_from(spira_config::process::cfg)
+}
+
+fn ledger_ttl_from(read: impl FnOnce(&str) -> Result<String, String>) -> Result<Duration, String> {
+    let value = read(LEDGER_KEY).map_err(|e| format!("spira.lc_request_ledger_secs: {e}"))?;
+    spira_config::process::parse_declared::<u64>(LEDGER_KEY, &value)
+        .map(Duration::from_secs)
+        .map_err(|e| format!("spira.lc_request_ledger_secs: {e}"))
+}
+
+enum Entry {
+    InFlight,
+    Done(Answer, Instant),
+}
+
+struct LedgerState {
+    ttl: Duration,
+    slots: std::sync::Mutex<std::collections::HashMap<String, Entry>>,
+    changed: std::sync::Condvar,
+}
+
+/// The answers to writes that carried a request id, so a second send under one id is answered
+/// by the first rather than applied again.
+#[derive(Clone)]
+pub(crate) struct Ledger(Arc<LedgerState>);
+
+/// Settles the in-flight slot when its worker ends: records the answer, or, if the worker died
+/// without one, frees the id so a retry runs.
+struct Settle {
+    ledger: Ledger,
+    id: String,
+    recorded: bool,
+}
+
+impl Settle {
+    fn record(&mut self, ans: &Answer) {
+        let mut slots = self.ledger.0.slots.lock().unwrap_or_else(|e| e.into_inner());
+        slots.insert(self.id.clone(), Entry::Done(ans.clone(), Instant::now()));
+        self.recorded = true;
+        self.ledger.0.changed.notify_all();
+    }
+}
+
+impl Drop for Settle {
+    fn drop(&mut self) {
+        if !self.recorded {
+            self.ledger.0.slots.lock().unwrap_or_else(|e| e.into_inner()).remove(&self.id);
+            self.ledger.0.changed.notify_all();
+        }
+    }
+}
+
+fn deadline_answer() -> Answer {
+    Answer::out(2, format!("cannot tell: {}", crate::db::DEADLINE_MESSAGE))
+}
+
+impl Ledger {
+    pub(crate) fn new(ttl: Duration) -> Ledger {
+        Ledger(Arc::new(LedgerState { ttl, slots: Default::default(), changed: Default::default() }))
+    }
+
+    /// The answer to the request `id`: the recorded one, the in-flight one's once it ends, or
+    /// `work`'s own, run at most once however many sends arrive. No answer within `wait` is a
+    /// deadline answer, and a worker still running keeps its slot until it has a real one.
+    fn answer(&self, id: &str, wait: Duration, work: impl FnOnce() -> Answer + Send + 'static) -> Answer {
+        let end = Instant::now() + wait;
+        let mut slots = self.0.slots.lock().unwrap_or_else(|e| e.into_inner());
+        loop {
+            let ttl = self.0.ttl;
+            slots.retain(|_, s| !matches!(s, Entry::Done(_, at) if at.elapsed() >= ttl));
+            match slots.get(id) {
+                Some(Entry::Done(ans, _)) => return Answer { owed: Box::new([]), cert_log: None, ..ans.clone() },
+                Some(Entry::InFlight) => {
+                    let left = end.saturating_duration_since(Instant::now());
+                    if left.is_zero() {
+                        return deadline_answer();
+                    }
+                    slots = self.0.changed.wait_timeout(slots, left).unwrap_or_else(|e| e.into_inner()).0;
+                }
+                None => break,
+            }
+        }
+        slots.insert(id.to_string(), Entry::InFlight);
+        drop(slots);
+        let mut settle = Settle { ledger: self.clone(), id: id.to_string(), recorded: false };
+        within(wait, move || {
+            let ans = work();
+            settle.record(&ans);
+            ans
+        })
+        .unwrap_or_else(deadline_answer)
+    }
+}
+
+type Work = Arc<dyn Fn(Request) -> Answer + Send + Sync>;
+
+/// What a request is served with: the ledger, the work that answers it and the deadline it keeps.
+struct Door {
+    ledger: Ledger,
+    work: Work,
+    deadline: fn(&[String]) -> Duration,
+}
+
+fn live_work() -> Work {
+    Arc::new(|req| {
+        let mut local = Local;
+        answer(req, &mut local, &mut crate::bd::LiveBd, &crate::composed::LiveContent, &crate::lifecycle_run_dir)
+    })
+}
 
 pub fn run(args: &[String]) -> i32 {
     // An explicit argv[0] (the launching unit's own ExecStart) wins outright; otherwise the
@@ -47,6 +161,16 @@ pub fn run(args: &[String]) -> i32 {
     match spans {
         Ok((run, keep)) => {
             let _ = SPANS.set(spira_otel::Sink::new(spira_otel::dir_of(std::path::Path::new(&run)), "spira-lc", keep));
+        }
+        Err(e) => {
+            eprintln!("spira-lc serve: {e}");
+            return 2;
+        }
+    }
+
+    match ledger_ttl() {
+        Ok(ttl) => {
+            let _ = LEDGER.set(Ledger::new(ttl));
         }
         Err(e) => {
             eprintln!("spira-lc serve: {e}");
@@ -489,10 +613,11 @@ fn bind_socket(socket_path: &str) -> std::io::Result<UnixListener> {
 }
 
 fn handle(stream: UnixStream, accepted: Instant) {
-    serve_one(stream, SPANS.get(), accepted);
+    let door = Door { ledger: LEDGER.get().expect("the ledger is set before the socket is bound").clone(), work: live_work(), deadline: request_deadline };
+    serve_one(stream, SPANS.get(), accepted, &door);
 }
 
-fn serve_one(stream: UnixStream, spans: Option<&spira_otel::Sink>, accepted: Instant) {
+fn serve_one(stream: UnixStream, spans: Option<&spira_otel::Sink>, accepted: Instant, door: &Door) {
     let received = Instant::now();
     let started_work = Arc::new(std::sync::Mutex::new(None::<Instant>));
     let started = SystemTime::now();
@@ -532,19 +657,26 @@ fn serve_one(stream: UnixStream, spans: Option<&spira_otel::Sink>, accepted: Ins
             let who = caller.clone();
             let holder_verb = verb.clone();
             let began = Arc::clone(&started_work);
-            let limit = request_deadline(&argv);
-            let req = Request { argv, stdin: req.stdin, caller: req.caller, task: None };
+            let limit = (door.deadline)(&argv);
+            let ledgered = req.request_id.clone().filter(|_| !spira_store::lc_call::is_read(&argv));
+            let request_id = req.request_id;
+            let req = Request { argv, stdin: req.stdin, caller: req.caller, task: None, request_id: request_id.clone() };
             let worker_rec = Arc::clone(&recorder);
-            within(limit.saturating_sub(received.elapsed()), move || {
+            let work = Arc::clone(&door.work);
+            let run = move || {
                 let _tracking = state_store::phases::track_scoped(worker_rec);
                 let _holder = state_store::phases::holder_scoped(&holder_verb, &who);
                 *began.lock().unwrap_or_else(|e| e.into_inner()) = Some(Instant::now());
                 crate::slow::set_caller(&who);
                 let _deadline = bind_deadline(received, limit);
-                let mut local = Local;
-                answer(req, &mut local, &mut crate::bd::LiveBd, &crate::composed::LiveContent, &crate::lifecycle_run_dir)
-            })
-            .unwrap_or_else(|| Answer::out(2, format!("cannot tell: {}", crate::db::DEADLINE_MESSAGE)))
+                let _request = crate::control::served::client_request_scoped(request_id);
+                work(req)
+            };
+            let wait = limit.saturating_sub(received.elapsed());
+            match ledgered {
+                Some(id) => door.ledger.answer(&id, wait, run),
+                None => within(wait, run).unwrap_or_else(deadline_answer),
+            }
         }
         Err((code, out)) => Answer::out(code, out),
     };
@@ -583,14 +715,16 @@ pub(crate) struct Request {
     pub caller: std::collections::BTreeMap<String, String>,
     /// The scheduler task whose effect made the call (`{"task": ...}`); what the store counts it under.
     pub task: Option<String>,
+    /// The id the client sent (`{"request_id": ...}`): a write sent twice under it is applied once.
+    pub request_id: Option<String>,
 }
 
 /// Longest request body read: a readiness publication or a section spec, never a file transfer.
 const MAX_BODY: u64 = 16 << 20;
 
 /// The request on `reader`: a JSON argv array on one line, or `{"argv": [...], "len": N}` on
-/// one line followed by exactly `N` bytes of stdin; the object may also carry `caller`
-/// and `task`. `Ok(None)` when the client sent nothing;
+/// one line followed by exactly `N` bytes of stdin; the object may also carry `caller`,
+/// `task` and `request_id`. `Ok(None)` when the client sent nothing;
 /// `Err((bytes read, refusal))` for a request that cannot be read.
 fn read_request(reader: &mut impl BufRead) -> Result<Option<(Request, usize)>, (usize, String)> {
     let mut line = String::new();
@@ -599,11 +733,11 @@ fn read_request(reader: &mut impl BufRead) -> Result<Option<(Request, usize)>, (
     }
     let bad = |e: &dyn std::fmt::Display| (line.len(), format!("bad request: {e}"));
     let head: serde_json::Value = serde_json::from_str(line.trim()).map_err(|e| bad(&e))?;
-    let (argv, len, caller, task) = match head {
-        serde_json::Value::Array(_) => (head, None, Default::default(), None),
+    let (argv, len, caller, task, request_id) = match head {
+        serde_json::Value::Array(_) => (head, None, Default::default(), None, None),
         serde_json::Value::Object(mut o) => {
             let len = match o.get("len") {
-                None if o.contains_key("caller") || o.contains_key("task") => None,
+                None if o.contains_key("caller") || o.contains_key("task") || o.contains_key("request_id") => None,
                 l => Some(l.and_then(serde_json::Value::as_u64).ok_or_else(|| bad(&"a request object needs a numeric len"))?),
             };
             if let Some(len) = len.filter(|&l| l > MAX_BODY) {
@@ -617,7 +751,11 @@ fn read_request(reader: &mut impl BufRead) -> Result<Option<(Request, usize)>, (
                 None => None,
                 Some(t) => Some(t.as_str().ok_or_else(|| bad(&"task is a name"))?.to_string()),
             };
-            (o.remove("argv").unwrap_or_default(), len, caller, task)
+            let request_id = match o.remove("request_id") {
+                None => None,
+                Some(r) => Some(r.as_str().filter(|r| !r.is_empty()).ok_or_else(|| bad(&"request_id is a non-empty string"))?.to_string()),
+            };
+            (o.remove("argv").unwrap_or_default(), len, caller, task, request_id)
         }
         _ => return Err(bad(&"a request is an argv array or an {argv, len} object")),
     };
@@ -631,7 +769,7 @@ fn read_request(reader: &mut impl BufRead) -> Result<Option<(Request, usize)>, (
         }
     };
     let size = line.len() + stdin.as_ref().map_or(0, String::len);
-    Ok(Some((Request { argv, stdin, caller, task }, size)))
+    Ok(Some((Request { argv, stdin, caller, task, request_id }, size)))
 }
 
 /// The primitives, in this process: a composed verb's reads and events never go back out
@@ -873,7 +1011,8 @@ mod tests {
         use std::io::{Read, Write};
         let (client, server) = std::os::unix::net::UnixStream::pair().unwrap();
         (&client).write_all(request.as_bytes()).unwrap();
-        super::serve_one(server, sink, std::time::Instant::now());
+        let door = super::Door { ledger: super::Ledger::new(std::time::Duration::from_secs(60)), work: super::live_work(), deadline: super::request_deadline };
+        super::serve_one(server, sink, std::time::Instant::now(), &door);
         let mut got = String::new();
         (&client).read_to_string(&mut got).unwrap();
         let head: serde_json::Value = serde_json::from_str(got.lines().next().unwrap()).unwrap();
@@ -1401,7 +1540,7 @@ mod tests {
         let caller: std::collections::BTreeMap<String, String> =
             [("SPIRA_RUNE", "czar"), ("SPIRA_CZAR_CLASS", "deadlock"), ("SPIRA_CZAR_TRIGGER_BEAD", "sp-t")].iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
         let argv: Vec<String> = ["content", "update", "sp-a", "--add-label", "x"].iter().map(|s| s.to_string()).collect();
-        let line = spira_store::lc_call::request_head(&argv, None, &caller, None).unwrap();
+        let line = spira_store::lc_call::request_head(&argv, None, &caller, None, None).unwrap();
         let mut wire = std::io::Cursor::new(format!("{line}\n").into_bytes());
         let (req, _) = super::read_request(&mut wire).unwrap().unwrap();
         assert_eq!(req.caller, caller, "the variables survive the wire");
@@ -1413,12 +1552,12 @@ mod tests {
 
         let mut acting = caller.clone();
         acting.insert("SPIRA_CZAR_STAGE_DEADLOCK".into(), "act".into());
-        let req = super::Request { argv: argv.clone(), stdin: None, caller: acting, task: None };
+        let req = super::Request { argv: argv.clone(), stdin: None, caller: acting, task: None, request_id: None };
         let ans = super::answer(req, &mut m, &mut b, &c, &|| Err("no run dir here".to_string()));
         assert_eq!(ans.code, 0, "{ans:?}");
         assert_eq!(*c.0.borrow(), ["update sp-a --add-label x"]);
 
-        let line = spira_store::lc_call::request_head(&argv, Some(2), &caller, None).unwrap();
+        let line = spira_store::lc_call::request_head(&argv, Some(2), &caller, None, None).unwrap();
         let mut wire = std::io::Cursor::new(format!("{line}\nhi").into_bytes());
         assert_eq!(super::read_request(&mut wire).unwrap().unwrap().0.stdin.as_deref(), Some("hi"), "a body still rides with its len");
         let mut wire = std::io::Cursor::new(b"{\"argv\":[\"list\"]}\n".to_vec());
@@ -1461,6 +1600,244 @@ mod tests {
         b.read_to_string(&mut got).unwrap();
         let head: serde_json::Value = serde_json::from_str(got.lines().next().unwrap()).unwrap();
         assert!(head.get("rev").is_none(), "{got}");
+    }
+
+    // ---- the request ledger: a write sent twice under one request id is applied once ----------
+
+    use std::sync::{Arc, Condvar, Mutex};
+    use std::time::Duration;
+
+    /// bd's content half as a double that is safe to share with the worker threads: records
+    /// each write, and parks a write until released while `held`.
+    struct Notes {
+        wrote: Mutex<Vec<String>>,
+        held: Mutex<bool>,
+        released: Condvar,
+    }
+
+    impl Notes {
+        fn new(held: bool) -> Arc<Notes> {
+            Arc::new(Notes { wrote: Mutex::new(Vec::new()), held: Mutex::new(held), released: Condvar::new() })
+        }
+        fn release(&self) {
+            *self.held.lock().unwrap() = false;
+            self.released.notify_all();
+        }
+        fn writes(&self) -> Vec<String> {
+            self.wrote.lock().unwrap().clone()
+        }
+    }
+
+    impl crate::composed::Content for Notes {
+        fn read(&self, args: &[String]) -> Result<String, crate::composed::ReadError> {
+            Ok(format!("read {}", args.join(" ")))
+        }
+        fn write(&self, args: &[&str]) -> Result<String, String> {
+            self.wrote.lock().unwrap().push(args.join(" "));
+            Ok(String::new())
+        }
+        fn write_stdin(&self, args: &[String], stdin: Option<&str>) -> Result<String, String> {
+            let mut held = self.held.lock().unwrap();
+            while *held {
+                held = self.released.wait(held).unwrap();
+            }
+            drop(held);
+            let body = stdin.map_or(String::new(), |b| format!(" <<{b}"));
+            self.wrote.lock().unwrap().push(format!("{}{body}", args.join(" ")));
+            Ok(format!("wrote {}", args.join(" ")))
+        }
+        fn delete(&self, _: &[String]) -> Result<(), String> {
+            Ok(())
+        }
+        fn ask_label(&self) -> Result<String, String> {
+            // literal-ok: test fixture label
+            Ok("needs-ryan".into())
+        }
+        fn registry(&self) -> spira_config::repos::Registry {
+            spira_config::repos::Registry::new(Some("spira|r/spira|main|gate.sh\n"), &Default::default(), std::path::Path::new("r/spira"))
+        }
+    }
+
+    struct Rig {
+        world: Arc<Mutex<World>>,
+        notes: Arc<Notes>,
+        door: Arc<super::Door>,
+    }
+
+    fn rig(held: bool, deadline: fn(&[String]) -> Duration) -> Rig {
+        let world = Arc::new(Mutex::new(World::new()));
+        let notes = Notes::new(held);
+        let (w, n) = (Arc::clone(&world), Arc::clone(&notes));
+        let work: super::Work = Arc::new(move |req| {
+            let world = w.lock().unwrap_or_else(|e| e.into_inner());
+            let (mut m, mut b) = (&*world, &*world);
+            super::answer(req, &mut m, &mut b, &*n, &|| Err("no run dir here".to_string()))
+        });
+        let door = Arc::new(super::Door { ledger: super::Ledger::new(Duration::from_secs(60)), work, deadline });
+        Rig { world, notes, door }
+    }
+
+    fn three_seconds(_: &[String]) -> Duration {
+        Duration::from_secs(3)
+    }
+
+    /// One request, `request_id` in its head, through `serve_one` over a socket pair.
+    fn send(door: &Arc<super::Door>, argv: &[&str], request_id: Option<&str>) -> (i32, String) {
+        use std::io::{Read, Write};
+        let argv: Vec<String> = argv.iter().map(|s| s.to_string()).collect();
+        let head = spira_store::lc_call::request_head(&argv, None, &Default::default(), None, request_id).unwrap();
+        let (client, server) = std::os::unix::net::UnixStream::pair().unwrap();
+        (&client).write_all(format!("{head}\n").as_bytes()).unwrap();
+        let door = Arc::clone(door);
+        let served = std::thread::spawn(move || super::serve_one(server, None, std::time::Instant::now(), &door));
+        let mut got = String::new();
+        (&client).read_to_string(&mut got).unwrap();
+        served.join().unwrap();
+        let (line, rest) = got.split_once('\n').unwrap();
+        let head: serde_json::Value = serde_json::from_str(line).unwrap();
+        let len = head["len"].as_u64().unwrap() as usize;
+        (head["exit_code"].as_i64().unwrap() as i32, rest[..len].to_string())
+    }
+
+    fn history_rows(r: &Rig, id: &str) -> usize {
+        let shown: serde_json::Value = serde_json::from_str(&r.world.lock().unwrap().ok(&["history", id, "--machine", "bead"])).unwrap();
+        shown.as_array().map(Vec::len).or_else(|| shown["history"].as_array().map(Vec::len)).unwrap_or_else(|| panic!("{shown}"))
+    }
+
+    fn drop_argv(r: &Rig, id: &str) -> Vec<String> {
+        let w = r.world.lock().unwrap();
+        let shown: serde_json::Value = serde_json::from_str(&w.ok(&["show", id])).unwrap();
+        let (state, version) = (shown["bead"]["state"].as_str().unwrap().to_string(), shown["bead"]["version"].as_str().unwrap().to_string());
+        let kind = serde_json::to_string(&lifecycle::bead::BeadEventKind::Drop { reason: lifecycle::reason::DropReason::Unwanted }).unwrap();
+        ["event", "bead", id, "--expect", &state, "--version", &version, "--actor", "test", "--kind", &kind].map(String::from).to_vec()
+    }
+
+    #[test]
+    fn an_event_sent_twice_under_one_request_id_advances_the_bead_once() {
+        let r = rig(false, three_seconds);
+        filed(&r.world.lock().unwrap(), "sp-a");
+        let argv = drop_argv(&r, "sp-a");
+        let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
+        let before = history_rows(&r, "sp-a");
+        let first = send(&r.door, &argv, Some("req-1"));
+        let second = send(&r.door, &argv, Some("req-1"));
+        assert_eq!(first.0, 0, "{first:?}");
+        assert_eq!(second, first, "the retry gets the first answer");
+        assert_eq!(history_rows(&r, "sp-a"), before + 1, "one transition");
+    }
+
+    #[test]
+    fn a_store_txn_retried_under_the_clients_id_after_a_restart_applies_once() {
+        let r = rig(false, three_seconds);
+        filed(&r.world.lock().unwrap(), "sp-a");
+        let argv = drop_argv(&r, "sp-a");
+        let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
+        let before = history_rows(&r, "sp-a");
+        let first = send(&r.door, &argv, Some("req-1"));
+        let restarted = Arc::new(super::Door { ledger: super::Ledger::new(Duration::from_secs(60)), work: Arc::clone(&r.door.work), deadline: three_seconds });
+        let again = send(&restarted, &argv, Some("req-1"));
+        assert_eq!(first.0, 0);
+        assert_eq!(again.0, 0, "{again:?}");
+        assert_eq!(history_rows(&r, "sp-a"), before + 1);
+    }
+
+    #[test]
+    fn a_content_note_sent_twice_under_one_request_id_writes_one_note() {
+        let r = rig(false, three_seconds);
+        let argv = ["content", "note", "sp-a", "x"];
+        let first = send(&r.door, &argv, Some("req-1"));
+        let second = send(&r.door, &argv, Some("req-1"));
+        assert_eq!(first.0, 0, "{first:?}");
+        assert_eq!(second, first);
+        assert_eq!(r.notes.writes(), ["note sp-a x"]);
+    }
+
+    #[test]
+    fn without_a_request_id_two_identical_notes_are_two_writes() {
+        let r = rig(false, three_seconds);
+        let argv = ["content", "note", "sp-a", "x"];
+        send(&r.door, &argv, None);
+        send(&r.door, &argv, None);
+        assert_eq!(r.notes.writes().len(), 2);
+    }
+
+    #[test]
+    fn a_read_sent_twice_under_one_request_id_is_answered_fresh_each_time() {
+        let r = rig(false, three_seconds);
+        filed(&r.world.lock().unwrap(), "sp-a");
+        let argv = drop_argv(&r, "sp-a");
+        let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
+        let before = send(&r.door, &["show", "sp-a"], Some("req-1"));
+        assert_eq!(send(&r.door, &argv, None).0, 0);
+        let after = send(&r.door, &["show", "sp-a"], Some("req-1"));
+        assert_ne!(before.1, after.1, "the second read ran, not the first one's answer");
+    }
+
+    #[test]
+    fn a_second_arrival_waits_only_to_its_own_deadline_and_the_worker_still_records_its_answer() {
+        let ledger = super::Ledger::new(Duration::from_secs(60));
+        let (started, started_rx) = std::sync::mpsc::channel::<()>();
+        let (release, release_rx) = std::sync::mpsc::channel::<()>();
+        let first = {
+            let ledger = ledger.clone();
+            std::thread::spawn(move || {
+                ledger.answer("r", Duration::from_secs(10), move || {
+                    started.send(()).unwrap();
+                    release_rx.recv().unwrap();
+                    crate::callers::Answer::out(0, "real".to_string())
+                })
+            })
+        };
+        started_rx.recv().unwrap();
+        let waited = ledger.answer("r", Duration::from_millis(30), || panic!("a second arrival never runs the work"));
+        assert_eq!((waited.code, waited.stdout.as_str()), (2, "cannot tell: deadline"));
+        release.send(()).unwrap();
+        assert_eq!(first.join().unwrap().stdout, "real");
+        let replay = ledger.answer("r", Duration::from_secs(1), || panic!("a recorded answer is replayed, not run again"));
+        assert_eq!(replay.stdout, "real");
+    }
+
+    #[test]
+    fn an_empty_or_non_string_request_id_is_a_bad_request() {
+        for head in [r#"{"argv":["list"],"request_id":""}"#, r#"{"argv":["list"],"request_id":7}"#] {
+            let mut reader = std::io::BufReader::new(format!("{head}\n").into_bytes().leak() as &[u8]);
+            let (_, msg) = super::read_request(&mut reader).unwrap_err();
+            assert!(msg.starts_with("bad request:") && msg.contains("request_id"), "{msg}");
+        }
+    }
+
+    fn fifty_ms(_: &[String]) -> Duration {
+        Duration::from_millis(50)
+    }
+
+    #[test]
+    fn a_retry_after_a_deadline_gets_the_workers_real_answer_and_the_note_exists_once() {
+        let r = rig(true, fifty_ms);
+        let argv = ["content", "note", "sp-a", "x"];
+        let first = send(&r.door, &argv, Some("req-1"));
+        assert_eq!(first, (2, "cannot tell: deadline".to_string()), "the worker is parked past the deadline");
+        let door = Arc::clone(&r.door);
+        let retry = std::thread::spawn(move || send(&door, &argv, Some("req-1")));
+        r.notes.release();
+        let second = retry.join().unwrap();
+        assert_eq!(second.0, 0, "{second:?}");
+        let third = send(&r.door, &argv, Some("req-1"));
+        assert_eq!(third.0, 0, "{third:?}");
+        assert_eq!(r.notes.writes(), ["note sp-a x"]);
+    }
+
+    #[test]
+    fn serve_refuses_to_start_naming_the_ledger_key_when_it_is_absent() {
+        let dir = testkit::TempDir::new("lc-ledger-key");
+        let toml = spira_config::process::fixture_toml(&dir, &[]);
+        let text = std::fs::read_to_string(&toml).unwrap();
+        assert!(text.contains("lc_request_ledger_secs"), "the fixture declares the key");
+        let kept: String = text.lines().filter(|l| !l.contains("lc_request_ledger_secs")).map(|l| format!("{l}\n")).collect();
+        std::fs::write(&toml, kept).unwrap();
+        let _env = testkit::env(&[("SPIRA_TOML", Some(toml.to_str().unwrap()))]);
+        let fresh = |k: &str| spira_config::process::fresh(&[k.to_string()]).map(|mut m| m.remove(k).unwrap());
+        let err = super::ledger_ttl_from(fresh).unwrap_err();
+        assert!(err.contains("lc_request_ledger_secs"), "{err}");
     }
 
     // ---- content writes over the socket: one test per sub-verb ------------------------------
@@ -1530,7 +1907,7 @@ mod tests {
     }
 
     fn served_with(w: &World, c: &dyn crate::composed::Content, argv: &[&str], stdin: &str) -> super::Answer {
-        let req = super::Request { argv: argv.iter().map(|a| a.to_string()).collect(), stdin: Some(stdin.to_string()), caller: Default::default(), task: None };
+        let req = super::Request { argv: argv.iter().map(|a| a.to_string()).collect(), stdin: Some(stdin.to_string()), caller: Default::default(), task: None, request_id: None };
         let (mut m, mut b) = (w, w);
         super::answer(req, &mut m, &mut b, c, &|| Err("no run dir here".to_string()))
     }
@@ -1559,6 +1936,7 @@ mod tests {
             stdin: None,
             caller: caller.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
             task: None,
+            request_id: None,
         };
         let (mut m, mut b) = (w, w);
         super::answer(req, &mut m, &mut b, c, &|| Err("no run dir here".to_string()))
@@ -1735,7 +2113,7 @@ mod tests {
     }
 
     fn create_bead_served(w: &World) -> super::Answer {
-        let req = super::Request { argv: ["create-bead", "sp-new", "--repo", "spira", "--ready"].map(String::from).to_vec(), stdin: None, caller: Default::default(), task: None };
+        let req = super::Request { argv: ["create-bead", "sp-new", "--repo", "spira", "--ready"].map(String::from).to_vec(), stdin: None, caller: Default::default(), task: None, request_id: None };
         let (mut m, mut b) = (w, w);
         super::answer(req, &mut m, &mut b, &Content::default(), &|| Err("no run dir here".to_string()))
     }
@@ -1818,6 +2196,7 @@ mod tests {
             stdin: None,
             caller: Default::default(),
             task: None,
+            request_id: None,
         };
         let ans = super::answer(req, &mut Primitives { world: &w, stale: &["sp-set"] }, &mut &w, &Content::default(), &|| Err("no run dir here".to_string()));
         assert_eq!(ans.code, 0, "{}{}", ans.stdout, ans.stderr);
@@ -1922,7 +2301,7 @@ mod tests {
         }
         let w = World::new();
         let (mut rec, mut bd) = (Rec(Vec::new()), &w);
-        let req = super::Request { argv: vec!["batch-progress".into()], stdin: Some("[{\"bead_id\":\"sp-a\"}]".into()), caller: Default::default(), task: None };
+        let req = super::Request { argv: vec!["batch-progress".into()], stdin: Some("[{\"bead_id\":\"sp-a\"}]".into()), caller: Default::default(), task: None, request_id: None };
         super::answer(req, &mut rec, &mut bd, &Content::default(), &|| Err(String::new()));
         assert_eq!(rec.0, vec![vec!["batch-progress".to_string(), "--json".into(), "[{\"bead_id\":\"sp-a\"}]".into()]]);
     }
@@ -1943,6 +2322,7 @@ mod tests {
             stdin: body.map(String::from),
             caller: Default::default(),
             task: None,
+            request_id: None,
         };
         let mut run = |req| {
             super::answer(req, &mut rec, &mut bd, &Content::default(), &|| Err(String::new()));

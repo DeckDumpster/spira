@@ -121,7 +121,7 @@ impl Machine for &World {
             }
         }
         self.n.set(self.n.get() + 1);
-        let request = format!("world/{}", self.n.get());
+        let request = crate::control::served::call_request_id();
         let call = Call { now: AT, request: &request, inputs: &crate::control::claimable::FIXED };
         match args.first().map(String::as_str) {
             Some(v) if crate::control::verbs::VERBS.contains(&v) => crate::control::verbs::run(&self.store, args),
