@@ -15,7 +15,11 @@ pub const BATCHES: &str = "batches/";
 pub const BATCH_IDS: &str = "batch-ids/";
 /// Each bead's rounds, `batch-members/<bead>/<round id>`: a range read answers `batches-of`.
 pub const BATCH_MEMBERS: &str = "batch-members/";
+/// The runtime's journal: `runtime/state/`, `runtime/effect/`, `runtime/resolved/`,
+/// `runtime/schedule/`, `runtime/fired/` and `runtime/poison/`, each keyed by its escaped natural key.
 pub const RUNTIME: &str = "runtime/";
+/// The attempt and poison history, `facts/<bead>/<request id>`: facts that change no bead's state.
+pub const FACTS: &str = "facts/";
 pub const HISTORY: &str = "history/";
 /// Knobs a section owner moves by applying an intent from one value to another.
 pub const KNOBS: &str = "knobs/";
@@ -33,6 +37,29 @@ pub const IMPORT: &str = "import/";
 /// The import's baseline: every record's stored state at revision `rev`, one past the last
 /// dolt event seq. Records the report lists were imported as stored, not replayed.
 pub const IMPORT_BASELINE: &str = "import/baseline";
+
+/// Every fact of `bead`, in the order they committed.
+pub fn facts_of(bead: &str) -> String {
+    format!("{FACTS}{bead}/")
+}
+
+pub fn fact(bead: &str, request: &str) -> String {
+    format!("{}{request}", facts_of(bead))
+}
+
+/// A natural key as one key component: `%` and `/` are escaped, so the component never splits.
+pub fn component(raw: &str) -> String {
+    raw.replace('%', "%25").replace('/', "%2F")
+}
+
+pub fn runtime(table: &str, natural: &[&str]) -> String {
+    let parts: Vec<String> = natural.iter().map(|p| component(p)).collect();
+    format!("{RUNTIME}{table}/{}", parts.join("/"))
+}
+
+pub fn runtime_table(table: &str) -> String {
+    format!("{RUNTIME}{table}/")
+}
 
 pub fn lifecycle(id: &str) -> String {
     format!("{LIFECYCLE}{id}")

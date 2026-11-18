@@ -1,6 +1,6 @@
 //! `bd-supersede <id> <succ>` and `bd-note <id> <text>` — the store-only writes the
-//! supersede-duty handler makes after the lifecycle row has moved. Neither touches
-//! `spira_lifecycle`: the row is the machine's verbs' to move, bd's side follows it.
+//! supersede-duty handler makes after the lifecycle row has moved. Neither touches the
+//! control store: the row is the machine's verbs' to move, bd's side follows it.
 
 use crate::callers::Answer;
 

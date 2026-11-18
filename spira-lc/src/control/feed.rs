@@ -40,7 +40,7 @@ const PAGE: usize = 1_000;
 
 /// The audits of the branch an `events/<rev>` key says ran. A key some other writer left
 /// without audits has none.
-fn branch_audits(events: &Item) -> Vec<Audit> {
+pub(super) fn branch_audits(events: &Item) -> Vec<Audit> {
     let data = &events.value.data;
     let branch = if data["refused"].as_bool() == Some(true) {
         "else"

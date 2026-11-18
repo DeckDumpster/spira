@@ -129,6 +129,14 @@ pub fn configured() -> Option<Result<Arc<Store<Served>>, String>> {
     Some(store_path()?.and_then(|p| opened(&p)))
 }
 
+/// The store the config declares, or the reason a verb that needs it cannot be answered.
+pub fn store() -> Result<Arc<Store<Served>>, String> {
+    match configured() {
+        Some(r) => r.map_err(|e| format!("the control store: {e}")),
+        None => Err("the control store is not configured: SPIRA_LC_STORE_PATH is unset or unreadable".into()),
+    }
+}
+
 /// `admin-create-store`: a new, empty control store at `SPIRA_LC_STORE_PATH`, which no verb
 /// creates on open (an absent store opened empty would answer every read as nothing there).
 /// Refused on an empty key, a path outside the instance's workspaces, or a file already there.

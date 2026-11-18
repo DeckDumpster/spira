@@ -101,7 +101,6 @@ fn exempt(path: &str) -> bool {
         || path == KEY_HISTORY_PATH
         || path.starts_with("docs/spikes/")
         || path.starts_with("raw/spira-beads/")
-        || path.starts_with("lifecycle/migrations/")
         || path.ends_with(".tsv")
         || ((path.starts_with("loom/tests/fixtures/") || path.starts_with("spira/testdata/")) && path.ends_with(".log"))
         || path == "spira-lint/DESIGN.md"

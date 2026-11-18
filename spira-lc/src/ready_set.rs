@@ -8,7 +8,6 @@ use std::sync::Mutex;
 use serde_json::{json, Value};
 
 use crate::control::records::{LifecycleRecord, Readiness};
-use crate::db::Conn;
 use crate::{plan, CANNOT_TELL};
 
 const FETCH_CHUNK: usize = 500;
@@ -21,7 +20,7 @@ type Fetch<'a> = dyn Fn(&[&str]) -> Result<Vec<Value>, String> + 'a;
 
 static ITEMS: Mutex<Held> = Mutex::new((None, BTreeMap::new()));
 
-pub fn run(conn: &Conn) -> (i32, String) {
+pub fn run() -> (i32, String) {
     let cannot = |e: String| (CANNOT_TELL, format!("cannot tell: ready-set: {e}"));
     let store = match crate::control::served::configured() {
         Some(Ok(s)) => s,
@@ -32,16 +31,16 @@ pub fn run(conn: &Conn) -> (i32, String) {
         Ok(j) => j,
         Err(e) => return cannot(e.to_string()),
     };
-    match answer(&judged, unjudged, plan::current_watermark(), &ITEMS, &|ids| fetch(conn, ids)) {
+    match answer(&judged, unjudged, plan::current_watermark(), &ITEMS, &fetch) {
         Ok(v) => (0, v.to_string()),
         Err(e) => cannot(e),
     }
 }
 
-fn fetch(conn: &Conn, ids: &[&str]) -> Result<Vec<Value>, String> {
+fn fetch(ids: &[&str]) -> Result<Vec<Value>, String> {
     let mut out = Vec::new();
     for chunk in ids.chunks(FETCH_CHUNK) {
-        out.extend(plan::fetch(conn, chunk)?);
+        out.extend(plan::fetch(chunk)?);
     }
     Ok(out)
 }

@@ -21,7 +21,6 @@ use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant, SystemTime};
 
 use crate::callers::Answer;
-use crate::db::Conn;
 
 const SWEEP_EVERY: Duration = Duration::from_secs(5);
 
@@ -98,24 +97,11 @@ pub fn run(args: &[String]) -> i32 {
 
     startup.mark("shipper");
 
-    let conn = match Conn::from_env() {
-        Ok(mut c) => {
-            c.enable_group_commit();
-            Arc::new(c)
-        }
-        Err(e) => {
-            eprintln!("spira-lc serve: cannot configure a connection: {e:?}");
-            return 2;
-        }
-    };
-
-    startup.mark("connection");
-
     stop_on_sigterm();
-    crate::plan::serve_on(Arc::clone(&conn));
+    crate::plan::serve_here();
     crate::settle::install();
     startup.mark("plan");
-    match crate::plan::read_watermark(&conn) {
+    match crate::plan::read_watermark() {
         Ok(w) => crate::plan::install_mirror(w),
         Err(e) => {
             eprintln!("spira-lc serve: planning watermark unread, bd kv is mirrored from the next stamp: {e}");
@@ -200,7 +186,7 @@ pub fn run(args: &[String]) -> i32 {
         let flights = flights.clone();
         std::thread::spawn(move || {
             std::thread::scope(|scope| {
-                accept_until_stopped(&listener, &socket_path, scope, &STOPPING, |stream| flights.serve(stream, |stream| handle(stream, &conn, Instant::now())))
+                accept_until_stopped(&listener, &socket_path, scope, &STOPPING, |stream| flights.serve(stream, |stream| handle(stream, Instant::now())))
             });
             let _ = done.send(());
         });
@@ -502,11 +488,11 @@ fn bind_socket(socket_path: &str) -> std::io::Result<UnixListener> {
     Ok(listener)
 }
 
-fn handle(stream: UnixStream, conn: &Arc<Conn>, accepted: Instant) {
-    serve_one(stream, conn, SPANS.get(), accepted);
+fn handle(stream: UnixStream, accepted: Instant) {
+    serve_one(stream, SPANS.get(), accepted);
 }
 
-fn serve_one(stream: UnixStream, conn: &Arc<Conn>, spans: Option<&spira_otel::Sink>, accepted: Instant) {
+fn serve_one(stream: UnixStream, spans: Option<&spira_otel::Sink>, accepted: Instant) {
     let received = Instant::now();
     let started_work = Arc::new(std::sync::Mutex::new(None::<Instant>));
     let started = SystemTime::now();
@@ -543,7 +529,6 @@ fn serve_one(stream: UnixStream, conn: &Arc<Conn>, spans: Option<&spira_otel::Si
     let recorder = Arc::new(state_store::phases::Recorder::default());
     let ans = match crate::work::bind_peer(&req.argv, peer_uid(&stream), &map) {
         Ok(argv) => {
-            let worker = Arc::clone(conn);
             let who = caller.clone();
             let holder_verb = verb.clone();
             let began = Arc::clone(&started_work);
@@ -556,7 +541,7 @@ fn serve_one(stream: UnixStream, conn: &Arc<Conn>, spans: Option<&spira_otel::Si
                 *began.lock().unwrap_or_else(|e| e.into_inner()) = Some(Instant::now());
                 crate::slow::set_caller(&who);
                 let _deadline = bind_deadline(received, limit);
-                let mut local = Local(&worker);
+                let mut local = Local;
                 answer(req, &mut local, &mut crate::bd::LiveBd, &crate::composed::LiveContent, &crate::lifecycle_run_dir)
             })
             .unwrap_or_else(|| Answer::out(2, format!("cannot tell: {}", crate::db::DEADLINE_MESSAGE)))
@@ -649,13 +634,13 @@ fn read_request(reader: &mut impl BufRead) -> Result<Option<(Request, usize)>, (
     Ok(Some((Request { argv, stdin, caller, task }, size)))
 }
 
-/// The primitives, in this process against its own connection: a composed verb's reads and
-/// events never go back out through the socket.
-struct Local<'a>(&'a Conn);
+/// The primitives, in this process: a composed verb's reads and events never go back out
+/// through the socket.
+struct Local;
 
-impl crate::callers::Machine for Local<'_> {
+impl crate::callers::Machine for Local {
     fn call(&mut self, args: &[String]) -> (i32, String) {
-        crate::dispatch(args, self.0)
+        crate::dispatch(args)
     }
 }
 
@@ -741,7 +726,6 @@ fn request_deadline(argv: &[String]) -> Duration {
 
 /// Binds the worker thread to the request deadline: the control store refuses a write begun past it.
 fn bind_deadline(received: Instant, limit: Duration) -> state_store::phases::DeadlineScope {
-    crate::db::set_request_deadline(Some(received + limit));
     state_store::phases::deadline_scoped(received + limit)
 }
 
@@ -889,8 +873,7 @@ mod tests {
         use std::io::{Read, Write};
         let (client, server) = std::os::unix::net::UnixStream::pair().unwrap();
         (&client).write_all(request.as_bytes()).unwrap();
-        let conn = std::sync::Arc::new(crate::db::Conn::unreachable());
-        super::serve_one(server, &conn, sink, std::time::Instant::now());
+        super::serve_one(server, sink, std::time::Instant::now());
         let mut got = String::new();
         (&client).read_to_string(&mut got).unwrap();
         let head: serde_json::Value = serde_json::from_str(got.lines().next().unwrap()).unwrap();

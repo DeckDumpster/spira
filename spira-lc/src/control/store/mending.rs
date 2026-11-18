@@ -81,6 +81,13 @@ impl<B: Backend> Store<B> {
         items.iter().map(|i| decode(&i.key, &i.value)).collect()
     }
 
+    /// Every mend recorded at or after `since`, from one snapshot.
+    pub fn mends_since(&self, since: i64) -> Result<Vec<MendRecord>> {
+        let (items, _) = self.contract().list(&[keys::MENDS], &Selector::Everything)?;
+        let mends = items.iter().map(|i| decode::<MendRecord>(&i.key, &i.value)).collect::<Result<Vec<_>>>()?;
+        Ok(mends.into_iter().filter(|m| m.at >= since).collect())
+    }
+
     /// Plans `kind` on the row read into `c`: the step and the row's next value, or the
     /// machine's refusal with its audit.
     fn plan_mending(

@@ -1,6 +1,6 @@
 //! Shells to `bd` for the non-lifecycle half of the dwarf semantic layer (design §3.5):
 //! titles, descriptions, dependencies, notes and filing stay bd's job (§3.3/3.4) — this
-//! module never touches `spira_lifecycle`. `SPIRA_BD`/`SPIRA_DB` are declared config
+//! module never touches the control store. `SPIRA_BD`/`SPIRA_DB` are declared config
 //! (spira/conf.d), resolved from `$SPIRA_TOML` (one source of config, per Ryan 2026-10-05) —
 //! never this process's own environment. The content door's reads are not here: they are SQL
 //! (`content_sql`).

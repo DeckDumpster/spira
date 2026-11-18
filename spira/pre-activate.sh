@@ -18,16 +18,6 @@
 #   units      every systemd unit renders with no unresolved placeholder
 #   self-test  the release's own spira/self-test.sh
 #   ami        a round AMI exists for the release's recipe-sha; only warns
-#   lifecycle  every pending lifecycle/migrations/*.sql is applied (spira-lc
-#              admin-migrate), so a release never goes live reading a column the store
-#              lacks (sp-vf9iu). Whether each is applied is read as the lifecycle service
-#              user (SPIRA_LC_USER + SPIRA_LC_PASSWORD_FILE, as lc-serve connects); only a
-#              pending one is applied, as the database admin SPIRA_LC_ADMIN_USER/PASSWORD,
-#              and with those unset or refused the check fails naming them (sp-p1z81). Runs
-#              last and only when every other check passed: a refused release must not
-#              change the live schema. A failing migration refuses the release. Then,
-#              always, `spira-lc admin-grants`: the release's own grants applied and read
-#              back, so a release is refused if its read-only user cannot SELECT.
 set -uo pipefail
 
 REL="${1:?usage: pre-activate.sh <release-dir>}"
@@ -246,62 +236,6 @@ check_self_test() {
     fi
 }
 
-# --- lifecycle: pending schema migrations, applied before the flip; failure refuses it ---
-check_lifecycle() {
-    local lc="$REL/bin/spira-lc" mig="$REL/lifecycle/migrations"
-    if [ "$FAIL" -ne 0 ]; then
-        printf 'pre-activate: skip lifecycle (another check failed; migrations not applied)\n'
-        return
-    fi
-    if [ ! -x "$lc" ] || [ ! -d "$mig" ]; then
-        ok "lifecycle (release carries no spira-lc or migrations)"
-        return
-    fi
-    local out rc live f pending=()
-    # The release live now passed this same check against this store before it went live,
-    # so every migration it carries unchanged is applied: only new or changed files are
-    # probed. A data correction's applied-probe scans its whole table, and 0019's outgrew
-    # the probe timeout and refused every landing (sp-eetimm). No live sibling (round VM,
-    # sim world, fresh install): every file is probed.
-    live="$(readlink -f "$(dirname "$REL")/current" 2>/dev/null)"
-    if [ -n "$live" ] && [ "$live" != "$(readlink -f "$REL")" ] && [ -d "$live/lifecycle/migrations" ]; then
-        for f in "$mig"/*.sql; do
-            [ -e "$f" ] || continue
-            cmp -s "$f" "$live/lifecycle/migrations/${f##*/}" || pending+=("$f")
-        done
-        if [ "${#pending[@]}" -eq 0 ]; then
-            lifecycle_grants "every migration carried unchanged from the live release ${live##*/}, applied when it went live"
-            return
-        fi
-    else
-        pending=("$mig")
-    fi
-    # The environment's own lifecycle identity, untouched: admin-migrate probes as it and
-    # reads SPIRA_LC_ADMIN_USER/PASSWORD itself, only when a migration is pending (sp-p1z81).
-    # No --if-enforced: there is no off to gate on (sp-v62vn).
-    out="$("$lc" admin-migrate "${pending[@]}" 2>&1)"
-    rc=$?
-    if [ "$rc" -ne 0 ]; then
-        fail lifecycle "$out"
-        return
-    fi
-    lifecycle_grants "$(printf '%s' "$out" | tail -1)"
-}
-
-# The grants the release's own code ships, applied and read back on every activation: a release
-# can grow them without touching a migration file, and a read-only user that cannot SELECT is
-# refused here, never first seen on the live release.
-lifecycle_grants() {
-    local out rc
-    out="$("$REL/bin/spira-lc" admin-grants 2>&1)"
-    rc=$?
-    if [ "$rc" -eq 0 ]; then
-        ok "lifecycle ($1; $(printf '%s' "$out" | tail -1))"
-    else
-        fail lifecycle-grants "$out"
-    fi
-}
-
 # --- ami: an AMI exists for this release's recipe-sha. A warning, never a refusal: the image
 # is built from main after the recipe lands, so refusing here could never be satisfied.
 check_ami() {
@@ -322,6 +256,5 @@ check_store
 check_units
 check_self_test
 check_ami
-check_lifecycle
 
 exit "$FAIL"

@@ -39,10 +39,6 @@ fn control_rust(path: &str) -> bool {
         && (path.starts_with("lifecycle/") || path.starts_with("spira-lc/src/") || path.split('/').next().is_some_and(|d| d.starts_with("state-store")))
 }
 
-fn control_sql(path: &str) -> bool {
-    path == "lifecycle/schema.sql" || (path.starts_with("lifecycle/migrations/") && path.ends_with(".sql"))
-}
-
 /// One finding before the allow list: `what` is the allow-list key after `<path>:`.
 struct Hit {
     line: usize,
@@ -52,99 +48,6 @@ struct Hit {
 
 fn hit(line: usize, what: impl Into<String>, message: impl Into<String>) -> Hit {
     Hit { line, what: what.into(), message: message.into() }
-}
-
-/// SQL with `--` comments blanked, newlines kept.
-fn sql_code(src: &str) -> String {
-    src.lines()
-        .map(|l| match l.find("--") {
-            Some(i) => format!("{}{}", &l[..i], " ".repeat(l.len() - i)),
-            None => l.to_string(),
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-fn line_at(text: &str, at: usize) -> usize {
-    1 + text[..at].bytes().filter(|&b| b == b'\n').count()
-}
-
-/// The top-level elements of a parenthesised column list starting just after its `(`, each
-/// with its byte offset.
-fn elements(text: &str, open: usize) -> Vec<(usize, &str)> {
-    let mut out = Vec::new();
-    let (mut depth, mut start) = (0usize, open);
-    for (i, c) in text[open..].char_indices().map(|(i, c)| (open + i, c)) {
-        match c {
-            '(' => depth += 1,
-            ')' if depth == 0 => {
-                out.push((start, &text[start..i]));
-                return out;
-            }
-            ')' => depth -= 1,
-            ',' if depth == 0 => {
-                out.push((start, &text[start..i]));
-                start = i + 1;
-            }
-            _ => {}
-        }
-    }
-    out
-}
-
-fn table_hit(line: usize, table: &str) -> Option<Hit> {
-    let why = if edge_table(table) {
-        "is an edge table: the dependency and parent graph belongs to bd"
-    } else if planning(table) {
-        "is named for planning data, which belongs to bd"
-    } else {
-        return None;
-    };
-    Some(hit(line, table, format!("table {table} {why}")))
-}
-
-fn column_hit(line: usize, table: &str, name: &str) -> Option<Hit> {
-    planning(name).then(|| hit(line, format!("{table}.{name}"), format!("column {table}.{name} copies planning data")))
-}
-
-fn sql_hits(src: &str) -> Vec<Hit> {
-    static CREATE: OnceLock<Regex> = OnceLock::new();
-    static ALTER: OnceLock<Regex> = OnceLock::new();
-    static CLAUSE: OnceLock<Regex> = OnceLock::new();
-    static COL: OnceLock<Regex> = OnceLock::new();
-    let text = sql_code(src);
-    let name = r"`?(?:\w+`?\.`?)?(\w+)`?";
-    let create = re(&CREATE, &format!(r"(?i)\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?{name}\s*\("));
-    let alter = re(&ALTER, &format!(r"(?i)\bALTER\s+TABLE\s+{name}([^;]*)"));
-    let clause = re(
-        &CLAUSE,
-        r"(?i)\bADD\s+(?:COLUMN\s+)?(?:IF\s+NOT\s+EXISTS\s+)?\(?\s*`?(\w+)|\bCHANGE\s+(?:COLUMN\s+)?`?\w+`?\s+`?(\w+)|\bRENAME\s+COLUMN\s+`?\w+`?\s+TO\s+`?(\w+)|\bRENAME\s+(?:TO|AS)\s+`?(?:\w+`?\.`?)?(\w+)",
-    );
-    let col = re(&COL, r"^\s*`?(\w+)`?");
-    let mut out = Vec::new();
-    for c in create.captures_iter(&text) {
-        let (m, table) = (c.get(1).expect("group"), c[1].to_ascii_lowercase());
-        if let Some(h) = table_hit(line_at(&text, m.start()), &table) {
-            out.push(h);
-            continue;
-        }
-        for (at, el) in elements(&text, c.get(0).expect("whole").end()) {
-            if let Some(cm) = col.captures(el) {
-                let g = cm.get(1).expect("group");
-                out.extend(column_hit(line_at(&text, at + g.start()), &table, &g.as_str().to_ascii_lowercase()));
-            }
-        }
-    }
-    for c in alter.captures_iter(&text) {
-        let table = c[1].to_ascii_lowercase();
-        let body = c.get(2).expect("group");
-        for k in clause.captures_iter(body.as_str()) {
-            let (i, g) = (1..=4).find_map(|i| k.get(i).map(|g| (i, g))).expect("one alternative matched");
-            let (line, n) = (line_at(&text, body.start() + g.start()), g.as_str().to_ascii_lowercase());
-            out.extend(if i == 4 { table_hit(line, &n) } else { column_hit(line, &table, &n) });
-        }
-    }
-    out
 }
 
 /// The source with everything but string literals blanked, newlines kept.
@@ -184,7 +87,7 @@ fn rust_sql_hits(c: &rust::Classified) -> Vec<Hit> {
     static WORD: OnceLock<Regex> = OnceLock::new();
     static TABLE: OnceLock<Regex> = OnceLock::new();
     let word = re(&WORD, r"[A-Za-z0-9_]+");
-    let table = re(&TABLE, r"(?i)\b(?:FROM|JOIN|INTO|UPDATE)\s+(?:spira_lifecycle\.)?bead\b");
+    let table = re(&TABLE, r"(?i)\b(?:FROM|JOIN|INTO|UPDATE)\s+bead\b");
     let addresses = |s: &str| table.is_match(s) || word.find_iter(s).any(|m| m.as_str() == "bead_id");
     let text = literals_only(c);
     let record_lines: BTreeSet<usize> = text.lines().enumerate().filter(|(_, l)| addresses(l)).map(|(i, _)| i + 1).collect();
@@ -346,7 +249,7 @@ impl Rule for TwoPlane {
     }
 
     fn applies_to(&self, e: &Entry) -> bool {
-        control_sql(&e.path) || control_rust(&e.path)
+        control_rust(&e.path)
     }
 
     fn check(&self, tree: &Tree) -> Result<Vec<Finding>, LintError> {
@@ -355,12 +258,8 @@ impl Rule for TwoPlane {
         let mut hits: Vec<(String, Hit)> = record_hits(tree)?;
         for e in files {
             let Some(src) = tree.content(e) else { continue };
-            if control_sql(&e.path) {
-                hits.extend(sql_hits(&String::from_utf8_lossy(src)).into_iter().map(|h| (e.path.clone(), h)));
-            } else {
-                let c = rust::classify(src);
-                hits.extend(rust_sql_hits(&c).into_iter().chain(vocabulary_hits(&c)).map(|h| (e.path.clone(), h)));
-            }
+            let c = rust::classify(src);
+            hits.extend(rust_sql_hits(&c).into_iter().chain(vocabulary_hits(&c)).map(|h| (e.path.clone(), h)));
         }
         let mut used = BTreeSet::new();
         let mut out = Vec::new();
@@ -421,27 +320,8 @@ mod tests {
     #[test]
     fn a_clean_control_plane_passes() {
         let t = fixture("tp-clean");
-        t.write("lifecycle/schema.sql", "CREATE TABLE IF NOT EXISTS bead (\n    bead_id VARCHAR(64) NOT NULL,\n    state VARCHAR(16),\n    PRIMARY KEY (bead_id)\n);\n");
-        assert_eq!(run(&t, &["lifecycle/schema.sql"]).unwrap(), Vec::<String>::new());
-    }
-
-    #[test]
-    fn an_edge_table_is_reported() {
-        let t = fixture("tp-dep");
-        t.write(
-            "lifecycle/schema.sql",
-            "-- the bead_dep mirror\nCREATE TABLE IF NOT EXISTS bead_dep (\n    bead_id VARCHAR(64) NOT NULL,\n    depends_on VARCHAR(64) NOT NULL\n);\n\
-             CREATE TABLE `spira_lifecycle`.`epic_edge` (a INT);\nCREATE TABLE labels (a INT);\nALTER TABLE parked RENAME TO round_dep;\n",
-        );
-        assert_eq!(
-            run(&t, &["lifecycle/schema.sql"]).unwrap(),
-            [
-                "two-plane: lifecycle/schema.sql:2: table bead_dep is an edge table: the dependency and parent graph belongs to bd",
-                "two-plane: lifecycle/schema.sql:6: table epic_edge is an edge table: the dependency and parent graph belongs to bd",
-                "two-plane: lifecycle/schema.sql:7: table labels is named for planning data, which belongs to bd",
-                "two-plane: lifecycle/schema.sql:8: table round_dep is an edge table: the dependency and parent graph belongs to bd",
-            ]
-        );
+        t.write("spira-lc/src/q.rs", "fn a() { q(\"SELECT bead_id, state FROM bead\"); }\n");
+        assert_eq!(run(&t, &["spira-lc/src/q.rs"]).unwrap(), Vec::<String>::new());
     }
 
     #[test]
@@ -490,7 +370,7 @@ mod tests {
         let t = fixture("tp-rsql");
         t.write(
             "spira-lc/src/q.rs",
-            "fn a() { q(\"SELECT bead_id, depends_on FROM bead_dep\"); }\nfn b() { q(\"SELECT title FROM bead WHERE state = 'READY'\"); }\nfn c() { q(\"SELECT id, title FROM issues\"); }\n\
+            "fn a() { q(\"SELECT bead_id, depends_on FROM edge_dep\"); }\nfn b() { q(\"SELECT title FROM bead WHERE state = 'READY'\"); }\nfn c() { q(\"SELECT id, title FROM issues\"); }\n\
              const D: &str = r#\"SELECT bead_id,\n  priority\n  FROM x\"#;\nconst E: [&str; 3] = [\"bead_id\", \"state\",\n  \"title\"];\nfn f() { json!({\"bead_id\": id, \"body\": b}); }\n",
         );
         let carries = |n: usize, w: &str| format!("two-plane: spira-lc/src/q.rs:{n}: carries planning field {w} on a lifecycle record: read it through the planning verbs");
@@ -498,7 +378,7 @@ mod tests {
             run(&t, &["spira-lc/src/q.rs"]).unwrap(),
             [
                 carries(1, "depends_on"),
-                "two-plane: spira-lc/src/q.rs:1: reads or writes edge table bead_dep: the dependency graph belongs to bd".to_string(),
+                "two-plane: spira-lc/src/q.rs:1: reads or writes edge table edge_dep: the dependency graph belongs to bd".to_string(),
                 carries(2, "title"),
                 carries(5, "priority"),
                 carries(8, "title"),
@@ -510,31 +390,27 @@ mod tests {
     #[test]
     fn an_allowlisted_finding_passes_and_a_stale_line_is_reported() {
         let t = fixture("tp-allow");
-        t.write("lifecycle/schema.sql", "CREATE TABLE bead_dep (\n    bead_id VARCHAR(64)\n);\n");
-        t.write(ALLOW_FILE, "# header\nlifecycle/schema.sql:bead_dep sp-x1\n");
-        assert_eq!(run(&t, &["lifecycle/schema.sql"]).unwrap(), Vec::<String>::new());
-        t.write(ALLOW_FILE, "lifecycle/schema.sql:bead_dep sp-x1\nlifecycle/schema.sql:bead.title sp-x1\n");
+        let q = "spira-lc/src/q.rs";
+        t.write(q, "fn a() { q(\"SELECT bead_id FROM edge_dep\"); }\n");
+        t.write(ALLOW_FILE, "# header\nspira-lc/src/q.rs:edge_dep sp-x1\n");
+        assert_eq!(run(&t, &[q]).unwrap(), Vec::<String>::new());
+        t.write(ALLOW_FILE, "spira-lc/src/q.rs:edge_dep sp-x1\nspira-lc/src/q.rs:title sp-x1\n");
         assert_eq!(
-            run(&t, &["lifecycle/schema.sql"]).unwrap(),
-            ["two-plane: spira-lint/two-plane-allow:2: lists lifecycle/schema.sql:bead.title, which no longer has a finding — remove the line (the list only shrinks)"]
+            run(&t, &[q]).unwrap(),
+            ["two-plane: spira-lint/two-plane-allow:2: lists spira-lc/src/q.rs:title, which no longer has a finding — remove the line (the list only shrinks)"]
         );
-        t.write(ALLOW_FILE, "lifecycle/schema.sql:bead_dep kept a reason in words\n");
-        assert_eq!(run(&t, &["lifecycle/schema.sql"]).unwrap(), Vec::<String>::new());
-        t.write("lifecycle/migrations/0001-a.sql", "CREATE TABLE bead_dep (a INT);\n");
-        assert_eq!(
-            run(&t, &["lifecycle/schema.sql", "lifecycle/migrations/0001-a.sql"]).unwrap(),
-            ["two-plane: lifecycle/migrations/0001-a.sql:1: table bead_dep is an edge table: the dependency and parent graph belongs to bd"]
-        );
-        for bad in ["lifecycle/schema.sql:bead_dep\n", "lifecycle/schema.sql:bead_dep kept\n", "lifecycle/schema.sql:bead_dep sp-\n", "lifecycle/schema.sql bead_dep sp-x1\n"] {
+        t.write(ALLOW_FILE, "spira-lc/src/q.rs:edge_dep kept a reason in words\n");
+        assert_eq!(run(&t, &[q]).unwrap(), Vec::<String>::new());
+        for bad in ["spira-lc/src/q.rs:edge_dep\n", "spira-lc/src/q.rs:edge_dep kept\n", "spira-lc/src/q.rs:edge_dep sp-\n", "spira-lc/src/q.rs edge_dep sp-x1\n"] {
             t.write(ALLOW_FILE, bad);
-            assert!(matches!(run(&t, &["lifecycle/schema.sql"]), Err(LintError::BadAllow { line: 1, .. })), "{bad:?}");
+            assert!(matches!(run(&t, &[q]), Err(LintError::BadAllow { line: 1, .. })), "{bad:?}");
         }
     }
 
     #[test]
     fn nothing_in_scope_refuses() {
         let t = TempDir::new("tp-none");
-        t.write("README.md", "bead_dep\n");
+        t.write("README.md", "edge_dep\n");
         let tree = Tree::from_paths(t.path(), ["README.md"], std::iter::empty::<&str>());
         assert_eq!(TwoPlane.check(&tree), Err(LintError::EmptyScope));
     }

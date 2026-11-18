@@ -1,19 +1,14 @@
-//! The runtime's store verbs: `journal <op> ...` over the `runtime_*` tables. The runtime
-//! reaches the lifecycle store only through this socket, so an idle runtime launches no process.
-//! A turn is one transaction of upserts and updates keyed by what they change, never a delete;
-//! the runtime reads the store once, at boot.
+//! The runtime's store verbs: `journal <op> ...` over the control store (`control::journal`). The
+//! runtime reaches the store only through this socket, so an idle runtime launches no process.
+//! A turn is upserts keyed by what they change, never a delete of a row; the runtime reads the
+//! store once, at boot.
 
 use serde_json::{json, Value};
 
-use crate::db::{Conn, DbError};
-use crate::rows::escape;
+use crate::control::journal::{EffectRow, PoisonRow, ScheduleRow, StateRow, Turn};
 
 const CANNOT_TELL: i32 = 2;
 const REFUSED: i32 = 3;
-
-fn lit(s: &str) -> String {
-    format!("'{}'", escape(s))
-}
 
 fn field<'a>(v: &'a Value, k: &str) -> Result<&'a str, String> {
     v.get(k).and_then(Value::as_str).ok_or_else(|| format!("journal: missing string {k}"))
@@ -23,7 +18,7 @@ fn number(v: &Value, k: &str) -> Result<u64, String> {
     v.get(k).and_then(Value::as_u64).ok_or_else(|| format!("journal: missing number {k}"))
 }
 
-/// Widths of the text columns, mirroring schema.sql.
+/// Widths the runtime checks a write against before it sends it (runtime/src/socket.rs).
 const ID_MAX: usize = 255;
 const STREAM_MAX: usize = 128;
 const TAG_MAX: usize = 64;
@@ -77,10 +72,6 @@ fn check_text(what: &str, name: &str, value: &str, max: usize) -> Result<(), Str
     }
 }
 
-fn opt_lit(v: &Value, k: &str) -> String {
-    v.get(k).and_then(Value::as_str).map_or("NULL".into(), lit)
-}
-
 fn parse(arg: Option<&String>, what: &str) -> Result<Value, String> {
     let text = arg.ok_or_else(|| format!("journal: missing {what}"))?;
     if text.contains('\0') {
@@ -100,100 +91,48 @@ fn text_arg<'a>(arg: Option<&'a String>, what: &str) -> Result<&'a str, String> 
     }
 }
 
-pub fn schedule_sql(row: &Value) -> Result<String, String> {
+fn schedule_row(row: &Value) -> Result<ScheduleRow, String> {
     let kind = row.get("kind").ok_or("journal: row has no kind")?;
     check_widths("schedule", "row_id", row)?;
-    Ok(format!(
-        "INSERT INTO runtime_schedule (row_id, at, stream, kind_tag, kind_body, cause, correlation, fired) VALUES ({}, {}, {}, {}, {}, {}, {}, 0) ON DUPLICATE KEY UPDATE row_id = row_id",
-        lit(field(row, "id")?),
-        number(row, "at")?,
-        lit(field(row, "stream")?),
-        lit(field(kind, "tag")?),
-        lit(field(kind, "body")?),
-        opt_lit(row, "cause"),
-        lit(field(row, "correlation")?),
-    ))
+    Ok(ScheduleRow {
+        id: field(row, "id")?.to_string(),
+        at: number(row, "at")?,
+        stream: field(row, "stream")?.to_string(),
+        tag: field(kind, "tag")?.to_string(),
+        body: field(kind, "body")?.to_string(),
+        cause: row.get("cause").and_then(Value::as_str).map(str::to_string),
+        correlation: field(row, "correlation")?.to_string(),
+    })
 }
 
-fn cell(r: &Value, k: &str) -> Value {
-    match r.get(k) {
-        Some(Value::String(s)) => Value::String(s.clone()),
-        Some(Value::Null) | None => Value::Null,
-        Some(v) => Value::String(v.to_string()),
-    }
-}
-
-fn num(r: &Value, k: &str) -> Value {
-    cell(r, k).as_str().and_then(|s| s.parse::<u64>().ok()).map_or(Value::Null, Value::from)
-}
-
-fn kind_of(r: &Value) -> Value {
-    json!({ "tag": cell(r, "kind_tag"), "body": cell(r, "kind_body").as_str().unwrap_or("") })
-}
-
-fn row_of(r: &Value) -> Value {
-    json!({ "id": cell(r, "row_id"), "at": num(r, "at"), "stream": cell(r, "stream"), "kind": kind_of(r), "cause": cell(r, "cause"), "correlation": cell(r, "correlation") })
+fn row_of(r: &ScheduleRow) -> Value {
+    json!({ "id": r.id, "at": r.at, "stream": r.stream, "kind": { "tag": r.tag, "body": r.body }, "cause": r.cause, "correlation": r.correlation })
 }
 
 const CLIP: usize = 240;
 
-fn clip(sql: &str) -> String {
-    match sql.char_indices().nth(CLIP) {
-        Some((i, _)) => format!("{}…", &sql[..i]),
-        None => sql.to_string(),
+fn clip(text: &str) -> String {
+    match text.char_indices().nth(CLIP) {
+        Some((i, _)) => format!("{}…", &text[..i]),
+        None => text.to_string(),
     }
 }
 
-fn failed(op: &str, sql: &str, subject: Option<&Value>, e: DbError) -> String {
-    let DbError::CannotTell(m) = e;
-    let who = subject.map_or(String::new(), |v| format!(" [{}]", describe(v)));
-    format!("journal {op}: {m}{who} — statement: {}", clip(sql))
-}
-
-fn write(conn: &Conn, op: &str, sql: &str, subject: Option<&Value>) -> Result<(), String> {
-    conn.append_event(sql).map_err(|e| failed(op, sql, subject, e))
-}
-
-fn read(conn: &Conn, op: &str, sql: &str) -> Result<Vec<Value>, String> {
-    conn.query(sql).map_err(|e| failed(op, sql, None, e))
-}
-
-fn fired_sql(row_id: &str) -> String {
-    format!("UPDATE runtime_schedule SET fired = 1 WHERE row_id = {}", lit(row_id))
-}
-
-fn state_sql(row: &Value) -> Result<String, String> {
+fn state_row(row: &Value) -> Result<StateRow, String> {
     let (task, skey) = (field(row, "task")?, field(row, "skey")?);
     check_text("turn", "task", task, TASK_MAX)?;
     check_text("turn", "skey", skey, KEY_MAX)?;
-    let (value, at) = (field(row, "value")?, number(row, "at")?);
-    Ok(format!("INSERT INTO runtime_task_state (task, skey, value, at) VALUES ({}, {}, {}, {at}) ON DUPLICATE KEY UPDATE value = {}, at = {at}", lit(task), lit(skey), lit(value), lit(value)))
+    Ok(StateRow { task: task.into(), skey: skey.into(), value: field(row, "value")?.into(), at: number(row, "at")? })
 }
 
-fn effect_sql(row: &Value) -> Result<String, String> {
+fn effect_row(row: &Value) -> Result<EffectRow, String> {
     let (task, ekey, request, stream) = (field(row, "task")?, field(row, "ekey")?, field(row, "request_id")?, field(row, "stream")?);
     check_text("turn", "task", task, TASK_MAX)?;
     check_text("turn", "ekey", ekey, KEY_MAX)?;
     check_text("turn", "request_id", request, ID_MAX)?;
     check_text("turn", "stream", stream, STREAM_MAX)?;
-    let spec = row.get("spec").ok_or("journal: effect has no spec")?.to_string();
-    let (requested, deadline) = (number(row, "requested_at")?, number(row, "deadline_at")?);
-    Ok(format!(
-        "INSERT INTO runtime_effect (task, ekey, request_id, stream, spec, requested_at, deadline_at, resolved) VALUES ({}, {}, {}, {}, {}, {requested}, {deadline}, 0) ON DUPLICATE KEY UPDATE request_id = {r}, stream = {s}, spec = {sp}, requested_at = {requested}, deadline_at = {deadline}, resolved = 0",
-        lit(task),
-        lit(ekey),
-        lit(request),
-        lit(stream),
-        lit(&spec),
-        r = lit(request),
-        s = lit(stream),
-        sp = lit(&spec),
-    ))
-}
-
-fn resolved_sql(request: &str) -> Result<String, String> {
-    check_text("turn", "request_id", request, ID_MAX)?;
-    Ok(format!("UPDATE runtime_effect SET resolved = 1 WHERE request_id = {}", lit(request)))
+    let spec = row.get("spec").ok_or("journal: effect has no spec")?.clone();
+    Ok(EffectRow { task: task.into(), ekey: ekey.into(), request_id: request.into(), stream: stream.into(), spec, requested_at: number(row, "requested_at")?, deadline_at: number(row, "deadline_at")? })
 }
 
 fn list<'a>(turn: &'a Value, k: &str) -> Result<&'a [Value], String> {
@@ -204,65 +143,60 @@ fn list<'a>(turn: &'a Value, k: &str) -> Result<&'a [Value], String> {
     }
 }
 
-/// The statements of one turn, in the order they apply: state, effect requests, schedule rows,
-/// then the outcomes and fired marks that close earlier ones. Every one is checked before any
-/// is written, so a refusal writes nothing.
-pub fn turn_sqls(turn: &Value) -> Result<Vec<String>, String> {
-    let mut sqls = vec![];
+/// One turn, every write checked before any is made, so a refusal writes nothing. The order it
+/// applies in: state, effect requests, schedule rows, then the outcomes and fired marks that
+/// close earlier ones.
+pub fn turn_of(turn: &Value) -> Result<Turn, String> {
+    let mut out = Turn::default();
     for r in list(turn, "state")? {
-        sqls.push(state_sql(r)?);
+        out.state.push(state_row(r)?);
     }
     for r in list(turn, "effects")? {
-        sqls.push(effect_sql(r)?);
+        out.effects.push(effect_row(r)?);
     }
     for r in list(turn, "schedules")? {
-        sqls.push(schedule_sql(r)?);
+        out.schedules.push(schedule_row(r)?);
     }
     for id in list(turn, "resolved")? {
-        sqls.push(resolved_sql(id.as_str().filter(|s| !s.is_empty()).ok_or_else(|| format!("journal: turn refused: a resolved mark is not a request id: {id}"))?)?);
+        let id = id.as_str().filter(|s| !s.is_empty()).ok_or_else(|| format!("journal: turn refused: a resolved mark is not a request id: {id}"))?;
+        check_text("turn", "request_id", id, ID_MAX)?;
+        out.resolved.push(id.to_string());
     }
     for id in list(turn, "fired")? {
         let id = id.as_str().filter(|s| !s.is_empty() && !s.contains('\0')).ok_or_else(|| format!("journal: turn refused: a fired mark is not a row id: {id}"))?;
-        sqls.push(fired_sql(id));
+        out.fired.push(id.to_string());
     }
-    Ok(sqls)
+    Ok(out)
 }
 
-fn run(args: &[String], conn: &Conn) -> Result<String, String> {
+fn failed(op: &str, what: impl std::fmt::Display) -> String {
+    format!("journal {op}: {what}")
+}
+
+fn run<B: state_store::Backend>(args: &[String], store: &crate::control::store::Store<B>) -> Result<String, String> {
     let op = args.first().map(String::as_str).unwrap_or("");
-    let (read, write) = (|c: &Conn, s: &str| read(c, op, s), |c: &Conn, s: &str, who: Option<&Value>| write(c, op, s, who));
     let a = |i: usize| args.get(i);
+    let cannot = |e: state_store::Error| failed(op, e);
     match op {
         "turn" => {
-            let turn = parse(a(1), "turn")?;
-            let sqls = turn_sqls(&turn)?;
-            if !sqls.is_empty() {
-                conn.append_events(&sqls).map_err(|e| failed(op, &sqls.join(";\n"), None, e))?;
-            }
+            let turn = turn_of(&parse(a(1), "turn")?)?;
+            store.journal_turn(&turn, "runtime").map_err(cannot)?;
             Ok(String::new())
         }
         "state" => {
-            let rows = read(conn, "SELECT task, skey, value, at FROM runtime_task_state ORDER BY task, skey")?;
-            Ok(Value::Array(rows.iter().map(|r| json!({ "task": cell(r, "task"), "skey": cell(r, "skey"), "value": cell(r, "value"), "at": num(r, "at") })).collect()).to_string())
+            let rows = store.journal_state().map_err(cannot)?;
+            Ok(Value::Array(rows.iter().map(|r| json!({ "task": r.task, "skey": r.skey, "value": r.value, "at": r.at })).collect()).to_string())
         }
         "open-effects" => {
-            let rows = read(conn, "SELECT task, ekey, request_id, stream, spec, requested_at, deadline_at FROM runtime_effect WHERE resolved = 0 ORDER BY requested_at, request_id")?;
-            let mut out = vec![];
-            for r in &rows {
-                let spec: Value = cell(r, "spec").as_str().and_then(|t| serde_json::from_str(t).ok()).ok_or_else(|| format!("journal: effect {} has an unreadable spec", cell(r, "request_id")))?;
-                out.push(json!({ "task": cell(r, "task"), "ekey": cell(r, "ekey"), "request_id": cell(r, "request_id"), "stream": cell(r, "stream"), "spec": spec, "requested_at": num(r, "requested_at"), "deadline_at": num(r, "deadline_at") }));
-            }
-            Ok(Value::Array(out).to_string())
+            let rows = store.journal_open_effects().map_err(cannot)?;
+            Ok(Value::Array(rows.iter().map(|r| json!({ "task": r.task, "ekey": r.ekey, "request_id": r.request_id, "stream": r.stream, "spec": r.spec, "requested_at": r.requested_at, "deadline_at": r.deadline_at })).collect()).to_string())
         }
         "due" => {
-            let filter = match a(1) {
-                Some(_) => format!(" AND at <= {}", arg_u64(a(1), "now")?),
-                None => String::new(),
+            let now = match a(1) {
+                Some(_) => Some(arg_u64(a(1), "now")?),
+                None => None,
             };
-            let rows = read(
-                conn,
-                &format!("SELECT row_id, at, stream, kind_tag, kind_body, cause, correlation FROM runtime_schedule WHERE fired = 0{filter} ORDER BY row_id"),
-            )?;
+            let rows = store.journal_due(now).map_err(cannot)?;
             Ok(Value::Array(rows.iter().map(row_of).collect()).to_string())
         }
         "poison" => {
@@ -271,29 +205,29 @@ fn run(args: &[String], conn: &Conn) -> Result<String, String> {
             check_text("poison", "stream", stream, STREAM_MAX)?;
             check_text("poison", "event_id", event, ID_MAX)?;
             check_text("poison", "handler", handler, HANDLER_MAX)?;
-            write(
-                conn,
-                &format!(
-                    "INSERT INTO runtime_poison (stream, event_id, handler, message) SELECT {s}, {}, {}, {} FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM runtime_poison WHERE stream = {s})",
-                    lit(event),
-                    lit(handler),
-                    lit(field(&p, "message")?),
-                    s = lit(stream),
-                ),
-                None,
-            )?;
+            let row = PoisonRow { stream: stream.into(), event: event.into(), handler: handler.into(), message: field(&p, "message")?.into() };
+            store.journal_poison(&row, "runtime").map_err(cannot)?;
             Ok(String::new())
         }
         "poisoned" => {
-            let rows = read(conn, &format!("SELECT stream, event_id, handler, message FROM runtime_poison WHERE stream = {}", lit(text_arg(a(1), "stream")?)))?;
-            Ok(rows.first().map_or("null".into(), |r| json!({ "stream": cell(r, "stream"), "event": cell(r, "event_id"), "handler": cell(r, "handler"), "message": cell(r, "message") }).to_string()))
+            let stream = text_arg(a(1), "stream")?;
+            let row = store.journal_poisoned(stream).map_err(cannot)?;
+            Ok(row.map_or("null".into(), |r| json!({ "stream": r.stream, "event": r.event, "handler": r.handler, "message": r.message }).to_string()))
         }
         _ => Err(format!("journal: unknown op {op:?} (turn|state|open-effects|due|poison|poisoned)")),
     }
 }
 
-pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
-    match run(args, conn) {
+pub fn dispatch(args: &[String]) -> (i32, String) {
+    let store = match crate::control::served::store() {
+        Ok(s) => s,
+        Err(e) => return (CANNOT_TELL, format!("cannot tell: {e}")),
+    };
+    answer(run(args, &*store))
+}
+
+fn answer(r: Result<String, String>) -> (i32, String) {
+    match r {
         Ok(out) => (0, out),
         Err(e) if e.starts_with("journal:") => (REFUSED, e),
         Err(e) => (CANNOT_TELL, format!("cannot tell: {e}")),
@@ -303,23 +237,24 @@ pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use runtime::ports::VirtualClock;
+    use state_store::{Config, Contract, MemBackend, Ports};
 
-    fn effect() -> Value {
-        json!({"task": "t", "ekey": "k'1", "request_id": "r1", "stream": "s", "spec": {"name": "n", "input": "i", "deadline_ms": 5, "key": "k'1"}, "requested_at": 1, "deadline_at": 6})
+    fn store() -> crate::control::store::Store<MemBackend> {
+        let c = Contract::open(MemBackend::new(), Ports::virtual_clock(&VirtualClock::new(1_000)), Config { min_lock_ttl_ms: 1_000 }).unwrap();
+        crate::control::store::Store::new(c, 1_000)
     }
 
-    #[test]
-    fn a_turn_upserts_state_and_effects_and_updates_what_it_closes_and_deletes_nothing() {
-        let row = json!({"id": "r1", "at": 5, "stream": "s", "kind": {"tag": "tick", "body": ""}, "cause": null, "correlation": "c"});
-        let turn = json!({"state": [{"task": "t", "skey": "carry", "value": "v'", "at": 2}], "effects": [effect()], "schedules": [row], "resolved": ["r0"], "fired": ["r9"]});
-        let sqls = turn_sqls(&turn).unwrap();
-        let heads: Vec<&str> = sqls.iter().map(|s| s.split(" (").next().unwrap().split(" SET").next().unwrap()).collect();
-        assert_eq!(heads, ["INSERT INTO runtime_task_state", "INSERT INTO runtime_effect", "INSERT INTO runtime_schedule", "UPDATE runtime_effect", "UPDATE runtime_schedule"], "{sqls:?}");
-        assert!(sqls[0].contains("'v\\''") && sqls[0].contains("ON DUPLICATE KEY UPDATE value"), "{}", sqls[0]);
-        assert!(sqls[1].contains("'k\\'1'") && sqls[1].contains("resolved = 0"), "{}", sqls[1]);
-        assert_eq!(sqls[3], "UPDATE runtime_effect SET resolved = 1 WHERE request_id = 'r0'");
-        assert!(sqls.iter().all(|s| !s.to_uppercase().contains("DELETE")), "{sqls:?}");
-        assert!(turn_sqls(&json!({})).unwrap().is_empty(), "an empty turn writes nothing");
+    fn call(s: &crate::control::store::Store<MemBackend>, argv: &[&str]) -> (i32, String) {
+        answer(run(&argv.iter().map(|a| a.to_string()).collect::<Vec<_>>(), s))
+    }
+
+    fn effect() -> Value {
+        json!({"task": "t", "ekey": "k'1/x", "request_id": "r1", "stream": "s", "spec": {"name": "n", "input": "i", "deadline_ms": 5, "key": "k'1"}, "requested_at": 1, "deadline_at": 6})
+    }
+
+    fn sched(id: &str, at: u64) -> Value {
+        json!({"id": id, "at": at, "stream": "s", "kind": {"tag": "tick", "body": "b"}, "cause": null, "correlation": "c"})
     }
 
     #[test]
@@ -341,32 +276,80 @@ mod tests {
             json!({"state": {"task": "t"}}),
             json!({"state": [{"task": "t", "skey": "carry", "value": "v", "at": 1}], "fired": [""]}),
         ] {
-            assert!(turn_sqls(&bad).unwrap_err().starts_with("journal:"), "{bad}");
+            assert!(turn_of(&bad).unwrap_err().starts_with("journal:"), "{bad}");
         }
-        assert!(turn_sqls(&wide("ekey", 255)).is_ok(), "the limit itself is accepted");
+        assert!(turn_of(&wide("ekey", 255)).is_ok(), "the limit itself is accepted");
+        assert_eq!(turn_of(&json!({})).unwrap(), Turn::default(), "an empty turn writes nothing");
     }
 
     #[test]
-    fn a_nul_in_a_payload_is_refused_before_any_sql() {
+    fn a_nul_in_a_payload_is_refused_before_any_write() {
         assert!(parse(Some(&"{\"a\":\"\0\"}".to_string()), "event").unwrap_err().contains("NUL"));
         assert!(text_arg(Some(&String::new()), "handler").is_err());
     }
 
     #[test]
     fn an_over_length_schedule_id_is_refused_naming_the_row_its_fields_and_their_lengths() {
-        let r = schedule_sql(&json!({"id": "r".repeat(260), "at": 1, "stream": "s", "kind": {"tag": "t", "body": ""}, "cause": null, "correlation": "c"})).unwrap_err();
-        assert!(r.starts_with("journal: schedule refused: row_id is 260 chars (max 255);") && r.contains("kind=t"), "{r}");
-        assert!(schedule_sql(&json!({"id": "r"})).is_err());
+        let r = schedule_row(&sched(&"r".repeat(260), 1)).unwrap_err();
+        assert!(r.starts_with("journal: schedule refused: row_id is 260 chars (max 255);") && r.contains("kind=tick"), "{r}");
+        assert!(schedule_row(&json!({"id": "r"})).is_err());
     }
 
-    /// runtime_poison is append-only for spira_lc (lifecycle/grants.sql: SELECT, INSERT): a dedupe
-    /// that needs UPDATE is "command denied" in production though a root-run test passes.
     #[test]
-    fn appends_to_append_only_tables_need_no_update_grant() {
-        let src = include_str!("journal.rs");
-        let table = "runtime_poison";
-        let bad = src.lines().filter(|l| l.contains(&format!("INSERT INTO {table}")) && l.contains("DUPLICATE KEY")).count();
-        assert_eq!(bad, 0, "{table} is granted SELECT, INSERT only; ON DUPLICATE KEY UPDATE is denied");
+    fn what_a_turn_wrote_reads_back_and_what_it_closed_is_no_longer_open() {
+        let s = store();
+        let turn = json!({"state": [{"task": "t", "skey": "carry", "value": "v'", "at": 2}], "effects": [effect()], "schedules": [sched("r2", 5), sched("r1", 4)]});
+        assert_eq!(call(&s, &["turn", &turn.to_string()]).0, 0);
+        assert_eq!(serde_json::from_str::<Value>(&call(&s, &["state"]).1).unwrap(), json!([{"task": "t", "skey": "carry", "value": "v'", "at": 2}]));
+        let open: Value = serde_json::from_str(&call(&s, &["open-effects"]).1).unwrap();
+        assert_eq!(open[0]["ekey"], "k'1/x");
+        let due: Value = serde_json::from_str(&call(&s, &["due"]).1).unwrap();
+        assert_eq!(due.as_array().unwrap().iter().map(|r| r["id"].as_str().unwrap()).collect::<Vec<_>>(), ["r1", "r2"], "by row id");
+        assert_eq!(serde_json::from_str::<Value>(&call(&s, &["due", "4"]).1).unwrap().as_array().unwrap().len(), 1, "only what is due at `now`");
+        let close = json!({"resolved": ["r1"], "fired": ["r1"]});
+        assert_eq!(call(&s, &["turn", &close.to_string()]).0, 0);
+        assert_eq!(call(&s, &["open-effects"]).1, "[]");
+        let due: Value = serde_json::from_str(&call(&s, &["due"]).1).unwrap();
+        assert_eq!(due.as_array().unwrap().len(), 1);
+        assert_eq!(due[0]["id"], "r2");
+    }
+
+    #[test]
+    fn an_effect_upserted_again_after_it_resolved_is_open_again_and_a_schedule_row_inserted_again_is_kept_as_it_was() {
+        let s = store();
+        let first = json!({"effects": [effect()], "schedules": [sched("r1", 4)]});
+        call(&s, &["turn", &first.to_string()]);
+        call(&s, &["turn", &json!({"resolved": ["r1"], "fired": ["r1"]}).to_string()]);
+        let again = json!({"effects": [effect()], "schedules": [sched("r1", 99)]});
+        call(&s, &["turn", &again.to_string()]);
+        assert_eq!(serde_json::from_str::<Value>(&call(&s, &["open-effects"]).1).unwrap().as_array().unwrap().len(), 1);
+        assert_eq!(call(&s, &["due"]).1, "[]", "the fired row is not re-armed by a second insert");
+    }
+
+    #[test]
+    fn a_fired_mark_for_a_row_not_yet_inserted_does_not_swallow_its_later_insert() {
+        let s = store();
+        call(&s, &["turn", &json!({"fired": ["r9"]}).to_string()]);
+        call(&s, &["turn", &json!({"schedules": [sched("r9", 1)]}).to_string()]);
+        assert_eq!(serde_json::from_str::<Value>(&call(&s, &["due"]).1).unwrap().as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_stream_keeps_its_first_poison() {
+        let s = store();
+        let p = |m: &str| json!({"stream": "st", "event": "e", "handler": "h", "message": m}).to_string();
+        assert_eq!(call(&s, &["poisoned", "st"]).1, "null");
+        call(&s, &["poison", &p("first")]);
+        call(&s, &["poison", &p("second")]);
+        assert_eq!(serde_json::from_str::<Value>(&call(&s, &["poisoned", "st"]).1).unwrap()["message"], "first");
+    }
+
+    #[test]
+    fn a_turn_over_the_ops_a_txn_carries_still_commits_whole() {
+        let s = store();
+        let rows: Vec<Value> = (0..300).map(|n| json!({"task": "t", "skey": format!("k{n}"), "value": "v", "at": n})).collect();
+        assert_eq!(call(&s, &["turn", &json!({"state": rows}).to_string()]).0, 0);
+        assert_eq!(serde_json::from_str::<Value>(&call(&s, &["state"]).1).unwrap().as_array().unwrap().len(), 300);
     }
 
     /// The runtime checks a write against these widths before it sends it (runtime/src/socket.rs).
@@ -379,10 +362,8 @@ mod tests {
     }
 
     #[test]
-    fn a_long_statement_is_clipped_to_the_limit_and_an_ellipsis() {
-        let sql = state_sql(&json!({"task": "t", "skey": "carry", "value": "x".repeat(10_000), "at": 1})).unwrap();
-        assert!(sql.len() > 10_000);
-        assert_eq!(clip(&sql).chars().count(), CLIP + 1);
+    fn a_long_text_is_clipped_to_the_limit_and_an_ellipsis() {
+        assert_eq!(clip(&"x".repeat(10_000)).chars().count(), CLIP + 1);
         assert_eq!(clip("short"), "short");
     }
 }

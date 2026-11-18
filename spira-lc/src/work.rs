@@ -12,10 +12,9 @@ use lifecycle::bead::{self, BeadEventKind, HoldKind};
 use lifecycle::reason::HoldCause;
 
 use crate::content_sql;
-use crate::db::Conn;
-use crate::{flag, rows, CANNOT_TELL, REFUSED};
+use crate::{flag, CANNOT_TELL, REFUSED};
 
-pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
+pub fn dispatch(args: &[String]) -> (i32, String) {
     let Some(bead_id) = args.first() else {
         return (CANNOT_TELL, "work: missing <bead-id>".into());
     };
@@ -28,20 +27,20 @@ pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
         return refusal;
     }
     match verb.as_str() {
-        "show" => cmd_show(bead_id, conn),
+        "show" => cmd_show(bead_id),
         "note" => cmd_note(bead_id, rest),
-        "submit" => cmd_submit(bead_id, rest, conn),
-        "done" => cmd_done(bead_id, rest, conn),
+        "submit" => cmd_submit(bead_id, rest),
+        "done" => cmd_done(bead_id, rest),
         "blocked" => cmd_blocked(bead_id, rest),
-        "file-followup" => cmd_file(bead_id, rest, "file-followup", conn),
-        "split" => cmd_file(bead_id, rest, "split", conn),
+        "file-followup" => cmd_file(bead_id, rest, "file-followup"),
+        "split" => cmd_file(bead_id, rest, "split"),
         "superseded-by" => cmd_superseded_by(bead_id, rest),
         "ack" => cmd_ack(bead_id, rest),
-        "logs" => cmd_logs(bead_id, rest, conn),
+        "logs" => cmd_logs(bead_id, rest),
         "cite-check" => cmd_cite_check(bead_id, rest, &mut |ids| crate::callers::Bd::known(&mut crate::bd::LiveBd, ids)),
         "fence" => cmd_fence(rest),
         "forge" => cmd_forge(bead_id, rest),
-        other if LANE_VERBS.contains(&other) => cmd_lane(bead_id, other, rest, conn),
+        other if LANE_VERBS.contains(&other) => cmd_lane(bead_id, other, rest),
         other => (
             CANNOT_TELL,
             format!("work: unknown verb {other:?} (want show, note, submit, done, blocked, file-followup, split, superseded-by, ack, logs, cite-check, {})", LANE_VERBS.join(", ")),
@@ -61,18 +60,15 @@ fn require_actor(args: &[String]) -> Result<String, (i32, String)> {
     flag(args, "--actor").ok_or((CANNOT_TELL, "work: --actor is required".to_string()))
 }
 
-fn cmd_show(bead_id: &str, conn: &Conn) -> (i32, String) {
+fn cmd_show(bead_id: &str) -> (i32, String) {
     let text = match crate::bd::show(bead_id) {
         Ok(text) => text,
         Err(e) => return (CANNOT_TELL, format!("cannot tell: {e}")),
     };
     match crate::plane::read(&[s("show"), bead_id.to_string()]) {
         (0, row) => {
-            let facts = conn
-                .query(&crate::facts::select_sql(&[bead_id.to_string()], &[spira_config::ejection::KIND.to_string()], None))
-                .map(crate::facts::shape)
-                .map_err(|crate::db::DbError::CannotTell(m)| m);
-            (0, with_logs(show_text(&text, &row, facts), kept_entries(bead_id, conn).len()))
+            let facts = crate::facts::read(&[bead_id.to_string()], &[spira_config::ejection::KIND.to_string()], None).map(crate::facts::shape);
+            (0, with_logs(show_text(&text, &row, facts), kept_entries(bead_id).len()))
         }
         (1, _) => (0, format!("{text}\nLIFECYCLE: no row\n")),
         (_, e) => (CANNOT_TELL, e),
@@ -90,8 +86,8 @@ fn with_logs(text: String, kept: usize) -> String {
 }
 
 /// The bead's `send-back-logs` facts, newest first: (epoch, actor, entry id).
-fn kept_entries(bead_id: &str, conn: &Conn) -> Vec<(i64, String, String)> {
-    let rows = conn.query(&crate::facts::select_sql(&[bead_id.to_string()], &[LOGS_KIND.to_string()], None)).unwrap_or_default();
+fn kept_entries(bead_id: &str) -> Vec<(i64, String, String)> {
+    let rows = crate::facts::read(&[bead_id.to_string()], &[LOGS_KIND.to_string()], None).unwrap_or_default();
     entries_of(&rows)
 }
 
@@ -107,14 +103,14 @@ fn entries_of(rows: &[serde_json::Value]) -> Vec<(i64, String, String)> {
 }
 
 /// `work logs [<entry> <file>]`: the entries this bead's own facts name, or one file of one.
-fn cmd_logs(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
+fn cmd_logs(bead_id: &str, args: &[String]) -> (i32, String) {
     let run = match spira_config::process::cfg("SPIRA_RUN") {
         Ok(r) => r,
         Err(e) => return (CANNOT_TELL, format!("cannot tell: {e}")),
     };
-    let rows = match conn.query(&crate::facts::select_sql(&[bead_id.to_string()], &[LOGS_KIND.to_string()], None)) {
+    let rows = match crate::facts::read(&[bead_id.to_string()], &[LOGS_KIND.to_string()], None) {
         Ok(r) => r,
-        Err(e) => return (CANNOT_TELL, format!("cannot tell: {e:?}")),
+        Err(e) => return (CANNOT_TELL, format!("cannot tell: {e}")),
     };
     logs_out(&rows, std::path::Path::new(&run), &split_reserved(args).args)
 }
@@ -253,7 +249,7 @@ fn cmd_ack(bead_id: &str, args: &[String]) -> (i32, String) {
     }
 }
 
-fn cmd_submit(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
+fn cmd_submit(bead_id: &str, args: &[String]) -> (i32, String) {
     let actor = match require_actor(args) {
         Ok(a) => a,
         Err(e) => return e,
@@ -295,8 +291,8 @@ fn cmd_submit(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
         }
     }
     if row.ejected_red_tip.as_deref() == Some(tip.as_str()) {
-        let round = ejected_reasons(conn, bead_id, &tip);
-        let gate = if round.is_none() { gate_red_at(conn, bead_id, &tip) } else { None };
+        let round = ejected_reasons(bead_id, &tip);
+        let gate = if round.is_none() { gate_red_at(bead_id, &tip) } else { None };
         return (REFUSED, red_tip_refusal(bead_id, &tip, round.as_deref(), gate.as_ref()));
     }
     if let Some(refusal) = branch_refusal(bead_id, &tip, &stack_tips) {
@@ -313,7 +309,7 @@ fn cmd_submit(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
         };
         let checkout = repo_checkout(&repo);
         if let Some((root, landref)) = &checkout {
-            let record = |cause: &str| conn.append_event(&crate::facts::insert_sql(bead_id, "suite-dropped", cause, &actor, crate::db::now_epoch())).map_err(|e| format!("{e:?}"));
+            let record = |cause: &str| crate::facts::append(&[crate::facts::fact_of(bead_id, "suite-dropped", cause, &actor, crate::db::now_epoch())]);
             if let Err(e) = spira_config::proof::drop_deleted_suites(run, bead_id, root, landref, &record) {
                 return (CANNOT_TELL, format!("cannot tell: {e}"));
             }
@@ -342,9 +338,9 @@ fn cmd_submit(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
     let build_dir = flag(args, "--build-dir").filter(|d| !d.is_empty());
     let done = crate::plane::apply(bead_id, &actor, BeadEventKind::Submit { tip: tip.clone() });
     if let (0, Some(dir)) = (done.0, build_dir) {
-        let fact = crate::facts::build_dir_sql(bead_id, &tip, &dir, &actor, crate::db::now_epoch());
-        if let Err(e) = conn.append_event(&fact) {
-            return (done.0, format!("{}\nwork submit: the build directory was not recorded ({e:?}); the gate builds cold", done.1));
+        let fact = crate::facts::build_dir(bead_id, &tip, &dir, &actor, crate::db::now_epoch());
+        if let Err(e) = crate::facts::append(&[fact]) {
+            return (done.0, format!("{}\nwork submit: the build directory was not recorded ({e}); the gate builds cold", done.1));
         }
     }
     if let (0, Some(run)) = (done.0, &run) {
@@ -715,36 +711,35 @@ fn red_tip_refusal(bead_id: &str, tip: &str, round: Option<&str>, gate: Option<&
     format!("refused: {tip} is the tip a round ejected {bead_id} for as red{why} — {next}")
 }
 
-fn gate_red_at(conn: &Conn, bead_id: &str, tip: &str) -> Option<GateRedAt> {
-    let sql = format!(
-        "SELECT JSON_UNQUOTE(JSON_EXTRACT(e.evidence, '$.GateRed.step')) AS step, JSON_UNQUOTE(JSON_EXTRACT(e.evidence, '$.GateRed.message')) AS message FROM event e \
-         WHERE e.machine = 'bead' AND e.event = 'GateRed' AND e.lc_key = '{b}' \
-           AND JSON_UNQUOTE(JSON_EXTRACT(e.evidence, '$.GateRed.tip')) = '{t}' ORDER BY e.seq DESC LIMIT 1",
-        b = rows::escape(bead_id),
-        t = rows::escape(tip)
-    );
-    let found = conn.query(&sql).ok()?;
-    gate_red_from_row(found.first()?)
+fn gate_red_at(bead_id: &str, tip: &str) -> Option<GateRedAt> {
+    let store = crate::control::served::store().ok()?;
+    let history = store.history(bead_id, Some("bead")).ok()?;
+    let newest = history.iter().rev().find(|c| c.audit.event == "GateRed" && c.audit.evidence["GateRed"]["tip"].as_str() == Some(tip))?;
+    gate_red_from(&newest.audit.evidence["GateRed"])
 }
 
-/// A step or message is present only when non-empty: JSON_UNQUOTE of a missing key reads back as the text `null`.
-fn gate_red_from_row(row: &serde_json::Value) -> Option<GateRedAt> {
-    let text = |k: &str| row.get(k).and_then(|v| v.as_str()).filter(|v| !v.is_empty() && *v != "null").map(str::to_string);
-    let (step, message) = (text("step"), text("message"));
-    Some(GateRedAt { step, message })
+/// A step or message is present only when non-empty.
+fn gate_red_from(red: &serde_json::Value) -> Option<GateRedAt> {
+    let text = |k: &str| red.get(k).and_then(|v| v.as_str()).filter(|v| !v.is_empty()).map(str::to_string);
+    Some(GateRedAt { step: text("step"), message: text("message") })
 }
 
-fn ejected_reasons(conn: &Conn, bead_id: &str, tip: &str) -> Option<String> {
-    let sql = format!(
-        "SELECT JSON_UNQUOTE(JSON_EXTRACT(e.evidence, '$.Eject.reason')) AS reason FROM event e \
-         JOIN batch_member m ON m.batch_id = e.lc_key \
-         WHERE e.machine = 'batch' AND e.event = 'Eject' AND m.bead_id = '{b}' AND m.tip = '{t}' \
-           AND JSON_UNQUOTE(JSON_EXTRACT(e.evidence, '$.Eject.bead_id')) = '{b}' ORDER BY e.seq DESC LIMIT 1",
-        b = rows::escape(bead_id),
-        t = rows::escape(tip)
-    );
-    let found = conn.query(&sql).ok()?;
-    found.first()?.get("reason")?.as_str().map(str::to_string)
+/// The reason the newest round that ejected `bead_id` at `tip` gave.
+fn ejected_reasons(bead_id: &str, tip: &str) -> Option<String> {
+    let store = crate::control::served::store().ok()?;
+    let mut newest: Option<(u64, String)> = None;
+    for round in store.round_ids_of(bead_id).ok()? {
+        if !store.batch(&round).ok()??.1.value.members.iter().any(|m| m.bead_id == bead_id && m.tip == tip) {
+            continue;
+        }
+        for c in store.history(&round, Some("batch")).ok()? {
+            let eject = &c.audit.evidence["Eject"];
+            if c.audit.event == "Eject" && eject["bead_id"].as_str() == Some(bead_id) && newest.as_ref().is_none_or(|(rev, _)| c.rev > *rev) {
+                newest = eject["reason"].as_str().map(|r| (c.rev, r.to_string()));
+            }
+        }
+    }
+    newest.map(|(_, reason)| reason)
 }
 
 /// A mender's calls the queue already dropped ends without an event the machine would refuse.
@@ -766,12 +761,12 @@ fn calls_failure(text: &str) -> Option<(String, u32, String)> {
 
 /// A mender's calls does not close DONE while the failure it was filed for is still unsettled:
 /// the round would sit in attributing with nothing to move it.
-fn unrecorded_outcome_refusal(conn: &Conn, bead_id: &str, actor: &str, verb: &str) -> Option<(i32, String)> {
+fn unrecorded_outcome_refusal(bead_id: &str, actor: &str, verb: &str) -> Option<(i32, String)> {
     if actor != "mender" {
         return None;
     }
     let (batch, pass, suite) = calls_failure(&crate::bd::show(bead_id).ok()?)?;
-    let row = crate::mending::fetch(conn, &batch, pass, &suite).ok()??;
+    let row = crate::mending::fetch(&batch, pass, &suite).ok()??;
     if row.state.is_terminal() {
         return None;
     }
@@ -791,7 +786,7 @@ fn already_finished_noop(bead_id: &str, state: bead::BeadState) -> Option<(i32, 
     }
 }
 
-fn cmd_done(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
+fn cmd_done(bead_id: &str, args: &[String]) -> (i32, String) {
     if let Some(refusal) = unanswered_amendment_refusal(bead_id) {
         return refusal;
     }
@@ -802,7 +797,7 @@ fn cmd_done(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
     if let Some(quiet) = mender_calls_closed(bead_id, &actor, "done") {
         return quiet;
     }
-    if let Some(refusal) = unrecorded_outcome_refusal(conn, bead_id, &actor, "done") {
+    if let Some(refusal) = unrecorded_outcome_refusal(bead_id, &actor, "done") {
         return refusal;
     }
     let Some(delivers) = flag(args, "--delivers") else {
@@ -840,7 +835,7 @@ fn cmd_done(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
         if let Some(refusal) = red_tracker_done_refusal(bead_id) {
             return refusal;
         }
-        if flag(args, "--after-ask").is_none() && released_on_ask_history(conn, bead_id) {
+        if flag(args, "--after-ask").is_none() && released_on_ask_history(bead_id) {
             return (
                 REFUSED,
                 format!(
@@ -925,9 +920,9 @@ fn red_tracker_done_refusal(bead_id: &str) -> Option<(i32, String)> {
     }
 }
 
-fn released_on_ask_history(conn: &Conn, bead_id: &str) -> bool {
+fn released_on_ask_history(bead_id: &str) -> bool {
     let argv = ["history", bead_id, "--machine", "bead"].map(String::from);
-    let (0, out) = crate::dispatch(&argv, conn) else { return true };
+    let (0, out) = crate::dispatch(&argv) else { return true };
     let Ok(serde_json::Value::Array(found)) = serde_json::from_str::<serde_json::Value>(&out) else { return true };
     let history: Vec<(String, String)> = found
         .iter()
@@ -1024,7 +1019,7 @@ fn child_repo(args: &[String]) -> Result<String, String> {
     }
 }
 
-fn cmd_file(bead_id: &str, args: &[String], verb: &str, conn: &Conn) -> (i32, String) {
+fn cmd_file(bead_id: &str, args: &[String], verb: &str) -> (i32, String) {
     let Some(title) = args.first() else {
         return (CANNOT_TELL, format!("work {verb}: missing <title>"));
     };
@@ -1042,7 +1037,7 @@ fn cmd_file(bead_id: &str, args: &[String], verb: &str, conn: &Conn) -> (i32, St
     let after_landing = args.iter().any(|a| a == "--after-landing");
     let actor = flag(args, "--actor").unwrap_or_default();
     let body = split_reserved(args).stdin;
-    let register = |new_id: &str| crate::dispatch(&[s("create-bead"), new_id.to_string(), s("--ready"), s("--repo"), repo.clone()], conn);
+    let register = |new_id: &str| crate::dispatch(&[s("create-bead"), new_id.to_string(), s("--ready"), s("--repo"), repo.clone()]);
     file_and_bind(&Filing { verb, actor: &actor, title, persona: &persona, repo: &repo, bound: bead_id, after_landing, body: body.as_deref() }, register)
 }
 
@@ -1977,7 +1972,7 @@ fn lifecycle_list_args(states: &[String], all: bool) -> Vec<String> {
 /// `work list`: lifecycle state decides which beads, the SQL reader supplies what they say. A state
 /// filter is the machine's; `--label`/`--title-contains` narrow by content in the reader, and the
 /// two are intersected here so neither side's idea of "open" is consulted.
-fn list_with_content(conn: &Conn, reader: &ReadFn, ask: ListAsk) -> (i32, String) {
+fn list_with_content(reader: &ReadFn, ask: ListAsk) -> (i32, String) {
     let ListAsk { states, all, filters, json, full, limit } = ask;
     let narrowing = lifecycle_list_args(states, all);
     let (rc, rows) = crate::plane::read(&narrowing);
@@ -1993,7 +1988,7 @@ fn list_with_content(conn: &Conn, reader: &ReadFn, ask: ListAsk) -> (i32, String
     let mut content: Vec<serde_json::Value> = Vec::new();
     for chunk in ids.chunks(LIST_ID_CHUNK) {
         if filters.is_empty() && !full {
-            match crate::plan::fetch(conn, chunk) {
+            match crate::plan::fetch(chunk) {
                 Ok(rows) => content.extend(rows),
                 Err(e) => return (CANNOT_TELL, e),
             }
@@ -2049,10 +2044,10 @@ fn served_read(args: &[String]) -> Result<String, content_sql::Failure> {
 }
 
 /// The steps that read bead content, answered by `reader`; no `bd` process, no fallback to one.
-fn run_read(step: Step, reader: &ReadFn, conn: &Conn) -> (i32, String) {
+fn run_read(step: Step, reader: &ReadFn) -> (i32, String) {
     let cannot = |e: content_sql::Failure| (CANNOT_TELL, format!("cannot tell: {}", e.text()));
     match step {
-        Step::Read { id, json: false } => cmd_show(&id, conn),
+        Step::Read { id, json: false } => cmd_show(&id),
         Step::Read { id, json: true } => reader(&[s("show"), id]).map_or_else(cannot, |t| (0, t)),
         Step::Search { query, limit, json } => {
             let mut args = vec![s("search"), query];
@@ -2075,7 +2070,7 @@ fn run_read(step: Step, reader: &ReadFn, conn: &Conn) -> (i32, String) {
                 .collect();
             (0, lines.join("\n"))
         }
-        Step::LcList { states, all, filters, json, full, limit } => list_with_content(conn, reader, ListAsk { states: &states, all, filters: &filters, json, full, limit }),
+        Step::LcList { states, all, filters, json, full, limit } => list_with_content(reader, ListAsk { states: &states, all, filters: &filters, json, full, limit }),
         other => (CANNOT_TELL, format!("work: {other:?} is not a read")),
     }
 }
@@ -2127,7 +2122,7 @@ fn live_session_refusal(verb: &str, call: &Call, arc: &std::path::Path) -> Optio
     })
 }
 
-fn cmd_lane(bound: &str, verb: &str, rest: &[String], conn: &Conn) -> (i32, String) {
+fn cmd_lane(bound: &str, verb: &str, rest: &[String]) -> (i32, String) {
     let call = split_reserved(rest);
     if let Ok(run) = spira_config::process::cfg("SPIRA_RUN") {
         if let Some(refusal) = live_session_refusal(verb, &call, &std::path::Path::new(&run).join("archivist")) {
@@ -2146,7 +2141,7 @@ fn cmd_lane(bound: &str, verb: &str, rest: &[String], conn: &Conn) -> (i32, Stri
                 Ok(t) => (0, t),
                 Err(e) => (CANNOT_TELL, format!("cannot tell: {e}")),
             },
-            read @ (Step::Read { .. } | Step::Search { .. } | Step::LcList { .. }) => run_read(read, &served_read, conn),
+            read @ (Step::Read { .. } | Step::Search { .. } | Step::LcList { .. }) => run_read(read, &served_read),
             Step::Tool { program, args, stdin } => {
                 // mail, by name; SPIRA_MAIL_SH is the harness-wide binary-override seam.
                 let prog = if program == "mail" { std::env::var("SPIRA_MAIL_SH").unwrap_or_else(|_| s("mail")) } else { s(program) };
@@ -2171,7 +2166,7 @@ fn cmd_lane(bound: &str, verb: &str, rest: &[String], conn: &Conn) -> (i32, Stri
             }
             Step::CreateRow { repo } => {
                 let new_id = out.trim().to_string();
-                match crate::dispatch(&[s("create-bead"), new_id.clone(), s("--ready"), s("--repo"), repo], conn) {
+                match crate::dispatch(&[s("create-bead"), new_id.clone(), s("--ready"), s("--repo"), repo]) {
                     (0, _) => (0, String::new()),
                     (_, e) => (
                         CANNOT_TELL,
@@ -2677,11 +2672,11 @@ mod tests {
     }
 
     #[test]
-    fn a_stored_gate_red_row_reads_back_its_step_and_message_and_a_stepless_one_still_reads_as_a_gate_red() {
+    fn a_stored_gate_red_reads_back_its_step_and_message_and_a_stepless_one_still_reads_as_a_gate_red() {
         let row = serde_json::json!({"step": "fixture-config", "message": "SPIRA_X is not declared"});
-        let got = super::gate_red_from_row(&row).unwrap();
+        let got = super::gate_red_from(&row).unwrap();
         assert_eq!((got.step.as_deref(), got.message.as_deref()), (Some("fixture-config"), Some("SPIRA_X is not declared")));
-        assert!(super::gate_red_from_row(&serde_json::json!({"step": "null", "message": null})).is_some_and(|g| g.step.is_none() && g.message.is_none()));
+        assert!(super::gate_red_from(&serde_json::json!({"step": "", "message": null})).is_some_and(|g| g.step.is_none() && g.message.is_none()));
     }
 
     #[test]
@@ -3082,7 +3077,7 @@ mod tests {
         let seen = std::cell::RefCell::new(Vec::new());
         let reader = scripted(r#"[{"id":"sp-a1","title":"merge queue stalls","priority":1,"status":"open"},{"id":"sp-b2","title":"queue docs","priority":3,"status":"closed"}]"#, &seen);
         let step = Step::Search { query: s("merge queue"), limit: Some(s("7")), json: false };
-        let (code, out) = run_read(step, &reader, &Conn::unreachable());
+        let (code, out) = run_read(step, &reader);
         assert_eq!((code, out.as_str()), (0, "sp-a1 P1 merge queue stalls\nsp-b2 P3 queue docs"));
         assert_eq!(*seen.borrow(), vec![v(&["search", "merge queue", "--limit", "7"])]);
     }
@@ -3091,9 +3086,9 @@ mod tests {
     fn search_json_passes_the_readers_rows_through_and_a_read_json_is_the_readers_show() {
         let seen = std::cell::RefCell::new(Vec::new());
         let reader = scripted(r#"[{"id":"sp-a1"}]"#, &seen);
-        let (_, out) = run_read(Step::Search { query: s("q"), limit: None, json: true }, &reader, &Conn::unreachable());
+        let (_, out) = run_read(Step::Search { query: s("q"), limit: None, json: true }, &reader);
         assert_eq!(out, r#"[{"id":"sp-a1"}]"#);
-        let (_, out) = run_read(Step::Read { id: s("sp-a1"), json: true }, &reader, &Conn::unreachable());
+        let (_, out) = run_read(Step::Read { id: s("sp-a1"), json: true }, &reader);
         assert_eq!(out, r#"[{"id":"sp-a1"}]"#);
         assert_eq!(*seen.borrow(), vec![v(&["search", "q"]), v(&["show", "sp-a1"])]);
     }
@@ -3102,7 +3097,7 @@ mod tests {
     fn a_reader_failure_is_cannot_tell_with_its_text_and_nothing_else_is_tried() {
         let reader = |_: &[String]| -> Result<String, content_sql::Failure> { Err(content_sql::Failure::Store("the held connection is gone".into())) };
         for step in [Step::Search { query: s("q"), limit: None, json: false }, Step::Read { id: s("sp-a1"), json: true }] {
-            let (code, out) = run_read(step, &reader, &Conn::unreachable());
+            let (code, out) = run_read(step, &reader);
             assert_eq!(code, CANNOT_TELL);
             assert!(out.contains("the held connection is gone"), "{out}");
         }
@@ -3112,9 +3107,9 @@ mod tests {
     fn a_search_reply_that_is_not_json_is_cannot_tell_and_a_missing_priority_is_a_question_mark() {
         let seen = std::cell::RefCell::new(Vec::new());
         let step = || Step::Search { query: s("q"), limit: None, json: false };
-        let (code, _) = run_read(step(), &scripted("not json", &seen), &Conn::unreachable());
+        let (code, _) = run_read(step(), &scripted("not json", &seen));
         assert_eq!(code, CANNOT_TELL);
-        let (code, out) = run_read(step(), &scripted(r#"[{"id":"sp-a1","title":"t"}]"#, &seen), &Conn::unreachable());
+        let (code, out) = run_read(step(), &scripted(r#"[{"id":"sp-a1","title":"t"}]"#, &seen));
         assert_eq!((code, out.as_str()), (0, "sp-a1 P? t"));
     }
 

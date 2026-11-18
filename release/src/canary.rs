@@ -10,7 +10,7 @@
 //! THE ONE THING THAT IS FAKE IS THE MODEL. `SPIRA_CALL` points to `fake-call.sh`,
 //! which execs `release canary-worker` instead of `dwarf.sh` — a scripted worker that
 //! claims, commits and submits the bead through the stage's own lifecycle machine
-//! (`crate::stage_lc`) without invoking Claude. `SPIRA_LAUNCH` records the
+//! without invoking Claude. `SPIRA_LAUNCH` records the
 //! landing dispatch and exits 0; `release canary` drives `landing-pass land` directly so it
 //! controls the timing.
 //!
@@ -23,8 +23,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-/// Every key `release stage up` exports — the lifecycle store's included, so an external
-/// stage's `spira-lc` calls reach the stage's machine and never the operator's (sp-880u4).
+/// Every key `release stage up` exports — the control store's included, so an external
+/// stage's `spira-lc` calls reach the stage's machine and never the operator's.
 const STAGE_KEYS: &[&str] = &[
     "SPIRA_HOME",
     "SPIRA_RUN",
@@ -40,13 +40,7 @@ const STAGE_KEYS: &[&str] = &[
     "PATH",
     "SPIRA_PATH",
     "SPIRA_SCOPE_LABEL",
-    "SPIRA_LC_HOST",
-    "SPIRA_LC_PORT",
-    "SPIRA_LC_DB",
-    "SPIRA_LC_DATA_DIR",
-    "SPIRA_LC_USER",
-    "SPIRA_LC_PASSWORD_FILE",
-    "SPIRA_LC_PASSWORD",
+    "SPIRA_LC_STORE_PATH",
     "SPIRA_LC_SOCKET",
 ];
 
@@ -196,9 +190,9 @@ fn run_canary_in(stage_root: &Path, env: &[(String, String)], prod: &ProdEnv, o:
     let e = envmap(env);
     let get = |k: &str| e.get(k).cloned().unwrap_or_default();
 
-    // Isolation check: every stage path resolves under STAGE_ROOT — the lifecycle credential
+    // Isolation check: every stage path resolves under STAGE_ROOT — the control store
     // and socket too, or a spira-lc call would reach the operator's machine.
-    for k in ["SPIRA_DB", "SPIRA_RUN", "SPIRA_HOME", "SPIRA_LC_PASSWORD_FILE", "SPIRA_LC_SOCKET"] {
+    for k in ["SPIRA_DB", "SPIRA_RUN", "SPIRA_HOME", "SPIRA_LC_STORE_PATH", "SPIRA_LC_SOCKET"] {
         let v = get(k);
         // An empty socket is declared direct mode (sp-yvyvzd): it reaches no service at all.
         if k == "SPIRA_LC_SOCKET" && v.is_empty() {

@@ -47,7 +47,6 @@ lcfix_up() {
     # placeholder credential satisfies its construction, and nothing here connects to it. A
     # suite that also stands up the dolt fixture keeps that fixture's own credential.
     if [ -z "${LCDOLT_DIR:-}" ]; then
-        export SPIRA_LC_PASSWORD=unused
         tl_config SPIRA_LC_SOCKET="" SPIRA_LC_PASSWORD_FILE="" || return 1
     fi
     tl_config SPIRA_LC_STORE_PATH="$LCFIX_DIR/control.db" SPIRA_LC_LIFECYCLE_ON_STORE=1 \
@@ -63,7 +62,7 @@ lcfix_up_on_testdb() {
     : > "$LCFIX_DIR/credential"
     tl_config SPIRA_LC_PASSWORD_FILE="$LCFIX_DIR/credential" SPIRA_LC_SOCKET="" \
         || { echo "lc-fixture: cannot declare the planning connection" >&2; return 1; }
-    export SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_DATA_DIR="$LCFIX_DIR" SPIRA_LC_USER=root SPIRA_LC_PASSWORD=""
+    export SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_DATA_DIR="$LCFIX_DIR" SPIRA_LC_USER=root
     LCFIX_ON_TESTDB=1
     _lcfix_point_at_testdb && _lcfix_stamp || return 1
     [ -n "${_LCFIX_ON_TESTDB:-}" ] && return 0

@@ -1,8 +1,8 @@
-//! Pure core: legacy bd events and post-cutover `spira_lifecycle.event`
+//! Pure core: legacy bd events and post-cutover lifecycle event
 //! rows both become `bead-stage` rows here, through `lifecycle::classify` itself (design
 //! reconciler-time-series-2026-09-27 §2a.1: "call the same crate functions once per legacy
 //! event, so there is still one mapping, owned by the lifecycle crate"). No I/O: main.rs
-//! reads bd and `spira_lifecycle`, and appends what this module builds. (The landing
+//! reads bd, and appends what this module builds. (The landing
 //! ledger it once also read is deleted, sp-2c1n0.)
 
 use std::collections::BTreeMap;
@@ -219,7 +219,7 @@ pub fn lag_verdict(newest_stage: Option<i64>, newest_event: i64, limit_secs: i64
     }
 }
 
-/// One row of the post-cutover `spira_lifecycle.event` table (`lifecycle/schema.sql`),
+/// One row of a post-cutover lifecycle event,
 /// already in the machine's own vocabulary — this source needs no classifier at all, only a
 /// column rename and a best-effort `reason` pulled from its JSON `evidence`.
 #[derive(Debug, Clone, PartialEq)]

@@ -1119,6 +1119,8 @@ mod sweeps;
 
 pub use asks::{AskClose, AskRecord};
 pub use direct::{Carrier, Edge, RepoSet};
+#[cfg(test)]
+pub use mending::MendRecord;
 pub use mending::{MendingRecord, Move, Stepped};
 pub use readiness::{Judged, Pass};
 pub use rounds::{Cut, Ran, Turned, Withdrawn};

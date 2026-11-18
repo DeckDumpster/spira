@@ -7,7 +7,7 @@ use std::time::Instant;
 
 use serde_json::Value;
 
-use crate::db::Conn;
+use crate::control::audits::Logged;
 
 pub type Break = (String, String, String, Value);
 
@@ -104,22 +104,57 @@ pub fn render(report: &Value) -> String {
     report.as_array().map(|a| a.iter().map(|j| j.to_string()).collect::<Vec<_>>().join("\n")).unwrap_or_default()
 }
 
-fn read_after(conn: &Conn, after: i64) -> Result<Vec<Value>, String> {
-    conn.query(&format!("SELECT seq, machine, lc_key, event, from_state, to_state FROM event WHERE applied = 1 AND seq > {after} ORDER BY seq"))
-        .map_err(|e| format!("{e:?}"))
+fn rows_of(logged: &[Logged]) -> Vec<Value> {
+    logged
+        .iter()
+        .filter(|l| l.audit.applied)
+        .map(|l| {
+            let a = &l.audit;
+            serde_json::json!({ "seq": l.rev.to_string(), "machine": a.machine, "lc_key": a.lc_key, "event": a.event, "from_state": a.from_state, "to_state": a.to_state })
+        })
+        .collect()
 }
 
-/// Everything, from scratch: what a one-shot CLI call (no serving process) does.
-pub fn scan(conn: &Conn) -> Result<Tracker, String> {
-    let mut t = Tracker::default();
-    t.absorb(&read_after(conn, 0)?);
-    t.built = Some(Instant::now());
-    Ok(t)
+static KEPT: std::sync::Mutex<Option<Tracker>> = std::sync::Mutex::new(None);
+
+/// The breaks in the whole applied log: the serving process remembers each key's last state and
+/// reads only the revisions past the last it saw, so a call never pays for the whole log twice.
+pub fn scan<B: state_store::Backend>(store: &crate::control::store::Store<B>) -> Result<Vec<Break>, String> {
+    let mut kept = KEPT.lock().unwrap_or_else(|e| e.into_inner());
+    advance(kept.get_or_insert_with(Tracker::default), store)
+}
+
+fn advance<B: state_store::Backend>(tracker: &mut Tracker, store: &crate::control::store::Store<B>) -> Result<Vec<Break>, String> {
+    let read = store.audits_after(tracker.upto.max(0) as u64).map_err(|e| e.to_string())?;
+    tracker.absorb(&rows_of(&read.audits));
+    tracker.built = Some(Instant::now());
+    Ok(tracker.breaks())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn store() -> crate::control::store::Store<state_store::MemBackend> {
+        let clock = runtime::ports::VirtualClock::new(0);
+        let c = state_store::Contract::open(state_store::MemBackend::new(), state_store::Ports::virtual_clock(&clock), state_store::Config { min_lock_ttl_ms: 1_000 }).unwrap();
+        crate::control::store::Store::new(c, 1_000)
+    }
+
+    #[test]
+    fn the_store_log_chains_and_a_later_call_reads_only_what_came_after() {
+        use lifecycle::bead::{BeadEvent, BeadEventKind, BeadState};
+        let s = store();
+        let mut t = Tracker::default();
+        s.create("sp-a", None, Some("0123456789abcdef0123456789abcdef01234567"), 100, &state_store::Request::new("c1", "t", "t")).unwrap();
+        assert!(advance(&mut t, &s).unwrap().is_empty());
+        let first = t.upto;
+        let hold = |n: u64| BeadEvent { expect: BeadState::Working, version: n, kind: BeadEventKind::Release, actor: "d".into(), at: Some(110) };
+        s.apply("sp-a", &hold(0), &state_store::Request::new("e1", "t", "t")).unwrap();
+        assert!(advance(&mut t, &s).unwrap().is_empty(), "a refused event is no applied one, so it breaks nothing");
+        assert_eq!(t.upto, first, "and moves nothing the tracker has seen");
+        assert_eq!(t.last.get(&("bead".to_string(), "sp-a".to_string())).map(String::as_str), Some("SUBMITTED"));
+    }
 
     fn ev(seq: i64, key: &str, from: &str, to: &str) -> Value {
         serde_json::json!({"seq": seq.to_string(), "machine": "bead", "lc_key": key, "event": "E", "from_state": from, "to_state": to})

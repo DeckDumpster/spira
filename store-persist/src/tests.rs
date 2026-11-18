@@ -93,7 +93,7 @@ fn world() -> World {
     let tmp = TempDir::new("store-persist");
     let (old, data, durable) = (tmp.join("old"), tmp.join("ram"), tmp.join("durable"));
     make_db(&old, "spira", "beads-v1");
-    make_db(&old, "spira_lifecycle", "lc-v1");
+    make_db(&old, "spira_aux", "aux-v1");
     put(&old.join(".doltcfg/privileges.db"), "grants");
     put(&old.join("dolt-server.yaml"), &yaml(&old));
     put(&data.join("dolt-server.yaml"), &yaml(&data));
@@ -164,13 +164,13 @@ fn config_declared_empty_durable_means_no_copy_and_bad_values_are_refused() {
 fn seed_copies_every_database_and_its_meta_offline_without_the_old_server_yaml() {
     let w = seeded();
     let l = layout(&w);
-    assert_eq!(durable_dbs(&l).unwrap().into_iter().collect::<Vec<_>>(), ["spira", "spira_lifecycle"]);
+    assert_eq!(durable_dbs(&l).unwrap().into_iter().collect::<Vec<_>>(), ["spira", "spira_aux"]);
     assert!(w.dolt.syncs.borrow().iter().all(|(c, _, _)| *c == Conn::Offline));
     assert!(l.meta_db("spira").join("repo_state.json").is_file());
     assert_eq!(fs::read_to_string(l.meta_root().join("doltcfg/privileges.db")).unwrap(), "grants");
     assert!(!l.meta_root().join("dolt-server.yaml").exists(), "the old yaml names the old directory");
     assert!(l.marker().is_file());
-    assert_eq!(read_state(&l).unwrap().dbs, ["spira", "spira_lifecycle"]);
+    assert_eq!(read_state(&l).unwrap().dbs, ["spira", "spira_aux"]);
     let again = seed(&w.cfg, &w.old, &w.dolt, &w.clock).unwrap_err();
     assert!(again.contains("already holds"), "{again}");
 }
@@ -191,7 +191,7 @@ fn restore_fills_an_empty_ram_directory_from_the_copy() {
     fs::remove_file(w.cfg.data.join("dolt-server.yaml")).unwrap();
     put(&layout(&w).meta_root().join("dolt-server.yaml"), &yaml(&w.cfg.data));
     let r = restore(&w.cfg, &w.dolt).unwrap();
-    assert_eq!(r.restored, ["dolt-server.yaml", ".doltcfg/privileges.db", "spira", "spira_lifecycle"]);
+    assert_eq!(r.restored, ["dolt-server.yaml", ".doltcfg/privileges.db", "spira", "spira_aux"]);
     assert_eq!(fs::read_to_string(w.cfg.data.join("spira/.dolt/noms/payload")).unwrap(), "beads-v1");
     assert!(w.cfg.data.join("spira/.dolt/repo_state.json").is_file());
     let link = fs::read_link(w.cfg.data.join("spira/.dolt/git-remote-cache")).unwrap();
@@ -206,7 +206,7 @@ fn restore_keeps_a_database_already_in_ram_because_it_is_newer() {
     restore(&w.cfg, &w.dolt).unwrap();
     put(&w.cfg.data.join("spira/.dolt/noms/payload"), "beads-v2");
     let r = restore(&w.cfg, &w.dolt).unwrap();
-    assert_eq!(r.kept, ["spira", "spira_lifecycle"]);
+    assert_eq!(r.kept, ["spira", "spira_aux"]);
     assert!(r.restored.is_empty());
     assert_eq!(fs::read_to_string(w.cfg.data.join("spira/.dolt/noms/payload")).unwrap(), "beads-v2");
 }
@@ -266,10 +266,10 @@ fn an_online_pass_goes_through_the_server_and_records_its_start() {
 fn a_pass_never_leaves_a_durable_database_behind() {
     let w = seeded();
     restore(&w.cfg, &w.dolt).unwrap();
-    fs::remove_dir_all(w.cfg.data.join("spira_lifecycle")).unwrap();
+    fs::remove_dir_all(w.cfg.data.join("spira_aux")).unwrap();
     let before = read_state(&layout(&w)).unwrap();
     let e = pass(&w.cfg, Mode::Offline, &w.dolt, &w.clock).unwrap_err();
-    assert!(e.contains("spira_lifecycle"), "{e}");
+    assert!(e.contains("spira_aux"), "{e}");
     assert_eq!(read_state(&layout(&w)).unwrap(), before, "a refused pass records nothing");
 }
 
@@ -366,7 +366,7 @@ fn compaction_collects_the_live_store_only_when_the_filesystem_has_room_for_a_se
     assert!(out.iter().any(|o| o.contains("not collected")), "{out:?}");
     w.dolt.free.set(Some(u64::MAX));
     let out = compact(&w.cfg, &w.dolt).unwrap();
-    assert_eq!(*w.dolt.gcs.borrow(), ["spira", "spira_lifecycle"]);
+    assert_eq!(*w.dolt.gcs.borrow(), ["spira", "spira_aux"]);
     assert!(out.iter().any(|o| o.contains("collected, live")), "{out:?}");
 }
 
@@ -384,7 +384,7 @@ fn gc_collects_each_live_database_without_touching_the_durable_copy_and_fails_wh
     assert!(w.dolt.gcs.borrow().is_empty());
     w.dolt.free.set(Some(u64::MAX));
     let out = gc(&w.cfg, &w.dolt).unwrap();
-    assert_eq!(*w.dolt.gcs.borrow(), ["spira", "spira_lifecycle"]);
+    assert_eq!(*w.dolt.gcs.borrow(), ["spira", "spira_aux"]);
     assert!(w.dolt.syncs.borrow().is_empty(), "{out:?}");
     assert_eq!(tree_bytes(&l.db("spira")), copy);
 }
@@ -397,7 +397,7 @@ fn gc_still_collects_the_other_database_when_one_fails_and_reports_the_failure()
     *w.dolt.fail_gc.borrow_mut() = Some("spira".into());
     let err = gc(&w.cfg, &w.dolt).unwrap_err();
     assert!(err.contains("spira: collection failed"), "{err}");
-    assert_eq!(*w.dolt.gcs.borrow(), ["spira", "spira_lifecycle"]);
+    assert_eq!(*w.dolt.gcs.borrow(), ["spira", "spira_aux"]);
 }
 
 #[test]

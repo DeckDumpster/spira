@@ -605,7 +605,7 @@ pub fn is_blocks_type(dep_type: Option<&str>) -> bool {
     )
 }
 
-/// `_bead_dep_add`'s refusal text when `depid` carries the incident label and `dep_type`
+/// The refusal text of a bd dependency add when `depid` carries the incident label and `dep_type`
 /// would wire a `blocks` edge onto it.
 pub fn incident_blocks_refusal(id: &str, depid: &str, incident_label: &str) -> String {
     format!(

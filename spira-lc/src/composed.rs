@@ -275,7 +275,7 @@ mod tests {
 
     #[test]
     fn the_git_proved_caller_verbs_stay_with_the_caller_and_every_other_composed_verb_is_served() {
-        for v in ["deliver", "content-on-base", "show", "event", "close-on-land", "serve", "admin-migrate", "unpublished"] {
+        for v in ["deliver", "content-on-base", "show", "event", "close-on-land", "serve", "admin-drop-lifecycle", "unpublished"] {
             assert!(!is_served(v), "{v}");
         }
         for v in ["close", "reopen", "reconcile-closed", "close-ask", "hold", "unhold", "drop", "disposition", "held", "reply", "content", "certify"] {

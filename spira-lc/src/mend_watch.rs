@@ -5,7 +5,7 @@
 
 use std::collections::BTreeSet;
 
-use crate::db::{now_epoch, Conn};
+use crate::db::now_epoch;
 use crate::{flag, CANNOT_TELL};
 
 pub const MAX_MENDS_PER_DAY: i64 = 2;
@@ -60,6 +60,27 @@ pub fn with_retries<T, E>(attempts: u32, pause: std::time::Duration, mut read: i
     last
 }
 
+/// The rows still MENDING past their deadline, soonest first, with no ask holding them.
+fn overdue_rows<B: state_store::Backend>(store: &crate::control::store::Store<B>, now: i64) -> Result<Vec<serde_json::Value>, state_store::Error> {
+    let mut rows: Vec<_> = store
+        .mendings()?
+        .into_iter()
+        .filter(|m| m.row.state == lifecycle::mending::MendingState::Mending && m.row.awaiting_ask.is_none())
+        .filter_map(|m| m.row.deadline.filter(|d| *d <= now).map(|d| (d, m)))
+        .collect();
+    rows.sort_by_key(|(d, _)| *d);
+    Ok(rows.into_iter().map(|(d, m)| serde_json::json!({ "batch_id": m.row.batch_id, "pass": m.row.pass.to_string(), "suite": m.row.suite, "deadline": d.to_string() })).collect())
+}
+
+/// Per bead, the mends recorded in the last day.
+fn mend_counts<B: state_store::Backend>(store: &crate::control::store::Store<B>, now: i64) -> Result<Vec<serde_json::Value>, state_store::Error> {
+    let mut counts: std::collections::BTreeMap<String, u64> = Default::default();
+    for m in store.mends_since(now - DAY_S)? {
+        *counts.entry(m.bead_id).or_default() += 1;
+    }
+    Ok(counts.into_iter().map(|(bead, n)| serde_json::json!({ "bead": bead, "n": n.to_string() })).collect())
+}
+
 /// Overdue rows (deadline at or before `now`) then beads over the daily cap, as breaches.
 pub(crate) fn collect(overdue: &[serde_json::Value], mends: &[serde_json::Value], now: i64) -> Vec<Breach> {
     let mut breaches: Vec<Breach> = overdue
@@ -74,15 +95,17 @@ pub(crate) fn collect(overdue: &[serde_json::Value], mends: &[serde_json::Value]
     breaches
 }
 
-pub fn run(args: &[String], conn: &Conn) -> (i32, String) {
+pub fn run(args: &[String]) -> (i32, String) {
+    let store = match crate::control::served::store() {
+        Ok(s) => s,
+        Err(e) => return (CANNOT_TELL, format!("cannot tell: {e}")),
+    };
     let now = now_epoch();
-    let overdue_sql = format!("SELECT batch_id, pass, suite, deadline FROM mending WHERE state = 'MENDING' AND awaiting_ask IS NULL AND deadline <= {now} ORDER BY deadline");
-    let mends_sql = format!("SELECT bead_id AS bead, COUNT(*) AS n FROM mend WHERE at >= {} GROUP BY bead_id", now - DAY_S);
-    let overdue = with_retries(READ_ATTEMPTS, READ_PAUSE, || conn.query(&overdue_sql));
-    let mends = with_retries(READ_ATTEMPTS, READ_PAUSE, || conn.query(&mends_sql));
+    let overdue = with_retries(READ_ATTEMPTS, READ_PAUSE, || overdue_rows(&store, now));
+    let mends = with_retries(READ_ATTEMPTS, READ_PAUSE, || mend_counts(&store, now));
     let (overdue, mends) = match (overdue, mends) {
         (Ok(o), Ok(m)) => (o, m),
-        (Err(e), _) | (_, Err(e)) => return (CANNOT_TELL, format!("cannot tell: {e:?}")),
+        (Err(e), _) | (_, Err(e)) => return (CANNOT_TELL, format!("cannot tell: {e}")),
     };
     let breaches = collect(&overdue, &mends, now);
     let Some(path) = flag(args, "--seen") else {
@@ -100,6 +123,59 @@ pub fn run(args: &[String], conn: &Conn) -> (i32, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::control::keys;
+    use crate::control::records::encode;
+    use crate::control::store::{MendRecord, MendingRecord, Store};
+    use state_store::{Config, Contract, MemBackend, Object, Ports, Request, Txn};
+
+    fn store() -> Store<MemBackend> {
+        let clock = runtime::ports::VirtualClock::new(0);
+        let c = Contract::open(MemBackend::new(), Ports::virtual_clock(&clock), Config { min_lock_ttl_ms: 1_000 }).unwrap();
+        Store::new(c, 1_000)
+    }
+
+    fn put(s: &Store<MemBackend>, key: &str, v: serde_json::Value) {
+        s.contract().txn(&Txn::new().put(key, Object::new(v)), &Request::new(&format!("put-{key}"), "t", "t")).unwrap();
+    }
+
+    #[test]
+    fn a_mending_row_past_its_deadline_with_no_ask_is_overdue_and_a_waiting_or_asked_one_is_not() {
+        let s = store();
+        let row = |suite: &str, state: lifecycle::mending::MendingState, deadline: i64, ask: Option<&str>| {
+            let mut m = MendingRecord::failed("batch-1", 1, suite, 10);
+            m.row.state = state;
+            m.row.deadline = Some(deadline);
+            m.row.awaiting_ask = ask.map(String::from);
+            put(&s, &keys::mending(&m.row.key()), encode(&m).unwrap());
+        };
+        use lifecycle::mending::MendingState::{Mending, Waiting};
+        row("late.sh", Mending, 900, None);
+        row("early.sh", Mending, 1_100, None);
+        row("asked.sh", Mending, 900, Some("ask-1"));
+        row("waiting.sh", Waiting, 900, None);
+        let rows = overdue_rows(&s, 1_000).unwrap();
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        assert_eq!((rows[0]["suite"].as_str(), rows[0]["deadline"].as_str()), (Some("late.sh"), Some("900")));
+    }
+
+    #[test]
+    fn mends_are_counted_per_bead_over_the_last_day_only() {
+        let s = store();
+        let mend = |bead: &str, n: usize, at: i64| {
+            let m = MendRecord { batch_id: "b".into(), pass: 1, suite: "s".into(), bead_id: bead.into(), from_tip: "f".into(), tip: "t".into(), ask_id: None, checked: vec![], diagnosis: None, at };
+            put(&s, &keys::mend(bead, at as u64, n), encode(&m).unwrap());
+        };
+        let now = 200_000;
+        for n in 0..3 {
+            mend("sp-loop", n, now - 100 + n as i64);
+        }
+        mend("sp-once", 0, now - 100);
+        mend("sp-loop", 9, now - DAY_S - 1);
+        let counts = mend_counts(&s, now).unwrap();
+        let n = |bead: &str| counts.iter().find(|r| r["bead"] == bead).map(|r| r["n"].as_str().unwrap().to_string());
+        assert_eq!((n("sp-loop"), n("sp-once")), (Some("3".to_string()), Some("1".to_string())));
+        assert!(collect(&[], &counts, now).iter().any(|b| b.key == "mends:sp-loop"));
+    }
 
     #[test]
     fn a_read_that_fails_then_succeeds_is_retried_and_one_that_never_does_is_not_hidden() {

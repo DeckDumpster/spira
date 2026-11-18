@@ -2,5 +2,5 @@ TYPE=string
 GROUP=lc
 DOC=Space-separated databases lc-backup.sh backs up, one backup dir, ledger and stamp each (directories under SPIRA_DOLT_DATA).
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    : "${SPIRA_LC_BACKUP_DB:=spira_lifecycle spira}"
+    : "${SPIRA_LC_BACKUP_DB:=spira}"
 SPIRA_CONF_DEFAULT_EOF

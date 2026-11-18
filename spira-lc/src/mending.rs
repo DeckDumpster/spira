@@ -3,58 +3,20 @@
 //! taken from the caller, so a mender cannot move its own deadline; `sweep` is how the
 //! machine applies `Expire` to an overdue row.
 
-use lifecycle::mending::{MendingRow, MendingState};
-use serde_json::Value;
+use lifecycle::mending::MendingRow;
 
-use crate::db::{Conn, DbError};
-use crate::rows::escape;
 use crate::CANNOT_TELL;
 
-const COLUMNS: &str = "batch_id, pass, suite, state, picked_at, deadline, triage_ended_at, diagnosis, awaiting_ask, returned, version";
-
-fn cell(row: &Value, col: &str) -> Option<String> {
-    match row.get(col) {
-        Some(Value::String(s)) if !s.is_empty() => Some(s.clone()),
-        _ => None,
-    }
-}
-
-fn num(row: &Value, col: &str) -> Option<i64> {
-    cell(row, col).and_then(|s| s.parse().ok())
-}
-
-pub(crate) fn from_json(row: &Value) -> Result<MendingRow, DbError> {
-    let state = MendingState::from_str(&cell(row, "state").unwrap_or_default())
-        .ok_or_else(|| DbError::CannotTell(format!("bad state in mending row: {row}")))?;
-    Ok(MendingRow {
-        batch_id: cell(row, "batch_id").unwrap_or_default(),
-        pass: num(row, "pass").unwrap_or(0) as u32,
-        suite: cell(row, "suite").unwrap_or_default(),
-        state,
-        picked_at: num(row, "picked_at"),
-        deadline: num(row, "deadline"),
-        triage_ended_at: num(row, "triage_ended_at"),
-        diagnosis: cell(row, "diagnosis"),
-        awaiting_ask: cell(row, "awaiting_ask"),
-        returned: cell(row, "returned").and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default(),
-        version: num(row, "version").unwrap_or(0) as u64,
-    })
-}
-
-pub fn fetch(conn: &Conn, batch: &str, pass: u32, suite: &str) -> Result<Option<MendingRow>, DbError> {
-    let rows = conn.query(&format!(
-        "SELECT {COLUMNS} FROM mending WHERE batch_id = '{}' AND pass = {pass} AND suite = '{}'",
-        escape(batch),
-        escape(suite)
-    ))?;
-    rows.first().map(from_json).transpose()
+pub fn fetch(batch: &str, pass: u32, suite: &str) -> Result<Option<MendingRow>, String> {
+    let store = crate::control::served::store()?;
+    Ok(store.mending(batch, pass, suite).map_err(|e| e.to_string())?.map(|m| m.row))
 }
 
 const BATCH_MAX: usize = 64;
 const SUITE_MAX: usize = 160;
 const KEY_MAX: usize = 256;
 
-/// Refuse an over-long field by name before it reaches SQL, mirroring `mending` and `event.lc_key`.
+/// Refuse an over-long field by name, before the machine sees it.
 pub fn check_widths(batch: &str, pass: u32, suite: &str) -> Result<(), (i32, String)> {
     let key = lifecycle::mending::key(batch, pass, suite);
     for (name, value, max) in [("batch_id", batch, BATCH_MAX), ("suite", suite, SUITE_MAX), ("lc_key", key.as_str(), KEY_MAX)] {
@@ -64,22 +26,4 @@ pub fn check_widths(batch: &str, pass: u32, suite: &str) -> Result<(), (i32, Str
         }
     }
     Ok(())
-}
-
-
-#[cfg(test)]
-mod tests {
-    use super::from_json;
-    use serde_json::json;
-
-    fn row(returned: serde_json::Value) -> serde_json::Value {
-        json!({"batch_id": "b", "pass": "1", "suite": "s", "state": "RETURNED", "version": "3", "returned": returned})
-    }
-
-    #[test]
-    fn the_returned_column_reads_back_as_a_list_and_a_null_or_garbled_one_as_none() {
-        assert_eq!(from_json(&row(json!(r#"["sp-a","sp-b"]"#))).unwrap().returned, ["sp-a", "sp-b"]);
-        assert!(from_json(&row(json!(null))).unwrap().returned.is_empty());
-        assert!(from_json(&row(json!("not json"))).unwrap().returned.is_empty());
-    }
 }
