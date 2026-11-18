@@ -114,7 +114,7 @@ fn submit_checks(p: &dyn Ports, repo: &str, tree: Option<&Path>) -> Judged {
     };
     let rows = match habits::config::parse_checks(&text) {
         Err(e) => return Ok(Outcome::NotMet(format!("{CHECKS} does not parse: {e}"))),
-        Ok(rows) if rows.is_empty() => return Ok(Outcome::NotMet(format!("{CHECKS} declares no [[check]] rows"))),
+        Ok(rows) if rows.is_empty() => return Ok(Outcome::Met(format!("{CHECKS} declares no [[check]] rows"))),
         Ok(rows) => rows,
     };
     let names: Vec<&str> = rows.iter().map(|r| r.name.as_str()).collect();
@@ -321,10 +321,20 @@ mod tests {
     }
 
     #[test]
-    fn submit_checks_not_met_when_the_file_declares_no_rows() {
+    fn submit_checks_met_when_the_file_declares_no_rows() {
         let mut f = green();
         f.files.insert(CHECKS.into(), "# Rows `work checks` runs before a branch is submitted.\n".into());
-        assert_eq!(line(&f, Clause::SubmitChecks), "not met submit-checks: .spira/checks.toml declares no [[check]] rows");
+        assert_eq!(line(&f, Clause::SubmitChecks), "met submit-checks: .spira/checks.toml declares no [[check]] rows");
+    }
+
+    #[test]
+    fn a_checks_file_with_no_rows_leaves_the_check_exit_zero() {
+        let mut f = green();
+        f.files.insert(CHECKS.into(), "# no rows\n".into());
+        let mut out = Vec::new();
+        let code = run(&f, "r", None, &ALL, &mut |l| out.push(l.to_string()));
+        assert_eq!(code, 0, "{out:?}");
+        assert!(!out.iter().any(|l| l.starts_with("not met")), "{out:?}");
     }
 
     #[test]
