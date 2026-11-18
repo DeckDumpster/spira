@@ -39,7 +39,8 @@ Extrapolating the 10,000→50,000 slope (40.1 KB/commit) to 215,526 commits pred
 against 8.55 GB measured (0.3% off), so the depth curve is linear at about **40 KB per commit**
 and the history term is independent of the HEAD measurement above. The history row in the first
 table is derived, so it sums to the copy by construction; the extrapolation (0.3% off) is the
-only independent check on it.
+only independent check on it, and it is what meets the within-10% sum: depth-curve history
+(8.57 GB) plus HEAD (0.05 GB) is within 1% of the copy.
 
 The history is 215,526 commits in 64 days (2026-09-15 to 2026-11-18), now
 3,370 a day on average. The last seven days, from `dolt_log` grouped by date: 4,202 (11-18, partial),
@@ -55,6 +56,7 @@ The history is 215,526 commits in 64 days (2026-09-15 to 2026-11-18), now
 | `bd: dep` | 2,952 |
 | `dependency: add` | 2,512 |
 | `bd: comment` | 2,265 |
+| other | 2,561 |
 
 About eight commits per issue (26,532). Hypothesis, not measured: each commit rewrites the prolly
 tree path to a changed `issues` row, and `issues` rows are wide (about 1.5 KB each at HEAD).
@@ -90,11 +92,11 @@ every commit is reachable from `main`. Inference: that is why the collection too
 6.1 GB.
 
 The collector (`store-persist`) is in this repo, but the cut is not a collector change: Dolt 2.4.2
-has no truncate-history operation among `dolt gc` flags or `dolt_gc` options, so it needs an ancestry rewrite proven on a scratch clone. It
+has no truncate-history operation I found among `dolt gc` flags or `dolt_gc` options, so it needs an ancestry rewrite proven on a scratch clone. It
 must run under the persist lock on a live RAM-backed store, and it invalidates every chunk the
 durable backup shares with the old history, so the backup must be re-seeded. It also needs the
 operator's decision on whether anything audits old log entries. That is a design, not an edit to
-this item, and it is filed with the build and acceptance as **sp-ko4ecn.2**.
+this item (an ancestry rewrite was not attempted here), and it is filed with the build and acceptance as **sp-ko4ecn.2**.
 
 ## Method notes
 
