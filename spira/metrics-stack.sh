@@ -64,11 +64,13 @@ grafana)
         ( umask 077; head -c 24 /dev/urandom | base64 | tr -d '/+=\n' > "$cred" ) || exit 2
     fi
     chmod 600 "$cred" || exit 2
+    [ -n "${SPIRA_METRICS_PAGE_URL:-}" ] || echo 'metrics-stack: SPIRA_METRICS_PAGE_URL is empty — metric alerts page nobody' >&2
     # batch-job: the container is the unit's long-running service process
     exec podman "${common[@]}" --name grafana \
         --user 0:0 -p "$host:$port:3000" \
         -e GF_SECURITY_ADMIN_PASSWORD__FILE=/run/credential \
         -e GF_ANALYTICS_REPORTING_ENABLED=false -e GF_ANALYTICS_CHECK_FOR_UPDATES=false -e GF_USERS_ALLOW_SIGN_UP=false -e GF_AUTH_ANONYMOUS_ENABLED=false -e "GF_INSTALL_PLUGINS=$VL_PLUGIN" \
+        -e "SPIRA_PAGE_URL=${SPIRA_METRICS_PAGE_URL:-http://127.0.0.1:9/unconfigured}" \
         -v "$cred:/run/credential:ro" -v "$data/grafana:/var/lib/grafana" \
         -v "$HERE/metrics/grafana/provisioning:/etc/grafana/provisioning:ro" \
         -v "$HERE/metrics/grafana/dashboards:/var/lib/grafana-dashboards:ro" \

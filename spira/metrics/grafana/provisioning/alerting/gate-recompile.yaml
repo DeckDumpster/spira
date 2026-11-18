@@ -1,0 +1,45 @@
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: gate
+    folder: Spira
+    interval: 1m
+    rules:
+      - uid: spira-gate-unit-test-recompiled
+        title: A unit gate recompiled inside its test phase
+        condition: C
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        data:
+          - refId: A
+            relativeTimeRange: { from: 900, to: 0 }
+            datasourceUid: spira-vm
+            model:
+              refId: A
+              instant: true
+              expr: sum by (repo) (increase(spira_gate_unit_test_recompiled_total[15m]))
+          - refId: B
+            relativeTimeRange: { from: 900, to: 0 }
+            datasourceUid: spira-vm
+            model:
+              refId: B
+              instant: true
+              expr: max by (repo) (last_over_time(spira_gate_unit_test_recompile_seconds[15m]))
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [0] }
+        labels:
+          spira_page: "true"
+        annotations:
+          summary: 'gate {{ $labels.repo }} recompiled inside its unit test phase for {{ printf "%.0f" $values.B.Value }}s'
+        notification_settings:
+          receiver: spira-page
+          group_by: [repo]
+          group_wait: 30s
+          repeat_interval: 8760h

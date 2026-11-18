@@ -54,4 +54,17 @@ want "positive control: a series nothing pushes is found" "check_secs_nobody_pus
 rm -f "$planted"
 
 is "gate-tooling.json carries no annotations" "0" "$(python3 -I -c 'import json,sys; print(len(json.load(open(sys.argv[1])).get("annotations",{}).get("list",[])))' "$DASH")"
+ALERT="$ROOT/spira/metrics/grafana/provisioning/alerting/gate-recompile.yaml"
+alert_series() { grep -o 'spira_gate_[a-z_]*' "$1" | sort -u; }
+alerted="$(alert_series "$ALERT")"
+want "positive control: the alert's series were found" "spira_gate_unit_test_recompiled_total" "$alerted"
+want "the alert's summary names the repo and the recompile seconds" "1" "$(grep -c 'summary:.*\$labels.repo.*\$values.B.Value' "$ALERT")"
+want "the alert names the recompile seconds" "spira_gate_unit_test_recompile_seconds" "$alerted"
+rcv="$(sed -n 's/^ *receiver: //p' "$ALERT")"
+CP="$ROOT/spira/metrics/grafana/provisioning/alerting/contact-points.yaml"
+want "the alert's receiver is a provisioned contact point" "name: $rcv" "$(grep -x " *name: $rcv" "$CP" | sed 's/^ *//')"
+want "positive control: an unprovisioned receiver is not found" "" "$(grep -x ' *name: no-such-receiver' "$CP")"
+want "the alert's datasource uid is the provisioned one" "spira-vm" "$(grep -o 'datasourceUid: spira-vm' "$ALERT" | head -1 | cut -d' ' -f2)"
+is "that uid is declared by the datasource" "uid: spira-vm" "$(grep -h "uid: spira-vm" "$ROOT/spira/metrics/grafana/provisioning/datasources/victoriametrics.yaml" | sed "s/^ *//")"
+want "the alert pages by the repo label" "group_by: [repo]" "$(grep group_by "$ALERT" | sed 's/^ *//')"
 tl_summary

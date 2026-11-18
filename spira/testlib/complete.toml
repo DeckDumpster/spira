@@ -440,6 +440,7 @@ max_live_dwarves = 6
 memories_cache = "/fixture/userhome/spira/run/memories-cache.json"
 metrics_data = ""
 metrics_grafana_addr = ""
+metrics_page_url = ""
 memories_cache_age = 300
 metrics_endpoint = ""
 mirror = ""
