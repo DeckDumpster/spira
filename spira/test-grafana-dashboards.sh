@@ -54,4 +54,11 @@ want "positive control: a series nothing pushes is found" "check_secs_nobody_pus
 rm -f "$planted"
 
 is "gate-tooling.json carries no annotations" "0" "$(python3 -I -c 'import json,sys; print(len(json.load(open(sys.argv[1])).get("annotations",{}).get("list",[])))' "$DASH")"
+ALERT="$ROOT/spira/metrics/grafana/provisioning/alerting/gate-recompile.yaml"
+alert_series() { grep -o 'spira_gate_[a-z_]*' "$1" | sort -u; }
+alerted="$(alert_series "$ALERT")"
+want "positive control: the alert's series were found" "spira_gate_unit_test_recompiled_total" "$alerted"
+want "the alert names the recompile seconds" "spira_gate_unit_test_recompile_seconds" "$alerted"
+want "the alert pages by the repo label" "group_by: [repo]" "$(grep group_by "$ALERT" | sed 's/^ *//')"
+want "the alert parses as YAML" "ok" "$(python3 -I -c 'import yaml,sys; yaml.safe_load(open(sys.argv[1])); print("ok")' "$ALERT" 2>&1 | tail -1)"
 tl_summary
