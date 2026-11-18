@@ -325,7 +325,10 @@ fi
 
 echo
 echo "CASE 20: update-ref and branch -f on the landing ref are refused:"
-git -C "$TR/landwt" update-ref refs/heads/local/main "$LR_NEW" "$LR_OLD" >/dev/null 2>&1
+out="$(git -C "$TR/landwt" update-ref refs/heads/local/main "$LR_NEW" "$LR_OLD" 2>&1)"; rc=$?
+is   "case 20: update-ref is refused" "1" "$([ $rc -ne 0 ] && echo 1 || echo 0)"
+want "case 20: refusal names the landing ref" "local/main" "$out"
+want "case 20: refusal names the exit" "git merge local/main" "$out"
 is "case 20: update-ref leaves local/main" "$LR_OLD" "$(landref_at)"
 git -C "$TR/landwt" branch -f local/main HEAD >/dev/null 2>&1
 is "case 20: branch -f leaves local/main" "$LR_OLD" "$(landref_at)"
