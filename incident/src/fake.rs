@@ -14,6 +14,8 @@ pub(crate) struct FakeBd {
     pub(crate) reachable: bool,
     /// The lifecycle machine does not answer: every dedup pass is blind.
     pub(crate) lc_down: bool,
+    /// `spira-lc fact` refuses every write.
+    pub(crate) fact_fails: bool,
     pub(crate) created: RefCell<Vec<(String, String)>>,
     pub(crate) bodies: RefCell<HashMap<String, String>>,
     pub(crate) reopened: RefCell<Vec<String>>,
@@ -116,6 +118,9 @@ impl Bd for FakeBd {
         self.reachable
     }
     fn fact(&self, id: &str, kind: &str, cause: &str) -> bool {
+        if self.fact_fails {
+            return false;
+        }
         self.facts.borrow_mut().push((id.into(), kind.into(), cause.into()));
         true
     }

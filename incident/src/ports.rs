@@ -59,8 +59,8 @@ pub trait Bd {
 }
 
 /// The recurrence counter (`bump_recur`/`recurs_of`): `recurred` facts in the lifecycle event log.
-pub fn bump_recur(bd: &dyn Bd, id: &str, cause: &str) {
-    let _ = bd.fact(id, "recurred", cause);
+pub fn bump_recur(bd: &dyn Bd, id: &str, cause: &str) -> bool {
+    bd.fact(id, "recurred", cause)
 }
 
 /// `None` means the log could not be read and the count is genuinely unknown (blind), never 0 —

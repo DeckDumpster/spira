@@ -238,7 +238,9 @@ fn bump_and_note(
         bd.label_add(cfg.db, id, &format!("payload-hash:{new_hash}"));
     }
 
-    ports::bump_recur(bd, id, cfg.cause);
+    if !ports::bump_recur(bd, id, cfg.cause) {
+        log.push(format!("{reference}: recurrence fact for {id} failed to write — the FENRIR count is short by one"));
+    }
     let log_suffix = if was_reopened { " (reopened from closed)" } else { "" };
     log.push(format!("{reference} recurred ({n}) — {id}{log_suffix}"));
 
@@ -655,6 +657,21 @@ mod tests {
     /// and linked to it; the old bead is not reopened, noted or labelled, and its row stays
     /// terminal. SEEN RED before the fix: the old bead was reopened in bd and noted under a
     /// LANDED row, and no new bead was filed (`created` stayed 0).
+    #[test]
+    fn a_recurrence_whose_fact_fails_to_write_is_logged() {
+        let known = vec!["spira".to_string()];
+        let mut bd = FakeBd::new();
+        let mailer = FakeMailer::default();
+        let clock = FixedClock(1_000_000);
+        let c = cfg(&known);
+        let mut log = vec![];
+        file_one(&bd, &mailer, &clock, &c, "incident:x", "t", b"p", "spira,incident", &mut log);
+        bd.fact_fails = true;
+        log.clear();
+        file_one(&bd, &mailer, &clock, &c, "incident:x", "t", b"p", "spira,incident", &mut log);
+        assert!(log.iter().any(|l| l.contains("incident:x") && l.contains("failed to write")), "{log:?}");
+    }
+
     // covers: UC-ops-detection-remediation-03
     #[test]
     fn a_recurrence_of_a_landed_incident_files_a_fresh_bead_citing_its_predecessor() {
