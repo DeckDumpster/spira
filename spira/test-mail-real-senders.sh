@@ -173,6 +173,7 @@ file_fenrir_incident() {
     # SPIRA_BD/SPIRA_DB are registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG):
     # declare via tl_config, not the env prefix below, which no process reads any more.
     tl_config SPIRA_BD="$(command -v incident-stub-bd)" SPIRA_DB="fakedb"
+    : > "$TMP/fenrir-filing-$n.out"
     printf '%s' "$payload" | \
         env STUB_BD_STATE="$FENRIR_STATE" STUB_BD_LOG="$FENRIR_LOG" \
         SPIRA_LC_BIN="$FENRIR_LC" \

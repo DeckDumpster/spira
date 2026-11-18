@@ -772,22 +772,23 @@ case "${1:-}" in
     facts-query) exit 0 ;;
     facts)
         shift
-        LC_FACTS_FILE="$(dirname "$0")/facts.tsv" python3 -c "
-import json, os, sys
-a = sys.argv[1:]
-def flag(n):
-    return a[a.index(n) + 1].split(\",\") if n in a else []
-ids, kinds = flag(\"--ids\"), flag(\"--kinds\")
-rows = []
-try:
-    for line in open(os.environ[\"LC_FACTS_FILE\"]):
-        f = line.rstrip(\"\\n\").split(\"\\t\")
-        if len(f) == 5 and (not ids or f[0] in ids) and (not kinds or f[1] in kinds):
-            rows.append({\"issue_id\": f[0], \"event_type\": f[1], \"new_value\": f[3], \"actor\": f[2], \"created_at\": f[4]})
-except OSError:
-    pass
-print(json.dumps(rows))
-" "$@"
+        ids=""; kinds=""
+        while [ $# -gt 0 ]; do
+            case "$1" in
+                --ids) ids="${2:-}"; shift 2 ;;
+                --kinds) kinds="${2:-}"; shift 2 ;;
+                *) shift ;;
+            esac
+        done
+        # awk, not an interpreter: this runs under the client'"'"'s call deadline on a loaded host.
+        awk -F"\t" -v ids="$ids" -v kinds="$kinds" '"'"'
+            function esc(s) { gsub(/\\/, "\\\\", s); gsub(/"/, "\\\"", s); return s }
+            BEGIN { n = split(ids, I, ","); m = split(kinds, K, ","); for (i = 1; i <= n; i++) wi[I[i]] = 1; for (i = 1; i <= m; i++) wk[K[i]] = 1; printf "[" }
+            NF == 5 && (n == 0 || ($1 in wi)) && (m == 0 || ($2 in wk)) {
+                printf "%s{\"issue_id\": \"%s\", \"event_type\": \"%s\", \"new_value\": \"%s\", \"actor\": \"%s\", \"created_at\": \"%s\"}", (c++ ? ", " : ""), esc($1), esc($2), esc($4), esc($3), esc($5)
+            }
+            END { print "]" }
+        '"'"' "$(dirname "$0")/facts.tsv" 2>/dev/null || echo "[]"
         exit 0 ;;
 esac
 '
