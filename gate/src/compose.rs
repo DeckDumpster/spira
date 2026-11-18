@@ -242,6 +242,8 @@ pub fn select_crates(diff_raw: &[u8], metadata_json: &str, transitive: bool) -> 
 pub struct Forces {
     /// `SPIRA_GATE_ALL=1`: the caller asked for the full corpus.
     pub gate_all: bool,
+    /// `SPIRA_GATE_UNIT_MAX_CRATES`: the most crates the unit tier may select before it narrows.
+    pub unit_cap: Option<usize>,
 }
 
 /// `gate_mode = fences` in force and nothing forcing the whole sequence: the trial runs the
@@ -281,7 +283,7 @@ pub fn compose(
                 touched.insert(n);
             }
         }
-        return unit_of(touched, readers, members);
+        return unit_of(touched, readers, members, forces.unit_cap);
     }
     let members = match members {
         Ok(m) => m,
@@ -318,18 +320,27 @@ pub fn compose(
             crates: all,
         };
     }
-    unit_of(touched, readers, members)
+    unit_of(touched, readers, members, forces.unit_cap)
 }
 
-fn unit_of(mut touched: BTreeSet<String>, readers: BTreeSet<String>, members: &[Member]) -> Composition {
+fn unit_of(mut touched: BTreeSet<String>, readers: BTreeSet<String>, members: &[Member], cap: Option<usize>) -> Composition {
     if touched.is_empty() && readers.is_empty() {
         return Composition::Fences;
     }
-    let mut crates = with_transitive_dependents(&touched, members);
-    crates.extend(readers.iter().cloned());
-    crates.sort();
-    crates.dedup();
-    touched.extend(readers);
+    let within = |mut crates: Vec<String>| {
+        crates.extend(readers.iter().cloned());
+        crates.sort();
+        crates.dedup();
+        crates
+    };
+    let mut crates = within(with_transitive_dependents(&touched, members));
+    if cap.is_some_and(|c| crates.len() > c) {
+        crates = within(with_dependents(&touched, members));
+        if cap.is_some_and(|c| crates.len() > c) {
+            crates = within(touched.iter().cloned().collect());
+        }
+    }
+    touched.extend(readers.iter().cloned());
     Composition::Unit { touched: touched.into_iter().collect(), targets: targets_of(&crates, members), crates }
 }
 
@@ -940,6 +951,26 @@ mod tests {
     }
 
     #[test]
+    fn a_selection_over_the_cap_narrows_to_direct_dependents_then_to_the_touched_crates() {
+        let w = ws();
+        let at = |cap: Option<usize>, mode| crates(&compose(mode, &Forces { unit_cap: cap, ..Forces::default() }, &ch(&["spira-config/src/lib.rs"]), Ok(&w)));
+        for mode in [GateMode::Unit, GateMode::Fences] {
+            assert_eq!(at(None, mode), v(&["dwarf", "landing-pass", "queue", "spira-config"]));
+            assert_eq!(at(Some(4), mode), v(&["dwarf", "landing-pass", "queue", "spira-config"]), "at the cap is within it");
+            assert_eq!(at(Some(3), mode), v(&["dwarf", "queue", "spira-config"]));
+            assert_eq!(at(Some(1), mode), v(&["spira-config"]), "the touched crate is always tested");
+        }
+    }
+
+    #[test]
+    fn a_reader_of_a_touched_file_survives_the_cap() {
+        let w = ws();
+        let f = Forces { unit_cap: Some(1), ..Forces::default() };
+        let got = compose(GateMode::Unit, &f, &ch(&["spira-config/src/lib.rs", "systemd/a.service"]), Ok(&w));
+        assert_eq!(crates(&got), v(&["release", "spira-config"]));
+    }
+
+    #[test]
     fn the_composition_table() {
         use Composition::*;
         let s = |w: &str| Suites { why: w.into() };
@@ -1188,7 +1219,7 @@ mod tests {
         }
         assert_eq!(compose(GateMode::Fences, &Forces::default(), &ch(&["gate/src/x.rs"]), Err("no cargo")), Composition::Fences);
         assert!(fences_only(GateMode::Fences, &Forces::default()));
-        let all = Forces { gate_all: true };
+        let all = Forces { gate_all: true, ..Forces::default() };
         assert!(!fences_only(GateMode::Fences, &all));
         assert_eq!(compose(GateMode::Fences, &all, &ch(&["gate/src/x.rs"]), Ok(&w)).label(), "suites(gate-all)");
         assert!(!fences_only(GateMode::Unit, &Forces::default()) && !fences_only(GateMode::Suites, &Forces::default()));
@@ -1226,7 +1257,7 @@ mod tests {
     fn gate_all_and_a_missing_graph_fall_back_to_suites() {
         let w = ws();
         let rs = ch(&["gate/src/x.rs"]);
-        let f = Forces { gate_all: true };
+        let f = Forces { gate_all: true, ..Forces::default() };
         assert_eq!(
             compose(GateMode::Unit, &f, &rs, Ok(&w)).label(),
             "suites(gate-all)"

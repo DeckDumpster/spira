@@ -455,7 +455,7 @@ impl<'w, W: World> Trial<'w, W> {
         // re-entry suites still run (sp-p3srm), so a branch that may have any — the round
         // named suites against its bead, or it changes a suite — keeps the bin the re-entry
         // phase reads (the tree's own suite runner).
-        let fences_only = compose::fences_only(mode, &Forces { gate_all: ctx.var("SPIRA_GATE_ALL") == "1" });
+        let fences_only = compose::fences_only(mode, &Forces { gate_all: ctx.var("SPIRA_GATE_ALL") == "1", ..Forces::default() });
         let may_reenter = !ejected.trim().is_empty()
             || files.lines().any(|p| p.trim().strip_prefix("spira/").is_some_and(compose::is_suite_name));
         let reentry_reads = if may_reenter { vec![compose::reentry_command(&[])] } else { Vec::new() };
@@ -1552,8 +1552,13 @@ impl<'w, W: World> Trial<'w, W> {
         if mode == GateMode::Suites {
             return Composition::Suites { why: "mode".into() };
         }
+        let Some(unit_cap) = key::digits(ctx.var("SPIRA_GATE_UNIT_MAX_CRATES")).filter(|n| *n > 0) else {
+            self.w.eprint(&format!("gate: SPIRA_GATE_UNIT_MAX_CRATES={:?} is not a positive crate count", ctx.var("SPIRA_GATE_UNIT_MAX_CRATES")));
+            return Composition::Suites { why: "unit-cap-config".into() };
+        };
         let forces = Forces {
             gate_all: ctx.var("SPIRA_GATE_ALL") == "1",
+            unit_cap: Some(unit_cap as usize),
         };
         let changed = match self.w.diff_raw(repo, base, rev) {
             Ok(c) => c,
