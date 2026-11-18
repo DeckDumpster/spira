@@ -247,7 +247,11 @@ pub fn observe(real: &hel::real::Real, lc: &spira_store::lc_call::LcClient, proc
     if run.join("world.halted").exists() {
         return serde_json::to_string(&Snapshot { halted: true, repos: vec![] }).map_err(|e| e.to_string());
     }
-    let mut rows = spira_store::lc_state::index(spira_store::lc_state::parse_rows(&store_view::call_held(lc, &["list", "--live"])?.out)?);
+    let live = store_view::call_held(lc, &["list", "--live"])?;
+    if live.code != 0 {
+        return Err(format!("spira-lc list --live exited {}", live.code));
+    }
+    let mut rows = spira_store::lc_state::index(spira_store::lc_state::parse_rows(&live.out)?);
     let unread = std::cell::Cell::new(None::<String>);
     let memo = std::cell::RefCell::new(&mut rows);
     let asked = std::cell::RefCell::new(std::collections::HashSet::<String>::new());
