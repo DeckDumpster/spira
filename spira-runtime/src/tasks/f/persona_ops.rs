@@ -624,13 +624,13 @@ pub fn run_ledger(e: &Effects, _key: &str, s: &EffectSpec) -> Result<String, Str
     let run = run_dir(e, &p.cfg);
     let log = p.act.run_id.as_ref().map(|id| run.join(format!("sweep-{RUNE}-{id}.log")));
     let done = (p.act.what == "done").then(|| (p.act.rc.unwrap_or(1), p.act.detail.as_str(), log.as_deref()));
+    dwarf::ops_sweep::ledger_line(&run, now_secs(), RUNE, done, &p.act.detail, p.act.why.as_deref(), TRACE_MARK);
     if let (Some(why), Some(id)) = (&p.act.why, &p.act.run_id) {
         use std::io::Write;
         let full = p.act.error.as_deref().unwrap_or(why);
         let line = format!("{} spira: ops sweep {id} harness-red: {full}\n", dwarf::util::iso_utc(now_secs()));
-        std::fs::OpenOptions::new().create(true).append(true).open(run.join("ops.log")).and_then(|mut f| f.write_all(line.as_bytes())).map_err(|e| format!("{NAME}: ops.log: {e}"))?;
+        return std::fs::OpenOptions::new().create(true).append(true).open(run.join("ops.log")).and_then(|mut f| f.write_all(line.as_bytes())).map(|_| format!("{} {RUNE} {}", p.act.what, p.act.detail)).map_err(|e| format!("{NAME}: ops.log: {e}"));
     }
-    dwarf::ops_sweep::ledger_line(&run, now_secs(), RUNE, done, &p.act.detail, p.act.why.as_deref(), TRACE_MARK);
     Ok(format!("{} {RUNE} {}", p.act.what, p.act.detail))
 }
 
