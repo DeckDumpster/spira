@@ -15,8 +15,8 @@ use crate::control::store::Store;
 /// The only views `ops-view` will name; the argument is matched, never interpolated.
 pub const VIEWS: [&str; 6] = ["ops_live", "ops_round", "ops_recent", "ops_edges", "ops_dwell", "ops_dwell_p95"];
 
-/// The machines `ops-gantt` reads events of, and the machines `ops-graph` draws.
-pub const GANTT_MACHINES: [&str; 2] = ["bead", "batch"];
+/// The machines `ops-transitions` reads events of, and the machines `ops-graph` draws.
+pub const TRANSITION_MACHINES: [&str; 2] = ["bead", "batch"];
 pub const GRAPH_MACHINES: [&str; 4] = ["bead", "batch", "ask", "mending"];
 
 const DAY_S: i64 = 86_400;
@@ -37,7 +37,7 @@ fn object(cols: Vec<(&str, Value)>) -> Value {
     Value::Object(cols.into_iter().map(|(k, v)| (k.to_string(), v)).collect::<Map<_, _>>())
 }
 
-/// The machines `ops-gantt` reads events of, matched against `allowed`; the first when the flag is absent.
+/// The machines `ops-transitions` reads events of, matched against `allowed`; the first when the flag is absent.
 fn machine_arg(verb: &str, args: &[String], allowed: &[&'static str]) -> Result<&'static str, (i32, String)> {
     let Some(at) = args.iter().position(|a| a == "--machine") else {
         return Ok(allowed[0]);
@@ -315,7 +315,7 @@ fn ops_dwell<B: Backend>(store: &Store<B>, now: i64) -> Result<Vec<Value>, Strin
     Ok(out)
 }
 
-fn gantt(logged: &[Logged], machine: &str, now: i64) -> Vec<Value> {
+fn transitions(logged: &[Logged], machine: &str, now: i64) -> Vec<Value> {
     applied_moves(logged, machine)
         .filter(|l| l.audit.at >= now - DAY_S)
         .map(|l| object(vec![("seq", text(l.rev)), ("bead_id", text(&l.audit.lc_key)), ("event", text(&l.audit.event)), ("from_state", text(&l.audit.from_state)), ("to_state", text(&l.audit.to_state)), ("at", text(l.audit.at))]))
@@ -414,15 +414,15 @@ fn view_rows<B: Backend>(store: &Store<B>, view: &str, now: i64) -> (i32, String
 }
 
 /// The stuck page's bars: the day's transitions plus the clock they are measured against.
-pub fn cmd_ops_gantt(args: &[String]) -> (i32, String) {
-    let machine = match machine_arg("ops-gantt", args, &GANTT_MACHINES) {
+pub fn cmd_ops_transitions(args: &[String]) -> (i32, String) {
+    let machine = match machine_arg("ops-transitions", args, &TRANSITION_MACHINES) {
         Ok(m) => m,
         Err(refusal) => return refusal,
     };
     with_store(|store| {
         let now = crate::db::now_epoch();
         match logged(store, now, DAY_S) {
-            Ok(a) => (0, json!({ "now": now, "events": gantt(&a, machine, now) }).to_string()),
+            Ok(a) => (0, json!({ "now": now, "events": transitions(&a, machine, now) }).to_string()),
             Err(e) => cannot(e),
         }
     })
@@ -572,11 +572,13 @@ mod tests {
     }
 
     #[test]
-    fn the_gantt_machine_is_one_the_log_carries_bead_facts_for() {
-        assert_eq!(machine_arg("ops-gantt", &[], &GANTT_MACHINES), Ok("bead"));
-        assert_eq!(machine_arg("ops-gantt", &["--machine".into(), "batch".into()], &GANTT_MACHINES), Ok("batch"));
-        assert_eq!(machine_arg("ops-gantt", &["--machine".into(), "bead' OR 1=1 --".into()], &GANTT_MACHINES).unwrap_err().0, 2);
-        assert_eq!(machine_arg("ops-gantt", &["--machine".into(), "ask".into()], &GANTT_MACHINES).unwrap_err().0, 2);
+    fn the_transitions_machine_is_one_the_log_carries_bead_facts_for() {
+        assert_eq!(machine_arg("ops-transitions", &[], &TRANSITION_MACHINES), Ok("bead"));
+        assert_eq!(machine_arg("ops-transitions", &["--machine".into(), "batch".into()], &TRANSITION_MACHINES), Ok("batch"));
+        assert_eq!(machine_arg("ops-transitions", &["--machine".into(), "bead' OR 1=1 --".into()], &TRANSITION_MACHINES).unwrap_err().0, 2);
+        let refused = machine_arg("ops-transitions", &["--machine".into(), "ask".into()], &TRANSITION_MACHINES).unwrap_err();
+        assert_eq!(refused.0, 2);
+        assert!(refused.1.starts_with("ops-transitions:"), "{}", refused.1);
     }
 
     #[test]
@@ -589,7 +591,7 @@ mod tests {
     }
 
     #[test]
-    fn the_gantt_lists_the_days_applied_state_changes_of_the_machine_asked_for() {
+    fn the_transitions_list_the_days_applied_state_changes_of_the_machine_asked_for() {
         let now = 1_000_000;
         let log = [
             audit("sp-a", "Claim", "READY", "WORKING", true, "d", now - 10),
@@ -597,9 +599,9 @@ mod tests {
             audit("sp-a", "Submit", "WORKING", "SUBMITTED", false, "d", now - 8),
             audit("sp-b", "Claim", "READY", "WORKING", true, "d", now - DAY_S - 1),
         ];
-        let rows = gantt(&log, "bead", now);
+        let rows = transitions(&log, "bead", now);
         assert_eq!(rows, [json!({"seq": (now - 10).to_string(), "bead_id": "sp-a", "event": "Claim", "from_state": "READY", "to_state": "WORKING", "at": (now - 10).to_string()})]);
-        assert!(gantt(&log, "batch", now).is_empty());
+        assert!(transitions(&log, "batch", now).is_empty());
     }
 
     #[test]

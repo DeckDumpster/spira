@@ -16,7 +16,7 @@ use spira_runtime::tasks::e::watch_transitions as wt;
 use crate::stuck::num;
 
 pub const MACHINES: [&str; 4] = ["bead", "batch", "ask", "mending"];
-const GANTT_MACHINES: [&str; 2] = ["bead", "batch"];
+const TRANSITION_MACHINES: [&str; 2] = ["bead", "batch"];
 const DAY: i64 = 86_400;
 /// How far back the retire station's feeders are looked for.
 const SEEN_WINDOW: i64 = DAY;
@@ -220,7 +220,7 @@ pub type Read = Result<Value, String>;
 #[derive(Clone, Debug)]
 pub struct Reads {
     pub graphs: BTreeMap<&'static str, Read>,
-    pub gantts: BTreeMap<&'static str, Read>,
+    pub moves: BTreeMap<&'static str, Read>,
     pub live: Read,
     pub batches: Read,
     pub asks: Read,
@@ -328,8 +328,8 @@ pub async fn gather(client: LcClient, views: Option<&Projection>, budget: Durati
         read(c, &["ops-graph", "--machine", "batch"], budget),
         read(c, &["ops-graph", "--machine", "ask"], budget),
         read(c, &["ops-graph", "--machine", "mending"], budget),
-        read(c, &["ops-gantt", "--machine", "bead"], budget),
-        read(c, &["ops-gantt", "--machine", "batch"], budget),
+        read(c, &["ops-transitions", "--machine", "bead"], budget),
+        read(c, &["ops-transitions", "--machine", "batch"], budget),
         read_held(views, c, &["list", "--live"], budget),
         read_held(views, c, &["list", "--batches"], budget),
         read(c, &["list-asks"], budget),
@@ -343,7 +343,7 @@ pub async fn gather(client: LcClient, views: Option<&Projection>, budget: Durati
     );
     Reads {
         graphs: BTreeMap::from([("bead", g_bead), ("batch", g_batch), ("ask", g_ask), ("mending", g_mending)]),
-        gantts: BTreeMap::from([("bead", t_bead), ("batch", t_batch)]),
+        moves: BTreeMap::from([("bead", t_bead), ("batch", t_batch)]),
         live,
         batches,
         asks,
@@ -590,10 +590,10 @@ pub fn build(reads: &Reads, now: i64) -> Result<Value, String> {
     note(&mut errors, "list --batches", &reads.batches);
     note(&mut errors, "list-asks", &reads.asks);
     note(&mut errors, "mending list --live", &reads.mending);
-    for m in GANTT_MACHINES {
-        match reads.gantts.get(m) {
-            Some(r) => note(&mut errors, &format!("ops-gantt --machine {m}"), r),
-            None => errors.push(format!("ops-gantt --machine {m}: not read")),
+    for m in TRANSITION_MACHINES {
+        match reads.moves.get(m) {
+            Some(r) => note(&mut errors, &format!("ops-transitions --machine {m}"), r),
+            None => errors.push(format!("ops-transitions --machine {m}: not read")),
         }
     }
     if let Err(e) = &reads.releases {
@@ -605,10 +605,10 @@ pub fn build(reads: &Reads, now: i64) -> Result<Value, String> {
     let tallies: &[Tally] = reads.counts.as_deref().unwrap_or(&[]);
     let counted_24h = reads.counts.is_ok();
 
-    let gantt_ok = |m: &str| reads.gantts.get(m).is_some_and(Result::is_ok);
+    let transitions_ok = |m: &str| reads.moves.get(m).is_some_and(Result::is_ok);
     let mut all_moves: Vec<Move> = Vec::new();
-    for m in GANTT_MACHINES {
-        if let Some(Ok(v)) = reads.gantts.get(m) {
+    for m in TRANSITION_MACHINES {
+        if let Some(Ok(v)) = reads.moves.get(m) {
             all_moves.extend(moves(m, v));
         }
     }
@@ -778,7 +778,7 @@ pub fn build(reads: &Reads, now: i64) -> Result<Value, String> {
     for st in &stations {
         let refs: Vec<EventRef> = st.events.iter().map(|e| event_ref(e)).collect();
         let mut inputs = ins(st);
-        if st.seen_only && refs.iter().all(|r| gantt_ok(r.machine)) {
+        if st.seen_only && refs.iter().all(|r| transitions_ok(r.machine)) {
             inputs.retain(|b| {
                 let (m, s) = b.split_once('.').unwrap_or(("", ""));
                 all_moves.iter().any(|mv| mv.machine == m && mv.from == s && mv.at >= seen_cutoff && refs.iter().any(|r| r.takes(mv.machine, &mv.event, &mv.from)))
@@ -786,7 +786,7 @@ pub fn build(reads: &Reads, now: i64) -> Result<Value, String> {
         }
         let outputs = outs(st);
         let matched: Vec<&Move> = all_moves.iter().filter(|m| refs.iter().any(|r| r.takes(m.machine, &m.event, &m.from))).collect();
-        let readable = !refs.is_empty() && refs.iter().any(|r| gantt_ok(r.machine));
+        let readable = !refs.is_empty() && refs.iter().any(|r| transitions_ok(r.machine));
         let per24h = if refs.is_empty() { None } else { tally(&refs, &|_| true) };
         let last_s = readable.then(|| matched.iter().map(|m| m.at).max().map(|at| now - at)).flatten();
 
@@ -1068,14 +1068,14 @@ mod tests {
         (args.to_string(), 0, out)
     }
 
-    fn script(batch_graph: String, gantt_bead: &Value, live: Value) -> Vec<(String, i32, String)> {
+    fn script(batch_graph: String, transitions_bead: &Value, live: Value) -> Vec<(String, i32, String)> {
         vec![
             ok("ops-graph --machine bead", bead_graph()),
             ok("ops-graph --machine batch", batch_graph),
             ok("ops-graph --machine ask", graph(&[("OPEN", "Answer", "ANSWERED")])),
             ok("ops-graph --machine mending", graph(&[("WAITING", "Pickup", "MENDING")])),
-            ok("ops-gantt --machine bead", gantt_bead.to_string()),
-            ok("ops-gantt --machine batch", json!({"now": NOW, "events": []}).to_string()),
+            ok("ops-transitions --machine bead", transitions_bead.to_string()),
+            ok("ops-transitions --machine batch", json!({"now": NOW, "events": []}).to_string()),
             ok("list --live", live.to_string()),
             ok("list --batches", "[]".into()),
             ok("list-asks", "[]".into()),
@@ -1236,9 +1236,9 @@ mod tests {
     #[tokio::test]
     async fn unclaim_counts_release_and_holder_dead_rows_together() {
         let row = |seq: i64, event: &str, at: i64| json!({"seq": seq, "bead_id": "sp-a", "event": event, "from_state": "WORKING", "to_state": "READY", "at": at});
-        let gantt = json!({"now": NOW, "events": [row(1, "Release", NOW - 60), row(2, "Release", NOW - 600), row(3, "HolderDead", NOW - 6000)]});
+        let transitions = json!({"now": NOW, "events": [row(1, "Release", NOW - 60), row(2, "Release", NOW - 600), row(3, "HolderDead", NOW - 6000)]});
         let (_logs, s) = counted(&[("bead", "Release", "WORKING", "READY", 2), ("bead", "HolderDead", "WORKING", "READY", 1), ("bead", "Submit", "WORKING", "SUBMITTED", 1)]);
-        let f = floor_with(script(batch_graph(), &gantt, json!([])), "nonexistent-run", &s).await.unwrap();
+        let f = floor_with(script(batch_graph(), &transitions, json!([])), "nonexistent-run", &s).await.unwrap();
         let st = by_id(&f, "stations", "bead.unclaim");
         assert_eq!((st["per24h"].as_i64(), st["last_s"].as_i64()), (Some(3), Some(60)));
         let edge = f["edges"].as_array().unwrap().iter().find(|e| e["from"] == "bead.WORKING" && e["to"] == "bead.unclaim").unwrap();

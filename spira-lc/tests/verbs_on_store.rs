@@ -81,7 +81,7 @@ fn the_ported_verbs_answer_from_the_control_store() {
     assert_eq!(json(&["ops-view", "ops_live"])[0]["bead_id"], "sp-a");
     assert_eq!(json(&["ops-view", "ops_live"])[0]["claimable"], "1");
     assert_eq!(json(&["ops-view", "ops_live"])[0]["repo"], "harness");
-    assert!(json(&["ops-gantt"])["events"].is_array());
+    assert!(json(&["ops-transitions"])["events"].is_array());
     assert!(json(&["ops-refusals", "3600"])["classes"].is_array());
     assert_eq!(json(&["ops-bead", "sp-a"])["bead"]["state"], "READY");
     assert_eq!(w.run(&["ops-bead", "sp-none"]).0, 1);
