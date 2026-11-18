@@ -1,4 +1,4 @@
-//! The ports over git, nix, `work`, `testenv` and the repo registry.
+//! The ports over git, nix and the repo registry.
 
 use crate::ports::{Piece, Ports};
 use crate::shell::{self, ShellEnv};

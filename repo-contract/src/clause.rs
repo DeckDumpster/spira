@@ -168,7 +168,8 @@ fn deploy(p: &dyn Ports, repo: &str, tree: Option<&Path>) -> Judged {
     })
 }
 
-/// Read-only: judges files and refs and runs no suite. Judges each clause in order, emitting its line as it settles; a red clause never stops the
+/// Read-only: runs no suite.
+/// Judges each clause in order, emitting its line as it settles; a red clause never stops the
 /// next. 0 when all are met, 1 when any is not met, else 2 when any could not be told.
 pub fn run(p: &dyn Ports, repo: &str, tree: Option<&Path>, clauses: &[Clause], emit: &mut dyn FnMut(&str)) -> i32 {
     let (mut unmet, mut unknown) = (false, false);

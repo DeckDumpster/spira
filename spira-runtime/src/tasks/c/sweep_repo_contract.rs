@@ -14,7 +14,7 @@
 //! ## Observe
 //!
 //! `sweep.repo_contract.observe` runs `repo-contract check --all` (which names every registered
-//! repo but the home repo), which reads files and refs only and runs no suite, and reads every scoped stop on `<run>`:
+//! repo but the home repo). The pass reads files and refs only and runs no suite. It also reads every scoped stop on `<run>`:
 //!
 //! ```text
 //! Snapshot { repos: [RepoState{ repo, verdict: Met|NotMet|CannotTell, lines }], stops: [StopView{ repo, owner }] }
