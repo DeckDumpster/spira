@@ -183,11 +183,11 @@ mod tests {
         let h = home.display().to_string();
         [
             ("HOME", h.clone()),
-            ("PATH", format!("{h}/.local/bin:{}/bin:/usr/bin", rel.display())),
-            ("BEADS_DIR", "/db/.beads".into()),
-            ("SPIRA_DB", "/db".into()),
+            ("PATH", format!("{h}/.local/bin:{}/bin:usr/bin", rel.display())),
+            ("BEADS_DIR", "db/.beads".into()),
+            ("SPIRA_DB", "db".into()),
             ("SPIRA_RELEASE", rel.display().to_string()),
-            ("SPIRA_LC_SOCKET", "/run/lc.sock".into()),
+            ("SPIRA_LC_SOCKET", "run/lc.sock".into()),
         ]
         .into_iter()
         .map(|(k, v)| (k.to_string(), v))
@@ -197,7 +197,7 @@ mod tests {
     fn cfg(home: &Path) -> BriefCfg {
         let spec = home.join("spec.toml");
         std::fs::write(&spec, "[persona.ops]\nmodel = \"claude-x\"\n").unwrap();
-        BriefCfg { agent: "/opt/agent".into(), toml: spec.display().to_string(), ..BriefCfg::default() }
+        BriefCfg { agent: "opt/agent".into(), toml: spec.display().to_string(), ..BriefCfg::default() }
     }
 
     fn exe(rel: &Path) -> impl Fn(&Path) -> bool + '_ {
@@ -215,7 +215,7 @@ mod tests {
         let pairs: BTreeMap<String, String> = b.argv[i + 1..].iter().take_while(|a| a.contains('=')).filter_map(|a| a.split_once('=')).map(|(k, v)| (k.to_string(), v.to_string())).collect();
         assert_eq!(pairs["PATH"], format!("{}:{}/model-bin:{}/.cargo/bin", system_paths::SYSTEM_PATH_MIN, rel.display(), home.display()));
         assert_eq!(pairs["SPIRA_RUNE"], "ops");
-        assert_eq!(pairs["SPIRA_LC_SOCKET"], "/run/lc.sock");
+        assert_eq!(pairs["SPIRA_LC_SOCKET"], "run/lc.sock");
         for k in ["BEADS_DIR", "SPIRA_DB", "SPIRA_WORK_BEAD_ID"] {
             assert!(!pairs.contains_key(k), "{k}");
         }
