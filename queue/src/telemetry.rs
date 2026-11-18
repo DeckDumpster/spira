@@ -7,7 +7,6 @@ pub const OPERATIONS: &[&str] = &[
     "submit",
     "protect",
     "stats",
-    "churn",
     "flush",
     "step",
     "verdict",

@@ -16,7 +16,6 @@ mod backfill_claim;
 mod backfill_repo;
 mod bd;
 mod callers;
-mod churn;
 mod cite_check;
 mod claim_sync;
 mod composed;
@@ -280,7 +279,6 @@ pub fn dispatch(args: &[String]) -> (i32, String) {
     }
     match args.first().map(|s| s.as_str()) {
         Some("stats") => (0, slow::stats_json()),
-        Some("churn-facts") => churn::cmd_churn_facts(&args[1..]),
         Some("mend-watch") => mend_watch::run(&args[1..]),
         Some("unpublished") => unpublished::run(&args[1..]),
         // The attempt and poison history (facts.rs): appended facts, never a transition.

@@ -684,10 +684,6 @@ pub trait Lc {
     ) -> Result<(), (i32, String)>;
     /// `mending tips`: each bead's latest mended tip, absent when it was never mended.
     fn mend_tips(&self, beads: &[String]) -> Result<BTreeMap<String, String>, String>;
-    /// `churn-facts --since <epoch>`: the rows the churn report measures, as the JSON text.
-    fn churn_facts(&self, _since: i64) -> Result<String, String> {
-        Err("churn-facts is not available on this lifecycle".into())
-    }
     /// `requeue-orphans --apply`: return every bead IN_DELIVERY that no open batch names, and
     /// abandon a batch that never began. `running(repo, batch)` says whether a leg unit or
     /// round-vm process of that round is live; such a round has begun and is left open.
