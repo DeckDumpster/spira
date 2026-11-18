@@ -131,11 +131,17 @@ pub fn brief(home: &Path, run: &Path, rune: &Rune, prompt: &str, id: &str, cfg: 
 
 /// One ledger line of a sweep: `awake <rune> <what>`, or `done <rune> sweep rc=<rc> status=<s>`
 /// with the session's spend read from its log.
-pub fn ledger_line(run: &Path, now: i64, rune: &str, done: Option<(i32, &str, Option<&Path>)>, awake: &str, trace_mark: &str) {
+pub fn ledger_line(run: &Path, now: i64, rune: &str, done: Option<(i32, &str, Option<&Path>)>, awake: &str, why: Option<&str>, trace_mark: &str) {
     let l = Ledger { path: run.join("dwarf-ledger.log"), dry: false };
     match done {
         None => l.awake(now, rune, awake),
-        Some((rc, status, log)) => l.done(now, rune, "sweep", rc, status, &ledger::session_result_fields(log, trace_mark)),
+        Some((rc, status, log)) => {
+            let mut rest = ledger::done_rest(rune, "sweep", rc, status, &ledger::session_result_fields(log, trace_mark));
+            if let Some(w) = why {
+                rest.push_str(&format!(" why={}", serde_json::to_string(w).unwrap_or_default()));
+            }
+            l.write(now, &rest)
+        }
     }
 }
 
