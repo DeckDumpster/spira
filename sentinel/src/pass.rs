@@ -463,6 +463,10 @@ impl<'a> Sentinel<'a> {
         if let Some(rows) = &lc_rows {
             self.check2d(&snap, rows);
         }
+        self.phase("CHECK2e");
+        if let Some(rows) = &lc_rows {
+            self.check2e(rows);
+        }
         self.phase("CHECK3");
         let plan_ready = self.check3(plan_ready, plan_inprog, n_open);
 
