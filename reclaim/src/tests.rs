@@ -35,6 +35,8 @@ fn cfg(root: &Path) -> Config {
         podman: None,
         podman_dir: None,
         podman_cap_bytes: 0,
+        tmp_root: None,
+        tmp_idle_secs: 6 * 3600,
         dry: false,
     }
 }
@@ -147,4 +149,105 @@ fn glob_matches_wildcards_and_finds_nothing_for_a_missing_directory() {
     assert!(wild(".tgt-*", ".tgt-final") && !wild(".tgt-*", "tgt-final") && wild("a*c*e", "abcde"));
     let root = testkit::TempDir::new("reclaim-glob-missing");
     assert!(glob(&format!("{}/nonexistent-reclaim/*/target", root.display())).is_empty());
+}
+
+const HOUR: u64 = 3600;
+
+fn tmp_dir(root: &Path, name: &str, secs: u64) -> PathBuf {
+    tgt(root, name, secs)
+}
+
+fn verdict_of(plan: &[Candidate], d: &Path) -> String {
+    let c = plan.iter().find(|c| c.path == d).unwrap_or_else(|| panic!("{d:?} is not a candidate"));
+    format!("{:?}", c.verdict)
+}
+
+#[test]
+fn tmp_plan_reclaims_an_idle_unheld_dir_and_skips_held_young_socket_and_symlink() {
+    let t = testkit::TempDir::new("reclaim-tmp-a");
+    let root = t.path().join("tmp");
+    fs::create_dir_all(&root).unwrap();
+    let idle = tmp_dir(&root, "tmp.idle", 9 * HOUR);
+    let held = tmp_dir(&root, "tmp.held", 9 * HOUR);
+    let young = tmp_dir(&root, "tmp.young", 60);
+    let sock = tmp_dir(&root, "tmp-1000", 9 * HOUR);
+    let _l = std::os::unix::net::UnixListener::bind(sock.join("default")).unwrap();
+    let link = root.join("tmp.link");
+    std::os::unix::fs::symlink(&idle, &link).unwrap();
+    fs::write(root.join("plain-file"), vec![1u8; 8192]).unwrap();
+    age(&root.join("plain-file"), 9 * HOUR);
+
+    let plan = tmp_plan(&root, own_uid(), now(), 6 * HOUR, &[held.join("artifact")]);
+    assert_eq!(verdict_of(&plan, &idle), "Reclaim");
+    assert_eq!(verdict_of(&plan, &held), r#"Skip("held by a live process")"#);
+    assert!(verdict_of(&plan, &young).starts_with("Skip(\"touched"));
+    assert_eq!(verdict_of(&plan, &sock), r#"Skip("holds a socket or fifo")"#);
+    assert_eq!(verdict_of(&plan, &link), r#"Skip("symlink")"#);
+    assert!(plan.iter().all(|c| c.path != root.join("plain-file")));
+}
+
+#[test]
+fn tmp_plan_leaves_a_dir_another_uid_owns() {
+    let t = testkit::TempDir::new("reclaim-tmp-uid");
+    tmp_dir(t.path(), "tmp.mine", 9 * HOUR);
+    assert!(tmp_plan(t.path(), own_uid().wrapping_add(1), now(), 6 * HOUR, &[]).is_empty());
+}
+
+#[test]
+fn the_tmp_pass_runs_above_the_free_space_trigger_and_leaves_build_targets_alone() {
+    let t = testkit::TempDir::new("reclaim-tmp-b");
+    let root = t.path().join("tmp");
+    fs::create_dir_all(&root).unwrap();
+    let idle = tmp_dir(&root, "tmp.idle", 9 * HOUR);
+    let young = tmp_dir(&root, "tmp.young", 60);
+    let target = tgt(t.path(), "worktree/.tgt-old", 9 * DAY);
+    let mut c = cfg(t.path());
+    c.tmp_root = Some(root);
+    let (r, log) = go(&c, &[], 5000);
+    assert!(r.unwrap() > 0, "{log:?}");
+    assert!(!idle.exists() && young.exists() && target.exists(), "{log:?}");
+    assert!(log.iter().any(|l| l.starts_with("reclaimed") && l.contains("tmp.idle")), "{log:?}");
+    assert!(log.iter().any(|l| l.starts_with("kept") && l.contains("tmp.young")), "{log:?}");
+}
+
+#[test]
+fn a_dry_tmp_pass_removes_nothing() {
+    let t = testkit::TempDir::new("reclaim-tmp-c");
+    let root = t.path().join("tmp");
+    fs::create_dir_all(&root).unwrap();
+    let idle = tmp_dir(&root, "tmp.idle", 9 * HOUR);
+    let mut c = cfg(t.path());
+    c.tmp_root = Some(root);
+    c.dry = true;
+    let (_, log) = go(&c, &[], 5000);
+    assert!(idle.exists() && log.iter().any(|l| l.contains("(dry)")), "{log:?}");
+}
+
+#[test]
+fn an_unreadable_subdirectory_keeps_its_tmp_dir() {
+    use std::os::unix::fs::PermissionsExt;
+    let t = testkit::TempDir::new("reclaim-tmp-unreadable");
+    let d = tmp_dir(t.path(), "tmp.opaque", 9 * HOUR);
+    let sub = d.join("sub");
+    fs::create_dir(&sub).unwrap();
+    let orig = fs::metadata(&sub).unwrap().permissions();
+    fs::set_permissions(&sub, fs::Permissions::from_mode(0o000)).unwrap();
+    age(&d, 9 * HOUR);
+    let plan = tmp_plan(t.path(), own_uid(), now(), 6 * HOUR, &[]);
+    fs::set_permissions(&sub, orig).unwrap();
+    assert_eq!(verdict_of(&plan, &d), r#"Skip("holds a socket or fifo")"#);
+}
+
+#[test]
+fn an_unmatched_require_does_not_stop_the_tmp_pass() {
+    let t = testkit::TempDir::new("reclaim-tmp-require");
+    let root = t.path().join("tmp");
+    fs::create_dir_all(&root).unwrap();
+    let idle = tmp_dir(&root, "tmp.idle", 9 * HOUR);
+    let mut c = cfg(t.path());
+    c.require = vec![format!("{}/worktree/sp-*", t.path().display())];
+    c.tmp_root = Some(root);
+    let (r, _) = go(&c, &[], 10);
+    assert!(r.unwrap_err().contains("positive control"));
+    assert!(!idle.exists());
 }

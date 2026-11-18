@@ -1,0 +1,7 @@
+TYPE=string
+GROUP=runtime
+DOC=The RAM-backed temp directory watchtower measures and sweep.reclaim clears of idle top-level directories.
+SCHEMA=The temp directory whose filesystem watchtower probes for free space and whose idle top-level directories sweep.reclaim removes (see SPIRA_RECLAIM_TMP_IDLE_HOURS). Declared so the task row reads the same key watchtower does.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_TMP_PROBE_PATH:=/tmp}"
+SPIRA_CONF_DEFAULT_EOF

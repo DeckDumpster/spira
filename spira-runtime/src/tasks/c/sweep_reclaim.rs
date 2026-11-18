@@ -18,7 +18,7 @@
 //!
 //! `sweep.reclaim.observe` (class `host`, deadline 120 s; walking `target/` trees is the slow part).
 //! Snapshot:
-//! `{require_ok:[(pattern, matched)], free_mib, candidates:[{path, bytes, age, verdict}], podman_bytes, cache:[{mtime, bytes, path}]}`.
+//! `{require_ok:[(pattern, matched)], free_mib, candidates:[{path, bytes, age, verdict}], podman_bytes, cache:[{mtime, bytes, path}], tmp:[{path, bytes, age, verdict}]}`.
 //! - `require_ok` is the positive control. Each `--require` pattern must match something, or the
 //!   pass removes nothing (`reclaim/src/lib.rs:200-204`). Today that is `--require
 //!   $SPIRA_RUN/worktree` (unit ExecStart).
@@ -32,6 +32,12 @@
 //! - `podman_bytes` is the block usage of `--podman-dir` (`lib.rs:46-60`, `lib.rs:234`).
 //! - `cache` is the file list under `--cache-dir`, leaving out `.tmp` files younger than 1 h
 //!   (`lib.rs:131-148`).
+//!
+//! - `tmp` is `reclaim::tmp_plan(tmp_root, uid, now, tmp_idle, held)`: the top-level directories of
+//!   `SPIRA_TMP_PROBE_PATH` owned by the sweep's uid, oldest first. The same `judge` verdicts apply
+//!   (symlink, held, idle), and a directory containing a socket or fifo is `special`, because
+//!   `/proc/<pid>/fd` names a unix socket by inode and its holder would look absent. Plain files are
+//!   not candidates.
 //!
 //! This reads the host, not a store. That is correct here, because the host's own filesystem is
 //! the component that decides free space and liveness. No Spira store owns these facts.
@@ -49,7 +55,9 @@
 //!    it before acting (see Act).
 //! 3. Else, if `podman_bytes > podman_cap` (40 GiB, unit `--podman-cap-gib 40`), emit
 //!    `podman_prune` (`lib.rs:232-239`).
-//! 4. If the cache total is over `cache_cap` (default 40 GiB, `main.rs:20`), emit `trim_cache` for
+//! 4. Whatever the free space, emit one `remove_tmp` per `Reclaim` tmp candidate: a tmpfs costs RAM
+//!    before it costs space, so this leg has no trigger.
+//! 5. If the cache total is over `cache_cap` (default 40 GiB, `main.rs:20`), emit `trim_cache` for
 //!    the oldest files until the total is under the cap.
 //!
 //! - **Carry:** `{refused_cause: Option<String>}`, so a persistent control failure is said once.
@@ -60,6 +68,7 @@
 //! | Effect | Class | Deadline | Idempotency key | Refuses |
 //! |---|---|---|---|---|
 //! | `sweep.reclaim.remove_target` | host | 300 s | `path:newest_mtime` | It refuses when the path is held, leased or a symlink at act time (it re-judges, `lib.rs:106`). It also refuses when free space has already reached the target (`lib.rs:220-223`). |
+//! | `sweep.reclaim.remove_tmp` | host | 300 s | `path:age` | It refuses a path that is not a top-level directory of the tmp root this uid owns, or that is held, a symlink, holds a socket or fifo, or was touched within the idle window at act time. |
 //! | `sweep.reclaim.podman_prune` | container | 600 s | `prune:<tick>` | It refuses any flag beyond `system prune -f`: no `-a`, no `--volumes` (`lib.rs:180-196`). The `podman` fork at `lib.rs:187` remains the allowed child. |
 //! | `sweep.reclaim.trim_cache` | host | 120 s | `cache_dir:<tick>` | It refuses a `.tmp` file younger than 1 h (`lib.rs:142`), and stops at the cap. |
 //!
@@ -96,6 +105,7 @@
 //!   - `min_free_gib` (70), `target_free_gib` (100)
 //!   - `cache_dir` (`run/sccache-dav`), `cache_cap_gib` (40)
 //!   - `podman`, `podman_dir` (`%h/.local/share/containers/storage`), `podman_cap_gib` (40)
+//!   - `SPIRA_TMP_PROBE_PATH` (the tmp root, shared with watchtower) and `SPIRA_RECLAIM_TMP_IDLE_HOURS` (6).
 //!   - Also `SPIRA_METRICS_ENDPOINT` (`main.rs:56`).
 //!
 //! ## Reverse
@@ -121,7 +131,8 @@ pub const REMOVE_TARGET: &str = "sweep.reclaim.remove_target";
 pub const PODMAN_PRUNE: &str = "sweep.reclaim.podman_prune";
 pub const TRIM_CACHE: &str = "sweep.reclaim.trim_cache";
 pub const MAINTAIN: &str = "sweep.reclaim.maintain";
-pub const EFFECTS: &[&str] = &[OBSERVE, REMOVE_TARGET, PODMAN_PRUNE, TRIM_CACHE, MAINTAIN];
+pub const REMOVE_TMP: &str = "sweep.reclaim.remove_tmp";
+pub const EFFECTS: &[&str] = &[OBSERVE, REMOVE_TARGET, PODMAN_PRUNE, TRIM_CACHE, MAINTAIN, REMOVE_TMP];
 /// The only git maintenance tasks ever run: both lossless, neither prunes reachable history.
 pub const MAINTAIN_ARGS: &[&str] = &["maintenance", "run", "--task=loose-objects", "--task=incremental-repack"];
 const MAINTAIN_DEADLINE_MS: u64 = 600_000;
@@ -133,6 +144,8 @@ pub const PODMAN_CAP_KEY: &str = "SPIRA_RECLAIM_PODMAN_CAP_GIB";
 pub const CACHE_DIR_KEY: &str = "SPIRA_RECLAIM_CACHE_DIR";
 pub const STORE_ROOT_KEY: &str = "SPIRA_SCCACHE_DAV_ROOT";
 pub const CACHE_CAP_KEY: &str = "SPIRA_RECLAIM_CACHE_CAP_GIB";
+pub const TMP_ROOT_KEY: &str = "SPIRA_TMP_PROBE_PATH";
+pub const TMP_IDLE_KEY: &str = "SPIRA_RECLAIM_TMP_IDLE_HOURS";
 /// Today argv; each becomes a key.
 pub const KEYS: &[&str] = &[
     CADENCE_KEY,
@@ -149,6 +162,8 @@ pub const KEYS: &[&str] = &[
     "SPIRA_RECLAIM_PODMAN",
     "SPIRA_RECLAIM_PODMAN_DIR",
     PODMAN_CAP_KEY,
+    TMP_ROOT_KEY,
+    TMP_IDLE_KEY,
 ];
 
 pub const SPEC: Spec = Spec { name: NAME, stream: STREAM, tick: TICK, state: STATE, probe: OBSERVE, probe_deadline_ms: 120_000, cadence_key: CADENCE_KEY, calendar: false, effects: EFFECTS, keys: KEYS, probe_input_key: None };
@@ -160,6 +175,7 @@ pub enum Verdict {
     Reclaim,
     Symlink,
     Held,
+    Special,
     Leased,
     #[default]
     Fresh,
@@ -204,6 +220,8 @@ pub struct Snapshot {
     pub candidates: Vec<Candidate>,
     pub podman_bytes: u64,
     pub cache: Vec<CacheFile>,
+    /// Top-level directories of the tmp root, oldest first.
+    pub tmp: Vec<Candidate>,
 }
 
 /// The pass machine (T3).
@@ -273,6 +291,9 @@ pub fn plan(cfg: &Cfg, snap: &Snapshot) -> Result<Vec<Act>, String> {
     } else if snap.podman_bytes > podman_cap {
         acts.push(act(PODMAN_PRUNE, "prune".into(), format!("storage {} MiB over cap {} MiB", snap.podman_bytes >> 20, podman_cap >> 20), 600_000));
     }
+    for c in snap.tmp.iter().filter(|c| c.verdict == Verdict::Reclaim) {
+        acts.push(act(REMOVE_TMP, format!("{}:{}", c.path, c.age), c.path.clone(), 300_000));
+    }
     for r in &snap.repos {
         acts.push(act(MAINTAIN, format!("maintain:{}", r.name), serde_json::to_string(r).map_err(|e| e.to_string())?, MAINTAIN_DEADLINE_MS));
     }
@@ -302,7 +323,7 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, _now_ms: u64) -
             }
             Ok((Carry { phase: Phase::Reclaiming, refused_cause: None, pending: acts.len() as u32 }, acts))
         }
-        Input::Outcome { effect, .. } if carry.phase == Phase::Reclaiming && [REMOVE_TARGET, PODMAN_PRUNE, TRIM_CACHE, MAINTAIN].contains(&effect.as_str()) => {
+        Input::Outcome { effect, .. } if carry.phase == Phase::Reclaiming && [REMOVE_TARGET, PODMAN_PRUNE, TRIM_CACHE, MAINTAIN, REMOVE_TMP].contains(&effect.as_str()) => {
             let pending = carry.pending.saturating_sub(1);
             Ok((if pending == 0 { Carry::default() } else { Carry { pending, ..carry.clone() } }, vec![]))
         }
@@ -321,6 +342,8 @@ pub struct Pinned {
     pub cache_dir: Option<std::path::PathBuf>,
     pub podman: String,
     pub podman_dir: Option<std::path::PathBuf>,
+    pub tmp_root: Option<std::path::PathBuf>,
+    pub tmp_idle_secs: u64,
 }
 
 fn cache_dir(get: &dyn Fn(&str) -> Result<String, String>) -> Result<Option<std::path::PathBuf>, String> {
@@ -350,12 +373,33 @@ impl Pinned {
             cache_dir: cache_dir(get)?,
             podman: get("SPIRA_RECLAIM_PODMAN")?.trim().to_string(),
             podman_dir: dir("SPIRA_RECLAIM_PODMAN_DIR")?,
+            tmp_root: dir(TMP_ROOT_KEY)?,
+            tmp_idle_secs: num(TMP_IDLE_KEY)? * 3_600,
         })
     }
 }
 
 fn epoch_now() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs())
+}
+
+fn to_candidates(planned: Vec<reclaim::Candidate>) -> Vec<Candidate> {
+    planned
+        .into_iter()
+        .map(|c| Candidate {
+            path: c.path.display().to_string(),
+            bytes: c.bytes,
+            age: c.age,
+            verdict: match c.verdict {
+                reclaim::Verdict::Reclaim => Verdict::Reclaim,
+                reclaim::Verdict::Skip(why) if why == "symlink" => Verdict::Symlink,
+                reclaim::Verdict::Skip(why) if why.starts_with("held") => Verdict::Held,
+                reclaim::Verdict::Skip(why) if why.starts_with("holds a socket") => Verdict::Special,
+                reclaim::Verdict::Skip(why) if why == "leased" => Verdict::Leased,
+                reclaim::Verdict::Skip(_) => Verdict::Fresh,
+            },
+        })
+        .collect()
 }
 
 /// The runner of [`OBSERVE`]: the host's facts, read in this process.
@@ -367,24 +411,11 @@ pub fn observe(p: &Pinned, proc_root: &std::path::Path, repos: Vec<Repo>) -> Res
     let require_ok = p.require.iter().map(|r| (r.clone(), !reclaim::glob(r).is_empty())).collect();
     let free_mib = spira_config::room::statvfs_mib(&reclaim::free_probe(&p.globs)).ok_or("cannot read free space")?;
     let held = reclaim::held_paths(proc_root);
-    let candidates = reclaim::plan(&p.globs, now, p.idle_secs, &held, p.lease_dir.as_deref())
-        .into_iter()
-        .map(|c| Candidate {
-            path: c.path.display().to_string(),
-            bytes: c.bytes,
-            age: c.age,
-            verdict: match c.verdict {
-                reclaim::Verdict::Reclaim => Verdict::Reclaim,
-                reclaim::Verdict::Skip(why) if why == "symlink" => Verdict::Symlink,
-                reclaim::Verdict::Skip(why) if why.starts_with("held") => Verdict::Held,
-                reclaim::Verdict::Skip(why) if why == "leased" => Verdict::Leased,
-                reclaim::Verdict::Skip(_) => Verdict::Fresh,
-            },
-        })
-        .collect();
+    let candidates = to_candidates(reclaim::plan(&p.globs, now, p.idle_secs, &held, p.lease_dir.as_deref()));
+    let tmp = p.tmp_root.as_deref().map(|r| to_candidates(reclaim::tmp_plan(r, reclaim::own_uid(), now, p.tmp_idle_secs, &held))).unwrap_or_default();
     let podman_bytes = p.podman_dir.as_deref().map_or(0, |d| reclaim::usage(d).bytes);
     let cache = p.cache_dir.as_deref().map(|d| reclaim::cache_files(d, now)).unwrap_or_default().into_iter().map(|(mtime, bytes, path)| CacheFile { mtime, bytes, path: path.display().to_string() }).collect();
-    serde_json::to_string(&Snapshot { repos, require_ok, free_mib, candidates, podman_bytes, cache }).map_err(|e| e.to_string())
+    serde_json::to_string(&Snapshot { repos, require_ok, free_mib, candidates, podman_bytes, cache, tmp }).map_err(|e| e.to_string())
 }
 
 /// The runner of [`REMOVE_TARGET`]: re-judges `path` at act time and removes it only when it
@@ -398,6 +429,19 @@ pub fn remove_target(p: &Pinned, proc_root: &std::path::Path, path: &str) -> Res
         return Ok(format!("kept {} (target free space reached)", path.display()));
     }
     let c = reclaim::judge(path, epoch_now(), p.idle_secs, &reclaim::held_paths(proc_root), p.lease_dir.as_deref());
+    if let reclaim::Verdict::Skip(why) = c.verdict {
+        return Err(format!("{} is not reclaimable at act time ({why}) — refusing", path.display()));
+    }
+    std::fs::remove_dir_all(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(format!("reclaimed {} {} MiB age {}s", path.display(), c.bytes >> 20, c.age))
+}
+
+/// The runner of [`REMOVE_TMP`]: re-plans the tmp root at act time and removes `path` only when
+/// it is still a top-level directory there and still reclaimable.
+pub fn remove_tmp(p: &Pinned, proc_root: &std::path::Path, path: &str) -> Result<String, String> {
+    let root = p.tmp_root.as_deref().ok_or("no tmp root is configured — refusing")?;
+    let path = std::path::Path::new(path);
+    let c = reclaim::tmp_plan(root, reclaim::own_uid(), epoch_now(), p.tmp_idle_secs, &reclaim::held_paths(proc_root)).into_iter().find(|c| c.path == path).ok_or_else(|| format!("{} is not a directory of {} this process owns — refusing", path.display(), root.display()))?;
     if let reclaim::Verdict::Skip(why) = c.verdict {
         return Err(format!("{} is not reclaimable at act time ({why}) — refusing", path.display()));
     }
@@ -499,7 +543,7 @@ mod tests {
 
     fn read(pairs: &[(&str, String)]) -> Pinned {
         let get = move |k: &str| Ok(pairs.iter().find(|(n, _)| *n == k).map_or("", |p| p.1.as_str()).to_string());
-        Pinned::read(&|k| if k.ends_with("_GIB") || k.ends_with("_DAYS") { Ok("1".into()) } else { get(k) }).unwrap()
+        Pinned::read(&|k| if k.ends_with("_GIB") || k.ends_with("_DAYS") || k.ends_with("_HOURS") { Ok("1".into()) } else { get(k) }).unwrap()
     }
 
     #[test]
@@ -535,12 +579,49 @@ mod tests {
 
     #[test]
     fn a_relative_store_root_is_refused_not_silently_untrimmed() {
-        let err = Pinned::read(&|k| Ok(match k { "SPIRA_SCCACHE_DAV_ROOT" => "store".into(), k if k.ends_with("_GIB") || k.ends_with("_DAYS") => "1".into(), _ => String::new() })).err().unwrap();
+        let err = Pinned::read(&|k| Ok(match k { "SPIRA_SCCACHE_DAV_ROOT" => "store".into(), k if k.ends_with("_GIB") || k.ends_with("_DAYS") || k.ends_with("_HOURS") => "1".into(), _ => String::new() })).err().unwrap();
         assert!(err.contains("SPIRA_SCCACHE_DAV_ROOT"), "{err}");
     }
 
     #[test]
     fn no_root_and_no_run_dir_trims_nothing() {
         assert_eq!(read(&[]).cache_dir, None);
+    }
+
+    fn tmp_pinned(root: &std::path::Path) -> Pinned {
+        Pinned { globs: vec![format!("{}/none-*", root.display())], require: vec![], lease_dir: None, idle_secs: 86_400, target_free_mib: 0, cache_dir: None, podman: String::new(), podman_dir: None, tmp_root: Some(root.join("tmp")), tmp_idle_secs: 3_600 }
+    }
+
+    fn aged_dir(root: &std::path::Path, name: &str, secs: u64) -> std::path::PathBuf {
+        let d = root.join("tmp").join(name);
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("f"), vec![1u8; 8192]).unwrap();
+        let t = std::time::SystemTime::now() - std::time::Duration::from_secs(secs);
+        for p in [d.join("f"), d.clone()] {
+            std::fs::File::open(p).unwrap().set_modified(t).unwrap();
+        }
+        d
+    }
+
+    #[test]
+    fn observe_reports_tmp_dirs_with_a_socket_dir_as_special_and_remove_tmp_refuses_what_is_not_reclaimable() {
+        let t = testkit::TempDir::new("sweep-reclaim-tmp");
+        let (idle, sock) = (aged_dir(t.path(), "tmp.idle", 86_400), aged_dir(t.path(), "tmp-1000", 86_400));
+        let _l = std::os::unix::net::UnixListener::bind(sock.join("default")).unwrap();
+        let young = aged_dir(t.path(), "tmp.young", 5);
+        let outside = t.path().join("outside");
+        std::fs::create_dir(&outside).unwrap();
+        let p = tmp_pinned(t.path());
+        let proc_root = t.path().join("proc");
+        std::fs::create_dir(&proc_root).unwrap();
+        let snap: Snapshot = serde_json::from_str(&observe(&p, &proc_root, vec![]).unwrap()).unwrap();
+        let verdict = |d: &std::path::Path| snap.tmp.iter().find(|c| c.path == d.display().to_string()).map(|c| c.verdict);
+        assert_eq!((verdict(&idle), verdict(&sock), verdict(&young)), (Some(Verdict::Reclaim), Some(Verdict::Special), Some(Verdict::Fresh)));
+        for refused in [&sock, &young, &outside] {
+            assert!(remove_tmp(&p, &proc_root, &refused.display().to_string()).is_err(), "{refused:?}");
+            assert!(refused.exists());
+        }
+        assert!(remove_tmp(&p, &proc_root, &idle.display().to_string()).unwrap().starts_with("reclaimed"));
+        assert!(!idle.exists());
     }
 }

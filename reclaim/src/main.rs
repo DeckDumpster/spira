@@ -21,6 +21,8 @@ fn parse(args: &[String]) -> Result<Config, String> {
         podman: None,
         podman_dir: None,
         podman_cap_bytes: 40 << 30,
+        tmp_root: None,
+        tmp_idle_secs: 6 * 3600,
         dry: false,
     };
     let mut it = args.iter();

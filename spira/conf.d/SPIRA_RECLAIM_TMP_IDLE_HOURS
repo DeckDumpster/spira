@@ -1,0 +1,9 @@
+TYPE=u64
+GROUP=runtime
+DOC=Hours a top-level directory of the tmp root must go untouched, unheld and socket-free before sweep.reclaim removes it.
+SCHEMA=REQUIRED: Hours a top-level directory of the tmp root (SPIRA_TMP_PROBE_PATH) must go untouched before sweep.reclaim removes it; a directory a live process stands in, or that holds a socket or fifo, is kept at any age. Declared by a spira-runtime task row written from its contract (wiki/projects/spira/designs/tasks/); its default is the contract's pin, which spira-config init writes on a fresh install and activation's config delta declares on an upgrade.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # The task contract's pin (wiki/projects/spira/designs/tasks/): spira-config init has no
+    # answer to invent for a typed key, so a fresh install could not configure without it.
+    : "${SPIRA_RECLAIM_TMP_IDLE_HOURS:=6}"
+SPIRA_CONF_DEFAULT_EOF

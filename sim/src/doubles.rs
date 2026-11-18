@@ -89,7 +89,7 @@ pub const TASK_EFFECTS: &[(&str, &[&str])] = &[
     ("hel.sweep", &["hel.sweep.observe", "hel.sweep.pr_tip", "hel.sweep.send", "hel.sweep.content_on_base", "hel.sweep.close_on_land", "hel.sweep.archive", "hel.sweep.free_worktree", "hel.sweep.orphan_worktree", "hel.sweep.prune"]),
     ("hel.reap_terminal", &["hel.reap_terminal.observe", "hel.reap_terminal.destroy_worktree", "hel.reap_terminal.remove_scratch", "hel.reap_terminal.prune"]),
     ("hel.reap_stale", &["hel.reap_stale.observe", "hel.reap_stale.destroy_worktree", "hel.reap_stale.prune"]),
-    ("sweep.reclaim", &["sweep.reclaim.observe", "sweep.reclaim.remove_target", "sweep.reclaim.podman_prune", "sweep.reclaim.trim_cache", "sweep.reclaim.maintain"]),
+    ("sweep.reclaim", &["sweep.reclaim.observe", "sweep.reclaim.remove_target", "sweep.reclaim.podman_prune", "sweep.reclaim.trim_cache", "sweep.reclaim.maintain", "sweep.reclaim.remove_tmp"]),
     ("asks.moot", &["asks.moot.observe", "asks.moot.check", "asks.moot.resolve", "asks.moot.withdraw"]),
     ("mail.tidy", &["mail.tidy.observe", "mail.tidy.archive"]),
     ("sweep.tsd", &["sweep.tsd.observe", "sweep.tsd.prune"]),

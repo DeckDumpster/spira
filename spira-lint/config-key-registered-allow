@@ -831,8 +831,6 @@ SPIRA_TMPFS_SHED_FREE_MIB gate/src/real.rs
 SPIRA_TMPFS_SHED_FREE_MIB sentinel/src/tower.rs
 SPIRA_TMPFS_SHED_FREE_MIB testenv/src/settings.rs
 SPIRA_TMPFS_SHED_FREE_MIB watchtower/src/main.rs
-SPIRA_TMP_PROBE_PATH sentinel/src/tower.rs
-SPIRA_TMP_PROBE_PATH watchtower/src/main.rs
 SPIRA_TMUX spira/owned.sh
 SPIRA_TMUX spira/uninstall.sh
 SPIRA_TOML cockpit/ops/src/tmux_env.rs
