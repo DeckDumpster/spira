@@ -1294,11 +1294,11 @@ mod locator_tests {
 
     #[test]
     fn a_worlds_sim_env_names_the_world_to_the_pilgrim_dwarf() {
-        let text = sim_env_text(Path::new("/w"), Path::new("/w/sim"), "3306", "/f");
-        let env = dwarf::pilgrim_world::model_env(Path::new("/w"), &text).unwrap();
+        let text = sim_env_text(Path::new("w"), Path::new("w/sim"), "3306", "f");
+        let env = dwarf::pilgrim_world::model_env(Path::new("w"), &text).unwrap();
         let get = |k: &str| env.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
-        assert_eq!(get("PILGRIM_TOML"), Some("/w/config/sim.toml".to_string()));
-        assert_eq!(get("PILGRIM_LC_SOCKET"), Some(lc_socket(Path::new("/w")).display().to_string()));
+        assert_eq!(get("PILGRIM_TOML"), Some("w/config/sim.toml".to_string()));
+        assert_eq!(get("PILGRIM_LC_SOCKET"), Some(lc_socket(Path::new("w")).display().to_string()));
     }
 
     #[test]
