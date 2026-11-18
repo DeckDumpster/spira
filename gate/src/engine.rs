@@ -1906,7 +1906,7 @@ impl<'w, W: World> Trial<'w, W> {
     /// Wall seconds of a phase of the branch trial, when a unit test phase ran.
     fn unit_phase_secs(&self, name: &str) -> u64 {
         match self.s.unit_timings {
-            Some(_) => self.s.phases.iter().find(|(n, _)| n == name).map_or(0, |p| p.1),
+            Some(_) => self.s.phases.iter().filter(|(n, _)| n == name || (name == "test" && n.starts_with("test-"))).map(|p| p.1).sum(),
             None => 0,
         }
     }
@@ -1918,8 +1918,9 @@ impl<'w, W: World> Trial<'w, W> {
     /// ` unit_build_secs=… unit_run_secs=… unit_tests=… unit_slowest=…` after a unit test phase; empty without one.
     fn unit_suffix(&self) -> String {
         let Some(t) = &self.s.unit_timings else { return String::new() };
+        let recompiled = parse::recompiled_secs(self.s.phases.iter().map(|(n, s)| (n.as_str(), *s))).map_or(String::new(), |_| " test_recompiled=1".into());
         format!(
-            " unit_build_secs={} unit_run_secs={} unit_tests={} unit_slowest={}",
+            " unit_build_secs={} unit_run_secs={} unit_tests={} unit_slowest={}{recompiled}",
             self.unit_phase_secs("build"),
             self.unit_phase_secs("test"),
             t.tests,
@@ -2717,7 +2718,9 @@ pub fn run_composed<W: World>(
             w.remove(&report);
         }
         let (r, o, wall) = go(name, step_env, &c, test_secs);
+        let split = if name == "test" && prefix.is_empty() && matches!(comp, Composition::Unit { .. }) { parse::test_split(&o, wall) } else { None };
         match parse::testenv_suites_secs(&o).filter(|_| reports_its_own_time(name)) {
+            _ if split.is_some() => phases.extend(split.unwrap_or_default()),
             Some(suites) => {
                 phases.push((format!("{prefix}{name}-build"), wall.saturating_sub(suites)));
                 phases.push((format!("{prefix}{name}"), suites));

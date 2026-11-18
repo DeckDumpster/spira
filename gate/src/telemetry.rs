@@ -277,6 +277,8 @@ pub fn push_metrics(sink: &spira_otel::metrics::MetricsSink, r: &GateRun) {
     let mode = if r.gate_mode.is_empty() { "unknown" } else { &r.gate_mode };
     let bt = if r.branch_type.is_empty() { "unknown" } else { &r.branch_type };
     let secs = |name, v: u64| Point::Seconds { name, value: v as f64 };
+    let parts: Vec<(&str, u64)> = r.phases.split(',').filter_map(|p| p.split_once(':')).filter_map(|(n, v)| Some((n, v.parse().ok()?))).collect();
+    let recompiled = crate::parse::recompiled_secs(parts.iter().copied());
     let covered_ran = r.phases.split(',').any(|p| p.starts_with("covered:"));
     sink.push(
         &[
@@ -291,6 +293,20 @@ pub fn push_metrics(sink: &spira_otel::metrics::MetricsSink, r: &GateRun) {
         .collect::<Vec<_>>(),
         &[("repo", &r.repo), ("status", &r.status), ("gate_mode", mode), ("branch_type", bt)],
     );
+    if parts.iter().any(|(n, _)| *n == "test-build") {
+        for (part, v) in parts.iter().filter(|(n, _)| crate::parse::TEST_PARTS.contains(n)) {
+            sink.push(
+                &[secs("spira_gate_unit_test_part_seconds", *v)],
+                &[("repo", &r.repo), ("status", &r.status), ("gate_mode", mode), ("branch_type", bt), ("part", part)],
+            );
+        }
+    }
+    if let Some(s) = recompiled {
+        sink.push(
+            &[Point::Count { name: "spira_gate_unit_test_recompiled_total", value: 1 }, secs("spira_gate_unit_test_recompile_seconds", s)],
+            &[("repo", &r.repo), ("status", &r.status), ("gate_mode", mode), ("branch_type", bt)],
+        );
+    }
 }
 
 /// The sink for `SPIRA_METRICS_ENDPOINT`; disabled when the config does not resolve.
@@ -332,6 +348,40 @@ mod tests {
         for name in ["spira_gate_run_seconds", "spira_gate_queue_seconds", "spira_gate_wait_seconds", "spira_gate_runs", "gate_mode", "branch_type"] {
             assert!(body.contains(name), "{name} missing from the push");
         }
+    }
+
+    #[test]
+    fn a_unit_trial_pushes_each_test_part_and_a_recompile() {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = l.local_addr().unwrap().to_string();
+        let h = std::thread::spawn(move || {
+            use std::io::{Read, Write};
+            let mut all = String::new();
+            for _ in 0..7 {
+                let (mut c, _) = l.accept().unwrap();
+                let mut buf = Vec::new();
+                let mut chunk = [0u8; 4096];
+                loop {
+                    let n = c.read(&mut chunk).unwrap();
+                    buf.extend_from_slice(&chunk[..n]);
+                    let Some(i) = buf.windows(4).position(|w| w == b"\r\n\r\n") else { continue };
+                    let head = String::from_utf8_lossy(&buf[..i]).to_lowercase();
+                    let len: usize = head.split("content-length: ").nth(1).unwrap().split("\r\n").next().unwrap().parse().unwrap();
+                    if buf.len() >= i + 4 + len {
+                        break;
+                    }
+                }
+                c.write_all(b"HTTP/1.1 204 No Content\r\n\r\n").unwrap();
+                all.push_str(&String::from_utf8_lossy(&buf));
+            }
+            all
+        });
+        let sink = spira_otel::metrics::MetricsSink::new(Some(&addr), "spira-gate", std::time::Duration::from_secs(2));
+        let r = GateRun { repo: "r".into(), status: "PASS".into(), phases: "build:1,test-build:207,test-list:2,test:5,test-integration:0,test-other:1".into(), ..Default::default() };
+        push_metrics(&sink, &r);
+        let body = h.join().unwrap();
+        assert!(body.contains("spira_gate_unit_test_part_seconds") && body.contains("test-build"), "{body}");
+        assert!(body.contains("spira_gate_unit_test_recompiled_total"), "{body}");
     }
 
     #[test]

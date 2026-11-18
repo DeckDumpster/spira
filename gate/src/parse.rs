@@ -779,3 +779,125 @@ mod step_tests {
         assert_eq!(slowest_step("a\t0\nb\t5\nc\t10\n", 15), Some(("a".to_string(), 5)));
     }
 }
+
+/// Seconds in cargo's `<h>h <m>m <s>s` duration (`1.39s`, `3m 27s`).
+fn cargo_duration(d: &str) -> Option<f64> {
+    let mut total = 0.0;
+    let mut any = false;
+    for w in d.split_whitespace() {
+        let (n, unit) = w.split_at(w.len().checked_sub(1)?);
+        let n: f64 = n.parse().ok()?;
+        total += n * match unit {
+            "h" => 3600.0,
+            "m" => 60.0,
+            "s" => 1.0,
+            _ => return None,
+        };
+        any = true;
+    }
+    any.then_some(total)
+}
+
+/// The seconds of a cargo `Finished \`<profile>\` profile [...] target(s) in <dur>` line.
+fn finished_secs(line: &str) -> Option<f64> {
+    let rest = line.trim_start().strip_prefix("Finished `")?;
+    let (_, rest) = rest.split_once("` profile [")?;
+    let (_, dur) = rest.split_once("target(s) in ")?;
+    cargo_duration(dur.trim())
+}
+
+/// The names `test_split` returns, in order.
+pub const TEST_PARTS: [&str; 5] = ["test-build", "test-list", "test", "test-integration", "test-other"];
+
+/// The unit test phase's wall split into [`TEST_PARTS`] by the `gate-substep` markers the phase
+/// prints. Each compile is credited to the command whose marker follows it and is capped at that
+/// command's seconds; each part is capped at what the wall has left, and `test-other` takes the
+/// rest, so the parts sum to `wall`. None when no marker is present.
+pub fn test_split(out: &str, wall: u64) -> Option<Vec<(String, u64)>> {
+    let (mut compile, mut unit, mut integ) = (0.0, None, None);
+    let mut pending = 0.0;
+    for line in out.lines() {
+        if let Some(s) = finished_secs(line) {
+            pending += s;
+            continue;
+        }
+        let Some(rest) = line.trim().strip_prefix(crate::compose::SUBSTEP_MARK) else { continue };
+        let mut w = rest.split_whitespace();
+        let (Some(label), Some(secs)) = (w.next(), w.next().and_then(|s| s.strip_prefix("secs=")?.parse::<f64>().ok())) else { continue };
+        let own = pending.min(secs);
+        pending = 0.0;
+        match label {
+            "unit" => unit = Some((secs, own)),
+            "integration" => integ = Some((secs, own)),
+            _ => continue,
+        }
+        compile += own;
+    }
+    if unit.is_none() && integ.is_none() {
+        return None;
+    }
+    let (u, uc) = unit.unwrap_or_default();
+    let (i, ic) = integ.unwrap_or_default();
+    let run = spira_config::unit_tier::timings(out).run_secs;
+    let raw = [compile, (u - uc - run).max(0.0), run, (i - ic).max(0.0)];
+    let mut left = wall;
+    let mut parts = Vec::new();
+    for (name, v) in TEST_PARTS.iter().zip(raw) {
+        let v = (v.round() as u64).min(left);
+        left -= v;
+        parts.push((name.to_string(), v));
+    }
+    parts.push((TEST_PARTS[4].to_string(), left));
+    Some(parts)
+}
+
+/// Seconds past which compiling inside the test phase, after the build phase ran, is a recompile.
+pub const RECOMPILE_SECS: u64 = 30;
+
+/// The `test-build` seconds of a gate whose build phase ran and whose test phase still compiled
+/// for more than [`RECOMPILE_SECS`]; None otherwise.
+pub fn recompiled_secs<'a>(phases: impl IntoIterator<Item = (&'a str, u64)>) -> Option<u64> {
+    let (mut built, mut test_build) = (false, 0);
+    for (n, s) in phases {
+        built |= n == "build";
+        if n == "test-build" {
+            test_build = s;
+        }
+    }
+    (built && test_build > RECOMPILE_SECS).then_some(test_build)
+}
+
+#[cfg(test)]
+mod test_split_tests {
+    use super::*;
+
+    const FIN: &str = "    Finished `test` profile [unoptimized + debuginfo] target(s) in";
+
+    fn sum(p: &[(String, u64)]) -> u64 {
+        p.iter().map(|x| x.1).sum()
+    }
+
+    #[test]
+    fn a_minutes_and_seconds_duration_is_read_as_seconds() {
+        let out = format!("{FIN} 3m 27s\ngate-substep unit secs=210\n     Summary [   1.000s] 1 test run: 1 passed, 0 skipped\n");
+        let p = test_split(&out, 211).unwrap();
+        assert_eq!(p[0], ("test-build".to_string(), 207));
+        assert_eq!(p[1], ("test-list".to_string(), 2));
+        assert_eq!(finished_secs(&format!("{FIN} 1.39s")), Some(1.39));
+    }
+
+    #[test]
+    fn an_output_with_no_marker_is_not_split() {
+        assert_eq!(test_split(&format!("{FIN} 3.00s\n"), 7), None);
+    }
+
+    #[test]
+    fn the_parts_name_the_five_and_sum_to_the_wall_even_when_the_markers_exceed_it() {
+        let out = format!("{FIN} 3.00s\ngate-substep unit secs=50\n{FIN} 3.00s\ngate-substep integration secs=40\n");
+        for wall in [0, 7, 60, 200] {
+            let p = test_split(&out, wall).unwrap();
+            assert_eq!(p.iter().map(|x| x.0.as_str()).collect::<Vec<_>>(), TEST_PARTS, "{wall}");
+            assert_eq!(sum(&p), wall, "{p:?}");
+        }
+    }
+}

@@ -204,6 +204,8 @@ pub struct UnitTimings {
     pub tests: u64,
     /// Whether the log carried a `Summary [` line: nextest's own report that it ran.
     pub summarized: bool,
+    /// The seconds in the `Summary [ <secs>s]` line; 0 when unsummarized.
+    pub run_secs: f64,
     /// `<binary> <test>` and seconds, the ten largest, ties in log order.
     pub slowest: Vec<(String, f64)>,
 }
@@ -240,9 +242,11 @@ pub fn timings(log: &str) -> UnitTimings {
     let mut seen = Vec::new();
     let mut tests = None;
     let mut summarized = false;
+    let mut run_secs = 0.0;
     for line in log.lines() {
         if let Some(rest) = line.trim_start().strip_prefix("Summary [") {
             summarized = true;
+            run_secs = rest.split_once("s]").and_then(|(s, _)| s.trim().parse().ok()).unwrap_or(0.0);
             tests = rest.split_once(']').and_then(|(_, r)| r.split_whitespace().next()?.parse().ok());
             break;
         }
@@ -251,7 +255,7 @@ pub fn timings(log: &str) -> UnitTimings {
     let tests = tests.unwrap_or(seen.len() as u64);
     seen.sort_by(|a, b| b.1.total_cmp(&a.1));
     seen.truncate(SLOWEST);
-    UnitTimings { tests, summarized, slowest: seen }
+    UnitTimings { tests, summarized, run_secs, slowest: seen }
 }
 
 impl UnitTimings {
@@ -417,6 +421,7 @@ mod tests {
         assert!(!timings("").summarized);
         assert!(!timings("bwrap: execvp cargo: No such file or directory\n").summarized);
         let t = timings("     Summary [   1.000s] 3 tests run: 3 passed, 0 skipped\n");
+        assert_eq!(t.run_secs, 1.0);
         assert!(t.summarized);
         assert_eq!(t.tests, 3);
     }
@@ -438,7 +443,7 @@ mod tests {
 
     #[test]
     fn the_slowest_field_is_name_colon_secs_joined_by_commas() {
-        let t = UnitTimings { tests: 2, summarized: true, slowest: vec![("a t1".into(), 1.5), ("b t2".into(), 0.25)] };
+        let t = UnitTimings { tests: 2, summarized: true, run_secs: 0.0, slowest: vec![("a t1".into(), 1.5), ("b t2".into(), 0.25)] };
         assert_eq!(t.slowest_field(), "a/t1:1.5,b/t2:0.25");
         assert_eq!(UnitTimings::default().slowest_field(), "-");
     }
