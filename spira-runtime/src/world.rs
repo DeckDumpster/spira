@@ -1117,7 +1117,7 @@ struct ThroughputParams {
     abandon_window_s: u64,
 }
 
-/// One store call held to what is left of its observe's bound; an absent store, or no time left,
+/// One store call held to what is left of its observe's bound; an absent store, a silent one, or no time left,
 /// answers `store unavailable`, which an observe's snapshot carries as its `why`.
 fn lc_bounded(client: &spira_store::lc_call::LcClient, total: std::time::Duration, spent: std::time::Duration, argv: &[&str]) -> Result<String, String> {
     use spira_store::lc_call::LcError;
@@ -1126,7 +1126,7 @@ fn lc_bounded(client: &spira_store::lc_call::LcClient, total: std::time::Duratio
         return Err(format!("store unavailable: tried for {} s, the observe's bound, before spira-lc {}", total.as_secs(), argv.join(" ")));
     }
     client.within(left).answer(argv).map_err(|e| match e {
-        LcError::NotRunning(m) => format!("store unavailable: {m}"),
+        LcError::NotRunning(m) | LcError::Fault(m) => format!("store unavailable: {m}"),
         e => e.to_string(),
     })
 }
@@ -1480,6 +1480,21 @@ mod bounded_store_tests {
         let why = lc_bounded(&client, Duration::from_secs(25), Duration::from_secs(10), &["dwell"]).unwrap_err();
         assert!(why.starts_with("store unavailable:") && why.contains("waited 15 s"), "{why}");
         assert_eq!(*double.0.lock().unwrap(), [Duration::from_secs(15)], "the client was bounded by the time left");
+    }
+
+    #[test]
+    fn a_store_that_accepts_and_never_replies_is_unavailable_inside_the_bound() {
+        let t = testkit::TempDir::new("observe-silent");
+        let listener = std::os::unix::net::UnixListener::bind(t.path().join("sock")).unwrap();
+        std::thread::spawn(move || {
+            let held: Vec<_> = listener.incoming().flatten().collect();
+            drop(held);
+        });
+        let client = LcClient::socket(t.path().join("sock"));
+        let (done, answered) = std::sync::mpsc::channel();
+        std::thread::spawn(move || done.send(lc_bounded(&client, Duration::from_secs(25), Duration::from_secs(24), &["list"])).unwrap()); // BDQ_READ_CONSIDERED="LcClient is the spira-lc door; no bdq"
+        let why = answered.recv_timeout(Duration::from_secs(3)).expect("the call returns inside what was left of the bound").unwrap_err(); // clock-safe: caps the wait for the call to return
+        assert!(why.starts_with("store unavailable"), "{why}");
     }
 
     #[test]

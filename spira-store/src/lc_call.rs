@@ -104,9 +104,10 @@ pub struct Socket {
 }
 
 impl Socket {
-    fn call(&self, argv: &[String], stdin: Option<&str>, not_running_wait: Duration) -> Result<Reply, Fail> {
+    fn call(&self, argv: &[String], stdin: Option<&str>, deadline: Duration, not_running_wait: Duration) -> Result<Reply, Fail> {
         let down = |e: &dyn std::fmt::Display| Fail::Final(format!("cannot tell: the lifecycle service is not answering on {}: {e} — nothing was read or written", self.path.display()));
         let wait = if argv.first().is_some_and(|v| SWEEPS.contains(&v.as_str())) { SWEEP_DEADLINE } else { DEADLINE };
+        let wait = if deadline == DEADLINE { wait } else { wait.min(deadline) };
         retrying(argv, &self.path, wait, not_running_wait, |left| {
             let stream = connect(&self.path)?;
             let left = left.max(Duration::from_millis(1));
@@ -118,11 +119,11 @@ impl Socket {
 
 impl Transport for Socket {
     fn exchange(&self, argv: &[String], stdin: Option<&str>, deadline: Duration) -> Result<Reply, String> {
-        self.call(argv, stdin, deadline).map_err(Fail::into_text)
+        self.call(argv, stdin, deadline, deadline).map_err(Fail::into_text)
     }
 
-    fn exchange_kind(&self, argv: &[String], stdin: Option<&str>, _deadline: Duration, not_running_wait: Duration) -> Result<Reply, LcError> {
-        self.call(argv, stdin, not_running_wait).map_err(|f| match f {
+    fn exchange_kind(&self, argv: &[String], stdin: Option<&str>, deadline: Duration, not_running_wait: Duration) -> Result<Reply, LcError> {
+        self.call(argv, stdin, deadline, not_running_wait).map_err(|f| match f {
             Fail::NotRunning(m) => LcError::NotRunning(m),
             f => LcError::Fault(f.into_text()),
         })
@@ -412,8 +413,8 @@ impl LcClient {
         Self::for_bin(&crate::lifecycle_row::lc_bin()?)
     }
 
-    /// Bounds a program call at `d` and the wait for an absent store at `d`; a socket
-    /// exchange that reached the store keeps [`DEADLINE`].
+    /// Bounds a call at `d`: a program run, the wait for an absent store, and a socket exchange
+    /// that reached the store. A client never bounded keeps [`DEADLINE`] (a sweep, [`SWEEP_DEADLINE`]).
     pub fn within(&self, d: Duration) -> Self {
         LcClient { deadline: d, not_running_wait: d, ..self.clone() }
     }
@@ -647,6 +648,23 @@ mod tests {
         let dir = testkit::TempDir::new("lc-call-wait");
         let e = LcClient::socket(dir.join("sock")).within(Duration::from_millis(300)).call(&["hold", "sp-a", "wait"]).unwrap_err();
         assert!(matches!(&e, LcError::NotRunning(m) if m.contains("store not running") && m.contains("nothing was sent")), "{e:?}");
+    }
+
+    #[test]
+    fn a_store_that_accepts_and_never_replies_is_cut_at_the_bound() {
+        let dir = testkit::TempDir::new("lc-call-silent");
+        let listener = std::os::unix::net::UnixListener::bind(dir.join("silent")).unwrap();
+        std::thread::spawn(move || {
+            let mut open = Vec::new();
+            for s in listener.incoming().flatten() {
+                open.push(s);
+            }
+        });
+        let client = LcClient::socket(dir.join("silent")).within(Duration::from_millis(300));
+        let (done, answered) = std::sync::mpsc::channel();
+        std::thread::spawn(move || done.send(client.call(&["list"])).unwrap());
+        let r = answered.recv_timeout(Duration::from_secs(1)).expect("the call returns at the bound, not at DEADLINE"); // clock-safe: caps the wait for the call to return
+        assert!(r.is_err(), "{r:?}");
     }
 
     #[test]
