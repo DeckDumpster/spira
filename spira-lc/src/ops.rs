@@ -518,7 +518,9 @@ mod tests {
         assert_eq!(machine_arg("ops-transitions", &[], &TRANSITION_MACHINES), Ok("bead"));
         assert_eq!(machine_arg("ops-transitions", &["--machine".into(), "batch".into()], &TRANSITION_MACHINES), Ok("batch"));
         assert_eq!(machine_arg("ops-transitions", &["--machine".into(), "bead' OR 1=1 --".into()], &TRANSITION_MACHINES).unwrap_err().0, 2);
-        assert_eq!(machine_arg("ops-transitions", &["--machine".into(), "ask".into()], &TRANSITION_MACHINES).unwrap_err().0, 2);
+        let refused = machine_arg("ops-transitions", &["--machine".into(), "ask".into()], &TRANSITION_MACHINES).unwrap_err();
+        assert_eq!(refused.0, 2);
+        assert!(refused.1.starts_with("ops-transitions:"), "{}", refused.1);
     }
 
     #[test]
