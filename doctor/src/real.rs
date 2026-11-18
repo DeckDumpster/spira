@@ -6,7 +6,7 @@
 //! derives is captured ONCE at startup, under `SPIRA_DOCTOR=1` exactly as doctor.sh itself
 //! sourced it, so every check reads a consistent snapshot rather than re-sourcing per call.
 
-use crate::ports::{Placement, StoreMeta, World};
+use crate::ports::{Placement, RootScan, RootWriter, StoreMeta, World};
 use std::collections::BTreeMap;
 use std::net::{TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
@@ -508,6 +508,16 @@ impl World for Real {
         judge_placement(p, Path::new(system_paths::ROOT), &mounts)
     }
 
+    fn root_writers(&self) -> RootScan {
+        scan_root_writers(Path::new(system_paths::PROC), Path::new(system_paths::ROOT), std::process::id())
+    }
+
+    fn root_targets(&self) -> Vec<PathBuf> {
+        let mut parents = vec![PathBuf::from(system_paths::VAR_TMP)];
+        parents.extend(self.env("HOME").filter(|h| !h.is_empty()).map(PathBuf::from));
+        parents.iter().flat_map(|p| target_roots_in(p, Path::new(system_paths::ROOT))).collect()
+    }
+
     fn git_daemon_base_paths(&self, port: u16) -> Vec<String> {
         let Ok(rd) = std::fs::read_dir(system_paths::PROC) else { return Vec::new() };
         rd.flatten()
@@ -679,16 +689,14 @@ pub fn placement_roots_from(cfg: impl Fn(&str) -> Option<String>, dwarf_bases: V
 /// Follows `p`'s symlinks and compares its device with `root`'s. `mounts` is `/proc/self/mounts`
 /// text, used only to name the filesystem of a path that is on root.
 pub fn judge_placement(p: &Path, root: &Path, mounts: &str) -> Placement {
-    use std::os::unix::fs::MetadataExt;
     let canonical = match p.canonicalize() {
         Ok(c) => c,
         Err(e) => return Placement::Unresolved(format!("{}: {e}", p.display())),
     };
-    let (Ok(have), Ok(want)) = (std::fs::metadata(&canonical), std::fs::metadata(root)) else {
-        return Placement::Unresolved(format!("cannot stat {} or {}", canonical.display(), root.display()));
-    };
-    if have.dev() != want.dev() {
-        return Placement::Elsewhere;
+    match same_device(&canonical, root) {
+        None => return Placement::Unresolved(format!("cannot stat {} or {}", canonical.display(), root.display())),
+        Some(false) => return Placement::Elsewhere,
+        Some(true) => {}
     }
     let source = mounts
         .lines()
@@ -701,4 +709,89 @@ pub fn judge_placement(p: &Path, root: &Path, mounts: &str) -> Placement {
         .map(|(src, _)| src.to_string())
         .unwrap_or_else(|| "unknown".into());
     Placement::OnRoot { canonical, source }
+}
+
+/// Whether `p` (symlinks followed) is on `root`'s device; `None` when either cannot be stat'd.
+pub fn same_device(p: &Path, root: &Path) -> Option<bool> {
+    use std::os::unix::fs::MetadataExt;
+    Some(std::fs::metadata(p).ok()?.dev() == std::fs::metadata(root).ok()?.dev())
+}
+
+/// `O_ACCMODE` of an `fdinfo` `flags:` line (octal) is `O_WRONLY` or `O_RDWR`.
+pub fn fdinfo_writable(fdinfo: &str) -> bool {
+    fdinfo
+        .lines()
+        .find_map(|l| l.strip_prefix("flags:"))
+        .and_then(|v| u32::from_str_radix(v.trim(), 8).ok())
+        .is_some_and(|f| matches!(f & 0o3, 1 | 2))
+}
+
+/// The two environ keys a build is recognised by; every other key is dropped unread.
+fn build_env_of(environ: &[u8]) -> (bool, Option<String>) {
+    let (mut wrapper, mut target) = (false, None);
+    for kv in environ.split(|b| *b == 0) {
+        let Some(at) = kv.iter().position(|b| *b == b'=') else { continue };
+        match &kv[..at] {
+            b"RUSTC_WRAPPER" => wrapper = true,
+            b"CARGO_TARGET_DIR" if at + 1 < kv.len() => target = Some(String::from_utf8_lossy(&kv[at + 1..]).into_owned()),
+            _ => {}
+        }
+    }
+    (wrapper, target)
+}
+
+/// A build env key, or a container scope in the cgroup path.
+pub fn is_build(environ: &[u8], cgroup: &str) -> bool {
+    let (wrapper, target) = build_env_of(environ);
+    wrapper || target.is_some() || cgroup_path(cgroup).split('/').any(|c| c.starts_with("libpod-") && c.ends_with(".scope"))
+}
+
+fn cgroup_path(cgroup: &str) -> &str {
+    cgroup.lines().find_map(|l| l.strip_prefix("0::")).unwrap_or("").trim()
+}
+
+/// The last component of the `0::` cgroup path.
+pub fn cgroup_unit(cgroup: &str) -> String {
+    cgroup_path(cgroup).rsplit('/').next().unwrap_or("").to_string()
+}
+
+pub fn scan_root_writers(proc: &Path, root: &Path, own: u32) -> RootScan {
+    let Ok(rd) = std::fs::read_dir(proc) else { return RootScan::Blind(format!("cannot read {}", proc.display())) };
+    let (mut readable, mut out) = (0usize, Vec::new());
+    for e in rd.flatten() {
+        let Some(pid) = e.file_name().to_str().and_then(|n| n.parse::<u32>().ok()).filter(|p| *p != own) else { continue };
+        let dir = e.path();
+        let Ok(fds) = std::fs::read_dir(dir.join("fd")) else { continue };
+        readable += 1;
+        let environ = std::fs::read(dir.join("environ")).unwrap_or_default();
+        let cgroup = std::fs::read_to_string(dir.join("cgroup")).unwrap_or_default();
+        let mut paths: Vec<PathBuf> = fds
+            .flatten()
+            .filter(|f| std::fs::read_to_string(dir.join("fdinfo").join(f.file_name())).is_ok_and(|i| fdinfo_writable(&i)))
+            .filter_map(|f| std::fs::read_link(f.path()).ok())
+            .filter(|l| l.is_absolute())
+            .collect();
+        paths.extend(build_env_of(&environ).1.map(PathBuf::from));
+        paths.sort();
+        paths.dedup();
+        let comm = std::fs::read_to_string(dir.join("comm")).unwrap_or_default().trim().to_string();
+        let (unit, build) = (cgroup_unit(&cgroup), is_build(&environ, &cgroup));
+        out.extend(
+            paths
+                .into_iter()
+                .filter(|p| same_device(p, root) == Some(true))
+                .map(|path| RootWriter { pid, comm: comm.clone(), unit: unit.clone(), path, build }),
+        );
+    }
+    if readable == 0 {
+        return RootScan::Blind(format!("no {}/<pid>/fd directory could be read", proc.display()));
+    }
+    RootScan::Seen(out)
+}
+
+pub fn target_roots_in(parent: &Path, root: &Path) -> Vec<PathBuf> {
+    let Ok(rd) = std::fs::read_dir(parent) else { return Vec::new() };
+    let mut v: Vec<PathBuf> = rd.flatten().map(|e| e.path()).filter(|p| p.join("CACHEDIR.TAG").is_file() && same_device(p, root) == Some(true)).collect();
+    v.sort();
+    v
 }

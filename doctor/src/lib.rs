@@ -80,6 +80,7 @@ pub fn run(w: &dyn World) -> i32 {
         Section { title: "compilation cache backend", lines: check_sccache_backend(w) },
         Section { title: "dwarf build directories", lines: check_dwarf_build(w) },
         Section { title: "disk placement", lines: check_disk_placement(w) },
+        Section { title: "root-disk writers", lines: check_root_writers(w) },
         Section { title: "round-vm mirror", lines: check_round_vm_mirror(w) },
         Section { title: "events substrate", lines: check_events_probe(w) },
         Section {
@@ -658,6 +659,54 @@ pub fn check_disk_placement(w: &dyn World) -> Vec<Line> {
             }
         })
         .collect()
+}
+
+// ============================================================================ root-disk writers
+
+/// Detects, never repairs: lists what writes to the root filesystem now, one line per
+/// (unit, command, directory), and every cargo target root left on it.
+pub fn check_root_writers(w: &dyn World) -> Vec<Line> {
+    use ports::RootScan;
+    use std::collections::BTreeMap;
+    let mut lines = Vec::new();
+    let mut held: Vec<PathBuf> = Vec::new();
+    match w.root_writers() {
+        RootScan::Blind(why) => lines.push(warn(format!("cannot tell who writes to the root filesystem: {why}"), "an unreadable /proc is not evidence of no writers.")),
+        RootScan::Seen(writers) => {
+            held = writers.iter().map(|x| x.path.clone()).collect();
+            type Group = (Vec<u32>, bool, Vec<PathBuf>);
+            let mut groups: BTreeMap<(String, String, PathBuf), Group> = BTreeMap::new();
+            for x in &writers {
+                let dir = x.path.parent().map(Path::to_path_buf).unwrap_or_else(|| x.path.clone());
+                let g = groups.entry((x.unit.clone(), x.comm.clone(), dir)).or_default();
+                if !g.0.contains(&x.pid) {
+                    g.0.push(x.pid);
+                }
+                g.1 |= x.build;
+                g.2.push(x.path.clone());
+            }
+            for ((unit, comm, dir), (pids, build, paths)) in groups {
+                let shown = if paths.len() == 1 { paths[0].clone() } else { dir };
+                let pid_list = pids.iter().map(u32::to_string).collect::<Vec<_>>().join(",");
+                let msg = format!("{comm} ({} pid{}: {pid_list}) in {unit} writes to the root filesystem: {}", pids.len(), if pids.len() == 1 { "" } else { "s" }, shown.display());
+                lines.push(if build {
+                    fail(msg, "a build or test writing to the root disk breaks the disk model; point its cargo home, target and temp dirs at their SSD per wiki disk-model.")
+                } else {
+                    warn(msg, "")
+                });
+            }
+        }
+    }
+    for t in w.root_targets().into_iter().filter(|t| !held.iter().any(|h| h.starts_with(t))) {
+        lines.push(warn(
+            format!("cargo target on the root filesystem: {} — no live process holds it; reclaim it (lossless) and point whatever made it at its SSD per wiki disk-model", t.display()),
+            "",
+        ));
+    }
+    if lines.is_empty() {
+        lines.push(ok("no process writes to the root filesystem"));
+    }
+    lines
 }
 
 // ============================================================================ round-vm mirror

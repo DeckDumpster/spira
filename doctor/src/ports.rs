@@ -152,6 +152,13 @@ pub trait World {
     /// Where `p` lands once symlinks are followed, against the root filesystem.
     fn placement_of(&self, p: &Path) -> Placement;
 
+    /// Every process holding a file open for writing, or building into a `CARGO_TARGET_DIR`,
+    /// on the root filesystem right now.
+    fn root_writers(&self) -> RootScan;
+    /// Direct children of `/var/tmp` and `$HOME` that are cargo target roots on the root
+    /// filesystem. Named, never sized.
+    fn root_targets(&self) -> Vec<PathBuf>;
+
     /// The `--base-path` of every `git daemon` process serving `port`, read from the process
     /// table. Empty when none is.
     fn git_daemon_base_paths(&self, port: u16) -> Vec<String>;
@@ -182,4 +189,24 @@ pub enum Placement {
     OnRoot { canonical: PathBuf, source: String },
     Elsewhere,
     Unresolved(String),
+}
+
+/// One process writing to the root filesystem.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RootWriter {
+    pub pid: u32,
+    pub comm: String,
+    /// The last component of the process's cgroup path.
+    pub unit: String,
+    pub path: PathBuf,
+    /// Belongs to a build or test: a harness build env, or a container scope.
+    pub build: bool,
+}
+
+/// What a scan of `/proc` found. `Blind` is a scan that could read no process at all, which
+/// must never read as "no writers".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RootScan {
+    Seen(Vec<RootWriter>),
+    Blind(String),
 }
