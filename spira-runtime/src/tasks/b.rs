@@ -396,7 +396,7 @@ pub mod kit {
                 None => 0,
                 Some(j) => {
                     let v = cfg.get(j).ok_or_else(|| format!("{j} is read but not declared"))?;
-                    v.trim().parse::<u64>().map_err(|_| format!("{j} must be a non-negative integer, got {v:?}"))? * 1000
+                    v.trim().parse::<u64>().ok().and_then(|s| s.checked_mul(1000)).ok_or_else(|| format!("{j} must be a non-negative integer of seconds, got {v:?}"))?
                 }
             };
             return Calendar::parse(raw).map(|c| Cadence::Calendar(c, jitter_ms)).map_err(|e| format!("{key}: {e}"));

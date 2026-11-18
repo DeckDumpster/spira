@@ -312,3 +312,25 @@ fn a_jitter_of_zero_fires_exactly_on_the_slot() {
     assert_eq!(first_fire(&zero, 1), SLOT_MS);
     assert_eq!(first_fire(&zero, 2), SLOT_MS);
 }
+
+#[test]
+fn a_fired_tick_rearms_the_next_slot_plus_a_seeded_offset() {
+    let d = testkit::TempDir::new("repo-contract-rearm");
+    let r = rig(&snap(vec![], &[]), d.path());
+    let next = r.engine().next_timer_at().expect("the fire re-arms");
+    let slot = NOW + SLOT;
+    assert!((slot..slot + 600_000).contains(&next), "{next} outside [{slot}, +600 s)");
+}
+
+#[test]
+fn a_jitter_that_overflows_milliseconds_refuses_the_build() {
+    let big = [(task::CADENCE_KEY, "*-*-* 05:10:00"), (task::JITTER_KEY, "18446744073709551615")];
+    assert!(<H as Stub>::from_cfg(&t::lookup::<H>(&big)).is_err());
+}
+
+#[test]
+fn only_the_tasks_that_declare_no_jitter_key_have_none() {
+    use spira_runtime::tasks::c::{sweep_escape_census, sweep_tsd};
+    assert!(task::SPEC.jitter_key == Some(task::JITTER_KEY));
+    assert!(sweep_escape_census::SPEC.jitter_key.is_none() && sweep_tsd::SPEC.jitter_key.is_none());
+}
