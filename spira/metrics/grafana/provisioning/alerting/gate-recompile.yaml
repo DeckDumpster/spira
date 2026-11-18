@@ -39,7 +39,7 @@ groups:
         annotations:
           summary: 'gate {{ $labels.repo }} recompiled inside its unit test phase for {{ printf "%.0f" $values.B.Value }}s'
         notification_settings:
-          receiver: grafana-default-email
+          receiver: spira-page
           group_by: [repo]
           group_wait: 30s
           repeat_interval: 8760h

@@ -69,6 +69,7 @@ grafana)
         --user 0:0 -p "$host:$port:3000" \
         -e GF_SECURITY_ADMIN_PASSWORD__FILE=/run/credential \
         -e GF_ANALYTICS_REPORTING_ENABLED=false -e GF_ANALYTICS_CHECK_FOR_UPDATES=false -e GF_USERS_ALLOW_SIGN_UP=false -e GF_AUTH_ANONYMOUS_ENABLED=false -e "GF_INSTALL_PLUGINS=$VL_PLUGIN" \
+        -e "SPIRA_PAGE_URL=${SPIRA_PAGE_URL:-http://127.0.0.1:9/unconfigured}" \
         -v "$cred:/run/credential:ro" -v "$data/grafana:/var/lib/grafana" \
         -v "$HERE/metrics/grafana/provisioning:/etc/grafana/provisioning:ro" \
         -v "$HERE/metrics/grafana/dashboards:/var/lib/grafana-dashboards:ro" \
