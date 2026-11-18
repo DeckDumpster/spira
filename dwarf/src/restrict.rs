@@ -106,7 +106,7 @@ const CONDITIONAL: &[&str] = &[
     "SCCACHE_IGNORE_SERVER_IO_ERROR",
     "SCCACHE_WEBDAV_ENDPOINT",
     "SCCACHE_WEBDAV_KEY_PREFIX",
-    // Fences, not credentials: each value only refuses (law-aeons-hold-no-forge-credential).
+    // Fences, not credentials: each value only refuses.
     "GH_CONFIG_DIR",
     "GIT_SSH_COMMAND",
     "GIT_ASKPASS",
