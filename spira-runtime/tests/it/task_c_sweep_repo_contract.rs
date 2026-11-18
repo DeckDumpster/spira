@@ -330,9 +330,13 @@ fn a_jitter_that_overflows_milliseconds_refuses_the_build() {
 }
 
 #[test]
-fn only_the_tasks_that_declare_no_jitter_key_have_none() {
-    use spira_runtime::tasks::c::{sweep_escape_census, sweep_tsd};
+fn every_calendar_task_wires_the_jitter_key_it_declares() {
+    use spira_runtime::tasks::c::{hel_reap_terminal, hel_sweep, roundvm_ami_prune, sweep_escape_census, sweep_nix_gc, sweep_tsd};
     assert!(task::SPEC.jitter_key == Some(task::JITTER_KEY));
+    assert!(hel_reap_terminal::SPEC.jitter_key == Some(hel_reap_terminal::JITTER_KEY));
+    assert!(hel_sweep::SPEC.jitter_key == Some(hel_sweep::JITTER_KEY));
+    assert!(roundvm_ami_prune::SPEC.jitter_key == Some(roundvm_ami_prune::JITTER_KEY));
+    assert!(sweep_nix_gc::SPEC.jitter_key == Some(sweep_nix_gc::JITTER_KEY));
     assert!(sweep_escape_census::SPEC.jitter_key.is_none() && sweep_tsd::SPEC.jitter_key.is_none());
 }
 
