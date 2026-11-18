@@ -305,7 +305,8 @@ mod tests {
     fn the_sweep_names_the_scheduler_not_a_sentinel_timer() {
         let out = render(&SweepData::fixture_nominal(1_700_000_000));
         assert!(!out.contains("sentinel timer"));
-        assert!(out.contains("scheduler (spira-runtime)"));
+        let line = out.lines().find(|l| l.contains("scheduler (spira-runtime)")).expect("scheduler line");
+        assert!(line.contains("sentinel pass") && !line.contains('{'), "{line}");
     }
 
     #[test]
