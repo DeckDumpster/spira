@@ -197,7 +197,7 @@ fn brief_with_spec(toml: Option<&std::path::Path>) -> Result<String, String> {
     std::fs::create_dir_all(home.join("runes")).unwrap();
     std::fs::write(home.join("runes").join("ops.rune"), "RUNE_NAME=ops\nRUNE_MEMORY_PREFIXES=\"law-,sop-\"\nRUNE_TOOLS=Read\nRUNE_SYSTEM_PROMPT=replace\n").unwrap();
     for registry in ["conf.d", "conf.toml.d"] {
-        std::os::unix::fs::symlink(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira").join(registry), home.join(registry)).unwrap();
+        std::os::unix::fs::symlink(testkit::manifest_dir().join("../spira").join(registry), home.join(registry)).unwrap();
     }
     let cache = ws.join("memories.json");
     std::fs::write(&cache, r#"{"law-a":"be careful"}"#).unwrap();
