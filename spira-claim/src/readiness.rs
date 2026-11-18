@@ -21,7 +21,7 @@ fn claimable(kind: Kind) -> bool {
 /// The `publish-readiness` payload for `live` records. `lc` holds them and their blockers;
 /// `bd` the content that names each one's blockers; `entries` the verdicts the claim rule
 /// reached for the READY and REWORK ones. A record the claim rule did not judge is not
-/// claimable, and waits on every blocker that has not finished.
+/// claimable, and waits on every unfinished blocker except a parent that does not hold it back.
 pub fn payload(live: &[&LifecycleRow], lc: &HashMap<String, LifecycleRow>, bd: &HashMap<String, ReadyRow>, entries: &[Entry], computed_at: &str, planning_watermark: Option<&str>) -> String {
     let verdicts: HashMap<&str, &Entry> = entries.iter().map(|e| (e.id.as_str(), e)).collect();
     let judged: Vec<Value> = live
