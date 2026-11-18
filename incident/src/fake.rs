@@ -22,7 +22,7 @@ pub(crate) struct FakeBd {
     pub(crate) duplicated: RefCell<Vec<(String, String)>>,
     pub(crate) labels: RefCell<HashMap<String, Vec<String>>>,
     pub(crate) notes: RefCell<HashMap<String, Vec<String>>>,
-    pub(crate) repos: RefCell<HashMap<String, String>>,
+    pub(crate) create_labels: RefCell<HashMap<String, String>>,
     pub(crate) next_id: RefCell<u32>,
     /// `bd show` calls made: the label-keyed dedup must make none.
     pub(crate) shows: RefCell<usize>,
@@ -55,6 +55,7 @@ impl Bd for FakeBd {
         *n += 1;
         self.created.borrow_mut().push((title.to_string(), external_ref.to_string()));
         self.bodies.borrow_mut().insert(id.clone(), _body.to_string());
+        self.create_labels.borrow_mut().insert(id.clone(), labels.to_string());
         self.rows.borrow_mut().push(BeadRow {
             id: id.clone(),
             status: BeadStatus::Open,
@@ -82,13 +83,6 @@ impl Bd for FakeBd {
     }
     fn note(&self, _db: &str, id: &str, text: &str) -> bool {
         self.notes.borrow_mut().entry(id.to_string()).or_default().push(text.to_string());
-        true
-    }
-    fn set_state(&self, _db: &str, _id: &str, _kv: &str) -> bool {
-        true
-    }
-    fn set_repo(&self, id: &str, repo: &str) -> bool {
-        self.repos.borrow_mut().insert(id.to_string(), repo.to_string());
         true
     }
     fn reopen(&self, _db: &str, id: &str, _cause: &str) -> bool {
