@@ -224,6 +224,7 @@ pub fn send_with(bd: &dyn Bd, env: &Env, args: &SendArgs, mut body: String, deli
         }
     }
 
+    let sent_body = body.clone();
     let mut rerouted = false;
     if mailbox == "operator" && !args.digest && env.operator_considered.is_none() {
         if let Some(why) = operator_refusal(args.kind, args.default, args.class, &body, args.requested_by) {
@@ -279,7 +280,7 @@ pub fn send_with(bd: &dyn Bd, env: &Env, args: &SendArgs, mut body: String, deli
     };
 
     if env.lint_considered.is_none() {
-        let input = LintInput { from: &from, subject: args.subject, kind: args.kind, default: args.default, urgent: args.urgent, body: &body, digest: args.digest };
+        let input = LintInput { from: &from, subject: args.subject, kind: args.kind, default: args.default, urgent: args.urgent, body: &sent_body, digest: args.digest };
         if let Err(e) = lint::lint_check(&input, &env.kinds_dir, env.id_prefix_for_regex()) {
             if is_operator {
                 repeat::repeat_release(repeat_guard.take().unwrap());
@@ -1004,6 +1005,25 @@ mod probe_tests {
             assert_eq!(root_mailbox_entries(t.path(), "operator"), 0, "{kind}/{default}/{class}");
             assert_eq!(root_mailbox_entries(t.path(), "concierge"), 1, "{kind}/{default}/{class}");
         }
+    }
+
+    #[test]
+    fn a_question_with_no_sections_of_its_own_is_refused_not_rerouted() {
+        let t = testkit::TempDir::new("mail-own-sections");
+        std::fs::create_dir_all(t.path().join("kinds")).unwrap();
+        std::fs::write(t.path().join("kinds/question.md"), "---\nrequires: X-Spira-Default\n---\n\n## Question\n\n## Default\n").unwrap();
+        let mut e = env(t.path());
+        e.lint_considered = None;
+        let a = SendArgs { class: "policy", bead: "sp-work1", ..args("x", false) };
+        for body in ["", "no sections here\n"] {
+            let msg = send(&FakeBd::new(vec![]), &e, &a, body.into()).unwrap_err();
+            assert!(msg.contains("section \"Question\" is empty") && msg.contains("section \"Default\" is empty"), "{msg}");
+            assert_eq!(root_mailbox_entries(t.path(), "operator"), 0);
+            assert_eq!(root_mailbox_entries(t.path(), "concierge"), 0);
+        }
+        send(&FakeBd::new(vec![]), &e, &a, "## Question\nx?\n\n## Default\ny\n".into()).unwrap();
+        assert_eq!(root_mailbox_entries(t.path(), "operator"), 0);
+        assert_eq!(root_mailbox_entries(t.path(), "concierge"), 1);
     }
 
     const THREE_PARAS: &str = "first paragraph\n\nsecond paragraph\n\nthird paragraph";
