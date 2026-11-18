@@ -528,7 +528,7 @@ fn pool_rows(rows: &[serde_json::Value], repo: &str) -> (Vec<PoolRow>, Vec<LeftO
     let mut left = Vec::new();
     let mut pool: Vec<PoolRow> = rows
         .iter()
-        .filter(|r| r.get("repo").and_then(|v| v.as_str()).map_or(true, |name| name == repo))
+        .filter(|r| r.get("repo").and_then(|v| v.as_str()).is_none_or(|name| name == repo))
         .filter(|r| in_pool_states(r))
         .filter_map(|r| {
             let id = r.get("bead_id")?.as_str()?.to_string();
