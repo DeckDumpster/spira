@@ -1465,8 +1465,7 @@ mod tests {
         assert_eq!(b.1, "CARGO_BUILD_JOBS=4 cargo test --no-run --timings --features integration -p gate -p queue");
         assert_eq!(t.0, "test");
         assert!(t.1.contains("; tools/test-sandbox/runner --around cargo nextest run --config-file target/gate-unit-nextest.toml --no-fail-fast --features integration -p gate -p queue --lib --bins; "), "{}", t.1);
-        assert!(t.1.contains("; cargo test --no-fail-fast --features integration -p gate -p queue --test '*'; "), "{}", t.1);
-        assert!(t.1.contains("; cargo test --no-fail-fast --features integration -p gate -p queue --test '*'; "), "{}", t.1);
+        assert!(t.1.contains("; cargo test --no-fail-fast --features integration -p gate -p queue --test '*'; _g_r=$?; [ \"$_g_rc\" -ne 0 ] || _g_rc=$_g_r; exit $_g_rc"), "{}", t.1);
     }
 
     #[test]
