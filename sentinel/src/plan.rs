@@ -185,6 +185,8 @@ pub struct CallPlan {
     pub task_limit: Option<TaskLimit>,
     /// Each class with a limit: its declarers' live count after this pass's calls, and their ready beads left uncalled.
     pub bound: Vec<Bound>,
+    /// Each rune that ends the pass with ready work (or an unreadable count) and no call, with the refusal that stopped it.
+    pub uncalled: BTreeMap<String, String>,
     /// The pass log, one line per refusal or call, as the binary printed them.
     pub log: Vec<String>,
 }
@@ -266,6 +268,13 @@ impl Planner<'_> {
         self.plan.log.push(line);
     }
 
+    fn refuse(&mut self, f: &str, reason: String) {
+        self.log(format!("CHECK7 {f}: {reason}"));
+        if self.ready_of(f) != Some(0) {
+            self.plan.uncalled.insert(f.to_string(), reason);
+        }
+    }
+
     /// `call_rune` past the pass-wide gates: the fleet ceiling, the elastic
     /// hold, readiness and the persona's own cap. A planned call counts as live at once.
     fn call(&mut self, f: &str, pool: Option<i64>, require_express: bool) -> bool {
@@ -273,20 +282,20 @@ impl Planner<'_> {
         if let Some(max_live) = self.w.max_live_dwarves {
             let live_all = self.live_total();
             if live_all >= max_live {
-                self.log(format!("CHECK7 {f}: {live_all}/{max_live} dwarf(s) live across the whole fleet — not calling"));
+                self.refuse(f, format!("{live_all}/{max_live} dwarf(s) live across the whole fleet — not calling"));
                 return false;
             }
             if rune.elastic && max_live - live_all == 1 {
                 let held = self.w.task.iter().filter(|t| !t.elastic).find_map(|t| self.ready_of(&t.name).filter(|n| *n > 0).map(|n| (t.name.clone(), n)));
                 if let Some((nef, n)) = held {
-                    self.log(format!("CHECK7 {f}: 1 fleet slot remaining, held back — {nef} has {n} ready bead(s)"));
+                    self.refuse(f, format!("1 fleet slot remaining, held back — {nef} has {n} ready bead(s)"));
                     return false;
                 }
             }
         }
         let ready = match self.ready.get(f).copied().flatten() {
             None => {
-                self.log(format!("CHECK7 {f}: CLAIM-ERROR: the ready count could not be read — not counted as zero ready, not calling this pass"));
+                self.refuse(f, "CLAIM-ERROR: the ready count could not be read — not counted as zero ready, not calling this pass".into());
                 return false;
             }
             Some(n) => n,
@@ -301,14 +310,14 @@ impl Planner<'_> {
                 continue;
             }
             if !rune.reactive {
-                self.log(format!("CHECK7 {f}: {c} {held} of {limit} held — no backfill"));
+                self.refuse(f, format!("{c} {held} of {limit} held — no backfill"));
                 return false;
             }
             self.log(format!("CHECK7 {f}: {c} {held} of {limit} held — reactive, starting over the limit"));
         }
         let free = self.free(f, pool);
         if free == 0 {
-            self.log(format!("CHECK7 {f}: {ready} ready, at concurrency cap"));
+            self.refuse(f, format!("{ready} ready, at concurrency cap"));
             return false;
         }
         let restricted = if require_express { ", restricted to express" } else { "" };
@@ -362,6 +371,11 @@ pub fn plan(w: &CallWorld) -> CallPlan {
     });
     if let Some(why) = gate {
         p.log(format!("CHECK7: {why}"));
+        for r in w.task.iter().chain(&w.reactive) {
+            if r.ready != Some(0) {
+                p.plan.uncalled.insert(r.name.clone(), why.clone());
+            }
+        }
         p.plan.refusal = Some(why);
         p.set_task_limit(Some(TaskLimit { name: "closed".into(), limit: 0, held: p.live_total() }));
         p.plan.bound = p.bound();
@@ -392,7 +406,9 @@ pub fn plan(w: &CallWorld) -> CallPlan {
     }
     for r in &w.reactive {
         match &hold {
-            Some(why) if r.uses.iter().any(|c| w.limits.contains_key(c)) => p.log(format!("CHECK7 {}: yielding — {why}", r.name)),
+            Some(why) if r.uses.iter().any(|c| w.limits.contains_key(c)) => {
+                p.refuse(&r.name, format!("yielding — {why}"));
+            }
             _ => {
                 p.call(&r.name, None, false);
             }
@@ -414,6 +430,8 @@ pub fn plan(w: &CallWorld) -> CallPlan {
         }
     }
     p.plan.bound = p.bound();
+    let called: Vec<&str> = p.plan.calls.iter().map(|c| c.rune.as_str()).collect();
+    p.plan.uncalled.retain(|r, _| !called.contains(&r.as_str()));
     p.plan
 }
 
@@ -689,6 +707,45 @@ mod tests {
     fn bound_reports_held_waiting_and_over() {
         let p = plan(&limited(vec![builder(3, 7), mender(0, 2)], &[("build-disk", 7)]));
         assert_eq!(p.bound, [Bound { class: "build-disk".into(), limit: 7, held: 9, waiting: 3, over: true }], "{:?}", p.log);
+    }
+
+    #[test]
+    fn uncalled_names_the_refusal_that_stopped_each_rune_with_ready_work() {
+        let mut w = limited(vec![builder(3, 5), mender(0, 2), rune("idle", 0), rune("blind", 1), rune("served", 1)], &[("build-disk", 7)]);
+        w.task[3].ready = None;
+        w.task[3].uses = vec![];
+        let p = plan(&w);
+        assert_eq!(p.uncalled.get("builder").map(String::as_str), Some("build-disk 7 of 7 held — no backfill"), "{:?}", p.log);
+        assert!(p.uncalled["blind"].contains("CLAIM-ERROR"), "{:?}", p.uncalled);
+        assert_eq!(called(&p), ["served"]);
+        assert!(!p.uncalled.contains_key("served") && !p.uncalled.contains_key("idle") && !p.uncalled.contains_key("mender"), "{:?}", p.uncalled);
+
+        let w = CallWorld { task: vec![Rune { live: 40, ..rune("builder", 2) }, rune("idle", 0)], max_live_dwarves: Some(40), ..world() };
+        let p = plan(&w);
+        assert_eq!(p.uncalled.get("builder").map(String::as_str), Some("40/40 dwarf(s) live across the whole fleet — not calling"));
+        assert!(!p.uncalled.contains_key("idle"));
+
+        let w = CallWorld { task: vec![Rune { single_flight: true, live: 1, ..rune("capped", 2) }], max_live_dwarves: Some(9), ..world() };
+        let p = plan(&w);
+        assert_eq!(p.uncalled.get("capped").map(String::as_str), Some("2 ready, at concurrency cap"), "{:?}", p.log);
+    }
+
+    #[test]
+    fn a_closed_gate_gives_every_ready_rune_the_gates_reason() {
+        let mut w = CallWorld { world: World::Halted, ..world() };
+        w.reactive = vec![Rune { reactive: true, ..rune("ops", 1) }, Rune { reactive: true, ..rune("quiet", 0) }];
+        let p = plan(&w);
+        let why = p.refusal.clone().unwrap();
+        assert_eq!(p.uncalled, BTreeMap::from([("builder".to_string(), why.clone()), ("ops".to_string(), why)]));
+    }
+
+    #[test]
+    fn the_urgent_yield_is_the_reason_a_bound_reactive_rune_is_uncalled() {
+        let mut w = limited(vec![builder(1, 0)], &[("build-disk", 7)]);
+        w.reactive = vec![mender(1, 0)];
+        w.urgent = Some(vec![Urgent { id: "sp-x".into(), p0: true, express: false }]);
+        let p = plan(&w);
+        assert_eq!(p.uncalled.get("mender").map(String::as_str), Some("yielding — urgent bead(s) unclaimed: sp-x"));
     }
 
     #[test]

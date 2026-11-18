@@ -335,3 +335,15 @@ fn a_decided_pass_carries_each_bound_class_as_it_left_it_and_the_carry_round_tri
     assert_eq!(back.task_limit, carry.task_limit);
     assert_eq!(Carry::default().bound, None, "no pass yet is not an empty array");
 }
+
+#[test]
+fn a_decided_pass_carries_why_each_ready_rune_got_no_call_and_the_carry_round_trips() {
+    let full = Snapshot { live_by_rune: [("builder".to_string(), 4)].into(), ..busy() };
+    let (carry, _) = decide(&Carry::default(), &full);
+    let uncalled = carry.uncalled.clone().expect("a decided pass carries its uncalled runes");
+    assert_eq!(uncalled.keys().collect::<Vec<_>>(), ["builder"], "ops has nothing ready: {uncalled:?}");
+    assert!(uncalled["builder"].contains("4/4 dwarf(s) live across the whole fleet"), "{uncalled:?}");
+    let back: Carry = serde_json::from_str(&serde_json::to_string(&carry).unwrap()).unwrap();
+    assert_eq!(back.uncalled, carry.uncalled);
+    assert_eq!(Carry::default().uncalled, None, "no pass yet is not an empty map");
+}
