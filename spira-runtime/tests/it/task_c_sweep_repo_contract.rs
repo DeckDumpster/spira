@@ -335,3 +335,21 @@ fn only_the_tasks_that_declare_no_jitter_key_have_none() {
     assert!(task::SPEC.jitter_key == Some(task::JITTER_KEY));
     assert!(sweep_escape_census::SPEC.jitter_key.is_none() && sweep_tsd::SPEC.jitter_key.is_none());
 }
+
+#[test]
+fn a_jittered_fire_is_not_read_as_a_missed_slot_by_a_restart() {
+    let world = json(&snap(vec![repo("shop", task::Verdict::Met, &[])], &[]));
+    let mut r = TaskRig::new(1, t::handler::<H>(SET).registration())
+        .unwrap()
+        .double(task::OBSERVE, move |_| Ok(world.clone()))
+        .double(task::INBOX_APPEND, |_| Ok("appended".into()));
+    r.clock.advance_to(NOW);
+    let (_, stream, kind) = H::boot();
+    r.tick(stream, kind).unwrap();
+    r.advance(SLOT_MS + 600_000).unwrap();
+    assert_eq!(observes(&r), 1);
+    r.reopen(t::handler::<H>(SET).registration()).unwrap();
+    let (_, stream, kind) = H::boot();
+    r.tick(stream, kind).unwrap();
+    assert_eq!(observes(&r), 1, "a restart after a jittered fire caught up a slot already served");
+}
