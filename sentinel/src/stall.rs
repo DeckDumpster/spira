@@ -181,6 +181,7 @@ mod tests {
         let d = testkit::TempDir::new("stall-moot");
         let ledger = d.join("it's-ledger.log");
         let since = NOW;
+        // FORK-EDGE: the predicate is a shell command by contract, run here as the moot-sweep runs it
         let sh = |p: &str| std::process::Command::new("bash").arg("-c").arg(p).status().unwrap().code();
         let pred = moot_predicate(&ledger, since);
         assert_eq!(sh(&pred), Some(2), "no ledger: the probe fails, which is not recovery");
