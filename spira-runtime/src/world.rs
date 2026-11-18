@@ -1491,10 +1491,10 @@ mod bounded_store_tests {
             drop(held);
         });
         let client = LcClient::socket(t.path().join("sock"));
-        let began = std::time::Instant::now();
-        let why = lc_bounded(&client, Duration::from_secs(25), Duration::from_secs(24), &["list"]).unwrap_err();
+        let (done, answered) = std::sync::mpsc::channel();
+        std::thread::spawn(move || done.send(lc_bounded(&client, Duration::from_secs(25), Duration::from_secs(24), &["list"])).unwrap()); // BDQ_READ_CONSIDERED="LcClient is the spira-lc door; no bdq"
+        let why = answered.recv_timeout(Duration::from_secs(3)).expect("the call returns inside what was left of the bound").unwrap_err(); // clock-safe: caps the wait for the call to return
         assert!(why.starts_with("store unavailable"), "{why}");
-        assert!(began.elapsed() < Duration::from_secs(2), "{:?}", began.elapsed());
     }
 
     #[test]

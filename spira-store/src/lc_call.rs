@@ -660,9 +660,11 @@ mod tests {
                 open.push(s);
             }
         });
-        let began = Instant::now();
-        let e = LcClient::socket(dir.join("silent")).within(Duration::from_millis(300)).call(&["list"]).unwrap_err();
-        assert!(began.elapsed() < Duration::from_secs(1), "{:?} {e:?}", began.elapsed());
+        let client = LcClient::socket(dir.join("silent")).within(Duration::from_millis(300));
+        let (done, answered) = std::sync::mpsc::channel();
+        std::thread::spawn(move || done.send(client.call(&["list"])).unwrap());
+        let r = answered.recv_timeout(Duration::from_secs(1)).expect("the call returns at the bound, not at DEADLINE"); // clock-safe: caps the wait for the call to return
+        assert!(r.is_err(), "{r:?}");
     }
 
     #[test]
