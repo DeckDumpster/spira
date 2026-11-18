@@ -195,8 +195,32 @@ pub fn identity_guard(registry: &BTreeMap<String, Vec<String>>, repo: &str, text
 /// The contract guard on a filing for `repo` carrying `labels`: `Ok(Some(line))` is the line to
 /// record on the bead when the named override admitted a repo that breaks the contract.
 pub fn contract_guard(repo: &str, labels: &[String], contract: &Contract, vars: &Vars) -> Result<Option<String>, Refusal> {
-    let _ = (repo, labels, contract, vars);
-    Ok(None)
+    if repo == contract.home_repo || labels.iter().any(|l| l == spira_config::scoped_stop::CONTRACT_FIX_LABEL) {
+        return Ok(None);
+    }
+    let exits = format!(
+        "bring it in line with `repo-contract scaffold {repo}` filed as `bead.sh file ... --contract-fix`, or set {CONTRACT_OVERRIDE_ENV}=\"<why>\" to file anyway"
+    );
+    let run = match (contract.check)(repo) {
+        Ok(run) => run,
+        Err(e) => return Err(refuse(REFUSED, format!("bead: refusing: cannot tell whether {repo} meets the landing contract: {e}\nbead: {exits}"))),
+    };
+    let not_met: Vec<&str> = run.stdout.lines().filter(|l| l.starts_with("not met ")).collect();
+    match run.code {
+        Some(0) => return Ok(None),
+        Some(1) => {}
+        other => {
+            let code = other.map_or("no exit code".to_string(), |c| format!("exit {c}"));
+            return Err(refuse(
+                REFUSED,
+                format!("bead: refusing: cannot tell whether {repo} meets the landing contract: repo-contract check gave {code}\n{}{}bead: {exits}", run.stdout, run.stderr),
+            ));
+        }
+    }
+    match identity::override_reason(vars(CONTRACT_OVERRIDE_ENV)) {
+        Some(why) => Ok(Some(format!("Contract considered: {why}\n{}", not_met.join("\n")))),
+        None => Err(refuse(REFUSED, format!("bead: refusing: {repo} does not meet the landing contract\n{}\nbead: {exits}", not_met.join("\n")))),
+    }
 }
 
 /// What the statute guard made of a text it admitted: the line to record, and what to show.
