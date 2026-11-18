@@ -277,14 +277,6 @@ fn ops_dwell<B: Backend>(store: &Store<B>, logged: &[Logged], now: i64) -> Resul
     Ok(out)
 }
 
-fn ejects(logged: &[Logged], now: i64) -> Vec<Value> {
-    logged
-        .iter()
-        .filter(|l| l.audit.machine == "batch" && l.audit.event == "Eject" && l.audit.applied && l.audit.at >= now - DAY_S)
-        .map(|l| object(vec![("batch_id", text(&l.audit.lc_key)), ("evidence", text(&l.audit.evidence)), ("actor", text(&l.audit.actor)), ("at", text(l.audit.at))]))
-        .collect()
-}
-
 fn gantt(logged: &[Logged], machine: &str, now: i64) -> Vec<Value> {
     applied_moves(logged, machine)
         .filter(|l| l.audit.at >= now - DAY_S)
@@ -338,38 +330,6 @@ fn logged<B: Backend>(store: &Store<B>, now: i64, span: i64) -> Result<Vec<Logge
         return Err(format!("the audit log is too long to read back {span}s in one call"));
     }
     Ok(scan.audits)
-}
-
-/// Everything the ops pane draws, in one call.
-pub fn cmd_ops_snapshot(_args: &[String]) -> (i32, String) {
-    with_store(snapshot)
-}
-
-fn snapshot<B: Backend>(store: &Store<B>) -> (i32, String) {
-    let now = crate::db::now_epoch();
-    let audits = match logged(store, now, DWELL_WINDOW_S) {
-        Ok(a) => a,
-        Err(e) => return cannot(e),
-    };
-    let mut out = Map::new();
-    out.insert("now".into(), json!(now));
-    out.insert("graph".into(), serde_json::from_str(&graph_json("bead")).unwrap_or(Value::Null));
-    let parts: [(&str, Result<Vec<Value>, String>); 7] = [
-        ("live", ops_live(store)),
-        ("recent", ops_recent(store, now)),
-        ("edges", Ok(ops_edges(&audits, now))),
-        ("dwell_p95", Ok(ops_dwell_p95_rows(&audits, now))),
-        ("dwell", ops_dwell(store, &audits, now)),
-        ("batches", ops_round(store)),
-        ("ejects", Ok(ejects(&audits, now))),
-    ];
-    for (key, rows) in parts {
-        match rows {
-            Ok(rows) => out.insert(key.into(), Value::Array(rows)),
-            Err(e) => return cannot(format!("{key}: {e}")),
-        };
-    }
-    (0, Value::Object(out).to_string())
 }
 
 fn view_arg(args: &[String]) -> Result<&'static str, (i32, String)> {

@@ -59,21 +59,6 @@ pub fn entered_state(history: &[serde_json::Value], state: &str, since: u64) -> 
     })
 }
 
-/// Lifts every stop whose `bead:ID=STATE` condition `reached` reports met; a stop whose
-/// state cannot be read stays. Returns the repos lifted and the conditions that could not be read.
-pub fn sweep(run: &Path, reached: &mut dyn FnMut(&str, &str, u64) -> Result<bool, String>) -> (Vec<String>, Vec<String>) {
-    let (mut lifted, mut unread) = (Vec::new(), Vec::new());
-    for s in repo_stops(run) {
-        let Some(Ok((bead, state))) = bead_condition(&s.until) else { continue };
-        match reached(&bead, &state, s.since) {
-            Ok(true) if unpause_repo(run, &s.repo, &[]).is_ok() => lifted.push(s.repo),
-            Ok(_) => {}
-            Err(e) => unread.push(format!("{}: {e}", s.repo)),
-        }
-    }
-    (lifted, unread)
-}
-
 pub fn parse_lanes(csv: &str) -> Result<Vec<String>, String> {
     let mut out: Vec<String> = Vec::new();
     for l in csv.split(',').map(str::trim).filter(|l| !l.is_empty()) {
@@ -403,21 +388,6 @@ mod tests {
         assert!(entered_state(&rows, "REWORK", 100));
         assert!(!entered_state(&rows, "REWORK", 101), "an entry before the pause is not a release");
         assert!(!entered_state(&[serde_json::json!({"to_state": "REWORK", "applied": 0, "at": 150})], "REWORK", 100), "a refused event did not happen");
-    }
-
-    #[test]
-    fn sweep_lifts_only_stops_whose_condition_is_met() {
-        let d = testkit::TempDir::new("scoped-stop-sweep");
-        pause_repo(d.path(), "cubby", &lanes("rounds"), "o", "r", "bead:sp-x=REWORK", 10).unwrap();
-        pause_repo(d.path(), "spira", &lanes("rounds"), "o", "r", "fix lands", 10).unwrap();
-        let (lifted, unread) = sweep(d.path(), &mut |b, st, since| Ok(b == "sp-x" && st == "REWORK" && since == 10));
-        assert_eq!((lifted, unread), (vec!["cubby".to_string()], vec![]));
-        assert!(stop_for(d.path(), "cubby", "rounds").is_none());
-        assert!(stop_for(d.path(), "spira", "rounds").is_some());
-        pause_repo(d.path(), "cubby", &lanes("rounds"), "o", "r", "bead:sp-y=DONE", 10).unwrap();
-        let (lifted, unread) = sweep(d.path(), &mut |_, _, _| Err("store down".into()));
-        assert!(lifted.is_empty() && unread.len() == 1);
-        assert!(stop_for(d.path(), "cubby", "rounds").is_some(), "an unreadable bead keeps the stop");
     }
 
     #[test]

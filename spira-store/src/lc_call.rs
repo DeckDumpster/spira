@@ -147,7 +147,7 @@ pub fn is_read(argv: &[String]) -> bool {
     let a: Vec<&str> = argv.iter().map(String::as_str).collect();
     matches!(
         a.as_slice(),
-        ["show" | "list" | "history" | "stats" | "facts" | "ready-set" | "claimable", ..] | ["content", "list" | "show" | "memories" | "state" | "search" | "events", ..]
+        ["show" | "list" | "history" | "stats" | "facts" | "claimable", ..] | ["content", "list" | "show" | "memories" | "state" | "search" | "events", ..]
             | ["content", "dep" | "label", "list", ..]
     )
 }

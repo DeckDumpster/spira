@@ -100,7 +100,7 @@ fn t4_every_effect_has_a_runner_and_a_double_and_the_module_spawns_nothing() {
     assert_eq!(effects_runnable(EFFECTS, &real, &sim), Ok(()));
 }
 
-/// `mend_watch.rs:22,29` and `pause_sweep.rs:23-24`, exactly, with no timestamp prefix.
+/// `mend_watch.rs:22,29` and the stop-lifting lines, exactly, with no timestamp prefix.
 #[test]
 fn t5_the_log_lines_are_mend_watchs_and_pause_sweeps() {
     let mut triple = overdue();
