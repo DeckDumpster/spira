@@ -357,6 +357,38 @@ fn sp_mg27kj_a_red_that_survived_its_attribution_is_attributed_once_more_by_susp
     assert!(leg.why == ATTRIBUTE && leg.after_certify && leg.confirmed, "{leg:?}");
 }
 
+fn confirmed_on(reds: &[&str]) -> Carry {
+    let mut c = confirmed(driving(State::Certifying, "spira.c3"));
+    c.repos.get_mut("spira").unwrap().attributed_reds = reds.iter().map(|r| r.to_string()).collect();
+    c
+}
+
+/// A certify red naming a suite no attribution of the round covered is attributed afresh, so its
+/// rerun can find a flip, even after the round's first and confirmed attributions were spent.
+#[test]
+fn sp_54in0u_a_red_on_a_suite_not_yet_attributed_is_attributed_after_the_round_spent_its_two() {
+    let mut r = carried(&confirmed_on(&["test-a.sh"]));
+    let n = r.requested().len();
+    r.tick(STREAM, ended("spira.c3", runtime::units::Exit::Code(1), "red=test-b.sh\n")).unwrap();
+    let after = asked_after(&r, n);
+    let names: Vec<&str> = after.iter().map(|(e, _)| e.as_str()).collect();
+    assert!(!names.contains(&PAUSE) && !names.contains(&ABANDON), "{names:?}");
+    let leg = &after.iter().find(|(e, _)| e == CORPUS).unwrap_or_else(|| panic!("no corpus leg: {after:?}")).1;
+    assert!(leg.why == ATTRIBUTE && leg.after_certify && !leg.confirmed, "{leg:?}");
+}
+
+/// The same suite red again after its attribution is a real red: the round abandons naming it.
+#[test]
+fn sp_54in0u_a_suite_red_again_after_its_attribution_abandons_naming_it() {
+    let mut r = carried(&confirmed_on(&["test-a.sh", "test-b.sh"]));
+    let n = r.requested().len();
+    r.tick(STREAM, ended("spira.c3", runtime::units::Exit::Code(1), "red=test-b.sh\n")).unwrap();
+    let after = asked_after(&r, n);
+    let abandon = &after.iter().find(|(e, _)| e == ABANDON).unwrap_or_else(|| panic!("no abandon: {after:?}")).1;
+    assert_eq!(abandon.reds, ["test-b.sh"]);
+    assert!(!after.iter().any(|(e, _)| e == CORPUS), "{after:?}");
+}
+
 #[test]
 fn sp_mg27kj_a_red_after_the_confirmed_attribution_pauses_and_abandons() {
     let mut r = carried(&confirmed(driving(State::Certifying, "spira.c3")));

@@ -49,6 +49,7 @@
 //! | Certifying | `unit.ran` green | Landing (`lc_certify`, `land`) |
 //! | Certifying | `unit.ran` red with no `red-output=`, first time (VM lost, no output and refused eject excepted) | Attributing, `after_certify` (the certify pass's own results are the prior) |
 //! | Certifying | `unit.ran` red after the attribution, two or more members, no `red-output=`, reds named, first time | Attributing, `after_certify` and `confirmed` (suspects named from the red suites' `# covers:` and the diffs) |
+//! | Certifying | `unit.ran` red after both attributions, two or more members, no `red-output=`, a red suite no attribution of the round covered | Attributing, `after_certify` (its rerun reaches the flip handling; once per red suite) |
 //! | Certifying | `unit.ran` red / failed | Done (eject guilty, `abandon`, verdict red) |
 //! | Certifying | `unit.ran` failed naming no verdict and no suite, after the attribution | Done (output kept, round left open, pace Infra) |
 //! | Attributing | observe: the round's open round is green on the carried head | Landing (`land`), or Certified when stacked; the attribution leg is stopped in the same tick |
@@ -461,6 +462,7 @@ pub static TABLE: &[(State, Trigger, State)] = &[
     (State::Certifying, Trigger::CertifyRed, State::Done),
     (State::Certifying, Trigger::CertifyRedFirst, State::Attributing),
     (State::Certifying, Trigger::CertifyRedConfirmed, State::Attributing),
+    // CertifyRedFirst again: a red naming a suite no attribution of the round covered.
     (State::Landing, Trigger::LandedStaged, State::Promoting),
     (State::Landing, Trigger::Landed, State::Done),
     (State::Landing, Trigger::LandRefused, State::Done),
@@ -601,6 +603,9 @@ pub struct RepoCarry {
     /// The red survived its attribution and was attributed once more, by suspect.
     #[serde(default)]
     pub confirmed: bool,
+    /// Red suites an attribution of this round already covered; a red naming one outside it is attributed afresh.
+    #[serde(default)]
+    pub attributed_reds: Vec<String>,
     /// The phase and first failing line of the certify pass whose red this round was attributed
     /// for; leads every later reason the round ends with.
     #[serde(default)]
@@ -716,6 +721,7 @@ impl RepoCarry {
             lost_vms: self.lost_vms,
             attributed: self.attributed,
             confirmed: self.confirmed,
+            attributed_reds: self.attributed_reds.clone(),
             pass_red: self.pass_red.clone(),
             certify_held: self.certify_held,
             eject_held: self.eject_held.clone(),
@@ -755,6 +761,7 @@ impl RepoCarry {
             lost_vms: round.lost_vms,
             attributed: round.attributed,
             confirmed: round.confirmed,
+            attributed_reds: round.attributed_reds.clone(),
             pass_red: round.pass_red.clone(),
             certify_held: round.certify_held,
             eject_held: round.eject_held.clone(),
@@ -1262,6 +1269,19 @@ impl Machine<'_> {
             leg.after_certify = true;
             a.input = serde_json::to_string(&leg).unwrap_or_default();
         }
+    }
+
+    fn record_attributed_reds(&mut self, out: &str) {
+        for red in certify_red_evidence(out).1 {
+            if !self.rc.attributed_reds.contains(&red) {
+                self.rc.attributed_reds.push(red);
+            }
+        }
+    }
+
+    /// A red names a suite no attribution of this round covered. A row with no record (written before it was kept) has none.
+    fn unattributed_reds(&self, out: &str) -> bool {
+        !self.rc.attributed_reds.is_empty() && certify_red_evidence(out).1.iter().any(|r| !self.rc.attributed_reds.contains(r))
     }
 
     fn attribute_confirmed(&mut self) {
@@ -2003,6 +2023,7 @@ impl Machine<'_> {
             }
             (State::Certifying, false) if !self.rc.attributed && !out.lines().any(|l| l.starts_with(RED_OUTPUT)) => {
                 self.rc.attributed = true;
+                self.record_attributed_reds(out);
                 if self.rc.pass_red.is_empty() {
                     self.rc.pass_red = pass_red_of(out);
                 }
@@ -2011,8 +2032,14 @@ impl Machine<'_> {
             }
             (State::Certifying, false) if self.rc.attributed && !self.rc.confirmed && self.rc.members.len() >= 2 && !out.lines().any(|l| l.starts_with(RED_OUTPUT)) && !certify_red_evidence(out).1.is_empty() => {
                 self.rc.confirmed = true;
+                self.record_attributed_reds(out);
                 self.go(Trigger::CertifyRedConfirmed);
                 self.attribute_confirmed();
+            }
+            (State::Certifying, false) if self.rc.attributed && self.rc.confirmed && self.rc.members.len() >= 2 && !out.lines().any(|l| l.starts_with(RED_OUTPUT)) && self.unattributed_reds(out) => {
+                self.record_attributed_reds(out);
+                self.go(Trigger::CertifyRedFirst);
+                self.attribute_after_certify();
             }
             (State::Certifying, false) if self.rc.members.len() != 1 && certify_red_evidence(out).0.is_none() && certify_red_evidence(out).1.is_empty() && !out.lines().any(|l| l.starts_with(RED_OUTPUT)) => self.certify_faulted(exit, out),
             (State::Certifying, false) => {
