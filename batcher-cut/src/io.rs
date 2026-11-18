@@ -520,14 +520,15 @@ fn hold_kinds(r: &serde_json::Value) -> Vec<String> {
     kinds
 }
 
-fn read_pool(env: &Env) -> Result<(Vec<PoolRow>, Vec<LeftOut>), String> {
-    Ok(pool_rows(&lc_rows(env)?))
+fn read_pool(env: &Env, repo: &str) -> Result<(Vec<PoolRow>, Vec<LeftOut>), String> {
+    Ok(pool_rows(&lc_rows(env)?, repo))
 }
 
-fn pool_rows(rows: &[serde_json::Value]) -> (Vec<PoolRow>, Vec<LeftOut>) {
+fn pool_rows(rows: &[serde_json::Value], repo: &str) -> (Vec<PoolRow>, Vec<LeftOut>) {
     let mut left = Vec::new();
     let mut pool: Vec<PoolRow> = rows
         .iter()
+        .filter(|r| r.get("repo").and_then(|v| v.as_str()).is_none_or(|name| name == repo))
         .filter(|r| in_pool_states(r))
         .filter_map(|r| {
             let id = r.get("bead_id")?.as_str()?.to_string();
@@ -712,7 +713,7 @@ fn tip_current(tip: &str, id: &str, branches: &BTreeMap<String, String>) -> bool
 /// record of an incident, an ask, a test bead or work already landed — is a row the machine
 /// must not hold CERTIFIED (drop it there), not one this reader second-guesses from bd.
 pub fn certified_pool(env: &Env, repo: &Repo) -> Result<Vec<Member>, String> {
-    let (certified, mut left) = read_pool(env)?;
+    let (certified, mut left) = read_pool(env, &repo.name)?;
     let branches = repo_branch_tips(repo)?;
     left.extend(moved_tips(&certified, &branches));
     announce_left_out(env, repo, &left);
@@ -4742,7 +4743,7 @@ mod pool_parity_tests {
             serde_json::json!({"bead_id": "sp-s", "state": "SUBMITTED", "tip": "ts", "holds": []}),
             serde_json::json!({"bead_id": "sp-c", "state": "CERTIFIED", "tip": "tc", "holds": []}),
         ];
-        let pool = pool_rows(&rows).0;
+        let pool = pool_rows(&rows, "spira").0;
         let flags: Vec<(&str, bool)> = pool.iter().map(|p| (p.0.as_str(), p.5)).collect();
         assert_eq!(flags, [("sp-c", false), ("sp-s", true)]);
     }
@@ -4751,14 +4752,30 @@ mod pool_parity_tests {
     fn a_submitted_bead_held_or_at_its_ejected_red_tip_is_left_out_naming_its_cause() {
         let held = |kind: &str| serde_json::json!({"bead_id": "sp-h", "state": "SUBMITTED", "tip": "th", "holds": [kind]});
         for kind in ["manual", "wait", "ask", "poison"] {
-            let (pool, left) = pool_rows(&[held(kind)]);
+            let (pool, left) = pool_rows(&[held(kind)], "spira");
             assert!(pool.is_empty(), "{kind}");
             assert_eq!(left[0].cause, Cause::Held(vec![kind.into()]));
         }
         let red = serde_json::json!({"bead_id": "sp-e", "state": "SUBMITTED", "tip": "te", "holds": [], "ejected_red_tip": "te"});
-        let (pool, left) = pool_rows(&[red]);
+        let (pool, left) = pool_rows(&[red], "spira");
         assert!(pool.is_empty());
         assert_eq!(left[0].cause, Cause::EjectedRed);
+    }
+
+    #[test]
+    fn another_repos_rows_never_enter_this_repos_pool_or_its_left_out_list() {
+        let row = |id: &str, repo: &str, state: &str, holds: &[&str]| serde_json::json!({"bead_id": id, "repo": repo, "state": state, "tip": "t", "holds": holds});
+        let rows = [
+            row("sp-sh", "spira", "SUBMITTED", &["manual"]),
+            row("sp-sc", "spira", "CERTIFIED", &[]),
+            row("cb-h", "cubby", "SUBMITTED", &["manual"]),
+            row("cb-c", "cubby", "CERTIFIED", &[]),
+        ];
+        let (pool, left) = pool_rows(&rows, "spira");
+        assert_eq!(pool.iter().map(|p| p.0.as_str()).collect::<Vec<_>>(), ["sp-sc"]);
+        assert_eq!(left.iter().map(|l| l.id.as_str()).collect::<Vec<_>>(), ["sp-sh"]);
+        let branches = BTreeMap::from([("sp-sc".to_string(), "t".to_string())]);
+        assert!(moved_tips(&pool, &branches).is_empty());
     }
 
     #[test]
@@ -4777,7 +4794,7 @@ mod pool_parity_tests {
         let rows = vec![
             serde_json::json!({"bead_id": "sp-c", "state": "CERTIFIED", "tip": "tc", "holds": []}),
         ];
-        let pool = pool_rows(&rows).0;
+        let pool = pool_rows(&rows, "spira").0;
         assert_eq!(pool.len(), 1);
         assert_eq!((pool[0].0.as_str(), pool[0].1.as_str()), ("sp-c", "tc"));
     }
@@ -4789,7 +4806,7 @@ mod pool_parity_tests {
             serde_json::json!({"bead_id": "sp-h", "state": "CERTIFIED", "tip": "th", "holds": ["manual"]}),
             serde_json::json!({"bead_id": "sp-e", "state": "CERTIFIED", "tip": "te", "holds": [], "ejected_red_tip": "te"}),
         ];
-        let (pool, left) = pool_rows(&rows);
+        let (pool, left) = pool_rows(&rows, "spira");
         assert_eq!(pool.iter().map(|p| p.0.as_str()).collect::<Vec<_>>(), ["sp-p"]);
         let causes: Vec<_> = left.iter().map(|l| (l.id.as_str(), l.cause.clone())).collect();
         assert_eq!(causes, [("sp-h", Cause::Held(vec!["manual".into()])), ("sp-e", Cause::EjectedRed)]);
