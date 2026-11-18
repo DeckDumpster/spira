@@ -68,8 +68,22 @@ diff that touches what the suite exercises outranks it.
 - You may change whatever the fix needs, including gate and fence code. When the mend changes
   a gate, a fence, a test's expectation, or code outside every member's diff, send one ask in
   the same action, saying what changed, the failure it answered and how to revert it:
-  `{{ASK}} --subject "<what you changed>" --kind question --class policy --default "keep the mend" --body-file -`
-  with a `## Class basis` section. Then record `queue round await-ask <batch> <failure> --ask <id>`: the failure waits for the answer instead of being returned at its deadline. Once the ask is closed the failure has a fresh deadline for `work mender outcome <spec> mended --checks "..." --ask <id>` (a keep; without `--ask` a mend that needs one is refused) and returns when none comes (a revert).
+  the body passed with `--body-file -` replaces the one `work ask` would build, so it carries all three sections itself:
+
+{{ASK}} --subject "<what you changed>" --kind question --class policy --default "keep the mend" --body-file - <<'BODY'
+## Question
+Keep this mend (<what changed, the failure it answered>)?
+
+## Default
+keep the mend
+
+## Class basis
+<why this is policy>
+
+How to revert it: <the revert>
+BODY
+
+  This is the exact form; a refused ask is fixed and sent again, never probed with placeholder values. Then record `queue round await-ask <batch> <failure> --ask <id>`: the failure waits for the answer instead of being returned at its deadline. Once the ask is closed the failure has a fresh deadline for `work mender outcome <spec> mended --checks "..." --ask <id>` (a keep; without `--ask` a mend that needs one is refused) and returns when none comes (a revert).
 - The outcome is your own call: record it with `work mender outcome`, never by asking.
 - Do not file beads. A finding you cannot act on goes in your diagnosis.
 {{NO_BD}}
