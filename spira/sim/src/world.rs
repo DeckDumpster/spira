@@ -946,6 +946,7 @@ pub fn fixture_repo(root: &Path, dst: &Path) -> Result<(), String> {
 /// The release's own tree as one commit of a new repository at `dst`, less what a release build
 /// adds and git never tracks: `bin/`, `model-bin/`, `MANIFEST` and the links into `../bin/`.
 pub fn release_repo(release: &Path, dst: &Path) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
     fn copy(from: &Path, to: &Path, top: bool) -> Result<(), String> {
         let io = |p: &Path, e: std::io::Error| format!("{}: {e}", p.display());
         std::fs::create_dir_all(to).map_err(|e| io(to, e))?;
@@ -966,6 +967,8 @@ pub fn release_repo(release: &Path, dst: &Path) -> Result<(), String> {
                 copy(&src, &out, false)?;
             } else {
                 std::fs::copy(&src, &out).map_err(|e| io(&src, e))?;
+                let exec = std::fs::metadata(&src).map_err(|e| io(&src, e))?.permissions().mode() & 0o111 != 0;
+                std::fs::set_permissions(&out, std::fs::Permissions::from_mode(if exec { 0o755 } else { 0o644 })).map_err(|e| io(&out, e))?;
             }
         }
         Ok(())
