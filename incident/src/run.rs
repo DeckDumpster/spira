@@ -309,7 +309,23 @@ fn file_new(
     // dwarf-filed title does not re-spool forever (sp-nredi).
     let clipped: String = title.chars().take(490).collect();
     let title = clipped.as_str();
-    let id = match bd.create(cfg.db, title, cfg.kind, cfg.priority, labels, reference, &body, cfg.actor) {
+    let create_labels = match cfg.repo_declared {
+        Some(repo) => {
+            let effective = if repo == cfg.home_repo || cfg.known_repos.iter().any(|r| r == repo) {
+                repo.to_string()
+            } else {
+                log.push(format!("warning: SPIRA_INCIDENT_REPO={repo} has no entry in the repository map; using {}", cfg.home_repo));
+                cfg.home_repo.to_string()
+            };
+            if labels.split(',').any(|l| l.trim().starts_with("repo:")) {
+                labels.to_string()
+            } else {
+                format!("{labels},repo:{effective}")
+            }
+        }
+        None => labels.to_string(),
+    };
+    let id = match bd.create(cfg.db, title, cfg.kind, cfg.priority, &create_labels, reference, &body, cfg.actor) {
         Ok(id) => id,
         Err(e) => {
             log.push(format!("create FAILED for {reference} — stays spooled ({e})"));
@@ -324,19 +340,6 @@ fn file_new(
             }
         }
         None => log.push(format!("filed {id} for {reference}")),
-    }
-
-    if let Some(repo) = cfg.repo_declared {
-        let effective = if repo == cfg.home_repo || cfg.known_repos.iter().any(|r| r == repo) {
-            repo.to_string()
-        } else {
-            log.push(format!("warning: SPIRA_INCIDENT_REPO={repo} has no entry in the repository map; using {}", cfg.home_repo));
-            cfg.home_repo.to_string()
-        };
-        bd.set_state(cfg.db, &id, &format!("repo={effective}"));
-        if !bd.set_repo(&id, &effective) {
-            log.push(format!("warning: {id} filed but its lifecycle row was not pointed at {effective}"));
-        }
     }
 
     if cfg.express {
@@ -719,6 +722,50 @@ mod tests {
         assert_eq!(bd.created.borrow().len(), 1);
     }
 
+    fn created_repo_of(bd: &FakeBd, id: &str) -> Option<String> {
+        let args: Vec<String> = ["create", "T", "--labels", bd.create_labels.borrow()[id].as_str()].map(String::from).to_vec();
+        bead::bdq::created_repo(&args)
+    }
+
+    #[test]
+    fn an_alarm_recurrence_of_a_terminal_incident_is_created_carrying_its_repo() {
+        let bd = FakeBd::new();
+        let mailer = FakeMailer::default();
+        let clock = FixedClock(1_792_800_000);
+        let known = vec!["spira".to_string()];
+        let mut c = cfg(&known);
+        c.repo_declared = Some("spira");
+        bd.rows.borrow_mut().push(BeadRow {
+            id: "sp-old".into(),
+            status: BeadStatus::Terminal,
+            external_ref: Some("incident:slow-query".into()),
+            labels: vec![format!("ref:{}", decide::ref_hash("incident:slow-query"))],
+            closed_at: Some("2026-10-08T00:00:00Z".into()),
+        });
+        let mut log = vec![];
+        let out = alarm_owner(&bd, &mailer, &clock, &c, "incident:slow-query", "SLOW STORE", b"p", "spira,incident", &mut log);
+        let Some(FileOutcome::Filed(id)) = out else { panic!("{log:?}") };
+        assert!(bd.create_labels.borrow()[&id].contains("repo:spira"));
+        assert_eq!(created_repo_of(&bd, &id).as_deref(), Some("spira"));
+    }
+
+    #[test]
+    fn a_first_filing_is_created_carrying_its_repo_and_an_unmapped_repo_falls_back_to_home() {
+        let known = vec!["spira".to_string()];
+        for (declared, want, warns) in [("spira", "spira", false), ("nope", "spira", true)] {
+            let bd = FakeBd::new();
+            let mailer = FakeMailer::default();
+            let clock = FixedClock(1_000_000);
+            let mut c = cfg(&known);
+            c.repo_declared = Some(declared);
+            let mut log = vec![];
+            let out = file_one(&bd, &mailer, &clock, &c, "incident:first", "t", b"p", "spira,incident", &mut log);
+            let FileOutcome::Filed(id) = out else { panic!("{log:?}") };
+            assert_eq!(created_repo_of(&bd, &id).as_deref(), Some(want));
+            assert_eq!(log.iter().any(|l| l.contains("no entry in the repository map")), warns, "{log:?}");
+        }
+    }
+
     #[test]
     fn an_alarm_with_no_bead_history_stays_an_inbox_note() {
         let bd = FakeBd::new();
@@ -893,7 +940,7 @@ mod tests {
         let mut log = vec![];
         let out = file_one(&bd, &mailer, &clock, &c, "incident:r", "r failed", b"payload", "spira,incident", &mut log);
         let FileOutcome::Filed(id) = out else { panic!() };
-        assert_eq!(bd.repos.borrow().get(&id).map(String::as_str), Some("dumpstar"));
+        assert_eq!(created_repo_of(&bd, &id).as_deref(), Some("dumpstar"));
     }
 
     // covers: UC-ops-detection-remediation-05
@@ -1114,7 +1161,7 @@ mod tests {
         let FileOutcome::Filed(id) = file_one(&bd, &mailer, &FixedClock(1_000_000), &c, "incident:nr", "t", b"p", "spira,incident", &mut log) else { panic!() };
         let notes = bd.notes.borrow().get(&id).cloned().unwrap_or_default().join("\n");
         assert!(notes.contains("SPIRA_INCIDENT_REPO"), "{notes}");
-        assert!(bd.repos.borrow().get(&id).is_none(), "no repo recorded when none was declared");
+        assert!(!bd.create_labels.borrow()[&id].contains("repo:"), "no repo recorded when none was declared");
     }
 
     // covers: UC-ops-detection-remediation-07
