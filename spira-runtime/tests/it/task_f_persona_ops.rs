@@ -41,7 +41,7 @@ fn nominal() -> Snapshot {
 }
 
 fn in_state(state: State) -> Carry {
-    Carry { state, run_id: Some("r1".into()), name: Some("ops-1".into()), started_at: Some(0) }
+    Carry { state, run_id: Some("r1".into()), name: Some("ops-1".into()), started_at: Some(0), ..Default::default() }
 }
 
 fn ran(exit: Exit) -> UnitRan {
@@ -228,4 +228,93 @@ fn the_brief_takes_the_persona_model_from_the_spec_the_runtime_was_started_with(
 fn the_brief_with_no_spec_is_refused_by_spira_configs_own_message() {
     let e = brief_with_spec(None).expect_err("no spec, no brief");
     assert!(e.contains("SPIRA_TOML is not set"), "{e}");
+}
+
+fn failed(effect: &str, error: &str) -> Input {
+    Input::Failed { effect: effect.into(), error: error.into() }
+}
+
+fn why_of(acts: &[runtime::EffectSpec]) -> Option<String> {
+    let line: serde_json::Value = serde_json::from_str(&acts.iter().find(|a| a.name == LEDGER).unwrap().input).unwrap();
+    line["why"].as_str().map(String::from)
+}
+
+#[test]
+fn a_unit_start_that_fails_records_why_and_removes_the_brief_files() {
+    let (next, acts) = decide(&in_state(State::Starting), &failed(UNIT_START, "boom\nmore")).unwrap();
+    assert_eq!((next.state, names(&acts)), (State::Recording, vec![LEDGER, CLEANUP]));
+    assert_eq!(why_of(&acts).as_deref(), Some("boom"));
+}
+
+#[test]
+fn a_brief_that_fails_records_why_and_removes_the_brief_files() {
+    let (next, acts) = decide(&in_state(State::Briefing), &failed(BRIEF, "\nSPIRA_TOML is not set — it names the one source of config\nmore")).unwrap();
+    assert_eq!((next.state, names(&acts)), (State::Recording, vec![LEDGER, CLEANUP]));
+    assert_eq!(why_of(&acts).as_deref(), Some("SPIRA_TOML is not set — it names the one source of config"));
+}
+
+#[test]
+fn a_brief_with_no_argv_records_why_and_removes_the_brief_files() {
+    let body = r#"{"name":"ops-1","sys_file":"s.md","task_file":"t.md","argv":[]}"#;
+    let (next, acts) = decide(&in_state(State::Briefing), &Input::Succeeded { effect: BRIEF.into(), body: body.into() }).unwrap();
+    assert_eq!((next.state, names(&acts)), (State::Recording, vec![LEDGER, CLEANUP]));
+    assert_eq!(why_of(&acts).as_deref(), Some("the brief returned no argv"));
+}
+
+#[test]
+fn a_missing_statute_still_goes_idle_without_cleanup() {
+    let (next, acts) = decide(&in_state(State::Briefing), &failed(BRIEF, &format!("x {}", dwarf::ops_sweep::STATUTE_MISSING))).unwrap();
+    assert_eq!((next.state, names(&acts)), (State::Idle, vec![LEDGER]));
+}
+
+#[test]
+fn the_ledger_line_ends_in_why_and_ops_log_holds_the_whole_error() {
+    let dir = testkit::TempDir::new("ops-ledger");
+    let cfg = BTreeMap::from([("SPIRA_RUN".to_string(), dir.path().display().to_string())]);
+    let act = LedgerLine { what: "done".into(), detail: "harness-red".into(), rc: Some(1), run_id: Some("r9".into()), why: Some("boom".into()), error: Some("boom\nmore".into()) };
+    let input = serde_json::json!({ "cfg": cfg, "act": act }).to_string();
+    let spec = runtime::EffectSpec::keyed(LEDGER, "k".to_string(), input, 5_000);
+    run_ledger(&spira_runtime::Effects::default(), "k", &spec).unwrap();
+    let ledger = std::fs::read_to_string(dir.path().join("dwarf-ledger.log")).unwrap();
+    assert!(ledger.trim_end().ends_with(r#"why="boom""#), "{ledger}");
+    assert!(ledger.contains("done ops sweep rc=1 status=harness-red "), "{ledger}");
+    let log = std::fs::read_to_string(dir.path().join("ops.log")).unwrap();
+    assert!(log.contains("spira: ops sweep r9 harness-red: boom\nmore"), "{log}");
+
+    for ext in ["name", "system.md", "task.md"] {
+        std::fs::write(dir.path().join(format!("sweep-ops-r9.{ext}")), "x").unwrap();
+    }
+    let clean = runtime::EffectSpec::keyed(CLEANUP, "c".to_string(), serde_json::json!({ "cfg": cfg, "act": "r9" }).to_string(), 5_000);
+    run_cleanup(&spira_runtime::Effects::default(), "c", &clean).unwrap();
+    let left: Vec<_> = std::fs::read_dir(dir.path()).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).filter(|n| n.starts_with("sweep-ops-")).collect();
+    assert!(left.is_empty(), "{left:?}");
+}
+
+#[test]
+fn the_same_failing_line_three_times_asks_the_concierge_once() {
+    let mut carry = in_state(State::Starting);
+    let mut asks = vec![];
+    for _ in 0..4 {
+        let (red, acts) = decide(&carry, &failed(UNIT_START, "boom")).unwrap();
+        asks.push(acts.iter().filter(|a| a.name == INBOX_APPEND).count());
+        let (idle, _) = decide(&red, &Input::Succeeded { effect: CLEANUP.into(), body: String::new() }).unwrap();
+        assert_eq!(idle.red, red.red, "the count survives the attempt's end");
+        carry = Carry { state: State::Starting, ..idle };
+    }
+    assert_eq!(asks, vec![0, 0, 1, 0]);
+    let (_, acts) = decide(&Carry { red: 3, red_why: Some("boom".into()), ..in_state(State::Starting) }, &failed(UNIT_START, "boom")).unwrap();
+    assert!(!names(&acts).contains(&INBOX_APPEND));
+    let (c, _) = decide(&carry, &failed(UNIT_START, "other")).unwrap();
+    assert_eq!((c.red, c.red_why.as_deref()), (1, Some("other")));
+    let (c, _) = decide(&Carry { red: 2, red_why: Some("boom".into()), ..in_state(State::Starting) }, &Input::Succeeded { effect: UNIT_START.into(), body: String::new() }).unwrap();
+    assert_eq!((c.red, c.red_why), (0, None));
+}
+
+#[test]
+fn the_concierge_line_is_keyed_on_the_failing_line_and_names_it() {
+    let carry = Carry { red: 2, red_why: Some("boom".into()), ..in_state(State::Starting) };
+    let (_, acts) = decide(&carry, &failed(UNIT_START, "boom")).unwrap();
+    let ask = acts.iter().find(|a| a.name == INBOX_APPEND).unwrap();
+    assert_eq!(ask.key, format!("ops/harness-red/{:x}", runtime::event::fnv1a("boom")));
+    assert!(ask.input.contains("[persona.ops] the ops sweep has failed to start 3 times running: boom"), "{}", ask.input);
 }

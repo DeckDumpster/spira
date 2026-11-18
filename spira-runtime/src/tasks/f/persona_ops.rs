@@ -94,7 +94,11 @@ pub const INCIDENT_DRAIN: &str = "persona.ops.incident_drain";
 pub const BRIEF: &str = "persona.ops.brief";
 pub const LEDGER: &str = "persona.ops.ledger";
 pub const CLEANUP: &str = "persona.ops.cleanup";
-pub const EFFECTS: &[&str] = &[OBSERVE, INTAKE_INSTALL, INCIDENT_DRAIN, BRIEF, UNIT_START, UNIT_STOP, LEDGER, CLEANUP];
+pub const INBOX_APPEND: &str = crate::watchers::INBOX_APPEND;
+pub const EFFECTS: &[&str] = &[OBSERVE, INTAKE_INSTALL, INCIDENT_DRAIN, BRIEF, UNIT_START, UNIT_STOP, LEDGER, CLEANUP, INBOX_APPEND];
+
+/// Consecutive harness-reds with one failing line before the Concierge is asked.
+pub const RED_ASK_AT: u32 = 3;
 
 pub const CADENCE_KEY: &str = "SPIRA_RUNTIME_PERSONA_OPS_SECS";
 /// `BD_TIMEOUT` is dropped: no step of the sweep calls bd with a deadline any more (statutes
@@ -154,6 +158,9 @@ pub struct Carry {
     pub run_id: Option<String>,
     pub name: Option<String>,
     pub started_at: Option<u64>,
+    /// Consecutive harness-reds whose failing line is `red_why`.
+    pub red: u32,
+    pub red_why: Option<String>,
 }
 
 /// What the machine is handed: its tick, the observe answer, an effect's outcome by name, its
@@ -176,10 +183,10 @@ pub const TRANSITIONS: &[Transition<State>] = &[
     Transition { from: State::Observing, on: "go", to: State::Preparing, effects: &[INTAKE_INSTALL, INCIDENT_DRAIN] },
     Transition { from: State::Preparing, on: "prepared", to: State::Briefing, effects: &[BRIEF] },
     Transition { from: State::Briefing, on: "statute-missing", to: State::Idle, effects: &[LEDGER] },
-    Transition { from: State::Briefing, on: "no-argv", to: State::Idle, effects: &[LEDGER] },
+    Transition { from: State::Briefing, on: "no-argv", to: State::Recording, effects: &[LEDGER, CLEANUP] },
     Transition { from: State::Briefing, on: "briefed", to: State::Starting, effects: &[UNIT_START] },
     Transition { from: State::Starting, on: "started", to: State::Running, effects: &[LEDGER] },
-    Transition { from: State::Starting, on: "start-failed", to: State::Idle, effects: &[LEDGER] },
+    Transition { from: State::Starting, on: "start-failed", to: State::Recording, effects: &[LEDGER, CLEANUP] },
     Transition { from: State::Running, on: "unit.ran", to: State::Recording, effects: &[LEDGER, CLEANUP] },
     Transition { from: State::Running, on: "deadline", to: State::Stopping, effects: &[UNIT_STOP] },
     Transition { from: State::Stopping, on: "unit.ran", to: State::Recording, effects: &[LEDGER, CLEANUP] },
@@ -198,6 +205,11 @@ pub struct LedgerLine {
     pub detail: String,
     pub rc: Option<i32>,
     pub run_id: Option<String>,
+    #[serde(default)]
+    pub why: Option<String>,
+    /// The whole error `why` is the first line of; written to `ops.log` only.
+    #[serde(default)]
+    pub error: Option<String>,
 }
 
 /// `persona.ops.brief`'s input: the run it is for, and the prompt when not the watch tower's
@@ -218,7 +230,27 @@ fn run_of(carry: &Carry) -> &str {
 }
 
 fn ledger(carry: &Carry, what: &str, detail: &str, rc: Option<i32>) -> EffectSpec {
-    spec(LEDGER, format!("ops/{}/{what}", run_of(carry)), &LedgerLine { what: what.into(), detail: detail.into(), rc, run_id: carry.run_id.clone() }, HOST_DEADLINE_MS)
+    spec(LEDGER, format!("ops/{}/{what}", run_of(carry)), &LedgerLine { what: what.into(), detail: detail.into(), rc, run_id: carry.run_id.clone(), why: None, error: None }, HOST_DEADLINE_MS)
+}
+
+/// The carry of an attempt that ended without a session: the red count outlives it.
+fn fresh(carry: &Carry, state: State) -> Carry {
+    Carry { state, red: carry.red, red_why: carry.red_why.clone(), ..Carry::default() }
+}
+
+/// A sweep that failed before its session started: the ledger line carrying why, the brief
+/// files' removal, and one line to the Concierge when the same why has come `RED_ASK_AT` times running.
+fn harness_red(carry: &Carry, state: State, error: &str) -> (Carry, Vec<EffectSpec>) {
+    let why = error.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or(error).to_string();
+    let red = if carry.red_why.as_deref() == Some(why.as_str()) { carry.red + 1 } else { 1 };
+    let mut line = ledger(carry, "done", "harness-red", Some(1));
+    line.input = serde_json::to_string(&LedgerLine { what: "done".into(), detail: "harness-red".into(), rc: Some(1), run_id: carry.run_id.clone(), why: Some(why.clone()), error: Some(error.to_string()) }).unwrap_or_default();
+    let mut acts = vec![line, spec(CLEANUP, format!("ops/{}/cleanup", run_of(carry)), &carry.run_id, HOST_DEADLINE_MS)];
+    if red == RED_ASK_AT {
+        let text = format!("[persona.ops] the ops sweep has failed to start {RED_ASK_AT} times running: {why} (run/ops.log, run/dwarf-ledger.log)");
+        acts.push(EffectSpec::keyed(INBOX_APPEND, format!("ops/harness-red/{:x}", runtime::event::fnv1a(&why)), text, HOST_DEADLINE_MS));
+    }
+    (Carry { state, red, red_why: Some(why), ..carry.clone() }, acts)
 }
 
 fn with(carry: &Carry, state: State) -> Carry {
@@ -249,7 +281,7 @@ pub fn decide(carry: &Carry, input: &Input) -> Result<(Carry, Vec<EffectSpec>), 
         Input::Tick => (with(carry, go("tick")?), vec![EffectSpec::probe(OBSERVE, String::new(), OBSERVE_DEADLINE_MS)]),
         Input::Observed(snap) => {
             if snap.halted || !snap.rune_present || snap.prompt_head.trim() == NOMINAL {
-                (Carry { state: go("skip")?, ..Carry::default() }, vec![])
+                (fresh(carry, go("skip")?), vec![])
             } else if snap.live >= snap.max || snap.draining || snap.pause != Pause::Open {
                 let why = if snap.live >= snap.max {
                     "capacity"
@@ -258,13 +290,13 @@ pub fn decide(carry: &Carry, input: &Input) -> Result<(Carry, Vec<EffectSpec>), 
                 } else {
                     "paused"
                 };
-                (Carry { state: go("busy")?, ..Carry::default() }, vec![ledger(carry, "awake", why, None)])
+                (fresh(carry, go("busy")?), vec![ledger(carry, "awake", why, None)])
             } else {
                 let next = with(carry, go("go")?);
                 (next, vec![EffectSpec::keyed(INTAKE_INSTALL, format!("ops/{}/intake", run_of(carry)), String::new(), PREPARE_DEADLINE_MS), EffectSpec::keyed(INCIDENT_DRAIN, format!("ops/{}/drain", run_of(carry)), String::new(), PREPARE_DEADLINE_MS)])
             }
         }
-        Input::Succeeded { effect, .. } | Input::Failed { effect, .. } if effect == LEDGER || effect == INTAKE_INSTALL || effect == UNIT_STOP => (carry.clone(), vec![]),
+        Input::Succeeded { effect, .. } | Input::Failed { effect, .. } if effect == LEDGER || effect == INBOX_APPEND || effect == INTAKE_INSTALL || effect == UNIT_STOP => (carry.clone(), vec![]),
         Input::Succeeded { effect, .. } | Input::Failed { effect, .. } if effect == INCIDENT_DRAIN => {
             let ask = BriefAsk { prompt: String::new(), run_id: carry.run_id.clone().unwrap_or_default() };
             (with(carry, go("prepared")?), vec![spec(BRIEF, format!("ops/{}/brief", run_of(carry)), &ask, BRIEF_DEADLINE_MS)])
@@ -273,7 +305,7 @@ pub fn decide(carry: &Carry, input: &Input) -> Result<(Carry, Vec<EffectSpec>), 
             let next = go("briefed")?;
             let b: dwarf::ops_sweep::SweepBrief = serde_json::from_str(body).map_err(|e| format!("{NAME}: the brief's answer is unreadable: {e}"))?;
             if b.argv.is_empty() {
-                return Ok((Carry { state: go("no-argv")?, ..Carry::default() }, vec![ledger(carry, "done", "harness-red", Some(1))]));
+                return Ok(harness_red(carry, go("no-argv")?, "the brief returned no argv"));
             }
             let key = carry.run_id.clone().ok_or_else(|| format!("{NAME}: {s:?} has no run id"))?;
             let unit = UnitSpec { task: NAME.into(), key, argv: b.argv, env: b.env, cwd: b.sys_file.parent().map(Path::to_path_buf) };
@@ -281,14 +313,14 @@ pub fn decide(carry: &Carry, input: &Input) -> Result<(Carry, Vec<EffectSpec>), 
         }
         Input::Failed { effect, error } if effect == BRIEF => {
             if error.contains(dwarf::ops_sweep::STATUTE_MISSING) {
-                (Carry { state: go("statute-missing")?, ..Carry::default() }, vec![ledger(carry, "awake", "statute-core-missing", None)])
+                (fresh(carry, go("statute-missing")?), vec![ledger(carry, "awake", "statute-core-missing", None)])
             } else {
-                (Carry { state: go("no-argv")?, ..Carry::default() }, vec![ledger(carry, "done", "harness-red", Some(1))])
+                harness_red(carry, go("no-argv")?, error)
             }
         }
-        Input::Succeeded { effect, .. } if effect == UNIT_START => (with(carry, go("started")?), vec![ledger(carry, "awake", "sweep", None)]),
-        Input::Failed { effect, .. } if effect == UNIT_START => (Carry { state: go("start-failed")?, ..Carry::default() }, vec![ledger(carry, "done", "harness-red", Some(1))]),
-        Input::Succeeded { effect, .. } | Input::Failed { effect, .. } if effect == CLEANUP => (Carry { state: go("recorded")?, ..Carry::default() }, vec![]),
+        Input::Succeeded { effect, .. } if effect == UNIT_START => (Carry { red: 0, red_why: None, ..with(carry, go("started")?) }, vec![ledger(carry, "awake", "sweep", None)]),
+        Input::Failed { effect, error } if effect == UNIT_START => harness_red(carry, go("start-failed")?, error),
+        Input::Succeeded { effect, .. } | Input::Failed { effect, .. } if effect == CLEANUP => (fresh(carry, go("recorded")?), vec![]),
         Input::Succeeded { effect, .. } | Input::Failed { effect, .. } => return Err(format!("{NAME}: {s:?} expects no outcome of {effect}")),
         Input::UnitRan { ran, outcome } => {
             let stopped = s == State::Stopping;
@@ -364,7 +396,7 @@ impl PersonaOps {
 
     /// A write's input with the pinned config beside the act, so its runner reads no config.
     fn pinned(&self, a: EffectSpec) -> EffectSpec {
-        if a.name == UNIT_START || a.name == UNIT_STOP {
+        if a.name == UNIT_START || a.name == UNIT_STOP || a.name == INBOX_APPEND {
             return a;
         }
         let act: serde_json::Value = serde_json::from_str(&a.input).unwrap_or(serde_json::Value::String(a.input.clone()));
@@ -372,7 +404,7 @@ impl PersonaOps {
     }
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("state"), runtime::rows::Part::Field("run_id"), runtime::rows::Part::Field("name"), runtime::rows::Part::Field("started_at")];
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("state"), runtime::rows::Part::Field("run_id"), runtime::rows::Part::Field("name"), runtime::rows::Part::Field("started_at"), runtime::rows::Part::Field("red"), runtime::rows::Part::Field("red_why")];
 
 impl Handler for PersonaOps {
     fn interests(&self) -> &[EventKindTag] {
@@ -395,7 +427,7 @@ impl Handler for PersonaOps {
                 if next.state == State::Running && carry.state == State::Starting {
                     next.started_at = Some(ev.at);
                 }
-                let acts: Vec<EffectSpec> = acts.into_iter().map(|a| self.with_run(a, &next)).collect();
+                let acts: Vec<EffectSpec> = acts.into_iter().map(|a| self.with_run(a, &next)).map(|a| stamped(a, ev.at)).collect();
                 let (probes, writes): (Vec<EffectSpec>, Vec<EffectSpec>) = acts.into_iter().partition(|a| a.name == OBSERVE);
                 let recorded = if next.state == State::Observing { persisted.clone() } else { next.clone() };
                 let mut out = commands(&persisted, &recorded, STATE, writes.into_iter().map(|a| self.pinned(a)).collect());
@@ -415,6 +447,14 @@ impl Handler for PersonaOps {
         }
         out
     }
+}
+
+/// An inbox line carries the time the handler saw its cause; `decide` is pure over the carry.
+fn stamped(a: EffectSpec, at_ms: u64) -> EffectSpec {
+    if a.name != INBOX_APPEND {
+        return a;
+    }
+    EffectSpec { input: format!("{} {}", batcher_cut::io::utc_stamp(at_ms / 1000), a.input), ..a }
 }
 
 impl PersonaOps {
@@ -584,7 +624,13 @@ pub fn run_ledger(e: &Effects, _key: &str, s: &EffectSpec) -> Result<String, Str
     let run = run_dir(e, &p.cfg);
     let log = p.act.run_id.as_ref().map(|id| run.join(format!("sweep-{RUNE}-{id}.log")));
     let done = (p.act.what == "done").then(|| (p.act.rc.unwrap_or(1), p.act.detail.as_str(), log.as_deref()));
-    dwarf::ops_sweep::ledger_line(&run, now_secs(), RUNE, done, &p.act.detail, TRACE_MARK);
+    dwarf::ops_sweep::ledger_line(&run, now_secs(), RUNE, done, &p.act.detail, p.act.why.as_deref(), TRACE_MARK);
+    if let (Some(why), Some(id)) = (&p.act.why, &p.act.run_id) {
+        use std::io::Write;
+        let full = p.act.error.as_deref().unwrap_or(why);
+        let line = format!("{} spira: ops sweep {id} harness-red: {full}\n", dwarf::util::iso_utc(now_secs()));
+        std::fs::OpenOptions::new().create(true).append(true).open(run.join("ops.log")).and_then(|mut f| f.write_all(line.as_bytes())).map_err(|e| format!("{NAME}: ops.log: {e}"))?;
+    }
     Ok(format!("{} {RUNE} {}", p.act.what, p.act.detail))
 }
 
