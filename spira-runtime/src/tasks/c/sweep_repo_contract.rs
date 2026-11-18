@@ -5,9 +5,10 @@
 //!
 //! ## Tick
 //!
-//! - **Calendar:** `OnCalendar=daily` by default, jittered by `Ctx::rand_u64`. A boot whose next
-//!   slot after `last_fired` has gone by, or that never fired, observes at once: an overdue tick
-//!   fires once.
+//! - **Calendar:** `OnCalendar=daily` by default, jittered by `Ctx::rand_u64`. The pass is stamped
+//!   when it starts. A boot observes only when a slot after the stamp has passed with no pass
+//!   started; a pass lost to a restart waits for the next slot, and a task that never fired
+//!   arms its slot and runs nothing at boot.
 //! - **Single-flight:** yes.
 //!
 //! ## Observe
@@ -156,7 +157,7 @@ fn inbox(now_ms: u64, key: String, what: String) -> Act {
 
 pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -> Decision<Carry> {
     match input {
-        Input::Fire => Ok((carry.clone(), vec![])),
+        Input::Fire => Ok((Carry { last_fired: Some(now_ms), ..carry.clone() }, vec![])),
         Input::Observed(snap) => {
             let secs = now_ms / 1000;
             let mut acts = vec![];
@@ -186,7 +187,7 @@ pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -
                     _ => {}
                 }
             }
-            Ok((Carry { last_fired: Some(now_ms), unsure }, acts))
+            Ok((Carry { last_fired: carry.last_fired, unsure }, acts))
         }
         Input::Outcome { effect, ok: false, body } if effect == STOP || effect == LIFT => {
             Ok((carry.clone(), vec![inbox(now_ms, format!("repo-contract/failed/{effect}/{}", now_ms / 1000), format!("{effect} did not apply, the next tick tries again: {body}"))]))
@@ -197,9 +198,9 @@ pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -
     }
 }
 
-/// A boot whose next slot after the last pass has gone by, or that never ran a pass, observes at once.
+/// A boot whose next slot after the last pass started has gone by observes at once; a task that never fired only arms its slot.
 pub fn catch_up(carry: &Carry, now_ms: u64, cadence: &Cadence) -> Option<String> {
-    carry.last_fired.is_none_or(|last| cadence.next(last) <= now_ms).then(String::new)
+    carry.last_fired.filter(|last| cadence.next(*last) <= now_ms).map(|_| String::new())
 }
 
 /// `repo-contract check --all`'s lines, judged per repo; the home repo is dropped.
