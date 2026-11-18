@@ -26,10 +26,15 @@ HARNESS="$(cd "$HERE/.." && pwd)"
 . "$HERE/testlib.sh"
 
 tmux_kill_pane_dead() {
-    tmux -L "$1" set-hook -t "$2" pane-died "wait-for -S $2-died" || return 1
     kill "$(tmux -L "$1" list-panes -t "$2" -F '#{pane_pid}')" || return 1
-    # batch-job: blocks on tmux's own pane-died signal; the timeout only guards a hang
-    timeout 60 tmux -L "$1" wait-for "$2-died"
+    local n
+    # waits-on: tmux #{pane_dead} for the killed pane; the attempt count is only a cap
+    for ((n = 0; n < 300; n++)); do
+        [ "$(tmux -L "$1" list-panes -t "$2" -F '#{pane_dead}' 2>/dev/null | head -1)" = 1 ] && return 0
+        sleep 0.1
+    done
+    echo "tmux_kill_pane_dead: $2 pane not dead after kill" >&2
+    return 1
 }
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 
@@ -505,7 +510,7 @@ dp_env() { env -u SPIRA_ADOPT_CONFIGURE_DEFAULT SPIRA_TOML="$DP_TOML" PATH="$DP/
     SPIRA_MEMORIES_CMD="$(fixture_cmd)" "$@"; }
 dp_pane_dead() { tmux -L "$DP_SOCK" list-panes -t "$DP_SOCK" -F '#{pane_dead}' 2>/dev/null | head -1; }
 tmux -L "$DP_SOCK" kill-server 2>/dev/null || true
-tmux -L "$DP_SOCK" new-session -d -s "$DP_SOCK" "sleep 600" \; set-option -t "$DP_SOCK" remain-on-exit on
+tmux -L "$DP_SOCK" new-session -d -s "$DP_SOCK" "exec sleep 600" \; set-option -t "$DP_SOCK" remain-on-exit on
 is "the live fixture pane reads live (positive control)" 0 "$(dp_pane_dead)"
 dp_live_out="$(dp_env bash "$HARNESS/concierge.sh" status 2>&1)"
 want   "status reports a live pane as running" "concierge: running" "$dp_live_out"
