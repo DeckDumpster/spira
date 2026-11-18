@@ -838,6 +838,12 @@ mod tests {
     }
 
     #[test]
+    fn the_usage_names_both_aggregate_sub_verbs() {
+        let (_, text) = cmd_plan(&a(&["nonsense"]));
+        assert!(text.contains("plan inflow --window-secs N") && text.contains("plan repo-labels --valid a,b"), "{text}");
+    }
+
+    #[test]
     fn no_ids_is_an_empty_answer_and_a_missing_selector_is_refused() {
         let c = crate::db::Conn::unreachable();
         assert_eq!(items(&a(&["--ids", ""]), &c), Ok(vec![]));
