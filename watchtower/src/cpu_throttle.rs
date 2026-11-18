@@ -17,7 +17,9 @@ pub struct Cfg {
     pub systemctl: String,
 }
 
-pub const DEFAULT_UNITS: &str = "dolt-beads.service spira-landing-pass.service spira-sentinel.service spira-call.service spira-verdict.service";
+pub fn default_units(instance: &str) -> Vec<String> {
+    vec!["dolt-beads.service".to_string(), spira_config::unit::unit_name("runtime", "service", instance)]
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Sample {
@@ -150,6 +152,14 @@ pub fn summarize(rows: &[Row], warn_pct: i64) -> (bool, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_default_units_are_the_ones_that_exist_for_the_instance() {
+        assert_eq!(default_units("prod"), vec!["dolt-beads.service", "spira-runtime-prod.service"]);
+        for retired in ["spira-sentinel", "spira-landing-pass", "spira-call", "spira-verdict"] {
+            assert!(!default_units("prod").iter().any(|u| u.contains(retired)));
+        }
+    }
 
     const STAT: &str = "usage_usec 100\nnr_periods 1088059\nnr_throttled 657510\nthrottled_usec 5\n";
 

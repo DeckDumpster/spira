@@ -309,25 +309,12 @@ pub fn now_keys(cfg: &Cfg) -> Kv {
     push(&mut out, "SP_DWARF_N", i.to_string());
     sweep_dwarf_static(&run, io::now());
 
-    push(&mut out, "SP_SENTINEL_TIMER", unit_active_key("sentinel", "timer", &cfg.instance));
-    push(&mut out, "SP_SENTINEL_AGE", age_of(&run.join("sentinel.log")));
-    push(&mut out, "SP_OPS_TIMER", unit_active_key("ops", "timer", &cfg.instance));
-
-    let mut ops_age = age_of(&run.join("ops.log"));
-    if let Ok(entries) = std::fs::read_dir(&run) {
-        for e in entries.flatten() {
-            let name = e.file_name();
-            let name = name.to_string_lossy();
-            if name.starts_with("dwarf-ops-") && name.ends_with(".pid") && dwarf_alive(&e.path()) {
-                ops_age = "0".to_string();
-                break;
-            }
-        }
+    let scheduler = unit_active_key("runtime", "service", &cfg.instance);
+    for (timer_key, age_key, task) in LOOP_PULSE {
+        push(&mut out, timer_key, scheduler.clone());
+        push(&mut out, age_key, task_age(&run, task));
     }
-    push(&mut out, "SP_OPS_AGE", ops_age);
 
-    push(&mut out, "SP_HEIMDALL_TIMER", unit_active_key("heimdall", "timer", &cfg.instance));
-    push(&mut out, "SP_HEIMDALL_AGE", age_of(&run.join("heimdall.status")));
     let heimdall_status = run.join("heimdall.status");
     if heimdall_status.is_file() {
         let (firing, keys) = read_heimdall_status(&heimdall_status);
@@ -520,8 +507,15 @@ pub(super) fn unit_active_key(rune: &str, kind: &str, instance: &str) -> String 
     }
 }
 
-fn age_of(path: &Path) -> String {
-    io::mtime_age_secs(path).map(|s| s.to_string()).unwrap_or_else(|| "?".to_string())
+/// Liveness keys the loop's readers consume, each fed by the runtime task that does the work.
+const LOOP_PULSE: [(&str, &str, &str); 3] = [
+    ("SP_SENTINEL_TIMER", "SP_SENTINEL_AGE", "sentinel-pass"),
+    ("SP_OPS_TIMER", "SP_OPS_AGE", "persona.ops"),
+    ("SP_HEIMDALL_TIMER", "SP_HEIMDALL_AGE", "reconcile.heimdall"),
+];
+
+fn task_age(run: &Path, task: &str) -> String {
+    spira_config::ticked::quiet_secs(run, task).map(|s| s.to_string()).unwrap_or_else(|| "?".to_string())
 }
 
 /// `dwarf_alive` (`lib.sh`): the one canonical implementation (`strand::probe::dwarf_alive`,
@@ -1650,6 +1644,25 @@ pub fn czar_progress(bead: &Value, lc: Option<&HashMap<String, lc::Row>>) -> Cza
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn loop_ages_come_from_the_task_stamp_not_the_retired_log() {
+        let t = testkit::TempDir::new("loop-pulse");
+        let run = t.path();
+        for f in ["sentinel.log", "ops.log", "heimdall.status"] {
+            std::fs::write(run.join(f), "old").unwrap();
+            let old = std::time::SystemTime::now() - std::time::Duration::from_secs(1_000_000);
+            std::fs::File::options().write(true).open(run.join(f)).unwrap().set_modified(old).unwrap();
+        }
+        for (_, _, task) in LOOP_PULSE {
+            assert_eq!(task_age(run, task), "?", "{task} never stamped");
+        }
+        for (_, age_key, task) in LOOP_PULSE {
+            spira_config::ticked::stamp(run, task);
+            let age: u64 = task_age(run, task).parse().unwrap_or_else(|_| panic!("{age_key} unread"));
+            assert!(age < 60, "{age_key} read {age}s, the log's age");
+        }
+    }
+
     #[test]
     fn dwarf_static_cache_honours_ttl_and_refuses_partial_rows() {
         let t = testkit::TempDir::new("dwarf-static");
