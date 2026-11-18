@@ -976,7 +976,7 @@ pub fn well_keys(cfg: &Cfg) -> Kv {
 // repo_label_keys
 // ---------------------------------------------------------------------------------------
 
-/// (unmapped, absent) over a full row set: the answer the server's `pane-facets repo-labels` gives.
+/// (unmapped, absent) over a full row set: the answer the server's `plan repo-labels` gives.
 fn repo_label_counts(rows: &[Value], valid: &std::collections::HashSet<String>) -> (usize, usize) {
     let (mut unmapped, mut absent) = (0, 0);
     for i in rows {
@@ -989,6 +989,15 @@ fn repo_label_counts(rows: &[Value], valid: &std::collections::HashSet<String>) 
         }
     }
     (unmapped, absent)
+}
+
+fn repo_labels_argv(sorted_names: &[&str]) -> Vec<String> {
+    ["plan", "repo-labels", "--valid", &sorted_names.join(",")].map(String::from).to_vec()
+}
+
+fn repo_labels_from_server(raw: &str) -> Option<(usize, usize)> {
+    let v: Value = serde_json::from_str(raw).ok()?;
+    Some((v.get("unmapped")?.as_u64()? as usize, v.get("absent")?.as_u64()? as usize))
 }
 
 pub fn repo_label_keys(cfg: &Cfg) -> Kv {
@@ -1011,10 +1020,8 @@ pub fn repo_label_keys(cfg: &Cfg) -> Kv {
     } else {
         let mut names: Vec<&str> = valid.iter().map(String::as_str).collect();
         names.sort_unstable();
-        lc::verb(&["pane-facets", "repo-labels", "--valid", &names.join(",")]).and_then(|raw| {
-            let v: Value = serde_json::from_str(&raw).ok()?;
-            Some((v.get("unmapped")?.as_u64()? as usize, v.get("absent")?.as_u64()? as usize))
-        })
+        let argv = repo_labels_argv(&names);
+        lc::verb(&argv.iter().map(String::as_str).collect::<Vec<_>>()).and_then(|raw| repo_labels_from_server(&raw))
     };
     match counts {
         None => {
@@ -1763,6 +1770,13 @@ mod tests {
         let cfg = Cfg { repo_map: "nonexistent/registry".into(), ..Cfg::default() };
         let out = repo_label_keys(&cfg);
         assert_eq!(out, vec![("SP_REPO_UNMAPPED".to_string(), "?".to_string()), ("SP_REPO_ABSENT".to_string(), "?".to_string())]);
+    }
+
+    #[test]
+    fn the_repo_label_probe_asks_plan_with_the_sorted_names_and_reads_the_reply() {
+        assert_eq!(repo_labels_argv(&["a", "b"]), ["plan", "repo-labels", "--valid", "a,b"]);
+        assert_eq!(repo_labels_from_server(r#"{"unmapped":1,"absent":2}"#), Some((1, 2)));
+        assert_eq!(repo_labels_from_server(r#"{"unmapped":1}"#), None);
     }
 
     #[test]

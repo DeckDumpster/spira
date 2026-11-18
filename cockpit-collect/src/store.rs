@@ -202,9 +202,9 @@ mod tests {
 
     #[test]
     fn a_verb_goes_over_the_socket_and_a_refusal_is_none() {
-        let (c, sent) = client(&[("list", 0, "[{\"bead_id\":\"sp-a\"}]"), ("pane-facets", 3, "refused")]);
+        let (c, sent) = client(&[("list", 0, "[{\"bead_id\":\"sp-a\"}]"), ("ops-snapshot", 3, "refused")]);
         assert_eq!(answer_on(&c, &["list", "--batches"]).as_deref(), Some("[{\"bead_id\":\"sp-a\"}]"));
-        assert_eq!(answer_on(&c, &["pane-facets", "inflow"]), None);
+        assert_eq!(answer_on(&c, &["ops-snapshot"]), None);
         assert_eq!(sent.sent.lock().unwrap()[0], vec!["list".to_string(), "--batches".to_string()]);
     }
 
