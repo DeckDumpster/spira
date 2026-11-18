@@ -36,6 +36,7 @@ mod red_trackers;
 mod pass;
 mod seams;
 mod services;
+mod stall;
 #[cfg(test)]
 mod fork_edges;
 mod store;

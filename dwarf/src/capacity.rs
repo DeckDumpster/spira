@@ -80,7 +80,7 @@ pub fn pause_state(pause_file: &Path, now: i64) -> PauseState {
 /// `capacity_pause_until`/`capacity_pause_why`, as one read, expiry not applied. The file
 /// is one line: `<epoch> <iso-stamp> <why...>`; `why` may itself contain spaces, so only
 /// the first two fields are stripped (bash's own `awk '{$1="";$2="";...}'`).
-pub(crate) fn read_pause(pause_file: &Path) -> PauseState {
+pub fn read_pause(pause_file: &Path) -> PauseState {
     let text = match std::fs::read_to_string(pause_file) {
         Ok(t) => t,
         Err(e) if e.kind() == ErrorKind::NotFound => return PauseState::Open,

@@ -1738,3 +1738,75 @@ fn the_exact_inherited_branch_label_is_removed() {
     assert_eq!(r.count(|s| s.prog == "bd" && s.args.iter().any(|a| a == "remove") && s.args.iter().any(|a| a == "branch:spira/sp-root")), 1, "{:#?}", r.lines());
     assert!(matches!(out.first(), Some(crate::detect::ParkOutcome::Unlabeled { .. })), "{out:?}");
 }
+
+// ---------------------------------------------------------------------------------------
+// CHECK 2e (READY work, no dwarf called, nothing explaining it)
+
+/// One pass over 15 READY rows whose newest `born` is `quiet_secs` old; `prep` lays out the
+/// run directory; `open_ask` scripts the store as already holding the ask. Returns the
+/// concierge mails sent and the mail the first of them carried.
+fn stall_pass(tag: &str, quiet_secs: i64, open_ask: bool, prep: impl Fn(&World)) -> (usize, String) {
+    let (w, r, sink, clock) = setup(tag);
+    std::fs::write(w.run.join("dwarf-ledger.log"), format!("{} born builder 7\n", crate::host::utc(NOW - quiet_secs))).unwrap();
+    prep(&w);
+    r.on(move |s| {
+        if s.prog == "spira-lc" && s.args[0] == "list" {
+            let rows: Vec<String> = (0..15).map(|i| format!(r#"{{"bead_id":"sp-r{i}","state":"READY","holds":"[]","version":"1"}}"#)).collect();
+            return ok(&format!("[{}]", rows.join(",")));
+        }
+        if open_ask && is_bd(s, "list") && s.args.iter().any(|a| a == "open") {
+            return ok(&format!(r#"[{{"id":"sp-ask1","title":"{}","status":"open"}}]"#, crate::stall::SUBJECT));
+        }
+        None
+    });
+    run_mode(&w, &r, &sink, &clock, Mode::Pass, &[], None);
+    let mails = r.count(|c| c.prog == "mail" && c.args.first().map(String::as_str) == Some("send"));
+    let body = r.find(|c| c.prog == "mail").and_then(|c| c.stdin).map(|b| String::from_utf8(b).unwrap()).unwrap_or_default();
+    (mails, body)
+}
+
+fn expired_pause(w: &World) {
+    std::fs::write(w.run.join("capacity-pause"), format!("{} {} usage\n", NOW - 3 * 3600, crate::host::utc(NOW - 3 * 3600))).unwrap();
+}
+
+#[test]
+fn on_check2e_ready_work_with_no_dwarf_called_and_an_expired_pause_files_one_ask_with_the_evidence() {
+    let (mails, body) = stall_pass("stall-ask", crate::stall::STALL_SECS + 60, false, expired_pause);
+    assert_eq!(mails, 1);
+    for want in ["MOOT-WHEN: awk", "ready: 15", "stalled: 31 minutes", "born builder 7", "EXPIRED"] {
+        assert!(body.contains(want), "missing {want:?} in {body}");
+    }
+}
+
+#[test]
+fn on_check2e_an_ask_already_open_is_not_filed_again() {
+    let (mails, _) = stall_pass("stall-dedup", crate::stall::STALL_SECS + 60, true, expired_pause);
+    assert_eq!(mails, 0);
+}
+
+#[test]
+fn on_check2e_a_pause_in_force_a_halted_world_or_a_recent_call_file_nothing() {
+    let live = |w: &World| std::fs::write(w.run.join("capacity-pause"), format!("{} x usage\n", NOW + 600)).unwrap();
+    assert_eq!(stall_pass("stall-live", crate::stall::STALL_SECS + 60, false, live).0, 0);
+    let halted = |w: &World| {
+        expired_pause(w);
+        std::fs::write(w.run.join("world.halted"), "").unwrap();
+    };
+    assert_eq!(stall_pass("stall-halted", crate::stall::STALL_SECS + 60, false, halted).0, 0);
+    assert_eq!(stall_pass("stall-recent", 60, false, expired_pause).0, 0);
+}
+
+#[test]
+fn on_check2e_a_pause_in_force_past_a_full_window_still_files_the_ask() {
+    let live = |w: &World| std::fs::write(w.run.join("capacity-pause"), format!("{} x usage\n", NOW + 600)).unwrap();
+    assert_eq!(stall_pass("stall-long-pause", crate::stall::PAUSE_WINDOW_SECS + 60, false, live).0, 1);
+}
+
+#[test]
+fn on_check2e_the_filed_body_carries_a_predicate_the_moot_sweep_reads_and_runs_to_exit_zero() {
+    let (_, body) = stall_pass("stall-moot-body", crate::stall::STALL_SECS + 60, false, expired_pause);
+    let row = serde_json::json!([{"id": "sp-ask1", "status": "open", "labels": ["needs-operator"], "description": body}]); // literal-ok: test fixture
+    let asks = watchtower::sweep::moot::asks_of(&row.to_string(), "needs-operator"); // literal-ok: test fixture
+    assert_eq!(asks.len(), 1, "{body}");
+    assert!(asks[0].1.starts_with("awk "), "{}", asks[0].1);
+}
