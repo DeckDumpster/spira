@@ -311,7 +311,7 @@ fn a_red_round_eject_naming_no_suite_is_refused_and_one_naming_a_suite_records_i
 }
 
 #[test]
-fn a_repo_whose_testenv_knows_only_gate_refuses_ci_and_accepts_gate_and_the_whole_testenv_run() {
+fn a_repo_whose_testenv_knows_only_gate_refuses_ci_and_forces_gate_for_the_whole_testenv_run() {
     let t = round_world();
     assert_eq!(
         t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]),
@@ -343,6 +343,48 @@ fn a_repo_whose_testenv_knows_only_gate_refuses_ci_and_accepts_gate_and_the_whol
     assert_eq!(eject("ci"), 1);
     assert!(t.err().contains("known suites: gate"), "{}", t.err());
     assert_eq!(eject("testenv"), 0, "{}", t.err());
+    assert!(t.lib.has("bead_reopen sp-b eject-red gate"), "{:?}", t.err());
+}
+
+#[test]
+fn a_ci_entry_red_forces_the_declared_default_tier_not_the_result_name() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    let wt = PathBuf::from(&kv_of(&t, "round")["worktree"]);
+    fs::create_dir_all(wt.join(".spira")).unwrap();
+    fs::write(
+        wt.join(".spira/testenv.toml"),
+        "ci_entry = \"bash gate.sh\"\ndefault = [\"gate\"]\n[tier.gate]\ncommand = \"true\"\n[tier.build]\ncommand = \"true\"\n",
+    )
+    .unwrap();
+    assert_eq!(
+        t.run(&["round", "eject", &batch, "sp-b", "--reason", "red", "--red", "--suites", "testenv", "--no-rebuild"]),
+        0,
+        "{}",
+        t.err()
+    );
+    assert!(t.lib.has("bead_reopen sp-b eject-red gate"), "{:?}", t.err());
+    let calls = t.lib.calls.borrow().clone();
+    let comment = calls.iter().find(|l| l.starts_with("comment sp-b")).cloned().unwrap_or_default();
+    assert!(calls.iter().filter(|c| c.starts_with("bead_reopen")).all(|c| !c.contains("testenv")), "{calls:?}");
+    assert!(comment.trim_end().ends_with("SPIRA_CERTIFY_SUITES: gate"), "{comment}");
+    assert!(!comment.contains("testenv"), "{comment}");
+}
+
+#[test]
+fn a_ci_entry_red_on_a_tree_with_no_own_testenv_is_refused_by_name() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    let before = kv_of(&t, "round");
+    assert_eq!(
+        t.run(&["round", "eject", &batch, "sp-b", "--reason", "red", "--red", "--suites", "testenv", "--no-rebuild"]),
+        1
+    );
+    assert!(t.err().contains("testenv does not know") && t.err().contains("testenv"), "{}", t.err());
+    assert_eq!(kv_of(&t, "round"), before);
+    assert!(!t.lib.has("bead_reopen") && !t.lc.has("eject-member"));
 }
 
 #[test]
@@ -8664,28 +8706,6 @@ fn an_unleased_round_is_touched_as_before_and_a_lapsed_token_or_an_unread_lease_
         t.err()
     );
     assert!(t.lc.has("abandon-batch r-1"));
-}
-
-#[test]
-fn an_eject_naming_the_testenv_run_of_a_repo_that_judges_itself_is_accepted() {
-    let t = round_world();
-    let open = [
-        "round",
-        "open",
-        "--members",
-        "sp-a:ta,sp-b:tb",
-        "--name",
-        "r-1",
-    ];
-    assert_eq!(t.run(&open), 0, "{}", t.err());
-    seed_suite(&t, "test-b.sh");
-    let (rc, e) = err_of(&t, || {
-        t.run(&[
-            "round", "eject", "r-1", "sp-b", "--reason", "red", "--red", "--suites", "testenv",
-        ])
-    });
-    assert_eq!(rc, 0, "{e}");
-    assert!(t.lc.has("eject-member r-1"), "{:?}", t.lc.calls.borrow());
 }
 
 /// `queue round land` as the Lander calls it (the argv the landing pass drives): the

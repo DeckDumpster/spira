@@ -2764,6 +2764,19 @@ mod tests {
     }
 
     #[test]
+    fn a_resubmit_after_an_eject_forcing_a_declared_tier_runs_that_tier_through_testenv_and_passes() {
+        let dir = proof_dir("declared-tier");
+        let run = dir.path().to_path_buf();
+        spira_config::proof::record_failing(&run, "sp-a", &["gate".into()]).unwrap();
+        let runner = |c: &str, _: u64| {
+            let (program, args) = check_invocation(c, TIP, "remarkable-pipeline", None).unwrap();
+            if (program, args.clone()) == ("testenv", v(&["--suites", "gate", TIP, "remarkable-pipeline"])) { (0, "gate: ok\n".to_string()) } else { (2, "batch: unknown suite: testenv\n".to_string()) }
+        };
+        assert!(proof_refusal(&run, "sp-a", TIP, &[], 60, &runner).is_none());
+        assert!(spira_config::proof::proven(&run, "sp-a", TIP, "gate"));
+    }
+
+    #[test]
     fn a_diff_that_owes_nothing_runs_nothing() {
         let dir = proof_dir("owes-nothing");
         let run = dir.path().to_path_buf();
