@@ -1682,15 +1682,17 @@ fn a_round_cut_with_one_member_twice_writes_no_discontinuous_delivery_event() {
     r.certified("sp-a", T1);
     let members = vec![("sp-a".to_string(), T1.to_string()); 2];
     let planned = r.s.plan_cut(&r.cut_spec(&members)).unwrap();
+    let head = r.s.contract().head().unwrap();
     let Planned::Cascade(_) = &planned else {
+        assert_eq!(r.s.contract().head().unwrap(), head, "a refused cut writes nothing");
+        assert!(r.s.delivery("sp-a").unwrap().is_none());
         return;
     };
-    let head = r.s.contract().head().unwrap();
-    if r.s.run_planned(planned, &r.req(), "cut").is_err() {
-        assert_eq!(r.s.contract().head().unwrap(), head);
+    let Ok(Ran::Done { rev, .. }) = r.s.run_planned(planned, &r.req(), "cut") else {
+        assert_eq!(r.s.contract().head().unwrap(), head, "a refused cut writes nothing");
         return;
-    }
-    let (_, audits) = r.audits_at(head + 1);
+    };
+    let (_, audits) = r.audits_at(rev);
     let mut prev: Option<String> = None;
     for a in audits.iter().filter(|a| a.applied && a.machine == "delivery" && a.lc_key == "sp-a") {
         if let Some(p) = &prev {
