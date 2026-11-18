@@ -96,6 +96,9 @@ fn a_pilgrim_files_links_and_closes_in_a_world_of_its_own_and_both_views_follow(
         .find(|(k, _)| k == "SPIRA_LC_SOCKET")
         .map(|(_, v)| v);
     assert_eq!(gate_socket, Some(lc_socket(&dir).display().to_string()));
+    let env_text = std::fs::read_to_string(dir.join("config/sim.env")).unwrap();
+    let named = dwarf::pilgrim_world::model_env(&dir, &env_text).unwrap();
+    assert!(named.contains(&("PILGRIM_TOML".to_string(), dir.join("config/sim.toml").display().to_string())), "{named:?}");
 
     pilgrim::up(&dir, pilgrim::FIXTURE, &ProcessSteps).unwrap();
     let loom = pilgrim::Loom::start(&dir).unwrap();

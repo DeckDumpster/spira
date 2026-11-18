@@ -48,3 +48,4 @@ cockpit-ops = { path = "../../cockpit/ops" }
 [dev-dependencies]
 testkit = { path = "../../testkit" }
 queue = { path = "../../queue" }
+dwarf = { path = "../../dwarf" }
