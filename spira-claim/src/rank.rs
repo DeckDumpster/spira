@@ -348,7 +348,7 @@ pub fn blockers(r: &ReadyRow) -> Vec<String> {
 }
 
 /// A parent that does not hold its child back, by [`edges::blocks`].
-fn parent_exempt(cand: &ReadyRow, parent: &str, lc: &HashMap<String, LifecycleRow>) -> bool {
+pub(crate) fn parent_exempt(cand: &ReadyRow, parent: &str, lc: &HashMap<String, LifecycleRow>) -> bool {
     !edges::blocks(edges::Edge::Parent {
         parent: lc.get(parent).map(|row| (row.state, row.tip.is_some())),
         split: cand.labels.iter().any(|l| l == SPLIT_LABEL),

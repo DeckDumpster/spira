@@ -21,7 +21,7 @@ fn claimable(kind: Kind) -> bool {
 /// The `publish-readiness` payload for `live` records. `lc` holds them and their blockers;
 /// `bd` the content that names each one's blockers; `entries` the verdicts the claim rule
 /// reached for the READY and REWORK ones. A record the claim rule did not judge is not
-/// claimable, and waits on every blocker that has not finished.
+/// claimable, and waits on every unfinished blocker except a parent that does not hold it back.
 pub fn payload(live: &[&LifecycleRow], lc: &HashMap<String, LifecycleRow>, bd: &HashMap<String, ReadyRow>, entries: &[Entry], computed_at: &str, planning_watermark: Option<&str>) -> String {
     let verdicts: HashMap<&str, &Entry> = entries.iter().map(|e| (e.id.as_str(), e)).collect();
     let judged: Vec<Value> = live
@@ -32,7 +32,13 @@ pub fn payload(live: &[&LifecycleRow], lc: &HashMap<String, LifecycleRow>, bd: &
             let (claimable, blocked_by, verdict) = match verdicts.get(rec.bead_id.as_str()) {
                 Some(e) => (claimable(e.verdict), e.blocker.iter().cloned().collect(), serde_json::to_value(e.verdict).unwrap_or(Value::Null)),
                 None => {
-                    let waiting: Vec<String> = gates.iter().filter(|(_, g)| g.as_ref().is_some_and(|g| g.class != GateClass::Finished)).map(|(b, _)| b.clone()).collect();
+                    let cand = bd.get(&rec.bead_id);
+                    let waiting: Vec<String> = gates
+                        .iter()
+                        .filter(|(_, g)| g.as_ref().is_some_and(|g| g.class != GateClass::Finished))
+                        .filter(|(b, _)| !cand.is_some_and(|c| c.parent.as_deref() == Some(b.as_str()) && rank::parent_exempt(c, b, lc)))
+                        .map(|(b, _)| b.clone())
+                        .collect();
                     (false, waiting, json!(format!("state:{}", rec.state.as_str())))
                 }
             };
@@ -48,7 +54,7 @@ mod occupied_tests {
 
     use lifecycle::bead::{BeadState, Stack};
 
-    use crate::rank::LifecycleRow;
+    use crate::rank::{Dependency, LifecycleRow, ReadyRow};
     use crate::verdicts::{Entry, Kind};
 
     fn row(id: &str, state: BeadState) -> LifecycleRow {
@@ -67,6 +73,45 @@ mod occupied_tests {
         let out = entries_of(&[&a, &b], &[entry]);
         assert_eq!(out["entries"][0]["verdict"], "occupied");
         assert_eq!(out["entries"][1]["verdict"], "state:WORKING");
+    }
+
+    fn child_entry(child_state: BeadState, labels: &[&str], parent: LifecycleRow, deps: Vec<Dependency>) -> serde_json::Value {
+        let child = row("sp-c", child_state);
+        let ready = ReadyRow { id: "sp-c".into(), parent: Some("sp-p".into()), labels: labels.iter().map(|l| l.to_string()).collect(), dependencies: deps, ..Default::default() };
+        let lc: HashMap<String, LifecycleRow> = [child.clone(), parent].into_iter().map(|r| (r.bead_id.clone(), r)).collect();
+        let bd = HashMap::from([("sp-c".to_string(), ready)]);
+        let out: serde_json::Value = serde_json::from_str(&super::payload(&[&child], &lc, &bd, &[], "t", None)).unwrap();
+        out["entries"][0].clone()
+    }
+
+    #[test]
+    fn an_idle_parent_is_not_named_a_blocker_of_an_unjudged_child_but_stays_in_gates() {
+        let e = child_entry(BeadState::Certified, &[], row("sp-p", BeadState::Ready), vec![]);
+        assert_eq!(e["blocked_by"], serde_json::json!([]));
+        assert_eq!(e["gates"]["sp-p"]["class"], "idle");
+    }
+
+    #[test]
+    fn a_parent_that_blocks_is_still_named() {
+        let split = child_entry(BeadState::Certified, &[spira_config::nonwork::SPLIT_LABEL], row("sp-p", BeadState::Ready), vec![]);
+        assert_eq!(split["blocked_by"], serde_json::json!(["sp-p"]));
+        let working = child_entry(BeadState::Certified, &[], row("sp-p", BeadState::Working), vec![]);
+        assert_eq!(working["blocked_by"], serde_json::json!(["sp-p"]));
+        let mut tipped = row("sp-p", BeadState::Ready);
+        tipped.tip = Some("abc".into());
+        let tipped = child_entry(BeadState::Certified, &[], tipped, vec![]);
+        assert_eq!(tipped["blocked_by"], serde_json::json!(["sp-p"]));
+    }
+
+    #[test]
+    fn a_declared_blocks_dependency_on_a_ready_bead_is_still_named() {
+        let dep = Dependency { issue_id: Some("sp-c".into()), depends_on_id: Some("sp-d".into()), dep_type: Some("blocks".into()) };
+        let child = row("sp-c", BeadState::Certified);
+        let ready = ReadyRow { id: "sp-c".into(), parent: Some("sp-p".into()), dependencies: vec![dep], ..Default::default() };
+        let lc: HashMap<String, LifecycleRow> = [child.clone(), row("sp-p", BeadState::Ready), row("sp-d", BeadState::Ready)].into_iter().map(|r| (r.bead_id.clone(), r)).collect();
+        let bd = HashMap::from([("sp-c".to_string(), ready)]);
+        let out: serde_json::Value = serde_json::from_str(&super::payload(&[&child], &lc, &bd, &[], "t", None)).unwrap();
+        assert_eq!(out["entries"][0]["blocked_by"], serde_json::json!(["sp-d"]));
     }
 
     #[test]
