@@ -966,6 +966,14 @@ mod tests {
     }
 
     #[test]
+    fn a_reader_of_a_touched_file_survives_the_cap() {
+        let w = ws();
+        let f = Forces { unit_cap: Some(1), ..Forces::default() };
+        let got = compose(GateMode::Unit, &f, &ch(&["spira-config/src/lib.rs", "systemd/a.service"]), Ok(&w));
+        assert_eq!(crates(&got), v(&["release", "spira-config"]));
+    }
+
+    #[test]
     fn the_composition_table() {
         use Composition::*;
         let s = |w: &str| Suites { why: w.into() };

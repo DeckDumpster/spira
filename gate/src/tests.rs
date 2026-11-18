@@ -209,7 +209,7 @@ fn ctx() -> Ctx {
         ("SPIRA_GATE_BUDGET", "300"),
         ("SPIRA_GATE_DEADLINE", "300"),
         ("SPIRA_GATE_BUILD_STALL", "300"),
-        ("SPIRA_GATE_UNIT_MAX_CRATES", "20"),
+        ("SPIRA_GATE_UNIT_MAX_CRATES", "7"),
         ("SPIRA_GATE_BUILDER_DIR_WAIT_SECS", "120"),
         ("SPIRA_UNIT_TEST_DEADLINE_SECS", "60"),
         ("SPIRA_UNIT_TEST_DEADLINE_PERIODS", "2"),
@@ -2576,6 +2576,24 @@ fn a_gate_whose_test_phase_did_not_run_records_no_unit_timings() {
     assert!(!meter(&f).contains("unit_"), "{}", meter(&f));
     let rows = f.tsd.borrow();
     assert!(rows.iter().any(|r| r.contains("\"unit_tests\":0") && r.contains("\"unit_slowest\":\"\"")), "{rows:?}");
+}
+
+#[test]
+fn the_unit_cap_the_config_names_narrows_the_crates_the_gate_builds() {
+    let f = unit_fake(&["spira-config/src/lib.rs"]);
+    f.put_var("SPIRA_GATE_UNIT_MAX_CRATES", "1");
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    assert!(f.cmds.borrow()[1].ends_with("--features integration -p spira-config"), "{:?}", f.cmds.borrow());
+}
+
+#[test]
+fn a_unit_cap_that_is_not_a_positive_count_runs_the_gate_string_whole() {
+    for bad in ["0", "", "many"] {
+        let f = unit_fake(&["spira-config/src/lib.rs"]);
+        f.put_var("SPIRA_GATE_UNIT_MAX_CRATES", bad);
+        assert_eq!(f.run(), PASS, "{bad:?}: {}", f.stderr());
+        assert!(meter(&f).contains("compose=suites(unit-cap-config)"), "{bad:?}: {}", meter(&f));
+    }
 }
 
 #[test]
