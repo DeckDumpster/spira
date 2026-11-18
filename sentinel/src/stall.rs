@@ -90,7 +90,7 @@ impl<'a> Sentinel<'a> {
         let now = self.h.now();
         let ledger_path = self.cfg.run.join("dwarf-ledger.log");
         let born = last_born(&std::fs::read_to_string(&ledger_path).unwrap_or_default());
-        let pause = dwarf::capacity::pause_state(&self.cfg.capacity_pause);
+        let pause = dwarf::capacity::pause_state(&self.cfg.capacity_pause, now);
         let ready = rows.iter().filter(|r| r.state == "READY" && r.holds.is_empty()).count();
         let inputs = Inputs {
             now,
