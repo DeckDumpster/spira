@@ -32,6 +32,16 @@ pub struct TapCase {
     pub status: String,
     pub ms: Option<u64>,
     pub at: Option<String>,
+    /// Set when the case failed by passing `spira.test_case_deadline`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deadline: Option<CaseDeadline>,
+}
+
+/// The deadline a case passed and the box's load when it did.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CaseDeadline {
+    pub secs: u64,
+    pub load: Option<String>,
 }
 
 impl TapSummary {
@@ -52,7 +62,7 @@ fn open_case(status: &str, rest: &str) -> TapCase {
     let n = rest[..digits].parse().unwrap_or(0);
     let name = rest[digits..].trim_start().strip_prefix("- ").unwrap_or(rest[digits..].trim_start());
     let name = name.split_once(" # ").map_or(name, |(head, _)| head).trim_end();
-    TapCase { n, name: name.to_string(), status: status.to_string(), ms: None, at: None }
+    TapCase { n, name: name.to_string(), status: status.to_string(), ms: None, at: None, deadline: None }
 }
 
 fn directive(desc: &str) -> Option<&'static str> {
@@ -376,7 +386,7 @@ mod tests {
         assert_eq!(t.cases.len(), 3);
         assert_eq!(
             t.cases[0],
-            TapCase { n: 1, name: "first".into(), status: "ok".into(), ms: Some(12), at: None }
+            TapCase { n: 1, name: "first".into(), status: "ok".into(), ms: Some(12), at: None, deadline: None }
         );
         assert_eq!((t.cases[1].status.as_str(), t.cases[1].name.as_str()), ("skip", "slow"));
         assert_eq!(t.cases[2].ms, Some(2503));

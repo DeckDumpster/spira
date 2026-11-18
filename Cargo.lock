@@ -138,6 +138,7 @@ dependencies = [
  "store-view",
  "suite-select",
  "system-paths",
+ "testenv",
  "testkit",
  "tsd",
 ]

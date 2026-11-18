@@ -10,7 +10,7 @@ name = "batcher"
 path = "src/main.rs"
 
 [features]
-integration = ["batcher/integration", "forge/integration", "gate/integration", "lifecycle/integration", "migration-numbers/integration", "runtime/integration", "sift/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "state-store/integration", "store-view/integration", "suite-select/integration", "testkit/integration", "tsd/integration", "system-paths/integration"]
+integration = ["batcher/integration", "forge/integration", "gate/integration", "lifecycle/integration", "migration-numbers/integration", "runtime/integration", "sift/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "state-store/integration", "store-view/integration", "suite-select/integration", "testenv/integration", "testkit/integration", "tsd/integration", "system-paths/integration"]
 
 [dependencies]
 system-paths = { path = "../system-paths" }
@@ -20,6 +20,7 @@ spira-config = { path = "../spira-config" }
 spira-store = { path = "../spira-store" }
 spira-otel = { path = "../spira-otel" }
 suite-select = { path = "../suite-select" }
+testenv = { path = "../testenv" }
 gate = { path = "../gate" }
 lifecycle = { path = "../lifecycle" }
 state-store = { path = "../state-store" }
