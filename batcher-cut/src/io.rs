@@ -3567,7 +3567,14 @@ pub struct OpenRound {
     pub worktree: String,
     pub phase: String,
     pub red: bool,
+    /// The suites the queue recorded red for the round's pass, from the round record's `red` key.
+    pub red_suites: Vec<String>,
     pub age_secs: u64,
+}
+
+/// The suite names of a round record's `red` value.
+fn red_suites_of(red: &str) -> Vec<String> {
+    red.split(',').map(str::trim).filter(|s| !s.is_empty()).map(String::from).collect()
 }
 
 /// `members` as `queue round status` writes them, `id:tip` apiece, split into ids and tips.
@@ -3604,6 +3611,7 @@ fn open_round_of(r: &store_view::Round, now: u64) -> OpenRound {
         worktree: get("worktree").to_string(),
         phase: r.phase.clone(),
         red: !get("red").is_empty(),
+        red_suites: red_suites_of(get("red")),
         age_secs: get("opened").parse().map_or(0, |t: u64| now.saturating_sub(t)),
     }
 }
@@ -3627,6 +3635,7 @@ fn open_rounds_of(out: &str) -> Vec<OpenRound> {
                     get("phase")
                 },
                 red: !get("red").is_empty(),
+                red_suites: red_suites_of(&get("red")),
                 age_secs: get("wall_secs").parse().unwrap_or(0),
             })
         })
@@ -5483,7 +5492,7 @@ mod land_exit_tests {
         let round = store_view::Round { phase: "certifying".into(), record };
         assert_eq!(
             open_round_of(&round, 1090),
-            OpenRound { id: "r2".into(), members: vec!["sp-c".into(), "sp-d".into()], tips: vec!["tc".into(), "td".into()], head: "bbb".into(), worktree: "w2".into(), phase: "certifying".into(), red: true, age_secs: 90 }
+            OpenRound { id: "r2".into(), members: vec!["sp-c".into(), "sp-d".into()], tips: vec!["tc".into(), "td".into()], head: "bbb".into(), worktree: "w2".into(), phase: "certifying".into(), red: true, red_suites: vec!["test-x.sh".into()], age_secs: 90 }
         );
     }
 

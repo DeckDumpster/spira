@@ -1770,8 +1770,77 @@ fn sp_29matj_a_driverless_round_with_no_verdict_is_abandoned_as_a_harness_fault(
     let abandon: Leg = serde_json::from_str(&acts.iter().find(|a| a.effect == ABANDON).unwrap_or_else(|| panic!("no abandon: {acts:?}")).input).unwrap();
     assert!(abandon.why.contains("new") && abandon.why.contains("no pass is running"), "{}", abandon.why);
     assert!(abandon.reds.is_empty());
+    assert_eq!(abandon.bead, NO_DRIVER, "a pass with no verdict is a harness fault, filed as no-driver and not as a red abandon");
     let rc = next.repos.get("spira").cloned().unwrap_or_default();
     assert_eq!((rc.state, rc.batch.as_deref(), rc.pace.infra), (State::Idle, None, 1), "no member is charged and the pace counts one infra");
+}
+
+fn red_snap(id: &str, members: &[&str], suites: &[&str], now_ms: u64) -> Snapshot {
+    let round = Round { id: id.into(), members: members.iter().map(|m| m.to_string()).collect(), head: "new".into(), worktree: "w".into(), phase: "attributing".into(), red: true, red_suites: suites.iter().map(|s| s.to_string()).collect(), ..Round::default() };
+    Snapshot { repos: [("spira".to_string(), Repo { open_round: Some(round), live_legs: Some(vec![]), ..busy().repos["spira"].clone() })].into(), now_ms }
+}
+
+/// Plays a leg-less red round to the point where it used to be abandoned.
+fn play_red_round(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Act>) {
+    let (seen, _) = decide(carry, snap);
+    decide(&seen, &Snapshot { now_ms: snap.now_ms + LEG_START_GRACE_MS + 1, ..snap.clone() })
+}
+
+fn assert_attributes_kept_results(acts: &[Act], round: &str) {
+    assert!(!acts.iter().any(|a| a.effect == ABANDON), "a recorded red is a verdict, not a missing one: {acts:?}");
+    let leg: Leg = serde_json::from_str(&acts.iter().find(|a| a.effect == CORPUS).unwrap_or_else(|| panic!("no attribution: {acts:?}")).input).unwrap();
+    assert_eq!((leg.why.as_str(), leg.after_pass.as_str()), (ATTRIBUTE, kept_results_file(round).as_str()));
+}
+
+#[test]
+fn sp_we0r0p_a_recorded_red_on_a_multi_member_round_is_attributed_not_abandoned() {
+    let snap = red_snap("r9", &["sp-2ykfhe", "sp-4wxapo"], &["test-repo-check-killed.sh"], NOW);
+    let (next, acts) = play_red_round(&driverless_carry(), &snap);
+    assert_attributes_kept_results(&acts, "r9");
+    let rc = &next.repos["spira"];
+    assert_eq!((rc.state, rc.pace.infra), (State::Attributing, 0));
+    let leg: Leg = serde_json::from_str(&acts.iter().find(|a| a.effect == CORPUS).unwrap().input).unwrap();
+    assert_eq!(leg.reds, ["test-repo-check-killed.sh"]);
+}
+
+#[test]
+fn sp_we0r0p_a_recorded_red_on_a_one_member_round_is_attributed_not_abandoned() {
+    let snap = red_snap("r9", &["sp-yrxbnt"], &["unit-tests"], NOW);
+    let (next, acts) = play_red_round(&driverless_carry(), &snap);
+    assert_attributes_kept_results(&acts, "r9");
+    let rc = &next.repos["spira"];
+    assert_eq!((rc.state, rc.pace.infra), (State::Attributing, 0));
+}
+
+#[test]
+fn sp_we0r0p_two_recorded_red_rounds_in_a_row_do_not_stop_the_lane_as_having_no_verdicts() {
+    let mut carry = driverless_carry();
+    for id in ["r8", "r9"] {
+        let snap = red_snap(id, &["sp-2ykfhe", "sp-4wxapo"], &["test-repo-check-killed.sh"], NOW);
+        let (next, acts) = play_red_round(&carry, &snap);
+        assert!(!acts.iter().any(|a| a.effect == INBOX_APPEND && a.input.contains("ROUNDS STOPPED")), "{id}: {acts:?}");
+        assert!(!acts.iter().any(|a| a.effect == PAUSE && serde_json::from_str::<Leg>(&a.input).is_ok_and(|l| l.bead == "stop")), "{id}: {acts:?}");
+        carry = driverless_carry();
+        carry.repos.get_mut("spira").unwrap().pace = next.repos["spira"].pace.clone();
+    }
+    assert_eq!(carry.repos["spira"].pace.infra, 0);
+}
+
+#[test]
+fn sp_we0r0p_a_head_that_is_red_and_legless_again_after_its_attribution_ends_the_round_red() {
+    let snap = red_snap("r9", &["sp-2ykfhe", "sp-4wxapo"], &["test-repo-check-killed.sh"], NOW);
+    let (attributing, _) = play_red_round(&driverless_carry(), &snap);
+    let mut again = attributing.clone();
+    let rc = again.repos.get_mut("spira").unwrap();
+    rc.leg = None;
+    rc.leg_at_ms = NOW - LEG_START_GRACE_MS - 1;
+    let (next, acts) = decide(&again, &snap);
+    let abandon: Leg = serde_json::from_str(&acts.iter().find(|a| a.effect == ABANDON).unwrap_or_else(|| panic!("no abandon: {acts:?}")).input).unwrap();
+    assert!(abandon.why.contains("test-repo-check-killed.sh"), "{}", abandon.why);
+    assert!(acts.iter().any(|a| a.effect == PAUSE), "{acts:?}");
+    let page = acts.iter().find(|a| a.effect == INBOX_APPEND).unwrap_or_else(|| panic!("no page: {acts:?}"));
+    assert!(page.input.contains("ROUND RED") && page.input.contains("test-repo-check-killed.sh"), "{}", page.input);
+    assert_eq!(next.repos["spira"].pace.infra, 0);
 }
 
 #[test]

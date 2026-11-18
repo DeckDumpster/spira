@@ -42,6 +42,9 @@
 //! | Corpus | `unit.ran` red | Attributing (`eject` + re-run leg) |
 //! | Corpus | `unit.ran` green | Mending if menders open, else Certifying |
 //! | Attributing | `unit.ran` (re-run) | Corpus-judged: Mending / Certifying / Done(blocked) |
+//! | Corpus, Attributing, Certifying | observe: no leg carries the round, its record names red suites (`red=`), first time on this head | Attributing (the pass's kept results are attributed; pace untouched) |
+//! | Corpus, Attributing, Certifying | observe: the same, a second time on the same head | Done (`red_naming` the red suites, pace Red) |
+//! | Corpus, Attributing, Certifying | observe: no leg, no recorded red, no verdict | Done (`abandon` as no-driver, pace Infra) |
 //! | Mending | `mending.settled` or timer 900 s (`main.rs:368`) | Certifying |
 //! | Certifying | `unit.ran` green | Landing (`lc_certify`, `land`) |
 //! | Certifying | `unit.ran` red with no `red-output=`, first time (VM lost, no output and refused eject excepted) | Attributing, `after_certify` (the certify pass's own results are the prior) |
@@ -255,6 +258,9 @@ pub struct Round {
     /// The queue marked the round red: a round is never stacked on it.
     #[serde(default)]
     pub red: bool,
+    /// The suites the queue recorded red for the round's pass.
+    #[serde(default)]
+    pub red_suites: Vec<String>,
     /// Seconds since the round opened; the least is the newest, the one the next round stacks on.
     #[serde(default)]
     pub age_secs: u64,
@@ -419,6 +425,8 @@ pub enum Trigger {
     CertifyHeld,
     /// The rounds below have ended: the held round lands.
     LowerEnded,
+    /// The queue recorded the round's pass red and no leg carries it: the attribution runs on the pass's kept results.
+    PassRedRecorded,
     /// An eject left the round with no member: the round ended in the store and nothing is left to attribute (not in the contract's table).
     RoundEmptied,
 }
@@ -467,6 +475,9 @@ pub static TABLE: &[(State, Trigger, State)] = &[
     (State::Attributing, Trigger::LegRestarted, State::Attributing),
     (State::Certifying, Trigger::LegRestarted, State::Certifying),
     (State::Corpus, Trigger::LegLost, State::Done),
+    (State::Corpus, Trigger::PassRedRecorded, State::Attributing),
+    (State::Attributing, Trigger::PassRedRecorded, State::Attributing),
+    (State::Certifying, Trigger::PassRedRecorded, State::Attributing),
     (State::Corpus, Trigger::RoundEmptied, State::Done),
     (State::Attributing, Trigger::RoundEmptied, State::Done),
     (State::Certifying, Trigger::RoundEmptied, State::Done),
@@ -621,6 +632,9 @@ pub struct RepoCarry {
     pub certify_head: String,
     #[serde(default)]
     pub run: u32,
+    /// The head whose recorded red was already re-attributed: it is attributed once per head.
+    #[serde(default)]
+    pub red_attributed_head: String,
     /// Times the carried leg has been started again because it never ran or vanished.
     #[serde(default)]
     pub leg_restarts: u32,
@@ -1502,11 +1516,40 @@ impl Machine<'_> {
         if self.rc.leg.is_some() || open.driven || open.phase == "green" || self.now_ms.saturating_sub(self.rc.leg_at_ms) < LEG_START_GRACE_MS {
             return false;
         }
+        if open.red {
+            self.recorded_red(open);
+            return true;
+        }
         let why = format!("round head {}: no pass is running and none will report (the pass the queue started ended without a verdict)", open.head);
         self.go(Trigger::LegLost);
         self.abandon_naming(&why, Vec::new());
+        if let Some(a) = self.acts.last_mut() {
+            let mut leg: Leg = serde_json::from_str(&a.input).unwrap_or_default();
+            leg.bead = NO_DRIVER.into();
+            a.input = serde_json::to_string(&leg).unwrap_or_default();
+        }
         self.finish(pace::Outcome::Infra, &why);
         true
+    }
+
+    /// The queue recorded the pass red: that is its verdict. The red suites' owners are attributed
+    /// once per head; a head that is red and leg-less again ends the round red.
+    fn recorded_red(&mut self, open: &Round) {
+        let suites = if open.red_suites.is_empty() { vec!["a recorded red".to_string()] } else { open.red_suites.clone() };
+        if self.rc.red_attributed_head == open.head {
+            let why = format!("round head {}: the pass is red ({}) and its attribution left the same head red", open.head, suites.join(", "));
+            self.go(Trigger::PassRedRecorded);
+            self.red_naming(&why, suites);
+            return;
+        }
+        self.rc.red_attributed_head = open.head.clone();
+        self.go(Trigger::PassRedRecorded);
+        self.attribute_after(kept_results_file(&open.id));
+        if let Some(a) = self.acts.last_mut() {
+            let mut leg: Leg = serde_json::from_str(&a.input).unwrap_or_default();
+            leg.reds = suites;
+            a.input = serde_json::to_string(&leg).unwrap_or_default();
+        }
     }
 
     /// The live leg certifies the tree the attribution rebuilt and the store still names the head
@@ -2844,7 +2887,7 @@ pub mod edge {
             let unfit = io::round_certifiable(env, repo, &r.id).err();
             let queue = landing_pass::gateq::GateQueue::new(&env.run);
             let gate_red = with_failing(io::gate_red_rows(env, &r.members), |id, tip| queue.failing_at(&repo.name, &format!("spira/{id}"), tip));
-            Round { id: r.id, members: r.members, tips: r.tips, head: r.head, worktree: r.worktree, driven, red: r.red, age_secs: r.age_secs, unfit, phase: r.phase, gate_red }
+            Round { id: r.id, members: r.members, tips: r.tips, head: r.head, worktree: r.worktree, driven, red: r.red, red_suites: r.red_suites, age_secs: r.age_secs, unfit, phase: r.phase, gate_red }
         });
         let open_round = open.next();
         let open_above: Vec<Round> = open.collect();
