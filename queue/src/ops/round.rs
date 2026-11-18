@@ -795,7 +795,7 @@ pub(super) fn retire_filed_mender(w: &World, id: &str, batch: &str, reason: &str
     if w.lc.bead_row(id).is_some_and(|r| {
         r.holds.iter().any(|h| h == "ask")
             || r.tip.is_some()
-            || matches!(r.state.as_str(), "SUBMITTED" | "CERTIFIED" | "WORKING")
+            || matches!(r.state.as_str(), "SUBMITTED" | "CERTIFIED")
     }) {
         return;
     }

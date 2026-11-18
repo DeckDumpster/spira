@@ -1266,6 +1266,65 @@ fn a_working_mender_that_also_holds_an_ask_is_kept_when_the_round_is_abandoned()
 }
 
 #[test]
+fn a_working_mender_with_no_commit_is_closed_when_the_round_is_abandoned() {
+    let t = round_world();
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb", "--name", "hand-7"]),
+        0,
+        "{}",
+        t.err()
+    );
+    fs::write(marker(&t, "hand-7", "mender-1-gate-x"), "sp-m21\n").unwrap();
+    t.lc.rows
+        .borrow_mut()
+        .as_mut()
+        .unwrap()
+        .push(crate::model::LcBeadRow {
+            bead_id: "sp-m21".into(),
+            state: "WORKING".into(),
+            ..Default::default()
+        });
+    assert_eq!(
+        t.run(&["round", "abandon", "hand-7", "--reason", "base moved"]),
+        0,
+        "{}",
+        t.err()
+    );
+    assert!(t.lib.has("bead_close sp-m21"), "{:?}", t.lib.calls.borrow());
+    assert!(marker(&t, "hand-7", "mender-1-gate-x.retired").exists());
+}
+
+#[test]
+fn a_working_mender_holding_a_tip_is_kept_when_the_round_is_abandoned() {
+    let t = round_world();
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb", "--name", "hand-8"]),
+        0,
+        "{}",
+        t.err()
+    );
+    fs::write(marker(&t, "hand-8", "mender-1-gate-x"), "sp-m22\n").unwrap();
+    t.lc.rows
+        .borrow_mut()
+        .as_mut()
+        .unwrap()
+        .push(crate::model::LcBeadRow {
+            bead_id: "sp-m22".into(),
+            state: "WORKING".into(),
+            tip: Some("abc123".into()),
+            ..Default::default()
+        });
+    assert_eq!(
+        t.run(&["round", "abandon", "hand-8", "--reason", "base moved"]),
+        0,
+        "{}",
+        t.err()
+    );
+    assert!(!t.lib.has("bead_close sp-m22"), "{:?}", t.lib.calls.borrow());
+    assert!(!marker(&t, "hand-8", "mender-1-gate-x.retired").exists());
+}
+
+#[test]
 fn abandoning_a_round_keeps_a_mender_that_holds_a_submitted_fix_for_the_next_cut() {
     let t = round_world();
     assert_eq!(
