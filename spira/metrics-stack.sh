@@ -64,6 +64,7 @@ grafana)
         ( umask 077; head -c 24 /dev/urandom | base64 | tr -d '/+=\n' > "$cred" ) || exit 2
     fi
     chmod 600 "$cred" || exit 2
+    [ -n "${SPIRA_METRICS_PAGE_URL:-}" ] || echo 'metrics-stack: SPIRA_METRICS_PAGE_URL is empty — metric alerts page nobody' >&2
     # batch-job: the container is the unit's long-running service process
     exec podman "${common[@]}" --name grafana \
         --user 0:0 -p "$host:$port:3000" \
