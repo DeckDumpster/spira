@@ -429,7 +429,7 @@ fn filed_and_said() -> TaskRig {
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&filed_and_said(), NAME);
-    assert_eq!(rows, ["blind", "diluted", "halted", "held", "readable_at", "resumed_at", "retried", "stalled/alpha", "starved", "undated", "unlanded"]);
+    assert_eq!(rows, ["blind", "diluted", "halted", "held", "resumed_at", "stalled/alpha", "starved", "undated", "unlanded"]);
 }
 
 #[test]
@@ -507,134 +507,37 @@ fn blind_after_activation(host: Arc<Mutex<Host>>) -> TaskRig {
 }
 
 #[test]
-fn a_landings_read_that_fails_just_after_an_activation_is_retried_and_pages_nothing_if_the_next_reads() {
+fn the_first_unreadable_landings_tick_just_after_an_activation_pages_blind() {
+    let host = Arc::new(Mutex::new(Host { snap: Snapshot { why: REFUSAL.into(), ..Default::default() }, ..landed(24) }));
+    let r = blind_after_activation(host);
+    let pages = named(&r, INBOX_APPEND);
+    assert_eq!(pages.len(), 1, "{pages:?}");
+    assert!(pages[0].contains("P0 BLIND") && !pages[0].contains("activation"), "{pages:?}");
+}
+
+#[test]
+fn a_second_unreadable_landings_tick_pages_nothing_more_and_a_readable_one_rearms_the_page() {
     let host = Arc::new(Mutex::new(Host { snap: Snapshot::default(), ..landed(24) }));
     let mut r = blind_after_activation(host.clone());
-    assert_eq!(named(&r, INBOX_APPEND), Vec::<String>::new(), "the first unreadable tick after an activation says nothing");
-    host.lock().unwrap().snap.readable = true;
-    r.advance(60_000).unwrap();
-    assert_eq!(named(&r, INBOX_APPEND), Vec::<String>::new(), "the next tick reads");
-}
-
-#[test]
-fn a_landings_read_that_stays_unreadable_for_two_ticks_after_an_activation_pages_blind_naming_it() {
-    let host = Arc::new(Mutex::new(Host { snap: Snapshot::default(), ..landed(24) }));
-    let mut r = blind_after_activation(host);
-    r.advance(60_000).unwrap();
-    let pages = named(&r, INBOX_APPEND);
-    assert_eq!(pages.len(), 1, "{pages:?}");
-    assert!(pages[0].contains("P0 BLIND") && pages[0].contains("after the activation"), "{pages:?}");
-}
-
-fn blind_with_server_up(host: Arc<Mutex<Host>>, up_s: u64) -> TaskRig {
-    let (_, stream, kind) = WatchThroughput::boot();
-    let observe = move |_: &str| {
-        let mut snap = host.lock().unwrap().snap.clone();
-        snap.store_up_s = Some(up_s);
-        Ok(serde_json::to_string(&snap).unwrap())
-    };
-    let mut r = TaskRig::new(1, WatchThroughput::new(config()).registration()).unwrap().double(OBSERVE, observe).double(FILE, |_| Ok("filed".into())).double(CLEAR, |_| Ok("cleared".into())).double(INBOX_APPEND, |_| Ok("appended".into()));
-    r.clock.advance_to(3 * DAY_MS);
-    r.tick(stream, kind).unwrap();
-    r
-}
-
-#[test]
-fn one_unreadable_landings_tick_after_the_store_server_restarted_pages_nothing_and_two_in_a_row_page() {
-    let host = Arc::new(Mutex::new(Host { snap: Snapshot::default(), ..landed(24) }));
-    let mut r = blind_with_server_up(host, 50);
-    assert_eq!(named(&r, INBOX_APPEND), Vec::<String>::new(), "the first read after a restart is retried");
-    r.advance(60_000).unwrap();
-    let pages = named(&r, INBOX_APPEND);
-    assert_eq!(pages.len(), 1, "{pages:?}");
-    assert!(pages[0].contains("P0 BLIND"), "{pages:?}");
-}
-
-#[test]
-fn an_unreadable_landings_tick_with_the_store_server_up_more_than_two_minutes_pages_only_when_the_next_is_unreadable_too() {
-    let host = Arc::new(Mutex::new(Host { snap: Snapshot::default(), ..landed(24) }));
-    let mut r = blind_with_server_up(host, 121);
-    assert_eq!(named(&r, INBOX_APPEND), Vec::<String>::new(), "the first unreadable tick is read again");
-    r.advance(60_000).unwrap();
-    let pages = named(&r, INBOX_APPEND);
-    assert_eq!(pages.len(), 1, "{pages:?}");
-    assert!(pages[0].contains("P0 BLIND"), "{pages:?}");
-}
-
-#[test]
-fn unreadable_ticks_that_are_never_consecutive_page_nothing_and_two_in_a_row_page_once() {
-    let host = Arc::new(Mutex::new(Host { snap: Snapshot::default(), ..landed(24) }));
-    let h = host.clone();
-    let (_, stream, kind) = WatchThroughput::boot();
-    let observe = move |_: &str| {
-        let mut snap = h.lock().unwrap().snap.clone();
-        snap.store_up_s = Some(10_000);
-        Ok(serde_json::to_string(&snap).unwrap())
-    };
-    let mut r = TaskRig::new(1, WatchThroughput::new(config()).registration()).unwrap().double(OBSERVE, observe).double(FILE, |_| Ok("filed".into())).double(CLEAR, |_| Ok("cleared".into())).double(INBOX_APPEND, |_| Ok("appended".into()));
-    r.clock.advance_to(3 * DAY_MS);
-    r.tick(stream, kind).unwrap();
-    let set = |readable: bool| host.lock().unwrap().snap.readable = readable;
-    for readable in [true, false, true] {
-        set(readable);
-        r.advance(60_000).unwrap();
-    }
-    assert_eq!(named(&r, INBOX_APPEND), Vec::<String>::new(), "alternating ticks page nothing");
-    set(false);
-    r.advance(60_000).unwrap();
-    assert_eq!(named(&r, INBOX_APPEND), Vec::<String>::new(), "the first of the pair");
     r.advance(60_000).unwrap();
     assert_eq!(named(&r, INBOX_APPEND).len(), 1, "{:?}", named(&r, INBOX_APPEND));
+    host.lock().unwrap().snap.readable = true;
     r.advance(60_000).unwrap();
-    assert_eq!(named(&r, INBOX_APPEND).len(), 1, "a third unreadable tick pages nothing more");
-    assert!(named(&r, INBOX_APPEND)[0].contains("P0 BLIND"));
+    host.lock().unwrap().snap.readable = false;
+    r.advance(60_000).unwrap();
+    assert_eq!(named(&r, INBOX_APPEND).len(), 2, "{:?}", named(&r, INBOX_APPEND));
 }
 
-const REFUSAL: &str = "cannot tell: list --state SUBMITTED,IN_DELIVERY: timed out";
-const RESTART_AT: u64 = 1_794_686_201;
-const NOW_MS: u64 = (RESTART_AT + 600) * 1000;
+const REFUSAL: &str = "store unavailable: store not running: nothing was sent; waited 50 s for run/lc.sock";
 
-fn blind_page(readable_at: u64, store_restart: Option<(u64, String)>) -> String {
-    let snap = Snapshot { why: REFUSAL.into(), store_restart, activated_at: Some(RESTART_AT), ..Default::default() };
-    let v = decide(&Carry { readable_at, retried: true, ..Default::default() }, &snap, NOW_MS, &config());
+#[test]
+fn a_blind_page_carries_the_stores_reason_and_says_nothing_of_restarts_or_activations() {
+    let snap = Snapshot { why: REFUSAL.into(), activated_at: Some(1_794_686_201), ..Default::default() };
+    let v = decide(&Carry::default(), &snap, 1_794_686_801_000, &config());
     let lines: Vec<String> = v.acts.iter().filter(|a| a.name == INBOX_APPEND).map(|a| a.input.clone()).collect();
     assert_eq!(lines.len(), 1, "{lines:?}");
-    assert!(!lines[0].contains("after the activation"), "{}", lines[0]);
-    lines[0].clone()
-}
-
-fn restart() -> Option<(u64, String)> {
-    Some((RESTART_AT, "f66b50ff0a5c1234567890abcdef1234567890ab".into()))
-}
-
-#[test]
-fn a_blind_page_quotes_the_refusal_and_names_the_activation_that_restarted_the_store_server() {
-    let line = blind_page(RESTART_AT - 100, restart());
-    assert!(line.contains(&format!("({REFUSAL})")), "{line}");
-    assert!(line.contains(&format!("restarted by the activation of f66b50ff0a5c at {}", spira_runtime::watchers::iso8601(RESTART_AT))), "{line}");
-    assert!(line.contains("the store has not answered since, so landing stalls are not being checked"), "{line}");
-}
-
-#[test]
-fn a_blind_page_after_the_store_answered_since_the_restart_carries_the_refusal_and_no_restart_clause() {
-    let line = blind_page(RESTART_AT + 1, restart());
-    assert!(line.contains(REFUSAL) && !line.contains("restarted"), "{line}");
-}
-
-#[test]
-fn a_blind_page_with_no_recorded_store_restart_carries_the_refusal_and_no_restart_clause() {
-    let line = blind_page(0, None);
-    assert!(line.contains(REFUSAL) && !line.contains("restarted"), "{line}");
-}
-
-#[test]
-fn a_readable_tick_after_a_recorded_store_restart_stops_the_next_blind_page_naming_it() {
-    let readable = Snapshot { readable: true, store_restart: restart(), ..Default::default() };
-    let carry = decide(&Carry::default(), &readable, NOW_MS, &config()).carry;
-    assert_eq!(carry.readable_at, NOW_MS / 1000);
-    let blind = Snapshot { why: REFUSAL.into(), store_restart: restart(), ..Default::default() };
-    let v = decide(&carry, &blind, NOW_MS + 60_000, &config());
-    assert!(v.acts.iter().all(|a| !a.input.contains("restarted")), "{:?}", v.acts);
+    assert!(lines[0].contains(&format!("({REFUSAL})")) && lines[0].contains("P0 BLIND"), "{}", lines[0]);
+    assert!(!lines[0].contains("restart") && !lines[0].contains("activation"), "{}", lines[0]);
 }
 
 fn one_waiting(now_s: u64, last_landing_ago: u64, bead: &str, waited: u64) -> Snapshot {
