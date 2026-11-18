@@ -43,7 +43,7 @@ path = "src/main.rs"
 
 [package.metadata.spira]
 # plan_conformance files through the real bead and bdq.
-test-bins = ["bead", "spira-config"]
+test-bins = ["bead", "spira-config", "spira-lc"]
 
 [profile.release]
 opt-level = "z"

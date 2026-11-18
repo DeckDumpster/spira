@@ -204,7 +204,7 @@ pub fn run(args: &[String]) -> (i32, String) {
         Err(e) => return cannot(e),
     }
     match admin.execute(&format!("DROP DATABASE `{db}`")) {
-        Ok(()) => (0, format!("admin-drop-lifecycle: carried {facts} facts and {rows} journal rows ({summary} held); dropped {db}")),
+        Ok(()) => (0, format!("admin-drop-lifecycle: carried {facts} facts and {rows} journal rows ({summary} held); dropped {db}\nadmin-drop-lifecycle: spira.lc_backup_db must no longer name {db}: set it to the databases still kept")),
         Err(e) => cannot(format!("dropping {db}: {e:?}")),
     }
 }
@@ -286,9 +286,11 @@ mod tests {
     #[test]
     fn only_a_plain_database_name_is_dropped_and_an_unarchived_one_is_refused_first() {
         assert!(plain_name("db_1") && !plain_name("") && !plain_name("a`; DROP DATABASE spira; --") && !plain_name("a b"));
-        let (rc, out) = run(&["--database".into(), "x`y".into(), "--archive".into(), "/nonexistent".into()]);
+        let dir = testkit::TempDir::new("spira-lc-drop-archive");
+        let missing = dir.join("archive.jsonl").display().to_string();
+        let (rc, out) = run(&["--database".into(), "x`y".into(), "--archive".into(), missing.clone()]);
         assert_eq!(rc, REFUSED, "{out}");
-        let (rc, out) = run(&["--database".into(), "sptest_x".into(), "--archive".into(), "/nonexistent/archive.jsonl".into()]);
+        let (rc, out) = run(&["--database".into(), "sptest_x".into(), "--archive".into(), missing]);
         assert_eq!(rc, REFUSED, "{out}");
         assert!(out.contains("archived"), "{out}");
         assert_eq!(run(&[]).0, CANNOT_TELL);

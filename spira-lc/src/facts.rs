@@ -342,6 +342,7 @@ mod tests {
         assert_eq!(rows[1]["new_value"].as_str().unwrap().len(), READ_MAX);
     }
 
+    // covers: UC-ops-detection-remediation-12
     #[test]
     fn facts_read_back_per_bead_in_the_order_they_were_written_and_scope_to_ids_kinds_and_since() {
         let s = store();
@@ -359,6 +360,7 @@ mod tests {
         assert_eq!(shape(all)[0]["created_at"], "1970-01-01T00:00:20Z");
     }
 
+    // covers: UC-ops-detection-remediation-12
     #[test]
     fn a_census_query_runs_over_the_facts_and_answers_as_bd_sql_does() {
         let s = store();

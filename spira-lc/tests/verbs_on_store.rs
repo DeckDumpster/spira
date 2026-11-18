@@ -29,7 +29,7 @@ impl World {
     }
 
     fn run(&self, args: &[&str]) -> (i32, String) {
-        let out = Command::new(env!("CARGO_BIN_EXE_spira-lc"))
+        let out = Command::new(testkit::bin_exe("spira-lc"))
             .args(args)
             .env_clear()
             .env("PATH", std::env::var("PATH").unwrap_or_default())
