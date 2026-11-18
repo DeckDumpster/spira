@@ -960,10 +960,15 @@ pub fn release_repo(release: &Path, dst: &Path) -> Result<(), String> {
             let kind = entry.file_type().map_err(|e| io(&src, e))?;
             if kind.is_symlink() {
                 let target = std::fs::read_link(&src).map_err(|e| io(&src, e))?;
-                if !target.starts_with("../bin/") {
-                    std::os::unix::fs::symlink(&target, &out).map_err(|e| io(&out, e))?;
+                if target.starts_with("../bin/") {
+                    continue;
                 }
-            } else if kind.is_dir() {
+                if !src.is_file() {
+                    std::os::unix::fs::symlink(&target, &out).map_err(|e| io(&out, e))?;
+                    continue;
+                }
+            }
+            if kind.is_dir() {
                 copy(&src, &out, false)?;
             } else {
                 std::fs::copy(&src, &out).map_err(|e| io(&src, e))?;
@@ -1338,6 +1343,8 @@ mod locator_tests {
         let tree = git(&dst, &["ls-tree", "-r", "--name-only", "HEAD"]).unwrap();
         let files: Vec<&str> = tree.lines().collect();
         assert_eq!(files, vec!["lifecycle/a.sql", "lifecycle/keep", "spira/testlib/complete.toml"]);
+        let linked = git(&dst, &["ls-tree", "HEAD", "lifecycle/keep"]).unwrap();
+        assert!(linked.starts_with("100644 blob"), "a link to a file is the file, which a world can write: {linked}");
     }
 
     #[test]
