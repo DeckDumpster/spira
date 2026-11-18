@@ -77,3 +77,21 @@ fn a_boot_escalates_a_gap_whose_grace_began_before_it() {
 fn a_boot_does_not_escalate_a_gap_that_was_already_escalated() {
     kit::assert_boot_matches_an_unstopped_run(gap_already_escalated, registration, STREAM, EventKind::new(TICK, ""));
 }
+
+#[test]
+fn a_repinned_cap_reaches_the_observation_the_next_tick_asks_for() {
+    let build = |pool: &str| {
+        let boot: std::collections::BTreeMap<String, String> = [("SPIRA_MAX_DWARVES".to_string(), pool.to_string())].into();
+        let base = spira_runtime::fixture::lookup("7");
+        let settings = spira_runtime::Settings::from_lookup(&move |k| boot.get(k).cloned().map_or_else(|| base(k), Ok)).unwrap();
+        let task = spira_runtime::tasks::all().find(|t| t.name == NAME).unwrap();
+        (task.build)(&settings)
+    };
+    let before = build("4");
+    let mut rig = TaskRig::new(1, before).unwrap();
+    rig.reopen(build("3")).unwrap();
+    rig.tick(STREAM, EventKind::new(TICK, "")).unwrap();
+    let asked = rig.requested().iter().find(|r| r.name == OBSERVE).expect("the tick asked for an observation");
+    let input: ObserveIn = serde_json::from_str(&asked.input).unwrap();
+    assert_eq!(input.values["SPIRA_MAX_DWARVES"], "3");
+}

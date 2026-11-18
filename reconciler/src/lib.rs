@@ -1163,13 +1163,13 @@ fn observe_fleet(cfg: &Config) -> Vec<Check> {
 
     for (labels, ready, live, is_task) in rows {
         let headroom = (max_live - live_reactive).max(0);
-        let desired_live = ready.min(headroom);
-        // SPIRA_MAX_DWARVES=0 is an operator pausing the task pool on purpose (dwarves.sh
-        // pool 0) — a deliberate state, not a fault. A reactive partition draws outside the
-        // pool, so its own gap still means something.
-        let deliberately_paused = is_task && pool == Some(0);
-        let slot_free = live_total < max_live;
-        let raw = if live >= desired_live || deliberately_paused || !slot_free {
+        // A task partition draws from the pool the sentinel bounds task starts by, so the pool
+        // bounds what is desired of it; pool 0 is an operator pause and leaves nothing desired.
+        // A reactive partition draws outside the pool.
+        let free = if is_task { sentinel::plan::ck7_pool(pool, live_total - live_reactive) } else { None };
+        let desired_live = ready.min(headroom).min(free.map_or(i64::MAX, |f| live + f));
+        let slot_free = live_total < max_live && free.map_or(true, |f| f > 0);
+        let raw = if live >= desired_live || !slot_free {
             RawStatus::Satisfied
         } else {
             RawStatus::Gap {
@@ -3458,6 +3458,8 @@ mod tests {
     struct Fleet {
         planned_live: i64,
         reactive_live: i64,
+        partition_rune: &'static str,
+        ready: i64,
     }
 
     impl Host for Fleet {
@@ -3480,8 +3482,8 @@ mod tests {
             match argv {
                 ["rune", "task"] => "builder\n".into(),
                 ["rune", "reactive"] => "ops\n".into(),
-                ["rune", "partitions"] => "ops\t\n".into(),
-                ["rune", "for-labels", _] => "ops\n".into(),
+                ["rune", "partitions"] => format!("{}\t\n", self.partition_rune),
+                ["rune", "for-labels", _] => format!("{}\n", self.partition_rune),
                 _ => String::new(),
             }
         }
@@ -3495,14 +3497,14 @@ mod tests {
             Some(if rune == "builder" { self.planned_live } else { self.reactive_live })
         }
         fn ready_count(&self, _: &str, _: &str) -> Option<i64> {
-            Some(3)
+            Some(self.ready)
         }
     }
 
     fn reactive_check(planned_live: i64, ceiling: &str) -> RawStatus {
         let mut cfg = test_config();
         cfg.max_live_dwarves = ceiling.into();
-        cfg.host = Some(Arc::new(Fleet { planned_live, reactive_live: 0 }));
+        cfg.host = Some(Arc::new(Fleet { planned_live, reactive_live: 0, partition_rune: "ops", ready: 3 }));
         let checks = observe_fleet(&cfg);
         assert_eq!(checks.len(), 1, "{checks:?}");
         checks[0].raw.clone()
@@ -3516,6 +3518,36 @@ mod tests {
     #[test]
     fn a_reactive_partition_at_the_ceiling_is_satisfied() {
         assert_eq!(reactive_check(5, "5"), RawStatus::Satisfied);
+    }
+
+    fn task_check(pool: &str, builders_live: i64) -> RawStatus {
+        let mut cfg = test_config();
+        cfg.max_live_dwarves = "5".into();
+        cfg.max_dwarves = pool.into();
+        cfg.host = Some(Arc::new(Fleet { planned_live: builders_live, reactive_live: 0, partition_rune: "builder", ready: 10 }));
+        let checks = observe_fleet(&cfg);
+        assert_eq!(checks.len(), 1, "{checks:?}");
+        checks[0].raw.clone()
+    }
+
+    #[test]
+    fn a_task_partition_above_the_pool_cap_is_satisfied() {
+        assert_eq!(task_check("3", 4), RawStatus::Satisfied);
+    }
+
+    #[test]
+    fn a_task_partition_at_the_pool_cap_is_satisfied() {
+        assert_eq!(task_check("3", 3), RawStatus::Satisfied);
+    }
+
+    #[test]
+    fn a_task_partition_below_the_pool_cap_is_a_gap_desiring_the_pool() {
+        assert_eq!(task_check("3", 2), RawStatus::Gap { desired: "3".into(), observed: "2".into(), since_hint: None });
+    }
+
+    #[test]
+    fn a_paused_task_pool_is_satisfied() {
+        assert_eq!(task_check("0", 0), RawStatus::Satisfied);
     }
 
     pub(super) fn test_config() -> Config {
