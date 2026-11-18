@@ -89,6 +89,8 @@ const CONDITIONAL: &[&str] = &[
     "GIT_COMMITTER_NAME",
     "GIT_COMMITTER_EMAIL",
     "SPIRA_DWARF",
+    // Names only the session's own worktree scratch directory, which the model can already write.
+    "TMPDIR",
     FENCE_OVERRIDE,
     // `work` (the one tool on the model's PATH) resolves its lifecycle socket from the one
     // source of config: it needs the spec and the release that locates its key registry.
@@ -268,6 +270,13 @@ mod tests {
     fn home_is_unconditional_even_when_absent() {
         let e = restricted_env("sp-x", &BTreeMap::new(), "rel/bin");
         assert_eq!(e.get("HOME").unwrap(), "");
+    }
+
+    #[test]
+    fn the_session_tmpdir_reaches_the_model() {
+        let b = base(&[("TMPDIR", "w/.runtime/session-tmp-1")]);
+        let e = restricted_env("sp-x", &b, "rel/bin");
+        assert_eq!(e.get("TMPDIR").map(String::as_str), Some("w/.runtime/session-tmp-1"));
     }
 
     #[test]
