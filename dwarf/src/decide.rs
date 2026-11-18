@@ -457,8 +457,33 @@ pub fn rapid_recur_streak(lines: &[&str]) -> i64 {
     count
 }
 
+/// The count of trailing `done` lines carrying `status=harness-red`, reset to 0 by any other
+/// line. Wall time plays no part: a start that works for minutes before failing still streaks.
+pub fn harness_red_streak(lines: &[&str]) -> i64 {
+    let mut count = 0i64;
+    for line in lines {
+        if line.contains(" status=harness-red ") {
+            count += 1;
+        } else {
+            count = 0;
+        }
+    }
+    count
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn harness_red_streak_table() {
+        let done = |status: &str, wall: &str| format!("2026-11-18T09:38:46Z done pilgrim sp-a rc=1 status={status} wall_s={wall} api_s=1");
+        let (r, u, q) = (done("harness-red", "342"), done("unlanded", "342"), done("harness-red", "2"));
+        assert_eq!(harness_red_streak(&[&r, &r, &r]), 3, "wall_s plays no part");
+        assert_eq!(harness_red_streak(&[&r, &u, &r]), 1, "another status resets the count");
+        assert_eq!(harness_red_streak(&[&r, &r, &u]), 0);
+        assert_eq!(harness_red_streak(&[&q, &r]), 2);
+        assert_eq!(harness_red_streak(&[]), 0);
+    }
+
     #[test]
     fn deadline_kills_with_harness_wall_do_not_streak() {
         let line = |f: &crate::ledger::SessionFields| format!("2026-10-28T10:49:05Z done mender sp-x rc=124 status=in_progress {}", f.render());
