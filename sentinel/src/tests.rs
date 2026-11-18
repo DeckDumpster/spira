@@ -1795,3 +1795,18 @@ fn on_check2e_a_pause_in_force_a_halted_world_or_a_recent_call_file_nothing() {
     assert_eq!(stall_pass("stall-halted", crate::stall::STALL_SECS + 60, false, halted).0, 0);
     assert_eq!(stall_pass("stall-recent", 60, false, expired_pause).0, 0);
 }
+
+#[test]
+fn on_check2e_a_pause_in_force_past_a_full_window_still_files_the_ask() {
+    let live = |w: &World| std::fs::write(w.run.join("capacity-pause"), format!("{} x usage\n", NOW + 600)).unwrap();
+    assert_eq!(stall_pass("stall-long-pause", crate::stall::PAUSE_WINDOW_SECS + 60, false, live).0, 1);
+}
+
+#[test]
+fn on_check2e_the_filed_body_carries_a_predicate_the_moot_sweep_reads_and_runs_to_exit_zero() {
+    let (_, body) = stall_pass("stall-moot-body", crate::stall::STALL_SECS + 60, false, expired_pause);
+    let row = serde_json::json!([{"id": "sp-ask1", "status": "open", "labels": ["needs-operator"], "description": body}]); // literal-ok: test fixture
+    let asks = watchtower::sweep::moot::asks_of(&row.to_string(), "needs-operator"); // literal-ok: test fixture
+    assert_eq!(asks.len(), 1, "{body}");
+    assert!(asks[0].1.starts_with("awk "), "{}", asks[0].1);
+}
