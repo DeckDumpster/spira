@@ -515,11 +515,16 @@ impl Run<'_> {
                 self.bump_requeue(&cause);
                 self.release();
                 let rc = self.finish(rc, &status);
-                let streak = self.harness_red_streak_now(&id);
                 let threshold = self.conf.i("SPIRA_RAPID_RECUR_THRESHOLD");
+                let lines = self.recent_done_lines(&id, threshold.max(0) as usize);
+                let streak = decide::harness_red_streak(&lines.iter().map(String::as_str).collect::<Vec<_>>());
                 if threshold <= 0 || streak < threshold {
                     self.note(&format!("Harness red (rc={rc}): the dwarf could not start its session — {why}. NO attempt was charged and nothing about the work is implied; this repeats until the harness config is fixed."));
                     self.log(&format!("{f}: {id} harness red (rc={rc}): {why} — no attempt charged"));
+                    return rc;
+                }
+                if self.lc_bead(&id).is_some_and(|r| r.held("ask")) {
+                    self.note(&format!("Harness red (rc={rc}): the dwarf could not start its session — {why}. NO attempt was charged. Already parked with an ask hold by rapid-recur."));
                     return rc;
                 }
                 let first: String = why.lines().next().unwrap_or("").trim().chars().take(200).collect();
@@ -638,14 +643,6 @@ impl Run<'_> {
             let _ = self.d.exec.exec("bead.sh", &s(&["amend", &self.s.bead, "--settle"]), None, None);
             crate::mailbox::close(&mail, &self.s.bead);
         }
-    }
-
-    fn harness_red_streak_now(&self, id: &str) -> i64 {
-        let threshold = self.conf.i("SPIRA_RAPID_RECUR_THRESHOLD").max(0) as usize;
-        let Ok(text) = std::fs::read_to_string(self.conf.ledger()) else { return 0 };
-        let needle = regex::Regex::new(&format!(r" done \S+ {} ", regex::escape(id))).unwrap();
-        let matches: Vec<&str> = text.lines().filter(|l| needle.is_match(l) && !l.contains(" status=worktree-held ")).collect();
-        decide::harness_red_streak(&matches[matches.len().saturating_sub(threshold)..])
     }
 
     /// The disposition branches that `exit $rc` inside the case: identity removed LAST, then

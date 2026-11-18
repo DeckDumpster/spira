@@ -270,6 +270,14 @@ impl<'a> Run<'a> {
         self.rapid_recur_check();
     }
 
+    /// The last `n` `done` lines this bead has in the ledger, a held worktree excluded.
+    pub(crate) fn recent_done_lines(&self, id: &str, n: usize) -> Vec<String> {
+        let Ok(text) = std::fs::read_to_string(self.conf.ledger()) else { return vec![] };
+        let needle = regex::Regex::new(&format!(r" done \S+ {} ", regex::escape(id))).unwrap();
+        let matches: Vec<&str> = text.lines().filter(|l| needle.is_match(l) && !l.contains(" status=worktree-held ")).collect();
+        matches[matches.len().saturating_sub(n)..].iter().map(|l| l.to_string()).collect()
+    }
+
     /// `rapid_recur_check`: three (SPIRA_RAPID_RECUR_THRESHOLD) consecutive sub-10s `done`
     /// lines for this bead are a setup loop that recurs identically on every retry
     /// (law-a-retry-must-change-an-input) — park with the ask label and `overseer` rather
@@ -285,11 +293,9 @@ impl<'a> Run<'a> {
         if threshold == 0 {
             return;
         }
-        let Ok(text) = std::fs::read_to_string(self.conf.ledger()) else { return };
-        let needle = regex::Regex::new(&format!(r" done \S+ {} ", regex::escape(&id))).unwrap();
-        let matches: Vec<&str> = text.lines().filter(|l| needle.is_match(l) && !l.contains(" status=worktree-held ")).collect();
-        let tail = &matches[matches.len().saturating_sub(threshold)..];
-        let count = decide::rapid_recur_streak(tail);
+        let lines = self.recent_done_lines(&id, threshold);
+        let tail: Vec<&str> = lines.iter().map(String::as_str).collect();
+        let count = decide::rapid_recur_streak(&tail);
         if count < threshold as i64 {
             return;
         }

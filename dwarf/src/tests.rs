@@ -397,6 +397,10 @@ pub(crate) mod verdict_run {
         assert!(subject.split(" --kind").next().unwrap().contains("bd init (server) failed"), "{mails:?}");
         assert_eq!(holds.len(), 1, "{holds:?}");
         assert_eq!(&holds[0][..3], ["hold", "sp-a", "manual"]);
+        assert!(holds[0][3].contains("harness-red streak 3") && holds[0][3].contains("bd init (server) failed"), "{holds:?}");
+        assert!(mails[0].contains("--default fix the harness fault named above, then lift the hold"), "{mails:?}");
+        let body = mails[0].split(" || ").nth(1).unwrap();
+        assert!(body.contains(RED_WHY) && body.contains("3 times in a row"), "{body}");
         assert!(note.contains("held"), "{note}");
     }
 
