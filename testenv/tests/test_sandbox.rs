@@ -134,8 +134,13 @@ fn print_args_for_a_binary_is_what_the_landing_ref_printed() {
     fs::remove_file(&copy).unwrap();
     let before = String::from_utf8(before.unwrap().stdout).unwrap();
     let mut now = print_args(&[system_paths::USR_BIN_TRUE, "a", "b"]);
-    // The one bind added since: the cargo config, so a cargo inside resolves the box's profile.
-    if let Some(i) = now.windows(3).position(|w| w[0] == "--ro-bind" && w[1].ends_with("/.cargo/config.toml") && w[1] == w[2]) {
+    // The binds added since: the cargo config files, with an empty wrapper, so a cargo inside resolves the box's profile.
+    for name in [".cargo/config.toml", ".cargo/config"] {
+        if let Some(i) = now.windows(3).position(|w| w[0] == "--ro-bind" && w[1].ends_with(name) && w[1] == w[2]) {
+            now.drain(i..i + 3);
+        }
+    }
+    if let Some(i) = now.windows(3).position(|w| w[0] == "--setenv" && w[1] == "RUSTC_WRAPPER" && w[2].is_empty()) {
         now.drain(i..i + 3);
     }
     assert_eq!(now, before.lines().collect::<Vec<_>>());
@@ -183,7 +188,7 @@ fn cargo_config_fixture(name: &str) -> (testkit::TempDir, PathBuf) {
     let tmp = testkit::TempDir::new(name);
     let home = fs::canonicalize(tmp.path()).unwrap().join("home");
     fs::create_dir_all(home.join(".cargo/bin")).unwrap();
-    for f in ["config.toml", "credentials.toml"] {
+    for f in ["config.toml", "config", "credentials.toml", "credentials"] {
         fs::write(home.join(".cargo").join(f), "").unwrap();
     }
     (tmp, home)
@@ -196,6 +201,10 @@ fn assert_config_bound_after_shadow_and_credentials_not(args: &[String], home: &
     let at = args.windows(3).position(|w| w[0] == "--ro-bind" && w[1] == config && w[2] == config).expect("config.toml is bound");
     assert!(at > shadow, "{args:?}");
     assert!(args.iter().all(|a| !a.contains("credentials")), "{args:?}");
+    let legacy = format!("{h}/.cargo/config");
+    let at = args.windows(3).position(|w| w[0] == "--ro-bind" && w[1] == legacy && w[2] == legacy).expect("the legacy config is bound");
+    assert!(at > shadow, "{args:?}");
+    assert!(args.windows(3).any(|w| w[0] == "--setenv" && w[1] == "RUSTC_WRAPPER" && w[2].is_empty()), "an empty wrapper overrides the config's: {args:?}");
     let home_cargo = format!("{h}/.cargo");
     assert!(args.windows(2).all(|w| !(w[0].ends_with("bind") && w[1] == home_cargo)), "{args:?}");
 }
@@ -211,7 +220,6 @@ fn around_binds_the_cargo_config_back_read_only_and_never_the_credentials() {
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     let args: Vec<String> = String::from_utf8(out.stdout).unwrap().lines().map(String::from).collect();
     assert_config_bound_after_shadow_and_credentials_not(&args, &home);
-    assert!(args.windows(3).any(|w| w[0] == "--setenv" && w[1] == "RUSTC_WRAPPER" && w[2].is_empty()), "an empty wrapper overrides the config's: {args:?}");
     assert!(!args.iter().any(|a| a == "--unsetenv"), "{args:?}");
 }
 
@@ -221,7 +229,7 @@ fn a_binary_run_binds_the_declared_cargo_homes_config_back_read_only_and_never_t
     let out = std::process::Command::new(workspace().join("tools/test-sandbox/runner"))
         .args(["--print-args", system_paths::USR_BIN_TRUE])
         .env_clear()
-        .env("PATH", "/usr/bin:/bin")
+        .env("PATH", format!("{}:{}", system_paths::USR_BIN, system_paths::BIN))
         .env("HOME", &home)
         .env("CARGO_HOME", home.join(".cargo"))
         .output()

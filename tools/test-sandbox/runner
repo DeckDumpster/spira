@@ -221,13 +221,13 @@ fi
 a+=(--chdir "$PWD")
 
 
+# With no network sccache cannot start, which fails every rustc probe. Empty, not unset: unset
+# lets the bound cargo config name a wrapper the sandbox hides.
 if [ -n "$around" ]; then
-    # With no network sccache cannot start, which fails every rustc probe. Empty, not unset: unset
-    # lets the bound config name a wrapper the sandbox hides.
     a+=(--setenv RUSTC_WRAPPER "")
     env=(GIT_CONFIG_SYSTEM="$gitconfig")
 else
-    a+=(--clearenv)
+    a+=(--clearenv --setenv RUSTC_WRAPPER "")
 fi
 if [ -n "$print" ]; then
     printf '%s\n' bwrap "${a[@]}"
