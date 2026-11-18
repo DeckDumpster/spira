@@ -125,8 +125,8 @@ impl Seam for RealSeam {
             }
         };
         let now = dwarf::util::now_epoch();
-        match dwarf::capacity::pause_state(&self.capacity_pause_file(&run)) {
-            dwarf::capacity::PauseState::Paused { until, .. } if until > now => Some(until - now),
+        match dwarf::capacity::pause_state(&self.capacity_pause_file(&run), now) {
+            dwarf::capacity::PauseState::Paused { until, .. } => Some(until - now),
             // Fail closed (never "OK"/None on an unreadable file — wave4-decomposition.md
             // (c)3): treat as paused for at least one backoff interval, never as open.
             dwarf::capacity::PauseState::Unknown => Some(self.capacity_backoff()),

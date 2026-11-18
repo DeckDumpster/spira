@@ -91,7 +91,7 @@ impl<'a> Sentinel<'a> {
         // Capacity (family K, wave 4.26): a pure read, in-process — sentinel never probes
         // or mutates the pause file, so dwarf stays the probe's one owner
         // (wave4-decomposition.md (c)3).
-        match dwarf::capacity::pause_state(&self.cfg.capacity_pause) {
+        match dwarf::capacity::pause_state(&self.cfg.capacity_pause, self.h.now()) {
             dwarf::capacity::PauseState::Open => {}
             dwarf::capacity::PauseState::Paused { until, .. } => {
                 let left = until - self.h.now();
@@ -549,7 +549,7 @@ impl<'a> Sentinel<'a> {
         // THE ACCOUNT BEFORE THE QUEUE, and a pure in-process read — never a probe (wave
         // 4.26 moved the one probe owner to `dwarf`; sentinel reading "cannot tell" as paused
         // is the fail-closed fix that same wave made, kept exactly by this port).
-        match dwarf::capacity::pause_state(&self.cfg.capacity_pause) {
+        match dwarf::capacity::pause_state(&self.cfg.capacity_pause, self.h.now()) {
             dwarf::capacity::PauseState::Open => {}
             dwarf::capacity::PauseState::Paused { until, .. } => {
                 let left = until - self.h.now();

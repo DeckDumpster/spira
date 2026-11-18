@@ -48,7 +48,7 @@ pub fn run(conf: &Conf, exec: &dyn Exec, now: i64, args: &[String]) -> i32 {
             0
         }
         "pause-until" => {
-            let at = match capacity::pause_state(&conf.capacity_pause()) {
+            let at = match capacity::read_pause(&conf.capacity_pause()) {
                 crate::capacity::PauseState::Paused { until, .. } => until,
                 _ => 0,
             };

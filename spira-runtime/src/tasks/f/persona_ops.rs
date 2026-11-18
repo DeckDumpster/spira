@@ -490,9 +490,8 @@ pub fn run_observe(e: &Effects, _key: &str, s: &EffectSpec) -> Result<String, St
         .map(|l| l.iter().filter(|d| matches!(d.state, UnitState::Active | UnitState::Activating)).count() as u32)
         .unwrap_or(0);
     let pause_file = Some(get(&cfg, "SPIRA_CAPACITY_PAUSE")).filter(|p| !p.is_empty()).map(PathBuf::from).unwrap_or_else(|| run.join("capacity-pause"));
-    let pause = match dwarf::capacity::pause_state(&pause_file) {
+    let pause = match dwarf::capacity::pause_state(&pause_file, now_secs()) {
         dwarf::capacity::PauseState::Open => Pause::Open,
-        dwarf::capacity::PauseState::Paused { until, .. } if until <= now_secs() => Pause::Open,
         dwarf::capacity::PauseState::Paused { until, .. } => Pause::Paused { left_s: (until - now_secs()) as u64 },
         dwarf::capacity::PauseState::Unknown => Pause::Unknown,
     };

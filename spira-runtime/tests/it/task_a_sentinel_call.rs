@@ -347,3 +347,26 @@ fn a_decided_pass_carries_why_each_ready_rune_got_no_call_and_the_carry_round_tr
     assert_eq!(back.uncalled, carry.uncalled);
     assert_eq!(Carry::default().uncalled, None, "no pass yet is not an empty map");
 }
+
+fn unit_start_with_pause(until_offset: i64) -> Result<String, String> {
+    let run = testkit::TempDir::new("sentinel-call-pause-run");
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
+    std::fs::write(run.path().join("capacity-pause"), format!("{} iso why\n", now + until_offset)).unwrap();
+    let e = spira_runtime::Effects { world: spira_runtime::world::World { run_dir: run.path().to_path_buf(), ..Default::default() }, ..Default::default() };
+    let input = serde_json::to_string(&Start { rune: "builder".into(), key: "builder-1-0".into(), require_express: false }).unwrap();
+    unit_start(&e, &runtime::event::EffectSpec::keyed(UNIT_START, "k", input, 10_000))
+}
+
+const CAPACITY_REFUSAL: &str = "the account's capacity is paused or unreadable — not calling";
+
+#[test]
+fn unit_start_does_not_refuse_on_a_capacity_pause_whose_time_has_passed() {
+    let err = unit_start_with_pause(-60).unwrap_err();
+    assert!(!err.contains(CAPACITY_REFUSAL), "{err}");
+}
+
+#[test]
+fn unit_start_still_refuses_on_a_capacity_pause_in_the_future() {
+    let err = unit_start_with_pause(3600).unwrap_err();
+    assert!(err.contains(CAPACITY_REFUSAL), "{err}");
+}

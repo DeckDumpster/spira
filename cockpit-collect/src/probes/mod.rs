@@ -379,8 +379,8 @@ pub fn now_keys(cfg: &Cfg) -> Kv {
     push(&mut out, "SP_DWARVES", live_dwarves.to_string());
 
     let cap_now = io::now();
-    match dwarf::capacity::pause_state(&capacity_pause_file(&run)) {
-        dwarf::capacity::PauseState::Paused { until, why } if until > cap_now => {
+    match dwarf::capacity::pause_state(&capacity_pause_file(&run), cap_now) {
+        dwarf::capacity::PauseState::Paused { until, why } => {
             push(&mut out, "SP_CAPACITY_PAUSED", "1");
             push(&mut out, "SP_CAPACITY_LEFT", (until - cap_now).to_string());
             push(&mut out, "SP_CAPACITY_AT", fmt_hm(until));
@@ -908,8 +908,8 @@ pub fn slots_keys(cfg: &Cfg) -> Kv {
 
     let run = io::run_dir();
     let cap_now = io::now();
-    let capacity_paused = match dwarf::capacity::pause_state(&capacity_pause_file(&run)) {
-        dwarf::capacity::PauseState::Paused { until, .. } if until > cap_now => "1",
+    let capacity_paused = match dwarf::capacity::pause_state(&capacity_pause_file(&run), cap_now) {
+        dwarf::capacity::PauseState::Paused { .. } => "1",
         // Fail closed: never "0"/open on an unreadable file (wave4-decomposition.md (c)3).
         dwarf::capacity::PauseState::Unknown => "?",
         _ => "0",
