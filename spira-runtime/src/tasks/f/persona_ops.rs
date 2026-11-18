@@ -568,7 +568,7 @@ pub fn run_brief(e: &Effects, _key: &str, s: &EffectSpec) -> Result<String, Stri
         // per-copy fact the config door never resolves, so declaring it refused the settings whole.
         harness_repo: e.world.home_path().map(|p| p.display().to_string()).unwrap_or_default(),
         prod: get(cfg, "SPIRA_PROD").to_string(),
-        toml: spira_config::process::cfg("SPIRA_TOML").unwrap_or_default(),
+        toml: spira_config::process::spec()?,
     };
     let lc = spira_store::lc_call::LcClient::socket(&e.world.lc_socket);
     let memories = || lc.answer(&["content", "memories", "--json"]).map_err(String::from);
