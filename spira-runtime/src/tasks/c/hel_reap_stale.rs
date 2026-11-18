@@ -241,19 +241,23 @@ pub fn world(run: &std::path::Path, release: &str, lc: &spira_store::lc_call::Lc
 }
 
 /// The runner of [`OBSERVE`]: `hel::stale::scan` in-process, with each tree's lifecycle row
-/// (one `list` over the socket) as its state, and the world's halt stamp.
+/// (the held projection's rows) as its state, and the world's halt stamp.
 pub fn observe(real: &hel::real::Real, lc: &spira_store::lc_call::LcClient, proc_root: &std::path::Path) -> Result<String, String> {
     let run = real.run();
     if run.join("world.halted").exists() {
         return serde_json::to_string(&Snapshot { halted: true, repos: vec![] }).map_err(|e| e.to_string());
     }
-    let mut rows = spira_store::lc_state::index(spira_store::lc_state::list_live_on(lc)?);
+    let live = store_view::call_held(lc, &["list", "--live"])?;
+    if live.code != 0 {
+        return Err(format!("spira-lc list --live exited {}", live.code));
+    }
+    let mut rows = spira_store::lc_state::index(spira_store::lc_state::parse_rows(&live.out)?);
     let unread = std::cell::Cell::new(None::<String>);
     let memo = std::cell::RefCell::new(&mut rows);
     let asked = std::cell::RefCell::new(std::collections::HashSet::<String>::new());
     let state_of = |id: &str| {
         if !memo.borrow().contains_key(id) && asked.borrow_mut().insert(id.to_string()) {
-            match spira_store::lc_state::list_ids_on(lc, &[id.to_string()]) {
+            match store_view::rows_by_ids(lc, &[id.to_string()]) {
                 Ok(found) => memo.borrow_mut().extend(spira_store::lc_state::index(found)),
                 Err(e) => unread.set(Some(e)),
             }
