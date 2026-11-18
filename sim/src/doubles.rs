@@ -96,7 +96,6 @@ pub const TASK_EFFECTS: &[(&str, &[&str])] = &[
     ("roundvm.drain", &["roundvm.drain.observe", "roundvm.drain.release"]),
     ("roundvm.ami_prune", &["roundvm.ami_prune.observe", "roundvm.ami_prune.deregister", "roundvm.ami_prune.delete_snapshot"]),
     ("sweep.archive", &["sweep.archive.observe", "sweep.archive.store", "sweep.archive.index"]),
-    ("sweep.repo_contract", &["sweep.repo_contract.observe", "sweep.repo_contract.stop", "sweep.repo_contract.lift", "inbox.append"]),
     ("sweep.nix_gc", &["sweep.nix_gc.observe", "sweep.nix_gc.collect", "inbox.append"]),
     ("sweep.export_beads", &["sweep.export_beads.observe", "sweep.export_beads.write", "sweep.export_beads.commit", "sweep.export_beads.publish", "sweep.export_beads.touch"]),
     ("sweep.escape_census", &["sweep.escape_census.observe", "sweep.escape_census.report"]),
