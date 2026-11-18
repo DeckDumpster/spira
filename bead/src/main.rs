@@ -697,8 +697,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             Err(rc) => return rc,
             Ok(Some(line)) => {
                 let path = env::temp_dir().join(format!("bead-statute-{}.md", std::process::id()));
-                let written = std::fs::OpenOptions::new().write(true).create_new(true).open(&path).and_then(|mut f| std::io::Write::write_all(&mut f, format!("{line}\n\n{body}").as_bytes()));
-                if let Err(e) = written {
+                if let Err(e) = std::fs::write(&path, format!("{line}\n\n{body}")) {
                     eprintln!("bead: writing {}: {e}", path.display());
                     return 1;
                 }

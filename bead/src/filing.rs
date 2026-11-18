@@ -201,29 +201,27 @@ pub fn contract_guard(repo: &str, labels: &[String], contract: &Contract, vars: 
     let exits = format!(
         "bring it in line with `repo-contract scaffold {repo}` filed as `bead.sh file ... --contract-fix`, or set {CONTRACT_OVERRIDE_ENV}=\"<why>\" to file anyway"
     );
-    let run = match (contract.check)(repo) {
-        Ok(run) => run,
-        Err(e) => return Err(refuse(REFUSED, format!("bead: refusing: cannot tell whether {repo} meets the landing contract: {e}\nbead: {exits}"))),
-    };
-    let not_met: Vec<&str> = run.stdout.lines().filter(|l| l.starts_with("not met ")).collect();
-    match run.code {
-        Some(0) => return Ok(None),
-        Some(1) if !not_met.is_empty() => {}
-        other => {
-            let code = match other {
-                None => "no exit code".to_string(),
-                Some(1) => "exit 1 naming no clause".to_string(),
-                Some(c) => format!("exit {c}"),
-            };
-            return Err(refuse(
-                REFUSED,
-                format!("bead: refusing: cannot tell whether {repo} meets the landing contract: repo-contract check gave {code}\n{}{}bead: {exits}", run.stdout, run.stderr),
-            ));
+    let (headline, detail) = match (contract.check)(repo) {
+        Err(e) => (format!("cannot tell whether {repo} meets the landing contract: {e}"), String::new()),
+        Ok(run) => {
+            let not_met: Vec<&str> = run.stdout.lines().filter(|l| l.starts_with("not met ")).collect();
+            match run.code {
+                Some(0) => return Ok(None),
+                Some(1) if !not_met.is_empty() => (format!("{repo} does not meet the landing contract"), format!("{}\n", not_met.join("\n"))),
+                other => {
+                    let code = match other {
+                        None => "no exit code".to_string(),
+                        Some(1) => "exit 1 naming no clause".to_string(),
+                        Some(c) => format!("exit {c}"),
+                    };
+                    (format!("cannot tell whether {repo} meets the landing contract: repo-contract check gave {code}"), format!("{}{}", run.stdout, run.stderr))
+                }
+            }
         }
-    }
+    };
     match identity::override_reason(vars(CONTRACT_OVERRIDE_ENV)) {
-        Some(why) => Ok(Some(format!("Contract considered: {why}\n{}", not_met.join("\n")))),
-        None => Err(refuse(REFUSED, format!("bead: refusing: {repo} does not meet the landing contract\n{}\nbead: {exits}", not_met.join("\n")))),
+        Some(why) => Ok(Some(format!("Contract considered: {why}\n{headline}\n{detail}").trim_end().to_string())),
+        None => Err(refuse(REFUSED, format!("bead: refusing: {headline}\n{detail}bead: {exits}"))),
     }
 }
 
@@ -504,5 +502,14 @@ mod tests {
         let text = args.last().unwrap();
         assert!(text.starts_with("Contract considered: bootstrapping") && text.contains("not met submit-checks") && text.ends_with("\n\nd"), "{text}");
         assert!(file(&p, "builder-lane,repo:deck", &[(CONTRACT_OVERRIDE_ENV, "  ")]).is_err());
+    }
+
+    #[test]
+    fn a_named_override_admits_a_check_that_cannot_tell_and_records_that_it_could_not() {
+        let p = deck_policy(checker(Some(2), "out-text", "err-text"));
+        let mut args = a(&["create", "T", "--labels", "builder-lane,repo:deck", "--description", "d"]);
+        create(&mut args, &mut None, &p, &|k| (k == CONTRACT_OVERRIDE_ENV).then(|| "bootstrapping".to_string())).unwrap();
+        let text = args.last().unwrap();
+        assert!(text.starts_with("Contract considered: bootstrapping") && text.contains("cannot tell") && text.ends_with("\n\nd"), "{text}");
     }
 }
