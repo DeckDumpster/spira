@@ -1030,7 +1030,7 @@ fn deadline_faults<R: RoundRunner, O: RoundOps>(
     let mut faults = vec![];
     for suite in reds {
         match runner.deadline_red(suite) {
-            Some(d) if ops.touching(suite, &[only.id.clone()]).is_empty() => {
+            Some(d) if ops.touching(suite, std::slice::from_ref(&only.id)).is_empty() => {
                 let load = d.load.as_deref().unwrap_or("load unknown");
                 faults.push(format!(
                     "{suite} case {} exceeded its {}s deadline ({load}); {}'s diff does not reach {suite}",
