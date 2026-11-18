@@ -244,6 +244,8 @@ fn a_unit_start_that_fails_records_why_and_removes_the_brief_files() {
     let (next, acts) = decide(&in_state(State::Starting), &failed(UNIT_START, "boom\nmore")).unwrap();
     assert_eq!((next.state, names(&acts)), (State::Recording, vec![LEDGER, CLEANUP]));
     assert_eq!(why_of(&acts).as_deref(), Some("boom"));
+    let line: serde_json::Value = serde_json::from_str(&acts[0].input).unwrap();
+    assert_eq!(line["error"], "boom\nmore");
 }
 
 #[test]
@@ -317,4 +319,27 @@ fn the_concierge_line_is_keyed_on_the_failing_line_and_names_it() {
     let ask = acts.iter().find(|a| a.name == INBOX_APPEND).unwrap();
     assert_eq!(ask.key, format!("ops/harness-red/{:x}", runtime::event::fnv1a("boom")));
     assert!(ask.input.contains("[persona.ops] the ops sweep has failed to start 3 times running: boom"), "{}", ask.input);
+}
+
+#[test]
+fn three_failed_starts_through_the_handler_ask_once_with_a_stamped_raw_line_and_keep_the_count_as_rows() {
+    let mut r = TaskRig::new(1, handler().registration()).unwrap().double(OBSERVE, |_| Ok(serde_json::to_string(&snap("SWEEP: go", 0, false, Pause::Open)).unwrap()));
+    r = r.double(BRIEF, |_| Ok(r#"{"name":"ops-1","sys_file":"s.md","task_file":"t.md","argv":["claude"]}"#.into()));
+    r = r.double(UNIT_START, |_| Err("boom\nmore".into()));
+    for e in [INTAKE_INSTALL, INCIDENT_DRAIN, LEDGER, CLEANUP, UNIT_STOP, INBOX_APPEND] {
+        r = r.double(e, |i| Ok(i.into()));
+    }
+    let (_, stream, kind) = PersonaOps::boot();
+    r.tick(stream, kind).unwrap();
+    for _ in 0..3 {
+        r.advance(CADENCE_MS).unwrap();
+    }
+    running(&r);
+    let asks: Vec<serde_json::Value> = r.journaled().iter().filter(|e| e.kind.tag == runtime::event::EFFECT_REQUESTED).filter_map(|e| serde_json::from_str::<serde_json::Value>(&e.kind.body).ok()).filter(|b| b["spec"]["name"] == INBOX_APPEND).collect();
+    assert_eq!(asks.len(), 1, "{asks:?}");
+    let input = asks[0]["spec"]["input"].as_str().unwrap();
+    assert!(input.contains("Z [persona.ops] the ops sweep has failed to start 3 times running: boom"), "{input}");
+    assert!(!input.starts_with('{'), "the shared runner takes the raw line: {input}");
+    let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&r, NAME);
+    assert!(rows.iter().any(|k| k == "red") && rows.iter().any(|k| k == "red_why"), "{rows:?}");
 }
