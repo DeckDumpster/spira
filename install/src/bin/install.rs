@@ -1206,6 +1206,29 @@ fn run_main() -> ExitCode {
         }
     }
 
+    // ---- phase 4.4: content reader --------------------------------------------------------
+    phase("phase 4.4: content reader");
+    if spira_config::resolve::lc_system_mode() {
+        skip("spira-lc runs as a system service (--system-user) — its credentials are under /etc/spira-lc");
+    } else if nonempty_env("SPIRA_INSTALL_LC_STORE_CONSIDERED").is_some() {
+        info("content reader NOT provisioned — SPIRA_INSTALL_LC_STORE_CONSIDERED is set; `spira-lc content` will not read until install runs without it");
+    } else if opts.dry {
+        would("create the content reader user, its credential file and its SELECT grants (spira-lc admin-provision-reader)");
+    } else {
+        match content_reader_phase() {
+            Ok(line) => {
+                if !line.contains("nothing changed") {
+                    changes += 1;
+                }
+                info(&line);
+            }
+            Err(e) => {
+                eprintln!("install: phase content reader failed — {e}");
+                return ExitCode::from(2);
+            }
+        }
+    }
+
     // ---- phase 4.5: control store ---------------------------------------------------------
     phase("phase 4.5: control store");
     if spira_config::resolve::lc_system_mode() {
@@ -1921,6 +1944,18 @@ fn control_store_phase() -> Result<(), String> {
     }
     info(&format!("created the control store at {path}"));
     Ok(())
+}
+
+/// The reader `spira-lc content` logs in as, provisioned through the one door onto the store.
+fn content_reader_phase() -> Result<String, String> {
+    let lc = spira_store::lifecycle_row::lc_bin()?;
+    // batch-job: one-time user and grants on the local Dolt server; bounded at 120 s by timeout(1).
+    let o = Command::new("timeout").arg("120").arg(&lc).arg("admin-provision-reader").stdin(Stdio::null()).output().map_err(|e| format!("cannot run spira-lc: {e}"))?;
+    let text = format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
+    if !o.status.success() {
+        return Err(format!("spira-lc admin-provision-reader exited {:?}: {}", o.status.code(), text.trim()));
+    }
+    Ok(text.trim().to_string())
 }
 
 fn create_same_user_credential(path: &str) -> Result<(), String> {
