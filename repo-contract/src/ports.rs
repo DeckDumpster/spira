@@ -3,20 +3,6 @@
 use crate::shell::ShellEnv;
 use std::path::Path;
 
-/// The verdict of the test entry point's run of a tier list, which reports one verdict for it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Tier {
-    pub name: String,
-    pub ok: bool,
-}
-
-/// `work checks` in a tree: whether it passed and each row's `-- <name>:` line.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Rows {
-    pub ok: bool,
-    pub lines: Vec<String>,
-}
-
 /// A registration piece, as `spira-config repo check` reports it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Piece {
@@ -33,10 +19,6 @@ pub trait Ports {
     /// The tree's flake dev shell; `Ok(None)` when it declares none.
     fn shell_env(&self, repo: &str, tree: Option<&Path>) -> Result<Option<ShellEnv>, String>;
     fn on_path(&self, env: &ShellEnv, program: &str) -> bool;
-    /// `work checks` in a detached worktree cut from the landing ref, or in `tree`.
-    fn run_checks(&self, repo: &str, tree: Option<&Path>) -> Result<Rows, String>;
-    /// `testenv --suites <csv> <land ref> <repo>`.
-    fn run_tiers(&self, repo: &str, suites: &[String]) -> Result<Vec<Tier>, String>;
     fn landing_pieces(&self, repo: &str) -> Vec<Piece>;
     fn land_mode(&self, repo: &str) -> String;
     /// The CI workflow's name for the repository, as `forge` resolves it.
