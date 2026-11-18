@@ -2774,6 +2774,7 @@ dependencies = [
  "serde_json",
  "spira-config",
  "spira-otel",
+ "spira-store",
 ]
 
 [[package]]

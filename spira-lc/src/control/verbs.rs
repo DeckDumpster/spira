@@ -10,7 +10,7 @@ use super::store::Store;
 use crate::{flag, CANNOT_TELL};
 
 /// The verbs this module answers.
-pub const VERBS: &[&str] = &["watch", "history", "event-seq", "dwell", "store-usage"];
+pub const VERBS: &[&str] = &["watch", "history", "event-seq", "audits", "dwell", "store-usage"];
 
 pub fn run<B: Backend>(store: &Store<B>, args: &[String]) -> (i32, String) {
     let rest = &args[1..];
@@ -18,6 +18,7 @@ pub fn run<B: Backend>(store: &Store<B>, args: &[String]) -> (i32, String) {
         Some("watch") => watch(store, rest),
         Some("history") => history(store, rest),
         Some("event-seq") => event_seq(store, rest),
+        Some("audits") => audits(store, rest),
         Some("dwell") => dwell(store, rest),
         Some("store-usage") => store_usage(store, rest),
         other => Err(format!("{other:?} is not a control-store verb")),
@@ -129,6 +130,36 @@ fn event_seq<B: Backend>(store: &Store<B>, args: &[String]) -> Result<String, St
         .event_seq(since)
         .map_err(|e| format!("event-seq: {e}"))?;
     Ok(json!({ "seq": seq, "keys": keys }).to_string())
+}
+
+/// The most audits one `audits` answer carries unless `--limit` says fewer.
+const AUDITS_PAGE: u64 = 500;
+/// How far back `audits --newest` looks for the newest audit, in seconds.
+const NEWEST_WINDOW_SECS: i64 = 86_400;
+
+/// `audits [--after N] [--limit M]`: the applied and refused bead audits past revision N, oldest
+/// first, each shaped as a `history` row (the revision as `seq`), at most M of them.
+/// `audits --newest`: the `at` of the newest audit in the last day, or null when there is none.
+fn audits<B: Backend>(store: &Store<B>, args: &[String]) -> Result<String, String> {
+    if args.iter().any(|a| a == "--newest") {
+        let floor = crate::db::now_epoch() - NEWEST_WINDOW_SECS;
+        let read = store.audits_since(floor).map_err(|e| format!("audits: {e}"))?;
+        let newest = read.audits.iter().map(|l| l.audit.at).max();
+        return Ok(json!({ "newest_at": newest }).to_string());
+    }
+    let after = number(args, "--after", 0).map_err(|e| format!("audits: {e}"))?;
+    let limit = number(args, "--limit", AUDITS_PAGE).map_err(|e| format!("audits: {e}"))?;
+    let read = store.audits_after(after).map_err(|e| format!("audits: {e}"))?;
+    let mut rows = Vec::new();
+    for l in read.audits.iter().take(limit as usize) {
+        let mut row = Map::new();
+        row.insert("seq".into(), l.rev.into());
+        if let Value::Object(audit) = encode(&l.audit).map_err(|e| e.to_string())? {
+            row.extend(audit);
+        }
+        rows.push(Value::Object(row));
+    }
+    Ok(json!({ "rows": rows }).to_string())
 }
 
 /// `dwell [--window S] [--landed-after T] [--now T]`: every waiting record's state, repo and
