@@ -802,8 +802,6 @@ mod tests {
         assert_eq!(seen.lock().unwrap().len(), 2);
     }
 
-    /// A content write carries the caller's guard variables — the rune, the czar context and
-    /// every stage — and nothing else of its environment; any other request is unchanged.
     #[test]
     fn a_request_id_rides_the_object_head_and_a_plain_request_stays_an_array() {
         let argv = vec!["content".to_string(), "note".to_string(), "sp-a".to_string()];
@@ -812,6 +810,8 @@ mod tests {
         assert!(request_head(&argv, None, &BTreeMap::new(), None, None).unwrap().starts_with('['));
     }
 
+    /// A content write carries the caller's guard variables — the rune, the czar context and
+    /// every stage — and nothing else of its environment; any other request is unchanged.
     #[test]
     fn a_content_request_carries_the_guard_variables_and_nothing_else() {
         let env = [("SPIRA_RUNE", "czar"), ("SPIRA_CZAR_CLASS", "deadlock"), ("SPIRA_CZAR_TRIGGER_BEAD", "sp-t"), ("SPIRA_CZAR_STAGE_DEADLOCK", "act"), ("SPIRA_DB", "db"), ("HOME", "h")];

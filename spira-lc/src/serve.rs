@@ -1773,6 +1773,39 @@ mod tests {
         assert_ne!(before.1, after.1, "the second read ran, not the first one's answer");
     }
 
+    #[test]
+    fn a_second_arrival_waits_only_to_its_own_deadline_and_the_worker_still_records_its_answer() {
+        let ledger = super::Ledger::new(Duration::from_secs(60));
+        let (started, started_rx) = std::sync::mpsc::channel::<()>();
+        let (release, release_rx) = std::sync::mpsc::channel::<()>();
+        let first = {
+            let ledger = ledger.clone();
+            std::thread::spawn(move || {
+                ledger.answer("r", Duration::from_secs(10), move || {
+                    started.send(()).unwrap();
+                    release_rx.recv().unwrap();
+                    crate::callers::Answer::out(0, "real".to_string())
+                })
+            })
+        };
+        started_rx.recv().unwrap();
+        let waited = ledger.answer("r", Duration::from_millis(30), || panic!("a second arrival never runs the work"));
+        assert_eq!((waited.code, waited.stdout.as_str()), (2, "cannot tell: deadline"));
+        release.send(()).unwrap();
+        assert_eq!(first.join().unwrap().stdout, "real");
+        let replay = ledger.answer("r", Duration::from_secs(1), || panic!("a recorded answer is replayed, not run again"));
+        assert_eq!(replay.stdout, "real");
+    }
+
+    #[test]
+    fn an_empty_or_non_string_request_id_is_a_bad_request() {
+        for head in [r#"{"argv":["list"],"request_id":""}"#, r#"{"argv":["list"],"request_id":7}"#] {
+            let mut reader = std::io::BufReader::new(format!("{head}\n").into_bytes().leak() as &[u8]);
+            let (_, msg) = super::read_request(&mut reader).unwrap_err();
+            assert!(msg.starts_with("bad request:") && msg.contains("request_id"), "{msg}");
+        }
+    }
+
     fn fifty_ms(_: &[String]) -> Duration {
         Duration::from_millis(50)
     }

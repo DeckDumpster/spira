@@ -381,6 +381,15 @@ mod tests {
     }
 
     #[test]
+    fn a_call_under_a_client_id_spends_it_on_its_first_txn_and_suffixes_each_further_one() {
+        let _bound = client_request_scoped(Some("req-1".to_string()));
+        assert_eq!((call_request_id(), call_request_id(), call_request_id()), ("req-1".into(), "req-1#2".into(), "req-1#3".into()));
+        drop(_bound);
+        let (a, b) = (call_request_id(), call_request_id());
+        assert!(a.starts_with("lc/") && a != b, "unbound calls mint their own: {a} {b}");
+    }
+
+    #[test]
     fn the_new_verbs_take_no_name_an_existing_verb_answers() {
         for v in sections::VERBS.iter().chain([&sections::lifecycle::VERB, &spira_lc::rc::VERB]) {
             assert!(!state::VERBS.contains(v), "{v}");
