@@ -14,7 +14,8 @@
 use std::path::{Path, PathBuf};
 
 use tsd_lifecycle_export::{
-    advance_legacy_checkpoint, fold_legacy, BdAuditEvent, LegacyCheckpoint, StageRow,
+    advance_legacy_checkpoint, drain, fold_legacy, lag_verdict, lifecycle_batch, newest_event, BdAuditEvent, LegacyCheckpoint,
+    LifecycleCheckpoint, StageRow,
 };
 
 fn main() {
@@ -117,14 +118,30 @@ fn fetch_bd_events(since: &str) -> Result<Vec<BdAuditEvent>, String> {
 
 // ── lifecycle: the control store's event log ─────────────────────────────────────────────
 
-const UNSERVED: &str = "the lifecycle event log lives in the control store, which this exporter has no reader for yet";
+const LAG_LIMIT_SECS: i64 = 600;
 
-fn run_lifecycle() -> Result<(), String> {
-    Err(UNSERVED.into())
+fn read_checkpoint<T: Default + serde::de::DeserializeOwned>(path: &Path) -> T {
+    std::fs::read_to_string(path).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
 }
 
+fn run_lifecycle() -> Result<(), String> {
+    let run = spira_run()?;
+    let cp_path = checkpoint_path(&run, "lifecycle");
+    let cp: LifecycleCheckpoint = read_checkpoint(&cp_path);
+    let lc = spira_store::lc_call::LcClient::configured()?;
+    drain(cp, |after| lifecycle_batch(&lc, after), |rows| write_rows(&run, rows), |cp| write_checkpoint(&cp_path, cp)).map(|_| ())
+}
+
+/// Fails when the newest `bead-stage` row trails the newest lifecycle event by over [`LAG_LIMIT_SECS`].
 fn run_check() -> Result<(), String> {
-    Err(UNSERVED.into())
+    let lc = spira_store::lc_call::LcClient::configured()?;
+    let Some(newest_event) = newest_event(&lc)? else { return Ok(()) };
+    let endpoint = spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok();
+    let store = spira_otel::query::Store::new(endpoint.as_deref()).map_err(|e| e.to_string())?;
+    let from = u64::try_from(newest_event - 86_400).unwrap_or(0);
+    let series = store.export("spira_tsd_value{tsd_family=\"bead-stage\"}", from).map_err(|e| e.to_string())?;
+    let newest_stage = series.iter().flat_map(|s| s.samples.iter().map(|(ms, _)| ms / 1000)).max();
+    lag_verdict(newest_stage, newest_event, LAG_LIMIT_SECS)
 }
 
 // ── the write path: every row through tsd-write, never a second in-process writer ─────────

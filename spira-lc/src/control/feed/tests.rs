@@ -84,6 +84,7 @@ on_each_backend!(
     history_lists_a_beads_changes_in_order_with_its_refusals_and_lost_races,
     history_outlives_forgetting_revisions,
     event_seq_names_only_the_beads_with_an_applied_event_after_the_revision,
+    audits_answers_the_applied_and_refused_events_after_a_revision_in_pages,
     a_watch_of_several_prefixes_delivers_each_and_nothing_else,
     store_usage_of_a_backend_that_keeps_no_history_still_pages_by_prefix,
     store_usage_answers_one_bounded_page_with_a_cursor_and_refuses_a_page_above_the_cap,
@@ -359,6 +360,29 @@ fn store_usage_answers_one_bounded_page_with_a_cursor_and_refuses_a_page_above_t
     let (code, out) = verbs::run(s, &["store-usage", "--limit", "10001"].map(String::from));
     assert_eq!(code, 2);
     assert!(out.contains("10000"), "{out}");
+}
+
+fn audits_answers_the_applied_and_refused_events_after_a_revision_in_pages<B: Backend>(s: &Store<B>) {
+    create(s, "sp-a");
+    let first = toggle(s, "sp-a", 1);
+    let bad = refused(s, "sp-a", 2);
+    let last = toggle(s, "sp-a", 3);
+    let after = first.to_string();
+    let got = call(s, &["audits", "--after", &after]);
+    let rows = got["rows"].as_array().unwrap();
+    let seqs: Vec<u64> = rows.iter().map(|r| r["seq"].as_u64().unwrap()).collect();
+    assert_eq!(seqs, [bad, last]);
+    assert_eq!(rows[0]["applied"], false);
+    assert_eq!(rows[0]["lc_key"], "sp-a");
+    assert_eq!(rows[1]["applied"], true);
+    assert!(rows[1]["to_state"].is_string() && rows[1]["at"].is_number());
+    let page = call(s, &["audits", "--after", &after, "--limit", "1"]);
+    assert_eq!(page["rows"].as_array().unwrap().len(), 1);
+    let head = last.to_string();
+    assert_eq!(call(s, &["audits", "--after", &head])["rows"], serde_json::json!([]));
+    assert_eq!(call(s, &["audits", "--newest"]), serde_json::json!({ "newest_at": null }), "audits stamped long ago are outside the window");
+    let zero: Vec<String> = ["audits", "--limit", "0"].map(String::from).to_vec();
+    assert_ne!(verbs::run(s, &zero).0, 0);
 }
 
 fn event_seq_names_only_the_beads_with_an_applied_event_after_the_revision<B: Backend>(

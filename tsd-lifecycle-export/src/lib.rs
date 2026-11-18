@@ -237,6 +237,47 @@ pub struct LifecycleEventRow {
     pub at: i64,
 }
 
+/// The most audits one `audits` call is asked for.
+pub const LIFECYCLE_BATCH: usize = 500;
+
+/// One batch of the control store's audits after revision `after`, as `spira-lc audits` answers them.
+pub fn lifecycle_batch(lc: &spira_store::lc_call::LcClient, after: i64) -> Result<Vec<LifecycleEventRow>, String> {
+    let limit = LIFECYCLE_BATCH.to_string();
+    let out = lc.answer(&["audits", "--after", &after.to_string(), "--limit", &limit]).map_err(|e| e.to_string())?;
+    parse_audits(&out)
+}
+
+/// The newest audit's epoch seconds in the store's recent window, or none.
+pub fn newest_event(lc: &spira_store::lc_call::LcClient) -> Result<Option<i64>, String> {
+    let out = lc.answer(&["audits", "--newest"]).map_err(|e| e.to_string())?;
+    let v: serde_json::Value = serde_json::from_str(&out).map_err(|e| format!("audits --newest: {e}"))?;
+    Ok(v.get("newest_at").and_then(|t| t.as_i64()))
+}
+
+pub fn parse_audits(text: &str) -> Result<Vec<LifecycleEventRow>, String> {
+    let v: serde_json::Value = serde_json::from_str(text).map_err(|e| format!("audits: not JSON: {e}"))?;
+    let rows = v.get("rows").and_then(|r| r.as_array()).ok_or("audits: no rows array")?;
+    let text_of = |r: &serde_json::Value, k: &str| r.get(k).and_then(|x| x.as_str()).map(str::to_string).ok_or_else(|| format!("audits: missing {k:?} in {r}"));
+    let num_of = |r: &serde_json::Value, k: &str| r.get(k).and_then(|x| x.as_i64()).ok_or_else(|| format!("audits: missing {k:?} in {r}"));
+    rows.iter()
+        .map(|r| {
+            Ok(LifecycleEventRow {
+                seq: num_of(r, "seq")?,
+                machine: text_of(r, "machine")?,
+                lc_key: text_of(r, "lc_key")?,
+                event: text_of(r, "event")?,
+                from_state: text_of(r, "from_state")?,
+                to_state: text_of(r, "to_state")?,
+                applied: r.get("applied").and_then(|x| x.as_bool()).ok_or_else(|| format!("audits: missing \"applied\" in {r}"))?,
+                refusal: r.get("refusal").and_then(|x| x.as_str()).map(str::to_string),
+                evidence: r.get("evidence").cloned().unwrap_or(serde_json::Value::Null),
+                actor: text_of(r, "actor")?,
+                at: num_of(r, "at")?,
+            })
+        })
+        .collect()
+}
+
 /// `evidence` is an arbitrary `BeadEventKind`/`DeliveryEventKind`/`BatchEventKind` payload
 /// (`serde_json::to_value` of the Rust enum) — every free-text cause the lifecycle crate
 /// carries today happens to live under one of these three keys (`Returned{reason}`,
@@ -298,6 +339,58 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct Scripted(std::sync::Mutex<Vec<String>>, Vec<(i32, String)>);
+
+    impl spira_store::lc_call::Transport for Scripted {
+        fn exchange(&self, argv: &[String], _: Option<&str>, _: std::time::Duration) -> Result<spira_store::lc_call::Reply, String> {
+            let n = self.0.lock().unwrap().len();
+            self.0.lock().unwrap().push(argv.join(" "));
+            let (code, out) = self.1[n.min(self.1.len() - 1)].clone();
+            Ok(spira_store::lc_call::Reply { code, out, err: String::new() })
+        }
+    }
+
+    fn scripted(answers: &[&str]) -> (spira_store::lc_call::LcClient, std::sync::Arc<Scripted>) {
+        let t = std::sync::Arc::new(Scripted(Default::default(), answers.iter().map(|a| (0, a.to_string())).collect()));
+        (spira_store::lc_call::LcClient::over(t.clone(), true), t)
+    }
+
+    const ROW: &str = r#"{"seq":7,"machine":"bead","lc_key":"sp-a","event":"Claim","from_state":"READY","to_state":"WORKING","applied":true,"refusal":null,"evidence":{"cause":"ask"},"actor":"d","at":86400}"#;
+
+    #[test]
+    fn the_control_store_audits_drain_into_stage_rows_and_resume_past_the_last_revision() {
+        let first = format!(r#"{{"rows":[{ROW}]}}"#);
+        let (lc, wire) = scripted(&[&first, r#"{"rows":[]}"#]);
+        let mut written = Vec::new();
+        let mut saved = Vec::new();
+        let cp = drain(LifecycleCheckpoint { last_seq: 3 }, |after| lifecycle_batch(&lc, after), |rows| { written.extend_from_slice(rows); Ok(()) }, |cp| { saved.push(*cp); Ok(()) }).unwrap();
+        assert_eq!(cp.last_seq, 7);
+        assert_eq!(saved, [LifecycleCheckpoint { last_seq: 7 }]);
+        assert_eq!(written.len(), 1);
+        assert_eq!((written[0].ts.as_str(), written[0].source.as_str(), written[0].reason.as_deref()), ("1970-01-02T00:00:00Z", "lifecycle", Some("ask")));
+        assert_eq!(*wire.0.lock().unwrap(), ["audits --after 3 --limit 500", "audits --after 7 --limit 500"]);
+    }
+
+    #[test]
+    fn a_refused_audit_keeps_its_refusal_and_a_store_that_cannot_answer_is_an_error_not_an_empty_log() {
+        let refused = ROW.replace(r#""applied":true,"refusal":null"#, r#""applied":false,"refusal":"stale""#);
+        let rows = parse_audits(&format!(r#"{{"rows":[{refused}]}}"#)).unwrap();
+        assert!(!rows[0].applied);
+        assert_eq!(map_lifecycle_row(&rows[0]).refusal.as_deref(), Some("stale"));
+        let down = std::sync::Arc::new(Scripted(Default::default(), vec![(2, "cannot tell: store down".into())]));
+        let lc = spira_store::lc_call::LcClient::over(down, true);
+        assert!(lifecycle_batch(&lc, 0).is_err());
+        assert!(parse_audits("{}").is_err());
+    }
+
+    #[test]
+    fn the_newest_event_comes_from_the_audits_verb() {
+        let (lc, wire) = scripted(&[r#"{"newest_at":99}"#, r#"{"newest_at":null}"#]);
+        assert_eq!(newest_event(&lc).unwrap(), Some(99));
+        assert_eq!(newest_event(&lc).unwrap(), None);
+        assert_eq!(wire.0.lock().unwrap()[0], "audits --newest");
+    }
 
     fn ev(id: &str, issue: &str, kind: &str, actor: &str, new_value: Option<&str>, at: &str) -> BdAuditEvent {
         BdAuditEvent {
