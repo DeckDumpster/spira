@@ -253,6 +253,38 @@ pub trait Steps {
     fn lc_stop(&self, world: &Path, pid: u32) -> Result<(), String>;
 }
 
+/// The world's declared environment: what every process run inside it inherits.
+pub fn sim_env_text(dir: &Path, sim_exe: &Path, port: &str, fixture: &str) -> String {
+    let run_dir = dir.join("run");
+    let runner = dir.join("config/suite-runner");
+    let gh_state = dir.join("gh");
+    let bin = dir.join("bin");
+    format!(
+        "SPIRA_RUN={}\nSPIRA_HOME={}\nSPIRA_SIM_GATE_RUNNER={}\nSIM_GH_DIR={}\nSIM_BIN={}\nSIM_PROBE={}\n{}={}\nSPIRA_RELEASE={}\nSPIRA_LC_SOCKET={}\nSPIRA_LC_HOST=127.0.0.1\nSPIRA_LC_PORT={}\nSPIRA_LC_USER=root\nSIM_BEADS_DB={}\n{}={}\n{}={}\nSPIRA_BATCHER_POLL_SECS={}\nSPIRA_CALL={}\nSPIRA_LAUNCH={}\nSPIRA_LAUNCH_CTL={}\n{}",
+        run_dir.display(),
+        dir.join("release/spira").display(),
+        runner.display(),
+        gh_state.display(),
+        bin.display(),
+        probe_command(sim_exe, dir),
+        crate::roundvm::WORLD_ENV,
+        dir.display(),
+        dir.join("release").display(),
+        lc_socket(dir).display(),
+        port,
+        bead_db(fixture).display(),
+        crate::agent::SCENARIO_VAR,
+        dir.join("agent.scenario").display(),
+        crate::agent::STATE_VAR,
+        dir.join("agent-state").display(),
+        BATCHER_POLL_SECS,
+        bin.join(CALL_TOOL).display(),
+        bin.join(LAUNCH_TOOL).display(),
+        bin.join(LAUNCH_TOOL).display(),
+        GO_RUNTIME_ENV
+    )
+}
+
 /// The world's lifecycle socket.
 pub fn lc_socket(world: &Path) -> PathBuf {
     world.join(LC_SOCKET)
@@ -731,33 +763,7 @@ fn build(dir: &Path, repo: &Path, tree: &str, source: &ReleaseSource, steps: &dy
         let settings: Vec<(String, String)> = config_settings(dir, repos, &gh_bin).into_iter().chain(home_settings(dir, fixture, &bd)).chain(lc_settings(dir)).chain(content_sql_settings(port.trim())).collect();
         steps.config_set_all(&release, &file, &settings)?;
         mark(dir, "up.config-set", t);
-        std::fs::write(
-            config.join("sim.env"),
-            format!(
-                "SPIRA_RUN={}\nSPIRA_HOME={}\nSPIRA_SIM_GATE_RUNNER={}\nSIM_GH_DIR={}\nSIM_BIN={}\nSIM_PROBE={}\n{}={}\nSPIRA_RELEASE={}\nSPIRA_LC_SOCKET={}\nSPIRA_LC_HOST=127.0.0.1\nSPIRA_LC_PORT={}\nSPIRA_LC_USER=root\nSIM_BEADS_DB={}\n{}={}\n{}={}\nSPIRA_BATCHER_POLL_SECS={}\nSPIRA_CALL={}\nSPIRA_LAUNCH={}\nSPIRA_LAUNCH_CTL={}\n{}",
-                run_dir.display(),
-                dir.join("release/spira").display(),
-                runner.display(),
-                gh_state.display(),
-                bin.display(),
-                probe_command(&std::env::current_exe().map_err(|e| e.to_string())?, dir),
-                crate::roundvm::WORLD_ENV,
-                dir.display(),
-                dir.join("release").display(),
-                lc_socket(dir).display(),
-                port.trim(),
-                bead_db(fixture).display(),
-                crate::agent::SCENARIO_VAR,
-                dir.join("agent.scenario").display(),
-                crate::agent::STATE_VAR,
-                dir.join("agent-state").display(),
-                BATCHER_POLL_SECS,
-                bin.join(CALL_TOOL).display(),
-                bin.join(LAUNCH_TOOL).display(),
-                bin.join(LAUNCH_TOOL).display(),
-                GO_RUNTIME_ENV
-            ),
-        )
+        std::fs::write(config.join("sim.env"), sim_env_text(dir, &sim_exe, port.trim(), fixture))
         .map_err(|e| e.to_string())?;
         Ok(())
     };
