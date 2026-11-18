@@ -418,6 +418,9 @@ A fence red is still a `branch-red`; a unit test the branch breaks is the round'
 
 * **Touched crates** = the crate classes' members, plus every member that depends on one of
   them, directly or through others (dependents: their own tests exercise the changed code).
+  Past `SPIRA_GATE_UNIT_MAX_CRATES` selected crates (sized so the three test passes fit
+  `SPIRA_GATE_DEADLINE`) the selection narrows to the touched crates' direct dependents, then to the
+  touched crates alone; the round tests every dependent. A workspace-wide input is not narrowed.
 
 ### The decision
 
