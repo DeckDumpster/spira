@@ -438,3 +438,53 @@ fn a_stay_ending_in_the_window_is_reported_and_one_with_no_entry_in_the_index_is
     assert_eq!(t.stays, [(2_300, 300)], "{t:?}");
     assert!(s.loop_transitions(3_000, 600).unwrap().stays.is_empty(), "left before the window");
 }
+
+fn landed_at(s: &Store<MemBackend>, id: &str, from: BeadState, kind: BeadEventKind, at: i64) {
+    let out = s.apply(id, &ev(from, version(s, id), kind, at), &req(&format!("land-{id}"))).unwrap();
+    assert!(matches!(out, Outcome::Applied { .. }), "{out:?}");
+}
+
+#[test]
+fn a_hand_landing_counts_as_the_repos_newest_delivered() {
+    let s = fresh();
+    work(&s, "sp-h", "harness", 2_000, Some(2_500));
+    landed_at(&s, "sp-h", BeadState::Submitted, BeadEventKind::ContentOnBase { proof: "ungated:concierge:r:evidence=x".into() }, 3_000);
+    let d = dwell(&s, &["--now", "4000", "--window", "100000"]);
+    assert_eq!(d["last"]["harness"]["Delivered"], 3_000, "{d}");
+}
+
+#[test]
+fn a_settle_landed_certified_bead_counts_as_delivered() {
+    let s = fresh();
+    s.create("sp-s", Some("harness"), Some(TIP), 1_000, &req("c")).unwrap();
+    let gate = BeadEventKind::GatePass { tip: TIP.into(), gate_key: "k".into() };
+    let out = s.apply("sp-s", &ev(BeadState::Submitted, 1, gate, 2_000), &req("g")).unwrap();
+    assert!(matches!(out, Outcome::Applied { .. }), "{out:?}");
+    landed_at(&s, "sp-s", BeadState::Certified, BeadEventKind::ContentOnBase { proof: "settle-landed:x".into() }, 3_100);
+    let d = dwell(&s, &["--now", "4000", "--window", "100000"]);
+    assert_eq!(d["last"]["harness"]["Delivered"], 3_100, "{d}");
+}
+
+#[test]
+fn the_newest_arrival_in_landed_wins_across_round_and_hand_landings() {
+    let s = fresh();
+    s.create("sp-r", Some("harness"), Some(TIP), 1_000, &req("cr")).unwrap();
+    let gate = BeadEventKind::GatePass { tip: TIP.into(), gate_key: "k".into() };
+    s.apply("sp-r", &ev(BeadState::Submitted, 1, gate, 2_000), &req("gr")).unwrap();
+    s.apply("sp-r", &ev(BeadState::Certified, 2, BeadEventKind::Deliver, 2_300), &req("dr")).unwrap();
+    landed_at(&s, "sp-r", BeadState::InDelivery, BeadEventKind::Delivered { merge_sha: TIP.into(), proof: "p".into() }, 2_800);
+    work(&s, "sp-h", "harness", 2_000, Some(2_500));
+    landed_at(&s, "sp-h", BeadState::Submitted, BeadEventKind::ContentOnBase { proof: "ungated:x".into() }, 3_000);
+    let d = dwell(&s, &["--now", "4000", "--window", "100000"]);
+    assert_eq!(d["last"]["harness"]["Delivered"], 3_000, "{d}");
+}
+
+#[test]
+fn a_correction_or_a_non_landing_is_not_a_delivery() {
+    let mut idx = super::LastIndex::default();
+    let mut repo = |_: &str| Ok(Some("harness".to_string()));
+    idx.fold_states("sp-a", 100, ("DROPPED", "LANDED"), &mut repo).unwrap();
+    idx.fold_states("sp-a", 200, ("LANDED", "LANDED"), &mut repo).unwrap();
+    idx.fold_states("sp-b", 300, ("READY", "WORKING"), &mut repo).unwrap();
+    assert!(idx.last.is_empty(), "{:?}", idx.last);
+}

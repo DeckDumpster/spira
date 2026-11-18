@@ -5,7 +5,8 @@
 //!   with its repo, the time it entered its state (`since`), and, while an ask holds it, when
 //!   that ask was raised. Read through the state index, so the terminal records are never read.
 //! - **last**: per repo, the newest applied Claim, Submit, Deliver (the bead's half of a round
-//!   cut) and Delivered at or after `now - --window`. The audit log is read once into a
+//!   cut) and Delivered (any arrival in LANDED from a working state, by any event: a round land,
+//!   a hand-landing, a settle) at or after `now - --window`. The audit log is read once into a
 //!   [`LastIndex`] the store keeps: each answer reads the revisions committed since the last one,
 //!   and reads back in revision chunks only until the index is older than `--window` seconds or
 //!   [`MAX_SCANNED`] audits have been read in the call. `horizon` is the oldest time the index
@@ -199,8 +200,7 @@ impl LastIndex {
             return Ok(());
         }
         let Some(repo) = repo(id)? else { return Ok(()) };
-        let newest = self.last.entry(repo.clone()).or_default().entry(event.to_string()).or_insert(at);
-        *newest = (*newest).max(at);
+        self.note_last(&repo, event, at);
         if event == "Delivered" {
             self.delivered
                 .entry(repo)
@@ -208,6 +208,11 @@ impl LastIndex {
                 .insert((at, commit.to_string()));
         }
         Ok(())
+    }
+
+    fn note_last(&mut self, repo: &str, kind: &str, at: i64) {
+        let newest = self.last.entry(repo.to_string()).or_default().entry(kind.to_string()).or_insert(at);
+        *newest = (*newest).max(at);
     }
 
     /// Folds one applied bead audit's states. LANDED is reached by more than `Delivered`, so
@@ -224,6 +229,9 @@ impl LastIndex {
             return Ok(());
         }
         let Some(repo) = repo(id)? else { return Ok(()) };
+        if to == landed && BeadState::from_str(from).is_some_and(|f| !f.is_terminal()) {
+            self.note_last(&repo, "Delivered", at);
+        }
         self.transitions.entry(id.to_string()).or_insert_with(|| (repo, BTreeSet::new())).1.insert((at, from.to_string(), to.to_string()));
         Ok(())
     }
