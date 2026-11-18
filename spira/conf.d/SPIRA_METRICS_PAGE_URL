@@ -1,0 +1,7 @@
+TYPE=string
+GROUP=metrics
+DOC=Webhook URL Grafana posts a page to when a metric alert fires; empty means pages go to a dead loopback address and only Grafana's own log shows them
+SCHEMA=Webhook URL for the `spira-page` Grafana contact point. metrics-stack.sh substitutes a dead loopback address when empty so Grafana still starts and the alert rules still load; an empty value pages nobody. No default.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # NO DEFAULT. Resolves to an empty string unless the environment or spira.toml sets it.
+SPIRA_CONF_DEFAULT_EOF
