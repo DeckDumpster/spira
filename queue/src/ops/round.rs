@@ -139,10 +139,9 @@ pub const ROUND_STEPS: [&str; 4] = [BUILD_RED, LINT_RED, UNIT_RED, CONFIG_DELTA_
 /// The round steps `testenv --suites <step>` cannot run for a tip.
 pub const ROUND_ONLY_STEPS: [&str; 3] = [BUILD_RED, LINT_RED, CONFIG_DELTA_RED];
 
-/// A round step, a base fence the round runs before its suites (`fence-<name>`), or the testenv
-/// run of a repository that judges itself.
+/// A round step, or a base fence the round runs before its suites (`fence-<name>`).
 pub fn is_round_step(name: &str) -> bool {
-    ROUND_STEPS.contains(&name) || name.starts_with(FENCE_RED_PREFIX) || name == REPO_TESTENV_RED
+    ROUND_STEPS.contains(&name) || name.starts_with(FENCE_RED_PREFIX)
 }
 
 /// Whether a verb meets the round lease guard: on the caller's word, with the token it was
@@ -4469,6 +4468,29 @@ fn finish_green(
     OK
 }
 
+/// The round's whole ci_entry run is a result, not a suite: a tree that declares its own testenv
+/// is recertified on that declaration's default tiers instead.
+fn ci_entry_red_as_default_tiers(wt: &Path, suites: &str) -> Result<String, String> {
+    let named: Vec<&str> = suites.split(',').filter(|s| !s.is_empty()).collect();
+    if !named.contains(&REPO_TESTENV_RED) || !gate::own::declares_own_testenv(wt) {
+        return Ok(suites.to_string());
+    }
+    let tiers = gate::own::default_tiers(wt).map_err(|e| format!("cannot read the default tiers for the round tree: {e}"))?;
+    if tiers.is_empty() {
+        return Err(format!("--suites names {REPO_TESTENV_RED} but the round tree's testenv declares no default tier to run in its place"));
+    }
+    let mut out: Vec<String> = Vec::new();
+    for n in named {
+        let each = if n == REPO_TESTENV_RED { tiers.clone() } else { vec![n.to_string()] };
+        for t in each {
+            if !out.contains(&t) {
+                out.push(t);
+            }
+        }
+    }
+    Ok(out.join(","))
+}
+
 /// Suites an eject forces on the recertification must be ones testenv runs for the round's tree;
 /// a name nothing can satisfy would block the bead's resubmit for good.
 fn known_forced_suites(w: &World, label: &str, wt: &Path, suites: &str) -> Result<(), i32> {
@@ -4592,6 +4614,14 @@ fn eject(
         return FAIL;
     }
     let wt = worktree_of(&kv);
+    let mapped = match ci_entry_red_as_default_tiers(&wt, suites) {
+        Ok(m) => m,
+        Err(e) => {
+            w.err(format!("queue.sh {label}: {e} — nothing changed"));
+            return FAIL;
+        }
+    };
+    let suites = mapped.as_str();
     if let Err(rc) = known_forced_suites(w, label, &wt, suites) {
         return rc;
     }
