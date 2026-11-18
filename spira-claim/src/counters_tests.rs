@@ -15,13 +15,13 @@ fn fact_args_name_the_kind_actor_and_cause() {
 #[test]
 fn fact_args_strip_quotes_from_the_cause() {
     let a = fact_args("harness", "sp-a", "requeued", "o'hara\"; drop table events; --");
-    assert_eq!(a[7], "ohara; drop table events; --");
+    assert_eq!(a[8], "ohara; drop table events; --");
 }
 
 #[test]
 fn fact_args_bound_a_runaway_cause() {
     let a = fact_args("harness", "sp-a", "requeued", &"y".repeat(5000));
-    assert!(a[7].len() <= 200, "{}", a[7].len());
+    assert!(a[8].len() <= 200, "{}", a[8].len());
 }
 
 #[test]
