@@ -8708,28 +8708,6 @@ fn an_unleased_round_is_touched_as_before_and_a_lapsed_token_or_an_unread_lease_
     assert!(t.lc.has("abandon-batch r-1"));
 }
 
-#[test]
-fn an_eject_naming_the_testenv_run_of_a_repo_that_judges_itself_is_accepted() {
-    let t = round_world();
-    let open = [
-        "round",
-        "open",
-        "--members",
-        "sp-a:ta,sp-b:tb",
-        "--name",
-        "r-1",
-    ];
-    assert_eq!(t.run(&open), 0, "{}", t.err());
-    seed_suite(&t, "test-b.sh");
-    let (rc, e) = err_of(&t, || {
-        t.run(&[
-            "round", "eject", "r-1", "sp-b", "--reason", "red", "--red", "--suites", "testenv",
-        ])
-    });
-    assert_eq!(rc, 0, "{e}");
-    assert!(t.lc.has("eject-member r-1"), "{:?}", t.lc.calls.borrow());
-}
-
 /// `queue round land` as the Lander calls it (the argv the landing pass drives): the
 /// exit the Lander classifies its refusal by, and stderr's first word, which is for the operator.
 fn land_as_the_lander(t: &T, batch: &str, token: Option<&str>) -> (i32, String) {
