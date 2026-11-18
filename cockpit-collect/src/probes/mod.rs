@@ -310,9 +310,8 @@ pub fn now_keys(cfg: &Cfg) -> Kv {
     sweep_dwarf_static(&run, io::now());
 
     let scheduler = unit_active_key("runtime", "service", &cfg.instance);
-    for (timer_key, age_key, task) in LOOP_PULSE {
-        push(&mut out, timer_key, scheduler.clone());
-        push(&mut out, age_key, task_age(&run, task));
+    for (key, value) in loop_pulse(&run, &scheduler) {
+        push(&mut out, key, value);
     }
 
     let heimdall_status = run.join("heimdall.status");
@@ -513,6 +512,10 @@ const LOOP_PULSE: [(&str, &str, &str); 3] = [
     ("SP_OPS_TIMER", "SP_OPS_AGE", "persona.ops"),
     ("SP_HEIMDALL_TIMER", "SP_HEIMDALL_AGE", "reconcile.heimdall"),
 ];
+
+fn loop_pulse(run: &Path, scheduler_active: &str) -> Vec<(&'static str, String)> {
+    LOOP_PULSE.iter().flat_map(|(timer_key, age_key, task)| [(*timer_key, scheduler_active.to_string()), (*age_key, task_age(run, task))]).collect()
+}
 
 fn task_age(run: &Path, task: &str) -> String {
     spira_config::ticked::quiet_secs(run, task).map(|s| s.to_string()).unwrap_or_else(|| "?".to_string())
@@ -1653,12 +1656,12 @@ mod tests {
             let old = std::time::SystemTime::now() - std::time::Duration::from_secs(1_000_000);
             std::fs::File::options().write(true).open(run.join(f)).unwrap().set_modified(old).unwrap();
         }
-        for (_, _, task) in LOOP_PULSE {
-            assert_eq!(task_age(run, task), "?", "{task} never stamped");
-        }
-        for (_, age_key, task) in LOOP_PULSE {
+        let get = |k: &str| loop_pulse(run, "1").into_iter().find(|(key, _)| *key == k).unwrap().1;
+        for (timer_key, age_key, task) in LOOP_PULSE {
+            assert_eq!(get(age_key), "?", "{task} never stamped");
+            assert_eq!(get(timer_key), "1");
             spira_config::ticked::stamp(run, task);
-            let age: u64 = task_age(run, task).parse().unwrap_or_else(|_| panic!("{age_key} unread"));
+            let age: u64 = get(age_key).parse().unwrap_or_else(|_| panic!("{age_key} unread"));
             assert!(age < 60, "{age_key} read {age}s, the log's age");
         }
     }
