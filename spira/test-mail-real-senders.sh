@@ -169,10 +169,11 @@ _keep_lc="${SPIRA_LC_BIN-}"; lc_mirror_bd "$TMP/fenrir-lc"; FENRIR_LC="$SPIRA_LC
 # incident-stub-bd, with the real mail (SPIRA_HOME/SPIRA_MAIL from the suite-wide
 # exports above) so the FENRIR message actually clears mail's lint.
 file_fenrir_incident() {
-    local ref="$1" title="$2" payload="$3"
+    local n="$1" ref="$2" title="$3" payload="$4"
     # SPIRA_BD/SPIRA_DB are registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG):
     # declare via tl_config, not the env prefix below, which no process reads any more.
     tl_config SPIRA_BD="$(command -v incident-stub-bd)" SPIRA_DB="fakedb"
+    : > "$TMP/fenrir-filing-$n.out"
     printf '%s' "$payload" | \
         env STUB_BD_STATE="$FENRIR_STATE" STUB_BD_LOG="$FENRIR_LOG" \
         SPIRA_LC_BIN="$FENRIR_LC" \
@@ -180,7 +181,20 @@ file_fenrir_incident() {
         SPIRA_INCIDENT_LOCK="$TMP/run/real-sender-fenrir.lock" \
         SPIRA_INCIDENT_REPO=real-sender-fixture \
         SPIRA_FENRIR_AT="$FENRIR_AT" \
-        "$INC" file "$title" - 2>/dev/null
+        "$INC" file "$title" - 2>"$TMP/fenrir-filing-$n.err" >"$TMP/fenrir-filing-$n.out"
+    echo $? > "$TMP/fenrir-filing-$n.rc"
+}
+
+# fenrir_report — every filing's status, stdout and stderr, the incident log and the facts the
+# lifecycle mirror recorded: what a short count is read against.
+fenrir_report() {
+    local n f
+    for n in $(seq 1 "$(( FENRIR_AT + 1 ))"); do
+        echo "# filing $n: exit $(cat "$TMP/fenrir-filing-$n.rc" 2>/dev/null || echo 'not run')"
+        for f in out err; do sed "s/^/#   $f: /" "$TMP/fenrir-filing-$n.$f" 2>/dev/null; done
+    done
+    echo "# incident log:"; sed 's/^/#   /' "$SPIRA_RUN/incident.log" 2>/dev/null
+    echo "# facts.tsv:"; sed 's/^/#   /' "$TMP/fenrir-lc/facts.tsv" 2>/dev/null
 }
 
 ref="incident:real-sender-fenrir-test"
@@ -188,9 +202,16 @@ before="$(unread)"
 # FENRIR_AT counts RECURRENCES, not sightings: the filing that creates the bead is recurrence 0,
 # so reaching FENRIR_AT recurrences takes one create plus FENRIR_AT recurring filings.
 for i in $(seq 1 "$(( FENRIR_AT + 1 ))"); do
-    file_fenrir_incident "$ref" "real sender FENRIR test" "payload $i" >/dev/null
+    file_fenrir_incident "$i" "$ref" "real sender FENRIR test" "payload $i"
 done
 after="$(unread)"
+fenrir_report   # before the first assertion: a failing case stops the suite
+fenrir_err() { cat "$TMP/fenrir-filing-$1.err" 2>/dev/null; }
+want "FENRIR filing 1 creates the bead"                "filed sp-stub1"            "$(fenrir_err 1)"
+want "FENRIR filing 2 recurs on the same bead"         "recurred (1) — sp-stub1"   "$(fenrir_err 2)"
+want "FENRIR filing 3 recurs on the same bead"         "recurred (2) — sp-stub1"   "$(fenrir_err 3)"
+want "FENRIR filing 3 crosses FENRIR_AT and escalates" "escalated once"            "$(fenrir_err 3)"
+is "FENRIR recurrences recorded as facts" "$FENRIR_AT" "$(lc_fact_count "$TMP/fenrir-lc" sp-stub1 recurred)"
 is "incident.sh FENRIR escalation delivers exactly one message" "$((before + 1))" "$after"
 body="$(cat "$(newest_ask)" 2>/dev/null)"
 want "incident.sh FENRIR message carries a Default"     "## Default"  "$body"
