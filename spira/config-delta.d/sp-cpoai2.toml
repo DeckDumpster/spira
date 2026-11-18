@@ -1,2 +1,0 @@
-removed = ["spira.runtime_sweep_repo_contract_calendar", "spira.runtime_sweep_repo_contract_jitter_secs"]
-removed_tasks = ["sweep.repo_contract"]
