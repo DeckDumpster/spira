@@ -26,10 +26,10 @@ git -C "$REPO" -c user.email=t@t -c user.name=t commit -qm init
 git -C "$REPO" branch -f local/main HEAD
 
 tl_repo_map "fixture | $REPO | local | local/main | |"
-CONF="$(tl_layer SPIRA_RUN="$RUN")"
-run() { env TMPDIR="$SCRATCH" SPIRA_RELEASE="$SPIRA_RELEASE" SPIRA_TOML="$CONF" SPIRA_NIX_PROFILE_BIN="$BIN" PATH="$PATH" HOME="$HOME" "$@"; }
+CONF="$(tl_layer SPIRA_RUN="$RUN" SPIRA_NIX_PROFILE_BIN="$BIN")"
+run() { env TMPDIR="$SCRATCH" SPIRA_RELEASE="$SPIRA_RELEASE" SPIRA_TOML="$CONF" PATH="$PATH" HOME="$HOME" "$@"; }
 
-run "$RC" check fixture >/dev/null 2>&1 &
+run "$RC" check fixture >"$TMPDIR/rc.out" 2>&1 &
 pid=$!
 tree=""
 for _ in $(seq 1 300); do
@@ -37,7 +37,7 @@ for _ in $(seq 1 300); do
     [ -n "$tree" ] && break
     sleep 0.1 # waits on the child's own marker directory appearing
 done
-[ -n "$tree" ] || bad "the run cut a repo-check tree under the run dir" "none under $RUN/worktree"
+[ -n "$tree" ] || bad "the run cut a repo-check tree under the run dir" "none under $RUN/worktree; run said: $(head -c 600 "$TMPDIR/rc.out")"
 killed="$(basename "${tree:-repo-check-0-0}" | cut -d- -f3)"
 pkill -KILL -P "$pid" 2>/dev/null
 kill -KILL "$pid" 2>/dev/null
