@@ -1531,6 +1531,7 @@ dependencies = [
  "mail",
  "reconciler-engine",
  "runtime",
+ "sentinel",
  "serde",
  "serde_json",
  "spira-config",

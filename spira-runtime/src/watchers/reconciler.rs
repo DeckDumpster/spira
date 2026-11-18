@@ -42,6 +42,9 @@ pub struct Reconciler {
 pub struct ObserveIn {
     pub at: u64,
     pub reminded: std::collections::BTreeSet<String>,
+    /// The keys the observers read, as the scheduler holds them for this tick.
+    #[serde(default)]
+    pub values: BTreeMap<String, String>,
 }
 
 /// Telemetry for the metrics store: a status row per check every pass, and the remedy events.
@@ -163,7 +166,7 @@ impl Handler for Reconciler {
             return vec![];
         }
         if ev.kind.tag == TICK {
-            let input = ObserveIn { at: ev.at, reminded: Self::book(view, &ev.stream).reminded };
+            let input = ObserveIn { at: ev.at, reminded: Self::book(view, &ev.stream).reminded, values: self.values.clone() };
             return vec![
                 Command::Probe(spec(OBSERVE, OBSERVE.into(), &input, OBSERVE_DEADLINE_MS)),
                 Command::Timer { at: ev.at + self.interval_ms, kind: EventKind::new(TICK, "") },
