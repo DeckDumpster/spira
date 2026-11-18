@@ -343,7 +343,7 @@ mod tests {
         f.files.insert(TESTENV.into(), "default = [\"unit\"]\n".into());
         f.tree_files = Some(BTreeMap::new());
         let mut out = Vec::new();
-        let tree = PathBuf::from("/t");
+        let tree = PathBuf::from("tree");
         run(&f, "r", Some(&tree), &[Clause::TestTiers], &mut |l| out.push(l.to_string()));
         assert_eq!(out, ["not met test-tiers: .spira/testenv.toml does not exist"]);
     }
