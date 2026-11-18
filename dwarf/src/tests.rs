@@ -127,7 +127,6 @@ pub(crate) mod verdict_run {
     fn with_run_launching<T>(vars: BTreeMap<String, String>, bd: &dyn Bd, git: Dirty, exec: &dyn Exec, clock: &(dyn Fn() -> i64 + Sync), seam: &dyn Seam, sink: &dyn Sink, launcher: &dyn Launcher, claimed_raw: &str, f: impl FnOnce(&mut Run) -> T) -> T {
         let conf = Conf::new(&Snapshot { vars, ..Default::default() }, Path::new("h/spira"));
         let rune = Rune::from_vars("builder", &Default::default());
-        let env = Env::new(Default::default(), Default::default());
         let stop = Arc::new(Stop::default());
         let mut r = Run {
             d: Deps { bd, seam, git: &git, exec, launcher, sink, env: &env, clock, sleep: &|_| {} },
@@ -233,6 +232,35 @@ pub(crate) mod verdict_run {
         let want = Run::session_tmpdir(work.path()).display().to_string();
         assert_eq!(envs.len(), 1);
         assert_eq!(envs[0].get("TMPDIR"), Some(&want));
+    }
+
+    #[test]
+    fn the_env_the_session_port_receives_carries_the_forge_fences_and_no_token() {
+        let work = testkit::TempDir::new("dwarf-fences-spec");
+        let w = work.path().to_path_buf();
+        let cap = Capture(Default::default());
+        let mut vars = super::complete_vars();
+        vars.insert("SPIRA_REPO".into(), "shared".into());
+        let cwd = std::env::current_dir().unwrap();
+        let (res, gh) = with_run_launching(vars, &NoBd, Dirty(vec![]), &Lc, &|| 0, &Seams(Default::default()), &Mute::default(), &cap, "", |r| {
+            r.s.logf = Some(w.join("log"));
+            let bin = w.join("model-bin");
+            std::fs::create_dir_all(&bin).unwrap();
+            testkit::write_exe(bin.join("work"), "#!/bin/sh\n");
+            r.d.env.set(spira_config::release_env::MODEL_BIN_OVERRIDE_ENV, &bin.display().to_string());
+            r.d.env.set("GH_TOKEN", "secret");
+            r.d.env.set("GITHUB_TOKEN", "secret");
+            (r.session(&w).map_err(|a| format!("{a:?}")), r.run_dir().join("dwarf-empty-gh"))
+        });
+        std::env::set_current_dir(cwd).unwrap();
+        res.unwrap();
+        let envs = cap.0.lock().unwrap();
+        let env = &envs[0];
+        assert_eq!(env.get("GH_CONFIG_DIR").map(String::as_str), Some(gh.to_str().unwrap()));
+        assert!(env.get("GIT_SSH_COMMAND").is_some_and(|v| v.contains("no SSH credentials")), "{env:?}");
+        assert_eq!(env.get("GIT_ASKPASS").map(String::as_str), Some(system_paths::BIN_FALSE));
+        assert_eq!(env.get("GIT_TERMINAL_PROMPT").map(String::as_str), Some("0"));
+        assert!(!env.contains_key("GH_TOKEN") && !env.contains_key("GITHUB_TOKEN"));
     }
 
     const REFUSED: &str = "The work is finished and checked, but work submit refuses: spira-lc content: cannot tell\nmore";

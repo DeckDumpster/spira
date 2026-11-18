@@ -106,6 +106,11 @@ const CONDITIONAL: &[&str] = &[
     "SCCACHE_IGNORE_SERVER_IO_ERROR",
     "SCCACHE_WEBDAV_ENDPOINT",
     "SCCACHE_WEBDAV_KEY_PREFIX",
+    // Fences, not credentials: each value only refuses (law-aeons-hold-no-forge-credential).
+    "GH_CONFIG_DIR",
+    "GIT_SSH_COMMAND",
+    "GIT_ASKPASS",
+    "GIT_TERMINAL_PROMPT",
 ];
 
 /// The cargo toolchain directory: `$CARGO_HOME/bin`, else `$HOME/.cargo/bin`, from the dwarf's
@@ -196,6 +201,23 @@ mod tests {
         for k in e.keys() {
             assert!(!k.contains("DOLT") && !k.starts_with("BEADS_D") && !k.ends_with("_DB") && !k.ends_with("_BD"), "{k} looks like a db locator");
         }
+    }
+
+    #[test]
+    fn the_forge_fences_reach_the_model_and_the_tokens_do_not() {
+        let b = base(&[
+            ("GH_CONFIG_DIR", "run/dwarf-empty-gh"),
+            ("GIT_SSH_COMMAND", "exit 1"),
+            ("GIT_ASKPASS", "false"),
+            ("GIT_TERMINAL_PROMPT", "0"),
+            ("GH_TOKEN", "t"),
+            ("GITHUB_TOKEN", "t"),
+        ]);
+        let e = restricted_env("sp-x", &b, "rel/model-bin");
+        for (k, v) in [("GH_CONFIG_DIR", "run/dwarf-empty-gh"), ("GIT_SSH_COMMAND", "exit 1"), ("GIT_ASKPASS", "false"), ("GIT_TERMINAL_PROMPT", "0")] {
+            assert_eq!(e.get(k).map(String::as_str), Some(v), "{k}");
+        }
+        assert!(!e.contains_key("GH_TOKEN") && !e.contains_key("GITHUB_TOKEN"));
     }
 
     fn exe_at(paths: &'static [&'static str]) -> impl Fn(&Path) -> bool {
