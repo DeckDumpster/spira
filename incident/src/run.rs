@@ -767,6 +767,21 @@ mod tests {
     }
 
     #[test]
+    fn a_repo_label_the_caller_already_passed_is_not_duplicated_or_overridden() {
+        let known = vec!["spira".to_string(), "other".to_string()];
+        let bd = FakeBd::new();
+        let mailer = FakeMailer::default();
+        let clock = FixedClock(1_000_000);
+        let mut c = cfg(&known);
+        c.repo_declared = Some("spira");
+        let mut log = vec![];
+        let out = file_one(&bd, &mailer, &clock, &c, "incident:own", "t", b"p", "spira,incident,repo:other", &mut log);
+        let FileOutcome::Filed(id) = out else { panic!("{log:?}") };
+        assert_eq!(bd.create_labels.borrow()[&id].matches("repo:").count(), 1);
+        assert_eq!(created_repo_of(&bd, &id).as_deref(), Some("other"));
+    }
+
+    #[test]
     fn an_alarm_with_no_bead_history_stays_an_inbox_note() {
         let bd = FakeBd::new();
         let mailer = FakeMailer::default();
