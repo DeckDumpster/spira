@@ -410,6 +410,7 @@ fn destroy_branch_with_state(run: &Path, reaplog_path: &Path, id: &str, br: &str
         return Err(DestroyBranchErr::Failed(msg));
     }
     if !g.branch_exists(br) {
+        clear_counters(run, reaplog_path, id, br);
         return Ok(());
     }
     // CERTIFIED/BATCHED GUARD. No caller bypass: even the Hel must not race verdict.sh's
@@ -453,11 +454,15 @@ fn destroy_branch_with_state(run: &Path, reaplog_path: &Path, id: &str, br: &str
         return Err(DestroyBranchErr::Failed(err));
     }
     reaplog(reaplog_path, "REMOVED", id, &format!("branch {br}"));
+    clear_counters(run, reaplog_path, id, br);
+    Ok(())
+}
+
+fn clear_counters(run: &Path, reaplog_path: &Path, id: &str, br: &str) {
     let cleared = spira_config::branch_key::clear_noverdict(run, br);
     if !cleared.is_empty() {
         reaplog(reaplog_path, "COUNTERS", id, &format!("branch {br} no-verdict counters removed: {}", cleared.join(" ")));
     }
-    Ok(())
 }
 
 /// The checkout `destroy-branch` acts on: a registered name resolves to its root first (a bare
@@ -755,6 +760,17 @@ mod tests {
         assert!(nv.join("spira-sp-gone2-conflict").exists());
         let logged = std::fs::read_to_string(&log).unwrap();
         assert!(logged.contains("spira-sp-gone-conflict.asked"), "{logged}");
+    }
+
+    #[test]
+    fn a_branch_already_gone_still_has_its_noverdict_counters_removed() {
+        let run = tempdir();
+        let repo = fixture_repo(&run);
+        let nv = run.join("noverdict");
+        std::fs::create_dir_all(&nv).unwrap();
+        std::fs::write(nv.join("spira-sp-vanished-conflict"), "98").unwrap();
+        assert!(destroy_branch(&run, &run.join("reap.log"), "sp-vanished", "spira/sp-vanished", &repo, "test", "hel", None, &open()).is_ok());
+        assert!(!nv.join("spira-sp-vanished-conflict").exists());
     }
 
     #[test]
