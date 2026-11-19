@@ -665,6 +665,32 @@ impl drive::RoundOps for LiveOps<'_> {
         self.start_sha.clone()
     }
 
+    fn round_name(&self) -> String {
+        self.batch
+            .map_or_else(|| self.round.clone(), str::to_string)
+    }
+
+    fn record_unnamed_red(&mut self, name: &str, failed: &[String], members: &[Member]) {
+        let red = drive::UnnamedRed {
+            filter: name.to_string(),
+            failed: failed.to_vec(),
+            batch: self.round_name(),
+            members: members
+                .iter()
+                .map(|m| (m.id.clone(), m.tip.clone()))
+                .collect(),
+        };
+        redtip::keep_unnamed(&self.env.run, &self.repo.name, &red);
+    }
+
+    fn prior_unnamed_red(&self) -> Option<drive::UnnamedRed> {
+        redtip::kept_unnamed(&self.env.run, &self.repo.name)
+    }
+
+    fn clear_unnamed_red(&mut self) {
+        redtip::clear_unnamed(&self.env.run, &self.repo.name);
+    }
+
     fn last_touching(&self, paths: &[String]) -> Option<String> {
         io::last_touching(self.repo, &self.start_sha, paths)
     }
