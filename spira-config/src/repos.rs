@@ -239,6 +239,7 @@ pub struct Registry {
     root_override: Option<String>,
     map_present: bool,
     publish: BTreeMap<String, crate::PublishSection>,
+    git: Option<PathBuf>,
 }
 
 impl Registry {
@@ -262,7 +263,15 @@ impl Registry {
             root_override: repo_override(env),
             map_present: map_text.is_some(),
             publish: BTreeMap::new(),
+            git: None,
         }
+    }
+
+    /// Runs the landing-ref probes through this git program instead of the one on `PATH`.
+    #[doc(hidden)]
+    pub fn with_git(mut self, git: PathBuf) -> Registry {
+        self.git = Some(git);
+        self
     }
 
     /// The `[publish.<name>]` declarations, for a registry built outside [`Registry::from_env`].
@@ -290,7 +299,7 @@ impl Registry {
         let publish = doc.as_ref().map(|d| d.publish.clone()).unwrap_or_default();
         if map_text.is_none() {
             if let Some(rows) = doc.as_ref().map(rows_from_toml) {
-                return Registry { rows, home: home_repo(&env, home), root_override: repo_override(&env), map_present: true, publish };
+                return Registry { rows, home: home_repo(&env, home), root_override: repo_override(&env), map_present: true, publish, git: None };
             }
         }
         Registry::new(map_text.as_deref(), &env, home).with_publish(publish)
@@ -477,8 +486,8 @@ fn git_remotes(repo: &str) -> Vec<String> {
 
 /// `git rev-parse --verify -q <r>` — whether `r` resolves to an object in `repo`; the `Err` is
 /// git's own words: its stderr (empty under `-q`, so its exit status too), or the deadline (124).
-fn verify_ref_explained(repo: &str, r: &str) -> Result<(), String> {
-    let out = crate::bounded::bounded("git").arg("-C").arg(repo).args(["rev-parse", "--verify", "-q", r]).output().map_err(|e| format!("git did not run: {e}"))?;
+fn verify_ref_explained(git: &Path, repo: &str, r: &str) -> Result<(), String> {
+    let out = crate::bounded::bounded(git).arg("-C").arg(repo).args(["rev-parse", "--verify", "-q", r]).output().map_err(|e| format!("git did not run: {e}"))?;
     if out.status.success() {
         return Ok(());
     }
@@ -497,7 +506,7 @@ fn exit_words(code: Option<i32>, stderr: &str) -> String {
 }
 
 fn verify_ref(repo: &str, r: &str) -> bool {
-    verify_ref_explained(repo, r).is_ok()
+    verify_ref_explained(Path::new("git"), repo, r).is_ok()
 }
 
 fn symbolic_ref_short(repo: &str, r: &str) -> Option<String> {
@@ -528,7 +537,7 @@ pub fn landref_explained(reg: &Registry, arg: &str) -> Result<String, String> {
         return Err(format!("{repo} is not a git checkout"));
     }
     let mut tried: Vec<String> = Vec::new();
-    let mut try_ref = |r: &str| match verify_ref_explained(&repo, r) {
+    let mut try_ref = |r: &str| match verify_ref_explained(reg.git.as_deref().unwrap_or(Path::new("git")), &repo, r) {
         Ok(()) => true,
         Err(why) => {
             tried.push(format!("{r}: {why}"));
