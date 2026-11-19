@@ -116,6 +116,8 @@ for fn in bdq bdjson _bdq_check_repo_label json_count; do
     declare -F "$fn" >/dev/null; wantrc "lib_sh_defines_no_bdq: $fn is not a function" 1 "$?"
 done
 is "lib_sh_defines_no_bdq: json_only is a plain stdin filter" "[1]" "$(printf 'warn\n[1]\n' | json_only)"
+printf '#!/bin/sh\necho "gh-stub $*"\n' > "$TMP/gh-stub"; chmod +x "$TMP/gh-stub"
+is "ghq runs the gh named by SPIRA_GH, with the arguments given" "gh-stub pr list" "$(SPIRA_GH="$TMP/gh-stub" ghq pr list)"
 
 beads "$(bead sp-spike-1 "${SPIRA_SCOPE_LABEL},$SPIRA_SPIKE_LABEL")"
 is "a spike bead is in the spike's partition" 1 "$(rune_ready spike)"
