@@ -206,13 +206,11 @@ fn resolve(operand: &str, cwd: Option<&Path>, home: &str) -> Option<PathBuf> {
 }
 
 /// The hook's whole stdout for one stdin payload: the block JSON on a refusal, else nothing.
-/// An unparseable payload and the override both pass.
-pub fn hook_output(raw: &str, run: &Path, worktree: &Path, home: &str, overridden: bool) -> Option<String> {
-    if overridden {
-        return None;
-    }
+/// An unparseable payload passes; the override lifts the search fence only, never the store fence.
+pub fn hook_output(raw: &str, search: Option<(&Path, &Path)>, home: &str, overridden: bool) -> Option<String> {
     let payload: Value = serde_json::from_str(raw).ok()?;
-    refusal(&payload, run, worktree, home).map(|reason| json!({"decision": "block", "reason": reason}).to_string())
+    let search = search.filter(|_| !overridden);
+    refusal(&payload, search, home).map(|reason| json!({"decision": "block", "reason": reason}).to_string())
 }
 
 const GREP_ARG_SHORT: &str = "efABCmdD";
@@ -298,6 +296,13 @@ fn strip_wrappers(words: &[String]) -> &[String] {
         match w {
             _ if is_assign => i += 1,
             "command" | "nohup" | "exec" | "time" => i += 1,
+            "xargs" => {
+                i += 1;
+                while i < words.len() && words[i].starts_with('-') {
+                    let takes_value = matches!(words[i].as_str(), "-n" | "-I" | "-L" | "-P" | "-d" | "-E" | "-s" | "-a" | "-S" | "--max-args" | "--max-procs" | "--delimiter" | "--arg-file" | "--max-lines" | "--eof" | "--max-chars");
+                    i += if takes_value { 2 } else { 1 };
+                }
+            }
             "env" => {
                 i += 1;
                 while i < words.len() && words[i].starts_with('-') {
@@ -325,24 +330,28 @@ fn strip_wrappers(words: &[String]) -> &[String] {
     &words[i.min(words.len())..]
 }
 
+const STORE_BINARIES: &[&str] = &["bd", "bdq", "bd-embedded", "dolt"];
+
+const STORE_REFUSAL: &str = "dwarf store-fence: bd is the store server's alone (law-only-spira-lc-talks-to-the-stores). Your bead: `work show|note|ask|done`. Anything else: `spira-lc <verb>`; a missing verb is a bead, not a side door.";
+
 struct Ctx<'a> {
-    run: &'a Path,
-    worktree: &'a Path,
+    search: Option<(&'a Path, &'a Path)>,
     home: &'a str,
 }
 
 impl Ctx<'_> {
-    fn refused_root(&self, root: &Path) -> bool {
-        self.run.starts_with(root) || (root.starts_with(self.run) && !root.starts_with(self.worktree))
+    fn refused_root(run: &Path, worktree: &Path, root: &Path) -> bool {
+        run.starts_with(root) || (root.starts_with(run) && !root.starts_with(worktree))
     }
 
     fn check(&self, head: &str, operands: &[String], cwd: Option<&Path>) -> Option<String> {
+        let (run, worktree) = self.search?;
         let roots: Vec<Option<PathBuf>> = if operands.is_empty() { vec![cwd.map(normalize)] } else { operands.iter().filter(|o| *o != "-").map(|o| resolve(o, cwd, self.home)).collect() };
-        roots.into_iter().flatten().find(|r| self.refused_root(r)).map(|r| self.reason(head, &r))
+        roots.into_iter().flatten().find(|r| Self::refused_root(run, worktree, r)).map(|r| Self::reason(run, worktree, head, &r))
     }
 
-    fn reason(&self, head: &str, root: &Path) -> String {
-        let (run, wt) = (self.run.display(), self.worktree.display());
+    fn reason(run: &Path, worktree: &Path, head: &str, root: &Path) -> String {
+        let (run, wt) = (run.display(), worktree.display());
         format!(
             "dwarf search-fence: {head} searches {}, which holds every session's transcripts and logs (sp-7lcsyn: one such search took 30 minutes of a session). For a round or gate red, run `work show`: its LAST RED section is the failure the round recorded. To read one known file, name it without a recursive flag (grep <pattern> {run}/<file>; rg always recurses, so use grep or the Read tool). Your worktree {wt} is searched freely.",
             root.display()
@@ -359,6 +368,12 @@ impl Ctx<'_> {
             let args = &words[1..];
             let base = head.rsplit('/').next().unwrap_or(head);
             match base {
+                b if STORE_BINARIES.contains(&b) => return Some(STORE_REFUSAL.to_string()),
+                "eval" => {
+                    if let Some(r) = self.command(&args.join(" "), cwd.clone(), depth + 1) {
+                        return Some(r);
+                    }
+                }
                 "cd" | "pushd" => {
                     let target = args.iter().find(|a| !a.starts_with('-') || *a == "-");
                     cwd = match target {
@@ -400,15 +415,15 @@ impl Ctx<'_> {
 }
 
 /// The refusal for a PreToolUse payload, or `None` when the call may run.
-pub fn refusal(payload: &Value, run: &Path, worktree: &Path, home: &str) -> Option<String> {
-    let ctx = Ctx { run, worktree, home };
-    let cwd = payload["cwd"].as_str().map_or_else(|| worktree.to_path_buf(), PathBuf::from);
+pub fn refusal(payload: &Value, search: Option<(&Path, &Path)>, home: &str) -> Option<String> {
+    let ctx = Ctx { search, home };
+    let cwd = payload["cwd"].as_str().map(PathBuf::from).or_else(|| search.map(|(_, w)| w.to_path_buf()));
     let input = &payload["tool_input"];
     match payload["tool_name"].as_str()? {
-        "Bash" => ctx.command(input["command"].as_str()?, Some(cwd), 0),
+        "Bash" => ctx.command(input["command"].as_str()?, cwd, 0),
         "Grep" => {
             let ops: Vec<String> = input["path"].as_str().map(|p| p.to_string()).into_iter().collect();
-            ctx.check("the Grep tool", &ops, Some(&cwd))
+            ctx.check("the Grep tool", &ops, cwd.as_deref())
         }
         "Glob" => {
             let pattern = input["pattern"].as_str()?;
@@ -417,7 +432,7 @@ pub fn refusal(payload: &Value, run: &Path, worktree: &Path, home: &str) -> Opti
             }
             let root = input["path"].as_str();
             let ops: Vec<String> = if pattern.starts_with(['/', '~']) { vec![pattern.to_string()] } else { root.map(String::from).into_iter().collect() };
-            ctx.check("the Glob tool", &ops, Some(&cwd))
+            ctx.check("the Glob tool", &ops, cwd.as_deref())
         }
         _ => None,
     }
@@ -448,7 +463,7 @@ mod tests {
     }
 
     fn verdict(payload: Value) -> Option<String> {
-        refusal(&payload, Path::new(&run_dir()), Path::new(&wt_dir()), &root())
+        refusal(&payload, Some((Path::new(&run_dir()), Path::new(&wt_dir()))), &root())
     }
 
     #[test]
@@ -456,13 +471,16 @@ mod tests {
         let (run, wt) = (run_dir(), wt_dir());
         let (run, wt) = (Path::new(&run), Path::new(&wt));
         let call = |cmd: &str| json!({"tool_name": "Bash", "cwd": wt_dir(), "tool_input": {"command": cmd}}).to_string();
-        let out = hook_output(&call(&at("grep -rl x @R/spira/run")), run, wt, &root(), false).expect("refused");
+        let out = hook_output(&call(&at("grep -rl x @R/spira/run")), Some((run, wt)), &root(), false).expect("refused");
         let v: Value = serde_json::from_str(&out).unwrap();
         assert_eq!(v["decision"], "block");
         assert!(v["reason"].as_str().unwrap().contains("work show"));
-        assert_eq!(hook_output(&call("grep -rn x ."), run, wt, &root(), false), None);
-        assert_eq!(hook_output(&call(&at("grep -rl x @R/spira/run")), run, wt, &root(), true), None, "override passes");
-        assert_eq!(hook_output("not json", run, wt, &root(), false), None, "unparseable passes");
+        assert_eq!(hook_output(&call("grep -rn x ."), Some((run, wt)), &root(), false), None);
+        assert_eq!(hook_output(&call(&at("grep -rl x @R/spira/run")), Some((run, wt)), &root(), true), None, "override passes the search fence");
+        assert!(hook_output(&call("bd show sp-a"), Some((run, wt)), &root(), true).is_some(), "override does not lift the store fence");
+        assert!(hook_output(&call("bd show sp-a"), None, &root(), false).is_some(), "store fence needs no run dir");
+        assert_eq!(hook_output(&call(&at("grep -rl x @R/spira/run")), None, &root(), false), None, "no search fence without a run dir");
+        assert_eq!(hook_output("not json", Some((run, wt)), &root(), false), None, "unparseable passes");
     }
 
     #[test]
@@ -482,6 +500,25 @@ mod tests {
 
     fn allowed(cmd: &str) {
         assert_eq!(bash(cmd), None, "{cmd}");
+    }
+
+    fn store_refused(cmd: &str) {
+        let r = bash(cmd).unwrap_or_else(|| panic!("not refused: {cmd}"));
+        assert!(r.contains("spira-lc") && r.contains("work"), "{r}");
+    }
+
+    #[test]
+    fn every_way_of_reaching_a_store_binary_is_refused() {
+        for c in ["bd show sp-a", "@R/bin/bdq list", "env A=1 bd create x", "timeout 5 bd-embedded", "bash -c 'bd dep add a b'", "sh <<'EOF'\nbdq ready\nEOF", "echo sp-a | xargs bd show", "echo sp-a | xargs -n 1 bd show", "echo sp-a | xargs --max-args 1 bd show", "echo sp-a | xargs -I{} bd show {}", "eval env A=1 bd show", "nice -n 5 bd list", "command bd list", "exec bd list", "nohup bd list", "eval \"bd close sp-a\"", "dolt sql", "cd /tmp && ./bd list"] {
+            store_refused(c);
+        }
+    }
+
+    #[test]
+    fn commands_that_only_mention_a_store_binary_run() {
+        for c in ["work show", "spira-lc show sp-a", "grep bd file.rs", "git grep bdq", "echo bd", "cat bead/src/bin/bdq.rs"] {
+            allowed(c);
+        }
     }
 
     #[test]

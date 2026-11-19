@@ -1868,8 +1868,9 @@ pub fn dwarf_settings(home: &Path, run: &Path, prod: Option<&Path>, habits: bool
         }
     }
     let dwarf_bin = home.parent().unwrap_or(home).join("bin").join("dwarf");
-    if let Some((run, work)) = search.filter(|_| is_executable(&dwarf_bin)) {
-        let cmd = format!("{} search-fence --run {} --worktree {}", sh_quote(&dwarf_bin), sh_quote(run), sh_quote(work));
+    if is_executable(&dwarf_bin) {
+        let scope = search.map(|(run, work)| format!(" --run {} --worktree {}", sh_quote(run), sh_quote(work))).unwrap_or_default();
+        let cmd = format!("{} search-fence{scope}", sh_quote(&dwarf_bin));
         pre.push(format!("{{\"type\": \"command\", \"command\": {}, \"timeout\": 5}}", serde_json::to_string(&cmd).unwrap()));
     }
     if !pre.is_empty() {
@@ -1939,7 +1940,7 @@ mod tests {
 
     #[test]
 
-    fn the_search_fence_hook_is_added_only_with_a_worktree_and_the_dwarf_binary() {
+    fn the_fence_hook_needs_the_dwarf_binary_and_carries_the_search_scope_only_with_a_worktree() {
         let d = testkit::TempDir::new("dwarf-settings-search");
         let home = d.path().join("spira");
         std::fs::create_dir_all(&home).unwrap();
@@ -1952,7 +1953,9 @@ mod tests {
         let bin = d.path().join("bin").join("dwarf");
         std::fs::create_dir_all(bin.parent().unwrap()).unwrap();
         testkit::write_exe(&bin, "#!/bin/sh\n");
-        assert!(cmds(None).is_empty());
+        let store_only = cmds(None);
+        assert_eq!(store_only.len(), 1);
+        assert!(store_only[0].contains("search-fence") && !store_only[0].contains("--run"), "{store_only:?}");
         let on = cmds(Some((run, wt)));
         assert_eq!(on.len(), 1);
         assert!(on[0].contains("search-fence") && on[0].contains("--run 'r/run'") && on[0].contains("--worktree 'r/run/worktree/sp-a'"), "{on:?}");
