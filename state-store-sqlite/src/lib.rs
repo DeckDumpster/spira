@@ -578,6 +578,9 @@ struct Inner {
     events_due: AtomicU64,
     /// Where an unfinished scan for the first stamped event resumes; the next commit continues it.
     events_scan_from: Mutex<Option<Vec<u8>>>,
+    /// The first stamped event a finished scan found, with its key: the unstamped events before
+    /// it are as old as it is, so the next page need not scan again.
+    events_stamped: Mutex<Option<(Vec<u8>, u64)>>,
     /// Rows the drains have examined since [`SqliteBackend::take_drain_rows`].
     drain_rows: AtomicU64,
     /// The VM steps every range statement has taken since [`SqliteBackend::take_read_steps`].
@@ -878,7 +881,7 @@ fn event_page(tx: &rusqlite::Transaction<'_>, lo: &[u8], hi: Option<&[u8]>, limi
 }
 
 enum Scan {
-    Found(u64),
+    Found(Vec<u8>, u64),
     NoneLeft,
     /// The budget ran out; resume from this key.
     Spent(Vec<u8>),
@@ -902,8 +905,8 @@ fn first_stamped_from(
         let page = event_page(tx, &cursor, hi, take)?;
         rows.fetch_add(page.len() as u64, Ordering::Relaxed);
         left -= page.len();
-        if let Some(at) = page.iter().find_map(|(_, v)| recorded_at(v)) {
-            return Ok(Scan::Found(at));
+        if let Some((k, at)) = page.iter().find_map(|(k, v)| recorded_at(v).map(|at| (k, at))) {
+            return Ok(Scan::Found(k.clone(), at));
         }
         match page.last() {
             Some((k, _)) if page.len() == take => {
@@ -1307,6 +1310,7 @@ impl SqliteBackend {
             incremental,
             events_due: AtomicU64::new(events_due),
             events_scan_from: Mutex::new(events_scan_from),
+            events_stamped: Mutex::new(None),
             drain_rows: AtomicU64::new(0),
             read_steps: AtomicU64::new(0),
             shm: File::open(format!("{}-shm", path.display())).ok(),
@@ -1437,6 +1441,9 @@ impl SqliteBackend {
             let unstamped_age = match page.iter().find_map(|(_, v)| recorded_at(v)) {
                 Some(at) => Some(at),
                 None if page.len() < DRAIN_PER_COMMIT => None,
+                None if lock(&self.0.events_stamped).as_ref().is_some_and(|(k, _)| page[page.len() - 1].0 < *k) => {
+                    lock(&self.0.events_stamped).as_ref().map(|(_, at)| *at)
+                }
                 None => {
                     let resume = lock(&self.0.events_scan_from).clone().unwrap_or_else(|| {
                         let mut c = page[page.len() - 1].0.clone();
@@ -1444,7 +1451,10 @@ impl SqliteBackend {
                         c
                     });
                     match first_stamped_from(&tx, resume, hi.as_deref(), DRAIN_PER_COMMIT, &self.0.drain_rows)? {
-                        Scan::Found(at) => Some(at),
+                        Scan::Found(k, at) => {
+                            *lock(&self.0.events_stamped) = Some((k, at));
+                            Some(at)
+                        }
                         Scan::NoneLeft => None,
                         Scan::Spent(cursor) => {
                             set_scan_from(&tx, Some(&cursor))?;
