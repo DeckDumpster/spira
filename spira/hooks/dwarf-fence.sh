@@ -398,7 +398,7 @@ if hit(sys.stdin.read()): print("1")
         reason="dwarves may not kill by pattern (pkill, killall, pgrep|xargs kill match other sessions' processes, the Concierge's included; law-guard-binds-the-caller): kill by PID after reading /proc/<pid>/cmdline, or stop a systemd unit by name with systemctl --user stop <unit>; SPIRA_DWARF_OVERRIDE=1 for Ops incidents"
 fi
 
-# Reverses the 2026-10-05 no-bd-rule ruling (sp-j7l3q) on 2026-11-18 (sp-dxbocs): a restricted PATH does not stop an absolute path.
+# A restricted PATH does not stop an absolute path. `dwarf search-fence` (search_fence.rs STORE_REFUSAL) is the override-proof twin of this rule.
 if [ -z "$reason" ]; then
     _direct_bd="$(printf '%s' "$cmd" | python3 -c '
 import re, shlex, sys

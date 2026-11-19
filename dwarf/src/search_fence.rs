@@ -299,7 +299,7 @@ fn strip_wrappers(words: &[String]) -> &[String] {
             "xargs" => {
                 i += 1;
                 while i < words.len() && words[i].starts_with('-') {
-                    let takes_value = matches!(words[i].as_str(), "-n" | "-I" | "-L" | "-P" | "-d" | "-E" | "-s" | "-a");
+                    let takes_value = matches!(words[i].as_str(), "-n" | "-I" | "-L" | "-P" | "-d" | "-E" | "-s" | "-a" | "-S" | "--max-args" | "--max-procs" | "--delimiter" | "--arg-file" | "--max-lines" | "--eof" | "--max-chars");
                     i += if takes_value { 2 } else { 1 };
                 }
             }
@@ -509,7 +509,7 @@ mod tests {
 
     #[test]
     fn every_way_of_reaching_a_store_binary_is_refused() {
-        for c in ["bd show sp-a", "/opt/x/bin/bdq list", "env A=1 bd create x", "timeout 5 bd-embedded", "bash -c 'bd dep add a b'", "sh <<'EOF'\nbdq ready\nEOF", "echo sp-a | xargs bd show", "echo sp-a | xargs -n 1 bd show", "eval \"bd close sp-a\"", "dolt sql", "cd /tmp && ./bd list"] {
+        for c in ["bd show sp-a", "@R/bin/bdq list", "env A=1 bd create x", "timeout 5 bd-embedded", "bash -c 'bd dep add a b'", "sh <<'EOF'\nbdq ready\nEOF", "echo sp-a | xargs bd show", "echo sp-a | xargs -n 1 bd show", "echo sp-a | xargs --max-args 1 bd show", "echo sp-a | xargs -I{} bd show {}", "eval env A=1 bd show", "nice -n 5 bd list", "command bd list", "exec bd list", "nohup bd list", "eval \"bd close sp-a\"", "dolt sql", "cd /tmp && ./bd list"] {
             store_refused(c);
         }
     }
