@@ -1511,7 +1511,7 @@ fn cut_new_round(
     reason: &TriggerReason,
 ) -> Result<(), pace::CutError> {
     let end = cut_new_round_inner(env_, repo, pool, reason);
-    io::reap_branches(repo, &format!("spira/batcher-attr/{}-*", repo.name));
+    io::reap_attribution_branches("batcher", repo);
     end
 }
 

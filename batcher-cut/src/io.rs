@@ -1954,16 +1954,32 @@ pub fn local_branches(repo: &Repo, prefix: &str) -> Vec<String> {
         .collect()
 }
 
-pub fn reap_branches(repo: &Repo, prefix: &str) {
+/// Deletes every local branch under `prefix`; returns the names deleted and, for each that
+/// could not be, git's stderr.
+pub fn reap_branches(repo: &Repo, prefix: &str) -> (Vec<String>, Vec<(String, String)>) {
+    let (mut deleted, mut failed) = (Vec::new(), Vec::new());
     for b in local_branches(repo, prefix) {
-        let _ = spira_config::bounded::bounded("git")
+        let out = spira_config::bounded::bounded("git")
             .arg("-C")
             .arg(&repo.path)
             .args(["branch", "-D", &b])
             .env("SPIRA_REF_SANCTIONED", "1")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
+            .output();
+        match out {
+            Ok(o) if o.status.success() => deleted.push(b),
+            Ok(o) => failed.push((b, String::from_utf8_lossy(&o.stderr).trim().to_string())),
+            Err(e) => failed.push((b, e.to_string())),
+        }
+    }
+    (deleted, failed)
+}
+
+/// Removes the repository's attribution branches from earlier rounds, printing each delete
+/// that failed with git's reason.
+pub fn reap_attribution_branches(who: &str, repo: &Repo) {
+    let prefix = format!("spira/batcher-attr/{}-*", repo.name);
+    for (b, why) in reap_branches(repo, &prefix).1 {
+        println!("{who} {}: could not delete {b}: {why}", repo.name);
     }
 }
 
@@ -6282,5 +6298,38 @@ mod eject_args_tests {
         assert_eq!(r, format!("{lead} First FAIL, test-x.sh: boom at x.rs:9"));
         let plain = crate::io::eject_reason("sp-a", &["test-x.sh".into()], &fails, false, None);
         assert!(plain.contains("is stacked on a member that turned"), "{plain}");
+    }
+}
+
+#[cfg(test)]
+mod reap_attribution_tests {
+    use super::*;
+
+    #[test]
+    fn reaping_takes_only_this_repositorys_attribution_branches() {
+        let t = testkit::TempDir::new("batcher-cut-reap-attr");
+        let d = t.path();
+        testkit::git(d, &["init", "-q", "-b", "main"]);
+        testkit::git(d, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "base"]);
+        for b in ["spira/batcher-attr/r-1-b1", "spira/batcher-attr/r-1", "spira/batcher-attr/other-1"] {
+            testkit::git(d, &["branch", b]);
+        }
+        let repo = Repo { name: "r".into(), path: d.to_path_buf(), base: "main".into(), forge: d.to_path_buf(), land: Land::Local };
+        reap_attribution_branches("batcher", &repo);
+        assert_eq!(testkit::git(d, &["for-each-ref", "--format=%(refname:short)", "refs/heads/spira/"]), "spira/batcher-attr/other-1");
+    }
+
+    #[test]
+    fn a_branch_git_will_not_delete_comes_back_with_its_reason() {
+        let t = testkit::TempDir::new("batcher-cut-reap-fail");
+        let d = t.path();
+        testkit::git(d, &["init", "-q", "-b", "main"]);
+        testkit::git(d, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "base"]);
+        testkit::git(d, &["checkout", "-q", "-b", "spira/batcher-attr/r-1"]);
+        let repo = Repo { name: "r".into(), path: d.to_path_buf(), base: "main".into(), forge: d.to_path_buf(), land: Land::Local };
+        let (deleted, failed) = reap_branches(&repo, "spira/batcher-attr/r-*");
+        assert!(deleted.is_empty());
+        assert_eq!(failed.len(), 1, "{failed:?}");
+        assert!(!failed[0].1.is_empty());
     }
 }

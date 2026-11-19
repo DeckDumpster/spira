@@ -130,12 +130,7 @@ pub fn tail_bytes(s: &str, n: usize) -> String {
     full[start..].to_string()
 }
 
-/// `printf '%s' "$br" | tr -c 'A-Za-z0-9._-' '-'` — the noverdict counter key.
-pub fn branch_key(br: &str) -> String {
-    br.chars()
-        .map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') { c } else { '-' })
-        .collect()
-}
+pub use spira_config::branch_key::branch_key;
 
 /// The pid of the child this process is waiting on, so a SIGTERM can be forwarded to it.
 pub static CURRENT_CHILD: AtomicI32 = AtomicI32::new(0);

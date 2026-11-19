@@ -453,6 +453,10 @@ fn destroy_branch_with_state(run: &Path, reaplog_path: &Path, id: &str, br: &str
         return Err(DestroyBranchErr::Failed(err));
     }
     reaplog(reaplog_path, "REMOVED", id, &format!("branch {br}"));
+    let cleared = spira_config::branch_key::clear_noverdict(run, br);
+    if !cleared.is_empty() {
+        reaplog(reaplog_path, "COUNTERS", id, &format!("branch {br} no-verdict counters removed: {}", cleared.join(" ")));
+    }
     Ok(())
 }
 
@@ -734,6 +738,23 @@ mod tests {
             assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr));
         }
         repo
+    }
+
+    #[test]
+    fn destroying_a_branch_removes_its_noverdict_counters_and_not_a_longer_names() {
+        let run = tempdir();
+        let repo = fixture_repo(&run);
+        let nv = run.join("noverdict");
+        std::fs::create_dir_all(&nv).unwrap();
+        for n in ["spira-sp-gone-conflict", "spira-sp-gone-conflict.asked", "spira-sp-gone2-conflict"] {
+            std::fs::write(nv.join(n), "3").unwrap();
+        }
+        let log = run.join("reap.log");
+        assert!(destroy_branch(&run, &log, "sp-gone", "spira/sp-gone", &repo, "test", "hel", None, &open()).is_ok());
+        assert!(!nv.join("spira-sp-gone-conflict").exists() && !nv.join("spira-sp-gone-conflict.asked").exists());
+        assert!(nv.join("spira-sp-gone2-conflict").exists());
+        let logged = std::fs::read_to_string(&log).unwrap();
+        assert!(logged.contains("spira-sp-gone-conflict.asked"), "{logged}");
     }
 
     #[test]

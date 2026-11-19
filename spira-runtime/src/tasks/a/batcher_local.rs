@@ -2970,6 +2970,7 @@ pub mod edge {
         let (env, leg) = (env()?, leg(spec)?);
         let repo = repo_of(&env, &leg)?;
         let Some(_lock) = io::try_lock(&env, &repo.name)? else { return Err(format!("{}: another operation holds the lock", repo.name)) };
+        io::reap_attribution_branches(super::NAME, &repo);
         match io::round_open_or_refused(&env, &repo, std::path::Path::new(&leg.wt), &core_members(&leg.members))? {
             io::OpenOutcome::Opened(batch) => json(&Opened { batch, ..Opened::default() }),
             io::OpenOutcome::Refused(refused, line) => {
