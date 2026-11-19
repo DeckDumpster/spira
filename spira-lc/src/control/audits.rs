@@ -40,6 +40,7 @@ pub struct Move<'a> {
     pub to_state: &'a str,
     pub applied: bool,
     pub refusal: Option<&'a str>,
+    pub actor: &'a str,
     pub at: i64,
 }
 
@@ -52,6 +53,7 @@ fn move_of(a: &Value) -> Option<Move<'_>> {
         to_state: a["to_state"].as_str()?,
         applied: a["applied"].as_bool()?,
         refusal: a["refusal"].as_str(),
+        actor: a["actor"].as_str()?,
         at: a["at"].as_i64()?,
     })
 }

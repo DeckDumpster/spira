@@ -329,6 +329,12 @@ pub(crate) fn startup_line(phase: &str, took: Duration, wall_ms: u64) -> String 
     format!("spira-lc serve: {} start-up {phase} {} ms", spira_lc::sections::rfc3339(wall_ms), took.as_millis())
 }
 
+fn log_rss(at: &str) {
+    if let Some(line) = crate::slow::rss_anon_line(at) {
+        eprintln!("{line}");
+    }
+}
+
 fn ready_line(phases: &[(&str, Duration)], wall_ms: u64) -> String {
     let total: Duration = phases.iter().map(|(_, took)| *took).sum();
     format!("spira-lc serve: {} ready after {} ms", spira_lc::sections::rfc3339(wall_ms), total.as_millis())
@@ -357,6 +363,7 @@ impl Startup {
     fn mark(&mut self, phase: &'static str) {
         let took = self.mark.elapsed();
         eprintln!("{}", startup_line(phase, took, wall_ms()));
+        log_rss(phase);
         self.phases.push((phase, took));
         self.mark = Instant::now();
     }
@@ -681,6 +688,9 @@ fn serve_one(stream: UnixStream, spans: Option<&spira_otel::Sink>, accepted: Ins
         Err((code, out)) => Answer::out(code, out),
     };
     let method = crate::slow::method_of(&argv_seen);
+    if crate::slow::first_of_verb(&verb) {
+        log_rss(&format!("after-first-{verb}"));
+    }
     crate::slow::request_done(&verb, &method, &caller, task.as_deref(), received.elapsed());
     crate::slow::sample(&method, received.elapsed());
     reply_then_settle(&stream, &ans, &mut |id, reason| crate::reconcile_content::settle_owed(&mut crate::bd::LiveBd, id, reason));

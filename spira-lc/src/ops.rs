@@ -324,30 +324,54 @@ fn transitions(logged: &[Logged], machine: &str, now: i64) -> Vec<Value> {
 
 /// Refused bead events inside the window, one row per (actor, event, from_state, refusal) with
 /// the count, the span and the newest five `bead@epoch` examples.
-fn refusals(logged: &[Logged], now: i64, window_secs: u64) -> Vec<Value> {
-    type Class = (String, String, String, String);
-    let mut groups: BTreeMap<Class, Vec<(i64, &str)>> = BTreeMap::new();
-    for l in logged.iter().filter(|l| l.audit.machine == "bead" && !l.audit.applied && l.audit.at >= now - window_secs as i64) {
-        let a = &l.audit;
-        groups.entry((a.actor.clone(), a.event.clone(), a.from_state.clone(), a.refusal.clone().unwrap_or_default())).or_default().push((a.at, a.lc_key.as_str()));
+struct Refusals {
+    floor: i64,
+    groups: BTreeMap<(String, String, String, String), Group>,
+}
+
+#[derive(Default)]
+struct Group {
+    n: usize,
+    first: i64,
+    last: i64,
+    newest: Vec<(i64, String)>,
+}
+
+impl Refusals {
+    fn new(floor: i64) -> Self {
+        Refusals { floor, groups: BTreeMap::new() }
     }
-    groups
-        .into_iter()
-        .map(|((actor, event, from, refusal), mut hits)| {
-            hits.sort_by(|a, b| b.cmp(a));
-            let examples: Vec<String> = hits.iter().take(5).map(|(at, key)| format!("{key}@{at}")).collect();
-            object(vec![
-                ("actor", text(actor)),
-                ("event", text(event)),
-                ("from_state", text(from)),
-                ("refusal", text(refusal)),
-                ("n", text(hits.len())),
-                ("first_at", text(hits.iter().map(|h| h.0).min().unwrap_or(0))),
-                ("last_at", text(hits.iter().map(|h| h.0).max().unwrap_or(0))),
-                ("examples", text(examples.join(","))),
-            ])
-        })
-        .collect()
+
+    fn take(&mut self, m: &Move) {
+        if m.machine != "bead" || m.applied || m.at < self.floor {
+            return;
+        }
+        let g = self.groups.entry((m.actor.into(), m.event.into(), m.from_state.into(), m.refusal.unwrap_or_default().into())).or_default();
+        (g.first, g.last) = if g.n == 0 { (m.at, m.at) } else { (g.first.min(m.at), g.last.max(m.at)) };
+        g.n += 1;
+        g.newest.push((m.at, m.lc_key.into()));
+        g.newest.sort_by(|a, b| b.cmp(a));
+        g.newest.truncate(5);
+    }
+
+    fn rows(self) -> Vec<Value> {
+        self.groups
+            .into_iter()
+            .map(|((actor, event, from, refusal), g)| {
+                let examples: Vec<String> = g.newest.iter().map(|(at, key)| format!("{key}@{at}")).collect();
+                object(vec![
+                    ("actor", text(actor)),
+                    ("event", text(event)),
+                    ("from_state", text(from)),
+                    ("refusal", text(refusal)),
+                    ("n", text(g.n)),
+                    ("first_at", text(g.first)),
+                    ("last_at", text(g.last)),
+                    ("examples", text(examples.join(","))),
+                ])
+            })
+            .collect()
+    }
 }
 
 fn cannot(e: impl std::fmt::Display) -> (i32, String) {
@@ -435,8 +459,9 @@ pub fn cmd_ops_refusals(args: &[String]) -> (i32, String) {
     };
     with_store(|store| {
         let now = crate::db::now_epoch();
-        match logged(store, now, window as i64) {
-            Ok(a) => (0, json!({ "now": now, "classes": refusals(&a, now, window) }).to_string()),
+        let mut refused = Refusals::new(now - window as i64);
+        match folded(store, now, window as i64, |m| refused.take(&m)) {
+            Ok(()) => (0, json!({ "now": now, "classes": refused.rows() }).to_string()),
             Err(e) => cannot(e),
         }
     })
@@ -538,7 +563,7 @@ mod tests {
 
     fn move_of(l: &Logged) -> Move<'_> {
         let a = &l.audit;
-        Move { machine: &a.machine, lc_key: &a.lc_key, event: &a.event, from_state: &a.from_state, to_state: &a.to_state, applied: a.applied, refusal: a.refusal.as_deref(), at: a.at }
+        Move { machine: &a.machine, lc_key: &a.lc_key, event: &a.event, from_state: &a.from_state, to_state: &a.to_state, applied: a.applied, refusal: a.refusal.as_deref(), actor: &a.actor, at: a.at }
     }
 
     #[test]
@@ -608,7 +633,9 @@ mod tests {
     fn refusals_group_by_who_asked_and_name_the_newest_five_examples() {
         let now = 1_000_000;
         let log: Vec<Logged> = (0..7).map(|n| audit(&format!("sp-{n}"), "Submit", "READY", "READY", false, "dwarf", now - 100 + n)).chain([audit("sp-x", "Submit", "READY", "SUBMITTED", true, "dwarf", now - 5), audit("sp-y", "Submit", "READY", "READY", false, "other", now - 2 * DAY_S)]).collect();
-        let rows = refusals(&log, now, 3_600);
+        let mut refused = Refusals::new(now - 3_600);
+        log.iter().rev().for_each(|l| refused.take(&move_of(l)));
+        let rows = refused.rows();
         assert_eq!(rows.len(), 1, "an applied event and one outside the window are no refusal: {rows:?}");
         assert_eq!(rows[0]["n"], "7");
         assert_eq!(rows[0]["first_at"], (now - 100).to_string());
