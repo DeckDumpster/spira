@@ -10,7 +10,6 @@
 //! `main.rs` already draws for `bead file`/`bead lint`.
 
 use std::collections::BTreeMap;
-use std::path::Path;
 
 use spira_config::repos::Registry;
 
@@ -375,33 +374,6 @@ pub fn czar_fence(class: &str, stage_of: &dyn Fn(&str) -> Option<String>) -> Res
     crate::guard::czar_stage(class, stage_of).map_err(|r| r.text.trim_end().to_string())
 }
 
-/// `(SPIRA_HOME_REPO, SPIRA_REPO_MAP)` resolved for a home and repo.
-pub type Resolver<'a> = dyn Fn(&Path, &Path) -> Result<(String, String), String> + 'a;
-
-/// The five vars the repo-label fence reads, as `lib.sh`'s `bdq()` shim handed them across the
-/// exec boundary after `conf.sh` derived them: `SPIRA_HOME` (the caller's, else `home`), the
-/// filesystem's `SPIRA_REPO_DERIVED`, `SPIRA_REPO` (the caller's, else derived), and the
-/// resolved `SPIRA_HOME_REPO`/`SPIRA_REPO_MAP` (`resolved(home, repo)`; empty when undeclared,
-/// as the shim's `${X:-}` passed them).
-pub fn fence_env(
-    home: &Path,
-    env: &BTreeMap<String, String>,
-    resolved: &Resolver,
-) -> Result<Vec<(String, String)>, String> {
-    let home = env.get("SPIRA_HOME").filter(|h| !h.is_empty()).map(std::path::PathBuf::from).unwrap_or_else(|| home.to_path_buf());
-    let derived = spira_config::resolve::derive_repo_filesystem(&home, env);
-    let repo = spira_config::resolve::derive_home_repo(&home, env);
-    let (home_repo, repo_map) = resolved(&home, &repo)?;
-    let s = |p: &Path| p.to_string_lossy().into_owned();
-    Ok(vec![
-        ("SPIRA_HOME".into(), s(&home)),
-        ("SPIRA_REPO".into(), s(&repo)),
-        ("SPIRA_REPO_DERIVED".into(), s(&derived)),
-        ("SPIRA_HOME_REPO".into(), home_repo),
-        ("SPIRA_REPO_MAP".into(), repo_map),
-    ])
-}
-
 /// `date -u +%Y-%m-%dT%H:%M:%S.%NZ` of `t`.
 pub fn utc_stamp_nanos(t: std::time::SystemTime) -> String {
     let d = t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
@@ -517,30 +489,6 @@ mod tests {
         assert!(czar_fence("deadlock", &stage).unwrap_err().contains("SPIRA_CZAR_STAGE_DEADLOCK=act"));
         assert!(czar_fence("deadlock", &|_| Some("wat".into())).unwrap_err().contains("unknown stage wat"));
         assert!(czar_fence("", &stage).is_err());
-    }
-
-    #[test]
-    fn fence_env_derives_the_five_vars_the_shim_carried() {
-        let tmp = testkit::TempDir::new("bead-fence-env");
-        let dir = tmp.path();
-        let home = dir.join("checkout").join("spira");
-        std::fs::create_dir_all(&home).unwrap();
-        std::fs::create_dir_all(dir.join("checkout").join(".git")).unwrap();
-        let top = dir.join("checkout").canonicalize().unwrap();
-        let seen = std::sync::Mutex::new(None);
-        let resolved = |h: &Path, r: &Path| {
-            *seen.lock().unwrap() = Some((h.to_path_buf(), r.to_path_buf()));
-            Ok(("brain".to_string(), "m/repos".to_string()))
-        };
-        let got: BTreeMap<String, String> = fence_env(&home, &env(&[]), &resolved).unwrap().into_iter().collect();
-        assert_eq!(got["SPIRA_HOME"], home.to_string_lossy());
-        assert_eq!(got["SPIRA_REPO_DERIVED"], top.to_string_lossy());
-        assert_eq!(got["SPIRA_REPO"], top.to_string_lossy());
-        assert_eq!((got["SPIRA_HOME_REPO"].as_str(), got["SPIRA_REPO_MAP"].as_str()), ("brain", "m/repos"));
-        assert_eq!(seen.lock().unwrap().clone(), Some((home.clone(), top.clone())));
-        let got: BTreeMap<String, String> = fence_env(&home, &env(&[("SPIRA_REPO", "elsewhere"), ("SPIRA_HOME", "h")]), &resolved).unwrap().into_iter().collect();
-        assert_eq!((got["SPIRA_REPO"].as_str(), got["SPIRA_HOME"].as_str()), ("elsewhere", "h"));
-        assert!(fence_env(&home, &env(&[]), &|_, _| Err("no toml".into())).is_err());
     }
 
     #[test]

@@ -63,3 +63,29 @@ fn a_planted_site_is_caught_and_a_marked_one_is_not() {
     let git = "fn f() { Command::new(\"git\").arg(\"status\"); }\n";
     assert!(unmarked(git).is_empty());
 }
+
+fn spawns_bdq(text: &str) -> Vec<String> {
+    text.lines()
+        .enumerate()
+        .filter(|(_, l)| {
+            let code = l.split("//").next().unwrap_or("");
+            code.contains("tool(\"bdq\")") || (code.contains("Command::new(") && code.contains("\"bdq\""))
+        })
+        .map(|(n, l)| format!("{}: {}", n + 1, l.trim()))
+        .collect()
+}
+
+#[test]
+fn no_bdq_spawn_remains_in_bead_main() {
+    let text = std::fs::read_to_string(testkit::manifest_dir().join("src/main.rs")).expect("read main.rs");
+    let found = spawns_bdq(&text);
+    assert!(found.is_empty(), "bead's main.rs spawns bdq; its writes go to `spira-lc content`:\n{}", found.join("\n"));
+}
+
+#[test]
+fn a_planted_bdq_spawn_is_caught_marked_or_not() {
+    let planted = "// FORK-EDGE: store\nlet mut cmd = Command::new(spira_config::release_env::tool(\"bdq\")?);\n";
+    assert_eq!(spawns_bdq(planted).len(), 1);
+    assert_eq!(spawns_bdq("Command::new(\"bdq\")").len(), 1);
+    assert!(spawns_bdq("let c = Command::new(\"git\"); // bdq\n").is_empty());
+}

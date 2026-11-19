@@ -3,7 +3,6 @@
 #
 # SHRINK-ONLY. A count goes down as callers move to spira-lc; nothing is raised for a NEW
 # executor. A count above the file's is refused; a count below it passes.
-1 bead/src/main.rs
 3 census/src/real.rs
 1 cert-sweep/src/main.rs
 1 concierge.sh
