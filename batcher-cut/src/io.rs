@@ -2774,7 +2774,8 @@ pub fn hold_blocking(env: &Env, repo: &str, key: &str) -> Option<String> {
 /// Folds the round tree's `config-delta.d` fragments into `config-delta.toml` as one commit,
 /// so the folded base lands with the round and the directory does not grow. Any failure puts
 /// the delta files back as the round merged them: a half-folded tree must not be tested.
-pub fn fold_config_delta(env: &Env, wt: &Path, members: &[Member]) -> Result<usize, String> {
+/// Returns the sha of the commit it made, or none when there was nothing to fold.
+pub fn fold_config_delta(env: &Env, wt: &Path, members: &[Member]) -> Result<Option<String>, String> {
     let git = |args: &[&str]| {
         run(
             spira_config::bounded::bounded("git")
@@ -2790,10 +2791,10 @@ pub fn fold_config_delta(env: &Env, wt: &Path, members: &[Member]) -> Result<usi
             "git",
         )
     };
-    let fold = || -> Result<usize, String> {
+    let fold = || -> Result<Option<String>, String> {
         let folded = spira_config::delta::fold_fragments(&wt.join("spira"))?;
         if folded.is_empty() {
-            return Ok(0);
+            return Ok(None);
         }
         git(&["add", "-A", "--", CONFIG_DELTA, CONFIG_DELTA_DIR])?;
         let ids: Vec<&str> = members.iter().map(|m| m.id.as_str()).collect();
@@ -2803,7 +2804,7 @@ pub fn fold_config_delta(env: &Env, wt: &Path, members: &[Member]) -> Result<usi
             "-m",
             &format!("round: fold {} config delta fragment(s) into {CONFIG_DELTA}\n\nMembers: {}\n", folded.len(), ids.join(" ")),
         ])?;
-        Ok(folded.len())
+        Ok(Some(git(&["rev-parse", "HEAD"])?.trim().to_string()))
     };
     fold().inspect_err(|_| {
         let _ = git(&["reset", "-q", "--hard", "HEAD"]);
@@ -2812,13 +2813,14 @@ pub fn fold_config_delta(env: &Env, wt: &Path, members: &[Member]) -> Result<usi
 
 /// Repairs the integration breaks that are mechanical, on the round tree, as one commit
 /// naming every member: a stale test-plan matrix is regenerated and a newly added spira
-/// script is made executable. Returns what it fixed; empty means the tree was left untouched.
+/// script is made executable. Returns what it fixed (empty means the tree was left untouched)
+/// and the sha of the commit it made.
 pub fn integration_fix(
     env: &Env,
     wt: &Path,
     base_sha: &str,
     members: &[Member],
-) -> Result<Vec<&'static str>, String> {
+) -> Result<(Vec<&'static str>, Option<String>), String> {
     let git = |args: &[&str]| {
         run(
             spira_config::bounded::bounded("git")
@@ -2863,7 +2865,7 @@ pub fn integration_fix(
     }
 
     if fixes.is_empty() {
-        return Ok(fixes);
+        return Ok((fixes, None));
     }
     let ids: Vec<String> = members.iter().map(|m| m.id.clone()).collect();
     let msg = batcher::core::integration_fix_message(&fixes, &ids);
@@ -2885,7 +2887,8 @@ pub fn integration_fix(
     if !child.wait().map_err(|e| e.to_string())?.success() {
         return Err("git commit of the integration fix failed".into());
     }
-    Ok(fixes)
+    let sha = git(&["rev-parse", "HEAD"])?.trim().to_string();
+    Ok((fixes, Some(sha)))
 }
 
 /// The verdict of a round that ejected every member it had: nothing is red any longer, so the

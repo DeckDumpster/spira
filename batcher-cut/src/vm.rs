@@ -318,6 +318,10 @@ impl DenySnapshot {
     }
 }
 
+/// The shas of the commits the round made itself (the config-delta fold, the integration
+/// fix), shared between the cut that makes them and the runner that reads a red's culprit.
+pub type RoundCommits = std::rc::Rc<std::cell::RefCell<Vec<String>>>;
+
 pub struct VmRunner<'a> {
     env: &'a Env,
     repo: &'a Repo,
@@ -335,6 +339,7 @@ pub struct VmRunner<'a> {
     stderr_path: PathBuf,
     members: Vec<Member>,
     changed: BTreeMap<Id, Vec<String>>,
+    own_commits: RoundCommits,
     main: Main,
     jobs: BTreeMap<u64, (String, String)>,
     verify_n: u32,
@@ -419,11 +424,24 @@ pub fn named_path_owner(
     }
 }
 
+/// Whether a `member=commit <sha12> …` line blames one of the round's own commits, compared
+/// on the line's second field, never as a substring of it.
+fn round_commit_culprit(line: &str, own_commits: &[String]) -> bool {
+    let mut words = line.strip_prefix("member=").unwrap_or("").split_whitespace();
+    match (words.next(), words.next()) {
+        (Some("commit"), Some(sha)) => {
+            sha.len() >= 7 && own_commits.iter().any(|o| o.starts_with(sha))
+        }
+        _ => false,
+    }
+}
+
 /// The low-pass filter that ended the pass red in `results`, with each member its output blames.
 fn filter_red_in(
     results: &Path,
     members: &[Member],
     changed: &BTreeMap<Id, Vec<String>>,
+    own_commits: &[String],
 ) -> Option<FilterRed> {
     let mut reds: Vec<String> = vec![];
     for e in fs::read_dir(results).ok()?.flatten() {
@@ -446,6 +464,7 @@ fn filter_red_in(
     reds.sort();
     let name = reds.first()?.clone();
     let mut named: Vec<(Id, String)> = vec![];
+    let mut harness: Vec<String> = vec![];
     for stage in &phases {
         for (id, line) in phase_owner(results, stage, members, changed) {
             if !named.iter().any(|(n, _)| *n == id) {
@@ -456,6 +475,10 @@ fn filter_red_in(
     for red in &reds {
         let text = fs::read_to_string(results.join(format!("{red}.out"))).unwrap_or_default();
         for line in text.lines() {
+            if round_commit_culprit(line, own_commits) {
+                harness.push(line.to_string());
+                continue;
+            }
             let owner = match blamed_member(line, members) {
                 Some(id) => Some((id, line.to_string())),
                 None if red == LINT => named_path_owner(line, members, changed),
@@ -473,7 +496,7 @@ fn filter_red_in(
         .filter(|(_, stage)| phases.contains(stage))
         .flat_map(|(_, stage)| batcher::unitattr::failing_lines(&fs::read_to_string(results.join(format!("{stage}.out"))).unwrap_or_default()))
         .collect();
-    Some(FilterRed { name, named, failed })
+    Some(FilterRed { name, named, failed, harness })
 }
 
 const UNIT_TESTS: &str = "unit-tests";
@@ -701,6 +724,11 @@ impl<'a> VmRunner<'a> {
         self
     }
 
+    pub fn with_round_commits(mut self, own: RoundCommits) -> Self {
+        self.own_commits = own;
+        self
+    }
+
     /// Names the round-vm scope after `batch`, so abandoning that batch stops it.
     pub fn in_batch(mut self, batch: Option<&str>) -> Self {
         self.batch = batch.map(str::to_string);
@@ -744,6 +772,7 @@ impl<'a> VmRunner<'a> {
             probe_n: 0,
             members: vec![],
             changed,
+            own_commits: RoundCommits::default(),
             main: Main::None,
             jobs: BTreeMap::new(),
             verify_n: 0,
@@ -1067,11 +1096,11 @@ impl RoundRunner for VmRunner<'_> {
     }
 
     fn filter_red(&mut self) -> Option<FilterRed> {
-        filter_red_in(&self.results, &self.members, &self.changed)
+        filter_red_in(&self.results, &self.members, &self.changed, &self.own_commits.borrow())
     }
 
     fn prior_red(&mut self) -> Option<FilterRed> {
-        filter_red_in(self.prior.as_deref()?, &self.members, &self.changed)
+        filter_red_in(self.prior.as_deref()?, &self.members, &self.changed, &self.own_commits.borrow())
     }
 
     fn confirmed(&self) -> bool {
@@ -1441,19 +1470,19 @@ mod tests {
             })
             .collect();
         assert_eq!(
-            filter_red_in(d.path(), &ms, &BTreeMap::new()),
+            filter_red_in(d.path(), &ms, &BTreeMap::new(), &[]),
             None,
             "no filter result, no filter red"
         );
         fs::write(d.path().join("fence-x.result"), "ok 1 1\n").unwrap();
         assert_eq!(
-            filter_red_in(d.path(), &ms, &BTreeMap::new()),
+            filter_red_in(d.path(), &ms, &BTreeMap::new(), &[]),
             None,
             "a green fence is not a red"
         );
         fs::write(d.path().join("spira-lint.result"), "red 1 2 - - - 1\n").unwrap();
         fs::write(d.path().join("spira-lint.out"), "member=commit abc spira: land sp-b — t r: f.rs:1: x\nmember=sp-b r: g.rs:2: y\nmember=the base itself (z) r: h.rs:3: z\n").unwrap();
-        let red = filter_red_in(d.path(), &ms, &BTreeMap::new()).unwrap();
+        let red = filter_red_in(d.path(), &ms, &BTreeMap::new(), &[]).unwrap();
         assert_eq!(red.name, "spira-lint");
         assert_eq!(red.named.len(), 1);
         assert_eq!(red.named[0].0, "sp-b");
@@ -1463,14 +1492,14 @@ mod tests {
             "member=the base itself (z) r: h.rs:3: z\n",
         )
         .unwrap();
-        assert!(filter_red_in(d.path(), &ms, &BTreeMap::new())
+        assert!(filter_red_in(d.path(), &ms, &BTreeMap::new(), &[])
             .unwrap()
             .named
             .is_empty());
         fs::write(d.path().join("fence-x.result"), "red 1 1 - - - 1\n").unwrap();
         fs::remove_file(d.path().join("spira-lint.result")).unwrap();
         assert_eq!(
-            filter_red_in(d.path(), &ms, &BTreeMap::new()).unwrap().name,
+            filter_red_in(d.path(), &ms, &BTreeMap::new(), &[]).unwrap().name,
             "fence-x",
             "a red fence is a filter red, naming nobody"
         );
@@ -1524,6 +1553,27 @@ mod tests {
     }
 
     #[test]
+    fn filter_red_sets_aside_a_culprit_the_round_made_by_its_recorded_sha_alone() {
+        let d = testkit::TempDir::new("vm-filter-red-harness");
+        let ms = [member("sp-a"), member("sp-b")];
+        let line = "member=commit 488e83c393bf round: fold 1 config delta fragment(s) into spira/config-delta.toml config-delta-folded: spira/config-delta.toml is edited by this branch";
+        fs::write(d.path().join("spira-lint.result"), "red 1 2 - - - 1\n").unwrap();
+        fs::write(d.path().join("spira-lint.out"), format!("{line}\n")).unwrap();
+        let own = ["488e83c393bf1122334455667788990011223344".to_string()];
+        let red = filter_red_in(d.path(), &ms, &BTreeMap::new(), &own).unwrap();
+        assert!(red.named.is_empty());
+        assert_eq!(red.harness, vec![line.to_string()]);
+        let elsewhere = ["deadbeefcafe0000000000000000000000000000".to_string()];
+        let red = filter_red_in(d.path(), &ms, &BTreeMap::new(), &elsewhere).unwrap();
+        assert!(red.named.is_empty() && red.harness.is_empty(), "{red:?}");
+        let lookalike = "member=commit 111111111111 spira: land sp-a 488e83c393bf";
+        fs::write(d.path().join("spira-lint.out"), format!("{lookalike}\n")).unwrap();
+        let red = filter_red_in(d.path(), &ms, &BTreeMap::new(), &own).unwrap();
+        assert!(red.harness.is_empty(), "a sha in the subject is not the culprit: {red:?}");
+        assert_eq!(red.named.len(), 1);
+    }
+
+    #[test]
     fn filter_red_ejects_the_member_a_base_blamed_lint_finding_names() {
         let d = testkit::TempDir::new("vm-filter-red-path");
         let ms = [member("sp-owner1"), member("sp-other2")];
@@ -1533,19 +1583,19 @@ mod tests {
         ]);
         fs::write(d.path().join("spira-lint.result"), "red 1 2 - - - 1\n").unwrap();
         fs::write(d.path().join("spira-lint.out"), format!("{BASE_LINE}\n")).unwrap();
-        let red = filter_red_in(d.path(), &ms, &changed).unwrap();
+        let red = filter_red_in(d.path(), &ms, &changed, &[]).unwrap();
         assert_eq!(red.named, [("sp-owner1".to_string(), BASE_LINE.to_string())]);
-        assert!(filter_red_in(d.path(), &ms, &BTreeMap::new()).unwrap().named.is_empty());
+        assert!(filter_red_in(d.path(), &ms, &BTreeMap::new(), &[]).unwrap().named.is_empty());
         let both = changed_of(&[
             ("sp-owner1", &["spira/lib-test-install.sh"]),
             ("sp-other2", &["spira/lib-test-install.sh"]),
         ]);
-        assert!(filter_red_in(d.path(), &ms, &both).unwrap().named.is_empty());
+        assert!(filter_red_in(d.path(), &ms, &both, &[]).unwrap().named.is_empty());
         fs::remove_file(d.path().join("spira-lint.result")).unwrap();
         fs::remove_file(d.path().join("spira-lint.out")).unwrap();
         fs::write(d.path().join("fence-x.result"), "red 1 1 - - - 1\n").unwrap();
         fs::write(d.path().join("fence-x.out"), format!("{BASE_LINE}\n")).unwrap();
-        assert!(filter_red_in(d.path(), &ms, &changed).unwrap().named.is_empty());
+        assert!(filter_red_in(d.path(), &ms, &changed, &[]).unwrap().named.is_empty());
     }
 
     #[test]
@@ -1561,7 +1611,7 @@ mod tests {
             "INTEGRATION-TESTS-RED: x\nFAIL dir:spira-runtime leg_lost::a\nFAIL dir:spira-runtime leg_lost::b\n",
         )
         .unwrap();
-        let red = filter_red_in(d.path(), &[], &BTreeMap::new()).expect("a red integration phase ends the pass");
+        let red = filter_red_in(d.path(), &[], &BTreeMap::new(), &[]).expect("a red integration phase ends the pass");
         assert_eq!(red.name, "integration-tests");
         assert_eq!(red.failed, ["FAIL dir:spira-runtime leg_lost::a", "FAIL dir:spira-runtime leg_lost::b"]);
     }
@@ -1603,7 +1653,7 @@ mod tests {
             vec!["queue/src/ops/round.rs".to_string()],
         );
         assert_eq!(
-            filter_red_in(d.path(), &ms, &changed),
+            filter_red_in(d.path(), &ms, &changed, &[]),
             None,
             "no phase record, no filter red"
         );
@@ -1617,7 +1667,7 @@ mod tests {
             "---- ops::t stdout ----\nthread 'ops::t' panicked at queue/src/ops/round.rs:3124:9:\n",
         )
         .unwrap();
-        let red = filter_red_in(d.path(), &ms, &changed).expect("a red unit phase ends the pass");
+        let red = filter_red_in(d.path(), &ms, &changed, &[]).expect("a red unit phase ends the pass");
         assert_eq!(red.name, "unit-tests");
         assert!(red.failed.is_empty(), "no failing-test line in this output");
         assert_eq!(
@@ -1633,7 +1683,7 @@ mod tests {
         )
         .unwrap();
         assert!(
-            filter_red_in(d.path(), &ms, &changed)
+            filter_red_in(d.path(), &ms, &changed, &[])
                 .unwrap()
                 .named
                 .is_empty(),
@@ -1652,7 +1702,7 @@ mod tests {
             ],
         );
         assert!(
-            filter_red_in(d.path(), &ms, &changed)
+            filter_red_in(d.path(), &ms, &changed, &[])
                 .unwrap()
                 .named
                 .is_empty(),
@@ -1660,7 +1710,7 @@ mod tests {
         );
         fs::write(d.path().join("unit.json"), "{\"verdict\":\"green\"}").unwrap();
         assert_eq!(
-            filter_red_in(d.path(), &ms, &changed),
+            filter_red_in(d.path(), &ms, &changed, &[]),
             None,
             "only a red record is a red"
         );
@@ -1674,7 +1724,7 @@ mod tests {
             "panicked at docs/x.md:1:1\n",
         )
         .unwrap();
-        let red = filter_red_in(d.path(), &ms, &changed).unwrap();
+        let red = filter_red_in(d.path(), &ms, &changed, &[]).unwrap();
         assert_eq!(
             (
                 red.name.as_str(),
@@ -1713,7 +1763,7 @@ mod tests {
         )
         .unwrap();
         fs::write(d.path().join("integration-tests.out"), "thread 'main' panicked at round-vm/tests/unit_deadline_real.rs:39:5:\nerror: the package 'tiny' does not contain this feature: integration\n").unwrap();
-        let red = filter_red_in(d.path(), &ms, &changed).unwrap();
+        let red = filter_red_in(d.path(), &ms, &changed, &[]).unwrap();
         assert_eq!(
             (
                 red.name.as_str(),
@@ -2201,7 +2251,7 @@ mod abandon_tests {
         let d = testkit::TempDir::new("vm-unit-failed");
         fs::write(d.path().join("unit.json"), "{\"verdict\":\"red\"}").unwrap();
         fs::write(d.path().join("unit-tests.out"), "FAIL loom factory::tests::a\nerror: x\nFAIL loom factory::tests::a\n").unwrap();
-        let red = filter_red_in(d.path(), &[], &BTreeMap::new()).unwrap();
+        let red = filter_red_in(d.path(), &[], &BTreeMap::new(), &[]).unwrap();
         assert_eq!(red.failed, ["FAIL loom factory::tests::a"]);
         assert_eq!(subset_scope("unit", &["loom".into(), "bad name;".into()]), "unit");
         assert_eq!(subset_scope("unit", &[]), "unit");

@@ -160,6 +160,8 @@ pub struct FilterRed {
     pub named: Vec<(Id, String)>,
     /// The failing tests the filter's output lists, as `<STATUS> <binary> <test>` lines.
     pub failed: Vec<String>,
+    /// The filter's output lines whose culprit is a commit the round made itself.
+    pub harness: Vec<String>,
 }
 
 /// Everything the round does besides running suites.
@@ -840,6 +842,13 @@ fn eject_filter_owners<R: RoundRunner, O: RoundOps>(
         .iter()
         .filter(|(id, _)| members.iter().any(|m| &m.id == id))
         .collect();
+    if named.is_empty() && !f.harness.is_empty() {
+        return Ok(FilterEject::Harness(format!(
+            "{} on round commit {}",
+            f.name,
+            f.harness.join("; ")
+        )));
+    }
     if named.is_empty() {
         let ids: Vec<Id> = members.iter().map(|m| m.id.clone()).collect();
         let graph = ops.package_graph();
@@ -1185,6 +1194,8 @@ fn base_why<O: RoundOps>(ops: &O, paths: &[String], red: &str) -> String {
 enum FilterEject {
     Base(String),
     Unnamed(String),
+    /// The red's culprit is a commit the round made itself: no member is charged.
+    Harness(String),
     /// Nothing is left to land; who left and who stayed.
     Emptied(String),
     Survivors(Vec<Member>),
@@ -1630,6 +1641,10 @@ fn attribute_members<R: RoundRunner, O: RoundOps>(
                     why,
                 })
             }
+            FilterEject::Harness(why) => {
+                ops.incident("harness", std::slice::from_ref(&why));
+                return Ok(harness_fault(&[why]));
+            }
             FilterEject::Unnamed(tests) => {
                 return Ok(RoundEnd::Blocked(format!(
                     "{} red{tests} names no member that can be ejected",
@@ -1804,6 +1819,10 @@ fn attribute_members<R: RoundRunner, O: RoundOps>(
                         base: ops.base_sha(),
                         why,
                     })
+                }
+                FilterEject::Harness(why) => {
+                    ops.incident("harness", std::slice::from_ref(&why));
+                    return Ok(harness_fault(&[why]));
                 }
                 FilterEject::Unnamed(tests) => {
                     return Ok(RoundEnd::Blocked(format!(
@@ -3372,6 +3391,7 @@ pub(crate) mod tests {
         f.runs_alone = true;
         f.filter = Some(Box::new(|_| {
             Some(FilterRed {
+                harness: vec![],
                 name: "spira-lint".into(),
                 named: vec![],
                 failed: vec![],
@@ -3638,6 +3658,7 @@ pub(crate) mod tests {
     #[test]
     fn a_one_member_round_red_in_a_prior_filter_ejects_its_member_without_a_probe() {
         let red = FilterRed {
+            harness: vec![],
             name: "integration-tests".into(),
             named: vec![],
             failed: vec!["FAIL dir:testenv t".into()],
@@ -3680,6 +3701,7 @@ pub(crate) mod tests {
     fn fence_only_round(refusal: Option<&str>) -> (Fake, Ops) {
         let mut f = Fake::new(|_, _| false);
         f.prior = Some(FilterRed {
+            harness: vec![],
             name: "fence-round-image-preflight".into(),
             named: vec![],
             failed: vec![],
@@ -4496,6 +4518,7 @@ pub(crate) mod tests {
     fn lint_naming(culprit: &'static str) -> FilterFn {
         Box::new(move |tree| {
             tree.contains(culprit).then(|| FilterRed {
+                harness: vec![],
                 name: "spira-lint".into(),
                 named: vec![(
                     culprit.to_string(),
@@ -4516,6 +4539,7 @@ pub(crate) mod tests {
     fn unit_red_when(culprit: &'static str) -> FilterFn {
         Box::new(move |tree| {
             tree.contains(culprit).then(|| FilterRed {
+                harness: vec![],
                 name: "unit-tests".into(),
                 named: vec![],
                 failed: FAILING.iter().map(|l| l.to_string()).collect(),
@@ -4605,6 +4629,7 @@ pub(crate) mod tests {
     fn release_red_when(culprit: &'static str) -> FilterFn {
         Box::new(move |tree| {
             tree.contains(culprit).then(|| FilterRed {
+                harness: vec![],
                 name: "unit-tests".into(),
                 named: vec![],
                 failed: vec![RELEASE_FAILING.to_string()],
@@ -4798,6 +4823,7 @@ pub(crate) mod tests {
         f.bisects = true;
         f.filter = Some(Box::new(|_| {
             Some(FilterRed {
+                harness: vec![],
                 name: "unit-tests".into(),
                 named: vec![],
                 failed: vec![FAILING[0].to_string()],
@@ -4833,6 +4859,7 @@ pub(crate) mod tests {
         f.bisects = true;
         f.filter = Some(Box::new(|_| {
             Some(FilterRed {
+                harness: vec![],
                 name: "integration-tests".into(),
                 named: vec![],
                 failed: vec![FAILING[0].to_string()],
@@ -4862,6 +4889,7 @@ pub(crate) mod tests {
         let mut f = Fake::new(|_, _| false);
         f.filter = Some(Box::new(|_| {
             Some(FilterRed {
+                harness: vec![],
                 name: "unit-tests".into(),
                 named: vec![],
                 failed: vec![FAILING[0].to_string()],
@@ -5895,6 +5923,7 @@ pub(crate) mod tests {
                 .iter()
                 .all(|c| tree.contains(*c))
                 .then(|| FilterRed {
+                    harness: vec![],
                     name: "unit-tests".into(),
                     named: vec![],
                     failed: vec![],
@@ -5931,6 +5960,80 @@ pub(crate) mod tests {
             ops.eject_evidence
         );
         assert!(ops.incidents.is_empty(), "{:?}", ops.incidents);
+    }
+
+    #[test]
+    fn a_filter_red_whose_culprit_is_a_round_commit_is_a_harness_fault_that_charges_no_member() {
+        let sha = "488e83c393bf";
+        let line = format!("member=commit {sha} round: fold 1 config delta fragment(s) into spira/config-delta.toml config-delta-folded: edited by this branch");
+        let mut f = Fake::new(|_, _| false);
+        f.runs_alone = true;
+        f.filter = Some(Box::new(move |_| {
+            Some(FilterRed {
+                name: "spira-lint".into(),
+                named: vec![],
+                failed: vec![],
+                harness: vec![line.clone()],
+            })
+        }));
+        let mut ops = Ops::default();
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(3),
+            three(),
+            Budget {
+                slots: 6,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
+        match end {
+            RoundEnd::Faulted(why) => assert!(
+                why.contains("harness fault") && why.contains("config-delta-folded") && why.contains(sha),
+                "{why}"
+            ),
+            other => panic!("{other:?}"),
+        }
+        assert!(ops.ejected.is_empty(), "{:?}", ops.ejected);
+        assert_eq!(ops.incidents.first().map(|(k, _)| k.as_str()), Some("harness"), "{:?}", ops.incidents);
+        assert!(f.probes.is_empty(), "{:?}", f.probes);
+    }
+
+    #[test]
+    fn a_prior_red_whose_culprit_is_a_round_commit_is_a_harness_fault_that_charges_no_member() {
+        let sha = "488e83c393bf";
+        let line = format!("member=commit {sha} round: fold 1 config delta fragment(s) into spira/config-delta.toml config-delta-folded: edited by this branch");
+        let mut f = Fake::new(|_, _| false);
+        f.runs_alone = true;
+        f.prior = Some(FilterRed {
+            name: "spira-lint".into(),
+            named: vec![],
+            failed: vec![],
+            harness: vec![line],
+        });
+        let mut ops = Ops::default();
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(3),
+            three(),
+            Budget {
+                slots: 6,
+                maxpar: 2,
+            },
+        )
+        .unwrap();
+        match end {
+            RoundEnd::Faulted(why) => assert!(
+                why.contains("harness fault") && why.contains("config-delta-folded") && why.contains(sha),
+                "{why}"
+            ),
+            other => panic!("{other:?}"),
+        }
+        assert!(ops.ejected.is_empty(), "{:?}", ops.ejected);
+        assert_eq!(ops.incidents.first().map(|(k, _)| k.as_str()), Some("harness"), "{:?}", ops.incidents);
+        assert!(f.probes.is_empty(), "{:?}", f.probes);
     }
 
     #[test]
@@ -6027,6 +6130,7 @@ pub(crate) mod tests {
         f.filter = Some(Box::new(move |_| {
             seen.set(seen.get() + 1);
             (seen.get() == 1).then(|| FilterRed {
+                harness: vec![],
                 name: "unit-tests".into(),
                 named: vec![],
                 failed: vec![],
@@ -6052,6 +6156,7 @@ pub(crate) mod tests {
 
     fn flip_red(failed: &[&str]) -> FilterRed {
         FilterRed {
+            harness: vec![],
             name: "unit-tests".into(),
             named: vec![],
             failed: failed.iter().map(|l| l.to_string()).collect(),
@@ -6175,6 +6280,7 @@ pub(crate) mod tests {
     fn an_integration_flip_is_named_by_the_package_its_directory_resolves_to() {
         let mut f = Fake::new(|_, _| false);
         f.filter = Some(red_once_on_the_whole_tree(FilterRed {
+            harness: vec![],
             name: "integration-tests".into(),
             named: vec![],
             failed: vec!["FAIL dir:testenv lint_x".into()],
@@ -6202,6 +6308,7 @@ pub(crate) mod tests {
     fn an_integration_flip_is_named_by_the_package_its_test_target_resolves_to() {
         let mut f = Fake::new(|_, _| false);
         f.filter = Some(red_once_on_the_whole_tree(FilterRed {
+            harness: vec![],
             name: "integration-tests".into(),
             named: vec![],
             failed: vec!["FAIL test:conformance_sqlite the_wal_x".into()],
@@ -6310,6 +6417,7 @@ pub(crate) mod tests {
                 .iter()
                 .all(|c| tree.contains(*c))
                 .then(|| FilterRed {
+                    harness: vec![],
                     name: "integration-tests".into(),
                     named: vec![],
                     failed: INTEG_FAILING.iter().map(|l| l.to_string()).collect(),
@@ -6353,6 +6461,7 @@ pub(crate) mod tests {
     fn a_two_member_round_red_on_one_integration_test_runs_only_that_test_per_member_ejects_its_owner_and_lands_the_other_without_the_corpus_again(
     ) {
         let red = FilterRed {
+            harness: vec![],
             name: "integration-tests".into(),
             named: vec![],
             failed: vec!["FAIL dir:testenv lint_does_not_refuse_a_key".into()],
@@ -6408,6 +6517,7 @@ pub(crate) mod tests {
     #[test]
     fn a_red_its_named_tests_do_not_reproduce_alone_is_attributed_on_the_whole_package() {
         let red = FilterRed {
+            harness: vec![],
             name: "integration-tests".into(),
             named: vec![],
             failed: vec!["FAIL dir:testenv lint_x".into()],
@@ -6456,6 +6566,7 @@ pub(crate) mod tests {
     #[test]
     fn a_named_test_red_no_probe_can_attribute_blocks_the_round_without_running_the_corpus() {
         let red = FilterRed {
+            harness: vec![],
             name: "integration-tests".into(),
             named: vec![],
             failed: vec!["FAIL dir:testenv lint_x".into()],
@@ -6481,6 +6592,7 @@ pub(crate) mod tests {
     #[test]
     fn a_round_that_loses_its_only_member_to_a_named_test_red_says_who_left() {
         let red = FilterRed {
+            harness: vec![],
             name: "integration-tests".into(),
             named: vec![],
             failed: vec!["FAIL dir:testenv t".into()],
@@ -6630,6 +6742,7 @@ pub(crate) mod tests {
         let mut f = Fake::new(|_, _| false);
         f.filter = Some(Box::new(|_| {
             Some(FilterRed {
+                harness: vec![],
                 name: "integration-tests".into(),
                 named: vec![],
                 failed: vec![],
@@ -6662,6 +6775,7 @@ pub(crate) mod tests {
         f.runs_alone = true;
         f.filter = Some(Box::new(|tree| {
             (tree.contains("m2") || tree.contains("m3")).then(|| FilterRed {
+                harness: vec![],
                 name: "spira-lint".into(),
                 named: vec![],
                 failed: vec![],
@@ -6694,6 +6808,7 @@ pub(crate) mod tests {
         f.runs_alone = true;
         f.filter = Some(Box::new(|tree| {
             tree.contains("m2").then(|| FilterRed {
+                harness: vec![],
                 name: "fence-fixture-config".into(),
                 named: vec![],
                 failed: vec![],
@@ -6725,6 +6840,7 @@ pub(crate) mod tests {
         let mut f = Fake::new(|_, _| false);
         f.filter = Some(Box::new(|_| {
             Some(FilterRed {
+                harness: vec![],
                 name: "spira-lint".into(),
                 named: vec![],
                 failed: vec![],
