@@ -3683,8 +3683,14 @@ mod tests {
         assert_eq!(check.key, "fleet:plan");
         assert_eq!(check.raw, RawStatus::Gap { desired: "1 (sp-x updated 2h ago)".into(), observed: "0".into(), since_hint: None });
         let rules = Rules { now_secs: 100, grace_secs: 0, effect_passes: 2, shadow_kinds: vec![] };
-        let acts = decide(&rules, &mut StateMap::new(), &mut PendingMap::new(), &mut AlertedSinceMap::new(), check);
-        let subject = acts.iter().find_map(|a| if let Act::Mail { mail, .. } = a { Some(mail.subject.clone()) } else { None }).expect("a page");
+        let (mut state, mut pending, mut alerted) = (StateMap::new(), PendingMap::new(), AlertedSinceMap::new());
+        let mut subject = None;
+        for pass in 0..4 {
+            let rules = Rules { now_secs: 100 + pass, ..rules.clone() };
+            let acts = decide(&rules, &mut state, &mut pending, &mut alerted, observe_fleet(&cfg).remove(0));
+            subject = subject.or(acts.iter().find_map(|a| if let Act::Mail { mail, .. } = a { Some(mail.subject.clone()) } else { None }));
+        }
+        let subject = subject.expect("a page");
         assert!(subject.contains("sp-x"), "{subject}");
     }
 
@@ -3765,11 +3771,11 @@ mod tests {
             cfg.max_live_dwarves = "5".into();
             cfg.max_dwarves = "3".into();
             cfg.starting = starting.iter().map(|(r, n)| (r.to_string(), *n)).collect();
-            cfg.host = Some(Arc::new(Fleet { planned_live: 2, reactive_live: 0, partition_rune: "builder", ready: 5 }));
+            cfg.host = Some(Arc::new(Fleet { planned_live: 2, reactive_live: 0, partition_rune: "builder", ready: 5, named: vec![] }));
             observe_fleet(&cfg)[0].raw.clone()
         };
         assert_eq!(check(&[("builder", 1)]), RawStatus::Satisfied);
-        assert_eq!(check(&[]), RawStatus::Gap { desired: "3".into(), observed: "2".into(), since_hint: None });
+        assert_eq!(check(&[]), RawStatus::Gap { desired: "3 (sp-r0, sp-r1, sp-r2, sp-r3, sp-r4)".into(), observed: "2".into(), since_hint: None });
     }
 
     fn redrive_pass(d: &mut (StateMap, PendingMap, AlertedSinceMap), now_secs: u64, gap: bool) -> Vec<Act> {
