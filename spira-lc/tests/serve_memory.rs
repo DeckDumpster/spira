@@ -85,6 +85,7 @@ fn a_burst_of_reads_over_fifty_connections_leaves_the_servers_anonymous_memory_w
     let (at_ready, threads_at_ready) = (rss_anon(pid), threads(pid));
 
     let per = REQUESTS / CONNECTIONS;
+    let burst = std::time::Instant::now();
     std::thread::scope(|scope| {
         for c in 0..CONNECTIONS {
             let socket = &socket;
@@ -98,6 +99,7 @@ fn a_burst_of_reads_over_fifty_connections_leaves_the_servers_anonymous_memory_w
             });
         }
     });
+    assert!(burst.elapsed() < Duration::from_secs(60), "{REQUESTS} requests took {:?}", burst.elapsed());
     // A request past its deadline is answered and its worker runs on: wait for the workers to end.
     let mut polls = 0;
     while threads(pid) > threads_at_ready {
