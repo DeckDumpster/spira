@@ -257,7 +257,7 @@ mod door_tests {
     #[test]
     fn the_stores_verbs_are_content_requests() {
         let door = Arc::new(Content::new(vec![]));
-        let world = Real::new(PathBuf::from("/nonexistent"), Ok(LcClient::over(door.clone(), true)), None);
+        let world = Real::new(PathBuf::new(), Ok(LcClient::over(door.clone(), true)), None);
         world.bd_priority("sp-a", 1);
         world.bd_note("sp-a", "text");
         world.bd_gate_discover("spira", "b");

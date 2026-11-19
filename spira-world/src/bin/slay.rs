@@ -335,7 +335,7 @@ mod tests {
     #[test]
     fn slays_bead_writes_are_content_requests() {
         let door = Arc::new(Content::new(vec![]));
-        let beads = RealBeads { lc: Ok(LcClient::over(door.clone(), true)), registry: spira_config::repos::Registry::from_env(Default::default(), Path::new("/nonexistent")) };
+        let beads = RealBeads { lc: Ok(LcClient::over(door.clone(), true)), registry: spira_config::repos::Registry::from_env(Default::default(), Path::new("")) };
         beads.clear_assignee("sp-a");
         beads.note("sp-a", "slain");
         beads.label_remove("sp-a", "x");
