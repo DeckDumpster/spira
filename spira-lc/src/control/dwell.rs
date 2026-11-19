@@ -334,7 +334,7 @@ impl<B: Backend> Store<B> {
         }
         if idx.high_rev < head {
             let after = events_key(idx.high_rev);
-            let oldest = self.scan(idx, Some(after), events_key(head), head, scanned, &mut repo)?;
+            let oldest = self.scan(idx, Some(after), events_key(head), head, head - idx.high_rev, scanned, &mut repo)?;
             idx.high_rev = head;
             idx.reached(oldest);
         }
@@ -342,7 +342,7 @@ impl<B: Backend> Store<B> {
         while idx.horizon > floor && idx.low_rev > 0 && *scanned < scan_cap() {
             let hi = idx.low_rev;
             let lo = hi.saturating_sub(span);
-            let oldest = self.scan(idx, Some(events_key(lo)), events_key(hi), head, scanned, &mut repo)?;
+            let oldest = self.scan(idx, Some(events_key(lo)), events_key(hi), head, hi - lo, scanned, &mut repo)?;
             idx.low_rev = lo;
             idx.reached(oldest);
             // Revisions with no audit (lock renewals, a reopen's jump, the import's baseline)
@@ -391,12 +391,13 @@ impl<B: Backend> Store<B> {
     }
 
     /// Folds the audits of the `events/` keys after `after` up to and including `end`, as of
-    /// `head`; the oldest audit time seen. The caller lowers the horizon once the range is done.
-    fn scan(&self, idx: &mut LastIndex, mut after: Option<String>, end: String, head: u64, scanned: &mut usize, repo: &mut impl FnMut(&str) -> Result<Option<String>>) -> Result<Option<i64>> {
+    /// `head`, in pages of at most `revs` keys, the revisions the range spans; the oldest audit time seen. The caller lowers the horizon once the range is done.
+    fn scan(&self, idx: &mut LastIndex, mut after: Option<String>, end: String, head: u64, revs: u64, scanned: &mut usize, repo: &mut impl FnMut(&str) -> Result<Option<String>>) -> Result<Option<i64>> {
         let mut oldest = None::<i64>;
+        let limit = PAGE.min(revs as usize).max(1);
         loop {
-            let page = self.contract().range_at(EVENTS_PREFIX, after.as_deref(), PAGE, head)?;
-            let full = page.len() == PAGE;
+            let page = self.contract().range_at(EVENTS_PREFIX, after.as_deref(), limit, head)?;
+            let full = page.len() == limit;
             for item in &page {
                 if item.key > end {
                     return Ok(oldest);

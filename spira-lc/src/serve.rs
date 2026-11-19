@@ -16,7 +16,7 @@
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -140,7 +140,31 @@ fn live_work() -> Work {
     })
 }
 
+/// Arenas glibc may give the connection threads between them: a thread per connection otherwise
+/// grows an arena of its own, and what it frees stays there.
+const MALLOC_ARENAS: libc::c_int = 2;
+
+const TRIM_EVERY_MS: u64 = 1_000;
+
+/// Gives the system the memory the connection threads freed: glibc keeps it in its arenas
+/// otherwise. Always when the last connection leaves, and otherwise at most once a second.
+fn return_freed_memory(idle: bool) {
+    static LAST: AtomicU64 = AtomicU64::new(0);
+    let now = wall_ms();
+    let last = LAST.load(Ordering::Relaxed);
+    if (idle || now.saturating_sub(last) >= TRIM_EVERY_MS) && LAST.compare_exchange(last, now, Ordering::Relaxed, Ordering::Relaxed).is_ok() {
+        // SAFETY: malloc_trim only returns free pages to the system.
+        unsafe {
+            libc::malloc_trim(0);
+        }
+    }
+}
+
 pub fn run(args: &[String]) -> i32 {
+    // SAFETY: mallopt only sets a glibc tunable, before any thread exists.
+    unsafe {
+        libc::mallopt(libc::M_ARENA_MAX, MALLOC_ARENAS);
+    }
     // An explicit argv[0] (the launching unit's own ExecStart) wins outright; otherwise the
     // one source of config (per Ryan 2026-10-05): $SPIRA_TOML's declared socket path, never
     // this process's own environment, and no literal fallback.
@@ -422,7 +446,12 @@ impl Flights {
         impl Drop for Leave<'_> {
             fn drop(&mut self) {
                 CURRENT.with(|c| *c.borrow_mut() = None);
-                self.0.open.lock().unwrap().retain(|(i, _)| *i != self.1);
+                let idle = {
+                    let mut open = self.0.open.lock().unwrap();
+                    open.retain(|(i, _)| *i != self.1);
+                    open.is_empty()
+                };
+                return_freed_memory(idle);
             }
         }
         let Ok(clone) = stream.try_clone() else {

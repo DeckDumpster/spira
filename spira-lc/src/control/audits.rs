@@ -11,7 +11,7 @@ use super::records::Audit;
 use super::store::Store;
 
 /// Revisions read per chunk of the newest-first scan.
-const CHUNK_REVS: u64 = 500;
+const CHUNK_REVS: u64 = 100;
 const PAGE: usize = 1_000;
 /// The most `events/` keys one answer reads.
 pub const MAX_SCANNED: usize = 200_000;
@@ -33,6 +33,7 @@ pub struct Scanned {
 /// no evidence and no allocation.
 #[derive(Clone, Copy, Debug)]
 pub struct Move<'a> {
+    pub rev: u64,
     pub machine: &'a str,
     pub lc_key: &'a str,
     pub event: &'a str,
@@ -44,8 +45,9 @@ pub struct Move<'a> {
     pub at: i64,
 }
 
-fn move_of(a: &Value) -> Option<Move<'_>> {
+fn move_of(rev: u64, a: &Value) -> Option<Move<'_>> {
     Some(Move {
+        rev,
         machine: a["machine"].as_str()?,
         lc_key: a["lc_key"].as_str()?,
         event: a["event"].as_str()?,
@@ -69,9 +71,10 @@ impl<B: Backend> Store<B> {
             let mut chunk: Vec<Item> = Vec::new();
             let mut after = (lo > 0).then(|| events_key(lo));
             let end = events_key(hi);
+            let limit = PAGE.min((hi - lo) as usize).max(1);
             'chunk: loop {
-                let page = self.contract().range_at(EVENTS_PREFIX, after.as_deref(), PAGE, head)?;
-                let full = page.len() == PAGE;
+                let page = self.contract().range_at(EVENTS_PREFIX, after.as_deref(), limit, head)?;
+                let full = page.len() == limit;
                 after = page.last().map(|i| i.key.clone());
                 for item in page {
                     if item.key > end {
@@ -101,7 +104,7 @@ impl<B: Backend> Store<B> {
         self.walk_chunks(floor, |chunk| {
             for item in chunk.iter().rev() {
                 for a in branch(item).iter().rev() {
-                    if let Some(m) = move_of(a).filter(|m| m.at >= floor) {
+                    if let Some(m) = move_of(item.mod_rev.main, a).filter(|m| m.at >= floor) {
                         visit(m);
                     }
                 }
@@ -109,25 +112,14 @@ impl<B: Backend> Store<B> {
         })
     }
 
-    /// The audits with `at >= floor`, oldest first.
-    pub fn audits_since(&self, floor: i64) -> Result<Scanned> {
-        let mut audits: Vec<Logged> = Vec::new();
-        let complete = self.walk_chunks(floor, |chunk| {
-            for item in chunk {
-                for audit in branch_audits(item) {
-                    if audit.at >= floor {
-                        audits.push(Logged { rev: item.mod_rev.main, audit });
-                    }
-                }
-            }
-        })?;
-        audits.sort_by_key(|l| l.rev);
-        Ok(Scanned { audits, complete })
-    }
-
     /// Every audit the store holds, oldest first: the imported history by its old seq, then each
     /// revision's. `after` skips what is at or below that revision.
     pub fn audits_after(&self, after: u64) -> Result<Scanned> {
+        self.audits_after_upto(after, usize::MAX)
+    }
+
+    /// The first `limit` audits past `after`, oldest first: the log is read only as far as they reach.
+    pub fn audits_after_upto(&self, after: u64, limit: usize) -> Result<Scanned> {
         let head = self.contract().head()?;
         let mut audits: Vec<Logged> = Vec::new();
         let imported = if after == 0 { self.contract().list(&[super::keys::HISTORY], &state_store::Selector::Everything)?.0 } else { Vec::new() };
@@ -145,12 +137,13 @@ impl<B: Backend> Store<B> {
             for item in &page {
                 audits.extend(branch_audits(item).into_iter().map(|audit| Logged { rev: item.mod_rev.main, audit }));
             }
-            if page.len() < PAGE {
+            if page.len() < PAGE || audits.len() >= limit {
                 break;
             }
             cursor = page.last().map(|i| i.key.clone());
         }
         audits.sort_by_key(|l| l.rev);
+        audits.truncate(limit);
         Ok(Scanned { audits, complete: true })
     }
 }
@@ -172,14 +165,16 @@ mod tests {
         let s = store();
         s.create("sp-a", None, Some("0123456789abcdef0123456789abcdef01234567"), 100, &Request::new("c1", "t", "t")).unwrap();
         s.create("sp-b", None, Some("0123456789abcdef0123456789abcdef01234567"), 200, &Request::new("c2", "t", "t")).unwrap();
-        let all = s.audits_since(0).unwrap();
-        assert!(all.complete);
-        let keys: Vec<&str> = all.audits.iter().filter(|l| l.audit.applied).map(|l| l.audit.lc_key.as_str()).collect();
-        assert!(keys.contains(&"sp-a") && keys.contains(&"sp-b"), "{keys:?}");
-        let later = s.audits_since(150).unwrap();
-        assert!(later.complete);
-        assert!(later.audits.iter().all(|l| l.audit.at >= 150), "{:?}", later.audits);
-        assert!(later.audits.iter().all(|l| l.audit.lc_key != "sp-a"));
+        let seen = |floor: i64| {
+            let mut keys: Vec<(String, bool, i64)> = Vec::new();
+            assert!(s.fold_audits_since(floor, |m| keys.push((m.lc_key.to_string(), m.applied, m.at))).unwrap());
+            keys
+        };
+        let all = seen(0);
+        assert!(all.iter().any(|k| k.1 && k.0 == "sp-a") && all.iter().any(|k| k.1 && k.0 == "sp-b"), "{all:?}");
+        let later = seen(150);
+        assert!(later.iter().all(|l| l.2 >= 150), "{later:?}");
+        assert!(later.iter().all(|l| l.0 != "sp-a"));
     }
 
     #[test]

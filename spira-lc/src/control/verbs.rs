@@ -186,7 +186,7 @@ fn audits<B: Backend>(store: &Store<B>, args: &[String]) -> Result<String, Strin
     if limit == 0 {
         return Err("audits: --limit must be at least 1".into());
     }
-    let read = store.audits_after(after).map_err(|e| format!("audits: {e}"))?;
+    let read = store.audits_after_upto(after, limit as usize).map_err(|e| format!("audits: {e}"))?;
     let mut rows = Vec::new();
     for l in read.audits.iter().take(limit as usize) {
         let mut row = Map::new();
