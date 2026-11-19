@@ -348,7 +348,7 @@ impl World for Real {
             .stdin(Stdio::null())
             .output();
         match out {
-            Ok(o) if o.status.success() => Ok(String::from_utf8_lossy(&o.stdout).lines().filter_map(|l| l.split_whitespace().next()).map(str::to_string).collect()),
+            Ok(o) if o.status.success() => Ok(loaded_failed_units(&String::from_utf8_lossy(&o.stdout))),
             Ok(o) => Err(format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr))),
             Err(e) => Err(e.to_string()),
         }
@@ -585,6 +585,16 @@ pub(crate) fn daemon_base_path(argv: &[String], port: u16) -> Option<String> {
     argv.iter().find_map(|a| a.strip_prefix("--base-path=")).map(String::from)
 }
 
+/// Names from `list-units --state=failed --plain`; a unit whose file is gone lists as
+/// `not-found` and is not a failure of anything installed.
+pub fn loaded_failed_units(listing: &str) -> Vec<String> {
+    listing.lines().filter_map(|l| {
+        let mut cols = l.split_whitespace();
+        let name = cols.next()?;
+        (cols.next() != Some("not-found")).then(|| name.to_string())
+    }).collect()
+}
+
 fn is_exec(p: &Path) -> bool {
     use std::os::unix::fs::PermissionsExt;
     std::fs::metadata(p).map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0).unwrap_or(false)
@@ -795,4 +805,15 @@ pub fn target_roots_in(parent: &Path, root: &Path) -> Vec<PathBuf> {
     let mut v: Vec<PathBuf> = rd.flatten().map(|e| e.path()).filter(|p| p.join("CACHEDIR.TAG").is_file() && same_device(p, root) == Some(true)).collect();
     v.sort();
     v
+}
+
+#[cfg(test)]
+mod failed_listing_tests {
+    use super::loaded_failed_units;
+
+    #[test]
+    fn a_retired_unit_listed_not_found_is_not_a_failed_unit() {
+        let listing = "spira-vm-pool-section-prod.service not-found failed failed spira vm pool\nspira-sentinel-prod.service loaded failed failed Sentinel\n";
+        assert_eq!(loaded_failed_units(listing), vec!["spira-sentinel-prod.service".to_string()]);
+    }
 }
