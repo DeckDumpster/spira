@@ -373,12 +373,20 @@ fn main() {
                 return;
             }
             let log_path = getenv("SPIRA_SLOW_QUERY_LOG").map(PathBuf::from).unwrap_or_else(|| run.join("slow-queries.log"));
+            let threshold_ms = match spira_config::process::cfg_parse::<u64>("SPIRA_SLOW_QUERY_MS") {
+                Ok(t) => t,
+                Err(e) => {
+                    log::log(&format!("watchtower: slow-query-check refused, nothing filed: {e}"));
+                    return;
+                }
+            };
             slow_query::run(
                 &run,
                 &log_path,
                 &reg("SPIRA_DB"),
                 &reg("SPIRA_HOME_REPO"),
                 &resolved_incident_sh(),
+                threshold_ms,
             );
         }
         Some("--drift-check") => {

@@ -259,9 +259,22 @@ pub fn set_verb(verb: &str) {
     VERB.with(|v| *v.borrow_mut() = verb.to_string());
 }
 
-fn threshold() -> Duration {
-    let ms = std::env::var("SPIRA_SLOW_QUERY_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(1000);
-    Duration::from_millis(ms)
+/// The slow-query threshold from the declared `SPIRA_SLOW_QUERY_MS`; a missing or unparsable key is an `Err`, never a default.
+fn threshold_from(declared: Result<String, String>) -> Result<Duration, String> {
+    let v = declared?;
+    v.trim().parse::<u64>().map(Duration::from_millis).map_err(|_| format!("SPIRA_SLOW_QUERY_MS is not a whole number of milliseconds: {v:?}"))
+}
+
+#[cfg(test)]
+thread_local! {
+    static THRESHOLD_MS: std::cell::Cell<u64> = const { std::cell::Cell::new(1000) };
+}
+
+fn threshold() -> Result<Duration, String> {
+    #[cfg(test)]
+    return Ok(Duration::from_millis(THRESHOLD_MS.with(|t| t.get())));
+    #[cfg(not(test))]
+    threshold_from(spira_config::process::cfg("SPIRA_SLOW_QUERY_MS"))
 }
 
 fn log_path() -> Option<std::path::PathBuf> {
@@ -324,7 +337,14 @@ pub fn record(took: Duration, sql: &str) {
 }
 
 fn append(took: Duration, verb: &str, caller: &str, sql: &str) {
-    if took < threshold() {
+    let limit = match threshold() {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("spira-lc: slow-query log off, refusing: {e}");
+            return;
+        }
+    };
+    if took < limit {
         return;
     }
     let Some(path) = log_path() else { return };
@@ -432,6 +452,15 @@ mod tests {
     }
 
     #[test]
+    fn a_threshold_the_config_does_not_declare_is_refused_by_name() {
+        let missing = "SPIRA_SLOW_QUERY_MS is not a registered config key (spira/conf.d) — refusing".to_string();
+        let e = threshold_from(Err(missing)).unwrap_err();
+        assert!(e.contains("SPIRA_SLOW_QUERY_MS"), "{e}");
+        assert_eq!(threshold_from(Ok("250".into())).unwrap(), Duration::from_millis(250));
+        assert!(threshold_from(Ok("fast".into())).unwrap_err().contains("SPIRA_SLOW_QUERY_MS"));
+    }
+
+    #[test]
     fn digits_inside_identifiers_survive() {
         assert!(shape("SELECT a1 FROM t2").contains("a1 FROM t2"));
     }
@@ -440,7 +469,8 @@ mod tests {
     fn a_fast_query_writes_nothing_and_a_slow_one_one_line() {
         let d = testkit::TempDir::new("slow-rec");
         let log = d.join("s.log");
-        let _env = testkit::env(&[("SPIRA_SLOW_QUERY_LOG", Some(log.to_str().unwrap())), ("SPIRA_SLOW_QUERY_MS", Some("1000"))]);
+        let _env = testkit::env(&[("SPIRA_SLOW_QUERY_LOG", Some(log.to_str().unwrap()))]);
+        THRESHOLD_MS.with(|t| t.set(1000));
         set_verb("list");
         set_caller("spira-lc");
         record(Duration::from_millis(500), "SELECT 1");
@@ -456,7 +486,8 @@ mod tests {
     fn a_request_is_logged_whole_and_counted_per_verb_and_caller() {
         let d = testkit::TempDir::new("slow-req");
         let log = d.join("s.log");
-        let _env = testkit::env(&[("SPIRA_SLOW_QUERY_LOG", Some(log.to_str().unwrap())), ("SPIRA_SLOW_QUERY_MS", Some("0"))]);
+        let _env = testkit::env(&[("SPIRA_SLOW_QUERY_LOG", Some(log.to_str().unwrap()))]);
+        THRESHOLD_MS.with(|t| t.set(0));
         request_done("probe-verb", "probe-verb", "probe\tcaller", None, Duration::from_millis(40));
         request_done("other-verb", "other-verb", "other", None, Duration::from_millis(7));
         request_done("probe-verb", "probe-verb", "probe\tcaller", None, Duration::from_millis(60));

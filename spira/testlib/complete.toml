@@ -333,6 +333,7 @@ gate_build_stall = 300
 gate_unit_max_crates = 20
 lc_request_ledger_secs = 120
 lc_idempotent_retry_secs = 60
+slow_query_ms = 1000
 gate_builder_dir_wait_secs = 120
 gate_lock_wait = "0"
 gate_suites = "/fixture/userhome/spira/spira-releases/current/spira/gate-suites"
