@@ -1546,7 +1546,7 @@ fn a_single_member_setup_red_whose_rerun_the_forge_refuses_is_ejected_in_that_pa
     refused_setup_red(&t);
     assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
     assert!(
-        t.out().contains("sp-a ejected: boom") && !t.out().contains("re-running run 77 once"),
+        t.out().contains("failed step: gate / Run bash tests/x.sh | boom") && !t.out().contains("re-running run 77 once"),
         "{}",
         t.out()
     );
@@ -1556,7 +1556,14 @@ fn a_single_member_setup_red_whose_rerun_the_forge_refuses_is_ejected_in_that_pa
         t.lc.calls.borrow()
     );
     assert!(
-        t.lib.calls.borrow().iter().any(|c| c.starts_with("comment sp-a") && c.contains("boom")),
+        t.lc.calls.borrow().iter().any(|c| c.starts_with("eject-member spira-1 sp-a") && c.contains("gate / Run bash tests/x.sh")),
+        "{:?}",
+        t.lc.calls.borrow()
+    );
+    assert!(
+        t.lib.calls.borrow().iter().any(|c| c.starts_with("comment sp-a")
+            && c.contains("failed step: gate / Run bash tests/x.sh")
+            && c.contains("boom")),
         "{:?}",
         t.lib.calls.borrow()
     );
@@ -1578,6 +1585,20 @@ fn a_multi_member_setup_red_whose_rerun_the_forge_refuses_is_abandoned_in_that_p
         t.lc.calls.borrow()
     );
     assert!(!t.qfile("open").exists());
+}
+
+#[test]
+fn a_setup_red_whose_rerun_the_forge_fails_to_start_settles_nothing_and_records_no_rerun() {
+    let t = T::new(LandMode::Queue);
+    lc_batch(&t);
+    refused_setup_red(&t);
+    *t.forge.rerun_decided.borrow_mut() = None;
+    *t.forge.rerun_refused.borrow_mut() = true;
+    assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+    assert!(t.err().contains("could not start"), "{}", t.err());
+    assert!(!record(&t).contains("setup_rerun"), "{}", record(&t));
+    assert!(t.qfile("open").exists());
+    assert!(!t.lc.calls.borrow().iter().any(|c| c.starts_with("abandon-batch")));
 }
 
 #[test]
