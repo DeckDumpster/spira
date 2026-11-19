@@ -724,12 +724,12 @@ impl<'a> VmRunner<'a> {
         self
     }
 
-    /// Names the round-vm scope after `batch`, so abandoning that batch stops it.
     pub fn with_round_commits(mut self, own: RoundCommits) -> Self {
         self.own_commits = own;
         self
     }
 
+    /// Names the round-vm scope after `batch`, so abandoning that batch stops it.
     pub fn in_batch(mut self, batch: Option<&str>) -> Self {
         self.batch = batch.map(str::to_string);
         self

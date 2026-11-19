@@ -5996,10 +5996,12 @@ pub(crate) mod tests {
             other => panic!("{other:?}"),
         }
         assert!(ops.ejected.is_empty(), "{:?}", ops.ejected);
+        assert_eq!(ops.incidents.first().map(|(k, _)| k.as_str()), Some("harness"), "{:?}", ops.incidents);
+        assert!(f.probes.is_empty(), "{:?}", f.probes);
     }
 
     #[test]
-        fn a_prior_red_whose_culprit_is_a_round_commit_is_a_harness_fault_that_charges_no_member() {
+    fn a_prior_red_whose_culprit_is_a_round_commit_is_a_harness_fault_that_charges_no_member() {
         let sha = "488e83c393bf";
         let line = format!("member=commit {sha} round: fold 1 config delta fragment(s) into spira/config-delta.toml config-delta-folded: edited by this branch");
         let mut f = Fake::new(|_, _| false);
@@ -6030,6 +6032,8 @@ pub(crate) mod tests {
             other => panic!("{other:?}"),
         }
         assert!(ops.ejected.is_empty(), "{:?}", ops.ejected);
+        assert_eq!(ops.incidents.first().map(|(k, _)| k.as_str()), Some("harness"), "{:?}", ops.incidents);
+        assert!(f.probes.is_empty(), "{:?}", f.probes);
     }
 
     #[test]
