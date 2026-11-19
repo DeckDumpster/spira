@@ -715,6 +715,12 @@ impl<'w, W: World> Trial<'w, W> {
         self.s.steps_file = w.temp_file("");
         self.s.tiers_file = w.temp_file("");
 
+        // THE SUITES' SHARE OF THE DEADLINE, from config: the gate phase's cutoff and the
+        // re-entry selector's budget. No fallback — a gate whose budget does not parse refuses.
+        let Some(budget) = key::digits(ctx.var("SPIRA_GATE_BUDGET")) else {
+            return v(NOVERDICT, "config", format!("gate: SPIRA_GATE_BUDGET={:?} is not a number of seconds — refusing to run a gate with no suites budget.", ctx.var("SPIRA_GATE_BUDGET")));
+        };
+
         // THE COMPOSITION: what the branch touches decides what runs.
         let comp = self.composition(mode, &ctx, &repo, &base_rev, &rev, &tree);
         // THE RE-ENTRY CHECK: the suites the round named, against the tree under test.
@@ -755,12 +761,12 @@ impl<'w, W: World> Trial<'w, W> {
         let (kept, over) = compose::defer_over_budget(
             &kept,
             &timing,
-            phase_cap("gate").unwrap_or(0),
+            budget,
         );
         for (s, t) in &over {
             w.eprint(&format!(
                 "gate: re-entry: {s} deferred to the round — recorded {t}s, past what is left of the gate's {}s suite budget; the round runs it",
-                phase_cap("gate").unwrap_or(0)
+                budget
             ));
         }
         re.required = kept;
@@ -902,7 +908,7 @@ impl<'w, W: World> Trial<'w, W> {
         };
         self.s.deny_label = format!("{at}/{}", &key::sha256_hex(deny_text.as_bytes())[..12]);
         w.eprint(&format!("gate: deny list {} ({} rows)", self.s.deny_label, deny.render().lines().count()));
-        let limits = Limits { deadline, stall, unit_deadline: (secs, periods), deny };
+        let limits = Limits { deadline, budget, stall, unit_deadline: (secs, periods), deny };
         let by_deadline = key::digits(&timeout).is_none_or(|t| deadline <= t);
         let eff = |spent: u64| {
             let rem = deadline.saturating_sub(spent).max(1);
@@ -1093,7 +1099,7 @@ impl<'w, W: World> Trial<'w, W> {
                 parse::tail_bytes(&out, 4000)));
         }
         if rc == 124 && by_deadline && last_phase_charged(&self.s.phases) {
-            return killed_verdict(&self.s.phases, deadline, self.s.test_secs, &cmd, &out);
+            return killed_verdict(&self.s.phases, budget, deadline, self.s.test_secs, &cmd, &out);
         }
         if rc == 124 {
             return v(NOVERDICT, "timeout", format!(
@@ -1217,7 +1223,7 @@ impl<'w, W: World> Trial<'w, W> {
                 return stall_verdict(&self.s.phases, &o);
             }
             if r == 124 && by_deadline && last_phase_charged(&self.s.phases) {
-                return killed_verdict(&self.s.phases, deadline, self.s.test_secs, base_cmd, &o);
+                return killed_verdict(&self.s.phases, budget, deadline, self.s.test_secs, base_cmd, &o);
             }
             base_rc = r;
             base_out = o;
@@ -2247,6 +2253,8 @@ pub fn stall_verdict(phases: &[(String, u64)], out: &str) -> Verdict {
 
 pub struct Limits {
     pub deadline: u64,
+    /// `SPIRA_GATE_BUDGET`: the suites' share of the deadline, and the gate phase's cutoff.
+    pub budget: u64,
     pub stall: u64,
     /// One unit test's deadline: the period in seconds and the periods before it is terminated.
     pub unit_deadline: (u64, u64),
@@ -2256,17 +2264,17 @@ pub struct Limits {
 /// The most a charged phase may take, seconds (`base-` prefix ignored); the gate cap is no
 /// shorter than the suites budget handed to testenv. Phases not listed take what is left of
 /// the deadline.
-pub fn phase_cap(name: &str) -> Option<u64> {
+pub fn phase_cap(name: &str, budget: u64) -> Option<u64> {
     match name.strip_prefix("base-").unwrap_or(name) {
-        "gate" => Some(260),
+        "gate" => Some(budget),
         _ => None,
     }
 }
 
 /// The last phase run, if it was killed at its own cap rather than by the whole-gate deadline.
-pub fn phase_cap_hit(phases: &[(String, u64)]) -> Option<(&str, u64, u64)> {
+pub fn phase_cap_hit(phases: &[(String, u64)], budget: u64) -> Option<(&str, u64, u64)> {
     let (name, ran) = phases.last()?;
-    let cap = phase_cap(name)?;
+    let cap = phase_cap(name, budget)?;
     (*ran >= cap).then_some((name.as_str(), *ran, cap))
 }
 
@@ -2278,8 +2286,8 @@ pub fn phase_cap_verdict(phase: &str, ran: u64, cap: u64, cmd: &str, out: &str) 
 
 /// The verdict for a gate command killed (rc 124) under the deadline: the phase cap when
 /// the last phase reached its own, else the whole-gate deadline.
-pub fn killed_verdict(phases: &[(String, u64)], deadline: u64, ran: u64, cmd: &str, out: &str) -> Verdict {
-    match phase_cap_hit(phases) {
+pub fn killed_verdict(phases: &[(String, u64)], budget: u64, deadline: u64, ran: u64, cmd: &str, out: &str) -> Verdict {
+    match phase_cap_hit(phases, budget) {
         Some((p, r, c)) if ran < deadline => phase_cap_verdict(p, r, c, cmd, out),
         _ => deadline_verdict(
             deadline,
@@ -2339,15 +2347,16 @@ pub fn base_rerun_cmd(suites: &[String]) -> String {
 }
 
 fn testenv_suites_cmd(list: &str) -> String {
-    testenv_cmd(Some(list), None)
+    testenv_cmd(Some(list), None, None)
 }
 
 /// The testenv call a gate phase makes: the named suites or the declaration's default
 /// tiers, in a share (`(key, keep)`) that a later call continues or finishes.
-fn testenv_cmd(suites: Option<&str>, share: Option<(&str, bool)>) -> String {
+fn testenv_cmd(suites: Option<&str>, share: Option<(&str, bool)>, deadline: Option<u64>) -> String {
+    let deadline = deadline.map_or(String::new(), |d| format!("--deadline {d} "));
     let suites = suites.map_or(String::new(), |l| format!("--suites {l} "));
     let share = share.map_or(String::new(), |(k, keep)| format!("{} {k} ", if keep { "--share-keep" } else { "--share" }));
-    testenv_call(&format!("{suites}{share}"))
+    testenv_call(&format!("{suites}{deadline}{share}"))
 }
 
 /// The call that merges a kept share into the warm cache; it runs no tier and judges nothing.
@@ -2545,7 +2554,7 @@ pub fn run_composed<W: World>(
     let left = |name: &str, spent: u64| {
         let outer = budget.map(|b| b.saturating_sub(w.now().saturating_sub(start)).max(1));
         let test = (charged(name) && !reports_its_own_time(name)).then(|| limits.deadline.saturating_sub(spent).max(1));
-        [outer, test, phase_cap(name)]
+        [outer, test, phase_cap(name, limits.budget)]
             .into_iter()
             .flatten()
             .min()
@@ -2618,13 +2627,13 @@ pub fn run_composed<W: World>(
     let cmd = if declared {
         let repo = env.iter().find(|(k, _)| k == "SPIRA_GATE_REPO_NAME").map_or("the repository", |(_, v)| v.as_str());
         w.eprint(&format!("gate: {repo} declares [tier.build] in .spira/testenv.toml: the gate phase runs testenv's default tiers, not the repo-map gate column"));
-        testenv_cmd(None, prefix.is_empty().then_some((share_key.as_str(), true)))
+        testenv_cmd(None, prefix.is_empty().then_some((share_key.as_str(), true)), Some(limits.budget))
     } else {
         cmd
     };
     let cmd = cmd.as_str();
     if prefix.is_empty() && declared {
-        let build_cmd = testenv_cmd(Some("build"), Some((&share_key, true)));
+        let build_cmd = testenv_cmd(Some("build"), Some((&share_key, true)), None);
         let (rc, out, wall) = go("build", env, &build_cmd, test_secs);
         phases.push(("build".to_string(), wall));
         if rc != 0 || w.signalled() {
