@@ -102,7 +102,7 @@ fn a_set_with_no_scheduler_listening_still_writes_and_says_so() {
     let b = setup("set-sched-down-box", &d.path().join("nobody.sock"));
     let o = run(&b, &["set", "spira.max_dwarves", "4", b.toml.to_str().unwrap()]);
     assert!(o.status.success());
-    assert!(out(&o).contains("written; the scheduler is not answering"), "{}", out(&o));
+    assert!(out(&o).contains("written; the scheduler is not running on"), "{}", out(&o));
     assert!(std::fs::read_to_string(&b.toml).unwrap().contains("max_dwarves = 4") || std::fs::read_to_string(&b.toml).unwrap().contains("max_dwarves = \"4\""));
 }
 
