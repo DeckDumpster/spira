@@ -1135,12 +1135,15 @@ fn observe_units(cfg: &Config) -> Vec<Check> {
 
 struct FleetReadings {
     /// `(labels, ready beads as (id, updated_at), live, is_task, runes)` per builder partition.
-    rows: Vec<(String, Vec<ReadyBead>, i64, bool, Vec<String>)>,
+    rows: Vec<FleetRow>,
     live_reactive: i64,
     live_total: i64,
     max_live: Option<i64>,
     pool: Option<i64>,
 }
+
+/// One partition: `(labels, ready, live, is_task, rune names)`.
+type FleetRow = (String, Vec<ReadyBead>, i64, bool, Vec<String>);
 
 /// A claimable bead: `(id, updated_at)`.
 pub type ReadyBead = (String, String);
