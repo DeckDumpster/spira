@@ -122,13 +122,35 @@ pub fn alarms(timings: &[Timing], limit_ms: u64, callers: &[String]) -> Vec<Stri
         .collect()
 }
 
-/// Where a probe's time went, for the page: the phases the probe reported (`start` before `begin`,
-/// its own phases, `exit` until the reap) plus `rest`, the time none of them claims.
+/// Where a probe's time went, for the page: the phases the probe reported (`spawn`, `load` and
+/// `config` before `begin`, its own phases, `exit` until the reap) plus `rest`, the time none of
+/// them claims, then the longest of them in words.
 fn breakdown(t: &Timing) -> String {
-    match t.phases.as_deref() {
-        Some(p) => format!("phases {p} rest={}ms", t.millis.saturating_sub(phase_sum(p))),
-        None => "phases unreported".to_string(),
+    let Some(p) = t.phases.as_deref() else { return "phases unreported".to_string() };
+    let rest = t.millis.saturating_sub(phase_sum(p));
+    let named = p.split(',').filter_map(|x| x.split_once('=')).filter_map(|(n, ms)| Some((n, ms.parse::<u64>().ok()?)));
+    let mut slowest = ("rest", rest);
+    for (n, ms) in named {
+        if ms > slowest.1 {
+            slowest = (n, ms);
+        }
     }
+    format!("phases {p} rest={rest}ms; slowest: {} {}ms{}", slowest.0, slowest.1, describe_phase(slowest.0))
+}
+
+fn describe_phase(name: &str) -> String {
+    let words = match name {
+        "spawn" => "perf-watch forking the probe",
+        "load" => "exec, dynamic link, runtime init",
+        "config" => "config resolve before begin",
+        "reply" => "store connect and answer",
+        "client" => "the probe's own work after begin",
+        "push" => "metrics push",
+        "exit" => "exit to reap",
+        "rest" => "unclaimed",
+        _ => return String::new(),
+    };
+    format!(" ({words})")
 }
 
 fn phase_sum(phases: &str) -> u64 {
@@ -473,8 +495,8 @@ mod tests {
     #[test]
     fn the_page_carries_the_probes_breakdown_slow_or_unrunnable() {
         let t = |millis, error: Option<&str>| Timing { name: "claim-check".into(), millis, micros: millis * 1000, error: error.map(String::from), phases: Some("store=30,push=2000".into()), timed_out_ms: None };
-        assert_eq!(alarms(&[t(2100, None)], 500, &[]), vec!["PERF SLOW claim-check 2100ms (limit 500ms) phases store=30,push=2000 rest=70ms; top callers: unknown"]);
-        assert_eq!(alarms(&[t(5000, Some("x exceeded its 5s deadline"))], 500, &[]), vec!["PERF UNRUNNABLE claim-check: x exceeded its 5s deadline (after 5000ms; phases store=30,push=2000 rest=2970ms)"]);
+        assert_eq!(alarms(&[t(2100, None)], 500, &[]), vec!["PERF SLOW claim-check 2100ms (limit 500ms) phases store=30,push=2000 rest=70ms; slowest: push 2000ms (metrics push); top callers: unknown"]);
+        assert_eq!(alarms(&[t(5000, Some("x exceeded its 5s deadline"))], 500, &[]), vec!["PERF UNRUNNABLE claim-check: x exceeded its 5s deadline (after 5000ms; phases store=30,push=2000 rest=2970ms; slowest: rest 2970ms (unclaimed))"]);
         let bare = Timing { phases: None, ..t(900, None) };
         assert!(alarms(&[bare], 500, &[])[0].contains("phases unreported"));
     }
@@ -554,6 +576,14 @@ mod tests {
         let prev = counts(&[("gh-intake/show", 12_430), ("batcher/rounds", 100), ("idle/x", 5)]);
         let cur = counts(&[("gh-intake/show", 12_430), ("batcher/rounds", 126), ("idle/x", 5)]);
         assert_eq!(top_callers(&prev, 1000, &cur, 1060, 3), vec!["batcher/rounds=26.0/min".to_string()]);
+    }
+
+    #[test]
+    fn a_slow_page_names_its_slowest_phase_in_words() {
+        let slow = timing(1400, Some("spawn=20,load=1290,config=55,reply=28"), None);
+        let slow = Timing { error: None, ..slow };
+        let page = &alarms(&[slow], 500, &[])[0];
+        assert!(page.contains("slowest: load 1290ms (exec, dynamic link, runtime init)"), "{page}");
     }
 
     #[test]
@@ -660,7 +690,7 @@ mod tests {
     fn a_slow_answer_after_a_timeout_pages_slow_with_its_phases() {
         let a = settled(1000, &Health::default(), timing(5000, None, Some(5000)));
         let b = settled(1300, &a.health, timing(900, Some("store=870"), None));
-        assert_eq!(b.lines, vec!["PERF SLOW claim-check 900ms (limit 500ms) phases store=870 rest=30ms; top callers: unknown".to_string()]);
+        assert_eq!(b.lines, vec!["PERF SLOW claim-check 900ms (limit 500ms) phases store=870 rest=30ms; slowest: store 870ms; top callers: unknown".to_string()]);
         assert!(b.health.timed_out.is_empty());
     }
 

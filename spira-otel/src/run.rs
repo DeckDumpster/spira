@@ -15,7 +15,7 @@ pub const EVENTS: &str = "spira_component_events";
 pub const DEADLINE: Duration = Duration::from_millis(250);
 /// Set by a caller timing this process (perf-watch): the phases are printed to stderr at exit.
 pub const PHASES_ENV: &str = "PERFWATCH_PHASES";
-/// Set by perf-watch on the probe: its start in epoch microseconds, so `begin` can record `start`.
+/// Set by perf-watch on the probe: its start in epoch microseconds, so `begin` can record `spawn`, `load` and `config`.
 pub const T0_ENV: &str = "PERFWATCH_T0_US";
 pub const PHASES_PREFIX: &str = "PERFWATCH_PHASES=";
 /// Printed on its own stderr line after the phases: the instant the probe wrote them, epoch microseconds.
@@ -76,12 +76,43 @@ pub fn phase(name: &str, millis: u64) {
     }
 }
 
-/// Records `start`: the time from the caller's clock stamp to `begin`, both epoch microseconds.
-fn record_start(now_us: u64, t0_us: u64) {
-    phase("start", now_us.saturating_sub(t0_us) / 1000);
+/// The phases before `begin`, from epoch microseconds: `spawn` (caller's stamp to the kernel's
+/// process start), `load` (process start to `main`) and `config` (`main` to now). Without a
+/// process start the first two cannot be told apart and are one `prelaunch`.
+fn pre_begin_phases(t0_us: u64, proc_start_us: Option<u64>, main_us: u64, now_us: u64) -> Vec<(String, u64)> {
+    let ms = |from: u64, to: u64| to.saturating_sub(from) / 1000;
+    let config = ("config".to_string(), ms(main_us, now_us));
+    match proc_start_us {
+        Some(ps) => {
+            let ps = ps.max(t0_us);
+            vec![("spawn".into(), ms(t0_us, ps)), ("load".into(), ms(ps, main_us)), config]
+        }
+        None => vec![("prelaunch".into(), ms(t0_us, main_us)), config],
+    }
 }
 
-/// Writes the phases line a timed run prints at exit: `start` and the recorded phases, then
+/// Phases that happen before `begin`; the time since `begin` leaves them out.
+const PRE_BEGIN: [&str; 4] = ["spawn", "load", "config", "prelaunch"];
+
+/// This process's kernel start in epoch microseconds, or `None` when `/proc` cannot say.
+fn kernel_start_us() -> Option<u64> {
+    let stat = std::fs::read_to_string("/proc/self/stat").ok()?;
+    let system = std::fs::read_to_string("/proc/stat").ok()?;
+    let ticks = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
+    proc_start_epoch_us(&stat, &system, u64::try_from(ticks).ok()?)
+}
+
+fn proc_start_epoch_us(self_stat: &str, proc_stat: &str, ticks_per_sec: u64) -> Option<u64> {
+    if ticks_per_sec == 0 {
+        return None;
+    }
+    let after_comm = &self_stat[self_stat.rfind(')')? + 1..];
+    let start_ticks: u64 = after_comm.split_whitespace().nth(19)?.parse().ok()?;
+    let btime: u64 = proc_stat.lines().find_map(|l| l.strip_prefix("btime "))?.trim().parse().ok()?;
+    Some(btime * 1_000_000 + start_ticks * 1_000_000 / ticks_per_sec)
+}
+
+/// Writes the phases line a timed run prints at exit: the pre-`begin` phases and the recorded phases, then
 /// `client` (the time since `begin` they and the push leave unaccounted), then `push` when made;
 /// a second line stamps the end, so the caller can time the exit.
 fn write_phases(out: &mut impl std::io::Write, enabled: bool, push: Option<u64>, since_begin_ms: u64, end_us: u64) {
@@ -89,7 +120,7 @@ fn write_phases(out: &mut impl std::io::Write, enabled: bool, push: Option<u64>,
         return;
     }
     let mut phases = PHASES.lock().map(|p| p.clone()).unwrap_or_default();
-    let recorded: u64 = phases.iter().filter(|(n, _)| n != "start").map(|(_, ms)| ms).sum();
+    let recorded: u64 = phases.iter().filter(|(n, _)| !PRE_BEGIN.contains(&n.as_str())).map(|(_, ms)| ms).sum();
     phases.push(("client".to_string(), since_begin_ms.saturating_sub(recorded).saturating_sub(push.unwrap_or(0))));
     if let Some(ms) = push {
         phases.push(("push".to_string(), ms));
@@ -134,15 +165,25 @@ extern "C" fn at_exit() {
 /// Starts this process's run for `component`; `endpoint` is `SPIRA_METRICS_ENDPOINT` as the
 /// caller resolved it, and `None` disables the push.
 pub fn begin(component: &str, endpoint: Option<&str>) {
+    begin_with(component, || endpoint.map(str::to_string));
+}
+
+/// `begin` for a caller that resolves the endpoint itself: `endpoint` runs after `main`'s entry
+/// is stamped, so the time it takes is the `config` phase.
+pub fn begin_with(component: &str, endpoint: impl FnOnce() -> Option<String>) {
+    let main_us = epoch_micros();
     static ARMED: std::sync::Once = std::sync::Once::new();
     ARMED.call_once(|| {
         unsafe { atexit(at_exit) };
     });
-    let sink = MetricsSink::new(endpoint, &format!("spira-{component}"), DEADLINE);
+    let endpoint = endpoint();
+    let sink = MetricsSink::new(endpoint.as_deref(), &format!("spira-{component}"), DEADLINE);
     if phases_enabled() {
         let t0 = std::env::var(T0_ENV).ok().and_then(|v| v.trim().parse::<u64>().ok());
         if let Some(t0) = t0 {
-            record_start(epoch_micros(), t0);
+            for (n, ms) in pre_begin_phases(t0, kernel_start_us(), main_us, epoch_micros()) {
+                phase(&n, ms);
+            }
         }
     }
     if let Ok(mut g) = CURRENT.lock() {
@@ -256,11 +297,13 @@ mod tests {
 
     static PHASES_TESTS: Mutex<()> = Mutex::new(());
 
-    fn line(start: Option<(u64, u64)>, recorded: &[(&str, u64)], push: u64, since_begin: u64) -> String {
+    fn line(start: Option<(u64, Option<u64>, u64, u64)>, recorded: &[(&str, u64)], push: u64, since_begin: u64) -> String {
         let _serial = PHASES_TESTS.lock().unwrap_or_else(|e| e.into_inner());
         *PHASES.lock().unwrap() = Vec::new();
-        if let Some((now, t0)) = start {
-            record_start(now, t0);
+        if let Some((t0, ps, main, now)) = start {
+            for (n, ms) in pre_begin_phases(t0, ps, main, now) {
+                phase(&n, ms);
+            }
         }
         for (n, ms) in recorded {
             phase(n, *ms);
@@ -273,7 +316,27 @@ mod tests {
 
     #[test]
     fn the_line_accounts_for_start_and_the_clients_own_time() {
-        assert_eq!(line(Some((1_600_000, 1_000_000)), &[("reply", 30)], 2, 50), "PERFWATCH_PHASES=start=600,reply=30,client=18,push=2\nPERFWATCH_END_US=1\n");
+        assert_eq!(line(Some((1_000_000, Some(1_100_000), 1_600_000, 1_610_000)), &[("reply", 30)], 2, 50), "PERFWATCH_PHASES=spawn=100,load=500,config=10,reply=30,client=18,push=2\nPERFWATCH_END_US=1\n");
+    }
+
+    #[test]
+    fn the_pre_begin_time_is_split_into_spawn_load_and_config() {
+        let got = line(Some((1_000_000, Some(1_100_000), 1_600_000, 1_610_000)), &[], 0, 10);
+        assert!(got.starts_with("PERFWATCH_PHASES=spawn=100,load=500,config=10,"), "{got}");
+    }
+
+    #[test]
+    fn without_a_kernel_start_the_pre_begin_time_is_prelaunch_and_config() {
+        let got = line(Some((1_000_000, None, 1_600_000, 1_610_000)), &[], 0, 10);
+        assert!(got.starts_with("PERFWATCH_PHASES=prelaunch=600,config=10,"), "{got}");
+    }
+
+    #[test]
+    fn the_kernel_start_is_boot_time_plus_the_starttime_ticks_past_a_command_with_parens() {
+        let stat = "42 (a) b (c)) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 1500 20 21";
+        assert_eq!(proc_start_epoch_us(stat, "cpu 1\nbtime 1000\n", 100), Some(1_000_000_000 + 15_000_000));
+        assert_eq!(proc_start_epoch_us(stat, "cpu 1\n", 100), None);
+        assert_eq!(proc_start_epoch_us("garbage", "btime 1\n", 100), None);
     }
 
     #[test]
