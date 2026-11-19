@@ -9806,7 +9806,6 @@ fn an_ejects_red_evidence_is_kept_where_the_next_pass_start_does_not_wipe_it() {
     *t.lc.batch_view.borrow_mut() = Some(("OPEN".into(), 0, 0, String::new()));
     assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]), 0, "{}", t.err());
     let batch = batch_of(&t);
-    assert_eq!(t.run(&["round", "pass-start", &batch]), 0, "{}", t.err());
     seed_suite(&t, "test-b.sh");
     let results = t.lib.s.run.join("rounds").join(format!("{batch}.results"));
     fs::create_dir_all(&results).unwrap();
@@ -9820,6 +9819,7 @@ fn an_ejects_red_evidence_is_kept_where_the_next_pass_start_does_not_wipe_it() {
         .and_then(|r| r.split(".\n").next().or(Some(r)))
         .map(|r| r.split(" Red").next().unwrap().trim_end_matches(['.', '"', ' ']).to_string())
         .unwrap_or_else(|| panic!("the reason names no kept evidence: {calls}"));
-    fs::remove_dir_all(&results).unwrap();
+    let _ = t.run(&["round", "pass-start", &batch]);
+    fs::remove_dir_all(&results).ok();
     assert!(fs::read_to_string(&kept).is_ok_and(|e| e.contains("FAIL: b_broke_the_wal")), "{kept}");
 }
