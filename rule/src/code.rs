@@ -626,7 +626,7 @@ pub fn book_drifted(repo_path: &Path, base: &str, toc: &[Part], pointers: &Point
     let mut files = generate(toc, pointers, |slug| book.get(slug).cloned());
     files.insert("toc.toml".to_string(), render_toc(toc));
     files.insert(POINTERS_FILE.to_string(), render_pointers(pointers));
-    files.iter().any(|(f, want)| git_in(repo_path, &["show", &format!("{rev}:law/{f}")]).map_or(true, |have| have.trim_end() != want.trim_end()))
+    files.iter().any(|(f, want)| git_in(repo_path, &["cat-file", "blob", &format!("{rev}:law/{f}")]).map_or(true, |have| have.trim_end() != want.trim_end()))
 }
 
 /// `toc` plus every slug that a branch not yet on `base` has filed in a Part (a `law/` branch,
