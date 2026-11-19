@@ -74,7 +74,11 @@ export SPIRA_DB="$TMP/db"
 tl_config SPIRA_BD="$SPIRA_BD" SPIRA_DB="$SPIRA_DB"
 
 newest_ask() { ls -t "$SPIRA_MAIL"/operator/new/* "$SPIRA_MAIL"/concierge/new/* 2>/dev/null | head -1; }
-unread() { echo $(( $(mail count operator 2>/dev/null) + $(mail count concierge 2>/dev/null) )); }
+unread() {
+    local o c
+    o="$(mail count operator 2>/dev/null)"; c="$(mail count concierge 2>/dev/null)"
+    echo $(( ${o:-0} + ${c:-0} ))
+}
 
 echo
 echo "watchd: notify's escalate/ask (question)"
