@@ -96,7 +96,7 @@ struct Args {
     all: Vec<(String, String)>,
 }
 
-const BOOL_FLAGS: &[&str] = &["--json", "--top-tier", "--count", "--dry-run", "--apply", "--raw", "--express"];
+const BOOL_FLAGS: &[&str] = &["--json", "--top-tier", "--count", "--dry-run", "--apply", "--raw", "--express", "--dropped"];
 
 impl Args {
     fn parse(raw: &[String]) -> Result<Args, String> {

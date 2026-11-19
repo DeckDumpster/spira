@@ -89,6 +89,18 @@ fn express_is_a_bool_flag_and_never_swallows_what_follows() {
     assert_eq!(a.pos, vec!["labels".to_string(), String::new()]);
 }
 
+/// The argv a dwarf's claim seam sends (`dwarf/src/seam.rs`): `--dropped` last, with nothing after
+/// it. Release 88977d0bc1 answered "--dropped needs a value" to every claim.
+#[test]
+fn dropped_is_a_bool_flag_as_the_claim_seam_sends_it() {
+    let raw: Vec<String> = ["builder", "--json", "--dropped"].iter().map(|s| s.to_string()).collect();
+    let a = Args::parse(&raw).expect("--dropped takes no value");
+    assert!(a.has("--dropped") && a.has("--json"));
+    assert_eq!(a.pos, vec!["builder".to_string()]);
+    let raw: Vec<String> = ["builder", "--json", "--dropped", "--express"].iter().map(|s| s.to_string()).collect();
+    assert!(Args::parse(&raw).expect("--dropped never swallows --express").has("--express"));
+}
+
 // ---- readiness is published for every live state ----------------------------------------
 
 mod published {
