@@ -213,7 +213,7 @@ fn runner_touchers_match_the_directories_and_not_their_lookalikes() {
     assert_eq!(ids, ["a", "b"]);
 }
 
-const DUP_KEY: &str = "error: duplicate key\n  --> spira-lc/Cargo.toml:44:1\n   |\n44 | libc = \"0.2\"\n   | ^^^^\nerror: failed to load manifest for workspace member `/home/ryan/spira/run/host-round/round-work/loom`\n";
+const DUP_KEY: &str = "error: duplicate key\n  --> spira-lc/Cargo.toml:44:1\n   |\n44 | libc = \"0.2\"\n   | ^^^^\nerror: failed to load manifest for workspace member `/work/loom`\n";
 
 #[test]
 fn a_manifest_error_at_a_file_two_members_touch_ejects_the_later_one() {
