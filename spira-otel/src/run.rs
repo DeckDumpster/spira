@@ -94,22 +94,27 @@ fn pre_begin_phases(t0_us: u64, proc_start_us: Option<u64>, main_us: u64, now_us
 /// Phases that happen before `begin`; the time since `begin` leaves them out.
 const PRE_BEGIN: [&str; 4] = ["spawn", "load", "config", "prelaunch"];
 
-/// This process's kernel start in epoch microseconds, or `None` when `/proc` cannot say.
+/// This process's kernel start in epoch microseconds, or `None` when `/proc` cannot say. Boot
+/// time is read as the realtime-minus-boottime difference: `/proc/stat` `btime` is whole seconds.
 fn kernel_start_us() -> Option<u64> {
     let stat = std::fs::read_to_string(std::path::Path::new(system_paths::PROC_SELF).join("stat")).ok()?;
-    let system = std::fs::read_to_string(std::path::Path::new(system_paths::PROC).join("stat")).ok()?;
     let ticks = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
-    proc_start_epoch_us(&stat, &system, u64::try_from(ticks).ok()?)
+    let now = epoch_micros();
+    let mut boot = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    if unsafe { libc::clock_gettime(libc::CLOCK_BOOTTIME, &mut boot) } != 0 {
+        return None;
+    }
+    let since_boot_us = u64::try_from(boot.tv_sec).ok()? * 1_000_000 + u64::try_from(boot.tv_nsec).ok()? / 1000;
+    proc_start_epoch_us(&stat, now.checked_sub(since_boot_us)?, u64::try_from(ticks).ok()?)
 }
 
-fn proc_start_epoch_us(self_stat: &str, proc_stat: &str, ticks_per_sec: u64) -> Option<u64> {
+fn proc_start_epoch_us(self_stat: &str, boot_epoch_us: u64, ticks_per_sec: u64) -> Option<u64> {
     if ticks_per_sec == 0 {
         return None;
     }
     let after_comm = &self_stat[self_stat.rfind(')')? + 1..];
     let start_ticks: u64 = after_comm.split_whitespace().nth(19)?.parse().ok()?;
-    let btime: u64 = proc_stat.lines().find_map(|l| l.strip_prefix("btime "))?.trim().parse().ok()?;
-    Some(btime * 1_000_000 + start_ticks * 1_000_000 / ticks_per_sec)
+    Some(boot_epoch_us + start_ticks * 1_000_000 / ticks_per_sec)
 }
 
 /// Writes the phases line a timed run prints at exit: the pre-`begin` phases and the recorded phases, then
@@ -334,9 +339,9 @@ mod tests {
     #[test]
     fn the_kernel_start_is_boot_time_plus_the_starttime_ticks_past_a_command_with_parens() {
         let stat = "42 (a) b (c)) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 1500 20 21";
-        assert_eq!(proc_start_epoch_us(stat, "cpu 1\nbtime 1000\n", 100), Some(1_000_000_000 + 15_000_000));
-        assert_eq!(proc_start_epoch_us(stat, "cpu 1\n", 100), None);
-        assert_eq!(proc_start_epoch_us("garbage", "btime 1\n", 100), None);
+        assert_eq!(proc_start_epoch_us(stat, 1_000_000_000 + 250_000, 100), Some(1_000_000_000 + 250_000 + 15_000_000), "a fractional boot time is kept");
+        assert_eq!(proc_start_epoch_us("garbage", 1, 100), None);
+        assert_eq!(proc_start_epoch_us(stat, 1, 0), None);
     }
 
     #[test]
