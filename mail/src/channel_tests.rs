@@ -147,6 +147,15 @@ fn archive_by_hand_refuses_without_a_why_and_moves_nothing() {
 
 // covers: UC-operator-channel-01
 #[test]
+fn a_hand_action_is_recorded_under_the_sessions_sender_else_the_operator() {
+    let (_t, mut e) = fixture("mail-actor");
+    assert_eq!(cmds::actor(&e), "op");
+    e.mail_from = Some("Dwarf <dwarf@spira>".into());
+    assert_eq!(cmds::actor(&e), "dwarf");
+}
+
+// covers: UC-operator-channel-01
+#[test]
 fn a_sent_alarm_carries_its_condition_header() {
     let (_t, mut e) = fixture("mail-condition-header");
     e.condition = Some("mail-health:concierge".into());

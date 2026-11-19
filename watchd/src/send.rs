@@ -129,6 +129,21 @@ mod tests {
     }
 
     #[test]
+    fn the_backlog_alarm_carries_its_condition_and_another_alert_carries_none() {
+        let tmp = testkit::TempDir::new("watchd-alert-condition");
+        let root = tmp.path().to_path_buf();
+        std::fs::create_dir_all(root.join("run")).unwrap();
+        let sent = |subject: &str| {
+            alert_operator(&NoStore::default(), &env(&root), subject, "## Note\nx\n").unwrap();
+            let mut files: Vec<_> = std::fs::read_dir(root.join("mail/operator/new")).unwrap().flatten().collect();
+            files.sort_by_key(|f| f.metadata().unwrap().modified().unwrap());
+            std::fs::read_to_string(files.last().unwrap().path()).unwrap()
+        };
+        assert!(sent(crate::notify::BACKLOG_SUBJECT).contains("\nX-Spira-Condition: watchd:notify\n"));
+        assert!(!sent("some other alert").contains("X-Spira-Condition"));
+    }
+
+    #[test]
     fn a_concierge_letter_lands_in_the_concierge_maildir_from_watchd() {
         let tmp = testkit::TempDir::new("watchd-send");
         let root = tmp.path().to_path_buf();

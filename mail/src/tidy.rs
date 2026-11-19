@@ -122,8 +122,12 @@ pub fn condition_raised(key: &str) -> bool {
     };
     let Ok(program) = spira_config::release_env::tool(tool) else { return true };
     let Ok(envs) = spira_config::release_env::child_path_env_for_process() else { return true };
+    ask_owner(&program, &envs, detail)
+}
+
+fn ask_owner(program: &str, envs: &[(String, String)], detail: &str) -> bool {
     let null = std::process::Stdio::null;
-    spira_config::bounded::bounded(program).args(["condition", detail]).envs(envs).stdin(null()).stdout(null()).stderr(null()).status().map_or(true, |s| s.code() != Some(CONDITION_ENDED))
+    spira_config::bounded::bounded(program).args(["condition", detail]).envs(envs.iter().map(|(k, v)| (k, v))).stdin(null()).stdout(null()).stderr(null()).status().map_or(true, |s| s.code() != Some(CONDITION_ENDED))
 }
 
 /// Moves each of `paths` into `<mail_root>/archive/cur`, creating the archive mailbox first. A
@@ -461,6 +465,20 @@ mod tests {
         seed_with(&d.path().join("operator"), "new", "a", "concierge is not reading its mail", "X-Spira-Condition: mail-health:concierge\n", 60);
         let report = tidy_asking(&empty_store(), true, d.path(), "operator", "asks", 86_400, false, &mut |_| panic!("an unread alarm is not asked about")).unwrap();
         assert_eq!((report.archived, report.kept), (0, 1));
+    }
+
+    #[test]
+    fn the_owners_exit_status_decides_ended_only_for_the_ended_code() {
+        let d = testkit::TempDir::new("mail-tidy-owner");
+        let owner = |name: &str, code: i32| {
+            let p = d.path().join(name);
+            testkit::write_exe(&p, &format!("#!/bin/sh\n[ \"$1\" = condition ] && [ \"$2\" = the-detail ] && exit {code}\nexit 99\n"));
+            p.to_string_lossy().into_owned()
+        };
+        assert!(!ask_owner(&owner("ended", CONDITION_ENDED), &[], "the-detail"), "exit 10 is ended");
+        assert!(ask_owner(&owner("standing", 0), &[], "the-detail"), "exit 0 is raised");
+        assert!(ask_owner(&owner("unsure", 1), &[], "the-detail"), "any other exit is raised");
+        assert!(ask_owner(&d.path().join("missing").to_string_lossy(), &[], "the-detail"), "a tool that cannot run is raised");
     }
 
     #[test]
