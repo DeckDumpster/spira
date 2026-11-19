@@ -2,13 +2,12 @@
 //! spira/slay.sh (bash).
 //!
 //! The decisions, the arguments and every refusal are `spira_world::slay`, behind ports; this
-//! file is the real adapters: the lifecycle service, `bdq`, git and `hel`'s destruction
+//! file is the real adapters: the lifecycle service and its content door, git and `hel`'s destruction
 //! chokepoint (the one permitted door onto `git worktree remove` / `git branch -D`), and the
 //! dwarf's own pidfiles and unit.
 
 use std::env;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
 
 use hel::ports::World;
 use spira_config::admission::RealProcs;
@@ -16,8 +15,6 @@ use spira_store::lc_call::LcClient;
 use spira_world::slay::gitops;
 use spira_world::slay::{self, BeadView, Beads, Ctx, Dwarf, Git, Lifecycle, Parsed, Ports, SalvageFailed, Stopped};
 use spira_world::{proc, sysctl};
-
-const BEAD_DEADLINE_SECS: &str = "30";
 
 fn fatal(msg: &str) -> ! {
     eprintln!("{msg}");
@@ -80,22 +77,20 @@ impl Lifecycle for RealLc {
 }
 
 struct RealBeads {
-    bdq: String,
     lc: Result<LcClient, String>,
     registry: spira_config::repos::Registry,
 }
 
 impl RealBeads {
-    fn bdq(&self, args: &[&str]) -> Option<String> {
-        // FORK-EDGE: content store — bdq is the store's one chokepoint, with its own fencing.
-        let mut cmd = spira_config::bounded::bounded_for(&self.bdq, BEAD_DEADLINE_SECS);
-        cmd.args(args).stdin(Stdio::null()).stderr(Stdio::null());
-        match spira_config::release_env::child_path_env_for_process() {
-            Ok(e) => cmd.envs(e),
-            Err(_) => return None,
-        };
-        let o = cmd.output().ok()?;
-        o.status.success().then(|| String::from_utf8_lossy(&o.stdout).into_owned())
+    fn content(&self, args: &[&str], body: Option<&str>) -> Option<String> {
+        let lc = self.lc.as_ref().ok()?;
+        let argv: Vec<&str> = std::iter::once("content").chain(args.iter().copied()).collect();
+        let r = match body {
+            Some(b) => lc.call_stdin(&argv, b),
+            None => lc.call(&argv),
+        }
+        .ok()?;
+        (r.code == 0).then_some(r.out)
     }
 }
 
@@ -109,18 +104,18 @@ impl Beads for RealBeads {
         Some(BeadView { id, labels })
     }
     fn clear_assignee(&self, id: &str) {
-        if self.bdq(&["update", id, "--assignee", "", "--force"]).is_none() {
-            let _ = self.bdq(&["update", id, "--assignee", ""]);
+        if self.content(&["update", id, "--assignee", "", "--force"], None).is_none() {
+            let _ = self.content(&["update", id, "--assignee", ""], None);
         }
     }
     fn label_add(&self, id: &str, label: &str) {
-        let _ = self.bdq(&["label", "add", id, label]);
+        let _ = self.content(&["label", "add", id, label], None);
     }
     fn label_remove(&self, id: &str, label: &str) {
-        let _ = self.bdq(&["label", "remove", id, label]);
+        let _ = self.content(&["label", "remove", id, label], None);
     }
     fn note(&self, id: &str, text: &str) {
-        let _ = self.bdq(&["note", id, text]);
+        let _ = self.content(&["note", id, "--stdin"], Some(text));
     }
     fn repo_root_of(&self, id: &str) -> Option<PathBuf> {
         let stated = self.lc.as_ref().ok().and_then(|c| c.call(&["content", "state", id, "repo"]).ok()).map(|r| r.out.trim().to_string()).unwrap_or_default();
@@ -308,12 +303,11 @@ fn main() {
     let submitted_label = spira_config::process::cfg("SPIRA_SUBMITTED_LABEL").unwrap_or_else(|e| fatal(&format!("slay.sh: FATAL: {e}")));
     let home = spira_world::locate_home().unwrap_or_else(|| fatal("slay.sh: cannot locate lib.sh — the bead's claim, note and work were NOT touched"));
     let store = spira_config::process::cfg("SPIRA_DB").unwrap_or_else(|e| format!("(unresolved: {e})"));
-    let bdq = spira_config::release_env::tool("bdq").unwrap_or_else(|e| fatal(&format!("slay.sh: FATAL: {e}")));
     let world = hel::verbs::real_world(None).unwrap_or_else(|e| fatal(&format!("slay.sh: FATAL: {e}")));
     let registry = spira_config::repos::Registry::from_env(env::vars().collect(), &home);
 
     let git = RealGit { world };
-    let beads = RealBeads { bdq, lc: LcClient::configured(), registry };
+    let beads = RealBeads { lc: LcClient::configured(), registry };
     let lc = RealLc(LcClient::configured());
     let dwarf = RealDwarf { run: run.clone(), lc: RealLc(LcClient::configured()) };
     let ports = Ports { git: &git, beads: &beads, lc: &lc, dwarf: &dwarf, procs: &RealProcs };
@@ -330,4 +324,22 @@ fn main() {
         spira_otel::oneshot::end(0);
     }
     spira_otel::oneshot::exit(report.code);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use spira_store::lc_call::fake::Content;
+    use std::sync::Arc;
+
+    #[test]
+    fn slays_bead_writes_are_content_requests() {
+        let door = Arc::new(Content::new(vec![]));
+        let beads = RealBeads { lc: Ok(LcClient::over(door.clone(), true)), registry: spira_config::repos::Registry::from_env(Default::default(), Path::new("/nonexistent")) };
+        beads.clear_assignee("sp-a");
+        beads.note("sp-a", "slain");
+        beads.label_remove("sp-a", "x");
+        let seen: Vec<String> = door.requests().iter().map(|r| r.join(" ")).collect();
+        assert_eq!(seen, ["content update sp-a --assignee  --force", "content note sp-a --stdin", "content label remove sp-a x"]);
+    }
 }

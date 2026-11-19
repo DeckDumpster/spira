@@ -62,7 +62,7 @@ fn main() {
     };
 
     spira_otel::run::operation(&cmd);
-    let bd = RealBd { bdq: declared(spira_config::release_env::tool("bdq")) };
+    let bd = RealBd { lc: spira_store::lc_call::LcClient::configured() };
 
     let home = locate_home(std::env::var("SPIRA_HOME").ok().as_deref(), std::env::var(spira_config::RELEASE_ENV).ok().as_deref());
 
