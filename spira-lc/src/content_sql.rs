@@ -601,8 +601,13 @@ pub fn answer(sql: &dyn Sql, db: &str, args: &[String]) -> Res<String> {
         }
         Read::Search { query, all, limit } => {
             let l = List { all, limit, ..List::default() };
-            let q = escape(&query);
-            let hit = ["id", "title", "description", "notes"].iter().map(|c| format!("LOCATE(LOWER('{q}'), LOWER({c})) > 0")).collect::<Vec<_>>().join(" OR ");
+            let words: Vec<&str> = query.split_whitespace().collect();
+            let words = if words.is_empty() { vec![""] } else { words };
+            let hit = words.iter().map(|w| {
+                let q = escape(w);
+                let any = ["id", "title", "description", "notes"].iter().map(|c| format!("LOCATE(LOWER('{q}'), LOWER({c})) > 0")).collect::<Vec<_>>().join(" OR ");
+                format!("({any})")
+            }).collect::<Vec<_>>().join(" AND ");
             let issues = sql.rows(&format!("SELECT {} FROM {db}.issues WHERE {} AND ({hit}){}", issue_columns(), l.where_clause(db), List::order(limit)))?;
             Ok(array(fill(sql, db, &issues, true)?))
         }
