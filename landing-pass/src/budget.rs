@@ -11,25 +11,14 @@ pub fn gate_fits(maxsec: i64, pass_start: u64, reserve: i64, now: u64) -> bool {
     maxsec - spent >= reserve
 }
 
-/// The wait handed to gate.sh as SPIRA_GATE_LOCK_WAIT, and a log line when the pass budget
-/// capped it. An explicit setting is honoured unchanged.
-pub fn gate_lock_wait(gate_timeout: i64, maxsec: i64, pass_start: u64, explicit: Option<&str>, now: u64) -> (String, Option<String>) {
-    if let Some(e) = explicit.filter(|e| !e.is_empty()) {
-        return (e.to_string(), None);
+/// The wait handed to gate.sh as SPIRA_GATE_LOCK_WAIT: an explicit setting unchanged, else twice
+/// the gate timeout. Never shortened by the pass budget: a gate admitted past the budget (a
+/// base fix) would get a zero wait and end NO_VERDICT lock-timeout on its first busy tree.
+pub fn gate_lock_wait(gate_timeout: i64, explicit: Option<&str>) -> String {
+    match explicit.filter(|e| !e.is_empty()) {
+        Some(e) => e.to_string(),
+        None => (gate_timeout * 2).to_string(),
     }
-    let ideal: i64 = gate_timeout * 2;
-    if maxsec > 0 {
-        let remaining = maxsec - (now as i64 - pass_start as i64);
-        if remaining < ideal {
-            return (
-                remaining.to_string(),
-                Some(format!(
-                    "landing: gate lock wait capped at {remaining}s by pass budget (ideal {ideal}s); rc=75 should be read as contention"
-                )),
-            );
-        }
-    }
-    (ideal.to_string(), None)
 }
 
 #[cfg(test)]
@@ -44,11 +33,9 @@ mod tests {
     }
 
     #[test]
-    fn lock_wait_is_twice_the_gate_timeout_and_capped() {
-        assert_eq!(gate_lock_wait(700, 0, 0, None, 5).0, "1400");
-        assert_eq!(gate_lock_wait(700, 3600, 0, Some("7"), 3590), ("7".into(), None));
-        let (w, note) = gate_lock_wait(700, 3600, 0, None, 3550);
-        assert_eq!(w, "50");
-        assert!(note.unwrap().contains("capped at 50s"));
+    fn lock_wait_is_twice_the_gate_timeout_and_an_exhausted_pass_budget_does_not_shorten_it() {
+        assert_eq!(gate_lock_wait(700, None), "1400");
+        assert_eq!(gate_lock_wait(700, Some("7")), "7");
+        assert_eq!(gate_lock_wait(700, Some("")), "1400");
     }
 }
