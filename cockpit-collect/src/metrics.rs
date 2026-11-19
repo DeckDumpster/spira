@@ -1,4 +1,4 @@
-//! The HEL / SELF / dwarf-ledger keys: two log files in, flat `KEY=value` pairs out. Pure
+//! The reap-log and dwarf-ledger keys: two log files in, flat `KEY=value` pairs out. Pure
 //! over its inputs so fixtures can drive it; a source that cannot be read renders `?` for the
 //! keys that depend on it, never 0.
 
@@ -16,16 +16,6 @@ fn token_split(line: &str) -> Option<(&str, &str)> {
     Some((&line[..end], &line[end + 1..]))
 }
 
-fn pass_ts(line: &str) -> Option<&str> {
-    let (ts, rest) = token_split(line)?;
-    rest.starts_with("spira: state: ").then_some(ts)
-}
-
-fn act(line: &str) -> Option<(&str, &str)> {
-    let (ts, rest) = token_split(line)?;
-    rest.strip_prefix("spira: ACT ").map(|t| (ts, t))
-}
-
 fn ledger(line: &str) -> Option<(&str, &str, &str, &str)> {
     let (ts, rest) = token_split(line)?;
     let (event, rest) = ["born", "awake", "done"]
@@ -41,103 +31,6 @@ fn ledger(line: &str) -> Option<(&str, &str, &str, &str)> {
         None if end == rest.len() => Some((ts, event, name, "")),
         None => None,
     }
-}
-
-fn not_an_event(text: &str) -> bool {
-    if text == "invoked reflection" {
-        return true;
-    }
-    text.strip_prefix("called a ")
-        .and_then(|r| r.strip_suffix(" dwarf"))
-        .is_some_and(|w| !w.is_empty() && !w.contains(char::is_whitespace))
-}
-
-fn digits(s: &str) -> Option<(i64, &str)> {
-    let n = s.bytes().take_while(u8::is_ascii_digit).count();
-    (n > 0).then(|| (s[..n].parse().unwrap_or(i64::MAX), &s[n..]))
-}
-
-fn counts_at(s: &str) -> Option<(i64, i64, i64)> {
-    let (o, s) = digits(s.strip_prefix("open=")?)?;
-    let (r, s) = digits(s.strip_prefix(" plan_ready=")?)?;
-    let (i, _) = digits(s.strip_prefix(" in_progress=")?)?;
-    Some((o, r, i))
-}
-
-/// open work, nothing ready, nothing running — CHECK 8's precondition.
-fn starved(line: &str) -> bool {
-    let mut from = 0;
-    while let Some(i) = line[from..].find("state: ") {
-        let rest = &line[from + i + 7..];
-        let mut tries = vec![rest];
-        if let Some((tok, tail)) = rest.split_once(' ') {
-            let word = tok.split_once('=').map(|(k, _)| k);
-            if word.is_some_and(|k| !k.is_empty() && k.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')) {
-                tries.push(tail);
-            }
-        }
-        if tries.into_iter().filter_map(counts_at).any(|(o, r, ip)| o > 0 && r == 0 && ip == 0) {
-            return true;
-        }
-        from += i + 7;
-    }
-    false
-}
-
-pub fn sentinel_metrics(lines: &[&str], since: i64) -> Keys {
-    let mut starved_n = 0;
-    let mut passes: Vec<Vec<String>> = Vec::new();
-    let mut judged_at: Option<usize> = None;
-    for line in lines {
-        if let Some(ts) = pass_ts(line) {
-            match parse_strict(ts) {
-                Some(t) if t >= since => {
-                    passes.push(Vec::new());
-                    if starved(line) {
-                        starved_n += 1;
-                    }
-                }
-                _ => {
-                    passes.clear();
-                    judged_at = None;
-                    starved_n = 0;
-                }
-            }
-            continue;
-        }
-        if let (Some((_, text)), false) = (act(line), passes.is_empty()) {
-            let text = text.trim().to_string();
-            if text == "invoked reflection" {
-                judged_at = Some(passes.len() - 1);
-            }
-            passes.last_mut().unwrap().push(text);
-        }
-    }
-    let n = passes.len();
-    let acts: usize = passes.iter().map(Vec::len).sum();
-    let mut false_acts = 0;
-    for i in 1..n {
-        let prev: BTreeSet<&String> = passes[i - 1].iter().collect();
-        false_acts += passes[i].iter().filter(|t| !not_an_event(t) && prev.contains(t)).count();
-    }
-    let mut out = Keys::new();
-    out.insert("SP_PASSES".into(), n.to_string());
-    out.insert("SP_ACTS".into(), acts.to_string());
-    out.insert("SP_FALSE_ACTS".into(), false_acts.to_string());
-    out.insert(
-        "SP_FALSE_PER_PASS".into(),
-        if n > 0 { format!("{:.2}", false_acts as f64 / n as f64) } else { "?".into() },
-    );
-    out.insert("SP_STARVED_PASSES".into(), starved_n.to_string());
-    out.insert(
-        "SP_SINCE_JUDGEMENT".into(),
-        match judged_at {
-            None if starved_n == 0 => "n/a".into(),
-            None => format!("NEVER ({starved_n} starved)"),
-            Some(j) => (n - 1 - j).to_string(),
-        },
-    );
-    out
 }
 
 pub fn ledger_metrics(lines: &[&str], since: i64) -> Keys {
@@ -172,130 +65,8 @@ pub fn ledger_metrics(lines: &[&str], since: i64) -> Keys {
     .collect()
 }
 
-pub fn hel_metrics(lines: &[&str], since: i64, now: i64) -> Keys {
-    let (mut sent, mut failed, mut held, mut kept) = (BTreeSet::new(), BTreeSet::new(), BTreeSet::new(), BTreeSet::new());
-    let mut failed_last: Option<i64> = None;
-    let mut cur: Option<i64> = None;
-    for line in lines {
-        if let Some(ts) = pass_ts(line).or_else(|| act(line).map(|(t, _)| t)) {
-            cur = parse_strict(ts);
-        }
-        let Some(c) = cur.filter(|c| *c >= since) else { continue };
-        let t = line.trim();
-        let second = || t.split_whitespace().nth(1).map(str::to_string);
-        if t.starts_with("SENT") {
-            sent.extend(second());
-        } else if t.starts_with("HELD") {
-            held.extend(second());
-        } else if t.starts_with("KEEP") {
-            kept.extend(second());
-        } else if t.starts_with("FAILED") {
-            if let Some(id) = second() {
-                failed.insert(id);
-                failed_last = Some(failed_last.map_or(c, |f| f.max(c)));
-            }
-        }
-    }
-    let age = failed_last.map_or("?".to_string(), |f| ((now - f) / 60).to_string());
-    [
-        ("SP_SENT", sent.len().to_string()),
-        ("SP_SENT_HELD", held.len().to_string()),
-        ("SP_SENT_KEPT", kept.len().to_string()),
-        ("SP_SENT_FAILED", failed.len().to_string()),
-        ("SP_SENT_FAILED_AGE_M", age),
-    ]
-    .into_iter()
-    .map(|(k, v)| (k.to_string(), v))
-    .collect()
-}
-
-/// What is repeating now, and the two regression tripwires, over the short SELF window.
-pub fn self_metrics(sent: &[&str], ledger_lines: &[&str], self_since: i64, now: i64) -> Keys {
-    let mut passes: Vec<(i64, Vec<String>)> = Vec::new();
-    let mut starved_tss: Vec<i64> = Vec::new();
-    let mut in_pass = false;
-    for line in sent {
-        if let Some(ts) = pass_ts(line) {
-            match parse_strict(ts) {
-                Some(t) if t >= self_since => {
-                    passes.push((t, Vec::new()));
-                    in_pass = true;
-                    if starved(line) {
-                        starved_tss.push(t);
-                    }
-                }
-                _ => in_pass = false,
-            }
-            continue;
-        }
-        if let (Some((_, text)), true) = (act(line), in_pass) {
-            let text = text.trim();
-            if !not_an_event(text) {
-                passes.last_mut().unwrap().1.push(text.to_string());
-            }
-        }
-    }
-
-    let mut out = Keys::new();
-    let n = passes.len();
-    let mut repeating: Vec<(usize, i64, String)> = Vec::new();
-    if n >= 2 {
-        let last: BTreeSet<&String> = passes[n - 1].1.iter().collect();
-        for text in last {
-            let mut run = 0;
-            let mut first_ts = passes[n - 1].0;
-            for (ts, acts) in passes.iter().rev() {
-                if !acts.contains(text) {
-                    break;
-                }
-                run += 1;
-                first_ts = *ts;
-            }
-            if run >= 2 {
-                repeating.push((run, ((passes[n - 1].0 - first_ts) / 60).max(1), text.clone()));
-            }
-        }
-    }
-    repeating.sort_by_key(|e| std::cmp::Reverse(e.0));
-    out.insert("SP_SELF_REPEATING_N".into(), repeating.len().to_string());
-    for (i, (run, dur, text)) in repeating.iter().enumerate() {
-        out.insert(format!("SP_SELF_REPEATING{i}"), format!("{text} \u{d7} {run} passes ({dur}m)"));
-    }
-
-    out.insert("SP_SELF_STARVED_W".into(), starved_tss.len().to_string());
-    out.insert("SP_SELF_STARVED_LAST".into(), ago(starved_tss.iter().max().copied(), now));
-
-    let mut born: BTreeMap<&str, i64> = BTreeMap::new();
-    for line in ledger_lines {
-        let Some((ts, event, name, _)) = ledger(line) else { continue };
-        let Some(t) = parse_strict(ts).filter(|t| *t >= self_since) else { continue };
-        match event {
-            "born" => {
-                born.insert(name, t);
-            }
-            "awake" => {
-                born.remove(name);
-            }
-            _ => {}
-        }
-    }
-    out.insert("SP_SELF_STILLBORN_W".into(), born.len().to_string());
-    out.insert("SP_SELF_STILLBORN_LAST".into(), ago(born.values().max().copied(), now));
-    out
-}
-
-fn ago(latest: Option<i64>, now: i64) -> String {
-    latest.map_or("-".into(), |t| format!("{}m ago", ((now - t) / 60).max(0)))
-}
-
-const SENTINEL_KEYS: &[&str] = &[
-    "SP_PASSES", "SP_ACTS", "SP_FALSE_ACTS", "SP_FALSE_PER_PASS", "SP_SINCE_JUDGEMENT", "SP_STARVED_PASSES",
-];
 const LEDGER_KEYS: &[&str] = &["SP_DWARF_BORN", "SP_DWARF_LIVED", "SP_DWARF_STILLBORN", "SP_DWARF_WORKED", "SP_DWARF_THRASH"];
-const HEL_KEYS: &[&str] = &["SP_SENT", "SP_SENT_HELD", "SP_SENT_KEPT", "SP_SENT_FAILED", "SP_SENT_FAILED_AGE_M"];
-const SELF_KEYS: &[&str] = &[
-    "SP_SELF_REPEATING_N", "SP_SELF_STILLBORN_W", "SP_SELF_STILLBORN_LAST", "SP_SELF_STARVED_W", "SP_SELF_STARVED_LAST",
-];
+const REAP_KEYS: &[&str] = &["SP_SENT_FAILED", "SP_SENT_FAILED_AGE_M"];
 
 fn read(path: &str) -> Option<String> {
     std::fs::read(path).ok().map(|b| String::from_utf8_lossy(&b).into_owned())
@@ -305,27 +76,33 @@ fn unknown(keys: &[&str]) -> Keys {
     keys.iter().map(|k| (k.to_string(), "?".to_string())).collect()
 }
 
-/// SPIRA_SELF_WINDOW is minutes, from the registered config.
-pub fn self_window_minutes() -> Option<f64> {
-    spira_config::process::cfg("SPIRA_SELF_WINDOW")
-        .ok()
-        .and_then(|v| v.trim().parse().ok())
+/// Distinct beads with a `FAILED` line in `reap.log` inside the window, and minutes since the newest.
+pub fn reap_metrics(lines: &[&str], since: i64, now: i64) -> Keys {
+    let mut failed = BTreeSet::new();
+    let mut newest: Option<i64> = None;
+    for line in lines {
+        let mut f = line.split_whitespace();
+        let (Some(ts), Some("FAILED"), Some(id)) = (f.next(), f.next(), f.next()) else { continue };
+        let Some(t) = parse_strict(ts).filter(|t| *t >= since) else { continue };
+        failed.insert(id);
+        newest = Some(newest.map_or(t, |n| n.max(t)));
+    }
+    let age = newest.map_or("?".to_string(), |n| ((now - n) / 60).to_string());
+    [("SP_SENT_FAILED", failed.len().to_string()), ("SP_SENT_FAILED_AGE_M", age)].into_iter().map(|(k, v)| (k.to_string(), v)).collect()
 }
 
-pub fn collect(sentinel_log: &str, ledger_log: &str, hours: f64, self_window_min: Option<f64>, now: i64) -> Keys {
+pub fn collect(reap_log: &str, ledger_log: &str, hours: f64, now: i64) -> Keys {
     let since = now - (hours * 3600.0) as i64;
-    let sent_text = read(sentinel_log);
+    let reap_text = read(reap_log);
     let ledger_text = read(ledger_log);
-    let sent: Option<Vec<&str>> = sent_text.as_deref().map(|t| t.lines().collect());
-    let led: Option<Vec<&str>> = ledger_text.as_deref().map(|t| t.lines().collect());
-
     let mut out = Keys::new();
-    out.extend(sent.as_deref().map_or_else(|| unknown(SENTINEL_KEYS), |l| sentinel_metrics(l, since)));
-    out.extend(led.as_deref().map_or_else(|| unknown(LEDGER_KEYS), |l| ledger_metrics(l, since)));
-    out.extend(sent.as_deref().map_or_else(|| unknown(HEL_KEYS), |l| hel_metrics(l, since, now)));
-    out.extend(match (sent.as_deref(), led.as_deref(), self_window_min) {
-        (Some(s), Some(l), Some(w)) => self_metrics(s, l, now - (w * 60.0) as i64, now),
-        _ => unknown(SELF_KEYS),
+    out.extend(match &reap_text {
+        Some(t) => reap_metrics(&t.lines().collect::<Vec<_>>(), since, now),
+        None => unknown(REAP_KEYS),
+    });
+    out.extend(match &ledger_text {
+        Some(t) => ledger_metrics(&t.lines().collect::<Vec<_>>(), since),
+        None => unknown(LEDGER_KEYS),
     });
     out.insert("SP_WINDOW_HOURS".into(), format!("{hours}"));
     out
@@ -378,69 +155,21 @@ mod tests {
         assert_eq!((m["SP_DWARF_THRASH"].as_str(), m["SP_DWARF_WORKED"].as_str()), ("2", "1"));
     }
 
-    // covers: UC-cockpit-observability-16
     #[test]
-    fn repeating_act_run_is_found_and_old_burst_is_not() {
-        let mk = |offs: &[i64]| -> Vec<String> {
-            offs.iter()
-                .flat_map(|o| {
-                    vec![
-                        format!("{} spira: state: open=1 plan_ready=1 in_progress=0", ts(*o)),
-                        format!("{} spira: ACT handled 1 stranded item(s)", ts(*o)),
-                    ]
-                })
-                .collect()
-        };
-        let recent = mk(&[-600, -480, -360]);
-        let r: Vec<&str> = recent.iter().map(String::as_str).collect();
-        let k = self_metrics(&r, &[], NOW - 5400, NOW);
-        assert_eq!(k["SP_SELF_REPEATING_N"], "1");
-        assert_eq!(k["SP_SELF_REPEATING0"], "handled 1 stranded item(s) \u{d7} 3 passes (4m)");
-        let old = mk(&[-21600, -21540, -21480]);
-        let o: Vec<&str> = old.iter().map(String::as_str).collect();
-        assert_eq!(self_metrics(&o, &[], NOW - 5400, NOW)["SP_SELF_REPEATING_N"], "0");
-    }
-
-    // covers: UC-cockpit-observability-16
-    #[test]
-    fn a_repeat_that_a_later_clean_pass_ended_is_not_repeating_now() {
-        let mut lines = Vec::new();
-        for o in [-600, -480, -360] {
-            lines.push(format!("{} spira: state: open=1 plan_ready=1 in_progress=0", ts(o)));
-            lines.push(format!("{} spira: ACT handled 1 stranded item(s)", ts(o)));
-        }
-        lines.push(format!("{} spira: state: open=0 plan_ready=0 in_progress=0", ts(-120)));
-        let l: Vec<&str> = lines.iter().map(String::as_str).collect();
-        assert_eq!(self_metrics(&l, &[], NOW - 5400, NOW)["SP_SELF_REPEATING_N"], "0");
-    }
-
-    // covers: UC-cockpit-observability-16
-    #[test]
-    fn stillborn_dwarves_count_only_inside_the_window_and_only_without_an_awake() {
-        let sl = |ledger: &[String]| {
-            let l: Vec<&str> = ledger.iter().map(String::as_str).collect();
-            self_metrics(&[], &l, NOW - 5400, NOW)
-        };
-        let born = |o: i64| format!("{} born dwarf-builder-sp-foo pid=1234", ts(o));
-        let k = sl(&[born(-600)]);
-        assert_eq!((k["SP_SELF_STILLBORN_W"].as_str(), k["SP_SELF_STILLBORN_LAST"].as_str()), ("1", "10m ago"));
-        let awake = format!("{} awake dwarf-builder-sp-foo work", ts(-600));
-        assert_eq!(sl(&[born(-600), awake])["SP_SELF_STILLBORN_W"], "0");
-        assert_eq!(sl(&[born(-21600)])["SP_SELF_STILLBORN_W"], "0");
-    }
-
-    #[test]
-    fn starved_reads_old_prefixed_state_lines() {
-        assert!(starved("t spira: state: open=2 plan_ready=0 in_progress=0 dwarves=0"));
-        assert!(starved("t spira: state: x=1 open=2 plan_ready=0 in_progress=0"));
-        assert!(!starved("t spira: state: open=2 plan_ready=1 in_progress=0"));
+    fn failed_deletes_count_distinct_beads_inside_the_window_and_age_from_the_newest() {
+        let l = |off: i64, verb: &str, id: &str| format!("{} {verb:<9} {id:<22} branch b survived deletion: x [by hel]", ts(off));
+        let lines = [l(-7200, "FAILED", "sp-a"), l(-3000, "FAILED", "sp-a"), l(-600, "FAILED", "sp-b"), l(-90000, "FAILED", "sp-old"), l(-60, "REMOVED", "sp-c")];
+        let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+        let k = reap_metrics(&refs, NOW - 86400, NOW);
+        assert_eq!((k["SP_SENT_FAILED"].as_str(), k["SP_SENT_FAILED_AGE_M"].as_str()), ("2", "10"));
+        assert_eq!(reap_metrics(&[], NOW - 86400, NOW)["SP_SENT_FAILED_AGE_M"], "?");
     }
 
     #[test]
     fn unreadable_sources_render_question_marks() {
-        let k = collect("nonexistent/a", "nonexistent/b", 24.0, Some(60.0), NOW);
-        assert_eq!(k["SP_PASSES"], "?");
-        assert_eq!(k["SP_SELF_STARVED_W"], "?");
+        let k = collect("nonexistent/a", "nonexistent/b", 24.0, NOW);
+        assert_eq!(k["SP_SENT_FAILED"], "?");
+        assert_eq!(k["SP_DWARF_BORN"], "?");
         assert_eq!(k["SP_WINDOW_HOURS"], "24");
     }
 }
