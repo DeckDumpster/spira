@@ -45,7 +45,7 @@
 //! | `unit.start` (shared) | unit | 2000 s; the session's wall is `RUNE_TIMEOUT_SECONDS` | `ops/<run_id>` as the unit key | a unit of that name already active |
 //! | `unit.stop` (shared) | unit | 30 s | `ops/<run_id>/stop` | a unit not running (done) |
 //! | `persona.ops.ledger` | host | 5 s | `ops/<run_id>/<awake or done>` | nothing |
-//! | `persona.ops.cleanup` | host | 5 s | `ops/<run_id>/cleanup` | nothing; a missing file is success |
+//! | `persona.ops.cleanup` | host | 5 s | `ops/<run_id>/cleanup` | a missing `SPIRA_OPS_SWEEP_KEEP_DAYS` or `SPIRA_RESULTS_PRUNE_MAX` (after the brief files are removed); also prunes `sweep-ops-*` older than the keep window |
 //!
 //! The `unit.start` input carries the claude argv, stdin from the task file, the log
 //! `sweep-ops-<id>.log`, and `SPIRA_DWARF`, `BEADS_ACTOR` and `GIT_*`. The lease side thread goes;
@@ -103,7 +103,7 @@ pub const RED_ASK_AT: u32 = 3;
 pub const CADENCE_KEY: &str = "SPIRA_RUNTIME_PERSONA_OPS_SECS";
 /// `BD_TIMEOUT` is dropped: no step of the sweep calls bd with a deadline any more (statutes
 /// come over the store's socket, the drain's bd calls carry their own).
-pub const KEYS: &[&str] = &[CADENCE_KEY, "SPIRA_AGENT", "SPIRA_MEMORIES_CACHE", "SPIRA_MEMORIES_CACHE_AGE", "SPIRA_STATUTE_CORE", "SPIRA_STATUTE_CORE_LOCAL", "SPIRA_BDQ_CONN_RETRIES", "SPIRA_ALERT_GLOB", "SPIRA_RUN"];
+pub const KEYS: &[&str] = &[CADENCE_KEY, "SPIRA_AGENT", "SPIRA_MEMORIES_CACHE", "SPIRA_MEMORIES_CACHE_AGE", "SPIRA_STATUTE_CORE", "SPIRA_STATUTE_CORE_LOCAL", "SPIRA_BDQ_CONN_RETRIES", "SPIRA_ALERT_GLOB", "SPIRA_RUN", "SPIRA_OPS_SWEEP_KEEP_DAYS", "SPIRA_RESULTS_PRUNE_MAX"];
 
 /// The first line of a prompt that means there is nothing to sweep.
 pub const NOMINAL: &str = "SWEEP:NOMINAL";
@@ -636,11 +636,16 @@ pub fn run_ledger(e: &Effects, _key: &str, s: &EffectSpec) -> Result<String, Str
     Ok(format!("{} {RUNE} {}", p.act.what, p.act.detail))
 }
 
-/// `persona.ops.cleanup`: removes the run's brief and name files.
+/// `persona.ops.cleanup`: removes the run's brief and name files, then prunes older sweep files.
 pub fn run_cleanup(e: &Effects, _key: &str, s: &EffectSpec) -> Result<String, String> {
     let p: Pinned<Option<String>> = parse(&s.input)?;
-    if let Some(id) = &p.act {
-        dwarf::ops_sweep::cleanup(&run_dir(e, &p.cfg), RUNE, id);
+    let run = run_dir(e, &p.cfg);
+    let id = p.act.as_deref().unwrap_or("");
+    if !id.is_empty() {
+        dwarf::ops_sweep::cleanup(&run, RUNE, id);
     }
-    Ok("cleaned".into())
+    let num = |k: &str| get(&p.cfg, k).parse::<u64>().map_err(|_| format!("{NAME}: {k} missing or not a number"));
+    let (days, max) = (num("SPIRA_OPS_SWEEP_KEEP_DAYS")?, num("SPIRA_RESULTS_PRUNE_MAX")?);
+    let gone = dwarf::ops_sweep::prune(&run, RUNE, id, days as u32, max as usize, now_secs() as u64);
+    Ok(format!("cleaned; pruned {} ({} over-age left)", gone.removed, gone.left))
 }

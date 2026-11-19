@@ -159,6 +159,14 @@ pub fn cleanup(run: &Path, rune: &str, id: &str) {
     }
 }
 
+/// Removes up to `max` of the sweep's run files (`sweep-<rune>-*`) older than `keep_days`,
+/// sparing the current run's own.
+pub fn prune(run: &Path, rune: &str, current: &str, keep_days: u32, max: usize, now: u64) -> spira_config::results_retention::Pruned {
+    let all = format!("sweep-{rune}-");
+    let own = format!("sweep-{rune}-{current}.");
+    spira_config::results_retention::prune(run, keep_days, max, now, &|name| !name.starts_with(&all) || name.starts_with(&own))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -242,5 +250,50 @@ mod tests {
         let (_root, home, run, rel) = setup("nowork", false);
         let e = brief(&home, &run, &rune_for_test(), "task", "r1", &cfg(&home), 0, &base(&home, &rel), &crate::escape::is_executable, &|| Ok("[]".into())).unwrap_err();
         assert!(e.contains("model-bin"), "{e}");
+    }
+
+    const NOW: u64 = 2_000_000_000;
+
+    fn aged(dir: &Path, name: &str, secs: u64) {
+        let p = dir.join(name);
+        std::fs::write(&p, "x").unwrap();
+        std::fs::File::open(&p).unwrap().set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(NOW - secs)).unwrap();
+    }
+
+    fn names(dir: &Path) -> Vec<String> {
+        let mut v: Vec<_> = std::fs::read_dir(dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        v.sort();
+        v
+    }
+
+    fn planted(tag: &str) -> testkit::TempDir {
+        let d = testkit::TempDir::new(tag);
+        for ext in ["log", "system.md", "task.md", "name"] {
+            aged(d.path(), &format!("sweep-ops-rOLD.{ext}"), 2 * 86400);
+        }
+        for ext in ["log", "system.md"] {
+            aged(d.path(), &format!("sweep-ops-rCUR.{ext}"), 2 * 86400);
+        }
+        aged(d.path(), "sweep-ops-123.log", 3 * 86400);
+        aged(d.path(), "sweep-ops-rNEW.log", 3600);
+        aged(d.path(), "dwarf-ledger.log", 10 * 86400);
+        aged(d.path(), "ops.log", 10 * 86400);
+        d
+    }
+
+    #[test]
+    fn prune_removes_over_age_sweep_files_and_spares_the_current_run_and_other_files() {
+        let d = planted("ops-prune");
+        let got = prune(d.path(), "ops", "rCUR", 1, 50, NOW);
+        assert_eq!((got.removed, got.left), (5, 0));
+        assert_eq!(names(d.path()), ["dwarf-ledger.log", "ops.log", "sweep-ops-rCUR.log", "sweep-ops-rCUR.system.md", "sweep-ops-rNEW.log"]);
+    }
+
+    #[test]
+    fn prune_removes_at_most_max_oldest_first_and_counts_the_rest() {
+        let d = planted("ops-prune-max");
+        let got = prune(d.path(), "ops", "rCUR", 1, 2, NOW);
+        assert_eq!((got.removed, got.left), (2, 3));
+        assert!(!names(d.path()).contains(&"sweep-ops-123.log".to_string()));
     }
 }

@@ -1,6 +1,6 @@
 TYPE=u32
 GROUP=lifecycle
-DOC=Most entries one write of round or test results removes from those folders; older entries are removed on write, so a backlog drains this many per call.
+DOC=Most entries one write of round or test results, or one ops sweep cleanup removing its run files (run/sweep-ops-*), removes from those folders; older entries are removed on write, so a backlog drains this many per call.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
     : "${SPIRA_RESULTS_PRUNE_MAX:=50}"
 SPIRA_CONF_DEFAULT_EOF

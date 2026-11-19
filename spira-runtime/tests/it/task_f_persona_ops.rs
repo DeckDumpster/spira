@@ -236,12 +236,34 @@ fn the_ledger_line_ends_in_why_and_ops_log_holds_the_whole_error() {
     let log = std::fs::read_to_string(dir.path().join("ops.log")).unwrap();
     assert!(log.contains("spira: ops sweep r9 harness-red: boom\nmore"), "{log}");
 
+    for ext in ["name", "system.md", "task.md", "log"] {
+        std::fs::write(dir.path().join(format!("sweep-ops-r9.{ext}")), "x").unwrap();
+    }
+    let old = dir.path().join("sweep-ops-rOLD.log");
+    std::fs::write(&old, "x").unwrap();
+    std::fs::File::open(&old).unwrap().set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(2 * 86400)).unwrap();
+    let mut pruning = cfg.clone();
+    pruning.insert("SPIRA_OPS_SWEEP_KEEP_DAYS".into(), "1".into());
+    pruning.insert("SPIRA_RESULTS_PRUNE_MAX".into(), "50".into());
+    let clean = runtime::EffectSpec::keyed(CLEANUP, "c".to_string(), serde_json::json!({ "cfg": pruning, "act": "r9" }).to_string(), 5_000);
+    let said = run_cleanup(&spira_runtime::Effects::default(), "c", &clean).unwrap();
+    assert!(said.starts_with("cleaned; pruned 1 "), "{said}");
+    let mut left: Vec<_> = std::fs::read_dir(dir.path()).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).filter(|n| n.starts_with("sweep-ops-")).collect();
+    left.sort();
+    assert_eq!(left, ["sweep-ops-r9.log"]);
+}
+
+#[test]
+fn cleanup_without_the_keep_days_key_errs_naming_it_after_removing_the_brief_files() {
+    let dir = testkit::TempDir::new("ops-cleanup-nokey");
+    let cfg = BTreeMap::from([("SPIRA_RUN".to_string(), dir.path().display().to_string()), ("SPIRA_RESULTS_PRUNE_MAX".to_string(), "50".to_string())]);
     for ext in ["name", "system.md", "task.md"] {
         std::fs::write(dir.path().join(format!("sweep-ops-r9.{ext}")), "x").unwrap();
     }
     let clean = runtime::EffectSpec::keyed(CLEANUP, "c".to_string(), serde_json::json!({ "cfg": cfg, "act": "r9" }).to_string(), 5_000);
-    run_cleanup(&spira_runtime::Effects::default(), "c", &clean).unwrap();
-    let left: Vec<_> = std::fs::read_dir(dir.path()).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).filter(|n| n.starts_with("sweep-ops-")).collect();
+    let err = run_cleanup(&spira_runtime::Effects::default(), "c", &clean).unwrap_err();
+    assert!(err.contains("SPIRA_OPS_SWEEP_KEEP_DAYS"), "{err}");
+    let left: Vec<_> = std::fs::read_dir(dir.path()).unwrap().collect();
     assert!(left.is_empty(), "{left:?}");
 }
 

@@ -782,3 +782,4 @@ cpu_throttle_units
 noverdict_window
 noverdict_max
 slow_query_ms
+ops_sweep_keep_days
