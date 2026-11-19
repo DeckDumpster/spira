@@ -362,7 +362,7 @@ mod tests {
         vec!["work-close-converted".to_string(), "eject".to_string()]
     }
 
-    // The expected tables are what `spira-lc facts-query` answered for the `sql.rs` builders'
+    // The expected tables are what the retired SQL verb answered for the `sql.rs` builders'
     // text over this fixture, captured before that verb was deleted.
     #[test]
     fn events_equal_what_the_sql_answered() {
