@@ -392,6 +392,7 @@ impl<B: Backend> Store<B> {
 
     /// Folds the audits of the `events/` keys after `after` up to and including `end`, as of
     /// `head`, in pages of at most `revs` keys, the revisions the range spans; the oldest audit time seen. The caller lowers the horizon once the range is done.
+    #[allow(clippy::too_many_arguments)]
     fn scan(&self, idx: &mut LastIndex, mut after: Option<String>, end: String, head: u64, revs: u64, scanned: &mut usize, repo: &mut impl FnMut(&str) -> Result<Option<String>>) -> Result<Option<i64>> {
         let mut oldest = None::<i64>;
         let limit = PAGE.min(revs as usize).max(1);

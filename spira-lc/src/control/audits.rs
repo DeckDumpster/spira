@@ -25,8 +25,6 @@ pub struct Logged {
 #[derive(Debug)]
 pub struct Scanned {
     pub audits: Vec<Logged>,
-    /// The scan reached `floor` or the start of the log.
-    pub complete: bool,
 }
 
 /// One audit read in place from its `events/` key: the fields the ops views fold, borrowed, with
@@ -144,7 +142,7 @@ impl<B: Backend> Store<B> {
         }
         audits.sort_by_key(|l| l.rev);
         audits.truncate(limit);
-        Ok(Scanned { audits, complete: true })
+        Ok(Scanned { audits })
     }
 }
 

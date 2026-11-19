@@ -772,11 +772,14 @@ mod tests {
         (store, now, dir)
     }
 
+    type Sqlite = Store<state_store_sqlite::SqliteBackend>;
+    type Call = Box<dyn Fn(&Sqlite, i64) -> (i32, String)>;
+
     /// Every read verb of the production mix that this store answers, as (name, call).
-    fn verbs() -> Vec<(&'static str, Box<dyn Fn(&Store<state_store_sqlite::SqliteBackend>, i64) -> (i32, String)>)> {
+    fn verbs() -> Vec<(&'static str, Call)> {
         use crate::control::{claimable, state, verbs as control_verbs};
         let args = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<String>>();
-        let mut out: Vec<(&'static str, Box<dyn Fn(&Store<state_store_sqlite::SqliteBackend>, i64) -> (i32, String)>)> = Vec::new();
+        let mut out: Vec<(&'static str, Call)> = Vec::new();
         for v in VIEWS {
             out.push((v, Box::new(move |s, now| view_rows(s, v, now))));
         }

@@ -16,7 +16,7 @@
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -146,8 +146,27 @@ const MALLOC_ARENAS: libc::c_int = 2;
 
 const TRIM_EVERY_MS: u64 = 1_000;
 
-/// Gives the system the memory the connection threads freed: glibc keeps it in its arenas
-/// otherwise. Always when the last connection leaves, and otherwise at most once a second.
+/// A thread answering a request: a connection's or a worker that outlives its deadline. The
+/// memory they freed goes back to the system when the last one ends.
+struct Busy;
+
+static BUSY: AtomicUsize = AtomicUsize::new(0);
+
+impl Busy {
+    fn enter() -> Busy {
+        BUSY.fetch_add(1, Ordering::SeqCst);
+        Busy
+    }
+}
+
+impl Drop for Busy {
+    fn drop(&mut self) {
+        return_freed_memory(BUSY.fetch_sub(1, Ordering::SeqCst) == 1);
+    }
+}
+
+/// Gives the system the memory the request threads freed: glibc keeps it in its arenas
+/// otherwise. Always when `idle`, and otherwise at most once a second.
 fn return_freed_memory(idle: bool) {
     static LAST: AtomicU64 = AtomicU64::new(0);
     let now = wall_ms();
@@ -446,12 +465,7 @@ impl Flights {
         impl Drop for Leave<'_> {
             fn drop(&mut self) {
                 CURRENT.with(|c| *c.borrow_mut() = None);
-                let idle = {
-                    let mut open = self.0.open.lock().unwrap();
-                    open.retain(|(i, _)| *i != self.1);
-                    open.is_empty()
-                };
-                return_freed_memory(idle);
+                self.0.open.lock().unwrap().retain(|(i, _)| *i != self.1);
             }
         }
         let Ok(clone) = stream.try_clone() else {
@@ -463,6 +477,7 @@ impl Flights {
         self.open.lock().unwrap().push((id, slot.clone()));
         CURRENT.with(|c| *c.borrow_mut() = Some(slot));
         let _leave = Leave(self, id);
+        let _busy = Busy::enter();
         f(stream);
     }
 
@@ -908,6 +923,7 @@ fn bind_deadline(received: Instant, limit: Duration) -> state_store::phases::Dea
 fn within<T: Send + 'static>(deadline: Duration, f: impl FnOnce() -> T + Send + 'static) -> Option<T> {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
+        let _busy = Busy::enter();
         let _ = tx.send(f());
     });
     rx.recv_timeout(deadline).ok()

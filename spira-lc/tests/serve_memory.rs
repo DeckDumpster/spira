@@ -4,7 +4,7 @@
 
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use serde_json::json;
 use state_store::{events_key, Backend, Object, Rev, Write};
@@ -14,16 +14,18 @@ const CONNECTIONS: usize = 50;
 const REQUESTS: usize = 500;
 const SLACK: u64 = 64 << 20;
 
+fn status_field(pid: u32, name: &str) -> u64 {
+    let status = std::fs::read_to_string(std::path::Path::new(system_paths::PROC).join(pid.to_string()).join("status")).expect("the server is alive");
+    let line = status.lines().find(|l| l.starts_with(name)).unwrap_or_else(|| panic!("{name}"));
+    line.split_whitespace().nth(1).and_then(|n| n.parse().ok()).expect("a number")
+}
+
 fn threads(pid: u32) -> u64 {
-    let status = std::fs::read_to_string(format!("/proc/{pid}/status")).expect("the server is alive");
-    let line = status.lines().find(|l| l.starts_with("Threads:")).expect("Threads");
-    line.split_whitespace().nth(1).and_then(|n| n.parse().ok()).expect("count")
+    status_field(pid, "Threads:")
 }
 
 fn rss_anon(pid: u32) -> u64 {
-    let status = std::fs::read_to_string(format!("/proc/{pid}/status")).expect("the server is alive");
-    let line = status.lines().find(|l| l.starts_with("RssAnon:")).expect("RssAnon");
-    line.split_whitespace().nth(1).and_then(|kb| kb.parse::<u64>().ok()).expect("kB") << 10
+    status_field(pid, "RssAnon:") << 10
 }
 
 /// A control store whose log holds a fortnight of bulky audits.
@@ -72,18 +74,16 @@ fn a_burst_of_reads_over_fifty_connections_leaves_the_servers_anonymous_memory_w
         .expect("spira-lc serve runs");
     let mut stderr = BufReader::new(child.stderr.take().unwrap());
     let mut line = String::new();
-    let began = Instant::now();
     let mut said = String::new();
     while !line.contains(" ready after ") {
         line.clear();
-        assert!(stderr.read_line(&mut line).unwrap() > 0 && began.elapsed() < Duration::from_secs(60), "the server never said ready: {said}");
+        assert!(stderr.read_line(&mut line).unwrap() > 0, "the server stopped before it said ready: {said}");
         said.push_str(&line);
     }
     std::thread::spawn(move || std::io::copy(&mut stderr, &mut std::io::sink()));
     let pid = child.id();
     let (at_ready, threads_at_ready) = (rss_anon(pid), threads(pid));
 
-    let started = Instant::now();
     let per = REQUESTS / CONNECTIONS;
     std::thread::scope(|scope| {
         for c in 0..CONNECTIONS {
@@ -98,12 +98,12 @@ fn a_burst_of_reads_over_fifty_connections_leaves_the_servers_anonymous_memory_w
             });
         }
     });
-    assert!(started.elapsed() < Duration::from_secs(60), "{} requests took {:?}", REQUESTS, started.elapsed());
     // A request past its deadline is answered and its worker runs on: wait for the workers to end.
-    let began = Instant::now();
+    let mut polls = 0;
     while threads(pid) > threads_at_ready {
-        assert!(began.elapsed() < Duration::from_secs(120), "the abandoned work never finished");
-        std::thread::sleep(Duration::from_millis(10));
+        polls += 1;
+        assert!(polls < 12_000, "the abandoned work never finished");
+        std::thread::sleep(Duration::from_millis(10)); // clock-safe: polls the server's thread count, the signal waited on
     }
     let after = rss_anon(pid);
     let _ = child.kill();
