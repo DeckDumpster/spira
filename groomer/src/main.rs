@@ -209,12 +209,3 @@ fn run_cmd(r: cmds::CmdResult) {
         }
     }
 }
-
-/// A value this binary cannot run without (a release tool, the child PATH), or exit 2 naming
-/// the refusal.
-fn declared<T>(v: Result<T, String>) -> T {
-    v.unwrap_or_else(|e| {
-        eprintln!("groomer: {e}");
-        std::process::exit(2)
-    })
-}
