@@ -345,6 +345,11 @@ fn read_sources(dir: &Path) -> Result<Vec<(String, String)>, String> {
     Ok(out)
 }
 
+/// One key file's text read as the registry reads it; `name` is the file's name.
+pub fn parse_key_text(name: &str, text: &str) -> Result<RegistryKey, String> {
+    parse_one(name, text)
+}
+
 fn parse_one(name: &str, text: &str) -> Result<RegistryKey, String> {
     let mut ty = String::new();
     let mut group = String::new();
