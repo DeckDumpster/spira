@@ -695,7 +695,6 @@ SPIRA_SLAY_SH spira/deploy.sh
 SPIRA_SLOW_QUERY_LOG sentinel/src/tower.rs
 SPIRA_SLOW_QUERY_LOG spira-lc/src/slow.rs
 SPIRA_SLOW_QUERY_LOG watchtower/src/main.rs
-SPIRA_SLOW_QUERY_MS spira-lc/src/slow.rs
 SPIRA_SOP_LEDGER cockpit-collect/src/probes/mod.rs
 SPIRA_SOP_LEDGER incident/src/intake.rs
 SPIRA_SOP_LEDGER sop/src/main.rs

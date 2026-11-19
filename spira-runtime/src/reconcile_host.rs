@@ -368,10 +368,10 @@ impl Host for RuntimeHost {
         Some(live_dwarves(&self.units().ok()?.active, rune))
     }
 
-    fn ready_count(&self, labels: &str, exclude: &str) -> Option<i64> {
-        let argv = ["ready-count".to_string(), labels.to_string(), exclude.to_string()];
+    fn ready_rows(&self, labels: &str, exclude: &str) -> Option<Vec<(String, String)>> {
+        let argv = ["ready-count".to_string(), labels.to_string(), exclude.to_string(), "--json".to_string()];
         let out = spira_claim::cli::dispatch_in(&argv, &mut std::io::empty(), &|k| std::env::var(k).ok());
-        Some(out.out.trim().parse().unwrap_or(0))
+        Some(reconciler::parse_ready_rows(&out.out))
     }
 
     fn tmux_server(&self) -> Option<Option<String>> {

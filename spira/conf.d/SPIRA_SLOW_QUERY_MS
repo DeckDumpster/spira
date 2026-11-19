@@ -1,0 +1,6 @@
+TYPE=u32
+GROUP=lifecycle
+DOC=Milliseconds a lifecycle store call may take before spira-lc logs it as slow and watchtower files the slow-store incident naming this threshold.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_SLOW_QUERY_MS:=1000}"
+SPIRA_CONF_DEFAULT_EOF

@@ -53,7 +53,7 @@ fn is_host_bound(shape: &str) -> bool {
     u == "CONNECT" || u.starts_with("START TRANSACTION") || u.starts_with("BEGIN")
 }
 
-pub fn run(run_dir: &Path, log_path: &Path, db: &str, home_repo: &str, incident_sh: &str) {
+pub fn run(run_dir: &Path, log_path: &Path, db: &str, home_repo: &str, incident_sh: &str, threshold_ms: u64) {
     let Ok(bytes) = std::fs::read(log_path) else {
         log("watchtower: slow-query-check — no slow-query log");
         return;
@@ -75,7 +75,8 @@ pub fn run(run_dir: &Path, log_path: &Path, db: &str, home_repo: &str, incident_
         return;
     }
     let contended = shapes.iter().any(|s| is_host_bound(&s.shape));
-    let worst = shapes.iter().map(Shape::max).max().unwrap_or(0);
+    let slowest = shapes.iter().max_by_key(|s| s.max()).expect("shapes is non-empty");
+    let worst = slowest.max();
     let hits: usize = shapes.iter().map(Shape::count).sum();
     let mut body = String::from("The lifecycle store is responding slowly. One incident covers every statement seen slow; the shapes are listed as evidence.\n\n");
     if contended {
@@ -86,7 +87,8 @@ pub fn run(run_dir: &Path, log_path: &Path, db: &str, home_repo: &str, incident_
     for s in &shapes {
         body.push_str(&format!("shape: {}\nverbs: {}\ncount: {}\np50: {}ms\nmax: {}ms\n\n", s.shape, s.verbs.join(", "), s.count(), s.p50(), s.max()));
     }
-    let f = Finding::new(db, home_repo, "SLOW STORE: lifecycle queries over threshold", &body)
+    let title = format!("SLOW STORE: {} {worst}ms over {threshold_ms}ms; {hits} call(s) over in window", slowest.verbs.join("/"));
+    let f = Finding::new(db, home_repo, &title, &body)
         .priority(1)
         .reference("incident:slow-query".to_string())
         .cause("slow-query");
@@ -112,8 +114,26 @@ mod tests {
         let (inc, calls) = fake_incident(&d);
         let log_path = d.join("slow-queries.log");
         std::fs::write(&log_path, "").unwrap();
-        run(&d, &log_path, "db", "spira", &inc);
+        run(&d, &log_path, "db", "spira", &inc, 1000);
         assert!(!calls.exists());
+    }
+
+    #[test]
+    fn the_title_names_the_slowest_verb_its_duration_the_threshold_and_the_count() {
+        let d = testkit::TempDir::new("wt-slow-title");
+        let (inc, calls) = fake_incident(&d);
+        let log_path = d.join("slow-queries.log");
+        let toml = spira_config::process::fixture_toml(&d, &[]);
+        let home = spira_config::process::spira_home();
+        let release = spira_config::process::fixture_release(&d, true);
+        let _env = testkit::env(&[("SPIRA_TOML", Some(toml.to_str().unwrap())), ("SPIRA_HOME", home.to_str()), ("SPIRA_RELEASE", release.to_str())]);
+        std::fs::write(&log_path, "1\tlist\tc\t1300\tSELECT a\n2\tshow\tc\t1100\tSELECT b\n").unwrap();
+        run(&d, &log_path, "db", "spira", &inc, 1000);
+        let got = std::fs::read_to_string(&calls).unwrap();
+        let first = got.lines().next().unwrap();
+        for want in ["incident:slow-query", "SLOW STORE: list 1300ms over 1000ms; 2 call(s) over in window"] {
+            assert!(got.contains(want), "{want} missing from {first}");
+        }
     }
 
     #[test]

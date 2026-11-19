@@ -72,7 +72,8 @@ pub fn run(check: &str) -> Result<String, String> {
         "conditions-check" => conditions_check(n, &run)?,
         "slow-query-check" => {
             let log = getenv("SPIRA_SLOW_QUERY_LOG").map(PathBuf::from).unwrap_or_else(|| run.join("slow-queries.log"));
-            slow_query::run(&run, &log, &reg("SPIRA_DB")?, &reg("SPIRA_HOME_REPO")?, &resolved_incident_sh());
+            let threshold_ms = reg("SPIRA_SLOW_QUERY_MS")?.trim().parse::<u64>().map_err(|e| format!("SPIRA_SLOW_QUERY_MS: {e}"))?;
+            slow_query::run(&run, &log, &reg("SPIRA_DB")?, &reg("SPIRA_HOME_REPO")?, &resolved_incident_sh(), threshold_ms);
         }
         "dolt-drop-check" => {
             let log = getenv("SPIRA_DOLT_LOG").map(PathBuf::from).unwrap_or_else(|| run.join("dolt-beads.log"));
