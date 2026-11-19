@@ -144,7 +144,7 @@ impl World for Real {
     }
 
     fn detect_invalid_closed(&self) -> String {
-        strand::detectors::detect_invalid_closed(self.strand_cfg())
+        spira_store::lc_call::LcClient::configured().map(|lc| strand::detectors::detect_invalid_closed(self.strand_cfg(), &lc)).unwrap_or_default()
     }
 
     fn create_bead(&self, title: &str, labels: &str, description: &str) -> Result<(), String> {

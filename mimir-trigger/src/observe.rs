@@ -110,7 +110,7 @@ pub fn git_log_subjects(repo: &Path, since_ts: i64, base_ref: &str) -> String {
 /// `detect_invalid_closed`'s raw lines, in-process through `strand`.
 pub fn invalid_closed_raw() -> Result<String, String> {
     let cfg = strand::config::Config::resolve(&strand::config::Live::load())?;
-    Ok(strand::detectors::detect_invalid_closed(&cfg))
+    Ok(strand::detectors::detect_invalid_closed(&cfg, &spira_store::lc_call::LcClient::configured()?))
 }
 
 #[cfg(test)]
