@@ -2,6 +2,7 @@
 name = "dwarf"
 version = "1.0.0"
 edition = "2021"
+autotests = false
 description = "dwarf — the runner called to claim one bead, build its worktree, render its brief, run the model session and account for the outcome (replaces spira/dwarf.sh)."
 
 [lib]
@@ -31,3 +32,8 @@ sha2 = "0.10"
 
 [dev-dependencies]
 testkit = { path = "../testkit" }
+
+[[test]]
+name = "session_tmp_ignored"
+path = "tests/session_tmp_ignored.rs"
+required-features = ["integration"]

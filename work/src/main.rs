@@ -108,6 +108,13 @@ fn main() {
     }
 
     if verb == "submit" {
+        if let Err(e) = scratch_gate() {
+            eprintln!("{}", refusal(R::SubmitScratch, "submit", &[("err", &e)]));
+            { let code = REFUSED; spira_otel::run::finish(code); std::process::exit(code) };
+        }
+    }
+
+    if verb == "submit" {
         if let Err(e) = contract_gate() {
             if e.starts_with("not met ") {
                 eprintln!("work submit: refused: the branch changes the repository's landing contract and leaves it unmet:\n{e}\nfix the contract files, commit, and run `work submit` again; `repo-contract check <repo> --tree .` shows every clause");
@@ -610,6 +617,17 @@ fn image_gate(bead: &str) -> Result<(), String> {
         work::image::Verdict::Built(run) => println!("work submit: the round image recipe builds (run {run})"),
     }
     Ok(())
+}
+
+/// Refuses a submit whose branch adds a session-scratch path against its landing ref, in any
+/// repository; an unresolvable landing ref or unreadable diff refuses.
+fn scratch_gate() -> Result<(), String> {
+    let common = git_line(&["rev-parse", "--path-format=absolute", "--git-common-dir"]).ok_or("cannot read the git dir")?;
+    let checkout = std::path::Path::new(&common).parent().ok_or("cannot find the checkout")?;
+    let reg = spira_config::repos::Registry::from_env_checkout(std::env::vars().collect(), checkout);
+    let land = spira_config::repos::landref(&reg, &checkout.to_string_lossy()).ok_or("the landing ref cannot be resolved, so the branch cannot be checked for session scratch")?;
+    let root = git_line(&["rev-parse", "--show-toplevel"]).ok_or("not inside a git worktree")?;
+    work::scratch::gate(std::path::Path::new(&root), &land)
 }
 
 /// Refuses a submit to a non-home repository whose diff against its landing ref edits a contract

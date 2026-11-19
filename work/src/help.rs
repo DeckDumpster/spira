@@ -43,6 +43,7 @@ pub enum R {
     ChecksGit,
     ChecksConfig,
     ChecksBuild,
+    SubmitScratch,
 }
 
 impl R {
@@ -51,7 +52,7 @@ impl R {
         R::SubmitTipArg, R::StatuteUsage, R::StatuteStdin, R::StatuteConfig, R::StatuteConfigUnset, R::StatuteRegistry, R::StatuteReport,
         R::StatuteNoteNotRecorded, R::CratesGit, R::CratesCargo, R::CratesSelect, R::HelpUsage, R::HelpUnknown, R::LawUsage, R::LawNotFound,
         R::ReviewArgs, R::ReviewShow, R::ReviewGit, R::ReviewConfig, R::ReviewAgentUnset, R::ReviewTimedOut, R::ReviewFailed,
-        R::ChecksUsage, R::ChecksGit, R::ChecksConfig, R::ChecksBuild,
+        R::ChecksUsage, R::ChecksGit, R::ChecksConfig, R::ChecksBuild, R::SubmitScratch,
     ];
 }
 
@@ -307,11 +308,13 @@ pub static ENTRIES: &[Entry] = &[
             "a tip whose merge onto local/main has a content conflict is refused, naming the conflicting paths; a tip that is only behind is submitted",
             "in a repository carrying the round image workflow, a branch whose diff against its landing ref touches the recipe has its Round AMI build dispatched and awaited; a failed build refuses, naming the step and its last log lines",
             "in a repository other than the home repo, a branch whose diff against its landing ref changes flake.nix, flake.lock, .spira/checks.toml, .spira/testenv.toml or .spira/deploy.toml, and leaves the environment, submit-checks, test-tiers or deploy clause of `repo-contract check` not met on its tip, is refused, naming the clause line",
+            "a branch whose diff against its landing ref adds a path under `.runtime/session-tmp-*` is refused, naming the paths",
             "a bead with a `Target:` line is submitted with a verdict; a submission without one is refused by the broker",
             "a --short verdict names a follow-on or escalation you filed",
         ],
         refusals: &[
             Refusal { id: R::SubmitNoTip, text: "no tip could be read from the worktree", fix: "run it from your worktree after committing; your branch is spira/<bead>" },
+            Refusal { id: R::SubmitScratch, text: "{err}", fix: "`git rm -r --cached .runtime`, commit, and run `work submit` again" },
             Refusal { id: R::SubmitTipArg, text: "{flag} is read from the worktree, never taken from the caller", fix: "drop {flag}; commit and run `work submit` bare" },
         ],
     },

@@ -102,12 +102,16 @@ impl Run<'_> {
 
     /// The session's `TMPDIR`: inside its worktree, where the worktree reap already cleans.
     pub(crate) fn session_tmpdir(work: &Path) -> PathBuf {
-        work.join(".runtime").join(format!("session-tmp-{}", std::process::id()))
+        work.join(spira_config::RUNTIME_DIR).join(format!("{}{}", spira_config::SESSION_TMP_PREFIX, std::process::id()))
     }
 
-    pub(crate) fn make_session_tmpdir(work: &Path) -> Result<PathBuf, (PathBuf, std::io::Error)> {
+    pub fn make_session_tmpdir(work: &Path) -> Result<PathBuf, (PathBuf, std::io::Error)> {
         let dir = Self::session_tmpdir(work);
-        std::fs::create_dir_all(&dir).map(|()| dir.clone()).map_err(|e| (dir, e))
+        let ignore = work.join(spira_config::RUNTIME_DIR).join(".gitignore");
+        std::fs::create_dir_all(&dir)
+            .and_then(|()| if ignore.exists() { Ok(()) } else { std::fs::write(&ignore, "*\n") })
+            .map(|()| dir.clone())
+            .map_err(|e| (dir, e))
     }
 
     pub(crate) fn export_session_tmpdir(&self, work: &Path) {
@@ -705,6 +709,18 @@ mod tests {
     fn the_session_tmpdir_lies_inside_the_worktree() {
         let w = Path::new("w/wt");
         assert!(Run::session_tmpdir(w).starts_with(w));
+    }
+
+    #[test]
+    fn making_the_session_tmpdir_writes_a_self_ignoring_gitignore_and_keeps_an_existing_one() {
+        let dir = testkit::TempDir::new("gi");
+        Run::make_session_tmpdir(dir.path()).unwrap();
+        assert_eq!(std::fs::read_to_string(dir.path().join(".runtime/.gitignore")).unwrap(), "*\n");
+        let kept = testkit::TempDir::new("gi");
+        std::fs::create_dir(kept.path().join(".runtime")).unwrap();
+        std::fs::write(kept.path().join(".runtime/.gitignore"), "other\n").unwrap();
+        Run::make_session_tmpdir(kept.path()).unwrap();
+        assert_eq!(std::fs::read_to_string(kept.path().join(".runtime/.gitignore")).unwrap(), "other\n");
     }
 
     #[test]
