@@ -389,6 +389,7 @@ cpu_throttle_units = "dolt-beads.service spira-runtime.service"
 noverdict_window = 172800
 noverdict_max = 3
 slow_query_ms = 1000
+ops_sweep_keep_days = 1
 
 [renamed]
 "persona.maechen" = "persona.mimir" # ffx-ok
