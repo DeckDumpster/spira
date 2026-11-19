@@ -176,6 +176,7 @@ pub fn up(o: &StageOpts) -> Result<Stage, String> {
     std::os::unix::fs::symlink(&o.bd_embedded, bin.join("bd")).map_err(|e| format!("cannot symlink bd: {e}"))?;
 
     // ---- beads database.
+    let mut init_needed = false;
     let db = root.join("db");
     fs::create_dir_all(&db).map_err(|e| format!("cannot create {}: {e}", db.display()))?;
     match &o.testdb_baseline {
@@ -185,20 +186,7 @@ pub fn up(o: &StageOpts) -> Result<Stage, String> {
                 format!("stage: baseline copy failed: {e}")
             })?;
         }
-        _ => {
-            let mut cmd = Command::new("bd-embedded");
-            cmd.current_dir(&db)
-                .env_clear()
-                .env("PATH", format!("{}:{}", bin.display(), std::env::var("PATH").unwrap_or_default()))
-                .env("HOME", std::env::var("HOME").unwrap_or_default())
-                .env("TERM", "dumb")
-                .env("BD_NON_INTERACTIVE", "1")
-                .args(["init", "--non-interactive", "--prefix", "sp", "--skip-agents", "--skip-hooks", "-q"]);
-            if let Err(e) = run(&mut cmd, "bd-embedded init") {
-                let _ = fsutil::remove_tree(&root);
-                return Err(format!("stage: {e}"));
-            }
-        }
+        _ => init_needed = true,
     }
 
     // ---- git: bare remote + working checkout.
@@ -319,11 +307,32 @@ pub fn up(o: &StageOpts) -> Result<Stage, String> {
             return Err(format!("stage: cannot declare the stage's own config: {e}"));
         }
     }
+    if init_needed {
+        if let Err(e) = init_store(&env, &db) {
+            let _ = fsutil::remove_tree(&root);
+            return Err(format!("stage: {e}"));
+        }
+    }
     if let Err(e) = create_control_store(&env) {
         let _ = fsutil::remove_tree(&root);
         return Err(format!("stage: control store: {e}"));
     }
     Ok(Stage { root, env })
+}
+
+/// The stage's own beads store, initialised by `spira-lc admin-store init` under the stage's env,
+/// where `SPIRA_BD` and `SPIRA_DB` name the stage's binary and database.
+fn init_command(lc: &str, env: &[(String, String)], db: &Path) -> Command {
+    let mut cmd = Command::new(lc);
+    cmd.current_dir(db).env_clear().env("HOME", std::env::var("HOME").unwrap_or_default()).env("TERM", "dumb").env("BD_NON_INTERACTIVE", "1").args(["admin-store", "init"]);
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    cmd
+}
+
+fn init_store(env: &[(String, String)], db: &Path) -> Result<(), String> {
+    run(&mut init_command(&spira_store::lifecycle_row::lc_bin()?, env, db), "spira-lc admin-store init")
 }
 
 /// The stage's empty control store, made by `spira-lc admin-create-store` under the stage's own env.
@@ -361,6 +370,22 @@ fn copy_dir(from: &Path, to: &Path) -> Result<(), String> {
         return Err(format!("cp -rp {} {} failed ({st})", from.display(), to.display()));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod init_tests {
+    use super::*;
+
+    #[test]
+    fn the_stage_initialises_its_store_through_spira_lc_admin_store() {
+        let env = vec![("SPIRA_BD".to_string(), "bd-embedded".to_string()), ("SPIRA_DB".to_string(), "stage/db".to_string())];
+        let cmd = init_command("spira-lc", &env, Path::new("stage/db"));
+        assert_eq!(cmd.get_program(), "spira-lc");
+        assert_eq!(cmd.get_args().collect::<Vec<_>>(), ["admin-store", "init"]);
+        assert_eq!(cmd.get_current_dir(), Some(Path::new("stage/db")));
+        let has = |k: &str, v: &str| cmd.get_envs().any(|(a, b)| a == k && b.is_some_and(|b| b == v));
+        assert!(has("SPIRA_BD", "bd-embedded") && has("SPIRA_DB", "stage/db"));
+    }
 }
 
 #[cfg(test)]

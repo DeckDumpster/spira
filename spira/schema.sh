@@ -168,13 +168,17 @@ schema_custom_types() {
 SCHEMA_PROBE_DEADLINE=5
 _SCHEMA_CANNOT=""
 
-# _probe <label> <bd args...> — sets _PROBE_OUT on success. A timeout or an error is
+# _probe <label> sql <statement> | config get <key> — sets _PROBE_OUT on success. A timeout or an error is
 # "cannot tell", never an empty answer a caller could read as absence
 # (law-a-failure-carries-its-own-explanation).
 _probe() {
     local label="$1" err rc line; shift
     err="$(mktemp)"
-    _PROBE_OUT="$(timeout "$SCHEMA_PROBE_DEADLINE" bd -C "$SPIRA_DB" "$@" 2>"$err")"; rc=$? # STORE_DOOR_CONSIDERED="probes the store's own schema and config (information_schema, config get); no bead is read or written"
+    if [ "$1" = sql ]; then
+        _PROBE_OUT="$(printf '%s\n' "$2" | timeout "$SCHEMA_PROBE_DEADLINE" spira-lc admin-store sql 2>"$err")"; rc=$?
+    else
+        _PROBE_OUT="$(timeout "$SCHEMA_PROBE_DEADLINE" spira-lc admin-store "$@" 2>"$err")"; rc=$?
+    fi
     line="$(grep -m1 '[^[:space:]]' "$err")"; rm -f "$err"
     [ "$rc" = 0 ] && return 0
     if [ "$rc" = 124 ]; then _cannot "$label timed out after ${SCHEMA_PROBE_DEADLINE}s"

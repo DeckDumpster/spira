@@ -10,7 +10,7 @@ use std::process::Command;
 use crate::content_sql::{self, Failure, Sql};
 use crate::content_sql::Bead;
 
-fn bd_bin() -> Result<String, String> {
+pub(crate) fn bd_bin() -> Result<String, String> {
     // SPIRA_BD resolves empty when unset (no default in its registry entry); an empty program
     // name fails every call, so the door's store half silently never ran in such a setup
     // (sp-swh8b8). Empty means bd on PATH, as every other bd caller reads it.

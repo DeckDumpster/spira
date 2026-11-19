@@ -662,6 +662,10 @@ case "$1" in
     content)
         shift; bd="${SPIRA_BD:-$(spira-config get spira.bd 2>/dev/null)}"; db="${SPIRA_DB:-$(spira-config get spira.db 2>/dev/null)}"
         exec "${bd:-bd}" ${db:+-C "$db"} "$@" ;;
+    admin-store)
+        shift; bd="${SPIRA_BD:-$(spira-config get spira.bd 2>/dev/null)}"; db="${SPIRA_DB:-$(spira-config get spira.db 2>/dev/null)}"
+        case "$1" in migrate) set -- migrate schema ;; migrate-status) set -- migrate status ;; *) exit 7 ;; esac
+        exec "${bd:-bd}" ${db:+-C "$db"} "$@" ;;
     *) exit 7 ;;
 esac
 STUB
@@ -1139,6 +1143,7 @@ case "${1:-}" in
         for c in $(type -ap spira-lc); do [ "$c" -ef "$0" ] || exec "$c" "$@"; done; exit 2 ;;
     claimable) ;;
     phase) exit 0 ;;
+    admin-store) case "${2:-}" in migrate) exec "${SPIRA_BD:-bd}" ${SPIRA_DB:+-C "$SPIRA_DB"} migrate schema ;; *) exit 7 ;; esac ;;
     disposition) mkdir -p "${SPIRA_RUN:?}/lc-disposition"; printf '%s\t%s\n' "${3:-}" "${4:-}" > "$SPIRA_RUN/lc-disposition/${2:?}"; exit 0 ;;
     express) mkdir -p "${SPIRA_RUN:?}/lc-express"; : > "$SPIRA_RUN/lc-express/${2:?}"; exit 0 ;;
     unexpress) rm -f "${SPIRA_RUN:?}/lc-express/${2:?}"; exit 0 ;;
