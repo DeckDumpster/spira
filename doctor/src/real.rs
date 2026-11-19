@@ -370,7 +370,7 @@ impl World for Real {
             .stdin(Stdio::null())
             .output();
         match out {
-            Ok(o) if o.status.success() => Ok(String::from_utf8_lossy(&o.stdout).lines().filter_map(|l| l.split_whitespace().next()).map(str::to_string).collect()),
+            Ok(o) if o.status.success() => Ok(loaded_failed_units(&String::from_utf8_lossy(&o.stdout))),
             Ok(o) if String::from_utf8_lossy(&o.stdout).trim().is_empty() && String::from_utf8_lossy(&o.stderr).trim().is_empty() => Ok(Vec::new()),
             Ok(o) => Err(format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr))),
             Err(e) => Err(e.to_string()),
@@ -596,7 +596,6 @@ pub fn loaded_failed_units(listing: &str) -> Vec<String> {
 }
 
 fn is_exec(p: &Path) -> bool {
-    use std::os::unix::fs::PermissionsExt;
     std::fs::metadata(p).map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0).unwrap_or(false)
 }
 
@@ -809,11 +808,25 @@ pub fn target_roots_in(parent: &Path, root: &Path) -> Vec<PathBuf> {
 
 #[cfg(test)]
 mod failed_listing_tests {
-    use super::loaded_failed_units;
+    use super::{loaded_failed_units, Real};
+    use crate::World;
 
     #[test]
     fn a_retired_unit_listed_not_found_is_not_a_failed_unit() {
         let listing = "spira-vm-pool-section-prod.service not-found failed failed spira vm pool\nspira-sentinel-prod.service loaded failed failed Sentinel\n";
         assert_eq!(loaded_failed_units(listing), vec!["spira-sentinel-prod.service".to_string()]);
+    }
+
+    #[test]
+    fn the_failed_unit_probe_drops_a_retired_unit_systemd_still_lists() {
+        let tmp = testkit::TempDir::new("doctor-failed-probe");
+        let dir = tmp.path().to_path_buf();
+        let fake = dir.join("systemctl");
+        testkit::write_exe(&fake, "#!/bin/sh\nprintf '%s\\n' 'spira-vm-pool-section-prod.service not-found failed failed gone' 'spira-sentinel-prod.service loaded failed failed Sentinel'\n");
+        let mut env = std::collections::BTreeMap::new();
+        env.insert("SPIRA_SYSTEMCTL".to_string(), fake.display().to_string());
+        let w = Real { home: dir.clone(), env, bdq: String::new(), child_env: vec![] };
+        let got = w.systemd_failed_units("spira-*").unwrap();
+        assert_eq!(got, vec!["spira-sentinel-prod.service".to_string()]);
     }
 }

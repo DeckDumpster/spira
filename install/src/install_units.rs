@@ -436,6 +436,7 @@ pub(crate) fn retire_dropped_units(ctx: &Ctx, rendered: &[(String, String, Strin
     if !r.retired.is_empty() {
         let _ = ctx.systemctl.daemon_reload();
         for u in &r.retired {
+            // best-effort: a unit systemd never held fails reset-failed as "not loaded"
             let _ = ctx.systemctl.reset_failed(u);
         }
     }

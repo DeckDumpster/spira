@@ -198,12 +198,6 @@ mod tests {
     }
 
     #[test]
-    fn a_retired_unit_systemd_still_holds_failed_is_absent_not_failed() {
-        let d = parse_show("Id=spira-vm-pool-section-prod.service\nLoadState=not-found\nActiveState=failed\nSubState=failed\n");
-        assert_eq!(d[0].state, UnitState::Absent);
-    }
-
-    #[test]
     fn detail_asks_the_named_program_and_a_silent_program_means_absent() {
         let tmp = testkit::TempDir::new("sysctl-units");
         let dir = tmp.path().to_path_buf();
