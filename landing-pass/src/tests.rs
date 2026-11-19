@@ -997,11 +997,11 @@ fn a_pass_clears_the_branchs_noverdict_counters() {
     h.closed("sp-a", "t1");
     let nv = h.s.run.join("noverdict");
     fs::create_dir_all(&nv).unwrap();
-    fs::write(nv.join("spira-sp-a"), "2").unwrap();
-    fs::write(nv.join("spira-sp-a.asked"), "").unwrap();
+    fs::write(nv.join("spira-sp-a-conflict"), "2").unwrap();
+    fs::write(nv.join("spira-sp-a-conflict.asked"), "").unwrap();
     fs::write(nv.join("spira-harness-fault"), "1").unwrap();
     h.run();
-    assert!(!nv.join("spira-sp-a").exists() && !nv.join("spira-sp-a.asked").exists());
+    assert!(!nv.join("spira-sp-a-conflict").exists() && !nv.join("spira-sp-a-conflict.asked").exists());
     assert!(nv.join("spira-harness-fault").exists());
 }
 
