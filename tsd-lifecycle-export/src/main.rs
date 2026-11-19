@@ -99,21 +99,25 @@ fn run_legacy(mode: &str, default_since: &str) -> Result<(), String> {
 }
 
 fn fetch_bd_events(since: &str) -> Result<Vec<BdAuditEvent>, String> {
-    let bd = spira_config::process::cfg("SPIRA_BD")?;
-    let db = spira_config::process::cfg("SPIRA_DB")?;
+    let lc = spira_store::lifecycle_row::lc_bin()?;
     let query = format!(
         "SELECT id, issue_id, event_type, actor, new_value, created_at FROM events \
          WHERE created_at >= {} ORDER BY created_at, id",
         sql_str(since)
     );
-    let out = spira_config::bounded::bounded(&bd) // STORE_DOOR_CONSIDERED="legacy bd-events export for the legacy and backfill modes; shrink-only until it is ported onto spira-lc"
-        .args(["-C", &db, "sql", "--json", &query])
-        .output()
-        .map_err(|e| format!("running {bd}: {e}"))?;
+    let mut child = spira_config::bounded::bounded(&lc)
+        .args(["admin-store", "sql", "--json"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("running {lc}: {e}"))?;
+    std::io::Write::write_all(&mut child.stdin.take().ok_or("no stdin")?, query.as_bytes()).map_err(|e| format!("writing the query: {e}"))?;
+    let out = child.wait_with_output().map_err(|e| format!("running {lc}: {e}"))?;
     if !out.status.success() {
-        return Err(format!("bd sql: {}", String::from_utf8_lossy(&out.stderr)));
+        return Err(format!("admin-store sql: {}", String::from_utf8_lossy(&out.stderr)));
     }
-    serde_json::from_slice(&out.stdout).map_err(|e| format!("parsing bd sql --json output: {e}"))
+    serde_json::from_slice(&out.stdout).map_err(|e| format!("parsing admin-store sql --json output: {e}"))
 }
 
 // ── lifecycle: the control store's event log ─────────────────────────────────────────────

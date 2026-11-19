@@ -159,14 +159,9 @@ pub fn check_bd_schema(bd: &str, db: &str, run: &str, doctor: bool, conf_file: &
         }
     }
 
-    // `timeout 30 "$bd" -C "$db" migrate schema 2>&1`, run through a shell so stderr folds
-    // into the same capture bash's own `2>&1` produced — the mismatch message, the lock
-    // message and a plain "command not found" all arrive on the one stream this reads.
-    let script = format!(
-        "timeout 30 {} -C {} migrate schema 2>&1",
-        crate::shell_quote(bd),
-        crate::shell_quote(db),
-    );
+    // Run through a shell so stderr folds into the one stream this reads: the mismatch
+    // message, the lock message and a plain "command not found" all arrive on it.
+    let script = schema_preflight_script();
     let (rc, combined) = match crate::bounded::bounded(system_paths::BIN_SH).arg("-c").arg(&script).output() {
         Ok(o) => (o.status.code().unwrap_or(1), String::from_utf8_lossy(&o.stdout).into_owned()),
         Err(e) => (1, format!("spira: could not run {bd}: {e}")),
@@ -189,6 +184,10 @@ pub fn check_bd_schema(bd: &str, db: &str, run: &str, doctor: bool, conf_file: &
     } else {
         SchemaCheckResult::ok(messages)
     }
+}
+
+fn schema_preflight_script() -> String {
+    "timeout 30 spira-lc admin-store migrate 2>&1".to_string()
 }
 
 /// What `bd migrate schema` said, judged: `ok` means stamp it, `refuse` means end the caller.
@@ -233,7 +232,10 @@ pub fn schema_verdict(rc: i32, combined: &str, bd: &str, doctor: bool, conf_file
                 conf_file,
             ));
         } else {
-            let first_line = combined.lines().next().unwrap_or("");
+            let first_line = match combined.lines().next() {
+                Some(l) => l.to_string(),
+                None => format!("`spira-lc admin-store migrate` exited {rc} and printed nothing"),
+            };
             messages.push(format!("spira: bd migrate schema failed — {first_line}"));
             messages.push(format!("spira: bd is {bd}"));
         }
@@ -271,6 +273,13 @@ fn extract_version(out: &str, marker: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_schema_preflight_asks_spira_lc() {
+        let script = schema_preflight_script();
+        assert!(script.contains("spira-lc admin-store migrate"), "{script}");
+        assert!(!script.contains("migrate schema"), "{script}");
+    }
 
     #[test]
     fn path_tail_appends_each_segment_once() {
@@ -358,6 +367,7 @@ mod tests {
             ("locked", 1, LOCKED, false, false, true, Some("embedded mode")),
             ("locked under doctor", 1, LOCKED, true, false, false, Some("embedded mode")),
             ("unrecognised failure", 2, "boom\nsecond\n", false, false, true, Some("failed — boom")),
+            ("a silent failure names the verb and its exit code", 7, "", false, false, true, Some("exited 7 and printed nothing")),
             ("could not run bd", 1, "spira: could not run bd: no such file", false, false, true, Some("failed — spira: could not run")),
         ];
         for (name, rc, out, doctor, ok, refuse, needle) in rows {

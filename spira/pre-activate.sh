@@ -169,16 +169,14 @@ check_registry() {
 
 # --- store: the bead store is reachable and its schema matches the bd on PATH ---
 check_store() {
-    if ! command -v bd >/dev/null 2>&1; then
-        fail store "bd not on PATH"
+    if ! command -v spira-lc >/dev/null 2>&1; then
+        fail store "spira-lc not on PATH"
         return
     fi
     local t="${SPIRA_STORE_CHECK_TIMEOUT:-30}" out rc attempt
     local conn_re='i/o timeout|connection refused|connection reset|broken pipe|failed to open database|driver: bad connection|packets\.go|dial tcp'
-    local -a cmd=(bd)
-    [ -n "${SPIRA_DB:-}" ] && cmd+=(-C "$SPIRA_DB")
     for attempt in 1 2; do
-        out="$(timeout "$t" "${cmd[@]}" migrate status 2>&1)"
+        out="$(timeout "$t" spira-lc admin-store migrate-status 2>&1)"
         rc=$?
         [ "$rc" -eq 0 ] && break
         [ "$rc" -ne 124 ] && ! grep -qiE "$conn_re" <<<"$out" && break
