@@ -145,19 +145,16 @@ fn run_fast_tier(args: &[String]) -> i32 {
     }
 }
 
-/// `dwarf search-fence --run <dir> --worktree <dir>`: the PreToolUse hook reading the payload on
+/// `dwarf search-fence [--run <dir> --worktree <dir>]`: the PreToolUse hook reading the payload on
 /// stdin; a refusal is the block JSON on stdout, anything else prints nothing. Always exit 0.
 fn run_search_fence(args: &[String]) -> i32 {
     let flag = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned();
-    let (Some(run), Some(worktree)) = (flag("--run"), flag("--worktree")) else {
-        eprintln!("usage: dwarf search-fence --run <dir> --worktree <dir>");
-        return 0;
-    };
+    let search = flag("--run").zip(flag("--worktree"));
     let overridden = std::env::var_os(dwarf::restrict::FENCE_OVERRIDE).is_some();
     let mut raw = String::new();
     let _ = std::io::stdin().read_to_string(&mut raw);
     let home = std::env::var("HOME").unwrap_or_default();
-    if let Some(out) = dwarf::search_fence::hook_output(&raw, Path::new(&run), Path::new(&worktree), &home, overridden) {
+    if let Some(out) = dwarf::search_fence::hook_output(&raw, search.as_ref().map(|(r, w)| (Path::new(r), Path::new(w))), &home, overridden) {
         println!("{out}");
     }
     0
