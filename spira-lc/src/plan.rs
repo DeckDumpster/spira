@@ -26,7 +26,7 @@ pub const READER_COLUMNS: &[(&str, &[&str])] = &[
     ("dependencies", &["issue_id", "depends_on_issue_id", "type"]),
     ("comments", &["id", "issue_id", "author", "text", "created_at"]),
     ("config", &["key", "value"]),
-    ("events", &["issue_id", "event_type", "new_value", "created_at"]),
+    ("events", &["issue_id", "event_type", "new_value", "actor", "created_at"]),
 ];
 
 /// The tables every content read but `events` needs; `events` is served only to a store that has it.

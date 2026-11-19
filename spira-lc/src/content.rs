@@ -41,6 +41,19 @@ pub fn check(args: &[String]) -> Result<Kind, String> {
         ["dep", "add", id, dep, "--type", t] if word(id) && word(dep) && DEP_TYPES.contains(t) => WRITE,
         ["dep", "remove" | "relate", a, b] if word(a) && word(b) => WRITE,
         ["set-state", id, kv] if word(id) && settable_state(kv) => WRITE,
+        ["duplicate", id, "--of", canon] if word(id) && word(canon) => WRITE,
+        ["recompute-blocked"] => WRITE,
+        ["gate", "discover", "--branch", b, "--repo", name] if word(b) && word(name) => WRITE,
+        ["gate", "check", "--type", t] if word(t) => WRITE,
+        ["gate", "check", t] if t.strip_prefix("--type=").is_some_and(word) => WRITE,
+        ["gate", "resolve", id] if word(id) => WRITE,
+        ["kv", "get", k] | ["kv", "get", k, "--json"] if word(k) => Ok(Kind::Read),
+        ["kv", "set" | "clear", k, ..] if *k == crate::plan::KV_KEY => Err(format!("`{k}` is the planning watermark, which only the planner writes; it is not settable through the door")),
+        ["kv", "set", k, val] if word(k) && word(val) => WRITE,
+        ["kv", "clear", k] if word(k) => WRITE,
+        ["remember", "--key", k] if word(k) => Ok(Kind::Write { body: true }),
+        ["forget", k] if word(k) => WRITE,
+        ["recall", k] if word(k) => Ok(Kind::Read),
         ["close", id] if word(id) => WRITE,
         ["close", id, "--reason", reason] if word(id) && !reason.trim().is_empty() => WRITE,
         ["update", id, flags @ ..] if !id.starts_with('-') && !flags.is_empty() => update_flags(flags),
@@ -67,9 +80,14 @@ fn unserved(verb: &str, instead: &str) -> String {
 
 fn update_flags(flags: &[&str]) -> Result<Kind, String> {
     let mut it = flags.iter();
-    let (mut body, mut forced) = (false, false);
+    let (mut body, mut forced, mut assignee, mut bd_force) = (false, false, false, false);
     while let Some(f) = it.next() {
+        if *f == "--force" {
+            bd_force = true;
+            continue;
+        }
         match (*f, it.next()) {
+            ("--assignee", Some(_)) => assignee = true,
             ("--priority" | "-p", Some(p)) if matches!(*p, "0" | "1" | "2" | "3" | "4") => {}
             (bead::claimdesc::FORCE_FLAG, Some(reason)) if !reason.trim().is_empty() => forced = true,
             ("--add-label" | "--remove-label", Some(l)) if !l.is_empty() => {}
@@ -78,6 +96,9 @@ fn update_flags(flags: &[&str]) -> Result<Kind, String> {
             ("--body-file", _) => return Err("update takes its description only as --body-file - (the request body)".into()),
             _ => return Err(format!("update takes only --add-label/--remove-label <label>, --set-metadata <key=value>, --priority 0-4 and --force-claimed <reason> with a body, not `{f}`")),
         }
+    }
+    if bd_force && !assignee {
+        return Err("update takes --force only with --assignee".into());
     }
     if forced && !body {
         return Err(format!("update takes {} only with --body-file - (a claimed description edit)", bead::claimdesc::FORCE_FLAG));
@@ -153,6 +174,8 @@ pub struct Guards<'a> {
     pub now: i64,
     /// A forced edit the guard admitted, for [`acknowledge`] once bd has applied it.
     pub forced: std::cell::RefCell<Option<Forced>>,
+    /// The registered repo root a `gate discover` runs bd in, for the write to take.
+    pub cwd: std::cell::RefCell<Option<std::path::PathBuf>>,
 }
 
 /// A claimed description edit admitted under `--force-claimed`.
@@ -177,6 +200,7 @@ pub fn guard(args: &mut Vec<String>, body: &mut Option<String>, g: &Guards, m: &
     let vars = |k: &str| g.caller.get(k).cloned();
     let ctx = bead::guard::Ctx { who: "spira-lc content", vars: &vars, rows: &row, now: g.now, ask_label: g.ask_label, registry: g.registry };
     blocks_edge(args, g)?;
+    repo_cwd(args, g)?;
     let mut log = match bead::guard::write(args, body.as_deref(), &ctx) {
         Ok(bead::guard::Admit { claim: bead::guard::Claim::Free, log }) => log,
         Ok(bead::guard::Admit { claim: bead::guard::Claim::Forced { id, claim, reason }, log }) => {
@@ -188,6 +212,9 @@ pub fn guard(args: &mut Vec<String>, body: &mut Option<String>, g: &Guards, m: &
         }
         Err(r) => return Err(Answer { code: r.code, stderr: r.text, ..Default::default() }),
     };
+    if args.first().map(String::as_str) == Some("remember") {
+        args.extend(body.take());
+    }
     if !filed_with_contract(args) {
         return Ok(log);
     }
@@ -202,6 +229,21 @@ pub fn guard(args: &mut Vec<String>, body: &mut Option<String>, g: &Guards, m: &
     .map_err(|r| Answer { code: r.code, stderr: r.text, ..Default::default() })?;
     log.push_str(&shown);
     Ok(log)
+}
+
+/// `gate discover … --repo <name>`: the name must be registered. The write runs in that root and
+/// bd is not given the flag, so the caller never names a path.
+fn repo_cwd(args: &mut Vec<String>, g: &Guards) -> Result<(), Answer> {
+    let [gate, discover, _, _, repo, name] = args.as_slice() else { return Ok(()) };
+    if (gate.as_str(), discover.as_str(), repo.as_str()) != ("gate", "discover", "--repo") {
+        return Ok(());
+    }
+    let Some(root) = (g.registry)().root(name) else {
+        return Err(Answer { code: bead::guard::REFUSED, stderr: format!("spira-lc content: gate discover --repo {name}: no such registered repo\n"), ..Default::default() });
+    };
+    *g.cwd.borrow_mut() = Some(root.into());
+    args.truncate(4);
+    Ok(())
 }
 
 /// The refusals `bead.sh dep add` gives a `blocks` edge: onto an epic, or onto an incident.
@@ -351,7 +393,7 @@ pub fn run(
     write: Write<'_>,
 ) -> Answer {
     if args.is_empty() {
-        return Answer { code: CANNOT_TELL, stderr: "usage: spira-lc content <list|show|ref|search|dep list|label list|events|comments|gate list|memories|state|config get|comments add|label add|label remove|note|close|update|create> …\n".into(), ..Default::default() };
+        return Answer { code: CANNOT_TELL, stderr: "usage: spira-lc content <list|show|ref|search|dep list|label list|events|comments|gate list|memories|state|config get|comments add|label add|label remove|note|close|update|create|dep add|dep remove|dep relate|set-state|duplicate|recompute-blocked|gate discover|gate check|gate resolve|kv get|kv set|kv clear|remember|forget|recall> …\n".into(), ..Default::default() };
     }
     let kind = match check(args) {
         Ok(k) => k,
@@ -573,6 +615,21 @@ mod tests {
             (&["update", "sp-a", "--priority", "1"], Kind::Write { body: false }),
             (&["update", "sp-a", "-p", "2"], Kind::Write { body: false }),
             (&["update", "sp-a", "--body-file", "-", "--force-claimed", "why"], Kind::Write { body: true }),
+            (&["update", "sp-a", "--assignee", ""], Kind::Write { body: false }),
+            (&["update", "sp-a", "--assignee", "dwarf-1", "--force"], Kind::Write { body: false }),
+            (&["duplicate", "sp-a", "--of", "sp-b"], Kind::Write { body: false }),
+            (&["recompute-blocked"], Kind::Write { body: false }),
+            (&["gate", "discover", "--branch", "b", "--repo", "spira"], Kind::Write { body: false }),
+            (&["gate", "check", "--type", "gh:run"], Kind::Write { body: false }),
+            (&["gate", "check", "--type=gh:run"], Kind::Write { body: false }),
+            (&["gate", "resolve", "sp-g"], Kind::Write { body: false }),
+            (&["kv", "get", "spira.watch.sp-e"], Kind::Read),
+            (&["kv", "get", "spira.watch.sp-e", "--json"], Kind::Read),
+            (&["kv", "set", "spira.watch.sp-e", "a@b"], Kind::Write { body: false }),
+            (&["kv", "clear", "spira.watch.sp-e"], Kind::Write { body: false }),
+            (&["remember", "--key", "sop-x"], Kind::Write { body: true }),
+            (&["forget", "sop-x"], Kind::Write { body: false }),
+            (&["recall", "sop-x"], Kind::Read),
             (&["create", "t"], Kind::Write { body: false }),
             (&["create", "T", "-t", "bug", "-p", "2", "--labels", "a,b", "--external-ref", "gh-1", "--body-file", "-", "--silent"], Kind::Write { body: true }),
             (&["create", "--parent", "sp-e", "--silent", "--title", "T"], Kind::Write { body: false }),
@@ -624,10 +681,18 @@ mod tests {
             &["update", "sp-a", "--force-claimed", "why"],
             &["set-state", "sp-a", "branch="],
             &["update", "sp-a", "-p", "5"],
+            &["update", "sp-a", "--force"],
+            &["duplicate", "sp-a"],
+            &["gate", "discover", "--branch", "b"],
+            &["kv", "set", crate::plan::KV_KEY, "1"],
+            &["kv", "clear", crate::plan::KV_KEY],
+            &["remember", "--key", "-x"],
             &["update", "sp-a", "--body-file", "-", "--force-claimed", " "],
             &["dep", "add", "sp-a", "sp-b", "--type"],
-            &["gate", "resolve", "x"],
             &[][..],
+            &["gate", "resolve"],
+            &["gate", "check"],
+            &["gate", "resolve", "-x"],
         ] {
             assert!(check(&v(bad)).is_err(), "{bad:?}");
         }
@@ -698,7 +763,7 @@ mod tests {
     /// the row off the machine.
     fn through_content(args: &[String], body: Option<&str>, env: &BTreeMap<String, String>, row: Option<&serde_json::Value>) -> Verdict {
         let ask = || Ok::<_, String>(ASK.to_string());
-        let g = Guards { caller: env, ask_label: &ask, registry: &registry, policy: &no_policy, repo_of: &|_| None, target_of: &|_| None, incident_label: &incident, now: NOW, forced: Default::default() };
+        let g = Guards { caller: env, ask_label: &ask, registry: &registry, policy: &no_policy, repo_of: &|_| None, target_of: &|_| None, incident_label: &incident, now: NOW, forced: Default::default(), cwd: Default::default() };
         guard(&mut args.to_vec(), &mut body.map(str::to_string), &g, &mut Rows(row.cloned())).map(|_| ()).map_err(|a| (a.code, a.stderr))
     }
 
@@ -826,7 +891,7 @@ mod tests {
     fn filing_guard(args: &[String], body: Option<&str>, env: &BTreeMap<String, String>) -> (Verdict, Vec<String>, Option<String>) {
         let ask = || Ok::<_, String>(ASK.to_string());
         let policy = || Ok(filing_policy());
-        let g = Guards { caller: env, ask_label: &ask, registry: &registry, policy: &policy, repo_of: &|id| (id == "sp-a").then(|| "spira".to_string()), target_of: &|_| None, incident_label: &incident, now: NOW, forced: Default::default() };
+        let g = Guards { caller: env, ask_label: &ask, registry: &registry, policy: &policy, repo_of: &|id| (id == "sp-a").then(|| "spira".to_string()), target_of: &|_| None, incident_label: &incident, now: NOW, forced: Default::default(), cwd: Default::default() };
         let (mut args, mut body) = (args.to_vec(), body.map(str::to_string));
         let verdict = guard(&mut args, &mut body, &g, &mut Rows(None)).map(|_| ()).map_err(|a| (a.code, a.stderr));
         (verdict, args, body)
@@ -982,7 +1047,7 @@ mod tests {
         let env = caller(&[]);
         let ask = || Ok::<_, String>(ASK.to_string());
         let shown = |_: &str| bead::parse_show_row(&target.to_string());
-        let g = Guards { caller: &env, ask_label: &ask, registry: &registry, policy: &no_policy, repo_of: &|_| None, target_of: &shown, incident_label: &incident, now: NOW, forced: Default::default() };
+        let g = Guards { caller: &env, ask_label: &ask, registry: &registry, policy: &no_policy, repo_of: &|_| None, target_of: &shown, incident_label: &incident, now: NOW, forced: Default::default(), cwd: Default::default() };
         let mut gd = |a: &mut Vec<String>, b: &mut Option<String>| guard(a, b, &g, &mut Rows(None));
         let ran = |_: &[String], _: Option<&str>| -> Result<String, String> {
             bd_ran.set(true);
@@ -1043,7 +1108,7 @@ mod tests {
         let held = serde_json::json!({"bead_id": "sp-a", "state": "WORKING", "holder": "dwarf-sp-a", "lease_until": NOW + 600});
         let env = caller(&[]);
         let ask = || Ok::<_, String>(ASK.to_string());
-        let g = Guards { caller: &env, ask_label: &ask, registry: &registry, policy: &no_policy, repo_of: &|_| None, target_of: &|_| None, incident_label: &incident, now: NOW, forced: Default::default() };
+        let g = Guards { caller: &env, ask_label: &ask, registry: &registry, policy: &no_policy, repo_of: &|_| None, target_of: &|_| None, incident_label: &incident, now: NOW, forced: Default::default(), cwd: Default::default() };
         let wrote = std::cell::RefCell::new(Vec::<String>::new());
         let write = |a: &[String], body: Option<&str>| -> Result<String, String> {
             wrote.borrow_mut().push(format!("{} <<{}", a.join(" "), body.unwrap_or("")));
@@ -1077,7 +1142,7 @@ mod tests {
     fn an_overridden_state_write_is_admitted_and_logged() {
         let env = caller(&[("SPIRA_BDQ_STATE_WRITE", "landing")]);
         let ask = || Ok::<_, String>(ASK.to_string());
-        let g = Guards { caller: &env, ask_label: &ask, registry: &registry, policy: &no_policy, repo_of: &|_| None, target_of: &|_| None, incident_label: &incident, now: NOW, forced: Default::default() };
+        let g = Guards { caller: &env, ask_label: &ask, registry: &registry, policy: &no_policy, repo_of: &|_| None, target_of: &|_| None, incident_label: &incident, now: NOW, forced: Default::default(), cwd: Default::default() };
         assert_eq!(
             guard(&mut v(&["close", "sp-a"]), &mut None, &g, &mut Rows(None)).map_err(|a| a.stderr),
             Ok("spira-lc content: STATE WRITE OVERRIDE (close sp-a) — bd's status moved outside the lifecycle machine: landing\n".into())
@@ -1090,7 +1155,7 @@ mod tests {
         let never = |_: &[String]| -> Result<String, crate::composed::ReadError> { panic!("bd must not run") };
         let env = caller(&[("SPIRA_RUNE", "czar"), ("SPIRA_CZAR_CLASS", "deadlock")]);
         let ask = || Ok::<_, String>(ASK.to_string());
-        let g = Guards { caller: &env, ask_label: &ask, registry: &registry, policy: &no_policy, repo_of: &|_| None, target_of: &|_| None, incident_label: &incident, now: NOW, forced: Default::default() };
+        let g = Guards { caller: &env, ask_label: &ask, registry: &registry, policy: &no_policy, repo_of: &|_| None, target_of: &|_| None, incident_label: &incident, now: NOW, forced: Default::default(), cwd: Default::default() };
         let mut machine = Rows(None);
         let mut gd = |a: &mut Vec<String>, b: &mut Option<String>| guard(a, b, &g, &mut machine);
         let mut no_after = |_: &[String], _: &str| -> String { panic!("nothing was written") };
@@ -1104,6 +1169,71 @@ mod tests {
         let mut refuse_all = |_: &mut Vec<String>, _: &mut Option<String>| Err(Answer { code: 1, stderr: "no\n".into(), ..Default::default() });
         let ans = run(&v(&["show", "sp-a"]), &mut body, &mut refuse_all, &mut no_after, &|_| Ok("read".into()), &never_w);
         assert_eq!((ans.code, ans.stdout.as_str()), (0, "read"), "a read is never guarded");
+    }
+
+    #[test]
+    fn a_claimed_beads_assignee_clear_is_judged_as_bdq_judges_it() {
+        let held = serde_json::json!({"bead_id": "sp-a", "state": "WORKING", "holder": "dwarf-sp-a", "lease_until": NOW + 600});
+        for env in [caller(&[]), czar(None), czar(Some("act")), caller(&[("SPIRA_RUNE", "builder")])] {
+            for args in [&["update", "sp-a", "--assignee", ""][..], &["update", "sp-a", "--assignee", "", "--force"]] {
+                for row in [None, Some(&held)] {
+                    assert_eq!(through_content(&v(args), None, &env, row), through_bdq(&v(args), None, &env, row), "{args:?} {env:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_gate_discover_runs_bd_in_the_registered_repo_root() {
+        let ask = || Ok::<_, String>(ASK.to_string());
+        let g = Guards { caller: &caller(&[]), ask_label: &ask, registry: &registry, policy: &no_policy, repo_of: &|_| None, target_of: &|_| None, incident_label: &incident, now: NOW, forced: Default::default(), cwd: Default::default() };
+        let ran: RefCell<Vec<(Vec<String>, Option<std::path::PathBuf>)>> = RefCell::new(Vec::new());
+        let write = |a: &[String], _: Option<&str>| -> Result<String, String> {
+            ran.borrow_mut().push((a.to_vec(), g.cwd.take()));
+            Ok(String::new())
+        };
+        let never = |_: &[String]| -> Result<String, crate::composed::ReadError> { panic!("not a read") };
+        let mut no_after = |_: &[String], _: &str| String::new();
+        let mut body = || Ok::<String, String>(String::new());
+        let mut gd = |a: &mut Vec<String>, b: &mut Option<String>| guard(a, b, &g, &mut Rows(None));
+        let ans = run(&v(&["gate", "discover", "--branch", "b", "--repo", "spira"]), &mut body, &mut gd, &mut no_after, &never, &write);
+        assert_eq!(ans.code, 0, "{ans:?}");
+        let root = registry().root("spira").map(std::path::PathBuf::from);
+        assert_eq!(ran.borrow().as_slice(), &[(v(&["gate", "discover", "--branch", "b"]), root)]);
+        let ans = run(&v(&["gate", "discover", "--branch", "b", "--repo", "nowhere"]), &mut body, &mut gd, &mut no_after, &never, &write);
+        assert_eq!(ans.code, 1, "{ans:?}");
+        assert_eq!(ran.borrow().len(), 1, "an unregistered name writes nothing");
+    }
+
+    #[test]
+    fn a_remembered_text_is_bds_last_argument_and_the_door_refuses_to_write_the_watermark() {
+        let mut args = v(&["remember", "--key", "k"]);
+        let mut body = Some("the text".to_string());
+        let ask = || Ok::<_, String>(ASK.to_string());
+        let g = Guards { caller: &caller(&[]), ask_label: &ask, registry: &registry, policy: &no_policy, repo_of: &|_| None, target_of: &|_| None, incident_label: &incident, now: NOW, forced: Default::default(), cwd: Default::default() };
+        guard(&mut args, &mut body, &g, &mut Rows(None)).unwrap();
+        assert_eq!((args, body), (v(&["remember", "--key", "k", "the text"]), None));
+        assert!(check(&v(&["kv", "set", crate::plan::KV_KEY, "1"])).unwrap_err().contains("planning watermark"));
+    }
+
+    #[test]
+    fn the_new_writes_reach_bd_with_bdqs_argv_and_a_remembered_body_last() {
+        let ask = || Ok::<_, String>(ASK.to_string());
+        let g = Guards { caller: &caller(&[]), ask_label: &ask, registry: &registry, policy: &no_policy, repo_of: &|_| None, target_of: &|_| None, incident_label: &incident, now: NOW, forced: Default::default(), cwd: Default::default() };
+        let ran: RefCell<Vec<Vec<String>>> = RefCell::new(Vec::new());
+        let write = |a: &[String], _: Option<&str>| -> Result<String, String> {
+            ran.borrow_mut().push(a.to_vec());
+            Ok(String::new())
+        };
+        let never = |_: &[String]| -> Result<String, crate::composed::ReadError> { panic!("not a read") };
+        let mut no_after = |_: &[String], _: &str| String::new();
+        let mut body = || Ok::<String, String>("the text".into());
+        let mut gd = |a: &mut Vec<String>, b: &mut Option<String>| guard(a, b, &g, &mut Rows(None));
+        for args in [&["remember", "--key", "k"][..], &["forget", "k"], &["kv", "set", "k", "1"], &["recompute-blocked"], &["duplicate", "sp-a", "--of", "sp-b"], &["update", "sp-a", "--assignee", ""]] {
+            assert_eq!(run(&v(args), &mut body, &mut gd, &mut no_after, &never, &write).code, 0, "{args:?}");
+        }
+        assert_eq!(ran.borrow()[0], v(&["remember", "--key", "k", "the text"]));
+        assert_eq!(ran.borrow()[1..].to_vec(), [v(&["forget", "k"]), v(&["kv", "set", "k", "1"]), v(&["recompute-blocked"]), v(&["duplicate", "sp-a", "--of", "sp-b"]), v(&["update", "sp-a", "--assignee", ""])]);
     }
 
     struct Recorder(Vec<Vec<String>>);
