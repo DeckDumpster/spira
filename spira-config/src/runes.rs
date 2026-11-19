@@ -861,7 +861,9 @@ mod tests {
         // No spira.toml under this fixture, and no real conf.d registry beside it either
         // — `rune_label_overlay` resolves to an EMPTY map (its own documented
         // "resolution failure" fallback), so every bare reference reads as unresolved.
+        let env = testkit::env(&[("SPIRA_SCOPE_LABEL", None), ("SPIRA_INCIDENT_LABEL", None), ("SPIRA_ASK_LABEL", None)]);
         let err = rune_predicate(&dir, "ops").unwrap_err();
+        drop(env);
         assert_eq!(err.rune, "ops");
         assert_eq!(err.var, "RUNE_LABELS");
         assert_eq!(err.reference, "SPIRA_INCIDENT_LABEL");
