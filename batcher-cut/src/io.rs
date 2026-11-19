@@ -1979,7 +1979,7 @@ pub fn reap_branches(repo: &Repo, prefix: &str) -> (Vec<String>, Vec<(String, St
 pub fn reap_attribution_branches(who: &str, repo: &Repo) {
     let prefix = format!("spira/batcher-attr/{}-*", repo.name);
     for (b, why) in reap_branches(repo, &prefix).1 {
-        println!("{who} {}: could not delete {b}: {why}", repo.name);
+        eprintln!("{who} {}: could not delete {b}: {why}", repo.name);
     }
 }
 
