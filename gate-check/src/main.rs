@@ -48,14 +48,7 @@ fn real_main() -> i32 {
             return 1;
         }
     };
-    let bdq = match spira_config::release_env::tool("bdq") {
-        Ok(b) => b,
-        Err(e) => {
-            eprintln!("gate-check: {e}");
-            return 1;
-        }
-    };
-    let world = Real::new(home.clone(), bdq, flaky_repo);
+    let world = Real::new(home.clone(), spira_store::lc_call::LcClient::configured(), flaky_repo);
     run(&world, &home);
     0
 }
@@ -99,7 +92,7 @@ fn discover(world: &dyn World) {
             continue;
         }
         for branch in &branches {
-            world.bd_gate_discover(&repo, branch);
+            world.bd_gate_discover(&name, branch);
         }
     }
 }

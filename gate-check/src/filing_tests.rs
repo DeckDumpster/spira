@@ -41,7 +41,7 @@ impl World for Beads {
     fn bd_gate_list_json(&self) -> String {
         "[]".into()
     }
-    fn bd_gate_discover(&self, _: &Path, _: &str) {}
+    fn bd_gate_discover(&self, _: &str, _: &str) {}
     fn bd_gate_check(&self) -> String {
         String::new()
     }
