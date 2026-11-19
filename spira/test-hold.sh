@@ -38,12 +38,12 @@ export BD_TIMEOUT=10
 # shellcheck disable=SC1090
 . "$HERE/lib.sh"
 
-status_of() { bdq show "$1" --json 2>/dev/null | json_only | python3 -c '
+status_of() { spira-lc content show "$1" --json 2>/dev/null | json_only | python3 -c '
 import sys,json
 d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]
 print(d[0].get("status","") if d else "")' 2>/dev/null; }
 
-assignee_of() { bdq show "$1" --json 2>/dev/null | json_only | python3 -c '
+assignee_of() { spira-lc content show "$1" --json 2>/dev/null | json_only | python3 -c '
 import sys,json
 d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]
 print(d[0].get("assignee","") or "" if d else "")' 2>/dev/null; }

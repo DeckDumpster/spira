@@ -34,7 +34,7 @@ try: rows = json.load(sys.stdin)
 except Exception: sys.exit(0)
 for r in rows:
     if r.get("blocked_by"):
-        print("%s %s (blocked by: %s)" % (r.get("bead_id", ""), r.get("title", ""), ", ".join(r["blocked_by"])))
+        print("%s (blocked by: %s)" % (r.get("id", ""), ", ".join(r["blocked_by"])))
 ' | grep -E '^\[|sp-' | head -40)"
 
 PROMPT="You are the Spira sentinel's judgement tier. Every deterministic check has passed
