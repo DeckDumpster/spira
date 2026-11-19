@@ -28,15 +28,18 @@ pub fn check(tree: &Path, base: Option<&str>) -> Result<usize, String> {
         let scratch = std::env::temp_dir().join(format!("gate-fixture-config-{}-{}", std::process::id(), SCRATCHES.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
         let _ = std::fs::remove_dir_all(&scratch);
         std::fs::create_dir_all(&scratch).map_err(|e| format!("scratch for the landing ref's keys: {e}"))?;
-        let archive = Command::new("timeout").args(["5", "git", "-C"]).arg(tree).args(["archive", base, "spira/conf.d"]).output()
+        let archive = Command::new("timeout").args(["60", "git", "-C"]).arg(tree).args(["archive", base, "spira/conf.d"]).output()
             .map_err(|e| format!("git archive {base}: {e}"))?;
         if !archive.status.success() {
             return Err(format!("git archive {base} spira/conf.d: {}", String::from_utf8_lossy(&archive.stderr).trim()));
         }
-        let mut tar = Command::new("timeout").args(["5", "tar", "-x"]).arg("-C").arg(&scratch).stdin(std::process::Stdio::piped()).spawn()
+        let mut tar = Command::new("timeout").args(["60", "tar", "-x"]).arg("-C").arg(&scratch).stdin(std::process::Stdio::piped()).spawn()
             .map_err(|e| format!("tar: {e}"))?;
-        std::io::Write::write_all(&mut tar.stdin.take().unwrap(), &archive.stdout).map_err(|e| format!("tar: {e}"))?;
+        let written = std::io::Write::write_all(&mut tar.stdin.take().unwrap(), &archive.stdout);
         let unpacked = tar.wait().map_err(|e| format!("tar: {e}"))?.success();
+        if let (Err(e), false) = (&written, unpacked) {
+            return Err(format!("tar did not unpack the landing ref {base}'s config keys: {e}"));
+        }
         let landed = unpacked.then(|| landing_doc(&fixture, &scratch.join("spira")).and_then(|landing| resolve_against(&landing, &scratch.join("spira/conf.d"), &format!("the landing ref {base}'s config keys (a round runs that code against this fixture)"))));
         let _ = std::fs::remove_dir_all(&scratch);
         landed.unwrap_or_else(|| Err(format!("could not unpack the landing ref {base}'s config keys")))?;
