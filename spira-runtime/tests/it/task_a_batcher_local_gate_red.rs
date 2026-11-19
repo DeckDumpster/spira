@@ -117,6 +117,7 @@ fn a_leg_that_ended_without_a_verdict_does_not_eject_from_the_leg_end_but_from_t
     let ran = runtime::units::UnitRan { handle: runtime::units::UnitHandle::of(NAME, &leg).unwrap(), exit: runtime::units::Exit::Unknown, duration_ms: 1 };
     let out = runtime::units::RanOutput::captured(b"", b"");
     let (_, acts) = on_ran_with(&carry, &ran, &out, NOW).expect("the carried leg ended");
+    assert!(!acts.is_empty(), "the leg end still drives the round: {acts:?}");
     assert!(!names(&acts).contains(&EJECT_GATE_RED), "{acts:?}");
 }
 
