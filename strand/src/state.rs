@@ -45,6 +45,20 @@ fn as_i64(v: &serde_json::Value) -> Option<i64> {
     v.as_i64().or_else(|| v.as_f64().map(|f| f as i64))
 }
 
+/// Whether the episode `key` is in the state at `path`: `None` when the file exists and cannot
+/// be read as state (a corrupt file is not an ended episode); a missing file holds no episode.
+pub fn episode_stands(path: &Path, key: &str) -> Option<bool> {
+    let text = match fs::read_to_string(path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Some(false),
+        Err(_) => return None,
+    };
+    match serde_json::from_str::<serde_json::Value>(&text).ok()? {
+        serde_json::Value::Object(map) => Some(map.contains_key(key)),
+        _ => None,
+    }
+}
+
 /// Age every row against `st`, and return the state pruned to exactly these rows (new rows
 /// start an episode at `now`).
 pub fn apply(st: &State, rows: &[PartRow], now: i64) -> (Vec<AgedRow>, State) {

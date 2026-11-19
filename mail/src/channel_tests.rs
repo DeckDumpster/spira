@@ -36,6 +36,7 @@ fn env(root: &Path) -> Env {
         allow_blocking: false,
         bead_id: None,
         lock_timeout_ms: 1000,
+        condition: None,
     }
 }
 
@@ -91,10 +92,75 @@ fn read_prints_the_oldest_unread_and_moves_it_from_new_to_cur() {
     let old = names(&e, "concierge", "new")[0].clone();
     fs::OpenOptions::new().write(true).open(e.mail_root.join("concierge/new").join(&old)).unwrap().set_modified(SystemTime::now() - Duration::from_secs(9000)).unwrap();
     let printed = cmds::read_cmd(&e, "concierge", None).unwrap();
-    let want = fs::read_to_string(e.mail_root.join("concierge/cur").join(&old)).unwrap();
+    let want = fs::read_to_string(e.mail_root.join("concierge/cur").join(format!("{old}:2,S"))).unwrap();
     assert_eq!(printed, want);
     assert_eq!(names(&e, "concierge", "new").len(), 1);
-    assert_eq!(names(&e, "concierge", "cur"), vec![old]);
+    assert_eq!(names(&e, "concierge", "cur"), vec![format!("{old}:2,S")]);
+}
+
+// covers: UC-operator-channel-01
+#[test]
+fn a_message_read_is_flagged_seen_so_count_and_tidy_agree_it_was_read() {
+    let (_t, e) = fixture("mail-read-seen");
+    maildir::mail_ensure(&e.mail_root.join("operator")).unwrap();
+    let merged = SendArgs { digest: true, ..args("operator", FROM, "MERGED #7 [spira]") };
+    send(&e, &merged).unwrap();
+    let id = names(&e, "operator", "new")[0].clone();
+    cmds::read_cmd(&e, "operator", Some(&id)).unwrap();
+    let read = e.mail_root.join("operator/cur").join(format!("{id}:2,S"));
+    assert!(read.is_file());
+    assert!(!maildir::is_unread(&read));
+    assert_eq!(cmds::count(&e, "operator").unwrap(), 0);
+    let bd = FakeBd::new(vec![crate::bead::BdOut::ok("[]"), crate::bead::BdOut::ok(r#"[{"id":"probe"}]"#)]);
+    let report = crate::tidy::tidy(&bd, true, &e.mail_root, "operator", "asks", 86_400, false).unwrap();
+    assert_eq!((report.archived, report.kept), (1, 0), "a read MERGED note leaves inside the fresh window");
+    assert!(e.mail_root.join("archive/cur").join(format!("{id}:2,S")).is_file());
+}
+
+// covers: UC-operator-channel-01
+#[test]
+fn archive_by_hand_moves_one_message_and_records_who_and_why() {
+    let (_t, e) = fixture("mail-archive-hand");
+    send(&e, &args("concierge", FROM, "stale thing")).unwrap();
+    send(&e, &args("concierge", FROM, "other thing")).unwrap();
+    let id = names(&e, "concierge", "new")[0].clone();
+    cmds::archive(&e, "concierge", &id, "the condition is gone", "ryan").unwrap();
+    assert_eq!(names(&e, "concierge", "new").len(), 1, "only the named message moved");
+    let text = fs::read_to_string(e.mail_root.join("archive/cur").join(&id)).unwrap();
+    let trailer = text.lines().last().unwrap();
+    assert!(trailer.starts_with("-- archived: ") && trailer.ends_with(" by ryan: the condition is gone"), "{trailer}");
+}
+
+// covers: UC-operator-channel-01
+#[test]
+fn archive_by_hand_refuses_without_a_why_and_moves_nothing() {
+    let (_t, e) = fixture("mail-archive-nowhy");
+    send(&e, &args("concierge", FROM, "stale thing")).unwrap();
+    let id = names(&e, "concierge", "new")[0].clone();
+    for why in ["", "  "] {
+        let err = cmds::archive(&e, "concierge", &id, why, "ryan").unwrap_err();
+        assert!(err.contains("--why"), "{err}");
+    }
+    assert_eq!(names(&e, "concierge", "new"), vec![id]);
+    assert!(!e.mail_root.join("archive").exists());
+}
+
+// covers: UC-operator-channel-01
+#[test]
+fn a_hand_action_is_recorded_under_the_sessions_sender_else_the_operator() {
+    let (_t, mut e) = fixture("mail-actor");
+    assert_eq!(cmds::actor(&e), "op");
+    e.mail_from = Some("Dwarf <dwarf@spira>".into());
+    assert_eq!(cmds::actor(&e), "dwarf");
+}
+
+// covers: UC-operator-channel-01
+#[test]
+fn a_sent_alarm_carries_its_condition_header() {
+    let (_t, mut e) = fixture("mail-condition-header");
+    e.condition = Some("mail-health:concierge".into());
+    let out = send(&e, &args("concierge", FROM, "concierge is not reading its mail")).unwrap();
+    assert!(fs::read_to_string(out.delivered_path).unwrap().contains("\nX-Spira-Condition: mail-health:concierge\n"));
 }
 
 // covers: UC-operator-channel-01
@@ -258,15 +324,15 @@ fn a_lint_refused_operator_send_writes_no_stamp_so_the_corrected_send_is_not_a_r
 // covers: UC-operator-channel-07
 // covers: UC-cockpit-observability-26
 #[test]
-fn done_sets_the_replied_flag_once_and_a_second_done_changes_nothing() {
+fn done_sets_the_replied_and_seen_flags_once_and_a_second_done_changes_nothing() {
     let (_t, e) = fixture("mail-uc07-done");
     send(&e, &args("concierge", FROM, "handled")).unwrap();
     let id = names(&e, "concierge", "new")[0].clone();
     cmds::done(&e, "concierge", &id, None).unwrap();
-    assert_eq!(names(&e, "concierge", "cur"), vec![format!("{id}:2,R")]);
+    assert_eq!(names(&e, "concierge", "cur"), vec![format!("{id}:2,RS")]);
     assert!(names(&e, "concierge", "new").is_empty());
     cmds::done(&e, "concierge", &id, None).unwrap();
-    assert_eq!(names(&e, "concierge", "cur"), vec![format!("{id}:2,R")]);
+    assert_eq!(names(&e, "concierge", "cur"), vec![format!("{id}:2,RS")]);
 }
 
 // covers: UC-operator-channel-07

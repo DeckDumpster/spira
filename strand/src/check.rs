@@ -635,8 +635,25 @@ pub fn escalation_body(title: &str, action: &str, why: &str, ctx: &str) -> Strin
 
 /// A stranded-work alert is about the very mailboxes a dead reader leaves unread; it is a note
 /// to the operator with the bypass, since an unclassed question is rerouted to the concierge.
-pub fn operator_send_args(title: &str) -> Vec<&str> {
-    vec!["send", "operator", "--from", "Strand check <strand@spira>", "--subject", title, "--kind", "note"]
+pub fn operator_send_args<'a>(title: &'a str, condition: &'a str) -> Vec<&'a str> {
+    vec!["send", "operator", "--from", "Strand check <strand@spira>", "--subject", title, "--kind", "note", "--condition", condition]
+}
+
+/// The `X-Spira-Condition` of a stranded-work alarm: the owner `mail tidy` asks, and the episode
+/// key in `strands.json`.
+pub fn condition_key(part: &str, kind: &str, id: &str) -> String {
+    format!("strand:{}", state::key(part, kind, id))
+}
+
+/// `strand condition <part:kind:id>`: exit [`CONDITION_ENDED`] once the episode is gone from the
+/// state, 0 while it stands, 1 when that cannot be told.
+pub const CONDITION_ENDED: i32 = 10;
+pub fn condition_exit(cfg: &Config, episode: &str) -> i32 {
+    match cfg.state_path().and_then(|p| state::episode_stands(&p, episode)) {
+        Some(true) => 0,
+        Some(false) => CONDITION_ENDED,
+        None => 1,
+    }
 }
 
 pub const OPERATOR_CONSIDERED: (&str, &str) = ("SPIRA_MAIL_OPERATOR_CONSIDERED", "strand-check alerts the operator about stranded work whoever reads the concierge");
@@ -695,9 +712,10 @@ fn escalate(cfg: &Config, part: &str, kind: &str, id: &str, detail: &str, action
     };
     let body = escalation_body(&title, action, &why, &ctx);
     // mail, by name on the launcher's PATH (sp-gypjk).
+    let condition = condition_key(part, kind, id);
     let _ = probe::run(
         "mail",
-        &operator_send_args(&title),
+        &operator_send_args(&title, &condition),
         Some(body.as_bytes()),
         &[OPERATOR_CONSIDERED],
     );
@@ -790,13 +808,30 @@ mod tests {
 
     #[test]
     fn a_stranded_alert_is_a_note_to_the_operator_with_the_bypass_and_no_question() {
-        let a = operator_send_args("t");
+        let a = operator_send_args("t", "strand:p:k:i");
         assert_eq!(a[1], "operator");
         assert!(a.windows(2).any(|w| w == ["--kind", "note"]), "{a:?}");
         assert!(!a.contains(&"--default") && !a.contains(&"question"), "{a:?}");
+        assert!(a.windows(2).any(|w| w == ["--condition", "strand:p:k:i"]), "{a:?}");
         assert_eq!(OPERATOR_CONSIDERED.0, "SPIRA_MAIL_OPERATOR_CONSIDERED");
         let b = escalation_body("T", "do x", "why", "ctx");
         assert!(b.starts_with("## Note\n") && b.contains("do x"), "{b}");
+    }
+
+    #[test]
+    fn a_stranded_alarms_condition_stands_while_its_episode_is_in_the_state_and_ends_when_it_leaves() {
+        let run = testkit::TempDir::new("strand-condition");
+        let cfg = Config { run: Some(run.to_path_buf()), ..Config::test_fixture() };
+        let key = state::key("spira,plan", "starved", "-");
+        assert_eq!(condition_key("spira,plan", "starved", "-"), format!("strand:{key}"));
+        assert_eq!(condition_exit(&cfg, &key), CONDITION_ENDED, "no state file holds no episode");
+        let mut st = state::State::new();
+        state::mark(&mut st, "spira,plan", "starved", "-", Mark::Escalated, 5);
+        state::save(&cfg.state_path().unwrap(), &st).unwrap();
+        assert_eq!(condition_exit(&cfg, &key), 0, "positive control: the episode stands");
+        assert_eq!(condition_exit(&cfg, "spira,plan:stuck:sp-x"), CONDITION_ENDED);
+        fs::write(cfg.state_path().unwrap(), "{not json").unwrap();
+        assert_eq!(condition_exit(&cfg, &key), 1, "a corrupt state is not an ended episode");
     }
 
     #[test]

@@ -105,6 +105,7 @@ mod tests {
             allow_blocking: false,
             bead_id: None,
             lock_timeout_ms: 1000,
+            condition: None,
         }
     }
 

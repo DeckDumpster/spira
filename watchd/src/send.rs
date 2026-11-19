@@ -47,7 +47,7 @@ pub fn send(bd: &dyn Bd, env: &Env, letter: &Letter) -> Result<(), String> {
 /// A note to the operator about a reader that is not reading. Unclassed operator mail is
 /// rerouted to the concierge, which is the mailbox such an alert is usually about.
 pub fn alert_operator(bd: &dyn Bd, env: &Env, subject: &str, body: &str) -> Result<(), String> {
-    let env = Env { operator_considered: Some("watchd alerts the operator about readers that are not reading".into()), ..env.clone() };
+    let env = Env { operator_considered: Some("watchd alerts the operator about readers that are not reading".into()), condition: crate::notify::condition_of(subject), ..env.clone() };
     send(bd, &env, &Letter { mailbox: "operator", subject, kind: "note", default: "", body })
 }
 
@@ -114,6 +114,7 @@ mod tests {
             allow_blocking: false,
             bead_id: None,
             lock_timeout_ms: 1000,
+            condition: None,
         }
     }
 
@@ -125,6 +126,21 @@ mod tests {
         alert_operator(&NoStore::default(), &env(&root), "events unread", "## Note\nx\n").unwrap();
         assert_eq!(std::fs::read_dir(root.join("mail/operator/new")).unwrap().count(), 1);
         assert!(!root.join("mail/concierge/new").exists());
+    }
+
+    #[test]
+    fn the_backlog_alarm_carries_its_condition_and_another_alert_carries_none() {
+        let tmp = testkit::TempDir::new("watchd-alert-condition");
+        let root = tmp.path().to_path_buf();
+        std::fs::create_dir_all(root.join("run")).unwrap();
+        let sent = |subject: &str| {
+            alert_operator(&NoStore::default(), &env(&root), subject, "## Note\nx\n").unwrap();
+            let mut files: Vec<_> = std::fs::read_dir(root.join("mail/operator/new")).unwrap().flatten().collect();
+            files.sort_by_key(|f| f.metadata().unwrap().modified().unwrap());
+            std::fs::read_to_string(files.last().unwrap().path()).unwrap()
+        };
+        assert!(sent(crate::notify::BACKLOG_SUBJECT).contains("\nX-Spira-Condition: watchd:notify\n"));
+        assert!(!sent("some other alert").contains("X-Spira-Condition"));
     }
 
     #[test]

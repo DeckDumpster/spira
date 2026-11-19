@@ -18,6 +18,14 @@
 set -uo pipefail
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/conf.sh"
 
+# `condition <mailbox|outbound>`: exit 10 once the alarm mailed for it has ended (its state is
+# gone), 0 while it stands. `mail tidy` asks this of an alarm it has read.
+if [ "${1:-}" = condition ]; then
+    case "${2:-}" in ''|*/*|.*) exit 2 ;; esac
+    [ -e "${SPIRA_RUN}/mail-health/$2" ] && exit 0
+    exit 10
+fi
+
 # These are alerts about a silent reader, often the concierge; without this `mail send operator`
 # reroutes a note to the concierge, which is the mailbox that is not being read.
 export SPIRA_MAIL_OPERATOR_CONSIDERED="mail-health alerts the operator about unread mailboxes"
@@ -72,6 +80,7 @@ if _out="$(_aerc_outgoing)"; then
             | SPIRA_MAIL_REPEAT_CONSIDERED="mail-health has own dedup" \
               mail send operator \
                 --from "Mail health <health@spira>" \
+                --condition "mail-health:outbound" \
                 --subject "reply path is broken: aerc cannot send" \
                 && { printf '%s\n' "$fault" > "$_osf"; found=1; } \
                 || { echo "mail-health: could not mail the operator about the reply path" >&2; err=1; }
@@ -113,6 +122,7 @@ while IFS= read -r _line; do
     | SPIRA_MAIL_REPEAT_CONSIDERED="mail-health has own dedup" \
       mail send operator \
         --from "Mail health <health@spira>" \
+        --condition "mail-health:$_mb" \
         --subject "$_mb is not reading its mail" \
         || { echo "mail-health: could not mail the operator about $_mb (see mail's error above)" >&2; err=1; continue; }
 

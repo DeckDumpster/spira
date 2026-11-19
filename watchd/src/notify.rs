@@ -21,6 +21,8 @@ use crate::sop_run::{self, Verdict};
 pub const NOTIFY_MAX: usize = 12;
 
 /// The backlog ask (`escalate`): subject, default and why, as mailed.
+pub const BACKLOG_STAMP: &str = "notify.escalated";
+pub const HEALTH_STAMP: &str = "notify-health.escalated";
 pub const BACKLOG_SUBJECT: &str = "Events a watcher produced have reached no reader";
 pub const BACKLOG_DEFAULT: &str = "read them below and act on them here — nothing has been marked read, so the next session to latch still gets them; if a line of this kind is never worth waking anyone for, narrow SPIRA_ACTIONABLE rather than lengthening SPIRA_NOTIFY_AGE";
 pub const BACKLOG_WHY: &str = "delivery of a watcher's events otherwise depends on a session existing to drain them, and a session hook fires at a session boundary — so an event produced while nothing is running waits for the next session to open, which for a headless agent never comes. Nothing else will surface these.";
@@ -28,6 +30,34 @@ pub const BACKLOG_WHY: &str = "delivery of a watcher's events otherwise depends 
 pub const HEALTH_SUBJECT: &str = "A watcher has stopped producing events";
 pub const HEALTH_DEFAULT: &str = "restart it with `watchd restart <name>`, then read the last line above. A unit that restarts without ever becoming active is usually a second copy started by hand holding its lock — retiring that copy is the fix, and `Restart=always` respawns on a clean exit too, so the loop never ends on its own. If the watcher is meant to be stopped, take its row out of the manifest instead of leaving a unit systemd will respawn forever.";
 pub const HEALTH_WHY: &str = "a watcher that is not running produces no events, and a watcher producing no events is indistinguishable from one with nothing to say. Nothing else escalates this: the other half of `notify` reports events that WERE produced, so the failure that stops production is exactly the one it cannot see.";
+
+/// The `X-Spira-Condition` of an operator alarm, by its subject: the escalation stamp that
+/// stands while the condition does.
+pub fn condition_of(subject: &str) -> Option<String> {
+    let name = match subject {
+        BACKLOG_SUBJECT => BACKLOG_STAMP,
+        HEALTH_SUBJECT => HEALTH_STAMP,
+        _ => return None,
+    };
+    Some(format!("watchd:{}", name.trim_end_matches(".escalated")))
+}
+
+/// Exit status of `watchd condition <name>` once the alarm's condition has ended.
+pub const CONDITION_ENDED: i32 = 10;
+
+/// `watchd condition <name>`: 0 while the escalation stamp `<name>.escalated` stands, otherwise
+/// [`CONDITION_ENDED`]; 2 for a name that is not an alarm.
+pub fn condition_exit(run: &str, name: &str) -> i32 {
+    let stamp = format!("{name}.escalated");
+    if ![BACKLOG_STAMP, HEALTH_STAMP].contains(&stamp.as_str()) {
+        return 2;
+    }
+    if paths::watchd_dir(run).join(stamp).exists() {
+        0
+    } else {
+        CONDITION_ENDED
+    }
+}
 
 /// FNV-1a 64-bit, hex-encoded — a stable, dependency-free fingerprint for the escalation
 /// dedupe stamps (`_wd_ask`'s `cksum`, which is not reproduced bit-for-bit here because
@@ -71,7 +101,7 @@ fn escalate(ops: &dyn Ops, run: &str, key: &str, report: &str) -> Result<bool, S
     ask(
         ops,
         run,
-        "notify.escalated",
+        BACKLOG_STAMP,
         key,
         BACKLOG_SUBJECT,
         BACKLOG_DEFAULT,
@@ -307,14 +337,14 @@ fn notify_health(rows: &[Row], ops: &dyn Ops, ctx: &Context) -> Result<NotifyOut
     }
 
     if stale == 0 {
-        fs_ops::remove(&paths::watchd_dir(&ctx.run).join("notify-health.escalated"));
+        fs_ops::remove(&paths::watchd_dir(&ctx.run).join(HEALTH_STAMP));
         return Ok(NotifyOutcome { report: String::new(), code: 0 });
     }
 
     ask(
         ops,
         &ctx.run,
-        "notify-health.escalated",
+        HEALTH_STAMP,
         &key,
         HEALTH_SUBJECT,
         HEALTH_DEFAULT,
@@ -351,6 +381,21 @@ mod tests {
 
     fn row(name: &str, kind: Kind, target: &str, health: &str) -> Row {
         Row { name: name.into(), kind, target: target.into(), health: health.into() }
+    }
+
+    #[test]
+    fn an_operator_alarms_condition_stands_while_its_escalation_stamp_does() {
+        let run = testkit::TempDir::new("watchd-condition");
+        let run_s = run.path().to_str().unwrap();
+        assert_eq!(condition_of(BACKLOG_SUBJECT).as_deref(), Some("watchd:notify"));
+        assert_eq!(condition_of(HEALTH_SUBJECT).as_deref(), Some("watchd:notify-health"));
+        assert_eq!(condition_of("something else"), None);
+        assert_eq!(condition_exit(run_s, "notify"), CONDITION_ENDED);
+        std::fs::create_dir_all(paths::watchd_dir(run_s)).unwrap();
+        std::fs::write(paths::watchd_dir(run_s).join(BACKLOG_STAMP), "fp").unwrap();
+        assert_eq!(condition_exit(run_s, "notify"), 0, "positive control: the stamp stands");
+        assert_eq!(condition_exit(run_s, "notify-health"), CONDITION_ENDED);
+        assert_eq!(condition_exit(run_s, "../x"), 2);
     }
 
     #[test]

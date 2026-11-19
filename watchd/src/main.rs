@@ -49,6 +49,13 @@ fn main() {
             print!("{}", commands::cmd_units(&rows));
             0
         }
+        "condition" => {
+            let Some(name) = rest.first() else {
+                eprintln!("usage: watchd condition <notify|notify-health>");
+                std::process::exit(2);
+            };
+            watchd::notify::condition_exit(&load_context().run, name)
+        }
         "keys" => {
             commands::cmd_keys();
             0

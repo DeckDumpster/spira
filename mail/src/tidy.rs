@@ -2,7 +2,8 @@
 //! production). A message is kept only if (1) its bead id names an open ask-labelled bead,
 //! (2) it is unread and younger than the fresh window, or (3) it carries `X-Spira-Urgent`
 //! and is younger than 7 days; rules (2) and (3) never keep mail whose bead is closed.
-//! Older copies of a repeated subject are always archived.
+//! A read digest note is archived; a read alarm (`X-Spira-Condition`) is kept exactly while its
+//! condition is raised. Older copies of a repeated subject are always archived.
 //! FAIL CLOSED throughout (law-a-control-that-cannot-check-must-refuse): an unreadable bead
 //! store, or a mailbox that was never created, moves nothing rather than guessing.
 
@@ -34,6 +35,10 @@ pub struct Seen {
     pub bead: String,
     pub unread: bool,
     pub urgent: bool,
+    /// `X-Spira-Digest`: a routine notice, gone once read.
+    pub digest: bool,
+    /// `X-Spira-Condition`; empty when the mail is not an alarm.
+    pub condition: String,
 }
 
 impl Seen {
@@ -66,25 +71,64 @@ pub fn scan(mail_root: &Path, mailbox: &str) -> Result<Vec<Seen>, String> {
             // The mail's bead is its header's, never an id scraped from the body's prose.
             let bead = message::header_line_sed(&text, "X-Spira-Bead");
             let urgent = !message::header_line_sed(&text, "X-Spira-Urgent").is_empty();
-            Seen { unread: maildir::is_unread(&path), subject: message::header_line_sed(&text, "Subject"), bead, urgent, mtime, path }
+            let digest = !message::header_line_sed(&text, "X-Spira-Digest").is_empty();
+            let condition = message::header_line_sed(&text, "X-Spira-Condition");
+            Seen { unread: maildir::is_unread(&path), subject: message::header_line_sed(&text, "Subject"), bead, urgent, digest, condition, mtime, path }
         })
         .collect())
 }
 
 /// The keep rule over `seen` (newest first), one verdict per message: kept iff it is the first
-/// copy of its subject AND (its bead is an open ask OR (it is fresh AND its bead is not known
-/// closed)). `closed` is asked only for a fresh first copy that names a bead.
-pub fn keeps(seen: &[Seen], open_asks: &dyn Fn(&str) -> bool, now: u64, fresh_s: u64, closed: &mut dyn FnMut(&str) -> bool) -> Vec<bool> {
+/// copy of its subject AND (its bead is an open ask OR a read alarm whose condition still stands OR
+/// (it is neither a read digest note nor a read alarm AND it is fresh AND its bead is not known closed)).
+/// `closed` is asked only for a fresh first copy that names a bead; `raised` only for a read
+/// alarm, and an answer it cannot give must be `true`.
+pub fn keeps(seen: &[Seen], open_asks: &dyn Fn(&str) -> bool, now: u64, fresh_s: u64, closed: &mut dyn FnMut(&str) -> bool, raised: &mut dyn FnMut(&str) -> bool) -> Vec<bool> {
     let mut subjects: HashSet<&str> = HashSet::new();
     seen.iter()
         .map(|m| {
             if !subjects.insert(m.subject.as_str()) {
                 return false;
             }
-            let open_ask = !m.bead.is_empty() && open_asks(&m.bead);
-            open_ask || (m.fresh(now, fresh_s) && !(!m.bead.is_empty() && closed(&m.bead)))
+            if !m.bead.is_empty() && open_asks(&m.bead) {
+                return true;
+            }
+            if !m.unread {
+                if m.digest {
+                    return false;
+                }
+                if !m.condition.is_empty() {
+                    return raised(&m.condition);
+                }
+            }
+            m.fresh(now, fresh_s) && !(!m.bead.is_empty() && closed(&m.bead))
         })
         .collect()
+}
+
+/// Exit status of a sender's `condition <detail>` verb when the condition has ended. Any other
+/// outcome, including a tool that cannot run, reads as still raised (fail closed).
+pub const CONDITION_ENDED: i32 = 10;
+
+/// Whether the alarm condition `key` (`<owner>:<detail>`) is still raised, asked of the owner's
+/// own binary as `<tool> condition <detail>`.
+pub fn condition_raised(key: &str) -> bool {
+    let Some((owner, detail)) = key.split_once(':') else { return true };
+    let tool = match owner {
+        "mail-health" => "mail-health.sh",
+        "strand" => "strand",
+        "watchd" => "watchd",
+        _ => return true,
+    };
+    let Ok(program) = spira_config::release_env::tool(tool) else { return true };
+    let Ok(envs) = spira_config::release_env::child_path_env_for_process() else { return true };
+    ask_owner(&program, &envs, detail)
+}
+
+fn ask_owner(program: &str, envs: &[(String, String)], detail: &str) -> bool {
+    let null = std::process::Stdio::null;
+    // FORK-EDGE: the owner's own binary is the only reader of its condition state
+    spira_config::bounded::bounded(program).args(["condition", detail]).envs(envs.iter().map(|(k, v)| (k, v))).stdin(null()).stdout(null()).stderr(null()).status().map_or(true, |s| s.code() != Some(CONDITION_ENDED))
 }
 
 /// Moves each of `paths` into `<mail_root>/archive/cur`, creating the archive mailbox first. A
@@ -139,12 +183,27 @@ pub fn tidy(
     fresh_s: u64,
     dry_run: bool,
 ) -> Result<TidyReport, String> {
+    tidy_asking(bd, db_configured, mail_root, mailbox, ask_label, fresh_s, dry_run, &mut condition_raised)
+}
+
+/// [`tidy`] with `raised` answering whether an alarm's condition still stands.
+#[allow(clippy::too_many_arguments)]
+pub fn tidy_asking(
+    bd: &dyn Bd,
+    db_configured: bool,
+    mail_root: &Path,
+    mailbox: &str,
+    ask_label: &str,
+    fresh_s: u64,
+    dry_run: bool,
+    raised: &mut dyn FnMut(&str) -> bool,
+) -> Result<TidyReport, String> {
     let ask_ids = open_asks(bd, db_configured, ask_label)?;
     let seen = scan(mail_root, mailbox)?;
     let archive_dir = mail_root.join("archive");
     maildir::mail_ensure(&archive_dir).map_err(|e| format!("cannot create archive mailbox: {e}"))?;
     let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
-    let verdicts = keeps(&seen, &|id| ask_ids.contains(id), now, fresh_s, &mut |id| bead::bead_is_closed(bd, id));
+    let verdicts = keeps(&seen, &|id| ask_ids.contains(id), now, fresh_s, &mut |id| bead::bead_is_closed(bd, id), raised);
     let mut report = TidyReport::default();
     for (m, keep) in seen.iter().zip(verdicts) {
         if keep {
@@ -356,5 +415,77 @@ mod tests {
         assert_eq!(report.archived, 1);
         assert!(d.path().join("operator/new/old").exists());
         let _ = Duration::from_secs(0);
+    }
+
+    fn seed_with(dir: &Path, sub: &str, name: &str, subject: &str, headers: &str, age_s: u64) {
+        let path = dir.join(sub).join(name);
+        fs::write(&path, format!("From: Bot <bot@spira>\nSubject: {subject}\n{headers}\nbody\n")).unwrap();
+        filetime_set(&path, filetime_secs_ago(age_s)).unwrap();
+    }
+
+    fn empty_store() -> FakeBd {
+        FakeBd::new(vec![BdOut::ok("[]"), BdOut::ok(r#"[{"id":"probe"}]"#)])
+    }
+
+    #[test]
+    fn a_read_digest_note_is_archived_inside_the_fresh_window_and_an_unread_one_is_kept() {
+        let d = testkit::TempDir::new("mail-tidy");
+        setup(d.path(), "operator");
+        seed_with(&d.path().join("operator"), "cur", "m1:2,S", "MERGED #1 [repo]", "X-Spira-Digest: yes\n", 60);
+        seed_with(&d.path().join("operator"), "new", "m2", "MERGED #2 [repo]", "X-Spira-Digest: yes\n", 60);
+        let report = tidy(&empty_store(), true, d.path(), "operator", "asks", 86_400, false).unwrap();
+        assert_eq!((report.archived, report.kept), (1, 1));
+        assert!(d.path().join("archive/cur/m1:2,S").exists());
+        assert!(d.path().join("operator/new/m2").exists());
+    }
+
+    #[test]
+    fn a_read_alarm_is_kept_while_its_condition_is_raised_and_archived_once_it_ended() {
+        let d = testkit::TempDir::new("mail-tidy");
+        setup(d.path(), "operator");
+        let hdr = |c: &str| format!("X-Spira-Condition: {c}\n");
+        seed_with(&d.path().join("operator"), "cur", "ended:2,S", "concierge is not reading its mail", &hdr("mail-health:concierge"), 60);
+        seed_with(&d.path().join("operator"), "cur", "raised:2,S", "the queue is stranded", &hdr("strand:p:starved:-"), 60);
+        let mut asked = vec![];
+        let report = tidy_asking(&empty_store(), true, d.path(), "operator", "asks", 86_400, false, &mut |c| {
+            asked.push(c.to_string());
+            c != "mail-health:concierge"
+        })
+        .unwrap();
+        assert_eq!((report.archived, report.kept), (1, 1));
+        assert!(d.path().join("archive/cur/ended:2,S").exists());
+        assert!(d.path().join("operator/cur/raised:2,S").exists());
+        asked.sort();
+        assert_eq!(asked, ["mail-health:concierge", "strand:p:starved:-"]);
+    }
+
+    #[test]
+    fn an_unread_alarm_inside_the_fresh_window_stays_even_when_its_condition_ended() {
+        let d = testkit::TempDir::new("mail-tidy");
+        setup(d.path(), "operator");
+        seed_with(&d.path().join("operator"), "new", "a", "concierge is not reading its mail", "X-Spira-Condition: mail-health:concierge\n", 60);
+        let report = tidy_asking(&empty_store(), true, d.path(), "operator", "asks", 86_400, false, &mut |_| panic!("an unread alarm is not asked about")).unwrap();
+        assert_eq!((report.archived, report.kept), (0, 1));
+    }
+
+    #[test]
+    fn the_owners_exit_status_decides_ended_only_for_the_ended_code() {
+        let d = testkit::TempDir::new("mail-tidy-owner");
+        let owner = |name: &str, code: i32| {
+            let p = d.path().join(name);
+            testkit::write_exe(&p, &format!("#!/bin/sh\n[ \"$1\" = condition ] && [ \"$2\" = the-detail ] && exit {code}\nexit 99\n"));
+            p.to_string_lossy().into_owned()
+        };
+        assert!(!ask_owner(&owner("ended", CONDITION_ENDED), &[], "the-detail"), "exit 10 is ended");
+        assert!(ask_owner(&owner("standing", 0), &[], "the-detail"), "exit 0 is raised");
+        assert!(ask_owner(&owner("unsure", 1), &[], "the-detail"), "any other exit is raised");
+        assert!(ask_owner(&d.path().join("missing").to_string_lossy(), &[], "the-detail"), "a tool that cannot run is raised");
+    }
+
+    #[test]
+    fn a_condition_whose_owner_cannot_be_asked_reads_as_raised() {
+        assert!(condition_raised("no-colon"));
+        assert!(condition_raised("nobody:x"));
+        assert!(condition_raised("strand:p:k:i"), "no release is named in the test environment");
     }
 }
