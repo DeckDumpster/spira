@@ -221,6 +221,8 @@ impl ServerEffectors for SystemEffectors {
     }
 
     fn unit_active(&self) -> bool {
+        // A server that cannot bind its port fails within moments of the start; look after that.
+        std::thread::sleep(std::time::Duration::from_millis(500));
         crate::bounded::bounded(Path::new("systemctl")).args(["--user", "is-active", "--quiet", SERVER_UNIT]).output().map(|o| o.status.success()).unwrap_or(false)
     }
 

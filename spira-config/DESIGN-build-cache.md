@@ -193,9 +193,8 @@ box; the fixture image waives it, `spira/testenv/doctor-waivers`): the cache liv
   That refusal, not the cross-tree path, is most of `release-bins`'s wall clock (§2.5).
 * **Proc-macro, build-script and binary crates are not cacheable by sccache** (35 of 92
   requests in the probe). They are compiled per tree — on tmpfs for a gate tree.
-* **`SCCACHE_IGNORE_SERVER_IO_ERROR=1`.** The server is spawned by whichever client first
-  needs it and dies with that client's systemd unit; a compile whose server vanished falls
-  back to a local rustc instead of failing the build.
+* **`SCCACHE_IGNORE_SERVER_IO_ERROR=1`.** A compile whose server vanished (a restart
+  of the unit) falls back to a local rustc instead of failing the build.
 * **The one server runs only as the `spira-sccache-server` user unit** (`Wrapper::env` starts
   it through `systemd-run`): `Restart=always`, `SCCACHE_IDLE_TIMEOUT=0`, and `TMPDIR` set to
   `<SPIRA_RUN>/sccache-server/tmp`. A server inherits its starter's `TMPDIR`; one a builder
