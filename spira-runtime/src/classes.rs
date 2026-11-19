@@ -234,7 +234,6 @@ pub const CLASSES: &[(&str, EffectClass)] = &[
     ("reconcile.goodput.standby", Store),
     ("reconcile.heimdall.clear", Store),
     ("reconcile.heimdall.fallback", Host),
-    ("reconcile.heimdall.heartbeat", Host),
     ("reconcile.heimdall.observe", Store),
     ("reconcile.heimdall.raise", Store),
     ("reconcile.heimdall.refresh", Store),

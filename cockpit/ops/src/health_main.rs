@@ -7,7 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use cockpit_ops::health::frame::{render, FrameInputs};
 use cockpit_ops::health::model::Snapshot;
-use cockpit_ops::health::sections::{refusal_lines, sentinel_timer_active, DrainState, HaltState};
+use cockpit_ops::health::sections::{refusal_lines, sentinel_armed, DrainState, HaltState};
 
 const HELP: &str = "usage: health [once [rows [cols]]|render-many <dir> [rows [cols]]|loop]";
 
@@ -59,24 +59,7 @@ fn read_snapshot(path: &Path) -> (String, bool) {
     }
 }
 
-fn sentinel_active() -> Option<bool> {
-    let instance = spira_config::process::cfg("SPIRA_INSTANCE").unwrap_or_default();
-    // FORK-EDGE: needs UnitFacts to carry the unit-file state (is-enabled): an enabled timer
-    // that is inactive means the sentinel is stopped, and the Units port reads only ActiveState.
-    let systemctl = env_nonempty("SPIRA_SYSTEMCTL").unwrap_or_else(|| "systemctl".to_string());
-    let run = |verb: &str, unit: &str| {
-        spira_config::bounded::bounded(&systemctl).args(["--user", verb, unit]).output().ok()
-    };
-    sentinel_timer_active(&instance, |unit| {
-        let enabled = run("is-enabled", unit).is_some_and(|o| o.status.success());
-        let text = run("is-active", unit)
-            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-            .unwrap_or_default();
-        (enabled, text)
-    })
-}
-
-fn gather_halt(run: &str) -> HaltState {
+fn gather_halt(run: &str, sentinel_active: Option<bool>) -> HaltState {
     let stamp = Path::new(run).join("world.halted");
     match std::fs::read_to_string(&stamp) {
         Ok(content) => {
@@ -88,9 +71,9 @@ fn gather_halt(run: &str) -> HaltState {
                 .and_then(|l| l.strip_prefix("why: "))
                 .unwrap_or("")
                 .to_string();
-            HaltState { stamp_exists: true, since, why, sentinel_active: sentinel_active() }
+            HaltState { stamp_exists: true, since, why, sentinel_active }
         }
-        Err(_) => HaltState { stamp_exists: false, since: String::new(), why: String::new(), sentinel_active: sentinel_active() },
+        Err(_) => HaltState { stamp_exists: false, since: String::new(), why: String::new(), sentinel_active },
     }
 }
 
@@ -160,7 +143,7 @@ fn build_inputs(run: &str) -> (FrameInputs<'static>, String) {
         snap_stale_s,
         working: working_rows(),
         trace_lines,
-        halt: gather_halt(run),
+        halt: gather_halt(run, sentinel_armed(&snap)),
         drain: gather_drain(run),
         run_dir: run.to_string(),
         mismatch_alt: if exists { None } else { mismatch_alt(run) },

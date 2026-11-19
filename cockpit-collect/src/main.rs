@@ -112,8 +112,8 @@ fn cmd_probe(name: Option<&str>) -> i32 {
 }
 
 fn cmd_metrics(args: &[String]) -> i32 {
-    let (Some(sent), Some(ledger)) = (args.first(), args.get(1)) else {
-        eprintln!("usage: cockpit-collect metrics <sentinel.log> <dwarf-ledger.log> [hours]");
+    let (Some(reap), Some(ledger)) = (args.first(), args.get(1)) else {
+        eprintln!("usage: cockpit-collect metrics <reap.log> <dwarf-ledger.log> [hours]");
         return 1;
     };
     let hours = match args.get(2).map(|h| h.parse::<f64>()) {
@@ -124,7 +124,7 @@ fn cmd_metrics(args: &[String]) -> i32 {
             return 1;
         }
     };
-    let keys = metrics::collect(sent, ledger, hours, metrics::self_window_minutes(), timeutil::now_secs());
+    let keys = metrics::collect(reap, ledger, hours, timeutil::now_secs());
     print!("{}", metrics::render(&keys));
     0
 }

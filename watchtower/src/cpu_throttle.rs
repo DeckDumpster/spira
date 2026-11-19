@@ -17,8 +17,8 @@ pub struct Cfg {
     pub systemctl: String,
 }
 
-pub fn default_units(instance: &str) -> Vec<String> {
-    vec!["dolt-beads.service".to_string(), spira_config::unit::unit_name("runtime", "service", instance)]
+pub fn units_of(configured: &str) -> Vec<String> {
+    configured.split_whitespace().map(String::from).collect()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -154,11 +154,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_default_units_are_the_ones_that_exist_for_the_instance() {
-        assert_eq!(default_units("prod"), vec!["dolt-beads.service", "spira-runtime-prod.service"]);
-        for retired in ["spira-sentinel", "spira-landing-pass", "spira-call", "spira-verdict"] {
-            assert!(!default_units("prod").iter().any(|u| u.contains(retired)));
-        }
+    fn the_unit_list_is_the_configured_words_and_nothing_else() {
+        assert_eq!(units_of("dolt-beads.service  spira-runtime.service"), vec!["dolt-beads.service", "spira-runtime.service"]);
+        assert!(units_of("").is_empty());
     }
 
     const STAT: &str = "usage_usec 100\nnr_periods 1088059\nnr_throttled 657510\nthrottled_usec 5\n";

@@ -37,47 +37,7 @@ fn repo_tag(labels: Option<&Vec<Value>>) -> String {
 fn recent_section(out: &mut Kv, run: &std::path::Path) {
     let mut candidates: Vec<String> = Vec::new();
 
-    // Source A: sentinel ACT lines.
-    for log in ["sentinel.log"] {
-        if let Ok(content) = std::fs::read_to_string(run.join(log)) {
-            for line in content.lines() {
-                if let Some(rest) = line.split_once(" spira: ACT ") {
-                    let (ts, verb_rest) = rest;
-                    let verb_rest = verb_rest.trim();
-                    let first_word = verb_rest.split_whitespace().next().unwrap_or("");
-                    let is_match = matches!(first_word, "landed" | "reopened" | "poisoned" | "announced" | "reaped")
-                        || (first_word == "reclaimed" && verb_rest.split_whitespace().nth(1).map(|w| w.chars().all(|c| c.is_ascii_digit())).unwrap_or(false));
-                    if is_match {
-                        candidates.push(format!("{ts} sentinel {verb_rest}"));
-                    }
-                }
-            }
-        }
-    }
-
-    // Source B: strand.sh RECLAIMED lines, attributed to the preceding timestamped line
-    // (`^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ) ` — strand.sh's own output carries no timestamp).
-    if let Ok(content) = std::fs::read_to_string(run.join("sentinel.log")) {
-        let mut ts: Option<&str> = None;
-        let mut reclaimed: Vec<String> = Vec::new();
-        for line in content.lines() {
-            if let Some(t) = leading_timestamp(line) {
-                ts = Some(t);
-                continue;
-            }
-            if let Some(rest) = line.strip_prefix("RECLAIMED ") {
-                if let Some(t) = ts {
-                    if let Some(bead) = rest.split_whitespace().next() {
-                        reclaimed.push(format!("{t} sentinel reclaimed {bead}"));
-                    }
-                }
-            }
-        }
-        let n = reclaimed.len();
-        candidates.extend(reclaimed.into_iter().skip(n.saturating_sub(40)));
-    }
-
-    // Source C: dwarf-ledger.log claims/endings.
+    // The dwarf-ledger.log claims/endings.
     if let Ok(content) = std::fs::read_to_string(run.join("dwarf-ledger.log")) {
         let mut ledger_rows: Vec<String> = Vec::new();
         for line in content.lines() {
@@ -149,30 +109,6 @@ fn recent_section(out: &mut Kv, run: &std::path::Path) {
         let actor_disp: String = actor.chars().take(8).collect();
         push(out, &format!("SP_EVENT{n}"), format!("{rel:<4} {actor_disp:<8} {body_display}"));
         push(out, &format!("SP_EVENT{n}_REPO"), repos.get(bead).cloned().unwrap_or_default());
-    }
-}
-
-/// `^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ) ` — the 20-char timestamp shape, then a space.
-fn leading_timestamp(line: &str) -> Option<&str> {
-    let ts = line.get(..20)?;
-    let bytes = ts.as_bytes();
-    let digit = |i: usize| bytes.get(i).map(|b| b.is_ascii_digit()).unwrap_or(false);
-    let is_ts = digit(0) && digit(1) && digit(2) && digit(3)
-        && bytes[4] == b'-'
-        && digit(5) && digit(6)
-        && bytes[7] == b'-'
-        && digit(8) && digit(9)
-        && bytes[10] == b'T'
-        && digit(11) && digit(12)
-        && bytes[13] == b':'
-        && digit(14) && digit(15)
-        && bytes[16] == b':'
-        && digit(17) && digit(18)
-        && bytes[19] == b'Z';
-    if is_ts && line.as_bytes().get(20) == Some(&b' ') {
-        Some(ts)
-    } else {
-        None
     }
 }
 

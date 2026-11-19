@@ -157,7 +157,6 @@ SPIRA_CONTENT_DRIFT_SLACK watchtower/src/main.rs
 SPIRA_CONTENT_DRIFT_SUSTAIN_SECS sentinel/src/tower.rs
 SPIRA_CONTENT_DRIFT_SUSTAIN_SECS watchtower/src/main.rs
 SPIRA_CPU_THROTTLE_MIN_PERIODS watchtower/src/process.rs
-SPIRA_CPU_THROTTLE_UNITS watchtower/src/process.rs
 SPIRA_CPU_THROTTLE_WARN_PCT watchtower/src/process.rs
 SPIRA_CTRL_SH spira/deploy.sh
 SPIRA_CZAR_CLASS bead/src/guard.rs
@@ -728,8 +727,6 @@ SPIRA_STATUS_SEAM spira/lib.sh
 SPIRA_STRAND_GRACE strand/src/config.rs
 SPIRA_SUITES_SH watchtower/src/process.rs
 SPIRA_SUPERVISE_BIN spira-config/src/convert.rs
-SPIRA_SYSTEMCTL cockpit-collect/src/probes/mod.rs
-SPIRA_SYSTEMCTL cockpit/ops/src/health_main.rs
 SPIRA_SYSTEMCTL doctor/src/real.rs
 SPIRA_SYSTEMCTL heimdall/src/main.rs
 SPIRA_SYSTEMCTL install/src/systemctl.rs

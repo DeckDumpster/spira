@@ -140,7 +140,6 @@ pub static TASKS: &[Task] = &[
             (reconcile_heimdall::CLEAR, |e, _, s| reconcile_heimdall::clear(&lc(e), &s.input)),
             (reconcile_heimdall::REFRESH, |e, _, s| reconcile_heimdall::raise(&lc(e), &s.input)),
             (reconcile_heimdall::FALLBACK, |e, _, s| reconcile_heimdall::fallback(&e.world.run_dir, &s.input)),
-            (reconcile_heimdall::HEARTBEAT, |e, _, s| reconcile_heimdall::heartbeat(&e.world.run_dir, &s.input)),
         ],
         keys: &[reconcile_heimdall::KEYS],
         build: build::<ReconcileHeimdall>,

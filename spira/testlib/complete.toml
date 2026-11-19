@@ -442,6 +442,7 @@ memories_cache = "/fixture/userhome/spira/run/memories-cache.json"
 metrics_data = ""
 metrics_grafana_addr = ""
 metrics_page_url = ""
+cpu_throttle_units = "dolt-beads.service spira-runtime.service"
 memories_cache_age = 300
 metrics_endpoint = ""
 mirror = ""

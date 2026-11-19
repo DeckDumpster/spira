@@ -309,20 +309,13 @@ pub fn now_keys(cfg: &Cfg) -> Kv {
     push(&mut out, "SP_DWARF_N", i.to_string());
     sweep_dwarf_static(&run, io::now());
 
-    let scheduler = unit_active_key("runtime", "service", &cfg.instance);
-    for (key, value) in loop_pulse(&run, &scheduler) {
+    for (key, value) in loop_pulse(scheduler_status()) {
         push(&mut out, key, value);
     }
 
-    let heimdall_status = run.join("heimdall.status");
-    if heimdall_status.is_file() {
-        let (firing, keys) = read_heimdall_status(&heimdall_status);
-        push(&mut out, "SP_HEIMDALL_FIRING", firing);
-        push(&mut out, "SP_HEIMDALL_KEYS", keys);
-    } else {
-        push(&mut out, "SP_HEIMDALL_FIRING", "?");
-        push(&mut out, "SP_HEIMDALL_KEYS", "");
-    }
+    let (firing, keys) = heimdall_alerts(lc::verb_read(&["condition", "list", "--owner", "heimdall"]).ok());
+    push(&mut out, "SP_HEIMDALL_FIRING", firing);
+    push(&mut out, "SP_HEIMDALL_KEYS", keys);
 
     let rs_out = io::run_tool("release", &["status"], None).unwrap_or_default();
     let rs_line = rs_out.lines().find(|l| l.starts_with("RUNNING UNLANDED ")).unwrap_or("");
@@ -404,18 +397,12 @@ fn fmt_hm(epoch: i64) -> String {
         .unwrap_or_default()
 }
 
-fn read_heimdall_status(path: &Path) -> (String, String) {
-    let content = std::fs::read_to_string(path).unwrap_or_default();
-    let mut firing = "?".to_string();
-    let mut keys = String::new();
-    for line in content.lines() {
-        if let Some(v) = line.strip_prefix("SP_HEIMDALL_FIRING=") {
-            firing = v.trim_matches('\'').to_string();
-        } else if let Some(v) = line.strip_prefix("SP_HEIMDALL_KEYS=") {
-            keys = v.trim_matches('\'').to_string();
-        }
-    }
-    (firing, keys)
+/// (count, comma-joined keys) of the heimdall conditions the store holds as firing; `?` when it did not answer.
+fn heimdall_alerts(reply: Option<String>) -> (String, String) {
+    let rows = reply.and_then(|r| serde_json::from_str::<Value>(&r).ok()).and_then(|v| v["conditions"].as_array().cloned());
+    let Some(rows) = rows else { return ("?".into(), String::new()) };
+    let keys: Vec<&str> = rows.iter().filter(|c| c["status"] == "True").filter_map(|c| c["key"].as_str()).collect();
+    (keys.len().to_string(), keys.join(","))
 }
 
 fn overrides_summary() -> (usize, usize, String) {
@@ -490,22 +477,6 @@ fn gate_scan_with(run: &Path, now: i64, argv_of: &dyn Fn(i64) -> Option<String>)
     (rows, n, live)
 }
 
-/// `spira_unit` (wave 4.10, sp-wqj3o: family C7's home is `spira_config::unit`, read
-/// in-process here instead of shelling into lib.sh via `io::lib_call` — the one bash bridge
-/// this bead names explicitly). `instance` is the caller's resolved `SPIRA_INSTANCE`
-/// (`Cfg::load`); `SPIRA_SYSTEMCTL` is not a registered config key, so it is still read
-/// straight from the environment, the same per-copy-fact reading `capacity_pause_file`
-/// (above) does for its own non-registered key.
-pub(super) fn unit_active_key(rune: &str, kind: &str, instance: &str) -> String {
-    let systemctl = std::env::var("SPIRA_SYSTEMCTL").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "systemctl".to_string());
-    let unit = spira_config::unit::resolve_unit(rune, kind, instance, &systemctl);
-    match io::unit_active(&unit) {
-        Some(true) => "1".to_string(),
-        Some(false) => "0".to_string(),
-        None => "?".to_string(),
-    }
-}
-
 /// Liveness keys the loop's readers consume, each fed by the runtime task that does the work.
 const LOOP_PULSE: [(&str, &str, &str); 3] = [
     ("SP_SENTINEL_TIMER", "SP_SENTINEL_AGE", "sentinel-pass"),
@@ -513,12 +484,25 @@ const LOOP_PULSE: [(&str, &str, &str); 3] = [
     ("SP_HEIMDALL_TIMER", "SP_HEIMDALL_AGE", "reconcile.heimdall"),
 ];
 
-fn loop_pulse(run: &Path, scheduler_active: &str) -> Vec<(&'static str, String)> {
-    LOOP_PULSE.iter().flat_map(|(timer_key, age_key, task)| [(*timer_key, scheduler_active.to_string()), (*age_key, task_age(run, task))]).collect()
+/// The loop tasks' keys from one `scheduler status` reply: TIMER is `1` armed / `0` not, AGE the
+/// seconds since the task last fired. Any key is `?` when the reply failed, did not parse or lacks the task.
+fn loop_pulse(reply: Result<String, String>) -> Vec<(&'static str, String)> {
+    let doc = reply.ok().and_then(|r| serde_json::from_str::<Value>(&r).ok());
+    let at = doc.as_ref().and_then(|d| d["at"].as_u64());
+    LOOP_PULSE
+        .iter()
+        .flat_map(|(timer_key, age_key, task)| {
+            let row = doc.as_ref().and_then(|d| d["tasks"].as_array()?.iter().find(|t| t["name"] == *task));
+            let timer = row.map_or("?", |t| if t["next_due_at"].is_null() { "0" } else { "1" });
+            let age = row.and_then(|t| Some(at?.saturating_sub(t["last_fired_at"].as_u64()?) / 1000)).map_or("?".to_string(), |n| n.to_string());
+            [(*timer_key, timer.to_string()), (*age_key, age)]
+        })
+        .collect()
 }
 
-fn task_age(run: &Path, task: &str) -> String {
-    spira_config::ticked::quiet_secs(run, task).map(|s| s.to_string()).unwrap_or_else(|| "?".to_string())
+fn scheduler_status() -> Result<String, String> {
+    let sock = spira_config::process::cfg("SPIRA_RUNTIME_SOCKET")?;
+    spira_config::scheduler_link::call(std::path::Path::new(sock.trim()), &["scheduler", "status"])
 }
 
 /// `dwarf_alive` (`lib.sh`): the one canonical implementation (`strand::probe::dwarf_alive`,
@@ -1532,25 +1516,13 @@ fn read_mail_subject(path: &Path) -> String {
 // hel_keys — the HEL / SELF / dwarf-ledger keys, from crate::metrics.
 // ---------------------------------------------------------------------------------------
 
-const HEL_KEYS: &[&str] = &[
-    "SP_SENT", "SP_SENT_HELD", "SP_SENT_KEPT", "SP_SENT_FAILED", "SP_SENT_FAILED_AGE_M",
-    "SP_PASSES", "SP_ACTS", "SP_FALSE_ACTS", "SP_FALSE_PER_PASS", "SP_SINCE_JUDGEMENT",
-    "SP_STARVED_PASSES", "SP_DWARF_BORN", "SP_DWARF_LIVED", "SP_DWARF_STILLBORN",
-    "SP_DWARF_WORKED", "SP_DWARF_THRASH", "SP_SELF_REPEATING_N", "SP_SELF_STILLBORN_W",
-    "SP_SELF_STILLBORN_LAST", "SP_SELF_STARVED_W", "SP_SELF_STARVED_LAST",
-];
+const HEL_KEYS: &[&str] = &["SP_SENT_FAILED", "SP_SENT_FAILED_AGE_M", "SP_DWARF_BORN", "SP_DWARF_LIVED", "SP_DWARF_STILLBORN", "SP_DWARF_WORKED", "SP_DWARF_THRASH"];
 
 pub fn hel_keys() -> Kv {
     let run = io::run_dir();
-    let sentinel_log = run.join("sentinel.log");
+    let reap = run.join("reap.log");
     let ledger = run.join("dwarf-ledger.log");
-    let keys = crate::metrics::collect(
-        sentinel_log.to_str().unwrap_or(""),
-        ledger.to_str().unwrap_or(""),
-        24.0,
-        crate::metrics::self_window_minutes(),
-        crate::timeutil::now_secs(),
-    );
+    let keys = crate::metrics::collect(reap.to_str().unwrap_or(""), ledger.to_str().unwrap_or(""), 24.0, crate::timeutil::now_secs());
     let mut out: Kv = keys.into_iter().collect();
     out.retain(|(k, _)| HEL_KEYS.contains(&k.as_str()));
     out
@@ -1648,21 +1620,30 @@ pub fn czar_progress(bead: &Value, lc: Option<&HashMap<String, lc::Row>>) -> Cza
 #[cfg(test)]
 mod tests {
     #[test]
-    fn loop_ages_come_from_the_task_stamp_not_the_retired_log() {
-        let t = testkit::TempDir::new("loop-pulse");
-        let run = t.path();
-        for f in ["sentinel.log", "ops.log", "heimdall.status"] {
-            std::fs::write(run.join(f), "old").unwrap();
-            let old = std::time::SystemTime::now() - std::time::Duration::from_secs(1_000_000);
-            std::fs::File::options().write(true).open(run.join(f)).unwrap().set_modified(old).unwrap();
-        }
-        let get = |k: &str| loop_pulse(run, "1").into_iter().find(|(key, _)| *key == k).unwrap().1;
-        for (timer_key, age_key, task) in LOOP_PULSE {
-            assert_eq!(get(age_key), "?", "{task} never stamped");
-            assert_eq!(get(timer_key), "1");
-            spira_config::ticked::stamp(run, task);
-            let age: u64 = get(age_key).parse().unwrap_or_else(|_| panic!("{age_key} unread"));
-            assert!(age < 60, "{age_key} read {age}s, the log's age");
+    fn firing_alerts_come_from_the_stores_heimdall_conditions() {
+        let doc = r#"{"conditions":[{"key":"sentinel-stale","status":"True"},{"key":"mirror-stale","status":"False"},{"key":"db-down","status":"True"}]}"#;
+        assert_eq!(heimdall_alerts(Some(doc.into())), ("2".to_string(), "sentinel-stale,db-down".to_string()));
+        assert_eq!(heimdall_alerts(Some(r#"{"conditions":[]}"#.into())).0, "0");
+        assert_eq!(heimdall_alerts(None).0, "?");
+        assert_eq!(heimdall_alerts(Some("garbage".into())).0, "?");
+    }
+
+    #[test]
+    fn loop_keys_come_from_the_schedulers_own_record_of_each_task() {
+        let doc = r#"{"at":100000,"tasks":[
+            {"name":"sentinel-pass","next_due_at":160000,"last_fired_at":95000},
+            {"name":"persona.ops","next_due_at":null,"last_fired_at":40000},
+            {"name":"reconcile.heimdall","next_due_at":1,"last_fired_at":null}]}"#;
+        let get = |reply: Result<String, String>, k: &str| loop_pulse(reply).into_iter().find(|(key, _)| *key == k).unwrap().1;
+        let ok = || Ok(doc.to_string());
+        assert_eq!((get(ok(), "SP_SENTINEL_TIMER").as_str(), get(ok(), "SP_SENTINEL_AGE").as_str()), ("1", "5"));
+        assert_eq!((get(ok(), "SP_OPS_TIMER").as_str(), get(ok(), "SP_OPS_AGE").as_str()), ("0", "60"));
+        assert_eq!((get(ok(), "SP_HEIMDALL_TIMER").as_str(), get(ok(), "SP_HEIMDALL_AGE").as_str()), ("1", "?"));
+        let lacking = || Ok(r#"{"at":1,"tasks":[]}"#.to_string());
+        for reply in [lacking as fn() -> Result<String, String>, || Err("down".into()), || Ok("not json".into())] {
+            for (t, a, _) in LOOP_PULSE {
+                assert_eq!((get(reply(), t).as_str(), get(reply(), a).as_str()), ("?", "?"));
+            }
         }
     }
 

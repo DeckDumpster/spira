@@ -991,7 +991,7 @@ mod tests {
         let ws = testkit::TempDir::new("spira-config-runes-shipped");
         let src = crate::resolve::locate_home_for_process().expect("SPIRA_HOME names the harness tree").join("runes");
         for dir in [src.clone(), src.join("disabled")] {
-            for e in std::fs::read_dir(&dir).unwrap().flatten().filter(|e| e.path().extension().is_some_and(|x| x == "rune")) {
+            for e in std::fs::read_dir(&dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display())).flatten().filter(|e| e.path().extension().is_some_and(|x| x == "rune")) {
                 write_rune(&ws, &e.path().file_stem().unwrap().to_string_lossy(), &std::fs::read_to_string(e.path()).unwrap());
             }
         }
@@ -1011,7 +1011,7 @@ mod tests {
         let ws = testkit::TempDir::new("spira-config-runes-reactive-set");
         let mut any_lane = vec![];
         for dir in [src.clone(), src.join("disabled")] {
-            for e in std::fs::read_dir(&dir).unwrap().flatten().filter(|e| e.path().extension().is_some_and(|x| x == "rune")) {
+            for e in std::fs::read_dir(&dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display())).flatten().filter(|e| e.path().extension().is_some_and(|x| x == "rune")) {
                 let name = e.path().file_stem().unwrap().to_string_lossy().into_owned();
                 let text = std::fs::read_to_string(e.path()).unwrap();
                 if assigned_value(&text, "RUNE_LANE").is_some() {
@@ -1032,7 +1032,7 @@ mod tests {
         let mut single = vec![];
         let mut seen = 0;
         for d in [dir.clone(), dir.join("disabled")] {
-            for e in std::fs::read_dir(&d).unwrap().flatten() {
+            for e in std::fs::read_dir(&d).unwrap_or_else(|e| panic!("{}: {e}", d.display())).flatten() {
                 let path = e.path();
                 if path.extension().is_none_or(|x| x != "rune") {
                     continue;

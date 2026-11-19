@@ -852,7 +852,10 @@ mod tests {
         testkit::write_exe(repo.join(".git/hooks/reference-transaction"), "#!/bin/sh\ncat >/dev/null\n[ \"$1\" = prepared ] && exit 1\nexit 0\n");
         let log = run.join("reap.log");
         assert!(matches!(destroy_branch(&run, &log, "sp-gone", "spira/sp-gone", &repo, "test", "hel", None, &open()), Err(DestroyBranchErr::Failed(_))));
-        assert!(std::fs::read_to_string(&log).unwrap().lines().any(|l| l.split_whitespace().nth(1) == Some("FAILED")));
+        let text = std::fs::read_to_string(&log).unwrap();
+        assert!(text.lines().any(|l| l.split_whitespace().nth(1) == Some("FAILED")));
+        let counted = cockpit_collect::metrics::reap_metrics(&text.lines().collect::<Vec<_>>(), 0, 4_000_000_000);
+        assert_eq!(counted["SP_SENT_FAILED"], "1", "the cockpit's parser must read the line the chokepoint writes: {text}");
     }
 
     #[test]

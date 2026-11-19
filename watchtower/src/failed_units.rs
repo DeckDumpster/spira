@@ -19,13 +19,13 @@ pub const SHARED_UNITS: &[&str] = &[
     "sccache-dav.service",
 ];
 
-/// The spira-* units and the shared ones that are failed now. `None` means the manager could
+/// Every failed unit of the manager's scope, transient ones included, and the shared ones. `None` means the manager could
 /// not be asked, rendered `?`, never an empty (all-clear) list. A unit whose file is gone is
 /// `Absent`, not failed.
 pub fn gather(units: &dyn Units) -> Option<Vec<String>> {
-    let mut failed: Vec<String> = units.list("spira-*").ok()?.into_iter().filter(|d| d.state == UnitState::Failed).map(|d| d.name).collect();
+    let mut failed: Vec<String> = units.list("*").ok()?.into_iter().filter(|d| d.state == UnitState::Failed).map(|d| d.name).collect();
     for name in SHARED_UNITS {
-        if units.facts(&UnitHandle::named(name)).ok()?.state == UnitState::Failed {
+        if !failed.iter().any(|f| f == name) && units.facts(&UnitHandle::named(name)).ok()?.state == UnitState::Failed {
             failed.push((*name).to_string());
         }
     }
@@ -124,7 +124,15 @@ mod tests {
         at(&u, "spira-ok.service", UnitState::Active);
         at(&u, "dolt-beads.service", UnitState::Failed);
         at(&u, "concierge.service", UnitState::Active);
-        assert_eq!(gather(&u), Some(vec!["spira-watchtower.service".to_string(), "dolt-beads.service".to_string()]));
+        assert_eq!(gather(&u), Some(vec!["dolt-beads.service".to_string(), "spira-watchtower.service".to_string()]));
+    }
+
+    #[test]
+    fn a_failed_transient_unit_outside_the_spira_prefix_is_named() {
+        let u = units();
+        at(&u, "concierge-hel-catchup.service", UnitState::Failed);
+        at(&u, "dolt-beads.service", UnitState::Failed);
+        assert_eq!(gather(&u), Some(vec!["concierge-hel-catchup.service".to_string(), "dolt-beads.service".to_string()]));
     }
 
     #[test]
