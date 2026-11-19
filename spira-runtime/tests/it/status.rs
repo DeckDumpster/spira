@@ -177,3 +177,18 @@ fn the_reconciler_host_reads_uncalled_from_the_carry_scheduler_uncalled_serves()
     let want = std::collections::BTreeMap::from([("mender".to_string(), "yielding — urgent bead(s) unclaimed: sp-x".to_string())]);
     assert_eq!(host.uncalled(), Some(Ok(want)));
 }
+
+#[test]
+fn the_reconciler_host_names_a_carry_it_cannot_decode() {
+    use reconciler::Host;
+    let clock = VirtualClock::new(0);
+    let board = Arc::new(StatusBoard::default());
+    let mut e = Engine::open(MemJournal::new(), Arc::new(clock.clone()), vec![Registration::new("sentinel-call", Passed(r#"{"uncalled":7}"#))], 1).unwrap().with_status_board(board.clone());
+    let mut host = spira_runtime::reconcile_host::RuntimeHost::new(Default::default(), Default::default(), None, std::path::PathBuf::new(), String::new(), 0, 0, String::new(), Default::default());
+    host.board = Some(board);
+    e.submit("t1", "t", EventKind::new("tick", "")).unwrap();
+    clock.advance_to(10);
+    e.run_until_idle().unwrap();
+    let err = host.uncalled().unwrap().unwrap_err();
+    assert!(err.contains("does not decode"), "{err}");
+}
