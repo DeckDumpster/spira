@@ -138,9 +138,8 @@ pub fn cmd_next(rows: &[Row], ctx: &Context, args: &NextArgs) -> Result<String, 
     let rf = redeliverfile(&ctx.run, &r.name);
     if let Ok(text) = std::fs::read_to_string(&rf) {
         let _ = std::fs::remove_file(&rf);
-        let out = format!("[redelivered] {text}");
-        write_delivered(&ctx.run, &r.name, &out, &args.ancestors);
-        return Ok(out);
+        write_delivered(&ctx.run, &r.name, &text, &args.ancestors);
+        return Ok(format!("[redelivered] {text}"));
     }
 
     let cf = paths::cursorfile(&ctx.run, &r.name);
@@ -335,5 +334,15 @@ mod tests {
         append(&log, "2026-10-08T00:00:09Z fresh\n");
         assert_eq!(run_next(&d, &log, 5).unwrap(), "[redelivered] one \"q\"\ntwo\\\n");
         assert_eq!(run_next(&d, &log, 5).unwrap(), "fresh\n");
+    }
+
+    #[test]
+    fn a_redelivery_that_fails_in_turn_is_redelivered_with_one_marker() {
+        let d = unique_dir("watchd-undeliver-twice");
+        let log = delivered_two(&d);
+        assert_eq!(undeliver(&d, None), 0);
+        run_next(&d, &log, 5).unwrap();
+        assert_eq!(undeliver(&d, None), 0);
+        assert_eq!(run_next(&d, &log, 5).unwrap(), "[redelivered] one \"q\"\ntwo\\\n");
     }
 }
