@@ -210,25 +210,10 @@ impl Notified {
 }
 
 /// What `bead.sh amend` prints: one line per change applied, then the holder line.
-pub fn amend_report(id: &str, changed: &str, notified: &Notified) -> Vec<String> {
-    let mut lines: Vec<String> = changed.split("\n\n").filter(|c| !c.is_empty()).map(|c| format!("{id}: {}", plain_change(c))).collect();
+pub fn amend_report(id: &str, applied: &[String], notified: &Notified) -> Vec<String> {
+    let mut lines: Vec<String> = applied.iter().map(|c| format!("{id}: {c}")).collect();
     lines.extend(notified.report(id));
     lines
-}
-
-fn plain_change(change: &str) -> String {
-    match change {
-        "Marked express." => return "marked express".into(),
-        "Description appended." => return "description appended".into(),
-        "Description updated." => return "description updated".into(),
-        _ => {}
-    }
-    let moved = change.strip_prefix("Priority changed P").and_then(|r| {
-        let (new, r) = r.split_once(" (was ")?;
-        let (old, _) = r.split_once(')')?;
-        Some(format!("priority {old} → P{new}"))
-    });
-    moved.unwrap_or_else(|| "note added".into())
 }
 
 fn mailbox_files(dir: &str) -> Vec<String> {
@@ -372,18 +357,15 @@ mod tests {
 
     #[test]
     fn amend_report_names_each_change_and_the_holder_line() {
-        let prio = crate::priority_note("a", Some(1), 0, None);
-        let mut changed = String::new();
-        append_change(&mut changed, &prio);
-        append_change(&mut changed, "Marked express.");
-        let lines = amend_report("sp-x", &changed, &Notified::NoLiveHolder);
+        let applied = vec!["priority P1 → P0".to_string(), "marked express".to_string()];
+        let lines = amend_report("sp-x", &applied, &Notified::NoLiveHolder);
         assert_eq!(lines[0], "sp-x: priority P1 → P0");
         assert_eq!(lines[1], "sp-x: marked express");
         assert!(lines[2].contains("no live holder on sp-x"), "{lines:?}");
         let mailed = Notified::Mailed { mailbox: "dwarf-sp-x".into(), msg_id: "<1@spira>".into() };
         let undelivered = Notified::Undelivered { mailbox: "dwarf-sp-x".into() };
         for n in [&mailed, &undelivered, &Notified::NothingToSay] {
-            let l = amend_report("sp-x", &changed, n);
+            let l = amend_report("sp-x", &applied, n);
             assert_eq!(l[1], "sp-x: marked express");
             assert_eq!(l.len(), if *n == Notified::NothingToSay { 2 } else { 3 });
         }
