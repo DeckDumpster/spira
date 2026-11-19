@@ -2447,13 +2447,13 @@ mod tests {
         let rev = b.commit(0, &[put]).unwrap();
         let s = rec.snapshot();
         let names: Vec<_> = s.phases.iter().map(|p| p.0).collect();
-        assert_eq!(names, ["writer_wait", "commit"]);
+        assert_eq!(names, ["writer_wait", "commit", "drain"]);
         assert_eq!((s.commits_us.len(), s.reads), (1, 0));
         b.get("k", rev).unwrap();
         phases::untrack();
         let s = rec.snapshot();
         let names: Vec<_> = s.phases.iter().map(|p| p.0).collect();
-        assert_eq!(names, ["writer_wait", "commit", "reader_wait", "read"]);
+        assert_eq!(names, ["writer_wait", "commit", "drain", "reader_wait", "read"]);
         assert_eq!(s.reads, 1);
     }
 
