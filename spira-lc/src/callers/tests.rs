@@ -197,6 +197,9 @@ impl Machine for Fake {
                 if flag(args, "--expect").as_deref() == Some("ATTRIBUTING") {
                     return (REFUSED, "refused".into());
                 }
+                if flag(args, "--expect").as_deref() == Some("CI_RUNNING") {
+                    return (REFUSED, "refused: Some(PassRunning { state: \"CI_RUNNING (pass 3, phase build)\", exit: \"to take it out at once, `queue round abandon`\" })".into());
+                }
                 self.batches.get_mut(&bead).unwrap().retain(|(b, _)| *b != args[1]);
                 (0, String::new())
             }
@@ -1824,6 +1827,20 @@ fn a_bead_in_a_batch_that_cannot_release_it_is_not_dropped() {
     assert!(a.stderr.contains("batch-2"), "{}", a.stderr);
     assert_eq!(f.state("sp-a"), "IN_DELIVERY");
     assert!(bd.closed.is_empty());
+}
+
+#[test]
+fn a_bead_in_a_round_whose_pass_is_running_is_not_dropped_and_the_refusal_names_its_exit() {
+    let mut f = Fake::default();
+    f.bead("sp-a", BeadState::InDelivery);
+    f.batches.insert("sp-a".into(), vec![("batch-3".into(), "CI_RUNNING".into())]);
+    let mut bd = FakeBd::default();
+    let a = drop_bead(&v(&["sp-a", "--reason", "no"]), &mut f, &mut bd);
+    assert_eq!(a.code, REFUSED, "{}", a.stderr);
+    assert!(a.stderr.contains("batch-3") && a.stderr.contains("round abandon") && a.stderr.contains("nothing dropped"), "{}", a.stderr);
+    assert_eq!(f.state("sp-a"), "IN_DELIVERY");
+    assert!(bd.closed.is_empty());
+    assert!(f.batches["sp-a"].len() == 1, "still a member");
 }
 
 #[test]

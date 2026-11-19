@@ -783,15 +783,6 @@ impl Scripts for FScripts {
             .iter()
             .any(|(r, b, _)| r == repo && b == batch)
     }
-    fn live_pass_scopes(&self, repo: &str, batch: &str) -> Result<Vec<String>, String> {
-        Ok(self
-            .round_legs
-            .borrow()
-            .iter()
-            .filter(|(r, b, u)| r == repo && b == batch && u.ends_with(".scope"))
-            .map(|(_, _, u)| u.clone())
-            .collect())
-    }
     fn stop_pass_scopes(&self, repo: &str, batch: &str) -> Result<Vec<String>, String> {
         if self.round_legs_stubborn.get() {
             return Err("1 still running after its stop".into());

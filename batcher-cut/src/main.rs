@@ -2387,6 +2387,7 @@ fn attribute_in(
         .with_deny_list(&deny)?
         .confirmed(o.confirmed);
     if let (Some(b), Some(pass)) = (o.batch.as_deref(), o.after_pass.as_deref()) {
+        io::round_corpus_ended_red(&env_, &repo, b);
         if pass.is_dir() {
             io::keep_attributed_pass(&env_.run, b, pass, io::rounds_prune(&env_, &repo, b).as_ref());
         }

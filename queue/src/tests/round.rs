@@ -3800,15 +3800,6 @@ fn pass_world() -> (T, String) {
     (t, batch)
 }
 
-fn host_pass_world() -> (T, String, String) {
-    let (t, batch) = pass_world();
-    fs::remove_file(marker(&t, &batch, "pass")).unwrap();
-    t.scripts.pass_alive.set(false);
-    let scope = format!("{}.scope", runtime::units::round_scope_unit("spira", &batch, "9-1"));
-    t.scripts.round_legs.borrow_mut().push(("spira".into(), batch.clone(), scope.clone()));
-    (t, batch, scope)
-}
-
 #[test]
 fn an_eject_with_no_suite_and_no_red_reopens_with_cause_eject() {
     let t = round_world();
@@ -3823,6 +3814,7 @@ fn an_eject_with_no_suite_and_no_red_reopens_with_cause_eject() {
 #[test]
 fn a_rebuild_that_cannot_cut_the_base_restores_the_head_and_says_nothing_changed() {
     let (t, batch) = pass_world();
+    *t.lc.batch_view.borrow_mut() = Some(("ATTRIBUTING".into(), 4, 1, String::new()));
     let rec = kv_of(&t, "round");
     let (base, head) = (rec["base"].to_string(), rec["head"].to_string());
     *t.git.add_refused.borrow_mut() = Some(base);
@@ -3833,16 +3825,62 @@ fn a_rebuild_that_cannot_cut_the_base_restores_the_head_and_says_nothing_changed
     assert!(!t.lc.has("eject-member"));
 }
 
-#[test]
-fn eject_refuses_while_a_pass_scope_runs_and_touches_nothing() {
-    let (t, batch, scope) = host_pass_world();
-    let before = t.git.calls.borrow().len();
+fn build_phase_world() -> (T, String) {
+    let (t, batch) = pass_world();
+    t.scripts.pass_alive.set(false);
+    t.scripts.round_legs.borrow_mut().clear();
+    let v = t.lc.batch_view.borrow().as_ref().map(|v| v.1).unwrap();
+    *t.lc.batch_view.borrow_mut() = Some(("CI_RUNNING".into(), v, 3, "build".into()));
+    (t, batch)
+}
+
+fn assert_eject_refused_while_the_pass_builds(extra: &[&str]) {
+    let (t, batch) = build_phase_world();
+    let before = kv_of(&t, "round");
+    let git_before = t.git.calls.borrow().len();
+    let mut argv = vec!["round", "eject", batch.as_str(), "sp-b", "--reason", "red", "--red", "--suites", "test-b.sh"];
+    argv.extend_from_slice(extra);
+    assert_eq!(t.run(&argv), crate::ops::round::PASS_RUNNING, "{}", t.err());
+    let e = t.err();
+    assert!(e.contains("pass 3") && e.contains("phase build"), "{e}");
+    assert!(e.contains("spira-lc hold") && e.contains("round abandon"), "{e}");
+    let after = kv_of(&t, "round");
+    assert_eq!((after["head"].to_string(), after["members"].to_string()), (before["head"].to_string(), before["members"].to_string()));
+    assert!(!t.lc.has("eject-member"));
+    assert_eq!(t.git.calls.borrow().len(), git_before, "no worktree call");
     assert_eq!(
-        t.run(&["round", "eject", &batch, "sp-b", "--reason", "red", "--red", "--suites", "test-b.sh"]),
-        crate::ops::round::PASS_RUNNING
+        t.run(&["round", "pass-verdict", &batch, "--verdict", "red", "--red-suites", "test-b.sh"]),
+        0,
+        "the running pass's verdict is still accepted: {}",
+        t.err()
     );
-    assert!(t.err().contains(&scope), "{}", t.err());
-    assert_eq!(t.git.calls.borrow().len(), before, "no worktree is pruned or removed");
+    assert!(events_of(&t, &batch).iter().any(|e| e.starts_with("{\"PassRed\"")), "PassRed is sent");
+}
+
+#[test]
+fn eject_refuses_while_the_lifecycle_row_says_a_pass_is_running_though_no_scope_exists() {
+    assert_eject_refused_while_the_pass_builds(&[]);
+}
+
+#[test]
+fn the_batchers_lease_token_does_not_get_an_eject_past_a_running_pass() {
+    let (t, batch) = build_phase_world();
+    leased_by(&t, &batch, "round-recert", "12-0");
+    assert_eq!(
+        t.run(&["round", "eject", &batch, "sp-b", "--reason", "red", "--red", "--suites", "test-b.sh", "--lease-token", "12-0"]),
+        crate::ops::round::PASS_RUNNING,
+        "{}",
+        t.err()
+    );
+    assert!(!t.lc.has("eject-member"));
+}
+
+#[test]
+fn eject_refuses_when_the_lifecycle_row_cannot_be_read() {
+    let (t, batch) = build_phase_world();
+    t.lc.no_batch_row.set(true);
+    assert_eq!(t.run(&["round", "eject", &batch, "sp-b", "--reason", "red", "--red", "--suites", "test-b.sh"]), 1);
+    assert!(t.err().contains("cannot tell whether a pass of round"), "{}", t.err());
     assert!(!t.lc.has("eject-member"));
 }
 
