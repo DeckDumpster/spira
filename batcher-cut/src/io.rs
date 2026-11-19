@@ -2606,6 +2606,10 @@ pub fn keep_red_evidence(run: &Path, batch: &str, why: &str, reds: &[String], da
     named_evidence(why, days.and_then(|d| keep_eject_evidence(run, batch, why, reds, d)))
 }
 
+fn keep_ejected_red(env: &Env, batch: &str, reason: &str, suites: &[String]) -> String {
+    keep_red_evidence(&env.run, batch, reason, suites, spira_config::process::cfg_parse::<u32>("SPIRA_SENDBACK_KEEP_DAYS"))
+}
+
 fn named_evidence(why: &str, kept: Result<(PathBuf, String), String>) -> String {
     match kept {
         Ok((p, body)) => format!("{why}\n{body}\nevidence kept: {}", p.display()),
@@ -3282,6 +3286,7 @@ pub fn round_eject(
     owner: bool,
 ) -> Result<(), String> {
     let reason = eject_reason(id, suites, first_fails, owner, None);
+    let reason = if owner { keep_ejected_red(env, batch, &reason, suites) } else { reason };
     let csv = if owner {
         suites.join(",")
     } else {
@@ -3301,6 +3306,7 @@ pub fn round_eject_returned(
     lead: &str,
 ) -> Result<(), String> {
     let reason = eject_reason(id, suites, first_fails, true, Some(lead));
+    let reason = keep_ejected_red(env, batch, &reason, suites);
     round_eject_with(env, repo, batch, id, &reason, &suites.join(","))
 }
 
