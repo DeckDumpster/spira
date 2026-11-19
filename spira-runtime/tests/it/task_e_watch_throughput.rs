@@ -420,7 +420,9 @@ fn flaky_git_bin() -> std::path::PathBuf {
             "#!/bin/sh\nif [ \"$1\" = -C ] && [ -f \"$2/.git/flaky\" ] && [ ! -e \"$2/.git/flaky-fired\" ]; then\nread pat < \"$2/.git/flaky\"\ncase \" $* \" in *\"$pat\"*) : > \"$2/.git/flaky-fired\"; [ -f \"$2/.git/flaky-fix\" ] && {real} -C \"$2\" branch local/main; exit 1;; esac\nfi\nexec {real} \"$@\"\n",
             real = real.display()
         );
-        testkit::write_exe(bin.join("git"), &script);
+        let tmp = bin.join(format!("git.{}", std::process::id()));
+        testkit::write_exe(&tmp, &script);
+        std::fs::rename(&tmp, bin.join("git")).unwrap();
         bin
     })
     .clone()
