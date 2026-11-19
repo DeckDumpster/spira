@@ -407,27 +407,38 @@ fn a_missing_landing_ref_names_the_repo_the_ref_tried_and_gits_status() {
     assert!(e.starts_with("spira: no landing ref resolves: ") && e.contains("local/main") && e.contains("exit 1"), "{e}");
 }
 
-/// A repo with one landed bead whose `git` fails once on a call matching `pat`, running `on_fail` first.
-fn flaky_git_repo(name: &str, pat: &str, on_fail: &str, now: u64) -> (testkit::TempDir, spira_runtime::world::World, std::path::PathBuf) {
+/// A `git` that behaves as git does, except that the one call of a repo whose `.git/flaky`
+/// holds a pattern and matches it fails once, after running `.git/flaky-fix`. It lives beside the
+/// test binary and is never removed, so no concurrent test can find it deleted mid-exec.
+fn flaky_git_bin() -> std::path::PathBuf {
+    static BIN: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+    BIN.get_or_init(|| {
+        let real = std::env::split_paths(&std::env::var_os("PATH").unwrap()).map(|d| d.join("git")).find(|g| g.is_file()).expect("a git on PATH");
+        let bin = std::env::current_exe().unwrap().parent().unwrap().join("flaky-git-bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let script = format!(
+            "#!/bin/sh\nif [ \"$1\" = -C ] && [ -f \"$2/.git/flaky\" ] && [ ! -e \"$2/.git/flaky-fired\" ]; then\nread pat < \"$2/.git/flaky\"\ncase \" $* \" in *\"$pat\"*) : > \"$2/.git/flaky-fired\"; [ -f \"$2/.git/flaky-fix\" ] && {real} -C \"$2\" branch local/main; exit 1;; esac\nfi\nexec {real} \"$@\"\n",
+            real = real.display()
+        );
+        testkit::write_exe(bin.join("git"), &script);
+        bin
+    })
+    .clone()
+}
+
+/// A repo with one landed bead whose next git call matching `pat` fails once; `fix` makes the
+/// failed call's ref appear behind it.
+fn flaky_git_repo(name: &str, pat: &str, fix: bool, now: u64) -> (testkit::TempDir, spira_runtime::world::World, std::path::PathBuf) {
+    let bin = flaky_git_bin();
     let dir = testkit::TempDir::new(name);
     let repo = dir.join("repo");
     std::fs::create_dir(&repo).unwrap();
     testkit::git(&repo, &["init", "-q", "-b", "other"]);
     commit_at(&repo, "sp-aaaaaa landed", now - 60);
-    let bin = dir.join("bin");
-    std::fs::create_dir(&bin).unwrap();
-    let marker = dir.join("failed-once");
-    let real_git = std::env::split_paths(&std::env::var_os("PATH").unwrap()).filter(|d| !d.starts_with(dir.parent().unwrap())).map(|d| d.join("git")).find(|g| g.is_file()).expect("a git on PATH");
-    let on_fail = on_fail.replace("GIT", &real_git.display().to_string());
-    testkit::write_exe(
-        bin.join("git"),
-        &format!(
-            "#!/bin/sh\ncase \"$*\" in *{repo}*{pat}*)\n[ -e {m} ] || {{ : > {m}; {on_fail}; exit 1; }};;\nesac\nexec {git} \"$@\"\n",
-            git = real_git.display(),
-            repo = repo.display(),
-            m = marker.display()
-        ),
-    );
+    std::fs::write(repo.join(".git/flaky"), format!("{pat}\n")).unwrap();
+    if fix {
+        std::fs::write(repo.join(".git/flaky-fix"), "").unwrap();
+    }
     let map = dir.join("repos");
     std::fs::write(&map, format!("spira|{}|queue.local|local/main||\n", repo.display())).unwrap();
     let w = spira_runtime::world::World { repo_map: map, home_repo: "spira".into(), ..Default::default() };
@@ -437,23 +448,23 @@ fn flaky_git_repo(name: &str, pat: &str, on_fail: &str, now: u64) -> (testkit::T
 #[test]
 fn a_landing_ref_that_fails_once_and_resolves_on_the_second_read_is_read() {
     let now = 1_700_000_000u64;
-    let (dir, w, bin) = flaky_git_repo("throughput-reread", "rev-parse*local/main", "GIT -C $2 branch local/main", now);
+    let (dir, w, bin) = flaky_git_repo("throughput-reread", "rev-parse --verify -q local/main", true, now);
     let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
     let _env = testkit::env(&[("PATH", Some(path.as_str()))]);
     let landings = w.landed_on_refs(now, "sp").expect("the second read resolves the ref");
-    assert!(dir.join("failed-once").exists(), "the first read did fail");
+    assert!(dir.join("repo/.git/flaky-fired").exists(), "the first read did fail");
     assert_eq!(landings[0].hourly.iter().sum::<u64>(), 1);
 }
 
 #[test]
 fn a_git_log_that_fails_once_is_read_again() {
     let now = 1_700_000_000u64;
-    let (dir, w, bin) = flaky_git_repo("throughput-logreread", "\\ log\\ ", ":", now);
+    let (dir, w, bin) = flaky_git_repo("throughput-logreread", " log local/main", false, now);
     testkit::git(&dir.join("repo"), &["branch", "local/main"]);
     let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
     let _env = testkit::env(&[("PATH", Some(path.as_str()))]);
     let landings = w.landed_on_refs(now, "sp").expect("the second log read answers");
-    assert!(dir.join("failed-once").exists(), "the first log read did fail");
+    assert!(dir.join("repo/.git/flaky-fired").exists(), "the first log read did fail");
     assert_eq!(landings[0].hourly.iter().sum::<u64>(), 1);
 }
 
