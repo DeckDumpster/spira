@@ -122,7 +122,8 @@ pub fn condition_raised(key: &str) -> bool {
     };
     let Ok(program) = spira_config::release_env::tool(tool) else { return true };
     let Ok(envs) = spira_config::release_env::child_path_env_for_process() else { return true };
-    std::process::Command::new(program).args(["condition", detail]).envs(envs).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().map_or(true, |s| s.code() != Some(CONDITION_ENDED))
+    let null = std::process::Stdio::null;
+    spira_config::bounded::bounded(program).args(["condition", detail]).envs(envs).stdin(null()).stdout(null()).stderr(null()).status().map_or(true, |s| s.code() != Some(CONDITION_ENDED))
 }
 
 /// Moves each of `paths` into `<mail_root>/archive/cur`, creating the archive mailbox first. A
