@@ -20,6 +20,7 @@ cat > "$W/bin/podman" <<'STUB'
 #!/bin/sh
 printf '%s\n' "$*" >> "$REC/argv"
 printf 'TMPDIR=%s\n' "$TMPDIR" >> "$REC/env"
+case " $* " in *" -i "*) cat > "$REC/stdin" ;; esac
 prev=""
 for a in "$@"; do
     case "$prev:$a" in -v:*:/tree.list:ro) cp "${a%%:*}" "$REC/list" ;; esac
@@ -97,7 +98,9 @@ git -C "$T" -c user.email=t@t -c user.name=t commit -qam pkgs
 rm -f "$W/rec"/*
 env -i PATH="$W/bin:$PATH" HOME="$W/home" REC="$W/rec" SPIRA_TOML="$(tl_layer SPIRA_PREFLIGHT_CACHE_ROOT="$SCRATCH")" \
     bash "$HERE/round-image-preflight.sh" --tree "$T" --base HEAD~1 --head HEAD --sysfs "$NONROT" >"$W/out" 2>"$W/err"; rc=$?
+[ "$rc" = 0 ] || sed "s/^/# err: /" "$W/err"
 wantrc "(b) the package-list-only path runs" 0 "$rc"
+want "(b) package-only podman is fed the head's apt line" "apt-get install -y curl git" "$(cat "$W/rec/stdin" 2>/dev/null)"
 want "(b) it took the package-list-only path" "package list installs" "$(cat "$W/out")"
 argv="$(cat "$W/rec/argv" 2>/dev/null)"
 want "(b) package-only podman carries the runroot" "--runroot $SCRATCH/run" "$argv"
