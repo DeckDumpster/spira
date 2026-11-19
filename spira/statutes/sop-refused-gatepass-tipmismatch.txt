@@ -1,0 +1,6 @@
+MATCH: refused GatePass from SUBMITTED \(TipMismatch\) by (gate|landing-pass)
+SYMPTOM: GatePass TipMismatch refusals. Benign: few, near baseline, many beads, tip replaced by resubmit. NOT benign: one bead refused repeatedly (e.g. sp-gqmccx 18x every ~4min for 68min, 3.6x baseline) = caller retry loop reading a stale/wrong tip.
+CHECK: group the examples by bead. Many beads near baseline => benign. One bead repeating with unchanged cadence => caller bug (CHECK fails; do not close as benign).
+FIX: benign: none, close noting count. Repeating single bead: file builder bead (work file --for builder) against the gate retry loop; compare the tip the gate reads with the bead's current tip.
+ESCALATE: many times baseline or same bead with unchanged tip: builder bead against the caller; leave incident open depending on it.
+REF: wiki/notes/standard-operating-procedures.md

@@ -1,0 +1,6 @@
+MATCH: SP_UNADOPTED.*=.*1|unadopted.*whose bead exists
+SYMPTOM: cockpit.env reports SP_UNADOPTED=1 for a branch whose bead `bd show <id>` finds cleanly. Distinct from sop-unadopted-ref-held-by-worktree, whose CHECK (bd finds no bead) fails here.
+CHECK: `bd -C $SPIRA_DB show <id>` succeeds. cockpit.sh's unadopted loop (~1041-1062) leaves `_st` empty only when its BD_TIMEOUT=2 probe got valid JSON with an "error" key -- a real timeout prints "?" -> SP_PROBE_FAIL instead. So bd itself answered not-found under the probe's 2s window for a bead that resolves fine outside it: transient dolt/bd contention, not a real orphan.
+FIX: Do not touch the branch/worktree. Confirm SP_UNADOPTED clears on the next cockpit.env read (usually self-clears). If no bead already diagnoses this signature, file one pointing at cockpit.sh:1041-1078 (harden: treat a fast error-shaped response near the timeout as PROBE_FAIL, not UNADOPTED, mirroring sp-kc9v4). Link via `bead.sh dep add`; leave the incident open, don't close on a reason.
+ESCALATE: The cockpit.sh probe fix is a builder bead through the normal gate, not a live Ops edit.
+REF: sp-mjn4p, sp-jyv2j, sp-n9z, sp-kc9v4, sop-unadopted-ref-held-by-worktree

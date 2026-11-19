@@ -1,0 +1,6 @@
+MATCH: close reason contains "Groom pass complete" AND the closed bead's own description contains "Close this bead" + "only when" AND the bead is not named in its own close reason's action list.
+SYMPTOM: A placeholder bead gating a dependent via bd-dep, created to block reclaim until an operator decision lands, is force-closed by a groom sweep as generic cruft. Effect: dependent's blocker clears, gets reclaimed, churn resumes, decision still unanswered.
+CHECK: bd show <placeholder> — CLOSED, gating language in description, close reason is a generic groom summary not naming it. bd show <dependent> — reclaimed after placeholder's close time.
+FIX: Groom-logic gap, not Ops's to fix in place. File against groom (see sp-yyros/epic sp-pswer, lifecycle cutover deletes "groomer's three sweeps" — may obsolete this). Suggested: groom should never close a bead that is a live bd-dep target without checking the dependent's condition, or placeholder beads get a `placeholder-gate` label groom skips. Re-escalate the gated decision directly rather than trusting the placeholder to survive.
+ESCALATE: Choice of groom fix design is operator/harness-owner's, not Ops's.
+REF: wiki/notes/groom-closes-placeholder-gate-bead.md

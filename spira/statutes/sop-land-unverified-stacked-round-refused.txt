@@ -1,0 +1,6 @@
+MATCH: land-unverified:.*is stacked on round .*which has not landed
+SYMPTOM: batcher land-unverified incident; queue.sh round land refused because the round is stacked on an earlier round that never landed. Every later stacked round is refused too.
+CHECK: payload contains "is stacked on round <base>, which has not landed — land <base> first; nothing changed"
+FIX: Do not fix this incident. Find the root bead on the base round (the incident that names the base round's own failure to land), link it with work dep-add <this> <root>, and leave this bead open. It clears when the base round lands.
+ESCALATE: if the base round has no open incident or bead explaining why it did not land, file one for the builder or the operator.
+REF: wiki/notes/standard-operating-procedures.md

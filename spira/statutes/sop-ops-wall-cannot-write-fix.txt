@@ -1,0 +1,18 @@
+MATCH: [Bb]ug bead.*(patch site identified|NOT DONE).*(sentinel\.sh|landing\.sh)
+SYMPTOM: An Ops session lands on a bug bead already holding a fully-specified code patch
+for a live periodic script, marked NOT DONE because a prior session ran out of wall-clock.
+It churns: each session re-derives the same diagnosis and dies at the wall without
+committing, because the real fix needs a new regression-test fixture harness
+(law-a-regression-test-must-be-seen-to-fail) that does not fit an Ops wall on top of
+re-reading the diagnosis.
+CHECK: grep the bead for "NOT DONE"/"ran out of wall-clock" plus a specified patch. Confirm
+no fix landed since: git log --all --oneline -i --grep="<check-name>". If a "files already
+in flight" conflict is listed, check whether that bead already landed — it may be stale.
+FIX: Don't re-diagnose or attempt code+test in one session if fixtures for that check don't
+exist yet — that's builder work. Confirm the patch site still matches, confirm/refute the
+"in flight" conflict, note both on the bead, leave it open/in_progress for a builder with a
+full wall rather than closing (close needs a landing commit naming the bead).
+ESCALATE: Nth consecutive session dying at the wall on one bead means it's sized wrong for
+the loop — ask the operator to hand it to a builder directly, or split into a fixture-harness
+bead plus the patch bead.
+REF: sp-m8c34

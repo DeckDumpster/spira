@@ -1,0 +1,6 @@
+MATCH: tl_config: cannot declare SPIRA_RUN|spira-config not found on PATH
+SYMPTOM: a suite run BY HAND on the host (not by a round or a gate) gets gate rc 75 (case 6 of test-yield.sh) with "tl_config: cannot declare SPIRA_RUN" or "spira-config not found on PATH", because the release's bin is not on the shell's PATH.
+CHECK: the output must contain one of those two texts. Then: command -v spira-config (empty = confirmed) and PATH=$SPIRA_RELEASE/bin:$PATH bash spira/test-yield.sh passes. If the red came from a ROUND or a GATE run, this SOP does not apply: a round runs with the release on PATH.
+FIX: for a hand run, put $SPIRA_RELEASE/bin on PATH or run through testenv. For a round or gate red on test-yield.sh case 6 (wanted 1, got 75), treat it as a member's regression until attribution or the mender says otherwise: on 2026-11-15 that exact red was sp-8w57u1 (the gate's citation check ran after it tried to open the store, so a gate with no readable store answered 75, "cannot tell", where it should have blamed the branch); the round went green once that member was ejected.
+ESCALATE: a round red on this case with no member touching gate/ or spira-lc's citation check: bisect by landing time.
+REF: wiki/notes/standard-operating-procedures.md

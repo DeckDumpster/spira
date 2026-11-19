@@ -1,0 +1,6 @@
+MATCH: PRESSURE: io full avg60|pressure-psi-io
+SYMPTOM: Watchtower files PRESSURE io full avg60 >=10 for 300s, recurring ~hourly (values 17-60). D-state: landing-pass, find, spira-lint, mv, jbd2, dm-0 flush kworkers, and (2026-10-08) `git -C worktree/.gate.* checkout -q --force --detach` at 200% CPU: gate worktree checkouts.
+CHECK: cat /proc/pressure/io; ps -eo pid,stat,pcpu,comm,args --sort=-pcpu | awk '$2 ~ /D/' | cut -c1-150 | head
+FIX: none by aeon. Confirm the D-state set is gate/landing git churn; ensure a builder bead exists to fence gate checkout/landing-pass/find/lint with IOWeight/ionice+CPUQuota (filed in sp-qp5dur's session). Link recurrences to it with work dep-add instead of re-diagnosing. Do not raise the threshold.
+ESCALATE: if D-state set is not gate/landing/lint, or pressure persists with no landing pass running.
+REF: wiki/notes/standard-operating-procedures.md

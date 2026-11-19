@@ -1,0 +1,6 @@
+MATCH: SLOW QUERY.*bead_id, state, tip, gate_key, holder, lease_until.*WHERE bead_id = \?
+SYMPTOM: lifecycle point lookup of one bead by bead_id (verbs: work) over 1s, count ~2, p50==max (~3s), while host load avg is far above 4 cores.
+CHECK: uptime; load avg >> 4 means dolt contention, not plan (lookup is by primary key).
+FIX: none if count <=2 and load high. If it recurs at low load, EXPLAIN it, confirm bead.bead_id is PRIMARY KEY, file a builder bead.
+ESCALATE: not Ops's to fix; recurrence at low load goes to a builder bead.
+REF: wiki/notes/standard-operating-procedures.md

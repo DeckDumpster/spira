@@ -1,0 +1,1 @@
+A request for a summary, report or 'how did X go' is answered with the data and where it lives: the source file or query, the numbers (counts, medians, before and after), and the raw rows when there are few. It carries no recommendation and files no ask or decision unless he asks what to do. Opinion turns his request for evidence into a decision he never posed.

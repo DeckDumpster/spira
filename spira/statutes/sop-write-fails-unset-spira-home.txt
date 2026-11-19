@@ -1,0 +1,6 @@
+MATCH: sop: failed to write|SPIRA_HOME=\.|default SPIRA_HOME falls back
+SYMPTOM: `sop write`/`sop applied` from an aeon prints only "sop: failed to write", exit 96. sop/src/main.rs env_or("SPIRA_HOME", ".") makes real.rs source "./lib.sh" (stderr nulled); aeon env has SPIRA_HOME unset and cwd is the worktree root, where lib.sh is not (it lives in spira/).
+CHECK: env -u SPIRA_HOME sop write x - </dev/null; echo $?  (fails) versus SPIRA_HOME=<prod>/spira sop write ... (succeeds).
+FIX: workaround: export SPIRA_HOME=<prod>/spira before sop write. Code fix (builder, bead sp-lzld5): resolve lib.sh relative to the sop binary or fail loudly "SPIRA_HOME unset", and surface seam stderr.
+ESCALATE: not needed.
+REF: wiki/notes/standard-operating-procedures.md

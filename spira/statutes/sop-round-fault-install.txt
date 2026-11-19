@@ -1,0 +1,8 @@
+MATCH: ROUND FAULT INSTALL r-auto-
+SYMPTOM: A round VM's batch ended "verdict FAULT install": the fixture install failed before any suite ran. Usually one member's change to the install or a unit; it can be a fault that only appears in a lane (the sim container runs its own install).
+CHECK: The round report names the batch verdict and phase; with one member, that member changed the install path.
+FIX: Reproduce the round VM's build-then-test sequence on the host for the member, with the failing run's suites and every lane, and report REPRODUCED / NOT REPRODUCED / NOTHING TESTED with the install output. A REPRODUCED fault is the member's red: eject it with that output. NOT REPRODUCED means the host repro differs from the VM: find the gap before anything else.
+RUN: release vm-repro {bead} --repo {repo} --was FAULT:install --deadline 600
+DEADLINE: 900
+ESCALATE: More than one member (no {bead} field), the tool fails or times out, or NOT REPRODUCED.
+REF: sp-pzah5b (eight FAULT install passes, 2026-10-28); law-a-failure-that-will-not-reproduce-is-a-fidelity-gap

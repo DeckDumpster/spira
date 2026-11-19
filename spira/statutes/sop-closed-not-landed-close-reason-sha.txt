@@ -1,0 +1,6 @@
+MATCH: closed-not-landed.*(close reason|landed at [0-9a-f]{7})|CLOSED NOT LANDED: sp-[a-z0-9]+ has no LANDED record
+SYMPTOM: CHECK5 refiles a closed-not-landed incident for a bead whose close reason cites a batch commit sha ("landed at 444bd3f") that does not name the bead in its subject.
+CHECK: git merge-base --is-ancestor <sha-in-close-reason> local/main && echo ancestor
+FIX: sp-lz3as added ClosedRow.cited_shas and a CHECK5 ancestry test in sentinel/src/check5.rs; once deployed the sentinel auto-resolves such incidents. Until deployed, close the incident with the ancestry proof quoted.
+ESCALATE: if the cited sha is NOT an ancestor of base, it is a real closed-not-landed; do not close.
+REF: wiki/notes/standard-operating-procedures.md

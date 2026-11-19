@@ -1,0 +1,16 @@
+MATCH: /proc/[0-9]+/cmdline.*No such file or directory
+SYMPTOM: A guard reads /proc/$PPID/cmdline with a trailing `2>/dev/null` on the same
+command, e.g. `tr '\0' '\n' < "/proc/$PPID/cmdline" 2>/dev/null`. If the pid already
+exited (short-lived intermediate shell, TOCTOU), "No such file or directory" still
+reaches real stderr. Not a PID-race alone: bash wires redirections left-to-right per
+simple command and aborts on first failure, so a trailing `2>/dev/null` never fires
+if an earlier `<` failed to open.
+CHECK: `bash -c 'tr x < /proc/999999999/cmdline 2>/dev/null'` — if this prints the
+error to your terminal despite the redirect, this is the bug.
+FIX: Test readability before reading, not after: `if [ -r "/proc/$PID/cmdline" ]; then
+... ; else caller="unknown"; fi`. Trailing `2>/dev/null` on an input redirection does
+not suppress its own open failure. Still TOCTOU between check and read — treat a read
+failure past the check as non-fatal fallback, never fatal to the caller.
+ESCALATE: Never — local code fix. Same pattern on any other transient /proc path:
+apply the same existence-check-first fix.
+REF: spira/mail.sh (_repeat_check, ~line 165), fixed in sp-9by2e (commit 5e40aabfc)

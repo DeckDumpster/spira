@@ -1,0 +1,6 @@
+MATCH: (Disk on /.*(9[0-9]|100)% used)|(root filesystem.*near capacity)|(FAULT \([0-9]+%, warn at)
+SYMPTOM: df -h / shows root LV above the 90% warn threshold while /tmp (tmpfs) is fine, ruling out sp-q7d72's /tmp-quota mode; the consumer is on the root LV itself.
+CHECK: du -xh --max-depth=1 "$HOME/.local" on the host; if .local/share/containers/storage is tens of GB, confirm with `podman images -a | wc -l` (dozens-to-hundreds is the signature) and check CREATED ages of localhost/spira-testenv tags for a steady one-per-1-2h drip with no pruning.
+FIX: Ops does not run this, file it for a builder/operator. Stopgap (reversible, images rebuild on next suite run): `podman image prune -a -f` on the host, typically reclaims tens of GB. Permanent: add `podman image prune -f` to the container-build path used by suites.sh/test-container harness so every build stops leaving a dangling ~2-4GB layer, capped per law-fence-loops-on-shared-hardware. Also glance at checkpoint/old-beads and stale cargo-target-bins-r* dirs under the run directory for smaller free wins.
+ESCALATE: reclaiming disk via podman prune is a bulk delete on shared host storage an Ops aeon cannot fully verify is safe against in-flight runs -- send the operator a decision mail with a default action rather than running it in-session.
+REF: wiki/notes/sp-q3lgs-disk-full-container-images.md

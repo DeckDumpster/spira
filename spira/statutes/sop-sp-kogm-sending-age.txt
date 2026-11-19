@@ -1,0 +1,6 @@
+MATCH: sending.*oldest unsent branch.*threshold
+SYMPTOM: Oldest unsent branch in spira/* refs exceeds 24h threshold
+CHECK: Identify the oldest unsent branch: (1) Extract name and timestamp from cockpit SP_UNSENT_OLDEST_H; (2) Find which branch is actually oldest by sorting spira/* refs by timestamp; (3) Determine its type: STRANDED (closed + not on main + not in open batch), BACKUP/SAFETY (backup-* prefix or queue/*), or QUEUED (active bead, not closed). Only STRANDED and certain QUEUED states are Ops's to fix; BACKUP branches are noise.
+FIX: For STRANDED beads: escalate to queue/batch team WITH EXPLICIT REQUIREMENT that they must re-queue or manually land the bead—not just close the escalation. Verify escalation was acted upon before closing this incident. For QUEUED but BLOCKED: investigate queue system. For BACKUP branches: file separate incident for backup-branch retention (sp-86cne or equivalent).
+ESCALATE: STRANDED bead with commits not on main and no open batch holding it — needs queue/batch team to manually re-queue or amend landing state. Backup branch policy — whether old backup branches should be preserved or reaped — is operator decision, not Ops's to implement.
+REF: wiki/notes/sending.md, incident:sp-8jany-stranded-batched, sp-3tnua-stranded-sp-zmd3u, sp-86cne-backup-branch, sp-vnjhj-escalation-systemic-failure

@@ -1,0 +1,6 @@
+MATCH: landing-pass.*(repo.registry|repo 'spira').*(release dir|no \.git|not a git checkout)|resolves 'spira' to release dir
+SYMPTOM: landing pass sees 0 spira/* branches while the git checkout has hundreds; repo 'spira' path is the release dir (no .git) and pass.rs CHECK6 skips it as not a git checkout.
+CHECK: grep -n 'from_env' landing-pass/src/real.rs  (repo_registry passes release-dir home); then git -C <registry path for spira> rev-parse --git-dir fails.
+FIX: builder bead: in landing-pass/src/real.rs repo_registry, set SPIRA_REPO to the harness git checkout in the env map before Registry::from_env when home has no .git (repos.rs registry_env derives home repo from home otherwise). Also alert when the only repo is skipped as not-a-git-checkout (pass.rs:207). Coordinate with other beads touching real.rs (sp-qyt58, sp-gctip).
+ESCALATE: not Ops's to fix; code change belongs to a builder.
+REF: wiki/notes/standard-operating-procedures.md

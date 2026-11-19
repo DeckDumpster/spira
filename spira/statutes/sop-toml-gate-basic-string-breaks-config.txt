@@ -1,0 +1,20 @@
+MATCH: TOML parse error.*expected newline, #|spira-config: TOML parse error
+SYMPTOM: Every script reading spira.toml (conf.sh, sop, ...) prints a TOML
+  parse error to stderr before any output. Error names one line/column but
+  the WHOLE file is rejected, so every gate/config value reverts to fallback
+  or nothing.
+CHECK: sed -n '<line>p' $SPIRA_HOME/spira.toml at the reported column. If
+  it's `gate = "..."` (double-quoted basic string) whose command body has an
+  embedded `"` (e.g. `_s="$(...)"`), that inner quote ends the string early.
+  Confirm: sop list 2>&1 >/dev/null | head — any stderr
+  confirms file-wide rejection.
+FIX: Rewrite as a TOML literal string (triple single quotes) so embedded "
+  and \ are taken verbatim: gate = '''bash ... '''. Not a triple-double
+  basic string if the value has \n/backslash escapes meant literally.
+  Verify: sop list 2>&1 >/dev/null | head prints nothing.
+ESCALATE: spira.toml is untracked (operator-side config, invisible to repo
+  grep, law-operator-side-fix-invisible-to-repo-grep). Ops aeon must not
+  edit it; operator/builder applies it. If conf.sh can't be read back from
+  an aeon context, escalate whether the gate is actually enforced while
+  broken rather than assume it.
+REF: sp-pfaty, sp-c9fko

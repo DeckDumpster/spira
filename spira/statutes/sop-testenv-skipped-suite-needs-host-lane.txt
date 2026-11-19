@@ -1,0 +1,6 @@
+MATCH: skip:podman_not_on_PATH|host lane so .* control can be seen red/green
+SYMPTOM: testenv returns GREEN with a suite SKIPPED (skip-allowlist.tsv podman_not_on_PATH) so a discriminating control is never seen red/green; e.g. test-watch-notify-rearm.sh (sp-j5qta).
+CHECK: grep -n 'test-watch-notify-rearm' spira/skip-allowlist.tsv ; testenv suites status
+FIX: Do not hand-run on host. Builder bead: add a testenv-sanctioned host lane (admitted by repo per law-a-lane-runs-only-where-the-repo-admits-it), run suite on pre-fix (37655109f^) and post-fix (37655109f), record red then green, narrow allowlist line, close sp-yf812.
+ESCALATE: If no sanctioned host lane exists and creating one changes what testenv admits, that is an operator design decision.
+REF: wiki/notes/standard-operating-procedures.md

@@ -1,0 +1,9 @@
+MATCH: (landing loop|batch.*gate.*mutex|landing pass.*freeze.*gate)
+SYMPTOM: Landing loop frozen for 14-90 minutes while batch pre-flight gate runs. No landing pass executes during gate run — verdict settlement and certification blocked, even for green PRs.
+CHECK: git log origin/main | grep -qE 'sp-hrkwa.*disable.*local.*gate|SPIRA_QUEUE_LOCAL_GATE' && echo "pass" || echo "fail"
+FIX: Disable local pre-flight gate via SPIRA_QUEUE_LOCAL_GATE=0 (sp-hrkwa). Operator decision 2026-09-17: local gates buy latency, CI buys coverage. Let CI be the gate; batch PR opens without local pre-flight. Resolves landing loop freeze.
+
+WATCHER NOTE: watchtower.sh --throttle-check fires "deep+stalled" incident while landing loop is legitimately frozen pending async gate implementation. This creates recurring false-positive incidents (sp-pw5qw pattern). Fix: watchtower.sh should consult the same CHECK before escalating. If async gate commits not on main, the stall is deliberate—suppress alert. Filed as sp-f2h4h.
+
+ESCALATE: none — this is an Ops incident with operator decision documented 2026-09-17 20:11. Solution implemented as sp-hrkwa and landed.
+REF: docs/sp-hsxk8-sop.md

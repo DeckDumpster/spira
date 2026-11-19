@@ -1,0 +1,6 @@
+MATCH: connection was closed|client connection went away|packets\.go:58.*i/o timeout|could not read the store|failed to check if database .* exists
+SYMPTOM: Dolt (port 3307) logs bursts of 'connection was closed'/'client connection went away'; spira-verdict/sentinel/gh-intake fail intermittently with i/o timeout. One-shot hand-run `bd note ... ; echo noted` can LOSE the write: the drop hits during bd's connect ("failed to check if database exists"), and an unconditional echo masks it.
+CHECK: grep -c 'went away' run/dolt-beads.log (rate per minute) and uptime (load >> 4 cores). Client-initiated EOFs under box load, not slow queries (SHOW FULL PROCESSLIST shows none >4s). After any hand-run bd write during a burst, re-read the bead (bd show --json) to confirm the note exists.
+FIX: none by Ops. Cause is client i/o timeouts under load ~25 on 4 cores; Dolt is not the dropper. Work is sp-zoqpj (watchtower rate check, client timeout/pooling, cut concurrency, bd connect retry + nonzero exit). Never chain `; echo ok` after bd; use &&.
+ESCALATE: if load stays high with the server idle, file against sp-zoqpj; do not raise timeouts as the fix.
+REF: wiki/notes/standard-operating-procedures.md

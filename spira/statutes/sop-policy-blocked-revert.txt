@@ -1,0 +1,6 @@
+MATCH: bead notes have 2+ session entries each confirming a decision bead is CLOSED and the acting bead is "not to be acted on" pending a separate named bead settling
+SYMPTOM: Decision bead closed the policy question but named a concrete follow-up bead in its close reason as the real unblock. Acting bead has no dep edge to it, so `bd ready --claim` reclaims it every cycle; each aeon re-derives the same "already decided" conclusion, burning an attempt for no new info.
+CHECK: `bd show <bead>` -- 2+ notes saying "already decided"/"not to be acted on". Then check for a dep edge to the bead named in the decision's close reason -- if absent, that is the gap.
+FIX: Find the bead named in the decision's close reason as the real unblock. `bead.sh dep add <acting-bead> <settling-bead>`. Not `bd defer` -- no timestamp exists, only an open bead to wait on. Leave acting bead open/unclosed; the edge is the fix.
+ESCALATE: close reason names no concrete follow-up bead, or it can't be found -- mail the operator.
+REF: wiki/notes/sp-ffezo2-decision-blocked-loop.md

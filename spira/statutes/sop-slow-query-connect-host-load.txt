@@ -1,0 +1,6 @@
+MATCH: SLOW QUERY: CONNECT|shape: CONNECT
+SYMPTOM: slow-query alarm with shape CONNECT (not a query shape); p50 1.6-5s across mixed verbs (event, show, list, work, fact). The time is spent opening the connection to dolt, not in any query plan or index.
+CHECK: uptime (load well above core count, e.g. 14-22 on 4 cores) and free -m; confirm the verbs are mixed and p50 is about 1.6s/2.5s/5.1s.
+FIX: No per-query fix exists. Find the load source (gate/batch runs, dashboards, pollers; see sop-dolt-client-drop-bursts and law-fence-loops-on-shared-hardware) and reduce the count of concurrent bd/dolt clients. Do not raise the threshold.
+ESCALATE: if load stays high with no gate or batch running, escalate as a host capacity issue.
+REF: wiki/notes/standard-operating-procedures.md

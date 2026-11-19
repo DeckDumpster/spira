@@ -1,0 +1,6 @@
+MATCH: failed-unit-spira-mail-tidy-prod\.service
+SYMPTOM: spira-mail-tidy-prod.service exits 1 in ~1s under host load because dolt 3307 times out; timer retries every 15min and self-clears.
+CHECK: systemctl status spira-mail-tidy-prod.service; journalctl -u spira-mail-tidy-prod -n 20 shows dolt 3307 timeout; uptime shows high load.
+FIX: Usually none (self-clears on the next 15min tick). To force: bin/mail tidy operator (succeeded: archived 25, kept 10).
+ESCALATE: if it still fails after load is normal (dolt 3307 up), file a bead.
+REF: wiki/notes/standard-operating-procedures.md

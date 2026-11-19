@@ -1,0 +1,6 @@
+MATCH: UNIT DRIFT: the installed unit directory carries files this install does not ship
+SYMPTOM: unit-drift incident recurs every ~2min listing UNSHIPPED local units/drop-ins that are deliberate operator files (concierge-status-briefing.*, refuse-manual-stop.conf, 50-*.conf, cadence.conf).
+CHECK: bash spira/drift.sh units 2>&1 | grep UNSHIPPED; then head each file — operator-local header/bead reference means deliberate.
+FIX: Do not delete the files. drift.sh has an allowlist: declare each as a [[unit]] (path, reason, and bead= or permanent = true) in ~/.config/spira/local-units.toml (the Concierge/operator owns it). Re-run drift.sh units; UNSHIPPED count should be 0.
+ESCALATE: if a listed file is NOT operator-made (unknown origin), escalate to operator before anything.
+REF: wiki/notes/standard-operating-procedures.md

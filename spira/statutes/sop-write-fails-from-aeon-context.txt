@@ -1,0 +1,6 @@
+MATCH: failed to write sop-[a-z0-9-]+|sop write fails
+SYMPTOM: sop write exits "sop: failed to write sop-<slug>" from an aeon worktree; no shelf entry; sop applied writes ledger but no bead note.
+CHECK: cd to the worktree root and run sop write of a trivial SOP; then cd <worktree>/spira and rerun. Fails at root and succeeds in spira/ means this (SPIRA_HOME unset so sop sources ./lib.sh).
+FIX: run sop from the spira/ subdirectory of your worktree, or export SPIRA_HOME=$SPIRA_RELEASE/spira, then rerun sop write and sop applied. Forget any probe keys with bdq forget.
+ESCALATE: none; code fix is a filed bead (sop SPIRA_HOME default).
+REF: wiki/notes/standard-operating-procedures.md

@@ -1,0 +1,1 @@
+Spira builds, gates and lands work; it never deploys a product. Each repository deploys itself through its own GitHub Actions deployment workflow on its own runner, triggered by its landing ref. A Spira tool, watcher or persona that moves a product's production checkout or runs its deploy is out of bounds; a product without a deploy workflow gets a bead for one in that repo.

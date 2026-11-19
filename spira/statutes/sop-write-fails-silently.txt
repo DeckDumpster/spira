@@ -1,0 +1,6 @@
+MATCH: sop: failed to write|sop write fails
+SYMPTOM: `sop write <slug> -` prints "sop: failed to write <slug>" from an aeon, while `bdq remember` by hand works. SPIRA_HOME is unset in the aeon env; sop defaults it to "." so it sources ./lib.sh (absent in the worktree root, exit 96) with stderr nulled.
+CHECK: test -z "$SPIRA_HOME" && ls ./lib.sh
+FIX: export SPIRA_HOME=<prod checkout>/spira (dir containing lib.sh) and rerun sop write.
+ESCALATE: if it still fails with SPIRA_HOME set, surface bdq remember stderr (sop/src/real.rs seam nulls it).
+REF: wiki/notes/standard-operating-procedures.md
