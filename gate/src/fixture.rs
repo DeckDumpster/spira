@@ -28,11 +28,13 @@ pub fn check(tree: &Path, base: Option<&str>) -> Result<usize, String> {
         let scratch = std::env::temp_dir().join(format!("gate-fixture-config-{}-{}", std::process::id(), SCRATCHES.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
         let _ = std::fs::remove_dir_all(&scratch);
         std::fs::create_dir_all(&scratch).map_err(|e| format!("scratch for the landing ref's keys: {e}"))?;
+        // batch-job: a gate step that extracts the landing ref under full gate load
         let archive = Command::new("timeout").args(["60", "git", "-C"]).arg(tree).args(["archive", base, "spira/conf.d"]).output()
             .map_err(|e| format!("git archive {base}: {e}"))?;
         if !archive.status.success() {
             return Err(format!("git archive {base} spira/conf.d: {}", String::from_utf8_lossy(&archive.stderr).trim()));
         }
+        // batch-job: a gate step that extracts the landing ref under full gate load
         let mut tar = Command::new("timeout").args(["60", "tar", "-x"]).arg("-C").arg(&scratch).stdin(std::process::Stdio::piped()).spawn()
             .map_err(|e| format!("tar: {e}"))?;
         let written = std::io::Write::write_all(&mut tar.stdin.take().unwrap(), &archive.stdout);
