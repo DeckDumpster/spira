@@ -57,4 +57,4 @@ while IFS= read -r w; do [ -n "$w" ] && build+=("$w"); done < "$BUILD"
 env -u SPIRA_RELEASE -u SPIRA_TOML -u SPIRA_HOME PATH="$unit_path" CARGO_BUILD_JOBS="$jobs" \
     "${build[@]}" || exit 1
 env -u SPIRA_RELEASE -u SPIRA_TOML -u SPIRA_HOME PATH="$unit_path" \
-    cargo test "${words[@]}" --features integration -j "$jobs" -- --test-threads="$threads" "${filters[@]}" "${skips[@]}"
+    cargo test "${words[@]}" --no-fail-fast --features integration -j "$jobs" -- --test-threads="$threads" "${filters[@]}" "${skips[@]}"

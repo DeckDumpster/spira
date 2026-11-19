@@ -1413,7 +1413,11 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
     }
     let mut unit_selection: Option<verdict::UnitSelection> = None;
     if crate::unit::selected(&selected) {
-        let crates = match crate::unit::write_crates(&repo.path, &base, br, &wt.path, args.tests.as_deref(), !args.direct) {
+        let picked = match &args.crates {
+            Some(named) => crate::unit::write_named(&wt.path, named, args.tests.as_deref()),
+            None => crate::unit::write_crates(&repo.path, &base, br, &wt.path, args.tests.as_deref(), !args.direct),
+        };
+        let crates = match picked {
             Ok(p) if p.affected.is_empty() && args.tests.is_some() => {
                 stderr("batch: --tests: the diff touches no crate, so no named test can run");
                 return Finish::fault(2, "tests-no-crates", 0);
@@ -1422,7 +1426,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
                 deps.log(&format!(
                     "unit-tests: {} affected crate(s) (selection={}): {}",
                     c.len(),
-                    if args.direct { "direct" } else { "transitive" },
+                    if args.crates.is_some() { "crates" } else if args.direct { "direct" } else { "transitive" },
                     c.join(" ")
                 ));
                 // law-absence-needs-a-positive-control: an empty list over a wrong base would
@@ -1458,7 +1462,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         };
         {
             let mut r = rec.borrow_mut();
-            r.selection = Some(if args.tests.is_some() { "tests" } else if args.direct { "direct" } else { "transitive" }.into());
+            r.selection = Some(if args.crates.is_some() { "crates" } else if args.tests.is_some() { "tests" } else if args.direct { "direct" } else { "transitive" }.into());
             r.crates = crates.clone();
             r.runner = Some("container".into());
             r.target = Some("branch".into());
