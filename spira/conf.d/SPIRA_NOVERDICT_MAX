@@ -1,0 +1,6 @@
+TYPE=u32
+GROUP=watchtower
+DOC=Consecutive no-verdict gate answers on one branch at which the escalation fires; the sweep reads a streak below it as nominal
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_NOVERDICT_MAX:=3}"
+SPIRA_CONF_DEFAULT_EOF

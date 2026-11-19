@@ -36,6 +36,7 @@ pub struct SweepData {
     pub gate_build_p90: Option<i64>,
     pub nv_worst: i64,
     pub nv_worst_key: Option<String>,
+    pub nv_win_label: String,
 
     pub unsent_inflight_disp: String,
 
@@ -101,6 +102,7 @@ impl SweepData {
             gate_build_p90: None,
             nv_worst: 0,
             nv_worst_key: None,
+            nv_win_label: win_label(172800),
             unsent_inflight_disp: "0".to_string(),
             yield_win_label: "last 1d".to_string(),
             yield_note: String::new(),
@@ -135,6 +137,48 @@ impl SweepData {
             release_status: None,
             slow_probes: Vec::new(),
         }
+    }
+}
+
+/// Largest counter under `dir` written within `window_s`; `window_s <= 0` reads all time.
+/// Counters are cleared only by a PASS on their own branch, so a dead branch's would pin it.
+fn worst_noverdict(dir: &std::path::Path, now: i64, window_s: i64) -> (i64, Option<String>) {
+    let mut worst = 0i64;
+    let mut key: Option<String> = None;
+    let Ok(rd) = std::fs::read_dir(dir) else { return (worst, key) };
+    for e in rd.flatten() {
+        let p = e.path();
+        if !p.is_file() || p.extension().map(|x| x == "asked").unwrap_or(false) {
+            continue;
+        }
+        if window_s > 0 && mtime_secs(&p).map(|m| now.saturating_sub(m) > window_s).unwrap_or(true) {
+            continue;
+        }
+        let Ok(t) = std::fs::read_to_string(&p) else { continue };
+        let Ok(n) = t.trim().parse::<i64>() else { continue };
+        if n > worst {
+            worst = n;
+            key = p.file_name().and_then(|s| s.to_str()).map(str::to_string);
+        }
+    }
+    (worst, key)
+}
+
+fn mtime_secs(p: &std::path::Path) -> Option<i64> {
+    let md = std::fs::metadata(p).ok()?;
+    let d = md.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?;
+    Some(d.as_secs() as i64)
+}
+
+fn win_label(w: i64) -> String {
+    if w <= 0 {
+        "all time".to_string()
+    } else if w >= 86400 {
+        format!("last {}d", w / 86400)
+    } else if w >= 3600 {
+        format!("last {}h", w / 3600)
+    } else {
+        format!("last {}m", w / 60)
     }
 }
 
@@ -255,13 +299,7 @@ pub fn collect(now: i64, cfg: &Cfg) -> SweepData {
             env.merge_lines(&String::from_utf8_lossy(&out.stdout), "YIELD_");
         }
     }
-    let yield_win_label = if cfg.yield_window_s >= 86400 {
-        format!("last {}d", cfg.yield_window_s / 86400)
-    } else if cfg.yield_window_s >= 3600 {
-        format!("last {}h", cfg.yield_window_s / 3600)
-    } else {
-        format!("last {}m", cfg.yield_window_s / 60)
-    };
+    let yield_win_label = win_label(cfg.yield_window_s);
     let yield_note = match env.raw("YIELD_RECORDER") {
         Some("silent") => format!(
             "   <- the gate meter saw {} red(s) and none reached the record: THE RECORDER IS NOT RUNNING",
@@ -273,28 +311,8 @@ pub fn collect(now: i64, cfg: &Cfg) -> SweepData {
     };
 
     // NO-VERDICT STREAKS -----------------------------------------------------------------
-    let mut nv_worst = 0i64;
-    let mut nv_worst_key: Option<String> = None;
-    let nv_dir = run.join("noverdict");
-    if let Ok(rd) = std::fs::read_dir(&nv_dir) {
-        for e in rd.flatten() {
-            let p = e.path();
-            if !p.is_file() {
-                continue;
-            }
-            if p.extension().map(|x| x == "asked").unwrap_or(false) {
-                continue;
-            }
-            if let Ok(t) = std::fs::read_to_string(&p) {
-                if let Ok(n) = t.trim().parse::<i64>() {
-                    if n > nv_worst {
-                        nv_worst = n;
-                        nv_worst_key = p.file_name().and_then(|s| s.to_str()).map(|s| s.to_string());
-                    }
-                }
-            }
-        }
-    }
+    let (nv_worst, nv_worst_key) = worst_noverdict(&run.join("noverdict"), now, cfg.noverdict_window_s);
+    let nv_win_label = win_label(cfg.noverdict_window_s);
 
     // DWARVES ALIVE / IDLE-WHILE-READY -------------------------------------------------------
     let ledger_path = run.join("dwarf-ledger.log");
@@ -381,6 +399,7 @@ pub fn collect(now: i64, cfg: &Cfg) -> SweepData {
         gate_build_p90,
         nv_worst,
         nv_worst_key,
+        nv_win_label,
         unsent_inflight_disp,
         yield_win_label,
         yield_note,
@@ -550,6 +569,36 @@ fn idle_while_ready_hits(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A counter whose branch never passed is never cleared, so the directory keeps it forever.
+    /// Inside the window it is reported; a day older it is not — and the positive control is the
+    /// SAME value planted fresh, which must still be reported, so a zero here cannot be a reader
+    /// that stopped working.
+    #[test]
+    fn a_stale_noverdict_counter_is_not_the_worst_streak_but_the_same_value_fresh_is() {
+        let d = testkit::TempDir::new("wt-nv");
+        let dir = d.path().join("noverdict");
+        std::fs::create_dir_all(&dir).unwrap();
+        let now = 1_900_000_000i64;
+        let plant = |name: &str, n: i64, age: i64| {
+            let f = dir.join(name);
+            std::fs::write(&f, format!("{n}\n")).unwrap();
+            let at = std::time::UNIX_EPOCH + std::time::Duration::from_secs((now - age) as u64);
+            std::fs::File::options().write(true).open(&f).unwrap().set_modified(at).unwrap();
+        };
+
+        plant("spira-sp-dead-conflict", 98, 46 * 86400);
+        plant("spira-sp-live-deadline", 3, 600);
+        assert_eq!(worst_noverdict(&dir, now, 172800), (3, Some("spira-sp-live-deadline".into())));
+
+        // POSITIVE CONTROL: the same 98, written now, is still the worst streak.
+        plant("spira-sp-fresh-conflict", 98, 600);
+        assert_eq!(worst_noverdict(&dir, now, 172800), (98, Some("spira-sp-fresh-conflict".into())));
+
+        // The window off keeps the all-time reading this bead was filed about.
+        std::fs::remove_file(dir.join("spira-sp-fresh-conflict")).unwrap();
+        assert_eq!(worst_noverdict(&dir, now, 0), (98, Some("spira-sp-dead-conflict".into())));
+    }
 
     /// A class with no `SP_CZAR_*` keys set renders `?` throughout, a fired class carries who
     /// handled it, and an unrelated class is untouched by another class's keys.

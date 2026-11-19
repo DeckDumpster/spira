@@ -50,7 +50,7 @@ pub fn write_report(data: &SweepData, cfg: &Cfg) -> bool {
     let prompt_file = cfg.prompt_file();
     let lapsed_marker = cfg.lapsed_marker();
 
-    if render::is_nominal(data, cfg.snap_stale_s) {
+    if render::is_nominal(data, cfg.snap_stale_s, cfg.noverdict_max) {
         let body = format!(
             "SWEEP:NOMINAL lapsed={} snap_age={}s nv_worst={}\n",
             data.lapsed_count_disp, data.snap_age_disp_raw, data.nv_worst
