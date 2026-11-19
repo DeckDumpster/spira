@@ -123,15 +123,15 @@ fn compares_status(r: &Res, n: &str) -> bool {
     false
 }
 
-/// The rowless controls — the rule's two NAMED exceptions (DESIGN.md "The rowless
-/// controls", the Concierge's ruling on sp-mve9i): `(file, function)`. Each is the positive
+/// The rowless controls — the rule's one NAMED exception (DESIGN.md "The rowless
+/// controls", the Concierge's ruling on sp-mve9i): `(file, function)`. It is the positive
 /// control for "no bead is rowless": a bead with no lifecycle row has no state but bd's, so
 /// finding one means asking bd which beads it considers live and looking for each in the
 /// machine. That read audits the machine's coverage; it decides nothing about a bead the
-/// machine holds. Named here, by file and function, and argued at each definition — not an
-/// allow-list file, and a third entry is a design change, not a configuration.
+/// machine holds. Named here, by file and function, and argued at its definition — not an
+/// allow-list file, and a second entry is a design change, not a configuration.
 pub const ROWLESS_CONTROLS: &[(&str, &str)] =
-    &[("sentinel/src/lifecycle.rs", "rowless"), ("watchtower/src/probes.rs", "rowless_beads")];
+    &[("watchtower/src/probes.rs", "rowless_beads")];
 
 /// Test code decides nothing in production: a file under a `tests/` directory, or named
 /// `tests.rs` / `*_tests.rs`.
@@ -345,9 +345,8 @@ mod tests {
             )
         };
         let lines = |rel: &str, name: &str| scan_text(rel, &body(name)).into_iter().map(|f| f.line).collect::<Vec<_>>();
-        assert_eq!(lines("sentinel/src/lifecycle.rs", "rowless"), vec![4], "the control is exempt, the fn after it is not");
-        assert_eq!(lines("watchtower/src/probes.rs", "rowless_beads"), vec![4]);
-        assert_eq!(lines("sentinel/src/lifecycle.rs", "rowless_too"), vec![2, 4], "a name that only starts the same");
+        assert_eq!(lines("watchtower/src/probes.rs", "rowless_beads"), vec![4], "the control is exempt, the fn after it is not");
+        assert_eq!(lines("watchtower/src/probes.rs", "rowless_beads_too"), vec![2, 4], "a name that only starts the same");
         assert_eq!(lines("sentinel/src/store.rs", "rowless"), vec![2, 4], "the same name in another file");
     }
 

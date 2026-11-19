@@ -1,8 +1,9 @@
 # sentinel — the loop's heartbeat
 
-Replaces `spira/sentinel.sh` (1,596 lines). The binary is `sentinel` and takes the same four
-entry points. This document is the contract. The code satisfies it, and the unit tests
-(`cargo test -p sentinel`) are derived from it.
+This crate is a library. The scheduler's sentinel tasks (`spira-runtime`, `reconciler`,
+`spira-lc`) link its modules; there is no `sentinel` binary and no `release canary`. The sections
+below that describe a binary's entry points, store layer or CLI record the contract the library
+modules were written against; the code in `src/` is what is in force.
 
 ## 1. Intent
 

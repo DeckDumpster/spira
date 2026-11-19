@@ -586,3 +586,14 @@ fn run_main(argv: &[String]) -> ExitCode {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn canary_is_not_a_verb() {
+        assert!(!super::USAGE.contains("canary"));
+        for op in ["canary", "canary-worker"] {
+            assert!(!release::telemetry::OPERATIONS.contains(&op), "{op} is not an operation");
+        }
+    }
+}
