@@ -3834,8 +3834,17 @@ pub fn try_round_pass_start(env: &Env, repo: &Repo, batch: &str) -> Result<(), S
 /// An attribution that ended without an outcome leaves its failure text on the batch as the
 /// pass's incomplete verdict; a pass that already has its verdict ignores it.
 pub fn round_attribution_failed(env: &Env, repo: &Repo, batch: &str, why: &str) {
-    let reason = format!("the attribution leg failed: {why}");
-    match round_verb(env, &["pass-verdict", "--verdict", "incomplete", "--reason", &reason, batch, &repo.name], "") {
+    round_pass_incomplete(env, repo, batch, &format!("the attribution leg failed: {why}"));
+}
+
+/// The corpus pass ended red without the queue hearing a verdict: recording it takes the round
+/// out of `CI_RUNNING`, where no eject is admitted.
+pub fn round_corpus_ended_red(env: &Env, repo: &Repo, batch: &str) {
+    round_pass_incomplete(env, repo, batch, "the corpus pass ended red; its members are attributed");
+}
+
+fn round_pass_incomplete(env: &Env, repo: &Repo, batch: &str, reason: &str) {
+    match round_verb(env, &["pass-verdict", "--verdict", "incomplete", "--reason", reason, batch, &repo.name], "") {
         Ok(r) if r.code == Some(0) => {}
         Ok(r) => eprintln!("batcher {}: {}", repo.name, verb_failed("queue round pass-verdict", &r)),
         Err(e) => eprintln!("batcher {}: {e}", repo.name),
