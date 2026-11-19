@@ -933,6 +933,39 @@ fn convict_recurring<R: RoundRunner, O: RoundOps>(
     with_probe_output(actions, &said)
 }
 
+/// Probes the members a diff mapping names as suspects. A lone suspect is run by itself: it is
+/// ejected only when the filter is red with it merged alone, never because nothing else is left.
+fn probe_suspects<R: RoundRunner>(
+    runner: &mut R,
+    f: &FilterRed,
+    tests: &str,
+    scope: &[String],
+    suspects: &[Member],
+) -> Vec<Action> {
+    match suspects {
+        [] => vec![],
+        [only] => {
+            if runner.filter_green_in(&f.name, scope, suspects) != Some(false) {
+                return vec![];
+            }
+            let said = vec![(vec![only.id.clone()], runner.probe_output())];
+            let line = format!(
+                "{} red{tests} with only {} merged (bisected by running member subsets)",
+                f.name, only.id
+            );
+            with_probe_output(vec![Action::Eject { id: only.id.clone(), line }], &said)
+        }
+        _ => probe_filter_owners(runner, f, tests, scope, suspects).0,
+    }
+}
+
+fn tag_first_line(line: &str, note: &str) -> String {
+    match line.split_once('\n') {
+        Some((head, rest)) => format!("{head} {note}\n{rest}"),
+        None => format!("{line} {note}"),
+    }
+}
+
 /// A filter's red names its owners: they leave with the red as their evidence and the survivors
 /// run the corpus again. A red naming no member cannot be attributed: it is filed (which holds
 /// this membership) instead of re-cut — unless the runner can run the filter on member subsets,
@@ -968,31 +1001,38 @@ fn eject_filter_owners<R: RoundRunner, O: RoundOps>(
             .as_ref()
             .map(|g| unitattr::reaching(g, &packages, &ops.diffs(&ids)))
             .unwrap_or_default();
-        let mut actions: Vec<Action> = mapped
-            .into_iter()
-            .map(|(id, via)| Action::Eject {
-                line: format!(
-                    "{} red{tests} (mapped by package: this member's diff touches {via})",
-                    f.name
-                ),
-                id,
-            })
-            .collect();
+        let vias: BTreeMap<Id, String> = mapped.into_iter().collect();
+        let mut actions: Vec<Action> = vec![];
         let mut kind = "unattributed";
         let mut cleared = String::new();
-        if actions.len() > 1 {
+        if !vias.is_empty() {
             let suspects: Vec<Member> = members
                 .iter()
-                .filter(|m| actions.iter().any(|a| action_id(a) == &m.id))
+                .filter(|m| vias.contains_key(&m.id))
                 .cloned()
                 .collect();
-            let (mut found, _, _) = probe_filter_owners(runner, f, &tests, &scope, &suspects);
+            let mut found = probe_suspects(runner, f, &tests, &scope, &suspects);
             if found.is_empty() && scope != packages {
-                (found, _, _) = probe_filter_owners(runner, f, &tests, &packages, &suspects);
+                found = probe_suspects(runner, f, &tests, &packages, &suspects);
             }
-            if !found.is_empty() {
-                actions = found;
-            }
+            actions = found
+                .into_iter()
+                .map(|a| {
+                    let via = vias.get(action_id(&a)).cloned().unwrap_or_default();
+                    let note = format!("(mapped by package: this member's diff touches {via})");
+                    match a {
+                        Action::Eject { id, line } => Action::Eject {
+                            id,
+                            line: tag_first_line(&line, &note),
+                        },
+                        Action::Sequence { id, behind, line } => Action::Sequence {
+                            id,
+                            behind,
+                            line: tag_first_line(&line, &note),
+                        },
+                    }
+                })
+                .collect();
         }
         if actions.is_empty() {
             actions = convict_recurring(runner, ops, f, &tests, &scope, members);
@@ -4719,6 +4759,7 @@ pub(crate) mod tests {
     fn a_unit_red_in_a_package_only_the_last_members_dependency_touches_ejects_that_member_and_no_other(
     ) {
         let mut f = Fake::new(|_, _| false);
+        f.bisects = true;
         f.filter = Some(unit_red_when("m4"));
         let mut ops = Ops {
             graph: Some(loom_graph()),
@@ -4745,11 +4786,7 @@ pub(crate) mod tests {
             ops.ejected,
             vec![("m4".to_string(), vec!["unit-tests".to_string()])]
         );
-        assert!(
-            f.probes.is_empty(),
-            "a mapped red runs no subset: {:?}",
-            f.probes
-        );
+        assert!(!f.probes.is_empty(), "a mapped red is probed before it ejects");
         let note = &ops.eject_evidence[0].1;
         assert!(
             note.contains("mapped by package") && FAILING.iter().all(|l| note.contains(l)),
@@ -4759,6 +4796,113 @@ pub(crate) mod tests {
             matches!(end, RoundEnd::Land { ref members, .. } if members.len() == 3),
             "{end:?}"
         );
+    }
+
+    const CONFIG_FAILING: &str = "FAIL spira-config runes::tests::the_shipped_runes_declare_build_disk";
+
+    fn config_red_when(culprit: &'static str) -> FilterFn {
+        Box::new(move |tree| {
+            tree.contains(culprit).then(|| FilterRed {
+                name: "unit-tests".into(),
+                named: vec![],
+                failed: vec![CONFIG_FAILING.to_string()],
+            })
+        })
+    }
+
+    fn config_graph() -> PackageGraph {
+        PackageGraph {
+            dirs: [("spira-config", "spira-config"), ("gate", "gate")]
+                .iter()
+                .map(|(p, d)| (p.to_string(), d.to_string()))
+                .collect(),
+            deps: std::collections::BTreeMap::new(),
+            ..Default::default()
+        }
+    }
+
+    fn run_config_red(
+        culprit: &'static str,
+        diffs: Vec<MemberDiff>,
+        members: Vec<Member>,
+    ) -> (Ops, Fake, RoundEnd) {
+        let mut f = Fake::new(|_, _| false);
+        f.bisects = true;
+        f.filter = Some(config_red_when(culprit));
+        let mut ops = Ops {
+            graph: Some(config_graph()),
+            diffs,
+            ..Ops::default()
+        };
+        let end = attribute_round(&mut f, &mut ops, &corpus(3), members, budget6()).unwrap();
+        (ops, f, end)
+    }
+
+    #[test]
+    fn mapped_suspects_cleared_by_their_probes_stay_and_the_unmapped_culprit_alone_is_ejected() {
+        let (ops, _f, end) = run_config_red(
+            "m3",
+            vec![
+                diff_paths("m1", &["spira/conf.d/SPIRA_X"]),
+                diff_paths("m2", &["spira-config/src/lib.rs"]),
+                diff_paths("m3", &["docs/x.md"]),
+            ],
+            three(),
+        );
+        assert_eq!(
+            ops.ejected,
+            vec![("m3".to_string(), vec!["unit-tests".to_string()])]
+        );
+        assert!(ops.eject_evidence[0].1.contains("with only m3 merged"));
+        assert!(
+            matches!(end, RoundEnd::Land { ref members, .. } if members.len() == 2),
+            "{end:?}"
+        );
+    }
+
+    #[test]
+    fn a_member_deleting_a_shipped_rune_is_mapped_and_convicted_by_a_probe_and_no_other_leaves() {
+        let (ops, f, end) = run_config_red(
+            "m3",
+            vec![
+                diff_paths("m1", &["spira/conf.d/SPIRA_X"]),
+                diff_paths("m2", &["spira-config/src/lib.rs"]),
+                diff_paths("m3", &["spira/runes/disabled/qa.rune"]),
+            ],
+            three(),
+        );
+        assert_eq!(
+            ops.ejected,
+            vec![("m3".to_string(), vec!["unit-tests".to_string()])]
+        );
+        assert!(!f.probes.is_empty());
+        assert!(
+            ops.eject_evidence[0].1.contains("spira/runes/disabled/qa.rune"),
+            "{}",
+            ops.eject_evidence[0].1
+        );
+        assert!(
+            matches!(end, RoundEnd::Land { ref members, .. } if members.len() == 2),
+            "{end:?}"
+        );
+    }
+
+    #[test]
+    fn a_lone_mapped_member_the_red_does_not_follow_is_not_ejected_on_the_mapping() {
+        let (ops, _f, end) = run_config_red(
+            "m3",
+            vec![
+                diff_paths("m1", &["spira/conf.d/SPIRA_X"]),
+                diff_paths("m2", &["docs/y.md"]),
+                diff_paths("m3", &["docs/x.md"]),
+            ],
+            three(),
+        );
+        assert_eq!(
+            ops.ejected,
+            vec![("m3".to_string(), vec!["unit-tests".to_string()])]
+        );
+        assert!(matches!(end, RoundEnd::Land { ref members, .. } if members.len() == 2));
     }
 
     const RELEASE_FAILING: &str =
@@ -4809,6 +4953,7 @@ pub(crate) mod tests {
     fn a_unit_red_in_a_crate_that_reads_a_file_outside_its_dir_ejects_the_member_touching_that_file_and_no_other(
     ) {
         let mut f = Fake::new(|_, _| false);
+        f.bisects = true;
         f.filter = Some(release_red_when("m6"));
         let mut ops = Ops {
             graph: Some(release_graph()),
@@ -4842,11 +4987,7 @@ pub(crate) mod tests {
             ops.ejected,
             vec![("m6".to_string(), vec!["unit-tests".to_string()])]
         );
-        assert!(
-            f.probes.is_empty(),
-            "one mapped suspect runs no subset: {:?}",
-            f.probes
-        );
+        assert!(!f.probes.is_empty(), "the one mapped suspect is probed");
         let note = &ops.eject_evidence[0].1;
         assert!(note.contains("read by release's tests"), "{note}");
         assert!(
@@ -4890,15 +5031,13 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn two_suspects_the_probes_cannot_tell_apart_both_leave() {
+    fn two_suspects_the_probes_cannot_tell_apart_are_not_ejected_on_the_mapping() {
         let mut f = Fake::new(|_, _| false);
         f.bisects = false;
         f.filter = Some(release_red_when("m2"));
         let mut ops = two_suspects();
         attribute_round(&mut f, &mut ops, &corpus(3), four(), budget6()).unwrap();
-        let mut gone: Vec<&str> = ops.ejected.iter().map(|(id, _)| id.as_str()).collect();
-        gone.sort();
-        assert_eq!(gone, ["m2", "m3"]);
+        assert!(ops.ejected.is_empty(), "{:?}", ops.ejected);
     }
 
     #[test]
@@ -6687,6 +6826,7 @@ pub(crate) mod tests {
     fn an_integration_red_in_a_crate_dir_only_one_members_diff_touches_ejects_that_member_and_certifies_the_rest(
     ) {
         let mut f = Fake::new(|_, _| false);
+        f.bisects = true;
         f.filter = Some(integration_red_when(&["m3"]));
         let mut ops = Ops {
             graph: Some(loom_graph()),
