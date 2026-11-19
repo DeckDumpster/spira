@@ -386,6 +386,9 @@ lc_request_ledger_secs = 120
 metrics_page_url = ""
 lc_idempotent_retry_secs = 60
 cpu_throttle_units = "dolt-beads.service spira-runtime.service"
+noverdict_window = 172800
+noverdict_max = 3
+slow_query_ms = 1000
 
 [renamed]
 "persona.maechen" = "persona.mimir" # ffx-ok
