@@ -1,5 +1,5 @@
 //! The production [`crate::ports::World`]: the `conf.sh`+`lib.sh` seam for the SQL runners
-//! and the fold map (never re-derived — DESIGN.md §2), `bdq`/`git`/`date` calls, and
+//! and the fold map (never re-derived — DESIGN.md §2), `spira-lc`/`git`/`date` calls, and
 //! the in-process classification pipeline.
 
 use crate::pipeline;
@@ -27,9 +27,31 @@ fn retry_sql(caller: &str, mut delay_s: u64, mut attempt: impl FnMut() -> (bool,
     Err(format!("{caller}: query failed after 3 attempts: {last_stderr}"))
 }
 
+/// `*` matches any run of characters, `?` one; everything else matches itself.
+fn glob_match(pattern: &str, s: &str) -> bool {
+    let (p, s): (Vec<char>, Vec<char>) = (pattern.chars().collect(), s.chars().collect());
+    let (mut pi, mut si, mut star, mut mark) = (0, 0, None, 0);
+    while si < s.len() {
+        if pi < p.len() && (p[pi] == '?' || p[pi] == s[si]) {
+            pi += 1;
+            si += 1;
+        } else if pi < p.len() && p[pi] == '*' {
+            star = Some(pi);
+            mark = si;
+            pi += 1;
+        } else if let Some(sp) = star {
+            pi = sp + 1;
+            mark += 1;
+            si = mark;
+        } else {
+            return false;
+        }
+    }
+    p[pi..].iter().all(|c| *c == '*')
+}
+
 pub struct Real {
     pub home: PathBuf,   // spira/ — where conf.sh and lib.sh live
-    pub bdq: String,
     /// `spira-lc`: `SPIRA_LC_BIN`, else the declared release's.
     pub lc: String,
     /// `PATH`/`SPIRA_RELEASE` every child runs under, from the declared release.
@@ -41,7 +63,6 @@ impl Real {
     pub fn new(home: PathBuf) -> Result<Real, String> {
         Ok(Real {
             home,
-            bdq: spira_config::release_env::tool("bdq")?,
             lc: spira_store::lifecycle_row::lc_bin()?,
             child_env: spira_config::release_env::child_path_env_for_process()?,
         })
@@ -70,20 +91,34 @@ impl Real {
         out.ok().map(|o| String::from_utf8_lossy(&o.stdout).trim_end_matches('\n').to_string()).unwrap_or_default()
     }
 
-    /// `bdq sql <query>` — stdout/stderr returned separately (never combined the
-    /// way `seam`'s bash-pipe callers were), so a retrying caller can report the LAST
-    /// attempt's stderr alone, exactly as `census_events_run_sql`'s own `2>"$_errtmp"`
-    /// (truncated fresh each attempt) did.
+    /// `spira-lc admin-store sql`, the statement on stdin — stdout/stderr returned separately
+    /// (never combined the way `seam`'s bash-pipe callers were), so a retrying caller can
+    /// report the LAST attempt's stderr alone.
     fn run_bd_sql(&self, query: &str) -> (bool, String, String) {
-        let out = spira_config::bounded::bounded(&self.bdq).arg("sql").arg(query).stdin(Stdio::null()).output();
-        match out {
+        match self.lc_run(&["admin-store", "sql"], Some(query)) {
             Ok(o) => (
                 o.status.success(),
                 String::from_utf8_lossy(&o.stdout).trim_end_matches('\n').to_string(),
                 String::from_utf8_lossy(&o.stderr).trim_end_matches('\n').to_string(),
             ),
-            Err(e) => (false, String::new(), e.to_string()),
+            Err(e) => (false, String::new(), e),
         }
+    }
+
+    /// One bounded `spira-lc` run, `stdin` written to it when given.
+    fn lc_run(&self, args: &[&str], stdin: Option<&str>) -> Result<std::process::Output, String> {
+        let mut child = spira_config::bounded::bounded(&self.lc)
+            .args(args)
+            .envs(self.child_env.iter().cloned())
+            .stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() })
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("cannot run {}: {e}", self.lc))?;
+        if let (Some(text), Some(mut si)) = (stdin, child.stdin.take()) {
+            std::io::Write::write_all(&mut si, text.as_bytes()).map_err(|e| format!("{}: writing stdin: {e}", self.lc))?;
+        }
+        child.wait_with_output().map_err(|e| format!("{}: {e}", self.lc))
     }
 
     /// The attempt-history facts the folds read, since `since`, from the lifecycle log.
@@ -241,14 +276,11 @@ impl World for Real {
     }
 
     fn bd_list_all_json(&self, label_pattern: &str) -> String {
-        spira_config::bounded::bounded(&self.bdq)
-            .args(["list", "--all", "--label-pattern", label_pattern, "--limit", "0", "--json"])
-            .stdin(Stdio::null())
-            .stderr(Stdio::null())
-            .output()
-            .ok()
-            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
-            .unwrap_or_default()
+        let Ok(o) = self.lc_run(&["content", "list", "--all", "--limit", "0", "--json"], None) else { return String::new() };
+        let text = String::from_utf8_lossy(&o.stdout).into_owned();
+        let Some(Ok(serde_json::Value::Array(rows))) = text.find(['[', '{']).map(|i| serde_json::from_str(&text[i..])) else { return String::new() };
+        let kept: Vec<_> = rows.into_iter().filter(|r| r["labels"].as_array().is_some_and(|ls| ls.iter().filter_map(|l| l.as_str()).any(|l| glob_match(label_pattern, l)))).collect();
+        serde_json::to_string(&kept).unwrap_or_default()
     }
 
     fn lc_rows(&self, ids: &[String]) -> Result<Vec<spira_store::lc_state::Row>, String> {
@@ -295,20 +327,13 @@ impl World for Real {
             .unwrap_or(0)
     }
     fn bd_sql_utc_now_row(&self) -> Result<String, String> {
-        let out = spira_config::bounded::bounded(&self.bdq)
-            .args(["sql", "SELECT DATE_FORMAT(UTC_TIMESTAMP(), '%Y-%m-%d %H:%i:%s') AS utc_fn"])
-            .stdin(Stdio::null())
-            .output();
-        match out {
-            Ok(o) => {
-                let combined = format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
-                if o.status.success() {
-                    Ok(combined.lines().nth(2).unwrap_or("").to_string())
-                } else {
-                    Err(combined)
-                }
-            }
-            Err(e) => Err(e.to_string()),
+        let query = "SELECT DATE_FORMAT(UTC_TIMESTAMP(), '%Y-%m-%d %H:%i:%s') AS utc_fn";
+        let o = self.lc_run(&["admin-store", "sql"], Some(query))?;
+        let combined = format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
+        if o.status.success() {
+            Ok(combined.lines().nth(2).unwrap_or("").to_string())
+        } else {
+            Err(combined)
         }
     }
     fn parse_utc_to_epoch(&self, s: &str) -> Option<i64> {
@@ -344,7 +369,7 @@ impl World for Real {
 
 #[cfg(test)]
 mod tests {
-    use super::{retry_sql, Real};
+    use super::{glob_match, retry_sql, Real};
     use crate::ports::World;
 
     fn failing_then_ok(fail_first: usize, calls: &std::cell::Cell<usize>) -> (bool, String, String) {
@@ -389,9 +414,8 @@ mod tests {
 
     fn real_over(dir: &std::path::Path, fact_list_out: &str) -> (Real, std::path::PathBuf) {
         let calls = dir.join("lc-calls");
-        let lc = script(dir, "lc", &format!("echo \"$*\" >> '{}'\ncat <<'EOF'\n{fact_list_out}\nEOF", calls.display()));
-        let bd = script(dir, "bd-stand-in", "echo '| bd | row |'");
-        (Real { home: dir.to_path_buf(), bdq: bd, lc, child_env: Vec::new() }, calls)
+        let lc = script(dir, "lc", &format!("[ \"$1\" = admin-store ] && {{ echo '| bd | row |'; exit 0; }}\necho \"$*\" >> '{}'\ncat <<'EOF'\n{fact_list_out}\nEOF", calls.display()));
+        (Real { home: dir.to_path_buf(), lc, child_env: Vec::new() }, calls)
     }
 
     #[test]
@@ -432,5 +456,32 @@ mod tests {
         assert_eq!(argv.lines().collect::<Vec<_>>(), [format!("{kinds} --since 1700000000"), kinds.to_string()]);
         assert_eq!(deliberate.trim(), "| bd | row |", "no cause list is resolvable here, so the fact leg adds nothing");
         assert!(handwritten.contains("| requeued | gate-red | alice | 1 | 1 |"), "{handwritten}");
+    }
+
+    #[test]
+    fn the_sql_goes_to_admin_store_on_stdin_and_the_label_read_is_a_content_list_filtered_here() {
+        let tmp = testkit::TempDir::new("census-door");
+        let dir = tmp.path();
+        let log = dir.join("calls");
+        let body = format!(
+            "echo \"$*\" >> '{log}'\ncase \"$1\" in\nadmin-store) cat >> '{log}'; printf 'h\\n-\\n| 2026-01-01 00:00:00 |\\n';;\ncontent) printf 'warn\\n[{{\"id\":\"sp-a\",\"labels\":[\"covers:x\"]}},{{\"id\":\"sp-b\",\"labels\":[\"other\"]}}]';;\nesac",
+            log = log.display()
+        );
+        let lc = script(dir, "lc", &body);
+        let real = Real { home: dir.to_path_buf(), lc, child_env: Vec::new() };
+        let row = real.bd_sql_utc_now_row().unwrap();
+        assert_eq!(row, "| 2026-01-01 00:00:00 |");
+        assert_eq!(real.run_bd_sql("SELECT 1").0, true);
+        let got = real.bd_list_all_json("covers:*");
+        assert_eq!(serde_json::from_str::<serde_json::Value>(&got).unwrap(), serde_json::json!([{"id":"sp-a","labels":["covers:x"]}]));
+        let calls = std::fs::read_to_string(&log).unwrap();
+        assert!(calls.contains("admin-store sql\n") && calls.contains("SELECT DATE_FORMAT") && calls.contains("SELECT 1"), "{calls}");
+        assert!(calls.contains("content list --all --limit 0 --json"), "{calls}");
+    }
+
+    #[test]
+    fn glob_matches_a_prefix_star_and_nothing_else() {
+        assert!(glob_match("covers:*", "covers:x") && glob_match("covers:*", "covers:"));
+        assert!(!glob_match("covers:*", "xcovers:x") && !glob_match("covers:*", "cover"));
     }
 }
