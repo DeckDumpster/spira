@@ -668,7 +668,7 @@ nextest_reds() {
 # the target read off the `(<exe>-<hash>)` of the `Running` line.
 cargo_test_reds() {
     awk '/^ *Running / { d = ""; t = ""
-           if (match($0, /\(.*\)/)) { t = substr($0, RSTART + 1, RLENGTH - 2); sub(/.*\//, "", t); sub(/-[0-9a-f]{16}$/, "", t) }
+           if (match($0, /\(.*\)/)) { t = substr($0, RSTART + 1, RLENGTH - 2); sub(/.*\//, "", t); n = length(t); if (substr(t, n - 16, 1) == "-" && substr(t, n - 15) ~ /^[0-9a-f]+$/) t = substr(t, 1, n - 17) }
            if (match($0, /[^ ]*\/?tests\//)) { d = substr($0, RSTART, RLENGTH); sub(/\/?tests\/$/, "", d); if (d == "") d = "." } }
          d != "" && /^test .* \.\.\. FAILED/ { if (d == "." && t != "") print "FAIL test:" t, $2; else print "FAIL dir:" d, $2 }' "$1"
 }
