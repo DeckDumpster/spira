@@ -72,3 +72,14 @@
         assert!(!t.join("model-bin/bd").exists(), "a store tool stays out of the model's PATH");
         assert!(model_bin_problems(t.path()).is_empty());
     }
+
+    #[test]
+    fn a_builder_can_run_test_registry_because_model_bin_links_it() {
+        let t = testkit::TempDir::new("model-bin-test-registry");
+        std::fs::create_dir_all(t.join("bin")).unwrap();
+        testkit::write_exe(t.join("bin/test-registry"), "");
+        let linked = link_model_bin(t.path()).unwrap();
+        assert_eq!(linked, vec!["test-registry".to_string()]);
+        assert!(t.join("model-bin/test-registry").exists());
+        assert!(model_bin_problems(t.path()).is_empty());
+    }
