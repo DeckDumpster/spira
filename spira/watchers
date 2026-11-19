@@ -88,7 +88,6 @@
 #   round-ami-stale                    task watch.ami_stale
 #   ci-spill-guard                     task watch.ci_spill
 #   pass-rate                          task watch.pass_rate
-#   warm-full                          task watch.warm_full
 #   testenv-cap                        task watch.testenv_cap
 #   alarms-probe                       task incident.probe
 #   notify (the timer)                 task inbox.notify
@@ -101,6 +100,11 @@
 # appends one line per path over the limit, with the top callers lc-serve counted. A quiet log
 # means every path answered inside the limit.
 perf-watch|log|@SPIRA_RUN@/perf-watch.log
+
+# DOLT-COLLECT is where `store-persist run` records a failed daily collection or copy rebuild: one
+# line per failing database per day, carrying Dolt's own error. Nothing else writes the log, and a
+# quiet log means collections are landing.
+dolt-collect|log|@SPIRA_RUN@/dolt-collect.log
 
 # UNIT-RUN-DBUS learns each user-unit run from the user manager's D-Bus signals and stores one
 # unit-run-dbus row per execution in the metrics store. Its log holds only what went wrong (a lost bus

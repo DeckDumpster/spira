@@ -1,4 +1,4 @@
-//! store-persist restore | pass [--offline] | run | seed --from DIR | compact | gc | age
+//! store-persist restore | pass [--offline] | run | seed --from DIR | gc | age
 //!
 //! Exit 0 done; 1 the operation failed (or `age` is past the bound); 2 usage or config.
 
@@ -9,7 +9,7 @@ use std::process::{Command, ExitCode, Stdio};
 use store_persist::ports::{Clock, Conn, Dolt};
 use store_persist::{Config, Mode};
 
-const USAGE: &str = "usage: store-persist restore | pass [--offline] | run | seed --from DIR | compact | gc | age";
+const USAGE: &str = "usage: store-persist restore | pass [--offline] | run | seed --from DIR | gc | age";
 
 struct RealClock;
 
@@ -72,15 +72,6 @@ impl Dolt for RealDolt {
     fn gc(&self, conn: &Conn, data: &Path, db: &str) -> Result<(), String> {
         // batch-job: a gc rewrites the whole live store
         self.sql(Self::command(conn, data, db), "CALL DOLT_GC();\n").map(|_| ())
-    }
-
-    fn free_bytes(&self, path: &Path) -> Result<u64, String> {
-        let c = std::ffi::CString::new(path.as_os_str().as_encoded_bytes()).map_err(|e| e.to_string())?;
-        let mut st: libc::statvfs = unsafe { std::mem::zeroed() };
-        if unsafe { libc::statvfs(c.as_ptr(), &mut st) } != 0 {
-            return Err(format!("cannot stat {}: {}", path.display(), std::io::Error::last_os_error()));
-        }
-        Ok(st.f_bavail as u64 * st.f_frsize as u64)
     }
 
     fn verify(&self, db_dir: &Path) -> Result<String, String> {
@@ -147,7 +138,6 @@ fn run(argv: &[String], sink: &spira_otel::metrics::MetricsSink) -> u8 {
         }
         ["seed", "--from", dir] => store_persist::seed(&cfg, &PathBuf::from(dir), &dolt, &clock)
             .map(|st| vec![format!("store-persist: seeded {} from {dir}", st.dbs.join(","))]),
-        ["compact"] => store_persist::compact(&cfg, &dolt).map(|v| v.into_iter().map(|l| format!("store-persist: {l}")).collect()),
         ["gc"] => store_persist::gc(&cfg, &dolt).map(|v| v.into_iter().map(|l| format!("store-persist: {l}")).collect()),
         ["age"] => store_persist::age(&cfg, clock.now_ms()).and_then(|(lag, stale)| {
             sink.push(&[spira_otel::metrics::Point::Gauge { name: "spira_store_persist_lag_seconds", value: lag as f64 / 1000.0 }], &[("component", "store-persist")]);

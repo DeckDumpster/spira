@@ -12,8 +12,8 @@ off the serving path:
   copied in. A database already in RAM is newer than its copy and is kept.
 - **pass** — every database is synced into the copy; the pass records the moment it began.
 - **run** — a pass every `SPIRA_DOLT_PERSIST_INTERVAL_SECS`, through the running server.
-- **compact** — first `dolt_gc()` on each live database when the filesystem has room for a second generation; then a copy grown past `SPIRA_DOLT_PERSIST_COMPACT_PCT` of its live size is rebuilt.
-- **collect** — `run` also calls `dolt_gc()` on each live database every `SPIRA_DOLT_PERSIST_GC_INTERVAL_SECS` (0 disables), under the same free-space rule as compact, so the live journal's garbage is bounded between daily compactions rather than growing until the next one.
+- **daily rebuild** — once a day `run` collects each live database, then rebuilds a copy grown past `SPIRA_DOLT_PERSIST_COMPACT_PCT` of its live size. A failed collection or rebuild appends one line, with Dolt's own error, to `<run>/dolt-collect.log`, which `spira/watchers` reads.
+- **collect** — `run` also calls `dolt_gc()` on each live database every `SPIRA_DOLT_PERSIST_GC_INTERVAL_SECS` (0 disables). A collection is never refused for want of space: a Dolt error is the report. Both schedules are kept in `<durable>/upkeep.state`, so a restart does not reset them.
 - **age** — red once the newest finished pass began more than `SPIRA_DOLT_PERSIST_MAX_LAG_SECS` ago.
 
 **The loss bound.** Every write committed before the newest finished pass began is on disk. A
@@ -93,7 +93,6 @@ can be larger than the store.
   pass --offline`, `TimeoutStartSec=900` (a restore copies the whole store). With the key
   empty both are no-ops on a disk-backed directory.
 - `dolt-persist.service`: `store-persist run`. Installed only when `SPIRA_DOLT_DURABLE` is set.
-- `dolt-persist-compact.timer` / `.service`: daily `store-persist compact`.
 
 ## 6. Measurements (fixture servers only)
 
@@ -115,4 +114,4 @@ The tmpfs holds the live store, its journals, Dolt's temp spool, and transiently
 database while automatic GC writes the new generation before deleting the old. Size a
 dedicated tmpfs at about three times the live store and cap it, so a runaway spool fills the
 tmpfs rather than the host's memory. Right after a reboot the store occupies up to
-`SPIRA_DOLT_PERSIST_COMPACT_PCT` of its live size, until GC runs.
+`SPIRA_DOLT_PERSIST_COMPACT_PCT` of its live size, until the next collection.
