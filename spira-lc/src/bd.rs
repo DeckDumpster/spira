@@ -81,7 +81,8 @@ fn sync_claim_inputs(ids: &[String]) {
     if ids.is_empty() || !crate::control::served::store_configured() {
         return;
     }
-    if crate::settle::owe_claims(ids, false) {
+    if crate::settle::has_settler() {
+        crate::settle::sync_claims(ids, false, &mut StoreMachine, &mut LiveBd);
         return;
     }
     let mut argv = vec![crate::claim_sync::VERB.to_string()];

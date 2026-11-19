@@ -181,8 +181,8 @@ pub fn run(argv: &[String], p: Ports<'_>) -> Answer {
             let (code, out) = m.call(argv);
             let mut ans = if spira_store::lc_call::is_refusal(code, &out) { Answer { code, stderr: line(&out), ..Default::default() } } else { Answer::out(code, out) };
             if code == 0 {
-                if let Some(id) = rest.first().filter(|id| !crate::settle::owe_claims(std::slice::from_ref(id), true)) {
-                    let sync = crate::claim_sync::run(&[crate::claim_sync::ONLY_IF_UNSET.to_string(), id.clone()], m, bd);
+                if let Some(id) = rest.first() {
+                    let sync = crate::settle::sync_claims(std::slice::from_ref(id), true, m, bd);
                     if sync.code != 0 {
                         ans.stderr.push_str(&format!("spira-lc create-bead: LIFECYCLE: {}; claim inputs not written; repair: spira-lc sync-claim-inputs {id}\n", sync.stderr.trim()));
                     }
