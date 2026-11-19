@@ -190,7 +190,7 @@ impl Memo {
     }
 }
 
-/// The most terminal rows kept; at the bound the set is dropped whole and refilled by what is asked next.
+/// The most terminal rows kept: at the bound the set is dropped whole and refilled by what is asked next.
 const TERMINAL_KEPT: usize = 4_096;
 
 /// The terminal rows the store was asked for, kept until a change names them or the views reload:
